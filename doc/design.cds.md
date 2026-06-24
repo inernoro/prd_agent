@@ -53,31 +53,31 @@ CDS 的文档按职责划分，推荐按以下顺序阅读：
 ```
 主入口：design.cds.md  ← 你在这里
     │
-    ├─ 一分钟起步      → guide.quickstart.md
-    ├─ 环境变量与多域名 → guide.cds-env.md
+    ├─ 一分钟起步      → guide.platform.quickstart.md
+    ├─ 环境变量与多域名 → guide.cds.env.md
     ├─ 功能是什么      → spec.cds.md
-    ├─ 怎么不宕机      → design.cds-resilience.md
-    ├─ 当前状态        → plan.cds-status.md (我在哪)
-    ├─ 怎么部署        → plan.cds-deployment.md
-    ├─ 长期路线图      → plan.cds-roadmap.md
-    ├─ 一键导入配置    → design.cds-onboarding.md
-    ├─ 数据迁移        → design.cds-data-migration.md
-    ├─ 认证陷阱        → guide.cds-ai-auth.md
-    └─ Onboarding 验收 → report.cds-onboarding-uat.md (18 friction + 41 契约对照)
+    ├─ 怎么不宕机      → design.cds.resilience.md
+    ├─ 当前状态        → plan.cds.status.md (我在哪)
+    ├─ 怎么部署        → plan.cds.deployment.md
+    ├─ 长期路线图      → plan.cds.roadmap.md
+    ├─ 一键导入配置    → design.cds.onboarding.md
+    ├─ 数据迁移        → design.cds.data-migration.md
+    ├─ 认证陷阱        → guide.cds.ai-auth.md
+    └─ Onboarding 验收 → report.cds.onboarding-uat.md (18 friction + 41 契约对照)
 ```
 
 | 文档 | 类型 | 什么时候读 |
 |---|---|---|
 | **design.cds.md** | design | 首次了解 CDS、理解整体架构 |
-| **guide.quickstart.md** | guide | 立刻上手 init/start/stop/restart + 多根域名 |
-| **guide.cds-env.md** | guide | 配置 .cds.env、理解 CDS_ROOT_DOMAINS 的路由生成规则 |
+| **guide.platform.quickstart.md** | guide | 立刻上手 init/start/stop/restart + 多根域名 |
+| **guide.cds.env.md** | guide | 配置 .cds.env、理解 CDS_ROOT_DOMAINS 的路由生成规则 |
 | **spec.cds.md** | spec | 想知道 CDS 具体能做什么（功能清单 F1-F11） |
-| **design.cds-resilience.md** | design | 在小服务器部署、关心容量/温池调度/跨机负载均衡 |
-| **plan.cds-deployment.md** | plan | 要真实上线一台服务器，需要部署步骤 |
-| **guide.cds-ai-auth.md** | guide | 遇到认证/JWT 问题排查 |
-| **design.cds-onboarding.md** | design | 要做"一键从项目导入 CDS 配置"的功能 |
-| **design.cds-data-migration.md** | design | 涉及跨环境数据迁移 |
-| **plan.cds-roadmap.md** | plan | 规划下一阶段做什么 |
+| **design.cds.resilience.md** | design | 在小服务器部署、关心容量/温池调度/跨机负载均衡 |
+| **plan.cds.deployment.md** | plan | 要真实上线一台服务器，需要部署步骤 |
+| **guide.cds.ai-auth.md** | guide | 遇到认证/JWT 问题排查 |
+| **design.cds.onboarding.md** | design | 要做"一键从项目导入 CDS 配置"的功能 |
+| **design.cds.data-migration.md** | design | 涉及跨环境数据迁移 |
+| **plan.cds.roadmap.md** | plan | 规划下一阶段做什么 |
 
 ---
 
@@ -204,7 +204,7 @@ interface IShellExecutor {
 
 状态持久化 + 端口分配 + 环境变量管理。
 
-- `load()` / `save()` — JSON 文件读写（v3.1 起为**原子写 + 滚动备份**，见 `design.cds-resilience.md §5`）
+- `load()` / `save()` — JSON 文件读写（v3.1 起为**原子写 + 滚动备份**，见 `design.cds.resilience.md §5`）
 - `addBranch()` / `removeBranch()` — 分支 CRUD
 - `allocatePort()` — 动态端口分配
 - `getCdsEnvVars()` — 自动生成 CDS_* 系统变量
@@ -485,16 +485,16 @@ target: `http://localhost:${process.env.VITE_API_PORT || 5000}`
 
 | 文档 | 内容 |
 |---|---|
-| `guide.quickstart.md` | init/start/stop/restart 快速上手 + 多根域名速查 |
-| `guide.cds-env.md` | `.cds.env` 配置、`CDS_ROOT_DOMAINS` 多域名路由规则 |
+| `guide.platform.quickstart.md` | init/start/stop/restart 快速上手 + 多根域名速查 |
+| `guide.cds.env.md` | `.cds.env` 配置、`CDS_ROOT_DOMAINS` 多域名路由规则 |
 | `spec.cds.md` | 功能规格 F1-F11 |
-| `design.cds-resilience.md` | 容量预算、LRU 调度、故障矩阵、跨机负载均衡 |
-| `design.cds-onboarding.md` | 一键导入配置 + AI 项目扫描 |
-| `design.cds-data-migration.md` | 跨环境数据迁移 |
-| `plan.cds-deployment.md` | 三种部署模式对比 + 端口分配 |
-| `plan.cds-roadmap.md` | Phase 0-3 里程碑 |
-| `plan.cds-resilience-rollout.md` | 高可用改造落地进度（可续传）|
-| `guide.cds-ai-auth.md` | 认证问题故障排查 |
+| `design.cds.resilience.md` | 容量预算、LRU 调度、故障矩阵、跨机负载均衡 |
+| `design.cds.onboarding.md` | 一键导入配置 + AI 项目扫描 |
+| `design.cds.data-migration.md` | 跨环境数据迁移 |
+| `plan.cds.deployment.md` | 三种部署模式对比 + 端口分配 |
+| `plan.cds.roadmap.md` | Phase 0-3 里程碑 |
+| `plan.cds.resilience-rollout.md` | 高可用改造落地进度（可续传）|
+| `guide.cds.ai-auth.md` | 认证问题故障排查 |
 
 ---
 

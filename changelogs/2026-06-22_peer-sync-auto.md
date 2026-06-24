@@ -9,7 +9,7 @@
 | fix | prd-admin | 同步中心交互草图(assets/prototypes)清除全部 emoji 图标，改纯文本（CLAUDE.md §0，Codex P1） |
 | fix | prd-admin | 知识库卡片「更多」菜单补 onMouseDown stopPropagation，修复菜单项点击前被 document mousedown 卸载（Bugbot/Codex） |
 | fix | prd-admin | 知识库置顶保存失败时回滚到操作前集合（原 prev2=>prev2 空操作不撤销乐观更新，Bugbot） |
-| docs | prd-api | spec.map-kb-transfer-protocol H1 补 · 规格 后缀 + 版本/日期/状态 标准头（doc-naming，Codex） |
+| docs | prd-api | spec.knowledge-base.transfer-protocol H1 补 · 规格 后缀 + 版本/日期/状态 标准头（doc-naming，Codex） |
 | fix | prd-api | 自动同步 worker 释放租约按 owner 限定（仅 PeerSyncLeaseOwner==本实例才清），避免超时被接管后误清新持有者租约放行第三次并发同步（Bugbot High） |
 | fix | prd-api | 同步 apply 的廉价跳过纳入 sortOrder/category 比较，修复仅排序/分类变化被漏同步（Bugbot） |
 | fix | prd-admin | 同步台账轮询加发号器 stale-response 守卫（DocumentStorePage + SyncCenterDialog），防慢响应覆盖新状态 |
@@ -17,11 +17,11 @@
 | fix | prd-api | 自动同步 worker 补防自指守卫（对端 RemoteNodeId==selfNodeId 跳过），与手动 transfer 同口径，治共享 Mongo 预览自我同步（Bugbot） |
 | fix | prd-api | BuildActorAsync 恢复权限兜底：GetEffectivePermissions 瞬时失败时退回调用方传入的 JWT claims 权限，避免 super 用户被误降级（Bugbot） |
 | fix | prd-api | IsDue 不再用 PeerSyncStatus==syncing 判在途（崩溃残留 syncing 会永久禁用该库自动同步），改由租约承担互斥+在途检测（有 TTL 自愈）（Bugbot High） |
-| fix | prd-api | 库级同步互斥租约 TTL 10min→30min 并 worker/手动共用同一常量，覆盖大库最坏同步耗时防超时被并发抢锁；>30min 超大库的心跳续租列入 debt.peer-sync（Bugbot High） |
+| fix | prd-api | 库级同步互斥租约 TTL 10min→30min 并 worker/手动共用同一常量，覆盖大库最坏同步耗时防超时被并发抢锁；>30min 超大库的心跳续租列入 debt.platform.peer-sync（Bugbot High） |
 | fix | prd-admin | 详情页同步按钮「进行中」只认近 30 分钟内的 syncing 运行（与租约 TTL 同口径），不再叠加可能陈旧的 store.peerSyncStatus，避免崩溃后永久脉冲（Bugbot） |
 | fix | prd-api | 自动同步 worker 成功通信后 bump 对端 PeerNode.LastContactAt（与手动 transfer 同口径），修复纯后台同步部署「最近通信」长期陈旧（Bugbot） |
 | fix | prd-api | 同步 apply 文件夹 upsert 纳入 SortOrder/Category 比较与写入，修复目录手动排序/分类漂移被漏同步（Codex） |
-| docs | prd-api | spec.map-kb-transfer-protocol 去除星标记字形，改 (v1.1) 纯文本（CLAUDE.md §0，Codex P1） |
+| docs | prd-api | spec.knowledge-base.transfer-protocol 去除星标记字形，改 (v1.1) 纯文本（CLAUDE.md §0，Codex P1） |
 | fix | prd-admin | 同步中心面板「进行中」判定同样加 30 分钟新鲜窗口（头部转圈/tab 计数/2s 轮询），与详情页一致，陈旧 syncing 台账不再永久脉冲（Bugbot） |
 | fix | prd-admin | 同步台账卡片(RunCard)对陈旧 syncing 行(超30min)显示为中性「未完成」而非金色脉冲，与进行中判定一致（Bugbot） |
 | fix | prd-api | 同步完成（手动/自动）终态回写一并重置 PeerSyncAutoLastAt，避免手动同步一个已到期库后 worker 约 1 分钟内又自动跑一遍（Bugbot） |

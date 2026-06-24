@@ -68,7 +68,7 @@ prd_agent/
 1. 代码→文档：Controller/Service 存在 → SRS 有描述
 2. 文档→代码：SRS 描述 → 代码有实现
 3. Git log→文档：近期 commit → 已反映
-4. DB→数据字典：MongoDbContext → rule.data-dictionary.md
+4. DB→数据字典：MongoDbContext → rule.platform.data-dictionary.md
 5. 关系→访问路径：Model 新增引用 → 端点权限校验已更新
 6. 写入→读取对称：能写入 → 必有读取/展示路径
 7. UI→API 闭环：前端入口 → API 增删改查通

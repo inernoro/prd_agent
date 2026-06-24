@@ -28,130 +28,130 @@ docs:
   spec.project-vision: 项目愿景与背景
   spec.prd: PRD Agent 产品需求文档
   spec.srs: PRD 理解与交互智能体软件需求规格说明书
-  spec.app-registry: 应用注册中心协议规范
+  spec.platform.app-registry: 应用注册中心协议规范
   spec.marketplace: 海鲜市场（Configuration Marketplace）
   spec.defect-agent: 缺陷管理 Agent 产品方案
-  spec.defect-agent-automation-protocol: 缺陷自动化协议
-  spec.pa-agent: 私人执行助理（PA Agent）产品方案
-  spec.pa-agent-savage-upgrade: 毒舌秘书 PA Agent 最小可行升级方案
-  spec.pa-agent-savage-iter-v2: 毒舌秘书 v2 迭代升级方案
+  spec.defect-agent.automation-protocol: 缺陷自动化协议
+  spec.product-agent.pa: 私人执行助理（PA Agent）产品方案
+  spec.product-agent.pa.savage-upgrade: 毒舌秘书 PA Agent 最小可行升级方案
+  spec.product-agent.pa.savage-iter-v2: 毒舌秘书 v2 迭代升级方案
   spec.report-agent: 周报 Agent 产品需求文档
   spec.report-agent.v2: 周报 Agent v2.0 产品需求文档
-  spec.report-agent-phase5: 周报 Agent Phase 5 用户故事
+  spec.report-agent.phase5: 周报 Agent Phase 5 用户故事
   spec.cds: CDS (Cloud Development Suite) 功能需求说明书
   spec.submission-gallery: 作品投稿与画廊展示规格
-  spec.cds-compose-contract: CDS Compose 契约（SSOT）
-  spec.cds-lifecycle: CDS 服务生命周期与缓存范围规格
-  spec.cds-map-pairing-protocol: CDS MAP 配对协议规格
-  spec.map-kb-transfer-protocol: MAP 知识库传输协议（MAP-KBTP v1）规格
-  spec.cds-project-model: CDS 多项目数据字典
-  spec.short-links: 统一短链系统规格
+  spec.cds.compose-contract: CDS Compose 契约（SSOT）
+  spec.cds.lifecycle: CDS 服务生命周期与缓存范围规格
+  spec.cds.map-pairing-protocol: CDS MAP 配对协议规格
+  spec.knowledge-base.transfer-protocol: MAP 知识库传输协议（MAP-KBTP v1）规格
+  spec.cds.project-model: CDS 多项目数据字典
+  spec.platform.short-links: 统一短链系统规格
   spec.speech-agent: 演讲智能体（长文本 → 思维导图演讲）产品规格
   spec.front-end-agent: 前端搭档智能体产品规格
 
   # ── 二、设计文档 ──
   # 先看核心架构，再看各模块设计
-  design.mobile-refactor: 手机端整体重构调研（使用强度 + 视觉取证 + 改造波次）
+  design.frontend.mobile-refactor: 手机端整体重构调研（使用强度 + 视觉取证 + 改造波次）
   design.daily-tips: 每日小贴士 / 路径式教程系统设计
-  design.acceptance-system: 功能验收体系设计（业界对标的标准化验收 + 取证 + 归档）
-  design.acceptance-kb: 验收报告知识库设计（最新在前 + 结论可视 + 模板约束 + 跨环境同步）
+  design.acceptance.system: 功能验收体系设计（业界对标的标准化验收 + 取证 + 归档）
+  design.acceptance.kb: 验收报告知识库设计（最新在前 + 结论可视 + 模板约束 + 跨环境同步）
   design.agent-universe: 智能体宇宙设计（能力契约 SSOT + 统一调用信封 + 漫威宇宙式互通）
-  design.knowledge-agent-architecture: 知识库智能体架构设计（三层模型 + map/cds-agent 命名 + 借运行时不重建 + KB-as-files 进、diff 闸出）
-  design.map-mcp-connector: MAP MCP 连接器设计（把开放接口翻译成 MCP 工具，可被 Claude/Codex 接入）
-  design.server-authority: 服务器权威性设计
+  design.knowledge-base.agent-architecture: 知识库智能体架构设计（三层模型 + map/cds-agent 命名 + 借运行时不重建 + KB-as-files 进、diff 闸出）
+  design.platform.map-mcp-connector: MAP MCP 连接器设计（把开放接口翻译成 MCP 工具，可被 Claude/Codex 接入）
+  design.platform.server-authority: 服务器权威性设计
   design.team-activity: 团队动态设计（全局白名单审计 Filter + 标题快照 + 管理员时间线）
-  design.unified-skill-system: 技能系统统一设计
-  design.llm-gateway: LLM Gateway 统一调用架构设计
-  design.llm-gateway-refactor: LLM Gateway 图片生成重构（compute-then-send）
-  design.model-pool: 大模型池设计（三级调度/三级链路）
+  design.skill.unified-skill-system: 技能系统统一设计
+  design.platform.llm-gateway: LLM Gateway 统一调用架构设计
+  design.platform.llm-gateway-refactor: LLM Gateway 图片生成重构（compute-then-send）
+  design.platform.model-pool: 大模型池设计（三级调度/三级链路）
   design.open-platform: 开放平台功能概要
-  design.external-authorization: 外部授权中心（TAPD/语雀/GitHub 凭证统一管理）
-  design.workflow-engine: 工作流引擎设计方案
-  design.workflow-auto-config: 工作流自动配置（AI 生成校验自愈 + 降低配置门槛）
+  design.platform.external-authorization: 外部授权中心（TAPD/语雀/GitHub 凭证统一管理）
+  design.workflow-agent.engine: 工作流引擎设计方案
+  design.workflow-agent.auto-config: 工作流自动配置（AI 生成校验自愈 + 降低配置门槛）
   design.ccas-agent: 赋码采集关联智能体（CCAS）设计（PRD 生成 + 设备素材库 + 流程示意图）
-  design.workflow-control-flow-sse: 工作流引擎 v2 流程控制舱与 SSE 实时推送设计
+  design.workflow-agent.control-flow-sse: 工作流引擎 v2 流程控制舱与 SSE 实时推送设计
   design.admin: PRD Admin 设计系统规范
-  design.account-data-sharing: 账户数据共享设计文档
-  design.ops-auth: 桌面端更新与分布式登录/会话审计说明
-  design.channel-adapter: 多通道适配器设计
-  design.apple-shortcuts: 苹果快捷指令集成设计方案
+  design.platform.account-data-sharing: 账户数据共享设计文档
+  design.platform.ops-auth: 桌面端更新与分布式登录/会话审计说明
+  design.channel-agent.adapter: 多通道适配器设计
+  design.shortcuts-agent.apple: 苹果快捷指令集成设计方案
   design.executive-dashboard: 总裁面板与周报 Agent 设计文档
   design.product-agent: 产品管理 Agent（产品-版本-需求-功能-缺陷-客户）设计
   design.defect-agent: 缺陷管理 Agent 功能设计
-  design.defect-labels: 缺陷管理标签体系设计
-  design.defect-image-analysis: 缺陷截图 VLM 预解析设计文档
-  design.defect-agent-share-skill-architecture: 缺陷分享与 Agent 技能修复架构
-  design.defect-automation-autonomy: 缺陷自动化自治体系
+  design.defect-agent.labels: 缺陷管理标签体系设计
+  design.defect-agent.image-analysis: 缺陷截图 VLM 预解析设计文档
+  design.defect-agent.share-skill-architecture: 缺陷分享与 Agent 技能修复架构
+  design.defect-agent.automation-autonomy: 缺陷自动化自治体系
   design.literary-agent: 文学创作 Agent 文章配图功能设计
-  design.multi-doc-knowledge: 多文档知识库与文档类型系统设计文档
-  design.multi-doc-and-citations: 多文档上下文与引用系统重设计
-  design.multi-image-compose: 多图组合生成设计
-  design.multi-image-vision-api: 多图生成设计文档（Vision API 方案）
-  design.inline-image-chat: 内联图片聊天分析功能改进设计
-  design.image-ref-and-persistence: 图片引用日志与消息持久化架构设计
-  design.video-scene-codegen: 视频场景代码生成架构设计
-  design.remotion-gap: Remotion 视频质量差距分析报告
+  design.knowledge-base.multi-doc: 多文档知识库与文档类型系统设计文档
+  design.knowledge-base.multi-doc-citations: 多文档上下文与引用系统重设计
+  design.visual-agent.multi-image-compose: 多图组合生成设计
+  design.visual-agent.multi-image-vision-api: 多图生成设计文档（Vision API 方案）
+  design.visual-agent.inline-image-chat: 内联图片聊天分析功能改进设计
+  design.platform.image-ref-and-persistence: 图片引用日志与消息持久化架构设计
+  design.video-agent.scene-codegen: 视频场景代码生成架构设计
+  design.video-agent.remotion-gap: Remotion 视频质量差距分析报告
   design.web-hosting: 网页托管与分享设计文档
-  design.ai-arena: AI 竞技场设计方案
+  design.arena: AI 竞技场设计方案
   design.ai-toolbox: AI 百宝箱设计方案
-  design.reusable-patterns: 可复用组件产品方案
-  design.left-right-layout: 左右布局重新设计总结
-  design.toast: Toast 通知系统实现
-  design.network-diagnostics: 网络诊断功能
+  design.frontend.reusable-patterns: 可复用组件产品方案
+  design.frontend.left-right-layout: 左右布局重新设计总结
+  design.frontend.toast: Toast 通知系统实现
+  design.platform.network-diagnostics: 网络诊断功能
   design.cds: CDS (Cloud Development Suite) 设计文档
-  design.cds-build-time: CDS 构建耗时与发布版/热加载机制设计
-  design.cds-agent-api: CDS Agent API 契约设计
-  design.cds-agent-runtime-architecture: CDS Agent 运行时架构设计
-  design.cds-agent-official-sdk-adapter: CDS Agent 官方 SDK Adapter 设计
-  design.cds-agent-commercial-architecture-and-roadmap: CDS Agent 商业级架构与路线图
-  design.cds-agent-managed-runtime-fact-source: CDS Agent R0 · CDS-managed runtime fact source 设计
-  design.knowledge-agent-architecture: CDS Agent 工作区基础设施模型（文件夹/知识库为主，GitHub 降级为钩子）
-  design.cds-onboarding: CDS 极简上手设计：一键配置 + 项目扫描技能
-  design.cds-ai-compose: CDS AI 生成 compose 草稿设计（可选路径，借用 CDS Agent/OpenRouter，确定性检测器为兜底）
-  design.ai-report-systems: AI 周报系统市场调研报告
-  design.exec-bt-deployment: CDS 部署架构与冲突分析
-  design.model-pool-failover: 模型池故障转移与自动探活设计
-  design.generation-snapshot: 生成快照设计
+  design.cds.build-time: CDS 构建耗时与发布版/热加载机制设计
+  design.cds.agent.api: CDS Agent API 契约设计
+  design.cds.agent.runtime-architecture: CDS Agent 运行时架构设计
+  design.cds.agent.official-sdk-adapter: CDS Agent 官方 SDK Adapter 设计
+  design.cds.agent.commercial-architecture-and-roadmap: CDS Agent 商业级架构与路线图
+  design.cds.agent.managed-runtime-fact-source: CDS Agent R0 · CDS-managed runtime fact source 设计
+  design.knowledge-base.agent-architecture: CDS Agent 工作区基础设施模型（文件夹/知识库为主，GitHub 降级为钩子）
+  design.cds.onboarding: CDS 极简上手设计：一键配置 + 项目扫描技能
+  design.cds.ai-compose: CDS AI 生成 compose 草稿设计（可选路径，借用 CDS Agent/OpenRouter，确定性检测器为兜底）
+  design.report-agent.ai-systems: AI 周报系统市场调研报告
+  design.platform.exec-bt-deployment: CDS 部署架构与冲突分析
+  design.platform.model-pool-failover: 模型池故障转移与自动探活设计
+  design.platform.generation-snapshot: 生成快照设计
   design.marketplace: 配置市场（海鲜市场）技术设计
-  design.skill-marketplace-open-api: 海鲜市场技能开放接口（AgentApiKey + findmapskills + P3 路线）
-  design.open-api: 开放接口（OpenAI 兼容对外网关）技术设计（架构+问题汇总+边界场景+压测+可观测性）
-  design.rbac-permission: RBAC 权限系统设计
+  design.skill.marketplace-open-api: 海鲜市场技能开放接口（AgentApiKey + findmapskills + P3 路线）
+  design.open-platform.open-api: 开放接口（OpenAI 兼容对外网关）技术设计（架构+问题汇总+边界场景+压测+可观测性）
+  design.platform.rbac-permission: RBAC 权限系统设计
   design.report-agent: 周报管理 Agent 架构设计
   design.review-agent: 产品评审员技术设计文档
-  design.system-emergence: 系统涌现：从基础组件到协同智能
+  design.emergence.system: 系统涌现：从基础组件到协同智能
   design.visual-agent: Visual Agent (视觉创作) 架构设计
-  design.document-store: 文档空间设计
-  design.document-store-sync: 知识库跨环境/本地库双向同步设计（令牌配对+血缘幂等+签名改动检测，含架构图）
-  design.knowledge-base-mention-network: 知识库引用网络（双链 + 反向链接 + 宇宙图）通用 mention 账本基础设施
-  design.emergence-explorer: 涌现探索器设计
-  design.pr-review-v2: PR Review V2 设计（OAuth 最小可审查工作台）
-  design.page-agent-bridge: Page Agent Bridge 设计（编码 Agent 浏览器之眼）
-  design.github-infrastructure: GitHub 基础设施层设计
-  design.exchange-virtual-platform: 模型中继虚拟平台设计
-  design.claude-sdk-executor: Claude SDK 执行器设计
-  design.workspace: CLI Agent 工作空间设计
-  design.storage-migration: 跨存储迁移与资源分离设计
-  design.cds-multi-project: CDS 多项目设计
-  design.cds-data-migration: CDS 数据迁移设计
-  design.cds-fu-02-auth-store-mongo: CDS FU-02 MapAuthStore（Mongo 后端）设计
-  design.cds-control-data-split: CDS 控制面/数据面分离设计（蓝绿部分已废弃）
-  design.cds-cluster-bootstrap: CDS 集群引导协议设计
-  design.cds-resilience: CDS 容量预算与故障隔离设计
-  design.cds-railway-onboarding-flow: CDS Railway 式部署向导设计
-  design.cds-visual-deploy: CDS 绝对可视化一键部署设计（检测回填+把握度+试运行沙箱+多DB实例+env粘贴+应用已上线，含架构图）
+  design.knowledge-base.store: 文档空间设计
+  design.knowledge-base.store-sync: 知识库跨环境/本地库双向同步设计（令牌配对+血缘幂等+签名改动检测，含架构图）
+  design.knowledge-base.mention-network: 知识库引用网络（双链 + 反向链接 + 宇宙图）通用 mention 账本基础设施
+  design.emergence.explorer: 涌现探索器设计
+  design.pr-review.v2: PR Review V2 设计（OAuth 最小可审查工作台）
+  design.page-agent.bridge: Page Agent Bridge 设计（编码 Agent 浏览器之眼）
+  design.platform.github-infrastructure: GitHub 基础设施层设计
+  design.platform.exchange-virtual-platform: 模型中继虚拟平台设计
+  design.cds.agent.sdk-executor: Claude SDK 执行器设计
+  design.platform.workspace: CLI Agent 工作空间设计
+  design.platform.storage-migration: 跨存储迁移与资源分离设计
+  design.cds.multi-project: CDS 多项目设计
+  design.cds.data-migration: CDS 数据迁移设计
+  design.cds.fu-02-auth-store-mongo: CDS FU-02 MapAuthStore（Mongo 后端）设计
+  design.cds.control-data-split: CDS 控制面/数据面分离设计（蓝绿部分已废弃）
+  design.cds.cluster-bootstrap: CDS 集群引导协议设计
+  design.cds.resilience: CDS 容量预算与故障隔离设计
+  design.cds.railway-onboarding-flow: CDS Railway 式部署向导设计
+  design.cds.visual-deploy: CDS 绝对可视化一键部署设计（检测回填+把握度+试运行沙箱+多DB实例+env粘贴+应用已上线，含架构图）
   design.speech-agent: 演讲智能体技术设计（数据模型 / Controller / Service / SSE 协议）
-  design.peer-sync: 系统级跨节点互传（Peer Sync）设计
-  design.reprocess-chat-routing: 文档再加工 · 智能体调用路由设计
-  design.team-activity-voc: 团队动态·用户体验之声(VOC) 设计（体验全景热力图 treemap + 痛点指数 + 闭环 + 设计思想）
+  design.platform.peer-sync: 系统级跨节点互传（Peer Sync）设计
+  design.prd-agent.reprocess-chat-routing: 文档再加工 · 智能体调用路由设计
+  design.team-activity.voc: 团队动态·用户体验之声(VOC) 设计（体验全景热力图 treemap + 痛点指数 + 闭环 + 设计思想）
 
   # ── 三、指南 ──
   # 先看全貌索引，再看部署/开发，然后是 Agent 使用教程，最后是专题指南
-  guide.agent-onboarding: Agent 开发入门指南（新手必读）
+  guide.platform.agent-onboarding: Agent 开发入门指南（新手必读）
   guide.list.directory: 文档索引目录页
-  guide.quickstart: PRD Agent 快速部署指南
-  guide.development-guide: PRD Agent 开发文档
-  guide.cloud-dev-tutorial: Claude Code 云开发教程
-  guide.init-strategy: 初始化策略实现总结
+  guide.platform.quickstart: PRD Agent 快速部署指南
+  guide.platform.development-guide: PRD Agent 开发文档
+  guide.cds.cloud-dev-tutorial: Claude Code 云开发教程
+  guide.platform.init-strategy: 初始化策略实现总结
   guide.prd-agent: PRD Agent 使用教程
   guide.visual-agent: 视觉创作 Agent 使用教程
   guide.literary-agent: 文学创作 Agent 使用教程
@@ -162,189 +162,189 @@ docs:
   guide.workflow-agent: 工作流引擎使用教程
   guide.shortcuts-agent: 快捷指令使用教程
   guide.marketplace: 海鲜市场（配置市场）使用教程
-  guide.mcp-connector: MAP MCP 连接器接入指南（Claude/Codex 接入 + 共享其他 Agent + 自助签发自测）
-  guide.visual-acceptance-skill: 视觉验收技能跨仓库使用教程
-  guide.workflow-canvas: 工作流画布操作手册
-  guide.weekly-report: 周报功能完整操作指南
-  guide.poster-feed-card: 多平台博主订阅 → 首页海报弹窗（涌现 1，TikTok/抖音/B站/小红书/YouTube）
-  guide.ai-toolbox-ops: AI 百宝箱运维指南
-  guide.cds-agent-workbench: CDS Agent 工作台用户指南
-  guide.cds-agent-code-review-quickstart: CDS Agent 代码审查上手指南
-  guide.cds-agent-workbench-reproduce: CDS Agent 工作台复现操作指南
-  guide.cds-agent-next-agent-testing: CDS Agent 下一代测试与涌现建议
-  guide.cds-agent-admin: CDS Agent 管理员指南
-  guide.cds-agent-runbook: CDS Agent 运行手册
-  guide.cds-agent-runtime-pool-recovery: CDS Agent Runtime Pool 恢复与官方 SDK Smoke · 指南
-  guide.cds-env: CDS 环境变量配置指南
-  guide.troubleshooting: 疑难杂症排查手册
-  guide.prd-agent-operations: PRD Agent 全平台操作手册
-  guide.cds-ai-auth: CDS + 后端 API 双层认证诊断指南
-  guide.cds-github-webhook-events: CDS GitHub Webhook 订阅配置指南
-  guide.cds-cli-swarm: CDS CLI 蜂群优化操作手册（多 agent 并行反馈+修复+复测）
-  guide.cds-deploy-three-paths: CDS 三种部署方式指南
-  guide.cds-tutorial: 从零开始的 CDS 教程指南（4 横向场景 × 2 纵向路径）
-  guide.cds-deploy-acceptance: CDS 可视化部署与验收指南（一键部署前后端+基建步骤 + 基础设施目录 + 验收清单）
-  guide.cds-one-click-deploy: CDS 一键可视化部署使用教程（贴仓库→检测填好→试运行验证→部署→应用已上线）
-  guide.cds-fullstack-infra-smoke: CDS 全栈基础设施冒烟样例指南
-  guide.skill-workflow: AI 技能工作流指南
-  guide.skill-removal-checklist: 删技能前置检查清单指南
-  guide.mongodb-indexes: MongoDB 索引手册
-  guide.multi-image-compose-test: 多图组合功能测试备忘录
-  guide.doubao-asr-relay: 豆包 ASR 模型中继接入指南
-  guide.open-api: 开放接口（OpenAI 兼容对外网关）接入指南
+  guide.platform.mcp-connector: MAP MCP 连接器接入指南（Claude/Codex 接入 + 共享其他 Agent + 自助签发自测）
+  guide.visual-agent.acceptance-skill: 视觉验收技能跨仓库使用教程
+  guide.workflow-agent.canvas: 工作流画布操作手册
+  guide.report-agent.weekly: 周报功能完整操作指南
+  guide.submission-gallery.poster-feed-card: 多平台博主订阅 → 首页海报弹窗（涌现 1，TikTok/抖音/B站/小红书/YouTube）
+  guide.ai-toolbox.ops: AI 百宝箱运维指南
+  guide.cds.agent.workbench: CDS Agent 工作台用户指南
+  guide.cds.agent.code-review-quickstart: CDS Agent 代码审查上手指南
+  guide.cds.agent.workbench-reproduce: CDS Agent 工作台复现操作指南
+  guide.cds.agent.next-agent-testing: CDS Agent 下一代测试与涌现建议
+  guide.cds.agent.admin: CDS Agent 管理员指南
+  guide.cds.agent.runbook: CDS Agent 运行手册
+  guide.cds.agent.runtime-pool-recovery: CDS Agent Runtime Pool 恢复与官方 SDK Smoke · 指南
+  guide.cds.env: CDS 环境变量配置指南
+  guide.platform.troubleshooting: 疑难杂症排查手册
+  guide.prd-agent.operations: PRD Agent 全平台操作手册
+  guide.cds.ai-auth: CDS + 后端 API 双层认证诊断指南
+  guide.cds.github-webhook-events: CDS GitHub Webhook 订阅配置指南
+  guide.cds.cli-swarm: CDS CLI 蜂群优化操作手册（多 agent 并行反馈+修复+复测）
+  guide.cds.deploy-three-paths: CDS 三种部署方式指南
+  guide.cds.tutorial: 从零开始的 CDS 教程指南（4 横向场景 × 2 纵向路径）
+  guide.cds.deploy-acceptance: CDS 可视化部署与验收指南（一键部署前后端+基建步骤 + 基础设施目录 + 验收清单）
+  guide.cds.one-click-deploy: CDS 一键可视化部署使用教程（贴仓库→检测填好→试运行验证→部署→应用已上线）
+  guide.cds.fullstack-infra-smoke: CDS 全栈基础设施冒烟样例指南
+  guide.skill.workflow: AI 技能工作流指南
+  guide.skill.removal-checklist: 删技能前置检查清单指南
+  guide.platform.mongodb-indexes: MongoDB 索引手册
+  guide.visual-agent.multi-image-compose-test: 多图组合功能测试备忘录
+  guide.speech-agent.doubao-asr-relay: 豆包 ASR 模型中继接入指南
+  guide.open-platform.open-api: 开放接口（OpenAI 兼容对外网关）接入指南
   guide.review-agent: 产品评审员使用手册
-  guide.cds-cluster-setup: CDS 集群扩容指南
-  guide.cds-forwarder-deploy: CDS Forwarder 部署 / 迁移 / 卸载 Runbook
-  guide.cds-mongo-migration: CDS state.json → MongoDB 迁移指南
-  guide.cds-multi-branch-db: CDS 多分支数据库隔离指南（Phase 5）
-  guide.cds-multi-project-upgrade: CDS 多项目升级迁移指南
-  guide.cds-mysql-validation-runbook: CDS MySQL 接入实战 Runbook（Phase 6）
-  guide.cds-orm-support: CDS ORM 支持指南（Phase 4 起）
-  guide.cds-view-parity: CDS 列表视图与拓扑视图功能对齐指南
-  guide.cds-web-migration-runbook: CDS Web 迁移运行手册
-  guide.cds-blue-green-handoff: CDS 蓝绿改造交接（已废弃，留档备查）
-  guide.claude-sdk-quickstart: Claude SDK 三步接入指南
-  guide.claude-sdk-cds-map-mvp: Claude SDK + CDS MAP 配对 MVP 指南
-  guide.e2e-tests: Playwright E2E 测试指南
+  guide.cds.cluster-setup: CDS 集群扩容指南
+  guide.cds.forwarder-deploy: CDS Forwarder 部署 / 迁移 / 卸载 Runbook
+  guide.cds.mongo-migration: CDS state.json → MongoDB 迁移指南
+  guide.cds.multi-branch-db: CDS 多分支数据库隔离指南（Phase 5）
+  guide.cds.multi-project-upgrade: CDS 多项目升级迁移指南
+  guide.cds.mysql-validation-runbook: CDS MySQL 接入实战 Runbook（Phase 6）
+  guide.cds.orm-support: CDS ORM 支持指南（Phase 4 起）
+  guide.cds.view-parity: CDS 列表视图与拓扑视图功能对齐指南
+  guide.cds.web-migration-runbook: CDS Web 迁移运行手册
+  guide.cds.blue-green-handoff: CDS 蓝绿改造交接（已废弃，留档备查）
+  guide.cds.agent.sdk-quickstart: Claude SDK 三步接入指南
+  guide.cds.agent.sdk-cds-map-mvp: Claude SDK + CDS MAP 配对 MVP 指南
+  guide.platform.e2e-tests: Playwright E2E 测试指南
   guide.infra-sandbox-agent: 基础设施沙箱 Agent 完整手册
-  guide.skill-catalog: 技能百科全书指南
-  guide.smoke-tests: 冒烟测试指南
+  guide.skill.catalog: 技能百科全书指南
+  guide.platform.smoke-tests: 冒烟测试指南
 
   # ── 四、规范与规则 ──
   # 先看文档相关规范，再看开发规范，最后是审计报告
-  rule.doc-naming: 文档命名规则
-  rule.skill-header: 技能头部规范
-  rule.doc-templates: 文档模板标准
-  rule.doc-maintenance: 文档维护说明
-  rule.app-identity: 应用身份定义规则
-  rule.agent-permissions: Agent 权限分类规则
-  rule.agent-development: Agent 开发交付流程规范
-  rule.data-dictionary: 数据字典
-  rule.default-editable: 默认可编辑原则
-  rule.frontend-component-reuse: 前端组件复用规则
-  rule.test-organization: 测试组织规范
-  rule.skill-system: 技能系统规则与创建指南
-  rule.skill-trigger-disambiguation: 同族技能触发词去重规则
-  rule.audit-prd-desktop-codebase: PRD Agent 全面代码审计报告
-  rule.ai-model-visibility: AI 模型可见性原则
-  rule.issues-system: Issues 体系协议规则（autofix + 视觉验收 + 元 issue #605）
-  rule.streaming-text: 流式文本动效统一规范 (Blur focus 默认)
-  rule.cds-mongo-migration: CDS state.json → MongoDB 迁移与回滚规则
-  rule.cds-project-isolation-audit: CDS 多项目隔离审计规则
-  rule.frontend-modal: 前端模态框布局硬约束规则
-  rule.landing-visual-style: 首页 / 登录页视觉语言规则
-  rule.llm-gateway: LLM Gateway 流式调用与 Reasoning 规则
+  rule.doc.naming: 文档命名规则
+  rule.skill.header: 技能头部规范
+  rule.doc.templates: 文档模板标准
+  rule.doc.maintenance: 文档维护说明
+  rule.platform.app-identity: 应用身份定义规则
+  rule.platform.agent-permissions: Agent 权限分类规则
+  rule.platform.agent-development: Agent 开发交付流程规范
+  rule.platform.data-dictionary: 数据字典
+  rule.frontend.default-editable: 默认可编辑原则
+  rule.frontend.frontend-component-reuse: 前端组件复用规则
+  rule.platform.test-organization: 测试组织规范
+  rule.skill.system: 技能系统规则与创建指南
+  rule.skill.trigger-disambiguation: 同族技能触发词去重规则
+  rule.frontend.audit-prd-desktop-codebase: PRD Agent 全面代码审计报告
+  rule.platform.ai-model-visibility: AI 模型可见性原则
+  rule.skill.issues-system: Issues 体系协议规则（autofix + 视觉验收 + 元 issue #605）
+  rule.frontend.streaming-text: 流式文本动效统一规范 (Blur focus 默认)
+  rule.cds.mongo-migration: CDS state.json → MongoDB 迁移与回滚规则
+  rule.cds.project-isolation-audit: CDS 多项目隔离审计规则
+  rule.frontend.frontend-modal: 前端模态框布局硬约束规则
+  rule.frontend.landing-visual-style: 首页 / 登录页视觉语言规则
+  rule.platform.llm-gateway: LLM Gateway 流式调用与 Reasoning 规则
 
   # ── 五、计划与方案 ──
-  plan.daily-tips-scenarios-and-staleness: 教程小书三场景统一 + 过时检测自动化(交接)
-  plan.report-agent-impl: 周报 Agent 实施进度追踪
-  plan.unified-defect-management: 统一缺陷管理平台实施计划
-  plan.pa-agent-competitive-improvements: PA Agent 竞品调研与改进方案
-  plan.multi-document: PRD Agent 多文档系统设计方案
-  plan.multi-image-ai-interaction: 多图 AI 交互方案
-  plan.video-tts-and-scene-upgrade: 视频 TTS 语音接入与场景视觉升级实施方案
+  plan.daily-tips.scenarios-and-staleness: 教程小书三场景统一 + 过时检测自动化(交接)
+  plan.report-agent.impl: 周报 Agent 实施进度追踪
+  plan.defect-agent.unified-management: 统一缺陷管理平台实施计划
+  plan.product-agent.pa.competitive-improvements: PA Agent 竞品调研与改进方案
+  plan.knowledge-base.multi-document: PRD Agent 多文档系统设计方案
+  plan.visual-agent.multi-image-ai-interaction: 多图 AI 交互方案
+  plan.video-agent.tts-and-scene-upgrade: 视频 TTS 语音接入与场景视觉升级实施方案
   plan.web-hosting: 网页托管与分享实现计划
-  plan.weekly-poster-designer-handoff: 海报工坊设计器重构交接(下一个 Agent 接手)
-  plan.cds-web-migration: CDS 前端迁移计划与交接（React + Vite + Tailwind + shadcn/ui，逐页接管）
-  plan.cds-legacy-feature-rollup: CDS legacy 12k 行 app.js 特色功能模块功能级迁移合并计划（Activity Monitor / 集群管理 / 容量超限选择 / 拓扑 DAG 等 13 项,分 3 wave）
-  plan.mobile-adaptation: 移动端适配功能规划
-  plan.mobile-layout-review: 移动端布局分析报告
-  plan.ai-toolbox-mvp: AI 百宝箱 MVP 规划
-  plan.ai-toolbox-next-steps: AI 百宝箱未完成项与下一步规划
-  plan.ai-text-assist: AI 文本辅助通用 Domain 设计
-  plan.md-to-ppt-chat-redesign: MD转PPT 对话式 artifact 工作台改造计划
-  plan.manual-image-marking-control: 配图标记手动干预（Phase 1/2/3 分阶段计划）
-  plan.animation-optimization: 动画优化计划
-  plan.desktop-asset-features: Desktop 资产功能方案
-  plan.doc-update: 文档长周期更新计划
-  plan.merge-image-ref-resolver: 合并计划书：三入口守门员统一
-  plan.skill-installation: Claude Code Skill 安装计划
-  plan.skill-marketplace-open-api-next: 海鲜市场技能开放接口 — 下一程交接（P2/P3/P4 待办 + UAT 清单 + 环境准备）
-  plan.cds-status: CDS 当前状态看板（唯一"我在哪"入口，每次 handoff 必更新）
-  plan.cds-agent-workbench: CDS Agent 工作台完全可用路线
-  plan.cds-agent-official-sdk-migration: CDS Agent 官方 SDK Adapter 迁移计划
-  plan.cds-agent-runtime-correction-limited: CDS Agent Runtime 架构纠偏 · 有限计划
-  plan.cds-roadmap: CDS 产品路线图（Phase 0-3 长期）
-  plan.cds-deployment: CDS 部署规划
-  plan.cds-railway-ux-followup: CDS Railway 式体验补齐计划
-  plan.cds-visual-deploy: CDS 绝对可视化部署计划（基建注册表 SSOT + 部署时间线 + 数据层操作 + AI compose 备选）
-  plan.report-agent-v3: Report Agent v3.0 升级方案 — 采集优先架构
-  plan.visual-agent-video-gen-daily-limit: 视觉创作视频生成每日限额实施方案
-  plan.design-doc-optimization: Design 文档优化项目进度
-  plan.daily-tips-remaining-work: 每日小贴士功能 — 剩余工作交接文档
-  plan.cds-backlog-matrix: CDS 横向事项 Backlog 矩阵
-  plan.cds-multi-project-phases: CDS 多项目改造 7 期交付计划
-  plan.cds-resilience-rollout: CDS 高可用改造落地进度
-  plan.emergence-1-tiktok-douyin-poster: 涌现 1 · TikTok / 抖音博主订阅首页广告海报
-  plan.prd-admin-surface-style-migration: prd-admin 样式统一迁移看板
-  plan.video-agent-list-detail-rebuild: 视频创作 Agent 列表 / 详情页全面重做交接
-  plan.cds-pr684-review-remediation: CDS PR #684 审查修复计划
+  plan.report-agent.weekly-poster-handoff: 海报工坊设计器重构交接(下一个 Agent 接手)
+  plan.cds.web-migration: CDS 前端迁移计划与交接（React + Vite + Tailwind + shadcn/ui，逐页接管）
+  plan.cds.legacy-feature-rollup: CDS legacy 12k 行 app.js 特色功能模块功能级迁移合并计划（Activity Monitor / 集群管理 / 容量超限选择 / 拓扑 DAG 等 13 项,分 3 wave）
+  plan.frontend.mobile-adaptation: 移动端适配功能规划
+  plan.frontend.mobile-layout-review: 移动端布局分析报告
+  plan.ai-toolbox.mvp: AI 百宝箱 MVP 规划
+  plan.ai-toolbox.next-steps: AI 百宝箱未完成项与下一步规划
+  plan.ai-toolbox.text-assist: AI 文本辅助通用 Domain 设计
+  plan.md-to-ppt.chat-redesign: MD转PPT 对话式 artifact 工作台改造计划
+  plan.visual-agent.manual-image-marking: 配图标记手动干预（Phase 1/2/3 分阶段计划）
+  plan.frontend.animation-optimization: 动画优化计划
+  plan.desktop.asset-features: Desktop 资产功能方案
+  plan.doc.update: 文档长周期更新计划
+  plan.visual-agent.merge-image-ref-resolver: 合并计划书：三入口守门员统一
+  plan.skill.installation: Claude Code Skill 安装计划
+  plan.skill.marketplace-open-api-next: 海鲜市场技能开放接口 — 下一程交接（P2/P3/P4 待办 + UAT 清单 + 环境准备）
+  plan.cds.status: CDS 当前状态看板（唯一"我在哪"入口，每次 handoff 必更新）
+  plan.cds.agent.workbench: CDS Agent 工作台完全可用路线
+  plan.cds.agent.official-sdk-migration: CDS Agent 官方 SDK Adapter 迁移计划
+  plan.cds.agent.runtime-correction-limited: CDS Agent Runtime 架构纠偏 · 有限计划
+  plan.cds.roadmap: CDS 产品路线图（Phase 0-3 长期）
+  plan.cds.deployment: CDS 部署规划
+  plan.cds.railway-ux-followup: CDS Railway 式体验补齐计划
+  plan.cds.visual-deploy: CDS 绝对可视化部署计划（基建注册表 SSOT + 部署时间线 + 数据层操作 + AI compose 备选）
+  plan.report-agent.v3: Report Agent v3.0 升级方案 — 采集优先架构
+  plan.visual-agent.video-gen-daily-limit: 视觉创作视频生成每日限额实施方案
+  plan.doc.design-doc-optimization: Design 文档优化项目进度
+  plan.daily-tips.remaining-work: 每日小贴士功能 — 剩余工作交接文档
+  plan.cds.backlog-matrix: CDS 横向事项 Backlog 矩阵
+  plan.cds.multi-project-phases: CDS 多项目改造 7 期交付计划
+  plan.cds.resilience-rollout: CDS 高可用改造落地进度
+  plan.emergence.tiktok-douyin-poster: 涌现 1 · TikTok / 抖音博主订阅首页广告海报
+  plan.frontend.prd-admin-surface-style-migration: prd-admin 样式统一迁移看板
+  plan.video-agent.list-detail-rebuild: 视频创作 Agent 列表 / 详情页全面重做交接
+  plan.cds.pr684-review-remediation: CDS PR #684 审查修复计划
 
   # ── 六、技术债务台账（按模块）──
-  # 已知边界 / 后续可补 / 留尾风险，命名规范见 rule.doc-naming.md「debt.* 专项约定」
-  debt.cds-project-migration: 项目迁移(CDS 项目移植) · 债务台账
+  # 已知边界 / 后续可补 / 留尾风险，命名规范见 rule.doc.naming.md「debt.* 专项约定」
+  debt.cds.project-migration: 项目迁移(CDS 项目移植) · 债务台账
   debt.agent-universe: 智能体宇宙 · 债务台账
-  debt.cds-ci-prebuilt: CDS 极速版（CI 预构建）· 已知边界与遗留事项
-  debt.knowledge-base-mention-network: 知识库引用网络 · MVP 已知边界与遗留事项
-  debt.knowledge-base-versioning: 知识库版本控制/图片插入/大小统计 · 已知边界
-  debt.onboarding-tips: 页面教程(小技巧)系统 · 债务台账
-  debt.pm-agent: 项目管理智能体 · 债务台账
+  debt.cds.ci-prebuilt: CDS 极速版（CI 预构建）· 已知边界与遗留事项
+  debt.knowledge-base.mention-network: 知识库引用网络 · MVP 已知边界与遗留事项
+  debt.knowledge-base.versioning: 知识库版本控制/图片插入/大小统计 · 已知边界
+  debt.daily-tips.onboarding: 页面教程(小技巧)系统 · 债务台账
+  debt.product-agent.pm: 项目管理智能体 · 债务台账
   debt.product-agent: 产品管理智能体 · 债务台账
   debt.shortcuts-agent: 快捷指令 Agent · 债务台账（一键安装前置条件/Agent 绑定 Phase2/签名 409 降级）
   debt.video-agent: 视频生成 Agent · 债务台账
-  debt.visual-storyboard: 视觉分镜台 · 债务台账（OpenRouter 出图画幅/modalities 按能力派生 · 拆镜 SSE 流式 · 关键帧 ImageGenRun 取消）
+  debt.visual-agent.storyboard: 视觉分镜台 · 债务台账（OpenRouter 出图画幅/modalities 按能力派生 · 拆镜 SSE 流式 · 关键帧 ImageGenRun 取消）
   debt.workflow-agent: 工作流 Agent · 债务台账
-  debt.asset-storage: 资源存储（IAssetStorage 实现）债务台账
-  debt.claude-sdk-executor: Claude SDK 执行器 / Python sidecar 债务台账
-  debt.cds-agent: CDS Agent 工作台 · 债务台账（R1 商业级 / Lite 边界 / 文档熵减）
-  debt.cds-branch-isolation: CDS 多分支跨分支隔离 · 债务台账（DNS 串台 / BullMQ 抢 job）
-  debt.cds-state-json: CDS state.json 影子存储债务台账
-  debt.cds-compose-secrets: CDS compose 模板 TODO secrets / 全量 import 被拒债务台账
-  debt.cds-backend-deploy-freeze: CDS 后端部署冻结 · 分支 api 跑旧代码（构建成功≠运行新代码 / 图生视频下载修复 + 额度提醒待部署）
-  plan.md-to-ppt-next-wave: MD 转 PPT 下一波执行计划（大纲右侧编辑器/状态机/澄清问卷/编辑深修）
+  debt.platform.asset-storage: 资源存储（IAssetStorage 实现）债务台账
+  debt.cds.agent.sdk-executor: Claude SDK 执行器 / Python sidecar 债务台账
+  debt.cds.agent: CDS Agent 工作台 · 债务台账（R1 商业级 / Lite 边界 / 文档熵减）
+  debt.cds.branch-isolation: CDS 多分支跨分支隔离 · 债务台账（DNS 串台 / BullMQ 抢 job）
+  debt.cds.state-json: CDS state.json 影子存储债务台账
+  debt.cds.compose-secrets: CDS compose 模板 TODO secrets / 全量 import 被拒债务台账
+  debt.cds.backend-deploy-freeze: CDS 后端部署冻结 · 分支 api 跑旧代码（构建成功≠运行新代码 / 图生视频下载修复 + 额度提醒待部署）
+  plan.md-to-ppt.next-wave: MD 转 PPT 下一波执行计划（大纲右侧编辑器/状态机/澄清问卷/编辑深修）
   debt.md-to-ppt: MD 转网页 PPT · 债务台账（预览 iframe same-origin 安全债 / KB 注入未实现）
-  debt.changelog-center: 更新中心（终身存储 + SSE 推送）债务台账
-  debt.cds-tutorial: CDS 教程（示例工程 + 隔离知识库 + 评分/自愈）债务台账
-  debt.cds-visual-deploy: CDS 绝对可视化一键部署 · 债务台账（已知边界 + 低边际 backlog + 独立 fixture demo 阻塞）
+  debt.platform.changelog-center: 更新中心（终身存储 + SSE 推送）债务台账
+  debt.cds.tutorial: CDS 教程（示例工程 + 隔离知识库 + 评分/自愈）债务台账
+  debt.cds.visual-deploy: CDS 绝对可视化一键部署 · 债务台账（已知边界 + 低边际 backlog + 独立 fixture demo 阻塞）
   debt.speech-agent: 演讲智能体 · 债务台账（MVP 已知边界 + Phase 2 backlog）
   debt.team-activity: 团队动态（团队脉搏）· 债务台账（排行刷量计分 / 直方图采样 / 深链下钻未通）
   debt.knowledge-base: 知识库（AI Toolbox attachment + 文档空间）债务台账
-  debt.kb-inline-comment: 知识库划词评论（批注栏/内联布局 + 就地输入 + 回读闭环）债务台账
-  debt.kb-selection-ai: 知识库划词 AI 局部编辑（AI 改写 + 选区配图）债务台账
+  debt.knowledge-base.inline-comment: 知识库划词评论（批注栏/内联布局 + 就地输入 + 回读闭环）债务台账
+  debt.knowledge-base.selection-ai: 知识库划词 AI 局部编辑（AI 改写 + 选区配图）债务台账
   debt.web-hosting: 网页托管 · 债务台账（幻灯片翻页方向兼容垫片边界）
-  debt.share-link-security: 分享链接安全债务台账
-  debt.web-hosting-client-ip: 网页托管真实客户端 IP（XFF 解析）债务台账
-  debt.team-feature: 团队（网页托管 + 知识库）债务台账
-  debt.visual-acceptance-skill: 验收技能（create-visual-test-to-kb）债务台账
-  debt.acceptance-system: 功能验收体系 · 债务台账（标准/执行/结果三方经知识库打通）
+  debt.platform.share-link-security: 分享链接安全债务台账
+  debt.web-hosting.client-ip: 网页托管真实客户端 IP（XFF 解析）债务台账
+  debt.team-activity.team-feature: 团队（网页托管 + 知识库）债务台账
+  debt.visual-agent.acceptance-skill: 验收技能（create-visual-test-to-kb）债务台账
+  debt.acceptance.system: 功能验收体系 · 债务台账（标准/执行/结果三方经知识库打通）
   debt.daily-tips: 小技巧与首页提醒过时机制债务台账
-  debt.library-doc-reader: 殿堂阅读器（克莱风暖色）保留未融合 DocBrowser 的债务台账
-  debt.report-detail: 周报详情页（异构数据 + 多 tabs + 右栏面板）保留独立实现的债务台账
-  debt.open-api: 开放接口对外网关债务台账（伞形 code 不变量 + 限流/降级/预警/配额 Phase 2 留尾）
-  debt.document-store-sync: 知识库跨环境/本地库↔库同步 · 债务台账（删除传播/附件/冲突合并/教程未补）
-  debt.daily-report: 日报技能（daily-report-summary）债务台账
-  debt.peer-sync: 系统级跨节点互传（Peer Sync）债务台账
-  debt.task-tree: 个人任务树 Agent · 债务台账
-  debt.web-hosting-comments: 网页托管评论 · 债务台账
+  debt.knowledge-base.library-doc-reader: 殿堂阅读器（克莱风暖色）保留未融合 DocBrowser 的债务台账
+  debt.report-agent.detail: 周报详情页（异构数据 + 多 tabs + 右栏面板）保留独立实现的债务台账
+  debt.open-platform.open-api: 开放接口对外网关债务台账（伞形 code 不变量 + 限流/降级/预警/配额 Phase 2 留尾）
+  debt.knowledge-base.store-sync: 知识库跨环境/本地库↔库同步 · 债务台账（删除传播/附件/冲突合并/教程未补）
+  debt.report-agent.daily: 日报技能（daily-report-summary）债务台账
+  debt.platform.peer-sync: 系统级跨节点互传（Peer Sync）债务台账
+  debt.workflow-agent.task-tree: 个人任务树 Agent · 债务台账
+  debt.web-hosting.comments: 网页托管评论 · 债务台账
 
   # ── 七、周报（降序：最新在前）──
-  report.agent-universe-completeness: 智能体宇宙 · 各智能体完备度看板（终极目标 vs 当前进度）
-  report.cds-visual-deploy: CDS 绝对可视化一键部署 · 完整报告（交付总览 + dogfood 修的真 bug + 各轮验收分享链）
-  report.cds-agent-goal-completion-audit-2026-05-19: CDS Agent 商业级可用闭环目标审计报告
-  report.cds-agent-p4-1-remote-preflight-2026-05-19: CDS Agent P4-1 远端发布前验收与试用入口报告
-  report.cds-agent-p4-2-provider-closure-2026-05-19: CDS Agent P4-2 远端 Provider 闭环验收报告
-  report.cds-agent-p4-3-remote-trial-acceptance-2026-05-19: CDS Agent P4-3 远端试用入口与发布验收包
-  report.cds-agent-p4-4-release-merge-strategy-2026-05-19: CDS Agent P4-4 发布/合并策略评估报告
-  report.cds-agent-p4-5-writable-trial-plan-2026-05-19: CDS Agent P4-5 writable / PR / KB apply 试用计划
-  report.cds-agent-phase1-acceptance-2026-05-19: CDS Agent Phase 1 验收报告
-  report.cds-agent-phase2-acceptance-2026-05-19: CDS Agent Phase 2 验收报告
-  report.cds-agent-phase3-acceptance-2026-05-19: CDS Agent Phase 3 验收报告
-  report.cds-agent-execution-ledger-2026-05-18: CDS Agent 执行过程账本
-  report.cds-agent-runtime-pool-contamination-2026-05-18: CDS Agent SDK Runtime 再次侵入 MAP 主系统 · 调查报告
-  report.cds-agent-sidecar-contamination-2026-05-18: CDS Agent sidecar 侵入 MAP 分支服务 · 调查报告
-  report.claude-agent-sdk-map-intrusion-root-cause-2026-05-18: Claude Agent SDK 容器侵入 MAP 主系统 · 根因报告
-  report.cds-agent-current-progress: CDS Agent 当前进度面板
-  report.cds-agent-workbench-2026-05-15: CDS Agent 工作台完成复盘（2026-05-15）
+  report.agent-universe.completeness: 智能体宇宙 · 各智能体完备度看板（终极目标 vs 当前进度）
+  report.cds.visual-deploy: CDS 绝对可视化一键部署 · 完整报告（交付总览 + dogfood 修的真 bug + 各轮验收分享链）
+  report.cds.agent.goal-completion-audit.2026-05-19: CDS Agent 商业级可用闭环目标审计报告
+  report.cds.agent.p4-1-remote-preflight.2026-05-19: CDS Agent P4-1 远端发布前验收与试用入口报告
+  report.cds.agent.p4-2-provider-closure.2026-05-19: CDS Agent P4-2 远端 Provider 闭环验收报告
+  report.cds.agent.p4-3-remote-trial-acceptance.2026-05-19: CDS Agent P4-3 远端试用入口与发布验收包
+  report.cds.agent.p4-4-release-merge-strategy.2026-05-19: CDS Agent P4-4 发布/合并策略评估报告
+  report.cds.agent.p4-5-writable-trial-plan.2026-05-19: CDS Agent P4-5 writable / PR / KB apply 试用计划
+  report.cds.agent.phase1-acceptance.2026-05-19: CDS Agent Phase 1 验收报告
+  report.cds.agent.phase2-acceptance.2026-05-19: CDS Agent Phase 2 验收报告
+  report.cds.agent.phase3-acceptance.2026-05-19: CDS Agent Phase 3 验收报告
+  report.cds.agent.execution-ledger.2026-05-18: CDS Agent 执行过程账本
+  report.cds.agent.runtime-pool-contamination.2026-05-18: CDS Agent SDK Runtime 再次侵入 MAP 主系统 · 调查报告
+  report.cds.agent.sidecar-contamination.2026-05-18: CDS Agent sidecar 侵入 MAP 分支服务 · 调查报告
+  report.cds.agent.sdk-map-intrusion-root-cause.2026-05-18: Claude Agent SDK 容器侵入 MAP 主系统 · 根因报告
+  report.cds.agent.current-progress: CDS Agent 当前进度面板
+  report.cds.agent.workbench.2026-05-15: CDS Agent 工作台完成复盘（2026-05-15）
   report.2026-W25: 周报 2026-W25 (06-15 ~ 06-21)
   report.2026-W24: 周报 2026-W24 (06-08 ~ 06-14)
   report.2026-W23: 周报 2026-W23 (06-01 ~ 06-07)
@@ -364,37 +364,37 @@ docs:
   report.2026-W09: 周报 2026-W09 (02-23 ~ 03-01)
   report.2026-W07: 周报 2026-W07 (02-09 ~ 02-15)
   report.2026-W06: 周报 2026-W06 (02-03 ~ 02-08)
-  report.cds-project-card-infra-audit-2026-05-12: CDS 项目卡片基础设施误读审计报告（2026-05-12）
-  report.cds-self-update-timing-observation-2026-05-13: CDS Self-Update 耗时观察记录（2026-05-13）
-  report.cds-github-auto-deploy-acceptance-2026-05-11: CDS GitHub 自动部署验收报告（2026-05-11）
-  report.cds-forwarder-success: CDS Forwarder 替代蓝绿部署收尾报告
-  report.cds-self-update-timing-audit: CDS Self-Update 时间体系审视报告
-  report.prd-admin-surface-style-migration: prd-admin 样式统一统计报表
-  report.weekly-map-data-accuracy-fix-2026-04-10: 周报 MAP 平台工作记录准确性修复
-  report.prd-agent-web-sync: PRD Agent Web 端同步开发报告
-  report.cds-onboarding-uat: CDS Onboarding UAT 终结报告（合并自原 5 个子文件，含 18 friction 全清单 + 4 audit 子结果 + 41 契约对照 + 真人 UAT 剩余清单）
-  report.skill-doc-evaluation: 文档技能评测报告：三技能 vs 已有文档
-  report.skill-eval-sample-user-guide: 文档技能评测·user-guide-writing 样本输出
-  report.skill-eval-sample-technical: 文档技能评测·technical-writing 样本输出
-  report.skill-eval-sample-diataxis: 文档技能评测·documentation-writer（Diátaxis）样本输出
-  report.cds-mongo-log-split-incident-2026-05-23: CDS Mongo 日志拆分事故复盘（2026-05-23）
-  report.tutorial-coverage: 页面教程全量路由覆盖审计（2026-06-04）
-  debt.cds-nginx-loading-pages:
+  report.cds.project-card-infra-audit.2026-05-12: CDS 项目卡片基础设施误读审计报告（2026-05-12）
+  report.cds.self-update-timing-observation.2026-05-13: CDS Self-Update 耗时观察记录（2026-05-13）
+  report.cds.github-auto-deploy-acceptance.2026-05-11: CDS GitHub 自动部署验收报告（2026-05-11）
+  report.cds.forwarder-success: CDS Forwarder 替代蓝绿部署收尾报告
+  report.cds.self-update-timing-audit: CDS Self-Update 时间体系审视报告
+  report.frontend.prd-admin-surface-style-migration: prd-admin 样式统一统计报表
+  report.report-agent.weekly-map-data-accuracy-fix.2026-04-10: 周报 MAP 平台工作记录准确性修复
+  report.prd-agent.web-sync: PRD Agent Web 端同步开发报告
+  report.cds.onboarding-uat: CDS Onboarding UAT 终结报告（合并自原 5 个子文件，含 18 friction 全清单 + 4 audit 子结果 + 41 契约对照 + 真人 UAT 剩余清单）
+  report.skill.doc-evaluation: 文档技能评测报告：三技能 vs 已有文档
+  report.skill.eval-sample-user-guide: 文档技能评测·user-guide-writing 样本输出
+  report.skill.eval-sample-technical: 文档技能评测·technical-writing 样本输出
+  report.skill.eval-sample-diataxis: 文档技能评测·documentation-writer（Diátaxis）样本输出
+  report.cds.mongo-log-split-incident.2026-05-23: CDS Mongo 日志拆分事故复盘（2026-05-23）
+  report.daily-tips.tutorial-coverage: 页面教程全量路由覆盖审计（2026-06-04）
+  debt.cds.nginx-loading-pages:
     title: "CDS loading pages 债务台账"
     status: partial
-  design.cds-skill-version-update:
+  design.cds.skill-version-update:
     title: "CDS 技能版本与更新架构"
     status: active
-  report.cds-agent-ux-acceptance-2026-06-06:
+  report.cds.agent.ux-acceptance.2026-06-06:
     title: "CDS Agent 体验修复验收报告（2026-06-06）"
     status: active
-  plan.product-agent-version-workflow:
+  plan.product-agent.version-workflow:
     title: "产品管理智能体版本流程整改计划"
     status: draft
-  report.version-20260610-1-summary:
+  report.release.version-20260610-1-summary:
     title: "version-20260610-1 分支改动说明"
     status: active
-  debt.map-mcp-connector: MAP MCP 连接器债务台账
-  debt.cds-performance: CDS 性能债务台账（构建越来越慢/前端缓慢根因 + 逐步解决）
-  debt.voc: 行为洞察 / VOC 体验之声 工程债务台账
-  debt.mobile-control-bar-overload: 移动端控制条过载治理台账
+  debt.platform.map-mcp-connector: MAP MCP 连接器债务台账
+  debt.cds.performance: CDS 性能债务台账（构建越来越慢/前端缓慢根因 + 逐步解决）
+  debt.team-activity.voc-legacy: 行为洞察 / VOC 体验之声 工程债务台账
+  debt.frontend.mobile-control-bar-overload: 移动端控制条过载治理台账

@@ -252,7 +252,7 @@ timeline
 | P0 GitHub 自动部署进入真实仓库规模验证         | 显著落地。本周 #457 / #466 / #467 在 webhook 噪声过滤、PR 评论模板自定义、一键跳转 Review Agent 三个方向把 GitHub 自动部署体验产品化；#459 三层就绪兜底消灭 Cloudflare 502 让"刚 push 立刻访问"的瞬态体验过关。 |
 | P0 Mongo 单后端运维跑通                 | 本周未在 PR 中显式推进 Mongo backup/restore/failover runbook。建议下周补。            |
 | P1 周报 / 视频 / 百宝箱 / 公开页做体验回归      | 大幅落地。周报 4 个 PR 落地浅色 + Markdown 导入 + IssueList + 多团队权限；视频走 Remotion 系统 Chromium 收尾；百宝箱 #479 修可见性；移动端 #477 大改首页。 |
-| P1 多项目 + GitHub + 技能同步文档化        | 显著落地。新增 14 篇文档（含 design.skill-marketplace-open-api / design.external-authorization / design.llm-gateway-refactor / debt.video-agent / rule.cds-project-isolation-audit 等关键架构文档）。 |
+| P1 多项目 + GitHub + 技能同步文档化        | 显著落地。新增 14 篇文档（含 design.skill.marketplace-open-api / design.platform.external-authorization / design.platform.llm-gateway-refactor / debt.video-agent / rule.cds.project-isolation-audit 等关键架构文档）。 |
 | P2 更新中心、公开市场和公开页形成数据闭环           | 部分推进。更新中心 #455 / #462 / #468 接入 AI 总结 + NEW 徽标 + GitHub 时间 + 知识库选择，形成"消费视角"。海鲜市场 #463 / #470 / #473 把"技能"开放为可下载/可订阅的数据流。公开页统计回流尚未推进。 |
 
 ---

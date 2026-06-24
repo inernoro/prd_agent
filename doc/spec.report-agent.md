@@ -655,7 +655,7 @@
 
 **补齐方案**：
 - 桌面端（Tauri）支持快捷打点（系统托盘 → 快速输入）
-- 未来移动端 PWA 支持（参考 `plan.mobile-adaptation.md`）
+- 未来移动端 PWA 支持（参考 `plan.frontend.mobile-adaptation.md`）
 - 日报打点必须极简：一个输入框 + 一个分类选择 + 回车确认
 
 ### 7.7 历史趋势与个人成长
