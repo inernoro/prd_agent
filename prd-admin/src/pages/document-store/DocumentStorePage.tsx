@@ -35,6 +35,7 @@ import {
   Send,
   Network,
   MoreHorizontal,
+  Download,
   Pin,
   ClipboardCheck,
   CalendarDays,
@@ -105,6 +106,7 @@ import {
 import { ShareToTeamDialog } from '@/components/team/ShareToTeamDialog';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { RelativeTime } from '@/components/ui/RelativeTime';
+import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { DocBrowser } from '@/components/doc-browser/DocBrowser';
 import { DocEmptyState } from '@/components/doc-browser/DocEmptyState';
@@ -810,6 +812,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
   const [showShareDialog, setShowShareDialog] = useState(false);
   const [showViewers, setShowViewers] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  /** 下载整库文档（打包 ZIP）进行中 */
+  const [downloading, setDownloading] = useState(false);
   /** 当前打开的订阅详情 entryId（null = 未打开） */
   const [subscriptionDetailId, setSubscriptionDetailId] = useState<string | null>(null);
   /** 当前打开的字幕生成 Drawer 目标 entry（null = 未打开） */
@@ -887,15 +891,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
     return () => { alive = false; window.clearInterval(t); };
   }, [storeId]);
 
-  // 「更多」下拉点外关闭
-  useEffect(() => {
-    if (!moreOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (moreRef.current && !moreRef.current.contains(e.target as Node)) setMoreOpen(false);
-    };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [moreOpen]);
+  // 「更多」下拉点外关闭由 AnchoredMenu 自身处理（菜单已 portal 到 body，
+  // 不能再用 document.mousedown 在 click 落到菜单项前就关掉）
 
   // 文档列表排序：服务端持久化（换设备 / 重登录 / 刷新都保持）。store.defaultSortMode 为 SSOT。
   const handleChangeSort = useCallback(async (mode: DocBrowserSortMode) => {
@@ -1203,6 +1200,80 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
     setPublishing(false);
   }, [store, storeId]);
 
+  // 下载当前知识库的全部文档：逐条拉正文 → 文本存为 .md、二进制附件下载原文件 → 打包成 ZIP。
+  // 禁止空白等待：按钮转圈 + toast 报进度（第 N / 总数），失败计数照实报。
+  const handleDownloadStore = useCallback(async () => {
+    if (!store || downloading) return;
+    const docs = entries.filter(e => !e.isFolder);
+    if (docs.length === 0) {
+      toast.warning('没有可下载的文档', '当前知识库还没有任何文档条目');
+      return;
+    }
+    setMoreOpen(false);
+    setDownloading(true);
+    toast.info('正在打包文档…', `共 ${docs.length} 篇，正在逐篇导出`);
+    try {
+      const JSZip = (await import('jszip')).default;
+      const zip = new JSZip();
+      const usedNames = new Set<string>();
+      // 文件名安全化 + 去重（同名加序号），保留可读标题
+      const safeName = (title: string, ext: string) => {
+        const base = (title || '未命名').replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 120) || '未命名';
+        let name = `${base}${ext}`;
+        let i = 2;
+        while (usedNames.has(name)) name = `${base} (${i++})${ext}`;
+        usedNames.add(name);
+        return name;
+      };
+      let ok = 0;
+      let fail = 0;
+      for (const entry of docs) {
+        try {
+          const res = await getDocumentContent(entry.id);
+          if (!res.success || !res.data) { fail++; continue; }
+          const { content, fileUrl, contentType } = res.data;
+          if (content != null && content !== '') {
+            // 文本类：markdown / 纯文本统一存 .md（阅读器即按 markdown 渲染）
+            const ext = contentType?.includes('html') ? '.html' : '.md';
+            zip.file(safeName(entry.title, ext), content);
+            ok++;
+          } else if (fileUrl) {
+            // 二进制附件：拉原文件体，沿用原扩展名（取不到则按标题）
+            const resp = await fetch(fileUrl);
+            if (!resp.ok) { fail++; continue; }
+            const blob = await resp.blob();
+            const urlExt = (() => {
+              const m = /\.([a-zA-Z0-9]{1,8})(?:\?|$)/.exec(fileUrl);
+              return m ? `.${m[1]}` : '';
+            })();
+            zip.file(safeName(entry.title.replace(/\.[a-zA-Z0-9]{1,8}$/, ''), urlExt), blob);
+            ok++;
+          } else {
+            fail++;
+          }
+        } catch {
+          fail++;
+        }
+      }
+      if (ok === 0) {
+        toast.error('下载失败', '所有文档均未能导出（可能正文为空或网络受限）');
+        return;
+      }
+      const out = await zip.generateAsync({ type: 'blob' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(out);
+      link.download = `${(store.name || '知识库').replace(/[\\/:*?"<>|]/g, '_')}.zip`;
+      link.click();
+      URL.revokeObjectURL(link.href);
+      toast.success('下载完成', `已打包 ${ok} 篇${fail > 0 ? `（${fail} 篇导出失败）` : ''}`);
+    } catch (err) {
+      console.error('[DocumentStore] download failed:', err);
+      toast.error('下载失败', '打包文档时出错，请重试');
+    } finally {
+      setDownloading(false);
+    }
+  }, [store, entries, downloading]);
+
   if (!store) {
     return (
       <div className="flex-1 flex items-center justify-center" style={{ minHeight: 'calc(100vh - 160px)' }}>
@@ -1276,24 +1347,21 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
               <Button variant="secondary" size="xs" onClick={() => setMoreOpen(o => !o)} title="更多操作">
                 <MoreHorizontal size={14} /> 更多
               </Button>
-              {moreOpen && (
-                <div
-                  className="absolute right-0 top-[34px] z-[120] min-w-[200px] rounded-[10px] py-1 shadow-lg"
-                  style={{ background: 'var(--bg-elevated)', border: '1px solid rgba(255,255,255,0.12)', boxShadow: '0 12px 40px rgba(0,0,0,0.4)' }}
-                >
-                  {store.isPublic ? (
-                    <>
-                      <MoreItem icon={<ArrowUpRight size={14} />} label="前往公开页" onClick={() => { setMoreOpen(false); onOpenLibrary(store.id); }} />
-                      <MoreItem icon={<GlobeLock size={14} />} label={publishing ? '处理中…' : '取消发布'} disabled={publishing} onClick={handleTogglePublish} />
-                    </>
-                  ) : (
-                    <MoreItem icon={<Globe size={14} />} label={publishing ? '处理中…' : '发布到智识殿堂'} disabled={publishing} onClick={handleTogglePublish} dataTourId="document-store-publish" />
-                  )}
-                  <MoreItem icon={<Network size={14} />} label="关系图谱" onClick={() => { setMoreOpen(false); navigate(`/document-store/${storeId}/universe`); }} />
-                  <MoreItem icon={<BarChart3 size={14} />} label="访客统计" onClick={() => { setMoreOpen(false); setShowViewers(true); }} />
-                  <MoreItem icon={<Rss size={14} />} label="添加订阅" onClick={() => { setMoreOpen(false); setShowSubscribe(true); }} />
-                </div>
-              )}
+              {/* createPortal 到 body：PageHeader 是 overflow-hidden 圆角玻璃条，绝对定位下拉会被裁掉。见 AnchoredMenu / frontend-modal.md */}
+              <AnchoredMenu open={moreOpen} onClose={() => setMoreOpen(false)} anchorRef={moreRef} minWidth={200}>
+                {store.isPublic ? (
+                  <>
+                    <MoreItem icon={<ArrowUpRight size={14} />} label="前往公开页" onClick={() => { setMoreOpen(false); onOpenLibrary(store.id); }} />
+                    <MoreItem icon={<GlobeLock size={14} />} label={publishing ? '处理中…' : '取消发布'} disabled={publishing} onClick={handleTogglePublish} />
+                  </>
+                ) : (
+                  <MoreItem icon={<Globe size={14} />} label={publishing ? '处理中…' : '发布到智识殿堂'} disabled={publishing} onClick={handleTogglePublish} dataTourId="document-store-publish" />
+                )}
+                <MoreItem icon={<Download size={14} />} label={downloading ? '打包中…' : '下载全部文档（ZIP）'} disabled={downloading} onClick={handleDownloadStore} />
+                <MoreItem icon={<Network size={14} />} label="关系图谱" onClick={() => { setMoreOpen(false); navigate(`/document-store/${storeId}/universe`); }} />
+                <MoreItem icon={<BarChart3 size={14} />} label="访客统计" onClick={() => { setMoreOpen(false); setShowViewers(true); }} />
+                <MoreItem icon={<Rss size={14} />} label="添加订阅" onClick={() => { setMoreOpen(false); setShowSubscribe(true); }} />
+              </AnchoredMenu>
             </div>
           </div>
         }
@@ -1823,6 +1891,8 @@ export function DocumentStorePage() {
   // 置顶：用户级，服务端持久化（跨设备/重登录保持）。openCardMenuId = 当前展开「更多」菜单的卡片 id。
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
   const [openCardMenuId, setOpenCardMenuId] = useState<string | null>(null);
+  // 当前展开卡片「更多」菜单的触发按钮元素，供 AnchoredMenu 定位（列表里无法为每张卡片建独立 ref）
+  const [cardMenuAnchor, setCardMenuAnchor] = useState<HTMLElement | null>(null);
   // 使用 storeId 而不是 store 对象，这样刷新后可以从 URL 或 sessionStorage 恢复
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(() => {
     return sessionStorage.getItem('doc-store-selected-id');
@@ -1891,13 +1961,7 @@ export function DocumentStorePage() {
     });
   }, [flushPins]);
 
-  // 卡片「更多」菜单点外关闭
-  useEffect(() => {
-    if (!openCardMenuId) return;
-    const onDown = () => setOpenCardMenuId(null);
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [openCardMenuId]);
+  // 卡片「更多」菜单点外关闭由 AnchoredMenu 自身处理（菜单已 portal 到 body）
 
   // 第二排：搜索 + 排序（sessionStorage 持久化；CLAUDE.md no-localStorage 规则）
   const [search, setSearch] = useState<string>(() => sessionStorage.getItem('doc-store-search') ?? '');
@@ -2632,17 +2696,12 @@ export function DocumentStorePage() {
                             <button
                               className="surface-row h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer transition-colors"
                               title="更多操作"
-                              onClick={(e) => { e.stopPropagation(); setOpenCardMenuId(cardMenuOpen ? null : s.id); }}
+                              onClick={(e) => { e.stopPropagation(); setCardMenuAnchor(e.currentTarget); setOpenCardMenuId(cardMenuOpen ? null : s.id); }}
                               style={{ color: 'var(--text-muted)' }}>
                               <MoreHorizontal size={15} />
                             </button>
-                            {cardMenuOpen && (
-                              <div
-                                className="absolute right-0 top-[32px] z-[120] min-w-[148px] rounded-[10px] py-1 shadow-lg"
-                                style={{ background: 'var(--bg-elevated)', border: '1px solid rgba(255,255,255,0.12)', boxShadow: '0 12px 40px rgba(0,0,0,0.4)' }}
-                                // 外部关闭监听的是 document 的 mousedown（先于 click 触发），不挡住会在 click 落到菜单项前就卸载菜单。
-                                onMouseDown={(e) => e.stopPropagation()}
-                                onClick={(e) => e.stopPropagation()}>
+                            {/* createPortal 到 body，避免被卡片 / 网格的 overflow 裁掉。见 AnchoredMenu */}
+                            <AnchoredMenu open={cardMenuOpen} onClose={() => setOpenCardMenuId(null)} anchorEl={cardMenuAnchor} minWidth={148}>
                                 <MoreItem icon={<Users size={14} />} label="分享到团队" onClick={() => {
                                   setOpenCardMenuId(null);
                                   setShareTeamTarget({ id: s.id, name: s.name, teamIds: (s as DocumentStoreWithPreview).sharedTeamIds ?? [] });
@@ -2670,8 +2729,7 @@ export function DocumentStorePage() {
                                     toast.error('删除失败', res.error?.message);
                                   }
                                 }} />
-                              </div>
-                            )}
+                            </AnchoredMenu>
                           </div>
                         )}
                       </div>
