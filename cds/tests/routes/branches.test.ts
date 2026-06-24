@@ -407,6 +407,10 @@ describe('Branch Routes', () => {
       expect(res.status).toBe(400);
       expect((res.body as any).error).toBe('invalid_branch_name');
     });
+
+    // 极速版部署不再硬闸门(用户 2026-06-23 决策:没有镜像逐组件回退固定主分支,不硬失败)。
+    // 镜像可用性由 container.ts runService 处理(本 commit 镜像拉不到→回退主分支镜像),
+    // 单测见 tests/services/ci-prebuilt-express.test.ts 的 fallbackImage 用例。
   });
 
   describe('GET /api/branches', () => {

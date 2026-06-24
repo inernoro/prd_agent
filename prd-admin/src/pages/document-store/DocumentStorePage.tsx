@@ -49,6 +49,9 @@ import {
 import { useNavigate, useLocation } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
+import { useIsMobile } from '@/hooks/useBreakpoint';
+import { MobileOverflowMenu } from '@/components/mobile/MobileOverflowMenu';
+import { MobileFab } from '@/components/mobile/MobileFab';
 import { Button } from '@/components/design/Button';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { TeamScopeBar, type TeamScope } from '@/components/team/TeamScopeBar';
@@ -1799,6 +1802,7 @@ const SORT_OPTIONS: { key: StoreSort; label: string }[] = [
 // ── 主页面 ──
 export function DocumentStorePage() {
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const currentUserId = useAuthStore((s) => s.user?.userId ?? null);
   const [tab, setTab] = useState<StoreTab>(() => {
     const saved = sessionStorage.getItem('doc-store-tab') as StoreTab | null;
@@ -2388,7 +2392,7 @@ export function DocumentStorePage() {
 
           <span className="flex-1" />
           {/* 统计区：账号级访客总计（右侧）。数字 count-up 缓动 + 整段淡入，避免突然蹦出。 */}
-          {tab === 'mine' && accountSummary && (
+          {!isMobile && tab === 'mine' && accountSummary && (
             <FadeIn>
               <span className="text-[12px] tabular-nums whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
                 <AnimatedStat value={accountSummary.totalViews} format={formatCountCompact} /> 次访问
@@ -2400,7 +2404,7 @@ export function DocumentStorePage() {
             </FadeIn>
           )}
           {/* 统计按钮：再往右，打开全部知识库的访客统计报表（区别于知识库内的单库统计） */}
-          {tab === 'mine' && (
+          {!isMobile && tab === 'mine' && (
             <Button
               variant="secondary"
               size="xs"
@@ -2410,7 +2414,7 @@ export function DocumentStorePage() {
               <BarChart3 size={13} /> 统计
             </Button>
           )}
-          {tab === 'mine' && (
+          {!isMobile && tab === 'mine' && (
             <Button
               variant="secondary"
               size="xs"
@@ -2420,7 +2424,7 @@ export function DocumentStorePage() {
               <Send size={13} /> 发送到
             </Button>
           )}
-          {tab === 'mine' && (
+          {!isMobile && tab === 'mine' && (
             <Button
               variant="secondary"
               size="xs"
@@ -2430,18 +2434,34 @@ export function DocumentStorePage() {
               <KeyRound size={13} /> 接入 AI
             </Button>
           )}
-          <Button
-            variant="primary"
-            size="xs"
-            data-tour-id="document-store-create"
-            onClick={() => setShowCreate(true)}
-            disabled={tab === 'team' && !teamScope.teamId}
-            title={tab === 'team' && !teamScope.teamId
-              ? '请先在上方选择或新建团队空间,新建的知识库会自动分享到所选团队空间'
-              : tab === 'team' ? '新建后自动分享到当前团队空间' : undefined}
-          >
-            <Plus size={13} /> 新建知识库
-          </Button>
+          {/* 移动端：次要操作（统计/发送到/接入AI）收进「⋯ 更多」Sheet，主操作走 FAB —— 见 mobile-first-density */}
+          {isMobile && tab === 'mine' && (
+            <MobileOverflowMenu
+              title="知识库操作"
+              items={[
+                { key: 'stats', label: '访客统计', icon: BarChart3, onClick: () => setShowAccountViewers(true) },
+                { key: 'send', label: '发送到 / 同步到其他节点', icon: Send, onClick: () => setShowSendToPeer(true) },
+                { key: 'api', label: '接入 AI（签发 API Key）', icon: KeyRound, onClick: () => setShowOpenApi(true) },
+              ]}
+            />
+          )}
+          {!isMobile && (
+            <Button
+              variant="primary"
+              size="xs"
+              data-tour-id="document-store-create"
+              onClick={() => setShowCreate(true)}
+              disabled={tab === 'team' && !teamScope.teamId}
+              title={tab === 'team' && !teamScope.teamId
+                ? '请先在上方选择或新建团队空间,新建的知识库会自动分享到所选团队空间'
+                : tab === 'team' ? '新建后自动分享到当前团队空间' : undefined}
+            >
+              <Plus size={13} /> 新建知识库
+            </Button>
+          )}
+          {isMobile && (
+            <MobileFab onClick={() => setShowCreate(true)} icon={Plus} label="新建" />
+          )}
         </div>
       )}
       </div>

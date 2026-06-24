@@ -1407,6 +1407,35 @@ export class StateService {
   }
 
   /**
+   * 2026-06-23：暂停 / 恢复一个项目。暂停（paused=true）会冻结整个项目的
+   * 自动部署 / 手动 deploy / reconciler 重试 / scheduler，调用方负责停止
+   * 已运行的容器（走 /branches/:id/stop）。恢复（paused=false）清空暂停元数据，
+   * 不自动重新部署。自动保存。返回更新后的 Project（找不到返回 undefined）。
+   */
+  setProjectPaused(
+    id: string,
+    paused: boolean,
+    opts: { by?: string; reason?: string } = {},
+  ): Project | undefined {
+    if (!this.state.projects) return undefined;
+    const idx = this.state.projects.findIndex((p) => p.id === id);
+    if (idx < 0) return undefined;
+    const current = this.state.projects[idx];
+    const now = new Date().toISOString();
+    const next: Project = {
+      ...current,
+      paused,
+      pausedAt: paused ? now : undefined,
+      pausedBy: paused ? (opts.by || 'unknown') : undefined,
+      pauseReason: paused ? (opts.reason?.trim() || undefined) : undefined,
+      updatedAt: now,
+    };
+    this.state.projects[idx] = next;
+    this.save();
+    return next;
+  }
+
+  /**
    * 写入项目的虚拟 cds-compose.yml（配置 SSOT，2026-05-29）。单调递增
    * composeVersion，记录来源。approve PendingImport / 手动编辑 / repo 同步
    * 三条路径都过这里，保证版本号和时间戳一致。返回写入后的新版本号。
@@ -1464,6 +1493,11 @@ export class StateService {
       githubInstallationId?: number;
       githubPrNumber?: number;
       githubPreviewCommentId?: number;
+      // 2026-06-23 极速版（CI 预构建）状态字段
+      ciImageStatus?: 'waiting' | 'ready' | 'failed';
+      ciTargetSha?: string;
+      ciWorkflowConclusion?: string;
+      ciWorkflowRunUrl?: string;
     },
   ): void {
     const branch = this.state.branches[id];
@@ -1481,6 +1515,10 @@ export class StateService {
     if ('githubInstallationId' in updates) branch.githubInstallationId = updates.githubInstallationId;
     if ('githubPrNumber' in updates) branch.githubPrNumber = updates.githubPrNumber;
     if ('githubPreviewCommentId' in updates) branch.githubPreviewCommentId = updates.githubPreviewCommentId;
+    if ('ciImageStatus' in updates) branch.ciImageStatus = updates.ciImageStatus;
+    if ('ciTargetSha' in updates) branch.ciTargetSha = updates.ciTargetSha;
+    if ('ciWorkflowConclusion' in updates) branch.ciWorkflowConclusion = updates.ciWorkflowConclusion;
+    if ('ciWorkflowRunUrl' in updates) branch.ciWorkflowRunUrl = updates.ciWorkflowRunUrl;
   }
 
   // ── Remote hosts (shared-service deployment targets, 2026-05-06) ──

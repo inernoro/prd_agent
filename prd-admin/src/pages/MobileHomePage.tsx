@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import * as LucideIcons from 'lucide-react';
 import {
   MessageSquare,
   Image as ImageIcon,
   Bug,
   Bell,
   ChevronRight,
-  Bot,
   type LucideIcon,
 } from 'lucide-react';
+import { accentFor, iconFor, DEFAULT_ACCENT } from '@/lib/agentAccent';
 import { useAuthStore } from '@/stores/authStore';
+import { buildStaticInfra, deriveLauncherPerms } from '@/lib/homeLauncherItems';
 import { BUILTIN_TOOLS } from '@/stores/toolboxStore';
 import type { ToolboxItem } from '@/services/real/aiToolbox';
 import { getAdminNotifications, getMobileFeed, getMobileStats } from '@/services';
@@ -28,34 +28,7 @@ import {
 } from '@/components/mobile/appStore';
 import { AS_COLOR, AS_SPACE, AS_FONT_FAMILY, AS_TYPE } from '@/lib/appStoreTokens';
 
-/* ─────────── Agent 主题色（iOS System Colors 级，不刺眼） ─────────── */
-
-const AGENT_ACCENT: Record<string, { from: string; to: string }> = {
-  'prd-agent':       { from: '#0A84FF', to: '#64D2FF' },  // iOS Blue → Teal
-  'visual-agent':    { from: '#BF5AF2', to: '#FF375F' },  // iOS Purple → Pink
-  'literary-agent':  { from: '#30D158', to: '#64D2FF' },  // iOS Green → Teal
-  'defect-agent':    { from: '#FF9F0A', to: '#FF453A' },  // iOS Orange → Red
-  'video-agent':     { from: '#FF375F', to: '#BF5AF2' },  // iOS Pink → Purple
-  'report-agent':    { from: '#5E5CE6', to: '#0A84FF' },  // iOS Indigo → Blue
-  'review-agent':    { from: '#FFD60A', to: '#FF9F0A' },  // iOS Yellow → Orange
-  'pr-review':       { from: '#5E5CE6', to: '#64D2FF' },  // iOS Indigo → Teal
-  'shortcuts-agent': { from: '#FFD60A', to: '#FF9F0A' },  // iOS Yellow → Orange
-  'transcript-agent':{ from: '#FF375F', to: '#BF5AF2' },  // Pink → Purple
-  'workflow-agent':  { from: '#30D158', to: '#64D2FF' },  // Green → Teal
-  'arena':           { from: '#FF9F0A', to: '#FFD60A' },  // Orange → Yellow
-};
-
-const DEFAULT_ACCENT = { from: '#0A84FF', to: '#5E5CE6' };
-
-function accentFor(agentKey?: string): { from: string; to: string } {
-  if (!agentKey) return DEFAULT_ACCENT;
-  return AGENT_ACCENT[agentKey] ?? DEFAULT_ACCENT;
-}
-
-function iconFor(iconName: string): LucideIcon {
-  const icons = LucideIcons as unknown as Record<string, LucideIcon>;
-  return icons[iconName] ?? Bot;
-}
+/* ─────────── Agent 主题色 / 图标解析见 @/lib/agentAccent（移动端 SSOT） ─────────── */
 
 /* ─────────── Feed 类型映射 ─────────── */
 
@@ -84,6 +57,7 @@ const AGENT_EYEBROW: Record<string, { label: string; color: string }> = {
 export default function MobileHomePage() {
   const navigate = useNavigate();
   const cdnBase = useAuthStore((s) => s.cdnBaseUrl ?? '');
+  const permissions = useAuthStore((s) => s.permissions ?? []);
   const [notifications, setNotifications] = useState<AdminNotificationItem[]>([]);
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const [stats, setStats] = useState<MobileStats | null>(null);
@@ -118,6 +92,8 @@ export default function MobileHomePage() {
   /* ── 数据分类 ── */
   const agents = useMemo(() => BUILTIN_TOOLS.filter((t) => t.kind === 'agent'), []);
   const tools = useMemo(() => BUILTIN_TOOLS.filter((t) => t.kind === 'tool'), []);
+  // 基础设施（知识库 / 资源 / 市场 / 工作流 / 更新中心 …）—— 与桌面首页同一数据源，知识库置首
+  const infra = useMemo(() => buildStaticInfra(deriveLauncherPerms(permissions)), [permissions]);
 
   /* ── 推荐 Carousel 项（有视频资产优先，无资产不上榜） ── */
   const featuredItems: FeaturedItem[] = useMemo(() => {
@@ -203,6 +179,24 @@ export default function MobileHomePage() {
                 subtitle: a.description,
                 tag: compatTagFor(a),
                 onClick: () => handleItemClick(a),
+              }))}
+            />
+          </AppStoreSection>
+        )}
+
+        {/* ── 基础设施（平台能力，知识库置首；与桌面首页同源，避免两端割裂） ── */}
+        {infra.length > 0 && (
+          <AppStoreSection title="基础设施" caption="知识库 · 资源 · 市场 · 工作流 · 更新中心">
+            <AppStoreRankedList
+              numbered={false}
+              items={infra.map((it) => ({
+                key: it.id,
+                Icon: iconFor(it.icon),
+                accent: accentFor(it.agentKey),
+                title: it.name,
+                subtitle: it.description,
+                pillLabel: '打开',
+                onClick: () => (it.routePath ? navigate(it.routePath) : undefined),
               }))}
             />
           </AppStoreSection>

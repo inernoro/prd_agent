@@ -12,8 +12,9 @@ import { StateService } from '../services/state.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile } from '../services/container.js';
-import { classifyDeployRuntime, computeServiceDrift } from '../services/deploy-runtime.js';
+import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
 import { acquireBuildSlot, buildGateStatus } from '../services/build-gate.js';
+import { recordBuild } from '../services/build-activity-tracker.js';
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { JanitorService } from '../services/janitor.js';
@@ -205,6 +206,11 @@ type BranchDeployRuntime = {
    */
   pendingPublish: boolean;
   /**
+   * 2026-06-23 极速版（CI 预构建）：是否有任一 profile 走预构建镜像部署模式。
+   * true 时前端把徽章从「发布版」细化为「极速版」（拉取 CI 镜像,非本机编译）。
+   */
+  prebuilt: boolean;
+  /**
    * 2026-05-29 P0 止血：期望态 vs 实际态漂移检测。
    *
    * 病根（本次 openvisual 事故暴露）：branch.services 是"上次部署时的快照"，
@@ -313,10 +319,12 @@ function summarizeBranchDeployRuntime(
   let releaseProfiles = 0;   // 实际以发布版在跑的 profile 数（真相）
   let sourceProfiles = 0;    // 实际以源码在跑 / 未跑的 profile 数
   let pendingPublish = false; // 配置=发布版 但运行现状还没跟上
+  let prebuilt = false;       // 配置=极速版（任一 profile 走预构建镜像）
   const modeLabels: string[] = [];
 
   for (const profile of profiles) {
     const effectiveProfile = resolveEffectiveProfile(profile, branch);
+    if (effectiveProfile.prebuiltImage === true) prebuilt = true;
     const configMode = effectiveProfile.activeDeployMode;
     const configLabel = configMode
       ? effectiveProfile.deployModes?.[configMode]?.label || configMode
@@ -354,6 +362,16 @@ function summarizeBranchDeployRuntime(
     if (configKind === 'release' && actualKind !== 'release') pendingPublish = true;
     if (configKind === 'release' && !running) pendingPublish = true;
 
+    // 极速版(prebuilt)特例（Codex P2: mark static-to-express as pending）:
+    // static 与 express 都归类 release,上面 configKind/actualKind 比对都是 release →
+    // 不会判 pending,但容器实际还是旧 static 镜像。只要"配置=极速版"而"实际跑的不是
+    // 这个极速版模式"（没在跑 / 确知 deployedMode 与 configMode 不一致）就该判待生效,
+    // 否则卡片会亮"极速版"绿徽章而其实没切过去。无真相的旧数据不误报(沿用上面口径)。
+    if (effectiveProfile.prebuiltImage === true) {
+      if (!running) pendingPublish = true;
+      else if (hasTruth && svc!.deployedMode !== configMode) pendingPublish = true;
+    }
+
     const suffix = hasTruth && actualMode !== configMode
       ? `${actualLabel}（配置 ${configLabel}，待生效）`
       : actualLabel;
@@ -383,6 +401,7 @@ function summarizeBranchDeployRuntime(
     sourceProfiles,
     modes: modeLabels,
     pendingPublish,
+    prebuilt,
     // 漂移检测走 deploy-runtime.ts 的纯函数 SSOT(可单测、与本文件解耦)
     drift: computeServiceDrift(profiles.map((p) => p.id), branch.services),
   };
@@ -434,23 +453,9 @@ function recordDeployDurationSample(
   stateService.recordDeployDuration(branch.projectId || 'default', mode, elapsedMs, maxReasonableMs);
 }
 
-function applyProjectDefaultDeployModes(
-  branch: BranchEntry,
-  projectDefaultDeployModes: Record<string, string> | undefined,
-  profiles: BuildProfile[],
-): void {
-  if (!projectDefaultDeployModes || Object.keys(projectDefaultDeployModes).length === 0) return;
-  for (const profile of profiles) {
-    if (!Object.prototype.hasOwnProperty.call(projectDefaultDeployModes, profile.id)) continue;
-    const mode = projectDefaultDeployModes[profile.id] || '';
-    if (mode && !profile.deployModes?.[mode]) continue;
-    if (!branch.profileOverrides) branch.profileOverrides = {};
-    branch.profileOverrides[profile.id] = {
-      ...(branch.profileOverrides[profile.id] || {}),
-      activeDeployMode: mode,
-    };
-  }
-}
+// 2026-06-23：实现已下沉到 deploy-runtime.ts 的 applyDefaultDeployModesToBranch（SSOT）,
+// 供 branches.ts（建分支）与 github-webhook-dispatcher.ts（webhook 自动建分支）共用。
+const applyProjectDefaultDeployModes = applyDefaultDeployModesToBranch;
 
 /**
  * 纯计算 self-status payload。
@@ -9846,6 +9851,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
 
+    // 2026-06-23：项目暂停 = 部署的统一兜底闸门。webhook 闸门 / reconciler 跳过 /
+    // scheduler 跳过都各管一段，但任何路径（含 auto-lifecycle 自调）最终都落到本
+    // 端点——在这里拦一道，暂停项目就**绝无可能**再被构建。?force=1 为人工逃生口。
+    const forceDeployWhilePaused = req.query?.force === '1' || req.query?.force === 'true';
+    if (deployProject?.paused === true && !forceDeployWhilePaused) {
+      res.status(423).json({
+        error: 'project_paused',
+        message: `项目「${deployProject.aliasName || deployProject.name}」已暂停，部署被拦截。请先在项目列表恢复该项目，或附加 ?force=1 强制部署一次。`,
+        pausedAt: deployProject.pausedAt || null,
+        escapeHatch: { hint: '附加 ?force=1 query 可绕过暂停强制部署一次（不推荐）。' },
+      });
+      return;
+    }
+
     // P4 Part 17 (G2 fix): scope build profiles by the branch's project
     // so a deploy in project A doesn't pull in B's profiles. Pre-Part 3
     // branches default to 'default' (the legacy migration target).
@@ -9854,6 +9873,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(400).json({ error: '尚未配置构建配置，请先添加至少一个构建配置。' });
       return;
     }
+
+    // 极速版部署不再硬闸门(用户 2026-06-23 决策:没有镜像默认回退固定主分支,不硬失败)。
+    // 镜像可用性由 container.ts runService 逐组件处理:本 commit 镜像拉不到就回退固定主分支
+    // 镜像(fallbackImage),两者都拉不到才报错。CI 仍按 path-filter 只构建改动组件(不重复构建),
+    // 期间 ciImageStatus=waiting 仅作 UI 反馈 + 触发 CI 完成后的自动重部署,不阻塞手动部署。
 
     // Phase 8 — env required check:必填项未填则 412 Precondition Failed,UI 弹窗强制感知
     // 用户可以"承诺会跑起来"按 ?ignoreRequired=1 query 强制 deploy(降级路径,不推荐)
@@ -9875,6 +9899,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
     }
 
+    // 资源面板：记录一次构建活动（webhook / 手动 / reconciler 重试统一在此计数），
+    // 让「分支少但反复构建」的项目能在资源占用面板按频次排到前面。
+    recordBuild(entry.projectId || 'default', entry.id, triggerFromRequest(req));
+
     const requestCommitSha = typeof req.body?.commitSha === 'string'
       && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
       ? req.body.commitSha
@@ -9895,6 +9923,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // Stamp it before dispatching so failures and remote rejections update the
     // visible time just like successful deploys do.
     entry.lastAccessedAt = new Date().toISOString();
+
+    // ── Commit SHA derivation (hoisted before cluster dispatch) ──
+    // 极速版镜像 tag 模板 `:sha-${CDS_COMMIT_SHA}` 在 resolveEffectiveProfile
+    // 里用 entry.githubCommitSha 解析。集群路径在下面 proxyDeployToExecutor 前
+    // 就 return,而 proxyDeployToExecutor 内部已经 resolveEffectiveProfile ——
+    // 所以 SHA 必须在「分发决策之前」就 stamp 好,否则远端 payload 的
+    // dockerImage 仍是 `:sha-`（空 tag）→ docker pull 必失败（Bugbot review）。
+    // 优先级与本地路径一致:① req.body.commitSha（webhook 锚定）② 已存 SHA
+    // ③ worktree HEAD 兜底。本地路径下方不再重复推导。
+    if (requestCommitSha) {
+      entry.githubCommitSha = requestCommitSha;
+    } else if (!entry.githubCommitSha && entry.worktreePath) {
+      try {
+        const sha = await shell.exec('git rev-parse HEAD', { cwd: entry.worktreePath });
+        if (sha.exitCode === 0 && sha.stdout.trim()) {
+          entry.githubCommitSha = sha.stdout.trim();
+        }
+      } catch {
+        /* non-fatal — 极速版镜像 tag 推导失败时由后续 docker pull 报错暴露 */
+      }
+    }
+    stateService.save();
 
     // ── Cluster dispatch decision ──
     //
@@ -10000,28 +10050,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
 
       // ── GitHub Checks integration ──
-      // Priority for the commit SHA fed to the check run:
-      //   1. req.body.commitSha — the authoritative value from the
-      //      webhook-originated dispatcher, pinned at webhook-handling
-      //      time so concurrent pushes can't race it
-      //   2. entry.githubCommitSha — stored on the branch by the push
-      //      handler (same value in the normal flow)
-      //   3. current worktree HEAD — fallback for UI-triggered deploys
-      // If none of the above resolve, the check-run path is a no-op.
-      const bodyCommitSha = requestCommitSha;
-      if (bodyCommitSha) {
-        entry.githubCommitSha = bodyCommitSha;
-      } else if (entry.githubRepoFullName && !entry.githubCommitSha) {
-        try {
-          const sha = await shell.exec('git rev-parse HEAD', { cwd: entry.worktreePath });
-          if (sha.exitCode === 0) {
-            entry.githubCommitSha = sha.stdout.trim();
-          }
-        } catch {
-          /* non-fatal — check run just won't fire */
-        }
-      }
-      stateService.save();
+      // commit SHA 已在上方「分发决策之前」按同一优先级
+      //   ① req.body.commitSha ② 已存 SHA ③ worktree HEAD
+      // stamp 到 entry.githubCommitSha（本地 + 远端共用），此处直接用即可,
+      // 不再重复推导。若三者都没解析出来,check-run / 极速版 tag 推导是 no-op。
       // Open an in-progress check run — best effort, errors logged not
       // thrown (so GitHub connectivity issues don't block the deploy).
       await checkRunRunner.ensureOpen(entry);
@@ -10037,6 +10069,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
         : await worktreeService.pull(entry.branch, entry.worktreePath);
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
+
+      // 非极速版（源码编译）路径:镜像/构建用 pull 后真实 HEAD,故无显式 body.commitSha 时
+      // 用 pullResult.head 刷新 githubCommitSha,避免镜像 tag/构建对应到 pull 前旧 SHA
+      // （Codex P2: refresh prebuilt SHA after pulling latest code）。
+      // **极速版例外**：极速版镜像由 CI 按 commit 预构建,只有 ciTargetSha(=CI ready 的 SHA)
+      // 才有可拉取的镜像。绝不能跟随 pull 后的新 HEAD（那个 SHA 多半还没 CI 镜像）——上面的
+      // CI 闸门已保证 ciImageStatus=ready 且 ciTargetSha===githubCommitSha,这里保持不动,
+      // 让镜像 tag 锁定在 CI 就绪的 SHA（Codex P2: require CI readiness for the deployed SHA）。
+      if (!requestCommitSha
+        && !branchUsesPrebuiltMode(profiles, entry)
+        && !(pullResult as { skipped?: boolean }).skipped
+        && typeof pullResult.head === 'string'
+        && /^[0-9a-f]{7,40}$/i.test(pullResult.head)
+        && entry.githubCommitSha !== pullResult.head) {
+        entry.githubCommitSha = pullResult.head;
+      }
 
       // Clear pinned commit — deploy always restores to branch HEAD
       if (entry.pinnedCommit) {
@@ -10892,6 +10940,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
         : await worktreeService.pull(entry.branch, entry.worktreePath);
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
+
+      // 同主 deploy 路径:**非极速版**才用 pull 后真实 HEAD 刷新 githubCommitSha;极速版
+      // 镜像锁定 CI 就绪的 ciTargetSha,不跟随 pull 后新 HEAD（Codex P2: refresh prebuilt
+      // SHA after pulling latest code + require CI readiness for the deployed SHA）。
+      // 本单服务路径无 requestCommitSha 变量,内联判定 body.commitSha 是否显式指定;
+      // 用本 profile 的 prebuiltImage 判定是否极速版。
+      {
+        const bodySha = typeof req.body?.commitSha === 'string' && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
+          ? req.body.commitSha : undefined;
+        const isPrebuiltProfile = resolveEffectiveProfile(profile, entry).prebuiltImage === true;
+        if (!bodySha
+          && !isPrebuiltProfile
+          && !(pullResult as { skipped?: boolean }).skipped
+          && typeof pullResult.head === 'string'
+          && /^[0-9a-f]{7,40}$/i.test(pullResult.head)
+          && entry.githubCommitSha !== pullResult.head) {
+          entry.githubCommitSha = pullResult.head;
+        }
+      }
 
       // Clear pinned commit — deploy always restores to branch HEAD
       if (entry.pinnedCommit) {
