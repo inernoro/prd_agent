@@ -132,6 +132,7 @@ start-next 领单
 - `spec.defect-agent-automation-protocol.md` —— 机械契约（端点/状态机/幂等），本体系是它之上的决策治理层
 - `design.defect-agent.md` —— 缺陷管理主设计（本文是其自治治理子设计）
 - `design.defect-agent-share-skill-architecture.md` —— `FixReport.ConfidenceScore` 的来源路径
+- 技能 `.claude/skills/ai-defect-resolve/SKILL.md`（v1.8.0 起）—— 本体系的**执行落地**：把自主三档边界 + 五层自治回路写成智能体每条缺陷必跑的自检（complete/block 前门禁）。设计是架构，技能是操作手册，二者双向引用
 - 规则：`blocked-state-circuit-breaker.md`（紧急熔断）、`closed-loop-acceptance.md` / `e2e-verification.md`（现状核实与闭环）、`snapshot-fallback.md`（旧描述未必成立）、`expectation-management.md`（对外申明）、`no-rootless-tree.md`（缺什么暴露什么，不假装能造）
 
 ## 十、风险与已知边界
