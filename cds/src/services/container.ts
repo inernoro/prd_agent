@@ -322,7 +322,12 @@ export function applyProfileOverride(baseline: BuildProfile, override?: BuildPro
  * applyProjectDefaultDeployModes() 在建分支时写进 branch.profileOverrides，
  * 之后就是普通的分支级 override，本函数只认 branch override + baseline。
  */
-export function resolveEffectiveProfile(profile: BuildProfile, branch?: BranchEntry): BuildProfile {
+export function resolveEffectiveProfile(
+  profile: BuildProfile,
+  branch?: BranchEntry,
+  // 内部递归用：解析源码回退 profile 时置 false，**绝不**再算二层回退，杜绝无限递归。
+  computeSourceFallback = true,
+): BuildProfile {
   const branchOverride = branch?.profileOverrides?.[profile.id];
   const withBranchOverride = applyProfileOverride(profile, branchOverride);
   const withMode = resolveProfileWithMode(withBranchOverride);
@@ -348,10 +353,16 @@ export function resolveEffectiveProfile(profile: BuildProfile, branch?: BranchEn
   // 直接切过去（baseline 解析保证 dockerImage=源码基础镜像、command=源码构建、端口正确，
   // 不会误继承极速版的 sha 镜像/8080 端口）。仅 prebuilt 时计算；递归一层即止（源码 profile
   // 非 prebuilt，不会再触发本分支）。
-  if (resolved.prebuiltImage) {
+  if (computeSourceFallback && resolved.prebuiltImage) {
     const srcMode = pickSourceFallbackMode(profile.deployModes, resolved.activeDeployMode);
     if (srcMode) {
-      const srcProfile = resolveEffectiveProfile({ ...profile, activeDeployMode: srcMode }, branch);
+      // 双保险防无限递归：① 强制 prebuiltImage:false（即便 baseline 自带 prebuilt 也压平）；
+      // ② computeSourceFallback=false（内层绝不再算回退）。任一独立成立即可终止递归。
+      const srcProfile = resolveEffectiveProfile(
+        { ...profile, activeDeployMode: srcMode, prebuiltImage: false },
+        branch,
+        false,
+      );
       if (!srcProfile.prebuiltImage && srcProfile.command && srcProfile.command.trim()) {
         resolved = { ...resolved, sourceFallbackProfile: srcProfile };
       }

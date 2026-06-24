@@ -125,4 +125,20 @@ describe('resolveEffectiveProfile 极速版 → 附带源码回退 profile', () 
     expect(eff.prebuiltImage).toBeFalsy();
     expect(eff.sourceFallbackProfile).toBeUndefined();
   });
+
+  it('baseline 自带 prebuiltImage:true 也不无限递归（CDS 崩溃回归）', () => {
+    // 这是真实把 CDS 打成 200/502 flapping 的触发条件：baseline.prebuiltImage=true 时，
+    // 旧实现递归解析源码 profile 仍是 prebuilt → 无限递归爆栈阻塞事件循环。
+    const prebuiltBaseline: BuildProfile = {
+      ...baseline,
+      prebuiltImage: true,
+      command: '', // prebuilt 常无 command
+    } as BuildProfile;
+    // 不抛栈溢出即通过
+    const eff = resolveEffectiveProfile(prebuiltBaseline, branch);
+    expect(eff).toBeTruthy();
+    // 源码回退（若有）必须是非 prebuilt，且不再嵌套
+    expect(eff.sourceFallbackProfile?.prebuiltImage).toBeFalsy();
+    expect(eff.sourceFallbackProfile?.sourceFallbackProfile).toBeUndefined();
+  });
 });
