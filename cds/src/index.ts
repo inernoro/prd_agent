@@ -37,7 +37,7 @@ import { syncAllSystemdUnits } from './services/systemd-sync.js';
 import { branchEvents, nowIso } from './services/branch-events.js';
 import { archiveBranchContainerLogs } from './services/container-log-archiver.js';
 import { reconcileStaleDeployDispatches, type DeployDispatchReconcileResult } from './services/deploy-dispatch-reconciler.js';
-import { shouldRetryInterruptedWebhookDispatch } from './services/deploy-dispatch-retry.js';
+import { shouldRetryInterruptedWebhookDispatch, isDeployDispatchRetryEnabled } from './services/deploy-dispatch-retry.js';
 import { ResourceUsageSampler } from './services/resource-usage-sampler.js';
 import { httpLogStoreFromEnv } from './services/http-log-store.js';
 import { serverEventLogStoreFromEnv } from './services/server-event-log-store.js';
@@ -94,6 +94,16 @@ const DEPLOY_DISPATCH_MAX_AGE_MS = Math.max(
 const DEPLOY_DISPATCH_RETRY_BACKOFF_MS = Math.max(
   0,
   Number.parseInt(process.env.CDS_DEPLOY_DISPATCH_RETRY_BACKOFF_MS || '', 10) || 5 * 60 * 1000,
+);
+// 2026-06-24 用户决策：部署重试默认**关闭**（治重试风暴）。
+// 上面三个上限（maxRetries/backoff/age）是 2026-06-23 加的护栏，但没根治风暴——
+// 多个部署来源（webhook + 对账补发 + 抢占后重建）互相叠加仍打满 CPU，导致整个 CDS
+// 进不去。现改为默认不自动补发 stale dispatch；需要时显式开
+// `CDS_DEPLOY_DISPATCH_RETRY_ENABLED=1` 才恢复（恢复后才受 maxRetries/backoff/age 约束）。
+// 对账器仍会把 stale 标记为 interrupted（纯记账），只是不再自动触发部署。
+// 判定走 deploy-dispatch-retry.ts 的纯函数 isDeployDispatchRetryEnabled（单测锁「默认关」）。
+const DEPLOY_DISPATCH_RETRY_ENABLED = isDeployDispatchRetryEnabled(
+  process.env.CDS_DEPLOY_DISPATCH_RETRY_ENABLED,
 );
 
 function mb(bytes: number): number {
@@ -201,6 +211,24 @@ function dispatchRecoveredWebhookDeploys(
   reconciled: DeployDispatchReconcileResult[],
   source: string,
 ): void {
+  // 重试默认关闭：只记一条「已跳过自动补发」，不再触发任何部署（治风暴的总闸）。
+  if (!DEPLOY_DISPATCH_RETRY_ENABLED) {
+    const pending = reconciled.filter((r) => r.nextStatus === 'interrupted');
+    if (pending.length > 0) {
+      store?.record({
+        category: 'system',
+        severity: 'info',
+        source,
+        action: 'branch.deploy-dispatch.retry-disabled',
+        message: `部署重试已关闭（未设 CDS_DEPLOY_DISPATCH_RETRY_ENABLED），跳过 ${pending.length} 个中断派发的自动补发`,
+        details: {
+          pendingCount: pending.length,
+          branchIds: pending.map((r) => r.branchId),
+        },
+      });
+    }
+    return;
+  }
   for (const result of reconciled) {
     if (result.nextStatus !== 'interrupted') continue;
     const traceHash = crypto.createHash('sha1')
@@ -1285,6 +1313,106 @@ proxyService.setScheduler(schedulerService);
 // crashed / user-stopped branches are never revived here. Kill-switch:
 // CDS_PREVIEW_AUTOWAKE=0 disables it (falls back to the diagnostic page).
 if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
+  // #1 重启中断分支按需自愈：访问到一个被 CDS self-update/崩溃重启打断的 error 分支时，
+  // 走一次完整重部署（中断分支容器可能没建好，docker restart 不够）。demand-driven + 代理侧
+  // 去重，不复活「每 5min 全量补发」的重试风暴。Kill-switch 复用 CDS_PREVIEW_AUTOWAKE=0。
+  proxyService.setOnRecoverInterrupted(async (slug: string) => {
+    const branch = stateService.getBranch(slug);
+    if (!branch) return;
+    // 同步前缀（首个 await 前）：再核一遍仍是「重启中断」error 态，翻 loading 并 save，
+    // 让代理紧接着渲染的等待页立刻显示「正在恢复」而非 error 闪一下。
+    if (branch.status !== 'error' || branch.executorId) return;
+    const marker = '重启中断';
+    const interrupted = (typeof branch.errorMessage === 'string' && branch.errorMessage.includes(marker))
+      || Object.values(branch.services || {}).some((s) => typeof s?.errorMessage === 'string' && s.errorMessage.includes(marker));
+    if (!interrupted) return;
+    const commitSha = branch.githubCommitSha || branch.lastDeployDispatchCommitSha || '';
+    if (!commitSha) return;
+    // Bugbot Medium「Recovery skips operation lease」：乐观翻 loading + 发内部 /deploy 前，
+    // 若分支上已有在跑的操作（部署/重启/降温…）就**不抢状态**——那个操作拥有该分支，交给它，
+    // 避免与在途操作的状态写竞争（cooled-wake 走 lease 互斥，这里用同源的协调器判活兜底；
+    // 内部 /deploy 自己仍会拿真正的 lease）。
+    if ((branchOperationCoordinator.getActiveOperations(branch.id) || []).some((op) => !op.cancelled)) return;
+    // 失败要还原的原始 error 文案（乐观翻 loading 前留存）。
+    const prevErrorMessage = branch.errorMessage;
+    const prevSvcError: Record<string, string | undefined> = {};
+    branch.status = 'restarting';
+    for (const [pid, svc] of Object.entries(branch.services || {})) {
+      if (svc) { prevSvcError[pid] = svc.errorMessage; svc.status = 'building'; svc.errorMessage = undefined; }
+    }
+    stateService.save();
+    const requestId = `recover_${slug}_${Date.now()}`;
+    activeServerEventLogStore?.record({
+      category: 'system',
+      severity: 'warn',
+      source: 'proxy.preview-interrupted-recovery',
+      action: 'branch.interrupted.recover-started',
+      message: `按需自愈：重启中断分支 ${slug} 被访问，触发重部署`,
+      projectId: branch.projectId,
+      branchId: branch.id,
+      requestId,
+      details: { commitSha, trigger: 'preview-access' },
+    });
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(slug)}/deploy`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CDS-Internal': '1',
+            'X-CDS-Trigger': 'preview-recovery',
+            'X-CDS-Request-Id': requestId,
+            ...(branch.projectId ? { 'X-CDS-Source-Project-Id': branch.projectId } : {}),
+          },
+          body: JSON.stringify({ commitSha }),
+        },
+      );
+      if (!response.ok) throw new Error(`HTTP ${response.status}: ${(await response.text().catch(() => '')).slice(0, 200)}`);
+      const reader = response.body?.getReader();
+      if (reader) { for (;;) { const { done } = await reader.read(); if (done) break; } }
+    } catch (err) {
+      activeServerEventLogStore?.record({
+        category: 'system',
+        severity: 'error',
+        source: 'proxy.preview-interrupted-recovery',
+        action: 'branch.interrupted.recover-failed',
+        message: `按需自愈重部署失败 ${slug}: ${(err as Error).message}`,
+        projectId: branch.projectId,
+        branchId: branch.id,
+        requestId,
+      });
+    } finally {
+      // Bugbot Medium「Recovery leaves branch restarting」：部署流跑完后，真正接管的部署会把
+      // status 从 restarting 翻走（building→running/error）。若仍停在 restarting，说明部署
+      // 根本没接管（trigger 抛错，或 lease 冲突走 200+SSE error 早退被当成功 drain），此时**必须
+      // 还原成 error**，否则分支永久卡 loading 且因 shouldRecoverInterrupted 要求 error 而再也
+      // 不会被重试。还原后下次访问（过 5s 去重窗）可再触发一次。
+      const cur = stateService.getBranch(slug);
+      if (cur && cur.status === 'restarting') {
+        cur.status = 'error';
+        cur.errorMessage = prevErrorMessage || '自愈重部署未生效，请重试或回控制台手动部署';
+        for (const [pid, svc] of Object.entries(cur.services || {})) {
+          if (svc && svc.status === 'building') {
+            svc.status = 'error';
+            svc.errorMessage = prevSvcError[pid] || cur.errorMessage;
+          }
+        }
+        stateService.save();
+        activeServerEventLogStore?.record({
+          category: 'system',
+          severity: 'warn',
+          source: 'proxy.preview-interrupted-recovery',
+          action: 'branch.interrupted.recover-not-engaged',
+          message: `按需自愈重部署未接管 ${slug}，已还原 error 以便下次重试`,
+          projectId: cur.projectId,
+          branchId: cur.id,
+          requestId,
+        });
+      }
+    }
+  });
+
   proxyService.setOnReviveCooled(async (slug: string) => {
     const branch = stateService.getBranch(slug);
     if (!branch) return;

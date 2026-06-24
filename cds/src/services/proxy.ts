@@ -81,6 +81,14 @@ export class ProxyService {
   private onReviveCooled: ((branchSlug: string) => Promise<void>) | null = null;
   /** Slugs with an auto-wake in flight — dedupes concurrent navigation hits. */
   private readonly revivingSlugs = new Set<string>();
+  /**
+   * #1 重启中断分支按需自愈：访问到一个「被 CDS 重启中断」的 error 分支时触发一次重部署。
+   * 与 onReviveCooled 互补 —— 那个 docker restart 复用旧容器（cooled），这个走完整重部署
+   * （中断分支容器可能根本没建好）。demand-driven（只恢复用户真正访问的分支）+ 去重，
+   * 不复活「每 5min 全量补发」的重试风暴。
+   */
+  private onRecoverInterrupted: ((branchSlug: string) => Promise<void>) | null = null;
+  private readonly recoveringSlugs = new Set<string>();
   /** Callback: notify dashboard of web access events */
   private onAccess: ((branchId: string, method: string, path: string, status: number, duration: number, profileId?: string) => void) | null = null;
   /** Optional worktree service for remote branch lookups */
@@ -117,6 +125,10 @@ export class ProxyService {
 
   setOnReviveCooled(fn: (branchSlug: string) => Promise<void>): void {
     this.onReviveCooled = fn;
+  }
+
+  setOnRecoverInterrupted(fn: (branchSlug: string) => Promise<void>): void {
+    this.onRecoverInterrupted = fn;
   }
 
   setOnAccess(fn: (branchId: string, method: string, path: string, status: number, duration: number, profileId?: string) => void): void {
@@ -600,6 +612,18 @@ export class ProxyService {
         && this.shouldAutoWakeCooled(branch)
       ) {
         this.triggerCooledWake(branch.id);
+      }
+      // #1 重启中断分支按需自愈：被 CDS self-update/崩溃重启打断的 error 分支（含「重启中断」
+      // 标记），同样在预览 host + 真实浏览器导航时触发一次完整重部署（去重）。恢复回调同步把
+      // status 翻到 loading 再 save，紧接着的 serveBranchStatusResponse 等待页即显示「正在恢复」。
+      if (
+        isGetNavigation
+        && isPreviewHost
+        && this.hasBrowserNavSignal(req)
+        && this.isHtmlNavigationRequest(req)
+        && this.shouldRecoverInterrupted(branch)
+      ) {
+        this.triggerInterruptedRecovery(branch.id);
       }
       this.serveBranchStatusResponse(req, res, branchSlug, branch);
       return;
@@ -1108,6 +1132,46 @@ export class ProxyService {
    * already running) the callback rejects without flipping status, and the
    * branch's diagnostic page shows as before — that other operation owns it.
    */
+  /**
+   * #1 该分支是否「被 CDS 重启中断」可按需自愈？只认这个**已知瞬态、重跑安全**的原因
+   * （CDS self-update / 崩溃重启打断了在途部署），不碰真正的构建失败 / 崩溃 / 用户停止。
+   * 远端执行器分支不在本机重部署范围（executorId 真值 = 远端）。
+   */
+  private shouldRecoverInterrupted(branch: BranchEntry): boolean {
+    if (!this.onRecoverInterrupted) return false;
+    if (branch.status !== 'error') return false;
+    if (branch.executorId) return false;
+    if (Object.keys(branch.services || {}).length === 0) return false;
+    const marker = '重启中断';
+    if (typeof branch.errorMessage === 'string' && branch.errorMessage.includes(marker)) return true;
+    for (const svc of Object.values(branch.services || {})) {
+      if (typeof svc?.errorMessage === 'string' && svc.errorMessage.includes(marker)) return true;
+    }
+    return false;
+  }
+
+  /** 触发一次中断恢复重部署，按 slug 去重（并发导航不重复打）。 */
+  private triggerInterruptedRecovery(slug: string): void {
+    if (!this.onRecoverInterrupted || this.recoveringSlugs.has(slug)) return;
+    this.recoveringSlugs.add(slug);
+    let pending: Promise<void>;
+    try {
+      pending = this.onRecoverInterrupted(slug);
+    } catch (err) {
+      this.recoveringSlugs.delete(slug);
+      console.error(`[proxy] interrupted-recovery threw for "${slug}": ${(err as Error).message}`);
+      return;
+    }
+    pending
+      .catch((err) => {
+        console.error(`[proxy] interrupted-recovery failed for "${slug}": ${(err as Error).message}`);
+      })
+      .finally(() => {
+        // 留一小段去重窗口，避免重部署刚把 status 翻 building 前的并发导航重复打。
+        setTimeout(() => this.recoveringSlugs.delete(slug), 5000);
+      });
+  }
+
   private triggerCooledWake(slug: string): void {
     if (!this.onReviveCooled || this.revivingSlugs.has(slug)) return;
     this.revivingSlugs.add(slug);
@@ -2269,7 +2333,33 @@ ${shouldAutoRefresh ? `;(function(){
             bodyPreview: body.slice(0, 8 * 1024),
             bodyBytes: Buffer.byteLength(body, 'utf8'),
           };
-          const widget = buildWidgetScript(branchCtx.branchId, branchCtx.branchName);
+          // 版本信息（sha + 极速/源码）并入既有 CDS widget（左下角那个），不再单开角标——
+          // 一处足矣（用户 2026-06-24 反馈「两个为何不合并」）。sha 取 githubCommitSha，
+          // 模式取该 profile 容器实际钉的 deployedMode（回退到源码时如实显示「源码」）。
+          const entry = this.stateService.getState().branches[branchCtx.branchId];
+          const svcMode = branchCtx.profileId
+            ? entry?.services?.[branchCtx.profileId]?.deployedMode
+            : undefined;
+          const anyMode = svcMode
+            ?? Object.values(entry?.services ?? {}).find((s) => s?.deployedMode)?.deployedMode;
+          // 部署类型只分两类给用户看：极速（CI 预构建镜像）/ 发布（源码编译产出的发布版）。
+          const modeLabel = anyMode
+            ? (/express|prebuilt/i.test(anyMode) ? '极速' : '发布')
+            : '';
+          // 徽章 sha 跟随实际部署模式（Codex/Bugbot）：
+          //  - 极速（CI 预构建镜像）：用 ciTargetSha —— 镜像 tag 按它解析，docs-only push 只动
+          //    githubCommitSha、不动 ciTargetSha，显 ciTargetSha 才是容器实际跑的镜像 commit。
+          //  - 发布（源码编译，含极速版缺镜像自动回退）：容器是从 worktree 编译的，跑的就是
+          //    githubCommitSha，**不能**显 ciTargetSha（那是个根本没在跑的镜像 commit）。
+          const badgeSha = (modeLabel === '极速'
+            ? (entry?.ciTargetSha || entry?.githubCommitSha)
+            : (entry?.githubCommitSha || entry?.ciTargetSha)) || '';
+          const widget = buildWidgetScript(
+            branchCtx.branchId,
+            branchCtx.branchName,
+            badgeSha,
+            modeLabel,
+          );
 
           // Inject before </body> if present, otherwise append
           const idx = body.lastIndexOf('</body>');
