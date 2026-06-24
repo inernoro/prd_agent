@@ -10,7 +10,10 @@
 //
 // 可视化（Three.js / R3F 星系）只消费本函数的输出，换皮不动这里。
 
-import { classifyCanonicalAppname, CANONICAL_CATEGORY } from './canonicalCategories';
+import { resolveCanonicalAppname, CANONICAL_CATEGORY } from './canonicalCategories';
+
+/** appname 解析结果（category 用字符串，兼容注入的自定义分类器）。 */
+type AppnameResolution = { category: string; appname: string; sub?: string };
 
 export const DOC_TYPES = ['spec', 'design', 'plan', 'rule', 'guide', 'report', 'debt'] as const;
 export type DocType = (typeof DOC_TYPES)[number];
@@ -156,7 +159,7 @@ interface DerivedPath {
 function derivePath(
   entry: GalaxyInputEntry,
   byId: Map<string, GalaxyInputEntry>,
-  classify: (appname: string) => string,
+  resolve: (appname: string) => AppnameResolution,
 ): DerivedPath {
   const name = nameForHierarchy(entry);
   const bare = stripExt(name);
@@ -169,9 +172,10 @@ function derivePath(
   // 1. 点分命名
   const dotted = parseDotted(name);
   if (dotted) {
-    const category = classify(dotted.appname);
-    const orphan = category === UNCLASSIFIED_GROUP;
-    return { groups: [category, dotted.appname, ...dotted.subs], docType: dotted.type, orphan };
+    const r = resolve(dotted.appname);
+    const orphan = r.category === UNCLASSIFIED_GROUP;
+    const groups = [r.category, r.appname, ...(r.sub ? [r.sub] : []), ...dotted.subs];
+    return { groups, docType: dotted.type, orphan };
   }
 
   // 2. 文件夹 / parentId 层级
@@ -192,7 +196,10 @@ export function buildDocGalaxy(
   links: GalaxyInputLink[] = [],
   options: BuildDocGalaxyOptions = {},
 ): DocGalaxy {
-  const classify = options.classifyAppname ?? classifyCanonicalAppname;
+  // 默认走 canonical 解析（含旧扁平名前缀去扁平化）；注入 classifyAppname 则只用其分类、不去扁平。
+  const resolve: (a: string) => AppnameResolution = options.classifyAppname
+    ? (a) => ({ category: options.classifyAppname!(a), appname: a })
+    : resolveCanonicalAppname;
   const byId = new Map(entries.map((e) => [e.id, e]));
 
   const root: GalaxyNode = {
@@ -213,7 +220,7 @@ export function buildDocGalaxy(
   const docs = entries.filter((e) => !e.isFolder);
 
   for (const entry of docs) {
-    const { groups, docType, orphan } = derivePath(entry, byId, classify);
+    const { groups, docType, orphan } = derivePath(entry, byId, resolve);
 
     // 逐级确保中间分组节点存在
     let parent = root;

@@ -25,7 +25,6 @@ import {
   type GalaxyInputEntry,
   type GalaxyInputLink,
 } from '@/lib/docGalaxy/buildDocGalaxy';
-import { classifyCanonicalAppname } from '@/lib/docGalaxy/canonicalCategories';
 
 // ── docType → 颜色注册表（不用 switch；7 种 type + 兜底） ──
 const TYPE_COLOR: Record<string, string> = {
@@ -432,8 +431,8 @@ export function DocumentGalaxyView({ storeId, storeName }: DocumentGalaxyViewPro
               isAutoDetected: edge.isAutoDetected,
             }))
           : [];
+        // 默认 canonical resolver：含旧扁平名前缀去扁平化（cds-xxx → cds > xxx），减少悬空
         const built = buildDocGalaxy(entries, links, {
-          classifyAppname: classifyCanonicalAppname,
           rootName: storeNameRef.current,
         });
         setGalaxy(built);

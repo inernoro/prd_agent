@@ -50,7 +50,36 @@ const CATEGORY_BY_APPNAME: Record<string, CanonicalCategory> = Object.fromEntrie
  * 供 buildDocGalaxy 作为可注入的 classifyAppname 使用（仅在点分命名库启用）。
  */
 export function classifyCanonicalAppname(appname: string): CanonicalCategory {
-  return CATEGORY_BY_APPNAME[appname] ?? CANONICAL_CATEGORY.UNCLASSIFIED;
+  return resolveCanonicalAppname(appname).category;
+}
+
+export interface ResolvedAppname {
+  category: CanonicalCategory;
+  /** 命中的 canonical appname（精确或前缀匹配到的），未命中则原样返回。 */
+  appname: string;
+  /** 旧扁平名前缀匹配后剩余的部分，作为子模块下钻。 */
+  sub?: string;
+}
+
+/**
+ * 解析 appname → 分类 + 规范 appname + 剩余子模块。
+ * 比 classifyCanonicalAppname 多做「最长 canonical 前缀匹配」，容忍旧扁平命名：
+ *   cds-project-migration → { 平台基础设施, cds, project-migration }
+ *   team-activity-voc     → { 应用 Agent, team-activity, voc }
+ * 精确命中优先（defect-agent 整段命中，不会被拆成 defect + agent）。
+ */
+export function resolveCanonicalAppname(appname: string): ResolvedAppname {
+  const exact = CATEGORY_BY_APPNAME[appname];
+  if (exact) return { category: exact, appname };
+
+  let best = '';
+  for (const c of Object.keys(CATEGORY_BY_APPNAME)) {
+    if (appname.startsWith(c + '-') && c.length > best.length) best = c;
+  }
+  if (best) {
+    return { category: CATEGORY_BY_APPNAME[best], appname: best, sub: appname.slice(best.length + 1) };
+  }
+  return { category: CANONICAL_CATEGORY.UNCLASSIFIED, appname };
 }
 
 /** 该 appname 是否在 canonical 清单内（可从根索引到，非悬空）。 */
