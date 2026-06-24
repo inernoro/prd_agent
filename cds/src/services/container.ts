@@ -372,6 +372,10 @@ export function resolveEffectiveProfile(
         env: branchOverride?.env ? { ...(profile.env || {}), ...branchOverride.env } : profile.env,
         activeDeployMode: srcMode,
         prebuiltImage: false,
+        // Bugbot Medium「Hot reload taints source fallback」：回退要的是「宁慢必成」的编译-运行，
+        // 不是 dev watcher。baseline 若开了 hotReload，resolveProfileWithMode 会把源码构建命令换成
+        // watcher → 回退跑成热加载而非发布版。关掉 hotReload，强制走 static/source 的编译命令。
+        hotReload: undefined,
       };
       const srcResolved = resolveProfileWithMode(srcBase);
       const srcImg = resolveImageTemplate(srcResolved.dockerImage, branch);

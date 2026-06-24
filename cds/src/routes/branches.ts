@@ -2743,7 +2743,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (!proxyHasError) {
         for (const rp of profiles) {
           const svc = entry.services[rp.id];
-          if (svc) svc.deployedMode = rp.activeDeployMode || '';
+          // 2026-06-24（Bugbot/Codex P2）：内嵌执行器与 master 共享同一 entry.services 对象，
+          // runService 已在那上面权威钉过实际模式（含极速版→源码自动回退后的 static）。优先采纳
+          // 它，仅未设时退回派发用的 rp.activeDeployMode（极速版会是 express，回退后不准）。
+          // 注：远端执行器进程独立，svc 非同一对象，回退态需靠其心跳/状态回传对齐（后续）。
+          if (svc) svc.deployedMode = svc.deployedMode || rp.activeDeployMode || '';
         }
         // 2026-05-14 Codex review P2 "Refresh the lifecycle clock after
         // remote redeploys"：本地部署成功会 stamp lastDeployAt（branches.ts
@@ -11164,7 +11168,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
           svc.status = 'running';
           svc.errorMessage = undefined;
           // 2026-05-14 真实态徽章：单服务 redeploy 同样钉住实际 deploy mode。
-          svc.deployedMode = effectiveProfile.activeDeployMode || '';
+          // 2026-06-24（Bugbot/Codex P2）：runService 已权威钉过 svc.deployedMode（含极速版→
+          // 源码自动回退后的真实模式），优先采纳它；仅其未设时退回 effectiveProfile（极速版会是
+          // express，回退场景下不准，会让 widget/收敛逻辑误以为仍在用 CI 镜像）。
+          svc.deployedMode = svc.deployedMode || effectiveProfile.activeDeployMode || '';
           logDeploy(id, `${profile.name} 启动成功 ✓`);
         } else {
           svc.status = 'error';
