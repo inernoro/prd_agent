@@ -429,6 +429,8 @@ export class GitHubWebhookDispatcher {
         ciTargetSha: commitSha,
         ciWorkflowConclusion: cached.conclusion,
         ciWorkflowRunUrl: cached.htmlUrl,
+        ciWaitingSince: undefined,
+        ciImageError: undefined,
       });
       this.deps.stateService.save();
       this.emitCiStatus(branchId, projectId, 'ready', commitSha, cached.htmlUrl);
@@ -440,11 +442,15 @@ export class GitHubWebhookDispatcher {
       };
     }
     // 失败 / cancelled / timed_out — 置 failed,不自动回退（与 workflow_run 路径一致）。
+    // 必须同样写 ciImageError + 清 ciWaitingSince：此路径让分支脱离 waiting，看门狗不再兜底，
+    // 若不写归因，已打开的看板翻 failed 却显示空/旧错误文案（Codex P2）。
     this.deps.stateService.updateBranchGithubMeta(branchId, {
       ciImageStatus: 'failed',
       ciTargetSha: commitSha,
       ciWorkflowConclusion: cached.conclusion,
       ciWorkflowRunUrl: cached.htmlUrl,
+      ciWaitingSince: undefined,
+      ciImageError: `CI 构建未成功（${cached.conclusion}）。可在分支详情切回源码编译重试。`,
     });
     this.deps.stateService.save();
     this.emitCiStatus(branchId, projectId, 'failed', commitSha, cached.htmlUrl);
@@ -977,19 +983,22 @@ export class GitHubWebhookDispatcher {
       // 否则 prClose=false 时不写 merged 墓碑，而随后 GitHub 删分支的 delete 事件仍写
       // abandoned，导致「合并的分支被错显为已放弃」（recordRemovedBranch 的 merged 粘性
       // 也救不了——因为压根没写过 merged）。entry 存在才有 branch 名可落库。
-      const tombstoneRequest = entry
-        ? {
-            branchId,
-            branch: entry.branch || branchName,
-            projectId: project.id,
-            reason: (merged ? 'merged' : 'abandoned') as 'merged' | 'abandoned',
-            prNumber: event.pull_request.number,
-            prUrl: event.pull_request.html_url,
-            mergeCommitSha: merged ? event.pull_request.merge_commit_sha : undefined,
-            baseRef: event.pull_request.base?.ref,
-            aliases: entry.subdomainAliases,
-          }
-        : undefined;
+      // **不以 entry 存在为前提构建墓碑**：若 delete webhook 先到、CDS 清理已删掉 entry，
+      // 再处理 pull_request.closed 时 entry 为 null。此时 delete 路径已写了 abandoned 墓碑，
+      // 若这里因 entry 缺失而不写 merged 墓碑，合并的 PR 会被错显为已放弃（Codex P2）。
+      // 分支名用 head.ref（branchName，恒有值），branchId 用已算好的 canonicalId 兜底；
+      // merged 粘性 + 元数据承袭会把已有 abandoned 升级为 merged 并保留别名等字段。
+      const tombstoneRequest = {
+        branchId,
+        branch: entry?.branch || branchName,
+        projectId: project.id,
+        reason: (merged ? 'merged' : 'abandoned') as 'merged' | 'abandoned',
+        prNumber: event.pull_request.number,
+        prUrl: event.pull_request.html_url,
+        mergeCommitSha: merged ? event.pull_request.merge_commit_sha : undefined,
+        baseRef: event.pull_request.base?.ref,
+        aliases: entry?.subdomainAliases,
+      };
 
       // PR_D.2: project.githubEventPolicy.prClose=false → 不自动停容器（但墓碑照记）
       if (!this.isEventEnabled(project, 'prClose')) {
@@ -1000,7 +1009,13 @@ export class GitHubWebhookDispatcher {
         };
       }
       if (!entry) {
-        return { action: 'ignored-event', message: `PR closed but branch '${branchId}' not in CDS` };
+        // entry 已被先到的 delete 清理：没容器可停，但墓碑照记（merged 粘性会把
+        // delete 写的 abandoned 升级为 merged），否则合并 PR 会被错显为已放弃（Codex P2）。
+        return {
+          action: 'ignored-event',
+          message: `PR closed but branch '${branchId}' not in CDS（仅记墓碑）`,
+          tombstoneRequest,
+        };
       }
       return {
         action: 'pr-branch-stopped',

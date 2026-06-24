@@ -674,6 +674,33 @@ describe('GitHubWebhookDispatcher', () => {
       expect(result.tombstoneRequest).toMatchObject({ reason: 'merged', prNumber: 99, baseRef: 'main' });
     });
 
+    // Codex P2: delete webhook 先到清掉 entry，再处理 closed(merged) 时 entry 已不存在。
+    // 仍须发 merged 墓碑（基于 head.ref），否则合并 PR 被 delete 写的 abandoned 错显为已放弃。
+    it('still emits merged tombstone on closed when branch entry already removed', async () => {
+      stateService.removeBranch('proj-feature');
+      const d = buildDispatcher();
+      const result = await d.handle('pull_request', {
+        action: 'closed',
+        number: 99,
+        pull_request: {
+          number: 99,
+          state: 'closed',
+          merged: true,
+          head: { ref: 'feature', sha: 'abc' },
+          base: { ref: 'main' },
+          html_url: 'https://github.com/octocat/repo/pull/99',
+          title: 'Great feature',
+        },
+        repository: { full_name: 'octocat/repo' },
+      });
+      expect(result.action).toBe('ignored-event'); // 无 entry 可停
+      expect(result.tombstoneRequest).toMatchObject({
+        branch: 'feature',
+        reason: 'merged',
+        prNumber: 99,
+      });
+    });
+
     it('ignores synchronize (handled by companion push)', async () => {
       const d = buildDispatcher();
       const result = await d.handle('pull_request', {
