@@ -3387,6 +3387,75 @@ function startPerfHealthMonitor(): ReturnType<typeof setInterval> {
 }
 startPerfHealthMonitor();
 
+// 极速版「等待 CI 镜像」看门狗（2026-06-24，可观测性补洞）。
+//
+// 背景：极速版分支 push 后置 ciImageStatus='waiting'，等 GitHub Actions 的
+// branch-image.yml 回投 workflow_run.completed 才部署。但若该分支 tree 里没有
+// branch-image.yml（从旧 main 切出）、CI 被禁用、或投递丢失，这个 completion
+// 永远不来 —— 分支无限期卡在 waiting / idle / lastDeployAt=null，**且无任何记录**，
+// 前端旧逻辑还把它误渲染成「容器停止 · 无记录 · 时间未知」（用户 2026-06-24 反馈
+// 「莫名其妙停止 / 可观测性有问题」的真因）。
+//
+// 看门狗：waiting 超过阈值（默认 15 分钟，无匹配 workflow_run）即翻 'failed' +
+// 写人类可读 ciImageError 归因 + server-event + branch.updated 事件，让分支卡显示
+// 「CI 镜像未就绪（原因）」而非假的「停止」。翻 failed 不阻断恢复：真 CI 完成事件
+// 晚到时 handleWorkflowRun 的 waiting||failed matcher 仍可 failed → ready。
+const CI_WAIT_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.CDS_CI_WAIT_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 15 * 60 * 1000;
+})();
+function startCiWaitWatchdog(): ReturnType<typeof setInterval> {
+  const check = (): void => {
+    try {
+      const state = stateService.getState();
+      const now = Date.now();
+      for (const b of Object.values(state.branches || {})) {
+        if (b.ciImageStatus !== 'waiting') continue;
+        const sinceIso = b.ciWaitingSince || b.lastPushAt;
+        const sinceMs = sinceIso ? Date.parse(sinceIso) : Number.NaN;
+        if (!Number.isFinite(sinceMs)) continue;
+        const waitedMs = now - sinceMs;
+        if (waitedMs < CI_WAIT_TIMEOUT_MS) continue;
+        const waitedMin = Math.round(waitedMs / 60000);
+        const shortSha = (b.ciTargetSha || b.githubCommitSha || '').slice(0, 7);
+        const reason = `CI 预构建镜像${shortSha ? ` ${shortSha}` : ''}等待超时（${waitedMin} 分钟无匹配构建完成）。常见原因：该分支缺少 .github/workflows/branch-image.yml（从旧 main 切出）、CI 未运行或事件丢失。可在分支详情切回源码编译重试。`;
+        stateService.updateBranchGithubMeta(b.id, {
+          ciImageStatus: 'failed',
+          ciWorkflowConclusion: 'timed_out_no_run',
+          ciWaitingSince: undefined,
+          ciImageError: reason,
+        });
+        stateService.save();
+        activeServerEventLogStore?.record({
+          category: 'container',
+          severity: 'warn',
+          source: 'ci-wait-watchdog',
+          action: 'app.ci-image.wait-timeout',
+          message: reason,
+          projectId: b.projectId,
+          branchId: b.id,
+          details: { ciTargetSha: b.ciTargetSha || null, waitedMin, timeoutMs: CI_WAIT_TIMEOUT_MS },
+        });
+        branchEvents.emitEvent({
+          type: 'branch.updated',
+          payload: {
+            branchId: b.id,
+            projectId: b.projectId,
+            patch: { ciImageStatus: 'failed', ciWorkflowConclusion: 'timed_out_no_run', ciImageError: reason },
+            ts: nowIso(),
+          },
+        });
+        console.warn(`[ci-wait-watchdog] ${b.id}: ${reason}`);
+      }
+    } catch { /* 自检不致命 */ }
+  };
+  const timer = setInterval(check, 60 * 1000);
+  timer.unref?.();
+  check();
+  return timer;
+}
+startCiWaitWatchdog();
+
 // Current dispatcher strategy — mutable so the Dashboard's strategy radio
 // can change it at runtime. Read fresh on every deploy by both the branch
 // router and the cluster router. Default: 'least-load' (memory+CPU weighted).

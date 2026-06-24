@@ -869,6 +869,10 @@ export class GitHubWebhookDispatcher {
           ciTargetSha: headSha,
           ciWorkflowConclusion: conclusion,
           ciWorkflowRunUrl: run.html_url,
+          // 真 CI 完成事件到达 → 清掉看门狗计时与超时文案（若此前已被判超时 failed,
+          // 这里允许 failed → ready 恢复,见下方 matcher 的 waiting||failed 条件）。
+          ciWaitingSince: undefined,
+          ciImageError: undefined,
         });
         this.deps.stateService.save();
         this.emitCiStatus(branchId, target.projectId, 'ready', headSha, run.html_url);
@@ -888,6 +892,10 @@ export class GitHubWebhookDispatcher {
         ciTargetSha: headSha, // 同上:保持 ciTargetSha 与本次 run 的 head_sha 一致
         ciWorkflowConclusion: conclusion,
         ciWorkflowRunUrl: run.html_url,
+        // 真 CI 失败有了归因（conclusion + run 链接），停掉看门狗计时并写明原因,
+        // 区别于「超时无 run」的看门狗失败。
+        ciWaitingSince: undefined,
+        ciImageError: `CI 构建未成功（${conclusion}）。可在分支详情切回源码编译重试。`,
       });
       this.deps.stateService.save();
       this.emitCiStatus(branchId, target.projectId, 'failed', headSha, run.html_url);
@@ -1319,6 +1327,10 @@ export class GitHubWebhookDispatcher {
         // 同时清掉上一次 run 的链接,否则「等待 CI 镜像」卡片的「查看构建」会指向
         // 旧的(可能失败/无关)Actions run（Bugbot: stale CI run link on wait）。
         ciWorkflowRunUrl: undefined,
+        // 看门狗据此判定 waiting 是否超时（CI 完成事件永不到达时翻 failed + 留归因）；
+        // 同时清掉上次的超时/失败文案,本次重新计时。
+        ciWaitingSince: receivedAt,
+        ciImageError: undefined,
       });
       this.deps.stateService.save();
       const waitEntry = this.deps.stateService.getBranch(branchId);

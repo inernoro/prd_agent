@@ -155,6 +155,8 @@ interface BranchSummary {
   ciTargetSha?: string;
   ciWorkflowConclusion?: string;
   ciWorkflowRunUrl?: string;
+  ciWaitingSince?: string;
+  ciImageError?: string;
   deployRuntime?: {
     kind: 'source' | 'release' | 'mixed';
     label: string;
@@ -4557,7 +4559,26 @@ function BranchCard({
                   : branch.lastStopSource === 'crash' ? '崩溃'
                     : branch.lastStopSource === 'system' ? '系统'
                       : '无记录';
-  const shouldShowStopReason = !isRunning && !isInterim;
+  // 2026-06-24 可观测性补洞：把「等 CI 镜像」「CI 镜像未就绪」「从未部署」从泛化的
+  // 「容器停止 · 无记录」里拆出来，别再把 idle 一律误标成「停止」。
+  // - isCiWaiting：极速版还在等 GitHub Actions 把镜像构建好（不是停止，是没启动）。
+  // - isCiFailed：CI 镜像构建失败 / 看门狗超时（有人类可读 ciImageError 归因）。
+  // - hasStopSignal：与后端 isStoppedBranch 同口径——真有停止信号（某 service stopped，
+  //   或 lastStop* 任一有值）才算「停止」。
+  // - isNeverDeployed：从没部署过（无 lastDeployAt、services 为空、无停止信号）→「待部署」。
+  const isCiWaiting = !isRunning && !isInterim && branch.ciImageStatus === 'waiting';
+  const isCiFailed = !isRunning && !isInterim && !isError && branch.ciImageStatus === 'failed';
+  const branchServices = Object.values(branch.services || {});
+  const hasStopSignal = !!branch.lastStoppedAt || !!branch.lastStopReason || !!branch.lastStopSource
+    || branchServices.some((svc) => svc.status === 'stopped');
+  const isNeverDeployed = !isRunning && !isInterim && !isError && !isCiWaiting && !isCiFailed
+    && !hasStopSignal && !branch.lastDeployAt && branchServices.length === 0;
+  // 真正展示「停止记录」面板：非运行/中间态，且排除上面那几种「其实没停止」的情况。
+  const shouldShowStopReason = !isRunning && !isInterim && !isCiWaiting && !isCiFailed && !isNeverDeployed;
+  const ciWaitSinceText = branch.ciWaitingSince
+    ? formatRelativeTime(branch.ciWaitingSince)
+    : (branch.lastPushAt ? formatRelativeTime(branch.lastPushAt) : '');
+  const ciImageErrorText = branch.ciImageError || 'CI 预构建镜像未就绪';
   const stopReasonText = branch.lastStopReason || '无停止记录';
   const stopTimeText = branch.lastStoppedAt ? formatRelativeTime(branch.lastStoppedAt) : '时间未知';
   useEffect(() => {
@@ -4890,8 +4911,50 @@ function BranchCard({
       <div className="flex max-w-full flex-wrap items-center gap-2 px-5 pt-3" style={{ minHeight: '1.75rem' }}>
         {/* 2026-06-22 用户主诉求：停止/降温/出错（!running && !interim）时，隐藏"服务端口那一横"，
             在同一槽位单行显示「容器停止/出错」统一标识 + 信息提醒（停止来源/调度器降温原因/错误），
-            让每张卡片这一行恒为单行 → 等高。运行/中间态才显示端口 chip。 */}
-        {shouldShowStopReason ? (
+            让每张卡片这一行恒为单行 → 等高。运行/中间态才显示端口 chip。
+            2026-06-24：在「停止」面板之前先拦截「等 CI 镜像 / CI 未就绪 / 待部署」三种
+            其实没停止的 idle 态，别再把它们误标成「容器停止 · 无记录 · 时间未知」。 */}
+        {isCiWaiting ? (
+          <div
+            className="flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-2.5 text-xs text-muted-foreground"
+            title={`等待 GitHub Actions 预构建镜像${branch.ciTargetSha ? ` (${branch.ciTargetSha.slice(0, 7)})` : ''}${ciWaitSinceText ? `\n自 ${ciWaitSinceText}` : ''}`}
+          >
+            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+            <span className="shrink-0 font-medium text-foreground/80">等待 CI 镜像</span>
+            <span className="min-w-0 flex-1 truncate text-muted-foreground/85">预构建中,就绪后自动部署</span>
+            {ciWaitSinceText ? <span className="shrink-0 whitespace-nowrap text-muted-foreground/65">{ciWaitSinceText}</span> : null}
+          </div>
+        ) : isCiFailed ? (
+          <div
+            className={`flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md border px-2.5 text-xs ${issueClass}`}
+            title={ciImageErrorText}
+          >
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            <span className="shrink-0 font-medium">CI 镜像未就绪</span>
+            <span className="min-w-0 flex-1 truncate">{ciImageErrorText}</span>
+            {branch.ciWorkflowRunUrl ? (
+              <a
+                href={branch.ciWorkflowRunUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="shrink-0 inline-flex items-center gap-1 underline"
+                onClick={(e) => e.stopPropagation()}
+              >
+                查看构建
+                <ExternalLink className="h-3 w-3" aria-hidden />
+              </a>
+            ) : null}
+          </div>
+        ) : isNeverDeployed ? (
+          <div
+            className="flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-2.5 text-xs text-muted-foreground"
+            title="该分支尚未部署预览（push 后会自动构建，或在分支详情手动部署）"
+          >
+            <Rocket className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            <span className="shrink-0 font-medium text-foreground/80">待部署</span>
+            <span className="min-w-0 flex-1 truncate text-muted-foreground/85">尚未构建预览,推送或手动部署后启动</span>
+          </div>
+        ) : shouldShowStopReason ? (
           <div
             className={`flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md border px-2.5 text-xs ${isError ? issueClass : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 text-muted-foreground'}`}
             title={isError

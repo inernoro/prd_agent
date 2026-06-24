@@ -590,4 +590,36 @@ describe('StateService', () => {
       expect(service.getRemovedBranch('slug-204')).toBeDefined();
     });
   });
+
+  describe('CI 镜像可观测性字段（极速版 waiting 看门狗）', () => {
+    it('updateBranchGithubMeta 能写入并清空 ciWaitingSince / ciImageError', () => {
+      service.load();
+      service.addBranch({
+        id: 'ci-express', branch: 'feat/ci-express',
+        worktreePath: '/tmp/wt/ci-express', services: {},
+        status: 'idle', createdAt: '2026-06-24T08:00:00.000Z',
+      });
+      // 进入「等待 CI 镜像」：钉计时起点。
+      service.updateBranchGithubMeta('ci-express', {
+        ciImageStatus: 'waiting',
+        ciWaitingSince: '2026-06-24T08:02:00.000Z',
+        ciImageError: undefined,
+      });
+      let b = service.getBranch('ci-express');
+      expect(b?.ciImageStatus).toBe('waiting');
+      expect(b?.ciWaitingSince).toBe('2026-06-24T08:02:00.000Z');
+
+      // 看门狗超时：翻 failed + 写归因 + 停掉计时。
+      service.updateBranchGithubMeta('ci-express', {
+        ciImageStatus: 'failed',
+        ciWorkflowConclusion: 'timed_out_no_run',
+        ciWaitingSince: undefined,
+        ciImageError: 'CI 预构建镜像 abcdef0 等待超时（15 分钟无匹配构建完成）。',
+      });
+      b = service.getBranch('ci-express');
+      expect(b?.ciImageStatus).toBe('failed');
+      expect(b?.ciWaitingSince).toBeUndefined();
+      expect(b?.ciImageError).toContain('等待超时');
+    });
+  });
 });

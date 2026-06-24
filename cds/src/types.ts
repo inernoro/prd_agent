@@ -632,6 +632,17 @@ export interface BranchEntry {
   /** 关联的 GitHub Actions run 页面 URL,前端「等待中 / 失败」态可一键跳转查看。 */
   ciWorkflowRunUrl?: string;
   /**
+   * 进入极速版「等待 CI 镜像」态的时刻（ISO）。看门狗据此判定 waiting 是否超时
+   * （等不到 workflow_run.completed —— 分支缺 branch-image.yml / CI 未运行 / 投递丢失）。
+   * 缺省时看门狗退回 lastPushAt 计时。
+   */
+  ciWaitingSince?: string;
+  /**
+   * 极速版镜像未就绪的人类可读原因（看门狗超时或 CI 失败时写）。前端「CI 镜像未就绪」
+   * 卡片展示此文案,替代过去把它误渲染成「容器停止 · 无记录」。
+   */
+  ciImageError?: string;
+  /**
    * PR number this branch is associated with (via webhook `pull_request`
    * event). Populated when CDS first sees a PR opened/reopened from this
    * branch. Used so subsequent deploys can refresh the bot comment

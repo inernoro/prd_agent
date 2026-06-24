@@ -1499,6 +1499,8 @@ export class StateService {
       ciTargetSha?: string;
       ciWorkflowConclusion?: string;
       ciWorkflowRunUrl?: string;
+      ciWaitingSince?: string;
+      ciImageError?: string;
     },
   ): void {
     const branch = this.state.branches[id];
@@ -1520,6 +1522,8 @@ export class StateService {
     if ('ciTargetSha' in updates) branch.ciTargetSha = updates.ciTargetSha;
     if ('ciWorkflowConclusion' in updates) branch.ciWorkflowConclusion = updates.ciWorkflowConclusion;
     if ('ciWorkflowRunUrl' in updates) branch.ciWorkflowRunUrl = updates.ciWorkflowRunUrl;
+    if ('ciWaitingSince' in updates) branch.ciWaitingSince = updates.ciWaitingSince;
+    if ('ciImageError' in updates) branch.ciImageError = updates.ciImageError;
   }
 
   // ── Remote hosts (shared-service deployment targets, 2026-05-06) ──
