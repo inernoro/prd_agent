@@ -167,6 +167,14 @@ export interface BuildProfile {
    */
   fallbackImage?: string | string[];
   /**
+   * 2026-06-24 极速版自动回退源码编译新增 —— **运行期字段,不持久化**。
+   * 由 resolveEffectiveProfile 在解析出 prebuilt(极速版) profile 时,**从 baseline**
+   * 额外解析出一个源码编译 profile 挂在这里(dockerImage=源码基础镜像如 dotnet-sdk/node,
+   * command=源码构建命令,prebuiltImage=false)。runService 在极速版镜像全部拉不到时,
+   * 直接切到这个已正确解析的源码 profile,避免「从极速版 profile 原地切换」误继承 sha
+   * 镜像/8080 端口(那是 bug)。无源码模式可回退时为 undefined。 */
+  sourceFallbackProfile?: BuildProfile;
+  /**
    * 2026-05-01 Phase 5 新增 —— 多分支数据库隔离策略。
    *
    * 'shared'(默认):所有分支共用一个数据库实例 + 一个 database name。
@@ -1250,6 +1258,12 @@ export interface CdsState {
    */
   daemonReadyAt?: string;
   /**
+   * 2026-06-24：系统级「发布(部署)阶段就绪探测下限秒数」默认值（默认 1200）。
+   * 项目可用 Project.deployReadinessFloorSeconds 覆盖。仅作用于部署首启的就绪等待
+   * （取 max(profile.timeoutSeconds, 此下限)），运行期重启/唤醒保持各 profile 短超时。
+   */
+  deployReadinessFloorSeconds?: number;
+  /**
    * GitHub webhook 投递日志(2026-05-07 用户反馈"需要看到每次 hook 详情")。
    * Ring buffer,最多 200 条,新插入溢出时丢最早的。系统级 —— 跨项目的全部
    * webhook 都进同一队列(每条带 repoFullName 区分),前端「CDS 系统设置」→
@@ -2258,6 +2272,13 @@ export interface Project {
    * 时间锚点 = lastReadyAt（部署成绿色），而不是 HTTP 流量，避免长连接永远刷新。
    */
   autoPublishAfterMinutes?: number;
+  /**
+   * 2026-06-24：项目级「发布(部署)阶段就绪探测下限秒数」覆盖。覆盖系统默认
+   * （CdsState.deployReadinessFloorSeconds，未设则 1200）。仅作用于**部署首启**的
+   * 就绪等待（取 max(该 profile 的 timeoutSeconds, 此下限)），运行期重启/唤醒不受影响。
+   * 给构建慢 / JVM 暖机慢的项目留足发布探测时间，避免被探活超时误杀。
+   */
+  deployReadinessFloorSeconds?: number;
   /**
    * Deprecated: 旧版项目级 "运行 N 分钟后自动停止" 策略。
    * 自动停止已收敛到 CDS 系统级 SchedulerService，避免项目设置中出现

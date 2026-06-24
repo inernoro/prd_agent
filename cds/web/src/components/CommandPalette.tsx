@@ -13,13 +13,20 @@ import {
 } from 'lucide-react';
 
 import { apiRequest } from '@/lib/api';
+import {
+  PROJECT_SETTINGS_INDEX,
+  PROJECT_TAB_LABELS,
+  SYSTEM_SETTINGS_INDEX,
+  SYSTEM_TAB_LABELS,
+} from '@/lib/settingsSearchIndex';
 
 /*
- * CommandPalette — global Cmd/Ctrl+K palette.
+ * CommandPalette — global Cmd/Ctrl+K palette（苹果聚焦式全局搜索）。
  *
- * Search across projects + tracked branches; pick a row to navigate. This is
- * the "convenience layer" Railway / Linear users expect: any resource is one
- * keystroke + a few characters away.
+ * Search across projects + tracked branches + 字段级设置/配置；pick a row to
+ * navigate. This is the "convenience layer" Railway / Linear users expect: any
+ * resource — 包括藏在某个设置 tab 里的某个配置项 —— is one keystroke + a few
+ * characters away.
  *
  * Open: Cmd/Ctrl + K, or programmatic via the dispatch hook in AppShell.
  * Close: Esc, click backdrop, pick a result.
@@ -27,6 +34,8 @@ import { apiRequest } from '@/lib/api';
  * Data sources:
  *   GET /api/projects         — list of projects
  *   GET /api/branches?project — branches per project (lazy-loaded after open)
+ *   settingsSearchIndex.ts    — 系统级 + 项目级字段配置静态索引（带同义词），
+ *                               让「保活/探活/240/镜像加速」等口语词都能命中
  */
 
 interface ProjectRow {
@@ -52,12 +61,22 @@ interface PaletteData {
 
 interface ResultItem {
   key: string;
-  type: 'project' | 'branch' | 'action';
+  type: 'project' | 'branch' | 'action' | 'setting';
   label: string;
   hint?: string;
   href?: string;
   icon: 'project' | 'branch' | 'settings' | 'topology';
+  /**
+   * 面包屑路径，告诉用户这条结果在哪（如「CDS 系统设置 / 调度器」、
+   * 「prd-agent / 项目设置 / 项目配置」、分支的「prd-agent」）。带路径是为了
+   * 让用户搜一次就记住它的位置。用 ' / ' 分段，与全局 Crumb 一致。
+   */
+  path?: string;
+  /** 额外的同义词集合，参与模糊匹配但不展示（来自 settingsSearchIndex） */
+  keywords?: string[];
 }
+
+const PATH_SEP = ' / ';
 
 function projectDisplay(project: ProjectRow): string {
   return project.aliasName || project.name || project.slug || project.id;
@@ -68,6 +87,7 @@ function projectsToRows(projects: ProjectRow[]): ResultItem[] {
     key: `project:${project.id}`,
     type: 'project' as const,
     label: projectDisplay(project),
+    path: 'CDS',
     hint: project.branchCount != null ? `${project.branchCount} 分支` : '项目',
     href: `/branches/${encodeURIComponent(project.id)}`,
     icon: 'project' as const,
@@ -78,33 +98,99 @@ function branchesToRows(branches: BranchRow[], projectsById: Map<string, Project
   return branches.map((branch) => {
     const project = projectsById.get(branch.projectId);
     const projectLabel = project ? projectDisplay(project) : branch.projectId;
+    const status = `${branch.status || ''}${branch.isFavorite ? ' · 收藏' : ''}`.trim();
     return {
       key: `branch:${branch.id}`,
       type: 'branch' as const,
       label: branch.branch,
-      hint: `${projectLabel} · ${branch.status || ''}${branch.isFavorite ? ' · 收藏' : ''}`.trim(),
+      // 分支结果带上所属项目作路径，用户一眼知道这条分支归哪个项目（也好记）。
+      path: projectLabel,
+      hint: status || undefined,
       href: `/branch-panel/${encodeURIComponent(branch.id)}?project=${encodeURIComponent(branch.projectId)}`,
       icon: 'branch' as const,
     };
   });
 }
 
+// 系统级设置（/cds-settings#tab）→ ResultItem。每个 tab 内的字段级配置都登记
+// 在 settingsSearchIndex 里，keywords 带丰富同义词，让「保活」「探活」「240」这类
+// 用户脑子里的词也能命中 —— 这是「Cmd+K 能搜到所有配置」的关键。
+function systemSettingsToRows(): ResultItem[] {
+  return SYSTEM_SETTINGS_INDEX.map((entry) => ({
+    key: `setting:${entry.id}`,
+    type: 'setting' as const,
+    label: entry.label,
+    path: ['CDS 系统设置', SYSTEM_TAB_LABELS[entry.tab] || entry.tab].join(PATH_SEP),
+    hint: entry.hint,
+    href: `/cds-settings#${entry.tab}`,
+    icon: 'settings' as const,
+    keywords: entry.keywords,
+  }));
+}
+
+// 项目级设置（/settings/<projectId>#tab）→ 对每个已加载项目展开一份，让用户
+// 在面板里直接选「哪个项目的哪个配置」，落到精确深链。
+function projectSettingsToRows(projects: ProjectRow[]): ResultItem[] {
+  const rows: ResultItem[] = [];
+  for (const project of projects) {
+    const projectLabel = projectDisplay(project);
+    for (const entry of PROJECT_SETTINGS_INDEX) {
+      rows.push({
+        key: `setting:${project.id}:${entry.id}`,
+        type: 'setting',
+        label: entry.label,
+        // 项目级配置路径带上项目名：「prd-agent / 项目设置 / 项目配置」
+        path: [projectLabel, '项目设置', PROJECT_TAB_LABELS[entry.tab] || entry.tab].join(PATH_SEP),
+        hint: entry.hint,
+        href: `/settings/${encodeURIComponent(project.id)}#${entry.tab}`,
+        icon: 'settings',
+        // 把项目名也并进 keywords，这样「prd-agent 探活」能一次命中到该项目
+        keywords: [...entry.keywords, projectLabel, project.slug || '', project.name || ''].filter(Boolean),
+      });
+    }
+  }
+  return rows;
+}
+
+// 同义词参与匹配但不展示。给单条 entry 算匹配分。
+// Codex P2「Tokenize combined project setting queries」：多词查询（如「prd-agent 探活」=
+// 项目名 + 字段）原先把整串拿去跟单个 keyword 比，永远命不中。改为按空白分词：每个词都要
+// 在某个 keyword 命中，整条分取各词最佳分的均值；任一词没命中则整条不匹配。单词时与原逻辑等价。
+function keywordScore(keywords: string[] | undefined, trimmed: string): number {
+  if (!keywords) return -1;
+  const tokens = trimmed.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return -1;
+  let total = 0;
+  for (const token of tokens) {
+    let bestForToken = -1;
+    for (const word of keywords) {
+      const idx = word.toLowerCase().indexOf(token);
+      if (idx < 0) continue;
+      const score = word.toLowerCase().startsWith(token) ? 70 - idx : 40 - idx;
+      if (score > bestForToken) bestForToken = score;
+    }
+    if (bestForToken < 0) return -1;
+    total += bestForToken;
+  }
+  return Math.round(total / tokens.length);
+}
+
 // 2026-05-07 wave 3.3:命令面板强化 — STATIC_ACTIONS 从 2 项扩到 12 项,
 // 涵盖 CDS 系统设置各 tab 的快速跳转 + 维护操作。模糊匹配靠 input value 的
 // 子串包含(已有逻辑),用户输入"集群"/"webhook"/"快照"等中文关键词都能命中。
 const STATIC_ACTIONS: ResultItem[] = [
-  { key: 'action:project-list',     type: 'action', label: '所有项目',           hint: '回到项目控制台',                href: '/project-list',                  icon: 'project' },
-  { key: 'action:cds-settings',     type: 'action', label: 'CDS 系统设置',       hint: '存储 / 集群 / GitHub / 维护',    href: '/cds-settings',                  icon: 'settings' },
-  { key: 'action:maintenance',      type: 'action', label: '更新与重启',         hint: 'self-update / 强制更新 / 历史',  href: '/cds-settings#maintenance',      icon: 'settings' },
-  { key: 'action:webhook-log',      type: 'action', label: 'GitHub Webhook 日志', hint: '每次 hook 投递详情 + payload',   href: '/cds-settings#webhook-log',      icon: 'settings' },
-  { key: 'action:cluster',          type: 'action', label: '集群',               hint: '节点列表 / 调度策略 / 加入退出',  href: '/cds-settings#cluster',          icon: 'settings' },
-  { key: 'action:remote-hosts',     type: 'action', label: '远程主机',           hint: 'shared-service 部署目标',        href: '/cds-settings#remote-hosts',     icon: 'settings' },
-  { key: 'action:connections',      type: 'action', label: '对接 MAP',           hint: '配对密钥 / 连接管理',            href: '/cds-settings#connections',      icon: 'settings' },
-  { key: 'action:snapshots',        type: 'action', label: '配置快照',           hint: '备份 / 回滚配置到任意时间点',    href: '/cds-settings#snapshots',        icon: 'settings' },
-  { key: 'action:storage',          type: 'action', label: '存储后端',           hint: 'JSON / Mongo / 切换',            href: '/cds-settings#storage',          icon: 'settings' },
-  { key: 'action:global-vars',      type: 'action', label: 'CDS 全局变量',       hint: '所有项目共享的环境变量',         href: '/cds-settings#global-vars',      icon: 'settings' },
-  { key: 'action:auth',             type: 'action', label: '登录与认证',         hint: 'GitHub OAuth / basic auth',      href: '/cds-settings#auth',             icon: 'settings' },
-  { key: 'action:access-keys',      type: 'action', label: 'AI Access Key',     hint: 'AI 访问密钥签发与撤销',          href: '/cds-settings#access-keys',      icon: 'settings' },
+  { key: 'action:project-list',     type: 'action', label: '所有项目',           path: 'CDS',           hint: '回到项目控制台',                href: '/project-list',                  icon: 'project' },
+  { key: 'action:cds-settings',     type: 'action', label: 'CDS 系统设置',       path: 'CDS',           hint: '存储 / 集群 / GitHub / 维护',    href: '/cds-settings',                  icon: 'settings' },
+  { key: 'action:maintenance',      type: 'action', label: '更新与重启',         path: 'CDS 系统设置',  hint: 'self-update / 强制更新 / 历史',  href: '/cds-settings#maintenance',      icon: 'settings' },
+  { key: 'action:webhook-log',      type: 'action', label: 'GitHub Webhook 日志', path: 'CDS 系统设置',  hint: '每次 hook 投递详情 + payload',   href: '/cds-settings#webhook-log',      icon: 'settings' },
+  { key: 'action:cluster',          type: 'action', label: '集群',               path: 'CDS 系统设置',  hint: '节点列表 / 调度策略 / 加入退出',  href: '/cds-settings#cluster',          icon: 'settings' },
+  { key: 'action:remote-hosts',     type: 'action', label: '远程主机',           path: 'CDS 系统设置',  hint: 'shared-service 部署目标',        href: '/cds-settings#remote-hosts',     icon: 'settings' },
+  { key: 'action:connections',      type: 'action', label: '对接 MAP',           path: 'CDS 系统设置',  hint: '配对密钥 / 连接管理',            href: '/cds-settings#connections',      icon: 'settings' },
+  { key: 'action:snapshots',        type: 'action', label: '配置快照',           path: 'CDS 系统设置',  hint: '备份 / 回滚配置到任意时间点',    href: '/cds-settings#snapshots',        icon: 'settings' },
+  { key: 'action:storage',          type: 'action', label: '存储后端',           path: 'CDS 系统设置',  hint: 'JSON / Mongo / 切换',            href: '/cds-settings#storage',          icon: 'settings' },
+  { key: 'action:global-vars',      type: 'action', label: 'CDS 全局变量',       path: 'CDS 系统设置',  hint: '所有项目共享的环境变量',         href: '/cds-settings#global-vars',      icon: 'settings' },
+  { key: 'action:auth',             type: 'action', label: '登录与认证',         path: 'CDS 系统设置',  hint: 'GitHub OAuth / basic auth',      href: '/cds-settings#auth',             icon: 'settings' },
+  { key: 'action:access-keys',      type: 'action', label: 'AI Access Key',     path: 'CDS 系统设置',  hint: 'AI 访问密钥签发与撤销',          href: '/cds-settings#access-keys',      icon: 'settings' },
 ];
 
 export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element | null {
@@ -168,6 +254,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     const trimmed = query.trim().toLowerCase();
     const projectRows = projectsToRows(data.projects);
     const branchRows = branchesToRows(data.branches, projectsById);
+    const systemSettingRows = systemSettingsToRows();
 
     if (!trimmed) {
       const favoriteBranches = data.branches.filter((branch) => branch.isFavorite);
@@ -184,11 +271,24 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       return text.toLowerCase().startsWith(trimmed) ? 100 - idx : 50 - idx;
     };
 
-    const merged = [...projectRows, ...branchRows, ...STATIC_ACTIONS];
+    // 项目级设置只在用户实际输入时展开（避免空态污染），keywords 已并入项目名。
+    const projectSettingRows = projectSettingsToRows(data.projects);
+    const merged = [
+      ...projectRows,
+      ...branchRows,
+      ...STATIC_ACTIONS,
+      ...systemSettingRows,
+      ...projectSettingRows,
+    ];
     return merged
       .map((item) => ({
         item,
-        rank: Math.max(score(item.label), item.hint ? score(item.hint) - 10 : -1),
+        rank: Math.max(
+          score(item.label),
+          item.hint ? score(item.hint) - 10 : -1,
+          // 同义词命中略低于正标题但高于 hint，保证「保活/探活」也能排到前面
+          keywordScore(item.keywords, trimmed) - 5,
+        ),
       }))
       .filter((entry) => entry.rank >= 0)
       .sort((left, right) => right.rank - left.rank)
@@ -208,7 +308,26 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     (item: ResultItem) => {
       if (!item.href) return;
       onClose();
+      const hashIdx = item.href.indexOf('#');
+      const targetPath = hashIdx >= 0 ? item.href.slice(0, hashIdx) : item.href;
+      const samePage = hashIdx >= 0 && window.location.pathname === targetPath;
       routerNavigate(item.href);
+      // react-router 的 history.pushState 不会触发 hashchange，已在目标设置页时
+      // 切 tab 全靠该页监听 hashchange。手动补一发，确保面板内深链能切到目标 tab。
+      // Bugbot Medium「Same-page hash sync race」：不能在下一 tick 直接 dispatch 裸
+      // hashchange —— 若 router 尚未把 hash 落到 window.location，监听会读到旧 hash、切错
+      // tab。改为 rAF 后核对：hash 未到目标值就直接 set（原生触发 hashchange 且值正确），
+      // 已到则补发合成事件。
+      if (samePage) {
+        const targetHash = item.href.slice(hashIdx); // 含 '#'
+        requestAnimationFrame(() => {
+          if (window.location.hash !== targetHash) {
+            window.location.hash = targetHash;
+          } else {
+            window.dispatchEvent(new HashChangeEvent('hashchange'));
+          }
+        });
+      }
     },
     [onClose, routerNavigate],
   );
@@ -253,7 +372,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="搜索项目、分支或操作"
+            placeholder="搜索项目、分支、设置或配置（如 保活 / 探活 / 镜像）"
             className="h-12 min-w-0 flex-1 border-0 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
             autoComplete="off"
             spellCheck={false}
@@ -280,6 +399,9 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
               >
                 <PaletteIcon kind={item.icon} />
                 <span className="min-w-0 flex-1">
+                  {item.path ? (
+                    <span className="mb-0.5 block truncate text-[11px] text-muted-foreground/70">{item.path}</span>
+                  ) : null}
                   <span className="block truncate text-sm font-medium">{item.label}</span>
                   {item.hint ? <span className="block truncate text-[11px] text-muted-foreground">{item.hint}</span> : null}
                 </span>

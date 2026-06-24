@@ -80,6 +80,8 @@ interface ProjectSummary {
   githubInstallationId?: number;
   githubAutoDeploy?: boolean;
   githubLinkedAt?: string;
+  /** 发布首启就绪探测下限（秒，0 = 用系统默认 1200）。仅部署路径生效。 */
+  deployReadinessFloorSeconds?: number;
   githubEventPolicy?: GithubEventPolicy;
   defaultDeployModes?: Record<string, string>;
   /** 2026-05-14: 部署成 running 后 N 分钟自动切到发布版（0=关）。 */
@@ -805,7 +807,99 @@ function RuntimeDefaultsTab({
         onSaved={onSaved}
         onToast={onToast}
       />
+
+      <ReadinessFloorSection
+        project={project}
+        projectId={projectId}
+        onSaved={onSaved}
+        onToast={onToast}
+      />
     </div>
+  );
+}
+
+/**
+ * 项目级「发布探活下限」：发布(部署)首启可能很慢（构建/迁移/JVM 暖机），给足探测时间避免被
+ * 探活超时误杀。0 = 用系统默认（1200s）。仅部署路径生效，运行期重启/唤醒保持各 profile 短超时。
+ */
+function ReadinessFloorSection({
+  project,
+  projectId,
+  onSaved,
+  onToast,
+}: {
+  project: ProjectSummary;
+  projectId: string;
+  onSaved: (project: ProjectSummary) => void;
+  onToast: (message: string) => void;
+}): JSX.Element {
+  const initial = Number(project.deployReadinessFloorSeconds) || 0;
+  const [seconds, setSeconds] = useState(initial);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    setSeconds(Number(project.deployReadinessFloorSeconds) || 0);
+  }, [project.deployReadinessFloorSeconds]);
+
+  async function save(): Promise<void> {
+    if (seconds < 0 || seconds > 3600) {
+      setError('发布探活下限必须是 0~3600 秒（0 = 用系统默认）');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      const result = await apiRequest<ProjectSaveResponse>(
+        `/api/projects/${encodeURIComponent(projectId)}`,
+        { method: 'PUT', body: { deployReadinessFloorSeconds: Math.floor(seconds) } },
+      );
+      onSaved(result.project);
+      onToast('发布探活下限已保存；下次部署生效');
+    } catch (err) {
+      setError(messageFromError(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Section
+      title="发布探活下限"
+      description="发布（部署）首启很慢时（构建 / 迁移 / JVM 暖机），给就绪探测足够时间避免被超时误杀。实际就绪超时取 max(该 profile 探活超时, 本下限)。仅部署路径生效；运行期重启 / 空闲唤醒保持各 profile 自己的短超时。"
+    >
+      <div className="space-y-3">
+        <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3">
+          <label className="flex flex-wrap items-center gap-3 text-sm">
+            <span className="font-medium">首启就绪探测下限</span>
+            <input
+              type="number"
+              min={0}
+              max={3600}
+              value={seconds}
+              onChange={(e) => setSeconds(Number(e.target.value) || 0)}
+              className="h-8 w-24 rounded-md border border-input bg-background px-2 text-sm"
+            />
+            <span className="font-medium">秒</span>
+          </label>
+          <div className="mt-1.5 text-xs leading-5 text-muted-foreground">
+            0 = 用系统默认（1200 秒）。范围 0~3600。该项目下所有分支的部署首启都按这个下限兜底。
+          </div>
+        </div>
+
+        {error ? <ErrorBlock message={error} /> : null}
+
+        <div className="flex flex-wrap items-center gap-3">
+          <Button type="button" onClick={() => void save()} disabled={saving}>
+            {saving ? <Loader2 className="animate-spin" /> : <Save />}
+            保存
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            本设置是<strong>项目级</strong>，下次部署生效。需全实例统一默认时改 CDS 系统级默认。
+          </span>
+        </div>
+      </div>
+    </Section>
   );
 }
 

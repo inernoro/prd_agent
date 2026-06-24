@@ -2407,6 +2407,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       defaultDeployModes: Record<string, string>;
       autoPublishAfterMinutes: number;
       autoStopAfterMinutes: number;
+      deployReadinessFloorSeconds: number;
       // PR_D.3: 5 个 per-event toggle，对应 Project.githubEventPolicy
       githubEventPolicy: {
         push?: boolean;
@@ -2489,7 +2490,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
     }
 
-    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled' | 'resourceChipDisplay' | 'githubEventPolicy' | 'defaultDeployModes' | 'autoPublishAfterMinutes' | 'autoStopAfterMinutes'>> = {};
+    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled' | 'resourceChipDisplay' | 'githubEventPolicy' | 'defaultDeployModes' | 'autoPublishAfterMinutes' | 'autoStopAfterMinutes' | 'deployReadinessFloorSeconds'>> = {};
     // PR_D.3: 合并 5 个 toggle 到 githubEventPolicy（partial patch — 仅
     // 对显式传入的 key 更新，不影响其它 key）。
     if (body.githubEventPolicy && typeof body.githubEventPolicy === 'object') {
@@ -2562,6 +2563,16 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         return;
       }
       patch[field] = Math.floor(num);
+    }
+    // 项目级「发布探活下限」覆盖（秒）。0 = 用系统默认；上限 3600s（1h）。
+    if (body.deployReadinessFloorSeconds !== undefined) {
+      const raw = body.deployReadinessFloorSeconds;
+      const num = typeof raw === 'number' ? raw : Number(raw);
+      if (!Number.isFinite(num) || num < 0 || num > 3600) {
+        res.status(400).json({ error: 'validation', field: 'deployReadinessFloorSeconds', message: '发布探活下限必须是 0~3600 秒（0 = 用系统默认）' });
+        return;
+      }
+      patch.deployReadinessFloorSeconds = Math.floor(num);
     }
     if (body.name !== undefined) patch.name = String(body.name).trim();
     // For alias fields an empty string explicitly clears them so the UI

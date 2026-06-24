@@ -11,7 +11,7 @@ import { Router, type Request, type Response } from 'express';
 import { StateService } from '../services/state.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
-import { resolveEffectiveProfile } from '../services/container.js';
+import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
 import { acquireBuildSlot, buildGateStatus } from '../services/build-gate.js';
 import { recordBuild } from '../services/build-activity-tracker.js';
@@ -1758,6 +1758,40 @@ export function shouldSkipFencedDeployCleanupForNewerRuntime(
   return !Number.isFinite(stoppedMs) || stoppedMs < latestRuntimeMs;
 }
 
+/**
+ * R2 竞态根治（2026-06-24）：会「产出/管理容器」的操作种类。被抢占的部署做
+ * fenced cleanup 删容器前，若分支上有这类**更新的**操作在跑，必须跳过删除 ——
+ * 那个操作正用/即将重建这些容器，删了会导致紧随其后的 restart/auto-wake 撞
+ * `No such container`（服务 0/N）。它们的 runService 按容器名 `docker rm -f`+create
+ * 幂等，留着不会泄漏。
+ */
+export const FENCED_CLEANUP_RUNTIME_PRODUCING_KINDS: ReadonlySet<BranchOperationKind> = new Set<BranchOperationKind>([
+  'deploy',
+  'deploy-profile',
+  'force-rebuild',
+  'restart',
+  'auto-restart',
+  'auto-lifecycle-redeploy',
+]);
+
+/** 纯函数：在活跃操作里找出「会接管容器」的非己方操作（用于 fenced cleanup 跳过判定）。可单测。 */
+export function findFencedCleanupRuntimeOwner(
+  activeOps: ReadonlyArray<{ operationId: string; cancelled?: boolean; request: { kind: BranchOperationKind; source?: string | null } }>,
+  selfOperationId: string | null | undefined,
+): { operationId: string; kind: BranchOperationKind; source: string | null } | null {
+  for (const op of activeOps) {
+    if (op.operationId === selfOperationId) continue;
+    // Codex P2「Ignore older cancelled operations during fenced cleanup」：被取代但尚未
+    // 收尾的操作仍可能挂在 active 列表里且 cancelled=true。它**不会**接管容器，若把它当
+    // owner 会误跳过清理、把失败容器留下。已取消的操作一律不算 runtime owner。
+    if (op.cancelled) continue;
+    if (FENCED_CLEANUP_RUNTIME_PRODUCING_KINDS.has(op.request.kind)) {
+      return { operationId: op.operationId, kind: op.request.kind, source: op.request.source ?? null };
+    }
+  }
+  return null;
+}
+
 export function createBranchRouter(deps: RouterDeps): Router {
   const {
     stateService,
@@ -2256,6 +2290,46 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       return;
     }
+    // R2 竞态根治（2026-06-24）：被抢占的部署在收尾失败后调本函数清容器，但若
+    // **抢占它的是另一个"会产出/管理容器的操作"**（新部署 / 重启 / 自动唤醒 /
+    // 强制重建等，且还没到 ready 所以 hasNewerReadyRuntime 为 false），此时删容器
+    // 会把那个在途操作正在用/即将重建的容器删掉 —— 紧接着 restart/auto-wake 对已删
+    // 容器 `docker restart` 就报 `No such container`，服务 0/N。
+    // 解法：只要有更新的 runtime-producing 操作在跑，本次 fenced cleanup 一律跳过，
+    // 把容器交给那个操作管理（它的 runService 按容器名 `docker rm -f` + create 幂等，
+    // 不会泄漏）。只有"无人接管"或"终止类操作接管"时才走删除。
+    const runtimeOwner = findFencedCleanupRuntimeOwner(
+      branchOperationCoordinator?.getActiveOperations(entry.id) ?? [],
+      operationId,
+    );
+    if (runtimeOwner && branchStillExists) {
+      for (const profileId of profileIds) {
+        const svc = entry.services?.[profileId];
+        if (!svc?.containerName) continue;
+        serverEventLogStore?.record({
+          category: 'container',
+          severity: 'info',
+          source: 'deploy-fenced-cleanup',
+          action: 'container.remove.after-fenced-deploy.skipped',
+          message: `skipped fenced deploy cleanup because a newer runtime-producing operation will manage the container: ${svc.containerName}`,
+          projectId: entry.projectId,
+          branchId: entry.id,
+          profileId,
+          containerName: svc.containerName,
+          requestId: requestId || null,
+          operationId: operationId || null,
+          details: {
+            reason,
+            skipReason: 'runtime-producing-operation-active',
+            runtimeOwnerOperationId: runtimeOwner.operationId || null,
+            runtimeOwnerKind: runtimeOwner.kind || null,
+            runtimeOwnerSource: runtimeOwner.source || null,
+          },
+        });
+      }
+      return;
+    }
+
     const cleanupOwner = branchOperationCoordinator
       ?.getActiveOperations(entry.id)
       .find((active) => active.operationId !== operationId && terminalCleanupKinds.has(active.request.kind));
@@ -2669,7 +2743,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (!proxyHasError) {
         for (const rp of profiles) {
           const svc = entry.services[rp.id];
-          if (svc) svc.deployedMode = rp.activeDeployMode || '';
+          // 2026-06-24（Bugbot/Codex P2）：内嵌执行器与 master 共享同一 entry.services 对象，
+          // runService 已在那上面权威钉过实际模式（含极速版→源码自动回退后的 static）。优先采纳
+          // 它，仅未设时退回派发用的 rp.activeDeployMode（极速版会是 express，回退后不准）。
+          // 注：远端执行器进程独立，svc 非同一对象，回退态需靠其心跳/状态回传对齐（后续）。
+          if (svc) svc.deployedMode = svc.deployedMode || rp.activeDeployMode || '';
         }
         // 2026-05-14 Codex review P2 "Refresh the lifecycle clock after
         // remote redeploys"：本地部署成功会 stamp lastDeployAt（branches.ts
@@ -10490,7 +10568,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
             if (!profile.startupSignal || ready) {
               const probeReady = await containerService.waitForReadiness(
                 svc.hostPort,
-                profile.readinessProbe,
+                // 发布阶段就绪探测：抬到部署下限(默认 1200s)，避免慢首启被误杀。运行期重启/唤醒不走这里。
+                applyDeployReadinessFloor(
+                  profile.readinessProbe,
+                  resolveDeployReadinessFloorSeconds(
+                    stateService.getState().deployReadinessFloorSeconds,
+                    stateService.getProject(entry.projectId || 'default')?.deployReadinessFloorSeconds,
+                  ),
+                ),
                 (info) => {
                   sendSSE(res, 'probe', {
                     profileId: profile.id,
@@ -10513,10 +10598,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
             if (ready) {
               svc.status = 'running';
               svc.errorMessage = undefined;
-              // 2026-05-14 真实态徽章：钉住容器**实际**用哪个 deploy mode
-              // 启动（用本次构建的 effectiveProfile，已含 override）。卡片
-              // 据此判断"真发布"还是"配置了但容器没跟上"。
-              svc.deployedMode = effectiveProfile.activeDeployMode || '';
+              // 2026-05-14 真实态徽章：钉住容器**实际**用哪个 deploy mode 启动。
+              // 2026-06-24（Bugbot）：runService 已在容器实际起来后权威钉过 svc.deployedMode
+              // （含极速版→源码自动回退后的真实模式），优先采纳它；仅其未设时退回
+              // effectiveProfile.activeDeployMode（极速版会是 express，回退场景下不准）。
+              svc.deployedMode = svc.deployedMode || effectiveProfile.activeDeployMode || '';
               logDeploy(id, `${profile.name} 启动成功 ✓`);
               const elapsed = Date.now() - serviceStartTime;
               logEvent({
@@ -11060,7 +11146,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
         if (!profile.startupSignal || ready) {
           ready = await containerService.waitForReadiness(
             svc.hostPort,
-            profile.readinessProbe,
+            // 发布阶段就绪探测：抬到部署下限(默认 1200s)，避免慢首启被误杀。运行期重启/唤醒不走这里。
+            applyDeployReadinessFloor(
+              profile.readinessProbe,
+              resolveDeployReadinessFloorSeconds(
+                stateService.getState().deployReadinessFloorSeconds,
+                stateService.getProject(entry.projectId || 'default')?.deployReadinessFloorSeconds,
+              ),
+            ),
             (info) => {
               sendSSE(res, 'probe', { profileId: profile.id, attempt: info.attempt, max: info.max, stage: info.stage, ok: info.ok, error: info.error });
             },
@@ -11075,7 +11168,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
           svc.status = 'running';
           svc.errorMessage = undefined;
           // 2026-05-14 真实态徽章：单服务 redeploy 同样钉住实际 deploy mode。
-          svc.deployedMode = effectiveProfile.activeDeployMode || '';
+          // 2026-06-24（Bugbot/Codex P2）：runService 已权威钉过 svc.deployedMode（含极速版→
+          // 源码自动回退后的真实模式），优先采纳它；仅其未设时退回 effectiveProfile（极速版会是
+          // express，回退场景下不准，会让 widget/收敛逻辑误以为仍在用 CI 镜像）。
+          svc.deployedMode = svc.deployedMode || effectiveProfile.activeDeployMode || '';
           logDeploy(id, `${profile.name} 启动成功 ✓`);
         } else {
           svc.status = 'error';

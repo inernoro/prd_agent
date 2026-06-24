@@ -8,10 +8,19 @@
  * - __CDS_BRANCH_ID__: the slugified branch ID
  * - __CDS_BRANCH_NAME__: the original branch name
  */
-export function buildWidgetScript(branchId: string, branchName: string): string {
+export function buildWidgetScript(
+  branchId: string,
+  branchName: string,
+  // 2026-06-24：版本信息并入本 widget（不再单开角标）。服务端预填 sha + 部署模式标签
+  // （极速/源码），保证首屏即可见；下面的 /api/branches 拉取会再刷新一次。
+  initialSha = '',
+  initialModeLabel = '',
+): string {
   // Escape for safe embedding in <script> tag
   const safeId = branchId.replace(/['"<>&]/g, '');
   const safeName = branchName.replace(/['"<>&]/g, '');
+  const safeSha = String(initialSha || '').replace(/[^a-fA-F0-9]/g, '').slice(0, 40);
+  const safeMode = String(initialModeLabel || '').replace(/[^一-龥A-Za-z]/g, '').slice(0, 8);
   const bridgeEnabled = process.env.CDS_BRIDGE_ENABLED === '1';
 
   return `
@@ -23,6 +32,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   var BRANCH_NAME='${safeName}';
   var API='/_cds/api';
   var BRIDGE_ENABLED=${bridgeEnabled ? 'true' : 'false'};
+  var DEPLOY_MODE_LABEL='${safeMode}';
 
   // ── Styles ──
   var css=document.createElement('style');
@@ -54,6 +64,9 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     #cds-widget .cds-branch{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     #cds-widget .cds-tag{font-size:10px;padding:1px 5px;border-radius:4px;background:rgba(255,255,255,0.15);margin-left:2px}
     #cds-widget .cds-sha{font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:5px;background:rgba(56,139,253,0.18);color:#dbeafe;font-family:ui-monospace,SFMono-Regular,monospace;letter-spacing:0.6px;border:1px solid rgba(56,139,253,0.32)}
+    #cds-widget .cds-mode{font-size:10.5px;font-weight:600;padding:1px 6px;border-radius:5px;letter-spacing:0.3px;background:rgba(255,255,255,0.12);color:#e6edf3}
+    #cds-widget .cds-mode.fast{background:rgba(34,197,94,0.20);color:#86efac;border:1px solid rgba(34,197,94,0.36)}
+    #cds-widget .cds-mode.source{background:rgba(245,158,11,0.20);color:#fcd34d;border:1px solid rgba(245,158,11,0.36)}
     #cds-widget .cds-sync-chip{display:inline-flex;align-items:center;gap:5px;padding:1px 7px;border-radius:999px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.12);font-size:9px;color:#f8fafc;letter-spacing:0.2px}
     #cds-widget .cds-sync-chip.done{background:rgba(63,185,80,0.16);border-color:rgba(63,185,80,0.34);color:#bef3c0}
     #cds-widget .cds-sync-chip.error{background:rgba(248,81,73,0.18);border-color:rgba(248,81,73,0.34);color:#ffb4ae}
@@ -151,7 +164,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   var deployProfileId=null;
   var profiles=[];
   var branchStatus='';
-  var commitSha='';
+  var commitSha='${safeSha}';
   var commitMsg='';
   var branchTags=[];
   var steps=[];
@@ -606,8 +619,10 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     h+='<div class="'+badgeClass+'" onmousedown="return false">';
     h+='<div class="cds-badge-main">';
     h+='<span class="cds-badge-icon">'+(syncState.visible&&syncState.phase==='syncing'?ICON_REFRESH:ICON_BRANCH)+'</span>';
-    h+='<span class="cds-branch">'+BRANCH_NAME+'</span>';
+    // 版本信息放最前（紧跟图标），避免被很长的分支名挤到看不见；sha / 模式各自配色。
     if(commitSha)h+='<span class="cds-sha" title="'+commitSha+'">'+shortSha(commitSha)+'</span>';
+    if(DEPLOY_MODE_LABEL)h+='<span class="cds-mode'+(DEPLOY_MODE_LABEL==='极速'?' fast':' source')+'">'+DEPLOY_MODE_LABEL+'</span>';
+    h+='<span class="cds-branch">'+BRANCH_NAME+'</span>';
     if(syncState.visible){
       var syncChipClass='cds-sync-chip'+(syncState.phase==='done'?' done':syncState.phase==='error'?' error':'');
       h+='<span class="'+syncChipClass+'" title="'+syncLabelText().replace(/"/g,'&quot;')+'">';
@@ -617,8 +632,9 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
       h+='<span>'+(syncState.phase==='done'?'完成':syncState.phase==='error'?'失败':'刷新')+' '+Math.round(syncState.progress)+'%</span>';
       h+='</span>';
     }
+    // 分支自定义标签照常显示；不再显示默认的「CDS」泛标签——部署类型已由前面的
+    // 极速/发布 chip 表达（用户 2026-06-24：分支标改为极速或发布标）。
     if(branchTags.length){for(var ti=0;ti<branchTags.length;ti++){h+='<span class="cds-tag">'+branchTags[ti]+'</span>';}}
-    else{h+='<span class="cds-tag">CDS</span>';}
     h+='<button data-action="toggle" title="'+(expanded?'收起':'展开更新面板')+'">'+(expanded?ICON_DOWN:ICON_UP)+'</button>';
     h+='<button data-action="dismiss">'+ICON_X+'</button>';
     h+='</div>';
@@ -762,7 +778,11 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
       var profileRes=res.profileRes||{};
       var found=res.found||null;
       branchStatus=found?found.status:'';
-      commitSha=found&&found.commitSha?found.commitSha:'';
+      // Codex P2「Keep ciTargetSha when refreshing the widget badge」：服务端已按
+      // ciTargetSha 注入了正确的初始 sha（反映容器实际跑的镜像 commit）。客户端刷新**不要**
+      // 用 /api/branches 的 commitSha（docs-only push 会更新它但镜像没换）把它降级覆盖；
+      // 优先保留服务端注入值，仅服务端没给时才用 API 值兜底。
+      commitSha=commitSha||(found&&(found.commitSha||found.githubCommitSha))||'';
       commitMsg=found&&found.subject?found.subject:'';
       branchTags=(found&&found.tags)||[];
       var sourceProfiles=(profileRes&&profileRes.profiles)||[];
@@ -1753,6 +1773,31 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
       }
     },30000);
   }
+
+  // ── 每分支不同 favicon：同一应用的多个分支预览开多标签时，靠彩色字母图标一眼区分
+  //    （原 favicon 全一样分不清）。颜色由分支名 hash 出 hue，字母取分支尾巴前两位。
+  //    SPA 可能后续覆写 favicon，故定时轻量重申。──
+  function setBranchFavicon(){
+    try{
+      var s=(BRANCH_NAME&&BRANCH_NAME.indexOf('/')>=0?BRANCH_NAME.slice(BRANCH_NAME.lastIndexOf('/')+1):BRANCH_NAME)||'cds';
+      var h=0; for(var i=0;i<s.length;i++){h=(h*31+s.charCodeAt(i))>>>0;}
+      var hue=h%360;
+      var initials=(s.replace(/[^a-zA-Z0-9]/g,'').slice(0,2)||'cd').toUpperCase();
+      var svg='<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32">'
+        +'<rect width="32" height="32" rx="7" fill="hsl('+hue+',62%,46%)"/>'
+        +'<text x="16" y="22" font-family="ui-monospace,Menlo,monospace" font-size="15" font-weight="700" text-anchor="middle" fill="#fff">'+initials+'</text></svg>';
+      var uri='data:image/svg+xml,'+encodeURIComponent(svg);
+      var head=document.head||document.getElementsByTagName('head')[0];
+      if(!head)return;
+      var existing=head.querySelectorAll('link[rel~="icon"]');
+      for(var j=0;j<existing.length;j++){ if(existing[j].getAttribute('data-cds-favicon')===null) existing[j].parentNode.removeChild(existing[j]); }
+      var link=head.querySelector('link[data-cds-favicon]');
+      if(!link){ link=document.createElement('link'); link.setAttribute('rel','icon'); link.setAttribute('type','image/svg+xml'); link.setAttribute('data-cds-favicon',''); head.appendChild(link); }
+      if(link.getAttribute('href')!==uri) link.setAttribute('href',uri);
+    }catch(e){}
+  }
+  setBranchFavicon();
+  setInterval(setBranchFavicon, 3000);
 
   // ── Initial: render badge + fetch branch info to update tab title immediately ──
   render();
