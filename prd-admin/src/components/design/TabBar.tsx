@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 
 export interface TabBarItem {
   key: string;
@@ -24,6 +25,7 @@ interface TabBarProps {
 }
 
 export function TabBar({ title, icon, items, activeKey, onChange, actions, variant = 'default' }: TabBarProps) {
+  const isMobile = useIsMobile();
   const [internalKey, setInternalKey] = useState(items?.[0]?.key ?? '');
   const currentKey = activeKey ?? internalKey;
   const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0, opacity: 0 });
@@ -136,10 +138,11 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
           </div>
         )}
 
-        {/* 右侧：本页教程入口(内嵌页头,非悬浮) + 操作按钮。标题模式 / 顶级 tabs 模式都展示入口。 */}
-        {(actions || title || (items && items.length > 0)) && (
+        {/* 右侧：本页教程入口(内嵌页头,非悬浮) + 操作按钮。
+            移动端隐藏教程 pill（用户要求；教程仍可从「我的 → 学习中心」进入），让出顶部空间给操作。 */}
+        {(actions || (!isMobile && (title || (items && items.length > 0)))) && (
           <div className="surface-nav-actions">
-            {(title || (items && items.length > 0)) && <TipsEntryButton compact />}
+            {!isMobile && (title || (items && items.length > 0)) && <TipsEntryButton compact />}
             {actions}
           </div>
         )}

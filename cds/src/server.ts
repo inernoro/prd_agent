@@ -648,6 +648,8 @@ export function resolveApiLabel(method: string, path: string): string {
     // CDS 配对连接（系统级，2026-05-06）
     'POST /cds-system/connections/issue': '生成配对密钥',
     'POST /cds-system/connections/accept': '接受配对请求',
+    // 项目级资源占用排行（系统级运维视图，2026-06-23）
+    'GET /cds-system/resource-usage': '查看资源占用',
     'GET /cds-system/connections': '列出配对连接',
     'GET /cds-system/network-topology': '查询网络拓扑',
     'GET /cds-system/github/webhook-deliveries': '列出 Webhook 日志',
@@ -792,6 +794,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'PUT /projects/:id/preview-mode': '更新项目预览模式',
     'GET /projects/:id/comment-template': '获取项目评论模板',
     'PUT /projects/:id/comment-template': '更新项目评论模板',
+    'POST /projects/:id/align-deploy-modes': '对齐全部分支运行模式',
     'GET /projects/:id/agent-sessions': '列出项目 Agent 会话',
     // 调度 / 集群
     'GET /scheduler/state': '获取调度器状态',
@@ -941,6 +944,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/bridge\/handshake-requests\/(.+)\/reject$/, '拒绝 Bridge 握手'],
     [/^GET \/bridge\/handshake-status\/(.+)$/, '查询 Bridge 握手状态'],
     // 项目 (CRUD)
+    [/^PUT \/projects\/(.+)\/paused$/, '暂停/恢复项目'],
     [/^GET \/projects\/(.+)\/agent-keys$/, '列出项目 Agent Keys'],
     [/^POST \/projects\/(.+)\/agent-keys$/, '创建项目 Agent Key'],
     [/^DELETE \/projects\/(.+)\/agent-keys\/(.+)$/, '删除项目 Agent Key'],

@@ -7,6 +7,7 @@
 ## 〇、触达机制（2026-06-02 重做，最高优先）
 
 - **入口位置**：右上角常驻 pill（文字「本页教程 / 新手指引」），始终可见、不可贴边隐藏。**禁止**改回右下角匿名图标（用户原话：像个小广告，没人点）。
+- **移动端例外（2026-06-22 用户要求）**：手机端（`<768px`）**隐藏** TabBar/PageHeader 内嵌的教程 pill，把顶部空间让给页面操作（控制条过载治理）。教程入口改由「我的 → 学习中心」（`/learning-center`）承载；新人未走完的本页 `*-page-guide` 仍由 `SpotlightOverlay` 自动开讲（不依赖 pill）。即"桌面常驻 pill、手机收进学习中心 + 自动开讲"。
 - **强制自动开讲**：`TipsDrawer` 有一个 effect——进入任意路由，若存在 `actionUrl` 匹配当前页、且 `sourceId` 以 `-page-guide` 结尾的 tip 还在 `tips` 里（后端已过滤掉「已学会」的 → 还在 = 没走完），就用 `writeSpotlightPayload` 自动开讲一次。本 session 每条只自动弹一次（`sessionStorage` 的 `tipsAutoStartedGuides`），跨 session 未走完会再弹，直到 `SpotlightOverlay` 末步「完成」`markLearned`。**新增页面教程时务必用 `*-page-guide` 后缀的 sourceId，否则不会自动开讲。**
 - **全局唯一挂载**：`<TipsDrawer/>` 与 `<SpotlightOverlay/>` 挂在 **App 根**（`src/app/App.tsx`，Router 内、Routes 外），跨任意路由（含 shell→全屏编辑器）**不卸载**。这样本页教程的 `NavigateTo` / 自动点击「新建」进编辑器的步骤不会因路由切换丢 state。**禁止**再在 `AppShell` 或某个页面里单独挂这两个组件（会重复实例 + 跨页丢 state）。
 

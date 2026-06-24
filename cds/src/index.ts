@@ -38,6 +38,7 @@ import { branchEvents, nowIso } from './services/branch-events.js';
 import { archiveBranchContainerLogs } from './services/container-log-archiver.js';
 import { reconcileStaleDeployDispatches, type DeployDispatchReconcileResult } from './services/deploy-dispatch-reconciler.js';
 import { shouldRetryInterruptedWebhookDispatch } from './services/deploy-dispatch-retry.js';
+import { ResourceUsageSampler } from './services/resource-usage-sampler.js';
 import { httpLogStoreFromEnv } from './services/http-log-store.js';
 import { serverEventLogStoreFromEnv } from './services/server-event-log-store.js';
 import { resolveStateBootstrapMode, seedStateFromJsonIfAllowed } from './services/state-bootstrap.js';
@@ -78,6 +79,21 @@ const MASTER_MEMORY_EVENT_MIN_INTERVAL_MS = Math.max(
 const STALE_DEPLOY_DISPATCH_RECONCILE_INTERVAL_MS = Math.max(
   60_000,
   Number.parseInt(process.env.CDS_STALE_DEPLOY_DISPATCH_RECONCILE_INTERVAL_MS || '', 10) || 300_000,
+);
+// 2026-06-23 重试风暴根因护栏（详见 services/deploy-dispatch-retry.ts）。
+// 历史实现对 stale webhook dispatch 无限重试、无退避、age 永不触发，导致
+// 「7 小时前的构建还在跑」的幽灵 + 部署风暴打满 CPU。下面三个上限封死它：
+const DEPLOY_DISPATCH_MAX_RETRIES = Math.max(
+  0,
+  Number.parseInt(process.env.CDS_DEPLOY_DISPATCH_MAX_RETRIES || '', 10) || 3,
+);
+const DEPLOY_DISPATCH_MAX_AGE_MS = Math.max(
+  60_000,
+  Number.parseInt(process.env.CDS_DEPLOY_DISPATCH_MAX_AGE_MS || '', 10) || 6 * 60 * 60 * 1000,
+);
+const DEPLOY_DISPATCH_RETRY_BACKOFF_MS = Math.max(
+  0,
+  Number.parseInt(process.env.CDS_DEPLOY_DISPATCH_RETRY_BACKOFF_MS || '', 10) || 5 * 60 * 1000,
 );
 
 function mb(bytes: number): number {
@@ -194,7 +210,15 @@ function dispatchRecoveredWebhookDeploys(
     const operationId = `op_dispatch_retry_${traceHash}`;
     const requestId = `retry_${traceHash}`;
     const branch = state.getBranch(result.branchId);
-    const decision = shouldRetryInterruptedWebhookDispatch(branch, result);
+    const project = branch?.projectId ? state.getProject(branch.projectId) : undefined;
+    const decision = shouldRetryInterruptedWebhookDispatch(branch, result, {
+      now: new Date(),
+      isProjectPaused: project?.paused === true,
+      skipWhenOperationActive: true,
+      maxAgeMs: DEPLOY_DISPATCH_MAX_AGE_MS,
+      maxRetries: DEPLOY_DISPATCH_MAX_RETRIES,
+      baseBackoffMs: DEPLOY_DISPATCH_RETRY_BACKOFF_MS,
+    });
     if (!decision.retry || !branch || !result.commitSha) {
       store?.record({
         category: 'system',
@@ -224,6 +248,9 @@ function dispatchRecoveredWebhookDeploys(
     branch.lastDeployDispatchSource = 'webhook';
     branch.lastDeployDispatchStatus = 'dispatching';
     branch.lastDeployDispatchError = undefined;
+    // 治幽灵：age 锚点用「首次」派发时间，重试不刷新它；老数据缺失时补一次。
+    if (!branch.deployDispatchFirstAt) branch.deployDispatchFirstAt = result.dispatchAt;
+    branch.deployDispatchRetryCount = (branch.deployDispatchRetryCount || 0) + 1;
     state.save();
 
     store?.record({
@@ -242,6 +269,9 @@ function dispatchRecoveredWebhookDeploys(
         reason: decision.reason,
         commitSha: result.commitSha,
         originalDispatchAt: result.dispatchAt,
+        firstDispatchAt: branch.deployDispatchFirstAt || null,
+        retryCount: branch.deployDispatchRetryCount,
+        maxRetries: DEPLOY_DISPATCH_MAX_RETRIES,
         retryAt,
         previousStatus: result.previousStatus,
       },
@@ -884,6 +914,14 @@ const containerService = new ContainerService(shell, config, {
   // `defd4695ab5f`,slug 才是 `mdimp`)。adapter 把 slug 暴露给容器层。
   getProjectSlug: (projectId) => stateService.getProject(projectId)?.slug,
 }, activeServerEventLogStore);
+
+// 2026-06-23：项目级资源占用采样（CPU/内存/构建频次）。每 N 秒跑一次
+// docker stats 并按项目汇总，供「资源占用」面板揪出 CPU 大户 / 反复构建大户。
+// executor 节点的分支容器在远端，本地采样无意义，跳过。
+const resourceUsageSampler = config.mode === 'executor'
+  ? null
+  : new ResourceUsageSampler(stateService, containerService);
+resourceUsageSampler?.start();
 
 function allBranchServicesInactive(branch: { services?: Record<string, { status?: string }> }): boolean {
   return Object.values(branch.services || {}).every((item) =>
