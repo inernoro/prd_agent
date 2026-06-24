@@ -4572,14 +4572,17 @@ function BranchCard({
   // ciImageStatus，故源码模式分支不该再进 CI 等待/失败行（Codex P2）。用 !== false 而非
   // === true：deployRuntime 仅由 GET /branches 注入，SSE 新建的极速版分支缺它（缺省=显示，
   // 明确 prebuilt=false 即已切源码=隐藏），与下方 CI chip 同口径。
-  const ciPrebuilt = branch.deployRuntime?.prebuilt !== false;
-  const isCiWaiting = !isRunning && !isInterim && ciPrebuilt && branch.ciImageStatus === 'waiting';
-  const isCiFailed = !isRunning && !isInterim && !isError && ciPrebuilt && branch.ciImageStatus === 'failed';
+  // hasStopSignal 先算：手动停 / 容器停的分支即便残留 ciImageStatus，也应优先显示「容器停止」
+  // 面板而非 CI 行（与后端 isStoppedBranch 同口径，Bugbot）。故 isCiWaiting/isCiFailed 带上
+  // !hasStopSignal 门。
   const branchServices = Object.values(branch.services || {});
   const hasStopSignal = branchServices.length > 0
     && !branchServices.some((svc) => svc.status === 'running' || svc.status === 'building'
       || svc.status === 'starting' || svc.status === 'restarting')
     && branchServices.some((svc) => svc.status === 'stopped');
+  const ciPrebuilt = branch.deployRuntime?.prebuilt !== false;
+  const isCiWaiting = !isRunning && !isInterim && !hasStopSignal && ciPrebuilt && branch.ciImageStatus === 'waiting';
+  const isCiFailed = !isRunning && !isInterim && !isError && !hasStopSignal && ciPrebuilt && branch.ciImageStatus === 'failed';
   const isNeverDeployed = !isRunning && !isInterim && !isError && !isCiWaiting && !isCiFailed
     && !hasStopSignal && !branch.lastDeployAt && branchServices.length === 0;
   // 真正展示「停止记录」面板：非运行/中间态，且排除上面那几种「其实没停止」的情况。

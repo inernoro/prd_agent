@@ -3555,6 +3555,15 @@ function startCiWaitWatchdog(): ReturnType<typeof setInterval> {
         // 已退出极速版的源码模式分支误判超时翻 failed（Codex P2，与 workflow_run 同口径）。
         const wdProfiles = stateService.getBuildProfilesForProject(b.projectId);
         if (!branchUsesPrebuiltMode(wdProfiles, b)) continue;
+        // 已停止的分支（用户手动停 / 容器停）即便残留 ciImageStatus='waiting' 也不该被超时翻
+        // failed——否则用户主动停掉的预览会被看门狗改写状态 + 推 SSE（Bugbot）。对齐后端
+        // isStoppedBranch 口径：services 非空 + 无活跃 + 至少一个 stopped。
+        const wdSvcs = Object.values(b.services || {});
+        const wdStopped = wdSvcs.length > 0
+          && !wdSvcs.some((s) => s.status === 'running' || s.status === 'building'
+            || s.status === 'starting' || s.status === 'restarting')
+          && wdSvcs.some((s) => s.status === 'stopped');
+        if (wdStopped) continue;
         const sinceIso = b.ciWaitingSince || b.lastPushAt;
         const sinceMs = sinceIso ? Date.parse(sinceIso) : Number.NaN;
         if (!Number.isFinite(sinceMs)) continue;
