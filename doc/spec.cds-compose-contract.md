@@ -82,6 +82,21 @@ CDS 在项目根目录按下面顺序探测,**第一个命中即用**:
 | `deploy.resources.limits:` | dict | 否 | 标准 cgroup 限制(`memory: "512M"`, `cpus: "1.5"`) |
 | `x-cds-resources:` | dict | 否 | CDS 优先扩展(`memoryMB: 512`, `cpus: 1.5`),与上面二选一,本字段优先 |
 
+### 2.2.1 `x-cds-deploy-modes` 子键（含 2026-06-23 极速版 / CI 预构建）
+
+`x-cds-deploy-modes.<serviceId>.<modeId>` 每个模式可声明:
+
+| 子键 | 类型 | 含义 |
+|---|---|---|
+| `label:` | string | 下拉显示名（如「开发模式」「静态部署」「极速版（CI 预构建）」） |
+| `command:` | string | 覆盖 `command`;**极速版可省略** → 用镜像自带 ENTRYPOINT/CMD |
+| `image:` | string | 覆盖 `image`;支持部署期模板变量 `${CDS_COMMIT_SHA}` / `${CDS_BRANCH_SLUG}`（CDS 部署时按分支替换，映射到运行期 `DeployModeOverride.dockerImage`） |
+| `env:` | dict | 在该模式下并入 `environment`（同 key 覆盖） |
+| `prebuilt:` | bool | **极速版**：true → 跳过 source mount，直接 `docker pull image` + run 镜像里的编译产物（CI 已编译，CDS 不本机编译）。对齐 `BuildProfile.prebuiltImage` |
+| `containerPort:` | int | 覆盖容器端口（预构建镜像监听端口常与源码模式不同，如 prd-api 源码 5000 / 生产镜像 8080） |
+
+极速版（CI 预构建）整体链路：push → GitHub Actions（`.github/workflows/branch-image.yml`）按 `sha-<github.sha>` 推 ghcr 镜像 → CDS 收 `workflow_run.completed` 后按 commit SHA `docker pull` + run。镜像 tag 公式与 CDS `slugifyBranchForImage` / `resolveImageTemplate` 保持 SSOT。详见 `doc/debt.cds-ci-prebuilt.md`。
+
 ### 2.3 基础设施 service(无相对路径,纯下载镜像)
 
 判定规则:`volumes:` 里**没有任何**相对路径 → 当作 infra service。

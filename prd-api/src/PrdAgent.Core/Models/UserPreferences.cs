@@ -61,6 +61,12 @@ public class UserPreferences
     /// </summary>
     public PmAgentPreferences? PmAgentPreferences { get; set; }
 
+    /// <summary>
+    /// 用户置顶的知识库 ID 列表（按用户视角排前，跨设备/重登录保持）。
+    /// 仅影响该用户「知识库 → 我的空间/团队空间」列表的排序，不影响他人。
+    /// </summary>
+    public List<string>? DocumentStorePinnedIds { get; set; }
+
     /// <summary>更新时间</summary>
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

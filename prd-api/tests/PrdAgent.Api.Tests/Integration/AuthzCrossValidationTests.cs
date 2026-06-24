@@ -4,6 +4,9 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using MongoDB.Driver;
+using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Database;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -40,10 +43,12 @@ public class AuthzCrossValidationTests : IClassFixture<WebApplicationFactory<Pro
 
     // UserA: the owner of a personal session (first human user found)
     private string? _userAUsername;
+    private string? _userAUserId;
     private string? _userASessionId;
 
     // UserB: a different user who should NOT be able to access UserA's session
     private string? _userBUsername;
+    private string? _userBUserId;
 
     // Available skill key
     private string? _availableSkillKey;
@@ -119,6 +124,7 @@ public class AuthzCrossValidationTests : IClassFixture<WebApplicationFactory<Pro
             if (items.GetArrayLength() == 0) continue;
 
             _userAUsername = username;
+            _userAUserId = userId;
             _userASessionId = items[0].GetProperty("sessionId").GetString();
             Log($"[Init] UserA: {username} (userId={userId}), session: {_userASessionId}");
             break;
@@ -133,6 +139,7 @@ public class AuthzCrossValidationTests : IClassFixture<WebApplicationFactory<Pro
             if (username != _userAUsername)
             {
                 _userBUsername = username;
+                _userBUserId = humanUsers.First(u => u.username == username).userId;
                 Log($"[Init] UserB: {username}");
                 break;
             }
@@ -254,6 +261,194 @@ public class AuthzCrossValidationTests : IClassFixture<WebApplicationFactory<Pro
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         AssertErrorCode(body, "PERMISSION_DENIED");
+    }
+
+    [Fact]
+    public async Task CV2_WorkflowExecute_OtherUserPrivateWorkflow_ShouldReturn403()
+    {
+        if (!Ready || _userAUserId == null || _userBUsername == null || _userBUserId == null)
+        { Log("[Skip] Missing prerequisites"); return; }
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+        var workflow = new Workflow
+        {
+            Name = "authz private workflow",
+            CreatedBy = _userAUserId,
+            OwnerUserId = _userAUserId,
+            Nodes = new List<WorkflowNode>
+            {
+                new()
+                {
+                    NodeId = "manual",
+                    Name = "手动触发",
+                    NodeType = "manual-trigger",
+                },
+            },
+        };
+
+        await db.Workflows.InsertOneAsync(workflow);
+        try
+        {
+            var client = CreateClient(_userBUsername);
+            var listProbe = await client.GetAsync("/api/workflow-agent/workflows");
+            if (listProbe.StatusCode != HttpStatusCode.OK)
+            {
+                Log($"[Skip] UserB lacks workflow-agent access: {listProbe.StatusCode}");
+                return;
+            }
+
+            var manageProbe = await client.GetAsync($"/api/workflow-agent/workflows/{workflow.Id}");
+            if (manageProbe.StatusCode == HttpStatusCode.OK)
+            {
+                Log("[Skip] UserB can manage/view other workflows; cannot validate non-owner denial");
+                return;
+            }
+
+            var response = await client.PostAsJsonAsync(
+                $"/api/workflow-agent/workflows/{workflow.Id}/execute",
+                new { variables = new Dictionary<string, string>() });
+            var body = await response.Content.ReadAsStringAsync();
+            Log($"[CV2] Workflow execute other private workflow => {response.StatusCode} | {Truncate(body, 200)}");
+
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            AssertErrorCode(body, "PERMISSION_DENIED");
+
+            var executionCount = await db.WorkflowExecutions.CountDocumentsAsync(e => e.WorkflowId == workflow.Id);
+            Assert.Equal(0, executionCount);
+        }
+        finally
+        {
+            await db.WorkflowExecutions.DeleteManyAsync(e => e.WorkflowId == workflow.Id);
+            await db.Workflows.DeleteOneAsync(w => w.Id == workflow.Id);
+        }
+    }
+
+    [Fact]
+    public async Task CV2_ShortcutCreate_OtherUserPrivateWorkflow_ShouldReturn403()
+    {
+        if (!Ready || _userAUserId == null || _userBUsername == null || _userBUserId == null)
+        { Log("[Skip] Missing prerequisites"); return; }
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+        var workflow = new Workflow
+        {
+            Name = "authz shortcut private workflow",
+            CreatedBy = _userAUserId,
+            OwnerUserId = _userAUserId,
+            Nodes = new List<WorkflowNode>
+            {
+                new()
+                {
+                    NodeId = "manual",
+                    Name = "手动触发",
+                    NodeType = "manual-trigger",
+                },
+            },
+        };
+
+        await db.Workflows.InsertOneAsync(workflow);
+        try
+        {
+            var client = CreateClient(_userBUsername);
+            var manageProbe = await client.GetAsync($"/api/workflow-agent/workflows/{workflow.Id}");
+            if (manageProbe.StatusCode == HttpStatusCode.OK)
+            {
+                Log("[Skip] UserB can manage/view other workflows; cannot validate shortcut binding denial");
+                return;
+            }
+
+            var response = await client.PostAsJsonAsync(
+                "/api/shortcuts",
+                new
+                {
+                    name = "authz shortcut",
+                    bindingType = ShortcutBindingType.Workflow,
+                    bindingTargetId = workflow.Id,
+                });
+            var body = await response.Content.ReadAsStringAsync();
+            Log($"[CV2] Shortcut create binding other private workflow => {response.StatusCode} | {Truncate(body, 200)}");
+
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            AssertErrorCode(body, "PERMISSION_DENIED");
+
+            var shortcutCount = await db.UserShortcuts.CountDocumentsAsync(s =>
+                s.UserId == _userBUserId && s.BindingTargetId == workflow.Id);
+            Assert.Equal(0, shortcutCount);
+        }
+        finally
+        {
+            await db.UserShortcuts.DeleteManyAsync(s => s.BindingTargetId == workflow.Id);
+            await db.Workflows.DeleteOneAsync(w => w.Id == workflow.Id);
+        }
+    }
+
+    [Fact]
+    public async Task CV2_ShortcutCollect_OldCrossUserWorkflowBinding_ShouldReturn403AndNotQueue()
+    {
+        if (!Ready || _userAUserId == null || _userBUserId == null)
+        { Log("[Skip] Missing prerequisites"); return; }
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+        var workflow = new Workflow
+        {
+            Name = "authz old shortcut private workflow",
+            CreatedBy = _userAUserId,
+            OwnerUserId = _userAUserId,
+            Nodes = new List<WorkflowNode>
+            {
+                new()
+                {
+                    NodeId = "manual",
+                    Name = "手动触发",
+                    NodeType = "manual-trigger",
+                },
+            },
+        };
+        var (token, hash, prefix) = UserShortcut.GenerateToken();
+        var shortcut = new UserShortcut
+        {
+            UserId = _userBUserId,
+            Name = "authz old shortcut",
+            TokenHash = hash,
+            TokenPrefix = prefix,
+            BindingType = ShortcutBindingType.Workflow,
+            BindingTargetId = workflow.Id,
+            BindingTargetName = workflow.Name,
+            ExpiresAt = DateTime.UtcNow.AddDays(1),
+        };
+
+        await db.Workflows.InsertOneAsync(workflow);
+        await db.UserShortcuts.InsertOneAsync(shortcut);
+        try
+        {
+            var client = _factory.CreateClient();
+            client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+            var response = await client.PostAsJsonAsync(
+                "/api/shortcuts/collect",
+                new { text = "authz shortcut collect check" });
+            var body = await response.Content.ReadAsStringAsync();
+            Log($"[CV2] Shortcut collect old cross-user workflow binding => {response.StatusCode} | {Truncate(body, 200)}");
+
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            AssertErrorCode(body, "PERMISSION_DENIED");
+
+            var executionCount = await db.WorkflowExecutions.CountDocumentsAsync(e => e.WorkflowId == workflow.Id);
+            Assert.Equal(0, executionCount);
+
+            var collectionCount = await db.UserCollections.CountDocumentsAsync(c => c.ShortcutId == shortcut.Id);
+            Assert.Equal(0, collectionCount);
+        }
+        finally
+        {
+            await db.UserCollections.DeleteManyAsync(c => c.ShortcutId == shortcut.Id);
+            await db.WorkflowExecutions.DeleteManyAsync(e => e.WorkflowId == workflow.Id);
+            await db.UserShortcuts.DeleteOneAsync(s => s.Id == shortcut.Id);
+            await db.Workflows.DeleteOneAsync(w => w.Id == workflow.Id);
+        }
     }
 
     // ══════════════════════════════════════════

@@ -25,6 +25,9 @@ export type DocumentStore = {
   tagColors?: Record<string, string>;
   /** 可管理的分类清单（知识库一等维度；空=未启用分类） */
   categories?: string[];
+  /** 本库默认文档排序（服务端持久化，换设备/重登录/刷新都保持）。
+   *  default / created-desc / created-asc / updated-desc / updated-asc / title-asc。 */
+  defaultSortMode?: string;
   /** 系统互联同步状态：syncing / synced / error */
   peerSyncStatus?: 'syncing' | 'synced' | 'error' | string | null;
   /** 系统互联同步方向：push / pull / both / received */
@@ -34,6 +37,10 @@ export type DocumentStore = {
   peerSyncNodeBaseUrl?: string | null;
   peerSyncLastAt?: string | null;
   peerSyncLastResult?: string | null;
+  /** 是否开启后台自动同步（用户在同步中心显式开启） */
+  peerSyncAutoEnabled?: boolean | null;
+  /** 自动同步周期（分钟，下限 5） */
+  peerSyncIntervalMinutes?: number | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -284,6 +291,8 @@ export type UpdateDocumentStoreInput = {
   tagColors?: Record<string, string>;
   /** 可管理的分类清单（null/不传=不变） */
   categories?: string[];
+  /** 文档默认排序（服务端持久化）：default/created-desc/created-asc/updated-desc/updated-asc/title-asc */
+  defaultSortMode?: string;
 };
 
 export type AddDocumentEntryInput = {

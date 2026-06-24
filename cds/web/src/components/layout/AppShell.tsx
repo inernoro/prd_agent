@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { Check, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Rocket, Search, Settings, Sun, X } from 'lucide-react';
+import { Check, ClipboardCheck, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Rocket, Search, Settings, Sun, X } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { CommitInbox } from '@/components/CommitInbox';
 import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
@@ -107,6 +107,7 @@ type ShellAuthStatus = {
 const preloadProjectListPage = (): void => { void import('@/pages/ProjectListPage'); };
 const preloadCdsSettingsPage = (): void => { void import('@/pages/CdsSettingsPage'); };
 const preloadReleaseCenterPage = (): void => { void import('@/pages/ReleaseCenterPage'); };
+const preloadReportsPage = (): void => { void import('@/pages/ReportsPage'); };
 
 function shellLoginHref(mode?: string): string {
   const path = mode === 'github' ? '/api/auth/github/login' : '/login';
@@ -204,7 +205,7 @@ export function AppShell({ active = 'projects', topbar, children, wide = false }
         logoutState={logoutState}
         onLogout={() => { void logout(); }}
       />
-      <div className="flex min-w-0 flex-col">
+      <div className="flex min-w-0 min-h-0 flex-col">
         {topbar}
         <main className={cn('cds-main', wide ? 'cds-main--wide' : null)}>
           {children}
@@ -429,6 +430,19 @@ function RailNav({ active, canLogout, logoutState, onLogout, onNavigate }: RailN
         >
           <Rocket />
           <span>Releases</span>
+        </Link>
+        <Link
+          to="/reports"
+          className="cds-rail-item"
+          data-active={active === 'reports' ? 'true' : 'false'}
+          aria-label="验收报告"
+          title="验收报告（CDS 自托管 HTML / Markdown）"
+          onClick={onNavigate}
+          onMouseEnter={preloadReportsPage}
+          onFocus={preloadReportsPage}
+        >
+          <ClipboardCheck />
+          <span>Reports</span>
         </Link>
       </div>
       <div className="flex-1" />

@@ -145,9 +145,15 @@ builder.Services.AddScoped<PrdAgent.Core.Sync.ISyncableResource,
     PrdAgent.Infrastructure.Sync.Resources.DefectSyncResource>();
 builder.Services.AddScoped<PrdAgent.Core.Sync.ISyncResourceRegistry,
     PrdAgent.Infrastructure.Sync.SyncResourceRegistry>();
+// 跨节点互传 per-item 核心（Controller 手动 transfer + 自动同步 worker 共用同一条路径，SSOT）。
+builder.Services.AddScoped<PrdAgent.Api.Services.PeerSync.IPeerSyncTransferService,
+    PrdAgent.Api.Services.PeerSync.PeerSyncTransferService>();
+// 知识库后台自动同步 worker（双向同步从「点一次跑一次」变「定期保持一致」；防风暴见 PeerSyncScheduleWorker）。
+builder.Services.AddHostedService<PrdAgent.Api.Services.PeerSync.PeerSyncScheduleWorker>();
 
 // 双链 + 反向链接（详见 doc/design.knowledge-base-mention-network.md）
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DocumentStore.MentionService>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DocumentStore.DocumentVersionService>();
 
 // LLM 请求上下文与日志（旁路写入，便于后台调试）
 builder.Services.AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAccessor>();
@@ -345,9 +351,31 @@ builder.Services.AddHostedService<PrdAgent.Infrastructure.Services.AiNewsCacheWa
 
 // 知识库 Agent 后台执行器（字幕生成 + 文档再加工，复用 DoubaoStreamAsrService 和 ILlmGateway）
 builder.Services.AddHttpClient("DocStoreAgent");
+// MCP 连接器网关：回环转发当前 sk-ak Bearer 到自身真实接口（McpGatewayController）。
+// 该 client 只用于回环调用自身，故放行证书校验，兼容仅配置 https 监听时对 127.0.0.1 的 TLS 主机名不匹配。
+builder.Services.AddHttpClient("McpLoopback", c =>
+{
+    // 放宽到 10 分钟：动态工具可能回环到长任务 Agent 动作（周报 / LLM 生成）。
+    // 配合 SendAsync 用 CancellationToken.None（客户端断开不取消），由下游服务端自身限制控制完成；
+    // 仍保留一个有界上限，避免连接无限悬挂。
+    c.Timeout = TimeSpan.FromSeconds(600);
+}).ConfigurePrimaryHttpMessageHandler(() => new System.Net.Http.SocketsHttpHandler
+{
+    // 不跟随重定向：回环只该打到自身后端，若目标返回跨主机重定向，跟过去会把转发的
+    // sk-ak / X-AI-Access-Key 凭据带到外部主机（凭据外泄）。让重定向以非 2xx 原样返回。
+    AllowAutoRedirect = false,
+    // 禁用系统代理：回环只调 127.0.0.1，避免配了 HTTP_PROXY 且未豁免 loopback 的部署
+    // 把携带 sk-ak / X-AI-Access-Key 的回环请求发到代理（失败或泄露密钥）。
+    UseProxy = false,
+    SslOptions = new System.Net.Security.SslClientAuthenticationOptions
+    {
+        RemoteCertificateValidationCallback = (_, _, _, _) => true,
+    },
+});
 builder.Services.AddScoped<PrdAgent.Api.Services.SubtitleGenerationProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ContentReprocessProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ContentReprocessApplyService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.DocumentStoreAssetNormalizer>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ShortVideoMaterialProcessor>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.DocumentStoreAgentWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.ShortVideoMaterialWorker>();
@@ -411,9 +439,17 @@ builder.Services.AddSingleton<IAssetStorage>(sp =>
     var cfg = sp.GetRequiredService<IConfiguration>();
     var log = sp.GetRequiredService<ILoggerFactory>().CreateLogger("AssetStorage");
     // 强约束：统一只使用一套"扁平环境变量"（不使用双下划线）：
-    // - ASSETS_PROVIDER=tencentCos
+    // - ASSETS_PROVIDER=tencentCos / cloudflareR2 / local
     // - TENCENT_COS_BUCKET / TENCENT_COS_REGION / TENCENT_COS_SECRET_ID / TENCENT_COS_SECRET_KEY / TENCENT_COS_PUBLIC_BASE_URL / TENCENT_COS_PREFIX
-    var providerRaw = (cfg["ASSETS_PROVIDER"] ?? "tencentCos").Trim();
+    // - R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_BUCKET / R2_PUBLIC_BASE_URL / R2_PREFIX / R2_ENDPOINT
+    // - ASSETS_LOCAL_DIR（local 模式存储根目录，默认 {ContentRoot}/data/assets）
+    //
+    // 2026-06-22：ASSETS_PROVIDER 不再硬默认 tencentCos。未显式指定时走 "auto"：
+    //   有 COS 凭据→COS；否则有 R2 凭据→R2；都没有→local（占位/兜底，让无云凭据的
+    //   实例如 CDS 预览也能正常存图，而不是构造 IAssetStorage 直接抛异常导致传图失败）。
+    // 显式设了 tencentCos/cloudflareR2 但缺凭据→仍按原样抛错（尊重显式选择）。
+    var providerRaw = (cfg["ASSETS_PROVIDER"] ?? string.Empty).Trim();
+    var providerExplicit = !string.IsNullOrWhiteSpace(providerRaw);
 
     static (string bucket, string region, string secretId, string secretKey, string? publicBaseUrl, string? prefix) ReadTencentCosEnv(IConfiguration cfg)
     {
@@ -426,7 +462,69 @@ builder.Services.AddSingleton<IAssetStorage>(sp =>
         return (bucket, region, sid, sk, string.IsNullOrWhiteSpace(publicBaseUrl) ? null : publicBaseUrl, string.IsNullOrWhiteSpace(prefix) ? null : prefix);
     }
 
-    var provider = string.IsNullOrWhiteSpace(providerRaw) ? "tencentCos" : providerRaw;
+    var provider = providerExplicit ? providerRaw : "auto";
+
+    static bool HasCosCreds(IConfiguration c)
+        => !string.IsNullOrWhiteSpace(c["TENCENT_COS_BUCKET"])
+        && !string.IsNullOrWhiteSpace(c["TENCENT_COS_REGION"])
+        && !string.IsNullOrWhiteSpace(c["TENCENT_COS_SECRET_ID"])
+        && !string.IsNullOrWhiteSpace(c["TENCENT_COS_SECRET_KEY"]);
+
+    static bool HasR2Creds(IConfiguration c)
+        => !string.IsNullOrWhiteSpace(c["R2_ACCOUNT_ID"])
+        && !string.IsNullOrWhiteSpace(c["R2_ACCESS_KEY_ID"])
+        && !string.IsNullOrWhiteSpace(c["R2_SECRET_ACCESS_KEY"])
+        && !string.IsNullOrWhiteSpace(c["R2_BUCKET"]);
+
+    // 是否存在「任何」云存储凭据片段（用于区分"完全没配"vs"配了一半"）。
+    static bool HasAnyCloudVar(IConfiguration c)
+        => new[]
+        {
+            "TENCENT_COS_BUCKET", "TENCENT_COS_REGION", "TENCENT_COS_SECRET_ID", "TENCENT_COS_SECRET_KEY",
+            "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET",
+        }.Any(k => !string.IsNullOrWhiteSpace(c[k]));
+
+    // 本地文件存储（占位/兜底）：无云凭据时也能存图，避免 IAssetStorage 构造抛异常。
+    IAssetStorage BuildLocal(string reason)
+    {
+        var dir = (cfg["ASSETS_LOCAL_DIR"] ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(dir))
+        {
+            var contentRoot = sp.GetService<IWebHostEnvironment>()?.ContentRootPath
+                ?? AppContext.BaseDirectory;
+            dir = Path.Combine(contentRoot, "data", "assets");
+        }
+        log.LogWarning(
+            "AssetStorage selected: provider=local dir={Dir} ({Reason})。本地存储仅适合开发/预览或占位；" +
+            "生产请设 ASSETS_PROVIDER=tencentCos|cloudflareR2 + 对应凭据。",
+            dir, reason);
+        return WrapWithRegistry(new LocalAssetStorage(dir), "local");
+    }
+
+    // auto：未显式指定 Provider 时按凭据自动挑选。
+    //   - 完整 COS / R2 凭据 → 用对应云存储；
+    //   - 完全没有任何云凭据 → 回退本地占位（文档化的 no-cloud 场景）；
+    //   - 配了一半（部分云变量存在但不完整）→ 视为配置错误 fail-fast，
+    //     不静默回退本地，避免资产被写进容器本地盘、重部署即丢（Codex P2）。
+    if (string.Equals(provider, "auto", StringComparison.OrdinalIgnoreCase))
+    {
+        if (HasCosCreds(cfg)) provider = "tencentCos";
+        else if (HasR2Creds(cfg)) provider = "cloudflareR2";
+        else if (HasAnyCloudVar(cfg))
+        {
+            throw new InvalidOperationException(
+                "检测到部分云存储凭据但不完整：请补全 TENCENT_COS_*（BUCKET/REGION/SECRET_ID/SECRET_KEY）" +
+                "或 R2_*（ACCOUNT_ID/ACCESS_KEY_ID/SECRET_ACCESS_KEY/BUCKET）整套；" +
+                "若确实要用本地存储，请显式设置 ASSETS_PROVIDER=local。" +
+                "已拒绝在凭据不完整时静默回退本地，以免资产写入容器本地盘、重部署后丢失。");
+        }
+        else return BuildLocal("ASSETS_PROVIDER 未设置且无任何云凭据");
+    }
+
+    if (string.Equals(provider, "local", StringComparison.OrdinalIgnoreCase))
+    {
+        return BuildLocal("ASSETS_PROVIDER=local（显式）");
+    }
 
     // 读取通用安全删除配置（两种 Provider 共享同一套策略逻辑）
     static (bool enableSafeDelete, string[] allow) ReadSafeDeleteConfig(IConfiguration c)
@@ -503,7 +601,7 @@ builder.Services.AddSingleton<IAssetStorage>(sp =>
     }
 
     throw new InvalidOperationException(
-        $"ASSETS_PROVIDER={providerRaw} 不支持。可选值：tencentCos / cloudflareR2");
+        $"ASSETS_PROVIDER={providerRaw} 不支持。可选值：tencentCos / cloudflareR2 / local");
 
     // ─── 装饰器：用 RegistryAssetStorage 包裹真实实现，自动登记每次存储操作 ───
     IAssetStorage WrapWithRegistry(IAssetStorage inner, string providerName)

@@ -39,6 +39,12 @@ public class OpenRouterVideoSubmitRequest
     /// <summary>视频描述 prompt</summary>
     public string Prompt { get; set; } = string.Empty;
 
+    /// <summary>
+    /// 图生视频首帧图 URL（公开 HTTPS）。设置后走 image-to-video：
+    /// 模型以这张图为起始帧、按 prompt 添加运动。留空则为纯文生视频。
+    /// </summary>
+    public string? FirstFrameImageUrl { get; set; }
+
     /// <summary>宽高比：16:9, 9:16, 1:1, 4:3, 3:4, 21:9, 9:21</summary>
     public string? AspectRatio { get; set; }
 

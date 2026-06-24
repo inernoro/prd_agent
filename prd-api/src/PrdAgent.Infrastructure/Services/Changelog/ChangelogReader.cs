@@ -133,6 +133,37 @@ public sealed class GitHubLogsView : IChangelogView
 }
 
 /// <summary>
+/// GitHub 待审核 PR 单条记录。
+/// </summary>
+public sealed class GitHubPendingReviewEntry
+{
+    public int Number { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public string AuthorName { get; set; } = string.Empty;
+    public string? AuthorAvatarUrl { get; set; }
+    public string HeadBranch { get; set; } = string.Empty;
+    public string BaseBranch { get; set; } = string.Empty;
+    public string HeadSha { get; set; } = string.Empty;
+    public string ShortSha { get; set; } = string.Empty;
+    public bool IsDraft { get; set; }
+    public DateTime CreatedAtUtc { get; set; }
+    public DateTime UpdatedAtUtc { get; set; }
+    public string HtmlUrl { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// GitHub 待审核 PR 视图。
+/// </summary>
+public sealed class GitHubPendingReviewView : IChangelogView
+{
+    public List<GitHubPendingReviewEntry> Items { get; set; } = new();
+    public int TotalCount { get; set; }
+    public bool DataSourceAvailable { get; set; }
+    public string Source { get; set; } = "none";
+    public DateTime FetchedAt { get; set; }
+}
+
+/// <summary>
 /// 从仓库的 changelogs/ 目录和 CHANGELOG.md 文件读取并解析更新记录。
 ///
 /// 数据源策略（按优先级）：
@@ -159,9 +190,10 @@ public interface IChangelogReader
     Task<CurrentWeekView> GetCurrentWeekAsync(bool force = false);
     Task<ReleasesView> GetReleasesAsync(int limit, bool force = false);
     Task<GitHubLogsView> GetGitHubLogsAsync(int limit, bool force = false);
+    Task<GitHubPendingReviewView> GetGitHubPendingReviewAsync(int limit, bool force = false);
 
     /// <summary>
-    /// 后台 Worker 专用：强制刷新全部三个视图（待发布 / 历史发布 / GitHub 日志），
+    /// 后台 Worker 专用：强制刷新全部视图（待发布 / 历史发布 / GitHub 日志 / 待审核 PR），
     /// 内部走 force 路径 → 重新拉取 → 落库（内容变化才推送）。供固定周期刷新调用。
     /// </summary>
     Task RefreshAllAsync(int releasesLimit, int githubLogsLimit, CancellationToken ct = default);
@@ -184,6 +216,7 @@ public sealed class ChangelogReader : IChangelogReader
     private const string CacheKeyCurrentWeek = "changelog:current-week";
     private const string CacheKeyReleases = "changelog:releases";
     private const string CacheKeyGitHubLogs = "changelog:github-logs";
+    private const string CacheKeyGitHubPendingReview = "changelog:github-pending-review";
 
     /// <summary>默认后台刷新周期（小时）。可由 Changelog:RefreshIntervalHours 覆盖。</summary>
     private const int DefaultRefreshIntervalHours = 4;
@@ -253,6 +286,7 @@ public sealed class ChangelogReader : IChangelogReader
     private const string ViewTypeCurrentWeek = "current-week";
     private const string ViewTypeReleases = "releases";
     private const string ViewTypeGitHubLogs = "github-logs";
+    private const string ViewTypeGitHubPendingReview = "github-pending-review";
 
     // ── 公共 API（终身存储优先：加载只读存量，刷新交给后台 Worker） ─────
 
@@ -272,6 +306,13 @@ public sealed class ChangelogReader : IChangelogReader
         return GetStoredAsync(ViewTypeGitHubLogs, cacheKey, force, () => FetchGitHubLogsAsync(limit));
     }
 
+    public Task<GitHubPendingReviewView> GetGitHubPendingReviewAsync(int limit, bool force = false)
+    {
+        if (limit <= 0 || limit > 100) limit = 50;
+        var cacheKey = $"{CacheKeyGitHubPendingReview}:{limit}";
+        return GetStoredAsync(ViewTypeGitHubPendingReview, cacheKey, force, () => FetchGitHubPendingReviewAsync(limit));
+    }
+
     public async Task RefreshAllAsync(int releasesLimit, int githubLogsLimit, CancellationToken ct = default)
     {
         // force=true → 走真实拉取 → 落库（内容变化才推送）。三个视图各自独立，互不阻塞失败。
@@ -280,6 +321,8 @@ public sealed class ChangelogReader : IChangelogReader
         await GetReleasesAsync(releasesLimit, force: true).ConfigureAwait(false);
         if (ct.IsCancellationRequested) return;
         await GetGitHubLogsAsync(githubLogsLimit, force: true).ConfigureAwait(false);
+        if (ct.IsCancellationRequested) return;
+        await GetGitHubPendingReviewAsync(50, force: true).ConfigureAwait(false);
     }
 
     public int GetRefreshIntervalHours()
@@ -554,6 +597,26 @@ public sealed class ChangelogReader : IChangelogReader
         }
 
         return new GitHubLogsView
+        {
+            DataSourceAvailable = false,
+            Source = "none",
+            FetchedAt = DateTime.UtcNow,
+        };
+    }
+
+    private async Task<GitHubPendingReviewView> FetchGitHubPendingReviewAsync(int limit)
+    {
+        try
+        {
+            var view = await BuildGitHubPendingReviewViewFromGitHubAsync(limit).ConfigureAwait(false);
+            if (view.DataSourceAvailable) return view;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[Changelog] GitHub 待审核 PR 拉取失败");
+        }
+
+        return new GitHubPendingReviewView
         {
             DataSourceAvailable = false,
             Source = "none",
@@ -1297,6 +1360,51 @@ public sealed class ChangelogReader : IChangelogReader
         return view;
     }
 
+    private async Task<GitHubPendingReviewView> BuildGitHubPendingReviewViewFromGitHubAsync(int limit)
+    {
+        var view = new GitHubPendingReviewView
+        {
+            Source = "github",
+            FetchedAt = DateTime.UtcNow,
+        };
+
+        var client = CreateGitHubClient();
+        var owner = GetGitHubOwner();
+        var repo = GetGitHubRepo();
+        var branch = GetGitHubBranch();
+        var apiBase = GetGitHubApiBase();
+        var max = Math.Clamp(limit, 1, 100);
+        var url = $"{apiBase}/repos/{owner}/{repo}/pulls?state=open&base={Uri.EscapeDataString(branch)}&sort=updated&direction=desc&per_page={max}";
+
+        using var req = CreateGitHubApiRequest(HttpMethod.Get, url);
+        using var resp = await client.SendAsync(req).ConfigureAwait(false);
+        if (!resp.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("[Changelog] GitHub Pulls API 失败 {Url} status={Status}", url, (int)resp.StatusCode);
+            view.DataSourceAvailable = false;
+            return view;
+        }
+
+        var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+        using var doc = JsonDocument.Parse(json);
+        if (doc.RootElement.ValueKind != JsonValueKind.Array)
+        {
+            view.DataSourceAvailable = false;
+            return view;
+        }
+
+        view.Items = doc.RootElement
+            .EnumerateArray()
+            .Select(ParseGitHubPullRequestItem)
+            .Where(x => x != null)
+            .Cast<GitHubPendingReviewEntry>()
+            .OrderByDescending(x => x.UpdatedAtUtc)
+            .ToList();
+        view.TotalCount = view.Items.Count;
+        view.DataSourceAvailable = true;
+        return view;
+    }
+
     // Link header 形如 <https://api.github.com/...&page=24735>; rel="last"
     private static readonly Regex GitHubLinkLastPageRegex =
         new("[?&]page=(\\d+)[^>]*>;\\s*rel=\"last\"", RegexOptions.Compiled);
@@ -1343,6 +1451,78 @@ public sealed class ChangelogReader : IChangelogReader
             _logger.LogWarning(ex, "[Changelog] GitHub 总提交数统计异常 {Url}", url);
             return null;
         }
+    }
+
+    private GitHubPendingReviewEntry? ParseGitHubPullRequestItem(JsonElement item)
+    {
+        var number = item.TryGetProperty("number", out var numberProp) && numberProp.TryGetInt32(out var n) ? n : 0;
+        var title = item.TryGetProperty("title", out var titleProp) ? titleProp.GetString() : null;
+        var htmlUrl = item.TryGetProperty("html_url", out var htmlUrlProp) ? htmlUrlProp.GetString() : null;
+        var isDraft = item.TryGetProperty("draft", out var draftProp) && draftProp.ValueKind == JsonValueKind.True;
+        var createdAtIso = item.TryGetProperty("created_at", out var createdAtProp) ? createdAtProp.GetString() : null;
+        var updatedAtIso = item.TryGetProperty("updated_at", out var updatedAtProp) ? updatedAtProp.GetString() : null;
+
+        string? authorName = null;
+        string? avatarUrl = null;
+        if (item.TryGetProperty("user", out var userEl) && userEl.ValueKind == JsonValueKind.Object)
+        {
+            authorName = userEl.TryGetProperty("login", out var loginProp) ? loginProp.GetString() : null;
+            avatarUrl = userEl.TryGetProperty("avatar_url", out var avatarProp) ? avatarProp.GetString() : null;
+        }
+
+        string? headBranch = null;
+        string? headSha = null;
+        if (item.TryGetProperty("head", out var headEl) && headEl.ValueKind == JsonValueKind.Object)
+        {
+            headBranch = headEl.TryGetProperty("ref", out var refProp) ? refProp.GetString() : null;
+            headSha = headEl.TryGetProperty("sha", out var shaProp) ? shaProp.GetString() : null;
+        }
+
+        string? baseBranch = null;
+        if (item.TryGetProperty("base", out var baseEl) && baseEl.ValueKind == JsonValueKind.Object)
+        {
+            baseBranch = baseEl.TryGetProperty("ref", out var baseRefProp) ? baseRefProp.GetString() : null;
+        }
+
+        if (number <= 0 || string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(htmlUrl))
+        {
+            return null;
+        }
+
+        if (!DateTime.TryParse(
+                createdAtIso,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                out var createdAtUtc))
+        {
+            createdAtUtc = DateTime.UtcNow;
+        }
+
+        if (!DateTime.TryParse(
+                updatedAtIso,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                out var updatedAtUtc))
+        {
+            updatedAtUtc = createdAtUtc;
+        }
+
+        var normalizedHeadSha = string.IsNullOrWhiteSpace(headSha) ? string.Empty : headSha!.Trim();
+        return new GitHubPendingReviewEntry
+        {
+            Number = number,
+            Title = title.Trim(),
+            AuthorName = string.IsNullOrWhiteSpace(authorName) ? "unknown" : authorName!.Trim(),
+            AuthorAvatarUrl = string.IsNullOrWhiteSpace(avatarUrl) ? null : avatarUrl,
+            HeadBranch = string.IsNullOrWhiteSpace(headBranch) ? string.Empty : headBranch!.Trim(),
+            BaseBranch = string.IsNullOrWhiteSpace(baseBranch) ? GetGitHubBranch() : baseBranch!.Trim(),
+            HeadSha = normalizedHeadSha,
+            ShortSha = normalizedHeadSha.Length > 9 ? normalizedHeadSha[..9] : normalizedHeadSha,
+            IsDraft = isDraft,
+            CreatedAtUtc = createdAtUtc,
+            UpdatedAtUtc = updatedAtUtc,
+            HtmlUrl = htmlUrl.Trim(),
+        };
     }
 
     private GitHubLogEntry? ParseGitHubCommitItem(JsonElement item)

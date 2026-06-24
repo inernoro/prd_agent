@@ -172,6 +172,201 @@ function hasNoReadableError(parsed: unknown): boolean {
   });
 }
 
+// ── Acceptance reports (CDS self-hosted, 2026-06-20) ──
+
+export type ReportFormat = 'html' | 'md';
+
+export interface AcceptanceReport {
+  id: string;
+  title: string;
+  format: ReportFormat;
+  projectId?: string | null;
+  branchId?: string | null;
+  sizeBytes: number;
+  createdBy?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** List report metadata, newest first, optionally filtered by project. */
+export async function listReports(projectId?: string): Promise<AcceptanceReport[]> {
+  const qs = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
+  const res = await apiRequest<{ reports: AcceptanceReport[] }>(`/api/reports${qs}`);
+  return res.reports;
+}
+
+export async function getReport(id: string): Promise<AcceptanceReport> {
+  const res = await apiRequest<{ report: AcceptanceReport }>(`/api/reports/${encodeURIComponent(id)}`);
+  return res.report;
+}
+
+/** Create a report via the JSON paste path. */
+export async function createReportFromText(input: {
+  title: string;
+  format: ReportFormat;
+  content: string;
+  projectId?: string | null;
+  branchId?: string | null;
+}): Promise<AcceptanceReport> {
+  const res = await apiRequest<{ report: AcceptanceReport }>('/api/reports', {
+    method: 'POST',
+    body: input,
+  });
+  return res.report;
+}
+
+/**
+ * Create a report via the multipart file-upload path. Multipart must fetch
+ * directly (the apiRequest wrapper is JSON-only). Mirrors apiUrl()'s
+ * passthrough handling so dashboard calls reach the CDS master.
+ */
+export async function createReportFromFile(input: {
+  title: string;
+  format?: ReportFormat;
+  file: File;
+  projectId?: string | null;
+  branchId?: string | null;
+}): Promise<AcceptanceReport> {
+  const form = new FormData();
+  form.append('title', input.title);
+  if (input.format) form.append('format', input.format);
+  if (input.projectId) form.append('projectId', input.projectId);
+  if (input.branchId) form.append('branchId', input.branchId);
+  form.append('file', input.file, input.file.name);
+
+  const url = apiUrl('/api/reports');
+  const res = await fetch(url, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { Accept: 'application/json' },
+    body: form,
+  });
+  const text = await res.text();
+  let parsed: unknown = text;
+  try { parsed = text ? JSON.parse(text) : undefined; } catch { /* keep text */ }
+  if (!res.ok) {
+    throwApiError('POST', url, res, parsed, res.headers.get('x-cds-request-id') || undefined);
+  }
+  return (parsed as { report: AcceptanceReport }).report;
+}
+
+export async function deleteReport(id: string): Promise<void> {
+  await apiRequest(`/api/reports/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+/** Fetch raw report content as text (for Markdown conversion or inspection). */
+export async function fetchReportRaw(id: string): Promise<string> {
+  const url = apiUrl(`/api/reports/${encodeURIComponent(id)}/raw`);
+  const res = await fetch(url, { credentials: 'include' });
+  if (!res.ok) {
+    throwApiError('GET', url, res, undefined, res.headers.get('x-cds-request-id') || undefined);
+  }
+  return res.text();
+}
+
+/** Absolute URL for the raw report endpoint (used as iframe src for HTML). */
+export function reportRawUrl(id: string): string {
+  return apiUrl(`/api/reports/${encodeURIComponent(id)}/raw`);
+}
+
+// ── Local users + activity (auth-local, 2026-06-20) ──
+
+export type CdsAuthProvider = 'github' | 'local';
+
+export interface CdsPublicUser {
+  id: string;
+  username: string | null;
+  githubLogin: string;
+  name: string;
+  email: string | null;
+  avatarUrl: string | null;
+  authProvider: CdsAuthProvider;
+  isSystemOwner: boolean;
+  status: 'active' | 'disabled';
+  lastLoginAt: string | null;
+  createdAt: string;
+}
+
+export interface CdsUserActivity {
+  id: string;
+  userId: string;
+  userLogin: string;
+  action: string;
+  targetType?: string | null;
+  targetId?: string | null;
+  summary: string;
+  ip?: string | null;
+  at: string;
+}
+
+/** Whether the system needs first-run bootstrap (zero users). Public. */
+export async function fetchBootstrapStatus(): Promise<{ needsBootstrap: boolean }> {
+  return apiRequest<{ needsBootstrap: boolean }>('/api/auth/bootstrap-status');
+}
+
+/** Create the first local system-owner account (only valid when zero users). */
+export async function bootstrapFirstUser(input: {
+  username: string;
+  password: string;
+  name?: string;
+}): Promise<{ user: CdsPublicUser }> {
+  return apiRequest('/api/auth/bootstrap', { method: 'POST', body: input });
+}
+
+/** Local username + password login. Sets the shared session cookie on success. */
+export async function localLogin(input: {
+  username: string;
+  password: string;
+}): Promise<{ user: CdsPublicUser }> {
+  return apiRequest('/api/auth/login', { method: 'POST', body: input });
+}
+
+/** Change the current user's own password. */
+export async function changeMyPassword(input: {
+  oldPassword: string;
+  newPassword: string;
+}): Promise<void> {
+  await apiRequest('/api/auth/change-password', { method: 'POST', body: input });
+}
+
+/** List all users (system-owner only). */
+export async function listUsers(): Promise<CdsPublicUser[]> {
+  const res = await apiRequest<{ users: CdsPublicUser[] }>('/api/auth/users');
+  return res.users;
+}
+
+/** Create a local user (system-owner only). */
+export async function createLocalUser(input: {
+  username: string;
+  password: string;
+  name?: string;
+}): Promise<CdsPublicUser> {
+  const res = await apiRequest<{ user: CdsPublicUser }>('/api/auth/users', { method: 'POST', body: input });
+  return res.user;
+}
+
+/** Enable/disable or admin-reset a user (system-owner only). */
+export async function updateUser(
+  id: string,
+  input: { status?: 'active' | 'disabled'; newPassword?: string },
+): Promise<CdsPublicUser | null> {
+  const res = await apiRequest<{ user: CdsPublicUser | null }>(
+    `/api/auth/users/${encodeURIComponent(id)}`,
+    { method: 'PATCH', body: input },
+  );
+  return res.user;
+}
+
+/** Query user activity, newest-first. Owner may pass userId; others see only their own. */
+export async function listUserActivity(opts: { userId?: string; limit?: number } = {}): Promise<CdsUserActivity[]> {
+  const qs = new URLSearchParams();
+  if (opts.userId) qs.set('userId', opts.userId);
+  if (opts.limit) qs.set('limit', String(opts.limit));
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  const res = await apiRequest<{ activity: CdsUserActivity[] }>(`/api/auth/activity${suffix}`);
+  return res.activity;
+}
+
 function throwApiError(
   method: string,
   url: string,

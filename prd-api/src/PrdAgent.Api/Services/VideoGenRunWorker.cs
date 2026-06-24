@@ -153,7 +153,14 @@ public class VideoGenRunWorker : BackgroundService
     /// </summary>
     private async Task ProcessDirectVideoGenAsync(VideoGenRun run)
     {
-        const string appCallerCode = AppCallerRegistry.VideoAgent.VideoGen.Generate;
+        // 领取前已请求取消（claim 仅过滤 Status==Queued、不看 CancelRequested）：直接置终态，不进入提交流程（Codex review）
+        if (run.CancelRequested) { await CancelRunAsync(run); return; }
+
+        // 按 run.AppKey 选 caller：视觉分镜台(visual-agent)创建的 run 归属 visual-agent 视频配额/模型池与日志归因，
+        // 不再一律记到 video-agent（Codex review，配合前端改走 /api/visual-agent/video-gen）。
+        var appCallerCode = run.AppKey == "visual-agent"
+            ? AppCallerRegistry.VisualAgent.VideoGen.Generate
+            : AppCallerRegistry.VideoAgent.VideoGen.Generate;
 
         _logger.LogInformation("VideoGen 直出开始: runId={RunId}, userModel={Model}, duration={Duration}s",
             run.Id, run.DirectVideoModel, run.DirectDuration);
@@ -176,6 +183,7 @@ public class VideoGenRunWorker : BackgroundService
             AppCallerCode = appCallerCode,
             Model = run.DirectVideoModel, // 用户偏好（可空）；由模型池决定最终选择
             Prompt = prompt,
+            FirstFrameImageUrl = run.DirectFirstFrameUrl, // 设置则走图生视频（视觉分镜台「动起来」）
             AspectRatio = run.DirectAspectRatio,
             Resolution = run.DirectResolution,
             DurationSeconds = run.DirectDuration,
@@ -183,6 +191,11 @@ public class VideoGenRunWorker : BackgroundService
             UserId = run.OwnerAdminId,
             RequestId = run.Id
         };
+
+        // 提交前最后一道闸：领取后、提交到 OpenRouter 之前若收到取消请求（用户重新生成分镜 / 离开页面），
+        // 置终态不提交，避免烧视频额度。覆盖「claim 与 submit 之间」的取消窗口（Codex review）。
+        var freshBeforeSubmit = await _db.VideoGenRuns.Find(x => x.Id == run.Id).FirstOrDefaultAsync(CancellationToken.None);
+        if (freshBeforeSubmit?.CancelRequested == true) { await CancelRunAsync(run); return; }
 
         var submitResult = await client.SubmitAsync(submitReq, CancellationToken.None);
         if (!submitResult.Success || string.IsNullOrWhiteSpace(submitResult.JobId))
@@ -608,7 +621,11 @@ public class VideoGenRunWorker : BackgroundService
         if (sceneIdx < 0) return;
         var scene = run.Scenes[sceneIdx];
 
-        const string appCallerCode = AppCallerRegistry.VideoAgent.VideoGen.Generate;
+        // 按 run.AppKey 选 caller：视觉分镜台(visual-agent)创建的 run 归属 visual-agent 视频配额/模型池与日志归因，
+        // 不再一律记到 video-agent（Codex review，配合前端改走 /api/visual-agent/video-gen）。
+        var appCallerCode = run.AppKey == "visual-agent"
+            ? AppCallerRegistry.VisualAgent.VideoGen.Generate
+            : AppCallerRegistry.VideoAgent.VideoGen.Generate;
         _logger.LogInformation("VideoGen 单镜渲染开始: runId={RunId}, scene={Idx}, prompt={Len}字",
             run.Id, sceneIdx, scene.Prompt.Length);
         await PublishEventAsync(run.Id, "scene.render.start", new { sceneIndex = sceneIdx });

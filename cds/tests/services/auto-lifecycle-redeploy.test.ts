@@ -95,6 +95,11 @@ describe('AutoLifecycleService.tick — auto-publish 真实重部署', () => {
     // Cursor Bugbot Medium：redeploy 后分支重新跑起来，不能钉"已停止"字段
     expect(h.branch.lastStoppedAt).toBeUndefined();
     expect(h.branch.lastStopSource).not.toBe('system');
+    // 2026-06-20 可观测性（任务 3）：redeploy 成功路径把"自动切发布版"显式记到
+    // lastPublishReason/lastPublishAt，供卡片展示这次隐形的模式跃迁。
+    expect(h.branch.lastPublishAt).toBeDefined();
+    expect(h.branch.lastPublishReason).toContain('自动切到发布版');
+    expect(h.branch.lastPublishReason).toContain('web=prod');
   });
 
   it('lastDeployAt == lastReadyAt（同毫秒）不判陈旧，计时正常累积 → redeploy 触发', async () => {

@@ -28,11 +28,15 @@ import { Router } from 'express';
 import { randomBytes, createHash } from 'node:crypto';
 import type { StateService } from '../services/state.js';
 import { detectStack, detectModules, detectDatabaseInitialization, type StackDetection } from '../services/stack-detector.js';
+import { buildCacheMounts } from '../services/cache-catalog.js';
 import { discoverComposeFiles, parseCdsCompose } from '../services/compose-parser.js';
 import { deriveEnvMetaForVars } from '../services/env-classifier.js';
 import { ProjectFilesService, ProjectFileError, type ProjectFilePayload } from '../services/project-files.js';
 import { repoNameFromGitRef } from '../services/preview-slug.js';
 import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
+import { resolveActorFromRequest } from '../services/actor-resolver.js';
+import { getLatestResourceUsage, type ProjectResourceUsage } from '../services/resource-usage-sampler.js';
+import { applyDefaultDeployModesToBranch } from '../services/deploy-runtime.js';
 import {
   getInfraCatalogEntry,
   infraCatalogIds,
@@ -358,10 +362,19 @@ const EMPTY_STATS: ProjectStats = {
   lastDeployedAt: null,
 };
 
-interface ProjectSummary extends Project, ProjectStats {}
+interface ProjectSummary extends Project, ProjectStats {
+  /** 2026-06-23：项目级实时资源占用（CPU/内存/构建频次），由采样器周期写入。 */
+  resourceUsage?: ProjectResourceUsage | null;
+}
 
-function toSummary(project: Project, stats: ProjectStats): ProjectSummary {
-  return { ...project, ...stats };
+function toSummary(project: Project, stats: ProjectStats, usage?: ProjectResourceUsage | null): ProjectSummary {
+  return { ...project, ...stats, resourceUsage: usage ?? null };
+}
+
+/** 把最近一次资源采样快照转成 projectId → usage 的查找表（无快照时空表）。 */
+function resourceUsageLookup(): Map<string, ProjectResourceUsage> {
+  const snapshot = getLatestResourceUsage();
+  return new Map((snapshot?.projects || []).map((p) => [p.projectId, p]));
 }
 
 async function resolveRemoteDefaultBranch(shell: IShellExecutor, repoPath: string): Promise<string | null> {
@@ -574,14 +587,9 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   }
 
   function defaultCacheMountsFor(image: string): BuildProfile['cacheMounts'] {
-    const cacheBase = stateService.getCacheBase();
-    const mounts: NonNullable<BuildProfile['cacheMounts']> = [];
-    if (image.includes('node')) {
-      mounts.push({ hostPath: `${cacheBase}/pnpm`, containerPath: '/pnpm/store' });
-    }
-    if (image.includes('dotnet')) {
-      mounts.push({ hostPath: `${cacheBase}/nuget`, containerPath: '/root/.nuget/packages' });
-    }
+    // SSOT: services/cache-catalog.ts。覆盖 node/dotnet/java(.m2+.gradle)/go/rust/python，
+    // 新增栈只改 catalog 一处。Java 缓存挂载固化后不再每次重新下载依赖（任务 3）。
+    const mounts = buildCacheMounts(image, stateService.getCacheBase());
     return mounts.length > 0 ? mounts : undefined;
   }
 
@@ -1072,8 +1080,10 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
    * with no obvious path forward.
    */
   function composeFallbackDetection(repoPath: string): StackDetection | null {
-    const fs = require('node:fs') as typeof import('node:fs');
-    const path = require('node:path') as typeof import('node:path');
+    // 2026-06-20：ESM 模块运行时无 require()，原先 require('node:fs'/'node:path')
+    // 真实运行会抛 "require is not defined"。复用文件顶部已 import 的 nodeFs/nodePath。
+    const fs = nodeFs;
+    const path = nodePath;
     const composeNames = [
       'docker-compose.yml',
       'docker-compose.yaml',
@@ -1264,10 +1274,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   router.get('/projects', (req, res) => {
     try {
       const projects = stateService.getProjects();
+      const usageMap = resourceUsageLookup();
       // SECURITY P1 (2026-05-09): mask customEnv/defaultEnv for non-owners.
       // Static AI_ACCESS_KEY / cdsg_ global key callers get key names but
       // not values. cdsp_ project key (matching) and cookie auth bypass.
-      const summaries = projects.map((p) => maskProjectSummary(req, toSummary(p, statsFor(p))));
+      const summaries = projects.map((p) => maskProjectSummary(req, toSummary(p, statsFor(p), usageMap.get(p.id) || null)));
       // Sort: legacy pinned first (existing UX), then by runtime liveness
       // so projects with running services bubble up — useful once you
       // have many projects and only a few are active.
@@ -1305,7 +1316,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         });
         return;
       }
-      const summary = maskProjectSummary(req, toSummary(project, statsFor(project)));
+      const summary = maskProjectSummary(req, toSummary(project, statsFor(project), resourceUsageLookup().get(project.id) || null));
       // CDS-CLI-007 / #551 (a)：识别"半成品"项目（cloneStatus=error 或 git
       // 项目缺 repoPath）并在响应里附 recovery 指引，避免 Agent 反复尝试
       // clone 却拿不到具体下一步。这里只读不写，不会引入额外副作用。
@@ -1441,6 +1452,134 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     stateService.setProjectCommentTemplate(req.params.id, settings);
     stateService.save();
     res.json({ ok: true, body: settings.body, updatedAt: settings.updatedAt });
+  });
+
+  /**
+   * PUT /api/projects/:id/paused — 暂停 / 恢复一个项目（2026-06-23）。
+   *
+   * body: { paused: boolean, reason?: string }
+   *
+   * 暂停（paused=true）= 冻结整个项目：
+   *   - webhook（push/PR/delete/comment）一律忽略（isEventEnabled 闸门）
+   *   - 手动 / 自动 deploy 一律 423（branches.ts 兜底闸门）
+   *   - reconciler 不再重试该项目的 stale dispatch
+   *   - 立即停止该项目所有分支正在运行的容器（释放 CPU/内存）
+   * 恢复（paused=false）= 解冻，但**不自动重新部署**（用户手动 deploy）。
+   *
+   * 容器停止走内部自调 POST /branches/:id/stop（复用全部停止逻辑：远端执行器、
+   * 操作租约、归因、计数），fire-and-forget 不阻塞响应——暂停标记本身是同步落库的，
+   * 新构建立刻被拦；容器停止由前端轮询反映。
+   */
+  router.put('/projects/:id/paused', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: 'project_not_found', message: `Project '${req.params.id}' does not exist.` });
+      return;
+    }
+    const mismatch = assertProjectAccess(
+      req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } },
+      project.id,
+    );
+    if (mismatch) {
+      res.status(mismatch.status).json(mismatch.body);
+      return;
+    }
+    const { paused, reason } = (req.body || {}) as { paused?: boolean; reason?: string };
+    if (typeof paused !== 'boolean') {
+      res.status(400).json({ error: 'validation', field: 'paused', message: 'paused 必须是布尔值' });
+      return;
+    }
+    if (reason !== undefined && typeof reason !== 'string') {
+      res.status(400).json({ error: 'validation', field: 'reason', message: 'reason 必须是字符串' });
+      return;
+    }
+
+    const actor = resolveActorFromRequest(req as any);
+    const updated = stateService.setProjectPaused(project.id, paused, {
+      by: actor,
+      reason: reason?.slice(0, 200),
+    });
+    if (!updated) {
+      res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+
+    // 收集需要停止的运行分支（仅暂停时）。
+    let stoppingBranchIds: string[] = [];
+    if (paused) {
+      const branches = stateService.getBranchesForProject(project.id);
+      stoppingBranchIds = branches
+        .filter((b) =>
+          Object.values(b.services || {}).some(
+            (s) => s.status === 'running' || s.status === 'starting' || s.status === 'building' || s.status === 'restarting',
+          ),
+        )
+        .map((b) => b.id);
+    }
+
+    res.json({
+      ok: true,
+      paused: updated.paused === true,
+      pausedAt: updated.pausedAt || null,
+      pausedBy: updated.pausedBy || null,
+      pauseReason: updated.pauseReason || null,
+      stoppingBranches: stoppingBranchIds,
+      message: paused
+        ? `项目「${updated.aliasName || updated.name}」已暂停，正在停止 ${stoppingBranchIds.length} 个分支的容器。`
+        : `项目「${updated.aliasName || updated.name}」已恢复，需手动重新部署分支。`,
+    });
+
+    // 暂停：后台停止所有运行容器（不阻塞响应；前端轮询会反映停止结果）。
+    if (paused && stoppingBranchIds.length > 0) {
+      const masterPort = config?.masterPort;
+      if (masterPort) {
+        for (const branchId of stoppingBranchIds) {
+          void fetch(`http://127.0.0.1:${masterPort}/api/branches/${encodeURIComponent(branchId)}/stop`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CDS-Internal': '1',
+              'X-CDS-Trigger': 'system',
+              'X-CDS-Source-Project-Id': project.id,
+              'X-CDS-Source-Branch-Id': branchId,
+            },
+            body: JSON.stringify({ reason: '项目已暂停，自动停止容器' }),
+          }).catch((err) => {
+            // eslint-disable-next-line no-console
+            console.warn(`[project-pause] stop ${branchId} failed: ${(err as Error).message}`);
+          });
+        }
+      } else {
+        // eslint-disable-next-line no-console
+        console.warn('[project-pause] masterPort 未配置，跳过容器停止（暂停标记已生效）');
+      }
+    }
+  });
+
+  /**
+   * GET /api/cds-system/resource-usage — 项目级资源占用排行（2026-06-23）。
+   *
+   * 系统级运维视图：把最近一次采样快照（每项目 CPU/内存/运行容器 + 近 1h/24h
+   * 构建频次）join 上项目名与暂停状态，前端据此排序揪出「CPU 大户 / 反复构建大户」
+   * 并一键暂停。返回 sampledAt=null 表示采样器尚未产出首个快照（刚启动）。
+   */
+  router.get('/cds-system/resource-usage', (_req, res) => {
+    const snapshot = getLatestResourceUsage();
+    const projectById = new Map(stateService.getProjects().map((p) => [p.id, p]));
+    const rows = (snapshot?.projects || []).map((usage) => {
+      const project = projectById.get(usage.projectId);
+      return {
+        ...usage,
+        name: project ? project.aliasName || project.name : usage.projectId,
+        paused: project?.paused === true,
+      };
+    });
+    res.json({
+      sampledAt: snapshot?.sampledAt ?? null,
+      intervalMs: snapshot?.intervalMs ?? null,
+      totals: snapshot?.totals ?? { cpuPercent: 0, memUsedMB: 0, runningContainers: 0 },
+      projects: rows,
+    });
   });
 
   // 项目级：对已存在项目按基建目录(infra-catalog SSOT)应用预设，生成真随机密码 +
@@ -2452,6 +2591,77 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
 
     const updated = stateService.getProject(project.id)!;
     res.json({ project: toSummary(updated, statsFor(updated)) });
+  });
+
+  // POST /api/projects/:id/align-deploy-modes — 2026-06-23 强制把项目「默认运行模式」
+  // 对齐到**所有已有分支**（写入每个分支的 profileOverrides.activeDeployMode）。
+  //
+  // 默认运行模式（project.defaultDeployModes）原本只在「建分支时」拷贝一次,已有分支
+  // 不受影响。本端点让用户一键把现有分支全部对齐到当前默认（如全切极速版）。
+  //
+  // 重要（debt.cds-ci-prebuilt #8 宿主容量）：**只写配置,不批量重部署**。同时重启
+  // 大量分支容器（尤其极速版要逐个 docker pull 镜像）会压垮共享宿主。对齐后各分支
+  // 在「下次部署」时按新模式生效；需立即生效的分支单独在分支详情里重部署。
+  router.post('/projects/:id/align-deploy-modes', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) { res.status(404).json({ error: 'not_found' }); return; }
+    // 项目级写操作：必须校验调用方（项目 scope Agent Key）有权访问本项目,
+    // 否则项目 A 的 key 可改写项目 B 的全部分支运行模式（Bugbot/Codex review）。
+    const mismatch = assertProjectAccess(
+      req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } },
+      project.id,
+    );
+    if (mismatch) {
+      res.status(mismatch.status).json(mismatch.body);
+      return;
+    }
+    const defaults = project.defaultDeployModes || {};
+    if (Object.keys(defaults).length === 0) {
+      res.status(400).json({ error: 'no_defaults', message: '项目未设置默认运行模式,请先在项目设置选好默认模式再对齐' });
+      return;
+    }
+    const profiles = stateService.getBuildProfilesForProject(project.id);
+    const branches = stateService.getBranchesForProject(project.id);
+    const aligned: Array<{ branchId: string; modes: Record<string, string> }> = [];
+    for (const branch of branches) {
+      // 对齐前记录各 profile 当前激活模式,用于判定本次对齐是否真的改了模式。
+      const prevModes: Record<string, string> = {};
+      for (const profile of profiles) {
+        prevModes[profile.id] = branch.profileOverrides?.[profile.id]?.activeDeployMode || '';
+      }
+      // 复用 SSOT 写入逻辑（建分支与 webhook 自动建分支同款）
+      applyDefaultDeployModesToBranch(branch, defaults, profiles);
+      const modes: Record<string, string> = {};
+      let modeChanged = false;
+      for (const profile of profiles) {
+        if (!Object.prototype.hasOwnProperty.call(defaults, profile.id)) continue;
+        const ov = branch.profileOverrides?.[profile.id];
+        if (!ov) continue;
+        stateService.setBranchProfileOverride(branch.id, profile.id, ov);
+        modes[profile.id] = ov.activeDeployMode || '';
+        if ((ov.activeDeployMode || '') !== (prevModes[profile.id] || '')) modeChanged = true;
+      }
+      // 模式真的变了才清 CI 徽章状态（Bugbot: align leaves stale CI badges）：
+      // align 只写 override、不部署,旧的 ciImageStatus/ciTargetSha 等若不清,卡片会
+      // 显示与新模式不符的「等待 CI / CI 失败」直到下次 push。模式未变则不动(避免清掉
+      // 正在 in-flight 等待的极速版分支状态)。CI 字段在下次 express push 时重新 stamp。
+      if (modeChanged && branch.ciImageStatus !== undefined) {
+        stateService.updateBranchGithubMeta(branch.id, {
+          ciImageStatus: undefined,
+          ciTargetSha: undefined,
+          ciWorkflowConclusion: undefined,
+          ciWorkflowRunUrl: undefined,
+        });
+      }
+      aligned.push({ branchId: branch.id, modes });
+    }
+    stateService.save();
+    res.json({
+      aligned: aligned.length,
+      branches: aligned,
+      defaultDeployModes: defaults,
+      note: '已把默认运行模式写入全部分支配置；为避免同时重部署压垮宿主，未触发批量重启，各分支下次部署生效。需立即生效的分支请单独重部署。',
+    });
   });
 
   // POST /api/projects/:id/files — upload arbitrary text files into a branch worktree.

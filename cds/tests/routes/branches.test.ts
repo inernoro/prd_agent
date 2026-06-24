@@ -4,7 +4,11 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { clearRunningServiceErrorMessages, createBranchRouter } from '../../src/routes/branches.js';
+import {
+  clearRunningServiceErrorMessages,
+  createBranchRouter,
+  shouldSkipFencedDeployCleanupForNewerRuntime,
+} from '../../src/routes/branches.js';
 import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService } from '../../src/services/container.js';
@@ -58,6 +62,33 @@ describe('branch status helpers', () => {
 
     expect(entry.services.api.errorMessage).toBeUndefined();
     expect(entry.services.worker.errorMessage).toBe('启动失败');
+  });
+
+  it('skips fenced deploy cleanup when a newer runtime became ready', () => {
+    expect(shouldSkipFencedDeployCleanupForNewerRuntime(
+      {
+        lastReadyAt: '2026-06-19T20:11:35.631Z',
+        lastDeployAt: '2026-06-19T20:11:35.700Z',
+      },
+      '2026-06-19T19:45:39.295Z',
+    )).toBe(true);
+  });
+
+  it('does not skip fenced deploy cleanup without a newer ready runtime', () => {
+    expect(shouldSkipFencedDeployCleanupForNewerRuntime(
+      { lastReadyAt: '2026-06-19T19:40:00.000Z' },
+      '2026-06-19T19:45:39.295Z',
+    )).toBe(false);
+  });
+
+  it('does not skip fenced deploy cleanup after a later stop', () => {
+    expect(shouldSkipFencedDeployCleanupForNewerRuntime(
+      {
+        lastReadyAt: '2026-06-19T20:11:35.631Z',
+        lastStoppedAt: '2026-06-19T20:12:00.000Z',
+      },
+      '2026-06-19T19:45:39.295Z',
+    )).toBe(false);
   });
 });
 
@@ -376,6 +407,10 @@ describe('Branch Routes', () => {
       expect(res.status).toBe(400);
       expect((res.body as any).error).toBe('invalid_branch_name');
     });
+
+    // 极速版部署不再硬闸门(用户 2026-06-23 决策:没有镜像逐组件回退固定主分支,不硬失败)。
+    // 镜像可用性由 container.ts runService 处理(本 commit 镜像拉不到→回退主分支镜像),
+    // 单测见 tests/services/ci-prebuilt-express.test.ts 的 fallbackImage 用例。
   });
 
   describe('GET /api/branches', () => {
@@ -739,11 +774,87 @@ describe('Branch Routes', () => {
       await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
       const res = await request(server, 'POST', '/api/branches/feature-test/stop');
       expect(res.status).toBe(200);
+      expect(stateService.getBranch('feature-test')?.lastStopSource).toBe('user');
+      expect(stateService.getBranch('feature-test')?.lastStopReason).toBe('用户手动停止');
       const operationActions = operationEvents
         .filter((event) => event.branchId === 'feature-test')
         .map((event) => event.action);
       expect(operationActions).toContain('branch.operation.started');
       expect(operationActions).toContain('branch.operation.completed');
+    });
+
+    it('attributes webhook-triggered stops to webhook instead of user', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/webhook-stop' });
+      const res = await request(
+        server,
+        'POST',
+        '/api/branches/feature-webhook-stop/stop',
+        undefined,
+        { 'X-CDS-Trigger': 'webhook' },
+      );
+      expect(res.status).toBe(200);
+      expect(stateService.getBranch('feature-webhook-stop')?.lastStopSource).toBe('webhook');
+      expect(stateService.getBranch('feature-webhook-stop')?.lastStopReason).toBe('GitHub webhook 触发停止');
+    });
+
+    it('preserves webhook attribution when stopping a remote executor branch', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'remote-webhook-stop',
+        projectId: 'default',
+        branch: 'feature/remote-webhook-stop',
+        worktreePath: path.join(tmpDir, 'worktrees', 'remote-webhook-stop'),
+        status: 'running',
+        createdAt: now,
+        executorId: 'exec-1',
+        services: {
+          api: {
+            profileId: 'api',
+            containerName: 'cds-remote-webhook-stop-api',
+            hostPort: 10001,
+            status: 'running',
+          },
+        },
+      });
+      registryNodes.push({
+        id: 'exec-1',
+        host: '127.0.0.1',
+        port: 9101,
+        status: 'online',
+        role: 'remote',
+        labels: [],
+        branches: ['remote-webhook-stop'],
+        capacity: { maxBranches: 10, memoryMB: 1024, cpuCores: 2 },
+        load: { memoryUsedMB: 0, cpuPercent: 0 },
+        registeredAt: now,
+        lastHeartbeat: now,
+      });
+      const fetchCalls: Array<{ url: string; body: any }> = [];
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        fetchCalls.push({
+          url: String(input),
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+        });
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }) as typeof fetch;
+
+      try {
+        const res = await request(
+          server,
+          'POST',
+          '/api/branches/remote-webhook-stop/stop',
+          undefined,
+          { 'X-CDS-Trigger': 'webhook' },
+        );
+
+        expect(res.status).toBe(200);
+        expect(fetchCalls[0]?.body?.trigger).toBe('webhook');
+        expect(stateService.getBranch('remote-webhook-stop')?.lastStopSource).toBe('webhook');
+        expect(stateService.getBranch('remote-webhook-stop')?.lastStopReason).toContain('GitHub webhook 触发停止');
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
   });
 

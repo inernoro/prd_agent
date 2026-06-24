@@ -175,14 +175,29 @@ export function resolveProfileWithMode(profile: BuildProfile): BuildProfile {
   let resolved: BuildProfile = profile;
   if (mode && profile.deployModes?.[mode]) {
     const override = profile.deployModes[mode];
+    // 2026-06-23 极速版：prebuilt 模式跳过 source mount(复用 prebuiltImage 语义),
+    // containerPort 覆盖预构建镜像监听端口(api/admin 生产镜像 8080,与源码模式不同)。
+    const willBePrebuilt = override.prebuilt ?? profile.prebuiltImage ?? false;
     resolved = {
       ...profile,
-      command: override.command ?? profile.command,
+      // prebuilt 模式若未显式给 command,**不继承** baseline 的源码构建命令
+      // (镜像里没有 SDK/源码,跑 baseline 命令必失败),置空 → runService 用镜像
+      // 自带 ENTRYPOINT/CMD 启动。
+      command: override.command ?? (willBePrebuilt ? '' : profile.command),
       dockerImage: override.dockerImage ?? profile.dockerImage,
       env: override.env
         ? { ...profile.env, ...override.env }
         : profile.env,
+      ...(override.prebuilt !== undefined ? { prebuiltImage: override.prebuilt } : {}),
+      ...(override.containerPort !== undefined ? { containerPort: override.containerPort } : {}),
+      // 极速版「逐组件回退主分支」:把本模式的 fallbackImage 一并带出,供 runService 在
+      // 本 commit 无该组件镜像时回退（path-filter 只构建改动组件,某些 commit 缺镜像）。
+      ...(override.fallbackImage !== undefined ? { fallbackImage: override.fallbackImage } : {}),
     };
+  }
+  // 极速版(prebuilt)不跑 hot reload watcher —— 镜像里是编译产物,没有源码可 watch。
+  if (resolved.prebuiltImage) {
+    return resolved;
   }
   // Hot reload 优先级最高
   const hrCmd = resolveHotReloadCommand(resolved);
@@ -190,6 +205,49 @@ export function resolveProfileWithMode(profile: BuildProfile): BuildProfile {
     return { ...resolved, command: hrCmd };
   }
   return resolved;
+}
+
+/**
+ * 2026-06-23 极速版 —— 解析 dockerImage 里的部署期模板变量。
+ *
+ * 极速版镜像 tag 由 commit SHA 决定（CI 按 `github.sha` 推 `sha-<SHA>` tag），
+ * 必须在拿到具体分支上下文时才能确定。支持:
+ *   - `${CDS_COMMIT_SHA}`  → **优先 branch.ciTargetSha**，退而 branch.githubCommitSha
+ *   - `${CDS_BRANCH_SLUG}` → 分支名 slugify（与 CI 的 branch-<slug> 移动 tag 对齐）
+ *
+ * 为何优先 ciTargetSha（Bugbot High: prebuilt image tag ignores ciTargetSha）：
+ *   ciTargetSha 是「CI 真正构建出镜像的那个 commit」的 SSOT；githubCommitSha 只是
+ *   「最近一次 push 的 commit」，会被 docs-only push / 被闸门拦下的 check_run 重跑悄悄推进，
+ *   而它们并不产生新镜像。若用 githubCommitSha 渲染 tag，会拉到错 SHA 的镜像或静默回退
+ *   branch-main，使预览与已就绪的 CI 产物不一致。故极速版 tag 锁定 ciTargetSha。
+ *   ciTargetSha 未设（如从未走过 CI 的分支）时退回 githubCommitSha，行为不变。
+ *
+ * 纯函数,export 给单测用。无模板变量时原样返回。
+ */
+export function resolveImageTemplate(image: string | undefined, branch?: BranchEntry): string | undefined {
+  if (!image || image.indexOf('${') === -1) return image;
+  const sha = branch?.ciTargetSha || branch?.githubCommitSha || '';
+  const slug = slugifyBranchForImage(branch?.branch || '');
+  return image
+    .replace(/\$\{CDS_COMMIT_SHA\}/g, sha)
+    .replace(/\$\{CDS_BRANCH_SLUG\}/g, slug);
+}
+
+/**
+ * 分支名 → 镜像 tag slug。**必须与 CI 的 `.github/workflows/branch-image.yml` 经
+ * docker/metadata-action `type=ref,event=branch,prefix=branch-` 推送的 tag 一致**,
+ * 否则 path-filter 跳过某组件时 `branch-${CDS_BRANCH_SLUG}` 回退会找不到本分支镜像
+ * （Codex P2: align branch-image fallback slugging）。docker/metadata-action 的 sanitizeTag:
+ *   - 只把**不属于 Docker tag 合法字符集** `[A-Za-z0-9._-]` 的连续序列替换为 '-';
+ *   - **保留大小写**、保留 '_' 和 '.'（不像旧实现那样小写 + 改写 '_'/'.'）;
+ *   - 例: `my/branch`→`my-branch`、`Codex/fix`→`Codex-fix`、`release/v1.2`→`release-v1.2`。
+ * 额外去掉前导 '.'/'-'(Docker tag 不能以它们开头) + 截到 128 字符上限。
+ */
+export function slugifyBranchForImage(branch: string): string {
+  return branch
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/^[.-]+/, '')
+    .slice(0, 128);
 }
 
 /**
@@ -236,7 +294,30 @@ export function applyProfileOverride(baseline: BuildProfile, override?: BuildPro
 export function resolveEffectiveProfile(profile: BuildProfile, branch?: BranchEntry): BuildProfile {
   const branchOverride = branch?.profileOverrides?.[profile.id];
   const withBranchOverride = applyProfileOverride(profile, branchOverride);
-  return resolveProfileWithMode(withBranchOverride);
+  const withMode = resolveProfileWithMode(withBranchOverride);
+  // 2026-06-23 极速版：deploy-mode 解析完后,把 dockerImage / fallbackImage 里的
+  // ${CDS_COMMIT_SHA} 等模板变量按当前分支上下文替换。无模板变量时是 no-op。
+  // fallbackImage 可为字符串或有序数组(逐组件回退链),逐元素解析。
+  const resolvedImage = resolveImageTemplate(withMode.dockerImage, branch);
+  const resolvedFallback = Array.isArray(withMode.fallbackImage)
+    ? withMode.fallbackImage.map((f) => resolveImageTemplate(f, branch) || f)
+    : resolveImageTemplate(withMode.fallbackImage, branch);
+  const imageChanged = resolvedImage !== withMode.dockerImage;
+  const fallbackChanged = JSON.stringify(resolvedFallback) !== JSON.stringify(withMode.fallbackImage);
+  if (imageChanged || fallbackChanged) {
+    return {
+      ...withMode,
+      dockerImage: resolvedImage || withMode.dockerImage,
+      ...(withMode.fallbackImage !== undefined ? { fallbackImage: resolvedFallback } : {}),
+    };
+  }
+  return withMode;
+}
+
+/** 把 BuildProfile.fallbackImage(string | string[] | undefined) 规整为有序候选数组。 */
+export function normalizeFallbackImages(fallback: string | string[] | undefined): string[] {
+  if (!fallback) return [];
+  return (Array.isArray(fallback) ? fallback : [fallback]).map((s) => (s || '').trim()).filter(Boolean);
 }
 
 function missingEnvTemplates(env: Record<string, string>): string[] {
@@ -480,13 +561,6 @@ export class ContainerService {
     }
     if (!mergedEnv['Jwt__Issuer']) mergedEnv['Jwt__Issuer'] = this.config.jwt.issuer;
 
-    if (entry.branch) {
-      mergedEnv['VITE_GIT_BRANCH'] = entry.branch;
-    }
-    if (entry.githubCommitSha) {
-      mergedEnv['VITE_BUILD_ID'] = entry.githubCommitSha.slice(0, 12);
-    }
-
     const isNodeContainer = /\bnode:/.test(profile.dockerImage);
     if (isNodeContainer) {
       mergedEnv['PNPM_HOME'] = mergedEnv['PNPM_HOME'] || '/pnpm';
@@ -499,6 +573,24 @@ export class ContainerService {
 
     if (profile.env) {
       Object.assign(mergedEnv, profile.env);
+    }
+
+    const deployCommit = entry.pinnedCommit || entry.githubCommitSha || entry.lastDeployDispatchCommitSha;
+    if (entry.branch) {
+      mergedEnv['VITE_GIT_BRANCH'] = entry.branch;
+    }
+    if (deployCommit) {
+      // 平台版本元数据必须覆盖项目 env，供发布中心和 /api/version 判断当前部署 commit。
+      mergedEnv['GIT_COMMIT'] = deployCommit;
+      mergedEnv['COMMIT_SHA'] = deployCommit;
+      mergedEnv['GITHUB_SHA'] = deployCommit;
+      mergedEnv['SOURCE_VERSION'] = deployCommit;
+      mergedEnv['CDS_COMMIT_SHA'] = deployCommit;
+      mergedEnv['VITE_BUILD_ID'] = deployCommit.slice(0, 12);
+    }
+    const deployTime = entry.lastDeployDispatchAt || entry.lastPushAt || entry.createdAt;
+    if (deployTime) {
+      mergedEnv['CDS_BUILD_TIME'] = deployTime;
     }
 
     const isolatedEnv = applyPerBranchDbIsolation(mergedEnv, profile.dbScope, entry.branch);
@@ -829,9 +921,98 @@ export class ContainerService {
     });
 
     const command = profile.command || '';
-    if (!command) {
+    // 2026-06-23 极速版：预构建镜像自带 ENTRYPOINT（api=`dotnet PrdAgent.Api.dll`,
+    // admin=`serve -s dist`）,允许 command 为空 —— 此时不 `sh -c` 包装,直接用
+    // 镜像默认 ENTRYPOINT/CMD 启动。非预构建模式仍强制要求 command。
+    const usePrebuiltEntrypoint = profile.prebuiltImage === true && !command;
+    if (!command && !usePrebuiltEntrypoint) {
       throw new Error(`构建配置 "${profile.id}" 缺少 command 字段`);
     }
+
+    // 极速版：运行前显式 docker pull 外部 ghcr 镜像（按 commit SHA tag 不可变）。
+    // 显式 pull 而非依赖 docker run 隐式拉取,是为了把「镜像缺失/拉取失败」第一时间
+    // 暴露给用户（对应「等待+提示,手动切回源码编译」兜底），并在 SSE 日志给反馈
+    // 而非空白等待。
+    if (profile.prebuiltImage === true) {
+      // 极速版「逐组件有序回退」(用户 2026-06-23 决策 + Codex P1)：CI 按 path-filter 只构建
+      // 改动的组件(不重复构建),所以某 commit 可能缺本组件镜像。按**有序回退链**尝试:
+      //   ① 本 commit 镜像(dockerImage,:sha-<X>)
+      //   ② fallbackImage 链:先 :branch-<slug>(本分支该组件最近一次构建,保住本分支已有改动)
+      //      再 :branch-main(本分支从未构建过该组件时退到主分支)。
+      // 任一拉到即用它跑容器,**不硬失败**;全部拉不到才报错。
+      const isUnresolved = (im: string): boolean => {
+        if (!im) return true;
+        if (im.includes('${')) return true; // 模板变量没解析
+        const tag = im.includes(':') ? im.slice(im.lastIndexOf(':') + 1) : '';
+        return tag === '' || tag.endsWith('-'); // tag 被空串替换成 :sha-/:branch-
+      };
+      const primary = (profile.dockerImage || '').trim();
+      const fallbackList = normalizeFallbackImages(profile.fallbackImage);
+      const candidates: Array<{ image: string; kind: 'primary' | 'fallback' }> = [];
+      const seen = new Set<string>();
+      if (!isUnresolved(primary)) { candidates.push({ image: primary, kind: 'primary' }); seen.add(primary); }
+      for (const fb of fallbackList) {
+        if (isUnresolved(fb) || seen.has(fb)) continue;
+        candidates.push({ image: fb, kind: 'fallback' });
+        seen.add(fb);
+      }
+
+      if (candidates.length === 0) {
+        const reason = `极速版镜像 tag 未解析且无可用回退镜像: ${primary || '(空)'} —— 缺 commit SHA / 分支 slug。`;
+        onOutput?.(`── ${reason} ──\n`);
+        this.recordContainerEvent({
+          severity: 'error',
+          source: 'cds-container-service',
+          action: 'app.pull.unresolved-tag',
+          message: `prebuilt image tag unresolved: ${primary}`,
+          projectId: entry.projectId,
+          branchId: entry.id,
+          profileId: profile.id,
+          requestId: context.requestId ?? undefined,
+          operationId: context.operationId ?? undefined,
+          details: { image: primary, fallback: fallbackList, reason: '极速版镜像 tag 模板变量为空/未解析且无回退' },
+        });
+        throw new Error(`${reason}\n请确认分支已有 commit（push 或部署请求携带 commitSha）,或配置回退镜像 / 切回源码编译。`);
+      }
+
+      let pulledImage: string | null = null;
+      let lastDetail = '';
+      for (let i = 0; i < candidates.length; i++) {
+        const cand = candidates[i];
+        onOutput?.(cand.kind === 'fallback'
+          ? `── 本 commit 无该组件 CI 镜像,按回退链尝试 ${cand.image} ──\n`
+          : `── 极速版: 拉取 CI 预构建镜像 ${cand.image}（CDS 不再本机编译）──\n`);
+        context.assertCurrent?.(`runService before docker-pull ${profile.id}`);
+        const pull = await this.shell.exec(`docker pull ${cand.image}`);
+        if (pull.stdout) onOutput?.(pull.stdout + '\n');
+        if (pull.exitCode === 0) { pulledImage = cand.image; break; }
+        lastDetail = (pull.stderr || pull.stdout || '').trim();
+        const hasNext = i < candidates.length - 1;
+        onOutput?.(`── 拉取失败: ${lastDetail}${hasNext ? `（改用下一个回退镜像 ${candidates[i + 1].image}）` : ''} ──\n`);
+      }
+
+      if (!pulledImage) {
+        onOutput?.(`── 极速版镜像拉取失败(含回退) ──\n`);
+        this.recordContainerEvent({
+          severity: 'error',
+          source: 'cds-container-service',
+          action: 'app.pull.failed',
+          message: `docker pull failed for prebuilt image(s): ${candidates.map((c) => c.image).join(', ')}`,
+          projectId: entry.projectId,
+          branchId: entry.id,
+          profileId: profile.id,
+          requestId: context.requestId ?? undefined,
+          operationId: context.operationId ?? undefined,
+          command: { name: 'docker pull', exitCode: 1, stdoutPreview: '', stderrPreview: lastDetail },
+          details: { images: candidates.map((c) => c.image), reason: '极速版预构建镜像(含回退)拉取失败' },
+        });
+        throw new Error(`极速版镜像拉取失败(含回退): ${candidates.map((c) => c.image).join(' / ')}\n${lastDetail}\n（CI 镜像可能尚未就绪或未设为 public,可在分支详情切回源码编译）`);
+      }
+      // 用实际拉到的镜像(可能是回退主分支镜像)跑容器:下游 docker run 读 profile.dockerImage。
+      if (pulledImage !== profile.dockerImage) profile.dockerImage = pulledImage;
+      onOutput?.(`── 镜像就绪: ${pulledImage} ──\n`);
+    }
+
     const resolvedEnv = this.resolveProfileRuntimeEnv(entry, profile, customEnv);
 
     const envFilePath = this.writeEnvFile(resolvedEnv);
@@ -840,7 +1021,9 @@ export class ContainerService {
       await this.buildProfileVolumeFlags(entry, profile, command, onOutput);
 
     try {
-      onOutput?.(`── 运行: ${command} ──\n`);
+      onOutput?.(usePrebuiltEntrypoint
+        ? `── 运行: ${profile.dockerImage}（镜像默认 ENTRYPOINT）──\n`
+        : `── 运行: ${command} ──\n`);
       // Bugbot 2026-05-06 1f32c1da:之前 log 的条件是 isNodeContainer && !skipSrcMount,
       // 比真正挂 volume 的条件(还要 /\bpnpm\b/.test(command))宽,npm/yarn 项目会
       // 看到"走 docker volume"的误导日志。改为与真实 mount 条件完全一致。
@@ -886,12 +1069,14 @@ export class ContainerService {
         ...volumeFlags,
         ...resourceFlags,
         ...entrypointFlags,
-        `-w ${containerWorkDir}`,
+        // 极速版预构建镜像无 command 时,不覆盖 -w（用镜像自带 WORKDIR）也不 sh -c 包装,
+        // 直接让镜像 ENTRYPOINT/CMD 启动。
+        ...(usePrebuiltEntrypoint ? [] : [`-w ${containerWorkDir}`]),
         envFlag,
         '--tmpfs /tmp',
         this.appLabels(entry.projectId, entry.id, profile.id, network),
         profile.dockerImage,
-        `sh -c "${command.replace(/"/g, '\\"')}"`,
+        ...(usePrebuiltEntrypoint ? [] : [`sh -c "${command.replace(/"/g, '\\"')}"`]),
       ].join(' ');
 
       context.assertCurrent?.(`runService before docker-run ${profile.id}`);

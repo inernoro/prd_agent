@@ -195,6 +195,10 @@ export const api = {
     stats: () => '/api/team-activity/stats',
     insights: () => '/api/team-activity/insights',
     insightState: () => '/api/team-activity/insights/state',
+    insightToRequirement: () => '/api/team-activity/insights/to-requirement',
+    experienceMap: () => '/api/team-activity/experience-map',
+    experienceTrend: () => '/api/team-activity/experience-trend',
+    endpointDetail: () => '/api/team-activity/endpoint-detail',
   },
 
   // ============ Skills 技能管理 ============
@@ -326,6 +330,7 @@ export const api = {
       visualAgent: () => '/api/dashboard/user-preferences/visual-agent',
       literaryAgent: () => '/api/dashboard/user-preferences/literary-agent',
       agentSwitcher: () => '/api/dashboard/user-preferences/agent-switcher',
+      docStorePins: () => '/api/dashboard/user-preferences/doc-store-pins',
     },
     stats: {
       overview: () => '/api/dashboard/stats/overview',
@@ -338,6 +343,15 @@ export const api = {
 
   // ============ Visual Agent 视觉创作 ============
   visualAgent: {
+    // 视觉创作自有的图生视频端点（appKey=visual-agent，与 video-agent 隔离，遵循 app-identity 规则）
+    videoGen: {
+      runs: {
+        create: () => '/api/visual-agent/video-gen/runs',
+        byId: (runId: string) => `/api/visual-agent/video-gen/runs/${runId}`,
+        cancel: (runId: string) => `/api/visual-agent/video-gen/runs/${runId}/cancel`,
+        stream: (runId: string) => `/api/visual-agent/video-gen/runs/${runId}/stream`,
+      },
+    },
     imageMaster: {
       sessions: {
         list: () => '/api/visual-agent/image-master/sessions',
@@ -381,6 +395,10 @@ export const api = {
       sizeCaps: () => '/api/visual-agent/image-gen/size-caps',
       /** 获取所有生图场景的模型池（合并去重） */
       models: () => '/api/visual-agent/image-gen/models',
+      /** 仅文生图(text2img)可用的模型池——分镜台关键帧等纯文生图场景用，避免选到 img2img/vision-only 池 */
+      modelsText2Img: () => '/api/visual-agent/image-gen/models/text2img',
+      /** 视觉分镜台：把想法/文章拆成镜头（含每镜关键帧图 prompt + 运动 prompt） */
+      storyboardScript: () => '/api/visual-agent/image-gen/storyboard-script',
       /** 根据平台侧模型ID获取适配信息（尺寸选项等） */
       adapterInfo: (modelId: string) => `/api/visual-agent/image-gen/adapter-info?modelId=${encodeURIComponent(modelId)}`,
       /** Visual Agent 域内日志查询（避免跨权限调用 /api/logs/llm） */
@@ -614,6 +632,12 @@ export const api = {
       batch: () => '/api/defect-agent/shares/batch',
       scores: (shareId: string) => `/api/defect-agent/shares/${shareId}/scores`,
       scoresStream: (shareId: string) => `/api/defect-agent/shares/${shareId}/scores/stream`,
+    },
+    automation: {
+      console: () => '/api/defect-agent/agent/automation-console',
+      ensureAuthorization: () => '/api/defect-agent/agent/authorization/ensure',
+      runs: () => '/api/defect-agent/agent/runs',
+      next: () => '/api/defect-agent/agent/next',
     },
   },
 
@@ -1216,6 +1240,7 @@ export const api = {
       listWithPreview: () => '/api/document-store/stores/with-preview',
       create: () => '/api/document-store/stores',
       detail: (storeId: string) => `/api/document-store/stores/${storeId}`,
+      size: (storeId: string) => `/api/document-store/stores/${storeId}/size`,
       setTeams: (storeId: string) => `/api/document-store/stores/${storeId}/teams`,
       primaryEntry: (storeId: string) => `/api/document-store/stores/${storeId}/primary-entry`,
       pinnedEntries: (storeId: string) => `/api/document-store/stores/${storeId}/pinned-entries`,
@@ -1255,6 +1280,10 @@ export const api = {
       subscribeGithub: (storeId: string) => `/api/document-store/stores/${storeId}/subscribe-github`,
       detail: (entryId: string) => `/api/document-store/entries/${entryId}`,
       content: (entryId: string) => `/api/document-store/entries/${entryId}/content`,
+      // 版本控制：历史版本列表 / 取某版本正文 / 恢复某版本
+      versions: (entryId: string) => `/api/document-store/entries/${entryId}/versions`,
+      versionDetail: (entryId: string, versionId: string) => `/api/document-store/entries/${entryId}/versions/${versionId}`,
+      versionRestore: (entryId: string, versionId: string) => `/api/document-store/entries/${entryId}/versions/${versionId}/restore`,
       move: (entryId: string) => `/api/document-store/entries/${entryId}/move`,
       primaryChild: (folderId: string) => `/api/document-store/entries/${folderId}/primary-child`,
       sync: (entryId: string) => `/api/document-store/entries/${entryId}/sync`,
@@ -1316,6 +1345,9 @@ export const api = {
     nodes: () => '/api/peer-sync/nodes',
     items: (type: string) => `/api/peer-sync/resources/${type}/items`,
     transfer: () => '/api/peer-sync/transfer',
+    autoSync: () => '/api/peer-sync/auto-sync',
+    runs: (type: string, itemId?: string) =>
+      `/api/peer-sync/runs?resourceType=${encodeURIComponent(type)}${itemId ? `&itemId=${encodeURIComponent(itemId)}` : ''}`,
     // 管理侧（设置 → 系统互联）
     adminList: () => '/api/admin/peer-nodes',
     adminPairingCode: () => '/api/admin/peer-nodes/pairing-code',
@@ -1377,6 +1409,12 @@ export const api = {
       if (opts?.before) params.push(`before=${encodeURIComponent(opts.before)}`);
       if (opts?.force) params.push('force=true');
       return `/api/changelog/github-logs${params.length ? `?${params.join('&')}` : ''}`;
+    },
+    githubPendingReview: (opts?: { limit?: number; force?: boolean }) => {
+      const params: string[] = [];
+      if (opts?.limit != null) params.push(`limit=${opts.limit}`);
+      if (opts?.force) params.push('force=true');
+      return `/api/changelog/github-pending-review${params.length ? `?${params.join('&')}` : ''}`;
     },
     /** AI 总结（走 ILlmGateway + prd-admin.changelog.aiSummary::chat） */
     aiSummary: () => '/api/changelog/ai-summary',
