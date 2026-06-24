@@ -1,7 +1,7 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta } from '../types.js';
+import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
@@ -139,6 +139,7 @@ function emptyState(): CdsState {
     activityLogs: {},
     resourceExternalAccess: {},
     resourceCloneTasks: [],
+    removedBranches: {},
   };
 }
 
@@ -1498,6 +1499,8 @@ export class StateService {
       ciTargetSha?: string;
       ciWorkflowConclusion?: string;
       ciWorkflowRunUrl?: string;
+      ciWaitingSince?: string;
+      ciImageError?: string;
     },
   ): void {
     const branch = this.state.branches[id];
@@ -1519,6 +1522,8 @@ export class StateService {
     if ('ciTargetSha' in updates) branch.ciTargetSha = updates.ciTargetSha;
     if ('ciWorkflowConclusion' in updates) branch.ciWorkflowConclusion = updates.ciWorkflowConclusion;
     if ('ciWorkflowRunUrl' in updates) branch.ciWorkflowRunUrl = updates.ciWorkflowRunUrl;
+    if ('ciWaitingSince' in updates) branch.ciWaitingSince = updates.ciWaitingSince;
+    if ('ciImageError' in updates) branch.ciImageError = updates.ciImageError;
   }
 
   // ── Remote hosts (shared-service deployment targets, 2026-05-06) ──
@@ -3099,6 +3104,93 @@ export class StateService {
       }
     }
     return this.state.defaultBranch ?? null;
+  }
+
+  /** 墓碑台账容量上限：超过即按 removedAt 淘汰最旧（防止无限增长）。 */
+  private static readonly REMOVED_BRANCHES_CAP = 200;
+
+  /**
+   * 记录一条分支墓碑（PR 合并/关闭后分支被删时调用）。以 previewSlug 为主键，
+   * 同 slug 重复写入按最新覆盖；超出容量上限时淘汰最旧的若干条。
+   *
+   * 一个例外（merged 粘性）：合并一个 PR 会先后投递两条 webhook —— `pull_request.closed`
+   * （reason='merged'）与随后 GitHub 自动删分支的 `delete`（reason='abandoned'）。两条
+   * 都会落墓碑，且投递顺序不保证。若已有 'merged' 记录，后到的 'abandoned' 不得把它降级
+   * （否则合并的分支会错显"已放弃"）；反向（先 abandoned 后 merged）允许覆盖，merged 信息更全。
+   */
+  recordRemovedBranch(tombstone: BranchTombstone): void {
+    if (!tombstone.previewSlug) return;
+    const map = this.state.removedBranches ?? (this.state.removedBranches = {});
+    const existing = map[tombstone.previewSlug];
+    // 分支名/slug 复用：同一 previewSlug 可能跨越**多个分支生命周期**（旧 PR 合并 → 同名分支
+    // 被新 PR 重新使用 → 新 PR 关闭/删除）。判定 incoming 是否属于与 existing **不同的、更晚的**
+    // 生命周期：incoming 带了不同的 prNumber（铁证），或 incoming 比 existing 晚很多（raw delete
+    // 复用兜底，合并后的自动删除是秒级，复用删除是小时级以上）。跨生命周期时既不保留 merged
+    // 粘性、也不承袭旧 PR 元数据/身份（否则旧 merged 页 + 旧 PR 链接会盖住当前 abandoned 状态，Codex P2）。
+    const existingAt = Date.parse(existing?.removedAt || '') || 0;
+    const incomingAt = Date.parse(tombstone.removedAt || '') || 0;
+    const differentPr = tombstone.prNumber != null && existing?.prNumber != null
+      && tombstone.prNumber !== existing.prNumber;
+    const farLater = existingAt > 0 && incomingAt > existingAt + 30 * 60 * 1000;
+    const crossLifecycle = !!existing && (differentPr || farLater);
+    if (existing?.reason === 'merged' && tombstone.reason === 'abandoned' && !crossLifecycle) {
+      return; // merged 粘性：同一生命周期的合并后 raw delete 不降级（跨生命周期复用则放行覆盖）
+    }
+    // 保留更丰富的 PR 元数据：典型流程「关 PR（写带 prNumber/prUrl 的 abandoned 墓碑）→
+    // GitHub 删分支（delete 事件再写一条 abandoned 墓碑，但不带任何 PR 字段）」会让后者
+    // 覆盖前者、丢掉「查看 PR」按钮。incoming 缺某 PR 字段而 existing 有，则承袭（Codex P2）。
+    // 跨生命周期（复用）时**不**承袭，避免旧 PR 元数据/身份污染新记录。
+    const record: BranchTombstone = { ...tombstone };
+    if (existing && !crossLifecycle) {
+      if (record.prNumber == null && existing.prNumber != null) record.prNumber = existing.prNumber;
+      if (!record.prUrl && existing.prUrl) record.prUrl = existing.prUrl;
+      if (!record.baseRef && existing.baseRef) record.baseRef = existing.baseRef;
+      if (!record.mergeCommitSha && existing.mergeCommitSha) record.mergeCommitSha = existing.mergeCommitSha;
+      // 身份字段（branchId/aliases）合并：保留**已有** branchId 为主键（第一写入者通常来自
+      // 真实 entry.id，比后到事件用 canonicalId 计算的更权威），把另一个不同的 id 收进
+      // aliases，让 findRemovedBranchByIdentifier 按任一 id 都命中——避免后到的 canonicalId
+      // 覆盖真实 entry.id 导致停止分支 gone 页查不到（Bugbot）。
+      const aliasSet = new Set<string>([...(existing.aliases ?? []), ...(record.aliases ?? [])]);
+      if (existing.branchId && record.branchId && existing.branchId !== record.branchId) {
+        aliasSet.add(record.branchId);
+      }
+      if (existing.branchId) record.branchId = existing.branchId;
+      if (aliasSet.size) record.aliases = Array.from(aliasSet);
+    }
+    map[tombstone.previewSlug] = record;
+    const entries = Object.entries(map);
+    if (entries.length > StateService.REMOVED_BRANCHES_CAP) {
+      // removedAt 升序排列，删掉最旧的几条直到回到上限。
+      entries.sort((a, b) => (a[1].removedAt || '').localeCompare(b[1].removedAt || ''));
+      const overflow = entries.length - StateService.REMOVED_BRANCHES_CAP;
+      for (let i = 0; i < overflow; i += 1) delete map[entries[i][0]];
+    }
+    this.save();
+  }
+
+  /** 按 previewSlug 查分支墓碑；无记录返回 undefined。 */
+  getRemovedBranch(previewSlug: string): BranchTombstone | undefined {
+    if (!previewSlug) return undefined;
+    return this.state.removedBranches?.[previewSlug];
+  }
+
+  /**
+   * gone 页用：按访问标识查墓碑。先按 previewSlug 主键（标准 v3 预览域），未命中再
+   * 兜底扫 branchId / aliases（自定义子域别名访问时 proxy 返回的是分支 id 或别名 label，
+   * 而非 computePreviewSlug 算出的 previewSlug，主键查不到）。
+   */
+  findRemovedBranchByIdentifier(identifier: string): BranchTombstone | undefined {
+    if (!identifier) return undefined;
+    const map = this.state.removedBranches;
+    if (!map) return undefined;
+    const direct = map[identifier];
+    if (direct) return direct;
+    const lower = identifier.toLowerCase();
+    for (const t of Object.values(map)) {
+      if (t.branchId && t.branchId === identifier) return t;
+      if (t.aliases?.some((a) => a.toLowerCase() === lower)) return t;
+    }
+    return undefined;
   }
 
   /** 项目级 preview 模式；fallback state.previewMode；都无返回 'multi'。 */

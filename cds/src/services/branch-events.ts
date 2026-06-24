@@ -70,7 +70,7 @@ export interface BranchUpdatedPayload {
     'githubPrNumber' | 'pinnedCommit' | 'tags' | 'notes' |
     'isFavorite' | 'isColorMarked' | 'subdomainAliases' |
     // 2026-06-23 极速版（CI 预构建）状态,前端分支卡/详情据此渲染「等待 CI / 构建失败」
-    'ciImageStatus' | 'ciTargetSha' | 'ciWorkflowConclusion' | 'ciWorkflowRunUrl'>>;
+    'ciImageStatus' | 'ciTargetSha' | 'ciWorkflowConclusion' | 'ciWorkflowRunUrl' | 'ciWaitingSince' | 'ciImageError'>>;
   ts: string;
 }
 

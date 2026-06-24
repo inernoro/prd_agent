@@ -508,4 +508,215 @@ describe('StateService', () => {
       expect(collisions).toHaveLength(1);
     });
   });
+
+  describe('removed-branch tombstones', () => {
+    const makeTombstone = (slug: string, removedAt: string) => ({
+      previewSlug: slug,
+      branch: slug,
+      projectId: 'proj',
+      reason: 'merged' as const,
+      removedAt,
+    });
+
+    it('records and reads a tombstone by previewSlug', () => {
+      service.load();
+      service.recordRemovedBranch(makeTombstone('login-feat-demo', '2026-06-24T00:00:00.000Z'));
+      const got = service.getRemovedBranch('login-feat-demo');
+      expect(got?.reason).toBe('merged');
+      expect(got?.branch).toBe('login-feat-demo');
+      expect(service.getRemovedBranch('nope')).toBeUndefined();
+    });
+
+    it('persists tombstones across reload', () => {
+      service.load();
+      service.recordRemovedBranch(makeTombstone('a-feat-demo', '2026-06-24T00:00:00.000Z'));
+      const reloaded = new StateService(stateFile);
+      reloaded.load();
+      expect(reloaded.getRemovedBranch('a-feat-demo')?.reason).toBe('merged');
+    });
+
+    it('merged is sticky: a later abandoned does not downgrade it', () => {
+      service.load();
+      // 合并 PR 先落 merged 墓碑，随后 GitHub 自动删分支的 delete 事件想落 abandoned。
+      service.recordRemovedBranch({
+        previewSlug: 'login-feat-demo',
+        branch: 'feat/login',
+        projectId: 'proj',
+        reason: 'merged',
+        removedAt: '2026-06-24T00:00:00.000Z',
+      });
+      service.recordRemovedBranch({
+        previewSlug: 'login-feat-demo',
+        branch: 'feat/login',
+        projectId: 'proj',
+        reason: 'abandoned',
+        removedAt: '2026-06-24T00:00:05.000Z',
+      });
+      expect(service.getRemovedBranch('login-feat-demo')?.reason).toBe('merged');
+    });
+
+    it('a different-PR abandoned replaces a stale merged (branch slug reuse)', () => {
+      service.load();
+      // PR #1 合并 → merged 墓碑。
+      service.recordRemovedBranch({
+        previewSlug: 'login-feat-demo', branch: 'feat/login', projectId: 'proj',
+        reason: 'merged', prNumber: 1, prUrl: 'https://x/pr/1',
+        removedAt: '2026-06-24T00:00:00.000Z',
+      });
+      // 同名分支被 PR #2 复用后关闭（未合并）→ 不同 prNumber，应替换陈旧 merged。
+      service.recordRemovedBranch({
+        previewSlug: 'login-feat-demo', branch: 'feat/login', projectId: 'proj',
+        reason: 'abandoned', prNumber: 2, prUrl: 'https://x/pr/2',
+        removedAt: '2026-06-24T01:00:00.000Z',
+      });
+      const t = service.getRemovedBranch('login-feat-demo');
+      expect(t?.reason).toBe('abandoned');
+      expect(t?.prNumber).toBe(2);            // 不承袭旧 PR #1 元数据
+      expect(t?.prUrl).toBe('https://x/pr/2');
+    });
+
+    it('a much-later raw delete replaces a stale merged (reuse, no prNumber)', () => {
+      service.load();
+      service.recordRemovedBranch({
+        previewSlug: 'login-feat-demo', branch: 'feat/login', projectId: 'proj',
+        reason: 'merged', prNumber: 1, removedAt: '2026-06-24T00:00:00.000Z',
+      });
+      // 数小时后 raw delete（无 prNumber）= 复用分支被删的不同生命周期。
+      service.recordRemovedBranch({
+        previewSlug: 'login-feat-demo', branch: 'feat/login', projectId: 'proj',
+        reason: 'abandoned', removedAt: '2026-06-24T05:00:00.000Z',
+      });
+      expect(service.getRemovedBranch('login-feat-demo')?.reason).toBe('abandoned');
+    });
+
+    it('abandoned can be upgraded to merged when delete arrives before pr-close', () => {
+      service.load();
+      service.recordRemovedBranch({
+        previewSlug: 'login-feat-demo',
+        branch: 'feat/login',
+        projectId: 'proj',
+        reason: 'abandoned',
+        removedAt: '2026-06-24T00:00:00.000Z',
+      });
+      service.recordRemovedBranch({
+        previewSlug: 'login-feat-demo',
+        branch: 'feat/login',
+        projectId: 'proj',
+        reason: 'merged',
+        removedAt: '2026-06-24T00:00:05.000Z',
+      });
+      expect(service.getRemovedBranch('login-feat-demo')?.reason).toBe('merged');
+    });
+
+    it('preserves richer PR metadata when a later delete tombstone lacks it', () => {
+      service.load();
+      // 关 PR：abandoned 墓碑带 prNumber/prUrl。
+      service.recordRemovedBranch({
+        previewSlug: 'login-feat-demo',
+        branch: 'feat/login',
+        projectId: 'proj',
+        reason: 'abandoned',
+        prNumber: 42,
+        prUrl: 'https://github.com/o/r/pull/42',
+        removedAt: '2026-06-24T00:00:00.000Z',
+      });
+      // GitHub 删分支：delete 事件再写一条 abandoned，但不带任何 PR 字段。
+      service.recordRemovedBranch({
+        previewSlug: 'login-feat-demo',
+        branch: 'feat/login',
+        projectId: 'proj',
+        reason: 'abandoned',
+        removedAt: '2026-06-24T00:00:05.000Z',
+      });
+      const got = service.getRemovedBranch('login-feat-demo');
+      expect(got?.prNumber).toBe(42); // 「查看 PR」按钮不丢
+      expect(got?.prUrl).toBe('https://github.com/o/r/pull/42');
+    });
+
+    it('keeps the first-written branchId and demotes a later differing id to aliases', () => {
+      service.load();
+      // delete 先写：真实 entry.id 作 branchId。
+      service.recordRemovedBranch({
+        previewSlug: 'feat-x-demo', branch: 'feat/x', projectId: 'p', reason: 'abandoned',
+        branchId: 'real-entry-id', removedAt: '2026-06-24T00:00:00.000Z',
+      });
+      // closed（无 entry）后写：用计算的 canonicalId，不得覆盖真实 id。
+      service.recordRemovedBranch({
+        previewSlug: 'feat-x-demo', branch: 'feat/x', projectId: 'p', reason: 'merged',
+        branchId: 'computed-canonical-id', removedAt: '2026-06-24T00:00:05.000Z',
+      });
+      // 两个 id 都能查到（主键 + alias 兜底），且 reason 升级为 merged。
+      expect(service.findRemovedBranchByIdentifier('real-entry-id')?.reason).toBe('merged');
+      expect(service.findRemovedBranchByIdentifier('computed-canonical-id')?.reason).toBe('merged');
+      expect(service.getRemovedBranch('feat-x-demo')?.branchId).toBe('real-entry-id');
+    });
+
+    it('findRemovedBranchByIdentifier falls back to branchId / aliases', () => {
+      service.load();
+      service.recordRemovedBranch({
+        previewSlug: 'login-feat-demo',
+        branch: 'feat/login',
+        projectId: 'proj',
+        reason: 'merged',
+        branchId: 'demo-feat-login',
+        aliases: ['Login-Alias'],
+        removedAt: '2026-06-24T00:00:00.000Z',
+      });
+      // 主键命中
+      expect(service.findRemovedBranchByIdentifier('login-feat-demo')?.reason).toBe('merged');
+      // branchId 兜底（自定义子域解析成分支 id）
+      expect(service.findRemovedBranchByIdentifier('demo-feat-login')?.reason).toBe('merged');
+      // 别名兜底（大小写不敏感）
+      expect(service.findRemovedBranchByIdentifier('login-alias')?.reason).toBe('merged');
+      expect(service.findRemovedBranchByIdentifier('nope')).toBeUndefined();
+    });
+
+    it('caps tombstones to 200, evicting oldest by removedAt', () => {
+      service.load();
+      // 写 205 条，时间递增 → 最旧 5 条应被淘汰。
+      for (let i = 0; i < 205; i += 1) {
+        const stamp = `2026-06-24T00:00:${String(i).padStart(2, '0')}.000Z`;
+        service.recordRemovedBranch(makeTombstone(`slug-${i}`, stamp));
+      }
+      const map = service.getState().removedBranches ?? {};
+      expect(Object.keys(map)).toHaveLength(200);
+      // 最旧的 slug-0..slug-4 被淘汰，最新的还在。
+      expect(service.getRemovedBranch('slug-0')).toBeUndefined();
+      expect(service.getRemovedBranch('slug-4')).toBeUndefined();
+      expect(service.getRemovedBranch('slug-5')).toBeDefined();
+      expect(service.getRemovedBranch('slug-204')).toBeDefined();
+    });
+  });
+
+  describe('CI 镜像可观测性字段（极速版 waiting 看门狗）', () => {
+    it('updateBranchGithubMeta 能写入并清空 ciWaitingSince / ciImageError', () => {
+      service.load();
+      service.addBranch({
+        id: 'ci-express', branch: 'feat/ci-express',
+        worktreePath: '/tmp/wt/ci-express', services: {},
+        status: 'idle', createdAt: '2026-06-24T08:00:00.000Z',
+      });
+      // 进入「等待 CI 镜像」：钉计时起点。
+      service.updateBranchGithubMeta('ci-express', {
+        ciImageStatus: 'waiting',
+        ciWaitingSince: '2026-06-24T08:02:00.000Z',
+        ciImageError: undefined,
+      });
+      let b = service.getBranch('ci-express');
+      expect(b?.ciImageStatus).toBe('waiting');
+      expect(b?.ciWaitingSince).toBe('2026-06-24T08:02:00.000Z');
+
+      // 看门狗超时：翻 failed + 写归因 + 停掉计时。
+      service.updateBranchGithubMeta('ci-express', {
+        ciImageStatus: 'failed',
+        ciWorkflowConclusion: 'timed_out_no_run',
+        ciWaitingSince: undefined,
+        ciImageError: 'CI 预构建镜像 abcdef0 等待超时（15 分钟无匹配构建完成）。',
+      });
+      b = service.getBranch('ci-express');
+      expect(b?.ciImageStatus).toBe('failed');
+      expect(b?.ciWaitingSince).toBeUndefined();
+      expect(b?.ciImageError).toContain('等待超时');
+    });
+  });
 });

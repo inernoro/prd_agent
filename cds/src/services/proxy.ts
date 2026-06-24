@@ -71,6 +71,13 @@ export class ProxyService {
   /** Callback: trigger auto-build for a branch that isn't running yet */
   private onAutoBuild: ((branchSlug: string, req: http.IncomingMessage, res: http.ServerResponse) => void) | null = null;
   /**
+   * Callback: render the "branch gone" page (merged / abandoned / generic) for a
+   * branch that has a tombstone. Used when a PR-closed branch is NOT auto-deleted
+   * by the repo — the stopped BranchEntry lingers, so routeToBranch would otherwise
+   * serve the generic stopped-status page and never reach serveBranchGonePage.
+   */
+  private onBranchGone: ((branchSlug: string, req: http.IncomingMessage, res: http.ServerResponse) => void) | null = null;
+  /**
    * Callback: revive a scheduler-cooled branch on preview access (lightweight
    * `docker restart` of preserved containers, no rebuild). Wired only when
    * preview auto-wake is enabled. Must flip branch.status to a loading state
@@ -121,6 +128,10 @@ export class ProxyService {
 
   setOnAutoBuild(fn: (branchSlug: string, req: http.IncomingMessage, res: http.ServerResponse) => void): void {
     this.onAutoBuild = fn;
+  }
+
+  setOnBranchGone(fn: (branchSlug: string, req: http.IncomingMessage, res: http.ServerResponse) => void): void {
+    this.onBranchGone = fn;
   }
 
   setOnReviveCooled(fn: (branchSlug: string) => Promise<void>): void {
@@ -572,6 +583,31 @@ export class ProxyService {
     }
 
     if (branch.status !== 'running' && !LOADING_BRANCH_STATUSES.has(branch.status)) {
+      // 墓碑优先：PR 合并/关闭后分支若**未被自动删除**（仓库保留 PR 分支），停止的
+      // BranchEntry 仍在，否则会落到下面的泛化「分支已停止」状态页，永远走不到
+      // serveBranchGonePage。先查墓碑：命中则与「分支已删除」走同一套合并/放弃页。
+      // fail-safe：无墓碑（绝大多数停止分支）则一切照旧；只拦真实 HTML 导航（asset/
+      // API 请求继续走状态页，避免把 gone HTML 当成 CSS/JS 返回）。墓碑命中也意味着
+      // 不该 auto-wake/恢复一个已合并/已放弃的分支，故置于这些副作用之前直接返回。
+      // 按 branchSlug（host label，标准 v3 预览即 previewSlug 主键）**和** branch.id 两路查，
+      // 因为墓碑以 previewSlug 为键、branchId 仅作兜底，二者可能都不等于对方（Bugbot）。
+      // 命中后转发墓碑自身的 previewSlug（map 主键）给 gone 页，保证它再查必命中。
+      const tomb = this.stateService.findRemovedBranchByIdentifier(branchSlug)
+        ?? this.stateService.findRemovedBranchByIdentifier(branch.id);
+      // 分支名复用：同名分支在旧 PR 合并/放弃后被重建时，旧墓碑仍留在 removedBranches。
+      // 仅当墓碑确实**晚于**当前这个 incarnation 的活动时间才分流，否则重建的分支（极速版下
+      // idle 等 CI）会被误导到旧的合并/放弃页（Codex P2）。incarnation 基准取 createdAt /
+      // lastPushAt / lastDeployAt 最近者；墓碑早于它 = 属于上一代分支 = 陈旧，照常走状态页。
+      const liveSince = Math.max(
+        Date.parse(branch.createdAt || '') || 0,
+        Date.parse(branch.lastPushAt || '') || 0,
+        Date.parse(branch.lastDeployAt || '') || 0,
+      );
+      const tombAt = tomb ? (Date.parse(tomb.removedAt || '') || 0) : 0;
+      if (this.onBranchGone && this.isHtmlNavigationRequest(req) && tomb && tombAt >= liveSince) {
+        this.onBranchGone(tomb.previewSlug || branch.id, req, res);
+        return;
+      }
       // Auto-wake: a branch put to sleep by the scheduler (containers preserved,
       // not removed) is revived on a real page navigation via a cheap
       // `docker restart`, so users don't hit a dead-end "go redeploy manually"

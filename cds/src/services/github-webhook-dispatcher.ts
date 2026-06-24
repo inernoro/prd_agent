@@ -144,6 +144,23 @@ export interface WebhookDispatchResult {
     branchId: string;
   };
   /**
+   * Populated on `pull_request.closed` —— 让路由层写一条分支墓碑，使过期分支
+   * 预览页能区分"已合并到主分支"（引导切主分支）与"已放弃"（跳 PR/commit）。
+   * 路由层据此计算 previewSlug + 解析默认分支后调 stateService.recordRemovedBranch。
+   */
+  tombstoneRequest?: {
+    branchId: string;
+    branch: string;
+    projectId: string;
+    reason: 'merged' | 'abandoned';
+    prNumber?: number;
+    prUrl?: string;
+    mergeCommitSha?: string;
+    baseRef?: string;
+    /** 删除前的自定义子域别名快照，供别名访问 gone 页时兜底匹配墓碑。 */
+    aliases?: string[];
+  };
+  /**
    * Populated on slash-command events (`/cds <cmd>` in issue_comment).
    * The route layer wires the command to the right action + posts a
    * reply comment on the PR.
@@ -215,6 +232,7 @@ export interface GitHubPullRequestEvent {
     number: number;
     state: 'open' | 'closed';
     merged?: boolean;
+    merge_commit_sha?: string;
     head: { ref: string; sha: string };
     base: { ref: string };
     html_url: string;
@@ -411,6 +429,8 @@ export class GitHubWebhookDispatcher {
         ciTargetSha: commitSha,
         ciWorkflowConclusion: cached.conclusion,
         ciWorkflowRunUrl: cached.htmlUrl,
+        ciWaitingSince: '',
+        ciImageError: '',
       });
       this.deps.stateService.save();
       this.emitCiStatus(branchId, projectId, 'ready', commitSha, cached.htmlUrl);
@@ -422,11 +442,15 @@ export class GitHubWebhookDispatcher {
       };
     }
     // 失败 / cancelled / timed_out — 置 failed,不自动回退（与 workflow_run 路径一致）。
+    // 必须同样写 ciImageError + 清 ciWaitingSince：此路径让分支脱离 waiting，看门狗不再兜底，
+    // 若不写归因，已打开的看板翻 failed 却显示空/旧错误文案（Codex P2）。
     this.deps.stateService.updateBranchGithubMeta(branchId, {
       ciImageStatus: 'failed',
       ciTargetSha: commitSha,
       ciWorkflowConclusion: cached.conclusion,
       ciWorkflowRunUrl: cached.htmlUrl,
+      ciWaitingSince: '',
+      ciImageError: `CI 构建未成功（${cached.conclusion}）。可在分支详情切回源码编译重试。`,
     });
     this.deps.stateService.save();
     this.emitCiStatus(branchId, projectId, 'failed', commitSha, cached.htmlUrl);
@@ -640,10 +664,6 @@ export class GitHubWebhookDispatcher {
     if (!project) {
       return { action: 'ignored-no-project', message: `No project linked to ${event.repository.full_name}` };
     }
-    // PR_D.2: project.githubEventPolicy.delete=false → 不自动清容器
-    if (!this.isEventEnabled(project, 'delete')) {
-      return { action: 'ignored-event', message: `delete handling disabled for project ${project.id}` };
-    }
     if (!isSafeGitRef(event.ref)) {
       return { action: 'ignored-event', message: `Rejected unsafe delete ref: ${event.ref.slice(0, 80)}` };
     }
@@ -659,6 +679,25 @@ export class GitHubWebhookDispatcher {
       return { action: 'ignored-event', message: `branch deleted on GitHub but not tracked by CDS: ${canonicalId}` };
     }
     const branchId = entry.id;
+    // 墓碑（gone 页用的「已放弃」元数据）独立于 delete「自动清容器」策略，任何删除都记。
+    // 否则 delete 策略关闭时不写墓碑 → 过期预览仍落泛化「启动失败」而非「已放弃」（Bugbot）。
+    // 与 PR-close 路径一致：reason 固定 abandoned（delete 事件无合并语义），若此前 PR 合并
+    // 已写 'merged' 墓碑，recordRemovedBranch 的 merged 粘性保证不被降级。
+    const tombstoneRequest = {
+      branchId,
+      branch: entry.branch || event.ref,
+      projectId: project.id,
+      reason: 'abandoned' as const,
+      aliases: entry.subdomainAliases,
+    };
+    // PR_D.2: project.githubEventPolicy.delete=false → 不自动清容器（但墓碑照记）
+    if (!this.isEventEnabled(project, 'delete')) {
+      return {
+        action: 'ignored-event',
+        message: `delete auto-cleanup disabled for project ${project.id}（仅记墓碑，不停容器/不删 entry）`,
+        tombstoneRequest,
+      };
+    }
     return {
       action: 'branch-deleted',
       message: `GitHub branch '${event.ref}' deleted; stopping CDS preview '${branchId}' + cleanup entry`,
@@ -667,6 +706,7 @@ export class GitHubWebhookDispatcher {
       // 2026-05-07 用户反馈"分支已删除但 CDS 端没清理":除了 stopRequest 停容器,
       // 还要 branchDeleteRequest 删 CDS state.branches[id] + worktree。
       branchDeleteRequest: { branchId },
+      tombstoneRequest,
     };
   }
 
@@ -751,12 +791,24 @@ export class GitHubWebhookDispatcher {
     sha: string,
     runUrl?: string,
   ): void {
+    // 真正驱动 UI 的不是这里的 patch —— /api/branches/stream 的 branch.updated 会从 state
+    // 重新序列化整个 branch 下发，BranchList 按 data.branch merge。所以 ciImageError 等的
+    // 清空必须在 **state** 里写 '' 而非 undefined（见各 updateBranchGithubMeta 调用），否则
+    // JSON.stringify 丢字段、客户端 merge 保留旧值（failed→ready 恢复时旧错误文案不消失）。
+    // patch 这里仍带上同名字段作语义说明，用 '' 兜底保持与 state 一致。
+    const fresh = this.deps.stateService.getBranch(branchId);
     branchEvents.emitEvent({
       type: 'branch.updated',
       payload: {
         branchId,
         projectId,
-        patch: { ciImageStatus: status, ciTargetSha: sha, ciWorkflowRunUrl: runUrl },
+        patch: {
+          ciImageStatus: status,
+          ciTargetSha: sha,
+          ciWorkflowRunUrl: runUrl ?? '',
+          ciWorkflowConclusion: fresh?.ciWorkflowConclusion ?? '',
+          ciImageError: fresh?.ciImageError ?? '',
+        },
         ts: nowIso(),
       },
     });
@@ -843,6 +895,10 @@ export class GitHubWebhookDispatcher {
           ciTargetSha: headSha,
           ciWorkflowConclusion: conclusion,
           ciWorkflowRunUrl: run.html_url,
+          // 真 CI 完成事件到达 → 清掉看门狗计时与超时文案（若此前已被判超时 failed,
+          // 这里允许 failed → ready 恢复,见下方 matcher 的 waiting||failed 条件）。
+          ciWaitingSince: '',
+          ciImageError: '',
         });
         this.deps.stateService.save();
         this.emitCiStatus(branchId, target.projectId, 'ready', headSha, run.html_url);
@@ -862,6 +918,10 @@ export class GitHubWebhookDispatcher {
         ciTargetSha: headSha, // 同上:保持 ciTargetSha 与本次 run 的 head_sha 一致
         ciWorkflowConclusion: conclusion,
         ciWorkflowRunUrl: run.html_url,
+        // 真 CI 失败有了归因（conclusion + run 链接），停掉看门狗计时并写明原因,
+        // 区别于「超时无 run」的看门狗失败。
+        ciWaitingSince: '',
+        ciImageError: `CI 构建未成功（${conclusion}）。可在分支详情切回源码编译重试。`,
       });
       this.deps.stateService.save();
       this.emitCiStatus(branchId, target.projectId, 'failed', headSha, run.html_url);
@@ -919,18 +979,52 @@ export class GitHubWebhookDispatcher {
 
     // `closed` action — tear down preview containers.
     if (event.action === 'closed') {
-      // PR_D.2: project.githubEventPolicy.prClose=false → 不自动停容器
+      const merged = event.pull_request.merged === true;
+      // 墓碑（gone 页区分「已合并 → 切主分支」vs「已放弃 → 跳 PR」）是纯展示元数据，
+      // 与 prClose「是否自动停容器」策略无关，任何关闭都要记。**必须独立于 prClose 闸门**：
+      // 否则 prClose=false 时不写 merged 墓碑，而随后 GitHub 删分支的 delete 事件仍写
+      // abandoned，导致「合并的分支被错显为已放弃」（recordRemovedBranch 的 merged 粘性
+      // 也救不了——因为压根没写过 merged）。entry 存在才有 branch 名可落库。
+      // **不以 entry 存在为前提构建墓碑**：若 delete webhook 先到、CDS 清理已删掉 entry，
+      // 再处理 pull_request.closed 时 entry 为 null。此时 delete 路径已写了 abandoned 墓碑，
+      // 若这里因 entry 缺失而不写 merged 墓碑，合并的 PR 会被错显为已放弃（Codex P2）。
+      // 分支名用 head.ref（branchName，恒有值），branchId 用已算好的 canonicalId 兜底；
+      // merged 粘性 + 元数据承袭会把已有 abandoned 升级为 merged 并保留别名等字段。
+      const tombstoneRequest = {
+        branchId,
+        branch: entry?.branch || branchName,
+        projectId: project.id,
+        reason: (merged ? 'merged' : 'abandoned') as 'merged' | 'abandoned',
+        prNumber: event.pull_request.number,
+        prUrl: event.pull_request.html_url,
+        mergeCommitSha: merged ? event.pull_request.merge_commit_sha : undefined,
+        baseRef: event.pull_request.base?.ref,
+        aliases: entry?.subdomainAliases,
+      };
+
+      // PR_D.2: project.githubEventPolicy.prClose=false → 不自动停容器（但墓碑照记）
       if (!this.isEventEnabled(project, 'prClose')) {
-        return { action: 'ignored-event', message: `PR-close handling disabled for project ${project.id}` };
+        return {
+          action: 'ignored-event',
+          message: `PR-close auto-stop disabled for project ${project.id}（仅记墓碑，不停容器）`,
+          tombstoneRequest,
+        };
       }
       if (!entry) {
-        return { action: 'ignored-event', message: `PR closed but branch '${branchId}' not in CDS` };
+        // entry 已被先到的 delete 清理：没容器可停，但墓碑照记（merged 粘性会把
+        // delete 写的 abandoned 升级为 merged），否则合并 PR 会被错显为已放弃（Codex P2）。
+        return {
+          action: 'ignored-event',
+          message: `PR closed but branch '${branchId}' not in CDS（仅记墓碑）`,
+          tombstoneRequest,
+        };
       }
       return {
         action: 'pr-branch-stopped',
-        message: `PR #${event.pull_request.number} ${event.pull_request.merged ? 'merged' : 'closed'}; stopping preview`,
+        message: `PR #${event.pull_request.number} ${merged ? 'merged' : 'closed'}; stopping preview`,
         branchId,
         stopRequest: { branchId },
+        tombstoneRequest,
       };
     }
 
@@ -1276,10 +1370,14 @@ export class GitHubWebhookDispatcher {
       this.deps.stateService.updateBranchGithubMeta(branchId, {
         ciImageStatus: 'waiting',
         ciTargetSha: commitSha,
-        ciWorkflowConclusion: undefined,
+        ciWorkflowConclusion: '',
         // 同时清掉上一次 run 的链接,否则「等待 CI 镜像」卡片的「查看构建」会指向
         // 旧的(可能失败/无关)Actions run（Bugbot: stale CI run link on wait）。
-        ciWorkflowRunUrl: undefined,
+        ciWorkflowRunUrl: '',
+        // 看门狗据此判定 waiting 是否超时（CI 完成事件永不到达时翻 failed + 留归因）；
+        // 同时清掉上次的超时/失败文案,本次重新计时。
+        ciWaitingSince: receivedAt,
+        ciImageError: '',
       });
       this.deps.stateService.save();
       const waitEntry = this.deps.stateService.getBranch(branchId);
