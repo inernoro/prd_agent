@@ -32,7 +32,7 @@
 | SRS | 需更新 | 需新增缺陷管理 API 契约 |
 | PRD | 需更新 | 需新增功能描述和用户场景 |
 | 数据字典 | 需更新 | 新增 defect_templates, defect_reports, defect_messages |
-| 设计文档 | 已创建 | doc/20.defect-agent.md |
+| 设计文档 | 已创建 | doc/design.defect-agent.md |
 | CLAUDE.md 快照 | 需更新 | 功能注册表+集合清单 |
 
 **待补文档**:
