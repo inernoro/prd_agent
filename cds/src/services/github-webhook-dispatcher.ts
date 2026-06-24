@@ -157,6 +157,8 @@ export interface WebhookDispatchResult {
     prUrl?: string;
     mergeCommitSha?: string;
     baseRef?: string;
+    /** 删除前的自定义子域别名快照，供别名访问 gone 页时兜底匹配墓碑。 */
+    aliases?: string[];
   };
   /**
    * Populated on slash-command events (`/cds <cmd>` in issue_comment).
@@ -656,10 +658,6 @@ export class GitHubWebhookDispatcher {
     if (!project) {
       return { action: 'ignored-no-project', message: `No project linked to ${event.repository.full_name}` };
     }
-    // PR_D.2: project.githubEventPolicy.delete=false → 不自动清容器
-    if (!this.isEventEnabled(project, 'delete')) {
-      return { action: 'ignored-event', message: `delete handling disabled for project ${project.id}` };
-    }
     if (!isSafeGitRef(event.ref)) {
       return { action: 'ignored-event', message: `Rejected unsafe delete ref: ${event.ref.slice(0, 80)}` };
     }
@@ -675,6 +673,25 @@ export class GitHubWebhookDispatcher {
       return { action: 'ignored-event', message: `branch deleted on GitHub but not tracked by CDS: ${canonicalId}` };
     }
     const branchId = entry.id;
+    // 墓碑（gone 页用的「已放弃」元数据）独立于 delete「自动清容器」策略，任何删除都记。
+    // 否则 delete 策略关闭时不写墓碑 → 过期预览仍落泛化「启动失败」而非「已放弃」（Bugbot）。
+    // 与 PR-close 路径一致：reason 固定 abandoned（delete 事件无合并语义），若此前 PR 合并
+    // 已写 'merged' 墓碑，recordRemovedBranch 的 merged 粘性保证不被降级。
+    const tombstoneRequest = {
+      branchId,
+      branch: entry.branch || event.ref,
+      projectId: project.id,
+      reason: 'abandoned' as const,
+      aliases: entry.subdomainAliases,
+    };
+    // PR_D.2: project.githubEventPolicy.delete=false → 不自动清容器（但墓碑照记）
+    if (!this.isEventEnabled(project, 'delete')) {
+      return {
+        action: 'ignored-event',
+        message: `delete auto-cleanup disabled for project ${project.id}（仅记墓碑，不停容器/不删 entry）`,
+        tombstoneRequest,
+      };
+    }
     return {
       action: 'branch-deleted',
       message: `GitHub branch '${event.ref}' deleted; stopping CDS preview '${branchId}' + cleanup entry`,
@@ -683,16 +700,7 @@ export class GitHubWebhookDispatcher {
       // 2026-05-07 用户反馈"分支已删除但 CDS 端没清理":除了 stopRequest 停容器,
       // 还要 branchDeleteRequest 删 CDS state.branches[id] + worktree。
       branchDeleteRequest: { branchId },
-      // 没走 PR 的直接删分支（git push --delete）也留墓碑，过期分支预览页才能落到
-      // "已放弃"页而非泛化的"启动失败"页。reason 固定 abandoned：delete 事件本身不带
-      // 合并语义。若该分支此前因 PR 合并已写过 'merged' 墓碑，recordRemovedBranch 的
-      // merged 粘性保证这条 abandoned 不会把它降级。
-      tombstoneRequest: {
-        branchId,
-        branch: entry.branch || event.ref,
-        projectId: project.id,
-        reason: 'abandoned',
-      },
+      tombstoneRequest,
     };
   }
 
@@ -979,6 +987,7 @@ export class GitHubWebhookDispatcher {
             prUrl: event.pull_request.html_url,
             mergeCommitSha: merged ? event.pull_request.merge_commit_sha : undefined,
             baseRef: event.pull_request.base?.ref,
+            aliases: entry.subdomainAliases,
           }
         : undefined;
 

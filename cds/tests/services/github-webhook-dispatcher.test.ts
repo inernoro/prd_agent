@@ -849,6 +849,22 @@ describe('GitHubWebhookDispatcher', () => {
       expect(r.tombstoneRequest?.mergeCommitSha).toBeUndefined();
     });
 
+    // Bugbot: delete 策略关闭时也要记 abandoned 墓碑（只是不自动清容器），
+    // 与 PR-close 路径一致，否则删分支清理仍落泛化「启动失败」而非「已放弃」。
+    it('records abandoned tombstone even when delete policy disabled', async () => {
+      stateService.updateProject('p1', { githubEventPolicy: { delete: false } });
+      const d = buildDispatcher();
+      const r = await d.handle('delete', {
+        ref: 'feat',
+        ref_type: 'branch',
+        repository: { full_name: 'octocat/repo' },
+      });
+      expect(r.action).toBe('ignored-event');
+      expect(r.stopRequest).toBeUndefined();
+      expect(r.branchDeleteRequest).toBeUndefined();
+      expect(r.tombstoneRequest).toMatchObject({ branchId: 'proj-feat', reason: 'abandoned' });
+    });
+
     it('ignores tag deletions', async () => {
       const d = buildDispatcher();
       const r = await d.handle('delete', {

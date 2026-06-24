@@ -3395,8 +3395,10 @@ function serveBranchGonePage(slug: string, req: http.IncomingMessage, res: http.
   };
 
   // 先查分支墓碑：PR 合并/关闭后分支被删，按原因分流到「已合并」/「已放弃」中间页，
-  // 而不是一律落「启动失败」。墓碑由 github-webhook 在 PR closed 时落库。
-  const tombstone = stateService.getRemovedBranch(slug);
+  // 而不是一律落「启动失败」。墓碑由 github-webhook 在 PR closed / 分支删除时落库。
+  // 用 findRemovedBranchByIdentifier：主键 previewSlug 未命中时兜底匹配 branchId / 别名，
+  // 否则自定义子域别名访问永远落不到分流页（Bugbot）。
+  const tombstone = stateService.findRemovedBranchByIdentifier(slug);
   if (tombstone) {
     if (tombstone.reason === 'merged') {
       // baseRef = PR 实际合并进的目标分支（可能不是项目默认分支，如合并进 develop）。

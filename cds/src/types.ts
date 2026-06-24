@@ -484,6 +484,13 @@ export interface BranchTombstone {
   baseRef?: string;
   /** 记录当时解析出的项目默认分支名（"切换到主分支"按钮的目标分支）。 */
   defaultBranch?: string | null;
+  /**
+   * 分支 canonical id。gone 页对**自定义子域别名**访问时，proxy 的 extractPreviewBranch
+   * 返回的是分支 id（或别名 label）而非 v3 previewSlug，主键查不到 → 用它兜底匹配。
+   */
+  branchId?: string;
+  /** 分支的自定义子域别名（删除前快照）。别名访问 gone 页时用它兜底匹配墓碑。 */
+  aliases?: string[];
   /** 记录时间（ISO）。容量淘汰按此排序。 */
   removedAt: string;
 }

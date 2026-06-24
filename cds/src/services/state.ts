@@ -3134,6 +3134,8 @@ export class StateService {
       if (!record.prUrl && existing.prUrl) record.prUrl = existing.prUrl;
       if (!record.baseRef && existing.baseRef) record.baseRef = existing.baseRef;
       if (!record.mergeCommitSha && existing.mergeCommitSha) record.mergeCommitSha = existing.mergeCommitSha;
+      if (!record.branchId && existing.branchId) record.branchId = existing.branchId;
+      if ((!record.aliases || record.aliases.length === 0) && existing.aliases?.length) record.aliases = existing.aliases;
     }
     map[tombstone.previewSlug] = record;
     const entries = Object.entries(map);
@@ -3150,6 +3152,25 @@ export class StateService {
   getRemovedBranch(previewSlug: string): BranchTombstone | undefined {
     if (!previewSlug) return undefined;
     return this.state.removedBranches?.[previewSlug];
+  }
+
+  /**
+   * gone 页用：按访问标识查墓碑。先按 previewSlug 主键（标准 v3 预览域），未命中再
+   * 兜底扫 branchId / aliases（自定义子域别名访问时 proxy 返回的是分支 id 或别名 label，
+   * 而非 computePreviewSlug 算出的 previewSlug，主键查不到）。
+   */
+  findRemovedBranchByIdentifier(identifier: string): BranchTombstone | undefined {
+    if (!identifier) return undefined;
+    const map = this.state.removedBranches;
+    if (!map) return undefined;
+    const direct = map[identifier];
+    if (direct) return direct;
+    const lower = identifier.toLowerCase();
+    for (const t of Object.values(map)) {
+      if (t.branchId && t.branchId === identifier) return t;
+      if (t.aliases?.some((a) => a.toLowerCase() === lower)) return t;
+    }
+    return undefined;
   }
 
   /** 项目级 preview 模式；fallback state.previewMode；都无返回 'multi'。 */

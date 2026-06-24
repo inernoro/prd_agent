@@ -599,6 +599,26 @@ describe('StateService', () => {
       expect(got?.prUrl).toBe('https://github.com/o/r/pull/42');
     });
 
+    it('findRemovedBranchByIdentifier falls back to branchId / aliases', () => {
+      service.load();
+      service.recordRemovedBranch({
+        previewSlug: 'login-feat-demo',
+        branch: 'feat/login',
+        projectId: 'proj',
+        reason: 'merged',
+        branchId: 'demo-feat-login',
+        aliases: ['Login-Alias'],
+        removedAt: '2026-06-24T00:00:00.000Z',
+      });
+      // 主键命中
+      expect(service.findRemovedBranchByIdentifier('login-feat-demo')?.reason).toBe('merged');
+      // branchId 兜底（自定义子域解析成分支 id）
+      expect(service.findRemovedBranchByIdentifier('demo-feat-login')?.reason).toBe('merged');
+      // 别名兜底（大小写不敏感）
+      expect(service.findRemovedBranchByIdentifier('login-alias')?.reason).toBe('merged');
+      expect(service.findRemovedBranchByIdentifier('nope')).toBeUndefined();
+    });
+
     it('caps tombstones to 200, evicting oldest by removedAt', () => {
       service.load();
       // 写 205 条，时间递增 → 最旧 5 条应被淘汰。

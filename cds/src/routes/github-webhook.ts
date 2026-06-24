@@ -575,6 +575,9 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
             mergeCommitSha: tr.mergeCommitSha,
             baseRef: tr.baseRef,
             defaultBranch: stateService.getDefaultBranchFor(tr.projectId),
+            // 别名/分支 id 兜底匹配键（自定义子域访问 gone 页时 previewSlug 主键查不到）。
+            branchId: tr.branchId,
+            aliases: tr.aliases,
             removedAt: new Date().toISOString(),
           });
         }
