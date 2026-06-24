@@ -368,3 +368,17 @@ docs:
   report.cds.agent.p4-1-remote-preflight.2026-05-19: CDS Agent P4-1 远端发布前验收与试用入口报告
   report.cds.agent.runtime-pool-contamination.2026-05-18: CDS Agent SDK Runtime 再次侵入 MAP 主系统 · 调查报告
   report.cds.agent.workbench.2026-05-15: CDS Agent 工作台完成复盘（2026-05-15）
+  report.agent-universe.completeness: 智能体宇宙 · 各智能体完备度看板（终极目标 vs 当前进度）
+  report.cds.agent.goal-completion-audit.2026-05-19: CDS Agent 商业级可用闭环目标审计报告
+  report.cds.agent.p4-2-provider-closure.2026-05-19: CDS Agent P4-2 远端 Provider 闭环验收报告
+  report.cds.agent.p4-3-remote-trial-acceptance.2026-05-19: CDS Agent P4-3 远端试用入口与发布验收包
+  report.cds.agent.p4-4-release-merge-strategy.2026-05-19: CDS Agent P4-4 发布/合并策略评估报告
+  report.cds.agent.p4-5-writable-trial-plan.2026-05-19: CDS Agent P4-5 writable / PR / KB apply 试用计划
+  report.cds.agent.phase1-acceptance.2026-05-19: CDS Agent Phase 1 验收报告
+  report.cds.agent.phase2-acceptance.2026-05-19: CDS Agent Phase 2 验收报告
+  report.cds.forwarder-success: CDS Forwarder 替代蓝绿部署收尾报告
+  report.cds.onboarding-uat: CDS Onboarding UAT 终结报告（合并自原 5 个子文件，含 18 friction 全清单 + 4 audit 子结果 + 41 契约对照 + 真人 UAT 剩余清单）
+  report.cds.self-update-timing-audit: CDS Self-Update 时间体系审视报告
+  report.cds.visual-deploy: CDS 绝对可视化一键部署 · 完整报告（交付总览 + dogfood 修的真 bug + 各轮验收分享链）
+  report.daily-tips.tutorial-coverage: 页面教程全量路由覆盖审计（2026-06-04）
+  report.frontend.prd-admin-surface-style-migration: prd-admin 样式统一统计报表
