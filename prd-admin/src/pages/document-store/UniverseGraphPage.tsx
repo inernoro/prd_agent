@@ -9,12 +9,18 @@
  *
  * 详见 doc/design.knowledge-base.mention-network.md §宇宙图。
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Settings as SettingsIcon, ArrowLeft, Loader2 } from 'lucide-react';
 import { getStoreGraph, type GraphNode, type GraphEdge } from '@/services/real/mentions';
 import { listDocumentStoresReal } from '@/services/real/documentStore';
 import type { DocumentStore } from '@/services/contracts/documentStore';
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
+
+// 3D 星系视图懒加载（three / @react-three 较重，仅切到「星系」tab 时才拉）
+const DocumentGalaxyView = lazy(() =>
+  import('./DocumentGalaxyView').then((m) => ({ default: m.DocumentGalaxyView })),
+);
 
 // ── 类别上色（简化版：按 category 字段 hash 取色；空 category 走默认） ──
 const PALETTE = [
@@ -66,6 +72,7 @@ export function UniverseGraphPage() {
   const [hoverNodeId, setHoverNodeId] = useState<string | null>(null);
   const [focusNodeId, setFocusNodeId] = useState<string | null>(null);
   const [zoomBadge, setZoomBadge] = useState<number>(100);
+  const [viewMode, setViewMode] = useState<'universe' | 'galaxy'>('universe');
 
   // 力导向参数 + 显示 / 过滤选项（可调）
   const stateRef = useRef<GraphState>({
@@ -504,18 +511,29 @@ export function UniverseGraphPage() {
 
   return (
     <div className="flex-1 flex flex-col relative" style={{ background: '#1e1e1e', color: '#cfcfcf', minHeight: 0 }}>
-      <canvas
-        ref={canvasRef}
-        onMouseDown={onMouseDown}
-        onMouseMove={onMouseMove}
-        onMouseUp={onMouseUp}
-        onMouseLeave={onMouseUp}
-        onWheel={onWheel}
-        onDoubleClick={onDoubleClickNode}
-        style={{ position: 'absolute', inset: 0, cursor: hoverNodeId ? 'pointer' : dragRef.current.mode === 'pan' ? 'grabbing' : 'grab' }}
-      />
+      {viewMode === 'universe' && (
+        <canvas
+          ref={canvasRef}
+          onMouseDown={onMouseDown}
+          onMouseMove={onMouseMove}
+          onMouseUp={onMouseUp}
+          onMouseLeave={onMouseUp}
+          onWheel={onWheel}
+          onDoubleClick={onDoubleClickNode}
+          style={{ position: 'absolute', inset: 0, cursor: hoverNodeId ? 'pointer' : dragRef.current.mode === 'pan' ? 'grabbing' : 'grab' }}
+        />
+      )}
 
-      {/* 返回 + 库名 */}
+      {/* 星系视图（懒加载，避免拖慢宇宙图首屏） */}
+      {viewMode === 'galaxy' && storeId && (
+        <div style={{ position: 'absolute', inset: 0, zIndex: 1 }}>
+          <Suspense fallback={<MapSectionLoader text="正在加载星系视图..." />}>
+            <DocumentGalaxyView storeId={storeId} storeName={storeName} />
+          </Suspense>
+        </div>
+      )}
+
+      {/* 返回 + 库名 + 视图切换 */}
       <div style={{ position: 'absolute', top: 12, left: 56, zIndex: 11, display: 'flex', alignItems: 'center', gap: 12 }}>
         <button
           onClick={() => {
@@ -541,9 +559,41 @@ export function UniverseGraphPage() {
         <div style={{ fontSize: 13, color: '#8a8a8a' }}>
           {storeName} · {nodes.length} 节点 · {edges.length} 引用
         </div>
+
+        {/* 视图切换：宇宙图 / 星系 */}
+        <div
+          style={{
+            display: 'flex',
+            background: 'rgba(45,45,45,0.85)',
+            border: '1px solid #3a3a3a',
+            borderRadius: 6,
+            overflow: 'hidden',
+          }}
+        >
+          {([
+            { key: 'universe', label: '宇宙图' },
+            { key: 'galaxy', label: '星系' },
+          ] as const).map((opt) => (
+            <button
+              key={opt.key}
+              onClick={() => setViewMode(opt.key)}
+              style={{
+                padding: '6px 12px',
+                fontSize: 12,
+                border: 'none',
+                cursor: 'pointer',
+                background: viewMode === opt.key ? '#7c5cff' : 'transparent',
+                color: viewMode === opt.key ? '#fff' : '#bdbdbd',
+              }}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* 齿轮按钮 */}
+      {/* 齿轮按钮（仅宇宙图） */}
+      {viewMode === 'universe' && (
       <button
         onClick={() => setPanelOpen(!panelOpen)}
         style={{
@@ -565,9 +615,10 @@ export function UniverseGraphPage() {
       >
         <SettingsIcon size={16} />
       </button>
+      )}
 
       {/* 设置面板 */}
-      {panelOpen && (
+      {viewMode === 'universe' && panelOpen && (
         <div
           style={{
             position: 'absolute',
@@ -720,7 +771,7 @@ export function UniverseGraphPage() {
       )}
 
       {/* hover 浮卡 */}
-      {hoverNode && (
+      {viewMode === 'universe' && hoverNode && (
         <div
           style={{
             position: 'absolute',
@@ -746,6 +797,7 @@ export function UniverseGraphPage() {
       )}
 
       {/* 缩放显示 */}
+      {viewMode === 'universe' && (
       <div
         style={{
           position: 'absolute',
@@ -762,8 +814,10 @@ export function UniverseGraphPage() {
       >
         {zoomBadge}%
       </div>
+      )}
 
       {/* 左下提示 */}
+      {viewMode === 'universe' && (
       <div
         style={{
           position: 'absolute',
@@ -776,8 +830,9 @@ export function UniverseGraphPage() {
       >
         滚轮缩放 · 拖动平移 · 悬停看预览 · 点击聚焦 · 双击进入文档
       </div>
+      )}
 
-      {loading && (
+      {viewMode === 'universe' && loading && (
         <div
           style={{
             position: 'absolute',
@@ -793,7 +848,7 @@ export function UniverseGraphPage() {
         </div>
       )}
 
-      {error && !loading && (
+      {viewMode === 'universe' && error && !loading && (
         <div
           style={{
             position: 'absolute',
@@ -813,7 +868,7 @@ export function UniverseGraphPage() {
         </div>
       )}
 
-      {!loading && !error && nodes.length === 0 && (
+      {viewMode === 'universe' && !loading && !error && nodes.length === 0 && (
         <div
           style={{
             position: 'absolute',
