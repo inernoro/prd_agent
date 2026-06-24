@@ -852,10 +852,8 @@
 
 ### 七、周报
 
-- [智能体宇宙 · 完备度看板](report.agent-universe.completeness) `report.agent-universe.completeness`
   > 各智能体完备度看板：终极目标、当前进度、TodoList、目前情况、风险点（当前加权进度约 55%）
 
-- [CDS 绝对可视化一键部署 · 完整报告](report.cds.visual-deploy) `report.cds.visual-deploy`
   > CDS Agent 商业级可用闭环目标的完成度审计报告（2026-05-19）
   > 用户 9 问逐条验收：发送卡死/不流式/噪声/展开空已修并取证；工具循环/线程不停在借来的 runtime（缓解）；工作区文件注入是需新建的接缝（gates md→ppt 案例）
 
@@ -883,7 +881,6 @@
 
   > Claude Agent SDK 容器侵入 MAP 主系统的根因分析报告（2026-05-18）
 
-- [CDS Agent 当前进度面板](report.cds.agent.current-progress) `report.cds.agent.current-progress`
   > CDS Agent 当前开发进度与状态面板（已合并到权威入口）
 
   > CDS Agent 工作台从连接探活到远程 sandbox 自巡检 PR 闭环的功能清单、坑位、未完成债务和交接提示词
@@ -951,32 +948,24 @@
 
   > CDS GitHub 自动部署 webhook 链路验收测试报告
 
-- [CDS Forwarder 替代蓝绿部署收尾报告](report.cds.forwarder-success) `report.cds.forwarder-success`
   > Forwarder 独立进程方案成功取代蓝绿部署的验收报告
 
-- [CDS Self-Update 时间体系审视报告](report.cds.self-update-timing-audit) `report.cds.self-update-timing-audit`
   > CDS 自更新流程中时间戳体系的问题分析与修复报告
 
-- [prd-admin 样式统一统计报表](report.frontend.prd-admin-surface-style-migration) `report.frontend.prd-admin-surface-style-migration`
   > prd-admin Surface System 迁移完成度的统计数据报表
 
   > MAP 平台工作记录数据准确性问题的修复过程报告
 
-- [PRD Agent Web 端同步开发报告](report.prd-agent.web-sync) `report.prd-agent.web-sync`
   > PRD Agent Web 端与桌面端同步开发的完整报告
 
   > 18 friction 全清单 + 4 audit 子结果(隔离/SSE/UI/mysql)+ 41 契约对照 + 真人 UAT 剩余清单（合并自原 5 个子文件）
 
-- [文档技能评测报告](report.skill.doc-evaluation) `report.skill.doc-evaluation`
   > 三种文档技能 vs 已有文档的评测对比报告
 
-- [文档技能评测·user-guide-writing 样本输出](report.skill.eval-sample-user-guide) `report.skill.eval-sample-user-guide`
   > 评测报告引用的 skill 原始输出样本（用户操作指南类）
 
-- [文档技能评测·technical-writing 样本输出](report.skill.eval-sample-technical) `report.skill.eval-sample-technical`
   > 评测报告引用的 skill 原始输出样本（技术规格类）
 
-- [文档技能评测·documentation-writer 样本输出](report.skill.eval-sample-diataxis) `report.skill.eval-sample-diataxis`
   > 评测报告引用的 skill 原始输出样本（Diátaxis 四象限类）
 
   > CDS 控制面 cds-master 崩溃导致 502 的事故根因分析与复盘
@@ -994,9 +983,7 @@
 | 2026-06-21 | 新增 | `doc/spec.defect-agent.automation-protocol.md` | 缺陷自动化协议契约 SSOT |
 | 2026-06-19 | 新增 | `debt.visual-agent.storyboard` | 视觉分镜台债务台账：OpenRouter 出图画幅/modalities 按能力派生 + 拆镜 SSE 流式 + 关键帧 ImageGenRun 离场取消 |
 | 2026-06-19 | 新增 | `debt.cds.backend-deploy-freeze` | CDS 后端部署冻结台账：分支 api 跑旧代码（构建成功≠运行新代码）+ 图生视频下载修复/额度提醒待部署复验 |
-| 2026-06-04 | 新增 | `report.daily-tips.tutorial-coverage` `debt.daily-tips.onboarding` | 页面教程系统统一升级:全量路由覆盖审计 + 债务台账(video-agent/薄教程加厚/编辑器/跨页待补) |
 | 2026-06-02 | 新增 | `design.agent-universe` `debt.agent-universe` | 智能体宇宙设计（能力契约 + 调用信封）与债务台账 |
-| 2026-06-02 | 新增 | `design.cds.visual-deploy` `guide.cds.one-click-deploy` `report.cds.visual-deploy` `debt.cds.visual-deploy` | CDS 绝对可视化一键部署收尾:设计(含架构图)+使用教程+完整报告+债务台账;`plan.cds.visual-deploy` 状态更新为核心收尾 |
 | 2026-06-01 | 新增 | `design.cds.ai-compose` `plan.cds.visual-deploy` `guide.cds.deploy-acceptance` | CDS AI 生成 compose 草稿设计、绝对可视化部署计划看板、可视化部署与验收指南（已发布到 KB） |
 | 2026-05-30 | 新增 | `debt.cds.agent` | CDS Agent 工作台债务台账（R1 商业级 / Lite 只读边界 / 文档熵减 / 无 profile 直跑） |
 | 2026-05-15 | 新增 | `design.cds.agent.runtime-architecture` | CDS Agent 运行时架构设计 |
@@ -1021,9 +1008,6 @@
 | 2026-04-20 | 新增 | `report.2026-W16` | 周报 2026-W16 (04-13 ~ 04-19) |
 | 2026-04-20 | 新增 | `report.2026-W15` | 周报 2026-W15 (04-06 ~ 04-12) |
 | 2026-04-20 | 新增 | `report.2026-W14` | 周报 2026-W14 (03-30 ~ 04-05) |
-| 2026-04-19 | 重命名 | `output-user-guide-writing` → `report.skill.eval-sample-user-guide` | 文档技能评测·user-guide-writing 样本输出 |
-| 2026-04-19 | 重命名 | `output-technical-writing` → `report.skill.eval-sample-technical` | 文档技能评测·technical-writing 样本输出 |
-| 2026-04-19 | 重命名 | `output-documentation-writer` → `report.skill.eval-sample-diataxis` | 文档技能评测·documentation-writer 样本输出 |
 | 2026-03-31 | 新增 | `report.2026-W13` | 周报 2026-W13 (03-23 ~ 03-29) |
 | 2026-03-31 | 新增 | `design.platform.llm-gateway` | LLM Gateway 统一调用架构设计 |
 | 2026-03-31 | 新增 | `design.marketplace` | 配置市场（海鲜市场）技术设计 |
@@ -1045,7 +1029,6 @@
 | 2026-03-23 | 新增 | `guide.cds.ai-auth` | CDS + 后端 API 双层认证诊断指南 |
 | 2026-03-23 | 新增 | `guide.prd-agent.operations` | PRD Agent 全平台操作手册 |
 | 2026-03-23 | 新增 | `guide.skill.workflow` | AI 技能工作流指南 |
-| 2026-03-23 | 新增 | `report.prd-agent.web-sync` | PRD Agent Web 端同步开发报告 |
 | 2026-03-23 | 更新 | `report.2026-W12` | 周报 2026-W12 (全量重写) |
 | 2026-03-20 | 新增 | `report.2026-W12` | 周报 2026-W12 (03-16 ~ 03-22) |
 | 2026-03-20 | 新增 | `guide.prd-agent` | PRD Agent 使用教程 |
@@ -1061,7 +1044,6 @@
 | 2026-03-20 | 新增 | `guide.workflow-agent.canvas` | 工作流画布操作手册 |
 | 2026-03-20 | 新增 | `guide.report-agent.weekly` | 周报功能完整操作指南 |
 | 2026-03-20 | 新增 | `design.platform.model-pool-failover` | 模型池故障转移与自动探活设计 |
-| 2026-03-20 | 新增 | `report.skill.doc-evaluation` | 文档技能评测报告 |
 | 2026-03-15 | 新增 | `report.2026-W11` | 周报 2026-W11 (03-09 ~ 03-15) |
 | 2026-03-15 | 新增 | `spec.cds` | CDS 功能需求说明书 |
 | 2026-03-15 | 新增 | `design.shortcuts-agent.apple` | 苹果快捷指令集成设计方案 |
@@ -1079,6 +1061,5 @@
 | 2026-06-10 | 新增 | `design.cds.skill-version-update` | CDS 技能版本与更新架构 |
 | 2026-06-10 | 新增 | `plan.product-agent.version-workflow` | 产品管理智能体版本流程整改计划 |
 | 2026-06-20 | 新增 | `design.team-activity.voc` | 团队动态·用户体验之声(VOC) 设计（treemap + 痛点指数 + 闭环 + 设计思想） |
-| 2026-06-11 | 新增 | `report.release.version-20260610-1-summary` | version-20260610-1 分支改动说明 |
 | 2026-06-21 | 新增 | `debt.cds.performance` | CDS 性能债务台账（Docker 垃圾堆积致构建越来越慢 + mongo 索引非主因结论 + 逐步解决路线） |
 | 2026-06-22 | 新增 | `debt.frontend.mobile-control-bar-overload` | 移动端控制条过载治理台账（知识库/缺陷/周报等页面，进内容前控制条 >1 条，治理机制与进度） |

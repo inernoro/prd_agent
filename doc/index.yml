@@ -328,9 +328,6 @@ docs:
   debt.web-hosting.comments: 网页托管评论 · 债务台账
 
   # ── 七、周报（降序：最新在前）──
-  report.agent-universe.completeness: 智能体宇宙 · 各智能体完备度看板（终极目标 vs 当前进度）
-  report.cds.visual-deploy: CDS 绝对可视化一键部署 · 完整报告（交付总览 + dogfood 修的真 bug + 各轮验收分享链）
-  report.cds.agent.current-progress: CDS Agent 当前进度面板
   report.2026-W25: 周报 2026-W25 (06-15 ~ 06-21)
   report.2026-W24: 周报 2026-W24 (06-08 ~ 06-14)
   report.2026-W23: 周报 2026-W23 (06-01 ~ 06-07)
@@ -350,15 +347,6 @@ docs:
   report.2026-W09: 周报 2026-W09 (02-23 ~ 03-01)
   report.2026-W07: 周报 2026-W07 (02-09 ~ 02-15)
   report.2026-W06: 周报 2026-W06 (02-03 ~ 02-08)
-  report.cds.forwarder-success: CDS Forwarder 替代蓝绿部署收尾报告
-  report.cds.self-update-timing-audit: CDS Self-Update 时间体系审视报告
-  report.frontend.prd-admin-surface-style-migration: prd-admin 样式统一统计报表
-  report.prd-agent.web-sync: PRD Agent Web 端同步开发报告
-  report.skill.doc-evaluation: 文档技能评测报告：三技能 vs 已有文档
-  report.skill.eval-sample-user-guide: 文档技能评测·user-guide-writing 样本输出
-  report.skill.eval-sample-technical: 文档技能评测·technical-writing 样本输出
-  report.skill.eval-sample-diataxis: 文档技能评测·documentation-writer（Diátaxis）样本输出
-  report.daily-tips.tutorial-coverage: 页面教程全量路由覆盖审计（2026-06-04）
   debt.cds.nginx-loading-pages:
     title: "CDS loading pages 债务台账"
     status: partial
@@ -370,7 +358,6 @@ docs:
   plan.product-agent.version-workflow:
     title: "产品管理智能体版本流程整改计划"
     status: draft
-  report.release.version-20260610-1-summary:
     title: "version-20260610-1 分支改动说明"
     status: active
   debt.platform.map-mcp-connector: MAP MCP 连接器债务台账

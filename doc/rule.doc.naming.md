@@ -70,6 +70,17 @@ appname 第一段**只能从下面四类里选，禁止自创**。新增应用 A
 
 > `cds` 已达 100+ 篇（占 doc/ 约三成）。新增 cds 文档前先问能不能并入现有 canonical 文档，别再造「进度剧场」（见 `debt.cds.agent.md` 的收敛计划）。
 
+### 报告 / 验收 / 图片不进 doc/（2026-06-24 用户强制，最高约束）
+
+用户多次发现验收报告、插图等临时产物掺进 doc/ 污染知识库。固化如下，违反即驳回：
+
+1. **doc/ 的 `report.*` 只允许周报 `report.YYYY-WNN.md`**。验收 / UAT / 事故 / 审计 / 进度 / 评测样本等一切「报告类临时文件」**一律禁止进 doc/**。
+2. 这类报告归**验收知识库**（`document_stores`，见 `create-visual-test-to-kb` 技能并出分享链），按主题分流：**MAP（prd-agent 平台自身）主题 → MAP 知识库；其余（CDS 及其他）→ CDS 知识库**。
+3. 事故 postmortem 若有长期架构价值，把结论并入相关 `design.*` / `debt.*`，不单独留 `report.*` 文件。
+4. **图片 / 插图不进仓库**：文档配图走知识库上传 / 外链，不 commit 进 `doc/` 或 `assets/`。例外：应用 UI 资源（如 `prd-admin/src/assets/**`、favicon、model-avatars）是**代码资源**，不受此限。
+
+> 历史背景：2026-06-24 清理时从 doc/ 移走 34 篇报告类文件（21 篇验收/事故 + 13 篇其余 report.*）+ 2 张报告插图 PNG，git 历史可追溯。本节确保不再回潮。
+
 ---
 
 ## 文件头部格式
