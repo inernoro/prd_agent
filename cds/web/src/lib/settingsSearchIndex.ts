@@ -360,13 +360,14 @@ export const PROJECT_SETTINGS_INDEX: SettingsIndexEntry[] = [
   {
     id: 'proj:compose:readiness',
     label: '就绪探测超时（探活）',
-    hint: '项目配置 · 服务端口探活 / readiness 超时（如 240s）',
+    hint: '项目配置 · 每服务 compose 标签 cds.readiness-timeout，默认 180s（无全局设置）',
     tab: 'compose',
     scope: 'project',
     keywords: [
       '探活', '就绪探活', '就绪探测', '就绪超时', '健康检查', '健康检查超时',
       'readiness', 'readiness timeout', 'readiness-timeout', 'health', 'healthcheck',
-      '端口探测', 'tcp 探活', 'probe', '超时', '240', '240s', '探测超时', '启动探测',
+      '端口探测', 'tcp 探活', 'probe', '超时', '180', '180s', '240', '240s',
+      '探测超时', '启动探测', 'cds.readiness-timeout',
     ],
   },
   {
