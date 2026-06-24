@@ -8,10 +8,19 @@
  * - __CDS_BRANCH_ID__: the slugified branch ID
  * - __CDS_BRANCH_NAME__: the original branch name
  */
-export function buildWidgetScript(branchId: string, branchName: string): string {
+export function buildWidgetScript(
+  branchId: string,
+  branchName: string,
+  // 2026-06-24：版本信息并入本 widget（不再单开角标）。服务端预填 sha + 部署模式标签
+  // （极速/源码），保证首屏即可见；下面的 /api/branches 拉取会再刷新一次。
+  initialSha = '',
+  initialModeLabel = '',
+): string {
   // Escape for safe embedding in <script> tag
   const safeId = branchId.replace(/['"<>&]/g, '');
   const safeName = branchName.replace(/['"<>&]/g, '');
+  const safeSha = String(initialSha || '').replace(/[^a-fA-F0-9]/g, '').slice(0, 40);
+  const safeMode = String(initialModeLabel || '').replace(/[^一-龥A-Za-z]/g, '').slice(0, 8);
   const bridgeEnabled = process.env.CDS_BRIDGE_ENABLED === '1';
 
   return `
@@ -23,6 +32,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   var BRANCH_NAME='${safeName}';
   var API='/_cds/api';
   var BRIDGE_ENABLED=${bridgeEnabled ? 'true' : 'false'};
+  var DEPLOY_MODE_LABEL='${safeMode}';
 
   // ── Styles ──
   var css=document.createElement('style');
@@ -54,6 +64,8 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     #cds-widget .cds-branch{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     #cds-widget .cds-tag{font-size:10px;padding:1px 5px;border-radius:4px;background:rgba(255,255,255,0.15);margin-left:2px}
     #cds-widget .cds-sha{font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:5px;background:rgba(56,139,253,0.18);color:#dbeafe;font-family:ui-monospace,SFMono-Regular,monospace;letter-spacing:0.6px;border:1px solid rgba(56,139,253,0.32)}
+    #cds-widget .cds-mode{font-size:10.5px;font-weight:600;padding:1px 6px;border-radius:5px;background:rgba(255,255,255,0.12);color:#e6edf3;letter-spacing:0.3px}
+    #cds-widget .cds-mode.fast{background:rgba(34,211,238,0.18);color:#a5f3fc;border:1px solid rgba(34,211,238,0.32)}
     #cds-widget .cds-sync-chip{display:inline-flex;align-items:center;gap:5px;padding:1px 7px;border-radius:999px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.12);font-size:9px;color:#f8fafc;letter-spacing:0.2px}
     #cds-widget .cds-sync-chip.done{background:rgba(63,185,80,0.16);border-color:rgba(63,185,80,0.34);color:#bef3c0}
     #cds-widget .cds-sync-chip.error{background:rgba(248,81,73,0.18);border-color:rgba(248,81,73,0.34);color:#ffb4ae}
@@ -151,7 +163,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   var deployProfileId=null;
   var profiles=[];
   var branchStatus='';
-  var commitSha='';
+  var commitSha='${safeSha}';
   var commitMsg='';
   var branchTags=[];
   var steps=[];
@@ -608,6 +620,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     h+='<span class="cds-badge-icon">'+(syncState.visible&&syncState.phase==='syncing'?ICON_REFRESH:ICON_BRANCH)+'</span>';
     h+='<span class="cds-branch">'+BRANCH_NAME+'</span>';
     if(commitSha)h+='<span class="cds-sha" title="'+commitSha+'">'+shortSha(commitSha)+'</span>';
+    if(DEPLOY_MODE_LABEL)h+='<span class="cds-mode'+(DEPLOY_MODE_LABEL==='极速'?' fast':'')+'">'+DEPLOY_MODE_LABEL+'</span>';
     if(syncState.visible){
       var syncChipClass='cds-sync-chip'+(syncState.phase==='done'?' done':syncState.phase==='error'?' error':'');
       h+='<span class="'+syncChipClass+'" title="'+syncLabelText().replace(/"/g,'&quot;')+'">';
@@ -762,7 +775,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
       var profileRes=res.profileRes||{};
       var found=res.found||null;
       branchStatus=found?found.status:'';
-      commitSha=found&&found.commitSha?found.commitSha:'';
+      commitSha=(found&&(found.commitSha||found.githubCommitSha))||commitSha;
       commitMsg=found&&found.subject?found.subject:'';
       branchTags=(found&&found.tags)||[];
       var sourceProfiles=(profileRes&&profileRes.profiles)||[];
