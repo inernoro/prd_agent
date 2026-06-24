@@ -208,6 +208,37 @@ export function resolveProfileWithMode(profile: BuildProfile): BuildProfile {
 }
 
 /**
+ * 极速版镜像缺失/拉取失败时，挑一个「源码编译」部署模式做自动回退（用户 2026-06-24 决策：
+ * express 失败自动回退源码编译，宁慢必成，根治「极速版永远不极速 / 部署出现异常打不开」）。
+ *
+ * CI 按 path-filter 只构建改动的组件，所以任何不同时改 prd-api + prd-admin 的分支都会缺
+ * ≥1 个组件的 sha 镜像 → express docker pull 404。与其硬失败，不如自动切到本 profile 里
+ * 一个非 prebuilt 的部署模式，从源码在 CDS 本机编译跑起来。
+ *
+ * 选择规则：在 deployModes 里挑 prebuilt!==true 且**带 command**（能真正源码构建）的模式，
+ * 跳过当前（失败的）模式；按常见源码模式名 static/source/dev/build 优先，否则取第一个满足的。
+ * 找不到（该 profile 压根没有源码模式）返回 null —— 调用方维持原有硬失败，不假装能跑。
+ *
+ * 纯函数，export 给单测。
+ */
+export function pickSourceFallbackMode(
+  deployModes: Record<string, DeployModeOverride> | undefined,
+  currentMode: string | undefined | null,
+): string | null {
+  if (!deployModes) return null;
+  const candidates = Object.entries(deployModes).filter(
+    ([name, ov]) => ov.prebuilt !== true && !!(ov.command && ov.command.trim()) && name !== currentMode,
+  );
+  if (candidates.length === 0) return null;
+  const preferred = ['static', 'source', 'dev', 'build'];
+  for (const p of preferred) {
+    const hit = candidates.find(([name]) => name.toLowerCase() === p);
+    if (hit) return hit[0];
+  }
+  return candidates[0][0];
+}
+
+/**
  * 2026-06-23 极速版 —— 解析 dockerImage 里的部署期模板变量。
  *
  * 极速版镜像 tag 由 commit SHA 决定（CI 按 `github.sha` 推 `sha-<SHA>` tag），
@@ -948,11 +979,13 @@ export class ContainerService {
       },
     });
 
-    const command = profile.command || '';
+    // 2026-06-24：command / usePrebuiltEntrypoint 改 let —— 极速版镜像拉取失败时会
+    // 自动回退到源码编译模式,届时需要把它们改写成源码构建的命令（见下方 fallback）。
+    let command = profile.command || '';
     // 2026-06-23 极速版：预构建镜像自带 ENTRYPOINT（api=`dotnet PrdAgent.Api.dll`,
     // admin=`serve -s dist`）,允许 command 为空 —— 此时不 `sh -c` 包装,直接用
     // 镜像默认 ENTRYPOINT/CMD 启动。非预构建模式仍强制要求 command。
-    const usePrebuiltEntrypoint = profile.prebuiltImage === true && !command;
+    let usePrebuiltEntrypoint = profile.prebuiltImage === true && !command;
     if (!command && !usePrebuiltEntrypoint) {
       throw new Error(`构建配置 "${profile.id}" 缺少 command 字段`);
     }
@@ -1020,25 +1053,54 @@ export class ContainerService {
       }
 
       if (!pulledImage) {
-        onOutput?.(`── 极速版镜像拉取失败(含回退) ──\n`);
-        this.recordContainerEvent({
-          severity: 'error',
-          source: 'cds-container-service',
-          action: 'app.pull.failed',
-          message: `docker pull failed for prebuilt image(s): ${candidates.map((c) => c.image).join(', ')}`,
-          projectId: entry.projectId,
-          branchId: entry.id,
-          profileId: profile.id,
-          requestId: context.requestId ?? undefined,
-          operationId: context.operationId ?? undefined,
-          command: { name: 'docker pull', exitCode: 1, stdoutPreview: '', stderrPreview: lastDetail },
-          details: { images: candidates.map((c) => c.image), reason: '极速版预构建镜像(含回退)拉取失败' },
-        });
-        throw new Error(`极速版镜像拉取失败(含回退): ${candidates.map((c) => c.image).join(' / ')}\n${lastDetail}\n（CI 镜像可能尚未就绪或未设为 public,可在分支详情切回源码编译）`);
+        // 极速版镜像全部拉取失败（path-filter 跳过本组件构建 → sha 镜像不存在,且回退链也没命中）。
+        // 用户 2026-06-24 决策：**不再硬失败**,自动回退到源码编译模式,宁慢必成,根治
+        // 「极速版永远不极速 / 部署出现异常打不开」。仅当该 profile 确实没有任何源码模式时才硬失败。
+        const fallbackMode = pickSourceFallbackMode(profile.deployModes, profile.activeDeployMode);
+        const sourceProfile = fallbackMode
+          ? resolveProfileWithMode({ ...profile, activeDeployMode: fallbackMode, prebuiltImage: false })
+          : null;
+        if (sourceProfile && sourceProfile.command && sourceProfile.command.trim()) {
+          onOutput?.(`── 极速版镜像缺失/拉取失败,自动回退源码编译模式 [${fallbackMode}]（较慢但必成功，无需手动切回）──\n`);
+          this.recordContainerEvent({
+            severity: 'warn',
+            source: 'cds-container-service',
+            action: 'app.pull.fallback-to-source',
+            message: `prebuilt image missing, auto fallback to source-build mode '${fallbackMode}': ${candidates.map((c) => c.image).join(', ')}`,
+            projectId: entry.projectId,
+            branchId: entry.id,
+            profileId: profile.id,
+            requestId: context.requestId ?? undefined,
+            operationId: context.operationId ?? undefined,
+            command: { name: 'docker pull', exitCode: 1, stdoutPreview: '', stderrPreview: lastDetail },
+            details: { images: candidates.map((c) => c.image), fallbackMode, reason: '极速版镜像缺失→自动回退源码编译' },
+          });
+          // 切换到源码构建：改写 profile / command / entrypoint，跳出预构建分支后即走源码路径。
+          profile = sourceProfile;
+          command = sourceProfile.command || '';
+          usePrebuiltEntrypoint = false;
+        } else {
+          onOutput?.(`── 极速版镜像拉取失败(含回退),且无可用源码模式可回退 ──\n`);
+          this.recordContainerEvent({
+            severity: 'error',
+            source: 'cds-container-service',
+            action: 'app.pull.failed',
+            message: `docker pull failed for prebuilt image(s): ${candidates.map((c) => c.image).join(', ')}`,
+            projectId: entry.projectId,
+            branchId: entry.id,
+            profileId: profile.id,
+            requestId: context.requestId ?? undefined,
+            operationId: context.operationId ?? undefined,
+            command: { name: 'docker pull', exitCode: 1, stdoutPreview: '', stderrPreview: lastDetail },
+            details: { images: candidates.map((c) => c.image), reason: '极速版预构建镜像(含回退)拉取失败,且无源码模式可回退' },
+          });
+          throw new Error(`极速版镜像拉取失败(含回退): ${candidates.map((c) => c.image).join(' / ')}\n${lastDetail}\n（CI 镜像可能尚未就绪或未设为 public,且该构建配置没有可回退的源码编译模式）`);
+        }
+      } else {
+        // 用实际拉到的镜像(可能是回退主分支镜像)跑容器:下游 docker run 读 profile.dockerImage。
+        if (pulledImage !== profile.dockerImage) profile.dockerImage = pulledImage;
+        onOutput?.(`── 镜像就绪: ${pulledImage} ──\n`);
       }
-      // 用实际拉到的镜像(可能是回退主分支镜像)跑容器:下游 docker run 读 profile.dockerImage。
-      if (pulledImage !== profile.dockerImage) profile.dockerImage = pulledImage;
-      onOutput?.(`── 镜像就绪: ${pulledImage} ──\n`);
     }
 
     const resolvedEnv = this.resolveProfileRuntimeEnv(entry, profile, customEnv);
