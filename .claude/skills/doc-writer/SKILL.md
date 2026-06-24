@@ -1,17 +1,17 @@
 ---
 name: doc-writer
-description: Guards document creation and modification in the doc/ directory, enforcing 6 standardized type templates (spec, design, plan, rule, guide, report). Validates file naming, header format, and type compliance. Manually triggered via /doc to show the type quick-reference, or auto-triggered when creating/modifying .md files under doc/. Trigger words: "写文档", "新建文档", "文档模板", "/doc".
+description: Guards document creation and modification in the doc/ directory, enforcing 7 standardized type templates (spec, design, plan, rule, guide, report, debt). Validates file naming, header format, and type compliance. Manually triggered via /doc to show the type quick-reference, or auto-triggered when creating/modifying .md files under doc/. Trigger words: "写文档", "新建文档", "文档模板", "/doc".
 ---
 
 # 文档写作守护
 
 > **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/doc`、"写文档"、"新建文档"、"文档模板"
 
-确保 `doc/` 下所有文档遵循统一的 6 种类型模板。创建新文档时自动套用模板，修改文档时校验格式。
+确保 `doc/` 下所有文档遵循统一的 7 种类型模板。创建新文档时自动套用模板，修改文档时校验格式。
 
 ## 核心规则
 
-1. **doc/ 下每个 .md 文件必须属于以下 6 种类型之一**，无例外
+1. **doc/ 下每个 .md 文件必须属于以下 7 种类型之一**，无例外
 2. **文件名格式**：`doc/{type}.{topic}.md`，topic 使用 `kebab-case`
 3. **必须包含标准头部**：版本 + 日期 + 状态
 4. **禁止发明新类型前缀**
@@ -28,6 +28,7 @@ description: Guards document creation and modification in the doc/ directory, en
 | 4 | `rule.*` | **Why not** | 为什么不能那样做 | 2 | 规范约定、审计报告 |
 | 5 | `guide.*` | **How-to** | 怎么操作 | 2 | 操作指南、备忘录 |
 | 6 | `report.*` | **What happened** | 做了什么 | 1 | 周报 |
+| 7 | `debt.*` | **What's owed** | 欠了什么 | 1 | 工程债务台账 |
 
 ### 类型选择决策树
 
@@ -38,7 +39,8 @@ description: Guards document creation and modification in the doc/ directory, en
 ├── 规划分步实施/排期 → plan.*
 ├── 制定规则/记录审计发现 → rule.*
 ├── 提供操作指南/临时备忘 → guide.*
-└── 记录周期性进展 → report.*
+├── 记录周期性进展 → report.*
+└── 记录已知边界/TODO/留尾债务 → debt.*
 ```
 
 ## 通用头部格式
@@ -117,6 +119,14 @@ Agent 规格文档额外要求 `appKey` 字段。
 
 > 详细生成流程见 `weekly-update-summary` 技能。
 
+### debt.* — 债务台账
+
+| 子类型 | 适用场景 | 核心章节 |
+|--------|---------|----------|
+| 债务台账 | 模块级未还工程债（已知边界 / TODO / 留尾风险） | 总览（open/paid 计数）→ 债务列表 → 已还归档 |
+
+> 按模块归档（`debt.{module}.md`），债务行用 `YYYY-MM-DD-{描述}` 作 ID，含严重度 / 触发条件 / 状态。详细字段约定见 `doc/rule.doc.naming.md` §debt.*。
+
 ---
 
 ## 执行流程
@@ -127,6 +137,6 @@ Agent 规格文档额外要求 `appKey` 字段。
 
 ### 当自动检测到文档操作时
 
-1. **创建新文档**：检查文件名前缀是否为 6 种之一，套用对应模板
+1. **创建新文档**：检查文件名前缀是否为 7 种之一，套用对应模板
 2. **修改文档**：校验头部格式（版本+日期+状态）是否存在
 3. **发现旧前缀**（story/agent/analysis/audit/memo）：提醒用户该前缀已废弃，建议重命名
