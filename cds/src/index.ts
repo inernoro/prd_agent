@@ -37,7 +37,7 @@ import { syncAllSystemdUnits } from './services/systemd-sync.js';
 import { branchEvents, nowIso } from './services/branch-events.js';
 import { archiveBranchContainerLogs } from './services/container-log-archiver.js';
 import { reconcileStaleDeployDispatches, type DeployDispatchReconcileResult } from './services/deploy-dispatch-reconciler.js';
-import { shouldRetryInterruptedWebhookDispatch } from './services/deploy-dispatch-retry.js';
+import { shouldRetryInterruptedWebhookDispatch, isDeployDispatchRetryEnabled } from './services/deploy-dispatch-retry.js';
 import { ResourceUsageSampler } from './services/resource-usage-sampler.js';
 import { httpLogStoreFromEnv } from './services/http-log-store.js';
 import { serverEventLogStoreFromEnv } from './services/server-event-log-store.js';
@@ -94,6 +94,16 @@ const DEPLOY_DISPATCH_MAX_AGE_MS = Math.max(
 const DEPLOY_DISPATCH_RETRY_BACKOFF_MS = Math.max(
   0,
   Number.parseInt(process.env.CDS_DEPLOY_DISPATCH_RETRY_BACKOFF_MS || '', 10) || 5 * 60 * 1000,
+);
+// 2026-06-24 用户决策：部署重试默认**关闭**（治重试风暴）。
+// 上面三个上限（maxRetries/backoff/age）是 2026-06-23 加的护栏，但没根治风暴——
+// 多个部署来源（webhook + 对账补发 + 抢占后重建）互相叠加仍打满 CPU，导致整个 CDS
+// 进不去。现改为默认不自动补发 stale dispatch；需要时显式开
+// `CDS_DEPLOY_DISPATCH_RETRY_ENABLED=1` 才恢复（恢复后才受 maxRetries/backoff/age 约束）。
+// 对账器仍会把 stale 标记为 interrupted（纯记账），只是不再自动触发部署。
+// 判定走 deploy-dispatch-retry.ts 的纯函数 isDeployDispatchRetryEnabled（单测锁「默认关」）。
+const DEPLOY_DISPATCH_RETRY_ENABLED = isDeployDispatchRetryEnabled(
+  process.env.CDS_DEPLOY_DISPATCH_RETRY_ENABLED,
 );
 
 function mb(bytes: number): number {
@@ -201,6 +211,24 @@ function dispatchRecoveredWebhookDeploys(
   reconciled: DeployDispatchReconcileResult[],
   source: string,
 ): void {
+  // 重试默认关闭：只记一条「已跳过自动补发」，不再触发任何部署（治风暴的总闸）。
+  if (!DEPLOY_DISPATCH_RETRY_ENABLED) {
+    const pending = reconciled.filter((r) => r.nextStatus === 'interrupted');
+    if (pending.length > 0) {
+      store?.record({
+        category: 'system',
+        severity: 'info',
+        source,
+        action: 'branch.deploy-dispatch.retry-disabled',
+        message: `部署重试已关闭（未设 CDS_DEPLOY_DISPATCH_RETRY_ENABLED），跳过 ${pending.length} 个中断派发的自动补发`,
+        details: {
+          pendingCount: pending.length,
+          branchIds: pending.map((r) => r.branchId),
+        },
+      });
+    }
+    return;
+  }
   for (const result of reconciled) {
     if (result.nextStatus !== 'interrupted') continue;
     const traceHash = crypto.createHash('sha1')

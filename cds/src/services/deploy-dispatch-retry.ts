@@ -29,6 +29,16 @@ export interface DeployDispatchRetryOptions {
   baseBackoffMs?: number;
 }
 
+/**
+ * 2026-06-24：部署重试**默认关闭**的总闸（治重试风暴）。只有显式把
+ * `CDS_DEPLOY_DISPATCH_RETRY_ENABLED` 设成 1/true/on/yes 才恢复自动补发；
+ * 未设 / 空 / 0 / false 一律视为关闭。reconciler 仍会把 stale 标记为
+ * interrupted（记账），但关闭时绝不自动触发部署。纯函数便于单测锁死「默认关」。
+ */
+export function isDeployDispatchRetryEnabled(raw: string | undefined | null): boolean {
+  return /^(1|true|on|yes)$/i.test((raw || '').trim());
+}
+
 /** 仍在「在途」的分支状态：此时不应再叠加一次重试部署。 */
 const ACTIVE_OPERATION_STATUSES = new Set(['building', 'starting', 'restarting', 'stopping']);
 

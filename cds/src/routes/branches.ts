@@ -1758,6 +1758,36 @@ export function shouldSkipFencedDeployCleanupForNewerRuntime(
   return !Number.isFinite(stoppedMs) || stoppedMs < latestRuntimeMs;
 }
 
+/**
+ * R2 竞态根治（2026-06-24）：会「产出/管理容器」的操作种类。被抢占的部署做
+ * fenced cleanup 删容器前，若分支上有这类**更新的**操作在跑，必须跳过删除 ——
+ * 那个操作正用/即将重建这些容器，删了会导致紧随其后的 restart/auto-wake 撞
+ * `No such container`（服务 0/N）。它们的 runService 按容器名 `docker rm -f`+create
+ * 幂等，留着不会泄漏。
+ */
+export const FENCED_CLEANUP_RUNTIME_PRODUCING_KINDS: ReadonlySet<BranchOperationKind> = new Set<BranchOperationKind>([
+  'deploy',
+  'deploy-profile',
+  'force-rebuild',
+  'restart',
+  'auto-restart',
+  'auto-lifecycle-redeploy',
+]);
+
+/** 纯函数：在活跃操作里找出「会接管容器」的非己方操作（用于 fenced cleanup 跳过判定）。可单测。 */
+export function findFencedCleanupRuntimeOwner(
+  activeOps: ReadonlyArray<{ operationId: string; request: { kind: BranchOperationKind; source?: string | null } }>,
+  selfOperationId: string | null | undefined,
+): { operationId: string; kind: BranchOperationKind; source: string | null } | null {
+  for (const op of activeOps) {
+    if (op.operationId === selfOperationId) continue;
+    if (FENCED_CLEANUP_RUNTIME_PRODUCING_KINDS.has(op.request.kind)) {
+      return { operationId: op.operationId, kind: op.request.kind, source: op.request.source ?? null };
+    }
+  }
+  return null;
+}
+
 export function createBranchRouter(deps: RouterDeps): Router {
   const {
     stateService,
@@ -2256,6 +2286,46 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       return;
     }
+    // R2 竞态根治（2026-06-24）：被抢占的部署在收尾失败后调本函数清容器，但若
+    // **抢占它的是另一个"会产出/管理容器的操作"**（新部署 / 重启 / 自动唤醒 /
+    // 强制重建等，且还没到 ready 所以 hasNewerReadyRuntime 为 false），此时删容器
+    // 会把那个在途操作正在用/即将重建的容器删掉 —— 紧接着 restart/auto-wake 对已删
+    // 容器 `docker restart` 就报 `No such container`，服务 0/N。
+    // 解法：只要有更新的 runtime-producing 操作在跑，本次 fenced cleanup 一律跳过，
+    // 把容器交给那个操作管理（它的 runService 按容器名 `docker rm -f` + create 幂等，
+    // 不会泄漏）。只有"无人接管"或"终止类操作接管"时才走删除。
+    const runtimeOwner = findFencedCleanupRuntimeOwner(
+      branchOperationCoordinator?.getActiveOperations(entry.id) ?? [],
+      operationId,
+    );
+    if (runtimeOwner && branchStillExists) {
+      for (const profileId of profileIds) {
+        const svc = entry.services?.[profileId];
+        if (!svc?.containerName) continue;
+        serverEventLogStore?.record({
+          category: 'container',
+          severity: 'info',
+          source: 'deploy-fenced-cleanup',
+          action: 'container.remove.after-fenced-deploy.skipped',
+          message: `skipped fenced deploy cleanup because a newer runtime-producing operation will manage the container: ${svc.containerName}`,
+          projectId: entry.projectId,
+          branchId: entry.id,
+          profileId,
+          containerName: svc.containerName,
+          requestId: requestId || null,
+          operationId: operationId || null,
+          details: {
+            reason,
+            skipReason: 'runtime-producing-operation-active',
+            runtimeOwnerOperationId: runtimeOwner.operationId || null,
+            runtimeOwnerKind: runtimeOwner.kind || null,
+            runtimeOwnerSource: runtimeOwner.source || null,
+          },
+        });
+      }
+      return;
+    }
+
     const cleanupOwner = branchOperationCoordinator
       ?.getActiveOperations(entry.id)
       .find((active) => active.operationId !== operationId && terminalCleanupKinds.has(active.request.kind));
