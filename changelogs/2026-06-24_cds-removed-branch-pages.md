@@ -5,3 +5,4 @@
 | fix | cds | PR review 修复：已合并页主分支链接优先用 baseRef（实际合并目标）而非 defaultBranch；prClose 策略关闭时合并 PR 也记 merged 墓碑（防 delete 事件误降级为已放弃）；停止面板判定严格对齐后端 isStoppedBranch（不靠孤立 lastStop* 误标停止）；recordRemovedBranch 承袭更丰富 PR 元数据（关 PR→删分支不丢「查看 PR」）；CI 失败 branch.updated 事件带上 ciImageError 实时下发 |
 | fix | cds | PR review 二轮：delete 策略关闭时也记 abandoned 墓碑（与 prClose 一致，删分支清理不再落泛化「启动失败」）；墓碑增 branchId/aliases 兜底键 + findRemovedBranchByIdentifier，自定义子域别名访问 gone 页也能匹配到合并/放弃页（previewSlug 主键查不到时兜底） |
 | fix | cds | PR review 三轮（竞态）：delete 先到清掉 entry 时，closed(merged) 仍基于 head.ref 写 merged 墓碑（merged 粘性升级 delete 写的 abandoned，合并 PR 不再错显已放弃）；CI 完成早到的缓存认领路径 failed 分支也写 ciImageError + 清 ciWaitingSince（脱离 waiting 后看门狗不兜底，看板能实时显示原因） |
+| fix | cds | PR review 四轮：CI 等待看门狗超时翻 failed 时清掉 ciWorkflowRunUrl，避免卡片「查看构建」指向与「无匹配构建完成」失败无关的历史 Actions run |

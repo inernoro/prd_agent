@@ -3556,6 +3556,9 @@ function startCiWaitWatchdog(): ReturnType<typeof setInterval> {
           ciWorkflowConclusion: 'timed_out_no_run',
           ciWaitingSince: undefined,
           ciImageError: reason,
+          // 超时原因是「无匹配构建完成」，任何旧 run 链接都与本次失败无关，清掉避免
+          // 卡片「查看构建」指向一个误导性的历史 Actions run（Bugbot）。
+          ciWorkflowRunUrl: undefined,
         });
         stateService.save();
         activeServerEventLogStore?.record({
@@ -3573,7 +3576,7 @@ function startCiWaitWatchdog(): ReturnType<typeof setInterval> {
           payload: {
             branchId: b.id,
             projectId: b.projectId,
-            patch: { ciImageStatus: 'failed', ciWorkflowConclusion: 'timed_out_no_run', ciImageError: reason },
+            patch: { ciImageStatus: 'failed', ciWorkflowConclusion: 'timed_out_no_run', ciImageError: reason, ciWorkflowRunUrl: undefined },
             ts: nowIso(),
           },
         });
