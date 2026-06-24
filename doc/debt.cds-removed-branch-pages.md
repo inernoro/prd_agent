@@ -1,6 +1,6 @@
 # CDS 过期分支预览页 · 债务台账
 
-> **日期**：2026-06-24 | **状态**：维护中
+> **版本**：v1.0 | **日期**：2026-06-24 | **状态**：已落地
 > 关联：`cds/src/index.ts`（buildBranchMergedPageHtml / buildBranchAbandonedPageHtml / serveBranchGonePage）、`cds/src/services/state.ts`（recordRemovedBranch）、`cds/src/routes/github-webhook.ts`
 
 ## 背景
