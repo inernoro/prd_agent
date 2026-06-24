@@ -3439,6 +3439,12 @@ function serveBranchGonePage(slug: string, req: http.IncomingMessage, res: http.
   res.end(html);
 }
 
+// 停止但未删除的 PR 分支（仓库不自动删合并分支）也要落到合并/放弃页，而非泛化停止页。
+// proxy 在 routeToBranch 命中墓碑时调本回调；serveBranchGonePage 内部再按墓碑分流。
+proxyService.setOnBranchGone((branchSlug, req, res) => {
+  serveBranchGonePage(branchSlug, req, res);
+});
+
 // Preview requests must never create worktrees or containers. Containers may only
 // be started by webhook dispatch, explicit dashboard deploy, or cdscli.
 proxyService.setOnAutoBuild(async (branchSlug, req, res) => {

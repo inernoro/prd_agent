@@ -71,6 +71,13 @@ export class ProxyService {
   /** Callback: trigger auto-build for a branch that isn't running yet */
   private onAutoBuild: ((branchSlug: string, req: http.IncomingMessage, res: http.ServerResponse) => void) | null = null;
   /**
+   * Callback: render the "branch gone" page (merged / abandoned / generic) for a
+   * branch that has a tombstone. Used when a PR-closed branch is NOT auto-deleted
+   * by the repo — the stopped BranchEntry lingers, so routeToBranch would otherwise
+   * serve the generic stopped-status page and never reach serveBranchGonePage.
+   */
+  private onBranchGone: ((branchSlug: string, req: http.IncomingMessage, res: http.ServerResponse) => void) | null = null;
+  /**
    * Callback: revive a scheduler-cooled branch on preview access (lightweight
    * `docker restart` of preserved containers, no rebuild). Wired only when
    * preview auto-wake is enabled. Must flip branch.status to a loading state
@@ -121,6 +128,10 @@ export class ProxyService {
 
   setOnAutoBuild(fn: (branchSlug: string, req: http.IncomingMessage, res: http.ServerResponse) => void): void {
     this.onAutoBuild = fn;
+  }
+
+  setOnBranchGone(fn: (branchSlug: string, req: http.IncomingMessage, res: http.ServerResponse) => void): void {
+    this.onBranchGone = fn;
   }
 
   setOnReviveCooled(fn: (branchSlug: string) => Promise<void>): void {
@@ -572,6 +583,17 @@ export class ProxyService {
     }
 
     if (branch.status !== 'running' && !LOADING_BRANCH_STATUSES.has(branch.status)) {
+      // 墓碑优先：PR 合并/关闭后分支若**未被自动删除**（仓库保留 PR 分支），停止的
+      // BranchEntry 仍在，否则会落到下面的泛化「分支已停止」状态页，永远走不到
+      // serveBranchGonePage。先查墓碑：命中则与「分支已删除」走同一套合并/放弃页。
+      // fail-safe：无墓碑（绝大多数停止分支）则一切照旧；只拦真实 HTML 导航（asset/
+      // API 请求继续走状态页，避免把 gone HTML 当成 CSS/JS 返回）。墓碑命中也意味着
+      // 不该 auto-wake/恢复一个已合并/已放弃的分支，故置于这些副作用之前直接返回。
+      if (this.onBranchGone && this.isHtmlNavigationRequest(req)
+        && this.stateService.findRemovedBranchByIdentifier(branch.id)) {
+        this.onBranchGone(branch.id, req, res);
+        return;
+      }
       // Auto-wake: a branch put to sleep by the scheduler (containers preserved,
       // not removed) is revived on a real page navigation via a cheap
       // `docker restart`, so users don't hit a dead-end "go redeploy manually"
