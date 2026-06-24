@@ -85,10 +85,10 @@ grep -rn "StreamAsync\|\.StreamAsync" prd-api/src/ --include="*.cs"
 
 | 类型 | 判定条件 | 合规性 |
 |------|----------|--------|
-| **用户触发的同步调用** | 用户点击按钮后等待结果 | ❌ 必须改为流式 |
-| **用户触发的流式调用** | 已用 SSE 推送中间结果 | ✅ 合规 |
-| **后台异步调用** | Worker/定时任务，用户不等待 | ✅ 豁免 |
-| **极快调用（<2s）** | Intent 检测、短文本分类等 | ⚠️ 建议加 loading 动画 |
+| **用户触发的同步调用** | 用户点击按钮后等待结果 | 未通过，必须改为流式 |
+| **用户触发的流式调用** | 已用 SSE 推送中间结果 | 通过 |
+| **后台异步调用** | Worker/定时任务，用户不等待 | 通过，豁免 |
+| **极快调用（<2s）** | Intent 检测、短文本分类等 | 注意，建议加 loading 动画 |
 
 ### Step 3: 检查前端消费方
 
@@ -109,9 +109,9 @@ grep -rn "text/event-stream" prd-admin/src/ --include="*.tsx"
 ```
 | 调用点 | 文件:行 | 类型 | 前端展示 | 合规 | 建议 |
 |--------|---------|------|----------|------|------|
-| 缺陷评分 | DefectAgentController:2450 | 流式 | SseStreamPanel | ✅ | - |
-| 提示词优化 | PromptsController:120 | 流式 | 自定义 Dialog | ⚠️ | 迁移到 useSseStream |
-| 缺陷提取 | DefectAgentAdapter:45 | SendAsync | 无 | ❌ | 改为流式 + SseStreamPanel |
+| 缺陷评分 | DefectAgentController:2450 | 流式 | SseStreamPanel | 通过 | - |
+| 提示词优化 | PromptsController:120 | 流式 | 自定义 Dialog | 注意 | 迁移到 useSseStream |
+| 缺陷提取 | DefectAgentAdapter:45 | SendAsync | 无 | 未通过 | 改为流式 + SseStreamPanel |
 ```
 
 ## 新功能接入指南
@@ -191,27 +191,27 @@ function MyPanel() {
 ## 反模式（禁止）
 
 ```tsx
-// ❌ 裸调用 + 空白等待
+// 反例：裸调用 + 空白等待
 const res = await fetch('/api/xxx');
 setResult(await res.json());
 
-// ❌ 静态加载提示
+// 反例：静态加载提示
 {loading && <p>加载中...</p>}
 
-// ❌ 只有 spinner，无文字变化
+// 反例：只有 spinner，无文字变化
 {loading && <Loader2 className="animate-spin" />}
 ```
 
 ## 合规模式（推荐）
 
 ```tsx
-// ✅ 使用 useSseStream + SseStreamPanel
+// 正例：使用 useSseStream + SseStreamPanel
 const sse = useSseStream({ url: '...', onItem: ... });
 <SseStreamPanel phase={sse.phase} phaseMessage={sse.phaseMessage} typing={sse.typing} ...>
   <ResultContent />
 </SseStreamPanel>
 
-// ✅ 最低限度兜底（极快调用场景）
+// 正例：最低限度兜底（极快调用场景）
 {loading && (
   <div className="flex items-center gap-2">
     <Loader2 className="animate-spin" />

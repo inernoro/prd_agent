@@ -43,7 +43,7 @@ ls .agent-workspace/*/progress.md 2>/dev/null
 ### 开场白模板
 
 ```
-👋 欢迎来到 PRD Agent 开发平台！
+欢迎来到 PRD Agent 开发平台！
 
 我是你的 Agent 开发教练。我会陪你从 0 到 1 构建一个完整的 AI Agent。
 
@@ -97,7 +97,7 @@ ls .agent-workspace/*/progress.md 2>/dev/null
 
 ## 阶段总览
 
-- [x] 0. 破冰 — 取名+描述想法 ✓ ({日期})
+- [x] 0. 破冰 — 取名+描述想法 ({日期})
 - [ ] 1. 需求打磨 — 验证可行性，排查重复
 - [ ] 2. 方案设计 — 评估风险，梳理数据流
 - [ ] 3. 建造 — AI 实现，你来验收
@@ -105,7 +105,7 @@ ls .agent-workspace/*/progress.md 2>/dev/null
 
 ## 阶段详情
 
-### 阶段 0：破冰 ✓
+### 阶段 0：破冰（已完成）
 - [x] Agent 命名: {agent-name}
 - [x] 初始想法记录: brief.md
 
@@ -144,8 +144,8 @@ ls .agent-workspace/*/progress.md 2>/dev/null
 ### 读取 progress.md 后的输出模板
 
 ```
-📍 当前项目：{agent-name}
-📊 当前阶段：{阶段号} - {阶段名}
+当前项目：{agent-name}
+当前阶段：{阶段号} - {阶段名}
 
 已完成：
 {列出已勾选的项目}
@@ -153,7 +153,7 @@ ls .agent-workspace/*/progress.md 2>/dev/null
 待完成：
 {列出当前阶段未勾选的项目}
 
-💡 下一步建议：
+下一步建议：
 {根据当前阶段给出 1-2 条具体建议}
 ```
 
@@ -187,9 +187,9 @@ ls .agent-workspace/*/progress.md 2>/dev/null
 - "你希望 AI 在哪个环节介入？"
 
 **禁止提问**：
-- ❌ "需要几个数据库表？"
-- ❌ "API 接口怎么设计？"
-- ❌ "用什么前端组件？"
+- 禁止 "需要几个数据库表？"
+- 禁止 "API 接口怎么设计？"
+- 禁止 "用什么前端组件？"
 
 **阶段完成条件**：用户输入 `/validate` 且评分 ≥ 7.0
 - 评分 < 7.0：展示改进建议，引导用户补充信息后重新验证
@@ -263,7 +263,7 @@ ls .agent-workspace/*/progress.md 2>/dev/null
 ### 阶段 3 → 4 过渡
 
 ```
-核心功能已经实现完成！🎉
+核心功能已经实现完成！
 
 最后一步：验收上线。我们需要：
 1. 完整走一遍用户流程（你来操作，我在旁边看）
@@ -314,9 +314,9 @@ ls .agent-workspace/*/progress.md 2>/dev/null
 # CDS canonical branch id 永远走 cdscli 拿（多项目 CDS canonical = ${projectSlug}-${slugify(branch)}）
 # 必须检查 cdscli 退出码，否则 BRANCH_ID 为空时 curl 会 PATCH 错路径 /api/branches/
 BRANCH_ID=$(python3 .claude/skills/cds/cli/cdscli.py --human branch-id) || {
-  echo "✗ cdscli branch-id 失败；先跑 /cds-deploy 部署当前分支" >&2; exit 1;
+  echo "[失败] cdscli branch-id 失败；先跑 /cds-deploy 部署当前分支" >&2; exit 1;
 }
-[ -z "$BRANCH_ID" ] && { echo "✗ cdscli branch-id 返回空" >&2; exit 1; }
+[ -z "$BRANCH_ID" ] && { echo "[失败] cdscli branch-id 返回空" >&2; exit 1; }
 curl -sf -X PATCH "$CDS/api/branches/$BRANCH_ID" \
   -H "X-AI-Access-Key: $AI_ACCESS_KEY" \
   -H "Content-Type: application/json" \
@@ -428,11 +428,11 @@ curl -sf -X PATCH "$CDS/api/branches/$BRANCH_ID" \
 
 | 加权总分 | 等级 | 说明 |
 |---------|------|------|
-| 4.5 - 5.0 | ⭐ 标杆 | 可作为其他 Agent 的参考范例 |
-| 3.5 - 4.4 | ✅ 优秀 | 高质量交付，可直接上线 |
-| 2.5 - 3.4 | 🟡 合格 | 基本可用，建议迭代改进后上线 |
-| 1.5 - 2.4 | ⚠️ 待改进 | 核心问题较多，需修复后重新评分 |
-| < 1.5 | ❌ 未通过 | 不建议上线 |
+| 4.5 - 5.0 | 标杆 | 可作为其他 Agent 的参考范例 |
+| 3.5 - 4.4 | 优秀 | 高质量交付，可直接上线 |
+| 2.5 - 3.4 | 合格 | 基本可用，建议迭代改进后上线 |
+| 1.5 - 2.4 | 待改进 | 核心问题较多，需修复后重新评分 |
+| < 1.5 | 未通过 | 不建议上线 |
 
 ### 输出格式
 
@@ -455,7 +455,7 @@ curl -sf -X PATCH "$CDS/api/branches/$BRANCH_ID" \
 | 10 | 文档与可维护 | 5% | ?/5 | ? | {一句话} |
 | | **加权总分** | | | **?/5.0** | |
 
-**等级**: {⭐/✅/🟡/⚠️/❌}
+**等级**: {标杆/优秀/合格/待改进/未通过}
 
 **亮点**: {做得好的地方}
 **改进**: {需要改进的地方}

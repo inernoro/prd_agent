@@ -164,16 +164,16 @@ services:
 
 ```bash
 python3 cdscli.py scan ./mdimp --output /tmp/out.yml
-grep "imp-api:" /tmp/out.yml          # ✓ 命中
-grep "spring-boot:run -pl imp-api" /tmp/out.yml  # ✓ 命中
-grep "./imp-platform:/app" /tmp/out.yml  # ✓ 命中
+grep "imp-api:" /tmp/out.yml          # 命中
+grep "spring-boot:run -pl imp-api" /tmp/out.yml  # 命中
+grep "./imp-platform:/app" /tmp/out.yml  # 命中
 ```
 
 - [x] scan 输出包含 imp-api
 - [x] command 含 -pl imp-api -am
 - [x] volume 挂父目录
 
-✅ 全部 PASS。请改 label `已验收` 并关闭。
+全部 PASS。请改 label `已验收` 并关闭。
 ```
 
 ### FAIL 报告

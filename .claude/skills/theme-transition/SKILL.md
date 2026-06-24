@@ -172,10 +172,10 @@ if (document.startViewTransition) {
 
 ```html
 <!-- Vanilla -->
-<button onclick="toggleTheme(event)">🌙</button>
+<button onclick="toggleTheme(event)">主题</button>
 
 <!-- React -->
-<button ref={triggerRef} onClick={(e) => toggleTheme('light')}>🌙</button>
+<button ref={triggerRef} onClick={(e) => toggleTheme('light')}>主题</button>
 ```
 
 ## 适配清单
@@ -192,7 +192,7 @@ if (document.startViewTransition) {
 ### 不要使用纯色遮罩覆盖
 
 ```js
-// ❌ 创建纯色 div 覆盖全屏 → 白屏/黑屏闪烁
+// 错误：创建纯色 div 覆盖全屏 → 白屏/黑屏闪烁
 const overlay = document.createElement('div');
 overlay.style.background = '#FFFFFF';
 overlay.style.clipPath = `circle(0px at ${x}px ${y}px)`;
@@ -203,7 +203,7 @@ overlay.style.clipPath = `circle(0px at ${x}px ${y}px)`;
 ### 不要在 setTimeout 中切换主题
 
 ```js
-// ❌ 延迟切换 → 新旧主题视觉断层
+// 错误：延迟切换 → 新旧主题视觉断层
 setTimeout(() => setTheme(newTheme), 300);
 // 正确：在 startViewTransition 回调中同步切换
 ```
@@ -211,7 +211,7 @@ setTimeout(() => setTheme(newTheme), 300);
 ### 不要跳过 maxRadius 计算
 
 ```js
-// ❌ 硬编码半径 → 角落点击时圆形无法覆盖对角
+// 错误：硬编码半径 → 角落点击时圆形无法覆盖对角
 document.documentElement.style.setProperty('--ripple-radius', '100vmax');
 // 正确：根据点击位置动态计算到最远角的距离
 ```

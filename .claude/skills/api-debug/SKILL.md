@@ -27,7 +27,7 @@ The API uses AI Access Key authentication:
   - `X-AI-Access-Key: {key}` - The configured access key
   - `X-AI-Impersonate: {username}` - A valid username to impersonate (must exist in database)
 
-> ⚠️ **严禁硬编码 `admin` 或 `root`**。`admin` 通常不是数据库真实用户名，`root` 是破窗账户不在 users 集合中。
+> 警告：**严禁硬编码 `admin` 或 `root`**。`admin` 通常不是数据库真实用户名，`root` 是破窗账户不在 users 集合中。
 > **强烈建议**：从 `$MAP_AI_USER` 环境变量读取用户名，避免每次都通过 JWT 登录发现。
 
 ## Base URL

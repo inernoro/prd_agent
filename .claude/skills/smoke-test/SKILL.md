@@ -7,7 +7,7 @@ description: 自动生成冒烟测试 curl 命令。扫描目标模块的 Contro
 
 > **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/smoke`、"冒烟测试"、"smoke test"、"跑个冒烟"
 
-> ℹ️ **CDS 分支冒烟请优先用 `cds` 技能** (2026-04-18)：`cdscli smoke <branchId>` 覆盖了
+> **CDS 分支冒烟请优先用 `cds` 技能** (2026-04-18)：`cdscli smoke <branchId>` 覆盖了
 > 分层冒烟（L1 根路径 / L2 无认证 API / L3 认证 API）+ 预览域名自动推断。
 >
 > 本技能继续服务于**非 CDS 场景**：给单一模块 Controller 生成链式
@@ -61,7 +61,7 @@ description: 自动生成冒烟测试 curl 命令。扫描目标模块的 Contro
 
 通过预览域名直连 MAP 平台 API（无需 container-exec 中转）：
 
-> ⚠ `PREVIEW_URL` **必须**走 cdscli 拿，禁止任何形式的手拼（`${BRANCH_ID}.miduo.org` 是 v1 老公式，多项目 CDS 下不可用）。
+> 警告：`PREVIEW_URL` **必须**走 cdscli 拿，禁止任何形式的手拼（`${BRANCH_ID}.miduo.org` 是 v1 老公式，多项目 CDS 下不可用）。
 > 唯一入口：`python3 .claude/skills/cds/cli/cdscli.py --human preview-url`（零参数，从 git + /api/branches 自动检测）
 
 ```bash
@@ -91,11 +91,11 @@ curl -sf "$CDS/api/branches/$BRANCH_ID/container-exec" \
   -d '{"profileId":"api","command":"curl -s http://localhost:5000/api/..."}'
 ```
 
-> ⚠️ **减少 container-exec 使用**：container-exec 有嵌套 JSON 转义复杂、调试困难等问题。优先使用模式 B 直连。
+> 注意：**减少 container-exec 使用**：container-exec 有嵌套 JSON 转义复杂、调试困难等问题。优先使用模式 B 直连。
 
 ### X-AI-Impersonate 用户名发现（关键！）
 
-> ⚠️ **严禁硬编码 `admin` 或 `root`**。`admin` 通常不是真实数据库用户名，`root` 是破窗账户不在 users 集合中。
+> 警告：**严禁硬编码 `admin` 或 `root`**。`admin` 通常不是真实数据库用户名，`root` 是破窗账户不在 users 集合中。
 
 **自动发现流程**（每次冒烟测试开始前必须执行，按优先级尝试）：
 
@@ -103,7 +103,7 @@ curl -sf "$CDS/api/branches/$BRANCH_ID/container-exec" \
 # 方法 1（最推荐，零网络请求）：读取环境变量 MAP_AI_USER
 IMPERSONATE="${MAP_AI_USER:-}"
 if [[ -n "$IMPERSONATE" ]]; then
-  echo "✓ 从 MAP_AI_USER 获取用户名: $IMPERSONATE"
+  echo "[OK] 从 MAP_AI_USER 获取用户名: $IMPERSONATE"
 fi
 
 # 方法 2（兜底）：通过 root 登录 + JWT 查询用户列表
@@ -191,7 +191,7 @@ echo ""
 echo ">>> [1/N] 查询元数据..."
 RESULT=$(curl -sf "$HOST/api/{module}/metadata" "${AUTH[@]}")
 echo "$RESULT" | jq -r '.data'
-echo "✅ 元数据查询成功"
+echo "[OK] 元数据查询成功"
 
 # --- 2. 创建资源 ---
 echo ""
@@ -203,13 +203,13 @@ RESULT=$(curl -sf "$HOST/api/{module}/items" "${AUTH[@]}" \
     "field1": "value1"
   }')
 ITEM_ID=$(echo "$RESULT" | jq -r '.data.id')
-echo "✅ 创建成功, ID: $ITEM_ID"
+echo "[OK] 创建成功, ID: $ITEM_ID"
 
 # --- 3. 读取验证 ---
 echo ""
 echo ">>> [3/N] 读取刚创建的资源..."
 curl -sf "$HOST/api/{module}/items/$ITEM_ID" "${AUTH[@]}" | jq '.data'
-echo "✅ 读取成功"
+echo "[OK] 读取成功"
 
 # --- 4. 更新 ---
 echo ""
@@ -217,7 +217,7 @@ echo ">>> [4/N] 更新资源..."
 curl -sf "$HOST/api/{module}/items/$ITEM_ID" "${AUTH[@]}" \
   -X PUT \
   -d '{"name": "smoke-test-已更新"}'
-echo "✅ 更新成功"
+echo "[OK] 更新成功"
 
 # --- 5. 业务操作 ---
 # (根据模块生成特有操作)
@@ -226,11 +226,11 @@ echo "✅ 更新成功"
 echo ""
 echo ">>> [N/N] 清理测试资源..."
 curl -sf "$HOST/api/{module}/items/$ITEM_ID" "${AUTH[@]}" -X DELETE
-echo "✅ 清理完成"
+echo "[OK] 清理完成"
 
 echo ""
 echo "=========================================="
-echo "🎉 所有冒烟测试通过!"
+echo "所有冒烟测试通过!"
 echo "=========================================="
 ```
 
@@ -276,13 +276,13 @@ echo "=========================================="
 echo ""
 echo ">>> [1/7] 获取事件类型列表..."
 curl -sf "$HOST/api/automations/event-types" "${AUTH[@]}" | jq '.data.items | length | "事件类型数量: \(.)"'
-echo "✅ 事件类型查询成功"
+echo "[OK] 事件类型查询成功"
 
 # 2. 获取动作类型列表
 echo ""
 echo ">>> [2/7] 获取动作类型列表..."
 curl -sf "$HOST/api/automations/action-types" "${AUTH[@]}" | jq '.data.items[] | .type + " - " + .label'
-echo "✅ 动作类型查询成功"
+echo "[OK] 动作类型查询成功"
 
 # 3. 创建测试规则
 echo ""
@@ -308,19 +308,19 @@ RESULT=$(curl -sf "$HOST/api/automations/rules" "${AUTH[@]}" \
     "contentTemplate": "事件: {{eventType}}, 来源: {{sourceId}}"
   }')
 RULE_ID=$(echo "$RESULT" | jq -r '.data.id')
-echo "✅ 创建成功, ID: $RULE_ID"
+echo "[OK] 创建成功, ID: $RULE_ID"
 
 # 4. 查询规则列表
 echo ""
 echo ">>> [4/7] 查询规则列表..."
 curl -sf "$HOST/api/automations/rules?page=1&pageSize=5" "${AUTH[@]}" | jq '.data | "总数: \(.total), 当前页: \(.items | length) 条"'
-echo "✅ 列表查询成功"
+echo "[OK] 列表查询成功"
 
 # 5. 切换启用/禁用
 echo ""
 echo ">>> [5/7] 切换规则状态..."
 curl -sf "$HOST/api/automations/rules/$RULE_ID/toggle" "${AUTH[@]}" -X POST | jq '.data'
-echo "✅ 状态切换成功"
+echo "[OK] 状态切换成功"
 # 切回启用
 curl -sf "$HOST/api/automations/rules/$RULE_ID/toggle" "${AUTH[@]}" -X POST > /dev/null
 echo "   (已切回启用状态)"
@@ -335,13 +335,13 @@ curl -sf "$HOST/api/automations/rules/$RULE_ID/trigger" "${AUTH[@]}" \
     "title": "冒烟测试触发",
     "content": "这是一条冒烟测试通知"
   }' | jq '.data | "所有动作成功: \(.allSucceeded), 动作数: \(.actionResults | length)"'
-echo "✅ 触发成功"
+echo "[OK] 触发成功"
 
 # 7. 删除测试规则
 echo ""
 echo ">>> [7/7] 清理测试规则..."
 curl -sf "$HOST/api/automations/rules/$RULE_ID" "${AUTH[@]}" -X DELETE
-echo "✅ 清理完成"
+echo "[OK] 清理完成"
 
 echo ""
 echo "=========================================="

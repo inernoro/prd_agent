@@ -44,10 +44,10 @@ git log "$DEFAULT_BRANCH" --format="%cd\t%H\t%an\t%s" --date=short | \
    ```
 3. **所有后续 `git log` / `git diff` / `git show` 必须以 `origin/$DEFAULT_BRANCH` 为基线**，不允许使用 `$DEFAULT_BRANCH`（本地分支）/ `HEAD` / 当前 checkout 分支：
    ```bash
-   # ✅ 正确
+   # 正确
    git log "origin/$DEFAULT_BRANCH" --format="%cd%x09%H%x09%an%x09%s" --date=short
 
-   # ❌ 错误（用本地分支，可能落后于远端 / 用错分支）
+   # 错误（用本地分支，可能落后于远端 / 用错分支）
    git log "$DEFAULT_BRANCH" ...
    git log main ...
    git log ...   # 默认走 HEAD
@@ -245,7 +245,7 @@ comm -23 /tmp/expected_weeks.txt /tmp/existing_weeks.txt > /tmp/missing_weeks.tx
 |------|------|--------|
 | 2.0 | 边界准备 | 默认主干 + `MONDAY/SUNDAY` 日期字符串 |
 | 2.1 | 提交总量 | `git log "$DEFAULT_BRANCH" --date=short` + 日期文本过滤 |
-| 2.2 | 去重文件/行数 | **禁止** `--shortstat` 累加，用 `git diff --shortstat FIRST^..LAST` |
+| 2.2 | 去重文件/行数 | 禁止 `--shortstat` 累加，用 `git diff --shortstat FIRST^..LAST` |
 | 2.3 | PR 列表与深读 | 只取本周实际 merge 到主干的 PR |
 | 2.4 | 贡献者统计 | 从本周 commit 集合提取 author |
 | 2.5 | 提交类型分布 | 从本周 commit 集合按标准前缀归类 |
@@ -417,4 +417,4 @@ bash scripts/assemble-changelog.sh
 5. **数字准确性**：所有统计数字必须来自 git 命令输出，不可估算
 6. **边界口径**：时间边界用 `%cd --date=short` 的日期文本，默认主干分支，不做时区换算
 7. **PR 展示**：不要再使用 `#FIRST ~ #LAST` 作为头部或附录标题
-8. **风格**：正式技术周报风格，表格中的分类 emoji 是结构标记
+8. **风格**：正式技术周报风格，表格中的分类标记用文字分级，禁止使用 emoji

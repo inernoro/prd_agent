@@ -78,8 +78,8 @@ grep -rn "_modelResolver.ResolveAsync\|_gateway.ResolveModelAsync\|IModelResolve
 ```
 
 对每条调用链（Controller → Worker → Client → Gateway → upstream HTTP），数一下"同一逻辑请求中 resolve 被调几次"：
-- **== 1 次**：✓ 符合 `compute-then-send.md` 规则
-- **>= 2 次**：✗ **根因在这里**。不要去给第二次、第三次打补丁，而是合并成一次
+- **== 1 次**：通过，符合 `compute-then-send.md` 规则
+- **>= 2 次**：未通过，**根因在这里**。不要去给第二次、第三次打补丁，而是合并成一次
 
 ### Step 5. 在独立端点里验证匹配算法本身对不对（离线、可重复）
 

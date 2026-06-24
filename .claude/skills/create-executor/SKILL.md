@@ -118,15 +118,15 @@ cd prd-api && dotnet build --no-restore
 2. 向用户报告：
 
 ```
-✅ {Name} 执行器接入完成
+{Name} 执行器接入完成
 
 改动文件：
   - CapsuleTypeRegistry.cs：注册 executorType="{kebab-name}" + {N} 个专有配置
   - CapsuleExecutor.cs：新增 ExecuteCliAgent_{PascalName}Async ({N} 行)
 
 执行器类型：{类型描述}
-多轮迭代：✅ 支持
-编译检查：✅ 通过
+多轮迭代：支持
+编译检查：通过
 
 用户可在工作流编辑器中添加「CLI Agent 执行器」胶囊，执行器类型选择「{显示名}」即可使用。
 ```
@@ -141,7 +141,7 @@ cd prd-api && dotnet build --no-restore
 | **CLI 进程型** | Process.Start(command) | 本地 Node.js 脚本、Python 工具 |
 | **混合型** | LLM 生成 prompt → 传给外部工具 | LLM 审题 + CLI 执行 |
 
-### LLM Gateway 调用范式（关键！）
+### LLM Gateway 调用范式（关键）
 
 调用 ILlmGateway 时必须使用 `SendAsync` + `RequestBody`（OpenAI messages 格式），**不存在** `GenerateAsync`/`SystemPrompt`/`UserMessage`：
 
