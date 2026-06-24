@@ -333,7 +333,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 
 规则 #9 是新 Agent 交付时的【位置/路径/预览】三行结构；本规则覆盖**所有** push（不限于新 Agent），**任何代码改动 push 后都必须有【预览】行**。
 
-跑评测/脚手架产出的"样本/证据/报告"文件**不进 `doc/`**——归验收知识库（`document_stores`，见 `doc/rule.doc.naming.md`「报告/验收/图片不进 doc/」，按 MAP/CDS 主题分流）。`doc/` 的 `report.*` 只留周报 `report.YYYY-WNN`，且禁止 commit `output-*.md` / `tmp-*.md` 裸文件名或文档插图。
+跑评测/脚手架产出的"样本/证据/报告"文件**不进 `doc/`**——归验收知识库（`document_stores`，见 `doc/rule.doc.naming.md`「报告/验收/图片不进 doc/」，按 MAP/CDS 主题分流）。`doc/` 的 `report.*` **目标收敛到周报 `report.YYYY-WNN`**（存量被设计文档/脚本/后端引用的非周报报告 grandfather 保留，待专项迁移，见 `rule.doc.naming` §报告），且禁止 commit `output-*.md` / `tmp-*.md` 裸文件名或文档插图。
 
 ---
 

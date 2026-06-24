@@ -74,12 +74,13 @@ appname 第一段**只能从下面四类里选，禁止自创**。新增应用 A
 
 用户多次发现验收报告、插图等临时产物掺进 doc/ 污染知识库。固化如下，违反即驳回：
 
-1. **doc/ 的 `report.*` 只允许周报 `report.YYYY-WNN.md`**。验收 / UAT / 事故 / 审计 / 进度 / 评测样本等一切「报告类临时文件」**一律禁止进 doc/**。
+1. **新增报告不进 doc/**：验收 / UAT / 事故 / 审计 / 进度 / 评测样本等一切「报告类临时文件」**一律不再新建到 doc/**。`doc/` 的 `report.*` **目标收敛到只剩周报 `report.YYYY-WNN.md`**。
 2. 这类报告归**验收知识库**（`document_stores`，见 `create-visual-test-to-kb` 技能并出分享链），按主题分流：**MAP（prd-agent 平台自身）主题 → MAP 知识库；其余（CDS 及其他）→ CDS 知识库**。
 3. 事故 postmortem 若有长期架构价值，把结论并入相关 `design.*` / `debt.*`，不单独留 `report.*` 文件。
 4. **图片 / 插图不进仓库**：文档配图走知识库上传 / 外链，不 commit 进 `doc/` 或 `assets/`。例外：应用 UI 资源（如 `prd-admin/src/assets/**`、favicon、model-avatars）是**代码资源**，不受此限。
+5. **存量 grandfather（非绝对句的关键）**：已存在且**被设计文档 / 脚本 / 后端代码引用**的非周报 `report.*`（如 CDS Agent 阶段验收报告被 `design.cds.agent.commercial-architecture-and-roadmap` 引用、`report.cds.forwarder-success` 被多篇 guide/design 引用）**暂时保留**，待**专项迁移任务**把它们搬去知识库 + 同步更新所有引用后再移除。**在此之前禁止简单删除**——会产生悬挂引用。本规则约束「新增」与「目标」，不要求即刻清空存量。
 
-> 历史背景：2026-06-24 清理时从 doc/ 移走 34 篇报告类文件（21 篇验收/事故 + 13 篇其余 report.*）+ 2 张报告插图 PNG，git 历史可追溯。本节确保不再回潮。
+> 历史背景：2026-06-24 按本规则从 doc/ 移走约 16 篇**零引用**的孤立报告 + 2 张报告插图 PNG。同期发现验收报告被脚本 / 后端 / 设计文档深度引用，**简单删除连环踩坑三轮**（scripts → 后端 → doc 交叉链接），故把被引用的 18 篇恢复并改为 grandfather。教训：存量报告迁移是独立专项，不能在重命名 PR 里顺手删。git 历史可追溯。
 
 ---
 

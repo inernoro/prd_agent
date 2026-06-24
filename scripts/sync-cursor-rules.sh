@@ -40,7 +40,7 @@ RULES=(
   "cds-first-verification|globs: prd-api/src/**/*.cs,prd-admin/src/**/*.{ts,tsx},prd-desktop/src/**/*.{ts,tsx},cds/src/**/*.ts,**/Dockerfile|CDS 优先验证：本地无 SDK ≠ 无法验证，禁止把验证负担转嫁给用户"
   "codebase-snapshot|description: 查询项目功能状态/MongoDB 集合/已废弃概念/架构模式时阅读|代码库快照：架构模式、功能注册表、115 个 MongoDB 集合、已废弃概念"
   "data-audit|globs: prd-api/src/**/Models/**/*.cs,prd-api/src/**/Controllers/**/*.cs|数据关系审计：新增实体引用时必须审计所有消费端点"
-  "doc-types|globs: doc/**/*.md|doc/ 下文档 6 种类型前缀（spec/design/plan/rule/guide/report）"
+  "doc-types|globs: doc/**/*.md|doc/ 下文档 7 种类型前缀（spec/design/plan/rule/guide/report/debt）"
   "e2e-verification|description: 功能开发完成后准备验收时阅读|端到端验收：API 200 不等于功能正常，必须打开真实页面逐项核查"
   "enum-ripple-audit|globs: prd-api/src/**/Enums/**/*.cs,prd-admin/src/types/**/*.ts,prd-desktop/src/types/**/*.ts|枚举/常量扩展涟漪审计：全栈 6 层同步"
   "frontend-architecture|globs: prd-admin/src/**/*.{ts,tsx},prd-desktop/src/**/*.{ts,tsx}|前端架构：无业务状态 + SSOT + 注册表 + 统一 Loader + 默认可编辑"
