@@ -181,6 +181,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     let content: string | undefined;
     let projectId: string | null | undefined;
     let branchId: string | null | undefined;
+    let folderId: string | null | undefined;
     let filename: string | undefined;
 
     if (contentType.includes('multipart/form-data')) {
@@ -199,6 +200,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       content = typeof body.content === 'string' ? body.content : undefined;
       projectId = typeof body.projectId === 'string' ? body.projectId : null;
       branchId = typeof body.branchId === 'string' ? body.branchId : null;
+      folderId = typeof body.folderId === 'string' ? body.folderId : null;
     } else if (typeof req.body === 'string') {
       content = req.body;
     }
@@ -243,12 +245,20 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       }
     }
 
+    // 文件夹必须存在且与报告同属一个项目作用域，否则忽略（state 层也会再校验一次）。
+    let resolvedFolderId: string | null = null;
+    if (folderId) {
+      const folder = stateService.getReportFolder(folderId);
+      if (folder && (folder.projectId ?? null) === resolvedProjectId) resolvedFolderId = folder.id;
+    }
+
     const meta = stateService.createAcceptanceReport({
       title: cleanTitle,
       format,
       content,
       projectId: resolvedProjectId,
       branchId: resolvedBranchId,
+      folderId: resolvedFolderId,
       createdBy: resolveActorFromRequest(req),
     });
     return res.status(201).json({ report: meta });
@@ -263,7 +273,12 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     // cookie/bootstrap（人类 owner）不受限，照旧看全部。
     const key = projectKeyOf(req);
     if (key) projectId = key.projectId;
-    const reports = stateService.listAcceptanceReports(projectId ?? null);
+    // folderId 过滤：'<id>' 仅该文件夹；'none' 仅未归类；缺省不过滤。
+    let folderFilter: string | null | undefined;
+    if (typeof req.query.folderId === 'string') {
+      folderFilter = req.query.folderId === 'none' ? null : req.query.folderId;
+    }
+    const reports = stateService.listAcceptanceReports(projectId ?? null, folderFilter);
     res.json({ reports });
   });
 
@@ -316,13 +331,25 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       : {};
     const title = typeof body.title === 'string' ? body.title.trim() : undefined;
     const content = typeof body.content === 'string' ? body.content : undefined;
-    if (title === undefined && content === undefined) {
+    // folderId: 字符串=移入该文件夹；null / 'none' / '' = 移出文件夹；缺省=不改动。
+    const hasFolder = Object.prototype.hasOwnProperty.call(body, 'folderId');
+    if (title === undefined && content === undefined && !hasFolder) {
       return res.status(400).json({ error: 'nothing_to_update', message: '没有可更新的字段' });
     }
     if (content !== undefined && exceedsCap(content)) {
       return res.status(413).json({ error: 'content_too_large', message: `报告内容超过上限（${MAX_CONTENT_BYTES / 1024 / 1024}MB）` });
     }
-    const updated = stateService.updateAcceptanceReport(req.params.id, { title, content });
+    let updated = existing;
+    if (title !== undefined || content !== undefined) {
+      updated = stateService.updateAcceptanceReport(req.params.id, { title, content }) ?? existing;
+    }
+    if (hasFolder) {
+      const raw = body.folderId;
+      const next = typeof raw === 'string' && raw && raw !== 'none' ? raw : null;
+      const moved = stateService.setReportFolder(req.params.id, next);
+      if (!moved) return res.status(400).json({ error: 'invalid_folder', message: '目标文件夹不存在或与报告项目不一致' });
+      updated = moved;
+    }
     return res.json({ report: updated });
   });
 
@@ -334,6 +361,58 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     if (mismatch) return res.status(mismatch.status).json(mismatch.body);
     const removed = stateService.deleteAcceptanceReport(req.params.id);
     if (!removed) return res.status(404).json({ error: 'not_found', message: '报告不存在' });
+    return res.json({ success: true });
+  });
+
+  // ── 验收报告文件夹（项目级分类）─────────────────────────────────────────
+  // 项目级 key 只能管自己项目的文件夹（沿用 reportAccessDenied 的作用域口径）；
+  // cookie / bootstrap（人类 owner）可管全部，含全局（CDS 自身）文件夹。
+
+  // GET /api/report-folders?projectId= — 列出某项目（或全局）下的文件夹。
+  router.get('/report-folders', (req: Request, res: Response) => {
+    let projectId = typeof req.query.projectId === 'string' && req.query.projectId ? req.query.projectId : null;
+    const key = projectKeyOf(req);
+    if (key) projectId = key.projectId;
+    return res.json({ folders: stateService.listReportFolders(projectId) });
+  });
+
+  // POST /api/report-folders — 新建文件夹 { name, projectId? }。
+  router.post('/report-folders', jsonParser, (req: Request, res: Response) => {
+    const body = (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body))
+      ? (req.body as Record<string, unknown>) : {};
+    const name = typeof body.name === 'string' ? body.name.trim() : '';
+    if (!name) return res.status(400).json({ error: 'missing_name', message: '请填写文件夹名称' });
+    let projectId = typeof body.projectId === 'string' && body.projectId ? body.projectId : null;
+    const key = projectKeyOf(req);
+    if (key) projectId = key.projectId;
+    // 校验项目存在（null=全局，允许）。
+    if (projectId && !stateService.getProject(projectId)) {
+      return res.status(400).json({ error: 'unknown_project', message: '关联项目不存在' });
+    }
+    const folder = stateService.createReportFolder({ name, projectId });
+    return res.status(201).json({ folder });
+  });
+
+  // PATCH /api/report-folders/:id — 重命名 { name }。
+  router.patch('/report-folders/:id', jsonParser, (req: Request, res: Response) => {
+    const folder = stateService.getReportFolder(req.params.id);
+    if (!folder) return res.status(404).json({ error: 'not_found', message: '文件夹不存在' });
+    const mismatch = reportAccessDenied(req, folder.projectId);
+    if (mismatch) return res.status(mismatch.status).json(mismatch.body);
+    const body = (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body))
+      ? (req.body as Record<string, unknown>) : {};
+    const name = typeof body.name === 'string' ? body.name.trim() : '';
+    if (!name) return res.status(400).json({ error: 'missing_name', message: '请填写文件夹名称' });
+    return res.json({ folder: stateService.renameReportFolder(req.params.id, name) });
+  });
+
+  // DELETE /api/report-folders/:id — 删除文件夹（内部报告改为未归类，不删内容）。
+  router.delete('/report-folders/:id', (req: Request, res: Response) => {
+    const folder = stateService.getReportFolder(req.params.id);
+    if (!folder) return res.status(404).json({ error: 'not_found', message: '文件夹不存在' });
+    const mismatch = reportAccessDenied(req, folder.projectId);
+    if (mismatch) return res.status(mismatch.status).json(mismatch.body);
+    stateService.deleteReportFolder(req.params.id);
     return res.json({ success: true });
   });
 

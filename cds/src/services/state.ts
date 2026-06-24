@@ -1,7 +1,7 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta } from '../types.js';
+import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
@@ -3545,10 +3545,19 @@ export class StateService {
     return path.join(this.getReportsBase(), `${meta.id}.${ext}`);
   }
 
-  /** List report metadata, newest first, optionally filtered by project. */
-  listAcceptanceReports(projectId?: string | null): AcceptanceReportMeta[] {
+  /**
+   * List report metadata, newest first, optionally filtered by project and/or
+   * folder. `folderId` semantics:
+   *   - undefined → no folder filtering (all reports in the project scope)
+   *   - null      → only reports NOT in any folder (未归类)
+   *   - '<id>'    → only reports in that folder
+   */
+  listAcceptanceReports(projectId?: string | null, folderId?: string | null): AcceptanceReportMeta[] {
     const all = this.state.acceptanceReports || [];
-    const filtered = projectId ? all.filter((r) => (r.projectId || null) === projectId) : all;
+    let filtered = projectId ? all.filter((r) => (r.projectId || null) === projectId) : all;
+    if (folderId !== undefined) {
+      filtered = filtered.filter((r) => (r.folderId || null) === (folderId || null));
+    }
     return [...filtered].sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));
   }
 
@@ -3578,16 +3587,23 @@ export class StateService {
     content: string;
     projectId?: string | null;
     branchId?: string | null;
+    folderId?: string | null;
     createdBy?: string;
   }): AcceptanceReportMeta {
     if (!this.state.acceptanceReports) this.state.acceptanceReports = [];
     const now = new Date().toISOString();
+    // 文件夹必须与报告同属一个项目作用域，否则忽略（防跨项目挂文件夹）。
+    const folder = input.folderId
+      ? (this.state.reportFolders || []).find((f) => f.id === input.folderId)
+      : undefined;
+    const folderId = folder && (folder.projectId || null) === (input.projectId ?? null) ? folder.id : null;
     const meta: AcceptanceReportMeta = {
       id: crypto.randomUUID().replace(/-/g, ''),
       title: input.title,
       format: input.format,
       projectId: input.projectId ?? null,
       branchId: input.branchId ?? null,
+      folderId,
       sizeBytes: Buffer.byteLength(input.content, 'utf8'),
       createdBy: input.createdBy,
       createdAt: now,
@@ -3633,6 +3649,84 @@ export class StateService {
       // Content file may already be gone — metadata removal still proceeds.
     }
     this.state.acceptanceReports = all.filter((r) => r.id !== id);
+    this.save();
+    return true;
+  }
+
+  /**
+   * Move a report into a folder (or out of any folder when folderId is null).
+   * The folder must exist and share the report's project scope, otherwise the
+   * assignment is rejected (returns null) to avoid cross-project leakage.
+   */
+  setReportFolder(reportId: string, folderId: string | null): AcceptanceReportMeta | null {
+    const meta = this.getAcceptanceReport(reportId);
+    if (!meta) return null;
+    if (folderId) {
+      const folder = (this.state.reportFolders || []).find((f) => f.id === folderId);
+      if (!folder) return null;
+      if ((folder.projectId || null) !== (meta.projectId || null)) return null;
+      meta.folderId = folder.id;
+    } else {
+      meta.folderId = null;
+    }
+    meta.updatedAt = new Date().toISOString();
+    this.save();
+    return meta;
+  }
+
+  /** List report folders for a project scope (null = global/CDS-self), sorted. */
+  listReportFolders(projectId?: string | null): ReportFolder[] {
+    const all = this.state.reportFolders || [];
+    const filtered = projectId !== undefined
+      ? all.filter((f) => (f.projectId || null) === (projectId || null))
+      : all;
+    return [...filtered].sort((a, b) =>
+      a.sortOrder !== b.sortOrder ? a.sortOrder - b.sortOrder : (a.createdAt < b.createdAt ? -1 : 1),
+    );
+  }
+
+  getReportFolder(id: string): ReportFolder | undefined {
+    return (this.state.reportFolders || []).find((f) => f.id === id);
+  }
+
+  createReportFolder(input: { name: string; projectId?: string | null }): ReportFolder {
+    if (!this.state.reportFolders) this.state.reportFolders = [];
+    const scope = input.projectId ?? null;
+    const maxOrder = this.state.reportFolders
+      .filter((f) => (f.projectId || null) === scope)
+      .reduce((m, f) => Math.max(m, f.sortOrder), -1);
+    const folder: ReportFolder = {
+      id: crypto.randomUUID().replace(/-/g, ''),
+      name: input.name,
+      projectId: scope,
+      sortOrder: maxOrder + 1,
+      createdAt: new Date().toISOString(),
+    };
+    this.state.reportFolders.push(folder);
+    this.save();
+    return folder;
+  }
+
+  renameReportFolder(id: string, name: string): ReportFolder | null {
+    const folder = this.getReportFolder(id);
+    if (!folder) return null;
+    folder.name = name;
+    this.save();
+    return folder;
+  }
+
+  /**
+   * Delete a folder. Reports inside it are NOT deleted — they are detached
+   * (folderId reset to null) so content is never lost when a folder is removed.
+   * Returns true when the folder existed.
+   */
+  deleteReportFolder(id: string): boolean {
+    const all = this.state.reportFolders || [];
+    if (!all.some((f) => f.id === id)) return false;
+    for (const r of this.state.acceptanceReports || []) {
+      if (r.folderId === id) r.folderId = null;
+    }
+    this.state.reportFolders = all.filter((f) => f.id !== id);
     this.save();
     return true;
   }

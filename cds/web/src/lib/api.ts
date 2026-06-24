@@ -182,17 +182,68 @@ export interface AcceptanceReport {
   format: ReportFormat;
   projectId?: string | null;
   branchId?: string | null;
+  folderId?: string | null;
   sizeBytes: number;
   createdBy?: string;
   createdAt: string;
   updatedAt: string;
 }
 
-/** List report metadata, newest first, optionally filtered by project. */
-export async function listReports(projectId?: string): Promise<AcceptanceReport[]> {
-  const qs = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
+export interface ReportFolder {
+  id: string;
+  name: string;
+  projectId?: string | null;
+  sortOrder: number;
+  createdAt: string;
+}
+
+/**
+ * List report metadata, newest first. `projectId` filters by project;
+ * `folderId` filters by folder ('none' = 仅未归类的报告).
+ */
+export async function listReports(projectId?: string, folderId?: string): Promise<AcceptanceReport[]> {
+  const params = new URLSearchParams();
+  if (projectId) params.set('projectId', projectId);
+  if (folderId) params.set('folderId', folderId);
+  const qs = params.toString() ? `?${params.toString()}` : '';
   const res = await apiRequest<{ reports: AcceptanceReport[] }>(`/api/reports${qs}`);
   return res.reports;
+}
+
+/** List report folders for a project scope (omit projectId for global/CDS-self). */
+export async function listReportFolders(projectId?: string): Promise<ReportFolder[]> {
+  const qs = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
+  const res = await apiRequest<{ folders: ReportFolder[] }>(`/api/report-folders${qs}`);
+  return res.folders;
+}
+
+export async function createReportFolder(name: string, projectId?: string | null): Promise<ReportFolder> {
+  const res = await apiRequest<{ folder: ReportFolder }>('/api/report-folders', {
+    method: 'POST',
+    body: { name, projectId: projectId ?? null },
+  });
+  return res.folder;
+}
+
+export async function renameReportFolder(id: string, name: string): Promise<ReportFolder> {
+  const res = await apiRequest<{ folder: ReportFolder }>(`/api/report-folders/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: { name },
+  });
+  return res.folder;
+}
+
+export async function deleteReportFolder(id: string): Promise<void> {
+  await apiRequest(`/api/report-folders/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+/** Move a report into a folder (folderId=null detaches it). */
+export async function moveReportToFolder(id: string, folderId: string | null): Promise<AcceptanceReport> {
+  const res = await apiRequest<{ report: AcceptanceReport }>(`/api/reports/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: { folderId },
+  });
+  return res.report;
 }
 
 export async function getReport(id: string): Promise<AcceptanceReport> {
@@ -207,6 +258,7 @@ export async function createReportFromText(input: {
   content: string;
   projectId?: string | null;
   branchId?: string | null;
+  folderId?: string | null;
 }): Promise<AcceptanceReport> {
   const res = await apiRequest<{ report: AcceptanceReport }>('/api/reports', {
     method: 'POST',
@@ -226,12 +278,14 @@ export async function createReportFromFile(input: {
   file: File;
   projectId?: string | null;
   branchId?: string | null;
+  folderId?: string | null;
 }): Promise<AcceptanceReport> {
   const form = new FormData();
   form.append('title', input.title);
   if (input.format) form.append('format', input.format);
   if (input.projectId) form.append('projectId', input.projectId);
   if (input.branchId) form.append('branchId', input.branchId);
+  if (input.folderId) form.append('folderId', input.folderId);
   form.append('file', input.file, input.file.name);
 
   const url = apiUrl('/api/reports');

@@ -1320,6 +1320,8 @@ export interface CdsState {
    * iframe 渲染（不授予 same-origin），见 routes/reports.ts。
    */
   acceptanceReports?: AcceptanceReportMeta[];
+  /** 验收报告文件夹（项目级分类，见 ReportFolder）。 */
+  reportFolders?: ReportFolder[];
 }
 
 /**
@@ -1340,6 +1342,8 @@ export interface AcceptanceReportMeta {
   projectId?: string | null;
   /** 可选关联分支 ID；不关联时为 null。 */
   branchId?: string | null;
+  /** 可选归属文件夹 ID（项目内分类）；未归类时为 null。文件夹的 projectId 必须与本报告一致。 */
+  folderId?: string | null;
   /** 正文字节数（UTF-8）。 */
   sizeBytes: number;
   /** 创建人（resolveActorFromRequest 解析的 actor，如 'user' / 'ai'）。 */
@@ -1348,6 +1352,24 @@ export interface AcceptanceReportMeta {
   createdAt: string;
   /** 最近一次更新时间 ISO 字符串。 */
   updatedAt: string;
+}
+
+/**
+ * 验收报告文件夹（项目级分类）。挂在某个 projectId 下，用于把该项目的验收报告
+ * 归类（如「2026-06 这几天 CDS 验收」「视觉回归」「冒烟」）。projectId=null 表示
+ * 全局报告（CDS 自身）的文件夹。报告的 folderId 必须与文件夹的 projectId 同属。
+ */
+export interface ReportFolder {
+  /** 稳定 ID。 */
+  id: string;
+  /** 文件夹名称（用户填写）。 */
+  name: string;
+  /** 归属项目 ID；全局（CDS 自身）报告的文件夹为 null。 */
+  projectId?: string | null;
+  /** 排序权重（小在前）。 */
+  sortOrder: number;
+  /** 创建时间 ISO 字符串。 */
+  createdAt: string;
 }
 
 /**
