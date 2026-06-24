@@ -94,6 +94,17 @@ describe('ProxyService stopped-branch tombstone divert', () => {
     expect(gone).not.toHaveBeenCalled();
   });
 
+  it('does NOT divert when branch timestamps are unparsable (liveSince=0, cannot prove tombstone is newer)', async () => {
+    const b = addStoppedBranch(''); // createdAt 空 → liveSince=0
+    tombstone(b.id);
+    const gone = vi.fn();
+    proxy.setOnBranchGone(gone);
+
+    await proxy.handleRequest(makeReq(), makeRes());
+
+    expect(gone).not.toHaveBeenCalled();
+  });
+
   it('does NOT divert a stopped branch with NO tombstone (fail-safe)', async () => {
     addStoppedBranch();
     const gone = vi.fn();

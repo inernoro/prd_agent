@@ -604,7 +604,12 @@ export class ProxyService {
         Date.parse(branch.lastDeployAt || '') || 0,
       );
       const tombAt = tomb ? (Date.parse(tomb.removedAt || '') || 0) : 0;
-      if (this.onBranchGone && this.isHtmlNavigationRequest(req) && tomb && tombAt >= liveSince) {
+      // liveSince===0（createdAt/lastPushAt/lastDeployAt 全缺或不可解析）时无法证明墓碑晚于
+      // 本分支 incarnation，任何带 removedAt 的旧墓碑都会满足 tombAt>=0 而误把仍在的分支分流
+      // 到 gone 页（Bugbot）。故要求 liveSince>0 才走时间门，否则保守落正常状态页。createdAt
+      // 是 BranchEntry 必填字段，liveSince=0 仅出现于脏数据。
+      if (this.onBranchGone && this.isHtmlNavigationRequest(req) && tomb
+        && liveSince > 0 && tombAt >= liveSince) {
         this.onBranchGone(tomb.previewSlug || branch.id, req, res);
         return;
       }
