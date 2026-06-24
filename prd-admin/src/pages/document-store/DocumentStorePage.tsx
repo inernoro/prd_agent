@@ -1276,10 +1276,12 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
           if (!res.success || !res.data) { fail++; continue; }
           const { content, fileUrl, contentType } = res.data;
           const textType = isTextType(contentType);
-          if (textType && content != null && content !== '') {
-            // 纯文字类：markdown/纯文本存 .md，html 存 .html（阅读器即按 markdown 渲染）
+          if (textType && !fileUrl) {
+            // 纯文字类：markdown/纯文本存 .md，html 存 .html（阅读器即按 markdown 渲染）。
+            // 空白文档（新建未写正文）content 为 null/空，仍要导出空文件，否则会被误判失败、
+            // 一个全是空白占位的知识库压根下不下来（Codex P2）。
             const ext = (contentType ?? '').toLowerCase().includes('html') ? '.html' : '.md';
-            zip.file(safeName(entry.title, ext), content);
+            zip.file(safeName(entry.title, ext), content ?? '');
             ok++;
           } else if (fileUrl) {
             // 二进制附件（pdf/docx/图片…）：优先下原文件。但 fileUrl 多为对象存储/CDN 绝对地址
