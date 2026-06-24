@@ -1328,9 +1328,12 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
     if (!interrupted) return;
     const commitSha = branch.githubCommitSha || branch.lastDeployDispatchCommitSha || '';
     if (!commitSha) return;
+    // 失败要还原的原始 error 文案（乐观翻 loading 前留存）。
+    const prevErrorMessage = branch.errorMessage;
+    const prevSvcError: Record<string, string | undefined> = {};
     branch.status = 'restarting';
-    for (const svc of Object.values(branch.services || {})) {
-      if (svc) { svc.status = 'building'; svc.errorMessage = undefined; }
+    for (const [pid, svc] of Object.entries(branch.services || {})) {
+      if (svc) { prevSvcError[pid] = svc.errorMessage; svc.status = 'building'; svc.errorMessage = undefined; }
     }
     stateService.save();
     const requestId = `recover_${slug}_${Date.now()}`;
@@ -1374,6 +1377,34 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
         branchId: branch.id,
         requestId,
       });
+    } finally {
+      // Bugbot Medium「Recovery leaves branch restarting」：部署流跑完后，真正接管的部署会把
+      // status 从 restarting 翻走（building→running/error）。若仍停在 restarting，说明部署
+      // 根本没接管（trigger 抛错，或 lease 冲突走 200+SSE error 早退被当成功 drain），此时**必须
+      // 还原成 error**，否则分支永久卡 loading 且因 shouldRecoverInterrupted 要求 error 而再也
+      // 不会被重试。还原后下次访问（过 5s 去重窗）可再触发一次。
+      const cur = stateService.getBranch(slug);
+      if (cur && cur.status === 'restarting') {
+        cur.status = 'error';
+        cur.errorMessage = prevErrorMessage || '自愈重部署未生效，请重试或回控制台手动部署';
+        for (const [pid, svc] of Object.entries(cur.services || {})) {
+          if (svc && svc.status === 'building') {
+            svc.status = 'error';
+            svc.errorMessage = prevSvcError[pid] || cur.errorMessage;
+          }
+        }
+        stateService.save();
+        activeServerEventLogStore?.record({
+          category: 'system',
+          severity: 'warn',
+          source: 'proxy.preview-interrupted-recovery',
+          action: 'branch.interrupted.recover-not-engaged',
+          message: `按需自愈重部署未接管 ${slug}，已还原 error 以便下次重试`,
+          projectId: cur.projectId,
+          branchId: cur.id,
+          requestId,
+        });
+      }
     }
   });
 
