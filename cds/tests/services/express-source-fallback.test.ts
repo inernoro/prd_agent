@@ -102,6 +102,24 @@ describe('resolveEffectiveProfile 极速版 → 附带源码回退 profile', () 
     expect(eff.dockerImage).toContain('sha-eeba7bf14abc');
   });
 
+  it('分支 override 锁 express 时仍挂非 prebuilt 源码回退（生产复现回归）', () => {
+    // 生产里 express 是经 branch.profileOverrides 设的；旧实现递归解析会被 override 再次
+    // 锁回 express，回退 profile 变 prebuilt 被拒 → 永不挂载 → runService 报「无源码模式」。
+    const baselineStatic: BuildProfile = { ...baseline, activeDeployMode: 'static' } as BuildProfile;
+    const branchWithOverride = {
+      githubCommitSha: 'abc1234',
+      profileOverrides: { 'api-prd-agent': { activeDeployMode: 'express' } },
+    } as unknown as BranchEntry;
+    const eff = resolveEffectiveProfile(baselineStatic, branchWithOverride);
+    expect(eff.prebuiltImage).toBe(true); // override 生效 → 极速版
+    const src = eff.sourceFallbackProfile;
+    expect(src).toBeTruthy(); // 关键：仍挂上了源码回退
+    expect(src!.prebuiltImage).toBeFalsy();
+    expect(src!.dockerImage).toBe('mcr.microsoft.com/dotnet/sdk:8.0'); // baseline 源码镜像
+    expect(src!.command).toContain('dotnet');
+    expect(src!.activeDeployMode).toBe('static');
+  });
+
   it('sourceFallbackProfile 用 baseline 源码镜像，不是 sha 镜像（核心回归）', () => {
     const eff = resolveEffectiveProfile(baseline, branch);
     const src = eff.sourceFallbackProfile;
