@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
+import { Surface } from '@/components/design/Surface';
 import { PageHeader } from '@/components/design/PageHeader';
 import { Select } from '@/components/design/Select';
 import { useAuthStore } from '@/stores/authStore';
@@ -226,8 +227,14 @@ export default function FileConvertPage() {
   // ── 进度百分比 ──
   const pct = totalRows > 0 ? Math.round((processedRows / totalRows) * 100) : 0;
 
+  // 步骤顺序常量，避免在 render 内反复创建数组
+  const STEPS: Step[] = ['upload', 'mapping', 'running'];
+  const STEP_LABELS = ['上传文件', '字段映射', '批量生成'];
+  const stepIdx = STEPS.indexOf(step);
+
   return (
-    <div className="h-full min-h-0 flex flex-col overflow-hidden">
+    // overflow: clip 不创建 stacking context，避免 backdrop-filter + overflow:hidden 合成层爆炸
+    <div className="h-full min-h-0 flex flex-col" style={{ overflow: 'clip' }}>
       {/* 页头 */}
       <div className="shrink-0 px-6 pt-5 pb-4">
         <PageHeader
@@ -245,9 +252,8 @@ export default function FileConvertPage() {
       {/* 步骤指示器 */}
       <div className="shrink-0 px-6 pb-4">
         <div className="flex items-center gap-0">
-          {(['upload', 'mapping', 'running'] as Step[]).map((s, idx) => {
-            const labels = ['上传文件', '字段映射', '批量生成'];
-            const isDone = (step === 'mapping' && idx === 0) || (step === 'running' && idx < 2);
+          {STEPS.map((s, idx) => {
+            const isDone = idx < stepIdx;
             const isActive = step === s;
             return (
               <div key={s} className="flex items-center">
@@ -262,11 +268,11 @@ export default function FileConvertPage() {
                     {isDone ? <CheckCircle2 size={14} /> : idx + 1}
                   </div>
                   <span className="text-xs font-medium" style={{ color: isActive ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                    {labels[idx]}
+                    {STEP_LABELS[idx]}
                   </span>
                 </div>
                 {idx < 2 && (
-                  <div className="w-12 h-px mx-3" style={{ background: idx < ['upload', 'mapping', 'running'].indexOf(step) ? 'var(--accent-green, #22c55e)' : 'var(--border-default)' }} />
+                  <div className="w-12 h-px mx-3" style={{ background: idx < stepIdx ? 'var(--accent-green, #22c55e)' : 'var(--border-default)' }} />
                 )}
               </div>
             );
@@ -274,14 +280,14 @@ export default function FileConvertPage() {
         </div>
       </div>
 
-      {/* 主体 */}
-      <div className="flex-1 min-h-0 flex gap-4 px-6 pb-6 overflow-hidden">
+      {/* 主体 - overflow:clip 同上 */}
+      <div className="flex-1 min-h-0 flex gap-4 px-6 pb-6" style={{ overflow: 'clip' }}>
         {/* 内容区 */}
         <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pr-1">
 
           {/* ── Step 1: 上传文件 ── */}
           {step === 'upload' && (
-            <GlassCard className="p-5">
+            <Surface variant="raised" className="rounded-2xl p-5">
               <div className="flex items-center gap-2 mb-4">
                 <div className="w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-bold text-white" style={{ background: 'var(--accent-primary, #6366f1)' }}>1</div>
                 <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>选择文件</span>
@@ -400,12 +406,12 @@ export default function FileConvertPage() {
                   下一步：配置字段映射
                 </Button>
               )}
-            </GlassCard>
+            </Surface>
           )}
 
           {/* ── Step 2: 字段映射 ── */}
           {(step === 'mapping' || step === 'running') && (
-            <GlassCard className="p-5">
+            <Surface variant="raised" className="rounded-2xl p-5">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
                   <div className="w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-bold text-white" style={{ background: step === 'running' ? 'var(--accent-green, #22c55e)' : 'var(--accent-primary, #6366f1)' }}>
@@ -502,12 +508,12 @@ export default function FileConvertPage() {
                   ))}
                 </div>
               )}
-            </GlassCard>
+            </Surface>
           )}
 
           {/* ── Step 3: 执行进度 ── */}
           {step === 'running' && (
-            <GlassCard className="p-5">
+            <Surface variant="raised" className="rounded-2xl p-5">
               <div className="flex items-center gap-2 mb-4">
                 <div className="w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-bold text-white" style={{ background: taskStatus === 'done' ? 'var(--accent-green, #22c55e)' : 'var(--accent-primary, #6366f1)' }}>
                   {taskStatus === 'done' ? <CheckCircle2 size={12} /> : '3'}
@@ -558,14 +564,14 @@ export default function FileConvertPage() {
                   重新开始
                 </Button>
               </div>
-            </GlassCard>
+            </Surface>
           )}
         </div>
 
         {/* ── 历史任务侧边栏 ── */}
         {showHistory && (
           <div className="w-72 shrink-0 flex flex-col" style={{ minHeight: 0 }}>
-            <GlassCard className="flex-1 flex flex-col overflow-hidden p-0">
+            <GlassCard variant="subtle" className="flex-1 flex flex-col overflow-hidden p-0">
               <div className="flex items-center justify-between px-4 py-3 shrink-0" style={{ borderBottom: '1px solid var(--border-default)' }}>
                 <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>历史任务</span>
                 <div className="flex gap-1">
@@ -649,19 +655,21 @@ function FileDropZone({
   );
 }
 
+// 静态映射：定义在组件外避免每次渲染重建
+const TASK_STATUS_COLOR: Record<string, string> = {
+  queued: 'var(--text-muted)', running: '#3b82f6', done: '#22c55e', error: '#ef4444',
+};
+const TASK_STATUS_LABEL: Record<string, string> = { queued: '排队中', running: '处理中', done: '完成', error: '失败' };
+
 // ── 历史任务行 ──
 function TaskRow({ task }: { task: FileConvertTask }) {
-  const statusColor: Record<string, string> = {
-    queued: 'var(--text-muted)', running: '#3b82f6', done: '#22c55e', error: '#ef4444',
-  };
-  const statusLabel: Record<string, string> = { queued: '排队中', running: '处理中', done: '完成', error: '失败' };
 
   return (
     <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--border-default)' }}>
       <div className="flex items-center justify-between mb-0.5">
         <span className="text-xs font-medium truncate max-w-[170px]" style={{ color: 'var(--text-primary)' }}>{task.sourceFileName}</span>
-        <span className="text-[11px] font-medium" style={{ color: statusColor[task.status] ?? 'var(--text-muted)' }}>
-          {statusLabel[task.status] ?? task.status}
+        <span className="text-[11px] font-medium" style={{ color: TASK_STATUS_COLOR[task.status] ?? 'var(--text-muted)' }}>
+          {TASK_STATUS_LABEL[task.status] ?? task.status}
         </span>
       </div>
       <div className="text-[11px] mb-1" style={{ color: 'var(--text-muted)' }}>
