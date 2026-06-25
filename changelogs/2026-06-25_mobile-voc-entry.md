@@ -13,3 +13,6 @@
 | feat | prd-admin | VOC 置顶进首页基础设施区，对有 team-activity.read 的用户替换掉智识殿堂（无权限者仍保留智识殿堂） |
 | polish | prd-admin | VOC 热力图小格标题按宽度自适应铺满（窄块小字号+截断省略），不再因放不下而整块无标题 |
 | fix | prd-admin | VOC 声道看板渠道标题（如「行为之声」）不再折叠换行，副标过窄时截断让位 |
+| fix | prd-admin | VOC 视图切换改用设计系统 TabBar（与应用模型池管理完全同款 surface-nav 顶栏+滑块），修复 SegmentedTabs 样式不一致+顶栏丢失；SegmentedTabs 回退原状 |
+| feat | prd-admin | TabBar 非激活项 hover 增加底色反馈（surface-nav-button:hover），更明显 |
+| feat | prd-admin | VOC 趋势爆点曲线新增汇总指标条（报错总数/慢请求总数/爆发点/单桶峰值），信息更丰富 |

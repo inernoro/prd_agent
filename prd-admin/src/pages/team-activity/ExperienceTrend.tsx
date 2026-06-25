@@ -125,6 +125,21 @@ export function ExperienceTrend({
       });
   }, [series]);
 
+  // 汇总指标：让趋势卡不只有一条线——给出报错/慢请求总量、爆发点数、单桶峰值（丰富信息）
+  const summary = useMemo(() => {
+    const bs = data?.buckets ?? [];
+    if (bs.length === 0) return null;
+    const errors = bs.reduce((s, b) => s + b.errors, 0);
+    const slow = bs.reduce((s, b) => s + b.slow, 0);
+    let peak = 0;
+    let peakAt = '';
+    for (const b of bs) {
+      const bad = b.errors + b.slow;
+      if (bad > peak) { peak = bad; peakAt = b.bucketStart; }
+    }
+    return { errors, slow, bursts: burstPts.length, peak, peakAt };
+  }, [data, burstPts]);
+
   // 「有可绘制趋势」判定：至少 2 个时间桶才能连成线，且报错/慢请求并非全 0（全 0 是平线，无趋势价值）。
   const hasData = useMemo(() => {
     if (!data || series == null) return false;
@@ -190,6 +205,29 @@ export function ExperienceTrend({
           </span>
         </div>
       </div>
+      {/* 汇总指标条：让趋势卡信息更丰富——报错/慢请求总量、爆发点数、单桶峰值 */}
+      {hasData && summary ? (
+        <div className="flex items-center gap-x-5 gap-y-1 flex-wrap px-4 pb-1.5 shrink-0 tabular-nums">
+          <span className="inline-flex items-baseline gap-1.5">
+            <span className="text-[15px] font-semibold" style={{ color: ERR }}>{summary.errors}</span>
+            <span className="text-[10.5px] text-white/40">报错总数</span>
+          </span>
+          <span className="inline-flex items-baseline gap-1.5">
+            <span className="text-[15px] font-semibold" style={{ color: SLOW }}>{summary.slow}</span>
+            <span className="text-[10.5px] text-white/40">慢请求总数</span>
+          </span>
+          <span className="inline-flex items-baseline gap-1.5">
+            <span className="text-[15px] font-semibold text-white/85">{summary.bursts}</span>
+            <span className="text-[10.5px] text-white/40">爆发点</span>
+          </span>
+          {summary.peak > 0 ? (
+            <span className="inline-flex items-baseline gap-1.5">
+              <span className="text-[15px] font-semibold text-white/85">{summary.peak}</span>
+              <span className="text-[10.5px] text-white/40">单{unit === 'hour' ? '时' : '日'}峰值 · {fmtBucket(summary.peakAt, unit)}</span>
+            </span>
+          ) : null}
+        </div>
+      ) : null}
       {/* Bento 桌面：本格是「宽而矮」的 row-span-1（≈220px），曲线区给较小 min-height 以贴合矮格；
           移动单图无 grid 撑高，靠媒体查询给更高 min-height 让曲线长满首屏。见底部 voc-trend-body 样式。 */}
       <div ref={svgBoxRef} className="px-2 pb-2 flex-1 min-h-0 flex flex-col voc-trend-body">
