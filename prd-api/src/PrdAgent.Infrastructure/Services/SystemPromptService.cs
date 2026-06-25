@@ -2,6 +2,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Prompts;
 
 namespace PrdAgent.Infrastructure.Services;
 
@@ -19,8 +20,9 @@ public class SystemPromptService : ISystemPromptService
     /// 还返回旧文本（snapshot-fallback 陷阱）。
     ///
     /// 2026-04-18: 首个版本号。同时引入"未详细说明 + @产品"澄清规则。
+    /// 2026-06-22: 引入无 emoji 与不可信资料提示注入防护规则。
     /// </summary>
-    public const string CurrentSeedVersion = "2026-04-18-undetail-clarify";
+    public const string CurrentSeedVersion = "2026-06-22-no-emoji-prompt-safety";
 
     public SystemPromptService(MongoDbContext db, IPromptManager promptManager)
     {
@@ -46,11 +48,11 @@ public class SystemPromptService : ISystemPromptService
         var entry = settings.Entries.FirstOrDefault(x => x.Role == role);
         if (entry != null && !string.IsNullOrWhiteSpace(entry.SystemPrompt))
         {
-            return entry.SystemPrompt.Trim();
+            return EnsureGlobalSafetyRules(entry.SystemPrompt.Trim());
         }
 
         // 兜底：默认值
-        return _promptManager.BuildSystemPrompt(role, prdContent: string.Empty).Trim();
+        return EnsureGlobalSafetyRules(_promptManager.BuildSystemPrompt(role, prdContent: string.Empty).Trim());
     }
 
     public async Task RefreshAsync(CancellationToken ct = default)
@@ -160,6 +162,16 @@ public class SystemPromptService : ISystemPromptService
 
         return effective;
     }
+
+    private static string EnsureGlobalSafetyRules(string systemPrompt)
+    {
+        var prompt = (systemPrompt ?? string.Empty).Trim();
+        if (prompt.Contains("禁止使用任何 emoji 字符", StringComparison.Ordinal)
+            && prompt.Contains("不可信资料", StringComparison.Ordinal))
+        {
+            return prompt;
+        }
+
+        return (prompt + PromptManager.GlobalSafetyAndOutputRules).Trim();
+    }
 }
-
-
