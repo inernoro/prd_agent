@@ -31,6 +31,7 @@ public class CdsReportImportService
     private readonly MongoDbContext _db;
     private readonly IInfraConnectionService _infra;
     private readonly IDocumentService _documentService;
+    private readonly DocumentStoreAssetNormalizer _assetNormalizer;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<CdsReportImportService> _logger;
 
@@ -38,12 +39,14 @@ public class CdsReportImportService
         MongoDbContext db,
         IInfraConnectionService infra,
         IDocumentService documentService,
+        DocumentStoreAssetNormalizer assetNormalizer,
         IHttpClientFactory httpClientFactory,
         ILogger<CdsReportImportService> logger)
     {
         _db = db;
         _infra = infra;
         _documentService = documentService;
+        _assetNormalizer = assetNormalizer;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
@@ -121,12 +124,31 @@ public class CdsReportImportService
                     continue;
                 }
 
-                // 正文按内容寻址存进 ParsedPrd（与上传/导入同一渲染路径）
-                var parsedDoc = await _documentService.ParseAsync(content);
+                // CDS 报告是自包含 HTML（内联 base64 图片）。MAP 知识库正文禁止 data:image
+                // （DocumentStoreAssetNormalizer 会硬拒，避免分享页破图）。故先归一化：把 base64 抽出 →
+                // 存进统一资产库 IAssetStorage（SHA256 去重）→ 正文改写成正式 HTTPS 图链。
+                // 与 PUT /entries/{id}/content 同一条归一化路径，导入不再绕过它。
+                string storeContent;
+                try
+                {
+                    var norm = await _assetNormalizer.NormalizeAsync(
+                        content, null, new DocumentStoreAssetNormalizationOptions("prd-agent"), ct);
+                    storeContent = norm.Content;
+                }
+                catch (Exception nex)
+                {
+                    result.Failed++;
+                    result.Messages.Add($"{r.Title}: 图片归一化失败 {nex.Message}");
+                    _logger.LogWarning(nex, "[cds-report-import] 资产归一化失败 reportId={ReportId}", r.Id);
+                    continue;
+                }
+
+                // 正文按内容寻址存进 ParsedPrd（与上传/导入同一渲染路径；已无 data:image）
+                var parsedDoc = await _documentService.ParseAsync(storeContent);
                 parsedDoc.Title = string.IsNullOrWhiteSpace(r.Title) ? "CDS 验收报告" : r.Title!;
                 await _documentService.SaveAsync(parsedDoc);
 
-                var contentIndex = content.Length > 2000 ? content[..2000] : content;
+                var contentIndex = storeContent.Length > 2000 ? storeContent[..2000] : storeContent;
                 var metadata = new Dictionary<string, string>
                 {
                     ["cdsReportId"] = r.Id,

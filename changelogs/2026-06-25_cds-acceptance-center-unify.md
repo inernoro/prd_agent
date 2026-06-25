@@ -18,3 +18,4 @@
 | fix | prd-admin | 知识库文档阅读 HTML 报告双滚动条修复：srcDoc 预览 iframe 改 allow-same-origin(仍禁脚本) + onLoad 量高自增高，iframe 不再内部滚动，只剩外层一条滚动条 |
 | polish | prd-admin | 知识库侧栏头部：排序 + 正文标题切换 + 显示设置合并到一行省垂直空间；侧栏很窄时正文标题/显示只留图标 |
 | fix | prd-admin | 知识库工具行合并后排序选项字字竖排折叠修复：排序控件 shrink-0 + whitespace-nowrap 永不被挤压换行；正文标题/显示窄栏(<380px)收成纯图标；整行放不下时横向滚动，绝不竖排折叠 |
+| fix | prd-api | CDS 报告导入器补归一化：导入时走 DocumentStoreAssetNormalizer 把 CDS 报告内联 base64 图片抽出存进统一资产库(IAssetStorage,SHA256 去重)改写成 HTTPS 图链，MAP 知识库正文不再留 data:image(原导入直接 DocumentService 存原文绕过了归一化) |
