@@ -3,22 +3,29 @@
  *
  * 数据：listDocumentEntriesReal（条目）+ getStoreGraph（双链）。
  * 业务关系识别复用 buildDocGalaxy（SSOT，根→分类→appname→子模块→文档树 + 横向引用）。
- * 渲染：@react-three/fiber Canvas + drei OrbitControls，放射状 3D 布局；
- *       叶子按 docType 上色，点叶子复用系统 MarkdownViewer 阅读。
  *
- * 视觉层（深空辉光星系）：
- *   - UnrealBloom 选择性辉光：@react-three/postprocessing 的 EffectComposer + Bloom，
- *     只有星体核心进入 bloom；drei <Html> 标签是 DOM 覆盖层，天然不参与 bloom，文字始终清晰。
- *   - ACES 色调映射 + 适中曝光（0.82），治高光死白。
- *   - 深空背景：星点 starfield（Points）+ additive 星云 sprite（缓慢漂移）。
- *   - 星体核心 emissive 提亮 + additive 光晕 sprite，光晕随相机距离衰减防爆白。
- *   - 父子线偏冷蓝（constellation 感），mention 线更淡。
+ * 渲染内核（2026-06-25 重写）：从 @react-three/fiber + @react-three/postprocessing
+ * 切回 **vanilla three.js**（原生 EffectComposer + UnrealBloomPass 选择性 bloom），
+ * 与演示版 doc-tree-3d.html 同一套渲染逻辑 —— 这是「白色 group/root 节点不爆成大白团」的关键：
+ *
+ *   选择性 bloom 双 pass：
+ *     1) bloomComposer 只渲染 BLOOM_LAYER（星体核心 mesh），其余物体临时变黑/隐藏 → 离屏 glow 纹理；
+ *     2) finalComposer 正常渲染整场景，再用 combine ShaderPass 把 glow 叠加上去（×0.85 软叠加）。
+ *   核心用 MeshBasicMaterial（非 emissive 泛光），bloom strength=0.62 / threshold=0.72 / radius=0.4，
+ *   只有最亮的核心像素溢出，辉光是点缀而非泛滥；白色枢纽节点因此不会过曝爆白。
+ *   ACES 色调映射 + 曝光 0.82：高光柔性滚降，放大时不死白。
+ *   光晕 sprite 随相机距离衰减；标签 / 连线 / 星点 / 星云全部不在 bloom 层，始终清晰。
+ *
+ * 功能层（保留）：type 图例筛选、点叶子复用系统 MarkdownViewer 阅读、hover 显示节点名、
+ * 数据加载超时护栏、错误显式报错、full-height flex-1 撑满。
  */
-import { Component, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { OrbitControls, Html } from '@react-three/drei';
-import { EffectComposer, Bloom } from '@react-three/postprocessing';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { X } from 'lucide-react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { MarkdownViewer } from '@/components/file-preview/MarkdownViewer';
@@ -49,57 +56,9 @@ function colorForDocType(docType?: string | null): string {
   return TYPE_COLOR[docType] ?? TYPE_COLOR.unknown;
 }
 
-// ── 3D 渲染错误边界：R3F / WebGL 渲染抛错时 catch，显式报错而非白屏空转 ──
-interface CanvasErrorBoundaryState {
-  error: Error | null;
-}
-
-class CanvasErrorBoundary extends Component<{ children: ReactNode }, CanvasErrorBoundaryState> {
-  state: CanvasErrorBoundaryState = { error: null };
-
-  static getDerivedStateFromError(error: Error): CanvasErrorBoundaryState {
-    return { error };
-  }
-
-  componentDidCatch(error: Error, info: unknown) {
-    console.error('[galaxy] 3D 渲染失败', error, info);
-  }
-
-  render() {
-    if (this.state.error) {
-      return (
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 40,
-            padding: 24,
-            textAlign: 'center',
-          }}
-        >
-          <div
-            style={{
-              background: 'rgba(60,30,30,0.95)',
-              border: '1px solid rgba(255,90,90,0.5)',
-              borderRadius: 8,
-              padding: '16px 20px',
-              color: '#ffd0d0',
-              fontSize: 13,
-              maxWidth: 520,
-              lineHeight: 1.6,
-            }}
-          >
-            3D 渲染失败：{this.state.error.message}。你的浏览器可能不支持 WebGL，或数据异常。
-          </div>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
+// 枢纽节点配色（与演示版一致：root 金、group 冷白）
+const ROOT_COLOR = '#ffe7a0';
+const GROUP_COLOR = '#dfe4f5';
 
 // ── 放射状 3D 布局：根在原点，逐层沿球面向外铺开 ──
 interface PlacedNode {
@@ -179,337 +138,652 @@ function makeRadialTexture(stops: Array<[number, string]>): THREE.Texture {
   return tex;
 }
 
-// 软白光晕（中心亮、边缘透明）—— 星体核心叠加 additive sprite 用
-const HALO_TEXTURE = makeRadialTexture([
-  [0, 'rgba(255,255,255,1)'],
-  [0.25, 'rgba(255,255,255,0.55)'],
-  [0.6, 'rgba(255,255,255,0.12)'],
-  [1, 'rgba(255,255,255,0)'],
-]);
-
-// 星点贴图（圆形软点）
-const STAR_TEXTURE = makeRadialTexture([
-  [0, 'rgba(255,255,255,1)'],
-  [0.4, 'rgba(255,255,255,0.5)'],
-  [1, 'rgba(255,255,255,0)'],
-]);
-
-// 星云贴图（弥散云团）
-const NEBULA_TEXTURE = makeRadialTexture([
-  [0, 'rgba(255,255,255,0.85)'],
-  [0.4, 'rgba(255,255,255,0.3)'],
-  [0.75, 'rgba(255,255,255,0.07)'],
-  [1, 'rgba(255,255,255,0)'],
-]);
-
-// ── 距离自适应光晕：靠近相机时缩小 + 降透明度，防止放大成铺屏白团 ──
-function StarHalo({ color, baseSize }: { color: string; baseSize: number }) {
-  const ref = useRef<THREE.Sprite>(null);
-  const matRef = useRef<THREE.SpriteMaterial>(null);
-  const worldPos = useRef(new THREE.Vector3());
-  useFrame(({ camera }) => {
-    const spr = ref.current;
-    const mat = matRef.current;
-    if (!spr || !mat) return;
-    spr.getWorldPosition(worldPos.current);
-    const dist = camera.position.distanceTo(worldPos.current);
-    // 远处光晕饱满，靠近（dist<14）时线性收缩到 ~45% 尺寸、~30% 透明度
-    const k = THREE.MathUtils.clamp((dist - 6) / 14, 0, 1);
-    const scale = baseSize * (0.45 + 0.55 * k);
-    spr.scale.setScalar(scale);
-    mat.opacity = 0.18 + 0.62 * k;
-  });
-  return (
-    <sprite ref={ref}>
-      <spriteMaterial
-        ref={matRef}
-        map={HALO_TEXTURE}
-        color={color}
-        transparent
-        depthWrite={false}
-        blending={THREE.AdditiveBlending}
-      />
-    </sprite>
-  );
+// ── 节点视觉尺寸 ──
+function leafRadius(): number {
+  return 0.55;
+}
+function groupRadius(node: GalaxyNode): number {
+  if (node.kind === 'root') return 1.5;
+  return Math.min(1.2, 0.6 + Math.sqrt(node.docCount) * 0.12);
+}
+function haloBaseSize(node: GalaxyNode): number {
+  if (node.kind === 'root') return 9;
+  if (node.kind === 'group') return 4.5 + groupRadius(node) * 1.6;
+  return 3.4; // leaf
 }
 
-interface GalaxyLeafProps {
-  pos: THREE.Vector3;
+// ── 节点渲染时挂在 sprite/mesh userData 上的元信息 ──
+interface NodeRender {
   node: GalaxyNode;
-  hovered: boolean;
-  onHover: (id: string | null) => void;
-  onOpen: (entryId: string) => void;
+  core: THREE.Mesh;
+  halo: THREE.Sprite;
+  haloBaseSize: number;
+  haloBaseOpacity: number;
 }
 
-function LeafStar({ pos, node, hovered, onHover, onOpen }: GalaxyLeafProps) {
-  const color = colorForDocType(node.docType);
-  return (
-    <group position={pos}>
-      <mesh
-        onPointerOver={(e) => {
-          e.stopPropagation();
-          onHover(node.id);
-          document.body.style.cursor = 'pointer';
-        }}
-        onPointerOut={(e) => {
-          e.stopPropagation();
-          onHover(null);
-          document.body.style.cursor = 'auto';
-        }}
-        onClick={(e) => {
-          e.stopPropagation();
-          if (node.entryId) onOpen(node.entryId);
-        }}
-        scale={hovered ? 1.7 : 1}
-      >
-        <sphereGeometry args={[0.55, 16, 16]} />
-        {/* emissive 提到 >1 让核心进入 bloom 的 luminanceThreshold 之上 */}
-        <meshStandardMaterial
-          color={color}
-          emissive={color}
-          emissiveIntensity={hovered ? 2.4 : 1.5}
-          toneMapped={false}
-        />
-      </mesh>
-      <StarHalo color={color} baseSize={hovered ? 5.2 : 3.4} />
-      {hovered && (
-        <Html distanceFactor={26} style={{ pointerEvents: 'none' }}>
-          <div
-            style={{
-              transform: 'translate(12px, -50%)',
-              whiteSpace: 'nowrap',
-              background: 'rgba(20,20,28,0.92)',
-              border: '1px solid rgba(255,255,255,0.16)',
-              borderRadius: 6,
-              padding: '4px 8px',
-              color: '#f0f0f5',
-              fontSize: 13,
-              boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
-            }}
-          >
-            {node.name}
-          </div>
-        </Html>
-      )}
-    </group>
+/**
+ * 文本标签贴图（枢纽节点用，canvas 绘制后做 sprite）。
+ * 标签在 bloom 层之外 → 永远清晰、不被泛光糊掉。
+ */
+function makeLabelSprite(text: string, kind: GalaxyNode['kind'], color: string): THREE.Sprite {
+  const fontSize = kind === 'root' ? 46 : 36;
+  const pad = 10;
+  const measure = document.createElement('canvas').getContext('2d')!;
+  const font = `600 ${fontSize}px "PingFang SC","Microsoft YaHei",system-ui,sans-serif`;
+  measure.font = font;
+  const w = measure.measureText(text).width;
+  const cv = document.createElement('canvas');
+  cv.width = Math.ceil(w + pad * 2);
+  cv.height = fontSize + pad * 2;
+  const cx = cv.getContext('2d')!;
+  cx.font = font;
+  // 半透明圆角底 + 描边
+  const rr = (x: number, y: number, ww: number, hh: number, r: number) => {
+    cx.beginPath();
+    cx.moveTo(x + r, y);
+    cx.arcTo(x + ww, y, x + ww, y + hh, r);
+    cx.arcTo(x + ww, y + hh, x, y + hh, r);
+    cx.arcTo(x, y + hh, x, y, r);
+    cx.arcTo(x, y, x + ww, y, r);
+    cx.closePath();
+  };
+  cx.fillStyle = 'rgba(3,6,18,0.6)';
+  rr(0, 0, cv.width, cv.height, 9);
+  cx.fill();
+  cx.strokeStyle = color + '66';
+  cx.lineWidth = 2;
+  rr(1, 1, cv.width - 2, cv.height - 2, 9);
+  cx.stroke();
+  cx.fillStyle = kind === 'root' ? '#ffffff' : color;
+  cx.font = font;
+  cx.textBaseline = 'middle';
+  cx.fillText(text, pad, cv.height / 2 + 2);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.needsUpdate = true;
+  const sp = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false }),
   );
+  const sc = 0.012 * (fontSize / 30);
+  sp.scale.set(cv.width * sc, cv.height * sc, 1);
+  sp.renderOrder = 10;
+  return sp;
 }
 
-function GroupStar({ pos, node }: { pos: THREE.Vector3; node: GalaxyNode }) {
-  const isRoot = node.kind === 'root';
-  const r = isRoot ? 1.5 : Math.min(1.2, 0.6 + Math.sqrt(node.docCount) * 0.12);
-  const color = isRoot ? '#ffe7a0' : '#dfe4f5';
-  return (
-    <group position={pos}>
-      <mesh>
-        <sphereGeometry args={[r, 20, 20]} />
-        <meshStandardMaterial
-          color={color}
-          emissive={color}
-          emissiveIntensity={isRoot ? 1.9 : 1.2}
-          toneMapped={false}
-        />
-      </mesh>
-      <StarHalo color={color} baseSize={isRoot ? 9 : 4.5 + r * 1.6} />
-    </group>
-  );
-}
-
-// ── 深空星点 starfield：几千个 Points 包裹整个场景，弱发光、缓慢自转 ──
-function Starfield({ count = 2600, radius = 320 }: { count?: number; radius?: number }) {
-  const ref = useRef<THREE.Points>(null);
-  const geom = useMemo(() => {
-    const positions = new Float32Array(count * 3);
-    const colors = new Float32Array(count * 3);
-    const palette = [
-      [0.7, 0.78, 1.0], // 冷蓝白
-      [1.0, 1.0, 1.0], // 纯白
-      [1.0, 0.86, 0.7], // 暖白
-      [0.78, 0.7, 1.0], // 淡紫
-    ];
-    for (let i = 0; i < count; i++) {
-      // 球壳内随机分布（半径在 [0.55R, R] 之间，避免太靠近中心）
-      const r = radius * (0.55 + Math.random() * 0.45);
-      const theta = Math.acos(2 * Math.random() - 1);
-      const phi = Math.random() * Math.PI * 2;
-      positions[i * 3] = r * Math.sin(theta) * Math.cos(phi);
-      positions[i * 3 + 1] = r * Math.cos(theta);
-      positions[i * 3 + 2] = r * Math.sin(theta) * Math.sin(phi);
-      const c = palette[Math.floor(Math.random() * palette.length)];
-      const dim = 0.4 + Math.random() * 0.6;
-      colors[i * 3] = c[0] * dim;
-      colors[i * 3 + 1] = c[1] * dim;
-      colors[i * 3 + 2] = c[2] * dim;
-    }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    g.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    return g;
-  }, [count, radius]);
-
-  useFrame((_, delta) => {
-    if (ref.current) ref.current.rotation.y += delta * 0.006;
-  });
-
-  return (
-    <points ref={ref} geometry={geom}>
-      <pointsMaterial
-        size={1.4}
-        sizeAttenuation
-        map={STAR_TEXTURE}
-        vertexColors
-        transparent
-        depthWrite={false}
-        blending={THREE.AdditiveBlending}
-        opacity={0.85}
-      />
-    </points>
-  );
-}
-
-// ── 大号 additive 星云 sprite：低饱和蓝紫，缓慢漂移，给背景层次感 ──
-function Nebulae() {
-  const groupRef = useRef<THREE.Group>(null);
-  const clouds = useMemo(
-    () => [
-      { pos: [-70, 30, -120] as [number, number, number], color: '#5b6cff', size: 150 },
-      { pos: [90, -40, -100] as [number, number, number], color: '#9a5bff', size: 130 },
-      { pos: [20, 60, -160] as [number, number, number], color: '#3b8cff', size: 170 },
-    ],
-    [],
-  );
-  useFrame(({ clock }) => {
-    if (!groupRef.current) return;
-    const t = clock.getElapsedTime();
-    groupRef.current.children.forEach((child, i) => {
-      child.position.x += Math.sin(t * 0.04 + i * 2) * 0.012;
-      child.position.y += Math.cos(t * 0.03 + i) * 0.01;
-    });
-  });
-  return (
-    <group ref={groupRef}>
-      {clouds.map((c, i) => (
-        <sprite key={i} position={c.pos} scale={[c.size, c.size, 1]}>
-          <spriteMaterial
-            map={NEBULA_TEXTURE}
-            color={c.color}
-            transparent
-            opacity={0.16}
-            depthWrite={false}
-            blending={THREE.AdditiveBlending}
-          />
-        </sprite>
-      ))}
-    </group>
-  );
-}
-
-// ── ACES 色调映射 + 适中曝光（在 R3F 内设置 gl，治高光死白） ──
-function ToneMappingSetup() {
-  const gl = useThree((s) => s.gl);
-  useEffect(() => {
-    gl.toneMapping = THREE.ACESFilmicToneMapping;
-    gl.toneMappingExposure = 0.82;
-  }, [gl]);
-  return null;
-}
-
-interface SceneProps {
+interface GalaxyCanvasProps {
   galaxy: DocGalaxy;
+  typeOn: Record<string, boolean>;
   onOpen: (entryId: string) => void;
 }
 
-function GalaxyScene({ galaxy, onOpen }: SceneProps) {
-  const [hoverId, setHoverId] = useState<string | null>(null);
+/**
+ * Vanilla three.js 渲染内核。挂一个 <div ref>，useEffect 里建 renderer/scene/camera/controls/composer，
+ * 选择性 bloom 双 pass。type 筛选通过 typeOn 同步给场景（dim/hide leaf）。
+ * unmount / galaxy 变化时彻底 dispose，避免 React 重复挂载泄漏。
+ */
+function GalaxyCanvas({ galaxy, typeOn, onOpen }: GalaxyCanvasProps) {
+  const mountRef = useRef<HTMLDivElement>(null);
+  const [fatal, setFatal] = useState<string | null>(null);
+  // hover 标签：3D 坐标 project 到屏幕后用绝对定位 DOM tooltip 渲染
+  const [hoverLabel, setHoverLabel] = useState<{ x: number; y: number; text: string } | null>(null);
 
-  const { placed, edges, mentionEdges } = useMemo(() => {
-    const { placed, edges } = layoutGalaxy(galaxy.root);
-    // 横向引用连线：两端都已布局才画
-    const mentionEdges: Array<[THREE.Vector3, THREE.Vector3]> = [];
-    for (const link of galaxy.links) {
-      const a = placed.get(link.source);
-      const b = placed.get(link.target);
-      if (a && b) mentionEdges.push([a.pos, b.pos]);
+  // typeOn 用 ref 透传给渲染循环，避免每次筛选都重建整个场景
+  const typeOnRef = useRef(typeOn);
+  typeOnRef.current = typeOn;
+  // applyFilter 函数引用，typeOn 变化时调用
+  const applyFilterRef = useRef<(() => void) | null>(null);
+  const onOpenRef = useRef(onOpen);
+  onOpenRef.current = onOpen;
+
+  useEffect(() => {
+    applyFilterRef.current?.();
+  }, [typeOn]);
+
+  useEffect(() => {
+    const mount = mountRef.current;
+    if (!mount) return;
+    setFatal(null);
+    setHoverLabel(null);
+
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    } catch (e) {
+      setFatal(e instanceof Error ? e.message : '无法创建 WebGL 上下文');
+      return;
     }
-    return { placed, edges, mentionEdges };
+
+    let W = mount.clientWidth || 1;
+    let H = mount.clientHeight || 1;
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x05060e, 1);
+    // ACES filmic 色调映射 + 适中曝光：高光柔性滚降，放大不死白
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 0.82;
+    mount.appendChild(renderer.domElement);
+    renderer.domElement.style.display = 'block';
+    renderer.domElement.style.width = '100%';
+    renderer.domElement.style.height = '100%';
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x05060e);
+    scene.fog = new THREE.FogExp2(0x05060e, 0.0045);
+
+    const camera = new THREE.PerspectiveCamera(55, W / H, 0.5, 4000);
+    camera.position.set(0, 18, 42);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.rotateSpeed = 0.6;
+    controls.zoomSpeed = 0.8;
+    controls.minDistance = 6;
+    controls.maxDistance = 320;
+    controls.autoRotate = true;
+    controls.autoRotateSpeed = 0.35;
+
+    // 用于 dispose 的资源台账
+    const disposables: Array<{ dispose: () => void }> = [];
+    const track = <T extends { dispose: () => void }>(o: T): T => {
+      disposables.push(o);
+      return o;
+    };
+
+    // ── 程序贴图 ──
+    const HALO_TEX = track(
+      makeRadialTexture([
+        [0, 'rgba(255,255,255,0.85)'],
+        [0.22, 'rgba(255,255,255,0.45)'],
+        [0.55, 'rgba(255,255,255,0.14)'],
+        [1, 'rgba(255,255,255,0)'],
+      ]),
+    );
+    const STAR_TEX = track(
+      makeRadialTexture([
+        [0, 'rgba(255,255,255,1)'],
+        [0.4, 'rgba(255,255,255,0.5)'],
+        [1, 'rgba(255,255,255,0)'],
+      ]),
+    );
+    const NEBULA_TEX = track(
+      makeRadialTexture([
+        [0, 'rgba(255,255,255,0.85)'],
+        [0.4, 'rgba(255,255,255,0.3)'],
+        [0.75, 'rgba(255,255,255,0.07)'],
+        [1, 'rgba(255,255,255,0)'],
+      ]),
+    );
+
+    // ── 选择性 bloom 分层：只有星体核心 mesh 在 BLOOM_LAYER ──
+    const BLOOM_LAYER = 1;
+    const bloomLayer = new THREE.Layers();
+    bloomLayer.set(BLOOM_LAYER);
+
+    // ── 深空星点 starfield（不进 bloom 层） ──
+    {
+      const N = 2600;
+      const radius = 320;
+      const positions = new Float32Array(N * 3);
+      const colors = new Float32Array(N * 3);
+      const palette = [
+        [0.7, 0.78, 1.0],
+        [1.0, 1.0, 1.0],
+        [1.0, 0.86, 0.7],
+        [0.78, 0.7, 1.0],
+      ];
+      for (let i = 0; i < N; i++) {
+        const r = radius * (0.55 + Math.random() * 0.45);
+        const theta = Math.acos(2 * Math.random() - 1);
+        const phi = Math.random() * Math.PI * 2;
+        positions[i * 3] = r * Math.sin(theta) * Math.cos(phi);
+        positions[i * 3 + 1] = r * Math.cos(theta);
+        positions[i * 3 + 2] = r * Math.sin(theta) * Math.sin(phi);
+        const c = palette[Math.floor(Math.random() * palette.length)];
+        const dim = 0.4 + Math.random() * 0.6;
+        colors[i * 3] = c[0] * dim;
+        colors[i * 3 + 1] = c[1] * dim;
+        colors[i * 3 + 2] = c[2] * dim;
+      }
+      const geo = track(new THREE.BufferGeometry());
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+      const mat = track(
+        new THREE.PointsMaterial({
+          size: 1.4,
+          sizeAttenuation: true,
+          map: STAR_TEX,
+          vertexColors: true,
+          transparent: true,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+          opacity: 0.85,
+        }),
+      );
+      scene.add(new THREE.Points(geo, mat));
+    }
+
+    // ── 星云 sprite（缓慢漂移，不进 bloom 层） ──
+    const nebulaGroup = new THREE.Group();
+    scene.add(nebulaGroup);
+    {
+      const clouds: Array<{ pos: [number, number, number]; color: string; size: number }> = [
+        { pos: [-70, 30, -120], color: '#5b6cff', size: 150 },
+        { pos: [90, -40, -100], color: '#9a5bff', size: 130 },
+        { pos: [20, 60, -160], color: '#3b8cff', size: 170 },
+      ];
+      for (const c of clouds) {
+        const mat = track(
+          new THREE.SpriteMaterial({
+            map: NEBULA_TEX,
+            color: new THREE.Color(c.color),
+            transparent: true,
+            opacity: 0.16,
+            depthWrite: false,
+            depthTest: false,
+            blending: THREE.AdditiveBlending,
+          }),
+        );
+        const sp = new THREE.Sprite(mat);
+        sp.position.set(...c.pos);
+        sp.scale.set(c.size, c.size, 1);
+        sp.renderOrder = -10;
+        nebulaGroup.add(sp);
+      }
+    }
+
+    // ── 布局 + 节点 mesh / halo / label ──
+    const { placed, edges } = layoutGalaxy(galaxy.root);
+    const nodeGroup = new THREE.Group();
+    scene.add(nodeGroup);
+
+    const renders: NodeRender[] = [];
+    const coreMeshes: THREE.Mesh[] = [];
+    const sphereGeoCache = new Map<string, THREE.SphereGeometry>();
+    const sphereGeo = (r: number): THREE.SphereGeometry => {
+      const key = r.toFixed(2);
+      let g = sphereGeoCache.get(key);
+      if (!g) {
+        g = track(new THREE.SphereGeometry(r, 16, 16));
+        sphereGeoCache.set(key, g);
+      }
+      return g;
+    };
+
+    for (const { node, pos } of placed.values()) {
+      const isLeaf = node.kind === 'leaf';
+      const color = isLeaf
+        ? colorForDocType(node.docType)
+        : node.kind === 'root'
+          ? ROOT_COLOR
+          : GROUP_COLOR;
+      const col = new THREE.Color(color);
+
+      // 核心：MeshBasicMaterial（非 emissive 泛光）—— 选择性 bloom 只让这层溢出
+      const r = isLeaf ? leafRadius() : groupRadius(node);
+      const coreMat = track(new THREE.MeshBasicMaterial({ color: col }));
+      const core = new THREE.Mesh(sphereGeo(r), coreMat);
+      core.position.copy(pos);
+      core.userData.node = node;
+      core.layers.enable(BLOOM_LAYER); // 只有核心进入 bloom pass
+      nodeGroup.add(core);
+      coreMeshes.push(core);
+
+      // 光晕 sprite（不进 bloom 层，距离衰减）
+      const haloBaseOpacity = isLeaf ? 0.3 : node.kind === 'root' ? 0.5 : 0.42;
+      const haloSize = haloBaseSize(node);
+      const haloMat = track(
+        new THREE.SpriteMaterial({
+          map: HALO_TEX,
+          color: col,
+          transparent: true,
+          opacity: haloBaseOpacity,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        }),
+      );
+      const halo = new THREE.Sprite(haloMat);
+      halo.position.copy(pos);
+      halo.scale.set(haloSize, haloSize, 1);
+      nodeGroup.add(halo);
+
+      // 枢纽标签（root / group）
+      if (!isLeaf) {
+        const lab = makeLabelSprite(node.name, node.kind, color);
+        if (lab.material.map) track(lab.material.map);
+        track(lab.material);
+        const dy = r + (node.kind === 'root' ? 1.4 : 0.9);
+        lab.position.set(pos.x, pos.y + dy, pos.z);
+        nodeGroup.add(lab);
+      }
+
+      renders.push({ node, core, halo, haloBaseSize: haloSize, haloBaseOpacity });
+    }
+
+    // ── 父子连线（偏冷蓝细线，不进 bloom 层） ──
+    {
+      const positions: number[] = [];
+      for (const [a, b] of edges) positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
+      const geo = track(new THREE.BufferGeometry());
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      const mat = track(
+        new THREE.LineBasicMaterial({
+          color: new THREE.Color('#4f7bd6'),
+          transparent: true,
+          opacity: 0.28,
+          depthWrite: false,
+        }),
+      );
+      scene.add(new THREE.LineSegments(geo, mat));
+    }
+
+    // ── 横向引用连线（更淡，不进 bloom 层） ──
+    {
+      const positions: number[] = [];
+      for (const link of galaxy.links) {
+        const a = placed.get(link.source);
+        const b = placed.get(link.target);
+        if (a && b) positions.push(a.pos.x, a.pos.y, a.pos.z, b.pos.x, b.pos.y, b.pos.z);
+      }
+      if (positions.length > 0) {
+        const geo = track(new THREE.BufferGeometry());
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        const mat = track(
+          new THREE.LineBasicMaterial({
+            color: new THREE.Color('#8fc4ff'),
+            transparent: true,
+            opacity: 0.32,
+            depthWrite: false,
+          }),
+        );
+        scene.add(new THREE.LineSegments(geo, mat));
+      }
+    }
+
+    // ── type 筛选：dim / hide 叶子核心 + 光晕 ──
+    const applyFilter = () => {
+      const on = typeOnRef.current;
+      const anyOff = DOC_TYPES.some((t) => !on[t]);
+      for (const rec of renders) {
+        const n = rec.node;
+        if (n.kind !== 'leaf') continue;
+        const visible = !anyOff || (n.docType ? on[n.docType] !== false : true);
+        rec.core.visible = visible;
+        rec.halo.visible = visible;
+      }
+    };
+    applyFilterRef.current = applyFilter;
+    applyFilter();
+
+    // ── 选择性 bloom 双 pass（演示版同款配方） ──
+    const renderTargetSize = new THREE.Vector2(W, H);
+    const bloomComposer = new EffectComposer(renderer);
+    bloomComposer.renderToScreen = false;
+    bloomComposer.addPass(new RenderPass(scene, camera));
+    // strength 0.62 / radius 0.4 / threshold 0.72：只有最亮核心溢出，辉光是点缀不是泛滥
+    const bloomPass = new UnrealBloomPass(renderTargetSize, 0.62, 0.4, 0.72);
+    bloomComposer.addPass(bloomPass);
+
+    const combineMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        baseTexture: { value: null },
+        bloomTexture: { value: bloomComposer.renderTarget2.texture },
+      },
+      vertexShader:
+        'varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
+      fragmentShader:
+        'uniform sampler2D baseTexture;uniform sampler2D bloomTexture;varying vec2 vUv;' +
+        'void main(){vec4 base=texture2D(baseTexture,vUv);vec4 glow=texture2D(bloomTexture,vUv);' +
+        // 软叠加：glow ×0.85，重叠辉光不超过过曝阈值
+        'gl_FragColor=base + vec4(glow.rgb*0.85,0.0);}',
+    });
+    const combinePass = new ShaderPass(combineMaterial, 'baseTexture');
+    combinePass.needsSwap = true;
+
+    const finalComposer = new EffectComposer(renderer);
+    finalComposer.addPass(new RenderPass(scene, camera));
+    finalComposer.addPass(combinePass);
+
+    // 临时变黑/隐藏非 bloom 物体，渲染 glow，再还原
+    const darkMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+    const matStash = new Map<string, THREE.Material | THREE.Material[]>();
+    const visStash = new Map<string, boolean>();
+    const darkenNonBloomed = (obj: THREE.Object3D) => {
+      const mesh = obj as THREE.Mesh;
+      if (mesh.isMesh && bloomLayer.test(obj.layers) === false) {
+        matStash.set(obj.uuid, mesh.material);
+        mesh.material = darkMat;
+      } else if (
+        (obj as THREE.Sprite).isSprite ||
+        (obj as THREE.Line).isLine ||
+        (obj as THREE.LineSegments).isLineSegments ||
+        (obj as THREE.Points).isPoints
+      ) {
+        visStash.set(obj.uuid, obj.visible);
+        obj.visible = false;
+      }
+    };
+    const restoreMaterial = (obj: THREE.Object3D) => {
+      const stashedMat = matStash.get(obj.uuid);
+      if (stashedMat !== undefined) {
+        (obj as THREE.Mesh).material = stashedMat;
+        matStash.delete(obj.uuid);
+      }
+      const stashedVis = visStash.get(obj.uuid);
+      if (stashedVis !== undefined) {
+        obj.visible = stashedVis;
+        visStash.delete(obj.uuid);
+      }
+    };
+    const renderBloom = () => {
+      scene.traverse(darkenNonBloomed);
+      const oldBg = scene.background;
+      const oldFog = scene.fog;
+      scene.background = null; // glow 目标要黑底
+      scene.fog = null;
+      bloomComposer.render();
+      scene.traverse(restoreMaterial);
+      scene.fog = oldFog;
+      scene.background = oldBg;
+      finalComposer.render();
+    };
+
+    // ── raycaster：hover 标签 + 点击叶子打开 ──
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    let hoverNode: GalaxyNode | null = null;
+    const projVec = new THREE.Vector3();
+
+    const pick = (clientX: number, clientY: number): { node: GalaxyNode; mesh: THREE.Mesh } | null => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+      const visibleCores = coreMeshes.filter((m) => m.visible);
+      const hits = raycaster.intersectObjects(visibleCores, false);
+      if (!hits.length) return null;
+      const mesh = hits[0].object as THREE.Mesh;
+      return { node: mesh.userData.node as GalaxyNode, mesh };
+    };
+
+    let downXY: [number, number] | null = null;
+    let dragMoved = false;
+
+    const onPointerMove = (ev: PointerEvent) => {
+      if (downXY && (Math.abs(ev.clientX - downXY[0]) > 4 || Math.abs(ev.clientY - downXY[1]) > 4)) {
+        dragMoved = true;
+      }
+      const hit = pick(ev.clientX, ev.clientY);
+      const node = hit?.node ?? null;
+      if (node !== hoverNode) {
+        hoverNode = node;
+        renderer.domElement.style.cursor = node ? 'pointer' : 'grab';
+        if (!node) setHoverLabel(null);
+      }
+      if (node && hit) {
+        // 把核心世界坐标投影到屏幕，定位 tooltip
+        hit.mesh.getWorldPosition(projVec);
+        projVec.project(camera);
+        const rect = renderer.domElement.getBoundingClientRect();
+        const sx = (projVec.x * 0.5 + 0.5) * rect.width;
+        const sy = (-projVec.y * 0.5 + 0.5) * rect.height;
+        setHoverLabel({ x: sx, y: sy, text: node.name });
+      }
+    };
+    const onPointerDown = (ev: PointerEvent) => {
+      downXY = [ev.clientX, ev.clientY];
+      dragMoved = false;
+      controls.autoRotate = false;
+    };
+    const onPointerUp = (ev: PointerEvent) => {
+      if (dragMoved) {
+        downXY = null;
+        return;
+      }
+      const hit = pick(ev.clientX, ev.clientY);
+      if (hit && hit.node.kind === 'leaf' && hit.node.entryId) {
+        onOpenRef.current(hit.node.entryId);
+      }
+      downXY = null;
+    };
+    const onPointerLeave = () => {
+      hoverNode = null;
+      setHoverLabel(null);
+    };
+
+    renderer.domElement.addEventListener('pointermove', onPointerMove);
+    renderer.domElement.addEventListener('pointerdown', onPointerDown);
+    renderer.domElement.addEventListener('pointerup', onPointerUp);
+    renderer.domElement.addEventListener('pointerleave', onPointerLeave);
+
+    // ── 渲染循环 ──
+    const clock = new THREE.Clock();
+    let rafId = 0;
+    const camPos = new THREE.Vector3();
+    const haloWorld = new THREE.Vector3();
+    const render = () => {
+      rafId = requestAnimationFrame(render);
+      const dt = clock.getDelta();
+      // 星云缓慢漂移
+      nebulaGroup.rotation.y += dt * 0.004;
+      nebulaGroup.rotation.x += dt * 0.0016;
+      // 光晕距离衰减 + hover 强调
+      camPos.copy(camera.position);
+      for (const rec of renders) {
+        if (!rec.halo.visible) continue;
+        rec.halo.getWorldPosition(haloWorld);
+        const d = camPos.distanceTo(haloWorld);
+        const k = THREE.MathUtils.clamp((d - 6) / 14, 0, 1);
+        const scale = rec.haloBaseSize * (0.45 + 0.55 * k);
+        rec.halo.scale.set(scale, scale, 1);
+        let tgt = rec.haloBaseOpacity * (0.45 + 0.55 * k);
+        if (hoverNode === rec.node) tgt = Math.min(0.85, tgt * 1.7);
+        const mat = rec.halo.material as THREE.SpriteMaterial;
+        mat.opacity += (tgt - mat.opacity) * 0.2;
+      }
+      controls.update();
+      renderBloom();
+    };
+    render();
+
+    // ── 尺寸响应 ──
+    const resize = () => {
+      W = mount.clientWidth || 1;
+      H = mount.clientHeight || 1;
+      camera.aspect = W / H;
+      camera.updateProjectionMatrix();
+      renderer.setSize(W, H);
+      bloomComposer.setSize(W, H);
+      finalComposer.setSize(W, H);
+    };
+    const ro = new ResizeObserver(resize);
+    ro.observe(mount);
+    window.addEventListener('resize', resize);
+
+    // ── 清理 ──
+    return () => {
+      cancelAnimationFrame(rafId);
+      ro.disconnect();
+      window.removeEventListener('resize', resize);
+      renderer.domElement.removeEventListener('pointermove', onPointerMove);
+      renderer.domElement.removeEventListener('pointerdown', onPointerDown);
+      renderer.domElement.removeEventListener('pointerup', onPointerUp);
+      renderer.domElement.removeEventListener('pointerleave', onPointerLeave);
+      controls.dispose();
+      bloomComposer.dispose();
+      finalComposer.dispose();
+      bloomPass.dispose();
+      combineMaterial.dispose();
+      darkMat.dispose();
+      for (const d of disposables) {
+        try {
+          d.dispose();
+        } catch {
+          /* noop */
+        }
+      }
+      renderer.dispose();
+      if (renderer.domElement.parentNode === mount) mount.removeChild(renderer.domElement);
+    };
+    // galaxy 变化重建场景；typeOn 走 applyFilterRef，不在此 deps
   }, [galaxy]);
 
-  // 父子连线几何（细灰）
-  const hierarchyGeom = useMemo(() => {
-    const positions: number[] = [];
-    for (const [a, b] of edges) {
-      positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
-    }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    return g;
-  }, [edges]);
-
-  // 横向引用连线几何（淡蓝）
-  const mentionGeom = useMemo(() => {
-    const positions: number[] = [];
-    for (const [a, b] of mentionEdges) {
-      positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
-    }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    return g;
-  }, [mentionEdges]);
-
-  const placedList = useMemo(() => Array.from(placed.values()), [placed]);
+  if (fatal) {
+    return (
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 40,
+          padding: 24,
+          textAlign: 'center',
+        }}
+      >
+        <div
+          style={{
+            background: 'rgba(60,30,30,0.95)',
+            border: '1px solid rgba(255,90,90,0.5)',
+            borderRadius: 8,
+            padding: '16px 20px',
+            color: '#ffd0d0',
+            fontSize: 13,
+            maxWidth: 520,
+            lineHeight: 1.6,
+          }}
+        >
+          3D 渲染失败：{fatal}。你的浏览器可能不支持 WebGL，或数据异常。
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <>
-      <ToneMappingSetup />
-      <ambientLight intensity={0.45} />
-      <pointLight position={[0, 0, 0]} intensity={1.0} distance={120} />
-      <pointLight position={[40, 40, 40]} intensity={0.4} />
-
-      {/* 深空背景层：星点 + 星云（在 bloom 之外的弱发光，不会被 EffectComposer 提亮过度） */}
-      <Starfield />
-      <Nebulae />
-
-      {/* 父子连线（偏冷蓝细线，constellation 感） */}
-      <lineSegments geometry={hierarchyGeom}>
-        <lineBasicMaterial color="#4f7bd6" transparent opacity={0.28} />
-      </lineSegments>
-
-      {/* 横向引用连线（更淡） */}
-      {mentionEdges.length > 0 && (
-        <lineSegments geometry={mentionGeom}>
-          <lineBasicMaterial color="#8fc4ff" transparent opacity={0.32} />
-        </lineSegments>
+    <div ref={mountRef} style={{ position: 'absolute', inset: 0 }}>
+      {hoverLabel && (
+        <div
+          style={{
+            position: 'absolute',
+            left: hoverLabel.x,
+            top: hoverLabel.y,
+            transform: 'translate(12px, -50%)',
+            pointerEvents: 'none',
+            whiteSpace: 'nowrap',
+            background: 'rgba(20,20,28,0.92)',
+            border: '1px solid rgba(255,255,255,0.16)',
+            borderRadius: 6,
+            padding: '4px 8px',
+            color: '#f0f0f5',
+            fontSize: 13,
+            boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+            zIndex: 15,
+          }}
+        >
+          {hoverLabel.text}
+        </div>
       )}
-
-      {placedList.map(({ node, pos }) =>
-        node.kind === 'leaf' ? (
-          <LeafStar
-            key={node.id}
-            pos={pos}
-            node={node}
-            hovered={hoverId === node.id}
-            onHover={setHoverId}
-            onOpen={onOpen}
-          />
-        ) : (
-          <GroupStar key={node.id} pos={pos} node={node} />
-        ),
-      )}
-
-      <OrbitControls enableDamping dampingFactor={0.05} rotateSpeed={0.6} zoomSpeed={0.8} minDistance={6} maxDistance={160} />
-
-      {/* UnrealBloom 选择性辉光：只有 emissive>阈值 的星体核心发光；
-          drei <Html> 标签是 DOM 覆盖层，天然不参与 bloom，文字始终清晰 */}
-      <EffectComposer>
-        <Bloom
-          intensity={0.6}
-          luminanceThreshold={0.72}
-          luminanceSmoothing={0.25}
-          radius={0.4}
-          mipmapBlur
-        />
-      </EffectComposer>
-    </>
+    </div>
   );
 }
 
@@ -638,6 +912,13 @@ export function DocumentGalaxyView({ storeId, storeName }: DocumentGalaxyViewPro
   const storeNameRef = useRef(storeName);
   storeNameRef.current = storeName;
 
+  // type 图例筛选状态（7 种 type 全开）
+  const [typeOn, setTypeOn] = useState<Record<string, boolean>>(() => {
+    const init: Record<string, boolean> = {};
+    for (const t of DOC_TYPES) init[t] = true;
+    return init;
+  });
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -731,7 +1012,8 @@ export function DocumentGalaxyView({ storeId, storeName }: DocumentGalaxyViewPro
 
   return (
     <div className="h-full w-full min-h-0 flex flex-col relative" style={{ background: '#05060e' }}>
-      {/* 图例 + 统计：独立页里它是顶部唯一头部，正常 flex 排布（不再绝对定位叠头部） */}
+      {/* 图例 + 统计：独立页里它是顶部唯一头部，正常 flex 排布（不再绝对定位叠头部）。
+          点击 chip 切换该 type 显隐（与渲染内核 typeOn 同步） */}
       {galaxy && (
         <div
           className="shrink-0"
@@ -745,13 +1027,43 @@ export function DocumentGalaxyView({ storeId, storeName }: DocumentGalaxyViewPro
             borderBottom: '1px solid rgba(255,255,255,0.08)',
           }}
         >
-          {DOC_TYPES.map((t) => (
-            <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: '#c8c8d2' }}>
-              <span style={{ width: 9, height: 9, borderRadius: '50%', background: TYPE_COLOR[t], display: 'inline-block' }} />
-              {t}
-              <span style={{ color: '#6a6a78' }}>{galaxy.stats.typeCounts[t] ?? 0}</span>
-            </div>
-          ))}
+          {DOC_TYPES.map((t) => {
+            const on = typeOn[t] !== false;
+            return (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setTypeOn((prev) => ({ ...prev, [t]: prev[t] === false }))}
+                title={`点击切换显示「${t}」类文档`}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  fontSize: 11,
+                  color: on ? '#c8c8d2' : '#5a5a66',
+                  background: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: '2px 4px',
+                  borderRadius: 6,
+                  opacity: on ? 1 : 0.5,
+                }}
+              >
+                <span
+                  style={{
+                    width: 9,
+                    height: 9,
+                    borderRadius: '50%',
+                    background: TYPE_COLOR[t],
+                    display: 'inline-block',
+                    boxShadow: on ? `0 0 6px ${TYPE_COLOR[t]}` : 'none',
+                  }}
+                />
+                {t}
+                <span style={{ color: '#6a6a78' }}>{galaxy.stats.typeCounts[t] ?? 0}</span>
+              </button>
+            );
+          })}
           <div style={{ fontSize: 11, color: '#8a8a96', borderLeft: '1px solid rgba(255,255,255,0.1)', paddingLeft: 8 }}>
             共 {galaxy.stats.totalDocs} 篇 · {galaxy.links.length} 引用
           </div>
@@ -765,20 +1077,9 @@ export function DocumentGalaxyView({ storeId, storeName }: DocumentGalaxyViewPro
           拖动旋转 · 滚轮缩放 · 悬停看标题 · 点击文档星阅读
         </div>
 
-        {/* 3D 画布（外套 ErrorBoundary：WebGL/R3F 抛错时显式报错，不白屏空转） */}
+        {/* 3D 画布（vanilla three.js 渲染内核；内部 try/catch + fatal state 替代 ErrorBoundary） */}
         {galaxy && !loading && !error && galaxy.stats.totalDocs > 0 && (
-          <CanvasErrorBoundary>
-            <Canvas
-              camera={{ position: [0, 18, 42], fov: 55 }}
-              style={{ position: 'absolute', inset: 0 }}
-              gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 0.82 }}
-            >
-              {/* 深空背景：深蓝黑，不是纯黑平底（再叠 starfield + nebula） */}
-              <color attach="background" args={['#05060e']} />
-              <fog attach="fog" args={['#05060e', 90, 280]} />
-              <GalaxyScene galaxy={galaxy} onOpen={setOpenEntryId} />
-            </Canvas>
-          </CanvasErrorBoundary>
+          <GalaxyCanvas galaxy={galaxy} typeOn={typeOn} onOpen={setOpenEntryId} />
         )}
 
         {loading && (
