@@ -1629,6 +1629,7 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'structural
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [partial, setPartial] = useState(false); // 翻页有页失败 → 图谱不完整
+  const [linksFailed, setLinksFailed] = useState(false); // 双链接口失败 → 引用关系未知（区别于「真的 0 引用」）
   const [openEntryId, setOpenEntryId] = useState<string | null>(null);
   // 当前聚焦的枢纽（GalaxyCanvas 上报；用于面包屑）
   const [focusedNode, setFocusedNode] = useState<GalaxyNode | null>(null);
@@ -1707,6 +1708,7 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'structural
     setError(null);
     setGalaxy(null);
     setPartial(false);
+    setLinksFailed(false);
     setOpenEntryId(null);
     setFocusedNode(null);
 
@@ -1718,7 +1720,7 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'structural
 
     // 整个加载（首页 + 翻页 + 成图）作为一个 async 单元，整体纳入下面的超时 race，
     // 任何一页 await 卡住都会触发超时报错，不会再静默停在「正在构建文档星系...」
-    const loadGalaxy = async (): Promise<{ built: DocGalaxy; partial: boolean }> => {
+    const loadGalaxy = async (): Promise<{ built: DocGalaxy; partial: boolean; linksFailed: boolean }> => {
       const [firstRes, graphRes] = await Promise.all([
         listDocumentEntriesReal(storeId, 1, 200),
         getStoreGraph(storeId),
@@ -1762,7 +1764,12 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'structural
         sourceUrl: e.sourceUrl ?? null,
         summary: e.summary ?? null,
       }));
-      // 双链可选：取不到不阻断成图
+      // 双链可选：取不到不阻断成图，但必须把「失败」与「真的没引用」区分开 ——
+      // 否则 graph 接口临时报错时会静默渲染成「0 引用」，让用户误以为该库没有关系（Codex P2）。
+      const linksFailed = !graphRes.success;
+      if (linksFailed) {
+        console.error('[galaxy] 引用关系（双链）加载失败，将以「引用加载失败」显式标注', graphRes.error);
+      }
       const links: GalaxyInputLink[] = graphRes.success
         ? graphRes.data.edges.map((edge) => ({
             from: edge.from,
@@ -1772,7 +1779,7 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'structural
           }))
         : [];
       // 默认 canonical resolver：含旧扁平名前缀去扁平化（cds-xxx → cds > xxx），减少悬空
-      return { built: buildDocGalaxy(entries, links, { rootName: storeNameRef.current }), partial: isPartial };
+      return { built: buildDocGalaxy(entries, links, { rootName: storeNameRef.current }), partial: isPartial, linksFailed };
     };
 
     Promise.race([loadGalaxy(), timeout])
@@ -1780,6 +1787,7 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'structural
         if (!cancelled) {
           setGalaxy(result.built);
           setPartial(result.partial);
+          setLinksFailed(result.linksFailed);
         }
       })
       .catch((e) => {
@@ -1857,8 +1865,23 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'structural
             );
           })}
           <div style={{ fontSize: 11, color: '#8a8a96', borderLeft: '1px solid rgba(255,255,255,0.1)', paddingLeft: 8 }}>
-            共 {galaxy.stats.totalDocs} 篇 · {galaxy.links.length} 引用
+            共 {galaxy.stats.totalDocs} 篇 · {linksFailed ? '引用未知' : `${galaxy.links.length} 引用`}
           </div>
+          {linksFailed && (
+            <div
+              style={{
+                fontSize: 11,
+                color: '#ffd0a0',
+                background: 'rgba(120,70,20,0.55)',
+                border: '1px solid rgba(255,160,80,0.5)',
+                borderRadius: 6,
+                padding: '2px 8px',
+              }}
+              title="引用关系（双链）接口加载失败：当前图中未画任何引用连线，并不代表该库没有引用。请稍后重试或检查权限/服务。"
+            >
+              引用关系加载失败
+            </div>
+          )}
           {partial && (
             <div
               style={{
