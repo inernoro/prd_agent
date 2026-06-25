@@ -22,6 +22,8 @@ export interface LauncherPerms {
   canReadLab: boolean;
   canManageAutomations: boolean;
   canReadLogs: boolean;
+  canReadTeamActivity: boolean;
+  canManageOpenPlatform: boolean;
 }
 
 /** 从权限串解析启动器入口的权限门（桌面/移动共用，口径唯一） */
@@ -33,6 +35,8 @@ export function deriveLauncherPerms(permissions: string[]): LauncherPerms {
     canReadLogs: permissions.includes('logs.read'),
     canReadModels: permissions.includes('mds.read') || permissions.includes('mds.write'),
     canReadUsers: permissions.includes('users.read') || permissions.includes('users.write'),
+    canReadTeamActivity: permissions.includes('team-activity.read'),
+    canManageOpenPlatform: permissions.includes('open-platform.manage'),
   };
 }
 
@@ -158,7 +162,38 @@ export function buildStaticInfra(p: LauncherPerms): ToolboxItem[] {
       tags: ['更新', '周报', 'changelog', 'release'],
       routePath: '/changelog',
     } as ToolboxItem,
+    {
+      id: '__library__',
+      name: '智识殿堂',
+      description: '公开知识精选，沉淀团队的最佳实践与教程',
+      icon: 'GraduationCap',
+      tags: ['知识', '殿堂', 'library', '教程', '精选'],
+      routePath: '/library',
+    } as ToolboxItem,
   ];
+
+  // VOC（行为洞察）—— 平台级能力，桌面靠侧边栏可达，但移动端首页此前无任何入口，
+  // 导致手机上完全找不到。挂到首页 SSOT 后桌面/移动/个人中心三处同步出现。
+  if (p.canReadTeamActivity) {
+    items.push({
+      id: '__team-activity__',
+      name: 'VOC',
+      description: '行为洞察 + 全员工作动态时间线，端点体验下钻与 AI 根因诊断',
+      icon: 'Radar',
+      tags: ['VOC', '行为洞察', '动态', '活动', 'voice of customer'],
+      routePath: '/team-activity',
+    } as ToolboxItem);
+  }
+  if (p.canManageOpenPlatform) {
+    items.push({
+      id: '__open-platform__',
+      name: '开放平台',
+      description: 'API 签发、应用接入与调用监控',
+      icon: 'Plug',
+      tags: ['开放平台', 'open platform', 'API', '接入'],
+      routePath: '/open-platform',
+    } as ToolboxItem);
+  }
 
   if (p.canReadModels) {
     items.push({
