@@ -469,31 +469,32 @@ public class FileConvertController : ControllerBase
 
             var placeholderList = string.Join("、", req.Placeholders);
 
-            var prompt = $"""
+            // $$""" = 双美元号 raw string：{x} 是字面量，{{x}} 才是插值
+            var prompt = $$"""
 你是数据处理专家。用户有一个源数据文件和一个目标模板。
 
-{sampleSb}
+{{sampleSb}}
 
-目标模板需要填充的占位符：{placeholderList}
+目标模板需要填充的占位符：{{placeholderList}}
 
 请为每个占位符写一个"值表达式"，告诉系统如何从源数据提取/转换内容。
 
-值表达式语法规则：
-- 用 {{列名}} 引用列的值（花括号内是列名）
-- 支持管道操作：{{列名 | 操作}}
+值表达式语法规则（用 {列名} 引用列值）：
+- 直接取值：{列名}
+- 管道操作：{列名 | 操作}
   - url_last：取 URL 最后一段（如 https://x.com/abc/CODE 提取 CODE）
   - trim：去除首尾空格
   - upper / lower：大写/小写
-  - regex: 正则表达式：用正则提取第一个捕获组（如 regex: ([A-Z0-9]{{16}}$)）
-  - split: 分隔符, N：按分隔符切割取第N段（从1起，如 split: /, 3）
+  - regex: 正则：用正则提取第一个捕获组（如 regex: ([A-Z0-9]{16}$)）
+  - split: 分隔符, N：按分隔符切割取第N段（如 split: /, 3）
   - replace: 旧, 新：替换字符串
-- 多段拼接：{{列A}} {{列B}} 或 前缀-{{列名}}-后缀
-- 管道可链式：{{列名 | url_last | upper}}
+- 多段拼接：{列A} {列B} 或 前缀-{列名}-后缀
+- 管道可链式：{列名 | url_last | upper}
 
-请对每个占位符输出 JSON，格式：
-{{"placeholder": "占位符名", "expression": "值表达式", "reason": "一句话说明"}}
+请对每个占位符输出 JSON（每行一个），格式：
+{"placeholder": "占位符名", "expression": "值表达式", "reason": "一句话说明"}
 
-每个占位符单独一行 JSON，不要包含 markdown 代码块。
+不要包含 markdown 代码块，直接输出 JSON 行。
 """;
 
             using var _ = _llmCtx.BeginScope(new LlmRequestContext(

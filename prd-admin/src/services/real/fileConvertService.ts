@@ -233,7 +233,7 @@ export async function suggestRules(
       if (!data) continue;
       try {
         const parsed = JSON.parse(data) as Record<string, string>;
-        if (eventType === 'suggestion') onSuggestion(parsed as RuleSuggestion);
+        if (eventType === 'suggestion') onSuggestion(parsed as unknown as RuleSuggestion);
         else if (eventType === 'status' || eventType === 'done') onStatus(parsed.message ?? '');
       } catch { /* ignore */ }
     }
