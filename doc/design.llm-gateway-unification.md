@@ -228,7 +228,83 @@ ImageResponse { images[](URL), usage }
 
 ---
 
-## 11. 关联文档
+## 11. 测试策略（MECE 全交叉 + 100% 核心覆盖）
+
+> 目标：把"模型池解析 + 协议选择"这层**决策逻辑**做到 100% 行+分支覆盖 + 高变异分数；新增 code/协议**结构上无法漏测**；每个意外情况有命名回归守护。一次测全，不再手工回调。
+> 背景：上一代模型池靠人肉反复调，代价巨大。本次重构的硬约束是——**安全网先于动刀**：解析快照不变 + 取证零使用，才允许删任何东西。
+
+### 11.1 覆盖金字塔（每层一道 CI 闸）
+
+| 层 | 机制 | 覆盖什么 | 闸门 |
+|---|---|---|---|
+| L1 解析矩阵 | xUnit `[Theory]`+`[MemberData]` | 输入维度全交叉（见 11.2） | 矩阵行全绿 |
+| L2 注册表黄金快照 | 反射 `AppCallerRegistry` | 全部 156 code × ModelType 的解析结果快照 | 快照零 diff |
+| L3 协议一致性契约 | 共享契约 × 每个协议 | 每协议 endpoint/headers/body/parse | 每协议过同一契约 |
+| L4 覆盖率门禁 | coverlet | 核心模块行+分支 | 核心 100%（胶水层除外，见 11.4） |
+| L5 变异测试 | Stryker.NET | 断言强度（防覆盖率虚高） | mutation score ≥ 阈值 |
+| L6 真实产出（gated） | 现有 Integration 模式 + 真 key | 每协议 × 模态真实出图/出字 | nightly，闭环截图取证 |
+| L7 影子双跑（prod） | 只读 mismatch 计数 | 上游真实怪癖 | mismatch=0 连续 N 天才翻开关 |
+
+### 11.2 MECE 维度与交叉
+
+解析行为是下列**正交维度**的函数；测试 = 对有意义的交叉逐格断言：
+
+| 维度 | 取值（穷举） |
+|---|---|
+| D1 解析层 | Dedicated / Default / Legacy / NotFound |
+| D2 ModelType | chat / intent / vision / generation / code / longContext / embedding / rerank / asr / tts / videoGen / audioGen / moderation |
+| D3 协议 | openai / claude / google / fal-image / passthrough / doubao-asr / ... |
+| D4 绑定来源 | 有专属绑定 / 无绑定 / orphan / 未注册 |
+| D5 expectedModel | 无 / 命中候选池 / 命中全池 / 命中 legacy 直查 / 未命中 |
+| D6 健康 | 全健康 / 部分降级 / 全不可用 / 混合 |
+| D7 路由 | 直连平台 / exchange(`__exchange__`) / exchange(真 id) |
+| D8 模态 | text 非流 / text 流 / 图 text2img / 图 img2img / 图多图 / asr / tts |
+| D9 意外 | 启动 bootstrap(IsMain) / anthropic 禁 /images / 尺寸 cap 400 重学 / OR 429 / 密钥解密失败 / 二次 resolve / 影子 mismatch |
+
+每格断言输出不变量：**O1** `(model, protocol, endpoint, key, headers, body.model)` 正确；**O2** resolutionType 正确；**O3** 日志字段正确；**O4** resolve 只发生一次（compute-then-send 守卫）；**O5** 健康状态转移正确；**O6** failover 选对下一个。
+
+矩阵用 `[MemberData]` 数据驱动——**矩阵即 SSOT**，加一格加一行，不写新方法。独立维度做全交叉；有依赖的维度（某协议不支持某模态）用约束剪枝并**显式记录"为何不测此格"**——这是 MECE 的两半：互不重叠（ME）+ 剪枝有据的完全穷举（CE）。
+
+### 11.3 让覆盖"自我维持"（治本：新增不漏测）
+
+- **注册表驱动**：L2 从 `AppCallerRegistry` 反射枚举所有 code——**新加一个 code 自动进黄金快照**，忘了配池立刻红。
+- **协议契约参数化**：L3 对协议注册表里**每一个** protocol 跑同一份契约——**新加一个协议必须过契约才能注册**，否则红。
+- 这两条把"覆盖全"从"靠人记得补测"变成"结构上漏不掉"。这是"不想再手工调一次"的**根本答案**：覆盖随源码自动生长。
+
+### 11.4 为什么是"这个 100%"而不是"那个 100%"
+
+- **核心决策模块**（resolver + 协议选择 + body 构建）**目标 100% 行+分支**——之前受的苦都在这层，纯逻辑，mock 掉 Mongo/HTTP 后可达。
+- **HTTP/SSE/DI 胶水层不强求 100%**——低价值高成本，用 `[ExcludeFromCodeCoverage]` 显式标注且**逐条评审**，真实产出由 L6 兜。
+- **覆盖率数字 ≠ 安全**——所以加 L5 变异测试，它翻转运算符/条件看测试抓不抓得到。**高变异分数才是"不用再手工 debug"的真凭证**；只看 100% 行覆盖会骗自己（弱断言也能刷满行覆盖）。
+
+### 11.5 意外情况登记 = 命名回归守护
+
+§10 与 `debt.llm-gateway.md` 挖出的每个意外，落一条**命名回归测试**（不只债务条），撞过的坑永不复发：
+
+| 测试名 | 守护的意外 |
+|---|---|
+| `Startup_WithoutLegacyFlags_ClaudeBootstrapStillResolves` | 删 legacy 标记后启动期 `Program.cs`/InfraAgent 仍能建 claude 客户端 |
+| `ProtocolBinding_ModelLab_Arena_ImageClient_AllRouteThroughRegistry` | 协议绑定散在 3 处的漂移 |
+| `Stats_AfterCodeDowngrade_SegmentationUnchanged` | code 降级后统计分段（`chat.*` 前缀）不变 |
+| `ImageSizeCap_OnUpstream400_RelearnsWithoutUserError` | 尺寸缓存孤儿导致首发 400 |
+| `Exchange_BothSentinelAndRealId_Resolve` | `__exchange__` 旧 sentinel 与真 id 双格式 |
+
+### 11.6 执行顺序（护栏先于动刀）
+
+```
+L2 黄金快照建立（P1 前必须先有）
+   → L1 矩阵 + L3 协议契约全绿
+   → L4 覆盖率达标 + L5 变异分数达标
+   → L7 影子双跑实测等价（mismatch=0）
+   → CDS 部署冒烟
+   → 才允许删任何东西（且 P0 取证确认线上零使用）
+```
+
+任何删除都排在"快照不变 + 取证零使用"两道闸之后，绝不先删再看。
+
+---
+
+## 12. 关联文档
 
 - `design.llm-gateway.md`——Gateway 总体设计（现状基线，本设计在其上做减法）
 - `design.llm-gateway-refactor.md`——图片 compute-then-send 重构（PR #490，本设计复用其算/发分离）

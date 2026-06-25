@@ -5,7 +5,7 @@
 
 ## 总览
 
-当前 open: 6 / paid: 0 / 总计: 6
+当前 open: 11 / paid: 0 / 总计: 11
 
 本台账记录"LLM 网关与模型池统一"迁移过程中已识别、但尚未在代码中偿还的边界与风险。详细方案见 `design.llm-gateway-unification.md`。
 
@@ -18,7 +18,12 @@
 | 2026-06-24-legacy-flag-tier | medium | 2026-06-24 | 调度第 3 层 legacy 标记（IsMain/IsIntent/IsVision/IsImageGen）与默认池功能重叠 | 迁标记进默认池后 | open | 散落 ~15 文件，删除需全栈审计（enum-ripple-audit） |
 | 2026-06-24-appcaller-sync-no-delete | low | 2026-06-24 | AppCallerRegistrySyncService 只增不删，156 条 code 越积越多 | code 降级为标签时 | open | 改对账式 + DeletedAt 软删 + 面板一键清 |
 | 2026-06-24-key-descend-rotation | high | 2026-06-24 | Protocol 下沉后更多 ApiKeyEncrypted 落到模型级，密钥轮换需先解密重加密所有字段 | 任何密钥轮换 | open | 受 cross-project-isolation.md 规则 #2 约束，迁移时不放大存量债 |
-| 2026-06-24-openrouter-single-point | medium | 2026-06-24 | 默认走 OpenRouter 享受统一，但 OR 故障会全系统瘫 | OR 不可用时 | open | 必须保留一条直连兜底，这是池不能删干净、只能缩短的原因 |
+| 2026-06-24-openrouter-single-point | medium | 2026-06-24 | 默认走 OpenRouter 享受统一，但 OR 故障/限流/消费上限会全系统瘫（不止宕机，throttle 也是 SPOF） | OR 不可用或被限流时 | open | 必须保留一条直连兜底，这是池不能删干净、只能缩短的原因 |
+| 2026-06-24-protocol-drift-3-places | high | 2026-06-24 | "协议绑平台"散在 3 处各写一遍：LlmGateway + ModelLabController + ArenaRunWorker 各自按 platformType 建 Claude/OpenAI 客户端，OpenAIImageClient 另有 anthropic 禁 /images 守卫 | 只改网关时 | open | 统一必须一起收口，否则修一漏三；回归测试 `ProtocolBinding_*_AllRouteThroughRegistry` |
+| 2026-06-24-startup-legacy-consumer | high | 2026-06-24 | 删 legacy 标记会动到启动期：Program.cs:945 读 IsMain 建 claude 客户端，InfraAgentRuntimeProfileService 读 IsMain 兜底 | 删 IsMain 字段时 | open | 没迁好系统起不来（非功能坏，是 bootstrap 坏）；测试 `Startup_WithoutLegacyFlags_*` |
+| 2026-06-24-stats-continuity | medium | 2026-06-24 | appCallerCode 还是计费/统计维度，StatsController 靠 `chat.*` 前缀摘非 chat token；降级若改名/合并会错乱历史分段 | code 降级时 | open | 降级=绑定变可选，绝不改 code 字符串；测试 `Stats_AfterCodeDowngrade_SegmentationUnchanged` |
+| 2026-06-24-image-size-cap-orphan | low | 2026-06-24 | image_gen_size_caps 按 modelId/platformId 做键缓存上游允许尺寸；协议/模型身份变更后缓存键孤儿，首发请求重吃 400 再学 | P2 图片并网关迁移时 | open | 迁移期图片短暂报错；测试 `ImageSizeCap_OnUpstream400_RelearnsWithoutUserError` |
+| 2026-06-24-exchange-sentinel-dual | low | 2026-06-24 | 池 item 的 PlatformId 有 `__exchange__` 旧 sentinel 与真 exchange id 两种格式，迁移需双格式兼容 | Exchange 路由归一进协议层时 | open | 测试 `Exchange_BothSentinelAndRealId_Resolve` |
 
 ## 已还的债务（归档）
 
