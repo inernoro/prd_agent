@@ -173,6 +173,17 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
 
   const selectedApp = appCallers.find((a) => a.id === selectedAppId);
 
+  // 已配置的 modelType（来自所有应用的 modelRequirements）——驱动「配置才出现」的类型 chip
+  const availableModelTypes = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          appCallers.flatMap((a) => (a.modelRequirements || []).map((r) => r.modelType)),
+        ),
+      ),
+    [appCallers],
+  );
+
   useEffect(() => {
     loadData();
   }, []);
@@ -957,6 +968,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
             <ModelTypeFilterBar
               value={modelTypeFilter}
               onChange={setModelTypeFilter}
+              availableTypes={availableModelTypes}
             />
           </div>
 

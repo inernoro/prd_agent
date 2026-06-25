@@ -9,3 +9,4 @@
 | feat | prd-admin | 模型池管理页顶部新增"健康总览"告警卡(PoolHealthOverview)：死池/高fallback 红色一级告警可点击定位 + 近7天 fallback 率迷你列表，把静默降级一眼暴露 |
 | feat | prd-api | P3 删 legacy 前置(生产配置,行为保持):chat 默认池补 deepseek-v4-pro 池内兜底(取代 step7 legacy 容灾)、解绑 ccas 死 auto 专属池使其落到 generation 默认池;实测全 153 code 零 actualModel 变化、零 code 仍走 Legacy |
 | refactor | prd-api | P3 删 legacy 解析层：ModelResolver 删第四步 legacy 解析 + 第七步 legacy 兜底 + FindLegacyModelAsync，池全不可用改返回 NotFound(容灾已下沉到池内兜底)；保留 IsMain/IsVision/IsIntent/IsImageGen 字段及其它消费方(P4 再清)。前置已证 153 code 零走 legacy，删码为行为 no-op |
+| refactor | prd-admin | 应用模型池管理页类型筛选 chip 同步"配置才出现"：ModelTypeFilterBar 传入应用实际用到的 modelType(来自 modelRequirements)，不再预铺 14 个空类目 |
