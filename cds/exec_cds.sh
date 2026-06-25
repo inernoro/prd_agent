@@ -106,8 +106,10 @@ iso_offset_seconds() {
     || python3 -c "import datetime;print((datetime.datetime.utcnow()+datetime.timedelta(seconds=${offset})).strftime('%Y-%m-%dT%H:%M:%SZ'))"
 }
 
-# Atomically upsert or remove a `export KEY="value"` line in .cds.env.
+# Atomically upsert or remove a `export KEY='value'` line in .cds.env.
 # Usage: env_upsert KEY VALUE   (VALUE="" removes the line)
+# Values are single-quoted so PEM private keys (which contain spaces and
+# dashes) are stored safely without shell interpretation.
 env_upsert() {
   local key="$1" value="$2"
   local tmp="${ENV_FILE}.tmp.$$"
@@ -117,15 +119,53 @@ env_upsert() {
   }
   awk -v k="$key" '$0 !~ "^export "k"=" { print }' "$ENV_FILE" > "$tmp"
   if [ -n "$value" ]; then
-    printf 'export %s="%s"\n' "$key" "$value" >> "$tmp"
+    # Wrap in single quotes; escape any embedded single quote as '\''
+    local q_value
+    q_value=$(printf '%s' "$value" | sed "s/'/'\\\\''/g")
+    printf "export %s='%s'\n" "$key" "$q_value" >> "$tmp"
   fi
   mv -f "$tmp" "$ENV_FILE"
   chmod 600 "$ENV_FILE"
 }
 
+# Preflight lint for .cds.env: detect PEM values that are not single-quoted,
+# which would cause "RSA: command not found" errors when the file is sourced.
+lint_env_file() {
+  local file="${1:-$ENV_FILE}"
+  [ -f "$file" ] || return 0
+  local line_num=0 issues=0
+  while IFS= read -r line; do
+    line_num=$((line_num + 1))
+    case "$line" in
+      '#'*|'') continue ;;
+    esac
+    # Strip leading 'export ' to get KEY=VALUE
+    local kv="${line#export }"
+    local val="${kv#*=}"
+    case "$val" in
+      '-----BEGIN'*)
+        # value starts with PEM header but is NOT single-quoted
+        local key="${kv%%=*}"
+        warn ".cds.env 第 ${line_num} 行：${key} 的 PEM 值未加引号，会导致 source 失败"
+        warn "  修复方法：把值用单引号包起来，例如："
+        warn "  export ${key}='-----BEGIN RSA PRIVATE KEY-----\\\\n...\\\\n-----END RSA PRIVATE KEY-----'"
+        warn "  或重新运行 ./exec_cds.sh init 重新配置 GitHub App 私钥。"
+        issues=$((issues + 1))
+        ;;
+    esac
+  done < "$file"
+  return "$issues"
+}
+
 # Load the only env file the script recognises.
+# Runs a preflight lint first so unquoted PEM keys produce a clear error
+# instead of "RSA: command not found" from the shell interpreter.
 load_env() {
   [ -f "$ENV_FILE" ] || return 0
+  if ! lint_env_file "$ENV_FILE"; then
+    err ".cds.env 格式有误（见上方警告），请修复后重试。"
+    exit 1
+  fi
   set -a
   # shellcheck disable=SC1090
   . "$ENV_FILE"
