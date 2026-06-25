@@ -1,8 +1,14 @@
+using MongoDB.Bson.Serialization.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 缺陷报告
 /// </summary>
+// BsonIgnoreExtraElements：删除 Phase 3 超时催办字段（LastEscalatedAt / EscalationCount）后，
+// 存量 defect_reports 文档里仍残留这些字段。DefectReport 未注册全局 IgnoreExtraElements，
+// 不加本特性会导致旧文档反序列化抛 FormatException，使缺陷列表/详情查询整批 500。
+[BsonIgnoreExtraElements]
 public class DefectReport
 {
     /// <summary>主键（Guid）</summary>
