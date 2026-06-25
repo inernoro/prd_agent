@@ -219,6 +219,20 @@ ImageResponse { images[](URL), usage }
 
 **保留点**：`/api/open-platform/app-callers` 返回 50 条，而注册表有 156 条——该端点可能是过滤子集，或 main 落后于若干特性分支。caller 的 26/50 比例方向可信但绝对数待 P1 注册表黄金快照（反射枚举全部 156 条）对齐。池/模型/策略数据高置信无歧义。
 
+### 9.3 全量解析底片（153 code × live main，2026-06-25）
+
+进一步枚举注册表全部 153 个去重 code，逐个打 live `main` 的 `resolve-model` 端点，拍成全量底片（`prd-api/tests/PrdAgent.Tests/fixtures/llm-resolution-golden.main.json`）。这张底片立刻回答了"156 vs 50"并改写了迁移风险：
+
+| 发现 | 数据 | 对方案的影响 |
+|---|---|---|
+| **"156 vs 50"真相** | 153 个 code **全部注册、全部可解析（0 失败）** | 50 只是"有显式 DB 绑定文档"的子集；其余 ~100 个 code 靠默认/legacy 解析，**不是数据缺口** |
+| **legacy 层是承重墙，不是遗迹** | **91/153 (60%) 走 Legacy 层**：chat 53→deepseek-v4-pro、generation 16→stub-image、vision 14→qwen、intent 8→deepseek-v4-flash | 修正 §9.2 的乐观判断：只有 4 个模型带标记没错，但 **91 个 code 经 legacy 层路由到这 4 个模型**。**迁移顺序变成硬约束**：必须先为 chat/intent/vision/generation 建默认池、用黄金快照确认 91 个 code 全部改走 DefaultPool，**才能**删 legacy 层。直接删 = 砸 60% 调用方 |
+| **7 个 code 解析到空（NotFound）** | `open-platform-agent.proxy::embedding/rerank`、`video-agent.audio::tts`、`video-agent.scene.codegen::code`、`visual-agent.scene.codegen::code`、`workflow-agent.cli-agent::code`、`workflow-agent.webpage-generator::code` | 存量隐患：这些 code 真被调用就会失败（无池无默认无 legacy 标记的冷门 modelType）。统一设计应显式暴露缺口（no-rootless-tree） |
+| **图片默认走 stub** | 16 个 generation code 经 legacy 全落 `stub-image`(Stub 平台) | 真实生图靠 expectedModel 显式传入；P2 图片并网关时要确认真实路径，别被 stub 误导 |
+| **DedicatedPool/DefaultPool** | DedicatedPool 52、DefaultPool 3、isFallback=true 69 | fallback 占比高印证"默认/legacy 兜底是常态" |
+
+**这正是黄金快照的价值**：它在写第一行生产代码之前，就拦下了"删 legacy 层会砸 60% 调用方"这个会让你重新调一遍的坑。
+
 > 取证手段：`scripts/llm-gateway-phase0-forensics.mongo.js` 是 DBA 直连 Mongo 版；本次走 API 等价路径（`GET /api/mds/model-groups|models|main-model|...`、`/api/open-platform/app-callers`、`/api/mds/exchanges`），二者结论应一致。
 
 ---
