@@ -22,8 +22,8 @@ export function GalaxyStandalonePage() {
   const { storeId } = useParams();
   const navigate = useNavigate();
   const [storeName, setStoreName] = useState<string>('');
-  // 标题显示模式：结构名(文件名/点分名，默认) ↔ 正文标题(frontmatter title / 首个标题)。
-  const [labelMode, setLabelMode] = useState<GalaxyLabelMode>('structural');
+  // 标题显示模式：正文标题(frontmatter title / 首个标题，默认) ↔ 结构名(文件名/点分名)。
+  const [labelMode, setLabelMode] = useState<GalaxyLabelMode>('content');
   // 关系链面包屑（DocumentGalaxyView 上报：聚焦枢纽 / 打开文档时的根→当前路径）。
   const [crumbs, setCrumbs] = useState<GalaxyCrumb[]>([]);
   // 命令式打开文档（点面包屑里的叶子）。

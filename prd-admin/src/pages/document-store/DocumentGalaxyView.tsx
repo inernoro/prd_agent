@@ -229,14 +229,20 @@ interface NodeRender {
  * 文本标签贴图（枢纽节点用，canvas 绘制后做 sprite）。
  * 标签在 bloom 层之外 → 永远清晰、不被泛光糊掉。
  */
-function makeLabelSprite(text: string, kind: GalaxyNode['kind'], depth: number, color: string): THREE.Sprite {
+// 仅生成标签纹理 + 尺寸（供初次创建 sprite 与切换显示模式时重绘共用）。
+function makeLabelTexture(
+  text: string,
+  kind: GalaxyNode['kind'],
+  depth: number,
+  color: string,
+): { tex: THREE.CanvasTexture; w: number; h: number; fontSize: number } {
   // 演示版字号：root 46 / category 40 / 其余 30
   const fontSize = kind === 'root' ? 46 : depth <= 1 ? 40 : 30;
   const pad = 10;
   const measure = document.createElement('canvas').getContext('2d')!;
   const font = `600 ${fontSize}px "PingFang SC","Microsoft YaHei",system-ui,sans-serif`;
   measure.font = font;
-  const w = measure.measureText(text).width;
+  const w = measure.measureText(text || ' ').width;
   const cv = document.createElement('canvas');
   cv.width = Math.ceil(w + pad * 2);
   cv.height = fontSize + pad * 2;
@@ -265,14 +271,35 @@ function makeLabelSprite(text: string, kind: GalaxyNode['kind'], depth: number, 
   cx.fillText(text, pad, cv.height / 2 + 2);
   const tex = new THREE.CanvasTexture(cv);
   tex.needsUpdate = true;
+  return { tex, w: cv.width, h: cv.height, fontSize };
+}
+
+function makeLabelSprite(text: string, kind: GalaxyNode['kind'], depth: number, color: string): THREE.Sprite {
+  const { tex, w, h, fontSize } = makeLabelTexture(text, kind, depth, color);
   const sp = new THREE.Sprite(
     new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false }),
   );
   // 演示版世界尺度：sc = 0.34*(fontSize/30)
   const sc = 0.34 * (fontSize / 30);
-  sp.scale.set(cv.width * sc, cv.height * sc, 1);
+  sp.scale.set(w * sc, h * sc, 1);
   sp.renderOrder = 10;
+  // 记录元数据，供切换显示模式时按相同 kind/depth/color 重绘
+  sp.userData.labelMeta = { kind, depth, color };
   return sp;
+}
+
+// 切换显示模式时重绘已有标签 sprite 的纹理（不重建场景）。返回新纹理供外层登记释放。
+function redrawLabelSprite(sprite: THREE.Sprite, text: string): THREE.CanvasTexture {
+  const meta = sprite.userData.labelMeta as { kind: GalaxyNode['kind']; depth: number; color: string };
+  const { tex, w, h, fontSize } = makeLabelTexture(text, meta.kind, meta.depth, meta.color);
+  const mat = sprite.material as THREE.SpriteMaterial;
+  const old = mat.map;
+  mat.map = tex;
+  mat.needsUpdate = true;
+  if (old) old.dispose();
+  const sc = 0.34 * (fontSize / 30);
+  sprite.scale.set(w * sc, h * sc, 1);
+  return tex;
 }
 
 // ── 子树统计：遍历某节点子树下所有叶子，按 docType 计数（hover 缩略卡 / 信息面板用）──
@@ -312,6 +339,22 @@ function collectLeaves(node: GalaxyNode): GalaxyNode[] {
   const out: GalaxyNode[] = [];
   for (const c of node.children) out.push(...collectLeaves(c));
   return out;
+}
+
+/**
+ * 画布标签文本（随结构名/正文标题开关切换）：
+ * - 叶子：直接走 leafDisplayName；
+ * - 分组：content 模式下若该簇仅含 1 篇文档（点分命名常生成「子模块=单文档」结构，
+ *   如 report.skill-eval-sample-user-guide → 子模块 eval-sample-user-guide 只裹 1 篇），
+ *   用该文档正文标题；多文档分组（appname/category）保持结构段名。
+ */
+function labelTextFor(node: GalaxyNode, mode: GalaxyLabelMode, contentTitles: Map<string, string>): string {
+  if (node.kind === 'leaf') return leafDisplayName(node, mode, contentTitles);
+  if (mode === 'content') {
+    const leaves = collectLeaves(node);
+    if (leaves.length === 1) return leafDisplayName(leaves[0], 'content', contentTitles);
+  }
+  return node.name;
 }
 
 /** 从根到目标节点的名称链（面包屑用，不含根「知识库」本身）。 */
@@ -387,49 +430,37 @@ function TypeBars({ tally, max }: { tally: Array<{ type: string; count: number }
   );
 }
 
-// 悬浮缩略卡：叶子 = type 徽章 + 标题 + 摘要（只读）；
-// 枢纽（分类/应用/子模块）= 名称 + 篇数 + 该簇文档清单（可点击跳转，半屏长、可滚、悬停保持）。
+// 悬浮缩略卡（只读，不挡 3D 拾取）：叶子 = type 徽章 + 标题 + 摘要简介；
+// 枢纽（分类/应用/子模块/根）= 名称 + 篇数 + type 分布。半屏文档清单已挪到顶部图例 type chip 上。
 function HoverCard({
   info,
   labelMode,
   contentTitles,
-  onOpenLeaf,
-  onKeepAlive,
-  onScheduleClose,
 }: {
   info: HoverInfo;
   labelMode: GalaxyLabelMode;
   contentTitles: Map<string, string>;
-  onOpenLeaf: (entryId: string) => void;
-  onKeepAlive: () => void;
-  onScheduleClose: () => void;
 }) {
   const { node, depth, flip } = info;
   const isLeaf = node.kind === 'leaf';
-  // 根（知识库）子树太大不铺清单；只有分类/应用/子模块这类 group 才出可点清单。
-  const showList = !isLeaf && node.kind !== 'root';
 
   const baseStyle: CSSProperties = {
     position: 'absolute',
     left: info.x,
     top: info.y,
     transform: flip ? 'translate(calc(-100% - 14px), -50%)' : 'translate(14px, -50%)',
-    // 叶子卡只读（不挡 3D 拾取）；枢纽清单需要可点 → 开启指针事件并悬停保持。
-    pointerEvents: showList ? 'auto' : 'none',
-    width: showList ? 320 : 280,
-    maxWidth: showList ? 320 : 280,
-    background: 'rgba(14,15,22,0.92)',
-    backdropFilter: 'blur(14px) saturate(140%)',
-    WebkitBackdropFilter: 'blur(14px) saturate(140%)',
+    pointerEvents: 'none',
+    width: 280,
+    maxWidth: 280,
+    background: 'rgba(14,15,22,0.94)',
+    backdropFilter: 'blur(12px) saturate(130%)',
+    WebkitBackdropFilter: 'blur(12px) saturate(130%)',
     border: '1px solid rgba(255,255,255,0.14)',
     borderRadius: 12,
-    padding: showList ? '10px 8px 8px 12px' : '10px 12px',
+    padding: '10px 12px',
     color: '#eef0f5',
     boxShadow: '0 10px 30px rgba(0,0,0,0.6)',
     zIndex: 18,
-    display: showList ? 'flex' : undefined,
-    flexDirection: showList ? 'column' : undefined,
-    maxHeight: showList ? '56vh' : undefined,
   };
 
   if (isLeaf) {
@@ -474,93 +505,115 @@ function HoverCard({
     );
   }
 
+  // 枢纽（分类/应用/子模块/根）：紧凑摘要卡（名称 + 篇数 + type 分布），保持不变
   const tally = tallySubtreeTypes(node);
   const label = node.kind === 'root' ? '知识库' : depth <= 1 ? '分类' : depth === 2 ? '应用' : '子模块';
-
-  // 根：保持紧凑摘要卡（不铺清单）
-  if (!showList) {
-    return (
-      <div style={baseStyle}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-          <span style={{ fontSize: 10, color: '#9aa0b4', background: 'rgba(255,255,255,0.06)', borderRadius: 4, padding: '1px 6px' }}>
-            {label}
-          </span>
-        </div>
-        <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.4, color: '#f4f5fa', wordBreak: 'break-word' }}>
-          {node.name}
-        </div>
-        <div style={{ fontSize: 12, color: '#b7b9c6', marginTop: 4 }}>共 {node.docCount} 篇文档</div>
-        <TypeBars tally={tally} max={6} />
-        <div style={{ fontSize: 11, color: '#6f7180', marginTop: 8 }}>点击聚焦该簇</div>
-      </div>
-    );
-  }
-
-  // 分类/应用/子模块：可点文档清单（半屏长 + 滚动 + 悬停保持，移入跳转）
-  const CAP = 100;
-  const leaves = collectLeaves(node);
-  const shown = leaves.slice(0, CAP);
-  const rest = leaves.length - shown.length;
   return (
-    <div style={baseStyle} onMouseEnter={onKeepAlive} onMouseLeave={onScheduleClose}>
-      <div style={{ flexShrink: 0, paddingRight: 4 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-          <span style={{ fontSize: 10, color: '#9aa0b4', background: 'rgba(255,255,255,0.06)', borderRadius: 4, padding: '1px 6px' }}>
-            {label}
-          </span>
-          <span style={{ fontSize: 12, color: '#b7b9c6' }}>共 {node.docCount} 篇</span>
-        </div>
-        <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.4, color: '#f4f5fa', wordBreak: 'break-word' }}>
-          {node.name}
-        </div>
+    <div style={baseStyle}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+        <span style={{ fontSize: 10, color: '#9aa0b4', background: 'rgba(255,255,255,0.06)', borderRadius: 4, padding: '1px 6px' }}>
+          {label}
+        </span>
       </div>
+      <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.4, color: '#f4f5fa', wordBreak: 'break-word' }}>
+        {node.name}
+      </div>
+      <div style={{ fontSize: 12, color: '#b7b9c6', marginTop: 4 }}>共 {node.docCount} 篇文档</div>
+      <TypeBars tally={tally} max={6} />
+      <div style={{ fontSize: 11, color: '#6f7180', marginTop: 8 }}>点击聚焦该簇</div>
+    </div>
+  );
+}
+
+// 顶部图例 type chip 悬浮飞出：该 type 全部文档清单（半屏可滚，点条目跳转）。
+function TypeDocFlyout({
+  type,
+  leaves,
+  labelMode,
+  contentTitles,
+  onOpen,
+  onKeepAlive,
+  onScheduleClose,
+}: {
+  type: string;
+  leaves: GalaxyNode[];
+  labelMode: GalaxyLabelMode;
+  contentTitles: Map<string, string>;
+  onOpen: (entryId: string) => void;
+  onKeepAlive: () => void;
+  onScheduleClose: () => void;
+}) {
+  const sorted = [...leaves].sort((a, b) =>
+    leafDisplayName(a, labelMode, contentTitles).localeCompare(leafDisplayName(b, labelMode, contentTitles), 'zh'),
+  );
+  return (
+    <div
+      onMouseEnter={onKeepAlive}
+      onMouseLeave={onScheduleClose}
+      style={{
+        position: 'absolute',
+        top: 'calc(100% + 6px)',
+        left: 0,
+        width: 340,
+        maxWidth: '92vw',
+        maxHeight: '52vh',
+        display: 'flex',
+        flexDirection: 'column',
+        background: 'rgba(15,16,24,0.96)',
+        backdropFilter: 'blur(16px) saturate(140%)',
+        WebkitBackdropFilter: 'blur(16px) saturate(140%)',
+        border: '1px solid rgba(255,255,255,0.14)',
+        borderRadius: 12,
+        boxShadow: '0 14px 38px rgba(0,0,0,0.6)',
+        zIndex: 40,
+        overflow: 'hidden',
+      }}
+    >
       <div
         style={{
-          flex: 1,
-          minHeight: 0,
-          overflowY: 'auto',
-          overscrollBehavior: 'contain',
-          marginTop: 8,
-          paddingRight: 4,
+          flexShrink: 0,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          padding: '9px 12px',
+          borderBottom: '1px solid rgba(255,255,255,0.08)',
         }}
       >
-        {shown.map((leaf) => {
-          const lt = leaf.docType ?? 'unknown';
-          return (
-            <button
-              key={leaf.id}
-              type="button"
-              onClick={() => leaf.entryId && onOpenLeaf(leaf.entryId)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                width: '100%',
-                textAlign: 'left',
-                background: 'transparent',
-                border: 'none',
-                borderRadius: 7,
-                padding: '6px 8px',
-                cursor: 'pointer',
-                color: '#dcdde6',
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.07)')}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-            >
-              <span
-                style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: colorForDocType(lt), boxShadow: `0 0 6px ${colorForDocType(lt)}` }}
-              />
-              <span style={{ fontSize: 12.5, lineHeight: 1.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {leafDisplayName(leaf, labelMode, contentTitles)}
-              </span>
-            </button>
-          );
-        })}
-        {rest > 0 && (
-          <div style={{ fontSize: 11, color: '#6f7180', padding: '6px 8px 2px' }}>
-            还有 {rest} 篇 · 点枢纽聚焦后查看全部
-          </div>
+        <span style={{ width: 9, height: 9, borderRadius: '50%', background: TYPE_COLOR[type] ?? TYPE_COLOR.unknown, boxShadow: `0 0 6px ${TYPE_COLOR[type] ?? TYPE_COLOR.unknown}` }} />
+        <span style={{ fontSize: 12.5, fontWeight: 600, color: '#eef0f5' }}>{TYPE_LABEL[type] ?? type}</span>
+        <span style={{ fontSize: 11, color: '#8a8c9a' }}>{sorted.length} 篇 · 点条目打开</span>
+      </div>
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: '6px 6px 8px' }}>
+        {sorted.length === 0 && (
+          <div style={{ fontSize: 12, color: '#76788a', padding: '8px 10px' }}>该类型暂无文档。</div>
         )}
+        {sorted.map((leaf) => (
+          <button
+            key={leaf.id}
+            type="button"
+            onClick={() => leaf.entryId && onOpen(leaf.entryId)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              width: '100%',
+              textAlign: 'left',
+              background: 'transparent',
+              border: 'none',
+              borderRadius: 7,
+              padding: '6px 8px',
+              cursor: 'pointer',
+              color: '#dcdde6',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.07)')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+          >
+            <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: colorForDocType(leaf.docType) }} />
+            <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, lineHeight: 1.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {leafDisplayName(leaf, labelMode, contentTitles)}
+            </span>
+          </button>
+        ))}
       </div>
     </div>
   );
@@ -600,6 +653,16 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
   onOpenRef.current = onOpen;
   const onFocusChangeRef = useRef(onFocusChange);
   onFocusChangeRef.current = onFocusChange;
+  // labelMode / contentTitles 走 ref：主场景 effect 只在 galaxy 变化时重建，标签文本切换走 relabelRef 重绘
+  const labelModeRef = useRef(labelMode);
+  labelModeRef.current = labelMode;
+  const contentTitlesRef = useRef(contentTitles);
+  contentTitlesRef.current = contentTitles;
+  const relabelRef = useRef<(() => void) | null>(null);
+  // 显示模式切换 → 重绘已有标签纹理（不重建场景）
+  useEffect(() => {
+    relabelRef.current?.();
+  }, [labelMode, contentTitles]);
   // hover 关闭延时：让指针从节点移动到「枢纽清单卡」时不立刻消失（可点跳转）。
   // useCallback 稳定 identity，便于进 effect deps 而不触发场景重建。
   const hoverCloseTimerRef = useRef<number | null>(null);
@@ -842,10 +905,10 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       halo.scale.set(haloSize, haloSize, 1);
       nodeGroup.add(halo);
 
-      // 枢纽标签（root / group）
+      // 枢纽标签（root / group）。文本随显示模式：结构段名 / 单文档簇取正文标题。
       let labelSprite: THREE.Sprite | null = null;
       if (!isLeaf) {
-        const lab = makeLabelSprite(node.name, node.kind, depth, color);
+        const lab = makeLabelSprite(labelTextFor(node, labelModeRef.current, contentTitlesRef.current), node.kind, depth, color);
         if (lab.material.map) track(lab.material.map);
         track(lab.material);
         // 演示版标签偏移：size + (root?14:8)
@@ -858,6 +921,17 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       renders.push({ node, core, halo, haloBaseSize: haloSize, haloBaseOpacity, size });
       if (labelSprite) labelByNodeId.set(node.id, labelSprite);
     }
+
+    // 显示模式切换 → 按当前 labelMode/contentTitles 重绘所有标签纹理（不重建场景）
+    relabelRef.current = () => {
+      const mode = labelModeRef.current;
+      const titles = contentTitlesRef.current;
+      for (const [id, sprite] of labelByNodeId) {
+        const pl = placed.get(id);
+        if (!pl) continue;
+        track(redrawLabelSprite(sprite, labelTextFor(pl.node, mode, titles)));
+      }
+    };
 
     // ── 父子连线（偏冷蓝细线，不进 bloom 层）。位置由 applyFilter 填充/重建：
     //    隐藏叶子的入边折叠为零长，不再连向空处。 ──
@@ -1284,6 +1358,7 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
 
     // ── 清理 ──
     return () => {
+      relabelRef.current = null;
       cancelAnimationFrame(rafId);
       ro.disconnect();
       window.removeEventListener('resize', resize);
@@ -1345,20 +1420,7 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
 
   return (
     <div ref={mountRef} style={{ position: 'absolute', inset: 0 }}>
-      {hover && (
-        <HoverCard
-          info={hover}
-          labelMode={labelMode}
-          contentTitles={contentTitles}
-          onOpenLeaf={(id) => {
-            cancelHoverClose();
-            setHover(null);
-            onOpenRef.current(id);
-          }}
-          onKeepAlive={cancelHoverClose}
-          onScheduleClose={scheduleHoverClose}
-        />
-      )}
+      {hover && <HoverCard info={hover} labelMode={labelMode} contentTitles={contentTitles} />}
 
       {focusInfo && (
         <div
@@ -1528,12 +1590,13 @@ function ReaderPanel({
         right: 12,
         bottom: 12,
         width: 'min(760px, 94vw)',
-        background: 'rgba(18,19,28,0.62)',
-        backdropFilter: 'blur(26px) saturate(150%)',
-        WebkitBackdropFilter: 'blur(26px) saturate(150%)',
+        // 玻璃质感但保证可读：底色足够实（0.92），blur 只做轻微通透，正文不被背景星点干扰
+        background: 'rgba(17,18,26,0.92)',
+        backdropFilter: 'blur(20px) saturate(130%)',
+        WebkitBackdropFilter: 'blur(20px) saturate(130%)',
         border: '1px solid rgba(255,255,255,0.12)',
         borderRadius: 18,
-        boxShadow: '0 18px 60px rgba(0,0,0,0.55)',
+        boxShadow: '0 18px 60px rgba(0,0,0,0.6)',
         zIndex: 20,
         display: 'flex',
         flexDirection: 'column',
@@ -1616,7 +1679,7 @@ export interface GalaxyCrumb {
 export interface DocumentGalaxyViewProps {
   storeId: string;
   storeName?: string;
-  /** 叶子名显示模式（结构名/正文标题），由外层头部开关控制。默认结构名。 */
+  /** 叶子名显示模式（结构名/正文标题），由外层头部开关控制。默认正文标题。 */
   labelMode?: GalaxyLabelMode;
   /** 当前关系链变化（聚焦枢纽 / 打开文档），供外层头部渲染面包屑。 */
   onContextChange?: (ctx: { crumbs: GalaxyCrumb[]; kind: 'none' | 'focus' | 'open' }) => void;
@@ -1624,7 +1687,7 @@ export interface DocumentGalaxyViewProps {
   openEntryRef?: MutableRefObject<((entryId: string) => void) | null>;
 }
 
-export function DocumentGalaxyView({ storeId, storeName, labelMode = 'structural', onContextChange, openEntryRef }: DocumentGalaxyViewProps) {
+export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', onContextChange, openEntryRef }: DocumentGalaxyViewProps) {
   const [galaxy, setGalaxy] = useState<DocGalaxy | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1701,6 +1764,36 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'structural
     for (const t of DOC_TYPES) init[t] = true;
     return init;
   });
+
+  // 图例 type chip 悬浮飞出：列出该 type 全部文档（半屏可滚，点条目跳转）。
+  const [flyoutType, setFlyoutType] = useState<string | null>(null);
+  const flyoutTimerRef = useRef<number | null>(null);
+  const openFlyout = useCallback((t: string) => {
+    if (flyoutTimerRef.current !== null) {
+      window.clearTimeout(flyoutTimerRef.current);
+      flyoutTimerRef.current = null;
+    }
+    setFlyoutType(t);
+  }, []);
+  const scheduleCloseFlyout = useCallback(() => {
+    if (flyoutTimerRef.current !== null) window.clearTimeout(flyoutTimerRef.current);
+    flyoutTimerRef.current = window.setTimeout(() => setFlyoutType(null), 200);
+  }, []);
+  useEffect(() => () => {
+    if (flyoutTimerRef.current !== null) window.clearTimeout(flyoutTimerRef.current);
+  }, []);
+  // 按 type 预聚合叶子（飞出清单数据源）
+  const leavesByType = useMemo(() => {
+    const m = new Map<string, GalaxyNode[]>();
+    if (!galaxy) return m;
+    for (const leaf of galaxy.leaves) {
+      const t = leaf.docType ?? 'unknown';
+      const arr = m.get(t);
+      if (arr) arr.push(leaf);
+      else m.set(t, [leaf]);
+    }
+    return m;
+  }, [galaxy]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1830,38 +1923,58 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'structural
           {DOC_TYPES.map((t) => {
             const on = typeOn[t] !== false;
             return (
-              <button
+              <span
                 key={t}
-                type="button"
-                onClick={() => setTypeOn((prev) => ({ ...prev, [t]: prev[t] === false }))}
-                title={`点击切换显示「${t}」类文档`}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 5,
-                  fontSize: 11,
-                  color: on ? '#c8c8d2' : '#5a5a66',
-                  background: 'transparent',
-                  border: 'none',
-                  cursor: 'pointer',
-                  padding: '2px 4px',
-                  borderRadius: 6,
-                  opacity: on ? 1 : 0.5,
-                }}
+                style={{ position: 'relative', display: 'inline-flex' }}
+                onMouseEnter={() => openFlyout(t)}
+                onMouseLeave={scheduleCloseFlyout}
               >
-                <span
+                <button
+                  type="button"
+                  onClick={() => setTypeOn((prev) => ({ ...prev, [t]: prev[t] === false }))}
+                  title={`点击切换显示「${t}」类文档；悬停查看该类全部文档`}
                   style={{
-                    width: 9,
-                    height: 9,
-                    borderRadius: '50%',
-                    background: TYPE_COLOR[t],
-                    display: 'inline-block',
-                    boxShadow: on ? `0 0 6px ${TYPE_COLOR[t]}` : 'none',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 5,
+                    fontSize: 11,
+                    color: on ? '#c8c8d2' : '#5a5a66',
+                    background: flyoutType === t ? 'rgba(255,255,255,0.07)' : 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    padding: '2px 6px',
+                    borderRadius: 6,
+                    opacity: on ? 1 : 0.5,
                   }}
-                />
-                {t}
-                <span style={{ color: '#6a6a78' }}>{galaxy.stats.typeCounts[t] ?? 0}</span>
-              </button>
+                >
+                  <span
+                    style={{
+                      width: 9,
+                      height: 9,
+                      borderRadius: '50%',
+                      background: TYPE_COLOR[t],
+                      display: 'inline-block',
+                      boxShadow: on ? `0 0 6px ${TYPE_COLOR[t]}` : 'none',
+                    }}
+                  />
+                  {t}
+                  <span style={{ color: '#6a6a78' }}>{galaxy.stats.typeCounts[t] ?? 0}</span>
+                </button>
+                {flyoutType === t && (
+                  <TypeDocFlyout
+                    type={t}
+                    leaves={leavesByType.get(t) ?? []}
+                    labelMode={labelMode}
+                    contentTitles={contentTitles}
+                    onOpen={(id) => {
+                      setFlyoutType(null);
+                      setOpenEntryId(id);
+                    }}
+                    onKeepAlive={() => openFlyout(t)}
+                    onScheduleClose={scheduleCloseFlyout}
+                  />
+                )}
+              </span>
             );
           })}
           <div style={{ fontSize: 11, color: '#8a8a96', borderLeft: '1px solid rgba(255,255,255,0.1)', paddingLeft: 8 }}>
