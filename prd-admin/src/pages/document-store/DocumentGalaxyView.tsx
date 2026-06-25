@@ -8,7 +8,7 @@
  *
  * 视觉精修（辉光 / EVE 风格）后续迭代，本版做到能用、能编译、能验收。
  */
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Component, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Html } from '@react-three/drei';
 import * as THREE from 'three';
@@ -40,6 +40,58 @@ const TYPE_COLOR: Record<string, string> = {
 function colorForDocType(docType?: string | null): string {
   if (!docType) return TYPE_COLOR.unknown;
   return TYPE_COLOR[docType] ?? TYPE_COLOR.unknown;
+}
+
+// ── 3D 渲染错误边界：R3F / WebGL 渲染抛错时 catch，显式报错而非白屏空转 ──
+interface CanvasErrorBoundaryState {
+  error: Error | null;
+}
+
+class CanvasErrorBoundary extends Component<{ children: ReactNode }, CanvasErrorBoundaryState> {
+  state: CanvasErrorBoundaryState = { error: null };
+
+  static getDerivedStateFromError(error: Error): CanvasErrorBoundaryState {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: unknown) {
+    console.error('[galaxy] 3D 渲染失败', error, info);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 40,
+            padding: 24,
+            textAlign: 'center',
+          }}
+        >
+          <div
+            style={{
+              background: 'rgba(60,30,30,0.95)',
+              border: '1px solid rgba(255,90,90,0.5)',
+              borderRadius: 8,
+              padding: '16px 20px',
+              color: '#ffd0d0',
+              fontSize: 13,
+              maxWidth: 520,
+              lineHeight: 1.6,
+            }}
+          >
+            3D 渲染失败：{this.state.error.message}。你的浏览器可能不支持 WebGL，或数据异常。
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 // ── 放射状 3D 布局：根在原点，逐层沿球面向外铺开 ──
@@ -387,11 +439,21 @@ export function DocumentGalaxyView({ storeId, storeName }: DocumentGalaxyViewPro
     setGalaxy(null);
     setOpenEntryId(null);
 
+    // 超时护栏：25s 内拿不到数据就显式报错，绝不静默空转
+    const TIMEOUT_MS = 25_000;
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('__galaxy_timeout__')), TIMEOUT_MS),
+    );
+
     // 先并行拉第一页 entries + 双链；entries 可能多页（doc/ 库 330+），下面再翻页补齐
-    Promise.all([listDocumentEntriesReal(storeId, 1, 200), getStoreGraph(storeId)])
+    Promise.race([
+      Promise.all([listDocumentEntriesReal(storeId, 1, 200), getStoreGraph(storeId)]),
+      timeout,
+    ])
       .then(async ([firstRes, graphRes]) => {
         if (cancelled) return;
         if (!firstRes.success) {
+          console.error('[galaxy] 加载文档条目失败', firstRes.error);
           setError(firstRes.error?.message || '加载文档条目失败');
           return;
         }
@@ -409,7 +471,10 @@ export function DocumentGalaxyView({ storeId, storeName }: DocumentGalaxyViewPro
           page += 1;
           const res = await listDocumentEntriesReal(storeId, page, PAGE_SIZE);
           if (cancelled) return;
-          if (!res.success) break;
+          if (!res.success) {
+            console.error('[galaxy] 翻页加载条目失败（用已拉取页继续成图）', page, res.error);
+            break;
+          }
           allItems.push(...res.data.items);
           if (res.data.items.length < PAGE_SIZE) break;
         }
@@ -438,7 +503,15 @@ export function DocumentGalaxyView({ storeId, storeName }: DocumentGalaxyViewPro
         setGalaxy(built);
       })
       .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : '加载失败');
+        if (cancelled) return;
+        const isTimeout = e instanceof Error && e.message === '__galaxy_timeout__';
+        const msg = isTimeout
+          ? '数据加载超时（25s），请检查网络或该库是否可访问'
+          : e instanceof Error
+            ? e.message
+            : '加载失败';
+        console.error('[galaxy] 数据加载失败', e);
+        setError(msg);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -451,22 +524,18 @@ export function DocumentGalaxyView({ storeId, storeName }: DocumentGalaxyViewPro
 
   return (
     <div className="h-full w-full min-h-0 flex flex-col relative" style={{ background: '#0c0c12' }}>
-      {/* 图例 + 统计 */}
+      {/* 图例 + 统计：独立页里它是顶部唯一头部，正常 flex 排布（不再绝对定位叠头部） */}
       {galaxy && (
         <div
+          className="shrink-0"
           style={{
-            position: 'absolute',
-            top: 12,
-            left: 12,
-            zIndex: 10,
             display: 'flex',
             flexWrap: 'wrap',
+            alignItems: 'center',
             gap: 8,
-            maxWidth: 'calc(100% - 24px)',
+            padding: '8px 12px',
             background: 'rgba(18,18,26,0.78)',
-            border: '1px solid rgba(255,255,255,0.08)',
-            borderRadius: 8,
-            padding: '8px 10px',
+            borderBottom: '1px solid rgba(255,255,255,0.08)',
           }}
         >
           {DOC_TYPES.map((t) => (
@@ -482,65 +551,72 @@ export function DocumentGalaxyView({ storeId, storeName }: DocumentGalaxyViewPro
         </div>
       )}
 
-      {/* 操作提示 */}
-      <div style={{ position: 'absolute', bottom: 12, left: 12, zIndex: 10, fontSize: 11, color: '#5a5a66' }}>
-        拖动旋转 · 滚轮缩放 · 悬停看标题 · 点击文档星阅读
-      </div>
-
-      {/* 3D 画布 */}
-      {galaxy && !loading && !error && galaxy.stats.totalDocs > 0 && (
-        <Canvas camera={{ position: [0, 18, 42], fov: 55 }} style={{ position: 'absolute', inset: 0 }}>
-          <color attach="background" args={['#0c0c12']} />
-          <GalaxyScene galaxy={galaxy} onOpen={setOpenEntryId} />
-        </Canvas>
-      )}
-
-      {loading && (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 5 }}>
-          <MapSectionLoader text="正在构建文档星系..." />
+      {/* 画布层（flex-1 撑满图例下方的剩余高度，画布/状态相对它定位） */}
+      <div className="flex-1 min-h-0 relative">
+        {/* 操作提示 */}
+        <div style={{ position: 'absolute', bottom: 12, left: 12, zIndex: 10, fontSize: 11, color: '#5a5a66' }}>
+          拖动旋转 · 滚轮缩放 · 悬停看标题 · 点击文档星阅读
         </div>
-      )}
 
-      {error && !loading && (
-        <div
-          style={{
-            position: 'absolute',
-            top: 80,
-            left: '50%',
-            transform: 'translateX(-50%)',
-            background: 'rgba(60,30,30,0.95)',
-            border: '1px solid rgba(255,90,90,0.5)',
-            borderRadius: 8,
-            padding: '12px 16px',
-            color: '#ffd0d0',
-            fontSize: 13,
-            zIndex: 50,
-          }}
-        >
-          加载失败：{error}
-        </div>
-      )}
+        {/* 3D 画布（外套 ErrorBoundary：WebGL/R3F 抛错时显式报错，不白屏空转） */}
+        {galaxy && !loading && !error && galaxy.stats.totalDocs > 0 && (
+          <CanvasErrorBoundary>
+            <Canvas camera={{ position: [0, 18, 42], fov: 55 }} style={{ position: 'absolute', inset: 0 }}>
+              <color attach="background" args={['#0c0c12']} />
+              <GalaxyScene galaxy={galaxy} onOpen={setOpenEntryId} />
+            </Canvas>
+          </CanvasErrorBoundary>
+        )}
 
-      {!loading && !error && galaxy && galaxy.stats.totalDocs === 0 && (
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: '#777',
-            fontSize: 14,
-            textAlign: 'center',
-            zIndex: 5,
-          }}
-        >
-          <div>
-            <div style={{ fontSize: 16, marginBottom: 8 }}>这个库还没有文档</div>
-            <div>上传或新建文档后，星系会自动生长。</div>
+        {loading && (
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 5 }}>
+            <MapSectionLoader text="正在构建文档星系..." />
           </div>
-        </div>
-      )}
+        )}
+
+        {error && !loading && (
+          <div
+            style={{
+              position: 'absolute',
+              top: 24,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              background: 'rgba(60,30,30,0.95)',
+              border: '1px solid rgba(255,90,90,0.5)',
+              borderRadius: 8,
+              padding: '12px 16px',
+              color: '#ffd0d0',
+              fontSize: 13,
+              maxWidth: 'min(560px, 92%)',
+              textAlign: 'center',
+              zIndex: 50,
+            }}
+          >
+            加载失败：{error}
+          </div>
+        )}
+
+        {!loading && !error && galaxy && galaxy.stats.totalDocs === 0 && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#777',
+              fontSize: 14,
+              textAlign: 'center',
+              zIndex: 5,
+            }}
+          >
+            <div>
+              <div style={{ fontSize: 16, marginBottom: 8 }}>这个库还没有文档</div>
+              <div>上传或新建文档后，星系会自动生长。</div>
+            </div>
+          </div>
+        )}
+      </div>
 
       {openEntryId && <ReaderPanel entryId={openEntryId} onClose={() => setOpenEntryId(null)} />}
     </div>
