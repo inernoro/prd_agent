@@ -17,3 +17,4 @@
 | feat | prd-admin | TabBar 非激活项 hover 增加底色反馈（surface-nav-button:hover），更明显 |
 | feat | prd-admin | VOC 趋势爆点曲线新增汇总指标条（报错总数/慢请求总数/爆发点/单桶峰值），信息更丰富 |
 | feat | prd-admin | VOC 下钻加载动效 1:1 复刻：证据卡阅读期点亮 + 阶段步骤脉冲环/打勾 + 报告打字机流式 + 分段浮现左缘点亮 + 页签切换淡入过渡 |
+| polish | prd-admin | VOC 行为洞察右列比例调整：趋势爆点(带汇总指标+曲线)上行加高(1.45fr:1fr)，声道看板下行，曲线不再挤 |
