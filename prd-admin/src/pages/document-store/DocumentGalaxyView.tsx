@@ -333,6 +333,40 @@ function leafDisplayName(node: GalaxyNode, mode: GalaxyLabelMode, contentTitles:
   return node.name;
 }
 
+/**
+ * 从正文标题里剥掉重复的「文件名前缀」。
+ * doc/ 作者约定：H1 常写成「{点分文件名} — {真标题}」甚至纯文件名。
+ * 直接拿 H1 当标题会把文件名带进来（用户「都是文件名字」的根因）。
+ * 尝试两种前缀：完整文件名、去掉 {type}. 段后的剩余；命中则连同其后的分隔符一并剥掉。
+ */
+function stripFilenamePrefix(title: string, filenameBare: string): string {
+  let t = title.trim();
+  const cands = [filenameBare];
+  const dot = filenameBare.indexOf('.');
+  if (dot > 0) cands.push(filenameBare.slice(dot + 1)); // 去掉 type 前缀（如 web-hosting-client-ip）
+  for (const c of cands) {
+    if (c && t.toLowerCase().startsWith(c.toLowerCase())) {
+      // 剥掉前缀后，去掉紧跟的分隔符（— – -- - · : ： | 及空白）
+      t = t.slice(c.length).replace(/^[\s—–―·:：|/-]+/, '').trim();
+      break;
+    }
+  }
+  return t;
+}
+
+/**
+ * 从知识库 entry 的 summary 推导「人类正文标题」：frontmatter title / 首个标题，
+ * 再剥掉重复的文件名前缀。无可用人类标题（如 H1 就是文件名本身）返回 null。
+ */
+function deriveContentTitle(summary: string | null | undefined, filenameBare: string): string | null {
+  if (!summary) return null;
+  if (summary.trimStart().startsWith('<')) return null; // HTML/XML 片段不参与
+  const raw = parseFrontmatter(summary).title?.trim();
+  if (!raw) return null;
+  const cleaned = stripFilenamePrefix(raw, filenameBare);
+  return cleaned || null;
+}
+
 /** 收集某节点子树下的全部文档叶（DFS，保留遇见顺序）。 */
 function collectLeaves(node: GalaxyNode): GalaxyNode[] {
   if (node.kind === 'leaf') return [node];
@@ -352,7 +386,11 @@ function labelTextFor(node: GalaxyNode, mode: GalaxyLabelMode, contentTitles: Ma
   if (node.kind === 'leaf') return leafDisplayName(node, mode, contentTitles);
   if (mode === 'content') {
     const leaves = collectLeaves(node);
-    if (leaves.length === 1) return leafDisplayName(leaves[0], 'content', contentTitles);
+    if (leaves.length === 1) {
+      const lt = leaves[0].entryId ? contentTitles.get(leaves[0].entryId) : undefined;
+      // 有人类标题用标题；没有（H1 就是文件名）用本组结构段名，比叶子全文件名干净
+      return lt ?? node.name;
+    }
   }
   return node.name;
 }
@@ -1711,15 +1749,13 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
     };
   }, [openEntryRef]);
 
-  // entryId → 正文标题（content 模式取用）。复用 parseFrontmatter SSOT：frontmatter.title / 首个标题。
+  // entryId → 人类正文标题（content 模式取用）。复用 parseFrontmatter SSOT + 剥文件名前缀。
   const contentTitles = useMemo(() => {
     const m = new Map<string, string>();
     if (!galaxy) return m;
     for (const leaf of galaxy.leaves) {
-      if (!leaf.entryId || !leaf.summary) continue;
-      const s = leaf.summary.trimStart();
-      if (s.startsWith('<')) continue; // HTML/XML 片段不参与正文标题推导
-      const t = parseFrontmatter(leaf.summary).title?.trim();
+      if (!leaf.entryId) continue;
+      const t = deriveContentTitle(leaf.summary, leaf.name);
       if (t) m.set(leaf.entryId, t);
     }
     return m;
