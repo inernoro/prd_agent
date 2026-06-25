@@ -1626,7 +1626,9 @@ export function DocBrowser({
     if (!el || typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver((entries) => {
       const w = entries[0]?.contentRect.width ?? 999;
-      setCompactControls(w < 300);
+      // 排序控件(排序+3选项，nowrap)约需 ~210px；窄于 ~380px 时正文标题/显示收成纯图标，
+      // 给排序留足空间、整行一行放下、不触发横向滚动。
+      setCompactControls(w < 380);
     });
     ro.observe(el);
     return () => ro.disconnect();
@@ -2710,10 +2712,12 @@ export function DocBrowser({
             侧栏很窄(compactControls)时正文标题/显示只留图标（文字标签隐藏，title 提示仍在）。 */}
         <div
           ref={headerControlsRef}
-          className="shrink-0 flex items-center justify-between gap-2 px-3 py-2.5"
+          className="shrink-0 flex items-center gap-2 px-3 py-2.5 overflow-x-auto"
           style={{ borderBottom: '1px solid var(--border-faint)' }}>
-          <div className="min-w-0 flex-1 overflow-hidden">{sidebarHeader}</div>
-          <div className="flex shrink-0 items-center gap-1">
+          {/* 排序控件 shrink-0 + 内部 whitespace-nowrap：永不被挤压换行（用户最讨厌的字字竖排折叠） */}
+          <div className="shrink-0">{sidebarHeader}</div>
+          {/* 正文标题/显示 推到最右；窄栏(compactControls)只留图标。整行放不下时横向滚动，绝不竖排折叠 */}
+          <div className="ml-auto flex shrink-0 items-center gap-1">
             <button
               onClick={() => setUseContentTitle(!useContentTitle)}
               className="flex cursor-pointer items-center gap-1 rounded-[7px] px-1.5 py-0.5 text-[10px] text-token-muted transition-colors hover-bg-soft"

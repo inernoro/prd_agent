@@ -254,16 +254,16 @@ function DocSortControl({ value, onChange }: { value: DocBrowserSortMode; onChan
     { key: 'updated-desc', label: '最近更新' },
   ];
   return (
-    <div className="flex items-center gap-1.5 px-1 pb-2">
-      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>排序</span>
-      <div className="flex items-center gap-0.5 rounded-[8px] p-0.5" style={{ background: 'rgba(148,163,184,0.10)' }}>
+    <div className="flex shrink-0 items-center gap-1.5 px-1">
+      <span className="shrink-0 whitespace-nowrap text-[11px]" style={{ color: 'var(--text-muted)' }}>排序</span>
+      <div className="flex shrink-0 items-center gap-0.5 rounded-[8px] p-0.5" style={{ background: 'rgba(148,163,184,0.10)' }}>
         {opts.map(o => {
           const active = o.key === value;
           return (
             <button
               key={o.key}
               onClick={() => onChange(o.key)}
-              className="rounded-[6px] px-2 py-1 text-[11px] transition-colors"
+              className="shrink-0 whitespace-nowrap rounded-[6px] px-2 py-1 text-[11px] transition-colors"
               style={active
                 ? { background: 'rgba(59,130,246,0.18)', color: 'rgba(147,180,255,0.98)', fontWeight: 600 }
                 : { color: 'var(--text-muted)' }}
