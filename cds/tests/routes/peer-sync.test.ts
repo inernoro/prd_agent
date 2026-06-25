@@ -46,10 +46,14 @@ function request(
   });
 }
 
-/** 复刻生产签名：`${METHOD}\n${path}\n${ts}\n${bodyHashHexOrEmpty}`，HMAC-SHA256(base64decode(secret))。 */
+/**
+ * 复刻 MAP 侧签名（SSOT = prd-api PeerNodeService.Compute）：
+ * `${METHOD}\n${path}\n${ts}\n${sha256(body)}`，HMAC-SHA256(base64decode(secret))。
+ * 注意：空 body 也走 sha256("")=e3b0c4…（不是空串），与 MAP 一致。
+ */
 function sign(secret: string, method: string, urlPath: string, body: string): { ts: string; sig: string } {
   const ts = String(Date.now());
-  const bodyHash = body ? crypto.createHash('sha256').update(body, 'utf8').digest('hex') : '';
+  const bodyHash = crypto.createHash('sha256').update(body ?? '', 'utf8').digest('hex');
   const payload = `${method.toUpperCase()}\n${urlPath}\n${ts}\n${bodyHash}`;
   const sig = crypto.createHmac('sha256', Buffer.from(secret, 'base64')).update(payload, 'utf8').digest('hex');
   return { ts, sig };
@@ -138,7 +142,7 @@ describe('peer-sync MAP-KBTP endpoints', () => {
     expect(bad.status).toBe(401);
     // Out-of-window ts (10 min ago) but otherwise correctly signed for that ts.
     const oldTs = String(Date.now() - 10 * 60 * 1000);
-    const bodyHash = '';
+    const bodyHash = crypto.createHash('sha256').update('', 'utf8').digest('hex');
     const payload = `GET\n/api/peer-sync/ping\n${oldTs}\n${bodyHash}`;
     const sig = crypto.createHmac('sha256', Buffer.from(secret, 'base64')).update(payload).digest('hex');
     const stale = await request(server, 'GET', '/api/peer-sync/ping', '', hdr(initiatorNodeId, oldTs, sig));

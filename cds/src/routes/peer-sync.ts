@@ -52,7 +52,9 @@ function ok(res: Response, data: unknown): void {
   res.json({ success: true, data });
 }
 function fail(res: Response, status: number, errorCode: string, message: string): void {
-  res.status(status).json({ success: false, errorCode, message });
+  // 顶层 errorCode/message 保留向后兼容；嵌套 error.{code,message} 让 MAP 发起方
+  // （AdminPeerNodesController 解析 error.message）能显示精确失败原因，而非泛化文案。
+  res.status(status).json({ success: false, errorCode, message, error: { code: errorCode, message } });
 }
 
 /**
@@ -75,7 +77,10 @@ function verifyPeerSignature(
   const tsMs = Number(ts);
   if (!Number.isFinite(tsMs) || Math.abs(Date.now() - tsMs) > MAX_SKEW_MS) return null;
 
-  const bodyHash = rawBody ? sha256hex(rawBody) : '';
+  // 空 body 也要 sha256（空串 → e3b0c4…），与 MAP PeerNodeService.Compute 的
+  // `Sha256Hex(body ?? "")` 对齐。早期写成「空 body → 空串」只在 CDS 自测里自洽，
+  // 与 MAP 的 GET /ping、/capabilities（空 body）签名串不一致会被 401，配对回滚。
+  const bodyHash = sha256hex(rawBody);
   const path = String(req.originalUrl || '').split('?')[0];
   const payload = `${(req.method || 'GET').toUpperCase()}\n${path}\n${ts}\n${bodyHash}`;
 
