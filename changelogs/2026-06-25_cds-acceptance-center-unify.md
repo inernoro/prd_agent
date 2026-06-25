@@ -13,3 +13,4 @@
 | feat | cds | 预览等待页显示构建模式(极速版/源码)+分支与PR直达链接 |
 | fix | cds | 预览等待页从容应对推送瞬间的"分支已停止"抖动(连续3拍非加载态才跳诊断页，期间显示"正在恢复") |
 | polish | cds | 预览等待页百分比改为按预估时间倒推的两位小数平滑递增(封顶99.99%，ready前不显示100%) |
+| feat | prd-api | 新增 CDS 验收报告导入器(CdsReportImportService + POST /api/document-store/import-cds-reports)：复用「系统互联」已授权的 CDS 全局连接长效令牌(X-AI-Access-Key)，免 peer-sync 握手、一次鉴权增量同步 CDS 报告进知识库(updatedSince + contentHash 去重) |
