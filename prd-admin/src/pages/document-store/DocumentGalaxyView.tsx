@@ -32,7 +32,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
-import { X, RotateCcw, Search, ArrowLeft, ToggleLeft, ToggleRight, Layers, Folder, FileText } from 'lucide-react';
+import { X, RotateCcw, Search, ArrowLeft, ToggleLeft, ToggleRight, Layers, Folder, FileText, ChevronDown } from 'lucide-react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { MarkdownViewer } from '@/components/file-preview/MarkdownViewer';
 import { parseFrontmatter } from '@/lib/frontmatter';
@@ -367,6 +367,28 @@ function deriveContentTitle(summary: string | null | undefined, filenameBare: st
   return cleaned || null;
 }
 
+/**
+ * 把 summary 清成「纯文本预览」：剥 frontmatter + 去 markdown 标记（标题/链接/代码/列表/表格/强调），
+ * 折叠空白。用于 hover 缩略卡 / 列表行预览，避免把 `--- title: ... ---` 和 `#`、`**` 直接糊在卡里。
+ */
+function cleanPreview(summary?: string | null): string {
+  if (!summary) return '';
+  return parseFrontmatter(summary)
+    .body.replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^>\s?/gm, '')
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/^\s*\d+\.\s+/gm, '')
+    .replace(/[*_~]{1,3}/g, '')
+    .replace(/^\s*[-=|:]{3,}\s*$/gm, ' ')
+    .replace(/\|/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /** 收集某节点子树下的全部文档叶（DFS，保留遇见顺序）。 */
 function collectLeaves(node: GalaxyNode): GalaxyNode[] {
   if (node.kind === 'leaf') return [node];
@@ -511,6 +533,8 @@ function HoverCard({
   const isLeaf = node.kind === 'leaf';
   // 分类/应用/子模块出可点清单；根不出（太大）
   const showList = !isLeaf && node.kind !== 'root';
+  // 清单内悬停某行 → 展开该文档正文预览（2 行截断）
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
 
   const baseStyle: CSSProperties = {
     position: 'absolute',
@@ -536,7 +560,7 @@ function HoverCard({
 
   if (isLeaf) {
     const t = node.docType ?? 'unknown';
-    const summary = node.summary?.trim();
+    const preview = cleanPreview(node.summary);
     return (
       <div style={baseStyle}>
         <PathLine names={pathNames} />
@@ -562,7 +586,7 @@ function HoverCard({
           style={{
             fontSize: 12,
             lineHeight: 1.5,
-            color: summary ? '#b7b9c6' : '#76788a',
+            color: preview ? '#b7b9c6' : '#76788a',
             marginTop: 6,
             display: '-webkit-box',
             WebkitLineClamp: 4,
@@ -570,7 +594,7 @@ function HoverCard({
             overflow: 'hidden',
           }}
         >
-          {summary || '（无摘要）'}
+          {preview || '（无摘要）'}
         </div>
         <div style={{ fontSize: 11, color: '#6f7180', marginTop: 8 }}>点击阅读全文</div>
       </div>
@@ -632,6 +656,7 @@ function HoverCard({
       >
         {shown.map((leaf) => {
           const lt = leaf.docType ?? 'unknown';
+          const preview = hoveredId === leaf.id ? cleanPreview(leaf.summary) : '';
           return (
             <button
               key={leaf.id}
@@ -639,8 +664,8 @@ function HoverCard({
               onClick={() => leaf.entryId && onOpenLeaf(leaf.entryId)}
               style={{
                 display: 'flex',
-                alignItems: 'center',
-                gap: 8,
+                flexDirection: 'column',
+                gap: 0,
                 width: '100%',
                 textAlign: 'left',
                 background: 'transparent',
@@ -650,13 +675,38 @@ function HoverCard({
                 cursor: 'pointer',
                 color: '#dcdde6',
               }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.07)')}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'rgba(255,255,255,0.07)';
+                setHoveredId(leaf.id);
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'transparent';
+                setHoveredId((id) => (id === leaf.id ? null : id));
+              }}
             >
-              <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: colorForDocType(lt), boxShadow: `0 0 6px ${colorForDocType(lt)}` }} />
-              <span style={{ fontSize: 12.5, lineHeight: 1.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {leafDisplayName(leaf, labelMode, contentTitles)}
+              <span style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: colorForDocType(lt), boxShadow: `0 0 6px ${colorForDocType(lt)}` }} />
+                <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, lineHeight: 1.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {leafDisplayName(leaf, labelMode, contentTitles)}
+                </span>
               </span>
+              {/* 悬停展开：正文预览（2 行截断） */}
+              {preview && (
+                <span
+                  style={{
+                    display: '-webkit-box',
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: 'vertical',
+                    overflow: 'hidden',
+                    fontSize: 11,
+                    color: '#8f93a3',
+                    marginTop: 2,
+                    paddingLeft: 16,
+                  }}
+                >
+                  {preview}
+                </span>
+              )}
             </button>
           );
         })}
@@ -689,6 +739,8 @@ function TypeDocFlyout({
   const sorted = [...leaves].sort((a, b) =>
     leafDisplayName(a, labelMode, contentTitles).localeCompare(leafDisplayName(b, labelMode, contentTitles), 'zh'),
   );
+  // 悬停某行 → 展开该文档的正文预览（第 2 行，2 行截断）
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
   return (
     <div
       onMouseEnter={onKeepAlive}
@@ -730,33 +782,61 @@ function TypeDocFlyout({
         {sorted.length === 0 && (
           <div style={{ fontSize: 12, color: '#76788a', padding: '8px 10px' }}>该类型暂无文档。</div>
         )}
-        {sorted.map((leaf) => (
-          <button
-            key={leaf.id}
-            type="button"
-            onClick={() => leaf.entryId && onOpen(leaf.entryId)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              width: '100%',
-              textAlign: 'left',
-              background: 'transparent',
-              border: 'none',
-              borderRadius: 7,
-              padding: '6px 8px',
-              cursor: 'pointer',
-              color: '#dcdde6',
-            }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.07)')}
-            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-          >
-            <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: colorForDocType(leaf.docType) }} />
-            <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, lineHeight: 1.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {leafDisplayName(leaf, labelMode, contentTitles)}
-            </span>
-          </button>
-        ))}
+        {sorted.map((leaf) => {
+          const preview = hoveredId === leaf.id ? cleanPreview(leaf.summary) : '';
+          return (
+            <button
+              key={leaf.id}
+              type="button"
+              onClick={() => leaf.entryId && onOpen(leaf.entryId)}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'rgba(255,255,255,0.07)';
+                setHoveredId(leaf.id);
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'transparent';
+                setHoveredId((id) => (id === leaf.id ? null : id));
+              }}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 0,
+                width: '100%',
+                textAlign: 'left',
+                background: 'transparent',
+                border: 'none',
+                borderRadius: 7,
+                padding: '6px 8px',
+                cursor: 'pointer',
+                color: '#dcdde6',
+              }}
+            >
+              <span style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
+                <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: colorForDocType(leaf.docType) }} />
+                <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, lineHeight: 1.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {leafDisplayName(leaf, labelMode, contentTitles)}
+                </span>
+              </span>
+              {/* 悬停展开：正文预览（2 行截断） */}
+              {preview && (
+                <span
+                  style={{
+                    display: '-webkit-box',
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: 'vertical',
+                    overflow: 'hidden',
+                    fontSize: 11,
+                    color: '#8f93a3',
+                    marginTop: 2,
+                    paddingLeft: 15,
+                  }}
+                >
+                  {preview}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -774,6 +854,8 @@ interface GalaxyCanvasProps {
   onFocusChange?: (node: GalaxyNode | null) => void;
   /** 外层请求把相机飞到某文档（值变化即触发；通常 = 当前打开的 entryId）。 */
   flyToEntryId?: string | null;
+  /** 外层请求聚焦某枢纽（面包屑下拉选兄弟分组时用；带单调递增 token，重复点同一 id 也能再次触发）。 */
+  focusHubReq?: { id: string; n: number } | null;
 }
 
 /**
@@ -781,8 +863,10 @@ interface GalaxyCanvasProps {
  * 选择性 bloom 双 pass。type 筛选通过 typeOn 同步给场景（dim/hide leaf）。
  * unmount / galaxy 变化时彻底 dispose，避免 React 重复挂载泄漏。
  */
-function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocusChange, flyToEntryId }: GalaxyCanvasProps) {
+function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocusChange, flyToEntryId, focusHubReq }: GalaxyCanvasProps) {
   const mountRef = useRef<HTMLDivElement>(null);
+  // 选中文档的发光旋转指针环（DOM 覆盖层，渲染循环每帧把它定位到选中星的屏幕投影处）
+  const selRingRef = useRef<HTMLDivElement>(null);
   const [fatal, setFatal] = useState<string | null>(null);
   // hover 缩略卡：3D 坐标 project 到屏幕后用绝对定位 DOM 卡片渲染（叶子=标题+摘要，枢纽=篇数+分布）
   const [hover, setHover] = useState<HoverInfo | null>(null);
@@ -831,6 +915,8 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
   const recenterRef = useRef<(() => void) | null>(null);
   // 取消选中命令引用（关闭抽屉时停掉持续选中态）
   const clearSelectionRef = useRef<(() => void) | null>(null);
+  // 聚焦某枢纽命令引用（面包屑下拉选兄弟分组时用）
+  const focusHubRef = useRef<((id: string) => void) | null>(null);
 
   useEffect(() => {
     applyFilterRef.current?.();
@@ -841,6 +927,24 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
     if (flyToEntryId) flyToRef.current?.(flyToEntryId);
     else clearSelectionRef.current?.();
   }, [flyToEntryId]);
+
+  // 外层请求聚焦某枢纽（面包屑下拉）。focusHubReq 带单调 token，重复点同一兄弟也能再次聚焦。
+  useEffect(() => {
+    if (focusHubReq) focusHubRef.current?.(focusHubReq.id);
+  }, [focusHubReq]);
+
+  // 选中指针环用到的 CSS 动画关键帧（旋转 + 呼吸辉光）注入一次（全局 style，id 守卫防重复）。
+  useEffect(() => {
+    const ID = 'galaxy-sel-ring-keyframes';
+    if (document.getElementById(ID)) return;
+    const el = document.createElement('style');
+    el.id = ID;
+    el.textContent = [
+      '@keyframes galaxy-sel-spin { from { transform: translate(-50%, -50%) rotate(0deg) } to { transform: translate(-50%, -50%) rotate(360deg) } }',
+      '@keyframes galaxy-sel-pulse { 0%,100% { opacity: 0.55 } 50% { opacity: 1 } }',
+    ].join('\n');
+    document.head.appendChild(el);
+  }, []);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -1336,6 +1440,11 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       resetFocus();
       controls.autoRotate = true; // 复位即回到初始自动旋转态
     };
+    // 面包屑下拉选兄弟分组 → 聚焦该枢纽（按 id 取 placed 节点）
+    focusHubRef.current = (id: string) => {
+      const pl = placed.get(id);
+      if (pl) focusNode(pl.node);
+    };
 
     // ── 选择性 bloom 双 pass（演示版同款配方） ──
     const renderTargetSize = new THREE.Vector2(W, H);
@@ -1513,7 +1622,9 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       const te = camera.matrix.elements;
       gRight.set(te[0], te[1], te[2]);
       gUp.set(te[4], te[5], te[6]);
-      const move = gRight.multiplyScalar(-panX).add(gUp.multiplyScalar(panY));
+      // 对齐视觉创作（AdvancedVisualAgentTab）的 trackpad 手感：内容随手指反向位移
+      // （cam - delta）。相机右移=内容左移、相机下移=内容上移 → move = right*Δx - up*Δy。
+      const move = gRight.multiplyScalar(panX).add(gUp.multiplyScalar(-panY));
       camera.position.add(move);
       controls.target.add(move);
     };
@@ -1627,6 +1738,34 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
         }
       }
 
+      // 选中文档的发光旋转指针环：把选中星的世界坐标投影到屏幕，定位 DOM 覆盖层。
+      // 星被筛选隐藏 / 没有选中 → 隐藏环。环颜色随该文档 docType。
+      {
+        const ring = selRingRef.current;
+        if (ring) {
+          const rec = selectedLeafId ? renders.find((r) => r.node.id === selectedLeafId) : null;
+          if (rec && rec.core.visible) {
+            rec.core.getWorldPosition(haloWorld);
+            projVec.copy(haloWorld).project(camera);
+            const rect = renderer.domElement.getBoundingClientRect();
+            const sx = (projVec.x * 0.5 + 0.5) * rect.width;
+            const sy = (-projVec.y * 0.5 + 0.5) * rect.height;
+            // projVec.z > 1 表示在相机背后 → 隐藏，避免环错位贴在屏幕反面
+            if (projVec.z <= 1) {
+              const accent = colorForDocType(rec.node.docType);
+              ring.style.display = 'block';
+              ring.style.left = `${sx}px`;
+              ring.style.top = `${sy}px`;
+              ring.style.setProperty('--galaxy-sel-accent', accent);
+            } else {
+              ring.style.display = 'none';
+            }
+          } else {
+            ring.style.display = 'none';
+          }
+        }
+      }
+
       controls.update();
       renderBloom();
     };
@@ -1652,6 +1791,7 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       flyToRef.current = null;
       recenterRef.current = null;
       clearSelectionRef.current = null;
+      focusHubRef.current = null;
       cancelAnimationFrame(rafId);
       ro.disconnect();
       window.removeEventListener('resize', resize);
@@ -1715,6 +1855,88 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
 
   return (
     <div ref={mountRef} style={{ position: 'absolute', inset: 0 }}>
+      {/* 选中文档的发光旋转指针环：渲染循环每帧更新 left/top + display + 强调色。
+          外层定位（left/top 由 JS 写），内层旋转环 + 4 个朝内的指针尖角。pointer-events:none 不挡操作。 */}
+      <div
+        ref={selRingRef}
+        style={{
+          position: 'absolute',
+          display: 'none',
+          left: 0,
+          top: 0,
+          width: 64,
+          height: 64,
+          pointerEvents: 'none',
+          zIndex: 14,
+          // 用 CSS 变量承接强调色（render 循环写 --galaxy-sel-accent）
+          ['--galaxy-sel-accent' as string]: '#ffe08a',
+        }}
+      >
+        {/* 旋转的虚线发光环（绕中心自转） */}
+        <div
+          style={{
+            position: 'absolute',
+            left: '50%',
+            top: '50%',
+            width: 64,
+            height: 64,
+            borderRadius: '50%',
+            border: '2px dashed var(--galaxy-sel-accent)',
+            boxShadow: '0 0 12px var(--galaxy-sel-accent), inset 0 0 8px var(--galaxy-sel-accent)',
+            filter: 'drop-shadow(0 0 4px var(--galaxy-sel-accent))',
+            animation: 'galaxy-sel-spin 6s linear infinite',
+          }}
+        />
+        {/* 呼吸的实线内圈（不自转，只脉冲发光，强调"指向这里"） */}
+        <div
+          style={{
+            position: 'absolute',
+            left: '50%',
+            top: '50%',
+            width: 44,
+            height: 44,
+            transform: 'translate(-50%, -50%)',
+            borderRadius: '50%',
+            border: '1px solid var(--galaxy-sel-accent)',
+            boxShadow: '0 0 10px var(--galaxy-sel-accent)',
+            opacity: 0.7,
+            animation: 'galaxy-sel-pulse 1.6s ease-in-out infinite',
+          }}
+        />
+        {/* 4 个朝内的指针尖角（上/右/下/左），用三角形指向中心选中星 */}
+        {[
+          { top: -2, left: '50%', tx: '-50%', ty: '0', dir: 'down' },
+          { top: '50%', left: 66, tx: '0', ty: '-50%', dir: 'left' },
+          { top: 66, left: '50%', tx: '-50%', ty: '0', dir: 'up' },
+          { top: '50%', left: -2, tx: '0', ty: '-50%', dir: 'right' },
+        ].map((p, i) => {
+          // 每个尖角是一个 6px 三角形，缺口边透明、指向边用强调色
+          const border: CSSProperties =
+            p.dir === 'down'
+              ? { borderLeft: '5px solid transparent', borderRight: '5px solid transparent', borderTop: '7px solid var(--galaxy-sel-accent)' }
+              : p.dir === 'up'
+                ? { borderLeft: '5px solid transparent', borderRight: '5px solid transparent', borderBottom: '7px solid var(--galaxy-sel-accent)' }
+                : p.dir === 'left'
+                  ? { borderTop: '5px solid transparent', borderBottom: '5px solid transparent', borderLeft: '7px solid var(--galaxy-sel-accent)' }
+                  : { borderTop: '5px solid transparent', borderBottom: '5px solid transparent', borderRight: '7px solid var(--galaxy-sel-accent)' };
+          return (
+            <span
+              key={i}
+              style={{
+                position: 'absolute',
+                top: p.top,
+                left: p.left,
+                width: 0,
+                height: 0,
+                transform: `translate(${p.tx}, ${p.ty})`,
+                filter: 'drop-shadow(0 0 3px var(--galaxy-sel-accent))',
+                ...border,
+              }}
+            />
+          );
+        })}
+      </div>
+
       {/* 常驻「复位视角」：回中心 + 清聚焦 + 继续自动旋转（不止双击/点空白） */}
       <button
         type="button"
@@ -2038,8 +2260,13 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
   const [openEntryId, setOpenEntryId] = useState<string | null>(null);
   // 当前聚焦的枢纽（GalaxyCanvas 上报；用于面包屑）
   const [focusedNode, setFocusedNode] = useState<GalaxyNode | null>(null);
-  // 关系链面包屑（本组件自渲染在单条顶栏里；同时仍可经 onContextChange 上报给外层）
+  // 关系链面包屑（现浮在画布左上角；同时仍可经 onContextChange 上报给外层）
   const [crumbs, setCrumbs] = useState<GalaxyCrumb[]>([]);
+  // 面包屑某段的下拉（跳转同级兄弟）。-1 = 全关；同时只开一个。
+  const [openCrumbIdx, setOpenCrumbIdx] = useState<number>(-1);
+  // 请求 GalaxyCanvas 聚焦某枢纽（面包屑下拉选兄弟分组）。带单调 token 让重复点同一 id 也能再触发。
+  const [focusHubReq, setFocusHubReq] = useState<{ id: string; n: number } | null>(null);
+  const focusHubReqN = useRef(0);
   const storeNameRef = useRef(storeName);
   storeNameRef.current = storeName;
 
@@ -2054,6 +2281,25 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
       if (openEntryRef) openEntryRef.current = null;
     };
   }, [openEntryRef]);
+
+  // 节点查找表（id → {node, parent}）：面包屑下拉「跳到同级兄弟」用它从 crumb.id 回查真实节点。
+  // 兄弟 = 父节点的 children；i===0 段的父 = root。
+  const nodeIndex = useMemo(() => {
+    const m = new Map<string, { node: GalaxyNode; parent: GalaxyNode | null }>();
+    if (!galaxy) return m;
+    const walk = (n: GalaxyNode, parent: GalaxyNode | null) => {
+      m.set(n.id, { node: n, parent });
+      for (const c of n.children) walk(c, n);
+    };
+    walk(galaxy.root, null);
+    return m;
+  }, [galaxy]);
+
+  // 请求聚焦某枢纽：递增 token，确保重复点同一兄弟分组也能再次触发 GalaxyCanvas 的聚焦。
+  const requestFocusHub = useCallback((id: string) => {
+    focusHubReqN.current += 1;
+    setFocusHubReq({ id, n: focusHubReqN.current });
+  }, []);
 
   // entryId → 人类正文标题（content 模式取用）。复用 parseFrontmatter SSOT + 剥文件名前缀。
   const contentTitles = useMemo(() => {
@@ -2138,6 +2384,26 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
 
   // 全局搜索：按显示名 / 结构名匹配，命中可点（→ 飞到 + 打开）
   const [search, setSearch] = useState('');
+  // 搜索结果某行悬停 → 展开正文预览（2 行截断）
+  const [searchHoverId, setSearchHoverId] = useState<string | null>(null);
+
+  // 面包屑下拉点击外部关闭：开着时挂 document mousedown，命中下拉容器外即收起。
+  const crumbOverlayRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (openCrumbIdx < 0) return;
+    const onDown = (e: MouseEvent) => {
+      if (crumbOverlayRef.current && !crumbOverlayRef.current.contains(e.target as Node)) {
+        setOpenCrumbIdx(-1);
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [openCrumbIdx]);
+
+  // 切换聚焦/打开文档导致面包屑变化时，关掉旧的下拉，避免指向失效的段。
+  useEffect(() => {
+    setOpenCrumbIdx(-1);
+  }, [crumbs]);
   const searchMatches = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q || !galaxy) return [];
@@ -2263,9 +2529,8 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
 
   return (
     <div className="h-full w-full min-h-0 flex flex-col relative" style={{ background: '#02030a' }}>
-      {/* 单条顶栏（合并原「返回/面包屑/开关」头部 + 「图例/统计/搜索」两横为一横）：
-          返回 + 库名 + 类型 chips + 统计 + 关系链面包屑 + 搜索 + 标题开关。
-          点击 chip 切换该 type 显隐（与渲染内核 typeOn 同步）。 */}
+      {/* 瘦身顶栏（类型 chips + 关系链面包屑已下放到画布左上角浮层，见下方）：
+          返回 + 库名 + 分隔 + flex 撑开 + 统计 + 引用/部分加载提示 + 搜索 + 标题开关。 */}
       {galaxy && (
         <div
           className="shrink-0"
@@ -2309,63 +2574,8 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
             </span>
           )}
           <span style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.12)', flexShrink: 0 }} />
-          {legendTypes.map((t) => {
-            const on = typeOn[t] !== false;
-            return (
-              <span
-                key={t}
-                style={{ position: 'relative', display: 'inline-flex' }}
-                onMouseEnter={() => openFlyout(t)}
-                onMouseLeave={scheduleCloseFlyout}
-              >
-                <button
-                  type="button"
-                  onClick={() => setTypeOn((prev) => ({ ...prev, [t]: prev[t] === false }))}
-                  title={`点击切换显示「${t}」类文档；悬停查看该类全部文档`}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 5,
-                    fontSize: 11,
-                    color: on ? '#c8c8d2' : '#5a5a66',
-                    background: flyoutType === t ? 'rgba(255,255,255,0.07)' : 'transparent',
-                    border: 'none',
-                    cursor: 'pointer',
-                    padding: '2px 6px',
-                    borderRadius: 6,
-                    opacity: on ? 1 : 0.5,
-                  }}
-                >
-                  <span
-                    style={{
-                      width: 9,
-                      height: 9,
-                      borderRadius: '50%',
-                      background: TYPE_COLOR[t],
-                      display: 'inline-block',
-                      boxShadow: on ? `0 0 6px ${TYPE_COLOR[t]}` : 'none',
-                    }}
-                  />
-                  {TYPE_LABEL[t] ?? t}
-                  <span style={{ color: '#6a6a78' }}>{galaxy.stats.typeCounts[t] ?? 0}</span>
-                </button>
-                {flyoutType === t && (
-                  <TypeDocFlyout
-                    type={t}
-                    leaves={leavesByType.get(t) ?? []}
-                    labelMode={labelMode}
-                    contentTitles={contentTitles}
-                    onOpen={(id) => {
-                      setFlyoutType(null);
-                      setOpenEntryId(id);
-                    }}
-                    onKeepAlive={() => openFlyout(t)}
-                    onScheduleClose={scheduleCloseFlyout}
-                  />
-                )}
-              </span>
-            );
-          })}
+          {/* flex 撑开把右侧统计/搜索/开关推到最右（类型 chips + 面包屑已挪到画布左上角浮层，见下方） */}
+          <div style={{ flex: 1, minWidth: 12 }} />
           <div style={{ fontSize: 11, color: '#8a8a96', borderLeft: '1px solid rgba(255,255,255,0.1)', paddingLeft: 8 }}>
             共 {galaxy.stats.totalDocs} 篇 · {linksFailed ? '引用未知' : `${galaxy.links.length} 引用`}
             {galaxy.stats.orphanCount > 0 && (
@@ -2404,54 +2614,6 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
               部分加载失败 · 图谱不完整
             </div>
           )}
-
-          {/* 关系链面包屑（占据中段，flex 撑开把右侧推到最右）：点枢纽/文档时显示所在路径 */}
-          <div
-            style={{
-              flex: 1,
-              minWidth: 120,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 4,
-              overflow: 'hidden',
-            }}
-          >
-            {crumbs.length === 0 ? (
-              <span style={{ fontSize: 11.5, color: '#5a5c6a' }}>点枢纽或文档，这里显示所在关系链</span>
-            ) : (
-              crumbs.map((c, i) => {
-                const isLast = i === crumbs.length - 1;
-                const isLeaf = c.kind === 'leaf';
-                const clickable = isLeaf && !!c.entryId;
-                const iconColor = isLeaf ? colorForDocType(c.docType) : i === 0 ? '#ffe08a' : '#9fb4d4';
-                const Icon = isLeaf ? FileText : i === 0 ? Layers : Folder;
-                return (
-                  <span key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
-                    {i > 0 && <span style={{ color: '#4d4f5c', fontSize: 12 }}>/</span>}
-                    <span
-                      onClick={clickable ? () => setOpenEntryId(c.entryId!) : undefined}
-                      title={isLeaf && c.docType ? `${c.docType} · ${c.name}` : c.name}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 4,
-                        fontSize: 12,
-                        color: isLast ? '#eef0f6' : '#9a9cab',
-                        fontWeight: isLast ? 600 : 400,
-                        cursor: clickable ? 'pointer' : 'default',
-                        maxWidth: 220,
-                        minWidth: 0,
-                      }}
-                    >
-                      <Icon size={12} style={{ color: iconColor, flexShrink: 0 }} />
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
-                    </span>
-                  </span>
-                );
-              })
-            )}
-          </div>
 
           {/* 全局搜索：输入标题 → 命中下拉 → 点击飞到 + 打开 */}
           <div style={{ position: 'relative', flexShrink: 0 }}>
@@ -2509,36 +2671,64 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
                   {searchMatches.length === 0 ? '无匹配文档' : `${searchMatches.length}${searchMatches.length >= 40 ? '+' : ''} 个匹配 · 点击飞到并打开`}
                 </div>
                 <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: '6px 6px 8px' }}>
-                  {searchMatches.map((leaf) => (
-                    <button
-                      key={leaf.id}
-                      type="button"
-                      onClick={() => {
-                        if (leaf.entryId) setOpenEntryId(leaf.entryId);
-                        setSearch('');
-                      }}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        width: '100%',
-                        textAlign: 'left',
-                        background: 'transparent',
-                        border: 'none',
-                        borderRadius: 7,
-                        padding: '6px 8px',
-                        cursor: 'pointer',
-                        color: '#dcdde6',
-                      }}
-                      onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.07)')}
-                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                    >
-                      <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: colorForDocType(leaf.docType) }} />
-                      <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {leafDisplayName(leaf, labelMode, contentTitles)}
-                      </span>
-                    </button>
-                  ))}
+                  {searchMatches.map((leaf) => {
+                    const preview = searchHoverId === leaf.id ? cleanPreview(leaf.summary) : '';
+                    return (
+                      <button
+                        key={leaf.id}
+                        type="button"
+                        onClick={() => {
+                          if (leaf.entryId) setOpenEntryId(leaf.entryId);
+                          setSearch('');
+                        }}
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 0,
+                          width: '100%',
+                          textAlign: 'left',
+                          background: 'transparent',
+                          border: 'none',
+                          borderRadius: 7,
+                          padding: '6px 8px',
+                          cursor: 'pointer',
+                          color: '#dcdde6',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = 'rgba(255,255,255,0.07)';
+                          setSearchHoverId(leaf.id);
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = 'transparent';
+                          setSearchHoverId((id) => (id === leaf.id ? null : id));
+                        }}
+                      >
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
+                          <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: colorForDocType(leaf.docType) }} />
+                          <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {leafDisplayName(leaf, labelMode, contentTitles)}
+                          </span>
+                        </span>
+                        {/* 悬停展开：正文预览（2 行截断） */}
+                        {preview && (
+                          <span
+                            style={{
+                              display: '-webkit-box',
+                              WebkitLineClamp: 2,
+                              WebkitBoxOrient: 'vertical',
+                              overflow: 'hidden',
+                              fontSize: 11,
+                              color: '#8f93a3',
+                              marginTop: 2,
+                              paddingLeft: 16,
+                            }}
+                          >
+                            {preview}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -2582,6 +2772,230 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
           拖动旋转 · 两指滑动平移 · ⌘/Ctrl+滚轮缩放 · 悬停看详情/清单 · 点文档星阅读 · 点枢纽聚焦 · 双击空白继续旋转
         </div>
 
+        {/* 画布左上角浮层：关系链面包屑（浮动药丸）+ 类型 chips（透明，无底盒）。
+            wrapper 不拦截指针，交互子元素各自 pointerEvents:auto。 */}
+        {galaxy && (
+          <div
+            ref={crumbOverlayRef}
+            style={{
+              position: 'absolute',
+              top: 10,
+              left: 12,
+              zIndex: 15,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 8,
+              alignItems: 'flex-start',
+              pointerEvents: 'none',
+              maxWidth: 'min(70%, 640px)',
+            }}
+          >
+            {/* 关系链面包屑（浮动药丸，仅在有 crumbs 时出现；每段带 ▾ 跳同级兄弟下拉） */}
+            {crumbs.length > 0 && (
+              <div
+                style={{
+                  pointerEvents: 'auto',
+                  position: 'relative',
+                  display: 'flex',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  gap: 4,
+                  background: 'linear-gradient(90deg, rgba(12,13,20,0.85), rgba(12,13,20,0.4))',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  borderRadius: 8,
+                  padding: '5px 10px',
+                  backdropFilter: 'blur(6px)',
+                  WebkitBackdropFilter: 'blur(6px)',
+                  maxWidth: '100%',
+                }}
+              >
+                {crumbs.map((c, i) => {
+                  const isLast = i === crumbs.length - 1;
+                  const isLeaf = c.kind === 'leaf';
+                  const clickable = isLeaf && !!c.entryId;
+                  const iconColor = isLeaf ? colorForDocType(c.docType) : i === 0 ? '#ffe08a' : '#9fb4d4';
+                  const Icon = isLeaf ? FileText : i === 0 ? Layers : Folder;
+                  // 该段的同级兄弟：i===0 取 root.children；否则取 crumb[i-1] 节点的 children
+                  const parentNode = i === 0 ? galaxy.root : (nodeIndex.get(crumbs[i - 1].id)?.node ?? null);
+                  const siblings = parentNode ? parentNode.children : [];
+                  const hasDropdown = siblings.length > 0;
+                  const dropdownOpen = openCrumbIdx === i;
+                  return (
+                    <span key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, position: 'relative' }}>
+                      {i > 0 && <span style={{ color: '#4d4f5c', fontSize: 12 }}>/</span>}
+                      <span
+                        onClick={
+                          hasDropdown
+                            ? () => setOpenCrumbIdx((cur) => (cur === i ? -1 : i))
+                            : clickable
+                              ? () => setOpenEntryId(c.entryId!)
+                              : undefined
+                        }
+                        title={isLeaf && c.docType ? `${c.docType} · ${c.name}` : c.name}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 4,
+                          fontSize: 12,
+                          color: isLast ? '#eef0f6' : '#9a9cab',
+                          fontWeight: isLast ? 600 : 400,
+                          cursor: hasDropdown || clickable ? 'pointer' : 'default',
+                          maxWidth: 200,
+                          minWidth: 0,
+                        }}
+                      >
+                        <Icon size={12} style={{ color: iconColor, flexShrink: 0 }} />
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
+                        {hasDropdown && <ChevronDown size={11} style={{ opacity: 0.6, flexShrink: 0 }} />}
+                      </span>
+                      {/* 同级兄弟下拉：点分组 → 聚焦该枢纽；点文档 → 打开 */}
+                      {dropdownOpen && hasDropdown && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            top: 'calc(100% + 6px)',
+                            left: 0,
+                            width: 280,
+                            maxWidth: '80vw',
+                            maxHeight: '52vh',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            background: 'rgba(15,16,24,0.97)',
+                            backdropFilter: 'blur(16px) saturate(140%)',
+                            WebkitBackdropFilter: 'blur(16px) saturate(140%)',
+                            border: '1px solid rgba(255,255,255,0.14)',
+                            borderRadius: 10,
+                            boxShadow: '0 14px 38px rgba(0,0,0,0.6)',
+                            zIndex: 60,
+                            overflow: 'hidden',
+                          }}
+                        >
+                          <div style={{ flexShrink: 0, fontSize: 11, color: '#8a8c9a', padding: '8px 12px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                            同级（{siblings.length}） · 点击跳转
+                          </div>
+                          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: '6px 6px 8px' }}>
+                            {siblings.map((sib) => {
+                              const sibLeaf = sib.kind === 'leaf';
+                              const active = sib.id === c.id;
+                              return (
+                                <button
+                                  key={sib.id}
+                                  type="button"
+                                  onClick={() => {
+                                    if (sibLeaf) {
+                                      if (sib.entryId) setOpenEntryId(sib.entryId);
+                                    } else {
+                                      requestFocusHub(sib.id);
+                                    }
+                                    setOpenCrumbIdx(-1);
+                                  }}
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 8,
+                                    width: '100%',
+                                    textAlign: 'left',
+                                    background: active ? 'rgba(255,255,255,0.06)' : 'transparent',
+                                    border: 'none',
+                                    borderRadius: 7,
+                                    padding: '6px 8px',
+                                    cursor: 'pointer',
+                                    color: active ? '#f4f5fa' : '#dcdde6',
+                                  }}
+                                  onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.09)')}
+                                  onMouseLeave={(e) => (e.currentTarget.style.background = active ? 'rgba(255,255,255,0.06)' : 'transparent')}
+                                >
+                                  <span
+                                    style={{
+                                      width: 8,
+                                      height: 8,
+                                      borderRadius: '50%',
+                                      flexShrink: 0,
+                                      background: sibLeaf ? colorForDocType(sib.docType) : '#ffe08a',
+                                      boxShadow: sibLeaf ? `0 0 5px ${colorForDocType(sib.docType)}` : 'none',
+                                    }}
+                                  />
+                                  <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {sibLeaf ? leafDisplayName(sib, labelMode, contentTitles) : sib.name}
+                                  </span>
+                                  {!sibLeaf && <span style={{ flexShrink: 0, fontSize: 11, color: '#76788a' }}>{sib.docCount} 篇</span>}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* 类型 chips（透明浮层，无底盒）：点击切显隐、悬停飞出该类全部文档清单 */}
+            <div style={{ pointerEvents: 'auto', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {legendTypes.map((t) => {
+                const on = typeOn[t] !== false;
+                return (
+                  <span
+                    key={t}
+                    style={{ position: 'relative', display: 'inline-flex' }}
+                    onMouseEnter={() => openFlyout(t)}
+                    onMouseLeave={scheduleCloseFlyout}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setTypeOn((prev) => ({ ...prev, [t]: prev[t] === false }))}
+                      title={`点击切换显示「${t}」类文档；悬停查看该类全部文档`}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 5,
+                        fontSize: 11,
+                        color: on ? '#c8c8d2' : '#5a5a66',
+                        background: flyoutType === t ? 'rgba(255,255,255,0.1)' : 'rgba(8,9,14,0.42)',
+                        border: '1px solid rgba(255,255,255,0.06)',
+                        cursor: 'pointer',
+                        padding: '3px 8px',
+                        borderRadius: 999,
+                        opacity: on ? 1 : 0.5,
+                        backdropFilter: 'blur(4px)',
+                        WebkitBackdropFilter: 'blur(4px)',
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 9,
+                          height: 9,
+                          borderRadius: '50%',
+                          background: TYPE_COLOR[t],
+                          display: 'inline-block',
+                          boxShadow: on ? `0 0 6px ${TYPE_COLOR[t]}` : 'none',
+                        }}
+                      />
+                      {TYPE_LABEL[t] ?? t}
+                      <span style={{ color: '#6a6a78' }}>{galaxy.stats.typeCounts[t] ?? 0}</span>
+                    </button>
+                    {flyoutType === t && (
+                      <TypeDocFlyout
+                        type={t}
+                        leaves={leavesByType.get(t) ?? []}
+                        labelMode={labelMode}
+                        contentTitles={contentTitles}
+                        onOpen={(id) => {
+                          setFlyoutType(null);
+                          setOpenEntryId(id);
+                        }}
+                        onKeepAlive={() => openFlyout(t)}
+                        onScheduleClose={scheduleCloseFlyout}
+                      />
+                    )}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* 3D 画布（vanilla three.js 渲染内核；内部 try/catch + fatal state 替代 ErrorBoundary） */}
         {galaxy && !loading && !error && galaxy.stats.totalDocs > 0 && (
           <GalaxyCanvas
@@ -2592,6 +3006,7 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
             contentTitles={contentTitles}
             onFocusChange={setFocusedNode}
             flyToEntryId={openEntryId}
+            focusHubReq={focusHubReq}
           />
         )}
 
