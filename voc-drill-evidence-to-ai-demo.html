@@ -52,7 +52,20 @@
   @keyframes blink{0%,100%{opacity:.3}50%{opacity:1}}
   .xmax{margin-left:auto;width:26px;height:26px;border-radius:7px;border:0;background:rgba(255,255,255,.04);color:var(--t2);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center}
   .xmax:hover{background:rgba(167,139,250,.22);color:#d6cbff}
-  .xbody{height:430px;overflow:auto;padding:13px;resize:both}
+  .xbody{min-height:120px;overflow:auto;padding:13px;resize:both}
+  /* 诊断等待：推进式步骤清单 */
+  .diag{display:flex;flex-direction:column;align-items:center;gap:14px;padding:30px 12px}
+  .diag .orb2{width:34px;height:34px;border-radius:50%;position:relative;background:conic-gradient(from 0deg,var(--violet),#60a5fa,#2dd4bf,var(--violet));animation:spin 1.4s linear infinite}
+  .diag .orb2::after{content:"";position:absolute;inset:5px;border-radius:50%;background:var(--panel)}
+  .diag .lead{font-size:11.5px;color:var(--t3)}
+  .diag .steps2{display:flex;flex-direction:column;gap:9px;width:100%;max-width:260px}
+  .diag .st{display:flex;align-items:center;gap:10px;font-size:11.5px;color:var(--t4)}
+  .diag .st .mk{width:16px;height:16px;border-radius:50%;border:1px solid rgba(255,255,255,.12);display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+  .diag .st.done{color:rgba(236,236,239,.45)}
+  .diag .st.done .mk{border-color:rgba(52,211,153,.5);background:rgba(52,211,153,.16);color:#34d399}
+  .diag .st.cur{color:#c4b5fd}
+  .diag .st.cur .mk{border-color:rgba(167,139,250,.6);background:rgba(167,139,250,.18)}
+  .diag .st.cur .mk i{width:6px;height:6px;border-radius:50%;background:var(--violet);animation:blink 1.1s ease-in-out infinite}
   .xbody::-webkit-scrollbar{width:6px}.xbody::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:3px}
   .grip{position:absolute;right:3px;bottom:3px;width:14px;height:14px;pointer-events:none;
     background:linear-gradient(135deg,transparent 46%,var(--violet) 46%,var(--violet) 54%,transparent 54%,transparent 70%,var(--violet) 70%,var(--violet) 78%,transparent 78%);opacity:.75}
@@ -206,14 +219,25 @@ body: {"status":"parsed","draftText":"一幅…","planItem":{...}}</pre></div>
   const REPORT = $('#reportContent').outerHTML;
   // 大模型阅读中（流式态在根因分析页签内）
   let timer=null;
+  const DIAG_STEPS=['读取真实请求样本','解析慢请求耗时分布','比对错误码与参数线索','归纳根因结论'];
+  let stepTimer=null;
+  function renderDiag(step){
+    const rows=DIAG_STEPS.map((s,i)=>{
+      const cls=i<step?'done':i===step?'cur':'';
+      const mk=i<step?'✓':i===step?'<i></i>':'';
+      return `<div class="st ${cls}"><span class="mk">${mk}</span><span>${s}${i===step?'…':''}</span></div>`;
+    }).join('');
+    $('#reportBox').innerHTML=`<div class="diag"><span class="orb2"></span><div class="lead">大模型正在分析真实请求样本…</div><div class="steps2">${rows}</div></div>`;
+  }
   $('#btnStream').addEventListener('click',()=>{
-    clearTimeout(timer);
+    clearTimeout(timer); clearInterval(stepTimer);
     $('#tabLive').style.display='inline-flex'; $('#hdLive').style.display='inline-flex';
-    $('#reportBox').innerHTML='<div class="live-block"><span class="orb"></span><span class="tx">大模型正在阅读「真实请求样本」，稍后给出根因结论…<br>（此面板右上角可随时「放大」）</span></div>';
-    timer=setTimeout(()=>$('#btnDone').click(), 2600);
+    let step=0; renderDiag(step);
+    stepTimer=setInterval(()=>{ step=Math.min(step+1,DIAG_STEPS.length-1); renderDiag(step); },1100);
+    timer=setTimeout(()=>{ clearInterval(stepTimer); $('#btnDone').click(); }, 5200);
   });
   $('#btnDone').addEventListener('click',()=>{
-    clearTimeout(timer);
+    clearTimeout(timer); clearInterval(stepTimer);
     $('#tabLive').style.display='none'; $('#hdLive').style.display='none';
     $('#reportBox').innerHTML=REPORT;
   });

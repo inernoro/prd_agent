@@ -12,7 +12,7 @@
  * 数据源：GET /api/team-activity/endpoint-detail（明细）+ /api/team-activity/diagnose（SSE 诊断）。
  */
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { Bug, ChevronRight, ClipboardList, Maximize2, Minimize2, RotateCcw, Sparkles, X } from 'lucide-react';
+import { Bug, Check, ChevronRight, ClipboardList, Maximize2, Minimize2, RotateCcw, Sparkles, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
@@ -39,12 +39,9 @@ function fmtTime(iso?: string | null): string {
  */
 function ExpandablePanel({
   title,
-  initialHeight,
   children,
 }: {
   title: ReactNode;
-  /** 内联态初始高度（px） */
-  initialHeight: number;
   children: ReactNode;
 }) {
   const [max, setMax] = useState(false);
@@ -72,11 +69,12 @@ function ExpandablePanel({
         {head(false)}
         <div
           style={{
-            resize: 'both', // 右下角原生抓手：拖拽改大小
+            // 默认自适应内容高度：完整展示全部 AI 分析，不再固定高度内截断；
+            // 整页滚动交给抽屉 body。仍保留右下角原生抓手可手动拖大拖小。
+            resize: 'both',
             overflow: 'auto',
             overscrollBehavior: 'contain',
             maxWidth: '100%',
-            height: initialHeight,
             minHeight: 120,
           }}
         >
@@ -116,6 +114,62 @@ function ExpandablePanel({
           )
         : null}
     </>
+  );
+}
+
+/**
+ * 诊断等待动画：旋转球 + 推进式步骤清单。模型还没吐首字时占位，
+ * 让用户「有东西在动可看」（用户反馈：等待时没东西可看，加点小动画）。
+ * 步骤按时间推进（不依赖真实进度，纯节奏占位），推进到最后一步保持脉冲。
+ */
+const DIAG_STEPS = ['读取真实请求样本', '解析慢请求耗时分布', '比对错误码与参数线索', '归纳根因结论'];
+function DiagnosingAnimation() {
+  const [step, setStep] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setStep((v) => Math.min(v + 1, DIAG_STEPS.length - 1)), 1400);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <div className="flex flex-col items-center gap-4 py-8">
+      <span
+        className="relative"
+        style={{ width: 34, height: 34, borderRadius: '50%', background: `conic-gradient(from 0deg, ${VIOLET}, #60a5fa, #2dd4bf, ${VIOLET})`, animation: 'voc-orb-spin 1.4s linear infinite' }}
+      >
+        <span className="absolute" style={{ inset: 5, borderRadius: '50%', background: '#16171b' }} />
+      </span>
+      <div className="text-[11.5px] text-white/45">大模型正在分析真实请求样本…</div>
+      <div className="flex flex-col gap-2 w-full max-w-[260px]">
+        {DIAG_STEPS.map((s, i) => {
+          const done = i < step;
+          const active = i === step;
+          return (
+            <div key={i} className="flex items-center gap-2.5 text-[11.5px]">
+              <span
+                className="inline-flex items-center justify-center shrink-0 rounded-full"
+                style={{
+                  width: 16,
+                  height: 16,
+                  border: `1px solid ${done ? 'rgba(52,211,153,0.5)' : active ? 'rgba(167,139,250,0.6)' : 'rgba(255,255,255,0.12)'}`,
+                  background: done ? 'rgba(52,211,153,0.16)' : active ? 'rgba(167,139,250,0.18)' : 'transparent',
+                }}
+              >
+                {done ? (
+                  <Check size={10} style={{ color: '#34d399' }} />
+                ) : active ? (
+                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: VIOLET, animation: 'voc-blink 1.1s ease-in-out infinite' }} />
+                ) : (
+                  <span className="w-1 h-1 rounded-full" style={{ background: 'rgba(255,255,255,0.25)' }} />
+                )}
+              </span>
+              <span style={{ color: done ? 'rgba(236,236,239,0.45)' : active ? '#c4b5fd' : 'rgba(236,236,239,0.3)' }}>
+                {s}
+                {active ? '…' : ''}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -253,7 +307,6 @@ export function ExperienceDrill({
         结论由 AI 阅读「真实请求样本」分析得出
       </div>
       <ExpandablePanel
-        initialHeight={460}
         title={
           <span className="flex items-center gap-2">
             AI 根因诊断
@@ -274,16 +327,8 @@ export function ExperienceDrill({
               <StreamingText text={diag.typing} streaming mode="blur" />
             </div>
           ) : (
-            // 还没有首字：旋转球 + 提示，证据已在「真实请求样本」页签可看
-            <div className="flex flex-col items-center justify-center gap-3 py-10 text-center">
-              <span
-                className="relative"
-                style={{ width: 30, height: 30, borderRadius: '50%', background: `conic-gradient(from 0deg, ${VIOLET}, #60a5fa, #2dd4bf, ${VIOLET})`, animation: 'voc-orb-spin 1.4s linear infinite' }}
-              >
-                <span className="absolute" style={{ inset: 5, borderRadius: '50%', background: '#16171b' }} />
-              </span>
-              <span className="text-[11.5px] text-white/45">大模型正在阅读真实请求样本，稍后给出根因结论…</span>
-            </div>
+            // 还没有首字：旋转球 + 推进式步骤清单，给用户「有东西在动」可看
+            <DiagnosingAnimation />
           )
         ) : diag.typing ? (
           <MarkdownContent content={diag.typing} variant="reading" />
