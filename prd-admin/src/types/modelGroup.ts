@@ -136,52 +136,6 @@ export interface ModelGroupMonitoringData {
 }
 
 /**
- * 调度预测 - 端点预测步骤
- */
-export interface PredictionStep {
-  order: number;
-  endpointId: string;
-  modelId: string;
-  action: 'request' | 'parallel' | 'fallback' | 'rotate' | 'weighted' | 'standby';
-  label: string;
-  isTarget: boolean;
-  weight?: number;
-  probability?: number;
-}
-
-/**
- * 调度预测 - 端点信息
- */
-export interface PredictionEndpoint {
-  endpointId: string;
-  modelId: string;
-  platformId: string;
-  platformName: string;
-  priority: number;
-  healthStatus: string;
-  isAvailable: boolean;
-  healthScore: number;
-  consecutiveFailures: number;
-  index: number;
-}
-
-/**
- * 调度预测结果
- */
-export interface PoolPrediction {
-  poolId: string;
-  poolName: string;
-  strategy: string;
-  strategyDescription: string;
-  allEndpoints: PredictionEndpoint[];
-  prediction: {
-    type: string;
-    description: string;
-    steps: PredictionStep[];
-  };
-}
-
-/**
  * 模型类型常量
  */
 export const ModelTypes = {

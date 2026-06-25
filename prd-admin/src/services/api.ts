@@ -96,7 +96,6 @@ export const api = {
       forApp: () => '/api/mds/model-groups/for-app',
       usage: (id: string) => `/api/mds/model-groups/${id}/usage`,
       unbind: (id: string) => `/api/mds/model-groups/${id}/unbind`,
-      predict: (id: string) => `/api/mds/model-groups/${id}/predict`,
       resetModelHealth: (groupId: string, modelId: string) =>
         `/api/mds/model-groups/${groupId}/reset-model-health?modelId=${encodeURIComponent(modelId)}`,
       resetAllHealth: (groupId: string) =>

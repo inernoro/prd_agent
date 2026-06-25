@@ -78,6 +78,7 @@ public class ModelPoolIntegrationTests
 
     /// <summary>
     /// 测试完整的模型池调度+测试流程（使用 Mock 端点）
+    /// 调度已化简为只有 FailFast：选最优端点，失败直接返回（不顺延）。
     /// </summary>
     [Fact]
     public async Task FullPoolLifecycle_WithMockEndpoints()
@@ -94,14 +95,14 @@ public class ModelPoolIntegrationTests
             .WithEndpoint("plat-2:model-b", new EndpointBehavior { LatencyMs = 100, ResponseBody = "{\"ok\":2}" });
 
         var pool = ModelPoolDispatcher.Create("pool-1", "Lifecycle Test Pool",
-            endpoints, PoolStrategyType.Sequential, dispatcher);
+            endpoints, PoolStrategyType.FailFast, dispatcher);
 
         // 2. 验证初始配置
         var config = pool.GetConfig();
-        Assert.Equal(PoolStrategyType.Sequential, config.Strategy);
+        Assert.Equal(PoolStrategyType.FailFast, config.Strategy);
         Assert.Equal(2, config.Endpoints.Count);
 
-        // 3. 调度请求
+        // 3. 调度请求 —— 命中优先级最高的端点
         var response = await pool.DispatchAsync(TestDataHelper.CreateRequest());
         Assert.True(response.Success);
         Assert.Equal("model-a", response.DispatchedEndpoint!.ModelId);
@@ -115,18 +116,18 @@ public class ModelPoolIntegrationTests
         Assert.Equal(2, testResults.Count);
         Assert.All(testResults, r => Assert.True(r.Success));
 
-        // 6. 模拟端点降级
+        // 6. 首选端点失败 —— FailFast 不顺延，直接返回失败
         var failDispatcher = new MockPoolHttpDispatcher()
             .WithEndpoint("plat-1:model-a", new EndpointBehavior { ShouldFail = true })
             .WithEndpoint("plat-2:model-b", new EndpointBehavior { ResponseBody = "{}" });
 
-        var pool2 = ModelPoolDispatcher.Create("pool-1", "Failover Pool",
-            endpoints, PoolStrategyType.Sequential, failDispatcher);
+        var pool2 = ModelPoolDispatcher.Create("pool-1", "FailFast Pool",
+            endpoints, PoolStrategyType.FailFast, failDispatcher);
 
         var response2 = await pool2.DispatchAsync(TestDataHelper.CreateRequest());
-        Assert.True(response2.Success);
-        Assert.Equal("model-b", response2.DispatchedEndpoint!.ModelId);
-        Assert.Equal(2, response2.EndpointsAttempted);
+        Assert.False(response2.Success);
+        Assert.Equal("model-a", response2.DispatchedEndpoint!.ModelId);
+        Assert.Equal(1, response2.EndpointsAttempted);
 
         // 7. 重置健康
         pool2.ResetAllHealth();
@@ -135,16 +136,13 @@ public class ModelPoolIntegrationTests
     }
 
     /// <summary>
-    /// 测试所有策略类型都能正常工作
+    /// 池一律按 FailFast 调度（非 FailFast 策略引擎已删除，枚举仅作数据兼容保留）。
     /// </summary>
     [Theory]
     [InlineData(PoolStrategyType.FailFast)]
-    [InlineData(PoolStrategyType.Race)]
     [InlineData(PoolStrategyType.Sequential)]
     [InlineData(PoolStrategyType.RoundRobin)]
-    [InlineData(PoolStrategyType.WeightedRandom)]
-    [InlineData(PoolStrategyType.LeastLatency)]
-    public async Task AllStrategies_WithMockEndpoints_ShouldSucceed(PoolStrategyType strategyType)
+    public async Task AnyStrategyType_WithMockEndpoints_DispatchesAsFailFast(PoolStrategyType strategyType)
     {
         var endpoints = new List<PoolEndpoint>
         {
@@ -161,12 +159,12 @@ public class ModelPoolIntegrationTests
         var result = await pool.DispatchAsync(TestDataHelper.CreateRequest());
 
         Assert.True(result.Success);
-        Assert.Equal(strategyType, result.StrategyUsed);
+        Assert.Equal(PoolStrategyType.FailFast, result.StrategyUsed);
         Assert.NotNull(result.DispatchedEndpoint);
     }
 
     /// <summary>
-    /// 测试池的并发安全性
+    /// 测试池的并发安全性（FailFast 下并发请求始终命中优先级最高的端点）。
     /// </summary>
     [Fact]
     public async Task ConcurrentDispatches_ShouldBeSafe()
@@ -176,7 +174,7 @@ public class ModelPoolIntegrationTests
         var dispatcher = new MockPoolHttpDispatcher().WithDefaultSuccess(10);
 
         var pool = ModelPoolDispatcher.Create("pool-1", "Concurrent Test Pool",
-            endpoints, PoolStrategyType.RoundRobin, dispatcher);
+            endpoints, PoolStrategyType.FailFast, dispatcher);
 
         var tasks = Enumerable.Range(0, 100)
             .Select(_ => pool.DispatchAsync(TestDataHelper.CreateRequest()));
@@ -186,17 +184,12 @@ public class ModelPoolIntegrationTests
         Assert.All(results, r => Assert.True(r.Success));
         Assert.Equal(100, results.Length);
 
-        // 验证轮询分布
-        var modelCounts = results
-            .GroupBy(r => r.DispatchedEndpoint!.ModelId)
-            .ToDictionary(g => g.Key, g => g.Count());
-
-        // 每个模型应该大致分到 33 次
-        Assert.True(modelCounts.Values.All(c => c > 20));
+        // FailFast：所有请求都命中优先级最高的 model-a
+        Assert.All(results, r => Assert.Equal("model-a", r.DispatchedEndpoint!.ModelId));
     }
 
     /// <summary>
-    /// 测试 StrategyType 从 ModelGroup 的转换
+    /// 测试 StrategyType int 转换正确（枚举成员保留，数据兼容）。
     /// </summary>
     [Theory]
     [InlineData(0, PoolStrategyType.FailFast)]

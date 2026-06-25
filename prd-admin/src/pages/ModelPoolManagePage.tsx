@@ -1,6 +1,5 @@
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
-import { GlassSwitch } from '@/components/design/GlassSwitch';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { Dialog } from '@/components/ui/Dialog';
 import { Tooltip } from '@/components/ui/Tooltip';
@@ -43,23 +42,15 @@ import { toast } from '@/lib/toast';
 import { getModelTypeDisplayName, getModelTypeIcon, MODEL_TYPE_DEFINITIONS } from '@/lib/appCallerUtils';
 import { ModelTypePicker, ModelTypeFilterBar } from '@/components/model/ModelTypePicker';
 
-/* ── 4 种可预测的调度策略（icon 选择器） ── */
+/* ── 策略图标元数据（仅用于池图标与调度预览的展示元信息）。
+   调度策略已化简为只有 FailFast：策略选择器已移除，池一律按 FailFast 调度。
+   这里保留多条仅为 InlineDispatchPreview 的 meta 查找与历史数据兜底展示。 ── */
 const STRATEGY_OPTIONS = [
   { value: PoolStrategyType.FailFast, label: '快速', desc: '选最优，失败即止', icon: Zap, color: 'rgba(251,146,60,0.95)' },
   { value: PoolStrategyType.Race, label: '竞速', desc: '并行发送，取最快', icon: GitBranch, color: 'rgba(168,85,247,0.95)' },
   { value: PoolStrategyType.Sequential, label: '顺序容灾', desc: '逐个尝试，失败切换', icon: ArrowRight, color: 'rgba(56,189,248,0.95)' },
   { value: PoolStrategyType.RoundRobin, label: '轮询', desc: '均匀分配', icon: RotateCw, color: 'rgba(34,197,94,0.95)' },
 ];
-
-/* 卡片列表中显示策略标签时也需要文案映射 */
-const STRATEGY_LABEL_MAP: Record<number, string> = {
-  [PoolStrategyType.FailFast]: '快速',
-  [PoolStrategyType.Race]: '竞速',
-  [PoolStrategyType.Sequential]: '顺序容灾',
-  [PoolStrategyType.RoundRobin]: '轮询',
-  [PoolStrategyType.WeightedRandom]: '加权随机',
-  [PoolStrategyType.LeastLatency]: '最低延迟',
-};
 
 // MODEL_TYPES 已迁移到 appCallerUtils.ts 的 MODEL_TYPE_DEFINITIONS
 
@@ -638,8 +629,6 @@ export function ModelPoolManagePage() {
           const healthyCnt = selectedPool.models?.filter(m => m.healthStatus === 'Healthy').length ?? 0;
           const degradedCnt = selectedPool.models?.filter(m => m.healthStatus === 'Degraded').length ?? 0;
           const unavailableCnt = selectedPool.models?.filter(m => m.healthStatus === 'Unavailable').length ?? 0;
-          const strategyOpt = STRATEGY_OPTIONS.find(s => s.value === selectedPool.strategyType) || STRATEGY_OPTIONS[0];
-          const StrategyIcon = strategyOpt.icon;
           const TypeIcon = getModelTypeIcon(selectedPool.modelType || 'chat');
 
           return (
@@ -686,10 +675,6 @@ export function ModelPoolManagePage() {
                 <span className="inline-flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
                   <TypeIcon size={12} />
                   {getModelTypeDisplayName(selectedPool.modelType || 'chat')}
-                </span>
-                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded" style={{ background: `${strategyOpt.color}12`, color: strategyOpt.color }}>
-                  <StrategyIcon size={10} />
-                  {STRATEGY_LABEL_MAP[selectedPool.strategyType ?? 0] || '快速'}
                 </span>
                 {selectedPool.code && (
                   <span className="font-mono" style={{ color: 'var(--text-muted)' }}>{selectedPool.code}</span>
@@ -893,22 +878,9 @@ export function ModelPoolManagePage() {
                   />
                 </div>
 
-                {/* 策略 icon 选择器 (GlassSwitch) */}
-                <div className="flex-1 min-w-0">
-                  <label className="block text-[12px] font-semibold mb-1.5" style={{ color: 'var(--text-secondary)' }}>
-                    调度策略
-                  </label>
-                  <GlassSwitch
-                    size="md"
-                    value={String(poolForm.strategyType ?? 0)}
-                    onChange={(key) => setPoolForm({ ...poolForm, strategyType: parseInt(key) as PoolStrategyType })}
-                    options={STRATEGY_OPTIONS.map((opt) => ({
-                      key: String(opt.value),
-                      label: opt.label,
-                      icon: <opt.icon size={13} />,
-                    }))}
-                  />
-                </div>
+                {/* 调度策略选择器已移除：池调度已化简为只有 FailFast（选最优端点，失败即返回）。
+                    strategyType 仍以 FailFast(0) 提交，仅作数据兼容。 */}
+                <div className="flex-1 min-w-0" />
 
                 <div className="shrink-0 flex items-center gap-2 h-9 pb-px">
                   <input

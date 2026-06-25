@@ -6,7 +6,6 @@ import type {
   UpdateModelGroupRequest,
   ModelGroupMonitoringData,
   ModelGroupUsageApp,
-  PoolPrediction,
 } from '../../types/modelGroup';
 
 export interface IModelGroupsService {
@@ -79,11 +78,6 @@ export interface IModelGroupsService {
     platformId: string,
     successCount: number
   ): Promise<ApiResponse<void>>;
-
-  /**
-   * 预测下一次请求的调度路径
-   */
-  predictNextDispatch(groupId: string): Promise<ApiResponse<PoolPrediction>>;
 
   /**
    * 重置单个模型的健康状态为 Healthy

@@ -3,3 +3,5 @@
 | test | prd-api | 新增注册表黄金快照护栏（反射 153 个 appCallerCode + ModelTypes，新增/改名即红）+ 解析黄金集成测试（Category=Integration，比对 153 code 解析底片） |
 | fix | prd-api | 止血：deepseek-v4-flash chat 默认池陈旧 Unavailable 健康标记已重置为 Healthy，53 个 chat code 停止静默 fallback |
 | refactor | prd-admin | 模型池管理类型筛选 chip 改为"配置才出现"：ModelTypeFilterBar 新增可空 availableTypes，只渲染已有池的 modelType，不再预铺 14 个空类目（OpenRouter 心智，向后兼容） |
+| refactor | prd-api | P3 删死策略引擎：移除 5 个非 FailFast 策略类(Race/RoundRobin/WeightedRandom/Sequential/LeastLatency)+ 调度预测端点/工具，池调度化简为只有 FailFast；保留 PoolStrategyType 枚举+StrategyType 字段(数据兼容,无 DB 迁移)；serving 路径零影响 |
+| refactor | prd-admin | P3 删调度预测 UI：移除 PoolPredictionDialog + predictNextDispatch service + 池编辑表单策略选择器，对齐"只有 FailFast" |
