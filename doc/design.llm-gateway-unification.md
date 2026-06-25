@@ -205,17 +205,21 @@ ImageResponse { images[](URL), usage }
 | legacy 标记仍被消费 | `IsMain/IsIntent/IsVision/IsImageGen` 散落 ~15 文件（含 `ModelResolver` 第 3 层、多个 Controller、`ModelDomainService`） |
 | sync 只增不删 | `AppCallerRegistrySyncService` 无删除/软删分支 |
 
-### 9.2 需运行期数据确认（见取证脚本）
+### 9.2 运行期取证结果（main 实测 2026-06-25）
 
-删除任何东西前，必须用真实库数据回答：
+通过 `AI_ACCESS_KEY` 直查 live `main` 的 API（预览分支共享真实 Mongo），结果：
 
-- `model_groups.StrategyType` 的分布——若全是 0（FailFast），删策略引擎零影响。
-- 有多少 `llm_app_callers` 真的配了非空 `ModelGroupIds`（决定 code 降级的影响面）。
-- 多少 `llm_app_callers` 已不在 registry（orphan，决定软删清理量）。
-- 图片各协议（Exchange/Google/OpenRouter/OpenAI）的真实请求占比（决定收敛优先级）。
-- 有多少模型实际依赖 Exchange（决定退役节奏）。
+| 取证项 | 实测 | 结论 |
+|---|---|---|
+| `model_groups.StrategyType` 分布 | 17 个池，**100% = 0(FailFast)** | 策略引擎确认死代码，P3 可删，零影响 |
+| legacy 标记启用数 | IsMain/IsIntent/IsVision/IsImageGen **各 1 个，共 4 个模型** | 迁进默认池成本几乎为零 |
+| Exchange 配置数 | **0 个**；池内 `__exchange__` 引用 **0 处** | Exchange 退役近乎零风险（其他分支可能不同，迁移时仍需双格式兼容兜底） |
+| 有专属绑定的 caller | 50 个 caller 中 **26 个有绑定，全是 chat**；24 个已纯默认 | code 降级只动 26 个同构 chat 绑定 |
+| 平台集中度 | 池内 19 item，platform1(openrouter) 占 10；模型 8/12 在 openrouter | 系统已 OpenRouter 为主，"OR 做默认"顺水推舟 |
 
-脚本输出即本节后续版本的填充依据。
+**保留点**：`/api/open-platform/app-callers` 返回 50 条，而注册表有 156 条——该端点可能是过滤子集，或 main 落后于若干特性分支。caller 的 26/50 比例方向可信但绝对数待 P1 注册表黄金快照（反射枚举全部 156 条）对齐。池/模型/策略数据高置信无歧义。
+
+> 取证手段：`scripts/llm-gateway-phase0-forensics.mongo.js` 是 DBA 直连 Mongo 版；本次走 API 等价路径（`GET /api/mds/model-groups|models|main-model|...`、`/api/open-platform/app-callers`、`/api/mds/exchanges`），二者结论应一致。
 
 ---
 
