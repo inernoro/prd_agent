@@ -7,3 +7,4 @@
 | refactor | prd-admin | P3 删调度预测 UI：移除 PoolPredictionDialog + predictNextDispatch service + 池编辑表单策略选择器，对齐"只有 FailFast" |
 | feat | prd-api | 新增只读端点 GET /api/mds/model-groups/health-overview：聚合各池健康(healthy/degraded/unavailable)+ 近 N 天按 modelType 的 fallback 率 + 死池/高fallback 一级告警，全只读不碰 serving/DB |
 | feat | prd-admin | 模型池管理页顶部新增"健康总览"告警卡(PoolHealthOverview)：死池/高fallback 红色一级告警可点击定位 + 近7天 fallback 率迷你列表，把静默降级一眼暴露 |
+| feat | prd-api | P3 删 legacy 前置(生产配置,行为保持):chat 默认池补 deepseek-v4-pro 池内兜底(取代 step7 legacy 容灾)、解绑 ccas 死 auto 专属池使其落到 generation 默认池;实测全 153 code 零 actualModel 变化、零 code 仍走 Legacy |

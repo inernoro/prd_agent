@@ -173,13 +173,13 @@
     "apiUrl": "https://main.miduo.org/api/v1/stub",
     "code": "ccas-agent.equipment::generation",
     "healthStatus": "Healthy",
-    "isFallback": true,
-    "modelGroupId": null,
+    "isFallback": false,
+    "modelGroupId": "bea057ffbb91461dba52f86194548942",
     "ok": true,
     "platformType": "openai",
-    "protocol": null,
-    "resolutionReason": null,
-    "resolutionType": "Legacy"
+    "protocol": "openai",
+    "resolutionReason": "protocol-from-platform-type",
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "deepseek/deepseek-v4-flash",
