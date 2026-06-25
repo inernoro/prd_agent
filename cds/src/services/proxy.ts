@@ -1798,21 +1798,25 @@ ${shouldAutoRefresh ? `;(function(){
   // 让数字始终在动；未 ready 前封顶 99.99%（守住"ready 前不显示 100%"）。
   var pct={display:0,server:0,ready:false};
   (function(){var el=document.querySelector('[data-role="progress-percent"]');var v=el?parseFloat(el.textContent):0;pct.display=pct.server=(isNaN(v)?0:v);})();
-  function computeTimeTargetPct(){
-    if(timingState&&timingState.medianMs){
-      var el=timingState.baseElapsedMs+(Date.now()-timingState.syncedAt);
-      if(el<0)el=0;
-      return Math.min(99.99, el/timingState.medianMs*100);
-    }
-    return null;
-  }
+  // 进度百分比：时间连续驱动，小数位一直在跳。
+  // 有历史耗时(median)时：以服务端日志/状态估算 server 作锚点(下限)，随 ETA 推进(frac=已用/中位)
+  // 平滑爬向 99.99——所以即使 server 卡在某个整数，百分比的小数位仍随秒推进而连续变化，用户看得见在动。
+  // 旧实现 target=max(server,timePct) 会被 server 整数封住、小数冻在 .00（用户实测反馈）。
   function tickPct(){
-    var timeP=computeTimeTargetPct();
-    var target=Math.max(pct.server, (timeP==null?pct.server:timeP), pct.display); // 单调
-    if(!pct.ready)target=Math.min(99.99,target);
-    if(pct.display<target){
-      pct.display=Math.min(target, pct.display+Math.max(0.02,(target-pct.display)*0.12));
+    var target;
+    if(timingState&&timingState.medianMs){
+      var elapsed=timingState.baseElapsedMs+(Date.now()-timingState.syncedAt);
+      if(elapsed<0)elapsed=0;
+      var frac=elapsed/timingState.medianMs; if(frac>1)frac=1; // 0..1，按 ETA 推进
+      var base=Math.min(pct.server,99.99);                      // 服务端估算作下限锚点
+      // 随时间从 base 连续爬向 99.99；若纯时间比例已超过 base(构建比平时久)则用时间比例继续推。
+      target=Math.max(base+(99.99-base)*frac, frac*100);
+    }else{
+      target=pct.server;                                        // 无历史样本：只展示状态估算，不编造时间
     }
+    if(!pct.ready)target=Math.min(99.99,target);
+    if(target<pct.display)target=pct.display;                   // 单调不回退
+    pct.display=target;
     var percentEl=document.querySelector('[data-role="progress-percent"]');
     var bar=document.querySelector('[data-role="progress-bar"]');
     var shown=pct.display.toFixed(2);
