@@ -162,26 +162,28 @@ export function buildStaticInfra(p: LauncherPerms): ToolboxItem[] {
       tags: ['更新', '周报', 'changelog', 'release'],
       routePath: '/changelog',
     } as ToolboxItem,
-    {
+  ];
+
+  // VOC（行为洞察）—— 用户要求：VOC 很重要，放首页并置顶替换掉「智识殿堂」。
+  // 故 canReadTeamActivity 者：VOC 置于基础设施首位，且不再展示智识殿堂（替换）；
+  // 无该权限者（看不到 VOC）：保留智识殿堂，避免首页该位空缺。
+  if (p.canReadTeamActivity) {
+    items.unshift({
+      id: '__team-activity__',
+      name: 'VOC',
+      description: '行为洞察 + 端点体验下钻与 AI 根因诊断（用户原声闭环）',
+      icon: 'Radar',
+      tags: ['VOC', '行为洞察', '动态', '活动', 'voice of customer'],
+      routePath: '/team-activity',
+    } as ToolboxItem);
+  } else {
+    items.push({
       id: '__library__',
       name: '智识殿堂',
       description: '公开知识精选，沉淀团队的最佳实践与教程',
       icon: 'GraduationCap',
       tags: ['知识', '殿堂', 'library', '教程', '精选'],
       routePath: '/library',
-    } as ToolboxItem,
-  ];
-
-  // VOC（行为洞察）—— 平台级能力，桌面靠侧边栏可达，但移动端首页此前无任何入口，
-  // 导致手机上完全找不到。挂到首页 SSOT 后桌面/移动/个人中心三处同步出现。
-  if (p.canReadTeamActivity) {
-    items.push({
-      id: '__team-activity__',
-      name: 'VOC',
-      description: '行为洞察 + 全员工作动态时间线，端点体验下钻与 AI 根因诊断',
-      icon: 'Radar',
-      tags: ['VOC', '行为洞察', '动态', '活动', 'voice of customer'],
-      routePath: '/team-activity',
     } as ToolboxItem);
   }
   if (p.canManageOpenPlatform) {

@@ -7,7 +7,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Activity, Eye, EyeOff, Radar } from 'lucide-react';
-import { PageHeader, GlassCard, Button } from '@/components/design';
+import { GlassCard, Button } from '@/components/design';
+import { SegmentedTabs } from '@/components/design/SegmentedTabs';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { RelativeTime } from '@/components/ui/RelativeTime';
@@ -195,17 +196,23 @@ export default function TeamActivityPage() {
   return (
     // 控制台三栏：左成员统计 / 中时间线 / 右分类统计。限一个上限宽避免巨幕下三栏间距失衡
     <div className="flex flex-col gap-4 h-full min-h-0 w-full mx-auto" style={{ maxWidth: 1840 }}>
-      {/* 页头：视图切换走 tabs（行为洞察/VOC 在前 / 动态流），时间范围 chips 走 actions 槽显眼可见 */}
-      <PageHeader
-        title="VOC"
-        tabs={[
-          { key: 'insights', label: '行为洞察', icon: <Radar size={13} /> },
-          { key: 'feed', label: '动态流', icon: <Activity size={13} /> },
-        ]}
-        activeTab={view}
-        onTabChange={(key) => switchView(key === 'insights' ? 'insights' : 'feed')}
-        actions={<TimeRangePicker value={timeRange} onChange={setTimeRange} />}
-      />
+      {/* 页头：视图切换走全项目统一的 SegmentedTabs（与「应用模型池管理」同款 pill + hover），
+          时间范围筛选保留 TimeRangePicker（含悬浮密度预览/自定义刷选，比纯分段更强）放右侧。 */}
+      <div className="flex items-center justify-between gap-3 flex-wrap shrink-0 px-0.5">
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="text-[16px] font-semibold text-white/90 shrink-0">VOC</span>
+          <SegmentedTabs
+            ariaLabel="VOC 视图切换"
+            value={view}
+            onChange={(key) => switchView(key === 'insights' ? 'insights' : 'feed')}
+            items={[
+              { key: 'insights', label: '行为洞察', icon: <Radar size={14} /> },
+              { key: 'feed', label: '动态流', icon: <Activity size={14} /> },
+            ]}
+          />
+        </div>
+        <TimeRangePicker value={timeRange} onChange={setTimeRange} />
+      </div>
 
       {/* 下方筛选栏：仅动态流视图保留（成员 / 模块 / 隐私脱敏）。行为洞察视图时间已上移页头，无需此栏。 */}
       {view === 'feed' ? (

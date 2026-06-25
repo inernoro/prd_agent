@@ -9,3 +9,6 @@
 | fix | prd-admin | VOC 下钻根因报告改自适应全高展示，不再固定 460px 内截断（整页滚动交给抽屉） |
 | feat | prd-admin | VOC 行为洞察仪表盘趋势爆点/声道看板新增全屏按钮（与热力图一致） |
 | refactor | prd-admin | VOC 行为洞察移除「体验痛点指数」仪表盘（作用不大），右下整宽保留声道看板，删除 ExperienceStats |
+| feat | prd-admin | VOC 视图切换改用全项目统一 SegmentedTabs（与「应用模型池管理」同款 pill），SegmentedTabs 支持 icon + 新增 hover 反馈 |
+| feat | prd-admin | VOC 置顶进首页基础设施区，对有 team-activity.read 的用户替换掉智识殿堂（无权限者仍保留智识殿堂） |
+| polish | prd-admin | VOC 热力图小格标题按宽度自适应铺满（窄块小字号+截断省略），不再因放不下而整块无标题 |
