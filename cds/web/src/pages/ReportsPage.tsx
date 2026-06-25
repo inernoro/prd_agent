@@ -255,7 +255,7 @@ export function ReportsPage(): JSX.Element {
         />
       )}
     >
-      <Workspace wide className="cds-workspace--fill">
+      <Workspace wide className="cds-workspace--fill cds-workspace--fluid">
         <div className="flex h-full min-h-0 flex-col gap-5">
           <section className="cds-surface-raised cds-hairline p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
