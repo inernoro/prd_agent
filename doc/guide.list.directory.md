@@ -151,6 +151,8 @@
 - [总裁面板与周报 Agent 设计文档](design.executive-dashboard) `design.executive-dashboard`
   > 高管视角的数据面板与周报 Agent 的设计
 
+- [产品管理系统（新仓库迁移版）规格](spec.product-management-system) `spec.product-management-system`
+  > 迁移到新仓库、去 AI、缺陷升一等对象、参考 TAPD 重设计：信息架构 + 核心功能 + 字段级数据建模
 - [产品管理 Agent 设计](design.product-agent) `design.product-agent`
   > 产品-版本-需求-功能-缺陷-客户全链路串联、版本化管理、分级追溯与知识图谱（参考 TAPD / RTM）
 - [产品管理 Agent 债务台账](debt.product-agent) `debt.product-agent`
