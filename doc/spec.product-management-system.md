@@ -24,6 +24,15 @@ updated: 2026-06-25
 | 3 | 缺陷定位 | **升级为一等对象**：完整字段 + 独立工作流，参考 TAPD 缺陷（不再只做追溯引用） |
 | 4 | 文档粒度 | **含数据建模**：字段名 / 类型 / 必填 / 默认 / 枚举 / 来源 / 索引建议 |
 
+2026-06-25 补充的平台与商用对齐结论：
+
+| # | 决策点 | 结论 |
+|---|--------|------|
+| 5 | SaaS 多租户 | **共享库 + TenantId 行级隔离**：所有集合加 `TenantId`，应用层强制按租户过滤（见第十七章） |
+| 6 | 组织/人员权威源 | **后台管理系统为本系统直接权威源**；其数据血缘为「企业微信通讯录 → 后台管理系统 → 本系统」（见第十六章） |
+| 7 | 账号标识 | **手机号作为唯一账号标识**；登录走「手机号 + 密码（无短信验证码）」+ 企业微信免登；**SSO 后续做（预留接口）**（见第十五章） |
+| 8 | 企业微信对接 | **登录（扫码/免登）+ 消息通知 + 手机号↔企业微信账号映射**；组织架构不重复从企业微信拉（已由后台管理系统聚合，见第十八章） |
+
 迁移前后的关键变化一览：
 
 | 维度 | 现状（旧仓库 product-agent） | 目标（新仓库） |
@@ -33,6 +42,10 @@ updated: 2026-06-25
 | 知识库 | 复用平台 DocumentStore | 以挂载关系引用「文档/知识库模块」（新仓库自建或接入，见第八章） |
 | 表单 / 流程引擎 | 元数据驱动，已落地 | 原样保留（核心资产） |
 | UI / 技术栈 | React + .NET + MongoDB | 新技术规范 + 新 UI（实现阶段决定） |
+| 账号体系 | 平台统一用户 | 手机号唯一标识 + 手机号密码登录（无短信）+ 企业微信免登，SSO 预留 |
+| 组织架构 | 平台用户/团队 | 从后台管理系统同步部门 + 人员（源头企业微信通讯录） |
+| 多租户 | 单实例 | 共享库 + TenantId 行级隔离，SaaS 商用 |
+| 企业微信 | 无 | 登录 + 消息通知 + 账号映射 |
 
 ---
 
@@ -104,7 +117,7 @@ updated: 2026-06-25
 
 ## 四、核心对象与字段建模
 
-> 所有对象统一含审计字段：`Id`（主键，32 位无连字符 UUID）、`CreatedAt` / `UpdatedAt`（datetime，默认当前时间）、`IsDeleted`（bool，默认 false 软删）。下表为节省篇幅，对每个对象只在首次出现处展开这些通用字段，其余对象省略不重复列。
+> 所有对象统一含审计字段：`Id`（主键，32 位无连字符 UUID）、`TenantId`（string，所属租户，SaaS 行级隔离，见第十七章）、`CreatedAt` / `UpdatedAt`（datetime，默认当前时间）、`IsDeleted`（bool，默认 false 软删）。下表为节省篇幅，对每个对象只在首次出现处展开这些通用字段（`TenantId` 在所有业务集合恒存，下表不再逐一重复列出），其余对象省略不重复列。
 
 ### 4.1 产品 Product（集合 `products`）
 
@@ -737,16 +750,18 @@ CSV/RTF 导入额外支持中文「已实现/已完成」→ resolved。
 
 ---
 
-## 八、知识库挂载（待新仓库决策）
+## 八、知识库挂载（方案 A：自建轻量文档模块）
 
-现状复用平台 `DocumentStore`（产品挂整体库、版本挂版本库，MRD/SRS/PRD 以文档标签分型）。新仓库无 DocumentStore，需二选一：
+**已定（2026-06-25）**：采用**方案 A** —— 新仓库自建一个轻量「文档/知识库模块」，本系统仅保留挂载关系字段（`Product.KnowledgeStoreId` / `ProductVersion.KnowledgeStoreId` / `VersionUpgradeRequest.KnowledgeEntryIds`），文档的增删改查走该模块。
 
-- **方案 A（推荐）**：新仓库接入/自建一个轻量「文档/知识库模块」，本系统仅保留挂载关系字段（`Product.KnowledgeStoreId` / `ProductVersion.KnowledgeStoreId` / `VersionUpgradeRequest.KnowledgeEntryIds`），文档增删改查走该模块。
-- **方案 B**：暂以「外链 URL」承载知识库（知识库字段降级为链接列表），不内建文档引擎。
+轻量文档模块建议的最小集合（同样含 `TenantId` 行级隔离）：
 
-> 此处需你拍板（见文末「待确认」）。本文档其余部分不依赖该决策。
+| 集合 | 用途 | 关键字段 |
+|---|---|---|
+| document_stores | 知识库（产品库 / 版本库） | TenantId、Name、OwnerId、ScopeType(product/version)、ScopeId |
+| document_entries | 知识条目（文档） | TenantId、StoreId、Title、Content(richtext)、Tags(string[])、CreatedBy、UpdatedAt |
 
-知识库内容分型（标签）建议保留：MRD / SRS / PRD / 设计稿 / 会议纪要 / 测试用例。
+知识库内容分型走**文档标签**：MRD / SRS / PRD / 设计稿 / 会议纪要 / 测试用例（不单设 docType 字段，标签即分型）。RAG / embedding / 全文检索不在首版范围。
 
 ---
 
@@ -829,6 +844,7 @@ CSV/RTF 导入额外支持中文「已实现/已完成」→ resolved。
 ## 十三、数据集合清单与索引建议（DBA）
 
 > 按「应用不自动建索引」规范，索引登记给 DBA 手动建。
+> **多租户**：下表所有业务集合均含 `TenantId`，且建议索引一律以 `TenantId` 为最左前缀（如 `{TenantId:1,ProductId:1,IsDeleted:1}`）。为节省篇幅下表索引省略最左 `TenantId`，落地时统一前置。
 
 | 集合 | 用途 | 建议索引 |
 |---|---|---|
@@ -851,7 +867,14 @@ CSV/RTF 导入额外支持中文「已实现/已完成」→ resolved。
 | product_categories | 产品类型 | `{IsDeleted:1}` |
 | product_desc_templates | 描述模板 | `{EntityType:1,IsDeleted:1}` |
 | product_structure_nodes | 结构节点 | `{ProductId:1,ParentId:1}` |
-| product_agent_settings | 应用设置（单例） | — |
+| product_agent_settings | 应用设置（租户级单例） | `{TenantId:1}` |
+| tenants | 租户（SaaS） | `{Status:1}`、`{Slug:1}` |
+| users | 账号/用户 | `{Phone:1}`（全局唯一）、`{WecomUserId:1}` |
+| org_units | 组织架构（部门，同步自后台管理系统） | `{ParentId:1}`、`{ExternalDeptId:1}` |
+| wecom_bindings | 手机号↔企业微信账号映射 | `{UserId:1}`、`{WecomUserId:1}` |
+| document_stores | 知识库（轻量文档模块，第八章） | `{ScopeType:1,ScopeId:1}` |
+| document_entries | 知识条目 | `{StoreId:1}`、`{Tags:1}` |
+| notifications | 站内/企业微信消息通知 | `{UserId:1,IsRead:1,CreatedAt:-1}` |
 
 ---
 
@@ -871,12 +894,145 @@ CSV/RTF 导入额外支持中文「已实现/已完成」→ resolved。
 
 ---
 
-## 十五、待确认事项
+## 十五、账号与登录（手机号账号体系）
 
-1. **知识库方案**（第八章）：A 自建轻量文档模块（推荐）/ B 仅外链 URL —— 影响知识库相关字段形态。
-2. **立项 T / 上线 V 双轨是否全保留**：当前按 TAPD + 产品委员会流程保留；如新仓库简化，可只保留 ProductVersion 单轨 + 状态机表达立项/上线。
-3. **`IsAiPoc` 等业务属性**：默认作为 AI 能力移除；若「是否 AI 项目」是真实业务标记，保留为普通字段。
-4. **新技术规范细节**：是否需要本文档补充约定（如统一审计字段、软删除、ID 生成、富文本净化、分页规范）以便新仓库直接套用。
+账号唯一标识为**手机号**。登录方式分阶段：
+
+| 阶段 | 登录方式 | 说明 |
+|---|---|---|
+| Phase 1 | 手机号 + 密码（**无短信验证码**） | 本系统自管密码（哈希存储） |
+| Phase 1 | 企业微信免登 / 扫码 | 企业微信内免登或扫码授权，按手机号匹配账号（见第十八章） |
+| Phase 2（预留） | 后台管理系统 SSO 跳转 | OIDC/OAuth2 跳转后台管理系统认证，回调带回身份；协议待定（见待确认） |
+
+### 15.1 用户/账号 User（集合 `users`）
+
+| 字段 | 类型 | 含义 | 必填 | 默认 | 枚举/取值 | 索引/备注 |
+|---|---|---|---|---|---|---|
+| Id | string | 主键 | 是 | UUID | — | PK |
+| TenantId | string | 所属租户 | 是 | — | — | 行级隔离 |
+| Phone | string | 手机号（唯一账号标识） | 是 | — | — | 唯一（范围见待确认）|
+| Name | string | 姓名 | 是 | "" | — | — |
+| PasswordHash | string | 密码哈希（Phase1，加盐） | 否 | null | — | 不可逆；SSO 用户可空 |
+| Avatar | string | 头像 URL | 否 | null | — | — |
+| Email | string | 邮箱 | 否 | null | — | — |
+| OrgUnitId | string | 所属部门 | 否 | null | — | FK→org_units |
+| Title | string | 职位 | 否 | null | — | — |
+| WecomUserId | string | 企业微信 UserId（映射） | 否 | null | — | 见 wecom_bindings |
+| Source | enum | 账号来源 | 是 | `backend-sync` | backend-sync/wecom/manual | — |
+| ExternalUserId | string | 后台管理系统用户 ID（同步键） | 否 | null | — | 同步幂等 |
+| Status | enum | 账号状态 | 是 | `active` | active/disabled | 离职=disabled |
+| Roles | string[] | 系统角色 | 否 | [] | — | RBAC，见第十二章 |
+| LastLoginAt | datetime | 最后登录时间 | 否 | null | — | — |
+
+> 密码找回（无短信）方式待确认：管理员重置 / 企业微信验证（见待确认）。
+
+---
+
+## 十六、组织架构与同步
+
+**数据血缘**：`企业微信通讯录 → 后台管理系统 → 本系统`。本系统**直接对接后台管理系统**取组织架构与人员（后台管理系统已聚合企业微信通讯录），**不重复**从企业微信拉组织；企业微信仅负责登录与消息（第十八章）。
+
+### 16.1 同步策略
+
+- 同步源：后台管理系统（本系统的直接权威源）。
+- 同步内容：部门树（org_units）+ 人员（users）。
+- 同步方式：全量 + 增量（webhook 推送或定时拉取，接口契约待后台系统确认，见待确认）。
+- 幂等键：部门 `ExternalDeptId`、人员 `ExternalUserId` / `Phone`。
+- 离职/撤部门：置 `Status=disabled` / `IsDeleted=true`，不物理删（保留历史归属与追溯）。
+- 本系统对组织架构**只读镜像**，不在本系统内直接增删改部门/人员。
+
+### 16.2 组织部门 OrgUnit（集合 `org_units`）
+
+| 字段 | 类型 | 含义 | 必填 | 默认 | 枚举/取值 | 索引/备注 |
+|---|---|---|---|---|---|---|
+| Id | string | 主键 | 是 | UUID | — | PK |
+| TenantId | string | 所属租户 | 是 | — | — | 行级隔离 |
+| Name | string | 部门名称 | 是 | "" | — | — |
+| ParentId | string | 父部门（空=根） | 否 | null | — | FK 自引用 |
+| ExternalDeptId | string | 后台管理系统部门 ID（同步键） | 是 | "" | — | 幂等 |
+| Path | string | 层级路径（如 `/总部/研发部`） | 否 | null | — | 便于树查询 |
+| LeaderUserId | string | 部门负责人 | 否 | null | — | FK→users |
+| SortOrder | int | 排序 | 否 | 0 | — | — |
+| Source | enum | 来源 | 是 | `backend-sync` | backend-sync | — |
+| SyncedAt | datetime | 最后同步时间 | 否 | null | — | — |
+| IsDeleted | bool | 软删除（撤部门） | 是 | false | — | — |
+
+---
+
+## 十七、SaaS 多租户
+
+**隔离模型**：共享库 + `TenantId` 行级隔离（决策 5）。
+
+### 17.1 强制规则
+
+1. 所有业务集合含 `TenantId`；任何查询/写入必须由服务端强制注入 `TenantId` 过滤，禁止跨租户读写。
+2. 所有索引以 `TenantId` 为最左前缀（第十三章）。
+3. 配置三级生效优先级：**全局默认 → 租户覆盖 → 产品覆盖**（表单模板 / 工作流定义 / 等级目录等的 `ProductId` 覆盖机制升级为 `TenantId` + `ProductId` 两层覆盖）。
+4. 单例类配置（如 `product_agent_settings`）改为**租户级单例**（按 `TenantId` 唯一）。
+
+### 17.2 租户 Tenant（集合 `tenants`）
+
+| 字段 | 类型 | 含义 | 必填 | 默认 | 枚举/取值 | 索引/备注 |
+|---|---|---|---|---|---|---|
+| Id | string | 主键（即 TenantId） | 是 | UUID | — | PK |
+| Name | string | 租户/企业名称 | 是 | "" | — | — |
+| Slug | string | 租户短标识（子域名/路由用） | 否 | null | — | 唯一 |
+| Status | enum | 租户状态 | 是 | `trial` | trial/active/suspended | — |
+| Plan | string | 套餐（计费维度，留接口） | 否 | null | — | — |
+| ContactPhone | string | 主联系人手机号 | 否 | null | — | — |
+| WecomCorpId | string | 企业微信企业 ID | 否 | null | — | 见第十八章 |
+| BackendSsoConfig | object | 后台管理系统对接配置（端点/密钥，密钥加密存储） | 否 | null | — | — |
+| ExpireAt | datetime | 到期时间 | 否 | null | — | — |
+
+> 计费/用量口径、租户注销与数据导出为留接口项，首版不做完整 billing（见待确认）。
+
+---
+
+## 十八、企业微信对接
+
+**范围**：登录（扫码/免登）+ 消息通知 + 手机号↔企业微信账号映射。**不含**组织架构同步（走第十六章后台管理系统）。
+
+### 18.1 配置
+
+企业微信配置为**租户级**：`tenants.WecomCorpId` + 应用配置（`AgentId`、`Secret` 加密存储、回调 `Token` / `EncodingAESKey`）。多租户对接方式（每租户自建应用 vs 第三方应用授权）见待确认。
+
+### 18.2 登录
+
+- **免登**：企业微信工作台内打开 → OAuth 网页授权拿 `WecomUserId` → 查 `wecom_bindings` 映射到 `users` → 签发本系统会话。
+- **扫码**：浏览器端企业微信扫码授权登录，同样按 `WecomUserId` → 账号映射。
+- 未绑定时按手机号自动匹配并写入 `wecom_bindings`（首登绑定）。
+
+### 18.3 消息通知
+
+- 触发点：需求/缺陷状态流转、指派转交、`@` 提醒、SLA 超时催办、升级申请审批结果。
+- 通道：企业微信应用消息 + 站内通知中心（`notifications` 集合）双写。
+- 通知内容带对象深链，点击跳回对应详情。
+
+### 18.4 账号映射 WecomBinding（集合 `wecom_bindings`）
+
+| 字段 | 类型 | 含义 | 必填 | 默认 | 索引/备注 |
+|---|---|---|---|---|---|
+| Id | string | 主键 | 是 | UUID | PK |
+| TenantId | string | 所属租户 | 是 | — | 行级隔离 |
+| UserId | string | 本系统用户 | 是 | "" | FK→users |
+| WecomUserId | string | 企业微信 UserId | 是 | "" | 唯一（租户内）|
+| Phone | string | 绑定时手机号 | 否 | null | 匹配依据 |
+| BoundAt | datetime | 绑定时间 | 是 | now | — |
+
+---
+
+## 十九、待确认事项
+
+原四点已定（2026-06-25）：① 知识库=方案 A 自建轻量文档模块；② 版本=T/V 双轨保留；③ `IsAiPoc`=移除；④ 技术规范统一约定节=暂不补。
+
+仍需后续确认（不阻塞本规格评审）：
+
+1. **手机号唯一性范围**：租户内唯一 / 全局唯一（同一手机号跨租户是否视为同一身份）。
+2. **SSO 协议（Phase 2）**：OIDC / OAuth2 / SAML，及与后台管理系统的对接端点与回调契约。
+3. **后台管理系统同步接口契约**：拉取 API / webhook 推送 / 定时全量，字段映射与增量游标，需后台系统侧配合确定。
+4. **密码找回方式（无短信）**：管理员重置 / 企业微信验证 / 邮箱。
+5. **SaaS 计费**：套餐维度与用量口径是否首版纳入，租户注销与数据导出策略。
+6. **企业微信多租户对接形态**：每租户自建应用 vs 服务商第三方应用授权。
 
 ---
 
