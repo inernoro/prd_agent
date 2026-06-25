@@ -184,13 +184,27 @@ ImageResponse { images[](URL), usage }
 | 相位 | 内容 | 风险 |
 |---|---|---|
 | **P0 取证** | 跑 `scripts/llm-gateway-phase0-forensics.mongo.js`：策略类型分布、有专属绑定的 code 数、图片各协议占比、orphan code 数。用数据确认死代码再删 | 只读，零 |
-| **P1 协议下沉** | 加 `Protocol` 字段 + `protocol = model ?? platform` 解析；老数据空 → 平台兜底，路由结果不变 | 极低（纯地基） |
+| **P1 协议下沉** | 加 `Protocol` 字段 + `protocol = model ?? platform` 解析；老数据空 → 平台兜底，路由结果不变 | 极低（纯地基） **【已完成 2026-06-25，commit b0172ce6】CDS 构建+部署绿、live 已证 protocol 字段 populating（146 条 protocol-from-platform-type，向后兼容已 live）、3 路对抗验证全 PASS、注册表黄金快照(153)+解析黄金集成测试双护栏落地** |
 | **P2 图片并网关** | 内部 image 契约 + 5 分支收成协议处理器，走统一 resolver | 中（需双主题/真机验收图片） |
-| **P3 删死重** | 迁 legacy flags 进默认池后删第 3 层；确认无人用策略引擎后删；Exchange 路由改走协议层 | 中（删除前必须 P0 数据背书） |
+| **P3 删死重** | 迁 legacy flags 进默认池后删第 3 层；确认无人用策略引擎后删；Exchange 路由改走协议层 | 中（删除前必须 P0 数据背书）**【止血后实测仅 38 个 code 走 Legacy / 3 个 modelType，见 §9.5】** |
 | **P4 code 降级** | code 默认零绑定 + 对账软删 + 面板一键清 | 低 |
 | **P5 新面板** | 路由图 + 模型中心表 | 低（只读层） |
 
 每相位满足 CDS 验证 + 集成测试，向后兼容，可停。
+
+### 8.1 P3 准确落地清单（止血后刷新，2026-06-25）
+
+§9.4 H1/H2 的死池被止血修复后，legacy 承载量从 §9.3 的 91 个骤降到 **38 个 / 3 个 modelType**。P3 删 legacy 的准确前置：
+
+| modelType | 仍走 Legacy 的 code 数 | 当前 legacy 目标 | P3 行为保持动作 |
+|---|---|---|---|
+| vision | 14 | qwen/qwen3.6-plus | 建 vision 默认池→qwen，golden 确认 14 个改走 DefaultPool 同模型 |
+| intent | 8 | deepseek/deepseek-v4-flash | 建 intent 默认池→deepseek-v4-flash，同上 |
+| generation | 16 | stub-image | **分叉点**：已存在 generation 默认池→gemini-3.1-flash-image-preview，但 legacy(IsImageGen) 优先级覆盖它路由到 stub。行为保持=建 generation 默认池→stub-image（或调整优先级让 generation 维持 stub）；改成 gemini=行为变更+烧钱，属用户显式决策，不在 P3 默认范围 |
+
+chat 的 53 个已因止血脱离 Legacy（回到 deepseek-v4-flash 默认池）。7 个 NotFound（embedding/rerank/tts/code）需建真实池或显式标"不支持"（no-rootless-tree），独立于删 legacy。
+
+P3 执行顺序：建上述 3 个默认池(生产共享 Mongo 写) → CDS 部署 → 刷新 golden 确认 38 个改走 DefaultPool 且 actualModel 不变 → 才删 legacy 解析层代码 + 策略引擎 → 再 CDS + golden 复confirm。任一步 golden diff 非空即停。
 
 ---
 
