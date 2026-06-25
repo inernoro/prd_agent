@@ -3677,6 +3677,40 @@ export class StateService {
     return meta;
   }
 
+  /**
+   * E6 匿名分享：为报告生成（或返回已有的）只读分享 token，返回更新后的元数据。
+   * 已有 token 时幂等返回旧 token（不重复 mint）。报告不存在返回 null。
+   */
+  enableReportShare(id: string): AcceptanceReportMeta | null {
+    const meta = this.getAcceptanceReport(id);
+    if (!meta) return null;
+    if (!meta.shareToken) {
+      meta.shareToken = crypto.randomBytes(16).toString('hex');
+      meta.updatedAt = new Date().toISOString();
+      this.save();
+    }
+    return meta;
+  }
+
+  /** E6：撤销报告的分享 token。返回更新后的元数据，或报告不存在时 null。 */
+  disableReportShare(id: string): AcceptanceReportMeta | null {
+    const meta = this.getAcceptanceReport(id);
+    if (!meta) return null;
+    if (meta.shareToken) {
+      meta.shareToken = null;
+      meta.updatedAt = new Date().toISOString();
+      this.save();
+    }
+    return meta;
+  }
+
+  /** E6：按分享 token 反查报告（公开 `/r/<token>` 路由用）。空/未命中返回 undefined。 */
+  getReportByShareToken(token: string): AcceptanceReportMeta | undefined {
+    const t = (token || '').trim();
+    if (!t) return undefined;
+    return (this.state.acceptanceReports || []).find((r) => r.shareToken === t);
+  }
+
   /** Delete a report's metadata + content file. Returns true when removed. */
   deleteAcceptanceReport(id: string): boolean {
     const all = this.state.acceptanceReports || [];

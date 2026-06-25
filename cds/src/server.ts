@@ -18,7 +18,7 @@ import { createProjectComposeRouter } from './routes/project-compose.js';
 import { createProjectMigrationRouter } from './routes/project-migration.js';
 import { createProjectStorageRouter } from './routes/project-storage.js';
 import { createCacheRouter } from './routes/cache.js';
-import { createReportsRouter } from './routes/reports.js';
+import { createReportsRouter, createPublicReportShareRouter } from './routes/reports.js';
 import { createSnapshotsRouter } from './routes/snapshots.js';
 import { createRemoteHostsRouter } from './routes/remote-hosts.js';
 import { createReleasesRouter } from './routes/releases.js';
@@ -861,6 +861,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/cds-system\/operator\/requests\/(.+)\/approve$/, '批准运维操作'],
     [/^POST \/cds-system\/operator\/requests\/(.+)\/reject$/, '拒绝运维操作'],
     [/^GET \/reports\/(.+)\/raw$/, '查看验收报告内容'],
+    [/^POST \/reports\/(.+)\/share$/, '生成报告分享链接'],
+    [/^DELETE \/reports\/(.+)\/share$/, '撤销报告分享链接'],
     [/^GET \/reports\/(.+)$/, '查看验收报告'],
     [/^PATCH \/reports\/(.+)$/, '更新验收报告'],
     [/^DELETE \/reports\/(.+)$/, '删除验收报告'],
@@ -1794,6 +1796,8 @@ export function createServer(deps: ServerDeps): express.Express {
       // GitHub webhook is public — it's authenticated by HMAC signature
       // verification inside the handler, not by the cookie/token middleware.
       if (req.method === 'POST' && req.path === '/api/github/webhook') return next();
+      // E6 验收报告匿名分享：`/r/:token` 由 token 自鉴权（不可枚举随机串），公开只读。
+      if (req.method === 'GET' && /^\/r\/[^/]+$/.test(req.path)) return next();
       if (/\.(css|js|ico|png|svg|woff2?)$/i.test(req.path)) return next();
       // Allow internal requests from widget proxy (/_cds/ → master)
       if (req.headers['x-cds-internal'] === '1') {
@@ -3242,6 +3246,9 @@ export function createServer(deps: ServerDeps): express.Express {
   // CDS 自托管验收报告（HTML / Markdown）。挂在全局认证网关之后，
   // 所以 CDS 登录态即可访问，无需额外权限配置。详见 routes/reports.ts。
   app.use('/api', createReportsRouter({ stateService: deps.stateService }));
+  // E6 验收报告匿名分享：顶层 `/r/:token` 公开只读（不经登录网关，token 自鉴权）。
+  // 在认证白名单里已放行 `/r/`，见上方全局网关。
+  app.use('/r', createPublicReportShareRouter({ stateService: deps.stateService }));
   // ConfigSnapshot (导入/破坏性操作前自动备份) + DestructiveOperationLog (紧急撤销).
   // 见 routes/snapshots.ts 头部注释。
   app.use('/api', createSnapshotsRouter({ stateService: deps.stateService }));

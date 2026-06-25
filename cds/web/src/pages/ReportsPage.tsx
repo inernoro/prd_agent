@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   ClipboardCheck, FileCode2, FileText, Folder, FolderOpen, FolderPlus,
-  Inbox, Layers, Link2, Pencil, Plus, RefreshCw, Trash2, Upload,
+  Inbox, Layers, Link2, Pencil, Plus, RefreshCw, Share2, Trash2, Upload,
 } from 'lucide-react';
 import { marked } from 'marked';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
@@ -23,6 +23,8 @@ import {
   createReportFromText,
   deleteReport,
   deleteReportFolder,
+  disableReportShare,
+  enableReportShare,
   fetchReportRaw,
   listReportFolders,
   listReports,
@@ -153,6 +155,18 @@ export function ReportsPage(): JSX.Element {
     return { byFolder: m, unfiled, total: allReports.length };
   }, [allReports]);
 
+  // E2 验收看板：当前视图(已选文件夹/项目)下的 verdict 计数。
+  const verdictStats = useMemo(() => {
+    const s = { pass: 0, conditional: 0, fail: 0, unknown: 0, total: visibleReports.length };
+    for (const r of visibleReports) {
+      if (r.verdict === 'pass') s.pass += 1;
+      else if (r.verdict === 'conditional') s.conditional += 1;
+      else if (r.verdict === 'fail') s.fail += 1;
+      else s.unknown += 1;
+    }
+    return s;
+  }, [visibleReports]);
+
   const handleCreated = useCallback((report: AcceptanceReport) => {
     setCreateOpen(false);
     setToast(`已创建报告「${report.title}」`);
@@ -268,6 +282,9 @@ export function ReportsPage(): JSX.Element {
                 </p>
               </div>
             </div>
+            {state.status === 'ok' && verdictStats.total > 0 ? (
+              <VerdictSummary stats={verdictStats} />
+            ) : null}
             {toast ? (
               <div className="mt-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-sm">{toast}</div>
             ) : null}
@@ -319,6 +336,49 @@ export function ReportsPage(): JSX.Element {
         onCreated={handleCreated}
       />
     </AppShell>
+  );
+}
+
+/**
+ * E2 验收看板：当前视图下 verdict 计数 + 通过率条。颜色为自包含状态胶囊
+ * (绿/琥珀/红/灰 + 白字)，两个主题下均可读，不依赖暗色背景 fallback。
+ */
+function VerdictSummary({
+  stats,
+}: {
+  stats: { pass: number; conditional: number; fail: number; unknown: number; total: number };
+}): JSX.Element {
+  const judged = stats.pass + stats.conditional + stats.fail;
+  const passRate = judged > 0 ? Math.round((stats.pass / judged) * 100) : null;
+  const chips: Array<{ label: string; n: number; bg: string }> = [
+    { label: '通过', n: stats.pass, bg: '#1a7f37' },
+    { label: '有条件', n: stats.conditional, bg: '#9a6700' },
+    { label: '不通过', n: stats.fail, bg: '#b42318' },
+    { label: '未判定', n: stats.unknown, bg: '#57606a' },
+  ];
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-3">
+      <span className="text-sm text-muted-foreground">本视图 {stats.total} 份</span>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {chips.filter((c) => c.n > 0).map((c) => (
+          <span
+            key={c.label}
+            className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold text-white"
+            style={{ background: c.bg }}
+          >
+            {c.label} {c.n}
+          </span>
+        ))}
+      </div>
+      {passRate !== null ? (
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold">通过率 {passRate}%</span>
+          <div className="h-1.5 w-28 overflow-hidden rounded-full bg-[hsl(var(--surface-sunken))]">
+            <div className="h-full rounded-full" style={{ width: `${passRate}%`, background: '#1a7f37' }} />
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -436,6 +496,21 @@ function FormatBadge({ format }: { format: ReportFormat }): JSX.Element {
   );
 }
 
+/** 单份报告的 verdict 胶囊（自包含状态色 + 白字，双主题可读）。 */
+function VerdictBadge({ verdict }: { verdict: NonNullable<AcceptanceReport['verdict']> }): JSX.Element {
+  const cfg: Record<string, { label: string; bg: string }> = {
+    pass: { label: '通过', bg: '#1a7f37' },
+    conditional: { label: '有条件', bg: '#9a6700' },
+    fail: { label: '不通过', bg: '#b42318' },
+  };
+  const c = cfg[verdict];
+  return (
+    <span className="inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-semibold text-white" style={{ background: c.bg }}>
+      {c.label}
+    </span>
+  );
+}
+
 function ReportList({
   reports, folders, projects, selectedId, onSelect, onDelete, onMove, onCopy,
 }: {
@@ -468,12 +543,15 @@ function ReportList({
               onClick={() => onSelect(report)}>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
+                  {report.verdict ? <VerdictBadge verdict={report.verdict} /> : null}
                   <span className="truncate text-sm font-medium">{report.title}</span>
                 </div>
                 <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
                   <FormatBadge format={report.format} />
                   <span>{formatBytes(report.sizeBytes)}</span>
                   {report.projectId ? <span className="truncate">项目：{projectName.get(report.projectId) ?? report.projectId}</span> : null}
+                  {report.commitSha ? <span className="font-mono">· {report.commitSha.slice(0, 7)}</span> : null}
+                  {report.prNumber ? <span>· PR #{report.prNumber}</span> : null}
                 </div>
                 <div className="mt-1 flex items-center justify-between gap-2">
                   <span className="text-[11px] text-muted-foreground/80">{formatTime(report.createdAt)}</span>
@@ -567,10 +645,14 @@ function ReportViewer({ report }: { report: AcceptanceReport | null }): JSX.Elem
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))]">
       <div className="flex items-center justify-between gap-2 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
+          {report.verdict ? <VerdictBadge verdict={report.verdict} /> : null}
           <span className="truncate text-sm font-medium">{report.title}</span>
           <FormatBadge format={report.format} />
         </div>
-        <span className="shrink-0 text-[11px] text-muted-foreground">{formatBytes(report.sizeBytes)}</span>
+        <div className="flex shrink-0 items-center gap-2">
+          <ShareControl report={report} />
+          <span className="text-[11px] text-muted-foreground">{formatBytes(report.sizeBytes)}</span>
+        </div>
       </div>
       <div className="min-h-0 flex-1 bg-white">
         {report.format === 'html' ? (
@@ -583,6 +665,80 @@ function ReportViewer({ report }: { report: AcceptanceReport | null }): JSX.Elem
           <iframe key={report.id} title={report.title} srcDoc={mdHtml} sandbox="allow-scripts" className="h-full w-full border-0" />
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * E6 匿名分享控件：生成/撤销报告的只读公开链接 /r/<token>。
+ * 给未登录第三方看不必退回 MAP；headless verify-open 也用它直接断言。
+ */
+function ShareControl({ report }: { report: AcceptanceReport }): JSX.Element {
+  const [token, setToken] = useState<string | null>(report.shareToken ?? null);
+  const [busy, setBusy] = useState(false);
+  const [hint, setHint] = useState('');
+
+  // 切换报告时同步当前报告的分享状态。
+  useEffect(() => { setToken(report.shareToken ?? null); setHint(''); }, [report.id, report.shareToken]);
+
+  const shareUrl = token ? `${window.location.origin}/r/${token}` : '';
+
+  const flash = (msg: string) => { setHint(msg); window.setTimeout(() => setHint(''), 2500); };
+
+  const onEnableOrCopy = useCallback(async () => {
+    if (busy) return;
+    if (token) {
+      try { await navigator.clipboard.writeText(shareUrl); flash('已复制公开链接'); }
+      catch { flash(shareUrl); }
+      return;
+    }
+    setBusy(true);
+    try {
+      const { report: updated } = await enableReportShare(report.id);
+      const next = updated.shareToken ?? null;
+      setToken(next);
+      const url = next ? `${window.location.origin}/r/${next}` : '';
+      try { await navigator.clipboard.writeText(url); flash('已生成并复制公开链接'); }
+      catch { flash('已生成公开链接'); }
+    } catch (e) {
+      flash(e instanceof ApiError ? e.message : '生成失败');
+    } finally { setBusy(false); }
+  }, [busy, token, shareUrl, report.id]);
+
+  const onRevoke = useCallback(async () => {
+    if (busy) return;
+    setBusy(true);
+    try { await disableReportShare(report.id); setToken(null); flash('已撤销，链接立即失效'); }
+    catch (e) { flash(e instanceof ApiError ? e.message : '撤销失败'); }
+    finally { setBusy(false); }
+  }, [busy, report.id]);
+
+  return (
+    <div className="flex items-center gap-1.5">
+      {hint ? <span className="text-[11px] text-muted-foreground">{hint}</span> : null}
+      <Button
+        variant={token ? 'secondary' : 'outline'}
+        size="sm"
+        className="h-7 gap-1 px-2 text-[11px]"
+        disabled={busy}
+        onClick={() => void onEnableOrCopy()}
+        title={token ? '复制匿名公开链接 /r/<token>' : '生成匿名只读公开链接（无需登录即可查看）'}
+      >
+        <Share2 className="h-3.5 w-3.5" />{token ? '复制公开链接' : '匿名分享'}
+      </Button>
+      {token ? (
+        <ConfirmAction
+          trigger={(
+            <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" aria-label="撤销分享" title="撤销分享链接">
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          )}
+          title="撤销这份报告的公开链接？"
+          description="撤销后 /r/<token> 立即失效，任何已分享出去的链接都无法再打开。"
+          confirmLabel="撤销"
+          onConfirm={() => void onRevoke()}
+        />
+      ) : null}
     </div>
   );
 }

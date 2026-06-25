@@ -224,6 +224,26 @@ function exceedsCap(content: string): boolean {
   return Buffer.byteLength(content, 'utf8') > MAX_CONTENT_BYTES;
 }
 
+/**
+ * Serve a report body with the hardened headers described in the security note
+ * at the top of this file (nosniff + sandbox CSP so the raw HTML can never run
+ * with CDS-origin privileges, even on direct navigation). Shared by the
+ * login-gated `/raw` endpoint and the public anonymous-share `/r/:token` route.
+ */
+function sendReportContent(res: Response, format: ReportFormat, content: string): void {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Cache-Control', 'no-store');
+  if (format === 'html') {
+    res.setHeader('Content-Security-Policy', "sandbox allow-scripts; default-src 'self' data: blob: https:; img-src * data: blob:; style-src 'unsafe-inline' *; script-src 'unsafe-inline' 'unsafe-eval' *; frame-ancestors 'self'");
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  } else {
+    res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'self'");
+    res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+  }
+  res.setHeader('Content-Disposition', 'inline');
+  res.send(content);
+}
+
 export function createReportsRouter(deps: ReportsRouterDeps): Router {
   const router = Router();
   const { stateService } = deps;
@@ -414,22 +434,30 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     if (content === undefined) {
       return res.status(404).json({ error: 'content_missing', message: '报告内容文件已丢失' });
     }
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('Cache-Control', 'no-store');
-    if (meta.format === 'html') {
-      // Sandbox directive forces a unique origin + denies same-origin even on
-      // direct navigation. The frontend additionally embeds this in a
-      // sandbox="allow-scripts" iframe (no allow-same-origin).
-      res.setHeader('Content-Security-Policy', "sandbox allow-scripts; default-src 'self' data: blob: https:; img-src * data: blob:; style-src 'unsafe-inline' *; script-src 'unsafe-inline' 'unsafe-eval' *; frame-ancestors 'self'");
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    } else {
-      // Markdown is served as plain text so a browser cannot render it as
-      // HTML; the frontend converts + sanitizes it before rendering.
-      res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'self'");
-      res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
-    }
-    res.setHeader('Content-Disposition', 'inline');
-    return res.send(content);
+    return sendReportContent(res, meta.format, content);
+  });
+
+  // ── E6 匿名分享：为登录用户提供「生成/撤销只读公开链接」──
+  // POST /api/reports/:id/share — 生成（幂等返回已有）分享 token。
+  router.post('/reports/:id/share', (req: Request, res: Response) => {
+    const meta = stateService.getAcceptanceReport(req.params.id);
+    if (!meta) return res.status(404).json({ error: 'not_found', message: '报告不存在' });
+    const mismatch = reportAccessDenied(req, meta.projectId);
+    if (mismatch) return res.status(mismatch.status).json(mismatch.body);
+    const updated = stateService.enableReportShare(meta.id);
+    if (!updated) return res.status(404).json({ error: 'not_found', message: '报告不存在' });
+    return res.json({ report: updated, shareUrl: `/r/${updated.shareToken}` });
+  });
+
+  // DELETE /api/reports/:id/share — 撤销分享 token（链接立即失效）。
+  router.delete('/reports/:id/share', (req: Request, res: Response) => {
+    const meta = stateService.getAcceptanceReport(req.params.id);
+    if (!meta) return res.status(404).json({ error: 'not_found', message: '报告不存在' });
+    const mismatch = reportAccessDenied(req, meta.projectId);
+    if (mismatch) return res.status(mismatch.status).json(mismatch.body);
+    const updated = stateService.disableReportShare(meta.id);
+    if (!updated) return res.status(404).json({ error: 'not_found', message: '报告不存在' });
+    return res.json({ report: updated });
   });
 
   // PATCH /api/reports/:id — rename and/or replace content.
@@ -537,6 +565,31 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     if (mismatch) return res.status(mismatch.status).json(mismatch.body);
     stateService.deleteReportFolder(req.params.id);
     return res.json({ success: true });
+  });
+
+  return router;
+}
+
+/**
+ * E6 公开分享路由（**不经登录网关**，由 token 本身鉴权）。挂在顶层 `/r`，
+ * 服务端在 server.ts 的认证白名单里放行 `/r/`。token 不可枚举（128-bit 随机），
+ * 撤销即 404。内容仍走 sandbox CSP（唯一 origin，禁 same-origin），与 `/raw` 同源安全模型。
+ */
+export function createPublicReportShareRouter(deps: ReportsRouterDeps): Router {
+  const router = Router();
+  const { stateService } = deps;
+
+  router.get('/:token', (req: Request, res: Response) => {
+    const meta = stateService.getReportByShareToken(req.params.token);
+    if (!meta || !meta.shareToken) {
+      // 不区分「token 错」与「已撤销」，统一 404，避免 token 探测。
+      return res.status(404).type('text/plain; charset=utf-8').send('链接不存在或已失效');
+    }
+    const content = stateService.readAcceptanceReportContent(meta.id);
+    if (content === undefined) {
+      return res.status(404).type('text/plain; charset=utf-8').send('报告内容文件已丢失');
+    }
+    return sendReportContent(res, meta.format, content);
   });
 
   return router;

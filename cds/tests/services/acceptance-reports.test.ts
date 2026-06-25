@@ -160,6 +160,26 @@ describe('StateService acceptance reports', () => {
     expect(patched!.prNumber).toBe(7);
   });
 
+  it('mints, looks up and revokes an anonymous share token (E6)', () => {
+    const meta = service.createAcceptanceReport({ title: 'Shareable', format: 'html', content: '<p>s</p>' });
+    expect(meta.shareToken == null).toBe(true);
+
+    const shared = service.enableReportShare(meta.id);
+    expect(shared!.shareToken).toMatch(/^[0-9a-f]{32}$/);
+    const token = shared!.shareToken!;
+
+    // Idempotent: enabling again returns the same token.
+    expect(service.enableReportShare(meta.id)!.shareToken).toBe(token);
+    // Reverse lookup resolves the report.
+    expect(service.getReportByShareToken(token)?.id).toBe(meta.id);
+    expect(service.getReportByShareToken('deadbeef')).toBeUndefined();
+
+    // Revoke invalidates the token.
+    const revoked = service.disableReportShare(meta.id);
+    expect(revoked!.shareToken).toBeNull();
+    expect(service.getReportByShareToken(token)).toBeUndefined();
+  });
+
   it('filters by updatedSince for incremental consumption (WS3)', async () => {
     const a = service.createAcceptanceReport({ title: 'A', format: 'md', content: '# a' });
     await new Promise((r) => setTimeout(r, 10));

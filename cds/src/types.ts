@@ -1360,6 +1360,11 @@ export interface AcceptanceReportMeta {
   prNumber?: number | null;
   /** E1 部署上下文：部署模式（如 'fast' 极速版 / 'source' 源码 / 'preview'）；可空。 */
   deployMode?: string | null;
+  /**
+   * E6 匿名分享 token（只读公开链接 `/r/<token>`，补登录态门控缺口）。
+   * 为 null 时未开启分享；撤销分享即置回 null。token 是不可枚举的随机串。
+   */
+  shareToken?: string | null;
   /** 创建人（resolveActorFromRequest 解析的 actor，如 'user' / 'ai'）。 */
   createdBy?: string;
   /** 创建时间 ISO 字符串。 */

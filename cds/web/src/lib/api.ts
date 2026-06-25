@@ -202,6 +202,8 @@ export interface AcceptanceReport {
   prNumber?: number | null;
   /** E1 部署上下文：部署模式。 */
   deployMode?: string | null;
+  /** E6 匿名分享 token（/r/<token> 只读公开链接）；null=未分享。 */
+  shareToken?: string | null;
   createdBy?: string;
   createdAt: string;
   updatedAt: string;
@@ -266,6 +268,21 @@ export async function moveReportToFolder(id: string, folderId: string | null): P
 
 export async function getReport(id: string): Promise<AcceptanceReport> {
   const res = await apiRequest<{ report: AcceptanceReport }>(`/api/reports/${encodeURIComponent(id)}`);
+  return res.report;
+}
+
+/** E6: 生成（幂等返回已有）报告匿名只读分享链接 /r/<token>。 */
+export async function enableReportShare(id: string): Promise<{ report: AcceptanceReport; shareUrl: string }> {
+  return apiRequest<{ report: AcceptanceReport; shareUrl: string }>(`/api/reports/${encodeURIComponent(id)}/share`, {
+    method: 'POST',
+  });
+}
+
+/** E6: 撤销报告分享链接（立即失效）。 */
+export async function disableReportShare(id: string): Promise<AcceptanceReport> {
+  const res = await apiRequest<{ report: AcceptanceReport }>(`/api/reports/${encodeURIComponent(id)}/share`, {
+    method: 'DELETE',
+  });
   return res.report;
 }
 
