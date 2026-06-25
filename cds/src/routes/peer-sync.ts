@@ -18,9 +18,25 @@
  * apply 为 no-op（CDS 不接受对端写入）。管理端点（生成配对码 / 列举撤销节点）走 CDS 登录态。
  */
 import crypto from 'node:crypto';
-import { Router, type Request, type Response, text as expressText, json as expressJson } from 'express';
+import { Router, type Request, type Response } from 'express';
 import type { StateService } from '../services/state.js';
 import type { AcceptanceReportMeta, Project } from '../types.js';
+
+/**
+ * 取请求原始正文字符串（HMAC 必须用对端签名时的同一份字节）。
+ * 全局 JSON 解析器（server.ts）的 verify 钩子已把原字节存到 req.rawBody，
+ * 故这里直接读它，不能用自带 body 解析器（流已被全局解析器消费，会拿到空串）。
+ */
+function rawBodyOf(req: Request): string {
+  const buf = (req as Request & { rawBody?: Buffer }).rawBody;
+  return buf ? buf.toString('utf8') : '';
+}
+
+/** 取已解析的 JSON body 对象（全局解析器已把 JSON 解析进 req.body）。 */
+function jsonBodyOf(req: Request): Record<string, unknown> {
+  const b = req.body;
+  return b && typeof b === 'object' && !Buffer.isBuffer(b) ? (b as Record<string, unknown>) : {};
+}
 
 const MAX_SKEW_MS = 5 * 60 * 1000;
 const RESOURCE_TYPE = 'document-store';
@@ -187,12 +203,9 @@ export interface PeerSyncRouterDeps {
 export function createPeerSyncRouter(deps: PeerSyncRouterDeps): Router {
   const router = Router();
   const { stateService } = deps;
-  // 用 text 解析拿到原始正文字符串（HMAC 要对原字节签名）。limit 放宽以容纳 apply 的 bundle。
-  const rawText = expressText({ type: '*/*', limit: '64mb' });
 
   const requireSig = (req: Request, res: Response): boolean => {
-    const raw = typeof req.body === 'string' ? req.body : '';
-    const node = verifyPeerSignature(req, raw, stateService);
+    const node = verifyPeerSignature(req, rawBodyOf(req), stateService);
     if (!node) {
       fail(res, 401, 'UNAUTHORIZED', '签名校验失败或节点未配对');
       return false;
@@ -201,11 +214,8 @@ export function createPeerSyncRouter(deps: PeerSyncRouterDeps): Router {
   };
 
   // 1) handshake — 配对码鉴权，换发 sharedSecret。
-  router.post('/handshake', rawText, (req: Request, res: Response) => {
-    let body: Record<string, unknown>;
-    try { body = JSON.parse(typeof req.body === 'string' && req.body ? req.body : '{}'); }
-    catch { return fail(res, 400, 'INVALID_FORMAT', '请求体不是合法 JSON'); }
-
+  router.post('/handshake', (req: Request, res: Response) => {
+    const body = jsonBodyOf(req);
     const pairingCode = String(body.pairingCode || '').trim();
     const initiatorNodeId = String(body.initiatorNodeId || '').trim();
     if (!pairingCode || !initiatorNodeId) {
@@ -229,13 +239,13 @@ export function createPeerSyncRouter(deps: PeerSyncRouterDeps): Router {
   });
 
   // 2) ping — 连通性 + 签名自检。
-  router.get('/ping', rawText, (req: Request, res: Response) => {
+  router.get('/ping', (req: Request, res: Response) => {
     if (!requireSig(req, res)) return;
     return ok(res, { ok: true, node: stateService.getOrCreatePeerSelfNodeId() });
   });
 
   // 3) capabilities — 广告资源类型。
-  router.get('/capabilities', rawText, (req: Request, res: Response) => {
+  router.get('/capabilities', (req: Request, res: Response) => {
     if (!requireSig(req, res)) return;
     return ok(res, {
       items: [
@@ -245,33 +255,27 @@ export function createPeerSyncRouter(deps: PeerSyncRouterDeps): Router {
   });
 
   // 4) signature — item 漂移指纹。
-  router.post('/resources/:type/signature', rawText, (req: Request, res: Response) => {
+  router.post('/resources/:type/signature', (req: Request, res: Response) => {
     if (!requireSig(req, res)) return;
     if (req.params.type !== RESOURCE_TYPE) return fail(res, 404, 'NOT_FOUND', `未注册的资源类型：${req.params.type}`);
-    let body: Record<string, unknown>;
-    try { body = JSON.parse(typeof req.body === 'string' && req.body ? req.body : '{}'); }
-    catch { return fail(res, 400, 'INVALID_FORMAT', '请求体不是合法 JSON'); }
-    const itemId = String(body.itemId || '').trim();
+    const itemId = String(jsonBodyOf(req).itemId || '').trim();
     const resolved = resolveItem(stateService, itemId);
     if (!resolved) return fail(res, 404, 'NOT_FOUND', `item 不存在：${itemId}`);
     return ok(res, { signature: computeSignature(resolved.reports) });
   });
 
   // 5) export — 导出 item 的 SyncResourceBundle。
-  router.post('/resources/:type/export', rawText, (req: Request, res: Response) => {
+  router.post('/resources/:type/export', (req: Request, res: Response) => {
     if (!requireSig(req, res)) return;
     if (req.params.type !== RESOURCE_TYPE) return fail(res, 404, 'NOT_FOUND', `未注册的资源类型：${req.params.type}`);
-    let body: Record<string, unknown>;
-    try { body = JSON.parse(typeof req.body === 'string' && req.body ? req.body : '{}'); }
-    catch { return fail(res, 400, 'INVALID_FORMAT', '请求体不是合法 JSON'); }
-    const itemId = String(body.itemId || '').trim();
+    const itemId = String(jsonBodyOf(req).itemId || '').trim();
     const bundle = buildBundle(stateService, itemId);
     if (!bundle) return fail(res, 404, 'NOT_FOUND', `item 不存在：${itemId}`);
     return ok(res, bundle);
   });
 
   // 6) apply — no-op（CDS 是只读源，不接受对端写入）。
-  router.post('/resources/:type/apply', rawText, (req: Request, res: Response) => {
+  router.post('/resources/:type/apply', (req: Request, res: Response) => {
     if (!requireSig(req, res)) return;
     if (req.params.type !== RESOURCE_TYPE) return fail(res, 404, 'NOT_FOUND', `未注册的资源类型：${req.params.type}`);
     return ok(res, {
@@ -292,10 +296,9 @@ export function createPeerSyncRouter(deps: PeerSyncRouterDeps): Router {
 export function createPeerSyncAdminRouter(deps: PeerSyncRouterDeps): Router {
   const router = Router();
   const { stateService } = deps;
-  const json = expressJson({ limit: '64kb' });
 
-  // 生成一次性配对码（明文仅返回一次）。
-  router.post('/admin/pairing-codes', json, (req: Request, res: Response) => {
+  // 生成一次性配对码（明文仅返回一次）。body 已由全局 JSON 解析器解析。
+  router.post('/admin/pairing-codes', (req: Request, res: Response) => {
     const body = (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body))
       ? (req.body as Record<string, unknown>) : {};
     const displayName = typeof body.displayName === 'string' ? body.displayName.trim() : undefined;

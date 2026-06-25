@@ -79,6 +79,8 @@ describe('peer-sync MAP-KBTP endpoints', () => {
     });
 
     const app = express();
+    // 镜像生产：全局 JSON 解析器 + verify 钩子把原字节存到 req.rawBody（HMAC 用）。
+    app.use(express.json({ verify: (req, _res, buf) => { (req as { rawBody?: Buffer }).rawBody = buf; } }));
     app.use('/api/peer-sync', createPeerSyncRouter({ stateService: service }));
     app.use('/api/peer-sync', createPeerSyncAdminRouter({ stateService: service }));
     server = http.createServer(app);

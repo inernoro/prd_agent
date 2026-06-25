@@ -7,3 +7,4 @@
 | feat | cds | 验收报告新增 E4 验收回写 PR：把 verdict 作为 PR 评论 + GitHub check-run(验收绿/红) 推回关联 PR(报告须带 prNumber，项目已 link GitHub)，阅读器内一键回写 |
 | feat | cds | 新增 WS3 MAP-KBTP v1 peer-sync 端点(handshake/ping/capabilities/signature/export/apply)，CDS 作只读源 peer 把验收报告以 document-store 资源暴露，HMAC-SHA256+5 分钟时间窗+一次性配对码鉴权，供 MAP 等系统整库 pull |
 | feat | cds | cdscli 新增 peer pairing-code/nodes/revoke 配对管理命令(VERSION 0.7.1) |
+| fix | cds | peer-sync HMAC 改用全局解析器已存的 req.rawBody 取原始正文(自带 body 解析器会被全局解析器抢先消费导致拿到空串、handshake 400)，测试镜像生产全局解析器 |
