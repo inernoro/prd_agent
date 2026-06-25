@@ -38,10 +38,14 @@ export function GalaxyStandalonePage() {
   }, [storeId]);
 
   const back = () => {
-    if (storeId) sessionStorage.setItem('doc-store-selected-id', storeId);
-    // 优先回退历史（从宇宙图「星系」按钮过来时回宇宙图），无历史则回知识库
-    if (window.history.length > 1) navigate(-1);
-    else navigate('/document-store');
+    // 显式回到该库的关系图谱页（确定的应用内目的地）。不用 navigate(-1)：从书签/深链/
+    // 登录 returnUrl 进来时 history 上一条可能是登录页或外站，会跳错（Codex P2）。
+    if (storeId) {
+      sessionStorage.setItem('doc-store-selected-id', storeId);
+      navigate(`/document-store/${storeId}/universe`);
+    } else {
+      navigate('/document-store');
+    }
   };
 
   const title = storeName || storeId || '文档星系';
