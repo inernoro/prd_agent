@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   ClipboardCheck, FileCode2, FileText, Folder, FolderOpen, FolderPlus,
-  Inbox, Layers, Pencil, Plus, RefreshCw, Trash2, Upload,
+  Inbox, Layers, Link2, Pencil, Plus, RefreshCw, Trash2, Upload,
 } from 'lucide-react';
 import { marked } from 'marked';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
@@ -65,6 +65,9 @@ export function ReportsPage(): JSX.Element {
   const [searchParams] = useSearchParams();
   // 项目作用域：从 URL ?project= 取（项目卡右上角入口带）。空 = 全局（CDS 自身）报告。
   const projectId = searchParams.get('project') || '';
+  // 直达深链：?report=<id> 自动打开该报告；?folder=<id> 自动激活该文件夹。
+  const reportParam = searchParams.get('report') || '';
+  const folderParam = searchParams.get('folder') || '';
 
   const [state, setState] = useState<ListState>({ status: 'loading' });
   const [projects, setProjects] = useState<ProjectLite[]>([]);
@@ -98,6 +101,19 @@ export function ReportsPage(): JSX.Element {
     setSelected(null);
     void load();
   }, [load]);
+
+  // 直达深链：报告加载完成后，按 ?folder= / ?report= 自动激活文件夹并打开对应报告。
+  // 用 identity-guard 的函数式 setState 避免重复触发（命中即稳定，不抖动）。
+  useEffect(() => {
+    if (state.status !== 'ok') return;
+    if (folderParam && folders.some((f) => f.id === folderParam)) {
+      setActiveFolder((prev) => (prev === folderParam ? prev : folderParam));
+    }
+    if (reportParam) {
+      const r = state.reports.find((x) => x.id === reportParam);
+      if (r) setSelected((prev) => (prev?.id === r.id ? prev : r));
+    }
+  }, [state, folders, folderParam, reportParam]);
 
   // 项目列表用于关联下拉 + 当前项目名展示（best-effort，失败不阻断）。
   useEffect(() => {
@@ -168,6 +184,22 @@ export function ReportsPage(): JSX.Element {
       setToast(`移动失败：${err instanceof ApiError ? err.message : String(err)}`);
     }
   }, [folders]);
+
+  // 复制「直达链接」：点了直接落到该报告（带 project/folder 上下文）。
+  const handleCopyLink = useCallback(async (report: AcceptanceReport) => {
+    const params = new URLSearchParams();
+    if (projectId) params.set('project', projectId);
+    if (report.folderId) params.set('folder', report.folderId);
+    params.set('report', report.id);
+    const url = `${window.location.origin}/reports?${params.toString()}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setToast('已复制直达链接');
+    } catch {
+      // 剪贴板不可用时退化为把链接显示在 toast，便于手动复制。
+      setToast(url);
+    }
+  }, [projectId]);
 
   const handleCreateFolder = useCallback(async (name: string) => {
     try {
@@ -267,6 +299,7 @@ export function ReportsPage(): JSX.Element {
                     onSelect={setSelected}
                     onDelete={handleDelete}
                     onMove={handleMove}
+                    onCopy={handleCopyLink}
                   />
                   <ReportViewer report={selected} />
                 </>
@@ -404,7 +437,7 @@ function FormatBadge({ format }: { format: ReportFormat }): JSX.Element {
 }
 
 function ReportList({
-  reports, folders, projects, selectedId, onSelect, onDelete, onMove,
+  reports, folders, projects, selectedId, onSelect, onDelete, onMove, onCopy,
 }: {
   reports: AcceptanceReport[];
   folders: ReportFolder[];
@@ -413,6 +446,7 @@ function ReportList({
   onSelect: (report: AcceptanceReport) => void;
   onDelete: (report: AcceptanceReport) => void;
   onMove: (report: AcceptanceReport, folderId: string | null) => void;
+  onCopy: (report: AcceptanceReport) => void;
 }): JSX.Element {
   const projectName = useMemo(() => {
     const map = new Map<string, string>();
@@ -455,7 +489,13 @@ function ReportList({
                   </select>
                 </div>
               </div>
-              <div onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center" onClick={(e) => e.stopPropagation()}>
+                <Button variant="ghost" size="icon"
+                  className="h-7 w-7 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
+                  aria-label="复制直达链接" title="复制直达链接"
+                  onClick={() => onCopy(report)}>
+                  <Link2 className="h-3.5 w-3.5" />
+                </Button>
                 <ConfirmAction
                   trigger={(
                     <Button variant="ghost" size="icon"
