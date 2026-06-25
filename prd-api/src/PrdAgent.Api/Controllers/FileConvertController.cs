@@ -113,9 +113,14 @@ public class FileConvertController : ControllerBase
     public record CreateTaskRequest(
         string SourceFileKey,
         string SourceFileName,
-        string TemplateFileKey,
-        string TemplateFileName,
-        List<FileConvertFieldMapping> FieldMappings,
+        /// <summary>template / expression</summary>
+        string OutputMode,
+        // ── template 模式 ──
+        string? TemplateFileKey,
+        string? TemplateFileName,
+        List<FileConvertFieldMapping>? FieldMappings,
+        // ── expression 模式 ──
+        List<FileConvertOutputColumn>? OutputColumns,
         string? RuleId);
 
     /// <summary>创建批量转换任务（入队）</summary>
@@ -123,17 +128,30 @@ public class FileConvertController : ControllerBase
     public async Task<IActionResult> CreateTask([FromBody] CreateTaskRequest req)
     {
         var userId = this.GetRequiredUserId();
-        if (req.FieldMappings == null || req.FieldMappings.Count == 0)
-            return BadRequest(new { error = "字段映射不能为空" });
+
+        if (req.OutputMode == FileConvertOutputMode.Expression)
+        {
+            if (req.OutputColumns == null || req.OutputColumns.Count == 0)
+                return BadRequest(new { error = "expression 模式下输出列不能为空" });
+        }
+        else
+        {
+            if (req.FieldMappings == null || req.FieldMappings.Count == 0)
+                return BadRequest(new { error = "template 模式下字段映射不能为空" });
+            if (string.IsNullOrEmpty(req.TemplateFileKey))
+                return BadRequest(new { error = "template 模式下模板文件不能为空" });
+        }
 
         var task = new FileConvertTask
         {
             UserId = userId,
             SourceFileKey = req.SourceFileKey,
             SourceFileName = req.SourceFileName,
+            OutputMode = req.OutputMode,
             TemplateFileKey = req.TemplateFileKey,
             TemplateFileName = req.TemplateFileName,
-            FieldMappings = req.FieldMappings,
+            FieldMappings = req.FieldMappings ?? new(),
+            OutputColumns = req.OutputColumns ?? new(),
             RuleId = req.RuleId,
             Status = FileConvertTaskStatus.Queued,
         };

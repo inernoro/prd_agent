@@ -12,7 +12,7 @@ import {
   parseSourceFile, parseTemplateFile, createTask, listTasks, listRules,
   saveRule, deleteRule, downloadResult, suggestRules,
   type ParseSourceResult, type ParseTemplateResult,
-  type FieldMapping, type FileConvertTask, type FileConvertRule, type RuleSuggestion,
+  type FieldMapping, type OutputColumn, type FileConvertTask, type FileConvertRule, type RuleSuggestion,
 } from '@/services/real/fileConvertService';
 
 const inputStyle: CSSProperties = {
@@ -32,7 +32,10 @@ export default function FileConvertPage() {
   const [templateLoading, setTemplateLoading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
+  // template 模式的映射
   const [mappings, setMappings] = useState<FieldMapping[]>([]);
+  // expression 模式的输出列
+  const [outputColumns, setOutputColumns] = useState<OutputColumn[]>([{ header: '结果', valueExpression: '' }]);
   const [rules, setRules] = useState<FileConvertRule[]>([]);
   const [savingRule, setSavingRule] = useState(false);
   const [saveRuleName, setSaveRuleName] = useState('');
@@ -99,16 +102,21 @@ export default function FileConvertPage() {
   );
 
   const toMappingStep = useCallback(() => {
-    if (!sourceResult || !templateResult) return;
-    const initial: FieldMapping[] = templateResult.placeholders.map(ph => {
-      // 尝试按列名匹配，找到则自动填入 {列名} 表达式，否则留空让用户填
-      const matched = sourceResult.columns.find(c => c.toLowerCase() === ph.toLowerCase());
-      return {
-        templatePlaceholder: ph,
-        valueExpression: matched ? `{${matched}}` : (sourceResult.columns[0] ? `{${sourceResult.columns[0]}}` : ''),
-      };
-    });
-    setMappings(initial);
+    if (!sourceResult) return;
+    if (templateResult) {
+      // template 模式：按占位符初始化映射
+      const initial: FieldMapping[] = templateResult.placeholders.map(ph => {
+        const matched = sourceResult.columns.find(c => c.toLowerCase() === ph.toLowerCase());
+        return {
+          templatePlaceholder: ph,
+          valueExpression: matched ? `{${matched}}` : (sourceResult.columns[0] ? `{${sourceResult.columns[0]}}` : ''),
+        };
+      });
+      setMappings(initial);
+    } else {
+      // expression 模式：默认一列输出
+      setOutputColumns([{ header: '结果', valueExpression: sourceResult.columns[0] ? `{${sourceResult.columns[0]}}` : '' }]);
+    }
     setStep('mapping');
   }, [sourceResult, templateResult]);
 
@@ -191,8 +199,15 @@ export default function FileConvertPage() {
 
   const startTask = useCallback(async () => {
     if (!sourceResult || !templateResult) return;
-    const validMappings = mappings.filter(m => m.valueExpression && m.templatePlaceholder);
-    if (validMappings.length === 0) return;
+    const isTemplateMode = !!templateResult;
+
+    if (isTemplateMode) {
+      const validMappings = mappings.filter(m => m.valueExpression && m.templatePlaceholder);
+      if (validMappings.length === 0) { toast.error('请至少配置一条字段映射'); return; }
+    } else {
+      const validCols = outputColumns.filter(c => c.valueExpression);
+      if (validCols.length === 0) { toast.error('请至少填写一条输出列表达式'); return; }
+    }
 
     setStep('running');
     setLogs([]);
@@ -202,12 +217,18 @@ export default function FileConvertPage() {
     setTaskError(null);
     setTaskStatus('queued');
 
-    const res = await createTask({
+    const res = await createTask(isTemplateMode ? {
       sourceFileKey: sourceResult.fileKey,
       sourceFileName: sourceResult.fileName,
-      templateFileKey: templateResult.fileKey,
-      templateFileName: templateResult.fileName,
-      fieldMappings: validMappings,
+      outputMode: 'template',
+      templateFileKey: templateResult!.fileKey,
+      templateFileName: templateResult!.fileName,
+      fieldMappings: mappings.filter(m => m.valueExpression && m.templatePlaceholder),
+    } : {
+      sourceFileKey: sourceResult.fileKey,
+      sourceFileName: sourceResult.fileName,
+      outputMode: 'expression',
+      outputColumns: outputColumns.filter(c => c.valueExpression),
     });
 
     if (!res.success) { setTaskError(String(res.error?.message ?? '创建任务失败')); return; }
@@ -442,9 +463,9 @@ export default function FileConvertPage() {
                 </div>
               )}
 
-              {sourceResult && templateResult && (
+              {sourceResult && (
                 <Button className="mt-4 w-full" variant="primary" onClick={toMappingStep}>
-                  下一步：配置字段映射
+                  {templateResult ? '下一步：配置字段映射' : '下一步：定义输出规则（无模板模式）'}
                 </Button>
               )}
             </Surface>
@@ -575,6 +596,54 @@ export default function FileConvertPage() {
                         </Button>
                         <Button size="sm" variant="ghost" onClick={() => setShowSaveRuleForm(false)}>取消</Button>
                       </div>
+                    </div>
+                  )}
+
+                  {/* expression 模式：输出列编辑器（无模板时显示） */}
+                  {!templateResult && (
+                    <div className="rounded-xl overflow-hidden mb-4" style={{ border: '1px solid var(--border-default)' }}>
+                      <div className="flex items-center justify-between px-4 py-2" style={{ background: 'var(--bg-sunken)', borderBottom: '1px solid var(--border-default)' }}>
+                        <span className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>
+                          输出列（CSV，每行一个结果）
+                        </span>
+                        <button
+                          className="text-[11px] transition-opacity hover:opacity-70"
+                          style={{ color: 'var(--accent-primary, #6366f1)' }}
+                          onClick={() => setOutputColumns(prev => [...prev, { header: `列${prev.length + 1}`, valueExpression: '' }])}
+                        >
+                          + 添加列
+                        </button>
+                      </div>
+                      {outputColumns.map((col, idx) => (
+                        <div key={idx} className="grid items-center gap-3 px-4 py-2.5" style={{ gridTemplateColumns: '120px 1fr 28px', borderBottom: idx < outputColumns.length - 1 ? '1px solid var(--border-default)' : undefined }}>
+                          <input
+                            value={col.header}
+                            onChange={e => {
+                              const next = [...outputColumns];
+                              next[idx] = { ...col, header: e.target.value };
+                              setOutputColumns(next);
+                            }}
+                            placeholder="列标题"
+                            className="h-7 px-2 rounded-lg text-xs outline-none"
+                            style={{ background: 'var(--bg-sunken)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                          />
+                          <ExprInput
+                            value={col.valueExpression}
+                            columns={sourceResult?.columns ?? []}
+                            placeholder={`表达式，例: {列名} 或 {URL列 | url_last}`}
+                            onChange={v => {
+                              const next = [...outputColumns];
+                              next[idx] = { ...col, valueExpression: v };
+                              setOutputColumns(next);
+                            }}
+                          />
+                          {outputColumns.length > 1 && (
+                            <button className="text-center transition-opacity hover:opacity-70" onClick={() => setOutputColumns(prev => prev.filter((_, i) => i !== idx))}>
+                              <X size={12} style={{ color: 'var(--text-muted)' }} />
+                            </button>
+                          )}
+                        </div>
+                      ))}
                     </div>
                   )}
 
@@ -743,76 +812,72 @@ function FileDropZone({
   );
 }
 
-// ── 映射行（表达式输入 + 列名快捷插入）──
-function MappingRow({
-  mapping, columns, isLast, onChange,
+// ── 通用表达式输入框（获焦时显示列名快捷 chip）──
+function ExprInput({
+  value, columns, placeholder, onChange,
 }: {
-  mapping: FieldMapping;
+  value: string;
   columns: string[];
-  isLast: boolean;
-  onChange: (expr: string) => void;
+  placeholder?: string;
+  onChange: (v: string) => void;
 }) {
-  const [showCols, setShowCols] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [show, setShow] = useState(false);
+  const ref = useRef<HTMLInputElement>(null);
 
-  const insertCol = (col: string) => {
-    const el = inputRef.current;
-    if (!el) { onChange(`${mapping.valueExpression}{${col}}`); return; }
-    const start = el.selectionStart ?? mapping.valueExpression.length;
-    const end = el.selectionEnd ?? start;
-    const newVal = mapping.valueExpression.slice(0, start) + `{${col}}` + mapping.valueExpression.slice(end);
-    onChange(newVal);
-    // 光标定位到插入后
-    requestAnimationFrame(() => {
-      el.focus();
-      const pos = start + col.length + 2;
-      el.setSelectionRange(pos, pos);
-    });
+  const insert = (col: string) => {
+    const el = ref.current;
+    if (!el) { onChange(`${value}{${col}}`); return; }
+    const s = el.selectionStart ?? value.length;
+    const e = el.selectionEnd ?? s;
+    const next = value.slice(0, s) + `{${col}}` + value.slice(e);
+    onChange(next);
+    requestAnimationFrame(() => { el.focus(); const p = s + col.length + 2; el.setSelectionRange(p, p); });
   };
 
   return (
+    <div className="flex-1">
+      <input
+        ref={ref}
+        value={value}
+        onChange={ev => onChange(ev.target.value)}
+        onFocus={() => setShow(true)}
+        onBlur={() => setTimeout(() => setShow(false), 150)}
+        placeholder={placeholder ?? `{列名} 或 {列名 | url_last}`}
+        className="w-full h-8 px-3 rounded-lg text-xs outline-none font-mono"
+        style={{ background: 'var(--bg-sunken)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+      />
+      {show && columns.length > 0 && (
+        <div className="flex flex-wrap gap-1 mt-1">
+          {columns.map(c => (
+            <button
+              key={c}
+              type="button"
+              className="text-[10px] px-1.5 py-0.5 rounded-md font-mono transition-opacity hover:opacity-70"
+              style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border-default)' }}
+              onMouseDown={ev => { ev.preventDefault(); insert(c); }}
+            >
+              +{c}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── 映射行（复用 ExprInput）──
+function MappingRow({ mapping, columns, isLast, onChange }: {
+  mapping: FieldMapping; columns: string[]; isLast: boolean; onChange: (expr: string) => void;
+}) {
+  return (
     <div style={{ borderBottom: isLast ? undefined : '1px solid var(--border-default)' }}>
       <div className="grid items-start gap-4 px-4 py-3" style={{ gridTemplateColumns: '1fr 2fr' }}>
-        {/* 左：占位符名 */}
         <div className="pt-1">
           <span className="text-xs font-mono font-medium" style={{ color: 'var(--accent-primary, #6366f1)' }}>
             {`{{${mapping.templatePlaceholder}}}`}
           </span>
         </div>
-
-        {/* 右：表达式输入 */}
-        <div>
-          <input
-            ref={inputRef}
-            value={mapping.valueExpression}
-            onChange={e => onChange(e.target.value)}
-            onFocus={() => setShowCols(true)}
-            onBlur={() => setTimeout(() => setShowCols(false), 150)}
-            placeholder={`例: {列名} 或 {列A}-{列B}`}
-            className="w-full h-8 px-3 rounded-lg text-xs outline-none font-mono"
-            style={{
-              background: 'var(--bg-sunken)',
-              border: '1px solid var(--border-default)',
-              color: 'var(--text-primary)',
-            }}
-          />
-          {/* 列名快捷插入 */}
-          {showCols && columns.length > 0 && (
-            <div className="flex flex-wrap gap-1 mt-1.5">
-              {columns.map(c => (
-                <button
-                  key={c}
-                  type="button"
-                  className="text-[10px] px-1.5 py-0.5 rounded-md font-mono transition-opacity hover:opacity-70"
-                  style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border-default)' }}
-                  onMouseDown={e => { e.preventDefault(); insertCol(c); }}
-                >
-                  +{c}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        <ExprInput value={mapping.valueExpression} columns={columns} placeholder="例: {列名} 或 {列A}-{列B}" onChange={onChange} />
       </div>
     </div>
   );

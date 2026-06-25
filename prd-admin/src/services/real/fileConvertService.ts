@@ -103,12 +103,21 @@ export async function parseTemplateFile(file: File): Promise<ApiResponse<ParseTe
   return ok(data as ParseTemplateResult);
 }
 
+export interface OutputColumn {
+  header: string;
+  valueExpression: string;
+}
+
 export async function createTask(payload: {
   sourceFileKey: string;
   sourceFileName: string;
-  templateFileKey: string;
-  templateFileName: string;
-  fieldMappings: FieldMapping[];
+  outputMode: 'template' | 'expression';
+  // template mode
+  templateFileKey?: string | null;
+  templateFileName?: string | null;
+  fieldMappings?: FieldMapping[];
+  // expression mode
+  outputColumns?: OutputColumn[];
   ruleId?: string | null;
 }): Promise<ApiResponse<{ taskId: string }>> {
   return apiRequest('/api/file-convert/tasks', { method: 'POST', body: payload });

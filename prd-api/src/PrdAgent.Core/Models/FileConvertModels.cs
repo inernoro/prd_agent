@@ -17,13 +17,23 @@ public class FileConvertTask
     /// <summary>源文件原始文件名</summary>
     public string SourceFileName { get; set; } = string.Empty;
 
-    /// <summary>模板文件存储 Key</summary>
-    public string TemplateFileKey { get; set; } = string.Empty;
+    /// <summary>
+    /// 输出模式：
+    /// - template：基于上传的模板文件生成（Word/Excel）
+    /// - expression：无模板，直接用表达式输出文本行
+    /// </summary>
+    public string OutputMode { get; set; } = FileConvertOutputMode.Template;
+
+    /// <summary>expression 模式下的输出列定义（每列一个表达式，生成 CSV / TXT）</summary>
+    public List<FileConvertOutputColumn> OutputColumns { get; set; } = new();
+
+    /// <summary>模板文件存储 Key（template 模式必填）</summary>
+    public string? TemplateFileKey { get; set; }
 
     /// <summary>模板文件原始文件名</summary>
-    public string TemplateFileName { get; set; } = string.Empty;
+    public string? TemplateFileName { get; set; }
 
-    /// <summary>字段映射列表</summary>
+    /// <summary>字段映射列表（template 模式使用）</summary>
     public List<FileConvertFieldMapping> FieldMappings { get; set; } = new();
 
     /// <summary>复用的规则 ID（可选）</summary>
@@ -46,6 +56,22 @@ public class FileConvertTask
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public static class FileConvertOutputMode
+{
+    public const string Template = "template";
+    public const string Expression = "expression";
+}
+
+/// <summary>expression 模式下的输出列（每列一个标题 + 值表达式）</summary>
+public class FileConvertOutputColumn
+{
+    /// <summary>输出列标题（CSV 表头 / TXT 前缀）</summary>
+    public string Header { get; set; } = string.Empty;
+
+    /// <summary>值表达式，同 FieldMapping.ValueExpression 语法</summary>
+    public string ValueExpression { get; set; } = string.Empty;
 }
 
 public static class FileConvertTaskStatus
