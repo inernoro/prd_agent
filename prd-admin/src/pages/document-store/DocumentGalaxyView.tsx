@@ -72,10 +72,10 @@ interface PlacedNode {
  */
 function layoutGalaxy(root: GalaxyNode): {
   placed: Map<string, PlacedNode>;
-  edges: Array<[THREE.Vector3, THREE.Vector3]>;
+  edges: Array<{ a: THREE.Vector3; b: THREE.Vector3; child: GalaxyNode }>;
 } {
   const placed = new Map<string, PlacedNode>();
-  const edges: Array<[THREE.Vector3, THREE.Vector3]> = [];
+  const edges: Array<{ a: THREE.Vector3; b: THREE.Vector3; child: GalaxyNode }> = [];
   const RING_GAP = 9; // 每深一层向外推进的半径
 
   const place = (
@@ -111,7 +111,7 @@ function layoutGalaxy(root: GalaxyNode): {
         .addScaledVector(w, sinT * Math.sin(phi))
         .normalize();
       const childCenter = center.clone().addScaledVector(offset, radius);
-      edges.push([center.clone(), childCenter.clone()]);
+      edges.push({ a: center.clone(), b: childCenter.clone(), child: kid });
       // 子树继续向同方向延展，半角随深度收窄
       place(kid, childCenter, offset, half * 0.7);
     });
@@ -459,56 +459,67 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen }: GalaxyCanvasProps) {
       renders.push({ node, core, halo, haloBaseSize: haloSize, haloBaseOpacity });
     }
 
-    // ── 父子连线（偏冷蓝细线，不进 bloom 层） ──
-    {
-      const positions: number[] = [];
-      for (const [a, b] of edges) positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
-      const geo = track(new THREE.BufferGeometry());
-      geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-      const mat = track(
-        new THREE.LineBasicMaterial({
-          color: new THREE.Color('#4f7bd6'),
-          transparent: true,
-          opacity: 0.28,
-          depthWrite: false,
-        }),
+    // ── 父子连线（偏冷蓝细线，不进 bloom 层）。位置由 applyFilter 填充/重建：
+    //    隐藏叶子的入边折叠为零长，不再连向空处。 ──
+    const hierGeo = track(new THREE.BufferGeometry());
+    hierGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(edges.length * 6), 3));
+    scene.add(
+      new THREE.LineSegments(
+        hierGeo,
+        track(new THREE.LineBasicMaterial({ color: new THREE.Color('#4f7bd6'), transparent: true, opacity: 0.28, depthWrite: false })),
+      ),
+    );
+
+    // ── 横向引用连线（更淡，不进 bloom 层）。任一端隐藏则该段折叠。 ──
+    const mentionPairs: Array<{ a: THREE.Vector3; b: THREE.Vector3; source: string; target: string }> = [];
+    for (const link of galaxy.links) {
+      const a = placed.get(link.source);
+      const b = placed.get(link.target);
+      if (a && b) mentionPairs.push({ a: a.pos, b: b.pos, source: link.source, target: link.target });
+    }
+    let mentionGeo: THREE.BufferGeometry | null = null;
+    if (mentionPairs.length > 0) {
+      mentionGeo = track(new THREE.BufferGeometry());
+      mentionGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(mentionPairs.length * 6), 3));
+      scene.add(
+        new THREE.LineSegments(
+          mentionGeo,
+          track(new THREE.LineBasicMaterial({ color: new THREE.Color('#8fc4ff'), transparent: true, opacity: 0.32, depthWrite: false })),
+        ),
       );
-      scene.add(new THREE.LineSegments(geo, mat));
     }
 
-    // ── 横向引用连线（更淡，不进 bloom 层） ──
-    {
-      const positions: number[] = [];
-      for (const link of galaxy.links) {
-        const a = placed.get(link.source);
-        const b = placed.get(link.target);
-        if (a && b) positions.push(a.pos.x, a.pos.y, a.pos.z, b.pos.x, b.pos.y, b.pos.z);
-      }
-      if (positions.length > 0) {
-        const geo = track(new THREE.BufferGeometry());
-        geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-        const mat = track(
-          new THREE.LineBasicMaterial({
-            color: new THREE.Color('#8fc4ff'),
-            transparent: true,
-            opacity: 0.32,
-            depthWrite: false,
-          }),
-        );
-        scene.add(new THREE.LineSegments(geo, mat));
-      }
-    }
-
-    // ── type 筛选：dim / hide 叶子核心 + 光晕 ──
+    // ── type 筛选：隐藏叶子核心/光晕 + 同步折叠其入边和引用线，不留连向空处的线 ──
     const applyFilter = () => {
       const on = typeOnRef.current;
       const anyOff = DOC_TYPES.some((t) => !on[t]);
+      const vis = new Map<string, boolean>();
       for (const rec of renders) {
         const n = rec.node;
-        if (n.kind !== 'leaf') continue;
-        const visible = !anyOff || (n.docType ? on[n.docType] !== false : true);
-        rec.core.visible = visible;
-        rec.halo.visible = visible;
+        const visible = n.kind !== 'leaf' || !anyOff || (n.docType ? on[n.docType] !== false : true);
+        vis.set(n.id, visible);
+        if (n.kind === 'leaf') {
+          rec.core.visible = visible;
+          rec.halo.visible = visible;
+        }
+      }
+      // 父子线：child 是隐藏叶子 → 两端折叠成同点（零长，不可见）
+      const hp = hierGeo.getAttribute('position') as THREE.BufferAttribute;
+      edges.forEach((e, i) => {
+        const show = vis.get(e.child.id) ?? true;
+        hp.setXYZ(i * 2, e.a.x, e.a.y, e.a.z);
+        hp.setXYZ(i * 2 + 1, show ? e.b.x : e.a.x, show ? e.b.y : e.a.y, show ? e.b.z : e.a.z);
+      });
+      hp.needsUpdate = true;
+      // 引用线：任一端隐藏 → 折叠
+      if (mentionGeo) {
+        const mp = mentionGeo.getAttribute('position') as THREE.BufferAttribute;
+        mentionPairs.forEach((e, i) => {
+          const show = (vis.get(e.source) ?? true) && (vis.get(e.target) ?? true);
+          mp.setXYZ(i * 2, e.a.x, e.a.y, e.a.z);
+          mp.setXYZ(i * 2 + 1, show ? e.b.x : e.a.x, show ? e.b.y : e.a.y, show ? e.b.z : e.a.z);
+        });
+        mp.needsUpdate = true;
       }
     };
     applyFilterRef.current = applyFilter;
