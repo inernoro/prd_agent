@@ -95,6 +95,15 @@ function stripExt(name: string): string {
   return name.replace(/\.(md|markdown|mdx)$/i, '');
 }
 
+/**
+ * 是否为「目录订阅容器」条目（非真文档）。
+ * GitHub 目录订阅的父条目 contentType 标记为目录，但 IsFolder 默认 false，
+ * 它没有正文，不应进入星系成叶。
+ */
+function isContainerEntry(e: GalaxyInputEntry): boolean {
+  return !!e.contentType && e.contentType.toLowerCase().includes('x-github-directory');
+}
+
 /** 从 sourceUrl 取 basename（不带查询/锚）。 */
 function basenameOf(url: string): string {
   const clean = url.split(/[?#]/)[0].replace(/\/+$/, '');
@@ -246,7 +255,10 @@ export function buildDocGalaxy(
   const leaves: GalaxyNode[] = [];
   const leafIds = new Set<string>();
 
-  const docs = entries.filter((e) => !e.isFolder);
+  // 排除「目录订阅容器」条目：GitHub 目录订阅的父条目 contentType 标为目录、
+  // 但 IsFolder 默认为 false，不是真文档（无正文、打开是空），不应成叶子，
+  // 否则会多出一个未分类幽灵节点、虚增 totalDocs、点开是空白阅读器（Codex P2）。
+  const docs = entries.filter((e) => !e.isFolder && !isContainerEntry(e));
 
   for (const entry of docs) {
     const { groups, docType, orphan } = derivePath(entry, byId, resolve);

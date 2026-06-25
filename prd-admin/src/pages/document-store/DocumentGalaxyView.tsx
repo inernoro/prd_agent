@@ -32,7 +32,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
-import { X } from 'lucide-react';
+import { X, RotateCcw, Search } from 'lucide-react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { MarkdownViewer } from '@/components/file-preview/MarkdownViewer';
 import { parseFrontmatter } from '@/lib/frontmatter';
@@ -827,6 +827,8 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
   const resetFocusRef = useRef<(() => void) | null>(null);
   // 飞到某文档的命令引用（图例飞出 / 面包屑 / 打开文档时让相机动起来，不再原地不动）
   const flyToRef = useRef<((entryId: string) => void) | null>(null);
+  // 复位视角命令引用（常驻「复位」按钮：回中心 + 清聚焦 + 继续自动旋转）
+  const recenterRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     applyFilterRef.current?.();
@@ -1140,11 +1142,12 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
     // ── type 筛选：隐藏叶子核心/光晕 + 同步折叠其入边和引用线，不留连向空处的线 ──
     const applyFilter = () => {
       const on = typeOnRef.current;
-      const anyOff = DOC_TYPES.some((t) => !on[t]);
+      // 任一类型（含 unknown）被关 → 进入过滤；按 docType ?? 'unknown' 取开关
+      const anyOff = Object.values(on).some((v) => v === false);
       const vis = new Map<string, boolean>();
       for (const rec of renders) {
         const n = rec.node;
-        const visible = n.kind !== 'leaf' || !anyOff || (n.docType ? on[n.docType] !== false : true);
+        const visible = n.kind !== 'leaf' || !anyOff || on[n.docType ?? 'unknown'] !== false;
         vis.set(n.id, visible);
         if (n.kind === 'leaf') {
           rec.core.visible = visible;
@@ -1303,6 +1306,10 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
 
     focusNodeRef.current = focusNode;
     resetFocusRef.current = resetFocus;
+    recenterRef.current = () => {
+      resetFocus();
+      controls.autoRotate = true; // 复位即回到初始自动旋转态
+    };
 
     // ── 选择性 bloom 双 pass（演示版同款配方） ──
     const renderTargetSize = new THREE.Vector2(W, H);
@@ -1598,6 +1605,7 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
     return () => {
       relabelRef.current = null;
       flyToRef.current = null;
+      recenterRef.current = null;
       cancelAnimationFrame(rafId);
       ro.disconnect();
       window.removeEventListener('resize', resize);
@@ -1661,6 +1669,33 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
 
   return (
     <div ref={mountRef} style={{ position: 'absolute', inset: 0 }}>
+      {/* 常驻「复位视角」：回中心 + 清聚焦 + 继续自动旋转（不止双击/点空白） */}
+      <button
+        type="button"
+        onClick={() => recenterRef.current?.()}
+        title="复位视角：回到中心并继续自动旋转"
+        style={{
+          position: 'absolute',
+          bottom: 12,
+          right: 12,
+          zIndex: 12,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          background: 'rgba(20,21,30,0.82)',
+          backdropFilter: 'blur(8px)',
+          WebkitBackdropFilter: 'blur(8px)',
+          border: '1px solid rgba(255,255,255,0.14)',
+          borderRadius: 8,
+          padding: '6px 10px',
+          color: '#cfcfd6',
+          cursor: 'pointer',
+          fontSize: 12,
+        }}
+      >
+        <RotateCcw size={13} /> 复位视角
+      </button>
+
       {hover && (
         <HoverCard
           info={hover}
@@ -1949,6 +1984,7 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
   const [error, setError] = useState<string | null>(null);
   const [partial, setPartial] = useState(false); // 翻页有页失败 → 图谱不完整
   const [linksFailed, setLinksFailed] = useState(false); // 双链接口失败 → 引用关系未知（区别于「真的 0 引用」）
+  const [loadProgress, setLoadProgress] = useState<{ loaded: number; total: number } | null>(null); // 构建期进度
   const [openEntryId, setOpenEntryId] = useState<string | null>(null);
   // 当前聚焦的枢纽（GalaxyCanvas 上报；用于面包屑）
   const [focusedNode, setFocusedNode] = useState<GalaxyNode | null>(null);
@@ -2013,12 +2049,18 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
     cb({ crumbs: [], kind: 'none' });
   }, [galaxy, openEntryId, focusedNode, labelMode, contentTitles]);
 
-  // type 图例筛选状态（7 种 type 全开）
+  // type 图例筛选状态（7 种 type + unknown，全开）
   const [typeOn, setTypeOn] = useState<Record<string, boolean>>(() => {
-    const init: Record<string, boolean> = {};
+    const init: Record<string, boolean> = { unknown: true };
     for (const t of DOC_TYPES) init[t] = true;
     return init;
   });
+
+  // 图例渲染的类型列表：有 unknown 文档时追加「其他」chip（否则无法隐藏/列出这类文档）
+  const legendTypes = useMemo<string[]>(
+    () => (galaxy && (galaxy.stats.typeCounts.unknown ?? 0) > 0 ? [...DOC_TYPES, 'unknown'] : [...DOC_TYPES]),
+    [galaxy],
+  );
 
   // 图例 type chip 悬浮飞出：列出该 type 全部文档（半屏可滚，点条目跳转）。
   const [flyoutType, setFlyoutType] = useState<string | null>(null);
@@ -2050,6 +2092,20 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
     return m;
   }, [galaxy]);
 
+  // 全局搜索：按显示名 / 结构名匹配，命中可点（→ 飞到 + 打开）
+  const [search, setSearch] = useState('');
+  const searchMatches = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q || !galaxy) return [];
+    const out: GalaxyNode[] = [];
+    for (const leaf of galaxy.leaves) {
+      const dn = leafDisplayName(leaf, labelMode, contentTitles).toLowerCase();
+      if (dn.includes(q) || leaf.name.toLowerCase().includes(q)) out.push(leaf);
+      if (out.length >= 40) break;
+    }
+    return out;
+  }, [search, galaxy, labelMode, contentTitles]);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -2057,6 +2113,7 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
     setGalaxy(null);
     setPartial(false);
     setLinksFailed(false);
+    setLoadProgress(null);
     setOpenEntryId(null);
     setFocusedNode(null);
 
@@ -2081,6 +2138,7 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
       const MAX_PAGES = 50; // 上限 10000 条，防御异常分页
       const allItems = [...firstRes.data.items];
       const total = firstRes.data.total ?? allItems.length;
+      if (!cancelled) setLoadProgress({ loaded: allItems.length, total });
       let isPartial = false; // 某页失败 → 图谱不完整，下面 UI 显式提示
       // 还有剩余页就继续翻：用 total 推断总页数，items.length < pageSize 作兜底终止
       let page = 1;
@@ -2098,6 +2156,7 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
           break;
         }
         allItems.push(...res.data.items);
+        if (!cancelled) setLoadProgress({ loaded: allItems.length, total });
         if (res.data.items.length < PAGE_SIZE) break;
       }
       // 翻到上限仍未取全也算不完整
@@ -2175,7 +2234,7 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
             borderBottom: '1px solid rgba(255,255,255,0.08)',
           }}
         >
-          {DOC_TYPES.map((t) => {
+          {legendTypes.map((t) => {
             const on = typeOn[t] !== false;
             return (
               <span
@@ -2212,7 +2271,7 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
                       boxShadow: on ? `0 0 6px ${TYPE_COLOR[t]}` : 'none',
                     }}
                   />
-                  {t}
+                  {TYPE_LABEL[t] ?? t}
                   <span style={{ color: '#6a6a78' }}>{galaxy.stats.typeCounts[t] ?? 0}</span>
                 </button>
                 {flyoutType === t && (
@@ -2234,6 +2293,11 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
           })}
           <div style={{ fontSize: 11, color: '#8a8a96', borderLeft: '1px solid rgba(255,255,255,0.1)', paddingLeft: 8 }}>
             共 {galaxy.stats.totalDocs} 篇 · {linksFailed ? '引用未知' : `${galaxy.links.length} 引用`}
+            {galaxy.stats.orphanCount > 0 && (
+              <span style={{ color: '#9a8a6a' }} title="未能从命名归到 canonical 分类、落「未分类」的文档数">
+                {' '}· {galaxy.stats.orphanCount} 悬空
+              </span>
+            )}
           </div>
           {linksFailed && (
             <div
@@ -2265,6 +2329,97 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
               部分加载失败 · 图谱不完整
             </div>
           )}
+
+          {/* 全局搜索（推到最右）：输入标题 → 命中下拉 → 点击飞到 + 打开 */}
+          <div style={{ position: 'relative', marginLeft: 'auto' }}>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                background: 'rgba(255,255,255,0.06)',
+                border: '1px solid rgba(255,255,255,0.12)',
+                borderRadius: 8,
+                padding: '4px 8px',
+              }}
+            >
+              <Search size={13} style={{ color: '#8a8c9a', flexShrink: 0 }} />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="搜索文档…"
+                style={{ background: 'transparent', border: 'none', outline: 'none', color: '#e8e8ee', fontSize: 12, width: 150 }}
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => setSearch('')}
+                  aria-label="清除搜索"
+                  style={{ background: 'none', border: 'none', color: '#9a9cab', cursor: 'pointer', display: 'flex', padding: 0 }}
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </div>
+            {search.trim() && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 6px)',
+                  right: 0,
+                  width: 320,
+                  maxWidth: '92vw',
+                  maxHeight: '52vh',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  background: 'rgba(15,16,24,0.97)',
+                  backdropFilter: 'blur(16px) saturate(140%)',
+                  WebkitBackdropFilter: 'blur(16px) saturate(140%)',
+                  border: '1px solid rgba(255,255,255,0.14)',
+                  borderRadius: 12,
+                  boxShadow: '0 14px 38px rgba(0,0,0,0.6)',
+                  zIndex: 50,
+                  overflow: 'hidden',
+                }}
+              >
+                <div style={{ flexShrink: 0, fontSize: 11, color: '#8a8c9a', padding: '8px 12px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                  {searchMatches.length === 0 ? '无匹配文档' : `${searchMatches.length}${searchMatches.length >= 40 ? '+' : ''} 个匹配 · 点击飞到并打开`}
+                </div>
+                <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: '6px 6px 8px' }}>
+                  {searchMatches.map((leaf) => (
+                    <button
+                      key={leaf.id}
+                      type="button"
+                      onClick={() => {
+                        if (leaf.entryId) setOpenEntryId(leaf.entryId);
+                        setSearch('');
+                      }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        width: '100%',
+                        textAlign: 'left',
+                        background: 'transparent',
+                        border: 'none',
+                        borderRadius: 7,
+                        padding: '6px 8px',
+                        cursor: 'pointer',
+                        color: '#dcdde6',
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.07)')}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                    >
+                      <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: colorForDocType(leaf.docType) }} />
+                      <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {leafDisplayName(leaf, labelMode, contentTitles)}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -2290,7 +2445,13 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
 
         {loading && (
           <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 5 }}>
-            <MapSectionLoader text="正在构建文档星系..." />
+            <MapSectionLoader
+              text={
+                loadProgress
+                  ? `正在构建文档星系… 已加载 ${loadProgress.loaded}/${loadProgress.total} 篇`
+                  : '正在构建文档星系…'
+              }
+            />
           </div>
         )}
 

@@ -84,6 +84,16 @@ describe('buildDocGalaxy 关系识别', () => {
     expect(childByName(appAgent!, 'defect-agent')).toBeTruthy();
   });
 
+  it('目录订阅容器条目（x-github-directory）不计为文档叶', () => {
+    const g = buildDocGalaxy([
+      entry('c1', 'inernoro/prd_agent/doc', { contentType: 'application/x-github-directory' }),
+      entry('d1', 'design.cds.a'),
+    ]);
+    expect(g.stats.totalDocs).toBe(1); // 只有真文档计入
+    expect(g.leaves.some((l) => l.entryId === 'c1')).toBe(false);
+    expect(childByName(g.root, '未分类')).toBeFalsy(); // 容器不再制造未分类幽灵
+  });
+
   it('GitHub 目录订阅的非点分文件 → 从 sourceUrl 还原仓库内目录层级（不落未分类）', () => {
     const g = buildDocGalaxy([
       entry('gh1', 'Intro', {
