@@ -32,6 +32,7 @@ updated: 2026-06-25
 | 6 | 组织/人员权威源 | **后台管理系统为本系统直接权威源**；其数据血缘为「企业微信通讯录 → 后台管理系统 → 本系统」（见第十六章） |
 | 7 | 账号标识 | **手机号作为唯一账号标识**；登录走「手机号 + 密码（无短信验证码）」+ 企业微信免登；**SSO 后续做（预留接口）**（见第十五章） |
 | 8 | 企业微信对接 | **登录（扫码/免登）+ 消息通知 + 手机号↔企业微信账号映射**；组织架构不重复从企业微信拉（已由后台管理系统聚合，见第十八章） |
+| 9 | 运营平台管理端 | 同步设计 SaaS 运营方后台：租户管理 + **完整计费（订阅/账单/支付）** + 跨租户运营大盘 + 全局公告 + 全局集成配置 + 运营 RBAC 与操作审计（见第二十章） |
 
 迁移前后的关键变化一览：
 
@@ -845,6 +846,7 @@ CSV/RTF 导入额外支持中文「已实现/已完成」→ resolved。
 
 > 按「应用不自动建索引」规范，索引登记给 DBA 手动建。
 > **多租户**：下表所有业务集合均含 `TenantId`，且建议索引一律以 `TenantId` 为最左前缀（如 `{TenantId:1,ProductId:1,IsDeleted:1}`）。为节省篇幅下表索引省略最左 `TenantId`，落地时统一前置。
+> 本表为**租户侧业务集合**；运营平台管理端的**平台级集合**（plans/subscriptions/invoices/payments/operators 等）见第二十章 20.11。
 
 | 集合 | 用途 | 建议索引 |
 |---|---|---|
@@ -978,13 +980,15 @@ CSV/RTF 导入额外支持中文「已实现/已完成」→ resolved。
 | Name | string | 租户/企业名称 | 是 | "" | — | — |
 | Slug | string | 租户短标识（子域名/路由用） | 否 | null | — | 唯一 |
 | Status | enum | 租户状态 | 是 | `trial` | trial/active/suspended | — |
-| Plan | string | 套餐（计费维度，留接口） | 否 | null | — | — |
+| PlanId | string | 当前套餐（以订阅为准，见第二十章计费） | 否 | null | — | FK→plans |
 | ContactPhone | string | 主联系人手机号 | 否 | null | — | — |
 | WecomCorpId | string | 企业微信企业 ID | 否 | null | — | 见第十八章 |
 | BackendSsoConfig | object | 后台管理系统对接配置（端点/密钥，密钥加密存储） | 否 | null | — | — |
-| ExpireAt | datetime | 到期时间 | 否 | null | — | — |
+| Quota | object | 配额（用户数/产品数/存储等，由套餐下发，可运营覆盖） | 否 | null | — | 见第二十章 |
+| OpenedById | string | 开通运营人员 | 否 | null | — | FK→operators |
+| ExpireAt | datetime | 到期时间（以订阅为准） | 否 | null | — | — |
 
-> 计费/用量口径、租户注销与数据导出为留接口项，首版不做完整 billing（见待确认）。
+> 计费已升级为**完整计费**（订阅/账单/支付），由运营平台管理端承载，详见第二十章。`tenants` 的 `PlanId` / `ExpireAt` / `Quota` 由订阅与套餐下发。
 
 ---
 
@@ -1031,8 +1035,207 @@ CSV/RTF 导入额外支持中文「已实现/已完成」→ resolved。
 2. **SSO 协议（Phase 2）**：OIDC / OAuth2 / SAML，及与后台管理系统的对接端点与回调契约。
 3. **后台管理系统同步接口契约**：拉取 API / webhook 推送 / 定时全量，字段映射与增量游标，需后台系统侧配合确定。
 4. **密码找回方式（无短信）**：管理员重置 / 企业微信验证 / 邮箱。
-5. **SaaS 计费**：套餐维度与用量口径是否首版纳入，租户注销与数据导出策略。
+5. **支付渠道**：完整计费已定（第二十章），仍需确认对接的支付渠道（微信支付/支付宝/对公转账/线下手工）与发票开具。
 6. **企业微信多租户对接形态**：每租户自建应用 vs 服务商第三方应用授权。
+7. **运营端登录与部署**：运营人员账号体系（独立 operators）的登录方式、运营端是否独立域名/独立部署。
+
+---
+
+## 二十、运营平台管理端（SaaS 运营方后台）
+
+### 20.1 定位与边界
+
+服务于 **SaaS 运营方**（平台方）的跨租户超级管理后台，与「租户侧产品管理应用」是**两个独立的端**：
+
+- **独立鉴权**：运营人员走独立账号体系 `operators`，不混入租户 `users`。
+- **跨租户**：运营端不受 `TenantId` 行级隔离约束（可跨租户检索），但**每个写操作必须落操作审计** `operation_audit_logs`。
+- **平台级数据**：套餐/订阅/账单/支付/公告/平台配置等为平台级集合；计费类含 `TenantId` 指向被计费租户，但归运营端管理。
+
+### 20.2 信息架构（导航）
+
+```
+运营概览（大盘）→ 租户管理 → 套餐与计费（套餐 / 订阅 / 账单 / 支付）→
+全局公告 → 全局集成配置 → 全局默认配置（模板/工作流/目录）→
+账号排查与登录审计 → 运营人员与权限 → 操作审计
+```
+
+### 20.3 租户管理
+
+复用 `tenants`（第十七章），运营端提供操作：开通（新建租户）/ 停用 / 恢复 / 续费 / 套餐变更 / 配额设置。开通即写 `OpenedById`，状态变更走 `operation_audit_logs`。
+
+### 20.4 套餐与计费（完整）
+
+#### 20.4a 套餐 Plan（集合 `plans`，平台级）
+
+| 字段 | 类型 | 含义 | 必填 | 默认 | 枚举/取值 | 索引/备注 |
+|---|---|---|---|---|---|---|
+| Id | string | 主键 | 是 | UUID | — | PK |
+| Name | string | 套餐名称 | 是 | "" | — | 如「专业版」 |
+| Code | string | 套餐编码 | 是 | "" | — | 唯一 |
+| Price | int | 价格（分） | 是 | 0 | — | — |
+| Currency | string | 币种 | 是 | `CNY` | — | — |
+| BillingCycle | enum | 计费周期 | 是 | `monthly` | monthly/yearly | — |
+| Quota | object | 配额（用户数/产品数/存储等） | 否 | null | — | 下发到租户 |
+| Features | string[] | 功能开关集（feature flags） | 否 | [] | — | 租户继承 |
+| Status | enum | 状态 | 是 | `active` | active/archived | — |
+| SortOrder | int | 排序 | 否 | 0 | — | — |
+
+#### 20.4b 订阅 Subscription（集合 `subscriptions`）
+
+| 字段 | 类型 | 含义 | 必填 | 默认 | 枚举/取值 | 索引/备注 |
+|---|---|---|---|---|---|---|
+| Id | string | 主键 | 是 | UUID | — | PK |
+| TenantId | string | 所属租户 | 是 | — | — | 索引 |
+| PlanId | string | 套餐 | 是 | — | — | FK→plans |
+| Status | enum | 订阅状态 | 是 | `trial` | trial/active/expired/canceled | — |
+| Seats | int | 席位数 | 否 | null | — | — |
+| Price | int | 成交价（分） | 是 | 0 | — | — |
+| AutoRenew | bool | 是否自动续费 | 否 | false | — | — |
+| StartAt | datetime | 生效时间 | 是 | now | — | — |
+| EndAt | datetime | 到期时间 | 否 | null | — | 同步到 tenants.ExpireAt |
+
+#### 20.4c 账单 Invoice（集合 `invoices`）
+
+| 字段 | 类型 | 含义 | 必填 | 默认 | 枚举/取值 | 索引/备注 |
+|---|---|---|---|---|---|---|
+| Id | string | 主键 | 是 | UUID | — | PK |
+| TenantId | string | 所属租户 | 是 | — | — | 索引 |
+| SubscriptionId | string | 关联订阅 | 是 | "" | — | FK→subscriptions |
+| InvoiceNo | string | 账单号 | 是 | 系统生成 | — | 唯一 |
+| Amount | int | 金额（分） | 是 | 0 | — | — |
+| Currency | string | 币种 | 是 | `CNY` | — | — |
+| PeriodStart / PeriodEnd | datetime | 账期 | 是 | — | — | — |
+| Status | enum | 账单状态 | 是 | `unpaid` | unpaid/paid/overdue/void | — |
+| DueAt | datetime | 应付日期 | 否 | null | — | — |
+| IssuedAt / PaidAt | datetime | 出账 / 付清时间 | 否 | null | — | — |
+
+#### 20.4d 支付 Payment（集合 `payments`）
+
+| 字段 | 类型 | 含义 | 必填 | 默认 | 枚举/取值 | 索引/备注 |
+|---|---|---|---|---|---|---|
+| Id | string | 主键 | 是 | UUID | — | PK |
+| TenantId | string | 所属租户 | 是 | — | — | 索引 |
+| InvoiceId | string | 关联账单 | 是 | "" | — | FK→invoices |
+| Channel | enum | 支付渠道 | 是 | — | wechat/alipay/bank/manual | 渠道清单待确认 |
+| Amount | int | 金额（分） | 是 | 0 | — | — |
+| Status | enum | 支付状态 | 是 | `pending` | pending/success/failed/refunded | — |
+| TradeNo | string | 第三方支付流水号 | 否 | null | — | 对账 |
+| PaidAt | datetime | 支付完成时间 | 否 | null | — | — |
+
+#### 20.4e 用量计量 UsageRecord（集合 `usage_records`）
+
+| 字段 | 类型 | 含义 | 必填 | 默认 | 枚举/取值 | 备注 |
+|---|---|---|---|---|---|---|
+| Id | string | 主键 | 是 | UUID | — | — |
+| TenantId | string | 所属租户 | 是 | — | — | 索引 |
+| Metric | enum | 计量指标 | 是 | — | users/products/storage/api-calls | — |
+| Value | int | 用量值 | 是 | 0 | — | — |
+| Period | string | 统计周期（如 2026-06） | 是 | "" | — | — |
+| RecordedAt | datetime | 记录时间 | 是 | now | — | — |
+
+### 20.5 跨租户运营大盘
+
+- 指标：租户总数 / 新增 / 活跃、各对象量（产品/需求/功能/缺陷）、收入（MRR/ARR/回款）、到期与逾期预警、租户健康度。
+- 数据源：聚合查询 + `usage_records` + 计费集合；可建 `operation_metrics_daily` 每日快照集合加速大盘（可选）。
+
+### 20.6 全局公告推送 Announcement（集合 `announcements`，平台级）
+
+| 字段 | 类型 | 含义 | 必填 | 默认 | 枚举/取值 | 备注 |
+|---|---|---|---|---|---|---|
+| Id | string | 主键 | 是 | UUID | — | — |
+| Title | string | 公告标题 | 是 | "" | — | — |
+| Content | richtext | 公告内容 | 是 | "" | — | XSS 净化 |
+| Audience | enum | 受众范围 | 是 | `all` | all/specific | — |
+| TargetTenantIds | string[] | 指定租户（Audience=specific 时） | 否 | [] | — | FK→tenants |
+| Channel | string[] | 推送通道 | 否 | [站内] | 站内 / 企业微信 | — |
+| Status | enum | 状态 | 是 | `draft` | draft/published | — |
+| PublishAt | datetime | 发布时间 | 否 | null | — | — |
+| CreatedBy | string | 创建运营人员 | 是 | "" | — | FK→operators |
+
+### 20.7 全局集成配置 PlatformSettings（集合 `platform_settings`，平台级单例）
+
+| 字段 | 类型 | 含义 | 必填 | 默认 | 备注 |
+|---|---|---|---|---|---|
+| Id | string | 单例固定 Id | 是 | `platform-settings` | — |
+| WecomProviderConfig | object | 企业微信第三方应用（服务商）默认配置 | 否 | null | 多租户授权用 |
+| DefaultSsoConfig | object | SSO 对接默认模板（Phase2 预留） | 否 | null | — |
+| NotifyChannelConfig | object | 全局通知渠道（邮件/企业微信）配置 | 否 | null | 无短信验证码，但通知可用邮件 |
+| UpdatedBy | string | 更新人 | 否 | "" | FK→operators |
+
+### 20.8 全局默认配置（模板/工作流/目录）
+
+运营端在此维护**三级覆盖的「全局默认」层**（第十七章 17.1 第 3 条）：全局默认表单模板 / 工作流定义 / 等级目录 / 需求类型 / 产品类型，租户与产品逐级继承覆盖。复用 `product_form_templates` / `product_workflow_definitions` / `product_grade_options` 等的全局记录（`TenantId` = 平台全局标记、`ProductId` = null）。
+
+### 20.9 账号排查与登录审计
+
+- **账号排查**：运营/客服跨租户**只读**检索 `users`，用于支持排障。
+- **登录审计 LoginAudit（集合 `login_audits`）**：
+
+| 字段 | 类型 | 含义 | 必填 | 默认 | 枚举/取值 | 备注 |
+|---|---|---|---|---|---|---|
+| Id | string | 主键 | 是 | UUID | — | — |
+| TenantId | string | 所属租户 | 否 | null | — | 运营登录可空 |
+| UserId | string | 用户 | 否 | null | — | FK→users/operators |
+| Phone | string | 登录手机号 | 否 | null | — | — |
+| Method | enum | 登录方式 | 是 | — | password/wecom/sso | — |
+| Result | enum | 结果 | 是 | — | success/fail | — |
+| FailReason | string | 失败原因 | 否 | null | — | — |
+| Ip / UserAgent | string | 来源 IP / UA | 否 | null | — | — |
+| At | datetime | 时间 | 是 | now | — | — |
+
+### 20.10 运营人员与权限
+
+#### 20.10a 运营账号 Operator（集合 `operators`，平台级）
+
+| 字段 | 类型 | 含义 | 必填 | 默认 | 枚举/取值 | 备注 |
+|---|---|---|---|---|---|---|
+| Id | string | 主键 | 是 | UUID | — | PK |
+| Account | string | 登录账号（手机号/工号） | 是 | "" | — | 唯一 |
+| Name | string | 姓名 | 是 | "" | — | — |
+| PasswordHash | string | 密码哈希 | 否 | null | — | — |
+| Roles | string[] | 运营角色 | 否 | [] | super-admin/operator/finance/support | 见下 |
+| Status | enum | 状态 | 是 | `active` | active/disabled | — |
+| LastLoginAt | datetime | 最后登录 | 否 | null | — | — |
+
+**运营角色权限**：
+
+| 角色 | 能力 |
+|---|---|
+| super-admin 超级管理员 | 全部，含运营人员管理与平台配置 |
+| operator 运营 | 租户管理、公告、大盘、全局默认配置 |
+| finance 财务 | 套餐/订阅/账单/支付（读写计费，不动租户业务） |
+| support 客服 | 账号排查、登录审计（只读） |
+
+#### 20.10b 操作审计 OperationAuditLog（集合 `operation_audit_logs`，平台级）
+
+| 字段 | 类型 | 含义 | 必填 | 默认 | 备注 |
+|---|---|---|---|---|---|
+| Id | string | 主键 | 是 | UUID | — |
+| OperatorId | string | 操作运营人员 | 是 | "" | FK→operators |
+| Action | string | 操作动作（如 tenant.suspend） | 是 | "" | — |
+| TargetType | string | 目标类型（tenant/plan/invoice…） | 是 | "" | — |
+| TargetId | string | 目标 Id | 否 | null | — |
+| TenantId | string | 被操作租户 | 否 | null | 跨租户操作留痕 |
+| Detail | object | 变更详情（前后值） | 否 | null | — |
+| Ip | string | 来源 IP | 否 | null | — |
+| At | datetime | 时间 | 是 | now | — |
+
+### 20.11 运营端数据集合清单（平台级）
+
+| 集合 | 用途 | 是否含 TenantId | 建议索引 |
+|---|---|---|---|
+| tenants | 租户（第十七章） | 自身即租户 | `{Status:1}`、`{Slug:1}` |
+| plans | 套餐 | 否（平台级） | `{Status:1}`、`{Code:1}` |
+| subscriptions | 订阅 | 是 | `{TenantId:1,Status:1}` |
+| invoices | 账单 | 是 | `{TenantId:1,Status:1}`、`{InvoiceNo:1}` |
+| payments | 支付 | 是 | `{TenantId:1}`、`{InvoiceId:1}` |
+| usage_records | 用量计量 | 是 | `{TenantId:1,Metric:1,Period:1}` |
+| announcements | 全局公告 | 否（平台级） | `{Status:1,PublishAt:-1}` |
+| platform_settings | 平台集成配置（单例） | 否 | — |
+| operators | 运营账号 | 否 | `{Account:1}` |
+| operation_audit_logs | 操作审计 | 否（含被操作 TenantId） | `{OperatorId:1,At:-1}`、`{TenantId:1,At:-1}` |
+| login_audits | 登录审计 | 否 | `{UserId:1,At:-1}`、`{TenantId:1,At:-1}` |
+| operation_metrics_daily（可选） | 大盘每日快照 | 否 | `{Date:-1}` |
 
 ---
 
