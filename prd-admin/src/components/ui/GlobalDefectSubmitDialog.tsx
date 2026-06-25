@@ -395,8 +395,9 @@ export function GlobalDefectSubmitDialog() {
       return false;
     }
     if (!assigneeUserId) {
-      // 用字段级闪烁代替右上角 toast：视觉聚焦到真正需要填写的那个控件
+      // 字段级闪烁聚焦控件，toast 兜底保证用户明确看到原因
       setAssigneeFlashTick((t) => t + 1);
+      toast.warning('请选择提交用户');
       return false;
     }
 
@@ -522,6 +523,11 @@ export function GlobalDefectSubmitDialog() {
                     aria-hidden
                     className="defect-field-flash absolute inset-0"
                   />
+                )}
+                {assigneeFlashTick > 0 && !assigneeUserId && (
+                  <div className="mt-1 text-[11px] text-token-error">
+                    请选择提交用户
+                  </div>
                 )}
               </div>
             </div>
