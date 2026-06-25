@@ -1,8 +1,13 @@
-// MAP 验收 · 归档后「自查能否打开」(项目无关)
-// 用途：归档拿到分享链后，headless 打开真页面断言报告确实渲染（标题 + 正文 + 截图），
+// 验收 · 归档后「自查能否打开」(项目无关，存储无关)
+// 用途：归档拿到可达链接后，headless 打开真页面断言报告确实渲染（标题 + 正文 + 截图），
 //       而不是"建了条目但点开空白"。空/打不开 → 退出码 2，调用方据此重新推送验收。
-// 用法：PWPATH=$(npm root -g)/playwright node verify-open.mjs <shareUrl> "<标题或正文里必现的一段文字>" [最少图片数=1]
-//   例：node verify-open.mjs https://x.miduo.org/s/lib/abc123 "SaaS空间模型" 4
+// 链接来源（任选其一，脚本本身不关心存储）：
+//   - CDS 匿名分享链 /r/<token>（E6，无需登录，headless 可直接断言——首选）。
+//   - CDS 验收中心直达深链 /reports?project=&folder=&report=（登录态；headless 需带 CDS 会话，
+//     或改用 cds/cli/acceptance 的 proxyroute harness 认证打开）。
+//   - 旧 MAP 知识库分享链 /s/lib/<token>（mode=doc-store 向后兼容路径）。
+// 用法：PWPATH=$(npm root -g)/playwright node verify-open.mjs <url> "<标题或正文里必现的一段文字>" [最少图片数=1]
+//   例：node verify-open.mjs https://cds.miduo.org/r/abc123 "SaaS空间模型" 4
 // 默认最多尝试 3 次（首试 + 2 次重试），并打印每次结果；用 VERIFY_OPEN_MAX_ATTEMPTS=1 可关闭重试。
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);

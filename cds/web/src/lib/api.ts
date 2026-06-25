@@ -176,14 +176,32 @@ function hasNoReadableError(parsed: unknown): boolean {
 
 export type ReportFormat = 'html' | 'md';
 
+export type ReportVerdict = 'pass' | 'conditional' | 'fail';
+
 export interface AcceptanceReport {
   id: string;
   title: string;
   format: ReportFormat;
   projectId?: string | null;
+  /** 列表接口附带：项目 slug，便于跨系统按项目归类展示。 */
+  projectSlug?: string | null;
   branchId?: string | null;
   folderId?: string | null;
   sizeBytes: number;
+  /** 验收结论（看板分组）。 */
+  verdict?: ReportVerdict | null;
+  /** 验收档位（自由文本）。 */
+  tier?: string | null;
+  /** 缺陷计数（按严重度）。 */
+  defectCounts?: Record<string, number> | null;
+  /** E1 部署上下文：commit SHA。 */
+  commitSha?: string | null;
+  /** E1 部署上下文：分支名。 */
+  branch?: string | null;
+  /** E1 部署上下文：PR 编号。 */
+  prNumber?: number | null;
+  /** E1 部署上下文：部署模式。 */
+  deployMode?: string | null;
   createdBy?: string;
   createdAt: string;
   updatedAt: string;

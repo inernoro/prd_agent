@@ -109,7 +109,53 @@ interface ParsedUpload {
   content?: string;
   projectId?: string | null;
   branchId?: string | null;
+  folderId?: string | null;
   filename?: string;
+  // E1 部署上下文 + 验收元数据（multipart 走字符串字段，POST 时再规整类型）。
+  verdict?: string;
+  tier?: string;
+  defectCounts?: string;
+  commitSha?: string;
+  branch?: string;
+  prNumber?: string;
+  deployMode?: string;
+}
+
+const VERDICTS = ['pass', 'conditional', 'fail'] as const;
+
+/** 规整 verdict 字符串到合法枚举，否则返回 null。 */
+function normVerdict(v: unknown): 'pass' | 'conditional' | 'fail' | null {
+  const s = typeof v === 'string' ? v.trim().toLowerCase() : '';
+  return (VERDICTS as readonly string[]).includes(s) ? (s as 'pass' | 'conditional' | 'fail') : null;
+}
+
+/** 规整 defectCounts：接受对象或 JSON 字符串，过滤为 { [string]: number }，否则 null。 */
+function normDefectCounts(v: unknown): Record<string, number> | null {
+  let obj: unknown = v;
+  if (typeof v === 'string') {
+    const s = v.trim();
+    if (!s) return null;
+    try { obj = JSON.parse(s); } catch { return null; }
+  }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
+  const out: Record<string, number> = {};
+  for (const [k, val] of Object.entries(obj as Record<string, unknown>)) {
+    const n = typeof val === 'number' ? val : Number(val);
+    if (Number.isFinite(n)) out[k] = n;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/** 规整 prNumber：接受数字或数字字符串，否则 null。 */
+function normPrNumber(v: unknown): number | null {
+  const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() ? Number(v) : NaN;
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/** 短文本字段规整（commitSha / branch / tier / deployMode）：trim 后空则 null，限长防滥用。 */
+function normShort(v: unknown, max = 200): string | null {
+  const s = typeof v === 'string' ? v.trim() : '';
+  return s ? s.slice(0, max) : null;
 }
 
 /**
@@ -151,6 +197,22 @@ function parseMultipart(buf: Buffer, contentType: string): ParsedUpload {
       out.projectId = value || null;
     } else if (fieldName === 'branchId') {
       out.branchId = value || null;
+    } else if (fieldName === 'folderId') {
+      out.folderId = value || null;
+    } else if (fieldName === 'verdict') {
+      out.verdict = value;
+    } else if (fieldName === 'tier') {
+      out.tier = value;
+    } else if (fieldName === 'defectCounts') {
+      out.defectCounts = value;
+    } else if (fieldName === 'commitSha') {
+      out.commitSha = value;
+    } else if (fieldName === 'branch') {
+      out.branch = value;
+    } else if (fieldName === 'prNumber') {
+      out.prNumber = value;
+    } else if (fieldName === 'deployMode') {
+      out.deployMode = value;
     } else if (fieldName === 'content' && out.content === undefined) {
       out.content = value;
     }
@@ -183,6 +245,14 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     let branchId: string | null | undefined;
     let folderId: string | null | undefined;
     let filename: string | undefined;
+    // E1 部署上下文 + 验收元数据（原始值，下面统一规整类型）。
+    let rawVerdict: unknown;
+    let rawTier: unknown;
+    let rawDefectCounts: unknown;
+    let rawCommitSha: unknown;
+    let rawBranch: unknown;
+    let rawPrNumber: unknown;
+    let rawDeployMode: unknown;
 
     if (contentType.includes('multipart/form-data')) {
       const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.from('');
@@ -192,7 +262,15 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       content = parsed.content;
       projectId = parsed.projectId;
       branchId = parsed.branchId;
+      folderId = parsed.folderId;
       filename = parsed.filename;
+      rawVerdict = parsed.verdict;
+      rawTier = parsed.tier;
+      rawDefectCounts = parsed.defectCounts;
+      rawCommitSha = parsed.commitSha;
+      rawBranch = parsed.branch;
+      rawPrNumber = parsed.prNumber;
+      rawDeployMode = parsed.deployMode;
     } else if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body)) {
       const body = req.body as Record<string, unknown>;
       title = typeof body.title === 'string' ? body.title : undefined;
@@ -201,6 +279,13 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       projectId = typeof body.projectId === 'string' ? body.projectId : null;
       branchId = typeof body.branchId === 'string' ? body.branchId : null;
       folderId = typeof body.folderId === 'string' ? body.folderId : null;
+      rawVerdict = body.verdict;
+      rawTier = body.tier;
+      rawDefectCounts = body.defectCounts;
+      rawCommitSha = body.commitSha;
+      rawBranch = body.branch;
+      rawPrNumber = body.prNumber;
+      rawDeployMode = body.deployMode;
     } else if (typeof req.body === 'string') {
       content = req.body;
     }
@@ -252,6 +337,19 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       if (folder && (folder.projectId ?? null) === resolvedProjectId) resolvedFolderId = folder.id;
     }
 
+    // E1：分支已解析时，若调用方未显式给 branch/commitSha/deployMode，从分支状态补全，
+    // 让「这份验收对应哪次部署」即使调用方偷懒也尽量可追溯。
+    let resolvedBranch = normShort(rawBranch);
+    let resolvedCommitSha = normShort(rawCommitSha, 64);
+    let resolvedDeployMode = normShort(rawDeployMode, 40);
+    if (resolvedBranchId) {
+      const br = stateService.getBranch(resolvedBranchId);
+      if (br) {
+        if (!resolvedBranch) resolvedBranch = normShort(br.branch);
+        if (!resolvedCommitSha) resolvedCommitSha = normShort(br.ciTargetSha || br.githubCommitSha, 64);
+      }
+    }
+
     const meta = stateService.createAcceptanceReport({
       title: cleanTitle,
       format,
@@ -259,6 +357,13 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       projectId: resolvedProjectId,
       branchId: resolvedBranchId,
       folderId: resolvedFolderId,
+      verdict: normVerdict(rawVerdict),
+      tier: normShort(rawTier, 80),
+      defectCounts: normDefectCounts(rawDefectCounts),
+      commitSha: resolvedCommitSha,
+      branch: resolvedBranch,
+      prNumber: normPrNumber(rawPrNumber),
+      deployMode: resolvedDeployMode,
       createdBy: resolveActorFromRequest(req),
     });
     return res.status(201).json({ report: meta });
@@ -278,7 +383,14 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     if (typeof req.query.folderId === 'string') {
       folderFilter = req.query.folderId === 'none' ? null : req.query.folderId;
     }
-    const reports = stateService.listAcceptanceReports(projectId ?? null, folderFilter);
+    // updatedSince：ISO 时间戳，增量消费（MAP / peer-sync 拉取）只取 updatedAt 更新的。
+    const updatedSince = typeof req.query.updatedSince === 'string' && req.query.updatedSince
+      ? req.query.updatedSince
+      : undefined;
+    const reports = stateService
+      .listAcceptanceReports(projectId ?? null, folderFilter, updatedSince)
+      // 响应附带 projectSlug，便于跨系统（MAP）按项目归类展示，免二次查项目表。
+      .map((r) => ({ ...r, projectSlug: r.projectId ? stateService.getProject(r.projectId)?.slug ?? null : null }));
     res.json({ reports });
   });
 
@@ -331,17 +443,28 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       : {};
     const title = typeof body.title === 'string' ? body.title.trim() : undefined;
     const content = typeof body.content === 'string' ? body.content : undefined;
+    // 验收元数据可单独 PATCH（看板改判定 / E4 回写后补 prNumber 等）。
+    // hasOwnProperty 区分「显式传 null 清空」与「缺省不动」。
+    const metaUpdates: Parameters<typeof stateService.updateAcceptanceReport>[1] = {};
+    if (Object.prototype.hasOwnProperty.call(body, 'verdict')) metaUpdates.verdict = normVerdict(body.verdict);
+    if (Object.prototype.hasOwnProperty.call(body, 'tier')) metaUpdates.tier = normShort(body.tier, 80);
+    if (Object.prototype.hasOwnProperty.call(body, 'defectCounts')) metaUpdates.defectCounts = normDefectCounts(body.defectCounts);
+    if (Object.prototype.hasOwnProperty.call(body, 'commitSha')) metaUpdates.commitSha = normShort(body.commitSha, 64);
+    if (Object.prototype.hasOwnProperty.call(body, 'branch')) metaUpdates.branch = normShort(body.branch);
+    if (Object.prototype.hasOwnProperty.call(body, 'prNumber')) metaUpdates.prNumber = normPrNumber(body.prNumber);
+    if (Object.prototype.hasOwnProperty.call(body, 'deployMode')) metaUpdates.deployMode = normShort(body.deployMode, 40);
+    const hasMeta = Object.keys(metaUpdates).length > 0;
     // folderId: 字符串=移入该文件夹；null / 'none' / '' = 移出文件夹；缺省=不改动。
     const hasFolder = Object.prototype.hasOwnProperty.call(body, 'folderId');
-    if (title === undefined && content === undefined && !hasFolder) {
+    if (title === undefined && content === undefined && !hasFolder && !hasMeta) {
       return res.status(400).json({ error: 'nothing_to_update', message: '没有可更新的字段' });
     }
     if (content !== undefined && exceedsCap(content)) {
       return res.status(413).json({ error: 'content_too_large', message: `报告内容超过上限（${MAX_CONTENT_BYTES / 1024 / 1024}MB）` });
     }
     let updated = existing;
-    if (title !== undefined || content !== undefined) {
-      updated = stateService.updateAcceptanceReport(req.params.id, { title, content }) ?? existing;
+    if (title !== undefined || content !== undefined || hasMeta) {
+      updated = stateService.updateAcceptanceReport(req.params.id, { title, content, ...metaUpdates }) ?? existing;
     }
     if (hasFolder) {
       const raw = body.folderId;

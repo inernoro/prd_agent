@@ -3552,11 +3552,19 @@ export class StateService {
    *   - null      → only reports NOT in any folder (未归类)
    *   - '<id>'    → only reports in that folder
    */
-  listAcceptanceReports(projectId?: string | null, folderId?: string | null): AcceptanceReportMeta[] {
+  listAcceptanceReports(
+    projectId?: string | null,
+    folderId?: string | null,
+    updatedSince?: string | null,
+  ): AcceptanceReportMeta[] {
     const all = this.state.acceptanceReports || [];
     let filtered = projectId ? all.filter((r) => (r.projectId || null) === projectId) : all;
     if (folderId !== undefined) {
       filtered = filtered.filter((r) => (r.folderId || null) === (folderId || null));
+    }
+    // 增量消费（peer-sync / MAP 拉取）：只返回 updatedAt 严格晚于游标的报告。
+    if (updatedSince) {
+      filtered = filtered.filter((r) => (r.updatedAt || r.createdAt) > updatedSince);
     }
     return [...filtered].sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));
   }
@@ -3588,6 +3596,13 @@ export class StateService {
     projectId?: string | null;
     branchId?: string | null;
     folderId?: string | null;
+    verdict?: 'pass' | 'conditional' | 'fail' | null;
+    tier?: string | null;
+    defectCounts?: Record<string, number> | null;
+    commitSha?: string | null;
+    branch?: string | null;
+    prNumber?: number | null;
+    deployMode?: string | null;
     createdBy?: string;
   }): AcceptanceReportMeta {
     if (!this.state.acceptanceReports) this.state.acceptanceReports = [];
@@ -3605,6 +3620,13 @@ export class StateService {
       branchId: input.branchId ?? null,
       folderId,
       sizeBytes: Buffer.byteLength(input.content, 'utf8'),
+      verdict: input.verdict ?? null,
+      tier: input.tier ?? null,
+      defectCounts: input.defectCounts ?? null,
+      commitSha: input.commitSha ?? null,
+      branch: input.branch ?? null,
+      prNumber: input.prNumber ?? null,
+      deployMode: input.deployMode ?? null,
       createdBy: input.createdBy,
       createdAt: now,
       updatedAt: now,
@@ -3623,7 +3645,17 @@ export class StateService {
    */
   updateAcceptanceReport(
     id: string,
-    updates: { title?: string; content?: string },
+    updates: {
+      title?: string;
+      content?: string;
+      verdict?: 'pass' | 'conditional' | 'fail' | null;
+      tier?: string | null;
+      defectCounts?: Record<string, number> | null;
+      commitSha?: string | null;
+      branch?: string | null;
+      prNumber?: number | null;
+      deployMode?: string | null;
+    },
   ): AcceptanceReportMeta | null {
     const meta = this.getAcceptanceReport(id);
     if (!meta) return null;
@@ -3633,6 +3665,13 @@ export class StateService {
       fs.writeFileSync(this.reportFilePath(meta), updates.content, 'utf-8');
       meta.sizeBytes = Buffer.byteLength(updates.content, 'utf8');
     }
+    if (updates.verdict !== undefined) meta.verdict = updates.verdict;
+    if (updates.tier !== undefined) meta.tier = updates.tier;
+    if (updates.defectCounts !== undefined) meta.defectCounts = updates.defectCounts;
+    if (updates.commitSha !== undefined) meta.commitSha = updates.commitSha;
+    if (updates.branch !== undefined) meta.branch = updates.branch;
+    if (updates.prNumber !== undefined) meta.prNumber = updates.prNumber;
+    if (updates.deployMode !== undefined) meta.deployMode = updates.deployMode;
     meta.updatedAt = new Date().toISOString();
     this.save();
     return meta;

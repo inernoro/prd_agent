@@ -43,7 +43,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
-VERSION = "0.6.9"  # ← bumped on each SKILL.md change; 服务端自动读这一行
+VERSION = "0.7.0"  # ← bumped on each SKILL.md change; 服务端自动读这一行
 _TRACE_ID: str = ""
 _HUMAN: bool = False
 _DRIFT_WARNED: bool = False  # 全进程只提示一次，避免每个请求都刷
@@ -2023,6 +2023,41 @@ def cmd_report_create(args: argparse.Namespace) -> None:
         payload["projectId"] = args.project
     if getattr(args, "folder", None):
         payload["folderId"] = args.folder
+    # 验收元数据 + E1 部署上下文(看板/跨系统展示/PR 回写都靠这些)。
+    if getattr(args, "verdict", None):
+        payload["verdict"] = args.verdict
+    if getattr(args, "tier", None):
+        payload["tier"] = args.tier
+    if getattr(args, "branch", None):
+        payload["branch"] = args.branch
+    if getattr(args, "branch_id", None):
+        payload["branchId"] = args.branch_id
+    if getattr(args, "commit", None):
+        payload["commitSha"] = args.commit
+    if getattr(args, "pr", None) is not None:
+        payload["prNumber"] = args.pr
+    if getattr(args, "deploy_mode", None):
+        payload["deployMode"] = args.deploy_mode
+    if getattr(args, "defects", None):
+        # --defects 接受 JSON('{"p0":0,"p1":2}') 或 'p0=0,p1=2' 两种写法。
+        raw = args.defects.strip()
+        parsed: Any = None
+        if raw.startswith("{"):
+            try:
+                parsed = json.loads(raw)
+            except Exception:
+                parsed = None
+        else:
+            parsed = {}
+            for pair in raw.split(","):
+                if "=" in pair:
+                    k, v = pair.split("=", 1)
+                    try:
+                        parsed[k.strip()] = int(v.strip())
+                    except Exception:
+                        pass
+        if parsed:
+            payload["defectCounts"] = parsed
     body = _call("POST", "/api/reports", body=payload, timeout=60)
     rep = body.get("report") if isinstance(body, dict) else None
     rid = (rep or {}).get("id", "?")
@@ -6684,6 +6719,15 @@ def _build_parser() -> argparse.ArgumentParser:
     rc.add_argument("--content", help="直接给正文(与 --html-file 二选一)")
     rc.add_argument("--format", choices=["html", "md"], help="默认按文件名/html 推断")
     rc.add_argument("--project"); rc.add_argument("--folder")
+    # 验收元数据 + E1 部署上下文(看板/跨系统/PR 回写)
+    rc.add_argument("--verdict", choices=["pass", "conditional", "fail"], help="验收结论")
+    rc.add_argument("--tier", help="验收档位(如 'P0 冒烟' / '视觉回归')")
+    rc.add_argument("--branch", help="被验收分支名(E1 部署上下文)")
+    rc.add_argument("--branch-id", help="关联 CDS 分支 ID(可从中自动补全分支名/commit)")
+    rc.add_argument("--commit", help="被验收 commit SHA(E1 部署上下文)")
+    rc.add_argument("--pr", type=int, help="关联 PR 编号(E1,便于 E4 回写)")
+    rc.add_argument("--deploy-mode", help="部署模式(fast/source/preview)")
+    rc.add_argument("--defects", help="缺陷计数,JSON('{\"p0\":0,\"p1\":2}')或 'p0=0,p1=2'")
     rc.set_defaults(func=cmd_report_create)
     rd = rep.add_parser("delete"); rd.add_argument("id"); rd.set_defaults(func=cmd_report_delete)
     rk = rep.add_parser("deeplink", help="打印某报告的应用内直达深链")

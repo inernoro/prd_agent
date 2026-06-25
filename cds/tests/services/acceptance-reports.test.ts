@@ -125,4 +125,53 @@ describe('StateService acceptance reports', () => {
   it('returns undefined content for a missing report', () => {
     expect(service.readAcceptanceReportContent('does-not-exist')).toBeUndefined();
   });
+
+  it('round-trips verdict + deploy-context metadata (WS1/E1)', () => {
+    const meta = service.createAcceptanceReport({
+      title: 'With metadata',
+      format: 'html',
+      content: '<p>ok</p>',
+      projectId: 'proj-1',
+      verdict: 'conditional',
+      tier: 'P0 冒烟',
+      defectCounts: { p0: 0, p1: 2 },
+      commitSha: 'abc1234',
+      branch: 'claude/feature-x',
+      prNumber: 922,
+      deployMode: 'fast',
+    });
+    expect(meta.verdict).toBe('conditional');
+    expect(meta.tier).toBe('P0 冒烟');
+    expect(meta.defectCounts).toEqual({ p0: 0, p1: 2 });
+    expect(meta.commitSha).toBe('abc1234');
+    expect(meta.branch).toBe('claude/feature-x');
+    expect(meta.prNumber).toBe(922);
+    expect(meta.deployMode).toBe('fast');
+
+    // Defaults to null when omitted.
+    const bare = service.createAcceptanceReport({ title: 'Bare', format: 'md', content: '# x' });
+    expect(bare.verdict).toBeNull();
+    expect(bare.commitSha).toBeNull();
+    expect(bare.defectCounts).toBeNull();
+
+    // PATCH-style metadata update (verdict flip + pr number backfill).
+    const patched = service.updateAcceptanceReport(bare.id, { verdict: 'pass', prNumber: 7 });
+    expect(patched!.verdict).toBe('pass');
+    expect(patched!.prNumber).toBe(7);
+  });
+
+  it('filters by updatedSince for incremental consumption (WS3)', async () => {
+    const a = service.createAcceptanceReport({ title: 'A', format: 'md', content: '# a' });
+    await new Promise((r) => setTimeout(r, 10));
+    const cursor = new Date().toISOString();
+    await new Promise((r) => setTimeout(r, 10));
+    const b = service.createAcceptanceReport({ title: 'B', format: 'md', content: '# b' });
+
+    const since = service.listAcceptanceReports(null, undefined, cursor);
+    expect(since.map((r) => r.id)).toEqual([b.id]);
+    // Touching A bumps updatedAt so it reappears after the cursor.
+    service.updateAcceptanceReport(a.id, { verdict: 'pass' });
+    const after = service.listAcceptanceReports(null, undefined, cursor).map((r) => r.id).sort();
+    expect(after).toEqual([a.id, b.id].sort());
+  });
 });

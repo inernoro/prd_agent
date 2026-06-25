@@ -1346,6 +1346,20 @@ export interface AcceptanceReportMeta {
   folderId?: string | null;
   /** 正文字节数（UTF-8）。 */
   sizeBytes: number;
+  /** 验收结论：pass 通过 / conditional 有条件通过 / fail 不通过；未判定为 null。 */
+  verdict?: 'pass' | 'conditional' | 'fail' | null;
+  /** 验收档位（如 P0 冒烟 / 视觉回归 / 完整验收等，自由文本，用于看板分组）；可空。 */
+  tier?: string | null;
+  /** 缺陷计数（按严重度），如 { p0:0, p1:1, p2:3 }；可空。 */
+  defectCounts?: Record<string, number> | null;
+  /** E1 部署上下文：被验收对象对应的 commit SHA（7+ 位）；可空。 */
+  commitSha?: string | null;
+  /** E1 部署上下文：被验收对象对应的分支名（与 branchId 互补，分支名更可读）；可空。 */
+  branch?: string | null;
+  /** E1 部署上下文：关联的 PR 编号（数字，便于回写）；可空。 */
+  prNumber?: number | null;
+  /** E1 部署上下文：部署模式（如 'fast' 极速版 / 'source' 源码 / 'preview'）；可空。 */
+  deployMode?: string | null;
   /** 创建人（resolveActorFromRequest 解析的 actor，如 'user' / 'ai'）。 */
   createdBy?: string;
   /** 创建时间 ISO 字符串。 */
