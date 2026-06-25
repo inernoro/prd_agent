@@ -908,6 +908,7 @@ export function DocumentGalaxyView({ storeId, storeName }: DocumentGalaxyViewPro
   const [galaxy, setGalaxy] = useState<DocGalaxy | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [partial, setPartial] = useState(false); // 翻页有页失败 → 图谱不完整
   const [openEntryId, setOpenEntryId] = useState<string | null>(null);
   const storeNameRef = useRef(storeName);
   storeNameRef.current = storeName;
@@ -924,6 +925,7 @@ export function DocumentGalaxyView({ storeId, storeName }: DocumentGalaxyViewPro
     setLoading(true);
     setError(null);
     setGalaxy(null);
+    setPartial(false);
     setOpenEntryId(null);
 
     // 超时护栏：25s 内拿不到数据就显式报错，绝不静默空转
@@ -934,7 +936,7 @@ export function DocumentGalaxyView({ storeId, storeName }: DocumentGalaxyViewPro
 
     // 整个加载（首页 + 翻页 + 成图）作为一个 async 单元，整体纳入下面的超时 race，
     // 任何一页 await 卡住都会触发超时报错，不会再静默停在「正在构建文档星系...」
-    const loadGalaxy = async (): Promise<DocGalaxy> => {
+    const loadGalaxy = async (): Promise<{ built: DocGalaxy; partial: boolean }> => {
       const [firstRes, graphRes] = await Promise.all([
         listDocumentEntriesReal(storeId, 1, 200),
         getStoreGraph(storeId),
@@ -947,6 +949,7 @@ export function DocumentGalaxyView({ storeId, storeName }: DocumentGalaxyViewPro
       const MAX_PAGES = 50; // 上限 10000 条，防御异常分页
       const allItems = [...firstRes.data.items];
       const total = firstRes.data.total ?? allItems.length;
+      let isPartial = false; // 某页失败 → 图谱不完整，下面 UI 显式提示
       // 还有剩余页就继续翻：用 total 推断总页数，items.length < pageSize 作兜底终止
       let page = 1;
       while (
@@ -958,12 +961,15 @@ export function DocumentGalaxyView({ storeId, storeName }: DocumentGalaxyViewPro
         const res = await listDocumentEntriesReal(storeId, page, PAGE_SIZE);
         if (cancelled) break;
         if (!res.success) {
-          console.error('[galaxy] 翻页加载条目失败（用已拉取页继续成图）', page, res.error);
+          console.error('[galaxy] 翻页加载条目失败（图谱将不完整）', page, res.error);
+          isPartial = true;
           break;
         }
         allItems.push(...res.data.items);
         if (res.data.items.length < PAGE_SIZE) break;
       }
+      // 翻到上限仍未取全也算不完整
+      if (page >= MAX_PAGES && allItems.length < total) isPartial = true;
 
       const entries: GalaxyInputEntry[] = allItems.map((e) => ({
         id: e.id,
@@ -983,12 +989,15 @@ export function DocumentGalaxyView({ storeId, storeName }: DocumentGalaxyViewPro
           }))
         : [];
       // 默认 canonical resolver：含旧扁平名前缀去扁平化（cds-xxx → cds > xxx），减少悬空
-      return buildDocGalaxy(entries, links, { rootName: storeNameRef.current });
+      return { built: buildDocGalaxy(entries, links, { rootName: storeNameRef.current }), partial: isPartial };
     };
 
     Promise.race([loadGalaxy(), timeout])
-      .then((built) => {
-        if (!cancelled) setGalaxy(built);
+      .then((result) => {
+        if (!cancelled) {
+          setGalaxy(result.built);
+          setPartial(result.partial);
+        }
       })
       .catch((e) => {
         if (cancelled) return;
@@ -1067,6 +1076,21 @@ export function DocumentGalaxyView({ storeId, storeName }: DocumentGalaxyViewPro
           <div style={{ fontSize: 11, color: '#8a8a96', borderLeft: '1px solid rgba(255,255,255,0.1)', paddingLeft: 8 }}>
             共 {galaxy.stats.totalDocs} 篇 · {galaxy.links.length} 引用
           </div>
+          {partial && (
+            <div
+              style={{
+                fontSize: 11,
+                color: '#ffd0a0',
+                background: 'rgba(120,70,20,0.55)',
+                border: '1px solid rgba(255,160,80,0.5)',
+                borderRadius: 6,
+                padding: '2px 8px',
+              }}
+              title="部分文档分页加载失败，当前星系不完整（缺少部分文档及其连线）"
+            >
+              部分加载失败 · 图谱不完整
+            </div>
+          )}
         </div>
       )}
 
