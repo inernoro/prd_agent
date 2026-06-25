@@ -1062,6 +1062,11 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
     get()._stopSubscription();
     set({
       view: 'grid',
+      pageTab: 'toolbox',
+      category: 'all',
+      searchQuery: '',
+      funcKindFilter: 'all',
+      activeTagFilter: null,
       selectedItem: null,
       editingItem: null,
       runStatus: 'idle',
