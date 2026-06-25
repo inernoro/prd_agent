@@ -108,13 +108,13 @@
     "apiUrl": "https://main.miduo.org/api/v1/stub",
     "code": "ai-toolbox.agent.visual::generation",
     "healthStatus": "Healthy",
-    "isFallback": true,
-    "modelGroupId": null,
+    "isFallback": false,
+    "modelGroupId": "bea057ffbb91461dba52f86194548942",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "qwen/qwen3.6-plus",
@@ -122,12 +122,12 @@
     "code": "ai-toolbox.agent.visual::vision",
     "healthStatus": "Healthy",
     "isFallback": false,
-    "modelGroupId": null,
+    "modelGroupId": "2f05b86bbbaa4b47ab901b504417d3e6",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "qwen/qwen3.6-plus",
@@ -148,12 +148,12 @@
     "code": "ai-toolbox.orchestration::intent",
     "healthStatus": "Healthy",
     "isFallback": false,
-    "modelGroupId": null,
+    "modelGroupId": "d4c151f3cf294068a5a9515c26cfab5d",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "qwen/qwen3.6-plus",
@@ -161,12 +161,12 @@
     "code": "ai-toolbox.orchestration::vision",
     "healthStatus": "Healthy",
     "isFallback": false,
-    "modelGroupId": null,
+    "modelGroupId": "2f05b86bbbaa4b47ab901b504417d3e6",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "stub-image",
@@ -177,8 +177,8 @@
     "modelGroupId": null,
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
+    "protocol": null,
+    "resolutionReason": null,
     "resolutionType": "Legacy"
   },
   {
@@ -330,12 +330,12 @@
     "code": "channel-trace-agent.knowledge::vision",
     "healthStatus": "Healthy",
     "isFallback": false,
-    "modelGroupId": null,
+    "modelGroupId": "2f05b86bbbaa4b47ab901b504417d3e6",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "qwen/qwen3.6-plus",
@@ -343,12 +343,12 @@
     "code": "defect-agent.analyze-image::vision",
     "healthStatus": "Healthy",
     "isFallback": false,
-    "modelGroupId": null,
+    "modelGroupId": "2f05b86bbbaa4b47ab901b504417d3e6",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "qwen/qwen3.6-plus",
@@ -460,12 +460,12 @@
     "code": "document-store.subtitle::vision",
     "healthStatus": "Healthy",
     "isFallback": false,
-    "modelGroupId": null,
+    "modelGroupId": "2f05b86bbbaa4b47ab901b504417d3e6",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "qwen/qwen3.6-plus",
@@ -512,12 +512,12 @@
     "code": "front-end-agent.assistant::vision",
     "healthStatus": "Healthy",
     "isFallback": false,
-    "modelGroupId": null,
+    "modelGroupId": "2f05b86bbbaa4b47ab901b504417d3e6",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "deepseek/deepseek-v4-flash",
@@ -550,26 +550,26 @@
     "apiUrl": "https://main.miduo.org/api/v1/stub",
     "code": "literary-agent.illustration.img2img::generation",
     "healthStatus": "Healthy",
-    "isFallback": true,
-    "modelGroupId": null,
+    "isFallback": false,
+    "modelGroupId": "bea057ffbb91461dba52f86194548942",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "stub-image",
     "apiUrl": "https://main.miduo.org/api/v1/stub",
     "code": "literary-agent.illustration.text2img::generation",
     "healthStatus": "Healthy",
-    "isFallback": true,
-    "modelGroupId": null,
+    "isFallback": false,
+    "modelGroupId": "bea057ffbb91461dba52f86194548942",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "qwen/qwen3.6-plus",
@@ -681,12 +681,12 @@
     "code": "md-to-ppt-agent.template-extract::vision",
     "healthStatus": "Healthy",
     "isFallback": false,
-    "modelGroupId": null,
+    "modelGroupId": "2f05b86bbbaa4b47ab901b504417d3e6",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "deepseek/deepseek-v4-flash",
@@ -706,13 +706,13 @@
     "apiUrl": "https://main.miduo.org/api/v1/stub",
     "code": "open-api.proxy::generation",
     "healthStatus": "Healthy",
-    "isFallback": true,
-    "modelGroupId": null,
+    "isFallback": false,
+    "modelGroupId": "bea057ffbb91461dba52f86194548942",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "qwen/qwen3.6-plus",
@@ -980,12 +980,12 @@
     "code": "prd-agent-desktop.chat.suggested-questions::intent",
     "healthStatus": "Healthy",
     "isFallback": false,
-    "modelGroupId": null,
+    "modelGroupId": "d4c151f3cf294068a5a9515c26cfab5d",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "qwen/qwen3.6-plus",
@@ -1019,12 +1019,12 @@
     "code": "prd-agent-desktop.group-name.suggest::intent",
     "healthStatus": "Healthy",
     "isFallback": false,
-    "modelGroupId": null,
+    "modelGroupId": "d4c151f3cf294068a5a9515c26cfab5d",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "qwen/qwen3.6-plus",
@@ -1057,13 +1057,13 @@
     "apiUrl": "https://main.miduo.org/api/v1/stub",
     "code": "prd-agent-web.lab::generation",
     "healthStatus": "Healthy",
-    "isFallback": true,
-    "modelGroupId": null,
+    "isFallback": false,
+    "modelGroupId": "bea057ffbb91461dba52f86194548942",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "qwen/qwen3.6-plus",
@@ -1071,12 +1071,12 @@
     "code": "prd-agent-web.lab::vision",
     "healthStatus": "Healthy",
     "isFallback": false,
-    "modelGroupId": null,
+    "modelGroupId": "2f05b86bbbaa4b47ab901b504417d3e6",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "qwen/qwen3.6-plus",
@@ -1097,12 +1097,12 @@
     "code": "prd-agent-web.platforms.reclassify::intent",
     "healthStatus": "Healthy",
     "isFallback": false,
-    "modelGroupId": null,
+    "modelGroupId": "d4c151f3cf294068a5a9515c26cfab5d",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "qwen/qwen3.6-plus",
@@ -1304,13 +1304,13 @@
     "apiUrl": "https://main.miduo.org/api/v1/stub",
     "code": "report-agent.weekly-poster.image::generation",
     "healthStatus": "Healthy",
-    "isFallback": true,
-    "modelGroupId": null,
+    "isFallback": false,
+    "modelGroupId": "bea057ffbb91461dba52f86194548942",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "qwen/qwen3.6-plus",
@@ -1395,13 +1395,13 @@
     "apiUrl": "https://main.miduo.org/api/v1/stub",
     "code": "speech-agent.node-image::generation",
     "healthStatus": "Healthy",
-    "isFallback": true,
-    "modelGroupId": null,
+    "isFallback": false,
+    "modelGroupId": "bea057ffbb91461dba52f86194548942",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "deepseek/deepseek-v4-flash",
@@ -1434,13 +1434,13 @@
     "apiUrl": "https://main.miduo.org/api/v1/stub",
     "code": "system.health-probe::generation",
     "healthStatus": "Healthy",
-    "isFallback": true,
-    "modelGroupId": null,
+    "isFallback": false,
+    "modelGroupId": "bea057ffbb91461dba52f86194548942",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "deepseek/deepseek-v4-flash",
@@ -1448,12 +1448,12 @@
     "code": "system.health-probe::intent",
     "healthStatus": "Healthy",
     "isFallback": false,
-    "modelGroupId": null,
+    "modelGroupId": "d4c151f3cf294068a5a9515c26cfab5d",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "qwen/qwen3.6-plus",
@@ -1461,12 +1461,12 @@
     "code": "system.health-probe::vision",
     "healthStatus": "Healthy",
     "isFallback": false,
-    "modelGroupId": null,
+    "modelGroupId": "2f05b86bbbaa4b47ab901b504417d3e6",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "deepseek/deepseek-v4-flash",
@@ -1551,13 +1551,13 @@
     "apiUrl": "https://main.miduo.org/api/v1/stub",
     "code": "video-agent.image.text2img::generation",
     "healthStatus": "Healthy",
-    "isFallback": true,
-    "modelGroupId": null,
+    "isFallback": false,
+    "modelGroupId": "bea057ffbb91461dba52f86194548942",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "",
@@ -1604,12 +1604,12 @@
     "code": "video-agent.v2d.analyze::vision",
     "healthStatus": "Healthy",
     "isFallback": false,
-    "modelGroupId": null,
+    "modelGroupId": "2f05b86bbbaa4b47ab901b504417d3e6",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "openai/gpt-audio",
@@ -1668,13 +1668,13 @@
     "apiUrl": "https://main.miduo.org/api/v1/stub",
     "code": "visual-agent.compose::generation",
     "healthStatus": "Healthy",
-    "isFallback": true,
-    "modelGroupId": null,
+    "isFallback": false,
+    "modelGroupId": "bea057ffbb91461dba52f86194548942",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "qwen/qwen3.6-plus",
@@ -1682,12 +1682,12 @@
     "code": "visual-agent.compose::vision",
     "healthStatus": "Healthy",
     "isFallback": false,
-    "modelGroupId": null,
+    "modelGroupId": "2f05b86bbbaa4b47ab901b504417d3e6",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "qwen/qwen3.6-plus",
@@ -1707,13 +1707,13 @@
     "apiUrl": "https://main.miduo.org/api/v1/stub",
     "code": "visual-agent.image-gen.batch-generate::generation",
     "healthStatus": "Healthy",
-    "isFallback": true,
-    "modelGroupId": null,
+    "isFallback": false,
+    "modelGroupId": "bea057ffbb91461dba52f86194548942",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "deepseek/deepseek-v4-flash",
@@ -1721,12 +1721,12 @@
     "code": "visual-agent.image-gen.clarify::intent",
     "healthStatus": "Healthy",
     "isFallback": false,
-    "modelGroupId": null,
+    "modelGroupId": "d4c151f3cf294068a5a9515c26cfab5d",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "qwen/qwen3.6-plus",
@@ -1734,25 +1734,25 @@
     "code": "visual-agent.image-gen.extract-style::vision",
     "healthStatus": "Healthy",
     "isFallback": false,
-    "modelGroupId": null,
+    "modelGroupId": "2f05b86bbbaa4b47ab901b504417d3e6",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "stub-image",
     "apiUrl": "https://main.miduo.org/api/v1/stub",
     "code": "visual-agent.image-gen.generate::generation",
     "healthStatus": "Healthy",
-    "isFallback": true,
-    "modelGroupId": null,
+    "isFallback": false,
+    "modelGroupId": "bea057ffbb91461dba52f86194548942",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "deepseek/deepseek-v4-flash",
@@ -1760,12 +1760,12 @@
     "code": "visual-agent.image-gen.plan::intent",
     "healthStatus": "Healthy",
     "isFallback": false,
-    "modelGroupId": null,
+    "modelGroupId": "d4c151f3cf294068a5a9515c26cfab5d",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "qwen/qwen3.6-plus",
@@ -1773,51 +1773,51 @@
     "code": "visual-agent.image.describe::vision",
     "healthStatus": "Healthy",
     "isFallback": false,
-    "modelGroupId": null,
+    "modelGroupId": "2f05b86bbbaa4b47ab901b504417d3e6",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "stub-image",
     "apiUrl": "https://main.miduo.org/api/v1/stub",
     "code": "visual-agent.image.img2img::generation",
     "healthStatus": "Healthy",
-    "isFallback": true,
-    "modelGroupId": null,
+    "isFallback": false,
+    "modelGroupId": "bea057ffbb91461dba52f86194548942",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "stub-image",
     "apiUrl": "https://main.miduo.org/api/v1/stub",
     "code": "visual-agent.image.text2img::generation",
     "healthStatus": "Healthy",
-    "isFallback": true,
-    "modelGroupId": null,
+    "isFallback": false,
+    "modelGroupId": "bea057ffbb91461dba52f86194548942",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "stub-image",
     "apiUrl": "https://main.miduo.org/api/v1/stub",
     "code": "visual-agent.image.vision::generation",
     "healthStatus": "Healthy",
-    "isFallback": true,
-    "modelGroupId": null,
+    "isFallback": false,
+    "modelGroupId": "bea057ffbb91461dba52f86194548942",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "qwen/qwen3.6-plus",
@@ -1825,12 +1825,12 @@
     "code": "visual-agent.image::vision",
     "healthStatus": "Healthy",
     "isFallback": false,
-    "modelGroupId": null,
+    "modelGroupId": "2f05b86bbbaa4b47ab901b504417d3e6",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "",
@@ -1877,12 +1877,12 @@
     "code": "visual-agent.workspace-title::intent",
     "healthStatus": "Healthy",
     "isFallback": false,
-    "modelGroupId": null,
+    "modelGroupId": "d4c151f3cf294068a5a9515c26cfab5d",
     "ok": true,
     "platformType": "openai",
-    "protocol": "openai",
-    "resolutionReason": "protocol-from-platform-type",
-    "resolutionType": "Legacy"
+    "protocol": null,
+    "resolutionReason": null,
+    "resolutionType": "DefaultPool"
   },
   {
     "actualModel": "qwen/qwen3.6-plus",

@@ -216,6 +216,19 @@ chat 的 53 个已因止血脱离 Legacy（回到 deepseek-v4-flash 默认池）
 
 P3 执行顺序：建上述 3 个默认池(生产共享 Mongo 写) → CDS 部署 → 刷新 golden 确认 38 个改走 DefaultPool 且 actualModel 不变 → 才删 legacy 解析层代码 + 策略引擎 → 再 CDS + golden 复confirm。任一步 golden diff 非空即停。
 
+#### 8.1.1 执行进度（2026-06-25）
+
+**已建 3 个行为保持默认池（生产共享 Mongo，即时生效，可逆）**：
+- vision 默认池 `default-vision-qwen`(id 2f05b86b…)→qwen/qwen3.6-plus@platform1
+- intent 默认池 `default-intent-deepseek-v4-flash`(id d4c151f3…)→deepseek/deepseek-v4-flash@platform1
+- generation 默认池 `default-generation-stub`(id bea057ff…)→stub-image@platform4（创建时自动取消了原 gemini 默认，gemini 默认池本就 enabled=null 不可用、被 legacy 兜成 stub，故此替换同样行为保持）
+
+**实测结果（golden 确定性刷新，零 actualModel 变化）**：38 个 legacy code 中 **37 个**已 Legacy→DefaultPool，actualModel 全部不变（纯行为保持，用户零感知）。
+
+**剩 1 个 + 删 legacy 的新阻断（§9.4 H5 浮现）**：`ccas-agent.equipment::generation` 仍走 Legacy（isFallback=True）——它绑了一个**空的 auto-* 专属池**（H5），step2 命中死专属池后直接 step7 兜底 legacy，绕过新默认池。**删 legacy 代码前必须先清这个空 auto 专属池**（让它落到 generation 默认池），否则删 legacy = 这个 code 变 NotFound。这把"删 legacy"的前置从"建默认池"扩展为"建默认池 + 清空 auto 专属池(H5)"。
+
+**还需决定的（删 legacy 代码本身的阻断）**：step7"池全不可用→兜底 legacy"目前是个**稳定性安全网**（池死了回退已知模型）。删 legacy 层前要给它替代（决策三说的"池内自带一条直连兜底条目"），否则删掉后池一旦全挂就 NotFound 硬失败。这是删 legacy 代码（非建默认池）的真正前置，留待下一步。
+
 ---
 
 ## 9. Phase 0 取证结果（截至 2026-06-24）
