@@ -170,7 +170,7 @@ export function ExperienceTrend({
 
   return (
     <GlassCard className="overflow-hidden h-full flex flex-col" style={{ padding: 0, minHeight: 0 }}>
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between px-4 pt-3 pb-2 shrink-0">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between px-4 pt-3 pb-2 shrink-0 sm:pr-12">
         <span className="text-[13px] font-semibold text-white/85 inline-flex items-center gap-2.5 min-w-0 flex-wrap">
           <span className="whitespace-nowrap">趋势爆点曲线</span>
           <span className="hidden sm:inline-flex text-[11px] text-white/35 font-normal items-center gap-1.5 whitespace-nowrap">

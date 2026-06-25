@@ -98,7 +98,7 @@ function FullscreenTile({ children }: { children: ReactNode }) {
             type="button"
             onClick={() => setOpen(true)}
             title="全屏查看"
-            className="absolute bottom-2 right-2 z-10 inline-flex items-center justify-center w-7 h-7 rounded-md text-white/45 hover:text-white/90 border border-white/10 bg-black/30 hover:bg-white/10 backdrop-blur-sm transition-colors cursor-pointer"
+            className="absolute top-2 right-2 z-20 inline-flex items-center justify-center w-7 h-7 rounded-md text-white/55 hover:text-white/95 border border-white/12 bg-[#16171b]/90 hover:bg-white/10 backdrop-blur-sm shadow-sm transition-colors cursor-pointer"
           >
             <Maximize2 size={13} />
           </button>
