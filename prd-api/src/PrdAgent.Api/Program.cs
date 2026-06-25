@@ -282,9 +282,6 @@ builder.Services.AddSingleton<PrdAgent.Core.Services.WorkflowValidationService>(
 // 工作流调度轮询：每 30 秒扫一次到期的 once / cron 调度，自动入队
 builder.Services.AddHostedService<PrdAgent.Api.Services.WorkflowScheduleWorker>();
 
-// PM 逾期/临近截止提醒：每天给相关用户发一条站内汇总通知
-builder.Services.AddHostedService<PrdAgent.Api.Services.PmOverdueReminderWorker>();
-
 // 一次性回填存量 PDF 包装站的 WrappedAssetType marker（PR #612）
 builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteBackfillService>();
 
@@ -415,9 +412,8 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IWorkflowExecutionService, P
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ArtifactStatsParser>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.PersonalSourceService>();
 
-// Defect Agent: 催办 Worker + Webhook 通知服务
+// Defect Agent: Webhook 通知服务
 builder.Services.AddScoped<PrdAgent.Api.Services.TapdBugAgentService>();
-builder.Services.AddHostedService<PrdAgent.Api.Services.DefectAgent.DefectEscalationWorker>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DefectWebhookService>();
 
 // Review Agent: Webhook 通知服务

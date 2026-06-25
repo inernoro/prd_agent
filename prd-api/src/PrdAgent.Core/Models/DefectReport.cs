@@ -203,14 +203,6 @@ public class DefectReport
 
     /// <summary>验收不通过原因</summary>
     public string? VerifyFailReason { get; set; }
-
-    // ===== Phase 3: 超时催办 =====
-
-    /// <summary>最后催办时间（防止重复催办）</summary>
-    public DateTime? LastEscalatedAt { get; set; }
-
-    /// <summary>催办次数</summary>
-    public int EscalationCount { get; set; } = 0;
 }
 
 /// <summary>
