@@ -233,6 +233,27 @@ ImageResponse { images[](URL), usage }
 
 **这正是黄金快照的价值**：它在写第一行生产代码之前，就拦下了"删 legacy 层会砸 60% 调用方"这个会让你重新调一遍的坑。
 
+### 9.4 举一反三：同类隐患实测（live main，2026-06-25）
+
+用同一套取证手法横扫"配置与实际不符 / 静默降级 / 孤儿配置 / 运行时报错"，挖出一批**当前就在发生**的问题（不是假设）：
+
+| # | 隐患 | 实测 | 性质 |
+|---|---|---|---|
+| H1 | **3 个池此刻 Unavailable，被 legacy 静默兜住** | `deepseek-v4-flash`(intent,连failed 5)、`whisper-large-v3`(asr,5)、`openai/gpt-5.4-image-2`(generation,7) 全挂；fallbackReason 实锤"池内所有模型不可用，回退直连" | **迁移阻断 + 现网降级**：legacy 层正在给这 3 个死池当安全网。先修/补默认池，否则删 legacy = 直接 outage |
+| H2 | **45% 的 code 在跑 fallback** | 69/153 isFallback=true，53 个 chat 全因 deepseek-v4-flash 池死了回退到 deepseek-v4-pro | 用户拿到的不是"配置该用的模型"，且**无任何告警**——静默降级 |
+| H3 | **图片默认走 stub，真在报错** | 16 个 generation code 解析到 `stub-image`；近 7 天 `visual-agent.image.text2img::generation` failed 10 次、模型=stub-image | 真实生图全靠 expectedModel 兜，忘传就拿 stub/报错（zero-friction 反面） |
+| H4 | **池孤儿 + 悬空引用** | 5 个孤儿模型(stub-chat/intent/vision + 2 个没进池的 gemini 图模)；多个池 item 指向 llmmodels 里不存在的 modelId（如 qwen 池里混入 `anthropic/claude-3.7-sonnet`） | 配置腐烂；部分是"池直连模型"by-design，但 claude 混进 qwen 池是可疑脏数据 |
+| H5 | **auto-* 自动建池泛滥（池版的 code 泛滥）** | `auto-prd-agent-desktop.chat...`、`auto-ccas-agent.equipment...`、`auto-marking-line-agent.diagram...`（后者**0 个模型，空池**） | 每 code 自动建池是 §决策五要治的另一面；空池 + 日期戳旧模型名 = 待清 |
+| H6 | **近 7 天 failed 24 笔**（stub-image 10 / deepseek 系 10 / report TIMEOUT 3） | 失败量低 = legacy 在兜底，不是真健康 | 印证"低失败率"是假象，根因（死池）没人管 |
+
+**对方案的影响（硬约束新增）**：
+
+1. **legacy 删除前必加一步「死池治理」**：H1+H2 说明 legacy 层当前在掩盖 3 个死池。迁移顺序升级为：建默认池 → **修复/确认这 3 个死池的替代** → 黄金快照确认全部 code 改走健康 DefaultPool → 才删 legacy。
+2. **新面板必须有「池健康 + fallback 率」告警**（问题5 升级）：45% 静默 fallback 无人知，正是"可视化面板"该一眼暴露的——把 Unavailable 池和 fallback 热度做成红色一级信息。
+3. **清理项明确**：5 孤儿模型 + 空 auto-池 + 悬空引用进 P4 清理清单。
+
+这些隐患**强化**了重构的必要性（乱是真的、且在烧），同时给了 P3/P4 具体的清理与修复标的。
+
 > 取证手段：`scripts/llm-gateway-phase0-forensics.mongo.js` 是 DBA 直连 Mongo 版；本次走 API 等价路径（`GET /api/mds/model-groups|models|main-model|...`、`/api/open-platform/app-callers`、`/api/mds/exchanges`），二者结论应一致。
 
 ---

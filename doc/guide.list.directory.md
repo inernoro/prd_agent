@@ -794,7 +794,7 @@
   > 11 条 open：输入仅支持粘贴 / 视图非画布 / 无 Run-Worker / 无配图 / 无备注 / 无播放态 / 无发布 / 白天主题待适配 / 无节点增删 / 无 chunk / CDS 自测待补
 
 - [LLM 网关与模型池统一迁移债务台账](debt.llm-gateway) `debt.llm-gateway`
-  > 11 条 open：接口绑平台(3处漂移) / 死策略引擎 / legacy 层(含启动期) / code 只增不删 / 密钥下沉 / OR 单点 / 统计分段 / 尺寸缓存 / 等
+  > 16 条 open：接口绑平台(3处漂移) / 死策略引擎 / legacy 层承重(60%) / 3个死池被legacy静默兜住 / 45%静默fallback无告警 / 生图默认走stub / 池泛滥孤儿 / code只增不删 / 密钥下沉 / OR单点 / 等
 - [知识库（AI Toolbox attachment + 文档空间）债务台账](debt.knowledge-base) `debt.knowledge-base`
   > 8 条 open：两套并存模型 / RAG embedding 未做 / wip 标签 CI 守卫 / 上传 API 不互通 / 等
 
