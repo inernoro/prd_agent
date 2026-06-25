@@ -29,6 +29,10 @@ public record LlmLogStart(
     string? AppCallerCode = null,
     string? PlatformId = null,
     string? PlatformName = null,
+    /// <summary>本次调用使用的协议（池条目 Protocol > 模型 Protocol > 平台 PlatformType）</summary>
+    string? Protocol = null,
+    /// <summary>协议/模型解析来源说明（调试用）</summary>
+    string? ResolutionReason = null,
     /// <summary>模型解析类型（0=直连单模型, 1=默认模型池, 2=专属模型池）</summary>
     ModelResolutionType? ModelResolutionType = null,
     string? ModelGroupId = null,

@@ -382,6 +382,14 @@ public class ModelResolver : IModelResolver
                     ActualPlatformId = fallbackLegacyModel.PlatformId ?? string.Empty,
                     ActualPlatformName = fallbackPlatform.Name,
                     PlatformType = fallbackPlatform.PlatformType,
+                    // P1 协议下沉：直连回退模型有真实 LLMModel，模型级 Protocol 参与链；
+                    // 存量数据 Protocol 为 null → 落到 PlatformType（向后兼容零差异）。
+                    Protocol = string.IsNullOrWhiteSpace(fallbackLegacyModel.Protocol)
+                        ? fallbackPlatform.PlatformType
+                        : fallbackLegacyModel.Protocol,
+                    ResolutionReason = string.IsNullOrWhiteSpace(fallbackLegacyModel.Protocol)
+                        ? "protocol-from-platform-type"
+                        : "protocol-from-model",
                     ApiUrl = fallbackLegacyModel.ApiUrl ?? fallbackPlatform.ApiUrl,
                     ApiKey = apiKey,
                     HealthStatus = "Healthy",

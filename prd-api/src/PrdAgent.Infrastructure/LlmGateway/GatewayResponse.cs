@@ -142,6 +142,16 @@ public class GatewayModelResolution
     public string? PlatformType { get; init; }
 
     /// <summary>
+    /// 本次调用使用的协议（P1 协议下沉：池条目 Protocol > 模型 Protocol > 平台 PlatformType）。
+    /// </summary>
+    public string? Protocol { get; init; }
+
+    /// <summary>
+    /// 协议/模型解析来源说明（调试用）。
+    /// </summary>
+    public string? ResolutionReason { get; init; }
+
+    /// <summary>
     /// API URL
     /// </summary>
     public string? ApiUrl { get; init; }

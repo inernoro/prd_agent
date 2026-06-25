@@ -59,6 +59,13 @@ public class ModelGroupItem
     
     /// <summary>组内优先级（越小越优先，从1开始）</summary>
     public int Priority { get; set; } = 1;
+
+    /// <summary>
+    /// 调用协议 (可选，覆盖模型级 Protocol)
+    /// - null 表示沿用模型级 Protocol，再沿用平台 PlatformType（向后兼容，存量数据均为 null）
+    /// - 解析优先级：池条目 Protocol > 模型 Protocol > 平台 PlatformType
+    /// </summary>
+    public string? Protocol { get; set; }
     
     /// <summary>健康状态</summary>
     public ModelHealthStatus HealthStatus { get; set; } = ModelHealthStatus.Healthy;

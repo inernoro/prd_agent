@@ -65,6 +65,8 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 HttpMethod = string.IsNullOrWhiteSpace(start.HttpMethod) ? null : start.HttpMethod.Trim().ToUpperInvariant(),
                 PlatformId = start.PlatformId,
                 PlatformName = start.PlatformName,
+                Protocol = start.Protocol,
+                ResolutionReason = start.ResolutionReason,
                 ModelResolutionType = start.ModelResolutionType,
                 ModelGroupId = start.ModelGroupId,
                 ModelGroupName = start.ModelGroupName,

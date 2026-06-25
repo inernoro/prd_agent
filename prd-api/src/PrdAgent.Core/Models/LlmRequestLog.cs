@@ -43,6 +43,18 @@ public class LlmRequestLog
     public string? PlatformId { get; set; }
     public string? PlatformName { get; set; }
 
+    /// <summary>
+    /// 本次调用使用的协议（解析阶段算定：池条目 Protocol > 模型 Protocol > 平台 PlatformType）。
+    /// 仅追加字段，存量日志为 null，老查询不受影响。
+    /// </summary>
+    public string? Protocol { get; set; }
+
+    /// <summary>
+    /// 协议/模型解析的来源说明（用于调试，记录最终命中的协议层级与原因）。
+    /// 仅追加字段，存量日志为 null。
+    /// </summary>
+    public string? ResolutionReason { get; set; }
+
     // 模型池信息（来自 ModelGroup）
     /// <summary>
     /// 模型解析类型（0=直连单模型, 1=默认模型池, 2=专属模型池）
