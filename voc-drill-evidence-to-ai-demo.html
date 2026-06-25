@@ -83,8 +83,9 @@
     border-top:1px solid rgba(196,181,253,.5);border-bottom:1px solid rgba(196,181,253,.5)}
   .phone.stage1 .scan{opacity:1;animation:scanmove 1.6s cubic-bezier(.45,0,.55,1) infinite}
   @keyframes scanmove{0%{top:60px}100%{top:560px}}
-  .phone.stage1 .body .card,.phone.stage1 .body .sample{animation:lit 1.6s ease-in-out infinite}
-  @keyframes lit{0%,100%{border-color:var(--bd)}50%{border-color:rgba(167,139,250,.35);box-shadow:0 0 14px rgba(167,139,250,.08)}}
+  /* stage1 时证据保持可见（rise 已 forwards 到 opacity:1），叠加边框脉冲用 box-shadow，
+     不能再用 animation 覆盖 .card/.sample —— 否则会顶掉 rise 的 forwards 把 opacity 打回 0 */
+  .phone.stage1 .body .card,.phone.stage1 .body .sample{box-shadow:0 0 14px rgba(167,139,250,.1);border-color:rgba(167,139,250,.3);transition:box-shadow .4s,border-color .4s}
 
   /* 模型分析浮层（stage1） */
   .llm{
