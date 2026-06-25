@@ -59,7 +59,7 @@ public class HostedSiteService : IHostedSiteService
         [".xml"] = "application/xml",
         [".svg"] = "image/svg+xml",
         [".png"] = "image/png",
-        [".jpg"] = "image/png",
+        [".jpg"] = "image/jpeg",
         [".jpeg"] = "image/jpeg",
         [".gif"] = "image/gif",
         [".webp"] = "image/webp",
@@ -2365,7 +2365,7 @@ public class HostedSiteService : IHostedSiteService
         return commonPrefix;
     }
 
-    private static string GetMimeType(string ext)
+    internal static string GetMimeType(string ext)
     {
         if (string.IsNullOrEmpty(ext)) return "application/octet-stream";
         return MimeMap.TryGetValue(ext, out var mime) ? mime : "application/octet-stream";
