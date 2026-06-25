@@ -306,20 +306,29 @@ public class WebPagesController : ControllerBase
               return lib.getDocument({ url: PDF_URL }).promise;
             }).then(function(pdf){
               if(statusEl){ statusEl.style.display = "none"; }
-              var dpr = Math.min(window.devicePixelRatio || 1, 2);
+              var maxBitmapPixels = 16777216;
+              var dpr = Math.min(Math.max(window.devicePixelRatio || 1, 1), 3);
               var renderOne = function(num){
                 return pdf.getPage(num).then(function(page){
                   var base = page.getViewport({ scale: 1 });
-                  var cssWidth = Math.min((pagesEl.clientWidth || window.innerWidth) - 16, 1100);
+                  var availableWidth = Math.max((pagesEl.clientWidth || window.innerWidth || 360) - 16, 320);
+                  var cssWidth = Math.floor(Math.min(availableWidth, 1100));
                   var cssScale = cssWidth / base.width;
-                  var vp = page.getViewport({ scale: cssScale * dpr });
+                  var cssHeight = Math.floor(cssWidth * base.height / base.width);
+                  var renderScale = cssScale * dpr;
+                  var estimatedPixels = (base.width * renderScale) * (base.height * renderScale);
+                  if(estimatedPixels > maxBitmapPixels){
+                    renderScale = renderScale * Math.sqrt(maxBitmapPixels / estimatedPixels);
+                  }
+                  var vp = page.getViewport({ scale: renderScale });
                   var canvas = document.createElement("canvas");
-                  var ctx = canvas.getContext("2d");
+                  var ctx = canvas.getContext("2d", { alpha: false });
                   canvas.width = Math.floor(vp.width);
                   canvas.height = Math.floor(vp.height);
                   canvas.style.width = cssWidth + "px";
-                  canvas.style.height = Math.floor(cssWidth * base.height / base.width) + "px";
+                  canvas.style.height = cssHeight + "px";
                   pagesEl.appendChild(canvas);
+                  if(ctx){ ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height); }
                   return page.render({ canvasContext: ctx, viewport: vp }).promise;
                 });
               };
