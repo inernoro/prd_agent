@@ -25,6 +25,8 @@ export interface GalaxyInputEntry {
   isFolder?: boolean;
   contentType?: string;
   sourceUrl?: string | null;
+  /** 文档摘要（hover 缩略卡预览用）。 */
+  summary?: string | null;
 }
 
 export interface GalaxyInputLink {
@@ -49,6 +51,8 @@ export interface GalaxyNode {
   entryId?: string;
   /** 仅叶子：文档类型（点分前缀），无法判定为 null。 */
   docType?: DocType | null;
+  /** 仅叶子：文档摘要（hover 缩略卡预览用），无则 null。 */
+  summary?: string | null;
   /** 是否悬空（无法归到 canonical 根 / 落到未分类）。 */
   orphan?: boolean;
 }
@@ -253,6 +257,7 @@ export function buildDocGalaxy(
       children: [],
       entryId: entry.id,
       docType,
+      summary: entry.summary ?? null,
       orphan,
     };
     parent.children.push(leaf);

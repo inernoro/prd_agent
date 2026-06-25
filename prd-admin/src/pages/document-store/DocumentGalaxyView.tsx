@@ -25,7 +25,7 @@
  * 功能层（保留）：type 图例筛选、点叶子复用系统 MarkdownViewer 阅读、hover 显示节点名、
  * 数据加载超时护栏、错误显式报错、full-height flex-1 撑满。
  */
-import { Suspense, useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useRef, useState, type CSSProperties } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
@@ -274,6 +274,166 @@ function makeLabelSprite(text: string, kind: GalaxyNode['kind'], depth: number, 
   return sp;
 }
 
+// ── 子树统计：遍历某节点子树下所有叶子，按 docType 计数（hover 缩略卡 / 信息面板用）──
+function tallySubtreeTypes(node: GalaxyNode): Array<{ type: string; count: number }> {
+  const counts: Record<string, number> = {};
+  const walk = (n: GalaxyNode) => {
+    if (n.kind === 'leaf') {
+      const t = n.docType ?? 'unknown';
+      counts[t] = (counts[t] ?? 0) + 1;
+      return;
+    }
+    n.children.forEach(walk);
+  };
+  walk(node);
+  // 按 count 降序，便于面板/缩略卡突出主要类型
+  return Object.entries(counts)
+    .map(([type, count]) => ({ type, count }))
+    .sort((a, b) => b.count - a.count);
+}
+
+// hover 缩略卡 / 信息面板共享的 hover 载荷
+interface HoverInfo {
+  x: number;
+  y: number;
+  flip: boolean; // 靠近右边缘时翻到节点左侧
+  node: GalaxyNode;
+  depth: number;
+}
+
+// 枢纽聚焦时的信息面板载荷（直接子节点 + 子树 type 分布）
+interface FocusInfo {
+  node: GalaxyNode;
+  depth: number;
+  typeTally: Array<{ type: string; count: number }>;
+  children: Array<{ node: GalaxyNode; isLeaf: boolean }>;
+}
+
+// type 名中文（缩略卡 / 面板分布条标注）。未知归「其他」。
+const TYPE_LABEL: Record<string, string> = {
+  spec: 'spec',
+  design: 'design',
+  plan: 'plan',
+  rule: 'rule',
+  guide: 'guide',
+  report: 'report',
+  debt: 'debt',
+  unknown: '其他',
+};
+
+// 子树 type 分布彩色小条（缩略卡 + 信息面板共用）
+function TypeBars({ tally, max }: { tally: Array<{ type: string; count: number }>; max?: number }) {
+  const list = max ? tally.slice(0, max) : tally;
+  if (!list.length) return null;
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+      {list.map(({ type, count }) => (
+        <span
+          key={type}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 4,
+            fontSize: 11,
+            color: '#c4c4d0',
+            background: 'rgba(255,255,255,0.05)',
+            border: '1px solid rgba(255,255,255,0.08)',
+            borderRadius: 5,
+            padding: '1px 6px',
+          }}
+        >
+          <span style={{ width: 7, height: 7, borderRadius: '50%', background: colorForDocType(type), display: 'inline-block' }} />
+          {TYPE_LABEL[type] ?? type}
+          <span style={{ color: '#8a8a96' }}>{count}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// 悬浮缩略卡：叶子 = type 徽章 + 标题 + 摘要；枢纽 = 名称 + 篇数 + type 分布
+function HoverCard({ info }: { info: HoverInfo }) {
+  const { node, depth, flip } = info;
+  const isLeaf = node.kind === 'leaf';
+  const baseStyle: CSSProperties = {
+    position: 'absolute',
+    left: info.x,
+    top: info.y,
+    transform: flip ? 'translate(calc(-100% - 14px), -50%)' : 'translate(14px, -50%)',
+    pointerEvents: 'none',
+    width: 280,
+    maxWidth: 280,
+    background: 'rgba(14,15,22,0.94)',
+    border: '1px solid rgba(255,255,255,0.14)',
+    borderRadius: 10,
+    padding: '10px 12px',
+    color: '#eef0f5',
+    boxShadow: '0 8px 28px rgba(0,0,0,0.6)',
+    zIndex: 18,
+  };
+
+  if (isLeaf) {
+    const t = node.docType ?? 'unknown';
+    const summary = node.summary?.trim();
+    return (
+      <div style={baseStyle}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+          <span
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              color: '#0b0b12',
+              background: colorForDocType(t),
+              borderRadius: 4,
+              padding: '1px 6px',
+              letterSpacing: 0.3,
+            }}
+          >
+            {TYPE_LABEL[t] ?? t}
+          </span>
+        </div>
+        <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.4, color: '#f4f5fa', wordBreak: 'break-word' }}>
+          {node.name}
+        </div>
+        <div
+          style={{
+            fontSize: 12,
+            lineHeight: 1.5,
+            color: summary ? '#b7b9c6' : '#76788a',
+            marginTop: 6,
+            display: '-webkit-box',
+            WebkitLineClamp: 3,
+            WebkitBoxOrient: 'vertical',
+            overflow: 'hidden',
+          }}
+        >
+          {summary || '（无摘要）'}
+        </div>
+        <div style={{ fontSize: 11, color: '#6f7180', marginTop: 8 }}>点击阅读全文</div>
+      </div>
+    );
+  }
+
+  // 枢纽
+  const tally = tallySubtreeTypes(node);
+  const label = node.kind === 'root' ? '知识库' : depth <= 1 ? '分类' : depth === 2 ? '应用' : '子模块';
+  return (
+    <div style={baseStyle}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+        <span style={{ fontSize: 10, color: '#9aa0b4', background: 'rgba(255,255,255,0.06)', borderRadius: 4, padding: '1px 6px' }}>
+          {label}
+        </span>
+      </div>
+      <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.4, color: '#f4f5fa', wordBreak: 'break-word' }}>
+        {node.name}
+      </div>
+      <div style={{ fontSize: 12, color: '#b7b9c6', marginTop: 4 }}>共 {node.docCount} 篇文档</div>
+      <TypeBars tally={tally} max={6} />
+      <div style={{ fontSize: 11, color: '#6f7180', marginTop: 8 }}>点击聚焦该簇</div>
+    </div>
+  );
+}
+
 interface GalaxyCanvasProps {
   galaxy: DocGalaxy;
   typeOn: Record<string, boolean>;
@@ -288,8 +448,10 @@ interface GalaxyCanvasProps {
 function GalaxyCanvas({ galaxy, typeOn, onOpen }: GalaxyCanvasProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const [fatal, setFatal] = useState<string | null>(null);
-  // hover 标签：3D 坐标 project 到屏幕后用绝对定位 DOM tooltip 渲染
-  const [hoverLabel, setHoverLabel] = useState<{ x: number; y: number; text: string } | null>(null);
+  // hover 缩略卡：3D 坐标 project 到屏幕后用绝对定位 DOM 卡片渲染（叶子=标题+摘要，枢纽=篇数+分布）
+  const [hover, setHover] = useState<HoverInfo | null>(null);
+  // 枢纽聚焦信息面板（点击枢纽后出现，含直接子节点列表）
+  const [focusInfo, setFocusInfo] = useState<FocusInfo | null>(null);
 
   // typeOn 用 ref 透传给渲染循环，避免每次筛选都重建整个场景
   const typeOnRef = useRef(typeOn);
@@ -298,6 +460,9 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen }: GalaxyCanvasProps) {
   const applyFilterRef = useRef<(() => void) | null>(null);
   const onOpenRef = useRef(onOpen);
   onOpenRef.current = onOpen;
+  // 聚焦/复位的命令引用（由 useEffect 内部填充，供面板列表点击 / 返回按钮调用）
+  const focusNodeRef = useRef<((node: GalaxyNode) => void) | null>(null);
+  const resetFocusRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     applyFilterRef.current?.();
@@ -307,7 +472,8 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen }: GalaxyCanvasProps) {
     const mount = mountRef.current;
     if (!mount) return;
     setFatal(null);
-    setHoverLabel(null);
+    setHover(null);
+    setFocusInfo(null);
 
     let renderer: THREE.WebGLRenderer;
     try {
@@ -473,6 +639,8 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen }: GalaxyCanvasProps) {
 
     const renders: NodeRender[] = [];
     const coreMeshes: THREE.Mesh[] = [];
+    // 标签随聚焦淡出 —— 单独收集 group 标签 sprite（label 没进 renders）
+    const labelByNodeId = new Map<string, THREE.Sprite>();
     const sphereGeoCache = new Map<string, THREE.SphereGeometry>();
     const sphereGeo = (r: number): THREE.SphereGeometry => {
       const key = r.toFixed(2);
@@ -521,6 +689,7 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen }: GalaxyCanvasProps) {
       nodeGroup.add(halo);
 
       // 枢纽标签（root / group）
+      let labelSprite: THREE.Sprite | null = null;
       if (!isLeaf) {
         const lab = makeLabelSprite(node.name, node.kind, depth, color);
         if (lab.material.map) track(lab.material.map);
@@ -529,9 +698,11 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen }: GalaxyCanvasProps) {
         const dy = size + (node.kind === 'root' ? 14 : 8);
         lab.position.set(pos.x, pos.y + dy, pos.z);
         nodeGroup.add(lab);
+        labelSprite = lab;
       }
 
       renders.push({ node, core, halo, haloBaseSize: haloSize, haloBaseOpacity, size });
+      if (labelSprite) labelByNodeId.set(node.id, labelSprite);
     }
 
     // ── 父子连线（偏冷蓝细线，不进 bloom 层）。位置由 applyFilter 填充/重建：
@@ -618,6 +789,113 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen }: GalaxyCanvasProps) {
     applyFilterRef.current = applyFilter;
     applyFilter();
 
+    // ── 枢纽聚焦 + 子树高亮 + 相机缓动 ──
+    // 每节点的目标亮度系数（1=高亮，<1=淡出）。渲染循环 lerp 到该目标，过渡平滑。
+    const dimTargetById = new Map<string, number>();
+    const dimCurrentById = new Map<string, number>();
+    for (const rec of renders) {
+      dimTargetById.set(rec.node.id, 1);
+      dimCurrentById.set(rec.node.id, 1);
+    }
+    let focusedNodeId: string | null = null;
+
+    const subtreeIds = (node: GalaxyNode): Set<string> => {
+      const ids = new Set<string>();
+      const walk = (n: GalaxyNode) => {
+        ids.add(n.id);
+        n.children.forEach(walk);
+      };
+      walk(node);
+      return ids;
+    };
+
+    // 相机缓动：1s easeInOutCubic 把 controls.target + camera.position 移到聚焦点。
+    let camTween: {
+      t0: number;
+      dur: number;
+      fromTarget: THREE.Vector3;
+      toTarget: THREE.Vector3;
+      fromPos: THREE.Vector3;
+      toPos: THREE.Vector3;
+    } | null = null;
+    const easeInOutCubic = (x: number) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+
+    const startCamTween = (targetPos: THREE.Vector3, distance: number) => {
+      // 沿当前相机→目标方向退到 distance 处，保留观察角度，避免镜头乱翻
+      const dir = camera.position.clone().sub(controls.target);
+      if (dir.lengthSq() < 1e-6) dir.set(0, 0.3, 1);
+      dir.normalize();
+      const toPos = targetPos.clone().add(dir.multiplyScalar(distance));
+      camTween = {
+        t0: performance.now(),
+        dur: 1000,
+        fromTarget: controls.target.clone(),
+        toTarget: targetPos.clone(),
+        fromPos: camera.position.clone(),
+        toPos,
+      };
+      controls.autoRotate = false;
+    };
+
+    // 根据子树大小估算合适的观察距离（枢纽越大、子节点越多，退得越远）
+    const focusDistanceFor = (node: GalaxyNode, depth: number): number => {
+      const base = depth <= 1 ? 520 : depth === 2 ? 320 : 220;
+      const span = Math.min(360, Math.sqrt(Math.max(1, node.docCount)) * 60);
+      return Math.max(150, base + span);
+    };
+
+    const focusNode = (node: GalaxyNode) => {
+      if (node.kind === 'leaf') return;
+      const placedNode = placed.get(node.id);
+      if (!placedNode) return;
+      focusedNodeId = node.id;
+      const inSet = subtreeIds(node);
+      // 同时点亮从根到该节点的祖先链（让聚焦簇与中心仍有视觉连接）
+      const ancestors = new Set<string>();
+      {
+        // 逐层从 root 找到该节点的路径
+        const findPath = (n: GalaxyNode, target: string, acc: string[]): string[] | null => {
+          if (n.id === target) return [...acc, n.id];
+          for (const c of n.children) {
+            const r = findPath(c, target, [...acc, n.id]);
+            if (r) return r;
+          }
+          return null;
+        };
+        const path = findPath(galaxy.root, node.id, []);
+        if (path) path.forEach((id) => ancestors.add(id));
+      }
+      for (const rec of renders) {
+        const keep = inSet.has(rec.node.id) || ancestors.has(rec.node.id);
+        dimTargetById.set(rec.node.id, keep ? 1 : 0.12);
+      }
+      const depth = placedNode.depth;
+      startCamTween(placedNode.pos.clone(), focusDistanceFor(node, depth));
+      // 信息面板数据
+      const typeTally = tallySubtreeTypes(node);
+      const childList = node.children.map((c) => ({ node: c, isLeaf: c.kind === 'leaf' }));
+      setFocusInfo({ node, depth, typeTally, children: childList });
+      setHover(null);
+    };
+
+    const resetFocus = () => {
+      focusedNodeId = null;
+      for (const rec of renders) dimTargetById.set(rec.node.id, 1);
+      setFocusInfo(null);
+      // 相机平滑回到初始机位
+      camTween = {
+        t0: performance.now(),
+        dur: 1000,
+        fromTarget: controls.target.clone(),
+        toTarget: new THREE.Vector3(0, 0, 0),
+        fromPos: camera.position.clone(),
+        toPos: new THREE.Vector3(0, 120, 1050),
+      };
+    };
+
+    focusNodeRef.current = focusNode;
+    resetFocusRef.current = resetFocus;
+
     // ── 选择性 bloom 双 pass（演示版同款配方） ──
     const renderTargetSize = new THREE.Vector2(W, H);
     const bloomComposer = new EffectComposer(renderer);
@@ -697,11 +975,16 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen }: GalaxyCanvasProps) {
     let hoverNode: GalaxyNode | null = null;
     const projVec = new THREE.Vector3();
 
+    // depthById：缩略卡 / 聚焦距离需要 depth；从 placed 取
+    const depthById = new Map<string, number>();
+    for (const { node, depth } of placed.values()) depthById.set(node.id, depth);
+
     const pick = (clientX: number, clientY: number): { node: GalaxyNode; mesh: THREE.Mesh } | null => {
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
+      // root/group 核心始终 visible；leaf 受 type 筛选影响。只 pick 可见者。
       const visibleCores = coreMeshes.filter((m) => m.visible);
       const hits = raycaster.intersectObjects(visibleCores, false);
       if (!hits.length) return null;
@@ -721,16 +1004,17 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen }: GalaxyCanvasProps) {
       if (node !== hoverNode) {
         hoverNode = node;
         renderer.domElement.style.cursor = node ? 'pointer' : 'grab';
-        if (!node) setHoverLabel(null);
+        if (!node) setHover(null);
       }
       if (node && hit) {
-        // 把核心世界坐标投影到屏幕，定位 tooltip
+        // 把核心世界坐标投影到屏幕，定位缩略卡；靠右边缘则翻到左侧
         hit.mesh.getWorldPosition(projVec);
         projVec.project(camera);
         const rect = renderer.domElement.getBoundingClientRect();
         const sx = (projVec.x * 0.5 + 0.5) * rect.width;
         const sy = (-projVec.y * 0.5 + 0.5) * rect.height;
-        setHoverLabel({ x: sx, y: sy, text: node.name });
+        const flip = sx > rect.width - 320; // 卡片宽 ~280 + 余量
+        setHover({ x: sx, y: sy, flip, node, depth: depthById.get(node.id) ?? 0 });
       }
     };
     const onPointerDown = (ev: PointerEvent) => {
@@ -744,14 +1028,22 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen }: GalaxyCanvasProps) {
         return;
       }
       const hit = pick(ev.clientX, ev.clientY);
-      if (hit && hit.node.kind === 'leaf' && hit.node.entryId) {
-        onOpenRef.current(hit.node.entryId);
+      if (hit) {
+        if (hit.node.kind === 'leaf') {
+          if (hit.node.entryId) onOpenRef.current(hit.node.entryId);
+        } else {
+          // 枢纽（root/group）：聚焦 + 高亮子树 + 信息面板
+          focusNode(hit.node);
+        }
+      } else if (focusedNodeId) {
+        // 点空白 → 取消聚焦复位
+        resetFocus();
       }
       downXY = null;
     };
     const onPointerLeave = () => {
       hoverNode = null;
-      setHoverLabel(null);
+      setHover(null);
     };
 
     renderer.domElement.addEventListener('pointermove', onPointerMove);
@@ -770,7 +1062,32 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen }: GalaxyCanvasProps) {
       // 星云缓慢漂移
       nebulaGroup.rotation.y += dt * 0.004;
       nebulaGroup.rotation.x += dt * 0.0016;
-      // 光晕距离衰减 + hover 强调（演示版数值 SSOT 照抄）
+
+      // 相机聚焦缓动（easeInOutCubic，~1s）
+      if (camTween) {
+        const k = Math.min(1, (performance.now() - camTween.t0) / camTween.dur);
+        const e = easeInOutCubic(k);
+        controls.target.lerpVectors(camTween.fromTarget, camTween.toTarget, e);
+        camera.position.lerpVectors(camTween.fromPos, camTween.toPos, e);
+        if (k >= 1) camTween = null;
+      }
+
+      // 聚焦淡出系数 lerp（平滑过渡，避免硬切）
+      for (const rec of renders) {
+        const cur = dimCurrentById.get(rec.node.id) ?? 1;
+        const tgt = dimTargetById.get(rec.node.id) ?? 1;
+        const next = cur + (tgt - cur) * 0.12;
+        dimCurrentById.set(rec.node.id, next);
+        // 核心球：dim 时调暗其颜色（用 material.color 缩放会污染基色，改用 opacity）
+        const coreMat = rec.core.material as THREE.MeshBasicMaterial;
+        if (!coreMat.transparent) coreMat.transparent = true;
+        coreMat.opacity = 0.15 + 0.85 * next;
+        // 标签：随聚焦淡出
+        const lab = labelByNodeId.get(rec.node.id);
+        if (lab) (lab.material as THREE.SpriteMaterial).opacity = next;
+      }
+
+      // 光晕距离衰减 + hover 强调（演示版数值 SSOT 照抄）+ 聚焦淡出
       camPos.copy(camera.position);
       for (const rec of renders) {
         if (!rec.halo.visible) continue;
@@ -781,7 +1098,8 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen }: GalaxyCanvasProps) {
         const attScale = 0.35 + 0.65 * att; // 永不完全坍缩，永不超过基准
         const scale = rec.haloBaseSize * attScale;
         rec.halo.scale.set(scale, scale, 1);
-        let tgt = rec.haloBaseOpacity * (0.45 + 0.55 * att); // 极近时淡化辉光
+        const dim = dimCurrentById.get(rec.node.id) ?? 1;
+        let tgt = rec.haloBaseOpacity * (0.45 + 0.55 * att) * dim; // 极近时淡化辉光，聚焦时集合外淡出
         if (hoverNode === rec.node) tgt = Math.min(0.85, tgt * 1.7);
         const mat = rec.halo.material as THREE.SpriteMaterial;
         mat.opacity += (tgt - mat.opacity) * 0.2;
@@ -867,26 +1185,106 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen }: GalaxyCanvasProps) {
 
   return (
     <div ref={mountRef} style={{ position: 'absolute', inset: 0 }}>
-      {hoverLabel && (
+      {hover && <HoverCard info={hover} />}
+
+      {focusInfo && (
         <div
           style={{
             position: 'absolute',
-            left: hoverLabel.x,
-            top: hoverLabel.y,
-            transform: 'translate(12px, -50%)',
-            pointerEvents: 'none',
-            whiteSpace: 'nowrap',
-            background: 'rgba(20,20,28,0.92)',
-            border: '1px solid rgba(255,255,255,0.16)',
-            borderRadius: 6,
-            padding: '4px 8px',
-            color: '#f0f0f5',
-            fontSize: 13,
-            boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
-            zIndex: 15,
+            top: 12,
+            left: 12,
+            width: 'min(300px, 84vw)',
+            maxHeight: 'calc(100% - 24px)',
+            background: 'rgba(14,15,22,0.95)',
+            border: '1px solid rgba(255,255,255,0.14)',
+            borderRadius: 12,
+            boxShadow: '0 10px 32px rgba(0,0,0,0.55)',
+            zIndex: 22,
+            display: 'flex',
+            flexDirection: 'column',
+            minHeight: 0,
           }}
         >
-          {hoverLabel.text}
+          <div style={{ padding: '12px 14px 10px', borderBottom: '1px solid rgba(255,255,255,0.08)', flexShrink: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 11, color: '#9aa0b4', marginBottom: 2 }}>
+                  {focusInfo.node.kind === 'root' ? '知识库' : focusInfo.depth <= 1 ? '分类' : focusInfo.depth === 2 ? '应用' : '子模块'}
+                </div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: '#f4f5fa', wordBreak: 'break-word' }}>
+                  {focusInfo.node.name}
+                </div>
+                <div style={{ fontSize: 12, color: '#b7b9c6', marginTop: 3 }}>共 {focusInfo.node.docCount} 篇文档</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => resetFocusRef.current?.()}
+                style={{
+                  flexShrink: 0,
+                  background: 'rgba(255,255,255,0.06)',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  borderRadius: 6,
+                  color: '#c8c8d0',
+                  fontSize: 11,
+                  padding: '4px 8px',
+                  cursor: 'pointer',
+                }}
+              >
+                返回
+              </button>
+            </div>
+            <TypeBars tally={focusInfo.typeTally} />
+          </div>
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: '8px 10px' }}>
+            <div style={{ fontSize: 11, color: '#76788a', padding: '2px 4px 6px' }}>
+              直接子项（{focusInfo.children.length}）
+            </div>
+            {focusInfo.children.map(({ node, isLeaf }) => (
+              <button
+                key={node.id}
+                type="button"
+                onClick={() => {
+                  if (isLeaf) {
+                    if (node.entryId) onOpenRef.current(node.entryId);
+                  } else {
+                    focusNodeRef.current?.(node);
+                  }
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  width: '100%',
+                  textAlign: 'left',
+                  background: 'transparent',
+                  border: 'none',
+                  borderRadius: 7,
+                  padding: '7px 8px',
+                  cursor: 'pointer',
+                  color: '#dcdde6',
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
+                onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+              >
+                <span
+                  style={{
+                    width: 9,
+                    height: 9,
+                    borderRadius: '50%',
+                    flexShrink: 0,
+                    background: isLeaf ? colorForDocType(node.docType) : '#ffe08a',
+                    boxShadow: isLeaf ? `0 0 5px ${colorForDocType(node.docType)}` : 'none',
+                  }}
+                />
+                <span style={{ flex: 1, minWidth: 0, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {node.name}
+                </span>
+                <span style={{ flexShrink: 0, fontSize: 11, color: '#76788a' }}>
+                  {isLeaf ? '阅读' : `${node.docCount} 篇`}
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -1084,6 +1482,7 @@ export function DocumentGalaxyView({ storeId, storeName }: DocumentGalaxyViewPro
         isFolder: e.isFolder,
         contentType: e.contentType,
         sourceUrl: e.sourceUrl ?? null,
+        summary: e.summary ?? null,
       }));
       // 双链可选：取不到不阻断成图
       const links: GalaxyInputLink[] = graphRes.success
@@ -1204,7 +1603,7 @@ export function DocumentGalaxyView({ storeId, storeName }: DocumentGalaxyViewPro
       <div className="flex-1 min-h-0 relative">
         {/* 操作提示 */}
         <div style={{ position: 'absolute', bottom: 12, left: 12, zIndex: 10, fontSize: 11, color: '#5a5a66' }}>
-          拖动旋转 · 滚轮缩放 · 悬停看标题 · 点击文档星阅读
+          拖动旋转 · 滚轮缩放 · 悬停看详情 · 点文档星阅读 · 点枢纽聚焦该簇
         </div>
 
         {/* 3D 画布（vanilla three.js 渲染内核；内部 try/catch + fatal state 替代 ErrorBoundary） */}

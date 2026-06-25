@@ -121,4 +121,15 @@ describe('buildDocGalaxy 关系识别', () => {
     });
     expect(childByName(g.root, '我的分组')).toBeTruthy();
   });
+
+  it('summary 透传到叶子节点；缺省为 null', () => {
+    const g = buildDocGalaxy([
+      entry('1', 'design.cds.a', { summary: 'CDS 设计摘要' }),
+      entry('2', 'design.cds.b'),
+    ]);
+    const a = g.leaves.find((l) => l.entryId === '1');
+    const b = g.leaves.find((l) => l.entryId === '2');
+    expect(a?.summary).toBe('CDS 设计摘要');
+    expect(b?.summary).toBeNull(); // 未提供 summary → null
+  });
 });
