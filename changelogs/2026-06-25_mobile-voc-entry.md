@@ -16,3 +16,4 @@
 | fix | prd-admin | VOC 视图切换改用设计系统 TabBar（与应用模型池管理完全同款 surface-nav 顶栏+滑块），修复 SegmentedTabs 样式不一致+顶栏丢失；SegmentedTabs 回退原状 |
 | feat | prd-admin | TabBar 非激活项 hover 增加底色反馈（surface-nav-button:hover），更明显 |
 | feat | prd-admin | VOC 趋势爆点曲线新增汇总指标条（报错总数/慢请求总数/爆发点/单桶峰值），信息更丰富 |
+| feat | prd-admin | VOC 下钻加载动效 1:1 复刻：证据卡阅读期点亮 + 阶段步骤脉冲环/打勾 + 报告打字机流式 + 分段浮现左缘点亮 + 页签切换淡入过渡 |

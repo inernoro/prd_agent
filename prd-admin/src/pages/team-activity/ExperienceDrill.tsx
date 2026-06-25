@@ -11,7 +11,7 @@
  *
  * 数据源：GET /api/team-activity/endpoint-detail（明细）+ /api/team-activity/diagnose（SSE 诊断）。
  */
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Bug, Check, ChevronRight, ClipboardList, Maximize2, Minimize2, RotateCcw, Sparkles, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -151,6 +151,8 @@ function DiagnosingAnimation() {
                   height: 16,
                   border: `1px solid ${done ? 'rgba(52,211,153,0.5)' : active ? 'rgba(167,139,250,0.6)' : 'rgba(255,255,255,0.12)'}`,
                   background: done ? 'rgba(52,211,153,0.16)' : active ? 'rgba(167,139,250,0.18)' : 'transparent',
+                  // 当前步：脉冲光环（1:1 复刻 demo 的 active ring）
+                  animation: active ? 'voc-step-ring 1.3s ease-in-out infinite' : undefined,
                 }}
               >
                 {done ? (
@@ -213,6 +215,40 @@ function SampleBlock({ s }: { s: TeamActivityEndpointDetailData['samples'][numbe
           {expanded ? '收起' : `展开全部（约 ${full.length.toLocaleString()} 字）`}
         </button>
       ) : null}
+    </div>
+  );
+}
+
+/** 把诊断报告 markdown 按标题切段（# / ①②③ / 1. 起头），供分段浮现 */
+function splitSections(md: string): string[] {
+  const isHeading = (l: string) =>
+    /^#{1,4}\s/.test(l) || /^\s*[①②③④⑤⑥⑦⑧⑨⑩]/.test(l) || /^\s*\d+[.、)]\s/.test(l);
+  const lines = md.split('\n');
+  const secs: string[] = [];
+  let cur: string[] = [];
+  for (const l of lines) {
+    if (isHeading(l) && cur.some((x) => x.trim())) {
+      secs.push(cur.join('\n'));
+      cur = [l];
+    } else {
+      cur.push(l);
+    }
+  }
+  if (cur.length) secs.push(cur.join('\n'));
+  return secs.filter((s) => s.trim());
+}
+
+/** 完成态：根因报告按段「浮现 + 左缘点亮」依次出现（1:1 复刻 demo 的分段点亮） */
+function ReportSections({ md }: { md: string }) {
+  const secs = useMemo(() => splitSections(md), [md]);
+  if (secs.length <= 1) return <MarkdownContent content={md} variant="reading" />;
+  return (
+    <div className="flex flex-col gap-1">
+      {secs.map((s, i) => (
+        <div key={i} className="voc-rca-sec" style={{ animationDelay: `${i * 0.18}s` }}>
+          <MarkdownContent content={s} variant="reading" />
+        </div>
+      ))}
     </div>
   );
 }
@@ -306,6 +342,21 @@ export function ExperienceDrill({
         <Sparkles size={11} style={{ color: VIOLET }} />
         结论由 AI 阅读「真实请求样本」分析得出
       </div>
+      {/* 证据卡：端点 + 指标。大模型阅读期间点亮（表示模型正在读它，1:1 复刻 demo） */}
+      <div className={`rounded-md px-3 py-2.5 bg-white/[0.02] border border-white/[0.06] transition-all duration-500 ${diagActive ? 'voc-evi-lit' : ''}`}>
+        <div className="text-[12px] text-white/85 font-mono break-all">{target}</div>
+        {detail ? (
+          <div className="flex items-center gap-x-3 gap-y-1 flex-wrap mt-2 text-[11px] tabular-nums">
+            <span className="text-white/45">{detail.count} 次调用</span>
+            {detail.errorCount > 0 ? <span style={{ color: ERR }}>报错 {detail.errorCount} 次</span> : null}
+            {detail.slowCount > 0 ? (
+              <span style={{ color: SLOW }}>
+                慢请求 {detail.slowCount} 次 · 均 {detail.avgSlowSec}s
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
       <ExpandablePanel
         title={
           <span className="flex items-center gap-2">
@@ -331,7 +382,8 @@ export function ExperienceDrill({
             <DiagnosingAnimation />
           )
         ) : diag.typing ? (
-          <MarkdownContent content={diag.typing} variant="reading" />
+          // 完成态：分段浮现 + 左缘点亮
+          <ReportSections md={diag.typing} />
         ) : (
           <div className="flex flex-col items-center gap-2 py-10 text-center">
             <span className="text-[12px] text-white/45">{diag.phaseMessage || '未能生成诊断'}</span>
@@ -410,7 +462,17 @@ export function ExperienceDrill({
 
   return (
     <div className="flex flex-col h-full" style={{ minHeight: 0 }}>
-      <style>{`@keyframes voc-orb-spin{to{transform:rotate(360deg)}}@keyframes voc-blink{0%,100%{opacity:.3}50%{opacity:1}}`}</style>
+      <style>{`
+        @keyframes voc-orb-spin{to{transform:rotate(360deg)}}
+        @keyframes voc-blink{0%,100%{opacity:.3}50%{opacity:1}}
+        @keyframes voc-step-ring{0%,100%{box-shadow:0 0 0 0 rgba(167,139,250,0)}50%{box-shadow:0 0 0 5px rgba(167,139,250,.18)}}
+        @keyframes voc-sec-in{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+        @keyframes voc-pane-in{from{opacity:0;transform:translateX(12px)}to{opacity:1;transform:none}}
+        /* 报告分段浮现 + 左缘点亮（边吐边逐段亮起） */
+        .voc-rca-sec{opacity:0;border-left:2px solid rgba(167,139,250,.45);padding-left:11px;animation:voc-sec-in .5s cubic-bezier(.2,.8,.2,1) forwards}
+        /* 证据卡在大模型阅读期间点亮（表示模型正在读它） */
+        .voc-evi-lit{border-color:rgba(167,139,250,.4)!important;box-shadow:0 0 0 4px rgba(167,139,250,.07)}
+      `}</style>
 
       <div className="flex items-center justify-between px-4 pt-3.5 pb-2 shrink-0">
         <span className="text-[13px] font-semibold text-white/85">端点下钻诊断</span>
@@ -478,7 +540,10 @@ export function ExperienceDrill({
         className="flex-1 px-4 pb-4"
         style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
       >
-        {tab === 'rca' ? renderRca() : renderSamples()}
+        {/* key=tab：切换时整块重挂载，触发淡入位移过渡（1:1 复刻 demo 的页签过渡） */}
+        <div key={tab} style={{ animation: 'voc-pane-in .34s cubic-bezier(.2,.8,.2,1)' }}>
+          {tab === 'rca' ? renderRca() : renderSamples()}
+        </div>
       </div>
 
       {/* 操作区 */}
