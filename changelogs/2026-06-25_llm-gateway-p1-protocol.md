@@ -5,3 +5,5 @@
 | refactor | prd-admin | 模型池管理类型筛选 chip 改为"配置才出现"：ModelTypeFilterBar 新增可空 availableTypes，只渲染已有池的 modelType，不再预铺 14 个空类目（OpenRouter 心智，向后兼容） |
 | refactor | prd-api | P3 删死策略引擎：移除 5 个非 FailFast 策略类(Race/RoundRobin/WeightedRandom/Sequential/LeastLatency)+ 调度预测端点/工具，池调度化简为只有 FailFast；保留 PoolStrategyType 枚举+StrategyType 字段(数据兼容,无 DB 迁移)；serving 路径零影响 |
 | refactor | prd-admin | P3 删调度预测 UI：移除 PoolPredictionDialog + predictNextDispatch service + 池编辑表单策略选择器，对齐"只有 FailFast" |
+| feat | prd-api | 新增只读端点 GET /api/mds/model-groups/health-overview：聚合各池健康(healthy/degraded/unavailable)+ 近 N 天按 modelType 的 fallback 率 + 死池/高fallback 一级告警，全只读不碰 serving/DB |
+| feat | prd-admin | 模型池管理页顶部新增"健康总览"告警卡(PoolHealthOverview)：死池/高fallback 红色一级告警可点击定位 + 近7天 fallback 率迷你列表，把静默降级一眼暴露 |

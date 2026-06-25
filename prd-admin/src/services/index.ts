@@ -1297,6 +1297,13 @@ export const getModelGroups = async () => {
   }
   throw new Error(response.error?.message || '获取模型分组失败');
 };
+export const getModelGroupHealthOverview = async (days?: number) => {
+  const response = await modelGroupsService.getModelGroupHealthOverview(days);
+  if (response.success && response.data) {
+    return response.data;
+  }
+  throw new Error(response.error?.message || '获取模型池健康总览失败');
+};
 export const createModelGroup = (data: Parameters<IModelGroupsService['createModelGroup']>[0]) => modelGroupsService.createModelGroup(data);
 export const updateModelGroup = (id: string, data: Parameters<IModelGroupsService['updateModelGroup']>[1]) => modelGroupsService.updateModelGroup(id, data);
 export const deleteModelGroup = (id: string) => modelGroupsService.deleteModelGroup(id);

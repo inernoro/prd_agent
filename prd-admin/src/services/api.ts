@@ -94,6 +94,10 @@ export const api = {
       list: () => '/api/mds/model-groups',
       byId: (id: string) => `/api/mds/model-groups/${id}`,
       forApp: () => '/api/mds/model-groups/for-app',
+      healthOverview: (days?: number) =>
+        days != null
+          ? `/api/mds/model-groups/health-overview?days=${encodeURIComponent(days)}`
+          : '/api/mds/model-groups/health-overview',
       usage: (id: string) => `/api/mds/model-groups/${id}/usage`,
       unbind: (id: string) => `/api/mds/model-groups/${id}/unbind`,
       resetModelHealth: (groupId: string, modelId: string) =>

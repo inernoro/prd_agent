@@ -41,6 +41,7 @@ import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import { getModelTypeDisplayName, getModelTypeIcon, MODEL_TYPE_DEFINITIONS } from '@/lib/appCallerUtils';
 import { ModelTypePicker, ModelTypeFilterBar } from '@/components/model/ModelTypePicker';
+import { PoolHealthOverview } from '@/components/model/PoolHealthOverview';
 
 /* ── 策略图标元数据（仅用于池图标与调度预览的展示元信息）。
    调度策略已化简为只有 FailFast：策略选择器已移除，池一律按 FailFast 调度。
@@ -100,6 +101,21 @@ export function ModelPoolManagePage() {
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   // 快速添加模型模式：不经过编辑表单，直接在所选池上追加模型并保存
   const [quickAddPool, setQuickAddPool] = useState<ModelGroup | null>(null);
+  // 健康总览刷新触发器：增删改池后 +1，让只读总览随之重新拉取
+  const [healthRefreshKey, setHealthRefreshKey] = useState(0);
+
+  // 死池告警 -> 定位到对应池（清掉类型过滤，确保池可见 + 选中）
+  const handleLocatePool = useCallback((poolId: string) => {
+    setModelTypeFilter('all');
+    setSearchTerm('');
+    setSelectedPoolId(poolId);
+  }, []);
+
+  // 高 fallback 告警 -> 按 modelType 过滤池列表
+  const handleLocateModelType = useCallback((modelType: string) => {
+    setSearchTerm('');
+    setModelTypeFilter(modelType);
+  }, []);
 
   useEffect(() => {
     loadData();
@@ -116,6 +132,8 @@ export function ModelPoolManagePage() {
       ]);
       setPools(poolsData);
       setPlatforms(platformsData.success ? platformsData.data : []);
+      // 池数据变化后刷新只读健康总览
+      setHealthRefreshKey((k) => k + 1);
     } catch (error) {
       toast.error('加载失败', String(error));
     } finally {
@@ -489,6 +507,13 @@ export function ModelPoolManagePage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
+
+      {/* 只读：模型池健康 + fallback 率告警总览（把静默降级一眼暴露成红色一级告警） */}
+      <PoolHealthOverview
+        refreshKey={healthRefreshKey}
+        onLocatePool={handleLocatePool}
+        onLocateModelType={handleLocateModelType}
+      />
 
       {/* 主体：左侧列表 + 右侧详情 */}
       <div className="grid gap-4 flex-1 min-h-0 lg:grid-cols-[280px_1fr]">

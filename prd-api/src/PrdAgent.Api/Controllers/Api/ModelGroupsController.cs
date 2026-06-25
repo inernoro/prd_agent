@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Models;
 using PrdAgent.Core.Helpers;
@@ -59,6 +60,202 @@ public class ModelGroupsController : ControllerBase
             .ToListAsync();
 
         return Ok(ApiResponse<List<ModelGroup>>.Ok(groups));
+    }
+
+    /// <summary>
+    /// 只读：模型池健康 + fallback 率告警总览。
+    /// 把"死池被静默兜底 / 高 fallback 率"这种静默降级一眼暴露成一级告警。
+    /// 纯读，无副作用：仅聚合 model_groups（健康状态）与 llmrequestlogs（fallback 统计），不写任何集合、不碰 serving 路径。
+    /// </summary>
+    [HttpGet("health-overview")]
+    public async Task<IActionResult> HealthOverview([FromQuery] int days = 7)
+    {
+        days = Math.Clamp(days, 1, 30);
+        var from = DateTime.UtcNow.AddDays(-days);
+
+        // ============ 1. 模型池健康（来自 model_groups 文档的 Models[].HealthStatus） ============
+        var groups = await _db.ModelGroups
+            .Find(Builders<ModelGroup>.Filter.Empty)
+            .SortByDescending(g => g.IsDefaultForType)
+            .ThenBy(g => g.Priority)
+            .ThenBy(g => g.CreatedAt)
+            .ToListAsync();
+
+        var pools = groups.Select(g =>
+        {
+            var healthy = g.Models.Count(m => m.HealthStatus == ModelHealthStatus.Healthy);
+            var degraded = g.Models.Count(m => m.HealthStatus == ModelHealthStatus.Degraded);
+            var unavailable = g.Models.Count(m => m.HealthStatus == ModelHealthStatus.Unavailable);
+            // worstStatus：池内最差的健康状态（有 Unavailable > Degraded > Healthy）
+            var worst = unavailable > 0 ? "Unavailable" : degraded > 0 ? "Degraded" : "Healthy";
+            return new
+            {
+                id = g.Id,
+                code = g.Code,
+                name = g.Name,
+                modelType = g.ModelType,
+                isDefaultForType = g.IsDefaultForType,
+                healthyCount = healthy,
+                degradedCount = degraded,
+                unavailableCount = unavailable,
+                worstStatus = worst,
+            };
+        }).ToList();
+
+        // ============ 2. fallback 率（按 modelType，复用 model-stats 的聚合风格） ============
+        // 注意：llmrequestlogs 是共享基础设施，可能混入其他部署/分支的记录；这里只按时间窗 + modelType 聚合，
+        // 用于"率"的趋势观察，不做精确归因（参见 cross-project-isolation 规则）。
+        // RequestType 字段承载 modelType 语义（chat/intent/vision/generation 等）。
+        var matchDoc = Builders<LlmRequestLog>.Filter
+            .Gte(x => x.StartedAt, from)
+            .Render(new RenderArgs<LlmRequestLog>(
+                _db.LlmRequestLogs.DocumentSerializer,
+                _db.LlmRequestLogs.Settings.SerializerRegistry));
+
+        // modelType 解析：优先取 AppCallerCode 的 "::{model-type}" 后缀（app-caller-registry 规则保证为
+        // chat/intent/vision/generation 等规范值，与池 ModelType 同口径），缺失时回退 RequestType，再回退 unknown。
+        BsonDocument modelTypeExpr = new("$let", new BsonDocument
+        {
+            { "vars", new BsonDocument
+                {
+                    { "idx", new BsonDocument("$indexOfBytes", new BsonArray { new BsonDocument("$ifNull", new BsonArray { "$AppCallerCode", "" }), "::" }) },
+                }
+            },
+            { "in", new BsonDocument("$cond", new BsonArray
+                {
+                    new BsonDocument("$gt", new BsonArray { "$$idx", -1 }),
+                    new BsonDocument("$substrBytes", new BsonArray
+                    {
+                        "$AppCallerCode",
+                        new BsonDocument("$add", new BsonArray { "$$idx", 2 }),
+                        1000,
+                    }),
+                    new BsonDocument("$ifNull", new BsonArray { "$RequestType", "unknown" }),
+                })
+            },
+        });
+
+        // 2a. 按 modelType 统计 total + fallbackCount
+        var typePipeline = new[]
+        {
+            new BsonDocument("$match", matchDoc),
+            new BsonDocument("$project", new BsonDocument
+            {
+                { "modelType", modelTypeExpr },
+                { "isFallback", new BsonDocument("$cond", new BsonArray
+                    {
+                        new BsonDocument("$eq", new BsonArray { "$IsFallback", true }),
+                        1, 0
+                    })
+                },
+            }),
+            new BsonDocument("$group", new BsonDocument
+            {
+                { "_id", "$modelType" },
+                { "total", new BsonDocument("$sum", 1) },
+                { "fallbackCount", new BsonDocument("$sum", "$isFallback") },
+            }),
+            new BsonDocument("$sort", new BsonDocument("total", -1)),
+        };
+        var typeRows = await _db.LlmRequestLogs.Aggregate<BsonDocument>(typePipeline).ToListAsync();
+
+        // 2b. 按 (modelType, fallbackReason) 统计 top reasons（仅 fallback 记录）
+        var reasonPipeline = new[]
+        {
+            new BsonDocument("$match", matchDoc),
+            new BsonDocument("$match", new BsonDocument("IsFallback", true)),
+            new BsonDocument("$project", new BsonDocument
+            {
+                { "modelType", modelTypeExpr },
+                { "reason", new BsonDocument("$ifNull", new BsonArray { "$FallbackReason", "(未记录原因)" }) },
+            }),
+            new BsonDocument("$group", new BsonDocument
+            {
+                { "_id", new BsonDocument { { "modelType", "$modelType" }, { "reason", "$reason" } } },
+                { "count", new BsonDocument("$sum", 1) },
+            }),
+            new BsonDocument("$sort", new BsonDocument("count", -1)),
+        };
+        var reasonRows = await _db.LlmRequestLogs.Aggregate<BsonDocument>(reasonPipeline).ToListAsync();
+
+        static long ToLong(BsonValue? v) => v == null || v.IsBsonNull ? 0L : v.ToInt64();
+        static string ToStr(BsonValue? v) => v == null || v.IsBsonNull ? string.Empty : v.ToString() ?? string.Empty;
+
+        // 把 reason 行按 modelType 归组，取每组前 3
+        var reasonsByType = reasonRows
+            .GroupBy(d => ToStr(d.GetValue("_id", new BsonDocument()).AsBsonDocument.GetValue("modelType", BsonNull.Value)))
+            .ToDictionary(
+                g => g.Key,
+                g => g.Take(3).Select(d => new
+                {
+                    reason = ToStr(d.GetValue("_id").AsBsonDocument.GetValue("reason", BsonNull.Value)),
+                    count = ToLong(d.GetValue("count", BsonNull.Value)),
+                }).ToList());
+
+        var fallbackByType = typeRows.Select(d =>
+        {
+            var modelType = ToStr(d.GetValue("_id", BsonNull.Value));
+            var total = ToLong(d.GetValue("total", BsonNull.Value));
+            var fallbackCount = ToLong(d.GetValue("fallbackCount", BsonNull.Value));
+            var rate = total > 0 ? (double)fallbackCount / total : 0d;
+            reasonsByType.TryGetValue(modelType, out var topReasons);
+            return new
+            {
+                modelType,
+                total,
+                fallbackCount,
+                fallbackRate = Math.Round(rate, 4),
+                topFallbackReasons = topReasons ?? new(),
+            };
+        }).ToList();
+
+        // ============ 3. 一级告警汇总 ============
+        const double HighFallbackThreshold = 0.2;
+        var alarms = new List<HealthAlarm>();
+
+        // 3a. 死池：有 Unavailable 模型的池 -> critical
+        foreach (var p in pools.Where(p => p.unavailableCount > 0))
+        {
+            alarms.Add(new HealthAlarm
+            {
+                Level = "critical",
+                Kind = "dead-pool",
+                Target = string.IsNullOrWhiteSpace(p.code) ? p.name : p.code,
+                PoolId = p.id,
+                ModelType = p.modelType,
+                Detail = $"模型池「{(string.IsNullOrWhiteSpace(p.name) ? p.code : p.name)}」存在 {p.unavailableCount} 个不可用(Unavailable)模型"
+                         + (p.isDefaultForType ? "（该类型默认池，命中请求会被静默兜底到其他模型）" : ""),
+            });
+        }
+
+        // 3b. 高 fallback：fallbackRate >= 0.2 的 modelType -> warning
+        foreach (var f in fallbackByType.Where(f => f.fallbackRate >= HighFallbackThreshold && f.total > 0))
+        {
+            var topReason = f.topFallbackReasons.Count > 0 ? f.topFallbackReasons[0].reason : null;
+            alarms.Add(new HealthAlarm
+            {
+                Level = "warning",
+                Kind = "high-fallback",
+                Target = f.modelType,
+                ModelType = f.modelType,
+                Detail = $"近 {days} 天「{f.modelType}」类型 fallback 率 {Math.Round(f.fallbackRate * 100, 1)}%"
+                         + $"（{f.fallbackCount}/{f.total}）"
+                         + (string.IsNullOrWhiteSpace(topReason) ? "" : $"，主要原因：{topReason}"),
+            });
+        }
+
+        // critical 排前面
+        var orderedAlarms = alarms
+            .OrderByDescending(a => a.Level == "critical")
+            .ToList();
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            days,
+            pools,
+            fallbackByType,
+            alarms = orderedAlarms,
+        }));
     }
 
     /// <summary>
@@ -962,6 +1159,25 @@ public class ModelGroupForAppResponse
     public bool IsDefault { get; set; }
     /// <summary>是否为传统配置模型（isImageGen 等标记）</summary>
     public bool IsLegacy { get; set; }
+}
+
+/// <summary>
+/// 健康总览的一级告警条目（只读，仅用于序列化返回）
+/// </summary>
+public class HealthAlarm
+{
+    /// <summary>告警级别：critical（死池）/ warning（高 fallback）</summary>
+    public string Level { get; set; } = "warning";
+    /// <summary>告警类型：dead-pool / high-fallback</summary>
+    public string Kind { get; set; } = string.Empty;
+    /// <summary>告警目标（池 Code/Name 或 modelType）</summary>
+    public string Target { get; set; } = string.Empty;
+    /// <summary>关联的模型池 ID（仅 dead-pool 有值）</summary>
+    public string? PoolId { get; set; }
+    /// <summary>关联的模型类型</summary>
+    public string? ModelType { get; set; }
+    /// <summary>人类可读的告警详情</summary>
+    public string Detail { get; set; } = string.Empty;
 }
 
 /// <summary>
