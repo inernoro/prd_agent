@@ -138,6 +138,22 @@ function nameForHierarchy(entry: GalaxyInputEntry): string {
   return entry.title;
 }
 
+/**
+ * 从 GitHub 文件 URL 还原「仓库内目录段」（不含文件名）。
+ * 支持 raw.githubusercontent.com/{o}/{r}/{branch}/PATH 与
+ * github.com/{o}/{r}/(blob|raw|tree)/{branch}/PATH 两种形态；其余主机返回 []。
+ * 用途：GitHub 目录订阅来的非点分文件（README/guide 风格）没有 parentId，
+ * 靠这个还原子目录层级，避免一律落到「未分类」。
+ */
+function githubDirSegments(url: string): string[] {
+  const clean = url.split(/[?#]/)[0];
+  let m = clean.match(/raw\.githubusercontent\.com\/[^/]+\/[^/]+\/[^/]+\/(.+)$/i);
+  if (!m) m = clean.match(/github\.com\/[^/]+\/[^/]+\/(?:blob|raw|tree)\/[^/]+\/(.+)$/i);
+  if (!m) return [];
+  const parts = m[1].split('/').filter(Boolean);
+  return parts.slice(0, -1); // 去掉文件名，仅留目录段
+}
+
 /** 沿 parentId 链收集文件夹层级（从顶到底，不含自身）。 */
 function folderPath(entry: GalaxyInputEntry, byId: Map<string, GalaxyInputEntry>): string[] {
   const path: string[] = [];
@@ -186,6 +202,15 @@ function derivePath(
   const folders = folderPath(entry, byId);
   if (folders.length > 0) {
     return { groups: folders, docType: parseDocType(name), orphan: false };
+  }
+
+  // 2b. GitHub 目录订阅的非点分文件：从 sourceUrl 还原仓库内目录层级
+  //     （这类条目无 parentId，否则一律落「未分类」——见 buildDocGalaxy 关系识别注释第 2 层）。
+  if (entry.sourceUrl) {
+    const ghDirs = githubDirSegments(entry.sourceUrl);
+    if (ghDirs.length > 0) {
+      return { groups: ghDirs, docType: parseDocType(name), orphan: false };
+    }
   }
 
   // 3. 兜底

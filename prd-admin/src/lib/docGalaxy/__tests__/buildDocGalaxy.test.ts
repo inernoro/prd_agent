@@ -84,6 +84,25 @@ describe('buildDocGalaxy 关系识别', () => {
     expect(childByName(appAgent!, 'defect-agent')).toBeTruthy();
   });
 
+  it('GitHub 目录订阅的非点分文件 → 从 sourceUrl 还原仓库内目录层级（不落未分类）', () => {
+    const g = buildDocGalaxy([
+      entry('gh1', 'Intro', {
+        sourceUrl: 'https://raw.githubusercontent.com/acme/widgets/main/docs/guide/intro.md',
+      }),
+      entry('gh2', 'Readme', {
+        sourceUrl: 'https://github.com/acme/widgets/blob/main/docs/readme.md',
+      }),
+    ]);
+    const docs = childByName(g.root, 'docs');
+    expect(docs).toBeTruthy();
+    const guide = childByName(docs!, 'guide');
+    expect(guide).toBeTruthy();
+    expect(leafTitles(guide!)).toContain('Intro'); // raw 形态：docs/guide/intro.md
+    expect(leafTitles(docs!)).toContain('Readme'); // blob 形态：docs/readme.md
+    expect(childByName(g.root, '未分类')).toBeFalsy();
+    expect(g.stats.orphanCount).toBe(0);
+  });
+
   it('双链：仅保留两端都是文档叶的边并去重', () => {
     const g = buildDocGalaxy(
       [entry('a', 'design.cds.a'), entry('b', 'design.cds.b')],
