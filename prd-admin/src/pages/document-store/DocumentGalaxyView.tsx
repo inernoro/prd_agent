@@ -6,11 +6,18 @@
  * 渲染：@react-three/fiber Canvas + drei OrbitControls，放射状 3D 布局；
  *       叶子按 docType 上色，点叶子复用系统 MarkdownViewer 阅读。
  *
- * 视觉精修（辉光 / EVE 风格）后续迭代，本版做到能用、能编译、能验收。
+ * 视觉层（深空辉光星系）：
+ *   - UnrealBloom 选择性辉光：@react-three/postprocessing 的 EffectComposer + Bloom，
+ *     只有星体核心进入 bloom；drei <Html> 标签是 DOM 覆盖层，天然不参与 bloom，文字始终清晰。
+ *   - ACES 色调映射 + 适中曝光（0.82），治高光死白。
+ *   - 深空背景：星点 starfield（Points）+ additive 星云 sprite（缓慢漂移）。
+ *   - 星体核心 emissive 提亮 + additive 光晕 sprite，光晕随相机距离衰减防爆白。
+ *   - 父子线偏冷蓝（constellation 感），mention 线更淡。
  */
 import { Component, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Canvas } from '@react-three/fiber';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Html } from '@react-three/drei';
+import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import * as THREE from 'three';
 import { X } from 'lucide-react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -156,6 +163,76 @@ function layoutGalaxy(root: GalaxyNode): {
   return { placed, edges };
 }
 
+// ── 径向渐变贴图（光晕 / 星点 / 星云共用，纯程序生成，不依赖外部资源） ──
+function makeRadialTexture(stops: Array<[number, string]>): THREE.Texture {
+  const size = 128;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  for (const [offset, color] of stops) grad.addColorStop(offset, color);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.needsUpdate = true;
+  return tex;
+}
+
+// 软白光晕（中心亮、边缘透明）—— 星体核心叠加 additive sprite 用
+const HALO_TEXTURE = makeRadialTexture([
+  [0, 'rgba(255,255,255,1)'],
+  [0.25, 'rgba(255,255,255,0.55)'],
+  [0.6, 'rgba(255,255,255,0.12)'],
+  [1, 'rgba(255,255,255,0)'],
+]);
+
+// 星点贴图（圆形软点）
+const STAR_TEXTURE = makeRadialTexture([
+  [0, 'rgba(255,255,255,1)'],
+  [0.4, 'rgba(255,255,255,0.5)'],
+  [1, 'rgba(255,255,255,0)'],
+]);
+
+// 星云贴图（弥散云团）
+const NEBULA_TEXTURE = makeRadialTexture([
+  [0, 'rgba(255,255,255,0.85)'],
+  [0.4, 'rgba(255,255,255,0.3)'],
+  [0.75, 'rgba(255,255,255,0.07)'],
+  [1, 'rgba(255,255,255,0)'],
+]);
+
+// ── 距离自适应光晕：靠近相机时缩小 + 降透明度，防止放大成铺屏白团 ──
+function StarHalo({ color, baseSize }: { color: string; baseSize: number }) {
+  const ref = useRef<THREE.Sprite>(null);
+  const matRef = useRef<THREE.SpriteMaterial>(null);
+  const worldPos = useRef(new THREE.Vector3());
+  useFrame(({ camera }) => {
+    const spr = ref.current;
+    const mat = matRef.current;
+    if (!spr || !mat) return;
+    spr.getWorldPosition(worldPos.current);
+    const dist = camera.position.distanceTo(worldPos.current);
+    // 远处光晕饱满，靠近（dist<14）时线性收缩到 ~45% 尺寸、~30% 透明度
+    const k = THREE.MathUtils.clamp((dist - 6) / 14, 0, 1);
+    const scale = baseSize * (0.45 + 0.55 * k);
+    spr.scale.setScalar(scale);
+    mat.opacity = 0.18 + 0.62 * k;
+  });
+  return (
+    <sprite ref={ref}>
+      <spriteMaterial
+        ref={matRef}
+        map={HALO_TEXTURE}
+        color={color}
+        transparent
+        depthWrite={false}
+        blending={THREE.AdditiveBlending}
+      />
+    </sprite>
+  );
+}
+
 interface GalaxyLeafProps {
   pos: THREE.Vector3;
   node: GalaxyNode;
@@ -186,8 +263,15 @@ function LeafStar({ pos, node, hovered, onHover, onOpen }: GalaxyLeafProps) {
         scale={hovered ? 1.7 : 1}
       >
         <sphereGeometry args={[0.55, 16, 16]} />
-        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={hovered ? 0.9 : 0.35} />
+        {/* emissive 提到 >1 让核心进入 bloom 的 luminanceThreshold 之上 */}
+        <meshStandardMaterial
+          color={color}
+          emissive={color}
+          emissiveIntensity={hovered ? 2.4 : 1.5}
+          toneMapped={false}
+        />
       </mesh>
+      <StarHalo color={color} baseSize={hovered ? 5.2 : 3.4} />
       {hovered && (
         <Html distanceFactor={26} style={{ pointerEvents: 'none' }}>
           <div
@@ -219,10 +303,115 @@ function GroupStar({ pos, node }: { pos: THREE.Vector3; node: GalaxyNode }) {
     <group position={pos}>
       <mesh>
         <sphereGeometry args={[r, 20, 20]} />
-        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={isRoot ? 0.7 : 0.4} />
+        <meshStandardMaterial
+          color={color}
+          emissive={color}
+          emissiveIntensity={isRoot ? 1.9 : 1.2}
+          toneMapped={false}
+        />
       </mesh>
+      <StarHalo color={color} baseSize={isRoot ? 9 : 4.5 + r * 1.6} />
     </group>
   );
+}
+
+// ── 深空星点 starfield：几千个 Points 包裹整个场景，弱发光、缓慢自转 ──
+function Starfield({ count = 2600, radius = 320 }: { count?: number; radius?: number }) {
+  const ref = useRef<THREE.Points>(null);
+  const geom = useMemo(() => {
+    const positions = new Float32Array(count * 3);
+    const colors = new Float32Array(count * 3);
+    const palette = [
+      [0.7, 0.78, 1.0], // 冷蓝白
+      [1.0, 1.0, 1.0], // 纯白
+      [1.0, 0.86, 0.7], // 暖白
+      [0.78, 0.7, 1.0], // 淡紫
+    ];
+    for (let i = 0; i < count; i++) {
+      // 球壳内随机分布（半径在 [0.55R, R] 之间，避免太靠近中心）
+      const r = radius * (0.55 + Math.random() * 0.45);
+      const theta = Math.acos(2 * Math.random() - 1);
+      const phi = Math.random() * Math.PI * 2;
+      positions[i * 3] = r * Math.sin(theta) * Math.cos(phi);
+      positions[i * 3 + 1] = r * Math.cos(theta);
+      positions[i * 3 + 2] = r * Math.sin(theta) * Math.sin(phi);
+      const c = palette[Math.floor(Math.random() * palette.length)];
+      const dim = 0.4 + Math.random() * 0.6;
+      colors[i * 3] = c[0] * dim;
+      colors[i * 3 + 1] = c[1] * dim;
+      colors[i * 3 + 2] = c[2] * dim;
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    return g;
+  }, [count, radius]);
+
+  useFrame((_, delta) => {
+    if (ref.current) ref.current.rotation.y += delta * 0.006;
+  });
+
+  return (
+    <points ref={ref} geometry={geom}>
+      <pointsMaterial
+        size={1.4}
+        sizeAttenuation
+        map={STAR_TEXTURE}
+        vertexColors
+        transparent
+        depthWrite={false}
+        blending={THREE.AdditiveBlending}
+        opacity={0.85}
+      />
+    </points>
+  );
+}
+
+// ── 大号 additive 星云 sprite：低饱和蓝紫，缓慢漂移，给背景层次感 ──
+function Nebulae() {
+  const groupRef = useRef<THREE.Group>(null);
+  const clouds = useMemo(
+    () => [
+      { pos: [-70, 30, -120] as [number, number, number], color: '#5b6cff', size: 150 },
+      { pos: [90, -40, -100] as [number, number, number], color: '#9a5bff', size: 130 },
+      { pos: [20, 60, -160] as [number, number, number], color: '#3b8cff', size: 170 },
+    ],
+    [],
+  );
+  useFrame(({ clock }) => {
+    if (!groupRef.current) return;
+    const t = clock.getElapsedTime();
+    groupRef.current.children.forEach((child, i) => {
+      child.position.x += Math.sin(t * 0.04 + i * 2) * 0.012;
+      child.position.y += Math.cos(t * 0.03 + i) * 0.01;
+    });
+  });
+  return (
+    <group ref={groupRef}>
+      {clouds.map((c, i) => (
+        <sprite key={i} position={c.pos} scale={[c.size, c.size, 1]}>
+          <spriteMaterial
+            map={NEBULA_TEXTURE}
+            color={c.color}
+            transparent
+            opacity={0.16}
+            depthWrite={false}
+            blending={THREE.AdditiveBlending}
+          />
+        </sprite>
+      ))}
+    </group>
+  );
+}
+
+// ── ACES 色调映射 + 适中曝光（在 R3F 内设置 gl，治高光死白） ──
+function ToneMappingSetup() {
+  const gl = useThree((s) => s.gl);
+  useEffect(() => {
+    gl.toneMapping = THREE.ACESFilmicToneMapping;
+    gl.toneMappingExposure = 0.82;
+  }, [gl]);
+  return null;
 }
 
 interface SceneProps {
@@ -271,19 +460,24 @@ function GalaxyScene({ galaxy, onOpen }: SceneProps) {
 
   return (
     <>
-      <ambientLight intensity={0.6} />
-      <pointLight position={[0, 0, 0]} intensity={1.2} distance={120} />
-      <pointLight position={[40, 40, 40]} intensity={0.5} />
+      <ToneMappingSetup />
+      <ambientLight intensity={0.45} />
+      <pointLight position={[0, 0, 0]} intensity={1.0} distance={120} />
+      <pointLight position={[40, 40, 40]} intensity={0.4} />
 
-      {/* 父子连线 */}
+      {/* 深空背景层：星点 + 星云（在 bloom 之外的弱发光，不会被 EffectComposer 提亮过度） */}
+      <Starfield />
+      <Nebulae />
+
+      {/* 父子连线（偏冷蓝细线，constellation 感） */}
       <lineSegments geometry={hierarchyGeom}>
-        <lineBasicMaterial color="#5a5f72" transparent opacity={0.35} />
+        <lineBasicMaterial color="#4f7bd6" transparent opacity={0.28} />
       </lineSegments>
 
-      {/* 横向引用连线 */}
+      {/* 横向引用连线（更淡） */}
       {mentionEdges.length > 0 && (
         <lineSegments geometry={mentionGeom}>
-          <lineBasicMaterial color="#6fa8ff" transparent opacity={0.4} />
+          <lineBasicMaterial color="#8fc4ff" transparent opacity={0.32} />
         </lineSegments>
       )}
 
@@ -302,7 +496,19 @@ function GalaxyScene({ galaxy, onOpen }: SceneProps) {
         ),
       )}
 
-      <OrbitControls enableDamping dampingFactor={0.08} rotateSpeed={0.6} zoomSpeed={0.8} minDistance={6} maxDistance={160} />
+      <OrbitControls enableDamping dampingFactor={0.05} rotateSpeed={0.6} zoomSpeed={0.8} minDistance={6} maxDistance={160} />
+
+      {/* UnrealBloom 选择性辉光：只有 emissive>阈值 的星体核心发光；
+          drei <Html> 标签是 DOM 覆盖层，天然不参与 bloom，文字始终清晰 */}
+      <EffectComposer>
+        <Bloom
+          intensity={0.6}
+          luminanceThreshold={0.72}
+          luminanceSmoothing={0.25}
+          radius={0.4}
+          mipmapBlur
+        />
+      </EffectComposer>
     </>
   );
 }
@@ -524,7 +730,7 @@ export function DocumentGalaxyView({ storeId, storeName }: DocumentGalaxyViewPro
   }, [storeId]);
 
   return (
-    <div className="h-full w-full min-h-0 flex flex-col relative" style={{ background: '#0c0c12' }}>
+    <div className="h-full w-full min-h-0 flex flex-col relative" style={{ background: '#05060e' }}>
       {/* 图例 + 统计：独立页里它是顶部唯一头部，正常 flex 排布（不再绝对定位叠头部） */}
       {galaxy && (
         <div
@@ -562,8 +768,14 @@ export function DocumentGalaxyView({ storeId, storeName }: DocumentGalaxyViewPro
         {/* 3D 画布（外套 ErrorBoundary：WebGL/R3F 抛错时显式报错，不白屏空转） */}
         {galaxy && !loading && !error && galaxy.stats.totalDocs > 0 && (
           <CanvasErrorBoundary>
-            <Canvas camera={{ position: [0, 18, 42], fov: 55 }} style={{ position: 'absolute', inset: 0 }}>
-              <color attach="background" args={['#0c0c12']} />
+            <Canvas
+              camera={{ position: [0, 18, 42], fov: 55 }}
+              style={{ position: 'absolute', inset: 0 }}
+              gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 0.82 }}
+            >
+              {/* 深空背景：深蓝黑，不是纯黑平底（再叠 starfield + nebula） */}
+              <color attach="background" args={['#05060e']} />
+              <fog attach="fog" args={['#05060e', 90, 280]} />
               <GalaxyScene galaxy={galaxy} onOpen={setOpenEntryId} />
             </Canvas>
           </CanvasErrorBoundary>
