@@ -117,9 +117,21 @@ export function FilePreview({ entry, preview }: { entry?: DocBrowserEntry; previ
       <iframe
         {...(fileUrl ? { src: fileUrl } : { srcDoc: srcDocHtml ?? '' })}
         title={entry.title}
-        sandbox=""
+        // srcDoc（导入/手写 HTML，与父同源可量高）：用 allow-same-origin（仍未给 allow-scripts，
+        // 脚本不执行、无 XSS），onLoad 量内容高度让 iframe 自增高、自身不再内部滚动 → 只剩外层
+        // 阅读区一条滚动条（修复「白底 iframe + 暗底外层」双滚动条）。
+        // fileUrl（上传 .html，跨源不可量高）：保持最严 sandbox="" + 100% 高，行为不变。
+        sandbox={fileUrl ? '' : 'allow-same-origin'}
+        onLoad={fileUrl ? undefined : (e) => {
+          try {
+            const ifr = e.currentTarget;
+            const d = ifr.contentDocument;
+            const h = d ? Math.max(d.documentElement?.scrollHeight || 0, d.body?.scrollHeight || 0) : 0;
+            if (h > 0) ifr.style.height = h + 'px';
+          } catch { /* 跨源不可量，保持默认高度 */ }
+        }}
         className="w-full rounded-lg"
-        style={{ height: '100%', minHeight: 480, border: '1px solid rgba(255,255,255,0.06)', background: '#fff' }}
+        style={{ height: fileUrl ? '100%' : 'auto', minHeight: 480, border: '1px solid rgba(255,255,255,0.06)', background: '#fff' }}
       />
     );
   }

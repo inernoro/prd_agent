@@ -15,3 +15,5 @@
 | polish | cds | 预览等待页百分比改为按预估时间倒推的两位小数平滑递增(封顶99.99%，ready前不显示100%) |
 | feat | prd-api | 新增 CDS 验收报告导入器(CdsReportImportService + POST /api/document-store/import-cds-reports)：复用「系统互联」已授权的 CDS 全局连接长效令牌(X-AI-Access-Key)，免 peer-sync 握手、一次鉴权增量同步 CDS 报告进知识库(updatedSince + contentHash 去重) |
 | fix | cds | 预览等待页进度小数位冻结修复：百分比改为按 ETA 连续时间插值(server 锚点→99.99)，小数位随秒持续跳动；旧 max(server,timePct) 被整数封住小数冻在 .00 |
+| fix | prd-admin | 知识库文档阅读 HTML 报告双滚动条修复：srcDoc 预览 iframe 改 allow-same-origin(仍禁脚本) + onLoad 量高自增高，iframe 不再内部滚动，只剩外层一条滚动条 |
+| polish | prd-admin | 知识库侧栏头部：排序 + 正文标题切换 + 显示设置合并到一行省垂直空间；侧栏很窄时正文标题/显示只留图标 |

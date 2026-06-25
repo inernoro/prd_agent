@@ -1618,6 +1618,19 @@ export function DocBrowser({
   const timeField: 'createdAt' | 'updatedAt' = sortMode === 'created-desc' ? 'createdAt' : 'updatedAt';
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
+  // 头部控件行（排序 + 正文标题 + 显示）合并到一行；侧栏很窄时控件只留图标（隐藏文字标签）。
+  const headerControlsRef = useRef<HTMLDivElement>(null);
+  const [compactControls, setCompactControls] = useState(false);
+  useEffect(() => {
+    const el = headerControlsRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width ?? 999;
+      setCompactControls(w < 300);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const [contentFirstLines, setContentFirstLines] = useState<Map<string, string>>(new Map());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entry: DocBrowserEntry } | null>(null);
   const [showAddMenu, setShowAddMenu] = useState(false);
@@ -2693,22 +2706,20 @@ export function DocBrowser({
           </div>
         )}
 
-        {/* 外部自定义 sidebar 头部（如「周报列表 · 按最近提交 · N 篇」），可选 */}
-        {sidebarHeader && (
-          <div className="shrink-0 px-3 py-2.5" style={{ borderBottom: '1px solid var(--border-faint)' }}>
-            {sidebarHeader}
-          </div>
-        )}
-        {/* 标题显示切换 + 搜索 + 新建文件夹 */}
-        <div className="surface-panel-header space-y-2.5 px-3 py-3">
-          {/* 标题模式切换（正文标题/文件名）+ 显示设置 */}
-          <div className="flex items-center justify-between">
+        {/* 头部控件行：排序(sidebarHeader) + 正文标题切换 + 显示设置，合并到一行省垂直空间；
+            侧栏很窄(compactControls)时正文标题/显示只留图标（文字标签隐藏，title 提示仍在）。 */}
+        <div
+          ref={headerControlsRef}
+          className="shrink-0 flex items-center justify-between gap-2 px-3 py-2.5"
+          style={{ borderBottom: '1px solid var(--border-faint)' }}>
+          <div className="min-w-0 flex-1 overflow-hidden">{sidebarHeader}</div>
+          <div className="flex shrink-0 items-center gap-1">
             <button
               onClick={() => setUseContentTitle(!useContentTitle)}
               className="flex cursor-pointer items-center gap-1 rounded-[7px] px-1.5 py-0.5 text-[10px] text-token-muted transition-colors hover-bg-soft"
               title={useContentTitle ? '当前：显示正文第一行为标题' : '当前：显示文件名为标题'}>
               {useContentTitle ? <ToggleRight size={12} className="text-token-accent" /> : <ToggleLeft size={12} />}
-              {useContentTitle ? '正文标题' : '文件名'}
+              {!compactControls && (useContentTitle ? '正文标题' : '文件名')}
             </button>
             <div ref={settingsMenuRef} className="relative">
               <button
@@ -2716,7 +2727,7 @@ export function DocBrowser({
                 className="flex cursor-pointer items-center gap-1 rounded-[7px] px-1.5 py-0.5 text-[10px] text-token-muted transition-colors hover-bg-soft"
                 title="显示设置">
                 <Settings size={11} className={showUpdatedTime ? 'text-token-accent' : ''} />
-                显示
+                {!compactControls && '显示'}
               </button>
               {showSettingsMenu && (
                 <div className="surface-popover absolute right-0 top-[26px] z-50 min-w-[180px] rounded-[10px] p-2">
@@ -2740,7 +2751,9 @@ export function DocBrowser({
               )}
             </div>
           </div>
-
+        </div>
+        {/* 搜索 + 新建文件夹 */}
+        <div className="surface-panel-header px-3 py-3">
           <div className="flex gap-1.5">
             <div className="relative flex-1">
               <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
