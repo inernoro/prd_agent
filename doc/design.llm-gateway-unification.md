@@ -24,6 +24,8 @@
 
 落地分 6 个相位，每相位向后兼容、可独立上线、可随时停。第一步只取证不动代码，用你库里的真实数据确认"哪些是死代码"再删，最稳。
 
+> **范围扩展（2026-06-25）**：本设计在内部模型池简化之外，纳入"对外平台化"目标——把这台引擎暴露成 OpenRouter 式平台供别人调用。实测发现外部入口（`OpenApiController` + AgentApiKey）**已存在且已共用同一引擎**，故二者不是两个项目而是同一架构的两面。详见 §12。决策：内部其他团队为主、按可扩展设计；先清引擎（P1-P3）再装对外入口。
+
 ---
 
 ## 2. 现状与问题（代码实测）
@@ -343,7 +345,57 @@ L2 黄金快照建立（P1 前必须先有）
 
 ---
 
-## 12. 关联文档
+## 12. 对外平台化（OpenRouter 式）——与本重构混合
+
+> 用户 2026-06-25 追加目标：拆掉原来的 apigateway，把这台引擎统一成"类似 OpenRouter 的平台"供别人调用，并问"本次重构能否混合使用"。实测结论：**能，且二者已经是同一架构的两面**。
+
+### 12.1 关键发现：平台已 ~60% 在跑，且已共用同一引擎
+
+| 已就绪（实测） | 文件 |
+|---|---|
+| OpenAI 兼容入口：`POST /api/v1/chat/completions`、`/v1/images/generations`、`GET /v1/models`、`/v1/key` | `OpenApiController.cs` |
+| 鉴权 `sk-ak-*` AgentApiKey + scope `open-api:call` | `Authentication/ApiKeyAuthenticationHandler.cs`、`Models/AgentApiKey.cs` |
+| per-key 模型白名单（`OpenApiChatModels`/`OpenApiImageModels`） | `AgentApiKey.cs` |
+| scope 框架（`{resource}:{action}` + 动态 agent scope） | `Helpers/AgentScopeFormat.cs`、`Models/AgentOpenEndpoint.cs` |
+| 用量日志 + Admin 控制台 | `AdminOpenApiController.cs`、`OpenApiUsageService.cs` |
+
+**决定性事实**：`open-api.proxy::chat` / `::generation` 是注册 code——**外部调用早已走同一个 `ModelResolver` + 引擎**。所以"混合"不是选择题，今天就是混的；本次重构清的是这台共用引擎，**外部平台自动受益，零额外打通成本**。
+
+### 12.2 "拆掉原来的 apigateway"拆的是哪个
+
+| 组件 | 身份 | 处置 |
+|---|---|---|
+| **OpenPlatformApp**（`sk-*`，绑死 PRD-chat、无 scope、`openplatformrequestlogs`） | 原 apigateway | **退役** |
+| `OpenApiController` + AgentApiKey（`sk-ak-*`） | 现代地基，已 OpenAI 兼容 | **接管，扩成统一平台** |
+| `open-platform-agent.proxy::embedding/rerank`（§9.4 的 NotFound） | 老 proxy 悬挂残骸 | 随老平台清掉 |
+
+§9.3 那两个 NotFound 之谜解开：是**老平台残留**，新路径 `open-api.proxy::*` 是好的。
+
+### 12.3 收敛：Caller 合一
+
+内部 `appCallerCode` + 外部 `AgentApiKey` = 同一个"Caller"（谁调 / 能调什么 / 算谁账）。两者已都解析进引擎，统一成一个 Caller 抽象，scope + 计费在关口分流。这就是"混合使用"的落地形态：**内部功能 = 平台的第一个客户，吃自己狗粮。**
+
+### 12.4 待建（基于实测，非从零）
+
+- per-key 配额硬执行（`PassUsageGateAsync` 仍是 stub，`OpenApiDailyTokenQuota` 等字段已声明未执行）
+- scope → 模型门（现仅 per-key 白名单，无 scope 级模型路由）
+- 动态模型列表（现为静态白名单）
+- 用量聚合面板（日志有，缺跨 key 聚合）
+- Unavailable 降级（`IsFallback` 已有，缺策略）
+
+### 12.5 范围与节奏（用户拍板 2026-06-25）
+
+- **范围**：内部其他团队/系统为主，**按可扩展设计**——scope/配额留好 seams，但现在不建公网付费墙、不做抗滥用。
+- **节奏**：**先清引擎（P1-P3）再装对外入口**。外部已共用引擎 → 清引擎=同时打平台地基。
+- **新硬约束**：模型名/池 code 一旦对外即成**公开 API 契约**——`auto-*` 脏池、空池、`stub-image` 默认（H3/H5）的清理从卫生升级为对外稳定性，必须在开放入口前清完。
+
+### 12.6 对相位的影响
+
+P4 清理范围扩大（含退役 OpenPlatformApp）；新增 **P6 平台收口**：Caller 合一 + 补 Phase2 配额/scope 门/模型列表 + 把模型名固化为公开契约。引擎相位（P1-P3）不变。
+
+---
+
+## 13. 关联文档
 
 - `design.llm-gateway.md`——Gateway 总体设计（现状基线，本设计在其上做减法）
 - `design.llm-gateway-refactor.md`——图片 compute-then-send 重构（PR #490，本设计复用其算/发分离）
