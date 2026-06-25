@@ -1322,6 +1322,53 @@ export interface CdsState {
   acceptanceReports?: AcceptanceReportMeta[];
   /** 验收报告文件夹（项目级分类，见 ReportFolder）。 */
   reportFolders?: ReportFolder[];
+  /** WS3 MAP-KBTP peer-sync：本 CDS 实例的稳定 nodeId（首次用时生成）。 */
+  peerSelfNodeId?: string;
+  /** WS3：已配对的对端节点（MAP 等），见 PeerNodeRecord。 */
+  peerNodes?: PeerNodeRecord[];
+  /** WS3：待用的一次性配对码（明文不存，只存 hash），见 PeerPairingCode。 */
+  peerPairingCodes?: PeerPairingCode[];
+}
+
+/**
+ * WS3 MAP-KBTP v1 peer-sync：已配对的对端节点。
+ * CDS 作为「源 peer」对外暴露验收报告供 MAP 等系统按知识库开放协议拉取。
+ * sharedSecret 是 HMAC-SHA256 的密钥（base64 编码的 32 字节随机串）。
+ */
+export interface PeerNodeRecord {
+  /** 本地记录 ID。 */
+  id: string;
+  /** 对端自报的稳定 nodeId（请求头 X-Peer-Node 的值）。 */
+  partnerNodeId: string;
+  /** 配对时生成的共享密钥（base64，HMAC 密钥）。明文存储——本机可读即可签验。 */
+  sharedSecret: string;
+  /** 对端公开 baseUrl（对端 handshake 自报，审计/回调用，本实现不回调）。 */
+  partnerBaseUrl?: string;
+  /** 对端显示名。 */
+  partnerDisplayName?: string;
+  /** 创建时间 ISO。 */
+  createdAt: string;
+  /** 最近一次被对端调用时间（审计）。 */
+  lastUsedAt?: string;
+}
+
+/**
+ * WS3：一次性配对码。管理员在 CDS 生成明文码交给对端，对端 handshake 时回带。
+ * CDS 只存 sha256 hash，校验通过即换发 sharedSecret + 建 PeerNodeRecord。
+ */
+export interface PeerPairingCode {
+  /** 稳定 ID。 */
+  id: string;
+  /** 配对码明文的 sha256 hex（明文不存）。 */
+  codeHash: string;
+  /** 备注显示名（这把码发给谁）。 */
+  displayName?: string;
+  /** 过期时间 ISO。 */
+  expiresAt: string;
+  /** 是否已被消费。 */
+  used: boolean;
+  /** 创建时间 ISO。 */
+  createdAt: string;
 }
 
 /**

@@ -43,7 +43,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
-VERSION = "0.7.0"  # ← bumped on each SKILL.md change; 服务端自动读这一行
+VERSION = "0.7.1"  # ← bumped on each SKILL.md change; 服务端自动读这一行
 _TRACE_ID: str = ""
 _HUMAN: bool = False
 _DRIFT_WARNED: bool = False  # 全进程只提示一次，避免每个请求都刷
@@ -2127,6 +2127,40 @@ def cmd_report_folder_rename(args: argparse.Namespace) -> None:
 def cmd_report_folder_delete(args: argparse.Namespace) -> None:
     body = _call("DELETE", f"/api/report-folders/{urllib.parse.quote(args.id)}", timeout=20)
     ok(body, note=f"已删除文件夹 {args.id}(内部报告改为未归类)")
+
+
+def cmd_peer_pairing_code(args: argparse.Namespace) -> None:
+    """生成一次性 peer-sync 配对码,交给 MAP「同步中心」配对本 CDS(验收报告整库 pull)。"""
+    payload: dict[str, Any] = {}
+    if getattr(args, "name", None):
+        payload["displayName"] = args.name
+    body = _call("POST", "/api/peer-sync/admin/pairing-codes", body=payload, timeout=20)
+    if _HUMAN and isinstance(body, dict):
+        print(f"配对码(明文仅此一次): {body.get('pairingCode','?')}")
+        print(f"  过期: {body.get('expiresAt','?')}")
+        print(f"  本 CDS nodeId: {body.get('selfNodeId','?')}")
+        print(f"  用法: 在 MAP 同步中心新增 CDS 节点,填本 CDS 的 peer-sync baseUrl + 上面的配对码")
+        return
+    ok(body)
+
+
+def cmd_peer_nodes(args: argparse.Namespace) -> None:
+    """列出已与本 CDS 配对的对端节点(MAP 等)。"""
+    body = _call("GET", "/api/peer-sync/admin/nodes", timeout=20)
+    nodes = body.get("nodes", []) if isinstance(body, dict) else []
+    if _HUMAN:
+        print(f"本 CDS nodeId: {(body or {}).get('selfNodeId','?')}")
+        print(f"{len(nodes)} 个已配对节点:")
+        for n in nodes:
+            print(f"  - {n.get('id','?')[:8]}  partner={n.get('partnerNodeId','?')[:12]}  "
+                  f"{n.get('partnerDisplayName') or '-'}  lastUsed={n.get('lastUsedAt') or '-'}")
+        return
+    ok(nodes)
+
+
+def cmd_peer_node_revoke(args: argparse.Namespace) -> None:
+    body = _call("DELETE", f"/api/peer-sync/admin/nodes/{urllib.parse.quote(args.id)}", timeout=20)
+    ok(body, note=f"已撤销 peer 节点 {args.id}")
 
 
 def cmd_self_branches(args: argparse.Namespace) -> None:
@@ -6740,6 +6774,14 @@ def _build_parser() -> argparse.ArgumentParser:
     rfr = rf.add_parser("rename"); rfr.add_argument("id"); rfr.add_argument("--name", required=True)
     rfr.set_defaults(func=cmd_report_folder_rename)
     rfd = rf.add_parser("delete"); rfd.add_argument("id"); rfd.set_defaults(func=cmd_report_folder_delete)
+
+    # MAP-KBTP peer-sync 管理(让 MAP 等系统按知识库开放协议拉取 CDS 验收报告)
+    peer = sub.add_parser("peer", help="peer-sync 配对:生成配对码 / 列举撤销节点").add_subparsers(dest="sub", required=True)
+    ppc = peer.add_parser("pairing-code", help="生成一次性配对码(交给 MAP 同步中心)")
+    ppc.add_argument("--name", help="备注:这把码发给谁"); ppc.set_defaults(func=cmd_peer_pairing_code)
+    pnl = peer.add_parser("nodes", help="列出已配对节点"); pnl.set_defaults(func=cmd_peer_nodes)
+    pnr = peer.add_parser("revoke", help="撤销一个已配对节点"); pnr.add_argument("id")
+    pnr.set_defaults(func=cmd_peer_node_revoke)
 
     prof = sub.add_parser(
         "profile",

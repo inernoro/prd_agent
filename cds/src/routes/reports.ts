@@ -31,6 +31,7 @@
  */
 import { Router, type Request, type Response, json as expressJson, text as expressText, raw as expressRaw } from 'express';
 import type { StateService } from '../services/state.js';
+import type { GitHubAppClient } from '../services/github-app-client.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 
 /**
@@ -70,6 +71,29 @@ function reportAccessDenied(
 
 export interface ReportsRouterDeps {
   stateService: StateService;
+  /** E4 验收回写 PR：可选 GitHub App 客户端（未配置时回写端点返回 503）。 */
+  githubApp?: GitHubAppClient;
+}
+
+/** 验收结论 → GitHub check-run conclusion。 */
+const VERDICT_CONCLUSION: Record<'pass' | 'conditional' | 'fail', 'success' | 'neutral' | 'failure'> = {
+  pass: 'success',
+  conditional: 'neutral',
+  fail: 'failure',
+};
+const VERDICT_CN: Record<'pass' | 'conditional' | 'fail', string> = {
+  pass: '通过',
+  conditional: '有条件通过',
+  fail: '不通过',
+};
+
+/** 从请求推断 CDS 对外可达基地址（PR 评论里的链接要绝对路径）。 */
+function publicBaseFromReq(req: Request): string {
+  const envBase = (process.env.CDS_PUBLIC_BASE_URL || '').trim().replace(/\/$/, '');
+  if (envBase) return envBase;
+  const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+  const host = String(req.headers['x-forwarded-host'] || req.headers['host'] || '').split(',')[0].trim();
+  return host ? `${proto}://${host}` : '';
 }
 
 /** Hard cap on report body size (paste + upload). 10MB of UTF-8 text. */
@@ -458,6 +482,93 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     const updated = stateService.disableReportShare(meta.id);
     if (!updated) return res.status(404).json({ error: 'not_found', message: '报告不存在' });
     return res.json({ report: updated });
+  });
+
+  // ── E4 验收回写 PR：把 verdict 作为 PR 评论 + GitHub check-run 推回 ──
+  // POST /api/reports/:id/push-to-pr — 需要报告带 verdict + prNumber，且所属项目已 link GitHub。
+  router.post('/reports/:id/push-to-pr', jsonParser, async (req: Request, res: Response) => {
+    const meta = stateService.getAcceptanceReport(req.params.id);
+    if (!meta) return res.status(404).json({ error: 'not_found', message: '报告不存在' });
+    const mismatch = reportAccessDenied(req, meta.projectId);
+    if (mismatch) return res.status(mismatch.status).json(mismatch.body);
+    if (!deps.githubApp) {
+      return res.status(503).json({ error: 'github_not_configured', message: '本 CDS 未配置 GitHub App，无法回写 PR' });
+    }
+    if (!meta.verdict) {
+      return res.status(400).json({ error: 'missing_verdict', message: '报告没有验收结论(verdict)，无法回写 PR' });
+    }
+    if (!meta.prNumber) {
+      return res.status(400).json({ error: 'missing_pr', message: '报告未关联 PR 编号(创建时带 --pr 或 prNumber)' });
+    }
+    const project = meta.projectId ? stateService.getProject(meta.projectId) : undefined;
+    const repoFull = project?.githubRepoFullName;
+    const installationId = project?.githubInstallationId;
+    if (!project || !repoFull || !installationId) {
+      return res.status(400).json({ error: 'project_not_linked', message: '报告所属项目未关联 GitHub 仓库/安装，无法回写 PR' });
+    }
+    const [owner, repo] = repoFull.split('/');
+    if (!owner || !repo) {
+      return res.status(400).json({ error: 'bad_repo', message: `项目的 githubRepoFullName 非法：${repoFull}` });
+    }
+
+    const base = publicBaseFromReq(req);
+    const deeplink = base
+      ? `${base}/reports?${meta.projectId ? `project=${encodeURIComponent(meta.projectId)}&` : ''}${meta.folderId ? `folder=${encodeURIComponent(meta.folderId)}&` : ''}report=${encodeURIComponent(meta.id)}`
+      : '';
+    const shareLink = base && meta.shareToken ? `${base}/r/${meta.shareToken}` : '';
+    const vCn = VERDICT_CN[meta.verdict];
+
+    // 评论正文（markdown）。HTML 注释标记便于以后识别/去重 CDS 验收评论。
+    const lines: string[] = [];
+    lines.push('<!-- cds-acceptance-report -->');
+    lines.push(`### CDS 验收：${vCn}`);
+    lines.push('');
+    lines.push(`**${meta.title}**`);
+    lines.push('');
+    if (meta.tier) lines.push(`- 档位：${meta.tier}`);
+    if (meta.defectCounts && Object.keys(meta.defectCounts).length) {
+      lines.push(`- 缺陷：${Object.entries(meta.defectCounts).map(([k, v]) => `${k}=${v}`).join('  ')}`);
+    }
+    const deployBits = [meta.branch, meta.commitSha ? meta.commitSha.slice(0, 7) : '', meta.deployMode].filter(Boolean);
+    if (deployBits.length) lines.push(`- 部署：${deployBits.join(' · ')}`);
+    if (deeplink) lines.push(`- 报告：[在 CDS 查看](${deeplink})${shareLink ? ` · [公开链接](${shareLink})` : ''}`);
+    lines.push('');
+    lines.push('<sub>由 CDS 验收中心回写</sub>');
+    const body = lines.join('\n');
+
+    const result: { commentUrl?: string; checkRun?: { id: number; htmlUrl: string }; warnings: string[] } = { warnings: [] };
+    // 1) PR 评论（主路径）。
+    try {
+      const c = await deps.githubApp.createIssueComment(installationId, owner, repo, meta.prNumber, body);
+      result.commentUrl = c.htmlUrl;
+    } catch (e) {
+      result.warnings.push(`PR 评论失败：${(e as Error).message.slice(0, 200)}`);
+    }
+    // 2) check-run（差异化：PR Checks 面板出现「验收绿/红」）。需要 commitSha。
+    if (meta.commitSha) {
+      try {
+        const cr = await deps.githubApp.createCheckRun(installationId, owner, repo, {
+          name: 'CDS 验收',
+          headSha: meta.commitSha,
+          status: 'completed',
+          conclusion: VERDICT_CONCLUSION[meta.verdict],
+          detailsUrl: deeplink || undefined,
+          externalId: meta.id,
+          completedAt: new Date().toISOString(),
+          output: { title: `CDS 验收：${vCn}`, summary: `${meta.title}${meta.tier ? `（${meta.tier}）` : ''}` },
+        });
+        result.checkRun = cr;
+      } catch (e) {
+        result.warnings.push(`check-run 创建失败：${(e as Error).message.slice(0, 200)}`);
+      }
+    } else {
+      result.warnings.push('报告无 commitSha，跳过 check-run（仅发 PR 评论）');
+    }
+
+    if (!result.commentUrl && !result.checkRun) {
+      return res.status(502).json({ error: 'push_failed', message: '回写 PR 失败', warnings: result.warnings });
+    }
+    return res.json({ ok: true, prNumber: meta.prNumber, repo: repoFull, ...result });
   });
 
   // PATCH /api/reports/:id — rename and/or replace content.

@@ -1,7 +1,7 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder } from '../types.js';
+import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
@@ -3709,6 +3709,90 @@ export class StateService {
     const t = (token || '').trim();
     if (!t) return undefined;
     return (this.state.acceptanceReports || []).find((r) => r.shareToken === t);
+  }
+
+  // ── WS3 MAP-KBTP peer-sync：节点 + 配对码 ──────────────────────────────
+
+  /** 本 CDS 实例稳定 nodeId（首次调用时生成并持久化）。 */
+  getOrCreatePeerSelfNodeId(): string {
+    if (!this.state.peerSelfNodeId) {
+      this.state.peerSelfNodeId = crypto.randomUUID().replace(/-/g, '');
+      this.save();
+    }
+    return this.state.peerSelfNodeId;
+  }
+
+  /** 生成一次性配对码：返回明文（仅此一次）+ 记录（只存 hash）。ttlMs 默认 10 分钟。 */
+  createPeerPairingCode(displayName?: string, ttlMs = 10 * 60 * 1000): { code: string; record: PeerPairingCode } {
+    if (!this.state.peerPairingCodes) this.state.peerPairingCodes = [];
+    const code = crypto.randomBytes(18).toString('base64url');
+    const now = Date.now();
+    const record: PeerPairingCode = {
+      id: crypto.randomUUID().replace(/-/g, ''),
+      codeHash: crypto.createHash('sha256').update(code).digest('hex'),
+      displayName,
+      expiresAt: new Date(now + ttlMs).toISOString(),
+      used: false,
+      createdAt: new Date(now).toISOString(),
+    };
+    this.state.peerPairingCodes.push(record);
+    this.save();
+    return { code, record };
+  }
+
+  /** 校验并消费一次性配对码（未用、未过期）。成功返回 true 并标记已用。 */
+  consumePeerPairingCode(code: string): boolean {
+    const hash = crypto.createHash('sha256').update(code || '').digest('hex');
+    const rec = (this.state.peerPairingCodes || []).find((c) => c.codeHash === hash);
+    if (!rec || rec.used) return false;
+    if (new Date(rec.expiresAt).getTime() < Date.now()) return false;
+    rec.used = true;
+    this.save();
+    return true;
+  }
+
+  /** 新建/记录一个已配对对端节点。 */
+  createPeerNode(input: {
+    partnerNodeId: string;
+    sharedSecret: string;
+    partnerBaseUrl?: string;
+    partnerDisplayName?: string;
+  }): PeerNodeRecord {
+    if (!this.state.peerNodes) this.state.peerNodes = [];
+    const rec: PeerNodeRecord = {
+      id: crypto.randomUUID().replace(/-/g, ''),
+      partnerNodeId: input.partnerNodeId,
+      sharedSecret: input.sharedSecret,
+      partnerBaseUrl: input.partnerBaseUrl,
+      partnerDisplayName: input.partnerDisplayName,
+      createdAt: new Date().toISOString(),
+    };
+    this.state.peerNodes.push(rec);
+    this.save();
+    return rec;
+  }
+
+  /** 按对端 nodeId（X-Peer-Node）反查配对节点。 */
+  getPeerNodeByPartnerId(partnerNodeId: string): PeerNodeRecord | undefined {
+    return (this.state.peerNodes || []).find((n) => n.partnerNodeId === partnerNodeId);
+  }
+
+  /** 更新节点 lastUsedAt（审计）。 */
+  touchPeerNode(id: string): void {
+    const n = (this.state.peerNodes || []).find((x) => x.id === id);
+    if (n) { n.lastUsedAt = new Date().toISOString(); this.save(); }
+  }
+
+  listPeerNodes(): PeerNodeRecord[] {
+    return [...(this.state.peerNodes || [])];
+  }
+
+  deletePeerNode(id: string): boolean {
+    const all = this.state.peerNodes || [];
+    if (!all.some((n) => n.id === id)) return false;
+    this.state.peerNodes = all.filter((n) => n.id !== id);
+    this.save();
+    return true;
   }
 
   /** Delete a report's metadata + content file. Returns true when removed. */

@@ -286,6 +286,20 @@ export async function disableReportShare(id: string): Promise<AcceptanceReport> 
   return res.report;
 }
 
+export interface PushToPrResult {
+  ok: boolean;
+  prNumber: number;
+  repo: string;
+  commentUrl?: string;
+  checkRun?: { id: number; htmlUrl: string };
+  warnings: string[];
+}
+
+/** E4: 把验收结论作为 PR 评论 + check-run 回写到关联 PR。 */
+export async function pushReportToPr(id: string): Promise<PushToPrResult> {
+  return apiRequest<PushToPrResult>(`/api/reports/${encodeURIComponent(id)}/push-to-pr`, { method: 'POST' });
+}
+
 /** Create a report via the JSON paste path. */
 export async function createReportFromText(input: {
   title: string;

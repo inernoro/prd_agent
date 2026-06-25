@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   ClipboardCheck, FileCode2, FileText, Folder, FolderOpen, FolderPlus,
-  Inbox, Layers, Link2, Pencil, Plus, RefreshCw, Share2, Trash2, Upload,
+  GitPullRequest, Inbox, Layers, Link2, Pencil, Plus, RefreshCw, Share2, Trash2, Upload,
 } from 'lucide-react';
 import { marked } from 'marked';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
@@ -27,6 +27,7 @@ import {
   enableReportShare,
   fetchReportRaw,
   listReportFolders,
+  pushReportToPr,
   listReports,
   moveReportToFolder,
   renameReportFolder,
@@ -650,6 +651,7 @@ function ReportViewer({ report }: { report: AcceptanceReport | null }): JSX.Elem
           <FormatBadge format={report.format} />
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {report.prNumber && report.verdict ? <PushToPrControl report={report} /> : null}
           <ShareControl report={report} />
           <span className="text-[11px] text-muted-foreground">{formatBytes(report.sizeBytes)}</span>
         </div>
@@ -739,6 +741,47 @@ function ShareControl({ report }: { report: AcceptanceReport }): JSX.Element {
           onConfirm={() => void onRevoke()}
         />
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * E4 验收回写 PR：把 verdict 作为 PR 评论 + check-run 推回关联 PR。
+ * 仅当报告带 prNumber + verdict 时显示（所属项目须已 link GitHub）。
+ */
+function PushToPrControl({ report }: { report: AcceptanceReport }): JSX.Element {
+  const [busy, setBusy] = useState(false);
+  const [hint, setHint] = useState('');
+  const flash = (msg: string) => { setHint(msg); window.setTimeout(() => setHint(''), 4000); };
+
+  const onPush = useCallback(async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const r = await pushReportToPr(report.id);
+      if (r.commentUrl || r.checkRun) {
+        flash(`已回写 PR #${r.prNumber}${r.warnings.length ? `（${r.warnings.length} 项告警）` : ''}`);
+      } else {
+        flash('回写失败');
+      }
+    } catch (e) {
+      flash(e instanceof ApiError ? e.message : '回写失败');
+    } finally { setBusy(false); }
+  }, [busy, report.id]);
+
+  return (
+    <div className="flex items-center gap-1.5">
+      {hint ? <span className="max-w-[180px] truncate text-[11px] text-muted-foreground">{hint}</span> : null}
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-7 gap-1 px-2 text-[11px]"
+        disabled={busy}
+        onClick={() => void onPush()}
+        title={`把验收结论回写到 PR #${report.prNumber}（PR 评论 + check-run）`}
+      >
+        <GitPullRequest className="h-3.5 w-3.5" />回写 PR #{report.prNumber}
+      </Button>
     </div>
   );
 }
