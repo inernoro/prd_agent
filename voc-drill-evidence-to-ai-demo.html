@@ -127,6 +127,29 @@
   .report .rhd{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
   .report .rhd .ai{font-size:11px;color:var(--t3);font-family:ui-monospace,monospace}
 
+  /* 可放大/可拖拽面板 */
+  .aicap{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--t3);margin-bottom:2px}
+  .aicap .sp{color:var(--violet)}
+  .xpanel{border:1px solid var(--bd2);border-radius:12px;background:rgba(255,255,255,.02);overflow:hidden;position:relative}
+  .xhd{display:flex;align-items:center;gap:8px;padding:9px 11px;border-bottom:1px solid var(--bd)}
+  .xhd .xt{font-size:12px;font-weight:600;color:var(--t2);display:flex;align-items:center;gap:7px;min-width:0}
+  .xhd .xt em{font-style:normal;font-size:10px;color:var(--t4);font-family:ui-monospace,monospace}
+  .xmax{margin-left:auto;width:26px;height:26px;border-radius:7px;border:0;background:rgba(255,255,255,.04);color:var(--t2);font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s}
+  .xmax:hover{background:rgba(167,139,250,.22);color:#d6cbff}
+  .xbody{height:430px;overflow:auto;padding:13px;resize:vertical}
+  .xbody::-webkit-scrollbar{width:6px}.xbody::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:3px}
+  .grip{position:absolute;right:2px;bottom:2px;width:14px;height:14px;pointer-events:none;
+    background:
+      linear-gradient(135deg,transparent 50%,rgba(167,139,250,.7) 50%) no-repeat,
+      linear-gradient(135deg,transparent 64%,rgba(167,139,250,.5) 64%) no-repeat;
+    background-size:6px 6px,11px 11px;background-position:bottom right,bottom right}
+  /* 放大浮层 */
+  .maxov{position:absolute;inset:0;z-index:30;display:none;align-items:center;justify-content:center;padding:14px;background:rgba(0,0,0,.62)}
+  .maxov.show{display:flex}
+  .maxcard{position:relative;width:96%;height:90%;background:#16171b;border:1px solid var(--bd2);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 24px 80px rgba(0,0,0,.6)}
+  .maxbody{flex:1;min-height:0;overflow:auto;padding:20px}
+  .maxbody .report h2{font-size:20px}
+
   /* tab 内容切换 + 进场 */
   .pane{display:none}.pane.show{display:flex;flex-direction:column;gap:14px;animation:rise .45s cubic-bezier(.2,.8,.2,1)}
   @keyframes rise{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
@@ -226,11 +249,15 @@ body: {"itemId":"793da750219d4ed…"}</pre>
 
       <!-- ===== AI 报告（仅 stage2 tab=ai 显示） ===== -->
       <div class="pane" id="paneAi">
-        <div class="report">
-          <div class="rhd">
-            <span class="pill" id="backToRaw">↩ 基于「原始证据」分析得出</span>
-            <span class="ai">deepseek-v4-pro · openrouter.ai</span>
+        <div class="aicap"><span class="sp">✦</span> 下方结论由 AI 阅读「原始证据」Tab 的真实请求分析得出</div>
+        <!-- ExpandablePanel：右上角放大按钮 + 右下角 resize 抓手 -->
+        <div class="xpanel">
+          <div class="xhd">
+            <span class="xt">✦ AI 根因诊断 <em>deepseek-v4-pro · openrouter.ai</em></span>
+            <button class="xmax" id="openMax" title="放大查看">⤢</button>
           </div>
+          <div class="xbody" id="reportBox">
+        <div class="report">
           <h2>接口体验诊断报告</h2>
           <div class="rule"></div>
           <h3><span class="ix">▣</span>端点信息</h3>
@@ -252,6 +279,18 @@ body: {"itemId":"793da750219d4ed…"}</pre>
             <li><b>参数线索：</b>所有慢请求 body 均为同一 itemId，指向单个大文档的导出序列化开销，而非并发或参数多样性问题。</li>
           </ul>
         </div>
+          </div>
+          <span class="grip" title="拖拽改大小"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 放大全屏阅读浮层 -->
+    <div class="maxov" id="maxov">
+      <div class="maxcard">
+        <div class="xhd"><span class="xt">✦ AI 根因诊断 <em>deepseek-v4-pro · openrouter.ai</em></span><button class="xmax" id="closeMax" title="还原">⤡</button></div>
+        <div class="maxbody" id="maxbody"></div>
+        <span class="grip" title="拖拽改大小"></span>
       </div>
     </div>
 
@@ -330,7 +369,14 @@ body: {"itemId":"793da750219d4ed…"}</pre>
   tabbar.querySelectorAll('.tab').forEach(b=>{
     b.addEventListener('click', ()=>{ if(phone.classList.contains('stage2')) selectTab(b.dataset.tab); });
   });
-  document.getElementById('backToRaw').addEventListener('click', ()=>selectTab('raw'));
+  // 放大 / 还原
+  const maxov=document.getElementById('maxov');
+  document.getElementById('openMax').addEventListener('click', ()=>{
+    document.getElementById('maxbody').innerHTML = document.getElementById('reportBox').innerHTML;
+    maxov.classList.add('show');
+  });
+  document.getElementById('closeMax').addEventListener('click', ()=>maxov.classList.remove('show'));
+  maxov.addEventListener('click', e=>{ if(e.target===maxov) maxov.classList.remove('show'); });
 
   function run(){
     clearTimers();
