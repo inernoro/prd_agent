@@ -445,62 +445,63 @@ export function DocumentGalaxyView({ storeId, storeName }: DocumentGalaxyViewPro
       setTimeout(() => reject(new Error('__galaxy_timeout__')), TIMEOUT_MS),
     );
 
-    // 先并行拉第一页 entries + 双链；entries 可能多页（doc/ 库 330+），下面再翻页补齐
-    Promise.race([
-      Promise.all([listDocumentEntriesReal(storeId, 1, 200), getStoreGraph(storeId)]),
-      timeout,
-    ])
-      .then(async ([firstRes, graphRes]) => {
-        if (cancelled) return;
-        if (!firstRes.success) {
-          console.error('[galaxy] 加载文档条目失败', firstRes.error);
-          setError(firstRes.error?.message || '加载文档条目失败');
-          return;
+    // 整个加载（首页 + 翻页 + 成图）作为一个 async 单元，整体纳入下面的超时 race，
+    // 任何一页 await 卡住都会触发超时报错，不会再静默停在「正在构建文档星系...」
+    const loadGalaxy = async (): Promise<DocGalaxy> => {
+      const [firstRes, graphRes] = await Promise.all([
+        listDocumentEntriesReal(storeId, 1, 200),
+        getStoreGraph(storeId),
+      ]);
+      if (!firstRes.success) {
+        console.error('[galaxy] 加载文档条目失败', firstRes.error);
+        throw new Error(firstRes.error?.message || '加载文档条目失败');
+      }
+      const PAGE_SIZE = 200;
+      const MAX_PAGES = 50; // 上限 10000 条，防御异常分页
+      const allItems = [...firstRes.data.items];
+      const total = firstRes.data.total ?? allItems.length;
+      // 还有剩余页就继续翻：用 total 推断总页数，items.length < pageSize 作兜底终止
+      let page = 1;
+      while (
+        allItems.length < total &&
+        firstRes.data.items.length >= PAGE_SIZE &&
+        page < MAX_PAGES
+      ) {
+        page += 1;
+        const res = await listDocumentEntriesReal(storeId, page, PAGE_SIZE);
+        if (cancelled) break;
+        if (!res.success) {
+          console.error('[galaxy] 翻页加载条目失败（用已拉取页继续成图）', page, res.error);
+          break;
         }
-        const PAGE_SIZE = 200;
-        const MAX_PAGES = 50; // 上限 10000 条，防御异常分页
-        const allItems = [...firstRes.data.items];
-        const total = firstRes.data.total ?? allItems.length;
-        // 还有剩余页就继续翻：用 total 推断总页数，items.length < pageSize 作兜底终止
-        let page = 1;
-        while (
-          allItems.length < total &&
-          firstRes.data.items.length >= PAGE_SIZE &&
-          page < MAX_PAGES
-        ) {
-          page += 1;
-          const res = await listDocumentEntriesReal(storeId, page, PAGE_SIZE);
-          if (cancelled) return;
-          if (!res.success) {
-            console.error('[galaxy] 翻页加载条目失败（用已拉取页继续成图）', page, res.error);
-            break;
-          }
-          allItems.push(...res.data.items);
-          if (res.data.items.length < PAGE_SIZE) break;
-        }
+        allItems.push(...res.data.items);
+        if (res.data.items.length < PAGE_SIZE) break;
+      }
 
-        const entries: GalaxyInputEntry[] = allItems.map((e) => ({
-          id: e.id,
-          title: e.title,
-          parentId: e.parentId ?? null,
-          isFolder: e.isFolder,
-          contentType: e.contentType,
-          sourceUrl: e.sourceUrl ?? null,
-        }));
-        // 双链可选：取不到不阻断成图
-        const links: GalaxyInputLink[] = graphRes.success
-          ? graphRes.data.edges.map((edge) => ({
-              from: edge.from,
-              to: edge.to,
-              anchorText: edge.anchorText,
-              isAutoDetected: edge.isAutoDetected,
-            }))
-          : [];
-        // 默认 canonical resolver：含旧扁平名前缀去扁平化（cds-xxx → cds > xxx），减少悬空
-        const built = buildDocGalaxy(entries, links, {
-          rootName: storeNameRef.current,
-        });
-        setGalaxy(built);
+      const entries: GalaxyInputEntry[] = allItems.map((e) => ({
+        id: e.id,
+        title: e.title,
+        parentId: e.parentId ?? null,
+        isFolder: e.isFolder,
+        contentType: e.contentType,
+        sourceUrl: e.sourceUrl ?? null,
+      }));
+      // 双链可选：取不到不阻断成图
+      const links: GalaxyInputLink[] = graphRes.success
+        ? graphRes.data.edges.map((edge) => ({
+            from: edge.from,
+            to: edge.to,
+            anchorText: edge.anchorText,
+            isAutoDetected: edge.isAutoDetected,
+          }))
+        : [];
+      // 默认 canonical resolver：含旧扁平名前缀去扁平化（cds-xxx → cds > xxx），减少悬空
+      return buildDocGalaxy(entries, links, { rootName: storeNameRef.current });
+    };
+
+    Promise.race([loadGalaxy(), timeout])
+      .then((built) => {
+        if (!cancelled) setGalaxy(built);
       })
       .catch((e) => {
         if (cancelled) return;
