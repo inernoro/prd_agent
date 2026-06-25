@@ -119,6 +119,50 @@ function ExpandablePanel({
   );
 }
 
+/**
+ * 单条真实请求样本：curl + body 内容过长（图文 JSON 动辄数千字）默认截断，
+ * 「展开全部」后限高滚动，避免撑爆抽屉（用户反馈：内容过长，需要截断）。
+ */
+function SampleBlock({ s }: { s: TeamActivityEndpointDetailData['samples'][number] }) {
+  const [expanded, setExpanded] = useState(false);
+  const isErr = s.statusCode >= 400 && s.statusCode !== 401;
+  const full = `${s.curl}${s.requestBody ? `\nbody: ${s.requestBody}` : ''}`;
+  const LIMIT = 600;
+  const tooLong = full.length > LIMIT;
+  const shown = !tooLong || expanded ? full : `${full.slice(0, LIMIT)}…`;
+  return (
+    <div className="rounded-md border border-white/[0.06] bg-[#0c0d0f] overflow-hidden">
+      <div className="flex items-center gap-2 px-2.5 py-1.5 border-b border-white/[0.05] text-[10.5px] tabular-nums">
+        <span style={{ color: isErr ? ERR : '#5eead4' }}>HTTP {s.statusCode}</span>
+        {typeof s.durationMs === 'number' ? <span className="text-white/40">{s.durationMs}ms</span> : null}
+        <span className="ml-auto text-white/30 font-mono">{fmtTime(s.occurredAt)}</span>
+      </div>
+      <pre
+        className="px-2.5 py-2 text-[10.5px] leading-relaxed text-white/65 font-mono"
+        style={{
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-all',
+          // 展开时限高滚动，不让超长 JSON 把整页顶飞
+          maxHeight: expanded ? 320 : undefined,
+          overflowY: expanded ? 'auto' : undefined,
+          overscrollBehavior: 'contain',
+        }}
+      >
+        {shown}
+      </pre>
+      {tooLong ? (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="w-full px-2.5 py-1.5 text-left text-[10.5px] text-white/45 hover:text-white/80 border-t border-white/[0.05] bg-white/[0.015] hover:bg-white/[0.04] transition-colors cursor-pointer"
+        >
+          {expanded ? '收起' : `展开全部（约 ${full.length.toLocaleString()} 字）`}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 export function ExperienceDrill({
   target,
   label,
@@ -310,25 +354,9 @@ export function ExperienceDrill({
         <div>
           <div className="text-[12px] text-white/55 font-medium mb-2">真实请求样本</div>
           <div className="flex flex-col gap-2">
-            {detail.samples.map((s, i) => {
-              const isErr = s.statusCode >= 400 && s.statusCode !== 401;
-              return (
-                <div key={i} className="rounded-md border border-white/[0.06] bg-[#0c0d0f] overflow-hidden">
-                  <div className="flex items-center gap-2 px-2.5 py-1.5 border-b border-white/[0.05] text-[10.5px] tabular-nums">
-                    <span style={{ color: isErr ? ERR : '#5eead4' }}>HTTP {s.statusCode}</span>
-                    {typeof s.durationMs === 'number' ? <span className="text-white/40">{s.durationMs}ms</span> : null}
-                    <span className="ml-auto text-white/30 font-mono">{fmtTime(s.occurredAt)}</span>
-                  </div>
-                  <pre
-                    className="px-2.5 py-2 text-[10.5px] leading-relaxed text-white/65 font-mono"
-                    style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', overflowX: 'auto' }}
-                  >
-                    {s.curl}
-                    {s.requestBody ? `\nbody: ${s.requestBody}` : ''}
-                  </pre>
-                </div>
-              );
-            })}
+            {detail.samples.map((s, i) => (
+              <SampleBlock key={i} s={s} />
+            ))}
           </div>
         </div>
       ) : null}

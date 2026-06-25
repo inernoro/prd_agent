@@ -792,7 +792,8 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
               <div
                 className="flex flex-col border-l border-white/10"
                 style={{
-                  width: 'min(440px, 94vw)',
+                  // 桌面更宽给诊断/报告留空间（手机仍 94vw）；右上角放大可再全屏
+                  width: 'min(560px, 94vw)',
                   height: '100vh',
                   background: '#16171b',
                   boxShadow: '-24px 0 80px rgba(0,0,0,0.5)',
@@ -834,7 +835,8 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
               <div
                 className="flex flex-col border-l border-white/10"
                 style={{
-                  width: 'min(440px, 94vw)',
+                  // 桌面更宽给诊断/报告留空间（手机仍 94vw）；右上角放大可再全屏
+                  width: 'min(560px, 94vw)',
                   height: '100vh',
                   background: '#16171b',
                   boxShadow: '-24px 0 80px rgba(0,0,0,0.5)',

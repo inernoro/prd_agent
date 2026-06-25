@@ -85,6 +85,9 @@
   .sample .top{display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid rgba(255,255,255,.05);font-size:10.5px}
   .sample .code{color:var(--green)}.sample .ms{color:var(--red);font-weight:600}.sample .tm{margin-left:auto;color:var(--t4);font-family:ui-monospace,monospace}
   .sample pre{padding:8px 10px;font-size:10px;line-height:1.55;color:var(--t2);font-family:ui-monospace,monospace;white-space:pre-wrap;word-break:break-all}
+  .sample pre.full{max-height:240px;overflow:auto}
+  .morebtn{width:100%;text-align:left;padding:7px 10px;font-size:10px;color:var(--t3);background:rgba(255,255,255,.015);border:0;border-top:1px solid rgba(255,255,255,.05);cursor:pointer}
+  .morebtn:hover{color:var(--t1);background:rgba(255,255,255,.04)}
 
   .foot{flex:0 0 auto;display:flex;gap:8px;padding:10px 16px;border-top:1px solid rgba(255,255,255,.05);align-items:center}
   .foot .b{font-size:11px;border-radius:7px;padding:6px 11px;border:1px solid}
@@ -157,12 +160,12 @@
           <div class="m"><span class="mut">1432 次调用</span><span style="color:var(--red)">报错 132 次</span></div>
         </div>
         <div class="blk"><div class="h">真实请求样本</div>
-          <div class="sample"><div class="top"><span class="code" style="color:var(--red)">HTTP 400</span><span class="ms">INVALID_FORMAT</span><span class="tm">06-25 16:40</span></div>
-            <pre>curl -X POST '…/markers/parse' -H 'Content-Type: application/json'
-body: {"status":"parsed","draftText":"一幅…(超长图文混排 JSON)","planItem":{"prompt":"&lt;omitted&gt;","count":1,"size":"1024x1024"}}</pre></div>
+          <div class="sample"><div class="top"><span class="code">HTTP 200</span><span class="ms" style="color:var(--amber)">6089ms</span><span class="tm">06-25 09:11</span></div>
+            <pre id="longPre">curl -X POST 'http://127.0.0.1:41876/api/peer-sync/resources/document-store/apply' -H 'Content-Type: application/json; charset=utf-8' --data-raw '{"bundle":{"schemaVersion":1,"resourceType":"document-store","item":{"key":"793da750219d4eddbe43d2574506688a","name":"验收报告",…</pre>
+            <button class="morebtn" id="moreBtn">展开全部（约 3,820 字）</button></div>
           <div class="sample"><div class="top"><span class="code" style="color:var(--red)">HTTP 400</span><span class="ms">INVALID_FORMAT</span><span class="tm">06-25 15:18</span></div>
             <pre>curl -X POST '…/markers/parse' -H 'Content-Type: application/json'
-body: {"status":"parsed","draftText":"一幅…","planItem":{"prompt":"&lt;omitted&gt;","count":1,"size":"1024x1024"}}</pre></div>
+body: {"status":"parsed","draftText":"一幅…","planItem":{...}}</pre></div>
         </div>
       </div>
     </div>
@@ -213,6 +216,17 @@ body: {"status":"parsed","draftText":"一幅…","planItem":{"prompt":"&lt;omitt
     clearTimeout(timer);
     $('#tabLive').style.display='none'; $('#hdLive').style.display='none';
     $('#reportBox').innerHTML=REPORT;
+  });
+  // 样本截断/展开
+  const LONG='curl -X POST \'http://127.0.0.1:41876/api/peer-sync/resources/document-store/apply\' -H \'Content-Type: application/json; charset=utf-8\' --data-raw \'{"bundle":{"schemaVersion":1,"resourceType":"document-store","item":{"key":"793da750219d4eddbe43d2574506688a","name":"验收报告","description":"标准化功能验收报告存档（MAP 验收标准 v2）","tags":[],"ownerUserName":"inernoro","ownerEmail":null,"createdAt":"2026-05-26T14:31:49.328Z","updatedAt":"2026-06-24T22:23:49.569Z","templateKey":"acceptance-report-v2",...(后略 数千字图文混排 JSON)...}}\'';
+  const SHORT=$('#longPre').textContent;
+  let exp=false;
+  $('#moreBtn').addEventListener('click',function(){
+    exp=!exp;
+    const pre=$('#longPre');
+    pre.textContent= exp?LONG:SHORT;
+    pre.classList.toggle('full',exp);
+    this.textContent= exp?'收起':'展开全部（约 3,820 字）';
   });
 </script>
 </body>
