@@ -12,8 +12,8 @@ namespace PrdAgent.Api.Controllers.Api.OfficialSkills;
 public static class OfficialSkillTemplates
 {
     public const string AiDefectResolveKey = "ai-defect-resolve";
-    public const string AiDefectResolveVersion = "1.7.0";
-    public const string AiDefectResolveReleaseDate = "2026-06-22";
+    public const string AiDefectResolveVersion = "1.7.2";
+    public const string AiDefectResolveReleaseDate = "2026-06-25";
 
     public const string AiDefectResolveSkillMd = """
 ---
@@ -73,6 +73,8 @@ Content-Type: application/json
 
 旧端点 `runs`、`next`、`comments`、`commit-info`、`fix-status` 只用于兼容和排障；日常自动化优先使用 `defect-agent-workflow.v1`。
 
+缺陷评论和每日输出必须引用缺陷内容，不能只写缺陷编号或修复标题。每条处理结果至少包含缺陷编号、标题、用户原始问题摘录、修复目标、PR 地址、commit 地址和验收事项清单。
+
 如果仓库存在 `scripts/defect-automation-probe.mjs`，日常任务启动前必须先运行安全自检：
 
 ```bash
@@ -91,8 +93,9 @@ DEFECT_AGENT_DOMAIN="{domain}" DEFECT_AGENT_KEY="{K}" node scripts/defect-automa
 2. 正式缺陷系统只负责读取待验收 trace 和回写通知；使用 `create-visual-test-to-kb` 在测试或预览环境跑视觉验收，目标取 `item.acceptance.target`，验收地址取 `item.acceptance.previewUrl`。
 3. 复制验收技能的 `acceptance.config.json` 到 `/tmp/defect-acceptance.config.json`，只在临时副本把 `report.storeName` 改为“缺陷修复验收报告”。
 4. 视觉验收必须进入更新中心的 commit 记录列表，截取对应 commit 行上的“关联缺陷 N”或“我的缺陷 N”按钮；必须点击按钮并截取弹窗，证明缺陷编号、标题、发布状态、验收报告或知识库链接可见。普通 changelog 文案行不作为缺陷关联验收目标。
-5. 归档后用 `verify-open.mjs` 打开报告地址，确认标题、正文和截图可见。
-6. `POST {domain}/api/defect-agent/agent/resolution-traces/{traceId}/validation-report` 回写 `knowledgeBaseName`、`knowledgeBaseUrl`、报告地址、`verdict` 并通知提交人。`knowledgeBaseUrl` 必填；`fail` 结论会发送“需要继续改进”，不要提前发送“已修复”。
+5. 缺陷修复验收报告必须在首屏包含“缺陷引用”“提交与发布证据”“验收事项清单”：缺陷引用写缺陷编号、标题、用户原始问题摘录和修复目标；提交与发布证据写 PR 地址、commit 地址、commit SHA、发布状态和验收地址；验收事项清单从缺陷内容和 commit/PR 总结出用户可理解的预期结果。
+6. 归档后用 `verify-open.mjs` 打开报告地址，确认标题、正文、PR/commit 链接、验收事项和截图可见。
+7. `POST {domain}/api/defect-agent/agent/resolution-traces/{traceId}/validation-report` 回写 `knowledgeBaseName`、`knowledgeBaseUrl`、报告地址、`verdict` 并通知提交人。`knowledgeBaseUrl` 必填；`fail` 结论会发送“需要继续改进”，不要提前发送“已修复”。
 
 ## 轻量标准
 
@@ -108,6 +111,7 @@ DEFECT_AGENT_DOMAIN="{domain}" DEFECT_AGENT_KEY="{K}" node scripts/defect-automa
 - 一次只处理一个缺陷，提交并回写 commit 后再继续下一条。
 - 不把密钥写入日志、提交、报告或评论。
 - 评论和修复说明必须包含可验收步骤。
+- 评论、报告和每日更新不得省略缺陷内容摘录；用户必须能直接看到修的是哪个原始问题，以及应该验收哪个 PR/commit。
 - 只 commit 不调用 `workflow/complete` 不算闭环完成；旧 `commit-info` 只用于兼容和排障。
 - 正式发布前只在缺陷内更新进度，不给提交人发“已修复”通知。
 - `start-next` 返回 `hasNext=false` 时正常结束，不创建 PR，不制造测试缺陷。

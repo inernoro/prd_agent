@@ -31,6 +31,7 @@ docs:
   spec.app-registry: 应用注册中心协议规范
   spec.marketplace: 海鲜市场（Configuration Marketplace）
   spec.defect-agent: 缺陷管理 Agent 产品方案
+  spec.defect-agent-autonomy-system: 缺陷自动化自治体系
   spec.defect-agent-automation-protocol: 缺陷自动化协议
   spec.pa-agent: 私人执行助理（PA Agent）产品方案
   spec.pa-agent-savage-upgrade: 毒舌秘书 PA Agent 最小可行升级方案

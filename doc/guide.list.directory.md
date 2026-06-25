@@ -39,6 +39,9 @@
 - [缺陷管理 Agent 产品方案](spec.defect-agent) `spec.defect-agent`
   > 缺陷管理 Agent 的产品需求与用户故事
 
+- [缺陷自动化自治体系](spec.defect-agent-autonomy-system) `spec.defect-agent-autonomy-system`
+  > 缺陷自动化 Agent 的自治边界、目标还原、证据契约、监督护栏和完成定义
+
 - [缺陷自动化协议](spec.defect-agent-automation-protocol) `spec.defect-agent-automation-protocol`
   > domain + K、工作流端点、commit 回写、更新中心关联和发布后验收通知的稳定协议
 

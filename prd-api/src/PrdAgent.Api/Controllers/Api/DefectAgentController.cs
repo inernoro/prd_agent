@@ -3311,7 +3311,7 @@ public class DefectAgentController : ControllerBase
         if (fixResult.Error != null)
             return fixResult.Error;
 
-        var completionComment = BuildCompletionEvidenceComment(request, commitResult.ShortSha);
+        var completionComment = BuildCompletionEvidenceComment(request, commitResult.ShortSha, defect);
         if (!string.IsNullOrWhiteSpace(request.CompletionComment))
             completionComment = $"{request.CompletionComment.Trim()}\n\n{completionComment}";
         var message = await InsertAutomationCommentAsync(
@@ -4248,7 +4248,7 @@ public class DefectAgentController : ControllerBase
         lines.Add("- start-next 返回 hasNext=false 时，本轮正常结束，不创建 PR，不制造测试缺陷。");
         lines.Add("- published-pending 为空时，只报告“无正式发布后待验收通知项”。");
         lines.Add("");
-        lines.Add("每日更新要求：列出正式缺陷系统 runId、处理缺陷、处理结果、修复 commit、PR、测试/预览验收地址、正式发布待验收项、验收报告链接、已通知用户和阻塞项。");
+        lines.Add("每日更新要求：列出正式缺陷系统 runId、处理缺陷引用（编号、标题、用户原始问题摘录）、处理结果、修复 commit/PR 可点击证据、测试/预览验收地址、验收事项清单、正式发布待验收项、验收报告链接、已通知用户和阻塞项。");
         return string.Join("\n", lines);
     }
 
@@ -4611,6 +4611,9 @@ public class DefectAgentController : ControllerBase
     }
 
     internal static string BuildCompletionEvidenceComment(CompleteDefectAutomationWorkflowRequest request, string? shortSha)
+        => BuildCompletionEvidenceComment(request, shortSha, null);
+
+    internal static string BuildCompletionEvidenceComment(CompleteDefectAutomationWorkflowRequest request, string? shortSha, DefectReport? defect)
     {
         var shaLabel = string.IsNullOrWhiteSpace(shortSha)
             ? NormalizeCommitSha(request.CommitSha) ?? request.CommitSha.Trim()
@@ -4621,6 +4624,11 @@ public class DefectAgentController : ControllerBase
         var lines = new List<string>
         {
             "自动化修复已提交，等待 PR 合并和正式环境发布后验收。",
+            "",
+            "缺陷引用：",
+            $"- 缺陷：{BuildDefectLabel(defect)}",
+            $"- 用户原始问题：{BuildDefectContentExcerpt(defect)}",
+            $"- 修复目标：{BuildDefectRepairTarget(defect, request)}",
             "",
             "证据链：",
             string.IsNullOrWhiteSpace(request.CommitUrl)
@@ -4650,6 +4658,67 @@ public class DefectAgentController : ControllerBase
 
         lines.Add("- 发布状态：未正式发布，需要真人审核发布后进入正式验收");
         return string.Join("\n", lines);
+    }
+
+    private static string BuildDefectLabel(DefectReport? defect)
+    {
+        if (defect == null)
+            return "未提供缺陷上下文";
+
+        var defectNo = string.IsNullOrWhiteSpace(defect.DefectNo) ? defect.Id : defect.DefectNo.Trim();
+        var title = string.IsNullOrWhiteSpace(defect.Title) ? "未填写标题" : defect.Title.Trim();
+        return $"{defectNo} {title}";
+    }
+
+    private static string BuildDefectRepairTarget(DefectReport? defect, CompleteDefectAutomationWorkflowRequest request)
+    {
+        var title = defect?.Title?.Trim();
+        if (!string.IsNullOrWhiteSpace(title))
+            return $"解决“{title}”描述的用户可见问题，并在正式发布后复验。";
+
+        if (!string.IsNullOrWhiteSpace(request.Resolution))
+            return $"按处理结论“{request.Resolution.Trim()}”完成修复，并在正式发布后复验。";
+
+        return "解决该缺陷描述的用户可见问题，并在正式发布后复验。";
+    }
+
+    private static string BuildDefectContentExcerpt(DefectReport? defect)
+    {
+        if (defect == null)
+            return "未提供缺陷原文，无法摘录用户原始问题。";
+
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(defect.RawContent))
+            parts.Add(defect.RawContent.Trim());
+
+        if (defect.StructuredData != null)
+        {
+            foreach (var key in new[]
+            {
+                "问题描述", "实际结果", "期望结果", "重现步骤", "影响范围", "影响位置",
+                "description", "actual", "expected", "steps", "scope", "page", "module"
+            })
+            {
+                if (defect.StructuredData.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value))
+                    parts.Add($"{key}：{value.Trim()}");
+            }
+        }
+
+        var text = string.Join("；", parts);
+        if (string.IsNullOrWhiteSpace(text))
+            return "缺陷未填写原始问题，请回到缺陷详情补充后再验收。";
+
+        return TruncateForComment(NormalizeCommentText(text), 240);
+    }
+
+    private static string NormalizeCommentText(string value)
+        => string.Join(" ", value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
+    private static string TruncateForComment(string value, int maxLength)
+    {
+        if (value.Length <= maxLength)
+            return value;
+        return value[..Math.Max(0, maxLength - 1)].TrimEnd() + "…";
     }
 
     internal static string BuildValidationEvidenceComment(

@@ -437,6 +437,19 @@ def _declares_deep_daily_acceptance(target, body):
     return False
 
 
+def _declares_defect_acceptance(target, body, cfg=None):
+    text = "\n".join([
+        (target or "").strip(),
+        (body or "").strip(),
+        ((cfg or {}).get("report", {}) or {}).get("storeName", ""),
+    ])
+    return bool(re.search(
+        r"(缺陷修复验收报告|缺陷复测|缺陷修复|缺陷验收|defect[-_ ]?(retest|fix|acceptance)|DEF-\d{4}-\d+)",
+        text,
+        re.I,
+    ))
+
+
 def _thin_table_cells(body, section_names):
     """Find table cells that hide missing evidence with vague filler words."""
     hits = []
@@ -472,6 +485,7 @@ def validate_inputs(a, body, manifest, cfg=None):
     daily_acceptance_claim = _declares_daily_acceptance(a.target, body)
     deep_daily_claim = _declares_deep_daily_acceptance(a.target, body)
     complex_acceptance_claim = _declares_complex_acceptance(a.target, body)
+    defect_acceptance_claim = _declares_defect_acceptance(a.target, body, cfg)
     if deep_daily_claim and len(manifest) < DEEP_DAILY_MIN_SHOTS:
         errs.append(
             f"[深度门禁] 每日/昨日报告声称深度验收，但截图数 {len(manifest)} < "
@@ -510,6 +524,13 @@ def validate_inputs(a, body, manifest, cfg=None):
     # v2.1 强制：需求一一对应表（避免"用户提了 10 条只对应 6 条"的茫然，详见 standard-v2.md §6.4）
     if "需求一一对应表" not in body:
         errs.append("[结构] 报告缺「需求一一对应表」标题（v2.1 强制，详见 standard-v2.md §6.4）")
+    if defect_acceptance_claim:
+        for section in ("缺陷引用", "提交与发布证据", "验收事项清单"):
+            if section not in body:
+                errs.append(f"[结构] 缺陷修复验收报告缺「{section}」：必须先说明缺陷内容、PR/commit 证据和验收预期，再展示截图")
+        for kw in ("用户原始问题", "修复目标", "PR", "commit", "验收事项", "预期结果"):
+            if kw not in body:
+                errs.append(f"[结构] 缺陷修复验收报告缺「{kw}」字段：用户无法判断修的是哪个问题、验哪个提交、预期是什么")
     if complex_acceptance_claim:
         if "改动断言到证据表" not in body:
             errs.append("[结构] 复杂验收缺「改动断言到证据表」标题：必须把 PR/commit 的改动断言连到真实操作/API/状态证据，不能用同模块邻近页面顶替")

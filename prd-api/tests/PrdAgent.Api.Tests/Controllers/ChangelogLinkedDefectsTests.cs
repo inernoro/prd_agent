@@ -156,6 +156,10 @@ public class ChangelogLinkedDefectsTests
         Assert.Contains("start-next 返回 hasNext=false", plan);
         Assert.Contains("无正式发布后待验收通知项", plan);
         Assert.Contains("runId", plan);
+        Assert.Contains("处理缺陷引用", plan);
+        Assert.Contains("用户原始问题摘录", plan);
+        Assert.Contains("修复 commit/PR 可点击证据", plan);
+        Assert.Contains("验收事项清单", plan);
         Assert.Contains("验收报告链接", plan);
     }
 
@@ -327,8 +331,7 @@ public class ChangelogLinkedDefectsTests
     [Fact]
     public void BuildCompletionEvidenceComment_RequiresPrCommitAndValidationReport()
     {
-        var comment = DefectAgentController.BuildCompletionEvidenceComment(
-            new CompleteDefectAutomationWorkflowRequest
+        var request = new CompleteDefectAutomationWorkflowRequest
             {
                 CommitSha = "abcdef1234567890",
                 CommitMessage = "fix(prd-api): 修复缺陷自动化证据链",
@@ -336,9 +339,24 @@ public class ChangelogLinkedDefectsTests
                 PullRequestNumber = 861,
                 PullRequestUrl = "https://github.com/inernoro/prd_agent/pull/861",
                 PreviewUrl = "https://preview.example.com/changelog",
-            },
-            "abcdef1");
+            };
+        var defect = new DefectReport
+            {
+                DefectNo = "DEF-2026-0188",
+                Title = "更新中心关联缺陷不可见",
+                RawContent = "用户在更新中心只能悬浮看到链接，列表中看不到缺陷内容和关联入口。",
+                StructuredData = new Dictionary<string, string>
+                {
+                    ["影响位置"] = "更新中心 GitHub 待审核提交列表",
+                    ["期望结果"] = "关联缺陷按钮可见，点击后展示缺陷详情、提交和验收报告。",
+                },
+            };
+        var comment = DefectAgentController.BuildCompletionEvidenceComment(request, "abcdef1", defect);
 
+        Assert.Contains("缺陷引用", comment);
+        Assert.Contains("DEF-2026-0188 更新中心关联缺陷不可见", comment);
+        Assert.Contains("用户原始问题：用户在更新中心只能悬浮看到链接", comment);
+        Assert.Contains("修复目标：解决“更新中心关联缺陷不可见”描述的用户可见问题", comment);
         Assert.Contains("PR #861", comment);
         Assert.Contains("abcdef1 fix(prd-api): 修复缺陷自动化证据链", comment);
         Assert.Contains("正式环境发布后生成并回写", comment);
