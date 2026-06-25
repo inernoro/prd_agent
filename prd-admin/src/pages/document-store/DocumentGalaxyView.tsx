@@ -32,7 +32,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
-import { X, RotateCcw, Search } from 'lucide-react';
+import { X, RotateCcw, Search, ArrowLeft, ToggleLeft, ToggleRight, Layers, Folder, FileText } from 'lucide-react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { MarkdownViewer } from '@/components/file-preview/MarkdownViewer';
 import { parseFrontmatter } from '@/lib/frontmatter';
@@ -829,14 +829,17 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
   const flyToRef = useRef<((entryId: string) => void) | null>(null);
   // 复位视角命令引用（常驻「复位」按钮：回中心 + 清聚焦 + 继续自动旋转）
   const recenterRef = useRef<(() => void) | null>(null);
+  // 取消选中命令引用（关闭抽屉时停掉持续选中态）
+  const clearSelectionRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     applyFilterRef.current?.();
   }, [typeOn]);
 
-  // 外层打开某文档（flyToEntryId 变化）→ 相机飞到它并脉冲高亮
+  // 外层打开某文档（flyToEntryId 变化）→ 相机飞到它并进入持续选中态；关闭则清除选中态
   useEffect(() => {
     if (flyToEntryId) flyToRef.current?.(flyToEntryId);
+    else clearSelectionRef.current?.();
   }, [flyToEntryId]);
 
   useEffect(() => {
@@ -1244,6 +1247,8 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
     // 叶子脉冲高亮（聚焦到具体文档时让它"呼吸"一下，强化"动起来了"的反馈）
     let pulseLeafId: string | null = null;
     let pulseT0 = 0;
+    // 持续选中态：被选中的文档星持续 发光 + 放大 + 呼吸动效，直到取消（关闭抽屉/复位）
+    let selectedLeafId: string | null = null;
 
     const focusNode = (node: GalaxyNode) => {
       if (node.kind === 'leaf') return;
@@ -1265,6 +1270,7 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       setFocusInfo({ node, depth, typeTally, children: childList });
       setHover(null);
       onFocusChangeRef.current?.(node);
+      selectedLeafId = null; // 选中枢纽 → 清掉文档星的持续选中态（枢纽有自己的聚焦视觉）
     };
 
     // 聚焦到具体文档叶：相机飞到它、点亮它与祖先链、脉冲高亮（点击列表/面包屑/星点都走这里）
@@ -1278,6 +1284,7 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       startCamTween(placedNode.pos.clone(), 150);
       pulseLeafId = node.id;
       pulseT0 = performance.now();
+      selectedLeafId = node.id; // 进入持续选中态（发光 + 放大 + 呼吸）
       setFocusInfo(null);
       setHover(null);
       onFocusChangeRef.current?.(node);
@@ -1287,9 +1294,28 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       const leaf = galaxy.leaves.find((l) => l.entryId === entryId);
       if (leaf) focusLeaf(leaf);
     };
+    // 取消选中（关闭抽屉）：停掉持续选中态 + 取消变暗，但不动相机（保留当前视角）
+    clearSelectionRef.current = () => {
+      if (selectedLeafId) {
+        const rec = renders.find((r) => r.node.id === selectedLeafId);
+        if (rec) rec.core.scale.setScalar(1);
+      }
+      selectedLeafId = null;
+      pulseLeafId = null;
+      focusedNodeId = null;
+      for (const rec of renders) dimTargetById.set(rec.node.id, 1);
+      setFocusInfo(null);
+      onFocusChangeRef.current?.(null);
+    };
 
     const resetFocus = () => {
       focusedNodeId = null;
+      if (selectedLeafId) {
+        const rec = renders.find((r) => r.node.id === selectedLeafId);
+        if (rec) rec.core.scale.setScalar(1);
+      }
+      selectedLeafId = null;
+      pulseLeafId = null;
       for (const rec of renders) dimTargetById.set(rec.node.id, 1);
       setFocusInfo(null);
       onFocusChangeRef.current?.(null);
@@ -1582,6 +1608,25 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
         const mat = rec.halo.material as THREE.SpriteMaterial;
         mat.opacity += (tgt - mat.opacity) * 0.2;
       }
+
+      // 持续选中态：被选中的文档星 发光（bloom 更强 + 光晕更亮）+ 放大 + 呼吸动效。
+      // 放在常态 dim/halo 之后，覆盖其值，让"哪个是选中的"一眼可见。
+      if (selectedLeafId) {
+        const rec = renders.find((r) => r.node.id === selectedLeafId);
+        if (rec) {
+          const phase = Math.sin(clock.elapsedTime * 2.6);
+          rec.core.scale.setScalar(1.55 + 0.18 * phase); // 放大 + 呼吸（bloom 层 → 自带发光）
+          (rec.core.material as THREE.MeshBasicMaterial).opacity = 1; // 选中恒亮
+          if (rec.halo.visible) {
+            const hs = rec.haloBaseSize * (2.2 + 0.3 * phase);
+            rec.halo.scale.set(hs, hs, 1);
+            (rec.halo.material as THREE.SpriteMaterial).opacity = Math.min(0.95, rec.haloBaseOpacity * 2.4);
+          }
+          const lab = labelByNodeId.get(rec.node.id);
+          if (lab) (lab.material as THREE.SpriteMaterial).opacity = 1;
+        }
+      }
+
       controls.update();
       renderBloom();
     };
@@ -1606,6 +1651,7 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       relabelRef.current = null;
       flyToRef.current = null;
       recenterRef.current = null;
+      clearSelectionRef.current = null;
       cancelAnimationFrame(rafId);
       ro.disconnect();
       window.removeEventListener('resize', resize);
@@ -1976,9 +2022,13 @@ export interface DocumentGalaxyViewProps {
   onContextChange?: (ctx: { crumbs: GalaxyCrumb[]; kind: 'none' | 'focus' | 'open' }) => void;
   /** 外层请求打开某文档（点面包屑叶子）。受控暴露当前 openEntryId 的 setter 太重，这里用 ref 命令式。 */
   openEntryRef?: MutableRefObject<((entryId: string) => void) | null>;
+  /** 返回按钮（合并到单条顶栏后由本组件渲染）。不传则不显示返回。 */
+  onBack?: () => void;
+  /** 切换标题显示模式（结构名 ↔ 正文标题）。不传则不显示开关。 */
+  onToggleLabelMode?: () => void;
 }
 
-export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', onContextChange, openEntryRef }: DocumentGalaxyViewProps) {
+export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', onContextChange, openEntryRef, onBack, onToggleLabelMode }: DocumentGalaxyViewProps) {
   const [galaxy, setGalaxy] = useState<DocGalaxy | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1988,6 +2038,8 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
   const [openEntryId, setOpenEntryId] = useState<string | null>(null);
   // 当前聚焦的枢纽（GalaxyCanvas 上报；用于面包屑）
   const [focusedNode, setFocusedNode] = useState<GalaxyNode | null>(null);
+  // 关系链面包屑（本组件自渲染在单条顶栏里；同时仍可经 onContextChange 上报给外层）
+  const [crumbs, setCrumbs] = useState<GalaxyCrumb[]>([]);
   const storeNameRef = useRef(storeName);
   storeNameRef.current = storeName;
 
@@ -2015,15 +2067,9 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
     return m;
   }, [galaxy]);
 
-  // 计算并上报关系链（面包屑）：优先打开的文档，其次聚焦的枢纽。
-  // onContextChange 走 ref（不进 deps），避免内联回调自激成环。
+  // 计算关系链（面包屑）：优先打开的文档，其次聚焦的枢纽。本组件自渲染在顶栏 +
+  // 可选经 onContextChange 上报。onContextChange 走 ref（不进 deps）避免内联回调自激成环。
   useEffect(() => {
-    const cb = onContextChangeRef.current;
-    if (!cb) return;
-    if (!galaxy) {
-      cb({ crumbs: [], kind: 'none' });
-      return;
-    }
     const toCrumbs = (nodes: GalaxyNode[]): GalaxyCrumb[] =>
       nodes.map((n) => ({
         id: n.id,
@@ -2032,21 +2078,19 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
         entryId: n.entryId,
         docType: n.docType,
       }));
-    if (openEntryId) {
-      const path = pathToNode(galaxy.root, 'e:' + openEntryId);
-      if (path) {
-        cb({ crumbs: toCrumbs(path), kind: 'open' });
-        return;
+    let result: { crumbs: GalaxyCrumb[]; kind: 'none' | 'focus' | 'open' } = { crumbs: [], kind: 'none' };
+    if (galaxy) {
+      if (openEntryId) {
+        const path = pathToNode(galaxy.root, 'e:' + openEntryId);
+        if (path) result = { crumbs: toCrumbs(path), kind: 'open' };
+      }
+      if (result.kind === 'none' && focusedNode) {
+        const path = pathToNode(galaxy.root, focusedNode.id);
+        if (path) result = { crumbs: toCrumbs(path), kind: 'focus' };
       }
     }
-    if (focusedNode) {
-      const path = pathToNode(galaxy.root, focusedNode.id);
-      if (path) {
-        cb({ crumbs: toCrumbs(path), kind: 'focus' });
-        return;
-      }
-    }
-    cb({ crumbs: [], kind: 'none' });
+    setCrumbs(result.crumbs);
+    onContextChangeRef.current?.(result);
   }, [galaxy, openEntryId, focusedNode, labelMode, contentTitles]);
 
   // type 图例筛选状态（7 种 type + unknown，全开）
@@ -2219,8 +2263,9 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
 
   return (
     <div className="h-full w-full min-h-0 flex flex-col relative" style={{ background: '#02030a' }}>
-      {/* 图例 + 统计：独立页里它是顶部唯一头部，正常 flex 排布（不再绝对定位叠头部）。
-          点击 chip 切换该 type 显隐（与渲染内核 typeOn 同步） */}
+      {/* 单条顶栏（合并原「返回/面包屑/开关」头部 + 「图例/统计/搜索」两横为一横）：
+          返回 + 库名 + 类型 chips + 统计 + 关系链面包屑 + 搜索 + 标题开关。
+          点击 chip 切换该 type 显隐（与渲染内核 typeOn 同步）。 */}
       {galaxy && (
         <div
           className="shrink-0"
@@ -2230,10 +2275,40 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
             alignItems: 'center',
             gap: 8,
             padding: '8px 12px',
-            background: 'rgba(18,18,26,0.78)',
+            background: 'rgba(18,18,26,0.82)',
             borderBottom: '1px solid rgba(255,255,255,0.08)',
           }}
         >
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              style={{
+                flexShrink: 0,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 5,
+                background: 'rgba(45,45,55,0.85)',
+                border: '1px solid rgba(255,255,255,0.12)',
+                borderRadius: 6,
+                padding: '5px 9px',
+                color: '#cfcfd6',
+                cursor: 'pointer',
+                fontSize: 12,
+              }}
+            >
+              <ArrowLeft size={13} /> 返回
+            </button>
+          )}
+          {storeName && (
+            <span
+              style={{ flexShrink: 0, fontSize: 13, fontWeight: 600, color: '#eaeaf0', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+              title={storeName}
+            >
+              {storeName}
+            </span>
+          )}
+          <span style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.12)', flexShrink: 0 }} />
           {legendTypes.map((t) => {
             const on = typeOn[t] !== false;
             return (
@@ -2330,8 +2405,56 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
             </div>
           )}
 
-          {/* 全局搜索（推到最右）：输入标题 → 命中下拉 → 点击飞到 + 打开 */}
-          <div style={{ position: 'relative', marginLeft: 'auto' }}>
+          {/* 关系链面包屑（占据中段，flex 撑开把右侧推到最右）：点枢纽/文档时显示所在路径 */}
+          <div
+            style={{
+              flex: 1,
+              minWidth: 120,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 4,
+              overflow: 'hidden',
+            }}
+          >
+            {crumbs.length === 0 ? (
+              <span style={{ fontSize: 11.5, color: '#5a5c6a' }}>点枢纽或文档，这里显示所在关系链</span>
+            ) : (
+              crumbs.map((c, i) => {
+                const isLast = i === crumbs.length - 1;
+                const isLeaf = c.kind === 'leaf';
+                const clickable = isLeaf && !!c.entryId;
+                const iconColor = isLeaf ? colorForDocType(c.docType) : i === 0 ? '#ffe08a' : '#9fb4d4';
+                const Icon = isLeaf ? FileText : i === 0 ? Layers : Folder;
+                return (
+                  <span key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+                    {i > 0 && <span style={{ color: '#4d4f5c', fontSize: 12 }}>/</span>}
+                    <span
+                      onClick={clickable ? () => setOpenEntryId(c.entryId!) : undefined}
+                      title={isLeaf && c.docType ? `${c.docType} · ${c.name}` : c.name}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        fontSize: 12,
+                        color: isLast ? '#eef0f6' : '#9a9cab',
+                        fontWeight: isLast ? 600 : 400,
+                        cursor: clickable ? 'pointer' : 'default',
+                        maxWidth: 220,
+                        minWidth: 0,
+                      }}
+                    >
+                      <Icon size={12} style={{ color: iconColor, flexShrink: 0 }} />
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
+                    </span>
+                  </span>
+                );
+              })
+            )}
+          </div>
+
+          {/* 全局搜索：输入标题 → 命中下拉 → 点击飞到 + 打开 */}
+          <div style={{ position: 'relative', flexShrink: 0 }}>
             <div
               style={{
                 display: 'flex',
@@ -2420,6 +2543,35 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
               </div>
             )}
           </div>
+
+          {/* 标题显示开关（最右）：结构名 ↔ 正文标题 */}
+          {onToggleLabelMode && (
+            <button
+              type="button"
+              onClick={onToggleLabelMode}
+              title={
+                labelMode === 'content'
+                  ? '当前：显示正文标题（正文第一行 / frontmatter title）。点击切回结构名'
+                  : '当前：显示结构名（文件名 / 点分命名）。点击切到正文标题'
+              }
+              style={{
+                flexShrink: 0,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 5,
+                background: 'rgba(45,45,55,0.85)',
+                border: '1px solid rgba(255,255,255,0.12)',
+                borderRadius: 6,
+                padding: '5px 9px',
+                color: '#cfcfd6',
+                cursor: 'pointer',
+                fontSize: 12,
+              }}
+            >
+              {labelMode === 'content' ? <ToggleRight size={14} style={{ color: '#8ab4ff' }} /> : <ToggleLeft size={14} />}
+              {labelMode === 'content' ? '正文标题' : '结构名'}
+            </button>
+          )}
         </div>
       )}
 
