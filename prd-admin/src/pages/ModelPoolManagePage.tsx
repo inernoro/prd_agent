@@ -454,6 +454,12 @@ export function ModelPoolManagePage() {
     });
   }, [pools, searchTerm, modelTypeFilter]);
 
+  // 已配置的 modelType 集合（从全部池取，不受当前筛选影响）——驱动"配置才出现"的类型 chip
+  const availableModelTypes = useMemo(
+    () => Array.from(new Set(pools.map((p) => p.modelType || 'chat'))),
+    [pools],
+  );
+
   // 按 modelType 分组（用于左侧列表分组标题）
   const groupedByType = useMemo(() => {
     const typeOrder = MODEL_TYPE_DEFINITIONS.map(t => t.value);
@@ -519,8 +525,12 @@ export function ModelPoolManagePage() {
                 <Plus size={14} />
               </Button>
             </div>
-            {/* 模型类型筛选 - 复用全局共享 ModelTypeFilterBar（13 种类型 + 全部） */}
-            <ModelTypeFilterBar value={modelTypeFilter} onChange={setModelTypeFilter} />
+            {/* 模型类型筛选 - 复用全局共享 ModelTypeFilterBar；只渲染已配置的类型（配置才出现，不预铺空类目） */}
+            <ModelTypeFilterBar
+              value={modelTypeFilter}
+              onChange={setModelTypeFilter}
+              availableTypes={availableModelTypes}
+            />
           </div>
 
           <div className="flex-1 overflow-auto">
