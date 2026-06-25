@@ -97,10 +97,14 @@ export default function FileConvertPage() {
 
   const toMappingStep = useCallback(() => {
     if (!sourceResult || !templateResult) return;
-    const initial: FieldMapping[] = templateResult.placeholders.map(ph => ({
-      templatePlaceholder: ph,
-      sourceColumn: sourceResult.columns.find(c => c.toLowerCase() === ph.toLowerCase()) ?? sourceResult.columns[0] ?? '',
-    }));
+    const initial: FieldMapping[] = templateResult.placeholders.map(ph => {
+      // 尝试按列名匹配，找到则自动填入 {列名} 表达式，否则留空让用户填
+      const matched = sourceResult.columns.find(c => c.toLowerCase() === ph.toLowerCase());
+      return {
+        templatePlaceholder: ph,
+        valueExpression: matched ? `{${matched}}` : (sourceResult.columns[0] ? `{${sourceResult.columns[0]}}` : ''),
+      };
+    });
     setMappings(initial);
     setStep('mapping');
   }, [sourceResult, templateResult]);
@@ -108,7 +112,8 @@ export default function FileConvertPage() {
   const applyRule = useCallback((rule: FileConvertRule) => {
     const applied: FieldMapping[] = rule.fieldMappings.map(m => ({
       templatePlaceholder: m.templatePlaceholder,
-      sourceColumn: sourceResult?.columns.find(c => c === m.sourceColumn) ?? m.sourceColumn,
+      // 旧规则（sourceColumn）自动转换为 {列名} 表达式
+      valueExpression: m.valueExpression || (m.sourceColumn ? `{${m.sourceColumn}}` : ''),
     }));
     setMappings(applied);
     if (rule.templateFileKey && rule.templateFileName) {
@@ -146,7 +151,7 @@ export default function FileConvertPage() {
 
   const startTask = useCallback(async () => {
     if (!sourceResult || !templateResult) return;
-    const validMappings = mappings.filter(m => m.sourceColumn && m.sourceColumn !== '__skip__' && m.templatePlaceholder);
+    const validMappings = mappings.filter(m => m.valueExpression && m.templatePlaceholder);
     if (validMappings.length === 0) return;
 
     setStep('running');
@@ -430,27 +435,17 @@ export default function FileConvertPage() {
                       <span className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>源文件列</span>
                     </div>
                     {mappings.map((m, idx) => (
-                      <div key={m.templatePlaceholder} className="grid grid-cols-2 items-center gap-0 px-4 py-2" style={{ borderBottom: idx < mappings.length - 1 ? '1px solid var(--border-default)' : undefined }}>
-                        <span className="text-xs font-mono font-medium pr-4" style={{ color: 'var(--accent-primary, #6366f1)' }}>{`{{${m.templatePlaceholder}}}`}</span>
-                        {/* 原生 select：零 portal 开销，不阻塞渲染 */}
-                        <select
-                          value={m.sourceColumn}
-                          onChange={(e) => {
-                            const next = [...mappings];
-                            next[idx] = { ...m, sourceColumn: e.target.value };
-                            setMappings(next);
-                          }}
-                          className="h-8 rounded-lg px-2 text-xs outline-none w-full"
-                          style={{
-                            background: 'var(--bg-sunken)',
-                            border: '1px solid var(--border-default)',
-                            color: 'var(--text-primary)',
-                          }}
-                        >
-                          {sourceResult?.columns.map(c => <option key={c} value={c}>{c}</option>)}
-                          <option value="__skip__">（不映射）</option>
-                        </select>
-                      </div>
+                      <MappingRow
+                        key={m.templatePlaceholder}
+                        mapping={m}
+                        columns={sourceResult?.columns ?? []}
+                        isLast={idx === mappings.length - 1}
+                        onChange={(expr) => {
+                          const next = [...mappings];
+                          next[idx] = { ...m, valueExpression: expr };
+                          setMappings(next);
+                        }}
+                      />
                     ))}
                   </div>
 
@@ -500,12 +495,12 @@ export default function FileConvertPage() {
               )}
 
               {step === 'running' && (
-                <div className="text-xs space-y-1" style={{ color: 'var(--text-muted)' }}>
-                  {mappings.filter(m => m.sourceColumn !== '__skip__').map(m => (
-                    <span key={m.templatePlaceholder} className="inline-flex items-center gap-1 mr-2 mb-1 px-2 py-0.5 rounded-md" style={{ background: 'var(--bg-sunken)', color: 'var(--text-secondary)' }}>
-                      <span style={{ color: 'var(--accent-primary, #6366f1)' }}>{`{{${m.templatePlaceholder}}}`}</span>
+                <div className="flex flex-wrap gap-1">
+                  {mappings.filter(m => m.valueExpression).map(m => (
+                    <span key={m.templatePlaceholder} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs" style={{ background: 'var(--bg-sunken)', color: 'var(--text-secondary)' }}>
+                      <span className="font-mono" style={{ color: 'var(--accent-primary, #6366f1)' }}>{`{{${m.templatePlaceholder}}}`}</span>
                       <span style={{ color: 'var(--text-muted)' }}>←</span>
-                      {m.sourceColumn}
+                      <span className="font-mono">{m.valueExpression}</span>
                     </span>
                   ))}
                 </div>
@@ -652,6 +647,81 @@ function FileDropZone({
             <p className="text-[11px]" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>{hint}</p>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ── 映射行（表达式输入 + 列名快捷插入）──
+function MappingRow({
+  mapping, columns, isLast, onChange,
+}: {
+  mapping: FieldMapping;
+  columns: string[];
+  isLast: boolean;
+  onChange: (expr: string) => void;
+}) {
+  const [showCols, setShowCols] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const insertCol = (col: string) => {
+    const el = inputRef.current;
+    if (!el) { onChange(`${mapping.valueExpression}{${col}}`); return; }
+    const start = el.selectionStart ?? mapping.valueExpression.length;
+    const end = el.selectionEnd ?? start;
+    const newVal = mapping.valueExpression.slice(0, start) + `{${col}}` + mapping.valueExpression.slice(end);
+    onChange(newVal);
+    // 光标定位到插入后
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + col.length + 2;
+      el.setSelectionRange(pos, pos);
+    });
+  };
+
+  return (
+    <div style={{ borderBottom: isLast ? undefined : '1px solid var(--border-default)' }}>
+      <div className="grid items-start gap-4 px-4 py-3" style={{ gridTemplateColumns: '1fr 2fr' }}>
+        {/* 左：占位符名 */}
+        <div className="pt-1">
+          <span className="text-xs font-mono font-medium" style={{ color: 'var(--accent-primary, #6366f1)' }}>
+            {`{{${mapping.templatePlaceholder}}}`}
+          </span>
+        </div>
+
+        {/* 右：表达式输入 */}
+        <div>
+          <input
+            ref={inputRef}
+            value={mapping.valueExpression}
+            onChange={e => onChange(e.target.value)}
+            onFocus={() => setShowCols(true)}
+            onBlur={() => setTimeout(() => setShowCols(false), 150)}
+            placeholder={`例: {列名} 或 {列A}-{列B}`}
+            className="w-full h-8 px-3 rounded-lg text-xs outline-none font-mono"
+            style={{
+              background: 'var(--bg-sunken)',
+              border: '1px solid var(--border-default)',
+              color: 'var(--text-primary)',
+            }}
+          />
+          {/* 列名快捷插入 */}
+          {showCols && columns.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-1.5">
+              {columns.map(c => (
+                <button
+                  key={c}
+                  type="button"
+                  className="text-[10px] px-1.5 py-0.5 rounded-md font-mono transition-opacity hover:opacity-70"
+                  style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border-default)' }}
+                  onMouseDown={e => { e.preventDefault(); insertCol(c); }}
+                >
+                  +{c}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
