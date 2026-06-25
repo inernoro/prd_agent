@@ -64,6 +64,7 @@ public class TemplateRendererService
         }
     }
 
+    // 匹配 {列名} 或 {列名 | 操作1 | 操作2}
     private static readonly System.Text.RegularExpressions.Regex ColRefRegex =
         new(@"\{([^{}]+)\}", System.Text.RegularExpressions.RegexOptions.Compiled);
 
@@ -74,23 +75,96 @@ public class TemplateRendererService
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var m in mappings)
         {
-            // 兼容旧版：ValueExpression 为空时退化为直接列映射
             var expr = string.IsNullOrWhiteSpace(m.ValueExpression)
                 ? (string.IsNullOrWhiteSpace(m.SourceColumn) ? null : $"{{{m.SourceColumn}}}")
                 : m.ValueExpression;
 
             if (expr == null) continue;
 
-            // 求值：将 {列名} 替换为对应行的列值，找不到则保留原文
+            // 将表达式中的 {列名 | 操作...} 全部求值替换
             var value = ColRefRegex.Replace(expr, match =>
             {
-                var col = match.Groups[1].Value.Trim();
-                return rowData.TryGetValue(col, out var v) ? v : match.Value;
+                var inner = match.Groups[1].Value;
+                var parts = inner.Split('|');
+                var col = parts[0].Trim();
+                if (!rowData.TryGetValue(col, out var raw)) return match.Value;
+
+                // 管道转换链
+                var current = raw;
+                for (var i = 1; i < parts.Length; i++)
+                    current = ApplyPipe(current, parts[i].Trim());
+                return current;
             });
 
             result[m.TemplatePlaceholder] = value;
         }
         return result;
+    }
+
+    /// <summary>
+    /// 对单个值应用管道操作。
+    /// 支持：
+    ///   url_last          — URL 末段（最后一个 / 后的内容）
+    ///   trim              — 去首尾空格
+    ///   upper / lower     — 大/小写
+    ///   regex: pattern    — 正则提取第1捕获组
+    ///   split: sep, N     — 按 sep 切割取第 N 段（从1起）
+    ///   replace: old, new — 字符串替换
+    /// </summary>
+    private static string ApplyPipe(string value, string pipe)
+    {
+        if (string.IsNullOrWhiteSpace(pipe)) return value;
+
+        if (pipe.Equals("url_last", StringComparison.OrdinalIgnoreCase))
+            return value.TrimEnd('/').Split('/').Last().Trim();
+
+        if (pipe.Equals("trim", StringComparison.OrdinalIgnoreCase))
+            return value.Trim();
+
+        if (pipe.Equals("upper", StringComparison.OrdinalIgnoreCase))
+            return value.ToUpperInvariant();
+
+        if (pipe.Equals("lower", StringComparison.OrdinalIgnoreCase))
+            return value.ToLowerInvariant();
+
+        if (pipe.StartsWith("regex:", StringComparison.OrdinalIgnoreCase))
+        {
+            var pattern = pipe["regex:".Length..].Trim();
+            try
+            {
+                var m = System.Text.RegularExpressions.Regex.Match(value, pattern);
+                if (m.Success)
+                    return m.Groups.Count > 1 ? m.Groups[1].Value : m.Value;
+            }
+            catch { /* 正则格式错误时返回原值 */ }
+            return value;
+        }
+
+        if (pipe.StartsWith("split:", StringComparison.OrdinalIgnoreCase))
+        {
+            // split: /, 2  →  按 "/" 切割，取第2段（从1起）
+            var args = pipe["split:".Length..].Split(',', 2);
+            if (args.Length == 2)
+            {
+                var sep = args[0].Trim();
+                if (int.TryParse(args[1].Trim(), out var idx) && idx >= 1)
+                {
+                    var parts = value.Split(sep);
+                    return idx <= parts.Length ? parts[idx - 1].Trim() : value;
+                }
+            }
+            return value;
+        }
+
+        if (pipe.StartsWith("replace:", StringComparison.OrdinalIgnoreCase))
+        {
+            // replace: old, new
+            var args = pipe["replace:".Length..].Split(',', 2);
+            if (args.Length == 2)
+                return value.Replace(args[0].Trim(), args[1].Trim());
+        }
+
+        return value;
     }
 
     private static byte[] RenderDocx(byte[] templateBytes, Dictionary<string, string> values)

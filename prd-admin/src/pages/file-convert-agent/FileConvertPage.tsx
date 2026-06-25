@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect, type CSSProperties } from 'react';
 import {
   Upload, FileText, Play, Save, Trash2, ChevronDown, ChevronRight,
-  RefreshCw, FileOutput, CheckCircle2, Table2, X,
+  RefreshCw, FileOutput, CheckCircle2, Table2, X, Sparkles,
 } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { Surface } from '@/components/design/Surface';
@@ -10,9 +10,9 @@ import { useAuthStore } from '@/stores/authStore';
 import { toast } from '@/lib/toast';
 import {
   parseSourceFile, parseTemplateFile, createTask, listTasks, listRules,
-  saveRule, deleteRule, downloadResult,
+  saveRule, deleteRule, downloadResult, suggestRules,
   type ParseSourceResult, type ParseTemplateResult,
-  type FieldMapping, type FileConvertTask, type FileConvertRule,
+  type FieldMapping, type FileConvertTask, type FileConvertRule, type RuleSuggestion,
 } from '@/services/real/fileConvertService';
 
 const inputStyle: CSSProperties = {
@@ -49,6 +49,9 @@ export default function FileConvertPage() {
   const [tasks, setTasks] = useState<FileConvertTask[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiStatus, setAiStatus] = useState<string | null>(null);
+  const [aiSuggestions, setAiSuggestions] = useState<RuleSuggestion[]>([]);
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -148,6 +151,43 @@ export default function FileConvertPage() {
     await deleteRule(ruleId);
     loadRules();
   }, [loadRules]);
+
+  const handleAiSuggest = useCallback(async () => {
+    if (!sourceResult || !templateResult) return;
+    setAiLoading(true);
+    setAiStatus('AI 正在分析数据...');
+    setAiSuggestions([]);
+    try {
+      await suggestRules(
+        {
+          columns: sourceResult.columns,
+          sampleRows: sourceResult.previewRows,
+          placeholders: templateResult.placeholders,
+        },
+        (s) => setAiSuggestions(prev => {
+          const exists = prev.findIndex(x => x.placeholder === s.placeholder);
+          if (exists >= 0) { const next = [...prev]; next[exists] = s; return next; }
+          return [...prev, s];
+        }),
+        (msg) => setAiStatus(msg),
+      );
+    } finally {
+      setAiLoading(false);
+    }
+  }, [sourceResult, templateResult]);
+
+  const applyAiSuggestion = useCallback((s: RuleSuggestion) => {
+    setMappings(prev => prev.map(m =>
+      m.templatePlaceholder === s.placeholder ? { ...m, valueExpression: s.expression } : m
+    ));
+  }, []);
+
+  const applyAllAiSuggestions = useCallback(() => {
+    setMappings(prev => prev.map(m => {
+      const s = aiSuggestions.find(x => x.placeholder === m.templatePlaceholder);
+      return s ? { ...m, valueExpression: s.expression } : m;
+    }));
+  }, [aiSuggestions]);
 
   const startTask = useCallback(async () => {
     if (!sourceResult || !templateResult) return;
@@ -429,6 +469,57 @@ export default function FileConvertPage() {
 
               {step === 'mapping' && (
                 <>
+                  {/* AI 建议区 */}
+                  <div className="mb-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                        表达式语法：<code className="px-1 rounded font-mono" style={{ background: 'var(--bg-sunken)', fontSize: 11 }}>{'{列名}'}</code>
+                        {' '}直接取值，<code className="px-1 rounded font-mono" style={{ background: 'var(--bg-sunken)', fontSize: 11 }}>{'{列名 | url_last}'}</code>
+                        {' '}取URL末段，<code className="px-1 rounded font-mono" style={{ background: 'var(--bg-sunken)', fontSize: 11 }}>{'{A}-{B}'}</code> 拼接
+                      </p>
+                      <Button
+                        size="sm" variant="secondary"
+                        onClick={handleAiSuggest}
+                        disabled={aiLoading}
+                      >
+                        <Sparkles size={12} className="mr-1.5" />
+                        {aiLoading ? 'AI 分析中...' : 'AI 建议规则'}
+                      </Button>
+                    </div>
+
+                    {/* AI 建议结果 */}
+                    {aiSuggestions.length > 0 && (
+                      <div className="rounded-xl p-3 mb-3" style={{ background: 'var(--bg-sunken)', border: '1px solid var(--border-default)' }}>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
+                            AI 建议（{aiSuggestions.length} 条）
+                          </span>
+                          <button className="text-xs transition-opacity hover:opacity-70" style={{ color: 'var(--accent-primary, #6366f1)' }} onClick={applyAllAiSuggestions}>
+                            全部应用
+                          </button>
+                        </div>
+                        <div className="space-y-1.5">
+                          {aiSuggestions.map(s => (
+                            <div key={s.placeholder} className="flex items-start justify-between gap-3">
+                              <div className="flex-1 min-w-0">
+                                <span className="text-[11px] font-mono" style={{ color: 'var(--accent-primary, #6366f1)' }}>{`{{${s.placeholder}}}`}</span>
+                                <span className="text-[11px] mx-1.5" style={{ color: 'var(--text-muted)' }}>←</span>
+                                <code className="text-[11px] font-mono" style={{ color: 'var(--text-primary)' }}>{s.expression}</code>
+                                {s.reason && <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{s.reason}</p>}
+                              </div>
+                              <button className="text-[11px] shrink-0 transition-opacity hover:opacity-70" style={{ color: 'var(--accent-primary, #6366f1)' }} onClick={() => applyAiSuggestion(s)}>
+                                应用
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {aiStatus && !aiLoading && (
+                      <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{aiStatus}</p>
+                    )}
+                  </div>
+
                   <div className="rounded-xl overflow-hidden mb-4" style={{ border: '1px solid var(--border-default)' }}>
                     <div className="grid grid-cols-2 gap-0 px-4 py-2" style={{ background: 'var(--bg-sunken)', borderBottom: '1px solid var(--border-default)' }}>
                       <span className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>模板占位符</span>

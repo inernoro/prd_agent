@@ -181,3 +181,52 @@ export async function updateRule(
 export async function deleteRule(ruleId: string): Promise<ApiResponse<{ ok: boolean }>> {
   return apiRequest(`/api/file-convert/rules/${ruleId}`, { method: 'DELETE' });
 }
+
+export interface RuleSuggestion {
+  placeholder: string;
+  expression: string;
+  reason: string;
+}
+
+/**
+ * AI 分析原始数据，流式返回每个占位符的规则建议
+ * onSuggestion 每收到一条建议调用一次
+ * onStatus 收到状态/完成消息时调用
+ */
+export async function suggestRules(
+  payload: { columns: string[]; sampleRows: Record<string, string>[]; placeholders: string[] },
+  onSuggestion: (s: RuleSuggestion) => void,
+  onStatus: (msg: string) => void,
+): Promise<void> {
+  const token = useAuthStore.getState().token ?? '';
+  const res = await fetch('/api/file-convert/suggest-rules', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-Client': 'admin' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.body) return;
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split('\n\n');
+    buffer = parts.pop() ?? '';
+    for (const part of parts) {
+      const lines = part.split('\n');
+      let eventType = 'message'; let data = '';
+      for (const line of lines) {
+        if (line.startsWith('event: ')) eventType = line.slice(7).trim();
+        else if (line.startsWith('data: ')) data = line.slice(6);
+      }
+      if (!data) continue;
+      try {
+        const parsed = JSON.parse(data) as Record<string, string>;
+        if (eventType === 'suggestion') onSuggestion(parsed as RuleSuggestion);
+        else if (eventType === 'status' || eventType === 'done') onStatus(parsed.message ?? '');
+      } catch { /* ignore */ }
+    }
+  }
+}
