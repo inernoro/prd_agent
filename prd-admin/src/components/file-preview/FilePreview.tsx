@@ -124,10 +124,30 @@ export function FilePreview({ entry, preview }: { entry?: DocBrowserEntry; previ
         sandbox={fileUrl ? '' : 'allow-same-origin'}
         onLoad={fileUrl ? undefined : (e) => {
           try {
-            const ifr = e.currentTarget;
+            const ifr = e.currentTarget as HTMLIFrameElement & { __roFit?: ResizeObserver };
             const d = ifr.contentDocument;
-            const h = d ? Math.max(d.documentElement?.scrollHeight || 0, d.body?.scrollHeight || 0) : 0;
-            if (h > 0) ifr.style.height = h + 'px';
+            if (!d || !d.documentElement) return;
+            const fit = () => {
+              const h = Math.max(d.documentElement?.scrollHeight || 0, d.body?.scrollHeight || 0);
+              if (h > 0) ifr.style.height = h + 'px';
+            };
+            fit();
+            // 关键：内容会在 onLoad 之后继续变高（base64 图片/字体异步加载、响应式重排），
+            // 一次量高必偏矮 → 内层又冒出滚动条（用户实测"随机出现两个滚动条"）。
+            // allow-same-origin 下父窗口可直接观察 iframe 文档，用 ResizeObserver 持续把 iframe
+            // 高度跟内容同步 → iframe 永不内部滚动，只剩外层一条（用户要的"固定外面那条"）。
+            ifr.__roFit?.disconnect();
+            if (typeof ResizeObserver !== 'undefined') {
+              const ro = new ResizeObserver(() => fit());
+              ro.observe(d.documentElement);
+              if (d.body) ro.observe(d.body);
+              ifr.__roFit = ro;
+            }
+            // 兜底：图片自然尺寸到来后再量一次（个别浏览器 RO 不覆盖 img load）。
+            d.querySelectorAll?.('img').forEach((img) => {
+              const im = img as HTMLImageElement;
+              if (!im.complete) im.addEventListener('load', fit, { once: true });
+            });
           } catch { /* 跨源不可量，保持默认高度 */ }
         }}
         className="w-full rounded-lg"
