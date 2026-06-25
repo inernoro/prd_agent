@@ -1246,20 +1246,34 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       );
     }
 
-    // ── type 筛选：隐藏叶子核心/光晕 + 同步折叠其入边和引用线，不留连向空处的线 ──
+    // ── type 筛选：隐藏被关类型的叶子 + 「空分组」整体隐藏（核心/光晕/标签）+ 折叠入边/引用线 ──
     const applyFilter = () => {
       const on = typeOnRef.current;
       // 任一类型（含 unknown）被关 → 进入过滤；按 docType ?? 'unknown' 取开关
       const anyOff = Object.values(on).some((v) => v === false);
       const vis = new Map<string, boolean>();
-      for (const rec of renders) {
-        const n = rec.node;
-        const visible = n.kind !== 'leaf' || !anyOff || on[n.docType ?? 'unknown'] !== false;
-        vis.set(n.id, visible);
+      // 自底向上算可见性：叶子按 type 开关；分组「子树里还有可见叶才可见」（root 恒可见，避免整图消失）。
+      // 这样某分类/应用/子模块下的文档被筛光时，空枢纽 + 其标签一并消失，不再悬空（Codex P2）。
+      const computeVisible = (n: GalaxyNode): boolean => {
+        let v: boolean;
         if (n.kind === 'leaf') {
-          rec.core.visible = visible;
-          rec.halo.visible = visible;
+          v = !anyOff || on[n.docType ?? 'unknown'] !== false;
+        } else {
+          let anyChild = false;
+          for (const c of n.children) if (computeVisible(c)) anyChild = true;
+          v = n.kind === 'root' ? true : anyChild;
         }
+        vis.set(n.id, v);
+        return v;
+      };
+      computeVisible(galaxy.root);
+      // 应用到所有节点（分组也参与）：核心球 / 光晕 / 标签 一起显隐
+      for (const rec of renders) {
+        const visible = vis.get(rec.node.id) ?? true;
+        rec.core.visible = visible;
+        rec.halo.visible = visible;
+        const lab = labelByNodeId.get(rec.node.id);
+        if (lab) lab.visible = visible;
       }
       // 父子线：child 是隐藏叶子 → 两端折叠成同点（零长，不可见）
       const hp = hierGeo.getAttribute('position') as THREE.BufferAttribute;
