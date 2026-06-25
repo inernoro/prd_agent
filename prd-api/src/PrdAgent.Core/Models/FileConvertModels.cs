@@ -57,15 +57,22 @@ public static class FileConvertTaskStatus
 }
 
 /// <summary>
-/// 单个字段映射：源文件的哪一列 → 模板的哪个占位符
+/// 单个字段映射：模板占位符 → 值表达式
 /// </summary>
 public class FileConvertFieldMapping
 {
-    /// <summary>源文件列名</summary>
-    public string SourceColumn { get; set; } = string.Empty;
-
     /// <summary>模板占位符名（不含 {{ }}）</summary>
     public string TemplatePlaceholder { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 值表达式：用 {列名} 引用源文件列值，支持自由拼接。
+    /// 示例: "{姓} {名}" / "北京-{区县}" / "{电话}"
+    /// 旧版兼容：若此字段为空且 SourceColumn 有值，则等价于 "{SourceColumn}"
+    /// </summary>
+    public string ValueExpression { get; set; } = string.Empty;
+
+    /// <summary>旧版直接列映射（已废弃，保留用于向后兼容）</summary>
+    public string SourceColumn { get; set; } = string.Empty;
 }
 
 /// <summary>

@@ -3,8 +3,14 @@ import { ok, fail, type ApiResponse } from '@/types/api';
 import { useAuthStore } from '@/stores/authStore';
 
 export interface FieldMapping {
-  sourceColumn: string;
   templatePlaceholder: string;
+  /**
+   * 值表达式：用 {列名} 引用源数据列，支持自由拼接。
+   * 例: "{姓} {名}" / "北京-{区县}" / "{电话}"
+   */
+  valueExpression: string;
+  /** 旧版兼容字段（已废弃，新建规则不再使用） */
+  sourceColumn?: string;
 }
 
 export interface ParseSourceResult {

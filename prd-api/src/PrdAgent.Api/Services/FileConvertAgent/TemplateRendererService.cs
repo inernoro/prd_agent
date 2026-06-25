@@ -64,6 +64,9 @@ public class TemplateRendererService
         }
     }
 
+    private static readonly System.Text.RegularExpressions.Regex ColRefRegex =
+        new(@"\{([^{}]+)\}", System.Text.RegularExpressions.RegexOptions.Compiled);
+
     private static Dictionary<string, string> BuildValues(
         Dictionary<string, string> rowData,
         List<FileConvertFieldMapping> mappings)
@@ -71,8 +74,21 @@ public class TemplateRendererService
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var m in mappings)
         {
-            if (rowData.TryGetValue(m.SourceColumn, out var val))
-                result[m.TemplatePlaceholder] = val;
+            // 兼容旧版：ValueExpression 为空时退化为直接列映射
+            var expr = string.IsNullOrWhiteSpace(m.ValueExpression)
+                ? (string.IsNullOrWhiteSpace(m.SourceColumn) ? null : $"{{{m.SourceColumn}}}")
+                : m.ValueExpression;
+
+            if (expr == null) continue;
+
+            // 求值：将 {列名} 替换为对应行的列值，找不到则保留原文
+            var value = ColRefRegex.Replace(expr, match =>
+            {
+                var col = match.Groups[1].Value.Trim();
+                return rowData.TryGetValue(col, out var v) ? v : match.Value;
+            });
+
+            result[m.TemplatePlaceholder] = value;
         }
         return result;
     }
