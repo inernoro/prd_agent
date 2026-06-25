@@ -4,17 +4,23 @@
  * 数据：listDocumentEntriesReal（条目）+ getStoreGraph（双链）。
  * 业务关系识别复用 buildDocGalaxy（SSOT，根→分类→appname→子模块→文档树 + 横向引用）。
  *
- * 渲染内核（2026-06-25 重写）：从 @react-three/fiber + @react-three/postprocessing
- * 切回 **vanilla three.js**（原生 EffectComposer + UnrealBloomPass 选择性 bloom），
- * 与演示版 doc-tree-3d.html 同一套渲染逻辑 —— 这是「白色 group/root 节点不爆成大白团」的关键：
+ * 渲染内核（2026-06-25 重写 + 视觉对齐）：vanilla three.js（原生 EffectComposer +
+ * UnrealBloomPass 选择性 bloom），**完整照搬演示版 doc-tree-3d.html 的视觉数值**（演示是 SSOT）。
+ * 这是「白色 group/root 节点不爆成大白团」的关键 —— 不只搬 bloom 双 pass，更搬真实的视觉用量：
  *
- *   选择性 bloom 双 pass：
+ *   尺度与布局（照抄演示）：LEVEL_R=[0,120,300,470,620,760] 球面树 + 斐波那契球铺顶级分类 +
+ *     圆锥散开子节点；相机 fov 60 / pos (0,120,1050) / 远 12000；OrbitControls 阻尼 0.045。
+ *   节点尺寸（照抄演示 nodeSize）：root 16 / category(d1) 10 / appname(d2) 4.5+min(5,√docCount) /
+ *     submodule(d≥3) 3.2 / leaf 2.1；核心球半径 = size*0.9。
+ *   光晕（白团根因，改成演示同款的小光晕）：缩放 = size*(leaf?7:10)、不透明度
+ *     root 0.5 / category 0.46 / appname 0.36 / submodule 0.26 / leaf 0.32；随相机距离衰减(refD=size*26)。
+ *   配色（照抄演示，更克制）：TYPE_COLORS + root 纯白 / category 金 / appname 冷白 / submodule 灰蓝。
+ *   选择性 bloom 双 pass（保留）：
  *     1) bloomComposer 只渲染 BLOOM_LAYER（星体核心 mesh），其余物体临时变黑/隐藏 → 离屏 glow 纹理；
  *     2) finalComposer 正常渲染整场景，再用 combine ShaderPass 把 glow 叠加上去（×0.85 软叠加）。
- *   核心用 MeshBasicMaterial（非 emissive 泛光），bloom strength=0.62 / threshold=0.72 / radius=0.4，
- *   只有最亮的核心像素溢出，辉光是点缀而非泛滥；白色枢纽节点因此不会过曝爆白。
+ *   核心 MeshBasicMaterial（非 emissive），bloom strength=0.62 / threshold=0.72 / radius=0.4；
  *   ACES 色调映射 + 曝光 0.82：高光柔性滚降，放大时不死白。
- *   光晕 sprite 随相机距离衰减；标签 / 连线 / 星点 / 星云全部不在 bloom 层，始终清晰。
+ *   标签 / 连线 / 星点 / 星云全部不在 bloom 层，始终清晰。
  *
  * 功能层（保留）：type 图例筛选、点叶子复用系统 MarkdownViewer 阅读、hover 显示节点名、
  * 数据加载超时护栏、错误显式报错、full-height flex-1 撑满。
@@ -40,85 +46,115 @@ import {
   type GalaxyInputLink,
 } from '@/lib/docGalaxy/buildDocGalaxy';
 
-// ── docType → 颜色注册表（不用 switch；7 种 type + 兜底） ──
+// ── docType → 颜色注册表（数值 SSOT = 演示版 doc-tree-3d.html TYPE_COLORS，照抄） ──
 const TYPE_COLOR: Record<string, string> = {
-  spec: '#5b9eff',
-  design: '#c47cff',
-  plan: '#5bcc8a',
-  rule: '#ff5b7a',
-  guide: '#5bcfd8',
-  report: '#ffd84d',
-  debt: '#ff9c5b',
-  unknown: '#9aa0b5',
+  spec: '#4ade80',
+  design: '#60a5fa',
+  plan: '#fbbf24',
+  rule: '#f87171',
+  guide: '#a78bfa',
+  report: '#22d3ee',
+  debt: '#fb923c',
+  unknown: '#94a3b8',
 };
 function colorForDocType(docType?: string | null): string {
   if (!docType) return TYPE_COLOR.unknown;
   return TYPE_COLOR[docType] ?? TYPE_COLOR.unknown;
 }
 
-// 枢纽节点配色（与演示版一致：root 金、group 冷白）
-const ROOT_COLOR = '#ffe7a0';
-const GROUP_COLOR = '#dfe4f5';
+// 枢纽节点配色（演示版 SSOT：root 纯白、category 金、appname 冷白、submodule 灰蓝）。
+// 产品 GalaxyNode 只有 root/group/leaf 三类，group 按层深映射到演示的 category/appname/submodule。
+const ROOT_COLOR = '#ffffff';
+const CAT_COLOR = '#ffe08a'; // 第 1 层 group ≈ 演示 category
+const APP_COLOR = '#e8f0ff'; // 第 2 层 group ≈ 演示 appname
+const SUB_COLOR = '#9fb4d4'; // 更深 group ≈ 演示 submodule
 
-// ── 放射状 3D 布局：根在原点，逐层沿球面向外铺开 ──
+// ── 放射状 3D 布局：演示版 doc-tree-3d.html 的确定性球面树（数值 SSOT，照抄）──
+// 每个节点在单位球上取一个方向；深度 -> 半径。顶级分类用斐波那契球均匀铺开，
+// 子节点在父方向周围的圆锥内散开。与产品旧版（RING_GAP=9 小尺度）相比尺度大得多、更散。
 interface PlacedNode {
   node: GalaxyNode;
   pos: THREE.Vector3;
+  depth: number;
 }
 
-/**
- * 递归布局：父节点在 center，子节点按数量在以 center 为顶点、沿 dir 方向的圆锥面上分布。
- * 半径随深度线性增长；同层子节点用黄金角错开，避免堆叠。
- */
+// 演示版 LEVEL_R = [0, 120, 300, 470, 620, 760]（逐层向外的半径）
+const LEVEL_R = [0, 120, 300, 470, 620, 760];
+function radiusForDepth(d: number): number {
+  return d < LEVEL_R.length ? LEVEL_R[d] : LEVEL_R[LEVEL_R.length - 1] + (d - LEVEL_R.length + 1) * 120;
+}
+
+// 顶级分类用斐波那契球均匀分布方向（演示版 distributeDirections，照抄）
+function distributeDirections(count: number): THREE.Vector3[] {
+  const dirs: THREE.Vector3[] = [];
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  for (let i = 0; i < count; i++) {
+    const y = 1 - (i / Math.max(1, count - 1)) * 2 * 0.85;
+    const r = Math.sqrt(Math.max(0, 1 - y * y));
+    const th = golden * i;
+    dirs.push(new THREE.Vector3(Math.cos(th) * r, y * 0.9, Math.sin(th) * r).normalize());
+  }
+  return dirs;
+}
+
+// 子节点在父方向周围的圆锥内散开（演示版 spreadInCone，照抄）
+function spreadInCone(parentDir: THREE.Vector3, count: number, spread: number): THREE.Vector3[] {
+  if (count === 1) return [parentDir.clone()];
+  const up = Math.abs(parentDir.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+  const u = up.clone().cross(parentDir).normalize();
+  const w = parentDir.clone().cross(u).normalize();
+  const out: THREE.Vector3[] = [];
+  for (let i = 0; i < count; i++) {
+    const ang2 = i * 2.399963; // 绕轴黄金角，铺成扇面
+    const rad = spread * Math.sqrt((i + 0.5) / count);
+    const dir = parentDir
+      .clone()
+      .multiplyScalar(Math.cos(rad))
+      .add(u.clone().multiplyScalar(Math.sin(rad) * Math.cos(ang2)))
+      .add(w.clone().multiplyScalar(Math.sin(rad) * Math.sin(ang2)))
+      .normalize();
+    out.push(dir);
+  }
+  return out;
+}
+
 function layoutGalaxy(root: GalaxyNode): {
   placed: Map<string, PlacedNode>;
   edges: Array<{ a: THREE.Vector3; b: THREE.Vector3; child: GalaxyNode }>;
 } {
   const placed = new Map<string, PlacedNode>();
   const edges: Array<{ a: THREE.Vector3; b: THREE.Vector3; child: GalaxyNode }> = [];
-  const RING_GAP = 9; // 每深一层向外推进的半径
 
-  const place = (
-    node: GalaxyNode,
-    center: THREE.Vector3,
-    dir: THREE.Vector3,
-    spread: number,
-  ) => {
-    placed.set(node.id, { node, pos: center.clone() });
-    const kids = node.children;
-    if (kids.length === 0) return;
+  // 根在原点
+  placed.set(root.id, { node: root, pos: new THREE.Vector3(0, 0, 0), depth: 0 });
 
-    // 在以 dir 为轴的圆锥/球冠上均匀撒点
-    const radius = RING_GAP;
-    // 构造与 dir 垂直的两个基向量
-    const up = Math.abs(dir.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
-    const u = new THREE.Vector3().crossVectors(dir, up).normalize();
-    const w = new THREE.Vector3().crossVectors(dir, u).normalize();
-    const golden = Math.PI * (3 - Math.sqrt(5)); // 黄金角
-
+  // 沿父方向递归铺开子树（演示版 layoutChildren）
+  const layoutChildren = (parent: GalaxyNode, parentPos: THREE.Vector3, parentDir: THREE.Vector3, depth: number) => {
+    const kids = parent.children;
+    if (!kids.length) return;
+    const spread = depth <= 2 ? 0.95 : 0.75;
+    const dirs = spreadInCone(parentDir, kids.length, spread);
+    const R = radiusForDepth(depth);
     kids.forEach((kid, i) => {
-      const n = kids.length;
-      // 子节点越多，圆锥张得越开（spread 控制半角，封顶约 70 度）
-      const half = Math.min(spread, Math.PI / 2.6);
-      // 沿圆锥面分布：极角 theta 随 i 在 [0, half] 间，方位角 phi 用黄金角
-      const t = n === 1 ? 0 : i / (n - 1);
-      const theta = half * Math.sqrt(t);
-      const phi = i * golden;
-      const sinT = Math.sin(theta);
-      const offset = new THREE.Vector3()
-        .addScaledVector(dir, Math.cos(theta))
-        .addScaledVector(u, sinT * Math.cos(phi))
-        .addScaledVector(w, sinT * Math.sin(phi))
-        .normalize();
-      const childCenter = center.clone().addScaledVector(offset, radius);
-      edges.push({ a: center.clone(), b: childCenter.clone(), child: kid });
-      // 子树继续向同方向延展，半角随深度收窄
-      place(kid, childCenter, offset, half * 0.7);
+      const dir = dirs[i];
+      const pos = dir.clone().multiplyScalar(R);
+      placed.set(kid.id, { node: kid, pos, depth });
+      edges.push({ a: parentPos.clone(), b: pos.clone(), child: kid });
+      layoutChildren(kid, pos, dir, depth + 1);
     });
   };
 
-  // 根的若干顶级分类沿整个球面铺开（spread = PI 让第一层 360 度散开）
-  place(root, new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 1, 0), Math.PI);
+  // 顶级分类（depth=1）用斐波那契球铺满整个球面
+  const cats = root.children;
+  const catDirs = distributeDirections(cats.length);
+  cats.forEach((c, i) => {
+    const dir = catDirs[i];
+    const pos = dir.clone().multiplyScalar(radiusForDepth(1));
+    placed.set(c.id, { node: c, pos, depth: 1 });
+    edges.push({ a: new THREE.Vector3(0, 0, 0), b: pos.clone(), child: c });
+    layoutChildren(c, pos, dir, 2);
+  });
+
   return { placed, edges };
 }
 
@@ -138,18 +174,44 @@ function makeRadialTexture(stops: Array<[number, string]>): THREE.Texture {
   return tex;
 }
 
-// ── 节点视觉尺寸 ──
-function leafRadius(): number {
-  return 0.55;
+// ── 节点视觉尺寸（演示版 nodeSize，数值 SSOT 照抄）──
+// 演示有 root/category/appname/submodule/doc 五类；产品只有 root/group/leaf，
+// 用 depth 把 group 映射到 category(d=1) / appname(d=2) / submodule(d>=3)。
+// docCount 等价演示的 leaves（该节点自身及子树的文档数）。
+function nodeSize(node: GalaxyNode, depth: number): number {
+  if (node.kind === 'root') return 16;
+  if (node.kind === 'leaf') return 2.1;
+  // group：按层深取演示对应类的尺寸
+  if (depth <= 1) return 10; // category
+  if (depth === 2) return 4.5 + Math.min(5, Math.sqrt(Math.max(1, node.docCount))); // appname
+  return 3.2; // submodule（更深）
 }
-function groupRadius(node: GalaxyNode): number {
-  if (node.kind === 'root') return 1.5;
-  return Math.min(1.2, 0.6 + Math.sqrt(node.docCount) * 0.12);
+
+// 演示版 haloOpacity：底数压低，附加光晕不再在重叠区叠成死白，bloom 补足其余
+function haloOpacity(node: GalaxyNode, depth: number): number {
+  if (node.kind === 'root') return 0.5;
+  if (node.kind === 'leaf') return 0.32;
+  if (depth <= 1) return 0.46; // category
+  if (depth === 2) return 0.36; // appname
+  return 0.26; // submodule
 }
-function haloBaseSize(node: GalaxyNode): number {
-  if (node.kind === 'root') return 9;
-  if (node.kind === 'group') return 4.5 + groupRadius(node) * 1.6;
-  return 3.4; // leaf
+
+// 演示版 sphereGeo：实际球半径 = size * 0.9
+function coreRadiusFromSize(size: number): number {
+  return size * 0.9;
+}
+
+// 演示版 halo 缩放：size * (doc ? 7 : 10) —— 小而克制，杜绝大白团
+function haloScaleFromSize(node: GalaxyNode, size: number): number {
+  return size * (node.kind === 'leaf' ? 7 : 10);
+}
+
+// 枢纽节点配色：按层深取演示对应类的颜色
+function groupColor(node: GalaxyNode, depth: number): string {
+  if (node.kind === 'root') return ROOT_COLOR;
+  if (depth <= 1) return CAT_COLOR;
+  if (depth === 2) return APP_COLOR;
+  return SUB_COLOR;
 }
 
 // ── 节点渲染时挂在 sprite/mesh userData 上的元信息 ──
@@ -159,14 +221,16 @@ interface NodeRender {
   halo: THREE.Sprite;
   haloBaseSize: number;
   haloBaseOpacity: number;
+  size: number;
 }
 
 /**
  * 文本标签贴图（枢纽节点用，canvas 绘制后做 sprite）。
  * 标签在 bloom 层之外 → 永远清晰、不被泛光糊掉。
  */
-function makeLabelSprite(text: string, kind: GalaxyNode['kind'], color: string): THREE.Sprite {
-  const fontSize = kind === 'root' ? 46 : 36;
+function makeLabelSprite(text: string, kind: GalaxyNode['kind'], depth: number, color: string): THREE.Sprite {
+  // 演示版字号：root 46 / category 40 / 其余 30
+  const fontSize = kind === 'root' ? 46 : depth <= 1 ? 40 : 30;
   const pad = 10;
   const measure = document.createElement('canvas').getContext('2d')!;
   const font = `600 ${fontSize}px "PingFang SC","Microsoft YaHei",system-ui,sans-serif`;
@@ -203,7 +267,8 @@ function makeLabelSprite(text: string, kind: GalaxyNode['kind'], color: string):
   const sp = new THREE.Sprite(
     new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false }),
   );
-  const sc = 0.012 * (fontSize / 30);
+  // 演示版世界尺度：sc = 0.34*(fontSize/30)
+  const sc = 0.34 * (fontSize / 30);
   sp.scale.set(cv.width * sc, cv.height * sc, 1);
   sp.renderOrder = 10;
   return sp;
@@ -256,8 +321,9 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen }: GalaxyCanvasProps) {
     let H = mount.clientHeight || 1;
     renderer.setSize(W, H);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setClearColor(0x05060e, 1);
-    // ACES filmic 色调映射 + 适中曝光：高光柔性滚降，放大不死白
+    // 演示版数值 SSOT：深空底色 0x02030a
+    renderer.setClearColor(0x02030a, 1);
+    // ACES filmic 色调映射 + 曝光 0.82：高光柔性滚降，放大不死白（演示版同款）
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 0.82;
     mount.appendChild(renderer.domElement);
@@ -266,21 +332,24 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen }: GalaxyCanvasProps) {
     renderer.domElement.style.height = '100%';
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x05060e);
-    scene.fog = new THREE.FogExp2(0x05060e, 0.0045);
+    scene.background = new THREE.Color(0x02030a);
+    // 演示版极淡指数雾（大尺度场景，0.00035）
+    scene.fog = new THREE.FogExp2(0x02030a, 0.00035);
 
-    const camera = new THREE.PerspectiveCamera(55, W / H, 0.5, 4000);
-    camera.position.set(0, 18, 42);
+    // 演示版相机：fov 60、近 1 远 12000、起始位 (0,120,1050)
+    const camera = new THREE.PerspectiveCamera(60, W / H, 1, 12000);
+    camera.position.set(0, 120, 1050);
 
+    // 演示版 OrbitControls：影院级阻尼/惯性
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
-    controls.dampingFactor = 0.05;
-    controls.rotateSpeed = 0.6;
-    controls.zoomSpeed = 0.8;
-    controls.minDistance = 6;
-    controls.maxDistance = 320;
+    controls.dampingFactor = 0.045;
+    controls.rotateSpeed = 0.5;
+    controls.zoomSpeed = 0.78;
+    controls.minDistance = 70;
+    controls.maxDistance = 6500;
     controls.autoRotate = true;
-    controls.autoRotateSpeed = 0.35;
+    controls.autoRotateSpeed = 0.42;
 
     // 用于 dispose 的资源台账
     const disposables: Array<{ dispose: () => void }> = [];
@@ -305,87 +374,93 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen }: GalaxyCanvasProps) {
         [1, 'rgba(255,255,255,0)'],
       ]),
     );
-    const NEBULA_TEX = track(
-      makeRadialTexture([
-        [0, 'rgba(255,255,255,0.85)'],
-        [0.4, 'rgba(255,255,255,0.3)'],
-        [0.75, 'rgba(255,255,255,0.07)'],
-        [1, 'rgba(255,255,255,0)'],
-      ]),
-    );
 
     // ── 选择性 bloom 分层：只有星体核心 mesh 在 BLOOM_LAYER ──
     const BLOOM_LAYER = 1;
     const bloomLayer = new THREE.Layers();
     bloomLayer.set(BLOOM_LAYER);
 
-    // ── 深空星点 starfield（不进 bloom 层） ──
+    // ── 深空星点 starfield（演示版数值 SSOT：N=3000、半径 2200..6400、size 3、opacity 0.8）──
     {
-      const N = 2600;
-      const radius = 320;
+      const N = 3000;
       const positions = new Float32Array(N * 3);
       const colors = new Float32Array(N * 3);
-      const palette = [
-        [0.7, 0.78, 1.0],
-        [1.0, 1.0, 1.0],
-        [1.0, 0.86, 0.7],
-        [0.78, 0.7, 1.0],
-      ];
       for (let i = 0; i < N; i++) {
-        const r = radius * (0.55 + Math.random() * 0.45);
-        const theta = Math.acos(2 * Math.random() - 1);
-        const phi = Math.random() * Math.PI * 2;
-        positions[i * 3] = r * Math.sin(theta) * Math.cos(phi);
-        positions[i * 3 + 1] = r * Math.cos(theta);
-        positions[i * 3 + 2] = r * Math.sin(theta) * Math.sin(phi);
-        const c = palette[Math.floor(Math.random() * palette.length)];
-        const dim = 0.4 + Math.random() * 0.6;
-        colors[i * 3] = c[0] * dim;
-        colors[i * 3 + 1] = c[1] * dim;
-        colors[i * 3 + 2] = c[2] * dim;
+        const r = 2200 + Math.random() * 4200;
+        const th = Math.random() * Math.PI * 2;
+        const ph = Math.acos(2 * Math.random() - 1);
+        positions[i * 3] = r * Math.sin(ph) * Math.cos(th);
+        positions[i * 3 + 1] = r * Math.sin(ph) * Math.sin(th);
+        positions[i * 3 + 2] = r * Math.cos(ph);
+        // 演示版亮度：b=0.35..0.9，蓝偏，克制
+        const b = 0.35 + Math.random() * 0.55;
+        colors[i * 3] = b;
+        colors[i * 3 + 1] = b;
+        colors[i * 3 + 2] = b * (0.85 + Math.random() * 0.2);
       }
       const geo = track(new THREE.BufferGeometry());
       geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
       geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
       const mat = track(
         new THREE.PointsMaterial({
-          size: 1.4,
+          size: 3,
           sizeAttenuation: true,
           map: STAR_TEX,
           vertexColors: true,
           transparent: true,
           depthWrite: false,
-          blending: THREE.AdditiveBlending,
-          opacity: 0.85,
+          opacity: 0.8,
         }),
       );
       scene.add(new THREE.Points(geo, mat));
     }
 
-    // ── 星云 sprite（缓慢漂移，不进 bloom 层） ──
+    // ── EVE 风远景星云（演示版数值 SSOT：14 片、半径 3400..6000、scale 2200..4600、opacity 0.5、additive）──
     const nebulaGroup = new THREE.Group();
     scene.add(nebulaGroup);
     {
-      const clouds: Array<{ pos: [number, number, number]; color: string; size: number }> = [
-        { pos: [-70, 30, -120], color: '#5b6cff', size: 150 },
-        { pos: [90, -40, -100], color: '#9a5bff', size: 130 },
-        { pos: [20, 60, -160], color: '#3b8cff', size: 170 },
-      ];
-      for (const c of clouds) {
+      // 演示版 makeNebulaTex：每片由 5 个随机径向云团叠成，wispy
+      const makeNebulaTex = (hue: string): THREE.Texture => {
+        const c = document.createElement('canvas');
+        c.width = c.height = 256;
+        const g = c.getContext('2d')!;
+        for (let k = 0; k < 5; k++) {
+          const cx = 64 + Math.random() * 128;
+          const cy = 64 + Math.random() * 128;
+          const rad = 40 + Math.random() * 90;
+          const rg = g.createRadialGradient(cx, cy, 0, cx, cy, rad);
+          rg.addColorStop(0, hue + 'cc');
+          rg.addColorStop(0.5, hue + '44');
+          rg.addColorStop(1, hue + '00');
+          g.fillStyle = rg;
+          g.beginPath();
+          g.arc(cx, cy, rad, 0, Math.PI * 2);
+          g.fill();
+        }
+        const tex = new THREE.CanvasTexture(c);
+        tex.needsUpdate = true;
+        return tex;
+      };
+      const hues = ['#16243f', '#1c2a52', '#2a1c46', '#102a3a', '#231a3e', '#0f2030'];
+      for (let i = 0; i < 14; i++) {
+        const hue = hues[i % hues.length];
         const mat = track(
           new THREE.SpriteMaterial({
-            map: NEBULA_TEX,
-            color: new THREE.Color(c.color),
+            map: track(makeNebulaTex(hue)),
             transparent: true,
-            opacity: 0.16,
+            opacity: 0.5,
+            blending: THREE.AdditiveBlending,
             depthWrite: false,
             depthTest: false,
-            blending: THREE.AdditiveBlending,
           }),
         );
         const sp = new THREE.Sprite(mat);
-        sp.position.set(...c.pos);
-        sp.scale.set(c.size, c.size, 1);
+        const r = 3400 + Math.random() * 2600;
+        const th = Math.random() * Math.PI * 2;
+        const ph = Math.acos(2 * Math.random() - 1);
+        sp.position.set(r * Math.sin(ph) * Math.cos(th), r * Math.sin(ph) * Math.sin(th) * 0.7, r * Math.cos(ph));
+        const sc = 2200 + Math.random() * 2400;
+        sp.scale.set(sc, sc, 1);
         sp.renderOrder = -10;
         nebulaGroup.add(sp);
       }
@@ -409,17 +484,16 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen }: GalaxyCanvasProps) {
       return g;
     };
 
-    for (const { node, pos } of placed.values()) {
+    for (const { node, pos, depth } of placed.values()) {
       const isLeaf = node.kind === 'leaf';
-      const color = isLeaf
-        ? colorForDocType(node.docType)
-        : node.kind === 'root'
-          ? ROOT_COLOR
-          : GROUP_COLOR;
+      const color = isLeaf ? colorForDocType(node.docType) : groupColor(node, depth);
       const col = new THREE.Color(color);
 
+      // 演示版尺度：size 决定核心球半径(size*0.9)、光晕缩放(size*7|10)、标签偏移
+      const size = nodeSize(node, depth);
+
       // 核心：MeshBasicMaterial（非 emissive 泛光）—— 选择性 bloom 只让这层溢出
-      const r = isLeaf ? leafRadius() : groupRadius(node);
+      const r = coreRadiusFromSize(size);
       const coreMat = track(new THREE.MeshBasicMaterial({ color: col }));
       const core = new THREE.Mesh(sphereGeo(r), coreMat);
       core.position.copy(pos);
@@ -428,9 +502,9 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen }: GalaxyCanvasProps) {
       nodeGroup.add(core);
       coreMeshes.push(core);
 
-      // 光晕 sprite（不进 bloom 层，距离衰减）
-      const haloBaseOpacity = isLeaf ? 0.3 : node.kind === 'root' ? 0.5 : 0.42;
-      const haloSize = haloBaseSize(node);
+      // 光晕 sprite（不进 bloom 层，距离衰减）—— 演示版小而克制，杜绝大白团
+      const haloBaseOpacity = haloOpacity(node, depth);
+      const haloSize = haloScaleFromSize(node, size);
       const haloMat = track(
         new THREE.SpriteMaterial({
           map: HALO_TEX,
@@ -448,25 +522,35 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen }: GalaxyCanvasProps) {
 
       // 枢纽标签（root / group）
       if (!isLeaf) {
-        const lab = makeLabelSprite(node.name, node.kind, color);
+        const lab = makeLabelSprite(node.name, node.kind, depth, color);
         if (lab.material.map) track(lab.material.map);
         track(lab.material);
-        const dy = r + (node.kind === 'root' ? 1.4 : 0.9);
+        // 演示版标签偏移：size + (root?14:8)
+        const dy = size + (node.kind === 'root' ? 14 : 8);
         lab.position.set(pos.x, pos.y + dy, pos.z);
         nodeGroup.add(lab);
       }
 
-      renders.push({ node, core, halo, haloBaseSize: haloSize, haloBaseOpacity });
+      renders.push({ node, core, halo, haloBaseSize: haloSize, haloBaseOpacity, size });
     }
 
     // ── 父子连线（偏冷蓝细线，不进 bloom 层）。位置由 applyFilter 填充/重建：
     //    隐藏叶子的入边折叠为零长，不再连向空处。 ──
     const hierGeo = track(new THREE.BufferGeometry());
     hierGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(edges.length * 6), 3));
+    // 演示版 EVE 星座线：冷蓝 #5a86c8、additive、opacity 0.42
     scene.add(
       new THREE.LineSegments(
         hierGeo,
-        track(new THREE.LineBasicMaterial({ color: new THREE.Color('#4f7bd6'), transparent: true, opacity: 0.28, depthWrite: false })),
+        track(
+          new THREE.LineBasicMaterial({
+            color: new THREE.Color('#5a86c8'),
+            transparent: true,
+            opacity: 0.42,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+          }),
+        ),
       ),
     );
 
@@ -481,10 +565,19 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen }: GalaxyCanvasProps) {
     if (mentionPairs.length > 0) {
       mentionGeo = track(new THREE.BufferGeometry());
       mentionGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(mentionPairs.length * 6), 3));
+      // 横向引用线：略亮冷蓝、additive、opacity 0.32（与父子线同色系，演示风格）
       scene.add(
         new THREE.LineSegments(
           mentionGeo,
-          track(new THREE.LineBasicMaterial({ color: new THREE.Color('#8fc4ff'), transparent: true, opacity: 0.32, depthWrite: false })),
+          track(
+            new THREE.LineBasicMaterial({
+              color: new THREE.Color('#8fc4ff'),
+              transparent: true,
+              opacity: 0.32,
+              blending: THREE.AdditiveBlending,
+              depthWrite: false,
+            }),
+          ),
         ),
       );
     }
@@ -677,16 +770,18 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen }: GalaxyCanvasProps) {
       // 星云缓慢漂移
       nebulaGroup.rotation.y += dt * 0.004;
       nebulaGroup.rotation.x += dt * 0.0016;
-      // 光晕距离衰减 + hover 强调
+      // 光晕距离衰减 + hover 强调（演示版数值 SSOT 照抄）
       camPos.copy(camera.position);
       for (const rec of renders) {
         if (!rec.halo.visible) continue;
         rec.halo.getWorldPosition(haloWorld);
         const d = camPos.distanceTo(haloWorld);
-        const k = THREE.MathUtils.clamp((d - 6) / 14, 0, 1);
-        const scale = rec.haloBaseSize * (0.45 + 0.55 * k);
+        const refD = Math.max(220, rec.size * 26); // 近于 refD 时缩小，避免贴脸过曝
+        const att = Math.min(1, d / refD);
+        const attScale = 0.35 + 0.65 * att; // 永不完全坍缩，永不超过基准
+        const scale = rec.haloBaseSize * attScale;
         rec.halo.scale.set(scale, scale, 1);
-        let tgt = rec.haloBaseOpacity * (0.45 + 0.55 * k);
+        let tgt = rec.haloBaseOpacity * (0.45 + 0.55 * att); // 极近时淡化辉光
         if (hoverNode === rec.node) tgt = Math.min(0.85, tgt * 1.7);
         const mat = rec.halo.material as THREE.SpriteMaterial;
         mat.opacity += (tgt - mat.opacity) * 0.2;
@@ -1031,7 +1126,7 @@ export function DocumentGalaxyView({ storeId, storeName }: DocumentGalaxyViewPro
   }, [storeId]);
 
   return (
-    <div className="h-full w-full min-h-0 flex flex-col relative" style={{ background: '#05060e' }}>
+    <div className="h-full w-full min-h-0 flex flex-col relative" style={{ background: '#02030a' }}>
       {/* 图例 + 统计：独立页里它是顶部唯一头部，正常 flex 排布（不再绝对定位叠头部）。
           点击 chip 切换该 type 显隐（与渲染内核 typeOn 同步） */}
       {galaxy && (
