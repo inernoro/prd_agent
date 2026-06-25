@@ -878,15 +878,20 @@ public class HostedSiteService : IHostedSiteService
                 & (effVisibility == "public"
                     ? (fb.Eq(x => x.Visibility, "public") | fb.Eq(x => x.Visibility, "") | fb.Eq(x => x.Visibility, (string?)null))
                     : fb.Eq(x => x.Visibility, effVisibility))
-                // 已过期的链接不得复用，否则覆盖 ExpiresAt 会"复活"旧 token，
-                // 持有过期 URL 的人凭旧链接重新获得访问权——必须新建（换新 token）。
-                & (fb.Eq(x => x.ExpiresAt, (DateTime?)null) | fb.Gt(x => x.ExpiresAt, nowUtc))
                 & (effShareType == "collection"
                     ? fb.Eq(x => x.ShareType, "collection")
                     : fb.Eq(x => x.ShareType, effShareType) & fb.Eq(x => x.SiteId, siteId))
                 & (effPurpose == "visit"
                     ? fb.Eq(x => x.Purpose, "visit")
                     : fb.Ne(x => x.Purpose, "visit"));
+            if (effPurpose != "visit")
+            {
+                // 已过期的用户分享不得复用，否则覆盖 ExpiresAt 会"复活"旧 token，
+                // 持有过期 URL 的人凭旧链接重新获得访问权——必须新建（换新 token）。
+                // visit 便捷链例外：它的产品语义是公开永久，历史误写过期时间的旧 token
+                // 要能在下一次访问动作中被原 token 自愈，而不是换新 token 让旧链接继续失效。
+                reuseFilter &= (fb.Eq(x => x.ExpiresAt, (DateTime?)null) | fb.Gt(x => x.ExpiresAt, nowUtc));
+            }
 
             var reuseCandidates = await _db.WebPageShareLinks.Find(reuseFilter)
                 .SortByDescending(x => x.CreatedAt).ToListAsync(ct);
@@ -1294,8 +1299,9 @@ public class HostedSiteService : IHostedSiteService
         if (share == null || share.IsRevoked)
             return new ShareViewResult { Error = "分享链接不存在或已失效", HttpStatus = 404, ErrorCode = "not_found" };
 
-        if (share.ExpiresAt.HasValue && share.ExpiresAt.Value < DateTime.UtcNow)
+        if (ShouldRejectExpiredShare(share, DateTime.UtcNow))
             return new ShareViewResult { Error = "分享链接已过期", HttpStatus = 400, ErrorCode = "expired" };
+        await HealVisitShareIfNeededAsync(share, ct);
 
         // Visibility 校验抽成共享方法 EnforceShareVisibilityAsync，
         // SaveSharedSiteAsync 等其他访问入口也走同一关卡（PR #685 Codex P2 反馈：
@@ -1394,6 +1400,45 @@ public class HostedSiteService : IHostedSiteService
     // 改标题 / 改可见性等元数据操作顶变，导致没改内容却击穿缓存。
     internal static DateTime EffectiveContentVersion(HostedSite site)
         => site.ContentVersion == default ? site.CreatedAt : site.ContentVersion;
+
+    internal static bool IsVisitShare(WebPageShareLink share)
+        => string.Equals(share.Purpose, "visit", StringComparison.OrdinalIgnoreCase);
+
+    internal static bool ShouldRejectExpiredShare(WebPageShareLink share, DateTime now)
+        => !IsVisitShare(share) && share.ExpiresAt.HasValue && share.ExpiresAt.Value < now;
+
+    private async Task HealVisitShareIfNeededAsync(WebPageShareLink share, CancellationToken ct)
+    {
+        if (!IsVisitShare(share)) return;
+
+        var updates = new List<UpdateDefinition<WebPageShareLink>>();
+        var oldExpiresAt = share.ExpiresAt;
+        if (share.ExpiresAt.HasValue)
+        {
+            updates.Add(Builders<WebPageShareLink>.Update.Set(x => x.ExpiresAt, (DateTime?)null));
+            share.ExpiresAt = null;
+        }
+        if (share.Visibility != "public")
+        {
+            updates.Add(Builders<WebPageShareLink>.Update.Set(x => x.Visibility, "public"));
+            share.Visibility = "public";
+        }
+        if (updates.Count == 0) return;
+
+        updates.Add(Builders<WebPageShareLink>.Update.Push(x => x.RenewalHistory, new ShareRenewalEvent
+        {
+            Action = "renewed",
+            ByUserId = share.CreatedBy,
+            OldExpiresAt = oldExpiresAt,
+            NewExpiresAt = null,
+            Note = "visit link auto-healed to permanent public access",
+        }));
+
+        await _db.WebPageShareLinks.UpdateOneAsync(
+            x => x.Id == share.Id,
+            Builders<WebPageShareLink>.Update.Combine(updates),
+            cancellationToken: ct);
+    }
 
     public static bool IsPdfWrapperSite(HostedSite site, out HostedSiteFile? pdf)
     {
