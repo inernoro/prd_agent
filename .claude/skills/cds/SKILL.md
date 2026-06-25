@@ -1,6 +1,6 @@
 ---
 name: cds
-version: 0.6.8
+version: 0.7.1
 description: CDS (Cloud Dev Space) core skill — hosts the canonical cdscli Python CLI, handles authentication (static AI_ACCESS_KEY / dynamic pairing / project key), manages env vars and project keys, owns CDS service self-update, defines the preview-URL slug formula, and acts as dispatcher when the user's intent is ambiguous between cold-path scanning and hot-path debugging. Activates when the user mentions CDS generically without specifying scan-or-deploy, configures CDS credentials, manages env / keys, updates the CDS service code itself, or asks about preview URL conventions. Does NOT directly perform project scanning (delegates to cds-project-scan, the cold path) or deployment debugging (delegates to cds-deploy-pipeline, the hot path). Trigger phrases include "cds 认证", "AI_ACCESS_KEY", "项目 key", "cds 自更新", "cds self-update", "预览地址公式", "配 cds 环境变量", "/cds", "/cds-auth", and the bare word "cds" when the user has not yet picked a direction.
 ---
 

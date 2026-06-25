@@ -39,6 +39,38 @@ cdscli report list --folder <folderId>
 - 文件夹：`GET/POST/PATCH/DELETE /api/report-folders`（`ReportFolder{ id,name,projectId?,sortOrder,createdAt }`）；删文件夹其中报告改未归类、不删内容；项目级 key 只能管自己项目（沿用 PR #865 鉴权）。
 - 深链：`/reports?project=&folder=&report=`（前端 `ReportsPage` 读 query 自动选中 + 高亮文件夹）。
 
+## 元数据 + 部署上下文（看板 / 跨系统 / PR 回写）
+
+`report create` 可带验收元数据，落进报告供 E2 看板、E4 回写 PR、WS3 跨系统展示用：
+
+```
+cdscli report create --title "..." --html-file r.html \
+  --verdict pass|conditional|fail --tier "L2 视觉回归" \
+  --branch <分支> --commit <sha> --pr <PR#> --deploy-mode fast|source \
+  --defects 'p0=0,p1=2'           # 或 JSON '{"p0":0,"p1":2}'
+```
+
+- E1：关联分支（`--branch-id`）时后端自动补全 branch/commit 部署上下文。
+- E2 看板：报告页顶部按 verdict 统计通过率，列表行带 verdict 徽章。
+- E4 回写 PR：报告带 `--pr` + 项目已 link GitHub → 报告阅读器「回写 PR」把 verdict 作
+  PR 评论 + check-run（pass→success / conditional→neutral / fail→failure）推回。
+- E6 匿名分享：报告阅读器「匿名分享」生成只读 `/r/<token>`，对外/未登录可看，可撤销。
+
+## MAP-KBTP peer-sync（让 MAP 等系统拉取 CDS 报告）
+
+职责分离：验收报告归 CDS，MAP 通过知识库开放协议（MAP-KBTP v1）整库 pull。CDS 作只读源 peer。
+
+```
+cdscli peer pairing-code --name "给谁"   # 生成一次性配对码(明文仅一次) + 本 CDS nodeId
+cdscli peer nodes                         # 列出已配对节点
+cdscli peer revoke <id>                   # 撤销节点(其请求立即 401)
+```
+
+操作：在 MAP「同步中心」新增 CDS 节点，填本 CDS 的 peer-sync baseUrl + 上面的配对码，
+选 `document-store` 资源、itemId=CDS 项目 id（全局报告用 `__cds_global__`）→ pull。
+协议端点：`/api/peer-sync/{handshake,ping,capabilities,resources/document-store/{signature,export,apply}}`，
+HMAC-SHA256（`METHOD\npath\nts\nsha256(body)`）+ ±5 分钟时间窗。apply 为 no-op（CDS 只读源）。
+
 ## 已知边界
 
 - SSE/EventSource 长连接不走 `route.fulfill`（取静态状态截图够用，实时流不适合）。
