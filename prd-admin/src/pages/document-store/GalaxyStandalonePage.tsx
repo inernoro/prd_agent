@@ -10,10 +10,11 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, ToggleLeft, ToggleRight } from 'lucide-react';
+import { ArrowLeft, ToggleLeft, ToggleRight, Layers, Folder, FileText } from 'lucide-react';
 import { getDocumentStoreReal } from '@/services/real/documentStore';
 import {
   DocumentGalaxyView,
+  colorForDocType,
   type GalaxyCrumb,
   type GalaxyLabelMode,
 } from './DocumentGalaxyView';
@@ -147,24 +148,31 @@ export function GalaxyStandalonePage() {
             crumbs.map((c, i) => {
               const isLast = i === crumbs.length - 1;
               const clickable = c.kind === 'leaf' && !!c.entryId;
+              // 每段左侧 kind 图标，让人一眼分清是分类/应用/子模块/文档：
+              //  第 1 段=分类(Layers)、文档叶=按 docType 上色的 FileText、其余分组=Folder
+              const isLeaf = c.kind === 'leaf';
+              const iconColor = isLeaf ? colorForDocType(c.docType) : i === 0 ? '#ffe08a' : '#9fb4d4';
+              const Icon = isLeaf ? FileText : i === 0 ? Layers : Folder;
               return (
                 <span key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
                   {i > 0 && <span style={{ color: '#4d4f5c', fontSize: 12 }}>/</span>}
                   <span
                     onClick={clickable ? () => openEntryRef.current?.(c.entryId!) : undefined}
-                    title={c.name}
+                    title={isLeaf && c.docType ? `${c.docType} · ${c.name}` : c.name}
                     style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4,
                       fontSize: 12.5,
                       color: isLast ? '#eef0f6' : '#9a9cab',
                       fontWeight: isLast ? 600 : 400,
                       cursor: clickable ? 'pointer' : 'default',
                       maxWidth: 240,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
+                      minWidth: 0,
                     }}
                   >
-                    {c.name}
+                    <Icon size={12} style={{ color: iconColor, flexShrink: 0 }} />
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
                   </span>
                 </span>
               );
