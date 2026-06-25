@@ -243,6 +243,25 @@ export function createPeerSyncRouter(deps: PeerSyncRouterDeps): Router {
     });
   });
 
+  // 1b) 两阶段握手的 confirm/finalize：CDS 是「握手即提交」单阶段 peer，不实现两阶段。
+  // 必须返回 404，让 MAP 发起方（AdminPeerNodesController）的 legacy 判定
+  // （`!confirm.Ok && confirm.Status == 404`）命中、按 legacy peer 继续配对；
+  // 若被登录网关拦成 401 或落 SPA fallback 200，MAP 会判「确认失败」而取消配对。
+  router.post('/handshake/confirm', (_req: Request, res: Response) =>
+    fail(res, 404, 'NOT_FOUND', 'CDS 为单阶段 peer，握手即提交，无 confirm 阶段'));
+  router.post('/handshake/finalize', (_req: Request, res: Response) =>
+    fail(res, 404, 'NOT_FOUND', 'CDS 为单阶段 peer，无 finalize 阶段'));
+  // cancel：MAP 在配对失败回滚时best-effort调用。CDS 握手时已落 PeerNode，
+  // 这里按 initiatorNodeId 删除半连接节点，返回 200（MAP 忽略其结果）。
+  router.post('/handshake/cancel', (req: Request, res: Response) => {
+    const initiatorNodeId = String(jsonBodyOf(req).initiatorNodeId || '').trim();
+    if (initiatorNodeId) {
+      const node = stateService.getPeerNodeByPartnerId(initiatorNodeId);
+      if (node) stateService.deletePeerNode(node.id);
+    }
+    return ok(res, { cancelled: true });
+  });
+
   // 2) ping — 连通性 + 签名自检。
   router.get('/ping', (req: Request, res: Response) => {
     if (!requireSig(req, res)) return;

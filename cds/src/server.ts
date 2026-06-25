@@ -706,6 +706,9 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /report-folders': '列出报告文件夹',
     'POST /report-folders': '新建报告文件夹',
     'POST /peer-sync/handshake': 'peer-sync 配对握手',
+    'POST /peer-sync/handshake/confirm': 'peer-sync 握手确认',
+    'POST /peer-sync/handshake/finalize': 'peer-sync 握手完成',
+    'POST /peer-sync/handshake/cancel': 'peer-sync 握手取消',
     'GET /peer-sync/ping': 'peer-sync 连通自检',
     'GET /peer-sync/capabilities': 'peer-sync 能力查询',
     'POST /peer-sync/admin/pairing-codes': '生成 peer-sync 配对码',
@@ -1810,10 +1813,12 @@ export function createServer(deps: ServerDeps): express.Express {
       // E6 验收报告匿名分享：`/r/:token` 由 token 自鉴权（不可枚举随机串），公开只读。
       if (req.method === 'GET' && /^\/r\/[^/]+$/.test(req.path)) return next();
       // WS3 MAP-KBTP peer-sync 协议端点：由配对码 / HMAC 自鉴权（路由内校验），放行登录网关。
-      // 注意只放行协议端点，`/api/peer-sync/admin/*` 不在此列——管理端点仍需 CDS 登录。
-      if (req.method === 'POST' && req.path === '/api/peer-sync/handshake') return next();
-      if (req.method === 'GET' && (req.path === '/api/peer-sync/ping' || req.path === '/api/peer-sync/capabilities')) return next();
-      if (req.method === 'POST' && /^\/api\/peer-sync\/resources\/[^/]+\/(signature|export|apply)$/.test(req.path)) return next();
+      // 放行整个 /api/peer-sync/ 前缀（admin 除外）——含 MAP 发起方探测的 handshake/confirm、
+      // finalize、cancel 等子路径，必须落到 peer-sync 路由（CDS 是单阶段 peer，confirm/finalize
+      // 返回 404 让 MAP 识别为 legacy peer 继续配对），而不是被登录网关拦成 401——401 会使 MAP 的
+      // legacy 判定（依赖 404，见 prd-api AdminPeerNodesController）失效而取消配对。协议端点各自
+      // 在路由内做配对码 / HMAC 鉴权；`/api/peer-sync/admin/*` 不放行，管理端点仍需 CDS 登录。
+      if (req.path.startsWith('/api/peer-sync/') && !req.path.startsWith('/api/peer-sync/admin/')) return next();
       if (/\.(css|js|ico|png|svg|woff2?)$/i.test(req.path)) return next();
       // Allow internal requests from widget proxy (/_cds/ → master)
       if (req.headers['x-cds-internal'] === '1') {

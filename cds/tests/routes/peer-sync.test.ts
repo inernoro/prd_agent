@@ -122,6 +122,21 @@ describe('peer-sync MAP-KBTP endpoints', () => {
     expect(bogus.status).toBe(401);
   });
 
+  it('handshake/confirm + finalize return 404 so MAP treats CDS as a legacy single-phase peer', async () => {
+    const { code } = service.createPeerPairingCode();
+    const hs = await request(server, 'POST', '/api/peer-sync/handshake', JSON.stringify({ pairingCode: code, initiatorNodeId }));
+    expect(hs.status).toBe(200);
+    // MAP 发起方握手后会 POST confirm；CDS 单阶段 → 必须 404（不是登录网关 401），
+    // 否则 MAP 的 legacyPeerCommittedOnHandshake 判定失效会取消配对。
+    const confirm = await request(server, 'POST', '/api/peer-sync/handshake/confirm', JSON.stringify({ pairingCode: code, initiatorNodeId, sharedSecret: 'x' }));
+    expect(confirm.status).toBe(404);
+    const finalize = await request(server, 'POST', '/api/peer-sync/handshake/finalize', JSON.stringify({ pairingCode: code, initiatorNodeId }));
+    expect(finalize.status).toBe(404);
+    // cancel 删除半连接节点并返回 200。
+    const cancel = await request(server, 'POST', '/api/peer-sync/handshake/cancel', JSON.stringify({ pairingCode: code, initiatorNodeId }));
+    expect(cancel.status).toBe(200);
+  });
+
   it('ping + capabilities succeed with a valid signature', async () => {
     const { secret } = await pairAndGetSecret();
     const p = sign(secret, 'GET', '/api/peer-sync/ping', '');
