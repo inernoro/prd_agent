@@ -24,11 +24,18 @@ export async function launch(cfg, opts = {}) {
   autoFindings.length = 0;
   const session = _bumpCaptureSession(); // 令旧会话残留监听器失效（Bugbot #6）
   const sc = cfg.screenshot || {};
-  const browser = await chromium.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+  // 代理环境（云端/CI 出口代理）：仅当显式设置 ACC_BROWSER_PROXY 时给 Chromium 配代理，
+  // 不影响本地直连运行。TLS 由出口代理重签，浏览器需信任其 CA（云端镜像已注入 NSS 信任）。
+  const launchOpts = { args: ['--no-sandbox', '--disable-setuid-sandbox'] };
+  if (process.env.ACC_BROWSER_PROXY) launchOpts.proxy = { server: process.env.ACC_BROWSER_PROXY };
+  const browser = await chromium.launch(launchOpts);
+  // opts.viewport 允许调用方覆盖视口（手机端验收时传 {width:390,height:844}）。
+  const vp = opts.viewport || { width: sc.width || 1440, height: sc.height || 900 };
   const ctxOpts = {
-    viewport: { width: sc.width || 1440, height: sc.height || 900 },
+    viewport: vp,
     deviceScaleFactor: sc.deviceScaleFactor || 2,
     ignoreHTTPSErrors: true, // 出口代理证书
+    ...(opts.isMobile ? { isMobile: true, hasTouch: true } : {}),
   };
   // v1.0（issue #605 二.1）：可选过程视频。比 N 张静态图更能让人 3 秒看懂"它怎么走的"。
   // 开法：launch(cfg, { recordVideoDir: outDir }) 或 cfg.screenshot.recordVideoDir。归档作可选附件。

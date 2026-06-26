@@ -31,6 +31,8 @@ export const MOBILE_COMPAT_REGISTRY: Record<string, MobileCompatEntry> = {
   '/defect-agent':            { level: 'full' },
   '/report-agent':            { level: 'full' },
   '/skills':                  { level: 'full' },
+  // 日志页手机端已专项适配：隐藏统计图、表格精简为 3 个核心列撑满视口、控制条合并为单条横滚
+  '/logs':                    { level: 'full' },
   '/literary-agent':          { level: 'full', note: '阅读/查看正常，深度编辑建议 PC' },
   '/marketplace':             { level: 'full' },
   '/library':                 { level: 'full' },
@@ -40,7 +42,6 @@ export const MOBILE_COMPAT_REGISTRY: Record<string, MobileCompatEntry> = {
   '/executive':               { level: 'limited', note: '图表较宽，横屏查看更佳' },
   '/users':                   { level: 'limited', note: '表格较宽，横向滑动查看' },
   '/mds':                     { level: 'limited', note: '模型配置项较多，建议 PC 编辑' },
-  '/logs':                    { level: 'limited', note: '日志表格较宽，建议横屏' },
   '/settings':                { level: 'limited' },
   '/prompts':                 { level: 'limited' },
   '/automations':             { level: 'limited' },
