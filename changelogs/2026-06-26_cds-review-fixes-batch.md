@@ -2,3 +2,4 @@
 | perf | cds | peer-sync export 改异步读报告正文（libuv 线程池），避免大批量大报告导出阻塞单进程事件循环 |
 | security | cds | peer-sync handshake/cancel 改为要求 HMAC 签名且只能撤销签名所属节点，防任意人凭 node id 撤销配对 |
 | security | prd-api | CdsReportImportService 导入到显式 storeId 时校验归属，防把 CDS 报告写进别人私有知识库 |
+| fix | prd-api | CdsReportImportService 增量游标只对默认全量镜像（无 projectId 过滤+同源）生效，过滤/换源导入改全量扫描且不回写共享水位，防项目 A 的游标永久跳过项目 B 旧报告 |

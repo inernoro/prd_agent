@@ -58,12 +58,23 @@ public class CdsReportImportService
         // 1) find-or-create 目标库（AppKey=cds-reports，每个用户一份「CDS 验收报告」镜像库）
         var store = await ResolveStoreAsync(userId, opts.StoreId, ct);
 
-        // 2) 列表（增量水位 = 库的 PeerSyncLastAt）
+        // 增量水位只对「默认全量镜像」语义成立：无 projectId 过滤 + 与上次同一个 CDS 源。
+        // 共享的 PeerSyncLastAt 是「上次拉全量到哪」的游标；一旦过滤（指定 projectId）或换了
+        // CDS 源，复用它会让 updatedSince 把另一作用域里更早更新的报告永久跳过 —— 例如先导项目 A
+        // 把游标戳到 now，再导项目 B 时 B 的旧报告 updatedAt < now 就被漏掉（Codex P2）。
+        // 故过滤/换源导入一律全量扫描，靠正文 contentHash 去重保证幂等，且**不回写**共享水位。
+        var isDefaultScopeImport =
+            string.IsNullOrWhiteSpace(opts.ProjectId)
+            && (string.IsNullOrWhiteSpace(store.PeerSyncNodeBaseUrl)
+                || string.Equals(store.PeerSyncNodeBaseUrl.TrimEnd('/'), baseUrl, StringComparison.OrdinalIgnoreCase));
+        var useIncrementalCursor = isDefaultScopeImport && !opts.Full;
+
+        // 2) 列表（增量水位 = 库的 PeerSyncLastAt，仅默认全量镜像启用）
         var listUrl = $"{baseUrl}/api/reports";
         var query = new List<string>();
         if (!string.IsNullOrWhiteSpace(opts.ProjectId))
             query.Add("projectId=" + Uri.EscapeDataString(opts.ProjectId!));
-        if (!opts.Full && store.PeerSyncLastAt.HasValue)
+        if (useIncrementalCursor && store.PeerSyncLastAt.HasValue)
             query.Add("updatedSince=" + Uri.EscapeDataString(store.PeerSyncLastAt.Value.ToUniversalTime().ToString("o")));
         if (query.Count > 0) listUrl += "?" + string.Join("&", query);
 
@@ -214,17 +225,25 @@ public class CdsReportImportService
             }
         }
 
-        // 4) 落水位 + 同步摘要（下次只增量）
-        var newWatermark = watermark > DateTime.MinValue ? watermark : DateTime.UtcNow;
+        // 4) 落同步摘要（下次只增量）
+        var updates = new List<UpdateDefinition<DocumentStore>>
+        {
+            Builders<DocumentStore>.Update.Set(s => s.PeerSyncStatus, "idle"),
+            Builders<DocumentStore>.Update.Set(s => s.PeerSyncNodeName, "CDS 验收中心"),
+            Builders<DocumentStore>.Update.Set(s => s.PeerSyncNodeBaseUrl, baseUrl),
+            Builders<DocumentStore>.Update.Set(s => s.PeerSyncLastResult, $"导入 {result.Imported} 新 / {result.Updated} 更新 / {result.Skipped} 跳过 / {result.Failed} 失败"),
+            Builders<DocumentStore>.Update.Set(s => s.UpdatedAt, DateTime.UtcNow),
+        };
+        // 只有默认全量镜像才回写增量游标 PeerSyncLastAt；过滤/换源导入若回写，会污染默认镜像的
+        // updatedSince 游标，使另一作用域的旧报告被永久跳过（Codex P2）。
+        if (isDefaultScopeImport)
+        {
+            var newWatermark = watermark > DateTime.MinValue ? watermark : DateTime.UtcNow;
+            updates.Add(Builders<DocumentStore>.Update.Set(s => s.PeerSyncLastAt, newWatermark));
+        }
         await _db.DocumentStores.UpdateOneAsync(
             s => s.Id == store.Id,
-            Builders<DocumentStore>.Update
-                .Set(s => s.PeerSyncLastAt, newWatermark)
-                .Set(s => s.PeerSyncStatus, "idle")
-                .Set(s => s.PeerSyncNodeName, "CDS 验收中心")
-                .Set(s => s.PeerSyncNodeBaseUrl, baseUrl)
-                .Set(s => s.PeerSyncLastResult, $"导入 {result.Imported} 新 / {result.Updated} 更新 / {result.Skipped} 跳过 / {result.Failed} 失败")
-                .Set(s => s.UpdatedAt, DateTime.UtcNow),
+            Builders<DocumentStore>.Update.Combine(updates),
             cancellationToken: ct);
 
         _logger.LogInformation(
