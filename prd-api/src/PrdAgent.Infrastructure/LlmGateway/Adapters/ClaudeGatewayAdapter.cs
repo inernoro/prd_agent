@@ -136,6 +136,36 @@ public class ClaudeGatewayAdapter : IGatewayAdapter
             result["temperature"] = temp?.DeepClone();
         }
 
+        // ── 协议下沉·透传保真（不再「只抄 5 个字段」拍平采样参数）──
+        // 历史 bug：本方法早期只复制 model/max_tokens/messages/stream/temperature，
+        // 调用方（含 Open Platform OpenAI 兼容代理，body 全量透传）设置的 top_p / top_k /
+        // stop 等被静默丢弃 → 路由到 Claude 池时采样行为与用户意图不符。
+        // 这里只透传「Claude Messages API 原生兼容」的字段，零 400 风险：
+        //   - top_p          ：OpenAI / Claude 同名同义，直接透传
+        //   - top_k          ：Claude 原生支持（OpenAI 无此字段，存在即透传）
+        //   - stop → stop_sequences：语义相同但字段名不同，需改名（OpenAI 用 stop，
+        //                       Claude 用 stop_sequences；接受 string 或 string[]）
+        // 注意：frequency_penalty / presence_penalty / n / logit_bias / response_format /
+        //   stream_options 等是 OpenAI 专有、Claude 会 400，故「不」透传（白名单而非黑名单）。
+        //   tools / tool_choice 两侧 schema 不同（OpenAI function 包裹 vs Claude input_schema），
+        //   需协议原生转换器处理，属 F4「能力描述符 + 协议原生处理器」一波，见
+        //   doc/design.llm-gateway-unification.md 决策一。本次不做半成品转换。
+        if (openaiBody.TryGetPropertyValue("top_p", out var topP) && topP is not null)
+        {
+            result["top_p"] = topP.DeepClone();
+        }
+        if (openaiBody.TryGetPropertyValue("top_k", out var topK) && topK is not null)
+        {
+            result["top_k"] = topK.DeepClone();
+        }
+        if (openaiBody.TryGetPropertyValue("stop", out var stop) && stop is not null)
+        {
+            // OpenAI stop 允许 string 或 string[]；Claude stop_sequences 要求 string[]。
+            result["stop_sequences"] = stop is JsonArray
+                ? stop.DeepClone()
+                : new JsonArray(stop.DeepClone());
+        }
+
         return result;
     }
 

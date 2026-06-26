@@ -509,6 +509,90 @@ public class LlmGatewayTests
 
     #endregion
 
+    #region Claude Protocol Passthrough Tests
+
+    // 守护"协议归一有损"修复（F3a）：ConvertToClaudeFormat 不再「只抄 5 个字段」拍平采样参数。
+    // Claude 原生兼容的 top_p / top_k 必须透传；OpenAI 的 stop 必须改名为 Claude 的 stop_sequences；
+    // OpenAI 专有、Claude 会 400 的 frequency_penalty 等「不」透传（白名单而非黑名单）。
+    // ConvertToClaudeFormat 为私有静态，走反射调用。
+    private static JsonObject InvokeConvertToClaudeFormat(JsonObject openaiBody)
+    {
+        var m = typeof(ClaudeGatewayAdapter).GetMethod(
+            "ConvertToClaudeFormat",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        Assert.NotNull(m);
+        return (JsonObject)m!.Invoke(null, new object[] { openaiBody, false })!;
+    }
+
+    private static JsonObject BaseClaudeBody() => new()
+    {
+        ["model"] = "claude-x",
+        ["max_tokens"] = 1024,
+        ["messages"] = new JsonArray { new JsonObject { ["role"] = "user", ["content"] = "hi" } }
+    };
+
+    [Fact]
+    public void ConvertToClaudeFormat_TopPAndTopK_ArePassedThrough()
+    {
+        var body = BaseClaudeBody();
+        body["top_p"] = 0.9;
+        body["top_k"] = 40;
+
+        var result = InvokeConvertToClaudeFormat(body);
+
+        Assert.Equal(0.9, (double)result["top_p"]!);
+        Assert.Equal(40, (int)result["top_k"]!);
+    }
+
+    [Fact]
+    public void ConvertToClaudeFormat_StopString_BecomesStopSequencesArray()
+    {
+        var body = BaseClaudeBody();
+        body["stop"] = "\n\n";
+
+        var result = InvokeConvertToClaudeFormat(body);
+
+        var seq = Assert.IsType<JsonArray>(result["stop_sequences"]);
+        Assert.Single(seq);
+        Assert.Equal("\n\n", (string?)seq[0]);
+        Assert.Null(result["stop"]); // OpenAI 字段名不应残留
+    }
+
+    [Fact]
+    public void ConvertToClaudeFormat_StopArray_IsPreservedAsStopSequences()
+    {
+        var body = BaseClaudeBody();
+        body["stop"] = new JsonArray { "END", "STOP" };
+
+        var result = InvokeConvertToClaudeFormat(body);
+
+        var seq = Assert.IsType<JsonArray>(result["stop_sequences"]);
+        Assert.Equal(2, seq.Count);
+        Assert.Equal("END", (string?)seq[0]);
+        Assert.Equal("STOP", (string?)seq[1]);
+    }
+
+    [Fact]
+    public void ConvertToClaudeFormat_OpenAIOnlyParams_AreNotPassedThrough()
+    {
+        // frequency_penalty / presence_penalty / n / stream_options 是 OpenAI 专有，
+        // Claude Messages API 会 400 → 必须被白名单挡掉。
+        var body = BaseClaudeBody();
+        body["frequency_penalty"] = 0.5;
+        body["presence_penalty"] = 0.3;
+        body["n"] = 2;
+        body["stream_options"] = new JsonObject { ["include_usage"] = true };
+
+        var result = InvokeConvertToClaudeFormat(body);
+
+        Assert.Null(result["frequency_penalty"]);
+        Assert.Null(result["presence_penalty"]);
+        Assert.Null(result["n"]);
+        Assert.Null(result["stream_options"]);
+    }
+
+    #endregion
+
     #region Helper Methods
 
     private static LlmGateway CreateTestGateway()

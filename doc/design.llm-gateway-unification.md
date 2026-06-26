@@ -92,6 +92,12 @@ key      = model.ApiKey ?? platform.ApiKey
 
 **反例（必须记住）**：识图不准 = `LLMAttachment` 没有 `detail` 字段、`GatewayLLMClient.BuildRequestBody` 只写 url 不写 detail → 7/9 视觉路径默认 `detail:"auto"` 低保真。这就是"全归一/拍平有损"的活标本。F1 已修（`LLMAttachment.Detail` + 透传默认 "high"）。
 
+**落地进度（逐层可停）**：
+
+- **F1 识图不准** —— 已修并验证（branch-image 构建绿 + 反射单测 `BuildRequestBody_ImageAttachment*`）。
+- **F3a Claude 采样参数停止拍平** —— 已修。`ClaudeGatewayAdapter.ConvertToClaudeFormat` 原先"只抄 model/max_tokens/messages/stream/temperature 五个字段"，把调用方设的 `top_p`/`top_k`/`stop` 静默丢弃。现透传 Claude 原生兼容的 `top_p`/`top_k`，并把 OpenAI 的 `stop` 改名为 Claude 的 `stop_sequences`（string→array）。**白名单而非黑名单**：`frequency_penalty`/`presence_penalty`/`n`/`stream_options` 等 OpenAI 专有字段 Claude 会 400，继续挡掉。单测 `ConvertToClaudeFormat_*` 守护。
+- **F2 / F3b（tools/tool_calls）——并入 F4，需先有消费者再做，不半成品**。取证：Open Platform 的 `/api/v1/chat/completions`（`OpenApiController.cs`）是 **OpenAI 兼容代理**，`RequestBody = body` 全量透传客户端请求体——函数调用客户端**会**传 `tools`/`tool_choice`。当前两处有损：① 请求侧路由到 Claude 池时 `tools` 被 `ConvertToClaudeFormat` 丢（且两侧 schema 不同：OpenAI `{type:function, function:{...}}` vs Claude `{name, input_schema}`，**不能盲透传**，需协议原生转换）；② 响应侧 `NonStreamChatAsync` 硬编码 `content = resp.Content`（纯文本），上游 `tool_calls` 从不回传，流式路径也无 `ToolCall` chunk。这正是"协议归一有损"在函数调用上的实证。修法属决策一本体（能力描述符决定"带 tools 的请求只能路由到支持 function-calling 的协议/池" + 协议原生 tools 转换器 + 响应 `Extensions` 容器透传 tool_calls），留待 F4 方向定后整波做。
+
 把现有 `IExchangeTransformer` 提升为这个**协议层**：openai/claude 两个 Gateway Adapter、三个 Image Adapter、五个 Transformer 收成"协议处理器"，按 protocol 字符串索引，**但各自保真、不互相拍平**。Exchange 不再是"特殊平台"，只是"一个带自己 url/key + 非 passthrough 协议的模型"。
 
 协议清单收敛到一个**小而封闭**的集合（不再"来个供应商写个 adapter"）：
