@@ -856,6 +856,8 @@ interface GalaxyCanvasProps {
   flyToEntryId?: string | null;
   /** 外层请求聚焦某枢纽（面包屑下拉选兄弟分组时用；带单调递增 token，重复点同一 id 也能再次触发）。 */
   focusHubReq?: { id: string; n: number } | null;
+  /** 阅读抽屉是否打开：打开时用 setViewOffset 把整个星系投影左移，让聚焦星居中于左半屏（而非全屏中心被抽屉盖住）。 */
+  drawerOpen?: boolean;
 }
 
 /**
@@ -863,7 +865,7 @@ interface GalaxyCanvasProps {
  * 选择性 bloom 双 pass。type 筛选通过 typeOn 同步给场景（dim/hide leaf）。
  * unmount / galaxy 变化时彻底 dispose，避免 React 重复挂载泄漏。
  */
-function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocusChange, flyToEntryId, focusHubReq }: GalaxyCanvasProps) {
+function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocusChange, flyToEntryId, focusHubReq, drawerOpen }: GalaxyCanvasProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   // 选中文档的发光旋转指针环（DOM 覆盖层，渲染循环每帧把它定位到选中星的屏幕投影处）
   const selRingRef = useRef<HTMLDivElement>(null);
@@ -917,10 +919,19 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
   const clearSelectionRef = useRef<(() => void) | null>(null);
   // 聚焦某枢纽命令引用（面包屑下拉选兄弟分组时用）
   const focusHubRef = useRef<((id: string) => void) | null>(null);
+  // 抽屉开合 → 相机投影左移（左右分屏时聚焦星居中于左半屏）
+  const drawerOpenRef = useRef(drawerOpen);
+  drawerOpenRef.current = drawerOpen;
+  const applyViewOffsetRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     applyFilterRef.current?.();
   }, [typeOn]);
+
+  // 抽屉开合变化 → 重算投影偏移
+  useEffect(() => {
+    applyViewOffsetRef.current?.();
+  }, [drawerOpen]);
 
   // 外层打开某文档（flyToEntryId 变化）→ 相机飞到它并进入持续选中态；关闭则清除选中态
   useEffect(() => {
@@ -983,6 +994,16 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
     // 演示版相机：fov 60、近 1 远 12000、起始位 (0,120,1050)
     const camera = new THREE.PerspectiveCamera(60, W / H, 1, 12000);
     camera.position.set(0, 120, 1050);
+
+    // 抽屉打开时：把投影窗口右移 inset/2（内容左移），使屏幕中心（聚焦星落点）落在左半可见区中心。
+    // 选中环/hover 卡/拾取都走 project(camera)/raycaster，自动跟随该偏移，不需额外处理。
+    const applyViewOffset = () => {
+      const inset = drawerOpenRef.current ? Math.min(760, W * 0.94) : 0;
+      if (inset > 0 && inset < W) camera.setViewOffset(W, H, inset / 2, 0, W, H);
+      else camera.clearViewOffset();
+    };
+    applyViewOffsetRef.current = applyViewOffset;
+    applyViewOffset();
 
     // 演示版 OrbitControls：影院级阻尼/惯性
     const controls = new OrbitControls(camera, renderer.domElement);
@@ -1791,6 +1812,7 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       H = mount.clientHeight || 1;
       camera.aspect = W / H;
       camera.updateProjectionMatrix();
+      applyViewOffset(); // 尺寸变了重算抽屉投影偏移（W 变 → inset 变）
       renderer.setSize(W, H);
       bloomComposer.setSize(W, H);
       finalComposer.setSize(W, H);
@@ -1806,6 +1828,7 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       recenterRef.current = null;
       clearSelectionRef.current = null;
       focusHubRef.current = null;
+      applyViewOffsetRef.current = null;
       cancelAnimationFrame(rafId);
       ro.disconnect();
       window.removeEventListener('resize', resize);
@@ -2541,6 +2564,130 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
     };
   }, [storeId]);
 
+  // 关系链面包屑（透明，无药丸底盒）—— 渲染在顶栏里（第一层）。每段带 ▾ 跳同级兄弟下拉。
+  const breadcrumbNode =
+    galaxy && crumbs.length > 0 ? (
+      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'nowrap', gap: 4, minWidth: 0, overflow: 'hidden' }}>
+        {crumbs.map((c, i) => {
+          const isLast = i === crumbs.length - 1;
+          const isLeaf = c.kind === 'leaf';
+          const clickable = isLeaf && !!c.entryId;
+          const iconColor = isLeaf ? colorForDocType(c.docType) : i === 0 ? '#ffe08a' : '#9fb4d4';
+          const Icon = isLeaf ? FileText : i === 0 ? Layers : Folder;
+          const parentNode = i === 0 ? galaxy.root : (nodeIndex.get(crumbs[i - 1].id)?.node ?? null);
+          const siblings = parentNode ? parentNode.children : [];
+          const hasDropdown = siblings.length > 0;
+          const dropdownOpen = openCrumbIdx === i;
+          return (
+            <span key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, position: 'relative' }}>
+              {i > 0 && <span style={{ color: '#4d4f5c', fontSize: 12 }}>/</span>}
+              <span
+                onClick={
+                  hasDropdown
+                    ? () => setOpenCrumbIdx((cur) => (cur === i ? -1 : i))
+                    : clickable
+                      ? () => setOpenEntryId(c.entryId!)
+                      : undefined
+                }
+                title={isLeaf && c.docType ? `${c.docType} · ${c.name}` : c.name}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  fontSize: 12,
+                  color: isLast ? '#eef0f6' : '#9a9cab',
+                  fontWeight: isLast ? 600 : 400,
+                  cursor: hasDropdown || clickable ? 'pointer' : 'default',
+                  maxWidth: 200,
+                  minWidth: 0,
+                }}
+              >
+                <Icon size={12} style={{ color: iconColor, flexShrink: 0 }} />
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
+                {hasDropdown && <ChevronDown size={11} style={{ opacity: 0.6, flexShrink: 0 }} />}
+              </span>
+              {dropdownOpen && hasDropdown && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 'calc(100% + 8px)',
+                    left: 0,
+                    width: 280,
+                    maxWidth: '80vw',
+                    maxHeight: '52vh',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    background: 'rgba(15,16,24,0.97)',
+                    backdropFilter: 'blur(16px) saturate(140%)',
+                    WebkitBackdropFilter: 'blur(16px) saturate(140%)',
+                    border: '1px solid rgba(255,255,255,0.14)',
+                    borderRadius: 10,
+                    boxShadow: '0 14px 38px rgba(0,0,0,0.6)',
+                    zIndex: 60,
+                    overflow: 'hidden',
+                  }}
+                >
+                  <div style={{ flexShrink: 0, fontSize: 11, color: '#8a8c9a', padding: '8px 12px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                    同级（{siblings.length}） · 点击跳转
+                  </div>
+                  <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: '6px 6px 8px' }}>
+                    {siblings.map((sib) => {
+                      const sibLeaf = sib.kind === 'leaf';
+                      const active = sib.id === c.id;
+                      return (
+                        <button
+                          key={sib.id}
+                          type="button"
+                          onClick={() => {
+                            if (sibLeaf) {
+                              if (sib.entryId) setOpenEntryId(sib.entryId);
+                            } else {
+                              requestFocusHub(sib.id);
+                            }
+                            setOpenCrumbIdx(-1);
+                          }}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                            width: '100%',
+                            textAlign: 'left',
+                            background: active ? 'rgba(255,255,255,0.06)' : 'transparent',
+                            border: 'none',
+                            borderRadius: 7,
+                            padding: '6px 8px',
+                            cursor: 'pointer',
+                            color: active ? '#f4f5fa' : '#dcdde6',
+                          }}
+                          onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.09)')}
+                          onMouseLeave={(e) => (e.currentTarget.style.background = active ? 'rgba(255,255,255,0.06)' : 'transparent')}
+                        >
+                          <span
+                            style={{
+                              width: 8,
+                              height: 8,
+                              borderRadius: '50%',
+                              flexShrink: 0,
+                              background: sibLeaf ? colorForDocType(sib.docType) : '#ffe08a',
+                              boxShadow: sibLeaf ? `0 0 5px ${colorForDocType(sib.docType)}` : 'none',
+                            }}
+                          />
+                          <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {sibLeaf ? leafDisplayName(sib, labelMode, contentTitles) : sib.name}
+                          </span>
+                          {!sibLeaf && <span style={{ flexShrink: 0, fontSize: 11, color: '#76788a' }}>{sib.docCount} 篇</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </span>
+          );
+        })}
+      </div>
+    ) : null;
+
   return (
     <div className="h-full w-full min-h-0 flex flex-col relative" style={{ background: '#02030a' }}>
       {/* 瘦身顶栏（类型 chips + 关系链面包屑已下放到画布左上角浮层，见下方）：
@@ -2588,8 +2735,15 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
             </span>
           )}
           <span style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.12)', flexShrink: 0 }} />
-          {/* flex 撑开把右侧统计/搜索/开关推到最右（类型 chips + 面包屑已挪到画布左上角浮层，见下方） */}
-          <div style={{ flex: 1, minWidth: 12 }} />
+          {/* 关系链面包屑（第一层，居中撑开把右侧统计/搜索/开关推到最右；类型 chips 仍在画布左上角浮层=第二层） */}
+          <div
+            ref={crumbOverlayRef}
+            style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}
+          >
+            {breadcrumbNode ?? (
+              <span style={{ fontSize: 11.5, color: '#5a5c6a' }}>点枢纽或文档，这里显示所在关系链</span>
+            )}
+          </div>
           <div style={{ fontSize: 11, color: '#8a8a96', borderLeft: '1px solid rgba(255,255,255,0.1)', paddingLeft: 8 }}>
             共 {galaxy.stats.totalDocs} 篇 · {linksFailed ? '引用未知' : `${galaxy.links.length} 引用`}
             {galaxy.stats.orphanCount > 0 && (
@@ -2786,11 +2940,9 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
           拖动旋转 · 两指滑动平移 · ⌘/Ctrl+滚轮缩放 · 悬停看详情/清单 · 点文档星阅读 · 点枢纽聚焦 · 双击空白继续旋转
         </div>
 
-        {/* 画布左上角浮层：关系链面包屑（浮动药丸）+ 类型 chips（透明，无底盒）。
-            wrapper 不拦截指针，交互子元素各自 pointerEvents:auto。 */}
+        {/* 画布左上角浮层（第二层）：仅类型 chips（透明，无底盒）。面包屑已上移到顶栏（第一层）。 */}
         {galaxy && (
           <div
-            ref={crumbOverlayRef}
             style={{
               position: 'absolute',
               top: 10,
@@ -2804,147 +2956,6 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
               maxWidth: 'min(70%, 640px)',
             }}
           >
-            {/* 关系链面包屑（浮动药丸，仅在有 crumbs 时出现；每段带 ▾ 跳同级兄弟下拉） */}
-            {crumbs.length > 0 && (
-              <div
-                style={{
-                  pointerEvents: 'auto',
-                  position: 'relative',
-                  display: 'flex',
-                  alignItems: 'center',
-                  flexWrap: 'wrap',
-                  gap: 4,
-                  background: 'linear-gradient(90deg, rgba(12,13,20,0.85), rgba(12,13,20,0.4))',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  borderRadius: 8,
-                  padding: '5px 10px',
-                  backdropFilter: 'blur(6px)',
-                  WebkitBackdropFilter: 'blur(6px)',
-                  maxWidth: '100%',
-                }}
-              >
-                {crumbs.map((c, i) => {
-                  const isLast = i === crumbs.length - 1;
-                  const isLeaf = c.kind === 'leaf';
-                  const clickable = isLeaf && !!c.entryId;
-                  const iconColor = isLeaf ? colorForDocType(c.docType) : i === 0 ? '#ffe08a' : '#9fb4d4';
-                  const Icon = isLeaf ? FileText : i === 0 ? Layers : Folder;
-                  // 该段的同级兄弟：i===0 取 root.children；否则取 crumb[i-1] 节点的 children
-                  const parentNode = i === 0 ? galaxy.root : (nodeIndex.get(crumbs[i - 1].id)?.node ?? null);
-                  const siblings = parentNode ? parentNode.children : [];
-                  const hasDropdown = siblings.length > 0;
-                  const dropdownOpen = openCrumbIdx === i;
-                  return (
-                    <span key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, position: 'relative' }}>
-                      {i > 0 && <span style={{ color: '#4d4f5c', fontSize: 12 }}>/</span>}
-                      <span
-                        onClick={
-                          hasDropdown
-                            ? () => setOpenCrumbIdx((cur) => (cur === i ? -1 : i))
-                            : clickable
-                              ? () => setOpenEntryId(c.entryId!)
-                              : undefined
-                        }
-                        title={isLeaf && c.docType ? `${c.docType} · ${c.name}` : c.name}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 4,
-                          fontSize: 12,
-                          color: isLast ? '#eef0f6' : '#9a9cab',
-                          fontWeight: isLast ? 600 : 400,
-                          cursor: hasDropdown || clickable ? 'pointer' : 'default',
-                          maxWidth: 200,
-                          minWidth: 0,
-                        }}
-                      >
-                        <Icon size={12} style={{ color: iconColor, flexShrink: 0 }} />
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
-                        {hasDropdown && <ChevronDown size={11} style={{ opacity: 0.6, flexShrink: 0 }} />}
-                      </span>
-                      {/* 同级兄弟下拉：点分组 → 聚焦该枢纽；点文档 → 打开 */}
-                      {dropdownOpen && hasDropdown && (
-                        <div
-                          style={{
-                            position: 'absolute',
-                            top: 'calc(100% + 6px)',
-                            left: 0,
-                            width: 280,
-                            maxWidth: '80vw',
-                            maxHeight: '52vh',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            background: 'rgba(15,16,24,0.97)',
-                            backdropFilter: 'blur(16px) saturate(140%)',
-                            WebkitBackdropFilter: 'blur(16px) saturate(140%)',
-                            border: '1px solid rgba(255,255,255,0.14)',
-                            borderRadius: 10,
-                            boxShadow: '0 14px 38px rgba(0,0,0,0.6)',
-                            zIndex: 60,
-                            overflow: 'hidden',
-                          }}
-                        >
-                          <div style={{ flexShrink: 0, fontSize: 11, color: '#8a8c9a', padding: '8px 12px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                            同级（{siblings.length}） · 点击跳转
-                          </div>
-                          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: '6px 6px 8px' }}>
-                            {siblings.map((sib) => {
-                              const sibLeaf = sib.kind === 'leaf';
-                              const active = sib.id === c.id;
-                              return (
-                                <button
-                                  key={sib.id}
-                                  type="button"
-                                  onClick={() => {
-                                    if (sibLeaf) {
-                                      if (sib.entryId) setOpenEntryId(sib.entryId);
-                                    } else {
-                                      requestFocusHub(sib.id);
-                                    }
-                                    setOpenCrumbIdx(-1);
-                                  }}
-                                  style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: 8,
-                                    width: '100%',
-                                    textAlign: 'left',
-                                    background: active ? 'rgba(255,255,255,0.06)' : 'transparent',
-                                    border: 'none',
-                                    borderRadius: 7,
-                                    padding: '6px 8px',
-                                    cursor: 'pointer',
-                                    color: active ? '#f4f5fa' : '#dcdde6',
-                                  }}
-                                  onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.09)')}
-                                  onMouseLeave={(e) => (e.currentTarget.style.background = active ? 'rgba(255,255,255,0.06)' : 'transparent')}
-                                >
-                                  <span
-                                    style={{
-                                      width: 8,
-                                      height: 8,
-                                      borderRadius: '50%',
-                                      flexShrink: 0,
-                                      background: sibLeaf ? colorForDocType(sib.docType) : '#ffe08a',
-                                      boxShadow: sibLeaf ? `0 0 5px ${colorForDocType(sib.docType)}` : 'none',
-                                    }}
-                                  />
-                                  <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                    {sibLeaf ? leafDisplayName(sib, labelMode, contentTitles) : sib.name}
-                                  </span>
-                                  {!sibLeaf && <span style={{ flexShrink: 0, fontSize: 11, color: '#76788a' }}>{sib.docCount} 篇</span>}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
-                    </span>
-                  );
-                })}
-              </div>
-            )}
-
             {/* 类型 chips（透明浮层，无底盒）：点击切显隐、悬停飞出该类全部文档清单 */}
             <div style={{ pointerEvents: 'auto', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               {legendTypes.map((t) => {
@@ -3021,6 +3032,7 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
             onFocusChange={setFocusedNode}
             flyToEntryId={openEntryId}
             focusHubReq={focusHubReq}
+            drawerOpen={!!openEntryId}
           />
         )}
 
