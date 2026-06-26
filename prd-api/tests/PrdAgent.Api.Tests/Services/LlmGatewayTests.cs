@@ -451,8 +451,10 @@ public class LlmGatewayTests
     private static GatewayLLMClient NewVisionClient()
     {
         var gateway = CreateTestGateway();
+        // 必须用「注册了 vision modelType」的 appCaller，否则 CreateClient 的
+        // TryValidateAppCaller 会因 modelType 不匹配抛异常（Admin.Lab.Chat 只注册了 chat）。
         return Assert.IsType<GatewayLLMClient>(
-            gateway.CreateClient(AppCallerRegistry.Admin.Lab.Chat, "vision"));
+            gateway.CreateClient(AppCallerRegistry.Admin.Lab.Vision, "vision"));
     }
 
     [Fact]
