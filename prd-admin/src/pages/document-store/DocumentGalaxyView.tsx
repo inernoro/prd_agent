@@ -2383,11 +2383,16 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
     return init;
   });
 
-  // 图例渲染的类型列表：有 unknown 文档时追加「其他」chip（否则无法隐藏/列出这类文档）
-  const legendTypes = useMemo<string[]>(
-    () => (galaxy && (galaxy.stats.typeCounts.unknown ?? 0) > 0 ? [...DOC_TYPES, 'unknown'] : [...DOC_TYPES]),
-    [galaxy],
-  );
+  // 图例渲染的类型列表：只列「本库真实存在（count>0）」的类型，不再把 spec/design/... 全摆成一排 0
+  // （用户反馈：很多库的文档没细分类型，全是「其他」，却仍显示一长串 0 的分类 chip，没意义）。
+  // unknown(其他) 同样仅在有未分类文档时追加。
+  const legendTypes = useMemo<string[]>(() => {
+    if (!galaxy) return [];
+    const counts = galaxy.stats.typeCounts;
+    const present: string[] = DOC_TYPES.filter((t) => (counts[t] ?? 0) > 0);
+    if ((counts.unknown ?? 0) > 0) present.push('unknown');
+    return present;
+  }, [galaxy]);
 
   // 图例 type chip 悬浮飞出：列出该 type 全部文档（半屏可滚，点条目跳转）。
   const [flyoutType, setFlyoutType] = useState<string | null>(null);

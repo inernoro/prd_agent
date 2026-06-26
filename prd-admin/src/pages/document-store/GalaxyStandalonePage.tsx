@@ -9,14 +9,13 @@
  * 路由：/document-store/:storeId/galaxy（参数化子路由，navCoverage 自动豁免）。
  */
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams, useLocation } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { getDocumentStoreReal } from '@/services/real/documentStore';
 import { DocumentGalaxyView, type GalaxyLabelMode } from './DocumentGalaxyView';
 
 export function GalaxyStandalonePage() {
   const { storeId } = useParams();
   const navigate = useNavigate();
-  const location = useLocation();
   const [storeName, setStoreName] = useState<string>('');
   // 标题显示模式：正文标题(frontmatter title / 首个标题，默认) ↔ 结构名(文件名/点分名)。
   const [labelMode, setLabelMode] = useState<GalaxyLabelMode>('content');
@@ -40,19 +39,15 @@ export function GalaxyStandalonePage() {
   }, [storeId]);
 
   const back = () => {
-    // 显式回到确定的应用内目的地（不用 navigate(-1)：从书签/深链/登录 returnUrl 进来时
-    // history 上一条可能是登录页或外站，会跳错）。回哪取决于来源：
-    //  - 从「宇宙图」的星系按钮进来（state.from==='universe'）→ 回宇宙图；
-    //  - 其余（知识库详情「星系」直达 / 更多菜单 / 深链 / 书签）→ 回库详情（设 selected-id 重开该库），
-    //    不默认回宇宙图——某些库 mentions 接口 403，宇宙图可能是错误页（Codex P2）。
+    // 知识星球(星系)与 obsidian 风「宇宙图」是两套不同心智，用户明确不希望它们互为返回关系：
+    // 无论从哪进来（库详情直达 / 深链 / 书签 / 旧宇宙图入口），返回一律回到「该知识库详情」，
+    // 不再回宇宙图。不用 navigate(-1)（history 上一条可能是登录页/外站，会跳错）。
     if (!storeId) {
       navigate('/document-store');
       return;
     }
     sessionStorage.setItem('doc-store-selected-id', storeId);
-    const from = (location.state as { from?: string } | null)?.from;
-    if (from === 'universe') navigate(`/document-store/${storeId}/universe`);
-    else navigate('/document-store');
+    navigate('/document-store');
   };
 
   const title = storeName || storeId || '文档星系';

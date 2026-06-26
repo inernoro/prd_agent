@@ -35,7 +35,6 @@ import {
   FolderSync,
   BarChart3,
   Send,
-  Network,
   MoreHorizontal,
   Pin,
   ClipboardCheck,
@@ -1285,10 +1284,26 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
               {uploading ? <MapSpinner size={14} /> : <Upload size={13} />}
               {uploading ? '上传中…' : '上传文档'}
             </Button>
-            {/* 星系：3D 文档星系直达入口（此前藏在 宇宙图 里，新用户找不到） */}
-            <Button variant="secondary" size="xs" onClick={() => navigate(`/document-store/${storeId}/galaxy`)} title="3D 文档星系">
-              <Orbit size={13} /> 星系
-            </Button>
+            {/* 知识星球：3D 文档星系直达入口（此前藏在「宇宙图」里，新用户找不到）。
+                借鉴「本页教程」pill 的柔和脉冲光环 + 渐变底，吸引用户点进来探索。 */}
+            <button
+              type="button"
+              onClick={() => navigate(`/document-store/${storeId}/galaxy`)}
+              title="知识星球 — 3D 文档星系，悬停看简介、点击进入文档"
+              className="flex h-7 cursor-pointer items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold"
+              style={{
+                color: 'rgba(196,181,253,0.98)',
+                background: 'linear-gradient(135deg, rgba(168,85,247,0.20), rgba(99,102,241,0.16))',
+                border: '1px solid rgba(196,181,253,0.45)',
+                animation: 'galaxyEntryPulse 2.4s ease-in-out infinite',
+              }}
+            >
+              <Orbit size={13} /> 知识星球
+              <style>{`@keyframes galaxyEntryPulse {
+                0%, 100% { box-shadow: 0 0 0 0 rgba(168,85,247,0); }
+                50% { box-shadow: 0 0 0 3px rgba(168,85,247,0.18); }
+              }`}</style>
+            </button>
             {/* 更多：收纳低频管理动作（发布 / 关系图谱 / 统计 / 订阅），折叠屏只占一个位 */}
             <div className="relative" ref={moreRef}>
               <Button variant="secondary" size="xs" onClick={toggleMore} title="更多操作">
@@ -1309,8 +1324,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
                   ) : (
                     <MoreItem icon={<Globe size={14} />} label={publishing ? '处理中…' : '发布到智识殿堂'} disabled={publishing} onClick={handleTogglePublish} dataTourId="document-store-publish" />
                   )}
-                  <MoreItem icon={<Network size={14} />} label="关系图谱" onClick={() => { setMoreOpen(false); navigate(`/document-store/${storeId}/universe`); }} />
-                  <MoreItem icon={<Orbit size={14} />} label="3D 文档星系" onClick={() => { setMoreOpen(false); navigate(`/document-store/${storeId}/galaxy`); }} />
+                  {/* 默认只暴露「知识星球」(3D 星系)。obsidian 风的「关系图谱/宇宙图」与星系是两套不同心智，
+                      并存让用户分不清该用哪个、返回关系也乱（见 debt.knowledge-base.galaxy-vs-universe）。
+                      暂时收起宇宙图入口（路由仍在，深链可达），待智能判别落地后再决定按库展示哪一个。 */}
+                  <MoreItem icon={<Orbit size={14} />} label="知识星球（3D 星系）" onClick={() => { setMoreOpen(false); navigate(`/document-store/${storeId}/galaxy`); }} />
                   <MoreItem icon={<BarChart3 size={14} />} label="访客统计" onClick={() => { setMoreOpen(false); setShowViewers(true); }} />
                   <MoreItem icon={<Rss size={14} />} label="添加订阅" onClick={() => { setMoreOpen(false); setShowSubscribe(true); }} />
                 </div>,

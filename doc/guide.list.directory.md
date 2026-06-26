@@ -800,6 +800,8 @@
 
 - [知识库引用网络 · 债务台账](debt.knowledge-base.mention-network) `debt.knowledge-base.mention-network`
   > 双链/反向链接/宇宙图 MVP 后续债务：跨实体引用、AI 自动补链、时间轴回放等候选项
+- [知识星球 与 宇宙图 并存 · 债务台账](debt.knowledge-base.galaxy-vs-universe) `debt.knowledge-base.galaxy-vs-universe`
+  > 星系(3D)与 obsidian 宇宙图两套图谱并存：本轮默认只展示星系 + 星系返回回库详情；智能判别该库展示哪一个待做
 
 - [网页托管 · 债务台账](debt.web-hosting) `debt.web-hosting`
   > 3 条 open：reveal 纵向子页 remap / 合成事件 isTrusted=false 长尾 / 未覆盖工作流生成内容

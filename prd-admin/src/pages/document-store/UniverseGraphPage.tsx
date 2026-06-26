@@ -545,7 +545,7 @@ export function UniverseGraphPage() {
         {/* 进入 3D 星系（独立全屏页） */}
         {storeId && (
           <button
-            onClick={() => navigate(`/document-store/${storeId}/galaxy`, { state: { from: 'universe' } })}
+            onClick={() => navigate(`/document-store/${storeId}/galaxy`)}
             style={{
               display: 'flex',
               alignItems: 'center',

@@ -285,6 +285,7 @@ docs:
   debt.cds.project-migration: 项目迁移(CDS 项目移植) · 债务台账
   debt.agent-universe: 智能体宇宙 · 债务台账
   debt.cds.ci-prebuilt: CDS 极速版（CI 预构建）· 已知边界与遗留事项
+  debt.knowledge-base.galaxy-vs-universe: 知识库 知识星球(3D 星系) 与 宇宙图(obsidian 群星) 并存 · 默认只展示星系 + 智能判别待做
   debt.knowledge-base.mention-network: 知识库引用网络 · MVP 已知边界与遗留事项
   debt.knowledge-base.versioning: 知识库版本控制/图片插入/大小统计 · 已知边界
   debt.daily-tips.onboarding: 页面教程(小技巧)系统 · 债务台账

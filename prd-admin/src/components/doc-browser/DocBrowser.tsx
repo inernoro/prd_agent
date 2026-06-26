@@ -3366,16 +3366,19 @@ export function DocBrowser({
               {trackedEntryForComments && (
                 <button
                   onClick={() => setInlineCommentsOpen(true)}
-                  className="h-6 px-2 rounded-[8px] text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors flex-shrink-0"
+                  className="h-7 rounded-[8px] text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition-colors flex-shrink-0"
                   style={{
+                    // 图标化：无评论时纯图标方钮；有评论时图标 + 数字（数字是关键信息，不能丢）
+                    width: commentCount > 0 ? undefined : 28,
+                    padding: commentCount > 0 ? '0 8px' : 0,
                     background: 'rgba(168,85,247,0.08)',
                     border: '1px solid rgba(168,85,247,0.18)',
                     color: 'rgba(216,180,254,0.95)',
                   }}
                   title={commentCount > 0 ? `已有 ${commentCount} 条评论 — 点击查看 / 添加` : '划词评论 — 选中文本后浮起「添加评论」'}
                 >
-                  <MessageSquareText size={11} />
-                  {commentCount > 0 ? `${commentCount} 条评论` : '评论'}
+                  <MessageSquareText size={13} />
+                  {commentCount > 0 ? commentCount : null}
                 </button>
               )}
               {/* 收起/展开右侧栏（本页章节 / 批注栏），给正文让宽 */}
@@ -3396,10 +3399,10 @@ export function DocBrowser({
               {selectedEntryId && !entries.find(e => e.id === selectedEntryId)?.isFolder && (
                 <button
                   onClick={toggleReaderFullscreen}
-                  className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                  className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer flex-shrink-0"
                   style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-muted)' }}
                   title={readerFullscreen ? '退出全屏（ESC）' : '全屏阅读（ESC 退出）'}>
-                  {readerFullscreen ? <><Minimize2 size={11} /> 退出全屏</> : <><Maximize2 size={11} /> 全屏</>}
+                  {readerFullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
                 </button>
               )}
               {/* 编辑/保存按钮（仅对可编辑类型显示） */}
@@ -3413,10 +3416,10 @@ export function DocBrowser({
                     {versionApi && !editMode && (
                       <button
                         onClick={() => setVersionHistoryOpen(true)}
-                        className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                        className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer flex-shrink-0"
                         style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-muted)' }}
-                        title="查看并恢复历史版本">
-                        <History size={11} /> 历史版本
+                        title="历史版本 — 查看并恢复">
+                        <History size={13} />
                       </button>
                     )}
                     {editMode ? (
@@ -3458,9 +3461,10 @@ export function DocBrowser({
                     ) : (
                       <button
                         onClick={() => { setEditContent(preview?.text ?? ''); setEditMode(true); }}
-                        className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
-                        style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.15)', color: 'rgba(59,130,246,0.9)' }}>
-                        <Pencil size={11} /> 编辑
+                        className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer flex-shrink-0"
+                        style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.15)', color: 'rgba(59,130,246,0.9)' }}
+                        title="编辑文档">
+                        <Pencil size={13} />
                       </button>
                     )}
                   </div>
