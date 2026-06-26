@@ -6,7 +6,7 @@ description: CDS (Cloud Dev Space) core skill — hosts the canonical cdscli Pyt
 
 # CDS — 核心技能：鉴权 / cdscli / env / self-update / 分诊器
 
-> **版本**：v0.6.8 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"cds 认证"、"AI_ACCESS_KEY"、"项目 key"、"cds 自更新"、"预览地址公式"、"配 cds 环境变量"
+> **版本**：v0.7.1 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"cds 认证"、"AI_ACCESS_KEY"、"项目 key"、"cds 自更新"、"预览地址公式"、"配 cds 环境变量"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
