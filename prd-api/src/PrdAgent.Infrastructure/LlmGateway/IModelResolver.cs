@@ -137,6 +137,13 @@ public class ModelResolutionResult
     /// </summary>
     public string? HealthStatus { get; init; }
 
+    /// <summary>
+    /// 是否支持函数调用（function_calling 能力）。
+    /// null = 未知（能力未分类，best-effort 放行）；true = 支持；false = 明确不支持（带 tools 时网关熔断报错，不骗用户）。
+    /// 仅在解析上下文已持有 LLMModel 对象时填充（直连/Legacy 路径）；池路径无模型对象，留 null（见 debt.llm-gateway-protocol-fidelity）。
+    /// </summary>
+    public bool? SupportsFunctionCalling { get; init; }
+
     // ========== Exchange 中继信息 ==========
 
     /// <summary>是否为 Exchange 中继模型</summary>
@@ -364,8 +371,20 @@ public class ModelResolutionResult
             ResolutionReason = reason,
             ApiUrl = model.ApiUrl ?? platform.ApiUrl,
             ApiKey = apiKey,
-            HealthStatus = "Healthy"
+            HealthStatus = "Healthy",
+            // 直连/Legacy 路径持有真实 LLMModel，可读 function_calling 能力供 G4 软门使用
+            SupportsFunctionCalling = FunctionCallingCapability(model)
         };
+    }
+
+    /// <summary>
+    /// 从模型能力描述符读 function_calling：无该条目返回 null（未知/未分类），有则返回其 Value。
+    /// </summary>
+    private static bool? FunctionCallingCapability(LLMModel model)
+    {
+        var cap = model.Capabilities?.FirstOrDefault(c =>
+            string.Equals(c.Type, "function_calling", StringComparison.OrdinalIgnoreCase));
+        return cap?.Value;
     }
 }
 

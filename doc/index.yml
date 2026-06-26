@@ -287,6 +287,7 @@ docs:
   debt.cds-ci-prebuilt: CDS 极速版（CI 预构建）· 已知边界与遗留事项
   debt.knowledge-base-mention-network: 知识库引用网络 · MVP 已知边界与遗留事项
   debt.knowledge-base-versioning: 知识库版本控制/图片插入/大小统计 · 已知边界
+  debt.llm-gateway-protocol-fidelity: LLM 网关协议保真（函数调用穿协议 + 能力软门）· 已知边界
   debt.onboarding-tips: 页面教程(小技巧)系统 · 债务台账
   debt.pm-agent: 项目管理智能体 · 债务台账
   debt.product-agent: 产品管理智能体 · 债务台账

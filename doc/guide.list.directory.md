@@ -743,6 +743,8 @@
   > 7 条 open：ghcr 包需手动设 public / 工作流名硬编码 / 每 push 双镜像 / 仍 git pull worktree / 构建时延 / 切回源码非一键 / ClaudeSdk 回调端口
 - [知识库版本控制/图片插入/大小统计 · 已知边界](debt.knowledge-base-versioning) `debt.knowledge-base-versioning`
   > 图片插入不刷新已修；版本控制独立集合 + 恢复只写文本不删资产；遗留：github 日同步覆盖手动编辑、大小不含外链图片字节、版本留存上限100
+- [LLM 网关协议保真（函数调用穿协议 + 能力软门）· 已知边界](debt.llm-gateway-protocol-fidelity) `debt.llm-gateway-protocol-fidelity`
+  > G1-G5 已落地；3 条 open：Claude 流式 tool_use 增量未映射 / 能力软门池路径为 null（best-effort 放行）/ Extensions 容器已建未消费
 - [更新中心（终身存储 + SSE 推送）债务台账](debt.changelog-center) `debt.changelog-center`
   > 3 条 open：推送中枢进程内单例（多实例需 Redis/change stream）/ 刷新周期不分视图冷热 / GitHub 日志前端 35s 轮询与 SSE 并存
 - [项目管理智能体 · 债务台账](debt.pm-agent) `debt.pm-agent`

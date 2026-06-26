@@ -595,6 +595,165 @@ public class LlmGatewayTests
 
     #endregion
 
+    #region Function-Calling (tools/tool_calls) Protocol Tests
+
+    // 守护"函数调用穿协议不丢"（G2/G3）：
+    // - Claude 请求：OpenAI function 包裹 tools → Claude input_schema；tool_choice 映射
+    // - Claude 响应：content[].type=="tool_use" → OpenAI 形状 tool_calls
+    // - OpenAI 响应：choices[0].message.tool_calls 透传；流式 delta.tool_calls → ToolCall chunk
+
+    [Fact]
+    public void ConvertToClaudeFormat_Tools_ConvertsFunctionWrapToInputSchema()
+    {
+        var body = BaseClaudeBody();
+        body["tools"] = new JsonArray
+        {
+            new JsonObject
+            {
+                ["type"] = "function",
+                ["function"] = new JsonObject
+                {
+                    ["name"] = "get_weather",
+                    ["description"] = "查天气",
+                    ["parameters"] = new JsonObject
+                    {
+                        ["type"] = "object",
+                        ["properties"] = new JsonObject { ["city"] = new JsonObject { ["type"] = "string" } }
+                    }
+                }
+            }
+        };
+
+        var result = InvokeConvertToClaudeFormat(body);
+
+        var tools = Assert.IsType<JsonArray>(result["tools"]);
+        Assert.Single(tools);
+        var t = Assert.IsType<JsonObject>(tools[0]);
+        Assert.Equal("get_weather", (string?)t["name"]);          // 扁平 name，无 function 包裹
+        Assert.Equal("查天气", (string?)t["description"]);
+        Assert.NotNull(t["input_schema"]);                         // parameters → input_schema
+        Assert.Null(t["function"]);                                // 不残留 OpenAI 包裹
+        Assert.Null(t["parameters"]);
+        Assert.Equal("object", (string?)t["input_schema"]!["type"]);
+    }
+
+    [Theory]
+    [InlineData("auto", "auto")]
+    [InlineData("required", "any")]
+    public void ConvertToClaudeFormat_ToolChoice_StringMapsToClaudeType(string openai, string claudeType)
+    {
+        var body = BaseClaudeBody();
+        body["tools"] = new JsonArray { new JsonObject { ["type"] = "function", ["function"] = new JsonObject { ["name"] = "f" } } };
+        body["tool_choice"] = openai;
+
+        var result = InvokeConvertToClaudeFormat(body);
+
+        var tc = Assert.IsType<JsonObject>(result["tool_choice"]);
+        Assert.Equal(claudeType, (string?)tc["type"]);
+    }
+
+    [Fact]
+    public void ConvertToClaudeFormat_ToolChoice_FunctionObjectMapsToTool()
+    {
+        var body = BaseClaudeBody();
+        body["tools"] = new JsonArray { new JsonObject { ["type"] = "function", ["function"] = new JsonObject { ["name"] = "get_weather" } } };
+        body["tool_choice"] = new JsonObject { ["type"] = "function", ["function"] = new JsonObject { ["name"] = "get_weather" } };
+
+        var result = InvokeConvertToClaudeFormat(body);
+
+        var tc = Assert.IsType<JsonObject>(result["tool_choice"]);
+        Assert.Equal("tool", (string?)tc["type"]);
+        Assert.Equal("get_weather", (string?)tc["name"]);
+    }
+
+    [Fact]
+    public void ClaudeAdapter_ParseToolCalls_ToolUse_ToOpenAiShape()
+    {
+        var adapter = new ClaudeGatewayAdapter();
+        var responseBody = """
+        {
+          "content": [
+            { "type": "text", "text": "稍等" },
+            { "type": "tool_use", "id": "toolu_1", "name": "get_weather", "input": { "city": "北京" } }
+          ]
+        }
+        """;
+
+        var toolCalls = adapter.ParseToolCalls(responseBody);
+
+        Assert.NotNull(toolCalls);
+        Assert.Single(toolCalls!);
+        var c = Assert.IsType<JsonObject>(toolCalls![0]);
+        Assert.Equal("toolu_1", (string?)c["id"]);
+        Assert.Equal("function", (string?)c["type"]);
+        var fn = Assert.IsType<JsonObject>(c["function"]);
+        Assert.Equal("get_weather", (string?)fn["name"]);
+        // arguments 必须是 JSON 字符串（OpenAI 约定）
+        var args = (string?)fn["arguments"];
+        Assert.NotNull(args);
+        Assert.Contains("北京", args!);
+    }
+
+    [Fact]
+    public void ClaudeAdapter_ParseToolCalls_NoToolUse_ReturnsNull()
+    {
+        var adapter = new ClaudeGatewayAdapter();
+        var responseBody = """{ "content": [ { "type": "text", "text": "你好" } ] }""";
+        Assert.Null(adapter.ParseToolCalls(responseBody));
+    }
+
+    [Fact]
+    public void OpenAIAdapter_ParseToolCalls_PassesThroughMessageToolCalls()
+    {
+        var adapter = new OpenAIGatewayAdapter();
+        var responseBody = """
+        {
+          "choices": [
+            { "message": { "role": "assistant", "content": null,
+              "tool_calls": [ { "id": "call_1", "type": "function", "function": { "name": "get_weather", "arguments": "{\"city\":\"上海\"}" } } ] } }
+          ]
+        }
+        """;
+
+        var toolCalls = adapter.ParseToolCalls(responseBody);
+
+        Assert.NotNull(toolCalls);
+        Assert.Single(toolCalls!);
+        var c = Assert.IsType<JsonObject>(toolCalls![0]);
+        Assert.Equal("call_1", (string?)c["id"]);
+        Assert.Equal("get_weather", (string?)c["function"]!["name"]);
+    }
+
+    [Fact]
+    public void OpenAIAdapter_ParseStreamChunk_ToolCallsDelta_EmitsToolCallChunk()
+    {
+        var adapter = new OpenAIGatewayAdapter();
+        var sse = """
+        {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"ci"}}]}}]}
+        """;
+
+        var chunk = adapter.ParseStreamChunk(sse);
+
+        Assert.NotNull(chunk);
+        Assert.Equal(GatewayChunkType.ToolCall, chunk!.Type);
+        Assert.NotNull(chunk.ToolCallDelta);
+        Assert.Single(chunk.ToolCallDelta!);
+    }
+
+    [Fact]
+    public void OpenAIAdapter_ParseStreamChunk_PlainText_StillText()
+    {
+        // 纯文本块不得被 tool_calls 子串判断误伤
+        var adapter = new OpenAIGatewayAdapter();
+        var sse = """{"choices":[{"delta":{"content":"你好"}}]}""";
+        var chunk = adapter.ParseStreamChunk(sse);
+        Assert.NotNull(chunk);
+        Assert.Equal(GatewayChunkType.Text, chunk!.Type);
+        Assert.Equal("你好", chunk.Content);
+    }
+
+    #endregion
+
     #region Helper Methods
 
     private static LlmGateway CreateTestGateway()

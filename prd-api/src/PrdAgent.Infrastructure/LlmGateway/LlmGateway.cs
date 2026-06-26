@@ -103,6 +103,14 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             requestBody["model"] = resolution.ActualModel;
             requestBody["stream"] = false;
 
+            // G4 能力软门：带 tools 但模型能力明确不支持 function_calling → 熔断报错（不骗用户）。
+            // 未知/未分类（null）放行（best-effort）。
+            if (RequestHasTools(requestBody) && resolution.SupportsFunctionCalling == false)
+            {
+                return GatewayResponse.Fail("FUNCTION_CALLING_UNSUPPORTED",
+                    $"模型 {resolution.ActualModel} 未声明支持函数调用（function_calling），请改用支持函数调用的模型或移除 tools。", 400);
+            }
+
             var endpoint = adapter.BuildEndpoint(resolution.ApiUrl!, request.ModelType);
             var httpRequest = adapter.BuildHttpRequest(endpoint, resolution.ApiKey, requestBody, request.EnablePromptCache);
             ApplyOpenRouterAttribution(httpRequest, resolution.ApiUrl, request.AppCallerCode);
@@ -170,6 +178,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             // 从原始响应中提取消息文本内容
             var messageContent = adapter.ParseMessageContent(responseBody);
+            // 协议保真：提取工具调用（函数调用），归一为 OpenAI 形状（无则 null，不影响纯文本响应）
+            var toolCalls = adapter.ParseToolCalls(responseBody);
 
             return new GatewayResponse
             {
@@ -177,6 +187,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 StatusCode = (int)response.StatusCode,
                 Content = messageContent ?? responseBody,
                 RawResponseBody = responseBody,
+                ToolCalls = toolCalls,
                 Resolution = gatewayResolution,
                 TokenUsage = tokenUsage,
                 DurationMs = durationMs,
@@ -245,6 +256,14 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var requestBody = request.GetEffectiveRequestBody();
             requestBody["model"] = resolution.ActualModel;
             requestBody["stream"] = true;
+
+            // G4 能力软门：带 tools 但模型能力明确不支持 function_calling → 熔断报错（不骗用户）。未知放行。
+            if (RequestHasTools(requestBody) && resolution.SupportsFunctionCalling == false)
+            {
+                yield return GatewayStreamChunk.Fail(
+                    $"模型 {resolution.ActualModel} 未声明支持函数调用（function_calling），请改用支持函数调用的模型或移除 tools。");
+                yield break;
+            }
 
             var endpoint = adapter.BuildEndpoint(resolution.ApiUrl!, request.ModelType);
             var httpRequest = adapter.BuildHttpRequest(endpoint, resolution.ApiKey, requestBody, request.EnablePromptCache);
@@ -1345,6 +1364,13 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             _logger.LogDebug(ex, "[LlmGateway] 发送用户故障通知失败");
         }
     }
+
+    /// <summary>
+    /// 请求体是否携带非空的 tools 数组（函数调用）。供 G4 能力软门判断。
+    /// </summary>
+    private static bool RequestHasTools(System.Text.Json.Nodes.JsonObject requestBody)
+        => requestBody.TryGetPropertyValue("tools", out var tools)
+           && tools is System.Text.Json.Nodes.JsonArray arr && arr.Count > 0;
 
     private IGatewayAdapter? GetAdapter(string? platformType)
     {

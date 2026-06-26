@@ -166,7 +166,89 @@ public class ClaudeGatewayAdapter : IGatewayAdapter
                 : new JsonArray(stop.DeepClone());
         }
 
+        // ── 函数调用（tools/tool_choice）协议原生转换（G3，照抄 transformer 模式）──
+        // OpenAI tools:[{type:function, function:{name, description, parameters}}]
+        //   → Claude tools:[{name, description, input_schema}]
+        // 两侧 schema 不同，禁止盲透传（这正是"全归一"会出错的地方）。
+        if (openaiBody.TryGetPropertyValue("tools", out var toolsNode) &&
+            toolsNode is JsonArray openaiTools && openaiTools.Count > 0)
+        {
+            var claudeTools = ConvertToolsToClaude(openaiTools);
+            if (claudeTools.Count > 0)
+            {
+                result["tools"] = claudeTools;
+
+                if (openaiBody.TryGetPropertyValue("tool_choice", out var tcNode) && tcNode is not null)
+                {
+                    var claudeChoice = ConvertToolChoiceToClaude(tcNode);
+                    if (claudeChoice != null)
+                        result["tool_choice"] = claudeChoice;
+                }
+            }
+        }
+
         return result;
+    }
+
+    /// <summary>
+    /// OpenAI tools → Claude tools。OpenAI 用 function 包裹 + parameters，Claude 用扁平 name + input_schema。
+    /// 已是 Claude 形状（无 function 包裹、有 input_schema）的条目原样克隆透传。
+    /// </summary>
+    private static JsonArray ConvertToolsToClaude(JsonArray openaiTools)
+    {
+        var claudeTools = new JsonArray();
+        foreach (var tool in openaiTools)
+        {
+            if (tool is not JsonObject o) continue;
+
+            // OpenAI 形状：{type:"function", function:{name, description, parameters}}
+            if (o["function"] is JsonObject fn)
+            {
+                var ct = new JsonObject
+                {
+                    ["name"] = fn["name"]?.DeepClone() ?? string.Empty
+                };
+                if (fn["description"] is { } desc)
+                    ct["description"] = desc.DeepClone();
+                // OpenAI parameters == Claude input_schema（都是 JSON Schema 对象）
+                ct["input_schema"] = fn["parameters"]?.DeepClone()
+                    ?? new JsonObject { ["type"] = "object" };
+                claudeTools.Add(ct);
+            }
+            // 已是 Claude 形状（有 input_schema / name）→ 原样克隆，不二次包裹
+            else if (o["input_schema"] is not null || o["name"] is not null)
+            {
+                claudeTools.Add(o.DeepClone());
+            }
+        }
+        return claudeTools;
+    }
+
+    /// <summary>
+    /// OpenAI tool_choice → Claude tool_choice。
+    /// "auto"→{type:auto}；"required"/"any"→{type:any}；{type:function,function:{name}}→{type:tool,name}；
+    /// "none"→ 返回 null（不强制，留给 Claude 默认 auto；Claude 旧版无 none 语义，避免 400）。
+    /// </summary>
+    private static JsonObject? ConvertToolChoiceToClaude(JsonNode tcNode)
+    {
+        if (tcNode is JsonValue v && v.TryGetValue<string>(out var s))
+        {
+            return s switch
+            {
+                "auto" => new JsonObject { ["type"] = "auto" },
+                "required" or "any" => new JsonObject { ["type"] = "any" },
+                _ => null // "none" 及未知 → 不设
+            };
+        }
+
+        if (tcNode is JsonObject o && (string?)o["type"] == "function")
+        {
+            var name = o["function"]?["name"];
+            if (name is not null)
+                return new JsonObject { ["type"] = "tool", ["name"] = name.DeepClone() };
+        }
+
+        return null;
     }
 
     public GatewayStreamChunk? ParseStreamChunk(string sseData)
@@ -325,6 +407,62 @@ public class ClaudeGatewayAdapter : IGatewayAdapter
                 {
                     return msgContent.GetString();
                 }
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// 非流式：Claude content[].type=="tool_use" → OpenAI 形状 tool_calls。
+    /// Claude: {type:"tool_use", id, name, input:{...}} → OpenAI: {id, type:"function", function:{name, arguments:"<json>"}}。
+    /// arguments 必须是 JSON 字符串（OpenAI 约定）。无 tool_use 返回 null。
+    /// 兼容部分 Claude 代理直接回 OpenAI 形状 choices[0].message.tool_calls 的情况。
+    /// </summary>
+    public JsonArray? ParseToolCalls(string responseBody)
+    {
+        try
+        {
+            if (JsonNode.Parse(responseBody) is not JsonObject root) return null;
+
+            // Claude 原生：content[].type == "tool_use"
+            if (root["content"] is JsonArray content)
+            {
+                JsonArray? result = null;
+                var index = 0;
+                foreach (var block in content)
+                {
+                    if (block is not JsonObject b) continue;
+                    if ((string?)b["type"] != "tool_use") continue;
+
+                    result ??= new JsonArray();
+                    var input = b["input"]?.DeepClone() ?? new JsonObject();
+                    result.Add(new JsonObject
+                    {
+                        ["id"] = (string?)b["id"] ?? $"call_{index}",
+                        ["type"] = "function",
+                        ["index"] = index,
+                        ["function"] = new JsonObject
+                        {
+                            ["name"] = (string?)b["name"] ?? string.Empty,
+                            ["arguments"] = input.ToJsonString()
+                        }
+                    });
+                    index++;
+                }
+                if (result != null) return result;
+            }
+
+            // 兼容：OpenAI 形状代理 choices[0].message.tool_calls
+            if (root["choices"] is JsonArray choices && choices.Count > 0 &&
+                choices[0] is JsonObject c0 &&
+                c0["message"] is JsonObject msg &&
+                msg["tool_calls"] is JsonArray tc && tc.Count > 0)
+            {
+                return tc.DeepClone() as JsonArray;
             }
         }
         catch

@@ -96,7 +96,13 @@ key      = model.ApiKey ?? platform.ApiKey
 
 - **F1 识图不准** —— 已修并验证（branch-image 构建绿 + 反射单测 `BuildRequestBody_ImageAttachment*`）。
 - **F3a Claude 采样参数停止拍平** —— 已修。`ClaudeGatewayAdapter.ConvertToClaudeFormat` 原先"只抄 model/max_tokens/messages/stream/temperature 五个字段"，把调用方设的 `top_p`/`top_k`/`stop` 静默丢弃。现透传 Claude 原生兼容的 `top_p`/`top_k`，并把 OpenAI 的 `stop` 改名为 Claude 的 `stop_sequences`（string→array）。**白名单而非黑名单**：`frequency_penalty`/`presence_penalty`/`n`/`stream_options` 等 OpenAI 专有字段 Claude 会 400，继续挡掉。单测 `ConvertToClaudeFormat_*` 守护。
-- **F2 / F3b（tools/tool_calls）——并入 F4，需先有消费者再做，不半成品**。取证：Open Platform 的 `/api/v1/chat/completions`（`OpenApiController.cs`）是 **OpenAI 兼容代理**，`RequestBody = body` 全量透传客户端请求体——函数调用客户端**会**传 `tools`/`tool_choice`。当前两处有损：① 请求侧路由到 Claude 池时 `tools` 被 `ConvertToClaudeFormat` 丢（且两侧 schema 不同：OpenAI `{type:function, function:{...}}` vs Claude `{name, input_schema}`，**不能盲透传**，需协议原生转换）；② 响应侧 `NonStreamChatAsync` 硬编码 `content = resp.Content`（纯文本），上游 `tool_calls` 从不回传，流式路径也无 `ToolCall` chunk。这正是"协议归一有损"在函数调用上的实证。修法属决策一本体（能力描述符决定"带 tools 的请求只能路由到支持 function-calling 的协议/池" + 协议原生 tools 转换器 + 响应 `Extensions` 容器透传 tool_calls），留待 F4 方向定后整波做。
+- **G1-G5 函数调用穿协议** —— 已落地核心路径（2026-06-26）。取证：Open Platform 的 `/api/v1/chat/completions`（`OpenApiController.cs`）是 **OpenAI 兼容代理**，`RequestBody = body` 全量透传客户端请求体——函数调用客户端**会**传 `tools`/`tool_choice`。修复分层：
+  - **G1 Extensions 容器**：`GatewayResponse.ToolCalls`/`Extensions` + `GatewayStreamChunk.ToolCallDelta`/`Extensions` + `IGatewayAdapter.ParseToolCalls`（默认返回 null）。
+  - **G2 OpenAI 线透传**：`OpenAIGatewayAdapter` 从 `choices[].message.tool_calls`（非流）/ `choices[].delta.tool_calls`（流）取出，零转换。
+  - **G3 Claude 线原生互转**：请求 OpenAI `{type:function, function:{name,description,parameters}}` → Claude `{name, description, input_schema}`，`tool_choice` auto/required/function→object 映射；响应 Claude `content[].type=="tool_use"` → OpenAI `tool_calls`（arguments 序列化为 JSON 字符串）。**两侧 schema 不同，禁止盲透传**——这正是"全归一"会出错处。
+  - **G4 能力软门**：带 `tools` 但模型 `LLMModelCapability.function_calling` 明确 false → 熔断报错（不骗用户）；未知放行。**能力描述符从死元数据升级为路由软门的首个消费者**。
+  - **G5 代理回吐**：`OpenApiController` 非流/流式均把 tool_calls 按 OpenAI 形状回吐（含 `finish_reason="tool_calls"`）。
+  - **已知边界**（见 `doc/debt.llm-gateway-protocol-fidelity.md`）：Claude 流式 tool_use 增量未映射；能力软门池路径为 null（best-effort 放行）；Extensions 容器已建未消费。
 
 把现有 `IExchangeTransformer` 提升为这个**协议层**：openai/claude 两个 Gateway Adapter、三个 Image Adapter、五个 Transformer 收成"协议处理器"，按 protocol 字符串索引，**但各自保真、不互相拍平**。Exchange 不再是"特殊平台"，只是"一个带自己 url/key + 非 passthrough 协议的模型"。
 
