@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>文档星系 · 加载动效候选（9 选 1）</title>
+<style>
+  :root {
+    --spec: #4ade80; --design: #60a5fa; --plan: #fbbf24; --rule: #f87171;
+    --guide: #a78bfa; --report: #22d3ee; --debt: #fb923c; --unknown: #94a3b8;
+    --gold: #ffe08a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #05060c; color: #c8c8d2;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+  .page { max-width: 1280px; margin: 0 auto; padding: 28px 24px 64px; }
+  header h1 { font-size: 18px; font-weight: 700; margin: 0 0 6px; color: #eef0f6; }
+  header p { font-size: 13px; color: #8a8c9a; margin: 0 0 4px; line-height: 1.7; }
+  header .hint { color: var(--gold); }
+  .grid { margin-top: 22px; display: grid; gap: 16px;
+    grid-template-columns: repeat(3, 1fr); }
+  @media (max-width: 960px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
+  .tile { position: relative; border-radius: 14px; overflow: hidden;
+    background: radial-gradient(120% 120% at 50% 35%, #0c0e18 0%, #05060c 70%);
+    border: 1px solid rgba(255,255,255,0.07); min-height: 280px;
+    display: flex; flex-direction: column; }
+  .stage { flex: 1; display: flex; align-items: center; justify-content: center; position: relative; }
+  .stage canvas { display: block; }
+  .ctx { position: absolute; bottom: 10px; left: 0; right: 0; text-align: center;
+    pointer-events: none; }
+  .ctx .map { font-weight: 800; letter-spacing: 4px; font-size: 15px;
+    background: linear-gradient(180deg,#fafbff,#9aa0b4); -webkit-background-clip: text;
+    background-clip: text; color: transparent; }
+  .ctx .status { font-size: 11px; color: #6a6a78; margin-top: 2px; }
+  .label { flex-shrink: 0; padding: 9px 12px; font-size: 12px; color: #c8c8d2;
+    border-top: 1px solid rgba(255,255,255,0.06); display: flex; align-items: center; gap: 8px;
+    background: rgba(10,11,18,0.6); }
+  .label .num { display: inline-flex; align-items: center; justify-content: center;
+    width: 20px; height: 20px; border-radius: 6px; font-size: 11px; font-weight: 700;
+    color: #05060c; background: var(--gold); flex-shrink: 0; }
+  .label .name { font-weight: 600; }
+  .label .desc { color: #7a7c8a; font-size: 11px; }
+
+  /* ---- 1 轨道环绕 ---- */
+  .l1 { position: relative; width: 130px; height: 130px; }
+  .l1 .core { position: absolute; left: 50%; top: 50%; width: 16px; height: 16px;
+    margin: -8px 0 0 -8px; border-radius: 50%; background: var(--gold);
+    box-shadow: 0 0 18px var(--gold), 0 0 36px rgba(255,224,138,0.5);
+    animation: l1pulse 1.8s ease-in-out infinite; }
+  .l1 .ring { position: absolute; left: 50%; top: 50%; border-radius: 50%;
+    border: 1px dashed rgba(255,255,255,0.14); transform: translate(-50%,-50%); }
+  .l1 .ring::after { content: ""; position: absolute; width: 9px; height: 9px; border-radius: 50%;
+    left: 50%; top: -5px; margin-left: -4.5px; }
+  .l1 .r1 { width: 60px; height: 60px; animation: spin 2.6s linear infinite; }
+  .l1 .r1::after { background: var(--report); box-shadow: 0 0 10px var(--report); }
+  .l1 .r2 { width: 96px; height: 96px; animation: spin 4.2s linear infinite reverse; }
+  .l1 .r2::after { background: var(--design); box-shadow: 0 0 10px var(--design); }
+  .l1 .r3 { width: 130px; height: 130px; animation: spin 6s linear infinite; }
+  .l1 .r3::after { background: var(--debt); box-shadow: 0 0 10px var(--debt); }
+  @keyframes spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
+  @keyframes l1pulse { 0%,100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.35); opacity: 0.82; } }
+
+  /* ---- 4 星云脉动 ---- */
+  .l4 { position: relative; width: 150px; height: 150px; }
+  .l4 .neb { position: absolute; inset: 0; border-radius: 50%;
+    background: radial-gradient(circle at 50% 50%, rgba(167,139,250,0.55), rgba(96,165,250,0.28) 45%, rgba(5,6,12,0) 72%);
+    filter: blur(2px); animation: l4breathe 2.8s ease-in-out infinite; }
+  .l4 .neb2 { background: radial-gradient(circle at 50% 50%, rgba(34,211,238,0.4), rgba(5,6,12,0) 60%);
+    animation-duration: 3.6s; animation-delay: -0.6s; }
+  .l4 .spark { position: absolute; width: 3px; height: 3px; border-radius: 50%; background: #fff;
+    box-shadow: 0 0 6px #fff; opacity: 0.85; animation: l4drift 4s ease-in-out infinite; }
+  @keyframes l4breathe { 0%,100% { transform: scale(0.86); opacity: 0.7; } 50% { transform: scale(1.12); opacity: 1; } }
+  @keyframes l4drift { 0%,100% { transform: translate(0,0); opacity: 0.3; } 50% { transform: translate(var(--dx), var(--dy)); opacity: 1; } }
+
+  /* ---- 5 群星旋环 ---- */
+  .l5 { position: relative; width: 130px; height: 130px; animation: spin2 7s linear infinite; }
+  @keyframes spin2 { to { transform: rotate(360deg); } }
+  .l5 .s { position: absolute; left: 50%; top: 50%; width: 11px; height: 11px; margin: -5.5px 0 0 -5.5px;
+    border-radius: 50%; }
+  .l5 .core5 { position: absolute; left: 50%; top: 50%; width: 12px; height: 12px; margin: -6px 0 0 -6px;
+    border-radius: 50%; background: var(--gold); box-shadow: 0 0 16px var(--gold);
+    animation: l1pulse 2s ease-in-out infinite; }
+
+  /* ---- 8 涟漪扩散 ---- */
+  .l8 { position: relative; width: 150px; height: 150px; display: flex; align-items: center; justify-content: center; }
+  .l8 .core8 { width: 14px; height: 14px; border-radius: 50%; background: var(--gold);
+    box-shadow: 0 0 16px var(--gold); animation: l1pulse 1.6s ease-in-out infinite; }
+  .l8 .wave { position: absolute; left: 50%; top: 50%; width: 28px; height: 28px; margin: -14px 0 0 -14px;
+    border-radius: 50%; border: 1.5px solid var(--report); opacity: 0; animation: l8ripple 3s ease-out infinite; }
+  .l8 .w2 { animation-delay: 1s; border-color: var(--guide); }
+  .l8 .w3 { animation-delay: 2s; border-color: var(--debt); }
+  @keyframes l8ripple { 0% { transform: scale(0.3); opacity: 0.9; } 80% { opacity: 0.12; } 100% { transform: scale(5.2); opacity: 0; } }
+
+  .foot { margin-top: 26px; font-size: 12px; color: #6a6a78; line-height: 1.8; }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <h1>文档星系 · 加载动效候选（9 选 1）</h1>
+    <p>当前知识星球进入/构建时用的是通用「MAP 正在加载…」转场，与星系本身的气质不搭。下面 9 个都是星系专属的加载动效（颜色取自真实文档类型配色：spec 绿 / design 蓝 / plan 黄 / rule 红 / guide 紫 / report 青 / debt 橙 / 金色为核心）。</p>
+    <p class="hint">看完告诉我你要第几个（或几个的组合），我再替换掉「正在构建文档星系…」「正在加载文档…」两处的普通加载。本页只是预览，未改动任何线上加载。</p>
+  </header>
+
+  <div class="grid">
+    <!-- 1 -->
+    <div class="tile">
+      <div class="stage">
+        <div class="l1">
+          <div class="core"></div>
+          <div class="ring r1"></div>
+          <div class="ring r2"></div>
+          <div class="ring r3"></div>
+        </div>
+        <div class="ctx"><div class="map">MAP</div><div class="status">正在构建文档星系…</div></div>
+      </div>
+      <div class="label"><span class="num">1</span><span class="name">轨道环绕</span><span class="desc">核心 + 三层卫星环反向自转</span></div>
+    </div>
+
+    <!-- 2 -->
+    <div class="tile">
+      <div class="stage"><canvas data-loader="spiral" width="220" height="220"></canvas>
+        <div class="ctx"><div class="map">MAP</div><div class="status">正在构建文档星系…</div></div>
+      </div>
+      <div class="label"><span class="num">2</span><span class="name">旋臂成形</span><span class="desc">双旋臂粒子缓慢旋转汇聚</span></div>
+    </div>
+
+    <!-- 3 -->
+    <div class="tile">
+      <div class="stage"><canvas data-loader="constellation" width="220" height="220"></canvas>
+        <div class="ctx"><div class="map">MAP</div><div class="status">正在构建文档星系…</div></div>
+      </div>
+      <div class="label"><span class="num">3</span><span class="name">星座连线</span><span class="desc">星点亮起后逐条连成关系网</span></div>
+    </div>
+
+    <!-- 4 -->
+    <div class="tile">
+      <div class="stage">
+        <div class="l4">
+          <div class="neb"></div><div class="neb neb2"></div>
+        </div>
+        <div class="ctx"><div class="map">MAP</div><div class="status">正在构建文档星系…</div></div>
+      </div>
+      <div class="label"><span class="num">4</span><span class="name">星云脉动</span><span class="desc">星云呼吸发光 + 微星漂移</span></div>
+    </div>
+
+    <!-- 5 -->
+    <div class="tile">
+      <div class="stage">
+        <div class="l5" id="l5ring"><div class="core5"></div></div>
+        <div class="ctx"><div class="map">MAP</div><div class="status">正在构建文档星系…</div></div>
+      </div>
+      <div class="label"><span class="num">5</span><span class="name">群星旋环</span><span class="desc">八类配色星点绕核整圈旋转</span></div>
+    </div>
+
+    <!-- 6 -->
+    <div class="tile">
+      <div class="stage"><canvas data-loader="warp" width="220" height="220"></canvas>
+        <div class="ctx"><div class="map">MAP</div><div class="status">正在构建文档星系…</div></div>
+      </div>
+      <div class="label"><span class="num">6</span><span class="name">曲速星流</span><span class="desc">星点自核心向外拉成光痕</span></div>
+    </div>
+
+    <!-- 7 -->
+    <div class="tile">
+      <div class="stage"><canvas data-loader="accretion" width="220" height="220"></canvas>
+        <div class="ctx"><div class="map">MAP</div><div class="status">正在构建文档星系…</div></div>
+      </div>
+      <div class="label"><span class="num">7</span><span class="name">吸积旋涡</span><span class="desc">粒子螺旋汇入发光核心</span></div>
+    </div>
+
+    <!-- 8 -->
+    <div class="tile">
+      <div class="stage">
+        <div class="l8">
+          <div class="wave"></div><div class="wave w2"></div><div class="wave w3"></div>
+          <div class="core8"></div>
+        </div>
+        <div class="ctx"><div class="map">MAP</div><div class="status">正在构建文档星系…</div></div>
+      </div>
+      <div class="label"><span class="num">8</span><span class="name">涟漪扩散</span><span class="desc">核心向外一圈圈扩散脉冲环</span></div>
+    </div>
+
+    <!-- 9 -->
+    <div class="tile">
+      <div class="stage"><canvas data-loader="converge" width="220" height="220"></canvas>
+        <div class="ctx"><div class="map">MAP</div><div class="status">正在构建文档星系…</div></div>
+      </div>
+      <div class="label"><span class="num">9</span><span class="name">聚类汇集</span><span class="desc">散落文档星飞入成团（呼应建库）</span></div>
+    </div>
+  </div>
+
+  <div class="foot">配色 SSOT 同 DocumentGalaxyView 的 TYPE_COLOR。预览地址刷新即重播。选定后我会把它做成 React 组件替换 MapSectionLoader/PageTransitionLoader 在星系两处的调用。</div>
+</div>
+
+<script>
+(function () {
+  var TYPE = ['#4ade80','#60a5fa','#fbbf24','#f87171','#a78bfa','#22d3ee','#fb923c','#94a3b8'];
+  var GOLD = '#ffe08a';
+
+  // 群星旋环(5)：JS 生成 8 个配色星点绕圆排布
+  var ring = document.getElementById('l5ring');
+  if (ring) {
+    for (var i = 0; i < 8; i++) {
+      var a = (i / 8) * Math.PI * 2;
+      var R = 55;
+      var s = document.createElement('div');
+      s.className = 's';
+      var c = TYPE[i];
+      s.style.background = c;
+      s.style.boxShadow = '0 0 10px ' + c;
+      s.style.transform = 'translate(' + (Math.cos(a) * R) + 'px,' + (Math.sin(a) * R) + 'px)';
+      ring.appendChild(s);
+    }
+  }
+
+  // 通用 canvas 高清适配
+  function fit(cv) {
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var w = cv.width, h = cv.height;
+    cv.style.width = w + 'px'; cv.style.height = h + 'px';
+    cv.width = w * dpr; cv.height = h * dpr;
+    var ctx = cv.getContext('2d');
+    ctx.scale(dpr, dpr);
+    return { ctx: ctx, w: w, h: h, cx: w / 2, cy: h / 2 };
+  }
+
+  function dot(ctx, x, y, r, color, glow) {
+    ctx.beginPath();
+    ctx.shadowBlur = glow || 0; ctx.shadowColor = color;
+    ctx.fillStyle = color;
+    ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  var loaders = {
+    spiral: function (s) {
+      var pts = [];
+      var N = 90, arms = 2, twist = 3.0;
+      for (var i = 0; i < N; i++) {
+        var t = i / N;
+        var r = 12 + t * 92;
+        var arm = (i % arms) * (Math.PI * 2 / arms);
+        pts.push({ r: r, base: arm + t * twist * Math.PI, c: TYPE[i % TYPE.length], size: 1.4 + (1 - t) * 1.8 });
+      }
+      return function (time) {
+        var rot = time * 0.0006;
+        s.ctx.clearRect(0, 0, s.w, s.h);
+        dot(s.ctx, s.cx, s.cy, 5, GOLD, 18);
+        for (var i = 0; i < pts.length; i++) {
+          var p = pts[i], th = p.base + rot;
+          dot(s.ctx, s.cx + Math.cos(th) * p.r, s.cy + Math.sin(th) * p.r, p.size, p.c, 6);
+        }
+      };
+    },
+    constellation: function (s) {
+      var stars = [];
+      for (var i = 0; i < 9; i++) {
+        var a = (i / 9) * Math.PI * 2 + 0.3;
+        var r = 38 + (i % 3) * 26;
+        stars.push({ x: s.cx + Math.cos(a) * r, y: s.cy + Math.sin(a) * r, c: TYPE[i % TYPE.length] });
+      }
+      var period = 4200;
+      return function (time) {
+        var t = (time % period) / period; // 0..1
+        s.ctx.clearRect(0, 0, s.w, s.h);
+        // 连线：在 0.45..0.8 阶段逐条出现
+        var lineP = Math.max(0, Math.min(1, (t - 0.4) / 0.4));
+        s.ctx.lineWidth = 1;
+        for (var i = 0; i < stars.length; i++) {
+          var nIdx = (i + 1) % stars.length;
+          var prog = lineP * stars.length - i;
+          if (prog > 0) {
+            var pp = Math.min(1, prog);
+            var a = stars[i], b = stars[nIdx];
+            s.ctx.strokeStyle = 'rgba(150,170,220,' + (0.5 * pp * (1 - t * 0.3)) + ')';
+            s.ctx.beginPath(); s.ctx.moveTo(a.x, a.y);
+            s.ctx.lineTo(a.x + (b.x - a.x) * pp, a.y + (b.y - a.y) * pp); s.ctx.stroke();
+          }
+        }
+        // 星点：逐颗亮起
+        for (var j = 0; j < stars.length; j++) {
+          var appear = Math.min(1, Math.max(0, t * stars.length * 1.6 - j));
+          var op = appear * (t > 0.85 ? (1 - (t - 0.85) / 0.15) : 1);
+          if (op <= 0) continue;
+          s.ctx.globalAlpha = op;
+          dot(s.ctx, stars[j].x, stars[j].y, 3.2, stars[j].c, 8);
+          s.ctx.globalAlpha = 1;
+        }
+        dot(s.ctx, s.cx, s.cy, 3, GOLD, 10);
+      };
+    },
+    warp: function (s) {
+      var N = 70, st = [];
+      function mk() { var a = Math.random() * Math.PI * 2; return { a: a, r: Math.random() * 12, v: 0.6 + Math.random() * 1.8, len: 0 }; }
+      for (var i = 0; i < N; i++) st.push(mk());
+      var last = 0;
+      return function (time) {
+        var dt = last ? Math.min(40, time - last) : 16; last = time;
+        s.ctx.clearRect(0, 0, s.w, s.h);
+        dot(s.ctx, s.cx, s.cy, 4, GOLD, 16);
+        for (var i = 0; i < st.length; i++) {
+          var p = st[i];
+          var pr = p.r;
+          p.r += p.v * (1 + p.r * 0.03) * dt * 0.12;
+          var x1 = s.cx + Math.cos(p.a) * pr, y1 = s.cy + Math.sin(p.a) * pr;
+          var x2 = s.cx + Math.cos(p.a) * p.r, y2 = s.cy + Math.sin(p.a) * p.r;
+          var op = Math.min(1, p.r / 30);
+          s.ctx.strokeStyle = 'rgba(200,214,240,' + op + ')';
+          s.ctx.lineWidth = Math.min(2.4, 0.6 + p.r * 0.02);
+          s.ctx.beginPath(); s.ctx.moveTo(x1, y1); s.ctx.lineTo(x2, y2); s.ctx.stroke();
+          if (p.r > 115) st[i] = mk();
+        }
+      };
+    },
+    accretion: function (s) {
+      var N = 80, st = [];
+      function mk() { return { a: Math.random() * Math.PI * 2, r: 40 + Math.random() * 65, c: TYPE[(Math.random() * TYPE.length) | 0] }; }
+      for (var i = 0; i < N; i++) st.push(mk());
+      var last = 0;
+      return function (time) {
+        var dt = last ? Math.min(40, time - last) : 16; last = time;
+        s.ctx.clearRect(0, 0, s.w, s.h);
+        // 发光核 + 环
+        s.ctx.strokeStyle = 'rgba(255,224,138,0.5)'; s.ctx.lineWidth = 1.5;
+        s.ctx.beginPath(); s.ctx.arc(s.cx, s.cy, 16, 0, Math.PI * 2); s.ctx.stroke();
+        dot(s.ctx, s.cx, s.cy, 7, GOLD, 22);
+        for (var i = 0; i < st.length; i++) {
+          var p = st[i];
+          p.a += (0.8 / (p.r + 8)) * dt * 1.4;
+          p.r -= dt * 0.012 * (1 + (90 - p.r) * 0.02);
+          var op = Math.min(1, (p.r - 14) / 40);
+          dot(s.ctx, s.cx + Math.cos(p.a) * p.r, s.cy + Math.sin(p.a) * p.r, 1.6 + (1 - p.r / 110) * 1.6, p.c, 5);
+          s.ctx.globalAlpha = 1;
+          if (p.r < 16) st[i] = mk();
+        }
+      };
+    },
+    converge: function (s) {
+      var N = 46, st = [];
+      function mk() {
+        var a = Math.random() * Math.PI * 2, R = 95 + Math.random() * 30;
+        return { hx: s.cx + Math.cos(a) * R, hy: s.cy + Math.sin(a) * R,
+          tx: s.cx + (Math.random() - 0.5) * 26, ty: s.cy + (Math.random() - 0.5) * 26,
+          c: TYPE[(Math.random() * TYPE.length) | 0], off: Math.random() };
+      }
+      for (var i = 0; i < N; i++) st.push(mk());
+      var period = 3200;
+      function ease(t) { return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; }
+      return function (time) {
+        s.ctx.clearRect(0, 0, s.w, s.h);
+        dot(s.ctx, s.cx, s.cy, 4.5, GOLD, 18);
+        for (var i = 0; i < st.length; i++) {
+          var p = st[i];
+          var t = ((time / period) + p.off) % 1;
+          var k = ease(Math.min(1, t / 0.75));            // 0..1 飞入
+          var fade = t > 0.82 ? (1 - (t - 0.82) / 0.18) : 1; // 末段淡出再生
+          var x = p.hx + (p.tx - p.hx) * k, y = p.hy + (p.ty - p.hy) * k;
+          s.ctx.globalAlpha = Math.max(0, fade) * (0.4 + k * 0.6);
+          dot(s.ctx, x, y, 2.4, p.c, 7);
+          s.ctx.globalAlpha = 1;
+        }
+      };
+    }
+  };
+
+  var ticks = [];
+  document.querySelectorAll('canvas[data-loader]').forEach(function (cv) {
+    var kind = cv.getAttribute('data-loader');
+    if (!loaders[kind]) return;
+    var s = fit(cv);
+    ticks.push(loaders[kind](s));
+  });
+  function frame(t) { for (var i = 0; i < ticks.length; i++) ticks[i](t); requestAnimationFrame(frame); }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

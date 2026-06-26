@@ -6,3 +6,4 @@
 | fix | prd-admin | 文档星系面包屑「同级跳转」下拉改 createPortal 到 body：顶栏与面包屑容器都 overflow:hidden 会裁掉原地 absolute 菜单，导致新加的同级菜单看不见/不可用（Codex P2）|
 | fix | prd-admin | 修复文档星系选中环偏移（用户反馈「歪/溢出位移」）：环外层容器以左上角对齐星的投影点，而内部环/指针绕容器中心排布，整圈偏到星右下 ~32px。给外层加 translate(-50%,-50%) 让容器中心对到星；并把 4 个指针尖角改为对称 ±34px 推出（旧写法对边钉同名边，盒尺寸同向相加偏右下 ~3.5px，Codex 几何复核发现）|
 | polish | prd-admin | 文档星系关系链面包屑从居中改到左上角（紧挨库名左对齐），右侧统计/搜索/标题开关用弹性占位推到最右 |
+| chore | prd-admin | 新增「文档星系加载动效候选」预览页 public/galaxy-loaders.html：9 个星系专属加载动效供选型（配色取自真实 TYPE_COLOR），选定后替换星系两处通用 MAP 加载 |
