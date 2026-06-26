@@ -26,6 +26,7 @@
  * 数据加载超时护栏、错误显式报错、full-height flex-1 撑满。
  */
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MutableRefObject } from 'react';
+import { createPortal } from 'react-dom';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
@@ -2301,6 +2302,10 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
   const [crumbs, setCrumbs] = useState<GalaxyCrumb[]>([]);
   // 面包屑某段的下拉（跳转同级兄弟）。-1 = 全关；同时只开一个。
   const [openCrumbIdx, setOpenCrumbIdx] = useState<number>(-1);
+  // 下拉用 createPortal 挂到 body（顶栏与面包屑容器都有 overflow:hidden，原地 absolute 会被裁掉，
+  // 用户根本看不到这个新加的同级跳转菜单 —— Codex P2）。打开时按被点段的 rect 计算 fixed 定位。
+  const [crumbMenuPos, setCrumbMenuPos] = useState<{ left: number; top: number } | null>(null);
+  const crumbMenuRef = useRef<HTMLDivElement>(null);
   // 请求 GalaxyCanvas 聚焦某枢纽（面包屑下拉选兄弟分组）。带单调 token 让重复点同一 id 也能再触发。
   const [focusHubReq, setFocusHubReq] = useState<{ id: string; n: number } | null>(null);
   const focusHubReqN = useRef(0);
@@ -2434,7 +2439,13 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
   useEffect(() => {
     if (openCrumbIdx < 0) return;
     const onDown = (e: MouseEvent) => {
-      if (crumbOverlayRef.current && !crumbOverlayRef.current.contains(e.target as Node)) {
+      const t = e.target as Node;
+      // 菜单已 portal 到 body，不在 crumbOverlayRef 子树里 —— 必须同时排除菜单 ref，
+      // 否则点菜单项会被判成「点外面」先关掉，按钮 onClick 都来不及触发。
+      if (
+        crumbOverlayRef.current && !crumbOverlayRef.current.contains(t) &&
+        (!crumbMenuRef.current || !crumbMenuRef.current.contains(t))
+      ) {
         setOpenCrumbIdx(-1);
       }
     };
@@ -2589,7 +2600,16 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
               <span
                 onClick={
                   hasDropdown
-                    ? () => setOpenCrumbIdx((cur) => (cur === i ? -1 : i))
+                    ? (e) => {
+                        const willOpen = openCrumbIdx !== i;
+                        if (willOpen) {
+                          const r = e.currentTarget.getBoundingClientRect();
+                          // 菜单宽 280，落在段左下方；贴右边时左移避免溢出视口。
+                          const left = Math.min(r.left, window.innerWidth - 280 - 8);
+                          setCrumbMenuPos({ left: Math.max(8, left), top: r.bottom + 8 });
+                        }
+                        setOpenCrumbIdx(willOpen ? i : -1);
+                      }
                     : clickable
                       ? () => setOpenEntryId(c.entryId!)
                       : undefined
@@ -2611,12 +2631,13 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
                 {hasDropdown && <ChevronDown size={11} style={{ opacity: 0.6, flexShrink: 0 }} />}
               </span>
-              {dropdownOpen && hasDropdown && (
+              {dropdownOpen && hasDropdown && crumbMenuPos && createPortal(
                 <div
+                  ref={crumbMenuRef}
                   style={{
-                    position: 'absolute',
-                    top: 'calc(100% + 8px)',
-                    left: 0,
+                    position: 'fixed',
+                    top: crumbMenuPos.top,
+                    left: crumbMenuPos.left,
                     width: 280,
                     maxWidth: '80vw',
                     maxHeight: '52vh',
@@ -2628,7 +2649,7 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
                     border: '1px solid rgba(255,255,255,0.14)',
                     borderRadius: 10,
                     boxShadow: '0 14px 38px rgba(0,0,0,0.6)',
-                    zIndex: 60,
+                    zIndex: 70,
                     overflow: 'hidden',
                   }}
                 >
@@ -2685,7 +2706,8 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
                       );
                     })}
                   </div>
-                </div>
+                </div>,
+                document.body,
               )}
             </span>
           );

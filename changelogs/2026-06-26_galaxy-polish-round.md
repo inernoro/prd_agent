@@ -3,3 +3,4 @@
 | polish | prd-admin | 库详情「更多」菜单默认只保留「知识星球（3D 星系）」入口，暂收起「关系图谱/宇宙图」（路由仍在，深链可达），待智能判别落地再放开 |
 | polish | prd-admin | 文档星系类型图例只列「本库真实存在(count>0)」的类型，不再把 spec/design/... 全摆成一排 0（很多库文档未细分类型，全是「其他」）|
 | polish | prd-admin | 知识库文档阅读顶栏「评论/全屏/历史版本/编辑」按钮改为纯图标方钮（评论有数时保留计数），收窄控制条占位 |
+| fix | prd-admin | 文档星系面包屑「同级跳转」下拉改 createPortal 到 body：顶栏与面包屑容器都 overflow:hidden 会裁掉原地 absolute 菜单，导致新加的同级菜单看不见/不可用（Codex P2）|
