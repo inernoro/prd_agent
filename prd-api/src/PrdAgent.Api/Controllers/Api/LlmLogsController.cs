@@ -272,6 +272,8 @@ public class LlmLogsController : ControllerBase
                 x.CacheCreationInputTokens,
                 x.CacheReadInputTokens,
                 x.ToolCallCount,
+                x.FinishReason,
+                x.IsStreaming,
                 x.Error,
                 x.QuestionText,
                 x.AnswerText,
@@ -338,6 +340,8 @@ public class LlmLogsController : ControllerBase
                 x.CacheCreationInputTokens,
                 x.CacheReadInputTokens,
                 x.ToolCallCount,
+                x.FinishReason,
+                x.IsStreaming,
                 x.Error,
                 x.IsFallback,
                 x.ExpectedModel,
@@ -833,6 +837,189 @@ public class LlmLogsController : ControllerBase
 
         // 返回 object：与现有 List/Meta 保持一致
         return Ok(ApiResponse<object>.Ok(new { days, items = safeItems }));
+    }
+
+    // ── 时间范围解析（from/to 优先；否则按 days 回看）──
+    private static (DateTime start, DateTime end) ResolveRange(string? from, string? to, int days)
+    {
+        var end = DateTime.UtcNow;
+        var start = end.AddDays(-Math.Clamp(days <= 0 ? 30 : days, 1, 90));
+        if (!string.IsNullOrWhiteSpace(from) && DateTime.TryParse(from, null,
+            System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out var f))
+            start = f;
+        if (!string.IsNullOrWhiteSpace(to) && DateTime.TryParse(to, null,
+            System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out var t))
+            end = t;
+        return (start, end);
+    }
+
+    private static int BsonInt(BsonValue? v) => v == null || v.IsBsonNull ? 0 : Convert.ToInt32(BsonTypeMapper.MapToDotNetValue(v));
+    private static string? BsonStr(BsonValue? v) => v == null || v.IsBsonNull ? null : BsonTypeMapper.MapToDotNetValue(v)?.ToString();
+
+    private FilterDefinition<LlmRequestLog> BuildLogFilter(
+        DateTime start, DateTime end, string? provider, string? model, string? status, string? appCallerCode, string? userId)
+    {
+        var filter = Builders<LlmRequestLog>.Filter.Gte(x => x.StartedAt, start)
+            & Builders<LlmRequestLog>.Filter.Lt(x => x.StartedAt, end);
+        if (!string.IsNullOrWhiteSpace(provider)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.Provider, provider);
+        if (!string.IsNullOrWhiteSpace(model)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.Model, model);
+        if (!string.IsNullOrWhiteSpace(status)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.Status, status);
+        if (!string.IsNullOrWhiteSpace(userId)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.UserId, userId);
+        if (!string.IsNullOrWhiteSpace(appCallerCode)) filter &= Builders<LlmRequestLog>.Filter.Regex(x => x.AppCallerCode, new BsonRegularExpression($"^{Regex.Escape(appCallerCode)}", "i"));
+        return filter;
+    }
+
+    /// <summary>
+    /// 按天的请求量时间序列（OpenRouter 风格柱状图数据源）。
+    /// $dateToString 分组 count，透传与列表一致的筛选；返回 [{date,count,successCount,failCount}]。
+    /// </summary>
+    [HttpGet("timeseries")]
+    public async Task<IActionResult> Timeseries(
+        [FromQuery] int days = 30,
+        [FromQuery] string? from = null,
+        [FromQuery] string? to = null,
+        [FromQuery] string? provider = null,
+        [FromQuery] string? model = null,
+        [FromQuery] string? status = null,
+        [FromQuery] string? appCallerCode = null,
+        [FromQuery] string? userId = null)
+    {
+        var (start, end) = ResolveRange(from, to, days);
+        var filter = BuildLogFilter(start, end, provider, model, status, appCallerCode, userId);
+        var matchDoc = filter.Render(new RenderArgs<LlmRequestLog>(
+            _db.LlmRequestLogs.DocumentSerializer, _db.LlmRequestLogs.Settings.SerializerRegistry));
+
+        var pipeline = new[]
+        {
+            new BsonDocument("$match", matchDoc),
+            new BsonDocument("$group", new BsonDocument
+            {
+                { "_id", new BsonDocument("$dateToString", new BsonDocument { { "format", "%Y-%m-%d" }, { "date", "$StartedAt" } }) },
+                { "count", new BsonDocument("$sum", 1) },
+                { "successCount", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray { new BsonDocument("$eq", new BsonArray { "$Status", "succeeded" }), 1, 0 })) },
+                { "failCount", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray { new BsonDocument("$eq", new BsonArray { "$Status", "failed" }), 1, 0 })) },
+            }),
+            new BsonDocument("$project", new BsonDocument { { "_id", 0 }, { "date", "$_id" }, { "count", 1 }, { "successCount", 1 }, { "failCount", 1 } }),
+            new BsonDocument("$sort", new BsonDocument("date", 1)),
+        };
+
+        var rows = await _db.LlmRequestLogs.Aggregate<BsonDocument>(pipeline).ToListAsync();
+        var items = rows.Select(d => new
+        {
+            date = BsonStr(d.GetValue("date", BsonNull.Value)),
+            count = BsonInt(d.GetValue("count", 0)),
+            successCount = BsonInt(d.GetValue("successCount", 0)),
+            failCount = BsonInt(d.GetValue("failCount", 0)),
+        }).ToList();
+
+        return Ok(ApiResponse<object>.Ok(new { from = start, to = end, items }));
+    }
+
+    /// <summary>
+    /// 按会话（SessionId）聚合（OpenRouter Sessions tab 数据源）。
+    /// 返回每个会话的 主模型/主平台/支撑模型/请求数/时间范围；primaryModel 等用频率最高项（C# 端算）。
+    /// </summary>
+    [HttpGet("sessions")]
+    public async Task<IActionResult> Sessions(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 30,
+        [FromQuery] int days = 30,
+        [FromQuery] string? from = null,
+        [FromQuery] string? to = null,
+        [FromQuery] string? appCallerCode = null,
+        [FromQuery] string? userId = null)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+        var (start, end) = ResolveRange(from, to, days);
+
+        var filter = BuildLogFilter(start, end, null, null, null, appCallerCode, userId)
+            & Builders<LlmRequestLog>.Filter.Ne(x => x.SessionId, null)
+            & Builders<LlmRequestLog>.Filter.Ne(x => x.SessionId, "");
+        var matchDoc = filter.Render(new RenderArgs<LlmRequestLog>(
+            _db.LlmRequestLogs.DocumentSerializer, _db.LlmRequestLogs.Settings.SerializerRegistry));
+
+        var groupStage = new BsonDocument("$group", new BsonDocument
+        {
+            { "_id", "$SessionId" },
+            { "requestCount", new BsonDocument("$sum", 1) },
+            { "start", new BsonDocument("$min", "$StartedAt") },
+            { "end", new BsonDocument("$max", "$StartedAt") },
+            { "models", new BsonDocument("$push", "$Model") },
+            { "providers", new BsonDocument("$push", "$Provider") },
+            { "apps", new BsonDocument("$push", "$AppCallerCode") },
+        });
+
+        // $facet：同时拿总数 + 当前页（按最近活跃排序）
+        var facet = new BsonDocument("$facet", new BsonDocument
+        {
+            { "total", new BsonArray { new BsonDocument("$count", "n") } },
+            { "rows", new BsonArray
+                {
+                    new BsonDocument("$sort", new BsonDocument("end", -1)),
+                    new BsonDocument("$skip", (page - 1) * pageSize),
+                    new BsonDocument("$limit", pageSize),
+                }
+            },
+        });
+
+        var pipeline = new[] { new BsonDocument("$match", matchDoc), groupStage, facet };
+        var facetResult = await _db.LlmRequestLogs.Aggregate<BsonDocument>(pipeline).FirstOrDefaultAsync();
+
+        var total = 0;
+        var rowsArr = new BsonArray();
+        if (facetResult != null)
+        {
+            if (facetResult["total"] is BsonArray ta && ta.Count > 0 && ta[0] is BsonDocument td)
+                total = BsonInt(td.GetValue("n", 0));
+            if (facetResult["rows"] is BsonArray ra) rowsArr = ra;
+        }
+
+        static string? Mode(BsonValue? arr)
+        {
+            if (arr is not BsonArray a) return null;
+            var counts = new Dictionary<string, int>();
+            foreach (var v in a)
+            {
+                var s = BsonStr(v);
+                if (string.IsNullOrEmpty(s)) continue;
+                counts[s] = counts.GetValueOrDefault(s) + 1;
+            }
+            return counts.Count == 0 ? null : counts.OrderByDescending(kv => kv.Value).First().Key;
+        }
+
+        static List<string> Distinct(BsonValue? arr, string? exclude, int max)
+        {
+            if (arr is not BsonArray a) return new();
+            var seen = new List<string>();
+            foreach (var v in a)
+            {
+                var s = BsonStr(v);
+                if (string.IsNullOrEmpty(s) || s == exclude || seen.Contains(s)) continue;
+                seen.Add(s);
+                if (seen.Count >= max) break;
+            }
+            return seen;
+        }
+
+        var items = rowsArr.OfType<BsonDocument>().Select(d =>
+        {
+            var primaryModel = Mode(d.GetValue("models", new BsonArray()));
+            var primaryProvider = Mode(d.GetValue("providers", new BsonArray()));
+            return new
+            {
+                sessionId = BsonStr(d.GetValue("_id", BsonNull.Value)),
+                requestCount = BsonInt(d.GetValue("requestCount", 0)),
+                start = d.GetValue("start", BsonNull.Value).IsBsonNull ? (DateTime?)null : d["start"].ToUniversalTime(),
+                end = d.GetValue("end", BsonNull.Value).IsBsonNull ? (DateTime?)null : d["end"].ToUniversalTime(),
+                appCallerCode = Mode(d.GetValue("apps", new BsonArray())),
+                primaryModel,
+                primaryProvider,
+                supportingModels = Distinct(d.GetValue("models", new BsonArray()), primaryModel, 5),
+            };
+        }).ToList();
+
+        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
     }
 
     /// <summary>

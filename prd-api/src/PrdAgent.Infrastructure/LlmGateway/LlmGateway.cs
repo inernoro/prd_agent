@@ -145,11 +145,13 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // 6. 解析响应
             GatewayTokenUsage? tokenUsage = null;
             System.Text.Json.Nodes.JsonArray? toolCalls = null;
+            string? finishReason = null;
             if (response.IsSuccessStatusCode)
             {
                 tokenUsage = adapter.ParseTokenUsage(responseBody);
                 // 协议保真：提取工具调用（函数调用），归一为 OpenAI 形状（无则 null，不影响纯文本响应）
                 toolCalls = adapter.ParseToolCalls(responseBody);
+                finishReason = ExtractFinishReason(responseBody);
             }
 
             // 7. 更新健康状态
@@ -166,7 +168,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             }
 
             // 8. 写入日志（完成）
-            await FinishLogAsync(logId, response, responseBody, tokenUsage, durationMs, toolCalls, ct);
+            await FinishLogAsync(logId, response, responseBody, tokenUsage, durationMs, toolCalls, finishReason, ct);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -583,7 +585,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             var assembledThinking = thinkingBuilder.ToString();
             var assembledToolCalls = BuildAccumulatedToolCalls(toolCallAccum);
-            await FinishStreamLogAsync(logId, assembledText, assembledThinking, tokenUsage, durationMs, assembledToolCalls, ct);
+            await FinishStreamLogAsync(logId, assembledText, assembledThinking, tokenUsage, durationMs, assembledToolCalls, finishReason, ct);
         }
         finally
         {
@@ -1414,6 +1416,10 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         {
             var requestJson = requestBody.ToJsonString();
             var redactedJson = LlmLogRedactor.RedactJson(requestJson);
+            // 是否流式：SendAsync 置 stream=false，StreamAsync 置 stream=true，此处统一从请求体读
+            bool? isStreaming = requestBody.TryGetPropertyValue("stream", out var streamNode)
+                && streamNode is JsonValue streamVal && streamVal.TryGetValue<bool>(out var sb)
+                ? sb : (bool?)null;
 
             return await _logWriter.StartAsync(
                 new LlmLogStart(
@@ -1458,7 +1464,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     ImageReferences: request.Context?.ImageReferences,
                     IsFallback: resolution.IsFallback ? true : null,
                     FallbackReason: resolution.FallbackReason,
-                    ExpectedModel: resolution.ExpectedModel),
+                    ExpectedModel: resolution.ExpectedModel,
+                    IsStreaming: isStreaming),
                 ct);
         }
         catch (Exception ex)
@@ -1475,6 +1482,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         GatewayTokenUsage? tokenUsage,
         long durationMs,
         System.Text.Json.Nodes.JsonArray? toolCalls,
+        string? finishReason,
         CancellationToken ct)
     {
         if (_logWriter == null || logId == null) return;
@@ -1508,12 +1516,40 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     EndedAt: DateTime.UtcNow,
                     DurationMs: durationMs,
                     ResponseToolCalls: toolCalls?.ToJsonString(),
-                    ToolCallCount: toolCalls?.Count));
+                    ToolCallCount: toolCalls?.Count,
+                    FinishReason: finishReason));
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[LlmGateway] 完成日志失败");
         }
+    }
+
+    /// <summary>
+    /// 从非流式响应体提取完成原因：OpenAI choices[0].finish_reason / Claude stop_reason。无则 null。
+    /// </summary>
+    private static string? ExtractFinishReason(string responseBody)
+    {
+        try
+        {
+            if (System.Text.Json.Nodes.JsonNode.Parse(responseBody) is not System.Text.Json.Nodes.JsonObject root)
+                return null;
+            if (root["choices"] is System.Text.Json.Nodes.JsonArray choices && choices.Count > 0 &&
+                choices[0] is System.Text.Json.Nodes.JsonObject c0 && c0["finish_reason"] is { } fr &&
+                fr.GetValueKind() == System.Text.Json.JsonValueKind.String)
+            {
+                return fr.GetValue<string>();
+            }
+            if (root["stop_reason"] is { } sr && sr.GetValueKind() == System.Text.Json.JsonValueKind.String)
+            {
+                return sr.GetValue<string>();
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+        return null;
     }
 
     private async Task FinishStreamLogAsync(
@@ -1523,6 +1559,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         GatewayTokenUsage? tokenUsage,
         long durationMs,
         System.Text.Json.Nodes.JsonArray? toolCalls,
+        string? finishReason,
         CancellationToken ct)
     {
         if (_logWriter == null || logId == null) return;
@@ -1551,7 +1588,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     EndedAt: DateTime.UtcNow,
                     DurationMs: durationMs,
                     ResponseToolCalls: toolCalls?.ToJsonString(),
-                    ToolCallCount: toolCalls?.Count));
+                    ToolCallCount: toolCalls?.Count,
+                    FinishReason: finishReason));
         }
         catch (Exception ex)
         {

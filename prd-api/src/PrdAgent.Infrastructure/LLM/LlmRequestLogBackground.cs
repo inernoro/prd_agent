@@ -127,7 +127,8 @@ public sealed class LlmRequestLogBackground
             .Set(l => l.EndedAt, done.EndedAt)
             .Set(l => l.DurationMs, done.DurationMs)
             .Set(l => l.ResponseToolCalls, toolCalls)
-            .Set(l => l.ToolCallCount, done.ToolCallCount);
+            .Set(l => l.ToolCallCount, done.ToolCallCount)
+            .Set(l => l.FinishReason, done.FinishReason);
 
         return _db.LlmRequestLogs.UpdateOneAsync(l => l.Id == logId, update);
     }

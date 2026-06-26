@@ -39,7 +39,7 @@ import type { GetExecutiveOverviewContract, GetExecutiveTrendsContract, GetExecu
 import type { CreatePlatformContract, DeletePlatformContract, GetPlatformsContract, UpdatePlatformContract } from '@/services/contracts/platforms';
 import type { ClearImageGenModelContract, ClearIntentModelContract, ClearVisionModelContract, CreateModelContract, DeleteModelContract, GetModelsContract, SetImageGenModelContract, SetIntentModelContract, SetMainModelContract, SetVisionModelContract, TestModelContract, UpdateModelContract, UpdateModelPrioritiesContract, GetModelAdapterInfoContract, GetModelsAdapterInfoBatchContract, GetAdapterInfoByModelNameContract } from '@/services/contracts/models';
 import type { ActivateLLMConfigContract, CreateLLMConfigContract, DeleteLLMConfigContract, GetLLMConfigsContract, UpdateLLMConfigContract } from '@/services/contracts/llmConfigs';
-import type { GetLlmLogDetailContract, GetLlmLogsContract, GetLlmLogsMetaContract, GetLlmModelStatsContract, GetReplayCurlContract } from '@/services/contracts/llmLogs';
+import type { GetLlmLogDetailContract, GetLlmLogsContract, GetLlmLogsMetaContract, GetLlmModelStatsContract, GetReplayCurlContract, GetLlmLogsTimeseriesContract, GetLlmLogsSessionsContract } from '@/services/contracts/llmLogs';
 import type { GetTeamActivityEndpointDetailContract, GetTeamActivityExperienceMapContract, GetTeamActivityExperienceTrendContract, GetTeamActivityInsightsContract, GetTeamActivityLogsContract, GetTeamActivityModulesContract, GetTeamActivityStatsContract, InsightToRequirementContract, SetTeamActivityInsightStateContract } from '@/services/contracts/teamActivity';
 import type { GetAdminDocumentContentContract } from '@/services/contracts/adminDocuments';
 import type { ListUploadArtifactsContract } from '@/services/contracts/uploadArtifacts';
@@ -318,7 +318,7 @@ import { getExecutiveOverviewReal, getExecutiveTrendsReal, getExecutiveTeamReal,
 import { createPlatformReal, deletePlatformReal, getPlatformsReal, updatePlatformReal } from '@/services/real/platforms';
 import { clearImageGenModelReal, clearIntentModelReal, clearVisionModelReal, createModelReal, deleteModelReal, getModelsReal, setImageGenModelReal, setIntentModelReal, setMainModelReal, setVisionModelReal, testModelReal, updateModelReal, updateModelPrioritiesReal, getModelAdapterInfoReal, getModelsAdapterInfoBatchReal, getAdapterInfoByModelNameReal } from '@/services/real/models';
 import { activateLLMConfigReal, createLLMConfigReal, deleteLLMConfigReal, getLLMConfigsReal, updateLLMConfigReal } from '@/services/real/llmConfigs';
-import { getLlmLogDetailReal, getLlmLogsMetaReal, getLlmLogsReal, getLlmModelStatsReal, getBatchModelStatsReal, getReplayCurlReal } from '@/services/real/llmLogs';
+import { getLlmLogDetailReal, getLlmLogsMetaReal, getLlmLogsReal, getLlmModelStatsReal, getBatchModelStatsReal, getReplayCurlReal, getLlmLogsTimeseriesReal, getLlmLogsSessionsReal } from '@/services/real/llmLogs';
 import { getTeamActivityEndpointDetailReal, getTeamActivityExperienceMapReal, getTeamActivityExperienceTrendReal, getTeamActivityInsightsReal, getTeamActivityLogsReal, getTeamActivityModulesReal, getTeamActivityStatsReal, insightToRequirementReal, setTeamActivityInsightStateReal } from '@/services/real/teamActivity';
 import { getAdminDocumentContentReal } from '@/services/real/adminDocuments';
 import { listUploadArtifactsReal } from '@/services/real/uploadArtifacts';
@@ -905,6 +905,8 @@ export const getLlmLogsMeta: GetLlmLogsMetaContract = withAuth(getLlmLogsMetaRea
 export const getLlmModelStats: GetLlmModelStatsContract = withAuth(getLlmModelStatsReal);
 export const getBatchModelStats = withAuth(getBatchModelStatsReal);
 export const getReplayCurl: GetReplayCurlContract = withAuth(getReplayCurlReal);
+export const getLlmLogsTimeseries: GetLlmLogsTimeseriesContract = withAuth(getLlmLogsTimeseriesReal);
+export const getLlmLogsSessions: GetLlmLogsSessionsContract = withAuth(getLlmLogsSessionsReal);
 export const listUploadArtifacts: ListUploadArtifactsContract = withAuth(listUploadArtifactsReal);
 export const getAdminDocumentContent: GetAdminDocumentContentContract = withAuth(getAdminDocumentContentReal);
 

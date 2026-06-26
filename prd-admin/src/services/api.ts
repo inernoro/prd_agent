@@ -181,6 +181,8 @@ export const api = {
       meta: () => '/api/logs/llm/meta',
       modelStats: () => '/api/logs/llm/model-stats',
       batchModelStats: () => '/api/logs/llm/model-stats/batch',
+      timeseries: () => '/api/logs/llm/timeseries',
+      sessions: () => '/api/logs/llm/sessions',
     },
     desktopPresence: {
       list: () => '/api/logs/desktop-presence',

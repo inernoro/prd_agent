@@ -131,6 +131,12 @@ public class LlmRequestLog
     public string? ResponseToolCalls { get; set; }
     /// <summary>函数调用条数（&gt;0 时日志列表显示「函数调用」chip）。</summary>
     public int? ToolCallCount { get; set; }
+
+    /// <summary>完成原因（上游 finish_reason / stop_reason：stop/length/tool_calls 等；存量日志为 null）。</summary>
+    public string? FinishReason { get; set; }
+
+    /// <summary>本次请求是否流式（来自请求体 stream 字段；存量日志为 null）。</summary>
+    public bool? IsStreaming { get; set; }
     public int? AssembledTextChars { get; set; } // 保留：用于摘要统计（与 AnswerTextChars 一致）
     public string? AssembledTextHash { get; set; } // 保留：用于摘要统计（与 AnswerTextHash 一致）
     public string? Error { get; set; }

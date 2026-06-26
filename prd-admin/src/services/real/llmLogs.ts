@@ -17,6 +17,10 @@ import type {
   BatchModelStatsData,
   GetReplayCurlContract,
   ReplayCurlData,
+  GetLlmLogsTimeseriesContract,
+  LlmLogsTimeseriesData,
+  GetLlmLogsSessionsContract,
+  LlmLogsSessionsData,
 } from '@/services/contracts/llmLogs';
 
 function toQuery(params?: GetLlmLogsParams) {
@@ -57,5 +61,13 @@ export const getBatchModelStatsReal: GetBatchModelStatsContract = async (params:
 
 export const getReplayCurlReal: GetReplayCurlContract = async (id: string): Promise<ApiResponse<ReplayCurlData>> => {
   return await apiRequest<ReplayCurlData>(api.logs.llm.replayCurl(encodeURIComponent(id)), { method: 'GET' });
+};
+
+export const getLlmLogsTimeseriesReal: GetLlmLogsTimeseriesContract = async (params): Promise<ApiResponse<LlmLogsTimeseriesData>> => {
+  return await apiRequest<LlmLogsTimeseriesData>(`${api.logs.llm.timeseries()}${toQuery(params as GetLlmLogsParams)}`, { method: 'GET' });
+};
+
+export const getLlmLogsSessionsReal: GetLlmLogsSessionsContract = async (params): Promise<ApiResponse<LlmLogsSessionsData>> => {
+  return await apiRequest<LlmLogsSessionsData>(`${api.logs.llm.sessions()}${toQuery(params as GetLlmLogsParams)}`, { method: 'GET' });
 };
 

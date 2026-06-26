@@ -49,7 +49,9 @@ public record LlmLogStart(
     string? FallbackReason = null,
     string? ExpectedModel = null,
     // 健康探活标记
-    bool? IsHealthProbe = null);
+    bool? IsHealthProbe = null,
+    /// <summary>本次请求是否流式（来自请求体 stream 字段）</summary>
+    bool? IsStreaming = null);
 
 public record LlmLogDone(
     int? StatusCode,
@@ -71,7 +73,9 @@ public record LlmLogDone(
     /// <summary>函数调用（tool_calls）OpenAI 形状序列化 JSON；无则 null</summary>
     string? ResponseToolCalls = null,
     /// <summary>函数调用条数</summary>
-    int? ToolCallCount = null);
+    int? ToolCallCount = null,
+    /// <summary>完成原因（上游 finish_reason / stop_reason）</summary>
+    string? FinishReason = null);
 
 public interface ILlmRequestLogWriter
 {

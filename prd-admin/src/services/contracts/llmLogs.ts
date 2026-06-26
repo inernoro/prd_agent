@@ -113,5 +113,63 @@ export type ReplayCurlData = {
 
 export type GetReplayCurlContract = (id: string) => Promise<ApiResponse<ReplayCurlData>>;
 
+// ── 按天请求量时间序列（OpenRouter 风格柱状图）──
+export type GetLlmLogsTimeseriesParams = {
+  days?: number;
+  from?: string;
+  to?: string;
+  provider?: string;
+  model?: string;
+  status?: string;
+  appCallerCode?: string;
+  userId?: string;
+};
+
+export type LlmLogsTimeseriesPoint = {
+  date: string; // YYYY-MM-DD (UTC)
+  count: number;
+  successCount: number;
+  failCount: number;
+};
+
+export type LlmLogsTimeseriesData = {
+  from: string;
+  to: string;
+  items: LlmLogsTimeseriesPoint[];
+};
+
+export type GetLlmLogsTimeseriesContract = (params?: GetLlmLogsTimeseriesParams) => Promise<ApiResponse<LlmLogsTimeseriesData>>;
+
+// ── 按会话聚合（OpenRouter Sessions tab）──
+export type GetLlmLogsSessionsParams = {
+  page?: number;
+  pageSize?: number;
+  days?: number;
+  from?: string;
+  to?: string;
+  appCallerCode?: string;
+  userId?: string;
+};
+
+export type LlmLogsSessionItem = {
+  sessionId: string | null;
+  requestCount: number;
+  start?: string | null;
+  end?: string | null;
+  appCallerCode?: string | null;
+  primaryModel?: string | null;
+  primaryProvider?: string | null;
+  supportingModels: string[];
+};
+
+export type LlmLogsSessionsData = {
+  items: LlmLogsSessionItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
+export type GetLlmLogsSessionsContract = (params?: GetLlmLogsSessionsParams) => Promise<ApiResponse<LlmLogsSessionsData>>;
+
 
 

@@ -96,7 +96,8 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 IsFallback = start.IsFallback,
                 FallbackReason = start.FallbackReason,
                 ExpectedModel = start.ExpectedModel,
-                IsHealthProbe = start.IsHealthProbe
+                IsHealthProbe = start.IsHealthProbe,
+                IsStreaming = start.IsStreaming
             };
 
             await _db.LlmRequestLogs.InsertOneAsync(log, cancellationToken: ct);

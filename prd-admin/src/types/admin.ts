@@ -157,6 +157,10 @@ export type LlmRequestLogListItem = {
   resolutionReason?: string | null;
   /** 函数调用条数（>0 显示「函数调用」chip） */
   toolCallCount?: number | null;
+  /** 完成原因（finish_reason / stop_reason；存量 null） */
+  finishReason?: string | null;
+  /** 是否流式（存量 null） */
+  isStreaming?: boolean | null;
 };
 
 export type LlmRequestLog = {
@@ -235,6 +239,10 @@ export type LlmRequestLog = {
   responseToolCalls?: string | null;
   /** 函数调用条数（>0 显示「函数调用」chip） */
   toolCallCount?: number | null;
+  /** 完成原因（finish_reason / stop_reason；存量 null） */
+  finishReason?: string | null;
+  /** 是否流式（存量 null） */
+  isStreaming?: boolean | null;
 };
 
 export type LlmImageReference = {
