@@ -121,9 +121,25 @@ ImageResponse { images[](URL), usage }
 - 新增功能不再产生"又一条要管理的绑定"。156 个 code 变成廉价标签 + 天然分析维度。
 - sync 改成**对账式**：registry 里没有的 code 标 `DeletedAt` 软删，面板一键清。
 
-### 决策六："池子拆出来" = 先合并再收口
+### 决策六：先合并成内聚模块 → **再独立成 Gateway 服务**（用户 2026-06-26 拍板，修订原"先不拆"）
 
-图片并网关、删死策略、删 legacy 层之后，剩下的东西小到可成为一个**单一内聚模块**（`Infrastructure/LlmGateway` 一个口子 = resolver + 协议注册表 + 短池 + 图片）。**不建议**现在拆成独立服务（过早优化，引入跨服务不稳定，与稳定优先冲突）。先做成干净内聚模块，真有规模再谈物理拆分。
+原判断：删死策略/legacy/图片并网关后，剩下小到可成**单一内聚模块**（`Infrastructure/LlmGateway` 一个口子 = resolver + 协议注册表 + 短池 + 图片），**先不拆服务**（避免过早优化）。
+
+**用户 2026-06-26 修订**：明确要求 **gateway 要独立出来**——把这个内聚模块抽成一个**独立的 Gateway 服务**（内部应用 + 外部客户统一入口），目标是**做 OpenRouter 的超集**（它有的都有 + 更多）。这与 §12「对外平台化」合流：独立 Gateway = 那个"类 OpenRouter 平台"的本体。
+
+落地姿态(稳定优先不变)：① **先把引擎清干净再抽**（P1-P3 已基本完成：协议字段地基 + 删死策略 + 删 legacy + 默认池 + 池内兜底），抽的是已经内聚好的那块；② 抽成独立服务后，现有内部调用走它、`OpenApiController` 的外部 `/v1/*` 也走它，**同一引擎两个面**(§12.1 已证外部早共用引擎)；③ 物理拆分按"先进程内独立模块边界清晰 → 再独立部署"两步走，不一步到位引入跨服务不稳定。
+
+### 决策八：观测性是一等公民（用户 2026-06-26 "观测性很重要"）
+
+对标 OpenRouter Logs 的深度，**做超集**。观测页(独立 Gateway 的核心面)至少含：
+
+- **Logs · Generations**：每个请求一行——时间/模型/平台/调用方(App)/in-out token/速度(tok/s)/**解析层(专属池/默认池)**/状态(+fallback 徽章)。
+- **Logs · Upstream Requests**：每次上游尝试——模型/最终供应商/状态码/尝试次数/延迟（多供应商竞速/重试可见）。
+- **Logs · Sessions**：按会话/调用方聚合——主模型/主供应商/辅助模型/请求数/用量。
+- **Generation 详情抽屉**：上游延迟 / 吞吐 / token(in→out) / **是否 fallback + fallback 延迟** / Provider Responses(每供应商状态+延迟条) / Overview(Model ID + 解析层 + 数据策略) / Request(App/RequestID/Streaming) / **Prompt+Completion 正文(opt-in 监听，默认零内容日志)**。
+- **死池 + fallback 率告警**(已落地 health-overview)置顶——静默降级一眼可见。
+- 数据吃现有 `llmrequestlogs`(165 字段，已有 isFallback/FallbackReason/ModelResolutionType/Protocol/token/duration)，**超集增量**：解析层维度、协议维度、池归属维度——这些是 OpenRouter 没有的(它没"池/解析层"概念)，正是我们的"超集"部分。
+- 风格**维持本系统暗色玻璃**，不抄 OpenRouter 皮；结构对标它。
 
 ### 决策七：管理 UI = OpenRouter 心智（用户 2026-06-25 拍板）
 
