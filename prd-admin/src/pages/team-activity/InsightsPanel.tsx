@@ -597,9 +597,9 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
           style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(12, minmax(0, 1fr))',
-            // 右列上行(趋势)比下行(声道)更高：趋势带汇总指标条+曲线需要更多高度才不挤
-            // （热力图跨两行，总高不变，只调右列内部比例）。用户按截图比例调整。
-            gridTemplateRows: '1.45fr 1fr',
+            // 右列：上行(趋势)更矮、下行(声道看板)更高——用户要趋势短、声道长（按截图比例）。
+            // 热力图跨两行总高不变，仅调右列内部比例。
+            gridTemplateRows: '1fr 1.7fr',
             gap: '12px',
             height: '100%',
             minHeight: 0,
