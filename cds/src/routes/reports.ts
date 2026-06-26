@@ -707,11 +707,14 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
   // 项目级 key 只能管自己项目的文件夹（沿用 reportAccessDenied 的作用域口径）；
   // cookie / bootstrap（人类 owner）可管全部，含全局（CDS 自身）文件夹。
 
-  // GET /api/report-folders?projectId= — 列出某项目（或全局）下的文件夹。
+  // GET /api/report-folders?projectId= — 列出文件夹。
+  // 语义与 GET /api/reports 对齐：缺省 projectId = 全部项目（供全局视图「按项目分组」展示
+  // 各项目的文件夹树，否则只回 CDS 自身的文件夹、项目分组永远只有一组）；显式 projectId =
+  // 仅该项目；项目级 key 一律锁到自己项目。
   router.get('/report-folders', (req: Request, res: Response) => {
-    let projectId = typeof req.query.projectId === 'string' && req.query.projectId ? req.query.projectId : null;
     const key = projectKeyOf(req);
-    if (key) projectId = key.projectId;
+    if (key) return res.json({ folders: stateService.listReportFolders(key.projectId) });
+    const projectId = typeof req.query.projectId === 'string' && req.query.projectId ? req.query.projectId : undefined;
     return res.json({ folders: stateService.listReportFolders(projectId) });
   });
 
