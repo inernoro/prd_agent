@@ -14,7 +14,13 @@ import { installNodeFetchRoute } from './proxyroute.mjs';
 export async function launchCds(cfg, opts = {}) {
   const session = _bumpCaptureSession();
   const sc = cfg.screenshot || {};
-  const browser = await chromium.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+  // 预装 chromium 版本可能与 pinned playwright 的 revision 不一致（报 "Executable doesn't
+  // exist"）。设 PW_EXECUTABLE_PATH 指向预装 chrome 直接用，绕开版本匹配（不要 playwright install）。
+  const exe = process.env.PW_EXECUTABLE_PATH || opts.executablePath;
+  const browser = await chromium.launch({
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    ...(exe ? { executablePath: exe } : {}),
+  });
   const ctx = await browser.newContext({
     viewport: { width: sc.width || 1440, height: sc.height || 900 },
     deviceScaleFactor: sc.deviceScaleFactor || 2,

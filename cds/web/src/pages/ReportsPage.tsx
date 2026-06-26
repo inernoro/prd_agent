@@ -272,7 +272,9 @@ export function ReportsPage(): JSX.Element {
     >
       <Workspace wide className="cds-workspace--fill cds-workspace--fluid">
         <div className="flex h-full min-h-0 flex-col gap-5">
-          <section className="cds-surface-raised cds-hairline p-4">
+          {/* shrink-0：否则在 flex-col + h-full 容器里，加载完成后下方报告列表(flex-1)抢空间，
+              flexbox 会把没锁 shrink 的头部压扁("刷新完成头部就收缩"，2026-06-26 验收反馈)。 */}
+          <section className="cds-surface-raised cds-hairline p-4 shrink-0">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="min-w-0">
                 <h1 className="text-lg font-semibold">
