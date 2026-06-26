@@ -863,6 +863,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
   /** 顶栏「更多」下拉 */
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
+  // 手机端：顶栏只留「上传文档 + 更多」，把同步/分享/知识星球收进「更多」菜单，
+  // 从根上解决顶栏按钮过多被挤压/裁切（治标的 flex-wrap 换行不如直接收纳）。
+  const isMobile = useIsMobile();
   // 「更多」下拉用 AnchoredMenu（自带 portal 到 body + 按 anchorRef 定位 + 点外关闭），
   // 不再手写 createPortal/morePos（PageHeader overflow-hidden 会裁原地 absolute）。
   const toggleMore = useCallback(() => setMoreOpen((o) => !o), []);
@@ -1399,27 +1402,30 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
           </div>
         }
         actions={
-          // flex-wrap + justify-end：手机端工具按钮多于一行宽时换行下来，全部可见可点；
-          // 否则 PageHeader 根是 overflow-hidden，最右的「知识星球 / 更多」会被裁出屏幕外
-          // （用户反馈「手机端没有这个功能」的根因）。桌面端有富余宽度，仍是单行。
+          // 顶栏只放主操作；次级操作（同步/分享/知识星球）手机端收进「更多」菜单，
+          // 桌面端宽度有富余才平铺。flex-wrap 仅作中间宽度的安全网，正常单行。
           <div className="flex items-center gap-2 flex-wrap justify-end">
             {/* 同步中心入口：有任务进行中时转圈 + 脉冲 + 文案「同步中…」，点击进入四视图 + 强制对齐 */}
-            <button
-              onClick={() => setShowSyncCenter(true)}
-              className={`surface-action flex h-7 cursor-pointer items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold transition-all ${syncBusy ? 'animate-pulse' : ''}`}
-              style={syncBusy
-                ? { color: 'rgba(252,211,77,0.98)', background: 'rgba(245,158,11,0.14)', boxShadow: 'inset 0 0 0 1px rgba(245,158,11,0.42)' }
-                : store.peerSyncStatus === 'error' ? { color: 'rgba(252,165,165,0.96)' } : undefined}
-              title="同步中心：进行中 / 发出去 / 收进来 / 历史，以及强制对齐（远端为准 / 本地为准 / 同时对准）"
-            >
-              {syncBusy ? <MapSpinner size={11} /> : <ArrowLeftRight size={11} />}
-              {syncBusy ? '同步中…' : '同步'}
-            </button>
+            {!isMobile && (
+              <button
+                onClick={() => setShowSyncCenter(true)}
+                className={`surface-action flex h-7 cursor-pointer items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold transition-all ${syncBusy ? 'animate-pulse' : ''}`}
+                style={syncBusy
+                  ? { color: 'rgba(252,211,77,0.98)', background: 'rgba(245,158,11,0.14)', boxShadow: 'inset 0 0 0 1px rgba(245,158,11,0.42)' }
+                  : store.peerSyncStatus === 'error' ? { color: 'rgba(252,165,165,0.96)' } : undefined}
+                title="同步中心：进行中 / 发出去 / 收进来 / 历史，以及强制对齐（远端为准 / 本地为准 / 同时对准）"
+              >
+                {syncBusy ? <MapSpinner size={11} /> : <ArrowLeftRight size={11} />}
+                {syncBusy ? '同步中…' : '同步'}
+              </button>
+            )}
             {/* 旧版同步链接徽章：仅当本库已加入同步配对时显示 */}
-            <StoreSyncBadge storeId={store.id} onManage={onManageSync} />
-            <Button variant="secondary" size="xs" onClick={() => setShowShareDialog(true)}>
-              <Share2 size={13} /> 分享
-            </Button>
+            {!isMobile && <StoreSyncBadge storeId={store.id} onManage={onManageSync} />}
+            {!isMobile && (
+              <Button variant="secondary" size="xs" onClick={() => setShowShareDialog(true)}>
+                <Share2 size={13} /> 分享
+              </Button>
+            )}
             <Button
               variant="primary"
               size="xs"
@@ -1431,32 +1437,42 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
               {uploading ? '上传中…' : '上传文档'}
             </Button>
             {/* 知识星球：3D 文档星系直达入口（此前藏在「宇宙图」里，新用户找不到）。
-                借鉴「本页教程」pill 的柔和脉冲光环 + 渐变底，吸引用户点进来探索。 */}
-            <button
-              type="button"
-              onClick={() => navigate(`/document-store/${storeId}/galaxy`)}
-              title="知识星球 — 3D 文档星系，悬停看简介、点击进入文档"
-              className="flex h-7 cursor-pointer items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold"
-              style={{
-                color: 'rgba(196,181,253,0.98)',
-                background: 'linear-gradient(135deg, rgba(168,85,247,0.20), rgba(99,102,241,0.16))',
-                border: '1px solid rgba(196,181,253,0.45)',
-                animation: 'galaxyEntryPulse 2.4s ease-in-out infinite',
-              }}
-            >
-              <Orbit size={13} /> 知识星球
-              <style>{`@keyframes galaxyEntryPulse {
-                0%, 100% { box-shadow: 0 0 0 0 rgba(168,85,247,0); }
-                50% { box-shadow: 0 0 0 3px rgba(168,85,247,0.18); }
-              }`}</style>
-            </button>
-            {/* 更多：收纳低频管理动作（发布 / 关系图谱 / 统计 / 订阅），折叠屏只占一个位 */}
+                借鉴「本页教程」pill 的柔和脉冲光环 + 渐变底，吸引用户点进来探索。
+                手机端收进「更多」菜单（见下），顶栏不挤。 */}
+            {!isMobile && (
+              <button
+                type="button"
+                onClick={() => navigate(`/document-store/${storeId}/galaxy`)}
+                title="知识星球 — 3D 文档星系，悬停看简介、点击进入文档"
+                className="flex h-7 cursor-pointer items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold"
+                style={{
+                  color: 'rgba(196,181,253,0.98)',
+                  background: 'linear-gradient(135deg, rgba(168,85,247,0.20), rgba(99,102,241,0.16))',
+                  border: '1px solid rgba(196,181,253,0.45)',
+                  animation: 'galaxyEntryPulse 2.4s ease-in-out infinite',
+                }}
+              >
+                <Orbit size={13} /> 知识星球
+                <style>{`@keyframes galaxyEntryPulse {
+                  0%, 100% { box-shadow: 0 0 0 0 rgba(168,85,247,0); }
+                  50% { box-shadow: 0 0 0 3px rgba(168,85,247,0.18); }
+                }`}</style>
+              </button>
+            )}
+            {/* 更多：收纳低频管理动作（发布 / 统计 / 订阅 + 手机端的同步/分享/知识星球），折叠屏只占一个位 */}
             <div className="relative" ref={moreRef}>
               <Button variant="secondary" size="xs" onClick={toggleMore} title="更多操作">
                 <MoreHorizontal size={14} /> 更多
               </Button>
               {/* createPortal 到 body：PageHeader 是 overflow-hidden 圆角玻璃条，绝对定位下拉会被裁掉。见 AnchoredMenu / frontend-modal.md */}
               <AnchoredMenu open={moreOpen} onClose={() => setMoreOpen(false)} anchorRef={moreRef} minWidth={200}>
+                {/* 手机端：顶栏收起的同步/分享落到菜单顶部（知识星球已在下方常驻项里） */}
+                {isMobile && (
+                  <>
+                    <MoreItem icon={syncBusy ? <MapSpinner size={14} /> : <ArrowLeftRight size={14} />} label={syncBusy ? '同步中…' : '同步中心'} onClick={() => { setMoreOpen(false); setShowSyncCenter(true); }} />
+                    <MoreItem icon={<Share2 size={14} />} label="分享" onClick={() => { setMoreOpen(false); setShowShareDialog(true); }} />
+                  </>
+                )}
                 {store.isPublic ? (
                   <>
                     <MoreItem icon={<ArrowUpRight size={14} />} label="前往公开页" onClick={() => { setMoreOpen(false); onOpenLibrary(store.id); }} />
