@@ -132,8 +132,15 @@ describe('peer-sync MAP-KBTP endpoints', () => {
     expect(confirm.status).toBe(404);
     const finalize = await request(server, 'POST', '/api/peer-sync/handshake/finalize', JSON.stringify({ pairingCode: code, initiatorNodeId }));
     expect(finalize.status).toBe(404);
-    // cancel 删除半连接节点并返回 200。
-    const cancel = await request(server, 'POST', '/api/peer-sync/handshake/cancel', JSON.stringify({ pairingCode: code, initiatorNodeId }));
+    // cancel 现在要求 HMAC 签名（防任何人凭 node id 撤销别人的配对，Codex P2）。
+    const secret = hs.body.data.sharedSecret as string;
+    const cbody = JSON.stringify({ initiatorNodeId });
+    // 未签名 → 401（不再裸删）。
+    const unsigned = await request(server, 'POST', '/api/peer-sync/handshake/cancel', cbody);
+    expect(unsigned.status).toBe(401);
+    // 用节点 sharedSecret 正确签名 → 200，删除该节点。
+    const c = sign(secret, 'POST', '/api/peer-sync/handshake/cancel', cbody);
+    const cancel = await request(server, 'POST', '/api/peer-sync/handshake/cancel', cbody, hdr(initiatorNodeId, c.ts, c.sig));
     expect(cancel.status).toBe(200);
   });
 

@@ -124,16 +124,18 @@ function computeSignature(reports: AcceptanceReportMeta[]): string {
 }
 
 /** 把一个 item 的报告组装成 MAP-KBTP SyncResourceBundle（resourceType=document-store）。 */
-function buildBundle(
+async function buildBundle(
   stateService: StateService,
   itemId: string,
-): Record<string, unknown> | null {
+): Promise<Record<string, unknown> | null> {
   const resolved = resolveItem(stateService, itemId);
   if (!resolved) return null;
   const { key, name, reports } = resolved;
 
-  const records = reports.map((r) => {
-    const content = stateService.readAcceptanceReportContent(r.id) ?? '';
+  // 异步读每份报告正文：交给 libuv 线程池，避免在主线程 readFileSync 串行读完一大堆大
+  // 报告把单进程 CDS 卡住(Cursor Bugbot High)。Promise.all 的并发由线程池(默认 4)自然限流。
+  const records = await Promise.all(reports.map(async (r) => {
+    const content = (await stateService.readAcceptanceReportContentAsync(r.id)) ?? '';
     const tags = [r.verdict ? verdictTag(r.verdict) : '', r.tier || ''].filter(Boolean);
     // metadata 一律字符串值（与协议 Dictionary<string,string> 对齐）。
     const metadata: Record<string, string> = { syncLineageId: r.id };
@@ -164,7 +166,7 @@ function buildBundle(
       lastChangedAt: r.updatedAt,
       extras: {},
     };
-  });
+  }));
 
   const createdAt = reports.length ? reports.map((r) => r.createdAt).sort()[0] : new Date(0).toISOString();
   const updatedAt = reports.length
@@ -251,14 +253,15 @@ export function createPeerSyncRouter(deps: PeerSyncRouterDeps): Router {
     fail(res, 404, 'NOT_FOUND', 'CDS 为单阶段 peer，握手即提交，无 confirm 阶段'));
   router.post('/handshake/finalize', (_req: Request, res: Response) =>
     fail(res, 404, 'NOT_FOUND', 'CDS 为单阶段 peer，无 finalize 阶段'));
-  // cancel：MAP 在配对失败回滚时best-effort调用。CDS 握手时已落 PeerNode，
-  // 这里按 initiatorNodeId 删除半连接节点，返回 200（MAP 忽略其结果）。
+  // cancel：MAP 在配对失败回滚时 best-effort 调用。CDS 握手时已落 PeerNode。
+  // 安全：取消必须自证——用节点 sharedSecret 的 HMAC 签名(握手后对端才有)，且只能取消
+  // **签名所属的那个节点**；不再凭 body 里的 initiatorNodeId 裸删。否则任何人知道/猜到
+  // partner node id 就能 POST cancel 撤销别人的配对、后续同步全 401(Codex P2，且本端点
+  // 在 server.ts 白名单里不经登录网关)。未签名 / 签错 → 401。
   router.post('/handshake/cancel', (req: Request, res: Response) => {
-    const initiatorNodeId = String(jsonBodyOf(req).initiatorNodeId || '').trim();
-    if (initiatorNodeId) {
-      const node = stateService.getPeerNodeByPartnerId(initiatorNodeId);
-      if (node) stateService.deletePeerNode(node.id);
-    }
+    const node = verifyPeerSignature(req, rawBodyOf(req), stateService);
+    if (!node) return fail(res, 401, 'UNAUTHORIZED', '签名校验失败或节点未配对');
+    stateService.deletePeerNode(node.id);
     return ok(res, { cancelled: true });
   });
 
@@ -289,11 +292,11 @@ export function createPeerSyncRouter(deps: PeerSyncRouterDeps): Router {
   });
 
   // 5) export — 导出 item 的 SyncResourceBundle。
-  router.post('/resources/:type/export', (req: Request, res: Response) => {
+  router.post('/resources/:type/export', async (req: Request, res: Response) => {
     if (!requireSig(req, res)) return;
     if (req.params.type !== RESOURCE_TYPE) return fail(res, 404, 'NOT_FOUND', `未注册的资源类型：${req.params.type}`);
     const itemId = String(jsonBodyOf(req).itemId || '').trim();
-    const bundle = buildBundle(stateService, itemId);
+    const bundle = await buildBundle(stateService, itemId);
     if (!bundle) return fail(res, 404, 'NOT_FOUND', `item 不存在：${itemId}`);
     return ok(res, bundle);
   });

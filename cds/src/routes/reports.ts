@@ -482,6 +482,10 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     let projectId = typeof req.query.projectId === 'string' && req.query.projectId
       ? req.query.projectId
       : undefined;
+    // 把传入的 projectId 规范成真实项目 id：cdscli / config 可能传 slug(如 prd-agent)，
+    // 而列表按存储的 projectId 精确过滤；不规范化则 slug 永远命中空集，create(已 resolve
+    // slug)成功了 list 却空(Cursor Bugbot Medium)。
+    if (projectId) projectId = stateService.getProject(projectId)?.id ?? projectId;
     // 项目级 key 只能看自己项目的报告（忽略其传入的 projectId 越权查询）；
     // cookie/bootstrap（人类 owner）不受限，照旧看全部。
     const key = projectKeyOf(req);
@@ -714,7 +718,9 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
   router.get('/report-folders', (req: Request, res: Response) => {
     const key = projectKeyOf(req);
     if (key) return res.json({ folders: stateService.listReportFolders(key.projectId) });
-    const projectId = typeof req.query.projectId === 'string' && req.query.projectId ? req.query.projectId : undefined;
+    const raw = typeof req.query.projectId === 'string' && req.query.projectId ? req.query.projectId : undefined;
+    // slug → 真实项目 id 规范化（同 GET /api/reports，否则传 slug 命中空集，Cursor Bugbot Medium）。
+    const projectId = raw ? stateService.getProject(raw)?.id ?? raw : undefined;
     return res.json({ folders: stateService.listReportFolders(projectId) });
   });
 

@@ -3584,6 +3584,22 @@ export class StateService {
     }
   }
 
+  /**
+   * Async variant of readAcceptanceReportContent — offloads disk I/O to the
+   * libuv threadpool instead of blocking the event loop. peer-sync export builds
+   * a bundle reading many report bodies; doing those reads synchronously stalls
+   * the single-process CDS server during a MAP pull (Cursor Bugbot High).
+   */
+  async readAcceptanceReportContentAsync(id: string): Promise<string | undefined> {
+    const meta = this.getAcceptanceReport(id);
+    if (!meta) return undefined;
+    try {
+      return await fs.promises.readFile(this.reportFilePath(meta), 'utf-8');
+    } catch {
+      return undefined;
+    }
+  }
+
   // ── Report inline-image assets (content-addressed, 2026-06-26) ──
   //
   // Report HTML used to embed screenshots as inline `data:image;base64,...`,

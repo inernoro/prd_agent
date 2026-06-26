@@ -267,6 +267,11 @@ public class CdsReportImportService
         {
             var existing = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync(ct);
             if (existing == null) throw new InvalidOperationException("指定的目标知识库不存在。");
+            // 鉴权：只允许导入到自己拥有的知识库。否则登录用户拿到别人的私有 storeId 就能
+            // 把 CDS 报告写进那个库(Codex review P2)。CDS 报告镜像按设计就是导入自己的库；
+            // 团队共享 / PM 项目成员的写入语义仍走常规 document-store 写端点。
+            if (existing.OwnerId != userId)
+                throw new InvalidOperationException("无权写入指定的目标知识库（只能导入到自己拥有的知识库）。");
             return existing;
         }
 
