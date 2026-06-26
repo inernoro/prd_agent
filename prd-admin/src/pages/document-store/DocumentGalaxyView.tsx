@@ -1904,6 +1904,12 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
           top: 0,
           width: 64,
           height: 64,
+          // 关键：render 循环把 left/top 写成星的投影点(sx,sy)，那是星的「屏幕坐标」。
+          // 容器默认以左上角对齐该点，而内部环/指针都绕「容器中心(32,32)」排布 →
+          // 整圈会偏到星的右下方 ~32px（用户反馈的「歪/溢出位移」根因）。
+          // 用 translate(-50%,-50%) 把容器中心对到 (sx,sy)，环才真正套在星上。
+          // render 循环只改 left/top/display，不动 transform，此静态值持续生效。
+          transform: 'translate(-50%, -50%)',
           pointerEvents: 'none',
           zIndex: 14,
           // 用 CSS 变量承接强调色（render 循环写 --galaxy-sel-accent）
@@ -1941,14 +1947,18 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
             animation: 'galaxy-sel-pulse 1.6s ease-in-out infinite',
           }}
         />
-        {/* 4 个朝内的指针尖角（上/右/下/左），用三角形指向中心选中星 */}
+        {/* 4 个朝内的指针尖角（上/右/下/左），用三角形指向中心选中星。
+            统一锚到容器中心(left/top:50%)，先 translate(-50%,-50%) 把三角形自身居中，
+            再沿轴向 ±34px 对称推出 —— 对边用「相同的盒尺寸居中 + 相反的半径」，几何中心
+            必然落在容器中心(=星)。旧写法对边各钉同名边(top:-2/top:66、left:-2/left:66)，
+            盒尺寸项同向相加而非镜像抵消，会让指针整体偏右下 ~3.5px（Codex 几何复核发现）。 */}
         {[
-          { top: -2, left: '50%', tx: '-50%', ty: '0', dir: 'down' },
-          { top: '50%', left: 66, tx: '0', ty: '-50%', dir: 'left' },
-          { top: 66, left: '50%', tx: '-50%', ty: '0', dir: 'up' },
-          { top: '50%', left: -2, tx: '0', ty: '-50%', dir: 'right' },
+          { dir: 'down', transform: 'translate(-50%, calc(-50% - 34px))' },
+          { dir: 'left', transform: 'translate(calc(-50% + 34px), -50%)' },
+          { dir: 'up', transform: 'translate(-50%, calc(-50% + 34px))' },
+          { dir: 'right', transform: 'translate(calc(-50% - 34px), -50%)' },
         ].map((p, i) => {
-          // 每个尖角是一个 6px 三角形，缺口边透明、指向边用强调色
+          // 每个尖角是一个三角形，缺口边透明、指向边用强调色
           const border: CSSProperties =
             p.dir === 'down'
               ? { borderLeft: '5px solid transparent', borderRight: '5px solid transparent', borderTop: '7px solid var(--galaxy-sel-accent)' }
@@ -1962,11 +1972,11 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
               key={i}
               style={{
                 position: 'absolute',
-                top: p.top,
-                left: p.left,
+                top: '50%',
+                left: '50%',
                 width: 0,
                 height: 0,
-                transform: `translate(${p.tx}, ${p.ty})`,
+                transform: p.transform,
                 filter: 'drop-shadow(0 0 3px var(--galaxy-sel-accent))',
                 ...border,
               }}
@@ -2762,15 +2772,18 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
             </span>
           )}
           <span style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.12)', flexShrink: 0 }} />
-          {/* 关系链面包屑（第一层，居中撑开把右侧统计/搜索/开关推到最右；类型 chips 仍在画布左上角浮层=第二层） */}
+          {/* 关系链面包屑（左上角，紧挨库名左对齐；用户要求放左上角，不再居中）。
+              可收缩 + 省略，后面的弹性占位把统计/搜索/开关推到最右。 */}
           <div
             ref={crumbOverlayRef}
-            style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}
+            style={{ flex: '0 1 auto', minWidth: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-start', overflow: 'hidden' }}
           >
             {breadcrumbNode ?? (
               <span style={{ fontSize: 11.5, color: '#5a5c6a' }}>点枢纽或文档，这里显示所在关系链</span>
             )}
           </div>
+          {/* 弹性占位：把右侧统计/搜索/开关推到最右，面包屑因此停在左侧 */}
+          <div style={{ flex: 1, minWidth: 8 }} />
           <div style={{ fontSize: 11, color: '#8a8a96', borderLeft: '1px solid rgba(255,255,255,0.1)', paddingLeft: 8 }}>
             共 {galaxy.stats.totalDocs} 篇 · {linksFailed ? '引用未知' : `${galaxy.links.length} 引用`}
             {galaxy.stats.orphanCount > 0 && (
