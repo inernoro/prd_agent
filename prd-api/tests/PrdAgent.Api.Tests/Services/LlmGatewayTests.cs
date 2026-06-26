@@ -754,6 +754,58 @@ public class LlmGatewayTests
         Assert.Equal("你好", chunk.Content);
     }
 
+    // 守护流式函数调用增量「按 index 合并」（日志可视化用）：首个 delta 带 id/name，
+    // 后续 delta 只追加 function.arguments 片段 → 合并成一条完整 tool_call。
+    // AccumulateToolCallDeltas / BuildAccumulatedToolCalls 为 LlmGateway 私有静态，走反射。
+    [Fact]
+    public void StreamToolCallDeltas_MergedByIndex_IntoOneCompleteCall()
+    {
+        var accumType = typeof(Dictionary<int, JsonObject>);
+        var accum = Activator.CreateInstance(accumType)!;
+
+        var accumulate = typeof(LlmGateway).GetMethod(
+            "AccumulateToolCallDeltas",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        var build = typeof(LlmGateway).GetMethod(
+            "BuildAccumulatedToolCalls",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        Assert.NotNull(accumulate);
+        Assert.NotNull(build);
+
+        var delta1 = new JsonArray
+        {
+            new JsonObject
+            {
+                ["index"] = 0,
+                ["id"] = "call_1",
+                ["type"] = "function",
+                ["function"] = new JsonObject { ["name"] = "get_weather", ["arguments"] = "{\"ci" }
+            }
+        };
+        var delta2 = new JsonArray
+        {
+            new JsonObject
+            {
+                ["index"] = 0,
+                ["function"] = new JsonObject { ["arguments"] = "ty\":\"上海\"}" }
+            }
+        };
+
+        accumulate!.Invoke(null, new object[] { accum, delta1 });
+        accumulate!.Invoke(null, new object[] { accum, delta2 });
+        var merged = build!.Invoke(null, new object[] { accum }) as JsonArray;
+
+        Assert.NotNull(merged);
+        Assert.Single(merged!);                                       // 两个 delta 合并成一条
+        var c = Assert.IsType<JsonObject>(merged![0]);
+        Assert.Equal("call_1", (string?)c["id"]);
+        var fn = Assert.IsType<JsonObject>(c["function"]);
+        Assert.Equal("get_weather", (string?)fn["name"]);
+        // arguments 片段拼接后是合法 JSON
+        var parsed = JsonNode.Parse((string)fn["arguments"]!);
+        Assert.Equal("上海", (string?)parsed!["city"]);
+    }
+
     #endregion
 
     #region Helper Methods

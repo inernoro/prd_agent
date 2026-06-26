@@ -122,6 +122,15 @@ public class LlmRequestLog
     // 响应（不再记录 rawSSE）
     public int? StatusCode { get; set; }
     public Dictionary<string, string>? ResponseHeaders { get; set; }
+
+    /// <summary>
+    /// 函数调用（tool_calls）——OpenAI 形状的 tool_calls 序列化 JSON（协议保真观测：
+    /// 网关把上游 tool_calls / Claude tool_use 归一为 OpenAI 形状后落盘，供日志页可视化。
+    /// 与 AnswerText 同款截断；无函数调用为 null）。
+    /// </summary>
+    public string? ResponseToolCalls { get; set; }
+    /// <summary>函数调用条数（&gt;0 时日志列表显示「函数调用」chip）。</summary>
+    public int? ToolCallCount { get; set; }
     public int? AssembledTextChars { get; set; } // 保留：用于摘要统计（与 AnswerTextChars 一致）
     public string? AssembledTextHash { get; set; } // 保留：用于摘要统计（与 AnswerTextHash 一致）
     public string? Error { get; set; }

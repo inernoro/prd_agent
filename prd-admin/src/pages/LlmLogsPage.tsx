@@ -16,6 +16,7 @@ import { AppCallerCodeIcon, getModelTypeIcon } from '@/lib/appCallerUtils';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { glassPanel } from '@/lib/glassStyles';
+import { getProtocolMeta } from '@/lib/protocolRegistry';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import ReactMarkdown from 'react-markdown';
@@ -1623,6 +1624,35 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                           );
                         })()}
                         {(() => {
+                          // 协议保真观测：协议 chip（openai/claude/exchange 着色）+ 函数调用 chip。
+                          // 协议对近期存量流量已入库，进页即可见——这是“日志样式有区别”的直接来源。
+                          const meta = getProtocolMeta(it.protocol);
+                          const toolCount = it.toolCallCount ?? 0;
+                          if (!meta && toolCount <= 0) return null;
+                          return (
+                            <div className="inline-flex items-center gap-1.5 shrink-0">
+                              {meta && (
+                                <span
+                                  className="inline-flex items-center rounded-full px-2 h-5 text-[10px] font-semibold tracking-wide shrink-0"
+                                  style={{ color: meta.color, background: meta.bg }}
+                                  title={`协议: ${meta.label}${it.resolutionReason ? ` (${it.resolutionReason})` : ''}`}
+                                >
+                                  {meta.label}
+                                </span>
+                              )}
+                              {toolCount > 0 && (
+                                <span
+                                  className="inline-flex items-center gap-1 rounded-full px-2 h-5 text-[10px] font-semibold tracking-wide shrink-0"
+                                  style={{ color: '#38bdf8', background: 'rgba(56,189,248,0.16)' }}
+                                  title="本次响应包含函数调用 tool_calls"
+                                >
+                                  函数调用 ×{toolCount}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })()}
+                        {(() => {
                           // 你提到的 DOM Path 对应的就是这个容器：这里用“明文”把本次替换写出来，并提供下拉展开查看全部尺寸
                           const hint = extractImageSizeAdjustmentHint(it);
                           if (!hint?.from || !hint?.to) return null;
@@ -1836,6 +1866,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                   {[
                     { k: 'provider', v: detail.provider || '—' },
                     { k: 'model', v: detail.model || '—' },
+                    { k: 'protocol', v: detail.protocol || '—' },
                     { k: 'status', v: detail.status || '—' },
                     { k: 'requestId', v: detail.requestId || '—' },
                     { k: 'requestType', v: detail.requestType || '—' },
@@ -1901,6 +1932,56 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                       {detail.expectedModel ? `期望: ${detail.expectedModel} → 实际: ${detail.model}` : ''}
                       {detail.fallbackReason ? ` · ${detail.fallbackReason}` : ''}
                     </div>
+                  </div>
+                ) : null}
+                {(() => {
+                  // 协议保真参数 chips：从请求体解析 detail/top_p/top_k/tools + 协议，让用户一眼看到
+                  // “detail 真的透传成 high 了 / 采样参数发出去了 / 函数调用发生了”。解析失败静默忽略。
+                  const chips: { label: string; color: string; bg: string }[] = [];
+                  const protoMeta = getProtocolMeta(detail.protocol);
+                  if (protoMeta) chips.push({ label: protoMeta.label, color: protoMeta.color, bg: protoMeta.bg });
+                  try {
+                    const body = JSON.parse(detail.requestBodyRedacted || '{}');
+                    let visionDetail: string | null = null;
+                    const msgs = Array.isArray(body?.messages) ? body.messages : [];
+                    for (const m of msgs) {
+                      const c = m?.content;
+                      if (Array.isArray(c)) {
+                        for (const part of c) {
+                          const d = part?.image_url?.detail;
+                          if (typeof d === 'string') { visionDetail = d; break; }
+                        }
+                      }
+                      if (visionDetail) break;
+                    }
+                    if (visionDetail) chips.push({ label: `detail=${visionDetail}`, color: '#34d399', bg: 'rgba(52,211,153,0.14)' });
+                    if (typeof body?.top_p === 'number') chips.push({ label: `top_p=${body.top_p}`, color: '#a5b4fc', bg: 'rgba(165,180,252,0.16)' });
+                    if (typeof body?.top_k === 'number') chips.push({ label: `top_k=${body.top_k}`, color: '#a5b4fc', bg: 'rgba(165,180,252,0.16)' });
+                    const toolsLen = Array.isArray(body?.tools) ? body.tools.length : 0;
+                    if (toolsLen > 0) chips.push({ label: `tools=${toolsLen}`, color: '#38bdf8', bg: 'rgba(56,189,248,0.16)' });
+                  } catch { /* 解析失败忽略 */ }
+                  if (chips.length === 0) return null;
+                  return (
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>保真参数</span>
+                      {chips.map((c, i) => (
+                        <span key={i} className="inline-flex items-center rounded-full px-2 h-5 text-[10px] font-semibold" style={{ color: c.color, background: c.bg }}>{c.label}</span>
+                      ))}
+                      {detail.resolutionReason ? <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>· {detail.resolutionReason}</span> : null}
+                    </div>
+                  );
+                })()}
+                {detail.responseToolCalls ? (
+                  <div className="mt-2 rounded-[10px] px-3 py-2" style={{ background: 'rgba(56,189,248,0.06)', border: '1px solid rgba(56,189,248,0.22)' }}>
+                    <div className="text-[12px] font-semibold mb-1" style={{ color: 'rgba(56,189,248,0.95)' }}>
+                      函数调用 tool_calls{typeof detail.toolCallCount === 'number' ? ` ×${detail.toolCallCount}` : ''}
+                    </div>
+                    <pre className="text-[11px] whitespace-pre-wrap break-all" style={{ color: 'var(--text-secondary)', maxHeight: 240, overflow: 'auto', margin: 0 }}>
+                      {(() => {
+                        try { return JSON.stringify(JSON.parse(detail.responseToolCalls), null, 2); }
+                        catch { return detail.responseToolCalls; }
+                      })()}
+                    </pre>
                   </div>
                 ) : null}
                 <div className="mt-3 flex-1 min-h-0 overflow-auto space-y-3">

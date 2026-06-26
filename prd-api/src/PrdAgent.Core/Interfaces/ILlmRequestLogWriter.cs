@@ -67,7 +67,11 @@ public record LlmLogDone(
     string? AssembledTextHash,
     string Status,
     DateTime EndedAt,
-    long? DurationMs);
+    long? DurationMs,
+    /// <summary>函数调用（tool_calls）OpenAI 形状序列化 JSON；无则 null</summary>
+    string? ResponseToolCalls = null,
+    /// <summary>函数调用条数</summary>
+    int? ToolCallCount = null);
 
 public interface ILlmRequestLogWriter
 {

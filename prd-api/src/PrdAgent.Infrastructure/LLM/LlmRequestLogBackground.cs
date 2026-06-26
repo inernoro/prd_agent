@@ -101,6 +101,13 @@ public sealed class LlmRequestLogBackground
             thinkingText = thinkingText[..answerMaxChars] + "...[TRUNCATED]";
         }
 
+        // 函数调用 JSON 同样截断保护
+        var toolCalls = done.ResponseToolCalls;
+        if (!string.IsNullOrEmpty(toolCalls) && toolCalls.Length > answerMaxChars)
+        {
+            toolCalls = toolCalls[..answerMaxChars] + "...[TRUNCATED]";
+        }
+
         var update = Builders<LlmRequestLog>.Update
             .Set(l => l.StatusCode, done.StatusCode)
             .Set(l => l.ResponseHeaders, done.ResponseHeaders)
@@ -118,7 +125,9 @@ public sealed class LlmRequestLogBackground
             .Set(l => l.AssembledTextHash, done.AssembledTextHash)
             .Set(l => l.Status, done.Status)
             .Set(l => l.EndedAt, done.EndedAt)
-            .Set(l => l.DurationMs, done.DurationMs);
+            .Set(l => l.DurationMs, done.DurationMs)
+            .Set(l => l.ResponseToolCalls, toolCalls)
+            .Set(l => l.ToolCallCount, done.ToolCallCount);
 
         return _db.LlmRequestLogs.UpdateOneAsync(l => l.Id == logId, update);
     }

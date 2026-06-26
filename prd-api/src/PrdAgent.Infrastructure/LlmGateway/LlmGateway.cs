@@ -144,9 +144,12 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             // 6. 解析响应
             GatewayTokenUsage? tokenUsage = null;
+            System.Text.Json.Nodes.JsonArray? toolCalls = null;
             if (response.IsSuccessStatusCode)
             {
                 tokenUsage = adapter.ParseTokenUsage(responseBody);
+                // 协议保真：提取工具调用（函数调用），归一为 OpenAI 形状（无则 null，不影响纯文本响应）
+                toolCalls = adapter.ParseToolCalls(responseBody);
             }
 
             // 7. 更新健康状态
@@ -163,7 +166,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             }
 
             // 8. 写入日志（完成）
-            await FinishLogAsync(logId, response, responseBody, tokenUsage, durationMs, ct);
+            await FinishLogAsync(logId, response, responseBody, tokenUsage, durationMs, toolCalls, ct);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -178,8 +181,6 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             // 从原始响应中提取消息文本内容
             var messageContent = adapter.ParseMessageContent(responseBody);
-            // 协议保真：提取工具调用（函数调用），归一为 OpenAI 形状（无则 null，不影响纯文本响应）
-            var toolCalls = adapter.ParseToolCalls(responseBody);
 
             return new GatewayResponse
             {
@@ -221,6 +222,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         string? logId = null;
         DateTime? firstByteAt = null;
         var textBuilder = new StringBuilder();
+        // 函数调用增量按 index 合并累积（首个 delta 带 id/name，后续 delta 拼 arguments），用于日志可视化
+        var toolCallAccum = new Dictionary<int, System.Text.Json.Nodes.JsonObject>();
 
         ModelResolutionResult? resolution = null;
         GatewayModelResolution? gatewayResolution = null;
@@ -441,6 +444,18 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     continue;
                 }
 
+                // 函数调用增量（ToolCall）：透传给调用方（OpenApiController 转 OpenAI SSE delta.tool_calls）
+                // + 按 index 累积入日志。ToolCall chunk 无 Content，不会走下面的文本分支，必须显式处理。
+                if (chunk.Type == GatewayChunkType.ToolCall)
+                {
+                    if (chunk.ToolCallDelta != null)
+                    {
+                        AccumulateToolCallDeltas(toolCallAccum, chunk.ToolCallDelta);
+                        yield return chunk;
+                    }
+                    continue;
+                }
+
                 // Thinking 类型（来自 reasoning_content 字段）
                 // Gateway 根据 IncludeThinking 决定是否透传给调用方
                 // Intent 模型类型强制禁止思考输出（无论 IncludeThinking 设置如何）
@@ -567,7 +582,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             }
 
             var assembledThinking = thinkingBuilder.ToString();
-            await FinishStreamLogAsync(logId, assembledText, assembledThinking, tokenUsage, durationMs, ct);
+            var assembledToolCalls = BuildAccumulatedToolCalls(toolCallAccum);
+            await FinishStreamLogAsync(logId, assembledText, assembledThinking, tokenUsage, durationMs, assembledToolCalls, ct);
         }
         finally
         {
@@ -1458,6 +1474,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         string responseBody,
         GatewayTokenUsage? tokenUsage,
         long durationMs,
+        System.Text.Json.Nodes.JsonArray? toolCalls,
         CancellationToken ct)
     {
         if (_logWriter == null || logId == null) return;
@@ -1489,7 +1506,9 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     AssembledTextHash: LlmLogRedactor.Sha256Hex(responseBody),
                     Status: status,
                     EndedAt: DateTime.UtcNow,
-                    DurationMs: durationMs));
+                    DurationMs: durationMs,
+                    ResponseToolCalls: toolCalls?.ToJsonString(),
+                    ToolCallCount: toolCalls?.Count));
         }
         catch (Exception ex)
         {
@@ -1503,6 +1522,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         string assembledThinking,
         GatewayTokenUsage? tokenUsage,
         long durationMs,
+        System.Text.Json.Nodes.JsonArray? toolCalls,
         CancellationToken ct)
     {
         if (_logWriter == null || logId == null) return;
@@ -1529,12 +1549,80 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     AssembledTextHash: LlmLogRedactor.Sha256Hex(assembledText),
                     Status: "succeeded",
                     EndedAt: DateTime.UtcNow,
-                    DurationMs: durationMs));
+                    DurationMs: durationMs,
+                    ResponseToolCalls: toolCalls?.ToJsonString(),
+                    ToolCallCount: toolCalls?.Count));
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[LlmGateway] 完成流式日志失败");
         }
+    }
+
+    /// <summary>
+    /// 把一批 OpenAI 形状 tool_calls 流式增量按 index 合并进累加器：
+    /// 首个 delta 带 id/name，后续 delta 只追加 function.arguments 片段。纯日志用途，best-effort 容错。
+    /// </summary>
+    private static void AccumulateToolCallDeltas(
+        Dictionary<int, System.Text.Json.Nodes.JsonObject> accum,
+        System.Text.Json.Nodes.JsonArray delta)
+    {
+        try
+        {
+            foreach (var item in delta)
+            {
+                if (item is not System.Text.Json.Nodes.JsonObject d) continue;
+                var idx = (d["index"] as System.Text.Json.Nodes.JsonValue) is { } iv && iv.TryGetValue<int>(out var i)
+                    ? i : accum.Count;
+
+                if (!accum.TryGetValue(idx, out var existing))
+                {
+                    existing = new System.Text.Json.Nodes.JsonObject
+                    {
+                        ["index"] = idx,
+                        ["type"] = "function",
+                        ["function"] = new System.Text.Json.Nodes.JsonObject { ["name"] = "", ["arguments"] = "" }
+                    };
+                    accum[idx] = existing;
+                }
+
+                if (d["id"] is { } id && existing["id"] == null) existing["id"] = id.DeepClone();
+                if (d["type"] is { } ty) existing["type"] = ty.DeepClone();
+
+                if (d["function"] is System.Text.Json.Nodes.JsonObject fn &&
+                    existing["function"] is System.Text.Json.Nodes.JsonObject ef)
+                {
+                    if (fn["name"] is { } nm)
+                    {
+                        var nmStr = nm.GetValueKind() == System.Text.Json.JsonValueKind.String ? nm.GetValue<string>() : null;
+                        if (!string.IsNullOrEmpty(nmStr)) ef["name"] = nmStr;
+                    }
+                    if (fn["arguments"] is { } ar && ar.GetValueKind() == System.Text.Json.JsonValueKind.String)
+                    {
+                        var prev = ef["arguments"]?.GetValueKind() == System.Text.Json.JsonValueKind.String
+                            ? ef["arguments"]!.GetValue<string>() : "";
+                        ef["arguments"] = prev + ar.GetValue<string>();
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // 日志累积容错：解析异常不影响主流程
+        }
+    }
+
+    /// <summary>累加器 → 按 index 排序的 OpenAI 形状 tool_calls 数组；空则 null。</summary>
+    private static System.Text.Json.Nodes.JsonArray? BuildAccumulatedToolCalls(
+        Dictionary<int, System.Text.Json.Nodes.JsonObject> accum)
+    {
+        if (accum.Count == 0) return null;
+        var arr = new System.Text.Json.Nodes.JsonArray();
+        foreach (var kv in accum.OrderBy(k => k.Key))
+        {
+            arr.Add(kv.Value.DeepClone());
+        }
+        return arr;
     }
 
     private async Task<string?> StartRawLogAsync(
