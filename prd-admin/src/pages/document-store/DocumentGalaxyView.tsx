@@ -1052,9 +1052,13 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
     controls.autoRotate = true;
     controls.autoRotateSpeed = 0.42;
     controls.enablePan = true;
-    // 滚轮/触控板手势改由自定义 wheel 接管（对齐 .claude/rules/gesture-unification.md）：
-    // 两指滑动 = 平移、⌘/Ctrl+滚轮 或 双指捏合 = 缩放。
-    controls.enableZoom = false;
+    // 触摸设备（手机/平板，primary pointer = coarse）：交给 OrbitControls 原生触摸手势
+    // （单指旋转、双指捏合缩放 + 平移），否则手机端无法缩放星系（enableZoom=false 会把
+    // 滚轮和触摸捏合一起禁掉）。
+    // 鼠标/触控板设备：enableZoom=false，缩放/平移由下方自定义 wheel 接管
+    // （对齐 .claude/rules/gesture-unification.md：两指滑动=平移、⌘/Ctrl+滚轮 或 捏合=缩放）。
+    const isTouch = typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches === true;
+    controls.enableZoom = isTouch;
 
     // 用于 dispose 的资源台账
     const disposables: Array<{ dispose: () => void }> = [];
@@ -1725,6 +1729,8 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       return wheelDevice === 'unknown' ? 'mouse' : wheelDevice;
     };
     const onWheel = (ev: WheelEvent) => {
+      // 触摸设备的缩放/平移交给 OrbitControls 原生触摸手势，自定义 wheel 不插手（避免双重处理）。
+      if (isTouch) return;
       ev.preventDefault();
       controls.autoRotate = false;
       camTween = null; // 手势打断聚焦缓动

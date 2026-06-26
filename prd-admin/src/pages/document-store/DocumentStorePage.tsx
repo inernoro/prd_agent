@@ -1399,7 +1399,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
           </div>
         }
         actions={
-          <div className="flex items-center gap-2">
+          // flex-wrap + justify-end：手机端工具按钮多于一行宽时换行下来，全部可见可点；
+          // 否则 PageHeader 根是 overflow-hidden，最右的「知识星球 / 更多」会被裁出屏幕外
+          // （用户反馈「手机端没有这个功能」的根因）。桌面端有富余宽度，仍是单行。
+          <div className="flex items-center gap-2 flex-wrap justify-end">
             {/* 同步中心入口：有任务进行中时转圈 + 脉冲 + 文案「同步中…」，点击进入四视图 + 强制对齐 */}
             <button
               onClick={() => setShowSyncCenter(true)}
