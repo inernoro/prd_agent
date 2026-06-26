@@ -15,3 +15,4 @@
 | feat | prd-admin | 文档星系滚轮/触摸板区分：黏性判别设备，鼠标滚轮=缩放、触摸板双指滑=平移、捏合/⌘·Ctrl+滚轮=缩放 |
 | fix | prd-admin | 文档星系阅读面板「两个标题」去重：面板头已显示标题，正文若以同名 H1/H2 开头则剥掉该行(兼容「文件名 — 真标题」式) |
 | fix | prd-admin | 文档星系构建失败/加载中也渲染「返回」兜底顶栏：全屏路由隐藏了 AppShell 导航，galaxy 为 null 时不再无路可退(Codex P2) |
+| chore | prd-admin | 移除已完成选型的临时预览页 public/galaxy-loaders.html（星座动效已落地为 GalaxyConstellationLoader，demo 不再随站点发布）|
