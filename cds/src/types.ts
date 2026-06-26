@@ -1432,6 +1432,8 @@ export interface ReportFolder {
   name: string;
   /** 归属项目 ID；全局（CDS 自身）报告的文件夹为 null。 */
   projectId?: string | null;
+  /** 父文件夹 ID（嵌套层级，根级为 null）。项目 = 根目录，下面技能自取多层子文件夹。 */
+  parentId?: string | null;
   /** 排序权重（小在前）。 */
   sortOrder: number;
   /** 创建时间 ISO 字符串。 */

@@ -224,4 +224,41 @@ describe('StateService acceptance reports', () => {
     expect(service.readReportAsset(name)!.data.equals(buf)).toBe(true);
     expect(service.readReportAsset(name)!.contentType).toBe('image/jpeg');
   });
+
+  // ── Nested report folders (项目 = 根目录，技能自取多层子文件夹) ──
+  it('findOrCreateFolderPath creates a nested chain under a project and is idempotent', () => {
+    const leaf1 = service.findOrCreateFolderPath('prd-agent', '视觉创作/2026-06-22');
+    expect(leaf1).toBeTruthy();
+    const all = service.listReportFolders('prd-agent');
+    const visual = all.find((f) => f.name === '视觉创作' && (f.parentId ?? null) === null);
+    const day = all.find((f) => f.name === '2026-06-22');
+    expect(visual).toBeTruthy();
+    expect(day).toBeTruthy();
+    expect(day!.parentId).toBe(visual!.id);
+    expect(leaf1).toBe(day!.id);
+    // 再次同路径不应重复建（find-or-create 幂等）。
+    const leaf2 = service.findOrCreateFolderPath('prd-agent', '视觉创作/2026-06-22');
+    expect(leaf2).toBe(leaf1);
+    expect(service.listReportFolders('prd-agent').filter((f) => f.name === '视觉创作')).toHaveLength(1);
+  });
+
+  it('findOrCreateFolderPath isolates folders per project (same path, different scope)', () => {
+    const a = service.findOrCreateFolderPath('proj-a', '视觉创作');
+    const b = service.findOrCreateFolderPath('proj-b', '视觉创作');
+    expect(a).not.toBe(b);
+    expect(service.getReportFolder(a!)!.projectId).toBe('proj-a');
+    expect(service.getReportFolder(b!)!.projectId).toBe('proj-b');
+    expect(service.findOrCreateFolderPath('proj-a', '')).toBeNull();
+  });
+
+  it('deleting a parent promotes children one level and unfiles its direct reports', () => {
+    const parent = service.createReportFolder({ name: '功能', projectId: 'p' });
+    const child = service.createReportFolder({ name: '子', projectId: 'p', parentId: parent.id });
+    const rep = service.createAcceptanceReport({ title: 'r', format: 'md', content: '# r', projectId: 'p', folderId: parent.id });
+    service.deleteReportFolder(parent.id);
+    // child 上提为根级（parentId → parent 的父级 = null），内容不丢
+    expect(service.getReportFolder(parent.id)).toBeUndefined();
+    expect(service.getReportFolder(child.id)!.parentId ?? null).toBeNull();
+    expect(service.getAcceptanceReport(rep.id)!.folderId).toBeNull();
+  });
 });

@@ -181,6 +181,7 @@ interface ParsedUpload {
   projectId?: string | null;
   branchId?: string | null;
   folderId?: string | null;
+  folderPath?: string;
   filename?: string;
   // E1 部署上下文 + 验收元数据（multipart 走字符串字段，POST 时再规整类型）。
   verdict?: string;
@@ -270,6 +271,8 @@ function parseMultipart(buf: Buffer, contentType: string): ParsedUpload {
       out.branchId = value || null;
     } else if (fieldName === 'folderId') {
       out.folderId = value || null;
+    } else if (fieldName === 'folderPath') {
+      out.folderPath = value;
     } else if (fieldName === 'verdict') {
       out.verdict = value;
     } else if (fieldName === 'tier') {
@@ -335,6 +338,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     let projectId: string | null | undefined;
     let branchId: string | null | undefined;
     let folderId: string | null | undefined;
+    let folderPath: string | undefined;
     let filename: string | undefined;
     // E1 部署上下文 + 验收元数据（原始值，下面统一规整类型）。
     let rawVerdict: unknown;
@@ -354,6 +358,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       projectId = parsed.projectId;
       branchId = parsed.branchId;
       folderId = parsed.folderId;
+      folderPath = parsed.folderPath;
       filename = parsed.filename;
       rawVerdict = parsed.verdict;
       rawTier = parsed.tier;
@@ -370,6 +375,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       projectId = typeof body.projectId === 'string' ? body.projectId : null;
       branchId = typeof body.branchId === 'string' ? body.branchId : null;
       folderId = typeof body.folderId === 'string' ? body.folderId : null;
+      folderPath = typeof body.folderPath === 'string' ? body.folderPath : undefined;
       rawVerdict = body.verdict;
       rawTier = body.tier;
       rawDefectCounts = body.defectCounts;
@@ -421,11 +427,18 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       }
     }
 
-    // 文件夹必须存在且与报告同属一个项目作用域，否则忽略（state 层也会再校验一次）。
+    // 文件夹归属（硬性要求 2026-06-26：项目 = 根目录，技能自取子文件夹路径）：
+    //   1) 显式 folderId 优先（必须同项目）；
+    //   2) 否则 folderPath（"/"分隔，如「视觉创作/2026-06-22」）→ 在该项目下 find-or-create
+    //      多层嵌套文件夹链，报告落到叶子。技能(cdscli/visual-test)用项目 key 提交时，只要带
+    //      一个功能名/路径，报告就自动归到「项目 → 功能 → …」下，不再全堆在项目顶层。
+    //   3) 都没有 → 未归类（旧报告/无路径报告留在未归类，不迁移）。
     let resolvedFolderId: string | null = null;
     if (folderId) {
       const folder = stateService.getReportFolder(folderId);
       if (folder && (folder.projectId ?? null) === resolvedProjectId) resolvedFolderId = folder.id;
+    } else if (folderPath && folderPath.trim()) {
+      resolvedFolderId = stateService.findOrCreateFolderPath(resolvedProjectId, folderPath);
     }
 
     // E1：分支已解析时，若调用方未显式给 branch/commitSha/deployMode，从分支状态补全，
@@ -702,7 +715,8 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     return res.json({ folders: stateService.listReportFolders(projectId) });
   });
 
-  // POST /api/report-folders — 新建文件夹 { name, projectId? }。
+  // POST /api/report-folders — 新建文件夹 { name, projectId?, parentId? }。
+  // parentId 支持嵌套（项目 = 根，技能自取多层子文件夹）；父必须同项目，否则视为根级。
   router.post('/report-folders', jsonParser, (req: Request, res: Response) => {
     const body = (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body))
       ? (req.body as Record<string, unknown>) : {};
@@ -715,7 +729,8 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     if (projectId && !stateService.getProject(projectId)) {
       return res.status(400).json({ error: 'unknown_project', message: '关联项目不存在' });
     }
-    const folder = stateService.createReportFolder({ name, projectId });
+    const parentId = typeof body.parentId === 'string' && body.parentId ? body.parentId : null;
+    const folder = stateService.createReportFolder({ name, projectId, parentId });
     return res.status(201).json({ folder });
   });
 

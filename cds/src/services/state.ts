@@ -3898,22 +3898,54 @@ export class StateService {
     return (this.state.reportFolders || []).find((f) => f.id === id);
   }
 
-  createReportFolder(input: { name: string; projectId?: string | null }): ReportFolder {
+  createReportFolder(input: { name: string; projectId?: string | null; parentId?: string | null }): ReportFolder {
     if (!this.state.reportFolders) this.state.reportFolders = [];
     const scope = input.projectId ?? null;
+    // 父文件夹必须存在且与子同属一个项目作用域，否则视为根级（防跨项目挂父）。
+    const parent = input.parentId
+      ? this.state.reportFolders.find((f) => f.id === input.parentId && (f.projectId || null) === scope)
+      : undefined;
+    const parentId = parent ? parent.id : null;
     const maxOrder = this.state.reportFolders
-      .filter((f) => (f.projectId || null) === scope)
+      .filter((f) => (f.projectId || null) === scope && (f.parentId || null) === parentId)
       .reduce((m, f) => Math.max(m, f.sortOrder), -1);
     const folder: ReportFolder = {
       id: crypto.randomUUID().replace(/-/g, ''),
       name: input.name,
       projectId: scope,
+      parentId,
       sortOrder: maxOrder + 1,
       createdAt: new Date().toISOString(),
     };
     this.state.reportFolders.push(folder);
     this.save();
     return folder;
+  }
+
+  /**
+   * Find-or-create a nested folder chain under a project from a "/"-separated
+   * path (e.g. "视觉创作/2026-06-22"). Each segment is matched case-sensitively
+   * by name within its parent; missing segments are created. Returns the leaf
+   * folder id, or null when the path is empty. This is how skills (cdscli /
+   * visual-test) drop reports under「项目 = 根目录 → 技能自取子文件夹」without
+   * needing to pre-create folders or know their ids.
+   */
+  findOrCreateFolderPath(projectId: string | null, path: string): string | null {
+    const segments = path.split('/').map((s) => s.trim()).filter(Boolean);
+    if (segments.length === 0) return null;
+    if (!this.state.reportFolders) this.state.reportFolders = [];
+    const scope = projectId ?? null;
+    let parentId: string | null = null;
+    let leafId: string | null = null;
+    for (const name of segments) {
+      const existing: ReportFolder | undefined = this.state.reportFolders.find(
+        (f) => (f.projectId || null) === scope && (f.parentId || null) === parentId && f.name === name,
+      );
+      const folder: ReportFolder = existing ?? this.createReportFolder({ name, projectId: scope, parentId });
+      parentId = folder.id;
+      leafId = folder.id;
+    }
+    return leafId;
   }
 
   renameReportFolder(id: string, name: string): ReportFolder | null {
@@ -3931,9 +3963,15 @@ export class StateService {
    */
   deleteReportFolder(id: string): boolean {
     const all = this.state.reportFolders || [];
-    if (!all.some((f) => f.id === id)) return false;
+    const target = all.find((f) => f.id === id);
+    if (!target) return false;
+    // 直接报告改为「未归类」（内容不丢）。子文件夹上提一层到被删者的父级（不级联删除，
+    // 避免误删一整棵子树），它们的报告原样保留。
     for (const r of this.state.acceptanceReports || []) {
       if (r.folderId === id) r.folderId = null;
+    }
+    for (const f of all) {
+      if ((f.parentId || null) === id) f.parentId = target.parentId ?? null;
     }
     this.state.reportFolders = all.filter((f) => f.id !== id);
     this.save();

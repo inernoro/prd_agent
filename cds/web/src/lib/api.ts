@@ -213,6 +213,8 @@ export interface ReportFolder {
   id: string;
   name: string;
   projectId?: string | null;
+  /** 父文件夹 ID（嵌套层级，根级为 null）。 */
+  parentId?: string | null;
   sortOrder: number;
   createdAt: string;
 }
@@ -237,10 +239,14 @@ export async function listReportFolders(projectId?: string): Promise<ReportFolde
   return res.folders;
 }
 
-export async function createReportFolder(name: string, projectId?: string | null): Promise<ReportFolder> {
+export async function createReportFolder(
+  name: string,
+  projectId?: string | null,
+  parentId?: string | null,
+): Promise<ReportFolder> {
   const res = await apiRequest<{ folder: ReportFolder }>('/api/report-folders', {
     method: 'POST',
-    body: { name, projectId: projectId ?? null },
+    body: { name, projectId: projectId ?? null, parentId: parentId ?? null },
   });
   return res.folder;
 }

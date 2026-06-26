@@ -2023,6 +2023,10 @@ def cmd_report_create(args: argparse.Namespace) -> None:
         payload["projectId"] = args.project
     if getattr(args, "folder", None):
         payload["folderId"] = args.folder
+    # 项目 = 根目录,技能自取子文件夹路径("/"分隔,如 视觉创作/2026-06-22)。带项目 key 提交时
+    # CDS 会在该项目下 find-or-create 这条嵌套文件夹链并把报告放进去,不再全堆在项目顶层。
+    elif getattr(args, "folder_path", None):
+        payload["folderPath"] = args.folder_path
     # 验收元数据 + E1 部署上下文(看板/跨系统展示/PR 回写都靠这些)。
     if getattr(args, "verdict", None):
         payload["verdict"] = args.verdict
@@ -2113,6 +2117,8 @@ def cmd_report_folder_create(args: argparse.Namespace) -> None:
     payload: dict[str, Any] = {"name": args.name}
     if getattr(args, "project", None):
         payload["projectId"] = args.project
+    if getattr(args, "parent", None):
+        payload["parentId"] = args.parent
     body = _call("POST", "/api/report-folders", body=payload, timeout=20)
     folder = body.get("folder") if isinstance(body, dict) else None
     ok({"folder": folder}, note=f"已新建文件夹 {(folder or {}).get('name','?')} id={(folder or {}).get('id','?')}")
@@ -6753,6 +6759,8 @@ def _build_parser() -> argparse.ArgumentParser:
     rc.add_argument("--content", help="直接给正文(与 --html-file 二选一)")
     rc.add_argument("--format", choices=["html", "md"], help="默认按文件名/html 推断")
     rc.add_argument("--project"); rc.add_argument("--folder")
+    rc.add_argument("--folder-path", help="项目下嵌套文件夹路径('/'分隔,如 视觉创作/2026-06-22);"
+                    "带项目 key 提交时 CDS 自动 find-or-create 这条链。与 --folder 二选一")
     # 验收元数据 + E1 部署上下文(看板/跨系统/PR 回写)
     rc.add_argument("--verdict", choices=["pass", "conditional", "fail"], help="验收结论")
     rc.add_argument("--tier", help="验收档位(如 'P0 冒烟' / '视觉回归')")
@@ -6770,6 +6778,7 @@ def _build_parser() -> argparse.ArgumentParser:
     rf = sub.add_parser("report-folder", help="验收报告文件夹:列出/新建/重命名/删除").add_subparsers(dest="sub", required=True)
     rfl = rf.add_parser("list"); rfl.add_argument("--project"); rfl.set_defaults(func=cmd_report_folder_list)
     rfc = rf.add_parser("create"); rfc.add_argument("--name", required=True); rfc.add_argument("--project")
+    rfc.add_argument("--parent", help="父文件夹 ID(嵌套子文件夹;省略=根级)")
     rfc.set_defaults(func=cmd_report_folder_create)
     rfr = rf.add_parser("rename"); rfr.add_argument("id"); rfr.add_argument("--name", required=True)
     rfr.set_defaults(func=cmd_report_folder_rename)

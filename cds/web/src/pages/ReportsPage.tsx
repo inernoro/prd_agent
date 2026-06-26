@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
-  ClipboardCheck, FileCode2, FileText, Folder, FolderOpen, FolderPlus,
+  Boxes, ClipboardCheck, FileCode2, FileText, Folder, FolderOpen, FolderPlus,
   GitPullRequest, Inbox, Layers, Link2, Pencil, Plus, RefreshCw, Share2, Trash2, Upload,
 } from 'lucide-react';
 import { marked } from 'marked';
@@ -301,6 +301,8 @@ export function ReportsPage(): JSX.Element {
                 onCreate={handleCreateFolder}
                 onRename={handleRenameFolder}
                 onDelete={handleDeleteFolder}
+                projects={projects}
+                scopeProjectId={projectId || null}
               />
               {visibleReports.length === 0 ? (
                 <EmptyReportsState onCreate={() => setCreateOpen(true)} filtered={allReports.length > 0} />
@@ -381,7 +383,7 @@ function VerdictSummary({
 }
 
 function FolderRail({
-  folders, counts, active, onSelect, onCreate, onRename, onDelete,
+  folders, counts, active, onSelect, onCreate, onRename, onDelete, projects, scopeProjectId,
 }: {
   folders: ReportFolder[];
   counts: { byFolder: Map<string, number>; unfiled: number; total: number };
@@ -390,6 +392,8 @@ function FolderRail({
   onCreate: (name: string) => void;
   onRename: (id: string, name: string) => void;
   onDelete: (id: string) => void;
+  projects: ProjectLite[];
+  scopeProjectId?: string | null;
 }): JSX.Element {
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
@@ -398,6 +402,86 @@ function FolderRail({
 
   const rowCls = (on: boolean) =>
     `group flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-sm transition-colors ${on ? 'bg-primary/10 text-primary' : 'hover:bg-[hsl(var(--surface-sunken))] text-foreground'}`;
+
+  // 子文件夹索引（parentId → 直接子文件夹，沿用后端 sortOrder 顺序）。
+  const byParent = new Map<string | null, ReportFolder[]>();
+  for (const f of folders) {
+    const p = f.parentId ?? null;
+    const arr = byParent.get(p) ?? [];
+    arr.push(f);
+    byParent.set(p, arr);
+  }
+  const projectName = (pid: string | null): string =>
+    pid ? (projects.find((p) => p.id === pid)?.name ?? pid) : 'CDS 自身';
+
+  // 递归渲染一棵文件夹子树：每层按 parentId 缩进 14px，技能自取的多层路径在此可视化。
+  const renderFolder = (f: ReportFolder, depth: number): JSX.Element[] => {
+    const pad = 8 + depth * 14;
+    const rows: JSX.Element[] = [];
+    if (editingId === f.id) {
+      rows.push(
+        <form key={f.id} className="flex items-center gap-1 px-1 py-1" style={{ paddingLeft: pad }}
+          onSubmit={(e) => { e.preventDefault(); const n = editName.trim(); if (n) onRename(f.id, n); setEditingId(null); }}>
+          <input autoFocus value={editName} onChange={(e) => setEditName(e.target.value)}
+            onBlur={() => setEditingId(null)}
+            className="h-7 w-full rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-sm outline-none focus:border-primary/60" />
+        </form>,
+      );
+    } else {
+      rows.push(
+        <div key={f.id} className={rowCls(active === f.id)} style={{ paddingLeft: pad }} onClick={() => onSelect(f.id)}>
+          {active === f.id ? <FolderOpen className="h-4 w-4 shrink-0" /> : <Folder className="h-4 w-4 shrink-0" />}
+          <span className="flex-1 truncate" title={f.name}>{f.name}</span>
+          <span className="text-[11px] text-muted-foreground group-hover:hidden">{counts.byFolder.get(f.id) ?? 0}</span>
+          <span className="hidden items-center gap-0.5 group-hover:flex" onClick={(e) => e.stopPropagation()}>
+            <Button variant="ghost" size="icon" className="h-6 w-6" title="重命名" aria-label="重命名文件夹"
+              onClick={() => { setEditingId(f.id); setEditName(f.name); }}>
+              <Pencil className="h-3.5 w-3.5" />
+            </Button>
+            <ConfirmAction
+              trigger={<Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground" title="删除文件夹" aria-label="删除文件夹"><Trash2 className="h-3.5 w-3.5" /></Button>}
+              title="删除这个文件夹？"
+              description="文件夹会被删除，其中报告改为「未归类」、子文件夹上提一层（内容不会丢失）。"
+              confirmLabel="删除"
+              onConfirm={() => onDelete(f.id)}
+            />
+          </span>
+        </div>,
+      );
+    }
+    for (const kid of byParent.get(f.id) ?? []) rows.push(...renderFolder(kid, depth + 1));
+    return rows;
+  };
+
+  // 全局视图(无 scopeProjectId)：根文件夹按项目分组，每组一个项目名表头(= 根目录)，比以往
+  // 多一级"项目"分类。项目视图：项目已是上下文，直接渲染该项目的文件夹树。
+  const isGlobal = scopeProjectId === undefined || scopeProjectId === null;
+  const roots = byParent.get(null) ?? [];
+  let tree: JSX.Element[];
+  if (isGlobal) {
+    const groups = new Map<string | null, ReportFolder[]>();
+    for (const r of roots) {
+      const pid = r.projectId ?? null;
+      const arr = groups.get(pid) ?? [];
+      arr.push(r);
+      groups.set(pid, arr);
+    }
+    const pids = [...groups.keys()].sort((a, b) =>
+      a === null ? 1 : b === null ? -1 : projectName(a).localeCompare(projectName(b), 'zh'),
+    );
+    tree = [];
+    for (const pid of pids) {
+      tree.push(
+        <div key={`hdr-${pid ?? 'self'}`} className="mt-2 flex items-center gap-1.5 px-2 pb-0.5 pt-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
+          <Boxes className="h-3.5 w-3.5 shrink-0 opacity-70" />
+          <span className="truncate" title={projectName(pid)}>{projectName(pid)}</span>
+        </div>,
+      );
+      for (const r of groups.get(pid) ?? []) tree.push(...renderFolder(r, 0));
+    }
+  } else {
+    tree = roots.flatMap((r) => renderFolder(r, 0));
+  }
 
   return (
     <div className="flex min-h-0 w-full flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] lg:w-[224px] lg:shrink-0">
@@ -420,35 +504,7 @@ function FolderRail({
           <span className="text-[11px] text-muted-foreground">{counts.unfiled}</span>
         </div>
         <div className="my-1.5 border-t border-[hsl(var(--hairline))]" />
-        {folders.map((f) => (
-          editingId === f.id ? (
-            <form key={f.id} className="flex items-center gap-1 px-1 py-1"
-              onSubmit={(e) => { e.preventDefault(); const n = editName.trim(); if (n) onRename(f.id, n); setEditingId(null); }}>
-              <input autoFocus value={editName} onChange={(e) => setEditName(e.target.value)}
-                onBlur={() => setEditingId(null)}
-                className="h-7 w-full rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-sm outline-none focus:border-primary/60" />
-            </form>
-          ) : (
-            <div key={f.id} className={rowCls(active === f.id)} onClick={() => onSelect(f.id)}>
-              {active === f.id ? <FolderOpen className="h-4 w-4 shrink-0" /> : <Folder className="h-4 w-4 shrink-0" />}
-              <span className="flex-1 truncate" title={f.name}>{f.name}</span>
-              <span className="text-[11px] text-muted-foreground group-hover:hidden">{counts.byFolder.get(f.id) ?? 0}</span>
-              <span className="hidden items-center gap-0.5 group-hover:flex" onClick={(e) => e.stopPropagation()}>
-                <Button variant="ghost" size="icon" className="h-6 w-6" title="重命名" aria-label="重命名文件夹"
-                  onClick={() => { setEditingId(f.id); setEditName(f.name); }}>
-                  <Pencil className="h-3.5 w-3.5" />
-                </Button>
-                <ConfirmAction
-                  trigger={<Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground" title="删除文件夹" aria-label="删除文件夹"><Trash2 className="h-3.5 w-3.5" /></Button>}
-                  title="删除这个文件夹？"
-                  description="文件夹会被删除，其中的报告改为「未归类」（内容不会丢失）。"
-                  confirmLabel="删除"
-                  onConfirm={() => onDelete(f.id)}
-                />
-              </span>
-            </div>
-          )
-        ))}
+        {tree}
         {creating ? (
           <form className="mt-1 flex items-center gap-1 px-1"
             onSubmit={(e) => { e.preventDefault(); const n = newName.trim(); if (n) onCreate(n); setCreating(false); }}>
@@ -458,7 +514,7 @@ function FolderRail({
               className="h-7 w-full rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-sm outline-none focus:border-primary/60" />
           </form>
         ) : folders.length === 0 ? (
-          <p className="px-2 py-2 text-[11px] text-muted-foreground">还没有文件夹。点右上角 + 新建一个来分类验收项。</p>
+          <p className="px-2 py-2 text-[11px] text-muted-foreground">还没有文件夹。技能用项目 key 提交报告并带文件夹路径会自动建（项目 → 功能 → …）；也可点右上角 + 手动建。</p>
         ) : null}
       </div>
     </div>
