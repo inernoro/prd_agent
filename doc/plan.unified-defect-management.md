@@ -232,7 +232,11 @@ public string? VerifyFailReason { get; set; }
 
 ---
 
-## 四、Phase 3：超时催办 Worker（P1）
+## 四、Phase 3：超时催办 Worker（已移除，2026-06-25）
+
+> 2026-06-25 用户决策：删除所有催办（缺陷超时催办 `DefectEscalationWorker` 与项目逾期提醒 `PmOverdueReminderWorker`）。
+> 原因：催办反复提醒被持续忽略，反而干扰正常需求。本节及下方实现描述仅作历史记录，相关 Worker、`DefectReport.LastEscalatedAt/EscalationCount` 字段、Program.cs 注册均已删除。
+> webhook 事件类型 `escalated`（"缺陷催办"）保留为可订阅枚举但不再有触发源。
 
 ### 4.1 新增 DefectEscalationWorker
 

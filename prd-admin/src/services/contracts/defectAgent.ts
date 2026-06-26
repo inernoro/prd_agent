@@ -125,9 +125,6 @@ export interface DefectReport {
   verifiedByName?: string;
   verifiedAt?: string;
   verifyFailReason?: string;
-  // Phase 3: 催办
-  lastEscalatedAt?: string;
-  escalationCount?: number;
 }
 
 /**
