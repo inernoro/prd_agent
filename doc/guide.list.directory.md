@@ -1071,3 +1071,23 @@
 | 2026-06-20 | 新增 | `design.team-activity.voc` | 团队动态·用户体验之声(VOC) 设计（treemap + 痛点指数 + 闭环 + 设计思想） |
 | 2026-06-21 | 新增 | `debt.cds.performance` | CDS 性能债务台账（Docker 垃圾堆积致构建越来越慢 + mongo 索引非主因结论 + 逐步解决路线） |
 | 2026-06-22 | 新增 | `debt.frontend.mobile-control-bar-overload` | 移动端控制条过载治理台账（知识库/缺陷/周报等页面，进内容前控制条 >1 条，治理机制与进度） |
+| 2026-06-26 | 新增 | `debt.acceptance-center-cds` | CDS 验收中心统一 债务台账 |
+| 2026-06-26 | 新增 | `debt.daily-tips.onboarding` | 页面教程(小技巧)系统 债务台账 |
+| 2026-06-26 | 新增 | `report.agent-universe.completeness` | 智能体宇宙 完备度看板 |
+| 2026-06-26 | 新增 | `report.cds.agent.goal-completion-audit.2026-05-19` | CDS Agent 商业级可用闭环目标审计报告 |
+| 2026-06-26 | 新增 | `report.cds.agent.p4-1-remote-preflight.2026-05-19` | CDS Agent P4-1 远端发布前验收与试用入口报告 |
+| 2026-06-26 | 新增 | `report.cds.agent.p4-2-provider-closure.2026-05-19` | CDS Agent P4-2 远端 Provider 闭环验收报告 |
+| 2026-06-26 | 新增 | `report.cds.agent.p4-3-remote-trial-acceptance.2026-05-19` | CDS Agent P4-3 远端试用入口与发布验收包 |
+| 2026-06-26 | 新增 | `report.cds.agent.p4-4-release-merge-strategy.2026-05-19` | CDS Agent P4-4 发布合并策略评估报告 |
+| 2026-06-26 | 新增 | `report.cds.agent.p4-5-writable-trial-plan.2026-05-19` | CDS Agent P4-5 writable / PR / KB apply 试用计划 |
+| 2026-06-26 | 新增 | `report.cds.agent.phase1-acceptance.2026-05-19` | CDS Agent Phase 1 验收报告 |
+| 2026-06-26 | 新增 | `report.cds.agent.phase2-acceptance.2026-05-19` | CDS Agent Phase 2 验收报告 |
+| 2026-06-26 | 新增 | `report.cds.agent.phase3-acceptance.2026-05-19` | CDS Agent Phase 3 验收报告 |
+| 2026-06-26 | 新增 | `report.cds.agent.runtime-pool-contamination.2026-05-18` | CDS Agent SDK Runtime 侵入 MAP 主系统 调查报告 |
+| 2026-06-26 | 新增 | `report.cds.agent.workbench.2026-05-15` | CDS Agent 工作台完成复盘报告 |
+| 2026-06-26 | 新增 | `report.cds.forwarder-success` | CDS Forwarder 替代蓝绿部署 收尾报告 |
+| 2026-06-26 | 新增 | `report.cds.onboarding-uat` | CDS Onboarding UAT 终结报告 |
+| 2026-06-26 | 新增 | `report.cds.self-update-timing-audit` | CDS Self-Update 时间体系审视报告 |
+| 2026-06-26 | 新增 | `report.cds.visual-deploy` | CDS 绝对可视化一键部署 完整报告 |
+| 2026-06-26 | 新增 | `report.daily-tips.tutorial-coverage` | 页面教程小技巧 全量路由覆盖审计报告 |
+| 2026-06-26 | 新增 | `report.frontend.prd-admin-surface-style-migration` | prd-admin 样式统一统计报表 |
