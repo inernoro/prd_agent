@@ -2188,9 +2188,11 @@ export function DocumentStorePage() {
         data-tour-id="library-tabs"
         className="sticky top-0 z-20 flex flex-col gap-3 pb-5 -mb-5"
         style={{
-          background: 'var(--bg-base)',
-          backdropFilter: 'saturate(180%) blur(8px)',
-          WebkitBackdropFilter: 'saturate(180%) blur(8px)',
+          // 不再用不透明的 var(--bg-base) 整块铺底（用户反馈「黑黑的」一坨）：
+          // 只保留半透明玻璃模糊，滚动内容从下方透出并被磨砂虚化，顶栏变轻。
+          background: 'color-mix(in srgb, var(--bg-base) 55%, transparent)',
+          backdropFilter: 'saturate(180%) blur(12px)',
+          WebkitBackdropFilter: 'saturate(180%) blur(12px)',
         }}
       >
         {/* 顶部第一排：左上角空间切换（我的空间 / 团队空间 / 我的收藏 / 我的点赞） */}
