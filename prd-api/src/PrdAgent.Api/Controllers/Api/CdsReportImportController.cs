@@ -33,6 +33,12 @@ public class CdsReportImportController : ControllerBase
     {
         var userId = this.GetRequiredUserId();
         var opts = request ?? new CdsReportImportOptions();
+        // SSRF 防护：HTTP 入口禁止信任调用方自带的 CDS base/key。否则任意登录用户都能让后端
+        // 用默认 HttpClient 探测内网任意主机的 /api/reports，观测状态/错误行为（Codex P2）。
+        // 生产导入一律走「系统互联」已授权的存储连接（connectionId / 最近活跃的 CDS 连接）；
+        // 显式 base/key 仅保留给单元测试直接调用 service（不经此 HTTP 端点）。
+        opts.CdsBaseUrl = null;
+        opts.CdsAccessKey = null;
         try
         {
             var result = await _importer.ImportAsync(userId, opts, ct);

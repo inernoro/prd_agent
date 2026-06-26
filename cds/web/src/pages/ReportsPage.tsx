@@ -879,6 +879,14 @@ function CreateReportDialog({
     }
   }, [open, defaultProjectId, defaultFolderId]);
 
+  // 文件夹下拉只列**当前所选项目**的文件夹。否则全局页（或切项目后）会列出此前加载过的
+  // 其它项目的文件夹，选了跨项目 folderId 会随新 projectId 发出去，被服务端判为不匹配后
+  // 静默存成「未归类」——用户看到创建成功却没归到所选文件夹（Codex P2）。
+  const visibleFolders = useMemo(
+    () => folders.filter((f) => (f.projectId || null) === (projectId || null)),
+    [folders, projectId],
+  );
+
   const applyFile = useCallback((picked: File) => {
     setFile(picked);
     const name = picked.name.toLowerCase();
@@ -897,7 +905,9 @@ function CreateReportDialog({
     if (!content.trim()) { setError('请粘贴报告内容或上传文件'); return; }
     setSubmitting(true);
     try {
-      const common = { projectId: projectId || null, folderId: folderId || null };
+      // 防御：只在 folderId 属于当前项目时才带上，杜绝跨项目 folderId 被静默丢弃。
+      const validFolderId = visibleFolders.some((f) => f.id === folderId) ? folderId : '';
+      const common = { projectId: projectId || null, folderId: validFolderId || null };
       const report = file
         ? await createReportFromFile({ title: cleanTitle, format, file, ...common })
         : await createReportFromText({ title: cleanTitle, format, content, ...common });
@@ -907,7 +917,7 @@ function CreateReportDialog({
     } finally {
       setSubmitting(false);
     }
-  }, [title, content, file, format, projectId, folderId, onCreated]);
+  }, [title, content, file, format, projectId, folderId, visibleFolders, onCreated]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -949,13 +959,13 @@ function CreateReportDialog({
                 </select>
               </label>
             ) : null}
-            {folders.length > 0 ? (
+            {visibleFolders.length > 0 ? (
               <label className="block space-y-1.5">
                 <span className="text-sm font-medium">文件夹（可选）</span>
                 <select value={folderId} onChange={(e) => setFolderId(e.target.value)}
                   className="h-9 w-full rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 text-sm outline-none focus:border-primary/60">
                   <option value="">未归类</option>
-                  {folders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                  {visibleFolders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
                 </select>
               </label>
             ) : null}
