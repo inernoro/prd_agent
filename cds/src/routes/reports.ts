@@ -682,14 +682,24 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     if (content !== undefined && exceedsCap(content)) {
       return res.status(413).json({ error: 'content_too_large', message: `报告内容超过上限（${MAX_CONTENT_BYTES / 1024 / 1024}MB）` });
     }
+    // 先校验 folder 再改内容（Codex P2）：否则非法/跨项目 folderId 会在内容已落盘后才回 400，
+    // 调用方看到失败却已被部分修改，重试或「以为被拒」的编辑都会污染数据。校验口径与
+    // setReportFolder 一致（存在 + 同项目作用域），通过后才执行内容更新与移动。
+    const nextFolder = hasFolder
+      ? (typeof body.folderId === 'string' && body.folderId && body.folderId !== 'none' ? body.folderId : null)
+      : undefined;
+    if (nextFolder) {
+      const folder = stateService.getReportFolder(nextFolder);
+      if (!folder || (folder.projectId || null) !== (existing.projectId || null)) {
+        return res.status(400).json({ error: 'invalid_folder', message: '目标文件夹不存在或与报告项目不一致' });
+      }
+    }
     let updated = existing;
     if (title !== undefined || content !== undefined || hasMeta) {
       updated = stateService.updateAcceptanceReport(req.params.id, { title, content, ...metaUpdates }) ?? existing;
     }
     if (hasFolder) {
-      const raw = body.folderId;
-      const next = typeof raw === 'string' && raw && raw !== 'none' ? raw : null;
-      const moved = stateService.setReportFolder(req.params.id, next);
+      const moved = stateService.setReportFolder(req.params.id, nextFolder ?? null);
       if (!moved) return res.status(400).json({ error: 'invalid_folder', message: '目标文件夹不存在或与报告项目不一致' });
       updated = moved;
     }

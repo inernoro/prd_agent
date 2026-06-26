@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
@@ -130,7 +131,31 @@ public class CdsReportImportService
                 var existing = await _db.DocumentEntries.Find(existFilter).FirstOrDefaultAsync(ct);
                 if (existing != null && existing.ContentHash == hash)
                 {
-                    result.Skipped++;
+                    // 正文未变，但元数据（verdict/title/projectSlug/updatedAt）可能改了——CDS 列表正是因
+                    // updatedAt 变化才增量返回它。若整条跳过又推进水位，MAP 镜像会永久保留旧标题/标签/
+                    // 元数据（Codex P2）。故只跳过昂贵的正文解析+资产归一化，仍轻量同步元数据/标签。
+                    var (mTitle, mTags, mMeta) = BuildEntryMeta(r, baseUrl);
+                    var metaChanged = existing.Title != mTitle
+                        || !(existing.Tags ?? new List<string>()).SequenceEqual(mTags)
+                        || !MetadataEquals(existing.Metadata, mMeta);
+                    if (metaChanged)
+                    {
+                        await _db.DocumentEntries.UpdateOneAsync(
+                            e => e.Id == existing.Id,
+                            Builders<DocumentEntry>.Update
+                                .Set(e => e.Title, mTitle)
+                                .Set(e => e.Tags, mTags)
+                                .Set(e => e.Metadata, mMeta)
+                                .Set(e => e.UpdatedBy, userId)
+                                .Set(e => e.LastChangedAt, DateTime.UtcNow)
+                                .Set(e => e.UpdatedAt, DateTime.UtcNow),
+                            cancellationToken: ct);
+                        result.Updated++;
+                    }
+                    else
+                    {
+                        result.Skipped++;
+                    }
                     TrackWatermark(r, ref watermark);
                     continue;
                 }
@@ -155,23 +180,12 @@ public class CdsReportImportService
                 }
 
                 // 正文按内容寻址存进 ParsedPrd（与上传/导入同一渲染路径；已无 data:image）
+                var (entryTitle, tags, metadata) = BuildEntryMeta(r, baseUrl);
                 var parsedDoc = await _documentService.ParseAsync(storeContent);
-                parsedDoc.Title = string.IsNullOrWhiteSpace(r.Title) ? "CDS 验收报告" : r.Title!;
+                parsedDoc.Title = entryTitle;
                 await _documentService.SaveAsync(parsedDoc);
 
                 var contentIndex = storeContent.Length > 2000 ? storeContent[..2000] : storeContent;
-                var metadata = new Dictionary<string, string>
-                {
-                    ["cdsReportId"] = r.Id,
-                    ["cdsProjectId"] = r.ProjectId ?? string.Empty,
-                    ["cdsProjectSlug"] = r.ProjectSlug ?? string.Empty,
-                    ["verdict"] = r.Verdict ?? string.Empty,
-                    ["cdsUpdatedAt"] = r.UpdatedAt ?? string.Empty,
-                    ["cdsSourceBaseUrl"] = baseUrl,
-                };
-                var tags = string.IsNullOrWhiteSpace(r.Verdict)
-                    ? new List<string>()
-                    : new List<string> { VerdictTag(r.Verdict!) };
 
                 if (existing == null)
                 {
@@ -318,6 +332,34 @@ public class CdsReportImportService
             var u = ua.ToUniversalTime();
             if (u > watermark) watermark = u;
         }
+    }
+
+    /// <summary>从 CDS 列表项构造 MAP 条目的标题/标签/元数据（不依赖正文，可在 contentHash 命中时复用）。</summary>
+    private static (string title, List<string> tags, Dictionary<string, string> metadata) BuildEntryMeta(CdsReportListItem r, string baseUrl)
+    {
+        var title = string.IsNullOrWhiteSpace(r.Title) ? "CDS 验收报告" : r.Title!;
+        var metadata = new Dictionary<string, string>
+        {
+            ["cdsReportId"] = r.Id,
+            ["cdsProjectId"] = r.ProjectId ?? string.Empty,
+            ["cdsProjectSlug"] = r.ProjectSlug ?? string.Empty,
+            ["verdict"] = r.Verdict ?? string.Empty,
+            ["cdsUpdatedAt"] = r.UpdatedAt ?? string.Empty,
+            ["cdsSourceBaseUrl"] = baseUrl,
+        };
+        var tags = string.IsNullOrWhiteSpace(r.Verdict)
+            ? new List<string>()
+            : new List<string> { VerdictTag(r.Verdict!) };
+        return (title, tags, metadata);
+    }
+
+    private static bool MetadataEquals(Dictionary<string, string>? a, Dictionary<string, string> b)
+    {
+        var left = a ?? new Dictionary<string, string>();
+        if (left.Count != b.Count) return false;
+        foreach (var kv in b)
+            if (!left.TryGetValue(kv.Key, out var v) || v != kv.Value) return false;
+        return true;
     }
 
     private static string VerdictTag(string verdict) => verdict switch
