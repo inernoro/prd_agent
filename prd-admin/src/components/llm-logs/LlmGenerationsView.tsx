@@ -1,7 +1,7 @@
 // OpenRouter 风格大模型日志页主体：顶部柱状图 + 时间范围 + 4 子 tab + 表格 + 详情抽屉。
 // 自包含（自己拉数据），挂在「大模型日志」tab 下。视觉走本系统 token，数据缺失项「—」。
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode, CSSProperties } from 'react';
 import type { EChartsOption } from 'echarts';
 import { EChart } from '@/components/charts/EChart';
@@ -69,22 +69,33 @@ export function LlmGenerationsView() {
     });
   }, []);
 
+  // 请求序号守卫：快速切筛选/翻页/tab 时丢弃过期响应，避免乱序覆盖（竞态）
+  const listSeq = useRef(0);
+  const sessSeq = useRef(0);
+  const seriesSeq = useRef(0);
+
   const loadList = useCallback(async (p: number) => {
+    const seq = ++listSeq.current;
     setLoading(true);
     const res = await getLlmLogs({ ...baseParams, page: p, pageSize: PAGE_SIZE });
+    if (seq !== listSeq.current) return; // 已有更新的请求，丢弃本次
     if (res.success && res.data) { setRows(res.data.items ?? []); setTotal(res.data.total ?? 0); }
     setLoading(false);
   }, [baseParams]);
 
   const loadSessions = useCallback(async (p: number) => {
+    const seq = ++sessSeq.current;
     setSessLoading(true);
     const res = await getLlmLogsSessions({ from: range.from, to: range.to, page: p, pageSize: PAGE_SIZE });
+    if (seq !== sessSeq.current) return;
     if (res.success && res.data) { setSessions(res.data.items ?? []); setSessTotal(res.data.total ?? 0); }
     setSessLoading(false);
   }, [range]);
 
   const loadSeries = useCallback(async () => {
+    const seq = ++seriesSeq.current;
     const res = await getLlmLogsTimeseries(baseParams);
+    if (seq !== seriesSeq.current) return;
     if (res.success && res.data) setSeries(res.data.items ?? []);
   }, [baseParams]);
 
@@ -171,35 +182,38 @@ export function LlmGenerationsView() {
   };
 
   // ── 表格渲染器 ──
+  // 窄屏不挤压：外层横向滚动 + 内层 min-width，列保持可读；body 仍纵向滚动。
   function Table<T>({ columns, items, rowKey, onRow, render, empty }: {
-    columns: ColumnDef[]; items: T[]; rowKey: (t: T) => string; onRow?: (t: T) => void;
+    columns: ColumnDef[]; items: T[]; rowKey: (t: T, idx: number) => string; onRow?: (t: T) => void;
     render: (col: ColumnDef, t: T) => ReactNode; empty: ReactNode;
   }) {
     const gridCols = columns.map((c) => c.width).join(' ');
     return (
-      <div className="flex-1 min-h-0 flex flex-col">
-        <div className="grid gap-2 px-3 py-2 shrink-0" style={{ gridTemplateColumns: gridCols, borderBottom: '1px solid var(--border-subtle)' }}>
-          {columns.map((c) => (
-            <div key={c.key} title={c.tip} className={`text-[10px] font-semibold uppercase tracking-wide ${c.align === 'right' ? 'text-right' : c.align === 'center' ? 'text-center' : ''}`} style={{ color: 'var(--text-muted)' }}>
-              {c.label}{c.tip ? <span style={{ opacity: 0.6 }}> ⓘ</span> : null}
-            </div>
-          ))}
-        </div>
-        <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-          {items.length === 0 ? empty : items.map((t) => (
-            <div
-              key={rowKey(t)}
-              onClick={onRow ? () => onRow(t) : undefined}
-              className={`grid gap-2 px-3 py-2 items-center ${onRow ? 'cursor-pointer hover:bg-[rgba(255,255,255,0.03)]' : ''}`}
-              style={{ gridTemplateColumns: gridCols, borderBottom: '1px solid var(--border-subtle)' }}
-            >
-              {columns.map((c) => (
-                <div key={c.key} className={`min-w-0 ${c.align === 'right' ? 'text-right' : c.align === 'center' ? 'text-center' : ''}`}>
-                  {render(c, t)}
-                </div>
-              ))}
-            </div>
-          ))}
+      <div className="flex-1 min-h-0 overflow-x-auto" style={{ overscrollBehavior: 'contain' }}>
+        <div className="h-full flex flex-col" style={{ minWidth: Math.max(880, columns.length * 90) }}>
+          <div className="grid gap-2 px-3 py-2 shrink-0" style={{ gridTemplateColumns: gridCols, borderBottom: '1px solid var(--border-subtle)' }}>
+            {columns.map((c) => (
+              <div key={c.key} title={c.tip} className={`text-[10px] font-semibold uppercase tracking-wide ${c.align === 'right' ? 'text-right' : c.align === 'center' ? 'text-center' : ''}`} style={{ color: 'var(--text-muted)' }}>
+                {c.label}{c.tip ? <span style={{ opacity: 0.6 }}> ⓘ</span> : null}
+              </div>
+            ))}
+          </div>
+          <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+            {items.length === 0 ? empty : items.map((t, idx) => (
+              <div
+                key={rowKey(t, idx)}
+                onClick={onRow ? () => onRow(t) : undefined}
+                className={`grid gap-2 px-3 py-2 items-center ${onRow ? 'cursor-pointer hover:bg-[rgba(255,255,255,0.07)]' : ''}`}
+                style={{ gridTemplateColumns: gridCols, borderBottom: '1px solid var(--border-subtle)' }}
+              >
+                {columns.map((c) => (
+                  <div key={c.key} className={`min-w-0 ${c.align === 'right' ? 'text-right' : c.align === 'center' ? 'text-center' : ''}`}>
+                    {render(c, t)}
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     );
@@ -286,7 +300,7 @@ export function LlmGenerationsView() {
           <>
             {sessLoading && sessions.length === 0 ? <MapSectionLoader text="正在聚合会话…" /> : (
               <Table
-                columns={SESSIONS_COLUMNS} items={sessions} rowKey={(it) => it.sessionId || Math.random().toString()}
+                columns={SESSIONS_COLUMNS} items={sessions} rowKey={(it, idx) => it.sessionId || String(idx)}
                 render={renderSessionCell as (col: ColumnDef, t: LlmLogsSessionItem) => ReactNode}
                 empty={<div className="py-16 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>该时间范围内暂无带会话 ID 的请求</div>}
               />

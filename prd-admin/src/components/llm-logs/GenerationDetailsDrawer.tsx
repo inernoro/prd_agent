@@ -116,16 +116,18 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
   const streaming = detail?.isStreaming == null ? DASH : detail.isStreaming ? '是' : '否';
 
   const node = (
-    <div className="fixed inset-0 z-[100]" onClick={onClose} style={{ background: 'rgba(0,0,0,0.45)' }}>
+    <div className="fixed inset-0 z-[100]" onClick={onClose} style={{ background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(2px)' }}>
       <div
         className="absolute top-0 right-0 flex flex-col"
         onClick={(e) => e.stopPropagation()}
         style={{
           height: '100vh',
           width: 'min(720px, 94vw)',
-          background: 'var(--bg-card, #1E1F20)',
+          // 必须用「完全不透明」surface：--bg-card 在暗色主题是 rgba(255,255,255,0.08) 几乎透明，
+          // 会把背后表格透出来（看不清）。--bg-elevated 是不透明的（暗 #1e1e24 / 亮 #F0EEE8）。
+          background: 'var(--bg-elevated, #1e1e24)',
           borderLeft: '1px solid var(--border-subtle)',
-          boxShadow: '-8px 0 40px rgba(0,0,0,0.35)',
+          boxShadow: '-8px 0 40px rgba(0,0,0,0.5)',
         }}
       >
         <div className="shrink-0 flex items-center justify-between px-4 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>

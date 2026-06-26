@@ -39,7 +39,6 @@ import { ModelHealthStatus } from '@/types/modelGroup';
 import type { ModelGroupItem } from '@/types/modelGroup';
 import { Activity, Check, ChevronLeft, ChevronRight, Clock, Database, DatabaseZap, Eye, EyeOff, ImagePlus, LayoutGrid, Link2, Minus, MoreVertical, Pencil, Plus, ScanEye, Search, Sparkles, Star, Trash2 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { glassPanel } from '@/lib/glassStyles';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -2049,7 +2048,11 @@ export default function ModelManagePage() {
                                           className="rounded-[12px] p-1 min-w-[140px]"
                                           style={{
                                             zIndex: 90,
-                                            ...glassPanel,
+                                            // 下拉菜单必须不透明，否则背后表格透出来看不清（同日志抽屉问题）。
+                                            // glassPanel 在暗色是半透明玻璃，改用不透明 elevated 面色（两主题均不透明）。
+                                            background: 'var(--bg-elevated, #1e1e24)',
+                                            border: '1px solid var(--border-subtle)',
+                                            boxShadow: '0 12px 32px rgba(0,0,0,0.4)',
                                           }}
                                           onClick={(e) => e.stopPropagation()}
                                         >

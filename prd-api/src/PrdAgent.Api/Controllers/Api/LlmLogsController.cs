@@ -853,7 +853,8 @@ public class LlmLogsController : ControllerBase
         return (start, end);
     }
 
-    private static int BsonInt(BsonValue? v) => v == null || v.IsBsonNull ? 0 : Convert.ToInt32(BsonTypeMapper.MapToDotNetValue(v));
+    // 用 long 避免 count 超 int.MaxValue 抛 InvalidCast；前端 number 可容纳
+    private static long BsonInt(BsonValue? v) => v == null || v.IsBsonNull ? 0L : Convert.ToInt64(BsonTypeMapper.MapToDotNetValue(v));
     private static string? BsonStr(BsonValue? v) => v == null || v.IsBsonNull ? null : BsonTypeMapper.MapToDotNetValue(v)?.ToString();
 
     private FilterDefinition<LlmRequestLog> BuildLogFilter(
@@ -894,7 +895,7 @@ public class LlmLogsController : ControllerBase
             new BsonDocument("$match", matchDoc),
             new BsonDocument("$group", new BsonDocument
             {
-                { "_id", new BsonDocument("$dateToString", new BsonDocument { { "format", "%Y-%m-%d" }, { "date", "$StartedAt" } }) },
+                { "_id", new BsonDocument("$dateToString", new BsonDocument { { "format", "%Y-%m-%d" }, { "date", "$StartedAt" }, { "timezone", "UTC" } }) },
                 { "count", new BsonDocument("$sum", 1) },
                 { "successCount", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray { new BsonDocument("$eq", new BsonArray { "$Status", "succeeded" }), 1, 0 })) },
                 { "failCount", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray { new BsonDocument("$eq", new BsonArray { "$Status", "failed" }), 1, 0 })) },

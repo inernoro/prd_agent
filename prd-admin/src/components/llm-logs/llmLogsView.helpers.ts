@@ -106,12 +106,12 @@ export const GENERATIONS_COLUMNS: ColumnDef[] = [
   { key: 'app', label: 'App', width: '1.8fr' },
   { key: 'input', label: 'Input', width: '0.7fr', align: 'right' },
   { key: 'output', label: 'Output', width: '0.7fr', align: 'right' },
-  { key: 'cost', label: 'Cost', width: '0.7fr', align: 'right', tip: '成本计算需后端聚合模型价格，暂未提供' },
-  { key: 'usage', label: 'Usage Type', width: '0.9fr' },
-  { key: 'speed', label: 'Speed', width: '0.8fr', align: 'right', tip: 'outputTokens / durationMs 计算（tok/s）' },
-  { key: 'finish', label: 'Finish', width: '0.8fr' },
+  { key: 'cost', label: 'Cost', width: '0.7fr', align: 'right', tip: '成本计算需后端聚合模型价格，暂未提供（统一显示 —）' },
+  { key: 'usage', label: 'Usage Type', width: '0.9fr', tip: '请求业务类型（chat/vision/generation 等）' },
+  { key: 'speed', label: 'Speed', width: '0.8fr', align: 'right', tip: '吞吐 = outputTokens / durationMs（tok/s）' },
+  { key: 'finish', label: 'Finish', width: '0.8fr', tip: '完成原因 finish_reason（旧日志未记录显示 —）' },
   { key: 'user', label: 'User', width: '1.1fr' },
-  { key: 'stream', label: 'Stream', width: '0.6fr', align: 'center' },
+  { key: 'stream', label: 'Stream', width: '0.6fr', align: 'center', tip: '是否流式（旧日志未记录显示 —）' },
 ];
 
 // Upstream Requests 列。Attempts/Key 无 per-attempt 历史 → —。
