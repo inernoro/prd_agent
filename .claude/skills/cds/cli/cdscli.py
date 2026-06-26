@@ -2066,9 +2066,13 @@ def cmd_report_create(args: argparse.Namespace) -> None:
     rep = body.get("report") if isinstance(body, dict) else None
     rid = (rep or {}).get("id", "?")
     if _HUMAN:
+        # 深链的 folder 取服务端实际归属的 folderId（--folder-path 由服务端解析成 id），
+        # 而非仅 CLI 的 --folder，否则用 --folder-path 创建的报告深链会缺 folder=、
+        # 左侧文件夹不高亮（Cursor Bugbot Medium）。
+        folder_id = (rep or {}).get("folderId") or getattr(args, "folder", None)
         print(f"[OK] 已创建报告 {rid[:8]}  {args.title}")
         print(f"  直达: {_cds_base()}/reports?"
-              + (f"folder={args.folder}&" if getattr(args, 'folder', None) else "")
+              + (f"folder={folder_id}&" if folder_id else "")
               + f"report={rid}")
         return
     ok({"report": rep}, note=f"已创建报告 {rid}")

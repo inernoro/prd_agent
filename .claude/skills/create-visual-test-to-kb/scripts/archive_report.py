@@ -176,7 +176,9 @@ def _cds_resolve_project(cfg):
 
 
 def _cds_find_or_create_folder(project_id, folder_name):
-    """按名字 find-or-create 项目下的验收文件夹，返回 folderId 或 None。"""
+    """按名字 find-or-create 项目下的**根级**验收文件夹，返回 folderId 或 None。
+    只在根级（parentId 为空）匹配 —— 本函数只建根级文件夹，若按名字匹配到同名的嵌套子
+    文件夹会把报告误归到错误层级（Cursor Bugbot Medium）。需要嵌套路径走 --folder-path。"""
     name = (folder_name or "").strip()
     if not name:
         return None
@@ -184,7 +186,7 @@ def _cds_find_or_create_folder(project_id, folder_name):
     listing = _cds_call("GET", "/api/report-folders" + qs)
     folders = listing.get("folders", []) if isinstance(listing, dict) else []
     for f in folders:
-        if f.get("name") == name:
+        if f.get("name") == name and not f.get("parentId"):
             return f.get("id")
     created = _cds_call("POST", "/api/report-folders", {"name": name, "projectId": project_id})
     folder = created.get("folder") if isinstance(created, dict) else None
