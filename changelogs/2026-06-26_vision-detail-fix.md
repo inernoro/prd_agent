@@ -6,3 +6,5 @@
 | docs | prd-api | 新增 debt.llm-gateway-protocol-fidelity 记录三处已知边界(Claude 流式 tool_use 增量未映射 / 能力软门池路径为 null / Extensions 已建未消费)；design.llm-gateway-unification 决策一标记 G1-G5 已实现 |
 | feat | prd-api | 日志观测性：协议保真改动在 /logs 页可瞥见。后端 LlmRequestLog 新增 ResponseToolCalls/ToolCallCount 并从网关 SendAsync(非流)+StreamAsync(流式增量按 index 合并)落盘；list 投影补 Protocol/ResolutionReason/ToolCallCount。修复网关流式从不转发 ToolCall chunk 的 G2/G5 缺口 |
 | feat | prd-admin | 日志页协议保真可视化：列表行新增协议 chip(openai/claude/exchange 着色，存量流量即可见)+ 函数调用 chip；详情面板新增 protocol 字段 + 保真参数 chips(从请求体解析 detail/top_p/top_k/tools)+ tool_calls 段。新增 lib/protocolRegistry.ts 注册表 |
+| feat | prd-api | 大模型日志观测端点：GET /api/logs/llm/timeseries(按天计数,柱状图源) + GET /api/logs/llm/sessions(按 SessionId $facet 聚合主模型/支撑模型/请求数);LlmRequestLog 落库 FinishReason/IsStreaming;list 投影暴露 |
+| feat | prd-admin | 大模型日志页重做为 OpenRouter 风格:顶部按天柱状图 + 时间范围段控 + 4 子 tab(Generations/Upstream Requests/Sessions/Jobs)表格 + 右侧 Generation details 抽屉(6 指标卡 + Overview + Request + tool_calls + Prompt/Completion)。视觉保留本系统液态玻璃风;无字段项(Cost/Canonical/Attempts)统一「—」并注明;Jobs 无概念渲染空态说明。新增 components/llm-logs/(LlmGenerationsView/GenerationDetailsDrawer/helpers)。嵌入式 LlmLogsPanel 保留旧紧凑视图 |

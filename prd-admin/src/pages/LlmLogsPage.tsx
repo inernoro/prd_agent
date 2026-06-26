@@ -17,6 +17,7 @@ import { resolveAvatarUrl } from '@/lib/avatar';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { glassPanel } from '@/lib/glassStyles';
 import { getProtocolMeta } from '@/lib/protocolRegistry';
+import { LlmGenerationsView } from '@/components/llm-logs/LlmGenerationsView';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import ReactMarkdown from 'react-markdown';
@@ -1283,6 +1284,23 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
         />
         <div className="flex-1 min-h-0">
           <SystemLogsTab />
+        </div>
+      </div>
+    );
+  }
+
+  // 主 /logs 页（非嵌入）：OpenRouter 风格大模型日志页（Generations/Upstream/Sessions/Jobs + 柱状图 + 详情抽屉）。
+  // 嵌入式 LlmLogsPanel（视觉创作侧栏）继续走下方旧紧凑视图。
+  if (!embedded) {
+    return (
+      <div className="h-full min-h-0 flex flex-col gap-4">
+        <TabBar
+          items={tabs}
+          activeKey={tab}
+          onChange={(key) => setTab(key as 'llm' | 'system')}
+        />
+        <div className="flex-1 min-h-0">
+          <LlmGenerationsView />
         </div>
       </div>
     );
