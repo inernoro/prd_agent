@@ -140,3 +140,23 @@ export const SESSIONS_COLUMNS: ColumnDef[] = [
 export function userLabel(it: LlmRequestLogListItem): string {
   return (it.displayName || it.username || it.userId || DASH) as string;
 }
+
+// ── 手机端核心列（mobile-first-density.md：只留核心信息，列用 fr 撑满视口、不横滚）──
+// 手机寸土寸金：每个表只保留「这一行是什么 + 一个关键指标」。
+export const GENERATIONS_COLUMNS_MOBILE: ColumnDef[] = [
+  { key: 'model', label: 'Model', width: '2fr' },
+  { key: 'output', label: 'Out', width: '0.7fr', align: 'right' },
+  { key: 'speed', label: 'tok/s', width: '0.8fr', align: 'right' },
+];
+
+export const UPSTREAM_COLUMNS_MOBILE: ColumnDef[] = [
+  { key: 'model', label: 'Model', width: '2fr' },
+  { key: 'status', label: 'Status', width: '0.9fr', align: 'center' },
+  { key: 'latency', label: 'Latency', width: '1fr', align: 'right' },
+];
+
+export const SESSIONS_COLUMNS_MOBILE: ColumnDef[] = [
+  { key: 'primaryModel', label: 'Model', width: '2fr' },
+  { key: 'app', label: 'App', width: '1.4fr' },
+  { key: 'requests', label: 'Req', width: '0.7fr', align: 'right' },
+];

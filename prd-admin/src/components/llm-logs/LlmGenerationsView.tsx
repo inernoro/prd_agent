@@ -14,10 +14,12 @@ import type { LlmRequestLogListItem } from '@/types/admin';
 import type { LlmLogsSessionItem, LlmLogsTimeseriesPoint } from '@/services/contracts/llmLogs';
 import { RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getProtocolMeta } from '@/lib/protocolRegistry';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 import { GenerationDetailsDrawer } from './GenerationDetailsDrawer';
 import {
   DASH, LOGS_SUBTABS, type LogsSubTab, TIME_RANGE_PRESETS, rangeFromPreset,
   GENERATIONS_COLUMNS, UPSTREAM_COLUMNS, SESSIONS_COLUMNS, type ColumnDef,
+  GENERATIONS_COLUMNS_MOBILE, UPSTREAM_COLUMNS_MOBILE, SESSIONS_COLUMNS_MOBILE,
   fmtShortTime, fmtDate, fmtMs, fmtCompact, computeTokPerSec, statusBadgeStyle, userLabel,
 } from './llmLogsView.helpers';
 
@@ -28,6 +30,7 @@ function Chip({ label, color, bg, title }: { label: string; color: string; bg: s
 }
 
 export function LlmGenerationsView() {
+  const isMobile = useIsMobile();
   const [subtab, setSubtab] = useState<LogsSubTab>('generations');
   const [presetKey, setPresetKey] = useState('30d');
   const [filterModel, setFilterModel] = useState('');
@@ -182,7 +185,8 @@ export function LlmGenerationsView() {
   };
 
   // ── 表格渲染器 ──
-  // 窄屏不挤压：外层横向滚动 + 内层 min-width，列保持可读；body 仍纵向滚动。
+  // 桌面窄屏不挤压：外层横向滚动 + 内层 min-width，列保持可读；body 仍纵向滚动。
+  // 手机端（核心列 ≤3）：minWidth 0 让 fr 列撑满视口，不强制横向滚动（mobile-first-density.md）。
   function Table<T>({ columns, items, rowKey, onRow, render, empty }: {
     columns: ColumnDef[]; items: T[]; rowKey: (t: T, idx: number) => string; onRow?: (t: T) => void;
     render: (col: ColumnDef, t: T) => ReactNode; empty: ReactNode;
@@ -190,7 +194,7 @@ export function LlmGenerationsView() {
     const gridCols = columns.map((c) => c.width).join(' ');
     return (
       <div className="flex-1 min-h-0 overflow-x-auto" style={{ overscrollBehavior: 'contain' }}>
-        <div className="h-full flex flex-col" style={{ minWidth: Math.max(880, columns.length * 90) }}>
+        <div className="h-full flex flex-col" style={{ minWidth: isMobile ? 0 : Math.max(880, columns.length * 90) }}>
           <div className="grid gap-2 px-3 py-2 shrink-0" style={{ gridTemplateColumns: gridCols, borderBottom: '1px solid var(--border-subtle)' }}>
             {columns.map((c) => (
               <div key={c.key} title={c.tip} className={`text-[10px] font-semibold uppercase tracking-wide ${c.align === 'right' ? 'text-right' : c.align === 'center' ? 'text-center' : ''}`} style={{ color: 'var(--text-muted)' }}>
@@ -236,36 +240,59 @@ export function LlmGenerationsView() {
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-3">
-      {/* 顶部：标题 + 时间范围 + 刷新 */}
-      <div className="flex items-center justify-between gap-2 flex-wrap shrink-0">
-        <div>
-          <div className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>Logs</div>
-          <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>查看大模型请求日志与历史 · 窗口内 {totalReq} 次请求</div>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <select value={filterModel} onChange={(e) => setFilterModel(e.target.value)} style={selectStyle}>
+      {/* 顶部：标题 + 时间范围 + 刷新。手机端合并成单条横向滚动控制条（mobile-first-density.md：进内容前 ≤1 条控制条）*/}
+      {isMobile ? (
+        <div className="shrink-0 flex items-center gap-2 overflow-x-auto pb-1" style={{ overscrollBehavior: 'contain' }}>
+          <div className="inline-flex rounded-lg overflow-hidden shrink-0" style={{ border: '1px solid var(--border-subtle)' }}>
+            {TIME_RANGE_PRESETS.map((p) => (
+              <button key={p.key} onClick={() => setPresetKey(p.key)} className="px-2.5 h-[30px] text-[11px] font-medium whitespace-nowrap" style={{ background: presetKey === p.key ? 'var(--bg-elevated, rgba(255,255,255,0.08))' : 'transparent', color: presetKey === p.key ? 'var(--text-primary)' : 'var(--text-muted)' }}>{p.label}</button>
+            ))}
+          </div>
+          <select value={filterModel} onChange={(e) => setFilterModel(e.target.value)} style={{ ...selectStyle, maxWidth: 140 }} className="shrink-0">
             <option value="">全部模型</option>
             {meta.models.map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
-          <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} style={selectStyle}>
+          <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} style={selectStyle} className="shrink-0">
             <option value="">全部状态</option>
             {meta.statuses.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
-          <div className="inline-flex rounded-lg overflow-hidden" style={{ border: '1px solid var(--border-subtle)' }}>
-            {TIME_RANGE_PRESETS.map((p) => (
-              <button key={p.key} onClick={() => setPresetKey(p.key)} className="px-2.5 h-[30px] text-[11px] font-medium" style={{ background: presetKey === p.key ? 'var(--bg-elevated, rgba(255,255,255,0.08))' : 'transparent', color: presetKey === p.key ? 'var(--text-primary)' : 'var(--text-muted)' }}>{p.label}</button>
-            ))}
-          </div>
-          <Button variant="secondary" size="sm" onClick={refresh} disabled={loading || sessLoading}>
-            {loading || sessLoading ? <MapSpinner size={14} /> : <RefreshCw size={14} />}刷新
+          <Button variant="secondary" size="sm" onClick={refresh} disabled={loading || sessLoading} className="shrink-0">
+            {loading || sessLoading ? <MapSpinner size={14} /> : <RefreshCw size={14} />}
           </Button>
         </div>
-      </div>
+      ) : (
+        <div className="flex items-center justify-between gap-2 flex-wrap shrink-0">
+          <div>
+            <div className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>Logs</div>
+            <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>查看大模型请求日志与历史 · 窗口内 {totalReq} 次请求</div>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <select value={filterModel} onChange={(e) => setFilterModel(e.target.value)} style={selectStyle}>
+              <option value="">全部模型</option>
+              {meta.models.map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+            <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} style={selectStyle}>
+              <option value="">全部状态</option>
+              {meta.statuses.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <div className="inline-flex rounded-lg overflow-hidden" style={{ border: '1px solid var(--border-subtle)' }}>
+              {TIME_RANGE_PRESETS.map((p) => (
+                <button key={p.key} onClick={() => setPresetKey(p.key)} className="px-2.5 h-[30px] text-[11px] font-medium" style={{ background: presetKey === p.key ? 'var(--bg-elevated, rgba(255,255,255,0.08))' : 'transparent', color: presetKey === p.key ? 'var(--text-primary)' : 'var(--text-muted)' }}>{p.label}</button>
+              ))}
+            </div>
+            <Button variant="secondary" size="sm" onClick={refresh} disabled={loading || sessLoading}>
+              {loading || sessLoading ? <MapSpinner size={14} /> : <RefreshCw size={14} />}刷新
+            </Button>
+          </div>
+        </div>
+      )}
 
-      {/* 柱状图 */}
-      <GlassCard className="p-2 shrink-0">
-        <EChart option={chartOption as EChartsOption} height={140} />
-      </GlassCard>
+      {/* 柱状图：手机端隐藏（用户反馈统计图在手机端无必要，只看核心功能）*/}
+      {!isMobile && (
+        <GlassCard className="p-2 shrink-0">
+          <EChart option={chartOption as EChartsOption} height={140} />
+        </GlassCard>
+      )}
 
       {/* 4 子 tab */}
       <TabBar items={LOGS_SUBTABS} activeKey={subtab} onChange={(k) => setSubtab(k as LogsSubTab)} />
@@ -276,7 +303,7 @@ export function LlmGenerationsView() {
           <>
             {loading && rows.length === 0 ? <MapSectionLoader text="正在加载…" /> : (
               <Table
-                columns={GENERATIONS_COLUMNS} items={rows} rowKey={(it) => it.id} onRow={(it) => setSelectedId(it.id)}
+                columns={isMobile ? GENERATIONS_COLUMNS_MOBILE : GENERATIONS_COLUMNS} items={rows} rowKey={(it) => it.id} onRow={(it) => setSelectedId(it.id)}
                 render={renderGenerationCell}
                 empty={<div className="py-16 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>该时间范围内暂无请求</div>}
               />
@@ -288,7 +315,7 @@ export function LlmGenerationsView() {
           <>
             {loading && rows.length === 0 ? <MapSectionLoader text="正在加载…" /> : (
               <Table
-                columns={UPSTREAM_COLUMNS} items={rows} rowKey={(it) => it.id} onRow={(it) => setSelectedId(it.id)}
+                columns={isMobile ? UPSTREAM_COLUMNS_MOBILE : UPSTREAM_COLUMNS} items={rows} rowKey={(it) => it.id} onRow={(it) => setSelectedId(it.id)}
                 render={renderUpstreamCell}
                 empty={<div className="py-16 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>该时间范围内暂无请求</div>}
               />
@@ -300,7 +327,7 @@ export function LlmGenerationsView() {
           <>
             {sessLoading && sessions.length === 0 ? <MapSectionLoader text="正在聚合会话…" /> : (
               <Table
-                columns={SESSIONS_COLUMNS} items={sessions} rowKey={(it, idx) => it.sessionId || String(idx)}
+                columns={isMobile ? SESSIONS_COLUMNS_MOBILE : SESSIONS_COLUMNS} items={sessions} rowKey={(it, idx) => it.sessionId || String(idx)}
                 render={renderSessionCell as (col: ColumnDef, t: LlmLogsSessionItem) => ReactNode}
                 empty={<div className="py-16 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>该时间范围内暂无带会话 ID 的请求</div>}
               />
