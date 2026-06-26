@@ -967,7 +967,7 @@ public class LlmLogsController : ControllerBase
         var pipeline = new[] { new BsonDocument("$match", matchDoc), groupStage, facet };
         var facetResult = await _db.LlmRequestLogs.Aggregate<BsonDocument>(pipeline).FirstOrDefaultAsync();
 
-        var total = 0;
+        long total = 0;
         var rowsArr = new BsonArray();
         if (facetResult != null)
         {
