@@ -384,3 +384,4 @@ docs:
   report.cds.visual-deploy: CDS 绝对可视化一键部署 · 完整报告（交付总览 + dogfood 修的真 bug + 各轮验收分享链）
   report.daily-tips.tutorial-coverage: 页面教程全量路由覆盖审计（2026-06-04）
   report.frontend.prd-admin-surface-style-migration: prd-admin 样式统一统计报表
+  debt.acceptance-center-cds: CDS 验收中心统一 · 债务台账（WS1/WS2/WS3 + E1/E2/E4/E6 已知边界与后续可补项）
