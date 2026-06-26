@@ -12,36 +12,39 @@ describe('niceBuildCommands', () => {
     delete process.env.CDS_BUILD_NICE;
   });
 
+  // 前导定义：镜像有 nice 才用，没有则降级为空（不因缺 nice 让构建失败）。
+  const PREAMBLE = (n: number) => `NICE=$(command -v nice >/dev/null 2>&1 && echo 'nice -n ${n}'); `;
+
   it('nices build/install verbs but leaves the serve verb alone', () => {
     process.env.CDS_BUILD_NICE = '10';
     const cmd = 'pnpm install --prefer-frozen-lockfile && pnpm build && pnpm start';
     const out = niceBuildCommands(cmd);
-    expect(out).toBe('nice -n 10 pnpm install --prefer-frozen-lockfile && nice -n 10 pnpm build && pnpm start');
+    expect(out).toBe(`${PREAMBLE(10)}$NICE pnpm install --prefer-frozen-lockfile && $NICE pnpm build && pnpm start`);
     // serve command (pnpm start) keeps normal priority
     expect(out).toContain('&& pnpm start');
-    expect(out).not.toContain('nice -n 10 pnpm start');
+    expect(out).not.toContain('$NICE pnpm start');
   });
 
   it('does not nice dev-server (pnpm dev) — it is a long-running serve, not a finite build', () => {
     process.env.CDS_BUILD_NICE = '10';
     const cmd = 'pnpm install --prefer-frozen-lockfile && pnpm dev --host 0.0.0.0 --port 3000';
     const out = niceBuildCommands(cmd);
-    expect(out).toBe('nice -n 10 pnpm install --prefer-frozen-lockfile && pnpm dev --host 0.0.0.0 --port 3000');
+    expect(out).toBe(`${PREAMBLE(10)}$NICE pnpm install --prefer-frozen-lockfile && pnpm dev --host 0.0.0.0 --port 3000`);
   });
 
   it('handles dotnet publish then serve', () => {
     process.env.CDS_BUILD_NICE = '12';
     const out = niceBuildCommands('dotnet restore && dotnet publish -c Release && dotnet App.dll');
-    expect(out).toBe('nice -n 12 dotnet restore && nice -n 12 dotnet publish -c Release && dotnet App.dll');
-    expect(out).not.toContain('nice -n 12 dotnet App.dll');
+    expect(out).toBe(`${PREAMBLE(12)}$NICE dotnet restore && $NICE dotnet publish -c Release && dotnet App.dll`);
+    expect(out).not.toContain('$NICE dotnet App.dll');
   });
 
-  it('is idempotent — does not double-nice an already-niced verb', () => {
+  it('is idempotent — does not double-wrap an already-processed command', () => {
     process.env.CDS_BUILD_NICE = '10';
     const once = niceBuildCommands('pnpm build && pnpm start');
     const twice = niceBuildCommands(once);
     expect(twice).toBe(once);
-    expect(twice).not.toContain('nice -n 10 nice -n 10');
+    expect(twice).not.toContain('$NICE $NICE');
   });
 
   it('off / 0 disables the transform entirely', () => {
@@ -64,6 +67,12 @@ describe('niceBuildCommands', () => {
     process.env.CDS_BUILD_NICE = '10';
     // "mytsc" / "go-build" must not be niced; only standalone verbs.
     const out = niceBuildCommands('echo mytsc && ./go-build.sh && tsc -p .');
-    expect(out).toBe('echo mytsc && ./go-build.sh && nice -n 10 tsc -p .');
+    expect(out).toBe(`${PREAMBLE(10)}echo mytsc && ./go-build.sh && $NICE tsc -p .`);
+  });
+
+  it('leaves a serve-only command untouched (no preamble when nothing matched)', () => {
+    process.env.CDS_BUILD_NICE = '10';
+    expect(niceBuildCommands('node server.js')).toBe('node server.js');
+    expect(niceBuildCommands('pnpm start')).toBe('pnpm start');
   });
 });

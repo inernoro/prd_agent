@@ -572,15 +572,20 @@ export function buildNiceLevel(): number {
 export function niceBuildCommands(command: string): string {
   const n = buildNiceLevel();
   if (!n || !command) return command;
-  const prefix = `nice -n ${n} `;
+  // 幂等：已处理过的命令(含 NICE= 前导定义)原样返回，避免重复包裹。
+  if (command.includes('NICE=$(command -v nice')) return command;
   let out = command;
+  let touched = false;
   for (const verb of BUILD_NICE_VERBS) {
     const esc = verb.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    // 命中处于词边界、且尚未被 nice 前缀包裹、且 verb 后是空白/结尾/管道分隔的 build 动词。
-    const re = new RegExp(`(?<![\\w-])(?<!nice -n \\d{1,2} )(${esc})(?=\\s|$|[&|;)])`, 'g');
-    out = out.replace(re, `${prefix}$1`);
+    // 命中处于词边界、尚未被 $NICE 前缀包裹、且 verb 后是空白/结尾/管道分隔的 build 动词。
+    const re = new RegExp(`(?<![\\w-])(?<!\\$NICE )(${esc})(?=\\s|$|[&|;)])`, 'g');
+    out = out.replace(re, (m) => { touched = true; return `$NICE ${m}`; });
   }
-  return out;
+  if (!touched) return command;
+  // 在命令最前定义 NICE：镜像里有 nice 才用(busybox/coreutils 普遍自带)，没有则降级为空，
+  // 绝不因某个镜像缺 nice 而让构建启动失败(no-rootless-tree：不假定能力存在，缺什么就降级)。
+  return `NICE=$(command -v nice >/dev/null 2>&1 && echo 'nice -n ${n}'); ${out}`;
 }
 
 export class ContainerService {
