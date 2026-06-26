@@ -688,10 +688,12 @@ public class LlmGatewayTests
         Assert.Equal("function", (string?)c["type"]);
         var fn = Assert.IsType<JsonObject>(c["function"]);
         Assert.Equal("get_weather", (string?)fn["name"]);
-        // arguments 必须是 JSON 字符串（OpenAI 约定）
+        // arguments 必须是 JSON 字符串（OpenAI 约定）；ToJsonString 会把非 ASCII 转义为 \uXXXX，
+        // 故不能裸子串比对，必须解析回 JSON 再断言字段值。
         var args = (string?)fn["arguments"];
         Assert.NotNull(args);
-        Assert.Contains("北京", args!);
+        var parsedArgs = JsonNode.Parse(args!);
+        Assert.Equal("北京", (string?)parsedArgs!["city"]);
     }
 
     [Fact]
