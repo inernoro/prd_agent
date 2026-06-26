@@ -37,6 +37,7 @@ import { PaSecretary } from '@/lib/paSecretaryIconRegistry';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useToolboxStore } from '@/stores/toolboxStore';
 import { useAuthStore } from '@/stores/authStore';
+import { deriveLauncherPerms, buildStaticAgents, buildStaticUtilities, buildStaticInfra } from '@/lib/homeLauncherItems';
 import { useChangelogStore, selectUnreadCount } from '@/stores/changelogStore';
 import { useWeeklyPosterStore } from '@/stores/weeklyPosterStore';
 import { WeeklyPosterModal } from '@/components/weekly-poster/WeeklyPosterModal';
@@ -514,14 +515,8 @@ export default function AgentLauncherPage() {
 
   const canUseReviewAgent = permissions.includes('review-agent.use');
   const canUsePrReview = permissions.includes('pr-review.use');
-  // 管理工具类权限门（从用户菜单迁移到首页实用工具区后，按权限过滤）
-  const canReadPrompts = permissions.includes('prompts.read') || permissions.includes('prompts.write');
-  const canReadLab = permissions.includes('lab.read') || permissions.includes('lab.write');
-  const canManageAutomations = permissions.includes('automations.manage');
-  const canReadLogs = permissions.includes('logs.read');
-  // 基础设施权限门
-  const canReadModels = permissions.includes('mds.read') || permissions.includes('mds.write');
-  const canReadUsers = permissions.includes('users.read') || permissions.includes('users.write');
+  // 启动器静态入口的权限门（智能体/实用工具/基础设施），口径与移动端共用同一 SSOT
+  const launcherPerms = useMemo(() => deriveLauncherPerms(permissions), [permissions]);
 
   // 更新中心未读数（用于首页快捷卡的红点徽章）
   const changelogUnread = useChangelogStore(selectUnreadCount);
@@ -548,160 +543,10 @@ export default function AgentLauncherPage() {
     void loadWeeklyPoster();
   }, [loadItems, loadChangelogCurrentWeek, loadHomepageAssets, loadWeeklyPoster]);
 
-  // 静态实用工具入口（不来自后端 toolbox）
-  //
-  // 分类原则（严格）：
-  //   - 智能体（featured）：AI + 完备生命周期 + 存储，三者缺一不可
-  //   - 实用工具（utilities）：工具型，缺 AI / 生命周期 / 存储 三要素之一
-  //   - 基础设施（infra）：平台级底座（知识库/市场/模型/团队/工作流/更新中心等），
-  //     即使用户自定义导航把它们隐藏了，首页仍然显示这一段，避免"找不到入口"。
-  const staticAgents: ToolboxItem[] = useMemo(() => {
-    // 涌现探索 = 智能体（AI 辅助 + 种子→探索→涌现完整生命周期 + emergence_trees 存储）
-    return [
-      {
-        id: '__emergence__',
-        name: '涌现探索智能体',
-        description: '从文档出发，AI 辅助发现功能创意与交叉价值',
-        icon: 'Sparkle',
-        tags: ['涌现', '探索', 'AI', '创意', '智能体'],
-        routePath: '/emergence',
-      } as ToolboxItem,
-    ];
-  }, []);
-
-  const staticUtilities: ToolboxItem[] = useMemo(() => {
-    const items: ToolboxItem[] = [
-      {
-        id: '__skill-agent__',
-        name: '技能创建助手',
-        description: 'AI 引导你逐步创建可复用的技能模板',
-        icon: 'Wand2',
-        tags: ['技能', 'skill', 'AI', '创建', '模板'],
-        routePath: '/skill-agent',
-      } as ToolboxItem,
-    ];
-
-    // 管理工具类（权限门控）
-    if (canReadPrompts) {
-      items.push({
-        id: '__prompts__',
-        name: '提示词管理',
-        description: '管理系统与技能提示词',
-        icon: 'FileText',
-        tags: ['提示词', 'prompts', '管理'],
-        routePath: '/prompts',
-      } as ToolboxItem);
-    }
-    if (canReadLab) {
-      items.push({
-        id: '__lab__',
-        name: '实验室',
-        description: 'Model Lab / 桌面实验 / 工具箱',
-        icon: 'FlaskConical',
-        tags: ['实验室', 'lab', 'beta'],
-        routePath: '/lab',
-      } as ToolboxItem);
-    }
-    if (canManageAutomations) {
-      items.push({
-        id: '__automations__',
-        name: '自动化规则',
-        description: '创建和管理跨系统的自动化任务',
-        icon: 'Zap',
-        tags: ['自动化', 'automation', '规则'],
-        routePath: '/automations',
-      } as ToolboxItem);
-    }
-    if (canReadLogs) {
-      items.push({
-        id: '__logs__',
-        name: '请求日志',
-        description: 'LLM 调用与 API 请求日志审计',
-        icon: 'ScrollText',
-        tags: ['日志', 'logs', '审计'],
-        routePath: '/logs',
-      } as ToolboxItem);
-    }
-
-    return items;
-  }, [canReadPrompts, canReadLab, canManageAutomations, canReadLogs]);
-
-  /** 基础设施：平台级能力，用户即使隐藏了侧边栏也必须在首页稳定出现 */
-  const staticInfra: ToolboxItem[] = useMemo(() => {
-    const items: ToolboxItem[] = [
-      {
-        id: '__document-store__',
-        name: '知识库',
-        description: '文档存储与知识管理，支持文件夹、GitHub 同步',
-        icon: 'Library',
-        tags: ['文档', '知识', '知识库', 'docs'],
-        routePath: '/document-store',
-      } as ToolboxItem,
-      {
-        id: '__my-assets__',
-        name: '我的资源',
-        description: '图片、附件、素材等个人资源统一管理',
-        icon: 'FolderHeart',
-        tags: ['资源', '素材', '附件'],
-        routePath: '/visual-agent?tab=assets',
-      } as ToolboxItem,
-      {
-        id: '__marketplace__',
-        name: '海鲜市场',
-        description: '社区共享的提示词、水印、参考图、工具',
-        icon: 'Store',
-        tags: ['市场', 'marketplace', '分享', '社区'],
-        routePath: '/marketplace',
-      } as ToolboxItem,
-      {
-        id: '__workflow-agent__',
-        name: '工作流引擎',
-        description: '可视化工作流编排，自动化多步骤任务串联',
-        icon: 'Workflow',
-        tags: ['工作流', '自动化', '编排'],
-        routePath: '/workflow-agent',
-      } as ToolboxItem,
-      {
-        id: '__web-pages__',
-        name: '网页托管',
-        description: '上传 HTML 或 ZIP，托管并分享你的网页',
-        icon: 'Globe',
-        tags: ['托管', '网页', 'hosting'],
-        routePath: '/web-pages',
-      } as ToolboxItem,
-      {
-        id: '__changelog__',
-        name: '更新中心',
-        description: '代码级周报：自动汇总仓库内的变更',
-        icon: 'Sparkles',
-        tags: ['更新', '周报', 'changelog', 'release'],
-        routePath: '/changelog',
-      } as ToolboxItem,
-    ];
-
-    if (canReadModels) {
-      items.push({
-        id: '__models__',
-        name: '模型中心',
-        description: '大模型与模型池配置、健康监控',
-        icon: 'Cpu',
-        tags: ['模型', 'LLM', '模型池', '调度'],
-        routePath: '/mds',
-      } as ToolboxItem);
-    }
-    if (canReadUsers) {
-      items.push({
-        id: '__teams__',
-        name: '团队协作',
-        description: '团队成员、用户组、分享与协作',
-        icon: 'Users',
-        tags: ['团队', '用户', '协作', '权限'],
-        routePath: '/users',
-      } as ToolboxItem);
-    }
-
-    return items;
-  }, [canReadModels, canReadUsers]);
+  // 静态入口（智能体 / 实用工具 / 基础设施）—— 数据源统一在 lib/homeLauncherItems（桌面+移动共用）
+  const staticAgents: ToolboxItem[] = useMemo(() => buildStaticAgents(), []);
+  const staticUtilities: ToolboxItem[] = useMemo(() => buildStaticUtilities(launcherPerms), [launcherPerms]);
+  const staticInfra: ToolboxItem[] = useMemo(() => buildStaticInfra(launcherPerms), [launcherPerms]);
 
   // Split into featured (智能体) / utilities (工具) / infra (基础设施) three buckets
   const { featured, utilities, infra, filtered } = useMemo(() => {
@@ -853,7 +698,9 @@ export default function AgentLauncherPage() {
 
             {/* Hero content */}
             <div className={`relative ${isMobile ? 'px-5 pt-8 pb-6' : 'px-8 pt-10 pb-8'}`}>
-              <div className={`flex ${isMobile ? 'flex-col gap-4' : 'items-start justify-between gap-8'}`}>
+              {/* flex-wrap：中等宽度(1024-1190px,非 mobile)下让右栏整体换行落到问候语下方，
+                  避免「左列 + 搜索 280 + 教程 280」单行不换挤爆视口(Codex) */}
+              <div className={`flex ${isMobile ? 'flex-col gap-4' : 'items-start justify-between gap-x-8 gap-y-6 flex-wrap'}`}>
                 <div className="shrink-0">
                   {/* 小型 eyebrow 标签：品牌定位 */}
                   <Reveal delay={REVEAL.heroEyebrow} duration={REVEAL_DURATION}>
@@ -910,9 +757,15 @@ export default function AgentLauncherPage() {
                       <TipsRotator fallback="选一个智能体开始创作，或在下方的实用工具里探索平台能力" />
                     </div>
                   </Reveal>
-                  {/* 搜索框：靠左，紧跟问候/副标题下方（与右侧教程卡分列左右，不再堆叠在右上角） */}
-                  <Reveal delay={REVEAL.heroSearch} duration={REVEAL_DURATION}>
-                    <div className="relative mt-4" style={{ maxWidth: isMobile ? '100%' : 360 }}>
+                </div>
+
+                {/* 右栏：搜索框 + 教程中心承接卡，搜索在左、教程在右，顶部对齐分列 */}
+                <Reveal delay={REVEAL.heroSearch} duration={REVEAL_DURATION}>
+                  {/* 非 mobile 右栏:去掉 shrink-0 + min-w-0,让 rail 能收缩到内容列实际宽度;
+                      flex-wrap + 子项 maxWidth:100% 保证窄到 <576px(侧栏展开的平板)时搜索/教程竖向堆叠而非横向溢出(Codex P2) */}
+                  <div className={isMobile ? 'flex flex-col gap-3 w-full' : 'flex flex-wrap items-start gap-4 min-w-0'}>
+                    {/* 搜索框：移到顶部、教程左侧 */}
+                    <div className="relative" style={{ width: isMobile ? '100%' : 280, maxWidth: '100%' }}>
                       <Search
                         size={15}
                         className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
@@ -942,17 +795,15 @@ export default function AgentLauncherPage() {
                         }}
                       />
                     </div>
-                  </Reveal>
-                </div>
 
-                {/* 右栏：仅教程中心承接卡（靠右，与左侧搜索分列左右，不再堆叠） */}
-                {!searchQuery.trim() && (
-                  <Reveal delay={REVEAL.heroSearch} duration={REVEAL_DURATION}>
-                    <div className="shrink-0" style={{ width: isMobile ? '100%' : 260 }}>
-                      <LearningCenterTeaser compact />
-                    </div>
-                  </Reveal>
-                )}
+                    {/* 教程中心承接卡（搜索态隐藏） */}
+                    {!searchQuery.trim() && (
+                      <div className="flex flex-col gap-2" style={{ width: isMobile ? '100%' : 280, maxWidth: '100%' }}>
+                        <LearningCenterTeaser />
+                      </div>
+                    )}
+                  </div>
+                </Reveal>
               </div>
             </div>
             {/* end hero content */}

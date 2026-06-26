@@ -14,6 +14,7 @@ import { ToolRunner } from './components/ToolRunner';
 import { BasicCapabilities } from './components/BasicCapabilities';
 import { QuickCreateWizard } from './components/QuickCreateWizard';
 import { ToolboxPageShell, ToolboxSegmentedControl, type ToolboxSegmentedItem } from './components/ToolboxShell';
+import { MobileToolboxView } from './MobileToolboxView';
 
 // 权属维度（原有）
 const CATEGORY_TABS: ToolboxSegmentedItem[] = [
@@ -128,7 +129,12 @@ export default function AiToolboxPage() {
 
   const hasActiveFilters = funcKindFilter !== 'all' || !!activeTagFilter;
 
-  // Grid view (default)
+  // 移动端「发现」：原生手机浏览体验（首屏即时出内容，不卡加载动画）
+  if (isMobile) {
+    return <MobileToolboxView />;
+  }
+
+  // Grid view (default, 桌面)
   return (
     <ToolboxPageShell
       pageTab={pageTab}

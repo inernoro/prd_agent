@@ -102,6 +102,9 @@ const SUPPORTED_EVENTS: ReadonlySet<string> = new Set([
   'delete',
   'repository',
   'release',
+  // 2026-06-23 极速版（CI 预构建）：监听 GitHub Actions 构建完成,据此按 commit SHA
+  // 拉取预构建镜像部署（替代 CDS 本机编译）。
+  'workflow_run',
 ]);
 
 /**
@@ -327,7 +330,7 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     // path still requires a valid HMAC.
     if (!SUPPORTED_EVENTS.has(eventName)) {
       outcome.dispatchAction = 'ignored';
-      outcome.dispatchReason = `event '${eventName}' 不在 CDS 处理范围(只处理 push / pull_request / check_run / delete / issue_comment / release 等 10 类),已 ack 不动作`;
+      outcome.dispatchReason = `event '${eventName}' 不在 CDS 处理范围(只处理 push / pull_request / check_run / workflow_run / delete / issue_comment / release 等类),已 ack 不动作`;
       res.setHeader('X-CDS-Suppress-Activity', '1');
       res.json({
         ok: true,
@@ -551,6 +554,40 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
           (err as Error).message,
         );
       });
+    }
+
+    // PR closed → 写一条分支墓碑（previewSlug 为键），让过期分支预览页能区分
+    // "已合并到主分支"（引导切主分支）与"已放弃"（跳 PR/commit）。先于 stop/delete
+    // 落库即可：墓碑独立于 branch entry，分支随后被删也不受影响。
+    if (result.tombstoneRequest) {
+      const tr = result.tombstoneRequest;
+      try {
+        const tombProject = stateService.getProject(tr.projectId);
+        const previewSlug = buildPreviewUrlForProject(null, tr.branch, tombProject, tr.projectId).previewSlug;
+        if (previewSlug) {
+          stateService.recordRemovedBranch({
+            previewSlug,
+            branch: tr.branch,
+            projectId: tr.projectId,
+            reason: tr.reason,
+            prNumber: tr.prNumber,
+            prUrl: tr.prUrl,
+            mergeCommitSha: tr.mergeCommitSha,
+            baseRef: tr.baseRef,
+            defaultBranch: stateService.getDefaultBranchFor(tr.projectId),
+            // 别名/分支 id 兜底匹配键（自定义子域访问 gone 页时 previewSlug 主键查不到）。
+            branchId: tr.branchId,
+            aliases: tr.aliases,
+            removedAt: new Date().toISOString(),
+          });
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[webhook] record branch tombstone failed for branch=${tr.branchId}:`,
+          (err as Error).message,
+        );
+      }
     }
 
     // 2026-05-07 用户反馈"分支已删除但 CDS 端没清理":handleDelete 现在
@@ -922,11 +959,22 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     const branchId = typeof req.query.branchId === 'string' ? req.query.branchId : '';
     const repoFullName = typeof req.query.repoFullName === 'string' ? req.query.repoFullName : '';
     const ref = typeof req.query.ref === 'string' ? req.query.ref : '';
+    // 2026-06-21: ref 比较必须两端归一化。push 投递的 item.ref 是完整
+    // `refs/heads/<branch>`，而 pull_request / check_run / issue_comment 等投递
+    // 的 item.ref 是 `pull_request.head.ref`(裸分支名)。前端固定传
+    // `refs/heads/<branch>`，旧逻辑只在「item.ref 恰好等于完整 ref」时命中，
+    // 导致裸名投递(以及其它没被 dispatcher 打上 branchId 的投递)全部漏掉——
+    // 用户表现为「日志永远只有一条」(只剩那条被打了 branchId 的 push)。
+    // 旧的 `item.ref === refs/heads/${ref}` 兜底分支因为前端已传完整 ref，
+    // 实际比较的是 `refs/heads/refs/heads/<branch>`，永远不成立(死代码)。
+    const branchNameOf = (raw?: string): string =>
+      (raw || '').replace(/^refs\/heads\//, '');
+    const refBranch = branchNameOf(ref);
     // 翻页 + 过滤组合下，简单稳妥的实现：把全量倒序拿出来做过滤、再切窗口；
     // 翻页是用户偶发动作，全量也就 1000 条，O(N) 完全够用。
     const all = stateService.getGithubWebhookDeliveries(1000);
     const filtered = all.filter((item) => {
-      const refMatches = !ref || item.ref === ref || item.ref === `refs/heads/${ref}`;
+      const refMatches = !ref || branchNameOf(item.ref) === refBranch;
       const repoMatches = !repoFullName || item.repoFullName === repoFullName;
       if (branchId) {
         if (item.branchId) return item.branchId === branchId;
@@ -1017,6 +1065,13 @@ function markWebhookDeployDispatch(
   const branch = stateService.getBranch(branchId);
   if (!branch) return;
   const ts = new Date().toISOString();
+  // 2026-06-23：一次「全新」的 webhook 派发（dispatching）重置重试预算——
+  // 钉首次派发时间（age 锚点）+ 归零重试计数，让新 commit 拿到干净的 N 次额度。
+  // accepted/failed 是同一轮派发的终态，不动这两个字段。
+  if (status === 'dispatching') {
+    branch.deployDispatchFirstAt = ts;
+    branch.deployDispatchRetryCount = 0;
+  }
   branch.lastDeployDispatchAt = ts;
   branch.lastDeployDispatchCommitSha = commitSha;
   branch.lastDeployDispatchSource = 'webhook';

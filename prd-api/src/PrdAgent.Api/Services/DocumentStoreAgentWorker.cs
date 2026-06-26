@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -43,8 +44,23 @@ public class DocumentStoreAgentWorker : BackgroundService
         {
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+            // 只回收【本实例】残留的 Running——共享 Mongo 下，不能把别的分支/主干正在处理的
+            // Running 任务误判成"崩溃残留"标记失败（定向消费，见 InstanceIdentity）。
+            var instanceId = InstanceIdentity.Get(scope.ServiceProvider.GetRequiredService<IConfiguration>());
+            // 回收范围 = 本实例 Running + 历史无主 Running（OwnerInstanceId 空）。
+            // 无主 Running 只可能由「定向消费上线前的旧代码」产生：旧代码不打 owner，
+            // 这些 run 的容器一旦退出就永远没人回收、永远卡 running。把无主 Running 一并
+            // 回收是一次性过渡兜底（上线后新 run 认领即打主，不再产生无主 Running）。
+            // 代价：若另一实例此刻正在跑某个无主 Running，会被本实例误判失败——但无主 =
+            // 旧代码遗留，归属本就不可分辨，这个过渡期代价可接受（Bugbot Medium）。
+            var recoverFilter = Builders<DocumentStoreAgentRun>.Filter.And(
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, DocumentStoreRunStatus.Running),
+                Builders<DocumentStoreAgentRun>.Filter.Or(
+                    Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, instanceId),
+                    Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
+                    Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, "")));
             var recovered = await db.DocumentStoreAgentRuns.UpdateManyAsync(
-                r => r.Status == DocumentStoreRunStatus.Running,
+                recoverFilter,
                 Builders<DocumentStoreAgentRun>.Update
                     .Set(r => r.Status, DocumentStoreRunStatus.Failed)
                     .Set(r => r.ErrorMessage, "服务重启，任务被中断")
@@ -103,10 +119,20 @@ public class DocumentStoreAgentWorker : BackgroundService
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
         var runStore = scope.ServiceProvider.GetRequiredService<IRunEventStore>();
 
-        // 原子拾取一个 queued 任务（按创建时间）
-        var filter = Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, DocumentStoreRunStatus.Queued);
+        // 原子拾取一个 queued 任务（按创建时间）——定向消费：只领取属于本实例的任务，
+        // 外加历史无主（OwnerInstanceId 空）的任务做兼容，避免共享 Mongo 下多容器互抢（见 InstanceIdentity）。
+        var instanceId = InstanceIdentity.Get(scope.ServiceProvider.GetRequiredService<IConfiguration>());
+        var filter = Builders<DocumentStoreAgentRun>.Filter.And(
+            Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, DocumentStoreRunStatus.Queued),
+            Builders<DocumentStoreAgentRun>.Filter.Or(
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, instanceId),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, "")));
         var update = Builders<DocumentStoreAgentRun>.Update
             .Set(r => r.Status, DocumentStoreRunStatus.Running)
+            // 认领时盖上本实例归属：领取历史无主任务后必须打主，否则本实例崩溃重启时
+            // "只回收本实例 Running"的兜底匹配不到它，会让该任务永远卡在 running（Bugbot Medium）。
+            .Set(r => r.OwnerInstanceId, instanceId)
             .Set(r => r.StartedAt, DateTime.UtcNow);
         var run = await db.DocumentStoreAgentRuns.FindOneAndUpdateAsync(
             filter, update,

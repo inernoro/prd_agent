@@ -1,188 +1,337 @@
 ---
 name: ai-defect-resolve
-version: 1.1.0
-description: AI 辅助缺陷修复技能。通过缺陷分享链接获取缺陷数据，按标准工作流（列清单→评论→修复→验收）自动化解决缺陷。强调安全协作：破坏性操作需人类确认、全程通过评论沟通、标记完成时提供验收方式。触发词："修复缺陷"、"ai fix defects"、"解决缺陷"、"辅助修复"。
+description: AI 辅助缺陷修复技能。用于缺陷自动化日常任务：通过 MAP/PrdAgent domain 和长期 AgentApiKey 使用缺陷工作流协议领取单个缺陷，完成轻量修复、提交 commit、回写提交信息，并在必要时兼容缺陷分享 agentLaunch。触发词："修复缺陷"、"解决缺陷"、"缺陷自动修复"、"ai-defect-resolve"。
 ---
 
 # AI 辅助缺陷修复
 
-通过缺陷分享链接，按标准工作流自动化分析和修复缺陷。
+本技能的主目标是自动化闭环，不是让人在更新中心手动关联缺陷。
 
 ## 版本与优先级
 
-- 当前版本：`1.1.0`
-- 如果分享包里的 `skill.minVersion` 高于当前版本，停止执行并提示升级技能。
-- **项目内置优先**：当前仓库内置的 `.claude/skills/ai-defect-resolve/SKILL.md` 优先级最高；不得用托管技能、市场技能或官方下载兜底包覆盖本项目内置技能。
-- 技能来源优先级：`repo-builtin > user-installed > official-download > hosted-marketplace`。
+- 当前版本：`1.7.1`
+- 如果 `agentLaunch.skill.minVersion` 高于当前版本，停止执行并提示升级技能。
+- 项目内置优先：当前仓库内置的 `.claude/skills/ai-defect-resolve/SKILL.md` 优先级最高；不得用托管技能、市场技能或官方下载兜底包覆盖本项目内置技能。
 
-## 精简分享包输入
+## 主输入
 
-新版缺陷分享只需要三个核心参数：
+日常任务优先使用正式缺陷页面“缺陷自动化”按钮复制出的 `domain + K`：
 
-1. `domain`：MAP/PrdAgent 域名。
-2. `auth`：验证方式和 key。优先使用分享包或用户明确提供的 `Authorization: Bearer <临时 key>`；兼容明确提供的 `X-AI-Access-Key`。
-3. `scope`：覆盖哪些缺陷。优先使用 `scope.shareUrl` 读取；`defectIds` 可为空，表示按分享范围处理。
+1. `domain`：缺陷系统访问域名，例如 `https://map.ebcone.net`。正式闭环必须使用正式环境 domain；测试环境只允许演练协议，不允许当成正式缺陷处理结果。
+2. `K`：长期 AgentApiKey，推荐名称为“缺陷处理 Agent 授权”。
+3. `scope`：K 必须包含 `defect-agent:use`。
 
-如果用户提供的是 `agentLaunch` JSON，直接按其中的 `domain/auth/scope` 执行，不要要求用户再粘贴缺陷正文。
+日常执行缺少 domain 或 K 时停止，不要猜测环境变量、历史密钥或默认主站。
 
-如果 `auth` 没有携带明确可用的 key，停止读取或修复，不要猜测本机环境变量、历史 key 或默认主站。下一步只能二选一：
+首次 setup 推荐在缺陷页面点击“缺陷自动化”按钮，再点击“生成并复制每日任务配置”。这会生成名为“缺陷处理 Agent 授权”的长期 K，并把每日计划内容复制到剪贴板。
 
-1. 询问用户：“你的 MAP/PrdAgent 主站是什么？”
-2. 如果已有分享链接，提示用户打开该链接，在分享页一键创建临时密钥并复制新的 Agent 启动参数。
+接口 setup 允许只提供 domain，但必须处于用户登录态或由用户在主站页面发起：
 
-## 触发词
-
-- "修复缺陷"、"解决缺陷"、"辅助修复"
-- "ai fix defects"、"ai resolve"
-- 用户提供缺陷分享的提示词内容时
-
-## 认证配置
-
-所有写接口请求必须使用分享包或用户明确提供的认证 Header。推荐格式：
-
-```
-Authorization: Bearer <临时 key>
-```
-
-兼容格式：
-
-```
-X-AI-Access-Key: <明确提供的 key>
-```
-
-> 不要把本机环境变量当作默认认证来源。缺少 key 时，先询问主站或让用户打开分享链接一键签发。
-
-## 标准工作流（6 阶段）
-
-### 阶段 1：获取缺陷数据
-
-```
-GET {viewUrl}
-```
-
-读取响应中的缺陷列表、附件截图、AI 评分、API 端点说明。
-
-### 阶段 2：制定修复计划（必须）
-
-**在动手之前，必须先列出完整的修复清单**：
-
-1. 逐条分析每个缺陷
-2. 标记安全修复 vs 有风险的修复
-3. **有争议或破坏性的修改必须先和人类确认，不要自行决定**
-
-输出格式示例：
-```markdown
-## 修复清单
-
-| # | 缺陷编号 | 标题 | 修复方案 | 风险等级 |
-|---|---------|------|---------|---------|
-| 1 | DEF-2026-0017 | 暂无可用生图模型 | 修复模型池查询逻辑 | 安全 |
-| 2 | DEF-2026-0039 | 缺陷追踪优化 | 重构状态流转 | ⚠️ 需确认 |
-```
-
-### 阶段 3：通过评论沟通（全程）
-
-```
-POST {viewUrl}/comments
+```http
+POST {domain}/api/defect-agent/agent/authorization/ensure
 Content-Type: application/json
 
 {
-  "agentName": "你的名称",
-  "items": [
-    { "defectId": "...", "content": "评论内容（Markdown）" }
-  ]
+  "forceNew": false
 }
 ```
 
-**必须发表评论的时机**：
-- 开始修复前：发表修复计划
-- 遇到阻碍时：说明问题和需要人类确认的事项
-- 修复完成后：**详细说明验收方式**
+如果已有名为“缺陷处理 Agent 授权”且包含 `defect-agent:use` scope 的可用 Key，接口返回 `created=false` 和 Key 元信息；如果没有则新建永不过期 K 并仅本次返回明文 `apiKey`。后端不保存明文 K，定时任务必须保存这次返回的 K。明文丢失时，重新点击按钮生成新 K。
 
-### 阶段 4：提交分析报告（可选）
+兼容输入：
 
+- 如果用户提供 `agentLaunch` 且 `scope.type == daily-next`，按其中的 `domain/auth/scope.nextUrl` 执行。
+- 如果用户提供旧分享包且仅有 `scope.shareUrl`，走“分享兼容流程”，但不要把它当成日常任务主路径。
+
+## 自动化主流程
+
+完成标准不是“生成计划”，而是至少有一条真实缺陷完成可审计闭环。日常任务执行时必须先跑线上接口，不能停在流程复述或提示词整理。
+
+优先使用缺陷工作流协议 `defect-agent-workflow.v1`。固定编排由后端工作流端点完成，智能体只负责理解缺陷、评论计划、判断轻量、修代码、验证和提交。
+
+如果仓库存在 `scripts/defect-automation-probe.mjs`，日常任务启动前必须先运行安全自检：
+
+```bash
+DEFECT_AGENT_DOMAIN="{domain}" DEFECT_AGENT_KEY="{K}" node scripts/defect-automation-probe.mjs --safe
 ```
-POST {viewUrl}/report
+
+安全自检只调用 `connector` 和 `published-pending`，不会领取缺陷。它必须证明：
+
+- `connector` 返回 200。
+- `auth.requiredScope == defect-agent:use`。
+- `workflow.version == defect-agent-workflow.v1`。
+
+自检失败时停止本轮，不要调用 `start-next`。
+
+1. 读取连接器协议。
+2. 调用 `workflow/start-next` 创建或复用运行记录，并领取一条缺陷。
+3. 发表评论说明计划。
+4. 判断是否轻量修复。
+5. 轻量修复则改代码、验证、commit、创建 PR，然后调用 `workflow/complete` 一次性回写 PR、commit、写入 `defect_resolution_traces`、标记缺陷已修复。
+6. 非轻量或无法自测时调用 `workflow/block`，写入阻塞原因并默认停止本轮运行。
+7. `workflow/complete` 返回下一次 `workflow/start-next` 入参后，继续下一条或结束。
+
+旧端点 `runs`、`next`、`comments`、`commit-info`、`fix-status` 只用于兼容和排障；日常自动化不要优先使用旧端点拆步骤。
+
+### 0. 真实闭环验收门禁
+
+任何声称“缺陷自动化可用”的交付，必须拿到以下证据。缺一项只能说“未完成”，不能让用户代为校验：
+
+1. `GET /agent/connector` 返回 200，证明 `domain + K` 可用。
+2. `POST /agent/workflow/start-next` 返回 `runId` 和具体缺陷，证明运行记录和领取缺陷都由工作流完成。
+3. 领取响应包含 `protocol.version == defect-agent-workflow.v1`。
+4. `POST /agent/defects/{id}/comments` 返回 `messageId`，证明已评论开始分析和轻量判定。
+5. 代码或技能实际产生 diff，并通过对应校验。
+6. git commit 成功，取得完整 `commitSha`，并创建或更新 PR，取得 `pullRequestUrl`。
+7. `POST /agent/workflow/complete` 返回成功，证明 PR、commit 已写回缺陷系统，且单缺陷已标记修复。
+8. `workflow/complete` 返回下一次 `workflow/start-next` 入参，证明流程能继续下一条。
+9. 阻塞或重量级缺陷必须调用 `POST /agent/workflow/block` 并写入失败原因。
+10. 更新中心的 commit 记录必须在 UI 上出现可点击的“关联缺陷 N”或“我的缺陷 N”标志，点击后能看到缺陷编号、标题、PR、commit、发布状态、验收报告或知识库链接；只验证接口 `linkedDefects` 不算完成。普通 changelog 文案行没有 commit id，不允许按日期批量贴缺陷标志。如果 commit 未正式发布，只能记录“需要真人审核发布”，不能冒充已发布。
+11. 正式发布后才能跑 `create-visual-test-to-kb`，报告必须进入“缺陷修复验收报告”知识库。
+12. 只有正式发布且验收通过后，才能调用 `validation-report` 通知提交人。
+
+执行者必须维护一份本轮证据摘要，至少记录 `domain`、`environment`、`runId`、`defectNo`、`defectId`、`messageId`、`commitSha`、`pullRequestUrl`、`commitInfoResult`、`fixStatusResult`、`nextResult`、`previewUrl`、`visualReportUrl`、更新中心 UI 截图路径和点击弹窗截图路径。摘要不能包含 K 明文。
+
+每日任务无缺陷时也要正常收尾：`start-next` 返回 `hasNext=false` 时，不创建 PR，不制造测试缺陷；`published-pending` 为空时，只报告“无正式发布后待验收通知项”。
+
+## 每日自动修复闭环规则
+
+自动化运行时，正式缺陷系统是唯一闭环落点；测试或预览环境只用于验证，不得从测试库领取正式缺陷，也不得把测试演练数据写成正式结果。
+
+1. PR 不得为草稿：自动化创建的缺陷修复 PR 必须是 ready for review。创建 PR 后、调用正式缺陷系统 `workflow/complete` 前，必须通过 GitHub CLI/API/连接器确认 `isDraft=false`；如果仍是草稿，先执行等价于 `gh pr ready <number>` 的操作再回写。
+2. 验证失败不得完成：本地校验、远端构建或必要自测未通过时，不得推送半成品，不得调用 `workflow/complete`。应在正式缺陷系统评论原因，并调用 `workflow/block`。
+3. 待审核入口：修复 PR 创建后，更新中心的“GitHub 待审核提交”页签应能看到该 open PR。该页签用于区分“已经提交但尚未合并”的缺陷修复，避免只看 GitHub commits 列表时误判为没有提交。
+4. 继续或停止要明说：`workflow/complete` 返回下一次 `start-next` 入参后，如果当前自动化提示允许继续，按一次一个缺陷继续领取下一条；如果提示限制本轮只处理一条，必须在最终报告写明“因本轮一次只处理一个缺陷而停止”，不得静默停下。
+
+### 1. 读取连接器协议
+
+```http
+GET {domain}/api/defect-agent/agent/connector
+Authorization: Bearer {K}
+```
+
+响应会返回：
+
+- 当前连接器类型：`map-defect-agent`
+- 当前 K 的 `keyId/name/expiresAt`，如果请求来自 AgentApiKey。
+- 长期授权创建建议：优先使用缺陷页面“缺陷自动化”按钮；接口兜底调用 `/api/defect-agent/agent/authorization/ensure`；兼容手动创建 `/api/agent-api-keys`，名称“缺陷处理 Agent 授权”，scope `defect-agent:use`。
+- 自动化端点清单。
+
+后端不保存明文 K。没有可用 K 时，必须先完成 setup 并保存明文；日常任务后续只需要 `domain + K`。
+
+### 2. 领取单个缺陷
+
+```http
+POST {domain}/api/defect-agent/agent/workflow/start-next
+Authorization: Bearer {K}
 Content-Type: application/json
 
 {
-  "agentName": "你的名称",
-  "items": [
-    {
-      "defectId": "...",
-      "confidenceScore": 85,
-      "analysis": "根因分析",
-      "fixSuggestion": "修复方案"
-    }
-  ]
+  "runId": "可选；为空则创建新 run",
+  "triggerType": "schedule",
+  "defectId": "可选；精确领取某个缺陷 ID 或缺陷编号，主要用于演练和回归",
+  "projectId": "可选",
+  "teamId": "可选",
+  "status": "submitted,assigned,processing"
 }
 ```
 
-### 阶段 5：执行修复
+响应中的 `data.run.id` 是本轮运行记录，`data.defect` 是当前唯一要处理的缺陷。当 `data.hasNext == false` 或 `data.defect == null` 时，本轮结束。
 
-根据计划修改代码。注意：
-- 遵循代码库的现有规范和架构模式
-- 不做超出缺陷范围的修改
+日常任务默认不传 `defectId`，让系统按项目、团队和状态自动领取。演练、回归或人工确认后的单点处理必须传 `defectId`，避免误领其它存量缺陷。
 
-### 阶段 6：标记修复完成
+### 3. 发表评论
 
-**先在评论中说明验收方式，然后调用**：
-
-```
-POST {viewUrl}/fix-status
+```http
+POST {domain}/api/defect-agent/agent/defects/{defectId}/comments
+Authorization: Bearer {K}
 Content-Type: application/json
 
 {
-  "items": [
-    {
-      "defectId": "...",
-      "agentName": "你的名称",
-      "resolution": "修复说明（含验收方式）"
-    }
-  ]
+  "runId": "{runId}",
+  "agentName": "Codex",
+  "content": "修复计划..."
 }
 ```
 
-> 会自动标记为「AI 自动解决」并通知缺陷提交者。
+评论至少出现三次：
 
-## 安全协作规则
+- 开始修复前：说明理解、计划、风险。
+- 遇到阻塞时：说明阻塞点和需要人类确认的事项。
+- 修复完成后：说明 PR、commit、测试或预览验收地址、验收步骤；发布后验收报告生成后必须再评论报告地址和知识库地址。
 
-1. **先列清单再动手** — 修复前必须列出所有修复方案
-2. **有争议的找人确认** — 以下情况必须暂停并询问人类：
-   - 删除代码或文件
-   - 修改 API 接口签名
-   - 架构层面的变更
-   - 影响其他模块的修改
-   - 不确定根因的缺陷
-3. **全程发评论** — 通过评论接口保持信息透明
-4. **说明验收方式** — 标记完成时必须告诉提交者如何验证
+### 4. 轻量修复判定
 
-## 评论模板
+参考 `issues-autofix` 的轻量标准：
 
-### 修复计划评论
-```markdown
-## 🔧 修复计划
+- 预计改动不超过 200 行。
+- 单个缺陷预计 10 分钟内能定位并完成主要修复。
+- 根因清晰，行为可验证。
+- 不涉及破坏性删除、数据库迁移、权限模型重写、跨服务协议改造。
+- 能跑通本地测试、集成测试、CDS 预览或浏览器验收中的至少一条。
 
-我已分析完所有缺陷，以下是修复方案：
+不满足轻量标准时：
 
-| 缺陷 | 方案 | 风险 |
-|------|------|------|
-| DEF-xxx | ... | 安全 |
+1. 不提交半成品。
+2. 评论说明原因、风险、建议拆分方式。
+3. 调用 `workflow/block` 停止当前缺陷。后端会把缺陷切到 `awaiting`，让它退出默认自动领取队列，等待用户确认或后续任务接管。
 
-如有疑问请回复，否则我将按此计划执行。
+### 5. 修复与提交
+
+修复代码后按仓库规则执行校验并提交 commit。commit message 使用中文。
+
+提交完成后必须取得：
+
+- `commitSha`
+- `shortSha`
+- `commitMessage`
+- `repository`
+- `branch`
+- `pullRequestNumber`，如果可用
+- `pullRequestUrl`
+- `commitUrl`，如果可用
+- `previewUrl`，如果已部署预览
+- `visualReportUrl`，如果已完成视觉验收
+
+所有代码改动必须通过 PR 完成。缺陷自动化可以提交分支和创建 PR，但不能把“有 commit”当成完成；`workflow/complete` 必须尽量带上 `pullRequestUrl`。如果仓库权限导致无法创建 PR，先评论阻塞并调用 `workflow/block`，不要把缺陷标记为已解决。
+
+### 6. 完成工作流
+
+```http
+POST {domain}/api/defect-agent/agent/workflow/complete
+Authorization: Bearer {K}
+Content-Type: application/json
+
+{
+  "runId": "{runId}",
+  "defectId": "{defectId}",
+  "agentName": "Codex",
+  "commitSha": "完整 commit id",
+  "shortSha": "短 commit id",
+  "commitMessage": "中文提交标题",
+  "repository": "owner/repo 或仓库名",
+  "branch": "当前分支",
+  "pullRequestNumber": 861,
+  "pullRequestUrl": "PR 地址",
+  "commitUrl": "commit 地址",
+  "previewUrl": "预览地址",
+  "visualReportUrl": "视觉验收报告地址",
+  "resolution": "修复说明",
+  "completionComment": "修复完成评论，可选"
+}
 ```
 
-### 修复完成评论
-```markdown
-## ✅ 修复完成
+该接口会同时写入：
 
-### 修复内容
-- DEF-xxx: 修复了 xxx
+- 缺陷结构化字段 `提交信息`
+- 缺陷结构化字段 `修复提交`
+- 缺陷结构化字段 `修复PR地址`
+- 更新中心关联用的 `defect_resolution_traces`
+- 缺陷状态 `已解决`
+- 缺陷评论：自动包含 PR、commit、验收地址和“正式发布后生成验收报告”的说明
 
-### 验收方式
-1. 打开 xxx 页面
-2. 执行 xxx 操作
-3. 预期结果：xxx
+因此更新中心不需要人工点“关联缺陷”。它只需要读取 commit id 关联结果。
 
-如验收不通过，请重新打开缺陷并说明问题。
+正式发布后的用户通知不要在这里提前发送；发布到正式环境并完成视觉验收后，再由发布验收链路通知提交人。
+
+### 7. 阻塞当前缺陷
+
+无法轻量修复、验证失败、提交失败或回写失败时，调用：
+
+```http
+POST {domain}/api/defect-agent/agent/workflow/block
+Authorization: Bearer {K}
+Content-Type: application/json
+
+{
+  "runId": "{runId}",
+  "defectId": "{defectId}",
+  "failurePhase": "analysis|fix|test|commit|callback",
+  "failureReason": "失败原因和下一步建议",
+  "comment": "写给缺陷提交者或维护者的阻塞说明",
+  "stopRun": true
+}
 ```
+
+重量级缺陷默认停止，让用户确认。只有明确要求继续时，才允许 `stopRun=false`。
+
+`workflow/block` 会把缺陷状态切到 `awaiting`。日常任务默认状态过滤是 `submitted,assigned,processing`，因此被阻塞缺陷不会在下一轮自动反复领取；需要人工补充或重新提交后再进入自动化队列。
+
+## 正式发布后的验收通知
+
+修复 commit 被正式发布后，更新中心会把对应 `defect_resolution_traces` 标记为 `published` 且 `notifyStatus=pending`。这时再做验收和通知。
+
+### 1. 拉取待验收通知项
+
+```http
+GET {domain}/api/defect-agent/agent/published-pending?limit=20
+Authorization: Bearer {K}
+```
+
+对每个 item：
+
+1. 正式缺陷系统只负责读取待验收 trace、回写报告和通知提交人；使用 `create-visual-test-to-kb` 在测试或预览环境跑视觉验收。目标优先取 `item.acceptance.target`，commit 取 `item.acceptance.commitSha`，验收地址取 `item.acceptance.previewUrl`。
+2. 复制 `.claude/skills/create-visual-test-to-kb/acceptance.config.json` 到 `/tmp/defect-acceptance.config.json`，只在临时副本里把 `report.storeName` 改成“缺陷修复验收报告”。
+3. 用验收技能归档报告；如果知识库不存在，归档脚本按 find-or-create 逻辑创建。归档必须走知识库传输共享协议：正文和截图 `assets[]` 一次性提交给知识库后端，由知识库决定正式图片域名和缓存刷新。禁止直接写 Mongo、禁止手动上传图片后拼 URL、禁止把 `data:image` 写进报告。
+4. 视觉验收必须进入更新中心的 commit 记录列表，截取对应 commit 行上的“关联缺陷 N”或“我的缺陷 N”按钮；必须点击按钮并截取弹窗，证明缺陷编号、标题、发布状态、验收报告或知识库链接可见。提交者本人场景必须证明按钮显示“我的缺陷 N”或弹窗内出现“我提交的”。普通 changelog 文案行不作为缺陷关联验收目标。
+5. 归档后必须用验收技能的 `verify-open.mjs` 打开报告地址，确认标题、正文和截图可见。
+6. 回写验收报告并通知提交人。验收失败时不要发送“已修复”，要发送“需要继续改进”。如果正式验收报告证明用户描述不成立，`verdict` 使用 `invalid`，回复必须引用验收报告证明该结论。
+
+建议归档参数：
+
+- `--target`：`item.acceptance.target`
+- `--module`：`缺陷管理`
+- `--feature`：缺陷标题或缺陷编号
+- `--type`：`修复`
+- `--verdict`：`pass`、`conditional` 或 `fail`
+
+### 2. 回写报告并通知提交人
+
+```http
+POST {domain}/api/defect-agent/agent/resolution-traces/{traceId}/validation-report
+Authorization: Bearer {K}
+Content-Type: application/json
+
+{
+  "visualReportId": "视觉验收报告 ID",
+  "visualReportUrl": "视觉验收报告地址",
+  "knowledgeBaseName": "缺陷修复验收报告",
+  "knowledgeBaseDocId": "知识库文档 ID",
+  "knowledgeBaseUrl": "知识库文档地址",
+  "verdict": "pass",
+  "message": "你的问题已修复，请查看验收报告。"
+}
+```
+
+该接口会更新 trace 的验收状态、验收报告字段和通知状态，并给缺陷提交人发送通知，同时在缺陷评论里写入知识库、验收报告、commit 和 PR 证据链。正式发布前不要调用。
+
+`verdict` 可取值：
+
+- `pass`：测试或预览环境验收通过，且报告已回写正式缺陷系统。
+- `conditional`：有条件通过，必须在报告和消息中说明限制。
+- `fail`：测试或预览环境验收未通过，需要继续改进。
+- `invalid`：验收报告证明用户提交的缺陷陈述不成立，用于有证据地回复用户。
+
+`knowledgeBaseUrl` 必须填写为验收报告知识库可打开地址；缺少该地址时后端会拒绝发送通知，避免用户收到无法查收的消息。
+
+## 分享兼容流程
+
+旧分享包仍可用：
+
+1. `GET {domain}{scope.shareUrl}` 读取缺陷。
+2. `POST {scope.shareUrl}/comments` 评论计划。
+3. `POST {scope.shareUrl}/report` 提交分析和 commit 信息。
+4. `POST {scope.shareUrl}/fix-status` 标记修复。
+
+优先使用 `agentLaunch` 提供的端点，不要自行拼错路径。
+
+## 安全规则
+
+1. 不泄露 K：不要把密钥写入日志、commit、评论、报告或截图。
+2. 一次只修一个缺陷：提交并回写 commit 后再继续下一条。
+3. 不确定就停：破坏性、重量级、跨系统变更必须评论并等待确认。
+4. 不跳过回写：只 commit 不调用 `workflow/complete` 不算闭环完成；旧 `commit-info` 只用于兼容和排障。
+5. 不提前通知用户：正式发布前只在缺陷内更新进度，不给提交人发“已修复”通知。
+6. 不把“已创建 PR”当作完成：必须等 commit 被正式发布后，才进入视觉验收和提交人通知。
+7. 不处理无关缺陷：验收或演练时先创建独立项目，运行记录带 `projectId` 过滤，避免领取线上其它人的存量缺陷。
+8. 不混淆环境：正式缺陷系统负责拉取、评论、commit/PR/validation-report 回写和通知；测试或预览环境负责修复验证与视觉验收。测试库里的演练缺陷不能当正式闭环结果，正式缺陷的状态和评论必须写回正式缺陷系统。

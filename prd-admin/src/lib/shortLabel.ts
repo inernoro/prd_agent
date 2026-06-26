@@ -20,6 +20,7 @@ export const SHORT_LABEL_MAP: Record<string, string> = {
 
   // ── 智能体（与 AGENT_DEFINITIONS / BUILTIN_TOOLS 对齐） ─────────
   'visual-agent': '视觉',
+  'visual-storyboard': '分镜',
   'literary-agent': '文学',
   'video-agent': '视频',
   'defect-agent': '缺陷',
@@ -67,7 +68,7 @@ export const SHORT_LABEL_MAP: Record<string, string> = {
   'lab': '实验室',
   'automations': '自动化',
   'logs': '日志',
-  'team-activity': '动态',
+  'team-activity': 'VOC',
 
   // ── 管理 / 其他 ───────────────────────
   'authz': '权限',

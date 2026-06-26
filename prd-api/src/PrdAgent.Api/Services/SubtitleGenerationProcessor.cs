@@ -218,6 +218,19 @@ public class SubtitleGenerationProcessor
             }
         }
 
+        // 多模态 chat 音频模型（OpenRouter openai/gpt-audio、gemini 等）→ 没有 Whisper /v1/audio/transcriptions
+        // 端点，只能把音频以 input_audio 发到 /v1/chat/completions 让多模态模型逐字转写。
+        if (IsChatAudioModel(resolution.ActualModel, resolution.PlatformType))
+        {
+            _logger.LogInformation(
+                "[doc-store-agent] 走多模态 chat 音频转写路径: model={Model} platform={Platform}",
+                resolution.ActualModel, resolution.ActualPlatformName);
+            // chat-audio 端点对 input_audio.format 严格校验：统一转成 wav。视频上面已 ffmpeg 抽成 wav；
+            // 上传的 audio/m4a、audio/mp3 此处补转，否则把非 wav 字节标成 "wav" 发给严格端点会失败/乱码（Bugbot Medium）。
+            var chatAudioWav = isVideo ? bytes : await ExtractAudioWithFfmpegAsync(bytes);
+            return await TranscribeViaChatAudioAsync(run, chatAudioWav, resolution.ToGatewayResolution());
+        }
+
         // 非 Exchange 模型 → 走 Whisper HTTP（OpenAI 兼容 /v1/audio/transcriptions）
         //
         // multipart 字段：保持与 c237e6d (19:22 跑通版本) 完全一致。
@@ -402,6 +415,126 @@ public class SubtitleGenerationProcessor
     }
 
     // ──────────────────────────────────────────────────────
+    // 路径 B2：多模态 chat 音频转写（OpenRouter gpt-audio / gemini 等，无 Whisper 端点）
+    // 把音频 base64 作为 input_audio 发到 /v1/chat/completions，模型直接逐字转写。
+    // 无逐句时间戳 → 返回单段（StartSec=EndSec=0）。
+    // ──────────────────────────────────────────────────────
+
+    private static bool IsChatAudioModel(string? model, string? platformType)
+    {
+        if (string.IsNullOrWhiteSpace(model)) return false;
+        // 本路径发的是 OpenAI 形态请求（/v1/chat/completions + input_audio）。原生非 OpenAI 形态的
+        // 平台不能走：claude/anthropic 走 ClaudeGatewayAdapter，请求体不同；google 原生 Gemini 用
+        // v1beta/models/{model}:generateContent，端点与请求体都和 OpenAI 完全不同。把 OpenAI 形态
+        // 请求发到这些原生端点会直接失败而非转写，所以仅 OpenAI 兼容平台可走（Codex P2）。
+        // OpenRouter 等 OpenAI 兼容平台注册为 openai，照常生效。
+        // 注意排除 google 与 gemini 两种 platformType——本仓库二者都指原生 Google 平台
+        // （见 ImageGenPlatformAdapterFactory），走 v1beta generateContent，与 OpenAI 形态不兼容。
+        var pt = (platformType ?? "").ToLowerInvariant();
+        if (pt is "google" or "gemini" or "anthropic" or "claude") return false;
+        var m = model.ToLowerInvariant();
+        if (m.Contains("whisper")) return false;
+        // 只认确实支持音频输入的多模态模型：名字含 audio（gpt-audio / gpt-4o-audio-preview /
+        // qwen*-audio 等）或 gemini（原生支持音频）。不能用裸 gpt-4o 匹配——gpt-4o / gpt-4o-mini
+        // 是文本+视觉模型，不接受 input_audio，会把这类 ASR 池绑定打挂（Bugbot Medium）。
+        return m.Contains("audio") || m.Contains("gemini");
+    }
+
+    private async Task<List<SubtitleSegment>> TranscribeViaChatAudioAsync(
+        DocumentStoreAgentRun run,
+        byte[] audioBytes,
+        GatewayModelResolution gwResolution)
+    {
+        var base64 = Convert.ToBase64String(audioBytes);
+        var requestBody = new JsonObject
+        {
+            ["model"] = gwResolution.ActualModel,
+            ["modalities"] = new JsonArray("text"),
+            ["messages"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["role"] = "user",
+                    ["content"] = new JsonArray
+                    {
+                        new JsonObject
+                        {
+                            ["type"] = "text",
+                            ["text"] = "请把这段音频逐字转写成文字，尽量一字不差保留原话。只输出转写出的文字本身，不要任何解释、说明或前后缀。",
+                        },
+                        new JsonObject
+                        {
+                            ["type"] = "input_audio",
+                            ["input_audio"] = new JsonObject { ["data"] = base64, ["format"] = "wav" },
+                        },
+                    },
+                },
+            },
+        };
+
+        var rawRequest = new GatewayRawRequest
+        {
+            AppCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+            ModelType = ModelTypes.Asr,
+            EndpointPath = "/v1/chat/completions",
+            IsMultipart = false,
+            RequestBody = requestBody,
+            TimeoutSeconds = 600,
+            Context = new GatewayRequestContext { UserId = run.UserId },
+        };
+
+        var rawResp = await _llmGateway.SendRawWithResolutionAsync(rawRequest, gwResolution, CancellationToken.None);
+        if (rawResp?.Success != true || string.IsNullOrWhiteSpace(rawResp.Content))
+        {
+            var detail = rawResp?.ErrorMessage ?? rawResp?.Content ?? "无响应";
+            throw new SubtitleAsrException(
+                $"多模态 chat 音频转写调用失败: {detail}",
+                BuildHttpDiagnostic(gwResolution, rawResp, new Dictionary<string, object> { ["model"] = gwResolution.ActualModel ?? "" }));
+        }
+
+        var text = ExtractChatCompletionContent(rawResp.Content);
+        // HTTP 成功但没解析出文字（模型拒答 / 响应结构异常 / 空内容）：必须当失败抛出，
+        // 否则字幕生成会拿空文本生成一个"无内容"占位文档，把失败伪装成成功（Bugbot Medium）。
+        if (string.IsNullOrWhiteSpace(text))
+            throw new SubtitleAsrException(
+                "多模态 chat 音频转写返回为空（模型可能拒答或响应格式异常）",
+                BuildHttpDiagnostic(gwResolution, rawResp, new Dictionary<string, object>
+                {
+                    ["model"] = gwResolution.ActualModel ?? "",
+                    ["reason"] = "empty-content",
+                }));
+        return new List<SubtitleSegment> { new(0, 0, text.Trim()) };
+    }
+
+    private static string ExtractChatCompletionContent(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.TryGetProperty("choices", out var choices)
+                && choices.ValueKind == JsonValueKind.Array
+                && choices.GetArrayLength() > 0
+                && choices[0].TryGetProperty("message", out var msg)
+                && msg.TryGetProperty("content", out var content))
+            {
+                if (content.ValueKind == JsonValueKind.String)
+                    return content.GetString() ?? "";
+                if (content.ValueKind == JsonValueKind.Array)
+                {
+                    var sb = new StringBuilder();
+                    foreach (var p in content.EnumerateArray())
+                        if (p.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String)
+                            sb.Append(t.GetString());
+                    return sb.ToString();
+                }
+            }
+        }
+        catch { /* 解析失败返回空 */ }
+        return "";
+    }
+
+    // ──────────────────────────────────────────────────────
     // 路径 C：豆包异步 ASR (doubao-asr Exchange) —— JSON body，不走 multipart
     // DoubaoAsrTransformer 只读 standardBody.audio_url / audio_data / url
     // ──────────────────────────────────────────────────────
@@ -564,12 +697,16 @@ public class SubtitleGenerationProcessor
             };
             using var process = System.Diagnostics.Process.Start(psi)
                 ?? throw new InvalidOperationException("ffmpeg 启动失败");
+            // 必须在 WaitForExitAsync 之前并发开始读 stderr/stdout：ffmpeg 写 stderr 量大，
+            // 长输入会把管道缓冲（约 64KB）写满后阻塞，而我们若先等退出再读就会与之死锁，
+            // 任务卡在 running 永不返回（Codex P2，与 CapsuleExecutor ffmpeg 同模式）。
+            var stderrTask = process.StandardError.ReadToEndAsync();
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
             await process.WaitForExitAsync();
+            var err = await stderrTask;
+            await stdoutTask;
             if (process.ExitCode != 0)
-            {
-                var err = await process.StandardError.ReadToEndAsync();
                 throw new InvalidOperationException($"ffmpeg 抽音频失败 (exit={process.ExitCode}): {err}");
-            }
             return await File.ReadAllBytesAsync(tmpOut);
         }
         finally

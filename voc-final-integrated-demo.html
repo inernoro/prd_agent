@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>团队动态 · 体验洞察中枢（最终整合效果）</title>
+<style>
+  :root{
+    --bg:#0e0f10;--card:#1a1b1d;--card2:#202123;--elev:#26282b;
+    --bd:rgba(255,255,255,.07);--bd2:rgba(255,255,255,.13);
+    --t1:#ececef;--t2:rgba(236,236,239,.62);--t3:rgba(236,236,239,.40);
+    --red:#f8717a;--amber:#fbbf24;--green:#34d399;--violet:#a78bfa;--blue:#60a5fa;--teal:#2dd4bf;
+    --shadow:0 8px 30px rgba(0,0,0,.4);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    background:radial-gradient(1200px 600px at 80% -10%,rgba(167,139,250,.06),transparent 60%),
+      radial-gradient(900px 500px at -5% 10%,rgba(45,212,191,.05),transparent 55%),var(--bg);
+    color:var(--t1);padding:22px 26px 50px;min-height:100vh;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1400px;margin:0 auto}
+  .head{display:flex;align-items:baseline;gap:14px;margin-bottom:14px}
+  .head h1{font-size:19px;font-weight:680}.head .sub{font-size:12.5px;color:var(--t3)}
+  .card{background:linear-gradient(180deg,var(--card),#161718);border:1px solid var(--bd);border-radius:16px;box-shadow:var(--shadow);overflow:hidden;min-width:0}
+
+  /* 闭环 ribbon */
+  .ribbon{display:flex;align-items:center;margin-bottom:16px;padding:10px 14px}
+  .stp{display:flex;align-items:center;gap:9px;flex:1}
+  .stp .dot{width:25px;height:25px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11.5px;font-weight:700;flex:0 0 auto;background:rgba(255,255,255,.05);color:var(--t3);border:1px solid var(--bd)}
+  .stp .tx{display:flex;flex-direction:column;line-height:1.25;min-width:0}
+  .stp .tx b{font-size:12.5px;white-space:nowrap}.stp .tx span{font-size:10px;color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .stp .arrow{flex:1;height:2px;margin:0 8px;background:linear-gradient(90deg,var(--bd),transparent);min-width:14px}
+  .stp.done .dot{background:rgba(52,211,153,.16);color:var(--green);border-color:rgba(52,211,153,.4)}
+  .stp.cur .dot{background:rgba(167,139,250,.18);color:var(--violet);border-color:rgba(167,139,250,.5);animation:pp 1.4s ease-in-out infinite}
+  .stp.cur .tx b{color:var(--violet)}
+  @keyframes pp{0%,100%{box-shadow:0 0 0 0 rgba(167,139,250,0)}50%{box-shadow:0 0 0 6px rgba(167,139,250,.18)}}
+
+  .grid{display:grid;grid-template-columns:1fr 320px;gap:16px;align-items:start}
+  .ch{display:flex;align-items:center;justify-content:space-between;padding:13px 16px 9px}
+  .ch .t{font-size:13px;font-weight:650;display:flex;align-items:center;gap:9px}
+  .live{font-size:11px;color:var(--teal);display:inline-flex;align-items:center;gap:6px}
+  .live .b{width:7px;height:7px;border-radius:50%;background:var(--teal);animation:blink 1.3s ease-in-out infinite}
+  @keyframes blink{0%,100%{opacity:.3;transform:scale(.8)}50%{opacity:1;transform:scale(1.3)}}
+  .seg{display:inline-flex;border:1px solid var(--bd);background:rgba(255,255,255,.03);border-radius:9px;padding:2px}
+  .seg button{border:0;background:transparent;color:var(--t3);font-size:11.5px;padding:5px 11px;border-radius:7px;cursor:pointer;transition:all .15s}
+  .seg button.on[data-m="all"]{background:rgba(45,212,191,.15);color:#5eead4}
+  .seg button.on[data-m="pain"]{background:rgba(248,113,122,.15);color:var(--red)}
+  .ctrls{display:flex;align-items:center;gap:12px}
+  .legend{display:flex;gap:12px}.legend span{font-size:11px;color:var(--t2);display:inline-flex;align-items:center;gap:6px}.legend i{width:9px;height:9px;border-radius:3px}
+  .tmwrap{padding:0 10px 6px}svg.tm{width:100%;height:auto;display:block}
+  .hint{font-size:11px;color:var(--t3);text-align:center;padding:6px 8px 12px}
+  .glb{fill:rgba(236,236,239,.82);font-size:10.5px;font-weight:700;paint-order:stroke;stroke:rgba(0,0,0,.6);stroke-width:2.5px}
+  .clb{fill:#fff;font-size:10px;font-weight:600;paint-order:stroke;stroke:rgba(0,0,0,.55);stroke-width:2.5px}
+  .csub{fill:rgba(255,255,255,.85);font-size:9px;paint-order:stroke;stroke:rgba(0,0,0,.55);stroke-width:2px}
+  @keyframes cg{0%,100%{stroke-opacity:.35}50%{stroke-opacity:1}}
+  @keyframes comet{0%{transform:translate(0,0);opacity:0}15%{opacity:1}100%{transform:translate(42px,-42px);opacity:0}}
+  .cell{cursor:default}.cell.pain{cursor:pointer}.cell:hover rect.f{filter:brightness(1.18)}
+
+  /* 右栏 */
+  .gauge-card{padding:14px 16px 16px;display:flex;flex-direction:column;align-items:center}
+  .gauge-card .gt{font-size:12.5px;color:var(--t2);align-self:flex-start;font-weight:600}
+  .gn{font-size:40px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
+  .mk{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;width:100%;margin-top:12px}
+  .mk div{background:var(--card2);border:1px solid var(--bd);border-radius:10px;padding:9px;text-align:center}
+  .mk .v{font-size:18px;font-weight:750}.mk .l{font-size:10px;color:var(--t3);margin-top:3px}
+  .chan{padding:14px 16px}.chan .gt{font-size:12.5px;color:var(--t2);font-weight:600;margin-bottom:11px}
+  .cb{margin-bottom:10px}.cb .r{display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:5px}.cb .r .cv{color:var(--t3)}
+  .cbar{height:7px;border-radius:4px;background:rgba(255,255,255,.06);overflow:hidden}.cbar>i{display:block;height:100%;border-radius:4px}
+
+  /* drill drawer (右栏切换态) */
+  .dh{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;border-bottom:1px solid var(--bd)}
+  .crumb{font-size:11.5px;color:var(--t2);display:flex;align-items:center;gap:5px;flex-wrap:wrap}.crumb b{color:var(--t1)}.crumb .sep{color:var(--t3)}
+  .dh .x{width:24px;height:24px;border-radius:7px;border:0;background:rgba(255,255,255,.05);color:var(--t3);cursor:pointer;font-size:14px}
+  .dbody{padding:13px 16px}
+  .statrow{display:flex;gap:8px;margin-bottom:13px;flex-wrap:wrap}
+  .st{background:var(--card2);border:1px solid var(--bd);border-radius:10px;padding:8px 10px;flex:1;min-width:64px}
+  .st .v{font-size:16px;font-weight:780;font-variant-numeric:tabular-nums}.st .l{font-size:9.5px;color:var(--t3);margin-top:2px}
+  .sec-t{font-size:11.5px;color:var(--t2);font-weight:600;margin:13px 0 8px;display:flex;align-items:center;gap:7px}
+  .sec-t::before{content:'';width:3px;height:11px;border-radius:2px;background:var(--red)}
+  .codebar{display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:11px}
+  .codebar .nm{font-family:ui-monospace,Menlo,monospace;color:var(--red);width:120px;flex:0 0 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .codebar .bar{flex:1;height:6px;background:rgba(255,255,255,.06);border-radius:3px;overflow:hidden}.codebar .bar>i{display:block;height:100%;background:var(--red)}
+  .codebar .n{color:var(--t3);width:38px;text-align:right}
+  .curl{background:#0c0d0f;border:1px solid var(--bd);border-radius:8px;padding:9px 11px;font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:var(--t2);line-height:1.6;overflow-x:auto;white-space:pre-wrap;word-break:break-all}
+  .curl .m{color:var(--teal)}.curl .err{color:var(--red)}
+  .diag{background:linear-gradient(180deg,rgba(167,139,250,.06),transparent);border:1px solid rgba(167,139,250,.22);border-radius:11px;padding:11px 13px;margin-top:4px}
+  .diag .dt{font-size:11.5px;color:var(--violet);font-weight:650;display:flex;align-items:center;gap:8px;margin-bottom:7px}
+  .diag .model{font-size:10px;color:var(--t3);font-family:ui-monospace,Menlo,monospace}
+  .diag .body{font-size:12px;line-height:1.65;color:var(--t1)}.diag .body b{color:var(--amber)}
+  .caret{display:inline-block;width:6px;height:13px;background:var(--violet);vertical-align:-2px;margin-left:1px;animation:bk 1s steps(1) infinite}@keyframes bk{50%{opacity:0}}
+  .acts{display:flex;flex-direction:column;gap:7px;margin-top:13px}
+  .acts button{border:1px solid var(--bd2);border-radius:9px;padding:9px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;transition:all .15s}
+  .acts .work{background:rgba(251,191,36,.13);color:var(--amber);border-color:rgba(251,191,36,.35)}
+  .acts .req{background:rgba(167,139,250,.13);color:var(--violet);border-color:rgba(167,139,250,.4)}
+  .acts .imp{background:rgba(52,211,153,.12);color:var(--green);border-color:rgba(52,211,153,.35)}
+  .acts button:hover{filter:brightness(1.15)}.acts button:disabled{opacity:.6;cursor:default}
+
+  /* 痛点榜 */
+  .sech{display:flex;align-items:center;gap:10px;margin:24px 2px 12px}.sech .t{font-size:14px;font-weight:650}.sech .ln{flex:1;height:1px;background:var(--bd)}.sech .c{font-size:12px;color:var(--t3)}
+  .pain{display:grid;grid-template-columns:54px 1fr 96px auto;gap:14px;align-items:center;background:var(--card);border:1px solid var(--bd);border-radius:13px;padding:13px 15px;margin-bottom:9px}
+  .pain.hot{border-left:3px solid var(--red)}.pain.warm{border-left:3px solid var(--amber)}
+  .ring{position:relative;width:48px;height:48px}.ring svg{transform:rotate(-90deg)}.ring .sn{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800}
+  .p1{display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap}.pt{font-size:13px;font-weight:600}
+  .bdg{font-size:10.5px;padding:2px 7px;border-radius:5px;font-weight:600}
+  .b-beh{background:rgba(96,165,250,.13);color:var(--blue)}.b-usr{background:rgba(167,139,250,.14);color:var(--violet)}
+  .b-err{background:rgba(248,113,122,.13);color:var(--red)}.b-slow{background:rgba(251,191,36,.13);color:var(--amber)}
+  .b-cor{background:linear-gradient(90deg,rgba(96,165,250,.18),rgba(167,139,250,.18));color:#cbb6ff;border:1px solid rgba(167,139,250,.4)}
+  .psub{font-size:12px;color:var(--t2)}.psub .code{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:var(--t3)}
+  .pr{display:flex;flex-direction:column;align-items:flex-end;gap:7px;min-width:140px}
+  .pst{font-size:11px;padding:4px 9px;border-radius:7px;font-weight:600}.s-todo{background:rgba(248,113,122,.13);color:var(--red)}.s-def{background:rgba(167,139,250,.13);color:var(--violet)}.s-fix{background:rgba(96,165,250,.13);color:var(--blue)}
+  .pb{display:flex;gap:6px}.pb button{font-size:11px;padding:4px 9px;border-radius:6px;cursor:pointer;border:1px solid var(--bd);background:var(--card2);color:var(--t2)}.pb button.pri{background:rgba(167,139,250,.13);border-color:rgba(167,139,250,.4);color:var(--violet)}
+  .tl{font-size:10.5px}.tl.up{color:var(--red)}.tl.down{color:var(--green)}.tl.flat{color:var(--t3)}
+  /* 已闭环 */
+  .loop{background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--bd);border-radius:14px;padding:4px 16px}
+  .li{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;padding:12px 4px}.li+.li{border-top:1px solid var(--bd)}
+  .li .lt{font-size:12.5px;font-weight:600}.li .ls{font-size:11.5px;color:var(--t3);margin-top:3px}
+  .ba{display:flex;align-items:center;gap:9px}.ba .bf{font-size:13px;color:var(--red);font-weight:700;text-decoration:line-through;opacity:.65}.ba .ar{color:var(--t3)}.ba .bt{font-size:15px;color:var(--green);font-weight:800}.ba .dp{font-size:11px;color:var(--green);background:rgba(52,211,153,.13);padding:2px 7px;border-radius:5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head"><h1>团队动态 · 体验洞察中枢</h1><span class="sub">监测 → 突增预警 → AI 根因 → 转缺陷 → 修复追踪 → 复测回落：一条把"沉默的问题信号"修完的闭环</span></div>
+
+  <div class="card ribbon" id="ribbon"></div>
+
+  <div class="grid">
+    <!-- 左：热力图 -->
+    <div class="card">
+      <div class="ch">
+        <span class="t">体验全景热力图<span class="live"><span class="b"></span>实时扫描</span></span>
+        <div class="ctrls">
+          <div class="seg" id="seg"><button data-m="all" class="on">全域</button><button data-m="pain">痛点</button></div>
+          <div class="legend"><span><i style="background:var(--red)"></i>报错</span><span><i style="background:var(--amber)"></i>等待</span><span><i style="background:hsl(196 36% 36%)"></i>健康</span></div>
+        </div>
+      </div>
+      <div class="tmwrap"><svg class="tm" id="tm" viewBox="0 0 1000 430" preserveAspectRatio="xMidYMid meet"></svg></div>
+      <div class="hint">点脉冲红/黄块（痛点）→ 右侧四级下钻 + AI 根因诊断 + 一键转缺陷/流转需求池</div>
+    </div>
+    <!-- 右：默认指数面板 / 点击后切下钻抽屉 -->
+    <div class="card" id="rpanel"></div>
+  </div>
+
+  <div class="sech"><span class="t">痛点优先级榜</span><span class="ln"></span><span class="c">影响分 = 人数 × 严重度 × 频次 × 趋势</span></div>
+  <div id="painList"></div>
+
+  <div class="sech" style="margin-top:22px"><span class="t">本月已闭环（修复证据）</span><span class="ln"></span><span class="c">修复后痛点回落</span></div>
+  <div class="loop" id="loop"></div>
+</div>
+
+<script>
+(function(){
+  const NS='http://www.w3.org/2000/svg';
+  const C={red:'#f8717a',amber:'#fbbf24',green:'#34d399',violet:'#a78bfa',blue:'#60a5fa',teal:'#2dd4bf'};
+  // ---- ribbon ----
+  const ST=[{n:'监测',s:'12.4 万信号已采',c:'done'},{n:'预警',s:'mark-seen 突增 +213%',c:'done'},{n:'AI 根因',s:'诊断生成中',c:'cur'},{n:'转缺陷',s:'待指派',c:''},{n:'修复追踪',s:'—',c:''},{n:'复测回落',s:'—',c:''}];
+  document.getElementById('ribbon').innerHTML=ST.map((s,i)=>`<div class="stp ${s.c}"><span class="dot">${i+1}</span><span class="tx"><b>${s.n}</b><span>${s.s}</span></span>${i<ST.length-1?'<span class="arrow"></span>':''}</div>`).join('');
+
+  // ---- treemap 数据（系统健康，真实端点风格）----
+  function lf(name,vol,st,opt={}){return {name,value:vol,st,...opt}}
+  const GROUPS=[
+    {name:'视觉创作',leaves:[
+      lf('批量生图',2400,'error',{burst:213,rate:.091,id:'batch'}),lf('图片理解',1700,'ok'),lf('分镜编排',1300,'ok'),
+      lf('文章标记',900,'error',{rate:.062,id:'markers'}),lf('视频生成',1100,'slow',{rate:.12,id:'video'})
+    ]},
+    {name:'周报管理',leaves:[lf('标记已读',1400,'error',{burst:213,rate:.21,id:'markseen'}),lf('海报生成',1000,'ok'),lf('周报汇总',1300,'ok'),lf('生成导出',700,'slow',{rate:.11,id:'gen'})]},
+    {name:'产品管理',leaves:[lf('文档对齐',2400,'ok'),lf('缺失检测',1700,'ok'),lf('版本流转',900,'ok')]},
+    {name:'缺陷管理',leaves:[lf('缺陷分析',1500,'error',{rate:.142,id:'defect'}),lf('要素抽取',1100,'ok')]},
+    {name:'知识库',leaves:[lf('文档搜索',900,'ok'),lf('上传解析',1100,'ok'),lf('引用网络',800,'ok')]},
+    {name:'更新/资讯',leaves:[lf('GitHub日志',900,'slow',{rate:.18,id:'ghlog',fixing:true}),lf('AI资讯',700,'slow',{burst:120,rate:.22,id:'ainews'}),lf('更新总结',800,'ok')]},
+    {name:'核心服务',leaves:[lf('LLM Gateway',3000,'ok'),lf('会话Worker',2000,'ok'),lf('模型池',1500,'ok')]},
+    {name:'基础设施',leaves:[lf('MongoDB',3800,'ok'),lf('Redis',2400,'ok'),lf('CDS',900,'ok')]},
+  ];
+
+  // ---- 下钻内容 ----
+  const DRILL={
+    batch:{crumb:['视觉创作','批量生图','generation','请求样本'],people:31,count:'9.1%',burst:'+213%',
+      codes:[['INVALID_FORMAT',312],['TIMEOUT',64],['RATE_LIMIT',21]],
+      curl:`<span class="m">POST</span> /api/visual-agent/image-gen/batch-generate\n  body: { count: 9, size: "auto", refs: [...] }\n→ <span class="err">400 INVALID_FORMAT</span> · 也有 31% 在 30s 内未返回`,
+      diag:`**时间聚集**：91% 失败集中在并发 ≥6 张的批量任务。\n**错误聚类**：INVALID_FORMAT(70%) 多因 size="auto" 在部分模型不受支持；TIMEOUT(14%) 集中在大尺寸。\n**疑似根因**：批量未做单图降级与尺寸校验，一张参数错全批失败 + 长任务无流式反馈。\n**建议动作**：① size 改前端枚举校验；② 批量逐张容错（单图失败不拖垮整批）；③ 生成走 SSE 进度，避免"卡住不动"。`},
+    markseen:{crumb:['周报管理','标记已读','PERMISSION_DENIED','请求样本'],people:28,count:'21%',burst:'+213%',
+      codes:[['PERMISSION_DENIED',316]],
+      curl:`<span class="m">POST</span> /api/weekly-posters/:id/mark-seen\n→ <span class="err">403 PERMISSION_DENIED</span>`,
+      diag:`**人群聚集**：28 人全部为"非海报作者"角色，集中在周一周报推送后 1 小时。\n**逻辑矛盾**：标记已读本应"任何可见者"都能调，当前却要求作者本人。\n**疑似根因**：mark-seen 误用了"作者校验"中间件。\n**建议动作**：① 放宽 mark-seen 到可见者；② 前端无权时不展示按钮（双保险）。`},
+    defect:{crumb:['缺陷管理','缺陷分析','选A给B','模型日志'],people:5,count:'14.2%',burst:'—',
+      codes:[['MODEL_FALLBACK',182],['UPSTREAM_5XX',31]],
+      curl:`<span class="m">POST</span> /api/defect/analyze  (expectedModel: deepseek-r1)\n→ 实际命中 <span class="err">fallback: gpt-4o-mini</span> · 报错率 14.2%`,
+      diag:`**模型不一致**：声明 deepseek-r1，实际 70% 命中 fallback 小模型（选 A 给 B）。\n**疑似根因**：deepseek-r1 池近期探活失败率高 → 频繁降级，小模型对长缺陷文本能力不足 → 报错率抬升。\n**建议动作**：① 修 deepseek-r1 池健康；② fallback 链补一个同级模型；③ compute-then-send 校验 ExpectedModel。`},
+    ainews:{crumb:['更新/资讯','AI资讯','latest','慢请求'],people:8,count:'63.6s',burst:'+120%',
+      codes:[['SLOW_>3s',146]],
+      curl:`<span class="m">GET</span> /api/ai-news/latest\n→ 均值 <span class="err">63.6s</span>（非流式）`,
+      diag:`**链路定位**：ai-news/latest 自身逻辑轻，63.6s 几乎全耗在它内部串行调用的"视频生成"子请求。\n**疑似根因**：资讯页同步等待了不该同步的视频生成。\n**建议动作**：① 视频生成异步化，资讯先返回文本；② 列表加缓存 + 骨架屏。`},
+  };
+  function drill(id){return DRILL[id]||{crumb:['—','—','—','样本'],people:'—',count:'—',burst:'—',codes:[],curl:'—',diag:`**时间聚集**：负面在近 7 天抬头。\n**建议动作**：建缺陷交对应模块核查，并立改善项目每日复测。`}}
+
+  // ---- squarify ----
+  const VW=1000,VH=430,PAD=3,HDR=14;
+  function worst(r,s,sc){const a=r.map(x=>x.value*sc),su=a.reduce((p,q)=>p+q,0),mx=Math.max(...a),mn=Math.min(...a);return Math.max(s*s*mx/(su*su),su*su/(s*s*mn))}
+  function squ(items,rect){const it=items.filter(i=>i.value>0).map(i=>({...i})).sort((a,b)=>b.value-a.value),out=[],free={...rect};let ft=it.reduce((s,i)=>s+i.value,0),i=0;
+    while(i<it.length&&ft>0&&free.w>.5&&free.h>.5){const sc=free.w*free.h/ft,side=Math.min(free.w,free.h),row=[it[i]];let last=worst(row,side,sc),j=i+1;
+      while(j<it.length){row.push(it[j]);const w=worst(row,side,sc);if(w>last){row.pop();break}last=w;j++}
+      const rv=row.reduce((s,r)=>s+r.value,0),ra=rv*sc;
+      if(free.w>=free.h){const cw=ra/free.h;let yy=free.y;row.forEach(r=>{const rh=r.value*sc/cw;r.rect={x:free.x,y:yy,w:cw,h:rh};yy+=rh;out.push(r)});free.x+=cw;free.w-=cw}
+      else{const rh=ra/free.w;let xx=free.x;row.forEach(r=>{const rw=r.value*sc/rh;r.rect={x:xx,y:free.y,w:rw,h:rh};xx+=rw;out.push(r)});free.y+=rh;free.h-=rh}
+      ft-=rv;i=j}return out}
+  const HUES=[222,200,186,170,150,210,196,132];
+  let mode='all';
+  function render(){
+    const tm=document.getElementById('tm');tm.innerHTML='';
+    let src=GROUPS;
+    if(mode==='pain')src=GROUPS.map(g=>({...g,leaves:g.leaves.filter(l=>l.st!=='ok').map(l=>({...l,value:Math.max(1,Math.round(l.value*(l.rate||.1)))}))})).filter(g=>g.leaves.length);
+    src=src.map(g=>({...g,value:g.leaves.reduce((s,l)=>s+l.value,0)}));
+    if(!src.length){tm.innerHTML='<text x="500" y="210" text-anchor="middle" fill="#34d399" font-size="15">当前范围内没有痛点</text>';return}
+    squ(src,{x:PAD,y:PAD,w:VW-PAD*2,h:VH-PAD*2}).forEach((g,gi)=>{
+      const r=g.rect;const gb=document.createElementNS(NS,'rect');['x','y','width','height'].forEach((k,ii)=>gb.setAttribute(k,[r.x,r.y,r.w,r.h][ii]));gb.setAttribute('rx',4);gb.setAttribute('fill','none');gb.setAttribute('stroke','rgba(255,255,255,.10)');tm.appendChild(gb);
+      if(r.w>64&&r.h>28){const t=document.createElementNS(NS,'text');t.setAttribute('class','glb');t.setAttribute('x',r.x+5);t.setAttribute('y',r.y+11);t.textContent=g.name;tm.appendChild(t)}
+      const inner={x:r.x+2,y:r.y+HDR,w:r.w-4,h:r.h-HDR-2};if(inner.w<4||inner.h<4)return;
+      squ(g.leaves,inner).forEach((l,li)=>{
+        const q=l.rect;if(q.w<1||q.h<1)return;const pain=l.st!=='ok';
+        const fill=l.st==='error'?C.red:l.st==='slow'?C.amber:'hsl('+HUES[gi%HUES.length]+' 36% 31%)';
+        const cell=document.createElementNS(NS,'g');cell.setAttribute('class','cell'+(pain?' pain':''));
+        if(pain){cell.style.filter='drop-shadow(0 0 6px '+fill+')';cell.addEventListener('click',()=>openDrill(l,g))}
+        const rc=document.createElementNS(NS,'rect');rc.setAttribute('class','f');rc.setAttribute('x',q.x+.5);rc.setAttribute('y',q.y+.5);rc.setAttribute('width',Math.max(0,q.w-1));rc.setAttribute('height',Math.max(0,q.h-1));rc.setAttribute('rx',2);rc.setAttribute('fill',fill);rc.setAttribute('stroke','rgba(255,255,255,.07)');cell.appendChild(rc);
+        if(pain){const gl=document.createElementNS(NS,'rect');gl.setAttribute('x',q.x+1);gl.setAttribute('y',q.y+1);gl.setAttribute('width',Math.max(0,q.w-2));gl.setAttribute('height',Math.max(0,q.h-2));gl.setAttribute('rx',2);gl.setAttribute('fill','none');gl.setAttribute('stroke','#fff');gl.setAttribute('stroke-width',1.4);gl.style.animation='cg '+(2+li*.2)+'s ease-in-out infinite';cell.appendChild(gl)}
+        if(q.w>44&&q.h>20){const t=document.createElementNS(NS,'text');t.setAttribute('class','clb');t.setAttribute('x',q.x+5);t.setAttribute('y',q.y+14);t.textContent=l.name;cell.appendChild(t);
+          if(l.burst&&q.h>30){const s=document.createElementNS(NS,'text');s.setAttribute('class','csub');s.setAttribute('x',q.x+5);s.setAttribute('y',q.y+26);s.textContent='突增 '+l.burst+'%';cell.appendChild(s)}}
+        if(l.burst&&l.burst>=100&&q.w>48&&q.h>30){const cx=q.x+q.w-12,cy=q.y+q.h-12,cm=document.createElementNS(NS,'g');
+          const tl=document.createElementNS(NS,'line');tl.setAttribute('x1',cx);tl.setAttribute('y1',cy);tl.setAttribute('x2',cx-15);tl.setAttribute('y2',cy+15);tl.setAttribute('stroke',C.amber);tl.setAttribute('stroke-width',2);tl.setAttribute('stroke-linecap','round');cm.appendChild(tl);
+          const hd=document.createElementNS(NS,'circle');hd.setAttribute('cx',cx);hd.setAttribute('cy',cy);hd.setAttribute('r',3.5);hd.setAttribute('fill','#fff');cm.appendChild(hd);
+          cm.style.transformOrigin=cx+'px '+cy+'px';cm.style.animation='comet 2.2s ease-out infinite';cell.appendChild(cm)}
+        tm.appendChild(cell);
+      });
+    });
+  }
+  document.getElementById('seg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;mode=b.dataset.m;document.querySelectorAll('#seg button').forEach(x=>x.classList.toggle('on',x===b));render()});
+
+  // ---- 右栏：默认指数面板 ----
+  const rp=document.getElementById('rpanel');
+  function statsPanel(){
+    rp.innerHTML=`
+      <div class="gauge-card">
+        <span class="gt">体验痛点指数</span>
+        <svg width="200" height="120" viewBox="0 0 200 120" style="margin-top:4px">
+          <defs><linearGradient id="gg" x1="0" x2="1"><stop offset="0" stop-color="${C.green}"/><stop offset=".5" stop-color="${C.amber}"/><stop offset="1" stop-color="${C.red}"/></linearGradient></defs>
+          <path d="M16 104 A84 84 0 0 1 184 104" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="13" stroke-linecap="round"/>
+          <path id="gv" d="M16 104 A84 84 0 0 1 184 104" fill="none" stroke="url(#gg)" stroke-width="13" stroke-linecap="round"/>
+          <text x="100" y="96" text-anchor="middle" class="gn" id="gnum" fill="${C.red}">0</text>
+          <text x="100" y="113" text-anchor="middle" font-size="10" fill="rgba(236,236,239,.4)">满分 100 · 越低越健康</text>
+        </svg>
+        <div class="mk"><div><div class="v" style="color:var(--red)">5</div><div class="l">待解决</div></div><div><div class="v" style="color:var(--green)">3</div><div class="l">已闭环</div></div><div><div class="v">48</div><div class="l">受影响人</div></div></div>
+      </div>
+      <div class="chan" style="border-top:1px solid var(--bd)">
+        <div class="gt">痛点声道占比</div>
+        ${[['报错',46,C.red],['等待过久',31,C.amber],['秒退流失',14,C.red],['反复横跳',9,C.violet]].map(([n,p,c])=>`<div class="cb"><div class="r"><span>${n}</span><span class="cv">${p}%</span></div><div class="cbar"><i style="width:${p}%;background:${c}"></i></div></div>`).join('')}
+      </div>`;
+    const len=Math.PI*84,gv=document.getElementById('gv');gv.style.strokeDasharray=len;gv.style.strokeDashoffset=len;gv.style.transition='stroke-dashoffset 1.1s cubic-bezier(.2,.8,.2,1)';
+    requestAnimationFrame(()=>gv.style.strokeDashoffset=len*(1-72/100));
+    const gn=document.getElementById('gnum');let s=performance.now();(function t(n){const p=Math.min(1,(n-s)/1100);gn.textContent=Math.round((1-Math.pow(1-p,3))*72);if(p<1)requestAnimationFrame(t)})(s);
+  }
+
+  // ---- 右栏：下钻抽屉 + AI 诊断流式 ----
+  let typer=null;
+  function openDrill(l,g){
+    if(typer)clearTimeout(typer);
+    const d=drill(l.id);
+    const maxN=Math.max(...d.codes.map(c=>c[1]),1);
+    rp.innerHTML=`
+      <div class="dh"><div class="crumb">${d.crumb.map((c,i)=>`${i?'<span class="sep">›</span>':''}<b style="${i===d.crumb.length-1?'color:var(--red)':''}">${c}</b>`).join('')}</div><button class="x" id="dx">×</button></div>
+      <div class="dbody">
+        <div class="statrow">
+          <div class="st"><div class="v">${typeof l.value==='number'?l.value.toLocaleString():l.value}</div><div class="l">访问量</div></div>
+          <div class="st"><div class="v" style="color:var(--red)">${d.count}</div><div class="l">${l.st==='slow'?'均耗时':'报错率'}</div></div>
+          <div class="st"><div class="v" style="color:var(--amber)">${d.burst}</div><div class="l">7日突增</div></div>
+          <div class="st"><div class="v">${d.people}</div><div class="l">影响人</div></div>
+        </div>
+        ${d.codes.length?`<div class="sec-t">错误码分布</div>${d.codes.map(c=>`<div class="codebar"><span class="nm">${c[0]}</span><span class="bar"><i style="width:${Math.round(c[1]/maxN*100)}%"></i></span><span class="n">${c[1]}</span></div>`).join('')}`:''}
+        <div class="sec-t">真实请求样本</div>
+        <div class="curl">${d.curl}</div>
+        <div class="sec-t">AI 根因诊断</div>
+        <div class="diag"><div class="dt">根因诊断 <span class="model" id="dm"></span></div><div class="body" id="db"></div></div>
+        <div class="acts">
+          <button class="work" onclick="this.textContent='已建缺陷 #D-412';this.disabled=true">转为缺陷 · 指派对应模块</button>
+          <button class="req" onclick="this.textContent='已流转 REQ-318（来源可回溯）';this.disabled=true">流转需求池 · 主动挖掘</button>
+          <button class="imp" onclick="this.textContent='已标记修复中 · 每日复测';this.disabled=true">标记修复 · 复测回落</button>
+        </div>
+      </div>`;
+    document.getElementById('dx').addEventListener('click',()=>{if(typer)clearTimeout(typer);statsPanel()});
+    setTimeout(()=>{const m=document.getElementById('dm');if(m)m.textContent='● claude-sonnet-4-6 · 流式';},300);
+    const db=document.getElementById('db');let i=0;const full=d.diag;
+    const mk=t=>t.replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/\n/g,'<br/>');
+    setTimeout(function type(){if(!document.getElementById('db'))return;if(i<=full.length){db.innerHTML=mk(full.slice(0,i))+'<span class="caret"></span>';i++;typer=setTimeout(type,15)}else db.innerHTML=mk(full)},500);
+  }
+
+  // ---- 痛点榜 ----
+  const PAINS=[
+    {sc:980,sev:'hot',cor:true,src:'beh',ch:'churn',t:'批量生图 卡顿 / 经常失败',sub:'视觉创作 · <span class="code">batch-generate</span>',people:31,n:3400,trend:'up',st:'todo'},
+    {sc:910,sev:'hot',src:'beh',ch:'err',t:'周报「标记已读」频繁 403',sub:'<span class="code">POST /weekly-posters/:id/mark-seen</span>',people:28,n:316,trend:'up',st:'def',si:'已转缺陷 #412'},
+    {sc:640,sev:'hot',src:'beh',ch:'err',t:'缺陷分析 选A给B + 报错偏高',sub:'<span class="code">defect.analyze</span> · ExpectedModel≠Model',people:5,n:182,trend:'up',st:'todo'},
+    {sc:480,sev:'warm',src:'beh',ch:'slow',t:'更新中心拉取 GitHub 日志慢',sub:'<span class="code">GET /changelog/github-logs</span> · 36.1s',people:10,n:99,trend:'down',st:'fix',si:'修复中'},
+    {sc:360,sev:'warm',src:'usr',ch:'fb',t:'知识库搜索结果不准',sub:'用户主动反馈 · 缺陷管理 3 条',people:3,n:3,trend:'up',st:'todo'},
+  ];
+  const CHL={err:['报错','b-err'],slow:['等待','b-slow'],churn:['流失','b-err'],fb:['吐槽','b-usr']};
+  function ring(sc,c){const R=20,len=2*Math.PI*R,p=Math.min(1,sc/1000);return `<div class="ring"><svg width="48" height="48" viewBox="0 0 48 48"><circle cx="24" cy="24" r="${R}" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="4"/><circle cx="24" cy="24" r="${R}" fill="none" stroke="${c}" stroke-width="4" stroke-linecap="round" stroke-dasharray="${len}" stroke-dashoffset="${len*(1-p)}"/></svg><div class="sn" style="color:${c}">${sc}</div></div>`}
+  function spark(tr){const col=tr==='up'?C.red:tr==='down'?C.green:'#7a7a82';const pts=tr==='up'?'2,18 14,14 26,8 38,4':tr==='down'?'2,4 14,9 26,13 38,18':'2,11 14,10 26,12 38,11';return `<svg width="42" height="22" viewBox="0 0 42 22"><polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.8" stroke-linecap="round"/></svg>`}
+  document.getElementById('painList').innerHTML=PAINS.map(p=>`
+    <div class="pain ${p.sev}">
+      ${ring(p.sc,p.sev==='hot'?C.red:C.amber)}
+      <div><div class="p1"><span class="pt">${p.t}</span>${p.cor?'<span class="bdg b-cor">说做互证</span>':''}<span class="bdg ${p.src==='usr'?'b-usr':'b-beh'}">${p.src==='usr'?'用户之声':'行为之声'}</span><span class="bdg ${CHL[p.ch][1]}">${CHL[p.ch][0]}</span></div><div class="psub">${p.sub}</div><div style="font-size:11.5px;color:var(--t3);margin-top:4px">${p.people} 人 · ${p.n} 次</div></div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:3px">${spark(p.trend)}<span class="tl ${p.trend}">${p.trend==='up'?'▲ 上涨':p.trend==='down'?'▼ 回落':'— 持平'}</span></div>
+      <div class="pr"><span class="pst ${p.st==='todo'?'s-todo':p.st==='def'?'s-def':'s-fix'}">${p.st==='todo'?'待处理':p.st==='def'?p.si:p.si}</span><div class="pb"><button class="pri">AI 诊断</button><button>转缺陷</button><button>已修复</button></div></div>
+    </div>`).join('');
+
+  // ---- 已闭环 ----
+  document.getElementById('loop').innerHTML=[
+    {t:'会话列表偶发报错',d:'分页优化上线 · 影响 14 人',b:'报错 220 次',a:'12 次',dp:'-95%'},
+    {t:'桌面端更新提示不弹',d:'版本检测修复 · 影响 30+ 人',b:'0 次触达',a:'按版本一次',dp:'已修复'},
+    {t:'文档预览偶尔白屏',d:'UTF-16 BOM 兼容 · 影响 6 人',b:'白屏 38 次',a:'0 次',dp:'-100%'},
+  ].map(c=>`<div class="li"><div><div class="lt">${c.t}</div><div class="ls">${c.d}</div></div><div class="ba"><span class="bf">${c.b}</span><span class="ar">→</span><span class="bt">${c.a}</span><span class="dp">${c.dp}</span></div></div>`).join('');
+
+  render();statsPanel();
+})();
+</script>
+</body>
+</html>

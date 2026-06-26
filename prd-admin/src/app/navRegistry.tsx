@@ -17,6 +17,7 @@ import { RequireAuth, RequirePermission } from '@/app/RouteGuards';
 
 // ── 页面组件（lazy 加载） ─────────────────────────────────
 const VisualAgentFullscreenPage = lazy(() => import('@/pages/visual-agent/VisualAgentFullscreenPage'));
+const VisualStoryboardPage = lazy(() => import('@/pages/visual-storyboard/VisualStoryboardPage'));
 const LiteraryAgentWorkspaceListPage = lazy(() => import('@/pages/literary-agent').then(m => ({ default: m.LiteraryAgentWorkspaceListPage })));
 const DefectAgentPage = lazy(() => import('@/pages/defect-agent').then(m => ({ default: m.DefectAgentPage })));
 const VideoAgentPage = lazy(() => import('@/pages/video-agent').then(m => ({ default: m.VideoAgentPage })));
@@ -301,6 +302,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       section: 'toolbox',
       appKey: 'report-agent',
       tags: ['周报', '日报', '团队管理'],
+    },
+  },
+  {
+    path: '/visual-storyboard',
+    permission: 'visual-agent.use',
+    element: shellGuarded('visual-agent.use', <VisualStoryboardPage />),
+    nav: {
+      label: '视觉分镜台',
+      shortLabel: '分镜',
+      description: '想法/文章拆成电影分镜，关键帧实时生长、逐镜精修，预留 image-to-video',
+      icon: 'Clapperboard',
+      section: 'toolbox',
+      appKey: 'visual-storyboard',
+      tags: ['视频', '分镜', '关键帧', '故事板', 'storyboard'],
+      wip: true,
     },
   },
   {
@@ -655,12 +671,12 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     permission: 'team-activity.read',
     element: shellGuarded('team-activity.read', <TeamActivityPage />),
     nav: {
-      label: '团队动态',
-      shortLabel: '动态',
-      description: '全员工作动态时间线（管理员）',
+      label: 'VOC',
+      shortLabel: 'VOC',
+      description: '行为洞察（VOC）+ 全员工作动态时间线（管理员）',
       icon: 'Activity',
       section: 'utility',
-      tags: ['动态', '活动', '工作日志', 'activity'],
+      tags: ['VOC', '行为洞察', '动态', '活动', '工作日志', 'activity', 'voice of customer'],
     },
   },
 

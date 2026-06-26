@@ -34,6 +34,10 @@ x-cds-env:
 # 部署模式 — 每个服务可在 CDS 左侧面板下拉切换
 # dev: 热重载开发模式（改代码自动刷新）
 # static: 静态编译模式（一次编译、启动快）
+# express: 极速版（CI 预构建）— 不在 CDS 本机编译，改为拉取 GitHub Actions 预构建的
+#          ghcr 镜像（push → CI 按 commit SHA 构建 → CDS 收 workflow_run 后 docker pull + run）。
+#          省掉 CDS 服务器的编译算力。镜像 tag 公式 `sha-${CDS_COMMIT_SHA}` 与
+#          .github/workflows/branch-image.yml 保持一致（SSOT）。
 x-cds-deploy-modes:
   api:
     dev:
@@ -45,17 +49,41 @@ x-cds-deploy-modes:
         dotnet watch run --project src/PrdAgent.Api --urls http://0.0.0.0:5000
     static:
       label: "静态部署 (publish)"
+      # 每次部署前清掉 bin/obj，强制干净编译：dotnet 增量构建在 CDS 共享 worktree 下偶发
+      # "撒谎"（源码改了却复用旧 DLL），清空后从零编译可彻底避免发布出不含最新改动的二进制。
       command: >-
         cd prd-api &&
+        rm -rf src/PrdAgent.Api/bin src/PrdAgent.Api/obj
+        src/PrdAgent.Core/bin src/PrdAgent.Core/obj
+        src/PrdAgent.Infrastructure/bin src/PrdAgent.Infrastructure/obj &&
         dotnet restore &&
         dotnet publish src/PrdAgent.Api -c Release -o /publish --no-restore &&
         dotnet /publish/PrdAgent.Api.dll --urls http://0.0.0.0:5000
       env:
         ASPNETCORE_ENVIRONMENT: Production
+    express:
+      label: "极速版（CI 预构建）"
+      # 无 command：使用镜像自带 ENTRYPOINT（dotnet PrdAgent.Api.dll）。
+      image: "ghcr.io/inernoro/prd_agent/prdagent-server:sha-${CDS_COMMIT_SHA}"
+      # 本 commit 没有 api 镜像（仅改了 admin/cds/docs，CI 未构建 api）时按顺序回退：
+      #   ① 本分支该组件最近一次构建（branch-<slug>，保住本分支已有的 api 改动）
+      #   ② 本分支从未构建过 api 时退到固定主分支镜像（branch-main）
+      fallbackImage:
+        - "ghcr.io/inernoro/prd_agent/prdagent-server:branch-${CDS_BRANCH_SLUG}"
+        - "ghcr.io/inernoro/prd_agent/prdagent-server:branch-main"
+      prebuilt: true
+      # 生产镜像监听 8080（与源码模式 5000 不同），覆盖容器端口 + 端口相关 env。
+      containerPort: 8080
+      env:
+        ASPNETCORE_ENVIRONMENT: Production
+        ASPNETCORE_URLS: "http://+:8080"
+        # ClaudeSdkExecutor 自调回调端口跟随容器端口（源码模式 5000 → 极速版 8080）。
+        ClaudeSdkExecutor__CallbackBaseUrl: "http://api-prd-agent:8080"
   admin:
     dev:
       label: "开发模式 (Vite HMR)"
       command: >-
+        cd prd-admin &&
         corepack enable &&
         corepack prepare pnpm@10.28.2 --activate &&
         pnpm config set store-dir /pnpm/store &&
@@ -64,12 +92,24 @@ x-cds-deploy-modes:
     static:
       label: "静态部署 (vite build+serve)"
       command: >-
+        cd prd-admin &&
         corepack enable &&
         corepack prepare pnpm@10.28.2 --activate &&
         pnpm config set store-dir /pnpm/store &&
         pnpm install --frozen-lockfile &&
         sh scripts/cds-vite-build.sh &&
-        npx -y serve -s dist -l tcp://0.0.0.0:8000
+        pnpm exec serve -s dist -l tcp://0.0.0.0:8000
+    express:
+      label: "极速版（CI 预构建）"
+      # 无 command：使用镜像自带 CMD（serve -s dist -l 8080）。
+      image: "ghcr.io/inernoro/prd_agent/prdagent-admin:sha-${CDS_COMMIT_SHA}"
+      # 本 commit 没有 admin 镜像（仅改了 api/cds/docs，CI 未构建 admin）时按顺序回退：
+      #   ① 本分支该组件最近一次构建（branch-<slug>）② 退到固定主分支镜像（branch-main）
+      fallbackImage:
+        - "ghcr.io/inernoro/prd_agent/prdagent-admin:branch-${CDS_BRANCH_SLUG}"
+        - "ghcr.io/inernoro/prd_agent/prdagent-admin:branch-main"
+      prebuilt: true
+      containerPort: 8080
 services:
   # ── App Services (有相对路径 volume mount) ──
 
@@ -83,9 +123,12 @@ services:
       - "5000"
     command: >-
       cd prd-api &&
+      rm -rf src/PrdAgent.Api/obj src/PrdAgent.Api/bin
+      src/PrdAgent.Core/obj src/PrdAgent.Core/bin
+      src/PrdAgent.Infrastructure/obj src/PrdAgent.Infrastructure/bin &&
       dotnet restore &&
-      dotnet build --no-restore &&
-      dotnet run --project src/PrdAgent.Api --no-build --urls http://0.0.0.0:5000
+      dotnet build --no-restore --no-incremental -c Debug &&
+      dotnet run --project src/PrdAgent.Api --no-build -c Debug --urls http://0.0.0.0:5000
     depends_on:
       mongodb: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -113,21 +156,23 @@ services:
     labels:
       cds.path-prefix: "/api/"
       cds.readiness-path: "/health"
+      # static 模式下 API 需要 restore + publish 后再启动；冷启动常超过 CDS 默认就绪窗口。
+      # 与 admin 的 1200s 保持一致，避免容器最终已监听但分支先被误判为 error。
+      cds.readiness-timeout: "1200"
+      cds.readiness-interval: "3"
 
   admin:
     image: node:20-slim
-    working_dir: /app
+    working_dir: /repo
     volumes:
-      - ./prd-admin:/app
-      # public/thirdparty/ref 是符号链接指向仓库根 thirdparty/ref（22+ 个 HTML 素材）。
-      # 单挂 ./prd-admin 时 symlink 解析到 /thirdparty/ref 找不到目录，
-      # vite build (static 模式) 的 copyPublicDir 步骤会报 ENOENT。
-      - ./thirdparty:/thirdparty:ro
+      # 挂载仓库根目录，确保 prd-admin/public 内指向仓库级资源的符号链接可解析。
+      - .:/repo
       - admin-pnpm-store:/pnpm/store
     ports:
       - "8000"
     # 默认 dev：秒级就绪，避免 static 冷构建 OOM（exitCode=137）。需要 dist 时在 CDS 切 static 模式。
     command: >-
+      cd prd-admin &&
       corepack enable &&
       corepack prepare pnpm@10.28.2 --activate &&
       pnpm config set store-dir /pnpm/store &&
@@ -136,8 +181,10 @@ services:
     labels:
       cds.path-prefix: "/"
       cds.readiness-path: "/"
-      # dev 模式 Vite 秒起；static 冷构建见 x-cds-deploy-modes.admin.static（readiness 1200s）
-      cds.readiness-timeout: "300"
+      # dev 模式 Vite 秒起；static 冷构建（pnpm install + vite build）实测约 320s，
+      # 超过原 300s 就绪超时会被误判 error（容器其实已 Accepting connections）。
+      # 按 base label 取两模式上限：static 冷构建留足余量，dev 秒起也不受影响。
+      cds.readiness-timeout: "1200"
       cds.readiness-interval: "3"
 
   # ── Infrastructure Services (无相对路径 mount) ──

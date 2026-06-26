@@ -16,6 +16,9 @@ namespace PrdAgent.Api.Middleware;
 /// </summary>
 public sealed class AdminPermissionMiddleware
 {
+    private const string DefectAgentShareScope = "defect-agent:share";
+    private const string DefectAgentSharePathPrefix = "/api/defect-agent/share/view/";
+
     private readonly RequestDelegate _next;
     private readonly ILogger<AdminPermissionMiddleware> _logger;
     private readonly IAdminControllerScanner _scanner;
@@ -72,6 +75,54 @@ public sealed class AdminPermissionMiddleware
         return false;
     }
 
+    internal static bool HasDefectShareScopeGrant(
+        IEnumerable<string> scopes,
+        string requiredPermission,
+        string path,
+        string method)
+    {
+        if (!string.Equals(requiredPermission, AdminPermissionCatalog.DefectAgentUse, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (!scopes.Contains(DefectAgentShareScope, StringComparer.OrdinalIgnoreCase))
+            return false;
+
+        if (!path.StartsWith(DefectAgentSharePathPrefix, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var suffix = path[DefectAgentSharePathPrefix.Length..].Trim('/');
+        if (string.IsNullOrWhiteSpace(suffix))
+            return false;
+
+        var parts = suffix.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (HttpMethods.IsGet(method))
+            return parts.Length == 1;
+
+        if (!HttpMethods.IsPost(method) || parts.Length != 2)
+            return false;
+
+        return string.Equals(parts[1], "comments", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(parts[1], "report", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(parts[1], "fix-status", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool HasDefectShareScopeGrant(HttpContext ctx, string requiredPermission, string path, string method)
+    {
+        var scopes = ctx.User?.FindAll("scope").Select(c => c.Value);
+        return scopes != null && HasDefectShareScopeGrant(scopes, requiredPermission, path, method);
+    }
+
+    private static void InjectBoundUserId(HttpContext context)
+    {
+        var boundUserId = context.User.FindFirst("boundUserId")?.Value;
+        if (!string.IsNullOrEmpty(boundUserId)
+            && context.User.Identity is System.Security.Claims.ClaimsIdentity idAgent
+            && idAgent.FindFirst(JwtRegisteredClaimNames.Sub) == null)
+        {
+            idAgent.AddClaim(new System.Security.Claims.Claim(JwtRegisteredClaimNames.Sub, boundUserId));
+            idAgent.AddClaim(new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.NameIdentifier, boundUserId));
+        }
+    }
 
     public async Task Invoke(HttpContext context, IAdminPermissionService permissionService)
     {
@@ -109,19 +160,12 @@ public sealed class AdminPermissionMiddleware
         var isAgentKey = string.Equals(context.User.FindFirst("authType")?.Value, "agent-apikey", StringComparison.Ordinal);
         if (isAgentKey)
         {
-            if (HasScopeGrant(context, required))
+            if (HasScopeGrant(context, required) || HasDefectShareScopeGrant(context, required, path, method))
             {
                 // 仅在通过 scope 门禁后，才把 owner 身份(sub)注入到本次请求的 principal，
                 // 让 scope 门禁内的 AdminController（如 document-store）的 GetRequiredUserId() 可用。
                 // 这样 owner 身份不会泄漏到任意 [Authorize] 用户端点（P1 安全修复）。
-                var boundUserId = context.User.FindFirst("boundUserId")?.Value;
-                if (!string.IsNullOrEmpty(boundUserId)
-                    && context.User.Identity is System.Security.Claims.ClaimsIdentity idAgent
-                    && idAgent.FindFirst(JwtRegisteredClaimNames.Sub) == null)
-                {
-                    idAgent.AddClaim(new System.Security.Claims.Claim(JwtRegisteredClaimNames.Sub, boundUserId));
-                    idAgent.AddClaim(new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.NameIdentifier, boundUserId));
-                }
+                InjectBoundUserId(context);
                 await _next(context);
                 return;
             }

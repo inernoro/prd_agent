@@ -17,6 +17,11 @@ import type { Request } from 'express';
 import type { ProxyHandler } from './proxy-handler.js';
 import type { RouteWatcher } from './route-watcher.js';
 import type { RouteResolverFn } from './index.js';
+import {
+  parseHttpLogLayer,
+  parseHttpRequestKindValue,
+  type HttpActiveRequestFilter,
+} from '../services/http-log-store.js';
 
 export interface DiagnosticRouterOptions {
   watcher: RouteWatcher;
@@ -35,6 +40,28 @@ function defaultIsLoopback(req: Request): boolean {
   const ip = (req.socket?.remoteAddress ?? '').toString();
   if (!ip) return false;
   return LOOPBACK_RE.test(ip);
+}
+
+function stringQuery(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function parseActiveFilter(query: Request['query']): HttpActiveRequestFilter {
+  const limitRaw = typeof query.limit === 'string' ? Number.parseInt(query.limit, 10) : undefined;
+  const minAgeRaw = typeof query.minAgeMs === 'string' ? Number.parseInt(query.minAgeMs, 10) : undefined;
+  return {
+    limit: Number.isFinite(limitRaw) ? limitRaw : undefined,
+    requestId: stringQuery(query.requestId),
+    host: stringQuery(query.host),
+    layer: parseHttpLogLayer(query.layer),
+    method: stringQuery(query.method),
+    pathContains: stringQuery(query.pathContains) || stringQuery(query.path),
+    branchId: stringQuery(query.branchId),
+    profileId: stringQuery(query.profileId),
+    requestKind: parseHttpRequestKindValue(query.requestKind),
+    minAgeMs: Number.isFinite(minAgeRaw) ? minAgeRaw : undefined,
+    sort: query.sort === 'started' ? 'started' : 'age',
+  };
 }
 
 export function createDiagnosticRouter(opts: DiagnosticRouterOptions): Router {
@@ -94,6 +121,21 @@ export function createDiagnosticRouter(opts: DiagnosticRouterOptions): Router {
       last60sRps: stats.last60sRps,
       errorCount: stats.errorCount,
       error503Count: stats.error503Count,
+    });
+  });
+
+  // active:回环 only。master 用它把 forwarder 进程内的 in-flight 请求合并进
+  // /api/http-logs/active 和 /api/perf/overview。
+  r.get('/__forwarder/active', (req, res) => {
+    if (!isLoopback(req)) {
+      res.status(403).json({ error: 'forbidden' });
+      return;
+    }
+    const active = opts.proxy.getActiveRequests(parseActiveFilter(req.query));
+    res.status(200).json({
+      active,
+      total: active.length,
+      generatedAt: new Date().toISOString(),
     });
   });
 

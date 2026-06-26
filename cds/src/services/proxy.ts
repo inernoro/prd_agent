@@ -6,7 +6,11 @@ import type { WorktreeService } from './worktree.js';
 import type { SchedulerService } from './scheduler.js';
 import { buildWidgetScript } from '../widget-script.js';
 import { computePreviewSlug, previewProjectSlugCandidates } from './preview-slug.js';
+import { classifyDeployRuntime } from './deploy-runtime.js';
+import { computeWaitTiming } from './wait-timing.js';
+import type { DeployDurationMode } from '../types.js';
 import {
+  classifyHttpRequestKind,
   createBodyCapture,
   isBinaryContentType,
   createRequestId,
@@ -66,6 +70,32 @@ export class ProxyService {
   private resolveUpstream: ((branchId: string, profileId?: string) => string | null) | null = null;
   /** Callback: trigger auto-build for a branch that isn't running yet */
   private onAutoBuild: ((branchSlug: string, req: http.IncomingMessage, res: http.ServerResponse) => void) | null = null;
+  /**
+   * Callback: render the "branch gone" page (merged / abandoned / generic) for a
+   * branch that has a tombstone. Used when a PR-closed branch is NOT auto-deleted
+   * by the repo — the stopped BranchEntry lingers, so routeToBranch would otherwise
+   * serve the generic stopped-status page and never reach serveBranchGonePage.
+   */
+  private onBranchGone: ((branchSlug: string, req: http.IncomingMessage, res: http.ServerResponse) => void) | null = null;
+  /**
+   * Callback: revive a scheduler-cooled branch on preview access (lightweight
+   * `docker restart` of preserved containers, no rebuild). Wired only when
+   * preview auto-wake is enabled. Must flip branch.status to a loading state
+   * synchronously (before its first await) so the waiting page rendered right
+   * after firing shows progress instead of the cooled diagnostic page.
+   * See .claude/rules/cds-auto-deploy.md + index.ts setOnReviveCooled wiring.
+   */
+  private onReviveCooled: ((branchSlug: string) => Promise<void>) | null = null;
+  /** Slugs with an auto-wake in flight — dedupes concurrent navigation hits. */
+  private readonly revivingSlugs = new Set<string>();
+  /**
+   * #1 重启中断分支按需自愈：访问到一个「被 CDS 重启中断」的 error 分支时触发一次重部署。
+   * 与 onReviveCooled 互补 —— 那个 docker restart 复用旧容器（cooled），这个走完整重部署
+   * （中断分支容器可能根本没建好）。demand-driven（只恢复用户真正访问的分支）+ 去重，
+   * 不复活「每 5min 全量补发」的重试风暴。
+   */
+  private onRecoverInterrupted: ((branchSlug: string) => Promise<void>) | null = null;
+  private readonly recoveringSlugs = new Set<string>();
   /** Callback: notify dashboard of web access events */
   private onAccess: ((branchId: string, method: string, path: string, status: number, duration: number, profileId?: string) => void) | null = null;
   /** Optional worktree service for remote branch lookups */
@@ -98,6 +128,18 @@ export class ProxyService {
 
   setOnAutoBuild(fn: (branchSlug: string, req: http.IncomingMessage, res: http.ServerResponse) => void): void {
     this.onAutoBuild = fn;
+  }
+
+  setOnBranchGone(fn: (branchSlug: string, req: http.IncomingMessage, res: http.ServerResponse) => void): void {
+    this.onBranchGone = fn;
+  }
+
+  setOnReviveCooled(fn: (branchSlug: string) => Promise<void>): void {
+    this.onReviveCooled = fn;
+  }
+
+  setOnRecoverInterrupted(fn: (branchSlug: string) => Promise<void>): void {
+    this.onRecoverInterrupted = fn;
   }
 
   setOnAccess(fn: (branchId: string, method: string, path: string, status: number, duration: number, profileId?: string) => void): void {
@@ -541,6 +583,84 @@ export class ProxyService {
     }
 
     if (branch.status !== 'running' && !LOADING_BRANCH_STATUSES.has(branch.status)) {
+      // 墓碑优先：PR 合并/关闭后分支若**未被自动删除**（仓库保留 PR 分支），停止的
+      // BranchEntry 仍在，否则会落到下面的泛化「分支已停止」状态页，永远走不到
+      // serveBranchGonePage。先查墓碑：命中则与「分支已删除」走同一套合并/放弃页。
+      // fail-safe：无墓碑（绝大多数停止分支）则一切照旧；只拦真实 HTML 导航（asset/
+      // API 请求继续走状态页，避免把 gone HTML 当成 CSS/JS 返回）。墓碑命中也意味着
+      // 不该 auto-wake/恢复一个已合并/已放弃的分支，故置于这些副作用之前直接返回。
+      // 按 branchSlug（host label，标准 v3 预览即 previewSlug 主键）**和** branch.id 两路查，
+      // 因为墓碑以 previewSlug 为键、branchId 仅作兜底，二者可能都不等于对方（Bugbot）。
+      // 命中后转发墓碑自身的 previewSlug（map 主键）给 gone 页，保证它再查必命中。
+      const tomb = this.stateService.findRemovedBranchByIdentifier(branchSlug)
+        ?? this.stateService.findRemovedBranchByIdentifier(branch.id);
+      // 分支名复用：同名分支在旧 PR 合并/放弃后被重建时，旧墓碑仍留在 removedBranches。
+      // 仅当墓碑确实**晚于**当前这个 incarnation 的活动时间才分流，否则重建的分支（极速版下
+      // idle 等 CI）会被误导到旧的合并/放弃页（Codex P2）。incarnation 基准取 createdAt /
+      // lastPushAt / lastDeployAt 最近者；墓碑早于它 = 属于上一代分支 = 陈旧，照常走状态页。
+      const liveSince = Math.max(
+        Date.parse(branch.createdAt || '') || 0,
+        Date.parse(branch.lastPushAt || '') || 0,
+        Date.parse(branch.lastDeployAt || '') || 0,
+      );
+      const tombAt = tomb ? (Date.parse(tomb.removedAt || '') || 0) : 0;
+      if (this.onBranchGone && this.isHtmlNavigationRequest(req) && tomb && tombAt >= liveSince) {
+        this.onBranchGone(tomb.previewSlug || branch.id, req, res);
+        return;
+      }
+      // Auto-wake: a branch put to sleep by the scheduler (containers preserved,
+      // not removed) is revived on a real page navigation via a cheap
+      // `docker restart`, so users don't hit a dead-end "go redeploy manually"
+      // page just because it idled out. Strictly scoped to scheduler-cooled
+      // branches — errored / crashed / user-stopped / deleted branches keep the
+      // diagnostic page (no passive deploy loops). Only top-level HTML
+      // navigation triggers it (asset/bot/prefetch requests do not), and the
+      // revive flips status synchronously so serveBranchStatusResponse below
+      // renders the live waiting page instead of the cooled dead-end.
+      // Pass the resolved entry id (branch.id) — NOT branchSlug — because for
+      // non-legacy/v3 projects the entry lives under a canonical id like
+      // `${projectSlug}-${slug}` while branchSlug is the bare preview label.
+      // The revive callback does stateService.getBranch(id), so the wrong key
+      // would silently no-op (same reason resolveUpstream/scheduler.touch below
+      // use branch.id).
+      // Restrict the wake to real GET navigations: isHtmlNavigationRequest also
+      // accepts HEAD and a missing Accept header, so uptime monitors / link
+      // checkers doing `HEAD /` against a preview host must not restart cooled
+      // containers (they aren't a user actually opening the page).
+      const isGetNavigation = (req.method || 'GET').toUpperCase() === 'GET';
+      // Only auto-wake on a PREVIEW host. The waiting page polls
+      // /_cds/waiting-status, which resolves the branch solely via
+      // extractPreviewBranch(host); for non-preview routing (X-Branch / cookie /
+      // routing rule / default branch) that poll can't resolve the branch, so
+      // the page would spin forever and never reload after the restart. Gate on
+      // the exact same resolution the poll uses, so a wake always implies a
+      // pollable waiting page. Non-preview routings keep the diagnostic page.
+      const isPreviewHost = this.extractPreviewBranch(req.headers.host || '') !== null;
+      // Require a POSITIVE browser-navigation signal (see hasBrowserNavSignal):
+      // isHtmlNavigationRequest treats a missing Accept header as HTML, so a
+      // bare `GET /` health probe / link checker would otherwise restart cooled
+      // containers and defeat scheduler cooling.
+      if (
+        isGetNavigation
+        && isPreviewHost
+        && this.hasBrowserNavSignal(req)
+        && this.isHtmlNavigationRequest(req)
+        && this.shouldAutoWakeCooled(branch)
+      ) {
+        this.triggerCooledWake(branch.id);
+      }
+      // #1 重启中断分支按需自愈：被 CDS self-update/崩溃重启打断的 error 分支（含「重启中断」
+      // 标记），同样在预览 host + 真实浏览器导航时触发一次完整重部署（去重）。恢复回调同步把
+      // status 翻到 loading 再 save，紧接着的 serveBranchStatusResponse 等待页即显示「正在恢复」。
+      if (
+        isGetNavigation
+        && isPreviewHost
+        && this.hasBrowserNavSignal(req)
+        && this.isHtmlNavigationRequest(req)
+        && this.shouldRecoverInterrupted(branch)
+      ) {
+        this.triggerInterruptedRecovery(branch.id);
+      }
       this.serveBranchStatusResponse(req, res, branchSlug, branch);
       return;
     }
@@ -801,6 +921,118 @@ export class ProxyService {
     return { percent, confidence, label, reason };
   }
 
+  /**
+   * 推断"本次 deploy/build 真正开始的时间"。
+   *
+   * 首选：分支上钉的 lastDeployStartedAt —— 在 status 切到 building 的那一刻打戳，
+   *      是在途构建唯一可靠的起点。在途构建的 op-log 直到 finalize 才落库，期间
+   *      getLogs() 只剩上一轮已完成的部署，若以历史 op-log 兜底会算成几小时/几天
+   *      误判 overdue（修复 PR #865 Codex P2）。仅当分支处于在途态（building/
+   *      starting/restarting）才优先它，避免 running 后还指向上一次构建起点。
+   * 其次：当前正在跑（status==='running'）的 build/run/auto-build op-log 的 startedAt。
+   * 退而求其次：最新一条 op-log 的 startedAt（可能刚结束但页面还没切走）。
+   * 最终兜底：branch.createdAt（对 re-deploy 已过期，故仅在无任何来源时用）。
+   */
+  private resolveDeployStartedAtMs(branch: BranchEntry): number | null {
+    const parse = (s?: string): number | null => {
+      if (!s) return null;
+      const ms = Date.parse(s);
+      return Number.isFinite(ms) ? ms : null;
+    };
+    // 分支上钉的本轮 deploy 起点。每个部署起点（多服务/单服务/远端执行器）都会
+    // 在 status 切到 building 时刷新它，所以它永远等于"最近一次部署的开始时刻"。
+    const stamped = parse(branch.lastDeployStartedAt);
+    // 0) 在途构建：op-log 此刻还没落库，stamped 是唯一可靠起点。
+    const interim = branch.status === 'building' || branch.status === 'starting' || branch.status === 'restarting';
+    if (interim && stamped != null) return stamped;
+
+    let logs: import('../types.js').OperationLog[] = [];
+    try {
+      logs = this.stateService.getLogs?.(branch.id) || [];
+    } catch {
+      logs = [];
+    }
+    const deployTypes = new Set(['build', 'run', 'auto-build']);
+    // 1) 最新的"正在跑"的部署 op-log
+    let running: import('../types.js').OperationLog | null = null;
+    let newest: import('../types.js').OperationLog | null = null;
+    for (const log of logs) {
+      if (!deployTypes.has(log.type)) continue;
+      const startedMs = parse(log.startedAt);
+      if (startedMs == null) continue;
+      if (!newest || startedMs > (parse(newest.startedAt) ?? -Infinity)) newest = log;
+      if (log.status === 'running') {
+        if (!running || startedMs > (parse(running.startedAt) ?? -Infinity)) running = log;
+      }
+    }
+    const pickedMs = parse((running || newest)?.startedAt);
+    // 2) stamped 不旧于最新 op-log 时优先它 —— 覆盖单服务重部署：该路径只把
+    //    svc.status 置 building、分支 status 未必翻 building（interim 检测漏接），
+    //    但 lastDeployStartedAt 已刷新，且必然 >= 上一轮已完成 op-log 的 startedAt，
+    //    故能盖过陈旧日志，不再误算几小时（修复 PR #865 Bugbot「单服务部署 ETA 偏斜」）。
+    if (stamped != null && (pickedMs == null || stamped >= pickedMs)) return stamped;
+    if (pickedMs != null) return pickedMs;
+    // 3) 最终兜底：分支创建时间（对 re-deploy 偏旧，仅在无任何来源时用）
+    return stamped ?? parse(branch.createdAt);
+  }
+
+  /**
+   * 选择历史耗时桶的模式（release vs source）。
+   *
+   * 真相来源 = 正在跑/等待的服务实际钉的 deployedMode；构建中往往还没钉
+   * （undefined）→ 默认 source（热加载，预览最常见场景，与 classifyDeployRuntime
+   * 对空 modeId 的归类一致）。选中桶无样本但另一桶有样本时回退到另一桶，
+   * 并按回退后的桶标注 mode，保证有数可用又不张冠李戴。
+   */
+  private resolveWaitTimingMode(
+    branch: BranchEntry,
+    waitingProfileId?: string,
+  ): { mode: DeployDurationMode; estimate: { medianMs: number | null; samples: number } } {
+    const svc = waitingProfileId ? branch.services?.[waitingProfileId] : undefined;
+    const deployedMode = svc?.deployedMode;
+    // 优先用容器已戳的运行模式；服务还没就绪(pending release 重建中)时 deployedMode
+    // 未戳，退化用"配置的目标 deploy mode"（profileOverride > profile.activeDeployMode）
+    // 判定，避免把正在重建的发布版误判成热加载、用错样本桶（修复 PR #865 codex P2
+    // 「pending 发布用源码 ETA」）。拿不到目标模式才兜底 source。
+    let modeSource = deployedMode;
+    if (modeSource === undefined || modeSource === '') {
+      // 仅限本分支所属项目的 profile——CDS 是多项目实例，getBuildProfiles() 返回
+      // 全实例所有项目的 profile，全量会让别的项目的发布版 profile 串改本分支 ETA。
+      // 用 canonical 的 getBuildProfilesForProject（内部按 (projectId||'default') 归一），
+      // 并把分支 projectId 同样归一，避免 undefined vs 'default' 不匹配导致过滤为空、
+      // 误退化成 source（修复 PR #865 Bugbot「foreign profiles」+「filter mismatch」）。
+      const projectProfiles = this.stateService.getBuildProfilesForProject(branch.projectId || 'default');
+      const targetModeFor = (pid: string): string | undefined =>
+        branch.profileOverrides?.[pid]?.activeDeployMode
+        ?? projectProfiles.find((p) => p.id === pid)?.activeDeployMode;
+      if (waitingProfileId) {
+        modeSource = targetModeFor(waitingProfileId);
+      } else {
+        // 整分支等待：本项目任一 profile 目标是发布版 → 按发布版估。
+        const ids = Object.keys(branch.services || {});
+        const scanIds = ids.length ? ids : projectProfiles.map((p) => p.id);
+        const anyRelease = scanIds
+          .some((pid) => { const m = targetModeFor(pid); return m ? classifyDeployRuntime(m) === 'release' : false; });
+        modeSource = anyRelease ? 'release' : undefined;
+      }
+    }
+    const preferred: DeployDurationMode =
+      modeSource !== undefined && modeSource !== ''
+        ? classifyDeployRuntime(modeSource)
+        : 'source';
+    const full = this.stateService.getBranchDeployEstimate(branch.projectId);
+    const buckets: Record<DeployDurationMode, { medianMs: number | null; samples: number }> = {
+      release: { medianMs: full.releaseMedianMs, samples: full.releaseSamples },
+      source: { medianMs: full.sourceMedianMs, samples: full.sourceSamples },
+    };
+    // 只用首选模式的样本桶，绝不跨模式回退。跨模式（用另一模式的中位）会张冠李戴：
+    // 用户在等发布版重建却拿到热加载的短 ETA（发布版通常慢得多），正是首次发布版
+    // 重建最容易误导的场景。首选桶无样本就返回 0 样本，等待页据此显示"正在积累
+    // 历史数据，暂无预计"，宁可不给也不给错（no-rootless-tree，修复 PR #865 Codex P2
+    // 「Keep release waits on the release estimate bucket」）。
+    return { mode: preferred, estimate: buckets[preferred] };
+  }
+
   private serveWaitingStatus(req: http.IncomingMessage, res: http.ServerResponse): void {
     const host = req.headers.host || '';
     const previewSlug = this.extractPreviewBranch(host) || '';
@@ -812,6 +1044,18 @@ export class ProxyService {
     const ready = Boolean(branch && branch.status === 'running' && (!waitingProfileId || waitingService?.status === 'running'));
     const loading = Boolean(branch && (branch.status === 'building' || branch.status === 'starting' || branch.status === 'restarting' || waitingService?.status === 'building' || waitingService?.status === 'starting' || waitingService?.status === 'restarting'));
     const displayBranch = this.displayBranchName(previewSlug, branch);
+
+    let timing: (ReturnType<typeof computeWaitTiming> & { mode: DeployDurationMode }) | null = null;
+    if (branch) {
+      const { mode, estimate } = this.resolveWaitTimingMode(branch, waitingProfileId);
+      const computed = computeWaitTiming({
+        status: branch.status,
+        deployStartedAtMs: this.resolveDeployStartedAtMs(branch),
+        nowMs: Date.now(),
+        estimate,
+      });
+      timing = { ...computed, mode };
+    }
 
     res.writeHead(200, {
       'Content-Type': 'application/json; charset=utf-8',
@@ -827,6 +1071,7 @@ export class ProxyService {
       status: branch?.status || 'not-found',
       waitingProfileId: waitingProfileId || null,
       progress: this.estimateWaitingProgress(branch, waitingProfileId),
+      timing,
       services: services.map((svc) => ({
         profileId: svc.profileId,
         status: svc.status,
@@ -861,6 +1106,126 @@ export class ProxyService {
       description: 'CDS 找到了该分支记录，但当前状态无法到达真实页面。这不是等待会自动完成的状态，请回到控制台处理后重新部署。',
       detail: branch.errorMessage || branch.lastStopReason,
     };
+  }
+
+  /**
+   * Is this branch eligible for preview auto-wake? Only branches the scheduler
+   * cooled (idle/stopped with lastStopSource='scheduler') and that still have
+   * preserved service containers to restart. Everything else (errored, crashed,
+   * OOM, user-stopped, deleted, or no built services) is left to its diagnostic
+   * page so a passive visit can never restart a broken or intentionally-stopped
+   * branch.
+   */
+  /**
+   * Stricter than isHtmlNavigationRequest: require a POSITIVE browser-navigation
+   * signal before auto-waking a cooled container. isHtmlNavigationRequest treats
+   * a missing Accept header as HTML, so a bare `GET /` from a health probe / link
+   * checker would otherwise restart containers and defeat scheduler cooling.
+   * Real browser navigations always send `Accept: text/html` (and modern ones
+   * `Sec-Fetch-Mode: navigate` / `Sec-Fetch-Dest: document`).
+   */
+  private hasBrowserNavSignal(req: http.IncomingMessage): boolean {
+    // Prefetch / prerender / link-preview fetches carry Accept: text/html but
+    // are NOT an actual visit — waking a cooled container for them defeats
+    // scheduler cooling. Reject them before accepting any HTML signal.
+    // Covers Chrome (Sec-Purpose: prefetch;prerender / Purpose: prefetch),
+    // Firefox (X-Moz: prefetch), and legacy X-Purpose: preview/prefetch.
+    const secPurpose = String(req.headers['sec-purpose'] || '').toLowerCase();
+    if (secPurpose.includes('prefetch') || secPurpose.includes('prerender')) return false;
+    const purpose = String(req.headers['purpose'] || '').toLowerCase();
+    if (purpose.includes('prefetch')) return false;
+    const xPurpose = String(req.headers['x-purpose'] || '').toLowerCase();
+    if (xPurpose.includes('prefetch') || xPurpose.includes('preview')) return false;
+    const xMoz = String(req.headers['x-moz'] || '').toLowerCase();
+    if (xMoz.includes('prefetch')) return false;
+
+    const accept = String(req.headers['accept'] || '').toLowerCase();
+    if (accept.includes('text/html')) return true;
+    const mode = String(req.headers['sec-fetch-mode'] || '').toLowerCase();
+    if (mode === 'navigate') return true;
+    const dest = String(req.headers['sec-fetch-dest'] || '').toLowerCase();
+    if (dest === 'document') return true;
+    return false;
+  }
+
+  private shouldAutoWakeCooled(branch: BranchEntry): boolean {
+    if (!this.onReviveCooled) return false;
+    if (branch.lastStopSource !== 'scheduler') return false;
+    if (branch.status !== 'idle') return false;
+    // Executor-owned (remote) branches can't be revived by a local docker
+    // restart — a resolved local deploy clears executorId, so a truthy value
+    // means a remote executor (present or temporarily absent). The index.ts
+    // revive callback double-guards this.
+    if (branch.executorId) return false;
+    return Object.keys(branch.services || {}).length > 0;
+  }
+
+  /**
+   * Fire the wake callback for a cooled branch, deduped per slug. Called
+   * synchronously so the callback can flip branch.status to a loading state
+   * (before its first await); the waiting page rendered immediately after this
+   * returns then reflects that progress. On lease conflict (a deploy/cool is
+   * already running) the callback rejects without flipping status, and the
+   * branch's diagnostic page shows as before — that other operation owns it.
+   */
+  /**
+   * #1 该分支是否「被 CDS 重启中断」可按需自愈？只认这个**已知瞬态、重跑安全**的原因
+   * （CDS self-update / 崩溃重启打断了在途部署），不碰真正的构建失败 / 崩溃 / 用户停止。
+   * 远端执行器分支不在本机重部署范围（executorId 真值 = 远端）。
+   */
+  private shouldRecoverInterrupted(branch: BranchEntry): boolean {
+    if (!this.onRecoverInterrupted) return false;
+    if (branch.status !== 'error') return false;
+    if (branch.executorId) return false;
+    if (Object.keys(branch.services || {}).length === 0) return false;
+    const marker = '重启中断';
+    if (typeof branch.errorMessage === 'string' && branch.errorMessage.includes(marker)) return true;
+    for (const svc of Object.values(branch.services || {})) {
+      if (typeof svc?.errorMessage === 'string' && svc.errorMessage.includes(marker)) return true;
+    }
+    return false;
+  }
+
+  /** 触发一次中断恢复重部署，按 slug 去重（并发导航不重复打）。 */
+  private triggerInterruptedRecovery(slug: string): void {
+    if (!this.onRecoverInterrupted || this.recoveringSlugs.has(slug)) return;
+    this.recoveringSlugs.add(slug);
+    let pending: Promise<void>;
+    try {
+      pending = this.onRecoverInterrupted(slug);
+    } catch (err) {
+      this.recoveringSlugs.delete(slug);
+      console.error(`[proxy] interrupted-recovery threw for "${slug}": ${(err as Error).message}`);
+      return;
+    }
+    pending
+      .catch((err) => {
+        console.error(`[proxy] interrupted-recovery failed for "${slug}": ${(err as Error).message}`);
+      })
+      .finally(() => {
+        // 留一小段去重窗口，避免重部署刚把 status 翻 building 前的并发导航重复打。
+        setTimeout(() => this.recoveringSlugs.delete(slug), 5000);
+      });
+  }
+
+  private triggerCooledWake(slug: string): void {
+    if (!this.onReviveCooled || this.revivingSlugs.has(slug)) return;
+    this.revivingSlugs.add(slug);
+    let pending: Promise<void>;
+    try {
+      pending = this.onReviveCooled(slug);
+    } catch (err) {
+      this.revivingSlugs.delete(slug);
+      console.error(`[proxy] auto-wake threw for "${slug}": ${(err as Error).message}`);
+      return;
+    }
+    pending
+      .catch((err) => {
+        console.error(`[proxy] auto-wake failed for "${slug}": ${(err as Error).message}`);
+      })
+      .finally(() => {
+        this.revivingSlugs.delete(slug);
+      });
   }
 
   private failureCopyForService(service: BranchEntry['services'][string] | undefined, profileId: string): { heading: string; description: string; detail?: string } | null {
@@ -933,8 +1298,8 @@ h1{font-size:clamp(42px,5.5vw,78px);line-height:.96;letter-spacing:0;margin-bott
     <div class="chip">${safeBranch}</div>
     ${safeError ? `<div class="err">${safeError}</div>` : ''}
     <div class="actions">
-      <a class="btn" href="/project-list">返回 CDS 控制台</a>
-      <a class="btn" href="/cds-settings#loading-pages">查看加载页预览</a>
+      <a class="btn" href="${this.dashboardBaseUrl()}/project-list">返回 CDS 控制台</a>
+      <a class="btn" href="${this.dashboardBaseUrl()}/cds-settings#loading-pages">查看加载页预览</a>
     </div>
     <div class="hint">CDS 会优先保留可诊断信息，避免把访问者带到空白或浏览器原生错误页。</div>
   </section>
@@ -1179,6 +1544,9 @@ h1{font-size:clamp(42px,5.6vw,82px);line-height:.96;letter-spacing:0;margin-bott
 .estimate-top strong{font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;font-size:15px;color:#f8fafc}
 .estimate-track{height:5px;border-radius:999px;background:rgba(255,255,255,.1);overflow:hidden}
 .estimate-bar{display:block;height:100%;width:0;border-radius:inherit;background:linear-gradient(90deg,#ffffff,#aeb4bd);box-shadow:0 0 18px rgba(255,255,255,.22);transition:width .45s ease}
+.estimate-time{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;margin-top:12px}
+.estimate-time-main{font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;font-size:15px;font-weight:700;color:#f8fafc;letter-spacing:.01em}
+.estimate-time-sub{font-size:11px;color:rgba(245,242,255,.52)}
 .estimate-meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;font-size:11px;color:rgba(245,242,255,.52)}
 .estimate-meta span{display:inline-flex;align-items:center}
 .cds-tip{width:min(620px,100%);margin:-8px 0 28px;color:rgba(245,242,255,.54);font-size:12px;line-height:1.65}
@@ -1216,6 +1584,10 @@ h1{font-size:clamp(42px,5.6vw,82px);line-height:.96;letter-spacing:0;margin-bott
         <strong data-role="progress-percent">${progress.percent}%</strong>
       </div>
       <div class="estimate-track"><span class="estimate-bar" data-role="progress-bar" style="width:${progress.percent}%"></span></div>
+      <div class="estimate-time" data-role="wait-timing" hidden>
+        <span class="estimate-time-main" data-role="wait-timing-main"></span>
+        <span class="estimate-time-sub" data-role="wait-timing-sub"></span>
+      </div>
       <div class="estimate-meta">
         <span data-role="progress-confidence">置信度 ${safeProgressConfidence}</span>
         <span data-role="progress-reason">${safeProgressReason}</span>
@@ -1408,23 +1780,89 @@ ${shouldAutoRefresh ? `;(function(){
     if(confidence)confidence.textContent='置信度 '+confidenceText;
     if(reason)reason.textContent=progress.reason||'基于当前状态估算';
   }
+  // 时间渲染：服务端轮询给 elapsedMs/medianMs，本地 1s ticker 让"已等待"平滑跳秒。
+  var timingState=null; // { baseElapsedMs, medianMs, samples, overdue, syncedAt }
+  function clock(ms){
+    var sec=Math.max(0,Math.round((Number(ms)||0)/1000));
+    var h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),s=sec%60;
+    function p(n){return n<10?'0'+n:''+n;}
+    return h>0?h+':'+p(m)+':'+p(s):p(m)+':'+p(s);
+  }
+  function renderTiming(){
+    var wrap=document.querySelector('[data-role="wait-timing"]');
+    if(!wrap)return;
+    if(!timingState){wrap.hidden=true;return;}
+    var main=document.querySelector('[data-role="wait-timing-main"]');
+    var sub=document.querySelector('[data-role="wait-timing-sub"]');
+    var elapsedMs=timingState.baseElapsedMs+(Date.now()-timingState.syncedAt);
+    if(elapsedMs<0)elapsedMs=0;
+    var ee=clock(elapsedMs);
+    var samples=Number(timingState.samples)||0;
+    var median=timingState.medianMs;
+    var mainText='',subText='';
+    if(samples>0&&median!=null){
+      if(timingState.overdue||elapsedMs>median){
+        mainText='已等待 '+ee+' · 通常约 '+clock(median)+' 完成，本次稍久，仍在继续';
+        subText='';
+      }else{
+        var remainingMs=Math.max(0,median-elapsedMs);
+        mainText='已等待 '+ee+' · 预计还需约 '+clock(remainingMs);
+        var modeLabel=timingState.mode==='release'?'发布版':timingState.mode==='source'?'热加载':'';
+        subText='（基于本项目最近 '+samples+' 次'+modeLabel+'构建的中位耗时，非单分支）';
+      }
+    }else{
+      mainText='已等待 '+ee+' · 正在积累历史耗时数据，暂无预计';
+      subText='';
+    }
+    if(main)main.textContent=mainText;
+    if(sub){sub.textContent=subText;sub.hidden=!subText;}
+    wrap.hidden=false;
+  }
+  function applyTiming(timing){
+    if(!timing||typeof timing!=='object'){timingState=null;renderTiming();return;}
+    timingState={
+      baseElapsedMs:Math.max(0,Number(timing.elapsedMs)||0),
+      medianMs:(timing.estimateMedianMs==null?null:Number(timing.estimateMedianMs)),
+      samples:Number(timing.estimateSamples)||0,
+      mode:(timing.mode||''),
+      overdue:!!timing.overdue,
+      syncedAt:Date.now()
+    };
+    renderTiming();
+  }
   function poll(){
     fetch(statusUrl,{cache:'no-store',headers:{Accept:'application/json'}})
       .then(function(res){return res.ok?res.json():null;})
       .then(function(data){
         if(!data)return;
         if(data.ready){location.reload();return;}
+        // Terminal non-loading state (branch error / idle / stopped / not-found):
+        // the operation failed or the branch is no longer coming up. Reload so
+        // the server renders the diagnostic page (with redeploy guidance) instead
+        // of leaving the visitor on a spinner forever — e.g. when auto-wake's
+        // restart/readiness fails and flips the branch to error.
+        //
+        // Branch-level waits only (no waitingProfile). For a PROFILE-scoped wait,
+        // one failed service can have loading=false while the branch (and other
+        // services) is still running; reloading there would land on the wrong
+        // upstream / 502 rather than a diagnostic page (routeToBranch only shows
+        // the status page for starting/building/restarting profiles, and
+        // resolveUpstream falls back to the first running service). Keep the
+        // prior in-place status update for that case.
+        if(data.loading===false && !waitingProfile){location.reload();return;}
         var statusEl=document.querySelector('[data-role="branch-status"]');
         if(statusEl)statusEl.textContent='分支状态 · '+label(data.status);
         var branchEl=document.querySelector('[data-role="branch-name"]');
         if(branchEl&&data.displayBranch)branchEl.textContent=data.displayBranch;
         renderProgress(data.progress);
+        applyTiming(data.timing);
         renderServices(data.services);
       })
       .catch(function(){});
   }
   window.setInterval(poll,2000);
   window.setInterval(renderTip,4200);
+  window.setInterval(renderTiming,1000);
   window.setTimeout(poll,400);
   renderTip();
 }())` : ''}
@@ -1489,8 +1927,8 @@ ${shouldAutoRefresh ? `;(function(){
     <p class="desc">该分支在此 CDS 实例上未注册，无法自动恢复。请确认分支名称，或回到 CDS 控制台重新部署。</p>
     <div class="chip">${safe}</div>
     <div class="actions">
-      <a class="btn" href="/project-list">返回 CDS 控制台</a>
-      <a class="btn" href="/cds-settings#loading-pages">查看加载页预览</a>
+      <a class="btn" href="${this.dashboardBaseUrl()}/project-list">返回 CDS 控制台</a>
+      <a class="btn" href="${this.dashboardBaseUrl()}/cds-settings#loading-pages">查看加载页预览</a>
     </div>
     <div class="hint">
       <span><strong>CDS 已停止自动恢复</strong> 避免错误分支被动访问后反复部署。</span>
@@ -1529,6 +1967,22 @@ ${shouldAutoRefresh ? `;(function(){
         default: return '&#39;';
       }
     });
+  }
+
+  /**
+   * Absolute base URL of the CDS dashboard host (e.g. "https://cds.miduo.org").
+   *
+   * These diagnostic pages are served on the *preview* subdomain
+   * (`<slug>.miduo.org`), so a relative href like `/project-list` would resolve
+   * against the preview host and land nowhere. The dashboard lives on a
+   * different host (dashboardDomain / mainDomain), so the "返回 CDS 控制台" /
+   * "查看加载页预览" links must be absolute. Same source of truth as
+   * index.ts `serveBranchGonePage` (dashboardDomain || mainDomain).
+   * Returns '' when no domain is configured, falling back to relative links.
+   */
+  private dashboardBaseUrl(): string {
+    const domain = this.config?.dashboardDomain || this.config?.mainDomain;
+    return domain ? `https://${domain}` : '';
   }
 
   /**
@@ -1734,14 +2188,61 @@ ${shouldAutoRefresh ? `;(function(){
     if (typeof clientReq.on === 'function') {
       clientReq.on('data', (chunk: Buffer | string) => requestCapture.onChunk(chunk));
     }
+    const requestKind = classifyHttpRequestKind({
+      layer: 'master-proxy',
+      method: clientReq.method || 'GET',
+      path: clientReq.url || '/',
+      headers: clientReq.headers,
+    });
+    const activeRequestId = this.httpLogStore?.beginActive?.({
+      layer: 'master-proxy',
+      requestKind,
+      requestId,
+      method: clientReq.method || 'GET',
+      protocol: String(clientReq.headers['x-forwarded-proto'] || 'http').split(',')[0],
+      host: String(clientReq.headers.host || ''),
+      path: clientReq.url || '/',
+      remoteAddr: (clientReq.headers['cf-connecting-ip'] as string)
+        || (clientReq.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
+        || clientReq.socket?.remoteAddress,
+      branchId: branchCtx?.branchId ?? null,
+      profileId: branchCtx?.profileId ?? null,
+      upstream,
+      request: {
+        headers: redactHeaders(clientReq.headers),
+      },
+    });
+    let activeCompleted = false;
+    let activeCleanupTimer: ReturnType<typeof setTimeout> | null = null;
+    const completeActiveRequest = () => {
+      if (activeCompleted || !activeRequestId) return;
+      activeCompleted = true;
+      if (activeCleanupTimer) {
+        clearTimeout(activeCleanupTimer);
+        activeCleanupTimer = null;
+      }
+      this.httpLogStore?.completeActive?.(activeRequestId);
+    };
+    const scheduleActiveCleanup = () => {
+      if (activeCompleted || !activeRequestId || activeCleanupTimer) return;
+      activeCleanupTimer = setTimeout(completeActiveRequest, 60_000);
+      activeCleanupTimer.unref?.();
+    };
+    if (typeof clientRes.once === 'function') {
+      clientRes.once('close', scheduleActiveCleanup);
+    } else if (typeof clientRes.on === 'function') {
+      clientRes.on('close', scheduleActiveCleanup);
+    }
     const logHttp = (
       status: number,
       response: { bodyPreview?: string; bodyBytes?: number } = {},
       outcome?: 'ok' | 'client-error' | 'server-error' | 'upstream-error' | 'timeout',
       error?: { code?: string; message?: string },
     ) => {
+      completeActiveRequest();
       this.httpLogStore?.record({
         layer: 'master-proxy',
+        requestKind,
         requestId,
         method: clientReq.method || 'GET',
         protocol: String(clientReq.headers['x-forwarded-proto'] || 'http').split(',')[0],
@@ -1868,7 +2369,33 @@ ${shouldAutoRefresh ? `;(function(){
             bodyPreview: body.slice(0, 8 * 1024),
             bodyBytes: Buffer.byteLength(body, 'utf8'),
           };
-          const widget = buildWidgetScript(branchCtx.branchId, branchCtx.branchName);
+          // 版本信息（sha + 极速/源码）并入既有 CDS widget（左下角那个），不再单开角标——
+          // 一处足矣（用户 2026-06-24 反馈「两个为何不合并」）。sha 取 githubCommitSha，
+          // 模式取该 profile 容器实际钉的 deployedMode（回退到源码时如实显示「源码」）。
+          const entry = this.stateService.getState().branches[branchCtx.branchId];
+          const svcMode = branchCtx.profileId
+            ? entry?.services?.[branchCtx.profileId]?.deployedMode
+            : undefined;
+          const anyMode = svcMode
+            ?? Object.values(entry?.services ?? {}).find((s) => s?.deployedMode)?.deployedMode;
+          // 部署类型只分两类给用户看：极速（CI 预构建镜像）/ 发布（源码编译产出的发布版）。
+          const modeLabel = anyMode
+            ? (/express|prebuilt/i.test(anyMode) ? '极速' : '发布')
+            : '';
+          // 徽章 sha 跟随实际部署模式（Codex/Bugbot）：
+          //  - 极速（CI 预构建镜像）：用 ciTargetSha —— 镜像 tag 按它解析，docs-only push 只动
+          //    githubCommitSha、不动 ciTargetSha，显 ciTargetSha 才是容器实际跑的镜像 commit。
+          //  - 发布（源码编译，含极速版缺镜像自动回退）：容器是从 worktree 编译的，跑的就是
+          //    githubCommitSha，**不能**显 ciTargetSha（那是个根本没在跑的镜像 commit）。
+          const badgeSha = (modeLabel === '极速'
+            ? (entry?.ciTargetSha || entry?.githubCommitSha)
+            : (entry?.githubCommitSha || entry?.ciTargetSha)) || '';
+          const widget = buildWidgetScript(
+            branchCtx.branchId,
+            branchCtx.branchName,
+            badgeSha,
+            modeLabel,
+          );
 
           // Inject before </body> if present, otherwise append
           const idx = body.lastIndexOf('</body>');

@@ -44,6 +44,12 @@ public enum SyncApplyMode
 
     /// <summary>仅新增：对端已存在的条目跳过，不覆盖。</summary>
     AddOnly = 1,
+
+    /// <summary>
+    /// 镜像对齐（数据破坏性）：以发起方为准覆盖共享条目，并【删除目标端 bundle 里不存在的条目】。
+    /// 用于「强制对齐」——远端为准（本地镜像远端）/ 本地为准（远端镜像本地）。同时对准不走此模式。
+    /// </summary>
+    Mirror = 2,
 }
 
 /// <summary>资源条目摘要（列出本节点当前用户可发送的条目，供「发送到」弹窗展示）。</summary>
@@ -107,6 +113,15 @@ public sealed class SyncBundleItem
     /// <summary>知识库模板键等资源级展示策略。旧节点缺省为 null。</summary>
     public string? TemplateKey { get; set; }
 
+    /// <summary>主文档的血缘 ID（跨节点对齐：接收方翻译回本端 entry id）。旧节点缺省 null。</summary>
+    public string? PrimaryEntryLineage { get; set; }
+
+    /// <summary>置顶文档的血缘 ID 列表（同上，按血缘翻译）。旧节点缺省 null。</summary>
+    public List<string>? PinnedEntryLineages { get; set; }
+
+    /// <summary>本库默认排序方式（default/created-desc/...）。旧节点缺省 null。</summary>
+    public string? DefaultSortMode { get; set; }
+
     /// <summary>未知 / 扩展字段（向下兼容：接收方不认识就原样保留）。</summary>
     public Dictionary<string, JsonElement> Extras { get; set; } = new();
 }
@@ -125,6 +140,15 @@ public sealed class SyncRecord
     public string? ContentType { get; set; }
     public long FileSize { get; set; }
     public List<string>? Tags { get; set; }
+
+    /// <summary>源正文 sha256（接收方先比它再决定是否做重活，命中即廉价跳过）。文件夹/旧节点为 null。</summary>
+    public string? ContentHash { get; set; }
+
+    /// <summary>目录手动排序值（越小越靠前）。旧节点缺省 null。</summary>
+    public double? SortOrder { get; set; }
+
+    /// <summary>分类（知识库一等维度）。旧节点缺省 null。</summary>
+    public string? Category { get; set; }
 
     /// <summary>正文内容（文件夹 / 二进制为 null；空字符串是合法的空文本）。</summary>
     public string? Content { get; set; }
@@ -152,6 +176,9 @@ public sealed class SyncApplyOutcome
     public int Updated { get; set; }
     public int Skipped { get; set; }
     public int Failed { get; set; }
+
+    /// <summary>镜像对齐时删除的条目数（仅 SyncApplyMode.Mirror 会 > 0）。</summary>
+    public int Deleted { get; set; }
 
     /// <summary>对端 schema 版本高于本节点、部分字段仅保留未解释时为 true。</summary>
     public bool Partial { get; set; }

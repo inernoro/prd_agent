@@ -5,14 +5,23 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   Sparkles, Calendar, Tag, RefreshCw, Filter, X, FileText,
   Wrench, Zap, Gauge, Shuffle, Shield, Package, FlaskConical, Cog,
-  Github, GitCommit, ExternalLink, Brain, Wand2, Radio, UserCheck, Flame,
+  Github, GitCommit, GitPullRequest, ExternalLink, Brain, Wand2, Radio, UserCheck, Flame,
+  Bug, FileCheck2, Eye,
 } from 'lucide-react';
 import { useChangelogStore } from '@/stores/changelogStore';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { SseTypingBlock } from '@/components/sse/SseTypingBlock';
 import { glassPanel } from '@/lib/glassStyles';
-import { getChangelogGitHubLogs, postChangelogAiSummary } from '@/services';
-import type { ChangelogEntry, ChangelogRelease, GitHubLogEntry, GitHubLogsView } from '@/services';
+import { getChangelogGitHubLogs, getChangelogGitHubPendingReview, postChangelogAiSummary } from '@/services';
+import type {
+  ChangelogEntry,
+  ChangelogRelease,
+  GitHubLinkedDefect,
+  GitHubLogEntry,
+  GitHubLogsView,
+  GitHubPendingReviewEntry,
+  GitHubPendingReviewView,
+} from '@/services';
 import { api } from '@/services/api';
 import { useSseStream } from '@/lib/useSseStream';
 import { TabBar } from '@/components/design/TabBar';
@@ -102,7 +111,7 @@ interface FlatEntry extends ChangelogEntry {
   releaseVersion?: string;
 }
 
-type HistorySubtab = 'releases' | 'fragments' | 'github_logs';
+type HistorySubtab = 'releases' | 'fragments' | 'github_logs' | 'github_pending_review';
 type HistorySummaryStatus = 'idle' | 'loading' | 'ready' | 'error';
 
 // v4：新增 repoTotalCommitCount / matched* / coAuthors 字段，bump key 使旧缓存自然失效
@@ -269,33 +278,41 @@ export default function ChangelogPage() {
   const [githubLogs, setGitHubLogs] = useState<GitHubLogsView | null>(() => readGitHubLogsCache());
   const [loadingGitHubLogs, setLoadingGitHubLogs] = useState(false);
   const [gitHubLogsError, setGitHubLogsError] = useState<string | null>(null);
+  const [githubPendingReview, setGitHubPendingReview] = useState<GitHubPendingReviewView | null>(null);
+  const [loadingGitHubPendingReview, setLoadingGitHubPendingReview] = useState(false);
+  const [gitHubPendingReviewError, setGitHubPendingReviewError] = useState<string | null>(null);
   const [newGitHubLogShas, setNewGitHubLogShas] = useState<Set<string>>(() => new Set());
   const [liveFetchedAt, setLiveFetchedAt] = useState<string | null>(() => githubLogs?.fetchedAt ?? null);
   const [summaryCache, setSummaryCache] = useState<Record<HistorySubtab, HistorySummaryResult | null>>({
     releases: null,
     fragments: null,
     github_logs: null,
+    github_pending_review: null,
   });
   const [summaryStatus, setSummaryStatus] = useState<Record<HistorySubtab, HistorySummaryStatus>>({
     releases: 'idle',
     fragments: 'idle',
     github_logs: 'idle',
+    github_pending_review: 'idle',
   });
   const [summaryThinking, setSummaryThinking] = useState<Record<HistorySubtab, string>>({
     releases: '',
     fragments: '',
     github_logs: '',
+    github_pending_review: '',
   });
   const [summaryError, setSummaryError] = useState<Record<HistorySubtab, string | null>>({
     releases: null,
     fragments: null,
     github_logs: null,
+    github_pending_review: null,
   });
   /** 各子 tab 独立世代，避免切 tab 后先发起的请求被后一次全局 runId 误判为过期而永久卡在 loading */
   const summaryRunByTab = useRef<Record<HistorySubtab, number>>({
     releases: 0,
     fragments: 0,
     github_logs: 0,
+    github_pending_review: 0,
   });
   const scrollRootRef = useRef<HTMLDivElement>(null);
   const githubLogsRef = useRef<GitHubLogsView | null>(githubLogs);
@@ -306,6 +323,7 @@ export default function ChangelogPage() {
   const githubLogsPendingRef = useRef(false);
   const githubLogsPendingForceRef = useRef(false);
   const refreshGitHubLogsRef = useRef<((opts?: { force?: boolean; foreground?: boolean; showError?: boolean }) => Promise<void>) | null>(null);
+  const refreshGitHubPendingReviewRef = useRef<((opts?: { force?: boolean; foreground?: boolean; showError?: boolean }) => Promise<void>) | null>(null);
   const newGitHubLogClearTimerRef = useRef<number | null>(null);
 
   /**
@@ -343,9 +361,9 @@ export default function ChangelogPage() {
   // 改为：以 `release.entriesOmitted` 本身作为「是否需要拉」的信号；store 端
   // 用 `loadingReleaseVersions` 做并发去重，本端无需再缓存。
   useEffect(() => {
-    if (!releases || releases.releases.length === 0) return;
-    const firstUnarchived = releases.releases.find(isUnarchivedRelease);
-    const firstPublished = releases.releases.find((release) => !isUnarchivedRelease(release));
+    if (!releases || (releases.releases?.length ?? 0) === 0) return;
+    const firstUnarchived = (releases.releases ?? []).find(isUnarchivedRelease);
+    const firstPublished = (releases.releases ?? []).find((release) => !isUnarchivedRelease(release));
     for (const release of [firstUnarchived, firstPublished]) {
       if (release?.entriesOmitted) void loadReleaseDetail(release.version);
     }
@@ -379,6 +397,12 @@ export default function ChangelogPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 待审核 PR：首屏后台拉一次，让 chip 计数能反映尚未 merge 的修复分支。
+  useEffect(() => {
+    void refreshGitHubPendingReview({ force: false, foreground: false, showError: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     githubLogsRef.current = githubLogs;
   }, [githubLogs]);
@@ -387,6 +411,12 @@ export default function ChangelogPage() {
   useEffect(() => {
     if (activeTab !== 'update_center' || historySubtab !== 'github_logs') {
       setGitHubLogsError(null);
+    }
+  }, [activeTab, historySubtab]);
+
+  useEffect(() => {
+    if (activeTab !== 'update_center' || historySubtab !== 'github_pending_review') {
+      setGitHubPendingReviewError(null);
     }
   }, [activeTab, historySubtab]);
 
@@ -430,7 +460,7 @@ export default function ChangelogPage() {
         // 否则 35s 轮询 / 手动刷新 / SSE 会用 first-page 80 条覆盖整个列表，
         // 用户正在看的更老内容直接消失（Bugbot #3 + Codex P2）。
         const preservedTail = (previous?.logs ?? []).filter((log) => !newShas.has(log.sha));
-        // ⚠️ 关键：合并 tail 时也要保留 previous 的 hasMore / nextCursor。
+        // 注意：合并 tail 时也要保留 previous 的 hasMore / nextCursor。
         // 否则用 res.data 的 nextCursor（first-page 最后一条 sha）去续接，
         // 会拉回已经在 preservedTail 里的同一批，产生重复（Bugbot High #1 + Codex P2）
         const merged: GitHubLogsView = preservedTail.length > 0 && previous
@@ -483,6 +513,40 @@ export default function ChangelogPage() {
     refreshGitHubLogsRef.current = refreshGitHubLogs;
   }, [refreshGitHubLogs]);
 
+  const refreshGitHubPendingReview = useCallback(async ({
+    force = false,
+    foreground = false,
+    showError = false,
+  }: {
+    force?: boolean;
+    foreground?: boolean;
+    showError?: boolean;
+  } = {}) => {
+    if (foreground) {
+      setLoadingGitHubPendingReview(true);
+      setGitHubPendingReviewError(null);
+    }
+    try {
+      const res = await getChangelogGitHubPendingReview({ limit: 50, force });
+      if (res.success && res.data) {
+        setGitHubPendingReview(res.data);
+        setGitHubPendingReviewError(null);
+      } else if (showError) {
+        setGitHubPendingReviewError(res.error?.message || '加载 GitHub 待审核提交失败');
+      }
+    } catch (error: unknown) {
+      if (showError) {
+        setGitHubPendingReviewError(error instanceof Error ? error.message : '加载 GitHub 待审核提交失败');
+      }
+    } finally {
+      if (foreground) setLoadingGitHubPendingReview(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshGitHubPendingReviewRef.current = refreshGitHubPendingReview;
+  }, [refreshGitHubPendingReview]);
+
   // cursor 分页续接 GitHub 提交（向更老的方向）
   const loadingMoreLogsRef = useRef(false);
   const loadMoreGitHubLogs = useCallback(async () => {
@@ -497,7 +561,7 @@ export default function ChangelogPage() {
         before: requestedCursor,
       });
       if (!res.success || !res.data) return;
-      // ⚠️ 关键：读最新 ref，而不是用 startSnapshot —— refresh 可能在我们等待期间到达。
+      // 注意：读最新 ref，而不是用 startSnapshot，refresh 可能在我们等待期间到达。
       // 若 latest 已不包含 requestedCursor（=refresh 已用新数据完全覆盖），
       // 本次返回的旧 cursor 数据是过时的，直接丢弃，避免用 stale 数据覆盖新列表（Bugbot #2）。
       const latest = githubLogsRef.current;
@@ -562,6 +626,11 @@ export default function ChangelogPage() {
     void loadCurrentWeek({ daysLimit: 4, force: true });
     void loadReleases({ limit: 100, summary: true, force: true });
     void refreshGitHubLogs({ force: true, foreground: historySubtab === 'github_logs', showError: historySubtab === 'github_logs' });
+    void refreshGitHubPendingReview({
+      force: true,
+      foreground: historySubtab === 'github_pending_review',
+      showError: historySubtab === 'github_pending_review',
+    });
   };
 
   // ── 实时推送（SSE）：服务器后台刷新有更新时主动推到本页，无需用户手动刷新 ──
@@ -579,6 +648,7 @@ export default function ChangelogPage() {
     if (viewType === 'current-week') void loadCurrentWeek({ daysLimit: 4 });
     else if (viewType === 'releases') void loadReleases({ limit: 100, summary: true });
     else if (viewType === 'github-logs') void refreshGitHubLogs({ force: false });
+    else if (viewType === 'github-pending-review') void refreshGitHubPendingReviewRef.current?.({ force: false });
     setJustUpdatedAt(Date.now());
   }, [loadCurrentWeek, loadReleases, refreshGitHubLogs]);
 
@@ -680,34 +750,40 @@ export default function ChangelogPage() {
 
   const counts = useMemo(() => {
     const released = releases?.totalEntries
-      ?? releases?.releases.reduce((sum, release) => (
-        sum + (release.entryCount ?? release.days.reduce((daySum, day) => daySum + day.entries.length, 0))
+      ?? (releases?.releases ?? []).reduce((sum, release) => (
+        sum + (release.entryCount ?? (release.days ?? []).reduce((daySum, day) => daySum + (day.entries?.length ?? 0), 0))
       ), 0)
       ?? 0;
     const unpublished = currentWeek?.totalEntries
-      ?? currentWeek?.fragments.reduce((sum, fragment) => sum + fragment.entries.length, 0)
+      ?? (currentWeek?.fragments ?? []).reduce((sum, fragment) => sum + (fragment.entries?.length ?? 0), 0)
       ?? 0;
     // chip 显示仓库全历史提交总数（用户关心的是「这个仓库一共提交了多少次」），
     // 统计失败时降级为「最近一周」窗口内条数
     const logs = githubLogs?.repoTotalCommitCount ?? githubLogs?.totalCount ?? githubLogs?.logs.length ?? 0;
-    return { releases: released, fragments: unpublished, github_logs: logs };
-  }, [currentWeek, githubLogs, releases]);
+    const pendingReview = githubPendingReview?.totalCount ?? githubPendingReview?.items.length ?? 0;
+    return {
+      releases: released,
+      fragments: unpublished,
+      github_logs: logs,
+      github_pending_review: pendingReview,
+    };
+  }, [currentWeek, githubLogs, githubPendingReview, releases]);
 
   // 收集 release / fragment 中出现过的 type 用于筛选 chip
   const { availableTypes } = useMemo(() => {
     const types = new Set<string>();
     if (releases) {
-      for (const r of releases.releases) {
-        for (const d of r.days) {
-          for (const e of d.entries) {
+      for (const r of releases.releases ?? []) {
+        for (const d of r.days ?? []) {
+          for (const e of d.entries ?? []) {
             if (e.type) types.add(e.type.toLowerCase());
           }
         }
       }
     }
     if (currentWeek) {
-      for (const fragment of currentWeek.fragments) {
-        for (const entry of fragment.entries) {
+      for (const fragment of currentWeek.fragments ?? []) {
+        for (const entry of fragment.entries ?? []) {
           if (entry.type) types.add(entry.type.toLowerCase());
         }
       }
@@ -728,17 +804,17 @@ export default function ChangelogPage() {
       result[key] = (result[key] ?? 0) + 1;
     };
     if (releases) {
-      for (const r of releases.releases) {
-        for (const d of r.days) {
+      for (const r of releases.releases ?? []) {
+        for (const d of r.days ?? []) {
           if (d.date < cutoffKey) continue;
-          for (const e of d.entries) add(e.type);
+          for (const e of d.entries ?? []) add(e.type);
         }
       }
     }
     if (currentWeek) {
-      for (const f of currentWeek.fragments) {
+      for (const f of currentWeek.fragments ?? []) {
         if (f.date < cutoffKey) continue;
-        for (const e of f.entries) add(e.type);
+        for (const e of f.entries ?? []) add(e.type);
       }
     }
     return result;
@@ -760,26 +836,26 @@ export default function ChangelogPage() {
     if (!releases) return [];
     // 去重：CHANGELOG.md 文末有第二个 `## [未发布]` 模板锚点，parser 会重复匹配
     const seenVersions = new Set<string>();
-    return releases.releases
+    return (releases.releases ?? [])
       .filter((r) => {
         if (seenVersions.has(r.version)) return false;
         seenVersions.add(r.version);
         return true;
       })
       .map((release) => {
-        const visibleDays = release.days
+        const visibleDays = (release.days ?? [])
           .map((d) => ({
             ...d,
-            entries: d.entries.filter(matchFilter),
+            entries: (d.entries ?? []).filter(matchFilter),
           }))
           .filter((d) => d.entries.length > 0);
         const totalCount = visibleDays.reduce((s, d) => s + d.entries.length, 0);
         // summary 模式（entriesOmitted=true）下 days 故意为空——仍然要渲染卡片，让 IntersectionObserver
         // 能挂到 dom 上触发详情拉取。只有当 release 真的「无 entries + 无 highlights + 非 summary」时才隐藏。
-        if (totalCount === 0 && release.highlights.length === 0 && !release.entriesOmitted) {
+        if (totalCount === 0 && (release.highlights?.length ?? 0) === 0 && !release.entriesOmitted) {
           return null;
         }
-        const entryCount = release.entryCount ?? release.days.reduce((sum, day) => sum + day.entries.length, 0);
+        const entryCount = release.entryCount ?? (release.days ?? []).reduce((sum, day) => sum + (day.entries?.length ?? 0), 0);
         return { release, visibleDays, totalCount, entryCount };
       })
       .filter((item): item is NonNullable<typeof item> => item !== null);
@@ -801,7 +877,7 @@ export default function ChangelogPage() {
       }
       for (const day of visibleDays) {
         const group = ensureGroup(day.date);
-        group.rows.push(...day.entries.map((entry) => ({
+        group.rows.push(...(day.entries ?? []).map((entry) => ({
           ...entry,
           date: day.date,
           commitTimeUtc: day.commitTimeUtc ?? null,
@@ -816,11 +892,11 @@ export default function ChangelogPage() {
 
   const fragmentGroups = useMemo(() => {
     if (!currentWeek) return [];
-    return currentWeek.fragments.reduce<Array<{
+    return (currentWeek.fragments ?? []).reduce<Array<{
       date: string;
       rows: Array<FlatEntry & { fileName: string }>;
     }>>((acc, fragment) => {
-      const visibleEntries = fragment.entries.filter(matchFilter);
+      const visibleEntries = (fragment.entries ?? []).filter(matchFilter);
       if (visibleEntries.length === 0) return acc;
       const bucket = acc.find((item) => item.date === fragment.date);
       const rows = visibleEntries.map((entry) => ({
@@ -837,6 +913,7 @@ export default function ChangelogPage() {
   }, [currentWeek, matchFilter]);
 
   const githubLogRows = githubLogs?.logs ?? [];
+  const githubPendingReviewRows = githubPendingReview?.items ?? [];
   const releaseList = useIncrementalVisible(
     activeTab === 'update_center' && historySubtab === 'releases',
     publishedTimelineGroups.length,
@@ -878,7 +955,7 @@ export default function ChangelogPage() {
     const visibleDates = new Set(
       publishedTimelineGroups.slice(0, releaseList.visibleCount).map((group) => group.date)
     );
-    for (const release of releases.releases) {
+    for (const release of releases.releases ?? []) {
       if (!release.entriesOmitted) continue;
       if (release.releaseDate && visibleDates.has(release.releaseDate)) {
         void loadReleaseDetail(release.version);
@@ -949,7 +1026,9 @@ export default function ChangelogPage() {
     ? '已发布'
     : historySubtab === 'fragments'
       ? '未发布'
-      : 'GitHub 提交';
+      : historySubtab === 'github_logs'
+        ? 'GitHub 提交'
+        : 'GitHub 待审核提交';
   const activeTotal = counts[historySubtab];
 
   // 新提交/新条目到达时给「共 N 次提交」chip 一道扫光（同页签内数值增长才触发，切页签不闪）
@@ -983,7 +1062,7 @@ export default function ChangelogPage() {
       <WeeklyReportSourceDialog />
 
       {activeTab === 'update_center' && (
-      <div ref={scrollRootRef} className="flex flex-col gap-5 flex-1 min-h-0 overflow-y-auto pr-1"
+      <div ref={scrollRootRef} className="clg-scroll flex flex-col gap-5 flex-1 min-h-0 overflow-y-auto pr-1"
         style={{ overscrollBehavior: 'contain' }}>
       {/* ── Header ───────────────────────────────────────── */}
       <header
@@ -1062,7 +1141,7 @@ export default function ChangelogPage() {
           <button
             type="button"
             onClick={handleRefresh}
-            disabled={loadingReleases || loadingCurrent || loadingGitHubLogs}
+            disabled={loadingReleases || loadingCurrent || loadingGitHubLogs || loadingGitHubPendingReview}
             className="h-9 px-3 rounded-lg inline-flex items-center gap-1.5 text-[12px] transition-colors disabled:opacity-50"
             style={{
               border: '1px solid rgba(255, 255, 255, 0.12)',
@@ -1071,7 +1150,7 @@ export default function ChangelogPage() {
             }}
             title="刷新（绕过服务端缓存并重新拉取）"
           >
-            {(loadingReleases || loadingCurrent || loadingGitHubLogs) ? <MapSpinner size={14} /> : <RefreshCw size={14} />}
+            {(loadingReleases || loadingCurrent || loadingGitHubLogs || loadingGitHubPendingReview) ? <MapSpinner size={14} /> : <RefreshCw size={14} />}
             <span>刷新</span>
           </button>
         </div>
@@ -1213,10 +1292,11 @@ export default function ChangelogPage() {
                   </span>
                 ),
               },
+              { key: 'github_pending_review', label: 'GitHub 待审核提交', icon: <GitPullRequest size={13} /> },
             ] as const).map((tab) => {
               const active = historySubtab === tab.key;
               const count = counts[tab.key];
-              const fragmentFileCount = currentWeek?.totalDays ?? currentWeek?.fragments.length ?? 0;
+              const fragmentFileCount = currentWeek?.totalDays ?? currentWeek?.fragments?.length ?? 0;
               const tabTitle = tab.key === 'fragments' && currentWeek
                 ? `${fragmentFileCount} 个碎片文件 · ${count} 条未发布改动\n来源：changelogs/*.md\n进入已发布流水：发布到 admin 生产环境后合入 CHANGELOG.md`
                 : undefined;
@@ -1262,7 +1342,7 @@ export default function ChangelogPage() {
               }}
               title={`${activeSummaryLabel}总数量`}
             >
-              共 <AnimatedNumber value={activeTotal} /> {historySubtab === 'github_logs' ? '次提交' : '条'}
+              共 <AnimatedNumber value={activeTotal} /> {historySubtab === 'github_logs' ? '次提交' : historySubtab === 'github_pending_review' ? '个 PR' : '条'}
             </span>
             <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
               {historySubtab === 'releases' && '来自 admin 生产发布流水'}
@@ -1279,6 +1359,12 @@ export default function ChangelogPage() {
                     <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
                   </span>
                   {liveFetchedAtRelative ? ` ${liveFetchedAtRelative}` : ' 实时同步中'}
+                </span>
+              )}
+              {historySubtab === 'github_pending_review' && (
+                <span className="inline-flex items-center gap-1">
+                  来自 GitHub Pull Requests API · open PR · 待 code review / CI
+                  {githubPendingReview?.fetchedAt ? ` · ${formatRelativeTime(githubPendingReview.fetchedAt)}同步` : ''}
                 </span>
               )}
             </span>
@@ -1519,7 +1605,7 @@ export default function ChangelogPage() {
           <>
             {!currentWeek && <MapSectionLoader text="正在加载未发布改动…" />}
 
-            {currentWeek && currentWeek.fragments.length === 0 && (
+            {currentWeek && (currentWeek.fragments?.length ?? 0) === 0 && (
               <div
                 className="rounded-xl px-4 py-6 text-center text-[12px]"
                 style={{
@@ -1532,7 +1618,7 @@ export default function ChangelogPage() {
               </div>
             )}
 
-            {currentWeek && currentWeek.fragments.length > 0 && fragmentGroups.length === 0 && (
+            {currentWeek && (currentWeek.fragments?.length ?? 0) > 0 && fragmentGroups.length === 0 && (
               <div
                 className="rounded-xl px-4 py-6 text-center text-[12px]"
                 style={{
@@ -1687,6 +1773,79 @@ export default function ChangelogPage() {
             )}
           </>
         )}
+
+        {historySubtab === 'github_pending_review' && (
+          <>
+            {loadingGitHubPendingReview && !githubPendingReview && <MapSectionLoader text="正在加载 GitHub 待审核提交…" />}
+
+            {gitHubPendingReviewError && (
+              <div
+                className="rounded-xl px-4 py-3 text-[12px]"
+                style={{
+                  background: 'rgba(248, 113, 113, 0.08)',
+                  border: '1px solid rgba(248, 113, 113, 0.32)',
+                  color: '#fca5a5',
+                }}
+              >
+                注意：{gitHubPendingReviewError}
+              </div>
+            )}
+
+            {!loadingGitHubPendingReview && githubPendingReview && githubPendingReviewRows.length === 0 && (
+              <div
+                className="rounded-xl px-4 py-6 text-center text-[12px]"
+                style={{
+                  background: 'rgba(255, 255, 255, 0.02)',
+                  border: '1px dashed rgba(255, 255, 255, 0.08)',
+                  color: 'var(--text-muted)',
+                }}
+              >
+                暂无 GitHub 待审核提交
+              </div>
+            )}
+
+            {githubPendingReviewRows.length > 0 && (
+              <div
+                className="rounded-xl px-4 py-3"
+                style={{
+                  background: 'rgba(255, 255, 255, 0.025)',
+                  border: '1px solid rgba(255, 255, 255, 0.06)',
+                }}
+              >
+                <div className="flex items-center gap-2 mb-3 flex-wrap">
+                  <div
+                    className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md"
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.04)',
+                      border: '1px solid rgba(255, 255, 255, 0.08)',
+                      color: 'var(--text-secondary)',
+                      fontSize: '13px',
+                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                      fontWeight: 600,
+                    }}
+                  >
+                    <GitPullRequest size={13} />
+                    Open PR
+                  </div>
+                  <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    · {githubPendingReviewRows.length} 个待审核提交
+                  </span>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <AnimatePresence initial={false}>
+                    {githubPendingReviewRows.map((item, idx) => (
+                      <GitHubPendingReviewRow
+                        key={item.number}
+                        item={item}
+                        index={idx}
+                      />
+                    ))}
+                  </AnimatePresence>
+                </div>
+              </div>
+            )}
+          </>
+        )}
       </section>
       </div>
       )}
@@ -1811,6 +1970,367 @@ function EntryRow({ entry, newCutoff }: { entry: FlatEntry; newCutoff: number | 
   );
 }
 
+interface PublishStatusMeta {
+  label: string;
+  color: string;
+  bg: string;
+  border: string;
+}
+
+function getPublishStatusMeta(status?: string | null): PublishStatusMeta {
+  if (status === 'published') {
+    return {
+      label: '已发布',
+      color: '#86efac',
+      bg: 'rgba(34, 197, 94, 0.09)',
+      border: 'rgba(34, 197, 94, 0.28)',
+    };
+  }
+  if (status === 'pending') {
+    return {
+      label: '需要真人审核发布',
+      color: '#fcd34d',
+      bg: 'rgba(234, 179, 8, 0.10)',
+      border: 'rgba(234, 179, 8, 0.28)',
+    };
+  }
+  return {
+    label: '需要真人审核发布',
+    color: '#cbd5e1',
+    bg: 'rgba(148, 163, 184, 0.09)',
+    border: 'rgba(148, 163, 184, 0.22)',
+  };
+}
+
+function resolveLinkedDefectStatus(defects: GitHubLinkedDefect[]): PublishStatusMeta | null {
+  if (defects.length === 0) return null;
+  if (defects.every((defect) => defect.publishStatus === 'published')) {
+    return getPublishStatusMeta('published');
+  }
+  if (defects.some((defect) => defect.publishStatus === 'pending')) {
+    return getPublishStatusMeta('pending');
+  }
+  return getPublishStatusMeta('unknown');
+}
+
+function buildDefectDetailUrl(defect: GitHubLinkedDefect): string {
+  const params = new URLSearchParams({ defectId: defect.defectId });
+  if (defect.traceId) params.set('traceId', defect.traceId);
+  return `/defect-agent?${params.toString()}`;
+}
+
+function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
+  const [open, setOpen] = useState(false);
+  const status = resolveLinkedDefectStatus(defects);
+  if (defects.length === 0 || !status) return null;
+
+  const hasMine = defects.some((defect) => defect.isSubmittedByMe);
+  const mineCount = defects.filter((defect) => defect.isSubmittedByMe).length;
+  const badgeCount = hasMine ? mineCount : defects.length;
+  const buttonMeta = hasMine
+    ? {
+        label: '我的缺陷',
+        color: '#f0abfc',
+        bg: 'rgba(217, 70, 239, 0.13)',
+        border: 'rgba(217, 70, 239, 0.36)',
+        icon: UserCheck,
+      }
+    : {
+        label: '关联缺陷',
+        color: status.color,
+        bg: status.bg,
+        border: status.border,
+        icon: Bug,
+      };
+  const ButtonIcon = buttonMeta.icon;
+
+  return (
+    <div className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className="inline-flex items-center gap-1.5 h-[26px] px-2 rounded-md text-[12px] transition-colors"
+        style={{
+          color: buttonMeta.color,
+          background: buttonMeta.bg,
+          border: `1px solid ${buttonMeta.border}`,
+        }}
+        title={hasMine ? '查看我提交且关联此更新的缺陷' : '查看该更新关联的缺陷'}
+      >
+        <ButtonIcon size={11} />
+        {buttonMeta.label} {badgeCount}
+        <span style={{ color: buttonMeta.color, opacity: 0.86 }}>{status.label}</span>
+      </button>
+      {open && (
+        <div
+          className="absolute right-0 top-[32px] z-40 w-[420px] max-w-[calc(100vw-48px)] rounded-lg p-3 shadow-2xl"
+          style={{
+            background: 'rgba(30, 30, 40, 0.98)',
+            border: '1px solid rgba(255, 255, 255, 0.14)',
+            boxShadow: '0 18px 60px rgba(0, 0, 0, 0.36)',
+          }}
+        >
+          <div className="flex items-center justify-between gap-3 pb-2 border-b border-white/10">
+            <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              {hasMine ? <UserCheck size={13} /> : <Bug size={13} />}
+              {hasMine ? '我的关联缺陷' : '关联缺陷'}
+            </div>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="h-6 w-6 inline-flex items-center justify-center rounded-md hover:bg-white/10"
+              title="关闭"
+            >
+              <X size={13} />
+            </button>
+          </div>
+          <div className="mt-2 space-y-2">
+            {defects.map((defect) => (
+              <div
+                key={defect.traceId}
+                className="rounded-md p-2"
+                style={{
+                  background: defect.isSubmittedByMe ? 'rgba(217, 70, 239, 0.055)' : 'rgba(255, 255, 255, 0.035)',
+                  border: `1px solid ${defect.isSubmittedByMe ? 'rgba(217, 70, 239, 0.24)' : 'rgba(255, 255, 255, 0.08)'}`,
+                }}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <a
+                    href={buildDefectDetailUrl(defect)}
+                    className="text-[13px] font-medium hover:underline"
+                    style={{ color: '#bfdbfe' }}
+                  >
+                    {defect.defectNo ? `#${defect.defectNo}` : '缺陷'} {defect.defectTitle || '未命名缺陷'}
+                  </a>
+                  <div className="shrink-0 inline-flex items-center gap-1">
+                    {defect.isSubmittedByMe && (
+                      <span
+                        className="rounded px-1.5 py-0.5 text-[11px]"
+                        style={{
+                          color: '#f0abfc',
+                          background: 'rgba(217, 70, 239, 0.12)',
+                          border: '1px solid rgba(217, 70, 239, 0.28)',
+                        }}
+                      >
+                        我提交的
+                      </span>
+                    )}
+                    <span
+                      className="rounded px-1.5 py-0.5 text-[11px]"
+                      style={{
+                        color: getPublishStatusMeta(defect.publishStatus).color,
+                        background: getPublishStatusMeta(defect.publishStatus).bg,
+                        border: `1px solid ${getPublishStatusMeta(defect.publishStatus).border}`,
+                      }}
+                    >
+                      {getPublishStatusMeta(defect.publishStatus).label}
+                    </span>
+                  </div>
+                </div>
+                {defect.reporterName && (
+                  <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    提交人：{defect.reporterName}
+                  </div>
+                )}
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <a
+                    href={buildDefectDetailUrl(defect)}
+                    className="inline-flex items-center gap-1 text-[12px] hover:underline"
+                    style={{ color: 'var(--text-secondary)' }}
+                  >
+                    <Eye size={11} />
+                    查看缺陷
+                  </a>
+                  {defect.commitSha && (
+                    <span
+                      className="inline-flex items-center gap-1 text-[12px]"
+                      style={{ color: 'var(--text-muted)' }}
+                    >
+                      <GitCommit size={11} />
+                      {defect.commitSha.slice(0, 7)}
+                    </span>
+                  )}
+                  {defect.pullRequestUrl && (
+                    <a
+                      href={defect.pullRequestUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-[12px] hover:underline"
+                      style={{ color: 'var(--text-secondary)' }}
+                    >
+                      <Github size={11} />
+                      {defect.pullRequestNumber ? `PR #${defect.pullRequestNumber}` : 'PR'}
+                    </a>
+                  )}
+                  {defect.previewUrl && (
+                    <a
+                      href={defect.previewUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-[12px] hover:underline"
+                      style={{ color: 'var(--text-secondary)' }}
+                    >
+                      <Eye size={11} />
+                      验收地址
+                    </a>
+                  )}
+                  {defect.visualReportUrl && (
+                    <a
+                      href={defect.visualReportUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-[12px] hover:underline"
+                      style={{ color: 'var(--text-secondary)' }}
+                    >
+                      <FileCheck2 size={11} />
+                      验收报告
+                    </a>
+                  )}
+                  {defect.knowledgeBaseUrl && (
+                    <a
+                      href={defect.knowledgeBaseUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-[12px] hover:underline"
+                      style={{ color: 'var(--text-secondary)' }}
+                    >
+                      <FileText size={11} />
+                      知识库
+                    </a>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GitHubPendingReviewRow({ item, index }: { item: GitHubPendingReviewEntry; index: number }) {
+  const updatedTime = formatRelativeTime(item.updatedAtUtc);
+  const avatarLetter = (item.authorName || '?').trim().charAt(0).toUpperCase() || '?';
+  const linkedDefects = item.linkedDefects ?? [];
+  const statusLabel = item.isDraft ? '草稿' : '待审核';
+  const statusStyle = item.isDraft
+    ? {
+        background: 'rgba(251, 146, 60, 0.10)',
+        color: '#fdba74',
+        border: '1px solid rgba(251, 146, 60, 0.30)',
+      }
+    : {
+        background: 'rgba(34, 197, 94, 0.10)',
+        color: '#86efac',
+        border: '1px solid rgba(34, 197, 94, 0.28)',
+      };
+
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 10, scale: 0.995 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -8, scale: 0.99 }}
+      transition={{ duration: 0.28, delay: Math.min(index, 8) * 0.025, ease: [0.25, 0.46, 0.45, 0.94] }}
+      className="rounded-lg px-3.5 py-3 flex items-center gap-3 transition-colors hover:bg-white/5"
+      style={{
+        background: 'rgba(255, 255, 255, 0.025)',
+        border: '1px solid rgba(255, 255, 255, 0.06)',
+        textDecoration: 'none',
+      }}
+      title={`${item.headBranch} -> ${item.baseBranch}`}
+    >
+      <div
+        className="shrink-0 inline-flex items-center gap-1 px-2 h-[24px] rounded-md text-[12px] font-semibold"
+        style={{
+          background: 'rgba(99, 102, 241, 0.12)',
+          color: '#c7d2fe',
+          border: '1px solid rgba(99, 102, 241, 0.24)',
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+        }}
+      >
+        <GitPullRequest size={11} />
+        #{item.number}
+      </div>
+      <div
+        className="shrink-0 inline-flex items-center gap-1 px-2 h-[24px] rounded-md text-[12px] font-semibold"
+        style={{
+          background: 'rgba(14, 165, 233, 0.10)',
+          color: '#7dd3fc',
+          border: '1px solid rgba(14, 165, 233, 0.22)',
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+        }}
+      >
+        <GitCommit size={11} />
+        {item.shortSha}
+      </div>
+      <div
+        className="shrink-0 inline-flex items-center gap-1.5 h-[26px] px-2 rounded-md text-[12px]"
+        style={{
+          color: 'var(--text-secondary)',
+          background: 'rgba(255, 255, 255, 0.04)',
+          border: '1px solid rgba(255, 255, 255, 0.08)',
+        }}
+      >
+        {item.authorAvatarUrl ? (
+          <img
+            src={item.authorAvatarUrl}
+            alt=""
+            className="h-4 w-4 rounded-full"
+            referrerPolicy="no-referrer"
+            loading="lazy"
+          />
+        ) : (
+          <span
+            className="h-4 w-4 rounded-full inline-flex items-center justify-center text-[9px] font-semibold"
+            style={{
+              background: 'rgba(99, 102, 241, 0.18)',
+              color: '#c7d2fe',
+            }}
+          >
+            {avatarLetter}
+          </span>
+        )}
+        {item.authorName}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="text-[13px] leading-relaxed truncate" style={{ color: 'var(--text-secondary)' }}>
+          {item.title}
+        </div>
+        <div
+          className="mt-0.5 text-[11px] truncate"
+          style={{
+            color: 'var(--text-muted)',
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+          }}
+        >
+          {`${item.headBranch} -> ${item.baseBranch}`}
+        </div>
+      </div>
+      <span
+        className="shrink-0 inline-flex items-center h-[24px] px-2 rounded-md text-[12px] font-semibold"
+        style={statusStyle}
+      >
+        {statusLabel}
+      </span>
+      <div
+        className="shrink-0 text-[12px]"
+        style={{
+          color: 'var(--text-muted)',
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      >
+        {updatedTime || formatDisplayDate('', item.updatedAtUtc)}
+      </div>
+      <LinkedDefectsPopover defects={linkedDefects} />
+      <a href={item.htmlUrl} target="_blank" rel="noreferrer" className="shrink-0 inline-flex" title="查看 GitHub PR">
+        <ExternalLink size={13} style={{ color: 'var(--text-muted)', opacity: 0.65, flexShrink: 0 }} />
+      </a>
+    </motion.div>
+  );
+}
+
 function GitHubLogRow({ log, index, isLiveNew }: { log: GitHubLogEntry; index: number; isLiveNew: boolean }) {
   const commitDateTime = formatCommitDateTime(log.commitTimeUtc) ?? log.commitTimeUtc;
   const relativeTime = formatRelativeTime(log.commitTimeUtc);
@@ -1819,6 +2339,7 @@ function GitHubLogRow({ log, index, isLiveNew }: { log: GitHubLogEntry; index: n
   const isMatched = Boolean(log.matchedDisplayName);
   const primaryAuthorLabel = log.matchedDisplayName ?? log.authorName;
   const coAuthors = log.coAuthors ?? [];
+  const linkedDefects = log.linkedDefects ?? [];
   const authorTooltip = [
     `GitHub 作者：${log.authorName}`,
     isMatched
@@ -1829,7 +2350,7 @@ function GitHubLogRow({ log, index, isLiveNew }: { log: GitHubLogEntry; index: n
       : null,
   ].filter(Boolean).join('\n');
   return (
-    <motion.a
+    <motion.div
       layout
       initial={{ opacity: 0, y: isLiveNew ? -18 : 10, scale: isLiveNew ? 0.985 : 0.995 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -1839,10 +2360,7 @@ function GitHubLogRow({ log, index, isLiveNew }: { log: GitHubLogEntry; index: n
         delay: isLiveNew ? Math.min(index, 6) * 0.035 : 0,
         ease: [0.25, 0.46, 0.45, 0.94],
       }}
-      href={log.htmlUrl}
-      target="_blank"
-      rel="noreferrer"
-      className="rounded-lg px-3.5 py-3 flex items-center gap-3 transition-colors hover:bg-white/5"
+      className="relative rounded-lg px-3.5 py-3 flex items-center gap-3 transition-colors hover:bg-white/5"
       style={{
         background: isLiveNew
           ? 'linear-gradient(90deg, rgba(34, 197, 94, 0.13), rgba(99, 102, 241, 0.07), rgba(255, 255, 255, 0.025))'
@@ -1920,7 +2438,10 @@ function GitHubLogRow({ log, index, isLiveNew }: { log: GitHubLogEntry; index: n
       >
         {relativeTime || formatDisplayDate('', log.commitTimeUtc)}
       </div>
-      <ExternalLink size={13} style={{ color: 'var(--text-muted)', opacity: 0.65, flexShrink: 0 }} />
-    </motion.a>
+      <LinkedDefectsPopover defects={linkedDefects} />
+      <a href={log.htmlUrl} target="_blank" rel="noreferrer" className="shrink-0 inline-flex" title="查看 GitHub commit">
+        <ExternalLink size={13} style={{ color: 'var(--text-muted)', opacity: 0.65, flexShrink: 0 }} />
+      </a>
+    </motion.div>
   );
 }

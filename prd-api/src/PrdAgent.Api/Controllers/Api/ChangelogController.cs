@@ -44,6 +44,7 @@ public class ChangelogController : ControllerBase
     private readonly IChangelogPushHub _pushHub;
     private readonly MongoDbContext _db;
     private readonly IMemoryCache _cache;
+    private readonly IConfiguration _config;
 
     public ChangelogController(
         IChangelogReader reader,
@@ -51,7 +52,8 @@ public class ChangelogController : ControllerBase
         ILLMRequestContextAccessor llmRequestContext,
         IChangelogPushHub pushHub,
         MongoDbContext db,
-        IMemoryCache cache)
+        IMemoryCache cache,
+        IConfiguration config)
     {
         _reader = reader;
         _gateway = gateway;
@@ -59,6 +61,7 @@ public class ChangelogController : ControllerBase
         _pushHub = pushHub;
         _db = db;
         _cache = cache;
+        _config = config;
     }
 
     /// <summary>
@@ -128,8 +131,318 @@ public class ChangelogController : ControllerBase
         // reader 永远拿全量（1000 上限），controller 切片
         var view = await _reader.GetGitHubLogsAsync(1000, force).ConfigureAwait(false);
         var matchIndex = await GetUserMatchIndexAsync().ConfigureAwait(false);
+        var linkedDefectsBySha = await GetLinkedDefectsForGitHubLogsAsync(view, limit, before).ConfigureAwait(false);
         if (!force) SetClientCacheHeaders();
-        return Ok(ApiResponse<GitHubLogsDto>.Ok(MapGitHubLogs(view, limit, before, matchIndex)));
+        return Ok(ApiResponse<GitHubLogsDto>.Ok(MapGitHubLogs(view, limit, before, matchIndex, linkedDefectsBySha)));
+    }
+
+    private async Task<IReadOnlyDictionary<string, List<GitHubLinkedDefectDto>>> GetLinkedDefectsForGitHubLogsAsync(
+        GitHubLogsView view,
+        int limit,
+        string? before)
+    {
+        var startIdx = 0;
+        if (!string.IsNullOrEmpty(before))
+        {
+            var idx = view.Logs.FindIndex(l => string.Equals(l.Sha, before, StringComparison.OrdinalIgnoreCase));
+            if (idx >= 0) startIdx = idx + 1;
+        }
+
+        var slice = view.Logs.Skip(startIdx).Take(Math.Max(0, limit)).ToList();
+        if (slice.Count == 0)
+            return new Dictionary<string, List<GitHubLinkedDefectDto>>(StringComparer.OrdinalIgnoreCase);
+
+        var shaAliasesByCommit = slice
+            .Select(l =>
+            {
+                var sha = l.Sha.ToLowerInvariant();
+                return new { CommitSha = sha, Aliases = BuildCommitShaAliases(l.Sha, l.ShortSha) };
+            })
+            .ToList();
+        var shas = shaAliasesByCommit
+            .SelectMany(x => x.Aliases)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var commitShaByAlias = shaAliasesByCommit
+            .SelectMany(x => x.Aliases.Select(alias => new { Alias = alias, x.CommitSha }))
+            .GroupBy(x => x.Alias, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().CommitSha, StringComparer.OrdinalIgnoreCase);
+        var traces = await _db.DefectResolutionTraces
+            .Find(x => shas.Contains(x.CommitSha))
+            .ToListAsync()
+            .ConfigureAwait(false);
+        var defectIds = traces
+            .Select(x => x.DefectId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var defectsById = defectIds.Count == 0
+            ? new Dictionary<string, DefectReport>(StringComparer.Ordinal)
+            : (await _db.DefectReports
+                .Find(x => defectIds.Contains(x.Id))
+                .ToListAsync()
+                .ConfigureAwait(false))
+                .ToDictionary(x => x.Id, StringComparer.Ordinal);
+        var currentUserId = this.GetRequiredUserId();
+
+        var deployedCommitSha = ResolveCurrentDeployCommitSha();
+        var deployedIndex = string.IsNullOrWhiteSpace(deployedCommitSha)
+            ? -1
+            : view.Logs.FindIndex(l => string.Equals(l.Sha, deployedCommitSha, StringComparison.OrdinalIgnoreCase));
+        var shaIndex = view.Logs
+            .Select((log, index) => new { log.Sha, index })
+            .GroupBy(x => x.Sha, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().index, StringComparer.OrdinalIgnoreCase);
+
+        var now = DateTime.UtcNow;
+        var newlyPublishedTraceIds = new List<string>();
+        var result = new Dictionary<string, List<GitHubLinkedDefectDto>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var trace in traces)
+        {
+            var normalizedTraceSha = trace.CommitSha.Trim().ToLowerInvariant();
+            if (!commitShaByAlias.TryGetValue(normalizedTraceSha, out var commitSha))
+                commitSha = normalizedTraceSha;
+
+            var publishStatus = ResolvePublishStatus(trace, commitSha, deployedCommitSha, deployedIndex, shaIndex);
+            if (publishStatus == DefectResolutionPublishStatus.Published &&
+                trace.PublishStatus != DefectResolutionPublishStatus.Published)
+            {
+                newlyPublishedTraceIds.Add(trace.Id);
+            }
+
+            if (!result.TryGetValue(commitSha, out var linked))
+            {
+                linked = new List<GitHubLinkedDefectDto>();
+                result[commitSha] = linked;
+            }
+
+            defectsById.TryGetValue(trace.DefectId, out var defect);
+            linked.Add(new GitHubLinkedDefectDto
+            {
+                TraceId = trace.Id,
+                DefectId = trace.DefectId,
+                DefectNo = trace.DefectNo,
+                DefectTitle = trace.DefectTitle,
+                ReporterName = defect?.ReporterName,
+                IsSubmittedByMe = defect != null
+                    && string.Equals(defect.ReporterId, currentUserId, StringComparison.Ordinal),
+                FixStatus = publishStatus == DefectResolutionPublishStatus.Published
+                    ? DefectResolutionFixStatus.Published
+                    : trace.FixStatus,
+                PublishStatus = publishStatus,
+                PreviewUrl = trace.PreviewUrl,
+                VisualReportUrl = trace.VisualReportUrl,
+                KnowledgeBaseUrl = trace.KnowledgeBaseUrl,
+                PullRequestNumber = trace.PullRequestNumber,
+                PullRequestUrl = trace.PullRequestUrl,
+                CommitSha = trace.CommitSha,
+            });
+        }
+
+        if (newlyPublishedTraceIds.Count > 0 && !string.IsNullOrWhiteSpace(deployedCommitSha))
+        {
+            var update = Builders<DefectResolutionTrace>.Update
+                .Set(x => x.PublishStatus, DefectResolutionPublishStatus.Published)
+                .Set(x => x.FixStatus, DefectResolutionFixStatus.Published)
+                .Set(x => x.PublishedByCommitSha, deployedCommitSha)
+                .Set(x => x.PublishedAt, now)
+                .Set(x => x.NotifyStatus, DefectResolutionNotifyStatus.Pending)
+                .Set(x => x.UpdatedAt, now);
+            await _db.DefectResolutionTraces.UpdateManyAsync(
+                Builders<DefectResolutionTrace>.Filter.In(x => x.Id, newlyPublishedTraceIds),
+                update);
+        }
+
+        return result;
+    }
+
+    private string? ResolveCurrentDeployCommitSha()
+    {
+        var candidates = new[]
+        {
+            _config["Changelog:ProductionCommitSha"],
+            _config["Deployment:CommitSha"],
+            Environment.GetEnvironmentVariable("GIT_COMMIT"),
+            Environment.GetEnvironmentVariable("COMMIT_SHA"),
+            Environment.GetEnvironmentVariable("GITHUB_SHA"),
+            Environment.GetEnvironmentVariable("SOURCE_VERSION"),
+            Environment.GetEnvironmentVariable("CDS_COMMIT_SHA"),
+            Environment.GetEnvironmentVariable("VERCEL_GIT_COMMIT_SHA"),
+        };
+
+        return candidates
+            .Select(x => x?.Trim().ToLowerInvariant())
+            .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+    }
+
+    internal static string ResolvePublishStatus(
+        DefectResolutionTrace trace,
+        string? deployedCommitSha,
+        int deployedIndex,
+        IReadOnlyDictionary<string, int> shaIndex)
+        => ResolvePublishStatus(trace, trace.CommitSha, deployedCommitSha, deployedIndex, shaIndex);
+
+    internal static string ResolvePublishStatus(
+        DefectResolutionTrace trace,
+        string commitSha,
+        string? deployedCommitSha,
+        int deployedIndex,
+        IReadOnlyDictionary<string, int> shaIndex)
+    {
+        if (trace.PublishStatus == DefectResolutionPublishStatus.Published)
+            return DefectResolutionPublishStatus.Published;
+        if (string.IsNullOrWhiteSpace(deployedCommitSha) || deployedIndex < 0)
+            return DefectResolutionPublishStatus.Unknown;
+        if (string.Equals(commitSha, deployedCommitSha, StringComparison.OrdinalIgnoreCase))
+            return DefectResolutionPublishStatus.Published;
+        if (!shaIndex.TryGetValue(commitSha, out var traceIndex))
+            return DefectResolutionPublishStatus.Unknown;
+        return traceIndex >= deployedIndex
+            ? DefectResolutionPublishStatus.Published
+            : DefectResolutionPublishStatus.Pending;
+    }
+
+    internal static IReadOnlyCollection<string> BuildCommitShaAliases(string? commitSha, string? shortSha)
+    {
+        var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var normalized = commitSha?.Trim().ToLowerInvariant();
+        if (!string.IsNullOrWhiteSpace(normalized))
+        {
+            aliases.Add(normalized);
+            if (normalized.Length >= 7)
+                aliases.Add(normalized[..7]);
+        }
+
+        var normalizedShort = shortSha?.Trim().ToLowerInvariant();
+        if (!string.IsNullOrWhiteSpace(normalizedShort))
+            aliases.Add(normalizedShort);
+
+        return aliases;
+    }
+
+    /// <summary>
+    /// GitHub 待审核提交（open PR）。用于展示自动化修复已经提交但尚未合入发布流水的 PR。
+    /// </summary>
+    [HttpGet("github-pending-review")]
+    public async Task<IActionResult> GetGitHubPendingReview(
+        [FromQuery] int limit = 50,
+        [FromQuery] bool force = false)
+    {
+        if (limit <= 0 || limit > 100) limit = 50;
+        var view = await _reader.GetGitHubPendingReviewAsync(limit, force).ConfigureAwait(false);
+        var linkedDefectsByPrNumber = await GetLinkedDefectsForPendingReviewAsync(view).ConfigureAwait(false);
+        if (!force) SetClientCacheHeaders();
+        return Ok(ApiResponse<GitHubPendingReviewDto>.Ok(MapGitHubPendingReview(view, linkedDefectsByPrNumber)));
+    }
+
+    private async Task<IReadOnlyDictionary<int, List<GitHubLinkedDefectDto>>> GetLinkedDefectsForPendingReviewAsync(
+        GitHubPendingReviewView view)
+    {
+        if (view.Items.Count == 0)
+            return new Dictionary<int, List<GitHubLinkedDefectDto>>();
+
+        var prNumbers = view.Items
+            .Select(x => x.Number)
+            .Distinct()
+            .ToList();
+        var shaAliasesByPr = view.Items
+            .Select(item => new { item.Number, Aliases = BuildCommitShaAliases(item.HeadSha, item.ShortSha) })
+            .ToList();
+        var shas = shaAliasesByPr
+            .SelectMany(x => x.Aliases)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var prNumberByAlias = shaAliasesByPr
+            .SelectMany(x => x.Aliases.Select(alias => new { Alias = alias, x.Number }))
+            .GroupBy(x => x.Alias, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().Number, StringComparer.OrdinalIgnoreCase);
+
+        var filters = new List<FilterDefinition<DefectResolutionTrace>>();
+        if (prNumbers.Count > 0)
+        {
+            filters.Add(Builders<DefectResolutionTrace>.Filter.In(
+                x => x.PullRequestNumber,
+                prNumbers.Select(x => (int?)x)));
+        }
+        if (shas.Count > 0)
+        {
+            filters.Add(Builders<DefectResolutionTrace>.Filter.In(x => x.CommitSha, shas));
+        }
+        if (filters.Count == 0)
+            return new Dictionary<int, List<GitHubLinkedDefectDto>>();
+
+        var filter = filters.Count == 1
+            ? filters[0]
+            : Builders<DefectResolutionTrace>.Filter.Or(filters);
+        var traces = await _db.DefectResolutionTraces
+            .Find(filter)
+            .ToListAsync()
+            .ConfigureAwait(false);
+        var defectIds = traces
+            .Select(x => x.DefectId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var defectsById = defectIds.Count == 0
+            ? new Dictionary<string, DefectReport>(StringComparer.Ordinal)
+            : (await _db.DefectReports
+                .Find(x => defectIds.Contains(x.Id))
+                .ToListAsync()
+                .ConfigureAwait(false))
+                .ToDictionary(x => x.Id, StringComparer.Ordinal);
+        var currentUserId = this.GetRequiredUserId();
+
+        var result = new Dictionary<int, List<GitHubLinkedDefectDto>>();
+        foreach (var trace in traces)
+        {
+            var prNumber = trace.PullRequestNumber;
+            if (!prNumber.HasValue)
+            {
+                var normalizedTraceSha = trace.CommitSha.Trim().ToLowerInvariant();
+                if (prNumberByAlias.TryGetValue(normalizedTraceSha, out var matchedPrNumber))
+                    prNumber = matchedPrNumber;
+            }
+            if (!prNumber.HasValue)
+                continue;
+
+            if (!result.TryGetValue(prNumber.Value, out var linked))
+            {
+                linked = new List<GitHubLinkedDefectDto>();
+                result[prNumber.Value] = linked;
+            }
+
+            defectsById.TryGetValue(trace.DefectId, out var defect);
+            var publishStatus = ResolvePendingReviewPublishStatus(trace);
+            linked.Add(new GitHubLinkedDefectDto
+            {
+                TraceId = trace.Id,
+                DefectId = trace.DefectId,
+                DefectNo = trace.DefectNo,
+                DefectTitle = trace.DefectTitle,
+                ReporterName = defect?.ReporterName,
+                IsSubmittedByMe = defect != null
+                    && string.Equals(defect.ReporterId, currentUserId, StringComparison.Ordinal),
+                FixStatus = publishStatus == DefectResolutionPublishStatus.Published
+                    ? DefectResolutionFixStatus.Published
+                    : trace.FixStatus,
+                PublishStatus = publishStatus,
+                PreviewUrl = trace.PreviewUrl,
+                VisualReportUrl = trace.VisualReportUrl,
+                KnowledgeBaseUrl = trace.KnowledgeBaseUrl,
+                PullRequestNumber = trace.PullRequestNumber ?? prNumber,
+                PullRequestUrl = trace.PullRequestUrl,
+                CommitSha = trace.CommitSha,
+            });
+        }
+
+        return result;
+    }
+
+    internal static string ResolvePendingReviewPublishStatus(DefectResolutionTrace trace)
+    {
+        return trace.PublishStatus == DefectResolutionPublishStatus.Published
+            ? DefectResolutionPublishStatus.Published
+            : DefectResolutionPublishStatus.Pending;
     }
 
     // ── GitHub 作者名 ↔ 系统用户 彩蛋匹配 ────────────────────────────
@@ -323,6 +636,18 @@ public class ChangelogController : ControllerBase
                 sceneLabel = "GitHub 日志";
                 break;
             }
+            case "github_pending_review":
+            {
+                var pv = await _reader.GetGitHubPendingReviewAsync(30, false).ConfigureAwait(false);
+                if (pv.Items.Count == 0)
+                {
+                    return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "当前没有可总结的 GitHub 待审核提交"));
+                }
+
+                payload = new { subtab = "github_pending_review", data = pv };
+                sceneLabel = "GitHub 待审核提交";
+                break;
+            }
             default:
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "subtab 无效"));
         }
@@ -401,7 +726,10 @@ public class ChangelogController : ControllerBase
 
     // ── DTO 映射 ──────────────────────────────────────────────────────
 
-    private static CurrentWeekDto MapCurrentWeek(CurrentWeekView view, int? daysLimit = null, int daysOffset = 0)
+    private static CurrentWeekDto MapCurrentWeek(
+        CurrentWeekView view,
+        int? daysLimit = null,
+        int daysOffset = 0)
     {
         var totalDays = view.Fragments.Count;
         var totalEntries = view.Fragments.Sum(f => f.Entries.Count);
@@ -431,7 +759,10 @@ public class ChangelogController : ControllerBase
         };
     }
 
-    private static ReleasesDto MapReleases(ReleasesView view, bool summary = false, int displayLimit = int.MaxValue) => new()
+    private static ReleasesDto MapReleases(
+        ReleasesView view,
+        bool summary = false,
+        int displayLimit = int.MaxValue) => new()
     {
         DataSourceAvailable = view.DataSourceAvailable,
         Source = view.Source,
@@ -443,7 +774,9 @@ public class ChangelogController : ControllerBase
         Releases = view.Releases.Take(displayLimit).Select(r => MapRelease(r, summary)).ToList(),
     };
 
-    private static ChangelogReleaseDto MapRelease(ChangelogRelease r, bool summary) => new()
+    private static ChangelogReleaseDto MapRelease(
+        ChangelogRelease r,
+        bool summary) => new()
     {
         Version = r.Version,
         ReleaseDate = r.ReleaseDate?.ToString("yyyy-MM-dd"),
@@ -466,7 +799,8 @@ public class ChangelogController : ControllerBase
         GitHubLogsView view,
         int limit,
         string? before,
-        IReadOnlyList<GitHubUserMatchCandidate> matchIndex)
+        IReadOnlyList<GitHubUserMatchCandidate> matchIndex,
+        IReadOnlyDictionary<string, List<GitHubLinkedDefectDto>> linkedDefectsBySha)
     {
         var totalCount = view.Logs.Count;
         var startIdx = 0;
@@ -522,6 +856,9 @@ public class ChangelogController : ControllerBase
                     MatchedDisplayName = match == null
                         ? null
                         : (string.IsNullOrWhiteSpace(match.DisplayName) ? match.Username : match.DisplayName),
+                    LinkedDefects = linkedDefectsBySha.TryGetValue(l.Sha, out var linkedDefects)
+                        ? linkedDefects
+                        : new List<GitHubLinkedDefectDto>(),
                     CoAuthors = l.CoAuthorNames.ConvertAll(name =>
                     {
                         var coMatch = ResolveMatch(name);
@@ -544,6 +881,34 @@ public class ChangelogController : ControllerBase
         Type = e.Type,
         Module = e.Module,
         Description = e.Description,
+    };
+
+    private static GitHubPendingReviewDto MapGitHubPendingReview(
+        GitHubPendingReviewView view,
+        IReadOnlyDictionary<int, List<GitHubLinkedDefectDto>> linkedDefectsByPrNumber) => new()
+    {
+        DataSourceAvailable = view.DataSourceAvailable,
+        Source = view.Source,
+        FetchedAt = view.FetchedAt.ToString("o"),
+        TotalCount = view.TotalCount,
+        Items = view.Items.ConvertAll(item => new GitHubPendingReviewEntryDto
+        {
+            Number = item.Number,
+            Title = item.Title,
+            AuthorName = item.AuthorName,
+            AuthorAvatarUrl = item.AuthorAvatarUrl,
+            HeadBranch = item.HeadBranch,
+            BaseBranch = item.BaseBranch,
+            HeadSha = item.HeadSha,
+            ShortSha = item.ShortSha,
+            IsDraft = item.IsDraft,
+            CreatedAtUtc = item.CreatedAtUtc.ToString("o"),
+            UpdatedAtUtc = item.UpdatedAtUtc.ToString("o"),
+            HtmlUrl = item.HtmlUrl,
+            LinkedDefects = linkedDefectsByPrNumber.TryGetValue(item.Number, out var linkedDefects)
+                ? linkedDefects
+                : new List<GitHubLinkedDefectDto>(),
+        }),
     };
 
     private static ReleasesView FilterReleasesForSummary(ReleasesView v, string? typeFilter)
@@ -684,7 +1049,7 @@ public class ChangelogController : ControllerBase
 
     public sealed class ChangelogAiSummaryRequest
     {
-        /// <summary>releases / fragments / github_logs</summary>
+        /// <summary>releases / fragments / github_logs / github_pending_review</summary>
         public string Subtab { get; set; } = "";
         public string? TypeFilter { get; set; }
     }
@@ -783,6 +1148,26 @@ public class ChangelogController : ControllerBase
         public string? MatchedDisplayName { get; set; }
         /// <summary>Co-authored-by 联合作者（已剔除与主作者同人），每位同样做系统用户匹配</summary>
         public List<GitHubCoAuthorDto> CoAuthors { get; set; } = new();
+        /// <summary>该 commit 关联的缺陷修复记录</summary>
+        public List<GitHubLinkedDefectDto> LinkedDefects { get; set; } = new();
+    }
+
+    public sealed class GitHubLinkedDefectDto
+    {
+        public string TraceId { get; set; } = string.Empty;
+        public string DefectId { get; set; } = string.Empty;
+        public string? DefectNo { get; set; }
+        public string? DefectTitle { get; set; }
+        public string? ReporterName { get; set; }
+        public bool IsSubmittedByMe { get; set; }
+        public string FixStatus { get; set; } = string.Empty;
+        public string PublishStatus { get; set; } = string.Empty;
+        public string? PreviewUrl { get; set; }
+        public string? VisualReportUrl { get; set; }
+        public string? KnowledgeBaseUrl { get; set; }
+        public int? PullRequestNumber { get; set; }
+        public string? PullRequestUrl { get; set; }
+        public string CommitSha { get; set; } = string.Empty;
     }
 
     public sealed class GitHubCoAuthorDto
@@ -806,5 +1191,32 @@ public class ChangelogController : ControllerBase
         /// <summary>下一页 cursor（=本批次最后一条的 sha），前端传给 before 参数取下一批</summary>
         public string? NextCursor { get; set; }
         public List<GitHubLogEntryDto> Logs { get; set; } = new();
+    }
+
+    public sealed class GitHubPendingReviewEntryDto
+    {
+        public int Number { get; set; }
+        public string Title { get; set; } = string.Empty;
+        public string AuthorName { get; set; } = string.Empty;
+        public string? AuthorAvatarUrl { get; set; }
+        public string HeadBranch { get; set; } = string.Empty;
+        public string BaseBranch { get; set; } = string.Empty;
+        public string HeadSha { get; set; } = string.Empty;
+        public string ShortSha { get; set; } = string.Empty;
+        public bool IsDraft { get; set; }
+        public string CreatedAtUtc { get; set; } = string.Empty;
+        public string UpdatedAtUtc { get; set; } = string.Empty;
+        public string HtmlUrl { get; set; } = string.Empty;
+        /// <summary>该 open PR 关联的缺陷修复记录</summary>
+        public List<GitHubLinkedDefectDto> LinkedDefects { get; set; } = new();
+    }
+
+    public sealed class GitHubPendingReviewDto
+    {
+        public bool DataSourceAvailable { get; set; }
+        public string Source { get; set; } = "none";
+        public string FetchedAt { get; set; } = string.Empty;
+        public int TotalCount { get; set; }
+        public List<GitHubPendingReviewEntryDto> Items { get; set; } = new();
     }
 }

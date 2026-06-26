@@ -15,8 +15,10 @@ import { createPendingImportRouter } from './routes/pending-import.js';
 import { createAccessRequestsRouter } from './routes/access-requests.js';
 import { createProjectInfraResyncRouter } from './routes/project-infra-resync.js';
 import { createProjectComposeRouter } from './routes/project-compose.js';
+import { createProjectMigrationRouter } from './routes/project-migration.js';
 import { createProjectStorageRouter } from './routes/project-storage.js';
 import { createCacheRouter } from './routes/cache.js';
+import { createReportsRouter } from './routes/reports.js';
 import { createSnapshotsRouter } from './routes/snapshots.js';
 import { createRemoteHostsRouter } from './routes/remote-hosts.js';
 import { createReleasesRouter } from './routes/releases.js';
@@ -34,6 +36,7 @@ import { GitHubAppClient } from './services/github-app-client.js';
 import { CheckRunRunner } from './services/check-run-runner.js';
 import { resolveGitAuthEnv } from './services/git-auth-env.js';
 import { createAuthRouter } from './routes/auth.js';
+import { createAuthLocalRouter } from './routes/auth-local.js';
 import { createWorkspacesRouter } from './routes/workspaces.js';
 import { MemoryAuthStore } from './infra/auth-store/memory-store.js';
 import type { AuthStore } from './infra/auth-store/memory-store.js';
@@ -48,14 +51,22 @@ import type { ContainerService } from './services/container.js';
 import type { ProxyService } from './services/proxy.js';
 import type { BridgeService } from './services/bridge.js';
 import type { SchedulerService } from './services/scheduler.js';
+import type { JanitorService } from './services/janitor.js';
 import type { CdsConfig, IShellExecutor } from './types.js';
 import type { GracefulShutdownController } from './services/graceful-shutdown.js';
 import {
   bodyPreviewFromUnknown,
+  classifyHttpRequestKind,
   createBodyCapture,
   createRequestId,
+  filterActiveHttpRequests,
+  parseHttpLogLayer,
+  parseHttpRequestKindValue,
   redactHeaders,
+  type ActiveHttpRequestRecord,
+  type HttpActiveRequestFilter,
   type HttpLogRecord,
+  type HttpRequestKind,
   type HttpLogSink,
 } from './services/http-log-store.js';
 import type { ServerEventLogSink, ServerEventCategory, ServerEventSeverity } from './services/server-event-log-store.js';
@@ -145,6 +156,7 @@ function isNoiseHttpLog(log: HttpLogRecord): boolean {
 function summarizeSlowHttpLogs(logs: HttpLogRecord[]): Array<{
   endpoint: string;
   method: string;
+  requestKind: HttpRequestKind;
   count: number;
   rps: number;
   windowMs: number;
@@ -169,6 +181,7 @@ function summarizeSlowHttpLogs(logs: HttpLogRecord[]): Array<{
   const groups = new Map<string, {
     endpoint: string;
     method: string;
+    requestKind: HttpRequestKind;
     durations: number[];
     errorCount: number;
     cacheHitCount: number;
@@ -178,13 +191,20 @@ function summarizeSlowHttpLogs(logs: HttpLogRecord[]): Array<{
   }>();
   for (const log of logs) {
     const method = (log.method || 'GET').toUpperCase();
+    const requestKind = log.requestKind || classifyHttpRequestKind({
+      layer: log.layer,
+      method,
+      path: log.path,
+      headers: log.request?.headers,
+    });
     const endpoint = normalizeHttpLogPath(log.path);
-    const key = `${method} ${endpoint}`;
+    const key = `${requestKind} ${method} ${endpoint}`;
     const existing = groups.get(key);
     if (!existing) {
       groups.set(key, {
         endpoint,
         method,
+        requestKind,
         durations: [log.durationMs],
         errorCount: log.status >= 400 ? 1 : 0,
         cacheHitCount: log.response?.headers?.['x-cds-cache'] === 'hit' ? 1 : 0,
@@ -213,6 +233,7 @@ function summarizeSlowHttpLogs(logs: HttpLogRecord[]): Array<{
       return {
         endpoint: group.endpoint,
         method: group.method,
+        requestKind: group.requestKind,
         count,
         rps: Number((count / (windowMs / 1000)).toFixed(3)),
         windowMs,
@@ -243,6 +264,143 @@ function summarizeFrequentHttpLogs(logs: HttpLogRecord[]): ReturnType<typeof sum
     .sort((a, b) => (b.count - a.count) || (b.rps - a.rps) || (b.p95Ms - a.p95Ms));
 }
 
+function filterHttpLogsByKind(logs: HttpLogRecord[], requestKind: HttpRequestKind): HttpLogRecord[] {
+  return logs.filter((log) => (log.requestKind || classifyHttpRequestKind({
+    layer: log.layer,
+    method: log.method,
+    path: log.path,
+    headers: log.request?.headers,
+  })) === requestKind);
+}
+
+function summarizeActiveHttpRequests(active: ActiveHttpRequestRecord[]): {
+  total: number;
+  over10s: number;
+  over30s: number;
+  over60s: number;
+  byKind: Record<HttpRequestKind, number>;
+} {
+  const byKind: Record<HttpRequestKind, number> = {
+    'user-traffic': 0,
+    'control-plane': 0,
+    deploy: 0,
+    'container-op': 0,
+    polling: 0,
+    sse: 0,
+  };
+  for (const request of active) {
+    byKind[request.requestKind] += 1;
+  }
+  return {
+    total: active.length,
+    over10s: active.filter((request) => request.ageMs >= 10_000).length,
+    over30s: active.filter((request) => request.ageMs >= 30_000).length,
+    over60s: active.filter((request) => request.ageMs >= 60_000).length,
+    byKind,
+  };
+}
+
+function dedupeActiveHttpRequests(requests: ActiveHttpRequestRecord[]): ActiveHttpRequestRecord[] {
+  const byRequestId = new Map<string, ActiveHttpRequestRecord>();
+  for (const request of requests) {
+    const existing = byRequestId.get(request.requestId);
+    if (!existing || request.ageMs > existing.ageMs) {
+      byRequestId.set(request.requestId, request);
+    }
+  }
+  return Array.from(byRequestId.values());
+}
+
+function activeQueryString(filter: HttpActiveRequestFilter): string {
+  const params = new URLSearchParams();
+  const entries: Array<[string, string | number | undefined]> = [
+    ['limit', filter.limit],
+    ['requestId', filter.requestId],
+    ['host', filter.host],
+    ['layer', filter.layer],
+    ['method', filter.method],
+    ['pathContains', filter.pathContains],
+    ['branchId', filter.branchId],
+    ['profileId', filter.profileId],
+    ['requestKind', filter.requestKind],
+    ['minAgeMs', filter.minAgeMs],
+    ['sort', filter.sort],
+  ];
+  for (const [key, value] of entries) {
+    if (value == null || value === '') continue;
+    params.set(key, String(value));
+  }
+  const text = params.toString();
+  return text ? `?${text}` : '';
+}
+
+function forwarderDiagnosticsPort(): number {
+  const raw = Number.parseInt(process.env.CDS_FORWARDER_PORT || '9090', 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : 9090;
+}
+
+function coerceForwarderActiveRecords(value: unknown): ActiveHttpRequestRecord[] {
+  const active = (value as { active?: unknown })?.active;
+  if (!Array.isArray(active)) return [];
+  return active.flatMap((item) => {
+    const row = item as Partial<ActiveHttpRequestRecord>;
+    if (!row || typeof row !== 'object') return [];
+    if (!row.id || !row.requestId || !row.method || !row.path || !row.layer || !row.requestKind) return [];
+    const startedAt = row.startedAt ? new Date(row.startedAt) : new Date();
+    const ageMs = Number.isFinite(row.ageMs) ? Math.max(0, Math.floor(row.ageMs || 0)) : Math.max(0, Date.now() - startedAt.getTime());
+    return [{
+      id: String(row.id),
+      startedAt,
+      ageMs,
+      layer: row.layer,
+      requestKind: row.requestKind,
+      requestId: String(row.requestId),
+      method: String(row.method),
+      protocol: row.protocol,
+      host: row.host ? String(row.host) : undefined,
+      path: String(row.path),
+      remoteAddr: row.remoteAddr,
+      branchId: row.branchId ?? null,
+      profileId: row.profileId ?? null,
+      upstream: row.upstream ?? null,
+      request: row.request || {},
+    }];
+  });
+}
+
+async function findForwarderActiveRequests(filter: HttpActiveRequestFilter): Promise<ActiveHttpRequestRecord[]> {
+  if (process.env.CDS_USE_FORWARDER !== '1' && !process.env.CDS_FORWARDER_PORT) return [];
+  try {
+    const json = await httpGetJson(
+      `http://127.0.0.1:${forwarderDiagnosticsPort()}/__forwarder/active${activeQueryString(filter)}`,
+      1000,
+    );
+    return coerceForwarderActiveRecords(json);
+  } catch {
+    return [];
+  }
+}
+
+async function collectActiveHttpRequests(
+  store: HttpLogSink | null | undefined,
+  filter: HttpActiveRequestFilter,
+  options: { excludeRequestId?: string } = {},
+): Promise<ActiveHttpRequestRecord[]> {
+  // Fetch enough rows from each source before applying the final combined cap,
+  // otherwise one busy layer can hide older rows from another layer.
+  const sourceFilter = {
+    ...filter,
+    limit: Math.max(filter.limit ?? 200, 5000),
+  };
+  const local = store?.findActive?.(sourceFilter) || [];
+  const forwarder = await findForwarderActiveRequests(sourceFilter);
+  const deduped = dedupeActiveHttpRequests([...local, ...forwarder]);
+  const combined = options.excludeRequestId
+    ? deduped.filter((request) => request.requestId !== options.excludeRequestId)
+    : deduped;
+  return filterActiveHttpRequests(combined, filter);
+}
+
 export interface ServerDeps {
   stateService: StateService;
   worktreeService: WorktreeService;
@@ -253,6 +411,7 @@ export interface ServerDeps {
   config: CdsConfig;
   /** Optional warm-pool scheduler (v3.1). */
   schedulerService?: SchedulerService;
+  janitorService?: JanitorService;
   /**
    * Cluster executor registry. Passed through to createBranchRouter so the
    * deploy handler can dispatch to remote executors when present. Absent in
@@ -489,6 +648,8 @@ export function resolveApiLabel(method: string, path: string): string {
     // CDS 配对连接（系统级，2026-05-06）
     'POST /cds-system/connections/issue': '生成配对密钥',
     'POST /cds-system/connections/accept': '接受配对请求',
+    // 项目级资源占用排行（系统级运维视图，2026-06-23）
+    'GET /cds-system/resource-usage': '查看资源占用',
     'GET /cds-system/connections': '列出配对连接',
     'GET /cds-system/network-topology': '查询网络拓扑',
     'GET /cds-system/github/webhook-deliveries': '列出 Webhook 日志',
@@ -527,6 +688,9 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /docker-images': '获取 Docker 镜像',
     'POST /cleanup': '清理已停止容器',
     'POST /cleanup-orphans': '清理孤儿容器',
+    'POST /branches/cleanup-damaged-containers': '清理损坏容器',
+    'POST /branches/cleanup-stopped': '清理已停止分支',
+    'POST /branches/cleanup-orphan-containers': '清理孤儿容器',
     'POST /prune-stale-branches': '清理过期分支',
     'POST /factory-reset': '恢复出厂设置',
     'GET /check-updates': '检查远程更新',
@@ -536,6 +700,8 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /import-config': '导入配置',
     'POST /build-profiles/bulk-set-modes': '批量设置部署命令',
     'GET /export-config': '导出配置',
+    'GET /reports': '列出验收报告',
+    'POST /reports': '创建验收报告',
     'GET /cache/status': '查看缓存状态',
     'POST /cache/repair': '修复缓存挂载',
     'GET /cache/export': '导出缓存包',
@@ -544,6 +710,9 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /proxy-log': '查看转发日志',
     'GET /proxy-log/stream': '订阅转发日志流',
     'GET /http-logs': '查看 HTTP 请求日志',
+    'GET /http-logs/active': '查看运行中 HTTP 请求',
+    'GET /http-logs/slow': '查看慢 HTTP 请求排行',
+    'GET /perf/overview': '查看性能概览',
     'GET /server-events': '查看服务器/容器事件日志',
     'GET /config-snapshots': '列出配置快照',
     'POST /config-snapshots': '手动保存配置快照',
@@ -589,11 +758,19 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /auth/github/callback': 'GitHub 登录回调',
     'POST /auth/logout': '退出登录',
     'GET /auth/status': '获取认证状态',
+    'POST /auth/login': '本地账号登录',
+    'GET /auth/bootstrap-status': '查询首启引导状态',
+    'POST /auth/bootstrap': '创建首个本地账号',
+    'POST /auth/change-password': '修改密码',
+    'GET /auth/users': '列出用户',
+    'POST /auth/users': '创建本地账号',
+    'GET /auth/activity': '查看用户操作痕迹',
     // 用户 / 系统基础信息
     'GET /me': '获取当前用户',
     'GET /status': '获取系统状态',
     'GET /healthz': '健康检查',
     'GET /host-stats': '获取主机状态',
+    'GET /cds-system/perf-health': '运维健康观测',
     'GET /state-stream': '订阅状态流',
     'GET /activity-stream': '订阅活动流',
     'GET /cli-version': '获取 CLI 版本',
@@ -617,6 +794,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'PUT /projects/:id/preview-mode': '更新项目预览模式',
     'GET /projects/:id/comment-template': '获取项目评论模板',
     'PUT /projects/:id/comment-template': '更新项目评论模板',
+    'POST /projects/:id/align-deploy-modes': '对齐全部分支运行模式',
     'GET /projects/:id/agent-sessions': '列出项目 Agent 会话',
     // 调度 / 集群
     'GET /scheduler/state': '获取调度器状态',
@@ -676,9 +854,14 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
+    [/^PATCH \/auth\/users\/(.+)$/, '更新用户'],
     [/^GET \/cds-system\/operator\/requests\/(.+)$/, '查询运维审批请求'],
     [/^POST \/cds-system\/operator\/requests\/(.+)\/approve$/, '批准运维操作'],
     [/^POST \/cds-system\/operator\/requests\/(.+)\/reject$/, '拒绝运维操作'],
+    [/^GET \/reports\/(.+)\/raw$/, '查看验收报告内容'],
+    [/^GET \/reports\/(.+)$/, '查看验收报告'],
+    [/^PATCH \/reports\/(.+)$/, '更新验收报告'],
+    [/^DELETE \/reports\/(.+)$/, '删除验收报告'],
     [/^GET \/config-snapshots\/(.+)$/, '查看配置快照详情'],
     [/^POST \/config-snapshots\/(.+)\/rollback$/, '回滚到配置快照'],
     [/^DELETE \/config-snapshots\/(.+)$/, '删除配置快照'],
@@ -695,6 +878,14 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/service-deployments\/(.+)$/, '查看部署详情'],
     // shared-service Project 实例发现（spec.cds-map-pairing-protocol §3.2）
     [/^GET \/projects\/(.+)\/instances$/, '列出项目实例'],
+    // 项目迁移(配置复刻 + 数据迁移扫描，2026-06-23)
+    [/^GET \/projects\/(.+)\/migration\/peers$/, '列出迁移目标'],
+    [/^POST \/projects\/(.+)\/migration\/peers$/, '新增迁移目标'],
+    [/^POST \/projects\/(.+)\/migration\/peers\/(.+)\/verify$/, '测试迁移目标连接'],
+    [/^DELETE \/projects\/(.+)\/migration\/peers\/(.+)$/, '删除迁移目标'],
+    [/^GET \/projects\/(.+)\/migration\/config-preview$/, '预览可复刻配置'],
+    [/^POST \/projects\/(.+)\/migration\/replicate-config$/, '推送配置到目标 CDS'],
+    [/^POST \/projects\/(.+)\/migration\/data-plan$/, '扫描数据迁移计划'],
     // CDS 配对连接 :id 路径
     [/^POST \/cds-system\/connections\/(.+)\/revoke$/, '撤销配对连接'],
     [/^GET \/cds-system\/connections\/(.+)$/, '查看配对连接'],
@@ -753,6 +944,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/bridge\/handshake-requests\/(.+)\/reject$/, '拒绝 Bridge 握手'],
     [/^GET \/bridge\/handshake-status\/(.+)$/, '查询 Bridge 握手状态'],
     // 项目 (CRUD)
+    [/^PUT \/projects\/(.+)\/paused$/, '暂停/恢复项目'],
     [/^GET \/projects\/(.+)\/agent-keys$/, '列出项目 Agent Keys'],
     [/^POST \/projects\/(.+)\/agent-keys$/, '创建项目 Agent Key'],
     [/^DELETE \/projects\/(.+)\/agent-keys\/(.+)$/, '删除项目 Agent Key'],
@@ -1026,11 +1218,20 @@ export function createServer(deps: ServerDeps): express.Express {
   // We stash the bytes on req.rawBody so the GitHub webhook route can
   // HMAC-verify the exact payload GitHub signed (re-serialized JSON
   // would produce a different hash and fail signature checks).
-  app.use(express.json({
+  // 全局 JSON body 解析器（默认上限 100kb）。/api/reports 例外：验收报告正文
+  // 可达数 MB（HTML/Markdown 粘贴），其路由自带 12mb 的 json/text/multipart 解析器，
+  // 故这里跳过 /api/reports，避免大报告在全局 100kb 解析器处被 413 拦掉（修复 PR #865
+  // codex P2「大粘贴报告绕不过全局 JSON 解析器」）。rawBody 仅签名校验类路由需要，
+  // /api/reports 不需要。
+  const globalJsonParser = express.json({
     verify: (req, _res, buf) => {
       (req as { rawBody?: Buffer }).rawBody = buf;
     },
-  }));
+  });
+  app.use((req, res, next) => {
+    if (req.path === '/api/reports' || req.path.startsWith('/api/reports/')) return next();
+    return globalJsonParser(req, res, next);
+  });
 
   // ── Liveness / readiness probe (public, no auth) ──
   // Used by:
@@ -1268,6 +1469,41 @@ export function createServer(deps: ServerDeps): express.Express {
     }
 
     const start = Date.now();
+    const requestKind = classifyHttpRequestKind({
+      layer: 'master',
+      method: req.method || 'GET',
+      path: req.originalUrl || req.url || '/',
+      headers: req.headers,
+    });
+    const activeRequestId = deps.httpLogStore?.beginActive?.({
+      layer: 'master',
+      requestKind,
+      requestId,
+      method: req.method || 'GET',
+      protocol: String(req.headers['x-forwarded-proto'] || req.protocol || '').split(',')[0] || undefined,
+      host: String(req.headers.host || ''),
+      path: req.originalUrl || req.url || '/',
+      remoteAddr: getRemoteAddr(req),
+      request: {
+        headers: redactHeaders(req.headers),
+      },
+    });
+    let activeCompleted = false;
+    let activeCleanupTimer: ReturnType<typeof setTimeout> | null = null;
+    const completeActiveRequest = () => {
+      if (activeCompleted || !activeRequestId) return;
+      activeCompleted = true;
+      if (activeCleanupTimer) {
+        clearTimeout(activeCleanupTimer);
+        activeCleanupTimer = null;
+      }
+      deps.httpLogStore?.completeActive?.(activeRequestId);
+    };
+    const scheduleActiveCleanup = () => {
+      if (activeCompleted || !activeRequestId || activeCleanupTimer) return;
+      activeCleanupTimer = setTimeout(completeActiveRequest, 60_000);
+      activeCleanupTimer.unref?.();
+    };
     const requestCapture = createBodyCapture(undefined, req.headers['content-type']);
     req.on('data', (chunk: Buffer | string) => requestCapture.onChunk(chunk));
     const responseCapture = createBodyCapture();
@@ -1289,6 +1525,7 @@ export function createServer(deps: ServerDeps): express.Express {
     };
 
     res.once('finish', () => {
+      completeActiveRequest();
       const status = res.statusCode || 0;
       const capturedReqBody = requestCapture.snapshot(req.headers['content-type']);
       const parsedReqBody = bodyPreviewFromUnknown(req.body, req.headers['content-type']);
@@ -1297,6 +1534,7 @@ export function createServer(deps: ServerDeps): express.Express {
       const respBody = responseCapture.snapshot(res.getHeader('content-type'));
       deps.httpLogStore?.record({
         layer: 'master',
+        requestKind,
         requestId,
         method: req.method || 'GET',
         protocol: String(req.headers['x-forwarded-proto'] || req.protocol || '').split(',')[0] || undefined,
@@ -1319,6 +1557,7 @@ export function createServer(deps: ServerDeps): express.Express {
         },
       });
     });
+    res.once('close', scheduleActiveCleanup);
     next();
   });
 
@@ -1491,7 +1730,28 @@ export function createServer(deps: ServerDeps): express.Express {
     });
     app.use('/api/workspaces', createWorkspacesRouter({ workspaceService }));
 
-    app.use(createGithubAuthMiddleware({ authService }));
+    // resolveAgentKey 让 cdsp_/cdsg_/静态 AI key 在 github 模式下与人类会话同等
+    // 放行（cookie 优先，无会话才认 key），并为 cdsp_ 戳 req.cdsProjectKey，使
+    // /api/reports 等按项目作用域生效（PR #865 Codex P2，用户确认"都兼得"）。
+    app.use(createGithubAuthMiddleware({
+      authService,
+      resolveAgentKey: (req) => resolveAiSession(req, deps.stateService),
+    }));
+
+    // Local username + password routes. Public endpoints (login / bootstrap)
+    // are whitelisted in github-auth.ts PUBLIC_PATHS so they pass the gate;
+    // authed endpoints (change-password / users / activity) read req.cdsUser
+    // attached by the gate above — hence mounted AFTER the middleware.
+    // 仅在持久化(mongo)后端开放首启 bootstrap：易失(memory)后端重启即清空，公开
+    // bootstrap 会在每次重启后重新开放，github 模式下首个访客即可自封 system owner
+    // （PR #865 Codex P1）。
+    const bootstrapAllowed = !(authStore instanceof MemoryAuthStore);
+    app.use('/api', createAuthLocalRouter({ authService, cookieSecure, bootstrapAllowed }));
+
+    // Expose the authService so downstream routers can record user activity
+    // at high-value touchpoints (deploy / stop / publish / report) when a
+    // session user is in scope. Optional — readers must null-check.
+    app.locals.cdsAuthService = authService;
 
     console.log(
       `  Auth: github mode (allowedOrgs: ${allowedOrgs.join(',') || '(any GitHub login allowed)'})`,
@@ -1517,6 +1777,10 @@ export function createServer(deps: ServerDeps): express.Express {
     app.use((req, res, next) => {
       if (req.path === '/') return next();
       if (req.path === '/login' || req.path === '/login.html' || req.path === '/api/login' || req.path === '/api/logout') return next();
+      // basic 模式下本地账号路由(github 模式才挂载)未注册：放行让其落到 404，
+      // 登录页据 404 回退到 /api/login，保住单用户 basic 部署仍可登录(修复 PR #865
+      // codex P1「basic-auth 登录回退被 401 截断」)。
+      if (req.path === '/api/auth/login' || req.path === '/api/auth/bootstrap' || req.path === '/api/auth/bootstrap-status') return next();
       if (req.path.startsWith('/api/ai/request-access') || req.path.startsWith('/api/ai/request-status/')) return next();
       // 被动授权:免密发起/轮询授权申请(github 模式同样放行,否则 agent 401)。
       if (isPublicAccessRequestRoute(req.method, req.path)) return next();
@@ -2174,11 +2438,14 @@ export function createServer(deps: ServerDeps): express.Express {
       }
       const pidStartedAt = (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT || null;
       const lastUpdate = history[0] || null;
+      // 与 branches.ts computeSelfStatusSnapshot 的判定保持一致：重启"已确认" =
+      // 当前进程的启动时刻晚于本次更新的开始时刻（pidStartedAt >= update.ts）。
+      // web-only 更新无需重启 → not_required，不再因 pidStartedAt 恒真而误报 completed。
+      const updateMs = lastUpdate?.ts ? Date.parse(lastUpdate.ts) : Number.NaN;
+      const pidMs = pidStartedAt ? Date.parse(pidStartedAt) : Number.NaN;
       const restartStatus =
-        lastUpdate?.status === 'success'
-          ? pidStartedAt
-            ? 'completed'
-            : 'incomplete'
+        lastUpdate?.status === 'success' && lastUpdate.updateMode !== 'web-only'
+          ? (Number.isFinite(pidMs) && Number.isFinite(updateMs) && pidMs >= updateMs ? 'completed' : 'incomplete')
           : lastUpdate?.status === 'deferred'
             ? 'pending'
             : 'not_required';
@@ -2321,8 +2588,45 @@ export function createServer(deps: ServerDeps): express.Express {
   // AND manually from the cluster hot-upgrade path when in-memory config
   // changes (mode flip) without a state.json write. Other modules reach it
   // via the exported `broadcastClusterChange()` below.
+  //
+  // 性能（2026-06-22）：原本 onSave 每次都同步 `JSON.stringify(整个 state)`
+  // （含全部分支 + 部署日志）。构建期间 deploy-log 每追加一行就 save() 一次，
+  // 一秒内能触发几十次全量序列化，把单线程事件循环钉死 → 仪表盘和所有 /api/*
+  // 在构建期间集体卡死（用户反复反馈的"阻塞"根因之一）。
+  // 这里把广播改成"前沿即时 + 尾沿合并"节流：突发写入时最多每
+  // BROADCAST_MIN_INTERVAL_MS 序列化一次，并保证突发结束后一定补发最终态。
+  // SSE 客户端在 200ms 内收敛到最新状态，肉眼无感，但事件循环不再被烤糊。
+  const BROADCAST_MIN_INTERVAL_MS = 200;
+  let broadcastTimer: ReturnType<typeof setTimeout> | null = null;
+  let broadcastPending = false;
+  let lastBroadcastAt = 0;
+
   function broadcastState(): void {
     if (stateClients.size === 0) return;
+    const sinceLast = Date.now() - lastBroadcastAt;
+    // 前沿：距上次广播已超过最小间隔且没有挂起的定时器 → 立即发，单次变更零延迟。
+    if (!broadcastTimer && sinceLast >= BROADCAST_MIN_INTERVAL_MS) {
+      doBroadcastState();
+      return;
+    }
+    // 冷却期内：标记脏 + 安排一次尾沿补发，把突发期的中间态合并掉。
+    broadcastPending = true;
+    if (!broadcastTimer) {
+      const wait = Math.max(0, BROADCAST_MIN_INTERVAL_MS - sinceLast);
+      broadcastTimer = setTimeout(() => {
+        broadcastTimer = null;
+        if (broadcastPending) {
+          broadcastPending = false;
+          doBroadcastState();
+        }
+      }, wait);
+      broadcastTimer.unref?.();
+    }
+  }
+
+  function doBroadcastState(): void {
+    if (stateClients.size === 0) return;
+    lastBroadcastAt = Date.now();
     const state = deps.stateService.getState();
 
     // ── Populate embedded master's runningContainers from local state ──
@@ -2448,6 +2752,7 @@ export function createServer(deps: ServerDeps): express.Express {
       : (typeof req.query.path === 'string' ? req.query.path : undefined);
     const branchId = typeof req.query.branchId === 'string' ? req.query.branchId : undefined;
     const profileId = typeof req.query.profileId === 'string' ? req.query.profileId : undefined;
+    const requestKind = parseHttpRequestKindValue(req.query.requestKind);
     const since = typeof req.query.since === 'string' ? req.query.since : undefined;
     const until = typeof req.query.until === 'string' ? req.query.until : undefined;
     const minDurationRaw = typeof req.query.minDurationMs === 'string' ? Number.parseInt(req.query.minDurationMs, 10) : undefined;
@@ -2468,12 +2773,56 @@ export function createServer(deps: ServerDeps): express.Express {
       pathContains,
       branchId,
       profileId,
+      requestKind,
       since,
       until,
       minDurationMs,
       sort,
     });
     res.json({ logs, total: logs.length });
+  });
+
+  app.get('/api/http-logs/active', async (req, res) => {
+    const reader = deps.httpLogStore?.findActive;
+    if (!reader) {
+      res.json({
+        ok: false,
+        disabled: true,
+        active: [],
+        total: 0,
+        message: 'HTTP active 请求表未启用；当前日志 sink 不支持 findActive。',
+      });
+      return;
+    }
+    const limit = Number.parseInt(String(req.query.limit || '200'), 10) || 200;
+    const minAgeRaw = typeof req.query.minAgeMs === 'string' ? Number.parseInt(req.query.minAgeMs, 10) : undefined;
+    const minAgeMs = Number.isFinite(minAgeRaw) ? minAgeRaw : undefined;
+    const sortRaw = typeof req.query.sort === 'string' ? req.query.sort : undefined;
+    const filter: HttpActiveRequestFilter = {
+      limit,
+      requestId: typeof req.query.requestId === 'string' ? req.query.requestId : undefined,
+      host: typeof req.query.host === 'string' ? req.query.host : undefined,
+      layer: parseHttpLogLayer(req.query.layer),
+      method: typeof req.query.method === 'string' ? req.query.method : undefined,
+      pathContains: typeof req.query.pathContains === 'string'
+        ? req.query.pathContains
+        : (typeof req.query.path === 'string' ? req.query.path : undefined),
+      branchId: typeof req.query.branchId === 'string' ? req.query.branchId : undefined,
+      profileId: typeof req.query.profileId === 'string' ? req.query.profileId : undefined,
+      requestKind: parseHttpRequestKindValue(req.query.requestKind),
+      minAgeMs,
+      sort: sortRaw === 'started' ? 'started' : 'age',
+    };
+    const active = await collectActiveHttpRequests(deps.httpLogStore, filter, {
+      excludeRequestId: String(res.locals.cdsRequestId || ''),
+    });
+    res.json({
+      ok: true,
+      disabled: false,
+      active,
+      total: active.length,
+      generatedAt: new Date().toISOString(),
+    });
   });
 
   app.get('/api/http-logs/slow', async (req, res) => {
@@ -2510,6 +2859,7 @@ export function createServer(deps: ServerDeps): express.Express {
       : undefined;
     const minDurationRaw = typeof req.query.minDurationMs === 'string' ? Number.parseInt(req.query.minDurationMs, 10) : undefined;
     const minDurationMs = Number.isFinite(minDurationRaw) ? minDurationRaw : undefined;
+    const sort = req.query.sort === 'recent' ? 'recent' : 'duration';
     const rawLogs = await reader.call(deps.httpLogStore, {
       limit: sample,
       since,
@@ -2518,10 +2868,11 @@ export function createServer(deps: ServerDeps): express.Express {
       method: typeof req.query.method === 'string' ? req.query.method : undefined,
       minStatus: typeof req.query.minStatus === 'string' ? Number.parseInt(req.query.minStatus, 10) || undefined : undefined,
       minDurationMs,
+      requestKind: parseHttpRequestKindValue(req.query.requestKind),
       pathContains: typeof req.query.pathContains === 'string'
         ? req.query.pathContains
         : (typeof req.query.path === 'string' ? req.query.path : undefined),
-      sort: 'recent',
+      sort,
     });
     const logs = includeNoise ? rawLogs : rawLogs.filter((log) => !isNoiseHttpLog(log));
     const endpoints = summarizeSlowHttpLogs(logs).slice(0, top);
@@ -2529,6 +2880,7 @@ export function createServer(deps: ServerDeps): express.Express {
       ok: true,
       disabled: false,
       includeNoise,
+      sort,
       sampleSize: rawLogs.length,
       filteredSampleSize: logs.length,
       noiseExcludedCount: rawLogs.length - logs.length,
@@ -2555,10 +2907,16 @@ export function createServer(deps: ServerDeps): express.Express {
     const sample = Math.max(1, Math.min(sampleRaw, 5000));
     const topRaw = Number.parseInt(String(req.query.top || '10'), 10) || 10;
     const top = Math.max(1, Math.min(topRaw, 50));
-    const logs = await reader.call(deps.httpLogStore, { limit: sample, sort: 'recent' });
+    const recentLogs = await reader.call(deps.httpLogStore, { limit: sample, sort: 'recent' });
+    const durationLogs = await reader.call(deps.httpLogStore, { limit: sample, sort: 'duration' });
+    const active = await collectActiveHttpRequests(deps.httpLogStore, { limit: 200, sort: 'age' }, {
+      excludeRequestId: String(res.locals.cdsRequestId || ''),
+    });
+    const logs = recentLogs;
     const normalLogs = logs.filter((log) => !isNoiseHttpLog(log));
     const noiseLogs = logs.filter(isNoiseHttpLog);
     const errorLogs = logs.filter((log) => log.status >= 500);
+    const durationNormalLogs = durationLogs.filter((log) => !isNoiseHttpLog(log));
     const recentSelfUpdateTimings = deps.stateService.getSelfUpdateHistory(20).map((record) => ({
       ts: record.ts,
       branch: record.branch,
@@ -2575,12 +2933,23 @@ export function createServer(deps: ServerDeps): express.Express {
       ok: true,
       disabled: false,
       sampleSize: logs.length,
+      durationSampleSize: durationLogs.length,
       noiseCount: noiseLogs.length,
       window: {
         newest: logs[0]?.ts || null,
         oldest: logs[logs.length - 1]?.ts || null,
       },
-      slowEndpoints: summarizeSlowHttpLogs(normalLogs).slice(0, top),
+      slowEndpoints: summarizeSlowHttpLogs(durationNormalLogs).slice(0, top),
+      slowByKind: {
+        userTraffic: summarizeSlowHttpLogs(filterHttpLogsByKind(durationNormalLogs, 'user-traffic')).slice(0, top),
+        controlPlane: summarizeSlowHttpLogs(filterHttpLogsByKind(durationNormalLogs, 'control-plane')).slice(0, top),
+        deploy: summarizeSlowHttpLogs(filterHttpLogsByKind(durationLogs, 'deploy')).slice(0, top),
+        containerOp: summarizeSlowHttpLogs(filterHttpLogsByKind(durationLogs, 'container-op')).slice(0, top),
+        polling: summarizeSlowHttpLogs(filterHttpLogsByKind(durationLogs, 'polling')).slice(0, top),
+        sse: summarizeSlowHttpLogs(filterHttpLogsByKind(durationLogs, 'sse')).slice(0, top),
+      },
+      activeRequests: active,
+      activeSummary: summarizeActiveHttpRequests(active),
       frequentEndpoints: summarizeFrequentHttpLogs(normalLogs).slice(0, top),
       errorEndpoints: summarizeSlowHttpLogs(errorLogs).slice(0, top),
       noiseEndpoints: summarizeFrequentHttpLogs(noiseLogs).slice(0, top),
@@ -2851,6 +3220,12 @@ export function createServer(deps: ServerDeps): express.Express {
     stateService: deps.stateService,
     assertProjectAccess: assertProjectAccess as any,
   }));
+  // 项目迁移:配置打包复刻 + 数据迁移扫描,把项目移植到另一个 CDS 节点(2026-06-23)
+  app.use('/api', createProjectMigrationRouter({
+    stateService: deps.stateService,
+    assertProjectAccess: assertProjectAccess as any,
+    authMode,
+  }));
   // 项目存储面板(infra named volume 大小/挂载关系，feature-emerge E7，2026-05-29)
   app.use('/api', createProjectStorageRouter({
     stateService: deps.stateService,
@@ -2860,6 +3235,9 @@ export function createServer(deps: ServerDeps): express.Express {
   // Cache diagnostics / repair / cross-server migration.
   // See routes/cache.ts for why this exists (挂载失效诊断 + 换机器预热).
   app.use('/api', createCacheRouter({ stateService: deps.stateService, shell: deps.shell }));
+  // CDS 自托管验收报告（HTML / Markdown）。挂在全局认证网关之后，
+  // 所以 CDS 登录态即可访问，无需额外权限配置。详见 routes/reports.ts。
+  app.use('/api', createReportsRouter({ stateService: deps.stateService }));
   // ConfigSnapshot (导入/破坏性操作前自动备份) + DestructiveOperationLog (紧急撤销).
   // 见 routes/snapshots.ts 头部注释。
   app.use('/api', createSnapshotsRouter({ stateService: deps.stateService }));
@@ -3036,6 +3414,7 @@ export function createServer(deps: ServerDeps): express.Express {
     shell: deps.shell,
     config: deps.config,
     schedulerService: deps.schedulerService,
+    janitorService: deps.janitorService,
     registry: deps.registry,
     getClusterStrategy: deps.getClusterStrategy,
     githubApp: githubAppClient,

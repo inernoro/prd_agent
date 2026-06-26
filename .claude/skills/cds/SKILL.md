@@ -51,6 +51,16 @@ $CLI env get --scope _global
 $CLI env get --scope <projectId>
 $CLI env set DB_PASS=s3cret --scope <projectId>
 
+# 构建配置：就绪超时(探活) / 部署模式 —— AI 用 key 直接设，不依赖 dashboard
+# （这些以前被误以为是 dashboard 专属、API key 设不了，其实和 branch deploy 同一套鉴权）
+$CLI profile list --project <id>                 # 列出 profile + 当前部署模式 + 就绪超时
+$CLI profile deploy-mode <profileId> dev         # 切 profile 激活部署模式（--reset 恢复默认）
+$CLI profile readiness <profileId> --timeout 1200  # 设就绪探测超时秒数（GET-合并-PUT 保留其它字段）
+$CLI profile readiness <profileId> --no-http     # 后台 worker：跳过 HTTP 探测只做 TCP（--http 撤销）
+$CLI branch set-mode <branchId> <profileId> dev  # 单分支部署模式覆盖（如把某预览分支 web 改 dev）
+# 注：就绪超时是「每服务/每 profile」级（无系统全局默认值），无标签时运行时默认 180s。
+#     改完都需要重新部署生效（$CLI branch deploy <id>）。
+
 # Key 管理
 $CLI global-key list                     # 全局 bootstrap key
 $CLI global-key create --label "for claude onboarding"
@@ -187,3 +197,13 @@ cds-project-scan   cds-deploy-pipeline
 ```
 
 两个子技能都从 `../cds/cli/cdscli.py` 引用 CLI，**不维护各自的拷贝**。
+
+## 部署项目的资产存储（prd-agent 图片/报告，2026-06-22）
+
+prd-agent 的图片/验收报告走后端 `IAssetStorage`，由**项目环境变量** `ASSETS_PROVIDER` 选择后端（在「项目环境变量」里配，不是 CDS 全局变量）：
+
+- 未配任何云凭据（典型 CDS 预览）→ 后端自动 **auto 回退 local**，图片存到容器内 `ASSETS_LOCAL_DIR`（默认 `{ContentRoot}/data/assets`），**无需任何配置即可正常传图**（修复"无云凭据实例传图直接失败"）。
+- 生产/需云端持久 → 配 `ASSETS_PROVIDER=cloudflareR2` + `R2_ACCOUNT_ID/R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY/R2_BUCKET`（R2 后端已内置，S3 兼容），或 `tencentCos` + `TENCENT_COS_*`。
+- local 是占位/兜底，容器重建即丢；要持久化预览图片可挂卷到 `ASSETS_LOCAL_DIR` 或直接配 R2。
+
+详见 `.claude/skills/create-visual-test-to-kb/SKILL.md`「报告图片与资产存储」。

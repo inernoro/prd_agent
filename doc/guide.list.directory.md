@@ -39,6 +39,9 @@
 - [缺陷管理 Agent 产品方案](spec.defect-agent) `spec.defect-agent`
   > 缺陷管理 Agent 的产品需求与用户故事
 
+- [缺陷自动化协议](spec.defect-agent-automation-protocol) `spec.defect-agent-automation-protocol`
+  > domain + K、工作流端点、commit 回写、更新中心关联和发布后验收通知的稳定协议
+
 - [私人执行助理（PA Agent）产品方案](spec.pa-agent) `spec.pa-agent`
   > PA Agent 产品定位、Phase 1 能力与路线图，可独立下载评审
 
@@ -72,6 +75,9 @@
 - [CDS MAP 配对协议规格](spec.cds-map-pairing-protocol) `spec.cds-map-pairing-protocol`
   > CDS 与 MAP 平台之间的配对协议规格
 
+- [MAP 知识库传输协议（MAP-KBTP v1）规格](spec.map-kb-transfer-protocol) `spec.map-kb-transfer-protocol`
+  > MAP 平台知识库双向同步的底层传输协议规格（PeerSync + DocumentStoreSyncResource，v1.1 已落地）
+
 - [CDS 多项目数据字典](spec.cds-project-model) `spec.cds-project-model`
   > CDS 多项目数据模型的字段定义与约束
 
@@ -86,6 +92,8 @@
 
 ### 二、设计文档
 
+- [手机端整体重构调研](design.mobile-refactor) `design.mobile-refactor`
+  > 真机视口取证 16 页 + 行为聚合使用强度 + 三波改造优先级（排除视觉创作）
 - [每日小贴士 / 路径式教程系统设计](design.daily-tips) `design.daily-tips`
   > 右下角悬浮教程书 + SpotlightOverlay 多步 Tour + 推送/批量/dismiss 闭环
 
@@ -97,6 +105,8 @@
   > 能力契约 SSOT + 统一调用信封；选了不自动发、视觉创作真出图、漫威宇宙式互通
 - [知识库智能体架构设计](design.knowledge-agent-architecture) `design.knowledge-agent-architecture`
   > 三层模型(脑/技能/沙箱) + map-agent·cds-agent 命名 + 借运行时不重建 + 唯一接缝(KB 当工作目录进、改动经 diff 闸出)；md→ppt 避坑
+- [MAP MCP 连接器设计](design.map-mcp-connector) `design.map-mcp-connector`
+  > 把 AgentOpenEndpoint 登记表翻译成 MCP 工具，远程 /mcp 端点（Streamable HTTP）复用 sk-ak + scope，可被 Claude/Codex 当连接器接入
 - [服务器权威性设计](design.server-authority) `design.server-authority`
   > 客户端断开不取消服务器任务的架构设计
 - [团队动态设计](design.team-activity) `design.team-activity`
@@ -116,6 +126,9 @@
 
 - [工作流自动配置设计](design.workflow-auto-config) `design.workflow-auto-config`
   > AI 生成校验自愈闭环 + 降低工作流配置门槛（让用户只描述、自动配）
+
+- [赋码采集关联智能体（CCAS）设计](design.ccas-agent) `design.ccas-agent`
+  > 产线赋码业务三件套：PRD 文档生成 + 设备素材库 + 流程示意图（appKey: ccas-agent）
 
 - [工作流引擎 v2 流程控制舱与 SSE 实时推送设计](design.workflow-control-flow-sse) `design.workflow-control-flow-sse`
   > 工作流引擎 v2 的控制流与 SSE 实时推送
@@ -204,6 +217,9 @@
 
 - [CDS (Cloud Development Suite) 设计文档](design.cds) `design.cds`
   > 云开发套件的架构设计
+
+- [CDS 构建耗时与发布版/热加载机制设计](design.cds-build-time) `design.cds-build-time`
+  > 构建流水线时间去向、>10 分钟根因（Java 重复下载依赖 / buildTimeout 上限 / 自动发布双构建）、发布版 vs 热加载对照与自动发布介入时机
 
 - [CDS Agent API 契约设计](design.cds-agent-api) `design.cds-agent-api`
   > MAP/CDS 会话、事件、工具审批、Hook、runtime profile 与工作流调用的 API 契约
@@ -388,6 +404,8 @@
 
 - [海鲜市场（配置市场）使用教程](guide.marketplace) `guide.marketplace`
   > 配置浏览、筛选、Fork 与发布的完整流程
+- [MAP MCP 连接器接入指南](guide.mcp-connector) `guide.mcp-connector`
+  > 把 MAP 当 MCP 连接器接入 Claude/Codex：/api/mcp 端点 + sk-ak + 5 内置工具 + 共享其他 Agent + AI 自助签发自测
 
 - [视觉验收技能跨仓库使用教程](guide.visual-acceptance-skill) `guide.visual-acceptance-skill`
   > 用个人 AgentApiKey + 海鲜市场安装、更新 `create-visual-test-to-kb`，避免借用个人 accesskey
@@ -625,7 +643,10 @@
 
 - [AI 文本辅助通用 Domain 设计](plan.ai-text-assist) `plan.ai-text-assist`
 - [MD转PPT 对话式 artifact 工作台改造计划](plan.md-to-ppt-chat-redesign) `plan.md-to-ppt-chat-redesign`
-  > AI 文本辅助功能的通用领域模型设计
+  > MD 转 PPT 对话式工作台改造的实施计划
+
+- [MD 转 PPT 下一波执行计划](plan.md-to-ppt-next-wave) `plan.md-to-ppt-next-wave`
+  > MD 转 PPT 下一波：大纲右侧编辑器 / 状态机 / 澄清问卷 / 编辑深修
 
 - [配图标记手动干预](plan.manual-image-marking-control) `plan.manual-image-marking-control`
   > 配图标记从"自动黑盒"升级为"提示词+位置策略+段落级操作"的分阶段计划（Phase 1/2/3）
@@ -703,12 +724,23 @@
 - [CDS PR #684 审查修复计划](plan.cds-pr684-review-remediation) `plan.cds-pr684-review-remediation`
   > CDS PR #684 代码审查发现问题的分阶段修复计划与进度追踪
 
+- [MD 转 PPT 下一波（大纲右侧编辑器 + 状态机 + 澄清问卷）](plan.md-to-ppt-next-wave) `plan.md-to-ppt-next-wave`
+  > MD 转 PPT 下一波迭代：大纲右侧编辑器、状态机重构、澄清问卷，源自用户 2026-06-10 11 条反馈
+
 ### 六、技术债务台账
 
 > 模块级未还工程债（已知边界 / 后续可补 / 留尾风险）。命名规范见 `rule.doc-naming.md` 「debt.* 专项约定」。
 
+- [项目迁移(CDS 项目移植) · 债务台账](debt.cds-project-migration) `debt.cds-project-migration`
+  > 配置复刻已落地(dry-run/merge/replace-all 到远端 CDS)；数据全量落库走手动备份/恢复桥接(只读扫描)、accessKey 明文存 state、仅 MongoDB 扫描
+- [CDS 过期分支预览页(合并/放弃分流) · 债务台账](debt.cds-removed-branch-pages) `debt.cds-removed-branch-pages`
+  > 分支墓碑区分合并/放弃；后续可补 commit 直链、放弃页推荐可用分支、git push --delete 也写墓碑
 - [智能体宇宙 · 债务台账](debt.agent-universe) `debt.agent-universe`
   > MVP 边界：仅视觉创作走真实生图、文学图文一体待补、信封仅再加工接入、img2img 占位
+- [CDS 极速版（CI 预构建）· 已知边界与遗留事项](debt.cds-ci-prebuilt) `debt.cds-ci-prebuilt`
+  > 7 条 open：ghcr 包需手动设 public / 工作流名硬编码 / 每 push 双镜像 / 仍 git pull worktree / 构建时延 / 切回源码非一键 / ClaudeSdk 回调端口
+- [知识库版本控制/图片插入/大小统计 · 已知边界](debt.knowledge-base-versioning) `debt.knowledge-base-versioning`
+  > 图片插入不刷新已修；版本控制独立集合 + 恢复只写文本不删资产；遗留：github 日同步覆盖手动编辑、大小不含外链图片字节、版本留存上限100
 - [更新中心（终身存储 + SSE 推送）债务台账](debt.changelog-center) `debt.changelog-center`
   > 3 条 open：推送中枢进程内单例（多实例需 Redis/change stream）/ 刷新周期不分视图冷热 / GitHub 日志前端 35s 轮询与 SSE 并存
 - [项目管理智能体 · 债务台账](debt.pm-agent) `debt.pm-agent`
@@ -733,6 +765,12 @@
 
 - [CDS Agent 工作台 · 债务台账](debt.cds-agent) `debt.cds-agent`
   > 4 条 open：R1 商业级 provider 闭环 / Lite 只读模式能力边界 / CDS Agent 文档群熵减 / 无 profile 时 Lite 直跑
+- [CDS 多分支跨分支隔离 · 债务台账](debt.cds-branch-isolation) `debt.cds-branch-isolation`
+  > 2 条 open：同项目多分支共享一张网 + 裸服务别名 → DNS round-robin 串台（worker 调 ai 间歇命中旧分支 404）/ 共享 Redis + BullMQ 无分支前缀 → 别分支旧 worker 抢 job；触发=多服务+多分支并存+代码不一致
+- [CDS 后端部署冻结 · 分支 api 跑旧代码](debt.cds-backend-deploy-freeze) `debt.cds-backend-deploy-freeze`
+  > open（阻塞）：构建成功≠运行新代码，后端 .cs 改动进不到运行进程；图生视频下载鲁棒修复 + 额度用尽主动提醒已就绪待部署修好后复验
+- [视觉分镜台 · 债务台账](debt.visual-storyboard) `debt.visual-storyboard`
+  > open：OpenRouter 出图画幅(size/image_config)+modalities 需按模型能力派生 / 拆镜改 SSE 流式逐镜吐出 / 关键帧 ImageGenRun 离场取消（SSE 无同步 runId）
 
 - [MD 转网页 PPT · 债务台账](debt.md-to-ppt) `debt.md-to-ppt`
   > 2 条 open：预览 iframe same-origin 安全债（重构时从隔离源渲染）/ 知识库注入 CDS Agent 会话未实现（UI 已禁用占位）
@@ -799,6 +837,15 @@
 - [网页托管评论 · 债务台账](debt.web-hosting-comments) `debt.web-hosting-comments`
   > 网页托管评论功能的已知边界与待补实现
 
+- [MAP MCP 连接器 · 债务台账](debt.map-mcp-connector) `debt.map-mcp-connector`
+  > MAP MCP 连接器核心链路已上线，债务台账记录 PR #836 后显式延后的硬化项（共 4 条，open 3）
+
+- [行为洞察 / VOC 体验之声 工程债务台账](debt.voc) `debt.voc`
+  > 行为洞察页面已知边界、待建造项（顶部 ribbon 流式动画、VOC 信息流等）与跨 session 债务
+
+- [移动端控制条过载治理台账](debt.mobile-control-bar-overload) `debt.mobile-control-bar-overload`
+  > 移动端控制条过载问题（知识库/缺陷/周报/海鲜市场等页面，进内容前控制条 >1 条），治理机制与进度
+
 ### 七、周报
 
 - [智能体宇宙 · 完备度看板](report.agent-universe-completeness) `report.agent-universe-completeness`
@@ -851,6 +898,9 @@
 
 - [CDS Agent 工作台完成复盘（2026-05-15）](report.cds-agent-workbench-2026-05-15) `report.cds-agent-workbench-2026-05-15`
   > CDS Agent 工作台从连接探活到远程 sandbox 自巡检 PR 闭环的功能清单、坑位、未完成债务和交接提示词
+
+- [周报 2026-W25 (06-15 ~ 06-21)](report.2026-W25) `report.2026-W25`
+  > 2026 年第 25 周工作总结（288 commits / 27 PRs，W24 峰值后的归途收口周：缺陷自动化闭环正式合龙 defect-agent v3+控制台 UI+精确领取+证据链+授权窄 scope、CDS 灰度预览体感升级 构建 ETA+本地账号登录+验收报告项目级鉴权+mongo-split 写入合并+持久化投影剥离 runtime 派生、视觉创作首页重新设计+上传压缩保留透明通道+视频本地超时取消后端 run、知识库图片插入/版本恢复/大库分页三老 Bug 收口、网页托管 PDF 改 PDF.js 治微信打开空白、产品蓝图 Wave1+Wave2+PRD 多轮改稿+设备素材本地上传、教程飞回入口 pill 弹簧接住光效、新增 expectation-management/content-fills-canvas 两条系统规则；fix 占比 50% 名副其实归途周）
 
 - [周报 2026-W24 (06-08 ~ 06-14)](report.2026-W24) `report.2026-W24`
   > 2026 年第 24 周工作总结（566 commits / 56 PRs，6 周以来最忙的一周：PM Agent Phase 2 全屏改版+AI 工作台+跨项目报表+P3 里程碑详情+AI 项目简报、Product Agent 立项 v1+TAPD 数字编号统一、MD 转 PPT 锚定 deck 模式+流式逐页大纲+模型池直选、知识库双链 v2+反向链接+Obsidian 风宇宙图+划词 AI 局部编辑、CDS 资源工作台协议+数据库工作台闭环+SSH 发布作战台+Agent 请求观测台、跨项目密钥隔离穿透事故复盘+平台密钥自检自愈、三个新智能体上线 TAPD 缺陷提报/商品溯源/识途、团队动态+行为洞察、网页托管团队空间 P0~P2、教程系统 v3 我已学会退出口+飞回动画半速+轻微提醒更新子类）
@@ -954,6 +1004,13 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-06-21 | 新增 | `report.2026-W25` | 2026-W25 周报（06-15 ~ 06-21）：W24 峰值后归途收口周，缺陷自动化闭环合龙 + CDS 灰度预览体感升级 + 视觉/知识库收口 + 两条新系统规则 |
+| 2026-06-21 | 新增 | `.claude/rules/expectation-management.md` | 预期管理总纲：让用户任何时刻知道在做什么/还要多久/接下来怎样/刚才变了什么/我该做什么 |
+| 2026-06-21 | 新增 | `.claude/rules/content-fills-canvas.md` | 内容填满画布：主产物必须 flex-1 占主导，禁内容小盒子 + 大留白 |
+| 2026-06-21 | 新增 | `doc/debt.cds-branch-isolation.md` | CDS 多分支跨分支隔离债务台账 |
+| 2026-06-21 | 新增 | `doc/spec.defect-agent-automation-protocol.md` | 缺陷自动化协议契约 SSOT |
+| 2026-06-19 | 新增 | `debt.visual-storyboard` | 视觉分镜台债务台账：OpenRouter 出图画幅/modalities 按能力派生 + 拆镜 SSE 流式 + 关键帧 ImageGenRun 离场取消 |
+| 2026-06-19 | 新增 | `debt.cds-backend-deploy-freeze` | CDS 后端部署冻结台账：分支 api 跑旧代码（构建成功≠运行新代码）+ 图生视频下载修复/额度提醒待部署复验 |
 | 2026-06-04 | 新增 | `report.tutorial-coverage` `debt.onboarding-tips` | 页面教程系统统一升级:全量路由覆盖审计 + 债务台账(video-agent/薄教程加厚/编辑器/跨页待补) |
 | 2026-06-02 | 新增 | `design.agent-universe` `debt.agent-universe` | 智能体宇宙设计（能力契约 + 调用信封）与债务台账 |
 | 2026-06-02 | 新增 | `design.cds-visual-deploy` `guide.cds-one-click-deploy` `report.cds-visual-deploy` `debt.cds-visual-deploy` | CDS 绝对可视化一键部署收尾:设计(含架构图)+使用教程+完整报告+债务台账;`plan.cds-visual-deploy` 状态更新为核心收尾 |
@@ -1041,4 +1098,7 @@
 | 2026-06-10 | 新增 | `debt.cds-nginx-loading-pages` | CDS loading pages 债务台账 |
 | 2026-06-10 | 新增 | `design.cds-skill-version-update` | CDS 技能版本与更新架构 |
 | 2026-06-10 | 新增 | `plan.product-agent-version-workflow` | 产品管理智能体版本流程整改计划 |
+| 2026-06-20 | 新增 | `design.team-activity-voc` | 团队动态·用户体验之声(VOC) 设计（treemap + 痛点指数 + 闭环 + 设计思想） |
 | 2026-06-11 | 新增 | `report.version-20260610-1-summary` | version-20260610-1 分支改动说明 |
+| 2026-06-21 | 新增 | `debt.cds-performance` | CDS 性能债务台账（Docker 垃圾堆积致构建越来越慢 + mongo 索引非主因结论 + 逐步解决路线） |
+| 2026-06-22 | 新增 | `debt.mobile-control-bar-overload` | 移动端控制条过载治理台账（知识库/缺陷/周报等页面，进内容前控制条 >1 条，治理机制与进度） |

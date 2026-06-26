@@ -1,8 +1,17 @@
 import { cn } from '@/lib/cn';
-import React, { useMemo, useRef, useEffect, useState } from 'react';
+import React, { createContext, useContext, useMemo, useRef, useEffect, useState } from 'react';
 import { shouldReduceEffects } from '@/lib/themeApplier';
 import { useThemeStore } from '@/stores/themeStore';
 import { useDataTheme } from '@/pages/report-agent/hooks/useDataTheme';
+import { useIsMobile } from '@/hooks/useBreakpoint';
+
+/**
+ * 卡片嵌套深度上下文（手机端去 chrome 用）。
+ * 顶层卡片 depth=0；任意 GlassCard 给子树提供 depth+1。
+ * 手机端 depth>0（卡套卡）时收紧内边距 + 缩小圆角 + 去重阴影，消除「卡中卡」框线浪费，
+ * 桌面端完全不受影响。见 .claude/rules/mobile-first-density.md。
+ */
+const GlassCardDepthContext = createContext(0);
 
 export type GlassCardVariant = 'default' | 'gold' | 'frost' | 'subtle';
 
@@ -31,6 +40,11 @@ export interface GlassCardProps {
   style?: React.CSSProperties;
   /** 是否隐藏溢出内容（默认 false，不裁剪内容） */
   overflow?: 'hidden' | 'visible' | 'auto';
+  /**
+   * 手机端满铺：isMobile 时让这张顶层卡片也去掉边框/圆角/底色/投影（透明满铺到边），
+   * 内容直接坐在页面底色上，营造手机原生「无卡框」观感。嵌套卡片(depth>0)手机端已自动满铺，无需传此参。
+   */
+  mobileFlush?: boolean;
   /**
    * 是否启用入场动画（进入视口时 fade-in + 上移）
    * 性能模式下自动禁用
@@ -66,6 +80,7 @@ export function GlassCard({
   onClick,
   style,
   overflow = 'visible',
+  mobileFlush = false,
   animated = false,
   animationDelay = 0,
   draggable,
@@ -77,6 +92,11 @@ export function GlassCard({
   const isPerf = shouldReduceEffects({ performanceMode: perfMode } as Parameters<typeof shouldReduceEffects>[0]);
   const dataTheme = useDataTheme();
   const isLight = dataTheme === 'light';
+
+  // 手机端密度：嵌套卡片(depth>0) 或显式 mobileFlush 的顶层卡，手机端去 chrome 满铺（桌面端零影响）
+  const depth = useContext(GlassCardDepthContext);
+  const isMobile = useIsMobile();
+  const flush = isMobile && (depth > 0 || mobileFlush);
 
   // ── 入场动画：IntersectionObserver + CSS transition ──
   const ref = useRef<HTMLDivElement>(null);
@@ -118,31 +138,51 @@ export function GlassCard({
       }
     : cardStyle;
 
-  const paddingClass = { none: '', sm: 'p-3', md: 'p-4', lg: 'p-6' };
+  // 内边距：桌面保持原值；手机端整体收紧一档；嵌套满铺卡再收紧一档；
+  // 顶层 mobileFlush 卡手机端直接 p-0（满铺到边，交给内容自己控制间距）
+  const topFlush = isMobile && mobileFlush;
+  const paddingClass = topFlush
+    ? ''
+    : (
+        flush
+          ? { none: '', sm: 'p-2', md: 'p-2.5', lg: 'p-3' }
+          : isMobile
+            ? { none: '', sm: 'p-2.5', md: 'p-3', lg: 'p-4' }
+            : { none: '', sm: 'p-3', md: 'p-4', lg: 'p-6' }
+      )[padding];
   const overflowClass = { hidden: 'overflow-hidden', visible: 'overflow-visible', auto: 'overflow-auto' };
+  // 满铺卡手机端缩小圆角，弱化「卡中卡」框感
+  const radiusClass = flush ? 'rounded-[10px]' : 'rounded-[16px]';
+  // 满铺卡手机端去掉底色/边框/投影，内容直接坐在页面底色上（手机原生无卡框观感）
+  const finalStyle: React.CSSProperties = flush
+    ? { ...animatedStyle, background: 'transparent', border: 'none', boxShadow: 'none' }
+    : animatedStyle;
 
   return (
-    <div
-      ref={ref}
-      className={cn(
-        'rounded-[16px] relative no-focus-ring',
-        !isPerf && 'glass-blur-pseudo',
-        !animated && 'transition-[border-color,box-shadow,opacity] duration-200',
-        overflowClass[overflow],
-        paddingClass[padding],
-        interactive && 'cursor-pointer glass-card-interactive',
-        className
-      )}
-      style={animatedStyle}
-      onClick={onClick}
-      tabIndex={interactive ? 0 : undefined}
-      draggable={draggable}
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
-      onPointerDown={onPointerDown}
-    >
-      {children}
-    </div>
+    <GlassCardDepthContext.Provider value={depth + 1}>
+      <div
+        ref={ref}
+        className={cn(
+          radiusClass,
+          'relative no-focus-ring',
+          !isPerf && !flush && 'glass-blur-pseudo',
+          !animated && 'transition-[border-color,box-shadow,opacity] duration-200',
+          overflowClass[overflow],
+          paddingClass,
+          interactive && 'cursor-pointer glass-card-interactive',
+          className
+        )}
+        style={finalStyle}
+        onClick={onClick}
+        tabIndex={interactive ? 0 : undefined}
+        draggable={draggable}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        onPointerDown={onPointerDown}
+      >
+        {children}
+      </div>
+    </GlassCardDepthContext.Provider>
   );
 }
 
@@ -222,11 +262,14 @@ function buildGlassStyle(
   isLight: boolean,
   extra?: React.CSSProperties,
 ): React.CSSProperties {
+  // B 方案（液态玻璃评估选定，2026-06-16）：清晰度优先。
+  // 玻璃感来自「边缘棱光 + 镜面反光 + 饱和度提升」，不靠重模糊——blur 半径大幅下调，
+  // 背景透得清楚（评估页 labs/liquid-glass 实测 current blur(40px) 把背景糊成一坨）。
   const blurValues = {
-    default: 'blur(40px) saturate(180%) brightness(1.1)',
-    gold: 'blur(40px) saturate(200%) brightness(1.15)',
-    frost: 'blur(60px) saturate(220%) brightness(1.12)',
-    subtle: 'blur(24px) saturate(160%) brightness(1.05)',
+    default: 'blur(14px) saturate(180%) brightness(1.08)',
+    gold: 'blur(16px) saturate(200%) brightness(1.12)',
+    frost: 'blur(22px) saturate(220%) brightness(1.1)',
+    subtle: 'blur(10px) saturate(160%) brightness(1.04)',
   };
 
   const borderMultiplier = { default: 1, gold: 1.3, frost: 1.4, subtle: 0.7 };
@@ -254,9 +297,12 @@ function buildGlassStyle(
     `;
   }
 
+  // B 方案棱光：顶边镜面高光（光从上方打下来）+ 侧缘光 + 底部内反光，让低模糊也读作"玻璃"。
   const shadowLayers = [
     '0 16px 32px -8px rgba(10, 10, 14, 0.5)',
-    `inset 0 1px 1px rgba(255, 255, 255, ${0.15 * borderMult})`,
+    `inset 0 1px 1px rgba(255, 255, 255, ${0.5 * borderMult})`,
+    'inset 1px 0 0 rgba(255, 255, 255, 0.12)',
+    'inset 0 -10px 20px -16px rgba(255, 255, 255, 0.16)',
     'inset 0 -1px 1px rgba(0, 0, 0, 0.15)',
   ];
   if (variant === 'gold') {

@@ -25,6 +25,16 @@ import { branchEvents, nowIso } from './branch-events.js';
 import path from 'node:path';
 import { StateService as StateServiceClass } from './state.js';
 import { analyzeChangeImpact } from './change-impact-analyzer.js';
+import { branchUsesPrebuiltMode, applyDefaultDeployModesToBranch } from './deploy-runtime.js';
+
+/**
+ * 2026-06-23 极速版（CI 预构建）—— 负责构建预构建镜像的 GitHub Actions 工作流标识。
+ * CDS 只在这个工作流的 workflow_run.completed 到达时才触发拉取部署,避免被 ci.yml /
+ * cds.yml 等其它工作流的完成事件误触发（那时镜像还没 push 到 ghcr）。
+ * 后续可做成 project 级配置以泛化到任意 public 仓库（见 doc/debt.cds-ci-prebuilt.md）。
+ */
+const CI_PREBUILT_WORKFLOW_FILE = 'branch-image.yml';
+const CI_PREBUILT_WORKFLOW_NAME = 'Branch Image';
 
 /**
  * Validate a git ref (branch/tag) name against a strict allow-list before
@@ -83,6 +93,7 @@ export interface WebhookDispatchResult {
     | 'ignored-non-branch'
     | 'ignored-non-push-branch'
     | 'ignored-auto-deploy-off'
+    | 'ignored-project-paused'
     | 'ignored-doc-only'
     | 'ignored-ping'
     | 'ignored-event'
@@ -96,7 +107,12 @@ export interface WebhookDispatchResult {
     | 'branch-deleted'
     | 'repo-renamed'
     | 'repo-detached'
-    | 'release-acknowledged';
+    | 'release-acknowledged'
+    // 2026-06-23 极速版（CI 预构建）
+    | 'ci-image-waiting'
+    | 'ci-image-ready'
+    | 'ci-image-failed'
+    | 'workflow-acknowledged';
   /** Short human message for the response + logs. */
   message: string;
   /** Populated when a branch was touched. */
@@ -126,6 +142,23 @@ export interface WebhookDispatchResult {
    */
   branchDeleteRequest?: {
     branchId: string;
+  };
+  /**
+   * Populated on `pull_request.closed` —— 让路由层写一条分支墓碑，使过期分支
+   * 预览页能区分"已合并到主分支"（引导切主分支）与"已放弃"（跳 PR/commit）。
+   * 路由层据此计算 previewSlug + 解析默认分支后调 stateService.recordRemovedBranch。
+   */
+  tombstoneRequest?: {
+    branchId: string;
+    branch: string;
+    projectId: string;
+    reason: 'merged' | 'abandoned';
+    prNumber?: number;
+    prUrl?: string;
+    mergeCommitSha?: string;
+    baseRef?: string;
+    /** 删除前的自定义子域别名快照，供别名访问 gone 页时兜底匹配墓碑。 */
+    aliases?: string[];
   };
   /**
    * Populated on slash-command events (`/cds <cmd>` in issue_comment).
@@ -199,6 +232,7 @@ export interface GitHubPullRequestEvent {
     number: number;
     state: 'open' | 'closed';
     merged?: boolean;
+    merge_commit_sha?: string;
     head: { ref: string; sha: string };
     base: { ref: string };
     html_url: string;
@@ -281,6 +315,28 @@ export interface GitHubReleaseEvent {
   installation?: { id: number };
 }
 
+/**
+ * 2026-06-23 极速版（CI 预构建）—— GitHub Actions 构建完成事件。
+ * CDS 据此把「等待中」的极速版分支按 commit SHA 拉取预构建镜像部署。
+ */
+export interface GitHubWorkflowRunEvent {
+  action: 'requested' | 'in_progress' | 'completed';
+  workflow_run?: {
+    id: number;
+    name?: string;
+    /** 触发该 run 的 workflow 文件路径（如 `.github/workflows/branch-image.yml`）。 */
+    path?: string;
+    head_branch?: string;
+    head_sha?: string;
+    status?: string;
+    conclusion?: string | null;
+    html_url?: string;
+    event?: string;
+  };
+  repository?: { full_name: string };
+  installation?: { id: number };
+}
+
 export interface WebhookDispatcherDeps {
   stateService: StateService;
   worktreeService: WorktreeService;
@@ -291,6 +347,119 @@ export interface WebhookDispatcherDeps {
 
 export class GitHubWebhookDispatcher {
   constructor(private readonly deps: WebhookDispatcherDeps) {}
+
+  /**
+   * 近期已完成的 branch-image.yml workflow_run 结果缓存（按 repo+sha）。
+   * 解决「push webhook 延迟/重试,workflow_run.completed 抢先到达」的竞态:
+   * 抢先到达时若没有等待分支匹配,把结果暂存这里;稍后 push 把分支置 express-waiting
+   * 时先查这里 —— 命中 success 立即部署、命中 failure 直接置 failed,不必苦等
+   * 第二个永远不会来的 completion 事件（Bugbot/Codex P2:don't drop early
+   * workflow_run completions）。进程内缓存(重启即丢,属可接受残留,见 debt 台账)。
+   */
+  private readonly recentCompletedRuns = new Map<
+    string,
+    { conclusion: string; htmlUrl?: string; at: number }
+  >();
+  private static readonly RECENT_RUN_CACHE_MAX = 200;
+  private static readonly RECENT_RUN_CACHE_TTL_MS = 60 * 60 * 1000; // 1h
+
+  // 缓存键带 head_branch:branch-image.yml 对每个分支的 push 各跑一次 workflow_run,
+  // 即便两个分支指向同一 commit,GitHub 也会发两条带不同 head_branch 的事件。若只按
+  // repo+sha 做键,第二条会覆盖第一条、且一次性消费会让另一分支永远认领不到
+  // （Bugbot:shared CI cache single consume）。带上 branch 即可让两个分支各拿各的。
+  // head_branch 缺省的旧 payload 退回 repo+sha(branch='')。
+  private recentRunKey(repoFullName: string, sha: string, branch?: string): string {
+    return `${repoFullName.toLowerCase()}::${(branch || '').toLowerCase()}::${sha.toLowerCase()}`;
+  }
+
+  private rememberCompletedRun(
+    repoFullName: string,
+    sha: string,
+    branch: string | undefined,
+    conclusion: string,
+    htmlUrl?: string,
+  ): void {
+    const now = Date.now();
+    // 顺手剪枝过期项,顺带把 Map 控制在上限内(超限删最旧)。
+    for (const [k, v] of this.recentCompletedRuns) {
+      if (now - v.at > GitHubWebhookDispatcher.RECENT_RUN_CACHE_TTL_MS) this.recentCompletedRuns.delete(k);
+    }
+    while (this.recentCompletedRuns.size >= GitHubWebhookDispatcher.RECENT_RUN_CACHE_MAX) {
+      const oldest = this.recentCompletedRuns.keys().next().value;
+      if (oldest === undefined) break;
+      this.recentCompletedRuns.delete(oldest);
+    }
+    this.recentCompletedRuns.set(this.recentRunKey(repoFullName, sha, branch), { conclusion, htmlUrl, at: now });
+  }
+
+  private takeCompletedRun(
+    repoFullName: string,
+    sha: string,
+    branch: string,
+  ): { conclusion: string; htmlUrl?: string } | undefined {
+    // 先认领「本分支专属」键,未命中再退回旧 payload 的无分支键(branch='')。
+    for (const key of [this.recentRunKey(repoFullName, sha, branch), this.recentRunKey(repoFullName, sha, '')]) {
+      const hit = this.recentCompletedRuns.get(key);
+      if (!hit) continue;
+      this.recentCompletedRuns.delete(key); // 一次性消费,避免下次 push 误用陈旧结果
+      if (Date.now() - hit.at > GitHubWebhookDispatcher.RECENT_RUN_CACHE_TTL_MS) return undefined;
+      return { conclusion: hit.conclusion, htmlUrl: hit.htmlUrl };
+    }
+    return undefined;
+  }
+
+  /**
+   * 极速版分支认领「早到并已缓存」的 CI 完成结果。命中即把分支推进到 ready/failed
+   * 并返回对应结果(success 带 deployRequest);未命中返回 null 让调用方继续置 waiting。
+   * push 正常路径与 docs-only 推进 ciTargetSha 后都走这里,避免缓存结果被漏认领
+   * （Codex P2:check cached CI runs after docs-only target changes）。
+   */
+  private claimCachedCiRunForExpress(
+    branchId: string,
+    projectId: string,
+    branchName: string,
+    repoFullName: string,
+    commitSha: string,
+  ): WebhookDispatchResult | null {
+    const cached = this.takeCompletedRun(repoFullName, commitSha, branchName);
+    if (!cached) return null;
+    if (cached.conclusion === 'success') {
+      this.deps.stateService.updateBranchGithubMeta(branchId, {
+        ciImageStatus: 'ready',
+        ciTargetSha: commitSha,
+        ciWorkflowConclusion: cached.conclusion,
+        ciWorkflowRunUrl: cached.htmlUrl,
+        ciWaitingSince: '',
+        ciImageError: '',
+      });
+      this.deps.stateService.save();
+      this.emitCiStatus(branchId, projectId, 'ready', commitSha, cached.htmlUrl);
+      return {
+        action: 'ci-image-ready',
+        message: `极速版分支 '${branchId}' 命中已完成的 CI 镜像（commit ${commitSha.slice(0, 7)}）,直接触发部署`,
+        branchId,
+        deployRequest: { branchId, commitSha },
+      };
+    }
+    // 失败 / cancelled / timed_out — 置 failed,不自动回退（与 workflow_run 路径一致）。
+    // 必须同样写 ciImageError + 清 ciWaitingSince：此路径让分支脱离 waiting，看门狗不再兜底，
+    // 若不写归因，已打开的看板翻 failed 却显示空/旧错误文案（Codex P2）。
+    this.deps.stateService.updateBranchGithubMeta(branchId, {
+      ciImageStatus: 'failed',
+      ciTargetSha: commitSha,
+      ciWorkflowConclusion: cached.conclusion,
+      ciWorkflowRunUrl: cached.htmlUrl,
+      ciWaitingSince: '',
+      ciImageError: `CI 构建未成功（${cached.conclusion}）。可在分支详情切回源码编译重试。`,
+    });
+    this.deps.stateService.save();
+    this.emitCiStatus(branchId, projectId, 'failed', commitSha, cached.htmlUrl);
+    return {
+      action: 'ci-image-failed',
+      message: `极速版分支 '${branchId}' 的 CI 构建未成功（${cached.conclusion}）,可在分支详情切回源码编译`,
+      branchId,
+    };
+  }
 
   /**
    * Dispatch a webhook event. The `dryRun` option is set by the
@@ -335,6 +504,8 @@ export class GitHubWebhookDispatcher {
         return this.handleRepository(payload as GitHubRepositoryEvent, dryRun);
       case 'release':
         return this.handleRelease(payload as GitHubReleaseEvent);
+      case 'workflow_run':
+        return this.handleWorkflowRun(payload as GitHubWorkflowRunEvent, dryRun);
       default:
         return { action: 'ignored-event', message: `Unhandled event type '${eventName}'` };
     }
@@ -345,6 +516,7 @@ export class GitHubWebhookDispatcher {
    * 应直接 return ignored 短路。
    *
    * 解析顺序：
+   *   0. project.paused === true → 整个项目冻结，所有事件一律拒绝
    *   1. project.githubEventPolicy[eventKey] 为 false → 拒绝
    *   2. policy 缺失 / 该字段未设 → push 事件兜底 githubAutoDeploy（向后兼容老
    *      开关），其它事件默认放行
@@ -354,6 +526,9 @@ export class GitHubWebhookDispatcher {
     eventKey: keyof NonNullable<import('../types.js').Project['githubEventPolicy']>,
   ): boolean {
     if (!project) return true;
+    // 2026-06-23：项目暂停 = 冻结所有 webhook 行为（push/PR/delete/comment）。
+    // 暂停时不再自动建分支 / 部署 / 清理容器，是「反复构建止血」的核心闸门。
+    if (project.paused === true) return false;
     const v = project.githubEventPolicy?.[eventKey];
     if (v === false) return false;
     if (v === true) return true;
@@ -489,10 +664,6 @@ export class GitHubWebhookDispatcher {
     if (!project) {
       return { action: 'ignored-no-project', message: `No project linked to ${event.repository.full_name}` };
     }
-    // PR_D.2: project.githubEventPolicy.delete=false → 不自动清容器
-    if (!this.isEventEnabled(project, 'delete')) {
-      return { action: 'ignored-event', message: `delete handling disabled for project ${project.id}` };
-    }
     if (!isSafeGitRef(event.ref)) {
       return { action: 'ignored-event', message: `Rejected unsafe delete ref: ${event.ref.slice(0, 80)}` };
     }
@@ -508,6 +679,25 @@ export class GitHubWebhookDispatcher {
       return { action: 'ignored-event', message: `branch deleted on GitHub but not tracked by CDS: ${canonicalId}` };
     }
     const branchId = entry.id;
+    // 墓碑（gone 页用的「已放弃」元数据）独立于 delete「自动清容器」策略，任何删除都记。
+    // 否则 delete 策略关闭时不写墓碑 → 过期预览仍落泛化「启动失败」而非「已放弃」（Bugbot）。
+    // 与 PR-close 路径一致：reason 固定 abandoned（delete 事件无合并语义），若此前 PR 合并
+    // 已写 'merged' 墓碑，recordRemovedBranch 的 merged 粘性保证不被降级。
+    const tombstoneRequest = {
+      branchId,
+      branch: entry.branch || event.ref,
+      projectId: project.id,
+      reason: 'abandoned' as const,
+      aliases: entry.subdomainAliases,
+    };
+    // PR_D.2: project.githubEventPolicy.delete=false → 不自动清容器（但墓碑照记）
+    if (!this.isEventEnabled(project, 'delete')) {
+      return {
+        action: 'ignored-event',
+        message: `delete auto-cleanup disabled for project ${project.id}（仅记墓碑，不停容器/不删 entry）`,
+        tombstoneRequest,
+      };
+    }
     return {
       action: 'branch-deleted',
       message: `GitHub branch '${event.ref}' deleted; stopping CDS preview '${branchId}' + cleanup entry`,
@@ -516,6 +706,7 @@ export class GitHubWebhookDispatcher {
       // 2026-05-07 用户反馈"分支已删除但 CDS 端没清理":除了 stopRequest 停容器,
       // 还要 branchDeleteRequest 删 CDS state.branches[id] + worktree。
       branchDeleteRequest: { branchId },
+      tombstoneRequest,
     };
   }
 
@@ -583,6 +774,165 @@ export class GitHubWebhookDispatcher {
     return { action: 'release-acknowledged', message: `release.${event.action} (${tag}) — future: production deploy` };
   }
 
+  /** 极速版（CI 预构建）：判断 workflow_run 是否来自「构建预构建镜像」的工作流。 */
+  private isPrebuiltImageWorkflow(run: NonNullable<GitHubWorkflowRunEvent['workflow_run']>): boolean {
+    // workflow_run.path 形如 `.github/workflows/branch-image.yml`。只认这个工作流,
+    // 避免 ci.yml / cds.yml 等其它工作流先完成就误触发部署（那时镜像还没 push）。
+    const base = (run.path || '').split('/').pop() || '';
+    if (base === CI_PREBUILT_WORKFLOW_FILE) return true;
+    // 兜底:按 workflow name 匹配（防止个别 GitHub 投递缺 path）。
+    return (run.name || '').trim() === CI_PREBUILT_WORKFLOW_NAME;
+  }
+
+  private emitCiStatus(
+    branchId: string,
+    projectId: string,
+    status: 'waiting' | 'ready' | 'failed',
+    sha: string,
+    runUrl?: string,
+  ): void {
+    // 真正驱动 UI 的不是这里的 patch —— /api/branches/stream 的 branch.updated 会从 state
+    // 重新序列化整个 branch 下发，BranchList 按 data.branch merge。所以 ciImageError 等的
+    // 清空必须在 **state** 里写 '' 而非 undefined（见各 updateBranchGithubMeta 调用），否则
+    // JSON.stringify 丢字段、客户端 merge 保留旧值（failed→ready 恢复时旧错误文案不消失）。
+    // patch 这里仍带上同名字段作语义说明，用 '' 兜底保持与 state 一致。
+    const fresh = this.deps.stateService.getBranch(branchId);
+    branchEvents.emitEvent({
+      type: 'branch.updated',
+      payload: {
+        branchId,
+        projectId,
+        patch: {
+          ciImageStatus: status,
+          ciTargetSha: sha,
+          ciWorkflowRunUrl: runUrl ?? '',
+          ciWorkflowConclusion: fresh?.ciWorkflowConclusion ?? '',
+          ciImageError: fresh?.ciImageError ?? '',
+        },
+        ts: nowIso(),
+      },
+    });
+  }
+
+  /**
+   * 2026-06-23 极速版（CI 预构建）—— GitHub Actions 构建完成。
+   *
+   * 只处理 `completed` + 来自预构建镜像工作流（branch-image.yml）的 run,按
+   * head_sha 找到「等待中」的极速版分支:
+   *   - success → 置 ready + 返回 deployRequest（路由层触发 docker pull + 部署）
+   *   - 其它   → 置 failed（前端提示可切回源码编译,不自动回退）
+   */
+  private async handleWorkflowRun(event: GitHubWorkflowRunEvent, dryRun: boolean): Promise<WebhookDispatchResult> {
+    const run = event.workflow_run;
+    if (!run || event.action !== 'completed') {
+      return { action: 'workflow-acknowledged', message: `workflow_run ${event.action} 已 ack（只处理 completed）` };
+    }
+    if (!event.repository) {
+      return { action: 'workflow-acknowledged', message: 'workflow_run 缺 repository,已 ack' };
+    }
+    if (!this.isPrebuiltImageWorkflow(run)) {
+      return { action: 'workflow-acknowledged', message: `workflow_run '${run.name || run.path || '?'}' 非预构建镜像工作流,已 ack` };
+    }
+    const project = this.deps.stateService.findProjectByRepoFullName(event.repository.full_name);
+    if (!project) {
+      return { action: 'ignored-no-project', message: `No project linked to ${event.repository.full_name}` };
+    }
+    const headSha = run.head_sha;
+    if (typeof headSha !== 'string' || !/^[0-9a-f]{7,40}$/i.test(headSha)) {
+      return { action: 'workflow-acknowledged', message: 'workflow_run head_sha 缺失/格式非法,已 ack' };
+    }
+    // 找等待该 SHA 的极速版分支（push 时已把 ciTargetSha 钉为该 commit）。
+    // 匹配条件（Bugbot/Codex review）：
+    //  1. ciTargetSha === head_sha;
+    //  2. **同时**比对 head_branch —— 多个分支可能指向同一 commit,GitHub 会按分支分别
+    //     跑 branch-image.yml,只按 SHA 取「第一个」会把 B 分支的 run 误派给 A 分支。
+    //     head_branch 缺省时退回只按 SHA（向后兼容）。
+    //  3. waiting **或** failed —— 操作员对失败的 run 点 re-run 且同 SHA 成功时,应允许
+    //     failed → ready 恢复,而不是因为不再是 waiting 就 ack 不动作（只能靠再 push 恢复）。
+    const branches = this.deps.stateService.getBranchesForProject(project.id);
+    // 只按「显式等待标记」匹配:ciTargetSha===head_sha + waiting/failed + 分支名。
+    //  - ciTargetSha 是 push 路径**显式**置 waiting 时钉下的「我在等这个 SHA 的 CI 镜像」,
+    //    是部署意图的可信标记;docs-only 等不该部署的 push 不会置它。
+    //  - **不**用 githubCommitSha 兜底:那只是「最近一次 push 的 commit」,docs-only push
+    //    也会刷新它 → 按它匹配会把 docs-only 显式跳过的 commit 也部署掉
+    //    （Codex P2: don't fallback-deploy docs-only CI runs）。
+    //  - 延迟/重试导致 workflow_run 早于 push 到达的竞态,由下方 rememberCompletedRun 缓存
+    //    兜底(push 置 waiting 时 takeCompletedRun 认领),不靠 githubCommitSha 猜。
+    //  - waiting **或** failed:操作员对失败 run 点 re-run 且同 SHA 成功时允许 failed→ready 恢复。
+    //  - head_branch 比对:多分支可能指向同一 commit,GitHub 按分支分别跑 branch-image.yml,
+    //    缺省时退回只按 SHA(向后兼容)。
+    // 还要校验分支**当前**仍是极速版（Codex P2: re-check mode before consuming CI
+    // completions）:用户若把 override 从 express 切回 dev/static,旧的 ciImageStatus/
+    // ciTargetSha 可能还在,此时不该再认 CI 完成事件去自动重部署一个已退出极速版的分支。
+    const wfProfiles = this.deps.stateService.getBuildProfilesForProject(project.id);
+    const matchable = (b: BranchEntry): boolean =>
+      (b.ciImageStatus === 'waiting' || b.ciImageStatus === 'failed')
+      && b.ciTargetSha === headSha
+      && (!run.head_branch || b.branch === run.head_branch)
+      && branchUsesPrebuiltMode(wfProfiles, b);
+    const target = branches.find(matchable);
+    if (!target) {
+      // 没有分支匹配:很可能是 push webhook 还没处理到(延迟/重试),分支尚未 stamp。
+      // 暂存结果,等稍后 push 把分支置 express-waiting 时认领(takeCompletedRun)。
+      if (!dryRun) {
+        this.rememberCompletedRun(event.repository.full_name, headSha, run.head_branch, run.conclusion || 'unknown', run.html_url);
+      }
+      return {
+        action: 'workflow-acknowledged',
+        message: `workflow_run(${run.conclusion}) @ ${headSha.slice(0, 7)} 暂无匹配分支,已缓存结果待 push 认领`,
+      };
+    }
+    const branchId = target.id;
+    const conclusion = run.conclusion || 'unknown';
+
+    if (conclusion === 'success') {
+      if (!dryRun) {
+        this.deps.stateService.updateBranchGithubMeta(branchId, {
+          ciImageStatus: 'ready',
+          // 把 ciTargetSha 钉到本次 head_sha:fallback matcher 可能按 githubCommitSha
+          // 匹配到一个 ciTargetSha 仍是旧值的分支,不同步会让 check_run 闸门
+          //（ready && ciTargetSha===head_sha）永远卡住（Bugbot: CI ready omits target SHA）。
+          ciTargetSha: headSha,
+          ciWorkflowConclusion: conclusion,
+          ciWorkflowRunUrl: run.html_url,
+          // 真 CI 完成事件到达 → 清掉看门狗计时与超时文案（若此前已被判超时 failed,
+          // 这里允许 failed → ready 恢复,见下方 matcher 的 waiting||failed 条件）。
+          ciWaitingSince: '',
+          ciImageError: '',
+        });
+        this.deps.stateService.save();
+        this.emitCiStatus(branchId, target.projectId, 'ready', headSha, run.html_url);
+      }
+      return {
+        action: 'ci-image-ready',
+        message: `${dryRun ? '[dry-run] ' : ''}CI 镜像就绪（${headSha.slice(0, 7)}）,触发极速版部署 '${branchId}'`,
+        branchId,
+        deployRequest: { branchId, commitSha: headSha },
+      };
+    }
+
+    // 失败 / cancelled / timed_out — 不自动回退,等用户手动切回源码编译。
+    if (!dryRun) {
+      this.deps.stateService.updateBranchGithubMeta(branchId, {
+        ciImageStatus: 'failed',
+        ciTargetSha: headSha, // 同上:保持 ciTargetSha 与本次 run 的 head_sha 一致
+        ciWorkflowConclusion: conclusion,
+        ciWorkflowRunUrl: run.html_url,
+        // 真 CI 失败有了归因（conclusion + run 链接），停掉看门狗计时并写明原因,
+        // 区别于「超时无 run」的看门狗失败。
+        ciWaitingSince: '',
+        ciImageError: `CI 构建未成功（${conclusion}）。可在分支详情切回源码编译重试。`,
+      });
+      this.deps.stateService.save();
+      this.emitCiStatus(branchId, target.projectId, 'failed', headSha, run.html_url);
+    }
+    return {
+      action: 'ci-image-failed',
+      message: `${dryRun ? '[dry-run] ' : ''}CI 构建未成功（${conclusion}），极速版分支 '${branchId}' 保持等待,可在分支详情切回源码编译`,
+      branchId,
+    };
+  }
+
   /**
    * Handle `pull_request` events. The three actions we care about:
    *   - `opened` / `reopened`: remember the PR number on the branch so
@@ -629,18 +979,52 @@ export class GitHubWebhookDispatcher {
 
     // `closed` action — tear down preview containers.
     if (event.action === 'closed') {
-      // PR_D.2: project.githubEventPolicy.prClose=false → 不自动停容器
+      const merged = event.pull_request.merged === true;
+      // 墓碑（gone 页区分「已合并 → 切主分支」vs「已放弃 → 跳 PR」）是纯展示元数据，
+      // 与 prClose「是否自动停容器」策略无关，任何关闭都要记。**必须独立于 prClose 闸门**：
+      // 否则 prClose=false 时不写 merged 墓碑，而随后 GitHub 删分支的 delete 事件仍写
+      // abandoned，导致「合并的分支被错显为已放弃」（recordRemovedBranch 的 merged 粘性
+      // 也救不了——因为压根没写过 merged）。entry 存在才有 branch 名可落库。
+      // **不以 entry 存在为前提构建墓碑**：若 delete webhook 先到、CDS 清理已删掉 entry，
+      // 再处理 pull_request.closed 时 entry 为 null。此时 delete 路径已写了 abandoned 墓碑，
+      // 若这里因 entry 缺失而不写 merged 墓碑，合并的 PR 会被错显为已放弃（Codex P2）。
+      // 分支名用 head.ref（branchName，恒有值），branchId 用已算好的 canonicalId 兜底；
+      // merged 粘性 + 元数据承袭会把已有 abandoned 升级为 merged 并保留别名等字段。
+      const tombstoneRequest = {
+        branchId,
+        branch: entry?.branch || branchName,
+        projectId: project.id,
+        reason: (merged ? 'merged' : 'abandoned') as 'merged' | 'abandoned',
+        prNumber: event.pull_request.number,
+        prUrl: event.pull_request.html_url,
+        mergeCommitSha: merged ? event.pull_request.merge_commit_sha : undefined,
+        baseRef: event.pull_request.base?.ref,
+        aliases: entry?.subdomainAliases,
+      };
+
+      // PR_D.2: project.githubEventPolicy.prClose=false → 不自动停容器（但墓碑照记）
       if (!this.isEventEnabled(project, 'prClose')) {
-        return { action: 'ignored-event', message: `PR-close handling disabled for project ${project.id}` };
+        return {
+          action: 'ignored-event',
+          message: `PR-close auto-stop disabled for project ${project.id}（仅记墓碑，不停容器）`,
+          tombstoneRequest,
+        };
       }
       if (!entry) {
-        return { action: 'ignored-event', message: `PR closed but branch '${branchId}' not in CDS` };
+        // entry 已被先到的 delete 清理：没容器可停，但墓碑照记（merged 粘性会把
+        // delete 写的 abandoned 升级为 merged），否则合并 PR 会被错显为已放弃（Codex P2）。
+        return {
+          action: 'ignored-event',
+          message: `PR closed but branch '${branchId}' not in CDS（仅记墓碑）`,
+          tombstoneRequest,
+        };
       }
       return {
         action: 'pr-branch-stopped',
-        message: `PR #${event.pull_request.number} ${event.pull_request.merged ? 'merged' : 'closed'}; stopping preview`,
+        message: `PR #${event.pull_request.number} ${merged ? 'merged' : 'closed'}; stopping preview`,
         branchId,
         stopRequest: { branchId },
+        tombstoneRequest,
       };
     }
 
@@ -729,6 +1113,12 @@ export class GitHubWebhookDispatcher {
     // PR_D.2: 统一走 isEventEnabled('push')，内部已 fallback 到老的
     // githubAutoDeploy；新代码用 githubEventPolicy.push。
     if (!this.isEventEnabled(project, 'push')) {
+      if (project.paused === true) {
+        return {
+          action: 'ignored-project-paused',
+          message: `Project '${project.name}' 已暂停，忽略 push 自动部署。`,
+        };
+      }
       return {
         action: 'ignored-auto-deploy-off',
         message: `Project '${project.name}' has push handling off. Ignoring push.`,
@@ -753,9 +1143,42 @@ export class GitHubWebhookDispatcher {
     const branchId = entry?.id ?? canonicalId;
     let created = false;
 
+    // 项目构建配置（极速版判定 + created 分支默认对齐共用）。早算一次,供下面
+    // docs-only / dry-run / express 分流复用,避免散落多处重复读取。
+    const profiles = this.deps.stateService.getBuildProfilesForProject(project.id);
+    // 判定某分支(或 webhook 即将新建的分支)是否走极速版(CI 预构建)模式。
+    //  - 已存在分支:直接按其 profileOverrides 判定。
+    //  - 即将新建分支(existing=undefined):webhook 建分支时会 applyDefaultDeployModesToBranch
+    //    把项目默认 override 拷进去 —— 这里用临时 entry 模拟同样拷贝再判定,
+    //    使 dry-run / self-test 与真实路径口径一致（Bugbot:dry-run ignores express wait path）。
+    const resolveExpress = (existing: BranchEntry | undefined): boolean => {
+      if (profiles.length === 0) return false;
+      if (existing) return branchUsesPrebuiltMode(profiles, existing);
+      if (!project.defaultDeployModes) return false;
+      const sim: BranchEntry = {
+        id: branchId,
+        projectId: project.id,
+        branch: branchName,
+        worktreePath: '',
+        services: {},
+        status: 'idle',
+        createdAt: new Date().toISOString(),
+      };
+      applyDefaultDeployModesToBranch(sim, project.defaultDeployModes, profiles);
+      return branchUsesPrebuiltMode(profiles, sim);
+    };
+
     const docsOnly = entry ? this.isDocsOnlyPush(event) : { ok: false, changedPaths: [] };
     if (docsOnly.ok) {
       if (!dryRun) {
+        // docs-only push 不动 CI 状态（2026-06-23 path-filter + 回退模型修正,Bugbot:
+        // CI ready without image builds）。理由：极速版镜像由 CI **按改动路径**构建
+        // （prd-api/** → api、prd-admin/** → admin），docs-only commit 不会产生任何
+        // sha-* 镜像。此前为「每个 commit 都构建」模型把 ciTargetSha 推进到 docs commit,
+        // 在 path-filter 下会:① 把正在构建的**代码 commit** 的 in-flight build 顶掉(孤儿,
+        // 永不部署);② 让分支显示「CI ready」却指向一个没有镜像的 SHA、只能全回退 main。
+        // 正确做法:docs-only 只刷新展示用 metadata,ciImageStatus/ciTargetSha 保持不动 ——
+        // 继续等待正在构建的代码 commit;docs 改动本就不进运行时镜像,无需重部署。
         this.deps.stateService.updateBranchGithubMeta(branchId, {
           githubRepoFullName: repoFullName,
           githubCommitSha: commitSha,
@@ -803,6 +1226,16 @@ export class GitHubWebhookDispatcher {
       if (dryRun) {
         // In dry-run we return the shape of "would-create" without
         // touching disk or state — self-test wants accurate signals.
+        // 极速版分支建好后不会立即部署,而是等 CI 镜像 → dry-run 必须返回同样的
+        // ci-image-waiting 形状(无 deployRequest),否则 self-test 会以为会部署,
+        // 与真实 express 处理不一致（Bugbot:dry-run ignores express wait path）。
+        if (resolveExpress(undefined)) {
+          return {
+            action: 'ci-image-waiting',
+            message: `[dry-run] 极速版分支 '${branchId}' 将等待 CI 构建镜像（commit ${commitSha.slice(0, 7)}）后拉取部署`,
+            branchId,
+          };
+        }
         return {
           action: 'branch-created',
           message: `[dry-run] Would create branch '${branchId}' from push at ${commitSha.slice(0, 7)}`,
@@ -842,6 +1275,15 @@ export class GitHubWebhookDispatcher {
     }
 
     if (dryRun) {
+      // 已存在分支若是极速版,真实路径会置 waiting 等 CI、不返回 deployRequest。
+      // dry-run 对齐这一形状（Bugbot:dry-run ignores express wait path）。
+      if (resolveExpress(entry)) {
+        return {
+          action: 'ci-image-waiting',
+          message: `[dry-run] 极速版分支 '${branchId}' 将等待 CI 构建镜像（commit ${commitSha.slice(0, 7)}）后拉取部署`,
+          branchId,
+        };
+      }
       return {
         action: created ? 'branch-created' : 'branch-refreshed',
         message: `[dry-run] Would stamp ${commitSha.slice(0, 7)} on '${branchId}'`,
@@ -890,6 +1332,75 @@ export class GitHubWebhookDispatcher {
           },
         });
       }
+    }
+
+    // ── 2026-06-23 极速版（CI 预构建）分流 ──────────────────────────────
+    // webhook 自动建分支时补回项目默认 deploy mode（与 UI 建分支一致;否则新分支
+    // 拿不到极速版 override）。已存在分支不动（其 override 已是 SSOT）。
+    // profiles 已在 handlePush 顶部 hoist。
+    if (created && project.defaultDeployModes && profiles.length > 0) {
+      const fresh = this.deps.stateService.getBranch(branchId);
+      if (fresh) {
+        applyDefaultDeployModesToBranch(fresh, project.defaultDeployModes, profiles);
+        // 显式落盘（mongo-split store 下 getBranch 可能返回副本,mutate 不持久化）
+        for (const [pid, ov] of Object.entries(fresh.profileOverrides || {})) {
+          this.deps.stateService.setBranchProfileOverride(branchId, pid, ov);
+        }
+      }
+    }
+
+    // 该分支是否走预构建镜像模式？是 → 不本机编译,改为「等待 CI 镜像就绪」,
+    // 等 GitHub Actions 的 workflow_run.completed 到达后再按 commit SHA 拉取部署。
+    //
+    // 注意（Bugbot/Codex review）：此处**不传** project.defaultDeployModes —— 部署路径
+    // resolveEffectiveProfile 按 2026-05-14 产品决策**不读**项目默认（默认只在建分支时
+    // 拷贝一次写进 override）。若这里用项目默认判定,则「已存在、无 override」的分支会被
+    // 误判成极速版 → 置 waiting 等 CI,但 deploy 仍走源码模式,自相矛盾。created 分支上面
+    // 已 applyDefaultDeployModesToBranch 写了 override,靠 override 即可命中。
+    const entryForMode = this.deps.stateService.getBranch(branchId) ?? entry;
+    const isExpress = branchUsesPrebuiltMode(profiles, entryForMode);
+    if (isExpress) {
+      // 竞态认领:若 branch-image.yml 的 workflow_run.completed 早于本次 push 到达,
+      // 结果已被 rememberCompletedRun 暂存。这里先认领 —— 命中就不必置 waiting 苦等
+      // 一个永远不会再来的 completion 事件（Bugbot/Codex P2）。
+      const claimed = this.claimCachedCiRunForExpress(
+        branchId, entryForMode.projectId, branchName, repoFullName, commitSha,
+      );
+      if (claimed) return claimed;
+      this.deps.stateService.updateBranchGithubMeta(branchId, {
+        ciImageStatus: 'waiting',
+        ciTargetSha: commitSha,
+        ciWorkflowConclusion: '',
+        // 同时清掉上一次 run 的链接,否则「等待 CI 镜像」卡片的「查看构建」会指向
+        // 旧的(可能失败/无关)Actions run（Bugbot: stale CI run link on wait）。
+        ciWorkflowRunUrl: '',
+        // 看门狗据此判定 waiting 是否超时（CI 完成事件永不到达时翻 failed + 留归因）；
+        // 同时清掉上次的超时/失败文案,本次重新计时。
+        ciWaitingSince: receivedAt,
+        ciImageError: '',
+      });
+      this.deps.stateService.save();
+      const waitEntry = this.deps.stateService.getBranch(branchId);
+      if (waitEntry) {
+        branchEvents.emitEvent({
+          type: 'branch.updated',
+          payload: {
+            branchId,
+            projectId: waitEntry.projectId,
+            patch: {
+              ciImageStatus: 'waiting',
+              ciTargetSha: commitSha,
+              githubCommitSha: waitEntry.githubCommitSha,
+            },
+            ts: receivedAt,
+          },
+        });
+      }
+      return {
+        action: 'ci-image-waiting',
+        message: `极速版分支 '${branchId}' 等待 CI 构建镜像（commit ${commitSha.slice(0, 7)}）;CI 完成后自动拉取部署`,
+        branchId,
+      };
     }
 
     return {
@@ -964,6 +1475,21 @@ export class GitHubWebhookDispatcher {
     if (!dryRun) {
       this.deps.stateService.updateBranchGithubMeta(branchId, { githubCommitSha: commitSha });
       this.deps.stateService.save();
+    }
+    // 极速版 CI 闸门（Bugbot: check run skips CI wait / ignores CI target SHA）：
+    // check_run re-run 不得绕过「等 CI 镜像」直接部署预构建镜像 —— ghcr 镜像可能还没
+    // push,docker pull 必失败。放行条件必须**同时**满足:① 镜像 ready;② ready 的就是
+    // 本次 head_sha（ciTargetSha===commitSha）。否则(waiting/failed/未构建,或 ready 的是
+    // 别的 commit)只 ack,不返回 deployRequest。非极速版分支维持原「re-run=重部署」不变。
+    const checkProfiles = this.deps.stateService.getBuildProfilesForProject(entry.projectId || 'default');
+    const expressReadyForThisSha =
+      entry.ciImageStatus === 'ready' && entry.ciTargetSha === commitSha;
+    if (branchUsesPrebuiltMode(checkProfiles, entry) && !expressReadyForThisSha) {
+      return {
+        action: 'ci-image-waiting',
+        message: `${dryRun ? '[dry-run] ' : ''}极速版分支 '${branchId}' 等待 CI 镜像就绪,check_run 重跑不触发预构建部署（状态:${entry.ciImageStatus || '未构建'}, 目标 SHA:${(entry.ciTargetSha || '-').slice(0, 7)} vs ${commitSha.slice(0, 7)}）`,
+        branchId,
+      };
     }
     return {
       action: 'check-run-requeued',

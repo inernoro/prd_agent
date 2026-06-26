@@ -6,6 +6,8 @@ import { saveVisualAgentWorkspaceViewport } from '@/services';
 import { Switch } from '@/components/design/Switch';
 import { Dialog } from '@/components/ui/Dialog';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
+import { GenSweepLoader } from '@/components/ui/GenSweepLoader'; // 生图等待动效=流光进度条（替换旧金色 Nebula）
+import { recordGenDurationMs } from '@/lib/genTiming';
 import { TwoPhaseRichComposer, type TwoPhaseRichComposerRef, type ImageOption } from '@/components/RichComposer';
 import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
 import {
@@ -54,6 +56,7 @@ import { streamImageGenRunWithRetry } from '@/services';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import { ASPECT_OPTIONS, getSizeForTier } from '@/lib/imageAspectOptions';
+import { compressImageForCanvas } from '@/lib/imageCompress';
 import {
   cleanDisplayTitle,
   computeRequestedSizeByRefRatio,
@@ -99,7 +102,6 @@ import {
   Type,
   Trash,
   PenTool,
-  Video,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
@@ -1645,8 +1647,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   // activeTool 已在上方通过 isMobile 初始化：移动端默认 'hand'，桌面端默认 'select'
   const [toolMenuOpen, setToolMenuOpen] = useState(false);
   const toolMenuCloseTimerRef = useRef<number | null>(null);
-  const [addMenuOpen, setAddMenuOpen] = useState(false);
-  const addMenuCloseTimerRef = useRef<number | null>(null);
   const [shapeMenuOpen, setShapeMenuOpen] = useState(false);
   const shapeMenuCloseTimerRef = useRef<number | null>(null);
 
@@ -2135,6 +2135,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     }
   }, []);
 
+  // 「对话优先」聚焦输入框的逻辑放在 workspace 启动恢复完成点（applyCanvasFocus，见下方 boot 效应），
+  // 不再用独立定时器：那样既无法随 workspace 切换重跑（一次性 ref 守卫永久失效），
+  // 又会在画布异步水合前用 1200ms 定时器误判空画布抢焦点。见 chief-designer-usability.md 第一/四原则。
+  // isMobile 走 ref 读取：boot 效应不应因跨断点缩放（isMobile 翻转）整体重跑重拉 workspace。
+  const isMobileRef = useRef(isMobile);
+  isMobileRef.current = isMobile;
+
   const startResize = useCallback(
     (e: ReactPointerEvent, it: CanvasImageItem, corner: ResizeCorner) => {
       if (effectiveTool === 'hand' && !isMobile) return;
@@ -2262,6 +2269,35 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [pendingCount, setPendingCount] = useState(0);
   const runningCountRef = useRef(0);
   const [runningCount, setRunningCount] = useState(0);
+
+  // 生图耗时采样：占位 running → done 时记录真实耗时，刷新「平均预期时长」(getGenAvgMs 滑动平均)。
+  // 集中在一个 effect 做，不侵入散落各处的回填路径；用 createdAt 作为起点（占位创建即开始计时）。
+  const genStartRef = useRef<Map<string, number>>(new Map());
+  useEffect(() => {
+    const m = genStartRef.current;
+    const stillRunning = new Set<string>();
+    for (const it of canvas) {
+      if (it.status === 'running') {
+        stillRunning.add(it.key);
+        if (!m.has(it.key)) m.set(it.key, it.createdAt && it.createdAt > 0 ? it.createdAt : Date.now());
+      }
+    }
+    for (const [key, start] of [...m.entries()]) {
+      if (stillRunning.has(key)) continue;
+      const item = canvas.find((x) => x.key === key);
+      if (item && item.status === 'done' && !!item.src) {
+        recordGenDurationMs(Date.now() - start); // 成功出图计入平均
+        m.delete(key);
+      } else if (item && item.status === 'error') {
+        // 暂存：error 可能被看门狗/对账治愈回 done（transient SSE/查询失败误标），
+        // 留住起点，等治愈后这条 effect 再命中 done 分支记录耗时（Bugbot 2026-06-23）。
+        continue;
+      } else {
+        // item 已从画布移除 / 变成非生成态 → 丢弃，不计入平均
+        m.delete(key);
+      }
+    }
+  }, [canvas]);
 
   const fileRef = useRef<HTMLInputElement | null>(null);
   const openImageFilePicker = useCallback(() => {
@@ -2609,6 +2645,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
         if (items.length > 0) {
           requestAnimationFrame(() => {
+            if (cancelled) return; // 已切 workspace / 卸载 → 陈旧回调不抢焦点
             const ae = document.activeElement as HTMLElement | null;
             const tag = (ae?.tagName ?? '').toLowerCase();
             const isEditable =
@@ -2618,6 +2655,24 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               Boolean(ae?.getAttribute?.('contenteditable'));
             if (isEditable) return;
             focusStage();
+          });
+        } else if (!isMobileRef.current) {
+          // 画布恢复完成且确认无产物 →「对话优先」聚焦输入框，让用户进来就能「描述即生成」。
+          // 放在恢复完成点（非定时器）：随 workspace 切换每次 boot 重跑，且不会在水合前误判空画布。
+          // 手机端走 pc-only 门槛（见 VisualAgentFullscreenPage），不抢焦点。
+          requestAnimationFrame(() => {
+            // 切 workspace / 卸载后这帧若才跑 → cancelled=true，避免陈旧回调把另一个正在加载的
+            // workspace 滚动并抢焦点到 composer（Bugbot 2026-06-23）。
+            if (cancelled) return;
+            const ae = document.activeElement as HTMLElement | null;
+            const tag = (ae?.tagName ?? '').toLowerCase();
+            const isEditable =
+              tag === 'textarea' ||
+              tag === 'input' ||
+              Boolean(ae?.isContentEditable) ||
+              Boolean(ae?.getAttribute?.('contenteditable'));
+            if (isEditable) return; // 用户已在某输入框，不抢
+            focusComposer();
           });
         }
       };
@@ -2708,7 +2763,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         initWorkspaceRef.current.started = false;
       }
     };
-  }, [focusStage, pushMsg, setViewport, workspaceId]);
+  }, [focusStage, focusComposer, pushMsg, setViewport, workspaceId]);
 
   // 当前 workspaceId 的最新值引用：供异步回调判断是否已切换 workspace（防串台）
   const workspaceIdRef = useRef(workspaceId);
@@ -4797,11 +4852,33 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   };
 
   const onUploadImages = async (files: File[], opts?: { mode?: 'auto' | 'add' }) => {
-    const list = (files ?? []).filter((f) => f && f.type && f.type.startsWith('image/'));
-    if (list.length === 0) return;
+    // 先按「新增路径」的上限（下方 list.slice(0, 20)）截断，再压缩——否则一次拖入 50 张时
+    // 会把 30 张注定被丢弃的图也解码 + 画到 canvas，反而在上传前先卡死/爆内存。
+    const rawList = (files ?? [])
+      .filter((f) => f && f.type && f.type.startsWith('image/'))
+      .slice(0, 20);
+    if (rawList.length === 0) return;
 
     // 关键：上传/放置必须串行化，否则两次快速上传会并发读文件，导致“空位算法看不到对方”=> 100% 覆盖
+    // 压缩（解码 + canvas 重编码）也必须放在锁内：否则并发上传会同时解码多张大图，
+    // 重新引发 20 张封顶本想避免的内存峰值 / 标签页冻结。
     const run = async () => {
+    // 上传前压缩：超大图（最长边 > 2560px 或 体积 > 8MB）会把画布拖卡，先在源头缩到阈值内。
+    // 已达标的图原样放行（幂等，不重复劣化）；解码失败放行原图由后端兜底。详见 lib/imageCompress.ts。
+    // 串行（非 Promise.all）逐张压缩：并发解码 + canvas 重编码多达 20 张大图会瞬时爆内存，
+    // 同一时刻只解码一张，峰值内存恒定。
+    let anyCompressed = false;
+    const list: File[] = [];
+    for (const f of rawList) {
+      try {
+        const { file, compressed } = await compressImageForCanvas(f);
+        if (compressed) anyCompressed = true;
+        list.push(file);
+      } catch {
+        list.push(f);
+      }
+    }
+    if (anyCompressed) showUploadToast('已自动压缩大图以提升画布流畅度');
     // 选中单张“图片”时：上传单图默认“替换”而非叠加（保留 x/y/w/h）
     const mode = opts?.mode ?? 'auto';
     if (mode === 'auto' && list.length === 1 && selectedKeys.length === 1) {
@@ -6056,9 +6133,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           </div>
                         ) : null}
                         {it.status === 'running' ? (
-                          <div className="absolute inset-0">
-                            <PrdPetalBreathingLoader fill className="absolute inset-0" />
-                          </div>
+                          <GenSweepLoader createdAt={it.createdAt} />
                         ) : it.status === 'error' ? (
                           <div className="absolute inset-0">
                             {/* 灰色静止花瓣背景 */}
@@ -6123,9 +6198,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         >
                           预计 {Math.round(w)} × {Math.round(h)}
                         </div>
-                        <div className="absolute inset-0">
-                          <PrdPetalBreathingLoader fill className="absolute inset-0" />
-                        </div>
+                        <GenSweepLoader createdAt={it.createdAt} />
                       </div>
                     ) : kind === 'shape' ? (
                       <div className="w-full h-full flex items-center justify-center">
@@ -7324,135 +7397,22 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           <span>H</span>
                         </span>
                       </button>
-                      <button
-                        type="button"
-                        className="flex w-full cursor-not-allowed items-center gap-3 rounded-[14px] px-3 py-2 text-token-muted opacity-60"
-                        disabled
-                      >
-                        <MapPin size={18} />
-                        <span className="text-[16px] font-semibold">
-                          Mark
-                        </span>
-                        <span className="ml-auto inline-flex items-center gap-2 text-[14px] font-semibold">
-                          <span>-</span>
-                          <span>M</span>
-                        </span>
-                      </button>
                                           </DropdownMenu.Content>
                   </DropdownMenu.Portal>
                 </DropdownMenu.Root>
               </div>
 
-              {/* +新增 */}
-              <div
-                onPointerEnter={() => {
-                  if (addMenuCloseTimerRef.current != null) {
-                    window.clearTimeout(addMenuCloseTimerRef.current);
-                    addMenuCloseTimerRef.current = null;
-                  }
-                  setAddMenuOpen(true);
-                }}
-                onPointerLeave={() => {
-                  if (addMenuCloseTimerRef.current != null) window.clearTimeout(addMenuCloseTimerRef.current);
-                  addMenuCloseTimerRef.current = window.setTimeout(() => {
-                    setAddMenuOpen(false);
-                    addMenuCloseTimerRef.current = null;
-                  }, HOVER_MENU_CLOSE_DELAY_MS);
-                }}
+              {/* 上传图片（原"新增"下拉收敛为直接上传：去掉只剩单项的菜单 +
+                  移除未开发的"上传视频/智能画板"禁用占位，见 .claude/rules/chief-designer-usability.md 奥卡姆原则）*/}
+              <button
+                type="button"
+                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover:bg-white/12"
+                title="上传图片"
+                aria-label="上传图片"
+                onClick={() => openImageFilePicker()}
               >
-                <DropdownMenu.Root
-                  modal={false}
-                  open={addMenuOpen}
-                  onOpenChange={(open) => {
-                    if (!open) setAddMenuOpen(false);
-                  }}
-                >
-                  <DropdownMenu.Trigger asChild>
-                    <button
-                      type="button"
-                      className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover:bg-white/12"
-                      title="新增"
-                      aria-label="新增"
-                    >
-                      <span className="text-[22px] leading-none font-semibold">+</span>
-                    </button>
-                  </DropdownMenu.Trigger>
-                  <DropdownMenu.Portal>
-                    <DropdownMenu.Content
-                      side="right"
-                      align="start"
-                      sideOffset={8}
-                      className="surface-popover z-50 min-w-[260px] rounded-[18px] p-3 text-token-primary"
-                      onPointerEnter={() => {
-                        if (addMenuCloseTimerRef.current != null) {
-                          window.clearTimeout(addMenuCloseTimerRef.current);
-                          addMenuCloseTimerRef.current = null;
-                        }
-                      }}
-                      onPointerLeave={() => {
-                        if (addMenuCloseTimerRef.current != null) window.clearTimeout(addMenuCloseTimerRef.current);
-                        addMenuCloseTimerRef.current = window.setTimeout(() => {
-                          setAddMenuOpen(false);
-                          addMenuCloseTimerRef.current = null;
-                        }, HOVER_MENU_CLOSE_DELAY_MS);
-                      }}
-                    >
-                      <div className="text-[14px] font-semibold text-token-primary">
-                        新增
-                      </div>
-                      <div className="mt-2 text-[12px] font-semibold text-token-muted">
-                        悬浮 - 展开菜单
-                      </div>
-                      <div className="mt-0.5 text-[12px] font-semibold text-token-muted">
-                        点按 - 执行操作
-                      </div>
-                      <div className="mt-2 h-px border-t border-token-subtle" />
-
-                      <div className="mt-3 grid gap-2">
-                        <button
-                          type="button"
-                          className="flex w-full items-center gap-3 rounded-[14px] px-3 py-2 text-token-primary hover:bg-white/5"
-                          onClick={() => {
-                            setAddMenuOpen(false);
-                            openImageFilePicker();
-                          }}
-                        >
-                          <ImagePlus size={18} />
-                          <span className="text-[16px] font-semibold">
-                            上传图片
-                          </span>
-                        </button>
-                        <button
-                          type="button"
-                          className="flex w-full cursor-not-allowed items-center gap-3 rounded-[14px] px-3 py-2 text-token-muted opacity-60"
-                          disabled
-                        >
-                          <Video size={18} />
-                          <span className="text-[16px] font-semibold">
-                            上传视频
-                          </span>
-                        </button>
-                        <button
-                          type="button"
-                          className="flex w-full cursor-not-allowed items-center gap-3 rounded-[14px] px-3 py-2 text-token-muted opacity-60"
-                          disabled
-                        >
-                          <span className="inline-flex h-5 w-5 items-center justify-center text-[18px] font-black">
-                            #
-                          </span>
-                          <span className="text-[16px] font-semibold">
-                            智能画板
-                          </span>
-                          <span className="ml-auto inline-flex items-center gap-2 text-[14px] font-semibold">
-                            <span>-</span>
-                            <span>F</span>
-                          </span>
-                        </button>
-                      </div>
-                                          </DropdownMenu.Content>
-                  </DropdownMenu.Portal>
-                </DropdownMenu.Root>
-              </div>
+                <ImagePlus size={18} />
+              </button>
 
               {/* 形状 */}
               <div
@@ -7570,16 +7530,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             stageRef.current?.focus();
                           }}
                         />
-                      </div>
-                      <div className="mt-4 text-[14px] font-semibold text-token-primary">
-                        形状文本
-                      </div>
-                      <div className="mt-3 grid grid-cols-5 gap-3">
-                        <button type="button" className="surface-inset h-12 cursor-not-allowed rounded-[14px] border border-token-subtle opacity-60" disabled />
-                        <button type="button" className="surface-inset h-12 cursor-not-allowed rounded-full border border-token-subtle opacity-60" disabled />
-                        <button type="button" className="surface-inset h-12 cursor-not-allowed rounded-[14px] border border-token-subtle opacity-60" disabled />
-                        <button type="button" className="surface-inset h-12 cursor-not-allowed rounded-[14px] border border-token-subtle opacity-60" disabled />
-                        <button type="button" className="surface-inset h-12 cursor-not-allowed rounded-[14px] border border-token-subtle opacity-60" disabled />
                       </div>
                                           </DropdownMenu.Content>
                   </DropdownMenu.Portal>

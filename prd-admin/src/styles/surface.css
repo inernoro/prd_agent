@@ -326,6 +326,45 @@
   display: none;
 }
 
+/* 移动端 headbar 统一形态（所有页面共用同一效果）：
+   1) 标题居中、独占一行；
+   2) tabs / 操作各自单行横滚，不再 flex-wrap 挤成多行；
+   3) 横滚区右侧渐隐遮罩，暗示"还能往右滑"。
+   仅手机生效，桌面保持 space-between + wrap 不变。
+   见 .claude/rules/mobile-first-density.md。 */
+@media (max-width: 767px) {
+  .surface-nav-content {
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: center;
+    flex-wrap: nowrap;
+    gap: 8px;
+  }
+  /* 标题 + tab 整组水平居中（放得下就居中，放不下退化为可横滚） */
+  .surface-nav-title {
+    justify-content: center;
+    text-align: center;
+  }
+  .surface-nav-tabs {
+    justify-content: safe center;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .surface-nav-tabs::-webkit-scrollbar {
+    display: none;
+  }
+  /* 操作行：放不下时单行横滚 + 右侧渐隐（滚动可达性提示） */
+  .surface-nav-actions {
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
+  }
+  .surface-nav-actions::-webkit-scrollbar {
+    display: none;
+  }
+}
+
 .surface-nav-indicator {
   position: absolute;
   height: 28px;

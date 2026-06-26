@@ -161,6 +161,20 @@ export interface BuildProfile {
    */
   prebuiltImage?: boolean;
   /**
+   * 2026-06-23 极速版「逐组件回退」新增 —— 预构建镜像缺失时的**有序回退链**（解析后）。
+   * 由 DeployModeOverride.fallbackImage 经 resolveEffectiveProfile 解析模板得到。
+   * runService 在 `docker pull dockerImage` 失败时按数组顺序逐个回退,第一个拉到的即用。
+   */
+  fallbackImage?: string | string[];
+  /**
+   * 2026-06-24 极速版自动回退源码编译新增 —— **运行期字段,不持久化**。
+   * 由 resolveEffectiveProfile 在解析出 prebuilt(极速版) profile 时,**从 baseline**
+   * 额外解析出一个源码编译 profile 挂在这里(dockerImage=源码基础镜像如 dotnet-sdk/node,
+   * command=源码构建命令,prebuiltImage=false)。runService 在极速版镜像全部拉不到时,
+   * 直接切到这个已正确解析的源码 profile,避免「从极速版 profile 原地切换」误继承 sha
+   * 镜像/8080 端口(那是 bug)。无源码模式可回退时为 undefined。 */
+  sourceFallbackProfile?: BuildProfile;
+  /**
    * 2026-05-01 Phase 5 新增 —— 多分支数据库隔离策略。
    *
    * 'shared'(默认):所有分支共用一个数据库实例 + 一个 database name。
@@ -308,10 +322,41 @@ export interface DeployModeOverride {
   label: string;
   /** Override command (replaces profile.command when this mode is active) */
   command?: string;
-  /** Override Docker image (replaces profile.dockerImage when this mode is active) */
+  /**
+   * Override Docker image (replaces profile.dockerImage when this mode is active).
+   *
+   * 2026-06-23 极速版（CI 预构建）新增 —— 支持部署期模板变量,在
+   * resolveEffectiveProfile 解析 branch 上下文时替换:
+   *   - `${CDS_COMMIT_SHA}`  → branch.githubCommitSha（CI 按此 SHA 推镜像）
+   *   - `${CDS_BRANCH_SLUG}` → 分支 slug（CI 的 branch-<slug> 移动 tag）
+   * 例: `ghcr.io/inernoro/prd_agent/prdagent-server:sha-${CDS_COMMIT_SHA}`
+   */
   dockerImage?: string;
   /** Extra/override environment variables merged on top of profile.env */
   env?: Record<string, string>;
+  /**
+   * 2026-06-23 极速版新增 —— 预构建镜像模式开关（对齐 BuildProfile.prebuiltImage）。
+   * true 时本模式跳过 source mount,直接 docker pull + run 镜像里的编译产物
+   * （CI 已编译好,CDS 不再本机编译,省服务器算力）。
+   * cds-compose 中通过 `x-cds-deploy-modes.<svc>.<mode>.prebuilt: true` 触发。
+   */
+  prebuilt?: boolean;
+  /**
+   * 2026-06-23 极速版新增 —— 覆盖容器端口。预构建镜像监听端口通常与源码开发
+   * 模式不同（如 prd-api 源码模式 5000,生产镜像 8080;prd-admin dist serve 8080）。
+   */
+  containerPort?: number;
+  /**
+   * 2026-06-23 极速版「逐组件回退」新增 —— 本 commit 没有该组件镜像时的**有序回退链**。
+   * CI 按 path-filter 只构建改动的组件（不重复构建），所以某 commit 可能缺某组件镜像。
+   * 按数组顺序逐个 docker pull,第一个拉到即用。推荐顺序（Codex P1: preserve prior branch
+   * images when a component is skipped）:
+   *   1. `:branch-${CDS_BRANCH_SLUG}` —— 本分支该组件最近一次构建（保住本分支已有改动,
+   *      避免「A 改 api、B 只改 admin」时部署 B 把 api 退到 main 丢掉本分支 api 改动）。
+   *   2. `:branch-main` —— 本分支从未构建过该组件时退到固定主分支镜像。
+   * 单字符串视为只有一个回退。支持模板变量(${CDS_BRANCH_SLUG} 等)。
+   */
+  fallbackImage?: string | string[];
 }
 
 /**
@@ -407,6 +452,48 @@ export interface ResourceLimits {
  * See `doc/design.cds-resilience.md` for the full state machine.
  */
 export type BranchHeatState = 'hot' | 'warming' | 'cooling' | 'cold';
+
+/**
+ * 分支被删原因，决定 gone 页渲染哪种中间页：
+ *  - 'merged'    PR 合并进主分支 → 引导用户切换到主分支预览
+ *  - 'abandoned' PR 关闭未合并 / 分支被直接删除 → 告知已放弃，跳 PR/commit
+ */
+export type BranchRemovalReason = 'merged' | 'abandoned';
+
+/**
+ * 分支墓碑 —— 分支删除后留下的一条轻量记录，让"过期分支预览页"能区分
+ * "已合并到主分支"（引导切主分支）与"已放弃/删除"（跳 PR/commit），
+ * 不必保留整个 BranchEntry。写入点见 github-webhook 路由层 recordRemovedBranch。
+ */
+export interface BranchTombstone {
+  /** 预览子域名 slug（gone 页查询主键，与 BranchTombstone 在 removedBranches 的 key 相同）。 */
+  previewSlug: string;
+  /** git 分支名（展示用）。 */
+  branch: string;
+  /** 所属项目 id。 */
+  projectId: string;
+  /** 删除原因。 */
+  reason: BranchRemovalReason;
+  /** 关联 PR 号（若由 PR 事件触发）。 */
+  prNumber?: number;
+  /** 关联 PR 的 GitHub 链接。 */
+  prUrl?: string;
+  /** 合并提交 SHA（reason='merged' 时由 PR payload 带出）。 */
+  mergeCommitSha?: string;
+  /** PR 的目标分支名（merged 时即合并进的分支，通常等于默认分支）。 */
+  baseRef?: string;
+  /** 记录当时解析出的项目默认分支名（"切换到主分支"按钮的目标分支）。 */
+  defaultBranch?: string | null;
+  /**
+   * 分支 canonical id。gone 页对**自定义子域别名**访问时，proxy 的 extractPreviewBranch
+   * 返回的是分支 id（或别名 label）而非 v3 previewSlug，主键查不到 → 用它兜底匹配。
+   */
+  branchId?: string;
+  /** 分支的自定义子域别名（删除前快照）。别名访问 gone 页时用它兜底匹配墓碑。 */
+  aliases?: string[];
+  /** 记录时间（ISO）。容量淘汰按此排序。 */
+  removedAt: string;
+}
 
 /** Branch entry — simplified for CDS */
 export interface BranchEntry {
@@ -519,12 +606,57 @@ export interface BranchEntry {
   lastDeployDispatchStatus?: 'dispatching' | 'accepted' | 'failed' | 'interrupted';
   /** Failure reason when the deploy dispatch itself failed before deployment started. */
   lastDeployDispatchError?: string;
+  /**
+   * 2026-06-23：本轮 webhook 部署派发的**首次**派发时间（ISO）。与
+   * lastDeployDispatchAt 不同——后者每次 reconciler 重试都会被刷新成最新
+   * 重试时刻，导致「自派发以来的时长」永远归零、age 上限永不触发，正是
+   * 「7 小时前的构建还在跑」幽灵的根因之一。本字段在 markWebhookDeployDispatch
+   * 收到全新派发（新 commit / 上一轮已终态）时打戳，重试路径**不更新**，
+   * 因此 reconciler 可以据此判断「这个派发已经太老，放弃重试」。
+   */
+  deployDispatchFirstAt?: string;
+  /**
+   * 2026-06-23：本轮 webhook 部署派发已被 reconciler 自动重试的次数。
+   * 每次 dispatchRecoveredWebhookDeploys 真正重新 POST /deploy 时 +1；
+   * markWebhookDeployDispatch 收到全新派发时归 0。达到上限
+   * （CDS_DEPLOY_DISPATCH_MAX_RETRIES，默认 3）后不再重试，避免无限重试风暴。
+   */
+  deployDispatchRetryCount?: number;
   /** GitHub user login that triggered the latest webhook touching this branch. */
   githubSenderLogin?: string;
   /** Original GitHub avatar URL from webhook payload.sender.avatar_url. */
   githubSenderAvatarUrl?: string;
   githubCheckRunId?: number;
   githubInstallationId?: number;
+  /**
+   * 2026-06-23 极速版（CI 预构建）新增 —— CI 镜像就绪状态。
+   *
+   * 仅对走「极速版」部署模式的分支有意义。push 进来后 CDS 不立即本机编译,
+   * 而是置 'waiting' 等 GitHub Actions 把该 commit 编译成 ghcr 镜像;CI 完成的
+   * `workflow_run.completed` webhook 到达后:
+   *   - conclusion=success → 'ready' → 触发 docker pull + deploy
+   *   - 否则 → 'failed'（前端提示「CI 构建失败,可切回源码编译」,不自动回退）
+   *
+   * 非极速版分支不设此字段,行为不变（push 即本机编译）。
+   */
+  ciImageStatus?: 'waiting' | 'ready' | 'failed';
+  /** 极速版正在等待 CI 构建的目标 commit SHA（用于 workflow_run 的 head_sha 匹配）。 */
+  ciTargetSha?: string;
+  /** 最近一次匹配到的 CI workflow_run 结论（success / failure / cancelled / timed_out …）。 */
+  ciWorkflowConclusion?: string;
+  /** 关联的 GitHub Actions run 页面 URL,前端「等待中 / 失败」态可一键跳转查看。 */
+  ciWorkflowRunUrl?: string;
+  /**
+   * 进入极速版「等待 CI 镜像」态的时刻（ISO）。看门狗据此判定 waiting 是否超时
+   * （等不到 workflow_run.completed —— 分支缺 branch-image.yml / CI 未运行 / 投递丢失）。
+   * 缺省时看门狗退回 lastPushAt 计时。
+   */
+  ciWaitingSince?: string;
+  /**
+   * 极速版镜像未就绪的人类可读原因（看门狗超时或 CI 失败时写）。前端「CI 镜像未就绪」
+   * 卡片展示此文案,替代过去把它误渲染成「容器停止 · 无记录」。
+   */
+  ciImageError?: string;
   /**
    * PR number this branch is associated with (via webhook `pull_request`
    * event). Populated when CDS first sees a PR opened/reopened from this
@@ -558,6 +690,16 @@ export interface BranchEntry {
   /** 最近一次成功部署完成的 ISO 时间戳。 */
   lastDeployAt?: string;
   /**
+   * 2026-06-21：本轮 deploy/build 真正开始执行的 ISO 时间戳。
+   * 在 status 切到 'building' 的那一刻打戳（branches.ts 两处部署起点）。
+   * 用途：预览等待页 `/_cds/waiting-status` 的"已等待 / 预计还需"必须以
+   * **本轮构建开始**为锚点。在途构建的 op-log 直到 finalize 才落库，期间
+   * getLogs() 只有上一轮已完成的部署 → 若以历史 op-log 兜底会算成"几小时/几天"
+   * 误判 overdue。本字段是唯一可靠的在途构建起点（修复 PR #865 Codex P2
+   * 「Use the active redeploy start time for waiting ETAs」）。
+   */
+  lastDeployStartedAt?: string;
+  /**
    * 2026-05-14: 容器最近一次进入 running 状态的 ISO 时间戳。
    * 由 reconcileBranchStatus() 在状态机切换到 'running' 时打戳。
    * 调度器（项目级 autoPublishAfterMinutes）
@@ -590,9 +732,28 @@ export interface BranchEntry {
    *   - 'oom'       Docker / kernel 明确报告 OOMKilled
    *   - 'external'  未匹配到 CDS 意图的 docker kill / SIGKILL
    *   - 'cds'       CDS 生命周期操作（删除 / 重部署替换 / 清理旧容器）
+   *   - 'webhook'   GitHub webhook / 外部事件触发
+   *   - 'ai'        AI Agent 通过 API 触发
    *   - 'system'    其他系统侧（垃圾回收 / janitor 等）
    */
-  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'oom' | 'external' | 'cds' | 'system';
+  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'oom' | 'external' | 'cds' | 'webhook' | 'ai' | 'system';
+  /**
+   * 2026-06-20：自动发布（auto-publish）最近一次成功把分支从源码/热加载切到
+   * 发布版并重建的 ISO 时间戳。与 lastStopReason 是兄弟字段，但语义不同——
+   * 这是"成功切到发布版"而非"被停止"，redeploy 成功路径**不能**钉 lastStoppedAt
+   * （否则 UI 会在一个正在运行的分支上误报"已停止"）。
+   *
+   * 病根（任务 3）：原来 auto-publish 的 release 重建只写一条 activity log，
+   * 分支卡片上没有任何持久态标记说明"我现在是被自动发布过的 release 版"，
+   * 用户看到容器重建一次却不知道为什么——把"发布版 vs 热加载"切换变得隐形。
+   * 本字段让这次模式跃迁在分支态里可观测。
+   */
+  lastPublishAt?: string;
+  /**
+   * 自动发布的人类可读原因短语，UI 直接展示。例如：
+   *   - "项目设置：启动满 30 分钟，已自动切到发布版并重新部署（web=prod）"
+   */
+  lastPublishReason?: string;
 }
 
 /** State of a single service (one build profile instance) within a branch */
@@ -655,6 +816,9 @@ export interface ContainerLogArchiveEntry {
     | 'container-logs-stream'
     | 'pre-deploy-recreate'
     | 'manual-stop'
+    | 'webhook-stop'
+    | 'ai-stop'
+    | 'system-stop'
     | 'scheduler-stop'
     | 'auto-lifecycle-stop'
     | 'crash-detected'
@@ -790,6 +954,52 @@ export type CustomEnvStore = Record<string, Record<string, string>>;
 /** Reserved scope key for project-independent (global) variables. */
 export const GLOBAL_ENV_SCOPE = '_global';
 
+/**
+ * 部署耗时模式分类。与 deploy-runtime.ts 的 classifyDeployRuntime 输出对齐：
+ *   - 'release' ：发布版（生产/编译产物运行，prod/release/static…）
+ *   - 'source'  ：源码 / 热加载（dev watch / vite / 默认源码模式）
+ * 历史中位预计耗时按 (projectId, mode) 分桶，互不串味。
+ */
+export type DeployDurationMode = 'release' | 'source';
+
+/**
+ * 部署耗时样本桶（2026-06-20）。
+ *
+ * 病根：分支构建中卡片只显示"已耗时 NN s"，用户不知道"还要等多久"。
+ * 对应的历史样本不能用 OperationLog —— 那个 per-branch 上限 10 条、build/run
+ * 混在一起、删分支即没。这里另立一份持久化样本台账，keyed by projectId + mode，
+ * 每桶保留最近 N 条（毫秒，从 deploy 开始到 ready）。
+ *
+ * 系统级放 CdsState 顶层（与项目维度无关的存储位置选择，样本本身按 projectId
+ * 分桶）；随 save() 落盘，跟随 JSON ↔ Mongo 存储切换。
+ */
+export interface DeployDurationSamples {
+  /** key = `${projectId}::${mode}`，value = 最近若干条毫秒耗时（旧→新追加）。 */
+  buckets: Record<string, number[]>;
+}
+
+/**
+ * 单个 (project, mode) 桶的历史耗时估算结果。
+ * medianMs = p50；sampleCount = 参与计算的样本数。无样本时 medianMs = null。
+ */
+export interface DeployDurationEstimate {
+  medianMs: number | null;
+  sampleCount: number;
+}
+
+/**
+ * 分支卡片消费的部署预计耗时摘要（两种模式各一份），随 BranchSummary 下发，
+ * 卡片无需额外请求即可在构建中展示"预计 MM:SS（近 N 次中位值）"。
+ * 某模式无历史样本时 median 为 null —— 卡片只显示已耗时，不编造预计值
+ * （no-rootless-tree：不假定不存在的数据）。
+ */
+export interface BranchDeployEstimate {
+  releaseMedianMs: number | null;
+  releaseSamples: number;
+  sourceMedianMs: number | null;
+  sourceSamples: number;
+}
+
 export interface CdsState {
   /** Routing rules */
   routingRules: RoutingRule[];
@@ -875,12 +1085,30 @@ export interface CdsState {
    * `schedulerEnabledOverride`. `undefined` = no override. `0` = unlimited.
    */
   schedulerMaxHotOverride?: number;
+  /**
+   * UI-controlled override for the global janitor enable flag. When defined,
+   * it supersedes `config.janitor.enabled` at runtime and is re-applied on boot.
+   */
+  janitorEnabledOverride?: boolean;
+  /**
+   * UI-controlled override for branch/container expiry in days.
+   * Range is intentionally capped at 7 days so stale local containers cannot
+   * accumulate indefinitely.
+   */
+  janitorWorktreeTTLOverride?: number;
   /** Data migration task history */
   dataMigrations?: DataMigration[];
   /** Per-branch/per-resource external access policies. Keyed by projectId:branchId:resourceId. */
   resourceExternalAccess?: Record<string, ResourceExternalAccessPolicy>;
   /** Resource-scoped database clone / create / restore task history. */
   resourceCloneTasks?: ResourceCloneTask[];
+  /**
+   * 分支墓碑台账（PR 合并/关闭后分支被删，gone 页据此区分"已合并"与"已放弃"）。
+   * Keyed by previewSlug（即预览子域名 slug，与 gone 页收到的 slug 同口径），
+   * 这样 serveBranchGonePage(slug) 能直接命中。容量上限由 StateService
+   * recordRemovedBranch 维护（保留最近 N 条，按 removedAt 淘汰最旧）。
+   */
+  removedBranches?: Record<string, BranchTombstone>;
   /** Registered remote CDS peers (for one-click cross-CDS data migration) */
   cdsPeers?: CdsPeer[];
   /**
@@ -1016,6 +1244,13 @@ export interface CdsState {
    */
   selfUpdateHistory?: SelfUpdateRecord[];
   /**
+   * 部署耗时样本台账（2026-06-20）。keyed by `${projectId}::${mode}`，
+   * 每桶保留最近 N 条毫秒耗时（StateService.DEPLOY_DURATION_SAMPLES_MAX）。
+   * 仅在部署成功时由 recordDeployDuration() 追加；卡片"预计耗时"的中位值
+   * 数据源。系统级（与具体项目无关的存储位置，样本本身按 projectId 分桶）。
+   */
+  deployDurationSamples?: DeployDurationSamples;
+  /**
    * Agent 请求历史摘要(2026-06-11 用户信任诉求:「看到一条条请求事件才相信
    * HTML 真是远程 agent 返回的」)。会话 done/fail/stop 时由 remote-hosts
    * 落一条摘要(收发预览各截 2000 字),ring buffer 500 条;全量事件仍在内存随重启丢失。
@@ -1029,6 +1264,12 @@ export interface CdsState {
    * 让 recordSelfUpdate 能算出真实"总耗时(含重启)"= daemonReadyAt - update.ts。
    */
   daemonReadyAt?: string;
+  /**
+   * 2026-06-24：系统级「发布(部署)阶段就绪探测下限秒数」默认值（默认 1200）。
+   * 项目可用 Project.deployReadinessFloorSeconds 覆盖。仅作用于部署首启的就绪等待
+   * （取 max(profile.timeoutSeconds, 此下限)），运行期重启/唤醒保持各 profile 短超时。
+   */
+  deployReadinessFloorSeconds?: number;
   /**
    * GitHub webhook 投递日志(2026-05-07 用户反馈"需要看到每次 hook 详情")。
    * Ring buffer,最多 200 条,新插入溢出时丢最早的。系统级 —— 跨项目的全部
@@ -1069,6 +1310,44 @@ export interface CdsState {
    *     accept 端检查并返回 409 connection_duplicate
    */
   cdsConnections?: Record<string, CdsConnection>;
+  /**
+   * CDS 自托管验收报告元数据（2026-06-20）。系统级 —— 报告正文（可能是
+   * 很大的 HTML / Markdown）落在 `<dataDir>/reports/<id>.<ext>` 磁盘文件上，
+   * 不进 state.json；这里只存轻量元数据（标题/格式/大小/归属/时间）。
+   *
+   * 验收/视觉测试报告以往只能归档到外部知识库（需单独鉴权），CDS 自己托管
+   * 后挂在 CDS 登录态后面即可访问，无需额外权限配置。HTML 报告以沙箱
+   * iframe 渲染（不授予 same-origin），见 routes/reports.ts。
+   */
+  acceptanceReports?: AcceptanceReportMeta[];
+}
+
+/**
+ * CDS 自托管验收报告的元数据（2026-06-20）。
+ *
+ * 报告正文不入 state —— 存到 `<dataDir>/reports/<id>.<ext>` 磁盘文件。
+ * 这里只保留供列表/详情页展示的轻量字段。系统级（与具体 project 无关的
+ * 存储位置，可选地通过 projectId 关联到某个项目以便过滤）。
+ */
+export interface AcceptanceReportMeta {
+  /** 稳定 ID（用于磁盘文件名 `<id>.<ext>` 与路由 `:id`）。 */
+  id: string;
+  /** 报告标题（用户填写，列表/详情展示）。 */
+  title: string;
+  /** 报告格式：'html' 原样渲染，'md' 转 HTML 后渲染。 */
+  format: 'html' | 'md';
+  /** 可选关联项目 ID（用于按项目过滤）；不关联时为 null。 */
+  projectId?: string | null;
+  /** 可选关联分支 ID；不关联时为 null。 */
+  branchId?: string | null;
+  /** 正文字节数（UTF-8）。 */
+  sizeBytes: number;
+  /** 创建人（resolveActorFromRequest 解析的 actor，如 'user' / 'ai'）。 */
+  createdBy?: string;
+  /** 创建时间 ISO 字符串。 */
+  createdAt: string;
+  /** 最近一次更新时间 ISO 字符串。 */
+  updatedAt: string;
 }
 
 /**
@@ -2001,6 +2280,13 @@ export interface Project {
    */
   autoPublishAfterMinutes?: number;
   /**
+   * 2026-06-24：项目级「发布(部署)阶段就绪探测下限秒数」覆盖。覆盖系统默认
+   * （CdsState.deployReadinessFloorSeconds，未设则 1200）。仅作用于**部署首启**的
+   * 就绪等待（取 max(该 profile 的 timeoutSeconds, 此下限)），运行期重启/唤醒不受影响。
+   * 给构建慢 / JVM 暖机慢的项目留足发布探测时间，避免被探活超时误杀。
+   */
+  deployReadinessFloorSeconds?: number;
+  /**
    * Deprecated: 旧版项目级 "运行 N 分钟后自动停止" 策略。
    * 自动停止已收敛到 CDS 系统级 SchedulerService，避免项目设置中出现
    * 两个互相打架的分钟值。字段保留仅用于兼容旧 state/API，运行时不再执行。
@@ -2041,6 +2327,22 @@ export interface Project {
   lastPullAt?: string;
   /** 最近一次成功部署完成的 ISO 时间戳（不是触发时间）。 */
   lastDeployAt?: string;
+  /**
+   * 2026-06-23：项目级「暂停」开关。设为 true 时**冻结整个项目**——
+   * 拒绝所有自动部署（webhook push/PR）、拒绝手动 deploy、reconciler 不再
+   * 重试该项目的 stale dispatch、scheduler/auto-lifecycle 跳过该项目。
+   * 暂停动作同时会停止该项目所有分支正在运行的容器（释放 CPU/内存）。
+   *
+   * 用途：长期不用却频繁被 webhook 触发反复构建的项目，无需删除即可
+   * 一键冻结止血；恢复后用户手动重新部署即可。缺省 / undefined 视作未暂停。
+   */
+  paused?: boolean;
+  /** 最近一次被暂停的 ISO 时间戳（恢复时清空）。 */
+  pausedAt?: string;
+  /** 发起暂停的操作者（actor 字符串，如 'user' / 'ai:xxx' / 'system'）。 */
+  pausedBy?: string;
+  /** 暂停原因（可选，用户在暂停时填写，UI 展示）。 */
+  pauseReason?: string;
   /**
    * PR_D.1: 项目级 GitHub 事件 policy。每个字段对应一类 webhook 事件，
    * undefined / true → 处理（默认行为，与 PR_D 之前一致），false → 短路忽略。
@@ -2420,9 +2722,9 @@ export interface ClusterCapacity {
  * See `doc/design.cds-resilience.md` Phase 2.
  */
 export interface JanitorConfig {
-  /** Enable the janitor. Default: false (backward compatible). */
+  /** Enable the janitor. Default: true. */
   enabled: boolean;
-  /** Remove worktrees not accessed in this many days. Default: 30. */
+  /** Remove worktrees and local containers not touched in this many days. Default: 7, max: 7. */
   worktreeTTLDays: number;
   /** Emit warning when disk usage exceeds this percent. Default: 80. */
   diskWarnPercent: number;

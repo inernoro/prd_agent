@@ -8,9 +8,71 @@
  * 对"什么算 release"判断不一致。抽到这里，改一处生效全局。
  */
 
+import type { BuildProfile, BranchEntry } from '../types.js';
+
+/**
+ * 解析某 build profile 在某分支上「生效的 deploy mode id」。
+ * 优先级（前者命中即返回）：分支级 override → profile 基线 activeDeployMode → 项目默认。
+ *
+ * 注意:resolveEffectiveProfile（container.ts）按 2026-05-14 产品决策**不**实时读
+ * 项目默认（默认只在建分支时拷贝一次写进 override）。本函数额外纳入项目默认,
+ * 仅用于 webhook「该不该等 CI」这种**判定**场景,以及建分支时回填 override。
+ */
+export function resolveActiveDeployModeId(
+  profile: BuildProfile,
+  branch: BranchEntry | undefined,
+  projectDefaultDeployModes?: Record<string, string>,
+): string | undefined {
+  return (
+    branch?.profileOverrides?.[profile.id]?.activeDeployMode
+    ?? profile.activeDeployMode
+    ?? projectDefaultDeployModes?.[profile.id]
+    ?? undefined
+  );
+}
+
+/**
+ * 该分支是否有任一 profile 走「预构建镜像」部署模式（极速版 / CI 预构建）。
+ * 任一 profile 需要 CI 镜像 → 整个分支部署都得等 CI（该 profile 的镜像没编译好之前拉不到）。
+ */
+export function branchUsesPrebuiltMode(
+  profiles: BuildProfile[],
+  branch: BranchEntry | undefined,
+  projectDefaultDeployModes?: Record<string, string>,
+): boolean {
+  return profiles.some((p) => {
+    const modeId = resolveActiveDeployModeId(p, branch, projectDefaultDeployModes);
+    return !!(modeId && p.deployModes?.[modeId]?.prebuilt === true);
+  });
+}
+
+/**
+ * 把项目默认 deploy mode 写进分支 profileOverrides（建分支时调用,SSOT）。
+ * 直接 mutate branch.profileOverrides（与历史 branches.ts 行为一致）；不存在 / 空默认时 no-op。
+ */
+export function applyDefaultDeployModesToBranch(
+  branch: BranchEntry,
+  projectDefaultDeployModes: Record<string, string> | undefined,
+  profiles: BuildProfile[],
+): void {
+  if (!projectDefaultDeployModes || Object.keys(projectDefaultDeployModes).length === 0) return;
+  for (const profile of profiles) {
+    if (!Object.prototype.hasOwnProperty.call(projectDefaultDeployModes, profile.id)) continue;
+    const mode = projectDefaultDeployModes[profile.id] || '';
+    if (mode && !profile.deployModes?.[mode]) continue;
+    if (!branch.profileOverrides) branch.profileOverrides = {};
+    branch.profileOverrides[profile.id] = {
+      ...(branch.profileOverrides[profile.id] || {}),
+      activeDeployMode: mode,
+    };
+  }
+}
+
 /** modeId / label 命中即视为"发布版/生产"运行模式。 */
 export const RELEASE_DEPLOY_MODE_PATTERN =
-  /(prod|production|release|static|publish|published|dist|standalone|built|发布|生产|正式|构建)/i;
+  // 2026-06-23 极速版（CI 预构建）也属"发布版"运行时（镜像即编译产物,非源码热加载）,
+  // 加 express / 极速 / prebuilt 关键词,让 auto-publish 等行为正确识别。
+  /(prod|production|release|static|publish|published|dist|standalone|built|express|prebuilt|发布|生产|正式|构建|极速)/i;
 
 /**
  * 给定一个具体 deploy mode（id + 可选 label），判断它是否属于"发布版"。

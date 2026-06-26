@@ -4,7 +4,7 @@ import { ArrowRight, Github, Home, KeyRound, Loader2, Server, Shield, Terminal, 
 import ShapeGrid from '@/components/effects/ShapeGrid';
 import { ShinyText } from '@/components/effects/ShinyText';
 import { Button } from '@/components/ui/button';
-import { apiUrl } from '@/lib/api';
+import { apiUrl, fetchBootstrapStatus, bootstrapFirstUser, fetchSessionAuthed } from '@/lib/api';
 import './HomePage.css';
 
 function redirectTarget(): string {
@@ -12,6 +12,10 @@ function redirectTarget(): string {
   const params = new URLSearchParams(window.location.search);
   const raw = params.get('redirect') || '/project-list';
   if (!raw.startsWith('/') || raw.startsWith('//')) return '/project-list';
+  // 绝不把目标指回登录路由本身 —— 否则已登录用户从 /login 跳 /login 是 no-op,
+  // spinner 永远转、登录框永不出现(Bugbot Medium「Login redirect target loops」)。
+  const path = raw.split(/[?#]/)[0];
+  if (path === '/login') return '/project-list';
   return raw;
 }
 
@@ -28,20 +32,56 @@ export function CdsAccessMorphBoard(props: { target?: string; onHome?: () => voi
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // First-run bootstrap: when the system has zero users, the login form turns
+  // into a "create the first system-owner account" form instead.
+  const [needsBootstrap, setNeedsBootstrap] = useState(false);
+  const [bootstrapName, setBootstrapName] = useState('');
   const target = useMemo(() => props.target ?? redirectTarget(), [props.target]);
   const githubLoginHref = useMemo(() => apiUrl(`/api/auth/github/login?redirect=${encodeURIComponent(target)}`), [target]);
+
+  useEffect(() => {
+    let alive = true;
+    fetchBootstrapStatus()
+      .then((s) => { if (alive) setNeedsBootstrap(s.needsBootstrap); })
+      .catch(() => { /* endpoint absent in non-github modes — ignore */ });
+    return () => { alive = false; };
+  }, []);
+
+  function goToTarget() {
+    if (/\.html(?:$|[?#])/i.test(target)) {
+      window.location.assign(target);
+    } else {
+      navigate(target, { replace: true, viewTransition: true });
+    }
+  }
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError('');
     setBusy(true);
     try {
-      const res = await fetch(apiUrl('/api/login'), {
+      if (needsBootstrap) {
+        // Create the first local system-owner account, then enter the console.
+        await bootstrapFirstUser({ username, password, name: bootstrapName || undefined });
+        goToTarget();
+        return;
+      }
+      // Try the github-mode local-login route first; fall back to the legacy
+      // basic-auth /api/login so single-user CDS_USERNAME deployments still work.
+      let res = await fetch(apiUrl('/api/auth/login'), {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({ username, password }),
       });
+      if (res.status === 404) {
+        res = await fetch(apiUrl('/api/login'), {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ username, password }),
+        });
+      }
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         const message = typeof body?.error === 'string' ? body.error : 'Access denied';
@@ -54,11 +94,7 @@ export function CdsAccessMorphBoard(props: { target?: string; onHome?: () => voi
       //   hard-load so the Express legacy→React redirects rewrite it; SPA navigate would let
       //   React Router treat `/settings.html` as unknown and fall through to `/project-list`
       //   (Bugbot #741 Medium「Login SPA skips legacy redirects」).
-      if (/\.html(?:$|[?#])/i.test(target)) {
-        window.location.assign(target);
-      } else {
-        navigate(target, { replace: true, viewTransition: true });
-      }
+      goToTarget();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -103,7 +139,7 @@ export function CdsAccessMorphBoard(props: { target?: string; onHome?: () => voi
         <label className="cdsh-node cdsh-login-identity-node">
           <div className="cdsh-row">
             <span className="cdsh-ico"><UserRound /></span>
-            <div><div className="cdsh-title">identity</div><div className="cdsh-desc cdsh-mono">operator</div></div>
+            <div><div className="cdsh-title">identity</div><div className="cdsh-desc cdsh-mono">{needsBootstrap ? 'new operator' : 'operator'}</div></div>
           </div>
           <span className="cdsh-login-inline-input">
             <input
@@ -118,13 +154,31 @@ export function CdsAccessMorphBoard(props: { target?: string; onHome?: () => voi
           </span>
         </label>
 
-        <div className="cdsh-node cdsh-login-session-node" aria-hidden>
-          <div className="cdsh-row">
-            <span className="cdsh-ico"><Shield /></span>
-            <div><div className="cdsh-title">session</div><div className="cdsh-desc cdsh-mono">same-origin cookie</div></div>
+        {needsBootstrap ? (
+          <label className="cdsh-node cdsh-login-session-node">
+            <div className="cdsh-row">
+              <span className="cdsh-ico"><UserRound /></span>
+              <div><div className="cdsh-title">display</div><div className="cdsh-desc cdsh-mono">optional</div></div>
+            </div>
+            <span className="cdsh-login-inline-input">
+              <input
+                value={bootstrapName}
+                onChange={(event) => setBootstrapName(event.target.value)}
+                autoComplete="name"
+                className="cdsh-login-morph-input"
+                placeholder="display name"
+              />
+            </span>
+          </label>
+        ) : (
+          <div className="cdsh-node cdsh-login-session-node" aria-hidden>
+            <div className="cdsh-row">
+              <span className="cdsh-ico"><Shield /></span>
+              <div><div className="cdsh-title">session</div><div className="cdsh-desc cdsh-mono">same-origin cookie</div></div>
+            </div>
+            <div className="cdsh-status"><span className="cdsh-sdot" />No local secret</div>
           </div>
-          <div className="cdsh-status"><span className="cdsh-sdot" />No local secret</div>
-        </div>
+        )}
 
         <div className="cdsh-node cdsh-login-console-node" aria-hidden>
           <div className="cdsh-row">
@@ -144,10 +198,11 @@ export function CdsAccessMorphBoard(props: { target?: string; onHome?: () => voi
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               type="password"
-              autoComplete="current-password"
+              autoComplete={needsBootstrap ? 'new-password' : 'current-password'}
               required
+              minLength={needsBootstrap ? 8 : undefined}
               className="cdsh-login-morph-input"
-              placeholder="password"
+              placeholder={needsBootstrap ? 'password (8+ chars)' : 'password'}
             />
           </span>
         </label>
@@ -163,8 +218,8 @@ export function CdsAccessMorphBoard(props: { target?: string; onHome?: () => voi
         <div className={`cdsh-login-access-node${error ? ' cdsh-login-access-node-error' : ''}`}>
           <Terminal className="h-4 w-4" />
           <div className="min-w-0 flex-1">
-            <div className="cdsh-lbl">{error ? 'Access · rejected' : busy ? 'Access · verifying' : 'Access · contracted'}</div>
-            <div className="cdsh-url cdsh-mono truncate">{error || 'auth-flow / enter-system'}</div>
+            <div className="cdsh-lbl">{error ? 'Access · rejected' : busy ? (needsBootstrap ? 'Access · provisioning' : 'Access · verifying') : (needsBootstrap ? 'Access · first run' : 'Access · contracted')}</div>
+            <div className="cdsh-url cdsh-mono truncate">{error || (needsBootstrap ? 'bootstrap / create-system-owner' : 'auth-flow / enter-system')}</div>
           </div>
           <Button type="submit" disabled={busy} className="cdsh-login-access-submit">
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
@@ -203,12 +258,46 @@ export function CdsAccessMorphBoard(props: { target?: string; onHome?: () => voi
 }
 
 export function LoginPage(): JSX.Element {
+  const navigate = useNavigate();
+  // 'checking' = 正在探会话态;'anon' = 未登录,展示登录框。已登录则直接跳走,
+  // 不会停留在此状态。探测期间用加载态占位,避免先闪一下登录框再跳转。
+  const [authPhase, setAuthPhase] = useState<'checking' | 'anon'>('checking');
+
   // 登录成功后要跳的内容页(默认控制台)是 lazy chunk:登录页一挂载就预取,
   // 提交成功 navigate 时不会触发 Suspense 白屏,配合 viewTransition 丝滑进内容页。
   useEffect(() => {
     void import('@/pages/ProjectListPage');
     void import('@/pages/HomePage');
   }, []);
+
+  // 直接访问 /login 时,若会话 cookie 仍有效,跳过登录框直达目标页
+  // (默认 /project-list,或 ?redirect= 指定的合法内部路径)。
+  useEffect(() => {
+    let alive = true;
+    fetchSessionAuthed().then((ok) => {
+      if (!alive) return;
+      if (!ok) {
+        setAuthPhase('anon');
+        return;
+      }
+      const target = redirectTarget();
+      // 兜底:若目标解析后仍等于当前路径,navigate 是 no-op,spinner 会卡死 ——
+      // 这种情况直接落到登录框(redirectTarget 已排除 /login,这里只是双保险)。
+      if (target.split(/[?#]/)[0] === window.location.pathname) {
+        setAuthPhase('anon');
+        return;
+      }
+      if (/\.html(?:$|[?#])/i.test(target)) {
+        // legacy server 路径:hard-load 让 Express 的 legacy→React 重定向生效。
+        window.location.assign(target);
+      } else {
+        navigate(target, { replace: true, viewTransition: true });
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, [navigate]);
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-[#120f17] text-[#f6f6f8]">
@@ -250,7 +339,13 @@ export function LoginPage(): JSX.Element {
           </div>
 
           <div className="cdsh-login-panel cdsh-rise" style={{ animationDelay: '.18s' }}>
-            <CdsAccessMorphBoard />
+            {authPhase === 'checking' ? (
+              <div className="flex min-h-[420px] items-center justify-center" role="status" aria-label="checking session">
+                <Loader2 className="h-6 w-6 animate-spin text-white/70" />
+              </div>
+            ) : (
+              <CdsAccessMorphBoard />
+            )}
           </div>
         </div>
       </section>
