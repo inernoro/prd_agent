@@ -537,6 +537,52 @@ export function computeProfileAliases(
   return Array.from(aliases);
 }
 
+/**
+ * 源码构建/安装类命令（pnpm install、vite build、dotnet publish 等）是一次性的
+ * CPU 爆发；同机几十个分支预览共享一颗 CPU 时，一次编译能把核占满、把正在跑的
+ * 预览和 CDS 代理都饿住（表现为预览根文档卡几十秒）。这里给这些 build 动词降
+ * 调度优先级（`nice`），让编译"有空就全速、有人抢就让路"。
+ *
+ * 注意与 2026-05-28「不给容器加任何 docker 资源限制(--cpus/--memory)」的约定不冲突：
+ * `nice` 只是进程调度优先级，不是硬上限——CPU 空闲时构建仍跑满，只有在争抢时才让
+ * 步给正常优先级的预览/代理。长时间运行的 serve 命令（dev/start/serve/node 等）
+ * 不在下表，保持正常优先级，预览本身不被降速。
+ *
+ * 由 `CDS_BUILD_NICE` 控制：默认 10；设为 0/off/false 关闭。极速版预构建镜像
+ * （走镜像 ENTRYPOINT、无 sh -c command）天然不经过这里。
+ */
+const BUILD_NICE_VERBS = [
+  'pnpm install', 'pnpm i', 'pnpm ci', 'pnpm run build', 'pnpm build',
+  'npm install', 'npm ci', 'npm run build',
+  'yarn install', 'yarn build', 'yarn run build',
+  'vite build', 'next build', 'tsc',
+  'dotnet restore', 'dotnet build', 'dotnet publish',
+  'cargo build', 'cargo install', 'go build', 'go install',
+  'webpack', 'rollup',
+];
+
+export function buildNiceLevel(): number {
+  const raw = (process.env.CDS_BUILD_NICE ?? '10').trim().toLowerCase();
+  if (raw === '' || raw === '0' || raw === 'off' || raw === 'false') return 0;
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) return 0;
+  return Math.min(n, 19);
+}
+
+export function niceBuildCommands(command: string): string {
+  const n = buildNiceLevel();
+  if (!n || !command) return command;
+  const prefix = `nice -n ${n} `;
+  let out = command;
+  for (const verb of BUILD_NICE_VERBS) {
+    const esc = verb.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // 命中处于词边界、且尚未被 nice 前缀包裹、且 verb 后是空白/结尾/管道分隔的 build 动词。
+    const re = new RegExp(`(?<![\\w-])(?<!nice -n \\d{1,2} )(${esc})(?=\\s|$|[&|;)])`, 'g');
+    out = out.replace(re, `${prefix}$1`);
+  }
+  return out;
+}
+
 export class ContainerService {
   constructor(
     private readonly shell: IShellExecutor,
@@ -1196,6 +1242,10 @@ export class ContainerService {
       //      profile.id 不同)
       // 多 alias 用多个 --network-alias 标志(docker 支持任意多个)。
       const profileAliasFlags = profileAliases.map((a) => `--network-alias ${a}`);
+
+      // 给源码 build/install 动词降调度优先级(nice)，让编译不饿死同机预览/代理。
+      // 仅作用于 sh -c "command" 源码路径；极速版预构建镜像(usePrebuiltEntrypoint)不经过。
+      if (!usePrebuiltEntrypoint) command = niceBuildCommands(command);
 
       const runCmd = [
         'docker run -d',

@@ -344,7 +344,8 @@ describe('ContainerService', () => {
       const dockerRuns = mock.commands.filter(c => c.includes('docker run'));
       expect(dockerRuns).toHaveLength(1);
       expect(dockerRuns[0]).toContain('docker run -d');
-      expect(dockerRuns[0]).toContain('pnpm install && pnpm build && pnpm start');
+      // build/install 动词被 nice 降优先级（默认 10），serve(pnpm start) 保持正常优先级。
+      expect(dockerRuns[0]).toContain('nice -n 10 pnpm install && nice -n 10 pnpm build && pnpm start');
     });
 
     it('should mount shared caches', async () => {
