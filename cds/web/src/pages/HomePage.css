@@ -1197,8 +1197,21 @@
   .cdsh-sub { font-size: 16px; margin-top: 22px; line-height: 1.6; }
   .cdsh-cta { margin-top: 26px; gap: 12px; }
   .cdsh-cta .cdsh-btn-lg { flex: 1 1 auto; justify-content: center; }
-  .cdsh-meta-row { margin-top: 24px; gap: 14px 22px; }
-  .cdsh-strip { padding: 26px 0 56px; }
+  /* Stack the two trust lines vertically so they read as a tidy list under the
+     CTAs instead of a faint ragged wrap. Slightly lift contrast on phones. */
+  .cdsh-meta-row { margin-top: 22px; flex-direction: column; align-items: flex-start; gap: 11px; }
+  .cdsh-meta { color: var(--cdsh-muted); }
+  /* The feature strip is the bottom of the page on phones — give it a clean
+     2-column card grid (uniform cells, centred text) instead of centre-justified
+     pills that wrap into a ragged stagger. Reads as one cohesive block. */
+  .cdsh-strip { padding: 28px 0 56px; margin-top: 6px; }
+  .cdsh-strip > p { margin-bottom: 16px; }
+  .cdsh-chips { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .cdsh-chip {
+    display: flex; align-items: center; justify-content: center; text-align: center;
+    border-radius: 12px; padding: 12px 10px; font-size: 12.5px; line-height: 1.35;
+  }
+  .cdsh-chip:hover { transform: none; }
   .cdsh-login-panel,
   .cdsh-access-sculpture {
     min-height: auto;

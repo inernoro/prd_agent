@@ -191,4 +191,5 @@ cds/
 | `.claude/rules/cds-auto-deploy.md` | 已 link GitHub 的项目 | push 即部署，不再手动 /cds-deploy |
 | `.claude/rules/quickstart-zero-friction.md` | `exec_cds.sh` | 一键启动包办所有依赖 |
 | `.claude/rules/content-fills-canvas.md` | `cds/web/src/**/*.tsx`, `cds/web/src/index.css` | 内容填满画布：预览/详情/结果区必须 flex-1 填满占主导，禁小盒子 + 大片留白；高度从外壳（`.cds-workspace--fill`）一路传到产物 |
+| `.claude/rules/mobile-layout-fallback.md` | `cds/web/src/**/*.tsx`, `cds/web/src/index.css` | desktop-fill 必须配 mobile-flow 兜底：< lg 从「填满」切到「自然流」（`flex flex-col` + 限高滚动区 + 模态 body 可滚 + 浮层限宽截断），desktop 用 `lg:` 叠回 fill；防止富面板在手机重叠/塌陷/溢出 |
 | `.claude/rules/expectation-management.md` | 任何用户感知的交互/等待/反馈 | 预期管理总纲：让用户随时知道在做什么/还要多久/接下来怎样/变了什么；CDS 的 ETA 等待页、构建进度即其落地 |
