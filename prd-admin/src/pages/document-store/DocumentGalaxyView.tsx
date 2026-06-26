@@ -870,6 +870,9 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
   const mountRef = useRef<HTMLDivElement>(null);
   // 选中文档的发光旋转指针环（DOM 覆盖层，渲染循环每帧把它定位到选中星的屏幕投影处）
   const selRingRef = useRef<HTMLDivElement>(null);
+  // 选中文档的标题标签（叶子不生成常驻标签 sprite，选中时在环下方显示标题，
+  // 解决「选中的文档星没有标题」——用户反馈「这朵蘑菇居然没有标题」）。
+  const selLabelRef = useRef<HTMLDivElement>(null);
   const [fatal, setFatal] = useState<string | null>(null);
   // hover 缩略卡：3D 坐标 project 到屏幕后用绝对定位 DOM 卡片渲染（叶子=标题+摘要，枢纽=篇数+分布）
   const [hover, setHover] = useState<HoverInfo | null>(null);
@@ -1778,6 +1781,7 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       // 星被筛选隐藏 / 没有选中 → 隐藏环。环颜色随该文档 docType。
       {
         const ring = selRingRef.current;
+        const selLabel = selLabelRef.current;
         if (ring) {
           const rec = selectedLeafId ? renders.find((r) => r.node.id === selectedLeafId) : null;
           if (rec && rec.core.visible) {
@@ -1793,11 +1797,21 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
               ring.style.left = `${sx}px`;
               ring.style.top = `${sy}px`;
               ring.style.setProperty('--galaxy-sel-accent', accent);
+              // 选中星的标题：叶子无常驻 sprite，这里在环下方补一个标题标签
+              if (selLabel) {
+                selLabel.style.display = 'block';
+                selLabel.style.left = `${sx}px`;
+                selLabel.style.top = `${sy}px`;
+                const txt = leafDisplayName(rec.node, labelModeRef.current, contentTitlesRef.current);
+                if (selLabel.textContent !== txt) selLabel.textContent = txt;
+              }
             } else {
               ring.style.display = 'none';
+              if (selLabel) selLabel.style.display = 'none';
             }
           } else {
             ring.style.display = 'none';
+            if (selLabel) selLabel.style.display = 'none';
           }
         }
       }
@@ -1893,6 +1907,35 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
 
   return (
     <div ref={mountRef} style={{ position: 'absolute', inset: 0 }}>
+      {/* 选中文档的标题标签：叶子不生成常驻标签 sprite，选中时在环下方补标题
+          （render 循环每帧写 left/top=星投影点 + textContent；transform 把它放到星下方居中）。 */}
+      <div
+        ref={selLabelRef}
+        style={{
+          position: 'absolute',
+          display: 'none',
+          left: 0,
+          top: 0,
+          transform: 'translate(-50%, 42px)',
+          maxWidth: 260,
+          padding: '3px 9px',
+          borderRadius: 7,
+          background: 'rgba(8,9,14,0.78)',
+          border: '1px solid rgba(255,255,255,0.12)',
+          color: '#eef0f6',
+          fontSize: 12,
+          fontWeight: 600,
+          lineHeight: 1.3,
+          textAlign: 'center',
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          pointerEvents: 'none',
+          zIndex: 14,
+          backdropFilter: 'blur(4px)',
+          WebkitBackdropFilter: 'blur(4px)',
+        }}
+      />
       {/* 选中文档的发光旋转指针环：渲染循环每帧更新 left/top + display + 强调色。
           外层定位（left/top 由 JS 写），内层旋转环 + 4 个朝内的指针尖角。pointer-events:none 不挡操作。 */}
       <div

@@ -144,6 +144,40 @@ describe('buildDocGalaxy 关系识别', () => {
     expect(g.stats.rootCount).toBe(3);
   });
 
+  it('标题分隔符层级：· 分段聚簇，叶名取剩余段（不再全堆未分类蘑菇）', () => {
+    const g = buildDocGalaxy([
+      entry('1', 'prd-agent·知识库·卡片置顶·验收报告'),
+      entry('2', 'prd-agent·知识库·星系修复·验收报告'),
+      entry('3', 'prd-agent·缺陷·分享·验收报告'),
+    ]);
+    // 前 2 段作分组：prd-agent → 知识库 / 缺陷
+    const app = childByName(g.root, 'prd-agent');
+    expect(app).toBeTruthy();
+    expect(childByName(app!, '知识库')).toBeTruthy();
+    expect(childByName(app!, '缺陷')).toBeTruthy();
+    // 知识库下两篇共享前缀聚成簇，不再各自落「未分类」
+    expect(childByName(app!, '知识库')!.docCount).toBe(2);
+    // 叶名取消费掉前 2 段后的剩余（含末段），不为空
+    const leaves = leafTitles(g.root);
+    expect(leaves).toContain('卡片置顶 · 验收报告');
+    expect(leaves).toContain('星系修复 · 验收报告');
+    // 全部已归类 → 无悬空
+    expect(g.stats.orphanCount).toBe(0);
+  });
+
+  it('裸连字符不拆 appname（prd-agent 不被拆成 prd/agent）', () => {
+    // 只有一个「空格-空格」分隔，prd-agent 整段保留
+    const g = buildDocGalaxy([entry('1', 'prd-agent - 某主题说明')]);
+    expect(childByName(g.root, 'prd-agent')).toBeTruthy();
+    expect(childByName(g.root, 'prd')).toBeFalsy();
+  });
+
+  it('无分隔符的纯标题仍落未分类（不误伤）', () => {
+    const g = buildDocGalaxy([entry('1', '一段没有任何分隔符的标题')]);
+    expect(g.stats.orphanCount).toBe(1);
+    expect(childByName(g.root, '未分类')).toBeTruthy();
+  });
+
   it('可注入自定义 classifyAppname（通用库不依赖 canonical 表）', () => {
     const g = buildDocGalaxy([entry('1', 'design.myapp.x')], [], {
       classifyAppname: () => '我的分组',

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>文档星系 · 加载动效候选（9 选 1）</title>
+<title>文档星系 · 加载动效（精修版 · 轨道 / 星座）</title>
 <style>
   :root {
     --spec: #4ade80; --design: #60a5fa; --plan: #fbbf24; --rule: #f87171;
@@ -13,354 +13,252 @@
   * { box-sizing: border-box; }
   html, body { margin: 0; background: #05060c; color: #c8c8d2;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
-  .page { max-width: 1280px; margin: 0 auto; padding: 28px 24px 64px; }
+  .page { max-width: 1180px; margin: 0 auto; padding: 28px 24px 64px; }
   header h1 { font-size: 18px; font-weight: 700; margin: 0 0 6px; color: #eef0f6; }
   header p { font-size: 13px; color: #8a8c9a; margin: 0 0 4px; line-height: 1.7; }
   header .hint { color: var(--gold); }
-  .grid { margin-top: 22px; display: grid; gap: 16px;
-    grid-template-columns: repeat(3, 1fr); }
-  @media (max-width: 960px) { .grid { grid-template-columns: repeat(2, 1fr); } }
-  @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
-  .tile { position: relative; border-radius: 14px; overflow: hidden;
-    background: radial-gradient(120% 120% at 50% 35%, #0c0e18 0%, #05060c 70%);
-    border: 1px solid rgba(255,255,255,0.07); min-height: 280px;
-    display: flex; flex-direction: column; }
+  .grid { margin-top: 22px; display: grid; gap: 18px; grid-template-columns: repeat(2, 1fr); }
+  @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
+  .tile { position: relative; border-radius: 16px; overflow: hidden;
+    background: radial-gradient(130% 120% at 50% 32%, #0c0e1a 0%, #05060c 72%);
+    border: 1px solid rgba(255,255,255,0.07); min-height: 360px; display: flex; flex-direction: column; }
   .stage { flex: 1; display: flex; align-items: center; justify-content: center; position: relative; }
   .stage canvas { display: block; }
-  .ctx { position: absolute; bottom: 10px; left: 0; right: 0; text-align: center;
-    pointer-events: none; }
-  .ctx .map { font-weight: 800; letter-spacing: 4px; font-size: 15px;
-    background: linear-gradient(180deg,#fafbff,#9aa0b4); -webkit-background-clip: text;
-    background-clip: text; color: transparent; }
-  .ctx .status { font-size: 11px; color: #6a6a78; margin-top: 2px; }
-  .label { flex-shrink: 0; padding: 9px 12px; font-size: 12px; color: #c8c8d2;
-    border-top: 1px solid rgba(255,255,255,0.06); display: flex; align-items: center; gap: 8px;
-    background: rgba(10,11,18,0.6); }
-  .label .num { display: inline-flex; align-items: center; justify-content: center;
-    width: 20px; height: 20px; border-radius: 6px; font-size: 11px; font-weight: 700;
-    color: #05060c; background: var(--gold); flex-shrink: 0; }
-  .label .name { font-weight: 600; }
-  .label .desc { color: #7a7c8a; font-size: 11px; }
-
-  /* ---- 1 轨道环绕 ---- */
-  .l1 { position: relative; width: 130px; height: 130px; }
-  .l1 .core { position: absolute; left: 50%; top: 50%; width: 16px; height: 16px;
-    margin: -8px 0 0 -8px; border-radius: 50%; background: var(--gold);
-    box-shadow: 0 0 18px var(--gold), 0 0 36px rgba(255,224,138,0.5);
-    animation: l1pulse 1.8s ease-in-out infinite; }
-  .l1 .ring { position: absolute; left: 50%; top: 50%; border-radius: 50%;
-    border: 1px dashed rgba(255,255,255,0.14); transform: translate(-50%,-50%); }
-  .l1 .ring::after { content: ""; position: absolute; width: 9px; height: 9px; border-radius: 50%;
-    left: 50%; top: -5px; margin-left: -4.5px; }
-  .l1 .r1 { width: 60px; height: 60px; animation: spin 2.6s linear infinite; }
-  .l1 .r1::after { background: var(--report); box-shadow: 0 0 10px var(--report); }
-  .l1 .r2 { width: 96px; height: 96px; animation: spin 4.2s linear infinite reverse; }
-  .l1 .r2::after { background: var(--design); box-shadow: 0 0 10px var(--design); }
-  .l1 .r3 { width: 130px; height: 130px; animation: spin 6s linear infinite; }
-  .l1 .r3::after { background: var(--debt); box-shadow: 0 0 10px var(--debt); }
-  @keyframes spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
-  @keyframes l1pulse { 0%,100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.35); opacity: 0.82; } }
-
-  /* ---- 4 星云脉动 ---- */
-  .l4 { position: relative; width: 150px; height: 150px; }
-  .l4 .neb { position: absolute; inset: 0; border-radius: 50%;
-    background: radial-gradient(circle at 50% 50%, rgba(167,139,250,0.55), rgba(96,165,250,0.28) 45%, rgba(5,6,12,0) 72%);
-    filter: blur(2px); animation: l4breathe 2.8s ease-in-out infinite; }
-  .l4 .neb2 { background: radial-gradient(circle at 50% 50%, rgba(34,211,238,0.4), rgba(5,6,12,0) 60%);
-    animation-duration: 3.6s; animation-delay: -0.6s; }
-  .l4 .spark { position: absolute; width: 3px; height: 3px; border-radius: 50%; background: #fff;
-    box-shadow: 0 0 6px #fff; opacity: 0.85; animation: l4drift 4s ease-in-out infinite; }
-  @keyframes l4breathe { 0%,100% { transform: scale(0.86); opacity: 0.7; } 50% { transform: scale(1.12); opacity: 1; } }
-  @keyframes l4drift { 0%,100% { transform: translate(0,0); opacity: 0.3; } 50% { transform: translate(var(--dx), var(--dy)); opacity: 1; } }
-
-  /* ---- 5 群星旋环 ---- */
-  .l5 { position: relative; width: 130px; height: 130px; animation: spin2 7s linear infinite; }
-  @keyframes spin2 { to { transform: rotate(360deg); } }
-  .l5 .s { position: absolute; left: 50%; top: 50%; width: 11px; height: 11px; margin: -5.5px 0 0 -5.5px;
-    border-radius: 50%; }
-  .l5 .core5 { position: absolute; left: 50%; top: 50%; width: 12px; height: 12px; margin: -6px 0 0 -6px;
-    border-radius: 50%; background: var(--gold); box-shadow: 0 0 16px var(--gold);
-    animation: l1pulse 2s ease-in-out infinite; }
-
-  /* ---- 8 涟漪扩散 ---- */
-  .l8 { position: relative; width: 150px; height: 150px; display: flex; align-items: center; justify-content: center; }
-  .l8 .core8 { width: 14px; height: 14px; border-radius: 50%; background: var(--gold);
-    box-shadow: 0 0 16px var(--gold); animation: l1pulse 1.6s ease-in-out infinite; }
-  .l8 .wave { position: absolute; left: 50%; top: 50%; width: 28px; height: 28px; margin: -14px 0 0 -14px;
-    border-radius: 50%; border: 1.5px solid var(--report); opacity: 0; animation: l8ripple 3s ease-out infinite; }
-  .l8 .w2 { animation-delay: 1s; border-color: var(--guide); }
-  .l8 .w3 { animation-delay: 2s; border-color: var(--debt); }
-  @keyframes l8ripple { 0% { transform: scale(0.3); opacity: 0.9; } 80% { opacity: 0.12; } 100% { transform: scale(5.2); opacity: 0; } }
-
+  .ctx { position: absolute; bottom: 14px; left: 0; right: 0; text-align: center; pointer-events: none; }
+  .ctx .map { font-weight: 800; letter-spacing: 5px; font-size: 17px;
+    background: linear-gradient(180deg,#fafbff,#9aa0b4); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .ctx .status { font-size: 12px; color: #7a7c8a; margin-top: 3px; }
+  .label { flex-shrink: 0; padding: 11px 14px; font-size: 13px; color: #c8c8d2;
+    border-top: 1px solid rgba(255,255,255,0.06); display: flex; align-items: center; gap: 9px; background: rgba(10,11,18,0.6); }
+  .label .num { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px;
+    border-radius: 7px; font-size: 12px; font-weight: 700; color: #05060c; background: var(--gold); flex-shrink: 0; }
+  .label .name { font-weight: 700; }
+  .label .desc { color: #7a7c8a; font-size: 12px; }
   .foot { margin-top: 26px; font-size: 12px; color: #6a6a78; line-height: 1.8; }
 </style>
 </head>
 <body>
 <div class="page">
   <header>
-    <h1>文档星系 · 加载动效候选（9 选 1）</h1>
-    <p>当前知识星球进入/构建时用的是通用「MAP 正在加载…」转场，与星系本身的气质不搭。下面 9 个都是星系专属的加载动效（颜色取自真实文档类型配色：spec 绿 / design 蓝 / plan 黄 / rule 红 / guide 紫 / report 青 / debt 橙 / 金色为核心）。</p>
-    <p class="hint">看完告诉我你要第几个（或几个的组合），我再替换掉「正在构建文档星系…」「正在加载文档…」两处的普通加载。本页只是预览，未改动任何线上加载。</p>
+    <h1>文档星系 · 加载动效（精修版）</h1>
+    <p>你选了 1（轨道环绕）和 3（星座连线），其余太简陋。这版只保留这两条主线，各做了精修，并加一个「轨道 + 星座」融合版。配色取自真实文档类型（spec 绿 / design 蓝 / plan 黄 / rule 红 / guide 紫 / report 青 / debt 橙，金色核心）。</p>
+    <p class="hint">告诉我最终用哪一个（A / B / C / D），我做成 React 组件替换星系的「正在构建文档星系…」「正在加载文档…」。本页仅预览，未改线上。</p>
   </header>
 
   <div class="grid">
-    <!-- 1 -->
     <div class="tile">
-      <div class="stage">
-        <div class="l1">
-          <div class="core"></div>
-          <div class="ring r1"></div>
-          <div class="ring r2"></div>
-          <div class="ring r3"></div>
-        </div>
-        <div class="ctx"><div class="map">MAP</div><div class="status">正在构建文档星系…</div></div>
-      </div>
-      <div class="label"><span class="num">1</span><span class="name">轨道环绕</span><span class="desc">核心 + 三层卫星环反向自转</span></div>
+      <div class="stage"><canvas data-loader="orbit" width="300" height="300"></canvas>
+        <div class="ctx"><div class="map">MAP</div><div class="status">正在构建文档星系…</div></div></div>
+      <div class="label"><span class="num">A</span><span class="name">轨道环绕 · 精修</span><span class="desc">脉冲核心 + 多层椭圆轨道 + 卫星拖尾 + 背景星点</span></div>
     </div>
 
-    <!-- 2 -->
     <div class="tile">
-      <div class="stage"><canvas data-loader="spiral" width="220" height="220"></canvas>
-        <div class="ctx"><div class="map">MAP</div><div class="status">正在构建文档星系…</div></div>
-      </div>
-      <div class="label"><span class="num">2</span><span class="name">旋臂成形</span><span class="desc">双旋臂粒子缓慢旋转汇聚</span></div>
+      <div class="stage"><canvas data-loader="constellation" width="300" height="300"></canvas>
+        <div class="ctx"><div class="map">MAP</div><div class="status">正在构建文档星系…</div></div></div>
+      <div class="label"><span class="num">B</span><span class="name">星座连线 · 精修</span><span class="desc">星点渐次亮起 → 光脉冲沿边流动连成网 → 呼吸循环</span></div>
     </div>
 
-    <!-- 3 -->
     <div class="tile">
-      <div class="stage"><canvas data-loader="constellation" width="220" height="220"></canvas>
-        <div class="ctx"><div class="map">MAP</div><div class="status">正在构建文档星系…</div></div>
-      </div>
-      <div class="label"><span class="num">3</span><span class="name">星座连线</span><span class="desc">星点亮起后逐条连成关系网</span></div>
+      <div class="stage"><canvas data-loader="fusion" width="300" height="300"></canvas>
+        <div class="ctx"><div class="map">MAP</div><div class="status">正在构建文档星系…</div></div></div>
+      <div class="label"><span class="num">C</span><span class="name">轨道 + 星座 融合</span><span class="desc">卫星沿轨道运行，经过时点亮并连线，构网后淡出重来</span></div>
     </div>
 
-    <!-- 4 -->
     <div class="tile">
-      <div class="stage">
-        <div class="l4">
-          <div class="neb"></div><div class="neb neb2"></div>
-        </div>
-        <div class="ctx"><div class="map">MAP</div><div class="status">正在构建文档星系…</div></div>
-      </div>
-      <div class="label"><span class="num">4</span><span class="name">星云脉动</span><span class="desc">星云呼吸发光 + 微星漂移</span></div>
-    </div>
-
-    <!-- 5 -->
-    <div class="tile">
-      <div class="stage">
-        <div class="l5" id="l5ring"><div class="core5"></div></div>
-        <div class="ctx"><div class="map">MAP</div><div class="status">正在构建文档星系…</div></div>
-      </div>
-      <div class="label"><span class="num">5</span><span class="name">群星旋环</span><span class="desc">八类配色星点绕核整圈旋转</span></div>
-    </div>
-
-    <!-- 6 -->
-    <div class="tile">
-      <div class="stage"><canvas data-loader="warp" width="220" height="220"></canvas>
-        <div class="ctx"><div class="map">MAP</div><div class="status">正在构建文档星系…</div></div>
-      </div>
-      <div class="label"><span class="num">6</span><span class="name">曲速星流</span><span class="desc">星点自核心向外拉成光痕</span></div>
-    </div>
-
-    <!-- 7 -->
-    <div class="tile">
-      <div class="stage"><canvas data-loader="accretion" width="220" height="220"></canvas>
-        <div class="ctx"><div class="map">MAP</div><div class="status">正在构建文档星系…</div></div>
-      </div>
-      <div class="label"><span class="num">7</span><span class="name">吸积旋涡</span><span class="desc">粒子螺旋汇入发光核心</span></div>
-    </div>
-
-    <!-- 8 -->
-    <div class="tile">
-      <div class="stage">
-        <div class="l8">
-          <div class="wave"></div><div class="wave w2"></div><div class="wave w3"></div>
-          <div class="core8"></div>
-        </div>
-        <div class="ctx"><div class="map">MAP</div><div class="status">正在构建文档星系…</div></div>
-      </div>
-      <div class="label"><span class="num">8</span><span class="name">涟漪扩散</span><span class="desc">核心向外一圈圈扩散脉冲环</span></div>
-    </div>
-
-    <!-- 9 -->
-    <div class="tile">
-      <div class="stage"><canvas data-loader="converge" width="220" height="220"></canvas>
-        <div class="ctx"><div class="map">MAP</div><div class="status">正在构建文档星系…</div></div>
-      </div>
-      <div class="label"><span class="num">9</span><span class="name">聚类汇集</span><span class="desc">散落文档星飞入成团（呼应建库）</span></div>
+      <div class="stage"><canvas data-loader="orbit2" width="300" height="300"></canvas>
+        <div class="ctx"><div class="map">MAP</div><div class="status">正在构建文档星系…</div></div></div>
+      <div class="label"><span class="num">D</span><span class="name">轨道环绕 · 倾斜盘</span><span class="desc">A 的 3D 倾斜视角变体，轨道呈扁椭圆更有星系盘感</span></div>
     </div>
   </div>
 
-  <div class="foot">配色 SSOT 同 DocumentGalaxyView 的 TYPE_COLOR。预览地址刷新即重播。选定后我会把它做成 React 组件替换 MapSectionLoader/PageTransitionLoader 在星系两处的调用。</div>
+  <div class="foot">配色 SSOT 同 DocumentGalaxyView 的 TYPE_COLOR。刷新即重播。选定后做成 React 组件替换 MapSectionLoader/PageTransitionLoader 在星系两处的调用。</div>
 </div>
 
 <script>
 (function () {
-  var TYPE = ['#4ade80','#60a5fa','#fbbf24','#f87171','#a78bfa','#22d3ee','#fb923c','#94a3b8'];
+  var TYPE = ['#4ade80','#60a5fa','#fbbf24','#f87171','#a78bfa','#22d3ee','#fb923c'];
   var GOLD = '#ffe08a';
 
-  // 群星旋环(5)：JS 生成 8 个配色星点绕圆排布
-  var ring = document.getElementById('l5ring');
-  if (ring) {
-    for (var i = 0; i < 8; i++) {
-      var a = (i / 8) * Math.PI * 2;
-      var R = 55;
-      var s = document.createElement('div');
-      s.className = 's';
-      var c = TYPE[i];
-      s.style.background = c;
-      s.style.boxShadow = '0 0 10px ' + c;
-      s.style.transform = 'translate(' + (Math.cos(a) * R) + 'px,' + (Math.sin(a) * R) + 'px)';
-      ring.appendChild(s);
-    }
-  }
-
-  // 通用 canvas 高清适配
   function fit(cv) {
     var dpr = Math.min(window.devicePixelRatio || 1, 2);
     var w = cv.width, h = cv.height;
     cv.style.width = w + 'px'; cv.style.height = h + 'px';
     cv.width = w * dpr; cv.height = h * dpr;
-    var ctx = cv.getContext('2d');
-    ctx.scale(dpr, dpr);
+    var ctx = cv.getContext('2d'); ctx.scale(dpr, dpr);
     return { ctx: ctx, w: w, h: h, cx: w / 2, cy: h / 2 };
   }
-
-  function dot(ctx, x, y, r, color, glow) {
-    ctx.beginPath();
-    ctx.shadowBlur = glow || 0; ctx.shadowColor = color;
-    ctx.fillStyle = color;
-    ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-    ctx.shadowBlur = 0;
+  function dot(ctx, x, y, r, color, glow, alpha) {
+    ctx.globalAlpha = alpha == null ? 1 : alpha;
+    ctx.beginPath(); ctx.shadowBlur = glow || 0; ctx.shadowColor = color;
+    ctx.fillStyle = color; ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+  }
+  // 静态背景星点（每个 stage 一套，淡淡铺底）
+  function bgStars(s, n) {
+    var arr = [];
+    for (var i = 0; i < n; i++) arr.push({ x: Math.random() * s.w, y: Math.random() * s.h,
+      r: Math.random() * 1.1 + 0.3, tw: Math.random() * Math.PI * 2, sp: 0.5 + Math.random() });
+    return arr;
+  }
+  function drawBg(s, stars, time) {
+    for (var i = 0; i < stars.length; i++) {
+      var st = stars[i], a = 0.25 + 0.25 * Math.sin(time * 0.001 * st.sp + st.tw);
+      dot(s.ctx, st.x, st.y, st.r, '#9fb4d4', 0, a);
+    }
   }
 
   var loaders = {
-    spiral: function (s) {
-      var pts = [];
-      var N = 90, arms = 2, twist = 3.0;
-      for (var i = 0; i < N; i++) {
-        var t = i / N;
-        var r = 12 + t * 92;
-        var arm = (i % arms) * (Math.PI * 2 / arms);
-        pts.push({ r: r, base: arm + t * twist * Math.PI, c: TYPE[i % TYPE.length], size: 1.4 + (1 - t) * 1.8 });
-      }
-      return function (time) {
-        var rot = time * 0.0006;
-        s.ctx.clearRect(0, 0, s.w, s.h);
-        dot(s.ctx, s.cx, s.cy, 5, GOLD, 18);
-        for (var i = 0; i < pts.length; i++) {
-          var p = pts[i], th = p.base + rot;
-          dot(s.ctx, s.cx + Math.cos(th) * p.r, s.cy + Math.sin(th) * p.r, p.size, p.c, 6);
-        }
-      };
-    },
-    constellation: function (s) {
-      var stars = [];
-      for (var i = 0; i < 9; i++) {
-        var a = (i / 9) * Math.PI * 2 + 0.3;
-        var r = 38 + (i % 3) * 26;
-        stars.push({ x: s.cx + Math.cos(a) * r, y: s.cy + Math.sin(a) * r, c: TYPE[i % TYPE.length] });
-      }
-      var period = 4200;
-      return function (time) {
-        var t = (time % period) / period; // 0..1
-        s.ctx.clearRect(0, 0, s.w, s.h);
-        // 连线：在 0.45..0.8 阶段逐条出现
-        var lineP = Math.max(0, Math.min(1, (t - 0.4) / 0.4));
-        s.ctx.lineWidth = 1;
-        for (var i = 0; i < stars.length; i++) {
-          var nIdx = (i + 1) % stars.length;
-          var prog = lineP * stars.length - i;
-          if (prog > 0) {
-            var pp = Math.min(1, prog);
-            var a = stars[i], b = stars[nIdx];
-            s.ctx.strokeStyle = 'rgba(150,170,220,' + (0.5 * pp * (1 - t * 0.3)) + ')';
-            s.ctx.beginPath(); s.ctx.moveTo(a.x, a.y);
-            s.ctx.lineTo(a.x + (b.x - a.x) * pp, a.y + (b.y - a.y) * pp); s.ctx.stroke();
+    // A 轨道环绕 · 精修：脉冲核心 + 3 层椭圆轨道 + 卫星拖尾
+    orbit: function (s) {
+      var bg = bgStars(s, 46);
+      var rings = [
+        { rx: 46, ry: 46, sp: 0.0011, c: TYPE[5], n: 1, ph: 0 },
+        { rx: 78, ry: 78, sp: -0.0008, c: TYPE[1], n: 2, ph: 1 },
+        { rx: 112, ry: 112, sp: 0.0006, c: TYPE[6], n: 1, ph: 2 }
+      ];
+      return function (t) {
+        s.ctx.clearRect(0, 0, s.w, s.h); drawBg(s, bg, t);
+        for (var r = 0; r < rings.length; r++) {
+          var R = rings[r];
+          s.ctx.strokeStyle = 'rgba(180,200,235,0.10)'; s.ctx.lineWidth = 1;
+          s.ctx.beginPath(); s.ctx.ellipse(s.cx, s.cy, R.rx, R.ry, 0, 0, Math.PI * 2); s.ctx.stroke();
+          for (var k = 0; k < R.n; k++) {
+            var ang = t * R.sp + R.ph + (k * Math.PI * 2 / R.n);
+            // 拖尾
+            for (var tr = 0; tr < 7; tr++) {
+              var a2 = ang - tr * 0.10 * (R.sp > 0 ? 1 : -1);
+              dot(s.ctx, s.cx + Math.cos(a2) * R.rx, s.cy + Math.sin(a2) * R.ry,
+                3.2 - tr * 0.35, R.c, 8, (1 - tr / 7) * 0.7);
+            }
+            dot(s.ctx, s.cx + Math.cos(ang) * R.rx, s.cy + Math.sin(ang) * R.ry, 3.4, R.c, 12);
           }
         }
-        // 星点：逐颗亮起
-        for (var j = 0; j < stars.length; j++) {
-          var appear = Math.min(1, Math.max(0, t * stars.length * 1.6 - j));
-          var op = appear * (t > 0.85 ? (1 - (t - 0.85) / 0.15) : 1);
-          if (op <= 0) continue;
-          s.ctx.globalAlpha = op;
-          dot(s.ctx, stars[j].x, stars[j].y, 3.2, stars[j].c, 8);
-          s.ctx.globalAlpha = 1;
-        }
-        dot(s.ctx, s.cx, s.cy, 3, GOLD, 10);
+        var pulse = 1 + 0.28 * Math.sin(t * 0.004);
+        dot(s.ctx, s.cx, s.cy, 7 * pulse, GOLD, 26);
+        dot(s.ctx, s.cx, s.cy, 3.4, '#fff', 10);
       };
     },
-    warp: function (s) {
-      var N = 70, st = [];
-      function mk() { var a = Math.random() * Math.PI * 2; return { a: a, r: Math.random() * 12, v: 0.6 + Math.random() * 1.8, len: 0 }; }
-      for (var i = 0; i < N; i++) st.push(mk());
-      var last = 0;
-      return function (time) {
-        var dt = last ? Math.min(40, time - last) : 16; last = time;
-        s.ctx.clearRect(0, 0, s.w, s.h);
-        dot(s.ctx, s.cx, s.cy, 4, GOLD, 16);
-        for (var i = 0; i < st.length; i++) {
-          var p = st[i];
-          var pr = p.r;
-          p.r += p.v * (1 + p.r * 0.03) * dt * 0.12;
-          var x1 = s.cx + Math.cos(p.a) * pr, y1 = s.cy + Math.sin(p.a) * pr;
-          var x2 = s.cx + Math.cos(p.a) * p.r, y2 = s.cy + Math.sin(p.a) * p.r;
-          var op = Math.min(1, p.r / 30);
-          s.ctx.strokeStyle = 'rgba(200,214,240,' + op + ')';
-          s.ctx.lineWidth = Math.min(2.4, 0.6 + p.r * 0.02);
-          s.ctx.beginPath(); s.ctx.moveTo(x1, y1); s.ctx.lineTo(x2, y2); s.ctx.stroke();
-          if (p.r > 115) st[i] = mk();
+    // D 轨道环绕 · 倾斜盘（扁椭圆 + 倾角）
+    orbit2: function (s) {
+      var bg = bgStars(s, 46);
+      var rings = [
+        { rx: 52, ry: 20, sp: 0.0013, c: TYPE[0], n: 1, ph: 0 },
+        { rx: 86, ry: 33, sp: -0.0009, c: TYPE[4], n: 2, ph: 1.2 },
+        { rx: 120, ry: 46, sp: 0.0006, c: TYPE[6], n: 1, ph: 2.4 }
+      ];
+      var tilt = -0.42;
+      return function (t) {
+        s.ctx.clearRect(0, 0, s.w, s.h); drawBg(s, bg, t);
+        for (var r = 0; r < rings.length; r++) {
+          var R = rings[r];
+          s.ctx.strokeStyle = 'rgba(180,200,235,0.10)'; s.ctx.lineWidth = 1;
+          s.ctx.beginPath(); s.ctx.ellipse(s.cx, s.cy, R.rx, R.ry, tilt, 0, Math.PI * 2); s.ctx.stroke();
+          for (var k = 0; k < R.n; k++) {
+            var ang = t * R.sp + R.ph + (k * Math.PI * 2 / R.n);
+            var ex = Math.cos(ang) * R.rx, ey = Math.sin(ang) * R.ry;
+            var x = s.cx + ex * Math.cos(tilt) - ey * Math.sin(tilt);
+            var y = s.cy + ex * Math.sin(tilt) + ey * Math.cos(tilt);
+            for (var tr = 0; tr < 6; tr++) {
+              var a2 = ang - tr * 0.11 * (R.sp > 0 ? 1 : -1);
+              var bx = Math.cos(a2) * R.rx, by = Math.sin(a2) * R.ry;
+              dot(s.ctx, s.cx + bx * Math.cos(tilt) - by * Math.sin(tilt),
+                s.cy + bx * Math.sin(tilt) + by * Math.cos(tilt), 3 - tr * 0.4, R.c, 7, (1 - tr / 6) * 0.65);
+            }
+            dot(s.ctx, x, y, 3.4, R.c, 12);
+          }
         }
+        var pulse = 1 + 0.26 * Math.sin(t * 0.004);
+        dot(s.ctx, s.cx, s.cy, 7 * pulse, GOLD, 26);
+        dot(s.ctx, s.cx, s.cy, 3.2, '#fff', 10);
       };
     },
-    accretion: function (s) {
-      var N = 80, st = [];
-      function mk() { return { a: Math.random() * Math.PI * 2, r: 40 + Math.random() * 65, c: TYPE[(Math.random() * TYPE.length) | 0] }; }
-      for (var i = 0; i < N; i++) st.push(mk());
-      var last = 0;
-      return function (time) {
-        var dt = last ? Math.min(40, time - last) : 16; last = time;
-        s.ctx.clearRect(0, 0, s.w, s.h);
-        // 发光核 + 环
-        s.ctx.strokeStyle = 'rgba(255,224,138,0.5)'; s.ctx.lineWidth = 1.5;
-        s.ctx.beginPath(); s.ctx.arc(s.cx, s.cy, 16, 0, Math.PI * 2); s.ctx.stroke();
-        dot(s.ctx, s.cx, s.cy, 7, GOLD, 22);
-        for (var i = 0; i < st.length; i++) {
-          var p = st[i];
-          p.a += (0.8 / (p.r + 8)) * dt * 1.4;
-          p.r -= dt * 0.012 * (1 + (90 - p.r) * 0.02);
-          var op = Math.min(1, (p.r - 14) / 40);
-          dot(s.ctx, s.cx + Math.cos(p.a) * p.r, s.cy + Math.sin(p.a) * p.r, 1.6 + (1 - p.r / 110) * 1.6, p.c, 5);
-          s.ctx.globalAlpha = 1;
-          if (p.r < 16) st[i] = mk();
-        }
-      };
-    },
-    converge: function (s) {
-      var N = 46, st = [];
-      function mk() {
-        var a = Math.random() * Math.PI * 2, R = 95 + Math.random() * 30;
-        return { hx: s.cx + Math.cos(a) * R, hy: s.cy + Math.sin(a) * R,
-          tx: s.cx + (Math.random() - 0.5) * 26, ty: s.cy + (Math.random() - 0.5) * 26,
-          c: TYPE[(Math.random() * TYPE.length) | 0], off: Math.random() };
+    // B 星座连线 · 精修：星点渐次亮 → 光脉冲沿边流动 → 呼吸循环
+    constellation: function (s) {
+      var bg = bgStars(s, 40);
+      var stars = [];
+      var N = 11;
+      for (var i = 0; i < N; i++) {
+        var a = (i / N) * Math.PI * 2 + (i % 2) * 0.5;
+        var r = 44 + (i % 3) * 30;
+        stars.push({ x: s.cx + Math.cos(a) * r, y: s.cy + Math.sin(a) * r, c: TYPE[i % TYPE.length] });
       }
-      for (var i = 0; i < N; i++) st.push(mk());
-      var period = 3200;
-      function ease(t) { return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; }
-      return function (time) {
-        s.ctx.clearRect(0, 0, s.w, s.h);
-        dot(s.ctx, s.cx, s.cy, 4.5, GOLD, 18);
-        for (var i = 0; i < st.length; i++) {
-          var p = st[i];
-          var t = ((time / period) + p.off) % 1;
-          var k = ease(Math.min(1, t / 0.75));            // 0..1 飞入
-          var fade = t > 0.82 ? (1 - (t - 0.82) / 0.18) : 1; // 末段淡出再生
-          var x = p.hx + (p.tx - p.hx) * k, y = p.hy + (p.ty - p.hy) * k;
-          s.ctx.globalAlpha = Math.max(0, fade) * (0.4 + k * 0.6);
-          dot(s.ctx, x, y, 2.4, p.c, 7);
-          s.ctx.globalAlpha = 1;
+      // 边：相邻 + 隔一个，构成网
+      var edges = [];
+      for (var i2 = 0; i2 < N; i2++) { edges.push([i2, (i2 + 1) % N]); if (i2 % 2 === 0) edges.push([i2, (i2 + 3) % N]); }
+      var period = 4600;
+      return function (t) {
+        s.ctx.clearRect(0, 0, s.w, s.h); drawBg(s, bg, t);
+        var p = (t % period) / period;
+        var starP = Math.min(1, p / 0.35);             // 0..0.35 星点亮起
+        var lineP = Math.max(0, Math.min(1, (p - 0.3) / 0.4)); // 0.3..0.7 连线生长
+        var fade = p > 0.85 ? 1 - (p - 0.85) / 0.15 : 1;
+        // 连线
+        for (var e = 0; e < edges.length; e++) {
+          var prog = lineP * edges.length - e;
+          if (prog <= 0) continue;
+          var pp = Math.min(1, prog);
+          var a = stars[edges[e][0]], b = stars[edges[e][1]];
+          var mx = a.x + (b.x - a.x) * pp, my = a.y + (b.y - a.y) * pp;
+          s.ctx.strokeStyle = 'rgba(150,175,225,' + (0.35 * fade) + ')'; s.ctx.lineWidth = 1;
+          s.ctx.beginPath(); s.ctx.moveTo(a.x, a.y); s.ctx.lineTo(mx, my); s.ctx.stroke();
+          // 沿边流动的光脉冲
+          if (pp >= 1) {
+            var fp = ((t * 0.0006) + e * 0.3) % 1;
+            dot(s.ctx, a.x + (b.x - a.x) * fp, a.y + (b.y - a.y) * fp, 1.7, '#cfe0ff', 8, 0.9 * fade);
+          }
         }
+        // 星点
+        for (var j = 0; j < N; j++) {
+          var ap = Math.min(1, Math.max(0, starP * N * 1.5 - j));
+          if (ap <= 0) continue;
+          var halo = 0.6 + 0.4 * Math.sin(t * 0.003 + j);
+          dot(s.ctx, stars[j].x, stars[j].y, 3 + halo, stars[j].c, 12, ap * fade * 0.5);
+          dot(s.ctx, stars[j].x, stars[j].y, 2.6, stars[j].c, 8, ap * fade);
+        }
+        dot(s.ctx, s.cx, s.cy, 4.5 * (1 + 0.2 * Math.sin(t * 0.004)), GOLD, 18, fade);
+      };
+    },
+    // C 融合：卫星沿轨道运行，经过星点时点亮并连线，构网后淡出重来
+    fusion: function (s) {
+      var bg = bgStars(s, 44);
+      var anchors = [];
+      var M = 9;
+      for (var i = 0; i < M; i++) {
+        var a = (i / M) * Math.PI * 2;
+        var r = 58 + (i % 3) * 26;
+        anchors.push({ x: s.cx + Math.cos(a) * r, y: s.cy + Math.sin(a) * r, c: TYPE[i % TYPE.length], lit: 0 });
+      }
+      var sat = { r: 92, sp: 0.0016 };
+      var period = 5200;
+      return function (t) {
+        s.ctx.clearRect(0, 0, s.w, s.h); drawBg(s, bg, t);
+        var cyc = (t % period) / period;
+        var fade = cyc > 0.84 ? 1 - (cyc - 0.84) / 0.16 : 1;
+        var ang = t * sat.sp;
+        var satx = s.cx + Math.cos(ang) * sat.r, saty = s.cy + Math.sin(ang) * sat.r;
+        // 轨道
+        s.ctx.strokeStyle = 'rgba(180,200,235,0.10)'; s.ctx.lineWidth = 1;
+        s.ctx.beginPath(); s.ctx.arc(s.cx, s.cy, sat.r, 0, Math.PI * 2); s.ctx.stroke();
+        // 点亮判定 + 连线到核心
+        for (var i2 = 0; i2 < M; i2++) {
+          var an = anchors[i2];
+          var d = Math.hypot(an.x - satx, an.y - saty);
+          if (d < 26) an.lit = Math.min(1, an.lit + 0.12);
+          an.lit *= 0.992;
+          if (an.lit > 0.04) {
+            s.ctx.strokeStyle = 'rgba(150,175,225,' + (0.3 * an.lit * fade) + ')'; s.ctx.lineWidth = 1;
+            s.ctx.beginPath(); s.ctx.moveTo(s.cx, s.cy); s.ctx.lineTo(an.x, an.y); s.ctx.stroke();
+          }
+          dot(s.ctx, an.x, an.y, 2.4 + an.lit * 1.6, an.c, 6 + an.lit * 10, (0.35 + an.lit * 0.65) * fade);
+        }
+        // 卫星拖尾
+        for (var tr = 0; tr < 8; tr++) {
+          var a2 = ang - tr * 0.09;
+          dot(s.ctx, s.cx + Math.cos(a2) * sat.r, s.cy + Math.sin(a2) * sat.r, 3.2 - tr * 0.32, TYPE[1], 8, (1 - tr / 8) * 0.7 * fade);
+        }
+        dot(s.ctx, satx, saty, 3.6, '#cfe0ff', 14, fade);
+        dot(s.ctx, s.cx, s.cy, 6.5 * (1 + 0.24 * Math.sin(t * 0.004)), GOLD, 24, fade);
+        dot(s.ctx, s.cx, s.cy, 3, '#fff', 8, fade);
       };
     }
   };
@@ -369,8 +267,7 @@
   document.querySelectorAll('canvas[data-loader]').forEach(function (cv) {
     var kind = cv.getAttribute('data-loader');
     if (!loaders[kind]) return;
-    var s = fit(cv);
-    ticks.push(loaders[kind](s));
+    ticks.push(loaders[kind](fit(cv)));
   });
   function frame(t) { for (var i = 0; i < ticks.length; i++) ticks[i](t); requestAnimationFrame(frame); }
   requestAnimationFrame(frame);
