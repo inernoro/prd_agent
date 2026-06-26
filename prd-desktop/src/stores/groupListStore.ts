@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { invoke } from '../lib/tauri';
 import type { ApiResponse, Group } from '../types';
+import { sanitizeGroupName } from '../components/utils/nameHeuristics';
 import { useAuthStore } from './authStore';
 
 interface GroupListState {
@@ -13,6 +14,13 @@ interface GroupListState {
   /** 更新指定群组的名称（用于后台 AI 生成群名后静默更新） */
   updateGroupName: (groupId: string, name: string) => void;
   clear: () => void;
+}
+
+function normalizeGroup(group: Group): Group {
+  return {
+    ...group,
+    groupName: sanitizeGroupName(group.groupName),
+  };
 }
 
 export const useGroupListStore = create<GroupListState>((set, get) => ({
@@ -33,7 +41,7 @@ export const useGroupListStore = create<GroupListState>((set, get) => ({
       const runOnce = async () => {
         const response = await invoke<ApiResponse<Group[]>>('get_groups');
         if (response.success && response.data) {
-          set({ groups: response.data });
+          set({ groups: response.data.map(normalizeGroup) });
           return { ok: true as const, code: null as string | null };
         }
         return { ok: false as const, code: response.error?.code ?? null };
@@ -67,12 +75,12 @@ export const useGroupListStore = create<GroupListState>((set, get) => ({
   },
 
   addGroup: (group) => set((state) => ({
-    groups: [group, ...state.groups],
+    groups: [normalizeGroup(group), ...state.groups],
   })),
 
   updateGroupName: (groupId, name) => set((state) => ({
     groups: state.groups.map((g) =>
-      g.groupId === groupId ? { ...g, groupName: name } : g
+      g.groupId === groupId ? { ...g, groupName: sanitizeGroupName(name) } : g
     ),
   })),
 

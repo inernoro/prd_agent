@@ -11,6 +11,7 @@ import { createServer, installSpaFallback, broadcastActivity, nextActivitySeq } 
 import type { ActivityEvent } from './server.js';
 import { ShellExecutor } from './services/shell-executor.js';
 import { StateService } from './services/state.js';
+import { branchUsesPrebuiltMode } from './services/deploy-runtime.js';
 import { WorktreeService } from './services/worktree.js';
 import { ContainerService } from './services/container.js';
 import { ProxyService } from './services/proxy.js';
@@ -37,7 +38,7 @@ import { syncAllSystemdUnits } from './services/systemd-sync.js';
 import { branchEvents, nowIso } from './services/branch-events.js';
 import { archiveBranchContainerLogs } from './services/container-log-archiver.js';
 import { reconcileStaleDeployDispatches, type DeployDispatchReconcileResult } from './services/deploy-dispatch-reconciler.js';
-import { shouldRetryInterruptedWebhookDispatch } from './services/deploy-dispatch-retry.js';
+import { shouldRetryInterruptedWebhookDispatch, isDeployDispatchRetryEnabled } from './services/deploy-dispatch-retry.js';
 import { ResourceUsageSampler } from './services/resource-usage-sampler.js';
 import { httpLogStoreFromEnv } from './services/http-log-store.js';
 import { serverEventLogStoreFromEnv } from './services/server-event-log-store.js';
@@ -94,6 +95,16 @@ const DEPLOY_DISPATCH_MAX_AGE_MS = Math.max(
 const DEPLOY_DISPATCH_RETRY_BACKOFF_MS = Math.max(
   0,
   Number.parseInt(process.env.CDS_DEPLOY_DISPATCH_RETRY_BACKOFF_MS || '', 10) || 5 * 60 * 1000,
+);
+// 2026-06-24 用户决策：部署重试默认**关闭**（治重试风暴）。
+// 上面三个上限（maxRetries/backoff/age）是 2026-06-23 加的护栏，但没根治风暴——
+// 多个部署来源（webhook + 对账补发 + 抢占后重建）互相叠加仍打满 CPU，导致整个 CDS
+// 进不去。现改为默认不自动补发 stale dispatch；需要时显式开
+// `CDS_DEPLOY_DISPATCH_RETRY_ENABLED=1` 才恢复（恢复后才受 maxRetries/backoff/age 约束）。
+// 对账器仍会把 stale 标记为 interrupted（纯记账），只是不再自动触发部署。
+// 判定走 deploy-dispatch-retry.ts 的纯函数 isDeployDispatchRetryEnabled（单测锁「默认关」）。
+const DEPLOY_DISPATCH_RETRY_ENABLED = isDeployDispatchRetryEnabled(
+  process.env.CDS_DEPLOY_DISPATCH_RETRY_ENABLED,
 );
 
 function mb(bytes: number): number {
@@ -201,6 +212,24 @@ function dispatchRecoveredWebhookDeploys(
   reconciled: DeployDispatchReconcileResult[],
   source: string,
 ): void {
+  // 重试默认关闭：只记一条「已跳过自动补发」，不再触发任何部署（治风暴的总闸）。
+  if (!DEPLOY_DISPATCH_RETRY_ENABLED) {
+    const pending = reconciled.filter((r) => r.nextStatus === 'interrupted');
+    if (pending.length > 0) {
+      store?.record({
+        category: 'system',
+        severity: 'info',
+        source,
+        action: 'branch.deploy-dispatch.retry-disabled',
+        message: `部署重试已关闭（未设 CDS_DEPLOY_DISPATCH_RETRY_ENABLED），跳过 ${pending.length} 个中断派发的自动补发`,
+        details: {
+          pendingCount: pending.length,
+          branchIds: pending.map((r) => r.branchId),
+        },
+      });
+    }
+    return;
+  }
   for (const result of reconciled) {
     if (result.nextStatus !== 'interrupted') continue;
     const traceHash = crypto.createHash('sha1')
@@ -1285,6 +1314,106 @@ proxyService.setScheduler(schedulerService);
 // crashed / user-stopped branches are never revived here. Kill-switch:
 // CDS_PREVIEW_AUTOWAKE=0 disables it (falls back to the diagnostic page).
 if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
+  // #1 重启中断分支按需自愈：访问到一个被 CDS self-update/崩溃重启打断的 error 分支时，
+  // 走一次完整重部署（中断分支容器可能没建好，docker restart 不够）。demand-driven + 代理侧
+  // 去重，不复活「每 5min 全量补发」的重试风暴。Kill-switch 复用 CDS_PREVIEW_AUTOWAKE=0。
+  proxyService.setOnRecoverInterrupted(async (slug: string) => {
+    const branch = stateService.getBranch(slug);
+    if (!branch) return;
+    // 同步前缀（首个 await 前）：再核一遍仍是「重启中断」error 态，翻 loading 并 save，
+    // 让代理紧接着渲染的等待页立刻显示「正在恢复」而非 error 闪一下。
+    if (branch.status !== 'error' || branch.executorId) return;
+    const marker = '重启中断';
+    const interrupted = (typeof branch.errorMessage === 'string' && branch.errorMessage.includes(marker))
+      || Object.values(branch.services || {}).some((s) => typeof s?.errorMessage === 'string' && s.errorMessage.includes(marker));
+    if (!interrupted) return;
+    const commitSha = branch.githubCommitSha || branch.lastDeployDispatchCommitSha || '';
+    if (!commitSha) return;
+    // Bugbot Medium「Recovery skips operation lease」：乐观翻 loading + 发内部 /deploy 前，
+    // 若分支上已有在跑的操作（部署/重启/降温…）就**不抢状态**——那个操作拥有该分支，交给它，
+    // 避免与在途操作的状态写竞争（cooled-wake 走 lease 互斥，这里用同源的协调器判活兜底；
+    // 内部 /deploy 自己仍会拿真正的 lease）。
+    if ((branchOperationCoordinator.getActiveOperations(branch.id) || []).some((op) => !op.cancelled)) return;
+    // 失败要还原的原始 error 文案（乐观翻 loading 前留存）。
+    const prevErrorMessage = branch.errorMessage;
+    const prevSvcError: Record<string, string | undefined> = {};
+    branch.status = 'restarting';
+    for (const [pid, svc] of Object.entries(branch.services || {})) {
+      if (svc) { prevSvcError[pid] = svc.errorMessage; svc.status = 'building'; svc.errorMessage = undefined; }
+    }
+    stateService.save();
+    const requestId = `recover_${slug}_${Date.now()}`;
+    activeServerEventLogStore?.record({
+      category: 'system',
+      severity: 'warn',
+      source: 'proxy.preview-interrupted-recovery',
+      action: 'branch.interrupted.recover-started',
+      message: `按需自愈：重启中断分支 ${slug} 被访问，触发重部署`,
+      projectId: branch.projectId,
+      branchId: branch.id,
+      requestId,
+      details: { commitSha, trigger: 'preview-access' },
+    });
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(slug)}/deploy`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CDS-Internal': '1',
+            'X-CDS-Trigger': 'preview-recovery',
+            'X-CDS-Request-Id': requestId,
+            ...(branch.projectId ? { 'X-CDS-Source-Project-Id': branch.projectId } : {}),
+          },
+          body: JSON.stringify({ commitSha }),
+        },
+      );
+      if (!response.ok) throw new Error(`HTTP ${response.status}: ${(await response.text().catch(() => '')).slice(0, 200)}`);
+      const reader = response.body?.getReader();
+      if (reader) { for (;;) { const { done } = await reader.read(); if (done) break; } }
+    } catch (err) {
+      activeServerEventLogStore?.record({
+        category: 'system',
+        severity: 'error',
+        source: 'proxy.preview-interrupted-recovery',
+        action: 'branch.interrupted.recover-failed',
+        message: `按需自愈重部署失败 ${slug}: ${(err as Error).message}`,
+        projectId: branch.projectId,
+        branchId: branch.id,
+        requestId,
+      });
+    } finally {
+      // Bugbot Medium「Recovery leaves branch restarting」：部署流跑完后，真正接管的部署会把
+      // status 从 restarting 翻走（building→running/error）。若仍停在 restarting，说明部署
+      // 根本没接管（trigger 抛错，或 lease 冲突走 200+SSE error 早退被当成功 drain），此时**必须
+      // 还原成 error**，否则分支永久卡 loading 且因 shouldRecoverInterrupted 要求 error 而再也
+      // 不会被重试。还原后下次访问（过 5s 去重窗）可再触发一次。
+      const cur = stateService.getBranch(slug);
+      if (cur && cur.status === 'restarting') {
+        cur.status = 'error';
+        cur.errorMessage = prevErrorMessage || '自愈重部署未生效，请重试或回控制台手动部署';
+        for (const [pid, svc] of Object.entries(cur.services || {})) {
+          if (svc && svc.status === 'building') {
+            svc.status = 'error';
+            svc.errorMessage = prevSvcError[pid] || cur.errorMessage;
+          }
+        }
+        stateService.save();
+        activeServerEventLogStore?.record({
+          category: 'system',
+          severity: 'warn',
+          source: 'proxy.preview-interrupted-recovery',
+          action: 'branch.interrupted.recover-not-engaged',
+          message: `按需自愈重部署未接管 ${slug}，已还原 error 以便下次重试`,
+          projectId: cur.projectId,
+          branchId: cur.id,
+          requestId,
+        });
+      }
+    }
+  });
+
   proxyService.setOnReviveCooled(async (slug: string) => {
     const branch = stateService.getBranch(slug);
     if (!branch) return;
@@ -2771,6 +2900,150 @@ ${redirectScript}
 </body></html>`;
 }
 
+// ── 过期分支预览页：已合并 / 已放弃 两种中间页 ──
+//
+// 分支被 PR 合并或关闭后会被删除，原先一律落到「启动失败」页。这里按墓碑
+// （BranchTombstone.reason）分流成两种更明确的中间页：
+//   merged    → 「已合并到主分支」+ 主按钮切换到主分支预览
+//   abandoned → 「分支已放弃」+ 跳 PR/commit
+// 两页沿用 transit/waiting 页同款 shapeGridBg 动效网格背景，并走暖色双主题
+// token（白天浅底深字，遵守 cds-theme-tokens.md 禁暗色背景规则）。
+
+/** 暖色双主题 token（:root 暗黑默认 + prefers-color-scheme:light 翻浅色）。 */
+const REMOVED_BRANCH_THEME_CSS = `:root{--bg-page:#0d1117;--bg-card:#161b22;--bg-elevated:#21262d;--border:#30363d;--border-subtle:#21262d;--text-primary:#f0f6fc;--text-secondary:#c9d1d9;--text-muted:#8b949e;--accent:#58a6ff;--accent-bg:rgba(88,166,255,.14);--success:#3fb950;--success-bg:rgba(63,185,80,.14);--shadow-card:0 24px 70px rgba(0,0,0,.45)}
+@media(prefers-color-scheme:light){:root{--bg-page:#f4efe9;--bg-card:#ffffff;--bg-elevated:#f1eae4;--border:#d8cfc6;--border-subtle:#e6ddd3;--text-primary:#2a1f19;--text-secondary:#3f3128;--text-muted:#7a6a5e;--accent:#1f6feb;--accent-bg:rgba(31,111,235,.10);--success:#1a7f37;--success-bg:rgba(26,127,55,.10);--shadow-card:0 16px 50px rgba(43,33,28,.12)}}`;
+
+/** 动效网格背景脚本（与 transit 页同款 shapeGridBg；stroke 用中性灰，双主题都可见）。 */
+const REMOVED_BRANCH_GRID_SCRIPT = `(function(){var canvas=document.getElementById('shapeGridBg');if(!canvas)return;var ctx=canvas.getContext('2d');if(!ctx)return;var offset={x:0,y:0};var size=42;var reduced=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;function resize(){var d=Math.min(window.devicePixelRatio||1,2);canvas.width=Math.max(1,Math.floor(window.innerWidth*d));canvas.height=Math.max(1,Math.floor(window.innerHeight*d));canvas.style.width='100%';canvas.style.height='100%';ctx.setTransform(d,0,0,d,0,0);}function draw(){var w=window.innerWidth,h=window.innerHeight;ctx.clearRect(0,0,w,h);if(!reduced){offset.x=(offset.x-.14+size)%size;offset.y=(offset.y-.14+size)%size;}var ox=((offset.x%size)+size)%size;var oy=((offset.y%size)+size)%size;ctx.strokeStyle='rgba(125,130,145,.12)';ctx.lineWidth=1;for(var x=-size+ox;x<w+size;x+=size){for(var y=-size+oy;y<h+size;y+=size){ctx.strokeRect(x,y,size,size);}}requestAnimationFrame(draw);}resize();window.addEventListener('resize',resize);requestAnimationFrame(draw);}());`;
+
+function escapeRemovedBranchHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => {
+    switch (c) {
+      case '&': return '&amp;';
+      case '<': return '&lt;';
+      case '>': return '&gt;';
+      case '"': return '&quot;';
+      default: return '&#39;';
+    }
+  });
+}
+
+/** 过期分支页公共 CSS（卡片 + 按钮 + 网格背景，全部走 token，双主题）。 */
+const REMOVED_BRANCH_BASE_CSS = `${REMOVED_BRANCH_THEME_CSS}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg-page);color:var(--text-secondary);display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;overflow:hidden}
+.shape-grid-bg{position:fixed;inset:0;width:100%;height:100%;border:0;display:block;pointer-events:none;opacity:.5}
+.shape-grid-vignette{position:fixed;inset:0;pointer-events:none;background:radial-gradient(900px 620px at 28% 16%,var(--accent-bg),transparent 60%)}
+.card{position:relative;z-index:1;max-width:540px;width:100%;padding:34px 34px 30px;background:var(--bg-card);border:1px solid var(--border);border-radius:18px;box-shadow:var(--shadow-card);text-align:center}
+.badge{width:54px;height:54px;margin:0 auto 18px;border-radius:14px;display:flex;align-items:center;justify-content:center}
+.badge svg{width:28px;height:28px}
+.badge.merged{background:var(--success-bg);color:var(--success)}
+.badge.abandoned{background:var(--accent-bg);color:var(--text-muted)}
+h1{font-size:22px;font-weight:700;color:var(--text-primary);letter-spacing:.2px;margin-bottom:10px;line-height:1.3}
+.branch-chip{display:inline-flex;align-items:center;gap:6px;font-family:ui-monospace,SFMono-Regular,monospace;font-size:12px;color:var(--text-secondary);background:var(--bg-elevated);border:1px solid var(--border-subtle);padding:5px 11px;border-radius:99px;margin-bottom:16px;word-break:break-all}
+.desc{font-size:14px;color:var(--text-muted);line-height:1.7;margin-bottom:24px}
+.desc strong{color:var(--text-secondary);font-weight:600}
+.actions{display:flex;flex-direction:column;gap:10px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:12px 18px;border-radius:10px;text-decoration:none;font-size:14px;font-weight:600;border:1px solid var(--border);color:var(--text-secondary);background:var(--bg-elevated);transition:filter .15s,transform .05s,border-color .15s}
+.btn:hover{border-color:var(--accent)}
+.btn:active{transform:scale(.985)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{filter:brightness(1.08)}
+.hint{font-size:12px;color:var(--text-muted);margin-top:18px;line-height:1.6}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important}}`;
+
+const MERGE_ICON_SVG = '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M5 3.25a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm0 2.122a2.25 2.25 0 10-1.5 0v.878A2.25 2.25 0 005.75 8.5h1.5v2.128a2.251 2.251 0 101.5 0V8.5h1.5a2.25 2.25 0 002.25-2.25v-.878a2.25 2.25 0 10-1.5 0v.878a.75.75 0 01-.75.75h-4.5A.75.75 0 015 6.25v-.878zm3.75 7.378a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm3-8.75a.75.75 0 100-1.5.75.75 0 000 1.5z"/></svg>';
+const ARCHIVE_ICON_SVG = '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M1.75 2.5A1.75 1.75 0 000 4.25v1.5C0 6.44.41 7.03 1 7.35v6.4c0 .966.784 1.75 1.75 1.75h10.5A1.75 1.75 0 0015 13.75v-6.4c.59-.32 1-.91 1-1.6v-1.5a1.75 1.75 0 00-1.75-1.75H1.75zM2.5 7.5h11v6.25a.25.25 0 01-.25.25H2.75a.25.25 0 01-.25-.25V7.5zm-1-3.25a.25.25 0 01.25-.25h12.5a.25.25 0 01.25.25v1.5a.25.25 0 01-.25.25H1.75a.25.25 0 01-.25-.25v-1.5zM6 9.75A.75.75 0 016.75 9h2.5a.75.75 0 010 1.5h-2.5A.75.75 0 016 9.75z"/></svg>';
+
+/**
+ * 「已合并到主分支」中间页：告知分支已合并、预览已下线，主按钮切换到主分支预览。
+ * 用户点按钮跳转（按需求不做自动跳转，避免"莫名其妙跳走"的预期失控）。
+ */
+function buildBranchMergedPageHtml(opts: {
+  branch: string;
+  mainBranch: string | null;
+  mainPreviewUrl: string | null;
+  prNumber?: number;
+  prUrl?: string;
+  dashboardUrl?: string;
+}): string {
+  const branch = escapeRemovedBranchHtml(opts.branch || '');
+  const mainBranch = escapeRemovedBranchHtml(opts.mainBranch || '主分支');
+  const prLabel = opts.prNumber ? `PR #${opts.prNumber}` : 'PR';
+  const primaryBtn = opts.mainPreviewUrl
+    ? `<a class="btn primary" href="${escapeRemovedBranchHtml(opts.mainPreviewUrl)}">切换到主分支预览 →</a>`
+    : (opts.dashboardUrl ? `<a class="btn primary" href="${escapeRemovedBranchHtml(opts.dashboardUrl)}">返回 CDS 控制台 →</a>` : '');
+  const prBtn = opts.prUrl ? `<a class="btn" href="${escapeRemovedBranchHtml(opts.prUrl)}">查看 ${prLabel}</a>` : '';
+  const dashBtn = opts.dashboardUrl && opts.mainPreviewUrl
+    ? `<a class="btn" href="${escapeRemovedBranchHtml(opts.dashboardUrl)}">CDS 控制台</a>` : '';
+  return `<!DOCTYPE html>
+<html lang="zh"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>分支已合并到主分支 — ${branch}</title>
+<style>${REMOVED_BRANCH_BASE_CSS}</style>
+</head><body>
+<canvas class="shape-grid-bg" id="shapeGridBg" aria-hidden="true"></canvas>
+<div class="shape-grid-vignette" aria-hidden="true"></div>
+<div class="card">
+  <div class="badge merged">${MERGE_ICON_SVG}</div>
+  <h1>分支已合并到主分支</h1>
+  <div class="branch-chip">${branch}</div>
+  <div class="desc">
+    该分支的 ${prLabel} 已合并进 <strong>${mainBranch}</strong>，预览环境已下线。<br>
+    主分支预览始终是最新的，点下面切换过去继续验收。
+  </div>
+  <div class="actions">
+    ${primaryBtn}
+    ${prBtn}
+    ${dashBtn}
+  </div>
+  ${opts.mainPreviewUrl ? '' : '<div class="hint">未能解析主分支预览地址，请从 CDS 控制台进入主分支。</div>'}
+</div>
+<script>${REMOVED_BRANCH_GRID_SCRIPT}</script>
+</body></html>`;
+}
+
+/**
+ * 「分支已放弃」中间页：PR 关闭未合并 / 分支被直接删除，预览不可恢复，跳 PR/commit。
+ * 后续打磨（commit 直链、可用分支推荐等）记入 doc/debt.cds-removed-branch-pages.md。
+ */
+function buildBranchAbandonedPageHtml(opts: {
+  branch: string;
+  prNumber?: number;
+  prUrl?: string;
+  dashboardUrl?: string;
+}): string {
+  const branch = escapeRemovedBranchHtml(opts.branch || '');
+  const prLabel = opts.prNumber ? `PR #${opts.prNumber}` : null;
+  const prBtn = opts.prUrl
+    ? `<a class="btn primary" href="${escapeRemovedBranchHtml(opts.prUrl)}">查看${prLabel ? ` ${prLabel}` : ' PR'} →</a>` : '';
+  const dashBtn = opts.dashboardUrl
+    ? `<a class="btn" href="${escapeRemovedBranchHtml(opts.dashboardUrl)}">返回 CDS 控制台</a>` : '';
+  return `<!DOCTYPE html>
+<html lang="zh"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>分支已放弃 — ${branch}</title>
+<style>${REMOVED_BRANCH_BASE_CSS}</style>
+</head><body>
+<canvas class="shape-grid-bg" id="shapeGridBg" aria-hidden="true"></canvas>
+<div class="shape-grid-vignette" aria-hidden="true"></div>
+<div class="card">
+  <div class="badge abandoned">${ARCHIVE_ICON_SVG}</div>
+  <h1>分支已放弃</h1>
+  <div class="branch-chip">${branch}</div>
+  <div class="desc">
+    该分支${prLabel ? `的 ${prLabel}` : ''}已关闭但未合并，预览环境已删除且<strong>不可恢复</strong>。<br>
+    需要回看改动内容可前往对应的 PR。
+  </div>
+  <div class="actions">
+    ${prBtn}
+    ${dashBtn}
+  </div>
+</div>
+<script>${REMOVED_BRANCH_GRID_SCRIPT}</script>
+</body></html>`;
+}
+
 // ── Auto-build transit page HTML ──
 //
 // 这是用户访问"未构建"分支子域名时看到的全屏过渡页 —— 没有引入 dashboard
@@ -3064,17 +3337,21 @@ h1{font-size:18px;font-weight:600;color:var(--text-primary);letter-spacing:.2px}
 
 // Helper: collect currently-running preview branches + build their public
 // URLs so the "branch gone" page can offer live alternatives to jump to.
-function liveBranchesForGonePage(host: string, targetSlug: string): BranchGoneLivePreview[] {
-  const state = stateService.getState();
-  // Derive the preview host ("foo.miduo.org" → "miduo.org") so links work
-  // under any configured root domain without hardcoding.
+// Derive the preview host ("foo.miduo.org" → "miduo.org") so links work
+// under any configured root domain without hardcoding.
+function derivePreviewHost(host: string): string | null {
   const rootDomains = config.rootDomains || (config.previewDomain ? [config.previewDomain] : []);
   const hostLower = host.split(':')[0].toLowerCase();
-  let previewHost: string | null = null;
   for (const rd of rootDomains) {
     const s = `.${rd.toLowerCase()}`;
-    if (hostLower.endsWith(s)) { previewHost = rd.toLowerCase(); break; }
+    if (hostLower.endsWith(s)) return rd.toLowerCase();
   }
+  return null;
+}
+
+function liveBranchesForGonePage(host: string, targetSlug: string): BranchGoneLivePreview[] {
+  const state = stateService.getState();
+  const previewHost = derivePreviewHost(host);
   // 走 buildPreviewUrl 全栈唯一入口，列出来的链接和 PR 评论 / settings preview
   // 输出格式一致（v3 = tail-prefix-projectSlug）。
   const out: BranchGoneLivePreview[] = [];
@@ -3113,14 +3390,61 @@ function serveBranchGonePage(slug: string, req: http.IncomingMessage, res: http.
   const host = req.headers.host || '';
   const dashboardDomain = config.dashboardDomain || config.mainDomain || null;
   const dashboardUrl = dashboardDomain ? `https://${dashboardDomain}` : undefined;
-  const live = liveBranchesForGonePage(host, slug);
-  const html = buildBranchGonePageHtml(slug, { dashboardUrl, mainDomain: config.mainDomain, liveBranches: live });
-  res.writeHead(404, {
+  const noCache = {
     'Content-Type': 'text/html; charset=utf-8',
     'Cache-Control': 'no-cache, no-store, must-revalidate',
-  });
+  };
+
+  // 先查分支墓碑：PR 合并/关闭后分支被删，按原因分流到「已合并」/「已放弃」中间页，
+  // 而不是一律落「启动失败」。墓碑由 github-webhook 在 PR closed / 分支删除时落库。
+  // 用 findRemovedBranchByIdentifier：主键 previewSlug 未命中时兜底匹配 branchId / 别名，
+  // 否则自定义子域别名访问永远落不到分流页（Bugbot）。
+  const tombstone = stateService.findRemovedBranchByIdentifier(slug);
+  if (tombstone) {
+    if (tombstone.reason === 'merged') {
+      // baseRef = PR 实际合并进的目标分支（可能不是项目默认分支，如合并进 develop）。
+      // 优先用它，defaultBranch 仅作兜底，避免对非默认目标错误显示「合并进 main」+ main 预览链接。
+      const mainBranch = tombstone.baseRef || tombstone.defaultBranch || null;
+      const previewHost = derivePreviewHost(host);
+      let mainPreviewUrl: string | null = null;
+      if (previewHost && mainBranch) {
+        const project = tombstone.projectId ? stateService.getProject(tombstone.projectId) : undefined;
+        const built = buildPreviewUrlForProject(previewHost, mainBranch, project, tombstone.projectId);
+        if (built.url) mainPreviewUrl = built.url;
+      }
+      res.writeHead(404, noCache);
+      res.end(buildBranchMergedPageHtml({
+        branch: tombstone.branch,
+        mainBranch,
+        mainPreviewUrl,
+        prNumber: tombstone.prNumber,
+        prUrl: tombstone.prUrl,
+        dashboardUrl,
+      }));
+      return;
+    }
+    // reason === 'abandoned'
+    res.writeHead(404, noCache);
+    res.end(buildBranchAbandonedPageHtml({
+      branch: tombstone.branch,
+      prNumber: tombstone.prNumber,
+      prUrl: tombstone.prUrl,
+      dashboardUrl,
+    }));
+    return;
+  }
+
+  const live = liveBranchesForGonePage(host, slug);
+  const html = buildBranchGonePageHtml(slug, { dashboardUrl, mainDomain: config.mainDomain, liveBranches: live });
+  res.writeHead(404, noCache);
   res.end(html);
 }
+
+// 停止但未删除的 PR 分支（仓库不自动删合并分支）也要落到合并/放弃页，而非泛化停止页。
+// proxy 在 routeToBranch 命中墓碑时调本回调；serveBranchGonePage 内部再按墓碑分流。
+proxyService.setOnBranchGone((branchSlug, req, res) => {
+  serveBranchGonePage(branchSlug, req, res);
+});
 
 // Preview requests must never create worktrees or containers. Containers may only
 // be started by webhook dispatch, explicit dashboard deploy, or cdscli.
@@ -3201,6 +3525,93 @@ function startPerfHealthMonitor(): ReturnType<typeof setInterval> {
   return timer;
 }
 startPerfHealthMonitor();
+
+// 极速版「等待 CI 镜像」看门狗（2026-06-24，可观测性补洞）。
+//
+// 背景：极速版分支 push 后置 ciImageStatus='waiting'，等 GitHub Actions 的
+// branch-image.yml 回投 workflow_run.completed 才部署。但若该分支 tree 里没有
+// branch-image.yml（从旧 main 切出）、CI 被禁用、或投递丢失，这个 completion
+// 永远不来 —— 分支无限期卡在 waiting / idle / lastDeployAt=null，**且无任何记录**，
+// 前端旧逻辑还把它误渲染成「容器停止 · 无记录 · 时间未知」（用户 2026-06-24 反馈
+// 「莫名其妙停止 / 可观测性有问题」的真因）。
+//
+// 看门狗：waiting 超过阈值（默认 15 分钟，无匹配 workflow_run）即翻 'failed' +
+// 写人类可读 ciImageError 归因 + server-event + branch.updated 事件，让分支卡显示
+// 「CI 镜像未就绪（原因）」而非假的「停止」。翻 failed 不阻断恢复：真 CI 完成事件
+// 晚到时 handleWorkflowRun 的 waiting||failed matcher 仍可 failed → ready。
+const CI_WAIT_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.CDS_CI_WAIT_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 15 * 60 * 1000;
+})();
+function startCiWaitWatchdog(): ReturnType<typeof setInterval> {
+  const check = (): void => {
+    try {
+      const state = stateService.getState();
+      const now = Date.now();
+      for (const b of Object.values(state.branches || {})) {
+        if (b.ciImageStatus !== 'waiting') continue;
+        // 校验分支**当前**仍是极速版：用户若把部署 override 从 express 切回 dev/static，
+        // profile 路由只存 override、不清旧的 ciImageStatus='waiting'，看门狗不该据此把一个
+        // 已退出极速版的源码模式分支误判超时翻 failed（Codex P2，与 workflow_run 同口径）。
+        const wdProfiles = stateService.getBuildProfilesForProject(b.projectId);
+        if (!branchUsesPrebuiltMode(wdProfiles, b)) continue;
+        // 不再按 service 状态（活跃/停止）跳过：ciImageStatus='waiting' 只由新 push 写入，是
+        // 比残留 service 更新、更权威的信号。一个「在跑旧部署 + 新 push 等新 CI」的极速版分支，
+        // 其 running service 属于旧 commit，不代表新 commit 已就绪——若新 CI 永不回来，看门狗
+        // 必须照常超时翻 failed 把 ciImageError 浮出来（Codex P2：别因旧 service 在跑而永不超时）。
+        // 唯一的跳过条件是上面的「已切回源码模式」（prebuilt 守卫），与前端 precedence 同口径。
+        const sinceIso = b.ciWaitingSince || b.lastPushAt;
+        const sinceMs = sinceIso ? Date.parse(sinceIso) : Number.NaN;
+        if (!Number.isFinite(sinceMs)) continue;
+        const waitedMs = now - sinceMs;
+        if (waitedMs < CI_WAIT_TIMEOUT_MS) continue;
+        const waitedMin = Math.round(waitedMs / 60000);
+        const shortSha = (b.ciTargetSha || b.githubCommitSha || '').slice(0, 7);
+        const reason = `CI 预构建镜像${shortSha ? ` ${shortSha}` : ''}等待超时（${waitedMin} 分钟无匹配构建完成）。常见原因：该分支缺少 .github/workflows/branch-image.yml（从旧 main 切出）、CI 未运行或事件丢失。可在分支详情切回源码编译重试。`;
+        stateService.updateBranchGithubMeta(b.id, {
+          ciImageStatus: 'failed',
+          ciWorkflowConclusion: 'timed_out_no_run',
+          // 清空字段一律用 '' 而非 undefined：/api/branches/stream 的 branch.updated 会
+          // 从 state 重新序列化**整个 branch** 下发，BranchList 按 data.branch merge 覆盖旧项；
+          // JSON.stringify 丢 undefined 字段 → 客户端 merge 时保留旧值（旧「查看构建」链接/
+          // 旧等待时间）。空串可序列化 + falsy，真正清空（Bugbot/Codex P2）。
+          ciWaitingSince: '',
+          ciImageError: reason,
+          // 超时原因是「无匹配构建完成」，任何旧 run 链接都与本次失败无关，清掉避免
+          // 卡片「查看构建」指向一个误导性的历史 Actions run。
+          ciWorkflowRunUrl: '',
+        });
+        stateService.save();
+        activeServerEventLogStore?.record({
+          category: 'container',
+          severity: 'warn',
+          source: 'ci-wait-watchdog',
+          action: 'app.ci-image.wait-timeout',
+          message: reason,
+          projectId: b.projectId,
+          branchId: b.id,
+          details: { ciTargetSha: b.ciTargetSha || null, waitedMin, timeoutMs: CI_WAIT_TIMEOUT_MS },
+        });
+        branchEvents.emitEvent({
+          type: 'branch.updated',
+          payload: {
+            branchId: b.id,
+            projectId: b.projectId,
+            // patch 仅作语义「本次变了什么」；真正驱动 UI 的是 SSE 层补的整 branch（见上）。
+            patch: { ciImageStatus: 'failed', ciWorkflowConclusion: 'timed_out_no_run', ciImageError: reason, ciWorkflowRunUrl: '' },
+            ts: nowIso(),
+          },
+        });
+        console.warn(`[ci-wait-watchdog] ${b.id}: ${reason}`);
+      }
+    } catch { /* 自检不致命 */ }
+  };
+  const timer = setInterval(check, 60 * 1000);
+  timer.unref?.();
+  check();
+  return timer;
+}
+startCiWaitWatchdog();
 
 // Current dispatcher strategy — mutable so the Dashboard's strategy radio
 // can change it at runtime. Read fresh on every deploy by both the branch

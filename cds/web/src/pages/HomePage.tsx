@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import ShapeGrid from '@/components/effects/ShapeGrid';
 import { CdsAccessMorphBoard } from '@/pages/LoginPage';
+import { fetchSessionAuthed } from '@/lib/api';
 import './HomePage.css';
 
 const FEED_LINES = [
@@ -20,9 +21,27 @@ const BranchIcon = (props: { className?: string }) => (
 );
 
 export function HomePage(): JSX.Element {
+  const navigate = useNavigate();
   const [feedIndex, setFeedIndex] = useState(0);
   const [feedOff, setFeedOff] = useState(false);
   const [accessMode, setAccessMode] = useState(false);
+  // 后台探测一次「当前会话 cookie 是否仍有效」。承诺在按钮点击前未必返回,
+  // 所以 enterConsole() 会 await 这个共享 promise 再决定:已登录直接进控制台,
+  // 未登录才弹登录框。probeRef 缓存唯一的探测 promise,ensureProbe() 保证
+  // 「挂载预探」和「点太快时的兜底」复用同一个请求,绝不并发两次探测
+  // (并发会让其中一次的瞬时失败误把已登录用户甩进登录框)。
+  const authedRef = useRef<boolean | null>(null);
+  const probeRef = useRef<Promise<boolean> | null>(null);
+
+  function ensureProbe(): Promise<boolean> {
+    if (!probeRef.current) {
+      probeRef.current = fetchSessionAuthed().then((ok) => {
+        authedRef.current = ok;
+        return ok;
+      });
+    }
+    return probeRef.current;
+  }
 
   useEffect(() => {
     // 预取访问面板和控制台 lazy chunk:首页点击 Access/Enter Console 时只做本页
@@ -34,10 +53,32 @@ export function HomePage(): JSX.Element {
     const ric = (window as unknown as { requestIdleCallback?: (cb: () => void) => number }).requestIdleCallback;
     if (typeof ric === 'function') ric(preload);
     else window.setTimeout(preload, 200);
+
+    // 已登录的用户重新打开首页时,不应该再被甩一次登录框 —— 先探一次会话态。
+    void ensureProbe();
+    // ensureProbe 用 ref 缓存,本 effect 仅运行一次,无需依赖项。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  async function enterConsole() {
+    // 已知已登录 → 直接进控制台,跳过登录框。
+    if (authedRef.current === true) {
+      navigate('/project-list', { viewTransition: true });
+      return;
+    }
+    // 已知未登录 → 弹登录框。
+    if (authedRef.current === false) {
+      setAccessMode(true);
+      return;
+    }
+    // 探测尚未完成(点得太快)→ await 同一个共享探测,避免并发误判。
+    const ok = await ensureProbe();
+    if (ok) navigate('/project-list', { viewTransition: true });
+    else setAccessMode(true);
+  }
+
   function openAccessMode() {
-    setAccessMode(true);
+    void enterConsole();
   }
 
   function closeAccessMode() {

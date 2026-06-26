@@ -155,6 +155,8 @@ interface BranchSummary {
   ciTargetSha?: string;
   ciWorkflowConclusion?: string;
   ciWorkflowRunUrl?: string;
+  ciWaitingSince?: string;
+  ciImageError?: string;
   deployRuntime?: {
     kind: 'source' | 'release' | 'mixed';
     label: string;
@@ -4557,7 +4559,42 @@ function BranchCard({
                   : branch.lastStopSource === 'crash' ? '崩溃'
                     : branch.lastStopSource === 'system' ? '系统'
                       : '无记录';
-  const shouldShowStopReason = !isRunning && !isInterim;
+  // 2026-06-24 可观测性补洞：把「等 CI 镜像」「CI 镜像未就绪」「从未部署」从泛化的
+  // 「容器停止 · 无记录」里拆出来，别再把 idle 一律误标成「停止」。
+  // - isCiWaiting：极速版还在等 GitHub Actions 把镜像构建好（不是停止，是没启动）。
+  // - isCiFailed：CI 镜像构建失败 / 看门狗超时（有人类可读 ciImageError 归因）。
+  // - hasStopSignal：严格对齐后端 isStoppedBranch 口径——services 非空 + 无任何活跃 service +
+  //   至少一个 stopped。**不**把孤立的 lastStop* 元数据当停止信号（否则 services 已清空、
+  //   只剩 lastStop* 残留的 idle 分支会被误显「容器停止」而非「待部署」，Bugbot Low）。
+  //   面板里的来源/原因/时间文案仍读 lastStop*，只是不靠它来「判定是否停止」。
+  // - isNeverDeployed：从没部署过（无 lastDeployAt、services 为空、无停止信号）→「待部署」。
+  // prebuilt !== false 门：分支若从极速版切回源码模式，profile 路由只存 override、不清旧的
+  // ciImageStatus，故源码模式分支不该再进 CI 等待/失败行（Codex P2）。用 !== false 而非
+  // === true：deployRuntime 仅由 GET /branches 注入，SSE 新建的极速版分支缺它（缺省=显示，
+  // 明确 prebuilt=false 即已切源码=隐藏），与下方 CI chip 同口径。
+  // 优先级（precedence）：ciImageStatus='waiting'/'failed' 只由「新 push」写入（push 把分支
+  // 重置进极速版等待），是比残留 service 状态**更新、更权威**的信号，故 CI 行优先于「容器停止」
+  // 面板。一个真正被用户停掉的分支不会处于 'waiting'（停止动作不写 ciImageStatus），所以
+  // 「停止 + waiting」这种组合只会出现在「停过 → 又 push」的场景，此时它确实在等 CI，应显示
+  // 「等待 CI 镜像」而非「容器停止」（Bugbot：stopped services hide CI wait）。因此 isCiWaiting/
+  // isCiFailed **不**再被 hasStopSignal 抑制；hasStopSignal 仅在 ciImageStatus 非 waiting/failed
+  // 时（即 shouldShowStopReason 兜底）才显示停止面板。
+  const branchServices = Object.values(branch.services || {});
+  const hasStopSignal = branchServices.length > 0
+    && !branchServices.some((svc) => svc.status === 'running' || svc.status === 'building'
+      || svc.status === 'starting' || svc.status === 'restarting')
+    && branchServices.some((svc) => svc.status === 'stopped');
+  const ciPrebuilt = branch.deployRuntime?.prebuilt !== false;
+  const isCiWaiting = !isRunning && !isInterim && ciPrebuilt && branch.ciImageStatus === 'waiting';
+  const isCiFailed = !isRunning && !isInterim && !isError && ciPrebuilt && branch.ciImageStatus === 'failed';
+  const isNeverDeployed = !isRunning && !isInterim && !isError && !isCiWaiting && !isCiFailed
+    && !hasStopSignal && !branch.lastDeployAt && branchServices.length === 0;
+  // 真正展示「停止记录」面板：非运行/中间态，且排除上面那几种「其实没停止」的情况。
+  const shouldShowStopReason = !isRunning && !isInterim && !isCiWaiting && !isCiFailed && !isNeverDeployed;
+  const ciWaitSinceText = branch.ciWaitingSince
+    ? formatRelativeTime(branch.ciWaitingSince)
+    : (branch.lastPushAt ? formatRelativeTime(branch.lastPushAt) : '');
+  const ciImageErrorText = branch.ciImageError || 'CI 预构建镜像未就绪';
   const stopReasonText = branch.lastStopReason || '无停止记录';
   const stopTimeText = branch.lastStoppedAt ? formatRelativeTime(branch.lastStoppedAt) : '时间未知';
   useEffect(() => {
@@ -4890,8 +4927,50 @@ function BranchCard({
       <div className="flex max-w-full flex-wrap items-center gap-2 px-5 pt-3" style={{ minHeight: '1.75rem' }}>
         {/* 2026-06-22 用户主诉求：停止/降温/出错（!running && !interim）时，隐藏"服务端口那一横"，
             在同一槽位单行显示「容器停止/出错」统一标识 + 信息提醒（停止来源/调度器降温原因/错误），
-            让每张卡片这一行恒为单行 → 等高。运行/中间态才显示端口 chip。 */}
-        {shouldShowStopReason ? (
+            让每张卡片这一行恒为单行 → 等高。运行/中间态才显示端口 chip。
+            2026-06-24：在「停止」面板之前先拦截「等 CI 镜像 / CI 未就绪 / 待部署」三种
+            其实没停止的 idle 态，别再把它们误标成「容器停止 · 无记录 · 时间未知」。 */}
+        {isCiWaiting ? (
+          <div
+            className="flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-2.5 text-xs text-muted-foreground"
+            title={`等待 GitHub Actions 预构建镜像${branch.ciTargetSha ? ` (${branch.ciTargetSha.slice(0, 7)})` : ''}${ciWaitSinceText ? `\n自 ${ciWaitSinceText}` : ''}`}
+          >
+            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+            <span className="shrink-0 font-medium text-foreground/80">等待 CI 镜像</span>
+            <span className="min-w-0 flex-1 truncate text-muted-foreground/85">预构建中,就绪后自动部署</span>
+            {ciWaitSinceText ? <span className="shrink-0 whitespace-nowrap text-muted-foreground/65">{ciWaitSinceText}</span> : null}
+          </div>
+        ) : isCiFailed ? (
+          <div
+            className={`flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md border px-2.5 text-xs ${issueClass}`}
+            title={ciImageErrorText}
+          >
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            <span className="shrink-0 font-medium">CI 镜像未就绪</span>
+            <span className="min-w-0 flex-1 truncate">{ciImageErrorText}</span>
+            {branch.ciWorkflowRunUrl ? (
+              <a
+                href={branch.ciWorkflowRunUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="shrink-0 inline-flex items-center gap-1 underline"
+                onClick={(e) => e.stopPropagation()}
+              >
+                查看构建
+                <ExternalLink className="h-3 w-3" aria-hidden />
+              </a>
+            ) : null}
+          </div>
+        ) : isNeverDeployed ? (
+          <div
+            className="flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-2.5 text-xs text-muted-foreground"
+            title="该分支尚未部署预览（push 后会自动构建，或在分支详情手动部署）"
+          >
+            <Rocket className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            <span className="shrink-0 font-medium text-foreground/80">待部署</span>
+            <span className="min-w-0 flex-1 truncate text-muted-foreground/85">尚未构建预览,推送或手动部署后启动</span>
+          </div>
+        ) : shouldShowStopReason ? (
           <div
             className={`flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md border px-2.5 text-xs ${isError ? issueClass : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 text-muted-foreground'}`}
             title={isError
@@ -5033,32 +5112,41 @@ function BranchCard({
           // running 时才用 service 自身状态做精细化区分。
           const chipStatus = isInterim || isError ? branch.status : resource.status;
           const chipRailClass = isError ? issueRailClass : statusRailClass(chipStatus);
-          const chipToneClass = chipStatus === 'running'
-            ? 'border-emerald-500/25 bg-emerald-500/[0.055] text-foreground/85 hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-foreground'
-            : chipStatus === 'error'
-              ? 'border-destructive/30 bg-destructive/10 text-foreground/85 hover:border-destructive/45 hover:bg-destructive/15 hover:text-foreground'
-              : isInterim
-                ? 'border-sky-500/30 bg-sky-500/10 text-foreground/85 hover:border-sky-500/45 hover:bg-sky-500/15 hover:text-foreground'
-                : 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))]/75 text-foreground/75 hover:border-primary/30 hover:bg-[hsl(var(--surface-raised))]/90 hover:text-foreground';
+          // 基础设施(MongoDB/Redis 等)是"依赖",不是"自己的容器":弱化为次要 —— 不显端口、
+          // 去边框、静默底色,和自有服务 chip 拉开主次(2026-06-26 用户验收 #4)。
+          const isInfra = resource.source === 'infra';
+          // "碎点"治理(2026-06-26 用户验收 #5):running 态由 chip 底色已表达,无需再缀一个
+          // 状态点;只在 error/中间态保留状态点(负面/过渡信号才值得这一点)。
+          const showDot = isError || isInterim;
+          const showPort = chipDisplay.port && !isInfra && typeof resource.port === 'number';
+          const chipToneClass = isInfra
+            ? 'border-transparent bg-transparent text-muted-foreground/70 hover:bg-[hsl(var(--surface-raised))]/55 hover:text-foreground/90'
+            : chipStatus === 'running'
+              ? 'border-emerald-500/25 bg-emerald-500/[0.055] text-foreground/85 hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-foreground'
+              : chipStatus === 'error'
+                ? 'border-destructive/30 bg-destructive/10 text-foreground/85 hover:border-destructive/45 hover:bg-destructive/15 hover:text-foreground'
+                : isInterim
+                  ? 'border-sky-500/30 bg-sky-500/10 text-foreground/85 hover:border-sky-500/45 hover:bg-sky-500/15 hover:text-foreground'
+                  : 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))]/75 text-foreground/75 hover:border-primary/30 hover:bg-[hsl(var(--surface-raised))]/90 hover:text-foreground';
           return (
             <button
               key={resource.id}
               type="button"
-              className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs shadow-[inset_0_1px_0_rgba(255,255,255,0.035)] transition-[background-color,border-color,color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 ${chipToneClass} ${
-                resource.access === 'external'
+              className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs transition-[background-color,border-color,color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 ${isInfra ? '' : 'shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]'} ${chipToneClass} ${
+                resource.access === 'external' && !isInfra
                   ? 'ring-1 ring-[hsl(var(--hairline))]'
                   : ''
               }`}
-              title={`${resource.displayName}\n${resource.serviceName}${resource.containerName ? ` · ${resource.containerName}` : ''}\n点击打开资源面板`}
+              title={`${resource.displayName}${isInfra ? '（基础设施依赖）' : ''}\n${resource.serviceName}${resource.containerName ? ` · ${resource.containerName}` : ''}${typeof resource.port === 'number' ? `\n端口 :${resource.port}` : ''}\n点击打开资源面板`}
               aria-label={`打开 ${resource.displayName} 资源面板`}
               onClick={(event) => {
                 event.stopPropagation();
                 onResourcePanel?.(resource);
               }}
             >
-              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${chipRailClass}`} aria-hidden />
-              {chipDisplay.icon ? <ResourceIcon resource={resource} className="h-3.5 w-3.5 shrink-0 opacity-85 saturate-100 brightness-105" /> : null}
-              {chipDisplay.port ? <span className="font-mono text-foreground/80">:{resource.port}</span> : null}
+              {showDot ? <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${chipRailClass}`} aria-hidden /> : null}
+              {(chipDisplay.icon || isInfra) ? <ResourceIcon resource={resource} className={`h-3.5 w-3.5 shrink-0 ${isInfra ? 'opacity-70' : 'opacity-85 saturate-100 brightness-105'}`} /> : null}
+              {showPort ? <span className="font-mono text-foreground/80">:{resource.port}</span> : null}
             </button>
           );
         }) : (

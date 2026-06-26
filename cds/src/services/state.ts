@@ -1,7 +1,7 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta } from '../types.js';
+import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
@@ -139,6 +139,7 @@ function emptyState(): CdsState {
     activityLogs: {},
     resourceExternalAccess: {},
     resourceCloneTasks: [],
+    removedBranches: {},
   };
 }
 
@@ -1498,6 +1499,8 @@ export class StateService {
       ciTargetSha?: string;
       ciWorkflowConclusion?: string;
       ciWorkflowRunUrl?: string;
+      ciWaitingSince?: string;
+      ciImageError?: string;
     },
   ): void {
     const branch = this.state.branches[id];
@@ -1519,6 +1522,8 @@ export class StateService {
     if ('ciTargetSha' in updates) branch.ciTargetSha = updates.ciTargetSha;
     if ('ciWorkflowConclusion' in updates) branch.ciWorkflowConclusion = updates.ciWorkflowConclusion;
     if ('ciWorkflowRunUrl' in updates) branch.ciWorkflowRunUrl = updates.ciWorkflowRunUrl;
+    if ('ciWaitingSince' in updates) branch.ciWaitingSince = updates.ciWaitingSince;
+    if ('ciImageError' in updates) branch.ciImageError = updates.ciImageError;
   }
 
   // ── Remote hosts (shared-service deployment targets, 2026-05-06) ──
@@ -3101,6 +3106,93 @@ export class StateService {
     return this.state.defaultBranch ?? null;
   }
 
+  /** 墓碑台账容量上限：超过即按 removedAt 淘汰最旧（防止无限增长）。 */
+  private static readonly REMOVED_BRANCHES_CAP = 200;
+
+  /**
+   * 记录一条分支墓碑（PR 合并/关闭后分支被删时调用）。以 previewSlug 为主键，
+   * 同 slug 重复写入按最新覆盖；超出容量上限时淘汰最旧的若干条。
+   *
+   * 一个例外（merged 粘性）：合并一个 PR 会先后投递两条 webhook —— `pull_request.closed`
+   * （reason='merged'）与随后 GitHub 自动删分支的 `delete`（reason='abandoned'）。两条
+   * 都会落墓碑，且投递顺序不保证。若已有 'merged' 记录，后到的 'abandoned' 不得把它降级
+   * （否则合并的分支会错显"已放弃"）；反向（先 abandoned 后 merged）允许覆盖，merged 信息更全。
+   */
+  recordRemovedBranch(tombstone: BranchTombstone): void {
+    if (!tombstone.previewSlug) return;
+    const map = this.state.removedBranches ?? (this.state.removedBranches = {});
+    const existing = map[tombstone.previewSlug];
+    // 分支名/slug 复用：同一 previewSlug 可能跨越**多个分支生命周期**（旧 PR 合并 → 同名分支
+    // 被新 PR 重新使用 → 新 PR 关闭/删除）。判定 incoming 是否属于与 existing **不同的、更晚的**
+    // 生命周期：incoming 带了不同的 prNumber（铁证），或 incoming 比 existing 晚很多（raw delete
+    // 复用兜底，合并后的自动删除是秒级，复用删除是小时级以上）。跨生命周期时既不保留 merged
+    // 粘性、也不承袭旧 PR 元数据/身份（否则旧 merged 页 + 旧 PR 链接会盖住当前 abandoned 状态，Codex P2）。
+    const existingAt = Date.parse(existing?.removedAt || '') || 0;
+    const incomingAt = Date.parse(tombstone.removedAt || '') || 0;
+    const differentPr = tombstone.prNumber != null && existing?.prNumber != null
+      && tombstone.prNumber !== existing.prNumber;
+    const farLater = existingAt > 0 && incomingAt > existingAt + 30 * 60 * 1000;
+    const crossLifecycle = !!existing && (differentPr || farLater);
+    if (existing?.reason === 'merged' && tombstone.reason === 'abandoned' && !crossLifecycle) {
+      return; // merged 粘性：同一生命周期的合并后 raw delete 不降级（跨生命周期复用则放行覆盖）
+    }
+    // 保留更丰富的 PR 元数据：典型流程「关 PR（写带 prNumber/prUrl 的 abandoned 墓碑）→
+    // GitHub 删分支（delete 事件再写一条 abandoned 墓碑，但不带任何 PR 字段）」会让后者
+    // 覆盖前者、丢掉「查看 PR」按钮。incoming 缺某 PR 字段而 existing 有，则承袭（Codex P2）。
+    // 跨生命周期（复用）时**不**承袭，避免旧 PR 元数据/身份污染新记录。
+    const record: BranchTombstone = { ...tombstone };
+    if (existing && !crossLifecycle) {
+      if (record.prNumber == null && existing.prNumber != null) record.prNumber = existing.prNumber;
+      if (!record.prUrl && existing.prUrl) record.prUrl = existing.prUrl;
+      if (!record.baseRef && existing.baseRef) record.baseRef = existing.baseRef;
+      if (!record.mergeCommitSha && existing.mergeCommitSha) record.mergeCommitSha = existing.mergeCommitSha;
+      // 身份字段（branchId/aliases）合并：保留**已有** branchId 为主键（第一写入者通常来自
+      // 真实 entry.id，比后到事件用 canonicalId 计算的更权威），把另一个不同的 id 收进
+      // aliases，让 findRemovedBranchByIdentifier 按任一 id 都命中——避免后到的 canonicalId
+      // 覆盖真实 entry.id 导致停止分支 gone 页查不到（Bugbot）。
+      const aliasSet = new Set<string>([...(existing.aliases ?? []), ...(record.aliases ?? [])]);
+      if (existing.branchId && record.branchId && existing.branchId !== record.branchId) {
+        aliasSet.add(record.branchId);
+      }
+      if (existing.branchId) record.branchId = existing.branchId;
+      if (aliasSet.size) record.aliases = Array.from(aliasSet);
+    }
+    map[tombstone.previewSlug] = record;
+    const entries = Object.entries(map);
+    if (entries.length > StateService.REMOVED_BRANCHES_CAP) {
+      // removedAt 升序排列，删掉最旧的几条直到回到上限。
+      entries.sort((a, b) => (a[1].removedAt || '').localeCompare(b[1].removedAt || ''));
+      const overflow = entries.length - StateService.REMOVED_BRANCHES_CAP;
+      for (let i = 0; i < overflow; i += 1) delete map[entries[i][0]];
+    }
+    this.save();
+  }
+
+  /** 按 previewSlug 查分支墓碑；无记录返回 undefined。 */
+  getRemovedBranch(previewSlug: string): BranchTombstone | undefined {
+    if (!previewSlug) return undefined;
+    return this.state.removedBranches?.[previewSlug];
+  }
+
+  /**
+   * gone 页用：按访问标识查墓碑。先按 previewSlug 主键（标准 v3 预览域），未命中再
+   * 兜底扫 branchId / aliases（自定义子域别名访问时 proxy 返回的是分支 id 或别名 label，
+   * 而非 computePreviewSlug 算出的 previewSlug，主键查不到）。
+   */
+  findRemovedBranchByIdentifier(identifier: string): BranchTombstone | undefined {
+    if (!identifier) return undefined;
+    const map = this.state.removedBranches;
+    if (!map) return undefined;
+    const direct = map[identifier];
+    if (direct) return direct;
+    const lower = identifier.toLowerCase();
+    for (const t of Object.values(map)) {
+      if (t.branchId && t.branchId === identifier) return t;
+      if (t.aliases?.some((a) => a.toLowerCase() === lower)) return t;
+    }
+    return undefined;
+  }
+
   /** 项目级 preview 模式；fallback state.previewMode；都无返回 'multi'。 */
   getPreviewModeFor(projectId?: string | null): 'simple' | 'port' | 'multi' {
     if (projectId) {
@@ -3453,10 +3545,27 @@ export class StateService {
     return path.join(this.getReportsBase(), `${meta.id}.${ext}`);
   }
 
-  /** List report metadata, newest first, optionally filtered by project. */
-  listAcceptanceReports(projectId?: string | null): AcceptanceReportMeta[] {
+  /**
+   * List report metadata, newest first, optionally filtered by project and/or
+   * folder. `folderId` semantics:
+   *   - undefined → no folder filtering (all reports in the project scope)
+   *   - null      → only reports NOT in any folder (未归类)
+   *   - '<id>'    → only reports in that folder
+   */
+  listAcceptanceReports(
+    projectId?: string | null,
+    folderId?: string | null,
+    updatedSince?: string | null,
+  ): AcceptanceReportMeta[] {
     const all = this.state.acceptanceReports || [];
-    const filtered = projectId ? all.filter((r) => (r.projectId || null) === projectId) : all;
+    let filtered = projectId ? all.filter((r) => (r.projectId || null) === projectId) : all;
+    if (folderId !== undefined) {
+      filtered = filtered.filter((r) => (r.folderId || null) === (folderId || null));
+    }
+    // 增量消费（peer-sync / MAP 拉取）：只返回 updatedAt 严格晚于游标的报告。
+    if (updatedSince) {
+      filtered = filtered.filter((r) => (r.updatedAt || r.createdAt) > updatedSince);
+    }
     return [...filtered].sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));
   }
 
@@ -3476,6 +3585,74 @@ export class StateService {
   }
 
   /**
+   * Async variant of readAcceptanceReportContent — offloads disk I/O to the
+   * libuv threadpool instead of blocking the event loop. peer-sync export builds
+   * a bundle reading many report bodies; doing those reads synchronously stalls
+   * the single-process CDS server during a MAP pull (Cursor Bugbot High).
+   */
+  async readAcceptanceReportContentAsync(id: string): Promise<string | undefined> {
+    const meta = this.getAcceptanceReport(id);
+    if (!meta) return undefined;
+    try {
+      return await fs.promises.readFile(this.reportFilePath(meta), 'utf-8');
+    } catch {
+      return undefined;
+    }
+  }
+
+  // ── Report inline-image assets (content-addressed, 2026-06-26) ──
+  //
+  // Report HTML used to embed screenshots as inline `data:image;base64,...`,
+  // which bloats the body and — when a report is pulled into another system's
+  // knowledge base — carries base64 into a place that forbids it. CDS now
+  // extracts those images at ingest, stores them content-addressed on disk, and
+  // rewrites the body to absolute HTTPS URLs served by
+  // `GET /api/reports/assets/:name`. This IS CDS's own object storage; no
+  // external bucket / S3 SDK is required (base64 was only ever a stopgap from
+  // before CDS had any asset store).
+
+  /** Host-side dir holding extracted report image assets. Created on write. */
+  getReportAssetsBase(): string {
+    return path.join(path.dirname(this.getCacheBase()), 'report-assets');
+  }
+
+  /**
+   * Persist a content-addressed report asset (immutable). `name` is
+   * `<sha256>.<ext>`; an existing file is left untouched — same bytes hash to
+   * the same name, so re-writes are pure no-ops and dedup is free. `name` is
+   * basename-sanitized as defense-in-depth against path traversal.
+   */
+  writeReportAsset(name: string, data: Buffer): void {
+    const safe = path.basename(name);
+    const dir = this.getReportAssetsBase();
+    const file = path.join(dir, safe);
+    if (fs.existsSync(file)) return;
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(file, data);
+  }
+
+  /** Read a stored report asset (data + content-type), or undefined when the
+   *  name is illegal / file missing. Only `<hex>.<ext>` names are accepted. */
+  readReportAsset(name: string): { data: Buffer; contentType: string } | undefined {
+    const safe = path.basename(name);
+    if (safe !== name || !/^[a-f0-9]{16,64}\.[a-z0-9]+$/i.test(safe)) return undefined;
+    const ext = safe.slice(safe.lastIndexOf('.') + 1).toLowerCase();
+    const contentType =
+      ext === 'png' ? 'image/png'
+      : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
+      : ext === 'gif' ? 'image/gif'
+      : ext === 'webp' ? 'image/webp'
+      : ext === 'svg' ? 'image/svg+xml'
+      : 'application/octet-stream';
+    try {
+      const data = fs.readFileSync(path.join(this.getReportAssetsBase(), safe));
+      return { data, contentType };
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
    * Create a report: write the content file to disk + persist metadata.
    * `content` byte length is recorded; the metadata id is generated here so
    * callers cannot collide. Returns the stored metadata.
@@ -3486,17 +3663,38 @@ export class StateService {
     content: string;
     projectId?: string | null;
     branchId?: string | null;
+    folderId?: string | null;
+    verdict?: 'pass' | 'conditional' | 'fail' | null;
+    tier?: string | null;
+    defectCounts?: Record<string, number> | null;
+    commitSha?: string | null;
+    branch?: string | null;
+    prNumber?: number | null;
+    deployMode?: string | null;
     createdBy?: string;
   }): AcceptanceReportMeta {
     if (!this.state.acceptanceReports) this.state.acceptanceReports = [];
     const now = new Date().toISOString();
+    // 文件夹必须与报告同属一个项目作用域，否则忽略（防跨项目挂文件夹）。
+    const folder = input.folderId
+      ? (this.state.reportFolders || []).find((f) => f.id === input.folderId)
+      : undefined;
+    const folderId = folder && (folder.projectId || null) === (input.projectId ?? null) ? folder.id : null;
     const meta: AcceptanceReportMeta = {
       id: crypto.randomUUID().replace(/-/g, ''),
       title: input.title,
       format: input.format,
       projectId: input.projectId ?? null,
       branchId: input.branchId ?? null,
+      folderId,
       sizeBytes: Buffer.byteLength(input.content, 'utf8'),
+      verdict: input.verdict ?? null,
+      tier: input.tier ?? null,
+      defectCounts: input.defectCounts ?? null,
+      commitSha: input.commitSha ?? null,
+      branch: input.branch ?? null,
+      prNumber: input.prNumber ?? null,
+      deployMode: input.deployMode ?? null,
       createdBy: input.createdBy,
       createdAt: now,
       updatedAt: now,
@@ -3515,7 +3713,17 @@ export class StateService {
    */
   updateAcceptanceReport(
     id: string,
-    updates: { title?: string; content?: string },
+    updates: {
+      title?: string;
+      content?: string;
+      verdict?: 'pass' | 'conditional' | 'fail' | null;
+      tier?: string | null;
+      defectCounts?: Record<string, number> | null;
+      commitSha?: string | null;
+      branch?: string | null;
+      prNumber?: number | null;
+      deployMode?: string | null;
+    },
   ): AcceptanceReportMeta | null {
     const meta = this.getAcceptanceReport(id);
     if (!meta) return null;
@@ -3525,9 +3733,134 @@ export class StateService {
       fs.writeFileSync(this.reportFilePath(meta), updates.content, 'utf-8');
       meta.sizeBytes = Buffer.byteLength(updates.content, 'utf8');
     }
+    if (updates.verdict !== undefined) meta.verdict = updates.verdict;
+    if (updates.tier !== undefined) meta.tier = updates.tier;
+    if (updates.defectCounts !== undefined) meta.defectCounts = updates.defectCounts;
+    if (updates.commitSha !== undefined) meta.commitSha = updates.commitSha;
+    if (updates.branch !== undefined) meta.branch = updates.branch;
+    if (updates.prNumber !== undefined) meta.prNumber = updates.prNumber;
+    if (updates.deployMode !== undefined) meta.deployMode = updates.deployMode;
     meta.updatedAt = new Date().toISOString();
     this.save();
     return meta;
+  }
+
+  /**
+   * E6 匿名分享：为报告生成（或返回已有的）只读分享 token，返回更新后的元数据。
+   * 已有 token 时幂等返回旧 token（不重复 mint）。报告不存在返回 null。
+   */
+  enableReportShare(id: string): AcceptanceReportMeta | null {
+    const meta = this.getAcceptanceReport(id);
+    if (!meta) return null;
+    if (!meta.shareToken) {
+      meta.shareToken = crypto.randomBytes(16).toString('hex');
+      meta.updatedAt = new Date().toISOString();
+      this.save();
+    }
+    return meta;
+  }
+
+  /** E6：撤销报告的分享 token。返回更新后的元数据，或报告不存在时 null。 */
+  disableReportShare(id: string): AcceptanceReportMeta | null {
+    const meta = this.getAcceptanceReport(id);
+    if (!meta) return null;
+    if (meta.shareToken) {
+      meta.shareToken = null;
+      meta.updatedAt = new Date().toISOString();
+      this.save();
+    }
+    return meta;
+  }
+
+  /** E6：按分享 token 反查报告（公开 `/r/<token>` 路由用）。空/未命中返回 undefined。 */
+  getReportByShareToken(token: string): AcceptanceReportMeta | undefined {
+    const t = (token || '').trim();
+    if (!t) return undefined;
+    return (this.state.acceptanceReports || []).find((r) => r.shareToken === t);
+  }
+
+  // ── WS3 MAP-KBTP peer-sync：节点 + 配对码 ──────────────────────────────
+
+  /** 本 CDS 实例稳定 nodeId（首次调用时生成并持久化）。 */
+  getOrCreatePeerSelfNodeId(): string {
+    if (!this.state.peerSelfNodeId) {
+      this.state.peerSelfNodeId = crypto.randomUUID().replace(/-/g, '');
+      this.save();
+    }
+    return this.state.peerSelfNodeId;
+  }
+
+  /** 生成一次性配对码：返回明文（仅此一次）+ 记录（只存 hash）。ttlMs 默认 10 分钟。 */
+  createPeerPairingCode(displayName?: string, ttlMs = 10 * 60 * 1000): { code: string; record: PeerPairingCode } {
+    if (!this.state.peerPairingCodes) this.state.peerPairingCodes = [];
+    const code = crypto.randomBytes(18).toString('base64url');
+    const now = Date.now();
+    const record: PeerPairingCode = {
+      id: crypto.randomUUID().replace(/-/g, ''),
+      codeHash: crypto.createHash('sha256').update(code).digest('hex'),
+      displayName,
+      expiresAt: new Date(now + ttlMs).toISOString(),
+      used: false,
+      createdAt: new Date(now).toISOString(),
+    };
+    this.state.peerPairingCodes.push(record);
+    this.save();
+    return { code, record };
+  }
+
+  /** 校验并消费一次性配对码（未用、未过期）。成功返回 true 并标记已用。 */
+  consumePeerPairingCode(code: string): boolean {
+    const hash = crypto.createHash('sha256').update(code || '').digest('hex');
+    const rec = (this.state.peerPairingCodes || []).find((c) => c.codeHash === hash);
+    if (!rec || rec.used) return false;
+    if (new Date(rec.expiresAt).getTime() < Date.now()) return false;
+    rec.used = true;
+    this.save();
+    return true;
+  }
+
+  /** 新建/记录一个已配对对端节点。 */
+  createPeerNode(input: {
+    partnerNodeId: string;
+    sharedSecret: string;
+    partnerBaseUrl?: string;
+    partnerDisplayName?: string;
+  }): PeerNodeRecord {
+    if (!this.state.peerNodes) this.state.peerNodes = [];
+    const rec: PeerNodeRecord = {
+      id: crypto.randomUUID().replace(/-/g, ''),
+      partnerNodeId: input.partnerNodeId,
+      sharedSecret: input.sharedSecret,
+      partnerBaseUrl: input.partnerBaseUrl,
+      partnerDisplayName: input.partnerDisplayName,
+      createdAt: new Date().toISOString(),
+    };
+    this.state.peerNodes.push(rec);
+    this.save();
+    return rec;
+  }
+
+  /** 按对端 nodeId（X-Peer-Node）反查配对节点。 */
+  getPeerNodeByPartnerId(partnerNodeId: string): PeerNodeRecord | undefined {
+    return (this.state.peerNodes || []).find((n) => n.partnerNodeId === partnerNodeId);
+  }
+
+  /** 更新节点 lastUsedAt（审计）。 */
+  touchPeerNode(id: string): void {
+    const n = (this.state.peerNodes || []).find((x) => x.id === id);
+    if (n) { n.lastUsedAt = new Date().toISOString(); this.save(); }
+  }
+
+  listPeerNodes(): PeerNodeRecord[] {
+    return [...(this.state.peerNodes || [])];
+  }
+
+  deletePeerNode(id: string): boolean {
+    const all = this.state.peerNodes || [];
+    if (!all.some((n) => n.id === id)) return false;
+    this.state.peerNodes = all.filter((n) => n.id !== id);
+    this.save();
+    return true;
   }
 
   /** Delete a report's metadata + content file. Returns true when removed. */
@@ -3541,6 +3874,122 @@ export class StateService {
       // Content file may already be gone — metadata removal still proceeds.
     }
     this.state.acceptanceReports = all.filter((r) => r.id !== id);
+    this.save();
+    return true;
+  }
+
+  /**
+   * Move a report into a folder (or out of any folder when folderId is null).
+   * The folder must exist and share the report's project scope, otherwise the
+   * assignment is rejected (returns null) to avoid cross-project leakage.
+   */
+  setReportFolder(reportId: string, folderId: string | null): AcceptanceReportMeta | null {
+    const meta = this.getAcceptanceReport(reportId);
+    if (!meta) return null;
+    if (folderId) {
+      const folder = (this.state.reportFolders || []).find((f) => f.id === folderId);
+      if (!folder) return null;
+      if ((folder.projectId || null) !== (meta.projectId || null)) return null;
+      meta.folderId = folder.id;
+    } else {
+      meta.folderId = null;
+    }
+    meta.updatedAt = new Date().toISOString();
+    this.save();
+    return meta;
+  }
+
+  /** List report folders for a project scope (null = global/CDS-self), sorted. */
+  listReportFolders(projectId?: string | null): ReportFolder[] {
+    const all = this.state.reportFolders || [];
+    const filtered = projectId !== undefined
+      ? all.filter((f) => (f.projectId || null) === (projectId || null))
+      : all;
+    return [...filtered].sort((a, b) =>
+      a.sortOrder !== b.sortOrder ? a.sortOrder - b.sortOrder : (a.createdAt < b.createdAt ? -1 : 1),
+    );
+  }
+
+  getReportFolder(id: string): ReportFolder | undefined {
+    return (this.state.reportFolders || []).find((f) => f.id === id);
+  }
+
+  createReportFolder(input: { name: string; projectId?: string | null; parentId?: string | null }): ReportFolder {
+    if (!this.state.reportFolders) this.state.reportFolders = [];
+    const scope = input.projectId ?? null;
+    // 父文件夹必须存在且与子同属一个项目作用域，否则视为根级（防跨项目挂父）。
+    const parent = input.parentId
+      ? this.state.reportFolders.find((f) => f.id === input.parentId && (f.projectId || null) === scope)
+      : undefined;
+    const parentId = parent ? parent.id : null;
+    const maxOrder = this.state.reportFolders
+      .filter((f) => (f.projectId || null) === scope && (f.parentId || null) === parentId)
+      .reduce((m, f) => Math.max(m, f.sortOrder), -1);
+    const folder: ReportFolder = {
+      id: crypto.randomUUID().replace(/-/g, ''),
+      name: input.name,
+      projectId: scope,
+      parentId,
+      sortOrder: maxOrder + 1,
+      createdAt: new Date().toISOString(),
+    };
+    this.state.reportFolders.push(folder);
+    this.save();
+    return folder;
+  }
+
+  /**
+   * Find-or-create a nested folder chain under a project from a "/"-separated
+   * path (e.g. "视觉创作/2026-06-22"). Each segment is matched case-sensitively
+   * by name within its parent; missing segments are created. Returns the leaf
+   * folder id, or null when the path is empty. This is how skills (cdscli /
+   * visual-test) drop reports under「项目 = 根目录 → 技能自取子文件夹」without
+   * needing to pre-create folders or know their ids.
+   */
+  findOrCreateFolderPath(projectId: string | null, path: string): string | null {
+    const segments = path.split('/').map((s) => s.trim()).filter(Boolean);
+    if (segments.length === 0) return null;
+    if (!this.state.reportFolders) this.state.reportFolders = [];
+    const scope = projectId ?? null;
+    let parentId: string | null = null;
+    let leafId: string | null = null;
+    for (const name of segments) {
+      const existing: ReportFolder | undefined = this.state.reportFolders.find(
+        (f) => (f.projectId || null) === scope && (f.parentId || null) === parentId && f.name === name,
+      );
+      const folder: ReportFolder = existing ?? this.createReportFolder({ name, projectId: scope, parentId });
+      parentId = folder.id;
+      leafId = folder.id;
+    }
+    return leafId;
+  }
+
+  renameReportFolder(id: string, name: string): ReportFolder | null {
+    const folder = this.getReportFolder(id);
+    if (!folder) return null;
+    folder.name = name;
+    this.save();
+    return folder;
+  }
+
+  /**
+   * Delete a folder. Reports inside it are NOT deleted — they are detached
+   * (folderId reset to null) so content is never lost when a folder is removed.
+   * Returns true when the folder existed.
+   */
+  deleteReportFolder(id: string): boolean {
+    const all = this.state.reportFolders || [];
+    const target = all.find((f) => f.id === id);
+    if (!target) return false;
+    // 直接报告改为「未归类」（内容不丢）。子文件夹上提一层到被删者的父级（不级联删除，
+    // 避免误删一整棵子树），它们的报告原样保留。
+    for (const r of this.state.acceptanceReports || []) {
+      if (r.folderId === id) r.folderId = null;
+    }
+    for (const f of all) {
+      if ((f.parentId || null) === id) f.parentId = target.parentId ?? null;
+    }
+    this.state.reportFolders = all.filter((f) => f.id !== id);
     this.save();
     return true;
   }

@@ -1,0 +1,16 @@
+{
+  "_comment": "取证 CDS 自身 Web(cds.miduo.org) 用。复制改名为 cds.config.json，凭据走 env 变量名引用。",
+  "project": "cds",
+  "auth": {
+    "browser": {
+      "loginPath": "/login",
+      "userSelector": "input[autocomplete=username]",
+      "passSelector": "input[type=password]",
+      "submitSelector": "button[type=submit]",
+      "userEnv": "CDS_USERNAME",
+      "passEnv": "CDS_PASSWORD",
+      "loggedInWhen": "leave-login-path"
+    }
+  },
+  "screenshot": { "width": 1440, "height": 900, "deviceScaleFactor": 2, "themeAttr": "data-theme", "outDir": "/tmp/acc_shots" }
+}

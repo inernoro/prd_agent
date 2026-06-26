@@ -125,4 +125,140 @@ describe('StateService acceptance reports', () => {
   it('returns undefined content for a missing report', () => {
     expect(service.readAcceptanceReportContent('does-not-exist')).toBeUndefined();
   });
+
+  it('round-trips verdict + deploy-context metadata (WS1/E1)', () => {
+    const meta = service.createAcceptanceReport({
+      title: 'With metadata',
+      format: 'html',
+      content: '<p>ok</p>',
+      projectId: 'proj-1',
+      verdict: 'conditional',
+      tier: 'P0 冒烟',
+      defectCounts: { p0: 0, p1: 2 },
+      commitSha: 'abc1234',
+      branch: 'claude/feature-x',
+      prNumber: 922,
+      deployMode: 'fast',
+    });
+    expect(meta.verdict).toBe('conditional');
+    expect(meta.tier).toBe('P0 冒烟');
+    expect(meta.defectCounts).toEqual({ p0: 0, p1: 2 });
+    expect(meta.commitSha).toBe('abc1234');
+    expect(meta.branch).toBe('claude/feature-x');
+    expect(meta.prNumber).toBe(922);
+    expect(meta.deployMode).toBe('fast');
+
+    // Defaults to null when omitted.
+    const bare = service.createAcceptanceReport({ title: 'Bare', format: 'md', content: '# x' });
+    expect(bare.verdict).toBeNull();
+    expect(bare.commitSha).toBeNull();
+    expect(bare.defectCounts).toBeNull();
+
+    // PATCH-style metadata update (verdict flip + pr number backfill).
+    const patched = service.updateAcceptanceReport(bare.id, { verdict: 'pass', prNumber: 7 });
+    expect(patched!.verdict).toBe('pass');
+    expect(patched!.prNumber).toBe(7);
+  });
+
+  it('mints, looks up and revokes an anonymous share token (E6)', () => {
+    const meta = service.createAcceptanceReport({ title: 'Shareable', format: 'html', content: '<p>s</p>' });
+    expect(meta.shareToken == null).toBe(true);
+
+    const shared = service.enableReportShare(meta.id);
+    expect(shared!.shareToken).toMatch(/^[0-9a-f]{32}$/);
+    const token = shared!.shareToken!;
+
+    // Idempotent: enabling again returns the same token.
+    expect(service.enableReportShare(meta.id)!.shareToken).toBe(token);
+    // Reverse lookup resolves the report.
+    expect(service.getReportByShareToken(token)?.id).toBe(meta.id);
+    expect(service.getReportByShareToken('deadbeef')).toBeUndefined();
+
+    // Revoke invalidates the token.
+    const revoked = service.disableReportShare(meta.id);
+    expect(revoked!.shareToken).toBeNull();
+    expect(service.getReportByShareToken(token)).toBeUndefined();
+  });
+
+  it('filters by updatedSince for incremental consumption (WS3)', async () => {
+    const a = service.createAcceptanceReport({ title: 'A', format: 'md', content: '# a' });
+    await new Promise((r) => setTimeout(r, 10));
+    const cursor = new Date().toISOString();
+    await new Promise((r) => setTimeout(r, 10));
+    const b = service.createAcceptanceReport({ title: 'B', format: 'md', content: '# b' });
+
+    const since = service.listAcceptanceReports(null, undefined, cursor);
+    expect(since.map((r) => r.id)).toEqual([b.id]);
+    // Touching A bumps updatedAt so it reappears after the cursor.
+    service.updateAcceptanceReport(a.id, { verdict: 'pass' });
+    const after = service.listAcceptanceReports(null, undefined, cursor).map((r) => r.id).sort();
+    expect(after).toEqual([a.id, b.id].sort());
+  });
+
+  // ── Content-addressed report image assets (base64 → object storage) ──
+  it('writes a report asset content-addressed and reads it back with content-type', () => {
+    const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex'); // PNG magic prefix
+    service.writeReportAsset('abc123def4560011.png', png);
+    const file = path.join(service.getReportAssetsBase(), 'abc123def4560011.png');
+    expect(fs.existsSync(file)).toBe(true);
+    const read = service.readReportAsset('abc123def4560011.png');
+    expect(read).toBeTruthy();
+    expect(read!.contentType).toBe('image/png');
+    expect(read!.data.equals(png)).toBe(true);
+  });
+
+  it('rejects illegal asset names (path traversal / non-hex) and missing files', () => {
+    expect(service.readReportAsset('../state.json')).toBeUndefined();
+    expect(service.readReportAsset('nope.png')).toBeUndefined(); // not hex
+    expect(service.readReportAsset('deadbeef.png')).toBeUndefined(); // legal name, no file
+  });
+
+  it('dedups identical bytes (immutable, no-op re-write)', () => {
+    const buf = Buffer.from('ffd8ffe000104a464946', 'hex'); // JPEG magic prefix
+    const name = 'aabbccddeeff0011.jpg';
+    service.writeReportAsset(name, buf);
+    const file = path.join(service.getReportAssetsBase(), name);
+    const mtime1 = fs.statSync(file).mtimeMs;
+    service.writeReportAsset(name, Buffer.from('different bytes ignored')); // existing file untouched
+    expect(fs.statSync(file).mtimeMs).toBe(mtime1);
+    expect(service.readReportAsset(name)!.data.equals(buf)).toBe(true);
+    expect(service.readReportAsset(name)!.contentType).toBe('image/jpeg');
+  });
+
+  // ── Nested report folders (项目 = 根目录，技能自取多层子文件夹) ──
+  it('findOrCreateFolderPath creates a nested chain under a project and is idempotent', () => {
+    const leaf1 = service.findOrCreateFolderPath('prd-agent', '视觉创作/2026-06-22');
+    expect(leaf1).toBeTruthy();
+    const all = service.listReportFolders('prd-agent');
+    const visual = all.find((f) => f.name === '视觉创作' && (f.parentId ?? null) === null);
+    const day = all.find((f) => f.name === '2026-06-22');
+    expect(visual).toBeTruthy();
+    expect(day).toBeTruthy();
+    expect(day!.parentId).toBe(visual!.id);
+    expect(leaf1).toBe(day!.id);
+    // 再次同路径不应重复建（find-or-create 幂等）。
+    const leaf2 = service.findOrCreateFolderPath('prd-agent', '视觉创作/2026-06-22');
+    expect(leaf2).toBe(leaf1);
+    expect(service.listReportFolders('prd-agent').filter((f) => f.name === '视觉创作')).toHaveLength(1);
+  });
+
+  it('findOrCreateFolderPath isolates folders per project (same path, different scope)', () => {
+    const a = service.findOrCreateFolderPath('proj-a', '视觉创作');
+    const b = service.findOrCreateFolderPath('proj-b', '视觉创作');
+    expect(a).not.toBe(b);
+    expect(service.getReportFolder(a!)!.projectId).toBe('proj-a');
+    expect(service.getReportFolder(b!)!.projectId).toBe('proj-b');
+    expect(service.findOrCreateFolderPath('proj-a', '')).toBeNull();
+  });
+
+  it('deleting a parent promotes children one level and unfiles its direct reports', () => {
+    const parent = service.createReportFolder({ name: '功能', projectId: 'p' });
+    const child = service.createReportFolder({ name: '子', projectId: 'p', parentId: parent.id });
+    const rep = service.createAcceptanceReport({ title: 'r', format: 'md', content: '# r', projectId: 'p', folderId: parent.id });
+    service.deleteReportFolder(parent.id);
+    // child 上提为根级（parentId → parent 的父级 = null），内容不丢
+    expect(service.getReportFolder(parent.id)).toBeUndefined();
+    expect(service.getReportFolder(child.id)!.parentId ?? null).toBeNull();
+    expect(service.getAcceptanceReport(rep.id)!.folderId).toBeNull();
+  });
 });

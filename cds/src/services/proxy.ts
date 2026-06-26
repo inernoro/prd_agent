@@ -71,6 +71,13 @@ export class ProxyService {
   /** Callback: trigger auto-build for a branch that isn't running yet */
   private onAutoBuild: ((branchSlug: string, req: http.IncomingMessage, res: http.ServerResponse) => void) | null = null;
   /**
+   * Callback: render the "branch gone" page (merged / abandoned / generic) for a
+   * branch that has a tombstone. Used when a PR-closed branch is NOT auto-deleted
+   * by the repo — the stopped BranchEntry lingers, so routeToBranch would otherwise
+   * serve the generic stopped-status page and never reach serveBranchGonePage.
+   */
+  private onBranchGone: ((branchSlug: string, req: http.IncomingMessage, res: http.ServerResponse) => void) | null = null;
+  /**
    * Callback: revive a scheduler-cooled branch on preview access (lightweight
    * `docker restart` of preserved containers, no rebuild). Wired only when
    * preview auto-wake is enabled. Must flip branch.status to a loading state
@@ -81,6 +88,14 @@ export class ProxyService {
   private onReviveCooled: ((branchSlug: string) => Promise<void>) | null = null;
   /** Slugs with an auto-wake in flight — dedupes concurrent navigation hits. */
   private readonly revivingSlugs = new Set<string>();
+  /**
+   * #1 重启中断分支按需自愈：访问到一个「被 CDS 重启中断」的 error 分支时触发一次重部署。
+   * 与 onReviveCooled 互补 —— 那个 docker restart 复用旧容器（cooled），这个走完整重部署
+   * （中断分支容器可能根本没建好）。demand-driven（只恢复用户真正访问的分支）+ 去重，
+   * 不复活「每 5min 全量补发」的重试风暴。
+   */
+  private onRecoverInterrupted: ((branchSlug: string) => Promise<void>) | null = null;
+  private readonly recoveringSlugs = new Set<string>();
   /** Callback: notify dashboard of web access events */
   private onAccess: ((branchId: string, method: string, path: string, status: number, duration: number, profileId?: string) => void) | null = null;
   /** Optional worktree service for remote branch lookups */
@@ -115,8 +130,16 @@ export class ProxyService {
     this.onAutoBuild = fn;
   }
 
+  setOnBranchGone(fn: (branchSlug: string, req: http.IncomingMessage, res: http.ServerResponse) => void): void {
+    this.onBranchGone = fn;
+  }
+
   setOnReviveCooled(fn: (branchSlug: string) => Promise<void>): void {
     this.onReviveCooled = fn;
+  }
+
+  setOnRecoverInterrupted(fn: (branchSlug: string) => Promise<void>): void {
+    this.onRecoverInterrupted = fn;
   }
 
   setOnAccess(fn: (branchId: string, method: string, path: string, status: number, duration: number, profileId?: string) => void): void {
@@ -560,6 +583,31 @@ export class ProxyService {
     }
 
     if (branch.status !== 'running' && !LOADING_BRANCH_STATUSES.has(branch.status)) {
+      // 墓碑优先：PR 合并/关闭后分支若**未被自动删除**（仓库保留 PR 分支），停止的
+      // BranchEntry 仍在，否则会落到下面的泛化「分支已停止」状态页，永远走不到
+      // serveBranchGonePage。先查墓碑：命中则与「分支已删除」走同一套合并/放弃页。
+      // fail-safe：无墓碑（绝大多数停止分支）则一切照旧；只拦真实 HTML 导航（asset/
+      // API 请求继续走状态页，避免把 gone HTML 当成 CSS/JS 返回）。墓碑命中也意味着
+      // 不该 auto-wake/恢复一个已合并/已放弃的分支，故置于这些副作用之前直接返回。
+      // 按 branchSlug（host label，标准 v3 预览即 previewSlug 主键）**和** branch.id 两路查，
+      // 因为墓碑以 previewSlug 为键、branchId 仅作兜底，二者可能都不等于对方（Bugbot）。
+      // 命中后转发墓碑自身的 previewSlug（map 主键）给 gone 页，保证它再查必命中。
+      const tomb = this.stateService.findRemovedBranchByIdentifier(branchSlug)
+        ?? this.stateService.findRemovedBranchByIdentifier(branch.id);
+      // 分支名复用：同名分支在旧 PR 合并/放弃后被重建时，旧墓碑仍留在 removedBranches。
+      // 仅当墓碑确实**晚于**当前这个 incarnation 的活动时间才分流，否则重建的分支（极速版下
+      // idle 等 CI）会被误导到旧的合并/放弃页（Codex P2）。incarnation 基准取 createdAt /
+      // lastPushAt / lastDeployAt 最近者；墓碑早于它 = 属于上一代分支 = 陈旧，照常走状态页。
+      const liveSince = Math.max(
+        Date.parse(branch.createdAt || '') || 0,
+        Date.parse(branch.lastPushAt || '') || 0,
+        Date.parse(branch.lastDeployAt || '') || 0,
+      );
+      const tombAt = tomb ? (Date.parse(tomb.removedAt || '') || 0) : 0;
+      if (this.onBranchGone && this.isHtmlNavigationRequest(req) && tomb && tombAt >= liveSince) {
+        this.onBranchGone(tomb.previewSlug || branch.id, req, res);
+        return;
+      }
       // Auto-wake: a branch put to sleep by the scheduler (containers preserved,
       // not removed) is revived on a real page navigation via a cheap
       // `docker restart`, so users don't hit a dead-end "go redeploy manually"
@@ -600,6 +648,18 @@ export class ProxyService {
         && this.shouldAutoWakeCooled(branch)
       ) {
         this.triggerCooledWake(branch.id);
+      }
+      // #1 重启中断分支按需自愈：被 CDS self-update/崩溃重启打断的 error 分支（含「重启中断」
+      // 标记），同样在预览 host + 真实浏览器导航时触发一次完整重部署（去重）。恢复回调同步把
+      // status 翻到 loading 再 save，紧接着的 serveBranchStatusResponse 等待页即显示「正在恢复」。
+      if (
+        isGetNavigation
+        && isPreviewHost
+        && this.hasBrowserNavSignal(req)
+        && this.isHtmlNavigationRequest(req)
+        && this.shouldRecoverInterrupted(branch)
+      ) {
+        this.triggerInterruptedRecovery(branch.id);
       }
       this.serveBranchStatusResponse(req, res, branchSlug, branch);
       return;
@@ -1012,6 +1072,15 @@ export class ProxyService {
       waitingProfileId: waitingProfileId || null,
       progress: this.estimateWaitingProgress(branch, waitingProfileId),
       timing,
+      buildMode: timing?.mode || null,
+      modeLabel: timing ? (timing.mode === 'release' ? '极速版' : '源码') : null,
+      branchPanelUrl: branch && this.dashboardBaseUrl()
+        ? `${this.dashboardBaseUrl()}/branch-panel/${branch.id}`
+        : null,
+      prUrl: branch && branch.githubRepoFullName && branch.githubPrNumber
+        ? `https://github.com/${branch.githubRepoFullName}/pull/${branch.githubPrNumber}`
+        : null,
+      prLabel: branch?.githubPrNumber ? `PR #${branch.githubPrNumber}` : null,
       services: services.map((svc) => ({
         profileId: svc.profileId,
         status: svc.status,
@@ -1108,6 +1177,46 @@ export class ProxyService {
    * already running) the callback rejects without flipping status, and the
    * branch's diagnostic page shows as before — that other operation owns it.
    */
+  /**
+   * #1 该分支是否「被 CDS 重启中断」可按需自愈？只认这个**已知瞬态、重跑安全**的原因
+   * （CDS self-update / 崩溃重启打断了在途部署），不碰真正的构建失败 / 崩溃 / 用户停止。
+   * 远端执行器分支不在本机重部署范围（executorId 真值 = 远端）。
+   */
+  private shouldRecoverInterrupted(branch: BranchEntry): boolean {
+    if (!this.onRecoverInterrupted) return false;
+    if (branch.status !== 'error') return false;
+    if (branch.executorId) return false;
+    if (Object.keys(branch.services || {}).length === 0) return false;
+    const marker = '重启中断';
+    if (typeof branch.errorMessage === 'string' && branch.errorMessage.includes(marker)) return true;
+    for (const svc of Object.values(branch.services || {})) {
+      if (typeof svc?.errorMessage === 'string' && svc.errorMessage.includes(marker)) return true;
+    }
+    return false;
+  }
+
+  /** 触发一次中断恢复重部署，按 slug 去重（并发导航不重复打）。 */
+  private triggerInterruptedRecovery(slug: string): void {
+    if (!this.onRecoverInterrupted || this.recoveringSlugs.has(slug)) return;
+    this.recoveringSlugs.add(slug);
+    let pending: Promise<void>;
+    try {
+      pending = this.onRecoverInterrupted(slug);
+    } catch (err) {
+      this.recoveringSlugs.delete(slug);
+      console.error(`[proxy] interrupted-recovery threw for "${slug}": ${(err as Error).message}`);
+      return;
+    }
+    pending
+      .catch((err) => {
+        console.error(`[proxy] interrupted-recovery failed for "${slug}": ${(err as Error).message}`);
+      })
+      .finally(() => {
+        // 留一小段去重窗口，避免重部署刚把 status 翻 building 前的并发导航重复打。
+        setTimeout(() => this.recoveringSlugs.delete(slug), 5000);
+      });
+  }
+
   private triggerCooledWake(slug: string): void {
     if (!this.onReviveCooled || this.revivingSlugs.has(slug)) return;
     this.revivingSlugs.add(slug);
@@ -1395,6 +1504,19 @@ void main(){
       : `<div class="svc"><span class="svc-dot" style="--svc-color:#6b7280">●</span><span>服务尚未创建</span></div>`;
 
     const branchLabel = stageLabel(branchStatus);
+    // 构建模式（极速版 = CI 预构建镜像直接部署 / 源码 = 拉代码热加载编译）+ 分支/PR 直达链接，
+    // 让等待页一眼知道「这是哪种构建、对应哪个分支与 PR」，不必猜。
+    const { mode: buildMode } = this.resolveWaitTimingMode(branch, waitingProfileId);
+    const safeModeLabel = this.escapeHtml(buildMode === 'release' ? '极速版' : '源码');
+    const dashBase = this.dashboardBaseUrl();
+    const branchPanelUrl = dashBase ? `${dashBase}/branch-panel/${encodeURIComponent(branch.id)}` : '';
+    const prNum = branch.githubPrNumber;
+    const prUrl = branch.githubRepoFullName && prNum
+      ? `https://github.com/${branch.githubRepoFullName}/pull/${prNum}`
+      : '';
+    const safeBranchPanelUrl = this.escapeHtml(branchPanelUrl);
+    const safePrUrl = this.escapeHtml(prUrl);
+    const safePrLabel = this.escapeHtml(prNum ? `PR #${prNum}` : 'PR');
     const shouldAutoRefresh = branchStatus === 'building' || branchStatus === 'starting' || branchStatus === 'restarting';
     const heading = branchStatus === 'stopped' || branchStatus === 'idle'
         ? '分支当前未运行'
@@ -1431,6 +1553,9 @@ h1{font-size:clamp(42px,5.6vw,82px);line-height:.96;letter-spacing:0;margin-bott
 .chip{position:relative;overflow:hidden;display:inline-flex;align-items:center;gap:8px;padding:9px 14px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.035);backdrop-filter:blur(10px);font-size:12px;color:#dde3ea}
 .chip::after{content:"";position:absolute;inset:-60% auto -60% -40%;width:42%;background:linear-gradient(90deg,transparent,rgba(245,242,255,.18),transparent);transform:skewX(-18deg);animation:glint 3.6s ease-in-out infinite}
 .branch{font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;word-break:break-all}
+.chip.mode{color:#cbd5e1}
+a.chip.link{cursor:pointer;text-decoration:none;color:#dde3ea;transition:border-color .2s ease,background .2s ease}
+a.chip.link:hover{border-color:rgba(255,255,255,.32);background:rgba(255,255,255,.07)}
 .services{display:flex;flex-direction:column;gap:12px;margin:0 0 28px;max-width:620px}
 	.svc{position:relative;overflow:hidden;display:flex;align-items:center;gap:12px;padding:13px 0;border-top:1px solid rgba(245,242,255,.13);font-size:15px;line-height:1.5}
 .svc::after{content:"";position:absolute;left:-35%;top:0;bottom:0;width:34%;background:linear-gradient(90deg,transparent,rgba(245,242,255,.14),transparent);transform:skewX(-18deg);animation:svc-glint 3.2s ease-in-out infinite}
@@ -1476,12 +1601,15 @@ h1{font-size:clamp(42px,5.6vw,82px);line-height:.96;letter-spacing:0;margin-bott
     <div class="meta">
       <span class="chip branch" data-role="branch-name">${safeBranch}</span>
       <span class="chip" data-role="branch-status">分支状态 · ${branchLabel}</span>
+      <span class="chip mode" data-role="build-mode">构建模式 · ${safeModeLabel}</span>
+      <a class="chip link" data-role="branch-link" href="${safeBranchPanelUrl}" target="_blank" rel="noopener"${branchPanelUrl ? '' : ' hidden'}>查看分支</a>
+      <a class="chip link" data-role="pr-link" href="${safePrUrl}" target="_blank" rel="noopener"${prUrl ? '' : ' hidden'}>${safePrLabel}</a>
     </div>
     <div class="services" data-role="services">${serviceRows}</div>
     <div class="estimate" data-role="progress-estimate">
       <div class="estimate-top">
         <span data-role="progress-label">${safeProgressLabel}</span>
-        <strong data-role="progress-percent">${progress.percent}%</strong>
+        <strong data-role="progress-percent">${progress.percent.toFixed(2)}%</strong>
       </div>
       <div class="estimate-track"><span class="estimate-bar" data-role="progress-bar" style="width:${progress.percent}%"></span></div>
       <div class="estimate-time" data-role="wait-timing" hidden>
@@ -1665,20 +1793,47 @@ ${shouldAutoRefresh ? `;(function(){
       root.appendChild(row);
     });
   }
-  function renderProgress(progress){
-    if(!progress)return;
-    var percent=Math.max(0,Math.min(100,Number(progress.percent)||0));
-    var label=document.querySelector('[data-role="progress-label"]');
+  // 百分比状态：display 是当前显示值（两位小数、单调不回退），server 是服务端状态/日志估算，
+  // 时间目标由 elapsed/median 推出。tickPct 每 200ms 把 display 平滑逼近 max(server,时间目标)，
+  // 让数字始终在动；未 ready 前封顶 99.99%（守住"ready 前不显示 100%"）。
+  var pct={display:0,server:0,ready:false};
+  (function(){var el=document.querySelector('[data-role="progress-percent"]');var v=el?parseFloat(el.textContent):0;pct.display=pct.server=(isNaN(v)?0:v);})();
+  // 进度百分比：时间连续驱动，小数位一直在跳。
+  // 有历史耗时(median)时：以服务端日志/状态估算 server 作锚点(下限)，随 ETA 推进(frac=已用/中位)
+  // 平滑爬向 99.99——所以即使 server 卡在某个整数，百分比的小数位仍随秒推进而连续变化，用户看得见在动。
+  // 旧实现 target=max(server,timePct) 会被 server 整数封住、小数冻在 .00（用户实测反馈）。
+  function tickPct(){
+    var target;
+    if(timingState&&timingState.medianMs){
+      var elapsed=timingState.baseElapsedMs+(Date.now()-timingState.syncedAt);
+      if(elapsed<0)elapsed=0;
+      var frac=elapsed/timingState.medianMs; if(frac>1)frac=1; // 0..1，按 ETA 推进
+      var base=Math.min(pct.server,99.99);                      // 服务端估算作下限锚点
+      // 随时间从 base 连续爬向 99.99；若纯时间比例已超过 base(构建比平时久)则用时间比例继续推。
+      target=Math.max(base+(99.99-base)*frac, frac*100);
+    }else{
+      target=pct.server;                                        // 无历史样本：只展示状态估算，不编造时间
+    }
+    if(!pct.ready)target=Math.min(99.99,target);
+    if(target<pct.display)target=pct.display;                   // 单调不回退
+    pct.display=target;
     var percentEl=document.querySelector('[data-role="progress-percent"]');
     var bar=document.querySelector('[data-role="progress-bar"]');
+    var shown=pct.display.toFixed(2);
+    if(percentEl)percentEl.textContent=shown+'%';
+    if(bar)bar.style.width=shown+'%';
+  }
+  function renderProgress(progress){
+    if(!progress)return;
+    pct.server=Math.max(0,Math.min(100,Number(progress.percent)||0));
+    var label=document.querySelector('[data-role="progress-label"]');
     var confidence=document.querySelector('[data-role="progress-confidence"]');
     var reason=document.querySelector('[data-role="progress-reason"]');
     var confidenceText=progress.confidence==='high'?'高':progress.confidence==='medium'?'中':'低';
     if(label)label.textContent=progress.label||'预计处理进度';
-    if(percentEl)percentEl.textContent=Math.round(percent)+'%';
-    if(bar)bar.style.width=percent+'%';
     if(confidence)confidence.textContent='置信度 '+confidenceText;
     if(reason)reason.textContent=progress.reason||'基于当前状态估算';
+    // 百分比文本/进度条由 tickPct 平滑驱动（两位小数 + 按预估时间倒推），这里只更新锚点。
   }
   // 时间渲染：服务端轮询给 elapsedMs/medianMs，本地 1s ticker 让"已等待"平滑跳秒。
   var timingState=null; // { baseElapsedMs, medianMs, samples, overdue, syncedAt }
@@ -1730,30 +1885,39 @@ ${shouldAutoRefresh ? `;(function(){
     };
     renderTiming();
   }
+  function setLink(sel,url,text){
+    var el=document.querySelector(sel);if(!el)return;
+    if(url){el.setAttribute('href',url);if(text)el.textContent=text;el.hidden=false;}
+    else{el.hidden=true;}
+  }
+  var notLoadingStreak=0; // 连续"非加载态"轮询计数，用于从容应对推送瞬间的 stopped 抖动
   function poll(){
     fetch(statusUrl,{cache:'no-store',headers:{Accept:'application/json'}})
       .then(function(res){return res.ok?res.json():null;})
       .then(function(data){
         if(!data)return;
-        if(data.ready){location.reload();return;}
-        // Terminal non-loading state (branch error / idle / stopped / not-found):
-        // the operation failed or the branch is no longer coming up. Reload so
-        // the server renders the diagnostic page (with redeploy guidance) instead
-        // of leaving the visitor on a spinner forever — e.g. when auto-wake's
-        // restart/readiness fails and flips the branch to error.
-        //
-        // Branch-level waits only (no waitingProfile). For a PROFILE-scoped wait,
-        // one failed service can have loading=false while the branch (and other
-        // services) is still running; reloading there would land on the wrong
-        // upstream / 502 rather than a diagnostic page (routeToBranch only shows
-        // the status page for starting/building/restarting profiles, and
-        // resolveUpstream falls back to the first running service). Keep the
-        // prior in-place status update for that case.
-        if(data.loading===false && !waitingProfile){location.reload();return;}
+        if(data.ready){pct.ready=true;location.reload();return;}
+        // 从容应对"触发构建瞬间的分支已停止"抖动：刚推送/重部署时分支可能瞬时报
+        // stopped/idle，但很快自愈复活。不要第一拍就把访客弹到吓人的失败页——连续
+        // 多拍仍是非加载态，才认定真的终止并 reload 到诊断页。期间显示"正在恢复"安抚。
+        // （仅分支级等待；profile 级等待保持原地更新，单个失败服务不应触发整页跳转。）
+        if(data.loading===false && !waitingProfile){
+          notLoadingStreak++;
+          if(notLoadingStreak<3){
+            var calmEl=document.querySelector('[data-role="branch-status"]');
+            if(calmEl)calmEl.textContent='分支状态 · 正在恢复';
+            return;
+          }
+          location.reload();return;
+        }
+        notLoadingStreak=0;
         var statusEl=document.querySelector('[data-role="branch-status"]');
         if(statusEl)statusEl.textContent='分支状态 · '+label(data.status);
         var branchEl=document.querySelector('[data-role="branch-name"]');
         if(branchEl&&data.displayBranch)branchEl.textContent=data.displayBranch;
+        if(data.modeLabel){var modeEl=document.querySelector('[data-role="build-mode"]');if(modeEl)modeEl.textContent='构建模式 · '+data.modeLabel;}
+        setLink('[data-role="branch-link"]',data.branchPanelUrl,'查看分支');
+        setLink('[data-role="pr-link"]',data.prUrl,data.prLabel||'PR');
         renderProgress(data.progress);
         applyTiming(data.timing);
         renderServices(data.services);
@@ -1763,8 +1927,10 @@ ${shouldAutoRefresh ? `;(function(){
   window.setInterval(poll,2000);
   window.setInterval(renderTip,4200);
   window.setInterval(renderTiming,1000);
+  window.setInterval(tickPct,200);
   window.setTimeout(poll,400);
   renderTip();
+  tickPct();
 }())` : ''}
 </script>
 </body></html>`;
@@ -2269,7 +2435,33 @@ ${shouldAutoRefresh ? `;(function(){
             bodyPreview: body.slice(0, 8 * 1024),
             bodyBytes: Buffer.byteLength(body, 'utf8'),
           };
-          const widget = buildWidgetScript(branchCtx.branchId, branchCtx.branchName);
+          // 版本信息（sha + 极速/源码）并入既有 CDS widget（左下角那个），不再单开角标——
+          // 一处足矣（用户 2026-06-24 反馈「两个为何不合并」）。sha 取 githubCommitSha，
+          // 模式取该 profile 容器实际钉的 deployedMode（回退到源码时如实显示「源码」）。
+          const entry = this.stateService.getState().branches[branchCtx.branchId];
+          const svcMode = branchCtx.profileId
+            ? entry?.services?.[branchCtx.profileId]?.deployedMode
+            : undefined;
+          const anyMode = svcMode
+            ?? Object.values(entry?.services ?? {}).find((s) => s?.deployedMode)?.deployedMode;
+          // 部署类型只分两类给用户看：极速（CI 预构建镜像）/ 发布（源码编译产出的发布版）。
+          const modeLabel = anyMode
+            ? (/express|prebuilt/i.test(anyMode) ? '极速' : '发布')
+            : '';
+          // 徽章 sha 跟随实际部署模式（Codex/Bugbot）：
+          //  - 极速（CI 预构建镜像）：用 ciTargetSha —— 镜像 tag 按它解析，docs-only push 只动
+          //    githubCommitSha、不动 ciTargetSha，显 ciTargetSha 才是容器实际跑的镜像 commit。
+          //  - 发布（源码编译，含极速版缺镜像自动回退）：容器是从 worktree 编译的，跑的就是
+          //    githubCommitSha，**不能**显 ciTargetSha（那是个根本没在跑的镜像 commit）。
+          const badgeSha = (modeLabel === '极速'
+            ? (entry?.ciTargetSha || entry?.githubCommitSha)
+            : (entry?.githubCommitSha || entry?.ciTargetSha)) || '';
+          const widget = buildWidgetScript(
+            branchCtx.branchId,
+            branchCtx.branchName,
+            badgeSha,
+            modeLabel,
+          );
 
           // Inject before </body> if present, otherwise append
           const idx = body.lastIndexOf('</body>');

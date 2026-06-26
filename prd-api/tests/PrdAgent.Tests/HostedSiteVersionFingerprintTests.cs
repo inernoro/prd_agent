@@ -96,4 +96,30 @@ public class HostedSiteVersionFingerprintTests
         // 这正是 Codex 评审要求：禁止给 ContentVersion 加 = DateTime.UtcNow 初始化器。
         Assert.Equal(default, new HostedSite().ContentVersion);
     }
+
+    [Fact]
+    public void VisitShare_WithHistoricalExpiresAt_IsStillAccepted()
+    {
+        var now = new DateTime(2026, 6, 25, 0, 0, 0, DateTimeKind.Utc);
+        var share = new WebPageShareLink
+        {
+            Purpose = "visit",
+            ExpiresAt = now.AddDays(-1),
+        };
+
+        Assert.False(HostedSiteService.ShouldRejectExpiredShare(share, now));
+    }
+
+    [Fact]
+    public void NormalShare_WithExpiredExpiresAt_IsRejected()
+    {
+        var now = new DateTime(2026, 6, 25, 0, 0, 0, DateTimeKind.Utc);
+        var share = new WebPageShareLink
+        {
+            Purpose = "share",
+            ExpiresAt = now.AddDays(-1),
+        };
+
+        Assert.True(HostedSiteService.ShouldRejectExpiredShare(share, now));
+    }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { shouldRetryInterruptedWebhookDispatch } from '../../src/services/deploy-dispatch-retry.js';
+import { shouldRetryInterruptedWebhookDispatch, isDeployDispatchRetryEnabled } from '../../src/services/deploy-dispatch-retry.js';
 import type { BranchEntry } from '../../src/types.js';
 import type { DeployDispatchReconcileResult } from '../../src/services/deploy-dispatch-reconciler.js';
 
@@ -138,5 +138,27 @@ describe('shouldRetryInterruptedWebhookDispatch — 重试风暴护栏 (opt-in o
       retry: true,
       reason: 'stale-webhook-dispatch-safe-to-retry',
     });
+  });
+});
+
+describe('isDeployDispatchRetryEnabled (2026-06-24 默认关闭)', () => {
+  it('默认关闭：未设 / 空 / 0 / false 一律 false', () => {
+    expect(isDeployDispatchRetryEnabled(undefined)).toBe(false);
+    expect(isDeployDispatchRetryEnabled(null)).toBe(false);
+    expect(isDeployDispatchRetryEnabled('')).toBe(false);
+    expect(isDeployDispatchRetryEnabled('0')).toBe(false);
+    expect(isDeployDispatchRetryEnabled('false')).toBe(false);
+    expect(isDeployDispatchRetryEnabled('off')).toBe(false);
+    expect(isDeployDispatchRetryEnabled('no')).toBe(false);
+    expect(isDeployDispatchRetryEnabled('  ')).toBe(false);
+  });
+
+  it('仅显式 1/true/on/yes（大小写无关、容空白）才开启', () => {
+    expect(isDeployDispatchRetryEnabled('1')).toBe(true);
+    expect(isDeployDispatchRetryEnabled('true')).toBe(true);
+    expect(isDeployDispatchRetryEnabled('TRUE')).toBe(true);
+    expect(isDeployDispatchRetryEnabled('on')).toBe(true);
+    expect(isDeployDispatchRetryEnabled('Yes')).toBe(true);
+    expect(isDeployDispatchRetryEnabled(' 1 ')).toBe(true);
   });
 });

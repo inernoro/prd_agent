@@ -300,6 +300,11 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
           <img
             src={coverUrl}
             alt=""
+            // 卡片封面图体积较大（上传素材可达 1-2MB/张），网格里大量卡片在首屏外。
+            // lazy + async 解码让屏外封面滚动到视口附近才下载，砍掉首屏的整片图片负载，
+            // 不阻塞首屏渲染（治「预览页一次拉几十 MB」）。
+            loading="lazy"
+            decoding="async"
             className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
             draggable={false}
             onError={() => setCoverFailed(true)}
@@ -761,9 +766,11 @@ export default function AgentLauncherPage() {
 
                 {/* 右栏：搜索框 + 教程中心承接卡，搜索在左、教程在右，顶部对齐分列 */}
                 <Reveal delay={REVEAL.heroSearch} duration={REVEAL_DURATION}>
-                  <div className={isMobile ? 'flex flex-col gap-3 w-full' : 'shrink-0 flex flex-wrap items-start gap-4'}>
+                  {/* 非 mobile 右栏:去掉 shrink-0 + min-w-0,让 rail 能收缩到内容列实际宽度;
+                      flex-wrap + 子项 maxWidth:100% 保证窄到 <576px(侧栏展开的平板)时搜索/教程竖向堆叠而非横向溢出(Codex P2) */}
+                  <div className={isMobile ? 'flex flex-col gap-3 w-full' : 'flex flex-wrap items-start gap-4 min-w-0'}>
                     {/* 搜索框：移到顶部、教程左侧 */}
-                    <div className="relative" style={{ width: isMobile ? '100%' : 280 }}>
+                    <div className="relative" style={{ width: isMobile ? '100%' : 280, maxWidth: '100%' }}>
                       <Search
                         size={15}
                         className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
@@ -794,17 +801,10 @@ export default function AgentLauncherPage() {
                       />
                     </div>
 
-                    {/* 教程中心承接卡（搜索态隐藏）—— 设计选型：三套效果并列对比，选定后保留其一 */}
+                    {/* 教程中心承接卡（搜索态隐藏） */}
                     {!searchQuery.trim() && (
-                      <div className="shrink-0 flex flex-col gap-2" style={{ width: isMobile ? '100%' : 280 }}>
-                        {(['A', 'B', 'C'] as const).map((v, i) => (
-                          <div key={v} className="flex flex-col gap-1">
-                            <span className="text-[10px] font-semibold tracking-wide" style={{ color: 'var(--text-muted, rgba(255,255,255,0.4))' }}>
-                              效果 {i + 1}
-                            </span>
-                            <LearningCenterTeaser compact variant={v} tourAnchor={i === 0} />
-                          </div>
-                        ))}
+                      <div className="flex flex-col gap-2" style={{ width: isMobile ? '100%' : 280, maxWidth: '100%' }}>
+                        <LearningCenterTeaser />
                       </div>
                     )}
                   </div>

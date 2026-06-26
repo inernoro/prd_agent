@@ -780,17 +780,17 @@
     @apply grid h-screen overflow-hidden;
     background-color: hsl(var(--surface-base));
     color: hsl(var(--foreground));
-    grid-template-columns: 260px minmax(0, 1fr);
+    grid-template-columns: 72px minmax(0, 1fr);
   }
 
   .cds-rail {
-    @apply sticky top-0 flex h-screen flex-col gap-4 px-4 py-5;
+    @apply sticky top-0 flex h-screen flex-col gap-4 px-2 py-5;
     background-color: hsl(var(--surface-sunken));
     border-right: 1px solid hsl(var(--hairline));
   }
 
   .cds-rail-brand {
-    @apply flex min-w-0 items-center gap-4 pb-5;
+    @apply flex min-w-0 items-center justify-center gap-4 pb-5;
   }
 
   .cds-rail-avatar {
@@ -1043,6 +1043,21 @@
     color: hsl(var(--destructive));
   }
 
+  /*
+   * 桌面左栏「icon 菜单」(用户反馈:260px 文字栏太占横向空间)。
+   * 仅作用于桌面常驻栏 .cds-rail —— 手机抽屉 .cds-mobile-drawer-panel 不在 .cds-rail
+   * 之内,保留文字标签。每个 item 已有 aria-label + title,隐藏文字后无障碍 + 悬停提示不丢。
+   */
+  .cds-rail .cds-rail-item {
+    @apply justify-center gap-0 px-0;
+  }
+  .cds-rail .cds-rail-item > span {
+    display: none;
+  }
+  .cds-rail .cds-rail-brand-title {
+    display: none;
+  }
+
   @media (max-width: 767px) {
     /* 手机端:不再保留 64px 常驻图标栏(那是"压缩 PC"观感的根源)。
        工作区吃满整屏宽,导航收进 TopBar 汉堡触发的 slide-in 抽屉。 */
@@ -1131,7 +1146,10 @@
   }
 
   .cds-topbar {
-    @apply sticky top-0 z-20 flex h-14 items-center gap-3 px-6;
+    /* shrink-0 必须有：topbar 是 flex 列的子项，h-14(56px) 在没锁 shrink 时会被下方
+       高内容(加载完成的长列表/设置页)挤压到 ~37px —— 表现为"刷新完成顶栏就收缩"，
+       且因为是共享 header，所有页面一样(2026-06-26 用户反馈"一样的")。锁 shrink 即恒 56px。 */
+    @apply sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 px-6;
     background-color: hsl(var(--surface-base) / 0.92);
     backdrop-filter: saturate(180%) blur(10px);
     border-bottom: 1px solid hsl(var(--hairline));
@@ -1273,6 +1291,15 @@
 
   .cds-workspace-wide {
     max-width: 1360px;
+  }
+
+  /*
+   * 满宽工作区(主从/三栏类页面用):去掉 max-width 居中,让内容吃满整列宽度,
+   * 杜绝宽屏下右侧大留白(用户反馈「又窄又有空白」)。与 --fill 叠加 = 满高+满宽。
+   * 详见 .claude/rules/content-fills-canvas.md。
+   */
+  .cds-workspace--fluid {
+    max-width: none;
   }
 
   .cds-workspace-settings {

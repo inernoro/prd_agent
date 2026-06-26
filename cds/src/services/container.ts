@@ -208,6 +208,40 @@ export function resolveProfileWithMode(profile: BuildProfile): BuildProfile {
 }
 
 /**
+ * 极速版镜像缺失/拉取失败时，挑一个「源码编译」部署模式做自动回退（用户 2026-06-24 决策：
+ * express 失败自动回退源码编译，宁慢必成，根治「极速版永远不极速 / 部署出现异常打不开」）。
+ *
+ * CI 按 path-filter 只构建改动的组件，所以任何不同时改 prd-api + prd-admin 的分支都会缺
+ * ≥1 个组件的 sha 镜像 → express docker pull 404。与其硬失败，不如自动切到本 profile 里
+ * 一个非 prebuilt 的部署模式，从源码在 CDS 本机编译跑起来。
+ *
+ * 选择规则：在 deployModes 里挑 prebuilt!==true 的模式（**不**要求该模式自带 command ——
+ * 有些源码/static 模式只覆盖 env/元数据、command 继承 baseline，resolveProfileWithMode 仍能
+ * 正确跑起来，Codex P2「Allow fallback modes to inherit baseline commands」）；跳过当前
+ * （失败的）模式；按常见源码模式名 static/source/dev/build 优先，否则取第一个。command 是否
+ * 真的解析得到，由 resolveEffectiveProfile 解析后那道 `srcProfile.command` 检查兜底——解析不出
+ * command 才不挂回退（维持硬失败，不假装能跑）。找不到任何非 prebuilt 模式返回 null。
+ *
+ * 纯函数，export 给单测。
+ */
+export function pickSourceFallbackMode(
+  deployModes: Record<string, DeployModeOverride> | undefined,
+  currentMode: string | undefined | null,
+): string | null {
+  if (!deployModes) return null;
+  const candidates = Object.entries(deployModes).filter(
+    ([name, ov]) => ov.prebuilt !== true && name !== currentMode,
+  );
+  if (candidates.length === 0) return null;
+  const preferred = ['static', 'source', 'dev', 'build'];
+  for (const p of preferred) {
+    const hit = candidates.find(([name]) => name.toLowerCase() === p);
+    if (hit) return hit[0];
+  }
+  return candidates[0][0];
+}
+
+/**
  * 2026-06-23 极速版 —— 解析 dockerImage 里的部署期模板变量。
  *
  * 极速版镜像 tag 由 commit SHA 决定（CI 按 `github.sha` 推 `sha-<SHA>` tag），
@@ -291,7 +325,10 @@ export function applyProfileOverride(baseline: BuildProfile, override?: BuildPro
  * applyProjectDefaultDeployModes() 在建分支时写进 branch.profileOverrides，
  * 之后就是普通的分支级 override，本函数只认 branch override + baseline。
  */
-export function resolveEffectiveProfile(profile: BuildProfile, branch?: BranchEntry): BuildProfile {
+export function resolveEffectiveProfile(
+  profile: BuildProfile,
+  branch?: BranchEntry,
+): BuildProfile {
   const branchOverride = branch?.profileOverrides?.[profile.id];
   const withBranchOverride = applyProfileOverride(profile, branchOverride);
   const withMode = resolveProfileWithMode(withBranchOverride);
@@ -304,20 +341,87 @@ export function resolveEffectiveProfile(profile: BuildProfile, branch?: BranchEn
     : resolveImageTemplate(withMode.fallbackImage, branch);
   const imageChanged = resolvedImage !== withMode.dockerImage;
   const fallbackChanged = JSON.stringify(resolvedFallback) !== JSON.stringify(withMode.fallbackImage);
-  if (imageChanged || fallbackChanged) {
-    return {
-      ...withMode,
-      dockerImage: resolvedImage || withMode.dockerImage,
-      ...(withMode.fallbackImage !== undefined ? { fallbackImage: resolvedFallback } : {}),
-    };
+  let resolved = (imageChanged || fallbackChanged)
+    ? {
+        ...withMode,
+        dockerImage: resolvedImage || withMode.dockerImage,
+        ...(withMode.fallbackImage !== undefined ? { fallbackImage: resolvedFallback } : {}),
+      }
+    : withMode;
+
+  // 2026-06-24 极速版自动回退源码编译：若解析出的是极速版(prebuilt)profile，**从 baseline**
+  // 额外解析一个源码编译 profile 挂到 sourceFallbackProfile，供 runService 在镜像拉不到时
+  // 直接切过去（baseline 解析保证 dockerImage=源码基础镜像、command=源码构建、端口正确，
+  // 不会误继承极速版的 sha 镜像/8080 端口）。仅 prebuilt 时计算；递归一层即止（源码 profile
+  // 非 prebuilt，不会再触发本分支）。
+  if (resolved.prebuiltImage) {
+    const srcMode = pickSourceFallbackMode(profile.deployModes, resolved.activeDeployMode);
+    if (srcMode) {
+      // 关键：源码回退 profile **从 baseline 结构字段起步**（dockerImage / containerPort /
+      // deployModes），强制 activeDeployMode=srcMode + prebuiltImage=false，再 resolveProfileWithMode
+      // 解析该源码模式 + 解析镜像模板。
+      // 为什么不套 branch override 的结构字段：生产里 branch.profileOverrides 是按极速版 pin 的
+      //   - activeDeployMode=express（会把模式锁回 express，回退又变 prebuilt 被拒）
+      //   - containerPort=null（极速版端口走 mode override，override 层是 null）→ docker run
+      //     报 `invalid containerPort: null`
+      //   - dockerImage=sha 模板 → 源码构建误用 sha 基础镜像
+      // 这些都是极速版专属值，并进源码构建必坏。**只并入 override 的 env**（运行时配置如连库串），
+      // 结构字段一律用 baseline。手动解析亦自然杜绝无限递归。
+      const srcBase = {
+        ...profile,
+        env: branchOverride?.env ? { ...(profile.env || {}), ...branchOverride.env } : profile.env,
+        activeDeployMode: srcMode,
+        prebuiltImage: false,
+        // Bugbot Medium「Hot reload taints source fallback」：回退要的是「宁慢必成」的编译-运行，
+        // 不是 dev watcher。baseline 若开了 hotReload，resolveProfileWithMode 会把源码构建命令换成
+        // watcher → 回退跑成热加载而非发布版。关掉 hotReload，强制走 static/source 的编译命令。
+        hotReload: undefined,
+      };
+      const srcResolved = resolveProfileWithMode(srcBase);
+      const srcImg = resolveImageTemplate(srcResolved.dockerImage, branch);
+      const srcProfile = srcImg !== srcResolved.dockerImage
+        ? { ...srcResolved, dockerImage: srcImg || srcResolved.dockerImage }
+        : srcResolved;
+      if (!srcProfile.prebuiltImage && srcProfile.command && srcProfile.command.trim()) {
+        resolved = { ...resolved, sourceFallbackProfile: srcProfile };
+      }
+    }
   }
-  return withMode;
+  return resolved;
 }
 
 /** 把 BuildProfile.fallbackImage(string | string[] | undefined) 规整为有序候选数组。 */
 export function normalizeFallbackImages(fallback: string | string[] | undefined): string[] {
   if (!fallback) return [];
   return (Array.isArray(fallback) ? fallback : [fallback]).map((s) => (s || '').trim()).filter(Boolean);
+}
+
+/**
+ * 2026-06-24 发布探活分阶段（R4）。发布(部署)首启可能很慢（构建/迁移/JVM 暖机），
+ * 给足探测时间避免被探活超时误杀；运行期重启/唤醒不走这里，保持各 profile 自己的短超时。
+ * 下限解析优先级：项目覆盖 > 系统默认 > 1200 兜底。纯函数，可单测。
+ */
+export function resolveDeployReadinessFloorSeconds(
+  systemDefault: number | null | undefined,
+  projectOverride: number | null | undefined,
+): number {
+  if (typeof projectOverride === 'number' && projectOverride > 0) return projectOverride;
+  if (typeof systemDefault === 'number' && systemDefault > 0) return systemDefault;
+  return 1200;
+}
+
+/**
+ * 把就绪探测 timeout 抬到部署下限（取 max），其余字段(path/interval/noHttp)原样保留。
+ * 只在部署路径调用；返回新对象不改原 probe。floor<=0 时原样返回。
+ */
+export function applyDeployReadinessFloor(
+  probe: ReadinessProbe | undefined,
+  floorSeconds: number,
+): ReadinessProbe | undefined {
+  if (!(floorSeconds > 0)) return probe;
+  const current = probe?.timeoutSeconds ?? 0;
+  if (current >= floorSeconds) return probe;
+  return { ...(probe ?? {}), timeoutSeconds: floorSeconds };
 }
 
 function missingEnvTemplates(env: Record<string, string>): string[] {
@@ -431,6 +535,57 @@ export function computeProfileAliases(
     }
   }
   return Array.from(aliases);
+}
+
+/**
+ * 源码构建/安装类命令（pnpm install、vite build、dotnet publish 等）是一次性的
+ * CPU 爆发；同机几十个分支预览共享一颗 CPU 时，一次编译能把核占满、把正在跑的
+ * 预览和 CDS 代理都饿住（表现为预览根文档卡几十秒）。这里给这些 build 动词降
+ * 调度优先级（`nice`），让编译"有空就全速、有人抢就让路"。
+ *
+ * 注意与 2026-05-28「不给容器加任何 docker 资源限制(--cpus/--memory)」的约定不冲突：
+ * `nice` 只是进程调度优先级，不是硬上限——CPU 空闲时构建仍跑满，只有在争抢时才让
+ * 步给正常优先级的预览/代理。长时间运行的 serve 命令（dev/start/serve/node 等）
+ * 不在下表，保持正常优先级，预览本身不被降速。
+ *
+ * 由 `CDS_BUILD_NICE` 控制：默认 10；设为 0/off/false 关闭。极速版预构建镜像
+ * （走镜像 ENTRYPOINT、无 sh -c command）天然不经过这里。
+ */
+const BUILD_NICE_VERBS = [
+  'pnpm install', 'pnpm i', 'pnpm ci', 'pnpm run build', 'pnpm build',
+  'npm install', 'npm ci', 'npm run build',
+  'yarn install', 'yarn build', 'yarn run build',
+  'vite build', 'next build', 'tsc',
+  'dotnet restore', 'dotnet build', 'dotnet publish',
+  'cargo build', 'cargo install', 'go build', 'go install',
+  'webpack', 'rollup',
+];
+
+export function buildNiceLevel(): number {
+  const raw = (process.env.CDS_BUILD_NICE ?? '10').trim().toLowerCase();
+  if (raw === '' || raw === '0' || raw === 'off' || raw === 'false') return 0;
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) return 0;
+  return Math.min(n, 19);
+}
+
+export function niceBuildCommands(command: string): string {
+  const n = buildNiceLevel();
+  if (!n || !command) return command;
+  // 幂等：已处理过的命令(含 NICE= 前导定义)原样返回，避免重复包裹。
+  if (command.includes('NICE=$(command -v nice')) return command;
+  let out = command;
+  let touched = false;
+  for (const verb of BUILD_NICE_VERBS) {
+    const esc = verb.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // 命中处于词边界、尚未被 $NICE 前缀包裹、且 verb 后是空白/结尾/管道分隔的 build 动词。
+    const re = new RegExp(`(?<![\\w-])(?<!\\$NICE )(${esc})(?=\\s|$|[&|;)])`, 'g');
+    out = out.replace(re, (m) => { touched = true; return `$NICE ${m}`; });
+  }
+  if (!touched) return command;
+  // 在命令最前定义 NICE：镜像里有 nice 才用(busybox/coreutils 普遍自带)，没有则降级为空，
+  // 绝不因某个镜像缺 nice 而让构建启动失败(no-rootless-tree：不假定能力存在，缺什么就降级)。
+  return `NICE=$(command -v nice >/dev/null 2>&1 && echo 'nice -n ${n}'); ${out}`;
 }
 
 export class ContainerService {
@@ -920,11 +1075,13 @@ export class ContainerService {
       },
     });
 
-    const command = profile.command || '';
+    // 2026-06-24：command / usePrebuiltEntrypoint 改 let —— 极速版镜像拉取失败时会
+    // 自动回退到源码编译模式,届时需要把它们改写成源码构建的命令（见下方 fallback）。
+    let command = profile.command || '';
     // 2026-06-23 极速版：预构建镜像自带 ENTRYPOINT（api=`dotnet PrdAgent.Api.dll`,
     // admin=`serve -s dist`）,允许 command 为空 —— 此时不 `sh -c` 包装,直接用
     // 镜像默认 ENTRYPOINT/CMD 启动。非预构建模式仍强制要求 command。
-    const usePrebuiltEntrypoint = profile.prebuiltImage === true && !command;
+    let usePrebuiltEntrypoint = profile.prebuiltImage === true && !command;
     if (!command && !usePrebuiltEntrypoint) {
       throw new Error(`构建配置 "${profile.id}" 缺少 command 字段`);
     }
@@ -957,11 +1114,16 @@ export class ContainerService {
         seen.add(fb);
       }
 
+      let pulledImage: string | null = null;
+      let lastDetail = '';
+      // Bugbot Medium「Unresolved tag skips source fallback」：tag 未解析（空 SHA /
+      // 未展开 ${} / 无候选）时，**不再**提前硬抛 —— 走下面统一的 `!pulledImage` 分支，
+      // 同样自动回退源码编译。只有连源码模式都没有时才硬失败。
       if (candidates.length === 0) {
-        const reason = `极速版镜像 tag 未解析且无可用回退镜像: ${primary || '(空)'} —— 缺 commit SHA / 分支 slug。`;
-        onOutput?.(`── ${reason} ──\n`);
+        lastDetail = `极速版镜像 tag 未解析且无可用回退镜像: ${primary || '(空)'} —— 缺 commit SHA / 分支 slug。`;
+        onOutput?.(`── ${lastDetail} ──\n`);
         this.recordContainerEvent({
-          severity: 'error',
+          severity: 'warn',
           source: 'cds-container-service',
           action: 'app.pull.unresolved-tag',
           message: `prebuilt image tag unresolved: ${primary}`,
@@ -972,45 +1134,71 @@ export class ContainerService {
           operationId: context.operationId ?? undefined,
           details: { image: primary, fallback: fallbackList, reason: '极速版镜像 tag 模板变量为空/未解析且无回退' },
         });
-        throw new Error(`${reason}\n请确认分支已有 commit（push 或部署请求携带 commitSha）,或配置回退镜像 / 切回源码编译。`);
-      }
-
-      let pulledImage: string | null = null;
-      let lastDetail = '';
-      for (let i = 0; i < candidates.length; i++) {
-        const cand = candidates[i];
-        onOutput?.(cand.kind === 'fallback'
-          ? `── 本 commit 无该组件 CI 镜像,按回退链尝试 ${cand.image} ──\n`
-          : `── 极速版: 拉取 CI 预构建镜像 ${cand.image}（CDS 不再本机编译）──\n`);
-        context.assertCurrent?.(`runService before docker-pull ${profile.id}`);
-        const pull = await this.shell.exec(`docker pull ${cand.image}`);
-        if (pull.stdout) onOutput?.(pull.stdout + '\n');
-        if (pull.exitCode === 0) { pulledImage = cand.image; break; }
-        lastDetail = (pull.stderr || pull.stdout || '').trim();
-        const hasNext = i < candidates.length - 1;
-        onOutput?.(`── 拉取失败: ${lastDetail}${hasNext ? `（改用下一个回退镜像 ${candidates[i + 1].image}）` : ''} ──\n`);
+      } else {
+        for (let i = 0; i < candidates.length; i++) {
+          const cand = candidates[i];
+          onOutput?.(cand.kind === 'fallback'
+            ? `── 本 commit 无该组件 CI 镜像,按回退链尝试 ${cand.image} ──\n`
+            : `── 极速版: 拉取 CI 预构建镜像 ${cand.image}（CDS 不再本机编译）──\n`);
+          context.assertCurrent?.(`runService before docker-pull ${profile.id}`);
+          const pull = await this.shell.exec(`docker pull ${cand.image}`);
+          if (pull.stdout) onOutput?.(pull.stdout + '\n');
+          if (pull.exitCode === 0) { pulledImage = cand.image; break; }
+          lastDetail = (pull.stderr || pull.stdout || '').trim();
+          const hasNext = i < candidates.length - 1;
+          onOutput?.(`── 拉取失败: ${lastDetail}${hasNext ? `（改用下一个回退镜像 ${candidates[i + 1].image}）` : ''} ──\n`);
+        }
       }
 
       if (!pulledImage) {
-        onOutput?.(`── 极速版镜像拉取失败(含回退) ──\n`);
-        this.recordContainerEvent({
-          severity: 'error',
-          source: 'cds-container-service',
-          action: 'app.pull.failed',
-          message: `docker pull failed for prebuilt image(s): ${candidates.map((c) => c.image).join(', ')}`,
-          projectId: entry.projectId,
-          branchId: entry.id,
-          profileId: profile.id,
-          requestId: context.requestId ?? undefined,
-          operationId: context.operationId ?? undefined,
-          command: { name: 'docker pull', exitCode: 1, stdoutPreview: '', stderrPreview: lastDetail },
-          details: { images: candidates.map((c) => c.image), reason: '极速版预构建镜像(含回退)拉取失败' },
-        });
-        throw new Error(`极速版镜像拉取失败(含回退): ${candidates.map((c) => c.image).join(' / ')}\n${lastDetail}\n（CI 镜像可能尚未就绪或未设为 public,可在分支详情切回源码编译）`);
+        // 极速版镜像全部拉取失败（path-filter 跳过本组件构建 → sha 镜像不存在,且回退链也没命中）。
+        // 用户 2026-06-24 决策：**不再硬失败**,自动回退到源码编译模式,宁慢必成,根治
+        // 「极速版永远不极速 / 部署出现异常打不开」。仅当该 profile 确实没有任何源码模式时才硬失败。
+        // 用 resolveEffectiveProfile 预先从 baseline 解析好的源码 profile（dockerImage=源码
+        // 基础镜像、command=源码构建、端口正确）。不在此处原地 re-resolve，避免误继承极速版
+        // 的 sha 镜像 / 8080 端口。
+        const sourceProfile = profile.sourceFallbackProfile;
+        if (sourceProfile && sourceProfile.command && sourceProfile.command.trim()) {
+          onOutput?.(`── 极速版镜像缺失/拉取失败,自动回退源码编译 [${sourceProfile.activeDeployMode ?? 'source'}]（较慢但必成功，无需手动切回）──\n`);
+          this.recordContainerEvent({
+            severity: 'warn',
+            source: 'cds-container-service',
+            action: 'app.pull.fallback-to-source',
+            message: `prebuilt image missing, auto fallback to source-build mode '${sourceProfile.activeDeployMode}': ${candidates.map((c) => c.image).join(', ')}`,
+            projectId: entry.projectId,
+            branchId: entry.id,
+            profileId: profile.id,
+            requestId: context.requestId ?? undefined,
+            operationId: context.operationId ?? undefined,
+            command: { name: 'docker pull', exitCode: 1, stdoutPreview: '', stderrPreview: lastDetail },
+            details: { images: candidates.map((c) => c.image), fallbackMode: sourceProfile.activeDeployMode, sourceImage: sourceProfile.dockerImage, reason: '极速版镜像缺失→自动回退源码编译' },
+          });
+          // 切换到源码构建：改写 profile / command / entrypoint，跳出预构建分支后即走源码路径。
+          profile = sourceProfile;
+          command = sourceProfile.command || '';
+          usePrebuiltEntrypoint = false;
+        } else {
+          onOutput?.(`── 极速版镜像拉取失败(含回退),且无可用源码模式可回退 ──\n`);
+          this.recordContainerEvent({
+            severity: 'error',
+            source: 'cds-container-service',
+            action: 'app.pull.failed',
+            message: `docker pull failed for prebuilt image(s): ${candidates.map((c) => c.image).join(', ')}`,
+            projectId: entry.projectId,
+            branchId: entry.id,
+            profileId: profile.id,
+            requestId: context.requestId ?? undefined,
+            operationId: context.operationId ?? undefined,
+            command: { name: 'docker pull', exitCode: 1, stdoutPreview: '', stderrPreview: lastDetail },
+            details: { images: candidates.map((c) => c.image), reason: '极速版预构建镜像(含回退)拉取失败,且无源码模式可回退' },
+          });
+          throw new Error(`极速版镜像拉取失败(含回退): ${candidates.map((c) => c.image).join(' / ')}\n${lastDetail}\n（CI 镜像可能尚未就绪或未设为 public,且该构建配置没有可回退的源码编译模式）`);
+        }
+      } else {
+        // 用实际拉到的镜像(可能是回退主分支镜像)跑容器:下游 docker run 读 profile.dockerImage。
+        if (pulledImage !== profile.dockerImage) profile.dockerImage = pulledImage;
+        onOutput?.(`── 镜像就绪: ${pulledImage} ──\n`);
       }
-      // 用实际拉到的镜像(可能是回退主分支镜像)跑容器:下游 docker run 读 profile.dockerImage。
-      if (pulledImage !== profile.dockerImage) profile.dockerImage = pulledImage;
-      onOutput?.(`── 镜像就绪: ${pulledImage} ──\n`);
     }
 
     const resolvedEnv = this.resolveProfileRuntimeEnv(entry, profile, customEnv);
@@ -1060,6 +1248,10 @@ export class ContainerService {
       // 多 alias 用多个 --network-alias 标志(docker 支持任意多个)。
       const profileAliasFlags = profileAliases.map((a) => `--network-alias ${a}`);
 
+      // 给源码 build/install 动词降调度优先级(nice)，让编译不饿死同机预览/代理。
+      // 仅作用于 sh -c "command" 源码路径；极速版预构建镜像(usePrebuiltEntrypoint)不经过。
+      if (!usePrebuiltEntrypoint) command = niceBuildCommands(command);
+
       const runCmd = [
         'docker run -d',
         `--name ${service.containerName}`,
@@ -1108,6 +1300,12 @@ export class ContainerService {
         });
         throw new Error(`启动服务 "${service.containerName}" 失败:\n${combinedOutput(result)}`);
       }
+      // 2026-06-24（Bugbot Medium「Fallback mode not recorded」）：在 runService 内
+      // 权威钉住**实际**启动用的 deploy mode —— profile 此刻已是回退后的真实 profile
+      // （极速版镜像缺失自动回退源码时 = static）。否则上层用未变的 effectiveProfile.
+      // activeDeployMode（仍是 express）钉 deployedMode，预览 widget 会把实际跑源码的
+      // 分支误标「极速」。下游 deploy 路径改为优先采纳这里钉的值。
+      service.deployedMode = profile.activeDeployMode || '';
       this.recordContainerEvent({
         severity: 'info',
         source: 'cds-container-service',

@@ -739,6 +739,8 @@
 
 - [项目迁移(CDS 项目移植) · 债务台账](debt.cds.project-migration) `debt.cds.project-migration`
   > 配置复刻已落地(dry-run/merge/replace-all 到远端 CDS)；数据全量落库走手动备份/恢复桥接(只读扫描)、accessKey 明文存 state、仅 MongoDB 扫描
+- [CDS 过期分支预览页(合并/放弃分流) · 债务台账](debt.cds-removed-branch-pages) `debt.cds-removed-branch-pages`
+  > 分支墓碑区分合并/放弃；后续可补 commit 直链、放弃页推荐可用分支、git push --delete 也写墓碑
 - [智能体宇宙 · 债务台账](debt.agent-universe) `debt.agent-universe`
   > MVP 边界：仅视觉创作走真实生图、文学图文一体待补、信封仅再加工接入、img2img 占位
 - [CDS 极速版（CI 预构建）· 已知边界与遗留事项](debt.cds.ci-prebuilt) `debt.cds.ci-prebuilt`

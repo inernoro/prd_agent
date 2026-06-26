@@ -4,7 +4,7 @@ import { ArrowRight, Github, Home, KeyRound, Loader2, Server, Shield, Terminal, 
 import ShapeGrid from '@/components/effects/ShapeGrid';
 import { ShinyText } from '@/components/effects/ShinyText';
 import { Button } from '@/components/ui/button';
-import { apiUrl, fetchBootstrapStatus, bootstrapFirstUser } from '@/lib/api';
+import { apiUrl, fetchBootstrapStatus, bootstrapFirstUser, fetchSessionAuthed } from '@/lib/api';
 import './HomePage.css';
 
 function redirectTarget(): string {
@@ -12,6 +12,10 @@ function redirectTarget(): string {
   const params = new URLSearchParams(window.location.search);
   const raw = params.get('redirect') || '/project-list';
   if (!raw.startsWith('/') || raw.startsWith('//')) return '/project-list';
+  // 绝不把目标指回登录路由本身 —— 否则已登录用户从 /login 跳 /login 是 no-op,
+  // spinner 永远转、登录框永不出现(Bugbot Medium「Login redirect target loops」)。
+  const path = raw.split(/[?#]/)[0];
+  if (path === '/login') return '/project-list';
   return raw;
 }
 
@@ -254,12 +258,46 @@ export function CdsAccessMorphBoard(props: { target?: string; onHome?: () => voi
 }
 
 export function LoginPage(): JSX.Element {
+  const navigate = useNavigate();
+  // 'checking' = 正在探会话态;'anon' = 未登录,展示登录框。已登录则直接跳走,
+  // 不会停留在此状态。探测期间用加载态占位,避免先闪一下登录框再跳转。
+  const [authPhase, setAuthPhase] = useState<'checking' | 'anon'>('checking');
+
   // 登录成功后要跳的内容页(默认控制台)是 lazy chunk:登录页一挂载就预取,
   // 提交成功 navigate 时不会触发 Suspense 白屏,配合 viewTransition 丝滑进内容页。
   useEffect(() => {
     void import('@/pages/ProjectListPage');
     void import('@/pages/HomePage');
   }, []);
+
+  // 直接访问 /login 时,若会话 cookie 仍有效,跳过登录框直达目标页
+  // (默认 /project-list,或 ?redirect= 指定的合法内部路径)。
+  useEffect(() => {
+    let alive = true;
+    fetchSessionAuthed().then((ok) => {
+      if (!alive) return;
+      if (!ok) {
+        setAuthPhase('anon');
+        return;
+      }
+      const target = redirectTarget();
+      // 兜底:若目标解析后仍等于当前路径,navigate 是 no-op,spinner 会卡死 ——
+      // 这种情况直接落到登录框(redirectTarget 已排除 /login,这里只是双保险)。
+      if (target.split(/[?#]/)[0] === window.location.pathname) {
+        setAuthPhase('anon');
+        return;
+      }
+      if (/\.html(?:$|[?#])/i.test(target)) {
+        // legacy server 路径:hard-load 让 Express 的 legacy→React 重定向生效。
+        window.location.assign(target);
+      } else {
+        navigate(target, { replace: true, viewTransition: true });
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, [navigate]);
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-[#120f17] text-[#f6f6f8]">
@@ -301,7 +339,13 @@ export function LoginPage(): JSX.Element {
           </div>
 
           <div className="cdsh-login-panel cdsh-rise" style={{ animationDelay: '.18s' }}>
-            <CdsAccessMorphBoard />
+            {authPhase === 'checking' ? (
+              <div className="flex min-h-[420px] items-center justify-center" role="status" aria-label="checking session">
+                <Loader2 className="h-6 w-6 animate-spin text-white/70" />
+              </div>
+            ) : (
+              <CdsAccessMorphBoard />
+            )}
           </div>
         </div>
       </section>

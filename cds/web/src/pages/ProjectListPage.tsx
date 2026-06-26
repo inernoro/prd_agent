@@ -9,6 +9,7 @@ import {
   Beaker,
   Braces,
   CheckCircle2,
+  ClipboardCheck,
   Code2,
   Copy,
   Database,
@@ -1981,6 +1982,11 @@ function ProjectCard({
         <Button asChild variant="ghost" size="icon" className="pointer-events-auto h-8 w-8 bg-[hsl(var(--surface-raised))]/90 shadow-sm backdrop-blur" title="项目设置">
           <a href={settingsHref(project)} onClick={(event) => event.stopPropagation()} aria-label={`设置 ${title}`}>
             <Settings />
+          </a>
+        </Button>
+        <Button asChild variant="ghost" size="icon" className="pointer-events-auto h-8 w-8 bg-[hsl(var(--surface-raised))]/90 shadow-sm backdrop-blur" title="验收报告">
+          <a href={`/reports?project=${encodeURIComponent(project.id)}`} onClick={(event) => event.stopPropagation()} aria-label={`${title} 验收报告`}>
+            <ClipboardCheck />
           </a>
         </Button>
         <Button

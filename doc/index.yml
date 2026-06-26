@@ -283,6 +283,9 @@ docs:
   # ── 六、技术债务台账（按模块）──
   # 已知边界 / 后续可补 / 留尾风险，命名规范见 rule.doc.naming.md「debt.* 专项约定」
   debt.cds.project-migration: 项目迁移(CDS 项目移植) · 债务台账
+  # 注：main 新增此条，文件名仍是旧式连字符（debt.cds-removed-branch-pages.md），
+  # 与本分支点分命名不一致，待 doc-naming 专项一并重命名（合并不夹带重命名）。
+  debt.cds-removed-branch-pages: CDS 过期分支预览页(合并/放弃分流) · 债务台账
   debt.agent-universe: 智能体宇宙 · 债务台账
   debt.cds.agent.acceptance-smoke-drift: CDS Agent 验收 smoke 断言漂移 · 需专项修复或退役（未接 CI 的手工取证脚本）
   debt.cds.ci-prebuilt: CDS 极速版（CI 预构建）· 已知边界与遗留事项

@@ -395,9 +395,12 @@ function TestChatPanel({
   const [streaming, setStreaming] = useState(false);
   const [streamingText, setStreamingText] = useState('');
   const abortRef = useRef<(() => void) | null>(null);
+  const messagesScrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScrollRef = useRef(true);
 
   const scrollToBottom = useCallback(() => {
+    if (!shouldAutoScrollRef.current) return;
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
 
@@ -405,10 +408,17 @@ function TestChatPanel({
     scrollToBottom();
   }, [messages, streamingText, scrollToBottom]);
 
+  const handleConversationScroll = useCallback(() => {
+    const el = messagesScrollRef.current;
+    if (!el) return;
+    shouldAutoScrollRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+  }, []);
+
   const handleSend = (text?: string) => {
     const msg = (text || input).trim();
     if (!msg || streaming) return;
 
+    shouldAutoScrollRef.current = true;
     const userMsg: DirectChatMessage = { role: 'user', content: msg };
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
@@ -463,12 +473,17 @@ function TestChatPanel({
     setStreamingText('');
     setStreaming(false);
     setInput('');
+    shouldAutoScrollRef.current = true;
   };
 
   return (
     <div className="flex flex-col h-full">
       {/* 对话区域 */}
-      <div className="flex-1 min-h-0 overflow-auto p-4 space-y-3">
+      <div
+        ref={messagesScrollRef}
+        onScroll={handleConversationScroll}
+        className="flex-1 min-h-0 overflow-auto p-4 space-y-3"
+      >
         {/* 欢迎消息 */}
         <Surface variant="inset" className="p-3 rounded-xl rounded-tl-sm text-[12px] leading-relaxed text-token-secondary">
           {welcomeMessage || '你好！有什么可以帮你的吗？'}

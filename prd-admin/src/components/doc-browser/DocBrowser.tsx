@@ -314,7 +314,7 @@ import ShinyText from '@/components/reactbits/ShinyText';
 import { systemDialog } from '@/lib/systemDialog';
 import { useViewTracking } from '@/lib/useViewTracking';
 import { useContentSelection, type ContentSelectionInfo } from '@/lib/useContentSelection';
-import { MessageSquareText, MessageSquarePlus, Check, ChevronLeft, PanelRight, MessageSquare, ImagePlus } from 'lucide-react';
+import { MessageSquareText, MessageSquarePlus, Check, ChevronLeft, PanelRight, ImagePlus } from 'lucide-react';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { InlineCommentDrawer, type PendingSelection } from '@/pages/document-store/InlineCommentDrawer';
 import type { DocumentInlineComment } from '@/services/contracts/documentStore';
@@ -339,7 +339,6 @@ import {
   isReplaceSafe,
 } from './selectionEdit';
 import { threadColor, groupKey } from './inlineCommentShared';
-import { useDocReaderPrefs } from '@/stores/docReaderPrefsStore';
 import { BulkActionBar } from './BulkActionBar';
 
 // ── 类型 ──
@@ -1619,6 +1618,21 @@ export function DocBrowser({
   const timeField: 'createdAt' | 'updatedAt' = sortMode === 'created-desc' ? 'createdAt' : 'updatedAt';
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
+  // 头部控件行（排序 + 正文标题 + 显示）合并到一行；侧栏很窄时控件只留图标（隐藏文字标签）。
+  const headerControlsRef = useRef<HTMLDivElement>(null);
+  const [compactControls, setCompactControls] = useState(false);
+  useEffect(() => {
+    const el = headerControlsRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width ?? 999;
+      // 排序控件(排序+3选项，nowrap)约需 ~210px；窄于 ~380px 时正文标题/显示收成纯图标，
+      // 给排序留足空间、整行一行放下、不触发横向滚动。
+      setCompactControls(w < 380);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const [contentFirstLines, setContentFirstLines] = useState<Map<string, string>>(new Map());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entry: DocBrowserEntry } | null>(null);
   const [showAddMenu, setShowAddMenu] = useState(false);
@@ -1805,9 +1819,8 @@ export function DocBrowser({
   // 评论计数 fetchIdRef 守卫（PR #685 Bugbot Low）：切换条目 / onClose 重拉时，
   // 旧 entry 的慢响应不覆盖新 entry 已设的计数。
   const commentCountFetchIdRef = useRef(0);
-  // 划词评论布局（margin=右侧批注栏 / inline=正文内联气泡），个人偏好走 localStorage 持久化
-  const inlineCommentLayout = useDocReaderPrefs((s) => s.inlineCommentLayout);
-  const setInlineCommentLayout = useDocReaderPrefs((s) => s.setInlineCommentLayout);
+  // 划词评论展示：默认「内联」（正文高亮 + 头像气泡）；点击某条评论 → 右侧「批注栏」展开该线程；
+  // 关掉批注栏（或再点一次该气泡）→ 回到内联。整套由 activeCommentKey 单独驱动，不再有布局开关。
   const [commentsCanCreate, setCommentsCanCreate] = useState(false);
   // 删除权限逐条判定用（公开库 canCreate 对任意登录者为 true，但删除仅作者/库主，Codex P2）
   const [commentsIsOwner, setCommentsIsOwner] = useState(false);
@@ -1816,10 +1829,12 @@ export function DocBrowser({
   const [commentsSyncTick, setCommentsSyncTick] = useState(0);
   // 批注栏 ↔ 正文高亮联动：hover 某条批注卡 → 命中分组 key → 对应高亮微亮
   const [hoveredCommentKey, setHoveredCommentKey] = useState<string | null>(null);
+  // 批注栏是否展开（与「当前激活线程」解耦：点 inline 气泡打开，点关闭按钮收起）。
+  // 解耦的原因：右侧批注卡点击也会 onActivate，若直接用 activeKey 控制可见性，
+  // 点正在读的那张卡会把 key toggle 成 null → 整个面板被卸载（Codex P2）。
+  const [commentPanelOpen, setCommentPanelOpen] = useState(false);
   // 激活态（点正文气泡或点批注卡）：高亮加亮 + 批注卡升起 + 画连线，一次只激活一条
   const [activeCommentKey, setActiveCommentKey] = useState<string | null>(null);
-  // 用户点「收起批注栏」后本条目临时切回 TOC（切文档复位）
-  const [marginCollapsed, setMarginCollapsed] = useState(false);
   // 划词后就地输入浮层（取代甩到右侧抽屉）
   // rects: 选区在打开浮层瞬间的所有 client rect（多行选区需要多个矩形），用于保留正文里的高亮覆盖层
   const [composer, setComposer] = useState<{
@@ -1887,8 +1902,8 @@ export function DocBrowser({
 
   // 进入条目时预拉评论 + 复位上一条目的临时 UI 态。只在 entryId / shareToken 真正变化时跑。
   useEffect(() => {
-    // 切文档复位：收起批注栏的临时态、未发完的就地输入浮层、激活/hover 态
-    setMarginCollapsed(false);
+    // 切文档复位：收起批注栏 + 清未发完的就地输入浮层、激活/hover 态（回到内联）
+    setCommentPanelOpen(false);
     setComposer(null);
     setActiveCommentKey(null);
     setHoveredCommentKey(null);
@@ -2109,12 +2124,11 @@ export function DocBrowser({
         // 自动激活新评论的线程 → 触发 InlineCommentConnector 入场动画（从正文气泡画连线到右侧卡），
         // 用户不用再手动点气泡才看到联系。groupKey 必须和 Overlay/Margin 同一函数，否则 activeKey 对不上。
         if (input.selectedText) {
-          // margin 模式下若用户手动收起了批注栏（marginCollapsed=true），Margin 与 Connector 都
-          // 没挂载（条件 !marginCollapsed），仅设 activeKey 谁也画不出来。与 handleActivateComment
-          // 保持同样的兜底：先重开批注栏再激活，确保连线必然显现（Bugbot Medium）。
-          if (inlineCommentLayout === 'margin' && marginCollapsed) {
-            setMarginCollapsed(false);
-          }
+          // 新建即展开批注栏并激活该线程 → 自动画连线，用户不用再手动点气泡。
+          // 右侧栏曾收起时同样要展开，否则新评论的连线/卡片无处可挂（同 Codex P2）。
+          setRightPanelCollapsed(false);
+          sessionStorage.setItem('doc-browser-right-collapsed', '0');
+          setCommentPanelOpen(true);
           setActiveCommentKey(groupKey(input.selectedText));
         }
         await refreshComments(); // 与服务器对账：成功则覆盖为真值，失败则保留乐观结果
@@ -2123,7 +2137,7 @@ export function DocBrowser({
     }
     toast.error('添加失败', res.error?.message);
     return false;
-  }, [trackedEntryForComments, refreshComments, inlineCommentLayout, marginCollapsed]);
+  }, [trackedEntryForComments, refreshComments]);
 
   const handleDeleteComment = useCallback(async (comment: DocumentInlineComment) => {
     // 删除前确认：margin/inline 的「删除」按钮小、易误点，与抽屉路径保持同样的二次确认（Codex P2）
@@ -2151,18 +2165,17 @@ export function DocBrowser({
     }
   }, [trackedEntryForComments]);
 
-  // 激活某条批注（点正文气泡或点批注卡）：默认 toggle。滚动定位由下面的 effect 按真实锚点处理。
+  // 点正文气泡 / 批注卡 → 展开批注栏并选中该线程（高亮 + 连线）。
+  // 只「打开 + 选中」，不在此 toggle 关闭：关闭统一走批注栏的关闭按钮（onClose），
+  // 否则点正在读的那张卡会把面板关掉（Codex P2）。重复点同一条 = 维持打开（幂等）。
   const handleActivateComment = useCallback((key: string) => {
-    // margin 收起态下点气泡：重开批注栏并「强制激活」该条（不 toggle off）。
-    // 否则同一条仍 active 时点它会被 toggle 关掉，>3 条时目标卡片仍折叠、点了看不到内容（Codex P2）。
-    if (inlineCommentLayout === 'margin' && marginCollapsed) {
-      setMarginCollapsed(false);
-      setActiveCommentKey(key);
-      return;
-    }
-    setActiveCommentKey((prev) => (prev === key ? null : key));
-    if (inlineCommentLayout === 'margin') setMarginCollapsed(false);
-  }, [inlineCommentLayout, marginCollapsed]);
+    // 右侧栏曾被用户收起（rightPanelCollapsed 持久化）时，批注栏挂在 !rightPanelCollapsed 分支下，
+    // 只设 commentPanelOpen 点了也看不到 → 这里一并展开右侧栏并持久化（Codex P2）。
+    setRightPanelCollapsed(false);
+    sessionStorage.setItem('doc-browser-right-collapsed', '0');
+    setCommentPanelOpen(true);
+    setActiveCommentKey(key);
+  }, []);
 
   // 激活后把正文锚点滚到眼前：用 overlay 已按 findTextRange（去空白 + contextBefore 消歧）放置的
   // data-active-hl 元素，而非 raw indexOf（会被空白归一化/重复短语坑，Bugbot Medium）。
@@ -2695,22 +2708,22 @@ export function DocBrowser({
           </div>
         )}
 
-        {/* 外部自定义 sidebar 头部（如「周报列表 · 按最近提交 · N 篇」），可选 */}
-        {sidebarHeader && (
-          <div className="shrink-0 px-3 py-2.5" style={{ borderBottom: '1px solid var(--border-faint)' }}>
-            {sidebarHeader}
-          </div>
-        )}
-        {/* 标题显示切换 + 搜索 + 新建文件夹 */}
-        <div className="surface-panel-header space-y-2.5 px-3 py-3">
-          {/* 标题模式切换（正文标题/文件名）+ 显示设置 */}
-          <div className="flex items-center justify-between">
+        {/* 头部控件行：排序(sidebarHeader) + 正文标题切换 + 显示设置，合并到一行省垂直空间；
+            侧栏很窄(compactControls)时正文标题/显示只留图标（文字标签隐藏，title 提示仍在）。 */}
+        <div
+          ref={headerControlsRef}
+          className="shrink-0 flex items-center gap-2 px-3 py-2.5 overflow-x-auto"
+          style={{ borderBottom: '1px solid var(--border-faint)' }}>
+          {/* 排序控件 shrink-0 + 内部 whitespace-nowrap：永不被挤压换行（用户最讨厌的字字竖排折叠） */}
+          <div className="shrink-0">{sidebarHeader}</div>
+          {/* 正文标题/显示 推到最右；窄栏(compactControls)只留图标。整行放不下时横向滚动，绝不竖排折叠 */}
+          <div className="ml-auto flex shrink-0 items-center gap-1">
             <button
               onClick={() => setUseContentTitle(!useContentTitle)}
               className="flex cursor-pointer items-center gap-1 rounded-[7px] px-1.5 py-0.5 text-[10px] text-token-muted transition-colors hover-bg-soft"
               title={useContentTitle ? '当前：显示正文第一行为标题' : '当前：显示文件名为标题'}>
               {useContentTitle ? <ToggleRight size={12} className="text-token-accent" /> : <ToggleLeft size={12} />}
-              {useContentTitle ? '正文标题' : '文件名'}
+              {!compactControls && (useContentTitle ? '正文标题' : '文件名')}
             </button>
             <div ref={settingsMenuRef} className="relative">
               <button
@@ -2718,7 +2731,7 @@ export function DocBrowser({
                 className="flex cursor-pointer items-center gap-1 rounded-[7px] px-1.5 py-0.5 text-[10px] text-token-muted transition-colors hover-bg-soft"
                 title="显示设置">
                 <Settings size={11} className={showUpdatedTime ? 'text-token-accent' : ''} />
-                显示
+                {!compactControls && '显示'}
               </button>
               {showSettingsMenu && (
                 <div className="surface-popover absolute right-0 top-[26px] z-50 min-w-[180px] rounded-[10px] p-2">
@@ -2742,7 +2755,9 @@ export function DocBrowser({
               )}
             </div>
           </div>
-
+        </div>
+        {/* 搜索 + 新建文件夹 */}
+        <div className="surface-panel-header px-3 py-3">
           <div className="flex gap-1.5">
             <div className="relative flex-1">
               <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
@@ -3339,29 +3354,7 @@ export function DocBrowser({
                   </button>
                 );
               })()}
-              {/* 划词评论布局切换：批注栏（右侧常驻）/ 内联（正文气泡展开）。仅文本预览态显示 */}
-              {trackedEntryForComments && tocContent && !editMode && (
-                <div className="flex items-center rounded-[8px] overflow-hidden flex-shrink-0"
-                  style={{ border: '1px solid rgba(168,85,247,0.18)' }}
-                  title="切换批注展示方式（保存为个人偏好）">
-                  {([
-                    { m: 'margin' as const, label: '批注栏', Icon: PanelRight },
-                    { m: 'inline' as const, label: '内联', Icon: MessageSquare },
-                  ]).map(({ m, label, Icon }) => (
-                    <button
-                      key={m}
-                      onClick={() => { setInlineCommentLayout(m); setActiveCommentKey(null); if (m === 'margin') setMarginCollapsed(false); }}
-                      className="h-6 px-2 text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors"
-                      style={{
-                        background: inlineCommentLayout === m ? 'rgba(168,85,247,0.18)' : 'transparent',
-                        color: inlineCommentLayout === m ? 'rgba(216,180,254,0.97)' : 'var(--text-muted)',
-                      }}
-                    >
-                      <Icon size={11} /> {label}
-                    </button>
-                  ))}
-                </div>
-              )}
+              {/* 批注布局开关已移除：评论默认内联，点击某条 → 右侧批注栏展开，关掉即回内联（activeCommentKey 单独驱动） */}
               {/* 批次 D：划词评论开关按钮 */}
               {trackedEntryForComments && (
                 <button
@@ -3615,13 +3608,14 @@ export function DocBrowser({
                     } : undefined}
                   />
                 )}
-                {/* 行内评论高亮 + 气泡/内联展开：把他人评论锚回正文，边读边可见 */}
+                {/* 行内评论高亮 + 气泡：把他人评论锚回正文，边读边可见。始终内联呈现；
+                    点击气泡走 onActivate 打开右侧批注栏（mode="margin" → 不就地展开卡片） */}
                 {!editMode && !contentLoading && tocContent && inlineCommentItems.length > 0 && (
                   <InlineCommentOverlay
                     containerRef={contentAreaRef}
                     comments={inlineCommentItems}
                     reflowKey={`${selectedEntryId ?? ''}:${preview?.text?.length ?? 0}`}
-                    mode={inlineCommentLayout}
+                    mode="margin"
                     hoveredKey={hoveredCommentKey}
                     activeKey={activeCommentKey}
                     onActivate={handleActivateComment}
@@ -3697,8 +3691,9 @@ export function DocBrowser({
                   移动端单栏阅读不挂右侧 TOC（否则又把正文挤窄），isMobile 时隐藏 DocToc。
                   rightPanelCollapsed 时整列收起，给正文让宽（工具栏「收起/章节」切换）。 */}
               {!rightPanelCollapsed && (() => {
-                const showMargin = inlineCommentLayout === 'margin' && !contentLoading && !editMode
-                  && !!tocContent && inlineCommentItems.length > 0 && !marginCollapsed;
+                // 点开某条评论 → 批注栏展开（commentPanelOpen，与激活线程解耦）；否则维持本页章节导航
+                const showMargin = commentPanelOpen && !contentLoading && !editMode
+                  && !!tocContent && inlineCommentItems.length > 0;
                 if (showMargin) {
                   return (
                     <InlineCommentMargin
@@ -3711,7 +3706,7 @@ export function DocBrowser({
                       onActivate={handleActivateComment}
                       onCreate={handleCreateComment}
                       onDelete={handleDeleteComment}
-                      onClose={() => setMarginCollapsed(true)}
+                      onClose={() => { setCommentPanelOpen(false); setActiveCommentKey(null); }}
                     />
                   );
                 }
@@ -3719,8 +3714,8 @@ export function DocBrowser({
                   <DocToc content={tocContent} scrollContainerRef={contentAreaRef} />
                 ) : null;
               })()}
-              {/* 激活批注的牵引连线（active-only，业界 Word/Figma 做法）：仅 margin 布局且有激活项时出现 */}
-              {inlineCommentLayout === 'margin' && !marginCollapsed && !rightPanelCollapsed && !editMode && !contentLoading
+              {/* 激活批注的牵引连线（active-only，业界 Word/Figma 做法）：批注栏展开且有激活项才出现 */}
+              {commentPanelOpen && !rightPanelCollapsed && !editMode && !contentLoading
                 && tocContent && inlineCommentItems.length > 0 && activeCommentKey && (
                 <InlineCommentConnector activeKey={activeCommentKey} color={threadColor(activeCommentKey)} boundsRef={contentAreaRef} />)}
             </div>

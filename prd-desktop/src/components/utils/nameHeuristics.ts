@@ -14,6 +14,39 @@ export function normalizeCandidateName(raw: string): string {
     .trim();
 }
 
+const HTML_ENTITY_MAP: Record<string, string> = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  nbsp: ' ',
+};
+
+function decodeHtmlEntities(raw: string): string {
+  return raw.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (match, entity: string) => {
+    const key = entity.toLowerCase();
+    if (key.startsWith('#x')) {
+      const code = Number.parseInt(key.slice(2), 16);
+      return Number.isFinite(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : match;
+    }
+    if (key.startsWith('#')) {
+      const code = Number.parseInt(key.slice(1), 10);
+      return Number.isFinite(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : match;
+    }
+    return HTML_ENTITY_MAP[key] ?? match;
+  });
+}
+
+export function sanitizeGroupName(raw: string, fallback = '未命名群组'): string {
+  const decoded = decodeHtmlEntities(raw || '');
+  const withoutTags = decoded
+    .replace(/<\/?[a-z][\w:-]*(?:\s[^<>]*)?>/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return withoutTags || fallback;
+}
+
 export function isMeaninglessName(raw: string): boolean {
   const s = normalizeCandidateName(stripFileExtension(raw));
   if (!s) return true;
@@ -62,5 +95,3 @@ export function extractMarkdownTitle(content: string): string {
   const m = s.match(/^#\s+(.+)\s*$/m);
   return (m?.[1] || '').trim();
 }
-
-

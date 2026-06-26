@@ -51,7 +51,7 @@ export const getLlmModelStatsReal: GetLlmModelStatsContract = async (params?: Ge
 export const getBatchModelStatsReal: GetBatchModelStatsContract = async (params: BatchModelStatsParams): Promise<ApiResponse<BatchModelStatsData>> => {
   return await apiRequest<BatchModelStatsData>(api.logs.llm.batchModelStats(), {
     method: 'POST',
-    body: JSON.stringify(params),
+    body: params,
   });
 };
 

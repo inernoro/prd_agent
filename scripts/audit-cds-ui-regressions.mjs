@@ -75,8 +75,11 @@ requireNotContains('branchList', 'title="发布到目标"', 'branch card has no 
 requireNotContains('branchList', 'window.confirm', 'branch card keeps CDS confirm popover instead of native browser confirm');
 
 // Resource chip tone: keep chips subdued but alive. This guards against both
-// over-bright chips and the "looks stopped" dim regression.
-requireContains('branchList', 'const chipToneClass = chipStatus ===', 'resource chips use explicit tone mapping');
+// over-bright chips and the "looks stopped" dim regression. 2026-06-26: chip tone
+// gained a leading `isInfra ?` subdued branch (基础设施依赖弱化为次要)，所以断言从
+// 「行首 const chipToneClass = chipStatus ===」放宽为「仍按 chipStatus 显式分态映射」，
+// 意图不变（line 80 仍钉运行态色值，防 helper 化 / 过亮 / 看着停了的回归）。
+requireContains('branchList', "chipStatus === 'running'", 'resource chips use explicit per-status tone mapping');
 requireContains('branchList', 'border-emerald-500/25 bg-emerald-500/[0.055]', 'running resource chip has live but subdued tone');
 
 // Database workbench: these are the product-level invariants from the database

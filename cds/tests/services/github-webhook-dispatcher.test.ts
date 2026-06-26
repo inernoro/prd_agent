@@ -615,6 +615,90 @@ describe('GitHubWebhookDispatcher', () => {
       });
       expect(result.action).toBe('pr-branch-stopped');
       expect(result.stopRequest).toEqual({ branchId: 'proj-feature' });
+      // 合并 PR → tombstone reason='merged'，带 PR/merge 元数据供「已合并」中间页用。
+      expect(result.tombstoneRequest).toMatchObject({
+        branchId: 'proj-feature',
+        branch: 'feature',
+        reason: 'merged',
+        prNumber: 99,
+        prUrl: 'https://github.com/octocat/repo/pull/99',
+        baseRef: 'main',
+      });
+    });
+
+    it('returns tombstoneRequest reason=abandoned when PR closed unmerged', async () => {
+      const d = buildDispatcher();
+      const result = await d.handle('pull_request', {
+        action: 'closed',
+        number: 99,
+        pull_request: {
+          number: 99,
+          state: 'closed',
+          merged: false,
+          head: { ref: 'feature', sha: 'abc' },
+          base: { ref: 'main' },
+          html_url: 'https://github.com/octocat/repo/pull/99',
+          title: 'Abandoned feature',
+        },
+        repository: { full_name: 'octocat/repo' },
+      });
+      expect(result.action).toBe('pr-branch-stopped');
+      expect(result.tombstoneRequest?.reason).toBe('abandoned');
+      // 未合并不带 mergeCommitSha。
+      expect(result.tombstoneRequest?.mergeCommitSha).toBeUndefined();
+    });
+
+    // Bugbot: prClose 策略关闭时,合并 PR 也必须写 merged 墓碑(只是不自动停容器),
+    // 否则随后的 delete 事件会把它错写成 abandoned，合并分支被误显「已放弃」。
+    it('records merged tombstone even when prClose policy disabled (no auto-stop)', async () => {
+      stateService.updateProject('p1', { githubEventPolicy: { prClose: false } });
+      const d = buildDispatcher();
+      const result = await d.handle('pull_request', {
+        action: 'closed',
+        number: 99,
+        pull_request: {
+          number: 99,
+          state: 'closed',
+          merged: true,
+          head: { ref: 'feature', sha: 'abc' },
+          base: { ref: 'main' },
+          html_url: 'https://github.com/octocat/repo/pull/99',
+          title: 'Great feature',
+        },
+        repository: { full_name: 'octocat/repo' },
+      });
+      // prClose 关 → 不自动停容器（action=ignored-event、无 stopRequest）...
+      expect(result.action).toBe('ignored-event');
+      expect(result.stopRequest).toBeUndefined();
+      // ...但墓碑照记，reason=merged，供 gone 页分流 + merged 粘性防 delete 降级。
+      expect(result.tombstoneRequest).toMatchObject({ reason: 'merged', prNumber: 99, baseRef: 'main' });
+    });
+
+    // Codex P2: delete webhook 先到清掉 entry，再处理 closed(merged) 时 entry 已不存在。
+    // 仍须发 merged 墓碑（基于 head.ref），否则合并 PR 被 delete 写的 abandoned 错显为已放弃。
+    it('still emits merged tombstone on closed when branch entry already removed', async () => {
+      stateService.removeBranch('proj-feature');
+      const d = buildDispatcher();
+      const result = await d.handle('pull_request', {
+        action: 'closed',
+        number: 99,
+        pull_request: {
+          number: 99,
+          state: 'closed',
+          merged: true,
+          head: { ref: 'feature', sha: 'abc' },
+          base: { ref: 'main' },
+          html_url: 'https://github.com/octocat/repo/pull/99',
+          title: 'Great feature',
+        },
+        repository: { full_name: 'octocat/repo' },
+      });
+      expect(result.action).toBe('ignored-event'); // 无 entry 可停
+      expect(result.tombstoneRequest).toMatchObject({
+        branch: 'feature',
+        reason: 'merged',
+        prNumber: 99,
+      });
     });
 
     it('ignores synchronize (handled by companion push)', async () => {
@@ -770,6 +854,42 @@ describe('GitHubWebhookDispatcher', () => {
       expect(r.stopRequest).toEqual({ branchId: 'proj-feat' });
       // 关键断言:branchDeleteRequest 与 stopRequest 同时返回
       expect(r.branchDeleteRequest).toEqual({ branchId: 'proj-feat' });
+    });
+
+    // 没走 PR 的直接删分支(git push --delete)也要留墓碑(reason=abandoned),
+    // 这样过期分支预览页能落到"已放弃"页而非泛化的"启动失败"页。
+    it('returns tombstoneRequest reason=abandoned for a raw branch delete', async () => {
+      const d = buildDispatcher();
+      const r = await d.handle('delete', {
+        ref: 'feat',
+        ref_type: 'branch',
+        repository: { full_name: 'octocat/repo' },
+      });
+      expect(r.action).toBe('branch-deleted');
+      expect(r.tombstoneRequest).toMatchObject({
+        branchId: 'proj-feat',
+        projectId: 'p1',
+        reason: 'abandoned',
+      });
+      // delete 事件不带 PR 语义 → 无 prNumber/mergeCommitSha
+      expect(r.tombstoneRequest?.prNumber).toBeUndefined();
+      expect(r.tombstoneRequest?.mergeCommitSha).toBeUndefined();
+    });
+
+    // Bugbot: delete 策略关闭时也要记 abandoned 墓碑（只是不自动清容器），
+    // 与 PR-close 路径一致，否则删分支清理仍落泛化「启动失败」而非「已放弃」。
+    it('records abandoned tombstone even when delete policy disabled', async () => {
+      stateService.updateProject('p1', { githubEventPolicy: { delete: false } });
+      const d = buildDispatcher();
+      const r = await d.handle('delete', {
+        ref: 'feat',
+        ref_type: 'branch',
+        repository: { full_name: 'octocat/repo' },
+      });
+      expect(r.action).toBe('ignored-event');
+      expect(r.stopRequest).toBeUndefined();
+      expect(r.branchDeleteRequest).toBeUndefined();
+      expect(r.tombstoneRequest).toMatchObject({ branchId: 'proj-feat', reason: 'abandoned' });
     });
 
     it('ignores tag deletions', async () => {

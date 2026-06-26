@@ -43,7 +43,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
-VERSION = "0.6.8"  # ← bumped on each SKILL.md change; 服务端自动读这一行
+VERSION = "0.7.1"  # ← bumped on each SKILL.md change; 服务端自动读这一行
 _TRACE_ID: str = ""
 _HUMAN: bool = False
 _DRIFT_WARNED: bool = False  # 全进程只提示一次，避免每个请求都刷
@@ -1864,6 +1864,313 @@ def cmd_env_set(args: argparse.Namespace) -> None:
                  f"/api/env/{urllib.parse.quote(k)}?scope={urllib.parse.quote(scope)}",
                  body={"value": v})
     ok(body, note=f"set {k} in scope={scope}")
+
+
+# ── 构建配置(就绪超时 / 部署模式)──────────────────────────────────
+#
+# 背景(2026-06-24):就绪探测超时(探活)和部署模式(web=dev/release)以前被误以为
+# 是 dashboard 专属、API key 设不了。其实后端早有端点,且和 `branch deploy` 同一套
+# 鉴权(AI access key 直接可调):
+#   GET  /api/build-profiles[?project=ID]               列出构建配置
+#   PUT  /api/build-profiles/:id/deploy-mode {mode}     切换 profile 的激活部署模式
+#   PUT  /api/build-profiles/:id {readinessProbe:{...}} 改就绪探测(GET-合并-PUT 保字段)
+#   PUT  /api/branches/:id/profile-overrides/:pid {activeDeployMode} 单分支部署模式覆盖
+# 这一组命令把它们补进 cdscli,AI 用 key 即可设置,不再依赖 dashboard。
+
+def _find_build_profile(profile_id: str, project: str | None) -> dict[str, Any]:
+    """GET 构建配置列表并按 id 命中。readiness 改动要 GET-合并-PUT,避免整体替换
+    readinessProbe 丢掉 path/interval/noHttp。"""
+    path = "/api/build-profiles"
+    if project:
+        path += f"?project={urllib.parse.quote(project)}"
+    body = _call("GET", path)
+    profiles = (body or {}).get("profiles") if isinstance(body, dict) else None
+    for p in profiles or []:
+        if isinstance(p, dict) and p.get("id") == profile_id:
+            return p
+    die(f"构建配置 '{profile_id}' 未找到"
+        + (f"(project={project})" if project else "(可加 --project 缩小范围)"), code=2)
+    raise SystemExit(2)  # unreachable, satisfies type checker
+
+
+def _profile_summary(p: dict[str, Any]) -> dict[str, Any]:
+    rp = p.get("readinessProbe") or {}
+    return {
+        "id": p.get("id"),
+        "name": p.get("name"),
+        "projectId": p.get("projectId"),
+        "activeDeployMode": p.get("activeDeployMode") or None,
+        "deployModes": list((p.get("deployModes") or {}).keys()),
+        "readiness": {
+            "timeoutSeconds": rp.get("timeoutSeconds"),
+            "intervalSeconds": rp.get("intervalSeconds"),
+            "path": rp.get("path"),
+            "noHttp": rp.get("noHttp"),
+        },
+    }
+
+
+def cmd_profile_list(args: argparse.Namespace) -> None:
+    project = getattr(args, "project", None) or os.environ.get("CDS_PROJECT_ID")
+    path = "/api/build-profiles"
+    if project:
+        path += f"?project={urllib.parse.quote(project)}"
+    body = _call("GET", path)
+    profiles = (body or {}).get("profiles") if isinstance(body, dict) else []
+    ok([_profile_summary(p) for p in (profiles or []) if isinstance(p, dict)],
+       note=f"{len(profiles or [])} 个构建配置" + (f"(project={project})" if project else ""))
+
+
+def cmd_profile_deploy_mode(args: argparse.Namespace) -> None:
+    mode = "" if getattr(args, "reset", False) else args.mode
+    if not args.reset and not mode:
+        die("必须提供部署模式名,或用 --reset 恢复默认", code=1)
+    body = _call("PUT", f"/api/build-profiles/{urllib.parse.quote(args.id)}/deploy-mode",
+                 body={"mode": mode})
+    ok(body, note=f"profile {args.id} 部署模式 -> {mode or 'default'}")
+
+
+def cmd_profile_readiness(args: argparse.Namespace) -> None:
+    if (args.timeout is None and args.interval is None and args.path is None
+            and args.no_http is None):
+        die("至少提供一项:--timeout / --interval / --path / --no-http|--http", code=1)
+    project = getattr(args, "project", None) or os.environ.get("CDS_PROJECT_ID")
+    existing = _find_build_profile(args.id, project)
+    probe = dict(existing.get("readinessProbe") or {})  # 合并,不整体替换
+    if args.timeout is not None:
+        probe["timeoutSeconds"] = args.timeout
+    if args.interval is not None:
+        probe["intervalSeconds"] = args.interval
+    if args.path is not None:
+        probe["path"] = args.path
+    if args.no_http is not None:
+        probe["noHttp"] = args.no_http
+    _call("PUT", f"/api/build-profiles/{urllib.parse.quote(args.id)}",
+          body={"readinessProbe": probe})
+    ok({"profileId": args.id, "readinessProbe": probe},
+       note=f"profile {args.id} 就绪探测已更新(改完需重新部署生效)")
+
+
+def cmd_branch_set_mode(args: argparse.Namespace) -> None:
+    # Codex P2「Preserve existing branch overrides when setting mode」：
+    # PUT /profile-overrides/:pid 是**整体替换**，只发 activeDeployMode 会把该分支已有的
+    # env / containerPort / dockerImage / pathPrefixes 等覆盖字段清掉，下次部署用错端口/镜像。
+    # 先取现有覆盖、只合并这一个字段再 PUT。
+    existing: dict = {}
+    try:
+        listing = _call("GET", "/api/branches", timeout=30)
+        for b in (listing.get("branches", []) if isinstance(listing, dict) else []):
+            if b.get("id") == args.id:
+                ov = (b.get("profileOverrides") or {}).get(args.profile)
+                if isinstance(ov, dict):
+                    existing = dict(ov)
+                break
+    except Exception:
+        existing = {}  # 取不到就退化为只设模式（与旧行为一致，至少不更糟）
+    existing["activeDeployMode"] = args.mode
+    body = _call("PUT",
+                 f"/api/branches/{urllib.parse.quote(args.id)}"
+                 f"/profile-overrides/{urllib.parse.quote(args.profile)}",
+                 body=existing)
+    ok(body, note=f"分支 {args.id} / profile {args.profile} 部署模式覆盖 -> {args.mode}"
+                  "(已保留其它覆盖字段；需重新部署生效)")
+
+
+# ── 验收报告 / 报告文件夹（CDS 自托管，POST /api/reports + /api/report-folders）──
+# 本会话沉淀:把「视觉取证 → 自托管验收报告 → 项目/文件夹归类 → 直达深链」做成一等公民。
+# 取证管线(chromium 穿 agent 代理 + 截图入库)见 cli/acceptance/ 与 reference/acceptance-reports.md。
+
+def cmd_report_list(args: argparse.Namespace) -> None:
+    qs = []
+    if getattr(args, "project", None):
+        qs.append(f"projectId={urllib.parse.quote(args.project)}")
+    if getattr(args, "folder", None):
+        qs.append(f"folderId={urllib.parse.quote(args.folder)}")
+    path = "/api/reports" + ("?" + "&".join(qs) if qs else "")
+    body = _call("GET", path, timeout=30)
+    reports = body.get("reports", []) if isinstance(body, dict) else []
+    if _HUMAN:
+        print(f"{len(reports)} 份验收报告:")
+        for r in reports:
+            print(f"  - {r.get('id','?')[:8]}  {r.get('title','?')}  "
+                  f"[{r.get('format','?')}]  proj={r.get('projectId') or '-'}  folder={r.get('folderId') or '-'}")
+        return
+    ok(reports)
+
+
+def cmd_report_get(args: argparse.Namespace) -> None:
+    body = _call("GET", f"/api/reports/{urllib.parse.quote(args.id)}", timeout=20)
+    ok(body)
+
+
+def cmd_report_create(args: argparse.Namespace) -> None:
+    """创建一份验收报告。--html-file 读取自包含 HTML(截图建议已内联 base64,单份<10MB)。
+    报告按设计是 CDS 登录态门控,无需知识库。可 --project / --folder 归类。"""
+    fmt = args.format
+    if args.html_file:
+        with open(args.html_file, "r", encoding="utf-8") as f:
+            content = f.read()
+        if not args.format:
+            fmt = "md" if args.html_file.lower().endswith((".md", ".markdown")) else "html"
+    elif args.content:
+        content = args.content
+        fmt = fmt or "html"
+    else:
+        die("--html-file 或 --content 至少给一个", code=1)
+        return
+    payload: dict[str, Any] = {"title": args.title, "format": fmt, "content": content}
+    if getattr(args, "project", None):
+        payload["projectId"] = args.project
+    if getattr(args, "folder", None):
+        payload["folderId"] = args.folder
+    # 项目 = 根目录,技能自取子文件夹路径("/"分隔,如 视觉创作/2026-06-22)。带项目 key 提交时
+    # CDS 会在该项目下 find-or-create 这条嵌套文件夹链并把报告放进去,不再全堆在项目顶层。
+    elif getattr(args, "folder_path", None):
+        payload["folderPath"] = args.folder_path
+    # 验收元数据 + E1 部署上下文(看板/跨系统展示/PR 回写都靠这些)。
+    if getattr(args, "verdict", None):
+        payload["verdict"] = args.verdict
+    if getattr(args, "tier", None):
+        payload["tier"] = args.tier
+    if getattr(args, "branch", None):
+        payload["branch"] = args.branch
+    if getattr(args, "branch_id", None):
+        payload["branchId"] = args.branch_id
+    if getattr(args, "commit", None):
+        payload["commitSha"] = args.commit
+    if getattr(args, "pr", None) is not None:
+        payload["prNumber"] = args.pr
+    if getattr(args, "deploy_mode", None):
+        payload["deployMode"] = args.deploy_mode
+    if getattr(args, "defects", None):
+        # --defects 接受 JSON('{"p0":0,"p1":2}') 或 'p0=0,p1=2' 两种写法。
+        raw = args.defects.strip()
+        parsed: Any = None
+        if raw.startswith("{"):
+            try:
+                parsed = json.loads(raw)
+            except Exception:
+                parsed = None
+        else:
+            parsed = {}
+            for pair in raw.split(","):
+                if "=" in pair:
+                    k, v = pair.split("=", 1)
+                    try:
+                        parsed[k.strip()] = int(v.strip())
+                    except Exception:
+                        pass
+        if parsed:
+            payload["defectCounts"] = parsed
+    body = _call("POST", "/api/reports", body=payload, timeout=60)
+    rep = body.get("report") if isinstance(body, dict) else None
+    rid = (rep or {}).get("id", "?")
+    if _HUMAN:
+        # 深链的 folder 取服务端实际归属的 folderId（--folder-path 由服务端解析成 id），
+        # 而非仅 CLI 的 --folder，否则用 --folder-path 创建的报告深链会缺 folder=、
+        # 左侧文件夹不高亮（Cursor Bugbot Medium）。
+        folder_id = (rep or {}).get("folderId") or getattr(args, "folder", None)
+        print(f"[OK] 已创建报告 {rid[:8]}  {args.title}")
+        print(f"  直达: {_cds_base()}/reports?"
+              + (f"folder={folder_id}&" if folder_id else "")
+              + f"report={rid}")
+        return
+    ok({"report": rep}, note=f"已创建报告 {rid}")
+
+
+def cmd_report_delete(args: argparse.Namespace) -> None:
+    body = _call("DELETE", f"/api/reports/{urllib.parse.quote(args.id)}", timeout=20)
+    ok(body, note=f"已删除报告 {args.id}")
+
+
+def cmd_report_deeplink(args: argparse.Namespace) -> None:
+    """打印某报告的应用内直达深链(点了直接打开该报告,左侧文件夹高亮)。"""
+    meta = _call("GET", f"/api/reports/{urllib.parse.quote(args.id)}", timeout=20)
+    rep = meta.get("report") if isinstance(meta, dict) else None
+    if not rep:
+        die("报告不存在", code=2)
+        return
+    folder = rep.get("folderId")
+    project = rep.get("projectId")
+    qs = []
+    if project:
+        qs.append(f"project={urllib.parse.quote(project)}")
+    if folder:
+        qs.append(f"folder={urllib.parse.quote(folder)}")
+    qs.append(f"report={urllib.parse.quote(args.id)}")
+    url = f"{_cds_base()}/reports?" + "&".join(qs)
+    if _HUMAN:
+        print(url)
+        return
+    ok({"url": url, "id": args.id})
+
+
+def cmd_report_folder_list(args: argparse.Namespace) -> None:
+    qs = f"?projectId={urllib.parse.quote(args.project)}" if getattr(args, "project", None) else ""
+    body = _call("GET", "/api/report-folders" + qs, timeout=20)
+    folders = body.get("folders", []) if isinstance(body, dict) else []
+    if _HUMAN:
+        print(f"{len(folders)} 个报告文件夹:")
+        for f in folders:
+            print(f"  - {f.get('id','?')[:8]}  {f.get('name','?')}  proj={f.get('projectId') or '-'}")
+        return
+    ok(folders)
+
+
+def cmd_report_folder_create(args: argparse.Namespace) -> None:
+    payload: dict[str, Any] = {"name": args.name}
+    if getattr(args, "project", None):
+        payload["projectId"] = args.project
+    if getattr(args, "parent", None):
+        payload["parentId"] = args.parent
+    body = _call("POST", "/api/report-folders", body=payload, timeout=20)
+    folder = body.get("folder") if isinstance(body, dict) else None
+    ok({"folder": folder}, note=f"已新建文件夹 {(folder or {}).get('name','?')} id={(folder or {}).get('id','?')}")
+
+
+def cmd_report_folder_rename(args: argparse.Namespace) -> None:
+    body = _call("PATCH", f"/api/report-folders/{urllib.parse.quote(args.id)}",
+                 body={"name": args.name}, timeout=20)
+    ok(body, note=f"已重命名文件夹 {args.id} -> {args.name}")
+
+
+def cmd_report_folder_delete(args: argparse.Namespace) -> None:
+    body = _call("DELETE", f"/api/report-folders/{urllib.parse.quote(args.id)}", timeout=20)
+    ok(body, note=f"已删除文件夹 {args.id}(内部报告改为未归类)")
+
+
+def cmd_peer_pairing_code(args: argparse.Namespace) -> None:
+    """生成一次性 peer-sync 配对码,交给 MAP「同步中心」配对本 CDS(验收报告整库 pull)。"""
+    payload: dict[str, Any] = {}
+    if getattr(args, "name", None):
+        payload["displayName"] = args.name
+    body = _call("POST", "/api/peer-sync/admin/pairing-codes", body=payload, timeout=20)
+    if _HUMAN and isinstance(body, dict):
+        print(f"配对码(明文仅此一次): {body.get('pairingCode','?')}")
+        print(f"  过期: {body.get('expiresAt','?')}")
+        print(f"  本 CDS nodeId: {body.get('selfNodeId','?')}")
+        print(f"  用法: 在 MAP 同步中心新增 CDS 节点,填本 CDS 的 peer-sync baseUrl + 上面的配对码")
+        return
+    ok(body)
+
+
+def cmd_peer_nodes(args: argparse.Namespace) -> None:
+    """列出已与本 CDS 配对的对端节点(MAP 等)。"""
+    body = _call("GET", "/api/peer-sync/admin/nodes", timeout=20)
+    nodes = body.get("nodes", []) if isinstance(body, dict) else []
+    if _HUMAN:
+        print(f"本 CDS nodeId: {(body or {}).get('selfNodeId','?')}")
+        print(f"{len(nodes)} 个已配对节点:")
+        for n in nodes:
+            print(f"  - {n.get('id','?')[:8]}  partner={n.get('partnerNodeId','?')[:12]}  "
+                  f"{n.get('partnerDisplayName') or '-'}  lastUsed={n.get('lastUsedAt') or '-'}")
+        return
+    ok(nodes)
+
+
+def cmd_peer_node_revoke(args: argparse.Namespace) -> None:
+    body = _call("DELETE", f"/api/peer-sync/admin/nodes/{urllib.parse.quote(args.id)}", timeout=20)
+    ok(body, note=f"已撤销 peer 节点 {args.id}")
 
 
 def cmd_self_branches(args: argparse.Namespace) -> None:
@@ -6436,6 +6743,86 @@ def _build_parser() -> argparse.ArgumentParser:
     bc.add_argument("--project", help="projectId(或读 CDS_PROJECT_ID)")
     bc.add_argument("--branch", required=True, help="git 分支名(必填)")
     bc.set_defaults(func=cmd_branch_create)
+    bsm = br.add_parser("set-mode",
+                        help="设置单分支的部署模式覆盖(activeDeployMode)。"
+                             "如把某预览分支的 web 改成 dev 模式。")
+    bsm.add_argument("id", help="CDS canonical branch id")
+    bsm.add_argument("profile", help="构建配置 id(profileId)")
+    bsm.add_argument("mode", help="部署模式名(须存在于该 profile 的 deployModes)")
+    bsm.set_defaults(func=cmd_branch_set_mode)
+
+    # 验收报告(CDS 自托管 HTML/Markdown,登录态门控,可按项目/文件夹归类)
+    rep = sub.add_parser("report", help="验收报告:列出/查看/创建/删除/直达深链").add_subparsers(dest="sub", required=True)
+    rl = rep.add_parser("list", help="列出报告(可 --project / --folder 过滤)")
+    rl.add_argument("--project"); rl.add_argument("--folder", help="folderId,或 'none' 仅未归类")
+    rl.set_defaults(func=cmd_report_list)
+    rg = rep.add_parser("get"); rg.add_argument("id"); rg.set_defaults(func=cmd_report_get)
+    rc = rep.add_parser("create", help="创建报告(--html-file 自包含 HTML,截图内联 base64)")
+    rc.add_argument("--title", required=True)
+    rc.add_argument("--html-file", help="报告 HTML/MD 文件路径")
+    rc.add_argument("--content", help="直接给正文(与 --html-file 二选一)")
+    rc.add_argument("--format", choices=["html", "md"], help="默认按文件名/html 推断")
+    rc.add_argument("--project"); rc.add_argument("--folder")
+    rc.add_argument("--folder-path", help="项目下嵌套文件夹路径('/'分隔,如 视觉创作/2026-06-22);"
+                    "带项目 key 提交时 CDS 自动 find-or-create 这条链。与 --folder 二选一")
+    # 验收元数据 + E1 部署上下文(看板/跨系统/PR 回写)
+    rc.add_argument("--verdict", choices=["pass", "conditional", "fail"], help="验收结论")
+    rc.add_argument("--tier", help="验收档位(如 'P0 冒烟' / '视觉回归')")
+    rc.add_argument("--branch", help="被验收分支名(E1 部署上下文)")
+    rc.add_argument("--branch-id", help="关联 CDS 分支 ID(可从中自动补全分支名/commit)")
+    rc.add_argument("--commit", help="被验收 commit SHA(E1 部署上下文)")
+    rc.add_argument("--pr", type=int, help="关联 PR 编号(E1,便于 E4 回写)")
+    rc.add_argument("--deploy-mode", help="部署模式(fast/source/preview)")
+    rc.add_argument("--defects", help="缺陷计数,JSON('{\"p0\":0,\"p1\":2}')或 'p0=0,p1=2'")
+    rc.set_defaults(func=cmd_report_create)
+    rd = rep.add_parser("delete"); rd.add_argument("id"); rd.set_defaults(func=cmd_report_delete)
+    rk = rep.add_parser("deeplink", help="打印某报告的应用内直达深链")
+    rk.add_argument("id"); rk.set_defaults(func=cmd_report_deeplink)
+
+    rf = sub.add_parser("report-folder", help="验收报告文件夹:列出/新建/重命名/删除").add_subparsers(dest="sub", required=True)
+    rfl = rf.add_parser("list"); rfl.add_argument("--project"); rfl.set_defaults(func=cmd_report_folder_list)
+    rfc = rf.add_parser("create"); rfc.add_argument("--name", required=True); rfc.add_argument("--project")
+    rfc.add_argument("--parent", help="父文件夹 ID(嵌套子文件夹;省略=根级)")
+    rfc.set_defaults(func=cmd_report_folder_create)
+    rfr = rf.add_parser("rename"); rfr.add_argument("id"); rfr.add_argument("--name", required=True)
+    rfr.set_defaults(func=cmd_report_folder_rename)
+    rfd = rf.add_parser("delete"); rfd.add_argument("id"); rfd.set_defaults(func=cmd_report_folder_delete)
+
+    # MAP-KBTP peer-sync 管理(让 MAP 等系统按知识库开放协议拉取 CDS 验收报告)
+    peer = sub.add_parser("peer", help="peer-sync 配对:生成配对码 / 列举撤销节点").add_subparsers(dest="sub", required=True)
+    ppc = peer.add_parser("pairing-code", help="生成一次性配对码(交给 MAP 同步中心)")
+    ppc.add_argument("--name", help="备注:这把码发给谁"); ppc.set_defaults(func=cmd_peer_pairing_code)
+    pnl = peer.add_parser("nodes", help="列出已配对节点"); pnl.set_defaults(func=cmd_peer_nodes)
+    pnr = peer.add_parser("revoke", help="撤销一个已配对节点"); pnr.add_argument("id")
+    pnr.set_defaults(func=cmd_peer_node_revoke)
+
+    prof = sub.add_parser(
+        "profile",
+        help="构建配置:就绪超时(探活) / 部署模式。AI 用 key 直接设,不依赖 dashboard。",
+    ).add_subparsers(dest="sub", required=True)
+    pfl = prof.add_parser("list", help="列出构建配置 + 当前部署模式 + 就绪超时")
+    pfl.add_argument("--project", help="projectId(或读 CDS_PROJECT_ID)")
+    pfl.set_defaults(func=cmd_profile_list)
+    pfdm = prof.add_parser("deploy-mode", help="切换 profile 的激活部署模式")
+    pfdm.add_argument("id", help="构建配置 id(profileId)")
+    pfdm.add_argument("mode", nargs="?", help="部署模式名(须存在于 deployModes)")
+    pfdm.add_argument("--reset", action="store_true", help="恢复默认(清空 activeDeployMode)")
+    pfdm.set_defaults(func=cmd_profile_deploy_mode)
+    pfr = prof.add_parser(
+        "readiness",
+        help="设置就绪探测(探活):超时 / 间隔 / 路径 / 是否跳过 HTTP。GET-合并-PUT 保留未改字段。",
+    )
+    pfr.add_argument("id", help="构建配置 id(profileId)")
+    pfr.add_argument("--timeout", type=int, default=None, help="就绪最长等待秒数(timeoutSeconds)")
+    pfr.add_argument("--interval", type=int, default=None, help="探测间隔秒数(intervalSeconds)")
+    pfr.add_argument("--path", default=None, help="HTTP 探测路径(如 /health)")
+    pfr_http = pfr.add_mutually_exclusive_group()
+    pfr_http.add_argument("--no-http", dest="no_http", action="store_const", const=True,
+                          default=None, help="跳过 HTTP 探测只做 TCP(后台 worker 用)")
+    pfr_http.add_argument("--http", dest="no_http", action="store_const", const=False,
+                          help="恢复 HTTP 探测(撤销 --no-http)")
+    pfr.add_argument("--project", help="projectId(或读 CDS_PROJECT_ID),用于按 id 定位 profile")
+    pfr.set_defaults(func=cmd_profile_readiness)
 
     env = sub.add_parser("env", help="环境变量").add_subparsers(dest="sub", required=True)
     eg = env.add_parser("get"); eg.add_argument("--scope"); eg.set_defaults(func=cmd_env_get)

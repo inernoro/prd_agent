@@ -594,6 +594,8 @@ describe('极速版 — dispatcher', () => {
     const branch = stateService.getBranch(pushed.branchId!);
     expect(branch?.ciImageStatus).toBe('waiting');
     expect(branch?.ciTargetSha).toBe(NEW_SHA);
-    expect(branch?.ciWorkflowRunUrl).toBeUndefined();
+    // 清空写空串而非 undefined：SSE 下发整 branch、JSON 丢 undefined，'' 才能让客户端
+    // merge 真正覆盖旧链接（PR #922 Bugbot/Codex P2）。两者都 falsy，UI 同样隐藏「查看构建」。
+    expect(branch?.ciWorkflowRunUrl).toBe('');
   });
 });

@@ -167,6 +167,14 @@ export interface BuildProfile {
    */
   fallbackImage?: string | string[];
   /**
+   * 2026-06-24 极速版自动回退源码编译新增 —— **运行期字段,不持久化**。
+   * 由 resolveEffectiveProfile 在解析出 prebuilt(极速版) profile 时,**从 baseline**
+   * 额外解析出一个源码编译 profile 挂在这里(dockerImage=源码基础镜像如 dotnet-sdk/node,
+   * command=源码构建命令,prebuiltImage=false)。runService 在极速版镜像全部拉不到时,
+   * 直接切到这个已正确解析的源码 profile,避免「从极速版 profile 原地切换」误继承 sha
+   * 镜像/8080 端口(那是 bug)。无源码模式可回退时为 undefined。 */
+  sourceFallbackProfile?: BuildProfile;
+  /**
    * 2026-05-01 Phase 5 新增 —— 多分支数据库隔离策略。
    *
    * 'shared'(默认):所有分支共用一个数据库实例 + 一个 database name。
@@ -445,6 +453,48 @@ export interface ResourceLimits {
  */
 export type BranchHeatState = 'hot' | 'warming' | 'cooling' | 'cold';
 
+/**
+ * 分支被删原因，决定 gone 页渲染哪种中间页：
+ *  - 'merged'    PR 合并进主分支 → 引导用户切换到主分支预览
+ *  - 'abandoned' PR 关闭未合并 / 分支被直接删除 → 告知已放弃，跳 PR/commit
+ */
+export type BranchRemovalReason = 'merged' | 'abandoned';
+
+/**
+ * 分支墓碑 —— 分支删除后留下的一条轻量记录，让"过期分支预览页"能区分
+ * "已合并到主分支"（引导切主分支）与"已放弃/删除"（跳 PR/commit），
+ * 不必保留整个 BranchEntry。写入点见 github-webhook 路由层 recordRemovedBranch。
+ */
+export interface BranchTombstone {
+  /** 预览子域名 slug（gone 页查询主键，与 BranchTombstone 在 removedBranches 的 key 相同）。 */
+  previewSlug: string;
+  /** git 分支名（展示用）。 */
+  branch: string;
+  /** 所属项目 id。 */
+  projectId: string;
+  /** 删除原因。 */
+  reason: BranchRemovalReason;
+  /** 关联 PR 号（若由 PR 事件触发）。 */
+  prNumber?: number;
+  /** 关联 PR 的 GitHub 链接。 */
+  prUrl?: string;
+  /** 合并提交 SHA（reason='merged' 时由 PR payload 带出）。 */
+  mergeCommitSha?: string;
+  /** PR 的目标分支名（merged 时即合并进的分支，通常等于默认分支）。 */
+  baseRef?: string;
+  /** 记录当时解析出的项目默认分支名（"切换到主分支"按钮的目标分支）。 */
+  defaultBranch?: string | null;
+  /**
+   * 分支 canonical id。gone 页对**自定义子域别名**访问时，proxy 的 extractPreviewBranch
+   * 返回的是分支 id（或别名 label）而非 v3 previewSlug，主键查不到 → 用它兜底匹配。
+   */
+  branchId?: string;
+  /** 分支的自定义子域别名（删除前快照）。别名访问 gone 页时用它兜底匹配墓碑。 */
+  aliases?: string[];
+  /** 记录时间（ISO）。容量淘汰按此排序。 */
+  removedAt: string;
+}
+
 /** Branch entry — simplified for CDS */
 export interface BranchEntry {
   id: string;
@@ -596,6 +646,17 @@ export interface BranchEntry {
   ciWorkflowConclusion?: string;
   /** 关联的 GitHub Actions run 页面 URL,前端「等待中 / 失败」态可一键跳转查看。 */
   ciWorkflowRunUrl?: string;
+  /**
+   * 进入极速版「等待 CI 镜像」态的时刻（ISO）。看门狗据此判定 waiting 是否超时
+   * （等不到 workflow_run.completed —— 分支缺 branch-image.yml / CI 未运行 / 投递丢失）。
+   * 缺省时看门狗退回 lastPushAt 计时。
+   */
+  ciWaitingSince?: string;
+  /**
+   * 极速版镜像未就绪的人类可读原因（看门狗超时或 CI 失败时写）。前端「CI 镜像未就绪」
+   * 卡片展示此文案,替代过去把它误渲染成「容器停止 · 无记录」。
+   */
+  ciImageError?: string;
   /**
    * PR number this branch is associated with (via webhook `pull_request`
    * event). Populated when CDS first sees a PR opened/reopened from this
@@ -1041,6 +1102,13 @@ export interface CdsState {
   resourceExternalAccess?: Record<string, ResourceExternalAccessPolicy>;
   /** Resource-scoped database clone / create / restore task history. */
   resourceCloneTasks?: ResourceCloneTask[];
+  /**
+   * 分支墓碑台账（PR 合并/关闭后分支被删，gone 页据此区分"已合并"与"已放弃"）。
+   * Keyed by previewSlug（即预览子域名 slug，与 gone 页收到的 slug 同口径），
+   * 这样 serveBranchGonePage(slug) 能直接命中。容量上限由 StateService
+   * recordRemovedBranch 维护（保留最近 N 条，按 removedAt 淘汰最旧）。
+   */
+  removedBranches?: Record<string, BranchTombstone>;
   /** Registered remote CDS peers (for one-click cross-CDS data migration) */
   cdsPeers?: CdsPeer[];
   /**
@@ -1197,6 +1265,12 @@ export interface CdsState {
    */
   daemonReadyAt?: string;
   /**
+   * 2026-06-24：系统级「发布(部署)阶段就绪探测下限秒数」默认值（默认 1200）。
+   * 项目可用 Project.deployReadinessFloorSeconds 覆盖。仅作用于部署首启的就绪等待
+   * （取 max(profile.timeoutSeconds, 此下限)），运行期重启/唤醒保持各 profile 短超时。
+   */
+  deployReadinessFloorSeconds?: number;
+  /**
    * GitHub webhook 投递日志(2026-05-07 用户反馈"需要看到每次 hook 详情")。
    * Ring buffer,最多 200 条,新插入溢出时丢最早的。系统级 —— 跨项目的全部
    * webhook 都进同一队列(每条带 repoFullName 区分),前端「CDS 系统设置」→
@@ -1246,6 +1320,55 @@ export interface CdsState {
    * iframe 渲染（不授予 same-origin），见 routes/reports.ts。
    */
   acceptanceReports?: AcceptanceReportMeta[];
+  /** 验收报告文件夹（项目级分类，见 ReportFolder）。 */
+  reportFolders?: ReportFolder[];
+  /** WS3 MAP-KBTP peer-sync：本 CDS 实例的稳定 nodeId（首次用时生成）。 */
+  peerSelfNodeId?: string;
+  /** WS3：已配对的对端节点（MAP 等），见 PeerNodeRecord。 */
+  peerNodes?: PeerNodeRecord[];
+  /** WS3：待用的一次性配对码（明文不存，只存 hash），见 PeerPairingCode。 */
+  peerPairingCodes?: PeerPairingCode[];
+}
+
+/**
+ * WS3 MAP-KBTP v1 peer-sync：已配对的对端节点。
+ * CDS 作为「源 peer」对外暴露验收报告供 MAP 等系统按知识库开放协议拉取。
+ * sharedSecret 是 HMAC-SHA256 的密钥（base64 编码的 32 字节随机串）。
+ */
+export interface PeerNodeRecord {
+  /** 本地记录 ID。 */
+  id: string;
+  /** 对端自报的稳定 nodeId（请求头 X-Peer-Node 的值）。 */
+  partnerNodeId: string;
+  /** 配对时生成的共享密钥（base64，HMAC 密钥）。明文存储——本机可读即可签验。 */
+  sharedSecret: string;
+  /** 对端公开 baseUrl（对端 handshake 自报，审计/回调用，本实现不回调）。 */
+  partnerBaseUrl?: string;
+  /** 对端显示名。 */
+  partnerDisplayName?: string;
+  /** 创建时间 ISO。 */
+  createdAt: string;
+  /** 最近一次被对端调用时间（审计）。 */
+  lastUsedAt?: string;
+}
+
+/**
+ * WS3：一次性配对码。管理员在 CDS 生成明文码交给对端，对端 handshake 时回带。
+ * CDS 只存 sha256 hash，校验通过即换发 sharedSecret + 建 PeerNodeRecord。
+ */
+export interface PeerPairingCode {
+  /** 稳定 ID。 */
+  id: string;
+  /** 配对码明文的 sha256 hex（明文不存）。 */
+  codeHash: string;
+  /** 备注显示名（这把码发给谁）。 */
+  displayName?: string;
+  /** 过期时间 ISO。 */
+  expiresAt: string;
+  /** 是否已被消费。 */
+  used: boolean;
+  /** 创建时间 ISO。 */
+  createdAt: string;
 }
 
 /**
@@ -1266,14 +1389,55 @@ export interface AcceptanceReportMeta {
   projectId?: string | null;
   /** 可选关联分支 ID；不关联时为 null。 */
   branchId?: string | null;
+  /** 可选归属文件夹 ID（项目内分类）；未归类时为 null。文件夹的 projectId 必须与本报告一致。 */
+  folderId?: string | null;
   /** 正文字节数（UTF-8）。 */
   sizeBytes: number;
+  /** 验收结论：pass 通过 / conditional 有条件通过 / fail 不通过；未判定为 null。 */
+  verdict?: 'pass' | 'conditional' | 'fail' | null;
+  /** 验收档位（如 P0 冒烟 / 视觉回归 / 完整验收等，自由文本，用于看板分组）；可空。 */
+  tier?: string | null;
+  /** 缺陷计数（按严重度），如 { p0:0, p1:1, p2:3 }；可空。 */
+  defectCounts?: Record<string, number> | null;
+  /** E1 部署上下文：被验收对象对应的 commit SHA（7+ 位）；可空。 */
+  commitSha?: string | null;
+  /** E1 部署上下文：被验收对象对应的分支名（与 branchId 互补，分支名更可读）；可空。 */
+  branch?: string | null;
+  /** E1 部署上下文：关联的 PR 编号（数字，便于回写）；可空。 */
+  prNumber?: number | null;
+  /** E1 部署上下文：部署模式（如 'fast' 极速版 / 'source' 源码 / 'preview'）；可空。 */
+  deployMode?: string | null;
+  /**
+   * E6 匿名分享 token（只读公开链接 `/r/<token>`，补登录态门控缺口）。
+   * 为 null 时未开启分享；撤销分享即置回 null。token 是不可枚举的随机串。
+   */
+  shareToken?: string | null;
   /** 创建人（resolveActorFromRequest 解析的 actor，如 'user' / 'ai'）。 */
   createdBy?: string;
   /** 创建时间 ISO 字符串。 */
   createdAt: string;
   /** 最近一次更新时间 ISO 字符串。 */
   updatedAt: string;
+}
+
+/**
+ * 验收报告文件夹（项目级分类）。挂在某个 projectId 下，用于把该项目的验收报告
+ * 归类（如「2026-06 这几天 CDS 验收」「视觉回归」「冒烟」）。projectId=null 表示
+ * 全局报告（CDS 自身）的文件夹。报告的 folderId 必须与文件夹的 projectId 同属。
+ */
+export interface ReportFolder {
+  /** 稳定 ID。 */
+  id: string;
+  /** 文件夹名称（用户填写）。 */
+  name: string;
+  /** 归属项目 ID；全局（CDS 自身）报告的文件夹为 null。 */
+  projectId?: string | null;
+  /** 父文件夹 ID（嵌套层级，根级为 null）。项目 = 根目录，下面技能自取多层子文件夹。 */
+  parentId?: string | null;
+  /** 排序权重（小在前）。 */
+  sortOrder: number;
+  /** 创建时间 ISO 字符串。 */
+  createdAt: string;
 }
 
 /**
@@ -2205,6 +2369,13 @@ export interface Project {
    * 时间锚点 = lastReadyAt（部署成绿色），而不是 HTTP 流量，避免长连接永远刷新。
    */
   autoPublishAfterMinutes?: number;
+  /**
+   * 2026-06-24：项目级「发布(部署)阶段就绪探测下限秒数」覆盖。覆盖系统默认
+   * （CdsState.deployReadinessFloorSeconds，未设则 1200）。仅作用于**部署首启**的
+   * 就绪等待（取 max(该 profile 的 timeoutSeconds, 此下限)），运行期重启/唤醒不受影响。
+   * 给构建慢 / JVM 暖机慢的项目留足发布探测时间，避免被探活超时误杀。
+   */
+  deployReadinessFloorSeconds?: number;
   /**
    * Deprecated: 旧版项目级 "运行 N 分钟后自动停止" 策略。
    * 自动停止已收敛到 CDS 系统级 SchedulerService，避免项目设置中出现
