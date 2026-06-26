@@ -48,7 +48,7 @@ jobs:
   server-build:
     name: Server Build & Test
     needs: changes
-    if: needs.changes.outputs.server == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: github.event_name == 'pull_request' || needs.changes.outputs.server == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -137,7 +137,7 @@ jobs:
     # main 分支发布不能只依赖本次 push 的路径变更:
     # 如果上一轮某个模块构建失败,后续只改其他模块会导致失败模块永久 skipped。
     # PR/develop 仍按路径过滤节省资源。
-    if: needs.changes.outputs.admin == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: github.event_name == 'pull_request' || needs.changes.outputs.admin == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -187,7 +187,7 @@ jobs:
   desktop-check:
     name: Desktop Client Check
     needs: changes
-    if: needs.changes.outputs.desktop == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: github.event_name == 'pull_request' || needs.changes.outputs.desktop == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-22.04
     defaults:
       run:
@@ -333,7 +333,7 @@ jobs:
   cds-build:
     name: CDS Build & Test
     needs: changes
-    if: needs.changes.outputs.cds == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: github.event_name == 'pull_request' || needs.changes.outputs.cds == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     defaults:
       run:
