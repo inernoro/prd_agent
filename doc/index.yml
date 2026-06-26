@@ -284,6 +284,7 @@ docs:
   # 已知边界 / 后续可补 / 留尾风险，命名规范见 rule.doc.naming.md「debt.* 专项约定」
   debt.cds.project-migration: 项目迁移(CDS 项目移植) · 债务台账
   debt.agent-universe: 智能体宇宙 · 债务台账
+  debt.cds.agent.acceptance-smoke-drift: CDS Agent 验收 smoke 断言漂移 · 需专项修复或退役（未接 CI 的手工取证脚本）
   debt.cds.ci-prebuilt: CDS 极速版（CI 预构建）· 已知边界与遗留事项
   debt.knowledge-base.galaxy-vs-universe: 知识库 知识星球(3D 星系) 与 宇宙图(obsidian 群星) 并存 · 默认只展示星系 + 智能判别待做
   debt.knowledge-base.mention-network: 知识库引用网络 · MVP 已知边界与遗留事项
@@ -357,6 +358,7 @@ docs:
   plan.product-agent.version-workflow:
     title: "产品管理智能体版本流程整改计划"
     status: draft
+  debt.platform.emoji-corpus: 历史 emoji 语料清理 · 债务台账（skill/doc 存量 emoji → 对外 generated json，分批 de-emoji + CI 守卫）
   debt.platform.map-mcp-connector: MAP MCP 连接器债务台账
   debt.cds.performance: CDS 性能债务台账（构建越来越慢/前端缓慢根因 + 逐步解决）
   debt.team-activity.voc-legacy: 行为洞察 / VOC 体验之声 工程债务台账

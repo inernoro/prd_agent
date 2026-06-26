@@ -849,6 +849,10 @@
 - [行为洞察 / VOC 体验之声 工程债务台账](debt.team-activity.voc-legacy) `debt.team-activity.voc-legacy`
   > 行为洞察页面已知边界、待建造项（顶部 ribbon 流式动画、VOC 信息流等）与跨 session 债务
 
+- [历史 emoji 语料清理 · 债务台账](debt.platform.emoji-corpus) `debt.platform.emoji-corpus`
+  > skill/doc 存量 emoji（含语义状态标记）会经 bundle-official-skills 进对外 generated json；分批 de-emoji + CI 守卫，未排期
+- [CDS Agent 验收 smoke 断言漂移 · 债务台账](debt.cds.agent.acceptance-smoke-drift) `debt.cds.agent.acceptance-smoke-drift`
+  > 2026-05 手工取证 smoke 的 require_match 硬编码文案随 doc 改写漂移、未接 CI；需整组「修复(锚结构化字段)或退役」而非逐条打补丁
 - [移动端控制条过载治理台账](debt.frontend.mobile-control-bar-overload) `debt.frontend.mobile-control-bar-overload`
   > 移动端控制条过载问题（知识库/缺陷/周报/海鲜市场等页面，进内容前控制条 >1 条），治理机制与进度
 
