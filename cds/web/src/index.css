@@ -1146,7 +1146,10 @@
   }
 
   .cds-topbar {
-    @apply sticky top-0 z-20 flex h-14 items-center gap-3 px-6;
+    /* shrink-0 必须有：topbar 是 flex 列的子项，h-14(56px) 在没锁 shrink 时会被下方
+       高内容(加载完成的长列表/设置页)挤压到 ~37px —— 表现为"刷新完成顶栏就收缩"，
+       且因为是共享 header，所有页面一样(2026-06-26 用户反馈"一样的")。锁 shrink 即恒 56px。 */
+    @apply sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 px-6;
     background-color: hsl(var(--surface-base) / 0.92);
     backdrop-filter: saturate(180%) blur(10px);
     border-bottom: 1px solid hsl(var(--hairline));
