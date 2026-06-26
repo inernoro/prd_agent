@@ -236,11 +236,17 @@ def run_cds(cfg, a, title, report_id, body, manifest, now, tags=None):
         raise RuntimeError(f"CDS 入库失败：{json.dumps(resp, ensure_ascii=False)[:300]}")
     rid = rep["id"]
     base = _cds_base()
+    # 深链必须用 CDS 返回的**规范 id**：config 给的可能是项目 slug(如 prd-agent)，POST 时 CDS
+    # 会把 slug 规范成真实 projectId，但 Reports 页按存储的 projectId 过滤；深链若写回 slug，
+    # 列表端点 /api/reports?projectId=<slug> 命中空集，点开是空白(Codex review P2)。folderId
+    # 同理用返回值兜准。
+    link_project = rep.get("projectId") or project_id
+    link_folder = rep.get("folderId") or folder_id
     qs = []
-    if project_id:
-        qs.append(f"project={project_id}")
-    if folder_id:
-        qs.append(f"folder={folder_id}")
+    if link_project:
+        qs.append(f"project={link_project}")
+    if link_folder:
+        qs.append(f"folder={link_folder}")
     qs.append(f"report={rid}")
     deeplink = f"{base}/reports?" + "&".join(qs)
     print(json.dumps({

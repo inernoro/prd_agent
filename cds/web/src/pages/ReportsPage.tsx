@@ -239,7 +239,16 @@ export function ReportsPage(): JSX.Element {
   const handleDeleteFolder = useCallback(async (id: string) => {
     try {
       await deleteReportFolder(id);
-      setFolders((cur) => cur.filter((f) => f.id !== id));
+      // 后端删父级时把子文件夹上提一层(parentId → 被删者的父级)。本地必须同样上提，
+      // 否则子文件夹的 parentId 仍指向已删 id，FolderRail 的 parentId 树会丢掉它们直到刷新
+      // (Codex review P2)。
+      setFolders((cur) => {
+        const deleted = cur.find((f) => f.id === id);
+        const newParent = deleted?.parentId ?? null;
+        return cur
+          .filter((f) => f.id !== id)
+          .map((f) => ((f.parentId ?? null) === id ? { ...f, parentId: newParent } : f));
+      });
       setState((cur) => (cur.status === 'ok'
         ? { status: 'ok', reports: cur.reports.map((r) => (r.folderId === id ? { ...r, folderId: null } : r)) }
         : cur));
