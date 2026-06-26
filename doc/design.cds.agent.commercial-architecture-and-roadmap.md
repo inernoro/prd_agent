@@ -480,7 +480,7 @@ Phase 0/1/2/3 已完成本地验收，`P4-1 远端发布前验收与试用入口
 | 文档 | 角色 |
 | --- | --- |
 | 本文 | 唯一权威入口，回答目标、架构、阶段、验收、进度和测试对勾 |
-| `doc/status.cds-agent-current-progress.md` | 兼容旧链接的跳转页，不再维护独立进度 |
+| ~~`doc/status.cds-agent-current-progress.md`~~（不入库） | 旧跳转页，已合并进本文档；不作为 committed 文档存在，引用一律改指本文档 |
 | `doc/plan.cds.agent.workbench.md` | 历史主战场，保留大量上下文 |
 | `doc/design.cds.agent.runtime-architecture.md` | 旧 runtime 架构说明，后续应按本文校准 |
 | `doc/guide.workflow-agent.md` | 通用工作流使用指南，后续补 `CdsAgentRun` 章节 |
@@ -521,7 +521,7 @@ Phase 0/1/2/3 已完成本地验收，`P4-1 远端发布前验收与试用入口
 | [x] | 单测 | CDS runtime/profile 路由测试通过 | `npm --prefix cds test -- --run tests/routes/remote-hosts-instances.test.ts`：8/8 pass |
 | [x] | 单测 | MAP session transport 测试通过 | `dotnet test ... --filter InfraAgentSessionServiceRuntimeAdapterTests --no-restore`：12/12 pass |
 | [x] | 构建 | CDS build 通过 | `npm --prefix cds run build` pass |
-| [x] | 文档 | 架构与进度合并为单一权威入口 | 本文档；`doc/status.cds-agent-current-progress.md` 降级为跳转页 |
+| [x] | 文档 | 架构与进度合并为单一权威入口 | 本文档；旧 `status.cds-agent-current-progress.md` 不入库（本地跳转页），所有引用改指本文档 |
 
 ### 14.3 Phase 1 当前进度
 
