@@ -186,6 +186,9 @@ public class CdsReportImportService
                 await _documentService.SaveAsync(parsedDoc);
 
                 var contentIndex = storeContent.Length > 2000 ? storeContent[..2000] : storeContent;
+                // 归一化后正文的字节数 —— document-store API 与 peer-sync 导出都读 FileSize，
+                // 不设会让导入的报告显示/同步成 0 字节空条目（Codex P2）。
+                var fileSize = (long)Encoding.UTF8.GetByteCount(storeContent);
 
                 if (existing == null)
                 {
@@ -198,6 +201,7 @@ public class CdsReportImportService
                         ContentType = string.Equals(r.Format, "html", StringComparison.OrdinalIgnoreCase) ? "text/html" : "text/markdown",
                         ContentIndex = contentIndex,
                         ContentHash = hash,
+                        FileSize = fileSize,
                         SourceUrl = rawUrl,
                         Tags = tags,
                         Metadata = metadata,
@@ -221,6 +225,7 @@ public class CdsReportImportService
                             .Set(e => e.Title, parsedDoc.Title)
                             .Set(e => e.ContentIndex, contentIndex)
                             .Set(e => e.ContentHash, hash)
+                            .Set(e => e.FileSize, fileSize)
                             .Set(e => e.Tags, tags)
                             .Set(e => e.Metadata, metadata)
                             .Set(e => e.UpdatedBy, userId)
@@ -250,7 +255,12 @@ public class CdsReportImportService
         };
         // 只有默认全量镜像才回写增量游标 PeerSyncLastAt；过滤/换源导入若回写，会污染默认镜像的
         // updatedSince 游标，使另一作用域的旧报告被永久跳过（Codex P2）。
-        if (isDefaultScopeImport)
+        //
+        // 且**仅当本轮零失败**才推进水位：若某条报告正文拉取/资产归一化失败（result.Failed>0），
+        // 推进水位会把这条失败报告的 updatedAt 甩到游标之前，下次增量 updatedSince 永久排除它，
+        // 一次瞬时失败变成知识库永久缺条（Codex P2）。失败时保留旧水位，下次从原游标重列、靠
+        // contentHash 去重幂等重试失败项，全部成功后再推进。
+        if (isDefaultScopeImport && result.Failed == 0)
         {
             var newWatermark = watermark > DateTime.MinValue ? watermark : DateTime.UtcNow;
             updates.Add(Builders<DocumentStore>.Update.Set(s => s.PeerSyncLastAt, newWatermark));
