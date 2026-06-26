@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Library,
+  Orbit,
   Plus,
   Upload,
   ArrowLeft,
@@ -833,6 +835,16 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
   /** 顶栏「更多」下拉 */
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
+  // 下拉菜单 createPortal 到 body（PageHeader 根有 overflow-hidden，原地 absolute 会被裁掉 → 看着"点不开"）。
+  const moreMenuRef = useRef<HTMLDivElement>(null);
+  const [morePos, setMorePos] = useState<{ top: number; right: number } | null>(null);
+  const toggleMore = useCallback(() => {
+    if (!moreOpen) {
+      const r = moreRef.current?.getBoundingClientRect();
+      if (r) setMorePos({ top: r.bottom + 4, right: Math.max(8, window.innerWidth - r.right) });
+    }
+    setMoreOpen((o) => !o);
+  }, [moreOpen]);
 
   // 文件上传状态
   const [uploading, setUploading] = useState(false);
@@ -891,7 +903,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
   useEffect(() => {
     if (!moreOpen) return;
     const onDown = (e: MouseEvent) => {
-      if (moreRef.current && !moreRef.current.contains(e.target as Node)) setMoreOpen(false);
+      const t = e.target as Node;
+      // 菜单已 portal 到 body：点按钮容器或菜单本身内都算"内部"，避免点菜单项时先被关掉
+      if (!moreRef.current?.contains(t) && !moreMenuRef.current?.contains(t)) setMoreOpen(false);
     };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
@@ -1271,15 +1285,21 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
               {uploading ? <MapSpinner size={14} /> : <Upload size={13} />}
               {uploading ? '上传中…' : '上传文档'}
             </Button>
+            {/* 星系：3D 文档星系直达入口（此前藏在 宇宙图 里，新用户找不到） */}
+            <Button variant="secondary" size="xs" onClick={() => navigate(`/document-store/${storeId}/galaxy`)} title="3D 文档星系">
+              <Orbit size={13} /> 星系
+            </Button>
             {/* 更多：收纳低频管理动作（发布 / 关系图谱 / 统计 / 订阅），折叠屏只占一个位 */}
             <div className="relative" ref={moreRef}>
-              <Button variant="secondary" size="xs" onClick={() => setMoreOpen(o => !o)} title="更多操作">
+              <Button variant="secondary" size="xs" onClick={toggleMore} title="更多操作">
                 <MoreHorizontal size={14} /> 更多
               </Button>
-              {moreOpen && (
+              {/* createPortal 到 body：逃离 PageHeader 的 overflow-hidden（否则下拉被裁，看着点不开） */}
+              {moreOpen && morePos && createPortal(
                 <div
-                  className="absolute right-0 top-[34px] z-[120] min-w-[200px] rounded-[10px] py-1 shadow-lg"
-                  style={{ background: 'var(--bg-elevated)', border: '1px solid rgba(255,255,255,0.12)', boxShadow: '0 12px 40px rgba(0,0,0,0.4)' }}
+                  ref={moreMenuRef}
+                  className="fixed z-[10000] min-w-[200px] rounded-[10px] py-1 shadow-lg"
+                  style={{ top: morePos.top, right: morePos.right, background: 'var(--bg-elevated)', border: '1px solid rgba(255,255,255,0.12)', boxShadow: '0 12px 40px rgba(0,0,0,0.4)' }}
                 >
                   {store.isPublic ? (
                     <>
@@ -1290,9 +1310,11 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
                     <MoreItem icon={<Globe size={14} />} label={publishing ? '处理中…' : '发布到智识殿堂'} disabled={publishing} onClick={handleTogglePublish} dataTourId="document-store-publish" />
                   )}
                   <MoreItem icon={<Network size={14} />} label="关系图谱" onClick={() => { setMoreOpen(false); navigate(`/document-store/${storeId}/universe`); }} />
+                  <MoreItem icon={<Orbit size={14} />} label="3D 文档星系" onClick={() => { setMoreOpen(false); navigate(`/document-store/${storeId}/galaxy`); }} />
                   <MoreItem icon={<BarChart3 size={14} />} label="访客统计" onClick={() => { setMoreOpen(false); setShowViewers(true); }} />
                   <MoreItem icon={<Rss size={14} />} label="添加订阅" onClick={() => { setMoreOpen(false); setShowSubscribe(true); }} />
-                </div>
+                </div>,
+                document.body,
               )}
             </div>
           </div>
