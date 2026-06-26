@@ -30,6 +30,12 @@
 - 影响：无（reserved，init-only 可空，零运行时代价）。
 - 补法：需要 logprobs/其它特有字段时，在适配器解析处填 Extensions、在消费端（如 Open Platform 代理 / 日志）读出。
 
+### 4. 实机 E2E（G6）被鉴权阻断，未取证
+- 现状：F1/F3a/G1-G5 已 CI 全绿（1037 测试 + 11 新增）+ 部署到预览（`/api/v` 确认运行本分支 commit）。但**实机** before/after 取证未完成：
+  - 函数调用实跑 `/api/v1/chat/completions` 需 `sk-ak-*` OpenApi key（用户 JWT 在「接入 AI」弹窗签发）；`AI_ACCESS_KEY` 不被该端点接受（`AgentApiKeysController` 注释：AiAccessKey 双身份已撤回）。AI 无法自助签发。
+  - 识图 detail 走内部 `LLMAttachment` 路径（缺陷图分析 / 多图合成等内部功能），需登录态 + 功能上下文；浏览器直连预览被 agent 代理阻断（chromium ERR_CONNECTION_CLOSED，本 session 已确认 curl 可达但 chromium 不可达）。
+- 补法：用户提供一个 `sk-ak-*`（接入 AI 弹窗一键生成）即可由 AI 跑函数调用实机冒烟；识图 A/B 由用户在缺陷图分析等功能页眼检，或后续补一条接受 AiAccessKey 的内部 vision 自测端点。
+
 ## 范围外（更大的后续波次，非本债务）
 
 - gateway 物理独立成服务、观测性页面（Logs Generations/Upstream/Sessions）、池清理（IsMain/IsVision legacy 字段下线）、管理 UI OpenRouter 超集。
