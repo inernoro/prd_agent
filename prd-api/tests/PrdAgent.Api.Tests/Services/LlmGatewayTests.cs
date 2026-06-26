@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using PrdAgent.Core.Interfaces;
 using CoreGateway = PrdAgent.Core.Interfaces.LlmGateway;
 using PrdAgent.Core.Models;
@@ -412,6 +413,98 @@ public class LlmGatewayTests
 
         Assert.Equal("https://api.openai.com/v1/chat/completions", endpoint);
         Assert.Contains("/v1/", endpoint);
+    }
+
+    #endregion
+
+    #region Vision image_url.detail Tests
+
+    // 守护"识图不准"根因修复：LLMAttachment 的图片必须把 detail 透传进 image_url，
+    // 默认 "high"（避免上游默认 "auto" 低保真）；调用方显式传则用调用方的值。
+    // BuildRequestBody 为私有，走反射调用。
+    private static JsonObject InvokeBuildRequestBody(GatewayLLMClient client, List<LLMMessage> messages)
+    {
+        var m = typeof(GatewayLLMClient).GetMethod(
+            "BuildRequestBody",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        Assert.NotNull(m);
+        return (JsonObject)m!.Invoke(client, new object[] { string.Empty, messages })!;
+    }
+
+    private static JsonObject? FindImageUrlObject(JsonObject body)
+    {
+        var messages = body["messages"] as JsonArray;
+        if (messages == null) return null;
+        foreach (var msg in messages)
+        {
+            if (msg is not JsonObject mo) continue;
+            if (mo["content"] is not JsonArray content) continue;
+            foreach (var part in content)
+            {
+                if (part is JsonObject po && (string?)po["type"] == "image_url")
+                    return po["image_url"] as JsonObject;
+            }
+        }
+        return null;
+    }
+
+    private static GatewayLLMClient NewVisionClient()
+    {
+        var gateway = CreateTestGateway();
+        return Assert.IsType<GatewayLLMClient>(
+            gateway.CreateClient(AppCallerRegistry.Admin.Lab.Chat, "vision"));
+    }
+
+    [Fact]
+    public void BuildRequestBody_ImageAttachmentWithoutDetail_DefaultsToHigh()
+    {
+        var client = NewVisionClient();
+        var messages = new List<LLMMessage>
+        {
+            new()
+            {
+                Role = "user",
+                Content = "这张图里有什么？",
+                Attachments = new List<LLMAttachment>
+                {
+                    new() { Type = "image", Url = "https://example.com/a.png" }
+                }
+            }
+        };
+
+        var body = InvokeBuildRequestBody(client, messages);
+        var imageUrl = FindImageUrlObject(body);
+
+        Assert.NotNull(imageUrl);
+        Assert.Equal("https://example.com/a.png", (string?)imageUrl!["url"]);
+        Assert.Equal("high", (string?)imageUrl!["detail"]);
+    }
+
+    [Theory]
+    [InlineData("low")]
+    [InlineData("auto")]
+    [InlineData("high")]
+    public void BuildRequestBody_ImageAttachmentWithDetail_UsesCallerValue(string detail)
+    {
+        var client = NewVisionClient();
+        var messages = new List<LLMMessage>
+        {
+            new()
+            {
+                Role = "user",
+                Content = "识别",
+                Attachments = new List<LLMAttachment>
+                {
+                    new() { Type = "image", Url = "https://example.com/b.png", Detail = detail }
+                }
+            }
+        };
+
+        var body = InvokeBuildRequestBody(client, messages);
+        var imageUrl = FindImageUrlObject(body);
+
+        Assert.NotNull(imageUrl);
+        Assert.Equal(detail, (string?)imageUrl!["detail"]);
     }
 
     #endregion

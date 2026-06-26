@@ -70,18 +70,29 @@
 
 ## 4. 核心决策
 
-### 决策一：协议（Protocol）下沉到模型，三套 adapter 合一
+### 决策一：协议（Protocol）下沉到模型 + 透传保真（**2026-06-26 修订：删掉"全归一"**）
 
-给模型加一个 `Protocol` 字段（`LLMModel` 与 `ModelGroupItem` 各一份，后者可覆盖前者）。解析时：
+> **修订背景**：原文写"三套 adapter 合一 / 全部归一为协议处理器"。用户 2026-06-26 指出**协议不能一刀切归一**——协议是模型相关的，聚合平台已出现异构协议，强行归一会**有损**。取证证实了这点（3 路 Explore + 亲核 file:line，反例见本节末）。核心更正：**"下沉"对、"全归一"错，两者被原文混成了一件事**。
+
+**下沉（保留）**：给模型加 `Protocol` 字段（`LLMModel` 与 `ModelGroupItem` 各一份，后者覆盖前者），P1 已落地：
 
 ```
 protocol = item.Protocol ?? model.Protocol ?? platform.PlatformType
-adapter  = protocolRegistry.Get(protocol)        // 统一注册表
-endpoint = adapter.BuildEndpoint(model.ApiUrl ?? platform.ApiUrl, modelType)
+handler  = protocolRegistry.Get(protocol)        // 协议原生处理器（不拍平）
+endpoint = handler.BuildEndpoint(model.ApiUrl ?? platform.ApiUrl, modelType)
 key      = model.ApiKey ?? platform.ApiKey
 ```
 
-把现有 `IExchangeTransformer` 提升为这个**统一协议层**：openai/claude 两个 Gateway Adapter、三个 Image Adapter、五个 Transformer 全部归一为"协议处理器"，按 protocol 字符串索引。Exchange 不再是"特殊平台"，只是"一个带自己 url/key + 非 passthrough 协议的模型"。
+**透传保真（取代"全归一"）**：协议层是**原生处理器注册表**，每个协议**原生实现 + 透传**，而不是把所有上游拍平成一套 OpenAI schema。原则：**通用的归一（横切信封：路由/鉴权/计费/日志/健康），专有的透传（模型面富载荷）**。具体：
+
+- protocol 升级为**能力描述符**（声明模态 + 参数支持，如 vision-detail），不止一个字符串。
+- 补 **Extensions 容器**让 provider 特有字段（`tool_calls`/`logprobs`/`reasoning`/视觉参数）存活，不在响应解析时被丢。
+- **按模态保真契约**（vision: detail/分辨率/多图；image: quality/style），不强塞 chat 形状。
+- Claude 等"逐字段抄"的拍平改为"剔除已知不兼容字段 + 其余透传"。
+
+**反例（必须记住）**：识图不准 = `LLMAttachment` 没有 `detail` 字段、`GatewayLLMClient.BuildRequestBody` 只写 url 不写 detail → 7/9 视觉路径默认 `detail:"auto"` 低保真。这就是"全归一/拍平有损"的活标本。F1 已修（`LLMAttachment.Detail` + 透传默认 "high"）。
+
+把现有 `IExchangeTransformer` 提升为这个**协议层**：openai/claude 两个 Gateway Adapter、三个 Image Adapter、五个 Transformer 收成"协议处理器"，按 protocol 字符串索引，**但各自保真、不互相拍平**。Exchange 不再是"特殊平台"，只是"一个带自己 url/key + 非 passthrough 协议的模型"。
 
 协议清单收敛到一个**小而封闭**的集合（不再"来个供应商写个 adapter"）：
 
