@@ -1,12 +1,12 @@
 ---
 name: create-visual-test-to-kb
 version: 1.0.0
-description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v2）——模拟人类的浏览器取证 + 标准化验收报告 + 归档进知识库并出分享链。一个技能内含三段：标准/模板、模拟人类浏览器取证（点击导航进入、禁地址栏直达、双主题截图、ZZ 照做风画框标序号 stepClick/stepShot）、报告归档（命名 状态前置，根治目录 `---`，**每次归档强制输出可达地址**：分享短链优先、拿不到则给 owner 登录路径）。默认报告走 **ZZ 照做风**（全大标题 + 一句话一步 + 逐步配图 `{{IMG:}}` + 文字在上图在下 + 变化处画框 + 分支顺序讲，同岗位照做必复现）。归档前有**强制准入校验**：目标/档位/Verdict/截图数/证据完整性/报告结构不达标直接拒收（入口准则，杜绝"什么都能进"）。项目无关，改 acceptance.config.json 即可跨仓库复用；无文档空间的仓库退化为本地 md+截图。触发词："视觉验收"、"验收"、"视觉测试"、"验收归档"、"归档验收报告"、"create visual test"、"/视觉验收"、"/验收"。
+description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v2）——模拟人类的浏览器取证 + 标准化验收报告 + 归档进 CDS 验收中心并出直达深链。职责分离：验收报告永远按项目归 CDS（平台自带、证据链内置），MAP 等系统通过知识库开放协议从 CDS 拉取展示，技能不再分流到 MAP 知识库。一个技能内含三段：标准/模板、模拟人类浏览器取证（点击导航进入、禁地址栏直达、双主题截图、ZZ 照做风画框标序号 stepClick/stepShot）、报告归档（命名结构固定，**每次归档强制输出可达地址**：CDS 直达深链 /reports，匿名对外用 /r/token）。默认报告走 **ZZ 照做风**（全大标题 + 一句话一步 + 逐步配图 `{{IMG:}}` + 文字在上图在下 + 变化处画框 + 分支顺序讲，同岗位照做必复现）。归档前有**强制准入校验**：目标/档位/Verdict/截图数/证据完整性/报告结构不达标直接拒收（入口准则，杜绝"什么都能进"）。项目无关，改 acceptance.config.json 即可跨仓库复用；无 CDS/离线退化为本地 md+截图。触发词："视觉验收"、"验收"、"视觉测试"、"验收归档"、"归档验收报告"、"create visual test"、"/视觉验收"、"/验收"。
 ---
 
 # 验收归档 v2 — 工业级功能验收全流水线
 
-> 一条不可分的流水线:**标准定义测什么/怎么截/怎么命名 → 模拟人类浏览器取证 → 证据落库出分享链**。
+> 一条不可分的流水线:**标准定义测什么/怎么截/怎么命名 → 模拟人类浏览器取证 → 证据落 CDS 验收中心出直达深链**。
 > 主纲在此,完整规则按需加载(见下"按需文件")。**先读 `reference/standard-v2.md`**——那是下限基线,不是参考是必读。
 
 ## 何时用
@@ -20,9 +20,9 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
 |------|------|----------|
 | **Playwright + Chromium** | harness 跑无头浏览器取证 | `npm i -g playwright && npx playwright install chromium`;运行时设 `PWPATH=$(npm root -g)/playwright` |
 | **Python 3** | 跑 `archive_report.py` | 系统自带 |
-| **登录凭据 env** | harness 表单登录 | `MAP_AI_USER`(用户名)、`MAP_ACCEPT_PASS`(密码)。**禁止写进文件**,运行时 export |
-| **归档密钥 env**(仅 doc-store 模式) | 落库鉴权 | 推荐 `MAP_DOC_STORE_KEY=sk-ak-*`(document-store:write);正式环境兜底可用 `MAP_DOC_STORE_JWT` 登录态;最后才回退 `AI_ACCESS_KEY` + `MAP_AI_USER` |
-| **cdscli**(可选) | 自动取预览域名 | 仓库内 `.claude/skills/cds/cli/cdscli.py`;没有就在 config 填 `previewUrlOverride` |
+| **登录凭据 env** | harness 表单登录(被验收应用) | `MAP_AI_USER`(用户名)、`MAP_ACCEPT_PASS`(密码)。**禁止写进文件**,运行时 export |
+| **CDS 归档 env**(默认 cds 模式) | 落 CDS 验收中心鉴权 | `CDS_HOST`(如 cds.miduo.org) + (`CDS_PROJECT_KEY`=项目级 cdsp_* 最小权限,推荐;或 `AI_ACCESS_KEY`=全局)。**禁止写进文件**,运行时 export |
+| **cdscli** | 取预览域名 + report/report-folder 命令 | 仓库内 `.claude/skills/cds/cli/cdscli.py`;没有就在 config 填 `previewUrlOverride` |
 
 `report.mode=local` 时**只需 Playwright + Python**,不需要任何密钥/网络——报告写本机临时目录,默认 `/tmp/map-acceptance-local`。不得写入仓库内 `doc/acceptance/`。
 
@@ -235,13 +235,13 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
    - **颜色标记统一**:红色=P0 阻断缺陷(空白/崩溃/核心不可用),橙色=P1/P2 中高风险或体验干扰(遮挡/错位/可用但不稳),蓝色=环境/路径/数据可达性说明(顶栏可见/路由可达/接口返回),绿色=通过证据(主体可见/关键区域正常)。同一张图里同时存在「可达」和「失败」时必须拆成不同颜色标记,不能全用一种颜色。
    - **问题标记必须可定位**:问题区域必须框到具体范围,标签写清严重级 + 现象,如 `P0: 正文区域空白`;禁止只写「有问题」「异常」「看这里」。通过标记也要写清通过了什么,如 `通过: CDS Agent 主体可见`;禁止只写「正常」。
    - **截图回读必须显式写进报告**:截图后不仅要自己看一眼,还要在报告里增加「截图回读检查」表,逐图记录是否截歪、是否加载完成、是否空白、问题是否入镜。发现缓慢加载/半截/空白但不是目标缺陷时,必须重拍;如果空白正是目标缺陷,要在图上框出空白区域并在回读表中说明。
-4. **归档**:`python3 scripts/archive_report.py --config acceptance.config.json --target "<目标>" --module "<模块>" --feature "<功能>" --type "<新增功能|优化|修复>" --verdict <pass|conditional|fail> --tier <L0|L1|L2> --report-md <正文.md> --manifest <outDir>/manifest.json [--branch --commit]`。
-   - **知识库传输共享协议（强制）**:归档脚本必须把报告正文和截图资产一次性提交给 `PUT /api/document-store/entries/{id}/content`。正文保留 `{{IMG:name}}`/`{{EVIDENCE}}` 结构，截图走 `assets[]`，由知识库后端统一上传正式资产、重写 Markdown 图片 URL、写 ParsedPrd、刷新 `document:{DocumentId}` 缓存。**禁止**脚本自行猜图片域名、禁止先上传截图条目再删除、禁止直接写 Mongo、禁止把 `data:image` 写进知识库正文。
-   - **命名固定结构**(用户定):标题 = `项目 · 模块 · 功能 · 操作方式 · 验收报告`(`--module/--feature/--type` 拼装,空段自动跳过)。**状态(通过/不通过)不进标题——走 tags 标记**(脚本自动写 `[verdict_cn, type, tier]`),不靠改名表达状态。
-   - 正文用 `{{IMG:<截图name>}}` 逐步内联(ZZ)或 `{{EVIDENCE}}` 集中,脚本自动替换为内联截图。
-   - **防断头报告**:建条目后强制校验正文真的落库(`GET /content` 的 `hasContent`);写不进(预览 524 等)会**自动删空壳条目 + 报错**,绝不留"有标题、点开空白"的半截条目。
-   - **必给地址**:收尾必打印「验收归档完成 · 必给地址」块(分享短链优先,拿不到则给 owner 登录路径)——每次归档都有一个可达地址交付,绝不静默。
-5. **归档后自查能否打开(强制,创建≠能看)**:拿到分享链后**必须**跑 `PWPATH=$(npm root -g)/playwright node scripts/verify-open.mjs <shareUrl> "<标题里必现的一段>" <最少图片数>`。它 headless 打开真页面断言报告渲染(标题 + 正文 + 截图);默认**最多尝试 3 次**(首试 + 2 次重试),用来吸收 CDS/Cloudflare/预览网关的偶发抖动和图片慢加载。**重试不能抹掉首试失败**:若第 1 次失败、第 2/3 次通过,报告必须记录「第一次结果 / 重试动作 / 最终通过次数 / 最终判定」,并把它标为链路风险;**exit 0 = 真能看**才算交付完成,**exit 2 = 空白/打不开/截图缺失 → 重新推送验收**(重跑第 4 步,生成新 report_id)。杜绝"建了条目但点开空白"流到用户手里。
+4. **归档(默认进 CDS 验收中心,职责分离)**:`python3 scripts/archive_report.py --config acceptance.config.json --target "<目标>" --module "<模块>" --feature "<功能>" --type "<新增功能|优化|修复>" --verdict <pass|conditional|fail> --tier <L0|L1|L2> --report-md <正文.md> --manifest <outDir>/manifest.json [--branch --commit --pr]`。
+   - **归属唯一:CDS**。验收能力归 CDS(平台自带、按项目分类、证据链内置);技能**不再分流到 MAP 知识库**——MAP 等系统通过知识库开放协议(peer-sync)从 CDS 拉取展示。`report.mode` 缺省=`cds`;`local` 为离线兜底;`doc-store` 仅向后兼容(需 config 显式保留)。详见 `../cds/reference/acceptance-reports.md`。
+   - **自包含 markdown**:正文保留 `{{IMG:name}}`/`{{EVIDENCE}}` 结构,截图**内联为 data-URI**,POST `/api/reports`(format=md)。报告自包含、单份 < 10MB(超了减截图或改用 `cds/cli/acceptance` 的 JPEG 压图取证管线)。CDS 鉴权走 env `CDS_HOST` + (`CDS_PROJECT_KEY` 或 `AI_ACCESS_KEY`)。
+   - **按项目 + 文件夹归类**:报告永远带 projectId(config.report.cdsProjectId > env CDS_PROJECT_ID > config.project);`config.report.cdsFolder` 设了就按名 find-or-create 项目级文件夹。`--verdict/--tier/--branch/--commit/--pr` 作为元数据 + E1 部署上下文 stamp 进报告(看板/跨系统/PR 回写都靠这些)。
+   - **命名固定结构**(用户定):标题 = `项目 · 模块 · 功能 · 操作方式 · 验收报告`(`--module/--feature/--type` 拼装,空段自动跳过)。**状态(通过/不通过)不进标题——走 verdict 元数据徽章**,不靠改名表达状态。
+   - **必给地址**:收尾必打印「验收归档完成 · CDS 验收中心」块 + `/reports?project=&folder=&report=` 直达深链——每次归档都有一个可达地址交付,绝不静默。
+5. **归档后自查能否打开(强制,创建≠能看)**:拿到可达链接后**必须**跑 `PWPATH=$(npm root -g)/playwright node scripts/verify-open.mjs <url> "<标题里必现的一段>" <最少图片数>`。它 headless 打开真页面断言报告渲染(标题 + 正文 + 截图);默认**最多尝试 3 次**(首试 + 2 次重试),吸收 CDS/Cloudflare/预览网关的偶发抖动和图片慢加载。CDS 直达深链是登录态(headless 需带 CDS 会话或用 `cds/cli/acceptance` proxyroute harness 打开);**匿名分享链 `/r/<token>`(E6)无需登录,headless 可直接断言——首选**。**重试不能抹掉首试失败**:若第 1 次失败、第 2/3 次通过,报告必须记录「第一次结果 / 重试动作 / 最终通过次数 / 最终判定」,并标为链路风险;**exit 0 = 真能看**才算交付完成,**exit 2 = 空白/打不开/截图缺失 → 重新推送验收**(重跑第 4 步,生成新 report_id)。杜绝"建了条目但点开空白"流到用户手里。
 
 ## 端到端示例(照抄即可)
 
@@ -262,23 +262,23 @@ node /tmp/my-driver.mjs "$(python3 $SKILL/../cds/cli/cdscli.py --human preview-u
 # 3. 读图核对(用 Read 工具逐张看),据 templates/report-template.md 写 /tmp/report_body.md
 #    正文里用 {{EVIDENCE}} 占位,脚本自动替换为内联截图
 
-# 4. 归档(doc-store 模式;无文档空间改 config.report.mode=local)
+# 4. 归档(默认 cds 验收中心;无 CDS/离线改 config.report.mode=local)
 python3 $SKILL/scripts/archive_report.py --config $SKILL/acceptance.config.json \
   --target "你的验收目标" --verdict pass --tier L2 \
   --report-md /tmp/report_body.md --manifest /tmp/acc_shots/manifest.json \
   --branch "$(git branch --show-current)" --commit "$(git rev-parse --short HEAD)"
 ```
 
-## 交付(三条路径,殿堂≠分享,务必分清)
+## 交付(CDS 验收中心,职责分离)
 
-> **殿堂(发布到殿堂)和分享(共享给别人)是两码事**(用户 2026-05-27 强调):**殿堂 = 对所有人开放**(库 `isPublic=true` → 进 `/public/stores` 公开陈列,谁都能浏览);**分享 = 对部分人开放**(库可私有,生成 share token → `/s/lib/{token}`,只有拿到链接的人能看,**不靠公开**)。验收报告是内部产物,**默认私有 + 分享链**,**不进殿堂**。两者正交,绝不可拿"设 public 进殿堂"冒充"分享给某人"。
+> **验收能力归 CDS,MAP 只消费**(用户 2026-06-25 定调):报告永远入 CDS 验收中心(平台自带、按项目分类、证据链内置)。MAP 等系统通过知识库开放协议(peer-sync)从 CDS 拉取展示,**无需各自再建「验收中心知识库」**。技能不再做 MAP/CDS 分流判断。
 
-- **① 分享链(对部分人,默认交付)**:`/s/lib/{token}`(脚本输出,2026-05-27 实测正确路由——旧 `/library/share/{token}` 不存在、会落到首页)。token 独立授权,**库私有也能看**(已实测:库 `isPublic=false` 时分享链仍渲染正文 + 4 张内联截图)。`LibraryShareViewPage` 渲染书册目录 + 正文 + 内联截图。分享是**库级**(整库一个 token、内含多篇),对方在左侧目录点具体报告阅读。
-- **② owner 登录自看(恒可靠)**:登录 MAP → 左侧「知识库」→ 「验收报告」库 → 最新一篇。走授权 DocBrowser,正文 + 截图完整渲染。给本人验收用。
-- **③ 殿堂(对所有人,仅当你确实要公开展示才用)**:把库设 `isPublic=true` → 进公开殿堂,任何人可浏览。**这不是分享,是公开**;验收报告默认不走这条。
+- **① CDS 直达深链(默认交付)**:`/reports?project=&folder=&report=`(归档脚本输出)。登录态可达,左侧文件夹高亮 + 右侧报告(正文 + 内联截图)渲染。按项目 + 文件夹归类,带 verdict 徽章 + 部署上下文。
+- **② CDS 匿名分享链(对外/未登录)**:`/r/<token>`(E6,只读、可撤销)。给未登录第三方看不必退回 MAP;headless `verify-open` 也用它直接断言。
+- **③ MAP 知识库(跨系统展示)**:MAP 管理员在「同步中心」配对 CDS 节点 → 选 `acceptance-report` → pull,CDS 报告落成 MAP 知识库(可搜索/打标签/关联)。增量靠 contentHash 去重,MAP 核心零改动。
 - **聊天内直给**:截图发给用户(authed 渲染图)是最稳的"立即可读"方式,不依赖任何链接。
 
-> 历史教训:(2026-05-26)曾把 share 链接当"点开即看"交付却空白——根因是用错路由/正文没落库。(2026-05-27)曾把验收报告库误设 `isPublic=true` 公开进殿堂,混淆了"分享给某人"与"公开给所有人"。交付前必须自己用无头浏览器走一遍目标查看路径,并确认库可见性(私有/公开)符合预期。
+> 历史教训:(2026-05-26)曾把 share 链接当"点开即看"交付却空白——根因是正文没落库。交付前必须自己用无头浏览器(`verify-open.mjs`)走一遍目标查看路径,确认报告正文 + 截图真的渲染,exit 0 才算交付完成。
 
 ## 按需文件(渐进式披露)
 
@@ -291,14 +291,16 @@ python3 $SKILL/scripts/archive_report.py --config $SKILL/acceptance.config.json 
 | `templates/report-template.md` | 旧版九段骨架(速览卡 + 九段 + 用例表 + `{{EVIDENCE}}` 集中证据) | 要集中证据段时 |
 | `scripts/harness.mjs` | 模拟人类浏览器 helper(点击导航/截图/主题 + ZZ 画框 stepClick/stepShot/box) | 写 driver 时 |
 | `scripts/annotate.mjs` | 通用「框选重点」工具:一条命令对任意页面按 selector/坐标画框+标签再截图(--login/--mobile/--click) | 发任何指向性截图前(§B2 硬要求) |
-| `scripts/archive_report.py` | 配置驱动归档(一次性提交正文+assets[]，由知识库后端资产化图片/建条目/写正文校验/分享链/必给地址/可见性防漂移) | 归档时 |
-| `scripts/verify-open.mjs` | 归档后自查:headless 打开分享链断言报告渲染(标题+正文+截图);空/打不开 exit 2 | 归档后(强制) |
-| `scripts/read_comments.py` | 回读闭环:拉知识库最近批注(用户在验收文档上的划词/全文批注),按时间倒序,供复测 | 复测/收集反馈时 |
-| `acceptance.config.json` | 项目配置(预览域名/登录/文档空间API/库名/截图);跨仓库改这个 | 接新仓库时 |
+| `scripts/archive_report.py` | 配置驱动归档(默认 cds:自包含 markdown 内联截图 → POST /api/reports,按项目+文件夹归类,带 verdict/部署上下文;local 离线兜底;doc-store 向后兼容) | 归档时 |
+| `scripts/verify-open.mjs` | 归档后自查:headless 打开可达链接断言报告渲染(标题+正文+截图);空/打不开 exit 2 | 归档后(强制) |
+| `../cds/reference/acceptance-reports.md` | CDS 验收中心:报告/文件夹 API、cdscli report 命令、取证管线、深链格式、10MB/份压图注意 | 归档到 CDS 时 |
+| `acceptance.config.json` | 项目配置(预览域名/登录/CDS 项目与文件夹/截图);跨仓库改这个 | 接新仓库时 |
 
-## 回读批注闭环(用户批注 → 智能体复测)
+## 回读批注闭环(用户批注 → 智能体复测;仅 doc-store 向后兼容路径)
 
-知识库与本技能是双向的:技能把验收报告**写**进知识库;用户在那篇报告里**划词/框选文字批注**(或对整篇评论)留下反馈,验收智能体再把这些批注**读**回来做下一轮复测。最简实现是按需轮询(不是监听):
+> 适用范围:**仅当 config 显式 `report.mode=doc-store`**(旧 MAP 知识库归档)。默认 CDS 路径的报告回读走 CDS(在报告页查看/评论),不经下面的知识库批注接口。`scripts/read_comments.py` 仅服务 doc-store 路径。
+
+知识库与本技能是双向的:doc-store 模式把验收报告**写**进知识库;用户在那篇报告里**划词/框选文字批注**(或对整篇评论)留下反馈,验收智能体再把这些批注**读**回来做下一轮复测。最简实现是按需轮询(不是监听):
 
 ```bash
 # 归档后,归档脚本会输出 storeId/entryId;隔段时间或被要求复测时拉一次最近批注

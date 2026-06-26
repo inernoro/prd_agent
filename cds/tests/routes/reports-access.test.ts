@@ -176,4 +176,63 @@ describe('Acceptance report routes — project-scoped key access', () => {
     expect(created.status).toBe(201);
     expect(created.body.report.projectId).toBe('proj-a'); // forced back to the key's project
   });
+
+  it('PATCH with invalid folderId rejects before mutating content (atomic, Codex P2)', async () => {
+    // 同时改 title 和给一个非法 folderId（不存在）→ 必须 400 且 title 不被改。
+    const res = await call(server, 'PATCH', `/api/reports/${reportA.id}`, {
+      body: { title: '被改后的标题', folderId: 'nonexistent-folder' },
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_folder');
+    // 内容/标题未被部分修改。
+    expect(service.getAcceptanceReport(reportA.id)!.title).toBe('A report');
+  });
+
+  it('PATCH with cross-project folderId rejects before mutating content (Codex P2)', async () => {
+    // proj-b 的文件夹不能用于 proj-a 的报告。
+    const folderB = service.createReportFolder({ name: 'B 夹', projectId: 'proj-b' });
+    const res = await call(server, 'PATCH', `/api/reports/${reportA.id}`, {
+      body: { title: '跨项目改名', folderId: folderB.id },
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_folder');
+    expect(service.getAcceptanceReport(reportA.id)!.title).toBe('A report');
+    expect(service.getAcceptanceReport(reportA.id)!.folderId ?? null).toBeNull();
+  });
+
+  it('PATCH with valid same-project folderId moves and applies title together', async () => {
+    const folderA = service.createReportFolder({ name: 'A 夹', projectId: 'proj-a' });
+    const res = await call(server, 'PATCH', `/api/reports/${reportA.id}`, {
+      body: { title: '新标题', folderId: folderA.id },
+    });
+    expect(res.status).toBe(200);
+    expect(service.getAcceptanceReport(reportA.id)!.title).toBe('新标题');
+    expect(service.getAcceptanceReport(reportA.id)!.folderId).toBe(folderA.id);
+  });
+
+  it('extracts inline base64 images into content-addressed assets on ingest', async () => {
+    // Minimal valid 1x1 PNG.
+    const b64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    const html = `<html><body><img src="data:image/png;base64,${b64}"></body></html>`;
+    const created = await call(server, 'POST', '/api/reports', {
+      body: { title: 'with image', format: 'html', content: html },
+    });
+    expect(created.status).toBe(201);
+    const id = created.body.report.id as string;
+
+    // Stored body no longer carries base64; it points at a content-addressed asset.
+    const stored = service.readAcceptanceReportContent(id)!;
+    expect(stored).not.toContain('data:image');
+    const m = stored.match(/\/api\/reports\/assets\/([a-f0-9]{64}\.png)/);
+    expect(m).toBeTruthy();
+    const name = m![1];
+
+    // Bytes round-trip exactly through the state asset store.
+    const asset = service.readReportAsset(name);
+    expect(asset!.data.equals(Buffer.from(b64, 'base64'))).toBe(true);
+
+    // The public asset route serves it (200).
+    const got = await call(server, 'GET', `/api/reports/assets/${name}`);
+    expect(got.status).toBe(200);
+  });
 });

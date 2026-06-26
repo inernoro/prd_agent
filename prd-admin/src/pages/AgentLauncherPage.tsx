@@ -300,6 +300,11 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
           <img
             src={coverUrl}
             alt=""
+            // 卡片封面图体积较大（上传素材可达 1-2MB/张），网格里大量卡片在首屏外。
+            // lazy + async 解码让屏外封面滚动到视口附近才下载，砍掉首屏的整片图片负载，
+            // 不阻塞首屏渲染（治「预览页一次拉几十 MB」）。
+            loading="lazy"
+            decoding="async"
             className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
             draggable={false}
             onError={() => setCoverFailed(true)}

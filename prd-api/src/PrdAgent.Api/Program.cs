@@ -1242,6 +1242,8 @@ builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IInfraAgentRuntimeJobQueu
 builder.Services.AddHostedService<PrdAgent.Api.Services.InfraAgentRuntimeWorker>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IInfraConnectionService,
     PrdAgent.Infrastructure.Services.InfraConnections.InfraConnectionService>();
+// CDS 验收报告导入：复用「系统互联」CDS 全局连接，把 CDS 报告增量同步进知识库（一次鉴权，无握手）。
+builder.Services.AddScoped<PrdAgent.Api.Services.CdsReportImportService>();
 builder.Services.AddHttpClient(
     PrdAgent.Infrastructure.Services.InfraConnections.InfraConnectionService.HttpClientName);
 builder.Services.AddHttpClient<PrdAgent.Core.Interfaces.IInfraAgentSessionService,

@@ -344,7 +344,10 @@ describe('ContainerService', () => {
       const dockerRuns = mock.commands.filter(c => c.includes('docker run'));
       expect(dockerRuns).toHaveLength(1);
       expect(dockerRuns[0]).toContain('docker run -d');
-      expect(dockerRuns[0]).toContain('pnpm install && pnpm build && pnpm start');
+      // build/install 动词被 $NICE 降优先级（默认 10），serve(pnpm start) 保持正常优先级；
+      // NICE 前导仅在镜像有 nice 时生效，缺则降级为空(不因缺 nice 让构建失败)。
+      expect(dockerRuns[0]).toContain("NICE=$(command -v nice >/dev/null 2>&1 && echo 'nice -n 10');");
+      expect(dockerRuns[0]).toContain('$NICE pnpm install && $NICE pnpm build && pnpm start');
     });
 
     it('should mount shared caches', async () => {
