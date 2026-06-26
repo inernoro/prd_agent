@@ -194,4 +194,34 @@ describe('StateService acceptance reports', () => {
     const after = service.listAcceptanceReports(null, undefined, cursor).map((r) => r.id).sort();
     expect(after).toEqual([a.id, b.id].sort());
   });
+
+  // ── Content-addressed report image assets (base64 → object storage) ──
+  it('writes a report asset content-addressed and reads it back with content-type', () => {
+    const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex'); // PNG magic prefix
+    service.writeReportAsset('abc123def4560011.png', png);
+    const file = path.join(service.getReportAssetsBase(), 'abc123def4560011.png');
+    expect(fs.existsSync(file)).toBe(true);
+    const read = service.readReportAsset('abc123def4560011.png');
+    expect(read).toBeTruthy();
+    expect(read!.contentType).toBe('image/png');
+    expect(read!.data.equals(png)).toBe(true);
+  });
+
+  it('rejects illegal asset names (path traversal / non-hex) and missing files', () => {
+    expect(service.readReportAsset('../state.json')).toBeUndefined();
+    expect(service.readReportAsset('nope.png')).toBeUndefined(); // not hex
+    expect(service.readReportAsset('deadbeef.png')).toBeUndefined(); // legal name, no file
+  });
+
+  it('dedups identical bytes (immutable, no-op re-write)', () => {
+    const buf = Buffer.from('ffd8ffe000104a464946', 'hex'); // JPEG magic prefix
+    const name = 'aabbccddeeff0011.jpg';
+    service.writeReportAsset(name, buf);
+    const file = path.join(service.getReportAssetsBase(), name);
+    const mtime1 = fs.statSync(file).mtimeMs;
+    service.writeReportAsset(name, Buffer.from('different bytes ignored')); // existing file untouched
+    expect(fs.statSync(file).mtimeMs).toBe(mtime1);
+    expect(service.readReportAsset(name)!.data.equals(buf)).toBe(true);
+    expect(service.readReportAsset(name)!.contentType).toBe('image/jpeg');
+  });
 });

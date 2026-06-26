@@ -30,6 +30,7 @@
  * access — only inside the no-same-origin sandbox the frontend builds.
  */
 import { Router, type Request, type Response, json as expressJson, text as expressText, raw as expressRaw } from 'express';
+import { createHash } from 'node:crypto';
 import type { StateService } from '../services/state.js';
 import type { GitHubAppClient } from '../services/github-app-client.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
@@ -98,6 +99,52 @@ function publicBaseFromReq(req: Request): string {
 
 /** Hard cap on report body size (paste + upload). 10MB of UTF-8 text. */
 const MAX_CONTENT_BYTES = 10 * 1024 * 1024;
+
+/** Matches inline base64 image data URIs (HTML `src="data:..."` or Markdown
+ *  `![](data:...)` — we operate on the data-URI substring, syntax-agnostic). */
+const DATA_IMG_RE = /data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,([A-Za-z0-9+/=\s]+)/g;
+const MIME_EXT: Record<string, string> = {
+  png: 'png', jpeg: 'jpg', jpg: 'jpg', gif: 'gif', webp: 'webp', 'svg+xml': 'svg',
+};
+
+/**
+ * Ingest-time normalization: pull inline `data:image/*;base64,...` images out of
+ * a report body, store them content-addressed via the state layer, and rewrite
+ * each occurrence to an absolute `<base>/api/reports/assets/<sha256>.<ext>` URL
+ * (relative when `base` is empty). Returns the rewritten content + count.
+ *
+ * Why: reports historically embedded screenshots as base64, bloating the body
+ * and carrying base64 into any downstream knowledge base that pulls the report
+ * (which forbids inline base64). Extracting once, at the source, means CDS
+ * reports never store base64 again — CDS's disk-backed asset store is its own
+ * object storage, no external bucket required.
+ */
+function normalizeInlineImages(
+  content: string,
+  base: string,
+  stateService: StateService,
+): { content: string; extracted: number } {
+  let extracted = 0;
+  const out = content.replace(DATA_IMG_RE, (whole: string, mime: string, b64: string) => {
+    const clean = b64.replace(/\s+/g, '');
+    if (!clean) return whole;
+    let buf: Buffer;
+    try {
+      buf = Buffer.from(clean, 'base64');
+    } catch {
+      return whole;
+    }
+    if (!buf.length) return whole;
+    const ext = MIME_EXT[mime.toLowerCase()] || 'png';
+    const hash = createHash('sha256').update(buf).digest('hex');
+    const name = `${hash}.${ext}`;
+    stateService.writeReportAsset(name, buf);
+    extracted += 1;
+    const rel = `/api/reports/assets/${name}`;
+    return base ? `${base}${rel}` : rel;
+  });
+  return { content: out, extracted };
+}
 
 type ReportFormat = 'html' | 'md';
 
@@ -394,10 +441,14 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       }
     }
 
+    // 入库前归一化：把内联 base64 图片抽出、内容寻址存盘、正文改写为 HTTPS 资源链接，
+    // 让 CDS 报告正文永不再携带 base64（下游知识库拉取时也就不会出现 base64）。
+    const { content: normalizedContent } = normalizeInlineImages(content, publicBaseFromReq(req), stateService);
+
     const meta = stateService.createAcceptanceReport({
       title: cleanTitle,
       format,
-      content,
+      content: normalizedContent,
       projectId: resolvedProjectId,
       branchId: resolvedBranchId,
       folderId: resolvedFolderId,
@@ -436,6 +487,19 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       // 响应附带 projectSlug，便于跨系统（MAP）按项目归类展示，免二次查项目表。
       .map((r) => ({ ...r, projectSlug: r.projectId ? stateService.getProject(r.projectId)?.slug ?? null : null }));
     res.json({ reports });
+  });
+
+  // GET /api/reports/assets/:name — 内容寻址的报告图片资源（PNG/JPG/...）。
+  // 公开只读：name 是 sha256(内容)+扩展名，不可枚举；正文里的截图通过它加载，跨源
+  // （如 MAP 知识库）渲染报告时也能直接取到图片。内容寻址永不变，长缓存。
+  // 注册在 `/reports/:id` 之前，避免被单段参数路由误吞。
+  router.get('/reports/assets/:name', (req: Request, res: Response) => {
+    const asset = stateService.readReportAsset(req.params.name);
+    if (!asset) return res.status(404).json({ error: 'not_found', message: '资源不存在' });
+    res.setHeader('Content-Type', asset.contentType);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    return res.end(asset.data);
   });
 
   // GET /api/reports/:id — single report metadata.

@@ -176,4 +176,30 @@ describe('Acceptance report routes — project-scoped key access', () => {
     expect(created.status).toBe(201);
     expect(created.body.report.projectId).toBe('proj-a'); // forced back to the key's project
   });
+
+  it('extracts inline base64 images into content-addressed assets on ingest', async () => {
+    // Minimal valid 1x1 PNG.
+    const b64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    const html = `<html><body><img src="data:image/png;base64,${b64}"></body></html>`;
+    const created = await call(server, 'POST', '/api/reports', {
+      body: { title: 'with image', format: 'html', content: html },
+    });
+    expect(created.status).toBe(201);
+    const id = created.body.report.id as string;
+
+    // Stored body no longer carries base64; it points at a content-addressed asset.
+    const stored = service.readAcceptanceReportContent(id)!;
+    expect(stored).not.toContain('data:image');
+    const m = stored.match(/\/api\/reports\/assets\/([a-f0-9]{64}\.png)/);
+    expect(m).toBeTruthy();
+    const name = m![1];
+
+    // Bytes round-trip exactly through the state asset store.
+    const asset = service.readReportAsset(name);
+    expect(asset!.data.equals(Buffer.from(b64, 'base64'))).toBe(true);
+
+    // The public asset route serves it (200).
+    const got = await call(server, 'GET', `/api/reports/assets/${name}`);
+    expect(got.status).toBe(200);
+  });
 });

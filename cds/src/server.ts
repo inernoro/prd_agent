@@ -877,6 +877,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/peer-sync\/resources\/(.+)\/export$/, 'peer-sync 导出报告'],
     [/^POST \/peer-sync\/resources\/(.+)\/apply$/, 'peer-sync 写入(忽略)'],
     [/^DELETE \/peer-sync\/admin\/nodes\/(.+)$/, '撤销 peer-sync 节点'],
+    [/^GET \/reports\/assets\/(.+)$/, '获取报告图片资源'],
     [/^GET \/reports\/(.+)$/, '查看验收报告'],
     [/^PATCH \/reports\/(.+)$/, '更新验收报告'],
     [/^DELETE \/reports\/(.+)$/, '删除验收报告'],
@@ -1812,6 +1813,9 @@ export function createServer(deps: ServerDeps): express.Express {
       if (req.method === 'POST' && req.path === '/api/github/webhook') return next();
       // E6 验收报告匿名分享：`/r/:token` 由 token 自鉴权（不可枚举随机串），公开只读。
       if (req.method === 'GET' && /^\/r\/[^/]+$/.test(req.path)) return next();
+      // 验收报告图片资源：name 为内容寻址 sha256+扩展名（不可枚举），公开只读，
+      // 供跨源（如 MAP 知识库）渲染报告时直接加载正文里的截图。
+      if (req.method === 'GET' && req.path.startsWith('/api/reports/assets/')) return next();
       // WS3 MAP-KBTP peer-sync 协议端点：由配对码 / HMAC 自鉴权（路由内校验），放行登录网关。
       // 放行整个 /api/peer-sync/ 前缀（admin 除外）——含 MAP 发起方探测的 handshake/confirm、
       // finalize、cancel 等子路径，必须落到 peer-sync 路由（CDS 是单阶段 peer，confirm/finalize

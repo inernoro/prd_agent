@@ -3584,6 +3584,58 @@ export class StateService {
     }
   }
 
+  // ── Report inline-image assets (content-addressed, 2026-06-26) ──
+  //
+  // Report HTML used to embed screenshots as inline `data:image;base64,...`,
+  // which bloats the body and — when a report is pulled into another system's
+  // knowledge base — carries base64 into a place that forbids it. CDS now
+  // extracts those images at ingest, stores them content-addressed on disk, and
+  // rewrites the body to absolute HTTPS URLs served by
+  // `GET /api/reports/assets/:name`. This IS CDS's own object storage; no
+  // external bucket / S3 SDK is required (base64 was only ever a stopgap from
+  // before CDS had any asset store).
+
+  /** Host-side dir holding extracted report image assets. Created on write. */
+  getReportAssetsBase(): string {
+    return path.join(path.dirname(this.getCacheBase()), 'report-assets');
+  }
+
+  /**
+   * Persist a content-addressed report asset (immutable). `name` is
+   * `<sha256>.<ext>`; an existing file is left untouched — same bytes hash to
+   * the same name, so re-writes are pure no-ops and dedup is free. `name` is
+   * basename-sanitized as defense-in-depth against path traversal.
+   */
+  writeReportAsset(name: string, data: Buffer): void {
+    const safe = path.basename(name);
+    const dir = this.getReportAssetsBase();
+    const file = path.join(dir, safe);
+    if (fs.existsSync(file)) return;
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(file, data);
+  }
+
+  /** Read a stored report asset (data + content-type), or undefined when the
+   *  name is illegal / file missing. Only `<hex>.<ext>` names are accepted. */
+  readReportAsset(name: string): { data: Buffer; contentType: string } | undefined {
+    const safe = path.basename(name);
+    if (safe !== name || !/^[a-f0-9]{16,64}\.[a-z0-9]+$/i.test(safe)) return undefined;
+    const ext = safe.slice(safe.lastIndexOf('.') + 1).toLowerCase();
+    const contentType =
+      ext === 'png' ? 'image/png'
+      : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
+      : ext === 'gif' ? 'image/gif'
+      : ext === 'webp' ? 'image/webp'
+      : ext === 'svg' ? 'image/svg+xml'
+      : 'application/octet-stream';
+    try {
+      const data = fs.readFileSync(path.join(this.getReportAssetsBase(), safe));
+      return { data, contentType };
+    } catch {
+      return undefined;
+    }
+  }
+
   /**
    * Create a report: write the content file to disk + persist metadata.
    * `content` byte length is recorded; the metadata id is generated here so
