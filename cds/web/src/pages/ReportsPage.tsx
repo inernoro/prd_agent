@@ -278,9 +278,6 @@ export function ReportsPage(): JSX.Element {
                 <h1 className="text-lg font-semibold">
                   验收报告{projectId ? <span className="ml-2 text-sm font-normal text-muted-foreground">· {projectName || projectId}</span> : <span className="ml-2 text-sm font-normal text-muted-foreground">· 全局（CDS 自身）</span>}
                 </h1>
-                <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                  把验收 / 视觉测试报告托管在 CDS 自身，挂在 CDS 登录态之后访问，无需单独的知识库。{projectId ? '当前按项目筛选；左侧文件夹可对验收项分类。' : '可建文件夹对验收项分类；从项目卡右上角「验收报告」进入可按项目查看。'}
-                </p>
               </div>
             </div>
             {state.status === 'ok' && verdictStats.total > 0 ? (
