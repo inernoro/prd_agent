@@ -134,6 +134,24 @@ import { useReprocessRunStore, selectStreamingByEntry } from '@/stores/reprocess
 
 const ACCEPT_TYPES = '.md,.txt,.pdf,.doc,.docx,.json,.yaml,.yml,.csv';
 
+export type DocumentStoreEmptyActionKey = 'create' | 'upload' | 'emergence';
+
+export const DOCUMENT_STORE_EMPTY_ACTIONS: Array<{
+  key: DocumentStoreEmptyActionKey;
+  title: string;
+  desc: string;
+}> = [
+  { key: 'create', title: '创建知识库', desc: '按项目或主题组织文档' },
+  { key: 'upload', title: '上传文档', desc: '先建知识库，再把文件上传进去' },
+  { key: 'emergence', title: '涌现探索', desc: '从文档出发，发现新可能' },
+];
+
+const DOCUMENT_STORE_EMPTY_ACTION_ICONS: Record<DocumentStoreEmptyActionKey, LucideIcon> = {
+  create: Library,
+  upload: Upload,
+  emergence: Sparkle,
+};
+
 // 账号级总计的紧凑格式化：大数走「万」，停留走「时/分」。
 function formatCountCompact(n: number): string {
   // count-up 动画喂进来的是插值浮点，先取整，避免 <1万 时闪现小数
@@ -2635,20 +2653,33 @@ export function DocumentStorePage() {
 
             {/* 三步引导 */}
             <div className="grid grid-cols-3 gap-4 mb-8 max-w-[560px] w-full">
-              {[
-                { icon: Library, title: '创建知识库', desc: '按项目或主题组织文档' },
-                { icon: Upload, title: '上传文档', desc: '拖拽文件即可上传' },
-                { icon: Sparkle, title: '涌现探索', desc: '从文档出发，发现新可能' },
-              ].map(s => (
-                <div key={s.title} className="surface-inset rounded-[12px] p-4 flex flex-col items-center text-center">
-                  <div className="w-8 h-8 rounded-full flex items-center justify-center mb-2.5"
-                    style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.12)' }}>
-                    <s.icon size={14} style={{ color: 'rgba(59,130,246,0.85)' }} />
-                  </div>
-                  <p className="text-[12px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>{s.title}</p>
-                  <p className="text-[11px] leading-[1.5]" style={{ color: 'var(--text-muted)' }}>{s.desc}</p>
-                </div>
-              ))}
+              {DOCUMENT_STORE_EMPTY_ACTIONS.map(s => {
+                const Icon = DOCUMENT_STORE_EMPTY_ACTION_ICONS[s.key];
+                return (
+                  <button
+                    key={s.key}
+                    type="button"
+                    className="surface-inset rounded-[12px] p-4 flex flex-col items-center text-center transition-colors hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
+                    onClick={() => {
+                      if (s.key === 'emergence') {
+                        navigate('/emergence');
+                        return;
+                      }
+                      if (s.key === 'upload') {
+                        toast.info('先创建知识库', '创建后进入知识库详情页即可上传文档');
+                      }
+                      setShowCreate(true);
+                    }}
+                  >
+                    <div className="w-8 h-8 rounded-full flex items-center justify-center mb-2.5"
+                      style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.12)' }}>
+                      <Icon size={14} style={{ color: 'rgba(59,130,246,0.85)' }} />
+                    </div>
+                    <p className="text-[12px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>{s.title}</p>
+                    <p className="text-[11px] leading-[1.5]" style={{ color: 'var(--text-muted)' }}>{s.desc}</p>
+                  </button>
+                );
+              })}
             </div>
 
             {tab === 'mine' ? (

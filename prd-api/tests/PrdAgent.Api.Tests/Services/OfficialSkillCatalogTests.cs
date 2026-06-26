@@ -22,7 +22,7 @@ public class OfficialSkillCatalogTests
         Assert.Contains("agent/workflow/start-next", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("agent/workflow/complete", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("agent/workflow/block", OfficialSkillTemplates.AiDefectResolveSkillMd);
-        Assert.Contains("发布中心只读取 commit id 关联结果并展示", OfficialSkillTemplates.AiDefectResolveSkillMd);
+        Assert.Contains("更新中心只读取 commit id 关联结果并展示", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("不允许按日期批量贴缺陷标志", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("scripts/defect-automation-probe.mjs", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("hasNext=false", OfficialSkillTemplates.AiDefectResolveSkillMd);
