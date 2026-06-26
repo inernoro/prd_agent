@@ -1,9 +1,12 @@
 ---
 name: task-handoff-checklist
-description: Generates structured handoff reports after completing development tasks. Scans changes across 8 dimensions (navigation, documentation, rules, workflows, testing, risks, code quality, follow-ups) to enable zero-question acceptance. Trigger words: "交接", "验收", "handoff", "/handoff".
+version: 1.0.0
+description: 开发任务完成后自动扫描变更，从导航、文档、规则、工作流、测试、风险、代码质量、后续事项八个维度生成结构化交接报告，让验收者零追问即可核对。触发词："交接"、"验收"、"handoff"、"/handoff"。
 ---
 
-# Task Handoff Checklist — 任务交接清单
+# 任务交接清单
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/handoff`、"交接"、"验收"、"handoff"
 
 AI 完成开发后，自动扫描变更，生成结构化交接报告。验收者不用追问就知道：改了哪里、测什么、沉淀了什么、有什么坑。
 
@@ -60,12 +63,12 @@ git diff --stat main...HEAD 2>/dev/null || git diff --stat HEAD~10
 
 | 维度 | 状态 | 详情 |
 |------|------|------|
-| 管理后台路由 | ✅ 新增 / 🔄 修改 / ➖ 无变化 | {路由路径，如 `/review-agent`} |
-| **百宝箱注册** | ✅ 已注册 / ⚠️ 未注册 / ➖ 无需 | {`toolboxStore.ts` BUILTIN_TOOLS 中的 id} |
-| 左侧导航 | ✅ 新增 / 🔄 修改 / ➖ 未加 | {`AdminMenuCatalog.cs` 中的条目 + 分组} |
-| 首页快捷入口 | ✅ 新增 / ➖ 未加 | {`QUICK_AGENTS` 或 `LandingPage.tsx` AgentShowcase} |
-| API 端点 | ✅ 新增 / 🔄 修改 / ➖ 无变化 | {端点列表} |
-| 桌面端入口 | ✅ 新增 / 🔄 修改 / ➖ 无变化 | {入口位置} |
+| 管理后台路由 | 新增 / 修改 / 无变化 | {路由路径，如 `/review-agent`} |
+| **百宝箱注册** | 已注册 / 未注册 / 无需 | {`toolboxStore.ts` BUILTIN_TOOLS 中的 id} |
+| 左侧导航 | 新增 / 修改 / 未加 | {`AdminMenuCatalog.cs` 中的条目 + 分组} |
+| 首页快捷入口 | 新增 / 未加 | {`QUICK_AGENTS` 或 `LandingPage.tsx` AgentShowcase} |
+| API 端点 | 新增 / 修改 / 无变化 | {端点列表} |
+| 桌面端入口 | 新增 / 修改 / 无变化 | {入口位置} |
 
 **位置声明**（新 Agent / 新页面必填，两行格式）：
 
@@ -82,13 +85,14 @@ git diff --stat main...HEAD 2>/dev/null || git diff --stat HEAD~10
 
 | 检查项 | 状态 | 说明 |
 |--------|------|------|
-| SRS | ✅ 已更新 / ⚠️ 需更新 / ➖ 无需 | {内容} |
-| PRD | ✅ 已更新 / ⚠️ 需更新 / ➖ 无需 | {内容} |
-| 数据字典 | ✅ 已更新 / ⚠️ 需更新 / ➖ 无需 | {新增集合/字段} |
-| 设计文档 | ✅ 已创建 / ⚠️ 需创建 / ➖ 无需 | {文档名} |
-| CLAUDE.md 快照 | ✅ 已更新 / ⚠️ 需更新 / ➖ 无需 | {功能注册表/集合清单} |
+| SRS | 已更新 / 需更新 / 无需 | {内容} |
+| PRD | 已更新 / 需更新 / 无需 | {内容} |
+| 数据字典 | 已更新 / 需更新 / 无需 | {新增集合/字段} |
+| 设计文档 | 已创建 / 需创建 / 无需 | {文档名} |
+| CLAUDE.md 快照 | 已更新 / 需更新 / 无需 | {功能注册表/集合清单} |
 
-**待补文档清单**（如有）: - [ ] ...
+**待补文档清单**（如有）:
+- [ ] ...
 
 ---
 
@@ -96,12 +100,12 @@ git diff --stat main...HEAD 2>/dev/null || git diff --stat HEAD~10
 
 | 检查项 | 状态 | 说明 |
 |--------|------|------|
-| 新增 appKey | ✅ / ➖ | {名称} |
-| 新增 AppCallerCode | ✅ / ➖ | {格式和用途} |
-| 新增架构模式 | ✅ / ➖ | {是否需写 rule.*.md} |
-| 修改已有规则 | ✅ / ➖ | {影响范围} |
-| 新增 MongoDB 集合 | ✅ / ➖ | {集合名，需同步数据字典} |
-| 新增权限点 | ✅ / ➖ | {权限名} |
+| 新增 appKey | 是 / 无 | {名称} |
+| 新增 AppCallerCode | 是 / 无 | {格式和用途} |
+| 新增架构模式 | 是 / 无 | {是否需写 rule.*.md} |
+| 修改已有规则 | 是 / 无 | {影响范围} |
+| 新增 MongoDB 集合 | 是 / 无 | {集合名，需同步数据字典} |
+| 新增权限点 | 是 / 无 | {权限名} |
 
 ---
 
@@ -109,12 +113,12 @@ git diff --stat main...HEAD 2>/dev/null || git diff --stat HEAD~10
 
 | 检查项 | 状态 | 影响范围 |
 |--------|------|----------|
-| Breaking Change | ✅ / ➖ | {受影响端} |
-| 数据模型变更 | ✅ / ➖ | {字段变更} |
-| 状态机变更 | ✅ / ➖ | {转换变更} |
-| 前后端交互变更 | ✅ / ➖ | {如轮询→SSE} |
-| 权限变更 | ✅ / ➖ | {权限要求变化} |
-| 配置项变更 | ✅ / ➖ | {新增环境变量} |
+| Breaking Change | 是 / 无 | {受影响端} |
+| 数据模型变更 | 是 / 无 | {字段变更} |
+| 状态机变更 | 是 / 无 | {转换变更} |
+| 前后端交互变更 | 是 / 无 | {如轮询→SSE} |
+| 权限变更 | 是 / 无 | {权限要求变化} |
+| 配置项变更 | 是 / 无 | {新增环境变量} |
 
 **迁移注意事项**（如有 Breaking Change）: ...
 
@@ -126,14 +130,14 @@ git diff --stat main...HEAD 2>/dev/null || git diff --stat HEAD~10
 
 | 类型 | 需要？ | 状态 | 说明 |
 |------|--------|------|------|
-| 单元测试 | ✅/➖ | ✅ 完成 / ⚠️ 未完成 | {测试文件} |
-| 冒烟测试 | ✅/➖ | ✅ 完成 / ⚠️ 未完成 | {端点} |
-| 页面测试 | ✅/➖ | ⚠️ 需人工 | {页面} |
-| 回归测试 | ✅/➖ | ⚠️ 需人工 | {受影响功能} |
+| 单元测试 | 需要/无需 | 完成 / 未完成 | {测试文件} |
+| 冒烟测试 | 需要/无需 | 完成 / 未完成 | {端点} |
+| 页面测试 | 需要/无需 | 需人工 | {页面} |
+| 回归测试 | 需要/无需 | 需人工 | {受影响功能} |
 
 ### 预览验收地址（需人工验收时必填）
 
-当测试矩阵中存在"⚠️ 需人工"的项目时，**只跑这一条命令**拿预览域名，**禁止**自己 slugify / 手写 `tr '/' '-'`：
+当测试矩阵中存在"需人工"的项目时，**只跑这一条命令**拿预览域名，**禁止**自己 slugify / 手写 `tr '/' '-'`：
 
 ```bash
 python3 .claude/skills/cds/cli/cdscli.py --human preview-url
@@ -174,10 +178,10 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 
 | 检查项 | 状态 |
 |--------|------|
-| 编译通过 (`dotnet build`) | ✅ / ❌ |
-| 前端构建 (`pnpm build`) | ✅ / ❌ / ➖ 无前端变更 |
-| TypeScript (`pnpm tsc`) | ✅ / ❌ / ➖ |
-| 无未使用导入 | ✅ / ⚠️ |
+| 编译通过 (`dotnet build`) | 通过 / 未通过 |
+| 前端构建 (`pnpm build`) | 通过 / 未通过 / 无前端变更 |
+| TypeScript (`pnpm tsc`) | 通过 / 未通过 / 无需 |
+| 无未使用导入 | 通过 / 待处理 |
 
 **架构合规**: Controller 身份隔离 / ILlmGateway / 前端无业务映射 / 服务器权威性
 

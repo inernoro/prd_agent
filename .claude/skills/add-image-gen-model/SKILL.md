@@ -1,6 +1,13 @@
-# Add Image Gen Model Skill
+---
+name: add-image-gen-model
+description: 添加生图模型适配器配置。输入模型匹配模式/显示名/提供商/尺寸约束等信息 → 在后端 Config + 前端 Adapter 注册新的图片生成模型。触发词："添加生图模型"、"新增生图模型配置"、"配置新的生图模型"、"add image gen model"。
+---
 
-## Trigger
+# 添加生图模型
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：「添加生图模型」、「新增生图模型配置」、`add image gen model`
+
+## 触发
 
 当用户说 "添加生图模型"、"新增生图模型配置"、"add image gen model"、"配置新的生图模型" 时触发此 skill。
 

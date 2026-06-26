@@ -20,9 +20,9 @@
  *   - DualWriteStateBackingStore — P3 Part 3. Writes both, reads per config.
  *
  * See:
- *   doc/design.cds-multi-project.md section 八
- *   doc/plan.cds-multi-project-phases.md P3
- *   doc/rule.cds-mongo-migration.md
+ *   doc/design.cds.multi-project.md section 八
+ *   doc/plan.cds.multi-project-phases.md P3
+ *   doc/rule.cds.mongo-migration.md
  */
 
 import type { CdsState } from '../../types.js';

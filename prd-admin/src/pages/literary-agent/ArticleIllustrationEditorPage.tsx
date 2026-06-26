@@ -87,7 +87,7 @@ type WorkflowPhase = 0 | 1 | 2;
 
 type MarkerRunStatus = 'idle' | 'parsing' | 'parsed' | 'running' | 'done' | 'error';
 
-// Phase 1: 位置策略。后续阶段计划见 doc/plan.manual-image-marking-control.md
+// Phase 1: 位置策略。后续阶段计划见 doc/plan.visual-agent.manual-image-marking.md
 type PositionStrategy = 'auto' | 'per-h1' | 'per-h2' | 'user-anchor';
 
 // 用户锚点占位符：匹配 [IMG] / [配图] / 【插图位置】（整行）
@@ -671,7 +671,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   // Phase 1: 位置策略（自动 / 固定位置 / 用户锚点）
   // 存 sessionStorage，键 = 'articleMarkerStrategy:' + workspaceId
-  // 下一阶段（Phase 2/3）再下沉到 workspace 持久化，见 doc/plan.manual-image-marking-control.md
+  // 下一阶段（Phase 2/3）再下沉到 workspace 持久化，见 doc/plan.visual-agent.manual-image-marking.md
   const [positionStrategy, setPositionStrategyRaw] = useState<PositionStrategy>('auto');
   const [positionStrategyOpen, setPositionStrategyOpen] = useState(false);
   useEffect(() => {

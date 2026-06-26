@@ -9,7 +9,7 @@ import type { StateService } from './state.js';
  * pool is full, the least-recently-accessed non-pinned branch is cooled down.
  * Idle branches are cooled automatically after `idleTTLSeconds`.
  *
- * See `doc/design.cds-resilience.md` for the full design.
+ * See `doc/design.cds.resilience.md` for the full design.
  *
  * Pinning rules (a branch is "pinned" and cannot be evicted if ANY apply):
  *   1. `branch.pinnedByUser === true`

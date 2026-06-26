@@ -61,7 +61,7 @@ timeline
 
 - 第一阶段：#515 新建 `web-v2` React 工程 + Express `/v2` 挂载（兼容老前端）。
 - 第二阶段：#516 大重命名 —— `web/` 改成 React 工程，`web-legacy/` 收纳老前端，URL 直挂根路径。
-- 配套文档：`guide.cds-web-migration-runbook.md` + `guide.cds-web-migration-handoff.md`（已在 05-03 整合到 `plan.cds-status.md` 看板）。
+- 配套文档：`guide.cds.web-migration-runbook.md` + `guide.cds-web-migration-handoff.md`（已在 05-03 整合到 `plan.cds.status.md` 看板）。
 - 相关 PR：#515、#516。
 
 ### 2. CDS Week 4.6 视觉重构九刀 — Railway 风格全量铺开
@@ -88,8 +88,8 @@ timeline
 - Phase 2.5：cds-compose 契约 SSOT + cdscli verify 子命令 + 7 类漏洞自检清单 + 24 个单测。
 - Phase 3：cdscli scan 输出全字段 carry-over + wait-for + 端口推断。
 - Phase 4：ORM 自动识别 + migration 注入 + dev/prod 模式（cdscli scan 升级为四级优先识别）。
-- Phase 5：多分支 DB 隔离机制 MVP + 配套指南 `guide.cds-multi-branch-db.md`。
-- Phase 6：契约测试 + 修 mysql init.sql 误分类 + 实战 runbook（`guide.cds-mysql-validation-runbook.md`）。
+- Phase 5：多分支 DB 隔离机制 MVP + 配套指南 `guide.cds.multi-branch-db.md`。
+- Phase 6：契约测试 + 修 mysql init.sql 误分类 + 实战 runbook（`guide.cds.mysql-validation-runbook.md`）。
 - Phase 7：Twenty CRM 端到端实战，9 个真盲区全修。
 - Phase 8 + 8.8：env 三色契约（CDS_* 前缀）+ 强制配置弹窗 + 行云流水部署。
 - Phase 9：env UX 打磨（Generate Secret / .env 上传 / 脱敏 / 审计 / 缺 env banner）。
@@ -147,7 +147,7 @@ timeline
 - 自更新可见性：GitHub 领先 + 上次更新 + 历史流水。
 - `/healthz` 深度探针 + 启动后强制自检。
 - 分支卡 + 项目设置 5 处 UX 反馈批量修复。
-- 文档大整合：41 篇散乱 CDS 文档收口为 `plan.cds-status.md` 看板 + 合并 UAT 5 件套 + 删 13 过期件。
+- 文档大整合：41 篇散乱 CDS 文档收口为 `plan.cds.status.md` 看板 + 合并 UAT 5 件套 + 删 13 过期件。
 - 相关 PR：#522（Phase A/B/C + UAT 闭环 + healthz + 文档整合，约 14 commits）。
 
 ### 8. CDS Onboarding UAT — 27% → 100% 闭环
@@ -174,7 +174,7 @@ timeline
 - 浅色卡片阴影减弱 + 周报详情页 tab 与章节徽章简化。
 - 浅色模式按钮系统改造 + segment 切换器统一。
 - 周报 Agent 浅色模式阴影与对比度打磨。
-- 配套规划文档：`plan.prd-admin-surface-style-migration.md` + `report.prd-admin-surface-style-migration.md`。
+- 配套规划文档：`plan.frontend.prd-admin-surface-style-migration.md` + `report.frontend.prd-admin-surface-style-migration.md`。
 - 相关 PR：#514（8 commits）、#519（3 commits）。
 
 ### 10. 模型选择器 + 模型池全栈重构
@@ -320,7 +320,7 @@ timeline
 | P1 CDS 项目隔离形成 lint 规则                          | 部分落地。#509/#511 PR_C.1-C.4 把项目隔离运营计数化，但 ESLint custom rule 未上。 |
 | P2 涌现探索器 + 文档空间联动                              | 暂未推进。 |
 | P2 移动端持续审计基础设施利用                              | 暂未推进。MobileAuditPage 仍为人工触发，未接 CI。 |
-| 额外承接 W16 遗留方向                                   | 显著落地：(1) GitHub 自动部署用 Twenty CRM 做端到端 MySQL 接入验证（#521，9 Phase + 15 轮 Bugbot）；(2) 周报 / 视频 / 百宝箱 / 公开页大幅产品化（#506/#507/#502/#492/#508）；(3) 多项目 + GitHub + 技能同步文档化新增 14 篇文档（`plan.cds-mysql-readiness`、`plan.cds-web-migration`、`spec.cds-compose-contract`、`guide.cds-multi-branch-db`、`guide.cds-orm-support`、`guide.cds-mysql-validation-runbook` 等），05-03 进一步整合 41 篇散乱文档为 `plan.cds-status.md` 看板；(4) 海鲜市场 #517 幂等覆盖上传 + 删除接口闭环（公开页 / 更新中心仍待后续）。 |
+| 额外承接 W16 遗留方向                                   | 显著落地：(1) GitHub 自动部署用 Twenty CRM 做端到端 MySQL 接入验证（#521，9 Phase + 15 轮 Bugbot）；(2) 周报 / 视频 / 百宝箱 / 公开页大幅产品化（#506/#507/#502/#492/#508）；(3) 多项目 + GitHub + 技能同步文档化新增 14 篇文档（`plan.cds-mysql-readiness`、`plan.cds.web-migration`、`spec.cds.compose-contract`、`guide.cds.multi-branch-db`、`guide.cds.orm-support`、`guide.cds.mysql-validation-runbook` 等），05-03 进一步整合 41 篇散乱文档为 `plan.cds.status.md` 看板；(4) 海鲜市场 #517 幂等覆盖上传 + 删除接口闭环（公开页 / 更新中心仍待后续）。 |
 
 ---
 

@@ -1,7 +1,7 @@
 /**
  * Forwarder HTTP / SSE / WebSocket 代理(B'.2-forwarder)
  *
- * 对应 doc/report.cds-forwarder-success.md
+ * 对应 doc/report.cds.forwarder-success.md
  *
  * 职责:
  *   1. 给定 RouteRecord(由 resolver 返回)+ 客户端 req/res,把请求 pipe 到 upstream

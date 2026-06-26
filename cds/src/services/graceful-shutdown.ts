@@ -1,8 +1,8 @@
 /**
  * Graceful Shutdown — 蓝绿 admin daemon 优雅关停 service(B'.3)
  *
- * 对应 doc/report.cds-forwarder-success.md
- * doc/design.cds-control-data-split.md 4.2 节"退役蓝"步骤。
+ * 对应 doc/report.cds.forwarder-success.md
+ * doc/design.cds.control-data-split.md 4.2 节"退役蓝"步骤。
  *
  * 旧 daemon 收到 SIGTERM(supervisor 切流后发出)→ 进 draining 态:
  *   1. healthz 后续应返 503(由 index.ts 读 isDraining() 决策,本服务不挂 route)

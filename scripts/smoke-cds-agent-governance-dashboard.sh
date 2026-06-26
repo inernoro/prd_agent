@@ -24,6 +24,6 @@ require_match "GOV-KB-READONLY" "prd-api/tests/PrdAgent.Api.Tests/Services/Infra
 require_match "GOV-PROFILE-SCOPE" "prd-api/src/PrdAgent.Infrastructure/Services/InfraAgentSessions/InfraAgentSessionService.cs" "profile gate"
 require_match "Runtime profile list/resolve are owner-or-team-scoped; update/delete remain owner-only" "prd-api/src/PrdAgent.Infrastructure/Services/InfraAgentSessions/InfraAgentSessionService.cs" "team-aware profile gate copy"
 require_match "InfraAgentGovernanceOwnerPolicyView" "prd-api/src/PrdAgent.Core/Interfaces/IInfraAgentSessionService.cs" "owner policy DTO"
-require_match "P3-5" "doc/design.cds-agent-commercial-architecture-and-roadmap.md" "roadmap entry"
+require_match "P3-5" "doc/design.cds.agent.commercial-architecture-and-roadmap.md" "roadmap entry"
 
 echo "PASS: CDS Agent governance dashboard static smoke"

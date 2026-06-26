@@ -18,7 +18,7 @@
  * github auth block wires up an authService. The middleware provides
  * `req.cdsUser` when a valid session cookie is present.
  *
- * See doc/plan.cds-multi-project-phases.md §8 P5.
+ * See doc/plan.cds.multi-project-phases.md §8 P5.
  */
 
 import { Router, type Request, type Response } from 'express';

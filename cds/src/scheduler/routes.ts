@@ -1,7 +1,7 @@
 /**
  * Scheduler API routes — manages executor registration, heartbeats, and dispatch.
  *
- * Handles the cluster bootstrap flow (see `doc/design.cds-cluster-bootstrap.md`):
+ * Handles the cluster bootstrap flow (see `doc/design.cds.cluster-bootstrap.md`):
  *  - A fresh executor posts to /register with `X-Bootstrap-Token`. On success
  *    we mint a permanent executor token and return it in the response body.
  *  - The first successful registration triggers `onFirstRegister`, which the
@@ -252,7 +252,7 @@ export function createSchedulerRouter(deps: SchedulerRouterDeps): Router {
 
   // ── GET /api/executors/capacity — aggregated cluster capacity ──
   // Public (no auth) so lightweight monitoring tools can poll it.
-  // See `doc/design.cds-cluster-bootstrap.md` §4.3.
+  // See `doc/design.cds.cluster-bootstrap.md` §4.3.
   router.get('/capacity', (_req, res) => {
     registry.refreshEmbeddedMasterLoad(); // embedded 主节点真实负载（bug #5）
     res.json(registry.getTotalCapacity());

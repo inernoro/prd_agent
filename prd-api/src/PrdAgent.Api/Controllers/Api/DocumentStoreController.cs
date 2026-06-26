@@ -1966,7 +1966,7 @@ public class DocumentStoreController : ControllerBase
     }
 
     // ─────────────────────────────────────────────
-    // 跨环境同步：导出 / 导入（design.acceptance-kb.md §5.C）
+    // 跨环境同步：导出 / 导入（design.acceptance.kb.md §5.C）
     // ─────────────────────────────────────────────
 
     /// <summary>
@@ -3409,7 +3409,7 @@ public class DocumentStoreController : ControllerBase
         var now = DateTime.UtcNow;
         // 原子 upsert（替代 find-then-insert/update）：单次 UpdateOne(IsUpsert) 把"查 + 插/改"合并为
         // 一个操作，消除两标签页并发各自 read-miss 后各插一行的窗口（Codex P2）。彻底去重还需
-        // (UserId, SourceEntryId) 唯一索引（本仓库禁运行时建索引，见 doc/guide.mongodb-indexes.md，由 DBA 建）。
+        // (UserId, SourceEntryId) 唯一索引（本仓库禁运行时建索引，见 doc/guide.platform.mongodb-indexes.md，由 DBA 建）。
         var filter = Builders<DocumentStoreConversation>.Filter.And(
             Builders<DocumentStoreConversation>.Filter.Eq(c => c.SourceEntryId, entryId),
             Builders<DocumentStoreConversation>.Filter.Eq(c => c.UserId, userId));
@@ -4186,7 +4186,7 @@ public class DocumentStoreController : ControllerBase
         // 注意：知识库分享目前没有可用的前端展示页（App.tsx 无 /library/share/:token 路由，
         // ShortLinkRouter 对 document_store 走 UnsupportedTargetError）。因此暂不注册 ShortLink
         // 数字短链，避免对外暴露打不开的 /s/{seq} 链接。待补齐 /library/share/:token 视图后
-        // 再纳入短链体系（详见 doc/debt.share-link-security.md）。
+        // 再纳入短链体系（详见 doc/debt.platform.share-link-security.md）。
         // 前端 DocumentStorePage 历史用 /library/share/{token}（自己拼），此处不返回 url 字段。
 
         // 返回完整 DocumentStoreShareLink，保持前端 DocumentStoreShareLink 类型契约不变
@@ -5272,7 +5272,7 @@ public class CreateDocStoreFolderRequest
     public string? ParentId { get; set; }
 }
 
-// ── 跨环境同步 bundle（design.acceptance-kb.md §5.C）──
+// ── 跨环境同步 bundle（design.acceptance.kb.md §5.C）──
 
 public class ImportStoreBundle
 {

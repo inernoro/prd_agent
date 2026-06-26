@@ -7,7 +7,7 @@ API_REGISTRY="$ROOT_DIR/prd-api/src/PrdAgent.Core/Models/CapsuleTypeRegistry.cs"
 WORKFLOW_TEMPLATE="$ROOT_DIR/prd-admin/src/pages/workflow-agent/workflowTemplates.ts"
 EXEC_DETAIL="$ROOT_DIR/prd-admin/src/pages/workflow-agent/ExecutionDetailPanel.tsx"
 FRONT_REGISTRY="$ROOT_DIR/prd-admin/src/pages/workflow-agent/capsuleRegistry.tsx"
-DOC="$ROOT_DIR/doc/design.cds-agent-commercial-architecture-and-roadmap.md"
+DOC="$ROOT_DIR/doc/design.cds.agent.commercial-architecture-and-roadmap.md"
 
 require_text() {
   local file="$1"

@@ -5,7 +5,7 @@ description: 模态框 3 硬约束：inline style 高度 + createPortal + min-h:
 
 <!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
      事实源: .claude/rules/frontend-modal.md
-     生成时间: 2026-06-14T08:27:26Z -->
+     生成时间: 2026-06-24T19:54:22Z -->
 
 
 # 前端模态框布局硬约束
@@ -101,4 +101,4 @@ Flex 子元素的 `min-height` 默认是 `auto`，这会阻止它收缩到内容
 
 **2026-04-11 pr-review 历史弹窗**：先用 `h-[90vh]` + `max-h-[90vh]`，用户反馈两次"超出屏幕无法滚动"。定位发现 Tailwind v4 下 arbitrary value 在某些路径上没被应用，modal 容器没有高度约束，内容一多就撑破整个视口。改用 inline style `{ height: '90vh', maxHeight: '90vh' }` + inline `minHeight: 0` + `createPortal` 后一次修复。
 
-> 详细：`doc/rule.frontend-modal.md`
+> 详细：`doc/rule.frontend.frontend-modal.md`

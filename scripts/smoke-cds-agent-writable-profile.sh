@@ -7,7 +7,7 @@ SESSION_SERVICE_FILE="$ROOT/prd-api/src/PrdAgent.Infrastructure/Services/InfraAg
 CONTROLLER_FILE="$ROOT/prd-api/src/PrdAgent.Api/Controllers/Api/AgentToolsController.cs"
 REGISTRY_FILE="$ROOT/prd-api/src/PrdAgent.Core/Models/CapsuleTypeRegistry.cs"
 INFRA_PAGE_FILE="$ROOT/prd-admin/src/pages/infra-services/InfraServicesPage.tsx"
-DOC_FILE="$ROOT/doc/design.cds-agent-commercial-architecture-and-roadmap.md"
+DOC_FILE="$ROOT/doc/design.cds.agent.commercial-architecture-and-roadmap.md"
 
 for file in "$POLICY_FILE" "$SESSION_SERVICE_FILE" "$CONTROLLER_FILE" "$REGISTRY_FILE" "$INFRA_PAGE_FILE" "$DOC_FILE"; do
   test -f "$file"

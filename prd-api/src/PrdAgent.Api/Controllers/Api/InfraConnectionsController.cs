@@ -9,7 +9,7 @@ namespace PrdAgent.Api.Controllers.Api;
 
 /// <summary>
 /// MAP 端基础设施连接管理接口（剪贴板配对密钥）。
-/// 详见 spec.cds-map-pairing-protocol.md。
+/// 详见 spec.cds.map-pairing-protocol.md。
 ///
 /// 鉴权：标准用户 JWT —— 调用方为登录的运营/开发用户，不是机器对机器。
 /// 机器调用通道（DynamicSidecarRegistry / ClaudeSidecarRouter）走

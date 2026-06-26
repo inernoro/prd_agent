@@ -392,8 +392,8 @@ function reconcileBranchStatusFromServices(branch: BranchEntry): { previousStatu
 // ── State ──
 //
 // CDS_STORAGE_MODE selects the physical storage backend that the
-// StateService writes through. See doc/plan.cds-multi-project-phases.md P3
-// and doc/rule.cds-mongo-migration.md.
+// StateService writes through. See doc/plan.cds.multi-project-phases.md P3
+// and doc/rule.cds.mongo-migration.md.
 //
 //   - 'json':            legacy state.json backend (explicit opt-in / tests)
 //   - 'mongo-split':     MongoDB multi-collection store (default runtime)
@@ -608,7 +608,7 @@ try {
 //
 // Auth backend is independent of the state storage backend
 // (CDS_STORAGE_MODE). You can mix them freely: e.g. state=json + auth=mongo.
-// See doc/guide.cds-env.md §3 and doc/design.cds-fu-02-auth-store-mongo.md.
+// See doc/guide.cds.env.md §3 and doc/design.cds.fu-02-auth-store-mongo.md.
 let activeAuthStore: import('./infra/auth-store/memory-store.js').AuthStore | undefined;
 const activeHttpLogStore = httpLogStoreFromEnv();
 if (activeHttpLogStore) {
@@ -874,7 +874,7 @@ const worktreeService = new WorktreeService(shell);
 // One-shot on-boot sweep. Symlinks any surviving `<worktreeBase>/<slug>`
 // entries into `<worktreeBase>/default/<slug>` and rewrites matching
 // BranchEntry.worktreePath values. Guarded by state.worktreeLayoutVersion
-// so subsequent boots skip the scan. See doc/plan.cds-backlog-matrix.md
+// so subsequent boots skip the scan. See doc/plan.cds.backlog-matrix.md
 // §FU-04 for the rationale.
 try {
   const migratedCount = WorktreeService.migrateFlatLayoutIfNeeded({
@@ -1175,7 +1175,7 @@ let shutdownInProgress = false;
 
 // ── Warm-pool scheduler (v3.1) ──
 // Disabled unless cds.config.json { "scheduler": { "enabled": true, ... } }.
-// See doc/design.cds-resilience.md and doc/plan.cds-resilience-rollout.md.
+// See doc/design.cds.resilience.md and doc/plan.cds.resilience-rollout.md.
 //
 // Runtime override: the Dashboard can toggle the scheduler via
 // PUT /api/scheduler/enabled, which writes to state.json. That value wins
@@ -1612,7 +1612,7 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
 // ── Janitor (Phase 2 resilience) ──
 // Enabled by default. Sweeps stale local containers/worktrees after a global
 // expiry window. The retention window is capped at 7 days by product policy.
-// See doc/design.cds-resilience.md Phase 2.
+// See doc/design.cds.resilience.md Phase 2.
 {
   const defaultJanitor = {
     enabled: true,
@@ -3746,7 +3746,7 @@ function listenWithRetry(
     const s = server.listen(port, () => {
       listening = true;
       // 2026-05-07 timing 审视:盖戳 daemon ready,让 recordSelfUpdate 能算
-      // 真实"用户感受到的等待" totalElapsedMs。详见 report.cds-self-update-timing-audit.md
+      // 真实"用户感受到的等待" totalElapsedMs。详见 report.cds.self-update-timing-audit.md
       try { stateService.recordDaemonReady(); } catch { /* 不致命 */ }
       onSuccess();
     });
@@ -3965,7 +3965,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   // We mount `/api/executors` in both standalone and scheduler modes so that
   // a fresh machine running in standalone can accept its first bootstrap
   // registration and *then* upgrade itself to scheduler in place — no
-  // process restart required. See `doc/design.cds-cluster-bootstrap.md` §4.4.
+  // process restart required. See `doc/design.cds.cluster-bootstrap.md` §4.4.
   //
   // In standalone mode the dispatcher is still created but has no remote
   // executors to dispatch to until the first one registers. The embedded

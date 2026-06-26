@@ -8,7 +8,7 @@
 >
 > **统计口径**：头部数字仅统计 `origin/main` 主干分支（weekly 技能纪律 #2：禁用 `--all`），按提交日期文本（`%cd --date=short`）过滤 `2026-06-15 ~ 2026-06-21`；PR 边界以本周实际落地主干的 merge commit 为准（27 个全部经 merge-base ancestor 校验可达），不信 GitHub `mergedAt`；文件 / 行变更口径为 `git diff --shortstat FIRST^..LAST`（包含跨 PR 合并副作用）。
 
-**本周趋势**：W25 是"W24 峰值后的归途收口周——缺陷自动化闭环正式合龙 + CDS 灰度预览体感升级 + 一批跨周积压被一周清完"。W24 是 6 周以来最忙的一周（566 提交 / 56 PR），W25 节奏掉回正常区间（288 提交 / 27 PR，体量约 W24 的 51%），但收的都是硬骨头：周中 06-18 一天落 110 提交，吃掉 12 个 PR——把 W23/W24 散在多分支上的"缺陷自动化闭环 / CDS 预览观测 / 知识库图片插入 / 视觉创作上传 / MCP 网关"五条长链路一次合龙。defect-agent 这周走完最后一公里——AiAccessKey 自助通道撤回、缺陷分享临时密钥窄 scope（`defect-agent:share`，1 天 TTL）、缺陷自动化控制台 UI、精确领取与工作流边界约束、缺陷修复证据链、自动化授权闭环、与缺陷分享外部 Agent 直连认证全部到位，本周新增 `doc/spec.defect-agent-automation-protocol.md` 把契约固化成 SSOT。CDS 方向最重要的一件事是把"卡 93% 静默等待"治了——构建中显示已耗时 + 历史中位 ETA + 自动展开「正在做什么」面板，并把 ETA 不跨模式回退的 Bug 一并修掉；同时上线"本地账号密码登录"作为 GitHub OAuth 之外的兜底（解决无 GitHub 时无法验收的死结）+ 验收报告项目级鉴权（孤儿分支防护）+ mongo-split 写入合并（治 master 事件循环被 save 风暴堵死）。视觉创作做了一次首页重新设计 + 上传压缩保留透明通道（不再兜底 JPEG）+ EXIF 方向解码 + 视频本地超时自动取消后端 run。知识库修了图片插入 / 版本恢复 / 大库分页（>500 条全量遍历）三个老 Bug。规则侧固化两条新原则：`expectation-management.md`（预期管理总纲——任何时刻让用户知道在做什么/还要多久/接下来怎样/刚才变了什么）和 `content-fills-canvas.md`（内容填满画布——主产物必须 flex-1 占主导，不许小盒子大留白）。fix(145)/feat(42)/docs(13) 三大类，**fix 占比 50%** —— 名副其实的归途周，欠债清得多、新坑少开。
+**本周趋势**：W25 是"W24 峰值后的归途收口周——缺陷自动化闭环正式合龙 + CDS 灰度预览体感升级 + 一批跨周积压被一周清完"。W24 是 6 周以来最忙的一周（566 提交 / 56 PR），W25 节奏掉回正常区间（288 提交 / 27 PR，体量约 W24 的 51%），但收的都是硬骨头：周中 06-18 一天落 110 提交，吃掉 12 个 PR——把 W23/W24 散在多分支上的"缺陷自动化闭环 / CDS 预览观测 / 知识库图片插入 / 视觉创作上传 / MCP 网关"五条长链路一次合龙。defect-agent 这周走完最后一公里——AiAccessKey 自助通道撤回、缺陷分享临时密钥窄 scope（`defect-agent:share`，1 天 TTL）、缺陷自动化控制台 UI、精确领取与工作流边界约束、缺陷修复证据链、自动化授权闭环、与缺陷分享外部 Agent 直连认证全部到位，本周新增 `doc/spec.defect-agent.automation-protocol.md` 把契约固化成 SSOT。CDS 方向最重要的一件事是把"卡 93% 静默等待"治了——构建中显示已耗时 + 历史中位 ETA + 自动展开「正在做什么」面板，并把 ETA 不跨模式回退的 Bug 一并修掉；同时上线"本地账号密码登录"作为 GitHub OAuth 之外的兜底（解决无 GitHub 时无法验收的死结）+ 验收报告项目级鉴权（孤儿分支防护）+ mongo-split 写入合并（治 master 事件循环被 save 风暴堵死）。视觉创作做了一次首页重新设计 + 上传压缩保留透明通道（不再兜底 JPEG）+ EXIF 方向解码 + 视频本地超时自动取消后端 run。知识库修了图片插入 / 版本恢复 / 大库分页（>500 条全量遍历）三个老 Bug。规则侧固化两条新原则：`expectation-management.md`（预期管理总纲——任何时刻让用户知道在做什么/还要多久/接下来怎样/刚才变了什么）和 `content-fills-canvas.md`（内容填满画布——主产物必须 flex-1 占主导，不许小盒子大留白）。fix(145)/feat(42)/docs(13) 三大类，**fix 占比 50%** —— 名副其实的归途周，欠债清得多、新坑少开。
 
 ---
 
@@ -62,7 +62,7 @@ timeline
 
 ### 1. 缺陷自动化闭环（defect-agent v3）—— 最后一公里合龙
 
-> **价值**：W23/W24 缺陷自动化协议起草、外部 Agent 临时密钥（W24 落地 `defect-agent:share` 1 天 TTL 窄 scope）、技能契约骨架陆续到位但散在多分支。W25 一周收尾五条线全部合龙：精确领取与工作流边界约束、缺陷修复证据链 UI 展示、缺陷自动化控制台、AiAccessKey 自助通道撤回与动态工具 schema/超时硬化、缺陷验收归属 + 修复关联自动闭环——本周新增 `doc/spec.defect-agent-automation-protocol.md` 把契约固化成 SSOT。defect-agent 自此走完 P0~P3。
+> **价值**：W23/W24 缺陷自动化协议起草、外部 Agent 临时密钥（W24 落地 `defect-agent:share` 1 天 TTL 窄 scope）、技能契约骨架陆续到位但散在多分支。W25 一周收尾五条线全部合龙：精确领取与工作流边界约束、缺陷修复证据链 UI 展示、缺陷自动化控制台、AiAccessKey 自助通道撤回与动态工具 schema/超时硬化、缺陷验收归属 + 修复关联自动闭环——本周新增 `doc/spec.defect-agent.automation-protocol.md` 把契约固化成 SSOT。defect-agent 自此走完 P0~P3。
 
 - **缺陷自动化协议契约固化（#861 + 06-21 spec 落盘）**：精确领取规则、工作流边界约束、修复证据链 UI、授权闭环可精确控制
 - **AiAccessKey 自助通道撤回与硬化（#836）**：自助签发能力撤回（避免越权），保留长效 M2M `sk-ak-*`；动态工具 schema 校验与超时硬化；MCP 网关非抛出式读取畸形 JSON-RPC 字段
@@ -76,7 +76,7 @@ timeline
 
 ### 2. CDS 灰度预览体感升级——构建 ETA + 本地账号 + 持久化纪律
 
-> **价值**：本周 CDS 集中治了三个老痛点：(1) 用户点"部署"后只能盯着 spinner 看，不知道还要多久——`expectation-management.md` 规则原话"卡在 93% 没有进度比没有进度更伤预期"；(2) 没有 GitHub 账号的同事无法在预览域名做验收——OAuth 是唯一入口的死结；(3) MongoDB master 事件循环被 save 风暴堵死、持久化投影里夹带 runtime 派生字段导致跨分支隔离穿透。三件事一并解决，并新增 `doc/debt.cds-branch-isolation.md` 把跨分支隔离债务台账固化。
+> **价值**：本周 CDS 集中治了三个老痛点：(1) 用户点"部署"后只能盯着 spinner 看，不知道还要多久——`expectation-management.md` 规则原话"卡在 93% 没有进度比没有进度更伤预期"；(2) 没有 GitHub 账号的同事无法在预览域名做验收——OAuth 是唯一入口的死结；(3) MongoDB master 事件循环被 save 风暴堵死、持久化投影里夹带 runtime 派生字段导致跨分支隔离穿透。三件事一并解决，并新增 `doc/debt.cds.branch-isolation.md` 把跨分支隔离债务台账固化。
 
 - **构建中 ETA 显示（#865）**：分支构建中显示「已耗时 XX 秒 / 历史中位预计 YY 秒」+ 进度条按 P95 推进、自动展开「正在做什么」阶段面板（治"卡 93% 静默等待"）
 - **ETA 不跨模式回退（#865 followup）**：发布版 vs 热加载切换时 ETA 不再用错样本（之前会把热加载的样本套到发布版上，给出离谱估计）
@@ -91,7 +91,7 @@ timeline
 - **过期锚点与远端分支停止归因（#847）**：禁止 janitor 误清远端分支、修复过期锚点
 - **Admin 静态预览源码启动目录修复（#853）**：Admin 预览源码模式启动目录错误导致 404
 - **Pages 前端产物根路径修复（#867）**：CI 流程最新前端产物根路径错误
-- **跨分支隔离债务台账（`doc/debt.cds-branch-isolation.md` 新增）**：把已知漏洞固化、为 W26 复测做准备
+- **跨分支隔离债务台账（`doc/debt.cds.branch-isolation.md` 新增）**：把已知漏洞固化、为 W26 复测做准备
 
 ### 3. 视觉创作 / 视频生成体验升级
 
@@ -153,10 +153,10 @@ timeline
 
 - **`.claude/rules/expectation-management.md` 新增**：预期管理总纲，附五条可执行约束 + AI 沟通也要管预期 + 与十几条既有规则的关系图谱
 - **`.claude/rules/content-fills-canvas.md` 新增**：内容填满画布三条硬约束（产物必须 flex-1 占满 / 高度从外壳传到产物 / 主从布局产物是主角）
-- **`doc/spec.defect-agent-automation-protocol.md` 新增**：缺陷自动化协议契约 SSOT
-- **`doc/debt.cds-branch-isolation.md` 新增**：跨分支隔离债务台账
-- **`doc/debt.cds-backend-deploy-freeze.md` 新增**：CDS 后端发布冻结期处理债务
-- **`doc/design.cds-build-time.md` 新增**：CDS 构建耗时设计文档（配合 ETA 上线）
+- **`doc/spec.defect-agent.automation-protocol.md` 新增**：缺陷自动化协议契约 SSOT
+- **`doc/debt.cds.branch-isolation.md` 新增**：跨分支隔离债务台账
+- **`doc/debt.cds.backend-deploy-freeze.md` 新增**：CDS 后端发布冻结期处理债务
+- **`doc/design.cds.build-time.md` 新增**：CDS 构建耗时设计文档（配合 ETA 上线）
 
 ### 10. 其他修补
 
@@ -215,7 +215,7 @@ timeline
 
 | W24 P 级建议方向（指向 W25） | W25 实际进展 |
 |------------------------------|--------------|
-| P0 **跨项目密钥事故复盘 + 隔离穿透清单复测** | 部分。本周固化了 `doc/debt.cds-branch-isolation.md` 跨分支隔离债务台账 + 持久化投影剥离 runtime 派生 + AiAccessKey 通道撤回（属于隔离穿透清单第 #2 项），但 6 类通道完整复测未做。下周建议排专项跑通通道 #3 `_global` customEnv / #4 共享 Mongo+Redis / #5 单实例多 Agent / #6 compose 占位值的回归测试。 |
+| P0 **跨项目密钥事故复盘 + 隔离穿透清单复测** | 部分。本周固化了 `doc/debt.cds.branch-isolation.md` 跨分支隔离债务台账 + 持久化投影剥离 runtime 派生 + AiAccessKey 通道撤回（属于隔离穿透清单第 #2 项），但 6 类通道完整复测未做。下周建议排专项跑通通道 #3 `_global` customEnv / #4 共享 Mongo+Redis / #5 单实例多 Agent / #6 compose 占位值的回归测试。 |
 | P0 **PM Agent Phase 2 真人 UAT**（含移动端） | 未做。W25 PM Agent 没有新代码改动，UAT 仍是欠款。**已第二次提醒**。 |
 | P0 **CDS Agent R1 vs Lite 路线决策**（第四次提醒） | 未做。W25 CDS 聚焦预览体感与稳定性收口，没有动 Agent R1/Lite 路线。**已第五次提醒**。 |
 | P0 **4 个 W22 新智能体真人验收**（第五次提醒） | 未做。CCAS / Project Route / 个人任务树仍未跑 `create-visual-test-to-kb`。**已第六次提醒**——警告：连续 6 周搁置，需要硬约束（如把它绑定到 W26 P0 里、不做不出 W26）。 |
@@ -238,7 +238,7 @@ timeline
 |--------|------|----------|
 | P0 | **4 个 W22 新智能体真人验收**（第六次提醒，硬约束） | CCAS / Project Route / 个人任务树（除 PM Agent 外）仍未跑 `create-visual-test-to-kb`。**强制要求**：W26 必须出 3 份验收报告归档到知识库，否则不准开新 Agent。 |
 | P0 | **跨项目隔离 6 类通道完整复测** | 本周清了通道 #1 #2，下周需把 #3 `_global` customEnv / #4 共享 Mongo+Redis / #5 单实例多 Agent / #6 compose 占位值四类全部跑回归测试，归档为 `doc/report.cross-project-isolation-channel-regression.md`。 |
-| P0 | **CDS Agent R1 vs Lite 路线决策**（第五次提醒） | 已连续 5 周未决策。本周必须在周会上明确：要么排期接入 Anthropic SDK 工程把 R1 真接通；要么明确 Lite 为正式形态把 R1 砍掉。**继续搁置就在 `doc/debt.cds-agent.md` 记一次"长期搁置"**。 |
+| P0 | **CDS Agent R1 vs Lite 路线决策**（第五次提醒） | 已连续 5 周未决策。本周必须在周会上明确：要么排期接入 Anthropic SDK 工程把 R1 真接通；要么明确 Lite 为正式形态把 R1 砍掉。**继续搁置就在 `doc/debt.cds.agent.md` 记一次"长期搁置"**。 |
 | P0 | **PM Agent Phase 2 真人 UAT**（含移动端，第二次提醒） | Phase 2 已推进 P0~P3 4 档但 Phase 1 都没跑 UAT。必须按"立项 → 任务 → 目标 → 里程碑 → 风险 → 周报 → AI 简报 → 全局总览"完整生命周期走一遍，并配 mobile viewport 验收。 |
 | P1 | **CDS 灰度预览 ETA 真人 UAT** | 本周架构改动较大（构建 ETA + 本地账号 + 验收报告鉴权 + ETA 不跨模式回退 + 持久化投影剥离）但仅靠脚本验证。下周走 `/验收` 流跑双主题 + 模拟人类浏览器取证（"卡 93%"是否真治了）。 |
 | P1 | **缺陷自动化端到端真人 UAT** | W25 缺陷自动化闭环已合龙，但全链路（外部 Agent 领取 → 修复 → 提交证据链 → 验收 → 关联）的真人 UAT 还没跑。下周建议挑一条真实缺陷走一遍，归档为 `doc/report.defect-agent-e2e-uat-2026-W26.md`。 |

@@ -7,11 +7,11 @@
  * 路由：/document-store/:storeId/universe（来自 navRegistry 的 store-scoped 入口）
  * 也支持顶层 /document-store/universe（用户自选库）。
  *
- * 详见 doc/design.knowledge-base-mention-network.md §宇宙图。
+ * 详见 doc/design.knowledge-base.mention-network.md §宇宙图。
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Settings as SettingsIcon, ArrowLeft, Loader2 } from 'lucide-react';
+import { Settings as SettingsIcon, ArrowLeft, Loader2, Orbit } from 'lucide-react';
 import { getStoreGraph, type GraphNode, type GraphEdge } from '@/services/real/mentions';
 import { listDocumentStoresReal } from '@/services/real/documentStore';
 import type { DocumentStore } from '@/services/contracts/documentStore';
@@ -515,7 +515,7 @@ export function UniverseGraphPage() {
         style={{ position: 'absolute', inset: 0, cursor: hoverNodeId ? 'pointer' : dragRef.current.mode === 'pan' ? 'grabbing' : 'grab' }}
       />
 
-      {/* 返回 + 库名 */}
+      {/* 返回 + 库名 + 进入星系（星系已拆为独立全屏页 /document-store/:storeId/galaxy） */}
       <div style={{ position: 'absolute', top: 12, left: 56, zIndex: 11, display: 'flex', alignItems: 'center', gap: 12 }}>
         <button
           onClick={() => {
@@ -541,6 +541,27 @@ export function UniverseGraphPage() {
         <div style={{ fontSize: 13, color: '#8a8a8a' }}>
           {storeName} · {nodes.length} 节点 · {edges.length} 引用
         </div>
+
+        {/* 进入 3D 星系（独立全屏页） */}
+        {storeId && (
+          <button
+            onClick={() => navigate(`/document-store/${storeId}/galaxy`)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '6px 12px',
+              fontSize: 12,
+              border: '1px solid #3a3a3a',
+              borderRadius: 6,
+              cursor: 'pointer',
+              background: 'rgba(45,45,45,0.85)',
+              color: '#bdbdbd',
+            }}
+          >
+            <Orbit size={13} /> 星系
+          </button>
+        )}
       </div>
 
       {/* 齿轮按钮 */}

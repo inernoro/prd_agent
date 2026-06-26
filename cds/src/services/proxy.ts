@@ -116,7 +116,7 @@ export class ProxyService {
   /**
    * Attach the warm-pool scheduler. When set, every successful route to a
    * HOT branch calls scheduler.touch() to refresh LRU ordering.
-   * See doc/design.cds-resilience.md §四.4.
+   * See doc/design.cds.resilience.md §四.4.
    */
   setScheduler(s: SchedulerService): void {
     this.scheduler = s;
@@ -544,7 +544,7 @@ export class ProxyService {
 
     // Loading states — serve friendly waiting page instead of 502/503 so
     // users never see a raw Cloudflare gateway error during build/restart.
-    // See `.claude/rules/cds-auto-deploy.md` + doc/design.cds-resilience.md.
+    // See `.claude/rules/cds-auto-deploy.md` + doc/design.cds.resilience.md.
     const LOADING_BRANCH_STATUSES: ReadonlySet<string> = new Set([
       'starting', 'building', 'restarting',
     ]);

@@ -3,7 +3,9 @@ name: llm-call-trace
 description: 排查大模型调用链路问题的方法论。当出现"前端选 A 后端跑 B"、"LLM 日志 model 字段不对"、"自定义模型调度被忽略"类 bug 时触发。强制走"捕获前端真实请求 → DB 真实状态 → 每层 resolve 调用审计 → 对比 LLM 日志实际 body.model"的顺序，禁止靠 DI 装饰器/AsyncLocal 打补丁。触发词："/llm-trace", "模型调用不对", "LLM 日志不符", "选 A 给 B", "trace model".
 ---
 
-# LLM Call Trace — 大模型调用链路排查
+# 大模型调用链路排查
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/llm-trace`、"模型调用不对"、"LLM 日志不符"、"选 A 给 B"、"trace model" | **SSOT**：`.claude/rules/compute-then-send.md`
 
 当用户报告"模型被换了"、"前端选 X 但日志显示 Y"、"自定义模型调度不生效"类 bug，**必须**按本 skill 顺序执行，禁止凭直觉加补丁。
 
@@ -76,8 +78,8 @@ grep -rn "_modelResolver.ResolveAsync\|_gateway.ResolveModelAsync\|IModelResolve
 ```
 
 对每条调用链（Controller → Worker → Client → Gateway → upstream HTTP），数一下"同一逻辑请求中 resolve 被调几次"：
-- **== 1 次**：✓ 符合 `compute-then-send.md` 规则
-- **>= 2 次**：✗ **根因在这里**。不要去给第二次、第三次打补丁，而是合并成一次
+- **== 1 次**：通过，符合 `compute-then-send.md` 规则
+- **>= 2 次**：未通过，**根因在这里**。不要去给第二次、第三次打补丁，而是合并成一次
 
 ### Step 5. 在独立端点里验证匹配算法本身对不对（离线、可重复）
 

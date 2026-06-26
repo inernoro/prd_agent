@@ -1,7 +1,7 @@
 /**
  * CDS 配对连接路由（系统级，2026-05-06）
  *
- * 实现 spec.cds-map-pairing-protocol.md v1：
+ * 实现 spec.cds.map-pairing-protocol.md v1：
  *   POST   /api/cds-system/connections/issue       生成剪贴板密钥
  *   POST   /api/cds-system/connections/accept      MAP 端粘贴 → 完成 handshake
  *   GET    /api/cds-system/connections             列出所有连接（含 pending）

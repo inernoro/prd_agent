@@ -792,5 +792,5 @@ Draft  --->  Submitted  --->  Viewed
 | 文档 | 关系 |
 |------|------|
 | `doc/spec.report-agent.md` | PRD v1.0 (存档，已删除) |
-| `doc/plan.report-agent-impl.md` | Phase 1-4 实施记录 |
+| `doc/plan.report-agent.impl.md` | Phase 1-4 实施记录 |
 | `CLAUDE.md` | 功能注册表 |

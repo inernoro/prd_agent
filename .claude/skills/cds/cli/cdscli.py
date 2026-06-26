@@ -5213,7 +5213,7 @@ def _emit_scan_result(args: argparse.Namespace, yaml_content: str,
 # 这是把过去 7 个 geo 实战根因(volumes 路径 / port 错位 / dependsOn 漏 /
 # schemaful DB 缺 migration / 密码转义)在 scan 端提前拦截的入口。
 #
-# 校验规则的 SSOT 在 doc/spec.cds-compose-contract.md § 4。
+# 校验规则的 SSOT 在 doc/spec.cds.compose-contract.md § 4。
 
 _SCHEMAFUL_DB_NAMES = {"mysql", "mariadb", "postgres", "postgresql", "sqlserver", "mssql", "oracle", "db2"}
 _MIGRATION_KEYWORDS = ["migrate", "prisma", "ef database update", "sequelize-cli", "flyway", "rake db:migrate", "alembic upgrade"]
@@ -5780,7 +5780,7 @@ def _verify_run_all(doc: dict, root: str) -> list[dict]:
     return issues
 
 
-# ── 评分(WS4)+ 自愈(WS5):SSOT doc/spec.cds-compose-contract.md § 4.4 / § 4.5 ──
+# ── 评分(WS4)+ 自愈(WS5):SSOT doc/spec.cds.compose-contract.md § 4.4 / § 4.5 ──
 
 # 每级严重度扣分。垃圾 compose(多 ERROR)分数被快速压到 F,挡在部署门外。
 _VERIFY_SEVERITY_PENALTY = {"ERROR": 25, "WARNING": 8, "INFO": 2}
@@ -5798,7 +5798,7 @@ def _verify_grade(score: int) -> str:
 def _verify_score(issues: list[dict]) -> dict:
     """把 ERROR/WARNING/INFO 聚合成 0-100 评分 + 字母等级。
 
-    SSOT:doc/spec.cds-compose-contract.md § 4.4。评分只看 issue 严重度,
+    SSOT:doc/spec.cds.compose-contract.md § 4.4。评分只看 issue 严重度,
     满分 100,逐条扣分,下限 0。等级用于教程示例与 CI 的质量门禁。
     """
     deductions = {sev: 0 for sev in _VERIFY_SEVERITY_PENALTY}
@@ -5958,7 +5958,7 @@ def cmd_verify(args: argparse.Namespace) -> None:
       --min-score N   评分 < N 时 exit 1(垃圾 compose 门禁)
       --fix           输出自愈修补(diff + 建议),不落盘
       --write         配合 --fix,把修补写回文件(先备份 .bak)
-    校验规则 SSOT:doc/spec.cds-compose-contract.md § 4。
+    校验规则 SSOT:doc/spec.cds.compose-contract.md § 4。
     """
     target = os.path.abspath(args.path or ".")
 
@@ -6908,7 +6908,7 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="跳过根目录 cds-compose.yml 缓存，强制重新扫描")
     sc.set_defaults(func=cmd_scan)
 
-    vf = sub.add_parser("verify", help="校验 cds-compose 文件(部署前预检 + 评分 + 自愈,SSOT: spec.cds-compose-contract.md)")
+    vf = sub.add_parser("verify", help="校验 cds-compose 文件(部署前预检 + 评分 + 自愈,SSOT: spec.cds.compose-contract.md)")
     vf.add_argument("path", nargs="?", default=".", help="项目根目录或 compose 文件路径,默认当前目录")
     vf.add_argument("--min-score", type=int, metavar="N",
                     help="评分 < N 时 exit 1(垃圾 compose 质量门禁,0-100)")

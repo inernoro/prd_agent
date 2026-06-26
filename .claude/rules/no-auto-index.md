@@ -6,7 +6,7 @@
 
 1. `MongoDbContext` 构造函数中 `CreateIndexes()` 已注释，禁止取消注释
 2. 禁止在任何 `IHostedService`、`BackgroundService`、启动逻辑中调用 `Indexes.CreateOne` / `Indexes.CreateMany`
-3. 新增索引需求：更新 `doc/guide.mongodb-indexes.md`，由 DBA 手动执行
+3. 新增索引需求：更新 `doc/guide.platform.mongodb-indexes.md`，由 DBA 手动执行
 4. 索引定义源码保留在 `MongoDbContext.CreateIndexes()` 中作为参考（不执行）
 
 ## 原因

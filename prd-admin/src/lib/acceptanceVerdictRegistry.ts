@@ -1,5 +1,5 @@
 /**
- * 验收结论徽章注册表（design.acceptance-kb.md §5.A）
+ * 验收结论徽章注册表（design.acceptance.kb.md §5.A）
  *
  * 验收报告条目的 verdict 存在 entry.metadata.verdict（pass/conditional/fail），
  * 由 create-visual-test-to-kb 技能归档时写入。本注册表把 verdict 映射为列表里的

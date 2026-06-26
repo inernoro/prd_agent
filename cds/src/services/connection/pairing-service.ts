@@ -1,5 +1,5 @@
 /**
- * CdsPairingService —— spec.cds-map-pairing-protocol.md v1 实施。
+ * CdsPairingService —— spec.cds.map-pairing-protocol.md v1 实施。
  *
  * 职责：
  *   1. issue：生成一次性 pairing token + 剪贴板密文（base64url JSON），

@@ -330,7 +330,7 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
         rid = data_or_raise(curl(HJ + ["-X", "POST", "-d", json.dumps(
             {"name": store_name, "description": cfg["report"].get("storeDescription", ""),
              "isPublic": want_public,
-             # 模板键：让"验收报告库"对写入条目做结构约束（design.acceptance-kb.md §5.B）。
+             # 模板键：让"验收报告库"对写入条目做结构约束（design.acceptance.kb.md §5.B）。
              # 机器归档缺必填 metadata/正文 section 会被后端 422 拒收。
              "templateKey": want_template}
         ), f"{base}/stores"]), "创建知识库")["id"]

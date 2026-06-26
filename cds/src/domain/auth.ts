@@ -6,8 +6,8 @@
  * is swapped out for a MongoDB-backed implementation without changing
  * any consumers — the Store interface is the stable contract.
  *
- * See doc/design.cds-multi-project.md section 七 and
- * doc/spec.cds-project-model.md sections 3 (users), 4 (sessions),
+ * See doc/design.cds.multi-project.md section 七 and
+ * doc/spec.cds.project-model.md sections 3 (users), 4 (sessions),
  * 5 (workspaces), 6 (workspace_members).
  */
 

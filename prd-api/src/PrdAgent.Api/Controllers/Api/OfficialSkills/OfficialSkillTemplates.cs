@@ -12,8 +12,8 @@ namespace PrdAgent.Api.Controllers.Api.OfficialSkills;
 public static class OfficialSkillTemplates
 {
     public const string AiDefectResolveKey = "ai-defect-resolve";
-    public const string AiDefectResolveVersion = "1.7.0";
-    public const string AiDefectResolveReleaseDate = "2026-06-22";
+    public const string AiDefectResolveVersion = "1.8.0";
+    public const string AiDefectResolveReleaseDate = "2026-06-24";
 
     public const string AiDefectResolveSkillMd = """
 ---
@@ -101,6 +101,26 @@ DEFECT_AGENT_DOMAIN="{domain}" DEFECT_AGENT_KEY="{K}" node scripts/defect-automa
 - 根因清晰，行为可验证。
 - 不涉及破坏性删除、数据库迁移、权限模型重写、跨服务协议改造。
 - 能跑通本地测试、集成测试、CDS 预览或浏览器验收中的至少一条。
+
+## 自治纪律（自主边界 + 五层自治回路）
+
+本技能不是线性脚本，是有边界、能担责的自治体系。动手前先定档，再按五层自检。判定口诀：动手前先问“这条该不该我全权改，还是该停下问人”。
+
+### 自主三档边界（动手前先定档）
+
+- 全权自主：轻量（≤200 行 / ≤10 分钟 / 根因清晰 / 可自测）→ 直接修 → `workflow/complete`。
+- 请示后做：超阈值 / 根因不清 / 影响面大 → 评论说明 → `workflow/block`（`stopRun=true`）。
+- 禁止自动做：破坏性删除 / DB 迁移 / 权限模型重写 / 跨服务协议改造 / 无法自测的关键路径 → 一律 `block` 升级，绝不自动执行。
+
+### 五层自治回路（每条缺陷按序自检）
+
+1. 认知：领单后还原“这条缺陷要解决的真实问题”，并实际复现/定位，确认描述仍成立；与现状不符 → `block`（`failurePhase=analysis`），不照过时描述改。
+2. 规划：即使行数小，也心算成功率 / 影响面 / 回滚代价；高风险或没把握主动降档“请示后做”。
+3. 执行：实况与预判严重不符就停下重规划或 `block`（`failurePhase=fix`）；推送前跑通至少一条真实自测。
+4. 记忆：动手前查同模块 / 同症状历史处置（`git log`、已有修复 commit、相似缺陷评论），复用经验与踩过的坑。
+5. 监督：三道事前阀——合规红线（禁止项 / 跨环境）拒绝；不确定就 `block` 升级而非硬猜；同一缺陷反复 fix-break-fix 或长任务兜圈 → 停 + 在 `failureReason` 标 `loopGuard`。
+
+complete / block 前自查：定了档且确属“全权自主”才 `complete`；认知 / 规划 / 执行 / 记忆 / 监督五条都过。任一为否，转 `block` 或降档，不许 `complete`。
 
 ## 约束
 

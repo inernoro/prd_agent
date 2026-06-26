@@ -30,7 +30,7 @@
 | 改进建议为规则模板 | 部分偿还 | 单条洞察 suggestion 仍为模板；整体「AI 简报」已接 ILlmGateway（insight-brief caller，SSE 流式 + 可发布知识库）。单条级 AI 建议待做 |
 | 停留时长不区分「阅读」与「卡住」 | 设计取舍 | 已剔除标签页隐藏时间，但页面内挂机无法区分；长停留洞察文案已提示由产品负责人结合页面性质判断 |
 | 路由信号自上线起累积 | 事实声明 | behavior_events 无历史回填；报错/慢端点洞察来自 apirequestlogs（含历史）。UI 已展示采集起点 |
-| behavior_events 无索引 | 待 DBA | 按 no-auto-index 规则不自动建索引；数据量上来后需 DBA 手动建 (OccurredAt desc) + (Type, OccurredAt) 索引并更新 guide.mongodb-indexes |
+| behavior_events 无索引 | 待 DBA | 按 no-auto-index 规则不自动建索引；数据量上来后需 DBA 手动建 (OccurredAt desc) + (Type, OccurredAt) 索引并更新 guide.platform.mongodb-indexes |
 
 ## 涌现第二波留尾（2026-06-12）
 

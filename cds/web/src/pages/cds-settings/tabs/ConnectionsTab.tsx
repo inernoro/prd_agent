@@ -1,5 +1,5 @@
 /**
- * 对接 MAP（CDS 系统设置 → 运行时 → 对接 MAP）—— spec.cds-map-pairing-protocol.md v1。
+ * 对接 MAP（CDS 系统设置 → 运行时 → 对接 MAP）—— spec.cds.map-pairing-protocol.md v1。
  *
  * 用户体验流：
  *   1. 点 [+ 创建连接密钥]
@@ -161,7 +161,7 @@ export function ConnectionsTab({
           通过剪贴板配对密钥，与 MAP 平台或其他执行器适配器建立信任连接。流程：点
           「创建连接密钥」→ 复制 → 在 MAP 平台粘贴 → 自动完成。详见{' '}
           <code className="rounded bg-muted px-1 py-0.5 text-xs">
-            doc/spec.cds-map-pairing-protocol.md
+            doc/spec.cds.map-pairing-protocol.md
           </code>
           。
         </>

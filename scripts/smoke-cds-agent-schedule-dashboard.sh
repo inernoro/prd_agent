@@ -25,6 +25,6 @@ require_match "kb_list" "prd-api/src/PrdAgent.Infrastructure/Services/AgentTools
 require_match "kb_search" "prd-api/src/PrdAgent.Infrastructure/Services/AgentTools/Tools/KnowledgeBaseReadonlyTools.cs" "KB search readonly tool"
 require_match "kb_read" "prd-api/src/PrdAgent.Infrastructure/Services/AgentTools/Tools/KnowledgeBaseReadonlyTools.cs" "KB read readonly tool"
 require_match "cds-agent-schedule-dashboard/v1" "prd-api/tests/PrdAgent.Api.Tests/Services/InfraAgentSessionServiceScheduleDashboardTests.cs" "schedule unit evidence"
-require_match "P3-4" "doc/design.cds-agent-commercial-architecture-and-roadmap.md" "roadmap entry"
+require_match "P3-4" "doc/design.cds.agent.commercial-architecture-and-roadmap.md" "roadmap entry"
 
 echo "PASS: CDS Agent schedule dashboard static smoke"

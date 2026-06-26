@@ -18,7 +18,7 @@ public sealed record ChangelogPushEvent(string ViewType, DateTime FetchedAt, str
 /// 每个打开着更新中心的浏览器通过 <see cref="Subscribe"/> 拿到一个独立 Channel，
 /// SSE 端点把事件逐条写给前端，前端据此重新读取存量并平滑替换。
 ///
-/// 已知边界：进程内广播，多实例部署时跨实例不互通（见 doc/debt.changelog-center.md）。
+/// 已知边界：进程内广播，多实例部署时跨实例不互通（见 doc/debt.platform.changelog-center.md）。
 /// </summary>
 public interface IChangelogPushHub
 {

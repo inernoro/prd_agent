@@ -8,7 +8,7 @@ using PrdAgent.Infrastructure.Database;
 namespace PrdAgent.Infrastructure.Services;
 
 /// <summary>
-/// 节点身份 + HMAC 鉴权（系统级跨节点互传）。详见 doc/design.peer-sync.md §5.1。
+/// 节点身份 + HMAC 鉴权（系统级跨节点互传）。详见 doc/design.platform.peer-sync.md §5.1。
 ///
 /// 签名串：HMAC_SHA256(sharedSecret, "{METHOD}\n{path}\n{ts}\n{sha256(body)}")。
 /// 共享密钥永不出现在 URL / 日志 / 前端；时间戳偏移超 5 分钟拒绝（防重放）。

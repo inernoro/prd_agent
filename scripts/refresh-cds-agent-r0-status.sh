@@ -114,17 +114,17 @@ if [[ "$ready_for_r0" != "true" ]]; then
   if [[ "$workflow_status" == "workflow_file_on_branch_not_indexed" && "$registry_visible" != "true" ]]; then
     user_action_required=true
     user_action_reason="legacy sidecar image publish evidence is incomplete; this is operator/debug fallback evidence, not the product path"
-    unblock_option_a="run doc/design.cds-agent-managed-runtime-fact-source.md and keep CDS-managed runtime as the product path"
+    unblock_option_a="run doc/design.cds.agent.managed-runtime-fact-source.md and keep CDS-managed runtime as the product path"
     unblock_option_b="if operating the fallback path only, verify image publication outside the normal user path"
   elif [[ "$missing_config" == *"CDS_REMOTE_HOST_"* ]]; then
     user_action_required=true
     user_action_reason="legacy remote host SSH inputs are missing; SSH/env values are CDS operator/debug fallback details, not the product path"
-    unblock_option_a="run doc/design.cds-agent-managed-runtime-fact-source.md and redesign R0 around CDS-managed runtime capacity"
+    unblock_option_a="run doc/design.cds.agent.managed-runtime-fact-source.md and redesign R0 around CDS-managed runtime capacity"
     unblock_option_b="use SSH/env only when explicitly operating a fallback recovery path"
   elif [[ "$missing_config" == *"CDS_AGENT_SIDECAR_IMAGE"* ]]; then
     user_action_required=true
     user_action_reason="legacy sidecar image input is missing; image/env is an operator/debug fallback detail, not the product path"
-    unblock_option_a="run doc/design.cds-agent-managed-runtime-fact-source.md and move image/profile responsibility behind CDS-managed runtime"
+    unblock_option_a="run doc/design.cds.agent.managed-runtime-fact-source.md and move image/profile responsibility behind CDS-managed runtime"
     unblock_option_b="use image/env only when explicitly operating a fallback recovery path"
   fi
 fi
@@ -188,7 +188,7 @@ mkdir -p "$(dirname "$OUTPUT")"
   elif [[ "$user_action_required" == "true" ]]; then
     printf 'Continue R0.7 CDS-managed runtime live evidence work. R0.7 local liveApply container path is in place; remote host, SSH, image, and env values are operator/debug fallback details, not the product path:\n\n'
     printf '```bash\n'
-    printf "sed -n '70,120p' doc/design.cds-agent-managed-runtime-fact-source.md\n"
+    printf "sed -n '70,120p' doc/design.cds.agent.managed-runtime-fact-source.md\n"
     printf 'npm --prefix cds test -- --run tests/routes/remote-hosts-instances.test.ts\n'
     printf 'scripts/smoke-cds-agent-map-session-transport.sh\n'
     printf 'scripts/smoke-cds-agent-shared-service-pool.sh\n'

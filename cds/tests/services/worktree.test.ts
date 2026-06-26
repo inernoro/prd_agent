@@ -9,7 +9,7 @@ import { MockShellExecutor } from '../../src/services/shell-executor.js';
  * P4 Part 18 (G1.2): WorktreeService is now stateless — every
  * repo-touching method takes `repoRoot` as its first argument. The
  * previous `repoRoot` constructor arg + getter/setter have been
- * removed. See `doc/design.cds-multi-project.md` and the commit
+ * removed. See `doc/design.cds.multi-project.md` and the commit
  * message for the rationale.
  */
 describe('WorktreeService', () => {

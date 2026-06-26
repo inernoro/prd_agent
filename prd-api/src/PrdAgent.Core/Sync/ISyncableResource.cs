@@ -2,7 +2,7 @@ namespace PrdAgent.Core.Sync;
 
 /// <summary>
 /// 可跨节点互传的业务资源。任何应用实现本接口 + DI 注册即可接入系统级互传，
-/// PeerSyncController 端点零改动。详见 doc/design.peer-sync.md §5.2。
+/// PeerSyncController 端点零改动。详见 doc/design.platform.peer-sync.md §5.2。
 ///
 /// 计算/发送分离：ExportAsync 是纯计算（导出 bundle），发送由 PeerSyncController 统一负责；
 /// ApplyAsync 是接收侧落库（按用户名对齐归属）。

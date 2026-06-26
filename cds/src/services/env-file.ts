@@ -1,7 +1,7 @@
 /**
  * .cds.env file helper — atomic read/write of the single user config file.
  *
- * The cluster bootstrap flow (see `doc/design.cds-cluster-bootstrap.md`) needs
+ * The cluster bootstrap flow (see `doc/design.cds.cluster-bootstrap.md`) needs
  * to mutate `.cds.env` from within the Node process:
  *   - On mode upgrade (standalone → scheduler), write `CDS_MODE=scheduler`.
  *   - On successful executor bootstrap, persist the permanent executor token.

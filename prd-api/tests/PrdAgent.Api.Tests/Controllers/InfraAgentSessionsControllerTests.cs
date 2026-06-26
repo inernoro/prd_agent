@@ -517,7 +517,7 @@ public class InfraAgentSessionsControllerTests
             debugCommands.Single(x => x.Code == "managed-runtime-capacity").Status.ShouldBe("blocked");
             debugCommands.Single(x => x.Code == "managed-runtime-capacity").Command.ShouldContain("smoke-cds-agent-managed-runtime-capacity.sh");
             debugCommands.Single(x => x.Code == "managed-runtime-fact-source").Status.ShouldBe("blocked");
-            debugCommands.Single(x => x.Code == "managed-runtime-fact-source").Command.ShouldContain("doc/design.cds-agent-managed-runtime-fact-source.md");
+            debugCommands.Single(x => x.Code == "managed-runtime-fact-source").Command.ShouldContain("doc/design.cds.agent.managed-runtime-fact-source.md");
             debugCommands.Single(x => x.Code == "runtime-pool-evidence").Status.ShouldBe("blocked");
             debugCommands.Single(x => x.Code == "runtime-pool-evidence").Command.ShouldContain("collect-cds-agent-runtime-pool-evidence.sh");
             debugCommands.Single(x => x.Code == "branch-isolation-dry-run").BlockedBy.ShouldBe("R0");
@@ -537,7 +537,7 @@ public class InfraAgentSessionsControllerTests
             executionPanel.BlockingReason.ShouldContain("CDS_MANAGED_RUNTIME_CAPACITY=missing");
             executionPanel.BlockingReason.ShouldContain("instanceCount=1 healthyCount=1 officialInstances=0");
             executionPanel.DeploymentAdvice.ShouldContain("CDS_MANAGED_RUNTIME_CAPACITY");
-            executionPanel.NextCommand.ShouldContain("doc/design.cds-agent-managed-runtime-fact-source.md");
+            executionPanel.NextCommand.ShouldContain("doc/design.cds.agent.managed-runtime-fact-source.md");
             executionPanel.NextCommand.ShouldContain("smoke-cds-agent-managed-runtime-capacity.sh");
             executionPanel.NextCommandCode.ShouldBe("managed-runtime-capacity");
             executionPanel.NextCommandSafety.ShouldContain("read-only");
@@ -828,7 +828,7 @@ public class InfraAgentSessionsControllerTests
         debugCommands.Single(x => x.Code == "r1-apply").Command
             .ShouldStartWith("CDS_HOST=https://cds.example.test SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=");
         diagnostics.ExecutionPanel.ShouldNotBeNull().NextCommand
-            .ShouldBe("sed -n '70,130p' doc/design.cds-agent-managed-runtime-fact-source.md && bash scripts/smoke-cds-agent-managed-runtime-capacity.sh");
+            .ShouldBe("sed -n '70,130p' doc/design.cds.agent.managed-runtime-fact-source.md && bash scripts/smoke-cds-agent-managed-runtime-capacity.sh");
     }
 
     private static InfraAgentSessionsController BuildController(

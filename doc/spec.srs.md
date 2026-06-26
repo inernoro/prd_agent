@@ -2156,7 +2156,7 @@ sequenceDiagram
 
 > 奥卡姆剃刀重构：取代原 "PR 审查棱镜" 方案。核心洞察是把 GitHub Token 从
 > "应用全局配置" 迁到 "每个用户的 OAuth 连接"，天然支持审查任意团队的 PR。
-> 详细设计见 `doc/design.pr-review-v2.md`。
+> 详细设计见 `doc/design.pr-review.v2.md`。
 
 #### 4.24.1 PR-001 通过 GitHub Device Flow 连接账号
 

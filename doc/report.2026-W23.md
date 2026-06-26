@@ -65,7 +65,7 @@ timeline
   - 接入门槛降低：再加工自动从契约列出可用 capabilities，不需要手动维护白名单
   - 形态归一：所有 Agent 返回结构统一，再加工无需 N 套解析逻辑
   - 路由清晰：从一句话 prompt 路由到具体 capability，可解释、可回溯
-- **配套设计文档**：`doc/report.agent-universe-completeness.md` + `doc/design.reprocess-chat-routing.md`
+- **配套设计文档**：`doc/report.agent-universe.completeness.md` + `doc/design.prd-agent.reprocess-chat-routing.md`
 
 ### 3. 多页面新手引导教程系统重构 — 从悬浮图标到页头常驻 pill
 
@@ -84,7 +84,7 @@ timeline
 
 - **基础设施注册表 SSOT**：`cds/src/infra-registry.ts` 唯一定义，前后端共用
 - **一键部署闭环**：选模板 → 渲染预览 → 评分校验 → 推送 → 容器就绪 → 预览 URL
-- **配套文档**：`doc/guide.cds-one-click-deploy.md` + `doc/guide.cds-deploy-acceptance.md` + `doc/plan.cds-visual-deploy.md` + `doc/report.cds-visual-deploy.md`
+- **配套文档**：`doc/guide.cds.one-click-deploy.md` + `doc/guide.cds.deploy-acceptance.md` + `doc/plan.cds.visual-deploy.md` + `doc/report.cds.visual-deploy.md`
 - **验收知识库**：`scripts/publish-cds-deploy-acceptance-kb.py` 把验收报告发布到独立知识库
 
 ### 5. 知识库列表两次大改 — sticky 之后又改回两行布局

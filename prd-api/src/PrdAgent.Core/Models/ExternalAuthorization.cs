@@ -8,7 +8,7 @@ namespace PrdAgent.Core.Models;
 /// - 凭证字段加密存储（CredentialsEncrypted），API 返回时脱敏
 /// - 工作流通过 authId 引用本记录，运行时通过内部接口解密取凭证
 ///
-/// 详见 doc/design.external-authorization.md
+/// 详见 doc/design.platform.external-authorization.md
 /// </summary>
 public class ExternalAuthorization
 {
