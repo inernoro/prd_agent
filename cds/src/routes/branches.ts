@@ -13,6 +13,7 @@ import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
+import { classifyTriggerSource, deriveDeployMode, deriveCommitMeta } from '../services/build-log-meta.js';
 import { acquireBuildSlot, buildGateStatus } from '../services/build-gate.js';
 import { recordBuild } from '../services/build-activity-tracker.js';
 import type { ContainerService } from '../services/container.js';
@@ -2562,6 +2563,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       startedAt: new Date().toISOString(),
       status: 'running',
       events: [{ step: preamble.step, status: preamble.status, title: preamble.title, timestamp: preamble.timestamp }],
+      // 2026-06-27 构建历史元数据：远端执行器路径。触发器 + commit；部署模式在
+      // profiles 解析后回填（见下方）。
+      triggerSource: classifyTriggerSource(context.trigger, entry.deployDispatchRetryCount),
+      ...deriveCommitMeta(entry),
     };
     let proxyHasError = false;
     // 远端运行时就绪时刻 —— 收到成功的 complete 事件时戳。用作 opLog.runtimeStartedAt，
@@ -2584,6 +2589,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const profiles = stateService
       .getBuildProfilesForProject(entry.projectId || 'default')
       .map((p) => resolveEffectiveProfile(p, entry));
+    // 2026-06-27：回填本次（远端）部署的部署模式，供构建历史展示「部署类型」。
+    opLog.deployMode = deriveDeployMode(profiles);
     const env = getMergedEnv(entry.projectId || 'default', entry.id);
 
     const payload = {
@@ -10071,6 +10078,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       startedAt: new Date().toISOString(),
       status: 'running',
       events: [],
+      // 2026-06-27 构建历史元数据：触发器 + commit（部署模式在 finalize 时回填,
+      // 那里才有 resolveEffectiveProfile 解析出的 activeDeployMode）。
+      triggerSource: classifyTriggerSource(triggerFromRequest(req), entry.deployDispatchRetryCount),
+      ...deriveCommitMeta(entry, requestCommitSha),
     };
 
     function logEvent(ev: OperationLogEvent) {
@@ -10749,6 +10760,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
         hasError ? 'deploy-error' : 'deploy-finalize',
         activeProfileIds,
       );
+      // 2026-06-27：回填本次部署实际使用的部署模式（取本次参与 profiles 里第一个
+      // 非空 activeDeployMode），供构建历史展示「部署类型」。空串=源码/默认模式。
+      opLog.deployMode = deriveDeployMode(
+        profiles
+          .filter((p) => activeProfileIds.has(p.id))
+          .map((p) => resolveEffectiveProfile(p, entry)),
+      );
       // 2026-06-20：成功部署记一条耗时样本（区分发布版/源码），供分支卡片
       // 在下次构建中展示"预计 MM:SS（近 N 次中位值）"。失败不记。
       recordDeployDurationSample(stateService, entry, profiles, opLog);
@@ -10998,6 +11016,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       startedAt: new Date().toISOString(),
       status: 'running',
       events: [],
+      // 2026-06-27 构建历史元数据：单服务部署。触发器 + commit + 该 profile 的部署模式。
+      triggerSource: classifyTriggerSource(triggerFromRequest(req), entry.deployDispatchRetryCount),
+      ...deriveCommitMeta(entry),
+      deployMode: deriveDeployMode([resolveEffectiveProfile(profile, entry)]),
     };
 
     function logEvent(ev: OperationLogEvent) {

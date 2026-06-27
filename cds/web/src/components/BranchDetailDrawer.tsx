@@ -142,6 +142,11 @@ interface OperationLog {
   containerLogSnapshots?: DeploymentContainerLogSnapshot[];
   status: 'running' | 'completed' | 'error';
   events: OperationLogEvent[];
+  // 2026-06-27 构建历史元数据（后端 additive block，详见 cds/src/types.ts）。
+  triggerSource?: 'webhook' | 'manual' | 'retry' | 'cooldown-rewarm' | 'system';
+  deployMode?: string;
+  commitSha?: string;
+  shortCommit?: string;
 }
 
 export interface DeploymentContainerLogSnapshot {
@@ -244,6 +249,9 @@ export interface BranchDeploymentItem {
   lastStep?: string;
   phase?: string;
   suggestion?: string;
+  // 2026-06-27 构建历史元数据：触发器 / 部署类型 / 版本短哈希，供历史行展开展示。
+  triggerSource?: 'webhook' | 'manual' | 'retry' | 'cooldown-rewarm' | 'system';
+  deployMode?: string;
 }
 
 type DrawerTab = 'overview' | 'deployments' | 'services' | 'logs' | 'variables' | 'metrics' | 'settings';
@@ -680,6 +688,9 @@ function legacyLogToDeploymentItem(log: OperationLog, branchId: string): BranchD
     runtimeStartedAt,
     containerLogSnapshots: log.containerLogSnapshots || [],
     lastStep,
+    triggerSource: log.triggerSource,
+    deployMode: log.deployMode,
+    commitSha: log.commitSha || undefined,
   };
 }
 

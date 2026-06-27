@@ -847,6 +847,38 @@ export interface OperationLog {
   containerLogSnapshots?: OperationLogContainerSnapshot[];
   status: 'running' | 'completed' | 'error';
   events: OperationLogEvent[];
+
+  // ───────────────────────────────────────────────────────────────────────
+  // 2026-06-27 构建历史元数据（additive block）。
+  //
+  // 让「部署/构建历史」每一行能回答 为什么(触发器) / 干了什么(部署类型) /
+  // 哪个版本(commit) / 什么时候开始(startedAt 已有)。全部 optional —— 旧
+  // OperationLog 没有这些字段时前端优雅降级，不编造（no-rootless-tree）。
+  // 写入点：branches.ts 的本地 / 远端两个 deploy opLog 创建处。
+  // ───────────────────────────────────────────────────────────────────────
+
+  /**
+   * 本次构建的触发来源：
+   *   - 'webhook'         GitHub push / PR webhook 自动派发
+   *   - 'manual'          用户在 UI / cdscli 手动点部署
+   *   - 'retry'           reconciler 对卡住/失败派发的自动重试（deployDispatchRetryCount>0）
+   *   - 'cooldown-rewarm' 调度器把降温的分支重新唤醒（warm pool）
+   *   - 'system'          其他系统侧自调（auto-lifecycle / 启动 reconcile 等）
+   * 无法判定时省略（undefined），不强行归类。
+   */
+  triggerSource?: 'webhook' | 'manual' | 'retry' | 'cooldown-rewarm' | 'system';
+
+  /**
+   * 本次部署使用的部署模式（= resolveEffectiveProfile 解析出的 activeDeployMode）。
+   * 空串 = 源码/默认模式；常见值如 'express' / 'static' / 'dev'。
+   * 多 profile 时取首个非空模式。undefined = 旧记录未采集。
+   */
+  deployMode?: string;
+
+  /** 本次部署锚定的 commit 完整 SHA（webhook 带入或 worktree HEAD 推导）。 */
+  commitSha?: string;
+  /** commitSha 的短哈希（前 7 位），UI 直接展示，省去前端再截断。 */
+  shortCommit?: string;
 }
 
 export interface ReleaseArtifact {
