@@ -10173,6 +10173,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         && /^[0-9a-f]{7,40}$/i.test(pullResult.head)
         && entry.githubCommitSha !== pullResult.head) {
         entry.githubCommitSha = pullResult.head;
+        // 同步刷新构建历史的 commit 元数据：opLog.commitSha 是在 pull 前（10084）按旧 HEAD
+        // 捕获的，若 pull 拉到了更新的 HEAD，部署的其实是 pullResult.head，历史「版本」列
+        // 必须指向真正部署的 commit，否则给 reviewer 指错版本（Codex P2）。
+        Object.assign(opLog, deriveCommitMeta(entry));
       }
 
       // Clear pinned commit — deploy always restores to branch HEAD
@@ -11065,6 +11069,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
           && /^[0-9a-f]{7,40}$/i.test(pullResult.head)
           && entry.githubCommitSha !== pullResult.head) {
           entry.githubCommitSha = pullResult.head;
+          // 同步刷新构建历史 commit 元数据为真正部署的 HEAD（Codex P2，同上）。
+          Object.assign(opLog, deriveCommitMeta(entry));
         }
       }
 

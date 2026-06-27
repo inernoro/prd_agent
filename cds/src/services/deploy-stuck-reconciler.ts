@@ -147,7 +147,11 @@ function decideBranchFinalization(
   // 证据路径 A：starting/building/restarting 但 lastReadyAt >= lastDeployStartedAt，
   // 说明它**确实**起来过 —— status 是陈旧的。再看是否随后被停（lastStoppedAt 更新）：
   // 停了 ⇒ idle；没停 ⇒ running。
-  if ((status === 'starting' || status === 'building' || status === 'restarting') && readyMs > 0 && readyMs >= startMs) {
+  // 守卫（Bugbot review）：必须有**本轮** lastDeployStartedAt 锚点（startMs > 0）才能
+  // 用 lastReadyAt 作证据。否则 startMs 缺省被当 0，任意陈旧的 lastReadyAt 都满足
+  // readyMs >= 0，会把一个真正在 starting 的新部署用上一轮的就绪戳误收敛。无锚点时
+  // 落到下方硬超时兜底，不走证据路径。
+  if ((status === 'starting' || status === 'building' || status === 'restarting') && startMs > 0 && readyMs >= startMs) {
     if (stoppedMs >= readyMs) {
       return {
         nextStatus: 'idle',
@@ -168,7 +172,9 @@ function decideBranchFinalization(
   // 说明停止已完成 —— 收敛为 idle（分支级无 'stopped' 终态，停妥即 idle）。
   if (status === 'stopping' && stoppedMs > 0) {
     const triggerMs = Math.max(startMs, readyMs);
-    if (stoppedMs >= triggerMs) {
+    // 守卫（Bugbot review）：必须有停止触发的锚点（triggerMs > 0）才能判停止已完成。
+    // 否则 triggerMs=0 时任意陈旧 lastStoppedAt 都满足，会把仍在进行的停止误判为已停。
+    if (triggerMs > 0 && stoppedMs >= triggerMs) {
       return {
         nextStatus: 'idle',
         via: 'timestamp-evidence',
@@ -178,11 +184,12 @@ function decideBranchFinalization(
     }
   }
 
-  // 硬超时兜底（最后手段）：拿不到时间戳证据时，仅当非终结态持续超过保守阈值
-  // 才收敛。锚点优先取本轮构建起点，退而取最近就绪 / 创建时间。
-  const anchorMs = startMs || readyMs || parseTime(branch.createdAt);
-  if (anchorMs > 0) {
-    const ageMs = nowMs - anchorMs;
+  // 硬超时兜底（最后手段）：拿不到时间戳证据时，仅当非终结态持续超过保守阈值才收敛。
+  // 锚点**只**用本轮启动戳 lastDeployStartedAt（startMs）。不再退回 lastReadyAt（上一轮的
+  // 完成戳，会让刚开始的新部署被当成"已持续很久"误超时）或 createdAt（老分支创建很久，会把
+  // 任何新非终结态立刻误判超时）。无本轮启动锚点 ⇒ 无法证明卡了多久 ⇒ 不触碰（Bugbot review 延伸）。
+  if (startMs > 0) {
+    const ageMs = nowMs - startMs;
     if (ageMs >= hardTimeoutMs) {
       const ageMin = Math.floor(ageMs / 60_000);
       const next: BranchEntry['status'] = status === 'stopping' ? 'idle' : 'error';
@@ -230,26 +237,11 @@ export function reconcileStuckDeployStates(
         ageMin: branchDecision.ageMin,
         reason: branchDecision.reason,
       });
-      options.appendLog?.(branch.id, {
-        type: 'build',
-        startedAt: branch.lastDeployStartedAt || branch.createdAt,
-        finishedAt: now.toISOString(),
-        status: branchDecision.nextStatus === 'error' ? 'error' : 'completed',
-        events: [{
-          step: 'stuck-state-finalize',
-          status: branchDecision.via === 'hard-timeout' ? 'warning' : 'info',
-          title: '状态机看门狗收敛卡死分支状态',
-          log: branchDecision.reason,
-          detail: {
-            previousStatus,
-            nextStatus: branchDecision.nextStatus,
-            via: branchDecision.via,
-            ageMin: branchDecision.ageMin,
-            source,
-          },
-          timestamp: now.toISOString(),
-        }],
-      });
+      // 注意（Bugbot review）：状态机收敛**不**写 type:'build' 的 OperationLog。
+      // OperationLog.status 只有 running/completed/error，前端把 'completed' 的 build 日志
+      // 渲染成「绿色成功部署」，看门狗的状态清理会被误显成一次成功部署，污染部署历史
+      // （而本 PR 的目标恰是让部署历史更准）。收敛只记到 server-event-log（系统日志）做审计，
+      // 与服务级收敛保持一致（服务级本就只 recordEvent、不 appendLog）。
       recordEvent(options.serverEventLogStore, branch, source, 'branch.stuck-state.finalized', branchDecision.reason, {
         previousStatus,
         nextStatus: branchDecision.nextStatus,
@@ -275,14 +267,14 @@ export function reconcileStuckDeployStates(
       let ageMin = 0;
 
       // stopping + lastStoppedAt 落戳且晚于停止触发 ⇒ 终结为 stopped。
-      if (svc.status === 'stopping' && stoppedMs > 0 && stoppedMs >= Math.max(startMs, readyMs)) {
+      if (svc.status === 'stopping' && stoppedMs > 0 && Math.max(startMs, readyMs) > 0 && stoppedMs >= Math.max(startMs, readyMs)) {
         nextStatus = 'stopped';
         via = 'timestamp-evidence';
         ageMin = Math.floor((nowMs - stoppedMs) / 60_000);
         reason = `状态机看门狗：服务 ${profileId} stopping 已完成（lastStoppedAt 已落戳），收敛为 stopped`;
       } else if (
         (svc.status === 'starting' || svc.status === 'building' || svc.status === 'restarting')
-        && readyMs > 0 && readyMs >= startMs
+        && startMs > 0 && readyMs >= startMs
       ) {
         // 起来过 ⇒ running（除非随后被停，则 stopped）。
         const stopped = stoppedMs >= readyMs;
@@ -291,12 +283,11 @@ export function reconcileStuckDeployStates(
         ageMin = startMs > 0 ? Math.floor((nowMs - startMs) / 60_000) : 0;
         reason = `状态机看门狗：服务 ${profileId} ${previousStatus} 实际已就绪，状态陈旧，收敛为 ${nextStatus}`;
       } else {
-        // 硬超时兜底。
-        const anchorMs = startMs || readyMs || parseTime(branch.createdAt);
-        if (anchorMs > 0 && nowMs - anchorMs >= hardTimeoutMs) {
+        // 硬超时兜底：锚点只用本轮启动戳（同分支级，Bugbot review 延伸）。
+        if (startMs > 0 && nowMs - startMs >= hardTimeoutMs) {
           nextStatus = svc.status === 'stopping' ? 'stopped' : 'error';
           via = 'hard-timeout';
-          ageMin = Math.floor((nowMs - anchorMs) / 60_000);
+          ageMin = Math.floor((nowMs - startMs) / 60_000);
           reason = `状态机看门狗：服务 ${profileId} ${previousStatus} 超过 ${Math.floor(hardTimeoutMs / 60_000)} 分钟未终结（已持续 ${ageMin} 分钟），已收敛为 ${nextStatus}`;
         }
       }
