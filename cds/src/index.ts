@@ -231,6 +231,10 @@ function startStaleDeployDispatchReconciler(
         // 开硬超时会把合法的 >45min 远端构建误判 error（Bugbot High「Executor deploys lack lease
         // skip」）。executor 只做时间戳证据收敛 + 告警。
         allowHardTimeout: isMaster,
+        // 僵尸 profile 过滤同样只在 master 安全：executor 本地 profile 注册表不权威（/exec/deploy
+        // 用 master 传来的 profilesData、不写本地注册表），过滤会把真实 executor 服务全当僵尸、
+        // 把在跑分支误判 idle（Codex P2「Do not filter executor services with local profiles」）。
+        filterZombieProfiles: isMaster,
         diffRuntimePaths: (b) => {
           // ciTargetSha..githubCommitSha 这段提交是否含运行时改动（非纯文档）。
           try {

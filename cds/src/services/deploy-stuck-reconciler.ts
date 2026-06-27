@@ -97,6 +97,15 @@ export interface ReconcileStuckDeployOptions {
    * 不做硬超时（证据路径自身要求 lastReadyAt 已晚于本轮 start，绝不会误杀在建构建）。
    */
   allowHardTimeout?: boolean;
+  /**
+   * 是否按「当前在册 build profile」过滤掉僵尸服务再做分支聚合。默认 true。
+   * 仅当本节点的 getBuildProfiles 是该分支服务的**权威**注册表时才安全。executor 节点的
+   * /exec/deploy 用的是 master 请求里传来的 profilesData、并不写进 executor 本地 profile 注册表，
+   * executor 本地 getBuildProfiles 可能为空/陈旧 → 会把真实 executor 服务全当僵尸过滤掉，把在跑的
+   * 远端分支误判 idle / 清服务错误（Codex P2「Do not filter executor services with local profiles」）。
+   * 故 index.ts 在 executor 模式传 false：executor 不做僵尸过滤，认所有已部署服务为真。
+   */
+  filterZombieProfiles?: boolean;
 }
 
 function parseTime(value?: string | null): number {
@@ -294,7 +303,11 @@ export function reconcileStuckDeployStates(
     // 当前 build profile 仍在册的 profileId 集合（用于聚合时排除僵尸服务条目）。无 getBuildProfiles
     // 时为 undefined ⇒ 聚合退回扫全部服务（保持旧行为）。
     const profilesForBranch = options.getBuildProfiles?.(branch);
-    const activeProfileIds = profilesForBranch
+    // 空数组视为「拿不到 profile 信息」= 不过滤（undefined），绝不能当成「没有任何在册 profile」
+    // 把所有服务都排除掉——否则聚合会无视全部 running 服务、把分支误判 idle（Bugbot Medium
+    // 「Empty profiles drop all services」）。executor 模式（filterZombieProfiles=false）本地 profile
+    // 注册表不权威，一律不过滤（Codex P2）。只有非空 profile 列表 + 允许过滤才做僵尸服务过滤。
+    const activeProfileIds = (options.filterZombieProfiles ?? true) && profilesForBranch && profilesForBranch.length > 0
       ? new Set(profilesForBranch.map((p) => p.id))
       : undefined;
 
@@ -341,6 +354,12 @@ export function reconcileStuckDeployStates(
     }
 
     // ── TYPE 2 服务级：卡死非终结 service.status 收敛 ──
+    // 分支级 lastReadyAt 只在「单服务」时能无歧义地代表「该服务已就绪」。多服务时 deploy-finalize
+    // 可能在**首个**服务 running 时就盖了 branch.lastReadyAt，此刻其余服务可能仍在真实 starting，
+    // 用 branch.lastReadyAt 作每服务就绪证据会过早把仍在起的服务翻成 running（Bugbot Medium
+    // 「Branch ready stamp per service」）。故「starting→running」证据路径仅单服务时启用；多服务
+    // 的卡死服务交给硬超时（master）或保持现状（真正起来的服务其 status 本就是 running）。
+    const singleService = Object.keys(branch.services || {}).length === 1;
     for (const [profileId, svc] of Object.entries(branch.services || {})) {
       if (!svc || !NON_TERMINAL_STATES.has(svc.status)) continue;
       const previousStatus = svc.status;
@@ -360,10 +379,11 @@ export function reconcileStuckDeployStates(
         ageMin = Math.floor((nowMs - stoppedMs) / 60_000);
         reason = `状态机看门狗：服务 ${profileId} stopping 已完成（lastStoppedAt 已落戳），收敛为 stopped`;
       } else if (
-        (svc.status === 'starting' || svc.status === 'building' || svc.status === 'restarting')
+        singleService
+        && (svc.status === 'starting' || svc.status === 'building' || svc.status === 'restarting')
         && startMs > 0 && readyMs >= startMs
       ) {
-        // 起来过 ⇒ running（除非随后被停，则 stopped）。
+        // 起来过 ⇒ running（除非随后被停，则 stopped）。仅单服务：branch.lastReadyAt 无歧义指向它。
         const stopped = stoppedMs >= readyMs;
         nextStatus = stopped ? 'stopped' : 'running';
         via = 'timestamp-evidence';

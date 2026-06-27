@@ -12,3 +12,4 @@
 | fix | cds | executor 节点禁用看门狗硬超时（allowHardTimeout=isMaster），只做时间戳证据收敛+告警，避免无租约判活时把合法 >45min 远端构建误判 error（Bugbot High #940） |
 | fix | cds | 看门狗分支聚合按当前在册 build profile 过滤服务，僵尸服务（profile 删/改名残留）不再把健康分支翻回 error（Codex P2 #940） |
 | fix | cds | executor 代理 source-build 的 pull 回传结构化 head/after/afterFull，master 用 parsePulledSha 取全 SHA 刷新构建历史+branch HEAD，远端路径不再只记短 SHA（Bugbot Low #940） |
+| fix | cds | 看门狗：getBuildProfiles 空数组视为不过滤(不把所有服务当僵尸误判 idle)；多服务分支不再用 branch.lastReadyAt 把仍在 starting 的服务过早翻 running；executor 模式不按本地 profile 过滤僵尸服务（Bugbot Medium×2 + Codex P2 #940） |

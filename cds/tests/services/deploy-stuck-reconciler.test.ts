@@ -317,6 +317,71 @@ describe('reconcileStuckDeployStates — Bugbot review 回归', () => {
     expect(results.some((r) => r.kind === 'branch-status-finalized')).toBe(false);
   });
 
+  it('getBuildProfiles 返回空数组视为不过滤，不把 running 服务的分支误判 idle（Bugbot Medium）', () => {
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const branch = makeBranch({
+      status: 'running',
+      lastDeployStartedAt: '2026-06-27T00:00:00.000Z',
+      lastReadyAt: '2026-06-27T00:05:00.000Z',
+      services: {
+        api: { profileId: 'api', containerName: 'c1', hostPort: 1, status: 'running' },
+      },
+    });
+    const results = reconcileStuckDeployStates([branch], { now, getBuildProfiles: () => [] });
+    expect(branch.status).toBe('running'); // 空 profile 不应把所有服务排除掉、误判 idle
+    expect(results).toHaveLength(0);
+  });
+
+  it('多服务分支不用 branch.lastReadyAt 把仍在 starting 的服务过早翻 running（Bugbot Medium）', () => {
+    const now = new Date('2026-06-27T00:20:00.000Z');
+    const branch = makeBranch({
+      status: 'starting',
+      lastDeployStartedAt: '2026-06-27T00:10:00.000Z', // 10 分钟前，未到 45min 硬超时
+      lastReadyAt: '2026-06-27T00:15:00.000Z', // 首个服务就绪时盖的 branch 戳
+      services: {
+        api: { profileId: 'api', containerName: 'c1', hostPort: 1, status: 'running' },
+        web: { profileId: 'web', containerName: 'c2', hostPort: 2, status: 'starting' }, // 仍在真实启动
+      },
+    });
+    const results = reconcileStuckDeployStates([branch], { now });
+    expect(branch.services.web.status).toBe('starting'); // 不被 branch 级就绪戳过早翻 running
+    expect(results.some((r) => r.kind === 'service-status-finalized')).toBe(false);
+  });
+
+  it('单服务分支仍可用 branch.lastReadyAt 收敛陈旧 starting（证据无歧义）', () => {
+    const now = new Date('2026-06-27T00:20:00.000Z');
+    const branch = makeBranch({
+      status: 'starting',
+      lastDeployStartedAt: '2026-06-27T00:10:00.000Z',
+      lastReadyAt: '2026-06-27T00:15:00.000Z',
+      services: {
+        only: { profileId: 'only', containerName: 'c1', hostPort: 1, status: 'starting' },
+      },
+    });
+    reconcileStuckDeployStates([branch], { now });
+    expect(branch.services.only.status).toBe('running'); // 单服务时 branch ready 即该服务 ready
+  });
+
+  it('filterZombieProfiles=false（executor）不按本地 profile 过滤，不把真实远端服务当僵尸（Codex P2）', () => {
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const branch = makeBranch({
+      status: 'running',
+      lastDeployStartedAt: '2026-06-27T00:00:00.000Z',
+      lastReadyAt: '2026-06-27T00:05:00.000Z',
+      services: {
+        api: { profileId: 'api', containerName: 'c1', hostPort: 1, status: 'running' },
+      },
+    });
+    const results = reconcileStuckDeployStates([branch], {
+      now,
+      filterZombieProfiles: false,
+      // executor 本地注册表里没有 api（陈旧/为空）；若仍过滤会把 api 当僵尸排除 → 误判 idle
+      getBuildProfiles: () => [{ id: 'totally-different' } as unknown as BuildProfile],
+    });
+    expect(branch.status).toBe('running'); // executor 不过滤 → 认 api 为真，保持 running
+    expect(results).toHaveLength(0);
+  });
+
   it('有在途操作的分支整条跳过：合法长任务不被硬超时误杀（Bugbot Medium）', () => {
     const now = new Date('2026-06-27T01:00:00.000Z'); // 启动 60 分钟前 > 45min 硬超时
     const branch = makeBranch({
