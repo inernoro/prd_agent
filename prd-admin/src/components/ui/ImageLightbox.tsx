@@ -40,11 +40,13 @@ export function ImageLightbox({
   captions?: (string | undefined)[];
 }) {
   const total = images.length;
-  // 钳制初始下标到 [0, total-1]，防止调用方传越界值导致渲染 images[idx] 为 undefined 的破图
   const clampIdx = (i: number) => Math.min(Math.max(0, i), Math.max(0, total - 1));
   const [idx, setIdx] = useState(() => clampIdx(initialIndex));
-  const hasPrev = idx > 0;
-  const hasNext = idx < total - 1;
+  // 渲染时再钳制一次：images 可能在灯箱打开期间实时增减（流式/新完成），用 safeIdx 既防越界破图，
+  // 又不会因为列表长度变化而重置用户当前浏览位置。
+  const safeIdx = clampIdx(idx);
+  const hasPrev = safeIdx > 0;
+  const hasNext = safeIdx < total - 1;
 
   // 缩放/平移状态
   const [scale, setScale] = useState(1);
@@ -69,19 +71,20 @@ export function ImageLightbox({
   }, []);
 
   const prev = useCallback(() => {
-    setIdx((i) => Math.max(0, i - 1));
+    setIdx((i) => Math.max(0, Math.min(i, total - 1) - 1));
     resetView();
-  }, [resetView]);
+  }, [total, resetView]);
   const next = useCallback(() => {
-    setIdx((i) => Math.min(total - 1, i + 1));
+    setIdx((i) => Math.min(total - 1, Math.min(i, total - 1) + 1));
     resetView();
   }, [total, resetView]);
 
-  // 切换初始图片时复位（同样钳制下标到 [0, total-1]）
+  // 仅在"打开了另一张图"（initialIndex 变化）时复位到该图；不依赖 total，
+  // 这样列表实时增减不会打断用户当前浏览位置（越界由渲染时的 safeIdx 兜底）。
   useEffect(() => {
-    setIdx(Math.min(Math.max(0, initialIndex), Math.max(0, total - 1)));
+    setIdx(initialIndex);
     resetView();
-  }, [initialIndex, total, resetView]);
+  }, [initialIndex, resetView]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -97,8 +100,8 @@ export function ImageLightbox({
   }, [onClose, prev, next, zoomBy, resetView]);
 
   if (!images.length) return null;
-  const src = images[idx];
-  const caption = captions?.[idx];
+  const src = images[safeIdx];
+  const caption = captions?.[safeIdx];
   const isZoomed = scale !== 1 || offset.x !== 0 || offset.y !== 0;
 
   // 滚轮缩放（以光标位置为锚点做简单平移补偿）
@@ -161,7 +164,7 @@ export function ImageLightbox({
         onClick={(e) => e.stopPropagation()}
       >
         <span className="text-sm tabular-nums" style={{ color: 'rgba(255,255,255,0.8)' }}>
-          {idx + 1} / {total}
+          {safeIdx + 1} / {total}
         </span>
         <div className="flex items-center gap-1.5" style={{ color: 'rgba(255,255,255,0.85)' }}>
           <button
@@ -257,7 +260,7 @@ export function ImageLightbox({
       {/* 图片本体 */}
       <img
         src={src}
-        alt={caption ?? `图 ${idx + 1}`}
+        alt={caption ?? `图 ${safeIdx + 1}`}
         draggable={false}
         onClick={(e) => e.stopPropagation()}
         onDoubleClick={(e) => {

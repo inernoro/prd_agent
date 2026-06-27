@@ -30,6 +30,13 @@ public class ArticleIllustrationWorkflow
     /// </summary>
     public Dictionary<string, string> AssetIdByMarkerIndex { get; set; } = new();
 
+    /// <summary>
+    /// 每个 markerIndex(string) 当前成功指针来自哪个 run（取该 run 的 CreatedAt）。
+    /// 用于并发批量/重生成时对 AssetIdByMarkerIndex 做"最新成功优先"的原子门控写入，
+    /// 不依赖 workspace 乐观锁（后者会被消息保存等无关写入 churn 掉）。
+    /// </summary>
+    public Dictionary<string, DateTime> AssetRunAtByMarkerIndex { get; set; } = new();
+
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 

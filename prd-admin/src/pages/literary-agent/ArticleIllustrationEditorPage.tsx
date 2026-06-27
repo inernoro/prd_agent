@@ -431,7 +431,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [thinkingContent, setThinkingContent] = useState('');
   const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
   // 统一图片灯箱（支持放大/缩小/拖拽预览）：右侧卡片与正文内联图片共用
-  const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null);
+  // 灯箱只存"打开位置 + 是否单图兜底"，图片列表在渲染时从最新 markerRunItems 实时重算，
+  // 这样灯箱开着时新完成/流式的配图会实时进入轮播（与旧 ImagePreviewDialog 行为一致，不冻结）。
+  const [lightbox, setLightbox] = useState<{ index: number; single: string | null } | null>(null);
   const [watermarkStatus, setWatermarkStatus] = useState<{ enabled: boolean; name?: string | null }>({ enabled: false });
   const [pendingWatermarkEdit, setPendingWatermarkEdit] = useState(false); // 用于延迟触发水印编辑
   const handleWatermarkStatusChange = useCallback((status: { hasActiveConfig: boolean; activeId?: string; activeName?: string }) => {
@@ -1618,11 +1620,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       found = ordered.findIndex((o) => o.url === clickedUrl);
     }
     if (found >= 0) {
-      setLightbox({ images: ordered.map((o) => o.url), index: found });
+      setLightbox({ index: found, single: null });
     } else if (clickedUrl) {
-      setLightbox({ images: [clickedUrl], index: 0 });
+      setLightbox({ index: 0, single: clickedUrl });
     } else if (ordered.length > 0) {
-      setLightbox({ images: ordered.map((o) => o.url), index: 0 });
+      setLightbox({ index: 0, single: null });
     }
   }, [collectOrderedMarkerImages, markers]);
 
@@ -3655,11 +3657,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         const ordered = collectOrderedMarkerImages();
                         const currentIdx = ordered.findIndex(o => o.markerIndex === it.markerIndex);
                         if (currentIdx >= 0) {
-                          setLightbox({ images: ordered.map(o => o.url), index: currentIdx });
+                          setLightbox({ index: currentIdx, single: null });
                         } else {
                           // 兜底：该卡片不在规范列表里（极少见），只展示它自己这张
                           const own = markerItemImageUrl(it);
-                          if (own) setLightbox({ images: [own], index: 0 });
+                          if (own) setLightbox({ index: 0, single: own });
                         }
                       }}
                     >
@@ -4776,10 +4778,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         }
       />
 
-      {/* 图片灯箱（可放大/缩小/拖拽预览） */}
+      {/* 图片灯箱（可放大/缩小/拖拽预览）。images 实时重算：单图兜底用 single，否则用最新规范顺序 */}
       {lightbox && (
         <ImageLightbox
-          images={lightbox.images}
+          images={lightbox.single ? [lightbox.single] : collectOrderedMarkerImages().map((o) => o.url)}
           index={lightbox.index}
           onClose={() => setLightbox(null)}
         />

@@ -1289,13 +1289,13 @@ public class ImageGenRunWorker : BackgroundService
     }
 
     /// <summary>
-    /// 文学创作场景：自动回填 ArticleIllustrationMarker 的状态，并在成功时一并写入资产指针
-    /// （marker.AssetId / Url / ImageRunAt + ArticleWorkflow.AssetIdByMarkerIndex + DoneImageCount）。
-    /// 并发重生成同一 marker 时按"最新成功优先、失败不抹旧图"取舍（用 marker.ImageRunAt = 产图 run 的
-    /// CreatedAt 作时间戳，与完成顺序无关）：
-    ///   - status=="done"：仅当 run.CreatedAt 比 marker.ImageRunAt 更新才覆盖成功图；否则跳过（已有更新成功图）。
-    ///   - 其它（error 等）：marker.ImageRunAt 非空（已有成功图）时不写错误，避免新失败抹掉旧成功图。
-    /// 整个判定 + 写入在同一份 ArticleWorkflow 的乐观锁 RMW 内完成，保证时间戳与指针原子一致。
+    /// 文学创作场景：回填 ArticleIllustrationMarker 状态 + 成功时写入资产指针。
+    /// 并发重生成/批量按"最新成功优先、失败不抹旧图"取舍（时间戳 = 产图 run 的 CreatedAt，与完成顺序无关）：
+    ///   - 资产指针 AssetIdByMarkerIndex + DoneImageCount：用**每 marker 原子条件 $set**（门控字段
+    ///     AssetRunAtByMarkerIndex），不走 workspace 乐观锁——后者会被消息保存等无关写入 churn 掉、
+    ///     批量并发下重试耗尽就丢指针（投稿/进度依赖此映射，必须可靠）。
+    ///   - marker 显示字段（Status/Url/AssetId/ImageRunAt）：尽力乐观锁 RMW，门控同一时间戳；
+    ///     done 仅当 run.CreatedAt 更新才覆盖，error 在已有成功图时不写（兼容 ImageRunAt 出现前的存量成功 marker）。
     /// </summary>
     private async Task TryPatchArticleMarkerAsync(
         ImageGenRun run,
@@ -1312,7 +1312,38 @@ public class ImageGenRunWorker : BackgroundService
 
         var markerIndex = run.ArticleMarkerIndex.Value;
         var isDone = status == "done";
+        var key = markerIndex.ToString();
 
+        // 1) 成功且有资产：可靠的"每 marker 原子 + 时间戳门控"指针写入（不依赖 workspace 乐观锁）。
+        if (isDone && !string.IsNullOrWhiteSpace(assetId))
+        {
+            var stampPath = $"ArticleWorkflow.AssetRunAtByMarkerIndex.{key}";
+            var pointerFilter = Builders<ImageMasterWorkspace>.Filter.And(
+                Builders<ImageMasterWorkspace>.Filter.Eq(x => x.Id, wid),
+                Builders<ImageMasterWorkspace>.Filter.Ne(x => x.ArticleWorkflow, null),
+                Builders<ImageMasterWorkspace>.Filter.Or(
+                    Builders<ImageMasterWorkspace>.Filter.Exists(stampPath, false),
+                    Builders<ImageMasterWorkspace>.Filter.Lt(stampPath, run.CreatedAt)));
+            var pointerUpdate = Builders<ImageMasterWorkspace>.Update
+                .Set($"ArticleWorkflow.AssetIdByMarkerIndex.{key}", assetId!)
+                .Set(stampPath, run.CreatedAt)
+                .Set("ArticleWorkflow.UpdatedAt", DateTime.UtcNow);
+            await _db.ImageMasterWorkspaces.UpdateOneAsync(pointerFilter, pointerUpdate, cancellationToken: ct);
+
+            // DoneImageCount 重算（读取最新字典，单字段 $set，不受乐观锁影响）
+            var latest = await _db.ImageMasterWorkspaces.Find(x => x.Id == wid).FirstOrDefaultAsync(ct);
+            if (latest?.ArticleWorkflow?.AssetIdByMarkerIndex != null)
+            {
+                var doneCount = latest.ArticleWorkflow.AssetIdByMarkerIndex.Values
+                    .Where(v => !string.IsNullOrWhiteSpace(v)).Distinct().Count();
+                await _db.ImageMasterWorkspaces.UpdateOneAsync(
+                    Builders<ImageMasterWorkspace>.Filter.Eq(x => x.Id, wid),
+                    Builders<ImageMasterWorkspace>.Update.Set(x => x.ArticleWorkflow!.DoneImageCount, doneCount),
+                    cancellationToken: ct);
+            }
+        }
+
+        // 2) marker 显示字段：尽力乐观锁 RMW（指针已在上面可靠写入，这里失败也不影响投稿映射）
         for (var attempt = 0; attempt < 5; attempt++)
         {
             var ws = await _db.ImageMasterWorkspaces.Find(x => x.Id == wid).FirstOrDefaultAsync(ct);
@@ -1328,22 +1359,13 @@ public class ImageGenRunWorker : BackgroundService
                 // 最新成功优先：已有同样新或更新的成功图则跳过（防止旧 run 覆盖新成功结果）
                 if (marker.ImageRunAt.HasValue && run.CreatedAt <= marker.ImageRunAt.Value)
                 {
-                    _logger.LogInformation(
-                        "[文学创作] 跳过成功回填：已有更新的成功配图。WorkspaceId={WorkspaceId}, MarkerIndex={MarkerIndex}, RunId={RunId}",
-                        wid, markerIndex, run.Id);
                     return;
                 }
                 marker.Status = "done";
                 marker.ErrorMessage = null;
                 marker.ImageRunAt = run.CreatedAt;
                 if (!string.IsNullOrWhiteSpace(url)) marker.Url = url;
-                if (!string.IsNullOrWhiteSpace(assetId))
-                {
-                    marker.AssetId = assetId;
-                    wf.AssetIdByMarkerIndex[markerIndex.ToString()] = assetId!;
-                    wf.DoneImageCount = wf.AssetIdByMarkerIndex.Values
-                        .Where(v => !string.IsNullOrWhiteSpace(v)).Distinct().Count();
-                }
+                if (!string.IsNullOrWhiteSpace(assetId)) marker.AssetId = assetId;
             }
             else
             {
@@ -1377,9 +1399,6 @@ public class ImageGenRunWorker : BackgroundService
 
             if (res.ModifiedCount > 0)
             {
-                _logger.LogInformation(
-                    "[文学创作] Marker 状态自动回填: WorkspaceId={WorkspaceId}, MarkerIndex={MarkerIndex}, Status={Status}",
-                    wid, markerIndex, status);
                 return;
             }
 
@@ -1388,7 +1407,7 @@ public class ImageGenRunWorker : BackgroundService
         }
 
         _logger.LogWarning(
-            "[文学创作] Marker 状态回填失败（乐观锁冲突次数过多）: WorkspaceId={WorkspaceId}, MarkerIndex={MarkerIndex}",
+            "[文学创作] Marker 显示字段回填乐观锁冲突次数过多（指针已可靠写入，仅显示态可能滞后）: WorkspaceId={WorkspaceId}, MarkerIndex={MarkerIndex}",
             wid, markerIndex);
     }
 
