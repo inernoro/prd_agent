@@ -9,3 +9,6 @@
 | fix | prd-admin | 图片灯箱开着时实时跟随最新配图：lightbox 只存打开位置（index+single 兜底），图片列表渲染时从最新 markerRunItems 重算（不再冻结快照）；ImageLightbox 越界下标改为渲染期 safeIdx 兜底，列表实时增减不再打断当前浏览位置 |
 | fix | prd-api | marker 显示回填的成功/失败门控同时参考权威指针时间戳 AssetRunAtByMarkerIndex（非仅 marker.ImageRunAt）：新 run 指针写成功但 display RMW 失败时，旧/失败 run 不再把 display 改成与权威指针不一致的状态 |
 | fix | prd-admin | 图片灯箱实时列表被重算成空时通知父级关闭，避免遮罩消失但父级 state 仍 open、Esc/清理失效 |
+| fix | prd-api | 修复并发 run 整体回写 ArticleWorkflow 互相覆盖原子指针（High）：marker 显示字段改为针对该 marker 子字段的定向 $set（ArticleWorkflow.Markers.{i}.*），不再整体替换 wf，杜绝跨 marker 抹掉彼此的 AssetIdByMarkerIndex/AssetRunAtByMarkerIndex |
+| fix | prd-api | DoneImageCount 改为单调门控写入（仅当新值更大才 $set，Lt 过滤）：并发完成时陈旧的较小计数不再最后落地把进度压低 |
+| fix | prd-admin | 图片灯箱列表改回"打开时快照"（撤销实时重算）：避免打开期间更靠前 marker 后完成插入导致正在看的图悄悄错位（最小惊讶）；新配图重开灯箱即可见 |

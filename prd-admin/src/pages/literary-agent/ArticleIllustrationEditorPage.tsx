@@ -431,9 +431,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [thinkingContent, setThinkingContent] = useState('');
   const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
   // 统一图片灯箱（支持放大/缩小/拖拽预览）：右侧卡片与正文内联图片共用
-  // 灯箱只存"打开位置 + 是否单图兜底"，图片列表在渲染时从最新 markerRunItems 实时重算，
-  // 这样灯箱开着时新完成/流式的配图会实时进入轮播（与旧 ImagePreviewDialog 行为一致，不冻结）。
-  const [lightbox, setLightbox] = useState<{ index: number; single: string | null } | null>(null);
+  // 灯箱在"打开那一刻"快照图片列表与起始下标。
+  // 刻意不在打开期间实时重算列表：否则更靠前的 marker 后完成插入会让已打开的图悄悄错位（违反"最小惊讶"）。
+  // 新完成的配图重新打开灯箱即可看到。
+  const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null);
   const [watermarkStatus, setWatermarkStatus] = useState<{ enabled: boolean; name?: string | null }>({ enabled: false });
   const [pendingWatermarkEdit, setPendingWatermarkEdit] = useState(false); // 用于延迟触发水印编辑
   const handleWatermarkStatusChange = useCallback((status: { hasActiveConfig: boolean; activeId?: string; activeName?: string }) => {
@@ -1620,11 +1621,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       found = ordered.findIndex((o) => o.url === clickedUrl);
     }
     if (found >= 0) {
-      setLightbox({ index: found, single: null });
+      setLightbox({ images: ordered.map((o) => o.url), index: found });
     } else if (clickedUrl) {
-      setLightbox({ index: 0, single: clickedUrl });
+      setLightbox({ images: [clickedUrl], index: 0 });
     } else if (ordered.length > 0) {
-      setLightbox({ index: 0, single: null });
+      setLightbox({ images: ordered.map((o) => o.url), index: 0 });
     }
   }, [collectOrderedMarkerImages, markers]);
 
@@ -3657,11 +3658,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         const ordered = collectOrderedMarkerImages();
                         const currentIdx = ordered.findIndex(o => o.markerIndex === it.markerIndex);
                         if (currentIdx >= 0) {
-                          setLightbox({ index: currentIdx, single: null });
+                          setLightbox({ images: ordered.map(o => o.url), index: currentIdx });
                         } else {
                           // 兜底：该卡片不在规范列表里（极少见），只展示它自己这张
                           const own = markerItemImageUrl(it);
-                          if (own) setLightbox({ index: 0, single: own });
+                          if (own) setLightbox({ images: [own], index: 0 });
                         }
                       }}
                     >
@@ -4778,10 +4779,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         }
       />
 
-      {/* 图片灯箱（可放大/缩小/拖拽预览）。images 实时重算：单图兜底用 single，否则用最新规范顺序 */}
+      {/* 图片灯箱（可放大/缩小/拖拽预览）。列表在打开时已快照，避免打开期间靠前 marker 完成插入导致错位 */}
       {lightbox && (
         <ImageLightbox
-          images={lightbox.single ? [lightbox.single] : collectOrderedMarkerImages().map((o) => o.url)}
+          images={lightbox.images}
           index={lightbox.index}
           onClose={() => setLightbox(null)}
         />
