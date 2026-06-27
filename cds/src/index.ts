@@ -195,7 +195,10 @@ function startStaleDeployDispatchReconciler(
       const stuck = reconcileStuckDeployStates(state.getAllBranches(), {
         source: 'deploy-stuck-reconciler.interval',
         serverEventLogStore: store,
-        getBuildProfiles: (b) => state.getBuildProfilesForProject(b.projectId),
+        // projectId 缺省回退 'default'（与全仓其它 getBuildProfilesForProject 调用一致）。
+        // 否则无 projectId 的分支拿到空 profile 列表 → branchUsesPrebuiltMode 恒 false →
+        // TYPE1 极速版落后告警对这些分支永不触发（Bugbot Low）。
+        getBuildProfiles: (b) => state.getBuildProfilesForProject(b.projectId || 'default'),
         diffRuntimePaths: (b) => {
           // ciTargetSha..githubCommitSha 这段提交是否含运行时改动（非纯文档）。
           try {

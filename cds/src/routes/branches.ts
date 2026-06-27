@@ -2792,6 +2792,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 收尾:remote 部署的 OperationLog 落库,与本地部署 (line 2724) 对齐
       opLog.finishedAt = new Date().toISOString();
       opLog.status = proxyHasError ? 'error' : 'completed';
+      // 部署模式在 2593 是 build 前从全量 project profiles 取的，未必是实际跑的那个，也不含
+      // executor 侧 express→static 回退。这里用服务实际 deployedMode（complete 时已钉）重算，
+      // 让构建历史「部署类型」反映真正跑起来的模式；取不到（executor 没回报）则保留原值
+      //（Bugbot Medium：remote deploy mode metadata stale）。
+      const ranDeployMode = deriveDeployMode(
+        Object.values(entry.services || {}).map((s) => ({ activeDeployMode: (s as { deployedMode?: string }).deployedMode })),
+      );
+      if (ranDeployMode) opLog.deployMode = ranDeployMode;
       // 与本地路径对齐：成功且有就绪时刻时采样部署耗时（recordDeployDurationSample
       // 内部已 guard status==='completed' + runtimeStartedAt 存在，失败/缺戳自动 no-op）。
       recordDeployDurationSample(stateService, entry, profiles, opLog);
