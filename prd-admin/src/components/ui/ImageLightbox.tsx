@@ -99,6 +99,11 @@ export function ImageLightbox({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose, prev, next, zoomBy, resetView]);
 
+  // 列表在打开期间被实时重算成空时，通知父级关闭，避免"遮罩已消失但父级 state 仍 open、Esc/清理失效"
+  useEffect(() => {
+    if (images.length === 0) onClose();
+  }, [images.length, onClose]);
+
   if (!images.length) return null;
   const src = images[safeIdx];
   const caption = captions?.[safeIdx];

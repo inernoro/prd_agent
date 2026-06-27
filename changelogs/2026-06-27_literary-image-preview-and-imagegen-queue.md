@@ -7,3 +7,5 @@
 | fix | prd-api | 配图灯箱并发取舍补存量兼容：ImageRunAt 字段出现前已成功的 marker（ImageRunAt 空但 Status=done 且有 AssetId/Url）失败回填时也判为"已有成功图"并跳过，避免一次失败重生成抹掉旧好图 |
 | fix | prd-api | 配图资产指针写入改回"每 marker 原子 + 时间戳门控"（新增 AssetRunAtByMarkerIndex 门控字段）：批量并发时不再因 workspace 乐观锁被消息保存 churn 掉、重试耗尽而丢失 AssetIdByMarkerIndex/DoneImageCount；同时消除对可能为 null 的字典直接索引导致的崩溃 |
 | fix | prd-admin | 图片灯箱开着时实时跟随最新配图：lightbox 只存打开位置（index+single 兜底），图片列表渲染时从最新 markerRunItems 重算（不再冻结快照）；ImageLightbox 越界下标改为渲染期 safeIdx 兜底，列表实时增减不再打断当前浏览位置 |
+| fix | prd-api | marker 显示回填的成功/失败门控同时参考权威指针时间戳 AssetRunAtByMarkerIndex（非仅 marker.ImageRunAt）：新 run 指针写成功但 display RMW 失败时，旧/失败 run 不再把 display 改成与权威指针不一致的状态 |
+| fix | prd-admin | 图片灯箱实时列表被重算成空时通知父级关闭，避免遮罩消失但父级 state 仍 open、Esc/清理失效 |

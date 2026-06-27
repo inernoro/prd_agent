@@ -1354,10 +1354,20 @@ public class ImageGenRunWorker : BackgroundService
 
             var marker = wf.Markers[markerIndex];
 
+            // 权威成功时间戳：以原子指针写入的 AssetRunAtByMarkerIndex 为准（display RMW 可能失败而落后于指针，
+            // 这里必须一并参考，否则旧/失败 run 会把 display 改成与权威指针不一致的状态）。
+            DateTime? authoritativeSuccessAt = null;
+            if (wf.AssetRunAtByMarkerIndex != null && wf.AssetRunAtByMarkerIndex.TryGetValue(key, out var assetStamp))
+            {
+                authoritativeSuccessAt = assetStamp;
+            }
+
             if (isDone)
             {
-                // 最新成功优先：已有同样新或更新的成功图则跳过（防止旧 run 覆盖新成功结果）
-                if (marker.ImageRunAt.HasValue && run.CreatedAt <= marker.ImageRunAt.Value)
+                // 最新成功优先：已有同样新或更新的成功图则跳过（marker 自身时间戳，或权威指针被更新 run 占据）。
+                // 权威戳用严格大于：等于时是本 run 自己刚写的指针，不应挡住自己的 display 回填。
+                if ((marker.ImageRunAt.HasValue && run.CreatedAt <= marker.ImageRunAt.Value)
+                    || (authoritativeSuccessAt.HasValue && run.CreatedAt < authoritativeSuccessAt.Value))
                 {
                     return;
                 }
@@ -1370,9 +1380,10 @@ public class ImageGenRunWorker : BackgroundService
             else
             {
                 // 失败不抹旧图：已有成功配图则不写错误状态。
-                // 除 ImageRunAt（新字段）外，还要兼容此字段出现前就已成功的存量 marker
-                // （ImageRunAt 为空但 Status=done 且有 AssetId/Url），否则一次失败重生成会抹掉旧好图。
-                var hasSuccessImage = marker.ImageRunAt.HasValue
+                // 判据含：权威指针时间戳（最可靠）、ImageRunAt（新字段）、以及兼容此字段出现前就已成功的
+                // 存量 marker（ImageRunAt 为空但 Status=done 且有 AssetId/Url），否则一次失败重生成会抹掉旧好图。
+                var hasSuccessImage = authoritativeSuccessAt.HasValue
+                    || marker.ImageRunAt.HasValue
                     || !string.IsNullOrWhiteSpace(marker.AssetId)
                     || (string.Equals(marker.Status, "done", StringComparison.OrdinalIgnoreCase)
                         && !string.IsNullOrWhiteSpace(marker.Url));
