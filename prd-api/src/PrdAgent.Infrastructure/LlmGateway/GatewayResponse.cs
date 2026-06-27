@@ -374,6 +374,13 @@ public class GatewayStreamChunk
     /// </summary>
     public Dictionary<string, JsonNode?>? Extensions { get; init; }
 
+    /// <summary>
+    /// 流内单调递增序号（断线续传 afterSeq 用）。进程内调用恒为 0；
+    /// 网关物理独立后由 /gw/stream 端点在发出 SSE 时逐块赋值，前端 ?afterSeq= 续传依赖它。
+    /// 详见 doc/design.llm-gateway-physical-isolation.md §3.6 / server-authority.md。
+    /// </summary>
+    public long Seq { get; init; }
+
     public static GatewayStreamChunk Text(string content) => new() { Type = GatewayChunkType.Text, Content = content };
     public static GatewayStreamChunk Thinking(string content) => new() { Type = GatewayChunkType.Thinking, Content = content };
     public static GatewayStreamChunk Start(GatewayModelResolution resolution) => new() { Type = GatewayChunkType.Start, Resolution = resolution };

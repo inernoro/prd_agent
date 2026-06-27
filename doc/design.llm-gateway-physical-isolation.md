@@ -1,8 +1,18 @@
 # LLM 网关物理独立设计
 
-> 类型: design | 状态: 草案(待用户拍板) | owner: inernoro | 更新: 2026-06-27
+> 类型: design | 状态: 实施中(用户已拍板) | owner: inernoro | 更新: 2026-06-27
 > 来源: 多智能体工作流(5 路勘察 → 综合 → 2 路对抗评审 → 终稿)，两评审均判 needs-revision 并已吸收
 > 关联: .claude/rules/compute-then-send.md / cross-project-isolation.md / server-authority.md / llm-gateway.md / agent-runtime-sdk-boundary.md
+
+## 范围修订（用户确认 2026-06-27，优先级高于下文 §2.3）
+
+用户明确：要做一个**统一的 AI 大模型网关**，把「调用 + 日志 + 分配(调度) + 模型池」整体隔离成独立服务，便于监测和改进（"在项目中不好改进"）。决策：
+
+1. **做真跨进程（阶段 0-3 全做）**，不止步于同进程 MVP。
+2. **图片链(ImageGen)纳入本初始**：`IImageGenGateway`/`OpenAIImageClient` 不再是永久非目标，而是**阶段 4 第二波**迁入同一网关——终态是覆盖 chat/text + image + 直连链的**统一网关**。安全顺序仍是先把 `ILlmGateway` 核心链跨进程跑稳(0-3)，再并入图片与直连链(4)，控制爆炸半径。
+3. 直连 `new ClaudeClient/new OpenAIClient` 的 6+ 处，中期改道走网关后并入(阶段 4 同批或紧随)。
+
+下文 §2.3 把 image/直连链列为"本期非目标"是 MVP 口径；按本修订它们是**本初始的后续阶段**，不是排除项。
 
 All reviewer claims confirmed against the codebase: `ModelPoolHealthProbeService` is a separate BackgroundService that also writes HealthStatus (line 356) and emits `IsHealthProbe` logs; `IImageGenGateway`/`OpenAIImageClient` is a parallel image-gen chain; and `new ClaudeClient`/`new OpenAIClient` are constructed directly in ~6 places (ModelLab, Arena, Program.cs DI, ModelDomainService), each taking `ctxAccessor` and a platform `apiKey` — meaning those chains keep decrypting keys inside prd-api.
 
