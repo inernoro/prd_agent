@@ -1366,51 +1366,71 @@ public class ImageGenRunWorker : BackgroundService
         }
 
         var mPath = $"ArticleWorkflow.Markers.{markerIndex}";
-        var setBuilder = Builders<ImageMasterWorkspace>.Update;
-        var updates = new List<UpdateDefinition<ImageMasterWorkspace>>();
+        var stampPath = $"ArticleWorkflow.AssetRunAtByMarkerIndex.{key}";
+        var F = Builders<ImageMasterWorkspace>.Filter;
+        var U = Builders<ImageMasterWorkspace>.Update;
 
         if (isDone)
         {
-            // 最新成功优先：已有同样新或更新的成功图则跳过（marker 自身时间戳，或权威指针被更新 run 占据）。
-            // 权威戳用严格大于：等于时是本 run 自己刚写的指针，不应挡住自己的 display 回填。
+            // 内存快速短路（最新成功优先）
             if ((marker.ImageRunAt.HasValue && run.CreatedAt <= marker.ImageRunAt.Value)
                 || (authoritativeSuccessAt.HasValue && run.CreatedAt < authoritativeSuccessAt.Value))
             {
                 return;
             }
-            updates.Add(setBuilder.Set($"{mPath}.Status", "done"));
-            updates.Add(setBuilder.Set($"{mPath}.ErrorMessage", (string?)null));
-            updates.Add(setBuilder.Set($"{mPath}.ImageRunAt", run.CreatedAt));
-            if (!string.IsNullOrWhiteSpace(url)) updates.Add(setBuilder.Set($"{mPath}.Url", url));
-            if (!string.IsNullOrWhiteSpace(assetId)) updates.Add(setBuilder.Set($"{mPath}.AssetId", assetId));
-        }
-        else
-        {
-            // 失败不抹旧图：已有成功配图则不写错误状态。
-            // 判据含：权威指针时间戳（最可靠）、ImageRunAt（新字段）、以及兼容此字段出现前就已成功的
-            // 存量 marker（ImageRunAt 为空但 Status=done 且有 AssetId/Url），否则一次失败重生成会抹掉旧好图。
-            var hasSuccessImage = authoritativeSuccessAt.HasValue
-                || marker.ImageRunAt.HasValue
-                || !string.IsNullOrWhiteSpace(marker.AssetId)
-                || (string.Equals(marker.Status, "done", StringComparison.OrdinalIgnoreCase)
-                    && !string.IsNullOrWhiteSpace(marker.Url));
-            if (hasSuccessImage)
+            // 原子门控：写入 filter 携带权威时间戳守卫，仅当本 run 仍是最新成功（无严格更新的指针）才落地，
+            // 否则陈旧 run 通过内存门控后仍可能后落地覆盖更新 run 的 display（Codex/Bugbot：stale 覆盖 newer）。
+            var doneFilter = F.And(
+                F.Eq(x => x.Id, wid),
+                F.Or(F.Exists(stampPath, false), F.Lte(stampPath, run.CreatedAt)));
+            var doneUpdates = new List<UpdateDefinition<ImageMasterWorkspace>>
             {
-                _logger.LogInformation(
-                    "[文学创作] 跳过失败回填：已有成功配图，不用失败覆盖。WorkspaceId={WorkspaceId}, MarkerIndex={MarkerIndex}, RunId={RunId}",
-                    wid, markerIndex, run.Id);
-                return;
-            }
-            updates.Add(setBuilder.Set($"{mPath}.Status", status));
-            if (!string.IsNullOrWhiteSpace(errorMessage)) updates.Add(setBuilder.Set($"{mPath}.ErrorMessage", errorMessage));
+                U.Set($"{mPath}.Status", "done"),
+                U.Set($"{mPath}.ErrorMessage", (string?)null),
+                U.Set($"{mPath}.ImageRunAt", run.CreatedAt),
+                U.Set($"{mPath}.UpdatedAt", DateTime.UtcNow),
+                U.Set("ArticleWorkflow.UpdatedAt", DateTime.UtcNow),
+            };
+            if (!string.IsNullOrWhiteSpace(url)) doneUpdates.Add(U.Set($"{mPath}.Url", url));
+            if (!string.IsNullOrWhiteSpace(assetId)) doneUpdates.Add(U.Set($"{mPath}.AssetId", assetId));
+            await _db.ImageMasterWorkspaces.UpdateOneAsync(doneFilter, U.Combine(doneUpdates), cancellationToken: ct);
+            return;
         }
 
-        updates.Add(setBuilder.Set($"{mPath}.UpdatedAt", DateTime.UtcNow));
-        updates.Add(setBuilder.Set("ArticleWorkflow.UpdatedAt", DateTime.UtcNow));
-
+        // 失败分支
+        var hasSuccessImage = authoritativeSuccessAt.HasValue
+            || marker.ImageRunAt.HasValue
+            || !string.IsNullOrWhiteSpace(marker.AssetId)
+            || (string.Equals(marker.Status, "done", StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(marker.Url));
+        if (hasSuccessImage)
+        {
+            // 失败但已有成功图：把因重生成而被置为 running 的 marker 恢复为 done（保留旧图），不写错误、不动图片字段，
+            // 否则 marker 会卡在 running（Bugbot：regen fail leaves marker running）。
+            await _db.ImageMasterWorkspaces.UpdateOneAsync(
+                F.Eq(x => x.Id, wid),
+                U.Combine(
+                    U.Set($"{mPath}.Status", "done"),
+                    U.Set($"{mPath}.ErrorMessage", (string?)null),
+                    U.Set($"{mPath}.UpdatedAt", DateTime.UtcNow),
+                    U.Set("ArticleWorkflow.UpdatedAt", DateTime.UtcNow)),
+                cancellationToken: ct);
+            _logger.LogInformation(
+                "[文学创作] 失败但已有成功图：marker 恢复 done 保留旧图。WorkspaceId={WorkspaceId}, MarkerIndex={MarkerIndex}, RunId={RunId}",
+                wid, markerIndex, run.Id);
+            return;
+        }
+        // 无成功图：写 error，filter 守卫"无成功指针"，避免并发成功后被错误覆盖。
+        var errUpdates = new List<UpdateDefinition<ImageMasterWorkspace>>
+        {
+            U.Set($"{mPath}.Status", status),
+            U.Set($"{mPath}.UpdatedAt", DateTime.UtcNow),
+            U.Set("ArticleWorkflow.UpdatedAt", DateTime.UtcNow),
+        };
+        if (!string.IsNullOrWhiteSpace(errorMessage)) errUpdates.Add(U.Set($"{mPath}.ErrorMessage", errorMessage));
         await _db.ImageMasterWorkspaces.UpdateOneAsync(
-            Builders<ImageMasterWorkspace>.Filter.Eq(x => x.Id, wid),
-            setBuilder.Combine(updates),
+            F.And(F.Eq(x => x.Id, wid), F.Exists(stampPath, false)),
+            U.Combine(errUpdates),
             cancellationToken: ct);
     }
 

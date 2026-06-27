@@ -54,6 +54,7 @@ export function ImageLightbox({
   const dragRef = useRef<{ active: boolean; startX: number; startY: number; baseX: number; baseY: number; moved: boolean }>(
     { active: false, startX: 0, startY: 0, baseX: 0, baseY: 0, moved: false },
   );
+  const imgRef = useRef<HTMLImageElement>(null);
 
   const resetView = useCallback(() => {
     setScale(1);
@@ -104,26 +105,28 @@ export function ImageLightbox({
     if (images.length === 0) onClose();
   }, [images.length, onClose]);
 
+  // 滚轮缩放：用原生非 passive 监听（React onWheel 默认 passive，preventDefault 会被忽略导致页面滚动穿透）。
+  useEffect(() => {
+    const el = imgRef.current;
+    if (!el) return;
+    const handler = (e: WheelEvent) => {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+      setScale((s) => {
+        const nextScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, s * factor));
+        if (nextScale <= 1) setOffset({ x: 0, y: 0 });
+        else setOffset((o) => ({ x: o.x * (nextScale / s), y: o.y * (nextScale / s) }));
+        return nextScale;
+      });
+    };
+    el.addEventListener('wheel', handler, { passive: false });
+    return () => el.removeEventListener('wheel', handler);
+  }, []);
+
   if (!images.length) return null;
   const src = images[safeIdx];
   const caption = captions?.[safeIdx];
   const isZoomed = scale !== 1 || offset.x !== 0 || offset.y !== 0;
-
-  // 滚轮缩放（以光标位置为锚点做简单平移补偿）
-  const onWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
-    setScale((s) => {
-      const nextScale = clampScale(s * factor);
-      if (nextScale <= 1) {
-        setOffset({ x: 0, y: 0 });
-      } else {
-        // 让缩放围绕图片中心附近，配合光标方向轻微补偿
-        setOffset((o) => ({ x: o.x * (nextScale / s), y: o.y * (nextScale / s) }));
-      }
-      return nextScale;
-    });
-  };
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (scale <= 1) return;
@@ -264,6 +267,7 @@ export function ImageLightbox({
 
       {/* 图片本体 */}
       <img
+        ref={imgRef}
         src={src}
         alt={caption ?? `图 ${safeIdx + 1}`}
         draggable={false}
@@ -276,7 +280,6 @@ export function ImageLightbox({
             return next;
           });
         }}
-        onWheel={onWheel}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
