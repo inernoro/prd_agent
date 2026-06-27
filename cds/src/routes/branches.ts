@@ -10782,12 +10782,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
         hasError ? 'deploy-error' : 'deploy-finalize',
         activeProfileIds,
       );
-      // 2026-06-27：回填本次部署实际使用的部署模式（取本次参与 profiles 里第一个
-      // 非空 activeDeployMode），供构建历史展示「部署类型」。空串=源码/默认模式。
+      // 2026-06-27：回填本次部署「实际跑起来」的部署模式，供构建历史展示「部署类型」。
+      // 优先取参与服务的 svc.deployedMode（runService 在容器起来后权威钉过，含极速版镜像
+      // 拉不到→源码构建的回退真相）；否则镜像回退场景会把源码部署误标成极速版（Codex P2）。
+      // 取不到 deployedMode（如未起容器）再退回配置的 activeDeployMode。空串=源码/默认模式。
+      const ranDeployModes = Array.from(activeProfileIds)
+        .map((pid) => (entry.services?.[pid] as { deployedMode?: string } | undefined)?.deployedMode)
+        .filter((m): m is string => typeof m === 'string' && m.trim() !== '')
+        .map((m) => ({ activeDeployMode: m }));
       opLog.deployMode = deriveDeployMode(
-        profiles
-          .filter((p) => activeProfileIds.has(p.id))
-          .map((p) => resolveEffectiveProfile(p, entry)),
+        ranDeployModes.length > 0
+          ? ranDeployModes
+          : profiles.filter((p) => activeProfileIds.has(p.id)).map((p) => resolveEffectiveProfile(p, entry)),
       );
       // 2026-06-20：成功部署记一条耗时样本（区分发布版/源码），供分支卡片
       // 在下次构建中展示"预计 MM:SS（近 N 次中位值）"。失败不记。
@@ -11242,6 +11248,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       opLog.status = svc.status === 'running' ? 'completed' : 'error';
       opLog.finishedAt = new Date().toISOString();
+      // 单服务路径：用 svc 实际跑起来的 deployedMode 重算部署类型（含极速版→源码回退真相），
+      // 而非创建时（11036）按配置 activeDeployMode 取的值（Codex P2，与主/远端路径一致）。
+      {
+        const ranMode = (svc as { deployedMode?: string }).deployedMode;
+        if (typeof ranMode === 'string' && ranMode.trim() !== '') opLog.deployMode = ranMode.trim();
+      }
       if (svc.status === 'running') {
         const runtimeReadyAt = new Date().toISOString();
         entry.lastReadyAt = runtimeReadyAt;
