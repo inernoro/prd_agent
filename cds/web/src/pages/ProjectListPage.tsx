@@ -1899,9 +1899,12 @@ function ProjectCard({
             </motion.div>
 
             <div className="absolute bottom-4 left-4 right-4 flex min-w-0 items-center gap-2 text-[13px] text-muted-foreground">
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" aria-hidden />
-              <span className="shrink-0">production</span>
-              <span className="text-muted-foreground/60">·</span>
+              {/* On phones the meta row is width-constrained — hide the static
+                  "production" prefix so live status / online count / CPU don't
+                  get clipped (mobile-layout-fallback.md). Desktop keeps it. */}
+              <span className="hidden h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500 sm:block" aria-hidden />
+              <span className="hidden shrink-0 sm:inline">production</span>
+              <span className="hidden text-muted-foreground/60 sm:inline">·</span>
               <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotTone}`} aria-hidden />
               <span className="shrink-0 text-foreground">
                 {paused ? '已暂停' : isReady ? (running > 0 ? '运行中' : '已就绪') : cloneLabel || '未就绪'}
@@ -1923,8 +1926,8 @@ function ProjectCard({
               ) : null}
               {!paused && recentBuilds1h > 0 ? (
                 <>
-                  <span className="text-muted-foreground/60">·</span>
-                  <span className="shrink-0 tabular-nums" title="近 1 小时构建次数">{recentBuilds1h} 次构建/时</span>
+                  <span className="hidden text-muted-foreground/60 sm:inline">·</span>
+                  <span className="hidden shrink-0 tabular-nums sm:inline" title="近 1 小时构建次数">{recentBuilds1h} 次构建/时</span>
                 </>
               ) : null}
             </div>
