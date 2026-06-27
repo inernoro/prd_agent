@@ -1090,8 +1090,9 @@ public class ImageGenRunWorker : BackgroundService
         await _db.ImageAssets.InsertOneAsync(asset, cancellationToken: ct);
 
         // 文学创作：更新 ArticleWorkflow.AssetIdByMarkerIndex（投稿详情依赖此字段查询配图）
-        // 使用 MongoDB 原子 $set 避免并发生图时 read-modify-write 丢失更新
-        if (run.ArticleMarkerIndex.HasValue)
+        // 使用 MongoDB 原子 $set 避免并发生图时 read-modify-write 丢失更新。
+        // 同时防止旧 run 覆盖新 run：若已被同 marker 的更新 run 取代，则只保留 ImageAsset 记录、不改共享指针。
+        if (run.ArticleMarkerIndex.HasValue && !await IsSupersededForArticleMarkerAsync(run, ct))
         {
             var idx = run.ArticleMarkerIndex.Value;
             var idxKey = idx.ToString();
@@ -1319,6 +1320,24 @@ public class ImageGenRunWorker : BackgroundService
     }
 
     /// <summary>
+    /// 判断该 run 是否已被同目标（同 workspace + 同 ArticleMarkerIndex）的更新 run 取代。
+    /// 并发处理多 run 后，用户对同一 marker 连续重生成会产生多个 run；旧 run 可能后完成，
+    /// 若不判定就会用旧结果覆盖新结果。仅当"本 run 是该目标里最新创建的 run"时才写共享 marker 指针。
+    /// </summary>
+    private async Task<bool> IsSupersededForArticleMarkerAsync(ImageGenRun run, CancellationToken ct)
+    {
+        if (!run.ArticleMarkerIndex.HasValue || string.IsNullOrWhiteSpace(run.WorkspaceId)) return false;
+        var newer = await _db.ImageGenRuns
+            .Find(x => x.WorkspaceId == run.WorkspaceId
+                       && x.ArticleMarkerIndex == run.ArticleMarkerIndex
+                       && x.Id != run.Id
+                       && x.CreatedAt > run.CreatedAt)
+            .Project(x => new { x.Id })
+            .FirstOrDefaultAsync(ct);
+        return newer != null;
+    }
+
+    /// <summary>
     /// 文学创作场景：自动回填 ArticleIllustrationMarker 的状态。
     /// 当 run.ArticleMarkerIndex 有值时，更新对应 marker 的 status/errorMessage/url。
     /// </summary>
@@ -1335,6 +1354,15 @@ public class ImageGenRunWorker : BackgroundService
         if (string.IsNullOrWhiteSpace(wid)) return;
 
         var markerIndex = run.ArticleMarkerIndex.Value;
+
+        // 防止旧 run 覆盖新 run：若已被同 marker 的更新 run 取代，跳过共享 marker 指针回填
+        if (await IsSupersededForArticleMarkerAsync(run, ct))
+        {
+            _logger.LogInformation(
+                "[文学创作] 跳过 Marker 回填：该 run 已被同 marker 的更新 run 取代。WorkspaceId={WorkspaceId}, MarkerIndex={MarkerIndex}, RunId={RunId}",
+                wid, markerIndex, run.Id);
+            return;
+        }
 
         for (var attempt = 0; attempt < 5; attempt++)
         {

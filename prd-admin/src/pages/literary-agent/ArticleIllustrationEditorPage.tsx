@@ -1602,25 +1602,29 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     return out;
   }, [markers, markerRunItems, markerItemImageUrl]);
 
-  const collectInlineImageUrls = useCallback(
-    () => collectOrderedMarkerImages().map((o) => o.url),
-    [collectOrderedMarkerImages],
-  );
-
   // 点击正文内联图片：以该图为起点打开可缩放灯箱（不管比例尺多大都可预览）。
-  // 若点击的 URL 不在收集到的轮播列表里（非 marker 图 / URL 不完全匹配），
-  // 则只展示用户实际点击的这张图——绝不退化成"打开第一张"误导用户。
-  const openInlineImageLightbox = useCallback((clickedUrl?: string) => {
-    const urls = collectInlineImageUrls();
-    const found = clickedUrl ? urls.findIndex((u) => u === clickedUrl) : -1;
+  // 优先按 marker 身份定位（markerArrayIdx = 正文 <img> 的 data-marker-idx，
+  // 即 markers 数组下标），与右侧卡片一致，避免多 marker 共用同一 URL 时按字符串
+  // 命中错下标。定位不到再退回 URL 匹配；仍找不到则只展示用户实际点击的这张图，
+  // 绝不退化成"打开第一张"误导用户。
+  const openInlineImageLightbox = useCallback((clickedUrl?: string, markerArrayIdx?: number) => {
+    const ordered = collectOrderedMarkerImages();
+    let found = -1;
+    if (markerArrayIdx != null && markers[markerArrayIdx]) {
+      const mIndex = markers[markerArrayIdx].index;
+      found = ordered.findIndex((o) => o.markerIndex === mIndex);
+    }
+    if (found < 0 && clickedUrl) {
+      found = ordered.findIndex((o) => o.url === clickedUrl);
+    }
     if (found >= 0) {
-      setLightbox({ images: urls, index: found });
+      setLightbox({ images: ordered.map((o) => o.url), index: found });
     } else if (clickedUrl) {
       setLightbox({ images: [clickedUrl], index: 0 });
-    } else if (urls.length > 0) {
-      setLightbox({ images: urls, index: 0 });
+    } else if (ordered.length > 0) {
+      setLightbox({ images: ordered.map((o) => o.url), index: 0 });
     }
-  }, [collectInlineImageUrls]);
+  }, [collectOrderedMarkerImages, markers]);
 
   const locateMarkerInPreview = (markerIndex: number) => {
     const container = articlePreviewRef.current;
@@ -3234,7 +3238,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             // 阻止冒泡到父 <a>，否则点击会跟随链接跳走而非打开预览
                             e.preventDefault();
                             e.stopPropagation();
-                            openInlineImageLightbox(typeof src === 'string' ? src : undefined);
+                            // 用 data-marker-idx（markers 数组下标）按 marker 身份定位，避免重复 URL 命中错下标
+                            const attr = e.currentTarget.getAttribute('data-marker-idx');
+                            const markerArrayIdx = attr != null && /^\d+$/.test(attr) ? parseInt(attr, 10) : undefined;
+                            openInlineImageLightbox(typeof src === 'string' ? src : undefined, markerArrayIdx);
                           }}
                           style={{ maxWidth: '100%', borderRadius: 8, margin: '8px 0', cursor: 'zoom-in' }}
                         />
