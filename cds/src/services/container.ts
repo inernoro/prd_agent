@@ -189,7 +189,9 @@ export function resolveProfileWithMode(profile: BuildProfile): BuildProfile {
         ? { ...profile.env, ...override.env }
         : profile.env,
       ...(override.prebuilt !== undefined ? { prebuiltImage: override.prebuilt } : {}),
-      ...(override.containerPort !== undefined ? { containerPort: override.containerPort } : {}),
+      // 用 != null（非 !== undefined）：override.containerPort 为 null 时**不得**覆盖 baseline 真实端口，
+      // 否则 docker run 拿到 null → `invalid containerPort: null`。合法端口恒为数字，永不为 null，故安全。
+      ...(override.containerPort != null ? { containerPort: override.containerPort } : {}),
       // 极速版「逐组件回退主分支」:把本模式的 fallbackImage 一并带出,供 runService 在
       // 本 commit 无该组件镜像时回退（path-filter 只构建改动组件,某些 commit 缺镜像）。
       ...(override.fallbackImage !== undefined ? { fallbackImage: override.fallbackImage } : {}),
@@ -297,7 +299,9 @@ export function applyProfileOverride(baseline: BuildProfile, override?: BuildPro
     ...(override.dockerImage !== undefined ? { dockerImage: override.dockerImage } : {}),
     ...(override.command !== undefined ? { command: override.command } : {}),
     ...(override.containerWorkDir !== undefined ? { containerWorkDir: override.containerWorkDir } : {}),
-    ...(override.containerPort !== undefined ? { containerPort: override.containerPort } : {}),
+    // != null：branch override 的 containerPort 为 null（极速版端口走 mode override，本层留 null）时
+    // **不得**覆盖 baseline 真实端口 → 根治 `docker: invalid containerPort: null`（prd-agent-main 等）。
+    ...(override.containerPort != null ? { containerPort: override.containerPort } : {}),
     ...(override.pathPrefixes !== undefined ? { pathPrefixes: override.pathPrefixes } : {}),
     ...(override.resources !== undefined ? { resources: override.resources } : {}),
     ...(override.activeDeployMode !== undefined ? { activeDeployMode: override.activeDeployMode } : {}),
