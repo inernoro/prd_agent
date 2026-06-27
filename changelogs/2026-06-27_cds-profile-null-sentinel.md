@@ -20,3 +20,5 @@
 | feat | cds | CDS 系统设置-维护：自更新「更新日志」面板在有更新任务时默认展开（DisclosurePanel 支持 defaultOpen + 展开/收起标签），不用每次点开看进度 |
 | fix | cds | 部署刷新 githubCommitSha 改用 shouldRefreshCommitSha：同 commit 的短 SHA 可升级为完整 40 位（不降级），治已持久化短 SHA 的分支 OperationLog.commitSha 一直短、版本元数据存歧义（Codex P2 #940） |
 | fix | cds | 卡死看门狗以「存活服务」（按在册 profile 过滤后）判定是否走分支级收敛：分支只剩僵尸服务时退回硬超时成 error，不被聚合藏成 idle（Codex P2 #940） |
+| polish | cds | 自更新历史耗时条：任何未计量时间都补「其他」铺满进度条（不留暗色黑轨道），「其他」颜色从 /30 提到 /55 中性灰（暗色下不再像黑块），图例仍只在 >1.5s 列出（用户反馈「后面黑色的是什么」） |
+| docs | cds | 新增 debt.cds.executor-watchdog：记录 executor 卡死看门狗硬超时的 #228/#233 评审冲突与根治方案（cluster-only） |
