@@ -1,0 +1,595 @@
+import { describe, expect, it } from 'vitest';
+import { reconcileStuckDeployStates, hasYoungActiveLease } from '../../src/services/deploy-stuck-reconciler.js';
+import type { BranchEntry, BuildProfile } from '../../src/types.js';
+import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
+
+function makeBranch(over: Partial<BranchEntry>): BranchEntry {
+  return {
+    id: 'b1',
+    projectId: 'p1',
+    branch: 'feature',
+    worktreePath: '/tmp/wt',
+    services: {},
+    status: 'running',
+    createdAt: '2026-06-27T00:00:00.000Z',
+    ...over,
+  } as BranchEntry;
+}
+
+function collectEvents() {
+  const events: Array<{ action: string; message: string; details?: Record<string, unknown> }> = [];
+  const sink: ServerEventLogSink = {
+    record(r) {
+      events.push({ action: r.action, message: r.message, details: r.details });
+    },
+  };
+  return { events, sink };
+}
+
+// 极速版（CI 预构建）profile，使 branchUsesPrebuiltMode 返回 true。
+const PREBUILT_PROFILES: BuildProfile[] = [
+  {
+    id: 'web',
+    activeDeployMode: 'express',
+    deployModes: { express: { prebuilt: true } },
+  } as unknown as BuildProfile,
+];
+
+describe('reconcileStuckDeployStates — TYPE 2 卡死非终结态收敛', () => {
+  it('stale starting with ready-after-start => corrected to running', () => {
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const branch = makeBranch({
+      status: 'starting',
+      lastDeployStartedAt: '2026-06-27T00:18:00.000Z',
+      lastReadyAt: '2026-06-27T01:01:00.000Z', // ready 晚于 start ⇒ 实际已就绪
+    });
+    const { events, sink } = collectEvents();
+    const updated: string[] = [];
+
+    const results = reconcileStuckDeployStates([branch], {
+      now,
+      source: 'unit',
+      serverEventLogStore: sink,
+      emitBranchUpdated: (b) => updated.push(b.id),
+    });
+
+    expect(branch.status).toBe('running');
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({
+      kind: 'branch-status-finalized',
+      previousStatus: 'starting',
+      nextStatus: 'running',
+      via: 'timestamp-evidence',
+    });
+    expect(updated).toEqual(['b1']);
+    expect(events[0]?.action).toBe('branch.stuck-state.finalized');
+  });
+
+  it('stale starting that was ready then stopped => corrected to idle', () => {
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const branch = makeBranch({
+      status: 'starting',
+      lastDeployStartedAt: '2026-06-27T00:18:00.000Z',
+      lastReadyAt: '2026-06-27T01:01:00.000Z',
+      lastStoppedAt: '2026-06-27T02:00:00.000Z', // 就绪后又被停 ⇒ idle
+      lastStopReason: '自动降温',
+    });
+
+    const results = reconcileStuckDeployStates([branch], { now });
+
+    expect(branch.status).toBe('idle');
+    expect(results[0]).toMatchObject({ nextStatus: 'idle', via: 'timestamp-evidence' });
+  });
+
+  it("service 'stopping' finalized to 'stopped' once lastStoppedAt is stamped", () => {
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const branch = makeBranch({
+      status: 'idle',
+      lastDeployStartedAt: '2026-06-27T00:00:00.000Z',
+      lastStoppedAt: '2026-06-27T03:00:00.000Z',
+      services: {
+        web: { profileId: 'web', containerName: 'c', hostPort: 1, status: 'stopping' },
+      },
+    });
+
+    const results = reconcileStuckDeployStates([branch], { now });
+
+    expect(branch.services.web.status).toBe('stopped');
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({
+      kind: 'service-status-finalized',
+      profileId: 'web',
+      previousStatus: 'stopping',
+      nextStatus: 'stopped',
+      via: 'timestamp-evidence',
+    });
+  });
+
+  it('service 硬超时收敛成 error 后，分支聚合 status/errorMessage 一并重算（Codex P2 回归）', () => {
+    const now = new Date('2026-06-27T01:00:00.000Z'); // 服务启动 60 分钟前 > 45min 硬超时
+    const branch = makeBranch({
+      status: 'running', // 分支自身停在 running（与某服务已卡死矛盾）
+      lastDeployStartedAt: '2026-06-27T00:00:00.000Z',
+      // 无 lastReadyAt ⇒ 服务走硬超时
+      services: {
+        web: { profileId: 'web', containerName: 'c', hostPort: 1, status: 'starting' },
+      },
+    });
+    const { events, sink } = collectEvents();
+    const updated: string[] = [];
+
+    const results = reconcileStuckDeployStates([branch], {
+      now,
+      source: 'unit',
+      serverEventLogStore: sink,
+      emitBranchUpdated: (b) => updated.push(b.id),
+    });
+
+    // 服务被收敛成 error
+    expect(branch.services.web.status).toBe('error');
+    // 关键：分支聚合不再停留在 running，被重算为 error + 带 branch.errorMessage
+    expect(branch.status).toBe('error');
+    expect(branch.errorMessage).toContain('web:');
+    expect(updated).toEqual(['b1']); // 发出的 branch.updated 携带正确的 error 状态
+    // 结果集含服务级收敛 + 分支聚合重算两条
+    expect(results.some((r) => r.kind === 'service-status-finalized' && r.nextStatus === 'error')).toBe(true);
+    expect(results.some((r) => r.kind === 'branch-status-finalized' && r.previousStatus === 'running' && r.nextStatus === 'error')).toBe(true);
+    expect(events.some((e) => e.action === 'branch.stuck-state.aggregate-recomputed')).toBe(true);
+  });
+
+  it('conservative hard timeout NOT tripped for a young in-progress build', () => {
+    const now = new Date('2026-06-27T00:10:00.000Z'); // 仅开始 10 分钟
+    const branch = makeBranch({
+      status: 'building',
+      lastDeployStartedAt: '2026-06-27T00:00:00.000Z',
+      // 无 lastReadyAt ⇒ 无时间戳证据，只能靠硬超时；但 10 分钟 << 45 分钟阈值
+    });
+
+    const results = reconcileStuckDeployStates([branch], { now });
+
+    expect(branch.status).toBe('building'); // 未被触碰
+    expect(results).toHaveLength(0);
+  });
+
+  it('hard timeout trips a long-stuck non-terminal state without timestamp evidence', () => {
+    const now = new Date('2026-06-27T01:00:00.000Z'); // 开始 60 分钟前
+    const branch = makeBranch({
+      status: 'building',
+      lastDeployStartedAt: '2026-06-27T00:00:00.000Z',
+    });
+
+    const results = reconcileStuckDeployStates([branch], { now });
+
+    expect(branch.status).toBe('error');
+    expect(results[0]).toMatchObject({ nextStatus: 'error', via: 'hard-timeout' });
+  });
+});
+
+describe('reconcileStuckDeployStates — TYPE 1 极速版镜像落后 HEAD 告警', () => {
+  it('express divergence with runtime diff => alarm (ciImageError set, no deploy)', () => {
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const branch = makeBranch({
+      ciImageStatus: 'ready',
+      ciTargetSha: 'aaaaaaa1111111',
+      githubCommitSha: 'bbbbbbb2222222',
+    });
+    const { events, sink } = collectEvents();
+
+    const results = reconcileStuckDeployStates([branch], {
+      now,
+      serverEventLogStore: sink,
+      getBuildProfiles: () => PREBUILT_PROFILES,
+      diffRuntimePaths: () => true, // 含运行时改动
+    });
+
+    expect(branch.ciImageStatus).toBe('ready'); // 未被改动（不自动部署）
+    expect(branch.ciTargetSha).toBe('aaaaaaa1111111'); // ciTargetSha 不变
+    expect(branch.ciImageError).toContain('极速版镜像落后 HEAD');
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ kind: 'express-head-divergence', via: 'alarm' });
+    expect(events[0]?.action).toBe('branch.express-image.head-divergence');
+  });
+
+  it('express divergence with docs-only diff => no alarm', () => {
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const branch = makeBranch({
+      ciImageStatus: 'ready',
+      ciTargetSha: 'aaaaaaa1111111',
+      githubCommitSha: 'bbbbbbb2222222',
+    });
+
+    const results = reconcileStuckDeployStates([branch], {
+      now,
+      getBuildProfiles: () => PREBUILT_PROFILES,
+      diffRuntimePaths: () => false, // 纯文档
+    });
+
+    expect(branch.ciImageError).toBeUndefined();
+    expect(results).toHaveLength(0);
+  });
+
+  it('no alarm when ciTargetSha equals HEAD (in sync)', () => {
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const branch = makeBranch({
+      ciImageStatus: 'ready',
+      ciTargetSha: 'samesha0000000',
+      githubCommitSha: 'samesha0000000',
+    });
+
+    const results = reconcileStuckDeployStates([branch], {
+      now,
+      getBuildProfiles: () => PREBUILT_PROFILES,
+      diffRuntimePaths: () => true,
+    });
+
+    expect(results).toHaveLength(0);
+    expect(branch.ciImageError).toBeUndefined();
+  });
+});
+
+describe('reconcileStuckDeployStates — Bugbot review 回归', () => {
+  it('starting 无 lastDeployStartedAt + 陈旧 lastReadyAt => 不误收敛（缺本轮锚点）', () => {
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const branch = makeBranch({
+      status: 'starting',
+      // 无 lastDeployStartedAt（本轮启动锚点缺失）
+      lastReadyAt: '2026-06-27T01:01:00.000Z', // 上一轮的陈旧就绪戳
+      createdAt: '2026-06-27T09:55:00.000Z', // 分支很年轻
+    });
+    const { events, sink } = collectEvents();
+    const results = reconcileStuckDeployStates([branch], { now, serverEventLogStore: sink });
+    expect(branch.status).toBe('starting'); // 未被陈旧 ready 戳误收敛为 running
+    expect(results).toHaveLength(0);
+    expect(events).toHaveLength(0);
+  });
+
+  it('stopping 无 start/ready 锚点 + 陈旧 lastStoppedAt => 不误判停止完成', () => {
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const branch = makeBranch({
+      status: 'stopping',
+      lastStoppedAt: '2026-06-27T01:00:00.000Z', // 陈旧
+      createdAt: '2026-06-27T09:55:00.000Z',
+    });
+    const results = reconcileStuckDeployStates([branch], { now });
+    expect(branch.status).toBe('stopping');
+    expect(results).toHaveLength(0);
+  });
+
+  it('老分支 starting 无 lastDeployStartedAt => 硬超时不触发（锚点只取本轮启动戳，不取 createdAt）', () => {
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const branch = makeBranch({
+      status: 'starting',
+      createdAt: '2026-06-20T00:00:00.000Z', // 7 天前创建
+      // 无 lastDeployStartedAt / lastReadyAt
+    });
+    const results = reconcileStuckDeployStates([branch], { now });
+    expect(branch.status).toBe('starting'); // 不因 createdAt 很老就被误判超时为 error
+    expect(results).toHaveLength(0);
+  });
+
+  it('stopping 部署已久但无 lastStoppedAt => 不被部署起点硬超时误判为已停（Bugbot High）', () => {
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const branch = makeBranch({
+      status: 'stopping',
+      lastDeployStartedAt: '2026-06-27T00:00:00.000Z', // 10 小时前部署（远超 45min 阈值）
+      // 无 lastStoppedAt：停止刚发起、Docker/executor 可能还在停
+      services: {
+        web: { profileId: 'web', containerName: 'c', hostPort: 1, status: 'stopping' },
+      },
+    });
+    const results = reconcileStuckDeployStates([branch], { now });
+    // 部署起点不是停止起点：绝不能用它把仍在进行的停止误判为已停
+    expect(branch.status).toBe('stopping');
+    expect(branch.services.web.status).toBe('stopping');
+    expect(results).toHaveLength(0);
+  });
+
+  it('allowHardTimeout=false（executor 节点）：卡死非终结态不被硬超时收敛（Bugbot High）', () => {
+    const now = new Date('2026-06-27T01:00:00.000Z'); // 启动 60 分钟前 > 45min
+    const branch = makeBranch({
+      status: 'building',
+      lastDeployStartedAt: '2026-06-27T00:00:00.000Z', // 无 ready 证据，本会硬超时成 error
+    });
+    const results = reconcileStuckDeployStates([branch], { now, allowHardTimeout: false });
+    expect(branch.status).toBe('building'); // executor 不做硬超时，留给 master/操作收尾
+    expect(results).toHaveLength(0);
+  });
+
+  it('僵尸服务（profile 已删/改名）不参与分支聚合，不把健康分支翻回 error（Codex P2）', () => {
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const branch = makeBranch({
+      status: 'running',
+      lastDeployStartedAt: '2026-06-27T00:00:00.000Z',
+      lastReadyAt: '2026-06-27T00:05:00.000Z',
+      services: {
+        api: { profileId: 'api', containerName: 'c1', hostPort: 1, status: 'running' },
+        // 已被删除/改名的旧 profile 残留的僵尸服务，卡在 error
+        oldweb: { profileId: 'oldweb', containerName: 'c2', hostPort: 2, status: 'error', errorMessage: '旧 profile 残留' },
+      },
+    });
+    const results = reconcileStuckDeployStates([branch], {
+      now,
+      // 当前在册 profile 只有 api；oldweb 不在 → 聚合应忽略它
+      getBuildProfiles: () => [{ id: 'api' } as unknown as BuildProfile],
+    });
+    expect(branch.status).toBe('running'); // 不被僵尸 error 服务翻回 error
+    expect(branch.errorMessage).toBeUndefined();
+    expect(results.some((r) => r.kind === 'branch-status-finalized')).toBe(false);
+  });
+
+  it('getBuildProfiles 返回空数组视为不过滤，不把 running 服务的分支误判 idle（Bugbot Medium）', () => {
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const branch = makeBranch({
+      status: 'running',
+      lastDeployStartedAt: '2026-06-27T00:00:00.000Z',
+      lastReadyAt: '2026-06-27T00:05:00.000Z',
+      services: {
+        api: { profileId: 'api', containerName: 'c1', hostPort: 1, status: 'running' },
+      },
+    });
+    const results = reconcileStuckDeployStates([branch], { now, getBuildProfiles: () => [] });
+    expect(branch.status).toBe('running'); // 空 profile 不应把所有服务排除掉、误判 idle
+    expect(results).toHaveLength(0);
+  });
+
+  it('多服务分支不用 branch.lastReadyAt 把仍在 starting 的服务过早翻 running（Bugbot Medium）', () => {
+    const now = new Date('2026-06-27T00:20:00.000Z');
+    const branch = makeBranch({
+      status: 'starting',
+      lastDeployStartedAt: '2026-06-27T00:10:00.000Z', // 10 分钟前，未到 45min 硬超时
+      lastReadyAt: '2026-06-27T00:15:00.000Z', // 首个服务就绪时盖的 branch 戳
+      services: {
+        api: { profileId: 'api', containerName: 'c1', hostPort: 1, status: 'running' },
+        web: { profileId: 'web', containerName: 'c2', hostPort: 2, status: 'starting' }, // 仍在真实启动
+      },
+    });
+    const results = reconcileStuckDeployStates([branch], { now });
+    expect(branch.services.web.status).toBe('starting'); // 不被 branch 级就绪戳过早翻 running
+    expect(results.some((r) => r.kind === 'service-status-finalized')).toBe(false);
+  });
+
+  it('单服务分支仍可用 branch.lastReadyAt 收敛陈旧 starting（证据无歧义）', () => {
+    const now = new Date('2026-06-27T00:20:00.000Z');
+    const branch = makeBranch({
+      status: 'starting',
+      lastDeployStartedAt: '2026-06-27T00:10:00.000Z',
+      lastReadyAt: '2026-06-27T00:15:00.000Z',
+      services: {
+        only: { profileId: 'only', containerName: 'c1', hostPort: 1, status: 'starting' },
+      },
+    });
+    reconcileStuckDeployStates([branch], { now });
+    expect(branch.services.only.status).toBe('running'); // 单服务时 branch ready 即该服务 ready
+  });
+
+  it('filterZombieProfiles=false（executor）不按本地 profile 过滤，不把真实远端服务当僵尸（Codex P2）', () => {
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const branch = makeBranch({
+      status: 'running',
+      lastDeployStartedAt: '2026-06-27T00:00:00.000Z',
+      lastReadyAt: '2026-06-27T00:05:00.000Z',
+      services: {
+        api: { profileId: 'api', containerName: 'c1', hostPort: 1, status: 'running' },
+      },
+    });
+    const results = reconcileStuckDeployStates([branch], {
+      now,
+      filterZombieProfiles: false,
+      // executor 本地注册表里没有 api（陈旧/为空）；若仍过滤会把 api 当僵尸排除 → 误判 idle
+      getBuildProfiles: () => [{ id: 'totally-different' } as unknown as BuildProfile],
+    });
+    expect(branch.status).toBe('running'); // executor 不过滤 → 认 api 为真，保持 running
+    expect(results).toHaveLength(0);
+  });
+
+  it('分支只剩僵尸服务（无存活 profile）+ 卡死 building => 退回分支级硬超时成 error，不被藏成 idle（Codex P2）', () => {
+    const now = new Date('2026-06-27T01:00:00.000Z'); // 启动 60 分钟前 > 45min
+    const branch = makeBranch({
+      status: 'building',
+      lastDeployStartedAt: '2026-06-27T00:00:00.000Z', // 无 ready 证据 → 硬超时
+      services: {
+        // 部署在创建当前 profile 服务前就崩了，只剩上一轮已删 profile 的僵尸条目
+        oldweb: { profileId: 'oldweb', containerName: 'c', hostPort: 1, status: 'stopped' },
+      },
+    });
+    const results = reconcileStuckDeployStates([branch], {
+      now,
+      getBuildProfiles: () => [{ id: 'api' } as unknown as BuildProfile], // 当前在册只有 api，无 oldweb
+    });
+    // 无存活服务 → 走分支级硬超时收敛为 error，而非聚合把僵尸过滤光后误判 idle
+    expect(branch.status).toBe('error');
+    expect(results.some((r) => r.kind === 'branch-status-finalized' && r.nextStatus === 'error')).toBe(true);
+  });
+
+  it('僵尸服务不参与服务级收敛：单存活服务时不被 branch.lastReadyAt 误翻 running（Bugbot Medium）', () => {
+    const now = new Date('2026-06-27T00:20:00.000Z');
+    const branch = makeBranch({
+      status: 'running',
+      lastDeployStartedAt: '2026-06-27T00:10:00.000Z',
+      lastReadyAt: '2026-06-27T00:15:00.000Z', // ready-after-start，会触发单服务证据路径
+      services: {
+        api: { profileId: 'api', containerName: 'c1', hostPort: 1, status: 'running' }, // 唯一存活
+        oldweb: { profileId: 'oldweb', containerName: 'c2', hostPort: 2, status: 'starting' }, // 僵尸，卡 starting
+      },
+    });
+    const results = reconcileStuckDeployStates([branch], {
+      now,
+      getBuildProfiles: () => [{ id: 'api' } as unknown as BuildProfile], // 当前在册只有 api
+    });
+    // 僵尸 oldweb 不被收敛（保持 starting），不在 UI/快照留误导性 running
+    expect(branch.services.oldweb.status).toBe('starting');
+    expect(results.some((r) => r.kind === 'service-status-finalized' && r.profileId === 'oldweb')).toBe(false);
+  });
+
+  it('有在途操作的分支整条跳过：合法长任务不被硬超时误杀（Bugbot Medium）', () => {
+    const now = new Date('2026-06-27T01:00:00.000Z'); // 启动 60 分钟前 > 45min 硬超时
+    const branch = makeBranch({
+      status: 'building',
+      lastDeployStartedAt: '2026-06-27T00:00:00.000Z', // 无 ready 证据，本会走硬超时成 error
+    });
+    const results = reconcileStuckDeployStates([branch], {
+      now,
+      hasActiveOperation: () => true, // 协调器报：该分支有在途部署
+    });
+    expect(branch.status).toBe('building'); // 未被硬超时误判
+    expect(results).toHaveLength(0);
+  });
+
+  it('服务全 stopped 但分支 stop 元数据缺失 => 分支不再卡在 running（Bugbot Medium）', () => {
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const branch = makeBranch({
+      status: 'running', // 分支元数据没落 stop，错误地停在 running
+      lastDeployStartedAt: '2026-06-27T00:00:00.000Z',
+      lastReadyAt: '2026-06-27T00:05:00.000Z',
+      // 无 lastStoppedAt
+      services: {
+        api: { profileId: 'api', containerName: 'c1', hostPort: 1, status: 'stopped' },
+        web: { profileId: 'web', containerName: 'c2', hostPort: 2, status: 'stopped' },
+      },
+    });
+    const { events, sink } = collectEvents();
+    const updated: string[] = [];
+    const results = reconcileStuckDeployStates([branch], {
+      now,
+      source: 'unit',
+      serverEventLogStore: sink,
+      emitBranchUpdated: (b) => updated.push(b.id),
+    });
+    expect(branch.status).toBe('idle'); // 由服务真实状态推出，不再谎报 running
+    expect(results.some((r) => r.kind === 'branch-status-finalized' && r.previousStatus === 'running' && r.nextStatus === 'idle')).toBe(true);
+    expect(updated).toEqual(['b1']);
+    expect(events.some((e) => e.action === 'branch.stuck-state.aggregate-recomputed')).toBe(true);
+  });
+
+  it('分支级 error（非服务来源）+ 服务全 stopped => 不被聚合清成 idle（Bugbot Medium）', () => {
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const branch = makeBranch({
+      status: 'error',
+      errorMessage: 'webhook 派发失败：CI 镜像门未通过', // 分支级失败，非任何服务报的
+      lastDeployStartedAt: '2026-06-27T00:00:00.000Z',
+      services: {
+        api: { profileId: 'api', containerName: 'c1', hostPort: 1, status: 'stopped' },
+        web: { profileId: 'web', containerName: 'c2', hostPort: 2, status: 'stopped' },
+      },
+    });
+    const results = reconcileStuckDeployStates([branch], { now });
+    expect(branch.status).toBe('error'); // 分支级 error 保留，不被服务聚合清成 idle
+    expect(branch.errorMessage).toBe('webhook 派发失败：CI 镜像门未通过'); // errorMessage 不被清空
+    expect(results).toHaveLength(0);
+  });
+
+  it('有服务的分支：分支级时间戳证据不再凌驾服务真相（lone stopping 保留）', () => {
+    // 即便分支级时间戳证据「ready 晚于 start、无 stop」会推出 running，有服务时也不采信它，
+    // 改由服务聚合决定：唯一服务 stopping ⇒ 分支保持 stopping（不被误判 running）。
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const branch = makeBranch({
+      status: 'stopping',
+      lastDeployStartedAt: '2026-06-27T00:00:00.000Z',
+      lastReadyAt: '2026-06-27T01:00:00.000Z', // 时间戳证据会想推 running
+      services: {
+        web: { profileId: 'web', containerName: 'c', hostPort: 1, status: 'stopping' },
+      },
+    });
+    const results = reconcileStuckDeployStates([branch], { now });
+    expect(branch.status).toBe('stopping'); // 服务仍 stopping ⇒ 分支保持 stopping
+    expect(results).toHaveLength(0);
+  });
+
+  it('状态机收敛不写 type:build 的 OperationLog（不伪装成绿色成功部署）', () => {
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const branch = makeBranch({
+      status: 'starting',
+      lastDeployStartedAt: '2026-06-27T00:18:00.000Z',
+      lastReadyAt: '2026-06-27T01:01:00.000Z',
+    });
+    const buildLogs: unknown[] = [];
+    const { sink } = collectEvents();
+    const results = reconcileStuckDeployStates([branch], {
+      now,
+      serverEventLogStore: sink,
+      appendLog: (_id, log) => { buildLogs.push(log); },
+    });
+    expect(branch.status).toBe('running'); // 收敛确实发生
+    expect(results).toHaveLength(1);
+    expect(buildLogs).toHaveLength(0); // 但不写部署/构建历史，只进系统事件日志
+  });
+});
+
+describe('reconcileStuckDeployStates — restarting 不被旧时间戳误收敛（Codex P2）', () => {
+  // 重启不刷新 lastDeployStartedAt，上一轮的 lastReadyAt 仍 >= 上一轮 lastDeployStartedAt。
+  // 旧逻辑会把仍在 restarting 的分支/服务用这对陈旧戳误翻成 running。
+
+  it('分支级：restarting + 旧 ready>=start ⇒ 不触碰（无服务兜底也不误翻 running）', () => {
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const branch = makeBranch({
+      status: 'restarting',
+      lastDeployStartedAt: '2026-06-27T09:50:00.000Z', // 上一轮部署起点
+      lastReadyAt: '2026-06-27T09:55:00.000Z', // 上一轮就绪（晚于起点）
+      // 无 services ⇒ 走分支级 decideBranchFinalization
+    });
+    const results = reconcileStuckDeployStates([branch], { now, source: 'unit' });
+    expect(branch.status).toBe('restarting'); // 保持，不被旧 ready 戳误收敛成 running
+    expect(results).toHaveLength(0);
+  });
+
+  it('服务级：单服务 restarting + 旧 ready>=start ⇒ 不触碰', () => {
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const branch = makeBranch({
+      status: 'restarting',
+      lastDeployStartedAt: '2026-06-27T09:50:00.000Z',
+      lastReadyAt: '2026-06-27T09:55:00.000Z',
+      services: {
+        web: { profileId: 'web', containerName: 'c', hostPort: 1, status: 'restarting' },
+      },
+    });
+    const results = reconcileStuckDeployStates([branch], { now, source: 'unit' });
+    expect(branch.services.web.status).toBe('restarting'); // 服务保持，不被旧戳误翻 running
+    // 分支聚合按服务真实状态重算：restarting 服务 ⇒ starting（聚合口径），不应是 running
+    expect(branch.status).not.toBe('running');
+    expect(results.some((r) => r.kind === 'service-status-finalized' && r.nextStatus === 'running')).toBe(false);
+  });
+
+  it('对照：starting（真新部署，戳已刷新）仍正常收敛 running', () => {
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const branch = makeBranch({
+      status: 'starting',
+      lastDeployStartedAt: '2026-06-27T09:50:00.000Z',
+      lastReadyAt: '2026-06-27T09:55:00.000Z',
+    });
+    const results = reconcileStuckDeployStates([branch], { now, source: 'unit' });
+    expect(branch.status).toBe('running'); // starting 不受本次改动影响，证据路径照常
+    expect(results).toHaveLength(1);
+  });
+});
+
+describe('hasYoungActiveLease — 在途租约判活（Bugbot Medium「Bad lease timestamp skips forever」）', () => {
+  const NOW = Date.parse('2026-06-27T10:00:00.000Z');
+  const ageOut = 90 * 60_000; // 2× 硬超时
+
+  it('年轻租约（5min 前）⇒ true（跳过收敛，护住合法长任务）', () => {
+    expect(hasYoungActiveLease([{ startedAt: '2026-06-27T09:55:00.000Z' }], NOW, ageOut)).toBe(true);
+  });
+
+  it('过老租约（>90min）⇒ false（挂死租约放行给硬超时）', () => {
+    expect(hasYoungActiveLease([{ startedAt: '2026-06-27T08:00:00.000Z' }], NOW, ageOut)).toBe(false);
+  });
+
+  it('缺/坏起始戳 ⇒ false（不再永久护住、卡死态可收敛）', () => {
+    expect(hasYoungActiveLease([{ startedAt: undefined }], NOW, ageOut)).toBe(false);
+    expect(hasYoungActiveLease([{ startedAt: 'not-a-date' }], NOW, ageOut)).toBe(false);
+    expect(hasYoungActiveLease([{}], NOW, ageOut)).toBe(false);
+  });
+
+  it('已取消的租约 ⇒ 忽略；空/缺省 ⇒ false', () => {
+    expect(hasYoungActiveLease([{ cancelled: true, startedAt: '2026-06-27T09:59:00.000Z' }], NOW, ageOut)).toBe(false);
+    expect(hasYoungActiveLease([], NOW, ageOut)).toBe(false);
+    expect(hasYoungActiveLease(null, NOW, ageOut)).toBe(false);
+  });
+
+  it('多租约取 some：一个年轻即 true', () => {
+    expect(hasYoungActiveLease(
+      [{ startedAt: '2026-06-27T08:00:00.000Z' }, { startedAt: '2026-06-27T09:58:00.000Z' }],
+      NOW, ageOut,
+    )).toBe(true);
+  });
+});

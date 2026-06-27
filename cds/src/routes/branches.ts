@@ -13,6 +13,7 @@ import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
+import { classifyTriggerSource, deriveDeployMode, deriveCommitMeta, parsePulledSha, shouldRefreshCommitSha } from '../services/build-log-meta.js';
 import { acquireBuildSlot, buildGateStatus } from '../services/build-gate.js';
 import { recordBuild } from '../services/build-activity-tracker.js';
 import type { ContainerService } from '../services/container.js';
@@ -2562,6 +2563,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       startedAt: new Date().toISOString(),
       status: 'running',
       events: [{ step: preamble.step, status: preamble.status, title: preamble.title, timestamp: preamble.timestamp }],
+      // 2026-06-27 构建历史元数据：远端执行器路径。触发器 + commit；部署模式在
+      // profiles 解析后回填（见下方）。
+      triggerSource: classifyTriggerSource(context.trigger, entry.deployDispatchRetryCount),
+      ...deriveCommitMeta(entry),
     };
     let proxyHasError = false;
     // 远端运行时就绪时刻 —— 收到成功的 complete 事件时戳。用作 opLog.runtimeStartedAt，
@@ -2584,6 +2589,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const profiles = stateService
       .getBuildProfilesForProject(entry.projectId || 'default')
       .map((p) => resolveEffectiveProfile(p, entry));
+    // 2026-06-27：回填本次（远端）部署的部署模式，供构建历史展示「部署类型」。
+    opLog.deployMode = deriveDeployMode(profiles);
     const env = getMergedEnv(entry.projectId || 'default', entry.id);
 
     const payload = {
@@ -2669,10 +2676,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
         if (eventName === 'complete') {
           if (parsed.ok === false) {
             proxyHasError = true;
-          } else if (parsed.services && typeof parsed.services === 'object') {
-            const svcMap = parsed.services as Record<string, { status?: string }>;
+          }
+          if (parsed.services && typeof parsed.services === 'object') {
+            const svcMap = parsed.services as Record<string, { status?: string; deployedMode?: string }>;
             if (Object.values(svcMap).some((s) => s?.status === 'error')) {
               proxyHasError = true;
+            }
+            // Bugbot Medium「Remote deploy mode metadata stale」：远端执行器进程独立，master 的
+            // entry.services 不是同一对象，此前只有派发用的 activeDeployMode（express），executor 侧
+            // express→source 回退的真相在 complete 的 services 载荷里却从未被复制过来。这里把 executor
+            // 回报的真实 deployedMode 复制进 master，供下方 2783 的 `||` 保留 + finally 重算「部署类型」。
+            for (const [pid, s] of Object.entries(svcMap)) {
+              const m = s?.deployedMode;
+              if (typeof m === 'string' && m.trim() !== '' && entry.services[pid]) {
+                entry.services[pid].deployedMode = m.trim();
+              }
             }
           }
           // 成功 complete = 远端运行时就绪的时刻（executor 在所有服务 running 后才发）。
@@ -2681,6 +2699,32 @@ export function createBranchRouter(deps: RouterDeps): Router {
           // 永远积累不出 ETA 样本，等待页/卡片一直显示"暂无历史预计"。
           if (!proxyHasError) {
             remoteRuntimeReadyAt = typeof parsed.timestamp === 'string' ? parsed.timestamp : new Date().toISOString();
+          }
+        }
+        // 远端 source-build 执行器会自行 pull 到更新 HEAD；用回传的 pull head 刷新构建历史
+        // commit 元数据（opLog.commitSha 在 2569 是按 master 冻结的旧 HEAD 捕获的），避免
+        // 「版本」列指向 pull 前旧 SHA（Codex P2）。极速版锁定 CI 镜像 SHA、不跟随 pull head。
+        if (parsed.step === 'pull' && !branchUsesPrebuiltMode(profiles, entry)) {
+          const pullDetail = (parsed.detail && typeof parsed.detail === 'object' ? parsed.detail : parsed) as { head?: unknown; after?: unknown; afterFull?: unknown; skipped?: boolean };
+          // executor 现在把结构化 head/after/afterFull 一并回传：用 parsePulledSha 取**全 SHA**
+          // （afterFull > after > head token），取不到再从 title 兜底解析短 SHA。与本地 deploy 路径
+          // 一致地刷新 opLog.commitSha + entry.githubCommitSha（后者被 check-run/release/集成复用，
+          // 须是全 SHA），避免远端 source-build 只记短 SHA / branch HEAD 停在 master 冻结的旧 SHA
+          // （Bugbot Low「Remote pull omits full SHA」）。极速版锁 CI 镜像 SHA、不跟随 pull head。
+          let pulledSha = parsePulledSha({
+            head: typeof pullDetail.head === 'string' ? pullDetail.head : undefined,
+            after: typeof pullDetail.after === 'string' ? pullDetail.after : undefined,
+            afterFull: typeof pullDetail.afterFull === 'string' ? pullDetail.afterFull : undefined,
+          });
+          if (!pulledSha && typeof parsed.title === 'string') {
+            const m = parsed.title.match(/\b([0-9a-f]{7,40})\b/i);
+            if (m) pulledSha = m[1];
+          }
+          if (pulledSha && !pullDetail.skipped) {
+            if (shouldRefreshCommitSha(entry.githubCommitSha, pulledSha)) {
+              entry.githubCommitSha = pulledSha;
+            }
+            Object.assign(opLog, deriveCommitMeta(entry, pulledSha));
           }
         }
         opLog.events.push({
@@ -2775,6 +2819,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 收尾:remote 部署的 OperationLog 落库,与本地部署 (line 2724) 对齐
       opLog.finishedAt = new Date().toISOString();
       opLog.status = proxyHasError ? 'error' : 'completed';
+      // 部署模式在 2593 是 build 前从全量 project profiles 取的，未必是实际跑的那个，也不含
+      // executor 侧 express→static 回退。这里用服务实际 deployedMode（complete 时已钉）重算，
+      // 让构建历史「部署类型」反映真正跑起来的模式；取不到（executor 没回报）则保留原值
+      //（Bugbot Medium：remote deploy mode metadata stale）。
+      const ranDeployMode = deriveDeployMode(
+        Object.values(entry.services || {}).map((s) => ({ activeDeployMode: (s as { deployedMode?: string }).deployedMode })),
+      );
+      if (ranDeployMode) opLog.deployMode = ranDeployMode;
       // 与本地路径对齐：成功且有就绪时刻时采样部署耗时（recordDeployDurationSample
       // 内部已 guard status==='completed' + runtimeStartedAt 存在，失败/缺戳自动 no-op）。
       recordDeployDurationSample(stateService, entry, profiles, opLog);
@@ -10071,6 +10123,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       startedAt: new Date().toISOString(),
       status: 'running',
       events: [],
+      // 2026-06-27 构建历史元数据：触发器 + commit（部署模式在 finalize 时回填,
+      // 那里才有 resolveEffectiveProfile 解析出的 activeDeployMode）。
+      triggerSource: classifyTriggerSource(triggerFromRequest(req), entry.deployDispatchRetryCount),
+      ...deriveCommitMeta(entry, requestCommitSha),
     };
 
     function logEvent(ev: OperationLogEvent) {
@@ -10155,13 +10211,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 才有可拉取的镜像。绝不能跟随 pull 后的新 HEAD（那个 SHA 多半还没 CI 镜像）——上面的
       // CI 闸门已保证 ciImageStatus=ready 且 ciTargetSha===githubCommitSha,这里保持不动,
       // 让镜像 tag 锁定在 CI 就绪的 SHA（Codex P2: require CI readiness for the deployed SHA）。
-      if (!requestCommitSha
-        && !branchUsesPrebuiltMode(profiles, entry)
+      // pull() 的 head 是 `git log --oneline -1`（带标题），不是裸 SHA；必须用 parsePulledSha
+      // 取裸 SHA（优先 after = rev-parse --short HEAD），否则旧的 bare-SHA 正则永不匹配、整段跳过，
+      // 历史「版本」列停在 pull 前旧 SHA（Codex P2）。
+      const pulledSha = parsePulledSha(pullResult);
+      // 源码 pull（非极速版、未 skip、解析出 SHA）：deploy 总是 reset 到分支 HEAD（下方清
+      // pinnedCommit、"deploy always restores to branch HEAD"），落地的就是 pulledSha。
+      const isSourcePull = !branchUsesPrebuiltMode(profiles, entry)
         && !(pullResult as { skipped?: boolean }).skipped
-        && typeof pullResult.head === 'string'
-        && /^[0-9a-f]{7,40}$/i.test(pullResult.head)
-        && entry.githubCommitSha !== pullResult.head) {
-        entry.githubCommitSha = pullResult.head;
+        && !!pulledSha;
+      if (!requestCommitSha && isSourcePull && shouldRefreshCommitSha(entry.githubCommitSha, pulledSha)) {
+        // entry.githubCommitSha 被 check-run/release/集成复用：仅在**未显式请求** commit 时跟随 HEAD。
+        entry.githubCommitSha = pulledSha;
+      }
+      // 构建历史「版本」列必须记**实际部署**的 SHA = pulledSha，**不受 requestCommitSha 影响**：
+      // 即使 webhook 带 requestCommitSha=A、origin 已前进到 B，pull hard-reset 到分支 HEAD 落地的是 B，
+      // 冻结在请求 SHA 上会给 reviewer 指错版本（Codex P2「Do not freeze webhook history on the
+      // requested SHA」）。极速版/skip 除外（镜像锁 CI 就绪 SHA，opLog 保持 deriveCommitMeta(entry,…) 初值）。
+      if (isSourcePull) {
+        Object.assign(opLog, deriveCommitMeta(entry, pulledSha));
       }
 
       // Clear pinned commit — deploy always restores to branch HEAD
@@ -10749,6 +10817,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
         hasError ? 'deploy-error' : 'deploy-finalize',
         activeProfileIds,
       );
+      // 2026-06-27：回填本次部署「实际跑起来」的部署模式，供构建历史展示「部署类型」。
+      // 优先取参与服务的 svc.deployedMode（runService 在容器起来后权威钉过，含极速版镜像
+      // 拉不到→源码构建的回退真相）；否则镜像回退场景会把源码部署误标成极速版（Codex P2）。
+      // 取不到 deployedMode（如未起容器）再退回配置的 activeDeployMode。空串=源码/默认模式。
+      const ranDeployModes = Array.from(activeProfileIds)
+        .map((pid) => (entry.services?.[pid] as { deployedMode?: string } | undefined)?.deployedMode)
+        .filter((m): m is string => typeof m === 'string' && m.trim() !== '')
+        .map((m) => ({ activeDeployMode: m }));
+      opLog.deployMode = deriveDeployMode(
+        ranDeployModes.length > 0
+          ? ranDeployModes
+          : profiles.filter((p) => activeProfileIds.has(p.id)).map((p) => resolveEffectiveProfile(p, entry)),
+      );
       // 2026-06-20：成功部署记一条耗时样本（区分发布版/源码），供分支卡片
       // 在下次构建中展示"预计 MM:SS（近 N 次中位值）"。失败不记。
       recordDeployDurationSample(stateService, entry, profiles, opLog);
@@ -10998,6 +11079,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       startedAt: new Date().toISOString(),
       status: 'running',
       events: [],
+      // 2026-06-27 构建历史元数据：单服务部署。触发器 + commit + 该 profile 的部署模式。
+      triggerSource: classifyTriggerSource(triggerFromRequest(req), entry.deployDispatchRetryCount),
+      ...deriveCommitMeta(entry),
+      deployMode: deriveDeployMode([resolveEffectiveProfile(profile, entry)]),
     };
 
     function logEvent(ev: OperationLogEvent) {
@@ -11036,13 +11121,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const bodySha = typeof req.body?.commitSha === 'string' && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
           ? req.body.commitSha : undefined;
         const isPrebuiltProfile = resolveEffectiveProfile(profile, entry).prebuiltImage === true;
-        if (!bodySha
-          && !isPrebuiltProfile
-          && !(pullResult as { skipped?: boolean }).skipped
-          && typeof pullResult.head === 'string'
-          && /^[0-9a-f]{7,40}$/i.test(pullResult.head)
-          && entry.githubCommitSha !== pullResult.head) {
-          entry.githubCommitSha = pullResult.head;
+        // 同主路径：head 带标题非裸 SHA，用 parsePulledSha 取裸 SHA（优先 after）再比对刷新（Codex P2）。
+        const pulledSha = parsePulledSha(pullResult);
+        const isSourcePull = !isPrebuiltProfile && !(pullResult as { skipped?: boolean }).skipped && !!pulledSha;
+        if (!bodySha && isSourcePull && shouldRefreshCommitSha(entry.githubCommitSha, pulledSha)) {
+          entry.githubCommitSha = pulledSha;
+        }
+        // opLog.commitSha 记**实际部署**的 SHA = pulledSha，不受 body.commitSha 影响：deploy 总是
+        // reset 到分支 HEAD（下方清 pinnedCommit），冻结在请求 SHA 会指错版本（Codex P2「Do not
+        // freeze webhook history on the requested SHA」）。极速版/skip 除外。
+        if (isSourcePull) {
+          Object.assign(opLog, deriveCommitMeta(entry, pulledSha));
         }
       }
 
@@ -11196,6 +11285,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       opLog.status = svc.status === 'running' ? 'completed' : 'error';
       opLog.finishedAt = new Date().toISOString();
+      // 单服务路径：用 svc 实际跑起来的 deployedMode 重算部署类型（含极速版→源码回退真相），
+      // 而非创建时（11036）按配置 activeDeployMode 取的值（Codex P2，与主/远端路径一致）。
+      // deployedMode 缺失/空（如未起容器/源码默认）时，与主路径一致退回 resolveEffectiveProfile，
+      // 绝不保留 pull 前的配置态（Bugbot Low「Single-service deploy mode gap」）。
+      {
+        const ranMode = (svc as { deployedMode?: string }).deployedMode;
+        opLog.deployMode = (typeof ranMode === 'string' && ranMode.trim() !== '')
+          ? ranMode.trim()
+          : deriveDeployMode([resolveEffectiveProfile(profile, entry)]);
+      }
       if (svc.status === 'running') {
         const runtimeReadyAt = new Date().toISOString();
         entry.lastReadyAt = runtimeReadyAt;

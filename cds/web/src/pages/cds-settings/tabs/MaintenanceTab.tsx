@@ -962,6 +962,8 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
           ) : null}
 
           <DisclosurePanel
+            key={runState === 'idle' ? 'log-idle' : 'log-active'}
+            defaultOpen={runState !== 'idle'}
             title={runTitle || '更新日志'}
             subtitle={
               runState === 'idle'
@@ -1729,14 +1731,16 @@ function SelfUpdateStageBar({ timings, totalMs }: { timings: SelfUpdateTimings; 
 
   // 2026-06-03 用户反馈:进度条大片黢黑 + 看不到"总计"。根因是各 step 之和
   // (totalSeg)远小于 total(含排空等待 / 进程退出后才发生的重启)。把差额补成
-  // 一段中性灰"其他",让进度条铺满;再单列"总计"chip,让用户对得上账。
+  // 一段"其他",让进度条铺满;再单列"总计"chip,让用户对得上账。
+  // 2026-06-27 二次修(用户反馈仍见黑块):
+  //  (1) **进度条**任何 >0 的未计量时间都补「其他」铺满,绝不留 surface-sunken 黑轨道;
+  //  (2) 「其他」颜色从 /30(暗色下≈纯黑、看着像 bug)提到 /55 中性灰,作为可辨识的正常分段;
+  //  (3) **图例**仍只在 >1.5s 时列「其他」,避免一堆碎段。
   const otherMs = Math.max(0, total - totalSeg);
-  // 阈值 1.5s 以下视作测量噪音(step 之间的零碎间隙),不单列,避免一堆碎段。
   const OTHER_THRESHOLD_MS = 1500;
-  const barSegments: StageSeg[] =
-    otherMs > OTHER_THRESHOLD_MS
-      ? [...segments, { key: 'other', label: '其他', ms: otherMs, color: 'bg-muted-foreground/30' }]
-      : segments;
+  const otherSeg: StageSeg = { key: 'other', label: '其他', ms: otherMs, color: 'bg-muted-foreground/55' };
+  const barSegments: StageSeg[] = otherMs > 0 ? [...segments, otherSeg] : segments;
+  const legendSegments: StageSeg[] = otherMs > OTHER_THRESHOLD_MS ? barSegments : segments;
 
   return (
     <div className="mt-1 space-y-1">
@@ -1751,7 +1755,7 @@ function SelfUpdateStageBar({ timings, totalMs }: { timings: SelfUpdateTimings; 
         ))}
       </div>
       <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
-        {barSegments.map((seg) => (
+        {legendSegments.map((seg) => (
           <span key={seg.key}>
             <span className={`inline-block h-2 w-2 align-middle ${seg.color}`} />{' '}
             {seg.label} {fmtMs(seg.ms)}

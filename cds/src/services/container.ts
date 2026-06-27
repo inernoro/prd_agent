@@ -189,7 +189,9 @@ export function resolveProfileWithMode(profile: BuildProfile): BuildProfile {
         ? { ...profile.env, ...override.env }
         : profile.env,
       ...(override.prebuilt !== undefined ? { prebuiltImage: override.prebuilt } : {}),
-      ...(override.containerPort !== undefined ? { containerPort: override.containerPort } : {}),
+      // 用 != null（非 !== undefined）：override.containerPort 为 null 时**不得**覆盖 baseline 真实端口，
+      // 否则 docker run 拿到 null → `invalid containerPort: null`。合法端口恒为数字，永不为 null，故安全。
+      ...(override.containerPort != null ? { containerPort: override.containerPort } : {}),
       // 极速版「逐组件回退主分支」:把本模式的 fallbackImage 一并带出,供 runService 在
       // 本 commit 无该组件镜像时回退（path-filter 只构建改动组件,某些 commit 缺镜像）。
       ...(override.fallbackImage !== undefined ? { fallbackImage: override.fallbackImage } : {}),
@@ -290,14 +292,39 @@ export function slugifyBranchForImage(branch: string): string {
  * of the baseline (override wins per key). Returns a NEW object — the baseline
  * is never mutated.
  */
-export function applyProfileOverride(baseline: BuildProfile, override?: BuildProfileOverride): BuildProfile {
+/**
+ * 剥掉 branch override 里值为 `null` 的顶层字段。`null` 是历史上「该继承 baseline」的哨兵
+ * （极速版把 `containerPort`/`dockerImage`/`command` 持久化成 null，表示「走 mode 层 / 继承」），
+ * **不是真实值**。下游各读取点历史上 `??` / `!= null` / `!== undefined` 混用——只要有一处用
+ * `!== undefined`，null 就会覆盖 baseline 的结构字段：
+ *   - `containerPort: null` → `docker run` 拿到 null → `invalid containerPort: null`
+ *   - `dockerImage: null`   → 空镜像 → `docker run "" sh` → 把命令 `sh` 当镜像 → `sh:latest` 拉取失败
+ * 这就是「修一处过一次 CI、换条解析路径又炸」的打地鼠根源。统一在所有 merge 入口剥一次 null，
+ * 所有 `!== undefined` 判定自然回归正确，整类 null-覆盖 bug 一次性消失（不必逐字段补 `!= null`）。
+ * 也覆盖**存量**持久化进 state 的 null override，无需数据迁移。纯函数，export 给单测。
+ */
+export function sanitizeProfileOverride(override?: BuildProfileOverride): BuildProfileOverride | undefined {
+  if (!override) return override;
+  let changed = false;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(override)) {
+    if (v === null) { changed = true; continue; }
+    out[k] = v;
+  }
+  return changed ? (out as BuildProfileOverride) : override;
+}
+
+export function applyProfileOverride(baseline: BuildProfile, rawOverride?: BuildProfileOverride): BuildProfile {
+  const override = sanitizeProfileOverride(rawOverride);
   if (!override) return baseline;
   return {
     ...baseline,
     ...(override.dockerImage !== undefined ? { dockerImage: override.dockerImage } : {}),
     ...(override.command !== undefined ? { command: override.command } : {}),
     ...(override.containerWorkDir !== undefined ? { containerWorkDir: override.containerWorkDir } : {}),
-    ...(override.containerPort !== undefined ? { containerPort: override.containerPort } : {}),
+    // != null：branch override 的 containerPort 为 null（极速版端口走 mode override，本层留 null）时
+    // **不得**覆盖 baseline 真实端口 → 根治 `docker: invalid containerPort: null`（prd-agent-main 等）。
+    ...(override.containerPort != null ? { containerPort: override.containerPort } : {}),
     ...(override.pathPrefixes !== undefined ? { pathPrefixes: override.pathPrefixes } : {}),
     ...(override.resources !== undefined ? { resources: override.resources } : {}),
     ...(override.activeDeployMode !== undefined ? { activeDeployMode: override.activeDeployMode } : {}),
@@ -1252,6 +1279,20 @@ export class ContainerService {
       // 仅作用于 sh -c "command" 源码路径；极速版预构建镜像(usePrebuiltEntrypoint)不经过。
       if (!usePrebuiltEntrypoint) command = niceBuildCommands(command);
 
+      // 防御性兜底（根治 `Unable to find image 'sh:latest'`）：到这一步 dockerImage 绝不能为空。
+      // 空镜像会让 `docker run ... <labels>  sh -c "..."` 把命令 token `sh` 当成镜像名去拉，报
+      // `sh:latest` not found，**掩盖真正根因**（镜像解析成空，多由 branch override 的 null 哨兵
+      // 覆盖 baseline 引起——已由 sanitizeProfileOverride 根治）。此处再加一道断言：任何残留路径
+      // 都明确失败 + 指出原因，而不是误判成 docker 镜像问题。
+      const runImage = (profile.dockerImage || '').trim();
+      if (!runImage || runImage.includes('${')) {
+        throw new Error(
+          `部署中止：构建配置 '${profile.id}' 解析出的镜像为空或未解析（dockerImage=${JSON.stringify(profile.dockerImage)}）。`
+          + ` 常因 branch override 把结构字段持久化成 null 覆盖了 baseline 镜像（见 sanitizeProfileOverride）。`
+          + ` 这不是 Docker/容器问题，是 CDS 的 profile 解析问题。`,
+        );
+      }
+
       const runCmd = [
         'docker run -d',
         `--name ${service.containerName}`,
@@ -1267,7 +1308,7 @@ export class ContainerService {
         envFlag,
         '--tmpfs /tmp',
         this.appLabels(entry.projectId, entry.id, profile.id, network),
-        profile.dockerImage,
+        runImage,
         ...(usePrebuiltEntrypoint ? [] : [`sh -c "${command.replace(/"/g, '\\"')}"`]),
       ].join(' ');
 

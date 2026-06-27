@@ -6,6 +6,8 @@ import { GLOBAL_ENV_SCOPE } from '../types.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
 import { sealToken, unsealToken, isSealedSecret } from '../infra/secret-seal.js';
+import { pruneWebhookDeliveries, WEBHOOK_DELIVERY_GLOBAL_MAX } from './webhook-delivery-retention.js';
+import { sanitizeProfileOverride } from './container.js';
 import { normalizeCacheHostPath, resolveCacheBase } from './cache-paths.js';
 import { buildCacheMounts } from './cache-catalog.js';
 import { getGithubAppWhitelistSettings, normalizeGitHubOwnerList } from './github-app-whitelist.js';
@@ -804,8 +806,11 @@ export class StateService {
     const branch = this.state.branches[branchId];
     if (!branch) throw new Error(`分支 "${branchId}" 不存在`);
     if (!branch.profileOverrides) branch.profileOverrides = {};
+    // writer 端就剥掉 null 结构哨兵字段，让新 override 一开始就干净（不写 containerPort:null /
+    // dockerImage:null 这类「该继承」的伪值）。与 applyProfileOverride 的 merge 端 sanitize 双保险，
+    // 整类 null-覆盖部署故障一次性根治（见 container.ts sanitizeProfileOverride 注释）。
     branch.profileOverrides[profileId] = {
-      ...override,
+      ...(sanitizeProfileOverride(override) ?? {}),
       updatedAt: new Date().toISOString(),
     };
   }
@@ -2962,19 +2967,20 @@ export class StateService {
 
   /**
    * 2026-05-14: 历史上限从 200 调到 1000。
-   * 单条 delivery ~1KB（含 payloadSnippet 截断），1000 条 ~1MB，state.json 可承受。
-   * 用户反馈"webhook 只有 1 条以为没日志"——根因是上限太小，遇到一阵 push 风暴
-   * 几分钟就被旧条目挤掉。1000 条相当于一个忙项目两天的窗口，足够回溯排查。
-   * 后续若上 MongoDB 持久化，把本 ring buffer 改成 capped collection，参考
-   * doc/debt.cds.state-json.md。
+   * 2026-06-27: 改为「按分支保留」策略（webhook-delivery-retention.ts SSOT）。
+   * 旧的纯全局上限在多项目实例上有致命缺陷：某个忙分支几分钟就用自己的 push/CI
+   * 事件把全局 buffer 灌满，把安静分支（如 main）的 push 历史整段挤光 → 用户看到
+   * 「main webhook 只有 1 条」。更糟的是 mongo-split 持久化层仍按 200 截断，把
+   * 2026-05-14 那次 200→1000 的修复悄悄回退了。现在写入与所有持久化层统一调
+   * pruneWebhookDeliveries：每个分支最近 N 条永不被其它分支挤掉，全局上限只兜总量。
+   * WEBHOOK_DELIVERY_HISTORY_MAX 保留为读接口的 limit 上限（= 全局上限）。
    */
-  static readonly WEBHOOK_DELIVERY_HISTORY_MAX = 1000;
+  static readonly WEBHOOK_DELIVERY_HISTORY_MAX = WEBHOOK_DELIVERY_GLOBAL_MAX;
 
   recordGithubWebhookDelivery(delivery: import('../types.js').GithubWebhookDelivery): void {
     const list = this.state.githubWebhookDeliveries || [];
     list.push(delivery);
-    while (list.length > StateService.WEBHOOK_DELIVERY_HISTORY_MAX) list.shift();
-    this.state.githubWebhookDeliveries = list;
+    this.state.githubWebhookDeliveries = pruneWebhookDeliveries(list);
     try {
       this.save();
     } catch (err) {

@@ -145,9 +145,21 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       // Pull latest
       sendEvent('step', { step: 'pull', status: 'running', title: '正在拉取最新代码...' });
       const pullResult = await worktreeService.pull(entry.branch, entry.worktreePath);
-      sendEvent('step', { step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}` });
+      // 带上结构化 SHA（head/after/afterFull），让 master 代理路径用 parsePulledSha 取**全 SHA**刷新
+      // 构建历史 commit 与 branch HEAD，避免只从 title 解析出短 SHA（Bugbot Low「Remote pull omits
+      // full SHA」）。head 是 `git log --oneline -1`（带标题），afterFull 是完整 40 位。
+      sendEvent('step', {
+        step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`,
+        head: pullResult.head, after: pullResult.after, afterFull: pullResult.afterFull,
+      });
 
       entry.status = 'building';
+      // 盖本轮构建起点锚点：executor 本地也跑 reconcileStuckDeployStates，其硬超时路径要求
+      // lastDeployStartedAt>0 才有超时基准。executor-owned 分支若不盖戳，卡在 building/starting
+      // 的远端构建就没有超时锚点、永不被本地看门狗收敛，master 侧的修正又会被 executor 心跳覆盖
+      // （Codex P2「Stamp executor deploy starts before relying on the watchdog」）。与 master 侧
+      // 各 deploy 入口的 lastDeployStartedAt 盖戳口径一致。
+      entry.lastDeployStartedAt = new Date().toISOString();
       stateService.save();
 
       // Pre-allocate ports
