@@ -170,4 +170,18 @@ describe('computeDeployDurationDisplay', () => {
     expect(r.stuck).toBe(false);
     expect(r.cappedMs).toBe(STUCK_DEPLOY_THRESHOLD_MS);
   });
+
+  it('终态但缺 finishedAt（旧历史行 isRunning=false）：不虚高、不卡住（Codex P2）', () => {
+    const now = start + 772 * 60 * 1000; // 即便 now 离 start 很远
+    const r = computeDeployDurationDisplay(start, undefined, now, undefined, false);
+    expect(r.stuck).toBe(false);
+    expect(r.elapsedMs).toBe(0);
+    expect(r.cappedMs).toBe(0);
+  });
+
+  it('真正进行中缺 finishedAt（isRunning=true，默认）：仍按 now 计时可卡住', () => {
+    const now = start + 90 * 60 * 1000;
+    const r = computeDeployDurationDisplay(start, undefined, now, undefined, true);
+    expect(r.stuck).toBe(true);
+  });
 });

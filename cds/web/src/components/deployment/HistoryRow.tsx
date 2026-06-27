@@ -88,7 +88,12 @@ export function HistoryRow({ deployment, onOpenLogs, defaultExpanded = false }: 
   const primarySnapshot = snapshots.find((item) => item.logs?.trim()) || snapshots[0];
 
   // 卡死耗时封顶：进行中且超阈值显示「疑似卡住」而非不断增长的数字。
-  const duration = computeDeployDurationDisplay(deployment.startedAt, deployment.finishedAt, Date.now());
+  // 传 isRunning（仅 status==='running'）：终态但缺 finishedAt 的旧历史行不再被当进行中、
+  // 不虚高耗时、不误报卡住（Codex P2「Respect completed rows without finishedAt」）。
+  const duration = computeDeployDurationDisplay(
+    deployment.startedAt, deployment.finishedAt, Date.now(),
+    undefined, deployment.status === 'running',
+  );
   const deployModeText = deployModeLabel(deployment.deployMode);
   const triggerText = triggerSourceLabel(deployment.triggerSource);
   const startedAtAbs = new Date(deployment.startedAt).toLocaleString();

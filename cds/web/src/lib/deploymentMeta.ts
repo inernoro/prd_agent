@@ -67,19 +67,30 @@ export interface DeployDurationDisplay {
  * 计算部署耗时的展示值 + 是否卡住。与后端 computeDeployDurationDisplay 同语义。
  *
  *   - 已结束（finishedAt 有值）：照实显示真实耗时，不判卡住（历史就该如实展示）。
- *   - 进行中（finishedAt 缺）：elapsed = now - startedAt；超阈值 → stuck，封顶。
+ *   - **已终结但缺 finishedAt**（旧历史行：字段后加的，legacy 投影传 undefined）：不是进行中，
+ *     绝不能拿 now 充当结束时间——否则旧的 success 行会显示虚高耗时、超 60min 还误报「疑似卡住」。
+ *     无可信结束时间 → 耗时按 0（caller 可显示「—」），且永不判卡住（Codex P2「Respect completed
+ *     rows without finishedAt」）。
+ *   - 真正进行中（finishedAt 缺 + isRunning）：elapsed = now - startedAt；超阈值 → stuck，封顶。
+ *
+ * isRunning 缺省 true：保持旧调用点行为（只传 finishedAt 的场景按「无 finishedAt=进行中」）。
  */
 export function computeDeployDurationDisplay(
   startedAt: number,
   finishedAt: number | undefined,
   now: number,
   thresholdMs: number = STUCK_DEPLOY_THRESHOLD_MS,
+  isRunning: boolean = true,
 ): DeployDurationDisplay {
-  const end = finishedAt ?? now;
-  const elapsedMs = Math.max(0, end - startedAt);
   if (finishedAt !== undefined) {
+    const elapsedMs = Math.max(0, finishedAt - startedAt);
     return { elapsedMs, stuck: false, cappedMs: elapsedMs };
   }
+  if (!isRunning) {
+    // 终态但没有结束戳：耗时未知，不虚高、不卡住。
+    return { elapsedMs: 0, stuck: false, cappedMs: 0 };
+  }
+  const elapsedMs = Math.max(0, now - startedAt);
   const stuck = elapsedMs > thresholdMs;
   return { elapsedMs, stuck, cappedMs: stuck ? thresholdMs : elapsedMs };
 }
