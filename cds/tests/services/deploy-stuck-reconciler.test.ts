@@ -401,6 +401,26 @@ describe('reconcileStuckDeployStates — Bugbot review 回归', () => {
     expect(results.some((r) => r.kind === 'branch-status-finalized' && r.nextStatus === 'error')).toBe(true);
   });
 
+  it('僵尸服务不参与服务级收敛：单存活服务时不被 branch.lastReadyAt 误翻 running（Bugbot Medium）', () => {
+    const now = new Date('2026-06-27T00:20:00.000Z');
+    const branch = makeBranch({
+      status: 'running',
+      lastDeployStartedAt: '2026-06-27T00:10:00.000Z',
+      lastReadyAt: '2026-06-27T00:15:00.000Z', // ready-after-start，会触发单服务证据路径
+      services: {
+        api: { profileId: 'api', containerName: 'c1', hostPort: 1, status: 'running' }, // 唯一存活
+        oldweb: { profileId: 'oldweb', containerName: 'c2', hostPort: 2, status: 'starting' }, // 僵尸，卡 starting
+      },
+    });
+    const results = reconcileStuckDeployStates([branch], {
+      now,
+      getBuildProfiles: () => [{ id: 'api' } as unknown as BuildProfile], // 当前在册只有 api
+    });
+    // 僵尸 oldweb 不被收敛（保持 starting），不在 UI/快照留误导性 running
+    expect(branch.services.oldweb.status).toBe('starting');
+    expect(results.some((r) => r.kind === 'service-status-finalized' && r.profileId === 'oldweb')).toBe(false);
+  });
+
   it('有在途操作的分支整条跳过：合法长任务不被硬超时误杀（Bugbot Medium）', () => {
     const now = new Date('2026-06-27T01:00:00.000Z'); // 启动 60 分钟前 > 45min 硬超时
     const branch = makeBranch({

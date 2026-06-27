@@ -22,3 +22,4 @@
 | fix | cds | 卡死看门狗以「存活服务」（按在册 profile 过滤后）判定是否走分支级收敛：分支只剩僵尸服务时退回硬超时成 error，不被聚合藏成 idle（Codex P2 #940） |
 | polish | cds | 自更新历史耗时条：任何未计量时间都补「其他」铺满进度条（不留暗色黑轨道），「其他」颜色从 /30 提到 /55 中性灰（暗色下不再像黑块），图例仍只在 >1.5s 列出（用户反馈「后面黑色的是什么」） |
 | docs | cds | 新增 debt.cds.executor-watchdog：记录 executor 卡死看门狗硬超时的 #228/#233 评审冲突与根治方案（cluster-only） |
+| fix | cds | 卡死看门狗服务级收敛跳过僵尸服务（已删/改名 profile 残留条目），不再被单服务证据路径误翻 running/stopped 在 UI/快照留误导状态（Bugbot Medium #940） |

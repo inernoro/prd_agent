@@ -365,8 +365,14 @@ export function reconcileStuckDeployStates(
     // 「Branch ready stamp per service」）。故「starting→running」证据路径仅单服务时启用；多服务
     // 的卡死服务交给硬超时（master）或保持现状（真正起来的服务其 status 本就是 running）。
     const singleService = liveServiceIds.length === 1;
+    const liveServiceIdSet = new Set(liveServiceIds);
     for (const [profileId, svc] of Object.entries(branch.services || {})) {
       if (!svc || !NON_TERMINAL_STATES.has(svc.status)) continue;
+      // 僵尸服务（已删/改名 profile 的残留条目）不参与服务级收敛：否则单服务证据路径会把一个
+      // 卡在 starting 的僵尸条目按 branch.lastReadyAt 误翻成 running/stopped，在 UI 与快照里留下
+      // 误导性的 per-service 状态（聚合虽已忽略它算分支状态，但条目本身被改脏）（Bugbot Medium
+      // 「Zombie services mis-reconciled as running」）。activeProfileIds 缺省（不过滤）时不跳过。
+      if (!liveServiceIdSet.has(profileId)) continue;
       const previousStatus = svc.status;
       const readyMs = parseTime(branch.lastReadyAt);
       const startMs = parseTime(branch.lastDeployStartedAt);
