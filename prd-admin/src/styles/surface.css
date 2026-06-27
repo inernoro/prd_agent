@@ -399,16 +399,19 @@
   flex-shrink: 0;
   padding: 0 12px;
   border: 0;
+  border-radius: 9px;
   background: transparent;
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
-  transition: color 160ms ease;
+  transition: color 160ms ease, background 160ms ease;
 }
 
-.surface-nav-button:hover {
-  color: var(--text-secondary);
+/* 非激活项鼠标悬浮：底色提示 + 文字提亮（更明显的 hover 反馈，惠及所有 TabBar 调用方） */
+.surface-nav-button:not([data-active="true"]):hover {
+  color: var(--text-primary);
+  background: var(--bg-card-hover, rgba(255, 255, 255, 0.06));
 }
 
 .surface-nav-button[data-active="true"] {

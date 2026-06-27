@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>VOC 端点下钻 · 根因分析置顶 + 两页签 + 报告可放大可拖拽</title>
+<style>
+  :root{
+    --bg:#0e0f10;--panel:#16171b;--card2:#0c0d0f;
+    --bd:rgba(255,255,255,.08);--bd2:rgba(255,255,255,.13);
+    --t1:#ececef;--t2:rgba(236,236,239,.62);--t3:rgba(236,236,239,.40);--t4:rgba(236,236,239,.26);
+    --red:#f8717a;--amber:#fbbf24;--green:#5eead4;--teal:#2dd4bf;--violet:#a78bfa;--blue:#60a5fa;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    background:radial-gradient(900px 480px at 82% -8%,rgba(167,139,250,.08),transparent 60%),var(--bg);
+    color:var(--t1);min-height:100vh;display:flex;flex-direction:column;align-items:center;gap:16px;padding:24px 16px 56px;-webkit-font-smoothing:antialiased}
+  h1.cap{width:100%;max-width:430px;font-size:15px;font-weight:680}
+  p.cap{width:100%;max-width:430px;font-size:12px;color:var(--t3);line-height:1.6;margin-top:-6px}
+
+  .phone{width:100%;max-width:430px;height:760px;background:var(--panel);border:1px solid var(--bd);border-radius:22px;overflow:hidden;position:relative;box-shadow:0 24px 80px rgba(0,0,0,.55);display:flex;flex-direction:column}
+  .hd{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 8px;flex:0 0 auto}
+  .hd .ttl{font-size:13px;font-weight:650;color:rgba(255,255,255,.85)}
+  .hd .x{width:28px;height:28px;border-radius:8px;color:var(--t3);border:0;background:transparent;font-size:17px;cursor:pointer}
+  .crumbs{display:flex;align-items:center;gap:5px;padding:0 16px 8px;font-size:11px;color:var(--t3);flex-wrap:wrap;flex:0 0 auto}
+  .crumbs .sep{color:var(--t4)}.crumbs .cur{color:rgba(255,255,255,.72)}
+
+  /* 页签栏（常驻） */
+  .tabbar{display:flex;gap:8px;padding:2px 16px 10px;flex:0 0 auto}
+  .tab{display:inline-flex;align-items:center;gap:7px;padding:0 13px;height:30px;border-radius:10px;font-size:12.5px;font-weight:600;border:1px solid var(--bd);background:rgba(255,255,255,.02);color:var(--t2);cursor:pointer}
+  .tab .dot{width:6px;height:6px;border-radius:50%;background:var(--violet)}
+  .tab .n{font-size:10px;color:var(--t4)}
+  .tab.on[data-t="rca"]{background:rgba(167,139,250,.14);border-color:rgba(167,139,250,.4);color:#d6cbff}
+  .tab.on[data-t="samples"]{background:rgba(45,212,191,.14);border-color:rgba(45,212,191,.35);color:#9af3e3}
+
+  .body{flex:1;min-height:0;overflow-y:auto;padding:0 16px 16px}
+  .body::-webkit-scrollbar{width:6px}.body::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:3px}
+  .pane{display:none}.pane.on{display:block;animation:rise .3s ease}
+  @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+  .aicap{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--t3);margin-bottom:9px}
+  .aicap .sp{color:var(--violet)}
+
+  /* ExpandablePanel：放大按钮 + 右下角 resize 抓手 */
+  .xpanel{border:1px solid var(--bd2);border-radius:12px;background:rgba(255,255,255,.02);overflow:hidden;position:relative}
+  .xhd{display:flex;align-items:center;gap:8px;padding:9px 11px;border-bottom:1px solid var(--bd)}
+  .xhd .xt{font-size:12px;font-weight:600;color:var(--t2);display:flex;align-items:center;gap:7px;min-width:0}
+  .xhd .xt .star{color:var(--violet)}
+  .xhd .xt em{font-style:normal;font-size:10px;color:var(--t4);font-family:ui-monospace,monospace}
+  .xhd .live{font-size:10px;color:var(--violet);display:inline-flex;align-items:center;gap:5px}
+  .xhd .live .b{width:6px;height:6px;border-radius:50%;background:var(--violet);animation:blink 1.1s ease-in-out infinite}
+  @keyframes blink{0%,100%{opacity:.3}50%{opacity:1}}
+  .xmax{margin-left:auto;width:26px;height:26px;border-radius:7px;border:0;background:rgba(255,255,255,.04);color:var(--t2);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+  .xmax:hover{background:rgba(167,139,250,.22);color:#d6cbff}
+  .xbody{min-height:120px;overflow:auto;padding:13px;resize:both}
+  /* 诊断等待：推进式步骤清单 */
+  .diag{display:flex;flex-direction:column;align-items:center;gap:14px;padding:30px 12px}
+  .diag .orb2{width:34px;height:34px;border-radius:50%;position:relative;background:conic-gradient(from 0deg,var(--violet),#60a5fa,#2dd4bf,var(--violet));animation:spin 1.4s linear infinite}
+  .diag .orb2::after{content:"";position:absolute;inset:5px;border-radius:50%;background:var(--panel)}
+  .diag .lead{font-size:11.5px;color:var(--t3)}
+  .diag .steps2{display:flex;flex-direction:column;gap:9px;width:100%;max-width:260px}
+  .diag .st{display:flex;align-items:center;gap:10px;font-size:11.5px;color:var(--t4)}
+  .diag .st .mk{width:16px;height:16px;border-radius:50%;border:1px solid rgba(255,255,255,.12);display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+  .diag .st.done{color:rgba(236,236,239,.45)}
+  .diag .st.done .mk{border-color:rgba(52,211,153,.5);background:rgba(52,211,153,.16);color:#34d399}
+  .diag .st.cur{color:#c4b5fd}
+  .diag .st.cur .mk{border-color:rgba(167,139,250,.6);background:rgba(167,139,250,.18)}
+  .diag .st.cur .mk i{width:6px;height:6px;border-radius:50%;background:var(--violet);animation:blink 1.1s ease-in-out infinite}
+  .xbody::-webkit-scrollbar{width:6px}.xbody::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:3px}
+  .grip{position:absolute;right:3px;bottom:3px;width:14px;height:14px;pointer-events:none;
+    background:linear-gradient(135deg,transparent 46%,var(--violet) 46%,var(--violet) 54%,transparent 54%,transparent 70%,var(--violet) 70%,var(--violet) 78%,transparent 78%);opacity:.75}
+
+  /* 报告正文 */
+  .report h2{font-size:16px;font-weight:700;margin-bottom:2px}
+  .report .rule{height:1px;background:var(--bd);margin:10px 0 4px}
+  .report h3{font-size:13.5px;font-weight:680;margin:14px 0 8px;display:flex;align-items:center;gap:7px}
+  .report h3 .ix{color:var(--violet)}
+  .report ul{list-style:none;display:flex;flex-direction:column;gap:7px}
+  .report li{font-size:12px;line-height:1.55;color:var(--t2);padding-left:14px;position:relative}
+  .report li::before{content:"";position:absolute;left:2px;top:7px;width:4px;height:4px;border-radius:50%;background:var(--t4)}
+  .report li b{color:var(--t1);font-weight:600}
+  .report p{font-size:12.5px;line-height:1.65;color:var(--t2)}
+
+  /* 大模型阅读中（流式态，放在根因分析页签内） */
+  .live-block{display:flex;flex-direction:column;align-items:center;gap:12px;padding:42px 12px;text-align:center}
+  .orb{width:32px;height:32px;border-radius:50%;position:relative;background:conic-gradient(from 0deg,var(--violet),#60a5fa,#2dd4bf,var(--violet));animation:spin 1.4s linear infinite}
+  .orb::after{content:"";position:absolute;inset:5px;border-radius:50%;background:var(--panel)}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .live-block .tx{font-size:11.5px;color:var(--t3);max-width:240px;line-height:1.6}
+
+  /* 样本 */
+  .blk{margin-top:4px}
+  .blk .h{font-size:12px;font-weight:600;color:var(--t2);margin:12px 0 8px}
+  .epcard{border:1px solid var(--bd);border-radius:10px;background:rgba(255,255,255,.02);padding:11px 12px}
+  .epcard .ep{font-size:12px;font-family:ui-monospace,monospace;color:rgba(255,255,255,.85);word-break:break-all}
+  .epcard .m{display:flex;gap:14px;margin-top:8px;font-size:11px}.epcard .slow{color:var(--amber)}.epcard .mut{color:var(--t3)}
+  .sample{border:1px solid var(--bd);border-radius:10px;background:var(--card2);overflow:hidden;margin-top:8px}
+  .sample .top{display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid rgba(255,255,255,.05);font-size:10.5px}
+  .sample .code{color:var(--green)}.sample .ms{color:var(--red);font-weight:600}.sample .tm{margin-left:auto;color:var(--t4);font-family:ui-monospace,monospace}
+  .sample pre{padding:8px 10px;font-size:10px;line-height:1.55;color:var(--t2);font-family:ui-monospace,monospace;white-space:pre-wrap;word-break:break-all}
+  .sample pre.full{max-height:240px;overflow:auto}
+  .morebtn{width:100%;text-align:left;padding:7px 10px;font-size:10px;color:var(--t3);background:rgba(255,255,255,.015);border:0;border-top:1px solid rgba(255,255,255,.05);cursor:pointer}
+  .morebtn:hover{color:var(--t1);background:rgba(255,255,255,.04)}
+
+  .foot{flex:0 0 auto;display:flex;gap:8px;padding:10px 16px;border-top:1px solid rgba(255,255,255,.05);align-items:center}
+  .foot .b{font-size:11px;border-radius:7px;padding:6px 11px;border:1px solid}
+  .foot .bug{background:rgba(251,191,36,.14);color:#fcd34d;border-color:rgba(251,191,36,.3)}
+  .foot .req{background:rgba(45,212,191,.1);color:#5eead4;border-color:rgba(45,212,191,.28)}
+  .foot .close{margin-left:auto;background:rgba(255,255,255,.03);color:var(--t3);border-color:var(--bd)}
+
+  /* 放大浮层 */
+  .maxov{position:absolute;inset:0;z-index:30;display:none;align-items:center;justify-content:center;padding:14px;background:rgba(0,0,0,.62)}
+  .maxov.show{display:flex}
+  .maxcard{position:relative;width:96%;height:90%;background:var(--panel);border:1px solid var(--bd2);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 24px 80px rgba(0,0,0,.6)}
+  .maxbody{flex:1;min-height:0;overflow:auto;padding:20px}.maxbody .report h2{font-size:20px}
+
+  .ctrl{width:100%;max-width:430px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+  .ctrl button{font-size:12.5px;font-weight:600;padding:9px 16px;border-radius:9px;cursor:pointer;border:1px solid var(--bd);background:rgba(255,255,255,.04);color:var(--t2)}
+  .ctrl button.v{border-color:rgba(167,139,250,.4);background:rgba(167,139,250,.16);color:#d6cbff}
+</style>
+</head>
+<body>
+  <h1 class="cap">VOC 端点下钻 · 根因分析置顶 + 两个常驻页签</h1>
+  <p class="cap">进入即落地【根因分析】（报告在顶部，不用翻页找）。报告卡右上角「放大」最大化全屏看、右下角抓手可拖拽改大小。第二个页签是【真实请求样本】。诊断流式期间，大模型阅读效果就在根因分析页签内播放。</p>
+
+  <div class="phone" id="phone">
+    <div class="hd"><span class="ttl">端点下钻诊断</span><button class="x">&times;</button></div>
+    <div class="crumbs"><span>视觉创作</span><span class="sep">›</span><span>markers</span><span class="sep">›</span><span>INVALID_FORMAT</span><span class="sep">›</span><span class="cur" id="crumbLeaf">根因分析</span></div>
+
+    <div class="tabbar">
+      <button class="tab on" data-t="rca"><span class="dot"></span>根因分析 <span class="live" id="tabLive" style="display:none"><span class="b"></span></span></button>
+      <button class="tab" data-t="samples">真实请求样本 <span class="n">132</span></button>
+    </div>
+
+    <div class="body">
+      <!-- 根因分析页签（默认） -->
+      <div class="pane on" id="paneRca">
+        <div class="aicap"><span class="sp">✦</span> 结论由 AI 阅读「真实请求样本」分析得出</div>
+        <div class="xpanel">
+          <div class="xhd">
+            <span class="xt"><span class="star">✦</span> AI 根因诊断 <em>deepseek-v4-flash · openrouter.ai</em>
+              <span class="live" id="hdLive" style="display:none"><span class="b"></span>正在诊断根因…</span>
+            </span>
+            <button class="xmax" id="openMax" title="放大查看">⤢</button>
+          </div>
+          <div class="xbody" id="reportBox">
+            <div class="report" id="reportContent">
+              <h2>接口体验诊断报告</h2>
+              <div class="rule"></div>
+              <h3><span class="ix">①</span>一句话判断最主要的问题</h3>
+              <p>该端点当前最主要的问题是：所有报错（132 次）均为同一个错误码 <b>INVALID_FORMAT</b>，报错率约 9%，表明服务端对请求体格式的校验规则与客户端实际发送的数据之间存在系统性不匹配。</p>
+              <h3><span class="ix">②</span>时间聚集 / 错误聚类 / 参数线索</h3>
+              <ul>
+                <li><b>错误聚类：</b>132 次报错全部为 INVALID_FORMAT，无其它错误码混入，属单点规则问题而非偶发。</li>
+                <li><b>参数线索：</b>报错请求 body 多含超长 draftText（图文混排 JSON），疑似超出校验长度或字段结构限制。</li>
+                <li><b>时间聚集：</b>报错在发布新版校验规则后明显抬头，与版本切换强相关。</li>
+              </ul>
+              <h3><span class="ix">③</span>建议</h3>
+              <ul>
+                <li>放宽 / 对齐 draftText 字段的格式与长度校验，与前端实际 payload 对齐。</li>
+                <li>对 INVALID_FORMAT 增加可读报错详情，便于客户端定位具体不合规字段。</li>
+              </ul>
+            </div>
+          </div>
+          <span class="grip" title="拖拽改大小"></span>
+        </div>
+      </div>
+
+      <!-- 真实请求样本页签 -->
+      <div class="pane" id="paneSamples">
+        <div class="epcard">
+          <div class="ep">POST /api/visual-agent/markers/parse</div>
+          <div class="m"><span class="mut">1432 次调用</span><span style="color:var(--red)">报错 132 次</span></div>
+        </div>
+        <div class="blk"><div class="h">真实请求样本</div>
+          <div class="sample"><div class="top"><span class="code">HTTP 200</span><span class="ms" style="color:var(--amber)">6089ms</span><span class="tm">06-25 09:11</span></div>
+            <pre id="longPre">curl -X POST 'http://127.0.0.1:41876/api/peer-sync/resources/document-store/apply' -H 'Content-Type: application/json; charset=utf-8' --data-raw '{"bundle":{"schemaVersion":1,"resourceType":"document-store","item":{"key":"793da750219d4eddbe43d2574506688a","name":"验收报告",…</pre>
+            <button class="morebtn" id="moreBtn">展开全部（约 3,820 字）</button></div>
+          <div class="sample"><div class="top"><span class="code" style="color:var(--red)">HTTP 400</span><span class="ms">INVALID_FORMAT</span><span class="tm">06-25 15:18</span></div>
+            <pre>curl -X POST '…/markers/parse' -H 'Content-Type: application/json'
+body: {"status":"parsed","draftText":"一幅…","planItem":{...}}</pre></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 放大浮层 -->
+    <div class="maxov" id="maxov">
+      <div class="maxcard">
+        <div class="xhd"><span class="xt"><span class="star">✦</span> AI 根因诊断 <em>deepseek-v4-flash · openrouter.ai</em></span><button class="xmax" id="closeMax" title="还原">⤡</button></div>
+        <div class="maxbody" id="maxbody"></div>
+        <span class="grip"></span>
+      </div>
+    </div>
+
+    <div class="foot"><span class="b bug">⚑ 转为缺陷</span><span class="b req">▤ 转需求</span><span class="b close">× 关闭</span></div>
+  </div>
+
+  <div class="ctrl">
+    <button class="v" id="btnStream">▶ 模拟「大模型阅读中」</button>
+    <button id="btnDone">显示完整报告</button>
+  </div>
+
+<script>
+  const $=s=>document.querySelector(s);
+  // 页签切换
+  document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>{
+    document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x===b));
+    const t=b.dataset.t;
+    $('#paneRca').classList.toggle('on',t==='rca');
+    $('#paneSamples').classList.toggle('on',t==='samples');
+    $('#crumbLeaf').textContent = t==='rca'?'根因分析':'请求样本';
+  }));
+  // 放大
+  const maxov=$('#maxov');
+  $('#openMax').addEventListener('click',()=>{ $('#maxbody').innerHTML=$('#reportBox').innerHTML; maxov.classList.add('show'); });
+  $('#closeMax').addEventListener('click',()=>maxov.classList.remove('show'));
+  maxov.addEventListener('click',e=>{ if(e.target===maxov) maxov.classList.remove('show'); });
+
+  const REPORT = $('#reportContent').outerHTML;
+  // 大模型阅读中（流式态在根因分析页签内）
+  let timer=null;
+  const DIAG_STEPS=['读取真实请求样本','解析慢请求耗时分布','比对错误码与参数线索','归纳根因结论'];
+  let stepTimer=null;
+  function renderDiag(step){
+    const rows=DIAG_STEPS.map((s,i)=>{
+      const cls=i<step?'done':i===step?'cur':'';
+      const mk=i<step?'✓':i===step?'<i></i>':'';
+      return `<div class="st ${cls}"><span class="mk">${mk}</span><span>${s}${i===step?'…':''}</span></div>`;
+    }).join('');
+    $('#reportBox').innerHTML=`<div class="diag"><span class="orb2"></span><div class="lead">大模型正在分析真实请求样本…</div><div class="steps2">${rows}</div></div>`;
+  }
+  $('#btnStream').addEventListener('click',()=>{
+    clearTimeout(timer); clearInterval(stepTimer);
+    $('#tabLive').style.display='inline-flex'; $('#hdLive').style.display='inline-flex';
+    let step=0; renderDiag(step);
+    stepTimer=setInterval(()=>{ step=Math.min(step+1,DIAG_STEPS.length-1); renderDiag(step); },1100);
+    timer=setTimeout(()=>{ clearInterval(stepTimer); $('#btnDone').click(); }, 5200);
+  });
+  $('#btnDone').addEventListener('click',()=>{
+    clearTimeout(timer); clearInterval(stepTimer);
+    $('#tabLive').style.display='none'; $('#hdLive').style.display='none';
+    $('#reportBox').innerHTML=REPORT;
+  });
+  // 样本截断/展开
+  const LONG='curl -X POST \'http://127.0.0.1:41876/api/peer-sync/resources/document-store/apply\' -H \'Content-Type: application/json; charset=utf-8\' --data-raw \'{"bundle":{"schemaVersion":1,"resourceType":"document-store","item":{"key":"793da750219d4eddbe43d2574506688a","name":"验收报告","description":"标准化功能验收报告存档（MAP 验收标准 v2）","tags":[],"ownerUserName":"inernoro","ownerEmail":null,"createdAt":"2026-05-26T14:31:49.328Z","updatedAt":"2026-06-24T22:23:49.569Z","templateKey":"acceptance-report-v2",...(后略 数千字图文混排 JSON)...}}\'';
+  const SHORT=$('#longPre').textContent;
+  let exp=false;
+  $('#moreBtn').addEventListener('click',function(){
+    exp=!exp;
+    const pre=$('#longPre');
+    pre.textContent= exp?LONG:SHORT;
+    pre.classList.toggle('full',exp);
+    this.textContent= exp?'收起':'展开全部（约 3,820 字）';
+  });
+</script>
+</body>
+</html>

@@ -31,6 +31,7 @@ import {
   Cpu,
   Users,
   Hammer,
+  Radar,
   type LucideIcon,
 } from 'lucide-react';
 import { PaSecretary } from '@/lib/paSecretaryIconRegistry';
@@ -536,10 +537,21 @@ export default function AgentLauncherPage() {
 
   const quickLinks = useMemo<HomeQuickLink[]>(() => {
     return QUICK_LINKS_BASE.map((link) => {
+      // VOC 很重要：有 team-activity.read 权限者，首页顶部快捷卡用 VOC 替换「智识殿堂」（用户要求）
+      if (link.id === 'library' && launcherPerms.canReadTeamActivity) {
+        return {
+          icon: Radar,
+          label: 'VOC',
+          desc: '用户原声闭环 · 行为洞察与 AI 根因诊断',
+          path: '/team-activity',
+          accent: '#6366F1',
+          gradient: 'linear-gradient(135deg, #6366F1, #8B5CF6)',
+        };
+      }
       const uploaded = link.id ? homepageAssets[`card.${link.id}`]?.url : undefined;
       return uploaded ? { ...link, backgroundUrl: uploaded } : link;
     });
-  }, [homepageAssets]);
+  }, [homepageAssets, launcherPerms]);
 
   useEffect(() => {
     loadItems();
