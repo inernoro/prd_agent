@@ -27,3 +27,4 @@
 | ci | cds | 新增 cds-prebuilt.yml + Dockerfile.dist：push 改 cds/** 时 CI 编译 CDS（esbuild 后端 + vite 前端 + tsc 门）并打成 ghcr 产物镜像 cds-dist:sha-<40hex>，为「CDS 自更新极速版」铺路（自更新拉产物跳过本机编译；找不到产物回退现编，纯增量不影响存量） |
 | feat | cds | CDS 自更新极速版 第2步：新增 cds-prebuilt.ts 纯函数决策层（computeCdsPrebuiltImageRef 与 CI 同公式 / parseCdsPrebuiltManifest 校验 / shouldTryCdsPrebuilt 灰度判定）+ 10 单测，运行层据此决定拉产物或回退现编 |
 | fix | cds | 看门狗在途操作跳过加年龄上限（2× 硬超时=90min）：deploy 路由自身挂死（git/docker pull 无界卡住）导致租约永不释放时，超龄租约不再护着分支，让硬超时把它收敛成 error（Codex P2 #940） |
+| feat | cds | CDS 自更新极速版 第3步(运行层模块)：新增 cds-prebuilt-runtime.ts（fetchCdsPrebuilt：docker pull + create + cp 解出 /dist /web-dist 到 staging + 校验 manifest，任何失败 ok:false 供回退现编，I/O 全注入可单测）+ 8 单测 |
