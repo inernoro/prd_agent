@@ -38,6 +38,8 @@ import { syncAllSystemdUnits } from './services/systemd-sync.js';
 import { branchEvents, nowIso } from './services/branch-events.js';
 import { archiveBranchContainerLogs } from './services/container-log-archiver.js';
 import { reconcileStaleDeployDispatches, type DeployDispatchReconcileResult } from './services/deploy-dispatch-reconciler.js';
+import { reconcileStuckDeployStates } from './services/deploy-stuck-reconciler.js';
+import { analyzeChangeImpact } from './services/change-impact-analyzer.js';
 import { shouldRetryInterruptedWebhookDispatch, isDeployDispatchRetryEnabled } from './services/deploy-dispatch-retry.js';
 import { ResourceUsageSampler } from './services/resource-usage-sampler.js';
 import { httpLogStoreFromEnv } from './services/http-log-store.js';
@@ -187,6 +189,43 @@ function startStaleDeployDispatchReconciler(
         console.warn(`[deploy-dispatch] reconciled ${reconciled.length} stale webhook dispatch state(s)`);
       }
       dispatchRecoveredWebhookDeploys(state, store, reconciled, 'deploy-dispatch-reconciler.interval');
+
+      // 通用部署卡死看门狗（2026-06-27）：收敛卡死的非终结态 + 极速版镜像落后告警。
+      // 纯函数 reconcileStuckDeployStates 经回调注入所有 I/O，这里只负责接线。
+      const stuck = reconcileStuckDeployStates(state.getAllBranches(), {
+        source: 'deploy-stuck-reconciler.interval',
+        serverEventLogStore: store,
+        getBuildProfiles: (b) => state.getBuildProfilesForProject(b.projectId),
+        diffRuntimePaths: (b) => {
+          // ciTargetSha..githubCommitSha 这段提交是否含运行时改动（非纯文档）。
+          try {
+            const range = `${b.ciTargetSha}..${b.githubCommitSha}`;
+            const out = execSync(`git -C ${JSON.stringify(b.worktreePath)} diff --name-only ${range} 2>/dev/null || true`, {
+              encoding: 'utf-8',
+            }).trim();
+            if (!out) return false;
+            const impact = analyzeChangeImpact(out.split('\n').filter(Boolean));
+            return impact.needsRestart || impact.hotReloadablePaths.length > 0;
+          } catch {
+            // 取不到 diff 证据 → 保守不告警（无根不喊）。
+            return false;
+          }
+        },
+        appendLog: (branchId, log) => state.appendLog(branchId, log),
+        emitBranchUpdated: (b) => branchEvents.emitEvent({
+          type: 'branch.updated',
+          payload: {
+            branchId: b.id,
+            projectId: b.projectId,
+            patch: { status: b.status, services: b.services, errorMessage: b.errorMessage, ciImageError: b.ciImageError },
+            ts: nowIso(),
+          },
+        }),
+      });
+      if (stuck.length > 0) {
+        console.warn(`[deploy-stuck] reconciled ${stuck.length} stuck deploy/lifecycle state(s)`);
+        state.save();
+      }
     } catch (err) {
       store?.record({
         category: 'system',
