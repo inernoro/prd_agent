@@ -3,4 +3,4 @@
 | fix | prd-admin | 文学创作配图灯箱：点击的图不在轮播列表时只展示用户实际点击的那张（不再误开第一张）；正文内联与右侧卡片两个入口统一 markerItemImageUrl 取 URL（trim 一致，跨入口可正确匹配下标） |
 | fix | prd-admin | 配图灯箱评审修补：工具条/导航按钮 zIndex 高于图片（放大拖拽后不再被图片盖住拦截点击）；初始下标钳制到合法区间防破图；正文内联与右侧卡片统一规范轮播顺序（markers 阅读顺序）；正文链接图点击阻止冒泡，不再跟随链接跳走而是打开预览 |
 | fix | prd-admin | 正文内联配图点击改按 data-marker-idx（marker 身份）定位轮播起点，多 marker 共用同一 URL 时也不会命中错下标 |
-| fix | prd-api | 生图并发后防止旧 run 覆盖新结果：用户对同一文学 marker 连续重生成产生多个 run 时，旧 run 完成不再覆盖更新 run 的 marker 指针（IsSupersededForArticleMarkerAsync 按 workspace+markerIndex+CreatedAt 守卫共享写入） |
+| fix | prd-api | 生图并发后的"重生成冲突"取舍改为「最新成功优先、失败不抹旧图」：文学 marker 新增 ImageRunAt 时间戳（产图 run 的 CreatedAt），成功仅当更新才覆盖、失败在已有成功图时不写错误；marker 状态+资产指针+DoneImageCount 统一在一次乐观锁 RMW 内原子写入；画布元素同样按 imageRunAt 时间戳守成功排序（画布失败路径本就只动占位、不抹成功图），与完成顺序无关 |

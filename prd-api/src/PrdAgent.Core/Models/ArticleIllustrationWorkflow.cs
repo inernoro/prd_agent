@@ -47,6 +47,9 @@ public class ArticleIllustrationMarker
     public ArticleIllustrationPlanItem? PlanItem { get; set; }  // 意图解析结果
     public string? ErrorMessage { get; set; }  // 错误信息
     public DateTime? UpdatedAt { get; set; }  // 最后更新时间
+    // 当前成功配图来自哪个 run（取该 run 的 CreatedAt）。用于并发重生成时"最新成功优先"判定：
+    // 仅当本 run.CreatedAt 比此值更新时才覆盖成功图；失败 run 在此值非空（已有成功图）时不写错误，避免抹掉好图。
+    public DateTime? ImageRunAt { get; set; }
 }
 
 /// <summary>

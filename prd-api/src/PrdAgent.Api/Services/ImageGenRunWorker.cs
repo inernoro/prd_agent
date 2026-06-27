@@ -621,7 +621,7 @@ public class ImageGenRunWorker : BackgroundService
                             }, ct);
 
                             // 文学创作：自动回填 ArticleIllustrationMarker.Status 为 error
-                            await TryPatchArticleMarkerAsync(run, "error", msg, null, ct);
+                            await TryPatchArticleMarkerAsync(run, "error", msg, null, null, ct);
                             return;
                         }
 
@@ -699,8 +699,8 @@ public class ImageGenRunWorker : BackgroundService
                             savedMessageId = doneMsgId
                         }, ct);
 
-                        // 文学创作：自动回填 ArticleIllustrationMarker.Status 为 done
-                        await TryPatchArticleMarkerAsync(run, "done", null, url ?? persisted?.Url, ct);
+                        // 文学创作：自动回填 ArticleIllustrationMarker.Status 为 done（含资产指针，最新成功优先）
+                        await TryPatchArticleMarkerAsync(run, "done", null, url ?? persisted?.Url, persisted?.Id, ct);
                         await TryPatchWeeklyPosterPageAsync(run, curItemIndex, url ?? persisted?.Url, ct);
                     }
                     finally
@@ -1089,55 +1089,9 @@ public class ImageGenRunWorker : BackgroundService
 
         await _db.ImageAssets.InsertOneAsync(asset, cancellationToken: ct);
 
-        // 文学创作：更新 ArticleWorkflow.AssetIdByMarkerIndex（投稿详情依赖此字段查询配图）
-        // 使用 MongoDB 原子 $set 避免并发生图时 read-modify-write 丢失更新。
-        // 同时防止旧 run 覆盖新 run：若已被同 marker 的更新 run 取代，则只保留 ImageAsset 记录、不改共享指针。
-        if (run.ArticleMarkerIndex.HasValue && !await IsSupersededForArticleMarkerAsync(run, ct))
-        {
-            var idx = run.ArticleMarkerIndex.Value;
-            var idxKey = idx.ToString();
-
-            // 1) 原子写入单个字典 key（无需读取整个文档，不受并发影响）
-            var atomicFilter = Builders<ImageMasterWorkspace>.Filter.Eq(x => x.Id, wid)
-                & Builders<ImageMasterWorkspace>.Filter.Ne(x => x.ArticleWorkflow, null);
-            var atomicUpdate = Builders<ImageMasterWorkspace>.Update
-                .Set($"ArticleWorkflow.AssetIdByMarkerIndex.{idxKey}", asset.Id)
-                .Set("ArticleWorkflow.UpdatedAt", DateTime.UtcNow);
-
-            var atomicRes = await _db.ImageMasterWorkspaces.UpdateOneAsync(atomicFilter, atomicUpdate, cancellationToken: ct);
-
-            if (atomicRes.MatchedCount == 0)
-            {
-                // ArticleWorkflow 尚未初始化（极少见）：整体写入
-                var ws = await _db.ImageMasterWorkspaces.Find(x => x.Id == wid).FirstOrDefaultAsync(ct);
-                if (ws != null)
-                {
-                    var wf = new ArticleIllustrationWorkflow();
-                    wf.AssetIdByMarkerIndex[idxKey] = asset.Id;
-                    wf.DoneImageCount = 1;
-                    wf.UpdatedAt = DateTime.UtcNow;
-                    await _db.ImageMasterWorkspaces.UpdateOneAsync(
-                        x => x.Id == wid,
-                        Builders<ImageMasterWorkspace>.Update.Set(x => x.ArticleWorkflow, wf),
-                        cancellationToken: ct);
-                }
-            }
-
-            // 2) 重新计算 DoneImageCount（读取最新字典，允许瞬间偏差但最终一致）
-            var latest = await _db.ImageMasterWorkspaces.Find(x => x.Id == wid).FirstOrDefaultAsync(ct);
-            if (latest?.ArticleWorkflow?.AssetIdByMarkerIndex != null)
-            {
-                var doneCount = latest.ArticleWorkflow.AssetIdByMarkerIndex.Values
-                    .Where(v => !string.IsNullOrWhiteSpace(v))
-                    .Distinct()
-                    .Count();
-                await _db.ImageMasterWorkspaces.UpdateOneAsync(
-                    Builders<ImageMasterWorkspace>.Filter.Eq(x => x.Id, wid),
-                    Builders<ImageMasterWorkspace>.Update
-                        .Set(x => x.ArticleWorkflow!.DoneImageCount, doneCount),
-                    cancellationToken: ct);
-            }
-        }
+        // 注意：文学创作的 AssetIdByMarkerIndex / DoneImageCount / marker 指针回填统一交由
+        // TryPatchArticleMarkerAsync 在"最新成功优先"的时间戳 RMW 内原子写入（见成功路径调用），
+        // 这里不再单独写指针，避免旧 run 绕过时间戳覆盖新成功结果。
 
         await TryPatchWorkspaceCanvasAsync(run, asset, ct);
         return asset;
@@ -1148,6 +1102,10 @@ public class ImageGenRunWorker : BackgroundService
         var wid = (run.WorkspaceId ?? string.Empty).Trim();
         var key = (run.TargetCanvasKey ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(wid) || string.IsNullOrWhiteSpace(key)) return;
+
+        // 最新成功优先：用 run.CreatedAt（毫秒）作时间戳，旧 run 不覆盖已被更新 run 成功回填的画布元素。
+        // （失败路径 TryMarkWorkspaceCanvasErrorAsync 本就只动占位元素、不抹成功图，故画布侧只需守成功排序。）
+        var myStamp = new DateTimeOffset(DateTime.SpecifyKind(run.CreatedAt, DateTimeKind.Utc)).ToUnixTimeMilliseconds();
 
         for (var attempt = 0; attempt < 5; attempt++)
         {
@@ -1190,6 +1148,7 @@ public class ImageGenRunWorker : BackgroundService
                     ["assetId"] = asset.Id,
                     ["sha256"] = asset.Sha256,
                     ["createdAt"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    ["imageRunAt"] = myStamp,
                 };
                 // 占位元素缺失时，必须分配新的唯一 refId，避免复用输入图 refId 导致 @imgN 解析命中错误图片。
                 o["refId"] = AllocateNextCanvasRefId(elements);
@@ -1201,6 +1160,15 @@ public class ImageGenRunWorker : BackgroundService
             }
             else
             {
+                // 最新成功优先：已有同样新或更新的成功图则跳过（防止旧 run 覆盖新成功结果）
+                var existingStamp = target["imageRunAt"]?.GetValue<long>() ?? 0L;
+                if (existingStamp >= myStamp)
+                {
+                    _logger.LogInformation(
+                        "[画布] 跳过成功回填：已有更新的成功图。WorkspaceId={WorkspaceId}, Key={Key}, RunId={RunId}",
+                        wid, key, run.Id);
+                    return;
+                }
                 target["kind"] = "image";
                 target["status"] = "done";
                 target["syncStatus"] = "synced";
@@ -1208,6 +1176,7 @@ public class ImageGenRunWorker : BackgroundService
                 target["src"] = asset.Url ?? "";
                 target["assetId"] = asset.Id;
                 target["sha256"] = asset.Sha256;
+                target["imageRunAt"] = myStamp;
                 if (!string.IsNullOrWhiteSpace(asset.Prompt)) target["prompt"] = asset.Prompt!;
             }
 
@@ -1320,32 +1289,20 @@ public class ImageGenRunWorker : BackgroundService
     }
 
     /// <summary>
-    /// 判断该 run 是否已被同目标（同 workspace + 同 ArticleMarkerIndex）的更新 run 取代。
-    /// 并发处理多 run 后，用户对同一 marker 连续重生成会产生多个 run；旧 run 可能后完成，
-    /// 若不判定就会用旧结果覆盖新结果。仅当"本 run 是该目标里最新创建的 run"时才写共享 marker 指针。
-    /// </summary>
-    private async Task<bool> IsSupersededForArticleMarkerAsync(ImageGenRun run, CancellationToken ct)
-    {
-        if (!run.ArticleMarkerIndex.HasValue || string.IsNullOrWhiteSpace(run.WorkspaceId)) return false;
-        var newer = await _db.ImageGenRuns
-            .Find(x => x.WorkspaceId == run.WorkspaceId
-                       && x.ArticleMarkerIndex == run.ArticleMarkerIndex
-                       && x.Id != run.Id
-                       && x.CreatedAt > run.CreatedAt)
-            .Project(x => new { x.Id })
-            .FirstOrDefaultAsync(ct);
-        return newer != null;
-    }
-
-    /// <summary>
-    /// 文学创作场景：自动回填 ArticleIllustrationMarker 的状态。
-    /// 当 run.ArticleMarkerIndex 有值时，更新对应 marker 的 status/errorMessage/url。
+    /// 文学创作场景：自动回填 ArticleIllustrationMarker 的状态，并在成功时一并写入资产指针
+    /// （marker.AssetId / Url / ImageRunAt + ArticleWorkflow.AssetIdByMarkerIndex + DoneImageCount）。
+    /// 并发重生成同一 marker 时按"最新成功优先、失败不抹旧图"取舍（用 marker.ImageRunAt = 产图 run 的
+    /// CreatedAt 作时间戳，与完成顺序无关）：
+    ///   - status=="done"：仅当 run.CreatedAt 比 marker.ImageRunAt 更新才覆盖成功图；否则跳过（已有更新成功图）。
+    ///   - 其它（error 等）：marker.ImageRunAt 非空（已有成功图）时不写错误，避免新失败抹掉旧成功图。
+    /// 整个判定 + 写入在同一份 ArticleWorkflow 的乐观锁 RMW 内完成，保证时间戳与指针原子一致。
     /// </summary>
     private async Task TryPatchArticleMarkerAsync(
         ImageGenRun run,
         string status,
         string? errorMessage,
         string? url,
+        string? assetId,
         CancellationToken ct)
     {
         // 只有文学创作场景（有 ArticleMarkerIndex）才需要回填
@@ -1354,15 +1311,7 @@ public class ImageGenRunWorker : BackgroundService
         if (string.IsNullOrWhiteSpace(wid)) return;
 
         var markerIndex = run.ArticleMarkerIndex.Value;
-
-        // 防止旧 run 覆盖新 run：若已被同 marker 的更新 run 取代，跳过共享 marker 指针回填
-        if (await IsSupersededForArticleMarkerAsync(run, ct))
-        {
-            _logger.LogInformation(
-                "[文学创作] 跳过 Marker 回填：该 run 已被同 marker 的更新 run 取代。WorkspaceId={WorkspaceId}, MarkerIndex={MarkerIndex}, RunId={RunId}",
-                wid, markerIndex, run.Id);
-            return;
-        }
+        var isDone = status == "done";
 
         for (var attempt = 0; attempt < 5; attempt++)
         {
@@ -1373,22 +1322,45 @@ public class ImageGenRunWorker : BackgroundService
             if (wf == null || wf.Markers == null || markerIndex < 0 || markerIndex >= wf.Markers.Count) return;
 
             var marker = wf.Markers[markerIndex];
-            marker.Status = status;
+
+            if (isDone)
+            {
+                // 最新成功优先：已有同样新或更新的成功图则跳过（防止旧 run 覆盖新成功结果）
+                if (marker.ImageRunAt.HasValue && run.CreatedAt <= marker.ImageRunAt.Value)
+                {
+                    _logger.LogInformation(
+                        "[文学创作] 跳过成功回填：已有更新的成功配图。WorkspaceId={WorkspaceId}, MarkerIndex={MarkerIndex}, RunId={RunId}",
+                        wid, markerIndex, run.Id);
+                    return;
+                }
+                marker.Status = "done";
+                marker.ErrorMessage = null;
+                marker.ImageRunAt = run.CreatedAt;
+                if (!string.IsNullOrWhiteSpace(url)) marker.Url = url;
+                if (!string.IsNullOrWhiteSpace(assetId))
+                {
+                    marker.AssetId = assetId;
+                    wf.AssetIdByMarkerIndex[markerIndex.ToString()] = assetId!;
+                    wf.DoneImageCount = wf.AssetIdByMarkerIndex.Values
+                        .Where(v => !string.IsNullOrWhiteSpace(v)).Distinct().Count();
+                }
+            }
+            else
+            {
+                // 失败不抹旧图：已有成功配图（ImageRunAt 非空）则不写错误状态
+                if (marker.ImageRunAt.HasValue)
+                {
+                    _logger.LogInformation(
+                        "[文学创作] 跳过失败回填：已有成功配图，不用失败覆盖。WorkspaceId={WorkspaceId}, MarkerIndex={MarkerIndex}, RunId={RunId}",
+                        wid, markerIndex, run.Id);
+                    return;
+                }
+                marker.Status = status;
+                if (!string.IsNullOrWhiteSpace(errorMessage)) marker.ErrorMessage = errorMessage;
+            }
+
             marker.UpdatedAt = DateTime.UtcNow;
-
-            if (!string.IsNullOrWhiteSpace(errorMessage))
-            {
-                marker.ErrorMessage = errorMessage;
-            }
-            else if (status == "done")
-            {
-                marker.ErrorMessage = null; // 清空错误信息
-            }
-
-            if (!string.IsNullOrWhiteSpace(url))
-            {
-                marker.Url = url;
-            }
+            wf.UpdatedAt = DateTime.UtcNow;
 
             var res = await _db.ImageMasterWorkspaces.UpdateOneAsync(
                 x => x.Id == wid && x.UpdatedAt == ws.UpdatedAt,
