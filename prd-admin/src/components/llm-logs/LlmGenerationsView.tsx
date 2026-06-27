@@ -106,7 +106,7 @@ export function LlmGenerationsView() {
     setAppLoading(true);
     const res = await getLlmLogsAppSummary({ from: range.from, to: range.to });
     if (seq !== appSeq.current) return;
-    if (res.success && res.data) setAppRows(res.data ?? []);
+    if (res.success && res.data) setAppRows(res.data.items ?? []);
     setAppLoading(false);
   }, [range]);
 

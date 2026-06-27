@@ -175,6 +175,7 @@ export type GetLlmLogsSessionsContract = (params?: GetLlmLogsSessionsParams) => 
 export type GetLlmLogsAppSummaryParams = {
   from?: string;
   to?: string;
+  days?: number;
 };
 
 export type LlmLogsAppSummaryItem = {
@@ -183,14 +184,20 @@ export type LlmLogsAppSummaryItem = {
   requestCount: number;
   successCount: number;
   failCount: number;
-  /** 0-1 之间的成功率 */
-  successRate: number;
-  medianDurationMs: number;
+  /** 0-1 之间的成功率；总数为 0 时为 null */
+  successRate: number | null;
+  medianDurationMs: number | null;
+};
+
+export type LlmLogsAppSummaryData = {
+  from: string;
+  to: string;
+  items: LlmLogsAppSummaryItem[];
 };
 
 export type GetLlmLogsAppSummaryContract = (
   params?: GetLlmLogsAppSummaryParams,
-) => Promise<ApiResponse<LlmLogsAppSummaryItem[]>>;
+) => Promise<ApiResponse<LlmLogsAppSummaryData>>;
 
 // ── 日志正文 COS 占位符还原 ──
 export type RestoreLlmLogTextData = {
@@ -200,7 +207,7 @@ export type RestoreLlmLogTextData = {
   questionText?: string | null;
   thinkingText?: string | null;
   restoredCount: number;
-  restoreErrors: string[];
+  restoreErrors: string[] | null;
 };
 
 export type RestoreLlmLogTextContract = (id: string) => Promise<ApiResponse<RestoreLlmLogTextData>>;

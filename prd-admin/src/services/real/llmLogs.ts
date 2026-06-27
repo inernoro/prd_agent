@@ -23,7 +23,7 @@ import type {
   LlmLogsSessionsData,
   GetLlmLogsAppSummaryContract,
   GetLlmLogsAppSummaryParams,
-  LlmLogsAppSummaryItem,
+  LlmLogsAppSummaryData,
   RestoreLlmLogTextContract,
   RestoreLlmLogTextData,
 } from '@/services/contracts/llmLogs';
@@ -76,8 +76,8 @@ export const getLlmLogsSessionsReal: GetLlmLogsSessionsContract = async (params)
   return await apiRequest<LlmLogsSessionsData>(`${api.logs.llm.sessions()}${toQuery(params as GetLlmLogsParams)}`, { method: 'GET' });
 };
 
-export const getLlmLogsAppSummaryReal: GetLlmLogsAppSummaryContract = async (params?: GetLlmLogsAppSummaryParams): Promise<ApiResponse<LlmLogsAppSummaryItem[]>> => {
-  return await apiRequest<LlmLogsAppSummaryItem[]>(`${api.logs.llm.appSummary()}${toQuery(params as GetLlmLogsParams)}`, { method: 'GET' });
+export const getLlmLogsAppSummaryReal: GetLlmLogsAppSummaryContract = async (params?: GetLlmLogsAppSummaryParams): Promise<ApiResponse<LlmLogsAppSummaryData>> => {
+  return await apiRequest<LlmLogsAppSummaryData>(`${api.logs.llm.appSummary()}${toQuery(params as GetLlmLogsParams)}`, { method: 'GET' });
 };
 
 export const restoreLlmLogTextReal: RestoreLlmLogTextContract = async (id: string): Promise<ApiResponse<RestoreLlmLogTextData>> => {
