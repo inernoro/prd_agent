@@ -327,6 +327,10 @@
       overscroll-behavior-x: contain;
       scrollbar-width: none;
       -webkit-overflow-scrolling: touch;
+      /* Right-edge fade hints the tab strip is horizontally scrollable instead
+         of hard-clipping the next tab (mobile-layout-fallback.md §6 cue). */
+      -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
+      mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
     }
 
     .cds-settings-nav::-webkit-scrollbar {
@@ -1315,6 +1319,25 @@
     --project-node-icon-size: 1.75rem;
     --project-node-gap: 0.875rem;
     --project-node-radius: 0.625rem;
+  }
+
+  /* Phones: shrink the tech-stack dock so the typical 4-6 glyphs fit centred
+     instead of getting hard-cut mid-icon; `safe center` keeps it centred when
+     it fits and falls back to scrollable (not clipped) for the rare 7-stack
+     project. The hover-magnify dock is desktop-only, so static sizing is fine. */
+  @media (max-width: 640px) {
+    .cds-project-card {
+      --project-node-size: 2.6rem;
+      --project-node-gap: 0.55rem;
+    }
+    .cds-project-node-row {
+      justify-content: safe center;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .cds-project-node-row::-webkit-scrollbar {
+      display: none;
+    }
   }
 
   .cds-project-node-row {
