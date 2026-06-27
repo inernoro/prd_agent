@@ -1347,8 +1347,14 @@ public class ImageGenRunWorker : BackgroundService
             }
             else
             {
-                // 失败不抹旧图：已有成功配图（ImageRunAt 非空）则不写错误状态
-                if (marker.ImageRunAt.HasValue)
+                // 失败不抹旧图：已有成功配图则不写错误状态。
+                // 除 ImageRunAt（新字段）外，还要兼容此字段出现前就已成功的存量 marker
+                // （ImageRunAt 为空但 Status=done 且有 AssetId/Url），否则一次失败重生成会抹掉旧好图。
+                var hasSuccessImage = marker.ImageRunAt.HasValue
+                    || !string.IsNullOrWhiteSpace(marker.AssetId)
+                    || (string.Equals(marker.Status, "done", StringComparison.OrdinalIgnoreCase)
+                        && !string.IsNullOrWhiteSpace(marker.Url));
+                if (hasSuccessImage)
                 {
                     _logger.LogInformation(
                         "[文学创作] 跳过失败回填：已有成功配图，不用失败覆盖。WorkspaceId={WorkspaceId}, MarkerIndex={MarkerIndex}, RunId={RunId}",
