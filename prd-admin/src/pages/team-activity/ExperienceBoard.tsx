@@ -153,9 +153,10 @@ export function ExperienceBoard({
 function ChannelHead({ icon: Icon, tint, title, subtitle }: { icon: typeof Activity; tint: string; title: string; subtitle: string }) {
   return (
     <div className="flex items-center gap-2 px-1 sticky top-0 z-[1] py-1.5" style={{ background: 'rgba(16,17,19,0.72)', backdropFilter: 'blur(6px)' }}>
-      <Icon size={14} style={{ color: tint }} />
-      <span className="text-[12.5px] font-semibold text-white/80">{title}</span>
-      <span className="text-[10.5px] text-white/35">{subtitle}</span>
+      <Icon size={14} className="shrink-0" style={{ color: tint }} />
+      {/* 标题不折叠（如「行为之声」四字），副标过窄时截断让位 */}
+      <span className="text-[12.5px] font-semibold text-white/80 whitespace-nowrap shrink-0">{title}</span>
+      <span className="text-[10.5px] text-white/35 truncate min-w-0">{subtitle}</span>
     </div>
   );
 }

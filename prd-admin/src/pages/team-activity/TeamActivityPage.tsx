@@ -7,7 +7,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Activity, Eye, EyeOff, Radar } from 'lucide-react';
-import { PageHeader, GlassCard, Button } from '@/components/design';
+import { GlassCard, Button } from '@/components/design';
+import { TabBar } from '@/components/design/TabBar';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { RelativeTime } from '@/components/ui/RelativeTime';
@@ -195,15 +196,15 @@ export default function TeamActivityPage() {
   return (
     // 控制台三栏：左成员统计 / 中时间线 / 右分类统计。限一个上限宽避免巨幕下三栏间距失衡
     <div className="flex flex-col gap-4 h-full min-h-0 w-full mx-auto" style={{ maxWidth: 1840 }}>
-      {/* 页头：视图切换走 tabs（行为洞察/VOC 在前 / 动态流），时间范围 chips 走 actions 槽显眼可见 */}
-      <PageHeader
-        title="VOC"
-        tabs={[
-          { key: 'insights', label: '行为洞察', icon: <Radar size={13} /> },
-          { key: 'feed', label: '动态流', icon: <Activity size={13} /> },
+      {/* 页头：视图切换用全项目统一的 TabBar（与「应用模型池管理」完全同款 surface-nav 顶栏 +
+          滑块指示 + hover），时间范围筛选放 actions（保留悬浮密度预览/自定义刷选，比纯分段更强）。 */}
+      <TabBar
+        items={[
+          { key: 'insights', label: '行为洞察', icon: <Radar size={14} /> },
+          { key: 'feed', label: '动态流', icon: <Activity size={14} /> },
         ]}
-        activeTab={view}
-        onTabChange={(key) => switchView(key === 'insights' ? 'insights' : 'feed')}
+        activeKey={view}
+        onChange={(key) => switchView(key === 'insights' ? 'insights' : 'feed')}
         actions={<TimeRangePicker value={timeRange} onChange={setTimeRange} />}
       />
 
