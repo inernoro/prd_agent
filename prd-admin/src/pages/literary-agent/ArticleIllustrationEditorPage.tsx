@@ -1589,17 +1589,23 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '');
   }, []);
 
-  // 收集正文内联配图 URL（按阅读顺序，与 buildPreviewMarkdownWithImages 的 data-marker-idx 顺序一致），
-  // 供点击正文图片打开灯箱时确定轮播顺序与初始下标。
-  const collectInlineImageUrls = useCallback(() => {
+  // 配图灯箱的唯一规范顺序：按 markers 阅读顺序（与 buildPreviewMarkdownWithImages 的 data-marker-idx 一致）。
+  // 正文内联点击与右侧卡片点击都用这一份，保证同一张图在两个入口的上一张/下一张完全一致。
+  const collectOrderedMarkerImages = useCallback((): Array<{ markerIndex: number; url: string }> => {
     const byIndex = new Map<number, MarkerRunItem>(markerRunItems.map((x) => [x.markerIndex, x]));
-    const urls: string[] = [];
+    const out: Array<{ markerIndex: number; url: string }> = [];
     for (let i = 0; i < markers.length; i++) {
-      const url = markerItemImageUrl(byIndex.get(markers[i].index));
-      if (url) urls.push(url);
+      const it = byIndex.get(markers[i].index);
+      const url = markerItemImageUrl(it);
+      if (it && url) out.push({ markerIndex: it.markerIndex, url });
     }
-    return urls;
+    return out;
   }, [markers, markerRunItems, markerItemImageUrl]);
+
+  const collectInlineImageUrls = useCallback(
+    () => collectOrderedMarkerImages().map((o) => o.url),
+    [collectOrderedMarkerImages],
+  );
 
   // 点击正文内联图片：以该图为起点打开可缩放灯箱（不管比例尺多大都可预览）。
   // 若点击的 URL 不在收集到的轮播列表里（非 marker 图 / URL 不完全匹配），
@@ -3223,7 +3229,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                           {...props}
                           src={src}
                           alt={alt}
-                          onClick={() => openInlineImageLightbox(typeof src === 'string' ? src : undefined)}
+                          onClick={(e) => {
+                            // 链接图 [![alt](img)](target) 渲染为 <a><img></a>：
+                            // 阻止冒泡到父 <a>，否则点击会跟随链接跳走而非打开预览
+                            e.preventDefault();
+                            e.stopPropagation();
+                            openInlineImageLightbox(typeof src === 'string' ? src : undefined);
+                          }}
                           style={{ maxWidth: '100%', borderRadius: 8, margin: '8px 0', cursor: 'zoom-in' }}
                         />
                       ),
@@ -3632,11 +3644,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       }}
                       onClick={() => {
                         if (!canShow) return;
-                        // 与正文内联灯箱共用 markerItemImageUrl（trim 一致），保证同一张图跨入口字符串相同
-                        const withImg = markerRunItems.filter(x => x.assetUrl || x.url || x.base64);
-                        const images = withImg.map(x => markerItemImageUrl(x));
-                        const currentIdx = withImg.findIndex(x => x.markerIndex === it.markerIndex);
-                        setLightbox({ images, index: currentIdx >= 0 ? currentIdx : 0 });
+                        // 与正文内联灯箱共用同一份规范顺序（markers 阅读顺序），保证两个入口轮播一致
+                        const ordered = collectOrderedMarkerImages();
+                        const currentIdx = ordered.findIndex(o => o.markerIndex === it.markerIndex);
+                        if (currentIdx >= 0) {
+                          setLightbox({ images: ordered.map(o => o.url), index: currentIdx });
+                        } else {
+                          // 兜底：该卡片不在规范列表里（极少见），只展示它自己这张
+                          const own = markerItemImageUrl(it);
+                          if (own) setLightbox({ images: [own], index: 0 });
+                        }
                       }}
                     >
                       {/* 图片内容 / 占位 / 加载动画 */}

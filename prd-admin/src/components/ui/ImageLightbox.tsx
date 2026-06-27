@@ -39,8 +39,10 @@ export function ImageLightbox({
   /** 可选 caption（与 images 同序），鼠标悬停或始终显示在底部 */
   captions?: (string | undefined)[];
 }) {
-  const [idx, setIdx] = useState(initialIndex);
   const total = images.length;
+  // 钳制初始下标到 [0, total-1]，防止调用方传越界值导致渲染 images[idx] 为 undefined 的破图
+  const clampIdx = (i: number) => Math.min(Math.max(0, i), Math.max(0, total - 1));
+  const [idx, setIdx] = useState(() => clampIdx(initialIndex));
   const hasPrev = idx > 0;
   const hasNext = idx < total - 1;
 
@@ -75,11 +77,11 @@ export function ImageLightbox({
     resetView();
   }, [total, resetView]);
 
-  // 切换初始图片时复位
+  // 切换初始图片时复位（同样钳制下标到 [0, total-1]）
   useEffect(() => {
-    setIdx(initialIndex);
+    setIdx(Math.min(Math.max(0, initialIndex), Math.max(0, total - 1)));
     resetView();
-  }, [initialIndex, resetView]);
+  }, [initialIndex, total, resetView]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -154,7 +156,8 @@ export function ImageLightbox({
       {/* 计数 + 缩放控件 + 关闭按钮 */}
       <div
         className="absolute top-0 left-0 right-0 flex items-center justify-between px-6 py-4"
-        style={{ background: 'linear-gradient(180deg, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0) 100%)' }}
+        // zIndex 必须高于图片：图片有 transform 会生成层叠上下文，放大/拖拽后可能盖住工具条并拦截点击
+        style={{ zIndex: 10, background: 'linear-gradient(180deg, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0) 100%)' }}
         onClick={(e) => e.stopPropagation()}
       >
         <span className="text-sm tabular-nums" style={{ color: 'rgba(255,255,255,0.8)' }}>
@@ -231,7 +234,7 @@ export function ImageLightbox({
           type="button"
           onClick={(e) => { e.stopPropagation(); prev(); }}
           className="absolute left-4 top-1/2 -translate-y-1/2 rounded-full p-3 transition-all hover:bg-white/10"
-          style={{ color: 'rgba(255,255,255,0.85)', background: 'rgba(0,0,0,0.4)' }}
+          style={{ zIndex: 10, color: 'rgba(255,255,255,0.85)', background: 'rgba(0,0,0,0.4)' }}
           aria-label="上一张 (←)"
           title="上一张 (←)"
         >
@@ -243,7 +246,7 @@ export function ImageLightbox({
           type="button"
           onClick={(e) => { e.stopPropagation(); next(); }}
           className="absolute right-4 top-1/2 -translate-y-1/2 rounded-full p-3 transition-all hover:bg-white/10"
-          style={{ color: 'rgba(255,255,255,0.85)', background: 'rgba(0,0,0,0.4)' }}
+          style={{ zIndex: 10, color: 'rgba(255,255,255,0.85)', background: 'rgba(0,0,0,0.4)' }}
           aria-label="下一张 (→)"
           title="下一张 (→)"
         >
