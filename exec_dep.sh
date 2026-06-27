@@ -16,6 +16,7 @@ set -eu
 #
 # 可选环境变量：
 #   - PRD_AGENT_API_IMAGE：覆盖后端镜像（默认按 REPO 组装 :latest，并优先走 get.miduo.org 镜像代理）
+#   - PRD_AGENT_LLMGW_IMAGE：覆盖独立 LLM 网关镜像（默认与 PRD_AGENT_API_IMAGE 同源；compose 已含 llmgw service，随 up 一起拉起）
 #   - API_PULL_TIMEOUT_SECONDS：后端镜像拉取超时时间，默认 30 秒
 #   - SKIP_API_PULL=1：跳过后端镜像拉取，仅更新静态站点并重建 compose
 #   - REPO：覆盖 GitHub 仓库 owner/repo（默认尝试从 git remote 推断；推断失败则回退 inernoro/prd_agent）
@@ -56,6 +57,12 @@ REPO_NAME="${REPO##*/}"
 # 默认后端镜像（latest 一键部署）
 if [ -z "${PRD_AGENT_API_IMAGE:-}" ]; then
   export PRD_AGENT_API_IMAGE="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-server:latest"
+fi
+
+# 默认独立 LLM 网关镜像（占位：当前与 api 同源，复用 prdagent-server:latest 同一份 DLL）。
+# prd-llmgw 拆为独立项目后改指向 prdagent-llmgw:latest。compose 已含 llmgw service，随 up 一起拉起。
+if [ -z "${PRD_AGENT_LLMGW_IMAGE:-}" ]; then
+  export PRD_AGENT_LLMGW_IMAGE="${PRD_AGENT_API_IMAGE}"
 fi
 
 if command -v docker-compose >/dev/null 2>&1; then

@@ -112,6 +112,47 @@ services:
       - prdagent-network
     restart: unless-stopped
 
+  # 独立 LLM 网关服务 llmgw —— 与 api 同源镜像、不同 entrypoint（占位）。
+  # 当前用 api 镜像 + 命令覆盖运行同一份 DLL 监听 8090；待 prd-llmgw 拆为独立项目后改 PRD_AGENT_LLMGW_IMAGE。
+  # 注入：同一 Mongo 连接串 + 同一 ApiKeyCrypto__Secret（共享平台密钥密文）+ 独立 LlmGwJwt__Secret（网关自身鉴权，跨服务隔离见 cross-project-isolation.md）。
+  llmgw:
+    image: ${PRD_AGENT_LLMGW_IMAGE:-ghcr.io/inernoro/prd_agent/prdagent-server:latest}
+    container_name: prdagent-llmgw
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:8090
+      - MongoDB__ConnectionString=mongodb://mongodb:27017
+      - MongoDB__DatabaseName=prdagent
+      - Redis__ConnectionString=redis:6379
+      # 平台 API key 密文解密密钥：必须与 api 一致，否则网关读不出已加密的平台 key
+      - ApiKeyCrypto__Secret=${API_KEY_CRYPTO_SECRET:-}
+      - ApiKeyCrypto__LegacySecrets=${API_KEY_CRYPTO_LEGACY_SECRETS:-}
+      # 网关自身鉴权密钥：独立于 api 的 JWT_SECRET（跨服务隔离）
+      - LlmGwJwt__Secret=${LLMGW_JWT_SECRET:-}
+      - LlmGwJwt__Issuer=prdagent-llmgw
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      - mongodb
+      - redis
+    networks:
+      - prdagent-network
+    restart: unless-stopped
+
+  # 独立 LLM 网关前端静态站 llmgw-web —— nginx 托管 prd-llmgw-web 构建产物。
+  # 静态产物由 deploy 流程下载/解压到 ./deploy/llmgw-web/dist（与 gateway 的 web/dist 同模式）。
+  llmgw-web:
+    image: nginx:1.27-alpine
+    container_name: prdagent-llmgw-web
+    volumes:
+      - ./deploy/llmgw-web/dist:/usr/share/nginx/html:ro
+    depends_on:
+      - llmgw
+    networks:
+      - prdagent-network
+    restart: unless-stopped
+
 volumes:
   mongodb_data:
   redis_data:
