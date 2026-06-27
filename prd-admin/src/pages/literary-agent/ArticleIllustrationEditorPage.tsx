@@ -3,7 +3,7 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { TipCard } from '@/components/daily-tips/TipCard';
-import { ImagePreviewDialog } from '@/components/ui/ImagePreviewDialog';
+import { ImageLightbox } from '@/components/ui/ImageLightbox';
 import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
 import { WorkflowProgressBar } from '@/components/ui/WorkflowProgressBar';
 import { MarketplaceCard } from '@/components/marketplace';
@@ -430,8 +430,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [markerStreaming, setMarkerStreaming] = useState(false);
   const [thinkingContent, setThinkingContent] = useState('');
   const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
-  const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
-  const [imagePreviewIndex, setImagePreviewIndex] = useState(0);
+  // 统一图片灯箱（支持放大/缩小/拖拽预览）：右侧卡片与正文内联图片共用
+  const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null);
   const [watermarkStatus, setWatermarkStatus] = useState<{ enabled: boolean; name?: string | null }>({ enabled: false });
   const [pendingWatermarkEdit, setPendingWatermarkEdit] = useState(false); // 用于延迟触发水印编辑
   const handleWatermarkStatusChange = useCallback((status: { hasActiveConfig: boolean; activeId?: string; activeName?: string }) => {
@@ -1580,6 +1580,33 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     },
     [buildPreviewMarkdownWithImages]
   );
+
+  // 收集正文内联配图 URL（按阅读顺序，与 buildPreviewMarkdownWithImages 的 data-marker-idx 顺序一致），
+  // 供点击正文图片打开灯箱时确定轮播顺序与初始下标。
+  const collectInlineImageUrls = useCallback(() => {
+    const byIndex = new Map<number, MarkerRunItem>(markerRunItems.map((x) => [x.markerIndex, x]));
+    const urls: string[] = [];
+    for (let i = 0; i < markers.length; i++) {
+      const it = byIndex.get(markers[i].index);
+      const url = it
+        ? (String(it.assetUrl || it.url || '').trim() ||
+            (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : ''))
+        : '';
+      if (url) urls.push(url);
+    }
+    return urls;
+  }, [markers, markerRunItems]);
+
+  // 点击正文内联图片：以该图为起点打开可缩放灯箱（不管比例尺多大都可预览）
+  const openInlineImageLightbox = useCallback((clickedUrl?: string) => {
+    const urls = collectInlineImageUrls();
+    if (urls.length === 0) {
+      if (clickedUrl) setLightbox({ images: [clickedUrl], index: 0 });
+      return;
+    }
+    const found = clickedUrl ? urls.findIndex((u) => u === clickedUrl) : -1;
+    setLightbox({ images: urls, index: found >= 0 ? found : 0 });
+  }, [collectInlineImageUrls]);
 
   const locateMarkerInPreview = (markerIndex: number) => {
     const container = articlePreviewRef.current;
@@ -3182,6 +3209,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       h1: ({ node: _node, children, ...props }) => <h1 {...props}>{highlightChildren(children)}</h1>,
                       h2: ({ node: _node, children, ...props }) => <h2 {...props}>{highlightChildren(children)}</h2>,
                       h3: ({ node: _node, children, ...props }) => <h3 {...props}>{highlightChildren(children)}</h3>,
+                      // 正文配图：点击打开可缩放灯箱（放大/缩小/拖拽预览），不管比例尺多大都可预览
+                      img: ({ node: _node, src, alt, style: _style, ...props }) => (
+                        <img
+                          {...props}
+                          src={src}
+                          alt={alt}
+                          onClick={() => openInlineImageLightbox(typeof src === 'string' ? src : undefined)}
+                          style={{ maxWidth: '100%', borderRadius: 8, margin: '8px 0', cursor: 'zoom-in' }}
+                        />
+                      ),
                     }}
                   >
                     {leftPreviewMarkdown}
@@ -3587,18 +3624,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       }}
                       onClick={() => {
                         if (!canShow) return;
-                        const allImages = markerRunItems
-                          .filter(x => x.assetUrl || x.url || x.base64)
-                          .map((x, i) => ({
-                            url: x.assetUrl || x.url || (x.base64?.startsWith('data:') ? x.base64 : `data:image/png;base64,${x.base64}`) || '',
-                            alt: `配图 ${i + 1}`,
-                          }));
-                        const currentIdx = allImages.findIndex((_, i) => {
-                          const item = markerRunItems.filter(x => x.assetUrl || x.url || x.base64)[i];
-                          return item?.markerIndex === it.markerIndex;
-                        });
-                        setImagePreviewIndex(currentIdx >= 0 ? currentIdx : 0);
-                        setImagePreviewOpen(true);
+                        const withImg = markerRunItems.filter(x => x.assetUrl || x.url || x.base64);
+                        const images = withImg.map(x =>
+                          x.assetUrl || x.url || (x.base64?.startsWith('data:') ? x.base64 : `data:image/png;base64,${x.base64}`) || '',
+                        );
+                        const currentIdx = withImg.findIndex(x => x.markerIndex === it.markerIndex);
+                        setLightbox({ images, index: currentIdx >= 0 ? currentIdx : 0 });
                       }}
                     >
                       {/* 图片内容 / 占位 / 加载动画 */}
@@ -4714,18 +4745,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         }
       />
 
-      {/* Image Preview Dialog */}
-      <ImagePreviewDialog
-        images={markerRunItems
-          .filter(x => x.assetUrl || x.url || x.base64)
-          .map((x, i) => ({
-            url: x.assetUrl || x.url || (x.base64?.startsWith('data:') ? x.base64 : `data:image/png;base64,${x.base64}`) || '',
-            alt: `配图 ${i + 1}`,
-          }))}
-        initialIndex={imagePreviewIndex}
-        open={imagePreviewOpen}
-        onClose={() => setImagePreviewOpen(false)}
-      />
+      {/* 图片灯箱（可放大/缩小/拖拽预览） */}
+      {lightbox && (
+        <ImageLightbox
+          images={lightbox.images}
+          index={lightbox.index}
+          onClose={() => setLightbox(null)}
+        />
+      )}
 
       {/* 风格图放大预览对话框 */}
       <Dialog

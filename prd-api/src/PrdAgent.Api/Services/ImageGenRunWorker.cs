@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Configuration;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Models.MultiImage;
@@ -22,6 +23,7 @@ public class ImageGenRunWorker : BackgroundService
     private readonly ILogger<ImageGenRunWorker> _logger;
     private readonly IRunEventStore _runStore;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
+    private readonly IConfiguration _config;
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
@@ -55,20 +57,38 @@ public class ImageGenRunWorker : BackgroundService
         IServiceScopeFactory scopeFactory,
         IRunEventStore runStore,
         ILogger<ImageGenRunWorker> logger,
-        ILLMRequestContextAccessor llmRequestContext)
+        ILLMRequestContextAccessor llmRequestContext,
+        IConfiguration config)
     {
         _db = db;
         _scopeFactory = scopeFactory;
         _runStore = runStore;
         _logger = logger;
         _llmRequestContext = llmRequestContext;
+        _config = config;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // 轮询模式：队列量很小（管理员生图），优先简单可靠
+        // 并发处理多个 run：每个 run 的单张生图最长可挂起到 600s（LLM:ImageGenTimeoutSeconds）。
+        // 若串行处理，单个被某平台拖住的 run 会卡住整个队列，造成“一个生图接口超时 → 后面所有
+        // 生图都跟着超时”。这里以有界并发认领并处理，单个慢 run 不再饿死其它 run。
+        var maxParallelRuns = Math.Clamp(_config.GetValue<int?>("LLM:ImageGenMaxParallelRuns") ?? 4, 1, 16);
+        var inFlight = new List<Task>();
+
         while (!stoppingToken.IsCancellationRequested)
         {
+            // 回收已完成的任务槽
+            inFlight.RemoveAll(t => t.IsCompleted);
+
+            // 槽位已满：等任一 run 结束再继续认领
+            if (inFlight.Count >= maxParallelRuns)
+            {
+                try { await Task.WhenAny(inFlight); }
+                catch { /* 单 run 异常已在 ProcessRunSafeAsync 内吞掉 */ }
+                continue;
+            }
+
             ImageGenRun? run = null;
             try
             {
@@ -85,9 +105,13 @@ public class ImageGenRunWorker : BackgroundService
 
             if (run == null)
             {
+                // 无新任务：有在跑的就等其一结束或短暂轮询，否则纯轮询
                 try
                 {
-                    await Task.Delay(600, stoppingToken);
+                    if (inFlight.Count > 0)
+                        await Task.WhenAny(Task.WhenAny(inFlight), Task.Delay(600, stoppingToken));
+                    else
+                        await Task.Delay(600, stoppingToken);
                 }
                 catch (OperationCanceledException)
                 {
@@ -96,21 +120,33 @@ public class ImageGenRunWorker : BackgroundService
                 continue;
             }
 
-            try
-            {
-                await ProcessRunAsync(run, stoppingToken);
-            }
-            catch (OperationCanceledException)
-            {
-                // app shutting down：尽量把 run 标记为失败/取消（避免永远 Running）
-                await MarkRunFailedSafeAsync(run.Id, "WORKER_STOPPED", "服务正在停止", CancellationToken.None);
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "ImageGenRunWorker process failed: {RunId}", run.Id);
-                await MarkRunFailedSafeAsync(run.Id, ErrorCodes.INTERNAL_ERROR, ex.Message, stoppingToken);
-            }
+            inFlight.Add(ProcessRunSafeAsync(run, stoppingToken));
+        }
+
+        // 优雅停机：尽量等待在跑的 run 结束（其内部对取消会把 run 标记失败）
+        try { await Task.WhenAll(inFlight); }
+        catch { /* ignore */ }
+    }
+
+    /// <summary>
+    /// 单个 run 的处理包装：吞掉所有异常并把 run 安全标记为失败，
+    /// 保证返回的 Task 永不 fault（供 ExecuteAsync 的 WhenAny/WhenAll 安全等待）。
+    /// </summary>
+    private async Task ProcessRunSafeAsync(ImageGenRun run, CancellationToken stoppingToken)
+    {
+        try
+        {
+            await ProcessRunAsync(run, stoppingToken);
+        }
+        catch (OperationCanceledException)
+        {
+            // app shutting down：尽量把 run 标记为失败/取消（避免永远 Running）
+            await MarkRunFailedSafeAsync(run.Id, "WORKER_STOPPED", "服务正在停止", CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "ImageGenRunWorker process failed: {RunId}", run.Id);
+            await MarkRunFailedSafeAsync(run.Id, ErrorCodes.INTERNAL_ERROR, ex.Message, CancellationToken.None);
         }
     }
 
