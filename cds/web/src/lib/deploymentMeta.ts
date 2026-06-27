@@ -25,11 +25,16 @@ export function triggerSourceLabel(source?: string): string {
 }
 
 /**
- * 部署模式中文标签。deployMode 是后端解析出的 activeDeployMode（如 express /
- * static / dev），空串视为「源码 / 默认模式」。常见模式给中文名，其余原样返回。
+ * 部署模式中文标签。deployMode 是后端解析出的 activeDeployMode（如 express / static / dev）。
+ * 必须区分两种「空」（Codex P2）：
+ *   - `undefined`/`null`（旧历史行根本没有这个新增元数据）→ 「未记录」，**不臆造**部署类型
+ *     （这些老行可能其实是 prebuilt/release 部署，谎报成「源码/默认」会让历史比改前更不准）。
+ *   - 显式空串 `''`（新行、deriveDeployMode 对源码部署返回 ''）→ 「源码 / 默认」。
+ * 与下方「版本」chip 的 commitSha ? … : '未记录' 口径一致。常见模式给中文名，其余原样返回。
  */
-export function deployModeLabel(mode?: string): string {
-  const m = (mode || '').trim();
+export function deployModeLabel(mode?: string | null): string {
+  if (mode == null) return '未记录';
+  const m = mode.trim();
   if (!m) return '源码 / 默认';
   return (
     {

@@ -74,11 +74,18 @@ export function deriveCommitMeta(
  * 用真实 HEAD 刷新 githubCommitSha + 构建历史版本列」整段被跳过 → 源码部署拉到更新提交后，
  * 历史「版本」列仍停在 pull 前旧 SHA，给 reviewer 指错版本。
  *
- * 正确取值：优先 `after`（pull() 由 `git rev-parse --short HEAD` 得到的裸短 SHA），
- * 拿不到再退而解析 `head` 的第一个 token。返回裸 SHA 或 ''（无法解析）。纯函数，可单测。
+ * 正确取值，按精度优先：`afterFull`（rev-parse HEAD，完整 40 位）> `after`（rev-parse
+ * --short HEAD，短 SHA）> 解析 `head` 的第一个 token（短 SHA）。**优先全 SHA**：githubCommitSha
+ * 被 GitHub check-run / release / acceptance 元数据 / OperationLog.commitSha（类型注释要求全 SHA）
+ * 复用，截断成短 SHA 会让外部集成指向歧义 revision（Codex P2）。返回裸 SHA 或 ''（无法解析）。
+ * 纯函数，可单测。
  */
-export function parsePulledSha(pullResult: { head?: string; after?: string } | null | undefined): string {
+export function parsePulledSha(
+  pullResult: { head?: string; after?: string; afterFull?: string } | null | undefined,
+): string {
   if (!pullResult) return '';
+  const afterFull = (pullResult.afterFull || '').trim();
+  if (/^[0-9a-f]{7,40}$/i.test(afterFull)) return afterFull;
   const after = (pullResult.after || '').trim();
   if (/^[0-9a-f]{7,40}$/i.test(after)) return after;
   const headToken = (pullResult.head || '').trim().split(/\s+/)[0] || '';

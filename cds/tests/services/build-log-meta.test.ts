@@ -10,7 +10,11 @@ import {
 } from '../../src/services/build-log-meta.js';
 
 describe('parsePulledSha', () => {
-  it('优先取 after（裸短 SHA）', () => {
+  it('优先取 afterFull（完整 40 位 SHA，避免截断外部集成用的 commit）', () => {
+    const full = '18ffd0c44dd38b98d2e806b22205580545ff547d';
+    expect(parsePulledSha({ afterFull: full, after: '18ffd0c', head: '18ffd0c msg' })).toBe(full);
+  });
+  it('无 afterFull 时退而取 after（裸短 SHA）', () => {
     expect(parsePulledSha({ after: 'abc1234', head: 'abc1234 some commit message' })).toBe('abc1234');
   });
   it('after 缺失时解析 head 第一个 token（治 head 带标题不匹配裸 SHA 正则）', () => {
