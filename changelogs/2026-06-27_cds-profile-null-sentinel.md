@@ -24,3 +24,4 @@
 | docs | cds | 新增 debt.cds.executor-watchdog：记录 executor 卡死看门狗硬超时的 #228/#233 评审冲突与根治方案（cluster-only） |
 | fix | cds | 卡死看门狗服务级收敛跳过僵尸服务（已删/改名 profile 残留条目），不再被单服务证据路径误翻 running/stopped 在 UI/快照留误导状态（Bugbot Medium #940） |
 | fix | cds | 部署耗时显示：终态但缺 finishedAt 的旧历史行（legacy 投影）不再被当进行中虚高耗时/超 60min 误报「疑似卡住」（computeDeployDurationDisplay 增 isRunning，HistoryRow 按 status 传入）（Codex P2 #940） |
+| ci | cds | 新增 cds-prebuilt.yml + Dockerfile.dist：push 改 cds/** 时 CI 编译 CDS（esbuild 后端 + vite 前端 + tsc 门）并打成 ghcr 产物镜像 cds-dist:sha-<40hex>，为「CDS 自更新极速版」铺路（自更新拉产物跳过本机编译；找不到产物回退现编，纯增量不影响存量） |

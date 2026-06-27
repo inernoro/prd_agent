@@ -1,0 +1,16 @@
+# cds/Dockerfile.dist —— CDS 自更新「极速版」产物载体（不是运行镜像）。
+#
+# CI（.github/workflows/cds-prebuilt.yml）在 GitHub Actions 上把 CDS 编译好
+# （esbuild 后端 → dist/ + vite 前端 → web/dist/，并过 tsc --noEmit 类型门），
+# 然后用本 Dockerfile 把**已编译产物**打成一个 ghcr OCI 镜像 `cds-dist:sha-<40hex>`。
+#
+# CDS 自更新时 `docker pull` 这个镜像 → `docker create` + `docker cp` 解出 /dist 与
+# /web-dist → 原子替换本机 dist/ 与 web/dist/ → 重启。整个过程**跳过本机编译**
+# （tsc 52s + vite 1.6min 全卸到 CI），自更新从 ~3min 降到几十秒。
+#
+# FROM scratch：无运行时、无 base layer，只作产物搬运；CDS 仍以宿主 systemd 进程跑，
+# 不在容器里运行。构建 context = ./cds，故 COPY 路径相对 cds/。
+FROM scratch
+COPY dist /dist
+COPY web/dist /web-dist
+COPY cds-prebuilt-manifest.json /manifest.json
