@@ -226,6 +226,11 @@ function startStaleDeployDispatchReconciler(
         // 「recovery skips operation lease」判活同源。
         hasActiveOperation: (b) =>
           (branchOperationCoordinator.getActiveOperations(b.id) || []).some((op) => !op.cancelled),
+        // 硬超时只在 master 启用：master 的本地/远端代理部署都持 BranchOperationCoordinator 租约，
+        // hasActiveOperation 判活准。executor 节点的 /exec/deploy 不持该租约（判活恒 false），
+        // 开硬超时会把合法的 >45min 远端构建误判 error（Bugbot High「Executor deploys lack lease
+        // skip」）。executor 只做时间戳证据收敛 + 告警。
+        allowHardTimeout: isMaster,
         diffRuntimePaths: (b) => {
           // ciTargetSha..githubCommitSha 这段提交是否含运行时改动（非纯文档）。
           try {

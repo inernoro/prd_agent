@@ -284,6 +284,39 @@ describe('reconcileStuckDeployStates — Bugbot review 回归', () => {
     expect(results).toHaveLength(0);
   });
 
+  it('allowHardTimeout=false（executor 节点）：卡死非终结态不被硬超时收敛（Bugbot High）', () => {
+    const now = new Date('2026-06-27T01:00:00.000Z'); // 启动 60 分钟前 > 45min
+    const branch = makeBranch({
+      status: 'building',
+      lastDeployStartedAt: '2026-06-27T00:00:00.000Z', // 无 ready 证据，本会硬超时成 error
+    });
+    const results = reconcileStuckDeployStates([branch], { now, allowHardTimeout: false });
+    expect(branch.status).toBe('building'); // executor 不做硬超时，留给 master/操作收尾
+    expect(results).toHaveLength(0);
+  });
+
+  it('僵尸服务（profile 已删/改名）不参与分支聚合，不把健康分支翻回 error（Codex P2）', () => {
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const branch = makeBranch({
+      status: 'running',
+      lastDeployStartedAt: '2026-06-27T00:00:00.000Z',
+      lastReadyAt: '2026-06-27T00:05:00.000Z',
+      services: {
+        api: { profileId: 'api', containerName: 'c1', hostPort: 1, status: 'running' },
+        // 已被删除/改名的旧 profile 残留的僵尸服务，卡在 error
+        oldweb: { profileId: 'oldweb', containerName: 'c2', hostPort: 2, status: 'error', errorMessage: '旧 profile 残留' },
+      },
+    });
+    const results = reconcileStuckDeployStates([branch], {
+      now,
+      // 当前在册 profile 只有 api；oldweb 不在 → 聚合应忽略它
+      getBuildProfiles: () => [{ id: 'api' } as unknown as BuildProfile],
+    });
+    expect(branch.status).toBe('running'); // 不被僵尸 error 服务翻回 error
+    expect(branch.errorMessage).toBeUndefined();
+    expect(results.some((r) => r.kind === 'branch-status-finalized')).toBe(false);
+  });
+
   it('有在途操作的分支整条跳过：合法长任务不被硬超时误杀（Bugbot Medium）', () => {
     const now = new Date('2026-06-27T01:00:00.000Z'); // 启动 60 分钟前 > 45min 硬超时
     const branch = makeBranch({

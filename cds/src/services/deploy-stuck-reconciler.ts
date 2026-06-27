@@ -88,6 +88,15 @@ export interface ReconcileStuckDeployOptions {
    * 「Long deploys falsely timed out」）。不提供时退化为旧行为（无操作感知）。
    */
   hasActiveOperation?: (branch: BranchEntry) => boolean;
+  /**
+   * 是否允许**硬超时**收敛（45min 兜底把卡死非终结态强制成 error）。默认 true。
+   * 仅当本节点能可靠判活（master：本地/远端代理部署都持 BranchOperationCoordinator 租约，
+   * hasActiveOperation 准）时才安全。executor 节点的 /exec/deploy **不持**该租约，hasActiveOperation
+   * 永远 false，硬超时会把合法的 >45min 远端构建误判 error（Bugbot High「Executor deploys lack
+   * lease skip」）。故 index.ts 在 executor 模式传 false：executor 只做时间戳证据收敛 + 告警，
+   * 不做硬超时（证据路径自身要求 lastReadyAt 已晚于本轮 start，绝不会误杀在建构建）。
+   */
+  allowHardTimeout?: boolean;
 }
 
 function parseTime(value?: string | null): number {
@@ -143,6 +152,7 @@ function decideBranchFinalization(
   branch: BranchEntry,
   nowMs: number,
   hardTimeoutMs: number,
+  allowHardTimeout: boolean,
 ): { nextStatus: BranchEntry['status']; via: 'timestamp-evidence' | 'hard-timeout'; ageMin: number; reason: string } | null {
   const status = branch.status;
   if (!NON_TERMINAL_STATES.has(status)) return null;
@@ -200,7 +210,7 @@ function decideBranchFinalization(
   // 不是停止起点，且停止流程不刷新该戳。一个运行已久的分支刚发起正常停止，下一拍就会被用
   // 部署起点误判超时、把仍在进行的停止标成 idle（Docker/远端 executor 可能还在停）。我们没有
   // "停止起点"时间戳，故 stopping 只走证据路径（lastStoppedAt）；无证据则不触碰，绝不谎报已停。
-  if (startMs > 0 && status !== 'stopping') {
+  if (allowHardTimeout && startMs > 0 && status !== 'stopping') {
     const ageMs = nowMs - startMs;
     if (ageMs >= hardTimeoutMs) {
       const ageMin = Math.floor(ageMs / 60_000);
@@ -225,10 +235,18 @@ function decideBranchFinalization(
  * branch.status 仍 running、branch.errorMessage 仍空，分支卡片/自动化漏掉看门狗失败）。
  * 返回是否改了分支聚合（status 或 errorMessage 任一变化）。
  */
-function recomputeBranchAggregateFromServices(branch: BranchEntry): { previousStatus: string; nextStatus: string; changed: boolean } {
+function recomputeBranchAggregateFromServices(
+  branch: BranchEntry,
+  activeProfileIds?: ReadonlySet<string>,
+): { previousStatus: string; nextStatus: string; changed: boolean } {
   const previousStatus = branch.status;
   const previousError = branch.errorMessage;
-  const statuses = Object.values(branch.services || {}).map((svc) => svc.status);
+  // 只认**当前 build profile 仍在册**的服务（Codex P2「Filter aggregate status to active profiles」）：
+  // 删/改名 profile 后 branch.services 可能残留僵尸服务条目，若它卡在 error，无脑聚合会把一次成功
+  // 重部署的 running 分支下一拍又翻回 error。无 profile 信息（activeProfileIds 缺省）时退回扫全部。
+  const liveEntries = Object.entries(branch.services || {})
+    .filter(([profileId]) => !activeProfileIds || activeProfileIds.has(profileId));
+  const statuses = liveEntries.map(([, svc]) => svc.status);
   const anyServiceError = statuses.some((s) => s === 'error');
   // 分支级 error（**非来自服务**：webhook 派发失败 / 极速版镜像门 / ciImageError 等）绝不能被
   // 服务聚合清掉（Bugbot Medium「Watchdog clears branch error state」）。判据：分支当前是 error
@@ -247,7 +265,7 @@ function recomputeBranchAggregateFromServices(branch: BranchEntry): { previousSt
   else if (statuses.some((s) => s === 'stopping')) next = 'stopping';
   else next = 'idle'; // 全部 stopped/idle ⇒ 分支 idle（治 Bugbot「服务全停但 branch 仍 running」）
   branch.status = next;
-  const failedReasons = Object.entries(branch.services || {})
+  const failedReasons = liveEntries
     .filter(([, svc]) => svc.status === 'error')
     .map(([id, svc]) => `${id}: ${svc.errorMessage || '启动失败'}`);
   branch.errorMessage = failedReasons.length ? failedReasons.join('\n') : undefined;
@@ -262,6 +280,7 @@ export function reconcileStuckDeployStates(
   const nowMs = now.getTime();
   const source = options.source ?? 'deploy-stuck-reconciler';
   const hardTimeoutMs = options.hardTimeoutMs ?? STUCK_NON_TERMINAL_HARD_TIMEOUT_MS;
+  const allowHardTimeout = options.allowHardTimeout ?? true;
   const results: DeployStuckReconcileResult[] = [];
 
   for (const branch of branches) {
@@ -272,6 +291,13 @@ export function reconcileStuckDeployStates(
     // 终态交给操作完成时落。与 index.ts:1401 的「recovery skips operation lease」判活同源。
     if (options.hasActiveOperation?.(branch)) continue;
 
+    // 当前 build profile 仍在册的 profileId 集合（用于聚合时排除僵尸服务条目）。无 getBuildProfiles
+    // 时为 undefined ⇒ 聚合退回扫全部服务（保持旧行为）。
+    const profilesForBranch = options.getBuildProfiles?.(branch);
+    const activeProfileIds = profilesForBranch
+      ? new Set(profilesForBranch.map((p) => p.id))
+      : undefined;
+
     // 分支是否有 per-service 跟踪。有服务 ⇒ 分支聚合状态以**服务真实状态**为准（更可靠）；
     // 无服务 ⇒ 退回时间戳证据/硬超时的分支级收敛（兜底）。
     const hasServices = Object.keys(branch.services || {}).length > 0;
@@ -280,7 +306,7 @@ export function reconcileStuckDeployStates(
     // Bugbot Medium「Branch running with stopped services」：分支级时间戳证据**不看服务状态**，
     // 会在「服务已全 stopped 但分支 stop 元数据没落戳」时把 branch 误留在 running。故有服务时
     // 一律跳过本时间戳分支决策，改由下方「服务级收敛 + 聚合重算」从服务真相推导分支状态。
-    const branchDecision = hasServices ? null : decideBranchFinalization(branch, nowMs, hardTimeoutMs);
+    const branchDecision = hasServices ? null : decideBranchFinalization(branch, nowMs, hardTimeoutMs, allowHardTimeout);
     if (branchDecision) {
       const previousStatus = branch.status;
       branch.status = branchDecision.nextStatus;
@@ -347,7 +373,8 @@ export function reconcileStuckDeployStates(
         // 硬超时兜底：锚点只用本轮启动戳；**stopping 排除**（无停止起点锚点，避免把仍在
         // 进行的正常停止误判超时标成 stopped —— Bugbot High / Codex P2，同分支级）。
         // stopping 只走上面的证据路径（lastStoppedAt）；无证据则不触碰。
-        if (svc.status !== 'stopping' && startMs > 0 && nowMs - startMs >= hardTimeoutMs) {
+        // allowHardTimeout=false（executor 节点无法判活）时禁用硬超时，只走证据路径（Bugbot High）。
+        if (allowHardTimeout && svc.status !== 'stopping' && startMs > 0 && nowMs - startMs >= hardTimeoutMs) {
           nextStatus = 'error';
           via = 'hard-timeout';
           ageMin = Math.floor((nowMs - startMs) / 60_000);
@@ -384,7 +411,7 @@ export function reconcileStuckDeployStates(
     // 但分支 stop 元数据没落戳、branch 卡在 running（Bugbot Medium「Branch running with stopped
     // services」）。重算无变化时是纯读 no-op，不产生 result/事件。
     if (hasServices) {
-      const agg = recomputeBranchAggregateFromServices(branch);
+      const agg = recomputeBranchAggregateFromServices(branch, activeProfileIds);
       if (agg.changed) {
         mutated = true; // 即便本轮没动任何 service（服务早已全 stopped），聚合改了 branch 也要发事件
         results.push({
