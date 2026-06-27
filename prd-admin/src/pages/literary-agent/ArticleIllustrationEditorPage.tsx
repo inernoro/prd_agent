@@ -1581,31 +1581,39 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     [buildPreviewMarkdownWithImages]
   );
 
+  // 单条配图项的展示 URL（trim 后），所有入口（正文内联渲染 / 内联灯箱 / 右侧卡片灯箱）
+  // 必须共用这一份逻辑，保证同一张图在不同入口产出完全一致的字符串，便于跨入口匹配下标。
+  const markerItemImageUrl = useCallback((it?: MarkerRunItem): string => {
+    if (!it) return '';
+    return String(it.assetUrl || it.url || '').trim() ||
+      (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '');
+  }, []);
+
   // 收集正文内联配图 URL（按阅读顺序，与 buildPreviewMarkdownWithImages 的 data-marker-idx 顺序一致），
   // 供点击正文图片打开灯箱时确定轮播顺序与初始下标。
   const collectInlineImageUrls = useCallback(() => {
     const byIndex = new Map<number, MarkerRunItem>(markerRunItems.map((x) => [x.markerIndex, x]));
     const urls: string[] = [];
     for (let i = 0; i < markers.length; i++) {
-      const it = byIndex.get(markers[i].index);
-      const url = it
-        ? (String(it.assetUrl || it.url || '').trim() ||
-            (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : ''))
-        : '';
+      const url = markerItemImageUrl(byIndex.get(markers[i].index));
       if (url) urls.push(url);
     }
     return urls;
-  }, [markers, markerRunItems]);
+  }, [markers, markerRunItems, markerItemImageUrl]);
 
-  // 点击正文内联图片：以该图为起点打开可缩放灯箱（不管比例尺多大都可预览）
+  // 点击正文内联图片：以该图为起点打开可缩放灯箱（不管比例尺多大都可预览）。
+  // 若点击的 URL 不在收集到的轮播列表里（非 marker 图 / URL 不完全匹配），
+  // 则只展示用户实际点击的这张图——绝不退化成"打开第一张"误导用户。
   const openInlineImageLightbox = useCallback((clickedUrl?: string) => {
     const urls = collectInlineImageUrls();
-    if (urls.length === 0) {
-      if (clickedUrl) setLightbox({ images: [clickedUrl], index: 0 });
-      return;
-    }
     const found = clickedUrl ? urls.findIndex((u) => u === clickedUrl) : -1;
-    setLightbox({ images: urls, index: found >= 0 ? found : 0 });
+    if (found >= 0) {
+      setLightbox({ images: urls, index: found });
+    } else if (clickedUrl) {
+      setLightbox({ images: [clickedUrl], index: 0 });
+    } else if (urls.length > 0) {
+      setLightbox({ images: urls, index: 0 });
+    }
   }, [collectInlineImageUrls]);
 
   const locateMarkerInPreview = (markerIndex: number) => {
@@ -3624,10 +3632,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       }}
                       onClick={() => {
                         if (!canShow) return;
+                        // 与正文内联灯箱共用 markerItemImageUrl（trim 一致），保证同一张图跨入口字符串相同
                         const withImg = markerRunItems.filter(x => x.assetUrl || x.url || x.base64);
-                        const images = withImg.map(x =>
-                          x.assetUrl || x.url || (x.base64?.startsWith('data:') ? x.base64 : `data:image/png;base64,${x.base64}`) || '',
-                        );
+                        const images = withImg.map(x => markerItemImageUrl(x));
                         const currentIdx = withImg.findIndex(x => x.markerIndex === it.markerIndex);
                         setLightbox({ images, index: currentIdx >= 0 ? currentIdx : 0 });
                       }}
