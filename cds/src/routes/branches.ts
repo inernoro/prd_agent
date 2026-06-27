@@ -2676,10 +2676,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
         if (eventName === 'complete') {
           if (parsed.ok === false) {
             proxyHasError = true;
-          } else if (parsed.services && typeof parsed.services === 'object') {
-            const svcMap = parsed.services as Record<string, { status?: string }>;
+          }
+          if (parsed.services && typeof parsed.services === 'object') {
+            const svcMap = parsed.services as Record<string, { status?: string; deployedMode?: string }>;
             if (Object.values(svcMap).some((s) => s?.status === 'error')) {
               proxyHasError = true;
+            }
+            // Bugbot Medium「Remote deploy mode metadata stale」：远端执行器进程独立，master 的
+            // entry.services 不是同一对象，此前只有派发用的 activeDeployMode（express），executor 侧
+            // express→source 回退的真相在 complete 的 services 载荷里却从未被复制过来。这里把 executor
+            // 回报的真实 deployedMode 复制进 master，供下方 2783 的 `||` 保留 + finally 重算「部署类型」。
+            for (const [pid, s] of Object.entries(svcMap)) {
+              const m = s?.deployedMode;
+              if (typeof m === 'string' && m.trim() !== '' && entry.services[pid]) {
+                entry.services[pid].deployedMode = m.trim();
+              }
             }
           }
           // 成功 complete = 远端运行时就绪的时刻（executor 在所有服务 running 后才发）。
@@ -11270,9 +11281,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       opLog.finishedAt = new Date().toISOString();
       // 单服务路径：用 svc 实际跑起来的 deployedMode 重算部署类型（含极速版→源码回退真相），
       // 而非创建时（11036）按配置 activeDeployMode 取的值（Codex P2，与主/远端路径一致）。
+      // deployedMode 缺失/空（如未起容器/源码默认）时，与主路径一致退回 resolveEffectiveProfile，
+      // 绝不保留 pull 前的配置态（Bugbot Low「Single-service deploy mode gap」）。
       {
         const ranMode = (svc as { deployedMode?: string }).deployedMode;
-        if (typeof ranMode === 'string' && ranMode.trim() !== '') opLog.deployMode = ranMode.trim();
+        opLog.deployMode = (typeof ranMode === 'string' && ranMode.trim() !== '')
+          ? ranMode.trim()
+          : deriveDeployMode([resolveEffectiveProfile(profile, entry)]);
       }
       if (svc.status === 'running') {
         const runtimeReadyAt = new Date().toISOString();

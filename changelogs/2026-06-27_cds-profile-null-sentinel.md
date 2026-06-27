@@ -15,3 +15,5 @@
 | fix | cds | 看门狗分支聚合按当前在册 build profile 过滤服务，僵尸服务（profile 删/改名残留）不再把健康分支翻回 error（Codex P2 #940） |
 | fix | cds | executor 代理 source-build 的 pull 回传结构化 head/after/afterFull，master 用 parsePulledSha 取全 SHA 刷新构建历史+branch HEAD，远端路径不再只记短 SHA（Bugbot Low #940） |
 | fix | cds | 看门狗：getBuildProfiles 空数组视为不过滤(不把所有服务当僵尸误判 idle)；多服务分支不再用 branch.lastReadyAt 把仍在 starting 的服务过早翻 running；executor 模式不按本地 profile 过滤僵尸服务（Bugbot Medium×2 + Codex P2 #940） |
+| fix | cds | 远端执行器部署：master 从 complete 事件复制 executor 回报的真实 deployedMode，express→source 回退不再被构建历史误标 express（Bugbot Medium #940） |
+| fix | cds | 单服务部署 deployedMode 缺失/空时退回 resolveEffectiveProfile，不再保留 pull 前配置态（Bugbot Low #940，与主/远端路径一致） |
