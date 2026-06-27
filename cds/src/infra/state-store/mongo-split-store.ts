@@ -46,6 +46,7 @@ import type {
   ServiceDeploymentLogEntry,
 } from '../../types.js';
 import type { StateBackingStore } from './backing-store.js';
+import { pruneWebhookDeliveries } from '../../services/webhook-delivery-retention.js';
 
 /** Mongo 集合最小接口 — 与 mongo-backing-store 风格一致，便于单测。 */
 export interface ISplitMongoCollection<TDoc extends { _id: string }> {
@@ -83,7 +84,9 @@ const MAX_LOGS_PER_BRANCH = 5;
 const MAX_EVENTS_PER_OPERATION_LOG = 5;
 const MAX_CONTAINER_ARCHIVES_PER_BRANCH = 3;
 const MAX_ACTIVITY_LOGS_PER_PROJECT = 200;
-const MAX_WEBHOOK_DELIVERIES = 200;
+// webhook 投递保留改走 pruneWebhookDeliveries（按分支保留，SSOT 在
+// services/webhook-delivery-retention.ts）。历史上这里写死全局 200，比 state.ts 的
+// 1000 还小，迁到 split 存储后把那次修复悄悄回退了，导致「main webhook 只剩 1 条」。
 const MAX_SELF_UPDATE_HISTORY = 20;
 const MAX_SELF_UPDATE_STEPS = 25;
 const MAX_SERVICE_DEPLOYMENT_LOGS = 100;
@@ -190,7 +193,7 @@ function globalRestOf(state: CdsState): GlobalRest {
       (logs || []).slice(-MAX_ACTIVITY_LOGS_PER_PROJECT) as ProjectActivityLog[],
     ]),
   );
-  restOfState.githubWebhookDeliveries = (state.githubWebhookDeliveries || []).slice(-MAX_WEBHOOK_DELIVERIES);
+  restOfState.githubWebhookDeliveries = pruneWebhookDeliveries(state.githubWebhookDeliveries || []);
   restOfState.selfUpdateHistory = (state.selfUpdateHistory || []).slice(-MAX_SELF_UPDATE_HISTORY).map(sanitizeSelfUpdateRecord);
   restOfState.serviceDeployments = Object.fromEntries(
     Object.entries(state.serviceDeployments || {}).map(([deploymentId, deployment]) => [
