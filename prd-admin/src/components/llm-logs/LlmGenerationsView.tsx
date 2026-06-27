@@ -21,6 +21,7 @@ import {
   GENERATIONS_COLUMNS, UPSTREAM_COLUMNS, SESSIONS_COLUMNS, type ColumnDef,
   GENERATIONS_COLUMNS_MOBILE, UPSTREAM_COLUMNS_MOBILE, SESSIONS_COLUMNS_MOBILE,
   fmtShortTime, fmtDate, fmtMs, fmtCompact, computeTokPerSec, statusBadgeStyle, userLabel,
+  deriveLifecycle,
 } from './llmLogsView.helpers';
 
 const PAGE_SIZE = 30;
@@ -138,7 +139,15 @@ export function LlmGenerationsView() {
   // ── 单元格渲染 ──
   const renderGenerationCell = (col: ColumnDef, it: LlmRequestLogListItem) => {
     switch (col.key) {
-      case 'date': return <span className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>{fmtShortTime(it.startedAt)}</span>;
+      case 'date': {
+        const lc = deriveLifecycle(it);
+        return (
+          <span className="inline-flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+            <span title={`生命周期：${lc.label}`} className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${lc.pulse ? 'animate-pulse' : ''}`} style={{ background: lc.color }} />
+            {fmtShortTime(it.startedAt)}
+          </span>
+        );
+      }
       case 'model': {
         const proto = getProtocolMeta(it.protocol);
         return <span className="inline-flex items-center gap-1 min-w-0"><span className="truncate text-[11px] font-medium" style={{ color: 'var(--text-primary)' }} title={it.model}>{it.model || DASH}</span>{proto ? <Chip label={proto.label} color={proto.color} bg={proto.bg} /> : null}</span>;

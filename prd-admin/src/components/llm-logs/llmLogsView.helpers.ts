@@ -141,6 +141,32 @@ export function userLabel(it: LlmRequestLogListItem): string {
   return (it.displayName || it.username || it.userId || DASH) as string;
 }
 
+// ── 请求生命周期派生（治"不知道没发送还是没收到"）──
+// 纯读侧派生：从 status/startedAt/firstByteAt/endedAt 组合出可视阶段，区分
+// "已发送但还没收到首字"(sent-no-response) 与 "正在接收"(receiving)。
+// 注：完全"没发出去"(StartAsync 失败/黑洞)不会有日志记录，需后端补 blackhole 落库（后续波次）。
+export interface LifecycleInfo { key: string; label: string; color: string; bg: string; pulse?: boolean }
+
+/** 阈值：已发送但超过该秒数仍无首字 → 标记"等待响应"（疑似没收到） */
+const SENT_NO_FIRSTBYTE_SECONDS = 20;
+
+export function deriveLifecycle(it: { status?: string | null; startedAt?: string | null; firstByteAt?: string | null; endedAt?: string | null }): LifecycleInfo {
+  const status = it.status || '';
+  if (status === 'succeeded') return { key: 'completed', label: '已完成', color: '#34d399', bg: 'rgba(52,211,153,0.15)' };
+  if (status === 'failed') return { key: 'failed', label: '失败', color: '#f87171', bg: 'rgba(248,113,113,0.15)' };
+  if (status === 'cancelled') return { key: 'cancelled', label: '已取消', color: '#94a3b8', bg: 'rgba(148,163,184,0.15)' };
+  if (status === 'blackhole') return { key: 'blackhole', label: '未发出', color: '#fb7185', bg: 'rgba(251,113,133,0.18)' };
+  // running 态：靠 firstByteAt 区分"已收首字 / 已发未收"
+  if (status === 'running') {
+    if (it.firstByteAt) return { key: 'receiving', label: '接收中', color: '#60a5fa', bg: 'rgba(96,165,250,0.16)', pulse: true };
+    const startedMs = it.startedAt ? Date.parse(it.startedAt) : NaN;
+    const elapsedSec = isNaN(startedMs) ? 0 : (Date.now() - startedMs) / 1000;
+    if (elapsedSec >= SENT_NO_FIRSTBYTE_SECONDS) return { key: 'sent-no-response', label: '已发·等响应', color: '#fbbf24', bg: 'rgba(251,191,36,0.16)', pulse: true };
+    return { key: 'sending', label: '发送中', color: '#a5b4fc', bg: 'rgba(165,180,252,0.16)', pulse: true };
+  }
+  return { key: status || 'unknown', label: status || DASH, color: '#94a3b8', bg: 'rgba(148,163,184,0.14)' };
+}
+
 // ── 手机端核心列（mobile-first-density.md：只留核心信息，列用 fr 撑满视口、不横滚）──
 // 手机寸土寸金：每个表只保留「这一行是什么 + 一个关键指标」。
 export const GENERATIONS_COLUMNS_MOBILE: ColumnDef[] = [

@@ -9,7 +9,7 @@ import type { LlmRequestLog } from '@/types/admin';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { getProtocolMeta } from '@/lib/protocolRegistry';
 import { Copy, X } from 'lucide-react';
-import { DASH, computeTokPerSec, fmtMs } from './llmLogsView.helpers';
+import { DASH, computeTokPerSec, fmtMs, deriveLifecycle } from './llmLogsView.helpers';
 
 function MetricCard({ title, value, note }: { title: string; value: string; note?: string }) {
   return (
@@ -144,6 +144,7 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>{detail.model || DASH}</span>
                 {detail.provider ? <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>· {detail.provider}</span> : null}
+                {(() => { const lc = deriveLifecycle(detail); return <span className={`inline-flex items-center gap-1 rounded-full px-2 h-5 text-[10px] font-semibold ${lc.pulse ? 'animate-pulse' : ''}`} style={{ color: lc.color, background: lc.bg }} title="请求生命周期：区分已发送未收到 / 接收中 / 已完成"><span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: lc.color }} />{lc.label}</span>; })()}
                 {fidelityChips(detail).map((c, i) => (
                   <span key={i} className="inline-flex items-center rounded-full px-2 h-5 text-[10px] font-semibold" style={{ color: c.color, background: c.bg }}>{c.label}</span>
                 ))}
