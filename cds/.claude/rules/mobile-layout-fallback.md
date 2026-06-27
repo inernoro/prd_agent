@@ -34,19 +34,19 @@
 
 ### 1. 多窗格容器：mobile `flex flex-col`，desktop `lg:grid`
 ```tsx
-// ❌ 只有 desktop fill,手机塌陷
+// 反例:只有 desktop fill,手机塌陷
 <div className="grid min-h-0 lg:grid-cols-[320px_minmax(0,1fr)]">
 
-// ✅ 手机自然堆叠,desktop 再填满
+// 正例:手机自然堆叠,desktop 再填满
 <div className="flex min-h-0 flex-col lg:grid lg:h-full lg:grid-cols-[320px_minmax(0,1fr)]">
 ```
 
 ### 2. 固定 px / `1fr` 网格行：只在 `lg:` 生效
 ```tsx
-// ❌ 245px 固定行 + 1fr 在手机单列里 → 1fr 塌成 0,结果区消失
+// 反例:245px 固定行 + 1fr 在手机单列里 → 1fr 塌成 0,结果区消失
 <main className="grid grid-rows-[245px_minmax(0,1fr)]">
 
-// ✅ 手机 flex-col 自然高度,desktop 再回到固定行布局
+// 正例:手机 flex-col 自然高度,desktop 再回到固定行布局
 <main className="flex min-h-0 flex-col lg:grid lg:grid-rows-[245px_minmax(0,1fr)]">
 ```
 
@@ -75,10 +75,10 @@
 
 ### 5. 浮动 pill / 徽章：限宽 + 截断,别 `whitespace-nowrap`
 ```tsx
-// ❌ 长文案把按钮挤出屏幕
+// 反例:长文案把按钮挤出屏幕
 <div className="fixed bottom-4 left-4"><span className="whitespace-nowrap">{label}</span>…buttons</div>
 
-// ✅ 限宽 + min-w-0 链 + 截断,按钮 shrink-0 永远够得到
+// 正例:限宽 + min-w-0 链 + 截断,按钮 shrink-0 永远够得到
 <div className="fixed bottom-4 left-4 max-w-[calc(100vw-2rem)]">
   <div className="flex min-w-0 …">
     <button className="flex min-w-0 …"><span className="truncate">{label}</span></button>
