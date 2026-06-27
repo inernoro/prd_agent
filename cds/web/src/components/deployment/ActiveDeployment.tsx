@@ -354,7 +354,12 @@ export function ActiveDeployment({
 
   // 卡死耗时封顶：进行中且超阈值（默认 60 分钟）显示「疑似卡住」而非越来越离谱的
   // 数字（历史上 772m 幽灵的根因是无上界一直涨）。已结束的部署照实显示。
-  const durationDisplay = computeDeployDurationDisplay(deployment.startedAt, deployment.finishedAt, now);
+  // 传 isRunning（按 displayStatus）：本面板也可能渲染已终结但缺 finishedAt 的行，
+  // 不传会被当进行中、虚高耗时 + 误报「疑似卡住」（Bugbot Medium「Active panel missing isRunning guard」）。
+  const durationDisplay = computeDeployDurationDisplay(
+    deployment.startedAt, deployment.finishedAt, now,
+    undefined, displayStatus === 'running',
+  );
   const deployDuration = formatDurationMs(durationDisplay.cappedMs);
   const triggerText = triggerSourceLabel(deployment.triggerSource);
   const runtimeDuration = formatRuntimeDuration(deployment, now);
