@@ -1313,11 +1313,12 @@ public class ImageGenRunWorker : BackgroundService
         var markerIndex = run.ArticleMarkerIndex.Value;
         var isDone = status == "done";
         var key = markerIndex.ToString();
+        // 权威成功时间戳的字段路径（第 1 步指针写入与第 2 步显示门控共用，避免重复声明导致 CS0136）
+        var stampPath = $"ArticleWorkflow.AssetRunAtByMarkerIndex.{key}";
 
         // 1) 成功且有资产：可靠的"每 marker 原子 + 时间戳门控"指针写入（不依赖 workspace 乐观锁）。
         if (isDone && !string.IsNullOrWhiteSpace(assetId))
         {
-            var stampPath = $"ArticleWorkflow.AssetRunAtByMarkerIndex.{key}";
             var pointerFilter = Builders<ImageMasterWorkspace>.Filter.And(
                 Builders<ImageMasterWorkspace>.Filter.Eq(x => x.Id, wid),
                 Builders<ImageMasterWorkspace>.Filter.Ne(x => x.ArticleWorkflow, null),
@@ -1366,7 +1367,6 @@ public class ImageGenRunWorker : BackgroundService
         }
 
         var mPath = $"ArticleWorkflow.Markers.{markerIndex}";
-        var stampPath = $"ArticleWorkflow.AssetRunAtByMarkerIndex.{key}";
         var F = Builders<ImageMasterWorkspace>.Filter;
         var U = Builders<ImageMasterWorkspace>.Update;
 
