@@ -185,20 +185,35 @@ function startStaleDeployDispatchReconciler(
     if (running) return;
     running = true;
     try {
+      // 两个看门狗各自 try/catch：webhook 派发收敛 与 通用卡死收敛是独立路径，崩溃必须各记各的
+      // action/source，否则卡死收敛的异常被误记成 `branch.deploy-dispatch.reconcile.failed`
+      // +「stale webhook dispatch」文案，排障时张冠李戴（Bugbot Low）。
       if (isMaster) {
-        const reconciled = reconcileStaleDeployDispatches(state, {
-          source: 'deploy-dispatch-reconciler.interval',
-          serverEventLogStore: store,
-        });
-        if (reconciled.length > 0) {
-          console.warn(`[deploy-dispatch] reconciled ${reconciled.length} stale webhook dispatch state(s)`);
+        try {
+          const reconciled = reconcileStaleDeployDispatches(state, {
+            source: 'deploy-dispatch-reconciler.interval',
+            serverEventLogStore: store,
+          });
+          if (reconciled.length > 0) {
+            console.warn(`[deploy-dispatch] reconciled ${reconciled.length} stale webhook dispatch state(s)`);
+          }
+          dispatchRecoveredWebhookDeploys(state, store, reconciled, 'deploy-dispatch-reconciler.interval');
+        } catch (err) {
+          store?.record({
+            category: 'system',
+            severity: 'error',
+            source: 'deploy-dispatch-reconciler.interval',
+            action: 'branch.deploy-dispatch.reconcile.failed',
+            message: `stale webhook deploy dispatch reconcile failed: ${(err as Error).message}`,
+            details: { error: (err as Error).message },
+          });
         }
-        dispatchRecoveredWebhookDeploys(state, store, reconciled, 'deploy-dispatch-reconciler.interval');
       }
 
       // 通用部署卡死看门狗（2026-06-27）：收敛卡死的非终结态 + 极速版镜像落后告警。
       // master + executor 都跑（见函数顶部说明）。
       // 纯函数 reconcileStuckDeployStates 经回调注入所有 I/O，这里只负责接线。
+      try {
       const stuck = reconcileStuckDeployStates(state.getAllBranches(), {
         source: 'deploy-stuck-reconciler.interval',
         serverEventLogStore: store,
@@ -236,15 +251,16 @@ function startStaleDeployDispatchReconciler(
         console.warn(`[deploy-stuck] reconciled ${stuck.length} stuck deploy/lifecycle state(s)`);
         state.save();
       }
-    } catch (err) {
-      store?.record({
-        category: 'system',
-        severity: 'error',
-        source: 'deploy-dispatch-reconciler.interval',
-        action: 'branch.deploy-dispatch.reconcile.failed',
-        message: `stale webhook deploy dispatch reconcile failed: ${(err as Error).message}`,
-        details: { error: (err as Error).message },
-      });
+      } catch (err) {
+        store?.record({
+          category: 'system',
+          severity: 'error',
+          source: 'deploy-stuck-reconciler.interval',
+          action: 'branch.deploy-stuck.reconcile.failed',
+          message: `stuck deploy/lifecycle state reconcile failed: ${(err as Error).message}`,
+          details: { error: (err as Error).message },
+        });
+      }
     } finally {
       running = false;
     }

@@ -105,6 +105,38 @@ describe('reconcileStuckDeployStates — TYPE 2 卡死非终结态收敛', () =>
     });
   });
 
+  it('service 硬超时收敛成 error 后，分支聚合 status/errorMessage 一并重算（Codex P2 回归）', () => {
+    const now = new Date('2026-06-27T01:00:00.000Z'); // 服务启动 60 分钟前 > 45min 硬超时
+    const branch = makeBranch({
+      status: 'running', // 分支自身停在 running（与某服务已卡死矛盾）
+      lastDeployStartedAt: '2026-06-27T00:00:00.000Z',
+      // 无 lastReadyAt ⇒ 服务走硬超时
+      services: {
+        web: { profileId: 'web', containerName: 'c', hostPort: 1, status: 'starting' },
+      },
+    });
+    const { events, sink } = collectEvents();
+    const updated: string[] = [];
+
+    const results = reconcileStuckDeployStates([branch], {
+      now,
+      source: 'unit',
+      serverEventLogStore: sink,
+      emitBranchUpdated: (b) => updated.push(b.id),
+    });
+
+    // 服务被收敛成 error
+    expect(branch.services.web.status).toBe('error');
+    // 关键：分支聚合不再停留在 running，被重算为 error + 带 branch.errorMessage
+    expect(branch.status).toBe('error');
+    expect(branch.errorMessage).toContain('web:');
+    expect(updated).toEqual(['b1']); // 发出的 branch.updated 携带正确的 error 状态
+    // 结果集含服务级收敛 + 分支聚合重算两条
+    expect(results.some((r) => r.kind === 'service-status-finalized' && r.nextStatus === 'error')).toBe(true);
+    expect(results.some((r) => r.kind === 'branch-status-finalized' && r.previousStatus === 'running' && r.nextStatus === 'error')).toBe(true);
+    expect(events.some((e) => e.action === 'branch.stuck-state.aggregate-recomputed')).toBe(true);
+  });
+
   it('conservative hard timeout NOT tripped for a young in-progress build', () => {
     const now = new Date('2026-06-27T00:10:00.000Z'); // 仅开始 10 分钟
     const branch = makeBranch({

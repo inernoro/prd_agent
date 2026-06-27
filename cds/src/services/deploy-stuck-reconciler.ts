@@ -209,6 +209,33 @@ function decideBranchFinalization(
   return null;
 }
 
+/**
+ * 从 service.status 重算分支聚合 status + errorMessage（纯函数，镜像 index.ts
+ * reconcileBranchStatusFromServices 的聚合口径，但**不**带 lastReadyAt 副作用 /
+ * 不清运行中服务的残留错误——看门狗只负责把「服务已被收敛成 error」如实上浮到分支级）。
+ * 仅在服务级收敛真的改了某个 service.status 后调用，避免在「分支有服务」的场景下
+ * 让分支级 errorMessage 与服务真实状态脱节（Codex P2：service 收敛成 error 但
+ * branch.status 仍 running、branch.errorMessage 仍空，分支卡片/自动化漏掉看门狗失败）。
+ * 返回是否改了分支聚合（status 或 errorMessage 任一变化）。
+ */
+function recomputeBranchAggregateFromServices(branch: BranchEntry): { previousStatus: string; nextStatus: string; changed: boolean } {
+  const previousStatus = branch.status;
+  const previousError = branch.errorMessage;
+  const statuses = Object.values(branch.services || {}).map((svc) => svc.status);
+  let next: BranchEntry['status'];
+  if (statuses.some((s) => s === 'error')) next = 'error';
+  else if (statuses.some((s) => s === 'building')) next = 'building';
+  else if (statuses.some((s) => s === 'starting' || s === 'restarting')) next = 'starting';
+  else if (statuses.some((s) => s === 'running')) next = 'running';
+  else next = 'idle';
+  branch.status = next;
+  const failedReasons = Object.entries(branch.services || {})
+    .filter(([, svc]) => svc.status === 'error')
+    .map(([id, svc]) => `${id}: ${svc.errorMessage || '启动失败'}`);
+  branch.errorMessage = failedReasons.length ? failedReasons.join('\n') : undefined;
+  return { previousStatus, nextStatus: next, changed: previousStatus !== next || previousError !== branch.errorMessage };
+}
+
 export function reconcileStuckDeployStates(
   branches: BranchEntry[],
   options: ReconcileStuckDeployOptions = {},
@@ -258,6 +285,7 @@ export function reconcileStuckDeployStates(
     }
 
     // ── TYPE 2 服务级：卡死非终结 service.status 收敛 ──
+    let serviceStatusChanged = false;
     for (const [profileId, svc] of Object.entries(branch.services || {})) {
       if (!svc || !NON_TERMINAL_STATES.has(svc.status)) continue;
       const previousStatus = svc.status;
@@ -302,6 +330,7 @@ export function reconcileStuckDeployStates(
       svc.status = nextStatus;
       if (nextStatus === 'error' && !svc.errorMessage) svc.errorMessage = reason;
       mutated = true;
+      serviceStatusChanged = true;
       results.push({
         branchId: branch.id,
         projectId: branch.projectId,
@@ -320,6 +349,32 @@ export function reconcileStuckDeployStates(
         via,
         ageMin,
       });
+    }
+
+    // 服务级收敛改了任一 service.status ⇒ 把分支聚合 status/errorMessage 一并重算，
+    // 否则发出的 branch.updated 仍可能是「branch 在 running、无 branch error」而某个 service
+    // 已被收敛成 error，分支卡片/按 branch.status 决策的自动化漏掉这次看门狗失败（Codex P2）。
+    if (serviceStatusChanged) {
+      const agg = recomputeBranchAggregateFromServices(branch);
+      if (agg.changed) {
+        results.push({
+          branchId: branch.id,
+          projectId: branch.projectId,
+          kind: 'branch-status-finalized',
+          previousStatus: agg.previousStatus,
+          nextStatus: agg.nextStatus,
+          via: 'timestamp-evidence',
+          reason: `状态机看门狗：服务级收敛后重算分支聚合状态 ${agg.previousStatus} → ${agg.nextStatus}`,
+        });
+        recordEvent(
+          options.serverEventLogStore,
+          branch,
+          source,
+          'branch.stuck-state.aggregate-recomputed',
+          `服务级收敛后重算分支聚合：${agg.previousStatus} → ${agg.nextStatus}`,
+          { previousStatus: agg.previousStatus, nextStatus: agg.nextStatus },
+        );
+      }
     }
 
     // ── TYPE 1：极速版镜像落后 HEAD 告警（只告警，不自动部署） ──
