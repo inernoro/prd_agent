@@ -229,8 +229,16 @@ function recomputeBranchAggregateFromServices(branch: BranchEntry): { previousSt
   const previousStatus = branch.status;
   const previousError = branch.errorMessage;
   const statuses = Object.values(branch.services || {}).map((svc) => svc.status);
+  const anyServiceError = statuses.some((s) => s === 'error');
+  // 分支级 error（**非来自服务**：webhook 派发失败 / 极速版镜像门 / ciImageError 等）绝不能被
+  // 服务聚合清掉（Bugbot Medium「Watchdog clears branch error state」）。判据：分支当前是 error
+  // 且没有任何服务处于 error ⇒ 这是分支级失败，服务全 stopped 也不与它矛盾，原样保留、不动 status/
+  // errorMessage（清分支级 error 是部署/操作的职责，不是看门狗的）。
+  if (previousStatus === 'error' && !anyServiceError) {
+    return { previousStatus, nextStatus: previousStatus, changed: false };
+  }
   let next: BranchEntry['status'];
-  if (statuses.some((s) => s === 'error')) next = 'error';
+  if (anyServiceError) next = 'error';
   else if (statuses.some((s) => s === 'building')) next = 'building';
   else if (statuses.some((s) => s === 'starting' || s === 'restarting')) next = 'starting';
   else if (statuses.some((s) => s === 'running')) next = 'running';

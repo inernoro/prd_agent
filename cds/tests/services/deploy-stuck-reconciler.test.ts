@@ -324,6 +324,23 @@ describe('reconcileStuckDeployStates — Bugbot review 回归', () => {
     expect(events.some((e) => e.action === 'branch.stuck-state.aggregate-recomputed')).toBe(true);
   });
 
+  it('分支级 error（非服务来源）+ 服务全 stopped => 不被聚合清成 idle（Bugbot Medium）', () => {
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const branch = makeBranch({
+      status: 'error',
+      errorMessage: 'webhook 派发失败：CI 镜像门未通过', // 分支级失败，非任何服务报的
+      lastDeployStartedAt: '2026-06-27T00:00:00.000Z',
+      services: {
+        api: { profileId: 'api', containerName: 'c1', hostPort: 1, status: 'stopped' },
+        web: { profileId: 'web', containerName: 'c2', hostPort: 2, status: 'stopped' },
+      },
+    });
+    const results = reconcileStuckDeployStates([branch], { now });
+    expect(branch.status).toBe('error'); // 分支级 error 保留，不被服务聚合清成 idle
+    expect(branch.errorMessage).toBe('webhook 派发失败：CI 镜像门未通过'); // errorMessage 不被清空
+    expect(results).toHaveLength(0);
+  });
+
   it('有服务的分支：分支级时间戳证据不再凌驾服务真相（lone stopping 保留）', () => {
     // 即便分支级时间戳证据「ready 晚于 start、无 stop」会推出 running，有服务时也不采信它，
     // 改由服务聚合决定：唯一服务 stopping ⇒ 分支保持 stopping（不被误判 running）。

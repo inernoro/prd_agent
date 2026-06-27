@@ -7,3 +7,5 @@
 | fix | cds | 源码部署 pull 后用 parsePulledSha 取裸 SHA（优先 after）刷新 githubCommitSha + 构建历史版本列，治 head 带标题不匹配裸 SHA 正则导致版本列停在旧 SHA（Codex P2 #940） |
 | fix | cds | 源码部署刷新 githubCommitSha 用完整 40 位 SHA（pull 新增 afterFull=rev-parse HEAD，parsePulledSha 优先全 SHA），避免截断成短 SHA 影响 GitHub check-run/release/OperationLog.commitSha 等外部集成（Codex P2 #940） |
 | fix | cds | 部署历史「部署类型」chip 区分缺失元数据与显式源码模式：旧历史行 deployMode 为 undefined 显示「未记录」而非臆造「源码/默认」（Codex P2 #940） |
+| fix | cds | 卡死看门狗聚合重算保留分支级 error（webhook 派发失败/镜像门等非服务来源），不再被服务聚合清成 idle/清空 errorMessage（Bugbot Medium + Codex P2 #940） |
+| fix | cds | executor /exec/deploy 起点盖 lastDeployStartedAt，让 executor 本地卡死看门狗硬超时有锚点（集群模式，Codex P2 #940） |
