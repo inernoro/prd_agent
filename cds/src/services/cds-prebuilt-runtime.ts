@@ -16,6 +16,13 @@ import { parseCdsPrebuiltManifest } from './cds-prebuilt.js';
 
 export interface PrebuiltExecResult { stdout: string; stderr: string; exitCode: number }
 
+/**
+ * `docker create` 的占位命令。产物镜像 `FROM scratch` 无 CMD/ENTRYPOINT，
+ * 不传命令会创建失败（"No command specified"）。该命令永不执行（只 create+cp+rm），
+ * 取镜像内真实存在的 /manifest.json 作无害占位。
+ */
+export const DOCKER_CREATE_PLACEHOLDER_CMD = '/manifest.json';
+
 export interface PrebuiltFetchDeps {
   /** 执行一条 docker 命令。 */
   exec: (cmd: string, opts?: { timeout?: number }) => Promise<PrebuiltExecResult>;
@@ -71,7 +78,10 @@ export async function fetchCdsPrebuilt(
     const pull = await deps.exec(`docker pull ${imageRef}`, { timeout: pullTimeoutMs });
     if (pull.exitCode !== 0) return { ok: false, reason: `docker pull 失败: ${(pull.stderr || '').slice(0, 200)}` };
 
-    const create = await deps.exec(`docker create ${imageRef}`, { timeout: 30_000 });
+    // 必须给 `docker create` 一个显式命令：产物镜像是 `FROM scratch` 且只有 COPY，无 CMD/ENTRYPOINT，
+    // 不带命令时 docker 直接报 "No command specified" 而创建失败，快路径会永远回退本机现编。
+    // 该命令永不执行（我们只 create + cp + rm，从不 start/run），故用一个无害占位（镜像内确实存在的 /manifest.json）。
+    const create = await deps.exec(`docker create ${imageRef} ${DOCKER_CREATE_PLACEHOLDER_CMD}`, { timeout: 30_000 });
     if (create.exitCode !== 0) return { ok: false, reason: `docker create 失败: ${(create.stderr || '').slice(0, 200)}` };
     const cid = parseDockerCreateId(create.stdout);
     if (!cid) return { ok: false, reason: 'docker create 未返回有效容器 id' };

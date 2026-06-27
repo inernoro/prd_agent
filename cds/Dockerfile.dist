@@ -14,3 +14,7 @@ FROM scratch
 COPY dist /dist
 COPY web/dist /web-dist
 COPY cds-prebuilt-manifest.json /manifest.json
+# scratch 无 CMD/ENTRYPOINT 时 `docker create` 会因 "No command specified" 失败，
+# 导致自更新快路径永远回退本机现编。给一个无害 CMD 兜底（永不执行——只 create+cp+rm）。
+# 运行层（cds-prebuilt-runtime.ts）同时显式传命令，双保险。
+CMD ["/manifest.json"]

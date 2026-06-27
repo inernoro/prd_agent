@@ -29,3 +29,4 @@
 | fix | cds | 看门狗在途操作跳过加年龄上限（2× 硬超时=90min）：deploy 路由自身挂死（git/docker pull 无界卡住）导致租约永不释放时，超龄租约不再护着分支，让硬超时把它收敛成 error（Codex P2 #940） |
 | feat | cds | CDS 自更新极速版 第3步(运行层模块)：新增 cds-prebuilt-runtime.ts（fetchCdsPrebuilt：docker pull + create + cp 解出 /dist /web-dist 到 staging + 校验 manifest，任何失败 ok:false 供回退现编，I/O 全注入可单测）+ 8 单测 |
 | docs | cds | 新增 debt.cds.selfupdate-prebuilt：CDS 自更新极速版台账（CI 产物+决策+拉取三层已落地验证，orchestrator 接线精确 spec 待真实环境灰度） |
+| fix | cds | 自更新极速版产物镜像加无害 CMD + 运行层 docker create 显式传命令：FROM scratch 无 CMD/ENTRYPOINT 时 docker create 报 "No command specified" 创建失败，会导致快路径永远回退本机现编（Codex P2 #940） |
