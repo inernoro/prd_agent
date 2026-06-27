@@ -3,7 +3,7 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { TipCard } from '@/components/daily-tips/TipCard';
-import { ImagePreviewDialog } from '@/components/ui/ImagePreviewDialog';
+import { ImageLightbox } from '@/components/ui/ImageLightbox';
 import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
 import { WorkflowProgressBar } from '@/components/ui/WorkflowProgressBar';
 import { MarketplaceCard } from '@/components/marketplace';
@@ -430,8 +430,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [markerStreaming, setMarkerStreaming] = useState(false);
   const [thinkingContent, setThinkingContent] = useState('');
   const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
-  const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
-  const [imagePreviewIndex, setImagePreviewIndex] = useState(0);
+  // 统一图片灯箱（支持放大/缩小/拖拽预览）：右侧卡片与正文内联图片共用
+  // 灯箱在"打开那一刻"快照图片列表与起始下标。
+  // 刻意不在打开期间实时重算列表：否则更靠前的 marker 后完成插入会让已打开的图悄悄错位（违反"最小惊讶"）。
+  // 新完成的配图重新打开灯箱即可看到。
+  const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null);
   const [watermarkStatus, setWatermarkStatus] = useState<{ enabled: boolean; name?: string | null }>({ enabled: false });
   const [pendingWatermarkEdit, setPendingWatermarkEdit] = useState(false); // 用于延迟触发水印编辑
   const handleWatermarkStatusChange = useCallback((status: { hasActiveConfig: boolean; activeId?: string; activeName?: string }) => {
@@ -1580,6 +1583,51 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     },
     [buildPreviewMarkdownWithImages]
   );
+
+  // 单条配图项的展示 URL（trim 后），所有入口（正文内联渲染 / 内联灯箱 / 右侧卡片灯箱）
+  // 必须共用这一份逻辑，保证同一张图在不同入口产出完全一致的字符串，便于跨入口匹配下标。
+  const markerItemImageUrl = useCallback((it?: MarkerRunItem): string => {
+    if (!it) return '';
+    return String(it.assetUrl || it.url || '').trim() ||
+      (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '');
+  }, []);
+
+  // 配图灯箱的唯一规范顺序：按 markers 阅读顺序（与 buildPreviewMarkdownWithImages 的 data-marker-idx 一致）。
+  // 正文内联点击与右侧卡片点击都用这一份，保证同一张图在两个入口的上一张/下一张完全一致。
+  const collectOrderedMarkerImages = useCallback((): Array<{ markerIndex: number; url: string }> => {
+    const byIndex = new Map<number, MarkerRunItem>(markerRunItems.map((x) => [x.markerIndex, x]));
+    const out: Array<{ markerIndex: number; url: string }> = [];
+    for (let i = 0; i < markers.length; i++) {
+      const it = byIndex.get(markers[i].index);
+      const url = markerItemImageUrl(it);
+      if (it && url) out.push({ markerIndex: it.markerIndex, url });
+    }
+    return out;
+  }, [markers, markerRunItems, markerItemImageUrl]);
+
+  // 点击正文内联图片：以该图为起点打开可缩放灯箱（不管比例尺多大都可预览）。
+  // 优先按 marker 身份定位（markerArrayIdx = 正文 <img> 的 data-marker-idx，
+  // 即 markers 数组下标），与右侧卡片一致，避免多 marker 共用同一 URL 时按字符串
+  // 命中错下标。定位不到再退回 URL 匹配；仍找不到则只展示用户实际点击的这张图，
+  // 绝不退化成"打开第一张"误导用户。
+  const openInlineImageLightbox = useCallback((clickedUrl?: string, markerArrayIdx?: number) => {
+    const ordered = collectOrderedMarkerImages();
+    let found = -1;
+    if (markerArrayIdx != null && markers[markerArrayIdx]) {
+      const mIndex = markers[markerArrayIdx].index;
+      found = ordered.findIndex((o) => o.markerIndex === mIndex);
+    }
+    if (found < 0 && clickedUrl) {
+      found = ordered.findIndex((o) => o.url === clickedUrl);
+    }
+    if (found >= 0) {
+      setLightbox({ images: ordered.map((o) => o.url), index: found });
+    } else if (clickedUrl) {
+      setLightbox({ images: [clickedUrl], index: 0 });
+    } else if (ordered.length > 0) {
+      setLightbox({ images: ordered.map((o) => o.url), index: 0 });
+    }
+  }, [collectOrderedMarkerImages, markers]);
 
   const locateMarkerInPreview = (markerIndex: number) => {
     const container = articlePreviewRef.current;
@@ -3182,6 +3230,25 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       h1: ({ node: _node, children, ...props }) => <h1 {...props}>{highlightChildren(children)}</h1>,
                       h2: ({ node: _node, children, ...props }) => <h2 {...props}>{highlightChildren(children)}</h2>,
                       h3: ({ node: _node, children, ...props }) => <h3 {...props}>{highlightChildren(children)}</h3>,
+                      // 正文配图：点击打开可缩放灯箱（放大/缩小/拖拽预览），不管比例尺多大都可预览
+                      img: ({ node: _node, src, alt, style: _style, ...props }) => (
+                        <img
+                          {...props}
+                          src={src}
+                          alt={alt}
+                          onClick={(e) => {
+                            // 链接图 [![alt](img)](target) 渲染为 <a><img></a>：
+                            // 阻止冒泡到父 <a>，否则点击会跟随链接跳走而非打开预览
+                            e.preventDefault();
+                            e.stopPropagation();
+                            // 用 data-marker-idx（markers 数组下标）按 marker 身份定位，避免重复 URL 命中错下标
+                            const attr = e.currentTarget.getAttribute('data-marker-idx');
+                            const markerArrayIdx = attr != null && /^\d+$/.test(attr) ? parseInt(attr, 10) : undefined;
+                            openInlineImageLightbox(typeof src === 'string' ? src : undefined, markerArrayIdx);
+                          }}
+                          style={{ maxWidth: '100%', borderRadius: 8, margin: '8px 0', cursor: 'zoom-in' }}
+                        />
+                      ),
                     }}
                   >
                     {leftPreviewMarkdown}
@@ -3587,18 +3654,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       }}
                       onClick={() => {
                         if (!canShow) return;
-                        const allImages = markerRunItems
-                          .filter(x => x.assetUrl || x.url || x.base64)
-                          .map((x, i) => ({
-                            url: x.assetUrl || x.url || (x.base64?.startsWith('data:') ? x.base64 : `data:image/png;base64,${x.base64}`) || '',
-                            alt: `配图 ${i + 1}`,
-                          }));
-                        const currentIdx = allImages.findIndex((_, i) => {
-                          const item = markerRunItems.filter(x => x.assetUrl || x.url || x.base64)[i];
-                          return item?.markerIndex === it.markerIndex;
-                        });
-                        setImagePreviewIndex(currentIdx >= 0 ? currentIdx : 0);
-                        setImagePreviewOpen(true);
+                        // 与正文内联灯箱共用同一份规范顺序（markers 阅读顺序），保证两个入口轮播一致
+                        const ordered = collectOrderedMarkerImages();
+                        const currentIdx = ordered.findIndex(o => o.markerIndex === it.markerIndex);
+                        if (currentIdx >= 0) {
+                          setLightbox({ images: ordered.map(o => o.url), index: currentIdx });
+                        } else {
+                          // 兜底：该卡片不在规范列表里（极少见），只展示它自己这张
+                          const own = markerItemImageUrl(it);
+                          if (own) setLightbox({ images: [own], index: 0 });
+                        }
                       }}
                     >
                       {/* 图片内容 / 占位 / 加载动画 */}
@@ -4714,18 +4779,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         }
       />
 
-      {/* Image Preview Dialog */}
-      <ImagePreviewDialog
-        images={markerRunItems
-          .filter(x => x.assetUrl || x.url || x.base64)
-          .map((x, i) => ({
-            url: x.assetUrl || x.url || (x.base64?.startsWith('data:') ? x.base64 : `data:image/png;base64,${x.base64}`) || '',
-            alt: `配图 ${i + 1}`,
-          }))}
-        initialIndex={imagePreviewIndex}
-        open={imagePreviewOpen}
-        onClose={() => setImagePreviewOpen(false)}
-      />
+      {/* 图片灯箱（可放大/缩小/拖拽预览）。列表在打开时已快照，避免打开期间靠前 marker 完成插入导致错位 */}
+      {lightbox && (
+        <ImageLightbox
+          images={lightbox.images}
+          index={lightbox.index}
+          onClose={() => setLightbox(null)}
+        />
+      )}
 
       {/* 风格图放大预览对话框 */}
       <Dialog
