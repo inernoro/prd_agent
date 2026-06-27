@@ -30,8 +30,6 @@ x-cds-env:
   # 如需迁移旧平台密文，可临时填写旧数据加密密钥，多个用英文分号分隔；迁移完成后删除。
   # ApiKeyCrypto__LegacySecrets: ""
   AI_ACCESS_KEY: "TODO: 请填写实际值"
-  # 独立 LLM 网关 llmgw 自身鉴权密钥：独立于 JWT_SECRET（跨服务隔离，见 cross-project-isolation.md）
-  LLMGW_JWT_SECRET: "TODO: 请填写实际值"
 
 # 部署模式 — 每个服务可在 CDS 左侧面板下拉切换
 # dev: 热重载开发模式（改代码自动刷新）
@@ -112,69 +110,6 @@ x-cds-deploy-modes:
         - "ghcr.io/inernoro/prd_agent/prdagent-admin:branch-main"
       prebuilt: true
       containerPort: 8080
-  # 独立 LLM 网关后端 llmgw —— 当前与 api 同源（prd-api 同一份 DLL，不同 entrypoint 端口 8090，占位）。
-  # 待 prd-llmgw 拆为独立项目后改 command / image 指向新项目。
-  llmgw:
-    dev:
-      label: "开发模式 (热重载)"
-      command: >-
-        cd prd-api &&
-        dotnet restore &&
-        dotnet build --no-restore &&
-        dotnet watch run --project src/PrdAgent.Api --urls http://0.0.0.0:5090
-    static:
-      label: "静态部署 (publish)"
-      command: >-
-        cd prd-api &&
-        rm -rf src/PrdAgent.Api/bin src/PrdAgent.Api/obj
-        src/PrdAgent.Core/bin src/PrdAgent.Core/obj
-        src/PrdAgent.Infrastructure/bin src/PrdAgent.Infrastructure/obj &&
-        dotnet restore &&
-        dotnet publish src/PrdAgent.Api -c Release -o /publish --no-restore &&
-        dotnet /publish/PrdAgent.Api.dll --urls http://0.0.0.0:5090
-      env:
-        ASPNETCORE_ENVIRONMENT: Production
-    express:
-      label: "极速版（CI 预构建）"
-      # 占位：当前复用 api 镜像（同一份 DLL）。prd-llmgw 拆出后改为独立 prdagent-llmgw 镜像。
-      image: "ghcr.io/inernoro/prd_agent/prdagent-server:sha-${CDS_COMMIT_SHA}"
-      fallbackImage:
-        - "ghcr.io/inernoro/prd_agent/prdagent-server:branch-${CDS_BRANCH_SLUG}"
-        - "ghcr.io/inernoro/prd_agent/prdagent-server:branch-main"
-      prebuilt: true
-      containerPort: 8090
-      env:
-        ASPNETCORE_ENVIRONMENT: Production
-        ASPNETCORE_URLS: "http://+:8090"
-  # 独立 LLM 网关前端站 llmgw-web —— prd-llmgw-web 静态前端（占位，项目拆出后启用真实构建）。
-  llmgw-web:
-    dev:
-      label: "开发模式 (Vite HMR)"
-      command: >-
-        cd prd-llmgw-web &&
-        corepack enable &&
-        corepack prepare pnpm@10.28.2 --activate &&
-        pnpm config set store-dir /pnpm/store &&
-        pnpm install --frozen-lockfile &&
-        pnpm exec vite --host 0.0.0.0 --port 8100
-    static:
-      label: "静态部署 (vite build+serve)"
-      command: >-
-        cd prd-llmgw-web &&
-        corepack enable &&
-        corepack prepare pnpm@10.28.2 --activate &&
-        pnpm config set store-dir /pnpm/store &&
-        pnpm install --frozen-lockfile &&
-        pnpm exec vite build &&
-        pnpm exec serve -s dist -l tcp://0.0.0.0:8100
-    express:
-      label: "极速版（CI 预构建）"
-      image: "ghcr.io/inernoro/prd_agent/prdagent-llmgw-web:sha-${CDS_COMMIT_SHA}"
-      fallbackImage:
-        - "ghcr.io/inernoro/prd_agent/prdagent-llmgw-web:branch-${CDS_BRANCH_SLUG}"
-        - "ghcr.io/inernoro/prd_agent/prdagent-llmgw-web:branch-main"
-      prebuilt: true
-      containerPort: 8080
 services:
   # ── App Services (有相对路径 volume mount) ──
 
@@ -249,63 +184,6 @@ services:
       # dev 模式 Vite 秒起；static 冷构建（pnpm install + vite build）实测约 320s，
       # 超过原 300s 就绪超时会被误判 error（容器其实已 Accepting connections）。
       # 按 base label 取两模式上限：static 冷构建留足余量，dev 秒起也不受影响。
-      cds.readiness-timeout: "1200"
-      cds.readiness-interval: "3"
-
-  # 独立 LLM 网关后端 llmgw（占位：复用 prd-api 同源 DLL，监听 8090）
-  llmgw:
-    image: mcr.microsoft.com/dotnet/sdk:8.0
-    working_dir: /repo
-    volumes:
-      - .:/repo
-      - api-nuget-cache:/root/.nuget/packages
-    ports:
-      - "5090"
-    command: >-
-      cd prd-api &&
-      rm -rf src/PrdAgent.Api/obj src/PrdAgent.Api/bin
-      src/PrdAgent.Core/obj src/PrdAgent.Core/bin
-      src/PrdAgent.Infrastructure/obj src/PrdAgent.Infrastructure/bin &&
-      dotnet restore &&
-      dotnet build --no-restore --no-incremental -c Debug &&
-      dotnet run --project src/PrdAgent.Api --no-build -c Debug --urls http://0.0.0.0:5090
-    depends_on:
-      mongodb: { condition: service_healthy }
-      redis: { condition: service_healthy }
-    environment:
-      # 仅服务特有变量，全局变量已由 x-cds-env 注入（含 JWT_SECRET / ApiKeyCrypto__Secret）
-      ASPNETCORE_ENVIRONMENT: Development
-      MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
-      MongoDB__DatabaseName: prdagent
-      Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT}"
-      # 网关自身鉴权密钥：独立于 api 的 JWT_SECRET（跨服务隔离）
-      LlmGwJwt__Secret: "${LLMGW_JWT_SECRET:-dev-llmgw-secret-change-me-32bytes!}"
-      LlmGwJwt__Issuer: prdagent-llmgw
-    labels:
-      cds.path-prefix: "/gw/"
-      cds.readiness-path: "/health"
-      cds.readiness-timeout: "1200"
-      cds.readiness-interval: "3"
-
-  # 独立 LLM 网关前端站 llmgw-web（占位：prd-llmgw-web 静态前端，监听 8100）
-  llmgw-web:
-    image: node:20-slim
-    working_dir: /repo
-    volumes:
-      - .:/repo
-      - admin-pnpm-store:/pnpm/store
-    ports:
-      - "8100"
-    command: >-
-      cd prd-llmgw-web &&
-      corepack enable &&
-      corepack prepare pnpm@10.28.2 --activate &&
-      pnpm config set store-dir /pnpm/store &&
-      pnpm install --frozen-lockfile &&
-      pnpm exec vite --host 0.0.0.0 --port 8100
-    labels:
-      cds.path-prefix: "/gw-web/"
-      cds.readiness-path: "/"
       cds.readiness-timeout: "1200"
       cds.readiness-interval: "3"
 
