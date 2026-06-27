@@ -22,6 +22,8 @@ export interface LauncherPerms {
   canReadLab: boolean;
   canManageAutomations: boolean;
   canReadLogs: boolean;
+  canReadTeamActivity: boolean;
+  canManageOpenPlatform: boolean;
 }
 
 /** 从权限串解析启动器入口的权限门（桌面/移动共用，口径唯一） */
@@ -33,6 +35,8 @@ export function deriveLauncherPerms(permissions: string[]): LauncherPerms {
     canReadLogs: permissions.includes('logs.read'),
     canReadModels: permissions.includes('mds.read') || permissions.includes('mds.write'),
     canReadUsers: permissions.includes('users.read') || permissions.includes('users.write'),
+    canReadTeamActivity: permissions.includes('team-activity.read'),
+    canManageOpenPlatform: permissions.includes('open-platform.manage'),
   };
 }
 
@@ -159,6 +163,39 @@ export function buildStaticInfra(p: LauncherPerms): ToolboxItem[] {
       routePath: '/changelog',
     } as ToolboxItem,
   ];
+
+  // VOC（行为洞察）—— 用户要求：VOC 很重要，放首页并置顶替换掉「智识殿堂」。
+  // 故 canReadTeamActivity 者：VOC 置于基础设施首位，且不再展示智识殿堂（替换）；
+  // 无该权限者（看不到 VOC）：保留智识殿堂，避免首页该位空缺。
+  if (p.canReadTeamActivity) {
+    items.unshift({
+      id: '__team-activity__',
+      name: 'VOC',
+      description: '行为洞察 + 端点体验下钻与 AI 根因诊断（用户原声闭环）',
+      icon: 'Radar',
+      tags: ['VOC', '行为洞察', '动态', '活动', 'voice of customer'],
+      routePath: '/team-activity',
+    } as ToolboxItem);
+  } else {
+    items.push({
+      id: '__library__',
+      name: '智识殿堂',
+      description: '公开知识精选，沉淀团队的最佳实践与教程',
+      icon: 'GraduationCap',
+      tags: ['知识', '殿堂', 'library', '教程', '精选'],
+      routePath: '/library',
+    } as ToolboxItem);
+  }
+  if (p.canManageOpenPlatform) {
+    items.push({
+      id: '__open-platform__',
+      name: '开放平台',
+      description: 'API 签发、应用接入与调用监控',
+      icon: 'Plug',
+      tags: ['开放平台', 'open platform', 'API', '接入'],
+      routePath: '/open-platform',
+    } as ToolboxItem);
+  }
 
   if (p.canReadModels) {
     items.push({

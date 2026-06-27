@@ -213,9 +213,9 @@ export function ExperienceMap({
   const isEntrance = !!boxDims && !enteredRef.current;
   if (boxDims) enteredRef.current = true;
 
-  // 全屏态视口更大（同一 viewBox 撑满更大物理像素），放宽标签阈值让更多块显示标签层级
-  const labelMinW = fullscreen ? 34 : 46;
-  const labelMinH = fullscreen ? 15 : 20;
+  // 放宽标签阈值让更多（含较小）块也显示标题——「标题显示不下就铺满」（按宽度截断到能放下的字数，不外溢）
+  const labelMinW = fullscreen ? 26 : 30;
+  const labelMinH = fullscreen ? 13 : 15;
   const subLabelMinH = fullscreen ? 26 : 32;
   const grpMinW = fullscreen ? 54 : 70;
   const grpMinH = fullscreen ? 24 : 30;
@@ -383,15 +383,22 @@ export function ExperienceMap({
                       transition: `${MORPH}, fill .5s ease`,
                     }}
                   />
-                  {showLabel ? (
-                    <text
-                      x={r.x + 5}
-                      y={r.y + 14}
-                      style={{ fill: '#fff', fontSize: 10, fontWeight: 600, paintOrder: 'stroke', stroke: 'rgba(0,0,0,0.55)', strokeWidth: 2.5 }}
-                    >
-                      {c.leaf.label}
-                    </text>
-                  ) : null}
+                  {showLabel ? (() => {
+                    // 「铺满」：窄块用更小字号 + 按可用宽度截断到放得下的字数（多余省略号），标题不外溢到邻块
+                    const labelFont = r.w < 56 ? 9 : 10;
+                    const maxChars = Math.max(1, Math.floor((r.w - 8) / (labelFont * 0.6)));
+                    const full = c.leaf.label ?? '';
+                    const text = full.length > maxChars ? `${full.slice(0, Math.max(1, maxChars - 1))}…` : full;
+                    return (
+                      <text
+                        x={r.x + 5}
+                        y={r.y + (labelFont < 10 ? 13 : 14)}
+                        style={{ fill: '#fff', fontSize: labelFont, fontWeight: 600, paintOrder: 'stroke', stroke: 'rgba(0,0,0,0.55)', strokeWidth: 2.5 }}
+                      >
+                        {text}
+                      </text>
+                    );
+                  })() : null}
                   {isPain && showLabel && r.h > subLabelMinH ? (
                     <text
                       x={r.x + 5}

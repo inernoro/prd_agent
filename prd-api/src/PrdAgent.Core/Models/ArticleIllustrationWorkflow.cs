@@ -30,6 +30,13 @@ public class ArticleIllustrationWorkflow
     /// </summary>
     public Dictionary<string, string> AssetIdByMarkerIndex { get; set; } = new();
 
+    /// <summary>
+    /// 每个 markerIndex(string) 当前成功指针来自哪个 run（取该 run 的 CreatedAt）。
+    /// 用于并发批量/重生成时对 AssetIdByMarkerIndex 做"最新成功优先"的原子门控写入，
+    /// 不依赖 workspace 乐观锁（后者会被消息保存等无关写入 churn 掉）。
+    /// </summary>
+    public Dictionary<string, DateTime> AssetRunAtByMarkerIndex { get; set; } = new();
+
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 
@@ -47,6 +54,9 @@ public class ArticleIllustrationMarker
     public ArticleIllustrationPlanItem? PlanItem { get; set; }  // 意图解析结果
     public string? ErrorMessage { get; set; }  // 错误信息
     public DateTime? UpdatedAt { get; set; }  // 最后更新时间
+    // 当前成功配图来自哪个 run（取该 run 的 CreatedAt）。用于并发重生成时"最新成功优先"判定：
+    // 仅当本 run.CreatedAt 比此值更新时才覆盖成功图；失败 run 在此值非空（已有成功图）时不写错误，避免抹掉好图。
+    public DateTime? ImageRunAt { get; set; }
 }
 
 /// <summary>

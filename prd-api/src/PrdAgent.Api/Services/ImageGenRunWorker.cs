@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Configuration;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Models.MultiImage;
@@ -22,6 +23,7 @@ public class ImageGenRunWorker : BackgroundService
     private readonly ILogger<ImageGenRunWorker> _logger;
     private readonly IRunEventStore _runStore;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
+    private readonly IConfiguration _config;
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
@@ -55,20 +57,38 @@ public class ImageGenRunWorker : BackgroundService
         IServiceScopeFactory scopeFactory,
         IRunEventStore runStore,
         ILogger<ImageGenRunWorker> logger,
-        ILLMRequestContextAccessor llmRequestContext)
+        ILLMRequestContextAccessor llmRequestContext,
+        IConfiguration config)
     {
         _db = db;
         _scopeFactory = scopeFactory;
         _runStore = runStore;
         _logger = logger;
         _llmRequestContext = llmRequestContext;
+        _config = config;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // 轮询模式：队列量很小（管理员生图），优先简单可靠
+        // 并发处理多个 run：每个 run 的单张生图最长可挂起到 600s（LLM:ImageGenTimeoutSeconds）。
+        // 若串行处理，单个被某平台拖住的 run 会卡住整个队列，造成“一个生图接口超时 → 后面所有
+        // 生图都跟着超时”。这里以有界并发认领并处理，单个慢 run 不再饿死其它 run。
+        var maxParallelRuns = Math.Clamp(_config.GetValue<int?>("LLM:ImageGenMaxParallelRuns") ?? 4, 1, 16);
+        var inFlight = new List<Task>();
+
         while (!stoppingToken.IsCancellationRequested)
         {
+            // 回收已完成的任务槽
+            inFlight.RemoveAll(t => t.IsCompleted);
+
+            // 槽位已满：等任一 run 结束再继续认领
+            if (inFlight.Count >= maxParallelRuns)
+            {
+                try { await Task.WhenAny(inFlight); }
+                catch { /* 单 run 异常已在 ProcessRunSafeAsync 内吞掉 */ }
+                continue;
+            }
+
             ImageGenRun? run = null;
             try
             {
@@ -85,9 +105,13 @@ public class ImageGenRunWorker : BackgroundService
 
             if (run == null)
             {
+                // 无新任务：有在跑的就等其一结束或短暂轮询，否则纯轮询
                 try
                 {
-                    await Task.Delay(600, stoppingToken);
+                    if (inFlight.Count > 0)
+                        await Task.WhenAny(Task.WhenAny(inFlight), Task.Delay(600, stoppingToken));
+                    else
+                        await Task.Delay(600, stoppingToken);
                 }
                 catch (OperationCanceledException)
                 {
@@ -96,21 +120,33 @@ public class ImageGenRunWorker : BackgroundService
                 continue;
             }
 
-            try
-            {
-                await ProcessRunAsync(run, stoppingToken);
-            }
-            catch (OperationCanceledException)
-            {
-                // app shutting down：尽量把 run 标记为失败/取消（避免永远 Running）
-                await MarkRunFailedSafeAsync(run.Id, "WORKER_STOPPED", "服务正在停止", CancellationToken.None);
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "ImageGenRunWorker process failed: {RunId}", run.Id);
-                await MarkRunFailedSafeAsync(run.Id, ErrorCodes.INTERNAL_ERROR, ex.Message, stoppingToken);
-            }
+            inFlight.Add(ProcessRunSafeAsync(run, stoppingToken));
+        }
+
+        // 优雅停机：尽量等待在跑的 run 结束（其内部对取消会把 run 标记失败）
+        try { await Task.WhenAll(inFlight); }
+        catch { /* ignore */ }
+    }
+
+    /// <summary>
+    /// 单个 run 的处理包装：吞掉所有异常并把 run 安全标记为失败，
+    /// 保证返回的 Task 永不 fault（供 ExecuteAsync 的 WhenAny/WhenAll 安全等待）。
+    /// </summary>
+    private async Task ProcessRunSafeAsync(ImageGenRun run, CancellationToken stoppingToken)
+    {
+        try
+        {
+            await ProcessRunAsync(run, stoppingToken);
+        }
+        catch (OperationCanceledException)
+        {
+            // app shutting down：尽量把 run 标记为失败/取消（避免永远 Running）
+            await MarkRunFailedSafeAsync(run.Id, "WORKER_STOPPED", "服务正在停止", CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "ImageGenRunWorker process failed: {RunId}", run.Id);
+            await MarkRunFailedSafeAsync(run.Id, ErrorCodes.INTERNAL_ERROR, ex.Message, CancellationToken.None);
         }
     }
 
@@ -585,7 +621,7 @@ public class ImageGenRunWorker : BackgroundService
                             }, ct);
 
                             // 文学创作：自动回填 ArticleIllustrationMarker.Status 为 error
-                            await TryPatchArticleMarkerAsync(run, "error", msg, null, ct);
+                            await TryPatchArticleMarkerAsync(run, "error", msg, null, null, ct);
                             return;
                         }
 
@@ -663,8 +699,8 @@ public class ImageGenRunWorker : BackgroundService
                             savedMessageId = doneMsgId
                         }, ct);
 
-                        // 文学创作：自动回填 ArticleIllustrationMarker.Status 为 done
-                        await TryPatchArticleMarkerAsync(run, "done", null, url ?? persisted?.Url, ct);
+                        // 文学创作：自动回填 ArticleIllustrationMarker.Status 为 done（含资产指针，最新成功优先）
+                        await TryPatchArticleMarkerAsync(run, "done", null, url ?? persisted?.Url, persisted?.Id, ct);
                         await TryPatchWeeklyPosterPageAsync(run, curItemIndex, url ?? persisted?.Url, ct);
                     }
                     finally
@@ -1053,54 +1089,9 @@ public class ImageGenRunWorker : BackgroundService
 
         await _db.ImageAssets.InsertOneAsync(asset, cancellationToken: ct);
 
-        // 文学创作：更新 ArticleWorkflow.AssetIdByMarkerIndex（投稿详情依赖此字段查询配图）
-        // 使用 MongoDB 原子 $set 避免并发生图时 read-modify-write 丢失更新
-        if (run.ArticleMarkerIndex.HasValue)
-        {
-            var idx = run.ArticleMarkerIndex.Value;
-            var idxKey = idx.ToString();
-
-            // 1) 原子写入单个字典 key（无需读取整个文档，不受并发影响）
-            var atomicFilter = Builders<ImageMasterWorkspace>.Filter.Eq(x => x.Id, wid)
-                & Builders<ImageMasterWorkspace>.Filter.Ne(x => x.ArticleWorkflow, null);
-            var atomicUpdate = Builders<ImageMasterWorkspace>.Update
-                .Set($"ArticleWorkflow.AssetIdByMarkerIndex.{idxKey}", asset.Id)
-                .Set("ArticleWorkflow.UpdatedAt", DateTime.UtcNow);
-
-            var atomicRes = await _db.ImageMasterWorkspaces.UpdateOneAsync(atomicFilter, atomicUpdate, cancellationToken: ct);
-
-            if (atomicRes.MatchedCount == 0)
-            {
-                // ArticleWorkflow 尚未初始化（极少见）：整体写入
-                var ws = await _db.ImageMasterWorkspaces.Find(x => x.Id == wid).FirstOrDefaultAsync(ct);
-                if (ws != null)
-                {
-                    var wf = new ArticleIllustrationWorkflow();
-                    wf.AssetIdByMarkerIndex[idxKey] = asset.Id;
-                    wf.DoneImageCount = 1;
-                    wf.UpdatedAt = DateTime.UtcNow;
-                    await _db.ImageMasterWorkspaces.UpdateOneAsync(
-                        x => x.Id == wid,
-                        Builders<ImageMasterWorkspace>.Update.Set(x => x.ArticleWorkflow, wf),
-                        cancellationToken: ct);
-                }
-            }
-
-            // 2) 重新计算 DoneImageCount（读取最新字典，允许瞬间偏差但最终一致）
-            var latest = await _db.ImageMasterWorkspaces.Find(x => x.Id == wid).FirstOrDefaultAsync(ct);
-            if (latest?.ArticleWorkflow?.AssetIdByMarkerIndex != null)
-            {
-                var doneCount = latest.ArticleWorkflow.AssetIdByMarkerIndex.Values
-                    .Where(v => !string.IsNullOrWhiteSpace(v))
-                    .Distinct()
-                    .Count();
-                await _db.ImageMasterWorkspaces.UpdateOneAsync(
-                    Builders<ImageMasterWorkspace>.Filter.Eq(x => x.Id, wid),
-                    Builders<ImageMasterWorkspace>.Update
-                        .Set(x => x.ArticleWorkflow!.DoneImageCount, doneCount),
-                    cancellationToken: ct);
-            }
-        }
+        // 注意：文学创作的 AssetIdByMarkerIndex / DoneImageCount / marker 指针回填统一交由
+        // TryPatchArticleMarkerAsync 在"最新成功优先"的时间戳 RMW 内原子写入（见成功路径调用），
+        // 这里不再单独写指针，避免旧 run 绕过时间戳覆盖新成功结果。
 
         await TryPatchWorkspaceCanvasAsync(run, asset, ct);
         return asset;
@@ -1111,6 +1102,10 @@ public class ImageGenRunWorker : BackgroundService
         var wid = (run.WorkspaceId ?? string.Empty).Trim();
         var key = (run.TargetCanvasKey ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(wid) || string.IsNullOrWhiteSpace(key)) return;
+
+        // 最新成功优先：用 run.CreatedAt（毫秒）作时间戳，旧 run 不覆盖已被更新 run 成功回填的画布元素。
+        // （失败路径 TryMarkWorkspaceCanvasErrorAsync 本就只动占位元素、不抹成功图，故画布侧只需守成功排序。）
+        var myStamp = new DateTimeOffset(DateTime.SpecifyKind(run.CreatedAt, DateTimeKind.Utc)).ToUnixTimeMilliseconds();
 
         for (var attempt = 0; attempt < 5; attempt++)
         {
@@ -1153,6 +1148,7 @@ public class ImageGenRunWorker : BackgroundService
                     ["assetId"] = asset.Id,
                     ["sha256"] = asset.Sha256,
                     ["createdAt"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    ["imageRunAt"] = myStamp,
                 };
                 // 占位元素缺失时，必须分配新的唯一 refId，避免复用输入图 refId 导致 @imgN 解析命中错误图片。
                 o["refId"] = AllocateNextCanvasRefId(elements);
@@ -1164,6 +1160,15 @@ public class ImageGenRunWorker : BackgroundService
             }
             else
             {
+                // 最新成功优先：已有同样新或更新的成功图则跳过（防止旧 run 覆盖新成功结果）
+                var existingStamp = target["imageRunAt"]?.GetValue<long>() ?? 0L;
+                if (existingStamp >= myStamp)
+                {
+                    _logger.LogInformation(
+                        "[画布] 跳过成功回填：已有更新的成功图。WorkspaceId={WorkspaceId}, Key={Key}, RunId={RunId}",
+                        wid, key, run.Id);
+                    return;
+                }
                 target["kind"] = "image";
                 target["status"] = "done";
                 target["syncStatus"] = "synced";
@@ -1171,6 +1176,7 @@ public class ImageGenRunWorker : BackgroundService
                 target["src"] = asset.Url ?? "";
                 target["assetId"] = asset.Id;
                 target["sha256"] = asset.Sha256;
+                target["imageRunAt"] = myStamp;
                 if (!string.IsNullOrWhiteSpace(asset.Prompt)) target["prompt"] = asset.Prompt!;
             }
 
@@ -1283,14 +1289,20 @@ public class ImageGenRunWorker : BackgroundService
     }
 
     /// <summary>
-    /// 文学创作场景：自动回填 ArticleIllustrationMarker 的状态。
-    /// 当 run.ArticleMarkerIndex 有值时，更新对应 marker 的 status/errorMessage/url。
+    /// 文学创作场景：回填 ArticleIllustrationMarker 状态 + 成功时写入资产指针。
+    /// 并发重生成/批量按"最新成功优先、失败不抹旧图"取舍（时间戳 = 产图 run 的 CreatedAt，与完成顺序无关）：
+    ///   - 资产指针 AssetIdByMarkerIndex + DoneImageCount：用**每 marker 原子条件 $set**（门控字段
+    ///     AssetRunAtByMarkerIndex），不走 workspace 乐观锁——后者会被消息保存等无关写入 churn 掉、
+    ///     批量并发下重试耗尽就丢指针（投稿/进度依赖此映射，必须可靠）。
+    ///   - marker 显示字段（Status/Url/AssetId/ImageRunAt）：尽力乐观锁 RMW，门控同一时间戳；
+    ///     done 仅当 run.CreatedAt 更新才覆盖，error 在已有成功图时不写（兼容 ImageRunAt 出现前的存量成功 marker）。
     /// </summary>
     private async Task TryPatchArticleMarkerAsync(
         ImageGenRun run,
         string status,
         string? errorMessage,
         string? url,
+        string? assetId,
         CancellationToken ct)
     {
         // 只有文学创作场景（有 ArticleMarkerIndex）才需要回填
@@ -1299,55 +1311,127 @@ public class ImageGenRunWorker : BackgroundService
         if (string.IsNullOrWhiteSpace(wid)) return;
 
         var markerIndex = run.ArticleMarkerIndex.Value;
+        var isDone = status == "done";
+        var key = markerIndex.ToString();
+        // 权威成功时间戳的字段路径（第 1 步指针写入与第 2 步显示门控共用，避免重复声明导致 CS0136）
+        var stampPath = $"articleWorkflow.assetRunAtByMarkerIndex.{key}";
 
-        for (var attempt = 0; attempt < 5; attempt++)
+        // 1) 成功且有资产：可靠的"每 marker 原子 + 时间戳门控"指针写入（不依赖 workspace 乐观锁）。
+        if (isDone && !string.IsNullOrWhiteSpace(assetId))
         {
-            var ws = await _db.ImageMasterWorkspaces.Find(x => x.Id == wid).FirstOrDefaultAsync(ct);
-            if (ws == null) return;
+            var pointerFilter = Builders<ImageMasterWorkspace>.Filter.And(
+                Builders<ImageMasterWorkspace>.Filter.Eq(x => x.Id, wid),
+                Builders<ImageMasterWorkspace>.Filter.Ne(x => x.ArticleWorkflow, null),
+                Builders<ImageMasterWorkspace>.Filter.Or(
+                    Builders<ImageMasterWorkspace>.Filter.Exists(stampPath, false),
+                    Builders<ImageMasterWorkspace>.Filter.Lt(stampPath, run.CreatedAt)));
+            var pointerUpdate = Builders<ImageMasterWorkspace>.Update
+                .Set($"articleWorkflow.assetIdByMarkerIndex.{key}", assetId!)
+                .Set(stampPath, run.CreatedAt)
+                .Set("articleWorkflow.updatedAt", DateTime.UtcNow);
+            await _db.ImageMasterWorkspaces.UpdateOneAsync(pointerFilter, pointerUpdate, cancellationToken: ct);
 
-            var wf = ws.ArticleWorkflow;
-            if (wf == null || wf.Markers == null || markerIndex < 0 || markerIndex >= wf.Markers.Count) return;
-
-            var marker = wf.Markers[markerIndex];
-            marker.Status = status;
-            marker.UpdatedAt = DateTime.UtcNow;
-
-            if (!string.IsNullOrWhiteSpace(errorMessage))
+            // DoneImageCount 重算（读取最新字典）。并发完成时各 task 读到的快照新旧不一，
+            // 用"仅当新值更大才写"的单调门控（Lt 过滤）防止陈旧的较小计数最后落地把数值压低；
+            // 生图过程中指针只增不减，单调最大即收敛到真实值。
+            var latest = await _db.ImageMasterWorkspaces.Find(x => x.Id == wid).FirstOrDefaultAsync(ct);
+            if (latest?.ArticleWorkflow?.AssetIdByMarkerIndex != null)
             {
-                marker.ErrorMessage = errorMessage;
+                var doneCount = latest.ArticleWorkflow.AssetIdByMarkerIndex.Values
+                    .Where(v => !string.IsNullOrWhiteSpace(v)).Distinct().Count();
+                await _db.ImageMasterWorkspaces.UpdateOneAsync(
+                    Builders<ImageMasterWorkspace>.Filter.And(
+                        Builders<ImageMasterWorkspace>.Filter.Eq(x => x.Id, wid),
+                        Builders<ImageMasterWorkspace>.Filter.Lt(x => x.ArticleWorkflow!.DoneImageCount, doneCount)),
+                    Builders<ImageMasterWorkspace>.Update.Set(x => x.ArticleWorkflow!.DoneImageCount, doneCount),
+                    cancellationToken: ct);
             }
-            else if (status == "done")
-            {
-                marker.ErrorMessage = null; // 清空错误信息
-            }
-
-            if (!string.IsNullOrWhiteSpace(url))
-            {
-                marker.Url = url;
-            }
-
-            var res = await _db.ImageMasterWorkspaces.UpdateOneAsync(
-                x => x.Id == wid && x.UpdatedAt == ws.UpdatedAt,
-                Builders<ImageMasterWorkspace>.Update
-                    .Set(x => x.ArticleWorkflow, wf)
-                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
-                cancellationToken: ct);
-
-            if (res.ModifiedCount > 0)
-            {
-                _logger.LogInformation(
-                    "[文学创作] Marker 状态自动回填: WorkspaceId={WorkspaceId}, MarkerIndex={MarkerIndex}, Status={Status}",
-                    wid, markerIndex, status);
-                return;
-            }
-
-            // 乐观锁冲突，重试
-            await Task.Delay(50, ct);
         }
 
-        _logger.LogWarning(
-            "[文学创作] Marker 状态回填失败（乐观锁冲突次数过多）: WorkspaceId={WorkspaceId}, MarkerIndex={MarkerIndex}",
-            wid, markerIndex);
+        // 2) marker 显示字段：用**针对该 marker 子字段的定向 $set**（绝不整体替换 ArticleWorkflow），
+        //    否则并发下用陈旧快照整体回写会抹掉其它 run 在第 1 步原子写入的
+        //    AssetIdByMarkerIndex / AssetRunAtByMarkerIndex（High：跨 marker 互相覆盖）。
+        //    先读一次用于门控评估（display 为尽力而为，指针已在第 1 步可靠写入；这里轻微 TOCTOU 可接受）。
+        var ws = await _db.ImageMasterWorkspaces.Find(x => x.Id == wid).FirstOrDefaultAsync(ct);
+        if (ws == null) return;
+        var wf = ws.ArticleWorkflow;
+        if (wf == null || wf.Markers == null || markerIndex < 0 || markerIndex >= wf.Markers.Count) return;
+        var marker = wf.Markers[markerIndex];
+
+        // 权威成功时间戳：以原子指针写入的 AssetRunAtByMarkerIndex 为准（display 可能落后于指针，
+        // 必须一并参考，否则旧/失败 run 会把 display 改成与权威指针不一致的状态）。
+        DateTime? authoritativeSuccessAt = null;
+        if (wf.AssetRunAtByMarkerIndex != null && wf.AssetRunAtByMarkerIndex.TryGetValue(key, out var assetStamp))
+        {
+            authoritativeSuccessAt = assetStamp;
+        }
+
+        var mPath = $"articleWorkflow.markers.{markerIndex}";
+        var F = Builders<ImageMasterWorkspace>.Filter;
+        var U = Builders<ImageMasterWorkspace>.Update;
+
+        if (isDone)
+        {
+            // 内存快速短路（最新成功优先）
+            if ((marker.ImageRunAt.HasValue && run.CreatedAt <= marker.ImageRunAt.Value)
+                || (authoritativeSuccessAt.HasValue && run.CreatedAt < authoritativeSuccessAt.Value))
+            {
+                return;
+            }
+            // 原子门控：写入 filter 携带权威时间戳守卫，仅当本 run 仍是最新成功（无严格更新的指针）才落地，
+            // 否则陈旧 run 通过内存门控后仍可能后落地覆盖更新 run 的 display（Codex/Bugbot：stale 覆盖 newer）。
+            var doneFilter = F.And(
+                F.Eq(x => x.Id, wid),
+                F.Or(F.Exists(stampPath, false), F.Lte(stampPath, run.CreatedAt)));
+            var doneUpdates = new List<UpdateDefinition<ImageMasterWorkspace>>
+            {
+                U.Set($"{mPath}.status", "done"),
+                U.Set($"{mPath}.errorMessage", (string?)null),
+                U.Set($"{mPath}.imageRunAt", run.CreatedAt),
+                U.Set($"{mPath}.updatedAt", DateTime.UtcNow),
+                U.Set("articleWorkflow.updatedAt", DateTime.UtcNow),
+            };
+            if (!string.IsNullOrWhiteSpace(url)) doneUpdates.Add(U.Set($"{mPath}.url", url));
+            if (!string.IsNullOrWhiteSpace(assetId)) doneUpdates.Add(U.Set($"{mPath}.assetId", assetId));
+            await _db.ImageMasterWorkspaces.UpdateOneAsync(doneFilter, U.Combine(doneUpdates), cancellationToken: ct);
+            return;
+        }
+
+        // 失败分支
+        var hasSuccessImage = authoritativeSuccessAt.HasValue
+            || marker.ImageRunAt.HasValue
+            || !string.IsNullOrWhiteSpace(marker.AssetId)
+            || (string.Equals(marker.Status, "done", StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(marker.Url));
+        if (hasSuccessImage)
+        {
+            // 失败但已有成功图：把因重生成而被置为 running 的 marker 恢复为 done（保留旧图），不写错误、不动图片字段，
+            // 否则 marker 会卡在 running（Bugbot：regen fail leaves marker running）。
+            await _db.ImageMasterWorkspaces.UpdateOneAsync(
+                F.Eq(x => x.Id, wid),
+                U.Combine(
+                    U.Set($"{mPath}.status", "done"),
+                    U.Set($"{mPath}.errorMessage", (string?)null),
+                    U.Set($"{mPath}.updatedAt", DateTime.UtcNow),
+                    U.Set("articleWorkflow.updatedAt", DateTime.UtcNow)),
+                cancellationToken: ct);
+            _logger.LogInformation(
+                "[文学创作] 失败但已有成功图：marker 恢复 done 保留旧图。WorkspaceId={WorkspaceId}, MarkerIndex={MarkerIndex}, RunId={RunId}",
+                wid, markerIndex, run.Id);
+            return;
+        }
+        // 无成功图：写 error，filter 守卫"无成功指针"，避免并发成功后被错误覆盖。
+        var errUpdates = new List<UpdateDefinition<ImageMasterWorkspace>>
+        {
+            U.Set($"{mPath}.status", status),
+            U.Set($"{mPath}.updatedAt", DateTime.UtcNow),
+            U.Set("articleWorkflow.updatedAt", DateTime.UtcNow),
+        };
+        if (!string.IsNullOrWhiteSpace(errorMessage)) errUpdates.Add(U.Set($"{mPath}.errorMessage", errorMessage));
+        await _db.ImageMasterWorkspaces.UpdateOneAsync(
+            F.And(F.Eq(x => x.Id, wid), F.Exists(stampPath, false)),
+            U.Combine(errUpdates),
+            cancellationToken: ct);
     }
 
     private async Task TryPatchWeeklyPosterPageAsync(ImageGenRun run, int itemIndex, string? imageUrl, CancellationToken ct)

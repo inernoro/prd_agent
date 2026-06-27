@@ -46,6 +46,7 @@ export const MOBILE_COMPAT_REGISTRY: Record<string, MobileCompatEntry> = {
   '/automations':             { level: 'limited' },
   '/assets':                  { level: 'limited' },
   '/open-platform':           { level: 'limited' },
+  '/team-activity':           { level: 'limited', note: '行为洞察图表较宽，横屏查看更佳' },
   '/review-agent':            { level: 'limited' },
   '/pr-review':               { level: 'limited', note: 'diff 阅读较挤，建议 PC' },
   '/lab':                     { level: 'limited' },
