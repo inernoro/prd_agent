@@ -221,6 +221,11 @@ function startStaleDeployDispatchReconciler(
         // 否则无 projectId 的分支拿到空 profile 列表 → branchUsesPrebuiltMode 恒 false →
         // TYPE1 极速版落后告警对这些分支永不触发（Bugbot Low）。
         getBuildProfiles: (b) => state.getBuildProfilesForProject(b.projectId || 'default'),
+        // 有在途操作（部署/重启/降温…）的分支整条跳过：那个操作拥有该分支，合法的长任务
+        // （>45min 编译/迁移/冷启）不该被硬超时误判失败（Bugbot Medium）。与 index.ts 别处
+        // 「recovery skips operation lease」判活同源。
+        hasActiveOperation: (b) =>
+          (branchOperationCoordinator.getActiveOperations(b.id) || []).some((op) => !op.cancelled),
         diffRuntimePaths: (b) => {
           // ciTargetSha..githubCommitSha 这段提交是否含运行时改动（非纯文档）。
           try {

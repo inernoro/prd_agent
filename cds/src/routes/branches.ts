@@ -13,7 +13,7 @@ import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
-import { classifyTriggerSource, deriveDeployMode, deriveCommitMeta } from '../services/build-log-meta.js';
+import { classifyTriggerSource, deriveDeployMode, deriveCommitMeta, parsePulledSha, commitShaDiffers } from '../services/build-log-meta.js';
 import { acquireBuildSlot, buildGateStatus } from '../services/build-gate.js';
 import { recordBuild } from '../services/build-activity-tracker.js';
 import type { ContainerService } from '../services/container.js';
@@ -10191,15 +10191,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 才有可拉取的镜像。绝不能跟随 pull 后的新 HEAD（那个 SHA 多半还没 CI 镜像）——上面的
       // CI 闸门已保证 ciImageStatus=ready 且 ciTargetSha===githubCommitSha,这里保持不动,
       // 让镜像 tag 锁定在 CI 就绪的 SHA（Codex P2: require CI readiness for the deployed SHA）。
+      // pull() 的 head 是 `git log --oneline -1`（带标题），不是裸 SHA；必须用 parsePulledSha
+      // 取裸 SHA（优先 after = rev-parse --short HEAD），否则旧的 bare-SHA 正则永不匹配、整段跳过，
+      // 历史「版本」列停在 pull 前旧 SHA（Codex P2）。
+      const pulledSha = parsePulledSha(pullResult);
       if (!requestCommitSha
         && !branchUsesPrebuiltMode(profiles, entry)
         && !(pullResult as { skipped?: boolean }).skipped
-        && typeof pullResult.head === 'string'
-        && /^[0-9a-f]{7,40}$/i.test(pullResult.head)
-        && entry.githubCommitSha !== pullResult.head) {
-        entry.githubCommitSha = pullResult.head;
+        && pulledSha
+        && commitShaDiffers(entry.githubCommitSha, pulledSha)) {
+        entry.githubCommitSha = pulledSha;
         // 同步刷新构建历史的 commit 元数据：opLog.commitSha 是在 pull 前（10084）按旧 HEAD
-        // 捕获的，若 pull 拉到了更新的 HEAD，部署的其实是 pullResult.head，历史「版本」列
+        // 捕获的，若 pull 拉到了更新的 HEAD，部署的其实是 pulledSha，历史「版本」列
         // 必须指向真正部署的 commit，否则给 reviewer 指错版本（Codex P2）。
         Object.assign(opLog, deriveCommitMeta(entry));
       }
@@ -11093,13 +11096,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const bodySha = typeof req.body?.commitSha === 'string' && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
           ? req.body.commitSha : undefined;
         const isPrebuiltProfile = resolveEffectiveProfile(profile, entry).prebuiltImage === true;
+        // 同主路径：head 带标题非裸 SHA，用 parsePulledSha 取裸 SHA（优先 after）再比对刷新（Codex P2）。
+        const pulledSha = parsePulledSha(pullResult);
         if (!bodySha
           && !isPrebuiltProfile
           && !(pullResult as { skipped?: boolean }).skipped
-          && typeof pullResult.head === 'string'
-          && /^[0-9a-f]{7,40}$/i.test(pullResult.head)
-          && entry.githubCommitSha !== pullResult.head) {
-          entry.githubCommitSha = pullResult.head;
+          && pulledSha
+          && commitShaDiffers(entry.githubCommitSha, pulledSha)) {
+          entry.githubCommitSha = pulledSha;
           // 同步刷新构建历史 commit 元数据为真正部署的 HEAD（Codex P2，同上）。
           Object.assign(opLog, deriveCommitMeta(entry));
         }

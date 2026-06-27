@@ -4,8 +4,41 @@ import {
   deriveDeployMode,
   deriveCommitMeta,
   computeDeployDurationDisplay,
+  parsePulledSha,
+  commitShaDiffers,
   STUCK_DEPLOY_THRESHOLD_MS,
 } from '../../src/services/build-log-meta.js';
+
+describe('parsePulledSha', () => {
+  it('优先取 after（裸短 SHA）', () => {
+    expect(parsePulledSha({ after: 'abc1234', head: 'abc1234 some commit message' })).toBe('abc1234');
+  });
+  it('after 缺失时解析 head 第一个 token（治 head 带标题不匹配裸 SHA 正则）', () => {
+    expect(parsePulledSha({ head: 'deadbee fix something' })).toBe('deadbee');
+  });
+  it('after 非法（带标题）回退 head token', () => {
+    expect(parsePulledSha({ after: 'not a sha', head: 'cafe123 msg' })).toBe('cafe123');
+  });
+  it('都无有效 SHA → 空串', () => {
+    expect(parsePulledSha({ head: 'no-sha here' })).toBe('');
+    expect(parsePulledSha({})).toBe('');
+    expect(parsePulledSha(null)).toBe('');
+  });
+});
+
+describe('commitShaDiffers', () => {
+  it('短 SHA 与全 SHA 互为前缀 ⇒ 同一 commit，不算变化', () => {
+    expect(commitShaDiffers('18ffd0c44dd38b98d2e806b22205580545ff547d', '18ffd0c')).toBe(false);
+    expect(commitShaDiffers('18ffd0c', '18ffd0c44dd38b98d2e806b22205580545ff547d')).toBe(false);
+  });
+  it('不同 commit ⇒ 算变化', () => {
+    expect(commitShaDiffers('18ffd0c', 'abc1234')).toBe(true);
+  });
+  it('任一为空 ⇒ 不算变化（不触发刷新）', () => {
+    expect(commitShaDiffers('', 'abc1234')).toBe(false);
+    expect(commitShaDiffers('abc1234', undefined)).toBe(false);
+  });
+});
 
 /**
  * 构建历史元数据纯函数单测（2026-06-27）。

@@ -284,6 +284,63 @@ describe('reconcileStuckDeployStates — Bugbot review 回归', () => {
     expect(results).toHaveLength(0);
   });
 
+  it('有在途操作的分支整条跳过：合法长任务不被硬超时误杀（Bugbot Medium）', () => {
+    const now = new Date('2026-06-27T01:00:00.000Z'); // 启动 60 分钟前 > 45min 硬超时
+    const branch = makeBranch({
+      status: 'building',
+      lastDeployStartedAt: '2026-06-27T00:00:00.000Z', // 无 ready 证据，本会走硬超时成 error
+    });
+    const results = reconcileStuckDeployStates([branch], {
+      now,
+      hasActiveOperation: () => true, // 协调器报：该分支有在途部署
+    });
+    expect(branch.status).toBe('building'); // 未被硬超时误判
+    expect(results).toHaveLength(0);
+  });
+
+  it('服务全 stopped 但分支 stop 元数据缺失 => 分支不再卡在 running（Bugbot Medium）', () => {
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const branch = makeBranch({
+      status: 'running', // 分支元数据没落 stop，错误地停在 running
+      lastDeployStartedAt: '2026-06-27T00:00:00.000Z',
+      lastReadyAt: '2026-06-27T00:05:00.000Z',
+      // 无 lastStoppedAt
+      services: {
+        api: { profileId: 'api', containerName: 'c1', hostPort: 1, status: 'stopped' },
+        web: { profileId: 'web', containerName: 'c2', hostPort: 2, status: 'stopped' },
+      },
+    });
+    const { events, sink } = collectEvents();
+    const updated: string[] = [];
+    const results = reconcileStuckDeployStates([branch], {
+      now,
+      source: 'unit',
+      serverEventLogStore: sink,
+      emitBranchUpdated: (b) => updated.push(b.id),
+    });
+    expect(branch.status).toBe('idle'); // 由服务真实状态推出，不再谎报 running
+    expect(results.some((r) => r.kind === 'branch-status-finalized' && r.previousStatus === 'running' && r.nextStatus === 'idle')).toBe(true);
+    expect(updated).toEqual(['b1']);
+    expect(events.some((e) => e.action === 'branch.stuck-state.aggregate-recomputed')).toBe(true);
+  });
+
+  it('有服务的分支：分支级时间戳证据不再凌驾服务真相（lone stopping 保留）', () => {
+    // 即便分支级时间戳证据「ready 晚于 start、无 stop」会推出 running，有服务时也不采信它，
+    // 改由服务聚合决定：唯一服务 stopping ⇒ 分支保持 stopping（不被误判 running）。
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const branch = makeBranch({
+      status: 'stopping',
+      lastDeployStartedAt: '2026-06-27T00:00:00.000Z',
+      lastReadyAt: '2026-06-27T01:00:00.000Z', // 时间戳证据会想推 running
+      services: {
+        web: { profileId: 'web', containerName: 'c', hostPort: 1, status: 'stopping' },
+      },
+    });
+    const results = reconcileStuckDeployStates([branch], { now });
+    expect(branch.status).toBe('stopping'); // 服务仍 stopping ⇒ 分支保持 stopping
+    expect(results).toHaveLength(0);
+  });
+
   it('状态机收敛不写 type:build 的 OperationLog（不伪装成绿色成功部署）', () => {
     const now = new Date('2026-06-27T10:00:00.000Z');
     const branch = makeBranch({

@@ -66,6 +66,37 @@ export function deriveCommitMeta(
 }
 
 /**
+ * 从 WorktreeService.pull() 的返回里取出**纯 SHA**。
+ *
+ * 病根（Codex P2）：pull() 的 `head` 来自 `git log --oneline -1`，形如
+ * `abc1234 commit message`（短 SHA + 空格 + 标题），**不是**裸 SHA。branches.ts 旧实现
+ * 用 `/^[0-9a-f]{7,40}$/.test(pullResult.head)` 当门：带标题的 head 永远不匹配 → 「pull 后
+ * 用真实 HEAD 刷新 githubCommitSha + 构建历史版本列」整段被跳过 → 源码部署拉到更新提交后，
+ * 历史「版本」列仍停在 pull 前旧 SHA，给 reviewer 指错版本。
+ *
+ * 正确取值：优先 `after`（pull() 由 `git rev-parse --short HEAD` 得到的裸短 SHA），
+ * 拿不到再退而解析 `head` 的第一个 token。返回裸 SHA 或 ''（无法解析）。纯函数，可单测。
+ */
+export function parsePulledSha(pullResult: { head?: string; after?: string } | null | undefined): string {
+  if (!pullResult) return '';
+  const after = (pullResult.after || '').trim();
+  if (/^[0-9a-f]{7,40}$/i.test(after)) return after;
+  const headToken = (pullResult.head || '').trim().split(/\s+/)[0] || '';
+  return /^[0-9a-f]{7,40}$/i.test(headToken) ? headToken : '';
+}
+
+/**
+ * 两个 SHA 是否指向不同 commit。短 SHA（7 位）与全 SHA（40 位）互为前缀 ⇒ 视为同一 commit，
+ * 不算变化（避免把存量的 40 位 githubCommitSha 截断成 7 位短哈希）。任一为空 ⇒ 不算变化。
+ */
+export function commitShaDiffers(a: string | null | undefined, b: string | null | undefined): boolean {
+  const lo = (a || '').trim().toLowerCase();
+  const ro = (b || '').trim().toLowerCase();
+  if (!lo || !ro) return false;
+  return !(lo.startsWith(ro) || ro.startsWith(lo));
+}
+
+/**
  * 「疑似卡住」判定阈值（毫秒）。一个仍在进行中的部署，已耗时超过这个值还没就绪，
  * 视为卡死/超时，前端不再显示一个不断增长的真实数字，而是封顶 + 打「疑似卡住」徽章。
  *

@@ -81,6 +81,13 @@ export interface ReconcileStuckDeployOptions {
   appendLog?: (branchId: string, log: OperationLog) => void;
   /** 收敛/告警后发 branch.updated 事件让 UI 刷新（注入以保持纯函数可测）。 */
   emitBranchUpdated?: (branch: BranchEntry) => void;
+  /**
+   * 该分支当前是否有**在途操作**（部署/重启/降温…由 BranchOperationCoordinator 持租约）。
+   * 返回 true ⇒ 看门狗本轮**完全跳过**该分支：操作拥有该分支，正常的长任务（>45min 的
+   * 编译/迁移/冷启）不应被硬超时误判为 error，状态由操作完成时自行落终态（Bugbot Medium
+   * 「Long deploys falsely timed out」）。不提供时退化为旧行为（无操作感知）。
+   */
+  hasActiveOperation?: (branch: BranchEntry) => boolean;
 }
 
 function parseTime(value?: string | null): number {
@@ -227,7 +234,10 @@ function recomputeBranchAggregateFromServices(branch: BranchEntry): { previousSt
   else if (statuses.some((s) => s === 'building')) next = 'building';
   else if (statuses.some((s) => s === 'starting' || s === 'restarting')) next = 'starting';
   else if (statuses.some((s) => s === 'running')) next = 'running';
-  else next = 'idle';
+  // 'stopping' 是**进行中**的非终结态：必须保留，绝不能塌成 idle（否则把仍在停止的分支谎报已停，
+  // 与服务级「stopping 无证据不触碰」自相矛盾）。仅当无任何 running/in-progress 服务时才看 stopping。
+  else if (statuses.some((s) => s === 'stopping')) next = 'stopping';
+  else next = 'idle'; // 全部 stopped/idle ⇒ 分支 idle（治 Bugbot「服务全停但 branch 仍 running」）
   branch.status = next;
   const failedReasons = Object.entries(branch.services || {})
     .filter(([, svc]) => svc.status === 'error')
@@ -249,8 +259,20 @@ export function reconcileStuckDeployStates(
   for (const branch of branches) {
     let mutated = false;
 
-    // ── TYPE 2 分支级：卡死非终结 branch.status 收敛 ──
-    const branchDecision = decideBranchFinalization(branch, nowMs, hardTimeoutMs);
+    // Bugbot Medium「Long deploys falsely timed out」：分支上有在途操作（部署/重启/降温…）时，
+    // 看门狗**整条跳过**——那个操作拥有该分支，>45min 的合法长任务不该被硬超时误杀成 error，
+    // 终态交给操作完成时落。与 index.ts:1401 的「recovery skips operation lease」判活同源。
+    if (options.hasActiveOperation?.(branch)) continue;
+
+    // 分支是否有 per-service 跟踪。有服务 ⇒ 分支聚合状态以**服务真实状态**为准（更可靠）；
+    // 无服务 ⇒ 退回时间戳证据/硬超时的分支级收敛（兜底）。
+    const hasServices = Object.keys(branch.services || {}).length > 0;
+
+    // ── TYPE 2 分支级：卡死非终结 branch.status 收敛（仅无 per-service 跟踪时作兜底）──
+    // Bugbot Medium「Branch running with stopped services」：分支级时间戳证据**不看服务状态**，
+    // 会在「服务已全 stopped 但分支 stop 元数据没落戳」时把 branch 误留在 running。故有服务时
+    // 一律跳过本时间戳分支决策，改由下方「服务级收敛 + 聚合重算」从服务真相推导分支状态。
+    const branchDecision = hasServices ? null : decideBranchFinalization(branch, nowMs, hardTimeoutMs);
     if (branchDecision) {
       const previousStatus = branch.status;
       branch.status = branchDecision.nextStatus;
@@ -285,7 +307,6 @@ export function reconcileStuckDeployStates(
     }
 
     // ── TYPE 2 服务级：卡死非终结 service.status 收敛 ──
-    let serviceStatusChanged = false;
     for (const [profileId, svc] of Object.entries(branch.services || {})) {
       if (!svc || !NON_TERMINAL_STATES.has(svc.status)) continue;
       const previousStatus = svc.status;
@@ -330,7 +351,6 @@ export function reconcileStuckDeployStates(
       svc.status = nextStatus;
       if (nextStatus === 'error' && !svc.errorMessage) svc.errorMessage = reason;
       mutated = true;
-      serviceStatusChanged = true;
       results.push({
         branchId: branch.id,
         projectId: branch.projectId,
@@ -351,20 +371,22 @@ export function reconcileStuckDeployStates(
       });
     }
 
-    // 服务级收敛改了任一 service.status ⇒ 把分支聚合 status/errorMessage 一并重算，
-    // 否则发出的 branch.updated 仍可能是「branch 在 running、无 branch error」而某个 service
-    // 已被收敛成 error，分支卡片/按 branch.status 决策的自动化漏掉这次看门狗失败（Codex P2）。
-    if (serviceStatusChanged) {
+    // 有 per-service 跟踪 ⇒ 分支聚合 status/errorMessage 永远以服务真实状态为准重算。
+    // 覆盖两类病：①服务级刚收敛成 error 但 branch 仍 running（Codex P2）；②服务早已全 stopped
+    // 但分支 stop 元数据没落戳、branch 卡在 running（Bugbot Medium「Branch running with stopped
+    // services」）。重算无变化时是纯读 no-op，不产生 result/事件。
+    if (hasServices) {
       const agg = recomputeBranchAggregateFromServices(branch);
       if (agg.changed) {
+        mutated = true; // 即便本轮没动任何 service（服务早已全 stopped），聚合改了 branch 也要发事件
         results.push({
           branchId: branch.id,
           projectId: branch.projectId,
           kind: 'branch-status-finalized',
           previousStatus: agg.previousStatus,
           nextStatus: agg.nextStatus,
-          via: 'timestamp-evidence',
-          reason: `状态机看门狗：服务级收敛后重算分支聚合状态 ${agg.previousStatus} → ${agg.nextStatus}`,
+          via: 'timestamp-evidence', // 由服务真实状态推导（per-service 即时间戳证据的聚合）
+          reason: `状态机看门狗：按服务真实状态重算分支聚合 ${agg.previousStatus} → ${agg.nextStatus}`,
         });
         recordEvent(
           options.serverEventLogStore,
