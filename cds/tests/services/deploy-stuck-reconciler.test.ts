@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { reconcileStuckDeployStates } from '../../src/services/deploy-stuck-reconciler.js';
+import { reconcileStuckDeployStates, hasYoungActiveLease } from '../../src/services/deploy-stuck-reconciler.js';
 import type { BranchEntry, BuildProfile } from '../../src/types.js';
 import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
 
@@ -512,5 +512,84 @@ describe('reconcileStuckDeployStates — Bugbot review 回归', () => {
     expect(branch.status).toBe('running'); // 收敛确实发生
     expect(results).toHaveLength(1);
     expect(buildLogs).toHaveLength(0); // 但不写部署/构建历史，只进系统事件日志
+  });
+});
+
+describe('reconcileStuckDeployStates — restarting 不被旧时间戳误收敛（Codex P2）', () => {
+  // 重启不刷新 lastDeployStartedAt，上一轮的 lastReadyAt 仍 >= 上一轮 lastDeployStartedAt。
+  // 旧逻辑会把仍在 restarting 的分支/服务用这对陈旧戳误翻成 running。
+
+  it('分支级：restarting + 旧 ready>=start ⇒ 不触碰（无服务兜底也不误翻 running）', () => {
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const branch = makeBranch({
+      status: 'restarting',
+      lastDeployStartedAt: '2026-06-27T09:50:00.000Z', // 上一轮部署起点
+      lastReadyAt: '2026-06-27T09:55:00.000Z', // 上一轮就绪（晚于起点）
+      // 无 services ⇒ 走分支级 decideBranchFinalization
+    });
+    const results = reconcileStuckDeployStates([branch], { now, source: 'unit' });
+    expect(branch.status).toBe('restarting'); // 保持，不被旧 ready 戳误收敛成 running
+    expect(results).toHaveLength(0);
+  });
+
+  it('服务级：单服务 restarting + 旧 ready>=start ⇒ 不触碰', () => {
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const branch = makeBranch({
+      status: 'restarting',
+      lastDeployStartedAt: '2026-06-27T09:50:00.000Z',
+      lastReadyAt: '2026-06-27T09:55:00.000Z',
+      services: {
+        web: { profileId: 'web', containerName: 'c', hostPort: 1, status: 'restarting' },
+      },
+    });
+    const results = reconcileStuckDeployStates([branch], { now, source: 'unit' });
+    expect(branch.services.web.status).toBe('restarting'); // 服务保持，不被旧戳误翻 running
+    // 分支聚合按服务真实状态重算：restarting 服务 ⇒ starting（聚合口径），不应是 running
+    expect(branch.status).not.toBe('running');
+    expect(results.some((r) => r.kind === 'service-status-finalized' && r.nextStatus === 'running')).toBe(false);
+  });
+
+  it('对照：starting（真新部署，戳已刷新）仍正常收敛 running', () => {
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const branch = makeBranch({
+      status: 'starting',
+      lastDeployStartedAt: '2026-06-27T09:50:00.000Z',
+      lastReadyAt: '2026-06-27T09:55:00.000Z',
+    });
+    const results = reconcileStuckDeployStates([branch], { now, source: 'unit' });
+    expect(branch.status).toBe('running'); // starting 不受本次改动影响，证据路径照常
+    expect(results).toHaveLength(1);
+  });
+});
+
+describe('hasYoungActiveLease — 在途租约判活（Bugbot Medium「Bad lease timestamp skips forever」）', () => {
+  const NOW = Date.parse('2026-06-27T10:00:00.000Z');
+  const ageOut = 90 * 60_000; // 2× 硬超时
+
+  it('年轻租约（5min 前）⇒ true（跳过收敛，护住合法长任务）', () => {
+    expect(hasYoungActiveLease([{ startedAt: '2026-06-27T09:55:00.000Z' }], NOW, ageOut)).toBe(true);
+  });
+
+  it('过老租约（>90min）⇒ false（挂死租约放行给硬超时）', () => {
+    expect(hasYoungActiveLease([{ startedAt: '2026-06-27T08:00:00.000Z' }], NOW, ageOut)).toBe(false);
+  });
+
+  it('缺/坏起始戳 ⇒ false（不再永久护住、卡死态可收敛）', () => {
+    expect(hasYoungActiveLease([{ startedAt: undefined }], NOW, ageOut)).toBe(false);
+    expect(hasYoungActiveLease([{ startedAt: 'not-a-date' }], NOW, ageOut)).toBe(false);
+    expect(hasYoungActiveLease([{}], NOW, ageOut)).toBe(false);
+  });
+
+  it('已取消的租约 ⇒ 忽略；空/缺省 ⇒ false', () => {
+    expect(hasYoungActiveLease([{ cancelled: true, startedAt: '2026-06-27T09:59:00.000Z' }], NOW, ageOut)).toBe(false);
+    expect(hasYoungActiveLease([], NOW, ageOut)).toBe(false);
+    expect(hasYoungActiveLease(null, NOW, ageOut)).toBe(false);
+  });
+
+  it('多租约取 some：一个年轻即 true', () => {
+    expect(hasYoungActiveLease(
+      [{ startedAt: '2026-06-27T08:00:00.000Z' }, { startedAt: '2026-06-27T09:58:00.000Z' }],
+      NOW, ageOut,
+    )).toBe(true);
   });
 });

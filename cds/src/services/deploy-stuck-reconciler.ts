@@ -43,6 +43,27 @@ const NON_TERMINAL_STATES = new Set(['starting', 'building', 'stopping', 'restar
  */
 export const STUCK_NON_TERMINAL_HARD_TIMEOUT_MS = 45 * 60_000;
 
+/**
+ * 在途操作租约是否「年轻」——用于看门狗的 hasActiveOperation 判活：年轻租约（有人正在
+ * 部署/重启该分支）跳过收敛，避免误杀合法长任务；过老（>maxSkipAgeMs，默认 2× 硬超时=90min）
+ * 或**无法判定起始时间**的租约一律放行给收敛，否则挂死/坏戳的租约会永久护住分支、卡死态永不
+ * 收敛（Codex P2「Let active deploys age out」+ Bugbot Medium「Bad lease timestamp skips forever」）。
+ * 纯函数，供 index.ts 接线 + 单测共用。
+ */
+export function hasYoungActiveLease(
+  ops: ReadonlyArray<{ cancelled?: boolean; startedAt?: string }> | null | undefined,
+  nowMs: number,
+  maxSkipAgeMs: number = STUCK_NON_TERMINAL_HARD_TIMEOUT_MS * 2,
+): boolean {
+  return (ops || []).some((op) => {
+    if (op.cancelled) return false;
+    const startMs = Date.parse(op.startedAt ?? '');
+    // 起始戳缺失/不可解析 → 不当作年轻租约（不跳过）。证不出年轻就当它可能挂死，放行给硬超时。
+    if (!Number.isFinite(startMs)) return false;
+    return nowMs - startMs < maxSkipAgeMs;
+  });
+}
+
 export type StuckReconcileKind =
   | 'branch-status-finalized' // TYPE 2：分支级非终结态收敛
   | 'service-status-finalized' // TYPE 2：服务级非终结态收敛
@@ -170,14 +191,19 @@ function decideBranchFinalization(
   const startMs = parseTime(branch.lastDeployStartedAt);
   const stoppedMs = parseTime(branch.lastStoppedAt);
 
-  // 证据路径 A：starting/building/restarting 但 lastReadyAt >= lastDeployStartedAt，
+  // 证据路径 A：starting/building 但 lastReadyAt >= lastDeployStartedAt，
   // 说明它**确实**起来过 —— status 是陈旧的。再看是否随后被停（lastStoppedAt 更新）：
   // 停了 ⇒ idle；没停 ⇒ running。
   // 守卫（Bugbot review）：必须有**本轮** lastDeployStartedAt 锚点（startMs > 0）才能
   // 用 lastReadyAt 作证据。否则 startMs 缺省被当 0，任意陈旧的 lastReadyAt 都满足
   // readyMs >= 0，会把一个真正在 starting 的新部署用上一轮的就绪戳误收敛。无锚点时
   // 落到下方硬超时兜底，不走证据路径。
-  if ((status === 'starting' || status === 'building' || status === 'restarting') && startMs > 0 && readyMs >= startMs) {
+  // **restarting 排除在证据路径外**（Codex P2「Do not finalize restarts from old deploy
+  // timestamps」）：手动重启 / 自动唤醒把 status 置 restarting 时**不刷新** lastDeployStartedAt，
+  // 上一轮部署的 lastReadyAt 仍 >= 上一轮的 lastDeployStartedAt，会把仍在重启中的分支用旧就绪
+  // 戳误翻成 running。restarting 真完成时 service.status 变 running 由聚合上浮；真卡死则由硬超时
+  // （restarting 不豁免）兜底。两条都不依赖会骗人的旧时间戳。
+  if ((status === 'starting' || status === 'building') && startMs > 0 && readyMs >= startMs) {
     if (stoppedMs >= readyMs) {
       return {
         nextStatus: 'idle',
@@ -391,9 +417,11 @@ export function reconcileStuckDeployStates(
         reason = `状态机看门狗：服务 ${profileId} stopping 已完成（lastStoppedAt 已落戳），收敛为 stopped`;
       } else if (
         singleService
-        && (svc.status === 'starting' || svc.status === 'building' || svc.status === 'restarting')
+        && (svc.status === 'starting' || svc.status === 'building')
         && startMs > 0 && readyMs >= startMs
       ) {
+        // restarting 同分支级一并排除（Codex P2「Do not finalize restarts from old deploy
+        // timestamps」）：重启不刷新 lastDeployStartedAt，旧就绪戳会把仍在重启的服务误翻 running。
         // 起来过 ⇒ running（除非随后被停，则 stopped）。仅单服务：branch.lastReadyAt 无歧义指向它。
         const stopped = stoppedMs >= readyMs;
         nextStatus = stopped ? 'stopped' : 'running';

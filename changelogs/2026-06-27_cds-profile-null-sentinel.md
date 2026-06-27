@@ -30,3 +30,7 @@
 | feat | cds | CDS 自更新极速版 第3步(运行层模块)：新增 cds-prebuilt-runtime.ts（fetchCdsPrebuilt：docker pull + create + cp 解出 /dist /web-dist 到 staging + 校验 manifest，任何失败 ok:false 供回退现编，I/O 全注入可单测）+ 8 单测 |
 | docs | cds | 新增 debt.cds.selfupdate-prebuilt：CDS 自更新极速版台账（CI 产物+决策+拉取三层已落地验证，orchestrator 接线精确 spec 待真实环境灰度） |
 | fix | cds | 自更新极速版产物镜像加无害 CMD + 运行层 docker create 显式传命令：FROM scratch 无 CMD/ENTRYPOINT 时 docker create 报 "No command specified" 创建失败，会导致快路径永远回退本机现编（Codex P2 #940） |
+| fix | cds | 卡死看门狗在途租约判活抽成 hasYoungActiveLease 纯函数：缺/坏起始戳的租约不再永久护住分支（原 return true 重蹈「租约永不释放」覆辙），放行给硬超时收敛（Bugbot Medium「Bad lease timestamp skips forever」#940）+ 5 单测 |
+| fix | cds | 卡死看门狗 restarting 排除出时间戳证据路径（分支级+服务级）：重启不刷新 lastDeployStartedAt，旧 lastReadyAt 会把仍在重启的分支/服务误翻 running；真完成由服务真相聚合上浮、真卡死由硬超时兜底（Codex P2「Do not finalize restarts from old deploy timestamps」#940）+ 3 单测 |
+| fix | cds | 部署历史 commit 列以**实际部署** SHA 为准：源码 deploy 总 reset 到分支 HEAD，webhook 带 requestCommitSha=A 但 origin 已到 B 时落地的是 B；opLog.commitSha 改为不受 requestCommitSha 冻结、跟随 pulledSha（主路径+单服务路径，Codex P2「Do not freeze webhook history on the requested SHA」#940） |
+| docs | cds | debt.cds.executor-watchdog 补登 #940 三项 cluster/UI 延期项（executor commit/mode 不回传、TYPE1 告警分支卡片不可见） |

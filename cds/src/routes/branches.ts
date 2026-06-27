@@ -10215,16 +10215,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 取裸 SHA（优先 after = rev-parse --short HEAD），否则旧的 bare-SHA 正则永不匹配、整段跳过，
       // 历史「版本」列停在 pull 前旧 SHA（Codex P2）。
       const pulledSha = parsePulledSha(pullResult);
-      if (!requestCommitSha
-        && !branchUsesPrebuiltMode(profiles, entry)
+      // 源码 pull（非极速版、未 skip、解析出 SHA）：deploy 总是 reset 到分支 HEAD（下方清
+      // pinnedCommit、"deploy always restores to branch HEAD"），落地的就是 pulledSha。
+      const isSourcePull = !branchUsesPrebuiltMode(profiles, entry)
         && !(pullResult as { skipped?: boolean }).skipped
-        && pulledSha
-        && shouldRefreshCommitSha(entry.githubCommitSha, pulledSha)) {
+        && !!pulledSha;
+      if (!requestCommitSha && isSourcePull && shouldRefreshCommitSha(entry.githubCommitSha, pulledSha)) {
+        // entry.githubCommitSha 被 check-run/release/集成复用：仅在**未显式请求** commit 时跟随 HEAD。
         entry.githubCommitSha = pulledSha;
-        // 同步刷新构建历史的 commit 元数据：opLog.commitSha 是在 pull 前（10084）按旧 HEAD
-        // 捕获的，若 pull 拉到了更新的 HEAD，部署的其实是 pulledSha，历史「版本」列
-        // 必须指向真正部署的 commit，否则给 reviewer 指错版本（Codex P2）。
-        Object.assign(opLog, deriveCommitMeta(entry));
+      }
+      // 构建历史「版本」列必须记**实际部署**的 SHA = pulledSha，**不受 requestCommitSha 影响**：
+      // 即使 webhook 带 requestCommitSha=A、origin 已前进到 B，pull hard-reset 到分支 HEAD 落地的是 B，
+      // 冻结在请求 SHA 上会给 reviewer 指错版本（Codex P2「Do not freeze webhook history on the
+      // requested SHA」）。极速版/skip 除外（镜像锁 CI 就绪 SHA，opLog 保持 deriveCommitMeta(entry,…) 初值）。
+      if (isSourcePull) {
+        Object.assign(opLog, deriveCommitMeta(entry, pulledSha));
       }
 
       // Clear pinned commit — deploy always restores to branch HEAD
@@ -11118,14 +11123,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const isPrebuiltProfile = resolveEffectiveProfile(profile, entry).prebuiltImage === true;
         // 同主路径：head 带标题非裸 SHA，用 parsePulledSha 取裸 SHA（优先 after）再比对刷新（Codex P2）。
         const pulledSha = parsePulledSha(pullResult);
-        if (!bodySha
-          && !isPrebuiltProfile
-          && !(pullResult as { skipped?: boolean }).skipped
-          && pulledSha
-          && shouldRefreshCommitSha(entry.githubCommitSha, pulledSha)) {
+        const isSourcePull = !isPrebuiltProfile && !(pullResult as { skipped?: boolean }).skipped && !!pulledSha;
+        if (!bodySha && isSourcePull && shouldRefreshCommitSha(entry.githubCommitSha, pulledSha)) {
           entry.githubCommitSha = pulledSha;
-          // 同步刷新构建历史 commit 元数据为真正部署的 HEAD（Codex P2，同上）。
-          Object.assign(opLog, deriveCommitMeta(entry));
+        }
+        // opLog.commitSha 记**实际部署**的 SHA = pulledSha，不受 body.commitSha 影响：deploy 总是
+        // reset 到分支 HEAD（下方清 pinnedCommit），冻结在请求 SHA 会指错版本（Codex P2「Do not
+        // freeze webhook history on the requested SHA」）。极速版/skip 除外。
+        if (isSourcePull) {
+          Object.assign(opLog, deriveCommitMeta(entry, pulledSha));
         }
       }
 

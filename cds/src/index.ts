@@ -38,7 +38,7 @@ import { syncAllSystemdUnits } from './services/systemd-sync.js';
 import { branchEvents, nowIso } from './services/branch-events.js';
 import { archiveBranchContainerLogs } from './services/container-log-archiver.js';
 import { reconcileStaleDeployDispatches, type DeployDispatchReconcileResult } from './services/deploy-dispatch-reconciler.js';
-import { reconcileStuckDeployStates, STUCK_NON_TERMINAL_HARD_TIMEOUT_MS } from './services/deploy-stuck-reconciler.js';
+import { reconcileStuckDeployStates, hasYoungActiveLease } from './services/deploy-stuck-reconciler.js';
 import { analyzeChangeImpact } from './services/change-impact-analyzer.js';
 import { shouldRetryInterruptedWebhookDispatch, isDeployDispatchRetryEnabled } from './services/deploy-dispatch-retry.js';
 import { ResourceUsageSampler } from './services/resource-usage-sampler.js';
@@ -224,20 +224,10 @@ function startStaleDeployDispatchReconciler(
         // 有在途操作（部署/重启/降温…）的分支整条跳过：那个操作拥有该分支，合法的长任务
         // （>45min 编译/迁移/冷启）不该被硬超时误判失败（Bugbot Medium）。与 index.ts 别处
         // 「recovery skips operation lease」判活同源。
-        hasActiveOperation: (b) => {
-          // 只护「年轻」的在途操作。一个 deploy 路由若自己挂死（如 git pull / docker pull 无界
-          // 卡住），它的租约直到 complete() 才释放——永不释放就永远护着、分支永远收敛不了
-          // （Codex P2「Let active deploys age out of the watchdog skip」）。故超过 2× 硬超时
-          // （默认 90min）的在途租约视为挂死，不再跳过，让硬超时把分支/服务收敛成 error。
-          const maxSkipAgeMs = STUCK_NON_TERMINAL_HARD_TIMEOUT_MS * 2;
-          const nowMs = Date.now();
-          return (branchOperationCoordinator.getActiveOperations(b.id) || []).some((op) => {
-            if (op.cancelled) return false;
-            const startMs = Date.parse(op.startedAt);
-            if (!Number.isFinite(startMs)) return true; // 无起始戳 → 保守当活跃、跳过
-            return nowMs - startMs < maxSkipAgeMs; // 仅年轻租约才跳过
-          });
-        },
+        hasActiveOperation: (b) =>
+          // 只护「年轻」的在途操作（>2× 硬超时=90min 的挂死租约、坏/缺起始戳的租约一律放行给收敛）。
+          // 判活逻辑抽到 deploy-stuck-reconciler.hasYoungActiveLease 纯函数，可单测（见同名 test 套件）。
+          hasYoungActiveLease(branchOperationCoordinator.getActiveOperations(b.id), Date.now()),
         // 硬超时只在 master 启用：master 的本地/远端代理部署都持 BranchOperationCoordinator 租约，
         // hasActiveOperation 判活准。executor 节点的 /exec/deploy 不持该租约（判活恒 false），
         // 开硬超时会把合法的 >45min 远端构建误判 error（Bugbot High「Executor deploys lack lease
