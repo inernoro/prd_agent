@@ -175,22 +175,29 @@ function startStaleDeployDispatchReconciler(
   state: StateService,
   store: ServerEventLogSink | null,
 ): NodeJS.Timeout | null {
-  if (config.mode === 'executor') return null;
+  // 看门狗在 master 与 executor 都要跑：webhook 部署派发收敛是 master 职责，但卡死状态收敛
+  // （TYPE2 非终结态 / TYPE1 镜像落后）必须**也**在 executor 本地跑 —— executor 是远端分支
+  // 状态的真相源，master 侧的修正会被下次 heartbeat 用 executor 快照覆盖（Codex P2: run the
+  // stuck reconciler on executors too）。故不再对 executor 提前返回；webhook 派发部分用 mode 守卫。
+  const isMaster = config.mode !== 'executor';
   let running = false;
   const run = () => {
     if (running) return;
     running = true;
     try {
-      const reconciled = reconcileStaleDeployDispatches(state, {
-        source: 'deploy-dispatch-reconciler.interval',
-        serverEventLogStore: store,
-      });
-      if (reconciled.length > 0) {
-        console.warn(`[deploy-dispatch] reconciled ${reconciled.length} stale webhook dispatch state(s)`);
+      if (isMaster) {
+        const reconciled = reconcileStaleDeployDispatches(state, {
+          source: 'deploy-dispatch-reconciler.interval',
+          serverEventLogStore: store,
+        });
+        if (reconciled.length > 0) {
+          console.warn(`[deploy-dispatch] reconciled ${reconciled.length} stale webhook dispatch state(s)`);
+        }
+        dispatchRecoveredWebhookDeploys(state, store, reconciled, 'deploy-dispatch-reconciler.interval');
       }
-      dispatchRecoveredWebhookDeploys(state, store, reconciled, 'deploy-dispatch-reconciler.interval');
 
       // 通用部署卡死看门狗（2026-06-27）：收敛卡死的非终结态 + 极速版镜像落后告警。
+      // master + executor 都跑（见函数顶部说明）。
       // 纯函数 reconcileStuckDeployStates 经回调注入所有 I/O，这里只负责接线。
       const stuck = reconcileStuckDeployStates(state.getAllBranches(), {
         source: 'deploy-stuck-reconciler.interval',

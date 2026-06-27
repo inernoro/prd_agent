@@ -2695,7 +2695,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // 「版本」列指向 pull 前旧 SHA（Codex P2）。极速版锁定 CI 镜像 SHA、不跟随 pull head。
         if (parsed.step === 'pull' && !branchUsesPrebuiltMode(profiles, entry)) {
           const pullDetail = (parsed.detail && typeof parsed.detail === 'object' ? parsed.detail : parsed) as { head?: unknown; skipped?: boolean };
-          const head = typeof pullDetail.head === 'string' ? pullDetail.head : undefined;
+          // executor 的 /exec/deploy 当前只把 head 放进 step 事件的 title 串（「已拉取: <sha>」），
+          // 没有结构化的 detail.head（Codex P2）。先取结构化字段，取不到再从 title 兜底解析出
+          // 40/7 位 hex SHA，避免 head 永远 undefined、commit 列停在 master 冻结的旧 SHA。
+          let head = typeof pullDetail.head === 'string' ? pullDetail.head : undefined;
+          if (!head && typeof parsed.title === 'string') {
+            const m = parsed.title.match(/\b([0-9a-f]{7,40})\b/i);
+            if (m) head = m[1];
+          }
           if (head && /^[0-9a-f]{7,40}$/i.test(head) && !pullDetail.skipped) {
             Object.assign(opLog, deriveCommitMeta(entry, head));
           }
