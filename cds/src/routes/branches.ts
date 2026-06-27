@@ -2694,17 +2694,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // commit 元数据（opLog.commitSha 在 2569 是按 master 冻结的旧 HEAD 捕获的），避免
         // 「版本」列指向 pull 前旧 SHA（Codex P2）。极速版锁定 CI 镜像 SHA、不跟随 pull head。
         if (parsed.step === 'pull' && !branchUsesPrebuiltMode(profiles, entry)) {
-          const pullDetail = (parsed.detail && typeof parsed.detail === 'object' ? parsed.detail : parsed) as { head?: unknown; skipped?: boolean };
-          // executor 的 /exec/deploy 当前只把 head 放进 step 事件的 title 串（「已拉取: <sha>」），
-          // 没有结构化的 detail.head（Codex P2）。先取结构化字段，取不到再从 title 兜底解析出
-          // 40/7 位 hex SHA，避免 head 永远 undefined、commit 列停在 master 冻结的旧 SHA。
-          let head = typeof pullDetail.head === 'string' ? pullDetail.head : undefined;
-          if (!head && typeof parsed.title === 'string') {
+          const pullDetail = (parsed.detail && typeof parsed.detail === 'object' ? parsed.detail : parsed) as { head?: unknown; after?: unknown; afterFull?: unknown; skipped?: boolean };
+          // executor 现在把结构化 head/after/afterFull 一并回传：用 parsePulledSha 取**全 SHA**
+          // （afterFull > after > head token），取不到再从 title 兜底解析短 SHA。与本地 deploy 路径
+          // 一致地刷新 opLog.commitSha + entry.githubCommitSha（后者被 check-run/release/集成复用，
+          // 须是全 SHA），避免远端 source-build 只记短 SHA / branch HEAD 停在 master 冻结的旧 SHA
+          // （Bugbot Low「Remote pull omits full SHA」）。极速版锁 CI 镜像 SHA、不跟随 pull head。
+          let pulledSha = parsePulledSha({
+            head: typeof pullDetail.head === 'string' ? pullDetail.head : undefined,
+            after: typeof pullDetail.after === 'string' ? pullDetail.after : undefined,
+            afterFull: typeof pullDetail.afterFull === 'string' ? pullDetail.afterFull : undefined,
+          });
+          if (!pulledSha && typeof parsed.title === 'string') {
             const m = parsed.title.match(/\b([0-9a-f]{7,40})\b/i);
-            if (m) head = m[1];
+            if (m) pulledSha = m[1];
           }
-          if (head && /^[0-9a-f]{7,40}$/i.test(head) && !pullDetail.skipped) {
-            Object.assign(opLog, deriveCommitMeta(entry, head));
+          if (pulledSha && !pullDetail.skipped) {
+            if (commitShaDiffers(entry.githubCommitSha, pulledSha)) {
+              entry.githubCommitSha = pulledSha;
+            }
+            Object.assign(opLog, deriveCommitMeta(entry, pulledSha));
           }
         }
         opLog.events.push({
