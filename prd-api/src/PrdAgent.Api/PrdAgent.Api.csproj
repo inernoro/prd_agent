@@ -30,6 +30,7 @@
   <ItemGroup>
     <ProjectReference Include="..\PrdAgent.Core\PrdAgent.Core.csproj" />
     <ProjectReference Include="..\PrdAgent.Infrastructure\PrdAgent.Infrastructure.csproj" />
+    <ProjectReference Include="..\PrdAgent.LlmGateway\PrdAgent.LlmGateway.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    PrdAgent.LlmGateway —— LLM 网关物理独立的承载项目。
+    阶段1：作为类库被 prd-api 进程内引用（同进程双形态），逐步移入网关实现。
+    阶段2：加 Program.cs 成为可独立运行的服务。
+    设计见 doc/design.llm-gateway-physical-isolation.md。
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="MongoDB.Driver" Version="2.29.0" />
+    <PackageReference Include="Polly" Version="8.4.2" />
+    <PackageReference Include="Polly.Extensions.Http" Version="3.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PrdAgent.Core\PrdAgent.Core.csproj" />
+    <ProjectReference Include="..\PrdAgent.Infrastructure\PrdAgent.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>
