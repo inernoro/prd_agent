@@ -1,9 +1,12 @@
 ---
 name: code-hygiene
+version: 1.0.0
 description: Audits code for post-migration residue and technical debt across 10 dimensions (dead fields, dead branches, compat shims, naming artifacts, redundant params/types, stale comments, migration guards, over-abstraction, near-duplicates, config-code drift). Outputs a structured report with auto-fix plan. Trigger words: "代码卫生", "清理残留", "hygiene", "代码体检", "/hygiene".
 ---
 
-# Code Hygiene — 代码卫生审计
+# 代码卫生审计
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/hygiene`、"代码卫生"、"清理残留"、"代码体检"、"hygiene"
 
 > **迁移完成 ≠ 功能能跑。迁移完成 = 代码里看不出曾经迁移过。**
 
@@ -33,16 +36,16 @@ description: Audits code for post-migration residue and technical debt across 10
 
 | # | 维度 | 一句话定义 | 典型信号 |
 |---|------|-----------|---------|
-| ① | **死字段** | 类型中定义了但无代码读写 | `// TODO`、空初始值 `= {}` |
-| ② | **死条件分支** | 分支永不执行或返回空值 | `case 'x': return null;` |
-| ③ | **兼容垫片** | 旧名称/旧配置的 fallback | `NEW || OLD`、`legacy` 注释 |
-| ④ | **命名残留** | 代码中仍用旧概念名称 | `providerConfig` vs `platformConfig` |
-| ⑤ | **冗余参数/类型** | 声明了但从未使用 | `_` 前缀参数、孤立类型导出 |
-| ⑥ | **过时注释** | 注释与代码行为不符 | 已完成的 TODO、过时 JSDoc |
-| ⑦ | **防御性迁移代码** | 旧数据格式的运行时填充 | `// v1 compat`、批量 `if (!field)` |
-| ⑧ | **过度抽象** | 只有一个调用者的 helper/wrapper | 单次调用的 `xxxUtils` |
-| ⑨ | **近似重复** | 两段 80%+ 相同的代码 | 复制粘贴仅改部分 |
-| ⑩ | **配置-代码漂移** | 配置文件使用了代码中不存在的语法/字段 | `x-cds-inject`、`{{host}}`、未解析的自定义扩展 |
+| 1 | **死字段** | 类型中定义了但无代码读写 | `// TODO`、空初始值 `= {}` |
+| 2 | **死条件分支** | 分支永不执行或返回空值 | `case 'x': return null;` |
+| 3 | **兼容垫片** | 旧名称/旧配置的 fallback | `NEW || OLD`、`legacy` 注释 |
+| 4 | **命名残留** | 代码中仍用旧概念名称 | `providerConfig` vs `platformConfig` |
+| 5 | **冗余参数/类型** | 声明了但从未使用 | `_` 前缀参数、孤立类型导出 |
+| 6 | **过时注释** | 注释与代码行为不符 | 已完成的 TODO、过时 JSDoc |
+| 7 | **防御性迁移代码** | 旧数据格式的运行时填充 | `// v1 compat`、批量 `if (!field)` |
+| 8 | **过度抽象** | 只有一个调用者的 helper/wrapper | 单次调用的 `xxxUtils` |
+| 9 | **近似重复** | 两段 80%+ 相同的代码 | 复制粘贴仅改部分 |
+| 10 | **配置-代码漂移** | 配置文件使用了代码中不存在的语法/字段 | `x-cds-inject`、`{{host}}`、未解析的自定义扩展 |
 
 **每个维度的详细信号和修复策略** → 见 [reference/dimensions.md](reference/dimensions.md)
 
@@ -108,20 +111,20 @@ description: Audits code for post-migration residue and technical debt across 10
 
 | 维度 | 发现 | 可自动修复 | 需确认 |
 |------|------|-----------|--------|
-| ① 死字段 | 2 | 2 | 0 |
-| ② 死分支 | 1 | 1 | 0 |
+| 1 死字段 | 2 | 2 | 0 |
+| 2 死分支 | 1 | 1 | 0 |
 | ... | ... | ... | ... |
 | **合计** | **N** | **N** | **N** |
 
 ## 发现详情
 
-### ①-1. `sharedEnv` — types.ts:206
+### 1-1. `sharedEnv` — types.ts:206
 
 - **代码**: `sharedEnv: Record<string, string>`
 - **证据**: 定义于 types.ts:206，初始化为 `{}` (config.ts:12)，从未被业务逻辑消费
 - **确定性**: 确认死代码
 - **修复**: 删除字段定义 + 所有初始化位置
-- **自动修复**: ✅
+- **自动修复**: 是
 
 ## 修复计划
 
@@ -152,17 +155,17 @@ description: Audits code for post-migration residue and technical debt across 10
 
 **Phase 3 扫描结果**:
 
-- **④ 命名残留**: `sessionStore.ts:42` — 变量 `providerList` 应为 `platformList`
-- **⑥ 过时注释**: `chatStore.ts:15` — `// TODO: 支持 Guide 模式` — Guide 已废弃
-- **⑦ 防御性迁移**: `themeStore.ts:88` — `if (!state.glassEnabled) state.glassEnabled = false` — 液态玻璃已全量上线
+- **4 命名残留**: `sessionStore.ts:42` — 变量 `providerList` 应为 `platformList`
+- **6 过时注释**: `chatStore.ts:15` — `// TODO: 支持 Guide 模式` — Guide 已废弃
+- **7 防御性迁移**: `themeStore.ts:88` — `if (!state.glassEnabled) state.glassEnabled = false` — 液态玻璃已全量上线
 
 **Phase 4 评估**:
 
 | # | 维度 | 确定性 | 自动修复 |
 |---|------|--------|---------|
-| 1 | ④ 命名残留 | 确认 | ✅ 重命名 |
-| 2 | ⑥ 过时注释 | 确认 | ✅ 删除 |
-| 3 | ⑦ 迁移代码 | 确认 | ✅ 删除 |
+| 1 | 4 命名残留 | 确认 | 是，重命名 |
+| 2 | 6 过时注释 | 确认 | 是，删除 |
+| 3 | 7 迁移代码 | 确认 | 是，删除 |
 
 **Phase 5 报告**: 3 项发现，3 项可自动修复，0 项需确认
 

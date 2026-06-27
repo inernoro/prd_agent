@@ -113,7 +113,7 @@ export function SiteNoticeInbox(): JSX.Element {
           if (!open) markAllRead();
         }}
       >
-        <Bell className="h-4 w-4" />
+        <Bell className="h-5 w-5" />
         {unreadCount > 0 ? (
           <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-primary px-1 text-center font-mono text-[10px] leading-4 text-primary-foreground">
             {unreadCount}

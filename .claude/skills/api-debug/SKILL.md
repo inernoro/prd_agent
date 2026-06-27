@@ -1,13 +1,15 @@
 ---
 name: api-debug
-description: Query the PrdAgent API to fetch real data for debugging. Use when you need to investigate issues, verify data states, or understand system behavior by querying actual API endpoints.
+description: 用 AI Access Key 认证查询 PrdAgent 真实 API 数据，辅助排查问题、核对数据状态、理解系统行为，产出可直接分析的 JSON 响应。触发词："查 API 数据"、"调试接口"、"看真实数据"、"api debug"、"verify data state"。
 ---
 
-# API Debug
+# API 调试
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/api-debug`、"查 API 数据"、"调试接口"
 
 Query the PrdAgent API using AI Access Key authentication to fetch real data for debugging and investigation.
 
-## When to Use
+## 何时用
 
 This skill should be used when:
 - Debugging issues that require checking actual data states
@@ -25,7 +27,7 @@ The API uses AI Access Key authentication:
   - `X-AI-Access-Key: {key}` - The configured access key
   - `X-AI-Impersonate: {username}` - A valid username to impersonate (must exist in database)
 
-> ⚠️ **严禁硬编码 `admin` 或 `root`**。`admin` 通常不是数据库真实用户名，`root` 是破窗账户不在 users 集合中。
+> 警告：**严禁硬编码 `admin` 或 `root`**。`admin` 通常不是数据库真实用户名，`root` 是破窗账户不在 users 集合中。
 > **强烈建议**：从 `$MAP_AI_USER` 环境变量读取用户名，避免每次都通过 JWT 登录发现。
 
 ## Base URL

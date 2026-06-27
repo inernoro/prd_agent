@@ -81,7 +81,7 @@ timeline
 
 > **价值**：把散落各处的分享链接收敛到单一短链基础设施，配管理员控制台统一管理，并把分享访问改为不可枚举的字母 token 直链，与数字短链彻底分开——为 W21 的"分享 URL 全局 /s/{token} 统一"打下地基。
 
-- 统一短链基础设施 + 管理员控制台（`spec.short-links` 文档同期补齐）。
+- 统一短链基础设施 + 管理员控制台（`spec.platform.short-links` 文档同期补齐）。
 - 访问走无密码分享链接的字母 token 地址；id 直链与分享数字短链解耦。
 - 修复 `WeeklyPosterController` 缺失的 using 引用。
 - 相关 PR：#613、#614、#618。
@@ -125,7 +125,7 @@ timeline
 > **价值**：本周新增 3 类平台技能。老王智能体用"米多解决问题五步法"在用户卡住时强制拆解任务；issues 三技能（autofix / visual-create / visual-run）建立 Agent 间 issue 自动巡检协议；daily-entropy-plan 把每日熵减做成一条命令跑完的全流程编排。
 
 - 新增 `laowang` 老王智能体技能。
-- 新增 issues 三技能 + 协议规则文档（`rule.issues-system.md`）。
+- 新增 issues 三技能 + 协议规则文档（`rule.skill.issues-system.md`）。
 - 新增 `daily-entropy-plan` 每日熵减全流程编排技能。
 - 海鲜市场卡片布局升级 + 百宝箱功能增强。
 - 修复左侧 sidebar 与「我的导航」菜单数量不一致；优化通知卡交互（批量处理 / 动态定位 / 乐观更新）。
@@ -222,7 +222,7 @@ timeline
 | #612  | 2026-05-14 | 修复 PDF 包装站分享被 Chrome 屏蔽                     | Bug 修复 |
 | #613  | 2026-05-14 | 统一短链基础设施 + 管理员控制台                           | 架构     |
 | #614  | 2026-05-14 | 补 WeeklyPosterController 缺失 using 引用         | Bug 修复 |
-| #618  | 2026-05-14 | 每日熵减计划 2026-W20 — spec.short-links 补缺       | 文档     |
+| #618  | 2026-05-14 | 每日熵减计划 2026-W20 — spec.platform.short-links 补缺       | 文档     |
 | #619  | 2026-05-15 | 重构 CDS 三技能按冷/热/核心三层分离                       | 工具链    |
 | #620  | 2026-05-15 | 项目级自动生命周期调度 + 分支停止原因可见性                    | 新功能    |
 | #621  | 2026-05-15 | 修正 CDS 技能文档中 7 处与真实 cdscli parser 不符的命令     | 文档     |

@@ -11,8 +11,8 @@
  * bubble up as structured objects rather than HTTP exceptions so the
  * auth-service can map them to user-visible messages.
  *
- * See doc/design.cds-multi-project.md section 七 and
- * doc/plan.cds-multi-project-phases.md P2.
+ * See doc/design.cds.multi-project.md section 七 and
+ * doc/plan.cds.multi-project-phases.md P2.
  */
 
 export interface GitHubProfile {

@@ -116,7 +116,7 @@ export class ProxyService {
   /**
    * Attach the warm-pool scheduler. When set, every successful route to a
    * HOT branch calls scheduler.touch() to refresh LRU ordering.
-   * See doc/design.cds-resilience.md §四.4.
+   * See doc/design.cds.resilience.md §四.4.
    */
   setScheduler(s: SchedulerService): void {
     this.scheduler = s;
@@ -544,7 +544,7 @@ export class ProxyService {
 
     // Loading states — serve friendly waiting page instead of 502/503 so
     // users never see a raw Cloudflare gateway error during build/restart.
-    // See `.claude/rules/cds-auto-deploy.md` + doc/design.cds-resilience.md.
+    // See `.claude/rules/cds-auto-deploy.md` + doc/design.cds.resilience.md.
     const LOADING_BRANCH_STATUSES: ReadonlySet<string> = new Set([
       'starting', 'building', 'restarting',
     ]);
@@ -1072,6 +1072,15 @@ export class ProxyService {
       waitingProfileId: waitingProfileId || null,
       progress: this.estimateWaitingProgress(branch, waitingProfileId),
       timing,
+      buildMode: timing?.mode || null,
+      modeLabel: timing ? (timing.mode === 'release' ? '极速版' : '源码') : null,
+      branchPanelUrl: branch && this.dashboardBaseUrl()
+        ? `${this.dashboardBaseUrl()}/branch-panel/${branch.id}`
+        : null,
+      prUrl: branch && branch.githubRepoFullName && branch.githubPrNumber
+        ? `https://github.com/${branch.githubRepoFullName}/pull/${branch.githubPrNumber}`
+        : null,
+      prLabel: branch?.githubPrNumber ? `PR #${branch.githubPrNumber}` : null,
       services: services.map((svc) => ({
         profileId: svc.profileId,
         status: svc.status,
@@ -1495,6 +1504,19 @@ void main(){
       : `<div class="svc"><span class="svc-dot" style="--svc-color:#6b7280">●</span><span>服务尚未创建</span></div>`;
 
     const branchLabel = stageLabel(branchStatus);
+    // 构建模式（极速版 = CI 预构建镜像直接部署 / 源码 = 拉代码热加载编译）+ 分支/PR 直达链接，
+    // 让等待页一眼知道「这是哪种构建、对应哪个分支与 PR」，不必猜。
+    const { mode: buildMode } = this.resolveWaitTimingMode(branch, waitingProfileId);
+    const safeModeLabel = this.escapeHtml(buildMode === 'release' ? '极速版' : '源码');
+    const dashBase = this.dashboardBaseUrl();
+    const branchPanelUrl = dashBase ? `${dashBase}/branch-panel/${encodeURIComponent(branch.id)}` : '';
+    const prNum = branch.githubPrNumber;
+    const prUrl = branch.githubRepoFullName && prNum
+      ? `https://github.com/${branch.githubRepoFullName}/pull/${prNum}`
+      : '';
+    const safeBranchPanelUrl = this.escapeHtml(branchPanelUrl);
+    const safePrUrl = this.escapeHtml(prUrl);
+    const safePrLabel = this.escapeHtml(prNum ? `PR #${prNum}` : 'PR');
     const shouldAutoRefresh = branchStatus === 'building' || branchStatus === 'starting' || branchStatus === 'restarting';
     const heading = branchStatus === 'stopped' || branchStatus === 'idle'
         ? '分支当前未运行'
@@ -1531,6 +1553,9 @@ h1{font-size:clamp(42px,5.6vw,82px);line-height:.96;letter-spacing:0;margin-bott
 .chip{position:relative;overflow:hidden;display:inline-flex;align-items:center;gap:8px;padding:9px 14px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.035);backdrop-filter:blur(10px);font-size:12px;color:#dde3ea}
 .chip::after{content:"";position:absolute;inset:-60% auto -60% -40%;width:42%;background:linear-gradient(90deg,transparent,rgba(245,242,255,.18),transparent);transform:skewX(-18deg);animation:glint 3.6s ease-in-out infinite}
 .branch{font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;word-break:break-all}
+.chip.mode{color:#cbd5e1}
+a.chip.link{cursor:pointer;text-decoration:none;color:#dde3ea;transition:border-color .2s ease,background .2s ease}
+a.chip.link:hover{border-color:rgba(255,255,255,.32);background:rgba(255,255,255,.07)}
 .services{display:flex;flex-direction:column;gap:12px;margin:0 0 28px;max-width:620px}
 	.svc{position:relative;overflow:hidden;display:flex;align-items:center;gap:12px;padding:13px 0;border-top:1px solid rgba(245,242,255,.13);font-size:15px;line-height:1.5}
 .svc::after{content:"";position:absolute;left:-35%;top:0;bottom:0;width:34%;background:linear-gradient(90deg,transparent,rgba(245,242,255,.14),transparent);transform:skewX(-18deg);animation:svc-glint 3.2s ease-in-out infinite}
@@ -1576,12 +1601,15 @@ h1{font-size:clamp(42px,5.6vw,82px);line-height:.96;letter-spacing:0;margin-bott
     <div class="meta">
       <span class="chip branch" data-role="branch-name">${safeBranch}</span>
       <span class="chip" data-role="branch-status">分支状态 · ${branchLabel}</span>
+      <span class="chip mode" data-role="build-mode">构建模式 · ${safeModeLabel}</span>
+      <a class="chip link" data-role="branch-link" href="${safeBranchPanelUrl}" target="_blank" rel="noopener"${branchPanelUrl ? '' : ' hidden'}>查看分支</a>
+      <a class="chip link" data-role="pr-link" href="${safePrUrl}" target="_blank" rel="noopener"${prUrl ? '' : ' hidden'}>${safePrLabel}</a>
     </div>
     <div class="services" data-role="services">${serviceRows}</div>
     <div class="estimate" data-role="progress-estimate">
       <div class="estimate-top">
         <span data-role="progress-label">${safeProgressLabel}</span>
-        <strong data-role="progress-percent">${progress.percent}%</strong>
+        <strong data-role="progress-percent">${progress.percent.toFixed(2)}%</strong>
       </div>
       <div class="estimate-track"><span class="estimate-bar" data-role="progress-bar" style="width:${progress.percent}%"></span></div>
       <div class="estimate-time" data-role="wait-timing" hidden>
@@ -1765,20 +1793,47 @@ ${shouldAutoRefresh ? `;(function(){
       root.appendChild(row);
     });
   }
-  function renderProgress(progress){
-    if(!progress)return;
-    var percent=Math.max(0,Math.min(100,Number(progress.percent)||0));
-    var label=document.querySelector('[data-role="progress-label"]');
+  // 百分比状态：display 是当前显示值（两位小数、单调不回退），server 是服务端状态/日志估算，
+  // 时间目标由 elapsed/median 推出。tickPct 每 200ms 把 display 平滑逼近 max(server,时间目标)，
+  // 让数字始终在动；未 ready 前封顶 99.99%（守住"ready 前不显示 100%"）。
+  var pct={display:0,server:0,ready:false};
+  (function(){var el=document.querySelector('[data-role="progress-percent"]');var v=el?parseFloat(el.textContent):0;pct.display=pct.server=(isNaN(v)?0:v);})();
+  // 进度百分比：时间连续驱动，小数位一直在跳。
+  // 有历史耗时(median)时：以服务端日志/状态估算 server 作锚点(下限)，随 ETA 推进(frac=已用/中位)
+  // 平滑爬向 99.99——所以即使 server 卡在某个整数，百分比的小数位仍随秒推进而连续变化，用户看得见在动。
+  // 旧实现 target=max(server,timePct) 会被 server 整数封住、小数冻在 .00（用户实测反馈）。
+  function tickPct(){
+    var target;
+    if(timingState&&timingState.medianMs){
+      var elapsed=timingState.baseElapsedMs+(Date.now()-timingState.syncedAt);
+      if(elapsed<0)elapsed=0;
+      var frac=elapsed/timingState.medianMs; if(frac>1)frac=1; // 0..1，按 ETA 推进
+      var base=Math.min(pct.server,99.99);                      // 服务端估算作下限锚点
+      // 随时间从 base 连续爬向 99.99；若纯时间比例已超过 base(构建比平时久)则用时间比例继续推。
+      target=Math.max(base+(99.99-base)*frac, frac*100);
+    }else{
+      target=pct.server;                                        // 无历史样本：只展示状态估算，不编造时间
+    }
+    if(!pct.ready)target=Math.min(99.99,target);
+    if(target<pct.display)target=pct.display;                   // 单调不回退
+    pct.display=target;
     var percentEl=document.querySelector('[data-role="progress-percent"]');
     var bar=document.querySelector('[data-role="progress-bar"]');
+    var shown=pct.display.toFixed(2);
+    if(percentEl)percentEl.textContent=shown+'%';
+    if(bar)bar.style.width=shown+'%';
+  }
+  function renderProgress(progress){
+    if(!progress)return;
+    pct.server=Math.max(0,Math.min(100,Number(progress.percent)||0));
+    var label=document.querySelector('[data-role="progress-label"]');
     var confidence=document.querySelector('[data-role="progress-confidence"]');
     var reason=document.querySelector('[data-role="progress-reason"]');
     var confidenceText=progress.confidence==='high'?'高':progress.confidence==='medium'?'中':'低';
     if(label)label.textContent=progress.label||'预计处理进度';
-    if(percentEl)percentEl.textContent=Math.round(percent)+'%';
-    if(bar)bar.style.width=percent+'%';
     if(confidence)confidence.textContent='置信度 '+confidenceText;
     if(reason)reason.textContent=progress.reason||'基于当前状态估算';
+    // 百分比文本/进度条由 tickPct 平滑驱动（两位小数 + 按预估时间倒推），这里只更新锚点。
   }
   // 时间渲染：服务端轮询给 elapsedMs/medianMs，本地 1s ticker 让"已等待"平滑跳秒。
   var timingState=null; // { baseElapsedMs, medianMs, samples, overdue, syncedAt }
@@ -1830,30 +1885,39 @@ ${shouldAutoRefresh ? `;(function(){
     };
     renderTiming();
   }
+  function setLink(sel,url,text){
+    var el=document.querySelector(sel);if(!el)return;
+    if(url){el.setAttribute('href',url);if(text)el.textContent=text;el.hidden=false;}
+    else{el.hidden=true;}
+  }
+  var notLoadingStreak=0; // 连续"非加载态"轮询计数，用于从容应对推送瞬间的 stopped 抖动
   function poll(){
     fetch(statusUrl,{cache:'no-store',headers:{Accept:'application/json'}})
       .then(function(res){return res.ok?res.json():null;})
       .then(function(data){
         if(!data)return;
-        if(data.ready){location.reload();return;}
-        // Terminal non-loading state (branch error / idle / stopped / not-found):
-        // the operation failed or the branch is no longer coming up. Reload so
-        // the server renders the diagnostic page (with redeploy guidance) instead
-        // of leaving the visitor on a spinner forever — e.g. when auto-wake's
-        // restart/readiness fails and flips the branch to error.
-        //
-        // Branch-level waits only (no waitingProfile). For a PROFILE-scoped wait,
-        // one failed service can have loading=false while the branch (and other
-        // services) is still running; reloading there would land on the wrong
-        // upstream / 502 rather than a diagnostic page (routeToBranch only shows
-        // the status page for starting/building/restarting profiles, and
-        // resolveUpstream falls back to the first running service). Keep the
-        // prior in-place status update for that case.
-        if(data.loading===false && !waitingProfile){location.reload();return;}
+        if(data.ready){pct.ready=true;location.reload();return;}
+        // 从容应对"触发构建瞬间的分支已停止"抖动：刚推送/重部署时分支可能瞬时报
+        // stopped/idle，但很快自愈复活。不要第一拍就把访客弹到吓人的失败页——连续
+        // 多拍仍是非加载态，才认定真的终止并 reload 到诊断页。期间显示"正在恢复"安抚。
+        // （仅分支级等待；profile 级等待保持原地更新，单个失败服务不应触发整页跳转。）
+        if(data.loading===false && !waitingProfile){
+          notLoadingStreak++;
+          if(notLoadingStreak<3){
+            var calmEl=document.querySelector('[data-role="branch-status"]');
+            if(calmEl)calmEl.textContent='分支状态 · 正在恢复';
+            return;
+          }
+          location.reload();return;
+        }
+        notLoadingStreak=0;
         var statusEl=document.querySelector('[data-role="branch-status"]');
         if(statusEl)statusEl.textContent='分支状态 · '+label(data.status);
         var branchEl=document.querySelector('[data-role="branch-name"]');
         if(branchEl&&data.displayBranch)branchEl.textContent=data.displayBranch;
+        if(data.modeLabel){var modeEl=document.querySelector('[data-role="build-mode"]');if(modeEl)modeEl.textContent='构建模式 · '+data.modeLabel;}
+        setLink('[data-role="branch-link"]',data.branchPanelUrl,'查看分支');
+        setLink('[data-role="pr-link"]',data.prUrl,data.prLabel||'PR');
         renderProgress(data.progress);
         applyTiming(data.timing);
         renderServices(data.services);
@@ -1863,8 +1927,10 @@ ${shouldAutoRefresh ? `;(function(){
   window.setInterval(poll,2000);
   window.setInterval(renderTip,4200);
   window.setInterval(renderTiming,1000);
+  window.setInterval(tickPct,200);
   window.setTimeout(poll,400);
   renderTip();
+  tickPct();
 }())` : ''}
 </script>
 </body></html>`;

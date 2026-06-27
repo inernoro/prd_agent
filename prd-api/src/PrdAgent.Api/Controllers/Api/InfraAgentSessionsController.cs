@@ -214,7 +214,7 @@ public class InfraAgentSessionsController : ControllerBase
                 "done",
                 "Fact source and non-fake session ownership guard are in place; SSH/image remain fallback only.",
                 "done",
-                "doc/design.cds-agent-managed-runtime-fact-source.md"),
+                "doc/design.cds.agent.managed-runtime-fact-source.md"),
             new SidecarExecutionTask(
                 4,
                 "R0.3",
@@ -637,14 +637,14 @@ public class InfraAgentSessionsController : ControllerBase
             new SidecarDebugCommand(
                 "managed-runtime-capacity",
                 "R0.5 CDS-managed runtime capacity",
-                "sed -n '70,130p' doc/design.cds-agent-managed-runtime-fact-source.md && bash scripts/smoke-cds-agent-managed-runtime-capacity.sh",
+                "sed -n '70,130p' doc/design.cds.agent.managed-runtime-fact-source.md && bash scripts/smoke-cds-agent-managed-runtime-capacity.sh",
                 "只读确认顶层 blocker 是 CDS_MANAGED_RUNTIME_CAPACITY；REMOTE_HOST_AVAILABLE/SHARED_POOL_RUNNING 只能出现在 legacy fallback evidence。",
                 r0Status,
                 r0Ready ? null : "R0"),
             new SidecarDebugCommand(
                 "managed-runtime-fact-source",
                 "R0 MAP/session transport smoke",
-                "sed -n '70,120p' doc/design.cds-agent-managed-runtime-fact-source.md && bash scripts/check-cds-agent-progress-consistency.sh",
+                "sed -n '70,120p' doc/design.cds.agent.managed-runtime-fact-source.md && bash scripts/check-cds-agent-progress-consistency.sh",
                 "只读确认 R0.2/R0.3/R0.4/R0V 已完成或阻塞到 capacity；SSH/image/env 仅为 operator fallback。",
                 r0Status,
                 r0Ready ? null : "R0"),
@@ -1048,7 +1048,7 @@ public class InfraAgentSessionsController : ControllerBase
     {
         var actions = new List<string>
         {
-            "先查看 doc/design.cds-agent-managed-runtime-fact-source.md，把 R0 fact source 收口为 CDS_MANAGED_RUNTIME_CAPACITY。",
+            "先查看 doc/design.cds.agent.managed-runtime-fact-source.md，把 R0 fact source 收口为 CDS_MANAGED_RUNTIME_CAPACITY。",
             "运行 bash scripts/smoke-cds-agent-managed-runtime-capacity.sh，确认 runtime-status/progress/audit 顶层不把 remote host/env/image 当产品 gate。",
             "运行 CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 bash scripts/collect-cds-agent-runtime-pool-evidence.sh，得到 branch-local sidecar、shared pool running 和 legacy fallback 的同一份证据。",
             "如果 evidence 显示 branch-local sidecar contamination，先用 scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh dry-run 确认候选 BuildProfile，再按审批执行清理。",

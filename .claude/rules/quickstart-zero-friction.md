@@ -222,7 +222,7 @@ check_docker || exit 1   # 再来一次发现缺 docker
 
 - 任何新增的可独立启动的子系统
 - 任何对现有启动脚本的重构
-- 任何 `README.md` 或 `doc/guide.quickstart.md` 的编写
+- 任何 `README.md` 或 `doc/guide.platform.quickstart.md` 的编写
 
 **不适用于**：
 - 内部工具脚本（开发者专用）

@@ -89,7 +89,7 @@ err()   { printf "%s[ERR]%s  %s\n" "$R" "$N" "$*" >&2; }
 
 # Bootstrap token lifetime — short enough to limit leak impact, long enough
 # for a human to copy-paste it to another machine. See
-# doc/design.cds-cluster-bootstrap.md §6.3.
+# doc/design.cds.cluster-bootstrap.md §6.3.
 BOOTSTRAP_TOKEN_TTL_SECONDS=900  # 15 minutes
 
 # Generate a cryptographically-random hex token (32 bytes → 64 hex chars).
@@ -892,7 +892,7 @@ build_ts() {
 #
 # Idempotent: if dist/ is already current for HEAD and web sources are clean,
 # this short-circuits.
-# See doc/plan.cds-web-migration.md for the migration timeline.
+# See doc/plan.cds.web-migration.md for the migration timeline.
 build_web() {
   local webdir="$SCRIPT_DIR/web"
   local distdir="$webdir/dist"
@@ -2161,7 +2161,7 @@ cert_cmd() {
 
 # ══ cluster bootstrap (connect / disconnect / issue-token / cluster) ═════════
 #
-# See doc/design.cds-cluster-bootstrap.md for the full design.
+# See doc/design.cds.cluster-bootstrap.md for the full design.
 # Goal: two-command cluster formation.
 #   Machine A (master):  ./exec_cds.sh issue-token         → outputs <token>
 #   Machine B (worker):  ./exec_cds.sh connect https://A <token>
@@ -3069,7 +3069,7 @@ help_cmd() {
      • 永久 token 存在 .cds.env (mode 0600)，仅 root 和 CDS 运行用户可读。
      • 推荐定期轮换永久 token: 主节点 issue-token → 从节点 disconnect && connect
 
-  详细操作手册见 doc/guide.cds-cluster-setup.md (含 5 种常见错误排查)
+  详细操作手册见 doc/guide.cds.cluster-setup.md (含 5 种常见错误排查)
 
 ──────────────────────────────────────────────────────────────────
   配置文件 (cds/.cds.env)
@@ -3108,12 +3108,12 @@ help_cmd() {
   学习路径 (新手强烈推荐看)
 ──────────────────────────────────────────────────────────────────
 
-  1. 第一次安装             → doc/guide.quickstart.md
-  2. 环境变量参考           → doc/guide.cds-env.md
-  3. 集群扩容操作手册       → doc/guide.cds-cluster-setup.md
+  1. 第一次安装             → doc/guide.platform.quickstart.md
+  2. 环境变量参考           → doc/guide.cds.env.md
+  3. 集群扩容操作手册       → doc/guide.cds.cluster-setup.md
   4. CDS 整体架构理解       → doc/design.cds.md
-  5. 容量预算与故障隔离     → doc/design.cds-resilience.md
-  6. 集群引导握手协议设计   → doc/design.cds-cluster-bootstrap.md
+  5. 容量预算与故障隔离     → doc/design.cds.resilience.md
+  6. 集群引导握手协议设计   → doc/design.cds.cluster-bootstrap.md
 
 ──────────────────────────────────────────────────────────────────
   常见问题
@@ -3139,7 +3139,7 @@ help_cmd() {
 
   Q: 我想让从节点直接接收外网流量，不经过主节点代理
   A: 这是高级场景，需要改 Cloudflare DNS 和 nginx 模板。当前默认方案是
-     "主代理"，对 DNS 零改动。详见 doc/design.cds-cluster-bootstrap.md §4
+     "主代理"，对 DNS 零改动。详见 doc/design.cds.cluster-bootstrap.md §4
 
 EOF
 }

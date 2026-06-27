@@ -24,7 +24,7 @@ namespace PrdAgent.Api.Controllers;
 ///   2. 动态工具 —— AgentOpenEndpoint 登记表，agent.* scope
 /// tools/call 回环转发当前 Bearer 到真实接口，真实接口的鉴权/权限仍是最终闸门（零业务侵入）。
 ///
-/// 设计文档：doc/design.map-mcp-connector.md
+/// 设计文档：doc/design.platform.map-mcp-connector.md
 /// </summary>
 [ApiController]
 [Route("api/mcp")]

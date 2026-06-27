@@ -3,7 +3,9 @@ name: dev-completion-report
 description: 开发任务完成后自动输出三段式总结报告：200字通俗总结 + 总结清单（改动/风险/测试/验收） + 行业对比分析（差异/不足/建议）。触发词："开发总结"、"完工报告"、"dev summary"、"/dev-report"。
 ---
 
-# Dev Completion Report — 开发完工报告
+# 开发完工报告
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/dev-report`、"开发总结"、"完工报告"、"dev summary"
 
 每次开发任务（commit + push 之后），自动输出三段式总结报告，让非技术用户也能验收，让技术用户能快速评估质量。
 

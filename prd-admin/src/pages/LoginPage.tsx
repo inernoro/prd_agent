@@ -10,7 +10,7 @@ import { HERO_GRADIENT } from '@/pages/home/sections/HeroSection';
 /**
  * LoginPage — 沿用 /home 的 Linear × Retro-Futurism 视觉语言
  *
- * 设计原则见 doc/rule.landing-visual-style.md
+ * 设计原则见 doc/rule.frontend.landing-visual-style.md
  *
  * 结构：
  *   1 · StaticBackdrop 静态背景（六层 CSS）

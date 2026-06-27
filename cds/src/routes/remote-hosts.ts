@@ -461,7 +461,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
   });
 
   /**
-   * Project 级实例发现（spec.cds-map-pairing-protocol.md §3.2 instanceDiscoveryUrl）。
+   * Project 级实例发现（spec.cds.map-pairing-protocol.md §3.2 instanceDiscoveryUrl）。
    *
    * 主系统消费这个端点拿到一个 project（绑 partner 的 shared-service Project）下
    * 所有 host 上跑的 sidecar 实例。聚合 ServiceDeployment.status='running'，按

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-跨环境知识库同步（design.acceptance-kb.md §5.C）。
+跨环境知识库同步（design.acceptance.kb.md §5.C）。
 
 把一个知识库从源环境导出、导入到目标环境，按 metadata.reportId 幂等去重。
 本期只同步文本类正文（验收报告天然是 markdown），二进制附件源端标 skipped、不搬。

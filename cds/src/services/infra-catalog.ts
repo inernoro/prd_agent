@@ -18,7 +18,7 @@
  * (Frontend picks it up automatically via the catalog endpoint.)
  *
  * Follows the Registry Pattern (.claude/rules/frontend-architecture.md) and the
- * compose contract (doc/spec.cds-compose-contract.md). Connection-env var NAMES are
+ * compose contract (doc/spec.cds.compose-contract.md). Connection-env var NAMES are
  * intentionally kept identical to the historical backend behaviour (MONGODB_URL /
  * DATABASE_URL / REDIS_URL / RABBITMQ_URL) so existing projects keep working.
  *

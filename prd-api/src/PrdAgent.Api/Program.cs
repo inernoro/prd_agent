@@ -136,7 +136,7 @@ builder.Services.AddSingleton<ISafeOutboundUrlValidator, PrdAgent.Infrastructure
 builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory,
     PrdAgent.Infrastructure.Services.SafeOutboundHttpHandlerFactory>();
 
-// 系统级跨节点互传（Peer Sync）—— 详见 doc/design.peer-sync.md
+// 系统级跨节点互传（Peer Sync）—— 详见 doc/design.platform.peer-sync.md
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IPeerNodeService,
     PrdAgent.Infrastructure.Services.PeerNodeService>();
 builder.Services.AddScoped<PrdAgent.Core.Sync.ISyncableResource,
@@ -151,7 +151,7 @@ builder.Services.AddScoped<PrdAgent.Api.Services.PeerSync.IPeerSyncTransferServi
 // 知识库后台自动同步 worker（双向同步从「点一次跑一次」变「定期保持一致」；防风暴见 PeerSyncScheduleWorker）。
 builder.Services.AddHostedService<PrdAgent.Api.Services.PeerSync.PeerSyncScheduleWorker>();
 
-// 双链 + 反向链接（详见 doc/design.knowledge-base-mention-network.md）
+// 双链 + 反向链接（详见 doc/design.knowledge-base.mention-network.md）
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DocumentStore.MentionService>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DocumentStore.DocumentVersionService>();
 
@@ -282,11 +282,11 @@ builder.Services.AddSingleton<PrdAgent.Core.Services.WorkflowValidationService>(
 // 工作流调度轮询：每 30 秒扫一次到期的 once / cron 调度，自动入队
 builder.Services.AddHostedService<PrdAgent.Api.Services.WorkflowScheduleWorker>();
 
-// PM 逾期/临近截止提醒：每天给相关用户发一条站内汇总通知
-builder.Services.AddHostedService<PrdAgent.Api.Services.PmOverdueReminderWorker>();
-
 // 一次性回填存量 PDF 包装站的 WrappedAssetType marker（PR #612）
 builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteBackfillService>();
+
+// 一次性清理：删除已移除催办 Worker 留下的存量提醒通知（pm-reminder / defect-escalation），让噪音立即归零
+builder.Services.AddHostedService<PrdAgent.Api.Services.EscalationNotificationCleanupService>();
 
 // 涌现探索器
 builder.Services.AddSingleton<PrdAgent.Api.Services.SystemCapabilityScanner>();
@@ -415,9 +415,8 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IWorkflowExecutionService, P
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ArtifactStatsParser>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.PersonalSourceService>();
 
-// Defect Agent: 催办 Worker + Webhook 通知服务
+// Defect Agent: Webhook 通知服务
 builder.Services.AddScoped<PrdAgent.Api.Services.TapdBugAgentService>();
-builder.Services.AddHostedService<PrdAgent.Api.Services.DefectAgent.DefectEscalationWorker>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DefectWebhookService>();
 
 // Review Agent: Webhook 通知服务
@@ -1236,13 +1235,15 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAgentApiKeyService,
     PrdAgent.Infrastructure.Services.AgentApiKeyService>();
 
 // MAP 端基础设施连接（剪贴板配对密钥与 CDS 等部署平台建立信任）
-// 详见 spec.cds-map-pairing-protocol.md
+// 详见 spec.cds.map-pairing-protocol.md
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IInfraAgentRuntimeJobQueue,
     PrdAgent.Infrastructure.Services.InfraAgentSessions.InMemoryInfraAgentRuntimeJobQueue>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.InfraAgentRuntimeWorker>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IInfraConnectionService,
     PrdAgent.Infrastructure.Services.InfraConnections.InfraConnectionService>();
+// CDS 验收报告导入：复用「系统互联」CDS 全局连接，把 CDS 报告增量同步进知识库（一次鉴权，无握手）。
+builder.Services.AddScoped<PrdAgent.Api.Services.CdsReportImportService>();
 builder.Services.AddHttpClient(
     PrdAgent.Infrastructure.Services.InfraConnections.InfraConnectionService.HttpClientName);
 builder.Services.AddHttpClient<PrdAgent.Core.Interfaces.IInfraAgentSessionService,
@@ -1253,7 +1254,7 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IInfraAgentRuntimeProfileSer
     PrdAgent.Infrastructure.Services.InfraAgentSessions.InfraAgentRuntimeProfileService>();
 
 // 注册 Claude Agent SDK Sidecar 路由（CLI Agent claude-sdk 执行器使用）
-// 详见 doc/design.claude-sdk-executor.md。多实例配置支持本地 / docker-compose / 远程 sandbox 三种部署。
+// 详见 doc/design.cds.agent.sdk-executor.md。多实例配置支持本地 / docker-compose / 远程 sandbox 三种部署。
 //
 // 零配置自启：如果 ClaudeSdkExecutor:AutoConfigureFromEnv=true（默认）且环境变量
 // ANTHROPIC_API_KEY 或 CLAUDE_SIDECAR_BASE_URL/CLAUDE_SIDECAR_TOKEN 非空，
@@ -1290,7 +1291,7 @@ builder.Services.AddHostedService<
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IAgentToolRegistry,
     PrdAgent.Infrastructure.Services.AgentTools.AgentToolRegistry>();
 
-// 注册外部授权中心（TAPD / 语雀 / GitHub 凭证聚合，见 doc/design.external-authorization.md）
+// 注册外部授权中心（TAPD / 语雀 / GitHub 凭证聚合，见 doc/design.platform.external-authorization.md）
 // Data Protection：凭证字段加密（独立于 Jwt:Secret，避免单点密钥泄露）。
 // 系统级外部授权必须跨容器重建长期有效，因此 key ring 存入 MongoDB，而不是临时文件系统。
 builder.Services.AddDataProtection()

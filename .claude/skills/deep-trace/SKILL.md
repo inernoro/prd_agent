@@ -3,7 +3,9 @@ name: deep-trace
 description: Performs end-to-end cross-layer data flow tracing for untrusted code changes. Traces data from entry to exit across backend C#, Rust Tauri, and frontend React layers, verifying field names, types, serialization rules, and error handling at every seam. Trigger words: "/deep-trace", "深度追踪", "deep trace".
 ---
 
-# Deep Trace - 跨层数据流深度追踪
+# 跨层数据流深度追踪
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/deep-trace`、"深度追踪"、"deep trace"
 
 对不信任的代码变更进行端到端穿透式验证，像探针一样追踪数据从入口到出口的完整链路，确保每一层的字段名、类型、序列化规则、异常处理都严丝合缝。
 
@@ -80,17 +82,17 @@ description: Performs end-to-end cross-layer data flow tracing for untrusted cod
   JSON: { "promptTemplate": "..." }
   ↓
 [反序列化] skill.rs:200 → ExtractPromptTemplateResponse { prompt_template }
-  serde camelCase: promptTemplate → prompt_template ✓
+  serde camelCase: promptTemplate → prompt_template 匹配
   ↓
 [Tauri 返回] skill.rs:209 → Result<ApiResponse<ExtractPromptTemplateResponse>>
   ↓
 [前端接收] MessageList.tsx:1391 → resp.data.promptTemplate
-  类型: string ✓
+  类型: string 一致
   ↓
 [事件传递] MessageList.tsx:1399 → detail.formData.promptTemplate
   ↓
 [消费] SkillManagerModal.tsx:69 → { ...EMPTY_FORM, ...initialFormData }
-  promptTemplate 覆盖默认空字符串 ✓
+  promptTemplate 覆盖默认空字符串 一致
 
 结论: 全链路字段名匹配，类型一致，null 已处理
 ```
@@ -182,9 +184,9 @@ git diff --name-only [base]..HEAD
 ## 接缝扫描结果
 | 接缝 | 状态 | 备注 |
 |------|------|------|
-| C# -> JSON | ✅/❌ | ... |
-| JSON -> Rust | ✅/❌ | ... |
-| Rust -> 前端 | ✅/❌ | ... |
+| C# -> JSON | 通过/未通过 | ... |
+| JSON -> Rust | 通过/未通过 | ... |
+| Rust -> 前端 | 通过/未通过 | ... |
 
 ## 链路穿透
 [关键字段的逐层追踪结果]
@@ -192,12 +194,12 @@ git diff --name-only [base]..HEAD
 ## 契约校验
 | 层 | 项目 | 状态 |
 |----|------|------|
-| ... | ... | ✅/❌ |
+| ... | ... | 通过/未通过 |
 
 ## 边界穿透
 | 向量 | 拦截层 | 状态 |
 |------|--------|------|
-| ... | ... | ✅/❌ |
+| ... | ... | 通过/未通过 |
 
 ## 注册完整性
 - [ ] 各项检查
@@ -206,9 +208,9 @@ git diff --name-only [base]..HEAD
 1. [严重程度] [描述]
 
 ## 结论
-- ✅ 全链路验证通过
-- ⚠️ 通过但有建议
-- ❌ 发现断裂点，需修复
+- 通过：全链路验证通过
+- 注意：通过但有建议
+- 未通过：发现断裂点，需修复
 ```
 
 ## 与 human-verify 的区别

@@ -23,10 +23,10 @@ require_match() {
   fi
 }
 
-REPORT_MD="doc/report.cds-agent-phase3-acceptance-2026-05-19.md"
+REPORT_MD="doc/report.cds.agent.phase3-acceptance.2026-05-19.md"
 REPORT_HTML="doc/report.cds-agent-phase3-acceptance-2026-05-19.html"
 REPORT_PDF="doc/report.cds-agent-phase3-acceptance-2026-05-19.pdf"
-ROADMAP="doc/design.cds-agent-commercial-architecture-and-roadmap.md"
+ROADMAP="doc/design.cds.agent.commercial-architecture-and-roadmap.md"
 
 require_file "$REPORT_MD" "Phase 3 acceptance markdown"
 require_file "$REPORT_HTML" "Phase 3 acceptance html"

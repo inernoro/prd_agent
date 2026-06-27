@@ -4,7 +4,7 @@
 | feat | cds | webhook 新增 workflow_run 事件处理：CI 成功→拉取部署、失败→标记可切回源码编译；push 在极速版分支置「等待 CI 镜像」而非立即编译 |
 | feat | cds | 分支卡新增 CI 状态徽章（等待 CI 镜像 / CI 构建失败 + 切回源码编译 + 查看构建链接）；部署模式标签细化「极速版」 |
 | feat | cds | cds-compose.yml 给 api / admin 增加 express 模式（极速版，prebuilt + 8080 端口） |
-| docs | cds | spec.cds-compose-contract 补 x-cds-deploy-modes 子键表（含 prebuilt/containerPort/模板）；新增 debt.cds-ci-prebuilt 台账 |
+| docs | cds | spec.cds.compose-contract 补 x-cds-deploy-modes 子键表（含 prebuilt/containerPort/模板）；新增 debt.cds.ci-prebuilt 台账 |
 | feat | cds | 极速版分支卡用独立 Zap（闪电）图标 + 青色徽章「极速版」,从「发布版」里区分出「拉 CI 镜像 vs 源码编译」（lucide SVG,非 emoji,遵 §0） |
 | feat | cds | 项目设置新增「强制所有分支对齐」：一键把项目默认运行模式写入全部已有分支配置（POST /api/projects/:id/align-deploy-modes，复用 applyDefaultDeployModesToBranch；只写配置不批量重部署,各分支下次部署生效,避免压垮宿主） |
 | fix | cds | PR review 修复（Bugbot/Codex）：align-deploy-modes 补 assertProjectAccess 防越权；push「等待 CI」判定不再用项目默认（与 deploy 一致,避免无 override 旧分支误等 CI 后跑源码）；workflow_run 匹配带 head_branch + 允许 failed re-run 成功恢复；deploy 兜底从 worktree HEAD 推导 commit SHA（避免极速版镜像 tag 变 sha-空）；极速版配置未生效显示「极速版·待生效」；CI 等待/失败徽章仅在仍是极速版时显示 |
@@ -31,9 +31,9 @@
 | feat | cds | 极速版「逐组件回退主分支」(用户决策):DeployModeOverride 新增 fallbackImage;runService 按「本 commit 镜像 → 固定主分支镜像(:branch-main)」优先级 docker pull,任一拉到即用,两者都拉不到才报错——解决 CI 按需构建后某 commit 缺某组件镜像(三场景:只一个构建/都没构建/仅 cds 改动)导致预览起不来 |
 | fix | cds | 极速版部署移除手动/单服务硬闸门(改为上面的逐组件回退):deploy 路由不再返回 409 ci_image_not_ready;镜像可用性下沉到 runService 逐组件回退处理,never 硬失败 |
 | fix | cds | workflow_run 匹配补「当前仍是极速版」校验(branchUsesPrebuiltMode),分支切回 dev/static 后旧 CI 完成事件不再被认领自动重部署一个已退出极速版的分支 |
-| docs | cds | debt.cds-ci-prebuilt 状态枚举改「进行中」(合规 rule.doc-naming);#3「每次构建两镜像」标记已偿还(改 path-filter + 回退) |
+| docs | cds | debt.cds.ci-prebuilt 状态枚举改「进行中」(合规 rule.doc.naming);#3「每次构建两镜像」标记已偿还(改 path-filter + 回退) |
 | fix | cds | PR review 修复（Bugbot High）：极速版镜像 tag 的 ${CDS_COMMIT_SHA} 优先解析为 ciTargetSha(CI 真正构建镜像的 commit)而非 githubCommitSha——后者会被 docs-only push / 被拦的 check_run 重跑悄悄推进却不产新镜像,用它渲染会拉错 SHA 镜像或静默回退 branch-main,使预览与就绪 CI 产物不一致;ciTargetSha 未设时退回 githubCommitSha |
 | fix | cds | PR review 修复（Bugbot）：path-filter 下 docs-only push 不再推进 ciTargetSha / 认领缓存——docs commit 不产镜像,推进会把正在构建的代码 commit 顶成孤儿(永不部署)或让分支显示「CI ready」却指向无镜像 SHA;改为只刷新展示用 githubCommitSha,CI 状态保持等待正在构建的代码 commit |
 | fix | cds | PR review 修复（Codex P1）：极速版回退改为**有序回退链**(fallbackImage 支持 string[])——本 commit 无该组件镜像时先退到本分支该组件最近一次构建(:branch-<slug>),再退到固定主分支(:branch-main)。修复「A 改 api、B 只改 admin」部署 B 时 api 直接回退 main、丢掉本分支 A 的 api 改动(混入 main 代码);admin 对称。runService 按链逐个 docker pull,第一个拉到即用 |
 | fix | cds | PR review 修复（Codex P2）：slugifyBranchForImage 对齐 docker/metadata-action 的 tag 规则——保留大小写、保留 _ 和 .,只把非法字符序列转 -,使 branch-${CDS_BRANCH_SLUG} 回退能命中 CI 实际推送的 tag(此前小写+改写 _/. 会让 Codex/fix、release/v1.2 等分支回退落空到 main、丢本分支改动) |
-| docs | cds | guide.cds-github-webhook-events 补充:极速版(CI 预构建)项目必须额外订阅 workflow_run 事件(需 Actions:Read-only 权限),否则极速版分支永久卡「等待 CI 镜像」;workflow_run 从噪声过滤表移到必订表 |
+| docs | cds | guide.cds.github-webhook-events 补充:极速版(CI 预构建)项目必须额外订阅 workflow_run 事件(需 Actions:Read-only 权限),否则极速版分支永久卡「等待 CI 镜像」;workflow_run 从噪声过滤表移到必订表 |

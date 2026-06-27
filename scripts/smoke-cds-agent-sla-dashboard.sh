@@ -21,6 +21,6 @@ require_match "HttpGet\\(\"sla-dashboard\"\\)" "prd-api/src/PrdAgent.Api/Control
 require_match "getInfraAgentSlaDashboard" "prd-admin/src/services/real/infraAgentSessions.ts" "frontend API client"
 require_match "SLA / 成本" "prd-admin/src/pages/cds-agent/CdsAgentPage.tsx" "SLA panel"
 require_match "cds-agent-sla-dashboard/v1" "prd-api/tests/PrdAgent.Api.Tests/Services/InfraAgentSessionServiceSlaDashboardTests.cs" "SLA unit evidence"
-require_match "P3-3" "doc/design.cds-agent-commercial-architecture-and-roadmap.md" "roadmap entry"
+require_match "P3-3" "doc/design.cds.agent.commercial-architecture-and-roadmap.md" "roadmap entry"
 
 echo "PASS: CDS Agent SLA dashboard static smoke"

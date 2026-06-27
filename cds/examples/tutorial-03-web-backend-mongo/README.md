@@ -19,7 +19,7 @@ python3 ../../../.claude/skills/cds/cli/cdscli.py scan . --apply-to-cds <project
 ## 纵向①：直接配置（无 compose）
 
 onboarding 选「前端(static)」+「后端(Node.js)」，并在 infra 区域加一个 MongoDB
-preset，CDS 自动注入 `MONGODB_URL`。详见 `doc/guide.cds-tutorial.md` § 场景③。
+preset，CDS 自动注入 `MONGODB_URL`。详见 `doc/guide.cds.tutorial.md` § 场景③。
 
 ## 预期结果
 

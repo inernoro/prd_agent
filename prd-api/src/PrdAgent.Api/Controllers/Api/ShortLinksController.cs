@@ -10,7 +10,7 @@ namespace PrdAgent.Api.Controllers.Api;
 /// 前端 SPA 路由 /s/:slug 通过本端点拿到 (targetType, token) 后再调对应业务端点。
 ///
 /// 设计选择：Seq 是全局自增数字，因此 /api/short-links/1..N 是可枚举的。
-/// 这是 2026-05-13 与产品确认的明确设计决策（详见 doc/spec.short-links.md）：
+/// 这是 2026-05-13 与产品确认的明确设计决策（详见 doc/spec.platform.short-links.md）：
 ///   - "公开分享" = 内容本就该任意人可见，URL 短而易传播比不可猜测更重要
 ///   - "敏感场景" = 创建时必须勾选密码保护；本端点不暴露作者/标题/任何内容，
 ///     攻击者枚举到 token 后调 view 端点仍会被 401 拦截

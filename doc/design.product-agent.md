@@ -74,7 +74,7 @@ updated: 2026-06-02
 - 通用引擎易过度设计：P0 只给够六类对象用的最小 schema。
 - 与 defect-agent 边界：缺陷只追溯引用、不双写。
 - 知识图谱性能：大产品节点多，P2 按版本/层级懒加载。
-- MongoDB 索引：新集合索引需求登记到 `doc/guide.mongodb-indexes.md` 交 DBA（禁止应用自动建索引）。
+- MongoDB 索引：新集合索引需求登记到 `doc/guide.platform.mongodb-indexes.md` 交 DBA（禁止应用自动建索引）。
 
 ## 十、已落地能力更新（2026-06-08）
 

@@ -3,7 +3,7 @@ using PrdAgent.Core.Models;
 namespace PrdAgent.Core.Interfaces;
 
 /// <summary>
-/// 基础设施连接管理服务（MAP 端）。详见 spec.cds-map-pairing-protocol。
+/// 基础设施连接管理服务（MAP 端）。详见 spec.cds.map-pairing-protocol。
 /// </summary>
 public interface IInfraConnectionService
 {

@@ -922,7 +922,7 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=open-api-list]", Title = "第 3 步：客户密钥列表", Body = "每张卡片 = 一个授权了 open-api:call 的客户密钥，显示它的默认模型、白名单数量、今日用量与限速。用上方搜索框可按客户名快速定位。", NavigateTo = "/open-platform?tab=open-api" },
                         new() { Selector = "[data-tour-id=open-api-list]", Title = "第 4 步：配置（点卡片「管理」）", Body = "点任意卡片右下角「管理」→ 右侧抽屉「配置」：配模型白名单（客户只能用白名单内的模型，第一个为默认；留空=走默认池）+ 每分钟/每日请求/每日 Token 限额。这样改总模型池也不会误伤已配置的客户。", NavigateTo = "/open-platform?tab=open-api" },
                         new() { Selector = "[data-tour-id=open-api-list]", Title = "第 5 步：调用日志 / 排障", Body = "同一「管理」抽屉切到「调用日志 / 调试」：按该客户拉最近请求，看请求→解析模型、状态、tokens、耗时、requestId。客户报错时把响应里的 id（chatcmpl-xxx）给你，即可直接定位那条请求。", NavigateTo = "/open-platform?tab=open-api" },
-                        new() { Selector = "[data-tour-id=open-api-root]", Title = "第 6 步：去签发一个密钥", Body = "新密钥在右上角「接入 AI」/ AgentApiKey 弹窗创建，记得勾选 open-api:call scope。客户接入细节见 doc/guide.open-api。本页教程结束。", NavigateTo = "/open-platform?tab=open-api" },
+                        new() { Selector = "[data-tour-id=open-api-root]", Title = "第 6 步：去签发一个密钥", Body = "新密钥在右上角「接入 AI」/ AgentApiKey 弹窗创建，记得勾选 open-api:call scope。客户接入细节见 doc/guide.open-platform.open-api。本页教程结束。", NavigateTo = "/open-platform?tab=open-api" },
                     },
                 }),
 

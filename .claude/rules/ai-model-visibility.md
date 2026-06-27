@@ -38,4 +38,4 @@ data: { "model": "anthropic/claude-sonnet-4-6", "platform": "OpenRouter" }
 </div>
 ```
 
-> 详细：`doc/rule.ai-model-visibility.md`
+> 详细：`doc/rule.platform.ai-model-visibility.md`

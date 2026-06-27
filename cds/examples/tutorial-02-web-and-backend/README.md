@@ -19,7 +19,7 @@ python3 ../../../.claude/skills/cds/cli/cdscli.py scan . --apply-to-cds <project
 ## 纵向①：直接配置（无 compose）
 
 onboarding 同时启用「前端服务(static)」+「后端服务(Node.js)」。详见
-`doc/guide.cds-tutorial.md` § 场景②。
+`doc/guide.cds.tutorial.md` § 场景②。
 
 ## 预期结果
 

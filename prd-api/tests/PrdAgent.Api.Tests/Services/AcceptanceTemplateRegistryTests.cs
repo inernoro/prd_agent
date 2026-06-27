@@ -6,7 +6,7 @@ using Xunit;
 namespace PrdAgent.Api.Tests.Services;
 
 /// <summary>
-/// 知识库模板校验单元测试（design.acceptance-kb.md §5.B）。
+/// 知识库模板校验单元测试（design.acceptance.kb.md §5.B）。
 /// 纯函数校验，无需 DB —— 验证机器归档缺必填 metadata / 正文 section 被识别。
 /// </summary>
 public class AcceptanceTemplateRegistryTests

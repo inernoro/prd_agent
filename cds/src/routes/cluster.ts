@@ -6,7 +6,7 @@
  * exists so that a human clicking around in the web Dashboard can form a
  * cluster without ever touching SSH.
  *
- * Flow (see doc/design.cds-cluster-bootstrap.md §4.1 for the CLI parallel):
+ * Flow (see doc/design.cds.cluster-bootstrap.md §4.1 for the CLI parallel):
  *
  *   Master side:
  *     POST /api/cluster/issue-token

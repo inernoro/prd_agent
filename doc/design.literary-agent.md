@@ -193,7 +193,7 @@ const bigHeadingLevel = useMemo(() => {
 
 **策略下放到后端的传输方式**：
 
-目前策略本身**不作为独立字段**发到后端——策略提示词在前端拼到 `userInstruction` 前部，后端 `ImageMasterController.GenerateArticleMarkers` 完全无感知。这让 Phase 1/1.5/1.6 后端零改动上线。Phase 2 会把 `positionStrategy` 下沉到 `ArticleIllustrationWorkflow` 做持久化，并在 `ArticleMarkerExtractor` 里对 `[IMG]` 占位符做强约束识别（绕过 LLM 随机性）。详见 `plan.manual-image-marking-control.md`。
+目前策略本身**不作为独立字段**发到后端——策略提示词在前端拼到 `userInstruction` 前部，后端 `ImageMasterController.GenerateArticleMarkers` 完全无感知。这让 Phase 1/1.5/1.6 后端零改动上线。Phase 2 会把 `positionStrategy` 下沉到 `ArticleIllustrationWorkflow` 做持久化，并在 `ArticleMarkerExtractor` 里对 `[IMG]` 占位符做强约束识别（绕过 LLM 随机性）。详见 `plan.visual-agent.manual-image-marking.md`。
 
 ## 六、数据设计
 
@@ -268,9 +268,9 @@ const bigHeadingLevel = useMemo(() => {
 | 文档 | 关系 |
 |------|------|
 | `design.visual-agent.md` | 共享底层生图引擎（ImageGen），Literary Agent 复用 VisualAgent 的工作空间和资产集合 |
-| `design.system-emergence.md` | 涌现篇中"内容创作流水线"场景的详细来源 |
-| `design.unified-skill-system.md` | 提示词与技能系统统一设计 |
-| `plan.manual-image-marking-control.md` | 配图位置策略（Phase 1~3）的分阶段实施计划与落地记录 |
+| `design.emergence.system.md` | 涌现篇中"内容创作流水线"场景的详细来源 |
+| `design.skill.unified-skill-system.md` | 提示词与技能系统统一设计 |
+| `plan.visual-agent.manual-image-marking.md` | 配图位置策略（Phase 1~3）的分阶段实施计划与落地记录 |
 
 ## 九、影响范围与风险
 

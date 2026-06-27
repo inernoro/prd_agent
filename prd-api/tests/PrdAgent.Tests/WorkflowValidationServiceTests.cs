@@ -9,7 +9,7 @@ namespace PrdAgent.Tests;
 /// <summary>
 /// 工作流自动配置核心：校验 + 自动接线 + 缺项扫描的回归测试。
 /// 守护「AI 产出从草稿变可跑件」这条闭环不退化。
-/// 设计依据：doc/design.workflow-auto-config.md
+/// 设计依据：doc/design.workflow-agent.auto-config.md
 /// </summary>
 public class WorkflowValidationServiceTests
 {

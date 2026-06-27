@@ -1,7 +1,7 @@
 /**
  * Forwarder 数据面类型 SSOT(B'.2-forwarder)
  *
- * 对应 doc/design.cds-control-data-split.md 4.1 / 6.1 节。
+ * 对应 doc/design.cds.control-data-split.md 4.1 / 6.1 节。
  * 所有 forwarder 子模块共享这里定义的类型,不依赖外部 cds/src/types.ts(避免与 admin daemon 强耦合)。
  */
 
@@ -21,7 +21,7 @@ export type RouteDataSource = 'mongo' | 'json-fallback';
 /**
  * Forwarder 路由记录(对应 mongo collection cds_forwarder_routes 中的一行)。
  *
- * 字段保持与 doc/design.cds-control-data-split.md 6.1 节一致,_id 用 string,
+ * 字段保持与 doc/design.cds.control-data-split.md 6.1 节一致,_id 用 string,
  * 测试里可以是任意可比较字符串(uuid / mongo ObjectId hex / 自增字符串)。
  */
 export interface RouteRecord {

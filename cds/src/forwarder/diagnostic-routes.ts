@@ -1,7 +1,7 @@
 /**
  * Forwarder 诊断路由(B'.2-forwarder)
  *
- * 对应 doc/report.cds-forwarder-success.md
+ * 对应 doc/report.cds.forwarder-success.md
  *
  * 三个端点:
  *   - /__forwarder/healthz     :任何 IP 可访问(用于 nginx 健康检查 + 容器探针)

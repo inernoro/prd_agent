@@ -1,9 +1,12 @@
 ---
 name: create-skill-file
+version: 1.0.0
 description: Creates and evaluates Claude Code SKILL.md files following Anthropic best practices. Generates well-structured skills with correct frontmatter, progressive disclosure, and quality validation. Trigger words: "创建技能", "新建 skill", "create skill", "技能评分", "skill score", "/create-skill".
 ---
 
-# Create Skill File — 技能创建 & 质量评估
+# 技能创建与质量评估
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/create-skill`、"创建技能"、"新建 skill"、"技能评分"、"skill score"
 
 创建高质量的 SKILL.md 文件，或对现有技能进行质量评分和改进建议。
 
@@ -69,10 +72,10 @@ description: ...            # 第三人称, ≤1024字符, 包含 what + when + 
 
 | 章节 | 必须 | 说明 |
 |------|------|------|
-| 适用场景 | ✅ | 3-5 个触发场景 |
-| 执行流程/工作流 | ✅ | 清晰的步骤，复杂任务用 checklist |
+| 适用场景 | 必须 | 3-5 个触发场景 |
+| 执行流程/工作流 | 必须 | 清晰的步骤，复杂任务用 checklist |
 | 输出模板 | 推荐 | 让 Claude 知道输出什么格式 |
-| 示例 | ✅ | 至少 1 个端到端 input→output |
+| 示例 | 必须 | 至少 1 个端到端 input→output |
 | 安全规则/注意事项 | 按需 | 高风险操作必须有 |
 
 ### Step 4: 拆分子文件

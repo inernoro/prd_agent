@@ -25,7 +25,7 @@ cd cds && ./exec_cds.sh restart    # 更新后重启
 cd cds && pnpm tsc --noEmit        # 类型检查
 ```
 
-前端分两栈，正在渐进迁移。交接和命令以 `doc/plan.cds-web-migration.md` 与 `doc/guide.cds-web-migration-runbook.md` 为准：
+前端分两栈，正在渐进迁移。交接和命令以 `doc/plan.cds.web-migration.md` 与 `doc/guide.cds.web-migration-runbook.md` 为准：
 
 | 目录 | 是什么 | 改动方式 |
 |------|--------|----------|
@@ -36,7 +36,7 @@ URL 路由优先级：`/api/*`（含复活接口 `POST /api/factory-reset`） > 
 
 当前 React 已接管：`/hello`、`/cds-settings`、`/project-list`、`/branches/:projectId`、`/branch-list?project=<id>`、`/branch-panel/:branchId`、`/branch-topology?project=<id>`、`/settings/:projectId`。`/settings.html?project=<id>` 兼容入口会重定向到 `/settings/<id>`。
 
-删除 legacy 代码有单独确认门槛：`cds/web-legacy/` 当前仍是功能对照层，特别是 `web-legacy/app.js` 里的容量、集群、活动流、拓扑详情等运维能力。除非用户在当前对话里明确确认可以删除，否则不要删除 `web-legacy/`、旧 HTML 或旧 JS；先按 `doc/plan.cds-web-migration.md` 的 Week 4.5 做功能差距收敛。
+删除 legacy 代码有单独确认门槛：`cds/web-legacy/` 当前仍是功能对照层，特别是 `web-legacy/app.js` 里的容量、集群、活动流、拓扑详情等运维能力。除非用户在当前对话里明确确认可以删除，否则不要删除 `web-legacy/`、旧 HTML 或旧 JS；先按 `doc/plan.cds.web-migration.md` 的 Week 4.5 做功能差距收敛。
 
 新初始化默认使用 MongoDB split store：`CDS_STORAGE_MODE=mongo-split`。`state.json` 只作为旧数据迁移入口，不再作为新业务默认存储；fresh install 不应自动生成空 `default` 项目。
 

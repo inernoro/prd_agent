@@ -96,6 +96,7 @@ export const KNOWN_CDS_ENV_KEYS: CdsEnvKeyDef[] = [
   { key: 'CDS_CONFIG', description: '配置文件路径覆盖（默认 cds.config.json）', isSecret: false, group: 'misc' },
   { key: 'CDS_HOST', description: '运行时自动注入容器的 host 占位（无需手填）', isSecret: false, group: 'misc' },
   { key: 'CDS_MAX_CONCURRENT_BUILDS', description: '全局构建并发上限（默认 3）；超出时分支构建排队，避免多构建同时把宿主 CPU 吃满', isSecret: false, group: 'misc' },
+  { key: 'CDS_BUILD_NICE', description: '源码 build/install 命令的 nice 优先级（默认 10，1-19，0/off 关闭）；让编译不饿死同机预览，非 docker 资源硬限', isSecret: false, group: 'misc' },
 ];
 
 export type EnvClassification = 'cds-canonical' | 'cds-legacy' | 'unknown';

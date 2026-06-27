@@ -6,4 +6,4 @@
 | feat | prd-admin | 知识库文档列表新增排序控件（默认/最新创建/最近更新），选中即服务端持久化，刷新/重登录不重置 |
 | feat | prd-admin | 知识库「同步」按钮轮询运行台账，进行中时转圈+脉冲+「同步中…」文案，明确告知正在同步 |
 | polish | prd-admin | 知识库顶栏收敛：发布/关系图谱/统计/订阅收进「更多」下拉，常驻仅留 同步/分享/上传文档，改善折叠屏布局 |
-| docs | doc | 新增 spec.map-kb-transfer-protocol.md（MAP-KBTP v1 对外协议 + 第三方接入方法） |
+| docs | doc | 新增 spec.knowledge-base.transfer-protocol.md（MAP-KBTP v1 对外协议 + 第三方接入方法） |

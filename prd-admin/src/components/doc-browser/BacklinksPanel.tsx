@@ -7,7 +7,7 @@
  * 用户点击卡片 → 派发 wikilink:click 事件（与 MarkdownViewer 内蓝链一致），
  * 由消费页面（DocumentStorePage）监听并跳转到对应 entry。
  *
- * 详见 doc/design.knowledge-base-mention-network.md。
+ * 详见 doc/design.knowledge-base.mention-network.md。
  */
 import { useEffect, useState } from 'react';
 import { ChevronDown, ChevronRight, Link2, Sparkles } from 'lucide-react';

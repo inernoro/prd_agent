@@ -3,7 +3,9 @@ name: release-version
 description: 一键发版本。用户说"发布版本：X.Y.Z"或"发版"时触发，自动盘点用户级改动、起草 release notes、调 release-prepare 备料、调 quick.sh release 完成 tag + push。所有 emoji 输出严格禁止（CLAUDE.md 规则 #0）。
 ---
 
-# Release Version
+# 一键发版本
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/release`、"发版"、"发布版本：X.Y.Z"
 
 把"发版本"压成两步：用户给版本号 → AI 起草 + 调脚本 → 收尾确认。
 

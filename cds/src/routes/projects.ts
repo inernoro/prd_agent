@@ -20,8 +20,8 @@
  * RoutingRule so that project-scoped listings and deletes cascade
  * correctly.
  *
- * See doc/design.cds-multi-project.md,
- * doc/plan.cds-multi-project-phases.md P4.
+ * See doc/design.cds.multi-project.md,
+ * doc/plan.cds.multi-project-phases.md P4.
  */
 
 import { Router } from 'express';
@@ -841,7 +841,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       // 后台任务(worker,"无 HTTP 入口")就绪探测走 noHttp:跳过 HTTP "/" 探测,只 TCP 探活
       // 端口。否则 deploy 的 waitForReadiness 会按 HTTP 探测一直 ECONNRESET 直到超时,把活着的
       // worker 误判为部署失败(PR #711 review)。绑定健康/TCP 端口的 worker 即就绪;完全不监听
-      // 端口的纯 worker 仍需 startupSignal(见 debt.cds-visual-deploy.md)。
+      // 端口的纯 worker 仍需 startupSignal(见 debt.cds.visual-deploy.md)。
       ...(service?.role === 'worker' ? { readinessProbe: { noHttp: true } } : {}),
       ...(defaultCacheMountsFor(resolved.image) ? { cacheMounts: defaultCacheMountsFor(resolved.image) } : {}),
     };
@@ -2610,7 +2610,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   // 默认运行模式（project.defaultDeployModes）原本只在「建分支时」拷贝一次,已有分支
   // 不受影响。本端点让用户一键把现有分支全部对齐到当前默认（如全切极速版）。
   //
-  // 重要（debt.cds-ci-prebuilt #8 宿主容量）：**只写配置,不批量重部署**。同时重启
+  // 重要（debt.cds.ci-prebuilt #8 宿主容量）：**只写配置,不批量重部署**。同时重启
   // 大量分支容器（尤其极速版要逐个 docker pull 镜像）会压垮共享宿主。对齐后各分支
   // 在「下次部署」时按新模式生效；需立即生效的分支单独在分支详情里重部署。
   router.post('/projects/:id/align-deploy-modes', (req, res) => {

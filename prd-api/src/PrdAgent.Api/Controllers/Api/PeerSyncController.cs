@@ -18,7 +18,7 @@ namespace PrdAgent.Api.Controllers.Api;
 
 /// <summary>
 /// 系统级跨节点互传：node-to-node 数据端点（HMAC 验签）+ 用户发起互传。
-/// 同一份代码每个节点既能发又能收。详见 doc/design.peer-sync.md §8。
+/// 同一份代码每个节点既能发又能收。详见 doc/design.platform.peer-sync.md §8。
 /// </summary>
 [ApiController]
 [Route("api/peer-sync")]

@@ -97,7 +97,7 @@ timeline
 > **价值**：当功能面持续扩张时，技能目录和文档结构如果不先收敛，后面所有 Agent 能力都会变得难找、难学、难维护。
 
 - README 重写为英文版，对齐 CLAUDE.md 的结构和技能链说明。
-- 技能百科全书 `guide.skill-catalog.md` 落地，35 个技能第一次有统一索引。
+- 技能百科全书 `guide.skill.catalog.md` 落地，35 个技能第一次有统一索引。
 - `documentation-writer` / `technical-writing` / `user-guide-writing` 合并为 `technical-documentation`，触发词冲突也做了修正。
 
 ---

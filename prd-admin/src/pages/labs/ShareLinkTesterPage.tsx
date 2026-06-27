@@ -270,7 +270,7 @@ export default function ShareLinkTesterPage() {
               <strong>P1 验收要点：</strong>
               <ul className="mt-2 ml-4 list-disc space-y-1">
                 <li>"统一长链" 应当 100% 可打开，URL bar 始终保持 <code>/s/{'{token}'}</code> 形式（web_page 类型）；
-                  其它类型当前会跳转到旧路径（P1.next 待解决，见 <code>doc/debt.share-link-security.md</code>）</li>
+                  其它类型当前会跳转到旧路径（P1.next 待解决，见 <code>doc/debt.platform.share-link-security.md</code>）</li>
                 <li>"超短链" 和 "统一长链" 都汇到同一个 ShortLink 索引，
                   应当显示相同内容（互为别名）</li>
                 <li>"旧版前缀链" 仅 web_page / report / skill / document_store 有；

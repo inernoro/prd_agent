@@ -1,7 +1,7 @@
 /**
  * Forwarder 路由表监听器(B'.2-forwarder)
  *
- * 对应 doc/report.cds-forwarder-success.md
+ * 对应 doc/report.cds.forwarder-success.md
  *
  * 职责:
  *   1. 启动 fullScan 加载全表 → atomic 替换内存表 → 写 JSON 快照

@@ -13,7 +13,7 @@ namespace PrdAgent.Api.Controllers.Api;
 ///
 /// - 用户登录后在「我的空间 → 外部授权」管理自己的第三方凭证
 /// - 工作流通过 authId 引用本中心的记录，运行时走内部 resolve 接口取明文
-/// - 设计见 doc/design.external-authorization.md
+/// - 设计见 doc/design.platform.external-authorization.md
 ///
 /// 鉴权：用户 JWT。所有接口强制 UserId 校验，禁止越权访问他人凭证。
 /// </summary>

@@ -46,7 +46,7 @@ public sealed class PrSummaryService
     /// 返回 LlmStreamDelta：区分 Thinking（思考过程） 和 Text（正式输出）。
     /// 推理模型（qwen-thinking / deepseek-r1）会先吐很长一段 reasoning_content
     /// 再吐正文，如果只处理 Text chunk 会把几十秒思考当空白等待——这正是
-    /// rule.ai-model-visibility 要求必须展示思考过程的根因。
+    /// rule.platform.ai-model-visibility 要求必须展示思考过程的根因。
     /// </summary>
     public async IAsyncEnumerable<LlmStreamDelta> StreamSummaryAsync(
         PrReviewItem item,
@@ -82,7 +82,7 @@ public sealed class PrSummaryService
                 // OpenRouter: 必须显式要求上游流式推送 reasoning 内容。
                 // 不加这两个字段时，OpenRouter 仍会生成 reasoning tokens（计费照收），
                 // 但不会在流中下发，导致用户看到 40~60s 空白等待。
-                // 详见 rule.llm-gateway 的"OpenRouter Reasoning"一节。
+                // 详见 rule.platform.llm-gateway 的"OpenRouter Reasoning"一节。
                 ["include_reasoning"] = true,
                 ["reasoning"] = new JsonObject { ["exclude"] = false },
             },

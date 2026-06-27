@@ -682,7 +682,7 @@ async function computeSelfStatusPayload(
     webBuildError,
     systemdUnitDrift,
     // 2026-05-07 timing 审视:暴露 daemonReadyAt 让前端判断"上次重启完成时刻"
-    // 用于校验 totalElapsedMs 字段。详见 report.cds-self-update-timing-audit.md
+    // 用于校验 totalElapsedMs 字段。详见 report.cds.self-update-timing-audit.md
     daemonReadyAt,
     runningPid: process.pid,
     pidStartedAt,
@@ -3173,7 +3173,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
    *
    * Duplicates the logic in `GET /branches` so deploy-time decisions don't
    * depend on the client having fetched capacity first.
-   * See doc/design.cds-resilience.md §四.1.
+   * See doc/design.cds.resilience.md §四.1.
    */
   function computeCapacity(): { current: number; max: number; totalMemGB: number } {
     const totalMemGB = Math.round(os.totalmem() / (1024 * 1024 * 1024));
@@ -17974,7 +17974,7 @@ cdscli project list --human
       // cds/web/src/** 时跳过后端 esbuild + 跳过 systemd 重启,**只**重 web/dist。
       // self-update 历史上没做 impact 分析,Phase A 把它也接进来 —— 用户改前端
       // 文案点 self-update 不再需要等 70-90s 重启。
-      // 详见 doc/report.cds-self-update-timing-audit.md Phase A。
+      // 详见 doc/report.cds.self-update-timing-audit.md Phase A。
       let suChangedPaths: string[] = [];
       let suDiffOk = false;
       if (fromSha && isSafeGitRef(fromSha)) {
@@ -18676,7 +18676,7 @@ cdscli project list --human
       // 跳过后端 esbuild + 跳过 systemd 重启,**只**重 web/dist 然后 SSE 'done'。
       // daemon 持续在线,nginx 不动,浏览器下次刷新自动拿新 hash bundle —— 用户体感
       // 0 停机。同 doc-only 路径但要真的跑 vite build。
-      // 详细审计见 doc/report.cds-self-update-timing-audit.md Phase A。
+      // 详细审计见 doc/report.cds.self-update-timing-audit.md Phase A。
       if (diffOk && isWebOnlyChange(impact, changedPaths)) {
         send('analyze', 'done', `本次改动 ${changedPaths.length} 文件全部在 cds/web/src/** — 走零停机前端更新路径`);
         // 跑 in-process vite build → atomic rename web/dist → 写 .build-sha。
@@ -19148,7 +19148,7 @@ cdscli project list --human
 
   // ─────────────────────────────────────────────────────────────────────
   // Warm-pool scheduler API (v3.1)
-  // See doc/design.cds-resilience.md §九.
+  // See doc/design.cds.resilience.md §九.
   // When schedulerService is not wired in, these endpoints return a
   // consistent "disabled" payload so Dashboard UIs can degrade gracefully.
   // ─────────────────────────────────────────────────────────────────────

@@ -21,7 +21,7 @@ import { cn } from '@/lib/utils';
  *
  * Replaces every `<div className="cds-app-shell"> + custom <nav> + custom <main>`
  * pattern that each page used to re-implement. Pages now render only their
- * workspace content + an optional topbar. See `doc/plan.cds-web-migration.md`
+ * workspace content + an optional topbar. See `doc/plan.cds.web-migration.md`
  * Week 4.6 (visual rebuild) for why this exists.
  *
  * Visual contract:

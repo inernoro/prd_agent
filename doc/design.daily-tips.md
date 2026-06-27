@@ -252,7 +252,7 @@ Tour 无法模拟复杂 UI 操作(如 dropdown 选择)。应对:
 ## 12. 跨版本更新通知策略(待实现,见交接文档)
 
 当 tip 内容**破坏性更新**(新增步骤、重写文案等)时,需要**再推一次**给已 dismiss
-的用户。当前未实现,设计方案见 `doc/plan.daily-tips-scenarios-and-staleness.md`:
+的用户。当前未实现,设计方案见 `doc/plan.daily-tips.scenarios-and-staleness.md`:
 
 - `DailyTip.Version: int`(默认 1),内容大改时 bump
 - `User.DismissedTipIds` 升级为 `DismissedTipKeys: List<{key, version}>`

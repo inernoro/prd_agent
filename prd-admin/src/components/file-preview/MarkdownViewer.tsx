@@ -108,7 +108,7 @@ const docSanitizeSchema = {
  * 把 wiki 链接语法 [[标题]] / [[标题|别名]] 转成标准 markdown 链接 [文本](wikilink:标题)
  * 这样 ReactMarkdown 视为普通链接渲染，由下方 a 组件的自定义 renderer 拦截 wikilink: href
  * 渲染为可点击的双链样式。点击发送 CustomEvent('wikilink:click')，由上层（DocumentStorePage）
- * 监听并跳转到对应 entry。详见 doc/design.knowledge-base-mention-network.md。
+ * 监听并跳转到对应 entry。详见 doc/design.knowledge-base.mention-network.md。
  */
 function preprocessWikilinks(body: string): string {
   if (!body) return body;

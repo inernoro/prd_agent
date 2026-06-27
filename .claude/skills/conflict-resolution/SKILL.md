@@ -1,9 +1,12 @@
 ---
 name: conflict-resolution
-description: Merges the main branch into the current feature branch before a PR, resolving conflicts on behalf of the developer.
+version: 1.0.0
+description: PR 前将 main 分支合并进当前特性分支，由 AI 代替开发者分级解决冲突，产出预合并报告并保证零冲突提交。触发词："合并主分支"、"预合并"、"merge main"、"/resolve"。
 ---
 
-# Conflict Resolution - PR 前预合并主分支
+# 预合并主分支
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/resolve`、"合并主分支"、"预合并"、"merge main"
 
 > **严格限制：此技能仅在用户明确说出触发词时才可执行。**
 > AI 在任何情况下都**禁止自动、主动、隐式**调用此技能。
@@ -18,12 +21,12 @@ description: Merges the main branch into the current feature branch before a PR,
 ┌─────────────────────────────────────────────────────┐
 │                   触发限制（铁律）                     │
 │                                                     │
-│  ✅ 允许触发：用户明确说出以下触发词                    │
+│  允许触发：用户明确说出以下触发词                      │
 │     "合并主分支"、"拉主分支"、"同步主分支"              │
 │     "merge main"、"预合并"、"pre-merge"               │
 │     "/resolve"                                      │
 │                                                     │
-│  ❌ 禁止触发：以下场景一律不得执行                      │
+│  禁止触发：以下场景一律不得执行                        │
 │     - AI 发现分支落后 main → 只提醒，不执行            │
 │     - 用户说"提 PR"但没说合并 → 不执行                 │
 │     - hook/自动化流程触发 → 不执行                     │
@@ -241,7 +244,7 @@ git push
 ```
 主分支已合并到当前分支，无冲突。
 新增 commit: [N] 个（来自 main）
-验证: 编译通过 ✅ 测试通过 ✅
+验证: 编译通过 测试通过
 已推送到远端。可以提 PR 了。
 ```
 
@@ -259,9 +262,9 @@ git push
 
 | 级别 | 数量 | 状态 |
 |------|------|------|
-| Level 1 (自动合并) | [N] | ✅ AI 已解决 |
-| Level 2 (需确认) | [N] | ⏳ 等待您确认 |
-| Level 3 (人工处理) | [N] | 🔴 请您处理 |
+| Level 1 (自动合并) | [N] | AI 已解决 |
+| Level 2 (需确认) | [N] | 等待您确认 |
+| Level 3 (人工处理) | [N] | 请您处理 |
 
 ## Level 1: 已自动解决
 
@@ -279,10 +282,10 @@ git push
 
 | 检查项 | 状态 |
 |--------|------|
-| 冲突标记残留 | ✅/❌ |
-| 后端编译 | ✅/❌ |
-| 前端类型检查 | ✅/❌ |
-| 单元测试 | ✅/❌ |
+| 冲突标记残留 | 通过/未通过 |
+| 后端编译 | 通过/未通过 |
+| 前端类型检查 | 通过/未通过 |
+| 单元测试 | 通过/未通过 |
 ```
 
 ---

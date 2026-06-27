@@ -1,7 +1,7 @@
 /**
  * ForwarderRoutePublisher 契约测试 (B'.2-forwarder MVP, 2026-05-08)
  *
- * 对应 doc/report.cds-forwarder-success.md
+ * 对应 doc/report.cds.forwarder-success.md
  * 验证:
  *   1. running 分支 → 路由记录(host = preview slug + 别名)
  *   2. building / starting 分支有端口时仍保留 preview host 路由

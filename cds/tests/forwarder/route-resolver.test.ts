@@ -1,7 +1,7 @@
 /**
  * Forwarder 路由解析单测 — TDD 契约
  *
- * 对应 doc/report.cds-forwarder-success.md
+ * 对应 doc/report.cds.forwarder-success.md
  * 实现位置:cds/src/forwarder/route-resolver.ts
  *
  * 路由解析器职责:接收 (host, path) → 返回匹配到的路由记录(包含

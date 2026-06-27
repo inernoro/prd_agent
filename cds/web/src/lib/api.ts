@@ -176,28 +176,134 @@ function hasNoReadableError(parsed: unknown): boolean {
 
 export type ReportFormat = 'html' | 'md';
 
+export type ReportVerdict = 'pass' | 'conditional' | 'fail';
+
 export interface AcceptanceReport {
   id: string;
   title: string;
   format: ReportFormat;
   projectId?: string | null;
+  /** 列表接口附带：项目 slug，便于跨系统按项目归类展示。 */
+  projectSlug?: string | null;
   branchId?: string | null;
+  folderId?: string | null;
   sizeBytes: number;
+  /** 验收结论（看板分组）。 */
+  verdict?: ReportVerdict | null;
+  /** 验收档位（自由文本）。 */
+  tier?: string | null;
+  /** 缺陷计数（按严重度）。 */
+  defectCounts?: Record<string, number> | null;
+  /** E1 部署上下文：commit SHA。 */
+  commitSha?: string | null;
+  /** E1 部署上下文：分支名。 */
+  branch?: string | null;
+  /** E1 部署上下文：PR 编号。 */
+  prNumber?: number | null;
+  /** E1 部署上下文：部署模式。 */
+  deployMode?: string | null;
+  /** E6 匿名分享 token（/r/<token> 只读公开链接）；null=未分享。 */
+  shareToken?: string | null;
   createdBy?: string;
   createdAt: string;
   updatedAt: string;
 }
 
-/** List report metadata, newest first, optionally filtered by project. */
-export async function listReports(projectId?: string): Promise<AcceptanceReport[]> {
-  const qs = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
+export interface ReportFolder {
+  id: string;
+  name: string;
+  projectId?: string | null;
+  /** 父文件夹 ID（嵌套层级，根级为 null）。 */
+  parentId?: string | null;
+  sortOrder: number;
+  createdAt: string;
+}
+
+/**
+ * List report metadata, newest first. `projectId` filters by project;
+ * `folderId` filters by folder ('none' = 仅未归类的报告).
+ */
+export async function listReports(projectId?: string, folderId?: string): Promise<AcceptanceReport[]> {
+  const params = new URLSearchParams();
+  if (projectId) params.set('projectId', projectId);
+  if (folderId) params.set('folderId', folderId);
+  const qs = params.toString() ? `?${params.toString()}` : '';
   const res = await apiRequest<{ reports: AcceptanceReport[] }>(`/api/reports${qs}`);
   return res.reports;
+}
+
+/** List report folders for a project scope (omit projectId for global/CDS-self). */
+export async function listReportFolders(projectId?: string): Promise<ReportFolder[]> {
+  const qs = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
+  const res = await apiRequest<{ folders: ReportFolder[] }>(`/api/report-folders${qs}`);
+  return res.folders;
+}
+
+export async function createReportFolder(
+  name: string,
+  projectId?: string | null,
+  parentId?: string | null,
+): Promise<ReportFolder> {
+  const res = await apiRequest<{ folder: ReportFolder }>('/api/report-folders', {
+    method: 'POST',
+    body: { name, projectId: projectId ?? null, parentId: parentId ?? null },
+  });
+  return res.folder;
+}
+
+export async function renameReportFolder(id: string, name: string): Promise<ReportFolder> {
+  const res = await apiRequest<{ folder: ReportFolder }>(`/api/report-folders/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: { name },
+  });
+  return res.folder;
+}
+
+export async function deleteReportFolder(id: string): Promise<void> {
+  await apiRequest(`/api/report-folders/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+/** Move a report into a folder (folderId=null detaches it). */
+export async function moveReportToFolder(id: string, folderId: string | null): Promise<AcceptanceReport> {
+  const res = await apiRequest<{ report: AcceptanceReport }>(`/api/reports/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: { folderId },
+  });
+  return res.report;
 }
 
 export async function getReport(id: string): Promise<AcceptanceReport> {
   const res = await apiRequest<{ report: AcceptanceReport }>(`/api/reports/${encodeURIComponent(id)}`);
   return res.report;
+}
+
+/** E6: 生成（幂等返回已有）报告匿名只读分享链接 /r/<token>。 */
+export async function enableReportShare(id: string): Promise<{ report: AcceptanceReport; shareUrl: string }> {
+  return apiRequest<{ report: AcceptanceReport; shareUrl: string }>(`/api/reports/${encodeURIComponent(id)}/share`, {
+    method: 'POST',
+  });
+}
+
+/** E6: 撤销报告分享链接（立即失效）。 */
+export async function disableReportShare(id: string): Promise<AcceptanceReport> {
+  const res = await apiRequest<{ report: AcceptanceReport }>(`/api/reports/${encodeURIComponent(id)}/share`, {
+    method: 'DELETE',
+  });
+  return res.report;
+}
+
+export interface PushToPrResult {
+  ok: boolean;
+  prNumber: number;
+  repo: string;
+  commentUrl?: string;
+  checkRun?: { id: number; htmlUrl: string };
+  warnings: string[];
+}
+
+/** E4: 把验收结论作为 PR 评论 + check-run 回写到关联 PR。 */
+export async function pushReportToPr(id: string): Promise<PushToPrResult> {
+  return apiRequest<PushToPrResult>(`/api/reports/${encodeURIComponent(id)}/push-to-pr`, { method: 'POST' });
 }
 
 /** Create a report via the JSON paste path. */
@@ -207,6 +313,7 @@ export async function createReportFromText(input: {
   content: string;
   projectId?: string | null;
   branchId?: string | null;
+  folderId?: string | null;
 }): Promise<AcceptanceReport> {
   const res = await apiRequest<{ report: AcceptanceReport }>('/api/reports', {
     method: 'POST',
@@ -226,12 +333,14 @@ export async function createReportFromFile(input: {
   file: File;
   projectId?: string | null;
   branchId?: string | null;
+  folderId?: string | null;
 }): Promise<AcceptanceReport> {
   const form = new FormData();
   form.append('title', input.title);
   if (input.format) form.append('format', input.format);
   if (input.projectId) form.append('projectId', input.projectId);
   if (input.branchId) form.append('branchId', input.branchId);
+  if (input.folderId) form.append('folderId', input.folderId);
   form.append('file', input.file, input.file.name);
 
   const url = apiUrl('/api/reports');
