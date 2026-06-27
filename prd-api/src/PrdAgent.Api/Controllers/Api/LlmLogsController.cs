@@ -170,7 +170,8 @@ public class LlmLogsController : ControllerBase
             .OrderBy(x => x.displayName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        var statuses = new[] { "running", "succeeded", "failed", "cancelled" };
+        // blackhole = StartAsync 写日志失败时的占位记录（请求体未记录，仅留最小信息），治"完全没发出去/未记录"不可查
+        var statuses = new[] { "running", "succeeded", "failed", "cancelled", "blackhole" };
 
         var userIds = (await _db.LlmRequestLogs
                 .Distinct(x => x.UserId, Builders<LlmRequestLog>.Filter.Empty)
@@ -361,6 +362,80 @@ public class LlmLogsController : ControllerBase
         if (log == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "日志不存在"));
 
         return Ok(ApiResponse<LlmRequestLog>.Ok(log));
+    }
+
+    /// <summary>
+    /// 文本一键还原：把 answerText / systemPromptText / questionText 里的
+    /// [TEXT_COS:sha256:charcount] 占位符按 sha256 从 COS 取回原文返回，供前端一键展开完整提示词/回答。
+    /// 长文本写日志时被换成占位符（见 LlmRequestLogWriter.ProcessJsonStringValuesForCosAsync），
+    /// 这里走与 ReplayCurl 一致的 COS 反查写法（domain=logs/type=log）把它复原。
+    /// 占位符无法还原（COS 未找到）时保留原占位符，并在 restoreErrors 里报告。
+    /// </summary>
+    [HttpGet("{id}/restore-text")]
+    public async Task<IActionResult> RestoreText(string id)
+    {
+        var log = await _db.LlmRequestLogs.Find(x => x.Id == id).FirstOrDefaultAsync();
+        if (log == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "日志不存在"));
+
+        var restoreErrors = new List<string>();
+        var restoredCount = 0;
+
+        var answerText = await RestoreTextCosPlaceholdersAsync(log.AnswerText, restoreErrors, c => restoredCount += c);
+        var systemPromptText = await RestoreTextCosPlaceholdersAsync(log.SystemPromptText, restoreErrors, c => restoredCount += c);
+        var questionText = await RestoreTextCosPlaceholdersAsync(log.QuestionText, restoreErrors, c => restoredCount += c);
+        var thinkingText = await RestoreTextCosPlaceholdersAsync(log.ThinkingText, restoreErrors, c => restoredCount += c);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            id = log.Id,
+            answerText,
+            systemPromptText,
+            questionText,
+            thinkingText,
+            restoredCount,
+            restoreErrors = restoreErrors.Count > 0 ? restoreErrors : null
+        }));
+    }
+
+    /// <summary>
+    /// 把单个文本字段里的 [TEXT_COS:sha256:charcount] 占位符替换为 COS 原文。
+    /// 复用 ReplayCurl 同款 COS 反查（domain=logs/type=log）。占位符取不回时保留原样并记错。
+    /// </summary>
+    private async Task<string?> RestoreTextCosPlaceholdersAsync(string? text, List<string> restoreErrors, Action<int> onRestored)
+    {
+        if (string.IsNullOrEmpty(text)) return text;
+
+        var textCosPattern = new Regex(@"\[TEXT_COS:([0-9a-f]{64}):(\d+)\]");
+        var matches = textCosPattern.Matches(text);
+        if (matches.Count == 0) return text;
+
+        var restored = 0;
+        var sb = new StringBuilder(text);
+        // 倒序替换避免偏移
+        for (var i = matches.Count - 1; i >= 0; i--)
+        {
+            var m = matches[i];
+            var sha256 = m.Groups[1].Value;
+
+            var found = await _assetStorage.TryReadByShaAsync(
+                sha256, HttpContext.RequestAborted,
+                domain: AppDomainPaths.DomainLogs,
+                type: AppDomainPaths.TypeLog);
+
+            if (found == null)
+            {
+                restoreErrors.Add($"COS 未找到文本: {sha256[..12]}...");
+                continue;
+            }
+
+            restored++;
+            var original = Encoding.UTF8.GetString(found.Value.bytes);
+            sb.Remove(m.Index, m.Length);
+            sb.Insert(m.Index, original);
+        }
+
+        if (restored > 0) onRestored(restored);
+        return sb.ToString();
     }
 
     /// <summary>
@@ -1093,6 +1168,107 @@ public class LlmLogsController : ControllerBase
         }
 
         return Ok(ApiResponse<object>.Ok(new { days, items = results }));
+    }
+
+    /// <summary>
+    /// 按应用聚合（治"MAP 各业务日志混在一张表"）：按 AppCallerCode 的应用前缀（'.' 之前那段，
+    /// 如 visual-agent / prd-agent / pr-review）+ requestType 分组，返回每应用的请求数 / 成功率 / 中位时延。
+    /// 应用前缀在 Mongo aggregate 用 $split + $arrayElemAt 取（无 '.' 时整串即前缀，'' 归为 unknown）。
+    /// 中位时延把分组内 DurationMs 收集后在 C# 端算中位数（与 Sessions 端点同款"$push 后端内算"模式）。
+    /// </summary>
+    [HttpGet("app-summary")]
+    public async Task<IActionResult> AppSummary(
+        [FromQuery] string? from = null,
+        [FromQuery] string? to = null,
+        [FromQuery] int days = 30)
+    {
+        var (start, end) = ResolveRange(from, to, days);
+
+        var filter = Builders<LlmRequestLog>.Filter.Gte(x => x.StartedAt, start)
+            & Builders<LlmRequestLog>.Filter.Lt(x => x.StartedAt, end);
+        var matchDoc = filter.Render(new RenderArgs<LlmRequestLog>(
+            _db.LlmRequestLogs.DocumentSerializer, _db.LlmRequestLogs.Settings.SerializerRegistry));
+
+        var pipeline = new[]
+        {
+            new BsonDocument("$match", matchDoc),
+            // 计算应用前缀：取 AppCallerCode 在 '.' 之前那段；缺失/空归为 "unknown"
+            new BsonDocument("$project", new BsonDocument
+            {
+                { "appPrefix", new BsonDocument("$let", new BsonDocument
+                    {
+                        { "vars", new BsonDocument("code", new BsonDocument("$ifNull", new BsonArray { "$AppCallerCode", "" })) },
+                        { "in", new BsonDocument("$cond", new BsonArray
+                            {
+                                new BsonDocument("$eq", new BsonArray { "$$code", "" }),
+                                "unknown",
+                                new BsonDocument("$arrayElemAt", new BsonArray { new BsonDocument("$split", new BsonArray { "$$code", "." }), 0 })
+                            })
+                        }
+                    })
+                },
+                { "requestType", new BsonDocument("$ifNull", new BsonArray { "$RequestType", "unknown" }) },
+                { "status", "$Status" },
+                { "durationMs", "$DurationMs" },
+            }),
+            new BsonDocument("$group", new BsonDocument
+            {
+                { "_id", new BsonDocument { { "appPrefix", "$appPrefix" }, { "requestType", "$requestType" } } },
+                { "requestCount", new BsonDocument("$sum", 1) },
+                { "successCount", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
+                    {
+                        new BsonDocument("$eq", new BsonArray { "$status", "succeeded" }), 1, 0
+                    }))
+                },
+                { "failCount", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
+                    {
+                        new BsonDocument("$eq", new BsonArray { "$status", "failed" }), 1, 0
+                    }))
+                },
+                // 收集 durationMs 供 C# 端算中位数（null 项由 MedianMs 过滤）
+                { "durations", new BsonDocument("$push", "$durationMs") },
+            }),
+            new BsonDocument("$sort", new BsonDocument("requestCount", -1)),
+        };
+
+        var rows = await _db.LlmRequestLogs.Aggregate<BsonDocument>(pipeline).ToListAsync();
+
+        static long? MedianMs(BsonValue? arr)
+        {
+            if (arr is not BsonArray a || a.Count == 0) return null;
+            var nums = new List<long>();
+            foreach (var v in a)
+            {
+                if (v == null || v.IsBsonNull) continue;
+                try { nums.Add(Convert.ToInt64(BsonTypeMapper.MapToDotNetValue(v))); }
+                catch { /* 跳过无法转换的项 */ }
+            }
+            if (nums.Count == 0) return null;
+            nums.Sort();
+            var mid = nums.Count / 2;
+            return nums.Count % 2 == 1 ? nums[mid] : (nums[mid - 1] + nums[mid]) / 2;
+        }
+
+        var items = rows.Select(d =>
+        {
+            var idDoc = d.GetValue("_id", new BsonDocument()) as BsonDocument ?? new BsonDocument();
+            var requestCount = BsonInt(d.GetValue("requestCount", 0));
+            var successCount = BsonInt(d.GetValue("successCount", 0));
+            var failCount = BsonInt(d.GetValue("failCount", 0));
+            return new
+            {
+                appPrefix = BsonStr(idDoc.GetValue("appPrefix", BsonNull.Value)),
+                requestType = BsonStr(idDoc.GetValue("requestType", BsonNull.Value)),
+                requestCount,
+                successCount,
+                failCount,
+                // 成功率：成功数 / 总请求数（0~1，保留 4 位小数）；总数为 0 时给 null
+                successRate = requestCount > 0 ? Math.Round((double)successCount / requestCount, 4) : (double?)null,
+                medianDurationMs = MedianMs(d.GetValue("durations", new BsonArray())),
+            };
+        }).ToList();
+
+        return Ok(ApiResponse<object>.Ok(new { from = start, to = end, items }));
     }
 }
 

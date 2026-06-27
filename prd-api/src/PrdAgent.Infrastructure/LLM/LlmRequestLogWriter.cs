@@ -115,12 +115,41 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
         }
         catch (Exception ex)
         {
-            // 以 Warning 级别记录，之前是 Debug 会在生产完全看不到——
-            // 任何 StartAsync 失败都会导致 LLM 调用不落日志，这种故障对运维
-            // 而言是幽灵级别的（用户看到功能跑通但日志空空）。提到 Warning
-            // 确保至少 container logs 里能搜到。
-            _logger.LogWarning(ex, "LlmRequestLogWriter.StartAsync failed — LLM 调用不会被记录。AppCallerCode={AppCallerCode}", start.AppCallerCode);
-            return null;
+            // 黑洞可见：StartAsync 失败（多半是 COS 上传 / requestBody 处理炸了）会导致
+            // LLM 调用完全不落日志——用户看到功能跑通但日志页空空，对运维而言是幽灵级别故障。
+            // 这里尽力插入一条「最小记录」（Status=blackhole），让"未发出/未记录"也可在日志页查到，
+            // 而不是只在 container logs 里留一条 Warning。最小记录只用 start 上的原始字段，
+            // 不再走可能失败的 COS 处理路径，避免二次抛异常。
+            try
+            {
+                var fallbackLog = new LlmRequestLog
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    RequestId = start.RequestId,
+                    GroupId = start.GroupId,
+                    SessionId = start.SessionId,
+                    UserId = start.UserId,
+                    ViewRole = start.ViewRole,
+                    RequestType = start.RequestType,
+                    AppCallerCode = start.AppCallerCode,
+                    AppCallerCodeDisplayName = GetDisplayName(start.AppCallerCode),
+                    Provider = start.Provider,
+                    Model = start.Model,
+                    StartedAt = start.StartedAt == default ? DateTime.UtcNow : start.StartedAt,
+                    EndedAt = DateTime.UtcNow,
+                    Status = "blackhole",
+                    Error = $"日志写入失败（未记录请求体）：{ex.GetType().Name}: {ex.Message}"
+                };
+                await _db.LlmRequestLogs.InsertOneAsync(fallbackLog, cancellationToken: ct);
+                _logger.LogWarning(ex, "LlmRequestLogWriter.StartAsync failed — 已写入 blackhole 占位日志。AppCallerCode={AppCallerCode}, RequestId={RequestId}", start.AppCallerCode, start.RequestId);
+                return fallbackLog.Id;
+            }
+            catch (Exception fallbackEx)
+            {
+                // 连最小记录都写不进去（DB 不可用），只能降级到 Warning 日志兜底。
+                _logger.LogWarning(fallbackEx, "LlmRequestLogWriter.StartAsync failed 且 blackhole 占位日志也写入失败 — LLM 调用不会被记录。AppCallerCode={AppCallerCode}。原始异常：{OriginalError}", start.AppCallerCode, ex.Message);
+                return null;
+            }
         }
     }
 
