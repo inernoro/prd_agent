@@ -745,6 +745,7 @@
   > MVP 边界：仅视觉创作走真实生图、文学图文一体待补、信封仅再加工接入、img2img 占位
 - [CDS 极速版（CI 预构建）· 已知边界与遗留事项](debt.cds.ci-prebuilt) `debt.cds.ci-prebuilt`
 - [CDS executor 卡死看门狗 · 债务台账](debt.cds.executor-watchdog) `debt.cds.executor-watchdog`
+- [CDS 自更新极速版（预构建产物）· 债务台账](debt.cds.selfupdate-prebuilt) `debt.cds.selfupdate-prebuilt`
   > 7 条 open：ghcr 包需手动设 public / 工作流名硬编码 / 每 push 双镜像 / 仍 git pull worktree / 构建时延 / 切回源码非一键 / ClaudeSdk 回调端口
 - [知识库版本控制/图片插入/大小统计 · 已知边界](debt.knowledge-base.versioning) `debt.knowledge-base.versioning`
   > 图片插入不刷新已修；版本控制独立集合 + 恢复只写文本不删资产；遗留：github 日同步覆盖手动编辑、大小不含外链图片字节、版本留存上限100

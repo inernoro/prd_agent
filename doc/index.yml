@@ -290,6 +290,7 @@ docs:
   debt.cds.agent.acceptance-smoke-drift: CDS Agent 验收 smoke 断言漂移 · 需专项修复或退役（未接 CI 的手工取证脚本）
   debt.cds.ci-prebuilt: CDS 极速版（CI 预构建）· 已知边界与遗留事项
   debt.cds.executor-watchdog: CDS executor 卡死看门狗 · 债务台账（cluster-only，#228/#233 评审冲突）
+  debt.cds.selfupdate-prebuilt: CDS 自更新极速版（预构建产物）· 债务台账（CI+决策+拉取已落地，orchestrator 接线待灰度）
   debt.knowledge-base.galaxy-vs-universe: 知识库 知识星球(3D 星系) 与 宇宙图(obsidian 群星) 并存 · 默认只展示星系 + 智能判别待做
   debt.knowledge-base.mention-network: 知识库引用网络 · MVP 已知边界与遗留事项
   debt.knowledge-base.versioning: 知识库版本控制/图片插入/大小统计 · 已知边界
