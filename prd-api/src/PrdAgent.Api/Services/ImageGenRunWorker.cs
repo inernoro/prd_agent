@@ -1314,7 +1314,7 @@ public class ImageGenRunWorker : BackgroundService
         var isDone = status == "done";
         var key = markerIndex.ToString();
         // 权威成功时间戳的字段路径（第 1 步指针写入与第 2 步显示门控共用，避免重复声明导致 CS0136）
-        var stampPath = $"ArticleWorkflow.AssetRunAtByMarkerIndex.{key}";
+        var stampPath = $"articleWorkflow.assetRunAtByMarkerIndex.{key}";
 
         // 1) 成功且有资产：可靠的"每 marker 原子 + 时间戳门控"指针写入（不依赖 workspace 乐观锁）。
         if (isDone && !string.IsNullOrWhiteSpace(assetId))
@@ -1326,9 +1326,9 @@ public class ImageGenRunWorker : BackgroundService
                     Builders<ImageMasterWorkspace>.Filter.Exists(stampPath, false),
                     Builders<ImageMasterWorkspace>.Filter.Lt(stampPath, run.CreatedAt)));
             var pointerUpdate = Builders<ImageMasterWorkspace>.Update
-                .Set($"ArticleWorkflow.AssetIdByMarkerIndex.{key}", assetId!)
+                .Set($"articleWorkflow.assetIdByMarkerIndex.{key}", assetId!)
                 .Set(stampPath, run.CreatedAt)
-                .Set("ArticleWorkflow.UpdatedAt", DateTime.UtcNow);
+                .Set("articleWorkflow.updatedAt", DateTime.UtcNow);
             await _db.ImageMasterWorkspaces.UpdateOneAsync(pointerFilter, pointerUpdate, cancellationToken: ct);
 
             // DoneImageCount 重算（读取最新字典）。并发完成时各 task 读到的快照新旧不一，
@@ -1366,7 +1366,7 @@ public class ImageGenRunWorker : BackgroundService
             authoritativeSuccessAt = assetStamp;
         }
 
-        var mPath = $"ArticleWorkflow.Markers.{markerIndex}";
+        var mPath = $"articleWorkflow.markers.{markerIndex}";
         var F = Builders<ImageMasterWorkspace>.Filter;
         var U = Builders<ImageMasterWorkspace>.Update;
 
@@ -1385,14 +1385,14 @@ public class ImageGenRunWorker : BackgroundService
                 F.Or(F.Exists(stampPath, false), F.Lte(stampPath, run.CreatedAt)));
             var doneUpdates = new List<UpdateDefinition<ImageMasterWorkspace>>
             {
-                U.Set($"{mPath}.Status", "done"),
-                U.Set($"{mPath}.ErrorMessage", (string?)null),
-                U.Set($"{mPath}.ImageRunAt", run.CreatedAt),
-                U.Set($"{mPath}.UpdatedAt", DateTime.UtcNow),
-                U.Set("ArticleWorkflow.UpdatedAt", DateTime.UtcNow),
+                U.Set($"{mPath}.status", "done"),
+                U.Set($"{mPath}.errorMessage", (string?)null),
+                U.Set($"{mPath}.imageRunAt", run.CreatedAt),
+                U.Set($"{mPath}.updatedAt", DateTime.UtcNow),
+                U.Set("articleWorkflow.updatedAt", DateTime.UtcNow),
             };
-            if (!string.IsNullOrWhiteSpace(url)) doneUpdates.Add(U.Set($"{mPath}.Url", url));
-            if (!string.IsNullOrWhiteSpace(assetId)) doneUpdates.Add(U.Set($"{mPath}.AssetId", assetId));
+            if (!string.IsNullOrWhiteSpace(url)) doneUpdates.Add(U.Set($"{mPath}.url", url));
+            if (!string.IsNullOrWhiteSpace(assetId)) doneUpdates.Add(U.Set($"{mPath}.assetId", assetId));
             await _db.ImageMasterWorkspaces.UpdateOneAsync(doneFilter, U.Combine(doneUpdates), cancellationToken: ct);
             return;
         }
@@ -1410,10 +1410,10 @@ public class ImageGenRunWorker : BackgroundService
             await _db.ImageMasterWorkspaces.UpdateOneAsync(
                 F.Eq(x => x.Id, wid),
                 U.Combine(
-                    U.Set($"{mPath}.Status", "done"),
-                    U.Set($"{mPath}.ErrorMessage", (string?)null),
-                    U.Set($"{mPath}.UpdatedAt", DateTime.UtcNow),
-                    U.Set("ArticleWorkflow.UpdatedAt", DateTime.UtcNow)),
+                    U.Set($"{mPath}.status", "done"),
+                    U.Set($"{mPath}.errorMessage", (string?)null),
+                    U.Set($"{mPath}.updatedAt", DateTime.UtcNow),
+                    U.Set("articleWorkflow.updatedAt", DateTime.UtcNow)),
                 cancellationToken: ct);
             _logger.LogInformation(
                 "[文学创作] 失败但已有成功图：marker 恢复 done 保留旧图。WorkspaceId={WorkspaceId}, MarkerIndex={MarkerIndex}, RunId={RunId}",
@@ -1423,11 +1423,11 @@ public class ImageGenRunWorker : BackgroundService
         // 无成功图：写 error，filter 守卫"无成功指针"，避免并发成功后被错误覆盖。
         var errUpdates = new List<UpdateDefinition<ImageMasterWorkspace>>
         {
-            U.Set($"{mPath}.Status", status),
-            U.Set($"{mPath}.UpdatedAt", DateTime.UtcNow),
-            U.Set("ArticleWorkflow.UpdatedAt", DateTime.UtcNow),
+            U.Set($"{mPath}.status", status),
+            U.Set($"{mPath}.updatedAt", DateTime.UtcNow),
+            U.Set("articleWorkflow.updatedAt", DateTime.UtcNow),
         };
-        if (!string.IsNullOrWhiteSpace(errorMessage)) errUpdates.Add(U.Set($"{mPath}.ErrorMessage", errorMessage));
+        if (!string.IsNullOrWhiteSpace(errorMessage)) errUpdates.Add(U.Set($"{mPath}.errorMessage", errorMessage));
         await _db.ImageMasterWorkspaces.UpdateOneAsync(
             F.And(F.Eq(x => x.Id, wid), F.Exists(stampPath, false)),
             U.Combine(errUpdates),

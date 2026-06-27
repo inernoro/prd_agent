@@ -284,6 +284,7 @@ public static class BsonClassMapRegistration
                 cm.MapMember(x => x.ExpectedImageCount).SetElementName("expectedImageCount");
                 cm.MapMember(x => x.DoneImageCount).SetElementName("doneImageCount");
                 cm.MapMember(x => x.AssetIdByMarkerIndex).SetElementName("assetIdByMarkerIndex");
+                cm.MapMember(x => x.AssetRunAtByMarkerIndex).SetElementName("assetRunAtByMarkerIndex");
                 cm.MapMember(x => x.UpdatedAt).SetElementName("updatedAt");
                 cm.SetIgnoreExtraElements(true);
             });
@@ -304,6 +305,7 @@ public static class BsonClassMapRegistration
                 cm.MapMember(x => x.PlanItem).SetElementName("planItem");
                 cm.MapMember(x => x.ErrorMessage).SetElementName("errorMessage");
                 cm.MapMember(x => x.UpdatedAt).SetElementName("updatedAt");
+                cm.MapMember(x => x.ImageRunAt).SetElementName("imageRunAt");
                 cm.SetIgnoreExtraElements(true);
             });
         }

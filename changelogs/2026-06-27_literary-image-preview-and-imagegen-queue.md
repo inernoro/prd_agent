@@ -14,3 +14,4 @@
 | fix | prd-admin | 图片灯箱列表改回"打开时快照"（撤销实时重算）：避免打开期间更靠前 marker 后完成插入导致正在看的图悄悄错位（最小惊讶）；新配图重开灯箱即可见 |
 | fix | prd-api | marker 显示写入加原子时间戳门控并恢复卡死态：done 写入 filter 携带 AssetRunAtByMarkerIndex 守卫（陈旧 run 通过内存门控后也不会后落地覆盖更新 run 的 display）；失败但已有成功图时把因重生成置 running 的 marker 恢复为 done（不再卡 running）；无成功图写 error 时 filter 守卫"无成功指针"防并发成功被覆盖 |
 | fix | prd-admin | 图片灯箱滚轮缩放改用原生非 passive wheel 监听（React onWheel 默认 passive，preventDefault 被忽略导致页面在遮罩后滚动穿透） |
+| fix | prd-api | 修复文学配图写入打到幽灵字段（P1）：ImageMasterWorkspace.ArticleWorkflow 等经 BsonClassMap 绑定为 camelCase，而 MongoDB 字符串路径 $set 不套用类映射约定——此前 PascalCase 字符串路径写到了顶层幽灵 ArticleWorkflow，编辑器/投稿读的 articleWorkflow 收不到 assetIdByMarkerIndex/doneImageCount/marker 状态。改为 camelCase 路径（articleWorkflow.markers.{i}.status 等），并给新字段 AssetRunAtByMarkerIndex/ImageRunAt 补 camelCase 元素名使读写一致 |
