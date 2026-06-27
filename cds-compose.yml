@@ -110,6 +110,29 @@ x-cds-deploy-modes:
         - "ghcr.io/inernoro/prd_agent/prdagent-admin:branch-main"
       prebuilt: true
       containerPort: 8080
+  # 独立 LLM 网关后端 llmgw —— 自包含 ASP.NET 服务，读共享 Mongo 做观测 + 独立账号。
+  # 预览域名 /gw/* 路由到本服务（见 services.llmgw 的 cds.path-prefix）。
+  llmgw:
+    dev:
+      label: "开发模式 (dotnet run)"
+      command: >-
+        cd /repo/prd-llmgw &&
+        rm -rf bin obj &&
+        dotnet restore &&
+        dotnet run --no-launch-profile -c Release --urls http://0.0.0.0:8090
+    express:
+      label: "极速版（CI 预构建）"
+      # 无 command：使用镜像自带 ENTRYPOINT（dotnet prd-llmgw.dll）。
+      image: "ghcr.io/inernoro/prd_agent/prdagent-llmgw:sha-${CDS_COMMIT_SHA}"
+      # 本 commit 没改 prd-llmgw（CI 未构建 llmgw）时回退到本分支最近一次构建；
+      # 主分支尚未落地 prd-llmgw，故不挂 branch-main 回退（避免拉取不存在镜像）。
+      fallbackImage:
+        - "ghcr.io/inernoro/prd_agent/prdagent-llmgw:branch-${CDS_BRANCH_SLUG}"
+      prebuilt: true
+      containerPort: 8090
+      env:
+        ASPNETCORE_ENVIRONMENT: Production
+        ASPNETCORE_URLS: "http://+:8090"
 services:
   # ── App Services (有相对路径 volume mount) ──
 
@@ -185,6 +208,39 @@ services:
       # 超过原 300s 就绪超时会被误判 error（容器其实已 Accepting connections）。
       # 按 base label 取两模式上限：static 冷构建留足余量，dev 秒起也不受影响。
       cds.readiness-timeout: "1200"
+      cds.readiness-interval: "3"
+
+  # 独立 LLM 网关后端 llmgw（默认 dotnet run 源码模式；CDS 可切 express 拉预构建镜像）。
+  # 与 api 同连一份 CDS 托管 Mongo（读 llmrequestlogs 观测），独立 JWT 账号体系。
+  llmgw:
+    image: mcr.microsoft.com/dotnet/sdk:8.0
+    working_dir: /repo
+    volumes:
+      - .:/repo
+      - api-nuget-cache:/root/.nuget/packages
+    ports:
+      - "8090"
+    command: >-
+      cd /repo/prd-llmgw &&
+      rm -rf bin obj &&
+      dotnet restore &&
+      dotnet run --no-launch-profile -c Release --urls http://0.0.0.0:8090
+    depends_on:
+      mongodb: { condition: service_healthy }
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
+      MongoDB__DatabaseName: prdagent
+      # 网关自身鉴权密钥：独立于 api 的 JWT（跨服务隔离）。预览环境用固定占位值即可。
+      LlmGwJwt__Secret: "cds-preview-llmgw-secret-please-change-0001xyz"
+      LlmGwJwt__Issuer: prdagent-llmgw
+      LLMGW_ADMIN_USER: admin
+      LLMGW_ADMIN_PASSWORD: llmgw-admin-2026
+    labels:
+      cds.path-prefix: "/gw/"
+      cds.readiness-path: "/gw/healthz"
+      # express 拉镜像秒起；dev 源码模式需 restore + 编译，留足就绪窗口。
+      cds.readiness-timeout: "900"
       cds.readiness-interval: "3"
 
   # ── Infrastructure Services (无相对路径 mount) ──
