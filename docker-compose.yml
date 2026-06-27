@@ -112,41 +112,37 @@ services:
       - prdagent-network
     restart: unless-stopped
 
-  # 独立 LLM 网关服务 llmgw —— 与 api 同源镜像、不同 entrypoint（占位）。
-  # 当前用 api 镜像 + 命令覆盖运行同一份 DLL 监听 8090；待 prd-llmgw 拆为独立项目后改 PRD_AGENT_LLMGW_IMAGE。
-  # 注入：同一 Mongo 连接串 + 同一 ApiKeyCrypto__Secret（共享平台密钥密文）+ 独立 LlmGwJwt__Secret（网关自身鉴权，跨服务隔离见 cross-project-isolation.md）。
+  # 独立 LLM 网关服务 llmgw —— 独立 prd-llmgw 镜像（自包含 ASP.NET 服务，监听 8090）。
+  # 与 MAP 共享同一 Mongo（读 llmrequestlogs 做观测）+ 独立 LlmGwJwt__Secret（网关自身账号鉴权，
+  # 跨服务隔离见 cross-project-isolation.md）。不依赖 prd-api 任何项目，剥离失败不波及主站。
   llmgw:
-    image: ${PRD_AGENT_LLMGW_IMAGE:-ghcr.io/inernoro/prd_agent/prdagent-server:latest}
+    image: ${PRD_AGENT_LLMGW_IMAGE:-ghcr.io/inernoro/prd_agent/prdagent-llmgw:latest}
     container_name: prdagent-llmgw
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8090
       - MongoDB__ConnectionString=mongodb://mongodb:27017
       - MongoDB__DatabaseName=prdagent
-      - Redis__ConnectionString=redis:6379
-      # 平台 API key 密文解密密钥：必须与 api 一致，否则网关读不出已加密的平台 key
-      - ApiKeyCrypto__Secret=${API_KEY_CRYPTO_SECRET:-}
-      - ApiKeyCrypto__LegacySecrets=${API_KEY_CRYPTO_LEGACY_SECRETS:-}
       # 网关自身鉴权密钥：独立于 api 的 JWT_SECRET（跨服务隔离）
       - LlmGwJwt__Secret=${LLMGW_JWT_SECRET:-}
       - LlmGwJwt__Issuer=prdagent-llmgw
+      # 独立账号种子（首启 upsert 到 llmgw_users）；生产请通过 .env 覆盖密码
+      - LLMGW_ADMIN_USER=${LLMGW_ADMIN_USER:-admin}
+      - LLMGW_ADMIN_PASSWORD=${LLMGW_ADMIN_PASSWORD:-llmgw-admin-2026}
     read_only: true
     tmpfs:
       - /tmp
     depends_on:
       - mongodb
-      - redis
     networks:
       - prdagent-network
     restart: unless-stopped
 
-  # 独立 LLM 网关前端静态站 llmgw-web —— nginx 托管 prd-llmgw-web 构建产物。
-  # 静态产物由 deploy 流程下载/解压到 ./deploy/llmgw-web/dist（与 gateway 的 web/dist 同模式）。
+  # 独立 LLM 网关前端静态站 llmgw-web —— 独立 prd-llmgw-web 镜像（nginx 托管构建产物，监听 80）。
+  # SPA 回退 + /gw 反代到 llmgw:8090（见 prd-llmgw-web/nginx.conf）。
   llmgw-web:
-    image: nginx:1.27-alpine
+    image: ${PRD_AGENT_LLMGW_WEB_IMAGE:-ghcr.io/inernoro/prd_agent/prdagent-llmgw-web:latest}
     container_name: prdagent-llmgw-web
-    volumes:
-      - ./deploy/llmgw-web/dist:/usr/share/nginx/html:ro
     depends_on:
       - llmgw
     networks:
