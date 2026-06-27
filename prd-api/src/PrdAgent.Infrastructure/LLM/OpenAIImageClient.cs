@@ -25,6 +25,10 @@ namespace PrdAgent.Infrastructure.LLM;
 /// OpenAI 兼容 Images API 客户端（/v1/images/generations）
 /// - 不依赖 ILLMClient（避免影响现有文本流式实现）
 /// - 仅用于“生图模型”（IsImageGen）
+/// - 角色：发送器 + 响应解析。标准文生图的"模型配置 → 上游请求体"参数转换
+///   （尺寸归一化 / size·width-height·aspect_ratio·none 格式 / 参数重命名）已收口到
+///   <see cref="ImageGenRequestBuilder"/>，本类不再内联拼装该请求体。
+///   Exchange / Google / OpenRouter 因上游协议形状不同，仍走各自专属构建分支。
 /// </summary>
 public class OpenAIImageClient
 {
@@ -311,17 +315,16 @@ public class OpenAIImageClient
         object reqObj;
         if (initImageBase64 == null)
         {
-            // 文生图请求
-            var sizeParams = reqParams.HasAdapter && reqParams.SizeParams.Count > 0 
-                ? reqParams.SizeParams 
-                : null;
-            reqObj = platformAdapter.BuildGenerationRequest(
-                effectiveModelName, 
-                prompt, 
-                n, 
-                normalizedSize, 
+            // 文生图请求：经 ImageGenRequestBuilder 收口"模型配置 → 上游请求体"的最终拼装
+            // （尺寸归一化/参数格式/重命名已在上面的 reqParams 完成，此处统一注入 sizeParams + 拼装）。
+            reqObj = ImageGenRequestBuilder.BuildGenerationBody(
+                effectiveModelName,
+                prompt,
+                n,
+                reqParams,
+                normalizedSize,
                 effectiveResponseFormat,
-                sizeParams);
+                platformAdapter);
         }
         else
         {
