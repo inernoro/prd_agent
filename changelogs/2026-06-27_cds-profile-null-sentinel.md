@@ -1,3 +1,5 @@
+| fix | cds | 根治 override.containerPort=null 覆盖 baseline 端口致 `docker: invalid containerPort: null`：resolveProfileWithMode/applyProfileOverride 两处合并改用 `!= null`，null 不再覆盖 baseline 真实端口（prd-agent-main 等 api/admin 部署失败修复） |
+| fix | cds | 新增部署卡死状态 reconciler：时间戳证据 + 保守硬超时终结卡死非终结态（branch/service starting/building/stopping/restarting），极速版镜像落后 HEAD 含运行时改动时只告警不自动部署 |
 | fix | cds | 根治 branch override 的 null 结构哨兵覆盖 baseline（sanitizeProfileOverride 在 merge/writer 双端剥 null），整类 `invalid containerPort: null` / 空镜像 `sh:latest` 部署故障一次性消失 |
 | fix | cds | docker run 前增加空镜像断言：解析出的 dockerImage 为空或含未解析模板时明确报错并指出是 CDS profile 解析问题，不再误判为 Docker 镜像问题 |
 | fix | cds | 看门狗双路径各自 try/catch：webhook 派发收敛与卡死收敛崩溃各记各的 action/source，不再张冠李戴（Bugbot Low #940） |
