@@ -21,6 +21,11 @@ import type {
   LlmLogsTimeseriesData,
   GetLlmLogsSessionsContract,
   LlmLogsSessionsData,
+  GetLlmLogsAppSummaryContract,
+  GetLlmLogsAppSummaryParams,
+  LlmLogsAppSummaryItem,
+  RestoreLlmLogTextContract,
+  RestoreLlmLogTextData,
 } from '@/services/contracts/llmLogs';
 
 function toQuery(params?: GetLlmLogsParams) {
@@ -69,5 +74,13 @@ export const getLlmLogsTimeseriesReal: GetLlmLogsTimeseriesContract = async (par
 
 export const getLlmLogsSessionsReal: GetLlmLogsSessionsContract = async (params): Promise<ApiResponse<LlmLogsSessionsData>> => {
   return await apiRequest<LlmLogsSessionsData>(`${api.logs.llm.sessions()}${toQuery(params as GetLlmLogsParams)}`, { method: 'GET' });
+};
+
+export const getLlmLogsAppSummaryReal: GetLlmLogsAppSummaryContract = async (params?: GetLlmLogsAppSummaryParams): Promise<ApiResponse<LlmLogsAppSummaryItem[]>> => {
+  return await apiRequest<LlmLogsAppSummaryItem[]>(`${api.logs.llm.appSummary()}${toQuery(params as GetLlmLogsParams)}`, { method: 'GET' });
+};
+
+export const restoreLlmLogTextReal: RestoreLlmLogTextContract = async (id: string): Promise<ApiResponse<RestoreLlmLogTextData>> => {
+  return await apiRequest<RestoreLlmLogTextData>(api.logs.llm.restoreText(encodeURIComponent(id)), { method: 'GET' });
 };
 

@@ -78,14 +78,36 @@ export function statusBadgeStyle(status?: string | null, statusCode?: number | n
   return { label: status || DASH, color: '#94a3b8', bg: 'rgba(148,163,184,0.15)' };
 }
 
-// ── 4 个子 tab ──
-export type LogsSubTab = 'generations' | 'upstream' | 'sessions' | 'jobs';
+// ── 子 tab ──
+export type LogsSubTab = 'generations' | 'upstream' | 'sessions' | 'apps' | 'jobs';
 export const LOGS_SUBTABS: { key: LogsSubTab; label: string }[] = [
   { key: 'generations', label: 'Generations' },
   { key: 'upstream', label: 'Upstream Requests' },
   { key: 'sessions', label: 'Sessions' },
+  { key: 'apps', label: '应用' },
   { key: 'jobs', label: 'Jobs' },
 ];
+
+// ── 成功率配色（注册表：低于 80% 橙、低于 50% 红，否则绿）──
+// frontend-architecture.md 注册表模式：着色逻辑集中一处，禁组件内散落阈值判断。
+export interface SuccessRateStyle { color: string; bg: string }
+const SUCCESS_RATE_THRESHOLDS: { max: number; color: string; bg: string }[] = [
+  { max: 0.5, color: '#f87171', bg: 'rgba(248,113,113,0.15)' },
+  { max: 0.8, color: '#fbbf24', bg: 'rgba(251,191,36,0.16)' },
+  { max: Infinity, color: '#34d399', bg: 'rgba(52,211,153,0.15)' },
+];
+
+export function successRateStyle(rate?: number | null): SuccessRateStyle {
+  const r = rate == null || !isFinite(rate) ? 1 : rate;
+  const hit = SUCCESS_RATE_THRESHOLDS.find((t) => r < t.max) ?? SUCCESS_RATE_THRESHOLDS[SUCCESS_RATE_THRESHOLDS.length - 1];
+  return { color: hit.color, bg: hit.bg };
+}
+
+/** 成功率 0-1 → 百分比文案 */
+export function fmtRate(rate?: number | null): string {
+  if (rate == null || !isFinite(rate)) return DASH;
+  return `${(rate * 100).toFixed(rate >= 0.995 || rate <= 0.005 ? 0 : 1)}%`;
+}
 
 // ── 列定义（注册表）。render 返回字符串或 {chip} 由组件解释 ──
 export interface ColumnDef {
@@ -185,4 +207,21 @@ export const SESSIONS_COLUMNS_MOBILE: ColumnDef[] = [
   { key: 'primaryModel', label: 'Model', width: '2fr' },
   { key: 'app', label: 'App', width: '1.4fr' },
   { key: 'requests', label: 'Req', width: '0.7fr', align: 'right' },
+];
+
+// 应用聚合矩阵列：每行 = 一个应用前缀 + 类型。直接回应「按应用看混在一张表的日志」。
+export const APP_SUMMARY_COLUMNS: ColumnDef[] = [
+  { key: 'app', label: '应用', width: '2fr' },
+  { key: 'type', label: '类型', width: '1.1fr' },
+  { key: 'requests', label: '请求数', width: '0.9fr', align: 'right' },
+  { key: 'successRate', label: '成功率', width: '1fr', align: 'right', tip: '成功数 / 请求数（低于 80% 橙、低于 50% 红）' },
+  { key: 'failCount', label: '失败', width: '0.8fr', align: 'right' },
+  { key: 'median', label: '中位时延', width: '1fr', align: 'right', tip: '该应用 + 类型请求耗时中位数' },
+];
+
+// 手机端：只留「应用 + 成功率 + 中位时延」三核心列（mobile-first-density.md）。
+export const APP_SUMMARY_COLUMNS_MOBILE: ColumnDef[] = [
+  { key: 'app', label: '应用', width: '1.6fr' },
+  { key: 'successRate', label: '成功率', width: '0.9fr', align: 'right' },
+  { key: 'median', label: '时延', width: '0.9fr', align: 'right' },
 ];

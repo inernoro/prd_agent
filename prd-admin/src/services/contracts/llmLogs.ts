@@ -171,5 +171,39 @@ export type LlmLogsSessionsData = {
 
 export type GetLlmLogsSessionsContract = (params?: GetLlmLogsSessionsParams) => Promise<ApiResponse<LlmLogsSessionsData>>;
 
+// ── 按应用前缀 + 类型聚合（应用视图矩阵）──
+export type GetLlmLogsAppSummaryParams = {
+  from?: string;
+  to?: string;
+};
+
+export type LlmLogsAppSummaryItem = {
+  appPrefix: string;
+  requestType: string;
+  requestCount: number;
+  successCount: number;
+  failCount: number;
+  /** 0-1 之间的成功率 */
+  successRate: number;
+  medianDurationMs: number;
+};
+
+export type GetLlmLogsAppSummaryContract = (
+  params?: GetLlmLogsAppSummaryParams,
+) => Promise<ApiResponse<LlmLogsAppSummaryItem[]>>;
+
+// ── 日志正文 COS 占位符还原 ──
+export type RestoreLlmLogTextData = {
+  id: string;
+  answerText?: string | null;
+  systemPromptText?: string | null;
+  questionText?: string | null;
+  thinkingText?: string | null;
+  restoredCount: number;
+  restoreErrors: string[];
+};
+
+export type RestoreLlmLogTextContract = (id: string) => Promise<ApiResponse<RestoreLlmLogTextData>>;
+
 
 

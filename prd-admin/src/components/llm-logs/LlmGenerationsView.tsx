@@ -9,18 +9,18 @@ import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
-import { getLlmLogs, getLlmLogsMeta, getLlmLogsTimeseries, getLlmLogsSessions } from '@/services';
+import { getLlmLogs, getLlmLogsMeta, getLlmLogsTimeseries, getLlmLogsSessions, getLlmLogsAppSummary } from '@/services';
 import type { LlmRequestLogListItem } from '@/types/admin';
-import type { LlmLogsSessionItem, LlmLogsTimeseriesPoint } from '@/services/contracts/llmLogs';
+import type { LlmLogsSessionItem, LlmLogsTimeseriesPoint, LlmLogsAppSummaryItem } from '@/services/contracts/llmLogs';
 import { RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getProtocolMeta } from '@/lib/protocolRegistry';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 import { GenerationDetailsDrawer } from './GenerationDetailsDrawer';
 import {
   DASH, LOGS_SUBTABS, type LogsSubTab, TIME_RANGE_PRESETS, rangeFromPreset,
-  GENERATIONS_COLUMNS, UPSTREAM_COLUMNS, SESSIONS_COLUMNS, type ColumnDef,
-  GENERATIONS_COLUMNS_MOBILE, UPSTREAM_COLUMNS_MOBILE, SESSIONS_COLUMNS_MOBILE,
-  fmtShortTime, fmtDate, fmtMs, fmtCompact, computeTokPerSec, statusBadgeStyle, userLabel,
+  GENERATIONS_COLUMNS, UPSTREAM_COLUMNS, SESSIONS_COLUMNS, APP_SUMMARY_COLUMNS, type ColumnDef,
+  GENERATIONS_COLUMNS_MOBILE, UPSTREAM_COLUMNS_MOBILE, SESSIONS_COLUMNS_MOBILE, APP_SUMMARY_COLUMNS_MOBILE,
+  fmtShortTime, fmtDate, fmtMs, fmtCompact, fmtRate, computeTokPerSec, statusBadgeStyle, successRateStyle, userLabel,
   deriveLifecycle,
 } from './llmLogsView.helpers';
 
@@ -51,6 +51,10 @@ export function LlmGenerationsView() {
   const [sessPage, setSessPage] = useState(1);
   const [sessLoading, setSessLoading] = useState(false);
 
+  // 应用聚合矩阵
+  const [appRows, setAppRows] = useState<LlmLogsAppSummaryItem[]>([]);
+  const [appLoading, setAppLoading] = useState(false);
+
   // 柱状图
   const [series, setSeries] = useState<LlmLogsTimeseriesPoint[]>([]);
 
@@ -76,6 +80,7 @@ export function LlmGenerationsView() {
   // 请求序号守卫：快速切筛选/翻页/tab 时丢弃过期响应，避免乱序覆盖（竞态）
   const listSeq = useRef(0);
   const sessSeq = useRef(0);
+  const appSeq = useRef(0);
   const seriesSeq = useRef(0);
 
   const loadList = useCallback(async (p: number) => {
@@ -96,6 +101,15 @@ export function LlmGenerationsView() {
     setSessLoading(false);
   }, [range]);
 
+  const loadApps = useCallback(async () => {
+    const seq = ++appSeq.current;
+    setAppLoading(true);
+    const res = await getLlmLogsAppSummary({ from: range.from, to: range.to });
+    if (seq !== appSeq.current) return;
+    if (res.success && res.data) setAppRows(res.data ?? []);
+    setAppLoading(false);
+  }, [range]);
+
   const loadSeries = useCallback(async () => {
     const seq = ++seriesSeq.current;
     const res = await getLlmLogsTimeseries(baseParams);
@@ -112,10 +126,14 @@ export function LlmGenerationsView() {
   useEffect(() => {
     if (subtab === 'sessions') loadSessions(sessPage);
   }, [subtab, sessPage, loadSessions]);
+  useEffect(() => {
+    if (subtab === 'apps') loadApps();
+  }, [subtab, loadApps]);
 
   const refresh = () => {
     loadSeries();
     if (subtab === 'sessions') loadSessions(sessPage);
+    else if (subtab === 'apps') loadApps();
     else loadList(page);
   };
 
@@ -189,6 +207,18 @@ export function LlmGenerationsView() {
       case 'primaryProvider': return <span className="truncate text-[11px]" style={{ color: 'var(--text-secondary)' }}>{it.primaryProvider || DASH}</span>;
       case 'supporting': return it.supportingModels.length ? <span className="flex flex-wrap gap-1">{it.supportingModels.slice(0, 3).map((m) => <Chip key={m} label={m} color="var(--text-secondary)" bg="rgba(148,163,184,0.14)" />)}{it.supportingModels.length > 3 ? <Chip label={`+${it.supportingModels.length - 3}`} color="var(--text-muted)" bg="rgba(148,163,184,0.1)" /> : null}</span> : <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{DASH}</span>;
       case 'requests': return <span className="tabular-nums text-[11px]" style={{ color: 'var(--text-secondary)' }}>{it.requestCount}</span>;
+      default: return null;
+    }
+  };
+
+  const renderAppCell = (col: ColumnDef, it: LlmLogsAppSummaryItem) => {
+    switch (col.key) {
+      case 'app': return <span className="truncate text-[11px] font-mono font-medium" style={{ color: 'var(--text-primary)' }} title={it.appPrefix}>{it.appPrefix || DASH}</span>;
+      case 'type': return <span className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>{it.requestType || DASH}</span>;
+      case 'requests': return <span className="tabular-nums text-[11px]" style={{ color: 'var(--text-secondary)' }}>{fmtCompact(it.requestCount)}</span>;
+      case 'successRate': { const s = successRateStyle(it.successRate); return <span className="inline-flex justify-end"><Chip label={fmtRate(it.successRate)} color={s.color} bg={s.bg} title={`成功 ${it.successCount} / 共 ${it.requestCount}`} /></span>; }
+      case 'failCount': return <span className="tabular-nums text-[11px]" style={{ color: it.failCount > 0 ? '#f87171' : 'var(--text-muted)' }}>{it.failCount}</span>;
+      case 'median': return <span className="tabular-nums text-[11px]" style={{ color: 'var(--text-secondary)' }}>{fmtMs(it.medianDurationMs)}</span>;
       default: return null;
     }
   };
@@ -342,6 +372,20 @@ export function LlmGenerationsView() {
               />
             )}
             <Pager p={sessPage} setP={setSessPage} tot={sessTotal} busy={sessLoading} />
+          </>
+        )}
+        {subtab === 'apps' && (
+          <>
+            {appLoading && appRows.length === 0 ? <MapSectionLoader text="正在聚合应用…" /> : (
+              <Table
+                columns={isMobile ? APP_SUMMARY_COLUMNS_MOBILE : APP_SUMMARY_COLUMNS} items={appRows} rowKey={(it, idx) => `${it.appPrefix}:${it.requestType}:${idx}`}
+                render={renderAppCell as (col: ColumnDef, t: LlmLogsAppSummaryItem) => ReactNode}
+                empty={<div className="py-16 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>该时间范围内暂无应用请求</div>}
+              />
+            )}
+            <div className="shrink-0 flex items-center px-3 py-2 text-[11px]" style={{ color: 'var(--text-muted)', borderTop: '1px solid var(--border-subtle)' }}>
+              <span>按应用前缀 + 类型聚合 · 共 {appRows.length} 组</span>
+            </div>
           </>
         )}
         {subtab === 'jobs' && (
