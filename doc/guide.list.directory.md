@@ -745,6 +745,8 @@
   > 图片插入不刷新已修；版本控制独立集合 + 恢复只写文本不删资产；遗留：github 日同步覆盖手动编辑、大小不含外链图片字节、版本留存上限100
 - [LLM 网关协议保真（函数调用穿协议 + 能力软门）· 已知边界](debt.llm-gateway-protocol-fidelity) `debt.llm-gateway-protocol-fidelity`
   > G1-G5 已落地；3 条 open：Claude 流式 tool_use 增量未映射 / 能力软门池路径为 null（best-effort 放行）/ Extensions 容器已建未消费
+- [AI 大模型网关从 MAP 剥离 · 债务台账](debt.llm-gateway-isolation) `debt.llm-gateway-isolation`
+  > 波1 落地：观测增强(生命周期/黑洞/app-summary MECE/还原/生图)+独立网关进程 prd-llmgw(登录/观测,镜像绿)+生图统一入口+部署管线；待用户 1 次 CDS 拓扑导入审批(pending 2db2aa51c74e)开预览；波2 serving 跨进程(HttpLlmGatewayClient+flag)未做
 - [更新中心（终身存储 + SSE 推送）债务台账](debt.changelog-center) `debt.changelog-center`
   > 3 条 open：推送中枢进程内单例（多实例需 Redis/change stream）/ 刷新周期不分视图冷热 / GitHub 日志前端 35s 轮询与 SSE 并存
 - [项目管理智能体 · 债务台账](debt.pm-agent) `debt.pm-agent`
