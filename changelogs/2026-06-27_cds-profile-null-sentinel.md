@@ -17,3 +17,4 @@
 | fix | cds | 看门狗：getBuildProfiles 空数组视为不过滤(不把所有服务当僵尸误判 idle)；多服务分支不再用 branch.lastReadyAt 把仍在 starting 的服务过早翻 running；executor 模式不按本地 profile 过滤僵尸服务（Bugbot Medium×2 + Codex P2 #940） |
 | fix | cds | 远端执行器部署：master 从 complete 事件复制 executor 回报的真实 deployedMode，express→source 回退不再被构建历史误标 express（Bugbot Medium #940） |
 | fix | cds | 单服务部署 deployedMode 缺失/空时退回 resolveEffectiveProfile，不再保留 pull 前配置态（Bugbot Low #940，与主/远端路径一致） |
+| feat | cds | CDS 系统设置-维护：自更新「更新日志」面板在有更新任务时默认展开（DisclosurePanel 支持 defaultOpen + 展开/收起标签），不用每次点开看进度 |

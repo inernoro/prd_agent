@@ -962,6 +962,8 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
           ) : null}
 
           <DisclosurePanel
+            key={runState === 'idle' ? 'log-idle' : 'log-active'}
+            defaultOpen={runState !== 'idle'}
             title={runTitle || '更新日志'}
             subtitle={
               runState === 'idle'
