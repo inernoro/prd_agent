@@ -18,3 +18,5 @@
 | fix | cds | 远端执行器部署：master 从 complete 事件复制 executor 回报的真实 deployedMode，express→source 回退不再被构建历史误标 express（Bugbot Medium #940） |
 | fix | cds | 单服务部署 deployedMode 缺失/空时退回 resolveEffectiveProfile，不再保留 pull 前配置态（Bugbot Low #940，与主/远端路径一致） |
 | feat | cds | CDS 系统设置-维护：自更新「更新日志」面板在有更新任务时默认展开（DisclosurePanel 支持 defaultOpen + 展开/收起标签），不用每次点开看进度 |
+| fix | cds | 部署刷新 githubCommitSha 改用 shouldRefreshCommitSha：同 commit 的短 SHA 可升级为完整 40 位（不降级），治已持久化短 SHA 的分支 OperationLog.commitSha 一直短、版本元数据存歧义（Codex P2 #940） |
+| fix | cds | 卡死看门狗以「存活服务」（按在册 profile 过滤后）判定是否走分支级收敛：分支只剩僵尸服务时退回硬超时成 error，不被聚合藏成 idle（Codex P2 #940） |

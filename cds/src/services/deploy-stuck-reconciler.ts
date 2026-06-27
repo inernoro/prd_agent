@@ -311,9 +311,14 @@ export function reconcileStuckDeployStates(
       ? new Set(profilesForBranch.map((p) => p.id))
       : undefined;
 
-    // 分支是否有 per-service 跟踪。有服务 ⇒ 分支聚合状态以**服务真实状态**为准（更可靠）；
-    // 无服务 ⇒ 退回时间戳证据/硬超时的分支级收敛（兜底）。
-    const hasServices = Object.keys(branch.services || {}).length > 0;
+    // 分支是否有**存活**的 per-service 跟踪（按 activeProfileIds 过滤掉僵尸服务）。有存活服务 ⇒
+    // 分支聚合状态以服务真实状态为准；**无存活服务**（只剩已删/改名 profile 的僵尸条目）⇒ 退回
+    // 分支级时间戳证据/硬超时收敛——否则一个「在创建任何当前 profile 服务前就崩掉」的部署会被
+    // 聚合把僵尸过滤光后误判成 idle、藏掉 error（Codex P2「Use live services before skipping branch
+    // timeout」）。activeProfileIds 缺省（不过滤）时退回「有无任何服务」。
+    const liveServiceIds = Object.keys(branch.services || {})
+      .filter((id) => !activeProfileIds || activeProfileIds.has(id));
+    const hasServices = liveServiceIds.length > 0;
 
     // ── TYPE 2 分支级：卡死非终结 branch.status 收敛（仅无 per-service 跟踪时作兜底）──
     // Bugbot Medium「Branch running with stopped services」：分支级时间戳证据**不看服务状态**，
@@ -359,7 +364,7 @@ export function reconcileStuckDeployStates(
     // 用 branch.lastReadyAt 作每服务就绪证据会过早把仍在起的服务翻成 running（Bugbot Medium
     // 「Branch ready stamp per service」）。故「starting→running」证据路径仅单服务时启用；多服务
     // 的卡死服务交给硬超时（master）或保持现状（真正起来的服务其 status 本就是 running）。
-    const singleService = Object.keys(branch.services || {}).length === 1;
+    const singleService = liveServiceIds.length === 1;
     for (const [profileId, svc] of Object.entries(branch.services || {})) {
       if (!svc || !NON_TERMINAL_STATES.has(svc.status)) continue;
       const previousStatus = svc.status;

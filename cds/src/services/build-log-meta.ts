@@ -104,6 +104,24 @@ export function commitShaDiffers(a: string | null | undefined, b: string | null 
 }
 
 /**
+ * 部署路径是否应把 `stored` 刷新成 `pulled`。在 commitShaDiffers 之上再补「短→全升级」：
+ * 同一 commit 但 stored 是 7 位短 SHA、pulled 是完整 40 位时也要刷新，否则已持久化短
+ * githubCommitSha 的分支会跳过赋值、OperationLog.commitSha 一直是短 SHA、版本元数据存歧义
+ * （Codex P2「Upgrade short SHAs when a full SHA is available」）。但绝不**降级**（pulled 比
+ * stored 短的同 commit 前缀）。pulled 为空不刷新；stored 为空则刷新。
+ */
+export function shouldRefreshCommitSha(stored: string | null | undefined, pulled: string | null | undefined): boolean {
+  const lo = (stored || '').trim().toLowerCase();
+  const ro = (pulled || '').trim().toLowerCase();
+  if (!ro) return false;            // 没有新值可写
+  if (!lo) return true;             // 旧值为空 → 写
+  if (lo === ro) return false;      // 完全一致 → 不动
+  if (ro.startsWith(lo) && ro.length > lo.length) return true;  // 短→全升级
+  if (lo.startsWith(ro)) return false;  // pulled 更短的同 commit 前缀 → 不降级
+  return true;                      // 真不同 commit → 刷新
+}
+
+/**
  * 「疑似卡住」判定阈值（毫秒）。一个仍在进行中的部署，已耗时超过这个值还没就绪，
  * 视为卡死/超时，前端不再显示一个不断增长的真实数字，而是封顶 + 打「疑似卡住」徽章。
  *

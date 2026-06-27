@@ -382,6 +382,25 @@ describe('reconcileStuckDeployStates — Bugbot review 回归', () => {
     expect(results).toHaveLength(0);
   });
 
+  it('分支只剩僵尸服务（无存活 profile）+ 卡死 building => 退回分支级硬超时成 error，不被藏成 idle（Codex P2）', () => {
+    const now = new Date('2026-06-27T01:00:00.000Z'); // 启动 60 分钟前 > 45min
+    const branch = makeBranch({
+      status: 'building',
+      lastDeployStartedAt: '2026-06-27T00:00:00.000Z', // 无 ready 证据 → 硬超时
+      services: {
+        // 部署在创建当前 profile 服务前就崩了，只剩上一轮已删 profile 的僵尸条目
+        oldweb: { profileId: 'oldweb', containerName: 'c', hostPort: 1, status: 'stopped' },
+      },
+    });
+    const results = reconcileStuckDeployStates([branch], {
+      now,
+      getBuildProfiles: () => [{ id: 'api' } as unknown as BuildProfile], // 当前在册只有 api，无 oldweb
+    });
+    // 无存活服务 → 走分支级硬超时收敛为 error，而非聚合把僵尸过滤光后误判 idle
+    expect(branch.status).toBe('error');
+    expect(results.some((r) => r.kind === 'branch-status-finalized' && r.nextStatus === 'error')).toBe(true);
+  });
+
   it('有在途操作的分支整条跳过：合法长任务不被硬超时误杀（Bugbot Medium）', () => {
     const now = new Date('2026-06-27T01:00:00.000Z'); // 启动 60 分钟前 > 45min 硬超时
     const branch = makeBranch({

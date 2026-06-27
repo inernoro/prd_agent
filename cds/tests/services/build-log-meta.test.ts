@@ -6,8 +6,31 @@ import {
   computeDeployDurationDisplay,
   parsePulledSha,
   commitShaDiffers,
+  shouldRefreshCommitSha,
   STUCK_DEPLOY_THRESHOLD_MS,
 } from '../../src/services/build-log-meta.js';
+
+describe('shouldRefreshCommitSha', () => {
+  const full = '18ffd0c44dd38b98d2e806b22205580545ff547d';
+  it('短→全升级（同 commit、pulled 更完整）→ 刷新', () => {
+    expect(shouldRefreshCommitSha('18ffd0c', full)).toBe(true);
+  });
+  it('全→短同 commit → 不降级', () => {
+    expect(shouldRefreshCommitSha(full, '18ffd0c')).toBe(false);
+  });
+  it('完全一致 → 不动', () => {
+    expect(shouldRefreshCommitSha(full, full)).toBe(false);
+    expect(shouldRefreshCommitSha('18ffd0c', '18ffd0c')).toBe(false);
+  });
+  it('不同 commit → 刷新', () => {
+    expect(shouldRefreshCommitSha('18ffd0c', 'abc1234')).toBe(true);
+  });
+  it('旧值空 → 刷新；新值空 → 不刷新', () => {
+    expect(shouldRefreshCommitSha('', 'abc1234')).toBe(true);
+    expect(shouldRefreshCommitSha('abc1234', '')).toBe(false);
+    expect(shouldRefreshCommitSha(undefined, full)).toBe(true);
+  });
+});
 
 describe('parsePulledSha', () => {
   it('优先取 afterFull（完整 40 位 SHA，避免截断外部集成用的 commit）', () => {

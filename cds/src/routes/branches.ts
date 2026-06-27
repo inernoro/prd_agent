@@ -13,7 +13,7 @@ import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
-import { classifyTriggerSource, deriveDeployMode, deriveCommitMeta, parsePulledSha, commitShaDiffers } from '../services/build-log-meta.js';
+import { classifyTriggerSource, deriveDeployMode, deriveCommitMeta, parsePulledSha, shouldRefreshCommitSha } from '../services/build-log-meta.js';
 import { acquireBuildSlot, buildGateStatus } from '../services/build-gate.js';
 import { recordBuild } from '../services/build-activity-tracker.js';
 import type { ContainerService } from '../services/container.js';
@@ -2721,7 +2721,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             if (m) pulledSha = m[1];
           }
           if (pulledSha && !pullDetail.skipped) {
-            if (commitShaDiffers(entry.githubCommitSha, pulledSha)) {
+            if (shouldRefreshCommitSha(entry.githubCommitSha, pulledSha)) {
               entry.githubCommitSha = pulledSha;
             }
             Object.assign(opLog, deriveCommitMeta(entry, pulledSha));
@@ -10219,7 +10219,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         && !branchUsesPrebuiltMode(profiles, entry)
         && !(pullResult as { skipped?: boolean }).skipped
         && pulledSha
-        && commitShaDiffers(entry.githubCommitSha, pulledSha)) {
+        && shouldRefreshCommitSha(entry.githubCommitSha, pulledSha)) {
         entry.githubCommitSha = pulledSha;
         // 同步刷新构建历史的 commit 元数据：opLog.commitSha 是在 pull 前（10084）按旧 HEAD
         // 捕获的，若 pull 拉到了更新的 HEAD，部署的其实是 pulledSha，历史「版本」列
@@ -11122,7 +11122,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           && !isPrebuiltProfile
           && !(pullResult as { skipped?: boolean }).skipped
           && pulledSha
-          && commitShaDiffers(entry.githubCommitSha, pulledSha)) {
+          && shouldRefreshCommitSha(entry.githubCommitSha, pulledSha)) {
           entry.githubCommitSha = pulledSha;
           // 同步刷新构建历史 commit 元数据为真正部署的 HEAD（Codex P2，同上）。
           Object.assign(opLog, deriveCommitMeta(entry));
