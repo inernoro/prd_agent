@@ -188,16 +188,20 @@ function decideBranchFinalization(
   // 锚点**只**用本轮启动戳 lastDeployStartedAt（startMs）。不再退回 lastReadyAt（上一轮的
   // 完成戳，会让刚开始的新部署被当成"已持续很久"误超时）或 createdAt（老分支创建很久，会把
   // 任何新非终结态立刻误判超时）。无本轮启动锚点 ⇒ 无法证明卡了多久 ⇒ 不触碰（Bugbot review 延伸）。
-  if (startMs > 0) {
+  //
+  // **stopping 排除在硬超时之外**（Bugbot High / Codex P2）：lastDeployStartedAt 是部署起点、
+  // 不是停止起点，且停止流程不刷新该戳。一个运行已久的分支刚发起正常停止，下一拍就会被用
+  // 部署起点误判超时、把仍在进行的停止标成 idle（Docker/远端 executor 可能还在停）。我们没有
+  // "停止起点"时间戳，故 stopping 只走证据路径（lastStoppedAt）；无证据则不触碰，绝不谎报已停。
+  if (startMs > 0 && status !== 'stopping') {
     const ageMs = nowMs - startMs;
     if (ageMs >= hardTimeoutMs) {
       const ageMin = Math.floor(ageMs / 60_000);
-      const next: BranchEntry['status'] = status === 'stopping' ? 'idle' : 'error';
       return {
-        nextStatus: next,
+        nextStatus: 'error',
         via: 'hard-timeout',
         ageMin,
-        reason: `状态机看门狗：${status} 超过 ${Math.floor(hardTimeoutMs / 60_000)} 分钟未终结（已持续 ${ageMin} 分钟），已收敛为 ${next}`,
+        reason: `状态机看门狗：${status} 超过 ${Math.floor(hardTimeoutMs / 60_000)} 分钟未终结（已持续 ${ageMin} 分钟），已收敛为 error`,
       };
     }
   }
@@ -283,12 +287,14 @@ export function reconcileStuckDeployStates(
         ageMin = startMs > 0 ? Math.floor((nowMs - startMs) / 60_000) : 0;
         reason = `状态机看门狗：服务 ${profileId} ${previousStatus} 实际已就绪，状态陈旧，收敛为 ${nextStatus}`;
       } else {
-        // 硬超时兜底：锚点只用本轮启动戳（同分支级，Bugbot review 延伸）。
-        if (startMs > 0 && nowMs - startMs >= hardTimeoutMs) {
-          nextStatus = svc.status === 'stopping' ? 'stopped' : 'error';
+        // 硬超时兜底：锚点只用本轮启动戳；**stopping 排除**（无停止起点锚点，避免把仍在
+        // 进行的正常停止误判超时标成 stopped —— Bugbot High / Codex P2，同分支级）。
+        // stopping 只走上面的证据路径（lastStoppedAt）；无证据则不触碰。
+        if (svc.status !== 'stopping' && startMs > 0 && nowMs - startMs >= hardTimeoutMs) {
+          nextStatus = 'error';
           via = 'hard-timeout';
           ageMin = Math.floor((nowMs - startMs) / 60_000);
-          reason = `状态机看门狗：服务 ${profileId} ${previousStatus} 超过 ${Math.floor(hardTimeoutMs / 60_000)} 分钟未终结（已持续 ${ageMin} 分钟），已收敛为 ${nextStatus}`;
+          reason = `状态机看门狗：服务 ${profileId} ${previousStatus} 超过 ${Math.floor(hardTimeoutMs / 60_000)} 分钟未终结（已持续 ${ageMin} 分钟），已收敛为 error`;
         }
       }
 

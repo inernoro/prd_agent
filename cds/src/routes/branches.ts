@@ -2690,6 +2690,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
             remoteRuntimeReadyAt = typeof parsed.timestamp === 'string' ? parsed.timestamp : new Date().toISOString();
           }
         }
+        // 远端 source-build 执行器会自行 pull 到更新 HEAD；用回传的 pull head 刷新构建历史
+        // commit 元数据（opLog.commitSha 在 2569 是按 master 冻结的旧 HEAD 捕获的），避免
+        // 「版本」列指向 pull 前旧 SHA（Codex P2）。极速版锁定 CI 镜像 SHA、不跟随 pull head。
+        if (parsed.step === 'pull' && !branchUsesPrebuiltMode(profiles, entry)) {
+          const pullDetail = (parsed.detail && typeof parsed.detail === 'object' ? parsed.detail : parsed) as { head?: unknown; skipped?: boolean };
+          const head = typeof pullDetail.head === 'string' ? pullDetail.head : undefined;
+          if (head && /^[0-9a-f]{7,40}$/i.test(head) && !pullDetail.skipped) {
+            Object.assign(opLog, deriveCommitMeta(entry, head));
+          }
+        }
         opLog.events.push({
           step: typeof parsed.step === 'string' ? parsed.step : eventName,
           status: typeof parsed.status === 'string' ? parsed.status : eventName,

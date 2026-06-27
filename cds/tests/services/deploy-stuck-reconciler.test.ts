@@ -235,6 +235,23 @@ describe('reconcileStuckDeployStates — Bugbot review 回归', () => {
     expect(results).toHaveLength(0);
   });
 
+  it('stopping 部署已久但无 lastStoppedAt => 不被部署起点硬超时误判为已停（Bugbot High）', () => {
+    const now = new Date('2026-06-27T10:00:00.000Z');
+    const branch = makeBranch({
+      status: 'stopping',
+      lastDeployStartedAt: '2026-06-27T00:00:00.000Z', // 10 小时前部署（远超 45min 阈值）
+      // 无 lastStoppedAt：停止刚发起、Docker/executor 可能还在停
+      services: {
+        web: { profileId: 'web', containerName: 'c', hostPort: 1, status: 'stopping' },
+      },
+    });
+    const results = reconcileStuckDeployStates([branch], { now });
+    // 部署起点不是停止起点：绝不能用它把仍在进行的停止误判为已停
+    expect(branch.status).toBe('stopping');
+    expect(branch.services.web.status).toBe('stopping');
+    expect(results).toHaveLength(0);
+  });
+
   it('状态机收敛不写 type:build 的 OperationLog（不伪装成绿色成功部署）', () => {
     const now = new Date('2026-06-27T10:00:00.000Z');
     const branch = makeBranch({
