@@ -13,7 +13,7 @@ export const CANONICAL_CATEGORY = {
   PLATFORM: '平台基础设施',
   CROSS_CUT: '跨切面保留域',
   TOP_LEVEL: '顶层产品',
-  UNCLASSIFIED: '未分类',
+  UNCLASSIFIED: '悬空',
 } as const;
 
 export type CanonicalCategory = (typeof CANONICAL_CATEGORY)[keyof typeof CANONICAL_CATEGORY];

@@ -52,9 +52,9 @@ describe('buildDocGalaxy 关系识别', () => {
     expect(weekly!.docCount).toBe(2);
   });
 
-  it('未知 appname → 未分类 + 标记悬空', () => {
+  it('未知 appname → 悬空 + 标记悬空', () => {
     const g = buildDocGalaxy([entry('o1', 'guide.list.directory')]);
-    const unclassified = childByName(g.root, '未分类');
+    const unclassified = childByName(g.root, '悬空');
     expect(unclassified).toBeTruthy();
     expect(g.stats.orphanCount).toBe(1);
     expect(g.leaves[0].orphan).toBe(true);
@@ -91,7 +91,7 @@ describe('buildDocGalaxy 关系识别', () => {
     ]);
     expect(g.stats.totalDocs).toBe(1); // 只有真文档计入
     expect(g.leaves.some((l) => l.entryId === 'c1')).toBe(false);
-    expect(childByName(g.root, '未分类')).toBeFalsy(); // 容器不再制造未分类幽灵
+    expect(childByName(g.root, '悬空')).toBeFalsy(); // 容器不再制造悬空幽灵
   });
 
   it('GitHub 目录订阅的非点分文件 → 从 sourceUrl 还原仓库内目录层级（不落未分类）', () => {
@@ -109,7 +109,7 @@ describe('buildDocGalaxy 关系识别', () => {
     expect(guide).toBeTruthy();
     expect(leafTitles(guide!)).toContain('Intro'); // raw 形态：docs/guide/intro.md
     expect(leafTitles(docs!)).toContain('Readme'); // blob 形态：docs/readme.md
-    expect(childByName(g.root, '未分类')).toBeFalsy();
+    expect(childByName(g.root, '悬空')).toBeFalsy();
     expect(g.stats.orphanCount).toBe(0);
   });
 
@@ -177,7 +177,7 @@ describe('buildDocGalaxy 关系识别', () => {
     ]);
     // 点分多数 → 不启用标题分割：描述式 5/6 落「未分类」，不会出现「CDS Agent」标题簇
     expect(childByName(g.root, 'CDS Agent')).toBeFalsy();
-    const unclassified = childByName(g.root, '未分类');
+    const unclassified = childByName(g.root, '悬空');
     expect(unclassified).toBeTruthy();
     expect(unclassified!.docCount).toBe(2); // 两篇描述式归到一处，而非散成两点
     // 点分文档照常按 canonical 归类
@@ -203,10 +203,10 @@ describe('buildDocGalaxy 关系识别', () => {
     expect(childByName(g.root, 'prd')).toBeFalsy();
   });
 
-  it('无分隔符的纯标题仍落未分类（不误伤）', () => {
+  it('无分隔符的纯标题仍落悬空（不误伤）', () => {
     const g = buildDocGalaxy([entry('1', '一段没有任何分隔符的标题')]);
     expect(g.stats.orphanCount).toBe(1);
-    expect(childByName(g.root, '未分类')).toBeTruthy();
+    expect(childByName(g.root, '悬空')).toBeTruthy();
   });
 
   it('可注入自定义 classifyAppname（通用库不依赖 canonical 表）', () => {
