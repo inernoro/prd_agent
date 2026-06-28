@@ -201,11 +201,44 @@ function splitTitleSegments(title: string): string[] {
     .filter(Boolean);
 }
 
+/**
+ * 一篇文档「天然适配哪种分割方式」：结构化（点分 / 文件夹 / GitHub 目录 / 周报）vs 标题分割 vs 无。
+ * 用于全库主导方式检测——一个知识库应作为整体遵循一种分割方式（用户 2026-06-27 定调）。
+ */
+function schemeOf(entry: GalaxyInputEntry, byId: Map<string, GalaxyInputEntry>): 'structured' | 'title' | 'none' {
+  const nm = nameForHierarchy(entry);
+  if (WEEKLY_RE.test(stripExt(nm))) return 'structured';
+  if (parseDotted(nm)) return 'structured';
+  if (folderPath(entry, byId).length > 0) return 'structured';
+  if (entry.sourceUrl && githubDirSegments(entry.sourceUrl).length > 0) return 'structured';
+  const segs = splitTitleSegments(entry.title);
+  const first = segs[0] || '';
+  if (segs.length >= 2 || first.split(/\s+/).filter(Boolean).length >= 2) return 'title';
+  return 'none';
+}
+
+/**
+ * 全库主导分割方式：标题分割的文档数 > 结构化文档数，才认为这是一个「标题分割为主」的库。
+ * 只有这种库才启用标题分组；否则（如 MAP 这种点分为主的库）少数描述式标题统一归「未分类」，
+ * 不用标题分割把它们打散成满天单点（用户：一个知识库应遵循一种分割方式，取最常见的）。
+ */
+function detectTitleDominant(docs: GalaxyInputEntry[], byId: Map<string, GalaxyInputEntry>): boolean {
+  let structured = 0;
+  let title = 0;
+  for (const e of docs) {
+    const s = schemeOf(e, byId);
+    if (s === 'structured') structured++;
+    else if (s === 'title') title++;
+  }
+  return title > structured;
+}
+
 /** 为一篇文档推导「从根到叶父」的分组链 + 类型 + 是否悬空。 */
 function derivePath(
   entry: GalaxyInputEntry,
   byId: Map<string, GalaxyInputEntry>,
   resolve: (appname: string) => AppnameResolution,
+  titleDominant: boolean,
 ): DerivedPath {
   const name = nameForHierarchy(entry);
   const bare = stripExt(name);
@@ -239,16 +272,22 @@ function derivePath(
     }
   }
 
-  // 2c. 标题分隔符层级：描述式标题（如「prd-agent·知识库·卡片置顶…·验收报告」）按
-  //     · / > | 或「空格-空格」分段 → 取前 1-2 段作分组，余下段拼回作叶名。
-  //     这样共享前缀（prd-agent·知识库·…）的文档自然聚成簇，而非全堆「未分类」蘑菇。
-  //     至少留 1 段给叶名，避免叶子无标题。
-  const segs = splitTitleSegments(entry.title);
-  if (segs.length >= 2) {
-    const groupCount = Math.min(2, segs.length - 1);
-    const groups = segs.slice(0, groupCount);
-    const leafName = segs.slice(groupCount).join(' · ');
-    return { groups, docType: parseDocType(name), orphan: false, leafName };
+  // 2c. 标题分割层级——仅当本库「以标题分割为主」时启用（titleDominant）。
+  //     点分为主的库（如 MAP）走不到这里：少数描述式标题统一落「未分类」(下方兜底)，
+  //     不用标题分割把它们打散，保持全库一种分割方式（用户 2026-06-27 定调）。
+  if (titleDominant) {
+    const segs = splitTitleSegments(entry.title);
+    const first = segs[0] || '';
+    const words = first.split(/\s+/).filter(Boolean);
+    if (words.length >= 2) {
+      // 首段含空格 → 前两词作家族分组（CDS Agent / CDS Web…），同族聚簇；叶名留完整标题
+      return { groups: [`${words[0]} ${words[1]}`], docType: parseDocType(name), orphan: false, leafName: stripExt(entry.title).trim() };
+    }
+    if (segs.length >= 2) {
+      // 首段无空格但有 ·（prd-agent·知识库·…）→ 取前 1-2 段作分组
+      const groupCount = Math.min(2, segs.length - 1);
+      return { groups: segs.slice(0, groupCount), docType: parseDocType(name), orphan: false, leafName: segs.slice(groupCount).join(' · ') };
+    }
   }
 
   // 3. 兜底
@@ -289,8 +328,11 @@ export function buildDocGalaxy(
   // 否则会多出一个未分类幽灵节点、虚增 totalDocs、点开是空白阅读器（Codex P2）。
   const docs = entries.filter((e) => !e.isFolder && !isContainerEntry(e));
 
+  // 全库主导分割方式检测：决定是否启用标题分割（一个库遵循一种分割方式）。
+  const titleDominant = detectTitleDominant(docs, byId);
+
   for (const entry of docs) {
-    const { groups, docType, orphan, leafName } = derivePath(entry, byId, resolve);
+    const { groups, docType, orphan, leafName } = derivePath(entry, byId, resolve, titleDominant);
 
     // 逐级确保中间分组节点存在
     let parent = root;

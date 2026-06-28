@@ -165,6 +165,37 @@ describe('buildDocGalaxy 关系识别', () => {
     expect(g.stats.orphanCount).toBe(0);
   });
 
+  it('全库主导分割：点分为主的库，少数描述式标题归未分类而非散点（治 MAP 不均匀）', () => {
+    const g = buildDocGalaxy([
+      entry('1', 'design.cds.agent.api'),
+      entry('2', 'design.cds.agent.runtime'),
+      entry('3', 'spec.cds'),
+      entry('4', 'guide.cds.deploy'),
+      // 少数描述式标题（无点分/sourceUrl）——点分为主的库里它们应统一归未分类，不被标题分割打散
+      entry('5', 'CDS Agent R0 · CDS-managed runtime fact source 设计'),
+      entry('6', 'CDS Agent P4-1 远端发布前验收与试用入口报告'),
+    ]);
+    // 点分多数 → 不启用标题分割：描述式 5/6 落「未分类」，不会出现「CDS Agent」标题簇
+    expect(childByName(g.root, 'CDS Agent')).toBeFalsy();
+    const unclassified = childByName(g.root, '未分类');
+    expect(unclassified).toBeTruthy();
+    expect(unclassified!.docCount).toBe(2); // 两篇描述式归到一处，而非散成两点
+    // 点分文档照常按 canonical 归类
+    expect(childByName(g.root, '平台基础设施')).toBeTruthy();
+  });
+
+  it('全库主导分割：标题分割为主的库，才启用同族前缀聚类', () => {
+    const g = buildDocGalaxy([
+      entry('1', 'CDS Agent R0 · 设计'),
+      entry('2', 'CDS Agent P4-1 · 报告'),
+      entry('3', 'CDS Agent Phase 1 验收报告'),
+    ]);
+    const agent = childByName(g.root, 'CDS Agent');
+    expect(agent).toBeTruthy();
+    expect(agent!.docCount).toBe(3); // 标题为主 → 同族聚成一簇
+    expect(g.stats.orphanCount).toBe(0);
+  });
+
   it('裸连字符不拆 appname（prd-agent 不被拆成 prd/agent）', () => {
     // 只有一个「空格-空格」分隔，prd-agent 整段保留
     const g = buildDocGalaxy([entry('1', 'prd-agent - 某主题说明')]);
