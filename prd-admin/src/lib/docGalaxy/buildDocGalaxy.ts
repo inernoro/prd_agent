@@ -238,6 +238,7 @@ function derivePath(
   entry: GalaxyInputEntry,
   byId: Map<string, GalaxyInputEntry>,
   resolve: (appname: string) => AppnameResolution,
+  applyCategory: boolean,
   titleDominant: boolean,
 ): DerivedPath {
   const name = nameForHierarchy(entry);
@@ -248,12 +249,23 @@ function derivePath(
     return { groups: [WEEKLY_GROUP], docType: 'report', orphan: false };
   }
 
-  // 1. 点分命名
+  // 1. 点分命名：appname 优先，直接按文件名段分层（appname → 子模块 → 文档）。
+  //    类型(spec/design/...)只做节点颜色（顶部图例），不进层级。
+  //    默认 NOT 套 canonical 分类伞（应用 Agent / 平台基础设施…）——那是按语义硬编码、
+  //    文件名里根本没有，会凭空造出一层（用户 2026-06-28 定调：去掉杜撰的分类，按文件名）。
+  //    仅当注入自定义 classifyAppname（通用库自定义顶层分组）时才保留分类层。
   const dotted = parseDotted(name);
   if (dotted) {
     const r = resolve(dotted.appname);
-    const orphan = r.category === UNCLASSIFIED_GROUP;
-    const groups = [r.category, r.appname, ...(r.sub ? [r.sub] : []), ...dotted.subs];
+    // r.appname / r.sub 仍用于把旧扁平名归一（cds-project-migration → cds + project-migration）。
+    const groups = [
+      ...(applyCategory ? [r.category] : []),
+      r.appname,
+      ...(r.sub ? [r.sub] : []),
+      ...dotted.subs,
+    ];
+    // appname 来自文件名、恒真实可达，不再判悬空；仅注入分类器时沿用「未分类」判定。
+    const orphan = applyCategory && r.category === UNCLASSIFIED_GROUP;
     return { groups, docType: dotted.type, orphan };
   }
 
@@ -328,11 +340,14 @@ export function buildDocGalaxy(
   // 否则会多出一个未分类幽灵节点、虚增 totalDocs、点开是空白阅读器（Codex P2）。
   const docs = entries.filter((e) => !e.isFolder && !isContainerEntry(e));
 
+  // 仅注入自定义 classifyAppname 时才套「分类伞」顶层；默认按 appname 直接分层
+  //（用户 2026-06-28：去掉杜撰的「应用 Agent」等 canonical 分类，按文件名走）。
+  const applyCategory = !!options.classifyAppname;
   // 全库主导分割方式检测：决定是否启用标题分割（一个库遵循一种分割方式）。
   const titleDominant = detectTitleDominant(docs, byId);
 
   for (const entry of docs) {
-    const { groups, docType, orphan, leafName } = derivePath(entry, byId, resolve, titleDominant);
+    const { groups, docType, orphan, leafName } = derivePath(entry, byId, resolve, applyCategory, titleDominant);
 
     // 逐级确保中间分组节点存在
     let parent = root;

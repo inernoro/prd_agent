@@ -29,20 +29,20 @@ describe('parseDotted / parseDocType', () => {
 });
 
 describe('buildDocGalaxy 关系识别', () => {
-  it('点分命名 → canonical 四大类根 → appname → 子模块 → 文档', () => {
+  it('点分命名 → appname 优先 → 子模块 → 文档（类型只做颜色，不进层级，无杜撰分类伞）', () => {
     const g = buildDocGalaxy([
       entry('1', 'design.cds.agent.runtime'),
       entry('2', 'spec.cds'),
       entry('3', 'design.defect-agent.automation-autonomy'),
     ]);
-    const platform = childByName(g.root, '平台基础设施');
-    expect(platform).toBeTruthy();
-    const cds = childByName(platform!, 'cds');
+    // appname 直接作顶层，不再套「平台基础设施 / 应用 Agent」canonical 分类
+    const cds = childByName(g.root, 'cds');
     expect(cds).toBeTruthy();
     expect(cds!.docCount).toBe(2); // spec.cds + design.cds.agent.runtime
     expect(childByName(cds!, 'agent')).toBeTruthy();
-    const appAgent = childByName(g.root, '应用 Agent');
-    expect(childByName(appAgent!, 'defect-agent')).toBeTruthy();
+    expect(childByName(g.root, 'defect-agent')).toBeTruthy();
+    expect(childByName(g.root, '平台基础设施')).toBeFalsy();
+    expect(childByName(g.root, '应用 Agent')).toBeFalsy();
   });
 
   it('周报走「周报」例外根', () => {
@@ -52,12 +52,12 @@ describe('buildDocGalaxy 关系识别', () => {
     expect(weekly!.docCount).toBe(2);
   });
 
-  it('未知 appname → 未分类 + 标记悬空', () => {
+  it('点分名的 appname 段恒作顶层（非 canonical 的 appname 也按 appname 走，不再悬空）', () => {
     const g = buildDocGalaxy([entry('o1', 'guide.list.directory')]);
-    const unclassified = childByName(g.root, '未分类');
-    expect(unclassified).toBeTruthy();
-    expect(g.stats.orphanCount).toBe(1);
-    expect(g.leaves[0].orphan).toBe(true);
+    // appname='list' 即便不在 canonical 清单，也按文件名归到 list 顶层，不凭空判悬空
+    expect(childByName(g.root, 'list')).toBeTruthy();
+    expect(g.stats.orphanCount).toBe(0);
+    expect(g.leaves[0].orphan).toBe(false);
   });
 
   it('非点分名 → 走 parentId 文件夹层级（通用知识库）', () => {
@@ -80,8 +80,7 @@ describe('buildDocGalaxy 关系识别', () => {
         sourceUrl: 'https://github.com/x/repo/blob/main/doc/design.defect-agent.automation-autonomy.md',
       }),
     ]);
-    const appAgent = childByName(g.root, '应用 Agent');
-    expect(childByName(appAgent!, 'defect-agent')).toBeTruthy();
+    expect(childByName(g.root, 'defect-agent')).toBeTruthy();
   });
 
   it('目录订阅容器条目（x-github-directory）不计为文档叶', () => {
@@ -139,8 +138,8 @@ describe('buildDocGalaxy 关系识别', () => {
     expect(g.stats.typeCounts.design).toBe(1);
     expect(g.stats.typeCounts.guide).toBe(2);
     expect(g.stats.typeCounts.report).toBe(1);
-    expect(g.stats.orphanCount).toBe(1); // unknownapp
-    // 根：平台基础设施 + 周报 + 未分类
+    expect(g.stats.orphanCount).toBe(0); // appname 优先：unknownapp 也按 appname 归类，不悬空
+    // 根：cds + 周报 + unknownapp（各按真实 appname 直接挂根）
     expect(g.stats.rootCount).toBe(3);
   });
 
@@ -180,8 +179,8 @@ describe('buildDocGalaxy 关系识别', () => {
     const unclassified = childByName(g.root, '未分类');
     expect(unclassified).toBeTruthy();
     expect(unclassified!.docCount).toBe(2); // 两篇描述式归到一处，而非散成两点
-    // 点分文档照常按 canonical 归类
-    expect(childByName(g.root, '平台基础设施')).toBeTruthy();
+    // 点分文档照常按 appname 直接归类
+    expect(childByName(g.root, 'cds')).toBeTruthy();
   });
 
   it('全库主导分割：标题分割为主的库，才启用同族前缀聚类', () => {
