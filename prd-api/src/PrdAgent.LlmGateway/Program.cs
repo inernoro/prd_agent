@@ -357,7 +357,54 @@ app.MapGet("/gw/v1/pools", async (
     return Results.Json(pools, jsonOpts);
 });
 
+// ILLMClient 流式生成（SSE）。供 MAP 侧 HttpLlmClient（CreateClient 路径）跨进程调用。
+// CreateClient 返回的客户端内部自管 LlmRequestContext，本端点无需额外开作用域。
+// server-authority：客户端断开不取消网关任务，向网关传 CancellationToken.None，仅写失败时静默 break。
+app.MapPost("/gw/v1/client-stream", async (
+    HttpContext http,
+    ClientStreamRequestDto body,
+    PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway) =>
+{
+    http.Response.Headers.ContentType = "text/event-stream";
+    http.Response.Headers.CacheControl = "no-cache";
+    http.Response.Headers["X-Accel-Buffering"] = "no";
+
+    var client = gateway.CreateClient(
+        body.AppCallerCode, body.ModelType, body.MaxTokens, body.Temperature, body.IncludeThinking, body.ExpectedModel);
+
+    try
+    {
+        await foreach (var chunk in client.StreamGenerateAsync(body.SystemPrompt, body.Messages, body.EnablePromptCache, CancellationToken.None))
+        {
+            var data = "data: " + JsonSerializer.Serialize(chunk, jsonOpts) + "\n\n";
+            await http.Response.WriteAsync(data);
+            await http.Response.Body.FlushAsync();
+        }
+    }
+    catch (OperationCanceledException)
+    {
+        // 客户端断开或写中断：静默停止写循环（不向网关传递取消）。
+    }
+    catch (ObjectDisposedException)
+    {
+        // 响应已释放：静默停止。
+    }
+});
+
 app.Run();
 
 // /gw/v1/resolve 的请求体 DTO（PascalCase）。
 internal sealed record ResolveRequestDto(string AppCallerCode, string ModelType, string? ExpectedModel);
+
+// /gw/v1/client-stream 的请求体 DTO（PascalCase）。Messages 用 Core 的 LLMMessage，
+// 与 MAP 侧 HttpLlmClient 序列化口径一致。
+internal sealed record ClientStreamRequestDto(
+    string AppCallerCode,
+    string ModelType,
+    int MaxTokens,
+    double Temperature,
+    bool IncludeThinking,
+    string? ExpectedModel,
+    string SystemPrompt,
+    List<PrdAgent.Core.Interfaces.LLMMessage> Messages,
+    bool EnablePromptCache);

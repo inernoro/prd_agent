@@ -201,8 +201,19 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.PlatformKeyIntegrityWork
 // 模型调度执行器
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
 
-// LLM Gateway 统一守门员（所有大模型调用必须通过此接口）
-builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.LlmGateway>();
+// LLM Gateway 统一守门员（所有大模型调用必须通过此接口）。
+// 特性开关：LlmGateway:Mode（环境变量 LlmGateway__Mode）。默认 inproc = 进程内 LlmGateway（行为不变）；
+// http = 切到 HttpLlmGatewayClient，跨进程调用独立部署的 serving 服务（/gw/v1/*）。
+// HttpLlmGatewayClient 同时实现 Infrastructure + Core 两个 ILlmGateway，下方 Core 桥接强转在两种模式下都成立。
+var gatewayMode = builder.Configuration["LlmGateway:Mode"] ?? "inproc";
+if (string.Equals(gatewayMode, "http", StringComparison.OrdinalIgnoreCase))
+{
+    builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>();
+}
+else
+{
+    builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.LlmGateway>();
+}
 
 // 注册 Core 层的 ILlmGateway 接口（同一实例）
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.LlmGateway.ILlmGateway>(sp =>
