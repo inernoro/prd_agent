@@ -91,10 +91,10 @@ function distributeDirections(count: number): THREE.Vector3[] {
   const dirs: THREE.Vector3[] = [];
   const golden = Math.PI * (3 - Math.sqrt(5));
   for (let i = 0; i < count; i++) {
-    const y = 1 - (i / Math.max(1, count - 1)) * 2 * 0.85;
+    const y = 1 - ((i + 0.5) / count) * 2; // 全球面对称，覆盖南北极
     const r = Math.sqrt(Math.max(0, 1 - y * y));
     const th = golden * i;
-    dirs.push(new THREE.Vector3(Math.cos(th) * r, y * 0.9, Math.sin(th) * r).normalize());
+    dirs.push(new THREE.Vector3(Math.cos(th) * r, y, Math.sin(th) * r).normalize());
   }
   return dirs;
 }
@@ -130,32 +130,35 @@ function layoutGalaxy(root: GalaxyNode): {
   // 根在原点
   placed.set(root.id, { node: root, pos: new THREE.Vector3(0, 0, 0), depth: 0 });
 
-  // 沿父方向递归铺开子树（演示版 layoutChildren）
-  const layoutChildren = (parent: GalaxyNode, parentPos: THREE.Vector3, parentDir: THREE.Vector3, depth: number) => {
-    const kids = parent.children;
-    if (!kids.length) return;
-    const spread = depth <= 2 ? 0.95 : 0.75;
-    const dirs = spreadInCone(parentDir, kids.length, spread);
-    const R = radiusForDepth(depth);
-    kids.forEach((kid, i) => {
-      const dir = dirs[i];
-      const pos = dir.clone().multiplyScalar(R);
-      placed.set(kid.id, { node: kid, pos, depth });
-      edges.push({ a: parentPos.clone(), b: pos.clone(), child: kid });
-      layoutChildren(kid, pos, dir, depth + 1);
-    });
+  // 全展平：所有文档叶均匀铺到一个正球（外层），枢纽铺到内层小正球，连线照旧。
+  void spreadInCone;
+  const groups: GalaxyNode[] = [];
+  const leaves: GalaxyNode[] = [];
+  const walk = (n: GalaxyNode) => {
+    for (const c of n.children) {
+      if (c.kind === 'leaf') leaves.push(c);
+      else { groups.push(c); walk(c); }
+    }
   };
-
-  // 顶级分类（depth=1）用斐波那契球铺满整个球面
-  const cats = root.children;
-  const catDirs = distributeDirections(cats.length);
-  cats.forEach((c, i) => {
-    const dir = catDirs[i];
-    const pos = dir.clone().multiplyScalar(radiusForDepth(1));
-    placed.set(c.id, { node: c, pos, depth: 1 });
-    edges.push({ a: new THREE.Vector3(0, 0, 0), b: pos.clone(), child: c });
-    layoutChildren(c, pos, dir, 2);
+  walk(root);
+  const leafDirs = distributeDirections(leaves.length);
+  leaves.forEach((lf, i) => {
+    placed.set(lf.id, { node: lf, pos: leafDirs[i].clone().multiplyScalar(620), depth: 3 });
   });
+  const grpDirs = distributeDirections(groups.length);
+  groups.forEach((g, i) => {
+    const d = g.depth || 1;
+    placed.set(g.id, { node: g, pos: grpDirs[i].clone().multiplyScalar(d <= 1 ? 180 : 320), depth: d });
+  });
+  const buildEdges = (n: GalaxyNode) => {
+    const pp = placed.get(n.id);
+    for (const c of n.children) {
+      const cp = placed.get(c.id);
+      if (pp && cp) edges.push({ a: pp.pos.clone(), b: cp.pos.clone(), child: c });
+      buildEdges(c);
+    }
+  };
+  buildEdges(root);
 
   return { placed, edges };
 }
