@@ -269,6 +269,78 @@ describe('ProxyService', () => {
       expect(payload.services).toContainEqual({ profileId: 'admin', status: 'starting' });
     });
 
+    it('serves the auto-refresh "preparing" page (not the manual-redeploy page) for an express branch waiting on the CI image', () => {
+      // 极速版（CI 预构建）：push 后分支 status 仍是 idle，但 ciImageStatus='waiting' 表示
+      // CDS 在等 GitHub Actions 构建镜像，完成后会自动部署。此窗口必须显示会自动刷新的
+      // 「预览环境准备中 · 极速版正在拉取分支」等待页，绝不能落到「未运行 · 请手动重新部署」。
+      proxy = new ProxyService(stateService, { previewDomain: 'preview.test' } as any);
+      addBranch('ci-wait', 'idle', { api: { profileId: 'api', status: 'stopped' } }, 'claude/ci-wait');
+      const branch = stateService.getBranch('ci-wait')!;
+      branch.ciImageStatus = 'waiting';
+      branch.ciTargetSha = 'abc1234';
+      stateService.save();
+
+      const req = makeReq({ host: 'ci-wait.preview.test', accept: 'text/html' });
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(written.statusCode).toBe(503);
+      expect(written.headers['Content-Type']).toContain('text/html');
+      expect(written.body).toContain('预览环境准备中');
+      expect(written.body).toContain('极速版正在拉取分支');
+      // 会自动刷新的等待页（含轮询脚本），不是静态「手动重新部署」诊断页
+      expect(written.body).toContain('/_cds/waiting-status');
+      expect(written.body).not.toContain('请回到 CDS 控制台确认日志后手动重新部署');
+    });
+
+    it('reports loading=true for an express branch waiting on the CI image (so the page does not self-reload to the diagnostic page)', () => {
+      proxy = new ProxyService(stateService, { previewDomain: 'preview.test' } as any);
+      addBranch('ci-wait2', 'idle', {}, 'claude/ci-wait2');
+      const branch = stateService.getBranch('ci-wait2')!;
+      branch.ciImageStatus = 'waiting';
+      stateService.save();
+
+      const req = makeReq({ host: 'ci-wait2.preview.test', accept: 'application/json' }, '/_cds/waiting-status');
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(written.statusCode).toBe(200);
+      const payload = JSON.parse(written.body) as { ready: boolean; loading: boolean; status: string };
+      expect(payload.ready).toBe(false);
+      expect(payload.loading).toBe(true);
+      expect(payload.status).toBe('idle');
+    });
+
+    it('shows a CI-failure diagnostic (not the generic not-running page) when the express CI image build failed', () => {
+      proxy = new ProxyService(stateService, { previewDomain: 'preview.test' } as any);
+      addBranch('ci-failed', 'idle', {}, 'claude/ci-failed');
+      const branch = stateService.getBranch('ci-failed')!;
+      branch.ciImageStatus = 'failed';
+      branch.ciImageError = 'CI 构建未成功（failure）';
+      stateService.save();
+
+      const req = makeReq({ host: 'ci-failed.preview.test', accept: 'text/html' });
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(written.body).toContain('极速版镜像未就绪');
+      expect(written.body).not.toContain('预览访问不会自动重新部署');
+    });
+
+    it('still shows the manual-redeploy page for a plain idle branch with no CI-image state', () => {
+      // 回归守卫：非极速版的真实 idle（用户停止 / 调度冷却到诊断页）仍走「未运行 · 手动重新部署」，
+      // 不被极速版改动误伤。
+      proxy = new ProxyService(stateService, { previewDomain: 'preview.test' } as any);
+      addBranch('plain-idle', 'idle', { api: { profileId: 'api', status: 'stopped' } }, 'claude/plain-idle');
+
+      const req = makeReq({ host: 'plain-idle.preview.test', accept: 'text/html' });
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(written.body).toContain('分支当前未运行');
+      expect(written.body).not.toContain('预览环境准备中');
+    });
+
     it('uses lastDeployStartedAt (not stale completed logs) for elapsed time while rebuilding', () => {
       // 回归 PR #865 Codex P2「Use the active redeploy start time for waiting ETAs」：
       // 在途构建的 op-log 直到 finalize 才落库，期间 getLogs() 只剩上一轮已完成的部署。
