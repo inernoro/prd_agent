@@ -1,1 +1,0 @@
-| fix | cds | 极速版镜像缺失自动回退源码编译（治「极速版永远不极速 / 部署出现异常打不开」）：CI 按 path-filter 只构建改动组件,任何不同时改 prd-api+prd-admin 的分支必缺 ≥1 个 sha 镜像 → express docker pull 404。原先硬失败要人手切回源码;现 runService 拉取失败(含 branch-main 回退)后,自动挑一个带 command 的非 prebuilt 部署模式(优先 static)从源码在 CDS 本机编译跑起来,无需人工干预;仅当该 profile 确无源码模式才维持硬失败 |
