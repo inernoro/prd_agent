@@ -182,23 +182,6 @@ interface DerivedPath {
   groups: string[];
   docType: DocType | null;
   orphan: boolean;
-  /** 覆盖叶子显示名（标题分隔符分组时，叶名取消费掉前缀段后的剩余）。不填则用 entry.title。 */
-  leafName?: string;
-}
-
-/**
- * 标题层级分隔符：中点（· U+00B7 / ・ U+30FB / • bullet）、斜杠（/ ／）、尖括号（> ＞）、
- * 竖线（| ｜）、书名号（»），以及「空格-空格」包裹的连字符。
- * 刻意不含「裸连字符」——否则会把 prd-agent / defect-agent 这类整段 appname 拆开。
- */
-const TITLE_SEP_RE = /\s*[·・•／/＞>｜|»]\s*|\s+[-–—]\s+/;
-
-/** 把描述式标题按层级分隔符切成段（去空白、去空段）。 */
-function splitTitleSegments(title: string): string[] {
-  return stripExt(title)
-    .split(TITLE_SEP_RE)
-    .map((s) => s.trim())
-    .filter(Boolean);
 }
 
 /** 为一篇文档推导「从根到叶父」的分组链 + 类型 + 是否悬空。 */
@@ -237,18 +220,6 @@ function derivePath(
     if (ghDirs.length > 0) {
       return { groups: ghDirs, docType: parseDocType(name), orphan: false };
     }
-  }
-
-  // 2c. 标题分隔符层级：描述式标题（如「prd-agent·知识库·卡片置顶…·验收报告」）按
-  //     · / > | 或「空格-空格」分段 → 取前 1-2 段作分组，余下段拼回作叶名。
-  //     这样共享前缀（prd-agent·知识库·…）的文档自然聚成簇，而非全堆「未分类」蘑菇。
-  //     至少留 1 段给叶名，避免叶子无标题。
-  const segs = splitTitleSegments(entry.title);
-  if (segs.length >= 2) {
-    const groupCount = Math.min(2, segs.length - 1);
-    const groups = segs.slice(0, groupCount);
-    const leafName = segs.slice(groupCount).join(' · ');
-    return { groups, docType: parseDocType(name), orphan: false, leafName };
   }
 
   // 3. 兜底
@@ -290,7 +261,7 @@ export function buildDocGalaxy(
   const docs = entries.filter((e) => !e.isFolder && !isContainerEntry(e));
 
   for (const entry of docs) {
-    const { groups, docType, orphan, leafName } = derivePath(entry, byId, resolve);
+    const { groups, docType, orphan } = derivePath(entry, byId, resolve);
 
     // 逐级确保中间分组节点存在
     let parent = root;
@@ -316,7 +287,7 @@ export function buildDocGalaxy(
 
     const leaf: GalaxyNode = {
       id: 'e:' + entry.id,
-      name: leafName || stripExt(entry.title || entry.id),
+      name: stripExt(entry.title || entry.id),
       kind: 'leaf',
       depth: parent.depth + 1,
       docCount: 1,

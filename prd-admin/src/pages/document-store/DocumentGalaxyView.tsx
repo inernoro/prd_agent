@@ -25,7 +25,7 @@
  * 功能层（保留）：type 图例筛选、点叶子复用系统 MarkdownViewer 阅读、hover 显示节点名、
  * 数据加载超时护栏、错误显式报错、full-height flex-1 撑满。
  */
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MutableRefObject, type PointerEvent as ReactPointerEvent } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MutableRefObject } from 'react';
 import { createPortal } from 'react-dom';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -34,8 +34,8 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { X, RotateCcw, Search, ArrowLeft, ToggleLeft, ToggleRight, Layers, Folder, FileText, ChevronDown } from 'lucide-react';
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { MarkdownViewer } from '@/components/file-preview/MarkdownViewer';
-import { GalaxyConstellationLoader } from './GalaxyConstellationLoader';
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { listDocumentEntriesReal, getDocumentContent } from '@/services/real/documentStore';
 import { getStoreGraph } from '@/services/real/mentions';
@@ -388,36 +388,6 @@ function cleanPreview(summary?: string | null): string {
     .replace(/\|/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-}
-
-/**
- * 阅读面板正文去重：面板头部已显示标题，正文若以同名标题(H1/H2)开头会出现「两个标题」。
- * 跳过 frontmatter 块与空行，取首个标题行；其文本规范化后等于头部标题、或以之结尾
- *（兼容「{文件名} — {真标题}」式 H1），则连同紧随空行一并剥掉。否则原样返回。
- */
-function stripDuplicateLeadingHeading(md: string, title: string): string {
-  if (!md || !title) return md;
-  const norm = (s: string) => s.replace(/\s+/g, '').toLowerCase();
-  const want = norm(title);
-  if (!want) return md;
-  const lines = md.split('\n');
-  let i = 0;
-  // 跳过 YAML frontmatter
-  if (lines[0]?.trim() === '---') {
-    const end = lines.indexOf('---', 1);
-    if (end > 0) i = end + 1;
-  }
-  while (i < lines.length && lines[i].trim() === '') i++;
-  const m = lines[i]?.match(/^#{1,2}\s+(.+?)\s*#*\s*$/);
-  if (m) {
-    const h = norm(m[1]);
-    if (h === want || (want.length >= 4 && h.endsWith(want))) {
-      lines.splice(i, 1);
-      if (lines[i]?.trim() === '') lines.splice(i, 1);
-      return lines.join('\n');
-    }
-  }
-  return md;
 }
 
 /** 收集某节点子树下的全部文档叶（DFS，保留遇见顺序）。 */
@@ -887,8 +857,8 @@ interface GalaxyCanvasProps {
   flyToEntryId?: string | null;
   /** 外层请求聚焦某枢纽（面包屑下拉选兄弟分组时用；带单调递增 token，重复点同一 id 也能再次触发）。 */
   focusHubReq?: { id: string; n: number } | null;
-  /** 阅读抽屉宽度(px，0=关)：打开时按实际宽度用 setViewOffset 把星系投影左移，让聚焦星居中于左半可见区。 */
-  drawerWidth?: number;
+  /** 阅读抽屉是否打开：打开时用 setViewOffset 把整个星系投影左移，让聚焦星居中于左半屏（而非全屏中心被抽屉盖住）。 */
+  drawerOpen?: boolean;
 }
 
 /**
@@ -896,13 +866,10 @@ interface GalaxyCanvasProps {
  * 选择性 bloom 双 pass。type 筛选通过 typeOn 同步给场景（dim/hide leaf）。
  * unmount / galaxy 变化时彻底 dispose，避免 React 重复挂载泄漏。
  */
-function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocusChange, flyToEntryId, focusHubReq, drawerWidth }: GalaxyCanvasProps) {
+function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocusChange, flyToEntryId, focusHubReq, drawerOpen }: GalaxyCanvasProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   // 选中文档的发光旋转指针环（DOM 覆盖层，渲染循环每帧把它定位到选中星的屏幕投影处）
   const selRingRef = useRef<HTMLDivElement>(null);
-  // 选中文档的标题标签（叶子不生成常驻标签 sprite，选中时在环下方显示标题，
-  // 解决「选中的文档星没有标题」——用户反馈「这朵蘑菇居然没有标题」）。
-  const selLabelRef = useRef<HTMLDivElement>(null);
   const [fatal, setFatal] = useState<string | null>(null);
   // hover 缩略卡：3D 坐标 project 到屏幕后用绝对定位 DOM 卡片渲染（叶子=标题+摘要，枢纽=篇数+分布）
   const [hover, setHover] = useState<HoverInfo | null>(null);
@@ -953,19 +920,19 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
   const clearSelectionRef = useRef<(() => void) | null>(null);
   // 聚焦某枢纽命令引用（面包屑下拉选兄弟分组时用）
   const focusHubRef = useRef<((id: string) => void) | null>(null);
-  // 抽屉宽度 → 相机投影左移（左右分屏时聚焦星居中于左半可见区）
-  const drawerWidthRef = useRef(drawerWidth);
-  drawerWidthRef.current = drawerWidth;
+  // 抽屉开合 → 相机投影左移（左右分屏时聚焦星居中于左半屏）
+  const drawerOpenRef = useRef(drawerOpen);
+  drawerOpenRef.current = drawerOpen;
   const applyViewOffsetRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     applyFilterRef.current?.();
   }, [typeOn]);
 
-  // 抽屉宽度变化（开合 / 拖拽改宽）→ 重算投影偏移
+  // 抽屉开合变化 → 重算投影偏移
   useEffect(() => {
     applyViewOffsetRef.current?.();
-  }, [drawerWidth]);
+  }, [drawerOpen]);
 
   // 外层打开某文档（flyToEntryId 变化）→ 相机飞到它并进入持续选中态；关闭则清除选中态
   useEffect(() => {
@@ -1032,9 +999,7 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
     // 抽屉打开时：把投影窗口右移 inset/2（内容左移），使屏幕中心（聚焦星落点）落在左半可见区中心。
     // 选中环/hover 卡/拾取都走 project(camera)/raycaster，自动跟随该偏移，不需额外处理。
     const applyViewOffset = () => {
-      const dw = drawerWidthRef.current ?? 0;
-      // 抽屉实际占宽 + 右侧 12 边距，封顶 94vw，与 ReaderPanel 自身宽度一致 → 聚焦星稳居左半中心
-      const inset = dw > 0 ? Math.min(dw + 12, W * 0.94) : 0;
+      const inset = drawerOpenRef.current ? Math.min(760, W * 0.94) : 0;
       if (inset > 0 && inset < W) camera.setViewOffset(W, H, inset / 2, 0, W, H);
       else camera.clearViewOffset();
     };
@@ -1705,31 +1670,11 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       d = Math.min(controls.maxDistance, Math.max(controls.minDistance, d));
       camera.position.copy(controls.target).add(gOffset.setLength(d));
     };
-    // 鼠标滚轮 vs 触摸板的「黏性」判别（用户要求：鼠标滚轮=缩放、触摸板双指滑=平移）。
-    // 正确约定（业界 3D 通行，Figma/Blender/Earth/本项目视觉创作画布）：
-    //   · 鼠标滚轮（无修饰键）          → 缩放
-    //   · 触摸板双指上下/左右滑          → 平移
-    //   · 触摸板双指捏合（浏览器合成 ctrlKey）/ ⌘·Ctrl+滚轮 → 缩放
-    // 判别启发：滚轮 deltaMode≠0(行/页) 或「纯垂直 + 整数 + 大步(≥100)」；触摸板 deltaX≠0 或小数或小步。
-    // 一旦识别出某设备就黏住，避免同一设备在大小步之间反复横跳；模糊时维持上次结论、首次默认鼠标。
-    let wheelDevice: 'mouse' | 'trackpad' | 'unknown' = 'unknown';
-    const classifyWheel = (ev: WheelEvent): 'mouse' | 'trackpad' => {
-      if (ev.deltaMode !== 0) { wheelDevice = 'mouse'; return 'mouse'; }
-      const ay = Math.abs(ev.deltaY);
-      const ax = Math.abs(ev.deltaX);
-      // 触摸板强特征：有水平分量 / 小数 delta / 很小的步长
-      if (ax > 0 || !Number.isInteger(ev.deltaY) || ay < 40) { wheelDevice = 'trackpad'; return 'trackpad'; }
-      // 鼠标强特征：纯垂直 + 整数 + 大步
-      if (ay >= 100) { wheelDevice = 'mouse'; return 'mouse'; }
-      // 模糊：沿用上次结论，首次默认鼠标（让「滚轮=缩放」成为不确定时的默认）
-      return wheelDevice === 'unknown' ? 'mouse' : wheelDevice;
-    };
     const onWheel = (ev: WheelEvent) => {
       ev.preventDefault();
       controls.autoRotate = false;
       camTween = null; // 手势打断聚焦缓动
-      // 捏合 / ⌘·Ctrl+滚轮 一律缩放；否则按设备判别：鼠标滚轮缩放、触摸板平移
-      if (ev.ctrlKey || ev.metaKey || classifyWheel(ev) === 'mouse') dollyByDelta(ev.deltaY);
+      if (ev.ctrlKey || ev.metaKey) dollyByDelta(ev.deltaY);
       else panByPixels(ev.deltaX, ev.deltaY);
     };
     // 双击空白处 → 继续自动旋转（双击节点不触发；不做双击缩放，遵守 gesture-unification）
@@ -1833,7 +1778,6 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       // 星被筛选隐藏 / 没有选中 → 隐藏环。环颜色随该文档 docType。
       {
         const ring = selRingRef.current;
-        const selLabel = selLabelRef.current;
         if (ring) {
           const rec = selectedLeafId ? renders.find((r) => r.node.id === selectedLeafId) : null;
           if (rec && rec.core.visible) {
@@ -1849,21 +1793,11 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
               ring.style.left = `${sx}px`;
               ring.style.top = `${sy}px`;
               ring.style.setProperty('--galaxy-sel-accent', accent);
-              // 选中星的标题：叶子无常驻 sprite，这里在环下方补一个标题标签
-              if (selLabel) {
-                selLabel.style.display = 'block';
-                selLabel.style.left = `${sx}px`;
-                selLabel.style.top = `${sy}px`;
-                const txt = leafDisplayName(rec.node, labelModeRef.current, contentTitlesRef.current);
-                if (selLabel.textContent !== txt) selLabel.textContent = txt;
-              }
             } else {
               ring.style.display = 'none';
-              if (selLabel) selLabel.style.display = 'none';
             }
           } else {
             ring.style.display = 'none';
-            if (selLabel) selLabel.style.display = 'none';
           }
         }
       }
@@ -1959,35 +1893,6 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
 
   return (
     <div ref={mountRef} style={{ position: 'absolute', inset: 0 }}>
-      {/* 选中文档的标题标签：叶子不生成常驻标签 sprite，选中时在环下方补标题
-          （render 循环每帧写 left/top=星投影点 + textContent；transform 把它放到星下方居中）。 */}
-      <div
-        ref={selLabelRef}
-        style={{
-          position: 'absolute',
-          display: 'none',
-          left: 0,
-          top: 0,
-          transform: 'translate(-50%, 42px)',
-          maxWidth: 260,
-          padding: '3px 9px',
-          borderRadius: 7,
-          background: 'rgba(8,9,14,0.78)',
-          border: '1px solid rgba(255,255,255,0.12)',
-          color: '#eef0f6',
-          fontSize: 12,
-          fontWeight: 600,
-          lineHeight: 1.3,
-          textAlign: 'center',
-          whiteSpace: 'nowrap',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          pointerEvents: 'none',
-          zIndex: 14,
-          backdropFilter: 'blur(4px)',
-          WebkitBackdropFilter: 'blur(4px)',
-        }}
-      />
       {/* 选中文档的发光旋转指针环：渲染循环每帧更新 left/top + display + 强调色。
           外层定位（left/top 由 JS 写），内层旋转环 + 4 个朝内的指针尖角。pointer-events:none 不挡操作。 */}
       <div
@@ -2231,15 +2136,11 @@ function ReaderPanel({
   entryId,
   displayTitle,
   pathNames,
-  width,
-  onResize,
   onClose,
 }: {
   entryId: string;
   displayTitle?: string;
   pathNames?: string[];
-  width: number;
-  onResize: (w: number) => void;
   onClose: () => void;
 }) {
   const [content, setContent] = useState<string | null>(null);
@@ -2282,33 +2183,8 @@ function ReaderPanel({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  // 左缘拖拽改宽：按指针 x 反推宽度 = 视口宽 - x - 右边距(12)，夹 [360, 94vw]。
-  const onResizeRef = useRef(onResize);
-  onResizeRef.current = onResize;
-  const startResize = (e: ReactPointerEvent) => {
-    e.preventDefault();
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    const move = (ev: PointerEvent) => {
-      onResizeRef.current(window.innerWidth - ev.clientX - 12);
-    };
-    const up = (ev: PointerEvent) => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-      try {
-        (e.target as HTMLElement).releasePointerCapture(ev.pointerId);
-      } catch {
-        /* 已释放 */
-      }
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-  };
-
   const shownTitle = displayTitle || title || '文档';
   const crumbLine = (pathNames ?? []).join(' / ');
-  // 去重：面板头部已经显示标题，正文若以同名 H1/H2 开头会变成「两个标题」（用户反馈）。
-  // 正文首个标题文本 ≈ 头部标题（或以其结尾，兼容「文件名 — 真标题」式 H1）时，剥掉该行。
-  const bodyForView = content ? stripDuplicateLeadingHeading(content, shownTitle) : content;
 
   return (
     // 悬浮玻璃卡：四周留白 + 全圆角，比贴边硬面板更圆润通透
@@ -2318,7 +2194,7 @@ function ReaderPanel({
         top: 12,
         right: 12,
         bottom: 12,
-        width: `min(${Math.round(width)}px, 94vw)`,
+        width: 'min(760px, 94vw)',
         // 玻璃质感但保证可读：底色足够实（0.92），blur 只做轻微通透，正文不被背景星点干扰
         background: 'rgba(17,18,26,0.92)',
         backdropFilter: 'blur(20px) saturate(130%)',
@@ -2333,23 +2209,6 @@ function ReaderPanel({
         overflow: 'hidden',
       }}
     >
-      {/* 左缘拖拽手柄：改阅读面板宽度（投影偏移随之同步，聚焦星保持左半居中）。 */}
-      <div
-        onPointerDown={startResize}
-        title="拖拽调整阅读面板宽度"
-        style={{
-          position: 'absolute',
-          left: -3,
-          top: 0,
-          bottom: 0,
-          width: 10,
-          cursor: 'ew-resize',
-          zIndex: 2,
-          touchAction: 'none',
-        }}
-      >
-        <div style={{ position: 'absolute', left: 3, top: '50%', transform: 'translateY(-50%)', width: 3, height: 42, borderRadius: 3, background: 'rgba(255,255,255,0.22)' }} />
-      </div>
       <div
         style={{
           display: 'flex',
@@ -2402,9 +2261,9 @@ function ReaderPanel({
       >
         {/* 正文限宽居中，长行不顶到边，阅读更舒适（容器仍撑满，靠 padding 收口） */}
         <div style={{ maxWidth: 720, margin: '0 auto' }}>
-          {loading && <div style={{ padding: '32px 0' }}><GalaxyConstellationLoader text="正在加载文档…" size={140} /></div>}
+          {loading && <MapSectionLoader text="正在加载文档..." />}
           {error && !loading && <div style={{ color: '#ffb0b0', fontSize: 13 }}>加载失败：{error}</div>}
-          {!loading && !error && content !== null && content.trim() !== '' && <MarkdownViewer content={bodyForView ?? content} />}
+          {!loading && !error && content !== null && content.trim() !== '' && <MarkdownViewer content={content} />}
           {!loading && !error && (content === null || content.trim() === '') && (
             <div style={{ color: '#888', fontSize: 13 }}>该文档暂无可预览的正文内容。</div>
           )}
@@ -2447,20 +2306,6 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
   const [linksFailed, setLinksFailed] = useState(false); // 双链接口失败 → 引用关系未知（区别于「真的 0 引用」）
   const [loadProgress, setLoadProgress] = useState<{ loaded: number; total: number } | null>(null); // 构建期进度
   const [openEntryId, setOpenEntryId] = useState<string | null>(null);
-  // 阅读面板宽度（可拖拽改宽；默认比原来宽 1/4 = 950）。纯 UI 偏好，可入 localStorage（no-localStorage 规则允许）。
-  const [drawerWidth, setDrawerWidth] = useState<number>(() => {
-    const saved = Number(localStorage.getItem('galaxy-reader-width'));
-    return saved >= 360 && saved <= 4000 ? saved : 950;
-  });
-  const setDrawerWidthPersist = useCallback((w: number) => {
-    const clamped = Math.max(360, Math.min(w, Math.round(window.innerWidth * 0.94)));
-    setDrawerWidth(clamped);
-    try {
-      localStorage.setItem('galaxy-reader-width', String(clamped));
-    } catch {
-      /* 隐私模式 setItem 可能抛错，忽略 */
-    }
-  }, []);
   // 当前聚焦的枢纽（GalaxyCanvas 上报；用于面包屑）
   const [focusedNode, setFocusedNode] = useState<GalaxyNode | null>(null);
   // 关系链面包屑（现浮在画布左上角；同时仍可经 onContextChange 上报给外层）
@@ -2882,49 +2727,6 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
 
   return (
     <div className="h-full w-full min-h-0 flex flex-col relative" style={{ background: '#02030a' }}>
-      {/* 极简兜底顶栏：galaxy 尚未构建成功（加载中 / 失败 / 超时）时也要有「返回」——
-          本路由是全屏，隐藏了 AppShell 导航，否则用户只能靠浏览器后退（Codex P2）。 */}
-      {!galaxy && (
-        <div
-          className="shrink-0"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            padding: '8px 12px',
-            background: 'rgba(18,18,26,0.82)',
-            borderBottom: '1px solid rgba(255,255,255,0.08)',
-          }}
-        >
-          {onBack && (
-            <button
-              type="button"
-              onClick={onBack}
-              style={{
-                flexShrink: 0,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 5,
-                background: 'rgba(45,45,55,0.85)',
-                border: '1px solid rgba(255,255,255,0.12)',
-                borderRadius: 6,
-                padding: '5px 9px',
-                color: '#cfcfd6',
-                cursor: 'pointer',
-                fontSize: 12,
-              }}
-            >
-              <ArrowLeft size={13} /> 返回
-            </button>
-          )}
-          {storeName && (
-            <span style={{ fontSize: 13, fontWeight: 600, color: '#eaeaf0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={storeName}>
-              {storeName}
-            </span>
-          )}
-        </div>
-      )}
-
       {/* 瘦身顶栏（类型 chips + 关系链面包屑已下放到画布左上角浮层，见下方）：
           返回 + 库名 + 分隔 + flex 撑开 + 统计 + 引用/部分加载提示 + 搜索 + 标题开关。 */}
       {galaxy && (
@@ -3270,13 +3072,13 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
             onFocusChange={setFocusedNode}
             flyToEntryId={openEntryId}
             focusHubReq={focusHubReq}
-            drawerWidth={openEntryId ? drawerWidth : 0}
+            drawerOpen={!!openEntryId}
           />
         )}
 
         {loading && (
           <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 5 }}>
-            <GalaxyConstellationLoader
+            <MapSectionLoader
               text={
                 loadProgress
                   ? `正在构建文档星系… 已加载 ${loadProgress.loaded}/${loadProgress.total} 篇`
@@ -3340,8 +3142,6 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
             entryId={openEntryId}
             displayTitle={displayTitle}
             pathNames={pathNames}
-            width={drawerWidth}
-            onResize={setDrawerWidthPersist}
             onClose={() => setOpenEntryId(null)}
           />
         );
@@ -3353,7 +3153,7 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
 // 供 React.lazy 懒加载使用
 export default function DocumentGalaxyViewLazy(props: DocumentGalaxyViewProps) {
   return (
-    <Suspense fallback={<div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><GalaxyConstellationLoader text="正在加载星系…" /></div>}>
+    <Suspense fallback={<MapSectionLoader text="正在加载星系..." />}>
       <DocumentGalaxyView {...props} />
     </Suspense>
   );
