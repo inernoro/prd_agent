@@ -25,8 +25,6 @@ export interface GalaxyInputEntry {
   isFolder?: boolean;
   contentType?: string;
   sourceUrl?: string | null;
-  /** 文档摘要（hover 缩略卡预览用）。 */
-  summary?: string | null;
 }
 
 export interface GalaxyInputLink {
@@ -51,8 +49,6 @@ export interface GalaxyNode {
   entryId?: string;
   /** 仅叶子：文档类型（点分前缀），无法判定为 null。 */
   docType?: DocType | null;
-  /** 仅叶子：文档摘要（hover 缩略卡预览用），无则 null。 */
-  summary?: string | null;
   /** 是否悬空（无法归到 canonical 根 / 落到未分类）。 */
   orphan?: boolean;
 }
@@ -93,15 +89,6 @@ const UNCLASSIFIED_GROUP = CANONICAL_CATEGORY.UNCLASSIFIED;
 /** 去掉常见文档后缀，便于解析点分名。 */
 function stripExt(name: string): string {
   return name.replace(/\.(md|markdown|mdx)$/i, '');
-}
-
-/**
- * 是否为「目录订阅容器」条目（非真文档）。
- * GitHub 目录订阅的父条目 contentType 标记为目录，但 IsFolder 默认 false，
- * 它没有正文，不应进入星系成叶。
- */
-function isContainerEntry(e: GalaxyInputEntry): boolean {
-  return !!e.contentType && e.contentType.toLowerCase().includes('x-github-directory');
 }
 
 /** 从 sourceUrl 取 basename（不带查询/锚）。 */
@@ -147,22 +134,6 @@ function nameForHierarchy(entry: GalaxyInputEntry): string {
   return entry.title;
 }
 
-/**
- * 从 GitHub 文件 URL 还原「仓库内目录段」（不含文件名）。
- * 支持 raw.githubusercontent.com/{o}/{r}/{branch}/PATH 与
- * github.com/{o}/{r}/(blob|raw|tree)/{branch}/PATH 两种形态；其余主机返回 []。
- * 用途：GitHub 目录订阅来的非点分文件（README/guide 风格）没有 parentId，
- * 靠这个还原子目录层级，避免一律落到「未分类」。
- */
-function githubDirSegments(url: string): string[] {
-  const clean = url.split(/[?#]/)[0];
-  let m = clean.match(/raw\.githubusercontent\.com\/[^/]+\/[^/]+\/[^/]+\/(.+)$/i);
-  if (!m) m = clean.match(/github\.com\/[^/]+\/[^/]+\/(?:blob|raw|tree)\/[^/]+\/(.+)$/i);
-  if (!m) return [];
-  const parts = m[1].split('/').filter(Boolean);
-  return parts.slice(0, -1); // 去掉文件名，仅留目录段
-}
-
 /** 沿 parentId 链收集文件夹层级（从顶到底，不含自身）。 */
 function folderPath(entry: GalaxyInputEntry, byId: Map<string, GalaxyInputEntry>): string[] {
   const path: string[] = [];
@@ -182,23 +153,6 @@ interface DerivedPath {
   groups: string[];
   docType: DocType | null;
   orphan: boolean;
-  /** 覆盖叶子显示名（标题分隔符分组时，叶名取消费掉前缀段后的剩余）。不填则用 entry.title。 */
-  leafName?: string;
-}
-
-/**
- * 标题层级分隔符：中点（· U+00B7 / ・ U+30FB / • bullet）、斜杠（/ ／）、尖括号（> ＞）、
- * 竖线（| ｜）、书名号（»），以及「空格-空格」包裹的连字符。
- * 刻意不含「裸连字符」——否则会把 prd-agent / defect-agent 这类整段 appname 拆开。
- */
-const TITLE_SEP_RE = /\s*[·・•／/＞>｜|»]\s*|\s+[-–—]\s+/;
-
-/** 把描述式标题按层级分隔符切成段（去空白、去空段）。 */
-function splitTitleSegments(title: string): string[] {
-  return stripExt(title)
-    .split(TITLE_SEP_RE)
-    .map((s) => s.trim())
-    .filter(Boolean);
 }
 
 /** 为一篇文档推导「从根到叶父」的分组链 + 类型 + 是否悬空。 */
@@ -228,27 +182,6 @@ function derivePath(
   const folders = folderPath(entry, byId);
   if (folders.length > 0) {
     return { groups: folders, docType: parseDocType(name), orphan: false };
-  }
-
-  // 2b. GitHub 目录订阅的非点分文件：从 sourceUrl 还原仓库内目录层级
-  //     （这类条目无 parentId，否则一律落「未分类」——见 buildDocGalaxy 关系识别注释第 2 层）。
-  if (entry.sourceUrl) {
-    const ghDirs = githubDirSegments(entry.sourceUrl);
-    if (ghDirs.length > 0) {
-      return { groups: ghDirs, docType: parseDocType(name), orphan: false };
-    }
-  }
-
-  // 2c. 标题分隔符层级：描述式标题（如「prd-agent·知识库·卡片置顶…·验收报告」）按
-  //     · / > | 或「空格-空格」分段 → 取前 1-2 段作分组，余下段拼回作叶名。
-  //     这样共享前缀（prd-agent·知识库·…）的文档自然聚成簇，而非全堆「未分类」蘑菇。
-  //     至少留 1 段给叶名，避免叶子无标题。
-  const segs = splitTitleSegments(entry.title);
-  if (segs.length >= 2) {
-    const groupCount = Math.min(2, segs.length - 1);
-    const groups = segs.slice(0, groupCount);
-    const leafName = segs.slice(groupCount).join(' · ');
-    return { groups, docType: parseDocType(name), orphan: false, leafName };
   }
 
   // 3. 兜底
@@ -284,13 +217,10 @@ export function buildDocGalaxy(
   const leaves: GalaxyNode[] = [];
   const leafIds = new Set<string>();
 
-  // 排除「目录订阅容器」条目：GitHub 目录订阅的父条目 contentType 标为目录、
-  // 但 IsFolder 默认为 false，不是真文档（无正文、打开是空），不应成叶子，
-  // 否则会多出一个未分类幽灵节点、虚增 totalDocs、点开是空白阅读器（Codex P2）。
-  const docs = entries.filter((e) => !e.isFolder && !isContainerEntry(e));
+  const docs = entries.filter((e) => !e.isFolder);
 
   for (const entry of docs) {
-    const { groups, docType, orphan, leafName } = derivePath(entry, byId, resolve);
+    const { groups, docType, orphan } = derivePath(entry, byId, resolve);
 
     // 逐级确保中间分组节点存在
     let parent = root;
@@ -316,14 +246,13 @@ export function buildDocGalaxy(
 
     const leaf: GalaxyNode = {
       id: 'e:' + entry.id,
-      name: leafName || stripExt(entry.title || entry.id),
+      name: stripExt(entry.title || entry.id),
       kind: 'leaf',
       depth: parent.depth + 1,
       docCount: 1,
       children: [],
       entryId: entry.id,
       docType,
-      summary: entry.summary ?? null,
       orphan,
     };
     parent.children.push(leaf);
