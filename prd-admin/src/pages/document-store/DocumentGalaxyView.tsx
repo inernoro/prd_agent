@@ -86,15 +86,18 @@ function radiusForDepth(d: number): number {
   return d < LEVEL_R.length ? LEVEL_R[d] : LEVEL_R[LEVEL_R.length - 1] + (d - LEVEL_R.length + 1) * 120;
 }
 
-// 顶级分类用斐波那契球均匀分布方向（演示版 distributeDirections，照抄）
+// 顶级枢纽用斐波那契球分布方向。
+// 关键修正（治「只有头没有尾」）：y 对称铺满整个球面 [+0.95, -0.95]，上下半球都填。
+// 旧版 y∈[+1,-0.7]×0.9 把南半球截断（最低到 -0.63），底部恒空 → 视觉头重脚轻，
+// 与数据无关、是布局烘焙进去的。改对称后，无论某个 appname 多大，整体仍上下铺开。
 function distributeDirections(count: number): THREE.Vector3[] {
   const dirs: THREE.Vector3[] = [];
   const golden = Math.PI * (3 - Math.sqrt(5));
   for (let i = 0; i < count; i++) {
-    const y = 1 - (i / Math.max(1, count - 1)) * 2 * 0.85;
+    const y = count <= 1 ? 0 : (1 - (i / (count - 1)) * 2) * 0.95;
     const r = Math.sqrt(Math.max(0, 1 - y * y));
     const th = golden * i;
-    dirs.push(new THREE.Vector3(Math.cos(th) * r, y * 0.9, Math.sin(th) * r).normalize());
+    dirs.push(new THREE.Vector3(Math.cos(th) * r, y, Math.sin(th) * r).normalize());
   }
   return dirs;
 }
@@ -146,11 +149,18 @@ function layoutGalaxy(root: GalaxyNode): {
     });
   };
 
-  // 顶级分类（depth=1）用斐波那契球铺满整个球面
+  // 顶级枢纽（depth=1）用斐波那契球铺满整个球面。
+  // 治「头重脚轻」第二招：大枢纽分到赤道带、小枢纽分到两极。
+  // 把文档最多的 appname（如 cds ~100 篇）放到视觉中心的赤道（铺展面最大、不堆顶），
+  // 否则单个大枢纽落到极点会把它整坨子树拖成一边倒。方向按 |y| 升序（近赤道在前），
+  // 枢纽按 docCount 降序，二者对齐：最大枢纽 → 最赤道方向。
   const cats = root.children;
   const catDirs = distributeDirections(cats.length);
-  cats.forEach((c, i) => {
-    const dir = catDirs[i];
+  const dirByEquator = catDirs.map((_, i) => i).sort((a, b) => Math.abs(catDirs[a].y) - Math.abs(catDirs[b].y));
+  const catBySize = cats.map((_, i) => i).sort((a, b) => cats[b].docCount - cats[a].docCount);
+  catBySize.forEach((catIdx, rank) => {
+    const c = cats[catIdx];
+    const dir = catDirs[dirByEquator[rank]];
     const pos = dir.clone().multiplyScalar(radiusForDepth(1));
     placed.set(c.id, { node: c, pos, depth: 1 });
     edges.push({ a: new THREE.Vector3(0, 0, 0), b: pos.clone(), child: c });
