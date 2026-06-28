@@ -1,9 +1,10 @@
-<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk.Web">
 
   <!--
-    PrdAgent.LlmGateway —— LLM 网关物理独立的承载项目。
-    阶段1：作为类库被 prd-api 进程内引用（同进程双形态），逐步移入网关实现。
-    阶段2：加 Program.cs 成为可独立运行的服务。
+    PrdAgent.LlmGateway —— 独立运行的 LLM 网关承载服务（ASP.NET）。
+    通过 DI 承载现有的 PrdAgent.Infrastructure.LlmGateway.LlmGateway + ModelResolver 实现，
+    把 LLM serving 能力以 HTTP 暴露出来，供 MAP 及其他系统跨进程调用。
+    不重写网关实现，只做 DI 装配 + HTTP 端点。
     设计见 doc/design.llm-gateway-physical-isolation.md。
   -->
 
@@ -14,7 +15,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="MongoDB.Driver" Version="2.29.0" />
     <PackageReference Include="Polly" Version="8.4.2" />
     <PackageReference Include="Polly.Extensions.Http" Version="3.0.0" />
