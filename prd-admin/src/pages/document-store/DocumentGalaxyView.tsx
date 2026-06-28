@@ -91,10 +91,10 @@ function distributeDirections(count: number): THREE.Vector3[] {
   const dirs: THREE.Vector3[] = [];
   const golden = Math.PI * (3 - Math.sqrt(5));
   for (let i = 0; i < count; i++) {
-    const y = 1 - (i / Math.max(1, count - 1)) * 2 * 0.85;
+    const y = 1 - ((i + 0.5) / count) * 2; // 全球面对称，覆盖南北极
     const r = Math.sqrt(Math.max(0, 1 - y * y));
     const th = golden * i;
-    dirs.push(new THREE.Vector3(Math.cos(th) * r, y * 0.9, Math.sin(th) * r).normalize());
+    dirs.push(new THREE.Vector3(Math.cos(th) * r, y, Math.sin(th) * r).normalize());
   }
   return dirs;
 }
