@@ -130,32 +130,64 @@ function layoutGalaxy(root: GalaxyNode): {
   // 根在原点
   placed.set(root.id, { node: root, pos: new THREE.Vector3(0, 0, 0), depth: 0 });
 
-  // 沿父方向递归铺开子树（演示版 layoutChildren）
-  const layoutChildren = (parent: GalaxyNode, parentPos: THREE.Vector3, parentDir: THREE.Vector3, depth: number) => {
-    const kids = parent.children;
-    if (!kids.length) return;
-    const spread = depth <= 2 ? 0.95 : 0.75;
-    const dirs = spreadInCone(parentDir, kids.length, spread);
-    const R = radiusForDepth(depth);
-    kids.forEach((kid, i) => {
-      const dir = dirs[i];
-      const pos = dir.clone().multiplyScalar(R);
-      placed.set(kid.id, { node: kid, pos, depth });
-      edges.push({ a: parentPos.clone(), b: pos.clone(), child: kid });
-      layoutChildren(kid, pos, dir, depth + 1);
-    });
-  };
-
-  // 顶级分类（depth=1）用斐波那契球铺满整个球面
+  // 纬度分带：每个顶级大类占一条纬度带，带高 ∝ 文档数（球面面积 ∝ 文档数 → 密度处处相等）。
+  // 带内按树序连续排布、同子簇相邻；枢纽落在其文档质心方向 → 连线短、不交错、整体正圆。
+  void distributeDirections;
+  void spreadInCone;
+  const goldenB = Math.PI * (3 - Math.sqrt(5));
   const cats = root.children;
-  const catDirs = distributeDirections(cats.length);
-  cats.forEach((c, i) => {
-    const dir = catDirs[i];
-    const pos = dir.clone().multiplyScalar(radiusForDepth(1));
-    placed.set(c.id, { node: c, pos, depth: 1 });
-    edges.push({ a: new THREE.Vector3(0, 0, 0), b: pos.clone(), child: c });
-    layoutChildren(c, pos, dir, 2);
+  const totalDocs = cats.reduce((sum, c) => sum + Math.max(1, c.docCount), 0) || 1;
+  const LEAF_R = 600;
+  let gi = 0;
+  let yTop = 1;
+  cats.forEach((cat) => {
+    const frac = Math.max(1, cat.docCount) / totalDocs;
+    const yBot = Math.max(-1, yTop - 2 * frac);
+    const catLeaves: GalaxyNode[] = [];
+    const catGroups: GalaxyNode[] = [];
+    const collect = (n: GalaxyNode) => {
+      for (const c of n.children) {
+        if (c.kind === 'leaf') catLeaves.push(c);
+        else { catGroups.push(c); collect(c); }
+      }
+    };
+    collect(cat);
+    const leafPos = new Map<string, THREE.Vector3>();
+    const nLeaf = Math.max(1, catLeaves.length);
+    catLeaves.forEach((lf, i) => {
+      const y = yBot + (yTop - yBot) * ((i + 0.5) / nLeaf);
+      const rr = Math.sqrt(Math.max(0, 1 - y * y));
+      const th = goldenB * gi++;
+      const pos = new THREE.Vector3(Math.cos(th) * rr, y, Math.sin(th) * rr).multiplyScalar(LEAF_R);
+      placed.set(lf.id, { node: lf, pos, depth: 3 });
+      leafPos.set(lf.id, pos);
+    });
+    const centroidDir = (node: GalaxyNode): THREE.Vector3 => {
+      const acc = new THREE.Vector3();
+      let cnt = 0;
+      const walk = (n: GalaxyNode) => {
+        if (n.kind === 'leaf') { const p = leafPos.get(n.id); if (p) { acc.add(p); cnt += 1; } return; }
+        for (const c of n.children) walk(c);
+      };
+      walk(node);
+      return acc.lengthSq() > 0 ? acc.normalize() : new THREE.Vector3(0, (yTop + yBot) / 2 || 1, 0.001).normalize();
+    };
+    placed.set(cat.id, { node: cat, pos: centroidDir(cat).multiplyScalar(radiusForDepth(1)), depth: 1 });
+    catGroups.forEach((g) => {
+      const d = g.depth && g.depth >= 1 ? g.depth : 2;
+      placed.set(g.id, { node: g, pos: centroidDir(g).multiplyScalar(radiusForDepth(Math.min(2, d))), depth: d });
+    });
+    yTop = yBot;
   });
+  const buildEdges = (n: GalaxyNode) => {
+    const pp = placed.get(n.id);
+    for (const c of n.children) {
+      const cp = placed.get(c.id);
+      if (pp && cp) edges.push({ a: pp.pos.clone(), b: cp.pos.clone(), child: c });
+      buildEdges(c);
+    }
+  };
+  buildEdges(root);
 
   return { placed, edges };
 }
