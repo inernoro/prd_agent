@@ -86,15 +86,19 @@ function radiusForDepth(d: number): number {
   return d < LEVEL_R.length ? LEVEL_R[d] : LEVEL_R[LEVEL_R.length - 1] + (d - LEVEL_R.length + 1) * 120;
 }
 
-// 顶级分类用斐波那契球均匀分布方向（演示版 distributeDirections，照抄）
+// 顶级分类用斐波那契球均匀分布方向。
+// 全球面对称：y 由接近 +1 均匀铺到接近 -1（含南北极），密度处处相等 → 正圆。
+// 旧版 `y = 1 - i/(count-1) * 2 * 0.85` 再 `* 0.9` 是「压扁球」：y 只到 [+0.90, -0.63]，
+// 整块南极帽永远空着、且上多下少（200 点时上 118 下 82）。分类少时秃顶看不出，
+// 分类一多就暴露成「顶部大、底部小」——这是「不再全局均衡」的直接根因。
 function distributeDirections(count: number): THREE.Vector3[] {
   const dirs: THREE.Vector3[] = [];
   const golden = Math.PI * (3 - Math.sqrt(5));
   for (let i = 0; i < count; i++) {
-    const y = 1 - (i / Math.max(1, count - 1)) * 2 * 0.85;
+    const y = 1 - ((i + 0.5) / count) * 2; // [+1, -1) 端点对称，覆盖全球面
     const r = Math.sqrt(Math.max(0, 1 - y * y));
     const th = golden * i;
-    dirs.push(new THREE.Vector3(Math.cos(th) * r, y * 0.9, Math.sin(th) * r).normalize());
+    dirs.push(new THREE.Vector3(Math.cos(th) * r, y, Math.sin(th) * r).normalize());
   }
   return dirs;
 }
