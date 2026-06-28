@@ -132,6 +132,7 @@ function layoutGalaxy(root: GalaxyNode): {
 
   // 全展平：所有文档叶均匀铺到一个正球（外层），枢纽铺到内层小正球，连线照旧。
   void spreadInCone;
+  void radiusForDepth;
   const groups: GalaxyNode[] = [];
   const leaves: GalaxyNode[] = [];
   const walk = (n: GalaxyNode) => {
