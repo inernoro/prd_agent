@@ -23,27 +23,40 @@ AI 大模型网关从 MAP 剥离的工程债务台账。记录「已做 / 待用
 - **部署管线**：docker-compose（exec_dep 路径）+ cds-compose（预览路径，dev 源码 + express 预构建两模式）+
   `_standalone.conf` `/gw` 反代 + branch-image.yml CI 任务，全部就位。
 
+## 波2 serving 跨进程：已实现 + 编译验证（runtime 待审批）
+
+- **serving 网关 SERVER（2a，已落地）**：`prd-api/src/PrdAgent.LlmGateway` 已从 scaffold 升级为可运行
+  ASP.NET 服务（`Program.cs`），DI 进程内承载现有 `LlmGateway`+`ModelResolver`（复刻 MAP 13 项注册），
+  HTTP 暴露 `/gw/v1/{healthz,resolve,send,stream(SSE),raw,pools,client-stream}`，`X-Gateway-Key` 共享密钥门。
+  **已移除 Api→LlmGateway ProjectReference**，serving 编译错误不再阻塞 api 主镜像（CI 已证 api-image 与
+  llmgw-serve-image 互不影响）。镜像 `prdagent-llmgw-serve` CI 构建绿。Dockerfile.llmgw-serve（8091）。
+- **MAP 客户端 + flag（2b，已落地）**：`HttpLlmGatewayClient : ILlmGateway(Infra)+ILlmGateway(Core)` 代理 6 方法
+  到 `/gw/v1/*`；`HttpLlmClient : ILLMClient` 代理 CreateClient 流式到 `/gw/v1/client-stream`。
+  `Api/Program.cs` 加 `LlmGateway__Mode=inproc|http`（默认 inproc），http 时 DI 换 HttpLlmGatewayClient，
+  **48 个注入点零改动、方法签名不变**（"方法请求→接口请求"）。api-image CI 已证编译绿。
+- **守住 compute-then-send**：跨进程 resolve 只在网关侧；`SendRawWithResolutionAsync` 的 resolution 不过线，
+  serving 端 `/gw/v1/raw` 重解析补 ApiKey；`ResolveModelAsync` 经 HTTP 返回的 resolution ApiKey 恒 null（[JsonIgnore]）。
+- **部署接入**：docker-compose 加 `llmgw-serve`；cds-compose 加 `llmgw-serve`（path-prefix `/gw/v1/`，dev+express）；
+  `_standalone.conf` 加 `/gw/v1/` → llmgw-serve:8091。
+
 ## 待用户（1 次手动，外部门禁）
 
-- **CDS 拓扑导入审批**：cds-compose 新增 `llmgw` 服务属于「拓扑变更」，CDS 要求 dashboard 人工批准，
-  AI key 无法自批。已提交 pending-import `2db2aa51c74e`（项目 prd-agent，addedProfiles=[api,admin,llmgw]）。
-  - 批准入口：CDS Dashboard → project-list?pendingImport=2db2aa51c74e → 批准。
-  - 批准后预览域名 `/gw/healthz` 应返回 `{"status":"ok"}`，即可 curl 验收
-    `/gw/auth/login`（admin / llmgw-admin-2026）+ `/gw/logs`，完成网关运行时闭环验收。
-  - 在此之前：网关代码已编译绿、镜像已推；仅「预览域名运行时」这一步卡在审批。exec_dep 路径不受此门禁影响。
+- **CDS 拓扑导入审批**：cds-compose 新增 `llmgw` + `llmgw-serve` 属「拓扑变更」，CDS 要求 dashboard 人工批准，
+  AI key 无法自批。当前 pending-import `a204d9ea7c2b`（addedProfiles=[api,admin,llmgw,llmgw-serve]，
+  supersede 旧的 2db2aa51c74e）。
+  - 批准入口：CDS Dashboard → `project-list?pendingImport=a204d9ea7c2b` → 批准。
+  - 批准后预览域名可 curl 验收：
+    - 观测控制台：`/gw/healthz` → ok；`/gw/auth/login`（admin / llmgw-admin-2026）+ `/gw/logs`。
+    - serving 网关：`/gw/v1/healthz` → ok；带 `X-Gateway-Key: dev-llmgw-serve-key` 调 `/gw/v1/resolve`、`/gw/v1/pools`。
+    - http 全链路：把 api 的 `LlmGateway__Mode` 置 `http` 后跑一次 chat/生图，逐字段比对 inproc vs http
+      （model/protocol/finish/内容/生图 URL）。
+  - 在此之前：全部代码已编译绿、4 个镜像已推；仅「预览域名运行时」这一步卡在审批。exec_dep 路径不受门禁影响。
 
-## 已知边界 / 后续（波2-3，未做）
+## 已知边界 / 后续（波3，未做）
 
-- **serving 跨进程（阶段2-3）未做**：当前 prd-llmgw 只承接「观测 + 登录」，**不**代理 LLM 调用本身
-  （`/gw/{resolve,send,stream,raw,pools}` 未实现）。MAP 的 chat/生图 serving 仍是进程内 `ILlmGateway` 直调。
-  - 真·跨进程 serving 需要网关侧持有 LLM 实现（引用 Infrastructure 的 LlmGateway/ModelResolver），
-    即走 `prd-api/src/PrdAgent.LlmGateway`（已 scaffold，引用 Infrastructure）加 Program.cs + serving 端点，
-    再在 MAP 侧加 `HttpLlmGatewayClient : ILlmGateway` + feature flag `LlmGateway__Mode=inproc|http`（默认 inproc）。
-  - 风险：该项目被 api csproj ProjectReference，编译错误会阻塞 api 主镜像；且跨进程 resolve 必须只在网关侧
-    （`ApiKey [JsonIgnore]` 过 HTTP 会置空 → 二次 resolve 复活「选 A 给 B」，见 compute-then-send 规则）。
-    须分批 CDS 编译验证 + 影子比对，失败即回滚。
-  - 计费、数据库分离、调度算法重写：本轮明确不做（用户「计费暂缓」「数据库暂不分离避免表撕裂」）。
-- **prd-llmgw-web 未上 CDS 预览**：仅后端 llmgw 上了预览（curl 可验）；前端独立站走 exec_dep / 后续 CDS
-  集成（需处理 SPA base-path 路由）。当前前端可本地 `pnpm dev` 或 exec_dep 部署访问。
-- **两个 LlmGateway 并存**：`prd-api/src/PrdAgent.LlmGateway`（阶段1 进程内 scaffold，api 引用）与
-  顶层 `prd-llmgw`（独立观测进程）暂时并存，职责不同。波2 serving 落地时归并。
+- **http 模式默认 OFF**：本轮只交付「可切」，未在生产把 `LlmGateway__Mode` 翻成 http（需审批后真人逐字段
+  影子比对通过才翻）。影子双发比对工具未做（计划：同请求 inproc+http 双发，diff 关键字段）。
+- **prd-llmgw-web 未上 CDS 预览**：观测前端独立站走 exec_dep / 后续 CDS 集成（需处理 SPA base-path 路由）。
+- **两个 LlmGateway 进程职责**：`prd-llmgw`（顶层，自包含观测控制台 + 登录，不引用 Infra）与
+  `prd-api/src/PrdAgent.LlmGateway`（serving 引擎，引用 Infra 持有实现）。职责不同、刻意分离，不归并。
+- 计费、数据库分离、调度算法重写：本轮明确不做（用户「计费暂缓」「数据库暂不分离避免表撕裂」）。
