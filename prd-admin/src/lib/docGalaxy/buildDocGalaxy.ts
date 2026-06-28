@@ -201,6 +201,50 @@ function splitTitleSegments(title: string): string[] {
     .filter(Boolean);
 }
 
+/** DocType → 中文桶名（与 doc/ 七类一致，作动态分类的顶级枢纽标签）。 */
+const TYPE_GROUP_LABEL: Record<DocType, string> = {
+  spec: '规格',
+  design: '设计',
+  plan: '计划',
+  rule: '规则',
+  guide: '指南',
+  report: '报告',
+  debt: '债务',
+};
+/** 描述式标题里出现的「类型词」→ DocType。中文为主，英文兜底。 */
+const TYPE_WORD: Record<string, DocType> = {
+  规格: 'spec', 需求: 'spec',
+  设计: 'design', 方案: 'design',
+  计划: 'plan', 规划: 'plan', 路线图: 'plan',
+  规则: 'rule', 规范: 'rule',
+  指南: 'guide', 备忘: 'guide', 手册: 'guide',
+  报告: 'report', 周报: 'report', 复盘: 'report', 调研: 'report',
+  台账: 'debt', 债务: 'debt',
+  spec: 'spec', design: 'design', plan: 'plan', rule: 'rule', guide: 'guide', report: 'report', debt: 'debt',
+};
+/** 「其他主题」——动态分类里推断不出类型时的有界兜底桶（绝不一篇一桶）。 */
+const OTHER_TOPIC_GROUP = '其他主题';
+
+/** 单段是否精确等于某类型词（中文原样或英文小写）。用于决定是否把它从叶名里剥掉。 */
+function exactTypeWord(seg: string): DocType | null {
+  const raw = seg.trim();
+  return TYPE_WORD[raw] ?? TYPE_WORD[raw.toLowerCase()] ?? null;
+}
+/** 单段推断类型：先精确匹配，再对中文做后缀匹配（「验收报告」→报告、「软件需求」→需求）。 */
+function typeOfSegment(seg: string): DocType | null {
+  const exact = exactTypeWord(seg);
+  if (exact) return exact;
+  const raw = seg.trim();
+  for (const word of Object.keys(TYPE_WORD)) {
+    if (/[一-龥]/.test(word) && raw.endsWith(word)) return TYPE_WORD[word];
+  }
+  return null;
+}
+/** 从标题分段推断文档类型：末段优先（描述式标题类型多在结尾「· 设计」），其次首段。 */
+function inferDocTypeFromSegments(segs: string[]): DocType | null {
+  return typeOfSegment(segs[segs.length - 1] ?? '') ?? typeOfSegment(segs[0] ?? '');
+}
+
 /** 为一篇文档推导「从根到叶父」的分组链 + 类型 + 是否悬空。 */
 function derivePath(
   entry: GalaxyInputEntry,
@@ -239,16 +283,24 @@ function derivePath(
     }
   }
 
-  // 2c. 标题分隔符层级：描述式标题（如「prd-agent·知识库·卡片置顶…·验收报告」）按
-  //     · / > | 或「空格-空格」分段 → 取前 1-2 段作分组，余下段拼回作叶名。
-  //     这样共享前缀（prd-agent·知识库·…）的文档自然聚成簇，而非全堆「未分类」蘑菇。
-  //     至少留 1 段给叶名，避免叶子无标题。
+  // 2c. 描述式标题 → 按「文档类型」分桶（有界，恒为 ≤7 类 + 其他主题）。
+  //     历史教训：旧逻辑把标题首段当顶级分类，而真实标题首段几乎篇篇不同
+  //     （「CDS Agent R0」「周报 Agent v2.0」…），于是一篇一类，336 篇炸出 200+ 个
+  //     顶级分类——既毁了星系全局均衡（顶部糊成一片），又违背「分类应当收敛」的本意。
+  //     现按类型分桶：类型从末段优先推断（描述式标题类型多在结尾「· 设计 / · 验收报告」），
+  //     推不出落「其他主题」。叶名保留完整描述（仅当末段恰好是纯类型词时剥掉，避免与桶名重复）。
   const segs = splitTitleSegments(entry.title);
   if (segs.length >= 2) {
-    const groupCount = Math.min(2, segs.length - 1);
-    const groups = segs.slice(0, groupCount);
-    const leafName = segs.slice(groupCount).join(' · ');
-    return { groups, docType: parseDocType(name), orphan: false, leafName };
+    const inferred = inferDocTypeFromSegments(segs);
+    const lastIsExactType = exactTypeWord(segs[segs.length - 1]) != null;
+    const leafSegs = lastIsExactType ? segs.slice(0, -1) : segs;
+    const bucket = inferred ? TYPE_GROUP_LABEL[inferred] : OTHER_TOPIC_GROUP;
+    return {
+      groups: [bucket],
+      docType: inferred ?? parseDocType(name),
+      orphan: false,
+      leafName: (leafSegs.length ? leafSegs : segs).join(' · '),
+    };
   }
 
   // 3. 兜底

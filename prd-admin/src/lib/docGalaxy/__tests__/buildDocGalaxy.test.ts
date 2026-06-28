@@ -144,32 +144,54 @@ describe('buildDocGalaxy 关系识别', () => {
     expect(g.stats.rootCount).toBe(3);
   });
 
-  it('标题分隔符层级：· 分段聚簇，叶名取剩余段（不再全堆未分类蘑菇）', () => {
+  it('描述式标题 → 按文档类型分桶（末段类型词），叶名剥掉纯类型末段', () => {
     const g = buildDocGalaxy([
-      entry('1', 'prd-agent·知识库·卡片置顶·验收报告'),
-      entry('2', 'prd-agent·知识库·星系修复·验收报告'),
-      entry('3', 'prd-agent·缺陷·分享·验收报告'),
+      entry('1', 'CDS Agent R0 · 运行事实源 · 设计'),
+      entry('2', 'RBAC 权限系统 · 设计'),
+      entry('3', '统一短链系统 · 规则'),
     ]);
-    // 前 2 段作分组：prd-agent → 知识库 / 缺陷
-    const app = childByName(g.root, 'prd-agent');
-    expect(app).toBeTruthy();
-    expect(childByName(app!, '知识库')).toBeTruthy();
-    expect(childByName(app!, '缺陷')).toBeTruthy();
-    // 知识库下两篇共享前缀聚成簇，不再各自落「未分类」
-    expect(childByName(app!, '知识库')!.docCount).toBe(2);
-    // 叶名取消费掉前 2 段后的剩余（含末段），不为空
+    const design = childByName(g.root, '设计');
+    expect(design).toBeTruthy();
+    expect(design!.docCount).toBe(2); // 两篇设计聚到「设计」桶
+    expect(childByName(g.root, '规则')!.docCount).toBe(1);
+    // 末段恰为纯类型词「设计」→ 从叶名剥掉，避免与桶名重复
     const leaves = leafTitles(g.root);
-    expect(leaves).toContain('卡片置顶 · 验收报告');
-    expect(leaves).toContain('星系修复 · 验收报告');
-    // 全部已归类 → 无悬空
+    expect(leaves).toContain('CDS Agent R0 · 运行事实源');
+    expect(leaves).toContain('RBAC 权限系统');
     expect(g.stats.orphanCount).toBe(0);
   });
 
-  it('裸连字符不拆 appname（prd-agent 不被拆成 prd/agent）', () => {
-    // 只有一个「空格-空格」分隔，prd-agent 整段保留
-    const g = buildDocGalaxy([entry('1', 'prd-agent - 某主题说明')]);
-    expect(childByName(g.root, 'prd-agent')).toBeTruthy();
-    expect(childByName(g.root, 'prd')).toBeFalsy();
+  it('类型词后缀推断（验收报告→报告 / 软件需求→规格），保留完整叶名', () => {
+    const g = buildDocGalaxy([
+      entry('1', 'CDS · 登录态识别与路由 · 验收报告'),
+      entry('2', 'PRD理解与交互智能体 软件需求 · 规格'),
+    ]);
+    expect(childByName(g.root, '报告')!.docCount).toBe(1);
+    expect(childByName(g.root, '规格')!.docCount).toBe(1);
+    const leaves = leafTitles(g.root);
+    // 「验收报告」非纯类型词（后缀命中），不剥离 → 叶名保留完整描述
+    expect(leaves).toContain('CDS · 登录态识别与路由 · 验收报告');
+  });
+
+  it('描述式标题分类必须有界：上百个唯一前缀也绝不一篇一桶（治 200+ 分类爆炸）', () => {
+    const entries = Array.from({ length: 120 }, (_, i) =>
+      entry('e' + i, `独一无二的主题前缀 ${i} · 子题 ${i} · 设计`),
+    );
+    const g = buildDocGalaxy(entries);
+    // 120 篇唯一前缀 → 旧逻辑会炸出 120 个顶级分类；现全部收敛进「设计」一个桶
+    expect(g.root.children.length).toBe(1);
+    expect(childByName(g.root, '设计')!.docCount).toBe(120);
+  });
+
+  it('推断不出类型 → 收敛到「其他主题」单一兜底桶（不一篇一桶、不退回蘑菇）', () => {
+    const g = buildDocGalaxy([
+      entry('1', '甲流程节点 · 乙环节衔接'),
+      entry('2', '丙模块拆解 · 丁步骤梳理'),
+    ]);
+    const other = childByName(g.root, '其他主题');
+    expect(other).toBeTruthy();
+    expect(other!.docCount).toBe(2);
+    expect(g.root.children.length).toBe(1); // 顶级只有一个「其他主题」
   });
 
   it('无分隔符的纯标题仍落未分类（不误伤）', () => {
