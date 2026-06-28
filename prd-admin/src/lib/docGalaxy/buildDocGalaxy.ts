@@ -182,7 +182,7 @@ interface DerivedPath {
   groups: string[];
   docType: DocType | null;
   orphan: boolean;
-  /** 覆盖叶子显示名（标题分隔符分组时，叶名取消费掉前缀段后的剩余）。不填则用 entry.title。 */
+  /** 覆盖叶子显示名（标题分隔符分组时，叶名取消费掉前缀段后的剩余）。不填则用结构名（文件名/点分名）。 */
   leafName?: string;
 }
 
@@ -358,7 +358,10 @@ export function buildDocGalaxy(
 
     const leaf: GalaxyNode = {
       id: 'e:' + entry.id,
-      name: leafName || stripExt(entry.title || entry.id),
+      // 叶子「结构名」恒取文件名/点分名（nameForHierarchy 优先 sourceUrl 点分 basename，
+      // 无则回退 title）——structural 标签模式直接用它；正文标题走 content 模式叠加（contentTitles）。
+      // 历史回归：旧版误把 leaf.name 设成 entry.title，导致 structural 模式也显示长正文标题而非文件名。
+      name: leafName || stripExt(nameForHierarchy(entry) || entry.title || entry.id),
       kind: 'leaf',
       depth: parent.depth + 1,
       docCount: 1,

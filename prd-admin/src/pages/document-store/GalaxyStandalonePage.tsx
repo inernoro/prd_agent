@@ -17,8 +17,9 @@ export function GalaxyStandalonePage() {
   const { storeId } = useParams();
   const navigate = useNavigate();
   const [storeName, setStoreName] = useState<string>('');
-  // 标题显示模式：正文标题(frontmatter title / 首个标题，默认) ↔ 结构名(文件名/点分名)。
-  const [labelMode, setLabelMode] = useState<GalaxyLabelMode>('content');
+  // 标题显示模式：结构名(文件名/点分名，默认) ↔ 正文标题(frontmatter title / 首个标题)。
+  // 默认用文件名——MAP 这类点分库的文件名短而结构化，比长正文标题更清爽、不糊成一片。
+  const [labelMode, setLabelMode] = useState<GalaxyLabelMode>('structural');
 
   // 取库名做标题；失败/拿不到就用 storeId 兜底（不阻断星系渲染）
   useEffect(() => {

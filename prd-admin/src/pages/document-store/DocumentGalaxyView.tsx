@@ -2445,7 +2445,7 @@ export interface DocumentGalaxyViewProps {
   onToggleLabelMode?: () => void;
 }
 
-export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', onContextChange, openEntryRef, onBack, onToggleLabelMode }: DocumentGalaxyViewProps) {
+export function DocumentGalaxyView({ storeId, storeName, labelMode = 'structural', onContextChange, openEntryRef, onBack, onToggleLabelMode }: DocumentGalaxyViewProps) {
   const [galaxy, setGalaxy] = useState<DocGalaxy | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
