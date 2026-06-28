@@ -133,6 +133,26 @@ x-cds-deploy-modes:
       env:
         ASPNETCORE_ENVIRONMENT: Production
         ASPNETCORE_URLS: "http://+:8090"
+  # 独立 LLM serving 网关 llmgw-serve —— DI 承载现有 LlmGateway/ModelResolver，HTTP 暴露 /gw/v1/*。
+  # 预览域名 /gw/v1/* 路由到本服务（比 llmgw 的 /gw/ 更具体，按最长前缀匹配，二者共存）。
+  llmgw-serve:
+    dev:
+      label: "开发模式 (dotnet run)"
+      command: >-
+        cd /repo/prd-api/src/PrdAgent.LlmGateway &&
+        rm -rf bin obj &&
+        dotnet restore &&
+        dotnet run --no-launch-profile -c Release --urls http://0.0.0.0:8091
+    express:
+      label: "极速版（CI 预构建）"
+      image: "ghcr.io/inernoro/prd_agent/prdagent-llmgw-serve:sha-${CDS_COMMIT_SHA}"
+      fallbackImage:
+        - "ghcr.io/inernoro/prd_agent/prdagent-llmgw-serve:branch-${CDS_BRANCH_SLUG}"
+      prebuilt: true
+      containerPort: 8091
+      env:
+        ASPNETCORE_ENVIRONMENT: Production
+        ASPNETCORE_URLS: "http://+:8091"
 services:
   # ── App Services (有相对路径 volume mount) ──
 
@@ -240,6 +260,37 @@ services:
       cds.path-prefix: "/gw/"
       cds.readiness-path: "/gw/healthz"
       # express 拉镜像秒起；dev 源码模式需 restore + 编译，留足就绪窗口。
+      cds.readiness-timeout: "900"
+      cds.readiness-interval: "3"
+
+  # 独立 LLM serving 网关 llmgw-serve（DI 承载现有 LlmGateway/ModelResolver，HTTP 暴露 /gw/v1/*）。
+  # 与 api 同连一份 CDS 托管 Mongo；resolve 解密平台 key 用全局 x-cds-env.ApiKeyCrypto__Secret，
+  # 日志写入用全局 TENCENT_COS_*（CDS 自动注入所有容器，无需在此重复声明）。
+  llmgw-serve:
+    image: mcr.microsoft.com/dotnet/sdk:8.0
+    working_dir: /repo
+    volumes:
+      - .:/repo
+      - api-nuget-cache:/root/.nuget/packages
+    ports:
+      - "8091"
+    command: >-
+      cd /repo/prd-api/src/PrdAgent.LlmGateway &&
+      rm -rf bin obj &&
+      dotnet restore &&
+      dotnet run --no-launch-profile -c Release --urls http://0.0.0.0:8091
+    depends_on:
+      mongodb: { condition: service_healthy }
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
+      MongoDB__DatabaseName: prdagent
+      # 内部 M2M 共享密钥门（预览环境固定占位值即可）。
+      LlmGwServe__ApiKey: "dev-llmgw-serve-key"
+    labels:
+      # /gw/v1/* 比 llmgw 的 /gw/ 更具体，按最长前缀匹配路由到本服务。
+      cds.path-prefix: "/gw/v1/"
+      cds.readiness-path: "/gw/v1/healthz"
       cds.readiness-timeout: "900"
       cds.readiness-interval: "3"
 
