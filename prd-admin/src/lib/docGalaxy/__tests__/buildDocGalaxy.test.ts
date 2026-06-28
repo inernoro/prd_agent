@@ -165,6 +165,22 @@ describe('buildDocGalaxy 关系识别', () => {
     expect(g.stats.orphanCount).toBe(0);
   });
 
+  it('同族前缀聚类：首段前两词相同的描述式标题聚到一个家族簇（治散点）', () => {
+    const g = buildDocGalaxy([
+      entry('1', 'CDS Agent R0 · CDS-managed runtime fact source 设计'),
+      entry('2', 'CDS Agent P4-1 远端发布前验收与试用入口报告'),
+      entry('3', 'CDS Agent Phase 1 验收报告'),
+      entry('4', 'CDS Web 多分支预览'),
+    ]);
+    const agent = childByName(g.root, 'CDS Agent');
+    expect(agent).toBeTruthy();
+    expect(agent!.docCount).toBe(3); // 三篇 CDS Agent 聚成一簇，不散点
+    expect(childByName(g.root, 'CDS Web')).toBeTruthy(); // 不同家族独立
+    expect(g.stats.orphanCount).toBe(0);
+    // 叶名保留完整标题
+    expect(leafTitles(agent!)).toContain('CDS Agent Phase 1 验收报告');
+  });
+
   it('裸连字符不拆 appname（prd-agent 不被拆成 prd/agent）', () => {
     // 只有一个「空格-空格」分隔，prd-agent 整段保留
     const g = buildDocGalaxy([entry('1', 'prd-agent - 某主题说明')]);

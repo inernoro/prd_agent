@@ -239,16 +239,21 @@ function derivePath(
     }
   }
 
-  // 2c. 标题分隔符层级：描述式标题（如「prd-agent·知识库·卡片置顶…·验收报告」）按
-  //     · / > | 或「空格-空格」分段 → 取前 1-2 段作分组，余下段拼回作叶名。
-  //     这样共享前缀（prd-agent·知识库·…）的文档自然聚成簇，而非全堆「未分类」蘑菇。
-  //     至少留 1 段给叶名，避免叶子无标题。
+  // 2c. 同族前缀聚类（治「散点不均匀」）：描述式标题第一段的「前两个空格词」作家族分组。
+  //     如「CDS Agent R0 · …」「CDS Agent P4-1 …」「CDS Agent Phase 1 验收报告」「CDS Agent 商业级架构…」
+  //     都归到一个「CDS Agent」簇下，而不是各自首段不同 → 散成一地单点（旧写法 segs.slice(0,2) 的毛病：
+  //     首段是「CDS Agent R0」整段、彼此不等 → 不聚簇）。叶名保留完整标题，清晰可读。
   const segs = splitTitleSegments(entry.title);
+  const first = segs[0] || '';
+  const words = first.split(/\s+/).filter(Boolean);
+  if (words.length >= 2) {
+    const family = `${words[0]} ${words[1]}`; // 家族一级，如 "CDS Agent" / "CDS Web"
+    return { groups: [family], docType: parseDocType(name), orphan: false, leafName: stripExt(entry.title).trim() };
+  }
+  // 首段无空格但有 ·（如 prd-agent·知识库·…）→ 仍按段分层，取前 1-2 段
   if (segs.length >= 2) {
     const groupCount = Math.min(2, segs.length - 1);
-    const groups = segs.slice(0, groupCount);
-    const leafName = segs.slice(groupCount).join(' · ');
-    return { groups, docType: parseDocType(name), orphan: false, leafName };
+    return { groups: segs.slice(0, groupCount), docType: parseDocType(name), orphan: false, leafName: segs.slice(groupCount).join(' · ') };
   }
 
   // 3. 兜底
