@@ -13,7 +13,7 @@ import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
-import { isValidExtraProfileId } from '../services/branch-extra-services.js';
+import { isValidExtraProfileId, mergeBranchProfiles } from '../services/branch-extra-services.js';
 import { classifyTriggerSource, deriveDeployMode, deriveCommitMeta, parsePulledSha, shouldRefreshCommitSha } from '../services/build-log-meta.js';
 import { acquireBuildSlot, buildGateStatus } from '../services/build-gate.js';
 import { recordBuild } from '../services/build-activity-tracker.js';
@@ -3837,7 +3837,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
           const branchProjectId = b.projectId || 'default';
           b.resources = buildUnifiedBranchResources({
             branch: b,
-            profiles: profilesFor(branchProjectId),
+            // 分支额外服务也要在分支列表资源视图里可见 → 项目底座(走 profilesFor 缓存) + 本分支额外。
+            profiles: mergeBranchProfiles(profilesFor(branchProjectId), b),
             infraServices: infraFor(branchProjectId),
             externalAccessPolicies: await getActiveResourceExternalAccessForBranch(branchProjectId, b),
             cloneTasks: stateService.listResourceCloneTasks({ projectId: branchProjectId, branchId: b.id }),
@@ -9897,7 +9898,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
 
-    const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
+    const profiles = stateService.getEffectiveProfilesForBranch(entry);
     const requestedProfileId = typeof req.body?.profileId === 'string' ? req.body.profileId.trim() : '';
     const baseProfile = (requestedProfileId
       ? profiles.find((profile) => profile.id === requestedProfileId)
@@ -10005,7 +10006,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // P4 Part 17 (G2 fix): scope build profiles by the branch's project
     // so a deploy in project A doesn't pull in B's profiles. Pre-Part 3
     // branches default to 'default' (the legacy migration target).
-    const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
+    const profiles = stateService.getEffectiveProfilesForBranch(entry);
     if (profiles.length === 0) {
       res.status(400).json({ error: '尚未配置构建配置，请先添加至少一个构建配置。' });
       return;
@@ -11061,7 +11062,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // P4 Part 17 (G2 fix): scope by the branch's project so a
     // single-service redeploy can't accidentally pick up a same-named
     // profile from a different project.
-    const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
+    const profiles = stateService.getEffectiveProfilesForBranch(entry);
     const profile = profiles.find(p => p.id === profileId);
     if (!profile) {
       res.status(404).json({ error: `构建配置 "${profileId}" 不存在` });
@@ -11878,7 +11879,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const port = stateService.allocatePort(config.portStart, await collectListeningPorts(shell));
     // P4 Part 17 (G2 fix): scope by branch project so the path-prefix
     // proxy only routes to profiles owned by this project.
-    const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
+    const profiles = stateService.getEffectiveProfilesForBranch(entry);
 
     // Create a lightweight HTTP proxy that routes by path-prefix
     const server = http.createServer((proxyReq, proxyRes) => {
@@ -12066,7 +12067,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // P4 Part 17 (G2 fix): scope by branch project so the override
     // modal's "effective env" preview only enumerates profiles in
     // this project, not every project's profile.
-    const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
+    const profiles = stateService.getEffectiveProfilesForBranch(entry);
     const payload = profiles.map(profile => {
       const override = entry.profileOverrides?.[profile.id];
       const resolved = resolveEffectiveProfile(profile, entry);
@@ -14442,9 +14443,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const trigger = triggerFromRequest(req);
 
       for (const entry of allBranches) {
-        const ownProjectId = entry.projectId || 'default';
+        // effective(项目底座 + 本分支额外):否则分支级额外服务会被当成「项目里没有的孤儿服务」
+        // 误剪掉。额外服务是这条分支的合法服务,必须算进「已知 profile id」集合。
         const ownProfileIds = new Set(
-          stateService.getBuildProfilesForProject(ownProjectId).map((p) => p.id),
+          stateService.getEffectiveProfilesForBranch(entry).map((p) => p.id),
         );
         const dropped: string[] = [];
         for (const profileId of Object.keys(entry.services || {})) {
@@ -16326,12 +16328,16 @@ cdscli project list --human
         send('worktree', 'done', `工作树已存在: ${mainBranch}`);
       }
 
-      // ── Phase 4: Deploy main branch (build + run all profiles) ──
+      // ── Phase 4: Deploy main branch (build + run all profiles + branch extras) ──
       // PR #498 round-4 review (Bugbot): use the project-scoped query
       // so multi-project setups don't deploy every project's profiles
       // under the owner's branch entry. Matches the auto-build path
       // in index.ts:1097 and webhook deploy flows.
-      const profiles = stateService.getBuildProfilesForProject(entry.projectId || owner.id);
+      // 项目底座(保留 owner.id 兜底的 projectId 解析) + 本分支额外服务。
+      const profiles = mergeBranchProfiles(
+        stateService.getBuildProfilesForProject(entry.projectId || owner.id),
+        entry,
+      );
       if (profiles.length > 0) {
         send('deploy', 'running', `正在部署 ${mainBranch} (${profiles.length} 个服务)...`);
 
