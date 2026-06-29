@@ -469,5 +469,27 @@ describe('Cross-project isolation on profiles/rules/export', () => {
           expect(res.body.stdout).toContain('***');
         });
     });
+
+    it('masks a webhook-style secret key (WEBHOOK_URL) in exec output via isSensitiveKey coverage (Codex P2)', () => {
+      // WEBHOOK_URL key doesn't match the old narrow regex and the value has no inline creds, yet it is a
+      // secret. The literal-value collector now uses isSensitiveKey (same as maskEnvRecord) → masked.
+      const now = new Date().toISOString();
+      const hook = 'https://hooks.slack.com/services/T000/B000/DoNotLeakThisHook';
+      stateService.addBranch({
+        id: 'a-hookenv', projectId: 'proj-a', branch: 'hookenv',
+        worktreePath: '/tmp/wt/a-hookenv',
+        services: { sidecar: { profileId: 'sidecar', containerName: 'cds_a-hookenv_sidecar', hostPort: 12348, status: 'running' } },
+        status: 'running', createdAt: now,
+        extraProfiles: [{ id: 'sidecar', name: 'sidecar', dockerImage: 'nginx:alpine', workDir: '', command: '', containerPort: 80, projectId: 'proj-a', env: { WEBHOOK_URL: hook } } as any],
+      });
+      installExecMock(`echoing -> ${hook}`, '', 0);
+      return request(server, 'POST', '/api/branches/a-hookenv/container-exec',
+        { profileId: 'sidecar', command: 'echo $WEBHOOK_URL' }, { 'X-Test-Key': KEY_PROJ_A })
+        .then((res) => {
+          expect(res.status).toBe(200);
+          expect(res.body.stdout).not.toContain(hook);
+          expect(res.body.stdout).toContain('***');
+        });
+    });
   });
 });

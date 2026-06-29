@@ -38,7 +38,7 @@ import { classifyEnvKey } from '../config/known-env-keys.js';
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
 import { isAllowedCdsBranchName, isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { buildPreviewUrlForProject } from '../services/comment-template.js';
-import { maskSecrets as maskSecretsText, maskEnvRecord, looksLikeUrlWithCredentials, shouldMask } from '../services/secret-masker.js';
+import { maskSecrets as maskSecretsText, maskEnvRecord, isSensitiveKey, looksLikeUrlWithCredentials, shouldMask } from '../services/secret-masker.js';
 import { buildUnifiedBranchResources, type UnifiedBranchResource } from '../services/resources.js';
 import { fetchWithLockRetry } from '../services/git-fetch-retry.js';
 import { resolveGitAuthEnv } from '../services/git-auth-env.js';
@@ -13114,9 +13114,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
           const sensitiveValues: string[] = [];
           for (const [k, v] of Object.entries(profEnv)) {
             if (typeof v !== 'string' || v.length < 6) continue;
-            // 敏感判定：key 名命中 OR 值是含内联凭据的 URL（DATABASE_URL/MONGODB_URI/REDIS_URL 等 key 名
-            // 不命中但值会泄露密码）。与 maskEnvRecord 同口径，否则 `echo $DATABASE_URL` 原样吐明文（Codex P2）。
-            if (!/secret|password|token|key|credential|pwd|passphrase/i.test(k) && !looksLikeUrlWithCredentials(v)) continue;
+            // 敏感判定与 maskEnvRecord 完全同口径：key 名走 isSensitiveKey 完整覆盖（含 WEBHOOK/SMTP_*/
+            // AUTH/JWT/PAT/*_KEY，旧窄正则不含这些）OR 值是含内联凭据的 URL（DATABASE_URL/MONGODB_URI 等 key
+            // 名不命中但值泄密）。否则 `echo $WEBHOOK_URL` 在 GET/PUT 已脱敏的同一密钥仍从 exec 输出原样吐出
+            // （Codex P2「Reuse sensitive-key coverage for exec masking」）。
+            if (!isSensitiveKey(k) && !looksLikeUrlWithCredentials(v)) continue;
             sensitiveValues.push(v);
           }
           // Sort longest-first so a value that contains another value as a
