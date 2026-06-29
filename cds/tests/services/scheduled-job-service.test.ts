@@ -134,6 +134,44 @@ describe('ScheduledJobService', () => {
     expect(run.log).not.toContain('清洗入库');
   });
 
+  it('retries a failed action according to retryCount before continuing', async () => {
+    let attempts = 0;
+    shell.addResponsePattern(/docker run[\s\S]*flaky/, () => {
+      attempts += 1;
+      return attempts === 1
+        ? { stdout: '', stderr: 'temporary failure\n', exitCode: 1 }
+        : { stdout: 'recovered\n', stderr: '', exitCode: 0 };
+    });
+    shell.addResponsePattern(/docker run[\s\S]*after-retry/, () => ({ stdout: 'after-ok\n', stderr: '', exitCode: 0 }));
+    const job: ScheduledJob = service.normalizeJob({
+      id: 'job_retry',
+      projectId: 'demo',
+      name: '重试任务',
+      enabled: true,
+      schedule: { type: 'manual', timezone: 'Asia/Shanghai' },
+      actions: [
+        { id: 'flaky', name: '临时失败动作', type: 'command', command: 'flaky' },
+        { id: 'next', name: '后续动作', type: 'command', command: 'after-retry' },
+      ],
+      timeoutSeconds: 30,
+      retryCount: 1,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    stateService.upsertScheduledJob(job);
+
+    const run = await service.runJob(job.id, 'manual');
+
+    expect(run.status).toBe('success');
+    expect(attempts).toBe(2);
+    expect(shell.commands).toHaveLength(3);
+    expect(run.log).toContain('尝试 1/2');
+    expect(run.log).toContain('尝试 2/2');
+    expect(run.log).toContain('recovered');
+    expect(run.log).toContain('after-ok');
+  });
+
   it('skips a due scheduled job when it is already running', async () => {
     shell.addResponsePattern(/docker run[\s\S]*slow/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     const job: ScheduledJob = service.normalizeJob({

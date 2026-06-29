@@ -15,22 +15,24 @@ export function createScheduledJobsRouter(deps: ScheduledJobsRouterDeps): Router
   const { stateService, scheduledJobService } = deps;
 
   router.get('/scheduled-jobs', (req, res) => {
-    const projectId = typeof req.query.project === 'string' ? req.query.project : undefined;
-    if (projectId) {
-      const access = deps.assertProjectAccess(req, projectId);
-      if (access) { res.status(access.status).json(access.body); return; }
-    }
+    const projectId = resolveProjectFilter(req, res, deps.assertProjectAccess);
+    if (projectId === false) return;
     const jobs = stateService.listScheduledJobs(projectId)
       .sort((a, b) => String(a.nextRunAt || '').localeCompare(String(b.nextRunAt || '')));
     res.json({ jobs });
   });
 
   router.get('/scheduled-jobs/runs', (req, res) => {
-    const projectId = typeof req.query.project === 'string' ? req.query.project : undefined;
+    let projectId = resolveProjectFilter(req, res, deps.assertProjectAccess);
+    if (projectId === false) return;
     const jobId = typeof req.query.jobId === 'string' ? req.query.jobId : undefined;
-    if (projectId) {
-      const access = deps.assertProjectAccess(req, projectId);
+    if (jobId) {
+      const job = stateService.getScheduledJob(jobId);
+      if (!job) { res.json({ runs: [] }); return; }
+      const access = deps.assertProjectAccess(req, job.projectId);
       if (access) { res.status(access.status).json(access.body); return; }
+      if (projectId && projectId !== job.projectId) { res.json({ runs: [] }); return; }
+      projectId = job.projectId;
     }
     const runs = stateService.listScheduledJobRuns({
       projectId,
@@ -138,6 +140,22 @@ export function createScheduledJobsRouter(deps: ScheduledJobsRouterDeps): Router
   });
 
   return router;
+}
+
+function resolveProjectFilter(
+  req: any,
+  res: any,
+  assertProjectAccess: ScheduledJobsRouterDeps['assertProjectAccess'],
+): string | undefined | false {
+  const requested = typeof req.query?.project === 'string' ? req.query.project : undefined;
+  const projectKey = req.cdsProjectKey as { projectId: string; keyId: string } | undefined;
+  const projectId = requested || projectKey?.projectId;
+  const access = assertProjectAccess(req, projectId);
+  if (access) {
+    res.status(access.status).json(access.body);
+    return false;
+  }
+  return projectId;
 }
 
 function parseJobInput(body: any): {

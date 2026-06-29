@@ -76,7 +76,11 @@ export class ScheduledJobService {
     this.running.add(job.id);
 
     try {
-      const result = await this.executeActions(job, Math.max(1, job.timeoutSeconds || DEFAULT_TIMEOUT_SECONDS));
+      const result = await this.executeActions(
+        job,
+        Math.max(1, job.timeoutSeconds || DEFAULT_TIMEOUT_SECONDS),
+        Math.max(0, Math.floor(job.retryCount || 0)),
+      );
       run.exitCode = result.exitCode;
       run.httpStatus = result.httpStatus;
       run.log = truncateLog(result.log);
@@ -168,7 +172,7 @@ export class ScheduledJobService {
     });
   }
 
-  private async executeActions(job: ScheduledJob, timeoutSeconds: number): Promise<ScheduledJobTargetCheckResult> {
+  private async executeActions(job: ScheduledJob, timeoutSeconds: number, retryCount: number): Promise<ScheduledJobTargetCheckResult> {
     const actions = normalizeActions(job.actions, job.target);
     if (actions.length === 0) {
       return { ok: false, exitCode: 1, log: '', error: '任务至少需要一个动作' };
@@ -182,7 +186,7 @@ export class ScheduledJobService {
       const title = action.name || defaultActionName(action);
       logs.push(`[${index + 1}/${actions.length}] ${title}`);
       const sandboxKey = actions.length === 1 ? job.id : `${job.id}-${index + 1}-${action.id}`;
-      const result = await this.executeTarget(action, timeoutSeconds, sandboxKey);
+      const result = await this.executeTargetWithRetry(action, timeoutSeconds, sandboxKey, retryCount);
       lastExitCode = result.exitCode;
       lastHttpStatus = result.httpStatus;
       if (result.log) logs.push(result.log);
@@ -202,6 +206,32 @@ export class ScheduledJobService {
       exitCode: lastExitCode,
       httpStatus: lastHttpStatus,
       log: logs.join('\n'),
+    };
+  }
+
+  private async executeTargetWithRetry(
+    target: ScheduledJobTarget,
+    timeoutSeconds: number,
+    sandboxKey: string,
+    retryCount: number,
+  ): Promise<ScheduledJobTargetCheckResult> {
+    const logs: string[] = [];
+    let last: ScheduledJobTargetCheckResult | null = null;
+    for (let attempt = 0; attempt <= retryCount; attempt += 1) {
+      const attemptSandboxKey = retryCount === 0 ? sandboxKey : `${sandboxKey}-try-${attempt + 1}`;
+      const result = await this.executeTarget(target, timeoutSeconds, attemptSandboxKey);
+      last = result;
+      if (retryCount > 0) logs.push(`尝试 ${attempt + 1}/${retryCount + 1}`);
+      if (result.log) logs.push(result.log);
+      if (result.ok) return { ...result, log: logs.join('\n') };
+      if (result.error) logs.push(result.error);
+    }
+    return {
+      ok: false,
+      exitCode: last?.exitCode,
+      httpStatus: last?.httpStatus,
+      log: logs.join('\n'),
+      error: last?.error || `重试 ${retryCount} 次后仍失败`,
     };
   }
 
