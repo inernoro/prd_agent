@@ -258,9 +258,13 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       const statuses = Object.values(entry.services).map(s => s.status);
       // 无服务(期望清单为空 / 已全部收敛拆除) → idle，与 master 端空清单清理一致（Bugbot Medium）：
       // 否则空 services 会落到 'error'，心跳同步把一次成功的「清空」误标为失败。
+      // error 优先于 running：running+error 混合落 error，与 master reconcile + 本地 finalize 同口径
+      // （Bugbot「Remote deploy ignores service errors」），不能任一 running 就报 running。
       entry.status = statuses.length === 0
         ? 'idle'
-        : statuses.some(s => s === 'running') ? 'running' : 'error';
+        : statuses.some(s => s === 'error') ? 'error'
+        : statuses.some(s => s === 'running') ? 'running'
+        : 'error';
       entry.lastAccessedAt = new Date().toISOString();
       stateService.save();
 

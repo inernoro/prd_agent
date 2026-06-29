@@ -19,9 +19,11 @@ const source = fs.readFileSync(
 describe('remote deploy complete: branch status realign contract', () => {
   it('realigns entry.status from the executor svcMap after the prune (no stuck building)', () => {
     expect(source).toContain('const remoteSvcStatuses = Object.values(svcMap).map((s) => s?.status);');
-    // empty desired set → idle (the empty-clear case), some running → running, else error.
+    // empty desired set → idle (the empty-clear case), then error precedence, then running, else error.
     expect(source).toContain("remoteSvcStatuses.length === 0");
-    expect(source).toContain("remoteSvcStatuses.some((s) => s === 'running') ? 'running' : 'error'");
+    // error must take precedence over running so a running+error mix reports error (matches local finalize).
+    expect(source).toContain("remoteSvcStatuses.some((s) => s === 'error') ? 'error'");
+    expect(source).toContain("remoteSvcStatuses.some((s) => s === 'running') ? 'running'");
   });
 
   it('syncs surviving services’ status from the authoritative svcMap', () => {

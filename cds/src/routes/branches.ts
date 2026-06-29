@@ -2723,11 +2723,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
               }
             }
             // ③ 重算分支态（派发时钉的 building 必须按权威 svcMap 重置，否则空清空 / 全 running 会一直 building 到心跳）：
-            //    无服务=idle、有 running=running、否则 error（与 executor 端 + master 本地空清单清理同款）。
+            //    无服务=idle、有 error=error、否则有 running=running、再否则 error。error 优先于 running——
+            //    running+error 混合时本地 finalize 落 error，远端必须同口径，不能任一 running 就报 running
+            //    （Bugbot「Remote deploy ignores service errors」）。
             const remoteSvcStatuses = Object.values(svcMap).map((s) => s?.status);
             entry.status = remoteSvcStatuses.length === 0
               ? 'idle'
-              : remoteSvcStatuses.some((s) => s === 'running') ? 'running' : 'error';
+              : remoteSvcStatuses.some((s) => s === 'error') ? 'error'
+              : remoteSvcStatuses.some((s) => s === 'running') ? 'running'
+              : 'error';
           }
           // 成功 complete = 远端运行时就绪的时刻（executor 在所有服务 running 后才发）。
           // 戳为 runtimeStartedAt，让 finally 能像本地路径一样采样部署耗时（修复 PR #865
