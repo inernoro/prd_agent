@@ -262,10 +262,12 @@ export class WorktreeService {
       await this.shell.exec(`rm -rf "${targetDir}"`);
     }
 
-    const addResult = await this.shell.exec(
-      `git worktree add "${targetDir}" "origin/${branch}"`,
-      { cwd: repoRoot },
-    );
+    const addCommand = `git worktree add "${targetDir}" "origin/${branch}"`;
+    let addResult = await this.shell.exec(addCommand, { cwd: repoRoot });
+    if (addResult.exitCode !== 0 && isMissingRegisteredWorktreeError(addResult)) {
+      await this.shell.exec('git worktree prune', { cwd: repoRoot });
+      addResult = await this.shell.exec(addCommand, { cwd: repoRoot });
+    }
     if (addResult.exitCode !== 0) {
       throw new Error(`创建工作树 "${branch}" 失败:\n${combinedOutput(addResult)}`);
     }
@@ -464,4 +466,8 @@ function isSymlink(p: string): boolean {
   } catch {
     return false;
   }
+}
+
+function isMissingRegisteredWorktreeError(result: Awaited<ReturnType<IShellExecutor['exec']>>): boolean {
+  return /missing but already registered worktree/i.test(combinedOutput(result));
 }
