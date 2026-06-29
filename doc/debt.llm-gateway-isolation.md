@@ -78,6 +78,20 @@ AI 大模型网关从 MAP 剥离的工程债务台账。记录「已做 / 待用
 - **D 层** `scripts/gw-smoke.py`：真机冒烟（读 `/gw/v1/pools` 选便宜 OpenRouter 模型按矩阵抽样 + 必败 canary），
   待 CDS 单分支多容器 + 导入审批后跑。
 - CI 结果：1066 passed / 0 failed（commit df301d73），过程中 CS8419(async 迭代器无 yield) 已修。
+
+### v2 扩展：从压缩版改数据驱动全枚举 + 可见大报告（commit b30218ab，CI 绿）
+
+- 用户反馈「这么少的表，能有效吗，是内容压缩了吗」——v1 确实压缩了（14 维摘要 + 18 手写 [Fact]）。v2 改为：
+  - `scripts/gen-gw-matrix-report.py`（纯 Python，无需 SDK，一处定义三处消费）→ `doc/report.gw-test-matrix.md`
+    （约 282 行可见大表）+ `protocol-cells.json`(91 B cell) + `transport-cells.json`(18 C cell)。报告里 B/C 每一行
+    = CI 真执行的一个 cell（非只列不跑）。
+  - **B 层** `GatewayProtocolFidelityTests` 改 `[Theory]+MemberData` 读 `protocol-cells.json`（91 cell：think 三形态/
+    tool 归一/token+cache/finish 全枚举/字符集 9 变体/edge→null；payload 全按适配器源码行为构造）。
+  - **C 层** `CrossProcessServingErrorLoadTests` 改 `[Theory]` 读 `transport-cells.json`（18 cell：方法×上游
+    {echo/failing/throwing/empty}×鉴权×并发，4 stub host 经 IClassFixture 复用）。
+  - **A 层** 新增 `GwResolutionMatrixTests`（153 反射 `[Theory]`：命名规范 + ModelType 13 类白名单 + 无重复 + canary）。
+- **CI 真跑结果**：commit b30218ab → `ci.yml` Server Build & Test 绿，**1313 passed / 4 skipped(Integration) / 0 failed**
+  （含新增约 262 个 cell）+ golden 程序集 424 passed。run 28368514692。
 - **债务**：`ModelTestStub.FailureMode`（AlwaysFail/Timeout/ConnectionReset 等）当前**未接入** serving 发送路径
   （resolver/gateway 不查 `model_test_stubs`）——失败注入要生效需在 `LlmGateway.SendAsync` resolve 后加 stub-hook，
   是独立改动，本轮未做；canary 改用真实失败路径（桩上游错误 / 坏 URL 模型）规避。
