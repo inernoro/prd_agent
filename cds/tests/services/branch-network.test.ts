@@ -24,9 +24,19 @@ describe('branchAppNetworkName', () => {
     expect(name.length).toBeLessThanOrEqual(63);
   });
 
-  it('keeps ≤60-char ids byte-for-byte identical to the legacy slice (zero regression)', () => {
-    const id = 'a'.repeat(60);
-    expect(branchAppNetworkName(id)).toBe(`cds-br-${id}`);
+  it('keeps ids up to 56 safe chars unhashed (prefix-aware cap: cds-br- + 56 = 63, within docker limit)', () => {
+    const id = 'a'.repeat(56);
+    const name = branchAppNetworkName(id);
+    expect(name).toBe(`cds-br-${id}`);
+    expect(name.length).toBe(63);
+  });
+
+  it('57-60 char ids are hashed and stay <=63 (prefix accounted for, Codex P2 二修)', () => {
+    for (const len of [57, 58, 60]) {
+      const name = branchAppNetworkName('b'.repeat(len));
+      expect(name.length).toBeLessThanOrEqual(63);
+      expect(name).toMatch(/-[0-9a-f]{8}$/); // hash suffix present
+    }
   });
 
   it('long ids sharing the first 60 safe chars still get distinct networks (Codex P2: no collision)', () => {

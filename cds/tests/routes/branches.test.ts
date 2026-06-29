@@ -472,11 +472,43 @@ describe('Branch Routes', () => {
       expect(stateService.getBranch('b1')!.extraProfiles).toBeUndefined();
     });
 
-    it('?redeploy=1 reports redeployTriggered (fire-and-forget self-deploy)', async () => {
+    it('?redeploy=1 reports redeployTriggered only after the self-deploy is accepted (200)', async () => {
       seedBranch('b1');
-      const res = await request(server, 'PUT', '/api/branches/b1/extra-services?redeploy=1', { extraProfiles: [extraSvc('demo-extra')] });
-      expect(res.status).toBe(200);
-      expect((res.body as any).redeployTriggered).toBe(true);
+      const originalFetch = globalThis.fetch;
+      const calls: string[] = [];
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        calls.push(String(input));
+        // deploy endpoint accepts → streams SSE 200
+        return new Response('event: complete\ndata: {"ok":true}\n\n', { status: 200 });
+      }) as typeof fetch;
+      try {
+        const res = await request(server, 'PUT', '/api/branches/b1/extra-services?redeploy=1', { extraProfiles: [extraSvc('demo-extra')] });
+        expect(res.status).toBe(200);
+        expect((res.body as any).redeployTriggered).toBe(true);
+        expect(calls.some((u) => u.includes('/api/branches/b1/deploy'))).toBe(true);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it('?redeploy=1 does NOT claim triggered when the self-deploy is rejected (423 paused) — surfaces the rejection', async () => {
+      seedBranch('b1');
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async () =>
+        new Response(JSON.stringify({ error: '分支已暂停' }), { status: 423 })) as typeof fetch;
+      try {
+        const res = await request(server, 'PUT', '/api/branches/b1/extra-services?redeploy=1', { extraProfiles: [extraSvc('demo-extra')] });
+        expect(res.status).toBe(200);
+        // The extra service is still persisted...
+        expect((res.body as any).count).toBe(1);
+        // ...but redeploy must NOT be reported as triggered, and the rejection is surfaced.
+        expect((res.body as any).redeployTriggered).toBe(false);
+        expect((res.body as any).redeployRejected?.status).toBe(423);
+        expect(String((res.body as any).redeployRejected?.message)).toContain('暂停');
+        expect(String((res.body as any).hint)).toContain('未成功');
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
 
     it('404 for unknown branch', async () => {
@@ -1699,6 +1731,51 @@ describe('Branch Routes', () => {
       expect(deploy.status).toBe(200);
       // The superseded deploy must NOT have deleted the zombie service entry under a cancelled lease.
       expect(stateService.getBranch('orphan-fence')?.services.zombie).toBeTruthy();
+    });
+
+    it('deploy with an empty effective profile list tears down lingering services instead of 400 (Codex P2)', async () => {
+      // A branch whose only running service was a branch-local extra. After the extra is cleared the
+      // effective profile list is empty. The deploy must NOT just 400 and leave the old container +
+      // entry.services row behind — it should reconcile (tear down) the now-orphaned services.
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'empty-cleanup',
+        projectId: 'default',
+        branch: 'feature/empty-cleanup',
+        worktreePath: path.join(tmpDir, 'worktrees', 'empty-cleanup'),
+        status: 'running',
+        createdAt: now,
+        // No build profiles configured for the project AND no extraProfiles → effective list empty,
+        // but a leftover service is still tracked (the just-cleared extra).
+        services: {
+          'demo-extra': { profileId: 'demo-extra', containerName: 'cds-empty-cleanup-demo-extra', hostPort: 10005, status: 'running' },
+        },
+      });
+      stateService.save();
+
+      const res = await request(server, 'POST', '/api/branches/empty-cleanup/deploy');
+      expect(res.status).toBe(200);
+      expect((res.body as any).cleared).toContain('demo-extra');
+      // The lingering service row is gone (container was torn down + entry removed).
+      expect(stateService.getBranch('empty-cleanup')?.services['demo-extra']).toBeUndefined();
+      expect(Object.keys(stateService.getBranch('empty-cleanup')?.services || {})).toHaveLength(0);
+    });
+
+    it('deploy with no profiles AND no services still returns the original 400', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'empty-nosvc',
+        projectId: 'default',
+        branch: 'feature/empty-nosvc',
+        worktreePath: path.join(tmpDir, 'worktrees', 'empty-nosvc'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+      });
+      stateService.save();
+      const res = await request(server, 'POST', '/api/branches/empty-nosvc/deploy');
+      expect(res.status).toBe(400);
+      expect(String((res.body as any).error)).toContain('构建配置');
     });
 
     it('records branch delete completion only after state flush succeeds', async () => {

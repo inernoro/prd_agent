@@ -69,16 +69,20 @@ function shortBranchHash(s: string): string {
  * 超长保唯一(Codex P2,2026-06-29)：docker 名长度有限,过去直接 `.slice(0,60)` 截断 —— 两个共享
  * 前 60 个安全字符的分支 id 会被分到**同一张** `cds-br-*` 网,它们的 app `--network-alias` 又落回
  * 同一张网 → 重新引入本隔离层要消除的跨分支 DNS 轮询。修复：仅当 sanitized 超过阈值才截断,并追加
- * 基于**完整** sanitized id 的短哈希后缀,使长 id 仍唯一。≤60 的常规分支 id 输出与旧实现完全一致(零回归)。
+ * 基于**完整** sanitized id 的短哈希后缀,使长 id 仍唯一。
+ *
+ * 阈值算前缀(Codex P2 二修)：返回名 = "cds-br-"(7 字符) + safe,docker 网名(DNS label)上限 63。
+ * 故 safe 必须 ≤ 56 —— 阈值取 56 而非 60,否则 57~60 字符的 id 会产出 64~67 字符的网名超限。
+ * 截断段取 47 + "-" + 8 位哈希 = 56,加前缀正好 63。base ≤ 56 的常规分支 id 整段保留(前缀后 ≤ 63)。
  */
+const MAX_SAFE_LEN = 56; // 63(docker 名上限) - "cds-br-".length(7)
 export function branchAppNetworkName(branchId: string): string {
   const sanitized = String(branchId || '')
     .replace(/[^a-zA-Z0-9_.-]/g, '-')
     .replace(/^[^a-zA-Z0-9]+/, '');
   const base = sanitized || 'branch';
-  // ≤60：保持旧行为(整段保留,前缀 "cds-br-" 7 字符)。>60：截到 47 + "-" + 8 位哈希 = 56,
-  // 加前缀共 63(docker 名上限内),且基于完整 id 的哈希保证不同长 id 不再撞网。
-  const safe = base.length > 60 ? `${base.slice(0, 47)}-${shortBranchHash(base)}` : base;
+  // 截断段 47 + "-" + 8 位哈希 = 56 = MAX_SAFE_LEN，基于完整 id 的哈希保证不同长 id 不再撞网。
+  const safe = base.length > MAX_SAFE_LEN ? `${base.slice(0, 47)}-${shortBranchHash(base)}` : base;
   return `cds-br-${safe}`;
 }
 

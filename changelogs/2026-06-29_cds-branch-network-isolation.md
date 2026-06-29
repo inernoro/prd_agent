@@ -4,3 +4,4 @@
 | fix | cds | 远端执行器分支网清理（Bugbot Medium）：cds-br-* 网创建在执行器 docker host，删分支时执行器 /exec/delete 顺手 removeBranchNetwork，避免隔离网在 worker 节点随删分支不断堆积 |
 | fix | cds | 超长分支网名保唯一（Codex P2）：branchAppNetworkName 超 60 字符时截断并追加完整 id 的短哈希，避免两个共享前 60 安全字符的分支 id 撞同一张 cds-br-* 网而重新引入跨分支 DNS 串流；≤60 的常规 id 输出零回归 |
 | fix | cds | 陈旧别名清理扫对网（Bugbot Medium）：隔离后 app 的 --network-alias 落在分支网而非共享项目网，pruneStaleAppContainersForProfile 改扫 netPlan.runNetwork（隔离=分支网），否则失败/半成功重部署后分支网上残留同别名僵尸端点、DNS 轮询复发 |
+| fix | cds | 分支网名截断阈值算上前缀（Codex P2 二修）：返回名 = "cds-br-"(7)+safe，docker DNS label 上限 63，故 safe 阈值取 56 而非 60，否则 57~60 字符的分支 id 产出 64~67 字符网名超限 |

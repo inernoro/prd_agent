@@ -10008,8 +10008,73 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // branches default to 'default' (the legacy migration target).
     const profiles = stateService.getEffectiveProfilesForBranch(entry);
     if (profiles.length === 0) {
-      res.status(400).json({ error: '尚未配置构建配置，请先添加至少一个构建配置。' });
-      return;
+      // 期望清单为空。两种情形分开处理（Codex P2）：
+      //  - 本来就没服务 → 一如既往 400「请先添加构建配置」。
+      //  - 还有在跑的服务（典型：分支所有服务都是额外服务，清掉 extraProfiles 后期望清单空）→ 不能直接
+      //    400 跑路，那样旧容器 + entry.services 行会残留（清掉最后一个额外服务后容器还在跑）。这里把现存
+      //    服务全部当孤儿下掉，再返回。用一个 deploy 租约保证拆除期间不与其它操作打架（fencing-safe，
+      //    remove 前后各 assertBranchOperationCurrent，与孤儿清理同款）。
+      const existingServices = Object.entries(entry.services);
+      if (existingServices.length === 0) {
+        res.status(400).json({ error: '尚未配置构建配置，请先添加至少一个构建配置。' });
+        return;
+      }
+      // 远端执行器 owned 的分支：容器在执行器上，master 端 remove 是 no-op。放行到下面的远端分发，
+      // 由 executor /exec/deploy 对空 payload 收敛（与 issue 5 同一条清理路径）。本地分支才在此就地拆。
+      const remoteOwned = !!(entry.executorId && registry
+        && registry.getAll().find((n) => n.id === entry.executorId && n.role !== 'embedded'));
+      if (!remoteOwned) {
+        const cleanupLease = beginBranchOperation(req, res, entry, {
+          kind: 'deploy',
+          source: 'api.deploy-branch',
+          reason: '期望清单为空，清理残留服务容器',
+          sse: false,
+        });
+        if (branchOperationCoordinator && !cleanupLease) return; // 被拒时 beginBranchOperation 已发 409 JSON
+        const cleanupReqId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
+        const cActor = resolveActorFromRequest(req);
+        const cTrigger = triggerFromRequest(req);
+        let cleanupStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+        const cleared: string[] = [];
+        try {
+          for (const [sid, svc] of existingServices) {
+            assertBranchOperationCurrent(cleanupLease, `empty-profiles-cleanup before ${sid}`);
+            try {
+              await containerService.remove(svc.containerName, {
+                projectId: entry.projectId,
+                branchId: entry.id,
+                profileId: sid,
+                requestId: cleanupReqId || null,
+                operationId: cleanupLease?.operationId || null,
+                actor: cActor,
+                trigger: cTrigger,
+                operation: 'deploy-empty-profiles-cleanup',
+                source: 'api.deploy-branch',
+                reason: '期望清单为空，清理残留服务容器',
+              });
+            } catch { /* best-effort：仍删条目 */ }
+            assertBranchOperationCurrent(cleanupLease, `empty-profiles-cleanup after ${sid}`);
+            delete entry.services[sid];
+            cleared.push(sid);
+          }
+          entry.status = 'idle';
+          entry.errorMessage = undefined;
+          stateService.save();
+        } catch (err) {
+          cleanupStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
+          completeBranchOperation(cleanupLease, cleanupStatus);
+          if (cleanupStatus === 'cancelled') {
+            res.status(409).json({ error: 'superseded', message: '清理被更高优先级操作取代' });
+            return;
+          }
+          res.status(500).json({ error: (err as Error).message });
+          return;
+        }
+        completeBranchOperation(cleanupLease, cleanupStatus);
+        res.status(200).json({ ok: true, cleared, message: `已清空所有服务（无构建配置，已下掉 ${cleared.length} 个残留容器）` });
+        return;
+      }
+      // remoteOwned：不在此 return，放行到下方远端分发（executor 收敛空 payload）。
     }
 
     // 极速版部署不再硬闸门(用户 2026-06-23 决策:没有镜像默认回退固定主分支,不硬失败)。
@@ -10019,8 +10084,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     // Phase 8 — env required check:必填项未填则 412 Precondition Failed,UI 弹窗强制感知
     // 用户可以"承诺会跑起来"按 ?ignoreRequired=1 query 强制 deploy(降级路径,不推荐)
+    // profiles.length > 0：env 必填闸门是给「要构建启动的服务」用的；走到这里 profiles 非空（空已在上面
+    // 的清理分支处理/放行）。保留判断让远端空 payload 收敛路径（remoteOwned 放行）不被 env 闸门误拦。
     const ignoreRequired = req.query?.ignoreRequired === '1' || req.query?.ignoreRequired === 'true';
-    if (!ignoreRequired && entry.projectId) {
+    if (!ignoreRequired && entry.projectId && profiles.length > 0) {
       const missingRequired = stateService.getMissingRequiredEnvKeys(entry.projectId);
       if (missingRequired.length > 0) {
         const meta = stateService.getEnvMeta(entry.projectId);
@@ -12657,7 +12724,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.json({ extraProfiles: entry.extraProfiles || [] });
   });
 
-  router.put('/branches/:id/extra-services', (req, res) => {
+  router.put('/branches/:id/extra-services', async (req, res) => {
     const entry = stateService.getBranch(req.params.id);
     if (!entry) {
       res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
@@ -12721,34 +12788,56 @@ export function createBranchRouter(deps: RouterDeps): Router {
     stateService.setBranchExtraProfiles(entry.id, sanitized);
     const updated = stateService.getBranch(entry.id)!;
     // 一步到位:声明/改额外服务是纯配置变更,不会自动重建已在运行的分支(用户实测痛点)。
-    // 带 ?redeploy=1 时,持久化后立刻 fire-and-forget 触发一次真正的分支重部署(走和 webhook
-    // 自调相同的 localhost 自 POST /deploy),让新增/改动的额外服务真正起容器、被移除的真正下掉。
+    // 带 ?redeploy=1 时,持久化后触发一次真正的分支重部署(走和 webhook 自调相同的 localhost 自 POST
+    // /deploy),让新增/改动的额外服务真正起容器、被移除的真正下掉。
     const wantRedeploy = req.query?.redeploy === '1' || req.query?.redeploy === 'true' || (req.body as { redeploy?: unknown })?.redeploy === true;
     let redeployTriggered = false;
+    let redeployRejected: { status: number; message: string } | null = null;
     if (wantRedeploy) {
-      redeployTriggered = true;
+      // 必须等到自调 deploy 真正被「接受」(HTTP 头到达)再决定 redeployTriggered,否则会出现「明明被拒
+      // 还回报已触发」(Bugbot Medium):deploy 端点对 暂停(423)/缺必填环境(412)/in-flight 冲突(409)
+      // 都在 initSSE 之前早返回错误码,await 头很快;成功路径 initSSE 之后才流式构建,所以 await 不会卡到
+      // 整次构建结束。被接受后在后台把 SSE 流读完丢弃(不阻塞本响应),构建在服务端异步继续
+      // (server-authority:客户端断开不取消部署)。
       const url = `http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(entry.id)}/deploy`;
-      void fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CDS-Internal': '1',
-          'X-CDS-Trigger': 'system',
-          ...(entry.projectId ? { 'X-CDS-Source-Project-Id': entry.projectId } : {}),
-          'X-CDS-Source-Branch-Id': entry.id,
-        },
-        body: JSON.stringify({}),
-      }).catch((err) => {
-        console.warn(`[extra-services] redeploy 自调失败(忽略,用户可手动部署) ${entry.id}: ${(err as Error).message}`);
-      });
+      try {
+        const upstream = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CDS-Internal': '1',
+            'X-CDS-Trigger': 'system',
+            ...(entry.projectId ? { 'X-CDS-Source-Project-Id': entry.projectId } : {}),
+            'X-CDS-Source-Branch-Id': entry.id,
+          },
+          body: JSON.stringify({}),
+        });
+        if (upstream.ok) {
+          redeployTriggered = true;
+          // 后台读尽 SSE 流(成功路径流式到部署结束),正常 drain 避免连接背压拖住服务端写入;不 await。
+          void upstream.text().catch(() => { /* drain best-effort */ });
+        } else {
+          const errText = await upstream.text().catch(() => '');
+          let msg = errText;
+          try { const j = JSON.parse(errText) as { error?: unknown }; if (typeof j?.error === 'string') msg = j.error; } catch { /* 保留原文 */ }
+          redeployRejected = { status: upstream.status, message: (msg || '').slice(0, 300) };
+          console.warn(`[extra-services] redeploy 被拒(HTTP ${upstream.status}) ${entry.id}: ${redeployRejected.message}`);
+        }
+      } catch (err) {
+        redeployRejected = { status: 0, message: (err as Error).message };
+        console.warn(`[extra-services] redeploy 自调失败 ${entry.id}: ${(err as Error).message}`);
+      }
     }
     res.json({
       extraProfiles: updated.extraProfiles || [],
       count: (updated.extraProfiles || []).length,
       redeployTriggered,
+      ...(redeployRejected ? { redeployRejected } : {}),
       hint: redeployTriggered
         ? '已触发重部署,额外服务将随本次部署起容器(几十秒后查看分支服务列表)'
-        : '额外服务已声明;需触发一次分支部署才会真正起容器(或重发本请求带 ?redeploy=1)',
+        : wantRedeploy
+          ? `额外服务已声明,但触发重部署未成功${redeployRejected ? `(HTTP ${redeployRejected.status}: ${redeployRejected.message})` : ''};请处理后手动部署(或重发本请求带 ?redeploy=1)`
+          : '额外服务已声明;需触发一次分支部署才会真正起容器(或重发本请求带 ?redeploy=1)',
     });
   });
 
