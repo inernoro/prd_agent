@@ -12324,7 +12324,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         profileId: profile.id,
         profileName: profile.name,
         baseline: isExtra && profile.env ? { ...profile, env: maskSecrets(profile.env) } : profile,
-        override: override || null,
+        // override 也要对额外服务脱敏（Codex P1「Mask override env in profile-overrides GET」）：PUT 现可给
+        // extra profile 存 env 覆盖，GET 若把 override.env 原样回吐就泄露密钥（baseline/effective 已脱敏，
+        // 唯独 override 漏）。与 PUT 响应同口径。
+        override: isExtra && override?.env ? { ...override, env: maskSecrets(override.env) } : (override || null),
         effective,
         cdsEnvKeys,
         hasOverride: !!override && Object.keys(override).some(k => k !== 'updatedAt' && k !== 'notes'),

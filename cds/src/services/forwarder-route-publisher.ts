@@ -147,12 +147,15 @@ export class ForwarderRoutePublisher {
     const projects = this.opts.state.getProjects();
     const projectById = new Map(projects.map((p) => [p.id, p]));
 
-    const buildProfiles = this.opts.state.getBuildProfiles();
-    const profileById = new Map<string, BuildProfile>();
-    for (const bp of buildProfiles) profileById.set(bp.id, bp);
-
     const branches = this.opts.state.getAllBranches();
     for (const branch of branches) {
+      // 用分支**有效** profiles（项目 profiles + 分支级额外服务）建本分支 profile 查找。原先全局只取
+      // getBuildProfiles()（项目级），分支级额外服务的 pathPrefixes（只存在 branch.extraProfiles）发不进
+      // forwarder-routes.json → CDS_USE_FORWARDER=1 时转发流量回退默认/约定路由、额外服务不可达
+      // （Codex P2「Publish extra-service path prefixes to the forwarder」）。
+      const profileById = new Map<string, BuildProfile>();
+      for (const bp of this.opts.state.getEffectiveProfilesForBranch(branch)) profileById.set(bp.id, bp);
+
       const project = projectById.get(branch.projectId);
       const previewSlug = buildPreviewUrlForProject('', branch.branch, project, branch.projectId).previewSlug;
       if (!previewSlug) continue;

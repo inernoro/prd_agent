@@ -29,6 +29,22 @@ import { createExecutorRouter } from '../../src/executor/routes.js';
 import type { CdsConfig, BranchEntry } from '../../src/types.js';
 import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
 
+// Source contract for the building-status timing fix (Bugbot "Executor deploy skips building status"):
+// the worker must set entry.status='building' BEFORE the pre-pull orphan teardown, so heartbeats don't
+// sync a stale running/idle onto master during the teardown+pull window. Asserted at source level because
+// the intermediate state is not observable through the synchronous test deploy.
+describe('Executor /exec/deploy: building status set before pre-pull teardown (source contract)', () => {
+  it("sets entry.status='building' before the orphan teardown / pull", () => {
+    const src = fs.readFileSync(path.resolve(process.cwd(), 'src/executor/routes.ts'), 'utf8');
+    const buildingIdx = src.indexOf("// 进入部署窗口立即把 worker 分支态钉成 building");
+    const teardownIdx = src.indexOf('const payloadProfileIds = new Set(profilesData.map');
+    const pullIdx = src.indexOf("正在拉取最新代码");
+    expect(buildingIdx).toBeGreaterThan(0);
+    expect(buildingIdx).toBeLessThan(teardownIdx);
+    expect(teardownIdx).toBeLessThan(pullIdx);
+  });
+});
+
 function makeConfig(tmpDir: string): CdsConfig {
   return {
     repoRoot: tmpDir,

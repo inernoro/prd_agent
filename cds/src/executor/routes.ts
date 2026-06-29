@@ -142,6 +142,13 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
         sendEvent('step', { step: 'worktree', status: 'done', title: '工作树已创建' });
       }
 
+      // 进入部署窗口立即把 worker 分支态钉成 building（Bugbot「Executor deploy skips building status」）：
+      // 孤儿收敛 + pull 都在 status=building 之前发生，原先 building 只在 pull 成功后才设，这段窗口里 worker
+      // 副本仍是上一轮的 running/idle，心跳会把它同步到 master、覆盖 master 派发时钉的 building，UI 在大半个
+      // 部署期看不出「构建中」。在拆容器/pull 之前就钉 building，让心跳同步过去的也是 building。
+      entry.status = 'building';
+      stateService.save();
+
       // 期望清单收敛必须在 pull 之前（Codex P2「Run executor cleanup before git pull」）：清空/移除额外服务
       // （payload 里没有的 service）的容器拆除不依赖最新代码；若放在 pull 之后，分支被上游删除或 git 瞬时失败会
       // 走 catch 直接报错，master 已保存新的（空/缩减）期望清单，而 worker 上被移除的旧容器仍在跑（ghost）。
