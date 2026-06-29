@@ -325,7 +325,7 @@ function SegmentPills({
 // ─── Main Page ───
 
 /** 单站点在当前作用域下的操作能力（团队作用域按角色 + 是否站点创建者解析；个人作用域全开） */
-interface SiteCaps {
+export interface SiteCaps {
   canEdit: boolean;
   canDelete: boolean;
   canShare: boolean;
@@ -445,7 +445,7 @@ export default function WebPagesPage() {
       canEdit: isOwner || canEditInWebHosting(myWebHostingRole),
       canShare: isOwner || canShareInWebHosting(myWebHostingRole),
       canDelete: isOwner || canDeleteInWebHosting(myWebHostingRole),
-      canSetVisibility: isOwner, // 「设为公开」= SetVisibility，后端仅站点创建者可调
+      canSetVisibility: isOwner, // 公开状态管理仅站点创建者可调
     };
   }, [teamScope.scope, currentUserId, myWebHostingRole]);
 
@@ -761,6 +761,7 @@ export default function WebPagesPage() {
             onDelete={() => handleDelete(site.id)}
             onShare={() => handleShare(site.id)}
             onQrCode={() => setQrSite(site)}
+            onTogglePublic={() => handleMakePublic(site)}
             onComments={() => setCommentSite(site)}
           />
         ))}
@@ -776,7 +777,7 @@ export default function WebPagesPage() {
           'radial-gradient(ellipse 70% 40% at 50% -10%, rgba(99,102,241,0.14) 0%, transparent 55%), linear-gradient(180deg, #20212a 0%, #181a22 480px, #16181f 100%)',
       }}
     >
-      {/* 右侧投放面板：可拖动 + 可收起，拖站点卡片到槽位即可公开/分享/删除 */}
+      {/* 右侧投放面板：可拖动 + 可收起，拖站点卡片到槽位即可分享/删除 */}
       <ShareDock
         mime={WEB_PAGE_MIME}
         title="投放面板"
@@ -857,24 +858,6 @@ export default function WebPagesPage() {
           },
         }}
         slots={[
-          {
-            key: 'public',
-            icon: <Globe size={18} />,
-            label: '公开',
-            hint: '任何人可在 /u/主页查看',
-            tone: 'sky',
-            onDrop: (id) => {
-              const site = sites.find(s => s.id === id);
-              if (site) handleMakePublic(site);
-            },
-            // 读心：拖已公开的站点过来 → 槽位提示「取消公开」（onDrop 仍走 handleMakePublic，内部按当前状态翻转）
-            resolve: (id) => {
-              const site = sites.find(s => s.id === id);
-              return site?.visibility === 'public'
-                ? { label: '取消公开', icon: <Lock size={18} />, hint: '改回私有', tone: 'rose' }
-                : null;
-            },
-          },
           {
             key: 'share',
             icon: <Share2 size={18} />,
@@ -1965,7 +1948,7 @@ function TransferToLibraryDialog({ site, onClose }: { site: HostedSite; onClose:
   );
 }
 
-function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSelect, onTogglePublic, onEdit, onDelete, onShare, onQrCode, onTransferToLibrary, onReplaceFile, onViewers, onMove, onComments }: {
+export function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSelect, onTogglePublic, onEdit, onDelete, onShare, onQrCode, onTransferToLibrary, onReplaceFile, onViewers, onMove, onComments }: {
   site: HostedSite;
   selected: boolean;
   fresh?: boolean;
@@ -2090,36 +2073,37 @@ function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSelect, on
           />
 
           <div className="absolute left-3 top-3 z-20 flex items-center gap-1.5">
-            {/* 公开状态按钮固定在左上：私有态"设为公开"，公开态"公开"（悬浮变"取消公开"），位置不跳。
-                设为公开 = SetVisibility，仅站点创建者可调；团队里非创建者只读展示公开角标。 */}
-            {!c.canSetVisibility ? (
-              isPublic ? (
+            {/* 公开态展示状态并允许创建者取消公开；私有态把原公开快捷位改为高频分享入口。 */}
+            {isPublic ? (
+              c.canSetVisibility ? (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onTogglePublic(); }}
+                  className="group/pub inline-flex h-7 cursor-pointer items-center gap-1 rounded-full bg-sky-500/32 px-2.5 text-[11px] font-semibold text-sky-50 shadow-md backdrop-blur-md transition-colors hover:bg-rose-500/45 hover:text-rose-50"
+                  title="点击取消公开"
+                >
+                  <Globe size={12} className="inline-block group-hover/pub:hidden" />
+                  <Lock size={12} className="hidden group-hover/pub:inline-block" />
+                  <span className="group-hover/pub:hidden">公开</span>
+                  <span className="hidden group-hover/pub:inline-block">取消公开</span>
+                </button>
+              ) : (
                 <span className="inline-flex h-7 items-center gap-1 rounded-full bg-sky-500/25 px-2.5 text-[11px] font-semibold text-sky-50 shadow-md backdrop-blur-md">
                   <Globe size={12} /> 公开
                 </span>
-              ) : null
-            ) : isPublic ? (
+              )
+            ) : c.canShare ? (
               <button
                 type="button"
-                onClick={(e) => { e.stopPropagation(); onTogglePublic(); }}
-                className="group/pub inline-flex h-7 cursor-pointer items-center gap-1 rounded-full bg-sky-500/32 px-2.5 text-[11px] font-semibold text-sky-50 shadow-md backdrop-blur-md transition-colors hover:bg-rose-500/45 hover:text-rose-50"
-                title="点击取消公开"
+                onClick={(e) => { e.stopPropagation(); onShare(); }}
+                className="inline-flex h-7 cursor-pointer items-center gap-1 rounded-full bg-violet-500/30 px-2.5 text-[11px] font-semibold text-violet-50 shadow-md backdrop-blur-md transition-colors hover:bg-violet-500/45"
+                title="分享"
+                aria-label="分享"
               >
-                <Globe size={12} className="inline-block group-hover/pub:hidden" />
-                <Lock size={12} className="hidden group-hover/pub:inline-block" />
-                <span className="group-hover/pub:hidden">公开</span>
-                <span className="hidden group-hover/pub:inline-block">取消公开</span>
+                <Share2 size={12} />
+                分享
               </button>
-            ) : (
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); onTogglePublic(); }}
-                className="inline-flex h-7 cursor-pointer items-center gap-1 rounded-full bg-black/42 px-2.5 text-[11px] font-semibold text-white/90 shadow-md backdrop-blur-md transition-colors hover:bg-black/58"
-                title="设为公开"
-              >
-                <Globe size={12} /> 设为公开
-              </button>
-            )}
+            ) : null}
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onSelect(); }}
@@ -2156,6 +2140,9 @@ function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSelect, on
               )
             )}
             <IconAction icon={<QrCode size={12} />} label="二维码" onClick={onQrCode} />
+            {!isPublic && c.canSetVisibility && (
+              <IconAction icon={<Globe size={12} />} label="发布到公开页" color="#7dd3fc" onClick={onTogglePublic} />
+            )}
             {isPublic && (
               <IconAction
                 icon={<BookOpen size={12} />}
@@ -2275,7 +2262,7 @@ function IconAction({
 
 // ─── List View ───
 
-function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete, onShare, onQrCode, onComments }: {
+function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete, onShare, onQrCode, onTogglePublic, onComments }: {
   site: HostedSite;
   selected: boolean;
   shared?: boolean;
@@ -2285,6 +2272,7 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
   onDelete: () => void;
   onShare: () => void;
   onQrCode: () => void;
+  onTogglePublic: () => void;
   onComments?: () => void;
 }) {
   const c = caps ?? { canEdit: true, canDelete: true, canShare: true, canSetVisibility: true };
@@ -2376,6 +2364,11 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
         <button onClick={handleVisit} className="p-1 rounded hover:bg-[var(--bg-hover)]">
           <ExternalLink size={14} style={{ color: 'var(--text-muted)' }} />
         </button>
+        {!isPublic && c.canSetVisibility && (
+          <button onClick={onTogglePublic} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="发布到公开页" aria-label="发布到公开页">
+            <Globe size={14} style={{ color: '#7dd3fc' }} />
+          </button>
+        )}
         {c.canShare && (
           shared ? (
             <button onClick={onShare} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="分享管理">
