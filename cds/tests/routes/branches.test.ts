@@ -629,6 +629,27 @@ describe('Branch Routes', () => {
       }
     });
 
+    it('preserves + validates extra-service entrypoint override (Codex P2)', async () => {
+      seedBranch('b1');
+      // empty string = clear the image ENTRYPOINT (container.ts → --entrypoint="")
+      const ok = await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80, entrypoint: '' }],
+      });
+      expect(ok.status).toBe(200);
+      expect(stateService.getBranch('b1')!.extraProfiles![0].entrypoint).toBe('');
+      // a single-token executable path is preserved
+      const ok2 = await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80, entrypoint: '/usr/local/bin/start.sh' }],
+      });
+      expect(ok2.status).toBe(200);
+      expect(stateService.getBranch('b1')!.extraProfiles![0].entrypoint).toBe('/usr/local/bin/start.sh');
+      // spaces / shell metacharacters are rejected at the boundary
+      const bad = await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80, entrypoint: 'sh -c "rm -rf /"' }],
+      });
+      expect(bad.status).toBe(400);
+    });
+
     it('strips env mask sentinels on PUT: reuses the prior real value, drops sentinels with no prior (Bugbot Medium)', async () => {
       seedBranch('b1');
       // First PUT establishes a real secret value for SECRET_KEY.
@@ -1436,10 +1457,14 @@ describe('Branch Routes', () => {
       const runStarted = new Promise<void>((resolve) => { markRunStarted = resolve; });
       const originalExec = mock.exec.bind(mock);
       mock.exec = async (command, options) => {
-        if (command.includes('docker run -d') && command.includes('--name cds-cross-cleanup-busy-api')) {
+        // Block the deploy at its OWN pre-pull orphan removal of `foreign` (deploy now reconciles the
+        // desired profile set before git pull — Codex P2). At this point the deploy holds the branch
+        // lease and `foreign` is still in entry.services (removal awaiting), so the cross-project sweep
+        // must observe the active operation and skip — the realistic busy-skip window.
+        if (command.includes('docker stop cds-cross-cleanup-busy-foreign')) {
           markRunStarted();
           await runRelease;
-          return { stdout: 'cid-cross-cleanup-busy', stderr: '', exitCode: 0 };
+          return { stdout: 'cds-cross-cleanup-busy-foreign', stderr: '', exitCode: 0 };
         }
         return originalExec(command, options);
       };
@@ -1470,6 +1495,52 @@ describe('Branch Routes', () => {
       }
       const deploy = await deployPromise;
       expect(deploy.status).toBe(200);
+    });
+
+    it('removes orphan services BEFORE the pull so a later pull failure cannot leave ghosts (Codex P2)', async () => {
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api', name: 'API', dockerImage: 'node', command: 'node server.js', workDir: '.', containerPort: 3000,
+      });
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'orphan-prepull',
+        projectId: 'default',
+        branch: 'feature/orphan-prepull',
+        worktreePath: path.join(tmpDir, 'worktrees', 'orphan-prepull'),
+        status: 'running',
+        createdAt: now,
+        services: {
+          api: { profileId: 'api', containerName: 'cds-orphan-prepull-api', hostPort: 10001, status: 'running' },
+          // demo-extra is NOT in the desired profile set → an orphan to be torn down.
+          'demo-extra': { profileId: 'demo-extra', containerName: 'cds-orphan-prepull-demo-extra', hostPort: 10002, status: 'running' },
+        },
+      });
+      stateService.save();
+
+      // Fail the pull (git reset --hard) for THIS branch's worktree — a fallible step AFTER the
+      // pre-pull orphan cleanup. If cleanup ran late (in finalize), the failed pull would skip it and
+      // leave demo-extra as a ghost.
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.includes('git reset --hard') && command.includes('orphan-prepull')) {
+          throw new Error('simulated pull failure');
+        }
+        return originalExec(command, options);
+      };
+      try {
+        const res = await request(server, 'POST', '/api/branches/orphan-prepull/deploy');
+        expect(res.status).toBe(200); // SSE; the failure is an in-stream error event
+      } finally {
+        mock.exec = originalExec;
+      }
+
+      // Orphan torn down pre-pull → no ghost: container removed + state row dropped.
+      expect(stateService.getBranch('orphan-prepull')?.services['demo-extra']).toBeUndefined();
+      expect(mock.commands.some((c) => c.includes('docker rm cds-orphan-prepull-demo-extra'))).toBe(true);
+      // The still-desired api service is untouched by orphan cleanup.
+      expect(stateService.getBranch('orphan-prepull')?.services['api']).toBeTruthy();
+      // The deploy itself ends in error because the pull failed.
+      expect(stateService.getBranch('orphan-prepull')?.status).toBe('error');
     });
   });
 

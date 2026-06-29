@@ -10415,6 +10415,46 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // thrown (so GitHub connectivity issues don't block the deploy).
       await checkRunRunner.ensureOpen(entry);
 
+      // 期望清单收敛上移到 pull 之前（Codex P2「Move local orphan cleanup before fallible deploy steps」）：
+      // 「服务从期望清单移除」（额外服务被清 / 项目 profile 被删）的容器拆除不依赖最新代码。原先只在
+      // deploy-finalize（pull + infra + db-init + 整个构建循环之后）才拆孤儿，若这些 fallible 步骤在
+      // PUT /extra-services?redeploy=1 已落库缩短后的 extraProfiles 之后中途 abort，被移除服务的容器与
+      // entry.services 行就留在原地、却没有任何有效 profile 元数据（pathPrefixes 等路由信息消失而旧容器仍跑）。
+      // executor 路径已把这步上移到 git pull 之前；本地路径同款前移。profiles 非空已由上方 profiles.length===0
+      // 分支保证（空清单走专门的就地清空路径），不会误删全部。fencing-safe：remove 前后各 assertCurrent。
+      {
+        const desiredIds = new Set(profiles.map((p) => p.id));
+        const orphans = Object.entries(entry.services).filter(([sid]) => !desiredIds.has(sid));
+        if (orphans.length > 0) {
+          const oActor = resolveActorFromRequest(req);
+          const oTrigger = triggerFromRequest(req);
+          for (const [sid, svc] of orphans) {
+            assertBranchOperationCurrent(branchOperationLease, `pre-pull-remove-orphan before ${sid}`);
+            logEvent({
+              step: 'remove-orphan-service', status: 'running',
+              title: `服务 "${sid}" 已从期望清单移除，正在下掉容器…`,
+              detail: { profileId: sid, status: svc.status, container: svc.containerName },
+              timestamp: new Date().toISOString(),
+            });
+            try {
+              await containerService.remove(svc.containerName, {
+                projectId: entry.projectId, branchId: entry.id, profileId: sid,
+                requestId: requestId || null, operationId: branchOperationLease?.operationId || null,
+                actor: oActor, trigger: oTrigger,
+                operation: 'deploy-remove-orphan-service', source: 'api.deploy-branch',
+                reason: '服务已从期望清单移除(额外服务被清/项目 profile 被删)',
+              });
+            } catch (err) {
+              logEvent({ step: 'remove-orphan-service', status: 'warning', title: `服务 "${sid}" 容器移除失败(忽略,仍清条目): ${(err as Error).message}`, timestamp: new Date().toISOString() });
+            }
+            assertBranchOperationCurrent(branchOperationLease, `pre-pull-remove-orphan after ${sid}`);
+            delete entry.services[sid];
+            stateService.save();
+            logEvent({ step: 'remove-orphan-service', status: 'done', title: `服务 "${sid}" 已下掉（已从期望清单移除）`, timestamp: new Date().toISOString() });
+          }
+        }
+      }
+
       // Pull latest code
       logEvent({ step: 'pull', status: 'running', title: '正在拉取最新代码...', timestamp: new Date().toISOString() });
       await checkRunRunner.progress(entry, {
@@ -13034,6 +13074,24 @@ export function createBranchRouter(deps: RouterDeps): Router {
         if (o.noHttp === true) out.noHttp = true;
         return Object.keys(out).length > 0 ? out : undefined;
       })();
+      // entrypoint 覆盖（Codex P2「Preserve extra-service entrypoint overrides」）：白名单此前止于
+      // prebuiltImage,丢弃了 BuildProfile.entrypoint,带 wrapper entrypoint 的镜像（典型 DB/CRM 镜像
+      // 自跑初始化脚本)无法清空/覆盖入口 → 运行期抢跑失败。这里予以保留 + 校验:空串 ""=清空 image
+      // ENTRYPOINT(container.ts 走 --entrypoint=""),否则必须是单 token 可执行名/路径(Docker --entrypoint
+      // 只接单 token;container.ts 另对含空格者告警跳过、并对值 JSON.stringify 兜底 shell 安全)。
+      let entrypoint: string | undefined;
+      if (raw?.entrypoint !== undefined) {
+        if (typeof raw.entrypoint !== 'string') {
+          res.status(400).json({ error: `额外服务 "${id}" 的 entrypoint 必须是字符串(""=清空 image ENTRYPOINT)` });
+          return;
+        }
+        const ep = raw.entrypoint.trim();
+        if (ep !== '' && (/\s/.test(ep) || !/^\/?[a-zA-Z0-9._/-]+$/.test(ep))) {
+          res.status(400).json({ error: `额外服务 "${id}" 的 entrypoint 非法(须为单个可执行名/路径,无空格与 shell 元字符;""=清空 image ENTRYPOINT)` });
+          return;
+        }
+        entrypoint = ep;
+      }
       seen.add(id);
       sanitized.push({
         id,
@@ -13041,6 +13099,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         dockerImage,
         workDir,
         ...(containerWorkDir ? { containerWorkDir } : {}),
+        ...(entrypoint !== undefined ? { entrypoint } : {}),
         command: String(raw?.command || ''),
         containerPort,
         projectId: entry.projectId || 'default',
