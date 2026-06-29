@@ -4,6 +4,7 @@ using MongoDB.Driver;
 using Microsoft.Extensions.Configuration;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Services;
+using PrdAgent.LlmGateway;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway;
@@ -229,182 +230,11 @@ var jsonOpts = new JsonSerializerOptions
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
 };
 
-// 共享密钥门（内部 M2M，不走 JWT）：/gw/v1/* 除 healthz 外必须带 X-Gateway-Key。
+// 密钥门 + 全部 /gw/v1/* 端点由可复用扩展装配（SSOT：集成自测 host 复用同一份映射，
+// 见 GatewayHttpEndpoints.cs / doc/design.llm-gateway-physical-isolation.md）。
 var gwApiKey = builder.Configuration["LlmGwServe:ApiKey"] ?? "dev-llmgw-serve-key";
-app.Use(async (context, next) =>
-{
-    var path = context.Request.Path.Value ?? string.Empty;
-    if (path.StartsWith("/gw/v1", StringComparison.OrdinalIgnoreCase)
-        && !path.StartsWith("/gw/v1/healthz", StringComparison.OrdinalIgnoreCase))
-    {
-        var provided = context.Request.Headers["X-Gateway-Key"].FirstOrDefault();
-        if (!string.Equals(provided, gwApiKey, StringComparison.Ordinal))
-        {
-            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            await context.Response.WriteAsync("unauthorized");
-            return;
-        }
-    }
-    await next();
-});
-
 var gitCommit = Environment.GetEnvironmentVariable("GIT_COMMIT") ?? string.Empty;
 
-// 把 GatewayRequestContext 转成 LlmRequestContext 并打开作用域。
-// LlmRequestContext 必填位置参数：RequestId / GroupId / SessionId / UserId / ViewRole /
-//   DocumentChars / DocumentHash / SystemPromptRedacted，随后是可选 RequestType / AppCallerCode。
-static IDisposable OpenContextScope(
-    ILLMRequestContextAccessor accessor,
-    GatewayRequestContext? ctx,
-    string requestType,
-    string appCallerCode)
-{
-    return accessor.BeginScope(new PrdAgent.Core.Interfaces.LlmRequestContext(
-        RequestId: ctx?.RequestId ?? Guid.NewGuid().ToString("N"),
-        GroupId: ctx?.GroupId,
-        SessionId: ctx?.SessionId,
-        UserId: ctx?.UserId,
-        ViewRole: ctx?.ViewRole,
-        DocumentChars: ctx?.DocumentChars,
-        DocumentHash: ctx?.DocumentHash,
-        SystemPromptRedacted: null,
-        RequestType: requestType,
-        AppCallerCode: appCallerCode));
-}
-
-// ───────────────────────── 端点 ─────────────────────────
-
-app.MapGet("/gw/v1/healthz", () => Results.Json(new
-{
-    status = "ok",
-    commit = gitCommit,
-    time = DateTime.UtcNow.ToString("o"),
-}));
-
-// 预解析模型调度结果（不发送请求）。
-app.MapPost("/gw/v1/resolve", async (
-    ResolveRequestDto body,
-    PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway) =>
-{
-    var resolution = await gateway.ResolveModelAsync(
-        body.AppCallerCode, body.ModelType, body.ExpectedModel, CancellationToken.None);
-    return Results.Json(resolution, jsonOpts);
-});
-
-// 非流式发送。
-app.MapPost("/gw/v1/send", async (
-    GatewayRequest request,
-    PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
-    ILLMRequestContextAccessor accessor) =>
-{
-    using var _ = OpenContextScope(accessor, request.Context, request.ModelType, request.AppCallerCode);
-    var response = await gateway.SendAsync(request, CancellationToken.None);
-    return Results.Json(response, jsonOpts);
-});
-
-// 流式发送（SSE）。server-authority：客户端断开不取消网关任务，向网关传 CancellationToken.None，
-// 仅在写失败时静默 break。
-app.MapPost("/gw/v1/stream", async (
-    HttpContext http,
-    GatewayRequest request,
-    PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
-    ILLMRequestContextAccessor accessor) =>
-{
-    http.Response.Headers.ContentType = "text/event-stream";
-    http.Response.Headers.CacheControl = "no-cache";
-    http.Response.Headers["X-Accel-Buffering"] = "no";
-
-    using var _ = OpenContextScope(accessor, request.Context, request.ModelType, request.AppCallerCode);
-    try
-    {
-        await foreach (var chunk in gateway.StreamAsync(request, CancellationToken.None))
-        {
-            var data = "data: " + JsonSerializer.Serialize(chunk, jsonOpts) + "\n\n";
-            await http.Response.WriteAsync(data);
-            await http.Response.Body.FlushAsync();
-        }
-    }
-    catch (OperationCanceledException)
-    {
-        // 客户端断开或写中断：静默停止写循环（不向网关传递取消）。
-    }
-    catch (ObjectDisposedException)
-    {
-        // 响应已释放：静默停止。
-    }
-});
-
-// 服务端解析后发原始 HTTP（API Key 解析保留在服务端）。
-app.MapPost("/gw/v1/raw", async (
-    GatewayRawRequest request,
-    PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
-    ILLMRequestContextAccessor accessor) =>
-{
-    using var _ = OpenContextScope(accessor, request.Context, request.ModelType, request.AppCallerCode);
-    var res = await gateway.ResolveModelAsync(
-        request.AppCallerCode, request.ModelType, request.ExpectedModel, CancellationToken.None);
-    var raw = await gateway.SendRawWithResolutionAsync(request, res, CancellationToken.None);
-    return Results.Json(raw, jsonOpts);
-});
-
-// 可用模型池列表。
-app.MapGet("/gw/v1/pools", async (
-    string appCallerCode,
-    string modelType,
-    PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway) =>
-{
-    var pools = await gateway.GetAvailablePoolsAsync(appCallerCode, modelType, CancellationToken.None);
-    return Results.Json(pools, jsonOpts);
-});
-
-// ILLMClient 流式生成（SSE）。供 MAP 侧 HttpLlmClient（CreateClient 路径）跨进程调用。
-// CreateClient 返回的客户端内部自管 LlmRequestContext，本端点无需额外开作用域。
-// server-authority：客户端断开不取消网关任务，向网关传 CancellationToken.None，仅写失败时静默 break。
-app.MapPost("/gw/v1/client-stream", async (
-    HttpContext http,
-    ClientStreamRequestDto body,
-    PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway) =>
-{
-    http.Response.Headers.ContentType = "text/event-stream";
-    http.Response.Headers.CacheControl = "no-cache";
-    http.Response.Headers["X-Accel-Buffering"] = "no";
-
-    var client = gateway.CreateClient(
-        body.AppCallerCode, body.ModelType, body.MaxTokens, body.Temperature, body.IncludeThinking, body.ExpectedModel);
-
-    try
-    {
-        await foreach (var chunk in client.StreamGenerateAsync(body.SystemPrompt, body.Messages, body.EnablePromptCache, CancellationToken.None))
-        {
-            var data = "data: " + JsonSerializer.Serialize(chunk, jsonOpts) + "\n\n";
-            await http.Response.WriteAsync(data);
-            await http.Response.Body.FlushAsync();
-        }
-    }
-    catch (OperationCanceledException)
-    {
-        // 客户端断开或写中断：静默停止写循环（不向网关传递取消）。
-    }
-    catch (ObjectDisposedException)
-    {
-        // 响应已释放：静默停止。
-    }
-});
+app.MapGatewayServingEndpoints(jsonOpts, gwApiKey, gitCommit);
 
 app.Run();
-
-// /gw/v1/resolve 的请求体 DTO（PascalCase）。
-internal sealed record ResolveRequestDto(string AppCallerCode, string ModelType, string? ExpectedModel);
-
-// /gw/v1/client-stream 的请求体 DTO（PascalCase）。Messages 用 Core 的 LLMMessage，
-// 与 MAP 侧 HttpLlmClient 序列化口径一致。
-internal sealed record ClientStreamRequestDto(
-    string AppCallerCode,
-    string ModelType,
-    int MaxTokens,
-    double Temperature,
-    bool IncludeThinking,
-    string? ExpectedModel,
-    string SystemPrompt,
-    List<PrdAgent.Core.Interfaces.LLMMessage> Messages,
-    bool EnablePromptCache);
