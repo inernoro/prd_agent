@@ -427,6 +427,40 @@ describe('Executor /exec/deploy', () => {
     expect(mock.commands.some(c => /docker rm/.test(c) && c.includes('cds-realproj-empty-clear-extra-api'))).toBe(true);
   });
 
+  it('treats an OMITTED profiles field as an empty teardown, not an opaque error (Bugbot Low: missing profiles guard)', async () => {
+    // Older masters / manual calls may omit `profiles` entirely. profilesData.map / .length must not throw —
+    // it should normalize to [] and run the same empty-teardown path as profiles: [].
+    const now = new Date().toISOString();
+    stateService.addBranch({
+      id: 'realproj-omit-profiles',
+      projectId: 'realproj',
+      branch: 'feature/omit-profiles',
+      worktreePath: path.join(tmpDir, 'worktrees', 'realproj', 'realproj-omit-profiles'),
+      services: {
+        'extra-api': { profileId: 'extra-api', containerName: 'cds-realproj-omit-profiles-extra-api', hostPort: 10008, status: 'running' },
+      },
+      status: 'running',
+      createdAt: now,
+    });
+    stateService.addProject({ id: 'realproj', slug: 'realproj', name: 'Real', kind: 'git', createdAt: now, updatedAt: now });
+    mock.commands.length = 0;
+
+    // NOTE: no `profiles` field in the body at all.
+    const result = await postSse(server, '/exec/deploy', {
+      branchId: 'realproj-omit-profiles',
+      branchName: 'feature/omit-profiles',
+      projectId: 'realproj',
+      env: {},
+    });
+
+    expect(result.status).toBe(200);
+    expect(result.events.some(e => e.event === 'error')).toBe(false);
+    expect(result.events.some(e => e.event === 'complete' && e.data?.message === '已清空所有服务')).toBe(true);
+    const entry = stateService.getBranch('realproj-omit-profiles');
+    expect(entry!.services['extra-api']).toBeUndefined();
+    expect(entry!.status).toBe('idle');
+  });
+
   it('threads operationId/requestId from master into executor docker run events', async () => {
     const result = await postSse(server, '/exec/deploy', {
       branchId: 'realproj-op-trace',

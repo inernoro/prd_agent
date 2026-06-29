@@ -62,7 +62,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
 
   // ── POST /exec/deploy — deploy a branch (create worktree + build + run) ──
   router.post('/deploy', async (req, res) => {
-    const { branchId, branchName, projectId, profiles: profilesData, env: envOverrides, requestId, operationId, actor, trigger } = req.body as {
+    const { branchId, branchName, projectId, profiles: profilesRaw, env: envOverrides, requestId, operationId, actor, trigger } = req.body as {
       branchId: string;
       branchName: string;
       // P4 follow-up (2026-04-24): master now passes projectId so the
@@ -78,6 +78,10 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       actor?: string | null;
       trigger?: string | null;
     };
+    // 缺省 profiles 视为空清单（Bugbot Low「Executor deploy missing profiles guard」）：旧 master 或手工
+    // 调用可能省略 profiles 字段,profilesData.map / .length 直接 throw → 把一次合法的「空清单 teardown」
+    // 变成不透明的部署错误。归一为 []，让下方孤儿收敛 + 空清单落 idle 的路径正常走。
+    const profilesData = Array.isArray(profilesRaw) ? profilesRaw : [];
 
     // SSE response
     res.writeHead(200, {
