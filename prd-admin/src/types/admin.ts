@@ -24,6 +24,10 @@ export type AdminUser = {
   lockoutRemainingSeconds?: number;
   /** 系统角色 key（用于权限管理） */
   systemRoleKey?: string | null;
+  miduoSsoSubjectType?: string | null;
+  miduoSsoSubjectMasked?: string | null;
+  miduoSsoDisplayNameSnapshot?: string | null;
+  miduoSsoBoundAt?: string | null;
 };
 
 export type PagedResult<T> = {

@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowRight, Sparkles, Terminal, Lock, User as UserIcon, Eye, EyeOff } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
-import { getAdminAuthzMe, login, resetPassword } from '@/services';
+import { getAdminAuthzMe, getSsoOptions, login, loginWithMiduoPlanetToken, resetPassword } from '@/services';
+import type { SsoLoginOption } from '@/services/contracts/auth';
 import { StaticBackdrop } from '@/pages/home/components/StaticBackdrop';
 import { Reveal } from '@/pages/home/components/Reveal';
 import { HERO_GRADIENT } from '@/pages/home/sections/HeroSection';
@@ -26,6 +27,20 @@ const passwordRules: Array<{ key: string; label: string; test: (pwd: string) => 
   { key: 'letter', label: '包含字母', test: (pwd) => /[a-zA-Z]/.test(pwd) },
   { key: 'digit', label: '包含数字', test: (pwd) => /\d/.test(pwd) },
 ];
+
+const MIDUO_SSO_STATE_KEY = 'prd-miduo-sso-state';
+
+function createSsoState() {
+  const bytes = new Uint8Array(16);
+  if (window.crypto?.getRandomValues) {
+    window.crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i += 1) {
+      bytes[i] = Math.floor(Math.random() * 256);
+    }
+  }
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -56,6 +71,8 @@ export default function LoginPage() {
     }
   });
   const [error, setError] = useState<string | null>(null);
+  const [ssoOptions, setSsoOptions] = useState<SsoLoginOption[]>([]);
+  const [ssoLoading, setSsoLoading] = useState(false);
 
   // 首次登录重置密码相关状态
   const [showResetPassword, setShowResetPassword] = useState(false);
@@ -76,6 +93,66 @@ export default function LoginPage() {
     if (isAuthed) navigate(returnUrl, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthed, navigate]);
+
+  useEffect(() => {
+    let alive = true;
+    getSsoOptions()
+      .then((res) => {
+        if (!alive) return;
+        setSsoOptions(res.success ? res.data.items : []);
+      })
+      .catch(() => {
+        if (alive) setSsoOptions([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const provider = searchParams.get('ssoProvider');
+    const token = searchParams.get('token') || searchParams.get('ssoToken') || searchParams.get('miduoToken');
+    const appCode = searchParams.get('app_code') || searchParams.get('appCode');
+    const source = searchParams.get('source');
+    const isMiduoCallback = provider === 'miduo-planet' || Boolean(token && (appCode || source === 'bridge'));
+    if (!isMiduoCallback || !token || ssoLoading) return;
+
+    let alive = true;
+    setSsoLoading(true);
+    setError(null);
+
+    const state = searchParams.get('state');
+    if (state) {
+      const expectedState = sessionStorage.getItem(MIDUO_SSO_STATE_KEY);
+      sessionStorage.removeItem(MIDUO_SSO_STATE_KEY);
+      if (!expectedState || expectedState !== state) {
+        setError('米多星球登录状态校验失败，请重新发起登录');
+        setSsoLoading(false);
+        return;
+      }
+    }
+
+    loginWithMiduoPlanetToken(token)
+      .then(async (res) => {
+        if (!alive) return;
+        if (!res.success) {
+          setError(res.error?.message || '米多星球登录失败');
+          return;
+        }
+        await completeLogin(res.data.user, res.data.accessToken, res.data.refreshToken, res.data.sessionKey);
+      })
+      .catch((e) => {
+        if (alive) setError(e instanceof Error ? e.message : '米多星球登录失败');
+      })
+      .finally(() => {
+        if (alive) setSsoLoading(false);
+      });
+
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   const onSubmit = async () => {
     if (!canSubmit || loading) return;
@@ -219,6 +296,9 @@ export default function LoginPage() {
               loading={loading}
               canSubmit={canSubmit}
               rememberUsername={rememberUsername}
+              ssoOptions={ssoOptions}
+              ssoLoading={ssoLoading}
+              returnUrl={returnUrl}
               onUsernameChange={setUsername}
               onPasswordChange={setPassword}
               onRememberChange={setRememberUsername}
@@ -584,6 +664,9 @@ interface LoginCardProps {
   loading: boolean;
   canSubmit: boolean;
   rememberUsername: boolean;
+  ssoOptions: SsoLoginOption[];
+  ssoLoading: boolean;
+  returnUrl: string;
   onUsernameChange: (v: string) => void;
   onPasswordChange: (v: string) => void;
   onRememberChange: (v: boolean) => void;
@@ -597,6 +680,9 @@ function LoginCard({
   loading,
   canSubmit,
   rememberUsername,
+  ssoOptions,
+  ssoLoading,
+  returnUrl,
   onUsernameChange,
   onPasswordChange,
   onRememberChange,
@@ -604,6 +690,18 @@ function LoginCard({
 }: LoginCardProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [capsLockOn, setCapsLockOn] = useState(false);
+  const buildSsoHref = (option: SsoLoginOption) => {
+    if (!option.baseUrl || !option.appCode || !option.redirectUri) return '#';
+    const state = createSsoState();
+    sessionStorage.setItem(MIDUO_SSO_STATE_KEY, state);
+    const callback = new URL(option.redirectUri, window.location.origin);
+    callback.searchParams.set('returnUrl', returnUrl);
+    callback.searchParams.set('ssoProvider', option.provider);
+    const bridge = `/sso/bridge?appCode=${encodeURIComponent(option.appCode)}&redirect_uri=${encodeURIComponent(callback.toString())}&state=${encodeURIComponent(state)}`;
+    const url = new URL('/login', option.baseUrl);
+    url.searchParams.set('redirect', bridge);
+    return url.toString();
+  };
   return (
     <GlassCard>
       {/* Brand row */}
@@ -762,7 +860,38 @@ function LoginCard({
           </div>
         </Reveal>
 
-        <Reveal delay={440}>
+        {ssoOptions.length > 0 && (
+          <Reveal delay={400}>
+            <div className="grid gap-2">
+              <div
+                className="flex items-center gap-3 text-[11px] uppercase text-white/40"
+                style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.16em' }}
+              >
+                <span className="h-px flex-1 bg-white/10" />
+                <span>SSO</span>
+                <span className="h-px flex-1 bg-white/10" />
+              </div>
+              {ssoOptions.map((option) => {
+                const disabled = !option.baseUrl || !option.appCode || !option.redirectUri || ssoLoading;
+                return (
+                  <a
+                    key={option.provider}
+                    href={disabled ? undefined : buildSsoHref(option)}
+                    aria-disabled={disabled}
+                    title={disabled ? '未配置登录地址' : option.label}
+                    className="inline-flex h-11 items-center justify-center gap-2 rounded-full border border-white/12 bg-white/[0.04] px-4 text-[13.5px] font-medium text-white/82 transition-all hover:border-white/24 hover:bg-white/[0.07] aria-disabled:pointer-events-none aria-disabled:opacity-45"
+                    style={{ fontFamily: 'var(--font-display)' }}
+                  >
+                    <Lock className="h-4 w-4" />
+                    {ssoLoading ? '正在登录' : option.label}
+                  </a>
+                );
+              })}
+            </div>
+          </Reveal>
+        )}
+
+        <Reveal delay={ssoOptions.length > 0 ? 480 : 440}>
           <div
             className="mt-1 inline-flex items-center gap-2 text-[11.5px] text-white/45"
             style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.1em' }}

@@ -40,6 +40,14 @@ public class UserListItem
     public int LockoutRemainingSeconds { get; set; }
     /// <summary>系统角色 key（用于权限管理）</summary>
     public string? SystemRoleKey { get; set; }
+    /// <summary>米多星球 SSO 绑定类型</summary>
+    public string? MiduoSsoSubjectType { get; set; }
+    /// <summary>米多星球 SSO 绑定脱敏展示值</summary>
+    public string? MiduoSsoSubjectMasked { get; set; }
+    /// <summary>米多星球 SSO 绑定姓名快照</summary>
+    public string? MiduoSsoDisplayNameSnapshot { get; set; }
+    /// <summary>米多星球 SSO 绑定时间</summary>
+    public DateTime? MiduoSsoBoundAt { get; set; }
 
     // ── 统计信息（批量查询，用于列表展示） ──
 
@@ -76,6 +84,10 @@ public class UserDetailResponse
     public DateTime? LastActiveAt { get; set; }
     public bool IsLocked { get; set; }
     public int LockoutRemainingSeconds { get; set; }
+    public string? MiduoSsoSubjectType { get; set; }
+    public string? MiduoSsoSubjectMasked { get; set; }
+    public string? MiduoSsoDisplayNameSnapshot { get; set; }
+    public DateTime? MiduoSsoBoundAt { get; set; }
 }
 
 /// <summary>
@@ -278,4 +290,3 @@ public class StreamErrorEvent
     public string ErrorCode { get; set; } = string.Empty;
     public string ErrorMessage { get; set; } = string.Empty;
 }
-
