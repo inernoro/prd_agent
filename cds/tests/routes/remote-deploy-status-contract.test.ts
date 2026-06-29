@@ -54,11 +54,14 @@ describe('remote deploy complete: branch status realign contract', () => {
     expect(source).toContain('entry.services[pid] = {');
   });
 
-  it('finally falls a stuck building branch to error on a streamed remote error (Bugbot "Remote deploy error stuck building")', () => {
-    // A streamed `error` event sets proxyHasError + reconciles services but ③ status recompute is complete-only,
-    // leaving the dispatch-time 'building'. The finally must demote building→error + backfill errorMessage.
-    expect(source).toContain("if (proxyHasError && entry.status === 'building') {");
-    expect(source).toContain("entry.status = 'error';");
+  it('finally demotes stuck-building to error AND backfills a top-level errorMessage on any remote failure (Bugbot "stuck building" + "partial failure missing errorMessage")', () => {
+    // Two failure shapes must both end at {status: error, errorMessage: non-empty}:
+    //   - streamed `error` event leaves dispatch-time 'building' → demote to error
+    //   - `complete` with an error service sets status=error in ③ but no top-level errorMessage → backfill
+    expect(source).toContain('if (proxyHasError) {');
+    expect(source).toContain("if (entry.status === 'building') entry.status = 'error';");
+    // errorMessage backfilled from executor message OR per-service failure summary OR generic fallback.
+    expect(source).toContain('const failedSvcMsgs = Object.values(entry.services || {})');
     expect(source).toContain('entry.errorMessage = proxyErrorMessage');
   });
 

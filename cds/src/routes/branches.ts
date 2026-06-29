@@ -2876,14 +2876,24 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 收尾:remote 部署的 OperationLog 落库,与本地部署 (line 2724) 对齐
       opLog.finishedAt = new Date().toISOString();
       opLog.status = proxyHasError ? 'error' : 'completed';
-      // 流式 error 事件（executor 部署失败，如孤儿拆除后 git pull 失败）只置 proxyHasError、对账了 services，
-      // 但分支态重算 ③ 仅在 complete 跑，派发时钉的 'building' 没人改 → UI 卡死「构建中」直到下次心跳
-      // （Bugbot「Remote deploy error stuck building」）。这里兜底：失败且分支态仍停在过渡态（building/
-      // starting/restarting）时落 error + 回填 errorMessage，与本地 finalize 失败口径一致。catch 路径已显式
-      // 置 error，此处幂等不覆盖。
-      if (proxyHasError && entry.status === 'building') {
-        entry.status = 'error';
-        if (!entry.errorMessage) entry.errorMessage = proxyErrorMessage || '远端执行器部署失败';
+      // 失败收尾统一兜底（两类失败都要落到「error 态 + 有顶层 errorMessage」）：
+      //   1) 流式 error 事件（如孤儿拆除后 git pull 失败）：③ 仅 complete 跑，派发钉的 'building' 没人改 →
+      //      卡死「构建中」（Bugbot「Remote deploy error stuck building」）。这里把 building 落 error。
+      //   2) complete 但部分服务 error（无单独 error 事件）：③ 已把 entry.status 置 error，却没设顶层
+      //      errorMessage → 分支显示失败但原因空，详情只散落在 entry.services（Bugbot「Remote partial
+      //      failure missing errorMessage」）。这里补顶层 errorMessage。
+      // errorMessage 来源优先级：executor error 事件原因 → 失败服务的 per-service 汇总 → 通用兜底。
+      // catch 路径已显式置 error + errorMessage，`!entry.errorMessage` 幂等不覆盖。
+      if (proxyHasError) {
+        if (entry.status === 'building') entry.status = 'error';
+        if (!entry.errorMessage) {
+          const failedSvcMsgs = Object.values(entry.services || {})
+            .filter((s) => s.status === 'error')
+            .map((s) => `${s.profileId}: ${s.errorMessage || '启动失败'}`);
+          entry.errorMessage = proxyErrorMessage
+            || (failedSvcMsgs.length > 0 ? failedSvcMsgs.join('\n') : '')
+            || '远端执行器部署失败';
+        }
         stateService.save();
       }
       // 部署模式在 2593 是 build 前从全量 project profiles 取的，未必是实际跑的那个，也不含
