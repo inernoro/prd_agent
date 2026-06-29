@@ -445,7 +445,7 @@ export default function WebPagesPage() {
       canEdit: isOwner || canEditInWebHosting(myWebHostingRole),
       canShare: isOwner || canShareInWebHosting(myWebHostingRole),
       canDelete: isOwner || canDeleteInWebHosting(myWebHostingRole),
-      canSetVisibility: isOwner, // 「设为公开」= SetVisibility，后端仅站点创建者可调
+      canSetVisibility: isOwner, // 公开状态管理仅站点创建者可调
     };
   }, [teamScope.scope, currentUserId, myWebHostingRole]);
 
@@ -1965,7 +1965,7 @@ function TransferToLibraryDialog({ site, onClose }: { site: HostedSite; onClose:
   );
 }
 
-function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSelect, onTogglePublic, onEdit, onDelete, onShare, onQrCode, onTransferToLibrary, onReplaceFile, onViewers, onMove, onComments }: {
+export function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSelect, onTogglePublic, onEdit, onDelete, onShare, onQrCode, onTransferToLibrary, onReplaceFile, onViewers, onMove, onComments }: {
   site: HostedSite;
   selected: boolean;
   fresh?: boolean;
@@ -2090,8 +2090,7 @@ function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSelect, on
           />
 
           <div className="absolute left-3 top-3 z-20 flex items-center gap-1.5">
-            {/* 公开状态按钮固定在左上：私有态"设为公开"，公开态"公开"（悬浮变"取消公开"），位置不跳。
-                设为公开 = SetVisibility，仅站点创建者可调；团队里非创建者只读展示公开角标。 */}
+            {/* 公开态展示状态并允许创建者取消公开；私有态不展示入口，避免和常用分享动作混淆。 */}
             {!c.canSetVisibility ? (
               isPublic ? (
                 <span className="inline-flex h-7 items-center gap-1 rounded-full bg-sky-500/25 px-2.5 text-[11px] font-semibold text-sky-50 shadow-md backdrop-blur-md">
@@ -2110,16 +2109,7 @@ function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSelect, on
                 <span className="group-hover/pub:hidden">公开</span>
                 <span className="hidden group-hover/pub:inline-block">取消公开</span>
               </button>
-            ) : (
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); onTogglePublic(); }}
-                className="inline-flex h-7 cursor-pointer items-center gap-1 rounded-full bg-black/42 px-2.5 text-[11px] font-semibold text-white/90 shadow-md backdrop-blur-md transition-colors hover:bg-black/58"
-                title="设为公开"
-              >
-                <Globe size={12} /> 设为公开
-              </button>
-            )}
+            ) : null}
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onSelect(); }}
