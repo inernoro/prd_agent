@@ -1,0 +1,688 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { StateService } from '../../src/services/state.js';
+import { MockShellExecutor } from '../../src/services/shell-executor.js';
+import { ScheduledJobService } from '../../src/services/scheduled-job-service.js';
+import type { ExecOptions, ExecResult, IShellExecutor, Project, ScheduledJob } from '../../src/types.js';
+
+describe('ScheduledJobService', () => {
+  let tmpDir: string;
+  let stateService: StateService;
+  let shell: MockShellExecutor;
+  let service: ScheduledJobService;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-scheduled-job-'));
+    stateService = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+    stateService.load();
+    const project: Project = {
+      id: 'demo',
+      slug: 'demo',
+      name: 'Demo',
+      kind: 'git',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    stateService.addProject(project);
+    shell = new MockShellExecutor();
+    service = new ScheduledJobService({
+      stateService,
+      shell,
+      config: { masterPort: 9900, repoRoot: tmpDir },
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete process.env.CDS_TASK_SANDBOX_IMAGE;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('runs a command job and persists run history', async () => {
+    shell.addResponsePattern(/docker run[\s\S]*echo sync-ok/, () => ({ stdout: 'sync-ok\n', stderr: '', exitCode: 0 }));
+    const job: ScheduledJob = service.normalizeJob({
+      id: 'job_1',
+      projectId: 'demo',
+      name: '同步统计',
+      enabled: true,
+      schedule: { type: 'daily', timeOfDay: '02:00', timezone: 'Asia/Shanghai' },
+      target: { type: 'command', command: 'echo sync-ok' },
+      timeoutSeconds: 30,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    stateService.upsertScheduledJob(job);
+
+    const run = await service.runJob(job.id, 'manual');
+
+    expect(run.status).toBe('success');
+    expect(run.log).toContain('sync-ok');
+    expect(shell.commands).toHaveLength(1);
+    expect(shell.commands[0]).toContain('docker run --rm');
+    expect(shell.commands[0]).toContain('alpine:3');
+    expect(shell.commands[0]).toContain(path.join('.cds', 'task-sandboxes', 'job_1', 'work'));
+    expect(shell.commands[0]).toContain(':/workspace:rw');
+    expect(shell.commands[0]).toContain('-w /workspace');
+    expect(shell.cwds[0]).toBeUndefined();
+    const runs = stateService.listScheduledJobRuns({ jobId: job.id });
+    expect(runs).toHaveLength(1);
+    expect(runs[0].status).toBe('success');
+    const updated = stateService.getScheduledJob(job.id);
+    expect(updated?.lastRunStatus).toBe('success');
+    expect(updated?.nextRunAt).toMatch(/T/);
+  });
+
+  it('runs multiple actions in order and stores one combined run log', async () => {
+    shell.addResponsePattern(/docker run[\s\S]*echo clean-ok/, () => ({ stdout: 'clean-ok\n', stderr: '', exitCode: 0 }));
+    const job: ScheduledJob = service.normalizeJob({
+      id: 'job_multi',
+      projectId: 'demo',
+      name: '多动作任务',
+      enabled: true,
+      schedule: { type: 'manual', timezone: 'Asia/Shanghai' },
+      actions: [
+        { id: 'pull', name: '拉取旧后台数据', type: 'command', command: 'echo pull-ok' },
+        { id: 'clean', name: '清洗入库', type: 'command', command: 'echo clean-ok' },
+      ],
+      timeoutSeconds: 30,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    shell.addResponsePattern(/docker run[\s\S]*echo pull-ok/, () => ({ stdout: 'pull-ok\n', stderr: '', exitCode: 0 }));
+    stateService.upsertScheduledJob(job);
+
+    const run = await service.runJob(job.id, 'manual');
+
+    expect(run.status).toBe('success');
+    expect(shell.commands).toHaveLength(2);
+    expect(run.log).toContain('[1/2] 拉取旧后台数据');
+    expect(run.log).toContain('[2/2] 清洗入库');
+    expect(run.log).toContain('pull-ok');
+    expect(run.log).toContain('clean-ok');
+  });
+
+  it('stops later actions when an earlier action fails', async () => {
+    shell.addResponsePattern(/docker run[\s\S]*exit 7/, () => ({ stdout: '', stderr: 'pull failed\n', exitCode: 7 }));
+    const job: ScheduledJob = service.normalizeJob({
+      id: 'job_multi_fail',
+      projectId: 'demo',
+      name: '失败停止',
+      enabled: true,
+      schedule: { type: 'manual', timezone: 'Asia/Shanghai' },
+      actions: [
+        { id: 'pull', name: '拉取旧后台数据', type: 'command', command: 'exit 7' },
+        { id: 'clean', name: '清洗入库', type: 'command', command: 'echo should-not-run' },
+      ],
+      timeoutSeconds: 30,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    stateService.upsertScheduledJob(job);
+
+    const run = await service.runJob(job.id, 'manual');
+
+    expect(run.status).toBe('failed');
+    expect(run.error).toContain('拉取旧后台数据');
+    expect(shell.commands).toHaveLength(1);
+    expect(run.log).not.toContain('清洗入库');
+  });
+
+  it('retries a failed action according to retryCount before continuing', async () => {
+    let attempts = 0;
+    shell.addResponsePattern(/docker run[\s\S]*flaky/, () => {
+      attempts += 1;
+      return attempts === 1
+        ? { stdout: '', stderr: 'temporary failure\n', exitCode: 1 }
+        : { stdout: 'recovered\n', stderr: '', exitCode: 0 };
+    });
+    shell.addResponsePattern(/docker run[\s\S]*after-retry/, () => ({ stdout: 'after-ok\n', stderr: '', exitCode: 0 }));
+    const job: ScheduledJob = service.normalizeJob({
+      id: 'job_retry',
+      projectId: 'demo',
+      name: '重试任务',
+      enabled: true,
+      schedule: { type: 'manual', timezone: 'Asia/Shanghai' },
+      actions: [
+        { id: 'flaky', name: '临时失败动作', type: 'command', command: 'flaky' },
+        { id: 'next', name: '后续动作', type: 'command', command: 'after-retry' },
+      ],
+      timeoutSeconds: 30,
+      retryCount: 1,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    stateService.upsertScheduledJob(job);
+
+    const run = await service.runJob(job.id, 'manual');
+
+    expect(run.status).toBe('success');
+    expect(attempts).toBe(2);
+    expect(shell.commands).toHaveLength(3);
+    expect(run.log).toContain('尝试 1/2');
+    expect(run.log).toContain('尝试 2/2');
+    expect(run.log).toContain('recovered');
+    expect(run.log).toContain('after-ok');
+  });
+
+  it('uses one timeout budget across all actions in a run', async () => {
+    let nowMs = Date.parse('2026-01-01T00:00:00.000Z');
+    vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+    shell.addResponsePattern(/docker run[\s\S]*budget-one/, (_match, options) => {
+      expect(options?.timeout).toBe(1000);
+      nowMs += 750;
+      return { stdout: 'one\n', stderr: '', exitCode: 0 };
+    });
+    shell.addResponsePattern(/docker run[\s\S]*budget-two/, (_match, options) => {
+      expect(options?.timeout).toBe(250);
+      return { stdout: 'two\n', stderr: '', exitCode: 0 };
+    });
+    const job: ScheduledJob = service.normalizeJob({
+      id: 'job_timeout_budget',
+      projectId: 'demo',
+      name: '总超时预算',
+      enabled: true,
+      schedule: { type: 'manual', timezone: 'Asia/Shanghai' },
+      actions: [
+        { id: 'one', name: '第一步', type: 'command', command: 'budget-one' },
+        { id: 'two', name: '第二步', type: 'command', command: 'budget-two' },
+      ],
+      timeoutSeconds: 1,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    stateService.upsertScheduledJob(job);
+
+    const run = await service.runJob(job.id, 'manual');
+
+    expect(run.status).toBe('success');
+    expect(shell.commands).toHaveLength(2);
+  });
+
+  it('skips a due scheduled job when it is already running', async () => {
+    shell.addResponsePattern(/docker run[\s\S]*slow/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    const job: ScheduledJob = service.normalizeJob({
+      id: 'job_2',
+      projectId: 'demo',
+      name: '慢任务',
+      enabled: true,
+      schedule: { type: 'interval', intervalMinutes: 1, timezone: 'Asia/Shanghai' },
+      target: { type: 'command', command: 'slow' },
+      timeoutSeconds: 30,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    stateService.upsertScheduledJob({ ...job, nextRunAt: '2026-01-01T00:00:00.000Z' });
+
+    const first = service.runJob(job.id, 'manual');
+    const skipped = await service.runJob(job.id, 'schedule');
+    await first;
+
+    expect(skipped.status).toBe('skipped');
+    expect(skipped.log).toContain('并发策略跳过');
+  });
+
+  it('does not overwrite job status when a manual run is skipped by concurrency policy', async () => {
+    let releaseExec: ((result: ExecResult) => void) | null = null;
+    const blockingShell: IShellExecutor = {
+      exec(): Promise<ExecResult> {
+        return new Promise((resolve) => {
+          releaseExec = resolve;
+        });
+      },
+    };
+    service = new ScheduledJobService({
+      stateService,
+      shell: blockingShell,
+      config: { masterPort: 9900, repoRoot: tmpDir },
+    });
+    const job: ScheduledJob = service.normalizeJob({
+      id: 'job_skip_status',
+      projectId: 'demo',
+      name: '跳过不覆盖状态',
+      enabled: true,
+      schedule: { type: 'manual', timezone: 'Asia/Shanghai' },
+      target: { type: 'command', command: 'slow' },
+      timeoutSeconds: 30,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    stateService.upsertScheduledJob({ ...job, lastRunStatus: 'success', lastRunId: 'previous-run' });
+
+    const first = service.runJob(job.id, 'manual');
+    await new Promise((resolve) => setImmediate(resolve));
+    const skipped = await service.runJob(job.id, 'manual');
+    expect(stateService.getScheduledJob(job.id)?.lastRunId).toBe('previous-run');
+    releaseExec?.({ stdout: 'ok\n', stderr: '', exitCode: 0 });
+    await first;
+
+    expect(skipped.status).toBe('skipped');
+    expect(stateService.getScheduledJob(job.id)?.lastRunStatus).toBe('success');
+  });
+
+  it('claims a due scheduled occurrence before awaiting a long-running job', async () => {
+    let releaseExec: ((result: ExecResult) => void) | null = null;
+    const blockingShell: IShellExecutor & { commands: string[] } = {
+      commands: [],
+      exec(command: string, _options?: ExecOptions): Promise<ExecResult> {
+        this.commands.push(command);
+        return new Promise((resolve) => {
+          releaseExec = resolve;
+        });
+      },
+    };
+    service = new ScheduledJobService({
+      stateService,
+      shell: blockingShell,
+      config: { masterPort: 9900, repoRoot: tmpDir },
+    });
+    const job: ScheduledJob = service.normalizeJob({
+      id: 'job_claim_due',
+      projectId: 'demo',
+      name: '提前声明调度',
+      enabled: true,
+      schedule: { type: 'interval', intervalMinutes: 1, timezone: 'Asia/Shanghai' },
+      target: { type: 'command', command: 'slow' },
+      timeoutSeconds: 30,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    stateService.upsertScheduledJob({ ...job, nextRunAt: '2026-01-01T00:00:00.000Z' });
+
+    const firstTick = service.tick(new Date('2026-01-01T00:00:00.000Z'));
+    await new Promise((resolve) => setImmediate(resolve));
+    await service.tick(new Date('2026-01-01T00:00:30.000Z'));
+    releaseExec?.({ stdout: 'done\n', stderr: '', exitCode: 0 });
+    await firstTick;
+
+    const runs = stateService.listScheduledJobRuns({ jobId: job.id });
+    expect(blockingShell.commands).toHaveLength(1);
+    expect(runs).toHaveLength(1);
+    expect(runs[0].status).toBe('success');
+  });
+
+  it('does not run a due job that is disabled while an earlier due job is running', async () => {
+    let releaseExec: ((result: ExecResult) => void) | null = null;
+    const blockingShell: IShellExecutor & { commands: string[] } = {
+      commands: [],
+      exec(command: string, _options?: ExecOptions): Promise<ExecResult> {
+        this.commands.push(command);
+        return new Promise((resolve) => {
+          releaseExec = resolve;
+        });
+      },
+    };
+    service = new ScheduledJobService({
+      stateService,
+      shell: blockingShell,
+      config: { masterPort: 9900, repoRoot: tmpDir },
+    });
+    const firstJob: ScheduledJob = service.normalizeJob({
+      id: 'job_first_due',
+      projectId: 'demo',
+      name: '先执行任务',
+      enabled: true,
+      schedule: { type: 'interval', intervalMinutes: 1, timezone: 'Asia/Shanghai' },
+      target: { type: 'command', command: 'first-slow' },
+      timeoutSeconds: 30,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    const disabledDuringTick: ScheduledJob = service.normalizeJob({
+      id: 'job_disabled_during_tick',
+      projectId: 'demo',
+      name: '执行前被禁用',
+      enabled: true,
+      schedule: { type: 'interval', intervalMinutes: 1, timezone: 'Asia/Shanghai' },
+      target: { type: 'command', command: 'should-not-run' },
+      timeoutSeconds: 30,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    stateService.upsertScheduledJob({ ...firstJob, nextRunAt: '2026-01-01T00:00:00.000Z' });
+    stateService.upsertScheduledJob({ ...disabledDuringTick, nextRunAt: '2026-01-01T00:00:00.000Z' });
+
+    const tick = service.tick(new Date('2026-01-01T00:00:00.000Z'));
+    await new Promise((resolve) => setImmediate(resolve));
+    stateService.upsertScheduledJob({ ...stateService.getScheduledJob(disabledDuringTick.id)!, enabled: false, nextRunAt: null });
+    releaseExec?.({ stdout: 'done\n', stderr: '', exitCode: 0 });
+    await tick;
+
+    expect(blockingShell.commands).toHaveLength(1);
+    expect(blockingShell.commands[0]).toContain('first-slow');
+    expect(stateService.listScheduledJobRuns({ jobId: disabledDuringTick.id })).toHaveLength(0);
+  });
+
+  it('does not run a stale due snapshot that another tick already claimed', async () => {
+    let releaseFirst: ((result: ExecResult) => void) | null = null;
+    const blockingShell: IShellExecutor & { commands: string[] } = {
+      commands: [],
+      exec(command: string, _options?: ExecOptions): Promise<ExecResult> {
+        this.commands.push(command);
+        if (command.includes('first-slow')) {
+          return new Promise((resolve) => {
+            releaseFirst = resolve;
+          });
+        }
+        return Promise.resolve({ stdout: 'second\n', stderr: '', exitCode: 0 });
+      },
+    };
+    service = new ScheduledJobService({
+      stateService,
+      shell: blockingShell,
+      config: { masterPort: 9900, repoRoot: tmpDir },
+    });
+    const firstJob: ScheduledJob = service.normalizeJob({
+      id: 'job_stale_first',
+      projectId: 'demo',
+      name: '阻塞任务',
+      enabled: true,
+      schedule: { type: 'interval', intervalMinutes: 1, timezone: 'Asia/Shanghai' },
+      target: { type: 'command', command: 'first-slow' },
+      timeoutSeconds: 30,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    const secondJob: ScheduledJob = service.normalizeJob({
+      id: 'job_stale_second',
+      projectId: 'demo',
+      name: '只应执行一次',
+      enabled: true,
+      schedule: { type: 'interval', intervalMinutes: 1, timezone: 'Asia/Shanghai' },
+      target: { type: 'command', command: 'second-once' },
+      timeoutSeconds: 30,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    stateService.upsertScheduledJob({ ...firstJob, nextRunAt: '2026-01-01T00:00:00.000Z' });
+    stateService.upsertScheduledJob({ ...secondJob, nextRunAt: '2026-01-01T00:00:00.000Z' });
+
+    const firstTick = service.tick(new Date('2026-01-01T00:00:00.000Z'));
+    await new Promise((resolve) => setImmediate(resolve));
+    await service.tick(new Date('2026-01-01T00:00:30.000Z'));
+    releaseFirst?.({ stdout: 'first\n', stderr: '', exitCode: 0 });
+    await firstTick;
+
+    expect(blockingShell.commands.filter((command) => command.includes('second-once'))).toHaveLength(1);
+    expect(stateService.listScheduledJobRuns({ jobId: secondJob.id })).toHaveLength(1);
+  });
+
+  it('preserves pending automatic schedule when an interval job is run manually', async () => {
+    shell.addResponsePattern(/docker run[\s\S]*manual-test/, () => ({ stdout: 'ok\n', stderr: '', exitCode: 0 }));
+    const nextRunAt = '2026-01-01T00:05:00.000Z';
+    const job: ScheduledJob = service.normalizeJob({
+      id: 'job_manual_preserve',
+      projectId: 'demo',
+      name: '手动测试不挪计划',
+      enabled: true,
+      schedule: { type: 'interval', intervalMinutes: 10, timezone: 'Asia/Shanghai' },
+      target: { type: 'command', command: 'manual-test' },
+      timeoutSeconds: 30,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    stateService.upsertScheduledJob({ ...job, nextRunAt });
+
+    const run = await service.runJob(job.id, 'manual');
+
+    expect(run.status).toBe('success');
+    expect(stateService.getScheduledJob(job.id)?.nextRunAt).toBe(nextRunAt);
+  });
+
+  it('does not start or repeatedly run jobs with invalid persisted daily schedules', async () => {
+    const badJob: ScheduledJob = {
+      id: 'job_bad_daily',
+      projectId: 'demo',
+      name: '坏调度',
+      enabled: true,
+      schedule: { type: 'daily', timeOfDay: 'bad', timezone: 'Invalid/Zone' },
+      target: { type: 'command', command: 'should-not-run' },
+      actions: [{ id: 'bad', name: '坏动作', type: 'command', command: 'should-not-run' }],
+      timeoutSeconds: 30,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      nextRunAt: null,
+    };
+    stateService.upsertScheduledJob(badJob);
+
+    expect(() => service.start()).not.toThrow();
+    service.stop();
+    await service.tick(new Date('2026-01-01T00:00:00.000Z'));
+
+    expect(shell.commands).toHaveLength(0);
+    expect(stateService.listScheduledJobRuns({ jobId: badJob.id })).toHaveLength(0);
+  });
+
+  it('keeps later due jobs running when one due job fails during claim', async () => {
+    const originalComputeNextRunAt = service.computeNextRunAt.bind(service);
+    vi.spyOn(service, 'computeNextRunAt').mockImplementation((schedule, from) => {
+      if (schedule.type === 'interval' && schedule.intervalMinutes === 13) {
+        throw new Error('bad schedule');
+      }
+      return originalComputeNextRunAt(schedule, from);
+    });
+    shell.addResponsePattern(/docker run[\s\S]*healthy/, () => ({ stdout: 'healthy\n', stderr: '', exitCode: 0 }));
+    const badJob: ScheduledJob = service.normalizeJob({
+      id: 'job_bad_claim',
+      projectId: 'demo',
+      name: '认领失败',
+      enabled: true,
+      schedule: { type: 'interval', intervalMinutes: 1, timezone: 'Asia/Shanghai' },
+      target: { type: 'command', command: 'bad' },
+      timeoutSeconds: 30,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    const healthyJob: ScheduledJob = service.normalizeJob({
+      id: 'job_after_bad_claim',
+      projectId: 'demo',
+      name: '后续正常',
+      enabled: true,
+      schedule: { type: 'interval', intervalMinutes: 1, timezone: 'Asia/Shanghai' },
+      target: { type: 'command', command: 'healthy' },
+      timeoutSeconds: 30,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    stateService.upsertScheduledJob({
+      ...badJob,
+      schedule: { type: 'interval', intervalMinutes: 13, timezone: 'Asia/Shanghai' },
+      nextRunAt: '2026-01-01T00:00:00.000Z',
+    });
+    stateService.upsertScheduledJob({ ...healthyJob, nextRunAt: '2026-01-01T00:00:00.000Z' });
+
+    await service.tick(new Date('2026-01-01T00:00:00.000Z'));
+
+    expect(shell.commands).toHaveLength(1);
+    expect(shell.commands[0]).toContain('healthy');
+  });
+
+  it('checks a command target without creating run history', async () => {
+    shell.addResponsePattern(/docker run[\s\S]*echo check-ok/, () => ({ stdout: 'check-ok\n', stderr: '', exitCode: 0 }));
+
+    const result = await service.checkTarget({ type: 'command', command: 'echo check-ok' }, 30);
+
+    expect(result.ok).toBe(true);
+    expect(result.exitCode).toBe(0);
+    expect(result.log).toContain('check-ok');
+    expect(shell.commands[0]).toContain(path.join('.cds', 'task-sandboxes', 'check-'));
+    expect(shell.commands[0]).toContain(':/workspace:rw');
+    expect(stateService.listScheduledJobRuns()).toHaveLength(0);
+  });
+
+  it('reports failed command target checks', async () => {
+    shell.addResponsePattern(/docker run[\s\S]*exit 2/, () => ({ stdout: '', stderr: 'failed\n', exitCode: 2 }));
+
+    const result = await service.checkTarget({ type: 'command', command: 'exit 2' }, 30);
+
+    expect(result.ok).toBe(false);
+    expect(result.exitCode).toBe(2);
+    expect(result.error).toContain('退出码 2');
+    expect(result.log).toContain('failed');
+  });
+
+  it('runs command targets from a relative directory inside the sandbox', async () => {
+    shell.addResponsePattern(/docker run[\s\S]*pwd/, () => ({ stdout: 'ok\n', stderr: '', exitCode: 0 }));
+    const job: ScheduledJob = service.normalizeJob({
+      id: 'job_relative_cwd',
+      projectId: 'demo',
+      name: '相对目录',
+      enabled: true,
+      schedule: { type: 'manual', timezone: 'Asia/Shanghai' },
+      target: { type: 'command', command: 'pwd', cwd: 'nested/work' },
+      timeoutSeconds: 30,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    stateService.upsertScheduledJob(job);
+
+    await service.runJob(job.id, 'manual');
+
+    const expectedCwd = fs.realpathSync.native(path.join(tmpDir, '.cds', 'task-sandboxes', 'job_relative_cwd', 'work', 'nested', 'work'));
+    expect(fs.existsSync(expectedCwd)).toBe(true);
+    expect(shell.commands[0]).toContain(`${fs.realpathSync.native(path.join(tmpDir, '.cds', 'task-sandboxes', 'job_relative_cwd', 'work'))}:/workspace:rw`);
+    expect(shell.commands[0]).toContain("-w /workspace/nested/work");
+  });
+
+  it('fails command targets that request an absolute cwd', async () => {
+    const job: ScheduledJob = service.normalizeJob({
+      id: 'job_abs_cwd',
+      projectId: 'demo',
+      name: '绝对目录',
+      enabled: true,
+      schedule: { type: 'manual', timezone: 'Asia/Shanghai' },
+      target: { type: 'command', command: 'pwd', cwd: '/tmp' },
+      timeoutSeconds: 30,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    stateService.upsertScheduledJob(job);
+
+    const run = await service.runJob(job.id, 'manual');
+
+    expect(run.status).toBe('failed');
+    expect(run.error).toContain('相对路径');
+    expect(shell.commands).toHaveLength(0);
+  });
+
+  it('fails command targets that try to traverse outside the sandbox', async () => {
+    const job: ScheduledJob = service.normalizeJob({
+      id: 'job_traverse_cwd',
+      projectId: 'demo',
+      name: '跳出目录',
+      enabled: true,
+      schedule: { type: 'manual', timezone: 'Asia/Shanghai' },
+      target: { type: 'command', command: 'pwd', cwd: '../outside' },
+      timeoutSeconds: 30,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    stateService.upsertScheduledJob(job);
+
+    const run = await service.runJob(job.id, 'manual');
+
+    expect(run.status).toBe('failed');
+    expect(run.error).toContain('不能跳出 sandbox');
+    expect(shell.commands).toHaveLength(0);
+  });
+
+  it('fails command targets when cwd is a symlink escaping the sandbox', async () => {
+    const outside = path.join(tmpDir, 'outside');
+    fs.mkdirSync(outside);
+    const sandboxWork = path.join(tmpDir, '.cds', 'task-sandboxes', 'job_symlink_cwd', 'work');
+    fs.mkdirSync(sandboxWork, { recursive: true });
+    fs.symlinkSync(outside, path.join(sandboxWork, 'escape'), 'dir');
+    const job: ScheduledJob = service.normalizeJob({
+      id: 'job_symlink_cwd',
+      projectId: 'demo',
+      name: '符号链接',
+      enabled: true,
+      schedule: { type: 'manual', timezone: 'Asia/Shanghai' },
+      target: { type: 'command', command: 'pwd', cwd: 'escape' },
+      timeoutSeconds: 30,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    stateService.upsertScheduledJob(job);
+
+    const run = await service.runJob(job.id, 'manual');
+
+    expect(run.status).toBe('failed');
+    expect(run.error).toContain('符号链接跳出 sandbox');
+    expect(shell.commands).toHaveLength(0);
+  });
+
+  it('wraps destructive absolute-path commands inside the docker sandbox', async () => {
+    shell.addResponsePattern(/docker run[\s\S]*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    const job: ScheduledJob = service.normalizeJob({
+      id: 'job_destructive',
+      projectId: 'demo',
+      name: '危险命令',
+      enabled: true,
+      schedule: { type: 'manual', timezone: 'Asia/Shanghai' },
+      target: { type: 'command', command: 'rm -rf /tmp/outside-file' },
+      timeoutSeconds: 30,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    stateService.upsertScheduledJob(job);
+
+    const run = await service.runJob(job.id, 'manual');
+
+    expect(run.status).toBe('success');
+    expect(shell.commands[0]).toContain('docker run --rm');
+    expect(shell.commands[0]).toContain("sh -lc 'rm -rf /tmp/outside-file'");
+    expect(shell.cwds[0]).toBeUndefined();
+  });
+
+  it('allows overriding the sandbox image by environment variable', async () => {
+    process.env.CDS_TASK_SANDBOX_IMAGE = 'node:20-alpine';
+    shell.addResponsePattern(/docker run[\s\S]*/, () => ({ stdout: 'ok\n', stderr: '', exitCode: 0 }));
+    const result = await service.checkTarget({ type: 'command', command: 'node -v' }, 30);
+
+    expect(result.ok).toBe(true);
+    expect(shell.commands[0]).toContain('node:20-alpine');
+  });
+});
