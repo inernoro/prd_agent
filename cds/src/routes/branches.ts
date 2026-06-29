@@ -2680,39 +2680,41 @@ export function createBranchRouter(deps: RouterDeps): Router {
             proxyHasError = true;
           }
           if (parsed.services && typeof parsed.services === 'object') {
-            const svcMap = parsed.services as Record<string, { status?: string; deployedMode?: string }>;
+            // executor 的 complete.services 是远端这条分支部署后的**权威全量** ServiceState 集合
+            // （含 profileId/containerName/hostPort/status/deployedMode）。master 进程独立、entry.services
+            // 不是同一对象，故 complete 时做一次**完整对账**（= 心跳全量同步的即时版），避免下面三类滞后：
+            //   - Bugbot「Remote deploy mode metadata stale」：executor express→source 回退后的真实 deployedMode
+            //   - Bugbot「Remote clear leaves master services stale」：executor 已删的服务 master 残留 ghost
+            //   - Bugbot「Remote complete skips service upsert」：executor 新建、master 没有的服务漏拷 → UI
+            //     显示 running 但 services 空/不全，要等下次心跳才补
+            const svcMap = parsed.services as Record<string, Partial<ServiceState>>;
             if (Object.values(svcMap).some((s) => s?.status === 'error')) {
               proxyHasError = true;
             }
-            // Bugbot Medium「Remote deploy mode metadata stale」：远端执行器进程独立，master 的
-            // entry.services 不是同一对象，此前只有派发用的 activeDeployMode（express），executor 侧
-            // express→source 回退的真相在 complete 的 services 载荷里却从未被复制过来。这里把 executor
-            // 回报的真实 deployedMode 复制进 master，供下方 2783 的 `||` 保留 + finally 重算「部署类型」。
+            // ① patch 已存在 / upsert executor-only（executor 对远端分支权威；upsert 守 containerName 存在）
             for (const [pid, s] of Object.entries(svcMap)) {
-              const m = s?.deployedMode;
-              if (typeof m === 'string' && m.trim() !== '' && entry.services[pid]) {
-                entry.services[pid].deployedMode = m.trim();
+              const existing = entry.services[pid];
+              if (existing) {
+                if (typeof s?.deployedMode === 'string' && s.deployedMode.trim() !== '') existing.deployedMode = s.deployedMode.trim();
+                if (typeof s?.status === 'string') existing.status = s.status as ServiceState['status'];
+              } else if (s && typeof s.containerName === 'string' && s.containerName) {
+                entry.services[pid] = {
+                  profileId: typeof s.profileId === 'string' ? s.profileId : pid,
+                  containerName: s.containerName,
+                  hostPort: typeof s.hostPort === 'number' ? s.hostPort : 0,
+                  status: (typeof s.status === 'string' ? s.status : 'running') as ServiceState['status'],
+                  ...(typeof s.deployedMode === 'string' ? { deployedMode: s.deployedMode } : {}),
+                };
               }
             }
-            // 远端权威收敛（Bugbot Medium「Remote clear leaves master services stale」）：executor
-            // complete 的 services 是部署后的权威集合。此前只 patch 已存在 key 的 deployedMode，从不删
-            // executor 已移除的服务 → 远端清空额外服务后 master 残留 ghost 服务条目，UI 一直显示到下次心跳。
-            // 这里按 svcMap 删除 master 端不再存在的服务条目（svcMap 为空=全部清掉，正是清空场景）。
-            // 仅在 complete 带 services 载荷时执行（老执行器不带则不动，避免误删）。
+            // ② prune master-only（svcMap 为空=全部清掉，正是空清单清空场景；老执行器不带 services 则整段不进，不会误删）
             for (const pid of Object.keys(entry.services)) {
               if (!Object.prototype.hasOwnProperty.call(svcMap, pid)) {
                 delete entry.services[pid];
               }
             }
-            // 同步存活服务 status + 重算分支态（Bugbot Medium「Remote complete leaves branch building」）：
-            // entry.status 在派发时被钉成 building，complete 后若不按 executor 权威 svcMap 重置，
-            // 空清单清空（services 删空）或全 running 的成功部署会一直显示 building 到下次心跳。
-            // 与 executor 端 + master 本地空清单清理同款：无服务=idle、有 running=running、否则 error。
-            for (const [pid, s] of Object.entries(svcMap)) {
-              if (entry.services[pid] && typeof s?.status === 'string') {
-                entry.services[pid].status = s.status as ServiceState['status'];
-              }
-            }
+            // ③ 重算分支态（派发时钉的 building 必须按权威 svcMap 重置，否则空清空 / 全 running 会一直 building 到心跳）：
+            //    无服务=idle、有 running=running、否则 error（与 executor 端 + master 本地空清单清理同款）。
             const remoteSvcStatuses = Object.values(svcMap).map((s) => s?.status);
             entry.status = remoteSvcStatuses.length === 0
               ? 'idle'

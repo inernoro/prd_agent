@@ -25,6 +25,14 @@ describe('remote deploy complete: branch status realign contract', () => {
   });
 
   it('syncs surviving services’ status from the authoritative svcMap', () => {
-    expect(source).toContain("entry.services[pid].status = s.status as ServiceState['status'];");
+    expect(source).toContain("existing.status = s.status as ServiceState['status'];");
+  });
+
+  it('upserts executor-only services (full reconcile, not just prune) so the map is complete on complete', () => {
+    // Bugbot "Remote complete skips service upsert": services that exist only on the executor must be
+    // copied into entry.services, not left for the next heartbeat.
+    expect(source).toContain('const existing = entry.services[pid];');
+    expect(source).toContain('typeof s.containerName === \'string\' && s.containerName');
+    expect(source).toContain('entry.services[pid] = {');
   });
 });
