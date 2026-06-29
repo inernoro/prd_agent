@@ -46,6 +46,7 @@ describe('WebPagesPage SiteCard', () => {
     const html = renderSiteCard();
 
     expect(html).not.toContain('设为公开');
+    expect(html).not.toContain('>公开<');
     expect(html).toContain('aria-label="分享"');
   });
 });

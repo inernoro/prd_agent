@@ -776,7 +776,7 @@ export default function WebPagesPage() {
           'radial-gradient(ellipse 70% 40% at 50% -10%, rgba(99,102,241,0.14) 0%, transparent 55%), linear-gradient(180deg, #20212a 0%, #181a22 480px, #16181f 100%)',
       }}
     >
-      {/* 右侧投放面板：可拖动 + 可收起，拖站点卡片到槽位即可公开/分享/删除 */}
+      {/* 右侧投放面板：可拖动 + 可收起，拖站点卡片到槽位即可分享/删除 */}
       <ShareDock
         mime={WEB_PAGE_MIME}
         title="投放面板"
@@ -857,24 +857,6 @@ export default function WebPagesPage() {
           },
         }}
         slots={[
-          {
-            key: 'public',
-            icon: <Globe size={18} />,
-            label: '公开',
-            hint: '任何人可在 /u/主页查看',
-            tone: 'sky',
-            onDrop: (id) => {
-              const site = sites.find(s => s.id === id);
-              if (site) handleMakePublic(site);
-            },
-            // 读心：拖已公开的站点过来 → 槽位提示「取消公开」（onDrop 仍走 handleMakePublic，内部按当前状态翻转）
-            resolve: (id) => {
-              const site = sites.find(s => s.id === id);
-              return site?.visibility === 'public'
-                ? { label: '取消公开', icon: <Lock size={18} />, hint: '改回私有', tone: 'rose' }
-                : null;
-            },
-          },
           {
             key: 'share',
             icon: <Share2 size={18} />,
