@@ -64,6 +64,25 @@ export function colorForDocType(docType?: string | null): string {
   return TYPE_COLOR[docType] ?? TYPE_COLOR.unknown;
 }
 
+export function rotateOrbitOffsetByPixels(
+  offset: THREE.Vector3,
+  dxPx: number,
+  dyPx: number,
+  viewportWidth: number,
+  viewportHeight: number,
+  rotateSpeed: number,
+  out = new THREE.Vector3(),
+): THREE.Vector3 {
+  const radius = offset.length();
+  if (radius < 1e-6) return out.copy(offset);
+  const spherical = new THREE.Spherical().setFromVector3(offset);
+  const rotateScale = 2 * Math.PI * rotateSpeed;
+  spherical.theta -= (dxPx / Math.max(1, viewportWidth)) * rotateScale;
+  spherical.phi -= (dyPx / Math.max(1, viewportHeight)) * rotateScale;
+  spherical.makeSafe();
+  return out.setFromSpherical(spherical).setLength(radius);
+}
+
 // 枢纽节点配色（演示版 SSOT：root 纯白、category 金、appname 冷白、submodule 灰蓝）。
 // 产品 GalaxyNode 只有 root/group/leaf 三类，group 按层深映射到演示的 category/appname/submodule。
 const ROOT_COLOR = '#ffffff';
@@ -1052,8 +1071,8 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
     controls.autoRotate = true;
     controls.autoRotateSpeed = 0.42;
     controls.enablePan = true;
-    // 滚轮/触控板手势改由自定义 wheel 接管（对齐 .claude/rules/gesture-unification.md）：
-    // 两指滑动 = 平移、⌘/Ctrl+滚轮 或 双指捏合 = 缩放。
+    // 滚轮/触控板手势改由自定义 wheel 接管：
+    // 两指滑动 = 围绕当前中心旋转视角、⌘/Ctrl+滚轮 或 双指捏合 = 缩放。
     controls.enableZoom = false;
 
     // 用于 dispose 的资源台账
@@ -1679,25 +1698,17 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       scheduleHoverClose();
     };
 
-    // ── 触控板/滚轮手势（gesture-unification.md 的 OrbitControls 落地）──
-    //   两指滑动 = 平移（含苹果触控板左右滑 → 左右移动）；⌘/Ctrl+滚轮 或 双指捏合 = 缩放。
+    // ── 触控板/滚轮手势：两指滑动像转动中心球体，只改变观察角度，不改变距离/焦点。──
     const gOffset = new THREE.Vector3();
-    const gRight = new THREE.Vector3();
-    const gUp = new THREE.Vector3();
-    const panByPixels = (dxPx: number, dyPx: number) => {
+    const gRotatedOffset = new THREE.Vector3();
+    const rotateViewByPixels = (dxPx: number, dyPx: number) => {
       const rect = renderer.domElement.getBoundingClientRect();
       gOffset.copy(camera.position).sub(controls.target);
-      const dist = gOffset.length() * Math.tan(((camera.fov / 2) * Math.PI) / 180);
-      const panX = (2 * dxPx * dist) / Math.max(1, rect.height);
-      const panY = (2 * dyPx * dist) / Math.max(1, rect.height);
-      const te = camera.matrix.elements;
-      gRight.set(te[0], te[1], te[2]);
-      gUp.set(te[4], te[5], te[6]);
-      // 对齐视觉创作（AdvancedVisualAgentTab）的 trackpad 手感：内容随手指反向位移
-      // （cam - delta）。相机右移=内容左移、相机下移=内容上移 → move = right*Δx - up*Δy。
-      const move = gRight.multiplyScalar(panX).add(gUp.multiplyScalar(-panY));
-      camera.position.add(move);
-      controls.target.add(move);
+      const radius = gOffset.length();
+      if (radius < 1e-6) return;
+      rotateOrbitOffsetByPixels(gOffset, dxPx, dyPx, rect.width, rect.height, controls.rotateSpeed, gRotatedOffset);
+      camera.position.copy(controls.target).add(gRotatedOffset);
+      camera.lookAt(controls.target);
     };
     const dollyByDelta = (deltaY: number) => {
       gOffset.copy(camera.position).sub(controls.target);
@@ -1705,10 +1716,10 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       d = Math.min(controls.maxDistance, Math.max(controls.minDistance, d));
       camera.position.copy(controls.target).add(gOffset.setLength(d));
     };
-    // 鼠标滚轮 vs 触摸板的「黏性」判别（用户要求：鼠标滚轮=缩放、触摸板双指滑=平移）。
+    // 鼠标滚轮 vs 触摸板的「黏性」判别（鼠标滚轮=缩放、触摸板双指滑=轨道旋转）。
     // 正确约定（业界 3D 通行，Figma/Blender/Earth/本项目视觉创作画布）：
     //   · 鼠标滚轮（无修饰键）          → 缩放
-    //   · 触摸板双指上下/左右滑          → 平移
+    //   · 触摸板双指上下/左右滑          → 围绕当前中心旋转观察方向，距离与 target 不变
     //   · 触摸板双指捏合（浏览器合成 ctrlKey）/ ⌘·Ctrl+滚轮 → 缩放
     // 判别启发：滚轮 deltaMode≠0(行/页) 或「纯垂直 + 整数 + 大步(≥100)」；触摸板 deltaX≠0 或小数或小步。
     // 一旦识别出某设备就黏住，避免同一设备在大小步之间反复横跳；模糊时维持上次结论、首次默认鼠标。
@@ -1728,9 +1739,9 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       ev.preventDefault();
       controls.autoRotate = false;
       camTween = null; // 手势打断聚焦缓动
-      // 捏合 / ⌘·Ctrl+滚轮 一律缩放；否则按设备判别：鼠标滚轮缩放、触摸板平移
+      // 捏合 / ⌘·Ctrl+滚轮 一律缩放；否则按设备判别：鼠标滚轮缩放、触摸板旋转
       if (ev.ctrlKey || ev.metaKey || classifyWheel(ev) === 'mouse') dollyByDelta(ev.deltaY);
-      else panByPixels(ev.deltaX, ev.deltaY);
+      else rotateViewByPixels(ev.deltaX, ev.deltaY);
     };
     // 双击空白处 → 继续自动旋转（双击节点不触发；不做双击缩放，遵守 gesture-unification）
     const onDblClick = (ev: MouseEvent) => {
@@ -3175,7 +3186,7 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
       <div className="flex-1 min-h-0 relative">
         {/* 操作提示 */}
         <div style={{ position: 'absolute', bottom: 12, left: 12, zIndex: 10, fontSize: 11, color: '#5a5a66' }}>
-          拖动旋转 · 两指滑动平移 · ⌘/Ctrl+滚轮缩放 · 悬停看详情/清单 · 点文档星阅读 · 点枢纽聚焦 · 双击空白继续旋转
+          拖动旋转 · 两指滑动旋转视角 · 捏合或 ⌘/Ctrl+滚轮缩放 · 悬停看详情/清单 · 点文档星阅读 · 点枢纽聚焦 · 双击空白继续旋转
         </div>
 
         {/* 画布左上角浮层（第二层）：仅类型 chips（透明，无底盒）。面包屑已上移到顶栏（第一层）。 */}
