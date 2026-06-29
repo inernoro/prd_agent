@@ -68,6 +68,8 @@
 
 - [CDS Compose 契约（SSOT）](spec.cds-compose-contract) `spec.cds-compose-contract`
   > CDS docker-compose 契约的唯一来源规格
+- [AI 大模型网关真实环境 MECE 冒烟测试矩阵](spec.llm-gateway-test-matrix) `spec.llm-gateway-test-matrix`
+  > 14 维 MECE 矩阵 + 4 层(解析/协议保真/跨进程/真机)测试 + 每层 canary；B/C 层 CI 真跑，D 层待 CDS
 
 - [CDS 服务生命周期与缓存范围规格](spec.cds-lifecycle) `spec.cds-lifecycle`
   > CDS 服务生命周期管理与缓存隔离范围的规格说明

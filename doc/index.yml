@@ -41,6 +41,7 @@ docs:
   spec.cds: CDS (Cloud Development Suite) 功能需求说明书
   spec.submission-gallery: 作品投稿与画廊展示规格
   spec.cds-compose-contract: CDS Compose 契约（SSOT）
+  spec.llm-gateway-test-matrix: AI 大模型网关真实环境 MECE 冒烟测试矩阵
   spec.cds-lifecycle: CDS 服务生命周期与缓存范围规格
   spec.cds-map-pairing-protocol: CDS MAP 配对协议规格
   spec.map-kb-transfer-protocol: MAP 知识库传输协议（MAP-KBTP v1）规格
