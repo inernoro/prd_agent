@@ -298,6 +298,45 @@ describe('Executor /exec/deploy', () => {
     expect(result.events.some(e => e.event === 'error')).toBe(false);
   });
 
+  it('emits error WITH the post-teardown services snapshot when pull fails (Bugbot remote-error-stale-services)', async () => {
+    // Orphan teardown runs before pull. If pull then fails, the error event must still carry the current
+    // services snapshot so the master can reconcile (the removed orphan must not stay running on master).
+    const now = new Date().toISOString();
+    stateService.addProject({ id: 'realproj', slug: 'realproj', name: 'Real', kind: 'git', createdAt: now, updatedAt: now });
+    stateService.addBranch({
+      id: 'realproj-pullfail',
+      projectId: 'realproj',
+      branch: 'feature/pullfail',
+      worktreePath: path.join(tmpDir, 'worktrees', 'realproj', 'realproj-pullfail'),
+      services: {
+        'old-extra': { profileId: 'old-extra', containerName: 'cds-realproj-pullfail-old-extra', hostPort: 10008, status: 'running' },
+      },
+      status: 'running',
+      createdAt: now,
+    });
+    // Force the git reset (inside WorktreeService.pull) to fail — exact responses win over the catch-all.
+    mock.addResponse('git reset --hard origin/feature/pullfail', { stdout: '', stderr: 'fatal: couldn\'t find remote ref', exitCode: 1 });
+
+    const result = await postSse(server, '/exec/deploy', {
+      branchId: 'realproj-pullfail',
+      branchName: 'feature/pullfail',
+      projectId: 'realproj',
+      // A real desired profile so the deploy does NOT short-circuit on empty payload → it reaches pull.
+      profiles: [{ id: 'api', name: 'API', dockerImage: 'node:20', workDir: 'api', command: 'node server.js', containerPort: 8080 }],
+      env: {},
+    });
+
+    expect(result.status).toBe(200);
+    const errorEvent = result.events.find(e => e.event === 'error');
+    expect(errorEvent).toBeDefined();
+    // The error payload carries a services snapshot (object) so the master can reconcile on failure.
+    expect(errorEvent!.data?.services).toBeDefined();
+    expect(typeof errorEvent!.data.services).toBe('object');
+    // The orphan was torn down before the pull failed (its container was removed + entry cleared).
+    expect(stateService.getBranch('realproj-pullfail')!.services['old-extra']).toBeUndefined();
+    expect(errorEvent!.data.services['old-extra']).toBeUndefined();
+  });
+
   it('does not stamp projectId on a branch the executor already knows about', async () => {
     // Existing entry on the executor (e.g., re-deploy after restart).
     // The deploy path must be a no-op for entry creation; the

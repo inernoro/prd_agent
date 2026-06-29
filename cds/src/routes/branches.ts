@@ -2675,11 +2675,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // complete（services 里带 status:'error'）而**不**发 error 事件，
         // proxyHasError 一直 false → 下方把失败的 release 部署也钉成真相 +
         // 刷 lastDeployAt。complete 必须按权威 ok / services 判失败。
-        if (eventName === 'complete') {
-          if (parsed.ok === false) {
-            proxyHasError = true;
-          }
-          if (parsed.services && typeof parsed.services === 'object') {
+        if (eventName === 'complete' && parsed.ok === false) {
+          proxyHasError = true;
+        }
+        // complete 或 error 都可能携带权威 services 快照：error 路径（如 pull 失败）此前 executor 端已按
+        // payload 拆除孤儿并改了 worker state，若不把这份快照回传给 master 对账，控制面会把已移除的服务一直
+        // 标 running/错端口直到下次心跳（Bugbot「Remote deploy error stale services」）。任一事件带 services 就对账。
+        if ((eventName === 'complete' || eventName === 'error') && parsed.services && typeof parsed.services === 'object') {
             // executor 的 complete.services 是远端这条分支部署后的**权威全量** ServiceState 集合
             // （含 profileId/containerName/hostPort/status/deployedMode）。master 进程独立、entry.services
             // 不是同一对象，故 complete 时做一次**完整对账**（= 心跳全量同步的即时版），避免下面三类滞后：
@@ -2722,25 +2724,27 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 delete entry.services[pid];
               }
             }
-            // ③ 重算分支态（派发时钉的 building 必须按权威 svcMap 重置，否则空清空 / 全 running 会一直 building 到心跳）：
-            //    无服务=idle、有 error=error、否则有 running=running、再否则 error。error 优先于 running——
-            //    running+error 混合时本地 finalize 落 error，远端必须同口径，不能任一 running 就报 running
-            //    （Bugbot「Remote deploy ignores service errors」）。
-            const remoteSvcStatuses = Object.values(svcMap).map((s) => s?.status);
-            entry.status = remoteSvcStatuses.length === 0
-              ? 'idle'
-              : remoteSvcStatuses.some((s) => s === 'error') ? 'error'
-              : remoteSvcStatuses.some((s) => s === 'running') ? 'running'
-              : 'error';
+            // ③ 重算分支态（仅 complete）：派发时钉的 building 必须按权威 svcMap 重置，否则空清空 / 全 running
+            //    会一直 building 到心跳。无服务=idle、有 error=error、否则有 running=running、再否则 error；error
+            //    优先于 running（running+error 混合本地 finalize 落 error，远端同口径，Bugbot「Remote deploy
+            //    ignores service errors」）。error 事件不在此重算——其最终态由下方失败 finalize（proxyHasError）
+            //    主导，避免把失败部署误标 idle/running。
+            if (eventName === 'complete') {
+              const remoteSvcStatuses = Object.values(svcMap).map((s) => s?.status);
+              entry.status = remoteSvcStatuses.length === 0
+                ? 'idle'
+                : remoteSvcStatuses.some((s) => s === 'error') ? 'error'
+                : remoteSvcStatuses.some((s) => s === 'running') ? 'running'
+                : 'error';
+            }
           }
           // 成功 complete = 远端运行时就绪的时刻（executor 在所有服务 running 后才发）。
           // 戳为 runtimeStartedAt，让 finally 能像本地路径一样采样部署耗时（修复 PR #865
           // Bugbot「executor deploys skip duration samples」）—— 否则执行器构建的项目
           // 永远积累不出 ETA 样本，等待页/卡片一直显示"暂无历史预计"。
-          if (!proxyHasError) {
+          if (eventName === 'complete' && !proxyHasError) {
             remoteRuntimeReadyAt = typeof parsed.timestamp === 'string' ? parsed.timestamp : new Date().toISOString();
           }
-        }
         // 远端 source-build 执行器会自行 pull 到更新 HEAD；用回传的 pull head 刷新构建历史
         // commit 元数据（opLog.commitSha 在 2569 是按 master 冻结的旧 HEAD 捕获的），避免
         // 「版本」列指向 pull 前旧 SHA（Codex P2）。极速版锁定 CI 镜像 SHA、不跟随 pull head。

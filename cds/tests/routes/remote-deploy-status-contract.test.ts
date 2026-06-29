@@ -30,6 +30,15 @@ describe('remote deploy complete: branch status realign contract', () => {
     expect(source).toContain("existing.status = s.status as ServiceState['status'];");
   });
 
+  it('reconciles entry.services from BOTH complete and error events (no stale services on failed remote deploy)', () => {
+    // Bugbot "Remote deploy error stale services": after moving orphan teardown before git pull, a failed
+    // deploy (e.g. pull failure) emits `error` carrying the post-teardown services snapshot; the master must
+    // reconcile entry.services from error too, else removed services stay running/wrong-port until heartbeat.
+    expect(source).toContain("(eventName === 'complete' || eventName === 'error') && parsed.services");
+    // status recompute stays complete-only so a failed deploy is not mislabeled idle/running.
+    expect(source).toContain("if (eventName === 'complete') {");
+  });
+
   it('syncs surviving services’ hostPort / containerName from the authoritative svcMap (no stale port)', () => {
     // Bugbot "Remote complete skips hostPort sync": existing rows must also adopt the executor's
     // authoritative containerName/hostPort, else preview/routing use the master's stale port until heartbeat.

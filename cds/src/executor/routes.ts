@@ -277,7 +277,14 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
         services: entry.services,
       });
     } catch (err) {
-      sendEvent('error', { message: (err as Error).message });
+      // 失败也回传当前权威 services 快照（Bugbot「Remote deploy error stale services」）：孤儿收敛已上移到
+      // pull 之前，pull 失败时 worker 上被移除的服务已删，但 master 只从事件里的 services 对账；不带 services
+      // 的 error 会让控制面把已移除的服务一直标 running/错端口到下次心跳。entry 可能尚未取到（极早失败）则省略。
+      const failedEntry = stateService.getBranch(branchId);
+      sendEvent('error', {
+        message: (err as Error).message,
+        ...(failedEntry ? { services: failedEntry.services } : {}),
+      });
     } finally {
       res.end();
     }
