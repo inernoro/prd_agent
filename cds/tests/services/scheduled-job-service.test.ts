@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -35,6 +35,7 @@ describe('ScheduledJobService', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     delete process.env.CDS_TASK_SANDBOX_IMAGE;
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -170,6 +171,42 @@ describe('ScheduledJobService', () => {
     expect(run.log).toContain('尝试 2/2');
     expect(run.log).toContain('recovered');
     expect(run.log).toContain('after-ok');
+  });
+
+  it('uses one timeout budget across all actions in a run', async () => {
+    let nowMs = Date.parse('2026-01-01T00:00:00.000Z');
+    vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+    shell.addResponsePattern(/docker run[\s\S]*budget-one/, (_match, options) => {
+      expect(options?.timeout).toBe(1000);
+      nowMs += 750;
+      return { stdout: 'one\n', stderr: '', exitCode: 0 };
+    });
+    shell.addResponsePattern(/docker run[\s\S]*budget-two/, (_match, options) => {
+      expect(options?.timeout).toBe(250);
+      return { stdout: 'two\n', stderr: '', exitCode: 0 };
+    });
+    const job: ScheduledJob = service.normalizeJob({
+      id: 'job_timeout_budget',
+      projectId: 'demo',
+      name: '总超时预算',
+      enabled: true,
+      schedule: { type: 'manual', timezone: 'Asia/Shanghai' },
+      actions: [
+        { id: 'one', name: '第一步', type: 'command', command: 'budget-one' },
+        { id: 'two', name: '第二步', type: 'command', command: 'budget-two' },
+      ],
+      timeoutSeconds: 1,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    stateService.upsertScheduledJob(job);
+
+    const run = await service.runJob(job.id, 'manual');
+
+    expect(run.status).toBe('success');
+    expect(shell.commands).toHaveLength(2);
   });
 
   it('skips a due scheduled job when it is already running', async () => {

@@ -15,6 +15,7 @@ async function request(
   method: string,
   urlPath: string,
   headers?: Record<string, string>,
+  body?: unknown,
 ): Promise<{ status: number; body: any }> {
   return new Promise((resolve, reject) => {
     const url = new URL(urlPath, 'http://127.0.0.1');
@@ -26,6 +27,7 @@ async function request(
       path: url.pathname,
       query: Object.fromEntries(url.searchParams.entries()),
       headers: headers || {},
+      body: body || {},
     };
     const h = headers?.['X-Test-Key'] || headers?.['x-test-key'];
     if (h === 'TEST-KEY-A') req.cdsProjectKey = { projectId: 'proj-a', keyId: 'k-a' };
@@ -117,6 +119,24 @@ describe('scheduled job routes project-scope isolation', () => {
 
     expect(res.status).toBe(403);
     expect(res.body.error).toBe('project_mismatch');
+  });
+
+  it('preserves nextRunAt when patching unrelated job fields', async () => {
+    const nextRunAt = '2026-01-01T01:00:00.000Z';
+    const existing = stateService.getScheduledJob('job-a');
+    expect(existing).toBeTruthy();
+    stateService.upsertScheduledJob({
+      ...existing!,
+      enabled: true,
+      schedule: { type: 'interval', intervalMinutes: 15, timezone: 'Asia/Shanghai' },
+      nextRunAt,
+    });
+
+    const res = await request(router, 'PATCH', '/scheduled-jobs/job-a', { 'X-Test-Key': KEY_A }, { name: 'renamed job' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.job.name).toBe('renamed job');
+    expect(res.body.job.nextRunAt).toBe(nextRunAt);
   });
 
   function seedJob(id: string, projectId: string, command: string): void {

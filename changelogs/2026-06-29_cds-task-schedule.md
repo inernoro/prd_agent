@@ -6,3 +6,5 @@
 | fix | cds | 任务调度执行时按 retryCount 重试失败动作 |
 | fix | cds | 修复长时间定时任务重复 tick 产生假跳过记录并覆盖运行状态的问题 |
 | fix | cds | 任务调度命令 sandbox 透传 CDS Docker network，支持访问项目内服务 |
+| fix | cds | 任务调度改为整次执行共享超时预算，避免多动作和重试突破任务总超时 |
+| fix | cds | 修复编辑任务非调度字段时错误重算 nextRunAt 的问题 |

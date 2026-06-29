@@ -101,6 +101,7 @@ export function createScheduledJobsRouter(deps: ScheduledJobsRouterDeps): Router
     const input = parseJobInput({ ...existing, ...req.body, projectId: existing.projectId });
     if ('error' in input) { res.status(400).json({ error: input.error }); return; }
 
+    const preserveNextRunAt = existing.enabled === input.enabled && schedulesEqual(existing.schedule, input.schedule);
     const job = scheduledJobService.normalizeJob({
       ...existing,
       name: input.name,
@@ -112,7 +113,7 @@ export function createScheduledJobsRouter(deps: ScheduledJobsRouterDeps): Router
       timeoutSeconds: input.timeoutSeconds,
       retryCount: input.retryCount,
       updatedAt: new Date().toISOString(),
-    });
+    }, { preserveNextRunAt });
     stateService.upsertScheduledJob(job);
     res.json({ job });
   });
@@ -272,4 +273,17 @@ function clampInt(value: unknown, fallback: number, min: number, max: number): n
   const n = Number(value);
   if (!Number.isFinite(n)) return fallback;
   return Math.min(Math.max(Math.floor(n), min), max);
+}
+
+function schedulesEqual(a: ScheduledJobSchedule, b: ScheduledJobSchedule): boolean {
+  return normalizeScheduleForCompare(a) === normalizeScheduleForCompare(b);
+}
+
+function normalizeScheduleForCompare(schedule: ScheduledJobSchedule): string {
+  return JSON.stringify({
+    type: schedule.type,
+    intervalMinutes: schedule.type === 'interval' ? schedule.intervalMinutes : undefined,
+    timeOfDay: schedule.type === 'daily' ? schedule.timeOfDay : undefined,
+    timezone: schedule.timezone || 'Asia/Shanghai',
+  });
 }

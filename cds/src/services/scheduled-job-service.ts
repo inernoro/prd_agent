@@ -18,6 +18,10 @@ export interface ScheduledJobTargetCheckResult {
   error?: string;
 }
 
+export interface NormalizeScheduledJobOptions {
+  preserveNextRunAt?: boolean;
+}
+
 const DEFAULT_TICK_MS = 30_000;
 const MAX_LOG_CHARS = 24_000;
 const DEFAULT_TIMEOUT_SECONDS = 300;
@@ -76,9 +80,10 @@ export class ScheduledJobService {
     this.running.add(job.id);
 
     try {
+      const timeoutMs = Math.max(1, job.timeoutSeconds || DEFAULT_TIMEOUT_SECONDS) * 1000;
       const result = await this.executeActions(
         job,
-        Math.max(1, job.timeoutSeconds || DEFAULT_TIMEOUT_SECONDS),
+        Date.now() + timeoutMs,
         Math.max(0, Math.floor(job.retryCount || 0)),
       );
       run.exitCode = result.exitCode;
@@ -102,7 +107,7 @@ export class ScheduledJobService {
   }
 
   async checkTarget(target: ScheduledJobTarget, timeoutSeconds: number): Promise<ScheduledJobTargetCheckResult> {
-    return this.executeTarget(target, Math.max(1, timeoutSeconds || DEFAULT_TIMEOUT_SECONDS), `check-${crypto.randomBytes(8).toString('hex')}`);
+    return this.executeTarget(target, Math.max(1, timeoutSeconds || DEFAULT_TIMEOUT_SECONDS) * 1000, `check-${crypto.randomBytes(8).toString('hex')}`);
   }
 
   computeNextRunAt(schedule: ScheduledJobSchedule, from = new Date()): string | null {
@@ -125,9 +130,14 @@ export class ScheduledJobService {
     return new Date(candidate).toISOString();
   }
 
-  normalizeJob(job: ScheduledJob): ScheduledJob {
+  normalizeJob(job: ScheduledJob, options: NormalizeScheduledJobOptions = {}): ScheduledJob {
     const now = new Date().toISOString();
-    const next = job.enabled ? this.computeNextRunAt(job.schedule, new Date()) : null;
+    const shouldPreserveNext = options.preserveNextRunAt && Boolean(job.nextRunAt || job.schedule.type === 'manual');
+    const next = !job.enabled
+      ? null
+      : shouldPreserveNext
+        ? job.nextRunAt || null
+        : this.computeNextRunAt(job.schedule, new Date());
     const actions = normalizeActions(job.actions, job.target);
     return {
       ...job,
@@ -183,7 +193,7 @@ export class ScheduledJobService {
     });
   }
 
-  private async executeActions(job: ScheduledJob, timeoutSeconds: number, retryCount: number): Promise<ScheduledJobTargetCheckResult> {
+  private async executeActions(job: ScheduledJob, deadlineMs: number, retryCount: number): Promise<ScheduledJobTargetCheckResult> {
     const actions = normalizeActions(job.actions, job.target);
     if (actions.length === 0) {
       return { ok: false, exitCode: 1, log: '', error: '任务至少需要一个动作' };
@@ -197,7 +207,7 @@ export class ScheduledJobService {
       const title = action.name || defaultActionName(action);
       logs.push(`[${index + 1}/${actions.length}] ${title}`);
       const sandboxKey = actions.length === 1 ? job.id : `${job.id}-${index + 1}-${action.id}`;
-      const result = await this.executeTargetWithRetry(action, timeoutSeconds, sandboxKey, retryCount);
+      const result = await this.executeTargetWithRetry(action, deadlineMs, sandboxKey, retryCount);
       lastExitCode = result.exitCode;
       lastHttpStatus = result.httpStatus;
       if (result.log) logs.push(result.log);
@@ -222,15 +232,20 @@ export class ScheduledJobService {
 
   private async executeTargetWithRetry(
     target: ScheduledJobTarget,
-    timeoutSeconds: number,
+    deadlineMs: number,
     sandboxKey: string,
     retryCount: number,
   ): Promise<ScheduledJobTargetCheckResult> {
     const logs: string[] = [];
     let last: ScheduledJobTargetCheckResult | null = null;
     for (let attempt = 0; attempt <= retryCount; attempt += 1) {
+      const remainingMs = deadlineMs - Date.now();
+      if (remainingMs <= 0) {
+        logs.push('任务已达到总超时时间。');
+        break;
+      }
       const attemptSandboxKey = retryCount === 0 ? sandboxKey : `${sandboxKey}-try-${attempt + 1}`;
-      const result = await this.executeTarget(target, timeoutSeconds, attemptSandboxKey);
+      const result = await this.executeTarget(target, remainingMs, attemptSandboxKey);
       last = result;
       if (retryCount > 0) logs.push(`尝试 ${attempt + 1}/${retryCount + 1}`);
       if (result.log) logs.push(result.log);
@@ -246,7 +261,7 @@ export class ScheduledJobService {
     };
   }
 
-  private async executeTarget(target: ScheduledJobTarget, timeoutSeconds: number, sandboxKey?: string): Promise<ScheduledJobTargetCheckResult> {
+  private async executeTarget(target: ScheduledJobTarget, timeoutMs: number, sandboxKey?: string): Promise<ScheduledJobTargetCheckResult> {
     if (target.type === 'command') {
       const sandbox = resolveCommandSandbox(this.deps.config.repoRoot, sandboxKey || 'manual', target.cwd);
       const result = await this.deps.shell.exec(buildDockerSandboxCommand({
@@ -255,7 +270,7 @@ export class ScheduledJobService {
         dockerNetwork: this.deps.config.dockerNetwork,
         hostSandboxRoot: sandbox.hostSandboxRoot,
       }), {
-        timeout: timeoutSeconds * 1000,
+        timeout: Math.max(1, Math.ceil(timeoutMs)),
       });
       const log = [result.stdout, result.stderr].filter(Boolean).join('\n');
       return {
@@ -267,7 +282,7 @@ export class ScheduledJobService {
     }
 
     const ctrl = new AbortController();
-    const timeout = setTimeout(() => ctrl.abort(), timeoutSeconds * 1000);
+    const timeout = setTimeout(() => ctrl.abort(), Math.max(1, Math.ceil(timeoutMs)));
     try {
       const url = normalizeTargetUrl(target.url, this.deps.config.masterPort);
       const headers = { ...(target.headers || {}) };
