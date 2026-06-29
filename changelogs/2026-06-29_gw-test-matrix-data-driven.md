@@ -1,0 +1,2 @@
+| test | prd-api | 网关测试矩阵从压缩版扩成数据驱动全枚举：GatewayProtocolFidelityTests 改 [Theory] 读 protocol-cells.json(91 协议保真 cell)，CrossProcessServingErrorLoadTests 改 [Theory] 读 transport-cells.json(18 跨进程 cell，4 stub host 复用)，新增 GwResolutionMatrixTests(153 反射 [Theory] 校验入口命名+ModelType 合法) |
+| docs | doc | 新增 report.gw-test-matrix（约 282 行全量可见报告：A 解析 153 入口 + B 91 cell + C 18 cell + 20 扩展维度），由 scripts/gen-gw-matrix-report.py 自动生成并产出两份 cell 目录 SSOT |

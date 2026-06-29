@@ -28,6 +28,11 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
+  <!-- 数据驱动矩阵 cell 目录（scripts/gen-gw-matrix-report.py 生成，B/C 层 [Theory] 读它真跑） -->
+  <ItemGroup>
+    <None Include="Gateway/fixtures/*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\src\PrdAgent.Api\PrdAgent.Api.csproj" />
     <ProjectReference Include="..\..\src\PrdAgent.Core\PrdAgent.Core.csproj" />

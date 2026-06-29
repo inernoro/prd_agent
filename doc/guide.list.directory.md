@@ -69,7 +69,7 @@
 - [CDS Compose 契约（SSOT）](spec.cds-compose-contract) `spec.cds-compose-contract`
   > CDS docker-compose 契约的唯一来源规格
 - [AI 大模型网关真实环境 MECE 冒烟测试矩阵](spec.llm-gateway-test-matrix) `spec.llm-gateway-test-matrix`
-  > 14 维 MECE 矩阵 + 4 层(解析/协议保真/跨进程/真机)测试 + 每层 canary；B/C 层 CI 真跑，D 层待 CDS
+  > MECE 矩阵 + 4 层(解析/协议保真/跨进程/真机)测试 + 每层 canary；数据驱动全量见 report.gw-test-matrix；B/C 层 CI 真跑，D 层待 CDS
 
 - [CDS 服务生命周期与缓存范围规格](spec.cds-lifecycle) `spec.cds-lifecycle`
   > CDS 服务生命周期管理与缓存隔离范围的规格说明
@@ -860,6 +860,8 @@
 
 - [智能体宇宙 · 完备度看板](report.agent-universe-completeness) `report.agent-universe-completeness`
   > 各智能体完备度看板：终极目标、当前进度、TodoList、目前情况、风险点（当前加权进度约 55%）
+- [AI 大模型网关测试矩阵全量报告](report.gw-test-matrix) `report.gw-test-matrix`
+  > 全枚举可见大表：A 解析 153 入口 + B 协议保真 91 cell + C 跨进程 18 cell + 20 扩展维度；由 gen-gw-matrix-report.py 自动生成，B/C 即 CI 真跑 cell
 
 - [CDS 绝对可视化一键部署 · 完整报告](report.cds-visual-deploy) `report.cds-visual-deploy`
 - [CDS Agent 商业级可用闭环目标审计报告](report.cds-agent-goal-completion-audit-2026-05-19) `report.cds-agent-goal-completion-audit-2026-05-19`

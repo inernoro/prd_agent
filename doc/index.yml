@@ -332,6 +332,7 @@ docs:
   debt.web-hosting-comments: 网页托管评论 · 债务台账
 
   # ── 七、周报（降序：最新在前）──
+  report.gw-test-matrix: AI 大模型网关测试矩阵全量报告（A 解析 153 + B 协议 91 + C 跨进程 18 cell，自动生成）
   report.agent-universe-completeness: 智能体宇宙 · 各智能体完备度看板（终极目标 vs 当前进度）
   report.cds-visual-deploy: CDS 绝对可视化一键部署 · 完整报告（交付总览 + dogfood 修的真 bug + 各轮验收分享链）
   report.cds-agent-goal-completion-audit-2026-05-19: CDS Agent 商业级可用闭环目标审计报告
