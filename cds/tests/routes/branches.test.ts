@@ -667,6 +667,10 @@ describe('Branch Routes', () => {
         extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80 }],
       });
       expect(stateService.getBranch('b1')!.profileOverrides?.['demo-extra']).toBeUndefined();
+      // The override clear must be PERSISTED, not in-memory only (Bugbot Medium): a fresh StateService
+      // reading the same state file must also see it gone — otherwise a restart reloads stale overrides.
+      const reloaded = new StateService(path.join(tmpDir, 'state.json'));
+      expect(reloaded.getBranch('b1')?.profileOverrides?.['demo-extra']).toBeUndefined();
     });
 
     it('preserves + validates extra-service dbScope (Codex P2)', async () => {

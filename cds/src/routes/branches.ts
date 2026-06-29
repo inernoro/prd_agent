@@ -13224,12 +13224,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 注:回滚时 final == prev,removedIds 为空,不会误删;额外 id 不会撞项目 profile id(PUT 已拒),清除安全。
     {
       const finalExtraIds = new Set((updated.extraProfiles || []).map((p) => p.id));
+      let clearedAnyOverride = false;
       for (const prev of prevExtraProfilesSnapshot) {
         if (!finalExtraIds.has(prev.id) && updated.profileOverrides?.[prev.id]) {
           stateService.clearBranchProfileOverride(entry.id, prev.id);
+          clearedAnyOverride = true;
         }
       }
-      updated = stateService.getBranch(entry.id)!;
+      // clearBranchProfileOverride 只改内存,必须显式落盘（Bugbot Medium「Extra removal override not
+      // persisted」）：extraProfiles 已由 setBranchExtraProfiles 持久化,若不 save 这次 override 清除,重启会
+      // 重新载入旧 profileOverrides,同 id 新服务又会套上陈旧 env/镜像。
+      if (clearedAnyOverride) {
+        stateService.save();
+        updated = stateService.getBranch(entry.id)!;
+      }
     }
     res.json({
       extraProfiles: maskExtraProfilesEnv(updated.extraProfiles || []) || [],
