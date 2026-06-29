@@ -448,6 +448,25 @@ describe('Branch Routes', () => {
       expect((g2.body as any).extraProfiles).toEqual([]); // sibling untouched
     });
 
+    it('preserves branch-local routing/ordering/readiness metadata (pathPrefixes/dependsOn/readinessProbe/startupSignal)', async () => {
+      seedBranch('b1');
+      const put = await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{
+          id: 'extra-api', name: 'extra-api', dockerImage: 'nginx:alpine', containerPort: 8080,
+          pathPrefixes: ['/api/', '/graphql'],
+          dependsOn: ['mysql', 'redis'],
+          readinessProbe: { path: '/health', intervalSeconds: 3, timeoutSeconds: 120, noHttp: false },
+          startupSignal: 'Network:',
+        }],
+      });
+      expect(put.status).toBe(200);
+      const saved = stateService.getBranch('b1')!.extraProfiles!.find((p) => p.id === 'extra-api')!;
+      expect(saved.pathPrefixes).toEqual(['/api/', '/graphql']);
+      expect(saved.dependsOn).toEqual(['mysql', 'redis']);
+      expect(saved.readinessProbe).toEqual({ path: '/health', intervalSeconds: 3, timeoutSeconds: 120 });
+      expect(saved.startupSignal).toBe('Network:');
+    });
+
     it('rejects an extra id that collides with a project profile', async () => {
       stateService.addBuildProfile({ id: 'api', name: 'API', dockerImage: 'img', workDir: 'api', command: 'run', containerPort: 8080, projectId: 'default' });
       seedBranch('b1');

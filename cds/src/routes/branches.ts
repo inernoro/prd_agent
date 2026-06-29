@@ -21,7 +21,7 @@ import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { JanitorService } from '../services/janitor.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
-import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogContainerSnapshot, OperationLogEvent, BuildProfile, BuildProfileOverride, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project, ProjectActivityLog, ResourceExternalAccessPolicy, ContainerLogArchiveEntry } from '../types.js';
+import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogContainerSnapshot, OperationLogEvent, BuildProfile, BuildProfileOverride, ReadinessProbe, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project, ProjectActivityLog, ResourceExternalAccessPolicy, ContainerLogArchiveEntry } from '../types.js';
 import { discoverComposeFiles, parseComposeFile, parseComposeString, resolveEnvTemplates, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
@@ -12876,6 +12876,30 @@ export function createBranchRouter(deps: RouterDeps): Router {
           return;
         }
       }
+      // 保留分支级路由/依赖/就绪元数据（Codex P2「Preserve branch-local routing metadata」）：
+      // 早期白名单只留 id/image/workDir/command/port/env，把 pathPrefixes（路由前缀）、dependsOn
+      // （启动顺序）、readinessProbe / startupSignal（就绪判定）这些 deploy 真正消费的字段静默丢了，
+      // 导致拆服务实验里靠路由前缀/启动顺序的额外服务不可达或起错序。这里按受支持字段透传 + 校验。
+      const strArray = (v: unknown): string[] | undefined => {
+        if (!Array.isArray(v)) return undefined;
+        const arr = v.map((x) => String(x).trim()).filter((x) => x.length > 0);
+        return arr.length > 0 ? arr : undefined;
+      };
+      const pathPrefixes = strArray(raw?.pathPrefixes);
+      const dependsOn = strArray(raw?.dependsOn);
+      const startupSignal = typeof raw?.startupSignal === 'string' && raw.startupSignal.trim() !== ''
+        ? raw.startupSignal : undefined;
+      const readinessProbe = ((): ReadinessProbe | undefined => {
+        const rp = raw?.readinessProbe;
+        if (!rp || typeof rp !== 'object' || Array.isArray(rp)) return undefined;
+        const o = rp as Record<string, unknown>;
+        const out: ReadinessProbe = {};
+        if (typeof o.path === 'string' && o.path.trim() !== '') out.path = o.path.trim();
+        if (typeof o.intervalSeconds === 'number' && o.intervalSeconds > 0) out.intervalSeconds = o.intervalSeconds;
+        if (typeof o.timeoutSeconds === 'number' && o.timeoutSeconds > 0) out.timeoutSeconds = o.timeoutSeconds;
+        if (o.noHttp === true) out.noHttp = true;
+        return Object.keys(out).length > 0 ? out : undefined;
+      })();
       seen.add(id);
       sanitized.push({
         id,
@@ -12893,6 +12917,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
           );
           return Object.keys(merged).length > 0 ? { env: merged } : {};
         })()),
+        ...(pathPrefixes ? { pathPrefixes } : {}),
+        ...(dependsOn ? { dependsOn } : {}),
+        ...(readinessProbe ? { readinessProbe } : {}),
+        ...(startupSignal ? { startupSignal } : {}),
         ...(raw?.prebuiltImage === true ? { prebuiltImage: true } : {}),
       } as BuildProfile);
     }
