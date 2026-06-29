@@ -12390,11 +12390,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // without a second round-trip.
       const refreshed = stateService.getBranch(id)!;
       const effective = resolveEffectiveProfile(profile, refreshed);
+      const savedOverride = stateService.getBranchProfileOverride(id, profileId);
+      // 分支级额外服务的 env 在 PUT 响应里脱敏（Codex P1「Mask extra profile env in override save
+      // responses」）：PUT 现可命中 extra-only profile（round-21），effective/override 直接回原 env 会泄露其
+      // 密钥，与上方 GET 面板的脱敏口径不一致。仅对额外服务遮蔽（项目 profile 行为不动）；状态层保持明文供
+      // deploy 直读。
+      const isExtra = (entry.extraProfiles || []).some((p) => p.id === profileId);
       res.json({
         message: '已保存分支覆盖',
         profileId,
-        override: stateService.getBranchProfileOverride(id, profileId),
-        effective,
+        override: isExtra && savedOverride?.env ? { ...savedOverride, env: maskSecrets(savedOverride.env) } : savedOverride,
+        effective: isExtra && effective.env ? { ...effective, env: maskSecrets(effective.env) } : effective,
         needsRedeploy: true,
       });
     } catch (err) {

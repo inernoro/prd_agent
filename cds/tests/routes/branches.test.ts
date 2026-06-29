@@ -660,6 +660,21 @@ describe('Branch Routes', () => {
       expect(stateService.getBranch('b1')!.profileOverrides?.['demo-extra']?.env?.FOO).toBe('bar');
     });
 
+    it('PUT /profile-overrides masks extra-profile secret env in the save response (Codex P1)', async () => {
+      seedBranch('b1');
+      await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80, env: { API_TOKEN: 'tok_secret', PUBLIC_URL: 'https://example.com' } }],
+      });
+      // Save an innocuous override; the response must NOT leak the extra service's secret env.
+      const put = await request(server, 'PUT', '/api/branches/b1/profile-overrides/demo-extra', { env: { API_TOKEN: 'tok_overridesecret' } });
+      expect(put.status).toBe(200);
+      expect((put.body as any).effective.env.API_TOKEN).toBe('***');
+      expect((put.body as any).effective.env.PUBLIC_URL).toBe('https://example.com');
+      expect((put.body as any).override.env.API_TOKEN).toBe('***');
+      // State still holds the real value (deploy reads raw).
+      expect(stateService.getBranch('b1')!.profileOverrides?.['demo-extra']?.env?.API_TOKEN).toBe('tok_overridesecret');
+    });
+
     it('404 for unknown branch', async () => {
       expect((await request(server, 'GET', '/api/branches/nope/extra-services')).status).toBe(404);
       expect((await request(server, 'PUT', '/api/branches/nope/extra-services', { extraProfiles: [] })).status).toBe(404);
