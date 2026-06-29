@@ -1141,6 +1141,56 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
       expect(res.status).not.toBe(403);
       expect(res.status).toBe(400); // missing gitRepoUrl
     });
+
+    it('detect-runtime keeps compose app services aligned with clone import', async () => {
+      shell.addResponsePattern(/git clone /, (match) => {
+        const dest = match.input?.match(/'([^']+)'\s*$/)?.[1];
+        expect(dest).toBeTruthy();
+        fs.mkdirSync(dest!, { recursive: true });
+        fs.writeFileSync(path.join(dest!, 'cds-compose.yml'), [
+          'services:',
+          '  app:',
+          '    image: ghcr.io/example/app:latest',
+          '    volumes:',
+          '      - ./:/app',
+          '    ports:',
+          '      - "8080:8080"',
+          '  web:',
+          '    image: node:20',
+          '    volumes:',
+          '      - ./web:/app',
+          '    command: pnpm start',
+          '    ports:',
+          '      - "3000:3000"',
+        ].join('\n'));
+        return { stdout: 'ok', stderr: '', exitCode: 0 };
+      });
+
+      const res = await request(server, 'POST', '/api/detect-runtime', {
+        gitRepoUrl: 'https://github.com/example/app.git',
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.services).toHaveLength(2);
+      expect(res.body.services).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: 'app',
+          runtime: 'dockerfile',
+          dockerImage: 'ghcr.io/example/app:latest',
+          command: '',
+          port: 8080,
+          stack: 'compose',
+        }),
+        expect.objectContaining({
+          id: 'web',
+          runtime: 'node',
+          dockerImage: 'node:20',
+          command: 'cd web && pnpm start',
+          port: 3000,
+          stack: 'compose',
+        }),
+      ]));
+    });
   });
 
   describe('POST /api/projects/:id/clone', () => {
