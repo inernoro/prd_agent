@@ -1188,7 +1188,11 @@ export class ContainerService {
             ? `── 本 commit 无该组件 CI 镜像,按回退链尝试 ${cand.image} ──\n`
             : `── 极速版: 拉取 CI 预构建镜像 ${cand.image}（CDS 不再本机编译）──\n`);
           context.assertCurrent?.(`runService before docker-pull ${profile.id}`);
-          const pull = await this.shell.exec(`docker pull ${cand.image}`);
+          // shellQuote 兜底（Codex P1「Validate extra-profile override images before deploy」）：cand.image
+          // 来自 resolved profile 的 dockerImage,而 profile-overrides PUT 可对分支额外服务覆盖 dockerImage,
+          // 绕过 extra-services 的严格镜像校验;裸拼进宿主机 `docker pull` 时 `alpine; touch /tmp/pwn` 这类值
+          // 会在 CDS 宿主机执行。这里单引号兜底关掉注入面(入口另有镜像引用白名单作边界防御)。
+          const pull = await this.shell.exec(`docker pull ${this.shellQuote(cand.image)}`);
           if (pull.stdout) onOutput?.(pull.stdout + '\n');
           if (pull.exitCode === 0) { pulledImage = cand.image; break; }
           lastDetail = (pull.stderr || pull.stdout || '').trim();

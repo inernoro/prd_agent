@@ -736,6 +736,25 @@ describe('Branch Routes', () => {
       expect(stateService.getBranch('b1')!.profileOverrides?.['demo-extra']?.env?.FOO).toBe('bar');
     });
 
+    it('PUT /profile-overrides rejects a shell-injecting dockerImage override (Codex P1)', async () => {
+      seedBranch('b1');
+      await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80, prebuiltImage: true }],
+      });
+      // A caller cannot bypass extra-services image validation by overriding dockerImage here:
+      // `alpine; touch /tmp/pwn` would hit the host `docker pull` if accepted.
+      const bad = await request(server, 'PUT', '/api/branches/b1/profile-overrides/demo-extra', { dockerImage: 'alpine:latest; touch /tmp/pwn' });
+      expect(bad.status).toBe(400);
+      expect(stateService.getBranch('b1')!.profileOverrides?.['demo-extra']?.dockerImage).toBeUndefined();
+      // A legitimate image reference is still accepted.
+      const ok = await request(server, 'PUT', '/api/branches/b1/profile-overrides/demo-extra', { dockerImage: 'ghcr.io/acme/api:1.2.3' });
+      expect(ok.status).toBe(200);
+      expect(stateService.getBranch('b1')!.profileOverrides?.['demo-extra']?.dockerImage).toBe('ghcr.io/acme/api:1.2.3');
+      // A traversal/metachar containerWorkDir override is also rejected.
+      const badCwd = await request(server, 'PUT', '/api/branches/b1/profile-overrides/demo-extra', { containerWorkDir: '/app/../etc' });
+      expect(badCwd.status).toBe(400);
+    });
+
     it('PUT /profile-overrides masks extra-profile secret env in the save response (Codex P1)', async () => {
       seedBranch('b1');
       await request(server, 'PUT', '/api/branches/b1/extra-services', {

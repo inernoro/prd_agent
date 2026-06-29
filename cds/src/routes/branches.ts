@@ -12423,6 +12423,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
 
+      // 覆盖镜像/路径的严格校验（Codex P1「Validate extra-profile override images before deploy」）：
+      // 此 PUT 现可覆盖分支额外服务的 dockerImage，调用方可先建 prebuiltImage 额外服务、再在此覆盖
+      // dockerImage 绕过 extra-services 的严格镜像白名单；覆盖值会并入有效 profile，prebuilt 路径用
+      // 宿主机 `docker pull ${image}` 拉取 → `alpine; touch /tmp/pwn` 在 CDS 宿主机执行。container.ts 已对
+      // pull 路径 shellQuote 兜底，这里在入口对 dockerImage/containerWorkDir 施加与 extra-services PUT 同款
+      // 白名单（对所有 profile 覆盖生效，合法镜像引用/容器内绝对路径均满足，不影响正常用法）。
+      if (typeof body.dockerImage === 'string' && body.dockerImage.trim() !== '') {
+        if (!/^[a-zA-Z0-9][a-zA-Z0-9._:/@-]*$/.test(body.dockerImage.trim())) {
+          res.status(400).json({ error: '覆盖的 dockerImage 含非法字符（镜像引用仅允许字母/数字/._:/@- ）' });
+          return;
+        }
+      }
+      if (typeof body.containerWorkDir === 'string' && body.containerWorkDir.trim() !== '') {
+        const cwd = body.containerWorkDir.trim();
+        if (!/^\/[a-zA-Z0-9._/-]*$/.test(cwd) || cwd.split('/').includes('..')) {
+          res.status(400).json({ error: '覆盖的 containerWorkDir 非法（须为容器内绝对路径，字母/数字/._-/，禁 .. 穿越与 shell 元字符）' });
+          return;
+        }
+      }
+
       // M8: `typeof [] === 'object'` is true and typeof null === 'object' too,
       // so we explicitly filter both. Otherwise `body.env = []` would cast to
       // Record<string,string> and produce garbage at deploy time.
