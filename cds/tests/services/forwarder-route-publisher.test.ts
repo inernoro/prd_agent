@@ -210,6 +210,30 @@ describe('ForwarderRoutePublisher', () => {
     expect(apiRoute.upstreamPort).toBe(41201);
   });
 
+  it('profileOverrides 配的 pathPrefixes 也发布到 forwarder（Codex P2「Resolve overrides before routing」mirror）', () => {
+    ensureProject('demo', 'demo');
+    addMultiProfileBranch({
+      projectId: 'demo',
+      branch: 'main',
+      services: { web: 41300, 'extra-api': 41301 },
+    });
+    state.addBuildProfile({ id: 'web', name: 'web', projectId: 'demo' } as Parameters<typeof state.addBuildProfile>[0]);
+    // extra-api declares NO pathPrefixes itself; the prefix is supplied via a profile override (only
+    // resolveEffectiveProfile merges it, not getEffectiveProfilesForBranch).
+    state.setBranchExtraProfiles('demo-main', [
+      { id: 'extra-api', name: 'extra-api', dockerImage: 'nginx:alpine', workDir: '', command: '', containerPort: 8080, projectId: 'demo' } as any,
+    ]);
+    state.setBranchProfileOverride('demo-main', 'extra-api', { pathPrefixes: ['/api/'] } as any);
+
+    publisher = new ForwarderRoutePublisher({ state, outputPath: outFile, rootDomains: ['miduo.org'] });
+    publisher.publishNow();
+    const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+
+    const apiRoute = data.find((r: { pathPrefix?: string }) => r.pathPrefix === '/api/');
+    expect(apiRoute).toBeDefined();
+    expect(apiRoute.upstreamPort).toBe(41301);
+  });
+
   it('subdomainAliases 每个生成额外路由记录', () => {
     ensureProject('demo', 'demo');
     addRunningBranch({

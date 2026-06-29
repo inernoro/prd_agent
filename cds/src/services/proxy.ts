@@ -8,6 +8,7 @@ import { buildWidgetScript } from '../widget-script.js';
 import { computePreviewSlug, previewProjectSlugCandidates } from './preview-slug.js';
 import { classifyDeployRuntime } from './deploy-runtime.js';
 import { computeWaitTiming } from './wait-timing.js';
+import { resolveEffectiveProfile } from './container.js';
 import type { DeployDurationMode } from '../types.js';
 import {
   classifyHttpRequestKind,
@@ -2234,7 +2235,14 @@ ${shouldAutoRefresh ? `;(function(){
     // by PUT /extra-services) is invisible to the proxy and its traffic falls through to convention/
     // default routing, leaving the extra service unreachable (Codex P2 "Route branch-local path
     // prefixes in the proxy"). Effective-profiles is also project-scoped, avoiding cross-project id mixups.
-    const profiles = this.stateService.getEffectiveProfilesForBranch(branch);
+    // Resolve each effective profile against the branch so profileOverrides apply (Codex P2 "Resolve
+    // overrides before routing path prefixes"): pathPrefixes supplied via PUT /profile-overrides are only
+    // merged by resolveEffectiveProfile, not by getEffectiveProfilesForBranch. Without this, an extra
+    // service can be running while requests for its override prefix fall through to convention/default
+    // routing (mirrored in forwarder-route-publisher.ts, which uses the same resolution).
+    const profiles = this.stateService
+      .getEffectiveProfilesForBranch(branch)
+      .map(p => resolveEffectiveProfile(p, branch));
     // Sort: longer prefixes first (most specific match wins)
     const profilesWithRoutes = profiles
       .filter(p => p.pathPrefixes && p.pathPrefixes.length > 0 && profileIds.includes(p.id))

@@ -31,6 +31,7 @@ import path from 'node:path';
 import type { StateService } from './state.js';
 import type { BranchEntry, BuildProfile } from '../types.js';
 import { buildPreviewUrlForProject } from './comment-template.js';
+import { resolveEffectiveProfile } from './container.js';
 import type { RouteRecord } from '../forwarder/types.js';
 
 /**
@@ -153,8 +154,14 @@ export class ForwarderRoutePublisher {
       // getBuildProfiles()（项目级），分支级额外服务的 pathPrefixes（只存在 branch.extraProfiles）发不进
       // forwarder-routes.json → CDS_USE_FORWARDER=1 时转发流量回退默认/约定路由、额外服务不可达
       // （Codex P2「Publish extra-service path prefixes to the forwarder」）。
+      // 每个有效 profile 再过 resolveEffectiveProfile 应用 profileOverrides（Codex P2「Resolve overrides
+      // before routing path prefixes」/ mirror）：经 PUT /profile-overrides 配的 pathPrefixes 只由
+      // resolveEffectiveProfile 合并,不在 getEffectiveProfilesForBranch 里;不解析则 override 前缀发不进
+      // forwarder-routes.json,与 proxy.ts 的解析口径保持一致。
       const profileById = new Map<string, BuildProfile>();
-      for (const bp of this.opts.state.getEffectiveProfilesForBranch(branch)) profileById.set(bp.id, bp);
+      for (const bp of this.opts.state.getEffectiveProfilesForBranch(branch)) {
+        profileById.set(bp.id, resolveEffectiveProfile(bp, branch));
+      }
 
       const project = projectById.get(branch.projectId);
       const previewSlug = buildPreviewUrlForProject('', branch.branch, project, branch.projectId).previewSlug;

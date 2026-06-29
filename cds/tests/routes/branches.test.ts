@@ -755,6 +755,39 @@ describe('Branch Routes', () => {
       expect(badCwd.status).toBe(400);
     });
 
+    it('container-exec masks a secret stored via profile-overrides (Codex P2: resolve overrides before masking exec output)', async () => {
+      seedBranch('b1');
+      await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80 }],
+      });
+      // The secret lives ONLY in the profile override (the extra profile itself has no env).
+      await request(server, 'PUT', '/api/branches/b1/profile-overrides/demo-extra', { env: { SECRET_TOKEN: 'supersecretvalue123' } });
+      // A running service row so container-exec finds a container to exec into.
+      stateService.getBranch('b1')!.services['demo-extra'] = {
+        profileId: 'demo-extra', containerName: 'cds-b1-demo-extra', hostPort: 10099, status: 'running',
+      };
+      stateService.save();
+
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        // simulate `echo $SECRET_TOKEN` dumping the raw secret on its own line
+        if (command.includes('docker exec cds-b1-demo-extra')) {
+          return { stdout: 'supersecretvalue123\n', stderr: '', exitCode: 0 };
+        }
+        return originalExec(command, options);
+      };
+      try {
+        const res = await request(server, 'POST', '/api/branches/b1/container-exec', { profileId: 'demo-extra', command: 'echo $SECRET_TOKEN' });
+        expect(res.status).toBe(200);
+        expect((res.body as any).masked).toBe(true);
+        // Override-supplied secret must be redacted (was leaked when masking read the unmerged profile).
+        expect((res.body as any).stdout).not.toContain('supersecretvalue123');
+        expect((res.body as any).stdout).toContain('***');
+      } finally {
+        mock.exec = originalExec;
+      }
+    });
+
     it('PUT /profile-overrides masks extra-profile secret env in the save response (Codex P1)', async () => {
       seedBranch('b1');
       await request(server, 'PUT', '/api/branches/b1/extra-services', {

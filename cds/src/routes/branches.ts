@@ -13269,7 +13269,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
         try {
           // 用分支**有效** profiles 查（项目 profiles + 分支额外服务），而非仅项目级 getBuildProfile：
           // 否则分支级额外服务(extraProfiles)的敏感 env 查不到，`echo $TOKEN` 会原样吐出明文（Codex P2）。
-          const prof = stateService.getEffectiveProfilesForBranch(entry).find((p) => p.id === profileId) as any;
+          // 再经 resolveEffectiveProfile 应用 profileOverrides（Codex P2「Resolve overrides before masking exec
+          // output」）：getEffectiveProfilesForBranch 只合并项目+额外 profile,不含 profileOverrides[profileId].env;
+          // 若密钥是经 PUT /profile-overrides 存的，未解析前查不到 → `echo $TOKEN` 仍吐明文(尽管 override 响应/
+          // 分支视图已脱敏)。resolveEffectiveProfile 把 override env 并入后再收集敏感值。
+          const baseProf = stateService.getEffectiveProfilesForBranch(entry).find((p) => p.id === profileId);
+          const prof = baseProf ? (resolveEffectiveProfile(baseProf, entry) as any) : undefined;
           const profEnv: Record<string, string> = (prof && prof.env) || {};
           // Collect concrete sensitive values long enough to be plausible
           // secrets. <6 chars are skipped to avoid mangling normal strings
