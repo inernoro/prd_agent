@@ -2636,6 +2636,12 @@ export class ContainerService {
     if (inspect.exitCode !== 0) {
       const create = await this.shell.exec(`docker network create ${target}`);
       if (create.exitCode !== 0) {
+        // 并发竞态：同一分支的多个服务（如 api + admin 在 layer-0 同时启动）首次都发现分支网
+        // 不存在 → 同时 `docker network create` → 一个成功、其余报 "already exists"。docker 网络
+        // create 天然幂等语义下这就是成功，吞掉视为已就绪（分支网是新建的，最易触发，旧共享网因
+        // 多已预先存在而少见此竞态）。
+        const stderr = (create.stderr || '').toLowerCase();
+        if (stderr.includes('already exists')) return;
         throw new Error(`创建 Docker 网络 "${target}" 失败:\n${combinedOutput(create)}`);
       }
     }

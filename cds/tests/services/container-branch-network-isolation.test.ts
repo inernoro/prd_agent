@@ -135,6 +135,24 @@ describe('ContainerService 分支级网络隔离', () => {
     expect(mock.commands.some((c) => c.includes('docker network create cds-br-feature-a'))).toBe(true);
   });
 
+  it('容忍并发竞态：分支网 create 报 "already exists" 不抛（同分支多服务同时首建）', async () => {
+    const service = new ContainerService(mock, makeConfig(), resolver);
+    aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
+    // 分支网 inspect 失败（不存在）→ create 报 already exists（另一个并发服务抢先建好了）
+    mock.addResponsePattern(/docker network inspect cds-br-feature-a/, () => ({ stdout: '', stderr: 'No such network', exitCode: 1 }));
+    mock.addResponsePattern(/docker network create cds-br-feature-a/, () => ({ stdout: '', stderr: 'Error response from daemon: network with name cds-br-feature-a already exists', exitCode: 1 }));
+    mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker network connect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker run/, () => ({ stdout: 'cid', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/mkdir/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+
+    // 不抛 = 通过
+    await expect(service.runService(makeEntry('proj-a'), makeProfile(), makeService())).resolves.toBeUndefined();
+    const runCmd = mock.commands.find((c) => c.includes('docker run -d'))!;
+    expect(runCmd).toContain('--network cds-br-feature-a');
+  });
+
   it('infra 容器不受分支隔离影响，仍在项目共享网', async () => {
     const service = new ContainerService(mock, makeConfig(), resolver);
     okStubs(mock);
