@@ -2072,7 +2072,7 @@ export function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSel
           />
 
           <div className="absolute left-3 top-3 z-20 flex items-center gap-1.5">
-            {/* 公开态展示状态并允许创建者取消公开；私有态不展示入口，避免和常用分享动作混淆。 */}
+            {/* 公开态展示状态并允许创建者取消公开；私有态把原公开快捷位改为高频分享入口。 */}
             {!c.canSetVisibility ? (
               isPublic ? (
                 <span className="inline-flex h-7 items-center gap-1 rounded-full bg-sky-500/25 px-2.5 text-[11px] font-semibold text-sky-50 shadow-md backdrop-blur-md">
@@ -2090,6 +2090,17 @@ export function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSel
                 <Lock size={12} className="hidden group-hover/pub:inline-block" />
                 <span className="group-hover/pub:hidden">公开</span>
                 <span className="hidden group-hover/pub:inline-block">取消公开</span>
+              </button>
+            ) : c.canShare ? (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onShare(); }}
+                className="inline-flex h-7 cursor-pointer items-center gap-1 rounded-full bg-violet-500/30 px-2.5 text-[11px] font-semibold text-violet-50 shadow-md backdrop-blur-md transition-colors hover:bg-violet-500/45"
+                title="分享"
+                aria-label="分享"
+              >
+                <Share2 size={12} />
+                分享
               </button>
             ) : null}
             <button

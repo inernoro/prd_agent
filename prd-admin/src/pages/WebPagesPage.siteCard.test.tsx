@@ -42,11 +42,12 @@ function renderSiteCard(site: HostedSite = baseSite) {
 }
 
 describe('WebPagesPage SiteCard', () => {
-  it('hides the private quick-public action while keeping share available', () => {
+  it('changes the private quick-public action into a visible share action', () => {
     const html = renderSiteCard();
 
     expect(html).not.toContain('设为公开');
     expect(html).not.toContain('>公开<');
+    expect(html).toContain('>分享<');
     expect(html).toContain('aria-label="分享"');
   });
 });
