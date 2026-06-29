@@ -12639,6 +12639,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
       return;
     }
+    // 项目级访问控制(Bugbot High / learned rule: 所有项目级资源 handler 必须 assertProjectAccess):
+    // 防止项目 A 的 cdsp_ key 读取/改动项目 B 分支的额外服务。
+    const mGet = assertProjectAccess(req as any, entry.projectId || 'default');
+    if (mGet) {
+      res.status(mGet.status).json(mGet.body);
+      return;
+    }
     res.json({ extraProfiles: entry.extraProfiles || [] });
   });
 
@@ -12646,6 +12653,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const entry = stateService.getBranch(req.params.id);
     if (!entry) {
       res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
+      return;
+    }
+    // 项目级访问控制(同上):PUT 会改部署清单 + ?redeploy=1 触发重部署,跨项目越权风险更高,必须校验。
+    const mPut = assertProjectAccess(req as any, entry.projectId || 'default');
+    if (mPut) {
+      res.status(mPut.status).json(mPut.body);
       return;
     }
     const body = (req.body || {}) as { extraProfiles?: unknown };

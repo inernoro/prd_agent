@@ -289,6 +289,49 @@ describe('Cross-project isolation on profiles/rules/export', () => {
     });
   });
 
+  // Bugbot High (2026-06-29, PR #951 review): the new GET/PUT
+  // /api/branches/:id/extra-services handlers must call assertProjectAccess
+  // like every other project-scoped branch route. Without it a project B key
+  // could read or change project A's branch extra services (and trigger a
+  // cross-project redeploy via ?redeploy=1). This pins the fix.
+  describe('GET/PUT /api/branches/:id/extra-services (cross-project guard)', () => {
+    function seedBranchA() {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'a-feature', projectId: 'proj-a', branch: 'feature',
+        worktreePath: '/tmp/wt/a-feature', services: {}, status: 'idle',
+        createdAt: now,
+      });
+    }
+    const extraSvc = { id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80, prebuiltImage: true };
+
+    it('GET refuses Project B key reading Project A branch extras (403)', async () => {
+      seedBranchA();
+      const res = await request(server, 'GET', '/api/branches/a-feature/extra-services',
+        undefined, { 'X-Test-Key': KEY_PROJ_B });
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('project_mismatch');
+    });
+
+    it('PUT refuses Project B key mutating Project A branch extras (403, no state change)', async () => {
+      seedBranchA();
+      const res = await request(server, 'PUT', '/api/branches/a-feature/extra-services',
+        { extraProfiles: [extraSvc] }, { 'X-Test-Key': KEY_PROJ_B });
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('project_mismatch');
+      // State must not have been touched.
+      expect(stateService.getBranch('a-feature')!.extraProfiles).toBeUndefined();
+    });
+
+    it('allows Project A key on its own branch extras', async () => {
+      seedBranchA();
+      const res = await request(server, 'PUT', '/api/branches/a-feature/extra-services',
+        { extraProfiles: [extraSvc] }, { 'X-Test-Key': KEY_PROJ_A });
+      expect(res.status).toBe(200);
+      expect(stateService.getBranch('a-feature')!.extraProfiles).toHaveLength(1);
+    });
+  });
+
   // F15 (HIGH severity, 2026-05-02 onboarding UAT): `docker exec` output
   // and `docker logs` output must mask sensitive env values by default.
   // Admin can opt out with ?unmask=1 (logged via activity stream).
