@@ -992,10 +992,15 @@ function branchTimeBadge(branch: BranchSummary, now = Date.now(), busySince?: st
     };
   }
   if (branch.lastAccessedAt) {
+    // lastAccessedAt 是「最近一次预览被访问」的时间（每次代理请求 scheduler.touch 刷新），
+    // 不是部署时间。此前误标为「上次部署」，导致「刚打开过预览」被显示成「上次部署 N 分钟前」，
+    // 与真实部署时间（lastDeployAt）矛盾（2026-06-29 用户反馈「最近一分钟没部署过」）。
     return {
-      label: '上次部署',
+      label: '最近访问',
       text: formatRelativeTime(branch.lastAccessedAt),
-      title: `最近一次部署尝试: ${branch.lastAccessedAt}`,
+      title: branch.lastDeployAt
+        ? `最近一次预览访问: ${branch.lastAccessedAt}；最近成功部署: ${branch.lastDeployAt}`
+        : `最近一次预览访问: ${branch.lastAccessedAt}`,
     };
   }
   if (branch.lastDeployAt) {

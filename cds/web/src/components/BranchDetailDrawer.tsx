@@ -739,8 +739,19 @@ function PreviewUrlChip({ url }: { url: string }): JSX.Element {
 function pickActiveDeployment(items: BranchDeploymentItem[], now: number): BranchDeploymentItem | null {
   if (items.length === 0) return null;
   const sorted = items.slice().sort((left, right) => right.startedAt - left.startedAt);
-  // running 优先
-  const running = sorted.find((item) => item.status === 'running');
+  // 僵尸 running 守卫：一条 webhook 派发/部署日志若进程在 finalize 前重启（或漏写终态），
+  // 会永远停在 status='running'。旧逻辑「有 running 就选它当当前部署」会把这条 N 天前的
+  // 孤儿当成进行中 → finishedAt 为空、已用时算成几天 → 误报「疑似卡住 ≥1h」，盖在一个其实
+  // 健康运行的分支上（真实根因见 .claude/rules，2026-06-29 miduo-backend-master 案例）。
+  // 规则：只要存在一条 startedAt 更晚的「已终结部署」(kind=deploy 且 success/error)，
+  // 比它更早的 running 必是被取代的孤儿，不再当作活跃部署；落到下面的「最近完成 / 最新一条」。
+  const newestFinishedDeployStart = sorted.find(
+    (item) => item.kind === 'deploy' && (item.status === 'success' || item.status === 'error'),
+  )?.startedAt ?? -Infinity;
+  // running 优先（但排除被更新部署取代的孤儿）
+  const running = sorted.find(
+    (item) => item.status === 'running' && item.startedAt >= newestFinishedDeployStart,
+  );
   if (running) return running;
   // 最近 60s 内结束的最近一条也当作 active
   const recent = sorted.find((item) => {
