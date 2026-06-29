@@ -38,6 +38,10 @@ export function pickActiveDeployment(
     }
     return max;
   }, -Infinity);
+  // 被更晚完成的部署取代的僵尸 running（startedAt 早于已完成部署的最晚 finishedAt）。这类条目永远
+  // 不该被当成「当前部署」，否则会渲染「疑似卡住」卡片。
+  const isSupersededRunning = (item: BranchDeploymentItem): boolean =>
+    item.status === 'running' && item.startedAt < newestFinishedDeployEnd;
   // running 优先（但排除被更晚完成的部署取代的孤儿：running 必须在所有已完成部署都收尾之后才开始）
   const running = sorted.find(
     (item) => item.status === 'running' && item.startedAt >= newestFinishedDeployEnd,
@@ -49,6 +53,8 @@ export function pickActiveDeployment(
     return now - item.finishedAt <= ACTIVE_DEPLOYMENT_TAIL_MS;
   });
   if (recent) return recent;
-  // 否则第一条（按时间倒序的最新）
-  return sorted[0];
+  // 兜底返回最新一条，但**跳过僵尸 running**（Codex P2）：tail 窗口过期后，若直接返回 sorted[0]，
+  // 而最新一条恰是被取代的僵尸 running，会把「疑似卡住」卡片又选回来。改取最新的非僵尸条目；
+  // 万一全是僵尸 running（极端），才退回 sorted[0]。
+  return sorted.find((item) => !isSupersededRunning(item)) ?? sorted[0];
 }

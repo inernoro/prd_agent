@@ -19,7 +19,7 @@ describe('isValidExtraProfileId', () => {
     for (const id of ['llmgw-serve', 'api', 'svc_1', 'A1', 'x']) expect(isValidExtraProfileId(id)).toBe(true);
   });
   it('rejects bad ids', () => {
-    for (const id of ['', '-bad', '_bad', 'has space', 'a'.repeat(64), 'emoji😀']) {
+    for (const id of ['', '-bad', '_bad', 'has space', 'a'.repeat(64), 'bad@id', 'has/slash']) {
       expect(isValidExtraProfileId(id)).toBe(false);
     }
   });

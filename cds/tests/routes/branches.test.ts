@@ -1634,6 +1634,73 @@ describe('Branch Routes', () => {
       }
     });
 
+    it('orphan-service removal does not delete entry.services when the deploy lease is superseded mid-loop', async () => {
+      // Bugbot Medium (learned rule: BranchOperationCoordinator lease safety): the deploy-finalize
+      // loop that tears down services removed from the desired set awaits containerService.remove.
+      // If a higher-priority op (manual stop) supersedes the deploy lease during that await, the loop
+      // must assertCurrent and abort BEFORE deleting entry.services + save() — not mutate state under
+      // a cancelled deploy.
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        command: 'node server.js',
+        workDir: '.',
+        containerPort: 3000,
+      });
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'orphan-fence',
+        projectId: 'default',
+        branch: 'feature/orphan-fence',
+        worktreePath: path.join(tmpDir, 'worktrees', 'orphan-fence'),
+        status: 'idle',
+        createdAt: now,
+        services: {
+          api: { profileId: 'api', containerName: 'cds-orphan-fence-api', hostPort: 10001, status: 'idle' },
+          // zombie: no matching build profile → the deploy's orphan-removal loop will try to remove it.
+          zombie: { profileId: 'zombie', containerName: 'cds-orphan-fence-zombie', hostPort: 10002, status: 'idle' },
+        },
+      });
+      stateService.save();
+
+      // Gate the deploy inside the orphan-removal loop: pause when it issues `docker rm` for the
+      // zombie container, then supersede the lease via a manual stop, then release.
+      let releaseRm!: () => void;
+      const rmRelease = new Promise<void>((resolve) => { releaseRm = resolve; });
+      let markRmStarted!: () => void;
+      const rmStarted = new Promise<void>((resolve) => { markRmStarted = resolve; });
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.includes('docker rm') && command.includes('cds-orphan-fence-zombie')) {
+          markRmStarted();
+          await rmRelease;
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+        return originalExec(command, options);
+      };
+
+      const deployPromise = request(server, 'POST', '/api/branches/orphan-fence/deploy');
+      try {
+        await rmStarted;
+        // Manual stop supersedes the in-flight deploy lease.
+        const stop = await request(
+          server,
+          'POST',
+          '/api/branches/orphan-fence/stop',
+          undefined,
+          { 'X-CDS-Request-Id': 'req-orphan-stop' },
+        );
+        expect(stop.status).toBe(200);
+      } finally {
+        releaseRm();
+      }
+      const deploy = await deployPromise;
+      expect(deploy.status).toBe(200);
+      // The superseded deploy must NOT have deleted the zombie service entry under a cancelled lease.
+      expect(stateService.getBranch('orphan-fence')?.services.zombie).toBeTruthy();
+    });
+
     it('records branch delete completion only after state flush succeeds', async () => {
       const now = new Date().toISOString();
       stateService.addBranch({

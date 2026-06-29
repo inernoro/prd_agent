@@ -129,7 +129,11 @@ describe('ContainerService 分支级网络隔离', () => {
     const startIdx = mock.commands.findIndex((c) => c.includes('docker start cds-feature-a-apigateway'));
     expect(createIdx).toBeGreaterThanOrEqual(0);
     expect(connectIdx).toBeGreaterThan(createIdx);
+    expect(startIdx).toBeGreaterThan(createIdx);
     expect(startIdx).toBeGreaterThan(connectIdx);
+    // 陈旧别名清理扫的是别名实际所在的网（隔离=分支网），不是共享项目网（Bugbot Medium）
+    expect(mock.commands.some((c) => c.includes('docker ps -aq') && c.includes('network=cds-br-feature-a'))).toBe(true);
+    expect(mock.commands.some((c) => c.includes('docker ps -aq') && c.includes('network=cds-proj-a'))).toBe(false);
   });
 
   it('确保分支网存在（inspect 失败则 create cds-br-feature-a）', async () => {

@@ -214,6 +214,31 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
         }
       }
 
+      // 期望清单收敛（Codex P2，2026-06-29）：payload profiles 里没有的 service = 已从分支额外服务
+      // (extraProfiles) 或项目 profile 移除。executor 必须主动下掉它的容器并删条目，否则 redeploy=1 清掉
+      // 额外服务后，worker 节点上的旧分支本地容器仍在跑（master 侧 deploy 已做同样的孤儿清理，executor
+      // 路径此前漏了）。best-effort：remove 失败也删条目，避免卡住本次部署。
+      const payloadProfileIds = new Set(profilesData.map((p) => p.id));
+      for (const [sid, svc] of Object.entries(entry.services)) {
+        if (payloadProfileIds.has(sid)) continue;
+        try {
+          await containerService.remove(svc.containerName, {
+            projectId: entry.projectId,
+            branchId: entry.id,
+            profileId: sid,
+            requestId: requestId || null,
+            operationId: operationId || null,
+            actor: actor || 'executor',
+            trigger: trigger || 'executor-deploy',
+            operation: 'executor-deploy-remove-orphan-service',
+            source: 'executor.deploy',
+            reason: '服务已从期望清单移除(额外服务被清/项目 profile 被删)',
+          });
+        } catch { /* best-effort：仍删条目 */ }
+        delete entry.services[sid];
+        sendEvent('step', { step: 'remove-orphan-service', status: 'done', title: `服务 "${sid}" 已下掉（已从期望清单移除）` });
+      }
+
       // Update overall status
       const statuses = Object.values(entry.services).map(s => s.status);
       entry.status = statuses.some(s => s === 'running') ? 'running' : 'error';

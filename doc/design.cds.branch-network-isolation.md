@@ -76,8 +76,9 @@ docker 多网语义：容器同时挂分支网 + 共享网时，DNS 跨其所连
   必须在 CDS 灰度上真机验证后再放心默认开。逃生开关是兜底。
 - **分支网清理已接线**（2026-06-29 review 修复）：主节点删分支 + 远端执行器 `/exec/delete` 都已调
   `removeBranchNetwork`。仍可加一个周期性 sweep（prune 无容器的 `cds-br-*`）兜底极端漏删，记入 debt。
-- **prune-by-network**：`pruneStaleAppContainersForProfile` 仍按共享网扫；隔离后主清理靠按容器名
-  `docker rm -f`，覆盖主用例，低风险。
+- **prune-by-network**（2026-06-29 review 修复）：`pruneStaleAppContainersForProfile` 现按
+  `netPlan.runNetwork`（隔离=分支网）扫别名，与别名实际所在网一致；否则失败/半成功重部署会在分支网
+  残留同别名僵尸端点。配合按容器名 `docker rm -f` 的主清理，覆盖完整。
 - **一次性 job**：留在共享网（无别名，不串流）；若将来 job 需要访问分支内 app 服务，再扩展。
 
 ## 7. 关联

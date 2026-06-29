@@ -57,4 +57,16 @@ describe('pickActiveDeployment — stale running guard uses finish time (Bugbot 
     // Both finished long before `now` (outside tail) → newest by startedAt wins.
     expect(pickActiveDeployment([old, newer], now)?.key).toBe('d-new');
   });
+
+  it('after the tail window expires the fallback skips a superseded zombie running (Codex P2)', () => {
+    // Ancient incident: a healthy deploy finished long ago (tail expired), and a zombie running —
+    // newest by startedAt — lingers having started before that deploy finished. The guarded running
+    // lookup already skips it, but the final fallback used to return sorted[0] (= the zombie),
+    // reviving the stuck card. The fallback must instead return the newest NON-superseded item.
+    const finishedDeploy = item({ key: 'd1', kind: 'deploy', status: 'success', startedAt: 100, finishedAt: 200 });
+    const zombie = item({ key: 'zombie', kind: 'deploy', status: 'running', startedAt: 150, finishedAt: undefined });
+    const picked = pickActiveDeployment([finishedDeploy, zombie], now);
+    expect(picked?.key).not.toBe('zombie');
+    expect(picked?.key).toBe('d1');
+  });
 });

@@ -10761,6 +10761,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const zActor = resolveActorFromRequest(req);
         const zTrigger = triggerFromRequest(req);
         for (const [sid, svc] of zombieServices) {
+          // 操作租约安全（Bugbot Medium / learned rule）：remove 是 await 悬挂点，期间本次 deploy 的
+          // 租约可能被更高优先级操作（手动停/删/更新部署）取代。必须在「下掉容器」前后各 assertCurrent
+          // 一次，租约被取代时抛 BranchOperationSupersededError 跳出循环 —— 不在已取消的 deploy 下继续
+          // delete entry.services + save()。assert 放在下面 best-effort remove 的 try 之外，确保取代错误
+          // 不被「容忍 remove 失败」的 catch 吞掉，而是向上冒泡终结本次 finalize（与 4505/4518 同款）。
+          assertBranchOperationCurrent(branchOperationLease, `remove-orphan-service before ${sid}`);
           logEvent({
             step: 'remove-orphan-service',
             status: 'running',
@@ -10784,6 +10790,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
           } catch (err) {
             logEvent({ step: 'remove-orphan-service', status: 'warning', title: `服务 "${sid}" 容器移除失败(忽略,仍清条目): ${(err as Error).message}`, timestamp: new Date().toISOString() });
           }
+          // remove 的 await 之后、改 state 之前再校验一次：租约还在才删条目。
+          assertBranchOperationCurrent(branchOperationLease, `remove-orphan-service after ${sid}`);
           delete entry.services[sid];
           logEvent({ step: 'remove-orphan-service', status: 'done', title: `服务 "${sid}" 已下掉`, timestamp: new Date().toISOString() });
         }

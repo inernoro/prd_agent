@@ -1073,7 +1073,10 @@ export class ContainerService {
       aliases: profileAliases,
     });
     if (netPlan.runNetwork !== network) await this.ensureNetwork(netPlan.runNetwork);
-    await this.pruneStaleAppContainersForProfile(entry, profile, service, network, profileAliases, onOutput, context);
+    // 陈旧别名清理必须扫「别名实际注册的那张网」（Bugbot Medium）：隔离开启后 app 的 --network-alias
+    // 落在分支网（cds-br-*）而非共享项目网，若仍扫共享网会**看不到** app 别名 → 失败/半成功重部署后
+    // 分支网上残留同别名的僵尸端点（DNS 轮询又回来了）。故传 netPlan.runNetwork（隔离=分支网，未隔离=共享网）。
+    await this.pruneStaleAppContainersForProfile(entry, profile, service, netPlan.runNetwork, profileAliases, onOutput, context);
 
     context.assertCurrent?.(`runService before pre-run-rm ${profile.id}`);
     // Remove any existing container
