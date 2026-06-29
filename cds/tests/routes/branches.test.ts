@@ -161,6 +161,11 @@ describe('Branch Routes', () => {
     // lastKnownGood 串到本测试。createBranchRouter 会重新 init cache。
     const cacheMod = await import('../../src/services/self-status-cache.js');
     cacheMod.selfStatusCache._resetForTests();
+    // 这些是部署/操作-fencing 测试，与分支网络隔离正交：它们用 `docker run -d --name X` 当协调闸门。
+    // 隔离开启时 runService 改走 create→connect→start，闸门匹配不到 `docker run -d` 会挂死。故本组
+    // 显式关隔离（与 container.test.ts / container-network-isolation.test.ts 同款），隔离 create/start
+    // 路径由 container-branch-network-isolation.test.ts 专门覆盖。
+    process.env.CDS_BRANCH_NETWORK_ISOLATION = '0';
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-routes-'));
     const config = makeConfig(tmpDir);
     mock = new MockShellExecutor();
@@ -240,6 +245,7 @@ describe('Branch Routes', () => {
   afterEach(async () => {
     delete process.env.CDS_DELETE_STATE_FLUSH_TIMEOUT_MS;
     delete process.env.CDS_BRANCHES_SLOW_MS;
+    delete process.env.CDS_BRANCH_NETWORK_ISOLATION;
     await new Promise<void>((resolve) => server.close(() => resolve()));
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
   });

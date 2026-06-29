@@ -56,20 +56,26 @@ docker 多网语义：容器同时挂分支网 + 共享网时，DNS 跨其所连
 ## 5. 实现位置（official/self-built 边界无关，纯自建）
 
 - `cds/src/services/branch-network.ts`：纯函数 SSOT（`branchAppNetworkName` / `resolveAppNetworkPlan`
-  / `branchNetworkIsolationEnabled`）。单测 `cds/tests/services/branch-network.test.ts`（11 例）。
+  / `branchNetworkIsolationEnabled`）。`branchAppNetworkName` 超 60 字符时截断 + 追加完整 id 短哈希后缀
+  保唯一（Codex P2，避免长 id 撞同网）；≤60 输出零回归。单测 `cds/tests/services/branch-network.test.ts`。
 - `cds/src/services/container.ts`：
-  - `runService`（app 容器）：按 plan 把主网设为分支网、跑后 `connectContainerToSharedNetwork` 连共享
-    infra 网（liveness 探测前，确保启动即可达 DB）。
+  - `runService`（app 容器，隔离时）：**create → connect(infra) → start** 时序——先 `docker create`
+    （进程不启动）落在分支网，再 `connectContainerToSharedNetwork` 连共享 infra 网，**最后 `docker start`**。
+    保证进程启动前两张网都已就位，避免 entrypoint 阶段就开 DB 连接的镜像在 infra 网就位前连库失败
+    （Codex P1）。未隔离路径仍走单步 `docker run -d`，零回归。
   - `connectContainerToSharedNetwork`：无别名 connect，幂等，连不上则部署显式失败（connDB 是硬需求）。
   - `removeBranchNetwork`：分支删除后尽力清理 `cds-br-*`（best-effort）。
   - infra 路径、一次性 job 路径不动。
+- 分支网清理已接线：主节点 `finalizeBranchDelete`（`branches.ts`）+ **远端执行器 `/exec/delete`
+  （`executor/routes.ts`）** 各自在删容器后调 `removeBranchNetwork`——分支网是在**哪台 docker host**
+  上创建就由那台删，避免 worker 节点上隔离网随删分支堆积（Bugbot Medium）。
 
 ## 6. 风险与已知边界
 
 - **docker 行为未在沙箱验证**：CDS 开发沙箱无 docker，纯函数已单测，但「多网 connect + DNS 解析」
   必须在 CDS 灰度上真机验证后再放心默认开。逃生开关是兜底。
-- **分支网清理未接线**：`removeBranchNetwork` 已实现但未接到 4 处 `removeBranch` 调用点（避免一次动太多
-  未测路径）。空的 `cds-br-*` 网无害，后续可加一个周期性 sweep（prune 无容器的 `cds-br-*`）。记入 debt。
+- **分支网清理已接线**（2026-06-29 review 修复）：主节点删分支 + 远端执行器 `/exec/delete` 都已调
+  `removeBranchNetwork`。仍可加一个周期性 sweep（prune 无容器的 `cds-br-*`）兜底极端漏删，记入 debt。
 - **prune-by-network**：`pruneStaleAppContainersForProfile` 仍按共享网扫；隔离后主清理靠按容器名
   `docker rm -f`，覆盖主用例，低风险。
 - **一次性 job**：留在共享网（无别名，不串流）；若将来 job 需要访问分支内 app 服务，再扩展。

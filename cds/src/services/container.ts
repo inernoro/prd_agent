@@ -1305,8 +1305,15 @@ export class ContainerService {
         );
       }
 
+      // 分支级隔离的启动时序（Codex P1,2026-06-29）：隔离时 app 容器主网=分支网,还需连共享 infra 网
+      // 才能解析 mysql/redis/mongo。若用 `docker run -d` 先把进程拉起、再 `docker network connect`,
+      // 那些在 entrypoint 阶段就开 DB 连接的镜像(极速版/API)会在 infra 网连上之前连库失败。
+      // 修复:隔离时改用 create → connect(infra) → start 时序 —— 进程启动前两张网都已就位,等价于
+      // 旧路径下「容器进程开始前就在项目网上」。未隔离(connectNetworks 为空)仍走原 `docker run -d`,零回归。
+      const attachSharedBeforeStart = netPlan.connectNetworks.length > 0;
+      const dockerCreateVerb = attachSharedBeforeStart ? 'docker create' : 'docker run -d';
       const runCmd = [
-        'docker run -d',
+        dockerCreateVerb,
         `--name ${service.containerName}`,
         `--network ${netPlan.runNetwork}`,
         ...profileAliasFlags,
@@ -1320,7 +1327,7 @@ export class ContainerService {
         envFlag,
         '--tmpfs /tmp',
         // cds.network 标签保持「共享/项目网」语义（用于按项目归属/孤儿容器清理的 projectIdForDockerNetwork
-        // 解析），不跟随实际 run 主网（分支网）。真正的隔离是上面的 `--network <分支网>` + 跑后 connect 共享网，
+        // 解析），不跟随实际 run 主网（分支网）。真正的隔离是上面的 `--network <分支网>` + 启动前 connect 共享网，
         // 与标签无关。若把标签写成 cds-br-<id>，孤儿容器(分支已不在 state)将无法按网络名归属到项目。
         this.appLabels(entry.projectId, entry.id, profile.id, network),
         runImage,
@@ -1334,7 +1341,7 @@ export class ContainerService {
           severity: 'error',
           source: 'cds-container-service',
           action: 'app.run.failed',
-          message: `docker run failed for ${service.containerName}`,
+          message: `${dockerCreateVerb} failed for ${service.containerName}`,
           projectId: entry.projectId,
           branchId: entry.id,
           profileId: profile.id,
@@ -1362,8 +1369,9 @@ export class ContainerService {
       // activeDeployMode（仍是 express）钉 deployedMode，预览 widget 会把实际跑源码的
       // 分支误标「极速」。下游 deploy 路径改为优先采纳这里钉的值。
       service.deployedMode = profile.activeDeployMode || '';
-      // 分支级隔离：把刚起的 app 容器连到共享 infra 网（无别名，仅为可达共享 mysql/redis）。
-      // 必须在 liveness/就绪探测之前完成，否则容器启动时连不上 DB 会直接失败。无别名 = 兄弟
+      // 分支级隔离：把 app 容器连到共享 infra 网（无别名，仅为可达共享 mysql/redis/mongo）。
+      // 隔离时容器是 `docker create` 出来的（进程尚未启动），这里在 start 之前把共享网连上，
+      // 保证 entrypoint 阶段就开 DB 连接的镜像在进程跑起来时两张网都已就位（Codex P1）。无别名 = 兄弟
       // 分支无法在共享网上按 app 别名解析到本容器，杜绝串流。未隔离时 connectNetworks 为空，跳过。
       for (const sharedNet of netPlan.connectNetworks) {
         await this.connectContainerToSharedNetwork(service.containerName, sharedNet, {
@@ -1373,6 +1381,38 @@ export class ContainerService {
           requestId: context.requestId ?? undefined,
           operationId: context.operationId ?? undefined,
         });
+      }
+      // 隔离路径用 create，网络就位后再启动进程；未隔离路径已由 `docker run -d` 启动，跳过。
+      if (attachSharedBeforeStart) {
+        context.assertCurrent?.(`runService before docker-start ${profile.id}`);
+        const startRes = await this.shell.exec(`docker start ${service.containerName}`);
+        if (startRes.exitCode !== 0) {
+          this.recordContainerEvent({
+            severity: 'error',
+            source: 'cds-container-service',
+            action: 'app.run.failed',
+            message: `docker start failed for ${service.containerName}`,
+            projectId: entry.projectId,
+            branchId: entry.id,
+            profileId: profile.id,
+            requestId: context.requestId ?? undefined,
+            operationId: context.operationId ?? undefined,
+            containerName: service.containerName,
+            command: {
+              name: 'docker start',
+              exitCode: startRes.exitCode,
+              stdoutPreview: startRes.stdout,
+              stderrPreview: startRes.stderr,
+            },
+            details: {
+              image: profile.dockerImage,
+              hostPort: service.hostPort,
+              containerPort: profile.containerPort,
+              network,
+            },
+          });
+          throw new Error(`启动服务 "${service.containerName}" 失败:\n${combinedOutput(startRes)}`);
+        }
       }
       this.recordContainerEvent({
         severity: 'info',

@@ -18,10 +18,32 @@ describe('branchAppNetworkName', () => {
     expect(branchAppNetworkName('')).toBe('cds-br-branch');
   });
 
-  it('caps overly long ids', () => {
+  it('caps overly long ids within docker name limit', () => {
     const name = branchAppNetworkName('x'.repeat(200));
     expect(name.startsWith('cds-br-')).toBe(true);
-    expect(name.length).toBeLessThanOrEqual('cds-br-'.length + 60);
+    expect(name.length).toBeLessThanOrEqual(63);
+  });
+
+  it('keeps ≤60-char ids byte-for-byte identical to the legacy slice (zero regression)', () => {
+    const id = 'a'.repeat(60);
+    expect(branchAppNetworkName(id)).toBe(`cds-br-${id}`);
+  });
+
+  it('long ids sharing the first 60 safe chars still get distinct networks (Codex P2: no collision)', () => {
+    // Two ids identical for the first 80 chars but differing in the tail. The old
+    // `.slice(0,60)` would map both to the same cds-br-* network → reintroducing the
+    // cross-branch DNS collision this layer prevents. The hash suffix keeps them apart.
+    const base = 'feature-very-long-branch-name-that-exceeds-sixty-characters-easily';
+    const a = branchAppNetworkName(`${base}-alpha`);
+    const b = branchAppNetworkName(`${base}-beta`);
+    expect(a).not.toBe(b);
+    expect(a.length).toBeLessThanOrEqual(63);
+    expect(b.length).toBeLessThanOrEqual(63);
+  });
+
+  it('is deterministic across calls (same id → same network name)', () => {
+    const id = 'z'.repeat(120);
+    expect(branchAppNetworkName(id)).toBe(branchAppNetworkName(id));
   });
 });
 

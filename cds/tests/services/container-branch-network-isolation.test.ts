@@ -72,6 +72,9 @@ const okStubs = (mock: MockShellExecutor) => {
   mock.addResponsePattern(/docker network create/, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
   mock.addResponsePattern(/docker network connect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
   mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+  // 隔离路径走 create → connect → start；非隔离/infra 仍走 docker run -d。两个动词都 mock。
+  mock.addResponsePattern(/docker create/, () => ({ stdout: 'cid', stderr: '', exitCode: 0 }));
+  mock.addResponsePattern(/docker start/, () => ({ stdout: 'cid', stderr: '', exitCode: 0 }));
   mock.addResponsePattern(/docker run/, () => ({ stdout: 'cid', stderr: '', exitCode: 0 }));
   mock.addResponsePattern(/mkdir/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
 };
@@ -103,7 +106,10 @@ describe('ContainerService 分支级网络隔离', () => {
 
     await service.runService(makeEntry('proj-a'), makeProfile(), makeService());
 
-    const runCmd = mock.commands.find((c) => c.includes('docker run -d'))!;
+    // 隔离路径用 docker create（进程尚未启动），不是 docker run -d
+    const runCmd = mock.commands.find((c) => c.includes('docker create'))!;
+    expect(runCmd).toBeDefined();
+    expect(mock.commands.some((c) => c.includes('docker run -d'))).toBe(false);
     expect(runCmd).toContain('--network cds-br-feature-a');
     expect(runCmd).not.toContain('--network cds-proj-a');
     // cds.network 标签保持项目网（用于项目归属/孤儿清理），不跟随实际 run 主网（分支网）
@@ -111,12 +117,19 @@ describe('ContainerService 分支级网络隔离', () => {
     expect(runCmd).not.toContain('--label cds.network=cds-br-');
     // app 别名仍在（但现在只挂在分支网上）
     expect(runCmd).toContain('--network-alias apigateway');
-    // 运行后连共享 infra 网，且不带别名（杜绝兄弟分支按 app 别名串流到本容器）
+    // 连共享 infra 网，且不带别名（杜绝兄弟分支按 app 别名串流到本容器）
     const connect = mock.commands.find((c) => c.includes('docker network connect'))!;
     expect(connect).toBeDefined();
     expect(connect).toContain('cds-proj-a');
     expect(connect).toContain('cds-feature-a-apigateway');
     expect(connect).not.toContain('--alias');
+    // 启动时序（Codex P1）：create → connect(infra) → start，infra 网必须在进程启动前就位
+    const createIdx = mock.commands.findIndex((c) => c.includes('docker create'));
+    const connectIdx = mock.commands.findIndex((c) => c.includes('docker network connect') && c.includes('cds-feature-a-apigateway'));
+    const startIdx = mock.commands.findIndex((c) => c.includes('docker start cds-feature-a-apigateway'));
+    expect(createIdx).toBeGreaterThanOrEqual(0);
+    expect(connectIdx).toBeGreaterThan(createIdx);
+    expect(startIdx).toBeGreaterThan(connectIdx);
   });
 
   it('确保分支网存在（inspect 失败则 create cds-br-feature-a）', async () => {
@@ -127,6 +140,8 @@ describe('ContainerService 分支级网络隔离', () => {
     mock.addResponsePattern(/docker network create/, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/docker network connect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker create/, () => ({ stdout: 'cid', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker start/, () => ({ stdout: 'cid', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/docker run/, () => ({ stdout: 'cid', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/mkdir/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
 
@@ -144,12 +159,14 @@ describe('ContainerService 分支级网络隔离', () => {
     mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/docker network connect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker create/, () => ({ stdout: 'cid', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker start/, () => ({ stdout: 'cid', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/docker run/, () => ({ stdout: 'cid', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/mkdir/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
 
     // 不抛 = 通过
     await expect(service.runService(makeEntry('proj-a'), makeProfile(), makeService())).resolves.toBeUndefined();
-    const runCmd = mock.commands.find((c) => c.includes('docker run -d'))!;
+    const runCmd = mock.commands.find((c) => c.includes('docker create'))!;
     expect(runCmd).toContain('--network cds-br-feature-a');
   });
 

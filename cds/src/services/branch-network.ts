@@ -51,13 +51,34 @@ export interface BranchNetworkPlan {
   connectNetworks: string[];
 }
 
-/** docker 网络名合法字符：[a-zA-Z0-9][a-zA-Z0-9_.-]*。分支 id 一般已是安全 slug，仍防御性 sanitize。 */
+/**
+ * 稳定的短哈希(djb2 → 8 位十六进制),仅用于超长分支网名截断时保唯一,不做安全用途。
+ * 纯函数、无依赖,跨进程/重启确定一致(同一 id 永远映射同一网名)。
+ */
+function shortBranchHash(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) {
+    h = ((h << 5) + h + s.charCodeAt(i)) >>> 0; // h * 33 + c,保持 uint32
+  }
+  return h.toString(16).padStart(8, '0');
+}
+
+/**
+ * docker 网络名合法字符：[a-zA-Z0-9][a-zA-Z0-9_.-]*。分支 id 一般已是安全 slug，仍防御性 sanitize。
+ *
+ * 超长保唯一(Codex P2,2026-06-29)：docker 名长度有限,过去直接 `.slice(0,60)` 截断 —— 两个共享
+ * 前 60 个安全字符的分支 id 会被分到**同一张** `cds-br-*` 网,它们的 app `--network-alias` 又落回
+ * 同一张网 → 重新引入本隔离层要消除的跨分支 DNS 轮询。修复：仅当 sanitized 超过阈值才截断,并追加
+ * 基于**完整** sanitized id 的短哈希后缀,使长 id 仍唯一。≤60 的常规分支 id 输出与旧实现完全一致(零回归)。
+ */
 export function branchAppNetworkName(branchId: string): string {
-  const safe = String(branchId || '')
+  const sanitized = String(branchId || '')
     .replace(/[^a-zA-Z0-9_.-]/g, '-')
-    .replace(/^[^a-zA-Z0-9]+/, '')
-    .slice(0, 60)
-    || 'branch';
+    .replace(/^[^a-zA-Z0-9]+/, '');
+  const base = sanitized || 'branch';
+  // ≤60：保持旧行为(整段保留,前缀 "cds-br-" 7 字符)。>60：截到 47 + "-" + 8 位哈希 = 56,
+  // 加前缀共 63(docker 名上限内),且基于完整 id 的哈希保证不同长 id 不再撞网。
+  const safe = base.length > 60 ? `${base.slice(0, 47)}-${shortBranchHash(base)}` : base;
   return `cds-br-${safe}`;
 }
 

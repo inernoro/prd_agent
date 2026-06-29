@@ -353,6 +353,10 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       }
       // P4 Part 18 (G1.2): executor stays on config.repoRoot.
       try { await worktreeService.remove(config.repoRoot, entry.worktreePath); } catch { /* ok */ }
+      // 分支专属网(cds-br-<id>)是在**本执行器**的 docker host 上创建的;主节点的 finalizeBranchDelete
+      // 只清主节点那张(本地不存在=no-op),清不到这里。必须由执行器自己删,否则 worker 节点上隔离网
+      // 随分支删除不断堆积(Bugbot Medium,2026-06-29)。容器上面已 remove,此时网可安全删;best-effort。
+      try { await containerService.removeBranchNetwork(branchId); } catch { /* ok */ }
       stateService.removeLogs(branchId);
       stateService.removeBranch(branchId);
       stateService.save();
