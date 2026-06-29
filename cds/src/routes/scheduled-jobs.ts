@@ -195,6 +195,7 @@ function parseSchedule(raw: any): ScheduledJobSchedule | { error: string } {
   const type = raw?.type === 'manual' || raw?.type === 'interval' || raw?.type === 'daily' ? raw.type : '';
   const timezone = cleanText(raw?.timezone, 80) || 'Asia/Shanghai';
   if (!type) return { error: '调度类型无效' };
+  if (!isValidTimeZone(timezone)) return { error: '时区无效' };
   if (type === 'manual') return { type, timezone };
   if (type === 'interval') {
     return { type, intervalMinutes: clampInt(raw?.intervalMinutes, 60, 1, 60 * 24 * 30), timezone };
@@ -286,4 +287,13 @@ function normalizeScheduleForCompare(schedule: ScheduledJobSchedule): string {
     timeOfDay: schedule.type === 'daily' ? schedule.timeOfDay : undefined,
     timezone: schedule.timezone || 'Asia/Shanghai',
   });
+}
+
+function isValidTimeZone(timeZone: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone }).format(new Date(0));
+    return true;
+  } catch {
+    return false;
+  }
 }

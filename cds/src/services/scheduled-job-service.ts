@@ -54,10 +54,14 @@ export class ScheduledJobService {
   async tick(now = new Date()): Promise<void> {
     const due = this.deps.stateService.listScheduledJobs()
       .filter((job) => job.enabled && job.schedule.type !== 'manual')
-      .filter((job) => !job.nextRunAt || Date.parse(job.nextRunAt) <= now.getTime());
+      .filter((job) => isJobDue(job, now));
     for (const job of due) {
-      if (!this.claimScheduledOccurrence(job, now)) continue;
-      await this.runJob(job.id, 'schedule');
+      try {
+        if (!this.claimScheduledOccurrence(job, now)) continue;
+        await this.runJob(job.id, 'schedule');
+      } catch (err) {
+        console.error('[scheduled-jobs] job tick failed:', job.id, (err as Error).message);
+      }
     }
   }
 
@@ -128,15 +132,20 @@ export class ScheduledJobService {
     const tz = schedule.timezone || 'Asia/Shanghai';
     const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(schedule.timeOfDay || '');
     if (!match) return null;
+    if (!isValidTimeZone(tz)) return null;
     const hour = Number(match[1]);
     const minute = Number(match[2]);
-    const parts = getZonedParts(from, tz);
-    let candidate = zonedLocalToUtc(parts.year, parts.month, parts.day, hour, minute, tz);
-    if (candidate <= from.getTime()) {
-      const next = addDays(parts.year, parts.month, parts.day, 1);
-      candidate = zonedLocalToUtc(next.year, next.month, next.day, hour, minute, tz);
+    try {
+      const parts = getZonedParts(from, tz);
+      let candidate = zonedLocalToUtc(parts.year, parts.month, parts.day, hour, minute, tz);
+      if (candidate <= from.getTime()) {
+        const next = addDays(parts.year, parts.month, parts.day, 1);
+        candidate = zonedLocalToUtc(next.year, next.month, next.day, hour, minute, tz);
+      }
+      return new Date(candidate).toISOString();
+    } catch {
+      return null;
     }
-    return new Date(candidate).toISOString();
   }
 
   normalizeJob(job: ScheduledJob, options: NormalizeScheduledJobOptions = {}): ScheduledJob {
@@ -162,8 +171,15 @@ export class ScheduledJobService {
 
   private reconcileNextRunAt(): void {
     for (const job of this.deps.stateService.listScheduledJobs()) {
-      if (!job.enabled || job.nextRunAt || job.schedule.type === 'manual') continue;
-      this.deps.stateService.upsertScheduledJob({ ...job, nextRunAt: this.computeNextRunAt(job.schedule) });
+      if (!job.enabled || job.schedule.type === 'manual') continue;
+      if (parseTimestamp(job.nextRunAt) !== null) continue;
+      try {
+        const nextRunAt = this.computeNextRunAt(job.schedule);
+        if (!nextRunAt) continue;
+        this.deps.stateService.upsertScheduledJob({ ...job, nextRunAt });
+      } catch (err) {
+        console.error('[scheduled-jobs] reconcile failed:', job.id, (err as Error).message);
+      }
     }
   }
 
@@ -182,9 +198,12 @@ export class ScheduledJobService {
     if (job.schedule.type === 'manual') return false;
     const latest = this.deps.stateService.getScheduledJob(job.id);
     if (!latest || !latest.enabled) return false;
+    if (!isJobDue(latest, now)) return false;
+    const nextRunAt = this.computeNextRunAt(latest.schedule, now);
+    if (!nextRunAt) return false;
     this.deps.stateService.upsertScheduledJob({
       ...latest,
-      nextRunAt: this.computeNextRunAt(latest.schedule, now),
+      nextRunAt,
       updatedAt: new Date().toISOString(),
     });
     return true;
@@ -198,9 +217,15 @@ export class ScheduledJobService {
       lastRunAt: run.finishedAt || run.startedAt || run.queuedAt,
       lastRunStatus: run.status,
       lastRunId: run.id,
-      nextRunAt: latest.enabled ? this.computeNextRunAt(latest.schedule, new Date()) : null,
+      nextRunAt: this.resolveNextRunAtAfterRun(latest),
       updatedAt: new Date().toISOString(),
     });
+  }
+
+  private resolveNextRunAtAfterRun(job: ScheduledJob): string | null {
+    if (!job.enabled || job.schedule.type === 'manual') return null;
+    if (parseTimestamp(job.nextRunAt) !== null) return job.nextRunAt || null;
+    return this.computeNextRunAt(job.schedule, new Date());
   }
 
   private async executeActions(job: ScheduledJob, deadlineMs: number, retryCount: number): Promise<ScheduledJobTargetCheckResult> {
@@ -418,6 +443,26 @@ function safePathSegment(value: string): string {
 function isPathInside(root: string, child: string): boolean {
   const rel = path.relative(root, child);
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+function isJobDue(job: ScheduledJob, now: Date): boolean {
+  const next = parseTimestamp(job.nextRunAt);
+  return next !== null && next <= now.getTime();
+}
+
+function parseTimestamp(value?: string | null): number | null {
+  if (!value) return null;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function isValidTimeZone(timeZone: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone }).format(new Date(0));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function truncateLog(log: string): string {

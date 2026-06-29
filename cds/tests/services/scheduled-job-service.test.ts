@@ -373,6 +373,162 @@ describe('ScheduledJobService', () => {
     expect(stateService.listScheduledJobRuns({ jobId: disabledDuringTick.id })).toHaveLength(0);
   });
 
+  it('does not run a stale due snapshot that another tick already claimed', async () => {
+    let releaseFirst: ((result: ExecResult) => void) | null = null;
+    const blockingShell: IShellExecutor & { commands: string[] } = {
+      commands: [],
+      exec(command: string, _options?: ExecOptions): Promise<ExecResult> {
+        this.commands.push(command);
+        if (command.includes('first-slow')) {
+          return new Promise((resolve) => {
+            releaseFirst = resolve;
+          });
+        }
+        return Promise.resolve({ stdout: 'second\n', stderr: '', exitCode: 0 });
+      },
+    };
+    service = new ScheduledJobService({
+      stateService,
+      shell: blockingShell,
+      config: { masterPort: 9900, repoRoot: tmpDir },
+    });
+    const firstJob: ScheduledJob = service.normalizeJob({
+      id: 'job_stale_first',
+      projectId: 'demo',
+      name: '阻塞任务',
+      enabled: true,
+      schedule: { type: 'interval', intervalMinutes: 1, timezone: 'Asia/Shanghai' },
+      target: { type: 'command', command: 'first-slow' },
+      timeoutSeconds: 30,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    const secondJob: ScheduledJob = service.normalizeJob({
+      id: 'job_stale_second',
+      projectId: 'demo',
+      name: '只应执行一次',
+      enabled: true,
+      schedule: { type: 'interval', intervalMinutes: 1, timezone: 'Asia/Shanghai' },
+      target: { type: 'command', command: 'second-once' },
+      timeoutSeconds: 30,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    stateService.upsertScheduledJob({ ...firstJob, nextRunAt: '2026-01-01T00:00:00.000Z' });
+    stateService.upsertScheduledJob({ ...secondJob, nextRunAt: '2026-01-01T00:00:00.000Z' });
+
+    const firstTick = service.tick(new Date('2026-01-01T00:00:00.000Z'));
+    await new Promise((resolve) => setImmediate(resolve));
+    await service.tick(new Date('2026-01-01T00:00:30.000Z'));
+    releaseFirst?.({ stdout: 'first\n', stderr: '', exitCode: 0 });
+    await firstTick;
+
+    expect(blockingShell.commands.filter((command) => command.includes('second-once'))).toHaveLength(1);
+    expect(stateService.listScheduledJobRuns({ jobId: secondJob.id })).toHaveLength(1);
+  });
+
+  it('preserves pending automatic schedule when an interval job is run manually', async () => {
+    shell.addResponsePattern(/docker run[\s\S]*manual-test/, () => ({ stdout: 'ok\n', stderr: '', exitCode: 0 }));
+    const nextRunAt = '2026-01-01T00:05:00.000Z';
+    const job: ScheduledJob = service.normalizeJob({
+      id: 'job_manual_preserve',
+      projectId: 'demo',
+      name: '手动测试不挪计划',
+      enabled: true,
+      schedule: { type: 'interval', intervalMinutes: 10, timezone: 'Asia/Shanghai' },
+      target: { type: 'command', command: 'manual-test' },
+      timeoutSeconds: 30,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    stateService.upsertScheduledJob({ ...job, nextRunAt });
+
+    const run = await service.runJob(job.id, 'manual');
+
+    expect(run.status).toBe('success');
+    expect(stateService.getScheduledJob(job.id)?.nextRunAt).toBe(nextRunAt);
+  });
+
+  it('does not start or repeatedly run jobs with invalid persisted daily schedules', async () => {
+    const badJob: ScheduledJob = {
+      id: 'job_bad_daily',
+      projectId: 'demo',
+      name: '坏调度',
+      enabled: true,
+      schedule: { type: 'daily', timeOfDay: 'bad', timezone: 'Invalid/Zone' },
+      target: { type: 'command', command: 'should-not-run' },
+      actions: [{ id: 'bad', name: '坏动作', type: 'command', command: 'should-not-run' }],
+      timeoutSeconds: 30,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      nextRunAt: null,
+    };
+    stateService.upsertScheduledJob(badJob);
+
+    expect(() => service.start()).not.toThrow();
+    service.stop();
+    await service.tick(new Date('2026-01-01T00:00:00.000Z'));
+
+    expect(shell.commands).toHaveLength(0);
+    expect(stateService.listScheduledJobRuns({ jobId: badJob.id })).toHaveLength(0);
+  });
+
+  it('keeps later due jobs running when one due job fails during claim', async () => {
+    const originalComputeNextRunAt = service.computeNextRunAt.bind(service);
+    vi.spyOn(service, 'computeNextRunAt').mockImplementation((schedule, from) => {
+      if (schedule.type === 'interval' && schedule.intervalMinutes === 13) {
+        throw new Error('bad schedule');
+      }
+      return originalComputeNextRunAt(schedule, from);
+    });
+    shell.addResponsePattern(/docker run[\s\S]*healthy/, () => ({ stdout: 'healthy\n', stderr: '', exitCode: 0 }));
+    const badJob: ScheduledJob = service.normalizeJob({
+      id: 'job_bad_claim',
+      projectId: 'demo',
+      name: '认领失败',
+      enabled: true,
+      schedule: { type: 'interval', intervalMinutes: 1, timezone: 'Asia/Shanghai' },
+      target: { type: 'command', command: 'bad' },
+      timeoutSeconds: 30,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    const healthyJob: ScheduledJob = service.normalizeJob({
+      id: 'job_after_bad_claim',
+      projectId: 'demo',
+      name: '后续正常',
+      enabled: true,
+      schedule: { type: 'interval', intervalMinutes: 1, timezone: 'Asia/Shanghai' },
+      target: { type: 'command', command: 'healthy' },
+      timeoutSeconds: 30,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    stateService.upsertScheduledJob({
+      ...badJob,
+      schedule: { type: 'interval', intervalMinutes: 13, timezone: 'Asia/Shanghai' },
+      nextRunAt: '2026-01-01T00:00:00.000Z',
+    });
+    stateService.upsertScheduledJob({ ...healthyJob, nextRunAt: '2026-01-01T00:00:00.000Z' });
+
+    await service.tick(new Date('2026-01-01T00:00:00.000Z'));
+
+    expect(shell.commands).toHaveLength(1);
+    expect(shell.commands[0]).toContain('healthy');
+  });
+
   it('checks a command target without creating run history', async () => {
     shell.addResponsePattern(/docker run[\s\S]*echo check-ok/, () => ({ stdout: 'check-ok\n', stderr: '', exitCode: 0 }));
 

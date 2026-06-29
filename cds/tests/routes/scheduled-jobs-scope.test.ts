@@ -139,6 +139,19 @@ describe('scheduled job routes project-scope isolation', () => {
     expect(res.body.job.nextRunAt).toBe(nextRunAt);
   });
 
+  it('rejects invalid schedule timezone on create', async () => {
+    const res = await request(router, 'POST', '/scheduled-jobs', { 'X-Test-Key': KEY_A }, {
+      projectId: 'proj-a',
+      name: 'bad timezone',
+      enabled: true,
+      schedule: { type: 'daily', timeOfDay: '02:00', timezone: 'Invalid/Zone' },
+      actions: [{ type: 'command', command: 'echo ok' }],
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('时区无效');
+  });
+
   function seedJob(id: string, projectId: string, command: string): void {
     const now = '2026-01-01T00:00:00.000Z';
     stateService.upsertScheduledJob(service.normalizeJob({
