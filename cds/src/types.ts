@@ -1097,6 +1097,10 @@ export interface CdsState {
   customEnv: CustomEnvStore;
   /** CDS-managed infrastructure services (databases, caches, etc.) */
   infraServices: InfraService[];
+  /** Project-scoped scheduled jobs owned by CDS. */
+  scheduledJobs?: ScheduledJob[];
+  /** Append-only scheduled job execution history. */
+  scheduledJobRuns?: ScheduledJobRun[];
   /** Mirror acceleration enabled (npm/docker registry mirrors for faster builds in China) */
   mirrorEnabled?: boolean;
   /** Tab title override enabled (updates browser tab title with tag or branch short name) */
@@ -1376,6 +1380,70 @@ export interface CdsState {
   peerNodes?: PeerNodeRecord[];
   /** WS3：待用的一次性配对码（明文不存，只存 hash），见 PeerPairingCode。 */
   peerPairingCodes?: PeerPairingCode[];
+}
+
+export type ScheduledJobSchedule =
+  | { type: 'manual'; timezone?: string }
+  | { type: 'interval'; intervalMinutes: number; timezone?: string }
+  | { type: 'daily'; timeOfDay: string; timezone?: string };
+
+export type ScheduledJobTarget =
+  | {
+      type: 'http';
+      method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+      url: string;
+      headers?: Record<string, string>;
+      body?: string;
+    }
+  | {
+      type: 'command';
+      command: string;
+      cwd?: string;
+    };
+
+export type ScheduledJobAction = ScheduledJobTarget & {
+  id: string;
+  name?: string;
+};
+
+export interface ScheduledJob {
+  id: string;
+  projectId: string;
+  name: string;
+  description?: string;
+  enabled: boolean;
+  schedule: ScheduledJobSchedule;
+  /** Legacy single target kept for old state/API callers. New code should use actions. */
+  target?: ScheduledJobTarget;
+  actions?: ScheduledJobAction[];
+  timeoutSeconds: number;
+  retryCount: number;
+  concurrencyPolicy: 'skip';
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: string;
+  lastRunAt?: string;
+  lastRunStatus?: ScheduledJobRunStatus;
+  lastRunId?: string;
+  nextRunAt?: string | null;
+}
+
+export type ScheduledJobRunStatus = 'queued' | 'running' | 'success' | 'failed' | 'skipped';
+
+export interface ScheduledJobRun {
+  id: string;
+  jobId: string;
+  projectId: string;
+  trigger: 'schedule' | 'manual';
+  status: ScheduledJobRunStatus;
+  queuedAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  durationMs?: number;
+  exitCode?: number;
+  httpStatus?: number;
+  log?: string;
+  error?: string;
 }
 
 /**

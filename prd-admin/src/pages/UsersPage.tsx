@@ -6,8 +6,8 @@ import { TabBar } from '@/components/design/TabBar';
 import { Select } from '@/components/design/Select';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { Dialog } from '@/components/ui/Dialog';
-import { getUsers, createUser, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, forceExpireAll, updateUserAvatar, updateUserDisplayName, initializeUsers, adminImpersonate, getSystemRoles, getUserAuthz, updateUserAuthz, getAdminPermissionCatalog, getUserRateLimit, updateUserRateLimit, bulkDeleteUsers } from '@/services';
-import { MoreVertical, Pencil, Search, UserCog, Users, Gauge, Trash2, FolderOpen, Image, Bug, Zap } from 'lucide-react';
+import { getUsers, createUser, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, forceExpireAll, updateUserAvatar, updateUserDisplayName, initializeUsers, adminImpersonate, getSystemRoles, getUserAuthz, updateUserAuthz, getAdminPermissionCatalog, getUserRateLimit, updateUserRateLimit, bulkDeleteUsers, getMiduoSsoConfig, importMiduoSsoBindings, updateMiduoSsoConfig } from '@/services';
+import { MoreVertical, Pencil, Search, UserCog, Users, Gauge, Trash2, FolderOpen, Image, Bug, Zap, Link2 } from 'lucide-react';
 import { getRoleMeta, ALL_ROLES } from '@/lib/roleConfig';
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { UserProfilePopover } from '@/components/ui/UserProfilePopover';
@@ -44,6 +44,10 @@ type UserRow = {
   totalRunCount?: number;
   totalImageCount?: number;
   defectCount?: number;
+  miduoSsoSubjectType?: string | null;
+  miduoSsoSubjectMasked?: string | null;
+  miduoSsoDisplayNameSnapshot?: string | null;
+  miduoSsoBoundAt?: string | null;
 };
 
 // 格式化相对时间（保留供 profile popover 使用）
@@ -101,6 +105,28 @@ export default function UsersPage() {
   const [createSystemRoles, setCreateSystemRoles] = useState<Array<{ key: string; name: string }>>([]);
   const [createSubmitting, setCreateSubmitting] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [createMiduoMobile, setCreateMiduoMobile] = useState('');
+
+  const [miduoConfigOpen, setMiduoConfigOpen] = useState(false);
+  const [miduoConfigLoading, setMiduoConfigLoading] = useState(false);
+  const [miduoConfigSaving, setMiduoConfigSaving] = useState(false);
+  const [miduoEnabled, setMiduoEnabled] = useState(false);
+  const [miduoBaseUrl, setMiduoBaseUrl] = useState('https://admin.ebcone.cn');
+  const [miduoAppCode, setMiduoAppCode] = useState('');
+  const [miduoAppSecret, setMiduoAppSecret] = useState('');
+  const [miduoHasSecret, setMiduoHasSecret] = useState(false);
+  const [miduoRedirectUri, setMiduoRedirectUri] = useState('');
+  const [miduoLabel, setMiduoLabel] = useState('米多星球');
+  const [miduoConfigError, setMiduoConfigError] = useState<string | null>(null);
+  const [miduoHandoffText, setMiduoHandoffText] = useState('');
+
+  const [miduoImportText, setMiduoImportText] = useState('');
+  const [miduoImportSubmitting, setMiduoImportSubmitting] = useState(false);
+  const [miduoImportResult, setMiduoImportResult] = useState<{
+    importedCount: number;
+    failedCount: number;
+    failedItems: Array<{ line: string; message: string }>;
+  } | null>(null);
 
   const [pwdOpen, setPwdOpen] = useState(false);
   const [pwdUser, setPwdUser] = useState<UserRow | null>(null);
@@ -195,6 +221,134 @@ export default function UsersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query.page, query.search, query.role, query.status]);
 
+  const openMiduoConfig = async () => {
+    setMiduoConfigOpen(true);
+    setMiduoConfigLoading(true);
+    setMiduoConfigError(null);
+    setMiduoAppSecret('');
+    try {
+      const res = await getMiduoSsoConfig();
+      if (!res.success) {
+        setMiduoConfigError(res.error?.message || '加载配置失败');
+        return;
+      }
+      setMiduoEnabled(res.data.enabled);
+      setMiduoBaseUrl(res.data.baseUrl || 'https://admin.ebcone.cn');
+      setMiduoAppCode(res.data.appCode || '');
+      setMiduoHasSecret(res.data.hasAppSecret);
+      setMiduoRedirectUri(res.data.redirectUri || '');
+      setMiduoLabel(res.data.label || '米多星球');
+    } finally {
+      setMiduoConfigLoading(false);
+    }
+  };
+
+  const buildMiduoBindingTemplate = () => {
+    const rows = items
+      .filter((u) => isHumanUser(u))
+      .map((u) => `${u.username} ${u.displayName || u.username} `);
+    return rows.length > 0
+      ? rows.join('\n')
+      : 'zhangsan 张三 \nlisi 李四 ';
+  };
+
+  const fillMiduoBindingTemplate = () => {
+    setMiduoImportText(buildMiduoBindingTemplate());
+    setMiduoImportResult(null);
+  };
+
+  const applyMiduoHandoffText = () => {
+    const text = miduoHandoffText;
+    const findValue = (labels: string[]) => {
+      for (const raw of text.split('\n')) {
+        const line = raw.replace(/[`*]/g, '').replace(/^-+\s*/, '').trim();
+        const hit = labels.find((label) => line.includes(label));
+        if (!hit) continue;
+        const idx = Math.max(line.indexOf('：'), line.indexOf(':'));
+        if (idx >= 0) return line.slice(idx + 1).trim();
+      }
+      return '';
+    };
+    const normalizeUrl = (value: string, fallback: string) => {
+      const raw = value.trim();
+      if (!raw || raw === '/') return fallback;
+      const withScheme = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+      try {
+        const url = new URL(withScheme);
+        if (!url.pathname || url.pathname === '/') url.pathname = '/login';
+        return url.toString().replace(/\/$/, '');
+      } catch {
+        return fallback;
+      }
+    };
+
+    const appCode = findValue(['应用编码', 'appCode']);
+    const appSecret = findValue(['应用密钥', 'appSecret']);
+    const appName = findValue(['应用名称', 'appName']);
+    const baseUrl = findValue(['baseUrl', '米多星球 Base URL']);
+    const callbackUrl = findValue(['callbackUrl', '快捷入口落地页']);
+
+    if (appCode) setMiduoAppCode(appCode);
+    if (appSecret) setMiduoAppSecret(appSecret);
+    if (appName) setMiduoLabel(appName);
+    setMiduoBaseUrl(/^https?:\/\//i.test(baseUrl) ? baseUrl.replace(/\/$/, '') : 'https://admin.ebcone.cn');
+    setMiduoRedirectUri(normalizeUrl(callbackUrl, 'https://map.ebcone.net/login'));
+    setMiduoEnabled(true);
+    toast.success('已识别交接信息', '请确认后保存配置');
+  };
+
+  const saveMiduoConfig = async () => {
+    setMiduoConfigSaving(true);
+    setMiduoConfigError(null);
+    try {
+      const res = await updateMiduoSsoConfig({
+        enabled: miduoEnabled,
+        baseUrl: miduoBaseUrl.trim(),
+        appCode: miduoAppCode.trim(),
+        appSecret: miduoAppSecret.trim() || undefined,
+        redirectUri: miduoRedirectUri.trim(),
+        label: miduoLabel.trim() || '米多星球',
+        subjectType: 'mobile',
+        hasAppSecret: miduoHasSecret,
+      });
+      if (!res.success) {
+        setMiduoConfigError(res.error?.message || '保存失败');
+        return;
+      }
+      setMiduoHasSecret(res.data.hasAppSecret);
+      setMiduoAppSecret('');
+      setMiduoConfigOpen(false);
+      toast.success('米多星球 SSO 配置已保存');
+    } finally {
+      setMiduoConfigSaving(false);
+    }
+  };
+
+  const submitMiduoImport = async () => {
+    setMiduoImportSubmitting(true);
+    setMiduoImportResult(null);
+    try {
+      const res = await importMiduoSsoBindings(miduoImportText, 'mobile');
+      if (!res.success) {
+        toast.error(res.error?.message || '导入失败');
+        return;
+      }
+      setMiduoImportResult({
+        importedCount: res.data.importedCount,
+        failedCount: res.data.failedCount,
+        failedItems: res.data.failedItems.map((x) => ({ line: x.line, message: x.message })),
+      });
+      if (res.data.failedCount === 0) {
+        toast.success('导入完成', `已绑定 ${res.data.importedCount} 个用户`);
+      } else {
+        toast.warning('导入完成', `成功 ${res.data.importedCount} 条，失败 ${res.data.failedCount} 条`);
+      }
+      await load();
+    } finally {
+      setMiduoImportSubmitting(false);
+    }
+  };
+
   const openCreateUser = async () => {
     setCreateUsername('');
     setCreateDisplayName('');
@@ -204,6 +358,7 @@ export default function UsersPage() {
     setCreateSystemRoleKey('agent_tester');
     setCreateError(null);
     setCreateSubmitting(false);
+    setCreateMiduoMobile('');
     setCreateOpen(true);
     
     // 加载系统角色列表
@@ -229,6 +384,8 @@ export default function UsersPage() {
         displayName: createDisplayName.trim() || createUsername.trim(),
         role: createRole,
         password: createPwd,
+        miduoSsoSubjectType: 'mobile',
+        miduoSsoSubjectValue: createMiduoMobile.trim() || undefined,
       });
       if (!res.success) {
         setCreateError(res.error?.message || '创建失败');
@@ -819,6 +976,11 @@ export default function UsersPage() {
           </div>
 
           <div className={`${isMobile ? '' : 'ml-auto'} flex items-center gap-2 shrink-0 flex-wrap justify-end`}>
+            <Button variant="secondary" size="xs" onClick={openMiduoConfig}>
+              <Link2 size={12} className="mr-1" />
+              SSO 接入
+            </Button>
+            <div className="mx-0.5 h-6 w-px bg-white/8" aria-hidden />
             <Button variant="secondary" size="xs" onClick={openCreateUser}>
               创建用户
             </Button>
@@ -904,6 +1066,7 @@ export default function UsersPage() {
                     <th className="text-center py-2 px-2 font-medium" style={{ color: 'var(--text-tertiary)' }}>
                       <span title="系统角色 key（决定后台权限）。空值表示走业务角色兜底：ADMIN→admin / 其它→none">权限</span>
                     </th>
+                    <th className="text-center py-2 px-2 font-medium" style={{ color: 'var(--text-tertiary)' }}>米多 SSO</th>
                     <th className="text-center py-2 px-2 font-medium" style={{ color: 'var(--text-tertiary)' }}>状态</th>
                     <th className="text-center py-2 px-2 font-medium" style={{ color: 'var(--text-tertiary)' }}>
                       <span title="加入的群组数">群组</span>
@@ -1030,6 +1193,21 @@ export default function UsersPage() {
                             >
                               {u.role === 'ADMIN' ? '(admin*)' : '(none*)'}
                             </span>
+                          )}
+                        </td>
+
+                        {/* 米多 SSO */}
+                        <td className="py-2 px-2 text-center whitespace-nowrap">
+                          {u.miduoSsoSubjectMasked ? (
+                            <span
+                              className="inline-flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded-[4px]"
+                              style={{ background: 'rgba(34,197,94,0.10)', color: 'rgba(34,197,94,0.92)', border: '1px solid rgba(34,197,94,0.20)' }}
+                              title={u.miduoSsoDisplayNameSnapshot || '已绑定'}
+                            >
+                              {u.miduoSsoSubjectMasked}
+                            </span>
+                          ) : (
+                            <span className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>未绑定</span>
                           )}
                         </td>
 
@@ -1280,6 +1458,7 @@ export default function UsersPage() {
             setCreateRole('DEV');
             setCreatePwd('');
             setCreateSystemRoleKey('agent_tester');
+            setCreateMiduoMobile('');
             setCreateError(null);
             setCreateSubmitting(false);
           }
@@ -1353,20 +1532,36 @@ export default function UsersPage() {
             </div>
 
             {/* 第二行：密码 */}
-            <div>
-              <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>密码</div>
-              <input
-                value={createPwd}
-                onChange={(e) => {
-                  setCreatePwd(e.target.value);
-                  setCreateError(null);
-                }}
-                type="password"
-                className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none"
-                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
-                placeholder="设置登录密码"
-                autoComplete="new-password"
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>密码</div>
+                <input
+                  value={createPwd}
+                  onChange={(e) => {
+                    setCreatePwd(e.target.value);
+                    setCreateError(null);
+                  }}
+                  type="password"
+                  className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none"
+                  style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                  placeholder="设置登录密码"
+                  autoComplete="new-password"
+                />
+              </div>
+              <div>
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>米多手机号</div>
+                <input
+                  value={createMiduoMobile}
+                  onChange={(e) => {
+                    setCreateMiduoMobile(e.target.value);
+                    setCreateError(null);
+                  }}
+                  className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none"
+                  style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                  placeholder="可选，仅保存 hash"
+                  autoComplete="off"
+                />
+              </div>
             </div>
 
             {/* 第三行：角色 + 权限（等高布局） */}
@@ -1464,6 +1659,156 @@ export default function UsersPage() {
                 {createSubmitting ? '创建中...' : '确认创建'}
               </Button>
             </div>
+          </div>
+        }
+      />
+
+      <Dialog
+        open={miduoConfigOpen}
+        onOpenChange={setMiduoConfigOpen}
+        title="SSO 接入"
+        description="粘贴米多交接信息自动识别配置，再生成绑定模板补手机号"
+        maxWidth={820}
+        content={
+          <div className="space-y-4">
+            {miduoConfigLoading ? (
+              <MapSectionLoader />
+            ) : (
+              <>
+                <div className="rounded-[12px] p-3" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>第一步：粘贴交接信息</div>
+                      <div className="mt-0.5 text-[12px]" style={{ color: 'var(--text-muted)' }}>直接粘贴 APP00013 交接 Markdown，系统会自动填 appCode、密钥、回调地址。</div>
+                    </div>
+                    <Button variant="secondary" size="xs" onClick={applyMiduoHandoffText} disabled={!miduoHandoffText.trim()}>
+                      自动识别
+                    </Button>
+                  </div>
+                  <textarea
+                    value={miduoHandoffText}
+                    onChange={(e) => setMiduoHandoffText(e.target.value)}
+                    className="mt-3 min-h-[88px] w-full rounded-[10px] px-3 py-2 text-sm outline-none font-mono"
+                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                    placeholder="把 APP00013 接入交付信息粘贴到这里"
+                  />
+                </div>
+
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>第二步：确认并保存配置</div>
+                <label className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-primary)' }}>
+                  <input
+                    type="checkbox"
+                    checked={miduoEnabled}
+                    onChange={(e) => setMiduoEnabled(e.target.checked)}
+                    className="accent-[var(--accent-gold)]"
+                  />
+                  启用登录页米多星球 SSO
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>Base URL</div>
+                    <input
+                      value={miduoBaseUrl}
+                      onChange={(e) => setMiduoBaseUrl(e.target.value)}
+                      className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none"
+                      style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                      placeholder="https://admin.ebcone.cn"
+                    />
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>appCode</div>
+                    <input
+                      value={miduoAppCode}
+                      onChange={(e) => setMiduoAppCode(e.target.value)}
+                      className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none"
+                      style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                      placeholder="APP00013"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>
+                    appSecret {miduoHasSecret ? '（已配置，留空则不修改）' : ''}
+                  </div>
+                  <input
+                    value={miduoAppSecret}
+                    onChange={(e) => setMiduoAppSecret(e.target.value)}
+                    type="password"
+                    className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none"
+                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                    placeholder={miduoHasSecret ? '留空保持原密钥' : '输入 appSecret'}
+                    autoComplete="new-password"
+                  />
+                </div>
+                <div>
+                  <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>回调地址</div>
+                  <input
+                    value={miduoRedirectUri}
+                    onChange={(e) => setMiduoRedirectUri(e.target.value)}
+                    className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none"
+                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                    placeholder="https://map.ebcone.net/login"
+                  />
+                </div>
+                <div>
+                  <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>登录项名称</div>
+                  <input
+                    value={miduoLabel}
+                    onChange={(e) => setMiduoLabel(e.target.value)}
+                    className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none"
+                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                    placeholder="米多星球"
+                  />
+                </div>
+                {miduoConfigError && (
+                  <div className="rounded-[10px] px-3 py-2 text-sm" style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(239,68,68,0.95)' }}>
+                    {miduoConfigError}
+                  </div>
+                )}
+                <div className="flex items-center justify-end gap-2 border-b border-white/8 pb-4">
+                  <Button variant="primary" size="sm" onClick={saveMiduoConfig} disabled={miduoConfigSaving}>
+                    {miduoConfigSaving ? '保存中...' : '保存配置'}
+                  </Button>
+                </div>
+
+                <div className="rounded-[12px] p-3" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>第三步：导入用户绑定</div>
+                      <div className="mt-0.5 text-[12px]" style={{ color: 'var(--text-muted)' }}>生成模板后只需要补手机号。每行格式：用户名 姓名 手机号。</div>
+                    </div>
+                    <Button variant="secondary" size="xs" onClick={fillMiduoBindingTemplate}>
+                      生成当前列表模板
+                    </Button>
+                  </div>
+                  <textarea
+                    value={miduoImportText}
+                    onChange={(e) => setMiduoImportText(e.target.value)}
+                    className="mt-3 min-h-[180px] w-full rounded-[10px] px-3 py-2 text-sm outline-none font-mono"
+                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                    placeholder={'zhangsan 张三 13800001111\nlisi 李四 13900002222'}
+                  />
+                  {miduoImportResult && (
+                    <div className="mt-3 rounded-[10px] px-3 py-2 text-sm" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}>
+                      <div>成功 {miduoImportResult.importedCount} 条，失败 {miduoImportResult.failedCount} 条</div>
+                      {miduoImportResult.failedItems.length > 0 && (
+                        <div className="mt-2 max-h-[120px] overflow-auto space-y-1" style={{ color: 'rgba(239,68,68,0.95)' }}>
+                          {miduoImportResult.failedItems.slice(0, 20).map((item, idx) => (
+                            <div key={`${item.line}-${idx}`}>{item.line}：{item.message}</div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <div className="mt-3 flex items-center justify-end gap-2">
+                    <Button variant="ghost" size="sm" onClick={() => setMiduoConfigOpen(false)} disabled={miduoImportSubmitting || miduoConfigSaving}>关闭</Button>
+                    <Button variant="primary" size="sm" onClick={submitMiduoImport} disabled={miduoImportSubmitting || !miduoImportText.trim()}>
+                      {miduoImportSubmitting ? '导入中...' : '导入绑定'}
+                    </Button>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         }
       />
