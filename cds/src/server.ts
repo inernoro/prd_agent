@@ -37,6 +37,7 @@ import { createGithubWebhookRouter } from './routes/github-webhook.js';
 import { GitHubAppClient } from './services/github-app-client.js';
 import { CheckRunRunner } from './services/check-run-runner.js';
 import { resolveGitAuthEnv } from './services/git-auth-env.js';
+import { maskBranchExtraProfilesEnv } from './services/secret-masker.js';
 import { createAuthRouter } from './routes/auth.js';
 import { createAuthLocalRouter } from './routes/auth-local.js';
 import { createWorkspacesRouter } from './routes/workspaces.js';
@@ -928,6 +929,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/branches\/(.+)\/container-logs$/, '查看容器日志'],
     [/^POST \/branches\/(.+)\/container-env$/, '查看容器环境变量'],
     [/^POST \/branches\/(.+)\/container-exec$/, '容器内执行命令'],
+    [/^GET \/branches\/(.+)\/extra-services$/, '查看分支额外服务'],
+    [/^PUT \/branches\/(.+)\/extra-services$/, '设置分支额外服务'],
     [/^GET \/branches\/(.+)\/git-log$/, '查看 Git 提交历史'],
     [/^PUT \/env\/(.+)$/, '设置环境变量'],
     [/^DELETE \/env\/(.+)$/, '删除环境变量'],
@@ -2706,7 +2709,11 @@ export function createServer(deps: ServerDeps): express.Express {
     // call (otherwise tab B would still show the old state until reload).
     const data = JSON.stringify({
       seq: ++stateSeq,
-      branches: Object.values(state.branches),
+      // Redact branch-local extra-service env before broadcasting (Codex P1 "Redact extraProfiles
+      // before state-stream broadcasts"): branch list / SSE paths mask via branchForView, but this
+      // full-state broadcaster serialized raw branches, so any /api/state-stream subscriber could
+      // receive extraProfiles.env secrets after a save. Route through the shared SSOT masker.
+      branches: Object.values(state.branches).map(maskBranchExtraProfilesEnv),
       defaultBranch: state.defaultBranch,
       // Cluster state — frontend uses these to update header + branch
       // placement + cluster modal without needing another /api/config call.

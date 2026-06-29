@@ -13,6 +13,7 @@ import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
+import { isValidExtraProfileId, mergeBranchProfiles } from '../services/branch-extra-services.js';
 import { classifyTriggerSource, deriveDeployMode, deriveCommitMeta, parsePulledSha, shouldRefreshCommitSha } from '../services/build-log-meta.js';
 import { acquireBuildSlot, buildGateStatus } from '../services/build-gate.js';
 import { recordBuild } from '../services/build-activity-tracker.js';
@@ -20,7 +21,7 @@ import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { JanitorService } from '../services/janitor.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
-import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogContainerSnapshot, OperationLogEvent, BuildProfile, BuildProfileOverride, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project, ProjectActivityLog, ResourceExternalAccessPolicy, ContainerLogArchiveEntry } from '../types.js';
+import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogContainerSnapshot, OperationLogEvent, BuildProfile, BuildProfileOverride, ReadinessProbe, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project, ProjectActivityLog, ResourceExternalAccessPolicy, ContainerLogArchiveEntry } from '../types.js';
 import { discoverComposeFiles, parseComposeFile, parseComposeString, resolveEnvTemplates, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
@@ -37,7 +38,7 @@ import { classifyEnvKey } from '../config/known-env-keys.js';
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
 import { isAllowedCdsBranchName, isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { buildPreviewUrlForProject } from '../services/comment-template.js';
-import { maskSecrets as maskSecretsText, shouldMask } from '../services/secret-masker.js';
+import { maskSecrets as maskSecretsText, maskEnvRecord, maskBranchExtraProfilesEnv, isSensitiveKey, looksLikeUrlWithCredentials, shouldMask } from '../services/secret-masker.js';
 import { buildUnifiedBranchResources, type UnifiedBranchResource } from '../services/resources.js';
 import { fetchWithLockRetry } from '../services/git-fetch-retry.js';
 import { resolveGitAuthEnv } from '../services/git-auth-env.js';
@@ -2569,6 +2570,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       ...deriveCommitMeta(entry),
     };
     let proxyHasError = false;
+    // 远端 error 事件携带的失败原因（executor SSE error.message），供 finally 把分支态从派发时的 building
+    // 落到 error 时回填 errorMessage（Bugbot「Remote deploy error stuck building」）。
+    let proxyErrorMessage: string | null = null;
     // 远端运行时就绪时刻 —— 收到成功的 complete 事件时戳。用作 opLog.runtimeStartedAt，
     // 让执行器构建路径也能像本地路径一样采集部署耗时样本（见下方 finally）。
     let remoteRuntimeReadyAt: string | null = null;
@@ -2586,8 +2590,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 否则 cluster 场景执行器仍按源码/热加载旧模式重建，但 master state
     // 有 override → branchAutoPublishConverged 误判收敛、不再重试，
     // auto-publish 表面成功实际没切容器。
+    // 分支实际部署清单 = 项目底座 + 本分支临时额外服务(branch-local);未声明额外服务 = 项目原样。
     const profiles = stateService
-      .getBuildProfilesForProject(entry.projectId || 'default')
+      .getEffectiveProfilesForBranch(entry)
       .map((p) => resolveEffectiveProfile(p, entry));
     // 2026-06-27：回填本次（远端）部署的部署模式，供构建历史展示「部署类型」。
     opLog.deployMode = deriveDeployMode(profiles);
@@ -2667,40 +2672,85 @@ export function createBranchRouter(deps: RouterDeps): Router {
         let parsed: Record<string, unknown> = {};
         try { parsed = JSON.parse(dataStr) as Record<string, unknown>; }
         catch { /* 非 JSON 数据降级为 raw chunk */ opLog.events.push({ step: eventName, status: 'log', chunk: dataStr.slice(0, 500), timestamp: new Date().toISOString() }); return; }
-        if (eventName === 'error') proxyHasError = true;
+        if (eventName === 'error') {
+          proxyHasError = true;
+          if (typeof parsed.message === 'string' && parsed.message.trim() !== '') proxyErrorMessage = parsed.message;
+        }
         // 2026-05-14 Codex review P2 "Don't stamp remote deploys before
         // checking service failures"：/exec/deploy 仅单服务失败时发
         // complete（services 里带 status:'error'）而**不**发 error 事件，
         // proxyHasError 一直 false → 下方把失败的 release 部署也钉成真相 +
         // 刷 lastDeployAt。complete 必须按权威 ok / services 判失败。
-        if (eventName === 'complete') {
-          if (parsed.ok === false) {
-            proxyHasError = true;
-          }
-          if (parsed.services && typeof parsed.services === 'object') {
-            const svcMap = parsed.services as Record<string, { status?: string; deployedMode?: string }>;
+        if (eventName === 'complete' && parsed.ok === false) {
+          proxyHasError = true;
+        }
+        // complete 或 error 都可能携带权威 services 快照：error 路径（如 pull 失败）此前 executor 端已按
+        // payload 拆除孤儿并改了 worker state，若不把这份快照回传给 master 对账，控制面会把已移除的服务一直
+        // 标 running/错端口直到下次心跳（Bugbot「Remote deploy error stale services」）。任一事件带 services 就对账。
+        if ((eventName === 'complete' || eventName === 'error') && parsed.services && typeof parsed.services === 'object') {
+            // executor 的 complete.services 是远端这条分支部署后的**权威全量** ServiceState 集合
+            // （含 profileId/containerName/hostPort/status/deployedMode）。master 进程独立、entry.services
+            // 不是同一对象，故 complete 时做一次**完整对账**（= 心跳全量同步的即时版），避免下面三类滞后：
+            //   - Bugbot「Remote deploy mode metadata stale」：executor express→source 回退后的真实 deployedMode
+            //   - Bugbot「Remote clear leaves master services stale」：executor 已删的服务 master 残留 ghost
+            //   - Bugbot「Remote complete skips service upsert」：executor 新建、master 没有的服务漏拷 → UI
+            //     显示 running 但 services 空/不全，要等下次心跳才补
+            const svcMap = parsed.services as Record<string, Partial<ServiceState>>;
             if (Object.values(svcMap).some((s) => s?.status === 'error')) {
               proxyHasError = true;
             }
-            // Bugbot Medium「Remote deploy mode metadata stale」：远端执行器进程独立，master 的
-            // entry.services 不是同一对象，此前只有派发用的 activeDeployMode（express），executor 侧
-            // express→source 回退的真相在 complete 的 services 载荷里却从未被复制过来。这里把 executor
-            // 回报的真实 deployedMode 复制进 master，供下方 2783 的 `||` 保留 + finally 重算「部署类型」。
+            // ① patch 已存在 / upsert executor-only（executor 对远端分支权威；upsert 守 containerName 存在）
             for (const [pid, s] of Object.entries(svcMap)) {
-              const m = s?.deployedMode;
-              if (typeof m === 'string' && m.trim() !== '' && entry.services[pid]) {
-                entry.services[pid].deployedMode = m.trim();
+              const existing = entry.services[pid];
+              if (existing) {
+                // svcMap 是远端权威全量，存活行不能只同步 status/deployedMode —— containerName / hostPort /
+                // errorMessage 也要按权威值覆盖（Bugbot「Remote complete skips hostPort sync」）。否则 master 仍
+                // 持本地旧端口/旧容器名，预览与路由会用错端口直到下次心跳才纠偏。
+                if (typeof s?.deployedMode === 'string' && s.deployedMode.trim() !== '') existing.deployedMode = s.deployedMode.trim();
+                if (typeof s?.status === 'string') existing.status = s.status as ServiceState['status'];
+                if (typeof s?.containerName === 'string' && s.containerName) existing.containerName = s.containerName;
+                if (typeof s?.hostPort === 'number' && s.hostPort > 0) existing.hostPort = s.hostPort;
+                // errorMessage：权威值有则覆盖，转为非 error 态时清掉旧错误信息（避免 running 行残留上次失败文案）。
+                if (typeof s?.errorMessage === 'string' && s.errorMessage) existing.errorMessage = s.errorMessage;
+                else if (s?.status && s.status !== 'error') delete existing.errorMessage;
+              } else if (s && typeof s.containerName === 'string' && s.containerName) {
+                entry.services[pid] = {
+                  profileId: typeof s.profileId === 'string' ? s.profileId : pid,
+                  containerName: s.containerName,
+                  hostPort: typeof s.hostPort === 'number' ? s.hostPort : 0,
+                  status: (typeof s.status === 'string' ? s.status : 'running') as ServiceState['status'],
+                  ...(typeof s.deployedMode === 'string' ? { deployedMode: s.deployedMode } : {}),
+                  ...(typeof s.errorMessage === 'string' && s.errorMessage ? { errorMessage: s.errorMessage } : {}),
+                };
               }
+            }
+            // ② prune master-only（svcMap 为空=全部清掉，正是空清单清空场景；老执行器不带 services 则整段不进，不会误删）
+            for (const pid of Object.keys(entry.services)) {
+              if (!Object.prototype.hasOwnProperty.call(svcMap, pid)) {
+                delete entry.services[pid];
+              }
+            }
+            // ③ 重算分支态（仅 complete）：派发时钉的 building 必须按权威 svcMap 重置，否则空清空 / 全 running
+            //    会一直 building 到心跳。无服务=idle、有 error=error、否则有 running=running、再否则 error；error
+            //    优先于 running（running+error 混合本地 finalize 落 error，远端同口径，Bugbot「Remote deploy
+            //    ignores service errors」）。error 事件不在此重算——其最终态由下方失败 finalize（proxyHasError）
+            //    主导，避免把失败部署误标 idle/running。
+            if (eventName === 'complete') {
+              const remoteSvcStatuses = Object.values(svcMap).map((s) => s?.status);
+              entry.status = remoteSvcStatuses.length === 0
+                ? 'idle'
+                : remoteSvcStatuses.some((s) => s === 'error') ? 'error'
+                : remoteSvcStatuses.some((s) => s === 'running') ? 'running'
+                : 'error';
             }
           }
           // 成功 complete = 远端运行时就绪的时刻（executor 在所有服务 running 后才发）。
           // 戳为 runtimeStartedAt，让 finally 能像本地路径一样采样部署耗时（修复 PR #865
           // Bugbot「executor deploys skip duration samples」）—— 否则执行器构建的项目
           // 永远积累不出 ETA 样本，等待页/卡片一直显示"暂无历史预计"。
-          if (!proxyHasError) {
+          if (eventName === 'complete' && !proxyHasError) {
             remoteRuntimeReadyAt = typeof parsed.timestamp === 'string' ? parsed.timestamp : new Date().toISOString();
           }
-        }
         // 远端 source-build 执行器会自行 pull 到更新 HEAD；用回传的 pull head 刷新构建历史
         // commit 元数据（opLog.commitSha 在 2569 是按 master 冻结的旧 HEAD 捕获的），避免
         // 「版本」列指向 pull 前旧 SHA（Codex P2）。极速版锁定 CI 镜像 SHA、不跟随 pull head。
@@ -2800,9 +2850,24 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // 重部署后，新 release 容器仍按上一轮 source run 的旧 lastReadyAt
         // 计时，下一拍可能立刻被 auto-stop。与本地路径对齐：stamp
         // lastDeployAt，让 release run 拿到自己的完整生命周期区间。
-        stateService.stampBranchTimestamp(entry.id, 'lastDeployAt');
-        // 戳远端就绪时刻，供 finally 采样部署耗时（见 remoteRuntimeReadyAt 声明处）。
-        if (remoteRuntimeReadyAt) opLog.runtimeStartedAt = remoteRuntimeReadyAt;
+        //
+        // 但纯清空（期望清单为空、teardown-only，远端收敛后落 idle）不是一次成功部署——
+        // stamp lastDeployAt / runtimeStartedAt 会把「拆服务」误当成功重部署，扰乱 auto-lifecycle
+        // 陈旧检测、dispatch 对账与「最近部署」语义（Bugbot「Idle clear stamps lastDeployAt」）。
+        // 故仅当确有期望部署的 profile 时才戳；profiles 为空 = 清空，跳过。
+        if (profiles.length > 0) {
+          stateService.stampBranchTimestamp(entry.id, 'lastDeployAt');
+          // 戳远端就绪时刻，供 finally 采样部署耗时（见 remoteRuntimeReadyAt 声明处）。
+          if (remoteRuntimeReadyAt) {
+            opLog.runtimeStartedAt = remoteRuntimeReadyAt;
+            // 与本地 finalize 对齐：确有服务 running 时刷新 entry.lastReadyAt，否则 executor-backed 分支显示
+            // running 却留着上一轮的旧就绪时刻，auto-lifecycle 陈旧检测/就绪调度按错误时间算（Bugbot「Remote
+            // deploy skips lastReadyAt」）。按 entry.services 实际状态判（③ 的 status 重算在 ingest 回调里，
+            // 主体 TS 流分析看不到，故不用 entry.status）。
+            const anyRunning = Object.values(entry.services || {}).some((s) => s.status === 'running');
+            if (anyRunning) entry.lastReadyAt = remoteRuntimeReadyAt;
+          }
+        }
       }
       entry.lastAccessedAt = new Date().toISOString();
       stateService.save();
@@ -2819,6 +2884,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 收尾:remote 部署的 OperationLog 落库,与本地部署 (line 2724) 对齐
       opLog.finishedAt = new Date().toISOString();
       opLog.status = proxyHasError ? 'error' : 'completed';
+      // 失败收尾统一兜底（两类失败都要落到「error 态 + 有顶层 errorMessage」）：
+      //   1) 流式 error 事件（如孤儿拆除后 git pull 失败）：③ 仅 complete 跑，派发钉的 'building' 没人改 →
+      //      卡死「构建中」（Bugbot「Remote deploy error stuck building」）。这里把 building 落 error。
+      //   2) complete 但部分服务 error（无单独 error 事件）：③ 已把 entry.status 置 error，却没设顶层
+      //      errorMessage → 分支显示失败但原因空，详情只散落在 entry.services（Bugbot「Remote partial
+      //      failure missing errorMessage」）。这里补顶层 errorMessage。
+      // errorMessage 来源优先级：executor error 事件原因 → 失败服务的 per-service 汇总 → 通用兜底。
+      // catch 路径已显式置 error + errorMessage，`!entry.errorMessage` 幂等不覆盖。
+      if (proxyHasError) {
+        if (entry.status === 'building') entry.status = 'error';
+        if (!entry.errorMessage) {
+          const failedSvcMsgs = Object.values(entry.services || {})
+            .filter((s) => s.status === 'error')
+            .map((s) => `${s.profileId}: ${s.errorMessage || '启动失败'}`);
+          entry.errorMessage = proxyErrorMessage
+            || (failedSvcMsgs.length > 0 ? failedSvcMsgs.join('\n') : '')
+            || '远端执行器部署失败';
+        }
+        stateService.save();
+      }
       // 部署模式在 2593 是 build 前从全量 project profiles 取的，未必是实际跑的那个，也不含
       // executor 侧 express→static 回退。这里用服务实际 deployedMode（complete 时已钉）重算，
       // 让构建历史「部署类型」反映真正跑起来的模式；取不到（executor 没回报）则保留原值
@@ -2890,14 +2975,35 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return { ...cdsEnv, ...mirrorEnv, ...customEnv, ...branchEnv, ...projectEnv };
   }
 
-  /** Mask sensitive env var values for trace logging */
+  /**
+   * Mask sensitive env var values for response serialization. Delegates to the shared
+   * SSOT maskEnvRecord (key-name OR URL-credential value), so URL-style secrets like
+   * DATABASE_URL/MONGODB_URI/REDIS_URL are masked even though the key name isn't in the
+   * sensitive list (Codex P2). All branch/profile serializers route through here.
+   */
   function maskSecrets(env: Record<string, string>): Record<string, string> {
-    const SENSITIVE = /secret|password|token|key|credential/i;
-    const masked: Record<string, string> = {};
-    for (const [k, v] of Object.entries(env)) {
-      masked[k] = SENSITIVE.test(k) ? '***' : v;
-    }
-    return masked;
+    return maskEnvRecord(env);
+  }
+
+  /**
+   * 序列化分支时给 branch-local 额外服务(extraProfiles)的 env 打掩码（Codex P1「Redact extra
+   * service env in responses」）。与 /build-profiles 的 maskSecrets 一致：状态层保持明文（deploy 路径
+   * 从 state 直接读 raw env，不经序列化），仅响应视图脱敏，避免任何能查看分支的调用方拿到原始密钥。
+   * GET→编辑→PUT 往返时回传的掩码哨兵由 mergeExtraEnv 还原成真实旧值，闭环不丢密钥。
+   */
+  function maskExtraProfilesEnv(profiles?: BuildProfile[]): BuildProfile[] | undefined {
+    if (!profiles) return profiles;
+    return profiles.map((p) => (p.env ? { ...p, env: maskSecrets(p.env) } : p));
+  }
+  /**
+   * 返回分支的「视图安全」浅拷贝：extraProfiles 的 env + profileOverrides[<额外服务 id>] 的 env 脱敏，
+   * 其余字段原样。委派到共享 SSOT maskBranchExtraProfilesEnv（与 state-stream 全量广播同一实现），
+   * 后者同时遮蔽分支级额外服务的覆盖 env（Codex P1「Mask extra-profile override env in branch views」——
+   * PUT /profile-overrides 现可给额外服务存 env 覆盖，/branches、/branches/:id、分支流原本只脱敏
+   * extraProfiles、漏了 profileOverrides）。状态层保持明文供 deploy 直读。
+   */
+  function branchForView<T extends BranchEntry>(branch: T): T {
+    return maskBranchExtraProfilesEnv(branch);
   }
 
   function isSqlInitInfra(service: InfraService): boolean {
@@ -3553,15 +3659,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
       ? all.filter((b) => (b.projectId || 'default') === projectFilter)
       : all;
     for (const branch of snapshot) reconcileBranchStatus(branch);
-    safeSend('snapshot', { branches: snapshot, projectId: projectFilter || undefined, ts: nowIso() });
+    safeSend('snapshot', { branches: snapshot.map(branchForView), projectId: projectFilter || undefined, ts: nowIso() });
 
     // Subscribe to the 'any' channel so we get one envelope per emit
     // with {type, payload} and can route with a single listener.
-    const exposeBranchForStream = (branch: any): any => (
-      branch?.githubCommitSha && !branch.commitSha
+    const exposeBranchForStream = (branch: any): any => {
+      const withSha = branch?.githubCommitSha && !branch.commitSha
         ? { ...branch, commitSha: branch.githubCommitSha }
-        : branch
-    );
+        : branch;
+      // 流式 branch.status / branch.updated 事件同样要给 extraProfiles env 脱敏（Bugbot Medium
+      // 「SSE leaks extra service secrets」）：此前只有初始 snapshot 走了 branchForView，后续事件
+      // 直接从 state 取原始 branch，订阅者会收到额外服务明文密钥。这里统一过 branchForView。
+      return branchForView(withSha);
+    };
     const anyHandler = (envelope: any) => {
       if (!envelope || !envelope.type) return;
       if (!eventMatchesFilter(envelope.type, envelope.payload)) return;
@@ -3702,7 +3812,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const previewSlug = preview?.previewSlug || b.id;
         const deployRuntime = summarizeBranchDeployRuntime(
           b,
-          stateService.getBuildProfilesForProject(b.projectId || 'default'),
+          stateService.getEffectiveProfilesForBranch(b),
         );
         // 2026-06-20：随分支下发两种模式的历史中位预计耗时，分支卡片在
         // 构建中据此展示"预计 MM:SS（近 N 次中位值）"，无需额外请求。
@@ -3835,7 +3945,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
           const branchProjectId = b.projectId || 'default';
           b.resources = buildUnifiedBranchResources({
             branch: b,
-            profiles: profilesFor(branchProjectId),
+            // 分支额外服务也要在分支列表资源视图里可见 → 项目底座(走 profilesFor 缓存) + 本分支额外。
+            profiles: mergeBranchProfiles(profilesFor(branchProjectId), b),
             infraServices: infraFor(branchProjectId),
             externalAccessPolicies: await getActiveResourceExternalAccessForBranch(branchProjectId, b),
             cloneTasks: stateService.listResourceCloneTasks({ projectId: branchProjectId, branchId: b.id }),
@@ -3847,7 +3958,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     );
 
     const payload = {
-      branches: branchesWithSubject,
+      // 列表序列化同样给 extraProfiles env 脱敏（Codex P1），避免分支列表泄露额外服务原始密钥。
+      branches: branchesWithSubject.map(branchForView),
       defaultBranch: state.defaultBranch,
       capacity: { maxContainers, runningContainers, totalMemGB },
       tabTitleEnabled: stateService.isTabTitleEnabled(),
@@ -4321,6 +4433,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         } catch { /* activity log is best-effort */ }
 
         assertBranchOperationCurrent(branchOperationLease, `cleanup-stopped before remove ${branch.id}`);
+        // 删分支即删分支网：隔离的 cds-br-* 网随删，避免在 worker/host 堆积（Codex P2「Remove branch
+        // networks from all cleanup flows」——此前仅 DELETE 路径删网，批量清理/孤儿/恢复出厂都漏了）。
+        await containerService.removeBranchNetwork(branch.id).catch(() => { /* best-effort */ });
         stateService.removeLogs(branch.id);
         stateService.removeBranch(branch.id);
         removed.push({ branchId: branch.id, branch: branch.branch, projectId: branch.projectId });
@@ -4724,7 +4839,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(m.status).json(m.body);
       return;
     }
-    res.json({ branch });
+    res.json({ branch: branchForView(branch) });
   });
 
   router.get('/branches/:id/resources', async (req, res) => {
@@ -4767,7 +4882,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const previewUrl = preview?.url || '';
     const resources = buildUnifiedBranchResources({
       branch,
-      profiles: stateService.getBuildProfilesForProject(projectId),
+      profiles: stateService.getEffectiveProfilesForBranch(branch),
       infraServices,
       externalAccessPolicies: await getActiveResourceExternalAccessForBranch(projectId, branch),
       cloneTasks: stateService.listResourceCloneTasks({ projectId, branchId: branch.id }),
@@ -6959,7 +7074,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const previewUrl = preview?.url || '';
     return buildUnifiedBranchResources({
       branch,
-      profiles: stateService.getBuildProfilesForProject(projectId),
+      profiles: stateService.getEffectiveProfilesForBranch(branch),
       infraServices: stateService.getInfraServicesForProject(projectId),
       externalAccessPolicies: await getActiveResourceExternalAccessForBranch(projectId, branch),
       cloneTasks: stateService.listResourceCloneTasks({ projectId, branchId: branch.id }),
@@ -9549,6 +9664,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
 
     const finalizeBranchDelete = async (message: string): Promise<void> => {
+      // 分支删除收尾:容器此时已 stop+remove,顺手清掉分支专属网(cds-br-<id>),让「删分支即消失」
+      // 覆盖到网络层(分支级临时额外服务的隔离网随分支一起消失)。best-effort:网络仍被占用/不存在
+      // 都吞掉(removeBranchNetwork 内部已容错)。分支的 extraProfiles 是 BranchEntry 字段,
+      // 下面 removeBranch 一并清除,无需单独处理。
+      await containerService.removeBranchNetwork(id).catch(() => { /* best-effort */ });
       stateService.removeLogs(id);
       stateService.removeBranch(id);
       stateService.save();
@@ -9890,7 +10010,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
 
-    const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
+    const profiles = stateService.getEffectiveProfilesForBranch(entry);
     const requestedProfileId = typeof req.body?.profileId === 'string' ? req.body.profileId.trim() : '';
     const baseProfile = (requestedProfileId
       ? profiles.find((profile) => profile.id === requestedProfileId)
@@ -9998,10 +10118,111 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // P4 Part 17 (G2 fix): scope build profiles by the branch's project
     // so a deploy in project A doesn't pull in B's profiles. Pre-Part 3
     // branches default to 'default' (the legacy migration target).
-    const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
+    const profiles = stateService.getEffectiveProfilesForBranch(entry);
+    // 归属远端执行器但无法确认其在线时，凡「新期望清单要拆掉现有服务」一律拒绝（Codex P2「Block offline
+    // executor removals」+ Bugbot「Missing executor skips offline guard」）：round-17/27 只在「注册表里查到该
+    // executor 且离线」时挡，漏了「executorId 指向远端但注册表查不到（已注销/陈旧归属）或 registry 不可用」——
+    // 这些情况下本地/另一执行器 redeploy 会把被删服务从 master state 抹掉，而旧容器仍在那台远端 worker 上跑
+    // （ghost）。判定：分支归属本地（executorId 缺省或 master-* embedded）→ 放行（容器在本地，就地拆正确）；
+    // 否则（executorId 指向远端）必须在注册表里查到**在线**的非 embedded 节点才放行（dispatch 会让 executor
+    // 自己收敛），离线/查不到/registry 不可用一律 503、不动 state，等执行器恢复或重新归属后重试。
+    {
+      const desiredIds = new Set(profiles.map((p) => p.id));
+      const droppedExisting = Object.keys(entry.services).filter((sid) => !desiredIds.has(sid));
+      // executorId 以 'master-' 开头 = 内嵌 master（本地）；其余非空值 = 远端归属（与 server.ts 心跳口径一致）。
+      const remoteAttributed = !!entry.executorId && !entry.executorId.startsWith('master-');
+      if (droppedExisting.length > 0 && remoteAttributed) {
+        const onlineRemoteNode = registry
+          ? registry.getAll().find((n) => n.id === entry.executorId && n.role !== 'embedded' && n.status === 'online')
+          : undefined;
+        if (!onlineRemoteNode) {
+          res.status(503).json({
+            error: 'owning_executor_offline',
+            message: `分支归属的执行器「${entry.executorId}」当前不可达（离线/已注销/未注册），无法拆除被移除的服务（${droppedExisting.join(', ')}）的容器。请等待执行器恢复或重新归属后重试。`,
+            executorId: entry.executorId,
+            droppedServices: droppedExisting,
+          });
+          return;
+        }
+      }
+    }
     if (profiles.length === 0) {
-      res.status(400).json({ error: '尚未配置构建配置，请先添加至少一个构建配置。' });
-      return;
+      // 期望清单为空。两种情形分开处理（Codex P2）：
+      //  - 本来就没服务 → 一如既往 400「请先添加构建配置」。
+      //  - 还有在跑的服务（典型：分支所有服务都是额外服务，清掉 extraProfiles 后期望清单空）→ 不能直接
+      //    400 跑路，那样旧容器 + entry.services 行会残留（清掉最后一个额外服务后容器还在跑）。这里把现存
+      //    服务全部当孤儿下掉，再返回。用一个 deploy 租约保证拆除期间不与其它操作打架（fencing-safe，
+      //    remove 前后各 assertBranchOperationCurrent，与孤儿清理同款）。
+      const existingServices = Object.entries(entry.services);
+      if (existingServices.length === 0) {
+        res.status(400).json({ error: '尚未配置构建配置，请先添加至少一个构建配置。' });
+        return;
+      }
+      // 远端执行器 owned 的分支：容器在执行器上，master 端 remove 是 no-op。
+      //  - 在线 → 放行到下面的远端分发，由 executor /exec/deploy 对空 payload 收敛（与 issue 5 同一清理路径）。
+      //  - 离线 → 上面的「拆现有服务」通用离线护栏已 503 拦掉（空清单 = 全部现有服务被拆，属其子集），到不了这里。
+      const owningRemoteNode = (entry.executorId && registry)
+        ? registry.getAll().find((n) => n.id === entry.executorId && n.role !== 'embedded')
+        : undefined;
+      const remoteOwned = !!owningRemoteNode; // 在线远端 owned（离线已被上方护栏挡下）
+      if (!remoteOwned) {
+        const cleanupLease = beginBranchOperation(req, res, entry, {
+          kind: 'deploy',
+          source: 'api.deploy-branch',
+          reason: '期望清单为空，清理残留服务容器',
+          // deploy 端点契约是 SSE event-stream；本「就地清空」路径以前回 200 JSON，EventSource 客户端会
+          // 因 content-type 不符报错/挂起（Bugbot Medium「Deploy route returns JSON not SSE」）。改为 SSE：
+          // 拿不到租约时 beginBranchOperation 直接发 SSE 终止事件；拿到后下面 initSSE 开流、逐步 push、complete 收尾。
+          sse: true,
+        });
+        if (branchOperationCoordinator && !cleanupLease) return; // 被拒时 beginBranchOperation 已发 SSE 终止事件
+        initSSE(res);
+        const cleanupReqId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
+        const cActor = resolveActorFromRequest(req);
+        const cTrigger = triggerFromRequest(req);
+        let cleanupStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+        const cleared: string[] = [];
+        try {
+          for (const [sid, svc] of existingServices) {
+            assertBranchOperationCurrent(cleanupLease, `empty-profiles-cleanup before ${sid}`);
+            sendSSE(res, 'step', { step: 'remove-orphan-service', status: 'running', title: `正在下掉残留服务 "${sid}"`, timestamp: new Date().toISOString() });
+            try {
+              await containerService.remove(svc.containerName, {
+                projectId: entry.projectId,
+                branchId: entry.id,
+                profileId: sid,
+                requestId: cleanupReqId || null,
+                operationId: cleanupLease?.operationId || null,
+                actor: cActor,
+                trigger: cTrigger,
+                operation: 'deploy-empty-profiles-cleanup',
+                source: 'api.deploy-branch',
+                reason: '期望清单为空，清理残留服务容器',
+              });
+            } catch { /* best-effort：仍删条目 */ }
+            assertBranchOperationCurrent(cleanupLease, `empty-profiles-cleanup after ${sid}`);
+            delete entry.services[sid];
+            cleared.push(sid);
+            sendSSE(res, 'step', { step: 'remove-orphan-service', status: 'done', title: `服务 "${sid}" 已下掉`, timestamp: new Date().toISOString() });
+          }
+          entry.status = 'idle';
+          entry.errorMessage = undefined;
+          stateService.save();
+        } catch (err) {
+          cleanupStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
+          completeBranchOperation(cleanupLease, cleanupStatus);
+          sendSSE(res, 'error', cleanupStatus === 'cancelled'
+            ? { message: '清理被更高优先级操作取代', operationStatus: 'cancelled' }
+            : { message: (err as Error).message });
+          res.end();
+          return;
+        }
+        completeBranchOperation(cleanupLease, cleanupStatus);
+        sendSSE(res, 'complete', { ok: true, cleared, message: `已清空所有服务（无构建配置，已下掉 ${cleared.length} 个残留容器）` });
+        res.end();
+        return;
+      }
+      // remoteOwned（在线）：不在此 return，放行到下方远端分发（executor 收敛空 payload）。
     }
 
     // 极速版部署不再硬闸门(用户 2026-06-23 决策:没有镜像默认回退固定主分支,不硬失败)。
@@ -10011,8 +10232,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     // Phase 8 — env required check:必填项未填则 412 Precondition Failed,UI 弹窗强制感知
     // 用户可以"承诺会跑起来"按 ?ignoreRequired=1 query 强制 deploy(降级路径,不推荐)
+    // profiles.length > 0：env 必填闸门是给「要构建启动的服务」用的；走到这里 profiles 非空（空已在上面
+    // 的清理分支处理/放行）。保留判断让远端空 payload 收敛路径（remoteOwned 放行）不被 env 闸门误拦。
     const ignoreRequired = req.query?.ignoreRequired === '1' || req.query?.ignoreRequired === 'true';
-    if (!ignoreRequired && entry.projectId) {
+    if (!ignoreRequired && entry.projectId && profiles.length > 0) {
       const missingRequired = stateService.getMissingRequiredEnvKeys(entry.projectId);
       if (missingRequired.length > 0) {
         const meta = stateService.getEnvMeta(entry.projectId);
@@ -10191,6 +10414,46 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Open an in-progress check run — best effort, errors logged not
       // thrown (so GitHub connectivity issues don't block the deploy).
       await checkRunRunner.ensureOpen(entry);
+
+      // 期望清单收敛上移到 pull 之前（Codex P2「Move local orphan cleanup before fallible deploy steps」）：
+      // 「服务从期望清单移除」（额外服务被清 / 项目 profile 被删）的容器拆除不依赖最新代码。原先只在
+      // deploy-finalize（pull + infra + db-init + 整个构建循环之后）才拆孤儿，若这些 fallible 步骤在
+      // PUT /extra-services?redeploy=1 已落库缩短后的 extraProfiles 之后中途 abort，被移除服务的容器与
+      // entry.services 行就留在原地、却没有任何有效 profile 元数据（pathPrefixes 等路由信息消失而旧容器仍跑）。
+      // executor 路径已把这步上移到 git pull 之前；本地路径同款前移。profiles 非空已由上方 profiles.length===0
+      // 分支保证（空清单走专门的就地清空路径），不会误删全部。fencing-safe：remove 前后各 assertCurrent。
+      {
+        const desiredIds = new Set(profiles.map((p) => p.id));
+        const orphans = Object.entries(entry.services).filter(([sid]) => !desiredIds.has(sid));
+        if (orphans.length > 0) {
+          const oActor = resolveActorFromRequest(req);
+          const oTrigger = triggerFromRequest(req);
+          for (const [sid, svc] of orphans) {
+            assertBranchOperationCurrent(branchOperationLease, `pre-pull-remove-orphan before ${sid}`);
+            logEvent({
+              step: 'remove-orphan-service', status: 'running',
+              title: `服务 "${sid}" 已从期望清单移除，正在下掉容器…`,
+              detail: { profileId: sid, status: svc.status, container: svc.containerName },
+              timestamp: new Date().toISOString(),
+            });
+            try {
+              await containerService.remove(svc.containerName, {
+                projectId: entry.projectId, branchId: entry.id, profileId: sid,
+                requestId: requestId || null, operationId: branchOperationLease?.operationId || null,
+                actor: oActor, trigger: oTrigger,
+                operation: 'deploy-remove-orphan-service', source: 'api.deploy-branch',
+                reason: '服务已从期望清单移除(额外服务被清/项目 profile 被删)',
+              });
+            } catch (err) {
+              logEvent({ step: 'remove-orphan-service', status: 'warning', title: `服务 "${sid}" 容器移除失败(忽略,仍清条目): ${(err as Error).message}`, timestamp: new Date().toISOString() });
+            }
+            assertBranchOperationCurrent(branchOperationLease, `pre-pull-remove-orphan after ${sid}`);
+            delete entry.services[sid];
+            stateService.save();
+            logEvent({ step: 'remove-orphan-service', status: 'done', title: `服务 "${sid}" 已下掉（已从期望清单移除）`, timestamp: new Date().toISOString() });
+          }
+        }
+      }
 
       // Pull latest code
       logEvent({ step: 'pull', status: 'running', title: '正在拉取最新代码...', timestamp: new Date().toISOString() });
@@ -10745,17 +11008,49 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const zombieServices = Object.entries(entry.services).filter(
         ([sid]) => !activeProfileIds.has(sid),
       );
-      for (const [sid, svc] of zombieServices) {
-        if (svc.status === 'error') {
+      // 服务已从「期望清单」移除(分支额外服务被清掉 / 项目 profile 被删) → **拆掉它的容器并删条目**,
+      // 让「移除即下掉」成立(分支级额外服务的对称半:加能起、删能下)。此前只对 error 态打 warning、
+      // 容器残留(2026-06-29 实测:清掉额外服务后 demo-extra 容器仍在跑)。best-effort:remove 失败也
+      // 继续删条目,避免卡住整次部署;profiles 非空已由上方 400 守卫保证,不会误删全部。
+      if (zombieServices.length > 0) {
+        const zActor = resolveActorFromRequest(req);
+        const zTrigger = triggerFromRequest(req);
+        for (const [sid, svc] of zombieServices) {
+          // 操作租约安全（Bugbot Medium / learned rule）：remove 是 await 悬挂点，期间本次 deploy 的
+          // 租约可能被更高优先级操作（手动停/删/更新部署）取代。必须在「下掉容器」前后各 assertCurrent
+          // 一次，租约被取代时抛 BranchOperationSupersededError 跳出循环 —— 不在已取消的 deploy 下继续
+          // delete entry.services + save()。assert 放在下面 best-effort remove 的 try 之外，确保取代错误
+          // 不被「容忍 remove 失败」的 catch 吞掉，而是向上冒泡终结本次 finalize（与 4505/4518 同款）。
+          assertBranchOperationCurrent(branchOperationLease, `remove-orphan-service before ${sid}`);
           logEvent({
-            step: 'zombie-service',
-            status: 'warning',
-            title: `服务 "${sid}" 已不在 startup-plan 里但状态停留在 error，被忽略`,
-            log: `这通常是旧 buildProfile 被删/改名后的残留。如确认无用，请通过 reset 接口清理 entry.services["${sid}"]。原 errorMessage="${svc.errorMessage || ''}"`,
-            detail: { profileId: sid, status: svc.status, port: svc.hostPort, container: svc.containerName },
+            step: 'remove-orphan-service',
+            status: 'running',
+            title: `服务 "${sid}" 已从期望清单移除，正在下掉容器…`,
+            detail: { profileId: sid, status: svc.status, container: svc.containerName },
             timestamp: new Date().toISOString(),
           });
+          try {
+            await containerService.remove(svc.containerName, {
+              projectId: entry.projectId,
+              branchId: entry.id,
+              profileId: sid,
+              requestId: requestId || null,
+              operationId: branchOperationLease?.operationId || null,
+              actor: zActor,
+              trigger: zTrigger,
+              operation: 'deploy-remove-orphan-service',
+              source: 'api.deploy-branch',
+              reason: '服务已从期望清单移除(额外服务被清/项目 profile 被删)',
+            });
+          } catch (err) {
+            logEvent({ step: 'remove-orphan-service', status: 'warning', title: `服务 "${sid}" 容器移除失败(忽略,仍清条目): ${(err as Error).message}`, timestamp: new Date().toISOString() });
+          }
+          // remove 的 await 之后、改 state 之前再校验一次：租约还在才删条目。
+          assertBranchOperationCurrent(branchOperationLease, `remove-orphan-service after ${sid}`);
+          delete entry.services[sid];
+          logEvent({ step: 'remove-orphan-service', status: 'done', title: `服务 "${sid}" 已下掉`, timestamp: new Date().toISOString() });
         }
+        stateService.save();
       }
       const activeStatuses = activeServices.map(([, s]) => s.status);
       const hasRunning = activeStatuses.some((s) => s === 'running');
@@ -10795,7 +11090,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
         entry.errorMessage = undefined;
       }
       const __statusPrev = entry.status;
-      entry.status = hasError ? 'error' : hasRunning ? 'running' : hasStarting ? 'starting' : 'error';
+      // 空期望清单（额外服务/项目 profile 全清后孤儿剪枝把 entry.services 删空）落 idle，不落 error
+      // （Bugbot「Empty deploy marks branch error」）：当分支挂了在线 executor 时上面的本地 empty-cleanup
+      // 早返回被 remoteOwned 跳过，可 executor 离线 → 分发回退到本地路径，走到这里。activeStatuses 为空且
+      // 非 error 即「成功清空」，与 executor 端 + 本地 empty-cleanup 的 idle 口径对齐；profiles>0 却零服务
+      // 的真失败已在上面 noServiceStarted 置 hasError=true，不会落到这个 idle 分支。
+      entry.status = hasError ? 'error'
+        : hasRunning ? 'running'
+        : hasStarting ? 'starting'
+        : activeStatuses.length === 0 ? 'idle'
+        : 'error';
       entry.lastAccessedAt = new Date().toISOString();
 
       opLog.status = hasError ? 'error' : 'completed';
@@ -11054,7 +11358,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // P4 Part 17 (G2 fix): scope by the branch's project so a
     // single-service redeploy can't accidentally pick up a same-named
     // profile from a different project.
-    const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
+    const profiles = stateService.getEffectiveProfilesForBranch(entry);
     const profile = profiles.find(p => p.id === profileId);
     if (!profile) {
       res.status(404).json({ error: `构建配置 "${profileId}" 不存在` });
@@ -11871,7 +12175,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const port = stateService.allocatePort(config.portStart, await collectListeningPorts(shell));
     // P4 Part 17 (G2 fix): scope by branch project so the path-prefix
     // proxy only routes to profiles owned by this project.
-    const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
+    const profiles = stateService.getEffectiveProfilesForBranch(entry);
 
     // Create a lightweight HTTP proxy that routes by path-prefix
     const server = http.createServer((proxyReq, proxyRes) => {
@@ -12059,21 +12363,31 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // P4 Part 17 (G2 fix): scope by branch project so the override
     // modal's "effective env" preview only enumerates profiles in
     // this project, not every project's profile.
-    const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
+    const profiles = stateService.getEffectiveProfilesForBranch(entry);
+    // 分支级额外服务(extraProfiles)在此 payload 里要给 env 脱敏（Codex P1）：切到
+    // getEffectiveProfilesForBranch 后额外服务也进了 override 面板，baseline / effective.env 若返回
+    // 原始 env 会泄露分支本地密钥。与 extra-services / 分支序列化的 maskExtraProfilesEnv 口径一致，
+    // 仅对额外服务脱敏（项目 profile 的既有行为不动）。
+    const extraProfileIds = new Set((entry.extraProfiles || []).map((p) => p.id));
     const payload = profiles.map(profile => {
+      const isExtra = extraProfileIds.has(profile.id);
       const override = entry.profileOverrides?.[profile.id];
       const resolved = resolveEffectiveProfile(profile, entry);
       // CDS infra vars first, then profile.env so user-set values can still
       // shadow infra defaults (keeps current runtime semantics — see container.ts).
+      const mergedEnv = { ...cdsVars, ...(resolved.env || {}) };
       const effective = {
         ...resolved,
-        env: { ...cdsVars, ...(resolved.env || {}) },
+        env: isExtra ? maskSecrets(mergedEnv) : mergedEnv,
       };
       return {
         profileId: profile.id,
         profileName: profile.name,
-        baseline: profile,
-        override: override || null,
+        baseline: isExtra && profile.env ? { ...profile, env: maskSecrets(profile.env) } : profile,
+        // override 也要对额外服务脱敏（Codex P1「Mask override env in profile-overrides GET」）：PUT 现可给
+        // extra profile 存 env 覆盖，GET 若把 override.env 原样回吐就泄露密钥（baseline/effective 已脱敏，
+        // 唯独 override 漏）。与 PUT 响应同口径。
+        override: isExtra && override?.env ? { ...override, env: maskSecrets(override.env) } : (override || null),
         effective,
         cdsEnvKeys,
         hasOverride: !!override && Object.keys(override).some(k => k !== 'updatedAt' && k !== 'notes'),
@@ -12089,7 +12403,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
-    const profile = stateService.getBuildProfile(profileId);
+    // 用分支**有效** profiles 解析目标（项目 profiles + 分支额外服务），与 GET /profile-overrides 一致
+    // （Bugbot「Extra profile overrides PUT fails」）：原仅用项目级 getBuildProfile，分支级 extra-only 的
+    // profileId 永远 404，尽管 GET 面板已把它列为可覆盖。effective 查找也天然项目内聚（更安全）。
+    const profile = stateService.getEffectiveProfilesForBranch(entry).find((p) => p.id === profileId);
     if (!profile) {
       res.status(404).json({ error: `构建配置 "${profileId}" 不存在` });
       return;
@@ -12106,6 +12423,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
 
+      // 覆盖镜像/路径的严格校验（Codex P1「Validate extra-profile override images before deploy」）：
+      // 此 PUT 现可覆盖分支额外服务的 dockerImage，调用方可先建 prebuiltImage 额外服务、再在此覆盖
+      // dockerImage 绕过 extra-services 的严格镜像白名单；覆盖值会并入有效 profile，prebuilt 路径用
+      // 宿主机 `docker pull ${image}` 拉取 → `alpine; touch /tmp/pwn` 在 CDS 宿主机执行。container.ts 已对
+      // pull 路径 shellQuote 兜底，这里在入口对 dockerImage/containerWorkDir 施加与 extra-services PUT 同款
+      // 白名单（对所有 profile 覆盖生效，合法镜像引用/容器内绝对路径均满足，不影响正常用法）。
+      if (typeof body.dockerImage === 'string' && body.dockerImage.trim() !== '') {
+        if (!/^[a-zA-Z0-9][a-zA-Z0-9._:/@-]*$/.test(body.dockerImage.trim())) {
+          res.status(400).json({ error: '覆盖的 dockerImage 含非法字符（镜像引用仅允许字母/数字/._:/@- ）' });
+          return;
+        }
+      }
+      if (typeof body.containerWorkDir === 'string' && body.containerWorkDir.trim() !== '') {
+        const cwd = body.containerWorkDir.trim();
+        if (!/^\/[a-zA-Z0-9._/-]*$/.test(cwd) || cwd.split('/').includes('..')) {
+          res.status(400).json({ error: '覆盖的 containerWorkDir 非法（须为容器内绝对路径，字母/数字/._-/，禁 .. 穿越与 shell 元字符）' });
+          return;
+        }
+      }
+
       // M8: `typeof [] === 'object'` is true and typeof null === 'object' too,
       // so we explicitly filter both. Otherwise `body.env = []` would cast to
       // Record<string,string> and produce garbage at deploy time.
@@ -12118,9 +12455,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // M9: drop any value that isn't a string. Non-string values would
         // explode the env-file writer (container.ts writeEnvFile) and leak
         // `undefined` / numbers into Docker env.
+        // 剥离掩码哨兵（Bugbot High「Extra override PUT keeps mask sentinels」）：额外服务的 GET 会把
+        // override.env 打掩码（***），GET→编辑→PUT 往返若把字面 *** 原样持久化，deploy 时真实密钥被抹。
+        // 命中哨兵则从已存覆盖的同 key 旧值恢复，无旧值则丢弃（绝不写字面哨兵）；与 extra-services PUT 口径一致。
+        const OVERRIDE_MASK_SENTINELS = new Set(['***', '***[masked]***', '****', '*****']);
+        const prevOverrideEnv = (entry.profileOverrides?.[profileId]?.env || {}) as Record<string, string>;
         const cleaned: Record<string, string> = {};
         for (const [k, v] of Object.entries(body.env as Record<string, unknown>)) {
-          if (typeof v === 'string') cleaned[k] = v;
+          if (typeof v !== 'string') continue;
+          if (OVERRIDE_MASK_SENTINELS.has(v.trim())) {
+            if (Object.prototype.hasOwnProperty.call(prevOverrideEnv, k)) cleaned[k] = prevOverrideEnv[k];
+            continue;
+          }
+          cleaned[k] = v;
         }
         envOverride = cleaned;
       }
@@ -12144,11 +12491,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // without a second round-trip.
       const refreshed = stateService.getBranch(id)!;
       const effective = resolveEffectiveProfile(profile, refreshed);
+      const savedOverride = stateService.getBranchProfileOverride(id, profileId);
+      // 分支级额外服务的 env 在 PUT 响应里脱敏（Codex P1「Mask extra profile env in override save
+      // responses」）：PUT 现可命中 extra-only profile（round-21），effective/override 直接回原 env 会泄露其
+      // 密钥，与上方 GET 面板的脱敏口径不一致。仅对额外服务遮蔽（项目 profile 行为不动）；状态层保持明文供
+      // deploy 直读。
+      const isExtra = (entry.extraProfiles || []).some((p) => p.id === profileId);
       res.json({
         message: '已保存分支覆盖',
         profileId,
-        override: stateService.getBranchProfileOverride(id, profileId),
-        effective,
+        override: isExtra && savedOverride?.env ? { ...savedOverride, env: maskSecrets(savedOverride.env) } : savedOverride,
+        effective: isExtra && effective.env ? { ...effective, env: maskSecrets(effective.env) } : effective,
         needsRedeploy: true,
       });
     } catch (err) {
@@ -12597,6 +12950,311 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  // ── 分支级临时额外服务(branch-local extra services) ──
+  // 项目 profiles 是稳定底座(改它走审批);单条分支可在底座之上临时追加自己的服务,只在本分支
+  // 部署、跑在分支专属网、不进项目、不需全局审批、删分支即消失。详见 design.cds.branch-local-extra-services。
+
+  router.get('/branches/:id/extra-services', (req, res) => {
+    const entry = stateService.getBranch(req.params.id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
+      return;
+    }
+    // 项目级访问控制(Bugbot High / learned rule: 所有项目级资源 handler 必须 assertProjectAccess):
+    // 防止项目 A 的 cdsp_ key 读取/改动项目 B 分支的额外服务。
+    const mGet = assertProjectAccess(req as any, entry.projectId || 'default');
+    if (mGet) {
+      res.status(mGet.status).json(mGet.body);
+      return;
+    }
+    res.json({ extraProfiles: maskExtraProfilesEnv(entry.extraProfiles || []) || [] });
+  });
+
+  router.put('/branches/:id/extra-services', async (req, res) => {
+    const entry = stateService.getBranch(req.params.id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
+      return;
+    }
+    // 项目级访问控制(同上):PUT 会改部署清单 + ?redeploy=1 触发重部署,跨项目越权风险更高,必须校验。
+    const mPut = assertProjectAccess(req as any, entry.projectId || 'default');
+    if (mPut) {
+      res.status(mPut.status).json(mPut.body);
+      return;
+    }
+    const body = (req.body || {}) as { extraProfiles?: unknown };
+    const list = body.extraProfiles;
+    if (!Array.isArray(list)) {
+      res.status(400).json({ error: 'extraProfiles 必须是数组(空数组=清空额外服务)' });
+      return;
+    }
+    // 项目 profile id 集合:额外服务撞这些 id 会被合并规则丢弃,所以直接拒绝,明确告知调用方。
+    const projectIds = new Set(
+      stateService.getBuildProfilesForProject(entry.projectId || 'default').map((p) => p.id),
+    );
+    // env 合并 + 掩码哨兵剥离（Bugbot High「PUT drops omitted env」+ Medium「persists mask sentinels」
+    // / learned rule）。两条铁律：
+    //  1. **merge 不 replace**：以同 id 旧 profile 的 env 为基底，再叠加入参——入参省略 env 不丢旧密钥、
+    //     入参部分 env 不删未提及的旧 key（与 build-profiles PUT 的 Bug AA merge 口径一致）。
+    //  2. **剥离掩码哨兵**：入参值命中 `***` / `***[masked]***` 等 → 保留旧值（基底里已有）；旧值不存在
+    //     则不写入（绝不持久化字面哨兵）。
+    const MASK_SENTINELS = new Set(['***', '***[masked]***', '****', '*****']);
+    const prevExtraEnvById = new Map<string, Record<string, string>>(
+      (entry.extraProfiles || []).map((p) => [p.id, (p.env || {}) as Record<string, string>]),
+    );
+    const mergeExtraEnv = (incoming: Record<string, unknown>, prevEnv: Record<string, string>): Record<string, string> => {
+      const out: Record<string, string> = { ...prevEnv }; // 基底 = 旧 env（merge，省略即保留）
+      for (const [k, v] of Object.entries(incoming || {})) {
+        if (typeof v !== 'string') continue;
+        if (MASK_SENTINELS.has(v.trim())) {
+          // 哨兵：保留旧值（已在基底）；旧值不存在则确保不写入字面哨兵
+          if (!Object.prototype.hasOwnProperty.call(prevEnv, k)) delete out[k];
+          continue;
+        }
+        out[k] = v; // 真实值覆盖
+      }
+      return out;
+    };
+    const sanitized: BuildProfile[] = [];
+    const seen = new Set<string>();
+    for (const raw of list as Array<Record<string, unknown>>) {
+      const id = String(raw?.id || '').trim();
+      if (!isValidExtraProfileId(id)) {
+        res.status(400).json({ error: `额外服务 id 非法: ${JSON.stringify(raw?.id)}(只能字母/数字开头,含 - _,长度 1..63)` });
+        return;
+      }
+      if (projectIds.has(id)) {
+        res.status(400).json({ error: `额外服务 id "${id}" 与项目服务撞名,分支额外服务不能覆盖项目底座(要按分支改项目服务请用 profileOverrides)` });
+        return;
+      }
+      if (seen.has(id)) {
+        res.status(400).json({ error: `额外服务 id "${id}" 重复` });
+        return;
+      }
+      const dockerImage = String(raw?.dockerImage || '').trim();
+      const containerPort = Number(raw?.containerPort);
+      if (!dockerImage) {
+        res.status(400).json({ error: `额外服务 "${id}" 缺少 dockerImage` });
+        return;
+      }
+      // 严格镜像引用校验（Codex P1，宿主机命令注入边界防御）：dockerImage 会进 docker create/run 的
+      // 宿主机命令行，含 shell 元字符（;$\`&|()<>空格等）会在 CDS 宿主机执行。镜像引用本就只含
+      // 字母/数字/._:/@-，这里在入口直接拒非法字符（container.ts 另对镜像与 command 做 shellQuote 兜底）。
+      if (!/^[a-zA-Z0-9][a-zA-Z0-9._:/@-]*$/.test(dockerImage)) {
+        res.status(400).json({ error: `额外服务 "${id}" 的 dockerImage 含非法字符（镜像引用仅允许字母/数字/._:/@- ）` });
+        return;
+      }
+      if (!Number.isInteger(containerPort) || containerPort <= 0 || containerPort > 65535) {
+        res.status(400).json({ error: `额外服务 "${id}" 的 containerPort 非法` });
+        return;
+      }
+      // workDir 边界校验（Codex P1「Validate extra-service workDir before deploy」）：workDir 会被
+      // path.join(worktreePath, workDir) 拼成宿主机挂载源、再进 docker create/run 命令行。container.ts
+      // 已对挂载路径 shellQuote 兜底，这里在入口再加严格白名单——只允许相对路径段（字母/数字/._-/ 与分隔符），
+      // 禁 shell 元字符与 .. 穿越，杜绝 workDir 含双引号 + $()/反引号 越权执行或挂载越界。
+      const workDir = String(raw?.workDir || '').trim();
+      if (workDir) {
+        if (!/^[a-zA-Z0-9._/-]+$/.test(workDir) || workDir.split('/').includes('..')) {
+          res.status(400).json({ error: `额外服务 "${id}" 的 workDir 非法（仅允许相对路径，字母/数字/._-/，禁 .. 穿越与 shell 元字符）` });
+          return;
+        }
+      }
+      // containerWorkDir 边界校验（Codex P2「Preserve container workdir for extra services」）：白名单此前丢弃它，
+      // 导致需要非默认容器工作目录的镜像/monorepo 服务被强制部署在 /app 而运行期失败。这里予以保留 + 校验：
+      // 容器内绝对路径（以 / 开头），与 workDir 同字符集（字母/数字/._-/），禁 .. 穿越与 shell 元字符（container.ts
+      // 对 -w / 挂载目标 shellQuote 兜底）。空 = 省略，container.ts 退回默认 /app。
+      const containerWorkDir = String(raw?.containerWorkDir || '').trim();
+      if (containerWorkDir) {
+        if (!/^\/[a-zA-Z0-9._/-]*$/.test(containerWorkDir) || containerWorkDir.split('/').includes('..')) {
+          res.status(400).json({ error: `额外服务 "${id}" 的 containerWorkDir 非法（须为容器内绝对路径，字母/数字/._-/，禁 .. 穿越与 shell 元字符）` });
+          return;
+        }
+      }
+      // dbScope 边界校验（Codex P2「Preserve dbScope on extra services」）：白名单此前丢弃 dbScope,
+      // resolveProfileRuntimeEnv 见 undefined 就跳过 per-branch 数据库改写,声明 dbScope:'per-branch' 的额外
+      // 服务(跑迁移/测试)会落回共享库、破坏分支隔离。这里予以保留 + 校验枚举(shared/per-branch),非法值显式拒绝。
+      let dbScope: 'shared' | 'per-branch' | undefined;
+      if (raw?.dbScope !== undefined) {
+        if (raw.dbScope !== 'shared' && raw.dbScope !== 'per-branch') {
+          res.status(400).json({ error: `额外服务 "${id}" 的 dbScope 非法（仅允许 'shared' 或 'per-branch'）` });
+          return;
+        }
+        dbScope = raw.dbScope;
+      }
+      // 保留分支级路由/依赖/就绪元数据（Codex P2「Preserve branch-local routing metadata」）：
+      // 早期白名单只留 id/image/workDir/command/port/env，把 pathPrefixes（路由前缀）、dependsOn
+      // （启动顺序）、readinessProbe / startupSignal（就绪判定）这些 deploy 真正消费的字段静默丢了，
+      // 导致拆服务实验里靠路由前缀/启动顺序的额外服务不可达或起错序。这里按受支持字段透传 + 校验。
+      const strArray = (v: unknown): string[] | undefined => {
+        if (!Array.isArray(v)) return undefined;
+        const arr = v.map((x) => String(x).trim()).filter((x) => x.length > 0);
+        return arr.length > 0 ? arr : undefined;
+      };
+      const pathPrefixes = strArray(raw?.pathPrefixes);
+      const dependsOn = strArray(raw?.dependsOn);
+      const startupSignal = typeof raw?.startupSignal === 'string' && raw.startupSignal.trim() !== ''
+        ? raw.startupSignal : undefined;
+      const readinessProbe = ((): ReadinessProbe | undefined => {
+        const rp = raw?.readinessProbe;
+        if (!rp || typeof rp !== 'object' || Array.isArray(rp)) return undefined;
+        const o = rp as Record<string, unknown>;
+        const out: ReadinessProbe = {};
+        if (typeof o.path === 'string' && o.path.trim() !== '') out.path = o.path.trim();
+        if (typeof o.intervalSeconds === 'number' && o.intervalSeconds > 0) out.intervalSeconds = o.intervalSeconds;
+        if (typeof o.timeoutSeconds === 'number' && o.timeoutSeconds > 0) out.timeoutSeconds = o.timeoutSeconds;
+        if (o.noHttp === true) out.noHttp = true;
+        return Object.keys(out).length > 0 ? out : undefined;
+      })();
+      // entrypoint 覆盖（Codex P2「Preserve extra-service entrypoint overrides」）：白名单此前止于
+      // prebuiltImage,丢弃了 BuildProfile.entrypoint,带 wrapper entrypoint 的镜像（典型 DB/CRM 镜像
+      // 自跑初始化脚本)无法清空/覆盖入口 → 运行期抢跑失败。这里予以保留 + 校验:空串 ""=清空 image
+      // ENTRYPOINT(container.ts 走 --entrypoint=""),否则必须是单 token 可执行名/路径(Docker --entrypoint
+      // 只接单 token;container.ts 另对含空格者告警跳过、并对值 JSON.stringify 兜底 shell 安全)。
+      let entrypoint: string | undefined;
+      if (raw?.entrypoint !== undefined) {
+        if (typeof raw.entrypoint !== 'string') {
+          res.status(400).json({ error: `额外服务 "${id}" 的 entrypoint 必须是字符串(""=清空 image ENTRYPOINT)` });
+          return;
+        }
+        const ep = raw.entrypoint.trim();
+        if (ep !== '' && (/\s/.test(ep) || !/^\/?[a-zA-Z0-9._/-]+$/.test(ep))) {
+          res.status(400).json({ error: `额外服务 "${id}" 的 entrypoint 非法(须为单个可执行名/路径,无空格与 shell 元字符;""=清空 image ENTRYPOINT)` });
+          return;
+        }
+        entrypoint = ep;
+      }
+      seen.add(id);
+      sanitized.push({
+        id,
+        name: String(raw?.name || id),
+        dockerImage,
+        workDir,
+        ...(containerWorkDir ? { containerWorkDir } : {}),
+        ...(entrypoint !== undefined ? { entrypoint } : {}),
+        ...(dbScope !== undefined ? { dbScope } : {}),
+        command: String(raw?.command || ''),
+        containerPort,
+        projectId: entry.projectId || 'default',
+        // 总是基于旧 env 合并（即使入参省略 env 也保留旧密钥，不丢失）；合并结果非空才落 env 字段。
+        ...((() => {
+          const merged = mergeExtraEnv(
+            (raw?.env && typeof raw.env === 'object' ? raw.env : {}) as Record<string, unknown>,
+            prevExtraEnvById.get(id) || {},
+          );
+          return Object.keys(merged).length > 0 ? { env: merged } : {};
+        })()),
+        ...(pathPrefixes ? { pathPrefixes } : {}),
+        ...(dependsOn ? { dependsOn } : {}),
+        ...(readinessProbe ? { readinessProbe } : {}),
+        ...(startupSignal ? { startupSignal } : {}),
+        ...(raw?.prebuiltImage === true ? { prebuiltImage: true } : {}),
+      } as BuildProfile);
+    }
+    // 破坏性移除回滚预备（Codex P2「Defer destructive extra-service saves until redeploy is accepted」）：
+    // 落库前先快照旧额外服务,并算出「被本次 PUT 删掉、但仍挂着 entry.services 运行行」的 id。
+    // 这类移除是破坏性的——若紧接着的自调 deploy 被拒(典型 owning_executor_offline:owning executor 离线、
+    // 无法真正下掉远端 worker 容器),master 端却已经丢了 profile 元数据,与仍在跑的 worker 容器永久脱节
+    // (幽灵服务)。仅新增/暂停/纯改 env 这类「没删掉任何在跑服务」的变更不算破坏性,deploy 被拒也保留配置。
+    const prevExtraProfilesSnapshot: BuildProfile[] = JSON.parse(
+      JSON.stringify(entry.extraProfiles || []),
+    );
+    const sanitizedIds = new Set(sanitized.map((p) => p.id));
+    const destructivelyDroppedIds = prevExtraProfilesSnapshot
+      .map((p) => p.id)
+      .filter((id) => !sanitizedIds.has(id) && entry.services[id] != null);
+    const hasDestructiveRemoval = destructivelyDroppedIds.length > 0;
+    stateService.setBranchExtraProfiles(entry.id, sanitized);
+    let updated = stateService.getBranch(entry.id)!;
+    // 一步到位:声明/改额外服务是纯配置变更,不会自动重建已在运行的分支(用户实测痛点)。
+    // 带 ?redeploy=1 时,持久化后触发一次真正的分支重部署(走和 webhook 自调相同的 localhost 自 POST
+    // /deploy),让新增/改动的额外服务真正起容器、被移除的真正下掉。
+    const wantRedeploy = req.query?.redeploy === '1' || req.query?.redeploy === 'true' || (req.body as { redeploy?: unknown })?.redeploy === true;
+    let redeployTriggered = false;
+    let redeployRejected: { status: number; message: string } | null = null;
+    let removalRolledBack = false;
+    if (wantRedeploy) {
+      // 必须等到自调 deploy 真正被「接受」(HTTP 头到达)再决定 redeployTriggered,否则会出现「明明被拒
+      // 还回报已触发」(Bugbot Medium):deploy 端点对 暂停(423)/缺必填环境(412)/in-flight 冲突(409)
+      // 都在 initSSE 之前早返回错误码,await 头很快;成功路径 initSSE 之后才流式构建,所以 await 不会卡到
+      // 整次构建结束。被接受后在后台把 SSE 流读完丢弃(不阻塞本响应),构建在服务端异步继续
+      // (server-authority:客户端断开不取消部署)。
+      const url = `http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(entry.id)}/deploy`;
+      try {
+        const upstream = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CDS-Internal': '1',
+            'X-CDS-Trigger': 'system',
+            ...(entry.projectId ? { 'X-CDS-Source-Project-Id': entry.projectId } : {}),
+            'X-CDS-Source-Branch-Id': entry.id,
+          },
+          body: JSON.stringify({}),
+        });
+        if (upstream.ok) {
+          redeployTriggered = true;
+          // 后台读尽 SSE 流(成功路径流式到部署结束),正常 drain 避免连接背压拖住服务端写入;不 await。
+          void upstream.text().catch(() => { /* drain best-effort */ });
+        } else {
+          const errText = await upstream.text().catch(() => '');
+          let msg = errText;
+          try { const j = JSON.parse(errText) as { error?: unknown }; if (typeof j?.error === 'string') msg = j.error; } catch { /* 保留原文 */ }
+          redeployRejected = { status: upstream.status, message: (msg || '').slice(0, 300) };
+          console.warn(`[extra-services] redeploy 被拒(HTTP ${upstream.status}) ${entry.id}: ${redeployRejected.message}`);
+        }
+      } catch (err) {
+        redeployRejected = { status: 0, message: (err as Error).message };
+        console.warn(`[extra-services] redeploy 自调失败 ${entry.id}: ${(err as Error).message}`);
+      }
+      // 破坏性移除 + 重部署被拒 → 回滚到旧额外服务,让 master 元数据与仍在跑的 worker 容器保持一致,
+      // 不留幽灵服务(Codex P2)。新增/纯改不回滚(deploy 被拒也保留已声明配置,用户可处理后重发)。
+      if (redeployRejected && hasDestructiveRemoval) {
+        stateService.setBranchExtraProfiles(entry.id, prevExtraProfilesSnapshot);
+        updated = stateService.getBranch(entry.id)!;
+        removalRolledBack = true;
+        console.warn(
+          `[extra-services] 重部署被拒且含破坏性移除(${destructivelyDroppedIds.join(', ')}),已回滚额外服务以避免幽灵服务 ${entry.id}`,
+        );
+      }
+    }
+    // 清理被移除额外服务的孤立 profileOverride（Codex P2「Clear stale overrides when removing extra services」）：
+    // 删一个有 profileOverride 的额外服务时,只改 extraProfiles 会把 entry.profileOverrides[id] 留下;若该分支
+    // 之后用**同 id**新建另一个临时服务,resolveEffectiveProfile 会把旧 override(镜像/env/路由)悄悄套到新服务上,
+    // 部署成上一轮的值而非刚提交的。这里按**最终**(已结算回滚)的 extraProfiles 算出真正被移除的 id,清掉其 override。
+    // 注:回滚时 final == prev,removedIds 为空,不会误删;额外 id 不会撞项目 profile id(PUT 已拒),清除安全。
+    {
+      const finalExtraIds = new Set((updated.extraProfiles || []).map((p) => p.id));
+      let clearedAnyOverride = false;
+      for (const prev of prevExtraProfilesSnapshot) {
+        if (!finalExtraIds.has(prev.id) && updated.profileOverrides?.[prev.id]) {
+          stateService.clearBranchProfileOverride(entry.id, prev.id);
+          clearedAnyOverride = true;
+        }
+      }
+      // clearBranchProfileOverride 只改内存,必须显式落盘（Bugbot Medium「Extra removal override not
+      // persisted」）：extraProfiles 已由 setBranchExtraProfiles 持久化,若不 save 这次 override 清除,重启会
+      // 重新载入旧 profileOverrides,同 id 新服务又会套上陈旧 env/镜像。
+      if (clearedAnyOverride) {
+        stateService.save();
+        updated = stateService.getBranch(entry.id)!;
+      }
+    }
+    res.json({
+      extraProfiles: maskExtraProfilesEnv(updated.extraProfiles || []) || [],
+      count: (updated.extraProfiles || []).length,
+      redeployTriggered,
+      ...(redeployRejected ? { redeployRejected } : {}),
+      ...(removalRolledBack ? { removalRolledBack, rolledBackServiceIds: destructivelyDroppedIds } : {}),
+      hint: redeployTriggered
+        ? '已触发重部署,额外服务将随本次部署起容器(几十秒后查看分支服务列表)'
+        : removalRolledBack
+          ? `重部署被拒(HTTP ${redeployRejected!.status}: ${redeployRejected!.message}),为避免幽灵服务已回滚移除操作(${destructivelyDroppedIds.join(', ')} 保留);请待 owning executor 上线后重试`
+          : wantRedeploy
+            ? `额外服务已声明,但触发重部署未成功${redeployRejected ? `(HTTP ${redeployRejected.status}: ${redeployRejected.message})` : ''};请处理后手动部署(或重发本请求带 ?redeploy=1)`
+            : '额外服务已声明;需触发一次分支部署才会真正起容器(或重发本请求带 ?redeploy=1)',
+    });
+  });
+
   // ── Container exec (run command inside container) ──
 
   router.post('/branches/:id/container-exec', async (req, res) => {
@@ -12643,7 +13301,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       let stderrMasked = maskSecretsText(result.stderr, { mask });
       if (mask && profileId) {
         try {
-          const prof = stateService.getBuildProfile(profileId) as any;
+          // 用分支**有效** profiles 查（项目 profiles + 分支额外服务），而非仅项目级 getBuildProfile：
+          // 否则分支级额外服务(extraProfiles)的敏感 env 查不到，`echo $TOKEN` 会原样吐出明文（Codex P2）。
+          // 再经 resolveEffectiveProfile 应用 profileOverrides（Codex P2「Resolve overrides before masking exec
+          // output」）：getEffectiveProfilesForBranch 只合并项目+额外 profile,不含 profileOverrides[profileId].env;
+          // 若密钥是经 PUT /profile-overrides 存的，未解析前查不到 → `echo $TOKEN` 仍吐明文(尽管 override 响应/
+          // 分支视图已脱敏)。resolveEffectiveProfile 把 override env 并入后再收集敏感值。
+          const baseProf = stateService.getEffectiveProfilesForBranch(entry).find((p) => p.id === profileId);
+          const prof = baseProf ? (resolveEffectiveProfile(baseProf, entry) as any) : undefined;
           const profEnv: Record<string, string> = (prof && prof.env) || {};
           // Collect concrete sensitive values long enough to be plausible
           // secrets. <6 chars are skipped to avoid mangling normal strings
@@ -12651,7 +13316,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
           const sensitiveValues: string[] = [];
           for (const [k, v] of Object.entries(profEnv)) {
             if (typeof v !== 'string' || v.length < 6) continue;
-            if (!/secret|password|token|key|credential|pwd|passphrase/i.test(k)) continue;
+            // 敏感判定与 maskEnvRecord 完全同口径：key 名走 isSensitiveKey 完整覆盖（含 WEBHOOK/SMTP_*/
+            // AUTH/JWT/PAT/*_KEY，旧窄正则不含这些）OR 值是含内联凭据的 URL（DATABASE_URL/MONGODB_URI 等 key
+            // 名不命中但值泄密）。否则 `echo $WEBHOOK_URL` 在 GET/PUT 已脱敏的同一密钥仍从 exec 输出原样吐出
+            // （Codex P2「Reuse sensitive-key coverage for exec masking」）。
+            if (!isSensitiveKey(k) && !looksLikeUrlWithCredentials(v)) continue;
             sensitiveValues.push(v);
           }
           // Sort longest-first so a value that contains another value as a
@@ -14362,9 +15031,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const trigger = triggerFromRequest(req);
 
       for (const entry of allBranches) {
-        const ownProjectId = entry.projectId || 'default';
+        // effective(项目底座 + 本分支额外):否则分支级额外服务会被当成「项目里没有的孤儿服务」
+        // 误剪掉。额外服务是这条分支的合法服务,必须算进「已知 profile id」集合。
         const ownProfileIds = new Set(
-          stateService.getBuildProfilesForProject(ownProjectId).map((p) => p.id),
+          stateService.getEffectiveProfilesForBranch(entry).map((p) => p.id),
         );
         const dropped: string[] = [];
         for (const profileId of Object.keys(entry.services || {})) {
@@ -14539,6 +15209,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
             await worktreeService.remove(repoRoot, entry.worktreePath);
           } catch { /* ok */ }
           assertBranchOperationCurrent(branchOperationLease, 'cleanup before state delete');
+          // 删分支即删分支网（Codex P2「Remove branch networks from all cleanup flows」）。
+          await containerService.removeBranchNetwork(entry.id).catch(() => { /* best-effort */ });
           stateService.removeLogs(entry.id);
           stateService.removeBranch(entry.id);
           removedCount += 1;
@@ -14699,6 +15371,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // State mutations are serial (state is in-memory, no async needed)
       for (const entry of cleanedOrphans) {
+        // 删分支即删分支网（Codex P2「Remove branch networks from all cleanup flows」）。
+        await containerService.removeBranchNetwork(entry.id).catch(() => { /* best-effort */ });
         stateService.removeLogs(entry.id);
         stateService.removeBranch(entry.id);
       }
@@ -14855,6 +15529,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
             await worktreeService.remove(repoRoot, entry.worktreePath);
           } catch { /* ok */ }
           assertBranchOperationCurrent(branchOperationLease, 'factory reset before state delete');
+          // 删分支即删分支网（Codex P2「Remove branch networks from all cleanup flows」）。
+          await containerService.removeBranchNetwork(entry.id).catch(() => { /* best-effort */ });
           stateService.removeLogs(entry.id);
           stateService.removeBranch(entry.id);
           } catch (err) {
@@ -16246,12 +16922,16 @@ cdscli project list --human
         send('worktree', 'done', `工作树已存在: ${mainBranch}`);
       }
 
-      // ── Phase 4: Deploy main branch (build + run all profiles) ──
+      // ── Phase 4: Deploy main branch (build + run all profiles + branch extras) ──
       // PR #498 round-4 review (Bugbot): use the project-scoped query
       // so multi-project setups don't deploy every project's profiles
       // under the owner's branch entry. Matches the auto-build path
       // in index.ts:1097 and webhook deploy flows.
-      const profiles = stateService.getBuildProfilesForProject(entry.projectId || owner.id);
+      // 项目底座(保留 owner.id 兜底的 projectId 解析) + 本分支额外服务。
+      const profiles = mergeBranchProfiles(
+        stateService.getBuildProfilesForProject(entry.projectId || owner.id),
+        entry,
+      );
       if (profiles.length > 0) {
         send('deploy', 'running', `正在部署 ${mainBranch} (${profiles.length} 个服务)...`);
 

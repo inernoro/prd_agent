@@ -289,6 +289,49 @@ describe('Cross-project isolation on profiles/rules/export', () => {
     });
   });
 
+  // Bugbot High (2026-06-29, PR #951 review): the new GET/PUT
+  // /api/branches/:id/extra-services handlers must call assertProjectAccess
+  // like every other project-scoped branch route. Without it a project B key
+  // could read or change project A's branch extra services (and trigger a
+  // cross-project redeploy via ?redeploy=1). This pins the fix.
+  describe('GET/PUT /api/branches/:id/extra-services (cross-project guard)', () => {
+    function seedBranchA() {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'a-feature', projectId: 'proj-a', branch: 'feature',
+        worktreePath: '/tmp/wt/a-feature', services: {}, status: 'idle',
+        createdAt: now,
+      });
+    }
+    const extraSvc = { id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80, prebuiltImage: true };
+
+    it('GET refuses Project B key reading Project A branch extras (403)', async () => {
+      seedBranchA();
+      const res = await request(server, 'GET', '/api/branches/a-feature/extra-services',
+        undefined, { 'X-Test-Key': KEY_PROJ_B });
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('project_mismatch');
+    });
+
+    it('PUT refuses Project B key mutating Project A branch extras (403, no state change)', async () => {
+      seedBranchA();
+      const res = await request(server, 'PUT', '/api/branches/a-feature/extra-services',
+        { extraProfiles: [extraSvc] }, { 'X-Test-Key': KEY_PROJ_B });
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('project_mismatch');
+      // State must not have been touched.
+      expect(stateService.getBranch('a-feature')!.extraProfiles).toBeUndefined();
+    });
+
+    it('allows Project A key on its own branch extras', async () => {
+      seedBranchA();
+      const res = await request(server, 'PUT', '/api/branches/a-feature/extra-services',
+        { extraProfiles: [extraSvc] }, { 'X-Test-Key': KEY_PROJ_A });
+      expect(res.status).toBe(200);
+      expect(stateService.getBranch('a-feature')!.extraProfiles).toHaveLength(1);
+    });
+  });
+
   // F15 (HIGH severity, 2026-05-02 onboarding UAT): `docker exec` output
   // and `docker logs` output must mask sensitive env values by default.
   // Admin can opt out with ?unmask=1 (logged via activity stream).
@@ -379,6 +422,74 @@ describe('Cross-project isolation on profiles/rules/export', () => {
       // (postgres://user:pw@host) is a known limitation tracked by
       // future hardening — flagged in the masker doc.
       expect(res.body.stderr).toContain('DB_PASSWORD=***[masked]***');
+    });
+
+    it('masks bare secret values for a BRANCH-LOCAL EXTRA profile (effective-profile lookup, Codex P2)', () => {
+      // A branch-local extra service holds a secret in its env. The value-replacement masker must find
+      // that secret via the branch's EFFECTIVE profiles (project + extras), not the project-only
+      // getBuildProfile — otherwise `echo $TOKEN` for the extra profile leaks the bare value.
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'a-extra', projectId: 'proj-a', branch: 'extra',
+        worktreePath: '/tmp/wt/a-extra',
+        services: { sidecar: { profileId: 'sidecar', containerName: 'cds_a-extra_sidecar', hostPort: 12346, status: 'running' } },
+        status: 'running', createdAt: now,
+        // The secret lives ONLY on the branch-local extra profile — not in any project build profile.
+        extraProfiles: [{ id: 'sidecar', name: 'sidecar', dockerImage: 'nginx:alpine', workDir: '', command: '', containerPort: 80, projectId: 'proj-a', env: { API_TOKEN: 'tok_DoNotLeakThisExtraSecret' } } as any],
+      });
+      installExecMock('echoing -> tok_DoNotLeakThisExtraSecret', '', 0);
+      return request(server, 'POST', '/api/branches/a-extra/container-exec',
+        { profileId: 'sidecar', command: 'echo $API_TOKEN' }, { 'X-Test-Key': KEY_PROJ_A })
+        .then((res) => {
+          expect(res.status).toBe(200);
+          expect(res.body.stdout).not.toContain('tok_DoNotLeakThisExtraSecret');
+          expect(res.body.stdout).toContain('***');
+        });
+    });
+
+    it('masks a URL-style secret value under a non-sensitive key name (DATABASE_URL) in exec output (Codex P2)', () => {
+      // The key name `DATABASE_URL` does not match secret|password|token|key|credential, but its value is a
+      // connection string with inline credentials. `echo $DATABASE_URL` must still be masked — the literal-
+      // value collector now also accepts URL-with-credentials values (same check as maskEnvRecord).
+      const now = new Date().toISOString();
+      const secretUrl = 'postgres://dbuser:Sup3rSecretPw@db.internal:5432/app';
+      stateService.addBranch({
+        id: 'a-urlenv', projectId: 'proj-a', branch: 'urlenv',
+        worktreePath: '/tmp/wt/a-urlenv',
+        services: { sidecar: { profileId: 'sidecar', containerName: 'cds_a-urlenv_sidecar', hostPort: 12347, status: 'running' } },
+        status: 'running', createdAt: now,
+        extraProfiles: [{ id: 'sidecar', name: 'sidecar', dockerImage: 'nginx:alpine', workDir: '', command: '', containerPort: 80, projectId: 'proj-a', env: { DATABASE_URL: secretUrl } } as any],
+      });
+      installExecMock(`echoing -> ${secretUrl}`, '', 0);
+      return request(server, 'POST', '/api/branches/a-urlenv/container-exec',
+        { profileId: 'sidecar', command: 'echo $DATABASE_URL' }, { 'X-Test-Key': KEY_PROJ_A })
+        .then((res) => {
+          expect(res.status).toBe(200);
+          expect(res.body.stdout).not.toContain(secretUrl);
+          expect(res.body.stdout).toContain('***');
+        });
+    });
+
+    it('masks a webhook-style secret key (WEBHOOK_URL) in exec output via isSensitiveKey coverage (Codex P2)', () => {
+      // WEBHOOK_URL key doesn't match the old narrow regex and the value has no inline creds, yet it is a
+      // secret. The literal-value collector now uses isSensitiveKey (same as maskEnvRecord) → masked.
+      const now = new Date().toISOString();
+      const hook = 'https://hooks.slack.com/services/T000/B000/DoNotLeakThisHook';
+      stateService.addBranch({
+        id: 'a-hookenv', projectId: 'proj-a', branch: 'hookenv',
+        worktreePath: '/tmp/wt/a-hookenv',
+        services: { sidecar: { profileId: 'sidecar', containerName: 'cds_a-hookenv_sidecar', hostPort: 12348, status: 'running' } },
+        status: 'running', createdAt: now,
+        extraProfiles: [{ id: 'sidecar', name: 'sidecar', dockerImage: 'nginx:alpine', workDir: '', command: '', containerPort: 80, projectId: 'proj-a', env: { WEBHOOK_URL: hook } } as any],
+      });
+      installExecMock(`echoing -> ${hook}`, '', 0);
+      return request(server, 'POST', '/api/branches/a-hookenv/container-exec',
+        { profileId: 'sidecar', command: 'echo $WEBHOOK_URL' }, { 'X-Test-Key': KEY_PROJ_A })
+        .then((res) => {
+          expect(res.status).toBe(200);
+          expect(res.body.stdout).not.toContain(hook);
+          expect(res.body.stdout).toContain('***');
+        });
     });
   });
 });
