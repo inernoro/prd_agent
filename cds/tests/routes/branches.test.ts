@@ -511,6 +511,24 @@ describe('Branch Routes', () => {
       }
     });
 
+    it('strips env mask sentinels on PUT: reuses the prior real value, drops sentinels with no prior (Bugbot Medium)', async () => {
+      seedBranch('b1');
+      // First PUT establishes a real secret value for SECRET_KEY.
+      await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80, env: { SECRET_KEY: 'real-secret', PUBLIC: 'v1' } }],
+      });
+      // Second PUT comes back with the masked sentinel for SECRET_KEY (GET→edit→PUT round trip) plus a
+      // brand-new key that is itself a sentinel (no prior value).
+      const res = await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80, env: { SECRET_KEY: '***[masked]***', PUBLIC: 'v2', BRAND_NEW: '***' } }],
+      });
+      expect(res.status).toBe(200);
+      const env = (stateService.getBranch('b1')!.extraProfiles![0].env)!;
+      expect(env.SECRET_KEY).toBe('real-secret'); // masked → reused real prior value, NOT the literal sentinel
+      expect(env.PUBLIC).toBe('v2');              // normal edit persists
+      expect('BRAND_NEW' in env).toBe(false);     // sentinel with no prior → dropped, never persisted literally
+    });
+
     it('404 for unknown branch', async () => {
       expect((await request(server, 'GET', '/api/branches/nope/extra-services')).status).toBe(404);
       expect((await request(server, 'PUT', '/api/branches/nope/extra-services', { extraProfiles: [] })).status).toBe(404);

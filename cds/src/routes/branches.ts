@@ -12746,6 +12746,27 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const projectIds = new Set(
       stateService.getBuildProfilesForProject(entry.projectId || 'default').map((p) => p.id),
     );
+    // 掩码哨兵剥离（Bugbot Medium / learned rule：PUT/PATCH 持久化前必须剥离 env 掩码哨兵）：
+    // 敏感 env 在展示侧会被替换成 `***[masked]***` 之类。GET→编辑→PUT 往返时未重新揭示的项会带着哨兵回来，
+    // 若原样持久化会把真实密钥覆盖成字面 `***`。规则：入参 env 命中哨兵 → 用同 id 旧 profile 的对应旧值回填，
+    // 旧值不存在则丢弃该 key（绝不持久化字面哨兵）。
+    const MASK_SENTINELS = new Set(['***', '***[masked]***', '****', '*****']);
+    const prevExtraEnvById = new Map<string, Record<string, string>>(
+      (entry.extraProfiles || []).map((p) => [p.id, (p.env || {}) as Record<string, string>]),
+    );
+    const sanitizeExtraEnv = (incoming: Record<string, unknown>, prevEnv: Record<string, string>): Record<string, string> => {
+      const cleaned: Record<string, string> = {};
+      for (const [k, v] of Object.entries(incoming || {})) {
+        if (typeof v !== 'string') continue;
+        if (MASK_SENTINELS.has(v.trim())) {
+          if (Object.prototype.hasOwnProperty.call(prevEnv, k)) cleaned[k] = prevEnv[k];
+          // 旧值不存在 → 丢弃，绝不持久化字面哨兵
+        } else {
+          cleaned[k] = v;
+        }
+      }
+      return cleaned;
+    };
     const sanitized: BuildProfile[] = [];
     const seen = new Set<string>();
     for (const raw of list as Array<Record<string, unknown>>) {
@@ -12781,7 +12802,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         command: String(raw?.command || ''),
         containerPort,
         projectId: entry.projectId || 'default',
-        ...(raw?.env && typeof raw.env === 'object' ? { env: raw.env as Record<string, string> } : {}),
+        ...(raw?.env && typeof raw.env === 'object'
+          ? { env: sanitizeExtraEnv(raw.env as Record<string, unknown>, prevExtraEnvById.get(id) || {}) }
+          : {}),
         ...(raw?.prebuiltImage === true ? { prebuiltImage: true } : {}),
       } as BuildProfile);
     }
@@ -12887,7 +12910,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       let stderrMasked = maskSecretsText(result.stderr, { mask });
       if (mask && profileId) {
         try {
-          const prof = stateService.getBuildProfile(profileId) as any;
+          // 用分支**有效** profiles 查（项目 profiles + 分支额外服务），而非仅项目级 getBuildProfile：
+          // 否则分支级额外服务(extraProfiles)的敏感 env 查不到，`echo $TOKEN` 会原样吐出明文（Codex P2）。
+          const prof = stateService.getEffectiveProfilesForBranch(entry).find((p) => p.id === profileId) as any;
           const profEnv: Record<string, string> = (prof && prof.env) || {};
           // Collect concrete sensitive values long enough to be plausible
           // secrets. <6 chars are skipped to avoid mangling normal strings

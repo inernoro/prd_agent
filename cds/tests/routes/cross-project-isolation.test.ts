@@ -423,5 +423,28 @@ describe('Cross-project isolation on profiles/rules/export', () => {
       // future hardening — flagged in the masker doc.
       expect(res.body.stderr).toContain('DB_PASSWORD=***[masked]***');
     });
+
+    it('masks bare secret values for a BRANCH-LOCAL EXTRA profile (effective-profile lookup, Codex P2)', () => {
+      // A branch-local extra service holds a secret in its env. The value-replacement masker must find
+      // that secret via the branch's EFFECTIVE profiles (project + extras), not the project-only
+      // getBuildProfile — otherwise `echo $TOKEN` for the extra profile leaks the bare value.
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'a-extra', projectId: 'proj-a', branch: 'extra',
+        worktreePath: '/tmp/wt/a-extra',
+        services: { sidecar: { profileId: 'sidecar', containerName: 'cds_a-extra_sidecar', hostPort: 12346, status: 'running' } },
+        status: 'running', createdAt: now,
+        // The secret lives ONLY on the branch-local extra profile — not in any project build profile.
+        extraProfiles: [{ id: 'sidecar', name: 'sidecar', dockerImage: 'nginx:alpine', workDir: '', command: '', containerPort: 80, projectId: 'proj-a', env: { API_TOKEN: 'tok_DoNotLeakThisExtraSecret' } } as any],
+      });
+      installExecMock('echoing -> tok_DoNotLeakThisExtraSecret', '', 0);
+      return request(server, 'POST', '/api/branches/a-extra/container-exec',
+        { profileId: 'sidecar', command: 'echo $API_TOKEN' }, { 'X-Test-Key': KEY_PROJ_A })
+        .then((res) => {
+          expect(res.status).toBe(200);
+          expect(res.body.stdout).not.toContain('tok_DoNotLeakThisExtraSecret');
+          expect(res.body.stdout).toContain('***');
+        });
+    });
   });
 });

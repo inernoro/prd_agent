@@ -241,12 +241,20 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
 
       // Update overall status
       const statuses = Object.values(entry.services).map(s => s.status);
-      entry.status = statuses.some(s => s === 'running') ? 'running' : 'error';
+      // 无服务(期望清单为空 / 已全部收敛拆除) → idle，与 master 端空清单清理一致（Bugbot Medium）：
+      // 否则空 services 会落到 'error'，心跳同步把一次成功的「清空」误标为失败。
+      entry.status = statuses.length === 0
+        ? 'idle'
+        : statuses.some(s => s === 'running') ? 'running' : 'error';
       entry.lastAccessedAt = new Date().toISOString();
       stateService.save();
 
       sendEvent('complete', {
-        message: entry.status === 'running' ? '部署完成' : '部分服务失败',
+        message: entry.status === 'running'
+          ? '部署完成'
+          : entry.status === 'idle'
+            ? '已清空所有服务'
+            : '部分服务失败',
         services: entry.services,
       });
     } catch (err) {

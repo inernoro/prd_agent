@@ -8,4 +8,7 @@
 | fix | cds | 远端执行器 redeploy 收敛期望清单（Codex P2）：/exec/deploy 对 payload profiles 里没有的 service 主动下掉容器+删条目，否则 redeploy=1 清掉额外服务后 worker 上旧分支本地容器仍在跑(此前只有 master 侧 deploy 做了孤儿清理) |
 | fix | cds | PUT extra-services?redeploy=1 不再谎报已触发（Bugbot Medium）：await 自调 deploy 的 HTTP 接受结果再定 redeployTriggered，被拒(暂停423/缺必填环境412/in-flight冲突409)时回 false + redeployRejected{status,message} + hint「未成功」，接受后后台 drain SSE、构建服务端异步继续 |
 | fix | cds | 清空最后一个额外服务后残留容器（Codex P2）：deploy 期望清单为空但仍有在跑服务时，不再直接 400 跑路，而是 fencing-safe 拆掉残留服务容器+删条目(本地就地拆；远端 owned 放行到 /exec/deploy 收敛空 payload)；env 必填闸门在 profiles 为空时跳过 |
+| fix | cds | 执行器空清单收敛标 idle 而非 error（Bugbot/Codex P2）：/exec/deploy 孤儿清理把服务全删后 entry.services 为空，原状态计算落到 error，心跳同步把一次成功清空误标失败；改为无服务=idle（与 master 空清单清理一致），complete 文案区分「已清空所有服务」 |
+| fix | cds | extra-services PUT 剥离 env 掩码哨兵（Bugbot Medium）：GET→编辑→PUT 往返带回 ***[masked]*** 等哨兵时，按同 id 旧值回填、无旧值则丢弃，杜绝把字面哨兵当密钥持久化进容器 env |
+| fix | cds | container-exec 掩码用分支有效 profiles 查 env（Codex P2）：原用项目级 getBuildProfile 查不到分支额外服务的敏感 env，导致 echo $TOKEN 吐明文；改用 getEffectiveProfilesForBranch（项目+额外）查，额外服务密钥同样被值替换掩码 |
 | security | cds | GET/PUT /branches/:id/extra-services 补 assertProjectAccess 项目级访问控制(Bugbot High)：此前缺校验，项目 A 的 cdsp_ key 可读取/改动项目 B 分支的额外服务并触发跨项目重部署；现与其他分支路由一致，跨项目返回 403 project_mismatch |
