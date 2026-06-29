@@ -93,5 +93,8 @@ public class AppSettings
     /// <summary>绑定字段类型，默认 mobile</summary>
     public string? MiduoSsoSubjectType { get; set; }
 
+    /// <summary>是否禁用管理后台密码登录，仅保留 SSO/破窗入口</summary>
+    public bool? PasswordLoginDisabled { get; set; }
+
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

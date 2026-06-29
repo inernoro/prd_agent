@@ -88,6 +88,7 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [ssoOptions, setSsoOptions] = useState<SsoLoginOption[]>([]);
   const [ssoLoading, setSsoLoading] = useState(false);
+  const [passwordLoginDisabled, setPasswordLoginDisabled] = useState(false);
 
   // 首次登录重置密码相关状态
   const [showResetPassword, setShowResetPassword] = useState(false);
@@ -115,9 +116,13 @@ export default function LoginPage() {
       .then((res) => {
         if (!alive) return;
         setSsoOptions(res.success ? res.data.items : []);
+        setPasswordLoginDisabled(res.success ? res.data.passwordLoginDisabled : false);
       })
       .catch(() => {
-        if (alive) setSsoOptions([]);
+        if (alive) {
+          setSsoOptions([]);
+          setPasswordLoginDisabled(false);
+        }
       });
     return () => {
       alive = false;
@@ -182,6 +187,10 @@ export default function LoginPage() {
 
   const onSubmit = async () => {
     if (!canSubmit || loading) return;
+    if (passwordLoginDisabled) {
+      setError('当前环境已禁用密码登录，请使用 SSO 登录');
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -324,6 +333,7 @@ export default function LoginPage() {
               rememberUsername={rememberUsername}
               ssoOptions={ssoOptions}
               ssoLoading={ssoLoading}
+              passwordLoginDisabled={passwordLoginDisabled}
               returnUrl={returnUrl}
               onError={setError}
               onUsernameChange={setUsername}
@@ -693,6 +703,7 @@ interface LoginCardProps {
   rememberUsername: boolean;
   ssoOptions: SsoLoginOption[];
   ssoLoading: boolean;
+  passwordLoginDisabled: boolean;
   returnUrl: string;
   onError: (message: string) => void;
   onUsernameChange: (v: string) => void;
@@ -710,6 +721,7 @@ function LoginCard({
   rememberUsername,
   ssoOptions,
   ssoLoading,
+  passwordLoginDisabled,
   returnUrl,
   onError,
   onUsernameChange,
@@ -799,97 +811,101 @@ function LoginCard({
           className="mt-3 text-[14px] text-white/62 leading-relaxed"
           style={{ fontFamily: 'var(--font-body)' }}
         >
-          使用管理员账号登录以进入控制台。
+          {passwordLoginDisabled ? '当前环境仅允许 SSO 登录。' : '使用管理员账号登录以进入控制台。'}
         </p>
       </Reveal>
 
       {/* Form */}
       <div className="mt-7 grid gap-4">
-        <Reveal delay={240}>
-          <Field
-            label="USERNAME"
-            value={username}
-            onChange={onUsernameChange}
-            placeholder="admin"
-            autoComplete="username"
-            Icon={UserIcon}
-          />
-        </Reveal>
-
-        <Reveal delay={300}>
-          <label className="block">
-            <span
-              className="mb-2 flex items-center justify-between text-[11px] uppercase text-white/55"
-              style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.2em' }}
-            >
-              <span>PASSWORD</span>
-              {capsLockOn && (
-                <span
-                  className="normal-case tracking-normal text-[11px] text-amber-300/90"
-                  style={{ letterSpacing: 0 }}
-                >
-                  大写锁定已开启
-                </span>
-              )}
-            </span>
-            <div
-              className="relative flex items-center rounded-xl transition-colors focus-within:border-white/35"
-              style={{
-                background: 'rgba(10, 14, 22, 0.62)',
-                border: '1px solid rgba(255, 255, 255, 0.12)',
-                backdropFilter: 'blur(10px)',
-                WebkitBackdropFilter: 'blur(10px)',
-              }}
-            >
-              <span className="pl-4 pr-1 text-white/45">
-                <Lock className="w-4 h-4" />
-              </span>
-              <input
-                value={password}
-                onChange={(e) => onPasswordChange(e.target.value)}
-                onKeyDown={(e) => {
-                  if (typeof e.getModifierState === 'function') {
-                    setCapsLockOn(e.getModifierState('CapsLock'));
-                  }
-                  if (e.key === 'Enter') onSubmit();
-                }}
-                onKeyUp={(e) => {
-                  if (typeof e.getModifierState === 'function') {
-                    setCapsLockOn(e.getModifierState('CapsLock'));
-                  }
-                }}
-                onBlur={() => setCapsLockOn(false)}
-                type={showPassword ? 'text' : 'password'}
-                placeholder="••••••••"
-                autoComplete="current-password"
-                className="h-12 w-full bg-transparent px-4 text-[14.5px] text-white placeholder-white/30 outline-none"
-                style={{ fontFamily: 'var(--font-body)' }}
+        {!passwordLoginDisabled && (
+          <>
+            <Reveal delay={240}>
+              <Field
+                label="USERNAME"
+                value={username}
+                onChange={onUsernameChange}
+                placeholder="admin"
+                autoComplete="username"
+                Icon={UserIcon}
               />
-              <button
-                type="button"
-                onClick={() => setShowPassword((v) => !v)}
-                tabIndex={-1}
-                aria-label={showPassword ? '隐藏密码' : '显示密码'}
-                title={showPassword ? '隐藏密码' : '显示密码'}
-                className="mr-2 flex h-9 w-9 items-center justify-center rounded-lg text-white/55 hover:text-white/85 hover:bg-white/5 transition-colors"
-              >
-                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-          </label>
-        </Reveal>
+            </Reveal>
 
-        <Reveal delay={340}>
-          <label className="flex items-center gap-2 cursor-pointer select-none text-[12.5px] text-white/65 hover:text-white/85 transition-colors">
-            <input
-              type="checkbox"
-              checked={rememberUsername}
-              onChange={(e) => onRememberChange(e.target.checked)}
-              className="h-3.5 w-3.5 cursor-pointer accent-white/85"
-            />
-            <span style={{ fontFamily: 'var(--font-body)' }}>记住用户名</span>
-          </label>
-        </Reveal>
+            <Reveal delay={300}>
+              <label className="block">
+                <span
+                  className="mb-2 flex items-center justify-between text-[11px] uppercase text-white/55"
+                  style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.2em' }}
+                >
+                  <span>PASSWORD</span>
+                  {capsLockOn && (
+                    <span
+                      className="normal-case tracking-normal text-[11px] text-amber-300/90"
+                      style={{ letterSpacing: 0 }}
+                    >
+                      大写锁定已开启
+                    </span>
+                  )}
+                </span>
+                <div
+                  className="relative flex items-center rounded-xl transition-colors focus-within:border-white/35"
+                  style={{
+                    background: 'rgba(10, 14, 22, 0.62)',
+                    border: '1px solid rgba(255, 255, 255, 0.12)',
+                    backdropFilter: 'blur(10px)',
+                    WebkitBackdropFilter: 'blur(10px)',
+                  }}
+                >
+                  <span className="pl-4 pr-1 text-white/45">
+                    <Lock className="w-4 h-4" />
+                  </span>
+                  <input
+                    value={password}
+                    onChange={(e) => onPasswordChange(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (typeof e.getModifierState === 'function') {
+                        setCapsLockOn(e.getModifierState('CapsLock'));
+                      }
+                      if (e.key === 'Enter') onSubmit();
+                    }}
+                    onKeyUp={(e) => {
+                      if (typeof e.getModifierState === 'function') {
+                        setCapsLockOn(e.getModifierState('CapsLock'));
+                      }
+                    }}
+                    onBlur={() => setCapsLockOn(false)}
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="••••••••"
+                    autoComplete="current-password"
+                    className="h-12 w-full bg-transparent px-4 text-[14.5px] text-white placeholder-white/30 outline-none"
+                    style={{ fontFamily: 'var(--font-body)' }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    tabIndex={-1}
+                    aria-label={showPassword ? '隐藏密码' : '显示密码'}
+                    title={showPassword ? '隐藏密码' : '显示密码'}
+                    className="mr-2 flex h-9 w-9 items-center justify-center rounded-lg text-white/55 hover:text-white/85 hover:bg-white/5 transition-colors"
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </label>
+            </Reveal>
+
+            <Reveal delay={340}>
+              <label className="flex items-center gap-2 cursor-pointer select-none text-[12.5px] text-white/65 hover:text-white/85 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={rememberUsername}
+                  onChange={(e) => onRememberChange(e.target.checked)}
+                  className="h-3.5 w-3.5 cursor-pointer accent-white/85"
+                />
+                <span style={{ fontFamily: 'var(--font-body)' }}>记住用户名</span>
+              </label>
+            </Reveal>
+          </>
+        )}
 
         {error && (
           <Reveal delay={0}>
@@ -897,13 +913,15 @@ function LoginCard({
           </Reveal>
         )}
 
-        <Reveal delay={360}>
-          <div className="mt-2">
-            <PrimaryPill onClick={onSubmit} disabled={!canSubmit || loading} loading={loading}>
-              {loading ? '登录中…' : '进入控制台'}
-            </PrimaryPill>
-          </div>
-        </Reveal>
+        {!passwordLoginDisabled && (
+          <Reveal delay={360}>
+            <div className="mt-2">
+              <PrimaryPill onClick={onSubmit} disabled={!canSubmit || loading} loading={loading}>
+                {loading ? '登录中…' : '进入控制台'}
+              </PrimaryPill>
+            </div>
+          </Reveal>
+        )}
 
         {ssoOptions.length > 0 && (
           <Reveal delay={400}>
@@ -937,15 +955,23 @@ function LoginCard({
           </Reveal>
         )}
 
-        <Reveal delay={ssoOptions.length > 0 ? 480 : 440}>
-          <div
-            className="mt-1 inline-flex items-center gap-2 text-[11.5px] text-white/45"
-            style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.1em' }}
-          >
-            <Terminal className="w-3 h-3" />
-            <span>DEFAULT · admin / admin · 首次登录后请修改密码</span>
-          </div>
-        </Reveal>
+        {passwordLoginDisabled && ssoOptions.length === 0 && (
+          <Reveal delay={420}>
+            <ErrorBar>当前已禁用密码登录，但没有可用 SSO。请配置 MAP_PASSWORD_LOGIN_BREAK_GLASS=true 后重启服务。</ErrorBar>
+          </Reveal>
+        )}
+
+        {!passwordLoginDisabled && (
+          <Reveal delay={ssoOptions.length > 0 ? 480 : 440}>
+            <div
+              className="mt-1 inline-flex items-center gap-2 text-[11.5px] text-white/45"
+              style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.1em' }}
+            >
+              <Terminal className="w-3 h-3" />
+              <span>DEFAULT · admin / admin · 首次登录后请修改密码</span>
+            </div>
+          </Reveal>
+        )}
       </div>
     </GlassCard>
   );
