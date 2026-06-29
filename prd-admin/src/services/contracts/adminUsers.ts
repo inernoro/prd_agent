@@ -126,6 +126,8 @@ export type MiduoSsoConfig = {
   redirectUri: string;
   label: string;
   subjectType: 'mobile' | 'wework_userid' | 'employeeNo';
+  passwordLoginDisabled: boolean;
+  passwordLoginBreakGlassEnabled?: boolean;
 };
 
 export type UpdateMiduoSsoConfigInput = MiduoSsoConfig & {
