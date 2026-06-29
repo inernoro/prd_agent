@@ -204,6 +204,17 @@ export function maskSecretsInObject<T>(obj: T, opts: { mask?: boolean } = {}): T
 const SENSITIVE_ENV_KEY = /secret|password|token|key|credential/i;
 const URL_WITH_CREDENTIALS = /^[a-z][a-z0-9+.\-]*:\/\/[^@/\s]*:[^@/\s]+@/i;
 
+/**
+ * Does a value look like a connection string carrying inline credentials
+ * (`scheme://user:pass@host`)? Exported so the container-exec literal-value
+ * masking path can reuse the SAME URL detection that maskEnvRecord uses for
+ * response serialization — otherwise `echo $DATABASE_URL` leaks the raw string
+ * even though GET responses mask it (Codex P2).
+ */
+export function looksLikeUrlWithCredentials(value: string): boolean {
+  return typeof value === 'string' && URL_WITH_CREDENTIALS.test(value);
+}
+
 export function maskEnvRecord(env: Record<string, string>, marker = '***'): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(env)) {

@@ -446,5 +446,28 @@ describe('Cross-project isolation on profiles/rules/export', () => {
           expect(res.body.stdout).toContain('***');
         });
     });
+
+    it('masks a URL-style secret value under a non-sensitive key name (DATABASE_URL) in exec output (Codex P2)', () => {
+      // The key name `DATABASE_URL` does not match secret|password|token|key|credential, but its value is a
+      // connection string with inline credentials. `echo $DATABASE_URL` must still be masked — the literal-
+      // value collector now also accepts URL-with-credentials values (same check as maskEnvRecord).
+      const now = new Date().toISOString();
+      const secretUrl = 'postgres://dbuser:Sup3rSecretPw@db.internal:5432/app';
+      stateService.addBranch({
+        id: 'a-urlenv', projectId: 'proj-a', branch: 'urlenv',
+        worktreePath: '/tmp/wt/a-urlenv',
+        services: { sidecar: { profileId: 'sidecar', containerName: 'cds_a-urlenv_sidecar', hostPort: 12347, status: 'running' } },
+        status: 'running', createdAt: now,
+        extraProfiles: [{ id: 'sidecar', name: 'sidecar', dockerImage: 'nginx:alpine', workDir: '', command: '', containerPort: 80, projectId: 'proj-a', env: { DATABASE_URL: secretUrl } } as any],
+      });
+      installExecMock(`echoing -> ${secretUrl}`, '', 0);
+      return request(server, 'POST', '/api/branches/a-urlenv/container-exec',
+        { profileId: 'sidecar', command: 'echo $DATABASE_URL' }, { 'X-Test-Key': KEY_PROJ_A })
+        .then((res) => {
+          expect(res.status).toBe(200);
+          expect(res.body.stdout).not.toContain(secretUrl);
+          expect(res.body.stdout).toContain('***');
+        });
+    });
   });
 });

@@ -6,6 +6,7 @@ import {
   maskSecretsInObject,
   maskEnvRecord,
   maskBranchExtraProfilesEnv,
+  looksLikeUrlWithCredentials,
   shouldMask,
 } from '../../src/services/secret-masker.js';
 
@@ -236,6 +237,20 @@ describe('secret-masker.maskEnvRecord', () => {
     expect(out.MONGODB_URI).toBe('***');
     expect(out.REDIS_URL).toBe('***');
     expect(out.PUBLIC_API_URL).toBe('https://api.example.com/v1');
+  });
+});
+
+describe('secret-masker.looksLikeUrlWithCredentials', () => {
+  it('detects connection strings with inline credentials', () => {
+    expect(looksLikeUrlWithCredentials('postgres://u:p@h:5432/db')).toBe(true);
+    expect(looksLikeUrlWithCredentials('mongodb://admin:s3cr3t@mongo:27017')).toBe(true);
+    expect(looksLikeUrlWithCredentials('redis://:onlypass@redis:6379')).toBe(true);
+  });
+  it('does not flag URLs without inline credentials or plain values', () => {
+    expect(looksLikeUrlWithCredentials('https://api.example.com/v1')).toBe(false);
+    expect(looksLikeUrlWithCredentials('redis://redis:6379')).toBe(false);
+    expect(looksLikeUrlWithCredentials('info')).toBe(false);
+    expect(looksLikeUrlWithCredentials('')).toBe(false);
   });
 });
 

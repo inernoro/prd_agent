@@ -328,6 +328,46 @@ describe('Executor /exec/deploy', () => {
     expect(entry!.projectId).toBe('whatever-was-there-before');
   });
 
+  it('empty payload tears down orphan services BEFORE/WITHOUT pulling (Codex P2 cleanup-before-pull)', async () => {
+    // A branch whose only service was a branch-local extra; the master cleared it and sent profiles: [].
+    // The cleanup must NOT be gated behind git pull — otherwise a transient git failure / upstream-deleted
+    // branch would error out leaving the worker container running while master saved the empty list.
+    const now = new Date().toISOString();
+    stateService.addBranch({
+      id: 'realproj-empty-clear',
+      projectId: 'realproj',
+      branch: 'feature/empty-clear',
+      worktreePath: path.join(tmpDir, 'worktrees', 'realproj', 'realproj-empty-clear'),
+      services: {
+        'extra-api': { profileId: 'extra-api', containerName: 'cds-realproj-empty-clear-extra-api', hostPort: 10007, status: 'running' },
+      },
+      status: 'running',
+      createdAt: now,
+    });
+    stateService.addProject({ id: 'realproj', slug: 'realproj', name: 'Real', kind: 'git', createdAt: now, updatedAt: now });
+    mock.commands.length = 0;
+
+    const result = await postSse(server, '/exec/deploy', {
+      branchId: 'realproj-empty-clear',
+      branchName: 'feature/empty-clear',
+      projectId: 'realproj',
+      profiles: [],
+      env: {},
+    });
+
+    expect(result.status).toBe(200);
+    // The orphan service container was removed + entry cleared, status idle.
+    expect(result.events.some(e => e.event === 'complete' && e.data?.message === '已清空所有服务')).toBe(true);
+    const entry = stateService.getBranch('realproj-empty-clear');
+    expect(entry!.services['extra-api']).toBeUndefined();
+    expect(entry!.status).toBe('idle');
+    // pull was skipped (nothing to build) — no `git ... pull` was issued and no 'pull' step emitted.
+    expect(result.events.some(e => e.event === 'step' && e.data?.step === 'pull')).toBe(false);
+    expect(mock.commands.some(c => /\bpull\b/.test(c))).toBe(false);
+    // the orphan container WAS removed.
+    expect(mock.commands.some(c => /docker rm/.test(c) && c.includes('cds-realproj-empty-clear-extra-api'))).toBe(true);
+  });
+
   it('threads operationId/requestId from master into executor docker run events', async () => {
     const result = await postSse(server, '/exec/deploy', {
       branchId: 'realproj-op-trace',
