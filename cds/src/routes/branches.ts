@@ -12675,7 +12675,36 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     stateService.setBranchExtraProfiles(entry.id, sanitized);
     const updated = stateService.getBranch(entry.id)!;
-    res.json({ extraProfiles: updated.extraProfiles || [], count: (updated.extraProfiles || []).length });
+    // 一步到位:声明/改额外服务是纯配置变更,不会自动重建已在运行的分支(用户实测痛点)。
+    // 带 ?redeploy=1 时,持久化后立刻 fire-and-forget 触发一次真正的分支重部署(走和 webhook
+    // 自调相同的 localhost 自 POST /deploy),让新增/改动的额外服务真正起容器、被移除的真正下掉。
+    const wantRedeploy = req.query?.redeploy === '1' || req.query?.redeploy === 'true' || (req.body as { redeploy?: unknown })?.redeploy === true;
+    let redeployTriggered = false;
+    if (wantRedeploy) {
+      redeployTriggered = true;
+      const url = `http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(entry.id)}/deploy`;
+      void fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CDS-Internal': '1',
+          'X-CDS-Trigger': 'system',
+          ...(entry.projectId ? { 'X-CDS-Source-Project-Id': entry.projectId } : {}),
+          'X-CDS-Source-Branch-Id': entry.id,
+        },
+        body: JSON.stringify({}),
+      }).catch((err) => {
+        console.warn(`[extra-services] redeploy 自调失败(忽略,用户可手动部署) ${entry.id}: ${(err as Error).message}`);
+      });
+    }
+    res.json({
+      extraProfiles: updated.extraProfiles || [],
+      count: (updated.extraProfiles || []).length,
+      redeployTriggered,
+      hint: redeployTriggered
+        ? '已触发重部署,额外服务将随本次部署起容器(几十秒后查看分支服务列表)'
+        : '额外服务已声明;需触发一次分支部署才会真正起容器(或重发本请求带 ?redeploy=1)',
+    });
   });
 
   // ── Container exec (run command inside container) ──

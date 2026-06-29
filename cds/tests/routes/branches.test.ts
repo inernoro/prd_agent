@@ -416,6 +416,69 @@ describe('Branch Routes', () => {
     // 单测见 tests/services/ci-prebuilt-express.test.ts 的 fallbackImage 用例。
   });
 
+  describe('分支级额外服务 /api/branches/:id/extra-services', () => {
+    const extraSvc = (id: string) => ({ id, name: id, dockerImage: 'nginx:alpine', containerPort: 80, prebuiltImage: true });
+    function seedBranch(id: string, projectId = 'default') {
+      stateService.addBranch({ id, projectId, branch: id, worktreePath: `/tmp/wt/${id}`, services: {}, status: 'idle', createdAt: new Date().toISOString() });
+    }
+
+    it('GET returns [] for a branch with no extras', async () => {
+      seedBranch('b1');
+      const res = await request(server, 'GET', '/api/branches/b1/extra-services');
+      expect(res.status).toBe(200);
+      expect((res.body as any).extraProfiles).toEqual([]);
+    });
+
+    it('PUT declares an extra service; GET reflects it; a sibling stays empty (zero cross-impact)', async () => {
+      seedBranch('b1'); seedBranch('b2');
+      const put = await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [extraSvc('demo-extra')] });
+      expect(put.status).toBe(200);
+      expect((put.body as any).count).toBe(1);
+      expect((put.body as any).redeployTriggered).toBe(false);
+
+      const g1 = await request(server, 'GET', '/api/branches/b1/extra-services');
+      expect((g1.body as any).extraProfiles.map((p: any) => p.id)).toEqual(['demo-extra']);
+      const g2 = await request(server, 'GET', '/api/branches/b2/extra-services');
+      expect((g2.body as any).extraProfiles).toEqual([]); // sibling untouched
+    });
+
+    it('rejects an extra id that collides with a project profile', async () => {
+      stateService.addBuildProfile({ id: 'api', name: 'API', dockerImage: 'img', workDir: 'api', command: 'run', containerPort: 8080, projectId: 'default' });
+      seedBranch('b1');
+      const res = await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [extraSvc('api')] });
+      expect(res.status).toBe(400);
+      expect(String((res.body as any).error)).toContain('撞名');
+    });
+
+    it('rejects invalid id / missing image / bad port', async () => {
+      seedBranch('b1');
+      expect((await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [{ id: '-bad', dockerImage: 'x', containerPort: 80 }] })).status).toBe(400);
+      expect((await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [{ id: 'ok', containerPort: 80 }] })).status).toBe(400);
+      expect((await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [{ id: 'ok', dockerImage: 'x', containerPort: 0 }] })).status).toBe(400);
+      expect((await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: 'notarray' })).status).toBe(400);
+    });
+
+    it('PUT [] clears extras', async () => {
+      seedBranch('b1');
+      await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [extraSvc('demo-extra')] });
+      const clr = await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [] });
+      expect((clr.body as any).count).toBe(0);
+      expect(stateService.getBranch('b1')!.extraProfiles).toBeUndefined();
+    });
+
+    it('?redeploy=1 reports redeployTriggered (fire-and-forget self-deploy)', async () => {
+      seedBranch('b1');
+      const res = await request(server, 'PUT', '/api/branches/b1/extra-services?redeploy=1', { extraProfiles: [extraSvc('demo-extra')] });
+      expect(res.status).toBe(200);
+      expect((res.body as any).redeployTriggered).toBe(true);
+    });
+
+    it('404 for unknown branch', async () => {
+      expect((await request(server, 'GET', '/api/branches/nope/extra-services')).status).toBe(404);
+      expect((await request(server, 'PUT', '/api/branches/nope/extra-services', { extraProfiles: [] })).status).toBe(404);
+    });
+  });
+
   describe('GET /api/branches', () => {
     it('should return empty branches initially', async () => {
       const res = await request(server, 'GET', '/api/branches');
