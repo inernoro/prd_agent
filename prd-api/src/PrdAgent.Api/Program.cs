@@ -205,10 +205,37 @@ builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, Pr
 // 特性开关：LlmGateway:Mode（环境变量 LlmGateway__Mode）。默认 inproc = 进程内 LlmGateway（行为不变）；
 // http = 切到 HttpLlmGatewayClient，跨进程调用独立部署的 serving 服务（/gw/v1/*）。
 // HttpLlmGatewayClient 同时实现 Infrastructure + Core 两个 ILlmGateway，下方 Core 桥接强转在两种模式下都成立。
+// 影子比对落库（灰度翻 http 前积累一致性证据；shadow 模式下注入 ShadowLlmGateway）
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.ILlmShadowComparisonWriter,
+    PrdAgent.Infrastructure.LlmGateway.LlmShadowComparisonWriter>();
+
 var gatewayMode = builder.Configuration["LlmGateway:Mode"] ?? "inproc";
 if (string.Equals(gatewayMode, "http", StringComparison.OrdinalIgnoreCase))
 {
     builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>();
+}
+else if (string.Equals(gatewayMode, "shadow", StringComparison.OrdinalIgnoreCase))
+{
+    // 影子模式：inproc 权威（返回调用方），后台对 http 网关做比对落 llmshadow_comparisons。
+    // 默认只比解析（免费）；LlmGateway:ShadowFullSamplePercent>0 时对采样 send 做完整内容比对。
+    var shadowSamplePercent = int.TryParse(builder.Configuration["LlmGateway:ShadowFullSamplePercent"], out var sp0) ? sp0 : 0;
+    builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>(sp =>
+        new PrdAgent.Infrastructure.LlmGateway.ShadowLlmGateway(
+            inproc: new PrdAgent.Infrastructure.LlmGateway.LlmGateway(
+                sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.IModelResolver>(),
+                sp.GetRequiredService<IHttpClientFactory>(),
+                sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.LlmGateway>>(),
+                sp.GetService<PrdAgent.Core.Interfaces.ILlmRequestLogWriter>(),
+                sp.GetService<PrdAgent.Core.Interfaces.ILLMRequestContextAccessor>(),
+                sp.GetService<PrdAgent.Infrastructure.ModelPool.IPoolFailoverNotifier>()),
+            http: new PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient(
+                sp.GetRequiredService<IHttpClientFactory>(),
+                sp.GetRequiredService<IConfiguration>(),
+                sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>>()),
+            logger: sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.ShadowLlmGateway>>(),
+            writer: sp.GetService<PrdAgent.Core.Interfaces.ILlmShadowComparisonWriter>(),
+            fullSamplePercent: shadowSamplePercent,
+            ctx: sp.GetService<PrdAgent.Core.Interfaces.ILLMRequestContextAccessor>()));
 }
 else
 {
