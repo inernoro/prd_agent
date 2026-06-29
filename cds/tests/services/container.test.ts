@@ -354,10 +354,33 @@ describe('ContainerService', () => {
       const dockerRuns = mock.commands.filter(c => c.includes('docker run'));
       expect(dockerRuns).toHaveLength(1);
       expect(dockerRuns[0]).toContain('docker run -d');
+      // host-shell 安全（Codex P1）：command 经 shellQuote 单引号转义传给宿主机，宿主机原样交给 docker，
+      // 由**容器内** sh -c 解释 $()/$NICE（这才是 NICE 探测的本意——nice 在容器里）。
+      expect(dockerRuns[0]).toContain("sh -c 'NICE=$(command -v nice >/dev/null 2>&1 && echo ");
       // build/install 动词被 $NICE 降优先级（默认 10），serve(pnpm start) 保持正常优先级；
       // NICE 前导仅在镜像有 nice 时生效，缺则降级为空(不因缺 nice 让构建失败)。
-      expect(dockerRuns[0]).toContain("NICE=$(command -v nice >/dev/null 2>&1 && echo 'nice -n 10');");
+      expect(dockerRuns[0]).toContain('nice -n 10');
       expect(dockerRuns[0]).toContain('$NICE pnpm install && $NICE pnpm build && pnpm start');
+    });
+
+    it('host-shell-quotes image and command so metacharacters cannot inject on the CDS host (Codex P1)', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/mkdir/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+
+      const profile = makeProfile({
+        dockerImage: 'evil:latest; touch /tmp/pwned',
+        command: 'node app.js; touch /tmp/pwned2',
+      });
+      await service.runService(makeEntry(), profile, makeService());
+      const runCmd = mock.commands.find(c => c.includes('docker run'))!;
+      // Image + command are single-quoted; the injected suffix is inside the quotes, so the host shell
+      // never executes it as a separate command (it's passed literally to docker / the container sh -c).
+      // Both the image and the command are single-quoted, so the host shell passes them as literal
+      // args to docker (the `; touch ...` suffix lives inside the quotes, never a separate host command).
+      expect(runCmd).toContain("'evil:latest; touch /tmp/pwned'");
+      expect(runCmd).toContain("sh -c 'node app.js; touch /tmp/pwned2'");
     });
 
     it('should mount shared caches', async () => {

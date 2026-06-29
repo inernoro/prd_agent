@@ -1333,8 +1333,13 @@ export class ContainerService {
         // 解析），不跟随实际 run 主网（分支网）。真正的隔离是上面的 `--network <分支网>` + 启动前 connect 共享网，
         // 与标签无关。若把标签写成 cds-br-<id>，孤儿容器(分支已不在 state)将无法按网络名归属到项目。
         this.appLabels(entry.projectId, entry.id, profile.id, network),
-        runImage,
-        ...(usePrebuiltEntrypoint ? [] : [`sh -c "${command.replace(/"/g, '\\"')}"`]),
+        // host-shell 安全（Codex P1「Validate shell-interpolated extra service fields」）：镜像引用与
+        // command 都来自用户可控的 BuildProfile（含分支级额外服务），必须对**宿主机 shell** 单引号转义，
+        // 否则 dockerImage=`x;rm -rf /` 或 command=`$(...)` 会在 CDS 宿主机上执行（而非仅容器内）。
+        // 单引号(shellQuote)让宿主机原样把字符串交给 docker；command 里的 shell 运算符仍由**容器内** sh -c
+        // 解释（这才是本意），顺带修了旧双引号写法把 $VAR/$(...) 在宿主机预展开的潜在 bug。
+        this.shellQuote(runImage),
+        ...(usePrebuiltEntrypoint ? [] : [`sh -c ${this.shellQuote(command)}`]),
       ].join(' ');
 
       context.assertCurrent?.(`runService before docker-run ${profile.id}`);

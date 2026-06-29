@@ -12830,6 +12830,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
         res.status(400).json({ error: `额外服务 "${id}" 缺少 dockerImage` });
         return;
       }
+      // 严格镜像引用校验（Codex P1，宿主机命令注入边界防御）：dockerImage 会进 docker create/run 的
+      // 宿主机命令行，含 shell 元字符（;$\`&|()<>空格等）会在 CDS 宿主机执行。镜像引用本就只含
+      // 字母/数字/._:/@-，这里在入口直接拒非法字符（container.ts 另对镜像与 command 做 shellQuote 兜底）。
+      if (!/^[a-zA-Z0-9][a-zA-Z0-9._:/@-]*$/.test(dockerImage)) {
+        res.status(400).json({ error: `额外服务 "${id}" 的 dockerImage 含非法字符（镜像引用仅允许字母/数字/._:/@- ）` });
+        return;
+      }
       if (!Number.isInteger(containerPort) || containerPort <= 0 || containerPort > 65535) {
         res.status(400).json({ error: `额外服务 "${id}" 的 containerPort 非法` });
         return;

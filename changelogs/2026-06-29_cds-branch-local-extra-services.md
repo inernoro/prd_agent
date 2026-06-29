@@ -16,4 +16,5 @@
 | fix | cds | 远端清空收敛 master 服务表（Bugbot Medium）：远端 owned 分支空清单部署后，executor complete 的 services 是权威集合，master 不再只 patch deployedMode，而是按其删除本地已不存在的服务条目，杜绝清空后 UI 残留 ghost 服务到下次心跳 |
 | security | cds | 分支列表 SSE 流式事件也给 extra env 脱敏（Bugbot/Codex P1）：branchForView 此前只作用于初始 snapshot，后续 branch.status/branch.updated 经 exposeBranchForStream 取原始 branch 泄露额外服务明文密钥；现 exposeBranchForStream 统一过 branchForView |
 | security | cds | profile-overrides 面板给额外服务 env 脱敏（Codex P1）：切到 getEffectiveProfilesForBranch 后额外服务进了 override 面板，baseline/effective.env 原样返回会泄露分支本地密钥；现仅对额外服务 maskSecrets（项目 profile 行为不变） |
+| security | cds | 修复 deploy 宿主机命令注入（Codex P1）：dockerImage/command 来自用户可控 BuildProfile（含分支额外服务），runService 拼 docker create/run 时镜像未引用、command 在宿主机双引号内（$()/反引号会在 CDS 宿主机执行）；现 container.ts 对镜像与 command 走 shellQuote 单引号（容器内 sh -c 仍正常解释运算符），extra-services PUT 另加严格镜像引用校验作边界防御 |
 | security | cds | GET/PUT /branches/:id/extra-services 补 assertProjectAccess 项目级访问控制(Bugbot High)：此前缺校验，项目 A 的 cdsp_ key 可读取/改动项目 B 分支的额外服务并触发跨项目重部署；现与其他分支路由一致，跨项目返回 403 project_mismatch |

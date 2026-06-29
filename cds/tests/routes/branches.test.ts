@@ -464,6 +464,18 @@ describe('Branch Routes', () => {
       expect((await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: 'notarray' })).status).toBe(400);
     });
 
+    it('rejects a dockerImage containing host-shell metacharacters (Codex P1 boundary defense)', async () => {
+      seedBranch('b1');
+      for (const bad of ['evil:latest; rm -rf /', 'img$(whoami)', 'img`id`', 'a b', 'img|cat', 'img&background']) {
+        const res = await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [{ id: 'ok', dockerImage: bad, containerPort: 80 }] });
+        expect(res.status).toBe(400);
+        expect(String((res.body as any).error)).toContain('dockerImage');
+      }
+      // A normal registry/namespace/repo:tag@digest reference is accepted.
+      const ok = await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [{ id: 'ok', dockerImage: 'ghcr.io/acme/api:1.2.3', containerPort: 80 }] });
+      expect(ok.status).toBe(200);
+    });
+
     it('PUT [] clears extras', async () => {
       seedBranch('b1');
       await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [extraSvc('demo-extra')] });
