@@ -258,9 +258,9 @@
 
 | 文档 | 关系 |
 |------|------|
-| `design.ai-report-systems.md` | 市场调研 — Phase 1 前的竞品分析，为功能设计提供灵感 |
+| `design.report-agent.ai-systems.md` | 市场调研 — Phase 1 前的竞品分析，为功能设计提供灵感 |
 | `design.executive-dashboard.md` | 总裁面板消费周报数据，展示团队级聚合指标 |
-| `design.workflow-engine.md` | 工作流引擎为周报提供外部数据源采集能力 |
+| `design.workflow-agent.engine.md` | 工作流引擎为周报提供外部数据源采集能力 |
 
 ## 十、影响范围与风险
 

@@ -68,10 +68,30 @@ public class AppSettings
 
     /// <summary>
     /// 本 MAP 实例的稳定标识（首次调用 InfraConnectionService.PasteAsync 时 lazy 生成）。
-    /// 用于 spec.cds-map-pairing-protocol §3.2 mapId 字段，让对端知道是哪个 MAP 实例。
+    /// 用于 spec.cds.map-pairing-protocol §3.2 mapId 字段，让对端知道是哪个 MAP 实例。
     /// </summary>
     public string? MapInstanceId { get; set; }
 
+    /// <summary>是否启用米多星球 SSO</summary>
+    public bool? MiduoSsoEnabled { get; set; }
+
+    /// <summary>米多星球开放接口 Base URL，如 https://admin.ebcone.cn</summary>
+    public string? MiduoSsoBaseUrl { get; set; }
+
+    /// <summary>米多星球 SSO appCode</summary>
+    public string? MiduoSsoAppCode { get; set; }
+
+    /// <summary>米多星球 SSO appSecret，仅后端使用，不返回前端</summary>
+    public string? MiduoSsoAppSecret { get; set; }
+
+    /// <summary>本系统 SSO 回调地址，如 https://map.ebcone.net/login</summary>
+    public string? MiduoSsoRedirectUri { get; set; }
+
+    /// <summary>登录页展示名称</summary>
+    public string? MiduoSsoLabel { get; set; }
+
+    /// <summary>绑定字段类型，默认 mobile</summary>
+    public string? MiduoSsoSubjectType { get; set; }
+
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
-

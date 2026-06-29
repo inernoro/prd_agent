@@ -3,7 +3,9 @@ name: cds-project-scan
 description: Scans local project structure and generates or uploads CDS compose YAML for project onboarding (the cold path of CDS lifecycle). Activates when the user wants to register a new project to CDS, regenerate the compose contract after structural changes, or push cds-compose.yml to CDS for approval. Detects tech stacks (.NET, Node, Rust, Python, Go), infrastructure services (MongoDB/Redis/Postgres), environment variables and routing prefixes; can submit via --apply-to-cds. Does NOT handle deployed-branch debugging, container logs, deploy failures, smoke tests, or CDS service self-update — those belong to cds-deploy-pipeline (hot path) and cds (core). Trigger phrases include "扫描项目", "接入 CDS", "生成 compose", "上传 cds 配置", "apply to cds", "注册项目到 cds", "register project", "/cds-scan", "--apply-to-cds".
 ---
 
-# CDS Project Scan — 冷路径：项目接入 / 配置生成
+# CDS 项目扫描（冷路径：项目接入 / 配置生成）
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/cds-scan`、"扫描项目"、"接入 CDS"、"生成 compose"、"--apply-to-cds"
 
 > **冷路径定位**：一次性 / 低频。把"本地仓库"变成"CDS 可识别的项目"。
 > 已部署后的调试、日志、冒烟 → 走 `cds-deploy-pipeline`（热路径）。
@@ -90,7 +92,7 @@ CDS 扫描进度：
 
 ## 7 类常见漏洞（提交前对照）
 
-详见 [doc/spec.cds-compose-contract.md](../../../doc/spec.cds-compose-contract.md) § 3-4。Top hits：
+详见 [doc/spec.cds.compose-contract.md](../../../doc/spec.cds.compose-contract.md) § 3-4。Top hits：
 
 | 现象 | 根因 | 自检 |
 |---|---|---|

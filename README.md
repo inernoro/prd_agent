@@ -140,9 +140,9 @@ Docs in `doc/` use strict prefixes:
 Good entry points:
 
 - [AGENTS.md](AGENTS.md) for repository rules.
-- [doc/design.peer-sync.md](doc/design.peer-sync.md) for system interconnection.
+- [doc/design.platform.peer-sync.md](doc/design.platform.peer-sync.md) for system interconnection.
 - [doc/design.cds.md](doc/design.cds.md) for branch previews.
-- [doc/design.llm-gateway.md](doc/design.llm-gateway.md) for model routing.
+- [doc/design.platform.llm-gateway.md](doc/design.platform.llm-gateway.md) for model routing.
 - [doc/design.product-agent.md](doc/design.product-agent.md) for product workflows.
 
 ## Deployment

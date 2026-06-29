@@ -3,7 +3,9 @@ name: cds-deploy-pipeline
 description: Deploys code to an existing CDS branch, monitors readiness, runs layered smoke tests, fetches container logs, and diagnoses deploy failures (the hot path of CDS lifecycle). Activates when the user wants to push and verify on the grey/灰度 environment, inspect logs from a deployed branch, debug a failing deploy, restart a profile, or check live grey-env status. Every operation runs through cdscli (no hand-written curl). Does NOT handle initial project onboarding, tech-stack scanning, or cds-compose.yml generation — those belong to cds-project-scan (cold path). Does NOT handle credential setup or CDS self-update — those belong to cds (core). Trigger phrases include "部署到灰度", "deploy pipeline", "推送并测试", "灰度状态", "容器报错", "看容器日志", "deploy 失败", "帮我看看 cds 报错", "重启 api", "冒烟测试", "/cds-deploy", "/cds-debug", "/cds-smoke".
 ---
 
-# CDS Deploy Pipeline — 热路径：部署 / 调试 / 冒烟
+# CDS 部署流水线
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/cds-deploy`、`/cds-debug`、`/cds-smoke`、"部署到灰度"、"看容器日志"、"deploy 失败"
 
 > **热路径定位**：高频 / 每天 N 次。已部署项目的"代码 → 灰度 → 验证 → 排错"闭环。
 > 还没接入 CDS 的新项目 → 走 `cds-project-scan`（冷路径）。

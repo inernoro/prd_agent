@@ -1,9 +1,12 @@
 ---
 name: human-verify
+version: 1.0.0
 description: Multi-perspective code verification that simulates human review. Combines adversarial debate (Devil's Advocate), reverse verification, boundary testing, and user scenario simulation to catch issues that compilers and linters miss. Trigger words: "/verify", "验证一下", "帮我检查".
 ---
 
-# Human Verify — 多角度模拟验证
+# 多角度模拟验证
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/verify`、"验证一下"、"帮我检查"
 
 完成代码后，用**完全不同的视角**交叉验证——不是"能不能跑"，而是"对不对、全不全、稳不稳"。
 
@@ -123,7 +126,7 @@ git diff --name-only HEAD~1    # 或 git diff --name-only
 
 | 优先级 | 质疑 | 辩护 | 裁决 |
 |--------|------|------|------|
-| 正确性 | {具体问题} | {辩护理由} | ✅ 通过 / ❌ 需修复 |
+| 正确性 | {具体问题} | {辩护理由} | 通过 / 需修复 |
 | 错误处理 | ... | ... | ... |
 
 ## 交叉验证
@@ -136,12 +139,12 @@ git diff --name-only HEAD~1    # 或 git diff --name-only
 
 | # | 问题 | 严重度 | 状态 |
 |---|------|--------|------|
-| 1 | {问题描述 + 文件:行号} | 高/中/低 | ✅ 已修复 / ⚠️ 待修复 |
+| 1 | {问题描述 + 文件:行号} | 高/中/低 | 已修复 / 待修复 |
 
 ## 结论
-- ✅ 验证通过
-- ⚠️ 验证通过，有建议: ...
-- ❌ 验证未通过，需修复: ...
+- 验证通过
+- 验证通过，有建议: ...
+- 验证未通过，需修复: ...
 ```
 
 ## 端到端示例
@@ -157,31 +160,31 @@ git diff --name-only HEAD~1    # 或 git diff --name-only
 
 | 优先级 | 质疑 | 辩护 | 裁决 |
 |--------|------|------|------|
-| 正确性 | CreateReport 未校验 templateId 是否存在 | 服务层 GetTemplateAsync 返回 null 时抛 NotFoundException | ✅ 通过 |
-| 错误处理 | 并发提交同名缺陷会怎样？ | 缺陷名不要求唯一，各自创建独立记录 | ✅ 通过 |
-| 安全性 | 用户能访问其他项目的模板吗？ | 服务层按 projectId 过滤 | ✅ 通过 |
+| 正确性 | CreateReport 未校验 templateId 是否存在 | 服务层 GetTemplateAsync 返回 null 时抛 NotFoundException | 通过 |
+| 错误处理 | 并发提交同名缺陷会怎样？ | 缺陷名不要求唯一，各自创建独立记录 | 通过 |
+| 安全性 | 用户能访问其他项目的模板吗？ | 服务层按 projectId 过滤 | 通过 |
 
 ## 交叉验证
 
 ### 边界测试
-- 空 title → 返回 400 ✅
-- title 超 500 字 → 无长度限制 ⚠️ 应加 MaxLength
-- fields 空数组 → 允许提交（符合设计，模板可选）✅
+- 空 title → 返回 400（通过）
+- title 超 500 字 → 无长度限制（注意：应加 MaxLength）
+- fields 空数组 → 允许提交（符合设计，模板可选）（通过）
 
 ### 逆向验证
 - 期望：创建报告 → 写入 DB → 返回 reportId
-- 追踪：Controller → Service.CreateAsync → Repository.Insert ✅
-- 审计日志：❌ 未记录创建操作
+- 追踪：Controller → Service.CreateAsync → Repository.Insert（通过）
+- 审计日志：未记录创建操作（未通过）
 
 ## 发现汇总
 
 | # | 问题 | 严重度 | 状态 |
 |---|------|--------|------|
-| 1 | title 无长度限制 | 中 | ⚠️ 待修复 |
-| 2 | 缺少创建操作审计日志 | 低 | ⚠️ 建议 |
+| 1 | title 无长度限制 | 中 | 待修复 |
+| 2 | 缺少创建操作审计日志 | 低 | 建议 |
 
 ## 结论
-⚠️ 验证通过，建议添加 title 长度限制
+验证通过，建议添加 title 长度限制
 ```
 
 ## 安全规则

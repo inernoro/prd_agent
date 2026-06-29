@@ -5,6 +5,8 @@ description: 创建「教程小书」的路径式引导演示(DailyTip + 多步 
 
 # 创建教程演示
 
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/createzzdemo`、"帮我创建一个小技巧 XX"、"创建 XX 演示"、"增加教程"
+
 ## 触发
 
 - **主推**:"帮我创建一个小技巧 XX"(最自然的中文表达)
@@ -103,8 +105,8 @@ description: 创建「教程小书」的路径式引导演示(DailyTip + 多步 
 ```json
 {
   "kind": "card",
-  "title": "⌘/Ctrl+B 切换侧边栏",
-  "body": "任何页面按 ⌘+B(Mac)/ Ctrl+B(Win)快速折叠/展开左侧导航。",
+  "title": "Cmd/Ctrl+B 切换侧边栏",
+  "body": "任何页面按 Cmd+B(Mac)/ Ctrl+B(Win)快速折叠/展开左侧导航。",
   "actionUrl": "/",
   "ctaText": "试一试",
   "displayOrder": 80,
@@ -113,7 +115,7 @@ description: 创建「教程小书」的路径式引导演示(DailyTip + 多步 
     "steps": [
       {
         "selector": "[data-tour-id=sidebar]",
-        "title": "按下 ⌘/Ctrl+B",
+        "title": "按下 Cmd/Ctrl+B",
         "body": "键盘按一下看侧边栏折叠效果。"
       },
       {
@@ -131,8 +133,8 @@ description: 创建「教程小书」的路径式引导演示(DailyTip + 多步 
 ```json
 {
   "kind": "card",
-  "title": "⌘/Ctrl+K 一键搜 Agent",
-  "body": "任何页面按 ⌘+K 弹出搜索,直接敲 Agent 名或文档标题即可跳转。",
+  "title": "Cmd/Ctrl+K 一键搜 Agent",
+  "body": "任何页面按 Cmd+K 弹出搜索,直接敲 Agent 名或文档标题即可跳转。",
   "actionUrl": "/",
   "ctaText": "打开搜索",
   "autoAction": {
@@ -140,7 +142,7 @@ description: 创建「教程小书」的路径式引导演示(DailyTip + 多步 
     "steps": [
       {
         "selector": "[data-tour-id=home-search]",
-        "title": "⌘/Ctrl+K 弹出搜索",
+        "title": "Cmd/Ctrl+K 弹出搜索",
         "body": "按快捷键或点搜索框,全站 Agent/文档都在里面。"
       },
       {
@@ -261,11 +263,11 @@ description: 创建「教程小书」的路径式引导演示(DailyTip + 多步 
 POST 入库成功后,引导管理员:
 
 ```
-✅ 小技巧已入库!立即试播验证效果:
+小技巧已入库,立即试播验证效果:
 1. 打开管理后台 → 系统设置 → 小技巧
 2. 找到刚创建的「{你给的标题}」
-3. 点左侧 ▶ Play 按钮 → 自动跳转 + 走一遍 Spotlight 引导
-4. 点「完成 🎉」确认撒花从按钮位置喷出
+3. 点左侧 Play 按钮 → 自动跳转 + 走一遍 Spotlight 引导
+4. 点「完成」确认撒花从按钮位置喷出
 5. 任何步骤失败 → 说给我我帮你改 selector
 ```
 
@@ -308,10 +310,10 @@ POST 入库成功后,引导管理员:
    ```
    【教程清单】  缺陷管理全链路 / 4 步 / 起点 /
    【步骤】
-     1. defect-create        [data-tour-id=defect-create] ✓ 存在
-     2. defect-description   [data-tour-id=defect-description] ✓ 存在
-     3. defect-assignee-picker ✓ 存在
-     4. defect-submit        ✓ 存在
+     1. defect-create        [data-tour-id=defect-create] 存在
+     2. defect-description   [data-tour-id=defect-description] 存在
+     3. defect-assignee-picker 存在
+     4. defect-submit        存在
    【打断风险】
      - Step 1 → 2:跳转到 /defect-agent 后需先点击「+ 提交缺陷」打开
        面板,description 才会渲染。缓解:Step 1 用按钮 selector,让

@@ -227,11 +227,11 @@
 
 | 文档 | 聚焦领域 | 关系 |
 |------|----------|------|
-| `design.image-ref-and-persistence.md` | 图片引用日志 + 消息持久化 | 解决 LLM 请求中参考图 base64 截断和消息丢失问题 |
-| `design.inline-image-chat.md` | 内联图片聊天分析 | RichComposer 中图片引用的统一处理方案 |
-| `design.multi-image-compose.md` | 多图组合生成 | 两阶段架构：预提取描述 + 实时组合 |
-| `design.multi-image-vision-api.md` | Vision API 多图支持 | 解决 img2img 端点只支持单张参考图的限制 |
-| `design.remotion-gap.md` | Remotion 质量分析 | 视频场景生成中的视觉质量差距分析（与 VideoAgent 交叉） |
+| `design.platform.image-ref-and-persistence.md` | 图片引用日志 + 消息持久化 | 解决 LLM 请求中参考图 base64 截断和消息丢失问题 |
+| `design.visual-agent.inline-image-chat.md` | 内联图片聊天分析 | RichComposer 中图片引用的统一处理方案 |
+| `design.visual-agent.multi-image-compose.md` | 多图组合生成 | 两阶段架构：预提取描述 + 实时组合 |
+| `design.visual-agent.multi-image-vision-api.md` | Vision API 多图支持 | 解决 img2img 端点只支持单张参考图的限制 |
+| `design.video-agent.remotion-gap.md` | Remotion 质量分析 | 视频场景生成中的视觉质量差距分析（与 VideoAgent 交叉） |
 
 ## 十、影响范围与风险
 
@@ -251,7 +251,7 @@
 
 | 风险 | 概率 | 影响 | 缓解措施 |
 |------|------|------|----------|
-| 生图模型服务不稳定 | 中 | 高 | 模型池故障转移（design.model-pool-failover.md） |
+| 生图模型服务不稳定 | 中 | 高 | 模型池故障转移（design.platform.model-pool-failover.md） |
 | 大量并发生图消耗 API 额度 | 中 | 中 | Run 队列 + 速率限制 |
 | COS 存储成本随资产增长 | 低 | 中 | 定期清理孤立资产 + 用户配额 |
 | 多图组合语义理解偏差 | 中 | 低 | Clarify API 反问澄清 + Plan API 优化 prompt |

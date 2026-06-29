@@ -426,7 +426,7 @@ export interface CacheMount {
  * from draining the whole host. Configured via compose
  * `deploy.resources.limits` (standard) or `x-cds-resources` (our extension).
  *
- * See `doc/design.cds-resilience.md` Phase 2.
+ * See `doc/design.cds.resilience.md` Phase 2.
  */
 export interface ResourceLimits {
   /**
@@ -449,7 +449,7 @@ export interface ResourceLimits {
  * - `cold`: containers not running, worktree preserved
  * - `undefined`: branch not managed by the scheduler (legacy / scheduler disabled)
  *
- * See `doc/design.cds-resilience.md` for the full state machine.
+ * See `doc/design.cds.resilience.md` for the full state machine.
  */
 export type BranchHeatState = 'hot' | 'warming' | 'cooling' | 'cold';
 
@@ -536,7 +536,7 @@ export interface BranchEntry {
   previewPort?: number;
   /**
    * Scheduler heat state. Set by SchedulerService; undefined when scheduler disabled.
-   * See `doc/design.cds-resilience.md` §三.
+   * See `doc/design.cds.resilience.md` §三.
    */
   heatState?: BranchHeatState;
   /**
@@ -574,6 +574,22 @@ export interface BranchEntry {
    * Absent / empty = pure inheritance (legacy behavior).
    */
   profileOverrides?: Record<string, BuildProfileOverride>;
+  /**
+   * 分支级「临时额外服务」(branch-local extra services) —— 2026-06-29。
+   *
+   * 设计目标(用户要求):项目级 build profiles 是**稳定底座**(改它走 dashboard 审批、影响全体);
+   * 而**单条分支**可以在底座之上**临时追加自己的服务/容器**(比如把某个模块拆成独立服务做实验),
+   * 这些额外服务:
+   *   - 只在**这条分支**部署,跑在分支专属网(cds-br-<id>)里,**不影响项目、不影响别的分支**;
+   *   - **不进项目 profiles、不需要全局审批**;
+   *   - 随分支生命周期走 —— **删分支即消失**(本字段挂在 BranchEntry 上,删分支连带清掉;
+   *     额外容器由分支 teardown 一并 rm,分支网由 removeBranchNetwork 清理)。
+   *
+   * 兼容性:**纯增量、可选**。未声明(absent/空)的分支 = 与现状完全一致(老行为零回归)。
+   * 合并规则见 `mergeBranchProfiles`:额外服务只能 ADD 新 id;与项目 profile 撞 id 时**以项目为准**
+   * (保护底座,要按分支改项目服务请用 profileOverrides,不是这里)。
+   */
+  extraProfiles?: BuildProfile[];
   /**
    * GitHub Checks integration — populated when the branch was
    * auto-created by a webhook push or the user linked a repo to the
@@ -847,6 +863,38 @@ export interface OperationLog {
   containerLogSnapshots?: OperationLogContainerSnapshot[];
   status: 'running' | 'completed' | 'error';
   events: OperationLogEvent[];
+
+  // ───────────────────────────────────────────────────────────────────────
+  // 2026-06-27 构建历史元数据（additive block）。
+  //
+  // 让「部署/构建历史」每一行能回答 为什么(触发器) / 干了什么(部署类型) /
+  // 哪个版本(commit) / 什么时候开始(startedAt 已有)。全部 optional —— 旧
+  // OperationLog 没有这些字段时前端优雅降级，不编造（no-rootless-tree）。
+  // 写入点：branches.ts 的本地 / 远端两个 deploy opLog 创建处。
+  // ───────────────────────────────────────────────────────────────────────
+
+  /**
+   * 本次构建的触发来源：
+   *   - 'webhook'         GitHub push / PR webhook 自动派发
+   *   - 'manual'          用户在 UI / cdscli 手动点部署
+   *   - 'retry'           reconciler 对卡住/失败派发的自动重试（deployDispatchRetryCount>0）
+   *   - 'cooldown-rewarm' 调度器把降温的分支重新唤醒（warm pool）
+   *   - 'system'          其他系统侧自调（auto-lifecycle / 启动 reconcile 等）
+   * 无法判定时省略（undefined），不强行归类。
+   */
+  triggerSource?: 'webhook' | 'manual' | 'retry' | 'cooldown-rewarm' | 'system';
+
+  /**
+   * 本次部署使用的部署模式（= resolveEffectiveProfile 解析出的 activeDeployMode）。
+   * 空串 = 源码/默认模式；常见值如 'express' / 'static' / 'dev'。
+   * 多 profile 时取首个非空模式。undefined = 旧记录未采集。
+   */
+  deployMode?: string;
+
+  /** 本次部署锚定的 commit 完整 SHA（webhook 带入或 worktree HEAD 推导）。 */
+  commitSha?: string;
+  /** commitSha 的短哈希（前 7 位），UI 直接展示，省去前端再截断。 */
+  shortCommit?: string;
 }
 
 export interface ReleaseArtifact {
@@ -1049,6 +1097,10 @@ export interface CdsState {
   customEnv: CustomEnvStore;
   /** CDS-managed infrastructure services (databases, caches, etc.) */
   infraServices: InfraService[];
+  /** Project-scoped scheduled jobs owned by CDS. */
+  scheduledJobs?: ScheduledJob[];
+  /** Append-only scheduled job execution history. */
+  scheduledJobRuns?: ScheduledJobRun[];
   /** Mirror acceleration enabled (npm/docker registry mirrors for faster builds in China) */
   mirrorEnabled?: boolean;
   /** Tab title override enabled (updates browser tab title with tag or branch short name) */
@@ -1120,7 +1172,7 @@ export interface CdsState {
    * default" project exists and assigns all pre-existing resources to
    * it. Real multi-project creation lands in P4 Part 2.
    *
-   * See doc/design.cds-multi-project.md, doc/spec.cds-project-model.md.
+   * See doc/design.cds.multi-project.md, doc/spec.cds.project-model.md.
    */
   projects?: Project[];
   /**
@@ -1259,7 +1311,7 @@ export interface CdsState {
   /**
    * Daemon 启动完成时间戳(ISO),由 index.ts 的 server.listen() 回调写入。
    * 2026-05-07 用户反馈"在左下角卡了 1 小时"导致的 timing 体系审视
-   * (report.cds-self-update-timing-audit.md):durationMs 只覆盖 process.exit
+   * (report.cds.self-update-timing-audit.md):durationMs 只覆盖 process.exit
    * 之前的后端流程,daemon 重启 + SSE 重连那段沉默时间不在记录里。本字段
    * 让 recordSelfUpdate 能算出真实"总耗时(含重启)"= daemonReadyAt - update.ts。
    */
@@ -1297,7 +1349,7 @@ export interface CdsState {
    */
   serviceDeployments?: Record<string, ServiceDeployment>;
   /**
-   * MAP 配对连接登记表（2026-05-06，spec.cds-map-pairing-protocol.md v1）。
+   * MAP 配对连接登记表（2026-05-06，spec.cds.map-pairing-protocol.md v1）。
    *
    * 每条记录代表一次 issue/accept handshake 后建立的双向信任关系：CDS 给
    * MAP（或未来其他 partner）一个长效 token，MAP 通过 instance discovery
@@ -1320,6 +1372,119 @@ export interface CdsState {
    * iframe 渲染（不授予 same-origin），见 routes/reports.ts。
    */
   acceptanceReports?: AcceptanceReportMeta[];
+  /** 验收报告文件夹（项目级分类，见 ReportFolder）。 */
+  reportFolders?: ReportFolder[];
+  /** WS3 MAP-KBTP peer-sync：本 CDS 实例的稳定 nodeId（首次用时生成）。 */
+  peerSelfNodeId?: string;
+  /** WS3：已配对的对端节点（MAP 等），见 PeerNodeRecord。 */
+  peerNodes?: PeerNodeRecord[];
+  /** WS3：待用的一次性配对码（明文不存，只存 hash），见 PeerPairingCode。 */
+  peerPairingCodes?: PeerPairingCode[];
+}
+
+export type ScheduledJobSchedule =
+  | { type: 'manual'; timezone?: string }
+  | { type: 'interval'; intervalMinutes: number; timezone?: string }
+  | { type: 'daily'; timeOfDay: string; timezone?: string };
+
+export type ScheduledJobTarget =
+  | {
+      type: 'http';
+      method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+      url: string;
+      headers?: Record<string, string>;
+      body?: string;
+    }
+  | {
+      type: 'command';
+      command: string;
+      cwd?: string;
+    };
+
+export type ScheduledJobAction = ScheduledJobTarget & {
+  id: string;
+  name?: string;
+};
+
+export interface ScheduledJob {
+  id: string;
+  projectId: string;
+  name: string;
+  description?: string;
+  enabled: boolean;
+  schedule: ScheduledJobSchedule;
+  /** Legacy single target kept for old state/API callers. New code should use actions. */
+  target?: ScheduledJobTarget;
+  actions?: ScheduledJobAction[];
+  timeoutSeconds: number;
+  retryCount: number;
+  concurrencyPolicy: 'skip';
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: string;
+  lastRunAt?: string;
+  lastRunStatus?: ScheduledJobRunStatus;
+  lastRunId?: string;
+  nextRunAt?: string | null;
+}
+
+export type ScheduledJobRunStatus = 'queued' | 'running' | 'success' | 'failed' | 'skipped';
+
+export interface ScheduledJobRun {
+  id: string;
+  jobId: string;
+  projectId: string;
+  trigger: 'schedule' | 'manual';
+  status: ScheduledJobRunStatus;
+  queuedAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  durationMs?: number;
+  exitCode?: number;
+  httpStatus?: number;
+  log?: string;
+  error?: string;
+}
+
+/**
+ * WS3 MAP-KBTP v1 peer-sync：已配对的对端节点。
+ * CDS 作为「源 peer」对外暴露验收报告供 MAP 等系统按知识库开放协议拉取。
+ * sharedSecret 是 HMAC-SHA256 的密钥（base64 编码的 32 字节随机串）。
+ */
+export interface PeerNodeRecord {
+  /** 本地记录 ID。 */
+  id: string;
+  /** 对端自报的稳定 nodeId（请求头 X-Peer-Node 的值）。 */
+  partnerNodeId: string;
+  /** 配对时生成的共享密钥（base64，HMAC 密钥）。明文存储——本机可读即可签验。 */
+  sharedSecret: string;
+  /** 对端公开 baseUrl（对端 handshake 自报，审计/回调用，本实现不回调）。 */
+  partnerBaseUrl?: string;
+  /** 对端显示名。 */
+  partnerDisplayName?: string;
+  /** 创建时间 ISO。 */
+  createdAt: string;
+  /** 最近一次被对端调用时间（审计）。 */
+  lastUsedAt?: string;
+}
+
+/**
+ * WS3：一次性配对码。管理员在 CDS 生成明文码交给对端，对端 handshake 时回带。
+ * CDS 只存 sha256 hash，校验通过即换发 sharedSecret + 建 PeerNodeRecord。
+ */
+export interface PeerPairingCode {
+  /** 稳定 ID。 */
+  id: string;
+  /** 配对码明文的 sha256 hex（明文不存）。 */
+  codeHash: string;
+  /** 备注显示名（这把码发给谁）。 */
+  displayName?: string;
+  /** 过期时间 ISO。 */
+  expiresAt: string;
+  /** 是否已被消费。 */
+  used: boolean;
+  /** 创建时间 ISO。 */
+  createdAt: string;
 }
 
 /**
@@ -1340,14 +1505,55 @@ export interface AcceptanceReportMeta {
   projectId?: string | null;
   /** 可选关联分支 ID；不关联时为 null。 */
   branchId?: string | null;
+  /** 可选归属文件夹 ID（项目内分类）；未归类时为 null。文件夹的 projectId 必须与本报告一致。 */
+  folderId?: string | null;
   /** 正文字节数（UTF-8）。 */
   sizeBytes: number;
+  /** 验收结论：pass 通过 / conditional 有条件通过 / fail 不通过；未判定为 null。 */
+  verdict?: 'pass' | 'conditional' | 'fail' | null;
+  /** 验收档位（如 P0 冒烟 / 视觉回归 / 完整验收等，自由文本，用于看板分组）；可空。 */
+  tier?: string | null;
+  /** 缺陷计数（按严重度），如 { p0:0, p1:1, p2:3 }；可空。 */
+  defectCounts?: Record<string, number> | null;
+  /** E1 部署上下文：被验收对象对应的 commit SHA（7+ 位）；可空。 */
+  commitSha?: string | null;
+  /** E1 部署上下文：被验收对象对应的分支名（与 branchId 互补，分支名更可读）；可空。 */
+  branch?: string | null;
+  /** E1 部署上下文：关联的 PR 编号（数字，便于回写）；可空。 */
+  prNumber?: number | null;
+  /** E1 部署上下文：部署模式（如 'fast' 极速版 / 'source' 源码 / 'preview'）；可空。 */
+  deployMode?: string | null;
+  /**
+   * E6 匿名分享 token（只读公开链接 `/r/<token>`，补登录态门控缺口）。
+   * 为 null 时未开启分享；撤销分享即置回 null。token 是不可枚举的随机串。
+   */
+  shareToken?: string | null;
   /** 创建人（resolveActorFromRequest 解析的 actor，如 'user' / 'ai'）。 */
   createdBy?: string;
   /** 创建时间 ISO 字符串。 */
   createdAt: string;
   /** 最近一次更新时间 ISO 字符串。 */
   updatedAt: string;
+}
+
+/**
+ * 验收报告文件夹（项目级分类）。挂在某个 projectId 下，用于把该项目的验收报告
+ * 归类（如「2026-06 这几天 CDS 验收」「视觉回归」「冒烟」）。projectId=null 表示
+ * 全局报告（CDS 自身）的文件夹。报告的 folderId 必须与文件夹的 projectId 同属。
+ */
+export interface ReportFolder {
+  /** 稳定 ID。 */
+  id: string;
+  /** 文件夹名称（用户填写）。 */
+  name: string;
+  /** 归属项目 ID；全局（CDS 自身）报告的文件夹为 null。 */
+  projectId?: string | null;
+  /** 父文件夹 ID（嵌套层级，根级为 null）。项目 = 根目录，下面技能自取多层子文件夹。 */
+  parentId?: string | null;
+  /** 排序权重（小在前）。 */
+  sortOrder: number;
+  /** 创建时间 ISO 字符串。 */
+  createdAt: string;
 }
 
 /**
@@ -1358,7 +1564,7 @@ export interface AcceptanceReportMeta {
  *   pending-pairing --(超时 / token 已用)--> （后台 GC 时删除）
  *   active --(用户/CDS 撤销)--> revoked
  *
- * 详见 doc/spec.cds-map-pairing-protocol.md。
+ * 详见 doc/spec.cds.map-pairing-protocol.md。
  */
 export interface CdsConnection {
   /** 稳定 ID。 */
@@ -1580,7 +1786,7 @@ export interface SelfUpdateRecord {
   /** 真实总耗时(ms,含 daemon 重启 + SSE 重连)。 = 下一次 daemon ready 时刻
    *  - 本 record 的 ts。daemon 重启后第一次 recordSelfUpdate 会回填上一条
    *  success entry 的此字段。比 durationMs 更接近用户体感等待时长。
-   *  2026-05-07 timing 审视新增 (report.cds-self-update-timing-audit)。 */
+   *  2026-05-07 timing 审视新增 (report.cds.self-update-timing-audit)。 */
   totalElapsedMs?: number;
   /** 失败/中止时的简短原因(已截断,前端不展开) */
   error?: string;
@@ -2687,7 +2893,7 @@ export interface ExecutorNode {
    *   - `embedded`: the master itself, deploys via local standalone path (no HTTP)
    *   - `remote`:   a separately-hosted executor reached via /exec/deploy HTTP API
    * Default: `remote` (backward compatible).
-   * See `doc/design.cds-cluster-bootstrap.md` §4.3.
+   * See `doc/design.cds.cluster-bootstrap.md` §4.3.
    */
   role?: 'embedded' | 'remote';
 }
@@ -2697,7 +2903,7 @@ export interface ExecutorNode {
  * `GET /api/executors/capacity` so Dashboard and external monitors can see
  * how cluster-wide resources grow as executors join.
  *
- * See `doc/design.cds-cluster-bootstrap.md` §4.3.
+ * See `doc/design.cds.cluster-bootstrap.md` §4.3.
  */
 export interface ClusterCapacity {
   online: number;
@@ -2719,7 +2925,7 @@ export interface ClusterCapacity {
 
 /**
  * Janitor (Phase 2) config — worktree TTL cleanup + disk watermark warning.
- * See `doc/design.cds-resilience.md` Phase 2.
+ * See `doc/design.cds.resilience.md` Phase 2.
  */
 export interface JanitorConfig {
   /** Enable the janitor. Default: true. */
@@ -2736,7 +2942,7 @@ export interface JanitorConfig {
  * Warm-pool scheduler configuration.
  * When `enabled=false`, the scheduler becomes a no-op and CDS behaves exactly
  * like pre-v3.1 (all branches stay running until manually stopped).
- * See `doc/design.cds-resilience.md` for the design rationale.
+ * See `doc/design.cds.resilience.md` for the design rationale.
  */
 export interface SchedulerConfig {
   /** Enable warm-pool scheduling. Default: false (backward compatible). */
@@ -2816,7 +3022,7 @@ export interface CdsConfig {
    * Generated by `./exec_cds.sh issue-token` on the master, handed to the new
    * executor via `./exec_cds.sh connect <master> <token>`, and consumed on the
    * first successful `/api/executors/register` call. Default TTL: 15 minutes.
-   * See `doc/design.cds-cluster-bootstrap.md` §4.2.
+   * See `doc/design.cds.cluster-bootstrap.md` §4.2.
    */
   bootstrapToken?: {
     /** Random hex token value. */

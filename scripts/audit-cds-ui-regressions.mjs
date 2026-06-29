@@ -75,8 +75,11 @@ requireNotContains('branchList', 'title="发布到目标"', 'branch card has no 
 requireNotContains('branchList', 'window.confirm', 'branch card keeps CDS confirm popover instead of native browser confirm');
 
 // Resource chip tone: keep chips subdued but alive. This guards against both
-// over-bright chips and the "looks stopped" dim regression.
-requireContains('branchList', 'const chipToneClass = chipStatus ===', 'resource chips use explicit tone mapping');
+// over-bright chips and the "looks stopped" dim regression. 2026-06-26: chip tone
+// gained a leading `isInfra ?` subdued branch (基础设施依赖弱化为次要)，所以断言从
+// 「行首 const chipToneClass = chipStatus ===」放宽为「仍按 chipStatus 显式分态映射」，
+// 意图不变（line 80 仍钉运行态色值，防 helper 化 / 过亮 / 看着停了的回归）。
+requireContains('branchList', "chipStatus === 'running'", 'resource chips use explicit per-status tone mapping');
 requireContains('branchList', 'border-emerald-500/25 bg-emerald-500/[0.055]', 'running resource chip has live but subdued tone');
 
 // Database workbench: these are the product-level invariants from the database
@@ -89,7 +92,12 @@ requireContains('drawer', 'function chooseMongoDatabase', 'Mongo default databas
 requireContains('drawer', 'configuredDatabaseNotice', 'Mongo configured/default database feedback exists');
 requireContains('drawer', 'function MongoResourceDataPanel', 'Mongo workbench panel exists');
 requireContains('drawer', 'function SqlResourceDataPanel', 'SQL workbench panel exists');
-requireRegex('drawer', /grid min-h-0 text-sm lg:grid-cols-\[320px_minmax\(0,1fr\)\]/, 'workbench uses side tree plus main operation canvas');
+// Desktop keeps the 320px side-tree + main split. Below lg the panes stack
+// (flex flex-col) and the modal body scrolls instead of overlapping — see
+// cds/.claude/rules/mobile-layout-fallback.md. Match only the desktop column
+// invariant so the mobile-flow prefix can evolve without tripping this guard.
+requireRegex('drawer', /lg:grid-cols-\[320px_minmax\(0,1fr\)\]/, 'workbench keeps desktop side tree plus main operation canvas');
+requireContains('drawer', 'overflow-y-auto lg:overflow-hidden', 'workbench modal body scrolls on mobile and fills on desktop');
 
 if (failures.length > 0) {
   console.error('CDS UI regression audit failed:');

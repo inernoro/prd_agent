@@ -1,7 +1,7 @@
 /**
  * 双链 + 反向链接 + 宇宙图 service。
  *
- * 详见后端 MentionsController + doc/design.knowledge-base-mention-network.md。
+ * 详见后端 MentionsController + doc/design.knowledge-base.mention-network.md。
  */
 import { apiRequest } from '@/services/real/apiClient';
 import { api } from '@/services/api';

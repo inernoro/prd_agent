@@ -161,6 +161,11 @@ describe('Branch Routes', () => {
     // lastKnownGood 串到本测试。createBranchRouter 会重新 init cache。
     const cacheMod = await import('../../src/services/self-status-cache.js');
     cacheMod.selfStatusCache._resetForTests();
+    // 这些是部署/操作-fencing 测试，与分支网络隔离正交：它们用 `docker run -d --name X` 当协调闸门。
+    // 隔离开启时 runService 改走 create→connect→start，闸门匹配不到 `docker run -d` 会挂死。故本组
+    // 显式关隔离（与 container.test.ts / container-network-isolation.test.ts 同款），隔离 create/start
+    // 路径由 container-branch-network-isolation.test.ts 专门覆盖。
+    process.env.CDS_BRANCH_NETWORK_ISOLATION = '0';
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-routes-'));
     const config = makeConfig(tmpDir);
     mock = new MockShellExecutor();
@@ -172,6 +177,9 @@ describe('Branch Routes', () => {
     mock.addResponsePattern(/git worktree prune/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/test -d/, () => ({ stdout: '', stderr: '', exitCode: 1 }));
     mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    // 分支级网络隔离（默认开）：runService 会 ensure 分支网 + 跑后 network connect 共享网。
+    mock.addResponsePattern(/docker network create/, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker network connect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/docker run/, () => ({ stdout: 'cid123', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/docker stop/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/docker rm/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
@@ -237,6 +245,7 @@ describe('Branch Routes', () => {
   afterEach(async () => {
     delete process.env.CDS_DELETE_STATE_FLUSH_TIMEOUT_MS;
     delete process.env.CDS_BRANCHES_SLOW_MS;
+    delete process.env.CDS_BRANCH_NETWORK_ISOLATION;
     await new Promise<void>((resolve) => server.close(() => resolve()));
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
   });
@@ -411,6 +420,474 @@ describe('Branch Routes', () => {
     // 极速版部署不再硬闸门(用户 2026-06-23 决策:没有镜像逐组件回退固定主分支,不硬失败)。
     // 镜像可用性由 container.ts runService 处理(本 commit 镜像拉不到→回退主分支镜像),
     // 单测见 tests/services/ci-prebuilt-express.test.ts 的 fallbackImage 用例。
+  });
+
+  describe('分支级额外服务 /api/branches/:id/extra-services', () => {
+    const extraSvc = (id: string) => ({ id, name: id, dockerImage: 'nginx:alpine', containerPort: 80, prebuiltImage: true });
+    function seedBranch(id: string, projectId = 'default') {
+      stateService.addBranch({ id, projectId, branch: id, worktreePath: `/tmp/wt/${id}`, services: {}, status: 'idle', createdAt: new Date().toISOString() });
+    }
+
+    it('GET returns [] for a branch with no extras', async () => {
+      seedBranch('b1');
+      const res = await request(server, 'GET', '/api/branches/b1/extra-services');
+      expect(res.status).toBe(200);
+      expect((res.body as any).extraProfiles).toEqual([]);
+    });
+
+    it('PUT declares an extra service; GET reflects it; a sibling stays empty (zero cross-impact)', async () => {
+      seedBranch('b1'); seedBranch('b2');
+      const put = await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [extraSvc('demo-extra')] });
+      expect(put.status).toBe(200);
+      expect((put.body as any).count).toBe(1);
+      expect((put.body as any).redeployTriggered).toBe(false);
+
+      const g1 = await request(server, 'GET', '/api/branches/b1/extra-services');
+      expect((g1.body as any).extraProfiles.map((p: any) => p.id)).toEqual(['demo-extra']);
+      const g2 = await request(server, 'GET', '/api/branches/b2/extra-services');
+      expect((g2.body as any).extraProfiles).toEqual([]); // sibling untouched
+    });
+
+    it('preserves branch-local routing/ordering/readiness metadata (pathPrefixes/dependsOn/readinessProbe/startupSignal)', async () => {
+      seedBranch('b1');
+      const put = await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{
+          id: 'extra-api', name: 'extra-api', dockerImage: 'nginx:alpine', containerPort: 8080,
+          pathPrefixes: ['/api/', '/graphql'],
+          dependsOn: ['mysql', 'redis'],
+          readinessProbe: { path: '/health', intervalSeconds: 3, timeoutSeconds: 120, noHttp: false },
+          startupSignal: 'Network:',
+        }],
+      });
+      expect(put.status).toBe(200);
+      const saved = stateService.getBranch('b1')!.extraProfiles!.find((p) => p.id === 'extra-api')!;
+      expect(saved.pathPrefixes).toEqual(['/api/', '/graphql']);
+      expect(saved.dependsOn).toEqual(['mysql', 'redis']);
+      expect(saved.readinessProbe).toEqual({ path: '/health', intervalSeconds: 3, timeoutSeconds: 120 });
+      expect(saved.startupSignal).toBe('Network:');
+    });
+
+    it('preserves containerWorkDir and rejects an illegal one (Codex P2)', async () => {
+      seedBranch('b1');
+      // valid container-absolute path is kept
+      const ok = await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'svc', name: 'svc', dockerImage: 'nginx:alpine', containerPort: 80, containerWorkDir: '/srv/app' }],
+      });
+      expect(ok.status).toBe(200);
+      expect(stateService.getBranch('b1')!.extraProfiles!.find((p) => p.id === 'svc')!.containerWorkDir).toBe('/srv/app');
+      // shell-metachar / relative / traversal rejected
+      for (const bad of ['app', '/srv/"; id', '/srv/../etc', '/a$(x)']) {
+        const res = await request(server, 'PUT', '/api/branches/b1/extra-services', {
+          extraProfiles: [{ id: 'svc', name: 'svc', dockerImage: 'nginx:alpine', containerPort: 80, containerWorkDir: bad }],
+        });
+        expect(res.status).toBe(400);
+        expect(String((res.body as any).error)).toContain('containerWorkDir');
+      }
+    });
+
+    it('rejects an extra id that collides with a project profile', async () => {
+      stateService.addBuildProfile({ id: 'api', name: 'API', dockerImage: 'img', workDir: 'api', command: 'run', containerPort: 8080, projectId: 'default' });
+      seedBranch('b1');
+      const res = await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [extraSvc('api')] });
+      expect(res.status).toBe(400);
+      expect(String((res.body as any).error)).toContain('撞名');
+    });
+
+    it('rejects invalid id / missing image / bad port', async () => {
+      seedBranch('b1');
+      expect((await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [{ id: '-bad', dockerImage: 'x', containerPort: 80 }] })).status).toBe(400);
+      expect((await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [{ id: 'ok', containerPort: 80 }] })).status).toBe(400);
+      expect((await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [{ id: 'ok', dockerImage: 'x', containerPort: 0 }] })).status).toBe(400);
+      expect((await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: 'notarray' })).status).toBe(400);
+    });
+
+    it('rejects a dockerImage containing host-shell metacharacters (Codex P1 boundary defense)', async () => {
+      seedBranch('b1');
+      for (const bad of ['evil:latest; rm -rf /', 'img$(whoami)', 'img`id`', 'a b', 'img|cat', 'img&background']) {
+        const res = await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [{ id: 'ok', dockerImage: bad, containerPort: 80 }] });
+        expect(res.status).toBe(400);
+        expect(String((res.body as any).error)).toContain('dockerImage');
+      }
+      // A normal registry/namespace/repo:tag@digest reference is accepted.
+      const ok = await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [{ id: 'ok', dockerImage: 'ghcr.io/acme/api:1.2.3', containerPort: 80 }] });
+      expect(ok.status).toBe(200);
+    });
+
+    it('rejects a workDir containing host-shell metacharacters or .. traversal (Codex P1 boundary defense)', async () => {
+      seedBranch('b1');
+      for (const bad of ['svc";id;"', 'a$(whoami)', 'p`id`', 'has space', 'a|b', 'x&y', '../../etc', 'a/../../b']) {
+        const res = await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [{ id: 'ok', dockerImage: 'img', containerPort: 80, workDir: bad }] });
+        expect(res.status).toBe(400);
+        expect(String((res.body as any).error)).toContain('workDir');
+      }
+      // A normal relative subdir is accepted (empty workDir也合法，下方一并验证)。
+      const ok = await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [{ id: 'ok', dockerImage: 'img', containerPort: 80, workDir: 'services/api' }] });
+      expect(ok.status).toBe(200);
+      const okEmpty = await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [{ id: 'ok', dockerImage: 'img', containerPort: 80 }] });
+      expect(okEmpty.status).toBe(200);
+    });
+
+    it('PUT [] clears extras', async () => {
+      seedBranch('b1');
+      await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [extraSvc('demo-extra')] });
+      const clr = await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [] });
+      expect((clr.body as any).count).toBe(0);
+      expect(stateService.getBranch('b1')!.extraProfiles).toBeUndefined();
+    });
+
+    it('?redeploy=1 reports redeployTriggered only after the self-deploy is accepted (200)', async () => {
+      seedBranch('b1');
+      const originalFetch = globalThis.fetch;
+      const calls: string[] = [];
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        calls.push(String(input));
+        // deploy endpoint accepts → streams SSE 200
+        return new Response('event: complete\ndata: {"ok":true}\n\n', { status: 200 });
+      }) as typeof fetch;
+      try {
+        const res = await request(server, 'PUT', '/api/branches/b1/extra-services?redeploy=1', { extraProfiles: [extraSvc('demo-extra')] });
+        expect(res.status).toBe(200);
+        expect((res.body as any).redeployTriggered).toBe(true);
+        expect(calls.some((u) => u.includes('/api/branches/b1/deploy'))).toBe(true);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it('?redeploy=1 does NOT claim triggered when the self-deploy is rejected (423 paused) — surfaces the rejection', async () => {
+      seedBranch('b1');
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async () =>
+        new Response(JSON.stringify({ error: '分支已暂停' }), { status: 423 })) as typeof fetch;
+      try {
+        const res = await request(server, 'PUT', '/api/branches/b1/extra-services?redeploy=1', { extraProfiles: [extraSvc('demo-extra')] });
+        expect(res.status).toBe(200);
+        // The extra service is still persisted...
+        expect((res.body as any).count).toBe(1);
+        // ...but redeploy must NOT be reported as triggered, and the rejection is surfaced.
+        expect((res.body as any).redeployTriggered).toBe(false);
+        expect((res.body as any).redeployRejected?.status).toBe(423);
+        expect(String((res.body as any).redeployRejected?.message)).toContain('暂停');
+        expect(String((res.body as any).hint)).toContain('未成功');
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it('?redeploy=1 rolls back a DESTRUCTIVE removal when the self-deploy is rejected (Codex P2: no ghost service)', async () => {
+      seedBranch('b1');
+      // Declare an extra service AND give it a live running service row (a worker container exists for it).
+      await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [extraSvc('demo-extra')] });
+      stateService.getBranch('b1')!.services['demo-extra'] = {
+        profileId: 'demo-extra', containerName: 'cds-b1-demo-extra', hostPort: 10099, status: 'running',
+      };
+      stateService.save();
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async () =>
+        new Response(JSON.stringify({ error: 'owning_executor_offline' }), { status: 503 })) as typeof fetch;
+      try {
+        // Clearing the extra service while its container still runs = destructive; deploy rejected → must roll back.
+        const res = await request(server, 'PUT', '/api/branches/b1/extra-services?redeploy=1', { extraProfiles: [] });
+        expect(res.status).toBe(200);
+        expect((res.body as any).redeployTriggered).toBe(false);
+        expect((res.body as any).removalRolledBack).toBe(true);
+        expect((res.body as any).rolledBackServiceIds).toContain('demo-extra');
+        // master metadata stays consistent with the still-running worker container.
+        expect((res.body as any).count).toBe(1);
+        expect(stateService.getBranch('b1')!.extraProfiles!.map((p) => p.id)).toEqual(['demo-extra']);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it('?redeploy=1 does NOT roll back an ADD-ONLY change when the self-deploy is rejected (keeps declared config)', async () => {
+      seedBranch('b1');
+      // Pre-existing extra service with a live row; the new PUT keeps it and ADDS a second one (no destructive drop).
+      await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [extraSvc('demo-extra')] });
+      stateService.getBranch('b1')!.services['demo-extra'] = {
+        profileId: 'demo-extra', containerName: 'cds-b1-demo-extra', hostPort: 10099, status: 'running',
+      };
+      stateService.save();
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async () =>
+        new Response(JSON.stringify({ error: '缺少必填环境变量' }), { status: 412 })) as typeof fetch;
+      try {
+        const res = await request(server, 'PUT', '/api/branches/b1/extra-services?redeploy=1', {
+          extraProfiles: [extraSvc('demo-extra'), extraSvc('demo-extra-2')],
+        });
+        expect(res.status).toBe(200);
+        expect((res.body as any).redeployTriggered).toBe(false);
+        expect((res.body as any).redeployRejected?.status).toBe(412);
+        // No service was dropped → not destructive → keep the declared config (do NOT roll back the add).
+        expect((res.body as any).removalRolledBack).toBeUndefined();
+        expect((res.body as any).count).toBe(2);
+        expect(stateService.getBranch('b1')!.extraProfiles!.map((p) => p.id).sort()).toEqual(['demo-extra', 'demo-extra-2']);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it('preserves + validates extra-service entrypoint override (Codex P2)', async () => {
+      seedBranch('b1');
+      // empty string = clear the image ENTRYPOINT (container.ts → --entrypoint="")
+      const ok = await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80, entrypoint: '' }],
+      });
+      expect(ok.status).toBe(200);
+      expect(stateService.getBranch('b1')!.extraProfiles![0].entrypoint).toBe('');
+      // a single-token executable path is preserved
+      const ok2 = await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80, entrypoint: '/usr/local/bin/start.sh' }],
+      });
+      expect(ok2.status).toBe(200);
+      expect(stateService.getBranch('b1')!.extraProfiles![0].entrypoint).toBe('/usr/local/bin/start.sh');
+      // spaces / shell metacharacters are rejected at the boundary
+      const bad = await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80, entrypoint: 'sh -c "rm -rf /"' }],
+      });
+      expect(bad.status).toBe(400);
+    });
+
+    it('clears a stale profileOverride when its extra service is removed (Codex P2)', async () => {
+      seedBranch('b1');
+      await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80 }],
+      });
+      // Save an override for the extra service.
+      await request(server, 'PUT', '/api/branches/b1/profile-overrides/demo-extra', { dockerImage: 'ghcr.io/acme/old:1' });
+      expect(stateService.getBranch('b1')!.profileOverrides?.['demo-extra']).toBeTruthy();
+      // Remove the extra service (clear). Its override must NOT linger to poison a later same-id service.
+      const clr = await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [] });
+      expect(clr.status).toBe(200);
+      expect(stateService.getBranch('b1')!.profileOverrides?.['demo-extra']).toBeUndefined();
+      // Re-create a different service with the SAME id: it must NOT inherit the old override image.
+      await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80 }],
+      });
+      expect(stateService.getBranch('b1')!.profileOverrides?.['demo-extra']).toBeUndefined();
+      // The override clear must be PERSISTED, not in-memory only (Bugbot Medium): a fresh StateService
+      // reading the same state file must also see it gone — otherwise a restart reloads stale overrides.
+      const reloaded = new StateService(path.join(tmpDir, 'state.json'));
+      expect(reloaded.getBranch('b1')?.profileOverrides?.['demo-extra']).toBeUndefined();
+    });
+
+    it('preserves + validates extra-service dbScope (Codex P2)', async () => {
+      seedBranch('b1');
+      // per-branch isolation must survive the whitelist (else resolveProfileRuntimeEnv skips DB rewriting).
+      const ok = await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80, dbScope: 'per-branch' }],
+      });
+      expect(ok.status).toBe(200);
+      expect(stateService.getBranch('b1')!.extraProfiles![0].dbScope).toBe('per-branch');
+      // an invalid enum value is rejected (not silently dropped).
+      const bad = await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80, dbScope: 'bogus' }],
+      });
+      expect(bad.status).toBe(400);
+    });
+
+    it('strips env mask sentinels on PUT: reuses the prior real value, drops sentinels with no prior (Bugbot Medium)', async () => {
+      seedBranch('b1');
+      // First PUT establishes a real secret value for SECRET_KEY.
+      await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80, env: { SECRET_KEY: 'real-secret', PUBLIC: 'v1' } }],
+      });
+      // Second PUT comes back with the masked sentinel for SECRET_KEY (GET→edit→PUT round trip) plus a
+      // brand-new key that is itself a sentinel (no prior value).
+      const res = await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80, env: { SECRET_KEY: '***[masked]***', PUBLIC: 'v2', BRAND_NEW: '***' } }],
+      });
+      expect(res.status).toBe(200);
+      const env = (stateService.getBranch('b1')!.extraProfiles![0].env)!;
+      expect(env.SECRET_KEY).toBe('real-secret'); // masked → reused real prior value, NOT the literal sentinel
+      expect(env.PUBLIC).toBe('v2');              // normal edit persists
+      expect('BRAND_NEW' in env).toBe(false);     // sentinel with no prior → dropped, never persisted literally
+    });
+
+    it('merges env on PUT: omitted env keeps prior secrets, partial env preserves unmentioned keys (Bugbot High)', async () => {
+      seedBranch('b1');
+      await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80, env: { SECRET_KEY: 'real-secret', OTHER: 'keep-me' } }],
+      });
+      // Re-declare the profile WITHOUT env at all → prior env must be preserved (not dropped).
+      const r1 = await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80 }],
+      });
+      expect(r1.status).toBe(200);
+      let env = stateService.getBranch('b1')!.extraProfiles![0].env!;
+      expect(env.SECRET_KEY).toBe('real-secret');
+      expect(env.OTHER).toBe('keep-me');
+      // Partial env (only one key) → the unmentioned prior key must still survive (merge, not replace).
+      const r2 = await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80, env: { OTHER: 'updated' } }],
+      });
+      expect(r2.status).toBe(200);
+      env = stateService.getBranch('b1')!.extraProfiles![0].env!;
+      expect(env.SECRET_KEY).toBe('real-secret'); // preserved despite being omitted this time
+      expect(env.OTHER).toBe('updated');          // updated value applied
+    });
+
+    it('redacts sensitive env in GET/PUT responses but keeps state raw (Codex P1)', async () => {
+      seedBranch('b1');
+      const put = await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80, env: { API_TOKEN: 'tok_secretvalue', PUBLIC_URL: 'https://example.com' } }],
+      });
+      expect(put.status).toBe(200);
+      // PUT response masks the sensitive value, leaves non-sensitive intact.
+      const putEnv = (put.body as any).extraProfiles[0].env;
+      expect(putEnv.API_TOKEN).toBe('***');
+      expect(putEnv.PUBLIC_URL).toBe('https://example.com');
+      // GET response is masked too.
+      const get = await request(server, 'GET', '/api/branches/b1/extra-services');
+      expect((get.body as any).extraProfiles[0].env.API_TOKEN).toBe('***');
+      // But the persisted state keeps the real value (deploy reads raw env from state).
+      expect(stateService.getBranch('b1')!.extraProfiles![0].env!.API_TOKEN).toBe('tok_secretvalue');
+    });
+
+    it('masks extra-service env in the profile-overrides payload (Codex P1)', async () => {
+      seedBranch('b1');
+      await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80, env: { API_TOKEN: 'tok_secretvalue', PUBLIC_URL: 'https://example.com' } }],
+      });
+      const res = await request(server, 'GET', '/api/branches/b1/profile-overrides');
+      expect(res.status).toBe(200);
+      const row = (res.body as any).profiles.find((p: any) => p.profileId === 'demo-extra');
+      expect(row).toBeTruthy();
+      // baseline + effective env both masked for the branch-local extra profile.
+      expect(row.baseline.env.API_TOKEN).toBe('***');
+      expect(row.baseline.env.PUBLIC_URL).toBe('https://example.com');
+      expect(row.effective.env.API_TOKEN).toBe('***');
+      // State still holds the real value (deploy reads raw).
+      expect(stateService.getBranch('b1')!.extraProfiles![0].env!.API_TOKEN).toBe('tok_secretvalue');
+    });
+
+    it('PUT /profile-overrides resolves a branch-local extra-only profile (no 404) — Bugbot "Extra profile overrides PUT fails"', async () => {
+      seedBranch('b1');
+      await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80 }],
+      });
+      // The GET panel lists demo-extra as overridable; the PUT must accept it (was 404 via project-only lookup).
+      const put = await request(server, 'PUT', '/api/branches/b1/profile-overrides/demo-extra', { env: { FOO: 'bar' } });
+      expect(put.status).toBe(200);
+      expect(stateService.getBranch('b1')!.profileOverrides?.['demo-extra']?.env?.FOO).toBe('bar');
+    });
+
+    it('PUT /profile-overrides rejects a shell-injecting dockerImage override (Codex P1)', async () => {
+      seedBranch('b1');
+      await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80, prebuiltImage: true }],
+      });
+      // A caller cannot bypass extra-services image validation by overriding dockerImage here:
+      // `alpine; touch /tmp/pwn` would hit the host `docker pull` if accepted.
+      const bad = await request(server, 'PUT', '/api/branches/b1/profile-overrides/demo-extra', { dockerImage: 'alpine:latest; touch /tmp/pwn' });
+      expect(bad.status).toBe(400);
+      expect(stateService.getBranch('b1')!.profileOverrides?.['demo-extra']?.dockerImage).toBeUndefined();
+      // A legitimate image reference is still accepted.
+      const ok = await request(server, 'PUT', '/api/branches/b1/profile-overrides/demo-extra', { dockerImage: 'ghcr.io/acme/api:1.2.3' });
+      expect(ok.status).toBe(200);
+      expect(stateService.getBranch('b1')!.profileOverrides?.['demo-extra']?.dockerImage).toBe('ghcr.io/acme/api:1.2.3');
+      // A traversal/metachar containerWorkDir override is also rejected.
+      const badCwd = await request(server, 'PUT', '/api/branches/b1/profile-overrides/demo-extra', { containerWorkDir: '/app/../etc' });
+      expect(badCwd.status).toBe(400);
+    });
+
+    it('container-exec masks a secret stored via profile-overrides (Codex P2: resolve overrides before masking exec output)', async () => {
+      seedBranch('b1');
+      await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80 }],
+      });
+      // The secret lives ONLY in the profile override (the extra profile itself has no env).
+      await request(server, 'PUT', '/api/branches/b1/profile-overrides/demo-extra', { env: { SECRET_TOKEN: 'supersecretvalue123' } });
+      // A running service row so container-exec finds a container to exec into.
+      stateService.getBranch('b1')!.services['demo-extra'] = {
+        profileId: 'demo-extra', containerName: 'cds-b1-demo-extra', hostPort: 10099, status: 'running',
+      };
+      stateService.save();
+
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        // simulate `echo $SECRET_TOKEN` dumping the raw secret on its own line
+        if (command.includes('docker exec cds-b1-demo-extra')) {
+          return { stdout: 'supersecretvalue123\n', stderr: '', exitCode: 0 };
+        }
+        return originalExec(command, options);
+      };
+      try {
+        const res = await request(server, 'POST', '/api/branches/b1/container-exec', { profileId: 'demo-extra', command: 'echo $SECRET_TOKEN' });
+        expect(res.status).toBe(200);
+        expect((res.body as any).masked).toBe(true);
+        // Override-supplied secret must be redacted (was leaked when masking read the unmerged profile).
+        expect((res.body as any).stdout).not.toContain('supersecretvalue123');
+        expect((res.body as any).stdout).toContain('***');
+      } finally {
+        mock.exec = originalExec;
+      }
+    });
+
+    it('PUT /profile-overrides masks extra-profile secret env in the save response (Codex P1)', async () => {
+      seedBranch('b1');
+      await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80, env: { API_TOKEN: 'tok_secret', PUBLIC_URL: 'https://example.com' } }],
+      });
+      // Save an innocuous override; the response must NOT leak the extra service's secret env.
+      const put = await request(server, 'PUT', '/api/branches/b1/profile-overrides/demo-extra', { env: { API_TOKEN: 'tok_overridesecret' } });
+      expect(put.status).toBe(200);
+      expect((put.body as any).effective.env.API_TOKEN).toBe('***');
+      expect((put.body as any).effective.env.PUBLIC_URL).toBe('https://example.com');
+      expect((put.body as any).override.env.API_TOKEN).toBe('***');
+      // State still holds the real value (deploy reads raw).
+      expect(stateService.getBranch('b1')!.profileOverrides?.['demo-extra']?.env?.API_TOKEN).toBe('tok_overridesecret');
+    });
+
+    it('GET /profile-overrides also masks the saved override env for extra profiles (Codex P1)', async () => {
+      seedBranch('b1');
+      await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80 }],
+      });
+      await request(server, 'PUT', '/api/branches/b1/profile-overrides/demo-extra', { env: { API_TOKEN: 'tok_overridesecret' } });
+      const res = await request(server, 'GET', '/api/branches/b1/profile-overrides');
+      expect(res.status).toBe(200);
+      const row = (res.body as any).profiles.find((p: any) => p.profileId === 'demo-extra');
+      // override.env must be masked too (baseline/effective already were; override was leaking).
+      expect(row.override.env.API_TOKEN).toBe('***');
+      expect(stateService.getBranch('b1')!.profileOverrides?.['demo-extra']?.env?.API_TOKEN).toBe('tok_overridesecret');
+    });
+
+    it('PUT /profile-overrides strips mask sentinels and restores the prior override secret (Bugbot High)', async () => {
+      seedBranch('b1');
+      await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80 }],
+      });
+      // First save the real override secret.
+      await request(server, 'PUT', '/api/branches/b1/profile-overrides/demo-extra', { env: { API_TOKEN: 'real_secret', LOG: 'info' } });
+      // GET→edit→PUT round trip re-submits the masked sentinel for the unchanged key.
+      const put = await request(server, 'PUT', '/api/branches/b1/profile-overrides/demo-extra', { env: { API_TOKEN: '***', LOG: 'debug' } });
+      expect(put.status).toBe(200);
+      // The literal sentinel must NOT be persisted — the real secret is restored, the edited key updates.
+      expect(stateService.getBranch('b1')!.profileOverrides?.['demo-extra']?.env?.API_TOKEN).toBe('real_secret');
+      expect(stateService.getBranch('b1')!.profileOverrides?.['demo-extra']?.env?.LOG).toBe('debug');
+    });
+
+    it('GET /api/branches/:id masks the extra-profile override env in the branch view (Codex P1)', async () => {
+      seedBranch('b1');
+      await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80 }],
+      });
+      await request(server, 'PUT', '/api/branches/b1/profile-overrides/demo-extra', { env: { API_TOKEN: 'tok_overridesecret' } });
+      const res = await request(server, 'GET', '/api/branches/b1');
+      expect(res.status).toBe(200);
+      // The branch view (also used by /branches list + stream) must redact override.env for extra profiles.
+      expect((res.body as any).branch.profileOverrides['demo-extra'].env.API_TOKEN).toBe('***');
+      // State still holds the real value.
+      expect(stateService.getBranch('b1')!.profileOverrides?.['demo-extra']?.env?.API_TOKEN).toBe('tok_overridesecret');
+    });
+
+    it('404 for unknown branch', async () => {
+      expect((await request(server, 'GET', '/api/branches/nope/extra-services')).status).toBe(404);
+      expect((await request(server, 'PUT', '/api/branches/nope/extra-services', { extraProfiles: [] })).status).toBe(404);
+    });
   });
 
   describe('GET /api/branches', () => {
@@ -1070,10 +1547,14 @@ describe('Branch Routes', () => {
       const runStarted = new Promise<void>((resolve) => { markRunStarted = resolve; });
       const originalExec = mock.exec.bind(mock);
       mock.exec = async (command, options) => {
-        if (command.includes('docker run -d') && command.includes('--name cds-cross-cleanup-busy-api')) {
+        // Block the deploy at its OWN pre-pull orphan removal of `foreign` (deploy now reconciles the
+        // desired profile set before git pull — Codex P2). At this point the deploy holds the branch
+        // lease and `foreign` is still in entry.services (removal awaiting), so the cross-project sweep
+        // must observe the active operation and skip — the realistic busy-skip window.
+        if (command.includes('docker stop cds-cross-cleanup-busy-foreign')) {
           markRunStarted();
           await runRelease;
-          return { stdout: 'cid-cross-cleanup-busy', stderr: '', exitCode: 0 };
+          return { stdout: 'cds-cross-cleanup-busy-foreign', stderr: '', exitCode: 0 };
         }
         return originalExec(command, options);
       };
@@ -1104,6 +1585,52 @@ describe('Branch Routes', () => {
       }
       const deploy = await deployPromise;
       expect(deploy.status).toBe(200);
+    });
+
+    it('removes orphan services BEFORE the pull so a later pull failure cannot leave ghosts (Codex P2)', async () => {
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api', name: 'API', dockerImage: 'node', command: 'node server.js', workDir: '.', containerPort: 3000,
+      });
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'orphan-prepull',
+        projectId: 'default',
+        branch: 'feature/orphan-prepull',
+        worktreePath: path.join(tmpDir, 'worktrees', 'orphan-prepull'),
+        status: 'running',
+        createdAt: now,
+        services: {
+          api: { profileId: 'api', containerName: 'cds-orphan-prepull-api', hostPort: 10001, status: 'running' },
+          // demo-extra is NOT in the desired profile set → an orphan to be torn down.
+          'demo-extra': { profileId: 'demo-extra', containerName: 'cds-orphan-prepull-demo-extra', hostPort: 10002, status: 'running' },
+        },
+      });
+      stateService.save();
+
+      // Fail the pull (git reset --hard) for THIS branch's worktree — a fallible step AFTER the
+      // pre-pull orphan cleanup. If cleanup ran late (in finalize), the failed pull would skip it and
+      // leave demo-extra as a ghost.
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.includes('git reset --hard') && command.includes('orphan-prepull')) {
+          throw new Error('simulated pull failure');
+        }
+        return originalExec(command, options);
+      };
+      try {
+        const res = await request(server, 'POST', '/api/branches/orphan-prepull/deploy');
+        expect(res.status).toBe(200); // SSE; the failure is an in-stream error event
+      } finally {
+        mock.exec = originalExec;
+      }
+
+      // Orphan torn down pre-pull → no ghost: container removed + state row dropped.
+      expect(stateService.getBranch('orphan-prepull')?.services['demo-extra']).toBeUndefined();
+      expect(mock.commands.some((c) => c.includes('docker rm cds-orphan-prepull-demo-extra'))).toBe(true);
+      // The still-desired api service is untouched by orphan cleanup.
+      expect(stateService.getBranch('orphan-prepull')?.services['api']).toBeTruthy();
+      // The deploy itself ends in error because the pull failed.
+      expect(stateService.getBranch('orphan-prepull')?.status).toBe('error');
     });
   });
 
@@ -1560,6 +2087,213 @@ describe('Branch Routes', () => {
       } finally {
         globalThis.fetch = originalFetch;
       }
+    });
+
+    it('orphan-service removal does not delete entry.services when the deploy lease is superseded mid-loop', async () => {
+      // Bugbot Medium (learned rule: BranchOperationCoordinator lease safety): the deploy-finalize
+      // loop that tears down services removed from the desired set awaits containerService.remove.
+      // If a higher-priority op (manual stop) supersedes the deploy lease during that await, the loop
+      // must assertCurrent and abort BEFORE deleting entry.services + save() — not mutate state under
+      // a cancelled deploy.
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        command: 'node server.js',
+        workDir: '.',
+        containerPort: 3000,
+      });
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'orphan-fence',
+        projectId: 'default',
+        branch: 'feature/orphan-fence',
+        worktreePath: path.join(tmpDir, 'worktrees', 'orphan-fence'),
+        status: 'idle',
+        createdAt: now,
+        services: {
+          api: { profileId: 'api', containerName: 'cds-orphan-fence-api', hostPort: 10001, status: 'idle' },
+          // zombie: no matching build profile → the deploy's orphan-removal loop will try to remove it.
+          zombie: { profileId: 'zombie', containerName: 'cds-orphan-fence-zombie', hostPort: 10002, status: 'idle' },
+        },
+      });
+      stateService.save();
+
+      // Gate the deploy inside the orphan-removal loop: pause when it issues `docker rm` for the
+      // zombie container, then supersede the lease via a manual stop, then release.
+      let releaseRm!: () => void;
+      const rmRelease = new Promise<void>((resolve) => { releaseRm = resolve; });
+      let markRmStarted!: () => void;
+      const rmStarted = new Promise<void>((resolve) => { markRmStarted = resolve; });
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.includes('docker rm') && command.includes('cds-orphan-fence-zombie')) {
+          markRmStarted();
+          await rmRelease;
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+        return originalExec(command, options);
+      };
+
+      const deployPromise = request(server, 'POST', '/api/branches/orphan-fence/deploy');
+      try {
+        await rmStarted;
+        // Manual stop supersedes the in-flight deploy lease.
+        const stop = await request(
+          server,
+          'POST',
+          '/api/branches/orphan-fence/stop',
+          undefined,
+          { 'X-CDS-Request-Id': 'req-orphan-stop' },
+        );
+        expect(stop.status).toBe(200);
+      } finally {
+        releaseRm();
+      }
+      const deploy = await deployPromise;
+      expect(deploy.status).toBe(200);
+      // The superseded deploy must NOT have deleted the zombie service entry under a cancelled lease.
+      expect(stateService.getBranch('orphan-fence')?.services.zombie).toBeTruthy();
+    });
+
+    it('deploy with an empty effective profile list tears down lingering services instead of 400 (Codex P2)', async () => {
+      // A branch whose only running service was a branch-local extra. After the extra is cleared the
+      // effective profile list is empty. The deploy must NOT just 400 and leave the old container +
+      // entry.services row behind — it should reconcile (tear down) the now-orphaned services.
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'empty-cleanup',
+        projectId: 'default',
+        branch: 'feature/empty-cleanup',
+        worktreePath: path.join(tmpDir, 'worktrees', 'empty-cleanup'),
+        status: 'running',
+        createdAt: now,
+        // No build profiles configured for the project AND no extraProfiles → effective list empty,
+        // but a leftover service is still tracked (the just-cleared extra).
+        services: {
+          'demo-extra': { profileId: 'demo-extra', containerName: 'cds-empty-cleanup-demo-extra', hostPort: 10005, status: 'running' },
+        },
+      });
+      stateService.save();
+
+      const res = await request(server, 'POST', '/api/branches/empty-cleanup/deploy');
+      expect(res.status).toBe(200);
+      // deploy 端点契约是 SSE：清空路径以 event: complete 收尾（不再是 200 JSON，Bugbot Medium）。
+      expect(res.headers['content-type']).toContain('text/event-stream');
+      const sse = String(res.body);
+      expect(sse).toContain('event: complete');
+      expect(sse).toContain('demo-extra'); // cleared 列表在 complete data 里
+      // The lingering service row is gone (container was torn down + entry removed).
+      expect(stateService.getBranch('empty-cleanup')?.services['demo-extra']).toBeUndefined();
+      expect(Object.keys(stateService.getBranch('empty-cleanup')?.services || {})).toHaveLength(0);
+    });
+
+    it('deploy with empty profiles refuses (503) when the owning executor is offline — no state mutation (Bugbot High)', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'empty-offline-exec',
+        projectId: 'default',
+        branch: 'feature/empty-offline-exec',
+        worktreePath: path.join(tmpDir, 'worktrees', 'empty-offline-exec'),
+        status: 'running',
+        createdAt: now,
+        executorId: 'exec-off',
+        services: {
+          'demo-extra': { profileId: 'demo-extra', containerName: 'cds-empty-offline-exec-demo-extra', hostPort: 10006, status: 'running' },
+        },
+      });
+      registryNodes.push({
+        id: 'exec-off', host: '127.0.0.1', port: 9109, status: 'offline', role: 'remote',
+        labels: [], branches: ['empty-offline-exec'],
+        capacity: { maxBranches: 10, memoryMB: 1024, cpuCores: 2 }, load: { memoryUsedMB: 0, cpuPercent: 0 }, registeredAt: now,
+      });
+      stateService.save();
+
+      const res = await request(server, 'POST', '/api/branches/empty-offline-exec/deploy');
+      expect(res.status).toBe(503);
+      expect((res.body as any).error).toBe('owning_executor_offline');
+      // state untouched — the worker container must not be orphaned/ghosted.
+      expect(stateService.getBranch('empty-offline-exec')?.services['demo-extra']).toBeTruthy();
+      expect(stateService.getBranch('empty-offline-exec')?.status).toBe('running');
+    });
+
+    it('deploy refuses (503) when dropping ONE service while project profiles remain + owning executor offline (Codex P2)', async () => {
+      const now = new Date().toISOString();
+      // Project profile 'api' remains; the branch also has a leftover 'demo-extra' service that is NOT in the
+      // effective profile list (extra cleared) → it would be dropped. Owner offline → must refuse, not delete.
+      stateService.addBuildProfile({ id: 'api', name: 'API', dockerImage: 'img', workDir: 'api', command: 'run', containerPort: 8080, projectId: 'default' });
+      stateService.addBranch({
+        id: 'partial-offline-exec',
+        projectId: 'default',
+        branch: 'feature/partial-offline-exec',
+        worktreePath: path.join(tmpDir, 'worktrees', 'partial-offline-exec'),
+        status: 'running',
+        createdAt: now,
+        executorId: 'exec-off2',
+        services: {
+          api: { profileId: 'api', containerName: 'cds-partial-offline-exec-api', hostPort: 10010, status: 'running' },
+          'demo-extra': { profileId: 'demo-extra', containerName: 'cds-partial-offline-exec-demo-extra', hostPort: 10011, status: 'running' },
+        },
+      });
+      registryNodes.push({
+        id: 'exec-off2', host: '127.0.0.1', port: 9110, status: 'offline', role: 'remote',
+        labels: [], branches: ['partial-offline-exec'],
+        capacity: { maxBranches: 10, memoryMB: 1024, cpuCores: 2 }, load: { memoryUsedMB: 0, cpuPercent: 0 }, registeredAt: now,
+      });
+      stateService.save();
+
+      const res = await request(server, 'POST', '/api/branches/partial-offline-exec/deploy');
+      expect(res.status).toBe(503);
+      expect((res.body as any).error).toBe('owning_executor_offline');
+      expect((res.body as any).droppedServices).toContain('demo-extra');
+      // state untouched — both services remain tracked.
+      expect(stateService.getBranch('partial-offline-exec')?.services['demo-extra']).toBeTruthy();
+      expect(stateService.getBranch('partial-offline-exec')?.services['api']).toBeTruthy();
+    });
+
+    it('deploy refuses (503) when a remote-attributed branch drops a service but the executor is NOT in the registry (Bugbot "Missing executor skips offline guard")', async () => {
+      const now = new Date().toISOString();
+      stateService.addBuildProfile({ id: 'api', name: 'API', dockerImage: 'img', workDir: 'api', command: 'run', containerPort: 8080, projectId: 'default' });
+      stateService.addBranch({
+        id: 'gone-exec-branch',
+        projectId: 'default',
+        branch: 'feature/gone-exec',
+        worktreePath: path.join(tmpDir, 'worktrees', 'gone-exec-branch'),
+        status: 'running',
+        createdAt: now,
+        // executorId points at a remote executor that is NOT registered (deregistered / stale attribution).
+        executorId: 'exec-gone',
+        services: {
+          api: { profileId: 'api', containerName: 'cds-gone-exec-branch-api', hostPort: 10020, status: 'running' },
+          'demo-extra': { profileId: 'demo-extra', containerName: 'cds-gone-exec-branch-demo-extra', hostPort: 10021, status: 'running' },
+        },
+      });
+      // Deliberately do NOT push 'exec-gone' into registryNodes.
+      stateService.save();
+
+      const res = await request(server, 'POST', '/api/branches/gone-exec-branch/deploy');
+      expect(res.status).toBe(503);
+      expect((res.body as any).error).toBe('owning_executor_offline');
+      // state untouched — must not orphan the remote worker's container.
+      expect(stateService.getBranch('gone-exec-branch')?.services['demo-extra']).toBeTruthy();
+      expect(stateService.getBranch('gone-exec-branch')?.services['api']).toBeTruthy();
+    });
+
+    it('deploy with no profiles AND no services still returns the original 400', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'empty-nosvc',
+        projectId: 'default',
+        branch: 'feature/empty-nosvc',
+        worktreePath: path.join(tmpDir, 'worktrees', 'empty-nosvc'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+      });
+      stateService.save();
+      const res = await request(server, 'POST', '/api/branches/empty-nosvc/deploy');
+      expect(res.status).toBe(400);
+      expect(String((res.body as any).error)).toContain('构建配置');
     });
 
     it('records branch delete completion only after state flush succeeds', async () => {

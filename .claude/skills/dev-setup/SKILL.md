@@ -3,11 +3,11 @@ name: dev-setup
 description: Sets up the development environment and performs local debugging. Handles two phases - Phase A installs and verifies SDKs (.NET, Node.js, Rust, pnpm) with auto-detection of local CLI vs cloud sandbox mode, and Phase B runs automated API testing and iterative debugging with log analysis. Trigger words: "装环境", "环境搭建", "setup env", "dev env", "还原环境", "restore env", "本地验证", "local verify", "E2E 测试".
 ---
 
-# Skill: 开发环境搭建与本地调试
+# 开发环境搭建与本地调试
 
-> 触发词：`装环境`、`环境搭建`、`setup env`、`dev env`、`还原环境`、`restore env`、`测试连接`、`test connectivity`、`dotnet restore`、`环境调试`、`本地验证`、`local verify`、`沙箱能力`、`sandbox check`、`自动测试`、`端到端测试`、`E2E 测试`、`集成测试`、`真实请求调试`、`验证修复`
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`装环境`、`环境搭建`、`setup env`、`dev env`、`还原环境`、`restore env`、`测试连接`、`test connectivity`、`dotnet restore`、`环境调试`、`本地验证`、`local verify`、`沙箱能力`、`sandbox check`、`自动测试`、`端到端测试`、`E2E 测试`、`集成测试`、`真实请求调试`、`验证修复`
 
-## 概述
+## 用途
 
 两阶段一体化技能：**阶段 A** 完成开发环境安装、配置与能力验证；**阶段 B** 通过真实 API 调用 + 日志分析进行自动化测试与调试。自动检测运行模式（本地 CLI / 云端 Web 沙箱），对已知平台限制自动绕过。
 

@@ -3,7 +3,7 @@ using PrdAgent.Core.Models;
 namespace PrdAgent.Core.Interfaces;
 
 /// <summary>
-/// 系统级跨节点互传的节点身份与 HMAC 鉴权服务。详见 doc/design.peer-sync.md §5.1。
+/// 系统级跨节点互传的节点身份与 HMAC 鉴权服务。详见 doc/design.platform.peer-sync.md §5.1。
 /// </summary>
 public interface IPeerNodeService
 {

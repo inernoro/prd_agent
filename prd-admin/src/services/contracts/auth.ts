@@ -21,6 +21,22 @@ export type LoginResponse = {
 
 export type LoginContract = (username: string, password: string) => Promise<ApiResponse<LoginResponse>>;
 
+export type SsoLoginOption = {
+  provider: 'miduo-planet' | string;
+  label: string;
+  baseUrl: string;
+  appCode: string;
+  redirectUri: string;
+};
+
+export type SsoOptionsResponse = {
+  items: SsoLoginOption[];
+};
+
+export type GetSsoOptionsContract = () => Promise<ApiResponse<SsoOptionsResponse>>;
+
+export type MiduoPlanetLoginContract = (token: string) => Promise<ApiResponse<LoginResponse>>;
+
 export type ResetPasswordResponse = {
   userId: string;
   resetAt: string;

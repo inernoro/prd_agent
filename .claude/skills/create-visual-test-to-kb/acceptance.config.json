@@ -1,12 +1,12 @@
 {
-  "_comment": "MAP 验收技能配置。项目无关——别的仓库改本文件即可复用。密码/密钥一律走 env 变量名引用，禁止写明文。",
+  "_comment": "验收技能配置（项目无关——别的仓库改本文件即可复用）。职责分离：验收报告默认归 CDS 验收中心，技能不再分流到 MAP 知识库。密码/密钥一律走 env 变量名引用，禁止写明文。",
   "project": "prd-agent",
   "previewUrlCmd": "python3 .claude/skills/cds/cli/cdscli.py --human preview-url",
   "previewUrlOverride": "",
 
   "auth": {
     "browser": {
-      "_comment": "headless 浏览器登录（取证用）。走表单，不注入 token。",
+      "_comment": "headless 浏览器登录（取证用，被验收应用本身）。走表单，不注入 token。",
       "loginPath": "/login",
       "userSelector": "input[type=text]",
       "passSelector": "input[type=password]",
@@ -14,33 +14,21 @@
       "userEnv": "MAP_AI_USER",
       "passEnv": "MAP_ACCEPT_PASS",
       "loggedInWhen": "leave-login-path"
-    },
-    "api": {
-      "_comment": "归档落库用。优先 scoped AgentApiKey(最小权限)，无则回退 AI 超级密钥模拟登录。",
-      "type": "ai-access-key",
-      "agentKeyEnv": "MAP_DOC_STORE_KEY",
-      "_agentKeyNote": "推荐：在 知识库→接入AI/AgentApiKey 处签发一个带 document-store:write scope 的长效 Key(sk-ak-*)，export 到 MAP_DOC_STORE_KEY。脚本会优先用它走 Authorization: Bearer，最小权限、无需 impersonate。后端约定写蕴含读（document-store:write 自动满足 document-store.read），故归档/同步脚本的 GET 调用也能通过。未设则回退下面的超级密钥。",
-      "keyHeader": "X-AI-Access-Key",
-      "keyEnv": "AI_ACCESS_KEY",
-      "impersonateHeader": "X-AI-Impersonate",
-      "impersonateEnv": "MAP_AI_USER"
     }
   },
 
   "report": {
-    "_comment": "归档目标。无文档空间的仓库把 mode 改 local，落本地 md + 截图目录。",
-    "mode": "doc-store",
-    "isPublic": false,
-    "_isPublicNote": "默认私有：owner 登录后走「知识库→验收报告」授权路径查看（正文+截图完整渲染）。设 true 才能让登出第三方经殿堂/分享看正文——注意分享阅读器当前不渲染 reference markdown 正文，跨人分享建议让对方登录或导出本地。",
-    "apiBasePath": "/api/document-store",
-    "storeName": "验收报告",
-    "storeDescription": "标准化功能验收报告归档（MAP 验收标准 v2）",
-    "templateKey": "acceptance-report-v2",
-    "_templateKeyNote": "知识库模板键(design.acceptance-kb.md §5.B)。建库时写入,后端据此对条目做结构约束:机器归档缺必填 metadata(verdict/tier/target)或正文缺「需求一一对应表」section 会被 422 拒收(与技能准入校验 §3.5 一致,零误伤)。别的仓库不想要模板约束就删掉本键。",
+    "_comment": "归档目标。默认 cds（验收中心，按项目归类）。无 CDS / 离线时把 mode 改 local，落本地 md + 截图目录。",
+    "mode": "cds",
+    "cdsProjectId": "",
+    "_cdsProjectIdNote": "CDS 项目 ID。留空则按 env CDS_PROJECT_ID > config.project 解析；都没有则归到 CDS 自身（全局）。CDS 鉴权走 env CDS_PROJECT_KEY（项目级 cdsp_*，推荐最小权限）或 AI_ACCESS_KEY（全局），CDS_HOST 指向 cds 域名。",
+    "cdsFolder": "",
+    "_cdsFolderNote": "可选：把报告归入某个项目级文件夹（按名 find-or-create）。如「每日验收」「视觉回归」。留空则挂项目根。",
     "naming": "{project} · {module} · {feature} · {type} · 验收报告",
-    "_namingNote": "固定结构(用户定 2026-05-27):项目·模块·功能·操作方式·验收报告。脚本按 --module/--feature/--type 直接拼装并自动跳过空段;状态(通过/不通过)不进标题——走 tags 标记(脚本自动写 [verdict_cn, type, tier])。操作方式如 新增功能/优化/修复。",
+    "_namingNote": "固定结构(用户定 2026-05-27):项目·模块·功能·操作方式·验收报告。脚本按 --module/--feature/--type 直接拼装并自动跳过空段;状态(通过/不通过)走 CDS verdict 元数据徽章,不进标题。操作方式如 新增功能/优化/修复。",
     "datetimeFormat": "%Y-%m-%d %H:%M",
-    "localOutDir": "/tmp/map-acceptance-local"
+    "localOutDir": "/tmp/map-acceptance-local",
+    "_docStoreNote": "旧 MAP 知识库归档（mode=doc-store）已下线为非默认。若确需向后兼容，需在本块补回 apiBasePath/storeName/templateKey/isPublic + auth.api（agentKeyEnv 等）字段并显式设 mode=doc-store；新仓库不要用此路径。"
   },
 
   "screenshot": {

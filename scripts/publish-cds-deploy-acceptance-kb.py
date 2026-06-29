@@ -2,7 +2,7 @@
 """把「CDS 可视化部署与验收」步骤发布进一个新的隔离知识库(DocumentStore)。
 
 一个 store「CDS 部署验收知识库」(appKey=cds-deploy-acceptance):
-  - 主文档 = doc/guide.cds-deploy-acceptance.md(部署 + 验收步骤)
+  - 主文档 = doc/guide.cds.deploy-acceptance.md(部署 + 验收步骤)
   - 4 个示例文档 = cds/examples/demo-* 的 README
 
 幂等:按 name+appKey 查重,存在则更新内容,不重复建库。只调既有 REST 端点,不新增后端代码。
@@ -34,7 +34,7 @@ PRIMARY = {
     "title": "CDS 可视化部署与验收指南",
     "summary": "纯前端一键部署前后端 + 基础设施(含消息队列)的步骤、基础设施目录、验收清单。",
     "tags": ["cds", "deploy", "acceptance", "guide"],
-    "path": os.path.join(REPO, "doc", "guide.cds-deploy-acceptance.md"),
+    "path": os.path.join(REPO, "doc", "guide.cds.deploy-acceptance.md"),
 }
 
 EXAMPLES = [

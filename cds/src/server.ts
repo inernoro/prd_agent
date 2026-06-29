@@ -18,7 +18,9 @@ import { createProjectComposeRouter } from './routes/project-compose.js';
 import { createProjectMigrationRouter } from './routes/project-migration.js';
 import { createProjectStorageRouter } from './routes/project-storage.js';
 import { createCacheRouter } from './routes/cache.js';
-import { createReportsRouter } from './routes/reports.js';
+import { createScheduledJobsRouter } from './routes/scheduled-jobs.js';
+import { createReportsRouter, createPublicReportShareRouter } from './routes/reports.js';
+import { createPeerSyncRouter, createPeerSyncAdminRouter } from './routes/peer-sync.js';
 import { createSnapshotsRouter } from './routes/snapshots.js';
 import { createRemoteHostsRouter } from './routes/remote-hosts.js';
 import { createReleasesRouter } from './routes/releases.js';
@@ -35,6 +37,7 @@ import { createGithubWebhookRouter } from './routes/github-webhook.js';
 import { GitHubAppClient } from './services/github-app-client.js';
 import { CheckRunRunner } from './services/check-run-runner.js';
 import { resolveGitAuthEnv } from './services/git-auth-env.js';
+import { maskBranchExtraProfilesEnv } from './services/secret-masker.js';
 import { createAuthRouter } from './routes/auth.js';
 import { createAuthLocalRouter } from './routes/auth-local.js';
 import { createWorkspacesRouter } from './routes/workspaces.js';
@@ -73,6 +76,7 @@ import type { ServerEventLogSink, ServerEventCategory, ServerEventSeverity } fro
 import type { BranchOperationCoordinator } from './services/branch-operation-coordinator.js';
 import { computeBundleFreshness } from './services/bundle-freshness.js';
 import { readBundledCdsCliVersion } from './services/cdscli-version.js';
+import { ScheduledJobService } from './services/scheduled-job-service.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -702,6 +706,16 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /export-config': '导出配置',
     'GET /reports': '列出验收报告',
     'POST /reports': '创建验收报告',
+    'GET /report-folders': '列出报告文件夹',
+    'POST /report-folders': '新建报告文件夹',
+    'POST /peer-sync/handshake': 'peer-sync 配对握手',
+    'POST /peer-sync/handshake/confirm': 'peer-sync 握手确认',
+    'POST /peer-sync/handshake/finalize': 'peer-sync 握手完成',
+    'POST /peer-sync/handshake/cancel': 'peer-sync 握手取消',
+    'GET /peer-sync/ping': 'peer-sync 连通自检',
+    'GET /peer-sync/capabilities': 'peer-sync 能力查询',
+    'POST /peer-sync/admin/pairing-codes': '生成 peer-sync 配对码',
+    'GET /peer-sync/admin/nodes': '列出 peer-sync 节点',
     'GET /cache/status': '查看缓存状态',
     'POST /cache/repair': '修复缓存挂载',
     'GET /cache/export': '导出缓存包',
@@ -859,9 +873,19 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/cds-system\/operator\/requests\/(.+)\/approve$/, '批准运维操作'],
     [/^POST \/cds-system\/operator\/requests\/(.+)\/reject$/, '拒绝运维操作'],
     [/^GET \/reports\/(.+)\/raw$/, '查看验收报告内容'],
+    [/^POST \/reports\/(.+)\/share$/, '生成报告分享链接'],
+    [/^DELETE \/reports\/(.+)\/share$/, '撤销报告分享链接'],
+    [/^POST \/reports\/(.+)\/push-to-pr$/, '验收回写 PR'],
+    [/^POST \/peer-sync\/resources\/(.+)\/signature$/, 'peer-sync 指纹查询'],
+    [/^POST \/peer-sync\/resources\/(.+)\/export$/, 'peer-sync 导出报告'],
+    [/^POST \/peer-sync\/resources\/(.+)\/apply$/, 'peer-sync 写入(忽略)'],
+    [/^DELETE \/peer-sync\/admin\/nodes\/(.+)$/, '撤销 peer-sync 节点'],
+    [/^GET \/reports\/assets\/(.+)$/, '获取报告图片资源'],
     [/^GET \/reports\/(.+)$/, '查看验收报告'],
     [/^PATCH \/reports\/(.+)$/, '更新验收报告'],
     [/^DELETE \/reports\/(.+)$/, '删除验收报告'],
+    [/^PATCH \/report-folders\/(.+)$/, '重命名报告文件夹'],
+    [/^DELETE \/report-folders\/(.+)$/, '删除报告文件夹'],
     [/^GET \/config-snapshots\/(.+)$/, '查看配置快照详情'],
     [/^POST \/config-snapshots\/(.+)\/rollback$/, '回滚到配置快照'],
     [/^DELETE \/config-snapshots\/(.+)$/, '删除配置快照'],
@@ -876,7 +900,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^DELETE \/cds-system\/remote-hosts\/(.+)$/, '删除远程主机'],
     [/^GET \/service-deployments\/(.+)\/stream$/, '订阅部署日志流'],
     [/^GET \/service-deployments\/(.+)$/, '查看部署详情'],
-    // shared-service Project 实例发现（spec.cds-map-pairing-protocol §3.2）
+    // shared-service Project 实例发现（spec.cds.map-pairing-protocol §3.2）
     [/^GET \/projects\/(.+)\/instances$/, '列出项目实例'],
     // 项目迁移(配置复刻 + 数据迁移扫描，2026-06-23)
     [/^GET \/projects\/(.+)\/migration\/peers$/, '列出迁移目标'],
@@ -905,6 +929,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/branches\/(.+)\/container-logs$/, '查看容器日志'],
     [/^POST \/branches\/(.+)\/container-env$/, '查看容器环境变量'],
     [/^POST \/branches\/(.+)\/container-exec$/, '容器内执行命令'],
+    [/^GET \/branches\/(.+)\/extra-services$/, '查看分支额外服务'],
+    [/^PUT \/branches\/(.+)\/extra-services$/, '设置分支额外服务'],
     [/^GET \/branches\/(.+)\/git-log$/, '查看 Git 提交历史'],
     [/^PUT \/env\/(.+)$/, '设置环境变量'],
     [/^DELETE \/env\/(.+)$/, '删除环境变量'],
@@ -1201,6 +1227,12 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
 
 export function createServer(deps: ServerDeps): express.Express {
   const app = express();
+  const scheduledJobService = new ScheduledJobService({
+    stateService: deps.stateService,
+    shell: deps.shell,
+    config: { masterPort: deps.config.masterPort, repoRoot: deps.config.repoRoot, dockerNetwork: deps.config.dockerNetwork },
+  });
+  scheduledJobService.start();
   app.set('etag', false);            // Disable ETag — prevents 304 on API polling (CDS is a dev tool, caching is misleading)
   // `/_cds/api/*` is the control-plane passthrough path used by preview
   // pages and the dashboard when `/api/*` might be claimed by a branch app.
@@ -1256,7 +1288,7 @@ export function createServer(deps: ServerDeps): express.Express {
   //
   // Returns 503 with the failing checks JSON-encoded so upstream knows
   // exactly what's wrong without having to SSH in.
-  // See doc/design.cds-resilience.md Phase 2 + .claude/rules/cds-first-verification.md.
+  // See doc/design.cds.resilience.md Phase 2 + .claude/rules/cds-first-verification.md.
   //
   app.get('/healthz', async (req, res) => {
     // ?lightweight=1 跳过所有 shell + fs check,只回最轻的 200 ok,
@@ -1321,7 +1353,7 @@ export function createServer(deps: ServerDeps): express.Express {
     // The React catch-all owns all non-API dashboard paths, so a wildcard
     // handler is enough to prove deep links can reach the SPA shell.
     const registeredPaths = collectRegisteredPaths(app);
-    const expectedSpaPaths = ['/project-list', '/branch-list', '/cds-settings'];
+    const expectedSpaPaths = ['/project-list', '/branch-list', '/cds-settings', '/task-schedule'];
     const missingRoutes = expectedSpaPaths.filter((p) => {
       // Either an exact match, or a wildcard ('*') is registered (the SPA fallback)
       return !registeredPaths.has(p) && !registeredPaths.has('*');
@@ -1388,7 +1420,7 @@ export function createServer(deps: ServerDeps): express.Express {
   //   uptimeSeconds     — os.uptime()
   //
   // Polled by the frontend every 5s. Cheap enough to not need caching.
-  // See doc/design.cds-resilience.md §八.
+  // See doc/design.cds.resilience.md §八.
   app.get('/api/host-stats', (_req, res) => {
     const totalBytes = os.totalmem();
     const freeBytes = os.freemem();
@@ -1610,7 +1642,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // Backward compatibility: if CDS_AUTH_MODE is unset and the legacy
   // CDS_USERNAME + CDS_PASSWORD env vars are present, default to 'basic'
   // so existing deployments keep working without an explicit toggle.
-  // See doc/design.cds-multi-project.md section 七.
+  // See doc/design.cds.multi-project.md section 七.
   const cdsUser = process.env.CDS_USERNAME;
   const cdsPass = process.env.CDS_PASSWORD;
   const rawAuthMode = (process.env.CDS_AUTH_MODE || '').toLowerCase();
@@ -1680,8 +1712,8 @@ export function createServer(deps: ServerDeps): express.Express {
   // unauthenticated API requests with 401. See:
   //   - cds/src/services/auth-service.ts
   //   - cds/src/middleware/github-auth.ts
-  //   - doc/design.cds-multi-project.md section 七
-  //   - doc/plan.cds-multi-project-phases.md P2
+  //   - doc/design.cds.multi-project.md section 七
+  //   - doc/plan.cds.multi-project-phases.md P2
   //
   // P2 uses an in-memory AuthStore; P3 will swap it out for a MongoDB
   // implementation behind the same interface, no consumer changes required.
@@ -1790,6 +1822,18 @@ export function createServer(deps: ServerDeps): express.Express {
       // GitHub webhook is public — it's authenticated by HMAC signature
       // verification inside the handler, not by the cookie/token middleware.
       if (req.method === 'POST' && req.path === '/api/github/webhook') return next();
+      // E6 验收报告匿名分享：`/r/:token` 由 token 自鉴权（不可枚举随机串），公开只读。
+      if (req.method === 'GET' && /^\/r\/[^/]+$/.test(req.path)) return next();
+      // 验收报告图片资源：name 为内容寻址 sha256+扩展名（不可枚举），公开只读，
+      // 供跨源（如 MAP 知识库）渲染报告时直接加载正文里的截图。
+      if (req.method === 'GET' && req.path.startsWith('/api/reports/assets/')) return next();
+      // WS3 MAP-KBTP peer-sync 协议端点：由配对码 / HMAC 自鉴权（路由内校验），放行登录网关。
+      // 放行整个 /api/peer-sync/ 前缀（admin 除外）——含 MAP 发起方探测的 handshake/confirm、
+      // finalize、cancel 等子路径，必须落到 peer-sync 路由（CDS 是单阶段 peer，confirm/finalize
+      // 返回 404 让 MAP 识别为 legacy peer 继续配对），而不是被登录网关拦成 401——401 会使 MAP 的
+      // legacy 判定（依赖 404，见 prd-api AdminPeerNodesController）失效而取消配对。协议端点各自
+      // 在路由内做配对码 / HMAC 鉴权；`/api/peer-sync/admin/*` 不放行，管理端点仍需 CDS 登录。
+      if (req.path.startsWith('/api/peer-sync/') && !req.path.startsWith('/api/peer-sync/admin/')) return next();
       if (/\.(css|js|ico|png|svg|woff2?)$/i.test(req.path)) return next();
       // Allow internal requests from widget proxy (/_cds/ → master)
       if (req.headers['x-cds-internal'] === '1') {
@@ -2665,7 +2709,11 @@ export function createServer(deps: ServerDeps): express.Express {
     // call (otherwise tab B would still show the old state until reload).
     const data = JSON.stringify({
       seq: ++stateSeq,
-      branches: Object.values(state.branches),
+      // Redact branch-local extra-service env before broadcasting (Codex P1 "Redact extraProfiles
+      // before state-stream broadcasts"): branch list / SSE paths mask via branchForView, but this
+      // full-state broadcaster serialized raw branches, so any /api/state-stream subscriber could
+      // receive extraProfiles.env secrets after a save. Route through the shared SSOT masker.
+      branches: Object.values(state.branches).map(maskBranchExtraProfilesEnv),
       defaultBranch: state.defaultBranch,
       // Cluster state — frontend uses these to update header + branch
       // placement + cluster modal without needing another /api/config call.
@@ -3192,7 +3240,7 @@ export function createServer(deps: ServerDeps): express.Express {
   }));
   // Multi-project router. P4 Part 2 wires up real create/delete, so the
   // router now needs shell (for docker network commands) and config.
-  // See doc/design.cds-multi-project.md.
+  // See doc/design.cds.multi-project.md.
   app.use('/api', createProjectsRouter({
     stateService: deps.stateService,
     shell: deps.shell,
@@ -3203,6 +3251,11 @@ export function createServer(deps: ServerDeps): express.Express {
   // Mounted at /api so the nested /projects/:id/pending-import path works
   // alongside the rest of the projects router.
   app.use('/api', createPendingImportRouter({ stateService: deps.stateService }));
+  app.use('/api', createScheduledJobsRouter({
+    stateService: deps.stateService,
+    scheduledJobService,
+    assertProjectAccess: assertProjectAccess as any,
+  }));
 
   // 被动授权 — agent 免密发起授权申请 + 用户右下角一键批准签发授权密钥。
   // 注意 发起/轮询两个端点的 public 放行在上面的全局认证中间件里(搜 access-requests)。
@@ -3235,9 +3288,14 @@ export function createServer(deps: ServerDeps): express.Express {
   // Cache diagnostics / repair / cross-server migration.
   // See routes/cache.ts for why this exists (挂载失效诊断 + 换机器预热).
   app.use('/api', createCacheRouter({ stateService: deps.stateService, shell: deps.shell }));
-  // CDS 自托管验收报告（HTML / Markdown）。挂在全局认证网关之后，
-  // 所以 CDS 登录态即可访问，无需额外权限配置。详见 routes/reports.ts。
-  app.use('/api', createReportsRouter({ stateService: deps.stateService }));
+  // E6 验收报告匿名分享：顶层 `/r/:token` 公开只读（不经登录网关，token 自鉴权）。
+  // 在认证白名单里已放行 `/r/`，见上方全局网关。
+  app.use('/r', createPublicReportShareRouter({ stateService: deps.stateService }));
+  // WS3 MAP-KBTP peer-sync：协议端点（HMAC/配对码鉴权，已在认证白名单放行）+ 管理端点（登录态）。
+  app.use('/api/peer-sync', createPeerSyncRouter({ stateService: deps.stateService }));
+  app.use('/api/peer-sync', createPeerSyncAdminRouter({ stateService: deps.stateService }));
+  // 注：CDS 自托管验收报告的 `/api` 路由挂载推迟到 githubAppClient 创建之后
+  // （见下方），以便 E4「验收回写 PR」拿到 GitHub App 客户端。
   // ConfigSnapshot (导入/破坏性操作前自动备份) + DestructiveOperationLog (紧急撤销).
   // 见 routes/snapshots.ts 头部注释。
   app.use('/api', createSnapshotsRouter({ stateService: deps.stateService }));
@@ -3406,6 +3464,10 @@ export function createServer(deps: ServerDeps): express.Express {
       console.warn('[check-run] startup reconciliation failed:', err.message);
     });
   }
+
+  // CDS 自托管验收报告（HTML / Markdown）。挂在全局认证网关之后，CDS 登录态即可访问。
+  // githubApp 用于 E4「验收回写 PR」（check-run / PR 评论）；未配置时回写端点返回 503。
+  app.use('/api', createReportsRouter({ stateService: deps.stateService, githubApp: githubAppClient }));
 
   app.use('/api', createBranchRouter({
     stateService: deps.stateService,

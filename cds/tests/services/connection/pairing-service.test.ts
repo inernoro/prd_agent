@@ -1,5 +1,5 @@
 /**
- * pairing-service.test.ts —— spec.cds-map-pairing-protocol.md v1 状态机锁定。
+ * pairing-service.test.ts —— spec.cds.map-pairing-protocol.md v1 状态机锁定。
  *
  * 覆盖：
  *   1. encodeClipboard / decodeClipboard round-trip

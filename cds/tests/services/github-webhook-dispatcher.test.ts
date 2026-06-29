@@ -294,7 +294,7 @@ describe('GitHubWebhookDispatcher', () => {
         commits: [
           {
             id: 'fecd0c501234567890abcdef1234567890abcde',
-            modified: ['doc/guide.cds-agent-runbook.md', 'README.md', 'scripts/smoke-cds-agent-one-cycle.sh'],
+            modified: ['doc/guide.cds.agent.runbook.md', 'README.md', 'scripts/smoke-cds-agent-one-cycle.sh'],
           },
         ],
       });

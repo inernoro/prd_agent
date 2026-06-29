@@ -11,7 +11,7 @@ import { DOCUMENT_TYPE_LABELS } from '../../types';
 import { openGroupSessionAndSetStore } from '../../lib/openGroupSession';
 import GroupList from '../Group/GroupList';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { extractMarkdownTitle, isMeaninglessName, normalizeCandidateName, stripFileExtension } from '../utils/nameHeuristics';
+import { extractMarkdownTitle, isMeaninglessName, normalizeCandidateName, sanitizeGroupName, stripFileExtension } from '../utils/nameHeuristics';
 import DocumentContextMenu from '../Document/DocumentContextMenu';
 import RenameDocumentModal from '../Document/RenameDocumentModal';
 import ConfirmDialog from '../ui/ConfirmDialog';
@@ -292,7 +292,7 @@ export default function Sidebar() {
 
   const submitCreate = async () => {
     setInlineError('');
-    const explicitGroupName = groupNameInput.trim();
+    const explicitGroupName = sanitizeGroupName(groupNameInput, '');
     const hasPrd = !!createPrdContent.trim();
 
     try {
@@ -320,9 +320,9 @@ export default function Sidebar() {
         if (!groupNameFinal) {
           const base = createPrdFileName ? normalizeCandidateName(stripFileExtension(createPrdFileName)) : '';
           if (base && !isMeaninglessName(base)) {
-            groupNameFinal = base;
+            groupNameFinal = sanitizeGroupName(base, '');
           } else {
-            groupNameFinal = extractMarkdownTitle(createPrdContent) || uploadResp.data.document.title || '';
+            groupNameFinal = sanitizeGroupName(extractMarkdownTitle(createPrdContent) || uploadResp.data.document.title || '', '');
           }
         }
 

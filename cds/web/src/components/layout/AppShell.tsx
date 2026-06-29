@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { Check, ClipboardCheck, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Rocket, Search, Settings, Sun, X } from 'lucide-react';
+import { CalendarClock, Check, ClipboardCheck, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Rocket, Search, Settings, Sun, X } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { CommitInbox } from '@/components/CommitInbox';
 import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
@@ -21,7 +21,7 @@ import { cn } from '@/lib/utils';
  *
  * Replaces every `<div className="cds-app-shell"> + custom <nav> + custom <main>`
  * pattern that each page used to re-implement. Pages now render only their
- * workspace content + an optional topbar. See `doc/plan.cds-web-migration.md`
+ * workspace content + an optional topbar. See `doc/plan.cds.web-migration.md`
  * Week 4.6 (visual rebuild) for why this exists.
  *
  * Visual contract:
@@ -108,6 +108,7 @@ const preloadProjectListPage = (): void => { void import('@/pages/ProjectListPag
 const preloadCdsSettingsPage = (): void => { void import('@/pages/CdsSettingsPage'); };
 const preloadReleaseCenterPage = (): void => { void import('@/pages/ReleaseCenterPage'); };
 const preloadReportsPage = (): void => { void import('@/pages/ReportsPage'); };
+const preloadTaskSchedulePage = (): void => { void import('@/pages/TaskSchedulePage'); };
 
 function shellLoginHref(mode?: string): string {
   const path = mode === 'github' ? '/api/auth/github/login' : '/login';
@@ -430,6 +431,19 @@ function RailNav({ active, canLogout, logoutState, onLogout, onNavigate }: RailN
         >
           <Rocket />
           <span>Releases</span>
+        </Link>
+        <Link
+          to="/task-schedule"
+          className="cds-rail-item"
+          data-active={active === 'task-schedule' ? 'true' : 'false'}
+          aria-label="任务调度"
+          title="任务调度（定时任务 / 手动执行 / 运行记录）"
+          onClick={onNavigate}
+          onMouseEnter={preloadTaskSchedulePage}
+          onFocus={preloadTaskSchedulePage}
+        >
+          <CalendarClock />
+          <span>Tasks</span>
         </Link>
         <Link
           to="/reports"

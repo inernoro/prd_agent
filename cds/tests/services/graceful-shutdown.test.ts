@@ -1,7 +1,7 @@
 /**
  * Graceful Shutdown — TDD 契约
  *
- * 对应 doc/report.cds-forwarder-success.md
+ * 对应 doc/report.cds.forwarder-success.md
  * 实现位置:cds/src/services/graceful-shutdown.ts
  *
  * 旧 daemon 收到 SIGTERM 后,停止接收新请求,drain 现有 SSE / 业务任务,

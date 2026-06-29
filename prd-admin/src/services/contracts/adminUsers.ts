@@ -27,6 +27,8 @@ export type CreateAdminUserInput = {
   password: string;
   role: UserRole;
   displayName?: string;
+  miduoSsoSubjectType?: 'mobile' | 'wework_userid' | 'employeeNo';
+  miduoSsoSubjectValue?: string;
 };
 
 export type CreateAdminUserResponse = {
@@ -115,6 +117,32 @@ export type BulkDeleteUsersResponse = {
 };
 
 export type BulkDeleteUsersContract = (userIds: string[]) => Promise<ApiResponse<BulkDeleteUsersResponse>>;
+
+export type MiduoSsoConfig = {
+  enabled: boolean;
+  baseUrl: string;
+  appCode: string;
+  hasAppSecret: boolean;
+  redirectUri: string;
+  label: string;
+  subjectType: 'mobile' | 'wework_userid' | 'employeeNo';
+};
+
+export type UpdateMiduoSsoConfigInput = MiduoSsoConfig & {
+  appSecret?: string;
+};
+
+export type MiduoSsoBindingImportResponse = {
+  requestedCount: number;
+  importedCount: number;
+  failedCount: number;
+  importedItems: Array<{ username: string; displayName: string; subjectMasked: string }>;
+  failedItems: Array<{ line: string; username?: string | null; code: string; message: string }>;
+};
+
+export type GetMiduoSsoConfigContract = () => Promise<ApiResponse<MiduoSsoConfig>>;
+export type UpdateMiduoSsoConfigContract = (input: UpdateMiduoSsoConfigInput) => Promise<ApiResponse<MiduoSsoConfig>>;
+export type ImportMiduoSsoBindingsContract = (text: string, subjectType?: MiduoSsoConfig['subjectType']) => Promise<ApiResponse<MiduoSsoBindingImportResponse>>;
 
 export type ForceExpireAllResponse = { expiredCount: number };
 export type ForceExpireAllContract = () => Promise<ApiResponse<ForceExpireAllResponse>>;

@@ -3,7 +3,9 @@ name: auto-fix-issues
 description: Agent 与 Agent 之间互相提交、修复、复测 GitHub issue 的自动巡检协议。当一个 agent 用另一个 agent 的产物（cdscli、prd-api、共享 skill 等）发现 bug、阻塞、能力缺口时，用本技能产出标准 issue / tracker / PR 收尾清单 / 复测报告，避免 agent 之间反复确认"修没修、修对没修、复测了没"。触发词："巡检"、"自动巡检"、"反馈给对方 agent"、"复测修复"、"agent 间提 issue"、"/audit"、"/auto-fix-issues"。
 ---
 
-# Auto Fix Issues — Agent 间自动巡检与修复闭环
+# Agent 间自动巡检与修复闭环
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/audit`、`/auto-fix-issues`、"巡检"、"反馈给对方 agent"、"复测修复"
 
 > 给 agent 用的「我用了你的产物发现 bug，怎么以最低 friction 让你修，修完我怎么复测」协议。
 > **不是**给最终用户的 UAT，**不是**自检代码 review，**是** agent → agent 的契约。
@@ -162,16 +164,16 @@ services:
 
 ```bash
 python3 cdscli.py scan ./mdimp --output /tmp/out.yml
-grep "imp-api:" /tmp/out.yml          # ✓ 命中
-grep "spring-boot:run -pl imp-api" /tmp/out.yml  # ✓ 命中
-grep "./imp-platform:/app" /tmp/out.yml  # ✓ 命中
+grep "imp-api:" /tmp/out.yml          # 命中
+grep "spring-boot:run -pl imp-api" /tmp/out.yml  # 命中
+grep "./imp-platform:/app" /tmp/out.yml  # 命中
 ```
 
 - [x] scan 输出包含 imp-api
 - [x] command 含 -pl imp-api -am
 - [x] volume 挂父目录
 
-✅ 全部 PASS。请改 label `已验收` 并关闭。
+全部 PASS。请改 label `已验收` 并关闭。
 ```
 
 ### FAIL 报告

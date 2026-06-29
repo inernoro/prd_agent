@@ -991,11 +991,29 @@ function branchTimeBadge(branch: BranchSummary, now = Date.now(), busySince?: st
       title: `GitHub push 到达 CDS: ${branch.lastPushAt}${deployPart}`,
     };
   }
+  // lastAccessedAt 同时被两件事盖戳：① 预览代理请求（scheduler.touch）② **部署尝试**（deploy 前盖，
+  // 让失败/被拒也更新可见时间）。所以不能无条件把它当「最近访问」——否则一次成功部署（部署前盖了
+  // lastAccessedAt、成功后又写更晚的 lastDeployAt）会被显示成「最近访问」而非「部署成功」（Bugbot
+  // Medium）。判据：成功部署的 lastDeployAt 必晚于部署前盖的 lastAccessedAt，故 deploy>=access 即代表
+  // 最近一次事件是部署；只有访问确实晚于部署才显示「最近访问」。
+  const accessMs = branch.lastAccessedAt ? Date.parse(branch.lastAccessedAt) : 0;
+  const deployMs = branch.lastDeployAt ? Date.parse(branch.lastDeployAt) : 0;
+  if (deployMs && deployMs >= accessMs) {
+    return {
+      label: '部署成功',
+      text: formatRelativeTime(branch.lastDeployAt),
+      title: branch.lastAccessedAt
+        ? `最近一次成功部署完成: ${branch.lastDeployAt}；最近一次预览访问: ${branch.lastAccessedAt}`
+        : `最近一次成功部署完成: ${branch.lastDeployAt}`,
+    };
+  }
   if (branch.lastAccessedAt) {
     return {
-      label: '上次部署',
+      label: '最近访问',
       text: formatRelativeTime(branch.lastAccessedAt),
-      title: `最近一次部署尝试: ${branch.lastAccessedAt}`,
+      title: branch.lastDeployAt
+        ? `最近一次预览访问: ${branch.lastAccessedAt}；最近成功部署: ${branch.lastDeployAt}`
+        : `最近一次预览访问: ${branch.lastAccessedAt}`,
     };
   }
   if (branch.lastDeployAt) {
@@ -5112,32 +5130,41 @@ function BranchCard({
           // running 时才用 service 自身状态做精细化区分。
           const chipStatus = isInterim || isError ? branch.status : resource.status;
           const chipRailClass = isError ? issueRailClass : statusRailClass(chipStatus);
-          const chipToneClass = chipStatus === 'running'
-            ? 'border-emerald-500/25 bg-emerald-500/[0.055] text-foreground/85 hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-foreground'
-            : chipStatus === 'error'
-              ? 'border-destructive/30 bg-destructive/10 text-foreground/85 hover:border-destructive/45 hover:bg-destructive/15 hover:text-foreground'
-              : isInterim
-                ? 'border-sky-500/30 bg-sky-500/10 text-foreground/85 hover:border-sky-500/45 hover:bg-sky-500/15 hover:text-foreground'
-                : 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))]/75 text-foreground/75 hover:border-primary/30 hover:bg-[hsl(var(--surface-raised))]/90 hover:text-foreground';
+          // 基础设施(MongoDB/Redis 等)是"依赖",不是"自己的容器":弱化为次要 —— 不显端口、
+          // 去边框、静默底色,和自有服务 chip 拉开主次(2026-06-26 用户验收 #4)。
+          const isInfra = resource.source === 'infra';
+          // "碎点"治理(2026-06-26 用户验收 #5):running 态由 chip 底色已表达,无需再缀一个
+          // 状态点;只在 error/中间态保留状态点(负面/过渡信号才值得这一点)。
+          const showDot = isError || isInterim;
+          const showPort = chipDisplay.port && !isInfra && typeof resource.port === 'number';
+          const chipToneClass = isInfra
+            ? 'border-transparent bg-transparent text-muted-foreground/70 hover:bg-[hsl(var(--surface-raised))]/55 hover:text-foreground/90'
+            : chipStatus === 'running'
+              ? 'border-emerald-500/25 bg-emerald-500/[0.055] text-foreground/85 hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-foreground'
+              : chipStatus === 'error'
+                ? 'border-destructive/30 bg-destructive/10 text-foreground/85 hover:border-destructive/45 hover:bg-destructive/15 hover:text-foreground'
+                : isInterim
+                  ? 'border-sky-500/30 bg-sky-500/10 text-foreground/85 hover:border-sky-500/45 hover:bg-sky-500/15 hover:text-foreground'
+                  : 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))]/75 text-foreground/75 hover:border-primary/30 hover:bg-[hsl(var(--surface-raised))]/90 hover:text-foreground';
           return (
             <button
               key={resource.id}
               type="button"
-              className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs shadow-[inset_0_1px_0_rgba(255,255,255,0.035)] transition-[background-color,border-color,color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 ${chipToneClass} ${
-                resource.access === 'external'
+              className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs transition-[background-color,border-color,color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 ${isInfra ? '' : 'shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]'} ${chipToneClass} ${
+                resource.access === 'external' && !isInfra
                   ? 'ring-1 ring-[hsl(var(--hairline))]'
                   : ''
               }`}
-              title={`${resource.displayName}\n${resource.serviceName}${resource.containerName ? ` · ${resource.containerName}` : ''}\n点击打开资源面板`}
+              title={`${resource.displayName}${isInfra ? '（基础设施依赖）' : ''}\n${resource.serviceName}${resource.containerName ? ` · ${resource.containerName}` : ''}${typeof resource.port === 'number' ? `\n端口 :${resource.port}` : ''}\n点击打开资源面板`}
               aria-label={`打开 ${resource.displayName} 资源面板`}
               onClick={(event) => {
                 event.stopPropagation();
                 onResourcePanel?.(resource);
               }}
             >
-              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${chipRailClass}`} aria-hidden />
-              {chipDisplay.icon ? <ResourceIcon resource={resource} className="h-3.5 w-3.5 shrink-0 opacity-85 saturate-100 brightness-105" /> : null}
-              {chipDisplay.port ? <span className="font-mono text-foreground/80">:{resource.port}</span> : null}
+              {showDot ? <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${chipRailClass}`} aria-hidden /> : null}
+              {(chipDisplay.icon || isInfra) ? <ResourceIcon resource={resource} className={`h-3.5 w-3.5 shrink-0 ${isInfra ? 'opacity-70' : 'opacity-85 saturate-100 brightness-105'}`} /> : null}
+              {showPort ? <span className="font-mono text-foreground/80">:{resource.port}</span> : null}
             </button>
           );
         }) : (

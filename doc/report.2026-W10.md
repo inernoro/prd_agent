@@ -111,7 +111,7 @@ timeline
 
 **MAP 系统价值**：工作流引擎是 MAP 的"自动化流水线"层，从单个 Agent（对话/画图/视频）升级为多 Agent 编排系统。本周的 ScriptExecutor 让工作流具备了确定性数据处理能力（不依赖 LLM），AI 参数填充让非技术人员也能配置复杂工作流，两者结合使工作流从"开发者工具"进化为"全职能自助平台"。
 
-> 参考文档：`design.workflow-engine.md`、`design.workflow-control-flow-sse.md`
+> 参考文档：`design.workflow-agent.engine.md`、`design.workflow-agent.control-flow-sse.md`
 
 涉及 PR：#165, #169, #170, #182, #183, #196, #201, #204
 
@@ -177,7 +177,7 @@ timeline
 
 **MAP 系统价值**：缺陷管理 Agent 是 PRD Agent 的配套质量闭环——PRD 文档 → 功能开发 → 测试缺陷反馈 → 修复迭代。结构化缺陷数据可对接周报 Agent 统计（共享 `report_teams` 集合），缺陷趋势指标支撑产品决策，Webhook 通知连接企业微信/钉钉/飞书等外部协作工具。
 
-> 参考文档：`plan.unified-defect-management.md`、`spec.defect-agent.md`、`design.defect-agent.md`
+> 参考文档：`plan.defect-agent.unified-management.md`、`spec.defect-agent.md`、`design.defect-agent.md`
 
 涉及 PR：#205
 
@@ -198,7 +198,7 @@ timeline
 
 **MAP 系统价值**：多文档知识库直接提升 PRD Agent 的核心能力——理解产品方案。在 MAP 的愿景中，PRD Agent 要替代"口头串讲"实现"文档即共识"，多文档支持让 AI 能同时对照需求文档、技术方案、竞品分析来回答问题，是从"单点理解"到"全局理解"的关键升级。后续 RAG 集成将进一步解锁长文档场景。
 
-> 参考文档：`design.multi-doc-knowledge.md`、`plan.multi-document.md`
+> 参考文档：`design.knowledge-base.multi-doc.md`、`plan.knowledge-base.multi-document.md`
 
 涉及 PR：#195
 
@@ -218,7 +218,7 @@ timeline
 
 **MAP 系统价值**：提升用户留存率 + 降低组织迁移成本。MAP 平台上积累的提示词、工作区配置、参考图库是团队的"隐性知识资产"，数据共享确保这些资产不因人员流动而丢失。
 
-> 参考文档：`design.account-data-sharing.md`
+> 参考文档：`design.platform.account-data-sharing.md`
 
 涉及 PR：#185
 
@@ -243,7 +243,7 @@ timeline
 
 **MAP 系统价值**：视频 Agent 是 MAP 的"内容输出放大器"——将文章、PRD 等文本内容转化为可传播的视频教程。场景代码生成解锁了 LLM 代码生成能力在视频领域的应用，`IVideoGenService` 领域服务让视频生成可被工作流编排，形成"文章 → 分镜 → LLM 代码 → Remotion 渲染 → COS 托管"的全自动管线。
 
-> 参考文档：`design.video-scene-codegen.md`、`plan.video-tts-and-scene-upgrade.md`、`plan.visual-agent-video-gen-daily-limit.md`
+> 参考文档：`design.video-agent.scene-codegen.md`、`plan.video-agent.tts-and-scene-upgrade.md`、`plan.visual-agent.video-gen-daily-limit.md`
 
 涉及 PR：#180, #202
 
@@ -307,7 +307,7 @@ timeline
 
 **MAP 系统价值**：周报 Agent 是 MAP 的"组织管理层"，驱动员工活跃度可视化，为总裁面板供应数据，强化团队管理闭环。与缺陷管理 Agent 共享 `report_teams` 集合，缺陷数据可对接周报统计，形成"开发 → 缺陷 → 周报 → 决策"的完整信息流。
 
-> 参考文档：`plan.report-agent-impl.md`、`spec.report-agent.md`
+> 参考文档：`plan.report-agent.impl.md`、`spec.report-agent.md`
 
 涉及 PR：#203
 

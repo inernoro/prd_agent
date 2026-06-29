@@ -63,7 +63,7 @@ timeline
 - **DAG 并行执行引擎**：BFS 拓扑排序 + `Task.WhenAll` 批量并发，`ConcurrentDictionary` 线程安全收集结果，批完成后单线程更新 DAG 状态
 - **画布高级交互**：自动布局（实际节点尺寸计算对齐）、撤销/重做历史栈、连线插入节点、快捷键体系
 - **ReactFlow 路由冲突根因修复**：ReactFlow 53+ zustand 订阅填满 React 调度队列，阻塞 React Router 位置变更事件——解决方案是"先卸载 ReactFlow 再导航"（`setUnmounting(true)` → `requestAnimationFrame` → `navigate()`），这是一个跨库状态管理冲突的通用解决模式
-- **故障排查指南**：将 ReactFlow 案例沉淀为 `guide.troubleshooting.md`，建立问题诊断知识库
+- **故障排查指南**：将 ReactFlow 案例沉淀为 `guide.platform.troubleshooting.md`，建立问题诊断知识库
 
 涉及 PR：#220
 

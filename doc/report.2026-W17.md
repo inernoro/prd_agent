@@ -66,7 +66,7 @@ timeline
 
 - 第一阶段（PR #488）：先做 8 轮战术性补丁——Controller 强制 DirectModel、AsyncLocal 跨调用栈传递、装饰器拦截、debug 端点写 `_diag_resolver_calls`、实例字段方案——全部失败，最终 commit message 留下完整的失败链。
 - 第二阶段（PR #490）：从战术补丁切到架构治理。新增 `SendRawWithResolutionAsync` 接收已解析结果不再二次 Resolve、`ExpectedModelRespectingResolver` 装饰器整体删除、`ResolverDebugController` test-chain/simulate-worker 端点删除、`OpenAIImageClient` 改用单次 Resolve 路径、`OpenRouterVideoClient` 缓存 Submit 解析结果消除轮询重复。
-- 沉淀：`.claude/rules/compute-then-send.md` 规则上线 + `.claude/skills/llm-call-trace/` 技能上线 + `doc/design.llm-gateway-refactor.md` 状态文档。
+- 沉淀：`.claude/rules/compute-then-send.md` 规则上线 + `.claude/skills/llm-call-trace/` 技能上线 + `doc/design.platform.llm-gateway-refactor.md` 状态文档。
 - 修复 `GatewayModelResolution` 凭据泄露 + `OriginalPool` 字段丢失。
 - 相关 PR：#488（10 commits）、#490（10 commits）。
 
@@ -88,7 +88,7 @@ timeline
 - PR #463：海鲜市场新增「技能」板块 + 收藏技能区块 + 用户菜单入口重构 + agent-switcher 置顶/最近/常用云端同步（换分支不丢数据）+ 筛选区液态玻璃卡 + 4 重质感层背景。
 - PR #470：技能卡片重设计 + 封面图 + 预览地址（204 行 `MarketplaceSkillsController` 扩容）。
 - PR #473：开放 API 主线落地——`AgentApiKeyService`（192 行）+ `MarketplaceSkill.ReferenceType` 字段预留 + `findmapskills 官方化（虚拟注入市场 + 版本号 + 更新机制）` + Bugbot 二轮安全审查（CSPRNG 用 `RandomNumberGenerator` 替代 `Random`、强类型日期、ResolveBaseUrl 支持 X-Forwarded-Host/Proto）+ `scripts/smoke-skill-marketplace.sh` 部署自测脚本 + 演示视频通用基础设施 + 「接入 AI」弹窗布局三处细节打磨。
-- 沉淀：`doc/design.skill-marketplace-open-api.md` + `doc/plan.skill-marketplace-open-api-next.md` + `agent_api_keys` / `agent_open_endpoints` / `external_authorizations` 三个新集合。
+- 沉淀：`doc/design.skill.marketplace-open-api.md` + `doc/plan.skill.marketplace-open-api-next.md` + `agent_api_keys` / `agent_open_endpoints` / `external_authorizations` 三个新集合。
 - 相关 PR：#463（6 commits）、#470（1 commit）、#473（10 commits）。
 
 ### 4. Daily Tips 全栈新增 + 全局 Cmd+K 命令面板
@@ -97,7 +97,7 @@ timeline
 
 - PR #471：feat 主线——`DailyTip` Model + `DailyTipsController` (329 行) + `AdminDailyTipsController` (197 行) + `User.DailyTipPreferences` 字段 + Quick Links 四卡左对齐 + 智能体/工具/基础设施三桶分类 + 推送/统计奥卡姆剃刀版。
 - PR #475：第二波——跨页 Tour + 多选批量推 + 场景 chip + 苹果风列表重设计 + 撒花改用真 canvas 算法（SuccessConfettiButton）+ Cursor Bugbot 三轮（autoClick 同病 / rect flash / dock 重复 dispatch / 超时卡 / 铃铛双向同步 / 常量共享）+ 11 步「大全套」showcase 用于回归测试。
-- 文档：`doc/design.daily-tips.md`（原理）+ `doc/plan.daily-tips-remaining-work.md` + `doc/plan.daily-tips-scenarios-and-staleness.md`（剩余工作交接）。
+- 文档：`doc/design.daily-tips.md`（原理）+ `doc/plan.daily-tips.remaining-work.md` + `doc/plan.daily-tips.scenarios-and-staleness.md`（剩余工作交接）。
 - 11 个 changelog 碎片记录 11 个独立交付节点（Ctrl+B/K 演示、撒花、跨页 Tour、Tab Cmd+K、apple 风列表等）。
 - 相关 PR：#471（5 commits）、#475（10 commits）。
 
@@ -105,12 +105,12 @@ timeline
 
 > **价值**：CDS 在 W17 进入"上一周打通能力，本周补漏洞 + 美化"的阶段。最重要的修复是 9 处跨项目隔离漏洞（容量徽章、技能包打包、cds-compose 文件扫描、quickstart 跨项目污染、infra/discover、分支串流、4 处认证回路、2 处数据泄露），CDS 从"看着像多项目"升级到"真正多项目"。同时白天主题下"砸黑底"的反复体验问题在第 N 轮反馈后通过 token 治理 + `.claude/rules/cds-theme-tokens.md` 规则一次性根治。
 
-- PR #484：项目隔离 8 处修复 + `doc/rule.cds-project-isolation-audit.md` 反思 MECE 矩阵盲区。
+- PR #484：项目隔离 8 处修复 + `doc/rule.cds.project-isolation-audit.md` 反思 MECE 矩阵盲区。
 - PR #498：第 6 轮收尾——legacy-cleanup status 走 needsMigration 路径 + initialize 容器名用 entry.id 替代裸 mainSlug + 跨项目隔离的 4 处认证漏洞 + 2 处数据泄露 + 系统性扫除 default 硬编码 + 区分"需要迁移"与"仅剩残留" + 一键清理接口（共 1619+86 行）。
 - PR #472：UI 大整理——header 精简 + Agent Key modal 白天模式修复 + Activity Monitor 去冗余 + 暗黑/白天 4 个具体 bug + 一劳永逸清理僵尸 token + MEM/CPU 上顶 + 分支排序 + 手机端 ☰ 菜单导航 + capacity+MEM/CPU 胶囊合并 + 项目列表 ⚙ 菜单去 emoji + 「白天主题彻底禁止暗色背景 + 把规则钉成最高优先级」（关联 `.claude/rules/cds-theme-tokens.md`）+ 启动审计 + API label 补全。
 - PR #489：备份/回滚/热更新一揽子 + Dockerfile BuildKit cache mount + dotnet-restart 热更新 + 强制重建 + 字节码核验 + 二级菜单 + 可编辑构建命令 + AI 控制可结束 + 全局批量改部署命令。
 - PR #459：预览就绪三层兜底（彻底消灭构建/重启窗口的 Cloudflare 502）+ 已删除分支子域名友好化。
-- PR #457：GitHub Webhook 噪声事件过滤 + 断开 500 重试循环 + 部署去重 + `doc/guide.cds-github-webhook-events.md`。
+- PR #457：GitHub Webhook 噪声事件过滤 + 断开 500 重试循环 + 部署去重 + `doc/guide.cds.github-webhook-events.md`。
 - 相关 PR：#484（9 commits）、#498（10 commits）、#472（10 commits）、#489（4 commits）、#459（2 commits）、#457（2 commits）。
 
 ### 6. 移动端首页 Apple Today 风重构 + 黑屏修复
@@ -134,7 +134,7 @@ timeline
 > **价值**：把"每周生成一张可分享的周报海报"从想法变成产品。LLM 真流式打字机面板 + AI 配图 + 5 项验收反馈整顿（去掉「周报」绑定让任何主题都能海报化 / SSE 流式 / 多数据源 / 预览 fix / 返回按钮）+ 服务器权威化（Worker + RunId）+ 主页周报海报轮播弹窗 + 资源管理「海报设计」入口。
 
 - PR #476：主线落地（4738+3 行）——`PosterAutopilotService`（601 行）+ `PosterTemplateRegistry`（96 行）+ `AppCallerCodeRegistryGuardTests` 测试基础设施 + 向导页液态玻璃 + 编辑器「生成图片」按钮真点击即生成 + LLM 输出改 Markdown 分段 + body 真 markdown 预览 + 修 runtime error。
-- 文档：`doc/plan.weekly-poster-designer-handoff.md` 交接文档。
+- 文档：`doc/plan.report-agent.weekly-poster-handoff.md` 交接文档。
 - 相关 PR：#476（10 commits）。
 
 ### 9. 更新中心改造 — AI 总结 + GitHub 时间秒级 + NEW 徽标 + 知识库选择
@@ -151,7 +151,7 @@ timeline
 > **价值**：从"工作流和评审硬编码鉴权"演进到"配一份外部凭据，多个 Agent 复用"。GitHub / Tapd / Yuque 三家先行接入，每家有独立的 Auth Handler，凭据走 DataProtection API 加密落 MongoDB，过期前 push 通知用户重新授权。配合本周的 sk-ak 长效凭据形成"对内 m2m + 对外 oauth"的完整凭据体系。
 
 - PR #493：核心落地——`ExternalAuthorizationService`（239 行）+ `GitHubAuthHandler`（48 行）+ `TapdAuthHandler`（118 行）+ `YuqueAuthHandler`（100 行）+ 验证失败时保留原有 metadata 和 expiresAt + 巡检 CSV header 检测改用关键词 + 数值特征双重判定 + 10 轮 Bugbot/Codex review（XSS / TOCTOU filter / chart data names ECharts innerHTML / cookie via variables / richText tooltip / dead code）。
-- 文档：`doc/design.external-authorization.md`。
+- 文档：`doc/design.platform.external-authorization.md`。
 - 相关 PR：#493（10 commits）。
 
 ### 11. 文章配图标记 — 位置策略选择器 Phase 1-1.7
@@ -159,7 +159,7 @@ timeline
 > **价值**：文学创作的文章配图从"AI 自动塞在哪算哪"升级到"用户可选 Above / Beside / Below 三种策略 + 锚点教程气泡 + 段落 gutter + 右键菜单 + 大小标题自适应 + 同尺寸配图占位"。让运营在排版长文时不再为"AI 把图塞错了位置"反复返工。
 
 - PR #464：5 个连续 Phase 落地——位置策略选择器 + 配图锚点教程气泡 + 段落 gutter + 右键菜单 + 切换有反馈 + 同尺寸配图占位 + 大小标题自适应。
-- 文档：`doc/plan.manual-image-marking-control.md`（计划） + `doc/design.literary-agent.md`（原理归档）。
+- 文档：`doc/plan.visual-agent.manual-image-marking.md`（计划） + `doc/design.literary-agent.md`（原理归档）。
 - 相关 PR：#464（4 commits）。
 
 ### 12. CDS PR 评论模板可自定义 + GitHub 评论一键跳转
@@ -182,7 +182,7 @@ timeline
 > **价值**：doc/ 引入第 7 类前缀 `debt.*` 用于"已知边界 / 后续可补 / TODO / 不确定风险"的台账记录。从此交付时主动声明的"已知边界"段落必须固化到对应 `debt.{module}.md`，不能只留在 commit message 里——否则下一次 session 没人记得。同时回填 W14-W16 三周缺失的周报，把项目历史首尾接上。
 
 - PR #460：W14-W16 周报回填（797+56 行）。
-- 新增 `doc/debt.video-agent.md` 录入视频 Agent 4 条债务 + 修订 `doc/rule.doc-naming.md` 引入 debt 前缀 + 同步 `doc/index.yml` 与 `doc/guide.list.directory.md`。
+- 新增 `doc/debt.video-agent.md` 录入视频 Agent 4 条债务 + 修订 `doc/rule.doc.naming.md` 引入 debt 前缀 + 同步 `doc/index.yml` 与 `doc/guide.list.directory.md`。
 - AI 竞技场 v1 单轮设计文案对齐（避免暗示多轮上下文）。
 - 跨 PR 的文档沉淀：14 个新文档（design / spec / plan / guide / report / debt / rule 全套），符合 W16 P1 提的"多项目 + GitHub + 技能同步文档化"方向。
 
@@ -252,7 +252,7 @@ timeline
 | P0 GitHub 自动部署进入真实仓库规模验证         | 显著落地。本周 #457 / #466 / #467 在 webhook 噪声过滤、PR 评论模板自定义、一键跳转 Review Agent 三个方向把 GitHub 自动部署体验产品化；#459 三层就绪兜底消灭 Cloudflare 502 让"刚 push 立刻访问"的瞬态体验过关。 |
 | P0 Mongo 单后端运维跑通                 | 本周未在 PR 中显式推进 Mongo backup/restore/failover runbook。建议下周补。            |
 | P1 周报 / 视频 / 百宝箱 / 公开页做体验回归      | 大幅落地。周报 4 个 PR 落地浅色 + Markdown 导入 + IssueList + 多团队权限；视频走 Remotion 系统 Chromium 收尾；百宝箱 #479 修可见性；移动端 #477 大改首页。 |
-| P1 多项目 + GitHub + 技能同步文档化        | 显著落地。新增 14 篇文档（含 design.skill-marketplace-open-api / design.external-authorization / design.llm-gateway-refactor / debt.video-agent / rule.cds-project-isolation-audit 等关键架构文档）。 |
+| P1 多项目 + GitHub + 技能同步文档化        | 显著落地。新增 14 篇文档（含 design.skill.marketplace-open-api / design.platform.external-authorization / design.platform.llm-gateway-refactor / debt.video-agent / rule.cds.project-isolation-audit 等关键架构文档）。 |
 | P2 更新中心、公开市场和公开页形成数据闭环           | 部分推进。更新中心 #455 / #462 / #468 接入 AI 总结 + NEW 徽标 + GitHub 时间 + 知识库选择，形成"消费视角"。海鲜市场 #463 / #470 / #473 把"技能"开放为可下载/可订阅的数据流。公开页统计回流尚未推进。 |
 
 ---
@@ -263,7 +263,7 @@ timeline
 | --- | ----------------------------------- | ----------------------------------------------------------------------------------------------- |
 | P0  | LLM Gateway 完成 compute-then-send 全量推广 | #490 已落地核心 + 删除装饰器，但其他 LLM 调用类（OpenAIChatClient / Anthropic / DeepSeek 各 Adapter）还需逐个审计是否有"二次 Resolve" 反模式残留，本周建立的规则要全量贯穿。 |
 | P0  | Mongo 单后端 runbook 收口（W16 遗留两周）       | backup / restore / failover / 切换回 JSON 的兜底路径必须文档化。两周未推进，下周必须排上日程。                               |
-| P1  | Daily Tips 真实运营回归 + 接力交接落地          | `doc/plan.daily-tips-remaining-work.md` + `doc/plan.daily-tips-scenarios-and-staleness.md` 两个交接文档已立。下周需要把"用户实际使用率 / 撒花完成率 / 跳过率 / 7 天后再次推送"等指标接入。 |
+| P1  | Daily Tips 真实运营回归 + 接力交接落地          | `doc/plan.daily-tips.remaining-work.md` + `doc/plan.daily-tips.scenarios-and-staleness.md` 两个交接文档已立。下周需要把"用户实际使用率 / 撒花完成率 / 跳过率 / 7 天后再次推送"等指标接入。 |
 | P1  | 周报 Agent UAT 真人验收                   | W17 周报 4 个 PR 改了大量浅色模式 + token + 权限矩阵 + Markdown 导入，需要走 `/uat` 真人验收清单确保多浏览器/多分辨率不退化。       |
 | P1  | Skill Marketplace P3 — AgentOpenEndpoint 落地 | PR #473 已经预留 `agent_open_endpoints` 集合 + `MarketplaceSkill.ReferenceType` 字段。下周应该把"装一个技能 → 自动注册一个 OpenEndpoint → 别的 Agent 可以调"的链路打通。 |
 | P1  | CDS 项目隔离形成 lint 规则                  | PR #498 收口 9 处隔离漏洞，但未来还会有人写出新的 default 硬编码。建议把"CURRENT_PROJECT_ID 不允许 fallback 到 'default'"等规则做成 ESLint custom rule + CI 拦截。 |

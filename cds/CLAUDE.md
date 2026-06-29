@@ -25,7 +25,7 @@ cd cds && ./exec_cds.sh restart    # 更新后重启
 cd cds && pnpm tsc --noEmit        # 类型检查
 ```
 
-前端分两栈，正在渐进迁移。交接和命令以 `doc/plan.cds-web-migration.md` 与 `doc/guide.cds-web-migration-runbook.md` 为准：
+前端分两栈，正在渐进迁移。交接和命令以 `doc/plan.cds.web-migration.md` 与 `doc/guide.cds.web-migration-runbook.md` 为准：
 
 | 目录 | 是什么 | 改动方式 |
 |------|--------|----------|
@@ -36,7 +36,7 @@ URL 路由优先级：`/api/*`（含复活接口 `POST /api/factory-reset`） > 
 
 当前 React 已接管：`/hello`、`/cds-settings`、`/project-list`、`/branches/:projectId`、`/branch-list?project=<id>`、`/branch-panel/:branchId`、`/branch-topology?project=<id>`、`/settings/:projectId`。`/settings.html?project=<id>` 兼容入口会重定向到 `/settings/<id>`。
 
-删除 legacy 代码有单独确认门槛：`cds/web-legacy/` 当前仍是功能对照层，特别是 `web-legacy/app.js` 里的容量、集群、活动流、拓扑详情等运维能力。除非用户在当前对话里明确确认可以删除，否则不要删除 `web-legacy/`、旧 HTML 或旧 JS；先按 `doc/plan.cds-web-migration.md` 的 Week 4.5 做功能差距收敛。
+删除 legacy 代码有单独确认门槛：`cds/web-legacy/` 当前仍是功能对照层，特别是 `web-legacy/app.js` 里的容量、集群、活动流、拓扑详情等运维能力。除非用户在当前对话里明确确认可以删除，否则不要删除 `web-legacy/`、旧 HTML 或旧 JS；先按 `doc/plan.cds.web-migration.md` 的 Week 4.5 做功能差距收敛。
 
 新初始化默认使用 MongoDB split store：`CDS_STORAGE_MODE=mongo-split`。`state.json` 只作为旧数据迁移入口，不再作为新业务默认存储；fresh install 不应自动生成空 `default` 项目。
 
@@ -191,4 +191,5 @@ cds/
 | `.claude/rules/cds-auto-deploy.md` | 已 link GitHub 的项目 | push 即部署，不再手动 /cds-deploy |
 | `.claude/rules/quickstart-zero-friction.md` | `exec_cds.sh` | 一键启动包办所有依赖 |
 | `.claude/rules/content-fills-canvas.md` | `cds/web/src/**/*.tsx`, `cds/web/src/index.css` | 内容填满画布：预览/详情/结果区必须 flex-1 填满占主导，禁小盒子 + 大片留白；高度从外壳（`.cds-workspace--fill`）一路传到产物 |
+| `.claude/rules/mobile-layout-fallback.md` | `cds/web/src/**/*.tsx`, `cds/web/src/index.css` | desktop-fill 必须配 mobile-flow 兜底：< lg 从「填满」切到「自然流」（`flex flex-col` + 限高滚动区 + 模态 body 可滚 + 浮层限宽截断），desktop 用 `lg:` 叠回 fill；防止富面板在手机重叠/塌陷/溢出 |
 | `.claude/rules/expectation-management.md` | 任何用户感知的交互/等待/反馈 | 预期管理总纲：让用户随时知道在做什么/还要多久/接下来怎样/变了什么；CDS 的 ETA 等待页、构建进度即其落地 |

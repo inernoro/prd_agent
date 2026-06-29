@@ -5,7 +5,7 @@
  * never touches the test runner — mirrors the pattern in
  * `tests/infra/mongo-backing-store.test.ts`.
  *
- * Covers the 9 scenarios called out in design.cds-fu-02-auth-store-mongo.md §5:
+ * Covers the 9 scenarios called out in design.cds.fu-02-auth-store-mongo.md §5:
  *  1. init with empty collection
  *  2. first upsertUser → isSystemOwner === false (store layer)
  *  3. second upsertUser → isSystemOwner === false (bootstrap is auth-service's job)

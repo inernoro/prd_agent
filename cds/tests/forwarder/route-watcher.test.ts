@@ -1,7 +1,7 @@
 /**
  * Forwarder 路由表监听 — TDD 契约
  *
- * 对应 doc/report.cds-forwarder-success.md
+ * 对应 doc/report.cds.forwarder-success.md
  * 实现位置:cds/src/forwarder/route-watcher.ts
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';

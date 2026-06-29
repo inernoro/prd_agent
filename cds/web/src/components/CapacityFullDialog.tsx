@@ -2,7 +2,7 @@
  * CapacityFullDialog — 部署被容量限制拒绝时弹出,让用户**勾选**当前 running
  * 分支(自己之外)中要停止的几个,确认后顺序调 stop 端点 + 自动重试当前部署。
  *
- * 2026-05-07 wave 1.3 (plan.cds-legacy-feature-rollup):
+ * 2026-05-07 wave 1.3 (plan.cds.legacy-feature-rollup):
  * legacy app.js 的 checkCapacityAndDeploy + toggleCapacityStopList +
  * capacityChoiceForce 三件套,React 化收敛到一个 dialog。
  */

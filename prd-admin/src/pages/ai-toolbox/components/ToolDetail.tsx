@@ -703,8 +703,8 @@ export function ToolDetail() {
       const forked = await forkItem(selectedItem.id);
       if (forked) {
         toast.success('已创建副本', '已切换到「我的」筛选；打开副本即可编辑');
-        setCategory('mine');
         backToGrid();
+        setCategory('mine');
       } else {
         toast.error('创建副本失败，请稍后重试');
       }

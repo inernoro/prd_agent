@@ -7,7 +7,7 @@ import { useGroupListStore } from '../../stores/groupListStore';
 import { useDesktopBrandingStore } from '../../stores/desktopBrandingStore';
 import { openGroupSessionAndSetStore } from '../../lib/openGroupSession';
 import { ApiResponse, Document, Session } from '../../types';
-import { extractMarkdownTitle, isMeaninglessName, normalizeCandidateName, stripFileExtension } from '../utils/nameHeuristics';
+import { extractMarkdownTitle, isMeaninglessName, normalizeCandidateName, sanitizeGroupName, stripFileExtension } from '../utils/nameHeuristics';
 
 interface UploadResponse {
   sessionId: string;
@@ -27,10 +27,10 @@ export default function DocumentUpload() {
     // 本地启发式命名：文件名有意义则用文件名，否则用 Markdown 标题或文档标题
     // 意图模型生成群名的逻辑已移到后端异步执行，不再阻塞创建流程
     const rawFileBase = fileName ? normalizeCandidateName(stripFileExtension(fileName)) : '';
-    if (rawFileBase && !isMeaninglessName(rawFileBase)) return rawFileBase;
+    if (rawFileBase && !isMeaninglessName(rawFileBase)) return sanitizeGroupName(rawFileBase);
 
     const mdTitle = extractMarkdownTitle(content);
-    return mdTitle || (docTitle || '').trim() || '未命名群组';
+    return sanitizeGroupName(mdTitle || docTitle || '', '未命名群组');
   };
 
   const handleUpload = async (content: string, fileName?: string | null) => {

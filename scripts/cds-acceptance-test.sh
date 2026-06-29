@@ -21,7 +21,7 @@
 #   Phase 8  端到端 (公网可达)
 #   Phase 9  清理
 #
-# 架构文档：doc/design.exec-bt-deployment.md
+# 架构文档：doc/design.platform.exec-bt-deployment.md
 # ══════════════════════════════════════════════════════════════════════════
 
 set -uo pipefail

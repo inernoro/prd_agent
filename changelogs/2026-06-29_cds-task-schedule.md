@@ -1,0 +1,12 @@
+| feat | cds | 新增任务调度 MVP，支持项目级定时任务、手动执行、HTTP/命令目标和运行记录 |
+| feat | cds | 任务调度动作支持检测执行与 curl 导入，并补充多组解析和检测测试 |
+| security | cds | 任务调度命令动作改为 Docker sandbox 执行，隔离宿主文件系统并限制工作目录逃逸 |
+| feat | cds | 任务调度改为触发器加动作步骤的纵向配置流，支持多个动作按顺序执行 |
+| security | cds | 修复项目级 key 可无范围读取任务调度列表与运行日志的问题 |
+| fix | cds | 任务调度执行时按 retryCount 重试失败动作 |
+| fix | cds | 修复长时间定时任务重复 tick 产生假跳过记录并覆盖运行状态的问题 |
+| fix | cds | 任务调度命令 sandbox 透传 CDS Docker network，支持访问项目内服务 |
+| fix | cds | 任务调度改为整次执行共享超时预算，避免多动作和重试突破任务总超时 |
+| fix | cds | 修复编辑任务非调度字段时错误重算 nextRunAt 的问题 |
+| fix | cds | 修复同一轮 tick 中任务被禁用后仍可能继续执行的问题 |
+| fix | cds | 加固任务调度 tick 认领逻辑，避免坏调度阻断启动、空 nextRunAt 重复执行和手动运行挪动自动计划 |

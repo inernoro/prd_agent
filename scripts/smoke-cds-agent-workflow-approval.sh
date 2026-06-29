@@ -11,7 +11,7 @@ EXEC_DETAIL="$ROOT_DIR/prd-admin/src/pages/workflow-agent/ExecutionDetailPanel.t
 EXEC_LIST="$ROOT_DIR/prd-admin/src/pages/workflow-agent/ExecutionListPanel.tsx"
 CONTRACTS="$ROOT_DIR/prd-admin/src/services/contracts/workflowAgent.ts"
 TEMPLATE="$ROOT_DIR/prd-admin/src/pages/workflow-agent/workflowTemplates.ts"
-DOC="$ROOT_DIR/doc/design.cds-agent-commercial-architecture-and-roadmap.md"
+DOC="$ROOT_DIR/doc/design.cds.agent.commercial-architecture-and-roadmap.md"
 
 require_text() {
   local file="$1"

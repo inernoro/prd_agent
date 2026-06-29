@@ -90,12 +90,12 @@ else
   require_text "$REFRESH_OUTPUT" 'nextAction: `continue R0.7 CDS-managed runtime live apply before any fallback env handoff`' 'refresh next action'
   require_text "$REFRESH_OUTPUT" 'Continue R0.7 CDS-managed runtime live evidence work' 'refresh R0 design next command'
   require_text "$REFRESH_OUTPUT" 'operator/debug fallback details, not the product path' 'refresh fallback scope'
-  require_text "$REFRESH_OUTPUT" 'doc/design.cds-agent-managed-runtime-fact-source.md' 'refresh next command design'
+  require_text "$REFRESH_OUTPUT" 'doc/design.cds.agent.managed-runtime-fact-source.md' 'refresh next command design'
   require_text "$PROGRESS_OUTPUT" 'Overall status: blocked_r0' 'progress overall status'
   require_text "$PROGRESS_OUTPUT" 'Current blocking gate: R0' 'progress blocking gate'
   require_text "$PROGRESS_OUTPUT" 'Continue R0.7 CDS-managed runtime live evidence work' 'progress exact next step'
   require_text "$PROGRESS_OUTPUT" 'operator/debug fallback details, not the product path' 'progress fallback scope'
-  require_text "$PROGRESS_OUTPUT" 'doc/design.cds-agent-managed-runtime-fact-source.md' 'progress next command design'
+  require_text "$PROGRESS_OUTPUT" 'doc/design.cds.agent.managed-runtime-fact-source.md' 'progress next command design'
 fi
 require_text "$PROGRESS_OUTPUT" 'R0 managed runtime capacity: status=' 'progress managed runtime capacity'
 require_text "$PROGRESS_OUTPUT" 'Operator fallback remote host verdict:' 'progress fallback host label'
@@ -131,8 +131,8 @@ if [[ "$progress_provider_complete" == "true" ]]; then
   require_text "$STATUS_DOC" 'provider_smokes_passed' 'status doc provider complete'
   require_text "$STATUS_DOC" 'Phase 4 P4-1/P4-2/P4-3/P4-4/P4-5' 'status doc phase4 complete'
 else
-  require_text "$STATUS_DOC" 'doc/plan.cds-agent-runtime-correction-limited.md' 'status doc correction plan'
-  require_text "$STATUS_DOC" 'doc/design.cds-agent-managed-runtime-fact-source.md' 'status doc R0 design'
+  require_text "$STATUS_DOC" 'doc/plan.cds.agent.runtime-correction-limited.md' 'status doc correction plan'
+  require_text "$STATUS_DOC" 'doc/design.cds.agent.managed-runtime-fact-source.md' 'status doc R0 design'
 fi
 
 printf 'CDS Agent progress consistency: pass\n'

@@ -9,7 +9,7 @@ import { MockShellExecutor } from '../../src/services/shell-executor.js';
  * P4 Part 18 (G1.2): WorktreeService is now stateless — every
  * repo-touching method takes `repoRoot` as its first argument. The
  * previous `repoRoot` constructor arg + getter/setter have been
- * removed. See `doc/design.cds-multi-project.md` and the commit
+ * removed. See `doc/design.cds.multi-project.md` and the commit
  * message for the rationale.
  */
 describe('WorktreeService', () => {
@@ -46,6 +46,28 @@ describe('WorktreeService', () => {
       expect(mock.commands).toContainEqual(expect.stringContaining('git worktree prune'));
       expect(mock.commands).toContainEqual(expect.stringContaining('rm -rf'));
       expect(mock.commands).toContainEqual(expect.stringContaining('git worktree add'));
+    });
+
+    it('should prune and retry when git has a missing registered worktree', async () => {
+      let addCount = 0;
+      mock.addResponsePattern(/git fetch/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/git worktree prune/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/test -d/, () => ({ stdout: '', stderr: '', exitCode: 1 }));
+      mock.addResponsePattern(/git worktree add/, () => {
+        addCount += 1;
+        if (addCount === 1) {
+          return {
+            stdout: 'Preparing worktree (detached HEAD 744f648e3)',
+            stderr: "fatal: '/tmp/wt/main' is a missing but already registered worktree;\nuse 'add -f' to override, or 'prune' or 'remove' to clear",
+            exitCode: 128,
+          };
+        }
+        return { stdout: 'Preparing worktree', stderr: '', exitCode: 0 };
+      });
+
+      await service.create(REPO, 'main', '/tmp/wt/main');
+      expect(mock.commands.filter(c => c.includes('git worktree prune'))).toHaveLength(2);
+      expect(mock.commands.filter(c => c.includes('git worktree add'))).toHaveLength(2);
     });
 
     it('should throw if fetch fails', async () => {

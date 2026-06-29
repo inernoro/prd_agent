@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Library,
+  Orbit,
   Plus,
   Upload,
   ArrowLeft,
@@ -33,7 +34,6 @@ import {
   FolderSync,
   BarChart3,
   Send,
-  Network,
   MoreHorizontal,
   Download,
   Pin,
@@ -133,6 +133,24 @@ import { ViewersDrawer } from './ViewersDrawer';
 import { useReprocessRunStore, selectStreamingByEntry } from '@/stores/reprocessRunStore';
 
 const ACCEPT_TYPES = '.md,.txt,.pdf,.doc,.docx,.json,.yaml,.yml,.csv';
+
+export type DocumentStoreEmptyActionKey = 'create' | 'upload' | 'emergence';
+
+export const DOCUMENT_STORE_EMPTY_ACTIONS: Array<{
+  key: DocumentStoreEmptyActionKey;
+  title: string;
+  desc: string;
+}> = [
+  { key: 'create', title: '创建知识库', desc: '按项目或主题组织文档' },
+  { key: 'upload', title: '上传文档', desc: '先建知识库，再把文件上传进去' },
+  { key: 'emergence', title: '涌现探索', desc: '从文档出发，发现新可能' },
+];
+
+const DOCUMENT_STORE_EMPTY_ACTION_ICONS: Record<DocumentStoreEmptyActionKey, LucideIcon> = {
+  create: Library,
+  upload: Upload,
+  emergence: Sparkle,
+};
 
 // 账号级总计的紧凑格式化：大数走「万」，停留走「时/分」。
 function formatCountCompact(n: number): string {
@@ -254,16 +272,16 @@ function DocSortControl({ value, onChange }: { value: DocBrowserSortMode; onChan
     { key: 'updated-desc', label: '最近更新' },
   ];
   return (
-    <div className="flex items-center gap-1.5 px-1 pb-2">
-      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>排序</span>
-      <div className="flex items-center gap-0.5 rounded-[8px] p-0.5" style={{ background: 'rgba(148,163,184,0.10)' }}>
+    <div className="flex shrink-0 items-center gap-1.5 px-1">
+      <span className="shrink-0 whitespace-nowrap text-[11px]" style={{ color: 'var(--text-muted)' }}>排序</span>
+      <div className="flex shrink-0 items-center gap-0.5 rounded-[8px] p-0.5" style={{ background: 'rgba(148,163,184,0.10)' }}>
         {opts.map(o => {
           const active = o.key === value;
           return (
             <button
               key={o.key}
               onClick={() => onChange(o.key)}
-              className="rounded-[6px] px-2 py-1 text-[11px] transition-colors"
+              className="shrink-0 whitespace-nowrap rounded-[6px] px-2 py-1 text-[11px] transition-colors"
               style={active
                 ? { background: 'rgba(59,130,246,0.18)', color: 'rgba(147,180,255,0.98)', fontWeight: 600 }
                 : { color: 'var(--text-muted)' }}
@@ -845,6 +863,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
   /** 顶栏「更多」下拉 */
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
+  // 「更多」下拉用 AnchoredMenu（自带 portal 到 body + 按 anchorRef 定位 + 点外关闭），
+  // 不再手写 createPortal/morePos（PageHeader overflow-hidden 会裁原地 absolute）。
+  const toggleMore = useCallback(() => setMoreOpen((o) => !o), []);
 
   // 文件上传状态
   const [uploading, setUploading] = useState(false);
@@ -1406,9 +1427,29 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
               {uploading ? <MapSpinner size={14} /> : <Upload size={13} />}
               {uploading ? '上传中…' : '上传文档'}
             </Button>
+            {/* 知识星球：3D 文档星系直达入口（此前藏在「宇宙图」里，新用户找不到）。
+                借鉴「本页教程」pill 的柔和脉冲光环 + 渐变底，吸引用户点进来探索。 */}
+            <button
+              type="button"
+              onClick={() => navigate(`/document-store/${storeId}/galaxy`)}
+              title="知识星球 — 3D 文档星系，悬停看简介、点击进入文档"
+              className="flex h-7 cursor-pointer items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold"
+              style={{
+                color: 'rgba(196,181,253,0.98)',
+                background: 'linear-gradient(135deg, rgba(168,85,247,0.20), rgba(99,102,241,0.16))',
+                border: '1px solid rgba(196,181,253,0.45)',
+                animation: 'galaxyEntryPulse 2.4s ease-in-out infinite',
+              }}
+            >
+              <Orbit size={13} /> 知识星球
+              <style>{`@keyframes galaxyEntryPulse {
+                0%, 100% { box-shadow: 0 0 0 0 rgba(168,85,247,0); }
+                50% { box-shadow: 0 0 0 3px rgba(168,85,247,0.18); }
+              }`}</style>
+            </button>
             {/* 更多：收纳低频管理动作（发布 / 关系图谱 / 统计 / 订阅），折叠屏只占一个位 */}
             <div className="relative" ref={moreRef}>
-              <Button variant="secondary" size="xs" onClick={() => setMoreOpen(o => !o)} title="更多操作">
+              <Button variant="secondary" size="xs" onClick={toggleMore} title="更多操作">
                 <MoreHorizontal size={14} /> 更多
               </Button>
               {/* createPortal 到 body：PageHeader 是 overflow-hidden 圆角玻璃条，绝对定位下拉会被裁掉。见 AnchoredMenu / frontend-modal.md */}
@@ -1422,7 +1463,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
                   <MoreItem icon={<Globe size={14} />} label={publishing ? '处理中…' : '发布到智识殿堂'} disabled={publishing} onClick={handleTogglePublish} dataTourId="document-store-publish" />
                 )}
                 <MoreItem icon={<Download size={14} />} label={downloading ? '打包中…' : '下载全部文档（ZIP）'} disabled={downloading} onClick={handleDownloadStore} />
-                <MoreItem icon={<Network size={14} />} label="关系图谱" onClick={() => { setMoreOpen(false); navigate(`/document-store/${storeId}/universe`); }} />
+                {/* 默认只暴露「知识星球」(3D 星系)。obsidian 风的「关系图谱/宇宙图」与星系是两套不同心智，
+                    并存让用户分不清该用哪个、返回关系也乱（见 debt.knowledge-base.galaxy-vs-universe）。
+                    暂时收起宇宙图入口（路由仍在，深链可达），待智能判别落地后再决定按库展示哪一个。 */}
+                <MoreItem icon={<Orbit size={14} />} label="知识星球（3D 星系）" onClick={() => { setMoreOpen(false); navigate(`/document-store/${storeId}/galaxy`); }} />
                 <MoreItem icon={<BarChart3 size={14} />} label="访客统计" onClick={() => { setMoreOpen(false); setShowViewers(true); }} />
                 <MoreItem icon={<Rss size={14} />} label="添加订阅" onClick={() => { setMoreOpen(false); setShowSubscribe(true); }} />
               </AnchoredMenu>
@@ -2296,9 +2340,11 @@ export function DocumentStorePage() {
         data-tour-id="library-tabs"
         className="sticky top-0 z-20 flex flex-col gap-3 pb-5 -mb-5"
         style={{
-          background: 'var(--bg-base)',
-          backdropFilter: 'saturate(180%) blur(8px)',
-          WebkitBackdropFilter: 'saturate(180%) blur(8px)',
+          // 不再用不透明的 var(--bg-base) 整块铺底（用户反馈「黑黑的」一坨）：
+          // 只保留半透明玻璃模糊，滚动内容从下方透出并被磨砂虚化，顶栏变轻。
+          background: 'color-mix(in srgb, var(--bg-base) 55%, transparent)',
+          backdropFilter: 'saturate(180%) blur(12px)',
+          WebkitBackdropFilter: 'saturate(180%) blur(12px)',
         }}
       >
         {/* 顶部第一排：左上角空间切换（我的空间 / 团队空间 / 我的收藏 / 我的点赞） */}
@@ -2635,20 +2681,33 @@ export function DocumentStorePage() {
 
             {/* 三步引导 */}
             <div className="grid grid-cols-3 gap-4 mb-8 max-w-[560px] w-full">
-              {[
-                { icon: Library, title: '创建知识库', desc: '按项目或主题组织文档' },
-                { icon: Upload, title: '上传文档', desc: '拖拽文件即可上传' },
-                { icon: Sparkle, title: '涌现探索', desc: '从文档出发，发现新可能' },
-              ].map(s => (
-                <div key={s.title} className="surface-inset rounded-[12px] p-4 flex flex-col items-center text-center">
-                  <div className="w-8 h-8 rounded-full flex items-center justify-center mb-2.5"
-                    style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.12)' }}>
-                    <s.icon size={14} style={{ color: 'rgba(59,130,246,0.85)' }} />
-                  </div>
-                  <p className="text-[12px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>{s.title}</p>
-                  <p className="text-[11px] leading-[1.5]" style={{ color: 'var(--text-muted)' }}>{s.desc}</p>
-                </div>
-              ))}
+              {DOCUMENT_STORE_EMPTY_ACTIONS.map(s => {
+                const Icon = DOCUMENT_STORE_EMPTY_ACTION_ICONS[s.key];
+                return (
+                  <button
+                    key={s.key}
+                    type="button"
+                    className="surface-inset rounded-[12px] p-4 flex flex-col items-center text-center transition-colors hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
+                    onClick={() => {
+                      if (s.key === 'emergence') {
+                        navigate('/emergence');
+                        return;
+                      }
+                      if (s.key === 'upload') {
+                        toast.info('先创建知识库', '创建后进入知识库详情页即可上传文档');
+                      }
+                      setShowCreate(true);
+                    }}
+                  >
+                    <div className="w-8 h-8 rounded-full flex items-center justify-center mb-2.5"
+                      style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.12)' }}>
+                      <Icon size={14} style={{ color: 'rgba(59,130,246,0.85)' }} />
+                    </div>
+                    <p className="text-[12px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>{s.title}</p>
+                    <p className="text-[11px] leading-[1.5]" style={{ color: 'var(--text-muted)' }}>{s.desc}</p>
+                  </button>
+                );
+              })}
             </div>
 
             {tab === 'mine' ? (

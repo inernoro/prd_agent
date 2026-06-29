@@ -4,9 +4,9 @@
  * 操作：转为缺陷（接入 defect-agent 修复流水线）/ 标记已修复 / 忽略（指纹级持久化，不再打扰）。
  * 数据源：apirequestlogs（报错/慢端点，历史即有）+ behavior_events（路由信号，自采集上线起累积）。
  */
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { BarChart3, BookOpen, Bug, Check, CheckCircle2, ClipboardList, EyeOff as IgnoreIcon, LayoutGrid, Megaphone, Microscope, Network, Radar, RotateCcw, ScrollText, TrendingUp, Users, X, type LucideIcon } from 'lucide-react';
+import { BookOpen, Bug, Check, CheckCircle2, ClipboardList, EyeOff as IgnoreIcon, LayoutGrid, Maximize2, Megaphone, Microscope, Network, Radar, RotateCcw, ScrollText, TrendingUp, Users, X, type LucideIcon } from 'lucide-react';
 import { GlassCard } from '@/components/design';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
@@ -29,7 +29,6 @@ import type { BehaviorInsight, TeamActivityExperienceMapData, TeamActivityInsigh
 import { getInsightKindMeta } from './insightKinds';
 import { ExperienceMap } from './ExperienceMap';
 import { ExperienceRibbon } from './ExperienceRibbon';
-import { ExperienceStats } from './ExperienceStats';
 import { ExperienceDrill } from './ExperienceDrill';
 import { ExperienceTrend } from './ExperienceTrend';
 import { ExperienceSiteMap } from './ExperienceSiteMap';
@@ -53,13 +52,87 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 // 移动端单图视图切换：同一份体验信号的不同可视化模式（桌面端走四图仪表盘，不用切换器）
-type HeroView = 'heatmap' | 'trend' | 'stats' | 'board';
+type HeroView = 'heatmap' | 'trend' | 'board';
 const HERO_VIEWS: { key: HeroView; label: string; icon: LucideIcon }[] = [
   { key: 'heatmap', label: '热力图', icon: LayoutGrid },
   { key: 'trend', label: '趋势爆点', icon: TrendingUp },
-  { key: 'stats', label: '痛点指数', icon: BarChart3 },
   { key: 'board', label: '声道看板', icon: Megaphone },
 ];
+
+/**
+ * 仪表盘单图全屏包装：给趋势爆点 / 声道看板等格子加「全屏」按钮（热力图自带全屏，故不包它）。
+ * 内容只挂载一处（关闭时内联、全屏时移进浮层），避免重复挂载导致的重复请求；ESC / 点遮罩退出。
+ * 全屏按钮放右下角，避开各卡头部右侧的图例 / 切换器，不遮挡。
+ */
+function FullscreenTile({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
+
+  return (
+    <div className="relative h-full min-h-0">
+      {open ? (
+        <div
+          className="h-full min-h-0 flex flex-col items-center justify-center gap-2 rounded-2xl border border-white/10 text-center"
+          style={{ background: 'rgba(255,255,255,0.02)' }}
+        >
+          <span className="text-[12px] text-white/35">已在全屏查看</span>
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            className="text-[11px] text-cyan-200/85 hover:text-cyan-100 underline-offset-2 hover:underline cursor-pointer"
+          >
+            退出全屏
+          </button>
+        </div>
+      ) : (
+        <>
+          {children}
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            title="全屏查看"
+            className="absolute top-2 right-2 z-20 inline-flex items-center justify-center w-7 h-7 rounded-md text-white/55 hover:text-white/95 border border-white/12 bg-[#16171b]/90 hover:bg-white/10 backdrop-blur-sm shadow-sm transition-colors cursor-pointer"
+          >
+            <Maximize2 size={13} />
+          </button>
+        </>
+      )}
+      {open
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[110] flex items-center justify-center p-4"
+              style={{ background: 'rgba(0,0,0,0.6)' }}
+              onClick={() => setOpen(false)}
+            >
+              <div
+                className="relative flex flex-col rounded-2xl border border-white/12 overflow-hidden"
+                style={{ width: 'min(1200px, 95vw)', height: 'min(86vh, 880px)', background: '#16171b', boxShadow: '0 24px 80px rgba(0,0,0,0.6)' }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  title="退出全屏"
+                  className="absolute top-3 right-3 z-10 inline-flex items-center justify-center w-8 h-8 rounded-md text-white/50 hover:text-white/90 bg-black/30 hover:bg-white/10 border border-white/10 transition-colors cursor-pointer"
+                >
+                  <X size={16} />
+                </button>
+                <div className="flex-1 min-h-0 p-4">{children}</div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
+    </div>
+  );
+}
 
 function buildDefectContent(item: BehaviorInsight, window: string): string {
   return [
@@ -487,16 +560,21 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
   // 趋势格：桌面四图仪表盘传 hideWhenEmpty（无数据直接 null，让 grid 自适应铺满剩余格 + 上报空态）；
   // 移动单图不传 hideWhenEmpty，保留空状态引导（一键切回热力图）。
   const renderTrendTile = (forDashboard: boolean) => (
-    <ExperienceTrend
-      from={from}
-      to={to}
-      onSwitchHeatmap={switchToHeatmap}
-      onEmptyChange={forDashboard ? setTrendEmpty : undefined}
-      hideWhenEmpty={forDashboard}
-    />
+    <FullscreenTile>
+      <ExperienceTrend
+        from={from}
+        to={to}
+        onSwitchHeatmap={switchToHeatmap}
+        onEmptyChange={forDashboard ? setTrendEmpty : undefined}
+        hideWhenEmpty={forDashboard}
+      />
+    </FullscreenTile>
   );
-  const renderStatsTile = () => (data ? <ExperienceStats items={data.items} /> : null);
-  const renderBoardTile = () => <ExperienceBoard items={data?.items ?? []} onSelectTarget={handleSelectTarget} onSwitchHeatmap={switchToHeatmap} from={from} to={to} />;
+  const renderBoardTile = () => (
+    <FullscreenTile>
+      <ExperienceBoard items={data?.items ?? []} onSelectTarget={handleSelectTarget} onSwitchHeatmap={switchToHeatmap} from={from} to={to} />
+    </FullscreenTile>
+  );
 
   // 桌面端（lg+）Bento 看板：全景热力图为主角。
   // 12 列 grid 撑满首屏（gridTemplateRows 1fr/1fr + height:100%），热力图占 8 列（约 2/3）× 2 行满高；
@@ -519,7 +597,9 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
           style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(12, minmax(0, 1fr))',
-            gridTemplateRows: '1fr 1fr',
+            // 右列：上行(趋势)更矮、下行(声道看板)更高——用户要趋势短、声道长（按截图比例）。
+            // 热力图跨两行总高不变，仅调右列内部比例。
+            gridTemplateRows: '1fr 1.7fr',
             gap: '12px',
             height: '100%',
             minHeight: 0,
@@ -532,19 +612,15 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
               {renderMapTile()}
             </div>
           </div>
-          {/* 右 1/3 列（4 列 × 2 行）：还原图2排布——趋势在上整宽，痛点指数 + 声道在下并排。
-              填满整屏后每格高度足够，痛点指数仪表盘与声道卡片都能完整渲染（不再被压扁裁掉）。
-              趋势无数据时整块移出，痛点指数 + 声道上下各占一行吸收其高度。 */}
+          {/* 右 1/3 列（4 列 × 2 行）：趋势在上整宽，声道看板在下整宽。
+              （体验痛点指数仪表盘按用户要求移除，作用不大，右下只保留声道看板。）
+              趋势无数据时整块移出，声道看板吸收其高度占满右列两行。 */}
           {trendEmpty ? (
-            <>
-              <div style={span(4, 1)} className="voc-bento-tile">{renderStatsTile()}</div>
-              <div style={span(4, 1)} className="voc-bento-tile">{renderBoardTile()}</div>
-            </>
+            <div style={span(4, 2)} className="voc-bento-tile">{renderBoardTile()}</div>
           ) : (
             <>
               <div style={span(4, 1)} className="voc-bento-tile">{renderTrendTile(true)}</div>
-              <div style={span(2, 1)} className="voc-bento-tile">{renderStatsTile()}</div>
-              <div style={span(2, 1)} className="voc-bento-tile">{renderBoardTile()}</div>
+              <div style={span(4, 1)} className="voc-bento-tile">{renderBoardTile()}</div>
             </>
           )}
         </div>
@@ -581,9 +657,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
           ? renderMapTile()
           : heroView === 'trend'
             ? renderTrendTile(false)
-            : heroView === 'stats'
-              ? renderStatsTile()
-              : renderBoardTile()}
+            : renderBoardTile()}
       </div>
     </div>
   );
@@ -792,7 +866,8 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
               <div
                 className="flex flex-col border-l border-white/10"
                 style={{
-                  width: 'min(440px, 94vw)',
+                  // 桌面更宽给诊断/报告留空间（手机仍 94vw）；右上角放大可再全屏
+                  width: 'min(560px, 94vw)',
                   height: '100vh',
                   background: '#16171b',
                   boxShadow: '-24px 0 80px rgba(0,0,0,0.5)',
@@ -834,7 +909,8 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
               <div
                 className="flex flex-col border-l border-white/10"
                 style={{
-                  width: 'min(440px, 94vw)',
+                  // 桌面更宽给诊断/报告留空间（手机仍 94vw）；右上角放大可再全屏
+                  width: 'min(560px, 94vw)',
                   height: '100vh',
                   background: '#16171b',
                   boxShadow: '-24px 0 80px rgba(0,0,0,0.5)',

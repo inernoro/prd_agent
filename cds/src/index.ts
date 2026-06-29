@@ -38,6 +38,8 @@ import { syncAllSystemdUnits } from './services/systemd-sync.js';
 import { branchEvents, nowIso } from './services/branch-events.js';
 import { archiveBranchContainerLogs } from './services/container-log-archiver.js';
 import { reconcileStaleDeployDispatches, type DeployDispatchReconcileResult } from './services/deploy-dispatch-reconciler.js';
+import { reconcileStuckDeployStates, hasYoungActiveLease } from './services/deploy-stuck-reconciler.js';
+import { analyzeChangeImpact } from './services/change-impact-analyzer.js';
 import { shouldRetryInterruptedWebhookDispatch, isDeployDispatchRetryEnabled } from './services/deploy-dispatch-retry.js';
 import { ResourceUsageSampler } from './services/resource-usage-sampler.js';
 import { httpLogStoreFromEnv } from './services/http-log-store.js';
@@ -173,29 +175,108 @@ function startStaleDeployDispatchReconciler(
   state: StateService,
   store: ServerEventLogSink | null,
 ): NodeJS.Timeout | null {
-  if (config.mode === 'executor') return null;
+  // 看门狗在 master 与 executor 都要跑：webhook 部署派发收敛是 master 职责，但卡死状态收敛
+  // （TYPE2 非终结态 / TYPE1 镜像落后）必须**也**在 executor 本地跑 —— executor 是远端分支
+  // 状态的真相源，master 侧的修正会被下次 heartbeat 用 executor 快照覆盖（Codex P2: run the
+  // stuck reconciler on executors too）。故不再对 executor 提前返回；webhook 派发部分用 mode 守卫。
+  const isMaster = config.mode !== 'executor';
   let running = false;
   const run = () => {
     if (running) return;
     running = true;
     try {
-      const reconciled = reconcileStaleDeployDispatches(state, {
-        source: 'deploy-dispatch-reconciler.interval',
-        serverEventLogStore: store,
-      });
-      if (reconciled.length > 0) {
-        console.warn(`[deploy-dispatch] reconciled ${reconciled.length} stale webhook dispatch state(s)`);
+      // 两个看门狗各自 try/catch：webhook 派发收敛 与 通用卡死收敛是独立路径，崩溃必须各记各的
+      // action/source，否则卡死收敛的异常被误记成 `branch.deploy-dispatch.reconcile.failed`
+      // +「stale webhook dispatch」文案，排障时张冠李戴（Bugbot Low）。
+      if (isMaster) {
+        try {
+          const reconciled = reconcileStaleDeployDispatches(state, {
+            source: 'deploy-dispatch-reconciler.interval',
+            serverEventLogStore: store,
+          });
+          if (reconciled.length > 0) {
+            console.warn(`[deploy-dispatch] reconciled ${reconciled.length} stale webhook dispatch state(s)`);
+          }
+          dispatchRecoveredWebhookDeploys(state, store, reconciled, 'deploy-dispatch-reconciler.interval');
+        } catch (err) {
+          store?.record({
+            category: 'system',
+            severity: 'error',
+            source: 'deploy-dispatch-reconciler.interval',
+            action: 'branch.deploy-dispatch.reconcile.failed',
+            message: `stale webhook deploy dispatch reconcile failed: ${(err as Error).message}`,
+            details: { error: (err as Error).message },
+          });
+        }
       }
-      dispatchRecoveredWebhookDeploys(state, store, reconciled, 'deploy-dispatch-reconciler.interval');
-    } catch (err) {
-      store?.record({
-        category: 'system',
-        severity: 'error',
-        source: 'deploy-dispatch-reconciler.interval',
-        action: 'branch.deploy-dispatch.reconcile.failed',
-        message: `stale webhook deploy dispatch reconcile failed: ${(err as Error).message}`,
-        details: { error: (err as Error).message },
+
+      // 通用部署卡死看门狗（2026-06-27）：收敛卡死的非终结态 + 极速版镜像落后告警。
+      // master + executor 都跑（见函数顶部说明）。
+      // 纯函数 reconcileStuckDeployStates 经回调注入所有 I/O，这里只负责接线。
+      try {
+      const stuck = reconcileStuckDeployStates(state.getAllBranches(), {
+        source: 'deploy-stuck-reconciler.interval',
+        serverEventLogStore: store,
+        // projectId 缺省回退 'default'（与全仓其它 getBuildProfilesForProject 调用一致）。
+        // 否则无 projectId 的分支拿到空 profile 列表 → branchUsesPrebuiltMode 恒 false →
+        // TYPE1 极速版落后告警对这些分支永不触发（Bugbot Low）。
+        getBuildProfiles: (b) => state.getBuildProfilesForProject(b.projectId || 'default'),
+        // 有在途操作（部署/重启/降温…）的分支整条跳过：那个操作拥有该分支，合法的长任务
+        // （>45min 编译/迁移/冷启）不该被硬超时误判失败（Bugbot Medium）。与 index.ts 别处
+        // 「recovery skips operation lease」判活同源。
+        hasActiveOperation: (b) =>
+          // 只护「年轻」的在途操作（>2× 硬超时=90min 的挂死租约、坏/缺起始戳的租约一律放行给收敛）。
+          // 判活逻辑抽到 deploy-stuck-reconciler.hasYoungActiveLease 纯函数，可单测（见同名 test 套件）。
+          hasYoungActiveLease(branchOperationCoordinator.getActiveOperations(b.id), Date.now()),
+        // 硬超时只在 master 启用：master 的本地/远端代理部署都持 BranchOperationCoordinator 租约，
+        // hasActiveOperation 判活准。executor 节点的 /exec/deploy 不持该租约（判活恒 false），
+        // 开硬超时会把合法的 >45min 远端构建误判 error（Bugbot High「Executor deploys lack lease
+        // skip」）。executor 只做时间戳证据收敛 + 告警。
+        allowHardTimeout: isMaster,
+        // 僵尸 profile 过滤同样只在 master 安全：executor 本地 profile 注册表不权威（/exec/deploy
+        // 用 master 传来的 profilesData、不写本地注册表），过滤会把真实 executor 服务全当僵尸、
+        // 把在跑分支误判 idle（Codex P2「Do not filter executor services with local profiles」）。
+        filterZombieProfiles: isMaster,
+        diffRuntimePaths: (b) => {
+          // ciTargetSha..githubCommitSha 这段提交是否含运行时改动（非纯文档）。
+          try {
+            const range = `${b.ciTargetSha}..${b.githubCommitSha}`;
+            const out = execSync(`git -C ${JSON.stringify(b.worktreePath)} diff --name-only ${range} 2>/dev/null || true`, {
+              encoding: 'utf-8',
+            }).trim();
+            if (!out) return false;
+            const impact = analyzeChangeImpact(out.split('\n').filter(Boolean));
+            return impact.needsRestart || impact.hotReloadablePaths.length > 0;
+          } catch {
+            // 取不到 diff 证据 → 保守不告警（无根不喊）。
+            return false;
+          }
+        },
+        appendLog: (branchId, log) => state.appendLog(branchId, log),
+        emitBranchUpdated: (b) => branchEvents.emitEvent({
+          type: 'branch.updated',
+          payload: {
+            branchId: b.id,
+            projectId: b.projectId,
+            patch: { status: b.status, services: b.services, errorMessage: b.errorMessage, ciImageError: b.ciImageError },
+            ts: nowIso(),
+          },
+        }),
       });
+      if (stuck.length > 0) {
+        console.warn(`[deploy-stuck] reconciled ${stuck.length} stuck deploy/lifecycle state(s)`);
+        state.save();
+      }
+      } catch (err) {
+        store?.record({
+          category: 'system',
+          severity: 'error',
+          source: 'deploy-stuck-reconciler.interval',
+          action: 'branch.deploy-stuck.reconcile.failed',
+          message: `stuck deploy/lifecycle state reconcile failed: ${(err as Error).message}`,
+          details: { error: (err as Error).message },
+        });
+      }
     } finally {
       running = false;
     }
@@ -392,8 +473,8 @@ function reconcileBranchStatusFromServices(branch: BranchEntry): { previousStatu
 // ── State ──
 //
 // CDS_STORAGE_MODE selects the physical storage backend that the
-// StateService writes through. See doc/plan.cds-multi-project-phases.md P3
-// and doc/rule.cds-mongo-migration.md.
+// StateService writes through. See doc/plan.cds.multi-project-phases.md P3
+// and doc/rule.cds.mongo-migration.md.
 //
 //   - 'json':            legacy state.json backend (explicit opt-in / tests)
 //   - 'mongo-split':     MongoDB multi-collection store (default runtime)
@@ -608,7 +689,7 @@ try {
 //
 // Auth backend is independent of the state storage backend
 // (CDS_STORAGE_MODE). You can mix them freely: e.g. state=json + auth=mongo.
-// See doc/guide.cds-env.md §3 and doc/design.cds-fu-02-auth-store-mongo.md.
+// See doc/guide.cds.env.md §3 and doc/design.cds.fu-02-auth-store-mongo.md.
 let activeAuthStore: import('./infra/auth-store/memory-store.js').AuthStore | undefined;
 const activeHttpLogStore = httpLogStoreFromEnv();
 if (activeHttpLogStore) {
@@ -874,7 +955,7 @@ const worktreeService = new WorktreeService(shell);
 // One-shot on-boot sweep. Symlinks any surviving `<worktreeBase>/<slug>`
 // entries into `<worktreeBase>/default/<slug>` and rewrites matching
 // BranchEntry.worktreePath values. Guarded by state.worktreeLayoutVersion
-// so subsequent boots skip the scan. See doc/plan.cds-backlog-matrix.md
+// so subsequent boots skip the scan. See doc/plan.cds.backlog-matrix.md
 // §FU-04 for the rationale.
 try {
   const migratedCount = WorktreeService.migrateFlatLayoutIfNeeded({
@@ -1175,7 +1256,7 @@ let shutdownInProgress = false;
 
 // ── Warm-pool scheduler (v3.1) ──
 // Disabled unless cds.config.json { "scheduler": { "enabled": true, ... } }.
-// See doc/design.cds-resilience.md and doc/plan.cds-resilience-rollout.md.
+// See doc/design.cds.resilience.md and doc/plan.cds.resilience-rollout.md.
 //
 // Runtime override: the Dashboard can toggle the scheduler via
 // PUT /api/scheduler/enabled, which writes to state.json. That value wins
@@ -1612,7 +1693,7 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
 // ── Janitor (Phase 2 resilience) ──
 // Enabled by default. Sweeps stale local containers/worktrees after a global
 // expiry window. The retention window is capped at 7 days by product policy.
-// See doc/design.cds-resilience.md Phase 2.
+// See doc/design.cds.resilience.md Phase 2.
 {
   const defaultJanitor = {
     enabled: true,
@@ -3746,7 +3827,7 @@ function listenWithRetry(
     const s = server.listen(port, () => {
       listening = true;
       // 2026-05-07 timing 审视:盖戳 daemon ready,让 recordSelfUpdate 能算
-      // 真实"用户感受到的等待" totalElapsedMs。详见 report.cds-self-update-timing-audit.md
+      // 真实"用户感受到的等待" totalElapsedMs。详见 report.cds.self-update-timing-audit.md
       try { stateService.recordDaemonReady(); } catch { /* 不致命 */ }
       onSuccess();
     });
@@ -3965,7 +4046,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   // We mount `/api/executors` in both standalone and scheduler modes so that
   // a fresh machine running in standalone can accept its first bootstrap
   // registration and *then* upgrade itself to scheduler in place — no
-  // process restart required. See `doc/design.cds-cluster-bootstrap.md` §4.4.
+  // process restart required. See `doc/design.cds.cluster-bootstrap.md` §4.4.
   //
   // In standalone mode the dispatcher is still created but has no remote
   // executors to dispatch to until the first one registers. The embedded

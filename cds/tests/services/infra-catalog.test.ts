@@ -17,7 +17,7 @@ import {
  *   2. The catalog is the single source of truth — new infra (kafka/nats/...) is
  *      reachable, and the public view never leaks secrets.
  *
- * See doc/spec.cds-compose-contract.md and cds/src/routes/projects.ts createInfraPreset.
+ * See doc/spec.cds.compose-contract.md and cds/src/routes/projects.ts createInfraPreset.
  */
 
 describe('infra-catalog SSOT', () => {

@@ -4,11 +4,13 @@ description: >
   Use this skill whenever the user says "给出方案", "先给方案", "方案", "给我方案", "方案确认后再动手", "先说思路", "给出你的思路和方案", or any phrase asking Claude to plan before executing. Also trigger when the user asks Claude to "先分析" or "先规划" before taking action. This skill ensures Claude always delivers a concise structured analysis first and explicitly waits for user approval before touching any files, writing any code, or taking any action. IMPORTANT: trigger this skill proactively whenever the user's phrasing implies they want a plan reviewed before execution — even if they don't use the exact trigger words.
 ---
 
-# Plan-First Workflow
+# 先方案后执行
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/plan-first`、"给出方案"、"先给方案"、"先说思路"、"先分析"、"先规划"
 
 When the user asks for a "方案" or requests that you plan before executing, follow this response pattern exactly.
 
-## Response structure
+## 响应结构
 
 Deliver your analysis concisely — the whole response should be under 300 words. Use this order:
 

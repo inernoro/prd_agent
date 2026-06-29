@@ -655,7 +655,7 @@
 
 **补齐方案**：
 - 桌面端（Tauri）支持快捷打点（系统托盘 → 快速输入）
-- 未来移动端 PWA 支持（参考 `plan.mobile-adaptation.md`）
+- 未来移动端 PWA 支持（参考 `plan.frontend.mobile-adaptation.md`）
 - 日报打点必须极简：一个输入框 + 一个分类选择 + 回车确认
 
 ### 7.7 历史趋势与个人成长
@@ -815,7 +815,7 @@ appKey: report-agent
 
 | 文档 | 关系 |
 |------|------|
-| `doc/rule.agent-development.md` | Agent 开发交付流程（Phase 1-6） |
+| `doc/rule.platform.agent-development.md` | Agent 开发交付流程（Phase 1-6） |
 | `doc/rule.app-key-definition.md` | appKey 定义规范 |
 | `doc/rule.app-feature-definition.md` | appCallerCode 命名规范 |
 | `doc/weekly-report-2026-W06.md` | 现有周报样例（作为汇总输出的参考格式） |

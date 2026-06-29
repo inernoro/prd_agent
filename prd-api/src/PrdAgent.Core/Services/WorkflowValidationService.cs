@@ -12,7 +12,7 @@ namespace PrdAgent.Core.Services;
 /// 3. 结构校验（未知/停用舱、悬空边、成环、空工作流）→ 失败由调用方回喂 LLM 自愈
 /// 4. 缺项扫描（必填配置 / secret 变量未填）→ 前端「补齐就能跑」表单
 ///
-/// 设计依据：doc/design.workflow-auto-config.md、.claude/rules/no-rootless-tree.md
+/// 设计依据：doc/design.workflow-agent.auto-config.md、.claude/rules/no-rootless-tree.md
 /// </summary>
 public class WorkflowValidationService
 {

@@ -2,7 +2,7 @@
  * 基础设施服务管理（v1：CDS 配对连接已落地）
  *
  * v1 落地能力：
- *   - 通过剪贴板配对密钥连接 CDS（spec.cds-map-pairing-protocol）
+ *   - 通过剪贴板配对密钥连接 CDS（spec.cds.map-pairing-protocol）
  *   - 列出 / 探活 / 删除已建立的 InfraConnection
  *
  * 已落地能力：
@@ -1039,7 +1039,7 @@ export default function InfraServicesPage() {
             <strong className="text-white">v1 已上线：</strong>
             输入 CDS 地址后跳转授权，授权完成自动回到 MAP 建立连接；无法跳转时仍可使用配对密钥兜底（
             <code className="mx-1 px-1 py-0.5 rounded bg-white/10 text-white/90">
-              doc/spec.cds-map-pairing-protocol.md
+              doc/spec.cds.map-pairing-protocol.md
             </code>
             ）。
             后续将逐步迁入实例只读列表 / 路由策略 / 业务监控等能力。
@@ -1506,10 +1506,10 @@ export default function InfraServicesPage() {
         <ul className="space-y-2 text-sm">
           <li>
             <a
-              href="/doc/spec.cds-map-pairing-protocol.md"
+              href="/doc/spec.cds.map-pairing-protocol.md"
               className="inline-flex items-center gap-1.5 text-blue-300 hover:text-blue-200"
             >
-              spec.cds-map-pairing-protocol.md
+              spec.cds.map-pairing-protocol.md
               <ExternalLink size={12} />
             </a>
             <span className="text-white/45 ml-2">配对协议 v1（已落地）</span>
@@ -1526,60 +1526,60 @@ export default function InfraServicesPage() {
           </li>
           <li>
             <a
-              href="/doc/design.claude-sdk-executor.md"
+              href="/doc/design.cds.agent.sdk-executor.md"
               className="inline-flex items-center gap-1.5 text-blue-300 hover:text-blue-200"
             >
-              design.claude-sdk-executor.md
+              design.cds.agent.sdk-executor.md
               <ExternalLink size={12} />
             </a>
             <span className="text-white/45 ml-2">claude-sdk 执行器架构</span>
           </li>
           <li>
             <a
-              href="/doc/guide.cds-agent-workbench.md"
+              href="/doc/guide.cds.agent.workbench.md"
               className="inline-flex items-center gap-1.5 text-blue-300 hover:text-blue-200"
             >
-              guide.cds-agent-workbench.md
+              guide.cds.agent.workbench.md
               <ExternalLink size={12} />
             </a>
             <span className="text-white/45 ml-2">CDS Agent 用户指南</span>
           </li>
           <li>
             <a
-              href="/doc/guide.cds-agent-code-review-quickstart.md"
+              href="/doc/guide.cds.agent.code-review-quickstart.md"
               className="inline-flex items-center gap-1.5 text-blue-300 hover:text-blue-200"
             >
-              guide.cds-agent-code-review-quickstart.md
+              guide.cds.agent.code-review-quickstart.md
               <ExternalLink size={12} />
             </a>
             <span className="text-white/45 ml-2">代码审查上手流程、官方 SDK 边界和当前 R1 阻塞</span>
           </li>
           <li>
             <a
-              href="/doc/guide.cds-agent-admin.md"
+              href="/doc/guide.cds.agent.admin.md"
               className="inline-flex items-center gap-1.5 text-blue-300 hover:text-blue-200"
             >
-              guide.cds-agent-admin.md
+              guide.cds.agent.admin.md
               <ExternalLink size={12} />
             </a>
             <span className="text-white/45 ml-2">长期授权、模型配置和 Hook 管理指南</span>
           </li>
           <li>
             <a
-              href="/doc/design.cds-agent-api.md"
+              href="/doc/design.cds.agent.api.md"
               className="inline-flex items-center gap-1.5 text-blue-300 hover:text-blue-200"
             >
-              design.cds-agent-api.md
+              design.cds.agent.api.md
               <ExternalLink size={12} />
             </a>
             <span className="text-white/45 ml-2">MAP/CDS Agent API 契约</span>
           </li>
           <li>
             <a
-              href="/doc/guide.cds-agent-runbook.md"
+              href="/doc/guide.cds.agent.runbook.md"
               className="inline-flex items-center gap-1.5 text-blue-300 hover:text-blue-200"
             >
-              guide.cds-agent-runbook.md
+              guide.cds.agent.runbook.md
               <ExternalLink size={12} />
             </a>
             <span className="text-white/45 ml-2">部署、401、撤销和 PR 验收排障</span>

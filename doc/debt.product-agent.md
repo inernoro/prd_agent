@@ -39,7 +39,7 @@ updated: 2026-06-10
 
 ## 索引登记需求（DBA）
 
-新增集合的索引建议（按 `.claude/rules/no-auto-index.md`，应用不自动建，登记给 DBA，见 `doc/guide.mongodb-indexes.md`）：
+新增集合的索引建议（按 `.claude/rules/no-auto-index.md`，应用不自动建，登记给 DBA，见 `doc/guide.platform.mongodb-indexes.md`）：
 
 - `products`：`{ OwnerId:1, IsDeleted:1, UpdatedAt:-1 }`、`{ MemberIds:1 }`
 - `product_versions`：`{ ProductId:1, IsDeleted:1 }`

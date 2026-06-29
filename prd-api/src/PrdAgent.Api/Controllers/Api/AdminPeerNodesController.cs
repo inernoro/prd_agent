@@ -17,7 +17,7 @@ namespace PrdAgent.Api.Controllers.Api;
 
 /// <summary>
 /// 系统互联（跨节点互传）管理端 —— 管理员配置对端节点、生成配对码、握手、解除配对。
-/// 「设置 → 系统互联」页面的后端入口。详见 doc/design.peer-sync.md §8。
+/// 「设置 → 系统互联」页面的后端入口。详见 doc/design.platform.peer-sync.md §8。
 /// </summary>
 [ApiController]
 [Route("api/admin/peer-nodes")]
@@ -219,7 +219,7 @@ public class AdminPeerNodesController : ControllerBase
         // 探活成功后才落本端 PeerNode（指向对端 B）
         // PR #742 review P2 fix：原子 upsert by RemoteNodeId，避免并发 Add（两个 admin 同时配同对端）
         // 产生两行同 RemoteNodeId 但不同 SharedSecret 的脏数据。Last-writer-wins，可接受。
-        // 需配套 peer_nodes.RemoteNodeId 唯一索引（DBA 手建，见 doc/guide.mongodb-indexes.md）。
+        // 需配套 peer_nodes.RemoteNodeId 唯一索引（DBA 手建，见 doc/guide.platform.mongodb-indexes.md）。
         var displayName = string.IsNullOrWhiteSpace(request.DisplayName)
             ? (string.IsNullOrWhiteSpace(result.DisplayName) ? "对端节点" : result.DisplayName!)
             : request.DisplayName!.Trim();
@@ -320,7 +320,7 @@ public class AdminPeerNodesController : ControllerBase
         }
     }
 
-    /// <summary>解除配对（删除本端记录；对端残留需对端管理员手动删，见 debt.peer-sync.md）。</summary>
+    /// <summary>解除配对（删除本端记录；对端残留需对端管理员手动删，见 debt.platform.peer-sync.md）。</summary>
     [HttpDelete("{id}")]
     public async Task<IActionResult> Delete(string id, CancellationToken ct)
     {

@@ -9,6 +9,7 @@ import { combinedOutput } from '../types.js';
 import { resolveCommandTemplate, resolveEnvTemplates } from './compose-parser.js';
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
 import { applyPerBranchDbIsolation } from './db-scope-isolation.js';
+import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkPlan } from './branch-network.js';
 import { nodeModulesVolumeName } from '../util/node-modules-volume.js';
 import {
   collectContainerDiagnostics,
@@ -189,7 +190,9 @@ export function resolveProfileWithMode(profile: BuildProfile): BuildProfile {
         ? { ...profile.env, ...override.env }
         : profile.env,
       ...(override.prebuilt !== undefined ? { prebuiltImage: override.prebuilt } : {}),
-      ...(override.containerPort !== undefined ? { containerPort: override.containerPort } : {}),
+      // 用 != null（非 !== undefined）：override.containerPort 为 null 时**不得**覆盖 baseline 真实端口，
+      // 否则 docker run 拿到 null → `invalid containerPort: null`。合法端口恒为数字，永不为 null，故安全。
+      ...(override.containerPort != null ? { containerPort: override.containerPort } : {}),
       // 极速版「逐组件回退主分支」:把本模式的 fallbackImage 一并带出,供 runService 在
       // 本 commit 无该组件镜像时回退（path-filter 只构建改动组件,某些 commit 缺镜像）。
       ...(override.fallbackImage !== undefined ? { fallbackImage: override.fallbackImage } : {}),
@@ -290,14 +293,39 @@ export function slugifyBranchForImage(branch: string): string {
  * of the baseline (override wins per key). Returns a NEW object — the baseline
  * is never mutated.
  */
-export function applyProfileOverride(baseline: BuildProfile, override?: BuildProfileOverride): BuildProfile {
+/**
+ * 剥掉 branch override 里值为 `null` 的顶层字段。`null` 是历史上「该继承 baseline」的哨兵
+ * （极速版把 `containerPort`/`dockerImage`/`command` 持久化成 null，表示「走 mode 层 / 继承」），
+ * **不是真实值**。下游各读取点历史上 `??` / `!= null` / `!== undefined` 混用——只要有一处用
+ * `!== undefined`，null 就会覆盖 baseline 的结构字段：
+ *   - `containerPort: null` → `docker run` 拿到 null → `invalid containerPort: null`
+ *   - `dockerImage: null`   → 空镜像 → `docker run "" sh` → 把命令 `sh` 当镜像 → `sh:latest` 拉取失败
+ * 这就是「修一处过一次 CI、换条解析路径又炸」的打地鼠根源。统一在所有 merge 入口剥一次 null，
+ * 所有 `!== undefined` 判定自然回归正确，整类 null-覆盖 bug 一次性消失（不必逐字段补 `!= null`）。
+ * 也覆盖**存量**持久化进 state 的 null override，无需数据迁移。纯函数，export 给单测。
+ */
+export function sanitizeProfileOverride(override?: BuildProfileOverride): BuildProfileOverride | undefined {
+  if (!override) return override;
+  let changed = false;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(override)) {
+    if (v === null) { changed = true; continue; }
+    out[k] = v;
+  }
+  return changed ? (out as BuildProfileOverride) : override;
+}
+
+export function applyProfileOverride(baseline: BuildProfile, rawOverride?: BuildProfileOverride): BuildProfile {
+  const override = sanitizeProfileOverride(rawOverride);
   if (!override) return baseline;
   return {
     ...baseline,
     ...(override.dockerImage !== undefined ? { dockerImage: override.dockerImage } : {}),
     ...(override.command !== undefined ? { command: override.command } : {}),
     ...(override.containerWorkDir !== undefined ? { containerWorkDir: override.containerWorkDir } : {}),
-    ...(override.containerPort !== undefined ? { containerPort: override.containerPort } : {}),
+    // != null：branch override 的 containerPort 为 null（极速版端口走 mode override，本层留 null）时
+    // **不得**覆盖 baseline 真实端口 → 根治 `docker: invalid containerPort: null`（prd-agent-main 等）。
+    ...(override.containerPort != null ? { containerPort: override.containerPort } : {}),
     ...(override.pathPrefixes !== undefined ? { pathPrefixes: override.pathPrefixes } : {}),
     ...(override.resources !== undefined ? { resources: override.resources } : {}),
     ...(override.activeDeployMode !== undefined ? { activeDeployMode: override.activeDeployMode } : {}),
@@ -537,6 +565,57 @@ export function computeProfileAliases(
   return Array.from(aliases);
 }
 
+/**
+ * 源码构建/安装类命令（pnpm install、vite build、dotnet publish 等）是一次性的
+ * CPU 爆发；同机几十个分支预览共享一颗 CPU 时，一次编译能把核占满、把正在跑的
+ * 预览和 CDS 代理都饿住（表现为预览根文档卡几十秒）。这里给这些 build 动词降
+ * 调度优先级（`nice`），让编译"有空就全速、有人抢就让路"。
+ *
+ * 注意与 2026-05-28「不给容器加任何 docker 资源限制(--cpus/--memory)」的约定不冲突：
+ * `nice` 只是进程调度优先级，不是硬上限——CPU 空闲时构建仍跑满，只有在争抢时才让
+ * 步给正常优先级的预览/代理。长时间运行的 serve 命令（dev/start/serve/node 等）
+ * 不在下表，保持正常优先级，预览本身不被降速。
+ *
+ * 由 `CDS_BUILD_NICE` 控制：默认 10；设为 0/off/false 关闭。极速版预构建镜像
+ * （走镜像 ENTRYPOINT、无 sh -c command）天然不经过这里。
+ */
+const BUILD_NICE_VERBS = [
+  'pnpm install', 'pnpm i', 'pnpm ci', 'pnpm run build', 'pnpm build',
+  'npm install', 'npm ci', 'npm run build',
+  'yarn install', 'yarn build', 'yarn run build',
+  'vite build', 'next build', 'tsc',
+  'dotnet restore', 'dotnet build', 'dotnet publish',
+  'cargo build', 'cargo install', 'go build', 'go install',
+  'webpack', 'rollup',
+];
+
+export function buildNiceLevel(): number {
+  const raw = (process.env.CDS_BUILD_NICE ?? '10').trim().toLowerCase();
+  if (raw === '' || raw === '0' || raw === 'off' || raw === 'false') return 0;
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) return 0;
+  return Math.min(n, 19);
+}
+
+export function niceBuildCommands(command: string): string {
+  const n = buildNiceLevel();
+  if (!n || !command) return command;
+  // 幂等：已处理过的命令(含 NICE= 前导定义)原样返回，避免重复包裹。
+  if (command.includes('NICE=$(command -v nice')) return command;
+  let out = command;
+  let touched = false;
+  for (const verb of BUILD_NICE_VERBS) {
+    const esc = verb.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // 命中处于词边界、尚未被 $NICE 前缀包裹、且 verb 后是空白/结尾/管道分隔的 build 动词。
+    const re = new RegExp(`(?<![\\w-])(?<!\\$NICE )(${esc})(?=\\s|$|[&|;)])`, 'g');
+    out = out.replace(re, (m) => { touched = true; return `$NICE ${m}`; });
+  }
+  if (!touched) return command;
+  // 在命令最前定义 NICE：镜像里有 nice 才用(busybox/coreutils 普遍自带)，没有则降级为空，
+  // 绝不因某个镜像缺 nice 而让构建启动失败(no-rootless-tree：不假定能力存在，缺什么就降级)。
+  return `NICE=$(command -v nice >/dev/null 2>&1 && echo 'nice -n ${n}'); ${out}`;
+}
+
 export class ContainerService {
   constructor(
     private readonly shell: IShellExecutor,
@@ -726,25 +805,30 @@ export class ContainerService {
     const containerWorkDir = profile.containerWorkDir || '/app';
     const skipSrcMount = profile.prebuiltImage === true;
     const isNodeContainer = /\bnode:/.test(profile.dockerImage);
+    // host-shell 安全（Codex P1「Validate extra-service workDir before deploy」）：srcMount 由
+    // path.join(worktreePath, profile.workDir) 拼成，profile.workDir / containerWorkDir 来自用户可控的
+    // BuildProfile（含分支级额外服务）。旧写法 `-v "${srcMount}":"${containerWorkDir}"` 用双引号，
+    // workDir 里塞一个双引号 + `$()`/反引号就能在 CDS 宿主机上越权执行。这里与 dockerImage/command 同口径，
+    // 对挂载路径两端走 shellQuote 单引号转义（docker 拿到的仍是原始路径，shell 不再预展开/不被截断）。
     const volumeFlags: string[] = skipSrcMount
       ? []
-      : [`-v "${srcMount}":"${containerWorkDir}"`];
+      : [`-v ${this.shellQuote(srcMount)}:${this.shellQuote(containerWorkDir)}`];
 
     if (skipSrcMount) {
       onOutput?.(`── 预构建镜像模式: 跳过 source mount(image 已含应用文件)──\n`);
     }
 
     if (isNodeContainer && !skipSrcMount && /\bpnpm\b/.test(command)) {
-      volumeFlags.push(`-v "${nodeModulesVolumeName(entry.id, profile.id)}":"${containerWorkDir}/node_modules"`);
+      volumeFlags.push(`-v ${this.shellQuote(nodeModulesVolumeName(entry.id, profile.id))}:${this.shellQuote(`${containerWorkDir}/node_modules`)}`);
     }
 
     if (profile.cacheMounts) {
       for (const cm of profile.cacheMounts) {
-        const mkdir = await this.shell.exec(`mkdir -p "${cm.hostPath}"`);
+        const mkdir = await this.shell.exec(`mkdir -p ${this.shellQuote(cm.hostPath)}`);
         if (mkdir.exitCode !== 0) {
           throw new Error(`创建缓存目录失败: ${cm.hostPath}: ${combinedOutput(mkdir)}`);
         }
-        volumeFlags.push(`-v "${cm.hostPath}":"${cm.containerPath}"`);
+        volumeFlags.push(`-v ${this.shellQuote(cm.hostPath)}:${this.shellQuote(cm.containerPath)}`);
       }
     }
 
@@ -983,7 +1067,21 @@ export class ContainerService {
       profile.id,
       this.getProjectMarkers(entry.projectId),
     );
-    await this.pruneStaleAppContainersForProfile(entry, profile, service, network, profileAliases, onOutput, context);
+    // 分支级网络隔离（默认开，全局 env 逃生）：app 容器主网 = 分支网（app 别名仅本分支可见），
+    // 运行后再连共享网（无别名，仅为可达共享 infra mysql/redis）。这样一个分支随便部署多少
+    // 容器都只落在自己的分支网，杜绝「app 别名跨分支串流」（apigateway 拆服务案例）。未隔离时
+    // netPlan 退化为「共享网 + app 别名」= 现状，零回归。详见 branch-network.ts / design 文档。
+    const netPlan = resolveAppNetworkPlan({
+      isolated: branchNetworkIsolationEnabled(process.env),
+      sharedNetwork: network,
+      branchId: entry.id,
+      aliases: profileAliases,
+    });
+    if (netPlan.runNetwork !== network) await this.ensureNetwork(netPlan.runNetwork);
+    // 陈旧别名清理必须扫「别名实际注册的那张网」（Bugbot Medium）：隔离开启后 app 的 --network-alias
+    // 落在分支网（cds-br-*）而非共享项目网，若仍扫共享网会**看不到** app 别名 → 失败/半成功重部署后
+    // 分支网上残留同别名的僵尸端点（DNS 轮询又回来了）。故传 netPlan.runNetwork（隔离=分支网，未隔离=共享网）。
+    await this.pruneStaleAppContainersForProfile(entry, profile, service, netPlan.runNetwork, profileAliases, onOutput, context);
 
     context.assertCurrent?.(`runService before pre-run-rm ${profile.id}`);
     // Remove any existing container
@@ -1090,7 +1188,11 @@ export class ContainerService {
             ? `── 本 commit 无该组件 CI 镜像,按回退链尝试 ${cand.image} ──\n`
             : `── 极速版: 拉取 CI 预构建镜像 ${cand.image}（CDS 不再本机编译）──\n`);
           context.assertCurrent?.(`runService before docker-pull ${profile.id}`);
-          const pull = await this.shell.exec(`docker pull ${cand.image}`);
+          // shellQuote 兜底（Codex P1「Validate extra-profile override images before deploy」）：cand.image
+          // 来自 resolved profile 的 dockerImage,而 profile-overrides PUT 可对分支额外服务覆盖 dockerImage,
+          // 绕过 extra-services 的严格镜像校验;裸拼进宿主机 `docker pull` 时 `alpine; touch /tmp/pwn` 这类值
+          // 会在 CDS 宿主机执行。这里单引号兜底关掉注入面(入口另有镜像引用白名单作边界防御)。
+          const pull = await this.shell.exec(`docker pull ${this.shellQuote(cand.image)}`);
           if (pull.stdout) onOutput?.(pull.stdout + '\n');
           if (pull.exitCode === 0) { pulledImage = cand.image; break; }
           lastDetail = (pull.stderr || pull.stdout || '').trim();
@@ -1197,10 +1299,35 @@ export class ContainerService {
       // 多 alias 用多个 --network-alias 标志(docker 支持任意多个)。
       const profileAliasFlags = profileAliases.map((a) => `--network-alias ${a}`);
 
+      // 给源码 build/install 动词降调度优先级(nice)，让编译不饿死同机预览/代理。
+      // 仅作用于 sh -c "command" 源码路径；极速版预构建镜像(usePrebuiltEntrypoint)不经过。
+      if (!usePrebuiltEntrypoint) command = niceBuildCommands(command);
+
+      // 防御性兜底（根治 `Unable to find image 'sh:latest'`）：到这一步 dockerImage 绝不能为空。
+      // 空镜像会让 `docker run ... <labels>  sh -c "..."` 把命令 token `sh` 当成镜像名去拉，报
+      // `sh:latest` not found，**掩盖真正根因**（镜像解析成空，多由 branch override 的 null 哨兵
+      // 覆盖 baseline 引起——已由 sanitizeProfileOverride 根治）。此处再加一道断言：任何残留路径
+      // 都明确失败 + 指出原因，而不是误判成 docker 镜像问题。
+      const runImage = (profile.dockerImage || '').trim();
+      if (!runImage || runImage.includes('${')) {
+        throw new Error(
+          `部署中止：构建配置 '${profile.id}' 解析出的镜像为空或未解析（dockerImage=${JSON.stringify(profile.dockerImage)}）。`
+          + ` 常因 branch override 把结构字段持久化成 null 覆盖了 baseline 镜像（见 sanitizeProfileOverride）。`
+          + ` 这不是 Docker/容器问题，是 CDS 的 profile 解析问题。`,
+        );
+      }
+
+      // 分支级隔离的启动时序（Codex P1,2026-06-29）：隔离时 app 容器主网=分支网,还需连共享 infra 网
+      // 才能解析 mysql/redis/mongo。若用 `docker run -d` 先把进程拉起、再 `docker network connect`,
+      // 那些在 entrypoint 阶段就开 DB 连接的镜像(极速版/API)会在 infra 网连上之前连库失败。
+      // 修复:隔离时改用 create → connect(infra) → start 时序 —— 进程启动前两张网都已就位,等价于
+      // 旧路径下「容器进程开始前就在项目网上」。未隔离(connectNetworks 为空)仍走原 `docker run -d`,零回归。
+      const attachSharedBeforeStart = netPlan.connectNetworks.length > 0;
+      const dockerCreateVerb = attachSharedBeforeStart ? 'docker create' : 'docker run -d';
       const runCmd = [
-        'docker run -d',
+        dockerCreateVerb,
         `--name ${service.containerName}`,
-        `--network ${network}`,
+        `--network ${netPlan.runNetwork}`,
         ...profileAliasFlags,
         `-p ${service.hostPort}:${profile.containerPort}`,
         ...volumeFlags,
@@ -1208,12 +1335,20 @@ export class ContainerService {
         ...entrypointFlags,
         // 极速版预构建镜像无 command 时,不覆盖 -w（用镜像自带 WORKDIR）也不 sh -c 包装,
         // 直接让镜像 ENTRYPOINT/CMD 启动。
-        ...(usePrebuiltEntrypoint ? [] : [`-w ${containerWorkDir}`]),
+        ...(usePrebuiltEntrypoint ? [] : [`-w ${this.shellQuote(containerWorkDir)}`]),
         envFlag,
         '--tmpfs /tmp',
+        // cds.network 标签保持「共享/项目网」语义（用于按项目归属/孤儿容器清理的 projectIdForDockerNetwork
+        // 解析），不跟随实际 run 主网（分支网）。真正的隔离是上面的 `--network <分支网>` + 启动前 connect 共享网，
+        // 与标签无关。若把标签写成 cds-br-<id>，孤儿容器(分支已不在 state)将无法按网络名归属到项目。
         this.appLabels(entry.projectId, entry.id, profile.id, network),
-        profile.dockerImage,
-        ...(usePrebuiltEntrypoint ? [] : [`sh -c "${command.replace(/"/g, '\\"')}"`]),
+        // host-shell 安全（Codex P1「Validate shell-interpolated extra service fields」）：镜像引用与
+        // command 都来自用户可控的 BuildProfile（含分支级额外服务），必须对**宿主机 shell** 单引号转义，
+        // 否则 dockerImage=`x;rm -rf /` 或 command=`$(...)` 会在 CDS 宿主机上执行（而非仅容器内）。
+        // 单引号(shellQuote)让宿主机原样把字符串交给 docker；command 里的 shell 运算符仍由**容器内** sh -c
+        // 解释（这才是本意），顺带修了旧双引号写法把 $VAR/$(...) 在宿主机预展开的潜在 bug。
+        this.shellQuote(runImage),
+        ...(usePrebuiltEntrypoint ? [] : [`sh -c ${this.shellQuote(command)}`]),
       ].join(' ');
 
       context.assertCurrent?.(`runService before docker-run ${profile.id}`);
@@ -1223,7 +1358,7 @@ export class ContainerService {
           severity: 'error',
           source: 'cds-container-service',
           action: 'app.run.failed',
-          message: `docker run failed for ${service.containerName}`,
+          message: `${dockerCreateVerb} failed for ${service.containerName}`,
           projectId: entry.projectId,
           branchId: entry.id,
           profileId: profile.id,
@@ -1251,6 +1386,51 @@ export class ContainerService {
       // activeDeployMode（仍是 express）钉 deployedMode，预览 widget 会把实际跑源码的
       // 分支误标「极速」。下游 deploy 路径改为优先采纳这里钉的值。
       service.deployedMode = profile.activeDeployMode || '';
+      // 分支级隔离：把 app 容器连到共享 infra 网（无别名，仅为可达共享 mysql/redis/mongo）。
+      // 隔离时容器是 `docker create` 出来的（进程尚未启动），这里在 start 之前把共享网连上，
+      // 保证 entrypoint 阶段就开 DB 连接的镜像在进程跑起来时两张网都已就位（Codex P1）。无别名 = 兄弟
+      // 分支无法在共享网上按 app 别名解析到本容器，杜绝串流。未隔离时 connectNetworks 为空，跳过。
+      for (const sharedNet of netPlan.connectNetworks) {
+        await this.connectContainerToSharedNetwork(service.containerName, sharedNet, {
+          projectId: entry.projectId,
+          branchId: entry.id,
+          profileId: profile.id,
+          requestId: context.requestId ?? undefined,
+          operationId: context.operationId ?? undefined,
+        });
+      }
+      // 隔离路径用 create，网络就位后再启动进程；未隔离路径已由 `docker run -d` 启动，跳过。
+      if (attachSharedBeforeStart) {
+        context.assertCurrent?.(`runService before docker-start ${profile.id}`);
+        const startRes = await this.shell.exec(`docker start ${service.containerName}`);
+        if (startRes.exitCode !== 0) {
+          this.recordContainerEvent({
+            severity: 'error',
+            source: 'cds-container-service',
+            action: 'app.run.failed',
+            message: `docker start failed for ${service.containerName}`,
+            projectId: entry.projectId,
+            branchId: entry.id,
+            profileId: profile.id,
+            requestId: context.requestId ?? undefined,
+            operationId: context.operationId ?? undefined,
+            containerName: service.containerName,
+            command: {
+              name: 'docker start',
+              exitCode: startRes.exitCode,
+              stdoutPreview: startRes.stdout,
+              stderrPreview: startRes.stderr,
+            },
+            details: {
+              image: profile.dockerImage,
+              hostPort: service.hostPort,
+              containerPort: profile.containerPort,
+              network,
+            },
+          });
+          throw new Error(`启动服务 "${service.containerName}" 失败:\n${combinedOutput(startRes)}`);
+        }
+      }
       this.recordContainerEvent({
         severity: 'info',
         source: 'cds-container-service',
@@ -1327,6 +1507,17 @@ export class ContainerService {
   ): Promise<ExecResult> {
     const network = this.getNetworkForProject(entry.projectId);
     await this.ensureNetwork(network);
+    // 分支级隔离下，长生命周期 app 容器的 --network-alias 落在分支网（cds-br-*）而非共享项目网。一次性 job
+    // （db-init/migration）若仍只挂共享网，就解析不到兄弟 app 的 profile 主机名（如 http://api:8080）——
+    // Bugbot「Job containers miss branch app DNS」。故 job 与 app 同口径走 netPlan：隔离时主网=分支网（能解析
+    // 兄弟 app 别名）+ 连共享 infra 网（能到 mysql/redis）；job 自身不注册别名（aliases:[]，没人需要解析到它）。
+    const netPlan = resolveAppNetworkPlan({
+      isolated: branchNetworkIsolationEnabled(process.env),
+      sharedNetwork: network,
+      branchId: entry.id,
+      aliases: [],
+    });
+    if (netPlan.runNetwork !== network) await this.ensureNetwork(netPlan.runNetwork);
 
     const resolvedEnv = this.resolveProfileRuntimeEnv(entry, profile, customEnv);
     const envFilePath = this.writeEnvFile(resolvedEnv);
@@ -1344,12 +1535,16 @@ export class ContainerService {
       }
 
       const entrypointFlags = this.buildEntrypointFlags(profile, onOutput);
-      const runCmd = [
-        'docker run --rm',
-        `--network ${network}`,
+      // host-shell 安全（Codex P1）：一次性命令路径与 runService 同口径——dockerImage / command / workdir
+      // 均来自用户可控 BuildProfile，对宿主机 shell 走 shellQuote 单引号转义；command 里的运算符仍由容器内
+      // sh -c 解释。旧写法 dockerImage 裸拼 + `sh -c "${command.replace(/"/g,'\\"')}"` 双引号可被 $()/反引号
+      // 在宿主机预展开/越权执行。
+      const jobImage = (profile.dockerImage || '').trim();
+      // 容器规格（不含 run 动词 / --network / --rm / --name），隔离与非隔离两条路径共用。
+      const jobSpec = [
         ...volumeFlags,
         ...entrypointFlags,
-        `-w ${containerWorkDir}`,
+        `-w ${this.shellQuote(containerWorkDir)}`,
         envFlag,
         '--tmpfs /tmp',
         `--label cds.managed=true`,
@@ -1357,14 +1552,55 @@ export class ContainerService {
         `--label cds.project.id=${entry.projectId || 'default'}`,
         `--label cds.branch.id=${entry.id}`,
         `--label cds.profile.id=${profile.id}`,
-        profile.dockerImage,
-        `sh -c "${command.replace(/"/g, '\\"')}"`,
-      ].join(' ');
+      ];
+      const jobTail = [this.shellQuote(jobImage), `sh -c ${this.shellQuote(command)}`];
+      const timeoutMs = context.timeoutMs ?? profile.buildTimeout ?? 600_000;
 
       context.assertCurrent?.(`runProfileCommand before docker-run ${profile.id}`);
-      const result = await this.shell.exec(runCmd, {
-        timeout: context.timeoutMs ?? profile.buildTimeout ?? 600_000,
-      });
+      let result: ExecResult;
+      const attachSharedBeforeStart = netPlan.connectNetworks.length > 0;
+      if (!attachSharedBeforeStart) {
+        // 未隔离：保持原 `docker run --rm` 一次性语义（零回归）。
+        const runCmd = ['docker run --rm', `--network ${netPlan.runNetwork}`, ...jobSpec, ...jobTail].join(' ');
+        result = await this.shell.exec(runCmd, { timeout: timeoutMs });
+      } else {
+        // 隔离：create(分支网) → connect(共享 infra 网) → start → wait → logs → rm。让 job 同时可达兄弟 app
+        // （分支网别名）与共享 infra（mysql/redis）。不能用 `docker run --rm`（单网、退出即删，无从 connect
+        // 第二张网 / 取 exitCode）。connect 失败抛错（与 app 同口径，infra 不可达的 job 没意义）。
+        const jobName = `cds-job-${entry.id}-${profile.id}`;
+        await this.shell.exec(`docker rm -f ${this.shellQuote(jobName)}`).catch(() => undefined); // 预清理同名残留
+        try {
+          const createCmd = ['docker create', `--name ${this.shellQuote(jobName)}`, `--network ${netPlan.runNetwork}`, ...jobSpec, ...jobTail].join(' ');
+          const createRes = await this.shell.exec(createCmd, { timeout: timeoutMs });
+          if (createRes.exitCode !== 0) {
+            result = createRes;
+          } else {
+            for (const sharedNet of netPlan.connectNetworks) {
+              await this.connectContainerToSharedNetwork(jobName, sharedNet, {
+                projectId: entry.projectId, branchId: entry.id, profileId: profile.id,
+                requestId: context.requestId ?? undefined, operationId: context.operationId ?? undefined,
+              });
+            }
+            const startRes = await this.shell.exec(`docker start ${this.shellQuote(jobName)}`, { timeout: timeoutMs });
+            if (startRes.exitCode !== 0) {
+              result = startRes;
+            } else {
+              // 阻塞到容器退出取退出码，再取日志（合并到 stdout 供展示，与 docker run 捕获等价）。
+              const waitRes = await this.shell.exec(`docker wait ${this.shellQuote(jobName)}`, { timeout: timeoutMs });
+              const parsedExit = parseInt((waitRes.stdout || '').trim(), 10);
+              const logsRes = await this.shell.exec(`docker logs ${this.shellQuote(jobName)}`, { timeout: timeoutMs });
+              result = {
+                stdout: logsRes.stdout,
+                stderr: logsRes.stderr,
+                exitCode: Number.isFinite(parsedExit) ? parsedExit : (waitRes.exitCode || 1),
+              };
+            }
+          }
+        } finally {
+          await this.shell.exec(`docker rm -f ${this.shellQuote(jobName)}`).catch(() => undefined);
+        }
+      }
+
       this.recordContainerEvent({
         severity: result.exitCode === 0 ? 'info' : 'error',
         source: 'cds-container-service',
@@ -1376,14 +1612,14 @@ export class ContainerService {
         requestId: context.requestId ?? undefined,
         operationId: context.operationId ?? undefined,
         command: {
-          name: 'docker run --rm',
+          name: attachSharedBeforeStart ? 'docker create+start (job, isolated)' : 'docker run --rm',
           exitCode: result.exitCode,
           stdoutPreview: result.stdout,
           stderrPreview: result.stderr,
         },
         details: {
           image: profile.dockerImage,
-          network,
+          network: netPlan.runNetwork,
           actor: context.actor ?? null,
           trigger: context.trigger ?? null,
         },
@@ -2513,8 +2749,74 @@ export class ContainerService {
     if (inspect.exitCode !== 0) {
       const create = await this.shell.exec(`docker network create ${target}`);
       if (create.exitCode !== 0) {
+        // 并发竞态：同一分支的多个服务（如 api + admin 在 layer-0 同时启动）首次都发现分支网
+        // 不存在 → 同时 `docker network create` → 一个成功、其余报 "already exists"。docker 网络
+        // create 天然幂等语义下这就是成功，吞掉视为已就绪（分支网是新建的，最易触发，旧共享网因
+        // 多已预先存在而少见此竞态）。
+        const stderr = (create.stderr || '').toLowerCase();
+        if (stderr.includes('already exists')) return;
         throw new Error(`创建 Docker 网络 "${target}" 失败:\n${combinedOutput(create)}`);
       }
+    }
+  }
+
+  /**
+   * 分支级隔离：把 app 容器连到共享 infra 网（无别名，仅为可达共享 mysql/redis）。
+   * 无别名 → 兄弟分支无法在共享网上按 app 别名解析到本容器，杜绝跨分支串流。
+   * 幂等：已连上视为成功；其它失败（含「容器不存在」）一律抛错——infra 可达性是硬需求，
+   * 连不上 DB 的容器没意义，宁可让部署显式失败而非静默起一个连不到数据库的容器。
+   * 唯一调用方是 create→connect→start 时序：容器在本调用前刚 `docker create` 成功（exitCode 已校验），
+   * 故连接时「no such container」不是良性并发 race，而是真异常——若吞掉，后续 `docker start` 会把 app
+   * 只挂在分支网、连不上共享 infra，DB/redis DNS 解析失败却 deploy 报成功（Bugbot「Infra connect failure
+   * ignored silently」）。因此不再容忍该错误。
+   */
+  private async connectContainerToSharedNetwork(
+    containerName: string,
+    network: string,
+    ctx: { projectId?: string; branchId?: string; profileId?: string; requestId?: string; operationId?: string } = {},
+  ): Promise<void> {
+    const result = await this.shell.exec(`docker network connect ${network} ${containerName}`);
+    if (result.exitCode === 0) return;
+    const stderr = (result.stderr || '').toLowerCase();
+    if (stderr.includes('already exists') || stderr.includes('already connected')) return;
+    this.recordContainerEvent({
+      severity: 'error',
+      source: 'cds-container-service',
+      action: 'app.network.connect.failed',
+      message: `connect ${containerName} to shared infra net ${network} failed`,
+      projectId: ctx.projectId ?? null,
+      branchId: ctx.branchId ?? null,
+      profileId: ctx.profileId ?? null,
+      requestId: ctx.requestId,
+      operationId: ctx.operationId,
+      containerName,
+      command: {
+        name: 'docker network connect',
+        exitCode: result.exitCode,
+        stdoutPreview: result.stdout,
+        stderrPreview: result.stderr,
+      },
+      details: { network },
+    });
+    throw new Error(`把容器 "${containerName}" 连接到共享 infra 网 "${network}" 失败:\n${combinedOutput(result)}`);
+  }
+
+  /**
+   * 分支删除时尽力清理其专属分支网（cds-br-<id>）。应在该分支所有容器 rm 之后调用。
+   * 网络仍被占用 / 不存在 → 吞掉（空网无害，下次再清）。共享 infra 网（cds-proj-<id>）绝不删。
+   */
+  async removeBranchNetwork(branchId: string): Promise<void> {
+    const net = branchAppNetworkName(branchId);
+    try {
+      const r = await this.shell.exec(`docker network rm ${net}`);
+      if (r.exitCode !== 0) {
+        const s = (r.stderr || '').toLowerCase();
+        if (!s.includes('not found') && !s.includes('no such network')) {
+          console.warn(`[branch-network] 清理分支网 ${net} 失败(忽略): ${(r.stderr || '').slice(0, 160)}`);
+        }
+      }
+    } catch (err) {
+      console.warn(`[branch-network] 清理分支网 ${net} 异常(忽略): ${(err as Error).message}`);
     }
   }
 

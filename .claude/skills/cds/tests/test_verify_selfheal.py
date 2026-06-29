@@ -2,7 +2,7 @@
 
 验证 `_verify_autofix` 对可自动修复的 issue(env-var-unresolved / depends-on-hint)
 产出修补后的 doc + diff,对不可自动修的 issue 降级为建议清单。
-SSOT:doc/spec.cds-compose-contract.md § 4.5。
+SSOT:doc/spec.cds.compose-contract.md § 4.5。
 """
 import os
 import sys

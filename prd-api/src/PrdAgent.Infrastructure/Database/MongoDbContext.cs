@@ -26,7 +26,7 @@ public class MongoDbContext
         _database = client.GetDatabase(databaseName);
         
         // 索引由 DBA 手动创建，禁止应用启动时自动创建
-        // 索引定义文档：doc/guide.mongodb-indexes.md
+        // 索引定义文档：doc/guide.platform.mongodb-indexes.md
         // CreateIndexes();
     }
 
@@ -90,7 +90,7 @@ public class MongoDbContext
     public IMongoCollection<OpenApiRequestLog> OpenApiRequestLogs => _database.GetCollection<OpenApiRequestLog>("open_api_request_logs");
 
     // 基础设施连接（MAP 端 —— 与 CDS / 未来执行器的剪贴板配对密钥连接，
-    // 详见 spec.cds-map-pairing-protocol）
+    // 详见 spec.cds.map-pairing-protocol）
     public IMongoCollection<InfraConnection> InfraConnections => _database.GetCollection<InfraConnection>("infra_connections");
 
     // 基础设施 Agent 工作台会话（MAP 端 —— 每条会话绑定一个基础设施连接，后续再绑定 CDS 运行实例）
@@ -100,7 +100,7 @@ public class MongoDbContext
     public IMongoCollection<InfraAgentHookProfile> InfraAgentHookProfiles => _database.GetCollection<InfraAgentHookProfile>("infra_agent_hook_profiles");
     public IMongoCollection<InfraAgentRuntimeProfile> InfraAgentRuntimeProfiles => _database.GetCollection<InfraAgentRuntimeProfile>("infra_agent_runtime_profiles");
 
-    // 外部授权中心（TAPD / 语雀 / GitHub 凭证聚合，见 doc/design.external-authorization.md）
+    // 外部授权中心（TAPD / 语雀 / GitHub 凭证聚合，见 doc/design.platform.external-authorization.md）
     public IMongoCollection<ExternalAuthorization> ExternalAuthorizations => _database.GetCollection<ExternalAuthorization>("external_authorizations");
 
     // Agent 开放接口登记（P3 基础设施）—— 每个 Agent 可登记多条 HTTP 入口让外部 AI 调用
@@ -220,7 +220,7 @@ public class MongoDbContext
     public IMongoCollection<Skill> Skills => _database.GetCollection<Skill>("skills");
 
     // 技能生成 Agent 会话持久化：保证刷新 / 重启 / 2h 后不丢失中间态
-    // 建议由 DBA 手动添加 LastActiveAt TTL 索引（7 天），见 doc/guide.mongodb-indexes.md
+    // 建议由 DBA 手动添加 LastActiveAt TTL 索引（7 天），见 doc/guide.platform.mongodb-indexes.md
     public IMongoCollection<SkillAgentSession> SkillAgentSessions => _database.GetCollection<SkillAgentSession>("skill_agent_sessions");
 
     // Workflow Agent 工作流引擎
@@ -316,7 +316,7 @@ public class MongoDbContext
     /// <summary>
     /// 通用 @ 账本（双链 + 反向链接 + 宇宙图 SSOT）。
     /// MVP 仅记录 document → document，未来扩展到 defect/pr/report 等任意实体。
-    /// 详见 doc/design.knowledge-base-mention-network.md。
+    /// 详见 doc/design.knowledge-base.mention-network.md。
     /// </summary>
     public IMongoCollection<Mention> Mentions => _database.GetCollection<Mention>("mentions");
 
@@ -498,6 +498,11 @@ public class MongoDbContext
             Users.Indexes.CreateOne(new CreateIndexModel<User>(
                 Builders<User>.IndexKeys.Ascending(u => u.Username),
                 new CreateIndexOptions()));
+            Users.Indexes.CreateOne(new CreateIndexModel<User>(
+                Builders<User>.IndexKeys
+                    .Ascending(u => u.MiduoSsoSubjectType)
+                    .Ascending(u => u.MiduoSsoSubjectHash),
+                new CreateIndexOptions { Sparse = true }));
         }
         catch (MongoCommandException ex) when (IsIndexConflict(ex))
         {
@@ -1641,7 +1646,7 @@ public class MongoDbContext
 
         // HostedSiteComments：评论按 站点 + 未删 + 时间倒序 查（站内/分享评论面板每次加载都走这条）。
         // 共享集合跨多站点后无此索引会全表扫 + 内存排序（Codex P2）。CreateIndexes 不执行，
-        // 仅作 DBA 手建参考，落地见 doc/guide.mongodb-indexes.md。
+        // 仅作 DBA 手建参考，落地见 doc/guide.platform.mongodb-indexes.md。
         HostedSiteComments.Indexes.CreateOne(new CreateIndexModel<HostedSiteComment>(
             Builders<HostedSiteComment>.IndexKeys
                 .Ascending(x => x.SiteId).Ascending(x => x.IsDeleted).Descending(x => x.CreatedAt),
@@ -1734,7 +1739,7 @@ public class MongoDbContext
         }
 
         // ChangelogSnapshots：按 Key 唯一（防多实例/多 Worker upsert 竞态插入重复行，
-        // 导致 GetAsync 命中任意旧行）。DBA 手建，定义见 doc/guide.mongodb-indexes.md。
+        // 导致 GetAsync 命中任意旧行）。DBA 手建，定义见 doc/guide.platform.mongodb-indexes.md。
         try
         {
             ChangelogSnapshots.Indexes.CreateOne(new CreateIndexModel<ChangelogSnapshot>(

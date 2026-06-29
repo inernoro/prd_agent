@@ -28,6 +28,7 @@ const WorkflowListPage = lazy(() => import('@/pages/workflow-agent').then(m => (
 const MarketplacePage = lazy(() => import('@/pages/marketplace').then(m => ({ default: m.MarketplacePage })));
 const DocumentStorePage = lazy(() => import('@/pages/document-store').then(m => ({ default: m.DocumentStorePage })));
 const UniverseGraphPage = lazy(() => import('@/pages/document-store/UniverseGraphPage').then(m => ({ default: m.UniverseGraphPage })));
+const GalaxyStandalonePage = lazy(() => import('@/pages/document-store/GalaxyStandalonePage').then(m => ({ default: m.GalaxyStandalonePage })));
 const AdminWebPagesPage = lazy(() => import('@/pages/AdminWebPagesPage'));
 const LibraryLandingPage = lazy(() => import('@/pages/library/LibraryLandingPage').then(m => ({ default: m.LibraryLandingPage })));
 const EmergenceExplorerPage = lazy(() => import('@/pages/emergence').then(m => ({ default: m.EmergenceExplorerPage })));
@@ -715,6 +716,14 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     // 顶层入口默认走第一个库；nav 字段省略以避免重复占用导航位
   },
   {
+    // 知识库 3D 文档星系独立全屏页（fullscreen 跳过 AppShell，自身再 fixed inset-0 兜底盖住 shell）。
+    // 参数化子路由，navCoverage 自动豁免，不进 launcherCatalog / shortLabel。
+    path: '/document-store/:storeId/galaxy',
+    placement: 'fullscreen',
+    permission: ['document-store.read', 'document-store.write'],
+    element: fullscreenGuarded(['document-store.read', 'document-store.write'], <GalaxyStandalonePage />),
+  },
+  {
     path: '/admin-web-pages',
     permission: 'web-pages.viewAll',
     element: shellGuarded('web-pages.viewAll', <AdminWebPagesPage />),
@@ -858,7 +867,7 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
   },
   {
     // claude-sdk sidecar 等共享基础设施服务的管理入口。
-    // v1：通过剪贴板配对密钥与 CDS 建立信任连接（spec.cds-map-pairing-protocol）。
+    // v1：通过剪贴板配对密钥与 CDS 建立信任连接（spec.cds.map-pairing-protocol）。
     // 后续：实例只读列表 / 路由策略 / 业务监控等。
     path: '/infra-services',
     permission: 'access',

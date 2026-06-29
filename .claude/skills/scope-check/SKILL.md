@@ -9,6 +9,8 @@ allowed-tools: Read Bash Glob Grep
 
 # 分支受控检查 — 提交前的安检门
 
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/scope-check`、"边界检查"、"检查边界"、"受控检查"
+
 ## 核心理念
 
 开发时自由创作，完成时安全检查。不限制过程，只审计结果。
@@ -54,7 +56,7 @@ git diff main...HEAD --stat
 
 以推断出的 `{agent-name}` 为基准（示例用 `review-agent`，PascalCase 为 `ReviewAgent`，camelCase 为 `reviewAgent`）：
 
-#### ✅ owned — 属于该 Agent 的文件
+#### owned — 属于该 Agent 的文件
 
 ```
 prd-api/src/PrdAgent.Api/Controllers/Api/ReviewAgent*.cs
@@ -74,7 +76,7 @@ changelogs/*
 
 **判定规则**：文件路径中包含 `{agent-name}`（kebab）或 `{AgentName}`（Pascal）或 `{agentName}`（camel）。
 
-#### 🔶 shared — 共享注册文件（需要 append-only 检查）
+#### shared — 共享注册文件（需要 append-only 检查）
 
 > 这些文件被所有 Agent 共享。新 Agent 通常**只在末尾追加**自己的注册条目，禁止删改已有内容。
 
@@ -116,7 +118,7 @@ changelogs/                                    # 碎片目录，新增碎片 = o
 
 **注意**：`changelogs/` 下的文件属于"每 PR 一个碎片"模式——你只能新增自己的碎片文件，禁止删改他人 PR 留下的碎片（除非你跑了 `bash scripts/assemble-changelog.sh` 合并发版）。
 
-#### ❌ foreign — 其他所有文件
+#### foreign — 其他所有文件
 
 不属于以上两类的文件，均为越界。
 
@@ -129,8 +131,8 @@ git diff main...HEAD -- {文件路径}
 ```
 
 分析 diff 输出：
-- **只有 `+` 行（新增）**→ ✅ append 合规
-- **有 `-` 行（删除或修改已有内容）**→ ⚠️ append 违规，需人工审核
+- **只有 `+` 行（新增）**→ append 合规
+- **有 `-` 行（删除或修改已有内容）**→ append 违规，需人工审核（警告）
 
 特别关注：
 
@@ -175,8 +177,8 @@ git diff main...HEAD -- prd-admin/src/stores/toolboxStore.ts \
 ```
 
 判定规则：
-- ✅ **合规**：每个新 `id: 'builtin-xxx'` 块内都有 `wip: true`
-- ❌ **违规**：新条目缺 `wip: true` → 违反 `.claude/rules/navigation-registry.md` 铁律 #1
+- **合规**：每个新 `id: 'builtin-xxx'` 块内都有 `wip: true`
+- **违规**：新条目缺 `wip: true` → 违反 `.claude/rules/navigation-registry.md` 铁律 #1
 
 **检查 3：是否同时改了左侧导航 / 首页快捷**
 
@@ -196,7 +198,7 @@ git diff main...HEAD -- prd-admin/src/stores/toolboxStore.ts \
 ## 输出模板
 
 ```markdown
-# 🔍 分支受控检查报告
+# 分支受控检查报告
 
 **分支**: {branch-name}
 **推断 Agent**: {agent-name}
@@ -205,22 +207,22 @@ git diff main...HEAD -- prd-admin/src/stores/toolboxStore.ts \
 
 ## 文件分类
 
-### ✅ owned ({count} 个)
+### owned ({count} 个)
 | 文件 | 变更类型 |
 |------|---------|
 | prd-admin/src/pages/review-agent/ReviewAgentPage.tsx | 新增 |
 | prd-admin/src/stores/reviewAgentStore.ts | 新增 |
 | ... | ... |
 
-### 🔶 shared ({count} 个)
+### shared ({count} 个)
 | 文件 | append-only 检查 | 详情 |
 |------|-----------------|------|
-| AdminPermissionCatalog.cs | ✅ 仅新增 | +2 行 |
-| toolboxStore.ts | ✅ 仅新增 | +14 行（新增 BUILTIN_TOOLS 条目）|
-| App.tsx | ⚠️ 有删改 | 删除了 1 行原有路由 |
+| AdminPermissionCatalog.cs | 仅新增 | +2 行 |
+| toolboxStore.ts | 仅新增 | +14 行（新增 BUILTIN_TOOLS 条目）|
+| App.tsx | 有删改（警告） | 删除了 1 行原有路由 |
 | ... | ... | ... |
 
-### ❌ foreign ({count} 个)
+### foreign ({count} 个)
 | 文件 | 风险说明 |
 |------|---------|
 | prd-admin/src/components/GlassCard.tsx | 共享 UI 组件，可能影响其他页面 |
@@ -231,9 +233,9 @@ git diff main...HEAD -- prd-admin/src/stores/toolboxStore.ts \
 
 | 检查项 | 结果 | 详情 |
 |--------|------|------|
-| 新增 BUILTIN_TOOLS 条目 | ✅ 1 个 / ➖ 无 | `id: 'builtin-review-agent'` |
-| `wip: true` 标记 | ✅ 已带 / ❌ 缺失 | 见 `.claude/rules/navigation-registry.md` 铁律 #1 |
-| 多处注册 routePath 一致 | ✅ 一致 / ⚠️ 不一致 / ➖ 仅百宝箱 | toolboxStore=`/review-agent`, menuCatalog=`/review-agent` |
+| 新增 BUILTIN_TOOLS 条目 | 1 个 / 无 | `id: 'builtin-review-agent'` |
+| `wip: true` 标记 | 已带 / 缺失 | 见 `.claude/rules/navigation-registry.md` 铁律 #1 |
+| 多处注册 routePath 一致 | 一致 / 不一致 / 仅百宝箱 | toolboxStore=`/review-agent`, menuCatalog=`/review-agent` |
 
 ## 结论
 
@@ -244,12 +246,12 @@ git diff main...HEAD -- prd-admin/src/stores/toolboxStore.ts \
 
 | 条件 | 结论 |
 |------|------|
-| foreign = 0 且 append 违规 = 0 且导航注册合规 | ✅ **边界合规**，可安全提交 |
-| foreign = 0 且 append 违规 > 0 | ⚠️ **需人工审核**：shared 文件有非追加修改 |
-| 新 BUILTIN_TOOLS 条目缺 `wip: true`（且未同时改 menu/QUICK_AGENTS）| ❌ **导航铁律违规**：新 Agent 必须默认 `wip: true`，验收通过后才转正 |
-| 多处注册 routePath 不一致 | ❌ **路由分叉**：toolboxStore / menu / QUICK_AGENTS 之间的 routePath 必须完全一致 |
-| foreign > 0 且均为文档/配置 | ⚠️ **轻度越界**：涉及非 Agent 文件，建议确认必要性 |
-| foreign > 0 且包含核心代码 | ❌ **越界警告**：修改了核心基础设施或其他 Agent 代码 |
+| foreign = 0 且 append 违规 = 0 且导航注册合规 | **边界合规**，可安全提交 |
+| foreign = 0 且 append 违规 > 0 | **需人工审核**：shared 文件有非追加修改 |
+| 新 BUILTIN_TOOLS 条目缺 `wip: true`（且未同时改 menu/QUICK_AGENTS）| **导航铁律违规**：新 Agent 必须默认 `wip: true`，验收通过后才转正 |
+| 多处注册 routePath 不一致 | **路由分叉**：toolboxStore / menu / QUICK_AGENTS 之间的 routePath 必须完全一致 |
+| foreign > 0 且均为文档/配置 | **轻度越界**：涉及非 Agent 文件，建议确认必要性 |
+| foreign > 0 且包含核心代码 | **越界警告**：修改了核心基础设施或其他 Agent 代码 |
 
 ### foreign 文件风险标注
 
@@ -257,15 +259,15 @@ git diff main...HEAD -- prd-admin/src/stores/toolboxStore.ts \
 
 | 文件路径模式 | 风险 | 说明 |
 |-------------|------|------|
-| `*/Controllers/Api/*Agent*.cs`（其他 Agent） | 🔴 高 | 修改了其他 Agent 的 Controller |
-| `*/Services/*Agent*`（其他 Agent） | 🔴 高 | 修改了其他 Agent 的服务 |
-| `*/pages/*-agent/*`（其他 Agent） | 🔴 高 | 修改了其他 Agent 的前端页面 |
-| `*/LlmGateway*`, `*/ModelResolver*` | 🔴 高 | 核心 AI 网关 |
-| `*/Security/AdminAuth*`, `*/Middleware/*` | 🔴 高 | 认证/权限中间件 |
-| `*/components/*` (共享组件) | 🟡 中 | 可能影响其他页面 |
-| `*/lib/*`, `*/utils/*` | 🟡 中 | 共享工具库 |
-| `doc/*`（非本 Agent） | 🟢 低 | 文档修改 |
-| `scripts/*` | 🟢 低 | 构建脚本 |
+| `*/Controllers/Api/*Agent*.cs`（其他 Agent） | 高 | 修改了其他 Agent 的 Controller |
+| `*/Services/*Agent*`（其他 Agent） | 高 | 修改了其他 Agent 的服务 |
+| `*/pages/*-agent/*`（其他 Agent） | 高 | 修改了其他 Agent 的前端页面 |
+| `*/LlmGateway*`, `*/ModelResolver*` | 高 | 核心 AI 网关 |
+| `*/Security/AdminAuth*`, `*/Middleware/*` | 高 | 认证/权限中间件 |
+| `*/components/*` (共享组件) | 中 | 可能影响其他页面 |
+| `*/lib/*`, `*/utils/*` | 中 | 共享工具库 |
+| `doc/*`（非本 Agent） | 低 | 文档修改 |
+| `scripts/*` | 低 | 构建脚本 |
 
 ## 特殊情况处理
 

@@ -4,7 +4,7 @@ globs: ["doc/**/*.md"]
 
 # doc/ 文档类型规则
 
-`doc/` 下所有 `.md` 文件必须属于以下 6 种类型之一，禁止发明新前缀。
+`doc/` 下所有 `.md` 文件必须属于以下 7 种类型之一，禁止发明新前缀。
 
 | 前缀 | 对应 | 核心问题 | 子类型 |
 |------|------|---------|--------|
@@ -14,6 +14,17 @@ globs: ["doc/**/*.md"]
 | `rule.*` | **Why not** | 为什么不能那样做 | 规范约定、审计报告 |
 | `guide.*` | **How-to** | 怎么操作 | 操作指南、备忘录 |
 | `report.*` | **What happened** | 做了什么 | 周报 |
+| `debt.*` | **What's owed** | 欠了什么 | 工程债务台账（已知边界 / 后续可补 / TODO 留尾 / 不确定风险） |
+
+## topic 命名：appname 优先 + 点分层级（不变的地基规则）
+
+完整文件名格式：`{type}.{appname}[.{子模块}].md`。前缀选好后，**topic 必须 appname 优先、点分层级**：
+
+- 第一段 = appname（应用/领域名，对齐 `rule.platform.app-identity`），子模块用 `.` 续接，**禁止用 `-` 把 appname 和子模块黏死**。
+- 正确 `design.cds.agent.runtime.md`、`spec.defect-agent.automation-protocol.md`；错误 `design.cds-agent-runtime-architecture.md`、`design.defect-automation-autonomy.md`（appname 不在首段）。
+- 跨切面/平台级用保留域名段 `platform.` / `frontend.` / `skill.` / `doc.`；例外（周报 / 顶层产品文档 / 带日期报告）见 `doc/rule.doc.naming.md`。
+
+同一应用文档第一段一致 → 列表自动聚成簇。SSOT：`doc/rule.doc.naming.md`。
 
 ## design.* 特别要求
 
@@ -24,4 +35,4 @@ globs: ["doc/**/*.md"]
 - **永远替换，不留历史**：设计文档不需要版本迭代说明（如"v2.0 变更：xxx"），每次更新直接覆盖全文。版本追踪由 `changelogs/` 碎片和 Git 历史承担
 - **按应用归属，不重叠**：一个应用/领域对应一个 design 主文档。子功能可以有独立的详细设计文档，但必须从主文档的「关联设计文档」章节引用，不得重复描述同一功能
 
-详细模板见 `doc-writer` 技能（`/doc`）和 `doc/rule.doc-templates.md`。
+详细模板见 `doc-writer` 技能（`/doc`）和 `doc/rule.doc.templates.md`。

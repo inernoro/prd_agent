@@ -13,10 +13,10 @@
 
 | 维度 | 状态 | 详情 |
 |------|------|------|
-| 管理后台路由 | ✅ 新增 | `/defect-agent/templates`, `/defect-agent/reports` |
-| 管理后台菜单 | ✅ 新增 | 侧边栏 → "缺陷管理" 下新增"模板管理"和"缺陷列表" |
-| API 端点 | ✅ 新增 | `POST/GET/PUT/DELETE /api/defect-agent/templates`, `POST /api/defect-agent/reports` |
-| 桌面端入口 | ➖ 无变化 | |
+| 管理后台路由 | 新增 | `/defect-agent/templates`, `/defect-agent/reports` |
+| 管理后台菜单 | 新增 | 侧边栏 → "缺陷管理" 下新增"模板管理"和"缺陷列表" |
+| API 端点 | 新增 | `POST/GET/PUT/DELETE /api/defect-agent/templates`, `POST /api/defect-agent/reports` |
+| 桌面端入口 | 无变化 | |
 
 **操作路径**:
 1. 登录管理后台 → 侧边栏点击"缺陷管理"
@@ -29,14 +29,14 @@
 
 | 检查项 | 状态 | 说明 |
 |--------|------|------|
-| SRS | ⚠️ 需更新 | 需新增缺陷管理 API 契约 |
-| PRD | ⚠️ 需更新 | 需新增功能描述和用户场景 |
-| 数据字典 | ⚠️ 需更新 | 新增 defect_templates, defect_reports, defect_messages |
-| 设计文档 | ✅ 已创建 | doc/20.defect-agent.md |
-| CLAUDE.md 快照 | ⚠️ 需更新 | 功能注册表+集合清单 |
+| SRS | 需更新 | 需新增缺陷管理 API 契约 |
+| PRD | 需更新 | 需新增功能描述和用户场景 |
+| 数据字典 | 需更新 | 新增 defect_templates, defect_reports, defect_messages |
+| 设计文档 | 已创建 | doc/design.defect-agent.md |
+| CLAUDE.md 快照 | 需更新 | 功能注册表+集合清单 |
 
 **待补文档**:
-- [ ] rule.data-dictionary.md: 3 个新集合字段定义
+- [ ] rule.platform.data-dictionary.md: 3 个新集合字段定义
 - [ ] CLAUDE.md: 功能注册表+集合清单
 
 ---
@@ -45,11 +45,11 @@
 
 | 检查项 | 状态 | 说明 |
 |--------|------|------|
-| 新增 appKey | ✅ | `defect-agent`，Controller 硬编码 |
-| 新增 AppCallerCode | ✅ | `defect-agent.analyze::intent` |
-| 新增架构模式 | ➖ | 复用 Run/Worker |
-| 新增 MongoDB 集合 | ✅ | defect_templates, defect_reports, defect_messages |
-| 新增权限点 | ✅ | DefectAgent.Templates.Manage, DefectAgent.Reports.View |
+| 新增 appKey | 是 | `defect-agent`，Controller 硬编码 |
+| 新增 AppCallerCode | 是 | `defect-agent.analyze::intent` |
+| 新增架构模式 | 无 | 复用 Run/Worker |
+| 新增 MongoDB 集合 | 是 | defect_templates, defect_reports, defect_messages |
+| 新增权限点 | 是 | DefectAgent.Templates.Manage, DefectAgent.Reports.View |
 
 ---
 
@@ -57,9 +57,9 @@
 
 | 检查项 | 状态 | 影响范围 |
 |--------|------|----------|
-| Breaking Change | ➖ | 全部新增，不影响现有 |
-| 权限变更 | ✅ | 管理员默认拥有，其他角色需手动分配 |
-| 其他 | ➖ | |
+| Breaking Change | 无 | 全部新增，不影响现有 |
+| 权限变更 | 是 | 管理员默认拥有，其他角色需手动分配 |
+| 其他 | 无 | |
 
 ---
 
@@ -67,9 +67,9 @@
 
 | 类型 | 状态 | 说明 |
 |------|------|------|
-| 单元测试 | ✅ 完成 | DefectAgentTests (25 tests) |
-| 冒烟测试 | ⚠️ 未完成 | 模板 CRUD + 缺陷提交 |
-| 页面测试 | ⚠️ 需人工 | 模板管理页 + 缺陷列表页 |
+| 单元测试 | 完成 | DefectAgentTests (25 tests) |
+| 冒烟测试 | 未完成 | 模板 CRUD + 缺陷提交 |
+| 页面测试 | 需人工 | 模板管理页 + 缺陷列表页 |
 
 **预览验收地址**: https://claude-add-defect-agent-abcde.miduo.org/
 
@@ -99,10 +99,10 @@
 
 | 检查项 | 状态 |
 |--------|------|
-| 编译通过 | ✅ |
-| 前端构建 | ✅ |
-| TypeScript | ✅ |
-| 架构合规 | ✅ Controller 硬编码 appKey / ILlmGateway / 服务器权威性 |
+| 编译通过 | 是 |
+| 前端构建 | 是 |
+| TypeScript | 是 |
+| 架构合规 | 是 Controller 硬编码 appKey / ILlmGateway / 服务器权威性 |
 
 ---
 

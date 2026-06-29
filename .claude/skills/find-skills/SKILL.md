@@ -1,13 +1,16 @@
 ---
 name: find-skills
+version: 1.0.0
 description: Helps users discover and install agent skills when they ask questions like "how do I do X", "find a skill for X", "is there a skill that can...", or express interest in extending capabilities. This skill should be used when the user is looking for functionality that might exist as an installable skill.
 ---
 
-# Find Skills
+# 技能发现与安装
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/find-skills`、"找技能"、"find a skill for X"、"is there a skill that can"
 
 This skill helps you discover and install skills from the open agent skills ecosystem.
 
-## When to Use This Skill
+## 何时使用
 
 Use this skill when the user:
 

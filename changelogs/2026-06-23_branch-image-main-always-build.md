@@ -1,1 +1,0 @@
-| fix | ci | branch-image.yml 默认分支 main 无论改动路径都构建 api/admin 两镜像（不走 path-filter 跳过）：根治「main 仅改 cds/docs 时不产 sha-<commit> 镜像 → CDS 极速版 docker pull 404、分支显示部署异常/无法构建」。main 是全体分支的回退镜像源(:branch-main)且自身极速版部署只认 sha-<commit>，必须始终产出；feature 分支保留 path-filter 优化 |

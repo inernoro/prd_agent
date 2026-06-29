@@ -1,6 +1,11 @@
 // 生产环境：严禁 mock/假数据。此处只允许真实后端实现。
 
-import type { LoginContract, ResetPasswordContract } from '@/services/contracts/auth';
+import type {
+  GetSsoOptionsContract,
+  LoginContract,
+  MiduoPlanetLoginContract,
+  ResetPasswordContract,
+} from '@/services/contracts/auth';
 import type {
   GetAdminAuthzMeContract,
   GetAdminPermissionCatalogContract,
@@ -33,6 +38,9 @@ import type {
   ForceExpireUserContract,
   ForceExpireAllContract,
   BulkDeleteUsersContract,
+  GetMiduoSsoConfigContract,
+  ImportMiduoSsoBindingsContract,
+  UpdateMiduoSsoConfigContract,
 } from '@/services/contracts/adminUsers';
 import type { GetActiveGroupsContract, GetGapStatsContract, GetMessageTrendContract, GetOverviewStatsContract, GetTokenUsageContract } from '@/services/contracts/adminStats';
 import type { GetExecutiveOverviewContract, GetExecutiveTrendsContract, GetExecutiveTeamContract, GetExecutiveAgentsContract, GetExecutiveModelsContract, GetExecutiveLeaderboardContract } from '@/services/contracts/executive';
@@ -283,7 +291,7 @@ import type {
 import { useAuthStore } from '@/stores/authStore';
 import { fail, type ApiResponse } from '@/types/api';
 
-import { loginReal, resetPasswordReal } from '@/services/real/auth';
+import { getSsoOptionsReal, loginReal, loginWithMiduoPlanetTokenReal, resetPasswordReal } from '@/services/real/auth';
 import {
   getAdminAuthzMeReal,
   getAdminPermissionCatalogReal,
@@ -312,6 +320,9 @@ import {
   forceExpireAllReal,
   initializeUsersReal,
   bulkDeleteUsersReal,
+  getMiduoSsoConfigReal,
+  importMiduoSsoBindingsReal,
+  updateMiduoSsoConfigReal,
 } from '@/services/real/adminUsers';
 import { getActiveGroupsReal, getGapStatsReal, getMessageTrendReal, getOverviewStatsReal, getTokenUsageReal } from '@/services/real/adminStats';
 import { getExecutiveOverviewReal, getExecutiveTrendsReal, getExecutiveTeamReal, getExecutiveAgentsReal, getExecutiveModelsReal, getExecutiveLeaderboardReal } from '@/services/real/executive';
@@ -796,6 +807,8 @@ function withAuth<TArgs extends unknown[], TResult>(
 }
 
 export const login: LoginContract = loginReal;
+export const getSsoOptions: GetSsoOptionsContract = getSsoOptionsReal;
+export const loginWithMiduoPlanetToken: MiduoPlanetLoginContract = loginWithMiduoPlanetTokenReal;
 export const resetPassword: ResetPasswordContract = resetPasswordReal;
 
 export const getAdminAuthzMe: GetAdminAuthzMeContract = withAuth(getAdminAuthzMeReal);
@@ -829,6 +842,9 @@ export const forceExpireAll: ForceExpireAllContract = withAuth(forceExpireAllRea
 export const initializeUsers = withAuth(initializeUsersReal);
 export const getUserProfile: GetUserProfileContract = withAuth(getUserProfileReal);
 export const bulkDeleteUsers: BulkDeleteUsersContract = withAuth(bulkDeleteUsersReal);
+export const getMiduoSsoConfig: GetMiduoSsoConfigContract = withAuth(getMiduoSsoConfigReal);
+export const updateMiduoSsoConfig: UpdateMiduoSsoConfigContract = withAuth(updateMiduoSsoConfigReal);
+export const importMiduoSsoBindings: ImportMiduoSsoBindingsContract = withAuth(importMiduoSsoBindingsReal);
 
 export const getOverviewStats: GetOverviewStatsContract = withAuth(getOverviewStatsReal);
 export const getTokenUsage: GetTokenUsageContract = withAuth(getTokenUsageReal);

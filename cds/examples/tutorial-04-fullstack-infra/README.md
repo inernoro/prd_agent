@@ -21,7 +21,7 @@ python3 ../../../.claude/skills/cds/cli/cdscli.py scan . --apply-to-cds <project
 ## 纵向①：直接配置（无 compose）
 
 onboarding 选「前端(static)」+「后端(Node.js)」，infra 区域分别加 MySQL / Redis /
-RabbitMQ 三个 preset。详见 `doc/guide.cds-tutorial.md` 场景④。
+RabbitMQ 三个 preset。详见 `doc/guide.cds.tutorial.md` 场景④。
 
 ## 预期结果
 

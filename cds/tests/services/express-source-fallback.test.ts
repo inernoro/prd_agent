@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { pickSourceFallbackMode, resolveEffectiveProfile } from '../../src/services/container.js';
-import type { BuildProfile, BranchEntry, DeployModeOverride } from '../../src/types.js';
+import {
+  pickSourceFallbackMode,
+  resolveEffectiveProfile,
+  applyProfileOverride,
+  sanitizeProfileOverride,
+} from '../../src/services/container.js';
+import type { BuildProfile, BranchEntry, DeployModeOverride, BuildProfileOverride } from '../../src/types.js';
 
 /**
  * 极速版镜像缺失 → 自动回退源码编译（用户 2026-06-24 决策，治「极速版永远不极速 / 打不开」）。
@@ -71,6 +76,63 @@ describe('pickSourceFallbackMode', () => {
 });
 
 /**
+ * 根治回归（2026-06-27 生产事故）：branch override 把结构字段持久化成 `null` 哨兵
+ * （containerPort:null / dockerImage:null / command:null，表示「该继承 baseline / 走 mode 层」），
+ * 历史上下游各读取点 `??` / `!= null` / `!== undefined` 混用 —— 任一处用 `!== undefined`，
+ * null 就覆盖 baseline 结构字段 → `invalid containerPort: null` / 空镜像 `sh:latest`。
+ * sanitizeProfileOverride 在 merge 入口统一剥 null，整类 null-覆盖 bug 一次性消失。
+ */
+describe('sanitizeProfileOverride 剥 null 结构哨兵', () => {
+  it('剥掉值为 null 的字段，保留真实值', () => {
+    const out = sanitizeProfileOverride({
+      activeDeployMode: 'express',
+      containerPort: null,
+      dockerImage: null,
+      command: null,
+      env: { FOO: 'bar' },
+    } as unknown as BuildProfileOverride)!;
+    expect(out.containerPort).toBeUndefined();
+    expect(out.dockerImage).toBeUndefined();
+    expect(out.command).toBeUndefined();
+    expect(out.activeDeployMode).toBe('express');
+    expect(out.env).toEqual({ FOO: 'bar' });
+  });
+
+  it('无 null 字段时原样返回（不分配新对象）', () => {
+    const o = { activeDeployMode: 'express' } as BuildProfileOverride;
+    expect(sanitizeProfileOverride(o)).toBe(o);
+  });
+
+  it('undefined override 透传', () => {
+    expect(sanitizeProfileOverride(undefined)).toBeUndefined();
+  });
+});
+
+describe('applyProfileOverride 不让 null 覆盖 baseline 结构字段', () => {
+  const baseline: BuildProfile = {
+    id: 'api-prd-agent',
+    name: 'api',
+    dockerImage: 'mcr.microsoft.com/dotnet/sdk:8.0',
+    command: 'cd prd-api && dotnet run',
+    containerPort: 5000,
+    activeDeployMode: 'static',
+  } as BuildProfile;
+
+  it('override 全 null 时返回 baseline 结构值（端口/镜像/命令都不被打成 null）', () => {
+    const merged = applyProfileOverride(baseline, {
+      activeDeployMode: 'express',
+      containerPort: null,
+      dockerImage: null,
+      command: null,
+    } as unknown as BuildProfileOverride);
+    expect(merged.containerPort).toBe(5000); // 不是 null
+    expect(merged.dockerImage).toBe('mcr.microsoft.com/dotnet/sdk:8.0'); // 不是 null/空
+    expect(merged.command).toBe('cd prd-api && dotnet run'); // 不是空串
+    expect(merged.activeDeployMode).toBe('express'); // 真实值仍生效
+  });
+});
+
+/**
  * 回归：resolveEffectiveProfile 解析出极速版 profile 时，必须把源码回退 profile 从
  * **baseline** 解析好挂在 sourceFallbackProfile 上 —— dockerImage 是源码基础镜像
  * (dotnet-sdk)，不能误继承极速版的 sha 镜像（这正是 2026-06-24 首版 bug：原地从极速版
@@ -131,6 +193,30 @@ describe('resolveEffectiveProfile 极速版 → 附带源码回退 profile', () 
     expect(src!.containerPort).toBe(5000); // baseline 端口，**非 override 的 null**
     expect(src!.command).toContain('dotnet'); // 源码命令，非 override 的空
     expect(src!.activeDeployMode).toBe('static');
+  });
+
+  it('生产形态 null override：极速版主路径 eff 解析出真实端口与真实镜像（事故根因回归）', () => {
+    // prd-agent-main 生产真实 override：结构字段全是 null 哨兵（该继承 baseline / 走 mode 层）。
+    // 旧实现 null 覆盖 baseline → eff.containerPort=null（docker `invalid containerPort: null`）、
+    // eff.dockerImage 被打空 → `sh:latest`。sanitize 后主路径必须解析出真实 8080 + 真实 sha 镜像。
+    const baselineStatic: BuildProfile = { ...baseline, activeDeployMode: 'static', containerPort: 5000 } as BuildProfile;
+    const branchProdShape = {
+      githubCommitSha: 'eeba7bf14abc',
+      profileOverrides: {
+        'api-prd-agent': {
+          activeDeployMode: 'express',
+          containerPort: null,
+          dockerImage: null,
+          command: null,
+        },
+      },
+    } as unknown as BranchEntry;
+    const eff = resolveEffectiveProfile(baselineStatic, branchProdShape);
+    expect(eff.prebuiltImage).toBe(true); // override.activeDeployMode 仍生效 → 极速版
+    expect(eff.containerPort).toBe(8080); // 极速版 mode 端口，**非 override 的 null**
+    expect(eff.dockerImage).toContain('sha-eeba7bf14abc'); // 真实解析的 sha 镜像
+    expect(eff.dockerImage).not.toContain('${'); // 模板已解析，非未解析占位
+    expect((eff.dockerImage || '').trim()).not.toBe(''); // 非空 → 不会退化成 `sh:latest`
   });
 
   it('sourceFallbackProfile 用 baseline 源码镜像，不是 sha 镜像（核心回归）', () => {

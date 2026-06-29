@@ -22,7 +22,7 @@ import type { StateService } from './state.js';
  * the janitor pure and testable. This mirrors the SchedulerService design
  * (cool/wake callbacks).
  *
- * See `doc/design.cds-resilience.md` Phase 2.
+ * See `doc/design.cds.resilience.md` Phase 2.
  */
 
 export interface JanitorConfig {

@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
-"""MAP 验收 · 报告归档（项目无关，配置驱动，双模式）。
+"""验收 · 报告归档（项目无关，配置驱动）。
 
-两种输出模式（由 acceptance.config.json 的 report.mode 决定）：
-  - doc-store：找/建报告库 → 建条目(正文以 # 标题打头,根治目录 `---`)
-    → 一次性提交正文 + assets[]，由知识库后端资产化图片并重写图链 → 出分享短链。
-    需要文档空间 API + AI 密钥。
+职责分离（2026-06-25）：验收能力归 CDS 验收中心，技能不再分流到 MAP 知识库。
+报告永远按项目入库 CDS；MAP 等系统通过知识库开放协议（peer-sync）从 CDS 拉取展示。
+
+三种输出模式（由 acceptance.config.json 的 report.mode 决定，缺省 = cds）：
+  - cds（默认主路）：自包含 markdown（截图内联 data-URI）→ POST /api/reports，
+    按项目 + 文件夹归类，带 verdict / tier / 部署上下文元数据 → 出 /reports 直达深链。
+    依赖 env：CDS_HOST + (CDS_PROJECT_KEY 或 AI_ACCESS_KEY)。
   - local：把报告写成本地 md + 截图拷到本地目录，图用相对路径引用。**零依赖**，
-    适合没有文档空间的仓库。
+    适合没有 CDS / 离线兜底。
+  - doc-store（向后兼容，不推荐）：旧 MAP 知识库路径，仅当 config 显式保留 mode=doc-store 才走。
 
 用法：
   python3 archive_report.py \
@@ -15,10 +19,7 @@
     --verdict pass --tier L2 \
     --report-md <报告正文.md，速览卡+九段，正文里用 {{EVIDENCE}} 占位> \
     --manifest <harness 产出的 manifest.json：[{name,caption,path}]> \
-    [--branch xxx --commit xxx]
-
-依赖 env（仅 doc-store 模式）：见 config.auth.api（默认 AI_ACCESS_KEY + MAP_AI_USER）。
-local 模式不读任何 env、不发任何网络请求。
+    [--branch xxx --commit xxx --pr 922]
 """
 import argparse, json, os, subprocess, datetime, re, shutil, time, base64, tempfile
 from pathlib import Path
@@ -134,6 +135,131 @@ def assemble(title, body, evidence, meta, img_md=None):
     return f"# {title}\n\n" + content.replace("{{EVIDENCE}}", evidence) + meta
 
 
+# ── CDS 验收中心（默认主路，职责分离：验收能力归 CDS，MAP 走开放协议消费）──
+CDS_REPORT_CAP = 10 * 1024 * 1024  # 与 cds/src/routes/reports.ts MAX_CONTENT_BYTES 对齐
+
+
+def _cds_base():
+    host = os.environ.get("CDS_HOST", "").strip().rstrip("/")
+    if not host:
+        raise RuntimeError("CDS_HOST 未设置（export CDS_HOST=cds.miduo.org）")
+    if not host.startswith("http"):
+        host = "https://" + host
+    return host
+
+
+def _cds_auth_headers():
+    """与 cdscli._auth_headers 一致：项目级 cdsp_* 优先，否则全局 AI_ACCESS_KEY。"""
+    pk = os.environ.get("CDS_PROJECT_KEY", "").strip()
+    if pk:
+        return ["-H", f"X-AI-Access-Key: {pk}"]
+    ak = os.environ.get("AI_ACCESS_KEY", "").strip()
+    if not ak:
+        raise RuntimeError("缺少 CDS 凭据（CDS_PROJECT_KEY 或 AI_ACCESS_KEY）")
+    return ["-H", f"X-AI-Access-Key: {ak}"]
+
+
+def _cds_call(method, path, payload=None):
+    H = _cds_auth_headers()
+    url = _cds_base() + path
+    if payload is not None:
+        return curl_json(H, method, url, payload)
+    return curl(H + ["-X", method, url])
+
+
+def _cds_resolve_project(cfg):
+    """CDS 项目 ID：config.report.cdsProjectId > env CDS_PROJECT_ID > config.project（项目身份 slug）。
+    解析不到时返回 None（归到 CDS 自身 / 全局，仍可入库）。"""
+    rep = cfg.get("report", {})
+    pid = (rep.get("cdsProjectId") or os.environ.get("CDS_PROJECT_ID") or cfg.get("project") or "").strip()
+    return pid or None
+
+
+def _cds_find_or_create_folder(project_id, folder_name):
+    """按名字 find-or-create 项目下的**根级**验收文件夹，返回 folderId 或 None。
+    只在根级（parentId 为空）匹配 —— 本函数只建根级文件夹，若按名字匹配到同名的嵌套子
+    文件夹会把报告误归到错误层级（Cursor Bugbot Medium）。需要嵌套路径走 --folder-path。"""
+    name = (folder_name or "").strip()
+    if not name:
+        return None
+    qs = f"?projectId={project_id}" if project_id else ""
+    listing = _cds_call("GET", "/api/report-folders" + qs)
+    folders = listing.get("folders", []) if isinstance(listing, dict) else []
+    for f in folders:
+        if f.get("name") == name and not f.get("parentId"):
+            return f.get("id")
+    created = _cds_call("POST", "/api/report-folders", {"name": name, "projectId": project_id})
+    folder = created.get("folder") if isinstance(created, dict) else None
+    return (folder or {}).get("id")
+
+
+def run_cds(cfg, a, title, report_id, body, manifest, now, tags=None):
+    """职责分离主路：把验收报告（自包含 markdown，截图内联 data-URI）入库到 CDS 验收中心。
+    报告永远按项目归类；MAP 等系统通过知识库开放协议（peer-sync）从 CDS 拉取展示。"""
+    project_id = _cds_resolve_project(cfg)
+    folder_id = None
+    try:
+        folder_id = _cds_find_or_create_folder(project_id, cfg.get("report", {}).get("cdsFolder"))
+    except Exception as e:
+        print(f"  [告警] 文件夹归类失败（报告仍会入库到项目根）：{str(e)[:120]}")
+
+    # 自包含 markdown：截图内联为 data-URI（CDS format=md 前端渲染 + 净化）。
+    evid_parts, img_md = [], {}
+    for m in manifest:
+        with open(m["path"], "rb") as f:
+            data = base64.b64encode(f.read()).decode("ascii")
+        uri = f"data:image/png;base64,{data}"
+        evid_parts.append(f"**{m['caption']}**\n\n![{m['caption']}]({uri})")
+        img_md[m["name"]] = f"![{m['caption']}]({uri})"
+        print(f"  内联截图 {m['name']} ({os.path.getsize(m['path'])}B)")
+    meta = build_meta(report_id, now, "cds", a, "")
+    content = assemble(title, body, "\n\n".join(evid_parts), meta, img_md)
+    size = len(content.encode("utf-8"))
+    if size > CDS_REPORT_CAP:
+        raise RuntimeError(
+            f"报告自包含正文 {size/1048576:.1f}MB 超 CDS 10MB 上限。"
+            "请减少截图数量、或改用 cds/cli/acceptance 的 JPEG 压图取证管线（chromium-canvas 缩放）后重跑。")
+
+    payload = {
+        "title": title, "format": "md", "content": content,
+        "projectId": project_id, "folderId": folder_id,
+        "verdict": a.verdict, "tier": a.tier,
+    }
+    if (a.branch or "").strip():
+        payload["branch"] = a.branch.strip()
+    if (a.commit or "").strip():
+        payload["commitSha"] = a.commit.strip()
+    pr = getattr(a, "pr", None)
+    if pr:
+        payload["prNumber"] = pr
+    resp = _cds_call("POST", "/api/reports", payload)
+    rep = resp.get("report") if isinstance(resp, dict) else None
+    if not rep or not rep.get("id"):
+        raise RuntimeError(f"CDS 入库失败：{json.dumps(resp, ensure_ascii=False)[:300]}")
+    rid = rep["id"]
+    base = _cds_base()
+    # 深链必须用 CDS 返回的**规范 id**：config 给的可能是项目 slug(如 prd-agent)，POST 时 CDS
+    # 会把 slug 规范成真实 projectId，但 Reports 页按存储的 projectId 过滤；深链若写回 slug，
+    # 列表端点 /api/reports?projectId=<slug> 命中空集，点开是空白(Codex review P2)。folderId
+    # 同理用返回值兜准。
+    link_project = rep.get("projectId") or project_id
+    link_folder = rep.get("folderId") or folder_id
+    qs = []
+    if link_project:
+        qs.append(f"project={link_project}")
+    if link_folder:
+        qs.append(f"folder={link_folder}")
+    qs.append(f"report={rid}")
+    deeplink = f"{base}/reports?" + "&".join(qs)
+    print(json.dumps({
+        "mode": "cds", "title": title, "report_id": report_id, "cdsReportId": rid,
+        "projectId": project_id, "folderId": folder_id, "verdict": a.verdict, "deeplink": deeplink,
+    }, ensure_ascii=False))
+    print("\n===== 验收归档完成 · CDS 验收中心 =====")
+    print("直达深链（CDS 登录态可达，按项目+文件夹归类）：" + deeplink)
+    print("说明：报告已入 CDS（验收能力的唯一归属）；MAP 等系统通过知识库开放协议从 CDS 拉取展示，无需另建验收知识库。")
+
+
 def run_local(cfg, a, title, report_id, body, manifest, meta, tags=None):
     out_dir = cfg["report"].get("localOutDir") or LOCAL_DEFAULT_OUT_DIR
     os.makedirs(out_dir, exist_ok=True)
@@ -204,7 +330,7 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
         rid = data_or_raise(curl(HJ + ["-X", "POST", "-d", json.dumps(
             {"name": store_name, "description": cfg["report"].get("storeDescription", ""),
              "isPublic": want_public,
-             # 模板键：让"验收报告库"对写入条目做结构约束（design.acceptance-kb.md §5.B）。
+             # 模板键：让"验收报告库"对写入条目做结构约束（design.acceptance.kb.md §5.B）。
              # 机器归档缺必填 metadata/正文 section 会被后端 422 拒收。
              "templateKey": want_template}
         ), f"{base}/stores"]), "创建知识库")["id"]
@@ -649,11 +775,14 @@ def main():
     ap.add_argument("--manifest", required=True, help="截图清单 json：[{name,caption,path}]")
     ap.add_argument("--branch", default="")
     ap.add_argument("--commit", default="")
+    ap.add_argument("--pr", type=int, default=None, help="关联 PR 编号（E1 部署上下文，便于 E4 回写）")
     ap.add_argument("--force", action="store_true", help="越过准入校验（仅在确知合理时用，会打印告警）")
     a = ap.parse_args()
 
     cfg = json.load(open(a.config))
-    mode = cfg.get("report", {}).get("mode", "doc-store")
+    # 职责分离（2026-06-25）：验收报告默认归 CDS 验收中心，技能不再分流到 MAP 知识库。
+    # local 仍作离线兜底；旧 doc-store 仅在 config 显式保留时走（向后兼容，不推荐）。
+    mode = cfg.get("report", {}).get("mode", "cds")
     now = datetime.datetime.now()
     dt = now.strftime(cfg["report"].get("datetimeFormat", "%Y-%m-%d %H:%M"))
     verdict_cn = {"pass": "通过", "conditional": "有条件通过", "fail": "不通过"}.get(a.verdict, a.verdict)
@@ -684,8 +813,12 @@ def main():
     try:
         if mode == "local":
             run_local(cfg, a, title, report_id, body, manifest, build_meta(report_id, now, "local", a, preview), tags)
-        else:
+        elif mode == "doc-store":
+            # 向后兼容：仅当 config 显式 mode=doc-store 才走旧 MAP 知识库路径。
             run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags)
+        else:
+            # 默认主路：CDS 验收中心。
+            run_cds(cfg, a, title, report_id, body, manifest, now, tags)
     except Exception as e:
         import sys as _sys
         print("\n[归档失败] 写库未完成（常见原因：预览环境 524 / 容器重启 / API 不可达）。")

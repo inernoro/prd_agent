@@ -1,9 +1,12 @@
 ---
 name: theme-transition
+version: 1.0.0
 description: 为任意前端项目添加主题切换圆形过渡动效（View Transition API + clip-path 水波纹扩散）。适用于 React/Vanilla/Tauri 等技术栈，含完整 CSS、JS 代码与降级方案。触发词："主题过渡"、"皮肤切换动效"、"theme transition"、"ripple theme"、"/theme-transition"。
 ---
 
-# Theme Transition — 主题切换圆形过渡动效
+# 主题切换圆形过渡动效
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/theme-transition`、"主题过渡"、"皮肤切换动效"、"ripple theme"
 
 为项目添加从按钮位置向外扩散的圆形 clip-path 主题切换动画，基于 View Transition API，自动降级到瞬时切换。
 
@@ -170,10 +173,10 @@ if (document.startViewTransition) {
 
 ```html
 <!-- Vanilla -->
-<button onclick="toggleTheme(event)">🌙</button>
+<button onclick="toggleTheme(event)">主题</button>
 
 <!-- React -->
-<button ref={triggerRef} onClick={(e) => toggleTheme('light')}>🌙</button>
+<button ref={triggerRef} onClick={(e) => toggleTheme('light')}>主题</button>
 ```
 
 ## 适配清单
@@ -190,7 +193,7 @@ if (document.startViewTransition) {
 ### 不要使用纯色遮罩覆盖
 
 ```js
-// ❌ 创建纯色 div 覆盖全屏 → 白屏/黑屏闪烁
+// 错误：创建纯色 div 覆盖全屏 → 白屏/黑屏闪烁
 const overlay = document.createElement('div');
 overlay.style.background = '#FFFFFF';
 overlay.style.clipPath = `circle(0px at ${x}px ${y}px)`;
@@ -201,7 +204,7 @@ overlay.style.clipPath = `circle(0px at ${x}px ${y}px)`;
 ### 不要在 setTimeout 中切换主题
 
 ```js
-// ❌ 延迟切换 → 新旧主题视觉断层
+// 错误：延迟切换 → 新旧主题视觉断层
 setTimeout(() => setTheme(newTheme), 300);
 // 正确：在 startViewTransition 回调中同步切换
 ```
@@ -209,7 +212,7 @@ setTimeout(() => setTheme(newTheme), 300);
 ### 不要跳过 maxRadius 计算
 
 ```js
-// ❌ 硬编码半径 → 角落点击时圆形无法覆盖对角
+// 错误：硬编码半径 → 角落点击时圆形无法覆盖对角
 document.documentElement.style.setProperty('--ripple-radius', '100vmax');
 // 正确：根据点击位置动态计算到最远角的距离
 ```

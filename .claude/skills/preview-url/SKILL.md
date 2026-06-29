@@ -3,7 +3,9 @@ name: preview-url
 description: 调 cdscli 生成当前分支的 CDS v3 预览验收地址。零参数，自动从 git + /api/branches 拿真实 previewSlug。所有 slug 与 host 拼接都由 cdscli 一口井负责，AI / 任何 skill 一律不得自己 slugify。触发词:"预览地址"、"验收地址"、"preview url"、"/preview"。
 ---
 
-# Preview URL — 预览验收地址生成（统一走 cdscli）
+# 预览验收地址生成
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/preview`、"预览地址"、"验收地址"、"preview url" | **SSOT**：`cds/src/services/preview-slug.ts:computePreviewSlug`
 
 唯一执行入口：
 

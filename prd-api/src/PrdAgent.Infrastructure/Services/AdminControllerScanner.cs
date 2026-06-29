@@ -70,6 +70,13 @@ public sealed class AdminControllerScanner : IAdminControllerScanner
         @"^/api/document-store/stores/[^/]+/sync/(signature|bundle|apply)/?$",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    // 周报海报已读标记是普通登录用户侧端点：Controller 内根据当前用户写 SeenBy，
+    // 不应要求 report-agent.template.manage 管理写权限。这里只豁免管理权限检查，
+    // [Authorize] 登录要求和业务层用户身份校验仍保留。
+    private static readonly Regex WeeklyPosterMarkSeenRoute = new(
+        @"^/api/weekly-posters/[^/]+/mark-seen/?$",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
     public AdminControllerScanner(ILogger<AdminControllerScanner> logger, Assembly? controllerAssembly = null)
     {
         _logger = logger;
@@ -209,6 +216,11 @@ public sealed class AdminControllerScanner : IAdminControllerScanner
         }
         // 知识库跨环境同步令牌端点（storeId 在路径中段，令牌鉴权在控制器内）
         if (SyncTokenRoute.IsMatch(path))
+        {
+            return true;
+        }
+        // 周报海报已读标记：普通登录用户可写自己的 SeenBy，不走模板管理写权限
+        if (WeeklyPosterMarkSeenRoute.IsMatch(path))
         {
             return true;
         }

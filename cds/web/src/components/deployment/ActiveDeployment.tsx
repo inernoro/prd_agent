@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDownToLine, Clock, Copy, ExternalLink, Loader2, Maximize2, X } from 'lucide-react';
+import { AlertTriangle, ArrowDownToLine, Clock, Copy, ExternalLink, Loader2, Maximize2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { PhaseKey } from '@/lib/deploymentPhases';
 import { normalizeContainerLogsForDisplay } from '@/lib/containerLogs';
 import type { BranchDeploymentItem } from '@/components/BranchDetailDrawer';
+import { computeDeployDurationDisplay, formatDurationMs, triggerSourceLabel } from '@/lib/deploymentMeta';
 import { type PhaseLogState, type InlineContainerLogControls } from './PhaseTree';
 
 function lastLines(text: string, n: number): string {
@@ -351,7 +352,16 @@ export function ActiveDeployment({
 }: ActiveDeploymentProps): JSX.Element {
   const displayStatus = effectiveDeploymentStatus(deployment, branchErrorMessage);
 
-  const deployDuration = formatDuration((deployment.finishedAt || now) - deployment.startedAt);
+  // 卡死耗时封顶：进行中且超阈值（默认 60 分钟）显示「疑似卡住」而非越来越离谱的
+  // 数字（历史上 772m 幽灵的根因是无上界一直涨）。已结束的部署照实显示。
+  // 传 isRunning（按 displayStatus）：本面板也可能渲染已终结但缺 finishedAt 的行，
+  // 不传会被当进行中、虚高耗时 + 误报「疑似卡住」（Bugbot Medium「Active panel missing isRunning guard」）。
+  const durationDisplay = computeDeployDurationDisplay(
+    deployment.startedAt, deployment.finishedAt, now,
+    undefined, displayStatus === 'running',
+  );
+  const deployDuration = formatDurationMs(durationDisplay.cappedMs);
+  const triggerText = triggerSourceLabel(deployment.triggerSource);
   const runtimeDuration = formatRuntimeDuration(deployment, now);
   const isError = displayStatus === 'error';
 
@@ -366,20 +376,31 @@ export function ActiveDeployment({
           {deployment.status === 'success' && displayStatus === 'error' ? '运行异常' : statusBadgeLabel(displayStatus)}
         </span>
         <span className="text-sm font-semibold">{deploymentKindLabel(deployment.kind)}</span>
+        {triggerText ? (
+          <span className="rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 text-[10px] text-muted-foreground">
+            {triggerText}
+          </span>
+        ) : null}
         {deployment.commitSha ? (
           <span className="font-mono text-xs text-muted-foreground">{deployment.commitSha.slice(0, 7)}</span>
         ) : null}
         <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
           <span
             className={`inline-flex items-center gap-1.5 rounded border px-2.5 py-1 font-mono text-xs font-semibold ${
-              displayStatus === 'running'
-                ? 'border-amber-500/35 bg-amber-500/10 text-amber-600 dark:text-amber-300'
-                : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground'
+              durationDisplay.stuck
+                ? 'border-amber-500/45 bg-amber-500/15 text-amber-600 dark:text-amber-300'
+                : displayStatus === 'running'
+                  ? 'border-amber-500/35 bg-amber-500/10 text-amber-600 dark:text-amber-300'
+                  : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground'
             }`}
-            title="从开始部署到部署动作完成的耗时；运行中时显示当前已用时间"
+            title={
+              durationDisplay.stuck
+                ? '本次部署进行中已超过 60 分钟仍未就绪，疑似卡住/超时；耗时已封顶，不再继续累加'
+                : '从开始部署到部署动作完成的耗时；运行中时显示当前已用时间'
+            }
           >
-            <Clock className="h-3.5 w-3.5" />
-            部署耗时 {deployDuration}
+            {durationDisplay.stuck ? <AlertTriangle className="h-3.5 w-3.5" /> : <Clock className="h-3.5 w-3.5" />}
+            {durationDisplay.stuck ? `疑似卡住 ≥${deployDuration}` : `部署耗时 ${deployDuration}`}
           </span>
           <span
             className="inline-flex items-center gap-1.5 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2.5 py-1 font-mono text-xs font-semibold text-muted-foreground"

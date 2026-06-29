@@ -22,7 +22,7 @@
  * memory usage can spike transiently during builds but the warm pool
  * is the stable long-term capacity signal.
  *
- * See `doc/design.cds-resilience.md` Phase 3.
+ * See `doc/design.cds.resilience.md` Phase 3.
  */
 
 import type { ExecutorNode } from '../types.js';

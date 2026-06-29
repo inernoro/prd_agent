@@ -95,4 +95,4 @@ Flex 子元素的 `min-height` 默认是 `auto`，这会阻止它收缩到内容
 
 **2026-04-11 pr-review 历史弹窗**：先用 `h-[90vh]` + `max-h-[90vh]`，用户反馈两次"超出屏幕无法滚动"。定位发现 Tailwind v4 下 arbitrary value 在某些路径上没被应用，modal 容器没有高度约束，内容一多就撑破整个视口。改用 inline style `{ height: '90vh', maxHeight: '90vh' }` + inline `minHeight: 0` + `createPortal` 后一次修复。
 
-> 详细：`doc/rule.frontend-modal.md`
+> 详细：`doc/rule.frontend.frontend-modal.md`

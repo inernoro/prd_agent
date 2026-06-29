@@ -5576,7 +5576,7 @@ function safeChart(canvasId, config) {
 
     // ── 执行器 F: claude-sdk（Anthropic Agent SDK 通过 sidecar 调用，支持跨服务器） ──
     //
-    // 详见 doc/design.claude-sdk-executor.md。本方法只做事件转译 + Run/Worker 集成，
+    // 详见 doc/design.cds.agent.sdk-executor.md。本方法只做事件转译 + Run/Worker 集成，
     // 真正的多轮 tool_use 循环在 Python sidecar 内完成。
 
     private static async Task<CapsuleResult> ExecuteCliAgent_ClaudeSdkAsync(
@@ -5588,7 +5588,7 @@ function safeChart(canvasId, config) {
         {
             sb.AppendLine("[claude-sdk] 未配置 ClaudeSdkExecutor 或路由器未注册");
             throw new InvalidOperationException(
-                "claude-sdk 执行器未启用。请把 ANTHROPIC_API_KEY 写入 .env 后重启 docker compose；零配置自启会自动注入 default sidecar。详见 doc/design.claude-sdk-executor.md。");
+                "claude-sdk 执行器未启用。请把 ANTHROPIC_API_KEY 写入 .env 后重启 docker compose；零配置自启会自动注入 default sidecar。详见 doc/design.cds.agent.sdk-executor.md。");
         }
 
         var toolRegistry = sp.GetService<IAgentToolRegistry>();

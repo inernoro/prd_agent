@@ -96,7 +96,7 @@ public static class PmBriefingRenderer
 
     private static readonly TimeZoneInfo ChinaTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Shanghai");
 
-    /// <summary>UTC → 中国时区（简报面向国内干系人，沿用 PmOverdueReminderWorker 同款时区约定）</summary>
+    /// <summary>UTC → 中国时区（简报面向国内干系人）</summary>
     public static DateTime ToCst(DateTime utc) => TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utc, DateTimeKind.Utc), ChinaTimeZone);
 
     /// <summary>中国时区本地时刻 → UTC（解析前端传来的 yyyy-MM-dd 周期日期用）</summary>

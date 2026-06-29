@@ -1,11 +1,14 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta } from '../types.js';
+import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
+import { mergeBranchProfiles, isValidExtraProfileId } from './branch-extra-services.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
 import { sealToken, unsealToken, isSealedSecret } from '../infra/secret-seal.js';
+import { pruneWebhookDeliveries, WEBHOOK_DELIVERY_GLOBAL_MAX } from './webhook-delivery-retention.js';
+import { sanitizeProfileOverride } from './container.js';
 import { normalizeCacheHostPath, resolveCacheBase } from './cache-paths.js';
 import { buildCacheMounts } from './cache-catalog.js';
 import { getGithubAppWhitelistSettings, normalizeGitHubOwnerList } from './github-app-whitelist.js';
@@ -132,6 +135,8 @@ function emptyState(): CdsState {
     defaultBranch: null,
     customEnv: { [GLOBAL_ENV_SCOPE]: {} } as CustomEnvStore,
     infraServices: [],
+    scheduledJobs: [],
+    scheduledJobRuns: [],
     releaseTargets: {},
     releasePlans: {},
     releaseRuns: {},
@@ -289,6 +294,8 @@ export class StateService {
       if (!this.state.resourceCloneTasks) this.state.resourceCloneTasks = [];
       if (!this.state.acceptanceReports) this.state.acceptanceReports = [];
       if (!this.state.cdsPeers) this.state.cdsPeers = [];
+      if (!this.state.scheduledJobs) this.state.scheduledJobs = [];
+      if (!this.state.scheduledJobRuns) this.state.scheduledJobRuns = [];
       if (!this.state.projects) this.state.projects = [];
       // Migrate: backfill cacheMounts for existing build profiles
       this.migrateCacheMounts();
@@ -704,7 +711,7 @@ export class StateService {
    * On failure of step 2/3/4, state.json is untouched. Step 5/6 failures
    * are logged but do not propagate — the main write already succeeded.
    *
-   * See doc/design.cds-resilience.md §5.
+   * See doc/design.cds.resilience.md §5.
    */
   save(): void {
     // P3: delegate physical persistence to the backing store. The atomic
@@ -730,6 +737,58 @@ export class StateService {
 
   getState(): Readonly<CdsState> {
     return this.state;
+  }
+
+  // ── Scheduled jobs ──
+
+  listScheduledJobs(projectId?: string): ScheduledJob[] {
+    const jobs = (this.state.scheduledJobs || []).map(normalizeScheduledJobShape);
+    return projectId ? jobs.filter((job) => job.projectId === projectId) : [...jobs];
+  }
+
+  getScheduledJob(id: string): ScheduledJob | undefined {
+    const job = (this.state.scheduledJobs || []).find((item) => item.id === id);
+    return job ? normalizeScheduledJobShape(job) : undefined;
+  }
+
+  upsertScheduledJob(job: ScheduledJob): ScheduledJob {
+    if (!this.state.scheduledJobs) this.state.scheduledJobs = [];
+    const idx = this.state.scheduledJobs.findIndex((item) => item.id === job.id);
+    if (idx >= 0) this.state.scheduledJobs[idx] = job;
+    else this.state.scheduledJobs.push(job);
+    this.save();
+    return job;
+  }
+
+  deleteScheduledJob(id: string): boolean {
+    if (!this.state.scheduledJobs) this.state.scheduledJobs = [];
+    const before = this.state.scheduledJobs.length;
+    this.state.scheduledJobs = this.state.scheduledJobs.filter((job) => job.id !== id);
+    if (before === this.state.scheduledJobs.length) return false;
+    this.save();
+    return true;
+  }
+
+  listScheduledJobRuns(options: { projectId?: string; jobId?: string; limit?: number } = {}): ScheduledJobRun[] {
+    const limit = Math.min(Math.max(options.limit || 100, 1), 500);
+    let runs = [...(this.state.scheduledJobRuns || [])];
+    if (options.projectId) runs = runs.filter((run) => run.projectId === options.projectId);
+    if (options.jobId) runs = runs.filter((run) => run.jobId === options.jobId);
+    return runs
+      .sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt))
+      .slice(0, limit);
+  }
+
+  upsertScheduledJobRun(run: ScheduledJobRun): ScheduledJobRun {
+    if (!this.state.scheduledJobRuns) this.state.scheduledJobRuns = [];
+    const idx = this.state.scheduledJobRuns.findIndex((item) => item.id === run.id);
+    if (idx >= 0) this.state.scheduledJobRuns[idx] = run;
+    else this.state.scheduledJobRuns.push(run);
+    this.state.scheduledJobRuns = this.state.scheduledJobRuns
+      .sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt))
+      .slice(0, 1000);
+    this.save();
+    return run;
   }
 
   // ── Branch management ──
@@ -804,8 +863,11 @@ export class StateService {
     const branch = this.state.branches[branchId];
     if (!branch) throw new Error(`分支 "${branchId}" 不存在`);
     if (!branch.profileOverrides) branch.profileOverrides = {};
+    // writer 端就剥掉 null 结构哨兵字段，让新 override 一开始就干净（不写 containerPort:null /
+    // dockerImage:null 这类「该继承」的伪值）。与 applyProfileOverride 的 merge 端 sanitize 双保险，
+    // 整类 null-覆盖部署故障一次性根治（见 container.ts sanitizeProfileOverride 注释）。
     branch.profileOverrides[profileId] = {
-      ...override,
+      ...(sanitizeProfileOverride(override) ?? {}),
       updatedAt: new Date().toISOString(),
     };
   }
@@ -1751,7 +1813,7 @@ export class StateService {
   // ── CDS configuration pairing connections (MAP / CLI partners, 2026-05-06) ──
   //
   // 配对连接登记。pairing token / long token 仅存 SHA256 hash，明文不出库。
-  // 详见 doc/spec.cds-map-pairing-protocol.md 与 types.ts::CdsConnection。
+  // 详见 doc/spec.cds.map-pairing-protocol.md 与 types.ts::CdsConnection。
 
   /** 列出全部连接（含 pending-pairing / revoked）。 */
   getCdsConnections(): CdsConnection[] {
@@ -2232,6 +2294,38 @@ export class StateService {
     return (this.state.buildProfiles || []).filter(
       (p) => (p.projectId || 'default') === projectId,
     );
+  }
+
+  /**
+   * 这条分支**实际要部署**的服务清单 = 项目级 profiles(稳定底座) + 本分支临时额外服务
+   * (branch.extraProfiles)。没声明额外服务的分支 = 项目 profiles 原样(老行为零回归)。
+   * 合并规则见 mergeBranchProfiles(额外项只能 ADD 新 id,撞项目 id 以项目为准)。部署 + 资源/拓扑
+   * 展示都走这一函,保证「分支额外服务」在哪都一致可见,且天生 scoped 在本分支。
+   */
+  getEffectiveProfilesForBranch(branch: BranchEntry): BuildProfile[] {
+    return mergeBranchProfiles(
+      this.getBuildProfilesForProject(branch.projectId || 'default'),
+      branch,
+    );
+  }
+
+  /**
+   * 设置/清空一条分支的临时额外服务(branch-local)。空数组 = 清空(回到纯项目底座)。
+   * 非法 id 的额外项被丢弃。仅改这一条分支,不碰项目 profiles、不碰别的分支。
+   */
+  setBranchExtraProfiles(branchId: string, extraProfiles: BuildProfile[]): BranchEntry | null {
+    const branch = this.getBranch(branchId);
+    if (!branch) return null;
+    const sanitized = (extraProfiles || []).filter(
+      (p) => p && isValidExtraProfileId(p.id),
+    );
+    if (sanitized.length === 0) {
+      delete branch.extraProfiles;
+    } else {
+      branch.extraProfiles = sanitized;
+    }
+    this.save();
+    return branch;
   }
 
   getInfraServicesForProject(projectId: string): InfraService[] {
@@ -2775,7 +2869,7 @@ export class StateService {
   static readonly SELF_UPDATE_HISTORY_MAX = 20;
 
   /**
-   * 2026-05-07 timing 审视 (report.cds-self-update-timing-audit):
+   * 2026-05-07 timing 审视 (report.cds.self-update-timing-audit):
    * 新进程 server.listen 后调,盖戳 daemon 完整 ready 的时刻。
    * recordSelfUpdate 在 daemon 重启后第一次跑(no-op 短路或新一次 update)时,
    * 会用此时间戳回填上一条 success record 的 totalElapsedMs。
@@ -2962,19 +3056,20 @@ export class StateService {
 
   /**
    * 2026-05-14: 历史上限从 200 调到 1000。
-   * 单条 delivery ~1KB（含 payloadSnippet 截断），1000 条 ~1MB，state.json 可承受。
-   * 用户反馈"webhook 只有 1 条以为没日志"——根因是上限太小，遇到一阵 push 风暴
-   * 几分钟就被旧条目挤掉。1000 条相当于一个忙项目两天的窗口，足够回溯排查。
-   * 后续若上 MongoDB 持久化，把本 ring buffer 改成 capped collection，参考
-   * doc/debt.cds-state-json.md。
+   * 2026-06-27: 改为「按分支保留」策略（webhook-delivery-retention.ts SSOT）。
+   * 旧的纯全局上限在多项目实例上有致命缺陷：某个忙分支几分钟就用自己的 push/CI
+   * 事件把全局 buffer 灌满，把安静分支（如 main）的 push 历史整段挤光 → 用户看到
+   * 「main webhook 只有 1 条」。更糟的是 mongo-split 持久化层仍按 200 截断，把
+   * 2026-05-14 那次 200→1000 的修复悄悄回退了。现在写入与所有持久化层统一调
+   * pruneWebhookDeliveries：每个分支最近 N 条永不被其它分支挤掉，全局上限只兜总量。
+   * WEBHOOK_DELIVERY_HISTORY_MAX 保留为读接口的 limit 上限（= 全局上限）。
    */
-  static readonly WEBHOOK_DELIVERY_HISTORY_MAX = 1000;
+  static readonly WEBHOOK_DELIVERY_HISTORY_MAX = WEBHOOK_DELIVERY_GLOBAL_MAX;
 
   recordGithubWebhookDelivery(delivery: import('../types.js').GithubWebhookDelivery): void {
     const list = this.state.githubWebhookDeliveries || [];
     list.push(delivery);
-    while (list.length > StateService.WEBHOOK_DELIVERY_HISTORY_MAX) list.shift();
-    this.state.githubWebhookDeliveries = list;
+    this.state.githubWebhookDeliveries = pruneWebhookDeliveries(list);
     try {
       this.save();
     } catch (err) {
@@ -3545,10 +3640,27 @@ export class StateService {
     return path.join(this.getReportsBase(), `${meta.id}.${ext}`);
   }
 
-  /** List report metadata, newest first, optionally filtered by project. */
-  listAcceptanceReports(projectId?: string | null): AcceptanceReportMeta[] {
+  /**
+   * List report metadata, newest first, optionally filtered by project and/or
+   * folder. `folderId` semantics:
+   *   - undefined → no folder filtering (all reports in the project scope)
+   *   - null      → only reports NOT in any folder (未归类)
+   *   - '<id>'    → only reports in that folder
+   */
+  listAcceptanceReports(
+    projectId?: string | null,
+    folderId?: string | null,
+    updatedSince?: string | null,
+  ): AcceptanceReportMeta[] {
     const all = this.state.acceptanceReports || [];
-    const filtered = projectId ? all.filter((r) => (r.projectId || null) === projectId) : all;
+    let filtered = projectId ? all.filter((r) => (r.projectId || null) === projectId) : all;
+    if (folderId !== undefined) {
+      filtered = filtered.filter((r) => (r.folderId || null) === (folderId || null));
+    }
+    // 增量消费（peer-sync / MAP 拉取）：只返回 updatedAt 严格晚于游标的报告。
+    if (updatedSince) {
+      filtered = filtered.filter((r) => (r.updatedAt || r.createdAt) > updatedSince);
+    }
     return [...filtered].sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));
   }
 
@@ -3568,6 +3680,74 @@ export class StateService {
   }
 
   /**
+   * Async variant of readAcceptanceReportContent — offloads disk I/O to the
+   * libuv threadpool instead of blocking the event loop. peer-sync export builds
+   * a bundle reading many report bodies; doing those reads synchronously stalls
+   * the single-process CDS server during a MAP pull (Cursor Bugbot High).
+   */
+  async readAcceptanceReportContentAsync(id: string): Promise<string | undefined> {
+    const meta = this.getAcceptanceReport(id);
+    if (!meta) return undefined;
+    try {
+      return await fs.promises.readFile(this.reportFilePath(meta), 'utf-8');
+    } catch {
+      return undefined;
+    }
+  }
+
+  // ── Report inline-image assets (content-addressed, 2026-06-26) ──
+  //
+  // Report HTML used to embed screenshots as inline `data:image;base64,...`,
+  // which bloats the body and — when a report is pulled into another system's
+  // knowledge base — carries base64 into a place that forbids it. CDS now
+  // extracts those images at ingest, stores them content-addressed on disk, and
+  // rewrites the body to absolute HTTPS URLs served by
+  // `GET /api/reports/assets/:name`. This IS CDS's own object storage; no
+  // external bucket / S3 SDK is required (base64 was only ever a stopgap from
+  // before CDS had any asset store).
+
+  /** Host-side dir holding extracted report image assets. Created on write. */
+  getReportAssetsBase(): string {
+    return path.join(path.dirname(this.getCacheBase()), 'report-assets');
+  }
+
+  /**
+   * Persist a content-addressed report asset (immutable). `name` is
+   * `<sha256>.<ext>`; an existing file is left untouched — same bytes hash to
+   * the same name, so re-writes are pure no-ops and dedup is free. `name` is
+   * basename-sanitized as defense-in-depth against path traversal.
+   */
+  writeReportAsset(name: string, data: Buffer): void {
+    const safe = path.basename(name);
+    const dir = this.getReportAssetsBase();
+    const file = path.join(dir, safe);
+    if (fs.existsSync(file)) return;
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(file, data);
+  }
+
+  /** Read a stored report asset (data + content-type), or undefined when the
+   *  name is illegal / file missing. Only `<hex>.<ext>` names are accepted. */
+  readReportAsset(name: string): { data: Buffer; contentType: string } | undefined {
+    const safe = path.basename(name);
+    if (safe !== name || !/^[a-f0-9]{16,64}\.[a-z0-9]+$/i.test(safe)) return undefined;
+    const ext = safe.slice(safe.lastIndexOf('.') + 1).toLowerCase();
+    const contentType =
+      ext === 'png' ? 'image/png'
+      : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
+      : ext === 'gif' ? 'image/gif'
+      : ext === 'webp' ? 'image/webp'
+      : ext === 'svg' ? 'image/svg+xml'
+      : 'application/octet-stream';
+    try {
+      const data = fs.readFileSync(path.join(this.getReportAssetsBase(), safe));
+      return { data, contentType };
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
    * Create a report: write the content file to disk + persist metadata.
    * `content` byte length is recorded; the metadata id is generated here so
    * callers cannot collide. Returns the stored metadata.
@@ -3578,17 +3758,38 @@ export class StateService {
     content: string;
     projectId?: string | null;
     branchId?: string | null;
+    folderId?: string | null;
+    verdict?: 'pass' | 'conditional' | 'fail' | null;
+    tier?: string | null;
+    defectCounts?: Record<string, number> | null;
+    commitSha?: string | null;
+    branch?: string | null;
+    prNumber?: number | null;
+    deployMode?: string | null;
     createdBy?: string;
   }): AcceptanceReportMeta {
     if (!this.state.acceptanceReports) this.state.acceptanceReports = [];
     const now = new Date().toISOString();
+    // 文件夹必须与报告同属一个项目作用域，否则忽略（防跨项目挂文件夹）。
+    const folder = input.folderId
+      ? (this.state.reportFolders || []).find((f) => f.id === input.folderId)
+      : undefined;
+    const folderId = folder && (folder.projectId || null) === (input.projectId ?? null) ? folder.id : null;
     const meta: AcceptanceReportMeta = {
       id: crypto.randomUUID().replace(/-/g, ''),
       title: input.title,
       format: input.format,
       projectId: input.projectId ?? null,
       branchId: input.branchId ?? null,
+      folderId,
       sizeBytes: Buffer.byteLength(input.content, 'utf8'),
+      verdict: input.verdict ?? null,
+      tier: input.tier ?? null,
+      defectCounts: input.defectCounts ?? null,
+      commitSha: input.commitSha ?? null,
+      branch: input.branch ?? null,
+      prNumber: input.prNumber ?? null,
+      deployMode: input.deployMode ?? null,
       createdBy: input.createdBy,
       createdAt: now,
       updatedAt: now,
@@ -3607,7 +3808,17 @@ export class StateService {
    */
   updateAcceptanceReport(
     id: string,
-    updates: { title?: string; content?: string },
+    updates: {
+      title?: string;
+      content?: string;
+      verdict?: 'pass' | 'conditional' | 'fail' | null;
+      tier?: string | null;
+      defectCounts?: Record<string, number> | null;
+      commitSha?: string | null;
+      branch?: string | null;
+      prNumber?: number | null;
+      deployMode?: string | null;
+    },
   ): AcceptanceReportMeta | null {
     const meta = this.getAcceptanceReport(id);
     if (!meta) return null;
@@ -3617,9 +3828,134 @@ export class StateService {
       fs.writeFileSync(this.reportFilePath(meta), updates.content, 'utf-8');
       meta.sizeBytes = Buffer.byteLength(updates.content, 'utf8');
     }
+    if (updates.verdict !== undefined) meta.verdict = updates.verdict;
+    if (updates.tier !== undefined) meta.tier = updates.tier;
+    if (updates.defectCounts !== undefined) meta.defectCounts = updates.defectCounts;
+    if (updates.commitSha !== undefined) meta.commitSha = updates.commitSha;
+    if (updates.branch !== undefined) meta.branch = updates.branch;
+    if (updates.prNumber !== undefined) meta.prNumber = updates.prNumber;
+    if (updates.deployMode !== undefined) meta.deployMode = updates.deployMode;
     meta.updatedAt = new Date().toISOString();
     this.save();
     return meta;
+  }
+
+  /**
+   * E6 匿名分享：为报告生成（或返回已有的）只读分享 token，返回更新后的元数据。
+   * 已有 token 时幂等返回旧 token（不重复 mint）。报告不存在返回 null。
+   */
+  enableReportShare(id: string): AcceptanceReportMeta | null {
+    const meta = this.getAcceptanceReport(id);
+    if (!meta) return null;
+    if (!meta.shareToken) {
+      meta.shareToken = crypto.randomBytes(16).toString('hex');
+      meta.updatedAt = new Date().toISOString();
+      this.save();
+    }
+    return meta;
+  }
+
+  /** E6：撤销报告的分享 token。返回更新后的元数据，或报告不存在时 null。 */
+  disableReportShare(id: string): AcceptanceReportMeta | null {
+    const meta = this.getAcceptanceReport(id);
+    if (!meta) return null;
+    if (meta.shareToken) {
+      meta.shareToken = null;
+      meta.updatedAt = new Date().toISOString();
+      this.save();
+    }
+    return meta;
+  }
+
+  /** E6：按分享 token 反查报告（公开 `/r/<token>` 路由用）。空/未命中返回 undefined。 */
+  getReportByShareToken(token: string): AcceptanceReportMeta | undefined {
+    const t = (token || '').trim();
+    if (!t) return undefined;
+    return (this.state.acceptanceReports || []).find((r) => r.shareToken === t);
+  }
+
+  // ── WS3 MAP-KBTP peer-sync：节点 + 配对码 ──────────────────────────────
+
+  /** 本 CDS 实例稳定 nodeId（首次调用时生成并持久化）。 */
+  getOrCreatePeerSelfNodeId(): string {
+    if (!this.state.peerSelfNodeId) {
+      this.state.peerSelfNodeId = crypto.randomUUID().replace(/-/g, '');
+      this.save();
+    }
+    return this.state.peerSelfNodeId;
+  }
+
+  /** 生成一次性配对码：返回明文（仅此一次）+ 记录（只存 hash）。ttlMs 默认 10 分钟。 */
+  createPeerPairingCode(displayName?: string, ttlMs = 10 * 60 * 1000): { code: string; record: PeerPairingCode } {
+    if (!this.state.peerPairingCodes) this.state.peerPairingCodes = [];
+    const code = crypto.randomBytes(18).toString('base64url');
+    const now = Date.now();
+    const record: PeerPairingCode = {
+      id: crypto.randomUUID().replace(/-/g, ''),
+      codeHash: crypto.createHash('sha256').update(code).digest('hex'),
+      displayName,
+      expiresAt: new Date(now + ttlMs).toISOString(),
+      used: false,
+      createdAt: new Date(now).toISOString(),
+    };
+    this.state.peerPairingCodes.push(record);
+    this.save();
+    return { code, record };
+  }
+
+  /** 校验并消费一次性配对码（未用、未过期）。成功返回 true 并标记已用。 */
+  consumePeerPairingCode(code: string): boolean {
+    const hash = crypto.createHash('sha256').update(code || '').digest('hex');
+    const rec = (this.state.peerPairingCodes || []).find((c) => c.codeHash === hash);
+    if (!rec || rec.used) return false;
+    if (new Date(rec.expiresAt).getTime() < Date.now()) return false;
+    rec.used = true;
+    this.save();
+    return true;
+  }
+
+  /** 新建/记录一个已配对对端节点。 */
+  createPeerNode(input: {
+    partnerNodeId: string;
+    sharedSecret: string;
+    partnerBaseUrl?: string;
+    partnerDisplayName?: string;
+  }): PeerNodeRecord {
+    if (!this.state.peerNodes) this.state.peerNodes = [];
+    const rec: PeerNodeRecord = {
+      id: crypto.randomUUID().replace(/-/g, ''),
+      partnerNodeId: input.partnerNodeId,
+      sharedSecret: input.sharedSecret,
+      partnerBaseUrl: input.partnerBaseUrl,
+      partnerDisplayName: input.partnerDisplayName,
+      createdAt: new Date().toISOString(),
+    };
+    this.state.peerNodes.push(rec);
+    this.save();
+    return rec;
+  }
+
+  /** 按对端 nodeId（X-Peer-Node）反查配对节点。 */
+  getPeerNodeByPartnerId(partnerNodeId: string): PeerNodeRecord | undefined {
+    return (this.state.peerNodes || []).find((n) => n.partnerNodeId === partnerNodeId);
+  }
+
+  /** 更新节点 lastUsedAt（审计）。 */
+  touchPeerNode(id: string): void {
+    const n = (this.state.peerNodes || []).find((x) => x.id === id);
+    if (n) { n.lastUsedAt = new Date().toISOString(); this.save(); }
+  }
+
+  listPeerNodes(): PeerNodeRecord[] {
+    return [...(this.state.peerNodes || [])];
+  }
+
+  deletePeerNode(id: string): boolean {
+    const all = this.state.peerNodes || [];
+    if (!all.some((n) => n.id === id)) return false;
+    this.state.peerNodes = all.filter((n) => n.id !== id);
+    this.save();
+    return true;
   }
 
   /** Delete a report's metadata + content file. Returns true when removed. */
@@ -3636,4 +3972,138 @@ export class StateService {
     this.save();
     return true;
   }
+
+  /**
+   * Move a report into a folder (or out of any folder when folderId is null).
+   * The folder must exist and share the report's project scope, otherwise the
+   * assignment is rejected (returns null) to avoid cross-project leakage.
+   */
+  setReportFolder(reportId: string, folderId: string | null): AcceptanceReportMeta | null {
+    const meta = this.getAcceptanceReport(reportId);
+    if (!meta) return null;
+    if (folderId) {
+      const folder = (this.state.reportFolders || []).find((f) => f.id === folderId);
+      if (!folder) return null;
+      if ((folder.projectId || null) !== (meta.projectId || null)) return null;
+      meta.folderId = folder.id;
+    } else {
+      meta.folderId = null;
+    }
+    meta.updatedAt = new Date().toISOString();
+    this.save();
+    return meta;
+  }
+
+  /** List report folders for a project scope (null = global/CDS-self), sorted. */
+  listReportFolders(projectId?: string | null): ReportFolder[] {
+    const all = this.state.reportFolders || [];
+    const filtered = projectId !== undefined
+      ? all.filter((f) => (f.projectId || null) === (projectId || null))
+      : all;
+    return [...filtered].sort((a, b) =>
+      a.sortOrder !== b.sortOrder ? a.sortOrder - b.sortOrder : (a.createdAt < b.createdAt ? -1 : 1),
+    );
+  }
+
+  getReportFolder(id: string): ReportFolder | undefined {
+    return (this.state.reportFolders || []).find((f) => f.id === id);
+  }
+
+  createReportFolder(input: { name: string; projectId?: string | null; parentId?: string | null }): ReportFolder {
+    if (!this.state.reportFolders) this.state.reportFolders = [];
+    const scope = input.projectId ?? null;
+    // 父文件夹必须存在且与子同属一个项目作用域，否则视为根级（防跨项目挂父）。
+    const parent = input.parentId
+      ? this.state.reportFolders.find((f) => f.id === input.parentId && (f.projectId || null) === scope)
+      : undefined;
+    const parentId = parent ? parent.id : null;
+    const maxOrder = this.state.reportFolders
+      .filter((f) => (f.projectId || null) === scope && (f.parentId || null) === parentId)
+      .reduce((m, f) => Math.max(m, f.sortOrder), -1);
+    const folder: ReportFolder = {
+      id: crypto.randomUUID().replace(/-/g, ''),
+      name: input.name,
+      projectId: scope,
+      parentId,
+      sortOrder: maxOrder + 1,
+      createdAt: new Date().toISOString(),
+    };
+    this.state.reportFolders.push(folder);
+    this.save();
+    return folder;
+  }
+
+  /**
+   * Find-or-create a nested folder chain under a project from a "/"-separated
+   * path (e.g. "视觉创作/2026-06-22"). Each segment is matched case-sensitively
+   * by name within its parent; missing segments are created. Returns the leaf
+   * folder id, or null when the path is empty. This is how skills (cdscli /
+   * visual-test) drop reports under「项目 = 根目录 → 技能自取子文件夹」without
+   * needing to pre-create folders or know their ids.
+   */
+  findOrCreateFolderPath(projectId: string | null, path: string): string | null {
+    const segments = path.split('/').map((s) => s.trim()).filter(Boolean);
+    if (segments.length === 0) return null;
+    if (!this.state.reportFolders) this.state.reportFolders = [];
+    const scope = projectId ?? null;
+    let parentId: string | null = null;
+    let leafId: string | null = null;
+    for (const name of segments) {
+      const existing: ReportFolder | undefined = this.state.reportFolders.find(
+        (f) => (f.projectId || null) === scope && (f.parentId || null) === parentId && f.name === name,
+      );
+      const folder: ReportFolder = existing ?? this.createReportFolder({ name, projectId: scope, parentId });
+      parentId = folder.id;
+      leafId = folder.id;
+    }
+    return leafId;
+  }
+
+  renameReportFolder(id: string, name: string): ReportFolder | null {
+    const folder = this.getReportFolder(id);
+    if (!folder) return null;
+    folder.name = name;
+    this.save();
+    return folder;
+  }
+
+  /**
+   * Delete a folder. Reports inside it are NOT deleted — they are detached
+   * (folderId reset to null) so content is never lost when a folder is removed.
+   * Returns true when the folder existed.
+   */
+  deleteReportFolder(id: string): boolean {
+    const all = this.state.reportFolders || [];
+    const target = all.find((f) => f.id === id);
+    if (!target) return false;
+    // 直接报告改为「未归类」（内容不丢）。子文件夹上提一层到被删者的父级（不级联删除，
+    // 避免误删一整棵子树），它们的报告原样保留。
+    for (const r of this.state.acceptanceReports || []) {
+      if (r.folderId === id) r.folderId = null;
+    }
+    for (const f of all) {
+      if ((f.parentId || null) === id) f.parentId = target.parentId ?? null;
+    }
+    this.state.reportFolders = all.filter((f) => f.id !== id);
+    this.save();
+    return true;
+  }
+}
+
+function normalizeScheduledJobShape(job: ScheduledJob): ScheduledJob {
+  if (Array.isArray(job.actions) && job.actions.length > 0) {
+    return {
+      ...job,
+      target: job.target || job.actions[0],
+    };
+  }
+  const legacyTarget = job.target;
+  const actions: ScheduledJobAction[] = legacyTarget
+    ? [{ ...legacyTarget, id: 'action_1', name: legacyTarget.type === 'http' ? '调用 HTTP 接口' : '执行命令脚本' }]
+    : [];
+  return {
+    ...job,
+    actions,
+    target: legacyTarget || actions[0],
+  };
 }

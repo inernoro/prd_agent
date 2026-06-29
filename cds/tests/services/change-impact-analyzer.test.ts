@@ -142,7 +142,7 @@ describe('isWebOnlyChange (Phase A 零停机前端更新判定)', () => {
   it('前端 + 文档混合 → true(文档随便改不影响)', () => {
     const paths = [
       'cds/web/src/App.tsx',
-      'doc/plan.cds-legacy-feature-rollup.md',
+      'doc/plan.cds.legacy-feature-rollup.md',
       'changelogs/2026-05-08_x.md',
     ];
     expect(isWebOnlyChange(analyzeChangeImpact(paths), paths)).toBe(true);

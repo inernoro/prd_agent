@@ -29,6 +29,22 @@ import { createExecutorRouter } from '../../src/executor/routes.js';
 import type { CdsConfig, BranchEntry } from '../../src/types.js';
 import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
 
+// Source contract for the building-status timing fix (Bugbot "Executor deploy skips building status"):
+// the worker must set entry.status='building' BEFORE the pre-pull orphan teardown, so heartbeats don't
+// sync a stale running/idle onto master during the teardown+pull window. Asserted at source level because
+// the intermediate state is not observable through the synchronous test deploy.
+describe('Executor /exec/deploy: building status set before pre-pull teardown (source contract)', () => {
+  it("sets entry.status='building' before the orphan teardown / pull", () => {
+    const src = fs.readFileSync(path.resolve(process.cwd(), 'src/executor/routes.ts'), 'utf8');
+    const buildingIdx = src.indexOf("// 进入部署窗口立即把 worker 分支态钉成 building");
+    const teardownIdx = src.indexOf('const payloadProfileIds = new Set(profilesData.map');
+    const pullIdx = src.indexOf("正在拉取最新代码");
+    expect(buildingIdx).toBeGreaterThan(0);
+    expect(buildingIdx).toBeLessThan(teardownIdx);
+    expect(teardownIdx).toBeLessThan(pullIdx);
+  });
+});
+
 function makeConfig(tmpDir: string): CdsConfig {
   return {
     repoRoot: tmpDir,
@@ -298,6 +314,49 @@ describe('Executor /exec/deploy', () => {
     expect(result.events.some(e => e.event === 'error')).toBe(false);
   });
 
+  it('emits error WITH the post-teardown services snapshot when pull fails (Bugbot remote-error-stale-services)', async () => {
+    // Orphan teardown runs before pull. If pull then fails, the error event must still carry the current
+    // services snapshot so the master can reconcile (the removed orphan must not stay running on master).
+    const now = new Date().toISOString();
+    stateService.addProject({ id: 'realproj', slug: 'realproj', name: 'Real', kind: 'git', createdAt: now, updatedAt: now });
+    stateService.addBranch({
+      id: 'realproj-pullfail',
+      projectId: 'realproj',
+      branch: 'feature/pullfail',
+      worktreePath: path.join(tmpDir, 'worktrees', 'realproj', 'realproj-pullfail'),
+      services: {
+        'old-extra': { profileId: 'old-extra', containerName: 'cds-realproj-pullfail-old-extra', hostPort: 10008, status: 'running' },
+      },
+      status: 'running',
+      createdAt: now,
+    });
+    // Force the git reset (inside WorktreeService.pull) to fail — exact responses win over the catch-all.
+    mock.addResponse('git reset --hard origin/feature/pullfail', { stdout: '', stderr: 'fatal: couldn\'t find remote ref', exitCode: 1 });
+
+    const result = await postSse(server, '/exec/deploy', {
+      branchId: 'realproj-pullfail',
+      branchName: 'feature/pullfail',
+      projectId: 'realproj',
+      // A real desired profile so the deploy does NOT short-circuit on empty payload → it reaches pull.
+      profiles: [{ id: 'api', name: 'API', dockerImage: 'node:20', workDir: 'api', command: 'node server.js', containerPort: 8080 }],
+      env: {},
+    });
+
+    expect(result.status).toBe(200);
+    const errorEvent = result.events.find(e => e.event === 'error');
+    expect(errorEvent).toBeDefined();
+    // The error payload carries a services snapshot (object) so the master can reconcile on failure.
+    expect(errorEvent!.data?.services).toBeDefined();
+    expect(typeof errorEvent!.data.services).toBe('object');
+    // The orphan was torn down before the pull failed (its container was removed + entry cleared).
+    expect(stateService.getBranch('realproj-pullfail')!.services['old-extra']).toBeUndefined();
+    expect(errorEvent!.data.services['old-extra']).toBeUndefined();
+    // worker 自身分支态落 error（Bugbot「Failed remote deploy reverts to building」）：否则下一次心跳会把
+    // master 已 finalize 的 error 覆盖回 building。
+    expect(stateService.getBranch('realproj-pullfail')!.status).toBe('error');
+    expect(stateService.getBranch('realproj-pullfail')!.errorMessage).toBeTruthy();
+  });
+
   it('does not stamp projectId on a branch the executor already knows about', async () => {
     // Existing entry on the executor (e.g., re-deploy after restart).
     // The deploy path must be a no-op for entry creation; the
@@ -326,6 +385,80 @@ describe('Executor /exec/deploy', () => {
     // Should not have been overwritten — the master-supplied value
     // only applies to newly-created entries.
     expect(entry!.projectId).toBe('whatever-was-there-before');
+  });
+
+  it('empty payload tears down orphan services BEFORE/WITHOUT pulling (Codex P2 cleanup-before-pull)', async () => {
+    // A branch whose only service was a branch-local extra; the master cleared it and sent profiles: [].
+    // The cleanup must NOT be gated behind git pull — otherwise a transient git failure / upstream-deleted
+    // branch would error out leaving the worker container running while master saved the empty list.
+    const now = new Date().toISOString();
+    stateService.addBranch({
+      id: 'realproj-empty-clear',
+      projectId: 'realproj',
+      branch: 'feature/empty-clear',
+      worktreePath: path.join(tmpDir, 'worktrees', 'realproj', 'realproj-empty-clear'),
+      services: {
+        'extra-api': { profileId: 'extra-api', containerName: 'cds-realproj-empty-clear-extra-api', hostPort: 10007, status: 'running' },
+      },
+      status: 'running',
+      createdAt: now,
+    });
+    stateService.addProject({ id: 'realproj', slug: 'realproj', name: 'Real', kind: 'git', createdAt: now, updatedAt: now });
+    mock.commands.length = 0;
+
+    const result = await postSse(server, '/exec/deploy', {
+      branchId: 'realproj-empty-clear',
+      branchName: 'feature/empty-clear',
+      projectId: 'realproj',
+      profiles: [],
+      env: {},
+    });
+
+    expect(result.status).toBe(200);
+    // The orphan service container was removed + entry cleared, status idle.
+    expect(result.events.some(e => e.event === 'complete' && e.data?.message === '已清空所有服务')).toBe(true);
+    const entry = stateService.getBranch('realproj-empty-clear');
+    expect(entry!.services['extra-api']).toBeUndefined();
+    expect(entry!.status).toBe('idle');
+    // pull was skipped (nothing to build) — no `git ... pull` was issued and no 'pull' step emitted.
+    expect(result.events.some(e => e.event === 'step' && e.data?.step === 'pull')).toBe(false);
+    expect(mock.commands.some(c => /\bpull\b/.test(c))).toBe(false);
+    // the orphan container WAS removed.
+    expect(mock.commands.some(c => /docker rm/.test(c) && c.includes('cds-realproj-empty-clear-extra-api'))).toBe(true);
+  });
+
+  it('treats an OMITTED profiles field as an empty teardown, not an opaque error (Bugbot Low: missing profiles guard)', async () => {
+    // Older masters / manual calls may omit `profiles` entirely. profilesData.map / .length must not throw —
+    // it should normalize to [] and run the same empty-teardown path as profiles: [].
+    const now = new Date().toISOString();
+    stateService.addBranch({
+      id: 'realproj-omit-profiles',
+      projectId: 'realproj',
+      branch: 'feature/omit-profiles',
+      worktreePath: path.join(tmpDir, 'worktrees', 'realproj', 'realproj-omit-profiles'),
+      services: {
+        'extra-api': { profileId: 'extra-api', containerName: 'cds-realproj-omit-profiles-extra-api', hostPort: 10008, status: 'running' },
+      },
+      status: 'running',
+      createdAt: now,
+    });
+    stateService.addProject({ id: 'realproj', slug: 'realproj', name: 'Real', kind: 'git', createdAt: now, updatedAt: now });
+    mock.commands.length = 0;
+
+    // NOTE: no `profiles` field in the body at all.
+    const result = await postSse(server, '/exec/deploy', {
+      branchId: 'realproj-omit-profiles',
+      branchName: 'feature/omit-profiles',
+      projectId: 'realproj',
+      env: {},
+    });
+
+    expect(result.status).toBe(200);
+    expect(result.events.some(e => e.event === 'error')).toBe(false);
+    expect(result.events.some(e => e.event === 'complete' && e.data?.message === '已清空所有服务')).toBe(true);
+    const entry = stateService.getBranch('realproj-omit-profiles');
+    expect(entry!.services['extra-api']).toBeUndefined();
+    expect(entry!.status).toBe('idle');
   });
 
   it('threads operationId/requestId from master into executor docker run events', async () => {

@@ -20,7 +20,7 @@ public static class HttpRequestExtensions
     /// （KnownProxies/KnownNetworks 或可信跳数），代码无法推断。取「不可伪造值」优先于
     /// 「穿透多层代理的精确性」。
     ///
-    /// 已知权衡（见 doc/debt.web-hosting-client-ip.md）：多层 public 拓扑
+    /// 已知权衡（见 doc/debt.web-hosting.client-ip.md）：多层 public 拓扑
     /// （public-nginx→gateway→branch-nginx→api）下，内层 nginx 把 X-Real-IP 覆盖成 gateway
     /// 内网地址，故此处会记到代理 IP 而非真实访客。若要在生产恢复真实访客 IP，须改用全局
     /// UseForwardedHeaders + 运维提供的可信代理 CIDR。

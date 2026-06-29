@@ -84,7 +84,7 @@ public class SkillAgentSessionStore : ISkillAgentSessionStore
         try
         {
             // "草稿" = 未保存过的会话：SavedSkillKey 为 null 或空字符串
-            // 靠 `UserId + LastActiveAt` 复合索引支撑（见 doc/guide.mongodb-indexes.md）
+            // 靠 `UserId + LastActiveAt` 复合索引支撑（见 doc/guide.platform.mongodb-indexes.md）
             var filter = Builders<SkillAgentSession>.Filter.And(
                 Builders<SkillAgentSession>.Filter.Eq(x => x.UserId, userId),
                 Builders<SkillAgentSession>.Filter.Or(

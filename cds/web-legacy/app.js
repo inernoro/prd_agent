@@ -1501,7 +1501,7 @@ async function addBranch(name) {
 // Label shows "free / total" so the number next to the battery matches
 // the visual fill. Clicking opens a detail popover with scheduler state.
 // Sourced from `containerCapacity`, updated by loadBranches() every 10s.
-// See doc/design.cds-resilience.md §八.
+// See doc/design.cds.resilience.md §八.
 
 function renderCapacityBadge() {
   const el = document.getElementById('capacityBadge');

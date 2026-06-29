@@ -1,9 +1,11 @@
 ---
 name: flow-trace
-description: Traces the full data flow and control flow of a specified feature or module, producing a readable end-to-end path diagram.
+description: 对指定功能或模块做全链路追踪（数据流/控制流/错误流），从入口一路追到数据库或 LLM，产出非技术人员也能看懂的端到端路径图（含决策点、数据变换、降级路径）。触发词："/trace"、"路径追踪"、"追踪 XXX"、"这个功能是怎么跑的"、"数据是怎么流转的"、"flow trace"。
 ---
 
-# Flow Trace - 路径追踪
+# 路径追踪
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/trace`、"路径追踪"、"追踪 XXX"、"这个功能是怎么跑的"、"数据是怎么流转的"、"flow trace"
 
 对指定功能或模块进行**全链路追踪**，输出一份"非程序员也能看懂"的路径图。让黑盒变透明。
 
@@ -328,9 +330,9 @@ description: Traces the full data flow and control flow of a specified feature o
     │
     ▼
 ③ 按重要程度分配"桌子空间"（60K token 预算）
-    │ 产品文档 40K → 预算够，放原版 ✅
-    │ 技术文档 25K → 预算不够，放缩印版（只有目录+开头）⚠️
-    │ 参考资料 15K → 预算够，放原版 ✅
+    │ 产品文档 40K → 预算够，放原版（通过）
+    │ 技术文档 25K → 预算不够，放缩印版（只有目录+开头）（注意：摘要降级）
+    │ 参考资料 15K → 预算够，放原版（通过）
     │
     ▼
 ④ 把最近的聊天记录也打包进去（30K 预算）

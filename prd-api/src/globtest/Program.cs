@@ -6,7 +6,7 @@ class Program {
         var m = new Matcher();
         m.AddInclude("report*.md");
         
-        string name1 = "design.account-data-sharing.md";
+        string name1 = "design.platform.account-data-sharing.md";
         string name2 = "report.2023.md";
         string name3 = "report_test.md";
 

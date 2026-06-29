@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace PrdAgent.Core.Sync;
 
 /// <summary>
-/// 跨节点互传通用契约。详见 doc/design.peer-sync.md §5.2 / §7.3。
+/// 跨节点互传通用契约。详见 doc/design.platform.peer-sync.md §5.2 / §7.3。
 ///
 /// 设计原则（compute-then-send + 向下兼容）：
 /// - 发起方调用 ISyncableResource.ExportAsync 得到 SyncResourceBundle（计算阶段），

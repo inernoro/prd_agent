@@ -219,7 +219,7 @@ elif [[ "$missing_config" != "none" || "$image_readiness" == "missing" ]]; then
 Continue R0.7 CDS-managed runtime live evidence work. R0.7 now has the local liveApply container path; next is running it against the real CDS shared-service runtime and proving sharedRunning > 0. `CDS_REMOTE_HOST_*`, SSH keys, and `CDS_AGENT_SIDECAR_IMAGE` are operator/debug fallback details, not the product path.
 
 ```bash
-sed -n '70,120p' doc/design.cds-agent-managed-runtime-fact-source.md
+sed -n '70,120p' doc/design.cds.agent.managed-runtime-fact-source.md
 npm --prefix cds test -- --run tests/routes/remote-hosts-instances.test.ts
 scripts/smoke-cds-agent-map-session-transport.sh
 scripts/smoke-cds-agent-shared-service-pool.sh

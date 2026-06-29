@@ -53,7 +53,7 @@ services:
       # 只有显式 SIDECAR_PROVIDER_KEY_MODE=env 时，缺 ANTHROPIC_API_KEY 才会成为 ready blocker。
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       # 上游切换：如果想全局走 DeepSeek / Kimi / GLM / cc-switch，设这个 env 即可。
-      # per-node 切换可在节点 JSON 写 baseUrl/apiKey/profile（详见 doc/guide.claude-sdk-quickstart.md）
+      # per-node 切换可在节点 JSON 写 baseUrl/apiKey/profile（详见 doc/guide.cds.agent.sdk-quickstart.md）
       - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}
       # 多上游 profile 文件路径（容器内）；映射到宿主的 profiles.yaml（gitignored）
       - PROFILES_PATH=/app/profiles.yaml

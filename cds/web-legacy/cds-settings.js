@@ -146,7 +146,7 @@
             '<div class="settings-placeholder">' +
               '<div class="settings-placeholder-title">未配置 GitHub App</div>' +
               '<div class="settings-placeholder-desc">' +
-                '在 cds/.cds.env 设置 CDS_GITHUB_APP_ID / CDS_GITHUB_APP_PRIVATE_KEY / CDS_GITHUB_WEBHOOK_SECRET 后 restart。详见 doc/guide.cds-cluster-setup.md。' +
+                '在 cds/.cds.env 设置 CDS_GITHUB_APP_ID / CDS_GITHUB_APP_PRIVATE_KEY / CDS_GITHUB_WEBHOOK_SECRET 后 restart。详见 doc/guide.cds.cluster-setup.md。' +
               '</div>' +
             '</div>';
           return;
