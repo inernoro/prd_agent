@@ -10753,17 +10753,41 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const zombieServices = Object.entries(entry.services).filter(
         ([sid]) => !activeProfileIds.has(sid),
       );
-      for (const [sid, svc] of zombieServices) {
-        if (svc.status === 'error') {
+      // 服务已从「期望清单」移除(分支额外服务被清掉 / 项目 profile 被删) → **拆掉它的容器并删条目**,
+      // 让「移除即下掉」成立(分支级额外服务的对称半:加能起、删能下)。此前只对 error 态打 warning、
+      // 容器残留(2026-06-29 实测:清掉额外服务后 demo-extra 容器仍在跑)。best-effort:remove 失败也
+      // 继续删条目,避免卡住整次部署;profiles 非空已由上方 400 守卫保证,不会误删全部。
+      if (zombieServices.length > 0) {
+        const zActor = resolveActorFromRequest(req);
+        const zTrigger = triggerFromRequest(req);
+        for (const [sid, svc] of zombieServices) {
           logEvent({
-            step: 'zombie-service',
-            status: 'warning',
-            title: `服务 "${sid}" 已不在 startup-plan 里但状态停留在 error，被忽略`,
-            log: `这通常是旧 buildProfile 被删/改名后的残留。如确认无用，请通过 reset 接口清理 entry.services["${sid}"]。原 errorMessage="${svc.errorMessage || ''}"`,
-            detail: { profileId: sid, status: svc.status, port: svc.hostPort, container: svc.containerName },
+            step: 'remove-orphan-service',
+            status: 'running',
+            title: `服务 "${sid}" 已从期望清单移除，正在下掉容器…`,
+            detail: { profileId: sid, status: svc.status, container: svc.containerName },
             timestamp: new Date().toISOString(),
           });
+          try {
+            await containerService.remove(svc.containerName, {
+              projectId: entry.projectId,
+              branchId: entry.id,
+              profileId: sid,
+              requestId: requestId || null,
+              operationId: branchOperationLease?.operationId || null,
+              actor: zActor,
+              trigger: zTrigger,
+              operation: 'deploy-remove-orphan-service',
+              source: 'api.deploy-branch',
+              reason: '服务已从期望清单移除(额外服务被清/项目 profile 被删)',
+            });
+          } catch (err) {
+            logEvent({ step: 'remove-orphan-service', status: 'warning', title: `服务 "${sid}" 容器移除失败(忽略,仍清条目): ${(err as Error).message}`, timestamp: new Date().toISOString() });
+          }
+          delete entry.services[sid];
+          logEvent({ step: 'remove-orphan-service', status: 'done', title: `服务 "${sid}" 已下掉`, timestamp: new Date().toISOString() });
         }
+        stateService.save();
       }
       const activeStatuses = activeServices.map(([, s]) => s.status);
       const hasRunning = activeStatuses.some((s) => s === 'running');
