@@ -650,6 +650,25 @@ describe('Branch Routes', () => {
       expect(bad.status).toBe(400);
     });
 
+    it('clears a stale profileOverride when its extra service is removed (Codex P2)', async () => {
+      seedBranch('b1');
+      await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80 }],
+      });
+      // Save an override for the extra service.
+      await request(server, 'PUT', '/api/branches/b1/profile-overrides/demo-extra', { dockerImage: 'ghcr.io/acme/old:1' });
+      expect(stateService.getBranch('b1')!.profileOverrides?.['demo-extra']).toBeTruthy();
+      // Remove the extra service (clear). Its override must NOT linger to poison a later same-id service.
+      const clr = await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [] });
+      expect(clr.status).toBe(200);
+      expect(stateService.getBranch('b1')!.profileOverrides?.['demo-extra']).toBeUndefined();
+      // Re-create a different service with the SAME id: it must NOT inherit the old override image.
+      await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80 }],
+      });
+      expect(stateService.getBranch('b1')!.profileOverrides?.['demo-extra']).toBeUndefined();
+    });
+
     it('preserves + validates extra-service dbScope (Codex P2)', async () => {
       seedBranch('b1');
       // per-branch isolation must survive the whitelist (else resolveProfileRuntimeEnv skips DB rewriting).

@@ -13217,6 +13217,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
         );
       }
     }
+    // 清理被移除额外服务的孤立 profileOverride（Codex P2「Clear stale overrides when removing extra services」）：
+    // 删一个有 profileOverride 的额外服务时,只改 extraProfiles 会把 entry.profileOverrides[id] 留下;若该分支
+    // 之后用**同 id**新建另一个临时服务,resolveEffectiveProfile 会把旧 override(镜像/env/路由)悄悄套到新服务上,
+    // 部署成上一轮的值而非刚提交的。这里按**最终**(已结算回滚)的 extraProfiles 算出真正被移除的 id,清掉其 override。
+    // 注:回滚时 final == prev,removedIds 为空,不会误删;额外 id 不会撞项目 profile id(PUT 已拒),清除安全。
+    {
+      const finalExtraIds = new Set((updated.extraProfiles || []).map((p) => p.id));
+      for (const prev of prevExtraProfilesSnapshot) {
+        if (!finalExtraIds.has(prev.id) && updated.profileOverrides?.[prev.id]) {
+          stateService.clearBranchProfileOverride(entry.id, prev.id);
+        }
+      }
+      updated = stateService.getBranch(entry.id)!;
+    }
     res.json({
       extraProfiles: maskExtraProfilesEnv(updated.extraProfiles || []) || [],
       count: (updated.extraProfiles || []).length,
