@@ -2035,6 +2035,34 @@ describe('Branch Routes', () => {
       expect(stateService.getBranch('partial-offline-exec')?.services['api']).toBeTruthy();
     });
 
+    it('deploy refuses (503) when a remote-attributed branch drops a service but the executor is NOT in the registry (Bugbot "Missing executor skips offline guard")', async () => {
+      const now = new Date().toISOString();
+      stateService.addBuildProfile({ id: 'api', name: 'API', dockerImage: 'img', workDir: 'api', command: 'run', containerPort: 8080, projectId: 'default' });
+      stateService.addBranch({
+        id: 'gone-exec-branch',
+        projectId: 'default',
+        branch: 'feature/gone-exec',
+        worktreePath: path.join(tmpDir, 'worktrees', 'gone-exec-branch'),
+        status: 'running',
+        createdAt: now,
+        // executorId points at a remote executor that is NOT registered (deregistered / stale attribution).
+        executorId: 'exec-gone',
+        services: {
+          api: { profileId: 'api', containerName: 'cds-gone-exec-branch-api', hostPort: 10020, status: 'running' },
+          'demo-extra': { profileId: 'demo-extra', containerName: 'cds-gone-exec-branch-demo-extra', hostPort: 10021, status: 'running' },
+        },
+      });
+      // Deliberately do NOT push 'exec-gone' into registryNodes.
+      stateService.save();
+
+      const res = await request(server, 'POST', '/api/branches/gone-exec-branch/deploy');
+      expect(res.status).toBe(503);
+      expect((res.body as any).error).toBe('owning_executor_offline');
+      // state untouched — must not orphan the remote worker's container.
+      expect(stateService.getBranch('gone-exec-branch')?.services['demo-extra']).toBeTruthy();
+      expect(stateService.getBranch('gone-exec-branch')?.services['api']).toBeTruthy();
+    });
+
     it('deploy with no profiles AND no services still returns the original 400', async () => {
       const now = new Date().toISOString();
       stateService.addBranch({

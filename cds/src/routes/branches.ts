@@ -10119,23 +10119,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // so a deploy in project A doesn't pull in B's profiles. Pre-Part 3
     // branches default to 'default' (the legacy migration target).
     const profiles = stateService.getEffectiveProfilesForBranch(entry);
-    // 归属离线执行器时，凡「新期望清单要拆掉现有服务」一律拒绝（Codex P2「Block offline executor removals
-    // with remaining profiles」）：round-17 的离线护栏只在 profiles 全空时挡；但删掉一个额外服务、项目
-    // profiles 还在（profiles.length>0）时也会走到这里——本地/另一执行器 redeploy 会把被删服务从 master state
-    // 抹掉，而旧容器仍在离线 worker 上跑（ghost）。故只要有现有服务不在新期望清单里、且归属执行器离线，就 503
-    // 拒绝、不动 state，等执行器恢复重试。在线 owner 放行到远端分发（executor 自己收敛）；非远端 owned（本地）
-    // 走下面就地拆除，不受此门影响。
+    // 归属远端执行器但无法确认其在线时，凡「新期望清单要拆掉现有服务」一律拒绝（Codex P2「Block offline
+    // executor removals」+ Bugbot「Missing executor skips offline guard」）：round-17/27 只在「注册表里查到该
+    // executor 且离线」时挡，漏了「executorId 指向远端但注册表查不到（已注销/陈旧归属）或 registry 不可用」——
+    // 这些情况下本地/另一执行器 redeploy 会把被删服务从 master state 抹掉，而旧容器仍在那台远端 worker 上跑
+    // （ghost）。判定：分支归属本地（executorId 缺省或 master-* embedded）→ 放行（容器在本地，就地拆正确）；
+    // 否则（executorId 指向远端）必须在注册表里查到**在线**的非 embedded 节点才放行（dispatch 会让 executor
+    // 自己收敛），离线/查不到/registry 不可用一律 503、不动 state，等执行器恢复或重新归属后重试。
     {
       const desiredIds = new Set(profiles.map((p) => p.id));
       const droppedExisting = Object.keys(entry.services).filter((sid) => !desiredIds.has(sid));
-      if (droppedExisting.length > 0) {
-        const owningRemoteNode = (entry.executorId && registry)
-          ? registry.getAll().find((n) => n.id === entry.executorId && n.role !== 'embedded')
+      // executorId 以 'master-' 开头 = 内嵌 master（本地）；其余非空值 = 远端归属（与 server.ts 心跳口径一致）。
+      const remoteAttributed = !!entry.executorId && !entry.executorId.startsWith('master-');
+      if (droppedExisting.length > 0 && remoteAttributed) {
+        const onlineRemoteNode = registry
+          ? registry.getAll().find((n) => n.id === entry.executorId && n.role !== 'embedded' && n.status === 'online')
           : undefined;
-        if (owningRemoteNode && owningRemoteNode.status !== 'online') {
+        if (!onlineRemoteNode) {
           res.status(503).json({
             error: 'owning_executor_offline',
-            message: `分支归属的执行器「${entry.executorId}」当前离线，无法拆除被移除的服务（${droppedExisting.join(', ')}）的容器。请等待执行器恢复后重试。`,
+            message: `分支归属的执行器「${entry.executorId}」当前不可达（离线/已注销/未注册），无法拆除被移除的服务（${droppedExisting.join(', ')}）的容器。请等待执行器恢复或重新归属后重试。`,
             executorId: entry.executorId,
             droppedServices: droppedExisting,
           });
