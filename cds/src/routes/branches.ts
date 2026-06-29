@@ -2704,6 +2704,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 delete entry.services[pid];
               }
             }
+            // 同步存活服务 status + 重算分支态（Bugbot Medium「Remote complete leaves branch building」）：
+            // entry.status 在派发时被钉成 building，complete 后若不按 executor 权威 svcMap 重置，
+            // 空清单清空（services 删空）或全 running 的成功部署会一直显示 building 到下次心跳。
+            // 与 executor 端 + master 本地空清单清理同款：无服务=idle、有 running=running、否则 error。
+            for (const [pid, s] of Object.entries(svcMap)) {
+              if (entry.services[pid] && typeof s?.status === 'string') {
+                entry.services[pid].status = s.status as ServiceState['status'];
+              }
+            }
+            const remoteSvcStatuses = Object.values(svcMap).map((s) => s?.status);
+            entry.status = remoteSvcStatuses.length === 0
+              ? 'idle'
+              : remoteSvcStatuses.some((s) => s === 'running') ? 'running' : 'error';
           }
           // 成功 complete = 远端运行时就绪的时刻（executor 在所有服务 running 后才发）。
           // 戳为 runtimeStartedAt，让 finally 能像本地路径一样采样部署耗时（修复 PR #865
