@@ -39,6 +39,18 @@ AI 大模型网关从 MAP 剥离的工程债务台账。记录「已做 / 待用
 - **部署接入**：docker-compose 加 `llmgw-serve`；cds-compose 加 `llmgw-serve`（path-prefix `/gw/v1/`，dev+express）；
   `_standalone.conf` 加 `/gw/v1/` → llmgw-serve:8091。
 
+## 波2 自测：CI 真跑通过（执行级证据，非仅编译）
+
+- 新增 `prd-api/tests/PrdAgent.Api.Tests/Gateway/CrossProcessServingSelfTest.cs`：起真实 Kestrel host 住
+  serving 端点（`MapGatewayServingEndpoints`，与生产 Program.cs 同一份），stub 上游网关，真实
+  `HttpLlmGatewayClient` 经真实 HTTP/SSE 打过去，端到端断言 resolve/send/stream/raw/pools/client-stream
+  往返 + **ApiKey 恒 null（[JsonIgnore] 不过线）** + 密钥门 401。
+- serving 端点抽成 `GatewayHttpEndpoints.MapGatewayServingEndpoints`（命名空间 `PrdAgent.LlmGatewayHost`，
+  避开与 `LlmGateway` 类型非限定引用的 CS0118）。
+- **CI 真跑结果**：`ci.yml` 的 `dotnet test` 执行该用例并 PASS（548ms；1048 passed / 0 failed，commit 530952bb）。
+  过程中自测还抓出一处断言笔误（fake 发两个 delta，期望写成 3 段）——证明它真在执行而非空跑。
+- 不覆盖真实模型解析/上游发送（既有实现，inproc 已验、本轮未改）；真机端到端待 CDS 升级 + 导入审批。
+
 ## 待用户（1 次手动，外部门禁）
 
 - **CDS 拓扑导入审批**：cds-compose 新增 `llmgw` + `llmgw-serve` 属「拓扑变更」，CDS 要求 dashboard 人工批准，
