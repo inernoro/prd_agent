@@ -12004,7 +12004,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const trigger = triggerFromRequest(req);
     try {
       assertBranchOperationCurrent(branchOperationLease, 'restart before state write');
+      const restartStartedAt = new Date().toISOString();
       entry.status = 'restarting';
+      entry.lastDeployStartedAt = restartStartedAt;
       for (const svc of services) svc.status = 'starting';
       stateService.save();
 

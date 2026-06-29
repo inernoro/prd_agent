@@ -706,10 +706,10 @@ export interface BranchEntry {
   /** 最近一次成功部署完成的 ISO 时间戳。 */
   lastDeployAt?: string;
   /**
-   * 2026-06-21：本轮 deploy/build 真正开始执行的 ISO 时间戳。
-   * 在 status 切到 'building' 的那一刻打戳（branches.ts 两处部署起点）。
+   * 2026-06-21：本轮 deploy/build/restart 真正开始执行的 ISO 时间戳。
+   * 在 status 切到 'building' 或 'restarting' 的那一刻打戳（部署、手动重启、预览自动唤醒）。
    * 用途：预览等待页 `/_cds/waiting-status` 的"已等待 / 预计还需"必须以
-   * **本轮构建开始**为锚点。在途构建的 op-log 直到 finalize 才落库，期间
+   * **本轮构建/重启开始**为锚点。在途构建的 op-log 直到 finalize 才落库，期间
    * getLogs() 只有上一轮已完成的部署 → 若以历史 op-log 兜底会算成"几小时/几天"
    * 误判 overdue。本字段是唯一可靠的在途构建起点（修复 PR #865 Codex P2
    * 「Use the active redeploy start time for waiting ETAs」）。
