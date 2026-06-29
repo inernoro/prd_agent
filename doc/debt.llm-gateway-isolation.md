@@ -64,6 +64,24 @@ AI 大模型网关从 MAP 剥离的工程债务台账。记录「已做 / 待用
       （model/protocol/finish/内容/生图 URL）。
   - 在此之前：全部代码已编译绿、4 个镜像已推；仅「预览域名运行时」这一步卡在审批。exec_dep 路径不受门禁影响。
 
+## 真实环境 MECE 冒烟矩阵：表 + B/C 层 CI 真跑通过
+
+- `doc/spec.llm-gateway-test-matrix.md`：14 维 MECE 矩阵（入口×流式×档位×协议×think位置×工具×token/cache×图片×
+  上下文×环境×中断×负载×演示×一平台多协议）+ 4 层分工（A 解析/B 协议保真/C 跨进程/D 真机）+ 每层 canary。
+- **B 层** `GatewayProtocolFidelityTests`（14 用例，CI 真跑绿）：喂 canned payload 给真实
+  `OpenAIGatewayAdapter`/`ClaudeGatewayAdapter`/`ThinkTagStripper`，断言 think 三形态
+  (reasoning_content/reasoning/`<think>`)归一 Thinking、tool_calls 归一、token+cache 采集、finish_reason、
+  跨 chunk 半截 `<think>` 缝合 + canary 探测元断言。
+- **C 层** `CrossProcessServingErrorLoadTests`（4 用例，CI 真跑绿）：上游 Fail→Success=false、抛异常→500 不崩、
+  并发 16 不串扰、错 key 401。
+- **A 层** 复用 `AppCallerRegistryGoldenSnapshotTests` + `LlmResolutionGoldenIntegrationTests`（153 入口 golden）。
+- **D 层** `scripts/gw-smoke.py`：真机冒烟（读 `/gw/v1/pools` 选便宜 OpenRouter 模型按矩阵抽样 + 必败 canary），
+  待 CDS 单分支多容器 + 导入审批后跑。
+- CI 结果：1066 passed / 0 failed（commit df301d73），过程中 CS8419(async 迭代器无 yield) 已修。
+- **债务**：`ModelTestStub.FailureMode`（AlwaysFail/Timeout/ConnectionReset 等）当前**未接入** serving 发送路径
+  （resolver/gateway 不查 `model_test_stubs`）——失败注入要生效需在 `LlmGateway.SendAsync` resolve 后加 stub-hook，
+  是独立改动，本轮未做；canary 改用真实失败路径（桩上游错误 / 坏 URL 模型）规避。
+
 ## 已知边界 / 后续（波3，未做）
 
 - **http 模式默认 OFF**：本轮只交付「可切」，未在生产把 `LlmGateway__Mode` 翻成 http（需审批后真人逐字段
