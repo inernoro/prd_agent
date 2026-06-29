@@ -158,13 +158,13 @@ public class MiduoPlanetSsoController : ControllerBase
     private async Task<MiduoPlanetSsoOptions> ReadOptionsAsync(CancellationToken ct)
     {
         var settings = await _db.AppSettings.Find(x => x.Id == "global").FirstOrDefaultAsync(ct);
-        var enabled = IsTruthy(FirstConfig("MiduoSso:Enabled", "MIDUO_SSO_ENABLED", "MiduoPlanetSso:Enabled", "MIDUO_PLANET_SSO_ENABLED"));
-        if (settings?.MiduoSsoEnabled == true) enabled = true;
+        var enabledFromConfig = IsTruthy(FirstConfig("MiduoSso:Enabled", "MIDUO_SSO_ENABLED", "MiduoPlanetSso:Enabled", "MIDUO_PLANET_SSO_ENABLED"));
+        var enabled = settings?.MiduoSsoEnabled ?? enabledFromConfig;
 
-        var baseUrl = FirstNonEmpty(settings?.MiduoSsoBaseUrl, FirstConfig("MiduoSso:BaseUrl", "MIDUO_SSO_BASE_URL", "MiduoPlanetSso:BaseUrl", "MIDUO_PLANET_SSO_BASE_URL"));
+        var baseUrl = NormalizeAbsoluteHttpUrl(FirstNonEmpty(settings?.MiduoSsoBaseUrl, FirstConfig("MiduoSso:BaseUrl", "MIDUO_SSO_BASE_URL", "MiduoPlanetSso:BaseUrl", "MIDUO_PLANET_SSO_BASE_URL")), trimTrailingSlash: true);
         var appCode = FirstNonEmpty(settings?.MiduoSsoAppCode, FirstConfig("MiduoSso:AppCode", "MIDUO_SSO_APP_CODE", "MiduoPlanetSso:AppCode", "MIDUO_PLANET_SSO_APP_CODE"));
         var appSecret = FirstNonEmpty(settings?.MiduoSsoAppSecret, FirstConfig("MiduoSso:AppSecret", "MIDUO_SSO_APP_SECRET", "MiduoPlanetSso:AppSecret", "MIDUO_PLANET_SSO_APP_SECRET"));
-        var redirectUri = FirstNonEmpty(settings?.MiduoSsoRedirectUri, FirstConfig("MiduoSso:RedirectUri", "MIDUO_SSO_REDIRECT_URI", "MiduoPlanetSso:RedirectUri", "MIDUO_PLANET_SSO_REDIRECT_URI"));
+        var redirectUri = NormalizeAbsoluteHttpUrl(FirstNonEmpty(settings?.MiduoSsoRedirectUri, FirstConfig("MiduoSso:RedirectUri", "MIDUO_SSO_REDIRECT_URI", "MiduoPlanetSso:RedirectUri", "MIDUO_PLANET_SSO_REDIRECT_URI")), trimTrailingSlash: false);
         if (string.IsNullOrWhiteSpace(baseUrl)
             || string.IsNullOrWhiteSpace(appCode)
             || string.IsNullOrWhiteSpace(appSecret)
@@ -177,7 +177,7 @@ public class MiduoPlanetSsoController : ControllerBase
         {
             Enabled = enabled,
             Label = FirstNonEmpty(settings?.MiduoSsoLabel, FirstConfig("MiduoSso:Label", "MIDUO_SSO_LABEL", "MiduoPlanetSso:Label", "MIDUO_PLANET_SSO_LABEL")) ?? "米多星球",
-            BaseUrl = baseUrl?.TrimEnd('/') ?? string.Empty,
+            BaseUrl = baseUrl ?? string.Empty,
             AppCode = appCode ?? string.Empty,
             AppSecret = appSecret ?? string.Empty,
             RedirectUri = redirectUri ?? string.Empty,
@@ -240,10 +240,7 @@ public class MiduoPlanetSsoController : ControllerBase
             return null;
         }
 
-        var subject = ReadJsonPath(doc.RootElement, $"return_data.{options.SubjectType}")
-            ?? ReadJsonPath(doc.RootElement, "return_data.wework_userid")
-            ?? ReadJsonPath(doc.RootElement, "return_data.employeeNo")
-            ?? ReadJsonPath(doc.RootElement, "return_data.mobile");
+        var subject = ReadJsonPath(doc.RootElement, $"return_data.{options.SubjectType}");
         var displayName = ReadJsonPath(doc.RootElement, "return_data.userName");
 
         return string.IsNullOrWhiteSpace(subject)
@@ -281,6 +278,26 @@ public class MiduoPlanetSsoController : ControllerBase
     {
         var v = (value ?? string.Empty).Trim();
         return subjectType == "mobile" ? new string(v.Where(char.IsDigit).ToArray()) : v;
+    }
+
+    private static string? NormalizeAbsoluteHttpUrl(string? value, bool trimTrailingSlash)
+    {
+        var raw = (value ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(raw) || raw.StartsWith('/')) return null;
+
+        var withScheme = raw.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            || raw.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+                ? raw
+                : $"https://{raw}";
+        if (!Uri.TryCreate(withScheme, UriKind.Absolute, out var uri)
+            || uri.Scheme is not ("http" or "https")
+            || string.IsNullOrWhiteSpace(uri.Host))
+        {
+            return null;
+        }
+
+        var normalized = uri.ToString();
+        return trimTrailingSlash ? normalized.TrimEnd('/') : normalized;
     }
 
     private static string? ReadJsonPath(JsonElement root, string path)

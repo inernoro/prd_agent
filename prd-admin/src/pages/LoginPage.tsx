@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { MouseEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowRight, Sparkles, Terminal, Lock, User as UserIcon, Eye, EyeOff } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
@@ -29,6 +30,20 @@ const passwordRules: Array<{ key: string; label: string; test: (pwd: string) => 
 ];
 
 const MIDUO_SSO_STATE_KEY = 'prd-miduo-sso-state';
+
+function normalizeAbsoluteHttpUrl(value: string | null | undefined, trimTrailingSlash = false) {
+  const raw = (value || '').trim();
+  if (!raw || raw.startsWith('/')) return null;
+  const withScheme = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  try {
+    const url = new URL(withScheme);
+    if (!['http:', 'https:'].includes(url.protocol) || !url.hostname) return null;
+    const normalized = url.toString();
+    return trimTrailingSlash ? normalized.replace(/\/$/, '') : normalized;
+  } catch {
+    return null;
+  }
+}
 
 function createSsoState() {
   const bytes = new Uint8Array(16);
@@ -118,18 +133,26 @@ export default function LoginPage() {
     if (!isMiduoCallback || !token || ssoLoading) return;
 
     let alive = true;
+    const stripSsoCallbackParams = () => {
+      const next = new URLSearchParams(searchParams);
+      ['token', 'ssoToken', 'miduoToken', 'ssoProvider', 'app_code', 'appCode', 'source', 'state'].forEach((key) => {
+        next.delete(key);
+      });
+      const query = next.toString();
+      navigate(query ? `/login?${query}` : '/login', { replace: true });
+    };
+
     setSsoLoading(true);
     setError(null);
 
     const state = searchParams.get('state');
-    if (state) {
-      const expectedState = sessionStorage.getItem(MIDUO_SSO_STATE_KEY);
-      sessionStorage.removeItem(MIDUO_SSO_STATE_KEY);
-      if (!expectedState || expectedState !== state) {
-        setError('米多星球登录状态校验失败，请重新发起登录');
-        setSsoLoading(false);
-        return;
-      }
+    const expectedState = sessionStorage.getItem(MIDUO_SSO_STATE_KEY);
+    sessionStorage.removeItem(MIDUO_SSO_STATE_KEY);
+    if (!state || !expectedState || expectedState !== state) {
+      setError('米多星球登录状态校验失败，请重新发起登录');
+      setSsoLoading(false);
+      stripSsoCallbackParams();
+      return;
     }
 
     loginWithMiduoPlanetToken(token)
@@ -137,12 +160,15 @@ export default function LoginPage() {
         if (!alive) return;
         if (!res.success) {
           setError(res.error?.message || '米多星球登录失败');
+          stripSsoCallbackParams();
           return;
         }
         await completeLogin(res.data.user, res.data.accessToken, res.data.refreshToken, res.data.sessionKey);
       })
       .catch((e) => {
-        if (alive) setError(e instanceof Error ? e.message : '米多星球登录失败');
+        if (!alive) return;
+        setError(e instanceof Error ? e.message : '米多星球登录失败');
+        stripSsoCallbackParams();
       })
       .finally(() => {
         if (alive) setSsoLoading(false);
@@ -299,6 +325,7 @@ export default function LoginPage() {
               ssoOptions={ssoOptions}
               ssoLoading={ssoLoading}
               returnUrl={returnUrl}
+              onError={setError}
               onUsernameChange={setUsername}
               onPasswordChange={setPassword}
               onRememberChange={setRememberUsername}
@@ -667,6 +694,7 @@ interface LoginCardProps {
   ssoOptions: SsoLoginOption[];
   ssoLoading: boolean;
   returnUrl: string;
+  onError: (message: string) => void;
   onUsernameChange: (v: string) => void;
   onPasswordChange: (v: string) => void;
   onRememberChange: (v: boolean) => void;
@@ -683,6 +711,7 @@ function LoginCard({
   ssoOptions,
   ssoLoading,
   returnUrl,
+  onError,
   onUsernameChange,
   onPasswordChange,
   onRememberChange,
@@ -692,15 +721,31 @@ function LoginCard({
   const [capsLockOn, setCapsLockOn] = useState(false);
   const buildSsoHref = (option: SsoLoginOption) => {
     if (!option.baseUrl || !option.appCode || !option.redirectUri) return '#';
+    const baseUrl = normalizeAbsoluteHttpUrl(option.baseUrl, true);
+    if (!baseUrl) return null;
     const state = createSsoState();
     sessionStorage.setItem(MIDUO_SSO_STATE_KEY, state);
     const callback = new URL(option.redirectUri, window.location.origin);
     callback.searchParams.set('returnUrl', returnUrl);
     callback.searchParams.set('ssoProvider', option.provider);
     const bridge = `/sso/bridge?appCode=${encodeURIComponent(option.appCode)}&redirect_uri=${encodeURIComponent(callback.toString())}&state=${encodeURIComponent(state)}`;
-    const url = new URL('/login', option.baseUrl);
+    const url = new URL('/login', baseUrl);
     url.searchParams.set('redirect', bridge);
     return url.toString();
+  };
+  const handleSsoClick = (event: MouseEvent<HTMLAnchorElement>, option: SsoLoginOption) => {
+    event.preventDefault();
+    if (ssoLoading) return;
+    try {
+      const href = buildSsoHref(option);
+      if (!href) {
+        onError('米多星球登录地址无效，请联系管理员检查 SSO 配置');
+        return;
+      }
+      window.location.assign(href);
+    } catch {
+      onError('米多星球登录地址无效，请联系管理员检查 SSO 配置');
+    }
   };
   return (
     <GlassCard>
@@ -872,11 +917,12 @@ function LoginCard({
                 <span className="h-px flex-1 bg-white/10" />
               </div>
               {ssoOptions.map((option) => {
-                const disabled = !option.baseUrl || !option.appCode || !option.redirectUri || ssoLoading;
+                const disabled = !option.baseUrl || !option.appCode || !option.redirectUri || !normalizeAbsoluteHttpUrl(option.baseUrl, true) || ssoLoading;
                 return (
                   <a
                     key={option.provider}
-                    href={disabled ? undefined : buildSsoHref(option)}
+                    href={disabled ? undefined : '#'}
+                    onClick={disabled ? undefined : (event) => handleSsoClick(event, option)}
                     aria-disabled={disabled}
                     title={disabled ? '未配置登录地址' : option.label}
                     className="inline-flex h-11 items-center justify-center gap-2 rounded-full border border-white/12 bg-white/[0.04] px-4 text-[13.5px] font-medium text-white/82 transition-all hover:border-white/24 hover:bg-white/[0.07] aria-disabled:pointer-events-none aria-disabled:opacity-45"
