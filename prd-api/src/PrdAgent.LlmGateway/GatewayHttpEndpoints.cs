@@ -4,10 +4,12 @@ using Microsoft.AspNetCore.Http;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.LlmGateway;
 
-namespace PrdAgent.LlmGateway;
+namespace PrdAgent.LlmGatewayHost;
 
 /// <summary>
-/// serving 网关的 HTTP 端点装配（SSOT）。Program.cs 与集成自测共用同一份端点映射，
+/// serving 网关的 HTTP 端点装配（SSOT）。
+/// 命名空间用 PrdAgent.LlmGatewayHost（非 PrdAgent.LlmGateway）——后者会与
+/// PrdAgent.Infrastructure.LlmGateway.LlmGateway 类型的非限定引用在引用方撞车（CS0118）。Program.cs 与集成自测共用同一份端点映射，
 /// 避免端点逻辑在测试里复制一份导致漂移。设计见 doc/design.llm-gateway-physical-isolation.md。
 /// </summary>
 public static class GatewayHttpEndpoints

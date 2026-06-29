@@ -4,7 +4,7 @@ using MongoDB.Driver;
 using Microsoft.Extensions.Configuration;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Services;
-using PrdAgent.LlmGateway;
+using PrdAgent.LlmGatewayHost;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway;

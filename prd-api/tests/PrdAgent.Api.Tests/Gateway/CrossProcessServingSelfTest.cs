@@ -9,7 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.LlmGateway;
-using PrdAgent.LlmGateway;
+using PrdAgent.LlmGatewayHost;
 using Shouldly;
 using Xunit;
 
