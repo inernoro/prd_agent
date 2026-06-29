@@ -65,6 +65,13 @@ describe('remote deploy complete: branch status realign contract', () => {
     expect(source).toContain('entry.errorMessage = proxyErrorMessage');
   });
 
+  it('stamps entry.lastReadyAt on a successful remote deploy with running services (Bugbot "Remote deploy skips lastReadyAt")', () => {
+    // The remote proxy must refresh lastReadyAt like the local finalize does, else executor-backed branches
+    // show running with a pre-deploy readiness time, skewing auto-lifecycle / readiness scheduling.
+    expect(source).toContain('const anyRunning = Object.values(entry.services || {}).some((s) => s.status === \'running\');');
+    expect(source).toContain('if (anyRunning) entry.lastReadyAt = remoteRuntimeReadyAt;');
+  });
+
   it('does not stamp lastDeployAt / runtimeStartedAt for a pure clear (empty profiles) on a successful remote complete (Bugbot "Idle clear stamps lastDeployAt")', () => {
     // A teardown-only remote deploy (profiles empty → idle) must not be treated as a successful redeploy;
     // the lastDeployAt + runtimeStartedAt stamps are gated on there being at least one desired profile.

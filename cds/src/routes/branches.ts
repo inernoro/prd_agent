@@ -2858,7 +2858,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
         if (profiles.length > 0) {
           stateService.stampBranchTimestamp(entry.id, 'lastDeployAt');
           // 戳远端就绪时刻，供 finally 采样部署耗时（见 remoteRuntimeReadyAt 声明处）。
-          if (remoteRuntimeReadyAt) opLog.runtimeStartedAt = remoteRuntimeReadyAt;
+          if (remoteRuntimeReadyAt) {
+            opLog.runtimeStartedAt = remoteRuntimeReadyAt;
+            // 与本地 finalize 对齐：确有服务 running 时刷新 entry.lastReadyAt，否则 executor-backed 分支显示
+            // running 却留着上一轮的旧就绪时刻，auto-lifecycle 陈旧检测/就绪调度按错误时间算（Bugbot「Remote
+            // deploy skips lastReadyAt」）。按 entry.services 实际状态判（③ 的 status 重算在 ingest 回调里，
+            // 主体 TS 流分析看不到，故不用 entry.status）。
+            const anyRunning = Object.values(entry.services || {}).some((s) => s.status === 'running');
+            if (anyRunning) entry.lastReadyAt = remoteRuntimeReadyAt;
+          }
         }
       }
       entry.lastAccessedAt = new Date().toISOString();
