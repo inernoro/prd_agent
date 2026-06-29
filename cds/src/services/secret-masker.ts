@@ -228,20 +228,41 @@ export function maskEnvRecord(env: Record<string, string>, marker = '***'): Reco
 }
 
 /**
- * View-safe shallow copy of a branch: mask every extraProfiles[].env, leave all other
- * fields as-is. SSOT for "redact branch-local extra-service secrets in any serialization"
- * — used by branch list/detail/SSE serializers AND the full-state broadcaster
- * (Codex P1 "Redact extraProfiles before state-stream broadcasts"). Generic so it does
- * not pull the BranchEntry/BuildProfile types into this leaf module.
+ * View-safe shallow copy of a branch: mask every extraProfiles[].env AND any
+ * profileOverrides[<extra-profile-id>].env, leave all other fields as-is. SSOT for "redact
+ * branch-local extra-service secrets in any serialization" — used by branch list/detail/SSE
+ * serializers AND the full-state broadcaster (Codex P1 "Redact extraProfiles before state-stream
+ * broadcasts" + "Mask extra-profile override env in branch views"). Generic so it does not pull
+ * the BranchEntry/BuildProfile types into this leaf module.
  */
 export function maskBranchExtraProfilesEnv<
-  T extends { extraProfiles?: Array<{ env?: Record<string, string> }> },
+  T extends {
+    extraProfiles?: Array<{ id?: string; env?: Record<string, string> }>;
+    profileOverrides?: Record<string, { env?: Record<string, string> }>;
+  },
 >(branch: T): T {
   if (!branch.extraProfiles) return branch;
-  return {
+  const extraIds = new Set(branch.extraProfiles.map((p) => p.id).filter((x): x is string => !!x));
+  const out: T = {
     ...branch,
     extraProfiles: branch.extraProfiles.map((p) => (p.env ? { ...p, env: maskEnvRecord(p.env) } : p)),
-  } as T;
+  };
+  // 额外服务的 PUT /profile-overrides 把 env 存进 branch.profileOverrides[<extraId>]，分支序列化若不连这里
+  // 一起脱敏，/branches、/branches/:id、分支流仍吐 override 明文（profile-overrides 响应已脱敏，唯独分支视图漏）。
+  if (branch.profileOverrides && extraIds.size > 0) {
+    let changed = false;
+    const maskedOv: Record<string, { env?: Record<string, string> }> = {};
+    for (const [pid, ov] of Object.entries(branch.profileOverrides)) {
+      if (extraIds.has(pid) && ov?.env) {
+        maskedOv[pid] = { ...ov, env: maskEnvRecord(ov.env) };
+        changed = true;
+      } else {
+        maskedOv[pid] = ov;
+      }
+    }
+    if (changed) (out as { profileOverrides?: unknown }).profileOverrides = maskedOv;
+  }
+  return out;
 }
 
 /**

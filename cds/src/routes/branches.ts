@@ -38,7 +38,7 @@ import { classifyEnvKey } from '../config/known-env-keys.js';
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
 import { isAllowedCdsBranchName, isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { buildPreviewUrlForProject } from '../services/comment-template.js';
-import { maskSecrets as maskSecretsText, maskEnvRecord, isSensitiveKey, looksLikeUrlWithCredentials, shouldMask } from '../services/secret-masker.js';
+import { maskSecrets as maskSecretsText, maskEnvRecord, maskBranchExtraProfilesEnv, isSensitiveKey, looksLikeUrlWithCredentials, shouldMask } from '../services/secret-masker.js';
 import { buildUnifiedBranchResources, type UnifiedBranchResource } from '../services/resources.js';
 import { fetchWithLockRetry } from '../services/git-fetch-retry.js';
 import { resolveGitAuthEnv } from '../services/git-auth-env.js';
@@ -2995,11 +2995,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!profiles) return profiles;
     return profiles.map((p) => (p.env ? { ...p, env: maskSecrets(p.env) } : p));
   }
-  /** 返回分支的「视图安全」浅拷贝：extraProfiles 的 env 脱敏，其余字段原样（仅在 extraProfiles 存在时拷贝）。 */
+  /**
+   * 返回分支的「视图安全」浅拷贝：extraProfiles 的 env + profileOverrides[<额外服务 id>] 的 env 脱敏，
+   * 其余字段原样。委派到共享 SSOT maskBranchExtraProfilesEnv（与 state-stream 全量广播同一实现），
+   * 后者同时遮蔽分支级额外服务的覆盖 env（Codex P1「Mask extra-profile override env in branch views」——
+   * PUT /profile-overrides 现可给额外服务存 env 覆盖，/branches、/branches/:id、分支流原本只脱敏
+   * extraProfiles、漏了 profileOverrides）。状态层保持明文供 deploy 直读。
+   */
   function branchForView<T extends BranchEntry>(branch: T): T {
-    return branch.extraProfiles
-      ? ({ ...branch, extraProfiles: maskExtraProfilesEnv(branch.extraProfiles) } as T)
-      : branch;
+    return maskBranchExtraProfilesEnv(branch);
   }
 
   function isSqlInitInfra(service: InfraService): boolean {
@@ -10115,6 +10119,30 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // so a deploy in project A doesn't pull in B's profiles. Pre-Part 3
     // branches default to 'default' (the legacy migration target).
     const profiles = stateService.getEffectiveProfilesForBranch(entry);
+    // 归属离线执行器时，凡「新期望清单要拆掉现有服务」一律拒绝（Codex P2「Block offline executor removals
+    // with remaining profiles」）：round-17 的离线护栏只在 profiles 全空时挡；但删掉一个额外服务、项目
+    // profiles 还在（profiles.length>0）时也会走到这里——本地/另一执行器 redeploy 会把被删服务从 master state
+    // 抹掉，而旧容器仍在离线 worker 上跑（ghost）。故只要有现有服务不在新期望清单里、且归属执行器离线，就 503
+    // 拒绝、不动 state，等执行器恢复重试。在线 owner 放行到远端分发（executor 自己收敛）；非远端 owned（本地）
+    // 走下面就地拆除，不受此门影响。
+    {
+      const desiredIds = new Set(profiles.map((p) => p.id));
+      const droppedExisting = Object.keys(entry.services).filter((sid) => !desiredIds.has(sid));
+      if (droppedExisting.length > 0) {
+        const owningRemoteNode = (entry.executorId && registry)
+          ? registry.getAll().find((n) => n.id === entry.executorId && n.role !== 'embedded')
+          : undefined;
+        if (owningRemoteNode && owningRemoteNode.status !== 'online') {
+          res.status(503).json({
+            error: 'owning_executor_offline',
+            message: `分支归属的执行器「${entry.executorId}」当前离线，无法拆除被移除的服务（${droppedExisting.join(', ')}）的容器。请等待执行器恢复后重试。`,
+            executorId: entry.executorId,
+            droppedServices: droppedExisting,
+          });
+          return;
+        }
+      }
+    }
     if (profiles.length === 0) {
       // 期望清单为空。两种情形分开处理（Codex P2）：
       //  - 本来就没服务 → 一如既往 400「请先添加构建配置」。
@@ -10129,22 +10157,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       // 远端执行器 owned 的分支：容器在执行器上，master 端 remove 是 no-op。
       //  - 在线 → 放行到下面的远端分发，由 executor /exec/deploy 对空 payload 收敛（与 issue 5 同一清理路径）。
-      //  - 离线（Bugbot High「Offline executor skips empty cleanup」）→ 远端分发够不到它（resolveDeployTarget
-      //    也会因离线回退本地），而本地 containerService.remove 同样够不到它机器上的容器；若放行到本地路径会
-      //    删掉 entry.services 行却留下 worker 上在跑的容器（ghost，下次心跳还会回填）。故在此明确 503 报错、
-      //    不动 state，等执行器恢复后重试。这是 deploy 前置校验门（与 project_paused/未配置 同级），用 JSON。
+      //  - 离线 → 上面的「拆现有服务」通用离线护栏已 503 拦掉（空清单 = 全部现有服务被拆，属其子集），到不了这里。
       const owningRemoteNode = (entry.executorId && registry)
         ? registry.getAll().find((n) => n.id === entry.executorId && n.role !== 'embedded')
         : undefined;
-      if (owningRemoteNode && owningRemoteNode.status !== 'online') {
-        res.status(503).json({
-          error: 'owning_executor_offline',
-          message: `分支归属的执行器「${entry.executorId}」当前离线，无法清理其上的残留服务容器。请等待执行器恢复后重试。`,
-          executorId: entry.executorId,
-        });
-        return;
-      }
-      const remoteOwned = !!owningRemoteNode; // 在线远端 owned
+      const remoteOwned = !!owningRemoteNode; // 在线远端 owned（离线已被上方护栏挡下）
       if (!remoteOwned) {
         const cleanupLease = beginBranchOperation(req, res, entry, {
           kind: 'deploy',

@@ -287,6 +287,22 @@ describe('secret-masker.maskBranchExtraProfilesEnv', () => {
     const plain = { id: 'b2', status: 'idle' };
     expect(maskBranchExtraProfilesEnv(plain)).toBe(plain); // no extras → same ref
   });
+
+  it('also masks profileOverrides env for extra-profile ids, leaving project-profile overrides untouched (Codex P1)', () => {
+    const branch = {
+      id: 'b1',
+      extraProfiles: [{ id: 'svc', env: { TOKEN: 'sek' } }],
+      profileOverrides: {
+        svc: { env: { TOKEN: 'override-secret', PORT: '8080' } }, // extra → masked
+        api: { env: { DB_PASSWORD: 'projsecret' } },               // project profile → NOT masked here
+      },
+    };
+    const view = maskBranchExtraProfilesEnv(branch);
+    expect(view.profileOverrides!.svc.env).toEqual({ TOKEN: '***', PORT: '8080' });
+    expect(view.profileOverrides!.api.env).toEqual({ DB_PASSWORD: 'projsecret' }); // project override unchanged
+    // original not mutated
+    expect(branch.profileOverrides.svc.env.TOKEN).toBe('override-secret');
+  });
 });
 
 describe('secret-masker.shouldMask', () => {

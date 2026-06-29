@@ -689,6 +689,20 @@ describe('Branch Routes', () => {
       expect(stateService.getBranch('b1')!.profileOverrides?.['demo-extra']?.env?.API_TOKEN).toBe('tok_overridesecret');
     });
 
+    it('GET /api/branches/:id masks the extra-profile override env in the branch view (Codex P1)', async () => {
+      seedBranch('b1');
+      await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80 }],
+      });
+      await request(server, 'PUT', '/api/branches/b1/profile-overrides/demo-extra', { env: { API_TOKEN: 'tok_overridesecret' } });
+      const res = await request(server, 'GET', '/api/branches/b1');
+      expect(res.status).toBe(200);
+      // The branch view (also used by /branches list + stream) must redact override.env for extra profiles.
+      expect((res.body as any).branch.profileOverrides['demo-extra'].env.API_TOKEN).toBe('***');
+      // State still holds the real value.
+      expect(stateService.getBranch('b1')!.profileOverrides?.['demo-extra']?.env?.API_TOKEN).toBe('tok_overridesecret');
+    });
+
     it('404 for unknown branch', async () => {
       expect((await request(server, 'GET', '/api/branches/nope/extra-services')).status).toBe(404);
       expect((await request(server, 'PUT', '/api/branches/nope/extra-services', { extraProfiles: [] })).status).toBe(404);
@@ -1970,6 +1984,40 @@ describe('Branch Routes', () => {
       // state untouched — the worker container must not be orphaned/ghosted.
       expect(stateService.getBranch('empty-offline-exec')?.services['demo-extra']).toBeTruthy();
       expect(stateService.getBranch('empty-offline-exec')?.status).toBe('running');
+    });
+
+    it('deploy refuses (503) when dropping ONE service while project profiles remain + owning executor offline (Codex P2)', async () => {
+      const now = new Date().toISOString();
+      // Project profile 'api' remains; the branch also has a leftover 'demo-extra' service that is NOT in the
+      // effective profile list (extra cleared) → it would be dropped. Owner offline → must refuse, not delete.
+      stateService.addBuildProfile({ id: 'api', name: 'API', dockerImage: 'img', workDir: 'api', command: 'run', containerPort: 8080, projectId: 'default' });
+      stateService.addBranch({
+        id: 'partial-offline-exec',
+        projectId: 'default',
+        branch: 'feature/partial-offline-exec',
+        worktreePath: path.join(tmpDir, 'worktrees', 'partial-offline-exec'),
+        status: 'running',
+        createdAt: now,
+        executorId: 'exec-off2',
+        services: {
+          api: { profileId: 'api', containerName: 'cds-partial-offline-exec-api', hostPort: 10010, status: 'running' },
+          'demo-extra': { profileId: 'demo-extra', containerName: 'cds-partial-offline-exec-demo-extra', hostPort: 10011, status: 'running' },
+        },
+      });
+      registryNodes.push({
+        id: 'exec-off2', host: '127.0.0.1', port: 9110, status: 'offline', role: 'remote',
+        labels: [], branches: ['partial-offline-exec'],
+        capacity: { maxBranches: 10, memoryMB: 1024, cpuCores: 2 }, load: { memoryUsedMB: 0, cpuPercent: 0 }, registeredAt: now,
+      });
+      stateService.save();
+
+      const res = await request(server, 'POST', '/api/branches/partial-offline-exec/deploy');
+      expect(res.status).toBe(503);
+      expect((res.body as any).error).toBe('owning_executor_offline');
+      expect((res.body as any).droppedServices).toContain('demo-extra');
+      // state untouched — both services remain tracked.
+      expect(stateService.getBranch('partial-offline-exec')?.services['demo-extra']).toBeTruthy();
+      expect(stateService.getBranch('partial-offline-exec')?.services['api']).toBeTruthy();
     });
 
     it('deploy with no profiles AND no services still returns the original 400', async () => {
