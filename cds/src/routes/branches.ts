@@ -13070,6 +13070,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
           return;
         }
       }
+      // dbScope 边界校验（Codex P2「Preserve dbScope on extra services」）：白名单此前丢弃 dbScope,
+      // resolveProfileRuntimeEnv 见 undefined 就跳过 per-branch 数据库改写,声明 dbScope:'per-branch' 的额外
+      // 服务(跑迁移/测试)会落回共享库、破坏分支隔离。这里予以保留 + 校验枚举(shared/per-branch),非法值显式拒绝。
+      let dbScope: 'shared' | 'per-branch' | undefined;
+      if (raw?.dbScope !== undefined) {
+        if (raw.dbScope !== 'shared' && raw.dbScope !== 'per-branch') {
+          res.status(400).json({ error: `额外服务 "${id}" 的 dbScope 非法（仅允许 'shared' 或 'per-branch'）` });
+          return;
+        }
+        dbScope = raw.dbScope;
+      }
       // 保留分支级路由/依赖/就绪元数据（Codex P2「Preserve branch-local routing metadata」）：
       // 早期白名单只留 id/image/workDir/command/port/env，把 pathPrefixes（路由前缀）、dependsOn
       // （启动顺序）、readinessProbe / startupSignal（就绪判定）这些 deploy 真正消费的字段静默丢了，
@@ -13120,6 +13131,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         workDir,
         ...(containerWorkDir ? { containerWorkDir } : {}),
         ...(entrypoint !== undefined ? { entrypoint } : {}),
+        ...(dbScope !== undefined ? { dbScope } : {}),
         command: String(raw?.command || ''),
         containerPort,
         projectId: entry.projectId || 'default',

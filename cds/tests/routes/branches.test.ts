@@ -650,6 +650,21 @@ describe('Branch Routes', () => {
       expect(bad.status).toBe(400);
     });
 
+    it('preserves + validates extra-service dbScope (Codex P2)', async () => {
+      seedBranch('b1');
+      // per-branch isolation must survive the whitelist (else resolveProfileRuntimeEnv skips DB rewriting).
+      const ok = await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80, dbScope: 'per-branch' }],
+      });
+      expect(ok.status).toBe(200);
+      expect(stateService.getBranch('b1')!.extraProfiles![0].dbScope).toBe('per-branch');
+      // an invalid enum value is rejected (not silently dropped).
+      const bad = await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80, dbScope: 'bogus' }],
+      });
+      expect(bad.status).toBe(400);
+    });
+
     it('strips env mask sentinels on PUT: reuses the prior real value, drops sentinels with no prior (Bugbot Medium)', async () => {
       seedBranch('b1');
       // First PUT establishes a real secret value for SECRET_KEY.
