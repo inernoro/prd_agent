@@ -12856,12 +12856,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
         res.status(400).json({ error: `额外服务 "${id}" 的 containerPort 非法` });
         return;
       }
+      // workDir 边界校验（Codex P1「Validate extra-service workDir before deploy」）：workDir 会被
+      // path.join(worktreePath, workDir) 拼成宿主机挂载源、再进 docker create/run 命令行。container.ts
+      // 已对挂载路径 shellQuote 兜底，这里在入口再加严格白名单——只允许相对路径段（字母/数字/._-/ 与分隔符），
+      // 禁 shell 元字符与 .. 穿越，杜绝 workDir 含双引号 + $()/反引号 越权执行或挂载越界。
+      const workDir = String(raw?.workDir || '').trim();
+      if (workDir) {
+        if (!/^[a-zA-Z0-9._/-]+$/.test(workDir) || workDir.split('/').includes('..')) {
+          res.status(400).json({ error: `额外服务 "${id}" 的 workDir 非法（仅允许相对路径，字母/数字/._-/，禁 .. 穿越与 shell 元字符）` });
+          return;
+        }
+      }
       seen.add(id);
       sanitized.push({
         id,
         name: String(raw?.name || id),
         dockerImage,
-        workDir: String(raw?.workDir || ''),
+        workDir,
         command: String(raw?.command || ''),
         containerPort,
         projectId: entry.projectId || 'default',

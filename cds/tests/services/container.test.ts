@@ -92,7 +92,7 @@ describe('ContainerService', () => {
       expect(runCmd).toContain('--name cds-feature-a-api');
       expect(runCmd).toContain('--network cds-network');
       expect(runCmd).toContain('-p 10001:8080');
-      expect(runCmd).toContain('-v "/wt/feature-a/prd-api":"/app"');
+      expect(runCmd).toContain(`-v '/wt/feature-a/prd-api':'/app'`);
       expect(runCmd).toContain('--env-file');
       expect(runCmd).toContain('dotnet restore && dotnet watch run');
 
@@ -383,6 +383,23 @@ describe('ContainerService', () => {
       expect(runCmd).toContain("sh -c 'node app.js; touch /tmp/pwned2'");
     });
 
+    it('host-shell-quotes the workDir-derived volume mount and -w so a malicious workDir cannot inject (Codex P1)', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/mkdir/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+
+      // 一个能逃出旧双引号写法的 workDir：含双引号 + shell 运算符。path.join(worktreePath, workDir)
+      // 后整段进 -v 挂载源。无 / 段，避免 path.join 归一化干扰断言。
+      const profile = makeProfile({ workDir: 'svc";id;"' });
+      await service.runService(makeEntry(), profile, makeService());
+      const runCmd = mock.commands.find(c => c.includes('docker run'))!;
+      // 整段挂载源被单引号包住，注入片段留在引号内，宿主机不会把 `;id;` 当独立命令执行。
+      expect(runCmd).toContain(`-v '/wt/feature-a/svc";id;"':`);
+      // 旧的双引号写法（会让 ";id;" 逃出）绝不能再出现。
+      expect(runCmd).not.toContain('-v "/wt/feature-a/svc";id;""');
+    });
+
     it('should mount shared caches', async () => {
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
@@ -398,7 +415,7 @@ describe('ContainerService', () => {
       await service.runService(makeEntry(), profile, makeService());
 
       const runCmd = mock.commands.find(c => c.includes('docker run -d'));
-      expect(runCmd).toContain('-v "/cache/nuget":"/root/.nuget"');
+      expect(runCmd).toContain(`-v '/cache/nuget':'/root/.nuget'`);
     });
 
     // ── Phase 2 cgroup resource limits ──
@@ -527,11 +544,11 @@ describe('ContainerService', () => {
       expect(runCmd).toBeDefined();
       expect(runCmd).not.toContain('docker run -d');
       expect(runCmd).toContain('--network cds-network');
-      expect(runCmd).toContain('-v "/wt/feature-a/prd-api":"/app"');
-      expect(runCmd).toContain(`-v "${nodeModulesVolumeName('feature-a', 'api')}":"/app/node_modules"`);
+      expect(runCmd).toContain(`-v '/wt/feature-a/prd-api':'/app'`);
+      expect(runCmd).toContain(`-v '${nodeModulesVolumeName('feature-a', 'api')}':'/app/node_modules'`);
       expect(runCmd).toContain('--label cds.type=job');
-      expect(runCmd).toContain('node:20');
-      expect(runCmd).toContain('sh -c "pnpm exec prisma migrate deploy"');
+      expect(runCmd).toContain(`'node:20'`);
+      expect(runCmd).toContain(`sh -c 'pnpm exec prisma migrate deploy'`);
 
       const envFileContent = writeSpy.mock.calls[0][1] as string;
       expect(envFileContent).toContain('DATABASE_URL=postgres://user:pass@postgres:5432/app');

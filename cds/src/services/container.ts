@@ -805,25 +805,30 @@ export class ContainerService {
     const containerWorkDir = profile.containerWorkDir || '/app';
     const skipSrcMount = profile.prebuiltImage === true;
     const isNodeContainer = /\bnode:/.test(profile.dockerImage);
+    // host-shell 安全（Codex P1「Validate extra-service workDir before deploy」）：srcMount 由
+    // path.join(worktreePath, profile.workDir) 拼成，profile.workDir / containerWorkDir 来自用户可控的
+    // BuildProfile（含分支级额外服务）。旧写法 `-v "${srcMount}":"${containerWorkDir}"` 用双引号，
+    // workDir 里塞一个双引号 + `$()`/反引号就能在 CDS 宿主机上越权执行。这里与 dockerImage/command 同口径，
+    // 对挂载路径两端走 shellQuote 单引号转义（docker 拿到的仍是原始路径，shell 不再预展开/不被截断）。
     const volumeFlags: string[] = skipSrcMount
       ? []
-      : [`-v "${srcMount}":"${containerWorkDir}"`];
+      : [`-v ${this.shellQuote(srcMount)}:${this.shellQuote(containerWorkDir)}`];
 
     if (skipSrcMount) {
       onOutput?.(`── 预构建镜像模式: 跳过 source mount(image 已含应用文件)──\n`);
     }
 
     if (isNodeContainer && !skipSrcMount && /\bpnpm\b/.test(command)) {
-      volumeFlags.push(`-v "${nodeModulesVolumeName(entry.id, profile.id)}":"${containerWorkDir}/node_modules"`);
+      volumeFlags.push(`-v ${this.shellQuote(nodeModulesVolumeName(entry.id, profile.id))}:${this.shellQuote(`${containerWorkDir}/node_modules`)}`);
     }
 
     if (profile.cacheMounts) {
       for (const cm of profile.cacheMounts) {
-        const mkdir = await this.shell.exec(`mkdir -p "${cm.hostPath}"`);
+        const mkdir = await this.shell.exec(`mkdir -p ${this.shellQuote(cm.hostPath)}`);
         if (mkdir.exitCode !== 0) {
           throw new Error(`创建缓存目录失败: ${cm.hostPath}: ${combinedOutput(mkdir)}`);
         }
-        volumeFlags.push(`-v "${cm.hostPath}":"${cm.containerPath}"`);
+        volumeFlags.push(`-v ${this.shellQuote(cm.hostPath)}:${this.shellQuote(cm.containerPath)}`);
       }
     }
 
@@ -1326,7 +1331,7 @@ export class ContainerService {
         ...entrypointFlags,
         // 极速版预构建镜像无 command 时,不覆盖 -w（用镜像自带 WORKDIR）也不 sh -c 包装,
         // 直接让镜像 ENTRYPOINT/CMD 启动。
-        ...(usePrebuiltEntrypoint ? [] : [`-w ${containerWorkDir}`]),
+        ...(usePrebuiltEntrypoint ? [] : [`-w ${this.shellQuote(containerWorkDir)}`]),
         envFlag,
         '--tmpfs /tmp',
         // cds.network 标签保持「共享/项目网」语义（用于按项目归属/孤儿容器清理的 projectIdForDockerNetwork
@@ -1515,12 +1520,17 @@ export class ContainerService {
       }
 
       const entrypointFlags = this.buildEntrypointFlags(profile, onOutput);
+      // host-shell 安全（Codex P1）：一次性命令路径与 runService 同口径——dockerImage / command / workdir
+      // 均来自用户可控 BuildProfile，对宿主机 shell 走 shellQuote 单引号转义；command 里的运算符仍由容器内
+      // sh -c 解释。旧写法 dockerImage 裸拼 + `sh -c "${command.replace(/"/g,'\\"')}"` 双引号可被 $()/反引号
+      // 在宿主机预展开/越权执行。
+      const jobImage = (profile.dockerImage || '').trim();
       const runCmd = [
         'docker run --rm',
         `--network ${network}`,
         ...volumeFlags,
         ...entrypointFlags,
-        `-w ${containerWorkDir}`,
+        `-w ${this.shellQuote(containerWorkDir)}`,
         envFlag,
         '--tmpfs /tmp',
         `--label cds.managed=true`,
@@ -1528,8 +1538,8 @@ export class ContainerService {
         `--label cds.project.id=${entry.projectId || 'default'}`,
         `--label cds.branch.id=${entry.id}`,
         `--label cds.profile.id=${profile.id}`,
-        profile.dockerImage,
-        `sh -c "${command.replace(/"/g, '\\"')}"`,
+        this.shellQuote(jobImage),
+        `sh -c ${this.shellQuote(command)}`,
       ].join(' ');
 
       context.assertCurrent?.(`runProfileCommand before docker-run ${profile.id}`);

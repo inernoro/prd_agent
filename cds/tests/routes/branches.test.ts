@@ -476,6 +476,20 @@ describe('Branch Routes', () => {
       expect(ok.status).toBe(200);
     });
 
+    it('rejects a workDir containing host-shell metacharacters or .. traversal (Codex P1 boundary defense)', async () => {
+      seedBranch('b1');
+      for (const bad of ['svc";id;"', 'a$(whoami)', 'p`id`', 'has space', 'a|b', 'x&y', '../../etc', 'a/../../b']) {
+        const res = await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [{ id: 'ok', dockerImage: 'img', containerPort: 80, workDir: bad }] });
+        expect(res.status).toBe(400);
+        expect(String((res.body as any).error)).toContain('workDir');
+      }
+      // A normal relative subdir is accepted (empty workDir也合法，下方一并验证)。
+      const ok = await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [{ id: 'ok', dockerImage: 'img', containerPort: 80, workDir: 'services/api' }] });
+      expect(ok.status).toBe(200);
+      const okEmpty = await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [{ id: 'ok', dockerImage: 'img', containerPort: 80 }] });
+      expect(okEmpty.status).toBe(200);
+    });
+
     it('PUT [] clears extras', async () => {
       seedBranch('b1');
       await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [extraSvc('demo-extra')] });
