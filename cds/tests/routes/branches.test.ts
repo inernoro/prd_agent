@@ -2965,6 +2965,7 @@ describe('Branch Routes', () => {
       const branch = stateService.getBranch('feat-restart')!;
       expect(branch.status).toBe('running');
       expect(branch.services.api.status).toBe('running');
+      expect(Date.parse(branch.lastDeployStartedAt || '')).toBeGreaterThan(Date.parse('2026-02-12T00:00:00Z'));
       const started = operationEvents.find((event) => event.branchId === 'feat-restart' && event.action === 'branch.operation.started');
       const completed = operationEvents.find((event) => event.branchId === 'feat-restart' && event.action === 'branch.operation.completed');
       expect(started?.details).toMatchObject({ kind: 'restart', source: 'api.restart-branch' });

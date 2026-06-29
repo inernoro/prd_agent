@@ -1418,7 +1418,9 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
     // 失败要还原的原始 error 文案（乐观翻 loading 前留存）。
     const prevErrorMessage = branch.errorMessage;
     const prevSvcError: Record<string, string | undefined> = {};
+    const recoveryStartedAt = new Date().toISOString();
     branch.status = 'restarting';
+    branch.lastDeployStartedAt = recoveryStartedAt;
     for (const [pid, svc] of Object.entries(branch.services || {})) {
       if (svc) { prevSvcError[pid] = svc.errorMessage; svc.status = 'building'; svc.errorMessage = undefined; }
     }
@@ -1548,7 +1550,9 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
       // still hits the finally and completes the lease — otherwise the
       // coordinator would keep an active op forever and reject all future
       // deploy/restart/stop on this branch until process restart.
+      const wakeStartedAt = new Date().toISOString();
       branch.status = 'restarting';
+      branch.lastDeployStartedAt = wakeStartedAt;
       for (const svc of services) {
         if (svc.status === 'stopped' || svc.status === 'idle') svc.status = 'starting';
       }
