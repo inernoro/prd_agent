@@ -38,7 +38,7 @@ import { classifyEnvKey } from '../config/known-env-keys.js';
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
 import { isAllowedCdsBranchName, isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { buildPreviewUrlForProject } from '../services/comment-template.js';
-import { maskSecrets as maskSecretsText, shouldMask } from '../services/secret-masker.js';
+import { maskSecrets as maskSecretsText, maskEnvRecord, shouldMask } from '../services/secret-masker.js';
 import { buildUnifiedBranchResources, type UnifiedBranchResource } from '../services/resources.js';
 import { fetchWithLockRetry } from '../services/git-fetch-retry.js';
 import { resolveGitAuthEnv } from '../services/git-auth-env.js';
@@ -2926,14 +2926,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return { ...cdsEnv, ...mirrorEnv, ...customEnv, ...branchEnv, ...projectEnv };
   }
 
-  /** Mask sensitive env var values for trace logging */
+  /**
+   * Mask sensitive env var values for response serialization. Delegates to the shared
+   * SSOT maskEnvRecord (key-name OR URL-credential value), so URL-style secrets like
+   * DATABASE_URL/MONGODB_URI/REDIS_URL are masked even though the key name isn't in the
+   * sensitive list (Codex P2). All branch/profile serializers route through here.
+   */
   function maskSecrets(env: Record<string, string>): Record<string, string> {
-    const SENSITIVE = /secret|password|token|key|credential/i;
-    const masked: Record<string, string> = {};
-    for (const [k, v] of Object.entries(env)) {
-      masked[k] = SENSITIVE.test(k) ? '***' : v;
-    }
-    return masked;
+    return maskEnvRecord(env);
   }
 
   /**
@@ -10958,7 +10958,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
         entry.errorMessage = undefined;
       }
       const __statusPrev = entry.status;
-      entry.status = hasError ? 'error' : hasRunning ? 'running' : hasStarting ? 'starting' : 'error';
+      // 空期望清单（额外服务/项目 profile 全清后孤儿剪枝把 entry.services 删空）落 idle，不落 error
+      // （Bugbot「Empty deploy marks branch error」）：当分支挂了在线 executor 时上面的本地 empty-cleanup
+      // 早返回被 remoteOwned 跳过，可 executor 离线 → 分发回退到本地路径，走到这里。activeStatuses 为空且
+      // 非 error 即「成功清空」，与 executor 端 + 本地 empty-cleanup 的 idle 口径对齐；profiles>0 却零服务
+      // 的真失败已在上面 noServiceStarted 置 hasError=true，不会落到这个 idle 分支。
+      entry.status = hasError ? 'error'
+        : hasRunning ? 'running'
+        : hasStarting ? 'starting'
+        : activeStatuses.length === 0 ? 'idle'
+        : 'error';
       entry.lastAccessedAt = new Date().toISOString();
 
       opLog.status = hasError ? 'error' : 'completed';

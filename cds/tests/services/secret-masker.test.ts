@@ -4,6 +4,8 @@ import {
   maskLine,
   maskSecrets,
   maskSecretsInObject,
+  maskEnvRecord,
+  maskBranchExtraProfilesEnv,
   shouldMask,
 } from '../../src/services/secret-masker.js';
 
@@ -212,6 +214,48 @@ describe('secret-masker.maskSecretsInObject', () => {
   it('passes through unchanged when mask: false', () => {
     const payload = { stdout: 'TOKEN=secret' };
     expect(maskSecretsInObject(payload, { mask: false })).toEqual(payload);
+  });
+});
+
+describe('secret-masker.maskEnvRecord', () => {
+  it('masks by sensitive key name', () => {
+    const out = maskEnvRecord({ JWT_SECRET: 'abc', MY_PASSWORD: 'p', LOG_LEVEL: 'info' });
+    expect(out.JWT_SECRET).toBe('***');
+    expect(out.MY_PASSWORD).toBe('***');
+    expect(out.LOG_LEVEL).toBe('info'); // non-sensitive untouched
+  });
+
+  it('masks URL-style values carrying inline credentials even when the key is not sensitive (Codex P2)', () => {
+    const out = maskEnvRecord({
+      DATABASE_URL: 'postgres://user:pass@host:5432/db',
+      MONGODB_URI: 'mongodb://admin:s3cr3t@mongo:27017',
+      REDIS_URL: 'redis://:onlypass@redis:6379',
+      PUBLIC_API_URL: 'https://api.example.com/v1', // no creds → not masked
+    });
+    expect(out.DATABASE_URL).toBe('***');
+    expect(out.MONGODB_URI).toBe('***');
+    expect(out.REDIS_URL).toBe('***');
+    expect(out.PUBLIC_API_URL).toBe('https://api.example.com/v1');
+  });
+});
+
+describe('secret-masker.maskBranchExtraProfilesEnv', () => {
+  it('masks extraProfiles[].env and leaves other fields + branches without extras untouched', () => {
+    const branch = {
+      id: 'b1',
+      status: 'running',
+      extraProfiles: [
+        { id: 'svc', env: { DATABASE_URL: 'postgres://u:p@h/db', PORT: '8080' } },
+        { id: 'noenv' },
+      ],
+    };
+    const view = maskBranchExtraProfilesEnv(branch);
+    expect(view.extraProfiles![0].env).toEqual({ DATABASE_URL: '***', PORT: '8080' });
+    expect(view.status).toBe('running'); // non-env fields untouched
+    expect(branch.extraProfiles[0].env!.DATABASE_URL).toBe('postgres://u:p@h/db'); // original not mutated
+
+    const plain = { id: 'b2', status: 'idle' };
+    expect(maskBranchExtraProfilesEnv(plain)).toBe(plain); // no extras → same ref
   });
 });
 

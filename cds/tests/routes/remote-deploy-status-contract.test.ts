@@ -42,4 +42,11 @@ describe('remote deploy complete: branch status realign contract', () => {
     expect(source).toContain('typeof s.containerName === \'string\' && s.containerName');
     expect(source).toContain('entry.services[pid] = {');
   });
+
+  it('local deploy finalize maps an empty desired set to idle, not error (Bugbot "Empty deploy marks branch error")', () => {
+    // When an in-line/local-fallback deploy ends with zero active services and no error (the empty-clear
+    // case), entry.status MUST be idle — matching the executor path and the local empty-cleanup early
+    // return — instead of falling through to the historical `: 'error'` default.
+    expect(source).toContain(": activeStatuses.length === 0 ? 'idle'");
+  });
 });
