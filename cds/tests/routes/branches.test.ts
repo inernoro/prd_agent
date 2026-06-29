@@ -574,6 +574,61 @@ describe('Branch Routes', () => {
       }
     });
 
+    it('?redeploy=1 rolls back a DESTRUCTIVE removal when the self-deploy is rejected (Codex P2: no ghost service)', async () => {
+      seedBranch('b1');
+      // Declare an extra service AND give it a live running service row (a worker container exists for it).
+      await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [extraSvc('demo-extra')] });
+      stateService.getBranch('b1')!.services['demo-extra'] = {
+        profileId: 'demo-extra', containerName: 'cds-b1-demo-extra', hostPort: 10099, status: 'running',
+      };
+      stateService.save();
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async () =>
+        new Response(JSON.stringify({ error: 'owning_executor_offline' }), { status: 503 })) as typeof fetch;
+      try {
+        // Clearing the extra service while its container still runs = destructive; deploy rejected → must roll back.
+        const res = await request(server, 'PUT', '/api/branches/b1/extra-services?redeploy=1', { extraProfiles: [] });
+        expect(res.status).toBe(200);
+        expect((res.body as any).redeployTriggered).toBe(false);
+        expect((res.body as any).removalRolledBack).toBe(true);
+        expect((res.body as any).rolledBackServiceIds).toContain('demo-extra');
+        // master metadata stays consistent with the still-running worker container.
+        expect((res.body as any).count).toBe(1);
+        expect(stateService.getBranch('b1')!.extraProfiles!.map((p) => p.id)).toEqual(['demo-extra']);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it('?redeploy=1 does NOT roll back an ADD-ONLY change when the self-deploy is rejected (keeps declared config)', async () => {
+      seedBranch('b1');
+      // Pre-existing extra service with a live row; the new PUT keeps it and ADDS a second one (no destructive drop).
+      await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [extraSvc('demo-extra')] });
+      stateService.getBranch('b1')!.services['demo-extra'] = {
+        profileId: 'demo-extra', containerName: 'cds-b1-demo-extra', hostPort: 10099, status: 'running',
+      };
+      stateService.save();
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async () =>
+        new Response(JSON.stringify({ error: '缺少必填环境变量' }), { status: 412 })) as typeof fetch;
+      try {
+        const res = await request(server, 'PUT', '/api/branches/b1/extra-services?redeploy=1', {
+          extraProfiles: [extraSvc('demo-extra'), extraSvc('demo-extra-2')],
+        });
+        expect(res.status).toBe(200);
+        expect((res.body as any).redeployTriggered).toBe(false);
+        expect((res.body as any).redeployRejected?.status).toBe(412);
+        // No service was dropped → not destructive → keep the declared config (do NOT roll back the add).
+        expect((res.body as any).removalRolledBack).toBeUndefined();
+        expect((res.body as any).count).toBe(2);
+        expect(stateService.getBranch('b1')!.extraProfiles!.map((p) => p.id).sort()).toEqual(['demo-extra', 'demo-extra-2']);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
     it('strips env mask sentinels on PUT: reuses the prior real value, drops sentinels with no prior (Bugbot Medium)', async () => {
       seedBranch('b1');
       // First PUT establishes a real secret value for SECRET_KEY.

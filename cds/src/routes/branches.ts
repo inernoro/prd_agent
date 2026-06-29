@@ -13059,14 +13059,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ...(raw?.prebuiltImage === true ? { prebuiltImage: true } : {}),
       } as BuildProfile);
     }
+    // 破坏性移除回滚预备（Codex P2「Defer destructive extra-service saves until redeploy is accepted」）：
+    // 落库前先快照旧额外服务,并算出「被本次 PUT 删掉、但仍挂着 entry.services 运行行」的 id。
+    // 这类移除是破坏性的——若紧接着的自调 deploy 被拒(典型 owning_executor_offline:owning executor 离线、
+    // 无法真正下掉远端 worker 容器),master 端却已经丢了 profile 元数据,与仍在跑的 worker 容器永久脱节
+    // (幽灵服务)。仅新增/暂停/纯改 env 这类「没删掉任何在跑服务」的变更不算破坏性,deploy 被拒也保留配置。
+    const prevExtraProfilesSnapshot: BuildProfile[] = JSON.parse(
+      JSON.stringify(entry.extraProfiles || []),
+    );
+    const sanitizedIds = new Set(sanitized.map((p) => p.id));
+    const destructivelyDroppedIds = prevExtraProfilesSnapshot
+      .map((p) => p.id)
+      .filter((id) => !sanitizedIds.has(id) && entry.services[id] != null);
+    const hasDestructiveRemoval = destructivelyDroppedIds.length > 0;
     stateService.setBranchExtraProfiles(entry.id, sanitized);
-    const updated = stateService.getBranch(entry.id)!;
+    let updated = stateService.getBranch(entry.id)!;
     // 一步到位:声明/改额外服务是纯配置变更,不会自动重建已在运行的分支(用户实测痛点)。
     // 带 ?redeploy=1 时,持久化后触发一次真正的分支重部署(走和 webhook 自调相同的 localhost 自 POST
     // /deploy),让新增/改动的额外服务真正起容器、被移除的真正下掉。
     const wantRedeploy = req.query?.redeploy === '1' || req.query?.redeploy === 'true' || (req.body as { redeploy?: unknown })?.redeploy === true;
     let redeployTriggered = false;
     let redeployRejected: { status: number; message: string } | null = null;
+    let removalRolledBack = false;
     if (wantRedeploy) {
       // 必须等到自调 deploy 真正被「接受」(HTTP 头到达)再决定 redeployTriggered,否则会出现「明明被拒
       // 还回报已触发」(Bugbot Medium):deploy 端点对 暂停(423)/缺必填环境(412)/in-flight 冲突(409)
@@ -13101,17 +13115,30 @@ export function createBranchRouter(deps: RouterDeps): Router {
         redeployRejected = { status: 0, message: (err as Error).message };
         console.warn(`[extra-services] redeploy 自调失败 ${entry.id}: ${(err as Error).message}`);
       }
+      // 破坏性移除 + 重部署被拒 → 回滚到旧额外服务,让 master 元数据与仍在跑的 worker 容器保持一致,
+      // 不留幽灵服务(Codex P2)。新增/纯改不回滚(deploy 被拒也保留已声明配置,用户可处理后重发)。
+      if (redeployRejected && hasDestructiveRemoval) {
+        stateService.setBranchExtraProfiles(entry.id, prevExtraProfilesSnapshot);
+        updated = stateService.getBranch(entry.id)!;
+        removalRolledBack = true;
+        console.warn(
+          `[extra-services] 重部署被拒且含破坏性移除(${destructivelyDroppedIds.join(', ')}),已回滚额外服务以避免幽灵服务 ${entry.id}`,
+        );
+      }
     }
     res.json({
       extraProfiles: maskExtraProfilesEnv(updated.extraProfiles || []) || [],
       count: (updated.extraProfiles || []).length,
       redeployTriggered,
       ...(redeployRejected ? { redeployRejected } : {}),
+      ...(removalRolledBack ? { removalRolledBack, rolledBackServiceIds: destructivelyDroppedIds } : {}),
       hint: redeployTriggered
         ? '已触发重部署,额外服务将随本次部署起容器(几十秒后查看分支服务列表)'
-        : wantRedeploy
-          ? `额外服务已声明,但触发重部署未成功${redeployRejected ? `(HTTP ${redeployRejected.status}: ${redeployRejected.message})` : ''};请处理后手动部署(或重发本请求带 ?redeploy=1)`
-          : '额外服务已声明;需触发一次分支部署才会真正起容器(或重发本请求带 ?redeploy=1)',
+        : removalRolledBack
+          ? `重部署被拒(HTTP ${redeployRejected!.status}: ${redeployRejected!.message}),为避免幽灵服务已回滚移除操作(${destructivelyDroppedIds.join(', ')} 保留);请待 owning executor 上线后重试`
+          : wantRedeploy
+            ? `额外服务已声明,但触发重部署未成功${redeployRejected ? `(HTTP ${redeployRejected.status}: ${redeployRejected.message})` : ''};请处理后手动部署(或重发本请求带 ?redeploy=1)`
+            : '额外服务已声明;需触发一次分支部署才会真正起容器(或重发本请求带 ?redeploy=1)',
     });
   });
 
