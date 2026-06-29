@@ -174,6 +174,20 @@ describe('ContainerService 分支级网络隔离', () => {
     expect(runCmd).toContain('--network cds-br-feature-a');
   });
 
+  it('infra 连接失败（no such container）让部署显式失败，绝不 docker start（Bugbot Medium）', async () => {
+    const service = new ContainerService(mock, makeConfig(), resolver);
+    aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
+    // 先注册失败的 connect（first-match-wins），再用 okStubs 兜底其它命令。
+    mock.addResponsePattern(/docker network connect/, () => ({ stdout: '', stderr: 'Error: No such container: cds-feature-a-apigateway', exitCode: 1 }));
+    okStubs(mock);
+
+    // 连不上共享 infra 网 = 硬失败（不再吞 "no such container"），否则会起一个连不到 DB 的容器。
+    await expect(service.runService(makeEntry('proj-a'), makeProfile(), makeService())).rejects.toThrow(/共享 infra 网/);
+    // create 已发但 connect 失败 → 绝不能 start 一个只挂分支网、连不到共享 infra 的容器。
+    expect(mock.commands.some((c) => c.includes('docker create'))).toBe(true);
+    expect(mock.commands.some((c) => c.includes('docker start cds-feature-a-apigateway'))).toBe(false);
+  });
+
   it('infra 容器不受分支隔离影响，仍在项目共享网', async () => {
     const service = new ContainerService(mock, makeConfig(), resolver);
     okStubs(mock);

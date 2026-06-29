@@ -2708,8 +2708,12 @@ export class ContainerService {
   /**
    * 分支级隔离：把 app 容器连到共享 infra 网（无别名，仅为可达共享 mysql/redis）。
    * 无别名 → 兄弟分支无法在共享网上按 app 别名解析到本容器，杜绝跨分支串流。
-   * 幂等：已连上视为成功；容器不存在按并发 race 容忍；其它失败抛错——infra 可达性是硬需求，
+   * 幂等：已连上视为成功；其它失败（含「容器不存在」）一律抛错——infra 可达性是硬需求，
    * 连不上 DB 的容器没意义，宁可让部署显式失败而非静默起一个连不到数据库的容器。
+   * 唯一调用方是 create→connect→start 时序：容器在本调用前刚 `docker create` 成功（exitCode 已校验），
+   * 故连接时「no such container」不是良性并发 race，而是真异常——若吞掉，后续 `docker start` 会把 app
+   * 只挂在分支网、连不上共享 infra，DB/redis DNS 解析失败却 deploy 报成功（Bugbot「Infra connect failure
+   * ignored silently」）。因此不再容忍该错误。
    */
   private async connectContainerToSharedNetwork(
     containerName: string,
@@ -2720,7 +2724,6 @@ export class ContainerService {
     if (result.exitCode === 0) return;
     const stderr = (result.stderr || '').toLowerCase();
     if (stderr.includes('already exists') || stderr.includes('already connected')) return;
-    if (stderr.includes('no such container')) return;
     this.recordContainerEvent({
       severity: 'error',
       source: 'cds-container-service',

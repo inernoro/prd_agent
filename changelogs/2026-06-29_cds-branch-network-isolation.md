@@ -5,3 +5,4 @@
 | fix | cds | 超长分支网名保唯一（Codex P2）：branchAppNetworkName 超 60 字符时截断并追加完整 id 的短哈希，避免两个共享前 60 安全字符的分支 id 撞同一张 cds-br-* 网而重新引入跨分支 DNS 串流；≤60 的常规 id 输出零回归 |
 | fix | cds | 陈旧别名清理扫对网（Bugbot Medium）：隔离后 app 的 --network-alias 落在分支网而非共享项目网，pruneStaleAppContainersForProfile 改扫 netPlan.runNetwork（隔离=分支网），否则失败/半成功重部署后分支网上残留同别名僵尸端点、DNS 轮询复发 |
 | fix | cds | 分支网名截断阈值算上前缀（Codex P2 二修）：返回名 = "cds-br-"(7)+safe，docker DNS label 上限 63，故 safe 阈值取 56 而非 60，否则 57~60 字符的分支 id 产出 64~67 字符网名超限 |
+| fix | cds | 共享 infra 网连接失败不再静默吞（Bugbot Medium「Infra connect failure ignored silently」）：connectContainerToSharedNetwork 原把 `no such container` 当成功返回，但唯一调用方是 create→connect→start 时序、容器在连接前刚 `docker create` 成功，故该错误是真异常而非并发 race；吞掉会让后续 docker start 把 app 只挂分支网、连不上共享 mysql/redis（DB/redis DNS 失败却 deploy 报成功）；现一律 record + throw，部署显式失败 |
