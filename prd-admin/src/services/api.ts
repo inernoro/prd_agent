@@ -12,6 +12,8 @@
 export const api = {
   auth: {
     login: () => '/api/v1/auth/login',
+    ssoOptions: () => '/api/v1/auth/miduo-planet/options',
+    miduoPlanetLogin: () => '/api/v1/auth/miduo-planet/login',
     register: () => '/api/v1/auth/register',
     refresh: () => '/api/v1/auth/refresh',
     validatePassword: () => '/api/v1/auth/validate-password',
@@ -47,6 +49,8 @@ export const api = {
     unlock: (userId: string) => `/api/users/${userId}/unlock`,
     forceExpire: (userId: string) => `/api/users/${userId}/force-expire`,
     forceExpireAll: () => '/api/users/force-expire-all',
+    miduoSsoConfig: () => '/api/users/miduo-sso/config',
+    miduoSsoImport: () => '/api/users/miduo-sso/bindings/import',
     inviteCodes: () => '/api/users/invite-codes',
     initialize: () => '/api/users/initialize',
     bulk: () => '/api/users/bulk',

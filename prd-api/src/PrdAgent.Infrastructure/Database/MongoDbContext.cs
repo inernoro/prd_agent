@@ -498,6 +498,11 @@ public class MongoDbContext
             Users.Indexes.CreateOne(new CreateIndexModel<User>(
                 Builders<User>.IndexKeys.Ascending(u => u.Username),
                 new CreateIndexOptions()));
+            Users.Indexes.CreateOne(new CreateIndexModel<User>(
+                Builders<User>.IndexKeys
+                    .Ascending(u => u.MiduoSsoSubjectType)
+                    .Ascending(u => u.MiduoSsoSubjectHash),
+                new CreateIndexOptions { Sparse = true }));
         }
         catch (MongoCommandException ex) when (IsIndexConflict(ex))
         {
