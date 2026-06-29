@@ -3586,11 +3586,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     // Subscribe to the 'any' channel so we get one envelope per emit
     // with {type, payload} and can route with a single listener.
-    const exposeBranchForStream = (branch: any): any => (
-      branch?.githubCommitSha && !branch.commitSha
+    const exposeBranchForStream = (branch: any): any => {
+      const withSha = branch?.githubCommitSha && !branch.commitSha
         ? { ...branch, commitSha: branch.githubCommitSha }
-        : branch
-    );
+        : branch;
+      // 流式 branch.status / branch.updated 事件同样要给 extraProfiles env 脱敏（Bugbot Medium
+      // 「SSE leaks extra service secrets」）：此前只有初始 snapshot 走了 branchForView，后续事件
+      // 直接从 state 取原始 branch，订阅者会收到额外服务明文密钥。这里统一过 branchForView。
+      return branchForView(withSha);
+    };
     const anyHandler = (envelope: any) => {
       if (!envelope || !envelope.type) return;
       if (!eventMatchesFilter(envelope.type, envelope.payload)) return;
@@ -12195,19 +12199,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // modal's "effective env" preview only enumerates profiles in
     // this project, not every project's profile.
     const profiles = stateService.getEffectiveProfilesForBranch(entry);
+    // 分支级额外服务(extraProfiles)在此 payload 里要给 env 脱敏（Codex P1）：切到
+    // getEffectiveProfilesForBranch 后额外服务也进了 override 面板，baseline / effective.env 若返回
+    // 原始 env 会泄露分支本地密钥。与 extra-services / 分支序列化的 maskExtraProfilesEnv 口径一致，
+    // 仅对额外服务脱敏（项目 profile 的既有行为不动）。
+    const extraProfileIds = new Set((entry.extraProfiles || []).map((p) => p.id));
     const payload = profiles.map(profile => {
+      const isExtra = extraProfileIds.has(profile.id);
       const override = entry.profileOverrides?.[profile.id];
       const resolved = resolveEffectiveProfile(profile, entry);
       // CDS infra vars first, then profile.env so user-set values can still
       // shadow infra defaults (keeps current runtime semantics — see container.ts).
+      const mergedEnv = { ...cdsVars, ...(resolved.env || {}) };
       const effective = {
         ...resolved,
-        env: { ...cdsVars, ...(resolved.env || {}) },
+        env: isExtra ? maskSecrets(mergedEnv) : mergedEnv,
       };
       return {
         profileId: profile.id,
         profileName: profile.name,
-        baseline: profile,
+        baseline: isExtra && profile.env ? { ...profile, env: maskSecrets(profile.env) } : profile,
         override: override || null,
         effective,
         cdsEnvKeys,
