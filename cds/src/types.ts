@@ -575,6 +575,22 @@ export interface BranchEntry {
    */
   profileOverrides?: Record<string, BuildProfileOverride>;
   /**
+   * 分支级「临时额外服务」(branch-local extra services) —— 2026-06-29。
+   *
+   * 设计目标(用户要求):项目级 build profiles 是**稳定底座**(改它走 dashboard 审批、影响全体);
+   * 而**单条分支**可以在底座之上**临时追加自己的服务/容器**(比如把某个模块拆成独立服务做实验),
+   * 这些额外服务:
+   *   - 只在**这条分支**部署,跑在分支专属网(cds-br-<id>)里,**不影响项目、不影响别的分支**;
+   *   - **不进项目 profiles、不需要全局审批**;
+   *   - 随分支生命周期走 —— **删分支即消失**(本字段挂在 BranchEntry 上,删分支连带清掉;
+   *     额外容器由分支 teardown 一并 rm,分支网由 removeBranchNetwork 清理)。
+   *
+   * 兼容性:**纯增量、可选**。未声明(absent/空)的分支 = 与现状完全一致(老行为零回归)。
+   * 合并规则见 `mergeBranchProfiles`:额外服务只能 ADD 新 id;与项目 profile 撞 id 时**以项目为准**
+   * (保护底座,要按分支改项目服务请用 profileOverrides,不是这里)。
+   */
+  extraProfiles?: BuildProfile[];
+  /**
    * GitHub Checks integration — populated when the branch was
    * auto-created by a webhook push or the user linked a repo to the
    * owning project. Used to post check-run status back to GitHub

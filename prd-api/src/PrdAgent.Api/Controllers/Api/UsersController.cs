@@ -137,6 +137,34 @@ public class UsersController : ControllerBase
         return $"{normalized[..3]}****{normalized[^4..]}";
     }
 
+    private static bool IsTruthy(string? value)
+    {
+        return string.Equals(value, "1", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "on", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? NormalizeAbsoluteHttpUrl(string? value, bool trimTrailingSlash)
+    {
+        var raw = (value ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(raw) || raw.StartsWith('/')) return null;
+
+        var withScheme = raw.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            || raw.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+                ? raw
+                : $"https://{raw}";
+        if (!Uri.TryCreate(withScheme, UriKind.Absolute, out var uri)
+            || uri.Scheme is not ("http" or "https")
+            || string.IsNullOrWhiteSpace(uri.Host))
+        {
+            return null;
+        }
+
+        var normalized = uri.ToString();
+        return trimTrailingSlash ? normalized.TrimEnd('/') : normalized;
+    }
+
     private string? BuildAvatarUrl(User user)
         => AvatarUrlBuilder.Build(_cfg, user);
 
@@ -624,6 +652,20 @@ public class UsersController : ControllerBase
         var miduoAppCode = await GetConfiguredMiduoAppCodeAsync(ct);
         if (!string.IsNullOrWhiteSpace(miduoSubjectValue) && string.IsNullOrWhiteSpace(miduoAppCode))
             return BadRequest(ApiResponse<object>.Fail("MIDUO_SSO_NOT_CONFIGURED", "请先配置米多星球 SSO appCode"));
+        var miduoSubjectHash = !string.IsNullOrWhiteSpace(miduoSubjectValue)
+            ? HashMiduoSubject(miduoAppCode!, miduoSubjectType, miduoSubjectValue)
+            : null;
+        if (!string.IsNullOrWhiteSpace(miduoSubjectHash))
+        {
+            var occupied = await _db.Users
+                .Find(u => u.MiduoSsoSubjectType == miduoSubjectType && u.MiduoSsoSubjectHash == miduoSubjectHash)
+                .Limit(1)
+                .FirstOrDefaultAsync(ct);
+            if (occupied != null)
+            {
+                return BadRequest(ApiResponse<object>.Fail("SSO_BINDING_EXISTS", $"该米多星球绑定值已绑定到用户 {occupied.Username}"));
+            }
+        }
 
         var user = new User
         {
@@ -639,7 +681,7 @@ public class UsersController : ControllerBase
         if (!string.IsNullOrWhiteSpace(miduoSubjectValue))
         {
             user.MiduoSsoSubjectType = miduoSubjectType;
-            user.MiduoSsoSubjectHash = HashMiduoSubject(miduoAppCode!, miduoSubjectType, miduoSubjectValue);
+            user.MiduoSsoSubjectHash = miduoSubjectHash;
             user.MiduoSsoSubjectMasked = MaskMiduoSubject(miduoSubjectType, miduoSubjectValue);
             user.MiduoSsoDisplayNameSnapshot = displayName;
             user.MiduoSsoBoundAt = DateTime.UtcNow;
@@ -1310,9 +1352,10 @@ public class UsersController : ControllerBase
     public async Task<IActionResult> GetMiduoSsoConfig(CancellationToken ct)
     {
         var settings = await _db.AppSettings.Find(x => x.Id == "global").FirstOrDefaultAsync(ct);
+        var envEnabled = IsTruthy(_cfg["MiduoSso:Enabled"] ?? _cfg["MIDUO_SSO_ENABLED"] ?? _cfg["MiduoPlanetSso:Enabled"] ?? _cfg["MIDUO_PLANET_SSO_ENABLED"]);
         var response = new MiduoSsoConfigResponse
         {
-            Enabled = settings?.MiduoSsoEnabled ?? false,
+            Enabled = settings?.MiduoSsoEnabled ?? envEnabled,
             BaseUrl = settings?.MiduoSsoBaseUrl ?? string.Empty,
             AppCode = settings?.MiduoSsoAppCode ?? string.Empty,
             HasAppSecret = !string.IsNullOrWhiteSpace(settings?.MiduoSsoAppSecret),
@@ -1327,21 +1370,21 @@ public class UsersController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<MiduoSsoConfigResponse>), StatusCodes.Status200OK)]
     public async Task<IActionResult> UpdateMiduoSsoConfig([FromBody] UpdateMiduoSsoConfigRequest request, CancellationToken ct)
     {
-        var baseUrl = (request.BaseUrl ?? string.Empty).Trim().TrimEnd('/');
+        var baseUrl = NormalizeAbsoluteHttpUrl(request.BaseUrl, trimTrailingSlash: true);
         var appCode = (request.AppCode ?? string.Empty).Trim();
         var appSecret = (request.AppSecret ?? string.Empty).Trim();
-        var redirectUri = (request.RedirectUri ?? string.Empty).Trim();
+        var redirectUri = NormalizeAbsoluteHttpUrl(request.RedirectUri, trimTrailingSlash: false);
         var label = string.IsNullOrWhiteSpace(request.Label) ? "米多星球" : request.Label.Trim();
         var subjectType = NormalizeMiduoSubjectType(request.SubjectType);
 
         if (request.Enabled)
         {
             if (string.IsNullOrWhiteSpace(baseUrl))
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "Base URL 不能为空"));
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "Base URL 必须是有效的 http(s) 地址"));
             if (string.IsNullOrWhiteSpace(appCode))
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "appCode 不能为空"));
             if (string.IsNullOrWhiteSpace(redirectUri))
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "回调地址不能为空"));
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "回调地址必须是有效的 http(s) 地址"));
         }
 
         var existing = await _db.AppSettings.Find(x => x.Id == "global").FirstOrDefaultAsync(ct);
@@ -1353,10 +1396,10 @@ public class UsersController : ControllerBase
 
         var update = Builders<AppSettings>.Update
             .Set(x => x.MiduoSsoEnabled, request.Enabled)
-            .Set(x => x.MiduoSsoBaseUrl, baseUrl)
+            .Set(x => x.MiduoSsoBaseUrl, baseUrl ?? string.Empty)
             .Set(x => x.MiduoSsoAppCode, appCode)
             .Set(x => x.MiduoSsoAppSecret, secretToSave)
-            .Set(x => x.MiduoSsoRedirectUri, redirectUri)
+            .Set(x => x.MiduoSsoRedirectUri, redirectUri ?? string.Empty)
             .Set(x => x.MiduoSsoLabel, label)
             .Set(x => x.MiduoSsoSubjectType, subjectType)
             .Set(x => x.UpdatedAt, DateTime.UtcNow)

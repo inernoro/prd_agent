@@ -1,5 +1,5 @@
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { TabBar } from '@/components/design/TabBar';
@@ -127,6 +127,7 @@ export default function UsersPage() {
     failedCount: number;
     failedItems: Array<{ line: string; message: string }>;
   } | null>(null);
+  const miduoConfigLoadSeqRef = useRef(0);
 
   const [pwdOpen, setPwdOpen] = useState(false);
   const [pwdUser, setPwdUser] = useState<UserRow | null>(null);
@@ -222,12 +223,15 @@ export default function UsersPage() {
   }, [query.page, query.search, query.role, query.status]);
 
   const openMiduoConfig = async () => {
+    const seq = miduoConfigLoadSeqRef.current + 1;
+    miduoConfigLoadSeqRef.current = seq;
     setMiduoConfigOpen(true);
     setMiduoConfigLoading(true);
     setMiduoConfigError(null);
     setMiduoAppSecret('');
     try {
       const res = await getMiduoSsoConfig();
+      if (seq !== miduoConfigLoadSeqRef.current) return;
       if (!res.success) {
         setMiduoConfigError(res.error?.message || '加载配置失败');
         return;
@@ -239,7 +243,7 @@ export default function UsersPage() {
       setMiduoRedirectUri(res.data.redirectUri || '');
       setMiduoLabel(res.data.label || '米多星球');
     } finally {
-      setMiduoConfigLoading(false);
+      if (seq === miduoConfigLoadSeqRef.current) setMiduoConfigLoading(false);
     }
   };
 
@@ -269,13 +273,13 @@ export default function UsersPage() {
       }
       return '';
     };
-    const normalizeUrl = (value: string, fallback: string) => {
+    const normalizeUrl = (value: string, fallback: string, defaultPath?: string) => {
       const raw = value.trim();
       if (!raw || raw === '/') return fallback;
       const withScheme = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
       try {
         const url = new URL(withScheme);
-        if (!url.pathname || url.pathname === '/') url.pathname = '/login';
+        if (defaultPath && (!url.pathname || url.pathname === '/')) url.pathname = defaultPath;
         return url.toString().replace(/\/$/, '');
       } catch {
         return fallback;
@@ -291,8 +295,8 @@ export default function UsersPage() {
     if (appCode) setMiduoAppCode(appCode);
     if (appSecret) setMiduoAppSecret(appSecret);
     if (appName) setMiduoLabel(appName);
-    setMiduoBaseUrl(/^https?:\/\//i.test(baseUrl) ? baseUrl.replace(/\/$/, '') : 'https://admin.ebcone.cn');
-    setMiduoRedirectUri(normalizeUrl(callbackUrl, 'https://map.ebcone.net/login'));
+    setMiduoBaseUrl(normalizeUrl(baseUrl, 'https://admin.ebcone.cn'));
+    setMiduoRedirectUri(normalizeUrl(callbackUrl, 'https://map.ebcone.net/login', '/login'));
     setMiduoEnabled(true);
     toast.success('已识别交接信息', '请确认后保存配置');
   };

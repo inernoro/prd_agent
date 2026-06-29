@@ -190,6 +190,82 @@ export function maskSecretsInObject<T>(obj: T, opts: { mask?: boolean } = {}): T
 }
 
 /**
+ * Env-record masking for response serialization (branch extraProfiles, build-profile
+ * overrides, trace dumps). Distinct from the line-oriented `maskSecrets()` above: this
+ * masks a `Record<string,string>` value when EITHER
+ *   - the KEY name looks sensitive (secret/password/token/key/credential), OR
+ *   - the VALUE is a connection string carrying inline credentials
+ *     (`scheme://user:pass@host`) — covers DATABASE_URL / MONGODB_URI / REDIS_URL etc.
+ *     whose key names don't match the sensitive list but whose value still leaks a
+ *     password (Codex P2 "Mask URL-style secrets in extra service env").
+ * Marker defaults to `***` so a GET→edit→PUT round-trip is recognized as a mask
+ * sentinel and restored to the stored value (see mergeExtraEnv).
+ */
+const URL_WITH_CREDENTIALS = /^[a-z][a-z0-9+.\-]*:\/\/[^@/\s]*:[^@/\s]+@/i;
+
+/**
+ * Does a value look like a connection string carrying inline credentials
+ * (`scheme://user:pass@host`)? Exported so the container-exec literal-value
+ * masking path can reuse the SAME URL detection that maskEnvRecord uses for
+ * response serialization — otherwise `echo $DATABASE_URL` leaks the raw string
+ * even though GET responses mask it (Codex P2).
+ */
+export function looksLikeUrlWithCredentials(value: string): boolean {
+  return typeof value === 'string' && URL_WITH_CREDENTIALS.test(value);
+}
+
+export function maskEnvRecord(env: Record<string, string>, marker = '***'): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) {
+    // 复用 isSensitiveKey 的完整敏感 key 覆盖（含 WEBHOOK / SMTP_* / AUTH / JWT / PAT / *_KEY 等），
+    // 而非早期窄正则 secret|password|token|key|credential —— 否则 WEBHOOK_URL / SLACK_WEBHOOK / SMTP_URL /
+    // AUTH_URL 这类存密钥 URL 的 key 名不命中、值又非 user:pass@ 形态时会原样泄露给任何能查看分支的调用方
+    // （Codex P1「Mask webhook-style env secrets in extra services」）。叠加值为含内联凭据 URL 的兜底。
+    const sensitive = isSensitiveKey(k) || (typeof v === 'string' && URL_WITH_CREDENTIALS.test(v));
+    out[k] = sensitive ? marker : v;
+  }
+  return out;
+}
+
+/**
+ * View-safe shallow copy of a branch: mask every extraProfiles[].env AND any
+ * profileOverrides[<extra-profile-id>].env, leave all other fields as-is. SSOT for "redact
+ * branch-local extra-service secrets in any serialization" — used by branch list/detail/SSE
+ * serializers AND the full-state broadcaster (Codex P1 "Redact extraProfiles before state-stream
+ * broadcasts" + "Mask extra-profile override env in branch views"). Generic so it does not pull
+ * the BranchEntry/BuildProfile types into this leaf module.
+ */
+export function maskBranchExtraProfilesEnv<
+  T extends {
+    extraProfiles?: Array<{ id?: string; env?: Record<string, string> }>;
+    profileOverrides?: Record<string, { env?: Record<string, string> }>;
+  },
+>(branch: T): T {
+  const hasExtra = Array.isArray(branch.extraProfiles) && branch.extraProfiles.length > 0;
+  const overrideEntries = branch.profileOverrides ? Object.entries(branch.profileOverrides) : [];
+  const hasMaskableOverride = overrideEntries.some(([, ov]) => !!ov?.env);
+  if (!hasExtra && !hasMaskableOverride) return branch;
+
+  const masked: Record<string, unknown> = { ...branch };
+  if (hasExtra) {
+    masked.extraProfiles = branch.extraProfiles!.map((p) => (p.env ? { ...p, env: maskEnvRecord(p.env) } : p));
+  }
+  // 分支视图遮蔽**所有** profileOverrides env，而非只按当前 extraProfiles 的 id：清掉额外服务后，
+  // branch.extraProfiles 已不含该 id，但 branch.profileOverrides 里残留的覆盖 env（含 PUT /profile-overrides
+  // 存的密钥）仍会被 /branches、/branches/:id、state-stream 明文吐出（Bugbot「Stale extra overrides leak
+  // secrets」）。分支列表/详情/流不需要明文覆盖 env（编辑走 profile-overrides 面板，自身脱敏），状态层仍存
+  // 明文供 deploy 直读，故此处一律遮蔽，杜绝孤立覆盖泄露。
+  if (hasMaskableOverride) {
+    const maskedOv: Record<string, { env?: Record<string, string> }> = {};
+    for (const [pid, ov] of overrideEntries) {
+      maskedOv[pid] = ov?.env ? { ...ov, env: maskEnvRecord(ov.env) } : ov;
+    }
+    masked.profileOverrides = maskedOv;
+  }
+  return masked as T;
+}
+
+/**
  * Resolve the "should we mask?" decision for an Express request.
  *
  * Default: ALWAYS mask. The only way to opt out is to pass `?unmask=1` on the

@@ -638,7 +638,7 @@ export default function AppShell() {
     <div
       className="w-full relative overflow-hidden app-aurora"
       style={{
-        // 背景走 .app-aurora 类（极淡彩色光晕 + var(--bg-base) 底），给液态玻璃可折射的深度
+        // 背景走 .app-aurora 类（中性白光 + var(--bg-base) 底），给液态玻璃可折射的深度
         // 移动端：用 dvh 跟随视口（修 iOS Safari 地址栏收缩导致的高度抖动 / 黑带）
         // 桌面端：保持 h:100% 依赖 #root，避免破坏现有侧栏/浮层布局
         minHeight: '100dvh',
@@ -1158,9 +1158,9 @@ export default function AppShell() {
             willChange: 'transform',
             ...(useSidebarGlass ? glassSidebar : {
               backgroundColor: 'var(--bg-elevated, #1e1e24)',
-              backgroundImage: 'linear-gradient(180deg, rgba(30,30,36,1) 0%, rgba(20,20,24,1) 100%)',
-              border: '1px solid rgba(99,102,241,0.08)',
-              boxShadow: '0 26px 120px rgba(0,0,0,0.60), 0 0 0 1px rgba(99,102,241,0.04) inset',
+              backgroundImage: 'linear-gradient(180deg, rgba(36,38,44,1) 0%, rgba(20,24,28,1) 100%)',
+              border: '1px solid rgba(255,255,255,0.10)',
+              boxShadow: '0 26px 120px rgba(0,0,0,0.60), 0 0 0 1px rgba(255,255,255,0.04) inset',
             }),
             pointerEvents: focusHideAside ? 'none' : 'auto',
           }}
@@ -1207,7 +1207,7 @@ export default function AppShell() {
                   style={{
                     width: 28,
                     height: 28,
-                    color: activeKey === '/' ? '#818cf8' : undefined,
+                    color: activeKey === '/' ? 'rgba(255, 255, 255, 0.88)' : undefined,
                   }}
                 >
                   {homeItem.icon}
@@ -1296,7 +1296,7 @@ export default function AppShell() {
                             style={{
                               width: 28,
                               height: 28,
-                              color: active ? '#818cf8' : undefined,
+                              color: active ? 'rgba(255, 255, 255, 0.88)' : undefined,
                             }}
                           >
                             {it.icon}

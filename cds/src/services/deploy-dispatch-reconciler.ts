@@ -42,6 +42,41 @@ function hasAllServicesRunning(branch: BranchEntry): boolean {
   return services.length > 0 && services.every((svc) => svc.status === 'running');
 }
 
+/**
+ * 派发已被更新的成功部署取代时，finalize 仍卡在 running 的孤儿部署日志。
+ * webhook 派发后进程若在 finalize 前重启 / 漏写终态，对应 build OperationLog 会永远停在
+ * status='running'；前端「有 running 就当当前部署」会把它误报为「疑似卡住 ≥1h」，盖在一个
+ * 其实健康运行的分支上（2026-06-29 miduo-backend-master：lastDeployAt 06-24 > 这条 06-23
+ * 的 webhook-dispatch 日志，但它从未写终态）。既然存在 startedAt 更晚的成功部署戳，这条更早的
+ * running 必已被取代，安全收敛为 completed。幂等：收敛后下次 status 不再是 running，不重复处理。
+ * @returns 是否发生变更（决定是否需要 save）。
+ */
+function finalizeSupersededRunningDeployLogs(
+  stateService: StateService,
+  branchId: string,
+  supersededByMs: number,
+  now: Date,
+): boolean {
+  const logs = stateService.getLogs(branchId);
+  let mutated = false;
+  for (const log of logs) {
+    if (log.type !== 'build' || log.status !== 'running') continue;
+    const startedMs = parseTime(log.startedAt);
+    if (!startedMs || startedMs >= supersededByMs) continue;
+    log.status = 'completed';
+    log.finishedAt = now.toISOString();
+    (log.events ||= []).push({
+      step: 'webhook-dispatch',
+      status: 'done',
+      title: '该部署日志已被更新的成功部署取代，CDS 收敛为已完成',
+      log: '原部署日志未写入终态便被新部署覆盖；看门狗据更晚的成功部署戳收敛，避免前端把它误报为「疑似卡住」',
+      timestamp: now.toISOString(),
+    });
+    mutated = true;
+  }
+  return mutated;
+}
+
 export function reconcileStaleDeployDispatches(
   stateService: StateService,
   options: ReconcileStaleDeployDispatchOptions = {},
@@ -51,6 +86,7 @@ export function reconcileStaleDeployDispatches(
   const staleAfterMinutes = options.staleAfterMinutes ?? STALE_DEPLOY_DISPATCH_MINUTES;
   const source = options.source ?? 'deploy-dispatch-reconciler';
   const results: DeployDispatchReconcileResult[] = [];
+  let mutatedLogs = false;
 
   for (const branch of stateService.getAllBranches()) {
     const status = branch.lastDeployDispatchStatus;
@@ -60,7 +96,14 @@ export function reconcileStaleDeployDispatches(
     const dispatchAtMs = parseTime(dispatchAt);
     if (!dispatchAtMs) continue;
     const lastDeployAtMs = parseTime(branch.lastDeployAt);
-    if (lastDeployAtMs >= dispatchAtMs) continue;
+    if (lastDeployAtMs >= dispatchAtMs) {
+      // 派发已被更新的成功部署取代：本次派发作废，不再判 stale；但要顺手 finalize 仍卡在
+      // running 的孤儿部署日志，否则前端会把它误报为「疑似卡住」（见函数注释的 06-29 案例）。
+      if (finalizeSupersededRunningDeployLogs(stateService, branch.id, lastDeployAtMs, now)) {
+        mutatedLogs = true;
+      }
+      continue;
+    }
     const lastReadyAtMs = parseTime(branch.lastReadyAt);
     if (
       lastReadyAtMs >= dispatchAtMs
@@ -197,6 +240,6 @@ export function reconcileStaleDeployDispatches(
     });
   }
 
-  if (results.length > 0) stateService.save();
+  if (results.length > 0 || mutatedLogs) stateService.save();
   return results;
 }

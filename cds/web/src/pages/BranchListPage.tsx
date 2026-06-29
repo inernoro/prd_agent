@@ -991,11 +991,29 @@ function branchTimeBadge(branch: BranchSummary, now = Date.now(), busySince?: st
       title: `GitHub push 到达 CDS: ${branch.lastPushAt}${deployPart}`,
     };
   }
+  // lastAccessedAt 同时被两件事盖戳：① 预览代理请求（scheduler.touch）② **部署尝试**（deploy 前盖，
+  // 让失败/被拒也更新可见时间）。所以不能无条件把它当「最近访问」——否则一次成功部署（部署前盖了
+  // lastAccessedAt、成功后又写更晚的 lastDeployAt）会被显示成「最近访问」而非「部署成功」（Bugbot
+  // Medium）。判据：成功部署的 lastDeployAt 必晚于部署前盖的 lastAccessedAt，故 deploy>=access 即代表
+  // 最近一次事件是部署；只有访问确实晚于部署才显示「最近访问」。
+  const accessMs = branch.lastAccessedAt ? Date.parse(branch.lastAccessedAt) : 0;
+  const deployMs = branch.lastDeployAt ? Date.parse(branch.lastDeployAt) : 0;
+  if (deployMs && deployMs >= accessMs) {
+    return {
+      label: '部署成功',
+      text: formatRelativeTime(branch.lastDeployAt),
+      title: branch.lastAccessedAt
+        ? `最近一次成功部署完成: ${branch.lastDeployAt}；最近一次预览访问: ${branch.lastAccessedAt}`
+        : `最近一次成功部署完成: ${branch.lastDeployAt}`,
+    };
+  }
   if (branch.lastAccessedAt) {
     return {
-      label: '上次部署',
+      label: '最近访问',
       text: formatRelativeTime(branch.lastAccessedAt),
-      title: `最近一次部署尝试: ${branch.lastAccessedAt}`,
+      title: branch.lastDeployAt
+        ? `最近一次预览访问: ${branch.lastAccessedAt}；最近成功部署: ${branch.lastDeployAt}`
+        : `最近一次预览访问: ${branch.lastAccessedAt}`,
     };
   }
   if (branch.lastDeployAt) {

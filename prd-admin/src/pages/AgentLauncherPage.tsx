@@ -634,11 +634,17 @@ export default function AgentLauncherPage() {
   );
 
   return (
-    <div className="h-full min-h-0 flex flex-col relative" style={{ background: 'var(--bg-base)' }}>
+    <div
+      className="h-full min-h-0 flex flex-col relative"
+      style={{
+        background: 'transparent',
+      }}
+    >
       {/* ── 页面背景大画幅层 (Page Hero Backing) ── */}
       <div
-        className="absolute inset-x-0 top-0 pointer-events-none"
+        className="absolute top-0 right-0 pointer-events-none"
         style={{
+          left: isMobile ? 0 : -128,
           height: isMobile ? '70vh' : '90vh',
           zIndex: 0,
           // overflow:hidden 把缩放 1.04 的背景图裁回容器内，避免在 AppShell 滚动容器里撑出横向滚动条
@@ -647,6 +653,14 @@ export default function AgentLauncherPage() {
           WebkitMaskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 50%, rgba(0,0,0,0) 100%)',
         }}
       >
+        {/* Unified glass base: keeps the hero photo from reading as a pasted black rectangle. */}
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              'linear-gradient(135deg, rgba(255, 255, 255, 0.16) 0%, rgba(30, 32, 40, 0.88) 34%, rgba(9, 10, 16, 0.98) 100%)',
+          }}
+        />
         {/* Background image —— 降级为「氛围层」：压暗 + 降饱和 + 轻模糊，从主角照片变墙上光影 */}
         <div
           className="absolute inset-0"
@@ -655,8 +669,13 @@ export default function AgentLauncherPage() {
             backgroundSize: 'cover',
             backgroundPosition: 'center top',
             backgroundRepeat: 'no-repeat',
-            opacity: 0.5,
-            filter: 'saturate(0.78) brightness(0.7) blur(1px)',
+            opacity: 0.28,
+            filter: 'saturate(0.68) brightness(0.64) blur(1.2px)',
+            mixBlendMode: 'screen',
+            maskImage:
+              'linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.18) 7%, rgba(0,0,0,0.78) 18%, #000 42%), linear-gradient(to bottom, #000 0%, #000 58%, transparent 100%)',
+            WebkitMaskImage:
+              'linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.18) 7%, rgba(0,0,0,0.78) 18%, #000 42%), linear-gradient(to bottom, #000 0%, #000 58%, transparent 100%)',
             transform: 'scale(1.04)',
           }}
         />
@@ -665,16 +684,16 @@ export default function AgentLauncherPage() {
           className="absolute inset-0"
           style={{
             background: isMobile
-              ? 'linear-gradient(180deg, var(--bg-base) 0%, rgba(10,10,11,0.7) 40%, transparent 100%)'
-              : 'linear-gradient(90deg, var(--bg-base) 0%, rgba(10,10,11,0.8) 25%, rgba(10,10,11,0.4) 50%, transparent 80%)',
+              ? 'linear-gradient(180deg, rgba(34,35,42,0.88) 0%, rgba(12,13,18,0.68) 46%, transparent 100%)'
+              : 'linear-gradient(90deg, rgba(36,37,44,0.82) 0%, rgba(24,25,32,0.58) 18%, rgba(12,13,18,0.34) 48%, transparent 84%)',
           }}
         />
         {/* Bottom scrim —— 让背景图无缝熔进深空底色，卡片区域是干净深色，不再有照片噪点透出（A2 驯服核心） */}
         <div
           className="absolute inset-x-0 bottom-0"
           style={{
-            height: '60%',
-            background: 'linear-gradient(180deg, transparent 0%, rgba(10,10,11,0.5) 55%, var(--bg-base) 100%)',
+            height: '68%',
+            background: 'linear-gradient(180deg, transparent 0%, rgba(11,12,22,0.58) 52%, var(--bg-base) 100%)',
           }}
         />
       </div>
@@ -703,9 +722,9 @@ export default function AgentLauncherPage() {
             width: isMobile ? '140%' : 520,
             height: isMobile ? 260 : 340,
             background:
-              'radial-gradient(ellipse at 30% 50%, rgba(124, 58, 237, 0.15) 0%, rgba(0, 240, 255, 0.05) 35%, transparent 65%)',
+              'radial-gradient(ellipse at 30% 50%, rgba(255, 255, 255, 0.13) 0%, rgba(226, 232, 240, 0.055) 36%, transparent 66%)',
             filter: 'blur(40px)',
-            opacity: 0.9,
+            opacity: 0.82,
             zIndex: 0,
           }}
         />
