@@ -2695,8 +2695,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
             for (const [pid, s] of Object.entries(svcMap)) {
               const existing = entry.services[pid];
               if (existing) {
+                // svcMap 是远端权威全量，存活行不能只同步 status/deployedMode —— containerName / hostPort /
+                // errorMessage 也要按权威值覆盖（Bugbot「Remote complete skips hostPort sync」）。否则 master 仍
+                // 持本地旧端口/旧容器名，预览与路由会用错端口直到下次心跳才纠偏。
                 if (typeof s?.deployedMode === 'string' && s.deployedMode.trim() !== '') existing.deployedMode = s.deployedMode.trim();
                 if (typeof s?.status === 'string') existing.status = s.status as ServiceState['status'];
+                if (typeof s?.containerName === 'string' && s.containerName) existing.containerName = s.containerName;
+                if (typeof s?.hostPort === 'number' && s.hostPort > 0) existing.hostPort = s.hostPort;
+                // errorMessage：权威值有则覆盖，转为非 error 态时清掉旧错误信息（避免 running 行残留上次失败文案）。
+                if (typeof s?.errorMessage === 'string' && s.errorMessage) existing.errorMessage = s.errorMessage;
+                else if (s?.status && s.status !== 'error') delete existing.errorMessage;
               } else if (s && typeof s.containerName === 'string' && s.containerName) {
                 entry.services[pid] = {
                   profileId: typeof s.profileId === 'string' ? s.profileId : pid,
@@ -2704,6 +2712,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
                   hostPort: typeof s.hostPort === 'number' ? s.hostPort : 0,
                   status: (typeof s.status === 'string' ? s.status : 'running') as ServiceState['status'],
                   ...(typeof s.deployedMode === 'string' ? { deployedMode: s.deployedMode } : {}),
+                  ...(typeof s.errorMessage === 'string' && s.errorMessage ? { errorMessage: s.errorMessage } : {}),
                 };
               }
             }

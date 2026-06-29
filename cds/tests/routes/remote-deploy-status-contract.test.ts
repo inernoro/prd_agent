@@ -28,6 +28,13 @@ describe('remote deploy complete: branch status realign contract', () => {
     expect(source).toContain("existing.status = s.status as ServiceState['status'];");
   });
 
+  it('syncs surviving services’ hostPort / containerName from the authoritative svcMap (no stale port)', () => {
+    // Bugbot "Remote complete skips hostPort sync": existing rows must also adopt the executor's
+    // authoritative containerName/hostPort, else preview/routing use the master's stale port until heartbeat.
+    expect(source).toContain('existing.containerName = s.containerName;');
+    expect(source).toContain('existing.hostPort = s.hostPort;');
+  });
+
   it('upserts executor-only services (full reconcile, not just prune) so the map is complete on complete', () => {
     // Bugbot "Remote complete skips service upsert": services that exist only on the executor must be
     // copied into entry.services, not left for the next heartbeat.
