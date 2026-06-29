@@ -8,3 +8,4 @@
 | fix | cds | 任务调度命令 sandbox 透传 CDS Docker network，支持访问项目内服务 |
 | fix | cds | 任务调度改为整次执行共享超时预算，避免多动作和重试突破任务总超时 |
 | fix | cds | 修复编辑任务非调度字段时错误重算 nextRunAt 的问题 |
+| fix | cds | 修复同一轮 tick 中任务被禁用后仍可能继续执行的问题 |

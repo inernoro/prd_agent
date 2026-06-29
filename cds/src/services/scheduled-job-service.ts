@@ -56,7 +56,7 @@ export class ScheduledJobService {
       .filter((job) => job.enabled && job.schedule.type !== 'manual')
       .filter((job) => !job.nextRunAt || Date.parse(job.nextRunAt) <= now.getTime());
     for (const job of due) {
-      this.claimScheduledOccurrence(job, now);
+      if (!this.claimScheduledOccurrence(job, now)) continue;
       await this.runJob(job.id, 'schedule');
     }
   }
@@ -64,6 +64,15 @@ export class ScheduledJobService {
   async runJob(jobId: string, trigger: ScheduledJobRun['trigger']): Promise<ScheduledJobRun> {
     const job = this.deps.stateService.getScheduledJob(jobId);
     if (!job) throw new Error('任务不存在');
+
+    if (trigger === 'schedule' && !job.enabled) {
+      const skipped = this.createRun(job, trigger, 'skipped');
+      skipped.finishedAt = skipped.queuedAt;
+      skipped.durationMs = 0;
+      skipped.log = '任务已禁用，本次调度跳过。';
+      this.deps.stateService.upsertScheduledJobRun(skipped);
+      return skipped;
+    }
 
     if (this.running.has(job.id)) {
       const skipped = this.createRun(job, trigger, 'skipped');
@@ -169,15 +178,16 @@ export class ScheduledJobService {
     };
   }
 
-  private claimScheduledOccurrence(job: ScheduledJob, now: Date): void {
-    if (job.schedule.type === 'manual') return;
+  private claimScheduledOccurrence(job: ScheduledJob, now: Date): boolean {
+    if (job.schedule.type === 'manual') return false;
     const latest = this.deps.stateService.getScheduledJob(job.id);
-    if (!latest || !latest.enabled) return;
+    if (!latest || !latest.enabled) return false;
     this.deps.stateService.upsertScheduledJob({
       ...latest,
       nextRunAt: this.computeNextRunAt(latest.schedule, now),
       updatedAt: new Date().toISOString(),
     });
+    return true;
   }
 
   private patchJobAfterRun(job: ScheduledJob, run: ScheduledJobRun): void {

@@ -317,6 +317,62 @@ describe('ScheduledJobService', () => {
     expect(runs[0].status).toBe('success');
   });
 
+  it('does not run a due job that is disabled while an earlier due job is running', async () => {
+    let releaseExec: ((result: ExecResult) => void) | null = null;
+    const blockingShell: IShellExecutor & { commands: string[] } = {
+      commands: [],
+      exec(command: string, _options?: ExecOptions): Promise<ExecResult> {
+        this.commands.push(command);
+        return new Promise((resolve) => {
+          releaseExec = resolve;
+        });
+      },
+    };
+    service = new ScheduledJobService({
+      stateService,
+      shell: blockingShell,
+      config: { masterPort: 9900, repoRoot: tmpDir },
+    });
+    const firstJob: ScheduledJob = service.normalizeJob({
+      id: 'job_first_due',
+      projectId: 'demo',
+      name: '先执行任务',
+      enabled: true,
+      schedule: { type: 'interval', intervalMinutes: 1, timezone: 'Asia/Shanghai' },
+      target: { type: 'command', command: 'first-slow' },
+      timeoutSeconds: 30,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    const disabledDuringTick: ScheduledJob = service.normalizeJob({
+      id: 'job_disabled_during_tick',
+      projectId: 'demo',
+      name: '执行前被禁用',
+      enabled: true,
+      schedule: { type: 'interval', intervalMinutes: 1, timezone: 'Asia/Shanghai' },
+      target: { type: 'command', command: 'should-not-run' },
+      timeoutSeconds: 30,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    stateService.upsertScheduledJob({ ...firstJob, nextRunAt: '2026-01-01T00:00:00.000Z' });
+    stateService.upsertScheduledJob({ ...disabledDuringTick, nextRunAt: '2026-01-01T00:00:00.000Z' });
+
+    const tick = service.tick(new Date('2026-01-01T00:00:00.000Z'));
+    await new Promise((resolve) => setImmediate(resolve));
+    stateService.upsertScheduledJob({ ...stateService.getScheduledJob(disabledDuringTick.id)!, enabled: false, nextRunAt: null });
+    releaseExec?.({ stdout: 'done\n', stderr: '', exitCode: 0 });
+    await tick;
+
+    expect(blockingShell.commands).toHaveLength(1);
+    expect(blockingShell.commands[0]).toContain('first-slow');
+    expect(stateService.listScheduledJobRuns({ jobId: disabledDuringTick.id })).toHaveLength(0);
+  });
+
   it('checks a command target without creating run history', async () => {
     shell.addResponsePattern(/docker run[\s\S]*echo check-ok/, () => ({ stdout: 'check-ok\n', stderr: '', exitCode: 0 }));
 
