@@ -1875,10 +1875,43 @@ describe('Branch Routes', () => {
 
       const res = await request(server, 'POST', '/api/branches/empty-cleanup/deploy');
       expect(res.status).toBe(200);
-      expect((res.body as any).cleared).toContain('demo-extra');
+      // deploy 端点契约是 SSE：清空路径以 event: complete 收尾（不再是 200 JSON，Bugbot Medium）。
+      expect(res.headers['content-type']).toContain('text/event-stream');
+      const sse = String(res.body);
+      expect(sse).toContain('event: complete');
+      expect(sse).toContain('demo-extra'); // cleared 列表在 complete data 里
       // The lingering service row is gone (container was torn down + entry removed).
       expect(stateService.getBranch('empty-cleanup')?.services['demo-extra']).toBeUndefined();
       expect(Object.keys(stateService.getBranch('empty-cleanup')?.services || {})).toHaveLength(0);
+    });
+
+    it('deploy with empty profiles refuses (503) when the owning executor is offline — no state mutation (Bugbot High)', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'empty-offline-exec',
+        projectId: 'default',
+        branch: 'feature/empty-offline-exec',
+        worktreePath: path.join(tmpDir, 'worktrees', 'empty-offline-exec'),
+        status: 'running',
+        createdAt: now,
+        executorId: 'exec-off',
+        services: {
+          'demo-extra': { profileId: 'demo-extra', containerName: 'cds-empty-offline-exec-demo-extra', hostPort: 10006, status: 'running' },
+        },
+      });
+      registryNodes.push({
+        id: 'exec-off', host: '127.0.0.1', port: 9109, status: 'offline', role: 'remote',
+        labels: [], branches: ['empty-offline-exec'],
+        capacity: { maxBranches: 10, memoryMB: 1024, cpuCores: 2 }, load: { memoryUsedMB: 0, cpuPercent: 0 }, registeredAt: now,
+      });
+      stateService.save();
+
+      const res = await request(server, 'POST', '/api/branches/empty-offline-exec/deploy');
+      expect(res.status).toBe(503);
+      expect((res.body as any).error).toBe('owning_executor_offline');
+      // state untouched — the worker container must not be orphaned/ghosted.
+      expect(stateService.getBranch('empty-offline-exec')?.services['demo-extra']).toBeTruthy();
+      expect(stateService.getBranch('empty-offline-exec')?.status).toBe('running');
     });
 
     it('deploy with no profiles AND no services still returns the original 400', async () => {

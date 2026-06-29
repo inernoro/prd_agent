@@ -2228,8 +2228,13 @@ ${shouldAutoRefresh ? `;(function(){
     const url = req.url || '/';
     const profileIds = Object.keys(branch.services);
 
-    // Phase 1: Check explicit pathPrefixes on build profiles (config-driven routing)
-    const profiles = this.stateService.getBuildProfiles();
+    // Phase 1: Check explicit pathPrefixes on build profiles (config-driven routing).
+    // Use the branch's EFFECTIVE profiles (project profiles + branch-local extraProfiles), not the
+    // global getBuildProfiles() — otherwise a branch-local extra service's pathPrefixes (now persisted
+    // by PUT /extra-services) is invisible to the proxy and its traffic falls through to convention/
+    // default routing, leaving the extra service unreachable (Codex P2 "Route branch-local path
+    // prefixes in the proxy"). Effective-profiles is also project-scoped, avoiding cross-project id mixups.
+    const profiles = this.stateService.getEffectiveProfilesForBranch(branch);
     // Sort: longer prefixes first (most specific match wins)
     const profilesWithRoutes = profiles
       .filter(p => p.pathPrefixes && p.pathPrefixes.length > 0 && profileIds.includes(p.id))

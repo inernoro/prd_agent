@@ -541,6 +541,35 @@ describe('ProxyService', () => {
       expect(resolvedUpstream).toBe('http://localhost:9000');
     });
 
+    it('routes by a branch-local extra service pathPrefix (effective profiles, not just project) — Codex P2', () => {
+      // A branch-local extra service `extra-api` with pathPrefixes ['/api/'], plus a project `web`
+      // profile as the convention/default catch-all. /api/* must route to extra-api even though it is
+      // NOT a project build profile — the proxy must consult effective profiles (project + extra).
+      addBranch('extra-branch', 'running', {
+        web: { profileId: 'web', status: 'running' },
+        'extra-api': { profileId: 'extra-api', status: 'running' },
+      });
+      stateService.addBuildProfile({
+        id: 'web', name: 'Web', dockerImage: 'node:20', workDir: 'web', containerPort: 5173, projectId: 'default',
+      });
+      // Branch-local only — deliberately NOT a project build profile.
+      stateService.setBranchExtraProfiles('extra-branch', [{
+        id: 'extra-api', name: 'extra-api', dockerImage: 'nginx:alpine', workDir: '',
+        containerPort: 8080, projectId: 'default', pathPrefixes: ['/api/'],
+      } as any]);
+      stateService.setDefaultBranch('extra-branch');
+      stateService.save();
+
+      let routedProfileId = '';
+      proxy.setResolveUpstream((_branchSlug, profileId) => { routedProfileId = String(profileId); return 'http://localhost:9000'; });
+
+      const req = { headers: { host: 'localhost' }, url: '/api/orders', pipe: () => {} } as unknown as http.IncomingMessage;
+      const { res } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(routedProfileId).toBe('extra-api');
+    });
+
     it('should not trigger auto-build for existing idle branches from a preview visit', () => {
       // Existing idle branches require an explicit redeploy action from the
       // control plane. A passive preview-page visit must not create a deploy

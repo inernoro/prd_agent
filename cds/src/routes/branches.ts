@@ -10075,18 +10075,36 @@ export function createBranchRouter(deps: RouterDeps): Router {
         res.status(400).json({ error: '尚未配置构建配置，请先添加至少一个构建配置。' });
         return;
       }
-      // 远端执行器 owned 的分支：容器在执行器上，master 端 remove 是 no-op。放行到下面的远端分发，
-      // 由 executor /exec/deploy 对空 payload 收敛（与 issue 5 同一条清理路径）。本地分支才在此就地拆。
-      const remoteOwned = !!(entry.executorId && registry
-        && registry.getAll().find((n) => n.id === entry.executorId && n.role !== 'embedded'));
+      // 远端执行器 owned 的分支：容器在执行器上，master 端 remove 是 no-op。
+      //  - 在线 → 放行到下面的远端分发，由 executor /exec/deploy 对空 payload 收敛（与 issue 5 同一清理路径）。
+      //  - 离线（Bugbot High「Offline executor skips empty cleanup」）→ 远端分发够不到它（resolveDeployTarget
+      //    也会因离线回退本地），而本地 containerService.remove 同样够不到它机器上的容器；若放行到本地路径会
+      //    删掉 entry.services 行却留下 worker 上在跑的容器（ghost，下次心跳还会回填）。故在此明确 503 报错、
+      //    不动 state，等执行器恢复后重试。这是 deploy 前置校验门（与 project_paused/未配置 同级），用 JSON。
+      const owningRemoteNode = (entry.executorId && registry)
+        ? registry.getAll().find((n) => n.id === entry.executorId && n.role !== 'embedded')
+        : undefined;
+      if (owningRemoteNode && owningRemoteNode.status !== 'online') {
+        res.status(503).json({
+          error: 'owning_executor_offline',
+          message: `分支归属的执行器「${entry.executorId}」当前离线，无法清理其上的残留服务容器。请等待执行器恢复后重试。`,
+          executorId: entry.executorId,
+        });
+        return;
+      }
+      const remoteOwned = !!owningRemoteNode; // 在线远端 owned
       if (!remoteOwned) {
         const cleanupLease = beginBranchOperation(req, res, entry, {
           kind: 'deploy',
           source: 'api.deploy-branch',
           reason: '期望清单为空，清理残留服务容器',
-          sse: false,
+          // deploy 端点契约是 SSE event-stream；本「就地清空」路径以前回 200 JSON，EventSource 客户端会
+          // 因 content-type 不符报错/挂起（Bugbot Medium「Deploy route returns JSON not SSE」）。改为 SSE：
+          // 拿不到租约时 beginBranchOperation 直接发 SSE 终止事件；拿到后下面 initSSE 开流、逐步 push、complete 收尾。
+          sse: true,
         });
-        if (branchOperationCoordinator && !cleanupLease) return; // 被拒时 beginBranchOperation 已发 409 JSON
+        if (branchOperationCoordinator && !cleanupLease) return; // 被拒时 beginBranchOperation 已发 SSE 终止事件
+        initSSE(res);
         const cleanupReqId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
         const cActor = resolveActorFromRequest(req);
         const cTrigger = triggerFromRequest(req);
@@ -10095,6 +10113,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         try {
           for (const [sid, svc] of existingServices) {
             assertBranchOperationCurrent(cleanupLease, `empty-profiles-cleanup before ${sid}`);
+            sendSSE(res, 'step', { step: 'remove-orphan-service', status: 'running', title: `正在下掉残留服务 "${sid}"`, timestamp: new Date().toISOString() });
             try {
               await containerService.remove(svc.containerName, {
                 projectId: entry.projectId,
@@ -10112,6 +10131,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             assertBranchOperationCurrent(cleanupLease, `empty-profiles-cleanup after ${sid}`);
             delete entry.services[sid];
             cleared.push(sid);
+            sendSSE(res, 'step', { step: 'remove-orphan-service', status: 'done', title: `服务 "${sid}" 已下掉`, timestamp: new Date().toISOString() });
           }
           entry.status = 'idle';
           entry.errorMessage = undefined;
@@ -10119,18 +10139,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
         } catch (err) {
           cleanupStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
           completeBranchOperation(cleanupLease, cleanupStatus);
-          if (cleanupStatus === 'cancelled') {
-            res.status(409).json({ error: 'superseded', message: '清理被更高优先级操作取代' });
-            return;
-          }
-          res.status(500).json({ error: (err as Error).message });
+          sendSSE(res, 'error', cleanupStatus === 'cancelled'
+            ? { message: '清理被更高优先级操作取代', operationStatus: 'cancelled' }
+            : { message: (err as Error).message });
+          res.end();
           return;
         }
         completeBranchOperation(cleanupLease, cleanupStatus);
-        res.status(200).json({ ok: true, cleared, message: `已清空所有服务（无构建配置，已下掉 ${cleared.length} 个残留容器）` });
+        sendSSE(res, 'complete', { ok: true, cleared, message: `已清空所有服务（无构建配置，已下掉 ${cleared.length} 个残留容器）` });
+        res.end();
         return;
       }
-      // remoteOwned：不在此 return，放行到下方远端分发（executor 收敛空 payload）。
+      // remoteOwned（在线）：不在此 return，放行到下方远端分发（executor 收敛空 payload）。
     }
 
     // 极速版部署不再硬闸门(用户 2026-06-23 决策:没有镜像默认回退固定主分支,不硬失败)。
