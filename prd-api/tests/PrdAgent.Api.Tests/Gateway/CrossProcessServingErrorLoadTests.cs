@@ -157,8 +157,8 @@ public class CrossProcessServingErrorLoadTests
     {
         public Task<GatewayResponse> SendAsync(GatewayRequest r, CancellationToken ct = default)
             => throw new InvalidOperationException("stub upstream boom");
-        public async IAsyncEnumerable<GatewayStreamChunk> StreamAsync(GatewayRequest r, [EnumeratorCancellation] CancellationToken ct = default)
-        { await Task.Yield(); throw new InvalidOperationException("boom"); }
+        public IAsyncEnumerable<GatewayStreamChunk> StreamAsync(GatewayRequest r, CancellationToken ct = default)
+            => throw new InvalidOperationException("boom");
         public Task<GatewayRawResponse> SendRawWithResolutionAsync(GatewayRawRequest r, GatewayModelResolution res, CancellationToken ct = default)
             => throw new InvalidOperationException("boom");
         public Task<GatewayModelResolution> ResolveModelAsync(string a, string m, string? e = null, CancellationToken ct = default)
