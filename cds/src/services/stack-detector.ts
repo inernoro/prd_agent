@@ -1007,6 +1007,46 @@ export interface ModuleDetection {
   detection: StackDetection;
 }
 
+const MODULE_SCAN_NOISE_DIRS = new Set([
+  'node_modules',
+  'dist',
+  'build',
+  'target',
+  '.git',
+  '.cds-repos',
+  '.vscode',
+  '.idea',
+  '.next',
+  '.turbo',
+  '.cache',
+  'coverage',
+  '__pycache__',
+  'venv',
+  '.venv',
+]);
+
+const NON_APP_MODULE_DIRS = new Set([
+  'cds',
+  'e2e',
+  'e2e-tests',
+  'tests',
+  'test',
+  'scripts',
+  'deploy',
+  'templates',
+  'docs',
+  'doc',
+]);
+
+function isNonAppModuleDir(name: string): boolean {
+  const normalized = name.trim().toLowerCase();
+  if (!normalized) return true;
+  if (MODULE_SCAN_NOISE_DIRS.has(normalized)) return true;
+  if (NON_APP_MODULE_DIRS.has(normalized)) return true;
+  if (normalized.endsWith('-sidecar') || normalized.includes('-sdk-sidecar')) return true;
+  return false;
+}
+
 /**
  * Heuristic monorepo scan: when the repo root has nothing useful, walk
  * one level of immediate subdirectories and run the per-directory
@@ -1042,23 +1082,6 @@ export function detectModules(searchPath: string): ModuleDetection[] {
   // Subdir scan. Hidden + heavy noise dirs filtered out. We accept the
   // small risk of double-counting nested monorepos (rare in practice)
   // for the sake of a simple, predictable scanner.
-  const NOISE = new Set([
-    'node_modules',
-    'dist',
-    'build',
-    'target',
-    '.git',
-    '.cds-repos',
-    '.vscode',
-    '.idea',
-    '.next',
-    '.turbo',
-    '.cache',
-    'coverage',
-    '__pycache__',
-    'venv',
-    '.venv',
-  ]);
 
   let entries: fs.Dirent[];
   try {
@@ -1071,7 +1094,7 @@ export function detectModules(searchPath: string): ModuleDetection[] {
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     if (entry.name.startsWith('.')) continue;
-    if (NOISE.has(entry.name)) continue;
+    if (isNonAppModuleDir(entry.name)) continue;
     const childPath = path.join(searchPath, entry.name);
     const detection = detectStack(childPath);
     if (detection.stack === 'unknown') continue;

@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { detectStack } from '../../src/services/stack-detector.js';
+import { detectModules, detectStack } from '../../src/services/stack-detector.js';
 
 describe('stack-detector', () => {
   let tmp: string;
@@ -31,6 +31,30 @@ describe('stack-detector', () => {
     const result = detectStack(path.join(tmp, 'no-such-dir'));
     expect(result.stack).toBe('unknown');
     expect(result.summary).toContain('路径不存在');
+  });
+
+  it('skips control-plane, sidecar, and test directories during monorepo module detection', () => {
+    fs.mkdirSync(path.join(tmp, 'prd-admin'));
+    fs.writeFileSync(path.join(tmp, 'prd-admin', 'package.json'), JSON.stringify({
+      name: 'prd-admin',
+      scripts: { dev: 'vite --host 0.0.0.0' },
+      dependencies: { '@vitejs/plugin-react': '^4.0.0', vite: '^5.0.0', react: '^18.0.0' },
+    }));
+
+    fs.mkdirSync(path.join(tmp, 'cds'));
+    fs.writeFileSync(path.join(tmp, 'cds', 'Dockerfile'), 'FROM node:20-slim\n');
+
+    fs.mkdirSync(path.join(tmp, 'claude-sdk-sidecar'));
+    fs.writeFileSync(path.join(tmp, 'claude-sdk-sidecar', 'Dockerfile'), 'FROM node:20-slim\n');
+
+    fs.mkdirSync(path.join(tmp, 'e2e'));
+    fs.writeFileSync(path.join(tmp, 'e2e', 'package.json'), JSON.stringify({
+      name: 'e2e',
+      scripts: { test: 'playwright test' },
+    }));
+
+    const modules = detectModules(tmp);
+    expect(modules.map((m) => m.subPath)).toEqual(['prd-admin']);
   });
 
   describe('Node.js', () => {
