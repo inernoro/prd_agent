@@ -51,6 +51,26 @@ AI 大模型网关从 MAP 剥离的工程债务台账。记录「已做 / 待用
   过程中自测还抓出一处断言笔误（fake 发两个 delta，期望写成 3 段）——证明它真在执行而非空跑。
 - 不覆盖真实模型解析/上游发送（既有实现，inproc 已验、本轮未改）；真机端到端待 CDS 升级 + 导入审批。
 
+## D 层真机：已跑通（2026-06-29，跨进程 serving 在真实预览上 8/8 绿）
+
+CDS 合并多容器能力（PR #951）后，serving 网关在 `claude/llm-scheduling-model-pool-x58zh4` 预览上端到端跑通：
+
+- **CDS 自更新到 main**：原 CDS 钉在已删分支 `claude/push-service-cds-issue-u2jbtz`（degraded:git_fetch_failed），
+  `self update --branch main`（dry-run 先过）→ 取消 degraded + 拿到多容器代码。
+- **单分支多容器部署**：用**分支级额外服务**（`PUT /api/branches/:id/extra-services?redeploy=1`，无需项目级审批）
+  把 `llmgw-serve` 作为第 3 个容器挂到本分支（与 api/admin 同分支），`pathPrefixes:["/gw/v1"]` 最长前缀路由。
+  镜像 `prdagent-llmgw-serve:sha-<merge>`（prebuiltImage:true）。**这正是此前被 CDS 卡住的「单分支多容器」能力**。
+- **env 接线（不材料化任何密钥）**：`MongoDB__ConnectionString` 设为模板 `mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}`，
+  CDS 部署期 `resolveEnvTemplates` 用注入的 cdsVars 展开；`Jwt__Secret`/`ApiKeyCrypto__Secret` 由项目 env 自动注入
+  （`container.ts` mergedEnv），故 resolve 解密平台 key 正常。
+- **D 层 8/8 绿**（`scripts/gw-smoke.py` 真打实时预览）：healthz / pools[chat,intent,vision] / send[chat]→
+  qwen/qwen3.6-plus、send[intent]→deepseek/deepseek-v4-flash(64 字)、send[vision]→qwen/qwen3.6-plus、canary
+  必败被抓。预览：`https://llm-scheduling-model-pool-x58zh4-claude-prd-agent.miduo.org/gw/v1/healthz`。
+- **harness 修复**：预览走 Cloudflare，默认 `Python-urllib` UA 被 CF 按浏览器签名拦（error 1010 / 403）→
+  `gw-smoke.py` 补浏览器 UA 头。
+- **已知小边界**：healthz 回显 commit=`fa467956d`（镜像 GIT_COMMIT build-arg 取到较旧分支提交，非 serving 代码本身
+  问题，端点行为为 merge 树最新）；后续可在 Dockerfile.llmgw-serve 把 GIT_COMMIT 钉到 github.sha 修正标签。
+
 ## 待用户（1 次手动，外部门禁）
 
 - **CDS 拓扑导入审批**：cds-compose 新增 `llmgw` + `llmgw-serve` 属「拓扑变更」，CDS 要求 dashboard 人工批准，

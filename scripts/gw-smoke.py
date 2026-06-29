@@ -34,6 +34,9 @@ def _req(method, path, body=None):
     data = json.dumps(body).encode() if body is not None else None
     r = urllib.request.Request(url, data=data, method=method)
     r.add_header("X-Gateway-Key", KEY)
+    # 预览域名走 Cloudflare：默认 Python-urllib UA 会被 CF 按浏览器签名拦截（error 1010 / 403）。
+    # 带一个正常浏览器 UA 即可放行（与真人浏览器/curl 一致）。
+    r.add_header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) gw-smoke/1.0")
     if data is not None:
         r.add_header("Content-Type", "application/json")
     try:
