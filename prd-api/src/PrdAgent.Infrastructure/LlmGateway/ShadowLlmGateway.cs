@@ -8,26 +8,31 @@ using CoreGateway = PrdAgent.Core.Interfaces.LlmGateway;
 namespace PrdAgent.Infrastructure.LlmGateway;
 
 /// <summary>
-/// 影子网关：把请求交给 inproc（进程内 LlmGateway，**权威**，结果原样返回调用方），同时**后台**对跨进程
-/// http 网关做比对，落 llmshadow_comparisons。用于灰度翻 http 前积累逐字段一致性证据。
+/// 网关模式路由器（影子 + 灰度翻 http 统一入口）：
 ///
-/// 成本护栏：默认只比**解析**（inproc 解析 vs http <c>/gw/v1/resolve</c>，纯 DB、零额外大模型调用），覆盖
+/// 1. **灰度翻 http（allowlist 权威路由）**：命中 <c>httpAllowlist</c> 的 appCallerCode 直接走 http 网关并**返回 http
+///    结果**（真正切到跨进程）。按入口逐个加白名单 = 逐个灰度翻，其余入口不受影响。
+/// 2. **影子比对（非 allowlist）**：未命中白名单的请求交给 inproc（**权威**，原样返回调用方），同时**后台**对 http
+///    网关做比对，落 llmshadow_comparisons，为后续把该入口加进白名单积累一致性证据。
+///
+/// 成本护栏：影子默认只比**解析**（inproc 解析 vs http <c>/gw/v1/resolve</c>，纯 DB、零额外大模型调用），覆盖
 /// compute-then-send / 选A给B 这类最高风险分歧。仅当 <c>fullSamplePercent &gt; 0</c> 时，才对采样的非流式 send
 /// 真发 http 做完整内容/finish/token 比对（有界成本）。流式（chat 主链路）只做免费 resolve 比对，绝不 2x 打大模型。
 ///
 /// server-authority：所有影子后台调用用 <see cref="CancellationToken.None"/>（调用方断开不取消）；影子任何失败
-/// 一律吞掉 + Warning，**caller 永远拿 inproc 结果**，主流程零影响。
+/// 一律吞掉 + Warning，**caller 永远拿 inproc 结果**（白名单命中除外，那是有意切 http）。主流程零影响。
 ///
 /// 同时实现 Infrastructure + Core 两个 ILlmGateway（与 HttpLlmGatewayClient 一致），使 Program.cs 的 Core 桥接强转成立。
 /// </summary>
 public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 {
-    private readonly ILlmGateway _inproc;   // 权威
-    private readonly ILlmGateway _http;     // 影子
+    private readonly ILlmGateway _inproc;   // 权威（非白名单）
+    private readonly ILlmGateway _http;     // 影子 / 白名单命中时的权威
     private readonly ILogger<ShadowLlmGateway> _logger;
     private readonly ILlmShadowComparisonWriter? _writer;
     private readonly int _fullSamplePercent;
     private readonly ILLMRequestContextAccessor? _ctx;
+    private readonly IReadOnlySet<string> _httpAllowlist;
 
     public ShadowLlmGateway(
         ILlmGateway inproc,
@@ -35,7 +40,8 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         ILogger<ShadowLlmGateway> logger,
         ILlmShadowComparisonWriter? writer = null,
         int fullSamplePercent = 0,
-        ILLMRequestContextAccessor? ctx = null)
+        ILLMRequestContextAccessor? ctx = null,
+        IReadOnlySet<string>? httpAllowlist = null)
     {
         _inproc = inproc;
         _http = http;
@@ -43,12 +49,18 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         _writer = writer;
         _fullSamplePercent = Math.Clamp(fullSamplePercent, 0, 100);
         _ctx = ctx;
+        _httpAllowlist = httpAllowlist ?? new HashSet<string>();
     }
 
-    // ─────────────────────── 主路径（inproc 权威 + 后台影子比对）───────────────────────
+    /// <summary>该 appCallerCode 是否已灰度翻 http（白名单命中 → http 权威）。</summary>
+    private bool RouteToHttp(string appCallerCode) => _httpAllowlist.Contains(appCallerCode);
+
+    // ─────────────────────── 主路径（白名单→http 权威 / 否则 inproc 权威 + 后台影子）───────────────────────
 
     public async Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default)
     {
+        if (RouteToHttp(request.AppCallerCode))
+            return await _http.SendAsync(request, ct);       // 已灰度：http 权威
         var inproc = await _inproc.SendAsync(request, ct);
         if (SampleHit())
             FireFullSendCompare(request, inproc);            // 采样：完整 send 比对（2x 打模型，有界）
@@ -60,6 +72,12 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     public async IAsyncEnumerable<GatewayStreamChunk> StreamAsync(
         GatewayRequest request, [EnumeratorCancellation] CancellationToken ct = default)
     {
+        if (RouteToHttp(request.AppCallerCode))
+        {
+            await foreach (var chunk in _http.StreamAsync(request, ct))  // 已灰度：http 权威流
+                yield return chunk;
+            yield break;
+        }
         GatewayModelResolution? startResolution = null;
         await foreach (var chunk in _inproc.StreamAsync(request, ct))
         {
@@ -74,6 +92,8 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     public async Task<GatewayModelResolution> ResolveModelAsync(
         string appCallerCode, string modelType, string? expectedModel = null, CancellationToken ct = default)
     {
+        if (RouteToHttp(appCallerCode))
+            return await _http.ResolveModelAsync(appCallerCode, modelType, expectedModel, ct);
         var inproc = await _inproc.ResolveModelAsync(appCallerCode, modelType, expectedModel, ct);
         FireResolveCompare(appCallerCode, modelType, expectedModel, inproc, "resolve");
         return inproc;
@@ -82,17 +102,21 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     public async Task<List<AvailableModelPool>> GetAvailablePoolsAsync(
         string appCallerCode, string modelType, CancellationToken ct = default)
     {
+        if (RouteToHttp(appCallerCode))
+            return await _http.GetAvailablePoolsAsync(appCallerCode, modelType, ct);
         var inproc = await _inproc.GetAvailablePoolsAsync(appCallerCode, modelType, ct);
         FirePoolsCompare(appCallerCode, modelType, inproc);
         return inproc;
     }
 
     /// <summary>
-    /// raw（生图/视频）走预解析 resolution，比对会 2x 打模型且不在本波 chat 范围内 → 纯透传 inproc，不影子。
+    /// raw（生图/视频）走预解析 resolution。白名单命中走 http 权威；否则透传 inproc（比对会 2x 打模型且不在本波 chat 范围内）。
     /// </summary>
     public Task<GatewayRawResponse> SendRawWithResolutionAsync(
         GatewayRawRequest request, GatewayModelResolution resolution, CancellationToken ct = default)
-        => _inproc.SendRawWithResolutionAsync(request, resolution, ct);
+        => RouteToHttp(request.AppCallerCode)
+            ? _http.SendRawWithResolutionAsync(request, resolution, ct)
+            : _inproc.SendRawWithResolutionAsync(request, resolution, ct);
 
     /// <summary>
     /// 返回绑定到 <c>this</c>（影子）的客户端，使 chat 的 <c>StreamGenerateAsync → ShadowLlmGateway.StreamAsync</c>，

@@ -210,14 +210,22 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.ILlmShadowComparisonWriter,
     PrdAgent.Infrastructure.LlmGateway.LlmShadowComparisonWriter>();
 
 var gatewayMode = builder.Configuration["LlmGateway:Mode"] ?? "inproc";
+// 灰度翻 http 白名单（按 appCallerCode 逐个切；`,`/`;`/换行分隔）。命中的入口走 http 权威，其余按 Mode。
+var httpAllowlist = (builder.Configuration["LlmGateway:HttpAppCallerAllowlist"] ?? string.Empty)
+    .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+    .Where(x => !string.IsNullOrWhiteSpace(x))
+    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+var isShadow = string.Equals(gatewayMode, "shadow", StringComparison.OrdinalIgnoreCase);
+
 if (string.Equals(gatewayMode, "http", StringComparison.OrdinalIgnoreCase))
 {
     builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>();
 }
-else if (string.Equals(gatewayMode, "shadow", StringComparison.OrdinalIgnoreCase))
+else if (isShadow || httpAllowlist.Count > 0)
 {
-    // 影子模式：inproc 权威（返回调用方），后台对 http 网关做比对落 llmshadow_comparisons。
-    // 默认只比解析（免费）；LlmGateway:ShadowFullSamplePercent>0 时对采样 send 做完整内容比对。
+    // 统一路由器：白名单命中 → http 权威（灰度翻）；否则 inproc 权威。
+    // shadow 模式下，对非白名单请求后台比对落 llmshadow_comparisons（默认只比解析=免费；
+    // LlmGateway:ShadowFullSamplePercent>0 时对采样 send 做完整内容比对）。inproc+仅白名单时不比对（writer=null）。
     var shadowSamplePercent = int.TryParse(builder.Configuration["LlmGateway:ShadowFullSamplePercent"], out var sp0) ? sp0 : 0;
     builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>(sp =>
         new PrdAgent.Infrastructure.LlmGateway.ShadowLlmGateway(
@@ -233,9 +241,10 @@ else if (string.Equals(gatewayMode, "shadow", StringComparison.OrdinalIgnoreCase
                 sp.GetRequiredService<IConfiguration>(),
                 sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>>()),
             logger: sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.ShadowLlmGateway>>(),
-            writer: sp.GetService<PrdAgent.Core.Interfaces.ILlmShadowComparisonWriter>(),
+            writer: isShadow ? sp.GetService<PrdAgent.Core.Interfaces.ILlmShadowComparisonWriter>() : null,
             fullSamplePercent: shadowSamplePercent,
-            ctx: sp.GetService<PrdAgent.Core.Interfaces.ILLMRequestContextAccessor>()));
+            ctx: sp.GetService<PrdAgent.Core.Interfaces.ILLMRequestContextAccessor>(),
+            httpAllowlist: httpAllowlist));
 }
 else
 {

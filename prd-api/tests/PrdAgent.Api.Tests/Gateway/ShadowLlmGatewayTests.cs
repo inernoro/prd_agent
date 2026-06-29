@@ -113,6 +113,47 @@ public class ShadowLlmGatewayTests
         http.SendCount.ShouldBe(0, "流式只做免费 resolve 比对，绝不重发 http 流");
     }
 
+    // ── 灰度翻 http：白名单命中 → http 权威（返回 http 结果，不比对）；未命中 → inproc 权威 ──
+    [Fact]
+    public async Task Allowlist_Hit_RoutesToHttpAuthoritative()
+    {
+        var inproc = new FakeGateway(Res("m-inproc", "openai", "openai")) { Content = "inproc-content" };
+        var http = new FakeGateway(Res("m-http", "openai", "openai")) { Content = "http-content" };
+        var writer = new CapturingWriter();
+        var shadow = new ShadowLlmGateway(inproc, http, NullLogger<ShadowLlmGateway>.Instance, writer,
+            httpAllowlist: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "demo.app::chat" });
+
+        // send：白名单命中 → 拿 http 结果
+        var resp = await shadow.SendAsync(Req());
+        resp.Content.ShouldBe("http-content", "白名单命中应走 http 权威");
+        resp.Resolution!.ActualModel.ShouldBe("m-http");
+
+        // resolve：白名单命中 → http model
+        var res = await shadow.ResolveModelAsync("demo.app::chat", "chat");
+        res.ActualModel.ShouldBe("m-http");
+
+        // 白名单命中不落比对记录（它已经是 http 权威，不是影子）
+        await Task.Delay(200);
+        writer.Records.ShouldBeEmpty("白名单命中是真正切 http，不应产生影子比对记录");
+        inproc.SendCount.ShouldBe(0, "白名单命中不应再走 inproc");
+    }
+
+    [Fact]
+    public async Task Allowlist_Miss_StaysInprocAndCompares()
+    {
+        var inproc = new FakeGateway(Res("m-inproc", "openai", "openai")) { Content = "inproc-content" };
+        var http = new FakeGateway(Res("m-http", "openai", "openai")) { Content = "http-content" };
+        var writer = new CapturingWriter();
+        var shadow = new ShadowLlmGateway(inproc, http, NullLogger<ShadowLlmGateway>.Instance, writer,
+            httpAllowlist: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "other.app::chat" });
+
+        var resp = await shadow.SendAsync(Req());  // demo.app::chat 不在白名单
+        resp.Content.ShouldBe("inproc-content", "未命中白名单应走 inproc 权威");
+
+        var cmp = await writer.WaitForRecordAsync();   // 未命中仍做影子比对
+        cmp.HasCritical.ShouldBeTrue("inproc=m-inproc vs http=m-http → model critical 不一致");
+    }
+
     // CreateClient 绑定到 shadow（使 chat 走 shadow.StreamAsync）
     [Fact]
     public void CreateClient_BindsToShadow()
@@ -163,6 +204,7 @@ public class ShadowLlmGatewayTests
 
         public bool ThrowOnResolve { get; init; }
         public bool ThrowOnSend { get; init; }
+        public string Content { get; init; } = "inproc-content";
         public int SendCount;
         public int ResolveCount;
 
@@ -170,7 +212,7 @@ public class ShadowLlmGatewayTests
         {
             Interlocked.Increment(ref SendCount);
             if (ThrowOnSend) throw new InvalidOperationException("stub http send boom");
-            return Task.FromResult(GatewayResponse.Ok("inproc-content", _res));
+            return Task.FromResult(GatewayResponse.Ok(Content, _res));
         }
 
         public async IAsyncEnumerable<GatewayStreamChunk> StreamAsync(
