@@ -52,6 +52,7 @@ export class ScheduledJobService {
       .filter((job) => job.enabled && job.schedule.type !== 'manual')
       .filter((job) => !job.nextRunAt || Date.parse(job.nextRunAt) <= now.getTime());
     for (const job of due) {
+      this.claimScheduledOccurrence(job, now);
       await this.runJob(job.id, 'schedule');
     }
   }
@@ -66,7 +67,6 @@ export class ScheduledJobService {
       skipped.durationMs = 0;
       skipped.log = '上一次执行仍在运行，本次按并发策略跳过。';
       this.deps.stateService.upsertScheduledJobRun(skipped);
-      this.patchJobAfterRun(job, skipped);
       return skipped;
     }
 
@@ -157,6 +157,17 @@ export class ScheduledJobService {
       status,
       queuedAt: new Date().toISOString(),
     };
+  }
+
+  private claimScheduledOccurrence(job: ScheduledJob, now: Date): void {
+    if (job.schedule.type === 'manual') return;
+    const latest = this.deps.stateService.getScheduledJob(job.id);
+    if (!latest || !latest.enabled) return;
+    this.deps.stateService.upsertScheduledJob({
+      ...latest,
+      nextRunAt: this.computeNextRunAt(latest.schedule, now),
+      updatedAt: new Date().toISOString(),
+    });
   }
 
   private patchJobAfterRun(job: ScheduledJob, run: ScheduledJobRun): void {

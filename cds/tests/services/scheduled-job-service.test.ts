@@ -5,7 +5,7 @@ import path from 'node:path';
 import { StateService } from '../../src/services/state.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { ScheduledJobService } from '../../src/services/scheduled-job-service.js';
-import type { Project, ScheduledJob } from '../../src/types.js';
+import type { ExecOptions, ExecResult, IShellExecutor, Project, ScheduledJob } from '../../src/types.js';
 
 describe('ScheduledJobService', () => {
   let tmpDir: string;
@@ -195,6 +195,89 @@ describe('ScheduledJobService', () => {
 
     expect(skipped.status).toBe('skipped');
     expect(skipped.log).toContain('并发策略跳过');
+  });
+
+  it('does not overwrite job status when a manual run is skipped by concurrency policy', async () => {
+    let releaseExec: ((result: ExecResult) => void) | null = null;
+    const blockingShell: IShellExecutor = {
+      exec(): Promise<ExecResult> {
+        return new Promise((resolve) => {
+          releaseExec = resolve;
+        });
+      },
+    };
+    service = new ScheduledJobService({
+      stateService,
+      shell: blockingShell,
+      config: { masterPort: 9900, repoRoot: tmpDir },
+    });
+    const job: ScheduledJob = service.normalizeJob({
+      id: 'job_skip_status',
+      projectId: 'demo',
+      name: '跳过不覆盖状态',
+      enabled: true,
+      schedule: { type: 'manual', timezone: 'Asia/Shanghai' },
+      target: { type: 'command', command: 'slow' },
+      timeoutSeconds: 30,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    stateService.upsertScheduledJob({ ...job, lastRunStatus: 'success', lastRunId: 'previous-run' });
+
+    const first = service.runJob(job.id, 'manual');
+    await new Promise((resolve) => setImmediate(resolve));
+    const skipped = await service.runJob(job.id, 'manual');
+    expect(stateService.getScheduledJob(job.id)?.lastRunId).toBe('previous-run');
+    releaseExec?.({ stdout: 'ok\n', stderr: '', exitCode: 0 });
+    await first;
+
+    expect(skipped.status).toBe('skipped');
+    expect(stateService.getScheduledJob(job.id)?.lastRunStatus).toBe('success');
+  });
+
+  it('claims a due scheduled occurrence before awaiting a long-running job', async () => {
+    let releaseExec: ((result: ExecResult) => void) | null = null;
+    const blockingShell: IShellExecutor & { commands: string[] } = {
+      commands: [],
+      exec(command: string, _options?: ExecOptions): Promise<ExecResult> {
+        this.commands.push(command);
+        return new Promise((resolve) => {
+          releaseExec = resolve;
+        });
+      },
+    };
+    service = new ScheduledJobService({
+      stateService,
+      shell: blockingShell,
+      config: { masterPort: 9900, repoRoot: tmpDir },
+    });
+    const job: ScheduledJob = service.normalizeJob({
+      id: 'job_claim_due',
+      projectId: 'demo',
+      name: '提前声明调度',
+      enabled: true,
+      schedule: { type: 'interval', intervalMinutes: 1, timezone: 'Asia/Shanghai' },
+      target: { type: 'command', command: 'slow' },
+      timeoutSeconds: 30,
+      retryCount: 0,
+      concurrencyPolicy: 'skip',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    stateService.upsertScheduledJob({ ...job, nextRunAt: '2026-01-01T00:00:00.000Z' });
+
+    const firstTick = service.tick(new Date('2026-01-01T00:00:00.000Z'));
+    await new Promise((resolve) => setImmediate(resolve));
+    await service.tick(new Date('2026-01-01T00:00:30.000Z'));
+    releaseExec?.({ stdout: 'done\n', stderr: '', exitCode: 0 });
+    await firstTick;
+
+    const runs = stateService.listScheduledJobRuns({ jobId: job.id });
+    expect(blockingShell.commands).toHaveLength(1);
+    expect(runs).toHaveLength(1);
+    expect(runs[0].status).toBe('success');
   });
 
   it('checks a command target without creating run history', async () => {

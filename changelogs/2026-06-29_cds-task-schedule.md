@@ -4,3 +4,5 @@
 | feat | cds | 任务调度改为触发器加动作步骤的纵向配置流，支持多个动作按顺序执行 |
 | security | cds | 修复项目级 key 可无范围读取任务调度列表与运行日志的问题 |
 | fix | cds | 任务调度执行时按 retryCount 重试失败动作 |
+| fix | cds | 修复长时间定时任务重复 tick 产生假跳过记录并覆盖运行状态的问题 |
+| fix | cds | 任务调度命令 sandbox 透传 CDS Docker network，支持访问项目内服务 |

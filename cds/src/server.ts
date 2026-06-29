@@ -1227,7 +1227,7 @@ export function createServer(deps: ServerDeps): express.Express {
   const scheduledJobService = new ScheduledJobService({
     stateService: deps.stateService,
     shell: deps.shell,
-    config: { masterPort: deps.config.masterPort, repoRoot: deps.config.repoRoot },
+    config: { masterPort: deps.config.masterPort, repoRoot: deps.config.repoRoot, dockerNetwork: deps.config.dockerNetwork },
   });
   scheduledJobService.start();
   app.set('etag', false);            // Disable ETag — prevents 304 on API polling (CDS is a dev tool, caching is misleading)
