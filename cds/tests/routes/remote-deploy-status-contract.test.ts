@@ -62,6 +62,13 @@ describe('remote deploy complete: branch status realign contract', () => {
     expect(source).toContain('entry.errorMessage = proxyErrorMessage');
   });
 
+  it('does not stamp lastDeployAt / runtimeStartedAt for a pure clear (empty profiles) on a successful remote complete (Bugbot "Idle clear stamps lastDeployAt")', () => {
+    // A teardown-only remote deploy (profiles empty → idle) must not be treated as a successful redeploy;
+    // the lastDeployAt + runtimeStartedAt stamps are gated on there being at least one desired profile.
+    expect(source).toContain('if (profiles.length > 0) {');
+    expect(source).toContain("stateService.stampBranchTimestamp(entry.id, 'lastDeployAt');");
+  });
+
   it('removes the per-branch network in every cleanup flow, not just DELETE (Codex P2 "Remove branch networks from all cleanup flows")', () => {
     // DELETE + cleanup-stopped + /cleanup + /cleanup-orphans + factory-reset → at least 5 call sites.
     const occurrences = (source.match(/removeBranchNetwork\(/g) || []).length;

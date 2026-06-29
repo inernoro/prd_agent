@@ -2850,9 +2850,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // 重部署后，新 release 容器仍按上一轮 source run 的旧 lastReadyAt
         // 计时，下一拍可能立刻被 auto-stop。与本地路径对齐：stamp
         // lastDeployAt，让 release run 拿到自己的完整生命周期区间。
-        stateService.stampBranchTimestamp(entry.id, 'lastDeployAt');
-        // 戳远端就绪时刻，供 finally 采样部署耗时（见 remoteRuntimeReadyAt 声明处）。
-        if (remoteRuntimeReadyAt) opLog.runtimeStartedAt = remoteRuntimeReadyAt;
+        //
+        // 但纯清空（期望清单为空、teardown-only，远端收敛后落 idle）不是一次成功部署——
+        // stamp lastDeployAt / runtimeStartedAt 会把「拆服务」误当成功重部署，扰乱 auto-lifecycle
+        // 陈旧检测、dispatch 对账与「最近部署」语义（Bugbot「Idle clear stamps lastDeployAt」）。
+        // 故仅当确有期望部署的 profile 时才戳；profiles 为空 = 清空，跳过。
+        if (profiles.length > 0) {
+          stateService.stampBranchTimestamp(entry.id, 'lastDeployAt');
+          // 戳远端就绪时刻，供 finally 采样部署耗时（见 remoteRuntimeReadyAt 声明处）。
+          if (remoteRuntimeReadyAt) opLog.runtimeStartedAt = remoteRuntimeReadyAt;
+        }
       }
       entry.lastAccessedAt = new Date().toISOString();
       stateService.save();
