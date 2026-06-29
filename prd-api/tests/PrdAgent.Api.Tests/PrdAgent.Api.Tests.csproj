@@ -24,7 +24,9 @@
   </ItemGroup>
 
   <!-- 集成自测需起 WebApplication/Kestrel host 住 serving 网关端点 -->
-  <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\PrdAgent.Api\PrdAgent.Api.csproj" />
