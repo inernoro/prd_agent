@@ -62,7 +62,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
 
   // ── POST /exec/deploy — deploy a branch (create worktree + build + run) ──
   router.post('/deploy', async (req, res) => {
-    const { branchId, branchName, projectId, profiles: profilesData, env: envOverrides, requestId, operationId, actor, trigger } = req.body as {
+    const { branchId, branchName, projectId, profiles: profilesRaw, env: envOverrides, requestId, operationId, actor, trigger } = req.body as {
       branchId: string;
       branchName: string;
       // P4 follow-up (2026-04-24): master now passes projectId so the
@@ -78,6 +78,10 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       actor?: string | null;
       trigger?: string | null;
     };
+    // 缺省 profiles 视为空清单（Bugbot Low「Executor deploy missing profiles guard」）：旧 master 或手工
+    // 调用可能省略 profiles 字段,profilesData.map / .length 直接 throw → 把一次合法的「空清单 teardown」
+    // 变成不透明的部署错误。归一为 []，让下方孤儿收敛 + 空清单落 idle 的路径正常走。
+    const profilesData = Array.isArray(profilesRaw) ? profilesRaw : [];
 
     // SSE response
     res.writeHead(200, {
@@ -140,6 +144,50 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
         stateService.addBranch(entry);
         stateService.save();
         sendEvent('step', { step: 'worktree', status: 'done', title: '工作树已创建' });
+      }
+
+      // 进入部署窗口立即把 worker 分支态钉成 building（Bugbot「Executor deploy skips building status」）：
+      // 孤儿收敛 + pull 都在 status=building 之前发生，原先 building 只在 pull 成功后才设，这段窗口里 worker
+      // 副本仍是上一轮的 running/idle，心跳会把它同步到 master、覆盖 master 派发时钉的 building，UI 在大半个
+      // 部署期看不出「构建中」。在拆容器/pull 之前就钉 building，让心跳同步过去的也是 building。
+      entry.status = 'building';
+      stateService.save();
+
+      // 期望清单收敛必须在 pull 之前（Codex P2「Run executor cleanup before git pull」）：清空/移除额外服务
+      // （payload 里没有的 service）的容器拆除不依赖最新代码；若放在 pull 之后，分支被上游删除或 git 瞬时失败会
+      // 走 catch 直接报错，master 已保存新的（空/缩减）期望清单，而 worker 上被移除的旧容器仍在跑（ghost）。
+      // 故先按 payload 收敛掉孤儿容器，再决定是否需要 pull/build。best-effort：remove 失败也删条目。
+      const payloadProfileIds = new Set(profilesData.map((p) => p.id));
+      for (const [sid, svc] of Object.entries(entry.services)) {
+        if (payloadProfileIds.has(sid)) continue;
+        try {
+          await containerService.remove(svc.containerName, {
+            projectId: entry.projectId,
+            branchId: entry.id,
+            profileId: sid,
+            requestId: requestId || null,
+            operationId: operationId || null,
+            actor: actor || 'executor',
+            trigger: trigger || 'executor-deploy',
+            operation: 'executor-deploy-remove-orphan-service',
+            source: 'executor.deploy',
+            reason: '服务已从期望清单移除(额外服务被清/项目 profile 被删)',
+          });
+        } catch { /* best-effort：仍删条目 */ }
+        delete entry.services[sid];
+        sendEvent('step', { step: 'remove-orphan-service', status: 'done', title: `服务 "${sid}" 已下掉（已从期望清单移除）` });
+      }
+      stateService.save();
+
+      // 期望清单为空 = 纯清空（如清掉最后一个额外服务）：没有要构建的东西，跳过 pull（避免 git 瞬时失败/分支
+      // 被上游删除把一次成功的清空翻成 error），直接落 idle + complete 返回。
+      if (profilesData.length === 0) {
+        entry.status = 'idle';
+        entry.errorMessage = undefined;
+        entry.lastAccessedAt = new Date().toISOString();
+        stateService.save();
+        sendEvent('complete', { message: '已清空所有服务', services: entry.services });
+        return; // finally 里 res.end()
       }
 
       // Pull latest
@@ -214,18 +262,49 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
         }
       }
 
+      // 注：期望清单收敛（移除 payload 之外的孤儿服务容器）已上移到 pull 之前，避免 git 失败把
+      // 已移除服务留成 ghost（Codex P2「Run executor cleanup before git pull」）。
+
       // Update overall status
       const statuses = Object.values(entry.services).map(s => s.status);
-      entry.status = statuses.some(s => s === 'running') ? 'running' : 'error';
+      // 无服务(期望清单为空 / 已全部收敛拆除) → idle，与 master 端空清单清理一致（Bugbot Medium）：
+      // 否则空 services 会落到 'error'，心跳同步把一次成功的「清空」误标为失败。
+      // error 优先于 running：running+error 混合落 error，与 master reconcile + 本地 finalize 同口径
+      // （Bugbot「Remote deploy ignores service errors」），不能任一 running 就报 running。
+      entry.status = statuses.length === 0
+        ? 'idle'
+        : statuses.some(s => s === 'error') ? 'error'
+        : statuses.some(s => s === 'running') ? 'running'
+        : 'error';
       entry.lastAccessedAt = new Date().toISOString();
       stateService.save();
 
       sendEvent('complete', {
-        message: entry.status === 'running' ? '部署完成' : '部分服务失败',
+        message: entry.status === 'running'
+          ? '部署完成'
+          : entry.status === 'idle'
+            ? '已清空所有服务'
+            : '部分服务失败',
         services: entry.services,
       });
     } catch (err) {
-      sendEvent('error', { message: (err as Error).message });
+      // 失败也回传当前权威 services 快照（Bugbot「Remote deploy error stale services」）：孤儿收敛已上移到
+      // pull 之前，pull 失败时 worker 上被移除的服务已删，但 master 只从事件里的 services 对账；不带 services
+      // 的 error 会让控制面把已移除的服务一直标 running/错端口到下次心跳。entry 可能尚未取到（极早失败）则省略。
+      const failedEntry = stateService.getBranch(branchId);
+      if (failedEntry) {
+        // 把 worker 自身的分支态落到 error（含 errorMessage）（Bugbot「Failed remote deploy reverts to
+        // building」）：部署前在 pre-allocate 处钉了 building，pull/构建失败时若不改，worker 副本停在
+        // building，下一次心跳会把 master 已 finalize 的 error 覆盖回 building（心跳以 worker status 为准）。
+        // 与 master finally 失败兜底同口径，让心跳同步过去的也是 error。
+        failedEntry.status = 'error';
+        if (!failedEntry.errorMessage) failedEntry.errorMessage = (err as Error).message;
+        stateService.save();
+      }
+      sendEvent('error', {
+        message: (err as Error).message,
+        ...(failedEntry ? { services: failedEntry.services } : {}),
+      });
     } finally {
       res.end();
     }
@@ -353,6 +432,10 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       }
       // P4 Part 18 (G1.2): executor stays on config.repoRoot.
       try { await worktreeService.remove(config.repoRoot, entry.worktreePath); } catch { /* ok */ }
+      // 分支专属网(cds-br-<id>)是在**本执行器**的 docker host 上创建的;主节点的 finalizeBranchDelete
+      // 只清主节点那张(本地不存在=no-op),清不到这里。必须由执行器自己删,否则 worker 节点上隔离网
+      // 随分支删除不断堆积(Bugbot Medium,2026-06-29)。容器上面已 remove,此时网可安全删;best-effort。
+      try { await containerService.removeBranchNetwork(branchId); } catch { /* ok */ }
       stateService.removeLogs(branchId);
       stateService.removeBranch(branchId);
       stateService.save();

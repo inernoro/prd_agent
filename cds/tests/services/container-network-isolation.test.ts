@@ -79,11 +79,21 @@ const okDockerStubs = (mock: MockShellExecutor) => {
 describe('ContainerService 多项目网络隔离', () => {
   let mock: MockShellExecutor;
   let aliveStub: ReturnType<typeof vi.spyOn>;
+  let prevIsolation: string | undefined;
 
   beforeEach(() => {
     mock = new MockShellExecutor();
+    // 本套件验证的是「项目级网络(P4)」契约：app/infra 容器跟随 project.dockerNetwork。
+    // 分支级网络隔离（默认开）会把 app 容器主网换成分支网 cds-br-<id>，那是另一层、另有专门套件
+    // （container-branch-network-isolation.test.ts）。这里关掉全局逃生开关，专测项目级网络解析这一层。
+    prevIsolation = process.env.CDS_BRANCH_NETWORK_ISOLATION;
+    process.env.CDS_BRANCH_NETWORK_ISOLATION = '0';
   });
-  afterEach(() => { aliveStub?.mockRestore(); });
+  afterEach(() => {
+    aliveStub?.mockRestore();
+    if (prevIsolation === undefined) delete process.env.CDS_BRANCH_NETWORK_ISOLATION;
+    else process.env.CDS_BRANCH_NETWORK_ISOLATION = prevIsolation;
+  });
 
   describe('runService 用 project.dockerNetwork', () => {
     it('项目 A 的分支用 cds-proj-A 网络', async () => {

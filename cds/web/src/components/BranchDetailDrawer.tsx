@@ -12,6 +12,7 @@ import { HistoryRow } from '@/components/deployment/HistoryRow';
 import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
 import { deriveBranchPhases, type PhaseKey } from '@/lib/deploymentPhases';
 import { normalizeContainerLogsForDisplay } from '@/lib/containerLogs';
+import { pickActiveDeployment } from './branchDeploymentSelection';
 import {
   buildBranchResources,
   ResourceIcon,
@@ -660,8 +661,6 @@ async function copyTextToClipboard(text: string): Promise<void> {
   document.body.removeChild(textarea);
 }
 
-const ACTIVE_DEPLOYMENT_TAIL_MS = 60_000;
-
 function legacyLogToDeploymentItem(log: OperationLog, branchId: string): BranchDeploymentItem {
   const events = log.events || [];
   const lines = events.map(eventText);
@@ -736,21 +735,6 @@ function PreviewUrlChip({ url }: { url: string }): JSX.Element {
   );
 }
 
-function pickActiveDeployment(items: BranchDeploymentItem[], now: number): BranchDeploymentItem | null {
-  if (items.length === 0) return null;
-  const sorted = items.slice().sort((left, right) => right.startedAt - left.startedAt);
-  // running 优先
-  const running = sorted.find((item) => item.status === 'running');
-  if (running) return running;
-  // 最近 60s 内结束的最近一条也当作 active
-  const recent = sorted.find((item) => {
-    if (!item.finishedAt) return false;
-    return now - item.finishedAt <= ACTIVE_DEPLOYMENT_TAIL_MS;
-  });
-  if (recent) return recent;
-  // 否则第一条（按时间倒序的最新）
-  return sorted[0];
-}
 
 export function BranchDetailDrawer({
   branchId,
