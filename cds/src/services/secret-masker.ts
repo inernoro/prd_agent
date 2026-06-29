@@ -201,7 +201,6 @@ export function maskSecretsInObject<T>(obj: T, opts: { mask?: boolean } = {}): T
  * Marker defaults to `***` so a GET→edit→PUT round-trip is recognized as a mask
  * sentinel and restored to the stored value (see mergeExtraEnv).
  */
-const SENSITIVE_ENV_KEY = /secret|password|token|key|credential/i;
 const URL_WITH_CREDENTIALS = /^[a-z][a-z0-9+.\-]*:\/\/[^@/\s]*:[^@/\s]+@/i;
 
 /**
@@ -218,7 +217,11 @@ export function looksLikeUrlWithCredentials(value: string): boolean {
 export function maskEnvRecord(env: Record<string, string>, marker = '***'): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(env)) {
-    const sensitive = SENSITIVE_ENV_KEY.test(k) || (typeof v === 'string' && URL_WITH_CREDENTIALS.test(v));
+    // 复用 isSensitiveKey 的完整敏感 key 覆盖（含 WEBHOOK / SMTP_* / AUTH / JWT / PAT / *_KEY 等），
+    // 而非早期窄正则 secret|password|token|key|credential —— 否则 WEBHOOK_URL / SLACK_WEBHOOK / SMTP_URL /
+    // AUTH_URL 这类存密钥 URL 的 key 名不命中、值又非 user:pass@ 形态时会原样泄露给任何能查看分支的调用方
+    // （Codex P1「Mask webhook-style env secrets in extra services」）。叠加值为含内联凭据 URL 的兜底。
+    const sensitive = isSensitiveKey(k) || (typeof v === 'string' && URL_WITH_CREDENTIALS.test(v));
     out[k] = sensitive ? marker : v;
   }
   return out;

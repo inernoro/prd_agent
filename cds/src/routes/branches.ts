@@ -2570,6 +2570,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       ...deriveCommitMeta(entry),
     };
     let proxyHasError = false;
+    // 远端 error 事件携带的失败原因（executor SSE error.message），供 finally 把分支态从派发时的 building
+    // 落到 error 时回填 errorMessage（Bugbot「Remote deploy error stuck building」）。
+    let proxyErrorMessage: string | null = null;
     // 远端运行时就绪时刻 —— 收到成功的 complete 事件时戳。用作 opLog.runtimeStartedAt，
     // 让执行器构建路径也能像本地路径一样采集部署耗时样本（见下方 finally）。
     let remoteRuntimeReadyAt: string | null = null;
@@ -2669,7 +2672,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         let parsed: Record<string, unknown> = {};
         try { parsed = JSON.parse(dataStr) as Record<string, unknown>; }
         catch { /* 非 JSON 数据降级为 raw chunk */ opLog.events.push({ step: eventName, status: 'log', chunk: dataStr.slice(0, 500), timestamp: new Date().toISOString() }); return; }
-        if (eventName === 'error') proxyHasError = true;
+        if (eventName === 'error') {
+          proxyHasError = true;
+          if (typeof parsed.message === 'string' && parsed.message.trim() !== '') proxyErrorMessage = parsed.message;
+        }
         // 2026-05-14 Codex review P2 "Don't stamp remote deploys before
         // checking service failures"：/exec/deploy 仅单服务失败时发
         // complete（services 里带 status:'error'）而**不**发 error 事件，
@@ -2863,6 +2869,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 收尾:remote 部署的 OperationLog 落库,与本地部署 (line 2724) 对齐
       opLog.finishedAt = new Date().toISOString();
       opLog.status = proxyHasError ? 'error' : 'completed';
+      // 流式 error 事件（executor 部署失败，如孤儿拆除后 git pull 失败）只置 proxyHasError、对账了 services，
+      // 但分支态重算 ③ 仅在 complete 跑，派发时钉的 'building' 没人改 → UI 卡死「构建中」直到下次心跳
+      // （Bugbot「Remote deploy error stuck building」）。这里兜底：失败且分支态仍停在过渡态（building/
+      // starting/restarting）时落 error + 回填 errorMessage，与本地 finalize 失败口径一致。catch 路径已显式
+      // 置 error，此处幂等不覆盖。
+      if (proxyHasError && entry.status === 'building') {
+        entry.status = 'error';
+        if (!entry.errorMessage) entry.errorMessage = proxyErrorMessage || '远端执行器部署失败';
+        stateService.save();
+      }
       // 部署模式在 2593 是 build 前从全量 project profiles 取的，未必是实际跑的那个，也不含
       // executor 侧 express→static 回退。这里用服务实际 deployedMode（complete 时已钉）重算，
       // 让构建历史「部署类型」反映真正跑起来的模式；取不到（executor 没回报）则保留原值
@@ -4388,6 +4404,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         } catch { /* activity log is best-effort */ }
 
         assertBranchOperationCurrent(branchOperationLease, `cleanup-stopped before remove ${branch.id}`);
+        // 删分支即删分支网：隔离的 cds-br-* 网随删，避免在 worker/host 堆积（Codex P2「Remove branch
+        // networks from all cleanup flows」——此前仅 DELETE 路径删网，批量清理/孤儿/恢复出厂都漏了）。
+        await containerService.removeBranchNetwork(branch.id).catch(() => { /* best-effort */ });
         stateService.removeLogs(branch.id);
         stateService.removeBranch(branch.id);
         removed.push({ branchId: branch.id, branch: branch.branch, projectId: branch.projectId });
@@ -12913,6 +12932,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
           return;
         }
       }
+      // containerWorkDir 边界校验（Codex P2「Preserve container workdir for extra services」）：白名单此前丢弃它，
+      // 导致需要非默认容器工作目录的镜像/monorepo 服务被强制部署在 /app 而运行期失败。这里予以保留 + 校验：
+      // 容器内绝对路径（以 / 开头），与 workDir 同字符集（字母/数字/._-/），禁 .. 穿越与 shell 元字符（container.ts
+      // 对 -w / 挂载目标 shellQuote 兜底）。空 = 省略，container.ts 退回默认 /app。
+      const containerWorkDir = String(raw?.containerWorkDir || '').trim();
+      if (containerWorkDir) {
+        if (!/^\/[a-zA-Z0-9._/-]*$/.test(containerWorkDir) || containerWorkDir.split('/').includes('..')) {
+          res.status(400).json({ error: `额外服务 "${id}" 的 containerWorkDir 非法（须为容器内绝对路径，字母/数字/._-/，禁 .. 穿越与 shell 元字符）` });
+          return;
+        }
+      }
       // 保留分支级路由/依赖/就绪元数据（Codex P2「Preserve branch-local routing metadata」）：
       // 早期白名单只留 id/image/workDir/command/port/env，把 pathPrefixes（路由前缀）、dependsOn
       // （启动顺序）、readinessProbe / startupSignal（就绪判定）这些 deploy 真正消费的字段静默丢了，
@@ -12943,6 +12973,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         name: String(raw?.name || id),
         dockerImage,
         workDir,
+        ...(containerWorkDir ? { containerWorkDir } : {}),
         command: String(raw?.command || ''),
         containerPort,
         projectId: entry.projectId || 'default',
@@ -14964,6 +14995,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
             await worktreeService.remove(repoRoot, entry.worktreePath);
           } catch { /* ok */ }
           assertBranchOperationCurrent(branchOperationLease, 'cleanup before state delete');
+          // 删分支即删分支网（Codex P2「Remove branch networks from all cleanup flows」）。
+          await containerService.removeBranchNetwork(entry.id).catch(() => { /* best-effort */ });
           stateService.removeLogs(entry.id);
           stateService.removeBranch(entry.id);
           removedCount += 1;
@@ -15124,6 +15157,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // State mutations are serial (state is in-memory, no async needed)
       for (const entry of cleanedOrphans) {
+        // 删分支即删分支网（Codex P2「Remove branch networks from all cleanup flows」）。
+        await containerService.removeBranchNetwork(entry.id).catch(() => { /* best-effort */ });
         stateService.removeLogs(entry.id);
         stateService.removeBranch(entry.id);
       }
@@ -15280,6 +15315,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
             await worktreeService.remove(repoRoot, entry.worktreePath);
           } catch { /* ok */ }
           assertBranchOperationCurrent(branchOperationLease, 'factory reset before state delete');
+          // 删分支即删分支网（Codex P2「Remove branch networks from all cleanup flows」）。
+          await containerService.removeBranchNetwork(entry.id).catch(() => { /* best-effort */ });
           stateService.removeLogs(entry.id);
           stateService.removeBranch(entry.id);
           } catch (err) {

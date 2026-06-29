@@ -54,6 +54,20 @@ describe('remote deploy complete: branch status realign contract', () => {
     expect(source).toContain('entry.services[pid] = {');
   });
 
+  it('finally falls a stuck building branch to error on a streamed remote error (Bugbot "Remote deploy error stuck building")', () => {
+    // A streamed `error` event sets proxyHasError + reconciles services but ③ status recompute is complete-only,
+    // leaving the dispatch-time 'building'. The finally must demote building→error + backfill errorMessage.
+    expect(source).toContain("if (proxyHasError && entry.status === 'building') {");
+    expect(source).toContain("entry.status = 'error';");
+    expect(source).toContain('entry.errorMessage = proxyErrorMessage');
+  });
+
+  it('removes the per-branch network in every cleanup flow, not just DELETE (Codex P2 "Remove branch networks from all cleanup flows")', () => {
+    // DELETE + cleanup-stopped + /cleanup + /cleanup-orphans + factory-reset → at least 5 call sites.
+    const occurrences = (source.match(/removeBranchNetwork\(/g) || []).length;
+    expect(occurrences).toBeGreaterThanOrEqual(5);
+  });
+
   it('local deploy finalize maps an empty desired set to idle, not error (Bugbot "Empty deploy marks branch error")', () => {
     // When an in-line/local-fallback deploy ends with zero active services and no error (the empty-clear
     // case), entry.status MUST be idle — matching the executor path and the local empty-cleanup early

@@ -467,6 +467,24 @@ describe('Branch Routes', () => {
       expect(saved.startupSignal).toBe('Network:');
     });
 
+    it('preserves containerWorkDir and rejects an illegal one (Codex P2)', async () => {
+      seedBranch('b1');
+      // valid container-absolute path is kept
+      const ok = await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'svc', name: 'svc', dockerImage: 'nginx:alpine', containerPort: 80, containerWorkDir: '/srv/app' }],
+      });
+      expect(ok.status).toBe(200);
+      expect(stateService.getBranch('b1')!.extraProfiles!.find((p) => p.id === 'svc')!.containerWorkDir).toBe('/srv/app');
+      // shell-metachar / relative / traversal rejected
+      for (const bad of ['app', '/srv/"; id', '/srv/../etc', '/a$(x)']) {
+        const res = await request(server, 'PUT', '/api/branches/b1/extra-services', {
+          extraProfiles: [{ id: 'svc', name: 'svc', dockerImage: 'nginx:alpine', containerPort: 80, containerWorkDir: bad }],
+        });
+        expect(res.status).toBe(400);
+        expect(String((res.body as any).error)).toContain('containerWorkDir');
+      }
+    });
+
     it('rejects an extra id that collides with a project profile', async () => {
       stateService.addBuildProfile({ id: 'api', name: 'API', dockerImage: 'img', workDir: 'api', command: 'run', containerPort: 8080, projectId: 'default' });
       seedBranch('b1');

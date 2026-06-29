@@ -226,6 +226,21 @@ describe('secret-masker.maskEnvRecord', () => {
     expect(out.LOG_LEVEL).toBe('info'); // non-sensitive untouched
   });
 
+  it('masks webhook/SMTP/auth-style secret keys via the broader isSensitiveKey coverage (Codex P1)', () => {
+    const out = maskEnvRecord({
+      WEBHOOK_URL: 'https://hooks.example.com/abc',
+      SLACK_WEBHOOK: 'https://hooks.slack.com/services/T/B/xyz',
+      SMTP_URL: 'smtps://mail.example.com',
+      AUTH_URL: 'https://auth.example.com/oauth',
+      PUBLIC_PAGE_URL: 'https://example.com', // not sensitive → unchanged
+    });
+    expect(out.WEBHOOK_URL).toBe('***');
+    expect(out.SLACK_WEBHOOK).toBe('***');
+    expect(out.SMTP_URL).toBe('***');
+    expect(out.AUTH_URL).toBe('***');
+    expect(out.PUBLIC_PAGE_URL).toBe('https://example.com');
+  });
+
   it('masks URL-style values carrying inline credentials even when the key is not sensitive (Codex P2)', () => {
     const out = maskEnvRecord({
       DATABASE_URL: 'postgres://user:pass@host:5432/db',

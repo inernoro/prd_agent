@@ -188,6 +188,41 @@ describe('ContainerService 分支级网络隔离', () => {
     expect(mock.commands.some((c) => c.includes('docker start cds-feature-a-apigateway'))).toBe(false);
   });
 
+  it('一次性 job（runProfileCommand）隔离时也跑分支网 + 连共享 infra 网（Bugbot「Job containers miss branch app DNS」）', async () => {
+    const service = new ContainerService(mock, makeConfig(), resolver);
+    mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker network create/, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker network connect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker create/, () => ({ stdout: 'cid', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker start/, () => ({ stdout: 'cid', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker wait/, () => ({ stdout: '0\n', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker logs/, () => ({ stdout: 'migration ok', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/mkdir/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+
+    const result = await service.runProfileCommand(makeEntry('proj-a'), makeProfile(), 'dotnet ef database update');
+
+    expect(result.exitCode).toBe(0);
+    // 隔离 job 用 create→connect→start→wait→logs→rm，不是一次性 docker run --rm。
+    const createCmd = mock.commands.find((c) => c.includes('docker create') && c.includes('cds-job-feature-a-apigateway'))!;
+    expect(createCmd).toBeDefined();
+    expect(createCmd).toContain('--network cds-br-feature-a'); // 主网=分支网 → 能解析兄弟 app 别名
+    expect(mock.commands.some((c) => c.includes('docker run --rm'))).toBe(false);
+    // 连共享 infra 网（mysql/redis 可达）。
+    expect(mock.commands.some((c) => c.includes('docker network connect') && c.includes('cds-proj-a') && c.includes('cds-job-feature-a-apigateway'))).toBe(true);
+    // 时序：create → connect → start → wait → rm。
+    const ci = mock.commands.findIndex((c) => c.includes('docker create') && c.includes('cds-job-feature-a-apigateway'));
+    const coni = mock.commands.findIndex((c) => c.includes('docker network connect') && c.includes('cds-job-feature-a-apigateway'));
+    const si = mock.commands.findIndex((c) => c.includes('docker start') && c.includes('cds-job-feature-a-apigateway'));
+    const wi = mock.commands.findIndex((c) => c.includes('docker wait') && c.includes('cds-job-feature-a-apigateway'));
+    expect(coni).toBeGreaterThan(ci);
+    expect(si).toBeGreaterThan(coni);
+    expect(wi).toBeGreaterThan(si);
+    // 收尾删除临时 job 容器。
+    expect(mock.commands.some((c) => c.includes('docker rm -f') && c.includes('cds-job-feature-a-apigateway'))).toBe(true);
+  });
+
   it('infra 容器不受分支隔离影响，仍在项目共享网', async () => {
     const service = new ContainerService(mock, makeConfig(), resolver);
     okStubs(mock);

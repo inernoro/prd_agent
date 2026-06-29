@@ -1503,6 +1503,17 @@ export class ContainerService {
   ): Promise<ExecResult> {
     const network = this.getNetworkForProject(entry.projectId);
     await this.ensureNetwork(network);
+    // 分支级隔离下，长生命周期 app 容器的 --network-alias 落在分支网（cds-br-*）而非共享项目网。一次性 job
+    // （db-init/migration）若仍只挂共享网，就解析不到兄弟 app 的 profile 主机名（如 http://api:8080）——
+    // Bugbot「Job containers miss branch app DNS」。故 job 与 app 同口径走 netPlan：隔离时主网=分支网（能解析
+    // 兄弟 app 别名）+ 连共享 infra 网（能到 mysql/redis）；job 自身不注册别名（aliases:[]，没人需要解析到它）。
+    const netPlan = resolveAppNetworkPlan({
+      isolated: branchNetworkIsolationEnabled(process.env),
+      sharedNetwork: network,
+      branchId: entry.id,
+      aliases: [],
+    });
+    if (netPlan.runNetwork !== network) await this.ensureNetwork(netPlan.runNetwork);
 
     const resolvedEnv = this.resolveProfileRuntimeEnv(entry, profile, customEnv);
     const envFilePath = this.writeEnvFile(resolvedEnv);
@@ -1525,9 +1536,8 @@ export class ContainerService {
       // sh -c 解释。旧写法 dockerImage 裸拼 + `sh -c "${command.replace(/"/g,'\\"')}"` 双引号可被 $()/反引号
       // 在宿主机预展开/越权执行。
       const jobImage = (profile.dockerImage || '').trim();
-      const runCmd = [
-        'docker run --rm',
-        `--network ${network}`,
+      // 容器规格（不含 run 动词 / --network / --rm / --name），隔离与非隔离两条路径共用。
+      const jobSpec = [
         ...volumeFlags,
         ...entrypointFlags,
         `-w ${this.shellQuote(containerWorkDir)}`,
@@ -1538,14 +1548,55 @@ export class ContainerService {
         `--label cds.project.id=${entry.projectId || 'default'}`,
         `--label cds.branch.id=${entry.id}`,
         `--label cds.profile.id=${profile.id}`,
-        this.shellQuote(jobImage),
-        `sh -c ${this.shellQuote(command)}`,
-      ].join(' ');
+      ];
+      const jobTail = [this.shellQuote(jobImage), `sh -c ${this.shellQuote(command)}`];
+      const timeoutMs = context.timeoutMs ?? profile.buildTimeout ?? 600_000;
 
       context.assertCurrent?.(`runProfileCommand before docker-run ${profile.id}`);
-      const result = await this.shell.exec(runCmd, {
-        timeout: context.timeoutMs ?? profile.buildTimeout ?? 600_000,
-      });
+      let result: ExecResult;
+      const attachSharedBeforeStart = netPlan.connectNetworks.length > 0;
+      if (!attachSharedBeforeStart) {
+        // 未隔离：保持原 `docker run --rm` 一次性语义（零回归）。
+        const runCmd = ['docker run --rm', `--network ${netPlan.runNetwork}`, ...jobSpec, ...jobTail].join(' ');
+        result = await this.shell.exec(runCmd, { timeout: timeoutMs });
+      } else {
+        // 隔离：create(分支网) → connect(共享 infra 网) → start → wait → logs → rm。让 job 同时可达兄弟 app
+        // （分支网别名）与共享 infra（mysql/redis）。不能用 `docker run --rm`（单网、退出即删，无从 connect
+        // 第二张网 / 取 exitCode）。connect 失败抛错（与 app 同口径，infra 不可达的 job 没意义）。
+        const jobName = `cds-job-${entry.id}-${profile.id}`;
+        await this.shell.exec(`docker rm -f ${this.shellQuote(jobName)}`).catch(() => undefined); // 预清理同名残留
+        try {
+          const createCmd = ['docker create', `--name ${this.shellQuote(jobName)}`, `--network ${netPlan.runNetwork}`, ...jobSpec, ...jobTail].join(' ');
+          const createRes = await this.shell.exec(createCmd, { timeout: timeoutMs });
+          if (createRes.exitCode !== 0) {
+            result = createRes;
+          } else {
+            for (const sharedNet of netPlan.connectNetworks) {
+              await this.connectContainerToSharedNetwork(jobName, sharedNet, {
+                projectId: entry.projectId, branchId: entry.id, profileId: profile.id,
+                requestId: context.requestId ?? undefined, operationId: context.operationId ?? undefined,
+              });
+            }
+            const startRes = await this.shell.exec(`docker start ${this.shellQuote(jobName)}`, { timeout: timeoutMs });
+            if (startRes.exitCode !== 0) {
+              result = startRes;
+            } else {
+              // 阻塞到容器退出取退出码，再取日志（合并到 stdout 供展示，与 docker run 捕获等价）。
+              const waitRes = await this.shell.exec(`docker wait ${this.shellQuote(jobName)}`, { timeout: timeoutMs });
+              const parsedExit = parseInt((waitRes.stdout || '').trim(), 10);
+              const logsRes = await this.shell.exec(`docker logs ${this.shellQuote(jobName)}`, { timeout: timeoutMs });
+              result = {
+                stdout: logsRes.stdout,
+                stderr: logsRes.stderr,
+                exitCode: Number.isFinite(parsedExit) ? parsedExit : (waitRes.exitCode || 1),
+              };
+            }
+          }
+        } finally {
+          await this.shell.exec(`docker rm -f ${this.shellQuote(jobName)}`).catch(() => undefined);
+        }
+      }
+
       this.recordContainerEvent({
         severity: result.exitCode === 0 ? 'info' : 'error',
         source: 'cds-container-service',
@@ -1557,14 +1608,14 @@ export class ContainerService {
         requestId: context.requestId ?? undefined,
         operationId: context.operationId ?? undefined,
         command: {
-          name: 'docker run --rm',
+          name: attachSharedBeforeStart ? 'docker create+start (job, isolated)' : 'docker run --rm',
           exitCode: result.exitCode,
           stdoutPreview: result.stdout,
           stderrPreview: result.stderr,
         },
         details: {
           image: profile.dockerImage,
-          network,
+          network: netPlan.runNetwork,
           actor: context.actor ?? null,
           trigger: context.trigger ?? null,
         },
