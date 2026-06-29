@@ -12392,9 +12392,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // M9: drop any value that isn't a string. Non-string values would
         // explode the env-file writer (container.ts writeEnvFile) and leak
         // `undefined` / numbers into Docker env.
+        // 剥离掩码哨兵（Bugbot High「Extra override PUT keeps mask sentinels」）：额外服务的 GET 会把
+        // override.env 打掩码（***），GET→编辑→PUT 往返若把字面 *** 原样持久化，deploy 时真实密钥被抹。
+        // 命中哨兵则从已存覆盖的同 key 旧值恢复，无旧值则丢弃（绝不写字面哨兵）；与 extra-services PUT 口径一致。
+        const OVERRIDE_MASK_SENTINELS = new Set(['***', '***[masked]***', '****', '*****']);
+        const prevOverrideEnv = (entry.profileOverrides?.[profileId]?.env || {}) as Record<string, string>;
         const cleaned: Record<string, string> = {};
         for (const [k, v] of Object.entries(body.env as Record<string, unknown>)) {
-          if (typeof v === 'string') cleaned[k] = v;
+          if (typeof v !== 'string') continue;
+          if (OVERRIDE_MASK_SENTINELS.has(v.trim())) {
+            if (Object.prototype.hasOwnProperty.call(prevOverrideEnv, k)) cleaned[k] = prevOverrideEnv[k];
+            continue;
+          }
+          cleaned[k] = v;
         }
         envOverride = cleaned;
       }

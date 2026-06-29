@@ -241,28 +241,28 @@ export function maskBranchExtraProfilesEnv<
     profileOverrides?: Record<string, { env?: Record<string, string> }>;
   },
 >(branch: T): T {
-  if (!branch.extraProfiles) return branch;
-  const extraIds = new Set(branch.extraProfiles.map((p) => p.id).filter((x): x is string => !!x));
-  const out: T = {
-    ...branch,
-    extraProfiles: branch.extraProfiles.map((p) => (p.env ? { ...p, env: maskEnvRecord(p.env) } : p)),
-  };
-  // 额外服务的 PUT /profile-overrides 把 env 存进 branch.profileOverrides[<extraId>]，分支序列化若不连这里
-  // 一起脱敏，/branches、/branches/:id、分支流仍吐 override 明文（profile-overrides 响应已脱敏，唯独分支视图漏）。
-  if (branch.profileOverrides && extraIds.size > 0) {
-    let changed = false;
-    const maskedOv: Record<string, { env?: Record<string, string> }> = {};
-    for (const [pid, ov] of Object.entries(branch.profileOverrides)) {
-      if (extraIds.has(pid) && ov?.env) {
-        maskedOv[pid] = { ...ov, env: maskEnvRecord(ov.env) };
-        changed = true;
-      } else {
-        maskedOv[pid] = ov;
-      }
-    }
-    if (changed) (out as { profileOverrides?: unknown }).profileOverrides = maskedOv;
+  const hasExtra = Array.isArray(branch.extraProfiles) && branch.extraProfiles.length > 0;
+  const overrideEntries = branch.profileOverrides ? Object.entries(branch.profileOverrides) : [];
+  const hasMaskableOverride = overrideEntries.some(([, ov]) => !!ov?.env);
+  if (!hasExtra && !hasMaskableOverride) return branch;
+
+  const masked: Record<string, unknown> = { ...branch };
+  if (hasExtra) {
+    masked.extraProfiles = branch.extraProfiles!.map((p) => (p.env ? { ...p, env: maskEnvRecord(p.env) } : p));
   }
-  return out;
+  // 分支视图遮蔽**所有** profileOverrides env，而非只按当前 extraProfiles 的 id：清掉额外服务后，
+  // branch.extraProfiles 已不含该 id，但 branch.profileOverrides 里残留的覆盖 env（含 PUT /profile-overrides
+  // 存的密钥）仍会被 /branches、/branches/:id、state-stream 明文吐出（Bugbot「Stale extra overrides leak
+  // secrets」）。分支列表/详情/流不需要明文覆盖 env（编辑走 profile-overrides 面板，自身脱敏），状态层仍存
+  // 明文供 deploy 直读，故此处一律遮蔽，杜绝孤立覆盖泄露。
+  if (hasMaskableOverride) {
+    const maskedOv: Record<string, { env?: Record<string, string> }> = {};
+    for (const [pid, ov] of overrideEntries) {
+      maskedOv[pid] = ov?.env ? { ...ov, env: maskEnvRecord(ov.env) } : ov;
+    }
+    masked.profileOverrides = maskedOv;
+  }
+  return masked as T;
 }
 
 /**

@@ -288,20 +288,33 @@ describe('secret-masker.maskBranchExtraProfilesEnv', () => {
     expect(maskBranchExtraProfilesEnv(plain)).toBe(plain); // no extras → same ref
   });
 
-  it('also masks profileOverrides env for extra-profile ids, leaving project-profile overrides untouched (Codex P1)', () => {
+  it('masks ALL profileOverrides env in the branch view (covers stale/cleared extra overrides) (Codex/Bugbot)', () => {
     const branch = {
       id: 'b1',
       extraProfiles: [{ id: 'svc', env: { TOKEN: 'sek' } }],
       profileOverrides: {
-        svc: { env: { TOKEN: 'override-secret', PORT: '8080' } }, // extra → masked
-        api: { env: { DB_PASSWORD: 'projsecret' } },               // project profile → NOT masked here
+        svc: { env: { TOKEN: 'override-secret', PORT: '8080' } }, // current extra → masked
+        api: { env: { DB_PASSWORD: 'projsecret' } },               // any override → masked in the view too
       },
     };
     const view = maskBranchExtraProfilesEnv(branch);
     expect(view.profileOverrides!.svc.env).toEqual({ TOKEN: '***', PORT: '8080' });
-    expect(view.profileOverrides!.api.env).toEqual({ DB_PASSWORD: 'projsecret' }); // project override unchanged
+    expect(view.profileOverrides!.api.env).toEqual({ DB_PASSWORD: '***' });
     // original not mutated
     expect(branch.profileOverrides.svc.env.TOKEN).toBe('override-secret');
+  });
+
+  it('masks leftover override env even after the extra service was cleared (extraProfiles absent) — Bugbot "Stale extra overrides leak secrets"', () => {
+    const branch = {
+      id: 'b1',
+      // extra services were cleared → no extraProfiles, but a stale override with a secret remains.
+      profileOverrides: {
+        'old-extra': { env: { API_TOKEN: 'still-secret', PORT: '9000' } },
+      },
+    };
+    const view = maskBranchExtraProfilesEnv(branch);
+    expect(view.profileOverrides!['old-extra'].env).toEqual({ API_TOKEN: '***', PORT: '9000' });
+    expect(branch.profileOverrides['old-extra'].env.API_TOKEN).toBe('still-secret');
   });
 });
 

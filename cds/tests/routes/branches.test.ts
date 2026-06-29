@@ -689,6 +689,21 @@ describe('Branch Routes', () => {
       expect(stateService.getBranch('b1')!.profileOverrides?.['demo-extra']?.env?.API_TOKEN).toBe('tok_overridesecret');
     });
 
+    it('PUT /profile-overrides strips mask sentinels and restores the prior override secret (Bugbot High)', async () => {
+      seedBranch('b1');
+      await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80 }],
+      });
+      // First save the real override secret.
+      await request(server, 'PUT', '/api/branches/b1/profile-overrides/demo-extra', { env: { API_TOKEN: 'real_secret', LOG: 'info' } });
+      // GET→edit→PUT round trip re-submits the masked sentinel for the unchanged key.
+      const put = await request(server, 'PUT', '/api/branches/b1/profile-overrides/demo-extra', { env: { API_TOKEN: '***', LOG: 'debug' } });
+      expect(put.status).toBe(200);
+      // The literal sentinel must NOT be persisted — the real secret is restored, the edited key updates.
+      expect(stateService.getBranch('b1')!.profileOverrides?.['demo-extra']?.env?.API_TOKEN).toBe('real_secret');
+      expect(stateService.getBranch('b1')!.profileOverrides?.['demo-extra']?.env?.LOG).toBe('debug');
+    });
+
     it('GET /api/branches/:id masks the extra-profile override env in the branch view (Codex P1)', async () => {
       seedBranch('b1');
       await request(server, 'PUT', '/api/branches/b1/extra-services', {
