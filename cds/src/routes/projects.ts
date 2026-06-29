@@ -1812,6 +1812,91 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     }
   });
 
+  type DetectedRuntimeService = {
+    id: string;
+    name: string;
+    role: 'frontend' | 'backend' | 'worker';
+    runtime: string;
+    dockerImage: string;
+    command: string;
+    port: number;
+    summary?: string;
+    stack?: string;
+    confidence?: number;
+    signals?: string[];
+    databaseInit?: ReturnType<typeof detectDatabaseInitialization>[number] | null;
+    databaseInitCandidates?: ReturnType<typeof detectDatabaseInitialization>;
+    manualSetupRequired?: boolean;
+  };
+
+  type DetectedRuntimeConfig = {
+    services: DetectedRuntimeService[];
+    infraPresets: string[];
+  };
+
+  function inferRuntimeFromProfile(profile: { dockerImage?: string; command?: string }): string {
+    const command = (profile.command || '').trim();
+    const text = `${profile.dockerImage || ''} ${command}`.toLowerCase();
+    if (text.includes('dotnet') || text.includes('aspnet')) return 'dotnet';
+    if (text.includes('node') || text.includes('pnpm') || text.includes('npm ') || text.includes('vite')) return 'node';
+    if (text.includes('python') || text.includes('pip ')) return 'python';
+    if (text.includes('maven') || text.includes('java ')) return 'java';
+    if (text.includes('golang') || /\bgo\s+(run|build|mod)\b/.test(text)) return 'go';
+    if (text.includes('rust') || text.includes('cargo ')) return 'rust';
+    if (text.includes('php')) return 'php';
+    if (!command) return 'dockerfile';
+    return 'custom';
+  }
+
+  function quoteShellPath(value: string): string {
+    if (/^[A-Za-z0-9_./-]+$/.test(value)) return value;
+    return `'${value.replace(/'/g, `'\\''`)}'`;
+  }
+
+  function commandFromProfile(profile: { command?: string; workDir?: string }): string {
+    const command = (profile.command || '').trim();
+    if (!command) return '';
+    const workDir = (profile.workDir || '.').trim().replace(/^\.\//, '');
+    if (!workDir || workDir === '.') return command;
+    return `cd ${quoteShellPath(workDir)} && ${command}`;
+  }
+
+  function roleFromProfile(profile: { pathPrefixes?: string[]; readinessProbe?: { noHttp?: boolean } }): 'frontend' | 'backend' | 'worker' {
+    if (profile.readinessProbe?.noHttp) return 'worker';
+    const prefixes = profile.pathPrefixes || [];
+    if (prefixes.some((prefix) => prefix === '/' || prefix === '/*')) return 'frontend';
+    return 'backend';
+  }
+
+  function detectedRuntimeConfigFromCdsCompose(repoDir: string): DetectedRuntimeConfig {
+    const composePath = ['cds-compose.yml', 'cds-compose.yaml']
+      .map((file) => nodePath.join(repoDir, file))
+      .find((file) => nodeFs.existsSync(file));
+    if (!composePath) return { services: [], infraPresets: [] };
+    const parsed = parseCdsCompose(nodeFs.readFileSync(composePath, 'utf-8'));
+    if (!parsed) return { services: [], infraPresets: [] };
+    const infraPresets = parsed.infraServices
+      .map((service) => service.id)
+      .filter((id) => INFRA_PRESETS.has(id));
+    const services = parsed.buildProfiles.map((profile) => ({
+      id: slugifyName(profile.id),
+      name: profile.name || profile.id,
+      role: roleFromProfile(profile),
+      runtime: inferRuntimeFromProfile(profile),
+      dockerImage: profile.dockerImage || '',
+      command: commandFromProfile(profile),
+      port: profile.containerPort || 8080,
+      summary: `[${nodePath.basename(composePath)}] ${profile.id} · ${profile.dockerImage}`,
+      stack: 'compose',
+      confidence: 0.95,
+      signals: [nodePath.basename(composePath), `services.${profile.id}`],
+      databaseInit: null,
+      databaseInitCandidates: [],
+      manualSetupRequired: false,
+    }));
+    return { services, infraPresets };
+  }
+
   // 检测并回填:仓库 URL → 浅克隆 → 复用 detectModules(monorepo 感知)识别栈 → 返回每个模块的建议
   // 服务配置(镜像/命令/端口),前端据此把应用服务一键填好,取代"按运行时猜测的默认",减少第一次点红。
   router.post('/detect-runtime', async (req, res) => {
@@ -1837,8 +1922,10 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     try {
       const clone = await shell.exec(`git clone --depth 1 ${gitRef ? `--branch ${q(gitRef)} ` : ''}${q(authedCloneUrl)} ${q(dir)}`, { timeout: 120000 });
       if (clone.exitCode !== 0) { res.status(400).json({ error: '克隆失败——检查 URL / 分支 / 访问权限。', detail: maskTok(combinedOutput(clone)).slice(-400) }); return; }
-      const modules = detectModules(dir);
-      const services = modules.map((m, i) => {
+      const composeConfig = detectedRuntimeConfigFromCdsCompose(dir);
+      const composeServices = composeConfig.services;
+      const modules = composeServices.length > 0 ? [] : detectModules(dir);
+      const services: DetectedRuntimeService[] = composeServices.length > 0 ? composeServices : modules.map((m, i) => {
         const d = m.detection;
         const sub = m.subPath && m.subPath !== '.' ? m.subPath : '';
         const inner = [d.installCommand, d.suggestedBuildCommand || d.buildCommand, d.suggestedRunCommand || d.runCommand].filter(Boolean).join(' && ');
@@ -1871,6 +1958,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         moduleCount: modules.length,
         databaseInit: databaseInitCandidates[0] || null,
         databaseInitCandidates,
+        infraPresets: composeConfig.infraPresets,
       });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
