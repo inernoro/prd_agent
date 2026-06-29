@@ -104,7 +104,7 @@ public class CrossProcessServingSelfTest
             var llmChunks = new List<LLMStreamChunk>();
             await foreach (var c in llmClient.StreamGenerateAsync("sys", msgs, CancellationToken.None))
                 llmChunks.Add(c);
-            llmChunks.Select(c => c.Type).ShouldBe(new[] { "start", "delta", "done" });
+            llmChunks.Select(c => c.Type).ShouldBe(new[] { "start", "delta", "delta", "done" });
             string.Concat(llmChunks.Where(c => c.Type == "delta").Select(c => c.Content)).ShouldBe("hi-there");
 
             // 7) 密钥门：错 key 的 client，send 应失败且 401。
