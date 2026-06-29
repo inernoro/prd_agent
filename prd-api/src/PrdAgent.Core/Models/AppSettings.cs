@@ -73,7 +73,7 @@ public class AppSettings
     public string? MapInstanceId { get; set; }
 
     /// <summary>是否启用米多星球 SSO</summary>
-    public bool MiduoSsoEnabled { get; set; }
+    public bool? MiduoSsoEnabled { get; set; }
 
     /// <summary>米多星球开放接口 Base URL，如 https://admin.ebcone.cn</summary>
     public string? MiduoSsoBaseUrl { get; set; }
