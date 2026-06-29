@@ -1319,7 +1319,10 @@ export class ContainerService {
         ...(usePrebuiltEntrypoint ? [] : [`-w ${containerWorkDir}`]),
         envFlag,
         '--tmpfs /tmp',
-        this.appLabels(entry.projectId, entry.id, profile.id, netPlan.runNetwork),
+        // cds.network 标签保持「共享/项目网」语义（用于按项目归属/孤儿容器清理的 projectIdForDockerNetwork
+        // 解析），不跟随实际 run 主网（分支网）。真正的隔离是上面的 `--network <分支网>` + 跑后 connect 共享网，
+        // 与标签无关。若把标签写成 cds-br-<id>，孤儿容器(分支已不在 state)将无法按网络名归属到项目。
+        this.appLabels(entry.projectId, entry.id, profile.id, network),
         runImage,
         ...(usePrebuiltEntrypoint ? [] : [`sh -c "${command.replace(/"/g, '\\"')}"`]),
       ].join(' ');

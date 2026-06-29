@@ -106,7 +106,9 @@ describe('ContainerService 分支级网络隔离', () => {
     const runCmd = mock.commands.find((c) => c.includes('docker run -d'))!;
     expect(runCmd).toContain('--network cds-br-feature-a');
     expect(runCmd).not.toContain('--network cds-proj-a');
-    expect(runCmd).toContain('--label cds.network=cds-br-feature-a');
+    // cds.network 标签保持项目网（用于项目归属/孤儿清理），不跟随实际 run 主网（分支网）
+    expect(runCmd).toContain('--label cds.network=cds-proj-a');
+    expect(runCmd).not.toContain('--label cds.network=cds-br-');
     // app 别名仍在（但现在只挂在分支网上）
     expect(runCmd).toContain('--network-alias apigateway');
     // 运行后连共享 infra 网，且不带别名（杜绝兄弟分支按 app 别名串流到本容器）
