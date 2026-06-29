@@ -281,6 +281,15 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       // pull 之前，pull 失败时 worker 上被移除的服务已删，但 master 只从事件里的 services 对账；不带 services
       // 的 error 会让控制面把已移除的服务一直标 running/错端口到下次心跳。entry 可能尚未取到（极早失败）则省略。
       const failedEntry = stateService.getBranch(branchId);
+      if (failedEntry) {
+        // 把 worker 自身的分支态落到 error（含 errorMessage）（Bugbot「Failed remote deploy reverts to
+        // building」）：部署前在 pre-allocate 处钉了 building，pull/构建失败时若不改，worker 副本停在
+        // building，下一次心跳会把 master 已 finalize 的 error 覆盖回 building（心跳以 worker status 为准）。
+        // 与 master finally 失败兜底同口径，让心跳同步过去的也是 error。
+        failedEntry.status = 'error';
+        if (!failedEntry.errorMessage) failedEntry.errorMessage = (err as Error).message;
+        stateService.save();
+      }
       sendEvent('error', {
         message: (err as Error).message,
         ...(failedEntry ? { services: failedEntry.services } : {}),

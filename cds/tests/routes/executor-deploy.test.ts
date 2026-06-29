@@ -335,6 +335,10 @@ describe('Executor /exec/deploy', () => {
     // The orphan was torn down before the pull failed (its container was removed + entry cleared).
     expect(stateService.getBranch('realproj-pullfail')!.services['old-extra']).toBeUndefined();
     expect(errorEvent!.data.services['old-extra']).toBeUndefined();
+    // worker 自身分支态落 error（Bugbot「Failed remote deploy reverts to building」）：否则下一次心跳会把
+    // master 已 finalize 的 error 覆盖回 building。
+    expect(stateService.getBranch('realproj-pullfail')!.status).toBe('error');
+    expect(stateService.getBranch('realproj-pullfail')!.errorMessage).toBeTruthy();
   });
 
   it('does not stamp projectId on a branch the executor already knows about', async () => {
