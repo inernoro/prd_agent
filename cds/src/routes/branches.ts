@@ -2694,6 +2694,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 entry.services[pid].deployedMode = m.trim();
               }
             }
+            // 远端权威收敛（Bugbot Medium「Remote clear leaves master services stale」）：executor
+            // complete 的 services 是部署后的权威集合。此前只 patch 已存在 key 的 deployedMode，从不删
+            // executor 已移除的服务 → 远端清空额外服务后 master 残留 ghost 服务条目，UI 一直显示到下次心跳。
+            // 这里按 svcMap 删除 master 端不再存在的服务条目（svcMap 为空=全部清掉，正是清空场景）。
+            // 仅在 complete 带 services 载荷时执行（老执行器不带则不动，避免误删）。
+            for (const pid of Object.keys(entry.services)) {
+              if (!Object.prototype.hasOwnProperty.call(svcMap, pid)) {
+                delete entry.services[pid];
+              }
+            }
           }
           // 成功 complete = 远端运行时就绪的时刻（executor 在所有服务 running 后才发）。
           // 戳为 runtimeStartedAt，让 finally 能像本地路径一样采样部署耗时（修复 PR #865
@@ -2900,6 +2910,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
       masked[k] = SENSITIVE.test(k) ? '***' : v;
     }
     return masked;
+  }
+
+  /**
+   * 序列化分支时给 branch-local 额外服务(extraProfiles)的 env 打掩码（Codex P1「Redact extra
+   * service env in responses」）。与 /build-profiles 的 maskSecrets 一致：状态层保持明文（deploy 路径
+   * 从 state 直接读 raw env，不经序列化），仅响应视图脱敏，避免任何能查看分支的调用方拿到原始密钥。
+   * GET→编辑→PUT 往返时回传的掩码哨兵由 mergeExtraEnv 还原成真实旧值，闭环不丢密钥。
+   */
+  function maskExtraProfilesEnv(profiles?: BuildProfile[]): BuildProfile[] | undefined {
+    if (!profiles) return profiles;
+    return profiles.map((p) => (p.env ? { ...p, env: maskSecrets(p.env) } : p));
+  }
+  /** 返回分支的「视图安全」浅拷贝：extraProfiles 的 env 脱敏，其余字段原样（仅在 extraProfiles 存在时拷贝）。 */
+  function branchForView<T extends BranchEntry>(branch: T): T {
+    return branch.extraProfiles
+      ? ({ ...branch, extraProfiles: maskExtraProfilesEnv(branch.extraProfiles) } as T)
+      : branch;
   }
 
   function isSqlInitInfra(service: InfraService): boolean {
@@ -3555,7 +3582,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       ? all.filter((b) => (b.projectId || 'default') === projectFilter)
       : all;
     for (const branch of snapshot) reconcileBranchStatus(branch);
-    safeSend('snapshot', { branches: snapshot, projectId: projectFilter || undefined, ts: nowIso() });
+    safeSend('snapshot', { branches: snapshot.map(branchForView), projectId: projectFilter || undefined, ts: nowIso() });
 
     // Subscribe to the 'any' channel so we get one envelope per emit
     // with {type, payload} and can route with a single listener.
@@ -3850,7 +3877,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     );
 
     const payload = {
-      branches: branchesWithSubject,
+      // 列表序列化同样给 extraProfiles env 脱敏（Codex P1），避免分支列表泄露额外服务原始密钥。
+      branches: branchesWithSubject.map(branchForView),
       defaultBranch: state.defaultBranch,
       capacity: { maxContainers, runningContainers, totalMemGB },
       tabTitleEnabled: stateService.isTabTitleEnabled(),
@@ -4727,7 +4755,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(m.status).json(m.body);
       return;
     }
-    res.json({ branch });
+    res.json({ branch: branchForView(branch) });
   });
 
   router.get('/branches/:id/resources', async (req, res) => {
@@ -12721,7 +12749,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(mGet.status).json(mGet.body);
       return;
     }
-    res.json({ extraProfiles: entry.extraProfiles || [] });
+    res.json({ extraProfiles: maskExtraProfilesEnv(entry.extraProfiles || []) || [] });
   });
 
   router.put('/branches/:id/extra-services', async (req, res) => {
@@ -12746,26 +12774,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const projectIds = new Set(
       stateService.getBuildProfilesForProject(entry.projectId || 'default').map((p) => p.id),
     );
-    // 掩码哨兵剥离（Bugbot Medium / learned rule：PUT/PATCH 持久化前必须剥离 env 掩码哨兵）：
-    // 敏感 env 在展示侧会被替换成 `***[masked]***` 之类。GET→编辑→PUT 往返时未重新揭示的项会带着哨兵回来，
-    // 若原样持久化会把真实密钥覆盖成字面 `***`。规则：入参 env 命中哨兵 → 用同 id 旧 profile 的对应旧值回填，
-    // 旧值不存在则丢弃该 key（绝不持久化字面哨兵）。
+    // env 合并 + 掩码哨兵剥离（Bugbot High「PUT drops omitted env」+ Medium「persists mask sentinels」
+    // / learned rule）。两条铁律：
+    //  1. **merge 不 replace**：以同 id 旧 profile 的 env 为基底，再叠加入参——入参省略 env 不丢旧密钥、
+    //     入参部分 env 不删未提及的旧 key（与 build-profiles PUT 的 Bug AA merge 口径一致）。
+    //  2. **剥离掩码哨兵**：入参值命中 `***` / `***[masked]***` 等 → 保留旧值（基底里已有）；旧值不存在
+    //     则不写入（绝不持久化字面哨兵）。
     const MASK_SENTINELS = new Set(['***', '***[masked]***', '****', '*****']);
     const prevExtraEnvById = new Map<string, Record<string, string>>(
       (entry.extraProfiles || []).map((p) => [p.id, (p.env || {}) as Record<string, string>]),
     );
-    const sanitizeExtraEnv = (incoming: Record<string, unknown>, prevEnv: Record<string, string>): Record<string, string> => {
-      const cleaned: Record<string, string> = {};
+    const mergeExtraEnv = (incoming: Record<string, unknown>, prevEnv: Record<string, string>): Record<string, string> => {
+      const out: Record<string, string> = { ...prevEnv }; // 基底 = 旧 env（merge，省略即保留）
       for (const [k, v] of Object.entries(incoming || {})) {
         if (typeof v !== 'string') continue;
         if (MASK_SENTINELS.has(v.trim())) {
-          if (Object.prototype.hasOwnProperty.call(prevEnv, k)) cleaned[k] = prevEnv[k];
-          // 旧值不存在 → 丢弃，绝不持久化字面哨兵
-        } else {
-          cleaned[k] = v;
+          // 哨兵：保留旧值（已在基底）；旧值不存在则确保不写入字面哨兵
+          if (!Object.prototype.hasOwnProperty.call(prevEnv, k)) delete out[k];
+          continue;
         }
+        out[k] = v; // 真实值覆盖
       }
-      return cleaned;
+      return out;
     };
     const sanitized: BuildProfile[] = [];
     const seen = new Set<string>();
@@ -12802,9 +12832,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
         command: String(raw?.command || ''),
         containerPort,
         projectId: entry.projectId || 'default',
-        ...(raw?.env && typeof raw.env === 'object'
-          ? { env: sanitizeExtraEnv(raw.env as Record<string, unknown>, prevExtraEnvById.get(id) || {}) }
-          : {}),
+        // 总是基于旧 env 合并（即使入参省略 env 也保留旧密钥，不丢失）；合并结果非空才落 env 字段。
+        ...((() => {
+          const merged = mergeExtraEnv(
+            (raw?.env && typeof raw.env === 'object' ? raw.env : {}) as Record<string, unknown>,
+            prevExtraEnvById.get(id) || {},
+          );
+          return Object.keys(merged).length > 0 ? { env: merged } : {};
+        })()),
         ...(raw?.prebuiltImage === true ? { prebuiltImage: true } : {}),
       } as BuildProfile);
     }
@@ -12852,7 +12887,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
     }
     res.json({
-      extraProfiles: updated.extraProfiles || [],
+      extraProfiles: maskExtraProfilesEnv(updated.extraProfiles || []) || [],
       count: (updated.extraProfiles || []).length,
       redeployTriggered,
       ...(redeployRejected ? { redeployRejected } : {}),

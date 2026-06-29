@@ -529,6 +529,46 @@ describe('Branch Routes', () => {
       expect('BRAND_NEW' in env).toBe(false);     // sentinel with no prior → dropped, never persisted literally
     });
 
+    it('merges env on PUT: omitted env keeps prior secrets, partial env preserves unmentioned keys (Bugbot High)', async () => {
+      seedBranch('b1');
+      await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80, env: { SECRET_KEY: 'real-secret', OTHER: 'keep-me' } }],
+      });
+      // Re-declare the profile WITHOUT env at all → prior env must be preserved (not dropped).
+      const r1 = await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80 }],
+      });
+      expect(r1.status).toBe(200);
+      let env = stateService.getBranch('b1')!.extraProfiles![0].env!;
+      expect(env.SECRET_KEY).toBe('real-secret');
+      expect(env.OTHER).toBe('keep-me');
+      // Partial env (only one key) → the unmentioned prior key must still survive (merge, not replace).
+      const r2 = await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80, env: { OTHER: 'updated' } }],
+      });
+      expect(r2.status).toBe(200);
+      env = stateService.getBranch('b1')!.extraProfiles![0].env!;
+      expect(env.SECRET_KEY).toBe('real-secret'); // preserved despite being omitted this time
+      expect(env.OTHER).toBe('updated');          // updated value applied
+    });
+
+    it('redacts sensitive env in GET/PUT responses but keeps state raw (Codex P1)', async () => {
+      seedBranch('b1');
+      const put = await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80, env: { API_TOKEN: 'tok_secretvalue', PUBLIC_URL: 'https://example.com' } }],
+      });
+      expect(put.status).toBe(200);
+      // PUT response masks the sensitive value, leaves non-sensitive intact.
+      const putEnv = (put.body as any).extraProfiles[0].env;
+      expect(putEnv.API_TOKEN).toBe('***');
+      expect(putEnv.PUBLIC_URL).toBe('https://example.com');
+      // GET response is masked too.
+      const get = await request(server, 'GET', '/api/branches/b1/extra-services');
+      expect((get.body as any).extraProfiles[0].env.API_TOKEN).toBe('***');
+      // But the persisted state keeps the real value (deploy reads raw env from state).
+      expect(stateService.getBranch('b1')!.extraProfiles![0].env!.API_TOKEN).toBe('tok_secretvalue');
+    });
+
     it('404 for unknown branch', async () => {
       expect((await request(server, 'GET', '/api/branches/nope/extra-services')).status).toBe(404);
       expect((await request(server, 'PUT', '/api/branches/nope/extra-services', { extraProfiles: [] })).status).toBe(404);

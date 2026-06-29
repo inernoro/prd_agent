@@ -11,4 +11,7 @@
 | fix | cds | 执行器空清单收敛标 idle 而非 error（Bugbot/Codex P2）：/exec/deploy 孤儿清理把服务全删后 entry.services 为空，原状态计算落到 error，心跳同步把一次成功清空误标失败；改为无服务=idle（与 master 空清单清理一致），complete 文案区分「已清空所有服务」 |
 | fix | cds | extra-services PUT 剥离 env 掩码哨兵（Bugbot Medium）：GET→编辑→PUT 往返带回 ***[masked]*** 等哨兵时，按同 id 旧值回填、无旧值则丢弃，杜绝把字面哨兵当密钥持久化进容器 env |
 | fix | cds | container-exec 掩码用分支有效 profiles 查 env（Codex P2）：原用项目级 getBuildProfile 查不到分支额外服务的敏感 env，导致 echo $TOKEN 吐明文；改用 getEffectiveProfilesForBranch（项目+额外）查，额外服务密钥同样被值替换掩码 |
+| fix | cds | extra-services PUT env 改为 merge 不 replace（Bugbot High）：入参省略 env 不再丢失已存密钥、部分 env 不再删未提及的旧 key（以同 id 旧 profile env 为基底叠加，与 build-profiles PUT 口径一致），叠加掩码哨兵剥离 |
+| security | cds | extra-services 响应给 env 脱敏（Codex P1）：GET/PUT extra-services + 分支详情/列表/SSE 快照序列化 extraProfiles 时对敏感 env 值打掩码（***），状态层保持明文供 deploy 直读；杜绝任何可查看分支的调用方拿到额外服务原始密钥 |
+| fix | cds | 远端清空收敛 master 服务表（Bugbot Medium）：远端 owned 分支空清单部署后，executor complete 的 services 是权威集合，master 不再只 patch deployedMode，而是按其删除本地已不存在的服务条目，杜绝清空后 UI 残留 ghost 服务到下次心跳 |
 | security | cds | GET/PUT /branches/:id/extra-services 补 assertProjectAccess 项目级访问控制(Bugbot High)：此前缺校验，项目 A 的 cdsp_ key 可读取/改动项目 B 分支的额外服务并触发跨项目重部署；现与其他分支路由一致，跨项目返回 403 project_mismatch |
