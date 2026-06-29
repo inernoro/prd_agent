@@ -48,10 +48,20 @@ const makeService = (): ServiceState => ({
 describe('ContainerService', () => {
   let mock: MockShellExecutor;
   let service: ContainerService;
+  let prevIsolation: string | undefined;
 
   beforeEach(() => {
     mock = new MockShellExecutor();
     service = new ContainerService(mock, makeConfig());
+    // 本文件断言的是旧的「共享网」run 命令形态（--network cds-network、资源标志等）。分支级网络
+    // 隔离（默认开）会改主网为分支网并追加 network connect，那有独立套件覆盖。这里关掉全局逃生开关，
+    // 保持本套件验证旧契约不变。
+    prevIsolation = process.env.CDS_BRANCH_NETWORK_ISOLATION;
+    process.env.CDS_BRANCH_NETWORK_ISOLATION = '0';
+  });
+  afterEach(() => {
+    if (prevIsolation === undefined) delete process.env.CDS_BRANCH_NETWORK_ISOLATION;
+    else process.env.CDS_BRANCH_NETWORK_ISOLATION = prevIsolation;
   });
 
   describe('runService', () => {

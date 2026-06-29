@@ -221,6 +221,9 @@
 - [CDS 构建耗时与发布版/热加载机制设计](design.cds.build-time) `design.cds.build-time`
   > 构建流水线时间去向、>10 分钟根因（Java 重复下载依赖 / buildTimeout 上限 / 自动发布双构建）、发布版 vs 热加载对照与自动发布介入时机
 
+- [CDS 分支级网络隔离](design.cds.branch-network-isolation) `design.cds.branch-network-isolation`
+  > 每分支专属 app 网（cds-br-<id>）+ 共享 infra 网，杜绝跨分支 app 别名串流；自动逐分支默认开、不做项目级硬开关、只留全局 env 逃生
+
 - [CDS Agent API 契约设计](design.cds.agent.api) `design.cds.agent.api`
   > MAP/CDS 会话、事件、工具审批、Hook、runtime profile 与工作流调用的 API 契约
 

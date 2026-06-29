@@ -9,6 +9,7 @@ import { combinedOutput } from '../types.js';
 import { resolveCommandTemplate, resolveEnvTemplates } from './compose-parser.js';
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
 import { applyPerBranchDbIsolation } from './db-scope-isolation.js';
+import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkPlan } from './branch-network.js';
 import { nodeModulesVolumeName } from '../util/node-modules-volume.js';
 import {
   collectContainerDiagnostics,
@@ -1061,6 +1062,17 @@ export class ContainerService {
       profile.id,
       this.getProjectMarkers(entry.projectId),
     );
+    // 分支级网络隔离（默认开，全局 env 逃生）：app 容器主网 = 分支网（app 别名仅本分支可见），
+    // 运行后再连共享网（无别名，仅为可达共享 infra mysql/redis）。这样一个分支随便部署多少
+    // 容器都只落在自己的分支网，杜绝「app 别名跨分支串流」（apigateway 拆服务案例）。未隔离时
+    // netPlan 退化为「共享网 + app 别名」= 现状，零回归。详见 branch-network.ts / design 文档。
+    const netPlan = resolveAppNetworkPlan({
+      isolated: branchNetworkIsolationEnabled(process.env),
+      sharedNetwork: network,
+      branchId: entry.id,
+      aliases: profileAliases,
+    });
+    if (netPlan.runNetwork !== network) await this.ensureNetwork(netPlan.runNetwork);
     await this.pruneStaleAppContainersForProfile(entry, profile, service, network, profileAliases, onOutput, context);
 
     context.assertCurrent?.(`runService before pre-run-rm ${profile.id}`);
@@ -1296,7 +1308,7 @@ export class ContainerService {
       const runCmd = [
         'docker run -d',
         `--name ${service.containerName}`,
-        `--network ${network}`,
+        `--network ${netPlan.runNetwork}`,
         ...profileAliasFlags,
         `-p ${service.hostPort}:${profile.containerPort}`,
         ...volumeFlags,
@@ -1307,7 +1319,7 @@ export class ContainerService {
         ...(usePrebuiltEntrypoint ? [] : [`-w ${containerWorkDir}`]),
         envFlag,
         '--tmpfs /tmp',
-        this.appLabels(entry.projectId, entry.id, profile.id, network),
+        this.appLabels(entry.projectId, entry.id, profile.id, netPlan.runNetwork),
         runImage,
         ...(usePrebuiltEntrypoint ? [] : [`sh -c "${command.replace(/"/g, '\\"')}"`]),
       ].join(' ');
@@ -1347,6 +1359,18 @@ export class ContainerService {
       // activeDeployMode（仍是 express）钉 deployedMode，预览 widget 会把实际跑源码的
       // 分支误标「极速」。下游 deploy 路径改为优先采纳这里钉的值。
       service.deployedMode = profile.activeDeployMode || '';
+      // 分支级隔离：把刚起的 app 容器连到共享 infra 网（无别名，仅为可达共享 mysql/redis）。
+      // 必须在 liveness/就绪探测之前完成，否则容器启动时连不上 DB 会直接失败。无别名 = 兄弟
+      // 分支无法在共享网上按 app 别名解析到本容器，杜绝串流。未隔离时 connectNetworks 为空，跳过。
+      for (const sharedNet of netPlan.connectNetworks) {
+        await this.connectContainerToSharedNetwork(service.containerName, sharedNet, {
+          projectId: entry.projectId,
+          branchId: entry.id,
+          profileId: profile.id,
+          requestId: context.requestId ?? undefined,
+          operationId: context.operationId ?? undefined,
+        });
+      }
       this.recordContainerEvent({
         severity: 'info',
         source: 'cds-container-service',
@@ -2611,6 +2635,63 @@ export class ContainerService {
       if (create.exitCode !== 0) {
         throw new Error(`创建 Docker 网络 "${target}" 失败:\n${combinedOutput(create)}`);
       }
+    }
+  }
+
+  /**
+   * 分支级隔离：把 app 容器连到共享 infra 网（无别名，仅为可达共享 mysql/redis）。
+   * 无别名 → 兄弟分支无法在共享网上按 app 别名解析到本容器，杜绝跨分支串流。
+   * 幂等：已连上视为成功；容器不存在按并发 race 容忍；其它失败抛错——infra 可达性是硬需求，
+   * 连不上 DB 的容器没意义，宁可让部署显式失败而非静默起一个连不到数据库的容器。
+   */
+  private async connectContainerToSharedNetwork(
+    containerName: string,
+    network: string,
+    ctx: { projectId?: string; branchId?: string; profileId?: string; requestId?: string; operationId?: string } = {},
+  ): Promise<void> {
+    const result = await this.shell.exec(`docker network connect ${network} ${containerName}`);
+    if (result.exitCode === 0) return;
+    const stderr = (result.stderr || '').toLowerCase();
+    if (stderr.includes('already exists') || stderr.includes('already connected')) return;
+    if (stderr.includes('no such container')) return;
+    this.recordContainerEvent({
+      severity: 'error',
+      source: 'cds-container-service',
+      action: 'app.network.connect.failed',
+      message: `connect ${containerName} to shared infra net ${network} failed`,
+      projectId: ctx.projectId ?? null,
+      branchId: ctx.branchId ?? null,
+      profileId: ctx.profileId ?? null,
+      requestId: ctx.requestId,
+      operationId: ctx.operationId,
+      containerName,
+      command: {
+        name: 'docker network connect',
+        exitCode: result.exitCode,
+        stdoutPreview: result.stdout,
+        stderrPreview: result.stderr,
+      },
+      details: { network },
+    });
+    throw new Error(`把容器 "${containerName}" 连接到共享 infra 网 "${network}" 失败:\n${combinedOutput(result)}`);
+  }
+
+  /**
+   * 分支删除时尽力清理其专属分支网（cds-br-<id>）。应在该分支所有容器 rm 之后调用。
+   * 网络仍被占用 / 不存在 → 吞掉（空网无害，下次再清）。共享 infra 网（cds-proj-<id>）绝不删。
+   */
+  async removeBranchNetwork(branchId: string): Promise<void> {
+    const net = branchAppNetworkName(branchId);
+    try {
+      const r = await this.shell.exec(`docker network rm ${net}`);
+      if (r.exitCode !== 0) {
+        const s = (r.stderr || '').toLowerCase();
+        if (!s.includes('not found') && !s.includes('no such network')) {
+          console.warn(`[branch-network] 清理分支网 ${net} 失败(忽略): ${(r.stderr || '').slice(0, 160)}`);
+        }
+      }
+    } catch (err) {
+      console.warn(`[branch-network] 清理分支网 ${net} 异常(忽略): ${(err as Error).message}`);
     }
   }
 

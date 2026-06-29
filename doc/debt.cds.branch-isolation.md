@@ -4,7 +4,7 @@
 
 ## 总览
 
-当前 open: 2 / paid: 0 / 总计: 2
+当前 open: 3 / 已落地待验证: 1（dns-alias-collision，2026-06-29 分支级网络隔离）/ paid: 0 / 总计: 4
 
 记录 CDS「同一项目多分支并存」时,分支级应用服务之间的两类串台缺陷。**注意区分**:分支共享数据库/Redis/Postgres 实例是**有意设计**(省资源 + 预览看真数据),本台账记录的不是"共享数据"的问题,而是"服务身份(DNS)"和"工作队列"被平台顺手一起共享导致的串台。
 
@@ -51,8 +51,10 @@ brandai 项目已临时用分支级 env 兜底:`AI_SERVICE_URL=http://cds-<branc
 
 | ID | 严重度 | 创建日期 | 描述 | 触发条件 | 状态 | 备注 |
 |----|--------|---------|------|---------|------|------|
-| 2026-06-21-dns-alias-collision | high | 2026-06-21 | 同项目多分支共享一张 docker 网络 + 裸服务别名,worker 调 `ai`/`redis`/`postgres` 经 DNS round-robin 间歇命中别分支(旧代码)容器 → 新路由 404 | 多服务项目 + 多分支并存 + 代码不一致 | open | 修复方向:每分支独立 network,或服务别名带分支前缀,让裸名只在本分支内解析;共享 DB/Redis 实例照旧。需处理共享 infra 容器对每分支网络的可达性(multi-attach) |
+| 2026-06-21-dns-alias-collision | high | 2026-06-21 | 同项目多分支共享一张 docker 网络 + 裸服务别名,worker 调 `ai`/`redis`/`postgres` 经 DNS round-robin 间歇命中别分支(旧代码)容器 → 新路由 404 | 多服务项目 + 多分支并存 + 代码不一致 | 已落地(待CDS docker验证) | 2026-06-29 修复:每分支专属 app 网 `cds-br-<id>` + 共享 infra 网(multi-attach,app 容器无别名连共享网仅为可达 DB),自动逐分支默认开 + 全局 env 逃生。见 `design.cds.branch-network-isolation` + `branch-network.ts`。残留见下方 BNI 行 |
 | 2026-06-21-bullmq-cross-branch-steal | high | 2026-06-21 | 分支共享同一 Redis,BullMQ 队列名无分支命名空间,别分支(旧代码)worker 抢本分支 job 并丢弃新字段 | 同上,且应用用共享队列 | open | 修复方向:CDS 自动派生并注入 `BULLMQ_PREFIX=<branchSlug>`(+ 可选 Redis key/db 前缀);仍用同一 Redis 实例,只给工单贴分支标签 |
+| BNI-cleanup | low | 2026-06-29 | 分支级网络隔离的 `removeBranchNetwork()` 已实现但未接到 4 处 `removeBranch` 调用点;空的 `cds-br-*` 网会随分支删除缓慢堆积 | 长期运行 + 大量分支增删 | open | 影响极小(空网几乎零成本)。修复方向:加一个周期性 sweep,prune 无容器的 `cds-br-*` 网;或在主 DELETE 分支路径调用 `removeBranchNetwork`。不接 4 处是为避免一次动太多未测 docker 路径 |
+| BNI-prune-network | low | 2026-06-29 | `pruneStaleAppContainersForProfile` 仍按共享网扫描,隔离后 app 容器在分支网,主清理改靠按容器名 `docker rm -f`(覆盖主用例) | 隔离开启后的陈旧容器清理 | open | 低风险:同名容器按名删已覆盖;遗留的跨网陈旧容器极少。后续可让 prune 同时扫描分支网 |
 
 ---
 

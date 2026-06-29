@@ -100,6 +100,7 @@ docs:
   design.platform.network-diagnostics: 网络诊断功能
   design.cds: CDS (Cloud Development Suite) 设计文档
   design.cds.build-time: CDS 构建耗时与发布版/热加载机制设计
+  design.cds.branch-network-isolation: CDS 分支级网络隔离（每分支专属 app 网 + 共享 infra 网，杜绝跨分支服务发现串流）
   design.cds.agent.api: CDS Agent API 契约设计
   design.cds.agent.runtime-architecture: CDS Agent 运行时架构设计
   design.cds.agent.official-sdk-adapter: CDS Agent 官方 SDK Adapter 设计
