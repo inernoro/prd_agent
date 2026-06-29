@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
+import { mergeBranchProfiles, isValidExtraProfileId } from './branch-extra-services.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
 import { sealToken, unsealToken, isSealedSecret } from '../infra/secret-seal.js';
@@ -2237,6 +2238,38 @@ export class StateService {
     return (this.state.buildProfiles || []).filter(
       (p) => (p.projectId || 'default') === projectId,
     );
+  }
+
+  /**
+   * 这条分支**实际要部署**的服务清单 = 项目级 profiles(稳定底座) + 本分支临时额外服务
+   * (branch.extraProfiles)。没声明额外服务的分支 = 项目 profiles 原样(老行为零回归)。
+   * 合并规则见 mergeBranchProfiles(额外项只能 ADD 新 id,撞项目 id 以项目为准)。部署 + 资源/拓扑
+   * 展示都走这一函,保证「分支额外服务」在哪都一致可见,且天生 scoped 在本分支。
+   */
+  getEffectiveProfilesForBranch(branch: BranchEntry): BuildProfile[] {
+    return mergeBranchProfiles(
+      this.getBuildProfilesForProject(branch.projectId || 'default'),
+      branch,
+    );
+  }
+
+  /**
+   * 设置/清空一条分支的临时额外服务(branch-local)。空数组 = 清空(回到纯项目底座)。
+   * 非法 id 的额外项被丢弃。仅改这一条分支,不碰项目 profiles、不碰别的分支。
+   */
+  setBranchExtraProfiles(branchId: string, extraProfiles: BuildProfile[]): BranchEntry | null {
+    const branch = this.getBranch(branchId);
+    if (!branch) return null;
+    const sanitized = (extraProfiles || []).filter(
+      (p) => p && isValidExtraProfileId(p.id),
+    );
+    if (sanitized.length === 0) {
+      delete branch.extraProfiles;
+    } else {
+      branch.extraProfiles = sanitized;
+    }
+    this.save();
+    return branch;
   }
 
   getInfraServicesForProject(projectId: string): InfraService[] {

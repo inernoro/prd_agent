@@ -13,6 +13,7 @@ import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
+import { isValidExtraProfileId } from '../services/branch-extra-services.js';
 import { classifyTriggerSource, deriveDeployMode, deriveCommitMeta, parsePulledSha, shouldRefreshCommitSha } from '../services/build-log-meta.js';
 import { acquireBuildSlot, buildGateStatus } from '../services/build-gate.js';
 import { recordBuild } from '../services/build-activity-tracker.js';
@@ -2586,8 +2587,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 否则 cluster 场景执行器仍按源码/热加载旧模式重建，但 master state
     // 有 override → branchAutoPublishConverged 误判收敛、不再重试，
     // auto-publish 表面成功实际没切容器。
+    // 分支实际部署清单 = 项目底座 + 本分支临时额外服务(branch-local);未声明额外服务 = 项目原样。
     const profiles = stateService
-      .getBuildProfilesForProject(entry.projectId || 'default')
+      .getEffectiveProfilesForBranch(entry)
       .map((p) => resolveEffectiveProfile(p, entry));
     // 2026-06-27：回填本次（远端）部署的部署模式，供构建历史展示「部署类型」。
     opLog.deployMode = deriveDeployMode(profiles);
@@ -3702,7 +3704,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const previewSlug = preview?.previewSlug || b.id;
         const deployRuntime = summarizeBranchDeployRuntime(
           b,
-          stateService.getBuildProfilesForProject(b.projectId || 'default'),
+          stateService.getEffectiveProfilesForBranch(b),
         );
         // 2026-06-20：随分支下发两种模式的历史中位预计耗时，分支卡片在
         // 构建中据此展示"预计 MM:SS（近 N 次中位值）"，无需额外请求。
@@ -4767,7 +4769,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const previewUrl = preview?.url || '';
     const resources = buildUnifiedBranchResources({
       branch,
-      profiles: stateService.getBuildProfilesForProject(projectId),
+      profiles: stateService.getEffectiveProfilesForBranch(branch),
       infraServices,
       externalAccessPolicies: await getActiveResourceExternalAccessForBranch(projectId, branch),
       cloneTasks: stateService.listResourceCloneTasks({ projectId, branchId: branch.id }),
@@ -6959,7 +6961,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const previewUrl = preview?.url || '';
     return buildUnifiedBranchResources({
       branch,
-      profiles: stateService.getBuildProfilesForProject(projectId),
+      profiles: stateService.getEffectiveProfilesForBranch(branch),
       infraServices: stateService.getInfraServicesForProject(projectId),
       externalAccessPolicies: await getActiveResourceExternalAccessForBranch(projectId, branch),
       cloneTasks: stateService.listResourceCloneTasks({ projectId, branchId: branch.id }),
@@ -9549,6 +9551,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
 
     const finalizeBranchDelete = async (message: string): Promise<void> => {
+      // 分支删除收尾:容器此时已 stop+remove,顺手清掉分支专属网(cds-br-<id>),让「删分支即消失」
+      // 覆盖到网络层(分支级临时额外服务的隔离网随分支一起消失)。best-effort:网络仍被占用/不存在
+      // 都吞掉(removeBranchNetwork 内部已容错)。分支的 extraProfiles 是 BranchEntry 字段,
+      // 下面 removeBranch 一并清除,无需单独处理。
+      await containerService.removeBranchNetwork(id).catch(() => { /* best-effort */ });
       stateService.removeLogs(id);
       stateService.removeBranch(id);
       stateService.save();
@@ -12595,6 +12602,79 @@ export function createBranchRouter(deps: RouterDeps): Router {
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
+  });
+
+  // ── 分支级临时额外服务(branch-local extra services) ──
+  // 项目 profiles 是稳定底座(改它走审批);单条分支可在底座之上临时追加自己的服务,只在本分支
+  // 部署、跑在分支专属网、不进项目、不需全局审批、删分支即消失。详见 design.cds.branch-local-extra-services。
+
+  router.get('/branches/:id/extra-services', (req, res) => {
+    const entry = stateService.getBranch(req.params.id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
+      return;
+    }
+    res.json({ extraProfiles: entry.extraProfiles || [] });
+  });
+
+  router.put('/branches/:id/extra-services', (req, res) => {
+    const entry = stateService.getBranch(req.params.id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
+      return;
+    }
+    const body = (req.body || {}) as { extraProfiles?: unknown };
+    const list = body.extraProfiles;
+    if (!Array.isArray(list)) {
+      res.status(400).json({ error: 'extraProfiles 必须是数组(空数组=清空额外服务)' });
+      return;
+    }
+    // 项目 profile id 集合:额外服务撞这些 id 会被合并规则丢弃,所以直接拒绝,明确告知调用方。
+    const projectIds = new Set(
+      stateService.getBuildProfilesForProject(entry.projectId || 'default').map((p) => p.id),
+    );
+    const sanitized: BuildProfile[] = [];
+    const seen = new Set<string>();
+    for (const raw of list as Array<Record<string, unknown>>) {
+      const id = String(raw?.id || '').trim();
+      if (!isValidExtraProfileId(id)) {
+        res.status(400).json({ error: `额外服务 id 非法: ${JSON.stringify(raw?.id)}(只能字母/数字开头,含 - _,长度 1..63)` });
+        return;
+      }
+      if (projectIds.has(id)) {
+        res.status(400).json({ error: `额外服务 id "${id}" 与项目服务撞名,分支额外服务不能覆盖项目底座(要按分支改项目服务请用 profileOverrides)` });
+        return;
+      }
+      if (seen.has(id)) {
+        res.status(400).json({ error: `额外服务 id "${id}" 重复` });
+        return;
+      }
+      const dockerImage = String(raw?.dockerImage || '').trim();
+      const containerPort = Number(raw?.containerPort);
+      if (!dockerImage) {
+        res.status(400).json({ error: `额外服务 "${id}" 缺少 dockerImage` });
+        return;
+      }
+      if (!Number.isInteger(containerPort) || containerPort <= 0 || containerPort > 65535) {
+        res.status(400).json({ error: `额外服务 "${id}" 的 containerPort 非法` });
+        return;
+      }
+      seen.add(id);
+      sanitized.push({
+        id,
+        name: String(raw?.name || id),
+        dockerImage,
+        workDir: String(raw?.workDir || ''),
+        command: String(raw?.command || ''),
+        containerPort,
+        projectId: entry.projectId || 'default',
+        ...(raw?.env && typeof raw.env === 'object' ? { env: raw.env as Record<string, string> } : {}),
+        ...(raw?.prebuiltImage === true ? { prebuiltImage: true } : {}),
+      } as BuildProfile);
+    }
+    stateService.setBranchExtraProfiles(entry.id, sanitized);
+    const updated = stateService.getBranch(entry.id)!;
+    res.json({ extraProfiles: updated.extraProfiles || [], count: (updated.extraProfiles || []).length });
   });
 
   // ── Container exec (run command inside container) ──

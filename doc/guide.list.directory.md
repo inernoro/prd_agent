@@ -224,6 +224,9 @@
 - [CDS 分支级网络隔离](design.cds.branch-network-isolation) `design.cds.branch-network-isolation`
   > 每分支专属 app 网（cds-br-<id>）+ 共享 infra 网，杜绝跨分支 app 别名串流；自动逐分支默认开、不做项目级硬开关、只留全局 env 逃生
 
+- [CDS 分支级临时额外服务](design.cds.branch-local-extra-services) `design.cds.branch-local-extra-services`
+  > 项目底座稳定（审批改、影响全体）+ 分支可自助加临时额外服务（只在本分支部署、跑分支专属网、删分支即消失、不影响别的分支）；纯增量可选、老行为零回归
+
 - [CDS Agent API 契约设计](design.cds.agent.api) `design.cds.agent.api`
   > MAP/CDS 会话、事件、工具审批、Hook、runtime profile 与工作流调用的 API 契约
 

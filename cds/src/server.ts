@@ -926,6 +926,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/branches\/(.+)\/container-logs$/, '查看容器日志'],
     [/^POST \/branches\/(.+)\/container-env$/, '查看容器环境变量'],
     [/^POST \/branches\/(.+)\/container-exec$/, '容器内执行命令'],
+    [/^GET \/branches\/(.+)\/extra-services$/, '查看分支额外服务'],
+    [/^PUT \/branches\/(.+)\/extra-services$/, '设置分支额外服务'],
     [/^GET \/branches\/(.+)\/git-log$/, '查看 Git 提交历史'],
     [/^PUT \/env\/(.+)$/, '设置环境变量'],
     [/^DELETE \/env\/(.+)$/, '删除环境变量'],
