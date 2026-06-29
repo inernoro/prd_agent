@@ -1,5 +1,13 @@
 import { ok, type ApiResponse } from '@/types/api';
-import type { LoginContract, LoginResponse, ResetPasswordContract, ResetPasswordResponse } from '@/services/contracts/auth';
+import type {
+  GetSsoOptionsContract,
+  LoginContract,
+  LoginResponse,
+  MiduoPlanetLoginContract,
+  ResetPasswordContract,
+  ResetPasswordResponse,
+  SsoOptionsResponse,
+} from '@/services/contracts/auth';
 import { apiRequest } from '@/services/real/apiClient';
 import { api } from '@/services/api';
 
@@ -18,6 +26,31 @@ export const loginReal: LoginContract = async (username, password): Promise<ApiR
     method: 'POST',
     auth: false,
     body: { username, password, clientType: 'admin' },
+  });
+
+  if (!res.success) return res;
+
+  return ok({
+    user: res.data.user,
+    accessToken: res.data.accessToken,
+    refreshToken: res.data.refreshToken,
+    sessionKey: res.data.sessionKey,
+    mustResetPassword: res.data.mustResetPassword,
+  });
+};
+
+export const getSsoOptionsReal: GetSsoOptionsContract = async (): Promise<ApiResponse<SsoOptionsResponse>> => {
+  return apiRequest<SsoOptionsResponse>(api.auth.ssoOptions(), {
+    method: 'GET',
+    auth: false,
+  });
+};
+
+export const loginWithMiduoPlanetTokenReal: MiduoPlanetLoginContract = async (token): Promise<ApiResponse<LoginResponse>> => {
+  const res = await apiRequest<BackendLoginResponse>(api.auth.miduoPlanetLogin(), {
+    method: 'POST',
+    auth: false,
+    body: { token, clientType: 'admin' },
   });
 
   if (!res.success) return res;
