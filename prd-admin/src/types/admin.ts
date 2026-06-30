@@ -155,6 +155,16 @@ export type LlmRequestLogListItem = {
   isFallback?: boolean | null;
   /** 期望使用的模型 */
   expectedModel?: string | null;
+  /** 本次调用使用的协议（openai/claude/exchange，协议下沉解析结果，存量日志为 null） */
+  protocol?: string | null;
+  /** 协议/模型解析来源说明（调试用） */
+  resolutionReason?: string | null;
+  /** 函数调用条数（>0 显示「函数调用」chip） */
+  toolCallCount?: number | null;
+  /** 完成原因（finish_reason / stop_reason；存量 null） */
+  finishReason?: string | null;
+  /** 是否流式（存量 null） */
+  isStreaming?: boolean | null;
 };
 
 export type LlmRequestLog = {
@@ -225,6 +235,18 @@ export type LlmRequestLog = {
   fallbackReason?: string | null;
   /** 期望使用的模型 */
   expectedModel?: string | null;
+  /** 本次调用使用的协议（openai/claude/exchange，协议下沉解析结果，存量日志为 null） */
+  protocol?: string | null;
+  /** 协议/模型解析来源说明（调试用） */
+  resolutionReason?: string | null;
+  /** 函数调用（tool_calls）OpenAI 形状序列化 JSON（无则 null，仅详情返回） */
+  responseToolCalls?: string | null;
+  /** 函数调用条数（>0 显示「函数调用」chip） */
+  toolCallCount?: number | null;
+  /** 完成原因（finish_reason / stop_reason；存量 null） */
+  finishReason?: string | null;
+  /** 是否流式（存量 null） */
+  isStreaming?: boolean | null;
 };
 
 export type LlmImageReference = {

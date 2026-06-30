@@ -983,6 +983,74 @@ describe('ProxyService', () => {
     });
   });
 
+  describe('named subdomain — 状态门控（停止服务不被强制为上游）', () => {
+    // resolvePreviewServiceSubdomain（master 命名子域兜底）必须与 forwarder 同口径：
+    // 只有 hostPort>0 **且** 状态可路由（running/starting/building/restarting）的服务才命中命名 host；
+    // 停止/错误但残留 hostPort 的服务不得被命名 host 强制为上游（否则产生 forwarder 本会省略的坏路由）。
+    function makeRes() {
+      const written = { statusCode: 0, headers: {} as Record<string, string>, body: '' };
+      const res = {
+        writeHead(code: number, headers: Record<string, string>) { written.statusCode = code; written.headers = headers; },
+        end(body?: string) { written.body = body || ''; },
+      } as unknown as http.ServerResponse;
+      return { res, written };
+    }
+
+    function setup(svcStatus: string) {
+      stateService.addProject({
+        id: 'prd-agent', slug: 'prd-agent', name: 'PRD Agent', kind: 'git',
+        legacyFlag: false, createdAt: new Date().toISOString(),
+      } as any);
+      stateService.addBranch({
+        id: 'prd-agent-main',
+        projectId: 'prd-agent',
+        branch: 'main',
+        worktreePath: '/tmp/named-sub',
+        // branch-local extra profile 声明命名子域 llmgw
+        extraProfiles: [{ id: 'llmgw', name: 'llmgw', subdomain: 'llmgw' } as any],
+        services: { llmgw: { profileId: 'llmgw', containerName: 'cds-x-llmgw', hostPort: 9200, status: svcStatus } },
+        // 分支顶层状态跟随服务：running 才会进入上游解析路径，否则 routeToBranch 提前返回等待页。
+        status: svcStatus === 'running' ? 'running' : 'idle',
+        createdAt: new Date().toISOString(),
+      } as any);
+      const previewProxy = new ProxyService(stateService, {
+        masterPort: 9900, workerPort: 5500,
+        repoRoot: '/tmp', worktreeBase: '/tmp', portStart: 9000,
+        previewDomain: 'preview.example.com',
+        rootDomains: ['preview.example.com'],
+      } as any);
+      let upstreamCalledWith: { branchId: string } | null = null;
+      previewProxy.setResolveUpstream((branchId: string) => {
+        upstreamCalledWith = { branchId };
+        return 'http://127.0.0.1:9200';
+      });
+      let autoBuildCalled = false;
+      previewProxy.setOnAutoBuild(() => { autoBuildCalled = true; });
+      const req = {
+        // previewSlug(main, prd-agent) = "main-prd-agent" → 命名 host "<slug>-llmgw"
+        headers: { host: 'main-prd-agent-llmgw.preview.example.com' },
+        url: '/',
+        pipe: () => {},
+      } as unknown as http.IncomingMessage;
+      const { res } = makeRes();
+      previewProxy.handleRequest(req, res);
+      return { upstreamCalledWith: () => upstreamCalledWith, autoBuildCalled: () => autoBuildCalled };
+    }
+
+    it('停止(stopped)的命名服务不被强制为上游，落回常规路径(auto-build)而非坏路由', () => {
+      const h = setup('stopped');
+      expect(h.upstreamCalledWith()).toBeNull(); // 没有把停止的 llmgw 容器强制成上游
+      expect(h.autoBuildCalled()).toBe(true);    // 落回常规 slug 路径，触发 auto-build
+    });
+
+    it('运行中(running)的命名服务正常命中其容器（门控不误伤可路由服务）', () => {
+      const h = setup('running');
+      expect(h.autoBuildCalled()).toBe(false);
+      expect(h.upstreamCalledWith()).not.toBeNull();
+      expect(h.upstreamCalledWith()!.branchId).toBe('prd-agent-main');
+    });
+  });
+
   describe('subdomain alias resolution (via extractPreviewBranch)', () => {
     // ProxyService.extractPreviewBranch is private — we reach it via any-cast
     // because the alternative (full HTTP dance through handleRequest with

@@ -1,0 +1,1089 @@
+[
+  {
+    "group": "openai-think-reasoning_content",
+    "dim": "D5/E2",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {\"reasoning_content\": \"hello\"}}]}",
+    "expect": {
+      "chunkType": "Thinking",
+      "content": "hello"
+    },
+    "id": "B001"
+  },
+  {
+    "group": "openai-think-reasoning_content",
+    "dim": "D5/E2",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {\"reasoning_content\": \"café-naïve-Zürich\"}}]}",
+    "expect": {
+      "chunkType": "Thinking",
+      "content": "café-naïve-Zürich"
+    },
+    "id": "B002"
+  },
+  {
+    "group": "openai-think-reasoning_content",
+    "dim": "D5/E2",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {\"reasoning_content\": \"中文深度思考内容\"}}]}",
+    "expect": {
+      "chunkType": "Thinking",
+      "content": "中文深度思考内容"
+    },
+    "id": "B003"
+  },
+  {
+    "group": "openai-think-reasoning_content",
+    "dim": "D5/E2",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {\"reasoning_content\": \"مرحبا بالعالم\"}}]}",
+    "expect": {
+      "chunkType": "Thinking",
+      "content": "مرحبا بالعالم"
+    },
+    "id": "B004"
+  },
+  {
+    "group": "openai-think-reasoning_content",
+    "dim": "D5/E2",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {\"reasoning_content\": \"a   b   c\"}}]}",
+    "expect": {
+      "chunkType": "Thinking",
+      "content": "a   b   c"
+    },
+    "id": "B005"
+  },
+  {
+    "group": "openai-think-reasoning_content",
+    "dim": "D5/E2",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {\"reasoning_content\": \"he said \\\"hi\\\" to me\"}}]}",
+    "expect": {
+      "chunkType": "Thinking",
+      "content": "he said \"hi\" to me"
+    },
+    "id": "B006"
+  },
+  {
+    "group": "openai-think-reasoning_content",
+    "dim": "D5/E2",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {\"reasoning_content\": \"line1\\nline2\"}}]}",
+    "expect": {
+      "chunkType": "Thinking",
+      "content": "line1\nline2"
+    },
+    "id": "B007"
+  },
+  {
+    "group": "openai-think-reasoning_content",
+    "dim": "D5/E2",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {\"reasoning_content\": \"Omega-Ω-approx-≈-sqrt-√\"}}]}",
+    "expect": {
+      "chunkType": "Thinking",
+      "content": "Omega-Ω-approx-≈-sqrt-√"
+    },
+    "id": "B008"
+  },
+  {
+    "group": "openai-think-reasoning_content",
+    "dim": "D5/E2",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {\"reasoning_content\": \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}}]}",
+    "expect": {
+      "chunkType": "Thinking",
+      "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    "id": "B009"
+  },
+  {
+    "group": "openai-think-reasoning",
+    "dim": "D5/E2",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {\"reasoning\": \"hello\"}}]}",
+    "expect": {
+      "chunkType": "Thinking",
+      "content": "hello"
+    },
+    "id": "B010"
+  },
+  {
+    "group": "openai-think-reasoning",
+    "dim": "D5/E2",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {\"reasoning\": \"café-naïve-Zürich\"}}]}",
+    "expect": {
+      "chunkType": "Thinking",
+      "content": "café-naïve-Zürich"
+    },
+    "id": "B011"
+  },
+  {
+    "group": "openai-think-reasoning",
+    "dim": "D5/E2",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {\"reasoning\": \"中文深度思考内容\"}}]}",
+    "expect": {
+      "chunkType": "Thinking",
+      "content": "中文深度思考内容"
+    },
+    "id": "B012"
+  },
+  {
+    "group": "openai-think-reasoning",
+    "dim": "D5/E2",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {\"reasoning\": \"مرحبا بالعالم\"}}]}",
+    "expect": {
+      "chunkType": "Thinking",
+      "content": "مرحبا بالعالم"
+    },
+    "id": "B013"
+  },
+  {
+    "group": "openai-think-reasoning",
+    "dim": "D5/E2",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {\"reasoning\": \"a   b   c\"}}]}",
+    "expect": {
+      "chunkType": "Thinking",
+      "content": "a   b   c"
+    },
+    "id": "B014"
+  },
+  {
+    "group": "openai-think-reasoning",
+    "dim": "D5/E2",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {\"reasoning\": \"he said \\\"hi\\\" to me\"}}]}",
+    "expect": {
+      "chunkType": "Thinking",
+      "content": "he said \"hi\" to me"
+    },
+    "id": "B015"
+  },
+  {
+    "group": "openai-think-reasoning",
+    "dim": "D5/E2",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {\"reasoning\": \"line1\\nline2\"}}]}",
+    "expect": {
+      "chunkType": "Thinking",
+      "content": "line1\nline2"
+    },
+    "id": "B016"
+  },
+  {
+    "group": "openai-think-reasoning",
+    "dim": "D5/E2",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {\"reasoning\": \"Omega-Ω-approx-≈-sqrt-√\"}}]}",
+    "expect": {
+      "chunkType": "Thinking",
+      "content": "Omega-Ω-approx-≈-sqrt-√"
+    },
+    "id": "B017"
+  },
+  {
+    "group": "openai-think-reasoning",
+    "dim": "D5/E2",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {\"reasoning\": \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}}]}",
+    "expect": {
+      "chunkType": "Thinking",
+      "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    "id": "B018"
+  },
+  {
+    "group": "openai-content-text",
+    "dim": "D2/E2",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {\"content\": \"hello\"}}]}",
+    "expect": {
+      "chunkType": "Text",
+      "content": "hello"
+    },
+    "id": "B019"
+  },
+  {
+    "group": "openai-content-text",
+    "dim": "D2/E2",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {\"content\": \"café-naïve-Zürich\"}}]}",
+    "expect": {
+      "chunkType": "Text",
+      "content": "café-naïve-Zürich"
+    },
+    "id": "B020"
+  },
+  {
+    "group": "openai-content-text",
+    "dim": "D2/E2",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {\"content\": \"中文深度思考内容\"}}]}",
+    "expect": {
+      "chunkType": "Text",
+      "content": "中文深度思考内容"
+    },
+    "id": "B021"
+  },
+  {
+    "group": "openai-content-text",
+    "dim": "D2/E2",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {\"content\": \"مرحبا بالعالم\"}}]}",
+    "expect": {
+      "chunkType": "Text",
+      "content": "مرحبا بالعالم"
+    },
+    "id": "B022"
+  },
+  {
+    "group": "openai-content-text",
+    "dim": "D2/E2",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {\"content\": \"a   b   c\"}}]}",
+    "expect": {
+      "chunkType": "Text",
+      "content": "a   b   c"
+    },
+    "id": "B023"
+  },
+  {
+    "group": "openai-content-text",
+    "dim": "D2/E2",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {\"content\": \"he said \\\"hi\\\" to me\"}}]}",
+    "expect": {
+      "chunkType": "Text",
+      "content": "he said \"hi\" to me"
+    },
+    "id": "B024"
+  },
+  {
+    "group": "openai-content-text",
+    "dim": "D2/E2",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {\"content\": \"line1\\nline2\"}}]}",
+    "expect": {
+      "chunkType": "Text",
+      "content": "line1\nline2"
+    },
+    "id": "B025"
+  },
+  {
+    "group": "openai-content-text",
+    "dim": "D2/E2",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {\"content\": \"Omega-Ω-approx-≈-sqrt-√\"}}]}",
+    "expect": {
+      "chunkType": "Text",
+      "content": "Omega-Ω-approx-≈-sqrt-√"
+    },
+    "id": "B026"
+  },
+  {
+    "group": "openai-content-text",
+    "dim": "D2/E2",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {\"content\": \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}}]}",
+    "expect": {
+      "chunkType": "Text",
+      "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    "id": "B027"
+  },
+  {
+    "group": "openai-finish",
+    "dim": "E3",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {}, \"finish_reason\": \"stop\"}]}",
+    "expect": {
+      "chunkType": "Done",
+      "finishReason": "stop"
+    },
+    "id": "B028"
+  },
+  {
+    "group": "openai-finish",
+    "dim": "E3",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {}, \"finish_reason\": \"length\"}]}",
+    "expect": {
+      "chunkType": "Done",
+      "finishReason": "length"
+    },
+    "id": "B029"
+  },
+  {
+    "group": "openai-finish",
+    "dim": "E3",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {}, \"finish_reason\": \"tool_calls\"}]}",
+    "expect": {
+      "chunkType": "Done",
+      "finishReason": "tool_calls"
+    },
+    "id": "B030"
+  },
+  {
+    "group": "openai-finish",
+    "dim": "E3",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {}, \"finish_reason\": \"content_filter\"}]}",
+    "expect": {
+      "chunkType": "Done",
+      "finishReason": "content_filter"
+    },
+    "id": "B031"
+  },
+  {
+    "group": "openai-finish-with-content",
+    "dim": "E3",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {\"content\": \"tail\"}, \"finish_reason\": \"stop\"}]}",
+    "expect": {
+      "chunkType": "Done",
+      "finishReason": "stop",
+      "content": "tail"
+    },
+    "id": "B032"
+  },
+  {
+    "group": "openai-stream-usage",
+    "dim": "D7",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [], \"usage\": {\"prompt_tokens\": 12, \"completion_tokens\": 7}}",
+    "expect": {
+      "chunkType": "Done",
+      "inputTokens": 12,
+      "outputTokens": 7
+    },
+    "id": "B033"
+  },
+  {
+    "group": "openai-stream-usage",
+    "dim": "D7",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [], \"usage\": {\"prompt_tokens\": 1, \"completion_tokens\": 0}}",
+    "expect": {
+      "chunkType": "Done",
+      "inputTokens": 1,
+      "outputTokens": 0
+    },
+    "id": "B034"
+  },
+  {
+    "group": "openai-stream-usage",
+    "dim": "D7",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [], \"usage\": {\"prompt_tokens\": 4096, \"completion_tokens\": 2048}}",
+    "expect": {
+      "chunkType": "Done",
+      "inputTokens": 4096,
+      "outputTokens": 2048
+    },
+    "id": "B035"
+  },
+  {
+    "group": "openai-tool-delta",
+    "dim": "D6",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {\"tool_calls\": [{\"index\": 0, \"id\": \"call_1\", \"type\": \"function\", \"function\": {\"name\": \"f\", \"arguments\": \"{}\"}}]}}]}",
+    "expect": {
+      "chunkType": "ToolCall"
+    },
+    "id": "B036"
+  },
+  {
+    "group": "openai-tool-delta-2",
+    "dim": "D6/E8",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {\"tool_calls\": [{\"index\": 0, \"id\": \"c1\", \"type\": \"function\", \"function\": {\"name\": \"a\", \"arguments\": \"{}\"}}, {\"index\": 1, \"id\": \"c2\", \"type\": \"function\", \"function\": {\"name\": \"b\", \"arguments\": \"{}\"}}]}}]}",
+    "expect": {
+      "chunkType": "ToolCall"
+    },
+    "id": "B037"
+  },
+  {
+    "group": "openai-edge-null",
+    "dim": "E1",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "",
+    "expect": {
+      "chunkType": "null"
+    },
+    "id": "B038"
+  },
+  {
+    "group": "openai-edge-null",
+    "dim": "E1",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "   ",
+    "expect": {
+      "chunkType": "null"
+    },
+    "id": "B039"
+  },
+  {
+    "group": "openai-edge-null",
+    "dim": "E1",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{}",
+    "expect": {
+      "chunkType": "null"
+    },
+    "id": "B040"
+  },
+  {
+    "group": "openai-edge-null",
+    "dim": "E1",
+    "adapter": "openai",
+    "method": "stream",
+    "payload": "{\"choices\": [{\"delta\": {}}]}",
+    "expect": {
+      "chunkType": "null"
+    },
+    "id": "B041"
+  },
+  {
+    "group": "openai-nonstream-usage",
+    "dim": "D7",
+    "adapter": "openai",
+    "method": "tokenUsage",
+    "payload": "{\"usage\": {\"prompt_tokens\": 30, \"completion_tokens\": 11}}",
+    "expect": {
+      "inputTokens": 30,
+      "outputTokens": 11
+    },
+    "id": "B042"
+  },
+  {
+    "group": "openai-nonstream-usage",
+    "dim": "D7",
+    "adapter": "openai",
+    "method": "tokenUsage",
+    "payload": "{\"usage\": {\"prompt_tokens\": 0, \"completion_tokens\": 0}}",
+    "expect": {
+      "inputTokens": 0,
+      "outputTokens": 0
+    },
+    "id": "B043"
+  },
+  {
+    "group": "openai-nonstream-usage",
+    "dim": "D7",
+    "adapter": "openai",
+    "method": "tokenUsage",
+    "payload": "{\"usage\": {\"prompt_tokens\": 1000, \"completion_tokens\": 500}}",
+    "expect": {
+      "inputTokens": 1000,
+      "outputTokens": 500
+    },
+    "id": "B044"
+  },
+  {
+    "group": "openai-nonstream-tool",
+    "dim": "D6",
+    "adapter": "openai",
+    "method": "toolCalls",
+    "payload": "{\"choices\": [{\"message\": {\"tool_calls\": [{\"id\": \"c1\", \"type\": \"function\", \"function\": {\"name\": \"g\", \"arguments\": \"{}\"}}]}}]}",
+    "expect": {
+      "toolCount": 1
+    },
+    "id": "B045"
+  },
+  {
+    "group": "openai-nonstream-tool-2",
+    "dim": "D6/E8",
+    "adapter": "openai",
+    "method": "toolCalls",
+    "payload": "{\"choices\": [{\"message\": {\"tool_calls\": [{\"id\": \"c1\", \"type\": \"function\", \"function\": {\"name\": \"g\", \"arguments\": \"{}\"}}, {\"id\": \"c2\", \"type\": \"function\", \"function\": {\"name\": \"h\", \"arguments\": \"{}\"}}]}}]}",
+    "expect": {
+      "toolCount": 2
+    },
+    "id": "B046"
+  },
+  {
+    "group": "openai-message-content",
+    "dim": "D9/E2",
+    "adapter": "openai",
+    "method": "messageContent",
+    "payload": "{\"choices\": [{\"message\": {\"content\": \"hello\"}}]}",
+    "expect": {
+      "content": "hello"
+    },
+    "id": "B047"
+  },
+  {
+    "group": "openai-message-content",
+    "dim": "D9/E2",
+    "adapter": "openai",
+    "method": "messageContent",
+    "payload": "{\"choices\": [{\"message\": {\"content\": \"café-naïve-Zürich\"}}]}",
+    "expect": {
+      "content": "café-naïve-Zürich"
+    },
+    "id": "B048"
+  },
+  {
+    "group": "openai-message-content",
+    "dim": "D9/E2",
+    "adapter": "openai",
+    "method": "messageContent",
+    "payload": "{\"choices\": [{\"message\": {\"content\": \"中文深度思考内容\"}}]}",
+    "expect": {
+      "content": "中文深度思考内容"
+    },
+    "id": "B049"
+  },
+  {
+    "group": "openai-message-content",
+    "dim": "D9/E2",
+    "adapter": "openai",
+    "method": "messageContent",
+    "payload": "{\"choices\": [{\"message\": {\"content\": \"مرحبا بالعالم\"}}]}",
+    "expect": {
+      "content": "مرحبا بالعالم"
+    },
+    "id": "B050"
+  },
+  {
+    "group": "openai-message-content",
+    "dim": "D9/E2",
+    "adapter": "openai",
+    "method": "messageContent",
+    "payload": "{\"choices\": [{\"message\": {\"content\": \"a   b   c\"}}]}",
+    "expect": {
+      "content": "a   b   c"
+    },
+    "id": "B051"
+  },
+  {
+    "group": "openai-message-content",
+    "dim": "D9/E2",
+    "adapter": "openai",
+    "method": "messageContent",
+    "payload": "{\"choices\": [{\"message\": {\"content\": \"he said \\\"hi\\\" to me\"}}]}",
+    "expect": {
+      "content": "he said \"hi\" to me"
+    },
+    "id": "B052"
+  },
+  {
+    "group": "openai-message-content",
+    "dim": "D9/E2",
+    "adapter": "openai",
+    "method": "messageContent",
+    "payload": "{\"choices\": [{\"message\": {\"content\": \"line1\\nline2\"}}]}",
+    "expect": {
+      "content": "line1\nline2"
+    },
+    "id": "B053"
+  },
+  {
+    "group": "openai-message-content",
+    "dim": "D9/E2",
+    "adapter": "openai",
+    "method": "messageContent",
+    "payload": "{\"choices\": [{\"message\": {\"content\": \"Omega-Ω-approx-≈-sqrt-√\"}}]}",
+    "expect": {
+      "content": "Omega-Ω-approx-≈-sqrt-√"
+    },
+    "id": "B054"
+  },
+  {
+    "group": "openai-message-content",
+    "dim": "D9/E2",
+    "adapter": "openai",
+    "method": "messageContent",
+    "payload": "{\"choices\": [{\"message\": {\"content\": \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}}]}",
+    "expect": {
+      "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    "id": "B055"
+  },
+  {
+    "group": "claude-content-text",
+    "dim": "D2/E2",
+    "adapter": "claude",
+    "method": "stream",
+    "payload": "{\"type\": \"content_block_delta\", \"delta\": {\"text\": \"hello\"}}",
+    "expect": {
+      "chunkType": "Text",
+      "content": "hello"
+    },
+    "id": "B056"
+  },
+  {
+    "group": "claude-content-text",
+    "dim": "D2/E2",
+    "adapter": "claude",
+    "method": "stream",
+    "payload": "{\"type\": \"content_block_delta\", \"delta\": {\"text\": \"café-naïve-Zürich\"}}",
+    "expect": {
+      "chunkType": "Text",
+      "content": "café-naïve-Zürich"
+    },
+    "id": "B057"
+  },
+  {
+    "group": "claude-content-text",
+    "dim": "D2/E2",
+    "adapter": "claude",
+    "method": "stream",
+    "payload": "{\"type\": \"content_block_delta\", \"delta\": {\"text\": \"中文深度思考内容\"}}",
+    "expect": {
+      "chunkType": "Text",
+      "content": "中文深度思考内容"
+    },
+    "id": "B058"
+  },
+  {
+    "group": "claude-content-text",
+    "dim": "D2/E2",
+    "adapter": "claude",
+    "method": "stream",
+    "payload": "{\"type\": \"content_block_delta\", \"delta\": {\"text\": \"مرحبا بالعالم\"}}",
+    "expect": {
+      "chunkType": "Text",
+      "content": "مرحبا بالعالم"
+    },
+    "id": "B059"
+  },
+  {
+    "group": "claude-content-text",
+    "dim": "D2/E2",
+    "adapter": "claude",
+    "method": "stream",
+    "payload": "{\"type\": \"content_block_delta\", \"delta\": {\"text\": \"a   b   c\"}}",
+    "expect": {
+      "chunkType": "Text",
+      "content": "a   b   c"
+    },
+    "id": "B060"
+  },
+  {
+    "group": "claude-content-text",
+    "dim": "D2/E2",
+    "adapter": "claude",
+    "method": "stream",
+    "payload": "{\"type\": \"content_block_delta\", \"delta\": {\"text\": \"he said \\\"hi\\\" to me\"}}",
+    "expect": {
+      "chunkType": "Text",
+      "content": "he said \"hi\" to me"
+    },
+    "id": "B061"
+  },
+  {
+    "group": "claude-content-text",
+    "dim": "D2/E2",
+    "adapter": "claude",
+    "method": "stream",
+    "payload": "{\"type\": \"content_block_delta\", \"delta\": {\"text\": \"line1\\nline2\"}}",
+    "expect": {
+      "chunkType": "Text",
+      "content": "line1\nline2"
+    },
+    "id": "B062"
+  },
+  {
+    "group": "claude-content-text",
+    "dim": "D2/E2",
+    "adapter": "claude",
+    "method": "stream",
+    "payload": "{\"type\": \"content_block_delta\", \"delta\": {\"text\": \"Omega-Ω-approx-≈-sqrt-√\"}}",
+    "expect": {
+      "chunkType": "Text",
+      "content": "Omega-Ω-approx-≈-sqrt-√"
+    },
+    "id": "B063"
+  },
+  {
+    "group": "claude-content-text",
+    "dim": "D2/E2",
+    "adapter": "claude",
+    "method": "stream",
+    "payload": "{\"type\": \"content_block_delta\", \"delta\": {\"text\": \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}}",
+    "expect": {
+      "chunkType": "Text",
+      "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    "id": "B064"
+  },
+  {
+    "group": "claude-stop-reason",
+    "dim": "E3",
+    "adapter": "claude",
+    "method": "stream",
+    "payload": "{\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"end_turn\"}, \"usage\": {\"output_tokens\": 5}}",
+    "expect": {
+      "chunkType": "Done",
+      "finishReason": "end_turn"
+    },
+    "id": "B065"
+  },
+  {
+    "group": "claude-stop-reason",
+    "dim": "E3",
+    "adapter": "claude",
+    "method": "stream",
+    "payload": "{\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"max_tokens\"}, \"usage\": {\"output_tokens\": 5}}",
+    "expect": {
+      "chunkType": "Done",
+      "finishReason": "max_tokens"
+    },
+    "id": "B066"
+  },
+  {
+    "group": "claude-stop-reason",
+    "dim": "E3",
+    "adapter": "claude",
+    "method": "stream",
+    "payload": "{\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"tool_use\"}, \"usage\": {\"output_tokens\": 5}}",
+    "expect": {
+      "chunkType": "Done",
+      "finishReason": "tool_use"
+    },
+    "id": "B067"
+  },
+  {
+    "group": "claude-stop-reason",
+    "dim": "E3",
+    "adapter": "claude",
+    "method": "stream",
+    "payload": "{\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"stop_sequence\"}, \"usage\": {\"output_tokens\": 5}}",
+    "expect": {
+      "chunkType": "Done",
+      "finishReason": "stop_sequence"
+    },
+    "id": "B068"
+  },
+  {
+    "group": "claude-message-stop",
+    "dim": "E3",
+    "adapter": "claude",
+    "method": "stream",
+    "payload": "{\"type\": \"message_stop\"}",
+    "expect": {
+      "chunkType": "Done",
+      "finishReason": "stop"
+    },
+    "id": "B069"
+  },
+  {
+    "group": "claude-error",
+    "dim": "D11",
+    "adapter": "claude",
+    "method": "stream",
+    "payload": "{\"type\": \"error\", \"error\": {\"message\": \"upstream boom\"}}",
+    "expect": {
+      "chunkType": "Error",
+      "error": "upstream boom"
+    },
+    "id": "B070"
+  },
+  {
+    "group": "claude-edge-null",
+    "dim": "E1",
+    "adapter": "claude",
+    "method": "stream",
+    "payload": "",
+    "expect": {
+      "chunkType": "null"
+    },
+    "id": "B071"
+  },
+  {
+    "group": "claude-edge-null",
+    "dim": "E1",
+    "adapter": "claude",
+    "method": "stream",
+    "payload": "{\"type\": \"ping\"}",
+    "expect": {
+      "chunkType": "null"
+    },
+    "id": "B072"
+  },
+  {
+    "group": "claude-usage-cache",
+    "dim": "D7/E9",
+    "adapter": "claude",
+    "method": "tokenUsage",
+    "payload": "{\"usage\": {\"input_tokens\": 40, \"output_tokens\": 9, \"cache_creation_input_tokens\": 15, \"cache_read_input_tokens\": 3}}",
+    "expect": {
+      "inputTokens": 40,
+      "outputTokens": 9,
+      "cacheCreation": 15,
+      "cacheRead": 3
+    },
+    "id": "B073"
+  },
+  {
+    "group": "claude-usage-cache",
+    "dim": "D7/E9",
+    "adapter": "claude",
+    "method": "tokenUsage",
+    "payload": "{\"usage\": {\"input_tokens\": 100, \"output_tokens\": 50, \"cache_creation_input_tokens\": 0, \"cache_read_input_tokens\": 0}}",
+    "expect": {
+      "inputTokens": 100,
+      "outputTokens": 50,
+      "cacheCreation": 0,
+      "cacheRead": 0
+    },
+    "id": "B074"
+  },
+  {
+    "group": "claude-usage-cache",
+    "dim": "D7/E9",
+    "adapter": "claude",
+    "method": "tokenUsage",
+    "payload": "{\"usage\": {\"input_tokens\": 10, \"output_tokens\": 5, \"cache_creation_input_tokens\": 7, \"cache_read_input_tokens\": 2}}",
+    "expect": {
+      "inputTokens": 10,
+      "outputTokens": 5,
+      "cacheCreation": 7,
+      "cacheRead": 2
+    },
+    "id": "B075"
+  },
+  {
+    "group": "claude-tooluse-normalize",
+    "dim": "D6",
+    "adapter": "claude",
+    "method": "toolCalls",
+    "payload": "{\"content\": [{\"type\": \"tool_use\", \"id\": \"tu_1\", \"name\": \"search\", \"input\": {\"q\": \"x\"}}]}",
+    "expect": {
+      "toolCount": 1,
+      "toolFirstName": "search",
+      "toolFirstType": "function"
+    },
+    "id": "B076"
+  },
+  {
+    "group": "claude-tooluse-2",
+    "dim": "D6/E8",
+    "adapter": "claude",
+    "method": "toolCalls",
+    "payload": "{\"content\": [{\"type\": \"tool_use\", \"id\": \"t1\", \"name\": \"alpha\", \"input\": {}}, {\"type\": \"tool_use\", \"id\": \"t2\", \"name\": \"beta\", \"input\": {}}]}",
+    "expect": {
+      "toolCount": 2,
+      "toolFirstName": "alpha",
+      "toolFirstType": "function"
+    },
+    "id": "B077"
+  },
+  {
+    "group": "claude-message-content",
+    "dim": "D9/E2",
+    "adapter": "claude",
+    "method": "messageContent",
+    "payload": "{\"content\": [{\"type\": \"text\", \"text\": \"hello\"}]}",
+    "expect": {
+      "content": "hello"
+    },
+    "id": "B078"
+  },
+  {
+    "group": "claude-message-content",
+    "dim": "D9/E2",
+    "adapter": "claude",
+    "method": "messageContent",
+    "payload": "{\"content\": [{\"type\": \"text\", \"text\": \"café-naïve-Zürich\"}]}",
+    "expect": {
+      "content": "café-naïve-Zürich"
+    },
+    "id": "B079"
+  },
+  {
+    "group": "claude-message-content",
+    "dim": "D9/E2",
+    "adapter": "claude",
+    "method": "messageContent",
+    "payload": "{\"content\": [{\"type\": \"text\", \"text\": \"中文深度思考内容\"}]}",
+    "expect": {
+      "content": "中文深度思考内容"
+    },
+    "id": "B080"
+  },
+  {
+    "group": "claude-message-content",
+    "dim": "D9/E2",
+    "adapter": "claude",
+    "method": "messageContent",
+    "payload": "{\"content\": [{\"type\": \"text\", \"text\": \"مرحبا بالعالم\"}]}",
+    "expect": {
+      "content": "مرحبا بالعالم"
+    },
+    "id": "B081"
+  },
+  {
+    "group": "claude-message-content",
+    "dim": "D9/E2",
+    "adapter": "claude",
+    "method": "messageContent",
+    "payload": "{\"content\": [{\"type\": \"text\", \"text\": \"a   b   c\"}]}",
+    "expect": {
+      "content": "a   b   c"
+    },
+    "id": "B082"
+  },
+  {
+    "group": "claude-message-content",
+    "dim": "D9/E2",
+    "adapter": "claude",
+    "method": "messageContent",
+    "payload": "{\"content\": [{\"type\": \"text\", \"text\": \"he said \\\"hi\\\" to me\"}]}",
+    "expect": {
+      "content": "he said \"hi\" to me"
+    },
+    "id": "B083"
+  },
+  {
+    "group": "claude-message-content",
+    "dim": "D9/E2",
+    "adapter": "claude",
+    "method": "messageContent",
+    "payload": "{\"content\": [{\"type\": \"text\", \"text\": \"line1\\nline2\"}]}",
+    "expect": {
+      "content": "line1\nline2"
+    },
+    "id": "B084"
+  },
+  {
+    "group": "claude-message-content",
+    "dim": "D9/E2",
+    "adapter": "claude",
+    "method": "messageContent",
+    "payload": "{\"content\": [{\"type\": \"text\", \"text\": \"Omega-Ω-approx-≈-sqrt-√\"}]}",
+    "expect": {
+      "content": "Omega-Ω-approx-≈-sqrt-√"
+    },
+    "id": "B085"
+  },
+  {
+    "group": "claude-message-content",
+    "dim": "D9/E2",
+    "adapter": "claude",
+    "method": "messageContent",
+    "payload": "{\"content\": [{\"type\": \"text\", \"text\": \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}]}",
+    "expect": {
+      "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    "id": "B086"
+  },
+  {
+    "group": "think-inline",
+    "dim": "D5",
+    "method": "thinkStripper",
+    "captureThinking": true,
+    "payloadChunks": [
+      "<think>推理内容</think>正式回答"
+    ],
+    "expect": {
+      "thinkVisible": "正式回答",
+      "thinkCaptured": "推理内容"
+    },
+    "id": "B087"
+  },
+  {
+    "group": "think-cross-chunk",
+    "dim": "D5/E4",
+    "method": "thinkStripper",
+    "captureThinking": false,
+    "payloadChunks": [
+      "abc<thi",
+      "nk>secret</thi",
+      "nk>xyz"
+    ],
+    "expect": {
+      "thinkVisible": "abcxyz"
+    },
+    "id": "B088"
+  },
+  {
+    "group": "think-plain",
+    "dim": "D5",
+    "method": "thinkStripper",
+    "captureThinking": true,
+    "payloadChunks": [
+      "just text"
+    ],
+    "expect": {
+      "thinkVisible": "just text",
+      "thinkCapturedEmpty": true
+    },
+    "id": "B089"
+  },
+  {
+    "group": "think-only",
+    "dim": "D5",
+    "method": "thinkStripper",
+    "captureThinking": true,
+    "payloadChunks": [
+      "<think>only thinking</think>"
+    ],
+    "expect": {
+      "thinkVisible": "",
+      "thinkCaptured": "only thinking"
+    },
+    "id": "B090"
+  },
+  {
+    "group": "think-nonascii-after",
+    "dim": "D5/E2",
+    "method": "thinkStripper",
+    "captureThinking": true,
+    "payloadChunks": [
+      "<think>t</think>done-完成"
+    ],
+    "expect": {
+      "thinkVisible": "done-完成",
+      "thinkCaptured": "t"
+    },
+    "id": "B091"
+  }
+]

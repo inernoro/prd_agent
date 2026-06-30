@@ -88,6 +88,8 @@
   > 长文本/文档转思维导图风格的可演讲材料，首期 mindmap 模式（MVP 已落地）
 
 - [前端搭档智能体产品规格](spec.front-end-agent) `spec.front-end-agent`
+- [AI 大模型网关真实环境 MECE 冒烟测试矩阵](spec.llm-gateway-test-matrix) `spec.llm-gateway-test-matrix`
+  > MECE 矩阵 + 4 层测试（解析/协议保真/跨进程/真机）+ 每层 canary；数据驱动全量见 report.gw-test-matrix
   > 面向后端同事的前端交付助手：接 API、写组件、修报错、看截图现象
 
 ### 二、设计文档
@@ -296,6 +298,10 @@
 
 - [LLM Gateway 图片生成重构设计](design.platform.llm-gateway-refactor) `design.platform.llm-gateway-refactor`
   > compute-then-send 重构方案，消除二次 Resolve 的根因
+- [LLM 网关物理独立设计](design.llm-gateway-physical-isolation) `design.llm-gateway-physical-isolation`
+  > 从 MAP 剥离 + 跨进程 serving（/gw/v1/*）+ flag inproc|http，含对抗评审
+- [LLM 网关与模型池统一](design.llm-gateway-unification) `design.llm-gateway-unification`
+  > 协议下沉 + 池减负 + 接口绑模型
 
 - [PR Review V2 设计](design.pr-review.v2) `design.pr-review.v2`
   > OAuth Device Flow 每用户独立 + PR 快照 + 笔记的最小可审查工作台
@@ -359,6 +365,9 @@
   > 文档再加工功能中不同智能体（视觉/文学）的调用路由与分发设计
 
 ### 三、指南
+
+- [LLM 网关验收面包屑清单](guide.llm-gateway.acceptance-breadcrumbs) `guide.llm-gateway.acceptance-breadcrumbs`
+  > 逐 UI 面：导航点击路径→截图点→预期→双主题（Playwright 可消费）+ 测试覆盖摘要 + 例外 12 条 + 压测 6 条
 
 - [Agent 开发入门指南（新手必读）](guide.platform.agent-onboarding) `guide.platform.agent-onboarding`
   > 新手 Agent 开发入门：阶段式陪伴、AGENT_WORKSPACE 进度文件、验收标准
@@ -611,6 +620,9 @@
   > LLM Gateway 流式场景的关键陷阱与 Reasoning 推理内容处理规则
 
 ### 五、计划与方案
+
+- [LLM 网关剥离上线计划](plan.llm-gateway.rollout) `plan.llm-gateway.rollout`
+  > 差异化进度 + 测试纲领（A/B/C/D 四层）+ 局限范围（L1-L9 + apiyi 中转专项）+ 翻 http 上线序列
 
 - [PA Agent 竞品调研与改进方案](plan.product-agent.pa.competitive-improvements) `plan.product-agent.pa.competitive-improvements`
   > 四类竞品谱系、与 Phase 1 差距对照、P2～P4 分期改进包
@@ -867,6 +879,9 @@
   > 移动端控制条过载问题（知识库/缺陷/周报/海鲜市场等页面，进内容前控制条 >1 条），治理机制与进度
 
 ### 七、周报
+
+- [AI 大模型网关测试矩阵全量报告](report.gw-test-matrix) `report.gw-test-matrix`
+  > 全枚举大表：A 解析 153 入口 + B 协议保真 91 cell + C 跨进程 18 cell + 20 扩展维度；B/C 即 CI 真跑 cell
 
   > 各智能体完备度看板：终极目标、当前进度、TodoList、目前情况、风险点（当前加权进度约 55%）
 

@@ -9,6 +9,7 @@ import { computePreviewSlug, previewProjectSlugCandidates } from './preview-slug
 import { classifyDeployRuntime } from './deploy-runtime.js';
 import { computeWaitTiming } from './wait-timing.js';
 import { resolveEffectiveProfile } from './container.js';
+import { ROUTABLE_SERVICE_STATUSES } from './forwarder-route-publisher.js';
 import type { DeployDurationMode } from '../types.js';
 import {
   classifyHttpRequestKind,
@@ -472,6 +473,15 @@ export class ProxyService {
     // Each branch gets its own subdomain — no cookies needed, fully independent
     const previewSlug = this.extractPreviewBranch(host);
     if (previewSlug) {
+      // 命名子域兜底:`<previewSlug>-<subdomain>.<root>` 直达声明了该 subdomain 的服务容器。
+      // 转发模式(CDS_USE_FORWARDER=1,生产数据面)下 forwarder 已按 host 精确命中,不会走到这里;
+      // 本兜底只服务非转发部署 + master 反代路径,避免命名 host 落到 auto-build。
+      const svcTarget = this.resolvePreviewServiceSubdomain(previewSlug);
+      if (svcTarget) {
+        // 直接传已解析的 entry(forcedEntry),避免 routeToBranch 二次 resolveBranchEntry 命中错分支。
+        this.routeToBranch(svcTarget.previewSlug, svcTarget.entry.branch, req, res, svcTarget.profileId, svcTarget.entry);
+        return;
+      }
       this.routeToBranch(previewSlug, previewSlug, req, res);
       return;
     }
@@ -537,11 +547,66 @@ export class ProxyService {
    * Route a request to a specific branch (by slug).
    * Used by both normal routing and preview subdomain routing.
    */
-  private routeToBranch(branchSlug: string, branchRef: string, req: http.IncomingMessage, res: http.ServerResponse): void {
+  /**
+   * 命名子域解析(master 兜底):`<previewSlug>-<subdomain>` → 该分支 + 强制走声明了该 subdomain
+   * 的有效 profile。仅当 slug 本身解析不到分支(① 优先)、但去掉 `-<subdomain>` 后缀能命中某分支的
+   * previewSlug、且该分支有匹配 subdomain 的在跑 profile 时才命中——避免与「分支名恰好以 -xxx 结尾」
+   * 混淆。转发模式下 forwarder 已按 host 直接命中,本兜底只服务非转发部署。
+   */
+  private resolvePreviewServiceSubdomain(
+    slug: string,
+  ): { entry: BranchEntry; profileId: string; previewSlug: string } | undefined {
+    // slug 本身就能解析到分支 → 不是命名子域,交回常规路径。
+    if (this.resolveBranchEntry(slug)) return undefined;
+    const state = this.stateService.getState();
+    const projects = this.stateService.getProjects?.() ?? [];
+    const projectById = new Map(projects.map((p) => [p.id, p]));
+    // 收集所有候选,取「previewSlug 最长(最具体)」者——slug `abc-demo-llmgw` 可能同时被
+    // (previewSlug=`abc`, subdomain=`demo-llmgw`) 和 (previewSlug=`abc-demo`, subdomain=`llmgw`) 命中,
+    // 必须按最长 previewSlug 消歧,否则 Object.values 迭代顺序决定胜者→同一 URL 路由不确定(Cursor Bugbot)。
+    // 等长再按 entry.id 字典序稳定 tie-break。
+    let best: { entry: BranchEntry; profileId: string; previewSlug: string } | undefined;
+    for (const entry of Object.values(state.branches)) {
+      if (!entry.branch) continue;
+      const project = entry.projectId ? projectById.get(entry.projectId) : undefined;
+      let profiles: BuildProfile[] | undefined;
+      for (const projectSlug of previewProjectSlugCandidates(project, entry.projectId)) {
+        const ps = computePreviewSlug(entry.branch, projectSlug);
+        if (!ps || !slug.startsWith(`${ps}-`)) continue;
+        const sub = slug.slice(ps.length + 1); // 去掉 `<ps>-`
+        if (!sub) continue;
+        profiles ??= this.stateService
+          .getEffectiveProfilesForBranch(entry)
+          .map((p) => resolveEffectiveProfile(p, entry));
+        // 要求该服务有 hostPort **且** 处于可路由状态——否则停止/错误（但残留 hostPort）的 profile
+        // 会被命名 host 强制命中却拿不到上游，产生 forwarder 本会省略的坏路由。
+        // 与 forwarder 命名路由「只发可路由服务」口径对齐，共用 ROUTABLE_SERVICE_STATUSES（Cursor Bugbot）。
+        const match = profiles.find((p) => {
+          if (!p.subdomain || p.subdomain.toLowerCase() !== sub) return false;
+          const svc = entry.services[p.id];
+          return (svc?.hostPort ?? 0) > 0 && ROUTABLE_SERVICE_STATUSES.has(String(svc?.status));
+        });
+        if (!match) continue;
+        // 返回已解析的 v3 previewSlug(非 slugify(branch.name))——后者对 claude/... 带 `/` 的分支名
+        // 算出的裸 slug 与 resolveBranchEntry 的 v3 前向匹配口径不符,会让命名 URL 在 master 兜底解析不到分支。
+        const better =
+          !best ||
+          ps.length > best.previewSlug.length ||
+          (ps.length === best.previewSlug.length && String(entry.id) < String(best.entry.id));
+        if (better) best = { entry, profileId: match.id, previewSlug: ps };
+      }
+    }
+    return best;
+  }
+
+  private routeToBranch(branchSlug: string, branchRef: string, req: http.IncomingMessage, res: http.ServerResponse, forcedProfileId?: string, forcedEntry?: BranchEntry): void {
+    // 命名子域命中时，调用方已解析出确切 entry（resolvePreviewServiceSubdomain 按最长 previewSlug 消歧）；
+    // 直接用它，**不再** resolveBranchEntry(slug) 二次解析——多分支共享同一 v3 slug 时二次解析可能命中
+    // 另一个 entry，导致 forcedProfileId 被丢、命名 host 路由到错分支（Cursor Bugbot）。
     // Use canonical-id fallback so subdomain hits on non-legacy projects
     // (entries stored as `${projectSlug}-${slug}`) match the bare-slug
     // request without falling through to auto-build on every reload.
-    const branch = this.resolveBranchEntry(branchSlug);
+    const branch = forcedEntry ?? this.resolveBranchEntry(branchSlug);
 
     // Loading states — serve friendly waiting page instead of 502/503 so
     // users never see a raw Cloudflare gateway error during build/restart.
@@ -679,7 +744,10 @@ export class ProxyService {
       return;
     }
 
-    const profileId = this.detectProfileFromRequest(req, branch);
+    // 命名子域命中时强制走该 profile(host 已绑定具体服务,不按路径再分流);否则按请求路径检测。
+    const profileId = forcedProfileId && branch.services[forcedProfileId]
+      ? forcedProfileId
+      : this.detectProfileFromRequest(req, branch);
 
     // Service-level loading: branch is "running" (some services up) but
     // the specific service for this request is still initializing.

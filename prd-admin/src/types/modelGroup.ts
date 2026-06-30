@@ -136,49 +136,53 @@ export interface ModelGroupMonitoringData {
 }
 
 /**
- * 调度预测 - 端点预测步骤
+ * 健康总览：单个模型池的健康摘要
  */
-export interface PredictionStep {
-  order: number;
-  endpointId: string;
-  modelId: string;
-  action: 'request' | 'parallel' | 'fallback' | 'rotate' | 'weighted' | 'standby';
-  label: string;
-  isTarget: boolean;
-  weight?: number;
-  probability?: number;
+export interface PoolHealthSummary {
+  id: string;
+  code: string;
+  name: string;
+  modelType: string;
+  isDefaultForType: boolean;
+  healthyCount: number;
+  degradedCount: number;
+  unavailableCount: number;
+  /** 池内最差健康状态 */
+  worstStatus: 'Healthy' | 'Degraded' | 'Unavailable';
 }
 
 /**
- * 调度预测 - 端点信息
+ * 健康总览：按 modelType 的 fallback 统计（近 N 天）
  */
-export interface PredictionEndpoint {
-  endpointId: string;
-  modelId: string;
-  platformId: string;
-  platformName: string;
-  priority: number;
-  healthStatus: string;
-  isAvailable: boolean;
-  healthScore: number;
-  consecutiveFailures: number;
-  index: number;
+export interface FallbackTypeStat {
+  modelType: string;
+  total: number;
+  fallbackCount: number;
+  /** 0-1 之间的比率 */
+  fallbackRate: number;
+  topFallbackReasons: Array<{ reason: string; count: number }>;
 }
 
 /**
- * 调度预测结果
+ * 健康总览：一级告警
  */
-export interface PoolPrediction {
-  poolId: string;
-  poolName: string;
-  strategy: string;
-  strategyDescription: string;
-  allEndpoints: PredictionEndpoint[];
-  prediction: {
-    type: string;
-    description: string;
-    steps: PredictionStep[];
-  };
+export interface HealthAlarm {
+  level: 'critical' | 'warning';
+  kind: 'dead-pool' | 'high-fallback';
+  target: string;
+  poolId?: string;
+  modelType?: string;
+  detail: string;
+}
+
+/**
+ * 模型池健康 + fallback 率告警总览（只读）
+ */
+export interface ModelGroupHealthOverview {
+  days: number;
+  pools: PoolHealthSummary[];
+  fallbackByType: FallbackTypeStat[];
+  alarms: HealthAlarm[];
 }
 
 /**

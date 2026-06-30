@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
@@ -43,6 +44,19 @@ public class GatewayResponse
     /// 响应内容（JSON 解析后）
     /// </summary>
     public JsonDocument? ContentJson { get; init; }
+
+    /// <summary>
+    /// 工具调用（函数调用）——OpenAI 形状的 tool_calls 数组（协议保真：
+    /// 上游若返回 tool_calls / Claude tool_use，由适配器归一为 OpenAI 形状回吐，
+    /// 不再被网关吃掉。无工具调用时为 null）。
+    /// </summary>
+    public JsonArray? ToolCalls { get; init; }
+
+    /// <summary>
+    /// 协议特有字段透传容器（logprobs / provider 特有字段等）。
+    /// 通用信封只认得的字段走强类型属性，认不得但又不该丢的走这里。
+    /// </summary>
+    public Dictionary<string, JsonNode?>? Extensions { get; init; }
 
     /// <summary>
     /// 模型调度信息
@@ -140,6 +154,16 @@ public class GatewayModelResolution
     /// 平台类型（openai, claude 等）
     /// </summary>
     public string? PlatformType { get; init; }
+
+    /// <summary>
+    /// 本次调用使用的协议（P1 协议下沉：池条目 Protocol > 模型 Protocol > 平台 PlatformType）。
+    /// </summary>
+    public string? Protocol { get; init; }
+
+    /// <summary>
+    /// 协议/模型解析来源说明（调试用）。
+    /// </summary>
+    public string? ResolutionReason { get; init; }
 
     /// <summary>
     /// API URL
@@ -339,11 +363,30 @@ public class GatewayStreamChunk
     /// </summary>
     public string? RawData { get; init; }
 
+    /// <summary>
+    /// 工具调用增量（仅 ToolCall 类型）——OpenAI 形状的 tool_calls 增量片段数组。
+    /// 协议保真：上游函数调用增量不再被网关吃掉，由适配器归一为 OpenAI 形状透出。
+    /// </summary>
+    public JsonArray? ToolCallDelta { get; init; }
+
+    /// <summary>
+    /// 协议特有字段透传容器（logprobs 等），认不得但不该丢的字段走这里。
+    /// </summary>
+    public Dictionary<string, JsonNode?>? Extensions { get; init; }
+
+    /// <summary>
+    /// 流内单调递增序号（断线续传 afterSeq 用）。进程内调用恒为 0；
+    /// 网关物理独立后由 /gw/stream 端点在发出 SSE 时逐块赋值，前端 ?afterSeq= 续传依赖它。
+    /// 详见 doc/design.llm-gateway-physical-isolation.md §3.6 / server-authority.md。
+    /// </summary>
+    public long Seq { get; init; }
+
     public static GatewayStreamChunk Text(string content) => new() { Type = GatewayChunkType.Text, Content = content };
     public static GatewayStreamChunk Thinking(string content) => new() { Type = GatewayChunkType.Thinking, Content = content };
     public static GatewayStreamChunk Start(GatewayModelResolution resolution) => new() { Type = GatewayChunkType.Start, Resolution = resolution };
     public static GatewayStreamChunk Done(string? finishReason, GatewayTokenUsage? usage) => new() { Type = GatewayChunkType.Done, FinishReason = finishReason, TokenUsage = usage };
     public static GatewayStreamChunk Fail(string error) => new() { Type = GatewayChunkType.Error, Error = error };
+    public static GatewayStreamChunk ToolCallChunk(JsonArray delta) => new() { Type = GatewayChunkType.ToolCall, ToolCallDelta = delta };
 }
 
 /// <summary>

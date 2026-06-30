@@ -48,6 +48,7 @@ docs:
   spec.platform.short-links: 统一短链系统规格
   spec.speech-agent: 演讲智能体（长文本 → 思维导图演讲）产品规格
   spec.front-end-agent: 前端搭档智能体产品规格
+  spec.llm-gateway-test-matrix: AI 大模型网关真实环境 MECE 冒烟测试矩阵（数据驱动全量见 report.gw-test-matrix）
 
   # ── 二、设计文档 ──
   # 先看核心架构，再看各模块设计
@@ -63,6 +64,8 @@ docs:
   design.skill.unified-skill-system: 技能系统统一设计
   design.platform.llm-gateway: LLM Gateway 统一调用架构设计
   design.platform.llm-gateway-refactor: LLM Gateway 图片生成重构（compute-then-send）
+  design.llm-gateway-physical-isolation: LLM 网关物理独立设计（从 MAP 剥离 + 跨进程 serving + flag）
+  design.llm-gateway-unification: LLM 网关与模型池统一（协议下沉 + 池减负 + 接口绑模型）
   design.platform.model-pool: 大模型池设计（三级调度/三级链路）
   design.open-platform: 开放平台功能概要
   design.platform.external-authorization: 外部授权中心（TAPD/语雀/GitHub 凭证统一管理）
@@ -211,6 +214,7 @@ docs:
   guide.infra-sandbox-agent: 基础设施沙箱 Agent 完整手册
   guide.skill.catalog: 技能百科全书指南
   guide.platform.smoke-tests: 冒烟测试指南
+  guide.llm-gateway.acceptance-breadcrumbs: LLM 网关验收面包屑清单（逐 UI 面 导航路径→截图点→预期，自动化可消费）+ 覆盖/例外/压测
 
   # ── 四、规范与规则 ──
   # 先看文档相关规范，再看开发规范，最后是审计报告
@@ -259,6 +263,7 @@ docs:
   plan.frontend.animation-optimization: 动画优化计划
   plan.desktop.asset-features: Desktop 资产功能方案
   plan.doc.update: 文档长周期更新计划
+  plan.llm-gateway.rollout: LLM 网关剥离上线计划（差异化进度 + 测试纲领 + 局限范围 + 翻 http 序列）
   plan.visual-agent.merge-image-ref-resolver: 合并计划书：三入口守门员统一
   plan.skill.installation: Claude Code Skill 安装计划
   plan.skill.marketplace-open-api-next: 海鲜市场技能开放接口 — 下一程交接（P2/P3/P4 待办 + UAT 清单 + 环境准备）
@@ -318,6 +323,9 @@ docs:
   debt.speech-agent: 演讲智能体 · 债务台账（MVP 已知边界 + Phase 2 backlog）
   debt.team-activity: 团队动态（团队脉搏）· 债务台账（排行刷量计分 / 直方图采样 / 深链下钻未通）
   debt.knowledge-base: 知识库（AI Toolbox attachment + 文档空间）债务台账
+  debt.llm-gateway: LLM 网关与模型池 · 债务台账
+  debt.llm-gateway-protocol-fidelity: LLM 网关协议保真（函数调用穿协议 + 能力软门）· 已知边界
+  debt.llm-gateway-isolation: AI 大模型网关从 MAP 剥离（观测/登录独立进程 + 部署 + serving 跨进程 + 数据驱动测试矩阵）· 债务台账
   debt.knowledge-base.inline-comment: 知识库划词评论（批注栏/内联布局 + 就地输入 + 回读闭环）债务台账
   debt.knowledge-base.selection-ai: 知识库划词 AI 局部编辑（AI 改写 + 选区配图）债务台账
   debt.web-hosting: 网页托管 · 债务台账（幻灯片翻页方向兼容垫片边界）
@@ -337,6 +345,7 @@ docs:
   debt.web-hosting.comments: 网页托管评论 · 债务台账
 
   # ── 七、周报（降序：最新在前）──
+  report.gw-test-matrix: AI 大模型网关测试矩阵全量报告（A 解析 153 + B 协议 91 + C 跨进程 18 cell，自动生成）
   report.2026-W26: 周报 2026-W26 (06-22 ~ 06-28)
   report.2026-W25: 周报 2026-W25 (06-15 ~ 06-21)
   report.2026-W24: 周报 2026-W24 (06-08 ~ 06-14)

@@ -84,6 +84,15 @@ public class OpenAIGatewayAdapter : IGatewayAdapter
         if (string.IsNullOrWhiteSpace(sseData))
             return null;
 
+        // 函数调用增量：tool_calls 是数组，下面的扁平标量扫描抓不到，单独走 JsonNode。
+        // 先做廉价子串判断，避免给纯文本块（绝大多数）额外开销。
+        if (sseData.Contains("tool_calls", StringComparison.Ordinal))
+        {
+            var toolDelta = ExtractToolCallArray(sseData, "delta");
+            if (toolDelta != null)
+                return GatewayStreamChunk.ToolCallChunk(toolDelta);
+        }
+
         var bytes = Encoding.UTF8.GetBytes(sseData);
         var reader = new Utf8JsonReader(bytes);
 
@@ -221,5 +230,32 @@ public class OpenAIGatewayAdapter : IGatewayAdapter
             // ignore
         }
         return null;
+    }
+
+    /// <summary>
+    /// 非流式：从 choices[0].message.tool_calls 取函数调用。OpenAI 上游本就是 OpenAI 形状，零转换透传。
+    /// </summary>
+    public JsonArray? ParseToolCalls(string responseBody)
+        => ExtractToolCallArray(responseBody, "message");
+
+    /// <summary>
+    /// 从 OpenAI 响应/增量里取 tool_calls 数组并 DeepClone（脱钩 parent）。
+    /// container = "message"（非流式 choices[0].message.tool_calls）或 "delta"（流式 choices[0].delta.tool_calls）。
+    /// </summary>
+    private static JsonArray? ExtractToolCallArray(string json, string container)
+    {
+        try
+        {
+            if (JsonNode.Parse(json) is not JsonObject root) return null;
+            if (root["choices"] is not JsonArray choices || choices.Count == 0) return null;
+            if (choices[0] is not JsonObject first) return null;
+            if (first[container] is not JsonObject holder) return null;
+            if (holder["tool_calls"] is not JsonArray toolCalls || toolCalls.Count == 0) return null;
+            return toolCalls.DeepClone() as JsonArray;
+        }
+        catch
+        {
+            return null;
+        }
     }
 }

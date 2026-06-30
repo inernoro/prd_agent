@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
 import type { InfraService, InfraVolume, InfraHealthCheck, BuildProfile, RoutingRule, DeployModeOverride, ResourceLimits } from '../types.js';
+import { isValidServiceSubdomain } from './branch-extra-services.js';
 
 /** Parsed infrastructure service from a compose file */
 export interface ComposeServiceDef {
@@ -439,6 +440,10 @@ export function parseCdsCompose(yamlString: string): CdsComposeConfig | null {
 function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
   const buildProfiles: CdsComposeConfig['buildProfiles'] = [];
   const infraServices: ComposeServiceDef[] = [];
+  // 命名子域唯一性:两个 service 抢同一个 cds.subdomain 会让 `<slug>-<sub>` host 路由非确定地
+  // 指向其中之一。与 PUT /branches/:id/extra-services 的去重保持一致——首个占用者保留,后续重复者
+  // 丢弃其 subdomain(降级为无命名 URL,仍可走主域名路径前缀),解析不阻断。
+  const seenSubdomains = new Set<string>();
 
   if (doc.services) {
     for (const [serviceId, entry] of Object.entries(doc.services)) {
@@ -486,6 +491,21 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
         // Phase 7 fix(B17):cds.prebuilt-image label → BuildProfile.prebuiltImage
         const prebuilt = labels['cds.prebuilt-image'];
         const prebuiltImage = prebuilt === 'true' || prebuilt === '1';
+        // cds.subdomain label → BuildProfile.subdomain:该服务获得 `<previewSlug>-<subdomain>.<root>`
+        // 命名 URL(独立入口,不埋在主应用路径下)。须单 DNS label,非法值忽略(不阻断解析)。
+        const subdomainRaw = labels['cds.subdomain'];
+        let subdomain = subdomainRaw && isValidServiceSubdomain(subdomainRaw.trim().toLowerCase())
+          ? subdomainRaw.trim().toLowerCase()
+          : undefined;
+        if (subdomain) {
+          if (seenSubdomains.has(subdomain)) {
+            // 重复:已被前一个 service 占用,本 service 丢弃命名子域(避免 host 路由冲突)。
+            console.warn(`[compose-parser] cds.subdomain "${subdomain}" 被多个 service 声明,service "${serviceId}" 的重复值已忽略`);
+            subdomain = undefined;
+          } else {
+            seenSubdomains.add(subdomain);
+          }
+        }
 
         // Bugbot fix(PR #521 第十轮 Bug 1)— build: 指令兜底:
         // - dockerImage 缺失时合成 "cds-build-<id>:latest" 占位(CDS 实际从
@@ -511,6 +531,7 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           resources: parseResourceLimits(entry),
           ...(entrypoint !== undefined ? { entrypoint } : {}),
           ...(prebuiltImage ? { prebuiltImage: true } : {}),
+          ...(subdomain ? { subdomain } : {}),
         });
       } else {
         // Infra service — no source mount, possibly built-from-source custom
@@ -667,6 +688,10 @@ export function toCdsCompose(
     // Phase 7 fix(B10):entrypoint → cds.entrypoint label(round-trip)
     if (p.entrypoint !== undefined) {
       entryLabels['cds.entrypoint'] = p.entrypoint;
+    }
+    // subdomain → cds.subdomain label(round-trip):命名子域 URL 元数据,导出/重导入不丢。
+    if (p.subdomain) {
+      entryLabels['cds.subdomain'] = p.subdomain;
     }
     // Phase 7 fix(B17):prebuiltImage → cds.prebuilt-image label(round-trip)
     if (p.prebuiltImage) {

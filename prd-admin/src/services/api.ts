@@ -98,9 +98,12 @@ export const api = {
       list: () => '/api/mds/model-groups',
       byId: (id: string) => `/api/mds/model-groups/${id}`,
       forApp: () => '/api/mds/model-groups/for-app',
+      healthOverview: (days?: number) =>
+        days != null
+          ? `/api/mds/model-groups/health-overview?days=${encodeURIComponent(days)}`
+          : '/api/mds/model-groups/health-overview',
       usage: (id: string) => `/api/mds/model-groups/${id}/usage`,
       unbind: (id: string) => `/api/mds/model-groups/${id}/unbind`,
-      predict: (id: string) => `/api/mds/model-groups/${id}/predict`,
       resetModelHealth: (groupId: string, modelId: string) =>
         `/api/mds/model-groups/${groupId}/reset-model-health?modelId=${encodeURIComponent(modelId)}`,
       resetAllHealth: (groupId: string) =>
@@ -179,9 +182,13 @@ export const api = {
       list: () => '/api/logs/llm',
       byId: (id: string) => `/api/logs/llm/${id}`,
       replayCurl: (id: string) => `/api/logs/llm/${id}/replay-curl`,
+      restoreText: (id: string) => `/api/logs/llm/${id}/restore-text`,
       meta: () => '/api/logs/llm/meta',
       modelStats: () => '/api/logs/llm/model-stats',
       batchModelStats: () => '/api/logs/llm/model-stats/batch',
+      appSummary: () => '/api/logs/llm/app-summary',
+      timeseries: () => '/api/logs/llm/timeseries',
+      sessions: () => '/api/logs/llm/sessions',
     },
     desktopPresence: {
       list: () => '/api/logs/desktop-presence',

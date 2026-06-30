@@ -27,47 +27,27 @@ public class ModelPoolDispatcherTests
     }
 
     [Fact]
-    public async Task Dispatch_WithRace_ShouldWork()
+    public async Task Dispatch_FailFast_ShouldPickHighestPriorityEndpoint()
     {
+        // 调度已化简为只有 FailFast：选最优端点（健康 + 优先级最高），失败直接返回。
         var endpoints = new List<PoolEndpoint>
         {
-            TestDataHelper.CreateEndpoint("model-1", "plat-1"),
-            TestDataHelper.CreateEndpoint("model-2", "plat-2")
+            TestDataHelper.CreateEndpoint("model-1", "plat-1", priority: 1),
+            TestDataHelper.CreateEndpoint("model-2", "plat-2", priority: 2)
         };
         var dispatcher = new MockPoolHttpDispatcher()
-            .WithEndpoint("plat-1:model-1", new EndpointBehavior { LatencyMs = 1000 })
-            .WithEndpoint("plat-2:model-2", new EndpointBehavior { LatencyMs = 0 });
+            .WithEndpoint("plat-1:model-1", new EndpointBehavior { ResponseBody = "{}" })
+            .WithEndpoint("plat-2:model-2", new EndpointBehavior { ResponseBody = "{}" });
 
         var pool = ModelPoolDispatcher.Create("pool-1", "Test Pool", endpoints,
-            PoolStrategyType.Race, dispatcher);
+            PoolStrategyType.FailFast, dispatcher);
 
         var result = await pool.DispatchAsync(TestDataHelper.CreateRequest());
 
         Assert.True(result.Success);
-        Assert.Equal(PoolStrategyType.Race, result.StrategyUsed);
-        Assert.Equal("model-2", result.DispatchedEndpoint!.ModelId); // Faster one
-    }
-
-    [Fact]
-    public async Task Dispatch_WithSequential_ShouldFallback()
-    {
-        var endpoints = new List<PoolEndpoint>
-        {
-            TestDataHelper.CreateEndpoint("fail-model", "plat-1"),
-            TestDataHelper.CreateEndpoint("ok-model", "plat-2")
-        };
-        var dispatcher = new MockPoolHttpDispatcher()
-            .WithEndpoint("plat-1:fail-model", new EndpointBehavior { ShouldFail = true })
-            .WithEndpoint("plat-2:ok-model", new EndpointBehavior { ResponseBody = "{}" });
-
-        var pool = ModelPoolDispatcher.Create("pool-1", "Test Pool", endpoints,
-            PoolStrategyType.Sequential, dispatcher);
-
-        var result = await pool.DispatchAsync(TestDataHelper.CreateRequest());
-
-        Assert.True(result.Success);
-        Assert.Equal("ok-model", result.DispatchedEndpoint!.ModelId);
-        Assert.Equal(2, result.EndpointsAttempted);
+        Assert.Equal(PoolStrategyType.FailFast, result.StrategyUsed);
+        Assert.Equal("model-1", result.DispatchedEndpoint!.ModelId); // 优先级最高
+        Assert.Equal(1, result.EndpointsAttempted); // FailFast 不顺延
     }
 
     #endregion
@@ -161,6 +141,7 @@ public class ModelPoolDispatcherTests
     public void GetConfig_ShouldReturnPoolInfo()
     {
         var endpoints = TestDataHelper.CreateEndpoints(("gpt-4o", 1), ("claude-3", 2));
+        // 调度已化简：无论传入哪种 StrategyType，池一律按 FailFast 构建。
         var pool = ModelPoolDispatcher.Create("pool-1", "My Pool", endpoints,
             PoolStrategyType.Sequential, new MockPoolHttpDispatcher());
 
@@ -168,7 +149,7 @@ public class ModelPoolDispatcherTests
 
         Assert.Equal("pool-1", config.PoolId);
         Assert.Equal("My Pool", config.PoolName);
-        Assert.Equal(PoolStrategyType.Sequential, config.Strategy);
+        Assert.Equal(PoolStrategyType.FailFast, config.Strategy);
         Assert.Equal(2, config.Endpoints.Count);
     }
 
@@ -223,15 +204,13 @@ public class ModelPoolDispatcherTests
 
     [Theory]
     [InlineData(PoolStrategyType.FailFast)]
-    [InlineData(PoolStrategyType.Race)]
     [InlineData(PoolStrategyType.Sequential)]
     [InlineData(PoolStrategyType.RoundRobin)]
-    [InlineData(PoolStrategyType.WeightedRandom)]
-    [InlineData(PoolStrategyType.LeastLatency)]
-    public void CreateStrategy_ShouldReturnCorrectType(PoolStrategyType type)
+    public void CreateStrategy_AlwaysReturnsFailFast(PoolStrategyType type)
     {
+        // 非 FailFast 策略引擎已删除，CreateStrategy 一律产出 FailFast（枚举仅作数据兼容保留）。
         var strategy = ModelPoolDispatcher.CreateStrategy(type);
-        Assert.Equal(type, strategy.StrategyType);
+        Assert.Equal(PoolStrategyType.FailFast, strategy.StrategyType);
     }
 
     #endregion

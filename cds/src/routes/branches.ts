@@ -13,7 +13,7 @@ import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
-import { isValidExtraProfileId, mergeBranchProfiles } from '../services/branch-extra-services.js';
+import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles } from '../services/branch-extra-services.js';
 import { classifyTriggerSource, deriveDeployMode, deriveCommitMeta, parsePulledSha, shouldRefreshCommitSha } from '../services/build-log-meta.js';
 import { acquireBuildSlot, buildGateStatus } from '../services/build-gate.js';
 import { recordBuild } from '../services/build-activity-tracker.js';
@@ -13161,6 +13161,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const prevExtraEnvById = new Map<string, Record<string, string>>(
       (entry.extraProfiles || []).map((p) => [p.id, (p.env || {}) as Record<string, string>]),
     );
+    // 命名子域同 env：入参省略 subdomain 字段时**继承旧值**，否则纯 env 改动的 redeploy 会静默抹掉命名 URL、
+    // 断掉 forwarder host 路由（Cursor Bugbot）。显式传空串 ''=有意清空。
+    const prevExtraSubdomainById = new Map<string, string>(
+      (entry.extraProfiles || []).flatMap((p) => (p.subdomain ? [[p.id, p.subdomain] as [string, string]] : [])),
+    );
     const mergeExtraEnv = (incoming: Record<string, unknown>, prevEnv: Record<string, string>): Record<string, string> => {
       const out: Record<string, string> = { ...prevEnv }; // 基底 = 旧 env（merge，省略即保留）
       for (const [k, v] of Object.entries(incoming || {})) {
@@ -13176,6 +13181,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     };
     const sanitized: BuildProfile[] = [];
     const seen = new Set<string>();
+    // 命名子域必须分支内唯一：两个服务复用同一 subdomain 会让 forwarder 发出多条同 host
+    // 不同上游端口的路由 → host 路由不确定命中错容器（Cursor Bugbot）。
+    const seenSubdomains = new Set<string>();
     for (const raw of list as Array<Record<string, unknown>>) {
       const id = String(raw?.id || '').trim();
       if (!isValidExtraProfileId(id)) {
@@ -13282,6 +13290,32 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
         entrypoint = ep;
       }
+      // 命名子域(Codex「Expose named per-service URL」):声明后该额外服务获得
+      // `<previewSlug>-<subdomain>.<root>` 独立命名 URL(forwarder 直达容器根路径),
+      // 给「可被别人调用」的独立服务(LLM 网关)区别于主应用的入口。须单 DNS label。
+      let subdomain: string | undefined;
+      // 字段缺省 → 继承旧值（省略即保留，不静默删命名 URL）；显式空串 → 有意清空；非空 → 校验后采用。
+      let sdCandidate: string | undefined;
+      if (raw?.subdomain === undefined) {
+        sdCandidate = prevExtraSubdomainById.get(id);   // 字段缺省 = 继承旧值
+      } else if (raw.subdomain !== null && String(raw.subdomain).trim() !== '') {
+        sdCandidate = String(raw.subdomain).trim().toLowerCase();  // 非空字符串 = 采用
+      }
+      // 显式 null / '' / 纯空白 = 有意清空（sdCandidate 保持 undefined）。
+      // 必须挡 null：String(null)==="null" 会过校验、落出伪命名 host `<slug>-null`（Cursor Bugbot）。
+      if (sdCandidate !== undefined) {
+        const sd = sdCandidate.toLowerCase();
+        if (!isValidServiceSubdomain(sd)) {
+          res.status(400).json({ error: `额外服务 "${id}" 的 subdomain 非法（须为单个 DNS label：小写字母/数字/连字符，不以连字符开头/结尾，长度 1..40）` });
+          return;
+        }
+        if (seenSubdomains.has(sd)) {
+          res.status(400).json({ error: `subdomain "${sd}" 被多个额外服务复用（命名子域须分支内唯一，否则 host 路由会撞车）` });
+          return;
+        }
+        seenSubdomains.add(sd);
+        subdomain = sd;
+      }
       seen.add(id);
       sanitized.push({
         id,
@@ -13291,6 +13325,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ...(containerWorkDir ? { containerWorkDir } : {}),
         ...(entrypoint !== undefined ? { entrypoint } : {}),
         ...(dbScope !== undefined ? { dbScope } : {}),
+        ...(subdomain ? { subdomain } : {}),
         command: String(raw?.command || ''),
         containerPort,
         projectId: entry.projectId || 'default',

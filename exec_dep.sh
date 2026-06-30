@@ -16,6 +16,7 @@ set -eu
 #
 # 可选环境变量：
 #   - PRD_AGENT_API_IMAGE：覆盖后端镜像（默认按 REPO 组装 :latest，并优先走 get.miduo.org 镜像代理）
+#   - PRD_AGENT_LLMGW_IMAGE：覆盖独立 LLM 网关镜像（默认与 PRD_AGENT_API_IMAGE 同源；compose 已含 llmgw service，随 up 一起拉起）
 #   - API_PULL_TIMEOUT_SECONDS：后端镜像拉取超时时间，默认 30 秒
 #   - SKIP_API_PULL=1：跳过后端镜像拉取，仅更新静态站点并重建 compose
 #   - REPO：覆盖 GitHub 仓库 owner/repo（默认尝试从 git remote 推断；推断失败则回退 inernoro/prd_agent）
@@ -56,6 +57,27 @@ REPO_NAME="${REPO##*/}"
 # 默认后端镜像（latest 一键部署）
 if [ -z "${PRD_AGENT_API_IMAGE:-}" ]; then
   export PRD_AGENT_API_IMAGE="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-server:latest"
+fi
+
+# 默认独立 LLM 网关镜像（控制台 prd-llmgw，自包含 ASP.NET 服务，监听 8090，提供 /gw/healthz、
+# /gw/auth/login、/gw/logs）。prd-llmgw 已是独立项目（CI branch-image 构建 prdagent-llmgw 镜像），
+# 故默认必须指向 prdagent-llmgw:latest，不能复用 api 镜像——否则 llmgw 服务会错跑 PrdAgent.Api.dll、
+# /gw/* 端点全缺。compose 的 llmgw service 默认也是该镜像，随 up 一起拉起。
+if [ -z "${PRD_AGENT_LLMGW_IMAGE:-}" ]; then
+  export PRD_AGENT_LLMGW_IMAGE="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-llmgw:latest"
+fi
+
+# 默认 LLM serving 网关镜像（llmgw-serve，DI 承载 LlmGateway/ModelResolver，监听 8091，暴露 /gw/v1/*）。
+# compose 现在随 up 一起拉起 llmgw-serve；docker-compose.yml 默认直连 ghcr.io，需代理的主机会绕过
+# get.miduo.org 预拉/超时路径而卡住或失败，故这里照 PRD_AGENT_LLMGW_IMAGE 范式钉到镜像源。
+if [ -z "${PRD_AGENT_LLMGW_SERVE_IMAGE:-}" ]; then
+  export PRD_AGENT_LLMGW_SERVE_IMAGE="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-llmgw-serve:latest"
+fi
+
+# 默认 LLM 网关前端静态站镜像（llmgw-web，nginx 托管控制台构建产物）。同样随 compose up 拉起，
+# 默认直连 ghcr.io，需代理主机会卡住，故一并钉到 get.miduo.org 镜像源。
+if [ -z "${PRD_AGENT_LLMGW_WEB_IMAGE:-}" ]; then
+  export PRD_AGENT_LLMGW_WEB_IMAGE="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-llmgw-web:latest"
 fi
 
 if command -v docker-compose >/dev/null 2>&1; then

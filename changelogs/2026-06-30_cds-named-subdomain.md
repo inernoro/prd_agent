@@ -1,0 +1,3 @@
+| feat | cds | 单分支多容器支持「命名子域 URL」：BuildProfile 新增 subdomain 字段，声明后该服务获得 `<previewSlug>-<subdomain>.<root>` 独立命名入口（forwarder 直达容器根路径，无 pathPrefix），让 LLM 网关这类「可被别人调用」的独立服务拥有区别于主应用域名的命名 URL，而不是埋在主应用 /gw/v1 路径下。单标签以匹配 *.<root> 通配证书 |
+| feat | cds | 命名子域三处接入：compose `cds.subdomain` label（解析+导出 round-trip）、PUT /branches/:id/extra-services 的 subdomain 字段（单 DNS label 校验）、forwarder-route-publisher 发命名 host 路由；proxy master 兜底识别 `<slug>-<sub>` 后缀 → 解析基分支 + 强制走对应 profile，不触发 auto-build（转发模式下 forwarder 已按 host 精确命中） |
+| test | cds | 新增命名子域测试：forwarder-route-publisher 发 `<slug>-llmgw` host 路由直达容器、主应用域名路由仍在；compose-parser cds.subdomain 解析 + round-trip + 非法值忽略 |

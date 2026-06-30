@@ -1,0 +1,212 @@
+[
+  {
+    "id": "C001",
+    "method": "send",
+    "gateway": "echo",
+    "authOk": true,
+    "concurrency": 1,
+    "expect": {
+      "success": true,
+      "contentEcho": true
+    },
+    "dim": "D1"
+  },
+  {
+    "id": "C002",
+    "method": "send",
+    "gateway": "echo",
+    "authOk": false,
+    "concurrency": 1,
+    "expect": {
+      "success": false,
+      "statusCode": 401
+    },
+    "dim": "E17"
+  },
+  {
+    "id": "C003",
+    "method": "send",
+    "gateway": "failing",
+    "authOk": true,
+    "concurrency": 1,
+    "expect": {
+      "success": false,
+      "errorCodeNonEmpty": true
+    },
+    "dim": "D11"
+  },
+  {
+    "id": "C004",
+    "method": "send",
+    "gateway": "throwing",
+    "authOk": true,
+    "concurrency": 1,
+    "expect": {
+      "success": false
+    },
+    "dim": "D11"
+  },
+  {
+    "id": "C005",
+    "method": "send",
+    "gateway": "empty",
+    "authOk": true,
+    "concurrency": 1,
+    "expect": {
+      "success": true,
+      "contentEmpty": true
+    },
+    "dim": "E1"
+  },
+  {
+    "id": "C006",
+    "method": "send",
+    "gateway": "echo",
+    "authOk": true,
+    "concurrency": 16,
+    "expect": {
+      "success": true,
+      "contentEcho": true,
+      "concurrentNoCrossTalk": true
+    },
+    "dim": "D12/E15"
+  },
+  {
+    "id": "C007",
+    "method": "stream",
+    "gateway": "echo",
+    "authOk": true,
+    "concurrency": 1,
+    "expect": {
+      "minChunks": 2,
+      "seqMonotonic": true,
+      "textJoined": "hello"
+    },
+    "dim": "D2"
+  },
+  {
+    "id": "C008",
+    "method": "stream",
+    "gateway": "echo",
+    "authOk": false,
+    "concurrency": 1,
+    "expect": {
+      "streamFailed": true
+    },
+    "dim": "E17"
+  },
+  {
+    "id": "C009",
+    "method": "stream",
+    "gateway": "failing",
+    "authOk": true,
+    "concurrency": 1,
+    "expect": {
+      "streamHasError": true
+    },
+    "dim": "D11"
+  },
+  {
+    "id": "C010",
+    "method": "stream",
+    "gateway": "echo",
+    "authOk": true,
+    "concurrency": 8,
+    "expect": {
+      "minChunks": 2,
+      "concurrentNoCrossTalk": true
+    },
+    "dim": "D12"
+  },
+  {
+    "id": "C011",
+    "method": "raw",
+    "gateway": "echo",
+    "authOk": true,
+    "concurrency": 1,
+    "expect": {
+      "success": true
+    },
+    "dim": "D8"
+  },
+  {
+    "id": "C012",
+    "method": "raw",
+    "gateway": "failing",
+    "authOk": true,
+    "concurrency": 1,
+    "expect": {
+      "success": false
+    },
+    "dim": "D11"
+  },
+  {
+    "id": "C013",
+    "method": "raw",
+    "gateway": "echo",
+    "authOk": false,
+    "concurrency": 1,
+    "expect": {
+      "success": false,
+      "statusCode": 401
+    },
+    "dim": "E17"
+  },
+  {
+    "id": "C014",
+    "method": "pools",
+    "gateway": "echo",
+    "authOk": true,
+    "concurrency": 1,
+    "expect": {
+      "poolsOk": true
+    },
+    "dim": "D3"
+  },
+  {
+    "id": "C015",
+    "method": "pools",
+    "gateway": "echo",
+    "authOk": false,
+    "concurrency": 1,
+    "expect": {
+      "poolsFailed": true
+    },
+    "dim": "E17"
+  },
+  {
+    "id": "C016",
+    "method": "resolve",
+    "gateway": "echo",
+    "authOk": true,
+    "concurrency": 1,
+    "expect": {
+      "actualModel": "m1",
+      "apiKeyNull": true
+    },
+    "dim": "E12/安全"
+  },
+  {
+    "id": "C017",
+    "method": "resolve",
+    "gateway": "echo",
+    "authOk": false,
+    "concurrency": 1,
+    "expect": {
+      "resolveFailed": true
+    },
+    "dim": "E17"
+  },
+  {
+    "id": "C018",
+    "method": "client-stream",
+    "gateway": "echo",
+    "authOk": true,
+    "concurrency": 1,
+    "expect": {
+      "minChunks": 2,
+      "textJoined": "hi"
+    },
+    "dim": "D2"
+  }
+]

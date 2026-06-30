@@ -43,6 +43,18 @@ public class LlmRequestLog
     public string? PlatformId { get; set; }
     public string? PlatformName { get; set; }
 
+    /// <summary>
+    /// 本次调用使用的协议（解析阶段算定：池条目 Protocol > 模型 Protocol > 平台 PlatformType）。
+    /// 仅追加字段，存量日志为 null，老查询不受影响。
+    /// </summary>
+    public string? Protocol { get; set; }
+
+    /// <summary>
+    /// 协议/模型解析的来源说明（用于调试，记录最终命中的协议层级与原因）。
+    /// 仅追加字段，存量日志为 null。
+    /// </summary>
+    public string? ResolutionReason { get; set; }
+
     // 模型池信息（来自 ModelGroup）
     /// <summary>
     /// 模型解析类型（0=直连单模型, 1=默认模型池, 2=专属模型池）
@@ -110,6 +122,21 @@ public class LlmRequestLog
     // 响应（不再记录 rawSSE）
     public int? StatusCode { get; set; }
     public Dictionary<string, string>? ResponseHeaders { get; set; }
+
+    /// <summary>
+    /// 函数调用（tool_calls）——OpenAI 形状的 tool_calls 序列化 JSON（协议保真观测：
+    /// 网关把上游 tool_calls / Claude tool_use 归一为 OpenAI 形状后落盘，供日志页可视化。
+    /// 与 AnswerText 同款截断；无函数调用为 null）。
+    /// </summary>
+    public string? ResponseToolCalls { get; set; }
+    /// <summary>函数调用条数（&gt;0 时日志列表显示「函数调用」chip）。</summary>
+    public int? ToolCallCount { get; set; }
+
+    /// <summary>完成原因（上游 finish_reason / stop_reason：stop/length/tool_calls 等；存量日志为 null）。</summary>
+    public string? FinishReason { get; set; }
+
+    /// <summary>本次请求是否流式（来自请求体 stream 字段；存量日志为 null）。</summary>
+    public bool? IsStreaming { get; set; }
     public int? AssembledTextChars { get; set; } // 保留：用于摘要统计（与 AnswerTextChars 一致）
     public string? AssembledTextHash { get; set; } // 保留：用于摘要统计（与 AnswerTextHash 一致）
     public string? Error { get; set; }

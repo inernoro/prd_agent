@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Models;
 using PrdAgent.Core.Helpers;
@@ -59,6 +60,202 @@ public class ModelGroupsController : ControllerBase
             .ToListAsync();
 
         return Ok(ApiResponse<List<ModelGroup>>.Ok(groups));
+    }
+
+    /// <summary>
+    /// 只读：模型池健康 + fallback 率告警总览。
+    /// 把"死池被静默兜底 / 高 fallback 率"这种静默降级一眼暴露成一级告警。
+    /// 纯读，无副作用：仅聚合 model_groups（健康状态）与 llmrequestlogs（fallback 统计），不写任何集合、不碰 serving 路径。
+    /// </summary>
+    [HttpGet("health-overview")]
+    public async Task<IActionResult> HealthOverview([FromQuery] int days = 7)
+    {
+        days = Math.Clamp(days, 1, 30);
+        var from = DateTime.UtcNow.AddDays(-days);
+
+        // ============ 1. 模型池健康（来自 model_groups 文档的 Models[].HealthStatus） ============
+        var groups = await _db.ModelGroups
+            .Find(Builders<ModelGroup>.Filter.Empty)
+            .SortByDescending(g => g.IsDefaultForType)
+            .ThenBy(g => g.Priority)
+            .ThenBy(g => g.CreatedAt)
+            .ToListAsync();
+
+        var pools = groups.Select(g =>
+        {
+            var healthy = g.Models.Count(m => m.HealthStatus == ModelHealthStatus.Healthy);
+            var degraded = g.Models.Count(m => m.HealthStatus == ModelHealthStatus.Degraded);
+            var unavailable = g.Models.Count(m => m.HealthStatus == ModelHealthStatus.Unavailable);
+            // worstStatus：池内最差的健康状态（有 Unavailable > Degraded > Healthy）
+            var worst = unavailable > 0 ? "Unavailable" : degraded > 0 ? "Degraded" : "Healthy";
+            return new
+            {
+                id = g.Id,
+                code = g.Code,
+                name = g.Name,
+                modelType = g.ModelType,
+                isDefaultForType = g.IsDefaultForType,
+                healthyCount = healthy,
+                degradedCount = degraded,
+                unavailableCount = unavailable,
+                worstStatus = worst,
+            };
+        }).ToList();
+
+        // ============ 2. fallback 率（按 modelType，复用 model-stats 的聚合风格） ============
+        // 注意：llmrequestlogs 是共享基础设施，可能混入其他部署/分支的记录；这里只按时间窗 + modelType 聚合，
+        // 用于"率"的趋势观察，不做精确归因（参见 cross-project-isolation 规则）。
+        // RequestType 字段承载 modelType 语义（chat/intent/vision/generation 等）。
+        var matchDoc = Builders<LlmRequestLog>.Filter
+            .Gte(x => x.StartedAt, from)
+            .Render(new RenderArgs<LlmRequestLog>(
+                _db.LlmRequestLogs.DocumentSerializer,
+                _db.LlmRequestLogs.Settings.SerializerRegistry));
+
+        // modelType 解析：优先取 AppCallerCode 的 "::{model-type}" 后缀（app-caller-registry 规则保证为
+        // chat/intent/vision/generation 等规范值，与池 ModelType 同口径），缺失时回退 RequestType，再回退 unknown。
+        BsonDocument modelTypeExpr = new("$let", new BsonDocument
+        {
+            { "vars", new BsonDocument
+                {
+                    { "idx", new BsonDocument("$indexOfBytes", new BsonArray { new BsonDocument("$ifNull", new BsonArray { "$AppCallerCode", "" }), "::" }) },
+                }
+            },
+            { "in", new BsonDocument("$cond", new BsonArray
+                {
+                    new BsonDocument("$gt", new BsonArray { "$$idx", -1 }),
+                    new BsonDocument("$substrBytes", new BsonArray
+                    {
+                        "$AppCallerCode",
+                        new BsonDocument("$add", new BsonArray { "$$idx", 2 }),
+                        1000,
+                    }),
+                    new BsonDocument("$ifNull", new BsonArray { "$RequestType", "unknown" }),
+                })
+            },
+        });
+
+        // 2a. 按 modelType 统计 total + fallbackCount
+        var typePipeline = new[]
+        {
+            new BsonDocument("$match", matchDoc),
+            new BsonDocument("$project", new BsonDocument
+            {
+                { "modelType", modelTypeExpr },
+                { "isFallback", new BsonDocument("$cond", new BsonArray
+                    {
+                        new BsonDocument("$eq", new BsonArray { "$IsFallback", true }),
+                        1, 0
+                    })
+                },
+            }),
+            new BsonDocument("$group", new BsonDocument
+            {
+                { "_id", "$modelType" },
+                { "total", new BsonDocument("$sum", 1) },
+                { "fallbackCount", new BsonDocument("$sum", "$isFallback") },
+            }),
+            new BsonDocument("$sort", new BsonDocument("total", -1)),
+        };
+        var typeRows = await _db.LlmRequestLogs.Aggregate<BsonDocument>(typePipeline).ToListAsync();
+
+        // 2b. 按 (modelType, fallbackReason) 统计 top reasons（仅 fallback 记录）
+        var reasonPipeline = new[]
+        {
+            new BsonDocument("$match", matchDoc),
+            new BsonDocument("$match", new BsonDocument("IsFallback", true)),
+            new BsonDocument("$project", new BsonDocument
+            {
+                { "modelType", modelTypeExpr },
+                { "reason", new BsonDocument("$ifNull", new BsonArray { "$FallbackReason", "(未记录原因)" }) },
+            }),
+            new BsonDocument("$group", new BsonDocument
+            {
+                { "_id", new BsonDocument { { "modelType", "$modelType" }, { "reason", "$reason" } } },
+                { "count", new BsonDocument("$sum", 1) },
+            }),
+            new BsonDocument("$sort", new BsonDocument("count", -1)),
+        };
+        var reasonRows = await _db.LlmRequestLogs.Aggregate<BsonDocument>(reasonPipeline).ToListAsync();
+
+        static long ToLong(BsonValue? v) => v == null || v.IsBsonNull ? 0L : v.ToInt64();
+        static string ToStr(BsonValue? v) => v == null || v.IsBsonNull ? string.Empty : v.ToString() ?? string.Empty;
+
+        // 把 reason 行按 modelType 归组，取每组前 3
+        var reasonsByType = reasonRows
+            .GroupBy(d => ToStr(d.GetValue("_id", new BsonDocument()).AsBsonDocument.GetValue("modelType", BsonNull.Value)))
+            .ToDictionary(
+                g => g.Key,
+                g => g.Take(3).Select(d => new
+                {
+                    reason = ToStr(d.GetValue("_id").AsBsonDocument.GetValue("reason", BsonNull.Value)),
+                    count = ToLong(d.GetValue("count", BsonNull.Value)),
+                }).ToList());
+
+        var fallbackByType = typeRows.Select(d =>
+        {
+            var modelType = ToStr(d.GetValue("_id", BsonNull.Value));
+            var total = ToLong(d.GetValue("total", BsonNull.Value));
+            var fallbackCount = ToLong(d.GetValue("fallbackCount", BsonNull.Value));
+            var rate = total > 0 ? (double)fallbackCount / total : 0d;
+            reasonsByType.TryGetValue(modelType, out var topReasons);
+            return new
+            {
+                modelType,
+                total,
+                fallbackCount,
+                fallbackRate = Math.Round(rate, 4),
+                topFallbackReasons = topReasons ?? new(),
+            };
+        }).ToList();
+
+        // ============ 3. 一级告警汇总 ============
+        const double HighFallbackThreshold = 0.2;
+        var alarms = new List<HealthAlarm>();
+
+        // 3a. 死池：有 Unavailable 模型的池 -> critical
+        foreach (var p in pools.Where(p => p.unavailableCount > 0))
+        {
+            alarms.Add(new HealthAlarm
+            {
+                Level = "critical",
+                Kind = "dead-pool",
+                Target = string.IsNullOrWhiteSpace(p.code) ? p.name : p.code,
+                PoolId = p.id,
+                ModelType = p.modelType,
+                Detail = $"模型池「{(string.IsNullOrWhiteSpace(p.name) ? p.code : p.name)}」存在 {p.unavailableCount} 个不可用(Unavailable)模型"
+                         + (p.isDefaultForType ? "（该类型默认池，命中请求会被静默兜底到其他模型）" : ""),
+            });
+        }
+
+        // 3b. 高 fallback：fallbackRate >= 0.2 的 modelType -> warning
+        foreach (var f in fallbackByType.Where(f => f.fallbackRate >= HighFallbackThreshold && f.total > 0))
+        {
+            var topReason = f.topFallbackReasons.Count > 0 ? f.topFallbackReasons[0].reason : null;
+            alarms.Add(new HealthAlarm
+            {
+                Level = "warning",
+                Kind = "high-fallback",
+                Target = f.modelType,
+                ModelType = f.modelType,
+                Detail = $"近 {days} 天「{f.modelType}」类型 fallback 率 {Math.Round(f.fallbackRate * 100, 1)}%"
+                         + $"（{f.fallbackCount}/{f.total}）"
+                         + (string.IsNullOrWhiteSpace(topReason) ? "" : $"，主要原因：{topReason}"),
+            });
+        }
+
+        // critical 排前面
+        var orderedAlarms = alarms
+            .OrderByDescending(a => a.Level == "critical")
+            .ToList();
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            days,
+            pools,
+            fallbackByType,
+            alarms = orderedAlarms,
+        }));
     }
 
     /// <summary>
@@ -775,213 +972,6 @@ public class ModelGroupsController : ControllerBase
     }
 
     /// <summary>
-    /// 预测下一次请求的调度路径
-    /// 根据当前策略和健康状态，模拟下一次请求会命中哪些端点
-    /// </summary>
-    [HttpGet("{id}/predict")]
-    public async Task<IActionResult> PredictNextDispatch(string id)
-    {
-        var group = await _db.ModelGroups.Find(g => g.Id == id).FirstOrDefaultAsync();
-        if (group == null)
-            return NotFound(ApiResponse<object>.Fail("MODEL_GROUP_NOT_FOUND", "模型分组不存在"));
-
-        if (group.Models == null || group.Models.Count == 0)
-            return Ok(ApiResponse<object>.Ok(new { poolId = id, endpoints = Array.Empty<object>(), strategy = "FailFast", description = "模型池为空" }));
-
-        var strategyType = (PoolStrategyType)group.StrategyType;
-        var platformIds = group.Models.Select(m => m.PlatformId).Distinct().ToList();
-        var platforms = await _db.LLMPlatforms.Find(p => platformIds.Contains(p.Id)).ToListAsync();
-        var platformMap = platforms.ToDictionary(p => p.Id);
-
-        // 构建端点列表并计算健康分数
-        var endpoints = group.Models.Select((m, idx) =>
-        {
-            var platform = platformMap.GetValueOrDefault(m.PlatformId);
-            var healthStatus = m.HealthStatus.ToString();
-            var isAvailable = m.HealthStatus != ModelHealthStatus.Unavailable;
-            var isHealthy = m.HealthStatus == ModelHealthStatus.Healthy;
-
-            // 计算健康分数 (100 = 完美, 0 = 不可用)
-            double healthScore = isAvailable
-                ? (isHealthy ? 100.0 - m.ConsecutiveFailures * 10 : 50.0 - m.ConsecutiveFailures * 5)
-                : 0;
-            healthScore = Math.Max(0, Math.Min(100, healthScore));
-
-            return new
-            {
-                endpointId = $"{m.PlatformId}:{m.ModelId}",
-                modelId = m.ModelId,
-                platformId = m.PlatformId,
-                platformName = platform?.Name ?? m.PlatformId,
-                priority = m.Priority,
-                healthStatus,
-                isAvailable,
-                healthScore,
-                consecutiveFailures = m.ConsecutiveFailures,
-                index = idx
-            };
-        }).ToList();
-
-        var available = endpoints.Where(e => e.isAvailable)
-            .OrderBy(e => e.healthStatus == "Healthy" ? 0 : 1)
-            .ThenBy(e => e.priority)
-            .Select(e => new PredictEndpointInfo(e.endpointId, e.modelId, e.priority, e.healthStatus))
-            .ToList();
-
-        // 根据策略预测调度路径
-        var prediction = strategyType switch
-        {
-            PoolStrategyType.FailFast => PredictFailFast(available),
-            PoolStrategyType.Race => PredictRace(available),
-            PoolStrategyType.Sequential => PredictSequential(available),
-            PoolStrategyType.RoundRobin => PredictRoundRobin(available),
-            PoolStrategyType.WeightedRandom => PredictWeightedRandom(available),
-            PoolStrategyType.LeastLatency => PredictLeastLatency(available),
-            _ => PredictFailFast(available)
-        };
-
-        return Ok(ApiResponse<object>.Ok(new
-        {
-            poolId = id,
-            poolName = group.Name,
-            strategy = strategyType.ToString(),
-            strategyDescription = GetStrategyDescription(strategyType),
-            allEndpoints = endpoints,
-            prediction
-        }));
-    }
-
-    private record PredictEndpointInfo(string EndpointId, string ModelId, int Priority, string HealthStatus);
-
-    private static object PredictFailFast(List<PredictEndpointInfo> available)
-    {
-        if (available.Count == 0)
-            return new { type = "FailFast", description = "无可用端点", steps = Array.Empty<object>() };
-
-        var ep = available[0];
-        return new
-        {
-            type = "FailFast",
-            description = "选择最优端点，失败直接返回错误",
-            steps = new object[]
-            {
-                new { order = 1, ep.EndpointId, ep.ModelId, action = "request", label = "发送请求", isTarget = true }
-            }
-        };
-    }
-
-    private static object PredictRace(List<PredictEndpointInfo> available)
-    {
-        if (available.Count == 0)
-            return new { type = "Race", description = "无可用端点", steps = Array.Empty<object>() };
-
-        var steps = available.Select(ep => (object)new
-        {
-            order = 1, ep.EndpointId, ep.ModelId, action = "parallel", label = "并行请求", isTarget = true
-        }).ToList();
-
-        return new { type = "Race", description = "同时请求所有端点，取最快返回的结果", steps };
-    }
-
-    private static object PredictSequential(List<PredictEndpointInfo> available)
-    {
-        if (available.Count == 0)
-            return new { type = "Sequential", description = "无可用端点", steps = Array.Empty<object>() };
-
-        var steps = available.Select((ep, i) => (object)new
-        {
-            order = i + 1,
-            ep.EndpointId,
-            ep.ModelId,
-            action = i == 0 ? "request" : "fallback",
-            label = i == 0 ? "首选请求" : $"第{i + 1}备选",
-            isTarget = i == 0
-        }).ToList();
-
-        return new { type = "Sequential", description = "按优先级依次尝试，失败则顺延", steps };
-    }
-
-    private static object PredictRoundRobin(List<PredictEndpointInfo> available)
-    {
-        if (available.Count == 0)
-            return new { type = "RoundRobin", description = "无可用端点", steps = Array.Empty<object>() };
-
-        var steps = available.Select((ep, i) => (object)new
-        {
-            order = i + 1,
-            ep.EndpointId,
-            ep.ModelId,
-            action = "rotate",
-            label = $"轮询 #{i + 1}",
-            isTarget = i == 0,
-            weight = 1.0 / available.Count
-        }).ToList();
-
-        return new { type = "RoundRobin", description = "在健康端点间均匀轮转", steps };
-    }
-
-    private static object PredictWeightedRandom(List<PredictEndpointInfo> available)
-    {
-        if (available.Count == 0)
-            return new { type = "WeightedRandom", description = "无可用端点", steps = Array.Empty<object>() };
-
-        var weights = available.Select(ep =>
-        {
-            double w = 1.0 / Math.Max(1, ep.Priority);
-            if (ep.HealthStatus != "Healthy") w *= 0.5;
-            return w;
-        }).ToList();
-        var totalWeight = weights.Sum();
-
-        var steps = available.Select((ep, i) =>
-        {
-            double pct = totalWeight > 0 ? weights[i] / totalWeight * 100 : 0;
-            return (object)new
-            {
-                order = i + 1,
-                ep.EndpointId,
-                ep.ModelId,
-                action = "weighted",
-                label = $"概率 {pct:F1}%",
-                isTarget = i == 0,
-                weight = weights[i],
-                probability = Math.Round(pct, 1)
-            };
-        }).ToList();
-
-        return new { type = "WeightedRandom", description = "按权重随机选择端点", steps };
-    }
-
-    private static object PredictLeastLatency(List<PredictEndpointInfo> available)
-    {
-        if (available.Count == 0)
-            return new { type = "LeastLatency", description = "无可用端点", steps = Array.Empty<object>() };
-
-        var steps = available.Select((ep, i) => (object)new
-        {
-            order = i + 1,
-            ep.EndpointId,
-            ep.ModelId,
-            action = i == 0 ? "request" : "standby",
-            label = i == 0 ? "最低延迟（首选）" : "备选",
-            isTarget = i == 0
-        }).ToList();
-
-        return new { type = "LeastLatency", description = "优先选择历史延迟最低的端点", steps };
-    }
-
-    private static string GetStrategyDescription(PoolStrategyType type) => type switch
-    {
-        PoolStrategyType.FailFast => "选择最优端点发送请求，失败直接返回错误",
-        PoolStrategyType.Race => "同时向所有端点发送请求，取最快成功的结果",
-        PoolStrategyType.Sequential => "按优先级依次尝试端点，失败后自动切换下一个",
-        PoolStrategyType.RoundRobin => "在所有健康端点间均匀轮转分配请求",
-        PoolStrategyType.WeightedRandom => "根据优先级权重随机选择端点",
-        PoolStrategyType.LeastLatency => "跟踪历史延迟数据，优先选择响应最快的端点",
-        _ => "未知策略"
-    };
-
-    /// <summary>
     /// 快捷创建带降级链的模型池
     /// 一次性创建 ModelGroup 并可选绑定 AppCaller
     /// </summary>
@@ -1015,7 +1005,7 @@ public class ModelGroupsController : ControllerBase
             ModelType = request.ModelType,
             Priority = request.Priority ?? 50,
             IsDefaultForType = request.IsDefaultForType,
-            StrategyType = request.Strategy ?? 2, // 默认 Sequential
+            StrategyType = request.Strategy ?? 0, // 默认 FailFast（调度已化简为只有 FailFast）
             Description = request.Description,
             Models = request.Models.Select((m, i) => new ModelGroupItem
             {
@@ -1169,6 +1159,25 @@ public class ModelGroupForAppResponse
     public bool IsDefault { get; set; }
     /// <summary>是否为传统配置模型（isImageGen 等标记）</summary>
     public bool IsLegacy { get; set; }
+}
+
+/// <summary>
+/// 健康总览的一级告警条目（只读，仅用于序列化返回）
+/// </summary>
+public class HealthAlarm
+{
+    /// <summary>告警级别：critical（死池）/ warning（高 fallback）</summary>
+    public string Level { get; set; } = "warning";
+    /// <summary>告警类型：dead-pool / high-fallback</summary>
+    public string Kind { get; set; } = string.Empty;
+    /// <summary>告警目标（池 Code/Name 或 modelType）</summary>
+    public string Target { get; set; } = string.Empty;
+    /// <summary>关联的模型池 ID（仅 dead-pool 有值）</summary>
+    public string? PoolId { get; set; }
+    /// <summary>关联的模型类型</summary>
+    public string? ModelType { get; set; }
+    /// <summary>人类可读的告警详情</summary>
+    public string Detail { get; set; } = string.Empty;
 }
 
 /// <summary>

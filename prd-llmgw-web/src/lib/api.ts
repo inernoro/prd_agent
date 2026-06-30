@@ -1,0 +1,165 @@
+// 独立 API 客户端：JWT 存 sessionStorage（no-localStorage 规则：认证态禁止进 localStorage）。
+// base 走 import.meta.env.VITE_LLMGW_API_BASE，默认 /gw（dev 由 vite proxy 反代）。
+//
+// 后端端点约定（后端另做，stub 即可）：
+//   POST  {BASE}/auth/login        body { username, password } → { success, data: { token, ... } }
+//   GET   {BASE}/logs              query 见 LogsListParams       → { success, data: LogsListData }
+//   GET   {BASE}/logs/meta                                       → { success, data: LogsMeta }
+//   GET   {BASE}/logs/timeseries   query { from, to, model?, status? } → { success, data: TimeseriesData }
+//   GET   {BASE}/logs/sessions     query { from, to, page, pageSize }  → { success, data: SessionsData }
+//   GET   {BASE}/logs/:id                                        → { success, data: LlmLogDetail }
+//
+// 列表数据形状与现有 /api/logs/llm 对齐，对接时只需把 BASE 指过去即可。
+
+import type {
+  ApiResponse,
+  LoginRequest,
+  LoginResult,
+  LogsListData,
+  LogsListParams,
+  LogsMeta,
+  TimeseriesData,
+  SessionsData,
+  LlmLogDetail,
+} from './types';
+
+const TOKEN_KEY = 'llmgw.token';
+const USER_KEY = 'llmgw.user';
+
+export const API_BASE = (import.meta.env.VITE_LLMGW_API_BASE || '/gw').replace(/\/$/, '');
+
+export function getToken(): string | null {
+  return sessionStorage.getItem(TOKEN_KEY);
+}
+
+export function getStoredUser(): { username?: string; displayName?: string } | null {
+  const raw = sessionStorage.getItem(USER_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+export function setSession(result: LoginResult) {
+  sessionStorage.setItem(TOKEN_KEY, result.token);
+  sessionStorage.setItem(
+    USER_KEY,
+    JSON.stringify({ username: result.username ?? undefined, displayName: result.displayName ?? undefined }),
+  );
+}
+
+export function clearSession() {
+  sessionStorage.removeItem(TOKEN_KEY);
+  sessionStorage.removeItem(USER_KEY);
+}
+
+export function isAuthed(): boolean {
+  return !!getToken();
+}
+
+type RequestOptions = {
+  method?: string;
+  /** 原始对象（本函数内部会 JSON.stringify，调用方禁止再序列化）。 */
+  body?: unknown;
+  query?: Record<string, string | number | undefined | null>;
+};
+
+function buildQuery(query?: RequestOptions['query']): string {
+  if (!query) return '';
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(query)) {
+    if (v === undefined || v === null || v === '') continue;
+    parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`);
+  }
+  return parts.length ? `?${parts.join('&')}` : '';
+}
+
+async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<ApiResponse<T>> {
+  const url = `${API_BASE}${path}${buildQuery(options.query)}`;
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: options.method || 'GET',
+      headers,
+      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+    });
+  } catch (e) {
+    return {
+      success: false,
+      data: null,
+      error: { code: 'NETWORK_ERROR', message: e instanceof Error ? e.message : '网络请求失败' },
+    };
+  }
+
+  if (res.status === 401) {
+    clearSession();
+    return { success: false, data: null, error: { code: 'UNAUTHORIZED', message: '登录已失效，请重新登录' } };
+  }
+
+  let payload: unknown = null;
+  const text = await res.text();
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = null;
+    }
+  }
+
+  // 优先认后端的 { success, data, error } 信封；否则按 HTTP 状态包装。
+  if (payload && typeof payload === 'object' && 'success' in (payload as Record<string, unknown>)) {
+    return payload as ApiResponse<T>;
+  }
+
+  if (!res.ok) {
+    return {
+      success: false,
+      data: null,
+      error: { code: `HTTP_${res.status}`, message: `请求失败（${res.status}）` },
+    };
+  }
+
+  return { success: true, data: payload as T, error: null };
+}
+
+// ── 鉴权 ──
+export function login(req: LoginRequest): Promise<ApiResponse<LoginResult>> {
+  return apiRequest<LoginResult>('/auth/login', { method: 'POST', body: req });
+}
+
+// ── 日志 ──
+export function getLogs(params: LogsListParams): Promise<ApiResponse<LogsListData>> {
+  return apiRequest<LogsListData>('/logs', { query: { ...params } });
+}
+
+export function getLogsMeta(): Promise<ApiResponse<LogsMeta>> {
+  return apiRequest<LogsMeta>('/logs/meta');
+}
+
+export function getLogsTimeseries(params: {
+  from: string;
+  to: string;
+  model?: string;
+  status?: string;
+}): Promise<ApiResponse<TimeseriesData>> {
+  return apiRequest<TimeseriesData>('/logs/timeseries', { query: { ...params } });
+}
+
+export function getLogsSessions(params: {
+  from: string;
+  to: string;
+  page?: number;
+  pageSize?: number;
+}): Promise<ApiResponse<SessionsData>> {
+  return apiRequest<SessionsData>('/logs/sessions', { query: { ...params } });
+}
+
+export function getLogDetail(id: string): Promise<ApiResponse<LlmLogDetail>> {
+  return apiRequest<LlmLogDetail>(`/logs/${encodeURIComponent(id)}`);
+}
