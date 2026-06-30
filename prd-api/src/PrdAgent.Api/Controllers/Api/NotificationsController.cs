@@ -18,11 +18,16 @@ public sealed class NotificationsController : ControllerBase
 {
     private readonly MongoDbContext _db;
     private readonly AdminPushNotificationService _pushService;
+    private readonly AdminNotificationEventService _eventService;
 
-    public NotificationsController(MongoDbContext db, AdminPushNotificationService pushService)
+    public NotificationsController(
+        MongoDbContext db,
+        AdminPushNotificationService pushService,
+        AdminNotificationEventService eventService)
     {
         _db = db;
         _pushService = pushService;
+        _eventService = eventService;
     }
 
     [HttpGet]
@@ -132,6 +137,48 @@ public sealed class NotificationsController : ControllerBase
         }
     }
 
+    [HttpPost("events")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> CreateEvent([FromBody] AdminNotificationEventRequest request, CancellationToken ct = default)
+    {
+        if (!HasAdminNotificationEventPermission())
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权创建管理员通知事件"));
+        }
+
+        var userId = this.GetRequiredUserId();
+        try
+        {
+            var result = await _eventService.CreateAsync(request, userId, ct);
+            var n = result.Notification;
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                created = result.Created,
+                notification = new
+                {
+                    n.Id,
+                    n.Key,
+                    n.Title,
+                    n.Message,
+                    n.Level,
+                    n.Status,
+                    n.ActionLabel,
+                    n.ActionUrl,
+                    n.ActionKind,
+                    n.Source,
+                    attachments = n.Attachments,
+                    n.CreatedAt,
+                    n.UpdatedAt,
+                    n.ExpiresAt
+                }
+            }));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+    }
+
     [HttpPost("{id}/handle")]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
     public async Task<IActionResult> Handle([FromRoute] string id, CancellationToken ct = default)
@@ -165,5 +212,15 @@ public sealed class NotificationsController : ControllerBase
 
         await _db.AdminNotifications.UpdateManyAsync(filter, update, cancellationToken: ct);
         return Ok(ApiResponse<object>.Ok(new { handled = true }));
+    }
+
+    private bool HasAdminNotificationEventPermission()
+    {
+        var permissions = User.FindAll("permissions").Select(x => x.Value).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return permissions.Contains(AdminPermissionCatalog.Super)
+            || permissions.Contains(AdminPermissionCatalog.SettingsWrite)
+            || permissions.Contains(AdminPermissionCatalog.OpenPlatformManage)
+            || permissions.Contains(AdminPermissionCatalog.AutomationsManage)
+            || permissions.Contains(AdminPermissionCatalog.DefectAgentManage);
     }
 }

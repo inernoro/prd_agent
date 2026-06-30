@@ -136,6 +136,7 @@ builder.Services.AddSingleton<ISafeOutboundUrlValidator, PrdAgent.Infrastructure
 builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory,
     PrdAgent.Infrastructure.Services.SafeOutboundHttpHandlerFactory>();
 builder.Services.AddScoped<PrdAgent.Api.Services.AdminPushNotificationService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.AdminNotificationEventService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.AdminPushNotificationWorker>();
 
 // 系统级跨节点互传（Peer Sync）—— 详见 doc/design.platform.peer-sync.md

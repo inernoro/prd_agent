@@ -9,3 +9,7 @@
 | feat | prd-api | 新增推送 appname 资源目录，为缺陷、预警、站内信、服务器到期、用户之声和 API 请求问题提供独立 icon |
 | feat | prd-admin | 推送订阅面板展示 appname 图标资源清单 |
 | feat | prd-api | 缺陷管理员通知携带用户上传图片附件，Bark 推送可直接展示问题截图 |
+| feat | prd-api | 新增管理员通知事件入口，支持用户之声、API 请求问题、服务器到期和系统预警按真实系统事件进入推送链路 |
+| feat | prd-api | 管理员推送资源补充知识库对齐元数据和公开 SVG icon 端点 |
+| feat | prd-admin | 推送订阅资源清单展示关联知识库与模板信息 |
+| test | prd-api | 新增管理员通知事件到 Bark topic 路由和图片附件分发测试 |

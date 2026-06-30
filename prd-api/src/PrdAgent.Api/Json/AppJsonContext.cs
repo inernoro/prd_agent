@@ -3,6 +3,7 @@ using PrdAgent.Api.Controllers;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Models.Requests;
 using PrdAgent.Api.Models.Responses;
+using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -104,6 +105,9 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(UpdateUserAuthzRequest))]
 [JsonSerializable(typeof(ValidatePasswordRequest))]
 [JsonSerializable(typeof(ForceExpireRequest))]
+[JsonSerializable(typeof(AdminPushSubscriptionUpsertRequest))]
+[JsonSerializable(typeof(AdminNotificationEventRequest))]
+[JsonSerializable(typeof(AdminNotificationEventAttachmentRequest))]
 // Desktop Assets 请求
 [JsonSerializable(typeof(AdminCreateDesktopAssetSkinRequest))]
 [JsonSerializable(typeof(AdminUpdateDesktopAssetSkinRequest))]
@@ -144,4 +148,3 @@ namespace PrdAgent.Api.Json;
 public partial class AppJsonContext : JsonSerializerContext
 {
 }
-

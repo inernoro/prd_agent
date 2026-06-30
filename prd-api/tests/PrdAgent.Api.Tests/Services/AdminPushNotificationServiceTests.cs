@@ -1,4 +1,5 @@
 using System.Net;
+using Microsoft.Extensions.Configuration;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Driver;
@@ -282,6 +283,133 @@ public sealed class AdminPushNotificationServiceTests
     }
 
     [Fact]
+    public async Task EventService_CreatesInfrastructureEventsForDedicatedPushTopics()
+    {
+        var testDb = await AdminPushTestDatabase.TryCreateAsync();
+        if (testDb == null) return;
+
+        try
+        {
+            var http = new RecordingHttpClientFactory(HttpStatusCode.OK);
+            var push = CreateService(testDb.Context, http);
+            var events = new AdminNotificationEventService(testDb.Context, NullLogger<AdminNotificationEventService>.Instance);
+
+            await testDb.Context.AdminPushSubscriptions.InsertManyAsync(
+            [
+                new AdminPushSubscription
+                {
+                    UserId = "u1",
+                    TopicKey = "admin-message",
+                    Enabled = true,
+                    ChannelType = "bark",
+                    BarkKey = "test-key",
+                    BarkServerUrl = "https://example.com",
+                    BarkGroup = "MAP System-{{appname}}",
+                    BarkIcon = "{{iconUrl}}",
+                },
+                new AdminPushSubscription
+                {
+                    UserId = "u1",
+                    TopicKey = "user-voice",
+                    Enabled = true,
+                    ChannelType = "bark",
+                    BarkKey = "test-key",
+                    BarkServerUrl = "https://example.com",
+                    BarkGroup = "MAP System-{{appname}}",
+                    BarkIcon = "{{iconUrl}}",
+                },
+                new AdminPushSubscription
+                {
+                    UserId = "u1",
+                    TopicKey = "api-request-alert",
+                    Enabled = true,
+                    ChannelType = "bark",
+                    BarkKey = "test-key",
+                    BarkServerUrl = "https://example.com",
+                    BarkGroup = "MAP System-{{appname}}",
+                    BarkIcon = "{{iconUrl}}",
+                },
+                new AdminPushSubscription
+                {
+                    UserId = "u1",
+                    TopicKey = "system-alert",
+                    Enabled = true,
+                    ChannelType = "bark",
+                    BarkKey = "test-key",
+                    BarkServerUrl = "https://example.com",
+                    BarkGroup = "MAP System-{{appname}}",
+                    BarkIcon = "{{iconUrl}}",
+                },
+            ]);
+
+            var imageUrl = "https://example.com/voice-snapshot.png";
+            await events.CreateAsync(new AdminNotificationEventRequest
+            {
+                Source = "server-expiry",
+                Title = "服务器到期提醒",
+                Message = "测试服务器将在 7 天后到期",
+                Level = "warning",
+                TargetUserId = "u1",
+                DedupKey = "server-1",
+            }, "admin", CancellationToken.None);
+            await events.CreateAsync(new AdminNotificationEventRequest
+            {
+                Source = "user-voice",
+                Title = "用户之声",
+                Message = "用户反馈关键路径有阻塞",
+                Level = "info",
+                TargetUserId = "u1",
+                DedupKey = "voice-1",
+                Attachments =
+                [
+                    new AdminNotificationEventAttachmentRequest
+                    {
+                        Name = "snapshot.png",
+                        Url = imageUrl,
+                        MimeType = "image/png",
+                    },
+                ],
+            }, "admin", CancellationToken.None);
+            await events.CreateAsync(new AdminNotificationEventRequest
+            {
+                Source = "api-request-alert",
+                Title = "API 请求问题",
+                Message = "接口错误率超过阈值",
+                Level = "error",
+                TargetUserId = "u1",
+                DedupKey = "api-1",
+            }, "admin", CancellationToken.None);
+            await events.CreateAsync(new AdminNotificationEventRequest
+            {
+                Source = "platform-key-integrity",
+                Title = "系统预警",
+                Message = "平台密钥配置需要检查",
+                Level = "warning",
+                TargetUserId = "u1",
+                DedupKey = "system-1",
+            }, "admin", CancellationToken.None);
+
+            await push.DispatchPendingAsync(CancellationToken.None);
+
+            Assert.Equal(4, http.Requests.Count);
+            var groups = http.Requests
+                .Select(x => QueryHelpers.ParseQuery(x.Uri.Query)["group"].ToString())
+                .ToList();
+            Assert.Contains("MAP System-服务器到期", groups);
+            Assert.Contains("MAP System-用户之声", groups);
+            Assert.Contains("MAP System-API 请求问题", groups);
+            Assert.Contains("MAP System-系统预警", groups);
+
+            var voice = http.Requests.Single(x => QueryHelpers.ParseQuery(x.Uri.Query)["group"] == "MAP System-用户之声");
+            Assert.Equal(imageUrl, QueryHelpers.ParseQuery(voice.Uri.Query)["image"]);
+        }
+        finally
+        {
+            await testDb.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task RealBarkSmoke_CreatesDefectsForInernoroAndSendsDifferentImages_WhenKeyIsConfigured()
     {
         var key = Environment.GetEnvironmentVariable("REAL_BARK_KEY");
@@ -383,6 +511,7 @@ public sealed class AdminPushNotificationServiceTests
             db,
             http,
             new AllowAllUrlValidator(),
+            TestConfiguration,
             NullLogger<AdminPushNotificationService>.Instance);
     }
 
@@ -392,8 +521,11 @@ public sealed class AdminPushNotificationServiceTests
             db,
             http,
             new AllowAllUrlValidator(),
+            TestConfiguration,
             NullLogger<AdminPushNotificationService>.Instance);
     }
+
+    private static readonly IConfiguration TestConfiguration = new ConfigurationBuilder().Build();
 
     private sealed class AdminPushTestDatabase : IAsyncDisposable
     {

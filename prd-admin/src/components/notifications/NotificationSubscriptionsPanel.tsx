@@ -202,7 +202,17 @@ export function NotificationSubscriptionsPanel() {
               <img src={resource.iconUrl} alt="" className="h-8 w-8 shrink-0 rounded-[8px] object-cover" />
               <div className="min-w-0">
                 <div className="truncate text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>{resource.appName}</div>
-                <div className="truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>{resource.description}</div>
+                <div className="truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>{resource.knowledgeStoreName}</div>
+                <div className="mt-1 flex min-w-0 items-center gap-1.5">
+                  <span className="truncate rounded-full px-1.5 py-0.5 text-[10px]" style={{ background: 'rgba(59,130,246,0.12)', color: '#93c5fd' }}>
+                    {resource.defaultGroup}
+                  </span>
+                  {resource.knowledgeTemplateKey && (
+                    <span className="truncate rounded-full px-1.5 py-0.5 text-[10px]" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}>
+                      {resource.knowledgeTemplateKey}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
           ))}

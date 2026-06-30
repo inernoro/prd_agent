@@ -43,6 +43,10 @@ export type AdminPushResourceDefinition = {
   description: string;
   iconUrl: string;
   defaultGroup: string;
+  resourcePath: string;
+  knowledgeStoreName: string;
+  knowledgeTemplateKey?: string | null;
+  colorKey: string;
 };
 
 export type AdminPushPresetDefinition = {
