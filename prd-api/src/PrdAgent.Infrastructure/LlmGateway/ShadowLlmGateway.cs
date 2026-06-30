@@ -279,9 +279,23 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             if (inproc.IsFallback != http.IsFallback)
                 cmp.Mismatches.Add(new FieldMismatch { Field = "isFallback", Inproc = inproc.IsFallback.ToString(), Http = http.IsFallback.ToString(), Severity = "warning" });
         }
+        else if (cmp.HttpOk && (inproc == null || http == null))
+        {
+            // 一边缺解析（典型：inproc 流因错误/早退从未 yield Start chunk → startResolution=null，
+            // 但后台 http resolve 成功）。此时没有可比字段，**绝不能**算 all-match（否则虚高影子证据，
+            // T10 会被骗过——Cursor Bugbot）。标一条 presence 不一致，让记录说明「为什么不是 match」。
+            cmp.Mismatches.Add(new FieldMismatch
+            {
+                Field = "resolutionPresence",
+                Inproc = inproc == null ? "missing" : "present",
+                Http = http == null ? "missing" : "present",
+                Severity = "warning",
+            });
+        }
 
         cmp.HasCritical = cmp.Mismatches.Any(m => m.Severity == "critical");
-        cmp.AllMatch = cmp.HttpOk && cmp.Mismatches.Count == 0;
+        // all-match 必须**两边解析都在**且零不一致；缺一边一律不算 match。
+        cmp.AllMatch = cmp.HttpOk && inproc != null && http != null && cmp.Mismatches.Count == 0;
         return cmp;
     }
 }

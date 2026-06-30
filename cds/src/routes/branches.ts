@@ -13297,10 +13297,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 字段缺省 → 继承旧值（省略即保留，不静默删命名 URL）；显式空串 → 有意清空；非空 → 校验后采用。
       let sdCandidate: string | undefined;
       if (raw?.subdomain === undefined) {
-        sdCandidate = prevExtraSubdomainById.get(id);
-      } else if (String(raw.subdomain).trim() !== '') {
-        sdCandidate = String(raw.subdomain).trim().toLowerCase();
+        sdCandidate = prevExtraSubdomainById.get(id);   // 字段缺省 = 继承旧值
+      } else if (raw.subdomain !== null && String(raw.subdomain).trim() !== '') {
+        sdCandidate = String(raw.subdomain).trim().toLowerCase();  // 非空字符串 = 采用
       }
+      // 显式 null / '' / 纯空白 = 有意清空（sdCandidate 保持 undefined）。
+      // 必须挡 null：String(null)==="null" 会过校验、落出伪命名 host `<slug>-null`（Cursor Bugbot）。
       if (sdCandidate !== undefined) {
         const sd = sdCandidate.toLowerCase();
         if (!isValidServiceSubdomain(sd)) {

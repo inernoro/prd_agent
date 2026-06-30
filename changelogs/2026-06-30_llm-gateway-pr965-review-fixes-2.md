@@ -22,3 +22,5 @@
 | fix | cds | cds-compose llmgw 控制台改用 per-deploy 派生的 admin 密码/JWT（CDS 替换 ${CDS_BRANCH_SLUG}），修复 Production 守卫拒绝仓库默认密码导致容器启动即 exit、部署判失败（Codex P1） |
 | fix | cds | 命名子域 master 路由直接用已解析 entry（forcedEntry），不再二次 resolveBranchEntry，避免多分支共享 v3 slug 时丢 forcedProfileId 路由到错分支 |
 | fix | cds | extra-services PUT 省略 subdomain 字段时继承旧值（同 env 合并语义），避免纯 env redeploy 静默抹掉命名 URL；显式空串才清空 |
+| fix | prd-api | 影子流式比对：inproc 流未 yield Start（错误/早退）致 startResolution=null 时不再误判 all-match，标 resolutionPresence 不一致（all-match 须两边解析都在） |
+| fix | cds | extra-services subdomain 显式 JSON null 视为清空（原 String(null)="null" 会落伪命名 host <slug>-null） |
