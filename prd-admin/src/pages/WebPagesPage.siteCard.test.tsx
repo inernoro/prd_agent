@@ -53,6 +53,8 @@ describe('WebPagesPage SiteCard', () => {
     expect(html).toContain('aria-label="分享"');
     expect(html).toContain('aria-label="编辑"');
     expect(html).toContain('aria-label="更多设置"');
+    expect(html).toContain('pointer-events-none');
+    expect(html).toContain('group-hover:pointer-events-auto');
     expect(html).not.toContain('aria-label="发布到公开页"');
     expect(html).not.toContain('aria-label="二维码"');
   });
@@ -61,6 +63,7 @@ describe('WebPagesPage SiteCard', () => {
     const html = renderSiteCard({ ...baseSite, visibility: 'public' }, ownerCaps, true);
 
     expect(html).toContain('aria-label="已分享"');
+    expect(html).toContain('公开</span>');
     expect(html).not.toContain('aria-label="分享管理"');
     expect(html).not.toContain('点击取消公开');
     expect(html).not.toContain('aria-label="发布到公开页"');

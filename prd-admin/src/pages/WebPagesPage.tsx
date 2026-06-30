@@ -2075,6 +2075,11 @@ export function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSel
           />
 
           <div className="absolute left-3 top-3 z-20 flex items-center gap-1.5">
+            {isPublic && (
+              <span className="inline-flex h-7 items-center gap-1 rounded-full bg-sky-500/25 px-2.5 text-[11px] font-semibold text-sky-50 shadow-md backdrop-blur-md">
+                <Globe size={12} /> 公开
+              </span>
+            )}
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onSelect(); }}
@@ -2101,7 +2106,7 @@ export function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSel
             </div>
           )}
 
-          <div className="absolute bottom-3 left-3 right-3 z-20 flex min-w-0 items-center justify-end gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
+          <div className="pointer-events-none absolute bottom-3 left-3 right-3 z-20 flex min-w-0 items-center justify-end gap-1.5 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
             {c.canShare && (
               <IconAction
                 icon={shared ? <Link2 size={12} /> : <Share2 size={12} />}
