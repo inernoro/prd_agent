@@ -51,7 +51,7 @@ public interface IPeerSyncTransferService
     void AttachPeerApplyOptions(SyncResourceBundle bundle, bool preserveTimestamps, bool rewriteAssetLinks, string? sourceBaseUrl);
 
     /// <summary>把 document-store 的 peer 同步状态回写到 DocumentStore（仅该资源消费）。</summary>
-    Task MarkPeerSyncAsync(string resourceType, string? itemId, string status, string direction, PeerNode node, string? result, CancellationToken ct);
+    Task MarkPeerSyncAsync(string resourceType, string? itemId, string status, string direction, PeerNode node, string? result, CancellationToken ct, bool updateDirection = true);
 
     /// <summary>一次性落一条 incoming 运行台账（对端 apply 过来，无两阶段进行中）。</summary>
     Task RecordRunAsync(
@@ -137,6 +137,7 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
             var assetRewriteFailed = 0;
             if (direction is "push" or "both")
             {
+                await UpdateRunProgressAsync(runId, "准备导出", 0, 0, itemName, ct);
                 var bundle = await resource.ExportAsync(itemId, actor, ct);
                 if (bundle == null)
                 {
@@ -148,7 +149,9 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
                     return result;
                 }
                 AttachPeerApplyOptions(bundle, preserveTimestamps, rewriteAssetLinks, sourceBaseUrl);
+                await UpdateRunProgressAsync(runId, "发送到对端", 0, bundle.Records.Count, FirstRecordTitle(bundle) ?? bundle.Item.Name, ct);
                 var outcome = await PushToPeerAsync(node, resource.ResourceType, bundle, itemId, mode, direction, preserveTimestamps, rewriteAssetLinks, sourceBaseUrl, ct);
+                await UpdateRunProgressAsync(runId, "发送到对端", bundle.Records.Count, bundle.Records.Count, null, ct);
                 // outcome != null = 已收到对端 HTTP 响应 = 通信成功（即便 Failed>0 也算"通"了）
                 if (outcome == null)
                 {
@@ -174,6 +177,7 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
             // 用户的本地编辑可能被丢。语义应为「先推后拉，推不通就不拉」，避免静默数据丢失。
             if (direction == "pull" || (direction == "both" && pushOk))
             {
+                await UpdateRunProgressAsync(runId, "从对端拉取", 0, 0, itemName, ct);
                 var bundle = await PullFromPeerAsync(node, resource.ResourceType, itemId, ct);
                 if (bundle == null)
                 {
@@ -203,7 +207,22 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
                 }
                 result.AnyPeerContact = true; // bundle != null = 对端 HTTP 200 应答 = 通信成功
                 AttachPeerApplyOptions(bundle, preserveTimestamps, rewriteAssetLinks, node.BaseUrl);
-                var outcome = await resource.ApplyAsync(bundle, actor, mode, itemId, ct);
+                await UpdateRunProgressAsync(runId, "本地写入", 0, bundle.Records.Count, FirstRecordTitle(bundle), ct);
+                var progressActor = actor with
+                {
+                    ProgressReporter = async (progress, token) =>
+                    {
+                        await UpdateRunProgressAsync(
+                            runId,
+                            progress.Phase ?? "本地写入",
+                            progress.Current,
+                            progress.Total,
+                            progress.CurrentRecordTitle,
+                            token);
+                    }
+                };
+                var outcome = await resource.ApplyAsync(bundle, progressActor, mode, itemId, ct);
+                await UpdateRunProgressAsync(runId, "本地写入", bundle.Records.Count, bundle.Records.Count, null, ct);
                 perItem.Add("拉取 " + (outcome.Message ?? "完成"));
                 created += outcome.Created;
                 updated += outcome.Updated;
@@ -220,7 +239,7 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
             }
             var summary = string.Join("；", perItem);
             await MarkPeerSyncAsync(resource.ResourceType, itemId, itemOk ? "synced" : "error", direction, node, summary, ct);
-            // 没有任何增删改 = 跳过，台账标 skipped 让「发出去/历史」一眼看出本轮无变化。
+            // 没有任何增删改 = 跳过，台账标 skipped；前端展示为「已同步」，避免用户把跳过误读成异常。
             var runStatus = !itemOk ? PeerSyncRunStatus.Error
                 : (created == 0 && updated == 0 && deleted == 0) ? PeerSyncRunStatus.Skipped
                 : PeerSyncRunStatus.Synced;
@@ -266,7 +285,8 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
         string direction,
         PeerNode node,
         string? result,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool updateDirection = true)
     {
         if (!string.Equals(resourceType, "document-store", StringComparison.Ordinal) || string.IsNullOrWhiteSpace(itemId))
             return;
@@ -274,12 +294,13 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
         var now = DateTime.UtcNow;
         var update = Builders<DocumentStore>.Update
             .Set(s => s.PeerSyncStatus, status)
-            .Set(s => s.PeerSyncDirection, direction)
             .Set(s => s.PeerSyncNodeId, node.RemoteNodeId)
             .Set(s => s.PeerSyncNodeName, node.DisplayName)
             .Set(s => s.PeerSyncNodeBaseUrl, node.BaseUrl)
             .Set(s => s.PeerSyncLastAt, now)
             .Set(s => s.PeerSyncLastResult, result);
+        if (updateDirection)
+            update = update.Set(s => s.PeerSyncDirection, direction);
         // 任何一次同步「完成」（不论手动还是自动）都顺带重置自动同步计时基准，
         // 否则手动同步一个已到期的库后，worker 会在约 1 分钟内又自动跑一遍（IsDue 只看 AutoLastAt，Bugbot）。
         // 仅在终态（非 syncing）回写，避免「进行中」就把计时往后推。
@@ -344,6 +365,7 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
                 .Set(r => r.AssetsRewritten, assetsRewritten)
                 .Set(r => r.AssetRewriteFailed, assetRewriteFailed)
                 .Set(r => r.Message, message)
+                .Set(r => r.ProgressPhase, status == PeerSyncRunStatus.Error ? "失败" : "已完成")
                 .Set(r => r.DurationMs, (int)Math.Max(0, (now - startedAt).TotalMilliseconds))
                 .Set(r => r.FinishedAt, now),
             cancellationToken: ct);
@@ -409,7 +431,7 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
             SourceBaseUrl = sourceBaseUrl,
         };
         var (ok, json, status) = await CallPeerAsync(node, HttpMethod.Post, $"/api/peer-sync/resources/{type}/apply", payload, ct);
-        if (!ok) throw new InvalidOperationException($"对端 apply 失败（HTTP {status}）");
+        if (!ok) throw new InvalidOperationException($"对端 apply 失败（HTTP {status}）：{PeerErrorSummary(json)}");
         return ExtractData<SyncApplyOutcome>(json);
     }
 
@@ -417,7 +439,7 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
     {
         var payload = new ItemRequest { ItemId = itemId };
         var (ok, json, status) = await CallPeerAsync(node, HttpMethod.Post, $"/api/peer-sync/resources/{type}/export", payload, ct);
-        if (!ok) return null;
+        if (!ok) throw new InvalidOperationException($"对端 export 失败（HTTP {status}）：{PeerErrorSummary(json)}");
         return ExtractData<SyncResourceBundle>(json);
     }
 
@@ -551,6 +573,61 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
         }
         catch { /* ignore */ }
         return null;
+    }
+
+    private async Task UpdateRunProgressAsync(
+        string? runId,
+        string phase,
+        int current,
+        int total,
+        string? currentRecordTitle,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(runId)) return;
+        var safeCurrent = Math.Max(0, current);
+        var safeTotal = Math.Max(0, total);
+        var update = Builders<PeerSyncRun>.Update
+            .Set(r => r.ProgressPhase, phase)
+            .Set(r => r.ProgressCurrent, safeTotal > 0 ? Math.Min(safeCurrent, safeTotal) : safeCurrent)
+            .Set(r => r.ProgressTotal, safeTotal);
+        if (currentRecordTitle != null)
+            update = update.Set(r => r.CurrentRecordTitle, currentRecordTitle);
+
+        await _db.PeerSyncRuns.UpdateOneAsync(r => r.Id == runId, update, cancellationToken: ct);
+    }
+
+    private static string? FirstRecordTitle(SyncResourceBundle bundle)
+        => bundle.Records.FirstOrDefault(r => !string.IsNullOrWhiteSpace(r.Title))?.Title;
+
+    private static string PeerErrorSummary(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return "对端没有返回错误详情";
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.TryGetProperty("error", out var error))
+            {
+                if (error.ValueKind == JsonValueKind.String) return TrimError(error.GetString());
+                if (error.ValueKind == JsonValueKind.Object)
+                {
+                    if (error.TryGetProperty("message", out var msg) && msg.ValueKind == JsonValueKind.String)
+                        return TrimError(msg.GetString());
+                    if (error.TryGetProperty("code", out var code) && code.ValueKind == JsonValueKind.String)
+                        return TrimError(code.GetString());
+                }
+            }
+            if (root.TryGetProperty("message", out var message) && message.ValueKind == JsonValueKind.String)
+                return TrimError(message.GetString());
+        }
+        catch { /* fall through */ }
+        return TrimError(json);
+    }
+
+    private static string TrimError(string? value)
+    {
+        var s = string.IsNullOrWhiteSpace(value) ? "对端没有返回错误详情" : value.Trim();
+        return s.Length > 500 ? s[..500] + "..." : s;
     }
 }
 

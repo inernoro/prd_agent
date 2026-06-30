@@ -416,7 +416,7 @@ public class PeerSyncController : ControllerBase
         if (!string.IsNullOrWhiteSpace(outcome.TargetItemId))
         {
             await _transfer.MarkPeerSyncAsync(resource.ResourceType, outcome.TargetItemId, success ? "synced" : "error", receiverDirection, node,
-                outcome.Message, ct);
+                outcome.Message, ct, updateDirection: false);
             await _transfer.RecordRunAsync(resource.ResourceType, outcome.TargetItemId, req.Bundle.Item?.Name ?? "",
                 receiverDirection, PeerSyncOrigin.Incoming, node, outcome, success, node.CreatedBy, "对端节点",
                 startedAt, ct);
@@ -571,7 +571,7 @@ public class PeerSyncController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { direction, results, anyFail }));
     }
 
-    /// <summary>同步中心：列出运行台账（进行中 / 发出去 / 收进来 / 历史，前端按 origin/direction/status 分组）。
+    /// <summary>同步中心：列出运行台账（当前状态 / 失败处理 / 接收审计 / 历史，前端按 origin/direction/status 分组）。
     /// itemId 为空 = 该用户全部可见条目的记录；否则限定单条目（带访问校验）。</summary>
     [Authorize]
     [HttpGet("runs")]

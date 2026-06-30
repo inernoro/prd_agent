@@ -57,7 +57,7 @@ import { Button } from '@/components/design/Button';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { TeamScopeBar, type TeamScope } from '@/components/team/TeamScopeBar';
 import { TeamWebPagesSection } from '@/pages/document-store/TeamWebPagesSection';
-import { SyncManagerPanel, StoreSyncBadge } from './SyncManagerPanel';
+import { StoreSyncBadge } from './SyncManagerPanel';
 import { SendToPeerDialog } from '@/components/sync/SendToPeerDialog';
 import { SyncCenterDialog } from './SyncCenterDialog';
 import { listPeerSyncRuns } from '@/services/real/peerSync';
@@ -763,11 +763,10 @@ function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle, onClos
 }
 
 // ── 空间详情视图（文档列表 + 上传）──
-function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initialEntryId }: {
+function StoreDetailView({ storeId, onBack, onOpenLibrary, initialEntryId }: {
   storeId: string;
   onBack: () => void;
   onOpenLibrary: (storeId: string) => void;
-  onManageSync?: () => void;
   /** 进入时直接打开的文档（从账号统计点击文档跳转而来）；组件按 storeId key 重挂载，挂载时消费一次 */
   initialEntryId?: string;
 }) {
@@ -1412,8 +1411,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
               {syncBusy ? <MapSpinner size={11} /> : <ArrowLeftRight size={11} />}
               {syncBusy ? '同步中…' : '同步'}
             </button>
-            {/* 旧版同步链接徽章：仅当本库已加入同步配对时显示 */}
-            <StoreSyncBadge storeId={store.id} onManage={onManageSync} />
+            {/* 旧版同步链接徽章：仅当本库已加入同步配对时显示，管理入口收敛到当前同步中心 */}
+            <StoreSyncBadge storeId={store.id} onManage={() => setShowSyncCenter(true)} />
             <Button variant="secondary" size="xs" onClick={() => setShowShareDialog(true)}>
               <Share2 size={13} /> 分享
             </Button>
@@ -1965,7 +1964,7 @@ function SubscribeDialog({ storeId, onClose, onCreated }: {
   );
 }
 
-type StoreTab = 'mine' | 'team' | 'favorites' | 'likes' | 'sync';
+type StoreTab = 'mine' | 'team' | 'favorites' | 'likes';
 
 type StoreSort = 'updated-desc' | 'created-desc' | 'name-asc' | 'docs-desc';
 const SORT_OPTIONS: { key: StoreSort; label: string }[] = [
@@ -1982,7 +1981,7 @@ export function DocumentStorePage() {
   const currentUserId = useAuthStore((s) => s.user?.userId ?? null);
   const [tab, setTab] = useState<StoreTab>(() => {
     const saved = sessionStorage.getItem('doc-store-tab') as StoreTab | null;
-    return saved === 'team' || saved === 'favorites' || saved === 'likes' || saved === 'sync' ? saved : 'mine';
+    return saved === 'team' || saved === 'favorites' || saved === 'likes' ? saved : 'mine';
   });
   const [stores, setStores] = useState<DocumentStoreWithPreview[]>([]);
   const [favorites, setFavorites] = useState<InteractionStoreCard[]>([]);
@@ -2008,12 +2007,12 @@ export function DocumentStorePage() {
     return sessionStorage.getItem('doc-store-selected-id');
   });
 
-  // 深链 ?tab=xxx（如「同步知识库教程」用 ?tab=sync 直达同步页签）：清空详情视图 + 切到该 tab，
+  // 深链 ?tab=xxx：清空详情视图 + 切到该 tab，
   // 这样从任意位置（含某个知识库详情内）打开教程都能落到目标页签，再把 query 抹掉避免重复触发。
   const location = useLocation();
   useEffect(() => {
     const t = new URLSearchParams(location.search).get('tab');
-    const valid: StoreTab[] = ['mine', 'team', 'favorites', 'likes', 'sync'];
+    const valid: StoreTab[] = ['mine', 'team', 'favorites', 'likes'];
     if (t && (valid as string[]).includes(t)) {
       setSelectedStoreId(null);
       setTab(t as StoreTab);
@@ -2192,12 +2191,8 @@ export function DocumentStorePage() {
       loadStores('team', effectiveTeamId);
     } else if (tab === 'favorites') {
       loadFavorites();
-    } else if (tab === 'likes') {
-      loadLikes();
     } else {
-      // sync 页签自管加载，页面级 loading 直接关闭
-      ++listFetchSeq.current;
-      setLoading(false);
+      loadLikes();
     }
   }, [tab, teamScope.teamId, loadStores, loadFavorites, loadLikes]);
 
@@ -2246,7 +2241,6 @@ export function DocumentStorePage() {
     { key: 'team', label: '团队空间', icon: Users },
     { key: 'favorites', label: '我的收藏', icon: Bookmark },
     { key: 'likes', label: '我的点赞', icon: Heart },
-    { key: 'sync', label: '跨环境同步', icon: FolderSync, dataTourId: 'library-sync-tab' },
   ];
 
   const isStoreTab = tab === 'mine' || tab === 'team';
@@ -2313,8 +2307,7 @@ export function DocumentStorePage() {
       }
       else if (tab === 'favorites') loadFavorites();
       else if (tab === 'likes') loadLikes();
-    }} onOpenLibrary={(id) => navigate(`/library/${id}`)}
-      onManageSync={() => { setSelectedStoreId(null); setTab('sync'); }} />;
+    }} onOpenLibrary={(id) => navigate(`/library/${id}`)} />;
   }
 
   // 统计概览（基于未筛选的原始列表，反映"我拥有/我看到的"全量）
@@ -2339,13 +2332,6 @@ export function DocumentStorePage() {
       <div
         data-tour-id="library-tabs"
         className="sticky top-0 z-20 flex flex-col gap-3 pb-5 -mb-5"
-        style={{
-          // 不再用不透明的 var(--bg-base) 整块铺底（用户反馈「黑黑的」一坨）：
-          // 只保留半透明玻璃模糊，滚动内容从下方透出并被磨砂虚化，顶栏变轻。
-          background: 'color-mix(in srgb, var(--bg-base) 55%, transparent)',
-          backdropFilter: 'saturate(180%) blur(12px)',
-          WebkitBackdropFilter: 'saturate(180%) blur(12px)',
-        }}
       >
         {/* 顶部第一排：左上角空间切换（我的空间 / 团队空间 / 我的收藏 / 我的点赞） */}
         <TabBar
@@ -2367,10 +2353,11 @@ export function DocumentStorePage() {
             else if (next === 'favorites') setFavorites([]);
             else setLikes([]);
             setLoading(true);
-            // 切 tab 时退出详情视图：否则详情视图早返回会挡在前面，点「跨环境同步」永远进不去（Bugbot）。
+            // 切 tab 时退出详情视图：否则详情视图早返回会挡在前面。
             setSelectedStoreId(null);
             setTab(next);
           }}
+          variant="plain"
         />
 
       {/* 第二排：按顶部 tab 联动的工具栏
@@ -2643,9 +2630,7 @@ export function DocumentStorePage() {
       </div>
 
       <div className="px-5 pb-6 w-full">
-        {tab === 'sync' ? (
-          <SyncManagerPanel />
-        ) : loading ? (
+        {loading ? (
           <MapSectionLoader text="加载中..." />
         ) : isFilteredOut ? (
           /* 筛选无结果 */

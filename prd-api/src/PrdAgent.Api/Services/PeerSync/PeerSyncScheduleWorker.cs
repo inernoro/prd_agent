@@ -167,6 +167,13 @@ public sealed class PeerSyncScheduleWorker : BackgroundService
             // 自动同步永远走非破坏性方向：push/pull/both（Overwrite，绝不 Mirror 删条目）。
             // 强制对齐（删除）是数据破坏路径，只能在 UI 二次确认后手动触发，自动同步不碰。
             var direction = NormalizeAutoDirection(store.PeerSyncDirection);
+            if (direction == null)
+            {
+                _logger.LogWarning(
+                    "[PeerSyncScheduleWorker] store {StoreId} has no user-confirmed auto direction ({Direction}), skip",
+                    store.Id, store.PeerSyncDirection);
+                return;
+            }
             var actor = await transfer.BuildActorAsync(store.OwnerId, isRoot: false, ct);
             // 本节点对外地址：worker 无 Request，按与 ResolveServerUrl 一致的「无请求」来源取——
             // 先 PEER_SELF_BASE_URL，再 config["ServerUrl"]。反代部署只要配了其一，自动 push 的图片本地化
@@ -209,11 +216,12 @@ public sealed class PeerSyncScheduleWorker : BackgroundService
         }
     }
 
-    /// <summary>把库上记录的方向归一成自动同步要跑的方向：push/pull 保留，其余（both/received/align-*）一律 both。</summary>
-    private static string NormalizeAutoDirection(string? direction) => direction switch
+    /// <summary>把库上记录的方向归一成自动同步要跑的方向。received 只是接收审计，不能升级成双向同步。</summary>
+    private static string? NormalizeAutoDirection(string? direction) => direction switch
     {
         "push" => "push",
         "pull" => "pull",
-        _ => "both",
+        "both" or "align-remote" or "align-local" or "align-both" => "both",
+        _ => null,
     };
 }

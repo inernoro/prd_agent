@@ -116,6 +116,10 @@ export interface PeerSyncRun {
   failed: number;
   assetsRewritten: number;
   assetRewriteFailed: number;
+  progressPhase?: string | null;
+  progressCurrent?: number;
+  progressTotal?: number;
+  currentRecordTitle?: string | null;
   message?: string | null;
   triggeredByUserId: string;
   triggeredByName?: string | null;

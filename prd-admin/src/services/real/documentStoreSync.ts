@@ -22,7 +22,7 @@ export interface DocumentSyncLink {
   status: SyncLinkStatus;
 }
 
-/** 列出当前用户的全部同步配对（跨所有库，用于「跨环境同步」页签） */
+/** 列出当前用户的全部旧版同步配对（跨所有库，用于兼容旧配对管理） */
 export async function listAllSyncLinks() {
   return await apiRequest<{ items: DocumentSyncLink[] }>(api.documentStore.sync.listAll(), { method: 'GET' });
 }
