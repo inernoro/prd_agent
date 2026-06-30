@@ -9757,11 +9757,30 @@ export function createBranchRouter(deps: RouterDeps): Router {
     });
     if (branchOperationCoordinator && !branchOperationLease) return;
     const deleteStartedAt = nowIso();
-    entry.status = 'stopping';
-    entry.lastStoppedAt = deleteStartedAt;
-    entry.lastStopSource = trigger === 'webhook' ? 'system' : 'cds';
-    entry.lastStopReason = `删除分支流程已开始：${deleteReason}`;
-    stateService.save();
+    const previousDeleteIntent = {
+      status: entry.status,
+      lastStoppedAt: entry.lastStoppedAt,
+      lastStopSource: entry.lastStopSource,
+      lastStopReason: entry.lastStopReason,
+    };
+    try {
+      entry.status = 'stopping';
+      entry.lastStoppedAt = deleteStartedAt;
+      entry.lastStopSource = trigger === 'webhook' ? 'system' : 'cds';
+      entry.lastStopReason = `删除分支流程已开始：${deleteReason}`;
+      stateService.save();
+    } catch (err) {
+      entry.status = previousDeleteIntent.status;
+      entry.lastStoppedAt = previousDeleteIntent.lastStoppedAt;
+      entry.lastStopSource = previousDeleteIntent.lastStopSource;
+      entry.lastStopReason = previousDeleteIntent.lastStopReason;
+      completeBranchOperation(branchOperationLease, 'failed', (err as Error).message);
+      res.status(500).json({
+        ok: false,
+        error: `删除分支状态持久化失败: ${(err as Error).message}`,
+      });
+      return;
+    }
     try {
       stateService.appendActivityLog(entry.projectId, {
         type: 'stop',

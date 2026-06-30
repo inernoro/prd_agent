@@ -2140,12 +2140,13 @@ janitorService.setRemoveFn(async (slug: string) => {
     }
 
     // ── Discover and reconcile app containers ──
-    const appContainers = await containerService.discoverAppContainers();
+    const appDiscovery = await containerService.discoverAppContainersWithStatus();
+    const appContainers = appDiscovery.containers;
     const branches = stateService.getAllBranches();
     let appReconciled = 0;
 
     for (const branch of branches) {
-      if (shouldPruneDeletedBranchStartupResidue(branch, appContainers)) {
+      if (appDiscovery.ok && shouldPruneDeletedBranchStartupResidue(branch, appContainers)) {
         activeServerEventLogStore?.record({
           category: 'container',
           severity: 'warn',

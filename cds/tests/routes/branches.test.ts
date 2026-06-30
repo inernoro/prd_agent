@@ -2461,6 +2461,37 @@ describe('Branch Routes', () => {
       expect(branchAfterReject.status).not.toBe('stopping');
     });
 
+    it('releases the delete lease when persisting delete intent fails', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'delete-save-fails',
+        projectId: 'default',
+        branch: 'feature/delete-save-fails',
+        worktreePath: path.join(tmpDir, 'worktrees', 'delete-save-fails'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+      });
+      stateService.save();
+
+      const originalSave = stateService.save.bind(stateService);
+      let shouldFailSave = true;
+      stateService.save = () => {
+        if (shouldFailSave) throw new Error('disk full');
+        return originalSave();
+      };
+
+      const failedDelete = await request(server, 'DELETE', '/api/branches/delete-save-fails');
+      expect(failedDelete.status).toBe(500);
+      expect(branchOperationCoordinator.getActive('delete-save-fails')).toBeUndefined();
+      expect(stateService.getBranch('delete-save-fails')?.status).toBe('idle');
+      expect(stateService.getBranch('delete-save-fails')?.lastStopReason).toBeUndefined();
+
+      shouldFailSave = false;
+      const nextDelete = await request(server, 'DELETE', '/api/branches/delete-save-fails');
+      expect(String(nextDelete.body)).toContain('complete');
+    });
+
     it('does not keep delete SSE open for slow best-effort volume cleanup', async () => {
       const now = new Date().toISOString();
       stateService.addBranch({
