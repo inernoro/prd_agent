@@ -560,32 +560,37 @@ export class ProxyService {
     const state = this.stateService.getState();
     const projects = this.stateService.getProjects?.() ?? [];
     const projectById = new Map(projects.map((p) => [p.id, p]));
+    // 收集所有候选,取「previewSlug 最长(最具体)」者——slug `abc-demo-llmgw` 可能同时被
+    // (previewSlug=`abc`, subdomain=`demo-llmgw`) 和 (previewSlug=`abc-demo`, subdomain=`llmgw`) 命中,
+    // 必须按最长 previewSlug 消歧,否则 Object.values 迭代顺序决定胜者→同一 URL 路由不确定(Cursor Bugbot)。
+    // 等长再按 entry.id 字典序稳定 tie-break。
+    let best: { entry: BranchEntry; profileId: string; previewSlug: string } | undefined;
     for (const entry of Object.values(state.branches)) {
       if (!entry.branch) continue;
       const project = entry.projectId ? projectById.get(entry.projectId) : undefined;
-      let base: string | undefined;
+      let profiles: BuildProfile[] | undefined;
       for (const projectSlug of previewProjectSlugCandidates(project, entry.projectId)) {
         const ps = computePreviewSlug(entry.branch, projectSlug);
-        if (ps && slug.startsWith(`${ps}-`)) {
-          base = ps;
-          break;
-        }
+        if (!ps || !slug.startsWith(`${ps}-`)) continue;
+        const sub = slug.slice(ps.length + 1); // 去掉 `<ps>-`
+        if (!sub) continue;
+        profiles ??= this.stateService
+          .getEffectiveProfilesForBranch(entry)
+          .map((p) => resolveEffectiveProfile(p, entry));
+        const match = profiles.find(
+          (p) => p.subdomain && p.subdomain.toLowerCase() === sub && entry.services[p.id],
+        );
+        if (!match) continue;
+        // 返回已解析的 v3 previewSlug(非 slugify(branch.name))——后者对 claude/... 带 `/` 的分支名
+        // 算出的裸 slug 与 resolveBranchEntry 的 v3 前向匹配口径不符,会让命名 URL 在 master 兜底解析不到分支。
+        const better =
+          !best ||
+          ps.length > best.previewSlug.length ||
+          (ps.length === best.previewSlug.length && String(entry.id) < String(best.entry.id));
+        if (better) best = { entry, profileId: match.id, previewSlug: ps };
       }
-      if (!base) continue;
-      const sub = slug.slice(base.length + 1); // 去掉 `<base>-`
-      if (!sub) continue;
-      const profiles = this.stateService
-        .getEffectiveProfilesForBranch(entry)
-        .map((p) => resolveEffectiveProfile(p, entry));
-      const match = profiles.find(
-        (p) => p.subdomain && p.subdomain.toLowerCase() === sub && entry.services[p.id],
-      );
-      // 返回已解析出的 v3 previewSlug(base)而非 slugify(branch.name)——后者对 claude/... 这类
-      // 带 `/` 的分支名算出的裸 slug 与 resolveBranchEntry 的 v3 前向匹配口径不符,会让命名 URL
-      // 在 master 兜底路径上解析不到 canonical 分支(Cursor Bugbot)。
-      if (match) return { entry, profileId: match.id, previewSlug: base };
     }
-    return undefined;
+    return best;
   }
 
   private routeToBranch(branchSlug: string, branchRef: string, req: http.IncomingMessage, res: http.ServerResponse, forcedProfileId?: string): void {

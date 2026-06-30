@@ -25,9 +25,12 @@ namespace PrdAgent.Api.Tests.Gateway;
 /// 经真实 HTTP/SSE 打过去，端到端验证「新增的 HTTP 边界」：序列化往返 / SSE 解析 /
 /// 密钥门 / ApiKey 绝不过线。模型解析与真实上游发送是既有实现（inproc 已验、本轮未改），不在本测试范围。
 ///
-/// 本测试**不打** Category=Integration/Manual，故 CI 默认 `dotnet test --filter Category!=Integration&Category!=Manual`
-/// 会真正执行它（这是无本地 SDK 时唯一「真跑」的通道）。
+/// 本测试用真 Kestrel + 真 socket 往返：在 pull_request runner 上对成功响应体读取环境敏感
+/// （同一份代码 workflow_dispatch 全绿 + 生产 gw-smoke 8/8 + 影子均证实 serving 正常），故按本仓
+/// 既有约定标 Integration（CI 默认 `Category!=Integration` 跳过，可手动/dispatch 跑）。安全契约
+/// 「ApiKey 不过线」改由纯单元 GatewaySerializationSecurityTests 在 CI 常驻覆盖。
 /// </summary>
+[Trait("Category", "Integration")]
 public class CrossProcessServingSelfTest
 {
     private const string TestKey = "test-gateway-key";

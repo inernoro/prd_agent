@@ -97,7 +97,7 @@ services:
       # 调用经 HttpLlmGatewayClient 打到 llmgw-serve（/gw/v1/*）。ServeBaseUrl 指向 serving 容器。
       - LlmGateway__Mode=${LLMGW_MODE:-inproc}
       - LlmGateway__ServeBaseUrl=${LLMGW_SERVE_BASE_URL:-http://llmgw-serve:8091}
-      - LlmGwServe__ApiKey=${LLMGW_SERVE_KEY:-dev-llmgw-serve-key}
+      - LlmGwServe__ApiKey=${LLMGW_SERVE_KEY:?must set LLMGW_SERVE_KEY in production (gateway /gw/v1 shared key gate, no insecure default)}
     # 重要：此 API 容器建议只读，避免任何本地落盘
     read_only: true
     # 允许少量临时写入到内存（tmpfs），避免 .NET/HTTP 栈因无 /tmp 可写而异常；不会落到磁盘
@@ -147,7 +147,7 @@ services:
       - R2_PREFIX=${R2_PREFIX:-}
       - R2_ENDPOINT=${R2_ENDPOINT:-}
       # 内部 M2M 共享密钥门（与 api 侧 LlmGwServe__ApiKey 对齐）
-      - LlmGwServe__ApiKey=${LLMGW_SERVE_KEY:-dev-llmgw-serve-key}
+      - LlmGwServe__ApiKey=${LLMGW_SERVE_KEY:?must set LLMGW_SERVE_KEY in production (gateway /gw/v1 shared key gate, no insecure default)}
     read_only: true
     tmpfs:
       - /tmp
@@ -173,7 +173,7 @@ services:
       - LlmGwJwt__Issuer=prdagent-llmgw
       # 独立账号种子（首启 upsert 到 llmgw_users）；生产请通过 .env 覆盖密码
       - LLMGW_ADMIN_USER=${LLMGW_ADMIN_USER:-admin}
-      - LLMGW_ADMIN_PASSWORD=${LLMGW_ADMIN_PASSWORD:-llmgw-admin-2026}
+      - LLMGW_ADMIN_PASSWORD=${LLMGW_ADMIN_PASSWORD:?must set LLMGW_ADMIN_PASSWORD in production (gateway console admin account, no insecure default)}
     read_only: true
     tmpfs:
       - /tmp

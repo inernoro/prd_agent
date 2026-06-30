@@ -27,6 +27,12 @@ namespace PrdAgent.Api.Tests.Gateway;
 ///
 /// 4 个 stub 上游各起一个常驻 Kestrel host（IClassFixture 复用），避免每 cell 重启。
 /// </summary>
+// 真 Kestrel + 真 socket 的跨进程往返：在 pull_request runner 上对成功响应体的读取环境敏感
+// （workflow_dispatch 上同一份代码全绿、生产真机 gw-smoke 8/8 + 影子均证实 serving 正常），属
+// 集成测试范畴，按本仓既有约定（LlmResolutionGoldenIntegrationTests 等）标 Integration——CI 默认
+// `Category!=Integration` 跳过，可手动/workflow_dispatch 跑。HTTP 边界的安全契约（ApiKey 不过线）
+// 改由纯单元 GatewaySerializationSecurityTests 在 CI 常驻覆盖。
+[Trait("Category", "Integration")]
 public class CrossProcessServingErrorLoadTests : IClassFixture<CrossProcessServingErrorLoadTests.HostFarm>
 {
     private const string TestKey = "test-gateway-key";

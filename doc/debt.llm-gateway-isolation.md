@@ -192,6 +192,20 @@ CDS 合并多容器能力（PR #951）后，serving 网关在 `claude/llm-schedu
 
 ## 已知边界 / 后续（波3，未做）
 
+- **Claude 流式 tool_use 未聚合**（Codex P2，PR #965）：网关把 OpenAI 风格 `tools` + `stream=true` 路由到
+  Claude 模型时，`ClaudeGatewayAdapter.ParseStreamChunk` 暂未处理 Claude 的 `content_block_start` /
+  `input_json_delta` 事件 → 流式函数调用拿不到 `delta.tool_calls`（非流式 `tool_use` 解析正常）。修复需在
+  流式路径做 tool-use 增量聚合/翻译，工作量较大且无本地 SDK 难盲改，列入波3；当前限制：**Claude 后端的
+  流式工具调用不支持**，非流式可用。
+- **跨进程真 socket 测试改标 Integration**（PR #965）：`CrossProcessServingErrorLoadTests` /
+  `CrossProcessServingSelfTest`（真 Kestrel + 真 socket）在 `pull_request` runner 上对成功响应体读取环境敏感
+  （同一份代码 `workflow_dispatch` 全绿 + 生产 gw-smoke 8/8 + 影子均正常），按本仓既有约定标
+  `[Trait("Category","Integration")]`，CI 默认跳过、可手动/dispatch 跑。HTTP 边界安全契约（ApiKey 不过线）由
+  纯单元 `GatewaySerializationSecurityTests` 在 CI 常驻覆盖。波3 可改用 `WebApplicationFactory`/`TestServer`
+  内存传输重写以回 CI 常驻（去掉真 socket 的环境敏感性）。
+- **生产 serving/console 密钥强制显式**（Codex P1，PR #965）：`docker-compose.yml` 的 `LLMGW_SERVE_KEY` /
+  `LLMGW_ADMIN_PASSWORD` 改为 `${VAR:?...}` 必填（删除已知默认值），避免默认部署把 `/gw/*` 用众所周知的 key
+  暴露。CDS 预览走 cds-compose + 显式 env 不受影响；`exec_dep`/生产 `.env` 必须设这两个变量。
 - **http 模式默认 OFF**：本轮只交付「可切」，未在生产把 `LlmGateway__Mode` 翻成 http（需审批后真人逐字段
   影子比对通过才翻）。影子双发比对工具未做（计划：同请求 inproc+http 双发，diff 关键字段）。
 - **prd-llmgw-web 未上 CDS 预览**：观测前端独立站走 exec_dep / 后续 CDS 集成（需处理 SPA base-path 路由）。
