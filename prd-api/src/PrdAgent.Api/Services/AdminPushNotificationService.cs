@@ -14,8 +14,10 @@ public sealed class AdminPushNotificationService
     private static readonly Regex PlaceholderRegex = new(@"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}", RegexOptions.Compiled);
     private static readonly HashSet<string> SupportedMethods = new(StringComparer.OrdinalIgnoreCase) { "GET", "POST" };
     private static readonly HashSet<string> SupportedBarkLevels = new(StringComparer.OrdinalIgnoreCase) { "active", "timeSensitive", "passive", "critical" };
-    private const int MaxDispatchPerList = 20;
+    private const int MaxDispatchPerSubscription = 20;
+    private const int MaxCandidateNotificationsPerSubscription = 200;
     private const string DefaultBarkServerUrl = "https://api.day.app";
+    private static readonly TimeSpan FailedRetryCooldown = TimeSpan.FromMinutes(10);
 
     private readonly MongoDbContext _db;
     private readonly IHttpClientFactory _httpClientFactory;
@@ -169,6 +171,8 @@ public sealed class AdminPushNotificationService
         var now = DateTime.UtcNow;
         var existing = await _db.AdminPushSubscriptions
             .Find(x => x.UserId == userId && x.TopicKey == topic.Key)
+            .SortByDescending(x => x.UpdatedAt)
+            .ThenByDescending(x => x.Id)
             .FirstOrDefaultAsync(ct);
 
         var entity = existing ?? new AdminPushSubscription
@@ -202,6 +206,10 @@ public sealed class AdminPushNotificationService
         {
             await _db.AdminPushSubscriptions.ReplaceOneAsync(x => x.Id == entity.Id, entity, cancellationToken: CancellationToken.None);
         }
+
+        await _db.AdminPushSubscriptions.DeleteManyAsync(
+            x => x.UserId == userId && x.TopicKey == topic.Key && x.Id != entity.Id,
+            CancellationToken.None);
 
         return entity;
     }
@@ -257,42 +265,87 @@ public sealed class AdminPushNotificationService
         return await DeliverAsync(userId, sub, notification, saveLog: false, ct);
     }
 
-    public async Task DispatchForUserAsync(string userId, IReadOnlyList<AdminNotification> notifications, CancellationToken ct)
+    public async Task DispatchPendingAsync(CancellationToken ct)
     {
-        var targets = notifications
-            .Where(x => x.Status == "open")
-            .Take(MaxDispatchPerList)
-            .ToList();
-        if (targets.Count == 0) return;
-
         var subscriptions = await _db.AdminPushSubscriptions
-            .Find(x => x.UserId == userId && x.Enabled)
+            .Find(x => x.Enabled)
             .ToListAsync(ct);
         if (subscriptions.Count == 0) return;
 
-        foreach (var notification in targets)
+        foreach (var subscription in PickLatestEnabledSubscriptions(subscriptions))
         {
-            foreach (var subscription in subscriptions)
+            try
             {
-                if (!MatchesTopic(subscription.TopicKey, notification)) continue;
-
-                var exists = await _db.AdminPushDeliveryLogs
-                    .Find(x => x.UserId == userId
-                        && x.SubscriptionId == subscription.Id
-                        && x.NotificationId == notification.Id)
-                    .AnyAsync(ct);
-                if (exists) continue;
-
-                try
-                {
-                    await DeliverAsync(userId, subscription, notification, saveLog: true, ct);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "管理员推送失败 user={UserId} subscription={SubscriptionId} notification={NotificationId}", userId, subscription.Id, notification.Id);
-                }
+                await DispatchSubscriptionAsync(subscription, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "管理员推送订阅扫描失败 user={UserId} topic={TopicKey} subscription={SubscriptionId}", subscription.UserId, subscription.TopicKey, subscription.Id);
             }
         }
+    }
+
+    private async Task DispatchSubscriptionAsync(AdminPushSubscription subscription, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var filter = Builders<AdminNotification>.Filter.Eq(x => x.Status, "open");
+        filter &= Builders<AdminNotification>.Filter.Or(
+            Builders<AdminNotification>.Filter.Eq(x => x.TargetUserId, null),
+            Builders<AdminNotification>.Filter.Eq(x => x.TargetUserId, subscription.UserId));
+        filter &= Builders<AdminNotification>.Filter.Or(
+            Builders<AdminNotification>.Filter.Eq(x => x.ExpiresAt, null),
+            Builders<AdminNotification>.Filter.Gt(x => x.ExpiresAt, now));
+
+        var candidates = await _db.AdminNotifications
+            .Find(filter)
+            .SortByDescending(x => x.CreatedAt)
+            .Limit(MaxCandidateNotificationsPerSubscription)
+            .ToListAsync(ct);
+
+        var delivered = 0;
+        foreach (var notification in candidates)
+        {
+            if (!MatchesTopic(subscription.TopicKey, notification)) continue;
+            if (await HasSuccessfulDeliveryAsync(subscription, notification.Id, ct)) continue;
+
+            var latestFailure = await GetLatestFailedDeliveryAsync(subscription, notification.Id, ct);
+            if (latestFailure?.CreatedAt > now.Subtract(FailedRetryCooldown)) continue;
+
+            await DeliverAsync(subscription.UserId, subscription, notification, saveLog: true, ct);
+            delivered++;
+            if (delivered >= MaxDispatchPerSubscription) return;
+        }
+    }
+
+    private async Task<bool> HasSuccessfulDeliveryAsync(AdminPushSubscription subscription, string notificationId, CancellationToken ct)
+    {
+        return await _db.AdminPushDeliveryLogs
+            .Find(x => x.UserId == subscription.UserId
+                && x.TopicKey == subscription.TopicKey
+                && x.NotificationId == notificationId
+                && x.Success)
+            .AnyAsync(ct);
+    }
+
+    private async Task<AdminPushDeliveryLog?> GetLatestFailedDeliveryAsync(AdminPushSubscription subscription, string notificationId, CancellationToken ct)
+    {
+        return await _db.AdminPushDeliveryLogs
+            .Find(x => x.UserId == subscription.UserId
+                && x.TopicKey == subscription.TopicKey
+                && x.NotificationId == notificationId
+                && !x.Success)
+            .SortByDescending(x => x.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    private static IEnumerable<AdminPushSubscription> PickLatestEnabledSubscriptions(IEnumerable<AdminPushSubscription> subscriptions)
+    {
+        return subscriptions
+            .GroupBy(x => $"{x.UserId}\u0000{x.TopicKey}", StringComparer.OrdinalIgnoreCase)
+            .Select(x => x
+                .OrderByDescending(s => s.UpdatedAt)
+                .ThenByDescending(s => s.Id, StringComparer.Ordinal)
+                .First());
     }
 
     private async Task<AdminPushDeliveryLog> DeliverAsync(
@@ -450,6 +503,16 @@ public sealed class AdminPushNotificationService
         });
     }
 
+    private static string RenderPlainTemplate(string template, IReadOnlyDictionary<string, string> values)
+    {
+        return PlaceholderRegex.Replace(template ?? string.Empty, match =>
+        {
+            var key = match.Groups[1].Value;
+            values.TryGetValue(key, out var raw);
+            return raw ?? string.Empty;
+        });
+    }
+
     private static string BuildBarkUrl(
         string? serverUrl,
         string? key,
@@ -472,12 +535,12 @@ public sealed class AdminPushNotificationService
 
         var group = string.IsNullOrWhiteSpace(groupTemplate)
             ? "MAP System"
-            : RenderTemplate(groupTemplate, placeholders, forUrl: false);
+            : RenderPlainTemplate(groupTemplate, placeholders);
         AddQuery(query, "group", group);
         AddQuery(query, "sound", sound);
         AddQuery(query, "level", level);
-        AddQuery(query, "icon", string.IsNullOrWhiteSpace(icon) ? null : RenderTemplate(icon, placeholders, forUrl: false));
-        AddQuery(query, "url", string.IsNullOrWhiteSpace(urlTemplate) ? placeholders.GetValueOrDefault("actionUrl") : RenderTemplate(urlTemplate, placeholders, forUrl: false));
+        AddQuery(query, "icon", string.IsNullOrWhiteSpace(icon) ? null : RenderPlainTemplate(icon, placeholders));
+        AddQuery(query, "url", string.IsNullOrWhiteSpace(urlTemplate) ? placeholders.GetValueOrDefault("actionUrl") : RenderPlainTemplate(urlTemplate, placeholders));
         if (call) AddQuery(query, "call", "1");
 
         return query.Count == 0 ? url : $"{url}?{string.Join("&", query)}";

@@ -1,5 +1,8 @@
+using MongoDB.Bson.Serialization.Attributes;
+
 namespace PrdAgent.Core.Models;
 
+[BsonIgnoreExtraElements]
 public class AdminPushSubscription
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
@@ -23,6 +26,7 @@ public class AdminPushSubscription
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 
+[BsonIgnoreExtraElements]
 public class AdminPushDeliveryLog
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");

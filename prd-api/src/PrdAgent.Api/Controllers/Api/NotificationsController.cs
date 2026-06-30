@@ -53,8 +53,6 @@ public sealed class NotificationsController : ControllerBase
             .Limit(200)
             .ToListAsync(ct);
 
-        await _pushService.DispatchForUserAsync(userId, items, ct);
-
         return Ok(ApiResponse<object>.Ok(new
         {
             items = items.Select(x => new

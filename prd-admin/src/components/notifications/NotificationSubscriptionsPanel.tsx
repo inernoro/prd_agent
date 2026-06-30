@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, FlaskConical, Info, Save, Settings2 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import {
@@ -90,10 +90,14 @@ export function NotificationSubscriptionsPanel() {
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [testingKey, setTestingKey] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const loadSeqRef = useRef(0);
 
   const load = useCallback(async () => {
+    const seq = loadSeqRef.current + 1;
+    loadSeqRef.current = seq;
     setLoading(true);
     const res = await getAdminPushSubscriptions();
+    if (loadSeqRef.current !== seq) return;
     if (res.success) {
       setTopics(res.data.topics ?? []);
       setPresets(res.data.presets ?? []);
@@ -106,7 +110,7 @@ export function NotificationSubscriptionsPanel() {
     } else {
       setMessage(res.error?.message || '加载推送订阅失败');
     }
-    setLoading(false);
+    if (loadSeqRef.current === seq) setLoading(false);
   }, []);
 
   useEffect(() => {
