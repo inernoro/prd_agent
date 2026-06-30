@@ -51,6 +51,18 @@ AI 大模型网关从 MAP 剥离的工程债务台账。记录「已做 / 待用
   过程中自测还抓出一处断言笔误（fake 发两个 delta，期望写成 3 段）——证明它真在执行而非空跑。
 - 不覆盖真实模型解析/上游发送（既有实现，inproc 已验、本轮未改）；真机端到端待 CDS 升级 + 导入审批。
 
+## 已知坑：分支级额外服务被 webhook 自动部署清空（2026-06-29）
+
+每次 `git push` 触发 CDS webhook **自动部署**（check-run「CDS Deploy」），它按**项目拓扑**重部署分支，会把
+**分支级额外服务**（`extraProfiles`，如本波挂的 `llmgw-serve`）**清空**（`extraProfiles: []` / 容器「未找到服务」）。
+表现：push 后 `/gw/v1/*` 全部落到 admin SPA（路由不再命中 llmgw-serve）。
+- **现状自愈办法**：等该 push 的「CDS Deploy」跑完（branch=running）后，重新 `PUT /extra-services?redeploy=1`
+  + `PUT /profile-overrides/api-prd-agent {env:{LlmGateway__Mode:shadow}}`，无新 push 就不再被清。
+- **根因/启示**：分支级额外服务对「webhook 自动部署」不持久 → **任何要长期常驻的网关服务（生产/每分支）应走项目级
+  compose 导入**（项目底座 profile，过审批，push 不清），而非分支级额外服务。分支级只适合「一次性真机验证」。
+- 待办：要么让 webhook 自动部署用 `getEffectiveProfilesForBranch`（含 extraProfiles）重部署、不清额外服务（CDS 侧修，
+  走 `/audit` 反馈给 CDS 团队）；要么本网关转项目级导入常驻。
+
 ## D 层真机：已跑通（2026-06-29，跨进程 serving 在真实预览上 8/8 绿）
 
 CDS 合并多容器能力（PR #951）后，serving 网关在 `claude/llm-scheduling-model-pool-x58zh4` 预览上端到端跑通：
