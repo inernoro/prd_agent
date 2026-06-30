@@ -79,7 +79,7 @@ serving 影子比对读端点。本文档把每一屏拆成**自动化工具（P
 | 8 | 连接重置 | 桩在传输中途 reset 连接 | 解析/传输健壮，标记失败，C 层 cell 覆盖 |
 | 9 | 并发串号 | 并发 N 个不同 appCallerCode 同时 resolve | 各请求解析互不串租户/串模型；D12 canary：串号即报 |
 | 10 | ApiKey 不过线 | serving 端点不带 / 带错 `X-Gateway-Key` | 除 healthz 外一律拒绝（密钥门，GatewayHttpEndpoints L33-40）；面 E 取证用 |
-| 11 | NotFound → 黑洞 | 无匹配池的 appCallerCode（7 个 NotFound 入口之一） | 解析档位 NotFound，落黑洞；若已落库 status=blackhole，生命周期 chip 显示「未发出」（红） |
+| 11 | NotFound → 黑洞 | 无匹配池的 appCallerCode（7 个 NotFound 入口之一） | 解析档位 NotFound，落黑洞；若已落库 status=blackhole，生命周期 chip 显示「记录降级」（红） |
 | 12 | 中转字段异构 | 同 platform 走 per-pool-item / per-model 不同 protocol 覆盖（D14） | 同 platform 出不同 protocol（openai/claude/exchange），ResolutionReason 记层级；覆盖被忽略即报 |
 
 ---
@@ -122,11 +122,11 @@ serving 影子比对读端点。本文档把每一屏拆成**自动化工具（P
 - **截图点 A2（生命周期 chip + 详情抽屉）**：在 A1 列表里 `click` 任意一行 → 打开 `GenerationDetailsDrawer`
   （createPortal，GenerationDetailsDrawer.tsx）。`waitForSelector` 命中生命周期 chip。
   - 生命周期 chip 文案集（deriveLifecycle，llmLogsView.helpers.ts L175-189，按状态取一）：
-    `已完成`（绿）/ `失败`（红）/ `已取消`（灰）/ `未发出`（黑洞，红）/ `接收中`（蓝 pulse）/
+    `已完成`（绿）/ `失败`（红）/ `已取消`（灰）/ `记录降级`（黑洞，红）/ `接收中`（蓝 pulse）/
     `已发·等响应`（黄 pulse，疑似没收首字）/ `发送中`（紫 pulse）。chip title=「请求生命周期：区分已发送未收到 / 接收中 / 已完成」。
   - 预期（双主题）：抽屉内顶部生命周期 chip 颜色 + 文案与该日志 status/firstByteAt 一致；TTFB / 总时长可见（drawer 内 firstByteAt 行）。
 - **截图点 A3（黑洞记录）**：在 A1 列表筛选/翻页找到一条 status=blackhole 的记录（NotFound 入口或 StartAsync 失败落库）并打开。
-  - 预期（双主题）：生命周期 chip 显示「未发出」（红，`#fb7185`），区别于「失败」。
+  - 预期（双主题）：生命周期 chip 显示「记录降级」（红，`#fb7185`），区别于「失败」（blackhole = 日志写入失败，调用很可能成功只是未可靠记录，故非「未发出」）。
   - 失败判据：若全表无 blackhole 记录，标注「本环境无黑洞样本，待 D 层 gw-smoke 用坏 URL 模型造一条」，不得伪造。
 - **截图点 A4（应用维度聚合视图）**：点子 TabBar「应用」tab → `waitForSelector` 命中聚合表（列：应用 / 类型 / 请求数 /
   成功率 / 失败 / 中位时延，llmLogsView.helpers.ts L212-219）+ 底部「按应用前缀 + 类型聚合 · 共 N 组」（LlmGenerationsView.tsx L387）。
@@ -242,7 +242,7 @@ serving 影子比对读端点。本文档把每一屏拆成**自动化工具（P
    还原后正文 / 真实 `<img>` / 聚合表行 / 健康总览主体 / 拓扑 `-llmgw` 边 / JSON summary 字段。
    绝不在 spinner、「加载中…」、「正在聚合…」、「还原中…」状态下截图当产物。
 4. **双主题各截一张**：每个截图点切换暗/亮主题各取一张（prd-admin 全局主题控件 / CDS 右上角主题切换按钮 / prd-llmgw-web theme.css）。
-5. **断言预期文案 / 元素存在**：截图同时 `expect(locator).toBeVisible()` 断言关键文案（如「未发出」「已还原」「健康总览」
+5. **断言预期文案 / 元素存在**：截图同时 `expect(locator).toBeVisible()` 断言关键文案（如「记录降级」「已还原」「健康总览」
    「LLM 网关观测台」「点击定位」）或 JSON 字段，让证据可机器校验。
 6. **闭环判据**（`closed-loop-acceptance.md`）：还原 / 生图 / 比对类必须截到「产物真的出现」；超时只记录超时现象，
    verdict 降级，不得在 caption 写「已完成 / 已还原 / 已渲染」。
