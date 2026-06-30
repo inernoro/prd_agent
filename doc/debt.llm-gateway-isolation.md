@@ -192,6 +192,20 @@ CDS 合并多容器能力（PR #951）后，serving 网关在 `claude/llm-schedu
 
 ## 已知边界 / 后续（波3，未做）
 
+- **命名子域：master 反代兜底路径有两处局限（forwarder/生产完整可用）**（Bugbot Medium ×2，PR #965）：
+  命名子域 `<previewSlug>-<sub>` 在**生产数据面（forwarder 模式，`CDS_USE_FORWARDER=1`）下完整可用**——forwarder
+  按 host 直接发布 `<sub>` 服务的独立路由，直达容器端口、按服务状态门控、**独立于主分支状态**（主分支还在
+  building 时该服务照样应答）。下面两处只发生在**非 forwarder 的 master 反代兜底**（dev/legacy 部署）路径，
+  本 PR 不改路由模型，记为已知局限，波3 随命名子域专项一起补：
+  1. **`/_cds/*` widget header scope 缺失**（`cds/src/services/proxy.ts` L443-486）：master 用
+     `extractPreviewBranch`+`resolveBranchEntry` 解析命名 host（`main-prd-agent-llmgw`），该 label 非分支 slug →
+     `sourceEntry` undefined → `x-cds-source-project-id`/`x-cds-source-branch-id` 内部 header 不注入。影响仅限
+     CDS Bridge widget 在非 forwarder 预览上的 source scope（dev 便利功能），不影响服务本体路由。
+  2. **`routeToBranch` 分支级门控挡命名服务**（`cds/src/services/proxy.ts` L647-734）：命名子域已置
+     `forcedProfileId`，但 master 路径仍按**分支级**状态（idle/stopped/building）返回等待页，导致一个已 running
+     的 `llmgw-serve` 在主分支部署中时，经 master 兜底访问会拿到 HTML 等待页而非服务。正解是命名子域命中时按
+     **服务级**状态路由（绕分支门控）——属路由模型变更，波3 做。**当前规避**：生产用 forwarder 模式（不受影响）；
+     非 forwarder 部署等主分支就绪后命名服务即正常。
 - **Claude 流式 tool_use 未聚合**（Codex P2，PR #965）：网关把 OpenAI 风格 `tools` + `stream=true` 路由到
   Claude 模型时，`ClaudeGatewayAdapter.ParseStreamChunk` 暂未处理 Claude 的 `content_block_start` /
   `input_json_delta` 事件 → 流式函数调用拿不到 `delta.tool_calls`（非流式 `tool_use` 解析正常）。修复需在

@@ -4,6 +4,9 @@ services:
     container_name: prdagent-gateway
     ports:
       - "5500:80"
+      # 网关前端控制台 prd-llmgw-web 走 _standalone.conf 的独立 server 块（listen 8081，
+      # /gw-api/ 反代到 llmgw:8090）。不发布 8081 主机就到不了该 listener，控制台打不开。
+      - "8081:8081"
     volumes:
       # conf.d/default.conf 是 symlink，由部署模式决定指向哪个 branches/*.conf：
       #   - 独立部署 (exec_dep.sh) → branches/_standalone.conf (真正的 /api → api:8080 反代)

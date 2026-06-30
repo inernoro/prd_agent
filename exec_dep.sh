@@ -59,10 +59,12 @@ if [ -z "${PRD_AGENT_API_IMAGE:-}" ]; then
   export PRD_AGENT_API_IMAGE="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-server:latest"
 fi
 
-# 默认独立 LLM 网关镜像（占位：当前与 api 同源，复用 prdagent-server:latest 同一份 DLL）。
-# prd-llmgw 拆为独立项目后改指向 prdagent-llmgw:latest。compose 已含 llmgw service，随 up 一起拉起。
+# 默认独立 LLM 网关镜像（控制台 prd-llmgw，自包含 ASP.NET 服务，监听 8090，提供 /gw/healthz、
+# /gw/auth/login、/gw/logs）。prd-llmgw 已是独立项目（CI branch-image 构建 prdagent-llmgw 镜像），
+# 故默认必须指向 prdagent-llmgw:latest，不能复用 api 镜像——否则 llmgw 服务会错跑 PrdAgent.Api.dll、
+# /gw/* 端点全缺。compose 的 llmgw service 默认也是该镜像，随 up 一起拉起。
 if [ -z "${PRD_AGENT_LLMGW_IMAGE:-}" ]; then
-  export PRD_AGENT_LLMGW_IMAGE="${PRD_AGENT_API_IMAGE}"
+  export PRD_AGENT_LLMGW_IMAGE="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-llmgw:latest"
 fi
 
 if command -v docker-compose >/dev/null 2>&1; then
