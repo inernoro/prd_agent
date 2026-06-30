@@ -166,7 +166,7 @@ export function userLabel(it: LlmRequestLogListItem): string {
 // ── 请求生命周期派生（治"不知道没发送还是没收到"）──
 // 纯读侧派生：从 status/startedAt/firstByteAt/endedAt 组合出可视阶段，区分
 // "已发送但还没收到首字"(sent-no-response) 与 "正在接收"(receiving)。
-// 注：完全"没发出去"(StartAsync 失败/黑洞)不会有日志记录，需后端补 blackhole 落库（后续波次）。
+// 注：blackhole = StartAsync 写日志失败（请求仍照常发起，结果未被可靠记录），标"记录降级"而非"未发出"。
 export interface LifecycleInfo { key: string; label: string; color: string; bg: string; pulse?: boolean }
 
 /** 阈值：已发送但超过该秒数仍无首字 → 标记"等待响应"（疑似没收到） */
@@ -177,7 +177,9 @@ export function deriveLifecycle(it: { status?: string | null; startedAt?: string
   if (status === 'succeeded') return { key: 'completed', label: '已完成', color: '#34d399', bg: 'rgba(52,211,153,0.15)' };
   if (status === 'failed') return { key: 'failed', label: '失败', color: '#f87171', bg: 'rgba(248,113,113,0.15)' };
   if (status === 'cancelled') return { key: 'cancelled', label: '已取消', color: '#94a3b8', bg: 'rgba(148,163,184,0.15)' };
-  if (status === 'blackhole') return { key: 'blackhole', label: '未发出', color: '#fb7185', bg: 'rgba(251,113,133,0.18)' };
+  // blackhole = 日志写入失败：请求仍照常发起，但完整结果未被可靠记录。
+  // 注意标签不能写"未发出"——该调用很可能成功了，只是这条日志没落库；标"记录降级"才如实。
+  if (status === 'blackhole') return { key: 'blackhole', label: '记录降级', color: '#fb7185', bg: 'rgba(251,113,133,0.18)' };
   // running 态：靠 firstByteAt 区分"已收首字 / 已发未收"
   if (status === 'running') {
     if (it.firstByteAt) return { key: 'receiving', label: '接收中', color: '#60a5fa', bg: 'rgba(96,165,250,0.16)', pulse: true };

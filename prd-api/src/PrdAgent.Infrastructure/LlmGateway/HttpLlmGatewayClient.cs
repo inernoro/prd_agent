@@ -183,6 +183,24 @@ public sealed class HttpLlmGatewayClient
                 resolution.ErrorMessage ?? "调用方 resolution 已失败，http 模式不得重新选模型");
         }
 
+        // 多 part 文件跨 HTTP 边界尚未接通（波3）：MultipartFiles 的元素类型是 ValueTuple
+        // (string,byte[],string)，System.Text.Json 默认不序列化 ValueTuple 字段 → 过线后文件内容丢失，
+        // serving 端会发出缺文件的 multipart 或在到达上游前失败。设计的可序列化形态是 MultipartFileRefs
+        // （具名 DTO + 对象存储引用），但该 rehydrate 管线属波3，尚未填充/落地。
+        // 在此之前**快速失败**，把"静默发坏请求"变成一条明确错误，而不是让 ASR/图生图等悄悄断掉。
+        // 进程内（inproc）模式不受影响：字节经 MultipartFiles 直传，不过 HTTP。
+        var hasInlineMultipartFiles = request.IsMultipart
+            && request.MultipartFiles is { Count: > 0 }
+            && (request.MultipartFileRefs is null || request.MultipartFileRefs.Count == 0);
+        if (hasInlineMultipartFiles)
+        {
+            return GatewayRawResponse.Fail(
+                "MULTIPART_HTTP_UNSUPPORTED",
+                "http 模式暂不支持携带内联文件的 multipart raw 调用（ASR/图生图等）。" +
+                "需先经对象存储引用（MultipartFileRefs）跨进程 rehydrate——属网关物理隔离波3，尚未接通。" +
+                "请将该入口暂留 inproc，或等待波3 完成。详见 doc/debt.llm-gateway-isolation.md。");
+        }
+
         var outboundRequest = request;
         if (!string.IsNullOrWhiteSpace(resolution.ActualModel))
         {

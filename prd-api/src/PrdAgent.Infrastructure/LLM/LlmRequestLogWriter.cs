@@ -117,9 +117,16 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
         {
             // 黑洞可见：StartAsync 失败（多半是 COS 上传 / requestBody 处理炸了）会导致
             // LLM 调用完全不落日志——用户看到功能跑通但日志页空空，对运维而言是幽灵级别故障。
-            // 这里尽力插入一条「最小记录」（Status=blackhole），让"未发出/未记录"也可在日志页查到，
+            // 这里尽力插入一条「最小记录」（Status=blackhole），让"记录降级"也可在日志页查到，
             // 而不是只在 container logs 里留一条 Warning。最小记录只用 start 上的原始字段，
             // 不再走可能失败的 COS 处理路径，避免二次抛异常。
+            //
+            // 语义校正（修复「blackhole 误标成功调用」）：StartAsync 在请求**发起前**被调用，
+            // 此处失败的是「日志写入」而非「请求发送」——请求随后仍会照常发起（上层吞掉日志异常）。
+            // 故 blackhole 的准确含义是「本次请求的完整生命周期未能可靠记录」，既非"成功"也非"未发出"。
+            // 为保证这条故障可见、不被后续 MarkDone/MarkError 覆盖或反向误标，这里**返回 null**：
+            // 上层 logId 保持 null → 所有 Mark* 调用 no-op（受 logId==null 守卫），blackhole 占位记录
+            // 作为独立、不可变的「记录降级」标记留存。不再依赖 LlmRequestLogBackground 的 Status 过滤兜底。
             try
             {
                 var fallbackLog = new LlmRequestLog
@@ -138,11 +145,12 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                     StartedAt = start.StartedAt == default ? DateTime.UtcNow : start.StartedAt,
                     EndedAt = DateTime.UtcNow,
                     Status = "blackhole",
-                    Error = $"日志写入失败（未记录请求体）：{ex.GetType().Name}: {ex.Message}"
+                    Error = $"日志写入失败（请求仍照常发起，但完整结果未被记录）：{ex.GetType().Name}: {ex.Message}"
                 };
                 await _db.LlmRequestLogs.InsertOneAsync(fallbackLog, cancellationToken: ct);
-                _logger.LogWarning(ex, "LlmRequestLogWriter.StartAsync failed — 已写入 blackhole 占位日志。AppCallerCode={AppCallerCode}, RequestId={RequestId}", start.AppCallerCode, start.RequestId);
-                return fallbackLog.Id;
+                _logger.LogWarning(ex, "LlmRequestLogWriter.StartAsync failed — 已写入 blackhole 占位日志（记录降级）。AppCallerCode={AppCallerCode}, RequestId={RequestId}", start.AppCallerCode, start.RequestId);
+                // 关键：返回 null 而非 fallbackLog.Id，使后续 MarkDone/MarkError 不会复用并覆盖这条记录。
+                return null;
             }
             catch (Exception fallbackEx)
             {

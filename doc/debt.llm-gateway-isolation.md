@@ -204,8 +204,25 @@ CDS 合并多容器能力（PR #951）后，serving 网关在 `claude/llm-schedu
   纯单元 `GatewaySerializationSecurityTests` 在 CI 常驻覆盖。波3 可改用 `WebApplicationFactory`/`TestServer`
   内存传输重写以回 CI 常驻（去掉真 socket 的环境敏感性）。
 - **生产 serving/console 密钥强制显式**（Codex P1，PR #965）：`docker-compose.yml` 的 `LLMGW_SERVE_KEY` /
-  `LLMGW_ADMIN_PASSWORD` 改为 `${VAR:?...}` 必填（删除已知默认值），避免默认部署把 `/gw/*` 用众所周知的 key
-  暴露。CDS 预览走 cds-compose + 显式 env 不受影响；`exec_dep`/生产 `.env` 必须设这两个变量。
+  `LLMGW_ADMIN_PASSWORD` / `LLMGW_JWT_SECRET` 均改为 `${VAR:?...}` 必填（删除已知默认值），避免默认部署把
+  `/gw/*` 用众所周知的 key 暴露。`LLMGW_JWT_SECRET` 尤其关键——console 的 `/gw/*` 是 bearer 鉴权，只校验
+  签名/issuer/有效期，回落到仓库 dev 密钥则任何人可自签 token 读 `/gw/logs`（无需 admin 密码）。除 compose
+  必填外，`prd-llmgw/Program.cs` 启动时再做一层防御：`IsProduction()` 下若 JWT 密钥/admin 密码缺失或等于
+  仓库 dev 占位值，直接抛异常拒绝启动。CDS 预览走 cds-compose + 显式 env 不受影响；`exec_dep`/生产 `.env`
+  必须设这三个变量。
+- **http 模式 multipart raw 跨进程未接通（波3，已 fail-fast 防误发）**（Codex P1，PR #965）：`MultipartFiles`
+  的元素是 ValueTuple `(string,byte[],string)`，System.Text.Json 默认不序列化 ValueTuple 字段 → 过 HTTP 线后
+  文件内容丢失。设计的可序列化形态是 `MultipartFileRefs`（具名 DTO + 对象存储引用），但「prd-api 上传字节拿
+  RefKey → serving 端按 RefKey 拉取 rehydrate 拼 multipart」这条管线属波3、尚未落地。当前 `HttpLlmGatewayClient.
+  SendRawWithResolutionAsync` 对「带内联文件的 multipart raw」**快速失败**（返回 `MULTIPART_HTTP_UNSUPPORTED`），
+  把静默发坏请求变成明确错误。影响面：http 模式下 ASR/转写/图生图等 multipart raw 入口需暂留 inproc。inproc
+  模式不受影响（字节经 MultipartFiles 直传，不过线）。波3 接通对象存储 rehydrate 后解除。
+- **blackhole 语义校正（修复「记录降级误标成功调用」）**（Codex/Bugbot，PR #965）：`LlmRequestLogWriter.StartAsync`
+  在请求**发起前**被调用，其失败的是「日志写入」而非「请求发送」——请求随后仍照常发起。故 blackhole 的准确含义是
+  「完整生命周期未能可靠记录」，既非成功也非「未发出」。修复：① StartAsync 失败路径**返回 null**（不再返回占位
+  行 id），使后续 MarkDone/MarkError no-op，blackhole 记录作为独立不可变标记留存，不被覆盖也不反向误标；
+  ② 移除 `LlmRequestLogBackground` 里 `Status != "blackhole"` 的兜底过滤（logId 不再复用，按主键直接更新）；
+  ③ 前端标签「未发出」→「记录降级」（prd-admin + prd-llmgw-web），如实反映「请求可能已成功，只是这条日志没落库」。
 - **http 模式默认 OFF**：本轮只交付「可切」，未在生产把 `LlmGateway__Mode` 翻成 http（需审批后真人逐字段
   影子比对通过才翻）。影子双发比对工具未做（计划：同请求 inproc+http 双发，diff 关键字段）。
 - **prd-llmgw-web 未上 CDS 预览**：观测前端独立站走 exec_dep / 后续 CDS 集成（需处理 SPA base-path 路由）。

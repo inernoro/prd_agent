@@ -424,6 +424,32 @@ services:
     expect(cfg).not.toBeNull();
     expect(cfg!.buildProfiles.find((p) => p.id === 'svc')!.subdomain).toBeUndefined();
   });
+
+  it('重复 subdomain：首个 service 保留，后续重复者丢弃（避免 host 路由撞车）', () => {
+    const yaml = `
+services:
+  alpha:
+    build: ./alpha
+    ports:
+      - "8001:8001"
+    labels:
+      cds.subdomain: "shared"
+  beta:
+    build: ./beta
+    ports:
+      - "8002:8002"
+    labels:
+      cds.subdomain: "shared"
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg).not.toBeNull();
+    const withSub = cfg!.buildProfiles.filter((p) => p.subdomain === 'shared');
+    // 只有一个 service 拿到该命名子域。
+    expect(withSub).toHaveLength(1);
+    // 首个声明者（alpha）保留，beta 被降级为无命名子域。
+    expect(cfg!.buildProfiles.find((p) => p.id === 'alpha')!.subdomain).toBe('shared');
+    expect(cfg!.buildProfiles.find((p) => p.id === 'beta')!.subdomain).toBeUndefined();
+  });
 });
 
 describe('parseStandardCompose — agent runtime sidecar isolation', () => {

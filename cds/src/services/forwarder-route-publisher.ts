@@ -276,8 +276,11 @@ export class ForwarderRoutePublisher {
       // 同一 subdomain 在一个分支内只发一条命名 host 路由：若两个服务复用同一 subdomain（理论上
       // 入口校验已拒，这里作数据面兜底），保留首个、跳过后续,避免同 host 不同上游端口的撞车路由
       // 命中错容器(Cursor Bugbot)。
+      // 按 profileId 排序后再去重,保证「保留首个」在 branch.services 对象键序变化时仍确定性命中
+      // 同一容器(否则两次发布可能因键序不同把同名 subdomain 指向不同端口)。
+      const subdomainCandidates = [...routableServices].sort((a, b) => a.profileId.localeCompare(b.profileId));
       const writtenSubdomains = new Set<string>();
-      for (const svc of routableServices) {
+      for (const svc of subdomainCandidates) {
         const bp = profileById.get(svc.profileId);
         const sub = bp?.subdomain;
         if (!sub) continue;

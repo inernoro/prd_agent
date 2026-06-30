@@ -26,16 +26,39 @@ var config = builder.Configuration;
 var mongoConn = config["MongoDB:ConnectionString"] ?? "mongodb://localhost:27017";
 var mongoDb = config["MongoDB:DatabaseName"] ?? "prdagent";
 
-var jwtSecret = config["LlmGwJwt:Secret"] ?? "llmgw-dev-secret-change-me-please-0001";
-var jwtIssuer = config["LlmGwJwt:Issuer"] ?? "prdagent-llmgw";
-if (Encoding.UTF8.GetByteCount(jwtSecret) < 32)
+const string DevJwtSecret = "llmgw-dev-secret-change-me-please-0001";
+const string DevAdminPwd = "llmgw-admin-2026";
+
+// 安全门（修复「仓库已知 dev 密钥可伪造 token 读 /gw/*」）：
+//   /gw/* 暴露在外，bearer 鉴权只校验签名/issuer/有效期。若生产回落到仓库已知的 dev 密钥，
+//   攻击者无需 admin 密码即可自签 token 读 /gw/logs。故生产环境**强制**显式配置真密钥，缺失即拒启动。
+//   非生产（Development/CI 自测）保留 dev 占位密钥，避免本地起不来。
+var isProduction = builder.Environment.IsProduction();
+
+var configuredJwtSecret = config["LlmGwJwt:Secret"];
+var jwtSecret = configuredJwtSecret ?? DevJwtSecret;
+var jwtTooShort = Encoding.UTF8.GetByteCount(jwtSecret) < 32; // HS256 要求密钥足够长
+if (isProduction && (string.IsNullOrWhiteSpace(configuredJwtSecret) || configuredJwtSecret == DevJwtSecret || jwtTooShort))
 {
-    // HS256 要求密钥足够长；过短则回落到带提示的开发占位密钥，避免启动即崩。
-    jwtSecret = "llmgw-dev-secret-change-me-please-0001";
+    throw new InvalidOperationException(
+        "生产环境必须显式配置 LLMGW_JWT_SECRET（≥32 字节、非仓库 dev 占位值）。" +
+        "缺失会回落到仓库已知 dev 密钥，使任何人可自签 token 读取 /gw/* —— 拒绝启动。");
 }
+if (jwtTooShort)
+{
+    // 仅非生产：过短回落到带提示的开发占位密钥，避免本地启动即崩。
+    jwtSecret = DevJwtSecret;
+}
+var jwtIssuer = config["LlmGwJwt:Issuer"] ?? "prdagent-llmgw";
 
 var seedAdminUser = Environment.GetEnvironmentVariable("LLMGW_ADMIN_USER") ?? "admin";
-var seedAdminPwd = Environment.GetEnvironmentVariable("LLMGW_ADMIN_PASSWORD") ?? "llmgw-admin-2026";
+var configuredAdminPwd = Environment.GetEnvironmentVariable("LLMGW_ADMIN_PASSWORD");
+if (isProduction && (string.IsNullOrWhiteSpace(configuredAdminPwd) || configuredAdminPwd == DevAdminPwd))
+{
+    throw new InvalidOperationException(
+        "生产环境必须显式配置 LLMGW_ADMIN_PASSWORD（非仓库 dev 占位值）—— 拒绝启动。");
+}
+var seedAdminPwd = configuredAdminPwd ?? DevAdminPwd;
 
 var gitCommit = Environment.GetEnvironmentVariable("GIT_COMMIT") ?? "";
 

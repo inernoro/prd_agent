@@ -179,7 +179,8 @@ export function deriveLifecycle(it: {
   if (status === 'succeeded') return { key: 'completed', label: '已完成', color: '#34d399', bg: 'rgba(52,211,153,0.15)' };
   if (status === 'failed') return { key: 'failed', label: '失败', color: '#f87171', bg: 'rgba(248,113,113,0.15)' };
   if (status === 'cancelled') return { key: 'cancelled', label: '已取消', color: '#94a3b8', bg: 'rgba(148,163,184,0.15)' };
-  if (status === 'blackhole') return { key: 'blackhole', label: '未发出', color: '#fb7185', bg: 'rgba(251,113,133,0.18)' };
+  // blackhole = 日志写入失败：请求仍照常发起，但完整结果未被可靠记录。标"记录降级"而非"未发出"。
+  if (status === 'blackhole') return { key: 'blackhole', label: '记录降级', color: '#fb7185', bg: 'rgba(251,113,133,0.18)' };
   if (status === 'running') {
     if (it.firstByteAt) return { key: 'receiving', label: '接收中', color: '#60a5fa', bg: 'rgba(96,165,250,0.16)', pulse: true };
     const startedMs = it.startedAt ? Date.parse(it.startedAt) : NaN;

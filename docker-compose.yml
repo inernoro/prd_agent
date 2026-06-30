@@ -169,7 +169,7 @@ services:
       - MongoDB__ConnectionString=mongodb://mongodb:27017
       - MongoDB__DatabaseName=prdagent
       # 网关自身鉴权密钥：独立于 api 的 JWT_SECRET（跨服务隔离）
-      - LlmGwJwt__Secret=${LLMGW_JWT_SECRET:-}
+      - LlmGwJwt__Secret=${LLMGW_JWT_SECRET:?must set LLMGW_JWT_SECRET in production (gateway console JWT signing key, >=32 bytes, no insecure default — empty falls back to a repo-known dev key that lets anyone forge a token to read /gw/*)}
       - LlmGwJwt__Issuer=prdagent-llmgw
       # 独立账号种子（首启 upsert 到 llmgw_users）；生产请通过 .env 覆盖密码
       - LLMGW_ADMIN_USER=${LLMGW_ADMIN_USER:-admin}

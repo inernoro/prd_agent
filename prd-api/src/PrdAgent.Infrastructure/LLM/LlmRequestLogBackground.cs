@@ -130,9 +130,9 @@ public sealed class LlmRequestLogBackground
             .Set(l => l.ToolCallCount, done.ToolCallCount)
             .Set(l => l.FinishReason, done.FinishReason);
 
-        // blackhole 占位记录（StartAsync 写库失败时落的最小记录）不得被后续 done 覆盖：
-        // 上游调用本身成功时若覆盖成 succeeded/failed，blackhole 故障就从「blackhole 状态过滤」里消失。
-        return _db.LlmRequestLogs.UpdateOneAsync(l => l.Id == logId && l.Status != "blackhole", update);
+        // blackhole 占位记录由 LlmRequestLogWriter.StartAsync 失败路径返回 null 保护——logId 永不复用，
+        // 故这里无需再按 Status 过滤；按主键直接更新即可。
+        return _db.LlmRequestLogs.UpdateOneAsync(l => l.Id == logId, update);
     }
 
     private Task UpdateErrorAsync(string logId, string error, int? statusCode)
@@ -145,8 +145,8 @@ public sealed class LlmRequestLogBackground
             .Set(l => l.Status, "failed")
             .Set(l => l.EndedAt, DateTime.UtcNow);
 
-        // 同上：blackhole 占位记录不得被后续 error 覆盖（保留「日志写入失败」这条故障可见）。
-        return _db.LlmRequestLogs.UpdateOneAsync(l => l.Id == logId && l.Status != "blackhole", update);
+        // 同上：blackhole 占位记录的 logId 不会被复用（StartAsync 失败返回 null），按主键直接更新即可。
+        return _db.LlmRequestLogs.UpdateOneAsync(l => l.Id == logId, update);
     }
 
     private async Task WithRetryAsync(LlmLogOp op, Func<Task> action)
