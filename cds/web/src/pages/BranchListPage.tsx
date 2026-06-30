@@ -4300,6 +4300,8 @@ function releaseStepsForRun(
   const failed = run.status === 'failed' || run.status === 'rollback_failed';
   const success = run.status === 'success' || run.status === 'rollback_success';
   const failurePhase = [...logs].reverse().find((log) => log.level === 'error')?.phase;
+  const connectConfirmed = logs.some((log) => log.phase === 'connect' && log.message.includes('cds-release-connect-ok'))
+    || phases.has('prepare');
   const prepareSeen = phases.has('prepare');
   const healthSeen = phases.has('healthcheck');
   const scriptOne = scripts[0] || './fast.sh';
@@ -4313,12 +4315,12 @@ function releaseStepsForRun(
     {
       id: 'connect',
       label: '连接服务器',
-      state: failurePhase === 'connect' ? 'failed' : phases.has('connect') || prepareSeen || scriptOneSeen || scriptTwoSeen || healthSeen || success ? 'done' : 'running',
+      state: failurePhase === 'connect' ? 'failed' : connectConfirmed || scriptOneSeen || scriptTwoSeen || healthSeen || success ? 'done' : 'running',
     },
     {
       id: 'directory',
       label: '进入站点目录',
-      state: failurePhase === 'connect' ? 'pending' : prepareSeen || scriptOneSeen || scriptTwoSeen || healthSeen || success ? 'done' : phases.has('connect') ? 'running' : 'pending',
+      state: failurePhase === 'connect' ? 'pending' : prepareSeen || scriptOneSeen || scriptTwoSeen || healthSeen || success ? 'done' : connectConfirmed ? 'running' : 'pending',
     },
     {
       id: 'script-one',
@@ -5658,4 +5660,3 @@ function branchOriginBadge(branch: BranchSummary): { label: string; title: strin
     className: 'border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300',
   };
 }
-
