@@ -1,7 +1,10 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 
 namespace PrdAgent.LlmGatewayHost;
@@ -160,6 +163,32 @@ public static class GatewayHttpEndpoints
             {
                 // 响应已释放：静默停止。
             }
+        });
+
+        // 影子比对读端点（观测）：X-Gateway-Key 门内，读 llmshadow_comparisons 给汇总 + 最近 N 条。
+        // 灰度翻 http 前看「inproc vs http 逐字段一致性」的窗口（去黑盒）。serving 进程与 MAP 共享同一 Mongo，故能读到。
+        app.MapGet("/gw/v1/shadow-comparisons", async (
+            MongoDbContext db,
+            int? limit,
+            string? appCallerCode) =>
+        {
+            var n = Math.Clamp(limit ?? 50, 1, 500);
+            var col = db.LlmShadowComparisons;
+            var filter = string.IsNullOrWhiteSpace(appCallerCode)
+                ? FilterDefinition<LlmShadowComparison>.Empty
+                : Builders<LlmShadowComparison>.Filter.Eq(x => x.AppCallerCode, appCallerCode);
+
+            var total = await col.CountDocumentsAsync(filter);
+            var allMatch = await col.CountDocumentsAsync(filter & Builders<LlmShadowComparison>.Filter.Eq(x => x.AllMatch, true));
+            var critical = await col.CountDocumentsAsync(filter & Builders<LlmShadowComparison>.Filter.Eq(x => x.HasCritical, true));
+            var httpFail = await col.CountDocumentsAsync(filter & Builders<LlmShadowComparison>.Filter.Eq(x => x.HttpOk, false));
+            var recent = await col.Find(filter).SortByDescending(x => x.ComparedAt).Limit(n).ToListAsync();
+
+            return Results.Json(new
+            {
+                summary = new { total, allMatch, critical, httpFail },
+                recent,
+            }, jsonOpts);
         });
     }
 
