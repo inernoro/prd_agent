@@ -9,6 +9,7 @@ import { computePreviewSlug, previewProjectSlugCandidates } from './preview-slug
 import { classifyDeployRuntime } from './deploy-runtime.js';
 import { computeWaitTiming } from './wait-timing.js';
 import { resolveEffectiveProfile } from './container.js';
+import { ROUTABLE_SERVICE_STATUSES } from './forwarder-route-publisher.js';
 import type { DeployDurationMode } from '../types.js';
 import {
   classifyHttpRequestKind,
@@ -577,14 +578,14 @@ export class ProxyService {
         profiles ??= this.stateService
           .getEffectiveProfilesForBranch(entry)
           .map((p) => resolveEffectiveProfile(p, entry));
-        // 要求该服务有 hostPort（可路由）——否则停止/缺端口的 profile 会被命名 host 强制命中却拿不到上游。
-        // 与 forwarder 命名路由「只发可路由服务」口径对齐（Cursor Bugbot）。
-        const match = profiles.find(
-          (p) =>
-            p.subdomain &&
-            p.subdomain.toLowerCase() === sub &&
-            (entry.services[p.id]?.hostPort ?? 0) > 0,
-        );
+        // 要求该服务有 hostPort **且** 处于可路由状态——否则停止/错误（但残留 hostPort）的 profile
+        // 会被命名 host 强制命中却拿不到上游，产生 forwarder 本会省略的坏路由。
+        // 与 forwarder 命名路由「只发可路由服务」口径对齐，共用 ROUTABLE_SERVICE_STATUSES（Cursor Bugbot）。
+        const match = profiles.find((p) => {
+          if (!p.subdomain || p.subdomain.toLowerCase() !== sub) return false;
+          const svc = entry.services[p.id];
+          return (svc?.hostPort ?? 0) > 0 && ROUTABLE_SERVICE_STATUSES.has(String(svc?.status));
+        });
         if (!match) continue;
         // 返回已解析的 v3 previewSlug(非 slugify(branch.name))——后者对 claude/... 带 `/` 的分支名
         // 算出的裸 slug 与 resolveBranchEntry 的 v3 前向匹配口径不符,会让命名 URL 在 master 兜底解析不到分支。

@@ -5,3 +5,4 @@
 | fix | prd-llmgw | LLM 日志 blackhole 状态标签「未发出」改为「记录降级」 |
 | fix | prd-api | http 模式 multipart raw（ASR/图生图）跨进程未接通时快速失败（MULTIPART_HTTP_UNSUPPORTED），防止静默发出丢文件的请求 |
 | fix | cds | compose cds.subdomain 重复声明时去重（首个保留，后续丢弃），forwarder 命名子域去重按 profileId 排序保证确定性 |
+| fix | cds | master 命名子域兜底增加状态门控：仅 hostPort>0 且状态可路由(running/starting/building/restarting)的服务才命中命名 host，停止/错误服务不再被强制为坏上游(与 forwarder 共用 ROUTABLE_SERVICE_STATUSES) |

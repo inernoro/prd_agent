@@ -52,7 +52,9 @@ function pickDefaultProfile(profileIds: string[]): string {
   return profileIds[0];
 }
 
-const ROUTABLE_SERVICE_STATUSES = new Set(['running', 'starting', 'building', 'restarting']);
+// 可路由服务状态(SSOT)：forwarder 命名/前缀路由与 proxy.ts master 命名子域兜底共用同一口径，
+// 避免「停止/错误的服务仍被强制为上游」这类两条路径漂移(Cursor Bugbot)。
+export const ROUTABLE_SERVICE_STATUSES = new Set(['running', 'starting', 'building', 'restarting']);
 
 export interface ForwarderRoutePublisherOptions {
   state: StateService;
