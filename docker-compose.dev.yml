@@ -145,14 +145,14 @@ services:
     networks:
       - prdagent-network
 
-  # 独立 LLM 网关服务 llmgw（dev）—— 与 api 同源构建、不同 entrypoint（占位）。
-  # 当前直接复用 api 镜像（build: ./prd-api）运行同一份 DLL，监听 8090，宿主映射 5090。
-  # 待 prd-llmgw 拆为独立项目后改 build context 与 image。
+  # 独立 LLM 网关服务 llmgw（dev）—— 自包含 prd-llmgw 项目（不引用 PrdAgent.*，仅 NuGet）。
+  # 提供 /gw/healthz、/gw/auth/login、/gw/logs，监听 8090，宿主映射 5090。构建上下文与 CI
+  # （branch-image.yml: context ./prd-llmgw）一致——不能再复用 api 镜像，否则跑的是 PrdAgent.Api.dll、/gw/* 全缺。
   llmgw:
     build:
-      context: ./prd-api
+      context: ./prd-llmgw
       dockerfile: Dockerfile
-    image: prdagent-api:dev
+    image: prdagent-llmgw:dev
     container_name: prdagent-llmgw
     ports:
       - "5090:8090"

@@ -227,12 +227,12 @@
 > 喂 canned 上游 payload 给真实 `OpenAIGatewayAdapter`/`ClaudeGatewayAdapter`/`ThinkTagStripper`，
 > 断言归一结果。`GatewayProtocolFidelityTests` 经 `[Theory]` 读 `protocol-cells.json` 逐 cell 执行。
 
-分组小计：claude-content-text=9 · claude-edge-null=2 · claude-error=1 · claude-message-content=9 · claude-message-stop=1 · claude-stop-reason=4 · claude-tooluse-2=1 · claude-tooluse-normalize=1 · claude-usage-cache=3 · openai-content-text=9 · openai-edge-null=4 · openai-finish=4 · openai-finish-with-content=1 · openai-message-content=9 · openai-nonstream-tool=1 · openai-nonstream-tool-2=1 · openai-nonstream-usage=3 · openai-stream-usage=3 · openai-think-reasoning=9 · openai-think-reasoning_content=9 · openai-tool-delta=1 · openai-tool-delta-2=1 · think-cross-chunk=1 · think-emoji-after=1 · think-inline=1 · think-only=1 · think-plain=1
+分组小计：claude-content-text=9 · claude-edge-null=2 · claude-error=1 · claude-message-content=9 · claude-message-stop=1 · claude-stop-reason=4 · claude-tooluse-2=1 · claude-tooluse-normalize=1 · claude-usage-cache=3 · openai-content-text=9 · openai-edge-null=4 · openai-finish=4 · openai-finish-with-content=1 · openai-message-content=9 · openai-nonstream-tool=1 · openai-nonstream-tool-2=1 · openai-nonstream-usage=3 · openai-stream-usage=3 · openai-think-reasoning=9 · openai-think-reasoning_content=9 · openai-tool-delta=1 · openai-tool-delta-2=1 · think-cross-chunk=1 · think-inline=1 · think-nonascii-after=1 · think-only=1 · think-plain=1
 
 | # | adapter | method | 维度 | payload(节选) | 期望 |
 |---|---|---|---|---|---|
 | B001 | openai | stream | D5/E2 | {"choices": [{"delta": {"reasoning_content": … | chunkType=Thinking, content=hello |
-| B002 | openai | stream | D5/E2 | {"choices": [{"delta": {"reasoning_content": … | chunkType=Thinking, content=thinking-emoji-✨ |
+| B002 | openai | stream | D5/E2 | {"choices": [{"delta": {"reasoning_content": … | chunkType=Thinking, content=café-naïve-Zürich |
 | B003 | openai | stream | D5/E2 | {"choices": [{"delta": {"reasoning_content": … | chunkType=Thinking, content=中文深度思考内容 |
 | B004 | openai | stream | D5/E2 | {"choices": [{"delta": {"reasoning_content": … | chunkType=Thinking, content=مرحبا بالعالم |
 | B005 | openai | stream | D5/E2 | {"choices": [{"delta": {"reasoning_content": … | chunkType=Thinking, content=a   b   c |
@@ -241,7 +241,7 @@
 | B008 | openai | stream | D5/E2 | {"choices": [{"delta": {"reasoning_content": … | chunkType=Thinking, content=Omega-Ω-approx-≈-sqrt-√ |
 | B009 | openai | stream | D5/E2 | {"choices": [{"delta": {"reasoning_content": … | chunkType=Thinking, content=xxxxxxxxxxxxxxxxxxxxxxx… |
 | B010 | openai | stream | D5/E2 | {"choices": [{"delta": {"reasoning": "hello"}… | chunkType=Thinking, content=hello |
-| B011 | openai | stream | D5/E2 | {"choices": [{"delta": {"reasoning": "thinkin… | chunkType=Thinking, content=thinking-emoji-✨ |
+| B011 | openai | stream | D5/E2 | {"choices": [{"delta": {"reasoning": "café-na… | chunkType=Thinking, content=café-naïve-Zürich |
 | B012 | openai | stream | D5/E2 | {"choices": [{"delta": {"reasoning": "中文深度思考内… | chunkType=Thinking, content=中文深度思考内容 |
 | B013 | openai | stream | D5/E2 | {"choices": [{"delta": {"reasoning": "مرحبا ب… | chunkType=Thinking, content=مرحبا بالعالم |
 | B014 | openai | stream | D5/E2 | {"choices": [{"delta": {"reasoning": "a   b  … | chunkType=Thinking, content=a   b   c |
@@ -250,7 +250,7 @@
 | B017 | openai | stream | D5/E2 | {"choices": [{"delta": {"reasoning": "Omega-Ω… | chunkType=Thinking, content=Omega-Ω-approx-≈-sqrt-√ |
 | B018 | openai | stream | D5/E2 | {"choices": [{"delta": {"reasoning": "xxxxxxx… | chunkType=Thinking, content=xxxxxxxxxxxxxxxxxxxxxxx… |
 | B019 | openai | stream | D2/E2 | {"choices": [{"delta": {"content": "hello"}}]} | chunkType=Text, content=hello |
-| B020 | openai | stream | D2/E2 | {"choices": [{"delta": {"content": "thinking-… | chunkType=Text, content=thinking-emoji-✨ |
+| B020 | openai | stream | D2/E2 | {"choices": [{"delta": {"content": "café-naïv… | chunkType=Text, content=café-naïve-Zürich |
 | B021 | openai | stream | D2/E2 | {"choices": [{"delta": {"content": "中文深度思考内容"… | chunkType=Text, content=中文深度思考内容 |
 | B022 | openai | stream | D2/E2 | {"choices": [{"delta": {"content": "مرحبا بال… | chunkType=Text, content=مرحبا بالعالم |
 | B023 | openai | stream | D2/E2 | {"choices": [{"delta": {"content": "a   b   c… | chunkType=Text, content=a   b   c |
@@ -278,7 +278,7 @@
 | B045 | openai | toolCalls | D6 | {"choices": [{"message": {"tool_calls": [{"id… | toolCount=1 |
 | B046 | openai | toolCalls | D6/E8 | {"choices": [{"message": {"tool_calls": [{"id… | toolCount=2 |
 | B047 | openai | messageContent | D9/E2 | {"choices": [{"message": {"content": "hello"}… | content=hello |
-| B048 | openai | messageContent | D9/E2 | {"choices": [{"message": {"content": "thinkin… | content=thinking-emoji-✨ |
+| B048 | openai | messageContent | D9/E2 | {"choices": [{"message": {"content": "café-na… | content=café-naïve-Zürich |
 | B049 | openai | messageContent | D9/E2 | {"choices": [{"message": {"content": "中文深度思考内… | content=中文深度思考内容 |
 | B050 | openai | messageContent | D9/E2 | {"choices": [{"message": {"content": "مرحبا ب… | content=مرحبا بالعالم |
 | B051 | openai | messageContent | D9/E2 | {"choices": [{"message": {"content": "a   b  … | content=a   b   c |
@@ -287,7 +287,7 @@
 | B054 | openai | messageContent | D9/E2 | {"choices": [{"message": {"content": "Omega-Ω… | content=Omega-Ω-approx-≈-sqrt-√ |
 | B055 | openai | messageContent | D9/E2 | {"choices": [{"message": {"content": "xxxxxxx… | content=xxxxxxxxxxxxxxxxxxxxxxx… |
 | B056 | claude | stream | D2/E2 | {"type": "content_block_delta", "delta": {"te… | chunkType=Text, content=hello |
-| B057 | claude | stream | D2/E2 | {"type": "content_block_delta", "delta": {"te… | chunkType=Text, content=thinking-emoji-✨ |
+| B057 | claude | stream | D2/E2 | {"type": "content_block_delta", "delta": {"te… | chunkType=Text, content=café-naïve-Zürich |
 | B058 | claude | stream | D2/E2 | {"type": "content_block_delta", "delta": {"te… | chunkType=Text, content=中文深度思考内容 |
 | B059 | claude | stream | D2/E2 | {"type": "content_block_delta", "delta": {"te… | chunkType=Text, content=مرحبا بالعالم |
 | B060 | claude | stream | D2/E2 | {"type": "content_block_delta", "delta": {"te… | chunkType=Text, content=a   b   c |
@@ -309,7 +309,7 @@
 | B076 | claude | toolCalls | D6 | {"content": [{"type": "tool_use", "id": "tu_1… | toolCount=1, toolFirstName=search, toolFirstType=function |
 | B077 | claude | toolCalls | D6/E8 | {"content": [{"type": "tool_use", "id": "t1",… | toolCount=2, toolFirstName=alpha, toolFirstType=function |
 | B078 | claude | messageContent | D9/E2 | {"content": [{"type": "text", "text": "hello"… | content=hello |
-| B079 | claude | messageContent | D9/E2 | {"content": [{"type": "text", "text": "thinki… | content=thinking-emoji-✨ |
+| B079 | claude | messageContent | D9/E2 | {"content": [{"type": "text", "text": "café-n… | content=café-naïve-Zürich |
 | B080 | claude | messageContent | D9/E2 | {"content": [{"type": "text", "text": "中文深度思考… | content=中文深度思考内容 |
 | B081 | claude | messageContent | D9/E2 | {"content": [{"type": "text", "text": "مرحبا … | content=مرحبا بالعالم |
 | B082 | claude | messageContent | D9/E2 | {"content": [{"type": "text", "text": "a   b … | content=a   b   c |
@@ -321,7 +321,7 @@
 | B088 | — | thinkStripper | D5/E4 | chunks:["abc<thi", "nk>secret</thi", "nk>xyz"] | thinkVisible=abcxyz |
 | B089 | — | thinkStripper | D5 | chunks:["just text"] | thinkVisible=just text, thinkCapturedEmpty=True |
 | B090 | — | thinkStripper | D5 | chunks:["<think>only thinking</think>"] | thinkVisible=, thinkCaptured=only thinking |
-| B091 | — | thinkStripper | D5/E2 | chunks:["<think>t</think>done-✓-完成"] | thinkVisible=done-✓-完成, thinkCaptured=t |
+| B091 | — | thinkStripper | D5/E2 | chunks:["<think>t</think>done-完成"] | thinkVisible=done-完成, thinkCaptured=t |
 
 ## 4. C 层：跨进程传输数据驱动 cell（18 个，CI 真跑）
 

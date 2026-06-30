@@ -200,16 +200,15 @@ CDS 合并多容器能力（PR #951）后，serving 网关在 `claude/llm-schedu
   预览默认 `Mode=inproc` 本就不调 serving）。**后续（波3 专项）**：公开网关命名 URL（含命名子域 `<slug>-llmgw`）
   需配 **per-deploy 生成密钥 + 访问控制**再开放，不能用仓库已知占位值。本决策同时 moot 了命名子域 master 路由
   两处局限（无公开路由即不触发）与 extra-services subdomain 撞名（无公开 subdomain 路由即 inert）。
-- **Claude OpenAI 兼容工具链不完整（多处）**（Codex P2 ×3，PR #965）：网关把 OpenAI 风格 `tools` 路由到 Claude
-  模型时，`ClaudeGatewayAdapter` 的 OpenAI↔Claude 工具协议翻译尚不完整，**当前限制：Claude 后端的工具调用仅
-  「单轮非流式、tool_choice=auto」可用**，以下场景待波3 专项补：
-  1. **流式 tool_use 未聚合**（`ParseStreamChunk`）：`stream=true` 时未处理 Claude `content_block_start` /
-     `input_json_delta` 事件 → 流式函数调用拿不到 `delta.tool_calls`（非流式正常）。
-  2. **`tool_choice: "none"` 未兑现**（`ConvertToClaudeFormat` 附近 L240）：caller 显式禁用工具时仍把转换后的
-     `tools` 附给 Claude → Claude 可能仍 `tool_use`。应在该请求 drop `tools` 或翻成 Claude 安全等价。
-  3. **tool-result 多轮消息未翻译**（L180 附近）：工具循环的后续请求把 OpenAI `assistant.tool_calls` /
-     `role:"tool"` 原样转发给 Claude，而 Claude 要 `tool_use`/`tool_result` content block → 可能 400。
-  三者同根（Claude 工具协议翻译半成品），合并为一个波3 专项一次做透，无本地 SDK 难盲改、不在本轮反应式补。
+- **Claude OpenAI 兼容工具链（非流式已做透，流式聚合待补）**（Codex P2 ×3，PR #965）：
+  - **已修（2/3，本轮）**：① `tool_choice:"none"` → 整段不附 `tools`（Claude 不可能 emit tool_use，兑现禁用意图）；
+    ② `assistant.tool_calls` / `role:"tool"` 多轮消息 → 翻译成 Claude `tool_use` / `tool_result` content block，
+    并行调用的多个结果合并进同一 user 轮（工具循环不再 400）。配 `ClaudeToolTranslationTests` 5 例 CI 真跑。
+    **现状：Claude 后端「单轮 + 多轮非流式」工具调用可用。**
+  - **待补（1/3，波3）**：流式 tool_use 聚合——`ParseStreamChunk` 是**无状态**的（一 SSE 事件进、一 chunk 出），
+    而 Claude 流式工具调用经 `content_block_start`(tool_use id+name) → 多个 `input_json_delta`(分片 JSON) →
+    `content_block_stop`，需**有状态**解析跨事件聚合。改造需让 adapter 持每流状态（或调用方持解析器实例），属架构变更，
+    单独一批做。**当前限制：Claude 后端的「流式」工具调用拿不到 `delta.tool_calls`；非流式可用。**
 - **影子 resolve 比对用有效期望模型**（Codex P2，PR #965 已修）：`ShadowLlmGateway` 的 send/stream resolve-only
   比对原传 `request.ExpectedModel`，但 inproc 解析用 `GetEffectiveExpectedModel()`（含 `RequestBody["model"]`
   回退）。model 只放 body 时影子 resolve 收 null → 误报 critical mismatch（假阳性）。已改为传

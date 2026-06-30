@@ -16,10 +16,10 @@
     "dim": "D5/E2",
     "adapter": "openai",
     "method": "stream",
-    "payload": "{\"choices\": [{\"delta\": {\"reasoning_content\": \"thinking-emoji-✨\"}}]}",
+    "payload": "{\"choices\": [{\"delta\": {\"reasoning_content\": \"café-naïve-Zürich\"}}]}",
     "expect": {
       "chunkType": "Thinking",
-      "content": "thinking-emoji-✨"
+      "content": "café-naïve-Zürich"
     },
     "id": "B002"
   },
@@ -124,10 +124,10 @@
     "dim": "D5/E2",
     "adapter": "openai",
     "method": "stream",
-    "payload": "{\"choices\": [{\"delta\": {\"reasoning\": \"thinking-emoji-✨\"}}]}",
+    "payload": "{\"choices\": [{\"delta\": {\"reasoning\": \"café-naïve-Zürich\"}}]}",
     "expect": {
       "chunkType": "Thinking",
-      "content": "thinking-emoji-✨"
+      "content": "café-naïve-Zürich"
     },
     "id": "B011"
   },
@@ -232,10 +232,10 @@
     "dim": "D2/E2",
     "adapter": "openai",
     "method": "stream",
-    "payload": "{\"choices\": [{\"delta\": {\"content\": \"thinking-emoji-✨\"}}]}",
+    "payload": "{\"choices\": [{\"delta\": {\"content\": \"café-naïve-Zürich\"}}]}",
     "expect": {
       "chunkType": "Text",
-      "content": "thinking-emoji-✨"
+      "content": "café-naïve-Zürich"
     },
     "id": "B020"
   },
@@ -563,9 +563,9 @@
     "dim": "D9/E2",
     "adapter": "openai",
     "method": "messageContent",
-    "payload": "{\"choices\": [{\"message\": {\"content\": \"thinking-emoji-✨\"}}]}",
+    "payload": "{\"choices\": [{\"message\": {\"content\": \"café-naïve-Zürich\"}}]}",
     "expect": {
-      "content": "thinking-emoji-✨"
+      "content": "café-naïve-Zürich"
     },
     "id": "B048"
   },
@@ -663,10 +663,10 @@
     "dim": "D2/E2",
     "adapter": "claude",
     "method": "stream",
-    "payload": "{\"type\": \"content_block_delta\", \"delta\": {\"text\": \"thinking-emoji-✨\"}}",
+    "payload": "{\"type\": \"content_block_delta\", \"delta\": {\"text\": \"café-naïve-Zürich\"}}",
     "expect": {
       "chunkType": "Text",
-      "content": "thinking-emoji-✨"
+      "content": "café-naïve-Zürich"
     },
     "id": "B057"
   },
@@ -932,9 +932,9 @@
     "dim": "D9/E2",
     "adapter": "claude",
     "method": "messageContent",
-    "payload": "{\"content\": [{\"type\": \"text\", \"text\": \"thinking-emoji-✨\"}]}",
+    "payload": "{\"content\": [{\"type\": \"text\", \"text\": \"café-naïve-Zürich\"}]}",
     "expect": {
-      "content": "thinking-emoji-✨"
+      "content": "café-naïve-Zürich"
     },
     "id": "B079"
   },
@@ -1073,15 +1073,15 @@
     "id": "B090"
   },
   {
-    "group": "think-emoji-after",
+    "group": "think-nonascii-after",
     "dim": "D5/E2",
     "method": "thinkStripper",
     "captureThinking": true,
     "payloadChunks": [
-      "<think>t</think>done-✓-完成"
+      "<think>t</think>done-完成"
     ],
     "expect": {
-      "thinkVisible": "done-✓-完成",
+      "thinkVisible": "done-完成",
       "thinkCaptured": "t"
     },
     "id": "B091"

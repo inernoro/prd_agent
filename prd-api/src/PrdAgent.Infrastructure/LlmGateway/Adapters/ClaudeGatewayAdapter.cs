@@ -85,7 +85,7 @@ public class ClaudeGatewayAdapter : IGatewayAdapter
             messagesNode is JsonArray messages)
         {
             var systemMessages = new List<JsonObject>();
-            var userMessages = new JsonArray();
+            var nonSystemMessages = new List<JsonObject>();
 
             foreach (var msg in messages)
             {
@@ -94,7 +94,7 @@ public class ClaudeGatewayAdapter : IGatewayAdapter
                 var role = msgObj["role"]?.GetValue<string>();
                 if (role == "system")
                 {
-                    var content = msgObj["content"]?.GetValue<string>() ?? "";
+                    var content = ExtractTextContent(msgObj["content"]);
                     var systemBlock = new JsonObject { ["type"] = "text", ["text"] = content };
 
                     // Prompt Cache: 给最后一个 system block 添加 cache_control
@@ -107,7 +107,7 @@ public class ClaudeGatewayAdapter : IGatewayAdapter
                 }
                 else
                 {
-                    userMessages.Add(msgObj.DeepClone());
+                    nonSystemMessages.Add(msgObj);
                 }
             }
 
@@ -120,8 +120,9 @@ public class ClaudeGatewayAdapter : IGatewayAdapter
                 result["system"] = systemArray;
             }
 
-            // 设置 messages
-            result["messages"] = userMessages;
+            // 设置 messages —— 把 OpenAI 工具调用消息（assistant.tool_calls / role:"tool"）翻译成
+            // Claude 的 tool_use / tool_result content block，否则工具循环的后续请求会让 Claude 池 400。
+            result["messages"] = BuildClaudeMessages(nonSystemMessages);
         }
 
         // 复制 stream
@@ -170,7 +171,13 @@ public class ClaudeGatewayAdapter : IGatewayAdapter
         // OpenAI tools:[{type:function, function:{name, description, parameters}}]
         //   → Claude tools:[{name, description, input_schema}]
         // 两侧 schema 不同，禁止盲透传（这正是"全归一"会出错的地方）。
-        if (openaiBody.TryGetPropertyValue("tools", out var toolsNode) &&
+        // tool_choice:"none" = 调用方显式禁用工具调用。Claude 旧版无 none 语义，且即便附了 tools 默认 auto
+        // 仍可能 emit tool_use → 违背调用方意图。最稳的等价：**整段不附 tools**（无 tools 则 Claude 不可能调用）。
+        var toolChoiceNone = openaiBody.TryGetPropertyValue("tool_choice", out var tcCheck)
+            && tcCheck is JsonValue tcv && tcv.TryGetValue<string>(out var tcStr) && tcStr == "none";
+
+        if (!toolChoiceNone &&
+            openaiBody.TryGetPropertyValue("tools", out var toolsNode) &&
             toolsNode is JsonArray openaiTools && openaiTools.Count > 0)
         {
             var claudeTools = ConvertToolsToClaude(openaiTools);
@@ -249,6 +256,97 @@ public class ClaudeGatewayAdapter : IGatewayAdapter
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// 把 OpenAI 风格消息列表翻译成 Claude messages：
+    ///   - assistant 带 tool_calls → assistant content:[{type:text}?, {type:tool_use, id, name, input}…]
+    ///   - role:"tool"（工具结果）→ user content:[{type:tool_result, tool_use_id, content}]，**连续的合并进同一 user 轮**
+    ///     （Claude 要求 tool_result 在紧跟 assistant tool_use 的那个 user 轮里；并行调用的多个结果同属一轮）。
+    ///   - 其余消息（普通文本 user/assistant）原样克隆（content 为 string 时 Claude 直接兼容）。
+    /// </summary>
+    private static JsonArray BuildClaudeMessages(List<JsonObject> msgs)
+    {
+        var outArr = new JsonArray();
+        JsonObject? pendingToolUser = null;
+
+        void FlushToolUser()
+        {
+            if (pendingToolUser != null) { outArr.Add(pendingToolUser); pendingToolUser = null; }
+        }
+
+        foreach (var m in msgs)
+        {
+            var role = m["role"]?.GetValue<string>();
+
+            if (role == "tool")
+            {
+                var block = new JsonObject
+                {
+                    ["type"] = "tool_result",
+                    ["tool_use_id"] = m["tool_call_id"]?.GetValue<string>() ?? string.Empty,
+                    ["content"] = ExtractTextContent(m["content"]),
+                };
+                pendingToolUser ??= new JsonObject { ["role"] = "user", ["content"] = new JsonArray() };
+                ((JsonArray)pendingToolUser["content"]!).Add(block);
+                continue;
+            }
+
+            // 非 tool 消息：先把累积的 tool_result user 轮落定，保持顺序
+            FlushToolUser();
+
+            if (role == "assistant" && m["tool_calls"] is JsonArray toolCalls && toolCalls.Count > 0)
+            {
+                var contentArr = new JsonArray();
+                var text = ExtractTextContent(m["content"]);
+                if (!string.IsNullOrEmpty(text))
+                    contentArr.Add(new JsonObject { ["type"] = "text", ["text"] = text });
+
+                foreach (var tc in toolCalls)
+                {
+                    if (tc is not JsonObject tco) continue;
+                    var fn = tco["function"] as JsonObject;
+                    var argsStr = fn?["arguments"]?.GetValue<string>() ?? "{}";
+                    JsonNode? input;
+                    try { input = JsonNode.Parse(string.IsNullOrWhiteSpace(argsStr) ? "{}" : argsStr); }
+                    catch { input = new JsonObject(); }
+                    contentArr.Add(new JsonObject
+                    {
+                        ["type"] = "tool_use",
+                        ["id"] = tco["id"]?.GetValue<string>() ?? string.Empty,
+                        ["name"] = fn?["name"]?.GetValue<string>() ?? string.Empty,
+                        ["input"] = input ?? new JsonObject(),
+                    });
+                }
+                outArr.Add(new JsonObject { ["role"] = "assistant", ["content"] = contentArr });
+            }
+            else
+            {
+                outArr.Add(m.DeepClone());
+            }
+        }
+
+        FlushToolUser();
+        return outArr;
+    }
+
+    /// <summary>
+    /// 提取消息 content 的纯文本：content 可能是 string，或 OpenAI 的 [{type:"text",text},…] 数组。
+    /// 非文本块（如 image_url）忽略——视觉透传不在本工具翻译范围内。
+    /// </summary>
+    private static string ExtractTextContent(JsonNode? content)
+    {
+        if (content == null) return string.Empty;
+        if (content is JsonValue v && v.TryGetValue<string>(out var s)) return s;
+        if (content is JsonArray arr)
+        {
+            var sb = new StringBuilder();
+            foreach (var part in arr)
+                if (part is JsonObject po && (string?)po["type"] == "text")
+                    sb.Append(po["text"]?.GetValue<string>() ?? string.Empty);
+            return sb.ToString();
+        }
+        return string.Empty;
     }
 
     public GatewayStreamChunk? ParseStreamChunk(string sseData)

@@ -15,3 +15,7 @@
 | docs | ops | debt 记录 Claude OpenAI 兼容工具链不完整（流式 tool_use/tool_choice:none/tool_result 多轮三处合并波3 专项） |
 | fix | prd-api | 影子比对在 inproc 改写 body[model] 前捕获有效期望模型（send/stream/full-send），修复 http 探针拿到 inproc 答案当输入导致永远 match、影子形同虚设 |
 | fix | prd-api | HttpLlmClient 三参 StreamGenerateAsync 重载改用默认 prompt-cache 开关（与 inproc 一致默认 true），修复 http 模式静默丢 Claude prompt-cache 头抬高时延/成本 |
+| feat | prd-api | Claude 适配器 OpenAI 兼容工具链非流式做透：tool_choice:none 不附 tools + assistant.tool_calls/role:tool 多轮消息翻译成 tool_use/tool_result（并行结果合并同一 user 轮），配 ClaudeToolTranslationTests 5 例 |
+| fix | ops | docker-compose.dev.yml 的 llmgw 改从独立 prd-llmgw 项目构建（原误用 api 镜像，/gw/* 端点缺失） |
+| fix | ops | cds-compose.yml 网关极速版镜像补 branch-main 回退（同 api/admin），防只改非 prd-llmgw 的分支选极速版拉不到镜像 |
+| fix | test | 重新生成 protocol-cells/transport-cells 矩阵 fixture，清除 emoji/符号测试向量（U+2728/U+2713），合规规则 §0 |

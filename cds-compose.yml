@@ -124,10 +124,12 @@ x-cds-deploy-modes:
       label: "极速版（CI 预构建）"
       # 无 command：使用镜像自带 ENTRYPOINT（dotnet prd-llmgw.dll）。
       image: "ghcr.io/inernoro/prd_agent/prdagent-llmgw:sha-${CDS_COMMIT_SHA}"
-      # 本 commit 没改 prd-llmgw（CI 未构建 llmgw）时回退到本分支最近一次构建；
-      # 主分支尚未落地 prd-llmgw，故不挂 branch-main 回退（避免拉取不存在镜像）。
+      # 回退链同 api/admin：① 本分支最近一次构建（branch-<slug>）② 固定主分支镜像（branch-main）。
+      # 本 PR 合入后 main 即构建 prdagent-llmgw，branch-main 生效；防止只改 prd-admin/doc 的分支
+      # （CI 路径过滤未构建 llmgw）选极速版时 sha/branch-<slug> 都缺、拉不到任何镜像。
       fallbackImage:
         - "ghcr.io/inernoro/prd_agent/prdagent-llmgw:branch-${CDS_BRANCH_SLUG}"
+        - "ghcr.io/inernoro/prd_agent/prdagent-llmgw:branch-main"
       prebuilt: true
       containerPort: 8090
       env:
@@ -146,8 +148,10 @@ x-cds-deploy-modes:
     express:
       label: "极速版（CI 预构建）"
       image: "ghcr.io/inernoro/prd_agent/prdagent-llmgw-serve:sha-${CDS_COMMIT_SHA}"
+      # 回退链同 api/admin：branch-<slug> → branch-main（防只改非 prd-api 的分支选极速版拉不到镜像）。
       fallbackImage:
         - "ghcr.io/inernoro/prd_agent/prdagent-llmgw-serve:branch-${CDS_BRANCH_SLUG}"
+        - "ghcr.io/inernoro/prd_agent/prdagent-llmgw-serve:branch-main"
       prebuilt: true
       containerPort: 8091
       env:
