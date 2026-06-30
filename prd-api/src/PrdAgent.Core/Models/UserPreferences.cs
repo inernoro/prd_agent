@@ -52,6 +52,11 @@ public class UserPreferences
     public AgentSwitcherPreferences? AgentSwitcherPreferences { get; set; }
 
     /// <summary>
+    /// 首页启动器偏好（顶部快捷卡显示选择等）。
+    /// </summary>
+    public HomeLauncherPreferences? HomeLauncherPreferences { get; set; }
+
+    /// <summary>
     /// 产品管理智能体偏好设置（用户级，跨产品共用）
     /// </summary>
     public ProductAgentPreferences? ProductAgentPreferences { get; set; }
@@ -94,6 +99,19 @@ public class ThemeConfig
 
     /// <summary>性能模式：auto | quality | performance</summary>
     public string PerformanceMode { get; set; } = "performance";
+}
+
+/// <summary>
+/// 首页启动器偏好设置
+/// </summary>
+[BsonIgnoreExtraElements]
+public class HomeLauncherPreferences
+{
+    /// <summary>首页第二张快捷卡：library | voc</summary>
+    public string SecondaryQuickLink { get; set; } = "library";
+
+    /// <summary>首页顶部资源卡列表，按顺序渲染，最多 6 个</summary>
+    public List<string>? QuickLinkIds { get; set; }
 }
 
 /// <summary>

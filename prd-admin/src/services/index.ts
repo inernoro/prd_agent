@@ -267,6 +267,7 @@ import type {
   UpdateVisualAgentPreferencesContract,
   UpdateLiteraryAgentPreferencesContract,
   UpdateAgentSwitcherPreferencesContract,
+  UpdateHomeLauncherPreferencesContract,
   UpdateDefaultNavLayoutContract,
   ApplyDefaultNavToAllUsersContract,
 } from '@/services/contracts/userPreferences';
@@ -576,6 +577,7 @@ import {
   updateVisualAgentPreferencesReal,
   updateLiteraryAgentPreferencesReal,
   updateAgentSwitcherPreferencesReal,
+  updateHomeLauncherPreferencesReal,
   updateDefaultNavLayoutReal,
   applyDefaultNavToAllUsersReal,
 } from '@/services/real/userPreferences';
@@ -1368,6 +1370,7 @@ export const updateThemeConfig: UpdateThemeConfigContract = withAuth(updateTheme
 export const updateVisualAgentPreferences: UpdateVisualAgentPreferencesContract = withAuth(updateVisualAgentPreferencesReal);
 export const updateLiteraryAgentPreferences: UpdateLiteraryAgentPreferencesContract = withAuth(updateLiteraryAgentPreferencesReal);
 export const updateAgentSwitcherPreferences: UpdateAgentSwitcherPreferencesContract = withAuth(updateAgentSwitcherPreferencesReal);
+export const updateHomeLauncherPreferences: UpdateHomeLauncherPreferencesContract = withAuth(updateHomeLauncherPreferencesReal);
 export const updateDefaultNavLayout: UpdateDefaultNavLayoutContract = withAuth(updateDefaultNavLayoutReal);
 export const applyDefaultNavToAllUsers: ApplyDefaultNavToAllUsersContract = withAuth(applyDefaultNavToAllUsersReal);
 
