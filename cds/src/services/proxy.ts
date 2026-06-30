@@ -478,8 +478,8 @@ export class ProxyService {
       // 本兜底只服务非转发部署 + master 反代路径,避免命名 host 落到 auto-build。
       const svcTarget = this.resolvePreviewServiceSubdomain(previewSlug);
       if (svcTarget) {
-        // 用已解析的 v3 previewSlug 路由(resolveBranchEntry 能命中),不要 slugify(branch.name)。
-        this.routeToBranch(svcTarget.previewSlug, svcTarget.entry.branch, req, res, svcTarget.profileId);
+        // 直接传已解析的 entry(forcedEntry),避免 routeToBranch 二次 resolveBranchEntry 命中错分支。
+        this.routeToBranch(svcTarget.previewSlug, svcTarget.entry.branch, req, res, svcTarget.profileId, svcTarget.entry);
         return;
       }
       this.routeToBranch(previewSlug, previewSlug, req, res);
@@ -599,11 +599,14 @@ export class ProxyService {
     return best;
   }
 
-  private routeToBranch(branchSlug: string, branchRef: string, req: http.IncomingMessage, res: http.ServerResponse, forcedProfileId?: string): void {
+  private routeToBranch(branchSlug: string, branchRef: string, req: http.IncomingMessage, res: http.ServerResponse, forcedProfileId?: string, forcedEntry?: BranchEntry): void {
+    // 命名子域命中时，调用方已解析出确切 entry（resolvePreviewServiceSubdomain 按最长 previewSlug 消歧）；
+    // 直接用它，**不再** resolveBranchEntry(slug) 二次解析——多分支共享同一 v3 slug 时二次解析可能命中
+    // 另一个 entry，导致 forcedProfileId 被丢、命名 host 路由到错分支（Cursor Bugbot）。
     // Use canonical-id fallback so subdomain hits on non-legacy projects
     // (entries stored as `${projectSlug}-${slug}`) match the bare-slug
     // request without falling through to auto-build on every reload.
-    const branch = this.resolveBranchEntry(branchSlug);
+    const branch = forcedEntry ?? this.resolveBranchEntry(branchSlug);
 
     // Loading states — serve friendly waiting page instead of 502/503 so
     // users never see a raw Cloudflare gateway error during build/restart.
