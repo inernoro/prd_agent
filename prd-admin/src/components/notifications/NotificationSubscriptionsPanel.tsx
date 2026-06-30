@@ -28,6 +28,7 @@ export const DEFAULT_NOTIFICATION_PUSH_DRAFT: UpdateAdminPushSubscriptionRequest
   barkSound: '',
   barkLevel: '',
   barkIcon: '',
+  barkImageTemplate: '{{imageUrl}}',
   barkUrlTemplate: '{{actionUrl}}',
   barkCall: false,
 };
@@ -46,6 +47,7 @@ function toDraft(subscription: AdminPushSubscription): UpdateAdminPushSubscripti
     barkSound: subscription.barkSound || '',
     barkLevel: subscription.barkLevel || '',
     barkIcon: subscription.barkIcon || '',
+    barkImageTemplate: subscription.barkImageTemplate || '{{imageUrl}}',
     barkUrlTemplate: subscription.barkUrlTemplate || '{{actionUrl}}',
     barkCall: Boolean(subscription.barkCall),
   };
@@ -65,6 +67,7 @@ export function buildNotificationPushDraftFromPreset(preset: AdminPushPresetDefi
     barkSound: '',
     barkLevel: '',
     barkIcon: '',
+    barkImageTemplate: '{{imageUrl}}',
     barkUrlTemplate: '{{actionUrl}}',
     barkCall: false,
   };
@@ -360,6 +363,15 @@ export function NotificationSubscriptionsPanel() {
                         />
                       </label>
                     </div>
+                    <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      图片 URL 模板
+                      <input
+                        className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
+                        style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+                        value={draft.barkImageTemplate || ''}
+                        onChange={(e) => updateDraft(topic.key, { barkImageTemplate: e.target.value })}
+                      />
+                    </label>
                     <label className="inline-flex cursor-pointer items-center gap-2 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
                       <input
                         type="checkbox"

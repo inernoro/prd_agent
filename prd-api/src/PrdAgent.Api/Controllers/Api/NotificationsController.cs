@@ -86,7 +86,7 @@ public sealed class NotificationsController : ControllerBase
         {
             topics = AdminPushNotificationService.TopicDefinitions,
             presets = AdminPushNotificationService.PresetDefinitions,
-            placeholders = new[] { "appname", "title", "message", "level", "source", "actionUrl", "createdAt", "notificationId" },
+            placeholders = new[] { "appname", "title", "message", "level", "source", "actionUrl", "imageUrl", "createdAt", "notificationId" },
             subscriptions
         }));
     }

@@ -162,6 +162,7 @@ public sealed class AdminPushNotificationService
                     NormalizeNullableText(request.BarkSound, 96),
                     barkLevel,
                     NormalizeNullableText(request.BarkIcon, 1024),
+                    NormalizeNullableText(request.BarkImageTemplate, 1024),
                     NormalizeNullableText(request.BarkUrlTemplate, 1024),
                     request.BarkCall)
                 : RenderTemplate(urlTemplate, BuildPreviewPlaceholders(topic), forUrl: true);
@@ -194,6 +195,7 @@ public sealed class AdminPushNotificationService
         entity.BarkSound = NormalizeNullableText(request.BarkSound, 96);
         entity.BarkLevel = barkLevel;
         entity.BarkIcon = NormalizeNullableText(request.BarkIcon, 1024);
+        entity.BarkImageTemplate = NormalizeNullableText(request.BarkImageTemplate, 1024);
         entity.BarkUrlTemplate = NormalizeNullableText(request.BarkUrlTemplate, 1024);
         entity.BarkCall = request.BarkCall;
         entity.UpdatedAt = now;
@@ -238,6 +240,7 @@ public sealed class AdminPushNotificationService
             BarkSound = NormalizeNullableText(request.BarkSound, 96),
             BarkLevel = NormalizeNullableText(request.BarkLevel, 32),
             BarkIcon = NormalizeNullableText(request.BarkIcon, 1024),
+            BarkImageTemplate = NormalizeNullableText(request.BarkImageTemplate, 1024),
             BarkUrlTemplate = NormalizeNullableText(request.BarkUrlTemplate, 1024),
             BarkCall = request.BarkCall,
         };
@@ -367,6 +370,7 @@ public sealed class AdminPushNotificationService
                 subscription.BarkSound,
                 subscription.BarkLevel,
                 subscription.BarkIcon,
+                subscription.BarkImageTemplate,
                 subscription.BarkUrlTemplate,
                 subscription.BarkCall)
             : RenderTemplate(subscription.UrlTemplate, placeholders, forUrl: true);
@@ -462,6 +466,7 @@ public sealed class AdminPushNotificationService
         ["level"] = "info",
         ["source"] = topic.Source,
         ["actionUrl"] = "/notifications",
+        ["imageUrl"] = string.Empty,
         ["createdAt"] = DateTime.UtcNow.ToString("O"),
         ["notificationId"] = "test",
     };
@@ -474,6 +479,7 @@ public sealed class AdminPushNotificationService
         ["level"] = notification.Level ?? string.Empty,
         ["source"] = notification.Source ?? string.Empty,
         ["actionUrl"] = notification.ActionUrl ?? string.Empty,
+        ["imageUrl"] = ResolveImageUrl(notification),
         ["createdAt"] = notification.CreatedAt.ToString("O"),
         ["notificationId"] = notification.Id,
     };
@@ -490,6 +496,14 @@ public sealed class AdminPushNotificationService
             "open-platform" => "开放平台",
             _ => string.IsNullOrWhiteSpace(source) ? "PRD Agent" : source,
         };
+    }
+
+    private static string ResolveImageUrl(AdminNotification notification)
+    {
+        var image = notification.Attachments?
+            .FirstOrDefault(x => (x.MimeType ?? string.Empty).StartsWith("image/", StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(x.Url));
+        return image?.Url ?? string.Empty;
     }
 
     private static string RenderTemplate(string template, IReadOnlyDictionary<string, string> values, bool forUrl)
@@ -523,6 +537,7 @@ public sealed class AdminPushNotificationService
         string? sound,
         string? level,
         string? icon,
+        string? imageTemplate,
         string? urlTemplate,
         bool call)
     {
@@ -540,6 +555,7 @@ public sealed class AdminPushNotificationService
         AddQuery(query, "sound", sound);
         AddQuery(query, "level", level);
         AddQuery(query, "icon", string.IsNullOrWhiteSpace(icon) ? null : RenderPlainTemplate(icon, placeholders));
+        AddQuery(query, "image", string.IsNullOrWhiteSpace(imageTemplate) ? placeholders.GetValueOrDefault("imageUrl") : RenderPlainTemplate(imageTemplate, placeholders));
         AddQuery(query, "url", string.IsNullOrWhiteSpace(urlTemplate) ? placeholders.GetValueOrDefault("actionUrl") : RenderPlainTemplate(urlTemplate, placeholders));
         if (call) AddQuery(query, "call", "1");
 
@@ -599,6 +615,7 @@ public sealed class AdminPushSubscriptionUpsertRequest
     public string? BarkSound { get; set; }
     public string? BarkLevel { get; set; }
     public string? BarkIcon { get; set; }
+    public string? BarkImageTemplate { get; set; }
     public string? BarkUrlTemplate { get; set; }
     public bool BarkCall { get; set; }
 }

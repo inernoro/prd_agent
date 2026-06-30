@@ -20,6 +20,7 @@ public class AdminPushSubscription
     public string? BarkSound { get; set; }
     public string? BarkLevel { get; set; }
     public string? BarkIcon { get; set; }
+    public string? BarkImageTemplate { get; set; }
     public string? BarkUrlTemplate { get; set; }
     public bool BarkCall { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

@@ -62,6 +62,7 @@ export type AdminPushSubscription = {
   barkSound?: string | null;
   barkLevel?: string | null;
   barkIcon?: string | null;
+  barkImageTemplate?: string | null;
   barkUrlTemplate?: string | null;
   barkCall?: boolean;
   createdAt?: string;
@@ -105,6 +106,7 @@ export type UpdateAdminPushSubscriptionRequest = {
   barkSound?: string | null;
   barkLevel?: string | null;
   barkIcon?: string | null;
+  barkImageTemplate?: string | null;
   barkUrlTemplate?: string | null;
   barkCall?: boolean;
 };

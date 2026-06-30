@@ -153,7 +153,166 @@ public sealed class AdminPushNotificationServiceTests
         }
     }
 
+    [Fact]
+    public async Task DispatchPendingAsync_BarkUsesNotificationImageAttachment()
+    {
+        var testDb = await AdminPushTestDatabase.TryCreateAsync();
+        if (testDb == null) return;
+
+        try
+        {
+            var http = new RecordingHttpClientFactory(HttpStatusCode.OK);
+            var service = CreateService(testDb.Context, http);
+
+            await testDb.Context.AdminPushSubscriptions.InsertOneAsync(new AdminPushSubscription
+            {
+                UserId = "u1",
+                TopicKey = "defect-management",
+                Enabled = true,
+                ChannelType = "bark",
+                BarkKey = "test-key",
+                BarkServerUrl = "https://example.com",
+                BarkImageTemplate = "{{imageUrl}}",
+            });
+            await testDb.Context.AdminNotifications.InsertOneAsync(new AdminNotification
+            {
+                Id = "n1",
+                Key = "k1",
+                Title = "缺陷提醒",
+                Message = "需要处理",
+                Source = "defect-agent",
+                Status = "open",
+                TargetUserId = "u1",
+                Attachments =
+                [
+                    new NotificationAttachment
+                    {
+                        Name = "snapshot.png",
+                        Url = "https://example.com/defect-image.png",
+                        MimeType = "image/png",
+                    },
+                ],
+                CreatedAt = DateTime.UtcNow,
+            });
+
+            await service.DispatchPendingAsync(CancellationToken.None);
+
+            var request = Assert.Single(http.Requests);
+            var query = QueryHelpers.ParseQuery(request.Uri.Query);
+            Assert.Equal("https://example.com/defect-image.png", query["image"]);
+        }
+        finally
+        {
+            await testDb.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task RealBarkSmoke_CreatesDefectsForInernoroAndSendsDifferentImages_WhenKeyIsConfigured()
+    {
+        var key = Environment.GetEnvironmentVariable("REAL_BARK_KEY");
+        if (string.IsNullOrWhiteSpace(key)) return;
+
+        var testDb = await AdminPushTestDatabase.TryCreateAsync();
+        if (testDb == null) return;
+
+        try
+        {
+            var service = CreateService(testDb.Context, new DirectHttpClientFactory());
+            var now = DateTime.UtcNow;
+            var images = new[]
+            {
+                "https://picsum.photos/seed/prd-agent-bark-defect-a/960/540",
+                "https://picsum.photos/seed/prd-agent-bark-defect-b/960/540",
+            };
+
+            await testDb.Context.AdminPushSubscriptions.InsertOneAsync(new AdminPushSubscription
+            {
+                UserId = "inernoro",
+                TopicKey = "defect-management",
+                Enabled = true,
+                ChannelType = "bark",
+                BarkKey = key,
+                BarkServerUrl = "https://api.day.app",
+                BarkGroup = "MAP System-{{appname}}",
+                BarkIcon = images[0],
+                BarkImageTemplate = "{{imageUrl}}",
+                BarkUrlTemplate = "https://admin-push-bark-protocol-codex-prd-agent.miduo.org/defect-agent?id={{notificationId}}",
+            });
+
+            for (var i = 0; i < images.Length; i++)
+            {
+                var defect = new DefectReport
+                {
+                    Id = Guid.NewGuid().ToString("N"),
+                    DefectNo = $"LOCAL-BARK-{now:HHmmss}-{i + 1}",
+                    Title = $"本地 Bark 图片推送验收缺陷 {i + 1}",
+                    RawContent = "用于验证管理员推送 Bark 协议 image 参数，不写入真实 key。",
+                    Status = DefectStatus.Submitted,
+                    Severity = i == 0 ? DefectSeverity.Major : DefectSeverity.Minor,
+                    Priority = DefectPriority.Medium,
+                    ReporterId = "codex-local",
+                    ReporterName = "Codex Local",
+                    AssigneeId = "inernoro",
+                    AssigneeName = "inernoro",
+                    CreatedAt = now.AddSeconds(i),
+                    UpdatedAt = now.AddSeconds(i),
+                };
+                await testDb.Context.DefectReports.InsertOneAsync(defect);
+
+                await testDb.Context.AdminNotifications.InsertOneAsync(new AdminNotification
+                {
+                    Id = defect.Id,
+                    Key = $"real-bark-defect:{defect.Id}",
+                    TargetUserId = "inernoro",
+                    Title = $"收到新缺陷：{defect.DefectNo}",
+                    Message = $"Codex Local 给你提交了一个缺陷：{defect.Title}",
+                    Level = defect.Severity == DefectSeverity.Major ? "warning" : "info",
+                    ActionLabel = "查看详情",
+                    ActionUrl = $"/defect-agent?id={defect.Id}",
+                    Source = "defect-agent",
+                    Attachments =
+                    [
+                        new NotificationAttachment
+                        {
+                            Name = $"defect-{i + 1}.jpg",
+                            Url = images[i],
+                            MimeType = "image/jpeg",
+                        },
+                    ],
+                    CreatedAt = now.AddSeconds(i),
+                    UpdatedAt = now.AddSeconds(i),
+                    ExpiresAt = now.AddDays(1),
+                });
+            }
+
+            await service.DispatchPendingAsync(CancellationToken.None);
+
+            var logs = await testDb.Context.AdminPushDeliveryLogs.Find(x => x.UserId == "inernoro").ToListAsync();
+            Assert.Equal(2, logs.Count);
+            Assert.All(logs, log =>
+            {
+                Assert.True(log.Success, log.ErrorMessage);
+                Assert.Equal(200, log.StatusCode);
+                Assert.Contains("image=", log.RequestUrl);
+            });
+        }
+        finally
+        {
+            await testDb.DisposeAsync();
+        }
+    }
+
     private static AdminPushNotificationService CreateService(MongoDbContext db, RecordingHttpClientFactory http)
+    {
+        return new AdminPushNotificationService(
+            db,
+            http,
+            new AllowAllUrlValidator(),
+            NullLogger<AdminPushNotificationService>.Instance);
+    }
+
+    private static AdminPushNotificationService CreateService(MongoDbContext db, DirectHttpClientFactory http)
     {
         return new AdminPushNotificationService(
             db,
@@ -225,6 +384,11 @@ public sealed class AdminPushNotificationServiceTests
         {
             return new HttpClient(new RecordingHandler(Requests, _statuses));
         }
+    }
+
+    private sealed class DirectHttpClientFactory : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => new();
     }
 
     private sealed class RecordingHandler : HttpMessageHandler
