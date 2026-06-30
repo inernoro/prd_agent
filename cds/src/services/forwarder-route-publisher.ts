@@ -273,10 +273,16 @@ export class ForwarderRoutePublisher {
       //    单标签(<previewSlug>-<subdomain>)以匹配 *.<root> 通配证书;subdomain 合法性
       //    由 branch-extra-services.isValidServiceSubdomain / compose cds.subdomain 入口保证。
       //    见 .claude/rules/navigation-registry 同源思路 + doc/design.llm-gateway-physical-isolation.md。
+      // 同一 subdomain 在一个分支内只发一条命名 host 路由：若两个服务复用同一 subdomain（理论上
+      // 入口校验已拒，这里作数据面兜底），保留首个、跳过后续,避免同 host 不同上游端口的撞车路由
+      // 命中错容器(Cursor Bugbot)。
+      const writtenSubdomains = new Set<string>();
       for (const svc of routableServices) {
         const bp = profileById.get(svc.profileId);
         const sub = bp?.subdomain;
         if (!sub) continue;
+        if (writtenSubdomains.has(sub)) continue;
+        writtenSubdomains.add(sub);
         for (const root of this.opts.rootDomains) {
           records.push({
             _id: `${branch.id}:${svc.profileId}:subdom:${idx++}`,

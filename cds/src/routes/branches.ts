@@ -13017,6 +13017,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     };
     const sanitized: BuildProfile[] = [];
     const seen = new Set<string>();
+    // 命名子域必须分支内唯一：两个服务复用同一 subdomain 会让 forwarder 发出多条同 host
+    // 不同上游端口的路由 → host 路由不确定命中错容器（Cursor Bugbot）。
+    const seenSubdomains = new Set<string>();
     for (const raw of list as Array<Record<string, unknown>>) {
       const id = String(raw?.id || '').trim();
       if (!isValidExtraProfileId(id)) {
@@ -13133,6 +13136,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
           res.status(400).json({ error: `额外服务 "${id}" 的 subdomain 非法（须为单个 DNS label：小写字母/数字/连字符，不以连字符开头/结尾，长度 1..40）` });
           return;
         }
+        if (seenSubdomains.has(sd)) {
+          res.status(400).json({ error: `subdomain "${sd}" 被多个额外服务复用（命名子域须分支内唯一，否则 host 路由会撞车）` });
+          return;
+        }
+        seenSubdomains.add(sd);
         subdomain = sd;
       }
       seen.add(id);

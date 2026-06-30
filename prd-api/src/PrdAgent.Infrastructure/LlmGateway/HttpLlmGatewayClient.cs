@@ -51,7 +51,9 @@ public sealed class HttpLlmGatewayClient
         // serving 服务的根地址（如 http://llmgw-serve:8091），去掉尾部斜杠避免拼接出双斜杠。
         _baseUrl = (config["LlmGateway:ServeBaseUrl"] ?? "http://llmgw-serve:8091").TrimEnd('/');
         // 共享密钥门（内部 M2M），与 serving 端 LlmGwServe:ApiKey 对齐。
-        _gatewayKey = config["LlmGwServe:ApiKey"] ?? "dev-llmgw-serve-key";
+        // 不回退到众所周知的占位 key：http 模式未显式配 LlmGwServe:ApiKey 时用空串，让 X-Gateway-Key 门
+        // 直接 401 响亮失败，而非用可预测的共享密钥静默通过、削弱本 PR 新增的密钥门（Cursor Bugbot）。
+        _gatewayKey = config["LlmGwServe:ApiKey"] ?? string.Empty;
     }
 
     private HttpClient CreateHttp(bool infiniteTimeout)

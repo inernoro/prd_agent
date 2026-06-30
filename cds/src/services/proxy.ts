@@ -577,8 +577,13 @@ export class ProxyService {
         profiles ??= this.stateService
           .getEffectiveProfilesForBranch(entry)
           .map((p) => resolveEffectiveProfile(p, entry));
+        // 要求该服务有 hostPort（可路由）——否则停止/缺端口的 profile 会被命名 host 强制命中却拿不到上游。
+        // 与 forwarder 命名路由「只发可路由服务」口径对齐（Cursor Bugbot）。
         const match = profiles.find(
-          (p) => p.subdomain && p.subdomain.toLowerCase() === sub && entry.services[p.id],
+          (p) =>
+            p.subdomain &&
+            p.subdomain.toLowerCase() === sub &&
+            (entry.services[p.id]?.hostPort ?? 0) > 0,
         );
         if (!match) continue;
         // 返回已解析的 v3 previewSlug(非 slugify(branch.name))——后者对 claude/... 带 `/` 的分支名

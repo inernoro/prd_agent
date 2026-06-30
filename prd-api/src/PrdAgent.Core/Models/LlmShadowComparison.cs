@@ -1,3 +1,5 @@
+using MongoDB.Bson.Serialization.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
@@ -9,6 +11,7 @@ namespace PrdAgent.Core.Models;
 ///
 /// Id 风格对齐既有 Model（rule #7）：纯 Guid，不加 [BsonId]/[BsonRepresentation]。
 /// </summary>
+[BsonIgnoreExtraElements]
 public class LlmShadowComparison
 {
     /// <summary>主键（Guid）</summary>
@@ -64,6 +67,7 @@ public class LlmShadowComparison
 }
 
 /// <summary>解析结果快照（取关键可比字段，不含敏感凭据）。</summary>
+[BsonIgnoreExtraElements]
 public class ResolveSnapshot
 {
     public bool Success { get; set; }
@@ -76,6 +80,7 @@ public class ResolveSnapshot
 }
 
 /// <summary>单字段不一致。</summary>
+[BsonIgnoreExtraElements]
 public class FieldMismatch
 {
     public string Field { get; set; } = string.Empty;
