@@ -169,20 +169,35 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     {
         if (_writer == null) return;
         var requestId = _ctx?.Current?.RequestId;
+        // 构造**私有副本**用于 http 全量比对，绝不改调用方仍持有的 request.RequestBody：
+        //   - inproc 已把 body["model"] 改写为其选中模型；这里在副本上把 model 恢复成原始有效期望模型
+        //     （有则写回、无则移除），让 http 独立解析（与 resolve 探针同根，评审 P2）。
+        //   - 用 DeepClone 而非原地改写：后台任务改调用方对象会与调用方复用/读取 body 竞态（Cursor Bugbot）。
+        var clonedBody = request.RequestBody?.DeepClone().AsObject();
+        if (clonedBody != null)
+        {
+            if (expectedModel != null) clonedBody["model"] = expectedModel;
+            else clonedBody.Remove("model");
+        }
+        var shadowReq = new GatewayRequest
+        {
+            AppCallerCode = request.AppCallerCode,
+            ModelType = request.ModelType,
+            ExpectedModel = request.ExpectedModel,
+            RequestBody = clonedBody,
+            RequestBodyRaw = request.RequestBodyRaw,
+            Stream = request.Stream,
+            EnablePromptCache = request.EnablePromptCache,
+            TimeoutSeconds = request.TimeoutSeconds,
+            IncludeThinking = request.IncludeThinking,
+            Context = request.Context,
+        };
         SafeRun(async () =>
         {
-            // inproc 已把 request.RequestBody["model"] 改写为其选中模型。http 全量发送前把 body model 恢复成
-            // **原始有效期望模型**（有则写回、无则移除），让 http 独立解析——否则 http 被锁到 inproc 的选择，
-            // 全量比对（含 resolution 字段）也失真（评审 P2，与 resolve 探针同根）。
-            if (request.RequestBody != null)
-            {
-                if (expectedModel != null) request.RequestBody["model"] = expectedModel;
-                else request.RequestBody.Remove("model");
-            }
             var sw = Stopwatch.StartNew();
             GatewayResponse? http = null;
             string? httpErr = null;
-            try { http = await _http.SendAsync(request, CancellationToken.None); }
+            try { http = await _http.SendAsync(shadowReq, CancellationToken.None); }
             catch (Exception ex) { httpErr = ex.Message; }
             sw.Stop();
             var cmp = BuildResolveComparison("send", requestId, request.AppCallerCode, request.ModelType,

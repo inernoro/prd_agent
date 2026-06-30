@@ -24,3 +24,4 @@
 | fix | cds | extra-services PUT 省略 subdomain 字段时继承旧值（同 env 合并语义），避免纯 env redeploy 静默抹掉命名 URL；显式空串才清空 |
 | fix | prd-api | 影子流式比对：inproc 流未 yield Start（错误/早退）致 startResolution=null 时不再误判 all-match，标 resolutionPresence 不一致（all-match 须两边解析都在） |
 | fix | cds | extra-services subdomain 显式 JSON null 视为清空（原 String(null)="null" 会落伪命名 host <slug>-null） |
+| fix | prd-api | 影子 full-send 比对用 DeepClone 私有副本发送，不再在后台任务改写调用方仍持有的 request.RequestBody（消除与调用方复用/读取的竞态） |
