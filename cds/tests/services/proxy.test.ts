@@ -269,6 +269,43 @@ describe('ProxyService', () => {
       expect(payload.services).toContainEqual({ profileId: 'admin', status: 'starting' });
     });
 
+    it('keeps waiting progress aligned with elapsed and remaining time when ETA exists', () => {
+      proxy = new ProxyService(stateService, { previewDomain: 'preview.test' } as any);
+      addBranch('eta-branch', 'starting', {
+        admin: { profileId: 'admin', status: 'starting' },
+      }, 'feature/eta-branch');
+      const branch = stateService.getBranch('eta-branch')!;
+      branch.lastDeployStartedAt = new Date(Date.now() - 15_000).toISOString();
+      stateService.recordDeployDuration('default', 'source', 81_000);
+      stateService.save();
+
+      const req = makeReq({ host: 'eta-branch.preview.test', accept: 'application/json' }, '/_cds/waiting-status?profile=admin');
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(written.statusCode).toBe(200);
+      const payload = JSON.parse(written.body) as {
+        progress: { percent: number; reason: string };
+        timing: { elapsedMs: number; estimateMedianMs: number; remainingMs: number } | null;
+      };
+      expect(payload.timing).not.toBeNull();
+      expect(payload.timing!.elapsedMs).toBeGreaterThanOrEqual(14_000);
+      expect(payload.timing!.estimateMedianMs).toBe(81_000);
+      expect(payload.timing!.remainingMs).toBeGreaterThan(60_000);
+      expect(payload.progress.percent).toBeGreaterThan(15);
+      expect(payload.progress.percent).toBeLessThan(25);
+      expect(payload.progress.reason).toContain('历史耗时');
+
+      const htmlReq = makeReq({ host: 'eta-branch.preview.test', accept: 'text/html' });
+      const { res: htmlRes, written: htmlWritten } = makeRes();
+      proxy.handleRequest(htmlReq, htmlRes);
+      const match = htmlWritten.body.match(/data-role="progress-percent">([0-9.]+)%/);
+      expect(match).not.toBeNull();
+      const initialPercent = Number(match![1]);
+      expect(initialPercent).toBeGreaterThan(15);
+      expect(initialPercent).toBeLessThan(25);
+    });
+
     it('serves the auto-refresh "preparing" page (not the manual-redeploy page) for an express branch waiting on the CI image', () => {
       // 极速版（CI 预构建）：push 后分支 status 仍是 idle，但 ciImageStatus='waiting' 表示
       // CDS 在等 GitHub Actions 构建镜像，完成后会自动部署。此窗口必须显示会自动刷新的
