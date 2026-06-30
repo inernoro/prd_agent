@@ -257,11 +257,11 @@ services:
       LLMGW_ADMIN_USER: admin
       LLMGW_ADMIN_PASSWORD: llmgw-admin-2026
     labels:
-      cds.path-prefix: "/gw/"
-      cds.readiness-path: "/gw/healthz"
-      # express 拉镜像秒起；dev 源码模式需 restore + 编译，留足就绪窗口。
-      cds.readiness-timeout: "900"
-      cds.readiness-interval: "3"
+      # 安全：CDS 预览**不公开 path-route** 网关 console。它用固定占位 admin 密码 + JWT 密钥，若对外
+      # 路由到 `/gw/`，任何可达 *.miduo.org 预览的人都能用已知密码登录读 LLM 日志（提示词/回答）。
+      # 故只在项目内网起容器（api 经 docker 名 http://llmgw:8090 内部可达），不发布公开路由；
+      # no-http-readiness 让 CDS 不经公开路由探活。公开命名 URL + per-deploy 生成密钥 + 访问控制属波3 专项。
+      cds.no-http-readiness: "true"
 
   # 独立 LLM serving 网关 llmgw-serve（DI 承载现有 LlmGateway/ModelResolver，HTTP 暴露 /gw/v1/*）。
   # 与 api 同连一份 CDS 托管 Mongo；resolve 解密平台 key 用全局 x-cds-env.ApiKeyCrypto__Secret，

@@ -192,6 +192,28 @@ CDS 合并多容器能力（PR #951）后，serving 网关在 `claude/llm-schedu
 
 ## 已知边界 / 后续（波3，未做）
 
+- **CDS 预览：网关 console + serving 仅内网、不公开 path-route**（Codex P1 ×2，PR #965 已修）：
+  `cds-compose.yml` 原把 console（`/gw/`，固定 admin 密码 `llmgw-admin-2026` + 固定 JWT 密钥）与 serving
+  （`/gw/v1/`，固定 key `dev-llmgw-serve-key`）公开 path-route 到每个 `*.miduo.org` 预览 → 任何人可用已知密码登录
+  读 LLM 日志、用已知 key 调 `/gw/v1/send` 烧 provider 额度。**已改**：两服务删 `cds.path-prefix`，加
+  `cds.no-http-readiness: "true"`，仅在项目内网起容器（api 经 docker 名 `http://llmgw[-serve]:809x` 内部可达；
+  预览默认 `Mode=inproc` 本就不调 serving）。**后续（波3 专项）**：公开网关命名 URL（含命名子域 `<slug>-llmgw`）
+  需配 **per-deploy 生成密钥 + 访问控制**再开放，不能用仓库已知占位值。本决策同时 moot 了命名子域 master 路由
+  两处局限（无公开路由即不触发）与 extra-services subdomain 撞名（无公开 subdomain 路由即 inert）。
+- **Claude OpenAI 兼容工具链不完整（多处）**（Codex P2 ×3，PR #965）：网关把 OpenAI 风格 `tools` 路由到 Claude
+  模型时，`ClaudeGatewayAdapter` 的 OpenAI↔Claude 工具协议翻译尚不完整，**当前限制：Claude 后端的工具调用仅
+  「单轮非流式、tool_choice=auto」可用**，以下场景待波3 专项补：
+  1. **流式 tool_use 未聚合**（`ParseStreamChunk`）：`stream=true` 时未处理 Claude `content_block_start` /
+     `input_json_delta` 事件 → 流式函数调用拿不到 `delta.tool_calls`（非流式正常）。
+  2. **`tool_choice: "none"` 未兑现**（`ConvertToClaudeFormat` 附近 L240）：caller 显式禁用工具时仍把转换后的
+     `tools` 附给 Claude → Claude 可能仍 `tool_use`。应在该请求 drop `tools` 或翻成 Claude 安全等价。
+  3. **tool-result 多轮消息未翻译**（L180 附近）：工具循环的后续请求把 OpenAI `assistant.tool_calls` /
+     `role:"tool"` 原样转发给 Claude，而 Claude 要 `tool_use`/`tool_result` content block → 可能 400。
+  三者同根（Claude 工具协议翻译半成品），合并为一个波3 专项一次做透，无本地 SDK 难盲改、不在本轮反应式补。
+- **影子 resolve 比对用有效期望模型**（Codex P2，PR #965 已修）：`ShadowLlmGateway` 的 send/stream resolve-only
+  比对原传 `request.ExpectedModel`，但 inproc 解析用 `GetEffectiveExpectedModel()`（含 `RequestBody["model"]`
+  回退）。model 只放 body 时影子 resolve 收 null → 误报 critical mismatch（假阳性）。已改为传
+  `GetEffectiveExpectedModel()`。
 - **命名子域：master 反代兜底路径有两处局限（forwarder/生产完整可用）**（Bugbot Medium ×2，PR #965）：
   命名子域 `<previewSlug>-<sub>` 在**生产数据面（forwarder 模式，`CDS_USE_FORWARDER=1`）下完整可用**——forwarder
   按 host 直接发布 `<sub>` 服务的独立路由，直达容器端口、按服务状态门控、**独立于主分支状态**（主分支还在

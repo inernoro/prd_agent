@@ -9,3 +9,7 @@
 | fix | ops | exec_dep.sh 默认 PRD_AGENT_LLMGW_IMAGE 改指向独立 prdagent-llmgw 镜像（原误用 api 镜像导致 llmgw 服务错跑 PrdAgent.Api.dll、/gw/* 端点全缺） |
 | fix | ops | docker-compose gateway 发布 8081 端口，让 standalone 部署能打开网关前端控制台（_standalone.conf 的 llmgw-web listener） |
 | docs | ops | debt 记录命名子域 master 反代兜底两处已知局限（widget header scope / 分支级门控），标注 forwarder 生产路径完整可用，波3 补 |
+| security | cds | CDS 预览网关 console(/gw/)+serving(/gw/v1/) 改为仅内网不公开路由，关闭用仓库已知 dev 密钥从公网登录读日志/调用 provider 额度的暴露（公开命名 URL 留波3 配 per-deploy 密钥） |
+| fix | prd-api | 影子 resolve 比对改用 GetEffectiveExpectedModel（含 RequestBody[model] 回退），消除 model 只放 body 时的假阳性 critical mismatch |
+| fix | scripts | 去除 gw-matrix 报告脚本测试向量里的 emoji/符号（U+2728 / U+2713），换非 emoji 非 ASCII 样本（拉丁重音/CJK），合规规则 §0 |
+| docs | ops | debt 记录 Claude OpenAI 兼容工具链不完整（流式 tool_use/tool_choice:none/tool_result 多轮三处合并波3 专项） |

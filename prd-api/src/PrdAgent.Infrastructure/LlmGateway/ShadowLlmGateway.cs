@@ -65,7 +65,9 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         if (SampleHit())
             FireFullSendCompare(request, inproc);            // 采样：完整 send 比对（2x 打模型，有界）
         else
-            FireResolveCompare(request.AppCallerCode, request.ModelType, request.ExpectedModel, inproc.Resolution, "send");
+            // 用有效期望模型（含 RequestBody["model"] 回退）——inproc 解析即用它，否则 model 只放 body 时
+            // 影子 resolve 收到 null 会误报 critical mismatch（假阳性污染影子证据）。
+            FireResolveCompare(request.AppCallerCode, request.ModelType, request.GetEffectiveExpectedModel(), inproc.Resolution, "send");
         return inproc;
     }
 
@@ -86,7 +88,8 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             yield return chunk;
         }
         // 流式只做免费 resolve 比对（不重发 http 流，绝不 2x 打大模型）。
-        FireResolveCompare(request.AppCallerCode, request.ModelType, request.ExpectedModel, startResolution, "stream");
+        // 同 send：传有效期望模型（含 RequestBody["model"] 回退），避免 model 只在 body 时影子误报 critical。
+        FireResolveCompare(request.AppCallerCode, request.ModelType, request.GetEffectiveExpectedModel(), startResolution, "stream");
     }
 
     public async Task<GatewayModelResolution> ResolveModelAsync(

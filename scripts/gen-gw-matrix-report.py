@@ -31,7 +31,7 @@ MODEL_TYPES_13 = [
 # 文本变体轴（E2 字符集 / E1 内容边界）。用 json.dumps 内嵌保证转义正确。
 TEXT_VARIANTS = [
     ("ascii", "hello"),
-    ("emoji", "thinking-emoji-✨"),
+    ("latin-diacritics", "café-naïve-Zürich"),
     ("cjk", "中文深度思考内容"),
     ("rtl", "مرحبا بالعالم"),
     ("spaces", "a   b   c"),
@@ -192,9 +192,9 @@ def build_protocol_cells():
     add(group="think-only", dim="D5", method="thinkStripper", captureThinking=True,
         payloadChunks=["<think>only thinking</think>"],
         expect={"thinkVisible": "", "thinkCaptured": "only thinking"})
-    add(group="think-emoji-after", dim="D5/E2", method="thinkStripper", captureThinking=True,
-        payloadChunks=["<think>t</think>done-✓-完成"],
-        expect={"thinkVisible": "done-✓-完成", "thinkCaptured": "t"})
+    add(group="think-nonascii-after", dim="D5/E2", method="thinkStripper", captureThinking=True,
+        payloadChunks=["<think>t</think>done-完成"],
+        expect={"thinkVisible": "done-完成", "thinkCaptured": "t"})
 
     return cells
 
