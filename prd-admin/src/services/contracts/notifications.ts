@@ -34,6 +34,15 @@ export type AdminPushTopicDefinition = {
   label: string;
   description: string;
   source: string;
+  resourceKey: string;
+};
+
+export type AdminPushResourceDefinition = {
+  key: string;
+  appName: string;
+  description: string;
+  iconUrl: string;
+  defaultGroup: string;
 };
 
 export type AdminPushPresetDefinition = {
@@ -89,6 +98,7 @@ export type AdminPushDeliveryLog = {
 export type GetAdminPushSubscriptionsResponse = {
   topics: AdminPushTopicDefinition[];
   presets: AdminPushPresetDefinition[];
+  resources: AdminPushResourceDefinition[];
   placeholders: string[];
   subscriptions: AdminPushSubscription[];
 };

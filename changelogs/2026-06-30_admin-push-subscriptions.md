@@ -6,3 +6,6 @@
 | test | prd-api | 新增管理员推送后台投递、失败重试和 Bark 查询参数回归测试 |
 | feat | prd-api | Bark 协议补充 image 推送图片参数，支持从通知图片附件填充占位符 |
 | feat | prd-admin | 推送订阅 Bark 协议新增图片 URL 模板配置 |
+| feat | prd-api | 新增推送 appname 资源目录，为缺陷、预警、站内信、服务器到期、用户之声和 API 请求问题提供独立 icon |
+| feat | prd-admin | 推送订阅面板展示 appname 图标资源清单 |
+| feat | prd-api | 缺陷管理员通知携带用户上传图片附件，Bark 推送可直接展示问题截图 |

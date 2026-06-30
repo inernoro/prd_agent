@@ -200,6 +200,80 @@ public sealed class AdminPushNotificationServiceTests
             var request = Assert.Single(http.Requests);
             var query = QueryHelpers.ParseQuery(request.Uri.Query);
             Assert.Equal("https://example.com/defect-image.png", query["image"]);
+            Assert.Equal("https://placehold.co/256x256/e11d48/ffffff/png?text=DEF", query["icon"]);
+        }
+        finally
+        {
+            await testDb.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task DispatchPendingAsync_RoutesUserVoiceAndApiAlertsToDedicatedTopics()
+    {
+        var testDb = await AdminPushTestDatabase.TryCreateAsync();
+        if (testDb == null) return;
+
+        try
+        {
+            var http = new RecordingHttpClientFactory(HttpStatusCode.OK);
+            var service = CreateService(testDb.Context, http);
+
+            await testDb.Context.AdminPushSubscriptions.InsertManyAsync(
+            [
+                new AdminPushSubscription
+                {
+                    UserId = "u1",
+                    TopicKey = "user-voice",
+                    Enabled = true,
+                    ChannelType = "bark",
+                    BarkKey = "test-key",
+                    BarkServerUrl = "https://example.com",
+                },
+                new AdminPushSubscription
+                {
+                    UserId = "u1",
+                    TopicKey = "api-request-alert",
+                    Enabled = true,
+                    ChannelType = "bark",
+                    BarkKey = "test-key",
+                    BarkServerUrl = "https://example.com",
+                },
+            ]);
+            await testDb.Context.AdminNotifications.InsertManyAsync(
+            [
+                new AdminNotification
+                {
+                    Id = "n1",
+                    Key = "voice-1",
+                    Title = "用户之声",
+                    Message = "用户反馈关键路径有阻塞",
+                    Source = "user-voice",
+                    Status = "open",
+                    TargetUserId = "u1",
+                    CreatedAt = DateTime.UtcNow,
+                },
+                new AdminNotification
+                {
+                    Id = "n2",
+                    Key = "api-1",
+                    Title = "API 请求问题",
+                    Message = "接口错误率超过阈值",
+                    Source = "api-request-alert",
+                    Status = "open",
+                    TargetUserId = "u1",
+                    CreatedAt = DateTime.UtcNow,
+                },
+            ]);
+
+            await service.DispatchPendingAsync(CancellationToken.None);
+
+            Assert.Equal(2, http.Requests.Count);
+            var icons = http.Requests
+                .Select(x => QueryHelpers.ParseQuery(x.Uri.Query)["icon"].ToString())
+                .ToList();
+            Assert.Contains(icons, icon => icon.Contains("text=VOC", StringComparison.Ordinal));
+            Assert.Contains(icons, icon => icon.Contains("text=API", StringComparison.Ordinal));
         }
         finally
         {

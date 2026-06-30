@@ -161,6 +161,24 @@ public class DefectAgentController : ControllerBase
         return null;
     }
 
+    private static List<NotificationAttachment>? BuildNotificationAttachments(DefectReport defect)
+    {
+        if (defect.Attachments.Count == 0) return null;
+
+        var attachments = defect.Attachments
+            .Where(x => !string.IsNullOrWhiteSpace(x.Url))
+            .Select(x => new NotificationAttachment
+            {
+                Name = x.FileName,
+                Url = x.ThumbnailUrl ?? x.Url,
+                SizeBytes = x.FileSize,
+                MimeType = x.MimeType,
+            })
+            .ToList();
+
+        return attachments.Count == 0 ? null : attachments;
+    }
+
     private string? GetSessionKey()
         => User.FindFirst("sessionKey")?.Value;
 
@@ -911,6 +929,7 @@ public class DefectAgentController : ControllerBase
                     ActionLabel = "查看详情",
                     ActionUrl = $"/defect-agent?id={defect.Id}",
                     Source = "defect-agent",
+                    Attachments = BuildNotificationAttachments(defect),
                     ExpiresAt = DateTime.UtcNow.AddDays(7)
                 };
 
@@ -3114,6 +3133,7 @@ public class DefectAgentController : ControllerBase
                 ActionUrl = actionUrl,
                 ActionKind = actionUrl.StartsWith("/", StringComparison.Ordinal) ? "navigate" : "external",
                 Source = "defect-agent",
+                Attachments = BuildNotificationAttachments(defect),
                 ExpiresAt = DateTime.UtcNow.AddDays(14),
             };
             await _db.AdminNotifications.InsertOneAsync(notification, cancellationToken: ct);
@@ -5262,6 +5282,7 @@ public class DefectAgentController : ControllerBase
                 ActionUrl = $"/defect-agent?defectId={item.DefectId}",
                 ActionKind = "navigate",
                 Source = "defect-agent",
+                Attachments = BuildNotificationAttachments(defect),
                 ExpiresAt = DateTime.UtcNow.AddDays(7),
             };
             await _db.AdminNotifications.InsertOneAsync(notification, cancellationToken: CancellationToken.None);

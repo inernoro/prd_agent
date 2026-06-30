@@ -38,9 +38,58 @@ public sealed class AdminPushNotificationService
 
     public static IReadOnlyList<AdminPushTopicDefinition> TopicDefinitions { get; } =
     [
-        new("defect-management", "缺陷管理", "缺陷提交、指派、验收、AI 修复等提醒", "defect-agent"),
-        new("report-agent", "周报协作", "周报提交、退回、审阅、逾期等提醒", "report-agent"),
-        new("system-alert", "系统告警", "模型池、平台密钥、开放平台额度等运营告警", "system"),
+        new("defect-management", "缺陷管理", "缺陷提交、指派、验收、AI 修复等提醒", "defect-agent", "defect-management"),
+        new("system-alert", "系统预警", "模型池、平台密钥、开放平台额度等运营告警", "system", "system-alert"),
+        new("admin-message", "管理员站内信", "服务器到期、配置提醒、人工公告等管理员通知", "admin-notice", "admin-message"),
+        new("user-voice", "用户之声", "真实用户反馈、体验痛点、主动提交的缺陷反馈", "user-voice", "user-voice"),
+        new("api-request-alert", "API 请求问题", "慢接口、错误率、调用失败、网关异常等请求告警", "api-request-alert", "api-request-alert"),
+        new("report-agent", "周报协作", "周报提交、退回、审阅、逾期等提醒", "report-agent", "report-agent"),
+    ];
+
+    public static IReadOnlyList<AdminPushResourceDefinition> ResourceDefinitions { get; } =
+    [
+        new(
+            "defect-management",
+            "缺陷管理",
+            "缺陷提交、指派、验收、AI 修复等提醒",
+            "https://placehold.co/256x256/e11d48/ffffff/png?text=DEF",
+            "MAP System-缺陷管理"),
+        new(
+            "system-alert",
+            "系统预警",
+            "通用预警、平台密钥、模型池、额度等风险提示",
+            "https://placehold.co/256x256/f59e0b/111827/png?text=ALERT",
+            "MAP System-系统预警"),
+        new(
+            "admin-message",
+            "管理员站内信",
+            "服务器到期、管理员公告、配置提醒",
+            "https://placehold.co/256x256/2563eb/ffffff/png?text=ADMIN",
+            "MAP System-管理员站内信"),
+        new(
+            "server-expiry",
+            "服务器到期",
+            "服务器、证书、域名、部署资源到期提醒",
+            "https://placehold.co/256x256/7c3aed/ffffff/png?text=SERVER",
+            "MAP System-服务器到期"),
+        new(
+            "user-voice",
+            "用户之声",
+            "用户主动反馈、真实缺陷、体验痛点",
+            "https://placehold.co/256x256/0891b2/ffffff/png?text=VOC",
+            "MAP System-用户之声"),
+        new(
+            "api-request-alert",
+            "API 请求问题",
+            "HTTP 错误、慢请求、网关异常、第三方接口失败",
+            "https://placehold.co/256x256/d97706/ffffff/png?text=API",
+            "MAP System-API 请求问题"),
+        new(
+            "report-agent",
+            "周报协作",
+            "周报提交、退回、审阅和团队协作提醒",
+            "https://placehold.co/256x256/059669/ffffff/png?text=REPORT",
+            "MAP System-周报协作"),
     ];
 
     public static IReadOnlyList<AdminPushPresetDefinition> PresetDefinitions { get; } =
@@ -109,6 +158,7 @@ public sealed class AdminPushNotificationService
         {
             if (byTopic.TryGetValue(topic.Key, out var sub)) return sub;
             var preset = PresetDefinitions[0];
+            var resource = ResolveResource(topic);
             return new AdminPushSubscription
             {
                 UserId = userId,
@@ -120,7 +170,9 @@ public sealed class AdminPushNotificationService
                 BodyTemplate = preset.BodyTemplate,
                 ContentType = preset.ContentType,
                 BarkServerUrl = DefaultBarkServerUrl,
-                BarkGroup = "MAP System-{{appname}}",
+                BarkGroup = resource.DefaultGroup,
+                BarkIcon = "{{iconUrl}}",
+                BarkImageTemplate = "{{imageUrl}}",
             };
         }).ToList();
     }
@@ -442,10 +494,31 @@ public sealed class AdminPushNotificationService
         if (topicKey.Equals("report-agent", StringComparison.OrdinalIgnoreCase))
             return source.Equals("report-agent", StringComparison.OrdinalIgnoreCase);
 
+        if (topicKey.Equals("admin-message", StringComparison.OrdinalIgnoreCase))
+            return source.Equals("admin-notice", StringComparison.OrdinalIgnoreCase)
+                || source.Equals("server-expiry", StringComparison.OrdinalIgnoreCase)
+                || source.Contains("expiry", StringComparison.OrdinalIgnoreCase)
+                || source.Contains("expire", StringComparison.OrdinalIgnoreCase);
+
+        if (topicKey.Equals("user-voice", StringComparison.OrdinalIgnoreCase))
+            return source.Equals("user-voice", StringComparison.OrdinalIgnoreCase)
+                || source.Equals("team-activity-voice", StringComparison.OrdinalIgnoreCase)
+                || source.Contains("voice", StringComparison.OrdinalIgnoreCase)
+                || source.Contains("feedback", StringComparison.OrdinalIgnoreCase);
+
+        if (topicKey.Equals("api-request-alert", StringComparison.OrdinalIgnoreCase))
+            return source.Equals("api-request-alert", StringComparison.OrdinalIgnoreCase)
+                || source.Equals("api-request-log", StringComparison.OrdinalIgnoreCase)
+                || source.Equals("gateway-alert", StringComparison.OrdinalIgnoreCase)
+                || source.Contains("api", StringComparison.OrdinalIgnoreCase);
+
         if (topicKey.Equals("system-alert", StringComparison.OrdinalIgnoreCase))
         {
             if (source.Equals("defect-agent", StringComparison.OrdinalIgnoreCase)
-                || source.Equals("report-agent", StringComparison.OrdinalIgnoreCase))
+                || source.Equals("report-agent", StringComparison.OrdinalIgnoreCase)
+                || source.Equals("admin-notice", StringComparison.OrdinalIgnoreCase)
+                || source.Equals("user-voice", StringComparison.OrdinalIgnoreCase)
+                || source.Equals("api-request-alert", StringComparison.OrdinalIgnoreCase))
                 return false;
             var level = (notification.Level ?? string.Empty).Trim();
             return level.Equals("warning", StringComparison.OrdinalIgnoreCase)
@@ -458,44 +531,80 @@ public sealed class AdminPushNotificationService
         return false;
     }
 
-    private static Dictionary<string, string> BuildPreviewPlaceholders(AdminPushTopicDefinition topic) => new(StringComparer.OrdinalIgnoreCase)
+    private static Dictionary<string, string> BuildPreviewPlaceholders(AdminPushTopicDefinition topic)
     {
-        ["appname"] = topic.Label,
-        ["title"] = "管理员推送测试",
-        ["message"] = "这是一条测试通知",
-        ["level"] = "info",
-        ["source"] = topic.Source,
-        ["actionUrl"] = "/notifications",
-        ["imageUrl"] = string.Empty,
-        ["createdAt"] = DateTime.UtcNow.ToString("O"),
-        ["notificationId"] = "test",
-    };
+        var resource = ResolveResource(topic);
+        return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["appname"] = topic.Label,
+            ["title"] = "管理员推送测试",
+            ["message"] = "这是一条测试通知",
+            ["level"] = "info",
+            ["source"] = topic.Source,
+            ["actionUrl"] = "/notifications",
+            ["iconUrl"] = resource.IconUrl,
+            ["imageUrl"] = string.Empty,
+            ["createdAt"] = DateTime.UtcNow.ToString("O"),
+            ["notificationId"] = "test",
+        };
+    }
 
-    private static Dictionary<string, string> BuildPlaceholders(AdminNotification notification) => new(StringComparer.OrdinalIgnoreCase)
+    private static Dictionary<string, string> BuildPlaceholders(AdminNotification notification)
     {
-        ["appname"] = ResolveAppName(notification),
-        ["title"] = notification.Title ?? string.Empty,
-        ["message"] = notification.Message ?? notification.Title ?? string.Empty,
-        ["level"] = notification.Level ?? string.Empty,
-        ["source"] = notification.Source ?? string.Empty,
-        ["actionUrl"] = notification.ActionUrl ?? string.Empty,
-        ["imageUrl"] = ResolveImageUrl(notification),
-        ["createdAt"] = notification.CreatedAt.ToString("O"),
-        ["notificationId"] = notification.Id,
-    };
+        var resource = ResolveResource(notification);
+        return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["appname"] = resource.AppName,
+            ["title"] = notification.Title ?? string.Empty,
+            ["message"] = notification.Message ?? notification.Title ?? string.Empty,
+            ["level"] = notification.Level ?? string.Empty,
+            ["source"] = notification.Source ?? string.Empty,
+            ["actionUrl"] = notification.ActionUrl ?? string.Empty,
+            ["iconUrl"] = resource.IconUrl,
+            ["imageUrl"] = ResolveImageUrl(notification),
+            ["createdAt"] = notification.CreatedAt.ToString("O"),
+            ["notificationId"] = notification.Id,
+        };
+    }
 
     private static string ResolveAppName(AdminNotification notification)
     {
+        return ResolveResource(notification).AppName;
+    }
+
+    private static AdminPushResourceDefinition ResolveResource(AdminPushTopicDefinition topic)
+    {
+        return ResourceDefinitions.FirstOrDefault(x => x.Key.Equals(topic.ResourceKey, StringComparison.OrdinalIgnoreCase))
+            ?? ResourceDefinitions[1];
+    }
+
+    private static AdminPushResourceDefinition ResolveResource(AdminNotification notification)
+    {
         var source = (notification.Source ?? string.Empty).Trim();
-        return source switch
+        var key = source switch
         {
-            "defect-agent" => "缺陷管理",
-            "report-agent" => "周报协作",
-            "llm-gateway-quota" => "模型池",
-            "platform-key-integrity" => "平台密钥",
-            "open-platform" => "开放平台",
-            _ => string.IsNullOrWhiteSpace(source) ? "PRD Agent" : source,
+            "defect-agent" => "defect-management",
+            "report-agent" => "report-agent",
+            "server-expiry" => "server-expiry",
+            "admin-notice" => "admin-message",
+            "user-voice" => "user-voice",
+            "team-activity-voice" => "user-voice",
+            "api-request-alert" => "api-request-alert",
+            "api-request-log" => "api-request-alert",
+            "gateway-alert" => "api-request-alert",
+            "llm-gateway-quota" => "system-alert",
+            "platform-key-integrity" => "system-alert",
+            "open-platform" => "system-alert",
+            _ when source.Contains("expire", StringComparison.OrdinalIgnoreCase) => "server-expiry",
+            _ when source.Contains("expiry", StringComparison.OrdinalIgnoreCase) => "server-expiry",
+            _ when source.Contains("voice", StringComparison.OrdinalIgnoreCase) => "user-voice",
+            _ when source.Contains("feedback", StringComparison.OrdinalIgnoreCase) => "user-voice",
+            _ when source.Contains("api", StringComparison.OrdinalIgnoreCase) => "api-request-alert",
+            _ => "system-alert",
         };
+
+        return ResourceDefinitions.FirstOrDefault(x => x.Key.Equals(key, StringComparison.OrdinalIgnoreCase))
+            ?? ResourceDefinitions[1];
     }
 
     private static string ResolveImageUrl(AdminNotification notification)
@@ -554,7 +663,7 @@ public sealed class AdminPushNotificationService
         AddQuery(query, "group", group);
         AddQuery(query, "sound", sound);
         AddQuery(query, "level", level);
-        AddQuery(query, "icon", string.IsNullOrWhiteSpace(icon) ? null : RenderPlainTemplate(icon, placeholders));
+        AddQuery(query, "icon", string.IsNullOrWhiteSpace(icon) ? placeholders.GetValueOrDefault("iconUrl") : RenderPlainTemplate(icon, placeholders));
         AddQuery(query, "image", string.IsNullOrWhiteSpace(imageTemplate) ? placeholders.GetValueOrDefault("imageUrl") : RenderPlainTemplate(imageTemplate, placeholders));
         AddQuery(query, "url", string.IsNullOrWhiteSpace(urlTemplate) ? placeholders.GetValueOrDefault("actionUrl") : RenderPlainTemplate(urlTemplate, placeholders));
         if (call) AddQuery(query, "call", "1");
@@ -589,7 +698,14 @@ public sealed class AdminPushNotificationService
     }
 }
 
-public sealed record AdminPushTopicDefinition(string Key, string Label, string Description, string Source);
+public sealed record AdminPushTopicDefinition(string Key, string Label, string Description, string Source, string ResourceKey);
+
+public sealed record AdminPushResourceDefinition(
+    string Key,
+    string AppName,
+    string Description,
+    string IconUrl,
+    string DefaultGroup);
 
 public sealed record AdminPushPresetDefinition(
     string Key,

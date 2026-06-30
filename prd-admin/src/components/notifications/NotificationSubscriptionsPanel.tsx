@@ -8,6 +8,7 @@ import {
 } from '@/services';
 import type {
   AdminPushPresetDefinition,
+  AdminPushResourceDefinition,
   AdminPushSubscription,
   AdminPushTopicDefinition,
   UpdateAdminPushSubscriptionRequest,
@@ -87,6 +88,7 @@ export function getSelectedNotificationPushPresetKey(draft: UpdateAdminPushSubsc
 export function NotificationSubscriptionsPanel() {
   const [topics, setTopics] = useState<AdminPushTopicDefinition[]>([]);
   const [presets, setPresets] = useState<AdminPushPresetDefinition[]>([]);
+  const [resources, setResources] = useState<AdminPushResourceDefinition[]>([]);
   const [placeholders, setPlaceholders] = useState<string[]>([]);
   const [drafts, setDrafts] = useState<DraftMap>({});
   const [loading, setLoading] = useState(true);
@@ -104,6 +106,7 @@ export function NotificationSubscriptionsPanel() {
     if (res.success) {
       setTopics(res.data.topics ?? []);
       setPresets(res.data.presets ?? []);
+      setResources(res.data.resources ?? []);
       setPlaceholders(res.data.placeholders ?? []);
       const next: DraftMap = {};
       for (const sub of res.data.subscriptions ?? []) {
@@ -162,6 +165,7 @@ export function NotificationSubscriptionsPanel() {
   }, [drafts]);
 
   const firstPreset = presets[0];
+  const resourcesByKey = useMemo(() => new Map(resources.map((x) => [x.key, x])), [resources]);
   const placeholderText = useMemo(() => placeholders.map((x) => `{{${x}}}`).join('  '), [placeholders]);
 
   if (loading) {
@@ -187,6 +191,24 @@ export function NotificationSubscriptionsPanel() {
         </div>
       </div>
 
+      {resources.length > 0 && (
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+          {resources.map((resource) => (
+            <div
+              key={resource.key}
+              className="flex min-w-0 items-center gap-2 rounded-[10px] border px-2.5 py-2"
+              style={{ borderColor: 'rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.04)' }}
+            >
+              <img src={resource.iconUrl} alt="" className="h-8 w-8 shrink-0 rounded-[8px] object-cover" />
+              <div className="min-w-0">
+                <div className="truncate text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>{resource.appName}</div>
+                <div className="truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>{resource.description}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {message && (
         <div
           className="rounded-[10px] border px-3 py-2 text-[12px]"
@@ -202,6 +224,7 @@ export function NotificationSubscriptionsPanel() {
           const selectedPresetKey = getSelectedNotificationPushPresetKey(draft, presets);
           const isBark = draft.channelType === 'bark';
           const isPost = String(draft.method).toUpperCase() === 'POST';
+          const resource = resourcesByKey.get(topic.resourceKey);
           return (
             <section
               key={topic.key}
@@ -229,6 +252,12 @@ export function NotificationSubscriptionsPanel() {
                     <div className="mt-1 text-[12px]" style={{ color: 'var(--text-muted)' }}>
                       {topic.description}
                     </div>
+                    {resource && (
+                      <div className="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full border px-2 py-1 text-[11px]" style={{ borderColor: 'rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}>
+                        <img src={resource.iconUrl} alt="" className="h-4 w-4 shrink-0 rounded-[4px] object-cover" />
+                        <span className="truncate">{resource.appName}</span>
+                      </div>
+                    )}
                   </div>
                   <label className="inline-flex cursor-pointer items-center gap-2 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
                     <input
