@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MongoSplitStateBackingStore, type ISplitMongoCollection, type ISplitMongoHandle } from '../../src/infra/state-store/mongo-split-store.js';
-import type { BranchEntry, CdsState, Project } from '../../src/types.js';
+import type { BranchEntry, CdsState, Project, SelfUpdateRecord } from '../../src/types.js';
 
 function emptyState(): CdsState {
   return {
@@ -73,11 +73,13 @@ class FakeSplitHandle implements ISplitMongoHandle {
   global = new FakeSplitCollection<{ _id: string; state: Omit<CdsState, 'projects' | 'branches'>; updatedAt: string }>();
   projects = new FakeSplitCollection<{ _id: string; doc: Project; updatedAt: string }>();
   branches = new FakeSplitCollection<{ _id: string; projectId: string; doc: BranchEntry; updatedAt: string }>();
+  selfUpdateHistory = new FakeSplitCollection<{ _id: string; ts: string; doc: SelfUpdateRecord; updatedAt: string }>();
 
   async connect(): Promise<void> {}
   globalCollection() { return this.global; }
   projectsCollection() { return this.projects; }
   branchesCollection() { return this.branches; }
+  selfUpdateHistoryCollection() { return this.selfUpdateHistory; }
   async close(): Promise<void> {}
   async ping(): Promise<boolean> { return true; }
 }
@@ -302,9 +304,11 @@ describe('MongoSplitStateBackingStore', () => {
     expect(Buffer.byteLength(global.logs['branch-a'][0].events[0].chunk || '', 'utf8')).toBeLessThanOrEqual(4 * 1024);
     expect(global.containerLogArchives['branch-a']).toHaveLength(3);
     expect(Buffer.byteLength(global.containerLogArchives['branch-a'][0].logs, 'utf8')).toBeLessThanOrEqual(16 * 1024);
-    expect(global.selfUpdateHistory).toHaveLength(20);
-    expect(global.selfUpdateHistory?.[0].steps).toHaveLength(25);
-    expect(Buffer.byteLength(global.selfUpdateHistory?.[0].steps?.[0].text || '', 'utf8')).toBeLessThanOrEqual(2 * 1024);
+    expect(global.selfUpdateHistory).toBeUndefined();
+    expect(handle.selfUpdateHistory.docs.size).toBe(20);
+    const firstHistory = [...handle.selfUpdateHistory.docs.values()][0].doc;
+    expect(firstHistory.steps).toHaveLength(25);
+    expect(Buffer.byteLength(firstHistory.steps?.[0].text || '', 'utf8')).toBeLessThanOrEqual(2 * 1024);
     expect(Buffer.byteLength(JSON.stringify(global), 'utf8')).toBeLessThan(2 * 1024 * 1024);
   });
 });

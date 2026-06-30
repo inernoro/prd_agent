@@ -166,6 +166,12 @@ export function createStorageModeRouter(deps: StorageModeRouterDeps): Router {
               documents: 1,
               note: '路由、变量、执行器等低频状态',
             },
+            {
+              name: 'cds_self_update_history',
+              role: '自更新历史',
+              documents: snapshot.selfUpdateHistory?.length || 0,
+              note: '独立保存步骤与错误，避免撑大全局文档',
+            },
           ]
         : [];
 

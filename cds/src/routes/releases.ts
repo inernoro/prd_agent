@@ -278,15 +278,16 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
     const send = (event: string, data: unknown): void => {
       try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* client gone */ }
     };
-    send('snapshot', {
-      run,
-      logs: run.logs.filter((log) => log.seq > afterSeq),
-    });
     const handler = (envelope: any): void => {
       if (!envelope?.payload || envelope.payload.releaseId !== req.params.id) return;
       send(envelope.type, envelope.payload);
     };
     releaseEvents.on('any', handler);
+    const latestRun = deps.stateService.getReleaseRun(req.params.id) || run;
+    send('snapshot', {
+      run: latestRun,
+      logs: latestRun.logs.filter((log) => log.seq > afterSeq),
+    });
     const keepalive = setInterval(() => {
       try { res.write(':keepalive\n\n'); } catch { /* ignore */ }
     }, 10_000);
