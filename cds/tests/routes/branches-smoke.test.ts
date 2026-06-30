@@ -8,7 +8,7 @@
  *   - body parsing + validation (previewHost, accessKey)
  *   - spawn flow (env vars passed through)
  *   - SSE stream framing (start / line / complete)
- *   - stdout → pass count extraction via the "✅ 通过: N 项" footer line
+ *   - stdout → pass count extraction via the "OK 通过: N 项" footer line
  *
  * We do NOT test the real smoke-*.sh chain here — that's scripts/
  * responsibility and would require a live prd-api.
@@ -114,8 +114,8 @@ describe('POST /api/branches/:id/smoke', () => {
     fs.writeFileSync(fakeSmoke, [
       '#!/usr/bin/env bash',
       'echo "=== fake smoke start: host=$SMOKE_TEST_HOST user=$SMOKE_USER ==="',
-      'echo "✅ 通过: 3 项"',
-      'echo "❌ 失败: 0 项"',
+      'echo "OK 通过: 3 项"',
+      'echo "FAIL 失败: 0 项"',
       'exit 0',
     ].join('\n'));
     fs.chmodSync(fakeSmoke, 0o755);
@@ -278,8 +278,8 @@ describe('runSmokeForBranch (Phase 4 helper)', () => {
       '#!/usr/bin/env bash',
       'echo "probe host=$SMOKE_TEST_HOST"',
       'echo "probe user=$SMOKE_USER"',
-      'echo "✅ 通过: 7 项"',
-      'echo "❌ 失败: 2 项"',
+      'echo "OK 通过: 7 项"',
+      'echo "FAIL 失败: 2 项"',
       'exit 42',
     ].join('\n'));
     fs.chmodSync(entry, 0o755);
