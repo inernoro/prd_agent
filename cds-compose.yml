@@ -136,7 +136,8 @@ x-cds-deploy-modes:
         ASPNETCORE_ENVIRONMENT: Production
         ASPNETCORE_URLS: "http://+:8090"
   # 独立 LLM serving 网关 llmgw-serve —— DI 承载现有 LlmGateway/ModelResolver，HTTP 暴露 /gw/v1/*。
-  # 预览域名 /gw/v1/* 路由到本服务（比 llmgw 的 /gw/ 更具体，按最长前缀匹配，二者共存）。
+  # 安全：CDS 预览**不公开 path-route** 本服务（见下 services 块 no-http-readiness）；仅内网可达，
+  # api 经 docker 名 http://llmgw-serve:8091 调用。公开命名 URL 属波3 专项。
   llmgw-serve:
     dev:
       label: "开发模式 (dotnet run)"
@@ -293,14 +294,16 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
       MongoDB__DatabaseName: prdagent
-      # 内部 M2M 共享密钥门（预览环境固定占位值即可）。
-      LlmGwServe__ApiKey: "dev-llmgw-serve-key"
+      # 内部 M2M 共享密钥门。仅内网可达（无公开路由），api 经 docker 名 http://llmgw-serve:8091 调用；
+      # `${VAR:-fallback}` 形——CDS env 有 LLMGW_SERVE_API_KEY 时用真实值（公开暴露 P2 时钉强随机），
+      # 否则用非仓库默认的内网 fallback。预览默认 LlmGateway:Mode=inproc，api 根本不调本服务。
+      LlmGwServe__ApiKey: "${LLMGW_SERVE_API_KEY:-llmgw-serve-cds-preview-internal-4d8b1e3a}"
     labels:
-      # /gw/v1/* 比 llmgw 的 /gw/ 更具体，按最长前缀匹配路由到本服务。
-      cds.path-prefix: "/gw/v1/"
-      cds.readiness-path: "/gw/v1/healthz"
-      cds.readiness-timeout: "900"
-      cds.readiness-interval: "3"
+      # 安全：与 llmgw console 同处理——CDS 预览**不公开 path-route** serving 网关。它用固定占位 M2M key，
+      # 若对外路由到 `/gw/v1/`，任何可达 *.miduo.org 预览的人都能用已知 key 调 /gw/v1/send 烧 provider 额度
+      # （无鉴权 LLM 调用）。故只在项目内网起容器（api 经 docker 名 http://llmgw-serve:8091 内部可达），
+      # 不发布公开路由；no-http-readiness 让 CDS 不经公开路由探活。公开命名 URL + per-deploy 生成密钥属波3 专项。
+      cds.no-http-readiness: "true"
 
   # ── Infrastructure Services (无相对路径 mount) ──
 
