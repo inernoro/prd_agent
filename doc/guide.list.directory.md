@@ -366,6 +366,9 @@
 
 ### 三、指南
 
+- [LLM 网关验收面包屑清单](guide.llm-gateway.acceptance-breadcrumbs) `guide.llm-gateway.acceptance-breadcrumbs`
+  > 逐 UI 面：导航点击路径→截图点→预期→双主题（Playwright 可消费）+ 测试覆盖摘要 + 例外 12 条 + 压测 6 条
+
 - [Agent 开发入门指南（新手必读）](guide.platform.agent-onboarding) `guide.platform.agent-onboarding`
   > 新手 Agent 开发入门：阶段式陪伴、AGENT_WORKSPACE 进度文件、验收标准
 

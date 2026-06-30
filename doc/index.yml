@@ -214,6 +214,7 @@ docs:
   guide.infra-sandbox-agent: 基础设施沙箱 Agent 完整手册
   guide.skill.catalog: 技能百科全书指南
   guide.platform.smoke-tests: 冒烟测试指南
+  guide.llm-gateway.acceptance-breadcrumbs: LLM 网关验收面包屑清单（逐 UI 面 导航路径→截图点→预期，自动化可消费）+ 覆盖/例外/压测
 
   # ── 四、规范与规则 ──
   # 先看文档相关规范，再看开发规范，最后是审计报告
