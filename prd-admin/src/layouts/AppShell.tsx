@@ -228,6 +228,12 @@ export default function AppShell() {
   const [notificationDialogTab, setNotificationDialogTab] = useState<'list' | 'subscriptions'>('list');
   const [notifications, setNotifications] = useState<AdminNotificationItem[]>([]);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get('panel') !== 'notifications') return;
+    setNotificationDialogOpen(true);
+    setNotificationDialogTab(params.get('tab') === 'subscriptions' ? 'subscriptions' : 'list');
+  }, [location.search]);
   // 更新中心：未读数（用于桌面 dropdown 中的徽章）+ 拉取本周更新
   const changelogUnread = useChangelogStore(selectUnreadCount);
   const loadChangelogCurrentWeek = useChangelogStore((s) => s.loadCurrentWeek);
