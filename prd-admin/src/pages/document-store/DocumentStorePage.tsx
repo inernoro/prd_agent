@@ -1428,12 +1428,12 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
               {uploading ? '上传中…' : '上传文档'}
             </Button>
             {/* 知识星球：3D 文档星系直达入口（此前藏在「宇宙图」里，新用户找不到）。
-                借鉴「本页教程」pill 的柔和脉冲光环，并把进入星空收敛成左侧 icon 的小幅动效。 */}
+                保留原始 orbit icon 语义，叠加胶囊背景光扫与 icon 轻动效。 */}
             <button
               type="button"
               onClick={() => navigate(`/document-store/${storeId}/galaxy`)}
               title="知识星球 — 3D 文档星系，悬停看简介、点击进入文档"
-              className="relative isolate flex h-7 cursor-pointer items-center gap-1.5 overflow-hidden rounded-[8px] px-3 text-[11px] font-semibold"
+              className="galaxy-entry-button relative isolate flex h-7 cursor-pointer items-center gap-1.5 overflow-hidden rounded-[8px] px-3 text-[11px] font-semibold"
               style={{
                 color: 'rgba(196,181,253,0.98)',
                 background: 'linear-gradient(135deg, rgba(168,85,247,0.20), rgba(99,102,241,0.16))',
@@ -1442,82 +1442,133 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
               }}
             >
               <span className="galaxy-entry-icon" aria-hidden="true">
-                <span className="galaxy-entry-star galaxy-entry-star-a" />
-                <span className="galaxy-entry-star galaxy-entry-star-b" />
-                <Orbit className="galaxy-entry-orbit" size={13} />
+                <span className="galaxy-entry-spark galaxy-entry-spark-a" />
+                <span className="galaxy-entry-spark galaxy-entry-spark-b" />
+                <svg className="galaxy-entry-orbit" viewBox="0 0 24 24" focusable="false">
+                  <circle className="galaxy-entry-core" cx="12" cy="12" r="2.35" />
+                  <path className="galaxy-entry-orbit-path" d="M7.6 16.4a6.2 6.2 0 0 1 0-8.8" />
+                  <path className="galaxy-entry-orbit-path" d="M16.4 7.6a6.2 6.2 0 0 1 0 8.8" />
+                  <path className="galaxy-entry-orbit-path" d="M4.2 19.8a11 11 0 0 1 0-15.6" />
+                  <path className="galaxy-entry-orbit-path" d="M19.8 4.2a11 11 0 0 1 0 15.6" />
+                </svg>
               </span>
               <span className="relative z-[1]">知识星球</span>
               <style>{`
                 @keyframes galaxyEntryPulse {
                   0%, 100% { box-shadow: 0 0 0 0 rgba(168,85,247,0); }
-                  50% { box-shadow: 0 0 0 3px rgba(168,85,247,0.18); }
+                  50% { box-shadow: 0 0 0 3px rgba(168,85,247,0.14); }
                 }
 
-                @keyframes galaxyEntryFly {
-                  0%, 100% { transform: translateX(0) scale(1); filter: drop-shadow(0 0 0 rgba(196,181,253,0)); }
-                  38% { transform: translateX(2px) scale(1.06); filter: drop-shadow(0 0 5px rgba(196,181,253,0.38)); }
-                  68% { transform: translateX(-0.5px) scale(0.98); filter: drop-shadow(0 0 2px rgba(196,181,253,0.22)); }
+                @keyframes galaxyEntrySweep {
+                  0% { transform: translateX(-125%); opacity: 0; }
+                  14% { opacity: 0.82; }
+                  52% { transform: translateX(118%); opacity: 0.54; }
+                  70%, 100% { transform: translateX(118%); opacity: 0; }
                 }
 
-                @keyframes galaxyEntryStarDriftA {
-                  0%, 100% { transform: translate3d(7px, 7px, 0) scale(0.65); opacity: 0; }
-                  28% { opacity: 0.95; }
-                  70% { transform: translate3d(-1px, 1px, 0) scale(1); opacity: 0.7; }
+                @keyframes galaxyEntryIconLift {
+                  0%, 100% { transform: translateY(0) rotate(0deg) scale(1); filter: drop-shadow(0 0 0 rgba(196,181,253,0)); }
+                  34% { transform: translateY(-1px) rotate(10deg) scale(1.06); filter: drop-shadow(0 0 8px rgba(196,181,253,0.5)); }
+                  58% { transform: translateY(0) rotate(-4deg) scale(0.99); filter: drop-shadow(0 0 2px rgba(196,181,253,0.22)); }
                 }
 
-                @keyframes galaxyEntryStarDriftB {
-                  0%, 100% { transform: translate3d(-2px, 11px, 0) scale(0.55); opacity: 0; }
-                  34% { opacity: 0.8; }
-                  76% { transform: translate3d(8px, 2px, 0) scale(0.9); opacity: 0.45; }
+                @keyframes galaxyEntryOrbitFlow {
+                  0% { stroke-dashoffset: 30; opacity: 0.72; }
+                  38% { stroke-dashoffset: 0; opacity: 1; }
+                  100% { stroke-dashoffset: -36; opacity: 0.72; }
+                }
+
+                @keyframes galaxyEntryCorePulse {
+                  0%, 100% { transform: scale(0.92); opacity: 0.74; }
+                  38% { transform: scale(1.16); opacity: 1; }
+                  62% { transform: scale(1); opacity: 0.88; }
+                }
+
+                @keyframes galaxyEntrySparkPop {
+                  0%, 100% { opacity: 0; transform: translate3d(0, 2px, 0) scale(0.6); }
+                  32% { opacity: 0.9; }
+                  60% { opacity: 0.35; transform: translate3d(2px, -1px, 0) scale(1); }
                 }
 
                 .galaxy-entry-icon {
                   position: relative;
                   z-index: 1;
-                  width: 15px;
-                  height: 15px;
-                  display: inline-flex;
-                  flex: 0 0 15px;
-                  align-items: center;
-                  justify-content: center;
+                  width: 16px;
+                  height: 16px;
+                  display: inline-grid;
+                  flex: 0 0 16px;
+                  place-items: center;
+                  overflow: visible;
                 }
 
-                .galaxy-entry-icon::before {
+                .galaxy-entry-button::before {
                   content: '';
                   position: absolute;
-                  inset: -4px;
-                  border-radius: 999px;
-                  background: radial-gradient(circle, rgba(196,181,253,0.26), rgba(196,181,253,0) 68%);
-                  opacity: 0.7;
+                  inset: -2px;
+                  z-index: 0;
+                  background: linear-gradient(
+                    105deg,
+                    transparent 0%,
+                    transparent 30%,
+                    rgba(255,255,255,0.16) 42%,
+                    rgba(196,181,253,0.32) 50%,
+                    rgba(255,255,255,0.13) 58%,
+                    transparent 70%,
+                    transparent 100%
+                  );
+                  transform: translateX(-125%);
+                  animation: galaxyEntrySweep 3s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+                  pointer-events: none;
                 }
 
                 .galaxy-entry-orbit {
-                  position: relative;
-                  z-index: 1;
-                  animation: galaxyEntryFly 2.8s cubic-bezier(0.34, 1.56, 0.64, 1) infinite;
+                  width: 15px;
+                  height: 15px;
+                  overflow: visible;
+                  color: rgba(196,181,253,0.98);
+                  animation: galaxyEntryIconLift 3s cubic-bezier(0.22, 1, 0.36, 1) infinite;
                   transform-origin: 50% 50%;
                 }
 
-                .galaxy-entry-star {
+                .galaxy-entry-orbit-path {
+                  fill: none;
+                  stroke: currentColor;
+                  stroke-linecap: round;
+                  stroke-linejoin: round;
+                  stroke-width: 2;
+                  stroke-dasharray: 18 24;
+                  animation: galaxyEntryOrbitFlow 3s ease-in-out infinite;
+                }
+
+                .galaxy-entry-core {
+                  fill: currentColor;
+                  transform-box: fill-box;
+                  transform-origin: center;
+                  animation: galaxyEntryCorePulse 3s ease-in-out infinite;
+                }
+
+                .galaxy-entry-spark {
                   position: absolute;
                   z-index: 0;
                   width: 2px;
                   height: 2px;
                   border-radius: 999px;
-                  background: rgba(245,243,255,0.95);
-                  box-shadow: 0 0 5px rgba(196,181,253,0.75);
+                  background: rgba(255,255,255,0.92);
+                  box-shadow: 0 0 6px rgba(196,181,253,0.82);
+                  opacity: 0;
+                  animation: galaxyEntrySparkPop 3s ease-in-out infinite;
                 }
 
-                .galaxy-entry-star-a {
-                  left: 1px;
+                .galaxy-entry-spark-a {
+                  left: 0;
                   top: 1px;
-                  animation: galaxyEntryStarDriftA 2.8s ease-in-out infinite;
+                  animation-delay: 0.1s;
                 }
 
-                .galaxy-entry-star-b {
-                  left: 4px;
-                  top: 0;
-                  animation: galaxyEntryStarDriftB 2.8s ease-in-out infinite;
+                .galaxy-entry-spark-b {
+                  right: 0;
+                  bottom: 2px;
+                  animation-delay: 0.42s;
                 }
               `}</style>
             </button>
