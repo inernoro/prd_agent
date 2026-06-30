@@ -10,15 +10,10 @@ export interface DiscoveredAppContainer {
 export function hasBranchDeleteCleanupIntent(branch: BranchEntry): boolean {
   const reason = branch.lastStopReason || '';
   if (!reason.includes('删除分支流程已开始')) return false;
-  if (
-    branch.status !== 'stopping'
-    && branch.lastStopSource !== 'system'
-    && branch.lastStopSource !== 'webhook'
-    && branch.lastStopSource !== 'cds'
-  ) {
-    return false;
-  }
-  return true;
+  if (branch.status !== 'stopping') return false;
+  return branch.lastStopSource === 'system'
+    || branch.lastStopSource === 'webhook'
+    || branch.lastStopSource === 'cds';
 }
 
 export function shouldPruneDeletedBranchStartupResidue(

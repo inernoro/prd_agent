@@ -58,6 +58,16 @@ describe('startup reconcile delete cleanup residue', () => {
     expect(shouldPruneDeletedBranchStartupResidue(remote, new Map())).toBe(false);
   });
 
+  it('requires both stopping status and an allowed delete source', () => {
+    const staleSource = branch({ status: 'error', lastStopSource: 'system' });
+    const wrongSource = branch({ status: 'stopping', lastStopSource: 'user' });
+
+    expect(hasBranchDeleteCleanupIntent(staleSource)).toBe(false);
+    expect(hasBranchDeleteCleanupIntent(wrongSource)).toBe(false);
+    expect(shouldPruneDeletedBranchStartupResidue(staleSource, new Map())).toBe(false);
+    expect(shouldPruneDeletedBranchStartupResidue(wrongSource, new Map())).toBe(false);
+  });
+
   it('does not treat a normal manual stop as delete residue', () => {
     const stopped = branch({
       status: 'idle',
