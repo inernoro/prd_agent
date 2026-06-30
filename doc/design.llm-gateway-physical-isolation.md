@@ -1,6 +1,6 @@
-# LLM 网关物理独立设计
+# LLM 网关物理独立设计 · 设计
 
-> 类型: design | 状态: 部分落地（阶段 0-2 影子模式 + CDS 命名子域已实现，灰度翻 http 进行中）| owner: inernoro | 更新: 2026-06-30
+> 类型: design | 状态: 开发中（阶段 0-2 影子模式 + CDS 命名子域已实现、预览真机跑通 serving resolve；灰度翻 http 待生产拍板）| owner: inernoro | 更新: 2026-06-30
 > 来源: 多智能体工作流(5 路勘察 → 综合 → 2 路对抗评审 → 终稿)，两评审均判 needs-revision 并已吸收
 > 关联: .claude/rules/compute-then-send.md / cross-project-isolation.md / server-authority.md / llm-gateway.md / agent-runtime-sdk-boundary.md
 

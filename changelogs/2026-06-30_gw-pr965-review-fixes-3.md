@@ -5,3 +5,6 @@
 | security | cds | llmgw-serve 与 llmgw console 同处理：CDS 预览删 `cds.path-prefix:/gw/v1/` 改 no-http-readiness，关闭已知 M2M key 的公开 /gw/v1/send 路由（防无鉴权 LLM 调用烧额度）；ApiKey 改 `${LLMGW_SERVE_API_KEY:-内网fallback}` 非仓库默认（Cursor Bugbot High） |
 | fix | prd-llmgw-web | dev 代理默认指向独立网关 console（localhost:5090，docker-compose.dev 映射 5090:8090），不再误指主 API 5000——后者无 /gw/auth/login 等 console 端点，导致 pnpm dev 登录/日志 404（Codex P2） |
 | fix | ops | _standalone.conf 8081 网关前端站 /gw-api/ 反代补 /gw/ 重写：proxy_pass 末尾带 /gw/ 把 /gw-api/auth/login 改写为后端认的 /gw/auth/login，修复原样透传导致的 404（Cursor Bugbot Medium） |
+| fix | cds | isValidServiceSubdomain 拒绝保留伪值 null/undefined/none/true/false/nan：堵住 JSON 字符串 "null" / compose label cds.subdomain:"null" 当真子域发布 <slug>-null.<root> 伪 host（Cursor Bugbot） |
+| fix | ops | docker-compose.dev.yml llmgw-web 改用 prd-llmgw-web/Dockerfile 真实构建，不再挂不存在的 ./deploy/llmgw-web/dist（空静态根导致 5590 控制台打不开）（Codex P2） |
+| docs | doc | design.llm-gateway-physical-isolation 头部补「· 设计」后缀 + 状态枚举改合法值「开发中」；debt 记 subdomain 撞项目 profile 校验缺口为波3（Cursor Bugbot / Codex P2） |

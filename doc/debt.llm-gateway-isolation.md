@@ -227,6 +227,13 @@ CDS 合并多容器能力（PR #951）后，serving 网关在 `claude/llm-schedu
      的 `llmgw-serve` 在主分支部署中时，经 master 兜底访问会拿到 HTML 等待页而非服务。正解是命名子域命中时按
      **服务级**状态路由（绕分支门控）——属路由模型变更，波3 做。**当前规避**：生产用 forwarder 模式（不受影响）；
      非 forwarder 部署等主分支就绪后命名服务即正常。
+  3. **subdomain 撞项目 profile 校验缺口**（Codex P2，PR #965，`cds/src/routes/branches.ts` 的 PUT
+     `/extra-services`）：分支 extra-service 设 `subdomain` 时只在**入参 extra-services 之间**查重，未把
+     **项目 build profiles**（也可经 `cds.subdomain` 拿到子域）seed 进 `seenSubdomains`。若 extra-service
+     复用某项目服务的 subdomain，PUT 会通过，forwarder 排序去重后只发布其一 → 命名 host 可能静默路由到错容器
+     或丢服务。**当前不修**（命名子域是波3 专项、预览内网 only 不公开路由故非可利用）；波3 随命名子域开放一起补：
+     seed `seenSubdomains` 含项目 profile 子域 + 拒绝跨项目/分支撞名。已先行加保留伪值（`null`/`undefined` 等）
+     拒绝，堵住最常见的序列化漏网（commit 见 PR #965）。
 - **Claude 流式 tool_use 未聚合**（Codex P2，PR #965）：网关把 OpenAI 风格 `tools` + `stream=true` 路由到
   Claude 模型时，`ClaudeGatewayAdapter.ParseStreamChunk` 暂未处理 Claude 的 `content_block_start` /
   `input_json_delta` 事件 → 流式函数调用拿不到 `delta.tool_calls`（非流式 `tool_use` 解析正常）。修复需在

@@ -180,12 +180,16 @@ services:
   # 独立 LLM 网关前端静态站 llmgw-web（dev）—— nginx 托管 prd-llmgw-web 构建产物。
   # 占位：静态产物挂载到 ./deploy/llmgw-web/dist；prd-llmgw-web 拆出后改为 build。
   llmgw-web:
-    image: nginx:1.27-alpine
+    # 独立网关前端站：用 prd-llmgw-web/Dockerfile 真实构建（pnpm build → nginx 托管）。
+    # 不再挂 ./deploy/llmgw-web/dist —— 该目录不存在/不入库，会让 5590 起一个空静态根，
+    # 文档化的 dev compose 流程下网关控制台打不开（Codex P2）。
+    build:
+      context: ./prd-llmgw-web
+      dockerfile: Dockerfile
+    image: prdagent-llmgw-web:dev
     container_name: prdagent-llmgw-web
     ports:
       - "5590:80"
-    volumes:
-      - ./deploy/llmgw-web/dist:/usr/share/nginx/html:ro
     depends_on:
       - llmgw
     networks:
