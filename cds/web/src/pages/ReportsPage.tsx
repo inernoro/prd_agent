@@ -156,18 +156,6 @@ export function ReportsPage(): JSX.Element {
     return { byFolder: m, unfiled, total: allReports.length };
   }, [allReports]);
 
-  // E2 验收看板：当前视图(已选文件夹/项目)下的 verdict 计数。
-  const verdictStats = useMemo(() => {
-    const s = { pass: 0, conditional: 0, fail: 0, unknown: 0, total: visibleReports.length };
-    for (const r of visibleReports) {
-      if (r.verdict === 'pass') s.pass += 1;
-      else if (r.verdict === 'conditional') s.conditional += 1;
-      else if (r.verdict === 'fail') s.fail += 1;
-      else s.unknown += 1;
-    }
-    return s;
-  }, [visibleReports]);
-
   const handleCreated = useCallback((report: AcceptanceReport) => {
     setCreateOpen(false);
     setToast(`已创建报告「${report.title}」`);
@@ -280,24 +268,10 @@ export function ReportsPage(): JSX.Element {
       )}
     >
       <Workspace wide className="cds-workspace--fill cds-workspace--fluid">
-        <div className="flex h-full min-h-0 flex-col gap-5">
-          {/* shrink-0：否则在 flex-col + h-full 容器里，加载完成后下方报告列表(flex-1)抢空间，
-              flexbox 会把没锁 shrink 的头部压扁("刷新完成头部就收缩"，2026-06-26 验收反馈)。 */}
-          <section className="cds-surface-raised cds-hairline p-4 shrink-0">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="min-w-0">
-                <h1 className="text-lg font-semibold">
-                  验收报告{projectId ? <span className="ml-2 text-sm font-normal text-muted-foreground">· {projectName || projectId}</span> : <span className="ml-2 text-sm font-normal text-muted-foreground">· 全局（CDS 自身）</span>}
-                </h1>
-              </div>
-            </div>
-            {state.status === 'ok' && verdictStats.total > 0 ? (
-              <VerdictSummary stats={verdictStats} />
-            ) : null}
-            {toast ? (
-              <div className="mt-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-sm">{toast}</div>
-            ) : null}
-          </section>
+        <div className="flex h-full min-h-0 flex-col gap-3">
+          {toast ? (
+            <div className="shrink-0 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-sm">{toast}</div>
+          ) : null}
 
           {state.status === 'loading' ? <LoadingBlock label="正在加载验收报告" /> : null}
           {state.status === 'error' ? <ErrorBlock message={state.message} transient={state.transient} /> : null}
@@ -347,49 +321,6 @@ export function ReportsPage(): JSX.Element {
         onCreated={handleCreated}
       />
     </AppShell>
-  );
-}
-
-/**
- * E2 验收看板：当前视图下 verdict 计数 + 通过率条。颜色为自包含状态胶囊
- * (绿/琥珀/红/灰 + 白字)，两个主题下均可读，不依赖暗色背景 fallback。
- */
-function VerdictSummary({
-  stats,
-}: {
-  stats: { pass: number; conditional: number; fail: number; unknown: number; total: number };
-}): JSX.Element {
-  const judged = stats.pass + stats.conditional + stats.fail;
-  const passRate = judged > 0 ? Math.round((stats.pass / judged) * 100) : null;
-  const chips: Array<{ label: string; n: number; bg: string }> = [
-    { label: '通过', n: stats.pass, bg: '#1a7f37' },
-    { label: '有条件', n: stats.conditional, bg: '#9a6700' },
-    { label: '不通过', n: stats.fail, bg: '#b42318' },
-    { label: '未判定', n: stats.unknown, bg: '#57606a' },
-  ];
-  return (
-    <div className="mt-3 flex flex-wrap items-center gap-3">
-      <span className="text-sm text-muted-foreground">本视图 {stats.total} 份</span>
-      <div className="flex flex-wrap items-center gap-1.5">
-        {chips.filter((c) => c.n > 0).map((c) => (
-          <span
-            key={c.label}
-            className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold text-white"
-            style={{ background: c.bg }}
-          >
-            {c.label} {c.n}
-          </span>
-        ))}
-      </div>
-      {passRate !== null ? (
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold">通过率 {passRate}%</span>
-          <div className="h-1.5 w-28 overflow-hidden rounded-full bg-[hsl(var(--surface-sunken))]">
-            <div className="h-full rounded-full" style={{ width: `${passRate}%`, background: '#1a7f37' }} />
-          </div>
-        </div>
-      ) : null}
-    </div>
   );
 }
 
