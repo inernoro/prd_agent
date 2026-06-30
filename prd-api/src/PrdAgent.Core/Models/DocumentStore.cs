@@ -92,7 +92,7 @@ public class DocumentStore
     /// <summary>系统互联同步状态：syncing / synced / error。由 Peer Sync 写入，用于列表与详情页标识。</summary>
     public string? PeerSyncStatus { get; set; }
 
-    /// <summary>系统互联同步方向：push / pull / both / received。</summary>
+    /// <summary>系统互联同步方向：push / pull / both / align-*。received 只是运行审计，不应写入这里。</summary>
     public string? PeerSyncDirection { get; set; }
 
     /// <summary>最近一次系统互联同步的对端节点 ID。</summary>
