@@ -1807,8 +1807,9 @@ export interface SelfUpdateRecord {
    *   - 'restart':   完整 validate + systemd 重启(~70-95s,默认)
    *   - 'noOp':      HEAD 已与 dist 一致,啥都没做(~3s)
    *   - 'web-only':  改动只触前端,只重 web/dist,daemon 不重启
-   *   - 'doc-only':  改动只触文档/changelogs,完全 noop */
-  updateMode?: 'hot-reload' | 'restart' | 'noOp' | 'web-only' | 'doc-only';
+   *   - 'doc-only':  改动只触文档/changelogs,完全 noop
+   *   - 'prebuilt':  命中 CI 预构建产物,跳过本机编译 */
+  updateMode?: 'hot-reload' | 'restart' | 'noOp' | 'web-only' | 'doc-only' | 'prebuilt';
   /** 结构化耗时明细。用于复查"每次慢在哪里",避免只能解析 steps 文本。
    *  常见字段:fetchMs/pullMs/validateMs/buildBackendMs/webBuildMs/totalMs,
    *  validate 内含 install_cds_ms/tsc_web_ms 等 validateBuildReadiness 原始计时。 */
