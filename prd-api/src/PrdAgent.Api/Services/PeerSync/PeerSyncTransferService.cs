@@ -593,9 +593,8 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
         var update = Builders<PeerSyncRun>.Update
             .Set(r => r.ProgressPhase, phase)
             .Set(r => r.ProgressCurrent, safeTotal > 0 ? Math.Min(safeCurrent, safeTotal) : safeCurrent)
-            .Set(r => r.ProgressTotal, safeTotal);
-        if (currentRecordTitle != null)
-            update = update.Set(r => r.CurrentRecordTitle, currentRecordTitle);
+            .Set(r => r.ProgressTotal, safeTotal)
+            .Set(r => r.CurrentRecordTitle, currentRecordTitle);
 
         await _db.PeerSyncRuns.UpdateOneAsync(r => r.Id == runId, update, cancellationToken: ct);
     }

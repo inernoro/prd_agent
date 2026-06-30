@@ -15,7 +15,7 @@ import { Button } from '@/components/design/Button';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import {
   listPeerNodes, listPeerSyncRuns, transferToPeer, setAutoSync,
-  type PeerNode, type PeerSyncRun, type PeerAlign,
+  type PeerNode, type PeerSyncRun, type PeerAlign, type TransferItemResult,
 } from '@/services/real/peerSync';
 
 interface Props {
@@ -127,17 +127,18 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
   }, [onClose]);
 
   const activeRuns = useMemo(() => runs.filter(isRunActive), [runs]);
-  const problemRuns = useMemo(() => runs.filter(r => r.status === 'error' || (r.status === 'syncing' && !isRunActive(r))), [runs]);
+  const problemRuns = useMemo(() => runs.filter(r => isProblemRun(r, runs)), [runs]);
   const latestRun = runs[0] || null;
-  const displayNodeName = peerNodeName || activeNodeName(nodes, nodeId) || latestRun?.peerNodeName || '对端节点';
-  const routeText = syncRouteText(peerSyncDirection, displayNodeName);
+  const manualTargetName = activeNodeName(nodes, nodeId) || '对端节点';
+  const routeNodeName = peerNodeName || latestRun?.peerNodeName || manualTargetName;
+  const routeText = syncRouteText(peerSyncDirection, routeNodeName);
   const autoDirectionNeedsConfirm = shouldConfirmAutoDirection(peerSyncDirection);
 
   const filtered = useMemo(() => {
     const records = runs.filter(r => !isRunActive(r));
     if (recordFilter === 'mine') return records.filter(r => r.origin === 'outgoing');
     if (recordFilter === 'received') return records.filter(r => r.origin === 'incoming');
-    if (recordFilter === 'failed') return records.filter(r => r.status === 'error' || (r.status === 'syncing' && !isRunActive(r)));
+    if (recordFilter === 'failed') return records.filter(r => isProblemRun(r, runs));
     return records;
   }, [runs, recordFilter]);
 
@@ -145,7 +146,7 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
     all: runs.filter(r => !isRunActive(r)).length,
     mine: runs.filter(r => !isRunActive(r) && r.origin === 'outgoing').length,
     received: runs.filter(r => !isRunActive(r) && r.origin === 'incoming').length,
-    failed: runs.filter(r => r.status === 'error' || (r.status === 'syncing' && !isRunActive(r))).length,
+    failed: runs.filter(r => isProblemRun(r, runs)).length,
   }), [runs]);
 
   const activeNode = nodes.find(n => n.id === nodeId) || null;
@@ -157,10 +158,15 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
     const res = await transferToPeer({ nodeId, resourceType, itemIds: [storeId], direction, mode: 'overwrite' });
     if (!mounted.current) return;
     setSubmitting(false);
-    if (res.success) {
+    const businessError = getTransferFailureMessage(res.success ? res.data : undefined);
+    if (res.success && !businessError) {
       setRecordFilter('all');
       await loadRuns();
       onAfterSync?.();
+    } else if (res.success) {
+      setRecordFilter('failed');
+      setError(businessError || '同步失败');
+      await loadRuns();
     } else {
       setError(res.error?.message || '同步失败');
     }
@@ -174,10 +180,15 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
     const res = await transferToPeer({ nodeId, resourceType, itemIds: [storeId], align });
     if (!mounted.current) return;
     setSubmitting(false);
-    if (res.success) {
+    const businessError = getTransferFailureMessage(res.success ? res.data : undefined);
+    if (res.success && !businessError) {
       setRecordFilter('all');
       await loadRuns();
       onAfterSync?.();
+    } else if (res.success) {
+      setRecordFilter('failed');
+      setError(businessError || '对齐失败');
+      await loadRuns();
     } else {
       setError(res.error?.message || '对齐失败');
     }
@@ -332,10 +343,10 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
                         </select>
                       )}
                       <Button size="sm" variant="primary" onClick={() => runManual('push')} disabled={submitting || nodes.length === 0}>
-                        {submitting ? <MapSpinner size={13} /> : <ArrowRight size={13} />} 发送到{displayNodeName}
+                        {submitting ? <MapSpinner size={13} /> : <ArrowRight size={13} />} 发送到{manualTargetName}
                       </Button>
                       <Button size="sm" variant="secondary" onClick={() => runManual('pull')} disabled={submitting || nodes.length === 0}>
-                        <ArrowLeft size={13} /> 从{displayNodeName}拉回
+                        <ArrowLeft size={13} /> 从{manualTargetName}拉回
                       </Button>
                       <Button size="sm" variant={showAlign ? 'primary' : 'secondary'} onClick={() => setShowAlign(v => !v)} disabled={nodes.length === 0}>
                         <Scale size={13} /> 高级对齐
@@ -581,6 +592,35 @@ function statusMeta(s: string): { label: string; color: string; bg: string; bord
 
 function activeNodeName(nodes: PeerNode[], nodeId: string): string | null {
   return nodes.find(n => n.id === nodeId)?.displayName || null;
+}
+
+function runIdentity(r: Pick<PeerSyncRun, 'itemId' | 'direction' | 'origin'>): string {
+  return `${r.itemId}::${r.origin}::${r.direction}`;
+}
+
+function runStartedAt(r: Pick<PeerSyncRun, 'startedAt'>): number {
+  const t = new Date(r.startedAt).getTime();
+  return Number.isNaN(t) ? 0 : t;
+}
+
+export function isProblemRun(run: PeerSyncRun, allRuns: PeerSyncRun[]): boolean {
+  const stale = run.status === 'syncing' && !isRunActive(run);
+  if (run.status !== 'error' && !stale) return false;
+  const identity = runIdentity(run);
+  const startedAt = runStartedAt(run);
+  return !allRuns.some(other =>
+    other.id !== run.id
+    && runIdentity(other) === identity
+    && runStartedAt(other) > startedAt
+    && (other.status === 'synced' || other.status === 'skipped'));
+}
+
+export function getTransferFailureMessage(data: { anyFail?: boolean; results?: TransferItemResult[] } | null | undefined): string | null {
+  if (!data?.anyFail) return null;
+  const failed = data.results?.find(r => !r.ok);
+  if (!failed) return '同步未完成，部分条目失败';
+  const name = failed.name || failed.itemId || '当前知识库';
+  return failed.message ? `${name}：${failed.message}` : `${name}：同步未完成`;
 }
 
 export function syncRouteText(direction: string | null | undefined, nodeName: string): string {

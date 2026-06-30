@@ -35,6 +35,7 @@ export interface SyncItemSummary {
 
 export interface TransferItemResult {
   itemId: string;
+  name?: string;
   ok: boolean;
   message?: string;
   created?: number;
