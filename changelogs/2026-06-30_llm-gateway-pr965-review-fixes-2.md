@@ -13,3 +13,5 @@
 | fix | prd-api | 影子 resolve 比对改用 GetEffectiveExpectedModel（含 RequestBody[model] 回退），消除 model 只放 body 时的假阳性 critical mismatch |
 | fix | scripts | 去除 gw-matrix 报告脚本测试向量里的 emoji/符号（U+2728 / U+2713），换非 emoji 非 ASCII 样本（拉丁重音/CJK），合规规则 §0 |
 | docs | ops | debt 记录 Claude OpenAI 兼容工具链不完整（流式 tool_use/tool_choice:none/tool_result 多轮三处合并波3 专项） |
+| fix | prd-api | 影子比对在 inproc 改写 body[model] 前捕获有效期望模型（send/stream/full-send），修复 http 探针拿到 inproc 答案当输入导致永远 match、影子形同虚设 |
+| fix | prd-api | HttpLlmClient 三参 StreamGenerateAsync 重载改用默认 prompt-cache 开关（与 inproc 一致默认 true），修复 http 模式静默丢 Claude prompt-cache 头抬高时延/成本 |

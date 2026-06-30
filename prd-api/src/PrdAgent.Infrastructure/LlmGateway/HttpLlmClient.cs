@@ -24,6 +24,9 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
     private readonly double _temperature;
     private readonly bool _includeThinking;
     private readonly string? _expectedModel;
+    // 默认 prompt-cache 开关：与进程内 GatewayLLMClient 对齐（CreateClient 默认 true）。三参 StreamGenerateAsync
+    // 重载（不显式传 enablePromptCache）走这个默认值，否则 http 模式会静默丢掉 Claude prompt-cache 头、抬高时延/成本。
+    private readonly bool _defaultEnablePromptCache;
     private readonly JsonSerializerOptions _jsonOpts;
     private readonly ILogger _logger;
     private readonly ILLMRequestContextAccessor? _ctxAccessor;
@@ -40,7 +43,8 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
         string? expectedModel,
         JsonSerializerOptions jsonOpts,
         ILogger logger,
-        ILLMRequestContextAccessor? ctxAccessor = null)
+        ILLMRequestContextAccessor? ctxAccessor = null,
+        bool defaultEnablePromptCache = true)
     {
         _httpFactory = httpFactory;
         _baseUrl = baseUrl;
@@ -54,6 +58,7 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
         _jsonOpts = jsonOpts;
         _logger = logger;
         _ctxAccessor = ctxAccessor;
+        _defaultEnablePromptCache = defaultEnablePromptCache;
     }
 
     public string Provider => "gateway-http";
@@ -62,7 +67,7 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
         string systemPrompt,
         List<LLMMessage> messages,
         CancellationToken cancellationToken = default)
-        => StreamGenerateAsync(systemPrompt, messages, enablePromptCache: false, cancellationToken);
+        => StreamGenerateAsync(systemPrompt, messages, enablePromptCache: _defaultEnablePromptCache, cancellationToken);
 
     public async IAsyncEnumerable<LLMStreamChunk> StreamGenerateAsync(
         string systemPrompt,

@@ -61,13 +61,14 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     {
         if (RouteToHttp(request.AppCallerCode))
             return await _http.SendAsync(request, ct);       // 已灰度：http 权威
+        // 关键：在 inproc 改写 request.RequestBody["model"] 为其选中的实际模型**之前**捕获有效期望模型。
+        // 否则影子 http 探针拿到的是 inproc 的答案当输入 → 永远 match，影子比对形同虚设（评审 P2）。
+        var expectedModel = request.GetEffectiveExpectedModel();
         var inproc = await _inproc.SendAsync(request, ct);
         if (SampleHit())
-            FireFullSendCompare(request, inproc);            // 采样：完整 send 比对（2x 打模型，有界）
+            FireFullSendCompare(request, inproc, expectedModel);  // 采样：完整 send 比对（2x 打模型，有界）
         else
-            // 用有效期望模型（含 RequestBody["model"] 回退）——inproc 解析即用它，否则 model 只放 body 时
-            // 影子 resolve 收到 null 会误报 critical mismatch（假阳性污染影子证据）。
-            FireResolveCompare(request.AppCallerCode, request.ModelType, request.GetEffectiveExpectedModel(), inproc.Resolution, "send");
+            FireResolveCompare(request.AppCallerCode, request.ModelType, expectedModel, inproc.Resolution, "send");
         return inproc;
     }
 
@@ -80,6 +81,9 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 yield return chunk;
             yield break;
         }
+        // 同 send：inproc 流会改写 request.RequestBody["model"]，必须在开流**之前**捕获原始有效期望模型，
+        // 否则影子探针拿到 inproc 选中的模型当输入 → 永远 match（评审 P2）。
+        var expectedModel = request.GetEffectiveExpectedModel();
         GatewayModelResolution? startResolution = null;
         await foreach (var chunk in _inproc.StreamAsync(request, ct))
         {
@@ -88,8 +92,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             yield return chunk;
         }
         // 流式只做免费 resolve 比对（不重发 http 流，绝不 2x 打大模型）。
-        // 同 send：传有效期望模型（含 RequestBody["model"] 回退），避免 model 只在 body 时影子误报 critical。
-        FireResolveCompare(request.AppCallerCode, request.ModelType, request.GetEffectiveExpectedModel(), startResolution, "stream");
+        FireResolveCompare(request.AppCallerCode, request.ModelType, expectedModel, startResolution, "stream");
     }
 
     public async Task<GatewayModelResolution> ResolveModelAsync(
@@ -162,12 +165,20 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         });
     }
 
-    private void FireFullSendCompare(GatewayRequest request, GatewayResponse inproc)
+    private void FireFullSendCompare(GatewayRequest request, GatewayResponse inproc, string? expectedModel)
     {
         if (_writer == null) return;
         var requestId = _ctx?.Current?.RequestId;
         SafeRun(async () =>
         {
+            // inproc 已把 request.RequestBody["model"] 改写为其选中模型。http 全量发送前把 body model 恢复成
+            // **原始有效期望模型**（有则写回、无则移除），让 http 独立解析——否则 http 被锁到 inproc 的选择，
+            // 全量比对（含 resolution 字段）也失真（评审 P2，与 resolve 探针同根）。
+            if (request.RequestBody != null)
+            {
+                if (expectedModel != null) request.RequestBody["model"] = expectedModel;
+                else request.RequestBody.Remove("model");
+            }
             var sw = Stopwatch.StartNew();
             GatewayResponse? http = null;
             string? httpErr = null;
