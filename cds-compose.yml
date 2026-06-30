@@ -110,6 +110,54 @@ x-cds-deploy-modes:
         - "ghcr.io/inernoro/prd_agent/prdagent-admin:branch-main"
       prebuilt: true
       containerPort: 8080
+  # 独立 LLM 网关后端 llmgw —— 自包含 ASP.NET 服务，读共享 Mongo 做观测 + 独立账号。
+  # 预览域名 /gw/* 路由到本服务（见 services.llmgw 的 cds.path-prefix）。
+  llmgw:
+    dev:
+      label: "开发模式 (dotnet run)"
+      command: >-
+        cd /repo/prd-llmgw &&
+        rm -rf bin obj &&
+        dotnet restore &&
+        dotnet run --no-launch-profile -c Release --urls http://0.0.0.0:8090
+    express:
+      label: "极速版（CI 预构建）"
+      # 无 command：使用镜像自带 ENTRYPOINT（dotnet prd-llmgw.dll）。
+      image: "ghcr.io/inernoro/prd_agent/prdagent-llmgw:sha-${CDS_COMMIT_SHA}"
+      # 回退链同 api/admin：① 本分支最近一次构建（branch-<slug>）② 固定主分支镜像（branch-main）。
+      # 本 PR 合入后 main 即构建 prdagent-llmgw，branch-main 生效；防止只改 prd-admin/doc 的分支
+      # （CI 路径过滤未构建 llmgw）选极速版时 sha/branch-<slug> 都缺、拉不到任何镜像。
+      fallbackImage:
+        - "ghcr.io/inernoro/prd_agent/prdagent-llmgw:branch-${CDS_BRANCH_SLUG}"
+        - "ghcr.io/inernoro/prd_agent/prdagent-llmgw:branch-main"
+      prebuilt: true
+      containerPort: 8090
+      env:
+        ASPNETCORE_ENVIRONMENT: Production
+        ASPNETCORE_URLS: "http://+:8090"
+  # 独立 LLM serving 网关 llmgw-serve —— DI 承载现有 LlmGateway/ModelResolver，HTTP 暴露 /gw/v1/*。
+  # 安全：CDS 预览**不公开 path-route** 本服务（见下 services 块 no-http-readiness）；仅内网可达，
+  # api 经 docker 名 http://llmgw-serve:8091 调用。公开命名 URL 属波3 专项。
+  llmgw-serve:
+    dev:
+      label: "开发模式 (dotnet run)"
+      command: >-
+        cd /repo/prd-api/src/PrdAgent.LlmGateway &&
+        rm -rf bin obj &&
+        dotnet restore &&
+        dotnet run --no-launch-profile -c Release --urls http://0.0.0.0:8091
+    express:
+      label: "极速版（CI 预构建）"
+      image: "ghcr.io/inernoro/prd_agent/prdagent-llmgw-serve:sha-${CDS_COMMIT_SHA}"
+      # 回退链同 api/admin：branch-<slug> → branch-main（防只改非 prd-api 的分支选极速版拉不到镜像）。
+      fallbackImage:
+        - "ghcr.io/inernoro/prd_agent/prdagent-llmgw-serve:branch-${CDS_BRANCH_SLUG}"
+        - "ghcr.io/inernoro/prd_agent/prdagent-llmgw-serve:branch-main"
+      prebuilt: true
+      containerPort: 8091
+      env:
+        ASPNETCORE_ENVIRONMENT: Production
+        ASPNETCORE_URLS: "http://+:8091"
 services:
   # ── App Services (有相对路径 volume mount) ──
 
@@ -141,6 +189,11 @@ services:
       MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
       MongoDB__DatabaseName: prdagent
       Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT}"
+      # 网关跨进程：把 LlmGateway:Mode 切 http/shadow（profile override）时，HttpLlmGatewayClient 需要
+      # 与 llmgw-serve 同一把 M2M key + serving 地址，否则 X-Gateway-Key 为空 → serving 401（Cursor Bugbot）。
+      # Mode 默认 inproc，不切就不会用到这两项；切了即就位。serving 地址用 profile-id 网络别名。
+      LlmGwServe__ApiKey: "${LLMGW_SERVE_API_KEY:-llmgw-serve-cds-preview-internal-4d8b1e3a}"
+      LlmGateway__ServeBaseUrl: "http://llmgw-serve-prd-agent:8091"
       # Jwt__Secret 由全局 x-cds-env.JWT_SECRET 自动注入，不在此声明
       Jwt__Issuer: prdagent
       ClaudeSdkExecutor__Enabled: "true"
@@ -186,6 +239,84 @@ services:
       # 按 base label 取两模式上限：static 冷构建留足余量，dev 秒起也不受影响。
       cds.readiness-timeout: "1200"
       cds.readiness-interval: "3"
+
+  # 独立 LLM 网关后端 llmgw（默认 dotnet run 源码模式；CDS 可切 express 拉预构建镜像）。
+  # 与 api 同连一份 CDS 托管 Mongo（读 llmrequestlogs 观测），独立 JWT 账号体系。
+  llmgw:
+    image: mcr.microsoft.com/dotnet/sdk:8.0
+    working_dir: /repo
+    volumes:
+      - .:/repo
+      - api-nuget-cache:/root/.nuget/packages
+    ports:
+      - "8090"
+    command: >-
+      cd /repo/prd-llmgw &&
+      rm -rf bin obj &&
+      dotnet restore &&
+      dotnet run --no-launch-profile -c Release --urls http://0.0.0.0:8090
+    depends_on:
+      mongodb: { condition: service_healthy }
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
+      MongoDB__DatabaseName: prdagent
+      # 网关自身鉴权密钥：`${VAR:-fallback}` 形——CDS env 有 LLMGW_JWT_SECRET / LLMGW_ADMIN_PASSWORD 时用真实值
+      # （公开暴露 P2 时在 CDS 钉强随机 secret），否则用**非仓库默认**的内网 fallback。
+      # 不能用仓库固定 dev 默认值（llmgw-admin-2026）——prd-llmgw/Program.cs 生产守卫会拒绝「Production + 仓库默认
+      # admin 密码」→ 容器启动即 exit、no-http-readiness 永不就绪、部署判失败（Codex P1）。fallback != dev 默认、过守卫；
+      # 内网 only 故固定 fallback 足够（无公开路由）。
+      LlmGwJwt__Secret: "${LLMGW_JWT_SECRET:-llmgw-jwt-cds-preview-internal-9f3a2c7e1b2d4f6}"
+      LlmGwJwt__Issuer: prdagent-llmgw
+      # 账户体系走环境变量，与 CDS dashboard 同账号密码（用户指定 2026-06-30）。bare `${CDS_USERNAME}`/
+      # `${CDS_PASSWORD}` **不带 `:-fallback`**：compose-parser.singlePassResolve 解析顺序为
+      # customEnv ?? process.env ?? default，CDS master 进程的 process.env.CDS_USERNAME/CDS_PASSWORD
+      # （server.ts:1646 CDS 自身 basic 登录同源）即被读入 → 网关 console 登录与 CDS 完全一致、无第二份口令、
+      # 无需把密码写进 _global 或仓库。去掉旧 `:-内网fallback` 是关键修复：那个默认值是**静默分叉源**——
+      # process.env 缺失时 console 落到一个与 CDS 不同的密码，用户拿 CDS 账号登录网关会失败（用户已指出此缺陷）。
+      # 边界：CDS 若未配 basic 账号（process.env 无此二值），missingEnvTemplates 在部署前抛
+      # 「环境变量模板缺少值: CDS_PASSWORD, CDS_USERNAME」= fail-closed 明确报错，而非静默用错密码（一致或显式失败）。
+      LLMGW_ADMIN_USER: "${CDS_USERNAME}"
+      LLMGW_ADMIN_PASSWORD: "${CDS_PASSWORD}"
+    labels:
+      # 安全：CDS 预览**不公开 path-route** 网关 console。它用固定占位 admin 密码 + JWT 密钥，若对外
+      # 路由到 `/gw/`，任何可达 *.miduo.org 预览的人都能用已知密码登录读 LLM 日志（提示词/回答）。
+      # 故只在项目内网起容器（api 经 docker 名 http://llmgw:8090 内部可达），不发布公开路由；
+      # no-http-readiness 让 CDS 不经公开路由探活。公开命名 URL + per-deploy 生成密钥 + 访问控制属波3 专项。
+      cds.no-http-readiness: "true"
+
+  # 独立 LLM serving 网关 llmgw-serve（DI 承载现有 LlmGateway/ModelResolver，HTTP 暴露 /gw/v1/*）。
+  # 与 api 同连一份 CDS 托管 Mongo；resolve 解密平台 key 用全局 x-cds-env.ApiKeyCrypto__Secret，
+  # 日志写入用全局 TENCENT_COS_*（CDS 自动注入所有容器，无需在此重复声明）。
+  llmgw-serve:
+    image: mcr.microsoft.com/dotnet/sdk:8.0
+    working_dir: /repo
+    volumes:
+      - .:/repo
+      - api-nuget-cache:/root/.nuget/packages
+    ports:
+      - "8091"
+    command: >-
+      cd /repo/prd-api/src/PrdAgent.LlmGateway &&
+      rm -rf bin obj &&
+      dotnet restore &&
+      dotnet run --no-launch-profile -c Release --urls http://0.0.0.0:8091
+    depends_on:
+      mongodb: { condition: service_healthy }
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
+      MongoDB__DatabaseName: prdagent
+      # 内部 M2M 共享密钥门。仅内网可达（无公开路由），api 经 docker 名 http://llmgw-serve:8091 调用；
+      # `${VAR:-fallback}` 形——CDS env 有 LLMGW_SERVE_API_KEY 时用真实值（公开暴露 P2 时钉强随机），
+      # 否则用非仓库默认的内网 fallback。预览默认 LlmGateway:Mode=inproc，api 根本不调本服务。
+      LlmGwServe__ApiKey: "${LLMGW_SERVE_API_KEY:-llmgw-serve-cds-preview-internal-4d8b1e3a}"
+    labels:
+      # 安全：与 llmgw console 同处理——CDS 预览**不公开 path-route** serving 网关。它用固定占位 M2M key，
+      # 若对外路由到 `/gw/v1/`，任何可达 *.miduo.org 预览的人都能用已知 key 调 /gw/v1/send 烧 provider 额度
+      # （无鉴权 LLM 调用）。故只在项目内网起容器（api 经 docker 名 http://llmgw-serve:8091 内部可达），
+      # 不发布公开路由；no-http-readiness 让 CDS 不经公开路由探活。公开命名 URL + per-deploy 生成密钥属波3 专项。
+      cds.no-http-readiness: "true"
 
   # ── Infrastructure Services (无相对路径 mount) ──
 

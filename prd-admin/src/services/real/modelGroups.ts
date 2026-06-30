@@ -6,7 +6,7 @@ import type {
   UpdateModelGroupRequest,
   ModelGroupMonitoringData,
   ModelGroupUsageApp,
-  PoolPrediction,
+  ModelGroupHealthOverview,
 } from '../../types/modelGroup';
 import type { IModelGroupsService } from '../contracts/modelGroups';
 import { useAuthStore } from '@/stores/authStore';
@@ -70,6 +70,18 @@ export class ModelGroupsService implements IModelGroupsService {
       throw new Error(json.error?.message || `获取模型分组失败: ${res.status}`);
     }
     return { ...json, data: (json.data ?? []).map((g: any) => mapGroupFromApi(g)) };
+  }
+
+  async getModelGroupHealthOverview(days?: number): Promise<ApiResponse<ModelGroupHealthOverview>> {
+    const res = await fetch(api.mds.modelGroups.healthOverview(days), {
+      headers: getAuthHeaders(),
+    });
+
+    const json = await readApiJson<ModelGroupHealthOverview>(res);
+    if (!res.ok || !json.success) {
+      throw new Error(json.error?.message || `获取模型池健康总览失败: ${res.status}`);
+    }
+    return json;
   }
 
   async getModelGroupsForApp(appCallerCode: string | null, modelType: string): Promise<ApiResponse<ModelGroupForApp[]>> {
@@ -287,18 +299,6 @@ export class ModelGroupsService implements IModelGroupsService {
     const json = await readApiJson<void>(res);
     if (!res.ok || !json.success) {
       throw new Error(json.error?.message || `重置所有模型健康状态失败: ${res.status}`);
-    }
-    return json;
-  }
-
-  async predictNextDispatch(groupId: string): Promise<ApiResponse<PoolPrediction>> {
-    const res = await fetch(api.mds.modelGroups.predict(groupId), {
-      headers: getAuthHeaders(),
-    });
-
-    const json = await readApiJson<PoolPrediction>(res);
-    if (!res.ok || !json.success) {
-      throw new Error(json.error?.message || `获取调度预测失败: ${res.status}`);
     }
     return json;
   }

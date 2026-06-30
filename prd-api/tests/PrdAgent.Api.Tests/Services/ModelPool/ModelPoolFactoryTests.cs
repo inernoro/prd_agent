@@ -125,7 +125,7 @@ public class ModelPoolFactoryTests
         {
             Id = "pool-1",
             Name = "Factory Test Pool",
-            StrategyType = 2, // Sequential
+            StrategyType = 2, // 存量字段保留，但调度已化简为只有 FailFast
             Models = new List<ModelGroupItem>
             {
                 new() { ModelId = "gpt-4o", PlatformId = "plat-1", Priority = 1 },
@@ -140,7 +140,8 @@ public class ModelPoolFactoryTests
         var config = pool.GetConfig();
         Assert.Equal("pool-1", config.PoolId);
         Assert.Equal("Factory Test Pool", config.PoolName);
-        Assert.Equal(PoolStrategyType.Sequential, config.Strategy);
+        // 工厂一律按 FailFast 构建，忽略 group.StrategyType
+        Assert.Equal(PoolStrategyType.FailFast, config.Strategy);
         Assert.Equal(2, config.Endpoints.Count);
     }
 
@@ -175,14 +176,12 @@ public class ModelPoolFactoryTests
     }
 
     [Theory]
-    [InlineData(0, PoolStrategyType.FailFast)]
-    [InlineData(1, PoolStrategyType.Race)]
-    [InlineData(2, PoolStrategyType.Sequential)]
-    [InlineData(3, PoolStrategyType.RoundRobin)]
-    [InlineData(4, PoolStrategyType.WeightedRandom)]
-    [InlineData(5, PoolStrategyType.LeastLatency)]
-    public void Create_AllStrategyTypes_ShouldWork(int strategyInt, PoolStrategyType expected)
+    [InlineData(0)] // FailFast
+    [InlineData(2)] // 存量 Sequential 值
+    [InlineData(5)] // 存量 LeastLatency 值
+    public void Create_AnyStoredStrategyType_AlwaysBuildsFailFast(int strategyInt)
     {
+        // 调度已化简：无论 group.StrategyType 存的是哪个历史值，工厂一律构建 FailFast 池。
         var platforms = new List<LLMPlatform>
         {
             new()
@@ -207,6 +206,6 @@ public class ModelPoolFactoryTests
         var factory = new ModelPoolFactory(httpDispatcher);
         var pool = factory.Create(group, platforms, "test-secret");
 
-        Assert.Equal(expected, pool.GetConfig().Strategy);
+        Assert.Equal(PoolStrategyType.FailFast, pool.GetConfig().Strategy);
     }
 }

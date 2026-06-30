@@ -4,7 +4,7 @@ namespace PrdAgent.Core.Models;
 /// 跨节点同步运行记录（MAP 知识库传输协议的历史台账）。
 ///
 /// 每发起一次 push / pull / both / 强制对齐，或被对端 apply（incoming）都落一条，
-/// 供「同步中心」展示「进行中 / 发出去 / 收进来 / 历史」四视图。
+/// 供「同步中心」展示当前状态、问题记录和最近审计。
 /// 与 DocumentSyncLog（订阅源逐文件变化）是两回事：本表记录的是节点间整库互传。
 /// </summary>
 public class PeerSyncRun
@@ -22,7 +22,7 @@ public class PeerSyncRun
 
     /// <summary>
     /// 同步方向 / 动作：
-    /// push（发出去）/ pull（收进来）/ both（双向）/ received（对端推来）/
+    /// push（发送到对端）/ pull（从对端拉回）/ both（双向）/ received（接收审计）/
     /// align-remote（强制对齐·远端为准）/ align-local（强制对齐·本地为准）/ align-both（强制对齐·同时对准）。
     /// </summary>
     public string Direction { get; set; } = string.Empty;
@@ -51,6 +51,18 @@ public class PeerSyncRun
     public int AssetsRewritten { get; set; }
     public int AssetRewriteFailed { get; set; }
 
+    /// <summary>当前阶段：准备导出 / 发送到对端 / 从对端拉取 / 本地写入 / 已完成。</summary>
+    public string? ProgressPhase { get; set; }
+
+    /// <summary>当前已处理记录数。知识库场景下对应已处理文档 / 文件夹数量。</summary>
+    public int ProgressCurrent { get; set; }
+
+    /// <summary>本轮待处理记录总数。未知时为 0。</summary>
+    public int ProgressTotal { get; set; }
+
+    /// <summary>当前正在处理的记录标题。</summary>
+    public string? CurrentRecordTitle { get; set; }
+
     /// <summary>人类可读摘要。</summary>
     public string? Message { get; set; }
 
@@ -70,7 +82,7 @@ public class PeerSyncRun
 
 public static class PeerSyncOrigin
 {
-    /// <summary>本端用户发起（发出去 / 拉取 / 对齐）。</summary>
+    /// <summary>本端用户发起（发送 / 拉取 / 对齐）。</summary>
     public const string Outgoing = "outgoing";
 
     /// <summary>对端节点推来（被 apply）。</summary>

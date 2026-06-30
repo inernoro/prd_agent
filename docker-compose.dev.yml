@@ -145,6 +145,56 @@ services:
     networks:
       - prdagent-network
 
+  # 独立 LLM 网关服务 llmgw（dev）—— 自包含 prd-llmgw 项目（不引用 PrdAgent.*，仅 NuGet）。
+  # 提供 /gw/healthz、/gw/auth/login、/gw/logs，监听 8090，宿主映射 5090。构建上下文与 CI
+  # （branch-image.yml: context ./prd-llmgw）一致——不能再复用 api 镜像，否则跑的是 PrdAgent.Api.dll、/gw/* 全缺。
+  llmgw:
+    build:
+      context: ./prd-llmgw
+      dockerfile: Dockerfile
+    image: prdagent-llmgw:dev
+    container_name: prdagent-llmgw
+    ports:
+      - "5090:8090"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8090
+      - MongoDB__ConnectionString=mongodb://mongodb:27017
+      - MongoDB__DatabaseName=prdagent
+      - Redis__ConnectionString=redis:6379
+      # 平台 API key 密文解密密钥：必须与 api 一致，否则网关读不出已加密的平台 key
+      - ApiKeyCrypto__Secret=${API_KEY_CRYPTO_SECRET:-YourApiKeyCryptoSecretForLocalDev2026!}
+      - ApiKeyCrypto__LegacySecrets=${API_KEY_CRYPTO_LEGACY_SECRETS:-}
+      # 网关自身鉴权密钥：独立于 api 的 JWT_SECRET（跨服务隔离）
+      - LlmGwJwt__Secret=${LLMGW_JWT_SECRET:-YourLlmGwJwtSecretForLocalDev2026!}
+      - LlmGwJwt__Issuer=prdagent-llmgw
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      - mongodb
+      - redis
+    networks:
+      - prdagent-network
+
+  # 独立 LLM 网关前端静态站 llmgw-web（dev）—— nginx 托管 prd-llmgw-web 构建产物。
+  # 占位：静态产物挂载到 ./deploy/llmgw-web/dist；prd-llmgw-web 拆出后改为 build。
+  llmgw-web:
+    # 独立网关前端站：用 prd-llmgw-web/Dockerfile 真实构建（pnpm build → nginx 托管）。
+    # 不再挂 ./deploy/llmgw-web/dist —— 该目录不存在/不入库，会让 5590 起一个空静态根，
+    # 文档化的 dev compose 流程下网关控制台打不开（Codex P2）。
+    build:
+      context: ./prd-llmgw-web
+      dockerfile: Dockerfile
+    image: prdagent-llmgw-web:dev
+    container_name: prdagent-llmgw-web
+    ports:
+      - "5590:80"
+    depends_on:
+      - llmgw
+    networks:
+      - prdagent-network
+
 volumes:
   mongodb_data:
   redis_data:

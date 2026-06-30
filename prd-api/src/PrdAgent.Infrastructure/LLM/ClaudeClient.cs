@@ -238,9 +238,13 @@ public class ClaudeClient : ILLMClient
                     StartedAt: startedAt,
                     PlatformId: _platformId,
                     PlatformName: _platformName,
+                    // 协议绑模型：ClaudeClient 本身即"claude 协议"的发送端，权威标注（观测性 C′）。
+                    Protocol: "claude",
+                    ResolutionReason: ctx?.ModelResolutionType != null ? "protocol-from-claude-client" : null,
                     ModelResolutionType: ctx?.ModelResolutionType,
                     ModelGroupId: ctx?.ModelGroupId,
-                    ModelGroupName: ctx?.ModelGroupName),
+                    ModelGroupName: ctx?.ModelGroupName,
+                    IsStreaming: true),
                 cancellationToken);
         }
 
@@ -259,6 +263,7 @@ public class ClaudeClient : ILLMClient
         var assembledChars = 0;
         var answerSb = new StringBuilder(capacity: 1024);
         var answerMaxChars = LlmLogLimits.DefaultAnswerMaxChars;
+        string? finishReason = null; // 观测性 C′：捕获 message_delta 的 stop_reason 落日志
         using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
 
         try
@@ -316,6 +321,9 @@ public class ClaudeClient : ILLMClient
                     break;
 
                 var eventData = JsonSerializer.Deserialize(data, LLMJsonContext.Default.ClaudeStreamEvent);
+
+                if (eventData?.Type == "message_delta" && !string.IsNullOrEmpty(eventData.Delta?.StopReason))
+                    finishReason = eventData.Delta!.StopReason;
 
                 if (eventData?.Type == "content_block_delta" && eventData.Delta?.Text != null)
                 {
@@ -398,7 +406,8 @@ public class ClaudeClient : ILLMClient
                         AssembledTextHash: hash,
                         Status: status,
                         EndedAt: endedAt,
-                        DurationMs: (long)(endedAt - startedAt).TotalMilliseconds));
+                        DurationMs: (long)(endedAt - startedAt).TotalMilliseconds,
+                        FinishReason: finishReason));
             }
         }
     }

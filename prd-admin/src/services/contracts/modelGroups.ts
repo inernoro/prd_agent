@@ -6,7 +6,7 @@ import type {
   UpdateModelGroupRequest,
   ModelGroupMonitoringData,
   ModelGroupUsageApp,
-  PoolPrediction,
+  ModelGroupHealthOverview,
 } from '../../types/modelGroup';
 
 export interface IModelGroupsService {
@@ -14,6 +14,11 @@ export interface IModelGroupsService {
    * 获取模型分组列表
    */
   getModelGroups(modelType?: string): Promise<ApiResponse<ModelGroup[]>>;
+
+  /**
+   * 只读：模型池健康 + fallback 率告警总览（默认近 7 天）
+   */
+  getModelGroupHealthOverview(days?: number): Promise<ApiResponse<ModelGroupHealthOverview>>;
 
   /**
    * 按应用标识获取模型分组列表（按优先级排序：专属池 > 默认池 > 传统配置）
@@ -79,11 +84,6 @@ export interface IModelGroupsService {
     platformId: string,
     successCount: number
   ): Promise<ApiResponse<void>>;
-
-  /**
-   * 预测下一次请求的调度路径
-   */
-  predictNextDispatch(groupId: string): Promise<ApiResponse<PoolPrediction>>;
 
   /**
    * 重置单个模型的健康状态为 Healthy

@@ -45,6 +45,15 @@ public class PeerSyncScheduleTests
     }
 
     [Fact]
+    public void Enabled_ButReceivedDirection_IsNotDue()
+    {
+        var store = Synced(autoEnabled: true, autoLastAt: null);
+        store.PeerSyncDirection = "received"; // 仅接收审计，不是用户确认过的自动同步方向
+        Assert.False(PeerSyncSchedule.IsDue(store, DateTime.UtcNow));
+        Assert.Null(PeerSyncSchedule.GetNextSyncAt(store));
+    }
+
+    [Fact]
     public void Enabled_StaleSyncingStatus_StillDue_LeaseHandlesInflight()
     {
         // 进程崩溃残留 status=syncing 不应永久禁用自动同步：在途互斥交给租约（有 TTL 自愈），

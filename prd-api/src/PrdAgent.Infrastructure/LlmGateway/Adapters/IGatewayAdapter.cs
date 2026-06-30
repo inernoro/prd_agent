@@ -57,4 +57,14 @@ public interface IGatewayAdapter
     /// <param name="responseBody">响应体 JSON</param>
     /// <returns>提取的文本内容，失败返回 null（回退到原始 JSON）</returns>
     string? ParseMessageContent(string responseBody);
+
+    /// <summary>
+    /// 从非流式响应体中提取工具调用（函数调用），归一为 OpenAI 形状的 tool_calls 数组。
+    /// 协议保真：OpenAI 线 choices[0].message.tool_calls 直接透传；
+    /// Claude 线 content[].type=="tool_use" 转成 OpenAI tool_calls 形状。
+    /// 无工具调用返回 null。默认实现返回 null（不支持函数调用的适配器无需重写）。
+    /// </summary>
+    /// <param name="responseBody">响应体 JSON</param>
+    /// <returns>OpenAI 形状的 tool_calls 数组，无则 null</returns>
+    JsonArray? ParseToolCalls(string responseBody) => null;
 }

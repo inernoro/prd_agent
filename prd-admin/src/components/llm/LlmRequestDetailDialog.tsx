@@ -212,6 +212,7 @@ export function LlmRequestDetailDialog({
                 {[
                   { k: 'provider', v: detail.provider || '—' },
                   { k: 'model', v: detail.model || '—' },
+                  { k: 'protocol', v: detail.protocol || '—' },
                   { k: 'status', v: detail.status || '—' },
                   { k: 'requestType', v: detail.requestType || '—' },
                   { k: 'appCallerCode', v: detail.appCallerCode || '—' },

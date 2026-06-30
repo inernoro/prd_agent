@@ -1235,7 +1235,7 @@ export default function AppShell() {
               style={{
                 height: 32,
                 background: 'linear-gradient(to bottom, var(--bg-elevated, #1e1e24) 0%, transparent 100%)',
-                opacity: navScrollState.canScroll && !navScrollState.atTop ? 0.95 : 0,
+                opacity: !isHomePage && navScrollState.canScroll && !navScrollState.atTop ? 0.95 : 0,
               }}
             />
 
@@ -1326,7 +1326,7 @@ export default function AppShell() {
               style={{
                 height: 40,
                 background: 'linear-gradient(to top, var(--bg-elevated, #1e1e24) 0%, transparent 100%)',
-                opacity: navScrollState.canScroll && !navScrollState.atBottom ? 0.95 : 0,
+                opacity: !isHomePage && navScrollState.canScroll && !navScrollState.atBottom ? 0.95 : 0,
               }}
             />
           </div>

@@ -65,6 +65,8 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 HttpMethod = string.IsNullOrWhiteSpace(start.HttpMethod) ? null : start.HttpMethod.Trim().ToUpperInvariant(),
                 PlatformId = start.PlatformId,
                 PlatformName = start.PlatformName,
+                Protocol = start.Protocol,
+                ResolutionReason = start.ResolutionReason,
                 ModelResolutionType = start.ModelResolutionType,
                 ModelGroupId = start.ModelGroupId,
                 ModelGroupName = start.ModelGroupName,
@@ -94,7 +96,8 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 IsFallback = start.IsFallback,
                 FallbackReason = start.FallbackReason,
                 ExpectedModel = start.ExpectedModel,
-                IsHealthProbe = start.IsHealthProbe
+                IsHealthProbe = start.IsHealthProbe,
+                IsStreaming = start.IsStreaming
             };
 
             await _db.LlmRequestLogs.InsertOneAsync(log, cancellationToken: ct);
@@ -112,12 +115,49 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
         }
         catch (Exception ex)
         {
-            // 以 Warning 级别记录，之前是 Debug 会在生产完全看不到——
-            // 任何 StartAsync 失败都会导致 LLM 调用不落日志，这种故障对运维
-            // 而言是幽灵级别的（用户看到功能跑通但日志空空）。提到 Warning
-            // 确保至少 container logs 里能搜到。
-            _logger.LogWarning(ex, "LlmRequestLogWriter.StartAsync failed — LLM 调用不会被记录。AppCallerCode={AppCallerCode}", start.AppCallerCode);
-            return null;
+            // 黑洞可见：StartAsync 失败（多半是 COS 上传 / requestBody 处理炸了）会导致
+            // LLM 调用完全不落日志——用户看到功能跑通但日志页空空，对运维而言是幽灵级别故障。
+            // 这里尽力插入一条「最小记录」（Status=blackhole），让"记录降级"也可在日志页查到，
+            // 而不是只在 container logs 里留一条 Warning。最小记录只用 start 上的原始字段，
+            // 不再走可能失败的 COS 处理路径，避免二次抛异常。
+            //
+            // 语义校正（修复「blackhole 误标成功调用」）：StartAsync 在请求**发起前**被调用，
+            // 此处失败的是「日志写入」而非「请求发送」——请求随后仍会照常发起（上层吞掉日志异常）。
+            // 故 blackhole 的准确含义是「本次请求的完整生命周期未能可靠记录」，既非"成功"也非"未发出"。
+            // 为保证这条故障可见、不被后续 MarkDone/MarkError 覆盖或反向误标，这里**返回 null**：
+            // 上层 logId 保持 null → 所有 Mark* 调用 no-op（受 logId==null 守卫），blackhole 占位记录
+            // 作为独立、不可变的「记录降级」标记留存。不再依赖 LlmRequestLogBackground 的 Status 过滤兜底。
+            try
+            {
+                var fallbackLog = new LlmRequestLog
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    RequestId = start.RequestId,
+                    GroupId = start.GroupId,
+                    SessionId = start.SessionId,
+                    UserId = start.UserId,
+                    ViewRole = start.ViewRole,
+                    RequestType = start.RequestType,
+                    AppCallerCode = start.AppCallerCode,
+                    AppCallerCodeDisplayName = GetDisplayName(start.AppCallerCode),
+                    Provider = start.Provider,
+                    Model = start.Model,
+                    StartedAt = start.StartedAt == default ? DateTime.UtcNow : start.StartedAt,
+                    EndedAt = DateTime.UtcNow,
+                    Status = "blackhole",
+                    Error = $"日志写入失败（请求仍照常发起，但完整结果未被记录）：{ex.GetType().Name}: {ex.Message}"
+                };
+                await _db.LlmRequestLogs.InsertOneAsync(fallbackLog, cancellationToken: ct);
+                _logger.LogWarning(ex, "LlmRequestLogWriter.StartAsync failed — 已写入 blackhole 占位日志（记录降级）。AppCallerCode={AppCallerCode}, RequestId={RequestId}", start.AppCallerCode, start.RequestId);
+                // 关键：返回 null 而非 fallbackLog.Id，使后续 MarkDone/MarkError 不会复用并覆盖这条记录。
+                return null;
+            }
+            catch (Exception fallbackEx)
+            {
+                // 连最小记录都写不进去（DB 不可用），只能降级到 Warning 日志兜底。
+                _logger.LogWarning(fallbackEx, "LlmRequestLogWriter.StartAsync failed 且 blackhole 占位日志也写入失败 — LLM 调用不会被记录。AppCallerCode={AppCallerCode}。原始异常：{OriginalError}", start.AppCallerCode, ex.Message);
+                return null;
+            }
         }
     }
 

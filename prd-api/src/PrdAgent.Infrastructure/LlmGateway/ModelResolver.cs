@@ -99,53 +99,30 @@ public class ModelResolver : IModelResolver
             }
         }
 
-        // ========== 第四步：回退到传统配置 ==========
+        // ========== 第五步：无 dedicated/default 池 → legacy 直连兜底 ==========
+        // 未迁移到 ModelGroups 的部署仍可能有 IsMain/IsIntent/IsVision/IsImageGen 标记的 enabled 模型、
+        // 但无默认池。直接 NotFound 会让这类部署全链解析失败（Codex P1）。NotFound 前先查 legacy 直连，
+        // 迁移自动化前保留向后兼容；已迁移部署有池故不会走到这里，零影响。
         if (candidateGroups == null || candidateGroups.Count == 0)
         {
             var legacyModel = await FindLegacyModelAsync(modelType, ct);
-
-            _logger.LogInformation(
-                "[ModelResolver] 查找传统配置: ModelType={Type}, Found={Found}, ModelName={Name}, PlatformId={PlatformId}",
-                modelType, legacyModel != null, legacyModel?.Name, legacyModel?.PlatformId);
-
             if (legacyModel != null)
             {
-                var platform = await _db.LLMPlatforms
+                var legacyPlatform = await _db.LLMPlatforms
                     .Find(p => p.Id == legacyModel.PlatformId && p.Enabled)
                     .FirstOrDefaultAsync(ct);
-
-                if (platform == null)
+                if (legacyPlatform != null)
                 {
-                    // 诊断：平台未找到的原因
-                    var platformById = await _db.LLMPlatforms
-                        .Find(p => p.Id == legacyModel.PlatformId)
-                        .FirstOrDefaultAsync(ct);
-
-                    _logger.LogWarning(
-                        "[ModelResolver] 传统配置平台查找失败: PlatformId={PlatformId}, PlatformExists={Exists}, PlatformEnabled={Enabled}",
-                        legacyModel.PlatformId,
-                        platformById != null,
-                        platformById?.Enabled);
-                }
-
-                if (platform != null)
-                {
-                    var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(platform.ApiKeyEncrypted, _config);
-
+                    var legacyApiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(legacyPlatform.ApiKeyEncrypted, _config);
                     _logger.LogInformation(
-                        "[ModelResolver] 使用传统配置模型: ModelType={Type}, Model={Model}, Platform={Platform}",
-                        modelType, legacyModel.ModelName, platform.Name);
-
-                    return ModelResolutionResult.FromLegacy(expectedModel, legacyModel, platform, apiKey);
+                        "[ModelResolver] 无池，使用 legacy 直连模型: ModelType={Type}, Model={Model}, Platform={Platform}",
+                        modelType, legacyModel.ModelName, legacyPlatform.Name);
+                    return ModelResolutionResult.FromLegacy(expectedModel, legacyModel, legacyPlatform, legacyApiKey);
                 }
             }
-        }
 
-        // ========== 第五步：无可用模型 ==========
-        if (candidateGroups == null || candidateGroups.Count == 0)
-        {
             _logger.LogWarning(
-                "[ModelResolver] 未找到可用模型: AppCallerCode={Code}, ModelType={Type}",
+                "[ModelResolver] 未找到可用模型（无池且 legacy 未命中）: AppCallerCode={Code}, ModelType={Type}",
                 appCallerCode, modelType);
 
             return ModelResolutionResult.NotFound(expectedModel,
@@ -328,8 +305,9 @@ public class ModelResolver : IModelResolver
                 resolutionType, expectedModel, selectedModel, group, platform, apiKey);
         }
 
-        // ========== 第七步：模型池全部不可用，回退到传统配置 ==========
-        // 收集原始模型池信息用于返回
+        // ========== 第七步：模型池全部不可用 → legacy 直连降级 ==========
+        // 池存在但池内模型全部 Unavailable 时，未迁移部署仍可降级到 legacy 直连（Codex P1）。
+        // 收集原始模型池状态用于诊断 + 降级结果的 OriginalModels 字段。
         var originalPool = candidateGroups.FirstOrDefault();
         var originalModels = originalPool?.Models?.Select(m => new OriginalModelInfo
         {
@@ -340,39 +318,18 @@ public class ModelResolver : IModelResolver
             ConsecutiveFailures = m.ConsecutiveFailures
         }).ToList();
 
-        _logger.LogWarning(
-            "[ModelResolver] ╔══════════════════════════════════════════════════════════╗\n" +
-            "[ModelResolver] ║  模型池降级回退                                           ║\n" +
-            "[ModelResolver] ╠══════════════════════════════════════════════════════════╣\n" +
-            "[ModelResolver] ║  AppCallerCode: {AppCallerCode,-38} ║\n" +
-            "[ModelResolver] ║  ModelType: {ModelType,-42} ║\n" +
-            "[ModelResolver] ║  原始模型池: {PoolName,-40} ║\n" +
-            "[ModelResolver] ║  模型状态: {ModelStates,-42} ║\n" +
-            "[ModelResolver] ╚══════════════════════════════════════════════════════════╝",
-            appCallerCode, modelType, originalPool?.Name ?? "(无)",
-            string.Join(", ", originalModels?.Select(m => $"{m.ModelId}={m.HealthStatus}") ?? Array.Empty<string>()));
-
         var fallbackLegacyModel = await FindLegacyModelAsync(modelType, ct);
-
-        _logger.LogInformation(
-            "[ModelResolver] 传统配置回退查找: ModelType={Type}, Found={Found}, ModelName={Name}, PlatformId={PlatformId}",
-            modelType, fallbackLegacyModel != null, fallbackLegacyModel?.Name, fallbackLegacyModel?.PlatformId);
-
         if (fallbackLegacyModel != null)
         {
             var fallbackPlatform = await _db.LLMPlatforms
                 .Find(p => p.Id == fallbackLegacyModel.PlatformId && p.Enabled)
                 .FirstOrDefaultAsync(ct);
-
             if (fallbackPlatform != null)
             {
-                var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(fallbackPlatform.ApiKeyEncrypted, _config);
-
+                var fallbackApiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(fallbackPlatform.ApiKeyEncrypted, _config);
                 _logger.LogWarning(
-                    "[ModelResolver] ║  降级成功: 使用直连模型 {Model} @ {Platform,-24} ║",
+                    "[ModelResolver] 池内全部不可用，降级 legacy 直连: Model={Model} @ {Platform}",
                     fallbackLegacyModel.ModelName, fallbackPlatform.Name);
-
-                // 返回带降级信息的结果
                 return new ModelResolutionResult
                 {
                     Success = true,
@@ -383,9 +340,8 @@ public class ModelResolver : IModelResolver
                     ActualPlatformName = fallbackPlatform.Name,
                     PlatformType = fallbackPlatform.PlatformType,
                     ApiUrl = fallbackLegacyModel.ApiUrl ?? fallbackPlatform.ApiUrl,
-                    ApiKey = apiKey,
+                    ApiKey = fallbackApiKey,
                     HealthStatus = "Healthy",
-                    // 降级信息
                     IsFallback = true,
                     FallbackReason = $"模型池 '{originalPool?.Name}' 中所有模型不可用，回退到直连模型",
                     OriginalPoolId = originalPool?.Id,
@@ -393,25 +349,15 @@ public class ModelResolver : IModelResolver
                     OriginalModels = originalModels
                 };
             }
-            else
-            {
-                var platformById = await _db.LLMPlatforms
-                    .Find(p => p.Id == fallbackLegacyModel.PlatformId)
-                    .FirstOrDefaultAsync(ct);
-
-                _logger.LogWarning(
-                    "[ModelResolver] 传统配置平台查找失败: PlatformId={PlatformId}, Exists={Exists}, Enabled={Enabled}",
-                    fallbackLegacyModel.PlatformId, platformById != null, platformById?.Enabled);
-            }
         }
 
-        // 所有模型池都没有可用模型，传统配置也没有
         _logger.LogWarning(
-            "[ModelResolver] 所有调度方式均失败: AppCallerCode={Code}, ModelType={Type}",
-            appCallerCode, modelType);
+            "[ModelResolver] 模型池内所有模型不可用且 legacy 未命中: AppCallerCode={Code}, ModelType={Type}, 原始模型池={PoolName}, 模型状态={ModelStates}",
+            appCallerCode, modelType, originalPool?.Name ?? "(无)",
+            string.Join(", ", originalModels?.Select(m => $"{m.ModelId}={m.HealthStatus}") ?? Array.Empty<string>()));
 
         return ModelResolutionResult.NotFound(expectedModel,
-            "模型池内所有模型不可用且传统配置也未找到");
+            $"模型池内所有模型不可用: AppCallerCode={appCallerCode}, ModelType={modelType}");
     }
 
     /// <inheritdoc />
@@ -679,6 +625,21 @@ public class ModelResolver : IModelResolver
         return (null, null);
     }
 
+    // legacy 直连兜底：未迁移到 ModelGroups 的部署仍按 IsMain/IsIntent/IsVision/IsImageGen 标记选模型。
+    // 迁移自动化前保留；已建默认池的部署解析在前面就命中，不会走到这里。
+    private async Task<LLMModel?> FindLegacyModelAsync(string modelType, CancellationToken ct)
+    {
+        LLMModel? result = modelType.ToLowerInvariant() switch
+        {
+            "chat" => await _db.LLMModels.Find(m => m.IsMain && m.Enabled).FirstOrDefaultAsync(ct),
+            "intent" => await _db.LLMModels.Find(m => m.IsIntent && m.Enabled).FirstOrDefaultAsync(ct),
+            "vision" => await _db.LLMModels.Find(m => m.IsVision && m.Enabled).FirstOrDefaultAsync(ct),
+            "generation" => await _db.LLMModels.Find(m => m.IsImageGen && m.Enabled).FirstOrDefaultAsync(ct),
+            _ => null
+        };
+        return result;
+    }
+
     private ModelGroupItem? SelectBestModel(ModelGroup group)
     {
         if (group.Models == null || group.Models.Count == 0)
@@ -707,34 +668,6 @@ public class ModelResolver : IModelResolver
             .Where(m => m.HealthStatus != ModelHealthStatus.Unavailable)
             .OrderBy(m => m.Priority)
             .FirstOrDefault();
-    }
-
-    private async Task<LLMModel?> FindLegacyModelAsync(string modelType, CancellationToken ct)
-    {
-        LLMModel? result = modelType.ToLowerInvariant() switch
-        {
-            "chat" => await _db.LLMModels.Find(m => m.IsMain && m.Enabled).FirstOrDefaultAsync(ct),
-            "intent" => await _db.LLMModels.Find(m => m.IsIntent && m.Enabled).FirstOrDefaultAsync(ct),
-            "vision" => await _db.LLMModels.Find(m => m.IsVision && m.Enabled).FirstOrDefaultAsync(ct),
-            "generation" => await _db.LLMModels.Find(m => m.IsImageGen && m.Enabled).FirstOrDefaultAsync(ct),
-            _ => null
-        };
-
-        // Debug: 如果未找到 generation 模型，额外查询诊断
-        if (result == null && modelType.ToLowerInvariant() == "generation")
-        {
-            var allImageGenModels = await _db.LLMModels
-                .Find(m => m.IsImageGen)
-                .ToListAsync(ct);
-
-            _logger.LogWarning(
-                "[ModelResolver] 未找到启用的 generation 模型。" +
-                "IsImageGen=true 的模型共 {Count} 个: {Models}",
-                allImageGenModels.Count,
-                string.Join(", ", allImageGenModels.Select(m => $"{m.Name}(Enabled={m.Enabled}, PlatformId={m.PlatformId})")));
-        }
-
-        return result;
     }
 
     private async Task<AvailableModelPool> MapToAvailablePoolAsync(
@@ -798,7 +731,6 @@ public class InMemoryModelResolver : IModelResolver
 {
     private readonly List<LLMAppCaller> _appCallers = new();
     private readonly List<ModelGroup> _modelGroups = new();
-    private readonly List<LLMModel> _legacyModels = new();
     private readonly List<LLMPlatform> _platforms = new();
     private readonly Dictionary<string, string> _apiKeys = new();
 
@@ -821,15 +753,6 @@ public class InMemoryModelResolver : IModelResolver
     }
 
     /// <summary>
-    /// 添加传统模型配置
-    /// </summary>
-    public InMemoryModelResolver WithLegacyModel(LLMModel model)
-    {
-        _legacyModels.Add(model);
-        return this;
-    }
-
-    /// <summary>
     /// 添加平台配置
     /// </summary>
     public InMemoryModelResolver WithPlatform(LLMPlatform platform, string? apiKey = null)
@@ -839,6 +762,29 @@ public class InMemoryModelResolver : IModelResolver
             _apiKeys[platform.Id] = apiKey;
         return this;
     }
+
+    private readonly List<LLMModel> _legacyModels = new();
+
+    /// <summary>
+    /// 添加 legacy 直连模型（IsMain/IsIntent/IsVision/IsImageGen 标记）。
+    /// 镜像生产 ModelResolver 的 legacy 兜底，供未迁移到 ModelGroups 的场景测试。
+    /// </summary>
+    public InMemoryModelResolver WithLegacyModel(LLMModel model, string? apiKey = null)
+    {
+        _legacyModels.Add(model);
+        if (!string.IsNullOrWhiteSpace(model.PlatformId) && !string.IsNullOrWhiteSpace(apiKey))
+            _apiKeys[model.PlatformId!] = apiKey!;
+        return this;
+    }
+
+    private LLMModel? FindLegacyModel(string modelType) => modelType.ToLowerInvariant() switch
+    {
+        "chat" => _legacyModels.FirstOrDefault(m => m.IsMain && m.Enabled),
+        "intent" => _legacyModels.FirstOrDefault(m => m.IsIntent && m.Enabled),
+        "vision" => _legacyModels.FirstOrDefault(m => m.IsVision && m.Enabled),
+        "generation" => _legacyModels.FirstOrDefault(m => m.IsImageGen && m.Enabled),
+        _ => null
+    };
 
     public Task<ModelResolutionResult> ResolveAsync(
         string appCallerCode,
@@ -881,33 +827,19 @@ public class InMemoryModelResolver : IModelResolver
                 resolutionType = "DefaultPool";
         }
 
-        // Step 4: 传统配置
+        // Step 5: 无 dedicated/default 池 → legacy 直连兜底（镜像生产 ModelResolver）。
         if (candidateGroups == null || candidateGroups.Count == 0)
         {
-            var legacyModel = modelType.ToLowerInvariant() switch
+            var legacy = FindLegacyModel(modelType);
+            if (legacy != null)
             {
-                "chat" => _legacyModels.FirstOrDefault(m => m.IsMain && m.Enabled),
-                "intent" => _legacyModels.FirstOrDefault(m => m.IsIntent && m.Enabled),
-                "vision" => _legacyModels.FirstOrDefault(m => m.IsVision && m.Enabled),
-                "generation" => _legacyModels.FirstOrDefault(m => m.IsImageGen && m.Enabled),
-                _ => null
-            };
-
-            if (legacyModel != null)
-            {
-                var platform = _platforms.FirstOrDefault(p => p.Id == legacyModel.PlatformId && p.Enabled);
-                if (platform != null)
+                var legacyPlatform = _platforms.FirstOrDefault(p => p.Id == legacy.PlatformId && p.Enabled);
+                if (legacyPlatform != null)
                 {
-                    _apiKeys.TryGetValue(platform.Id, out var apiKey);
-                    return Task.FromResult(ModelResolutionResult.FromLegacy(
-                        expectedModel, legacyModel, platform, apiKey));
+                    _apiKeys.TryGetValue(legacyPlatform.Id, out var legacyKey);
+                    return Task.FromResult(ModelResolutionResult.FromLegacy(expectedModel, legacy, legacyPlatform, legacyKey));
                 }
             }
-        }
-
-        // Step 5: 无可用模型
-        if (candidateGroups == null || candidateGroups.Count == 0)
-        {
             return Task.FromResult(ModelResolutionResult.NotFound(expectedModel,
                 $"未找到可用模型: AppCallerCode={appCallerCode}, ModelType={modelType}"));
         }
@@ -931,6 +863,35 @@ public class InMemoryModelResolver : IModelResolver
             _apiKeys.TryGetValue(platform.Id, out var apiKey);
             return Task.FromResult(ModelResolutionResult.FromPool(
                 resolutionType, expectedModel, selectedModel, group, platform, apiKey));
+        }
+
+        // 池存在但全部不可用 → legacy 直连降级（镜像生产 ModelResolver）。
+        var fallbackLegacy = FindLegacyModel(modelType);
+        if (fallbackLegacy != null)
+        {
+            var fbPlatform = _platforms.FirstOrDefault(p => p.Id == fallbackLegacy.PlatformId && p.Enabled);
+            if (fbPlatform != null)
+            {
+                _apiKeys.TryGetValue(fbPlatform.Id, out var fbKey);
+                var originalPool = candidateGroups.FirstOrDefault();
+                return Task.FromResult(new ModelResolutionResult
+                {
+                    Success = true,
+                    ResolutionType = "Legacy",
+                    ExpectedModel = expectedModel,
+                    ActualModel = fallbackLegacy.ModelName,
+                    ActualPlatformId = fallbackLegacy.PlatformId ?? string.Empty,
+                    ActualPlatformName = fbPlatform.Name,
+                    PlatformType = fbPlatform.PlatformType,
+                    ApiUrl = fallbackLegacy.ApiUrl ?? fbPlatform.ApiUrl,
+                    ApiKey = fbKey,
+                    HealthStatus = "Healthy",
+                    IsFallback = true,
+                    FallbackReason = $"模型池 '{originalPool?.Name}' 中所有模型不可用，回退到直连模型",
+                    OriginalPoolId = originalPool?.Id,
+                    OriginalPoolName = originalPool?.Name
+                });
+            }
         }
 
         return Task.FromResult(ModelResolutionResult.NotFound(expectedModel,

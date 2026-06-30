@@ -43,7 +43,7 @@ function StatusBadge({ status }: { status: SyncLinkStatus }) {
 
 /**
  * 知识库详情右上角的同步状态徽章：仅当本库已加入同步配对时显示。
- * 聚合多个配对的状态（error > pending > synced > never），点击跳转到「跨环境同步」页签。
+ * 聚合多个旧版配对的状态（error > pending > synced > never），点击进入当前同步中心管理。
  */
 export function StoreSyncBadge({ storeId, onManage }: { storeId: string; onManage?: () => void }) {
   const [links, setLinks] = useState<DocumentSyncLink[] | null>(null);
@@ -75,7 +75,7 @@ export function StoreSyncBadge({ storeId, onManage }: { storeId: string; onManag
   return (
     <button
       onClick={onManage}
-      title={`本知识库已加入跨环境同步（${links.length} 个配对），点击管理`}
+      title={`本知识库已加入旧版同步配对（${links.length} 个），点击管理`}
       className={`surface-action flex h-7 cursor-pointer items-center gap-1.5 rounded-[8px] px-2.5 text-[11px] font-semibold transition-all ${meta.cls}`}
     >
       {meta.icon}
@@ -411,4 +411,3 @@ function StartLinkDialog({ stores, onClose, onDone }: {
     </div>
   );
 }
-

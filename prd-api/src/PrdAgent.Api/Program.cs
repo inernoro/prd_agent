@@ -204,8 +204,56 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.PlatformKeyIntegrityWork
 // 模型调度执行器
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
 
-// LLM Gateway 统一守门员（所有大模型调用必须通过此接口）
-builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.LlmGateway>();
+// LLM Gateway 统一守门员（所有大模型调用必须通过此接口）。
+// 特性开关：LlmGateway:Mode（环境变量 LlmGateway__Mode）。默认 inproc = 进程内 LlmGateway（行为不变）；
+// http = 切到 HttpLlmGatewayClient，跨进程调用独立部署的 serving 服务（/gw/v1/*）。
+// HttpLlmGatewayClient 同时实现 Infrastructure + Core 两个 ILlmGateway，下方 Core 桥接强转在两种模式下都成立。
+// 影子比对落库（灰度翻 http 前积累一致性证据；shadow 模式下注入 ShadowLlmGateway）
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.ILlmShadowComparisonWriter,
+    PrdAgent.Infrastructure.LlmGateway.LlmShadowComparisonWriter>();
+
+var gatewayMode = builder.Configuration["LlmGateway:Mode"] ?? "inproc";
+// 灰度翻 http 白名单（按 appCallerCode 逐个切；`,`/`;`/换行分隔）。命中的入口走 http 权威，其余按 Mode。
+var httpAllowlist = (builder.Configuration["LlmGateway:HttpAppCallerAllowlist"] ?? string.Empty)
+    .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+    .Where(x => !string.IsNullOrWhiteSpace(x))
+    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+var isShadow = string.Equals(gatewayMode, "shadow", StringComparison.OrdinalIgnoreCase);
+
+if (string.Equals(gatewayMode, "http", StringComparison.OrdinalIgnoreCase))
+{
+    builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>();
+}
+else if (isShadow || httpAllowlist.Count > 0)
+{
+    // 统一路由器：白名单命中 → http 权威（灰度翻）；否则 inproc 权威。
+    // shadow 模式下，对非白名单请求后台比对落 llmshadow_comparisons（默认只比解析=免费；
+    // LlmGateway:ShadowFullSamplePercent>0 时对采样 send 做完整内容比对）。inproc+仅白名单时不比对（writer=null）。
+    var shadowSamplePercent = int.TryParse(builder.Configuration["LlmGateway:ShadowFullSamplePercent"], out var sp0) ? sp0 : 0;
+    builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>(sp =>
+        new PrdAgent.Infrastructure.LlmGateway.ShadowLlmGateway(
+            inproc: new PrdAgent.Infrastructure.LlmGateway.LlmGateway(
+                sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.IModelResolver>(),
+                sp.GetRequiredService<IHttpClientFactory>(),
+                sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.LlmGateway>>(),
+                sp.GetService<PrdAgent.Core.Interfaces.ILlmRequestLogWriter>(),
+                sp.GetService<PrdAgent.Core.Interfaces.ILLMRequestContextAccessor>(),
+                sp.GetService<PrdAgent.Infrastructure.ModelPool.IPoolFailoverNotifier>()),
+            http: new PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient(
+                sp.GetRequiredService<IHttpClientFactory>(),
+                sp.GetRequiredService<IConfiguration>(),
+                sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>>(),
+                sp.GetService<PrdAgent.Core.Interfaces.ILLMRequestContextAccessor>()),
+            logger: sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.ShadowLlmGateway>>(),
+            writer: isShadow ? sp.GetService<PrdAgent.Core.Interfaces.ILlmShadowComparisonWriter>() : null,
+            fullSamplePercent: shadowSamplePercent,
+            ctx: sp.GetService<PrdAgent.Core.Interfaces.ILLMRequestContextAccessor>(),
+            httpAllowlist: httpAllowlist));
+}
+else
+{
+    builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.LlmGateway>();
+}
 
 // 注册 Core 层的 ILlmGateway 接口（同一实例）
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.LlmGateway.ILlmGateway>(sp =>

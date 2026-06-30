@@ -91,7 +91,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             }
 
             // 2. 选择适配器
-            var adapter = GetAdapter(resolution.PlatformType);
+            var adapter = GetAdapterForResolution(resolution);
             if (adapter == null)
             {
                 return GatewayResponse.Fail("UNSUPPORTED_PLATFORM",
@@ -102,6 +102,14 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var requestBody = request.GetEffectiveRequestBody();
             requestBody["model"] = resolution.ActualModel;
             requestBody["stream"] = false;
+
+            // G4 能力软门：带 tools 但模型能力明确不支持 function_calling → 熔断报错（不骗用户）。
+            // 未知/未分类（null）放行（best-effort）。
+            if (RequestHasTools(requestBody) && resolution.SupportsFunctionCalling == false)
+            {
+                return GatewayResponse.Fail("FUNCTION_CALLING_UNSUPPORTED",
+                    $"模型 {resolution.ActualModel} 未声明支持函数调用（function_calling），请改用支持函数调用的模型或移除 tools。", 400);
+            }
 
             var endpoint = adapter.BuildEndpoint(resolution.ApiUrl!, request.ModelType);
             var httpRequest = adapter.BuildHttpRequest(endpoint, resolution.ApiKey, requestBody, request.EnablePromptCache);
@@ -136,9 +144,14 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             // 6. 解析响应
             GatewayTokenUsage? tokenUsage = null;
+            System.Text.Json.Nodes.JsonArray? toolCalls = null;
+            string? finishReason = null;
             if (response.IsSuccessStatusCode)
             {
                 tokenUsage = adapter.ParseTokenUsage(responseBody);
+                // 协议保真：提取工具调用（函数调用），归一为 OpenAI 形状（无则 null，不影响纯文本响应）
+                toolCalls = adapter.ParseToolCalls(responseBody);
+                finishReason = ExtractFinishReason(responseBody);
             }
 
             // 7. 更新健康状态
@@ -155,7 +168,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             }
 
             // 8. 写入日志（完成）
-            await FinishLogAsync(logId, response, responseBody, tokenUsage, durationMs, ct);
+            await FinishLogAsync(logId, response, responseBody, tokenUsage, durationMs, toolCalls, finishReason, ct);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -177,6 +190,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 StatusCode = (int)response.StatusCode,
                 Content = messageContent ?? responseBody,
                 RawResponseBody = responseBody,
+                ToolCalls = toolCalls,
                 Resolution = gatewayResolution,
                 TokenUsage = tokenUsage,
                 DurationMs = durationMs,
@@ -210,6 +224,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         string? logId = null;
         DateTime? firstByteAt = null;
         var textBuilder = new StringBuilder();
+        // 函数调用增量按 index 合并累积（首个 delta 带 id/name，后续 delta 拼 arguments），用于日志可视化
+        var toolCallAccum = new Dictionary<int, System.Text.Json.Nodes.JsonObject>();
 
         ModelResolutionResult? resolution = null;
         GatewayModelResolution? gatewayResolution = null;
@@ -234,7 +250,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             gatewayResolution = resolution.ToGatewayResolution();
 
             // 2. 选择适配器
-            var adapter = GetAdapter(resolution.PlatformType);
+            var adapter = GetAdapterForResolution(resolution);
             if (adapter == null)
             {
                 yield return GatewayStreamChunk.Fail($"不支持的平台类型: {resolution.PlatformType}");
@@ -245,6 +261,14 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var requestBody = request.GetEffectiveRequestBody();
             requestBody["model"] = resolution.ActualModel;
             requestBody["stream"] = true;
+
+            // G4 能力软门：带 tools 但模型能力明确不支持 function_calling → 熔断报错（不骗用户）。未知放行。
+            if (RequestHasTools(requestBody) && resolution.SupportsFunctionCalling == false)
+            {
+                yield return GatewayStreamChunk.Fail(
+                    $"模型 {resolution.ActualModel} 未声明支持函数调用（function_calling），请改用支持函数调用的模型或移除 tools。");
+                yield break;
+            }
 
             var endpoint = adapter.BuildEndpoint(resolution.ApiUrl!, request.ModelType);
             var httpRequest = adapter.BuildHttpRequest(endpoint, resolution.ApiKey, requestBody, request.EnablePromptCache);
@@ -422,6 +446,18 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     continue;
                 }
 
+                // 函数调用增量（ToolCall）：透传给调用方（OpenApiController 转 OpenAI SSE delta.tool_calls）
+                // + 按 index 累积入日志。ToolCall chunk 无 Content，不会走下面的文本分支，必须显式处理。
+                if (chunk.Type == GatewayChunkType.ToolCall)
+                {
+                    if (chunk.ToolCallDelta != null)
+                    {
+                        AccumulateToolCallDeltas(toolCallAccum, chunk.ToolCallDelta);
+                        yield return chunk;
+                    }
+                    continue;
+                }
+
                 // Thinking 类型（来自 reasoning_content 字段）
                 // Gateway 根据 IncludeThinking 决定是否透传给调用方
                 // Intent 模型类型强制禁止思考输出（无论 IncludeThinking 设置如何）
@@ -430,7 +466,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     if (!thinkingStarted)
                     {
                         thinkingStarted = true;
-                        _logger.LogInformation("[LlmGateway] ✦ 思考开始。AppCallerCode: {AppCallerCode}", request.AppCallerCode);
+                        _logger.LogInformation("[LlmGateway] 思考开始。AppCallerCode: {AppCallerCode}", request.AppCallerCode);
                     }
                     if (!string.IsNullOrEmpty(chunk.Content))
                     {
@@ -449,7 +485,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     if (!contentStarted)
                     {
                         contentStarted = true;
-                        _logger.LogInformation("[LlmGateway] ✦ 正文开始。AppCallerCode: {AppCallerCode}", request.AppCallerCode);
+                        _logger.LogInformation("[LlmGateway] 正文开始。AppCallerCode: {AppCallerCode}", request.AppCallerCode);
                     }
                     // 通过 ThinkTagStripper 过滤 <think>...</think> 标签
                     var stripped = thinkTagStripper.Process(chunk.Content);
@@ -548,7 +584,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             }
 
             var assembledThinking = thinkingBuilder.ToString();
-            await FinishStreamLogAsync(logId, assembledText, assembledThinking, tokenUsage, durationMs, ct);
+            var assembledToolCalls = BuildAccumulatedToolCalls(toolCallAccum);
+            await FinishStreamLogAsync(logId, assembledText, assembledThinking, tokenUsage, durationMs, assembledToolCalls, finishReason, ct);
         }
         finally
         {
@@ -634,7 +671,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             // 2. 选择适配器并构建 endpoint
             var isExchange = resolution.IsExchange;
-            var adapter = isExchange ? null : GetAdapter(resolution.PlatformType);
+            var adapter = isExchange ? null : GetAdapterForResolution(resolution);
             string endpoint;
 
             if (isExchange)
@@ -1346,6 +1383,25 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         }
     }
 
+    /// <summary>
+    /// 请求体是否携带非空的 tools 数组（函数调用）。供 G4 能力软门判断。
+    /// </summary>
+    private static bool RequestHasTools(System.Text.Json.Nodes.JsonObject requestBody)
+        => requestBody.TryGetPropertyValue("tools", out var tools)
+           && tools is System.Text.Json.Nodes.JsonArray arr && arr.Count > 0;
+
+    // 按「解析出的 wire 协议」选适配器，而非平台类型。pool-item 可覆盖 Protocol（混合/代理平台
+    // 走不同 wire），此时必须按 resolution.Protocol 选 adapter，否则请求仍用旧平台适配器构造、只有
+    // 日志显示 protocol-from-pool-item（Codex P2）。Protocol 默认回落 PlatformType，普通平台零差异；
+    // Protocol 为空时退回 PlatformType 兜底。
+    private IGatewayAdapter? GetAdapterForResolution(GatewayModelResolution resolution)
+        => GetAdapter(string.IsNullOrWhiteSpace(resolution.Protocol) ? resolution.PlatformType : resolution.Protocol);
+
+    // raw 路径用 ModelResolutionResult（与 send/stream 的 GatewayModelResolution 不同类型，两者都有
+    // Protocol/PlatformType）。同样按解析 Protocol 选 adapter，Protocol 空回落 PlatformType。
+    private IGatewayAdapter? GetAdapterForResolution(ModelResolutionResult resolution)
+        => GetAdapter(string.IsNullOrWhiteSpace(resolution.Protocol) ? resolution.PlatformType : resolution.Protocol);
+
     private IGatewayAdapter? GetAdapter(string? platformType)
     {
         if (string.IsNullOrWhiteSpace(platformType))
@@ -1372,6 +1428,10 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         {
             var requestJson = requestBody.ToJsonString();
             var redactedJson = LlmLogRedactor.RedactJson(requestJson);
+            // 是否流式：SendAsync 置 stream=false，StreamAsync 置 stream=true，此处统一从请求体读
+            bool? isStreaming = requestBody.TryGetPropertyValue("stream", out var streamNode)
+                && streamNode is JsonValue streamVal && streamVal.TryGetValue<bool>(out var sb)
+                ? sb : (bool?)null;
 
             return await _logWriter.StartAsync(
                 new LlmLogStart(
@@ -1404,6 +1464,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     AppCallerCode: request.AppCallerCode,
                     PlatformId: resolution.ActualPlatformId,
                     PlatformName: resolution.ActualPlatformName,
+                    Protocol: resolution.Protocol,
+                    ResolutionReason: resolution.ResolutionReason,
                     ModelResolutionType: ParseResolutionType(resolution.ResolutionType),
                     ModelGroupId: resolution.ModelGroupId,
                     ModelGroupName: resolution.ModelGroupName,
@@ -1414,7 +1476,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     ImageReferences: request.Context?.ImageReferences,
                     IsFallback: resolution.IsFallback ? true : null,
                     FallbackReason: resolution.FallbackReason,
-                    ExpectedModel: resolution.ExpectedModel),
+                    ExpectedModel: resolution.ExpectedModel,
+                    IsStreaming: isStreaming),
                 ct);
         }
         catch (Exception ex)
@@ -1430,6 +1493,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         string responseBody,
         GatewayTokenUsage? tokenUsage,
         long durationMs,
+        System.Text.Json.Nodes.JsonArray? toolCalls,
+        string? finishReason,
         CancellationToken ct)
     {
         if (_logWriter == null || logId == null) return;
@@ -1461,12 +1526,42 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     AssembledTextHash: LlmLogRedactor.Sha256Hex(responseBody),
                     Status: status,
                     EndedAt: DateTime.UtcNow,
-                    DurationMs: durationMs));
+                    DurationMs: durationMs,
+                    ResponseToolCalls: toolCalls?.ToJsonString(),
+                    ToolCallCount: toolCalls?.Count,
+                    FinishReason: finishReason));
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[LlmGateway] 完成日志失败");
         }
+    }
+
+    /// <summary>
+    /// 从非流式响应体提取完成原因：OpenAI choices[0].finish_reason / Claude stop_reason。无则 null。
+    /// </summary>
+    private static string? ExtractFinishReason(string responseBody)
+    {
+        try
+        {
+            if (System.Text.Json.Nodes.JsonNode.Parse(responseBody) is not System.Text.Json.Nodes.JsonObject root)
+                return null;
+            if (root["choices"] is System.Text.Json.Nodes.JsonArray choices && choices.Count > 0 &&
+                choices[0] is System.Text.Json.Nodes.JsonObject c0 && c0["finish_reason"] is { } fr &&
+                fr.GetValueKind() == System.Text.Json.JsonValueKind.String)
+            {
+                return fr.GetValue<string>();
+            }
+            if (root["stop_reason"] is { } sr && sr.GetValueKind() == System.Text.Json.JsonValueKind.String)
+            {
+                return sr.GetValue<string>();
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+        return null;
     }
 
     private async Task FinishStreamLogAsync(
@@ -1475,6 +1570,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         string assembledThinking,
         GatewayTokenUsage? tokenUsage,
         long durationMs,
+        System.Text.Json.Nodes.JsonArray? toolCalls,
+        string? finishReason,
         CancellationToken ct)
     {
         if (_logWriter == null || logId == null) return;
@@ -1501,12 +1598,81 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     AssembledTextHash: LlmLogRedactor.Sha256Hex(assembledText),
                     Status: "succeeded",
                     EndedAt: DateTime.UtcNow,
-                    DurationMs: durationMs));
+                    DurationMs: durationMs,
+                    ResponseToolCalls: toolCalls?.ToJsonString(),
+                    ToolCallCount: toolCalls?.Count,
+                    FinishReason: finishReason));
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[LlmGateway] 完成流式日志失败");
         }
+    }
+
+    /// <summary>
+    /// 把一批 OpenAI 形状 tool_calls 流式增量按 index 合并进累加器：
+    /// 首个 delta 带 id/name，后续 delta 只追加 function.arguments 片段。纯日志用途，best-effort 容错。
+    /// </summary>
+    private static void AccumulateToolCallDeltas(
+        Dictionary<int, System.Text.Json.Nodes.JsonObject> accum,
+        System.Text.Json.Nodes.JsonArray delta)
+    {
+        try
+        {
+            foreach (var item in delta)
+            {
+                if (item is not System.Text.Json.Nodes.JsonObject d) continue;
+                var idx = (d["index"] as System.Text.Json.Nodes.JsonValue) is { } iv && iv.TryGetValue<int>(out var i)
+                    ? i : accum.Count;
+
+                if (!accum.TryGetValue(idx, out var existing))
+                {
+                    existing = new System.Text.Json.Nodes.JsonObject
+                    {
+                        ["index"] = idx,
+                        ["type"] = "function",
+                        ["function"] = new System.Text.Json.Nodes.JsonObject { ["name"] = "", ["arguments"] = "" }
+                    };
+                    accum[idx] = existing;
+                }
+
+                if (d["id"] is { } id && existing["id"] == null) existing["id"] = id.DeepClone();
+                if (d["type"] is { } ty) existing["type"] = ty.DeepClone();
+
+                if (d["function"] is System.Text.Json.Nodes.JsonObject fn &&
+                    existing["function"] is System.Text.Json.Nodes.JsonObject ef)
+                {
+                    if (fn["name"] is { } nm)
+                    {
+                        var nmStr = nm.GetValueKind() == System.Text.Json.JsonValueKind.String ? nm.GetValue<string>() : null;
+                        if (!string.IsNullOrEmpty(nmStr)) ef["name"] = nmStr;
+                    }
+                    if (fn["arguments"] is { } ar && ar.GetValueKind() == System.Text.Json.JsonValueKind.String)
+                    {
+                        var prev = ef["arguments"]?.GetValueKind() == System.Text.Json.JsonValueKind.String
+                            ? ef["arguments"]!.GetValue<string>() : "";
+                        ef["arguments"] = prev + ar.GetValue<string>();
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // 日志累积容错：解析异常不影响主流程
+        }
+    }
+
+    /// <summary>累加器 → 按 index 排序的 OpenAI 形状 tool_calls 数组；空则 null。</summary>
+    private static System.Text.Json.Nodes.JsonArray? BuildAccumulatedToolCalls(
+        Dictionary<int, System.Text.Json.Nodes.JsonObject> accum)
+    {
+        if (accum.Count == 0) return null;
+        var arr = new System.Text.Json.Nodes.JsonArray();
+        foreach (var kv in accum.OrderBy(k => k.Key))
+        {
+            arr.Add(kv.Value.DeepClone());
+        }
+        return arr;
     }
 
     private async Task<string?> StartRawLogAsync(
@@ -1556,6 +1722,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     AppCallerCode: request.AppCallerCode,
                     PlatformId: resolution.ActualPlatformId,
                     PlatformName: resolution.ActualPlatformName,
+                    Protocol: resolution.Protocol,
+                    ResolutionReason: resolution.ResolutionReason,
                     ModelResolutionType: ParseResolutionType(resolution.ResolutionType),
                     ModelGroupId: resolution.ModelGroupId,
                     ModelGroupName: resolution.ModelGroupName,

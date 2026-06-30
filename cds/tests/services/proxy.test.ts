@@ -269,6 +269,43 @@ describe('ProxyService', () => {
       expect(payload.services).toContainEqual({ profileId: 'admin', status: 'starting' });
     });
 
+    it('keeps waiting progress aligned with elapsed and remaining time when ETA exists', () => {
+      proxy = new ProxyService(stateService, { previewDomain: 'preview.test' } as any);
+      addBranch('eta-branch', 'starting', {
+        admin: { profileId: 'admin', status: 'starting' },
+      }, 'feature/eta-branch');
+      const branch = stateService.getBranch('eta-branch')!;
+      branch.lastDeployStartedAt = new Date(Date.now() - 15_000).toISOString();
+      stateService.recordDeployDuration('default', 'source', 81_000);
+      stateService.save();
+
+      const req = makeReq({ host: 'eta-branch.preview.test', accept: 'application/json' }, '/_cds/waiting-status?profile=admin');
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(written.statusCode).toBe(200);
+      const payload = JSON.parse(written.body) as {
+        progress: { percent: number; reason: string };
+        timing: { elapsedMs: number; estimateMedianMs: number; remainingMs: number } | null;
+      };
+      expect(payload.timing).not.toBeNull();
+      expect(payload.timing!.elapsedMs).toBeGreaterThanOrEqual(14_000);
+      expect(payload.timing!.estimateMedianMs).toBe(81_000);
+      expect(payload.timing!.remainingMs).toBeGreaterThan(60_000);
+      expect(payload.progress.percent).toBeGreaterThan(15);
+      expect(payload.progress.percent).toBeLessThan(25);
+      expect(payload.progress.reason).toContain('历史耗时');
+
+      const htmlReq = makeReq({ host: 'eta-branch.preview.test', accept: 'text/html' });
+      const { res: htmlRes, written: htmlWritten } = makeRes();
+      proxy.handleRequest(htmlReq, htmlRes);
+      const match = htmlWritten.body.match(/data-role="progress-percent">([0-9.]+)%/);
+      expect(match).not.toBeNull();
+      const initialPercent = Number(match![1]);
+      expect(initialPercent).toBeGreaterThan(15);
+      expect(initialPercent).toBeLessThan(25);
+    });
+
     it('serves the auto-refresh "preparing" page (not the manual-redeploy page) for an express branch waiting on the CI image', () => {
       // 极速版（CI 预构建）：push 后分支 status 仍是 idle，但 ciImageStatus='waiting' 表示
       // CDS 在等 GitHub Actions 构建镜像，完成后会自动部署。此窗口必须显示会自动刷新的
@@ -943,6 +980,74 @@ describe('ProxyService', () => {
         'other.com', '/',
       );
       expect(result).toBeNull();
+    });
+  });
+
+  describe('named subdomain — 状态门控（停止服务不被强制为上游）', () => {
+    // resolvePreviewServiceSubdomain（master 命名子域兜底）必须与 forwarder 同口径：
+    // 只有 hostPort>0 **且** 状态可路由（running/starting/building/restarting）的服务才命中命名 host；
+    // 停止/错误但残留 hostPort 的服务不得被命名 host 强制为上游（否则产生 forwarder 本会省略的坏路由）。
+    function makeRes() {
+      const written = { statusCode: 0, headers: {} as Record<string, string>, body: '' };
+      const res = {
+        writeHead(code: number, headers: Record<string, string>) { written.statusCode = code; written.headers = headers; },
+        end(body?: string) { written.body = body || ''; },
+      } as unknown as http.ServerResponse;
+      return { res, written };
+    }
+
+    function setup(svcStatus: string) {
+      stateService.addProject({
+        id: 'prd-agent', slug: 'prd-agent', name: 'PRD Agent', kind: 'git',
+        legacyFlag: false, createdAt: new Date().toISOString(),
+      } as any);
+      stateService.addBranch({
+        id: 'prd-agent-main',
+        projectId: 'prd-agent',
+        branch: 'main',
+        worktreePath: '/tmp/named-sub',
+        // branch-local extra profile 声明命名子域 llmgw
+        extraProfiles: [{ id: 'llmgw', name: 'llmgw', subdomain: 'llmgw' } as any],
+        services: { llmgw: { profileId: 'llmgw', containerName: 'cds-x-llmgw', hostPort: 9200, status: svcStatus } },
+        // 分支顶层状态跟随服务：running 才会进入上游解析路径，否则 routeToBranch 提前返回等待页。
+        status: svcStatus === 'running' ? 'running' : 'idle',
+        createdAt: new Date().toISOString(),
+      } as any);
+      const previewProxy = new ProxyService(stateService, {
+        masterPort: 9900, workerPort: 5500,
+        repoRoot: '/tmp', worktreeBase: '/tmp', portStart: 9000,
+        previewDomain: 'preview.example.com',
+        rootDomains: ['preview.example.com'],
+      } as any);
+      let upstreamCalledWith: { branchId: string } | null = null;
+      previewProxy.setResolveUpstream((branchId: string) => {
+        upstreamCalledWith = { branchId };
+        return 'http://127.0.0.1:9200';
+      });
+      let autoBuildCalled = false;
+      previewProxy.setOnAutoBuild(() => { autoBuildCalled = true; });
+      const req = {
+        // previewSlug(main, prd-agent) = "main-prd-agent" → 命名 host "<slug>-llmgw"
+        headers: { host: 'main-prd-agent-llmgw.preview.example.com' },
+        url: '/',
+        pipe: () => {},
+      } as unknown as http.IncomingMessage;
+      const { res } = makeRes();
+      previewProxy.handleRequest(req, res);
+      return { upstreamCalledWith: () => upstreamCalledWith, autoBuildCalled: () => autoBuildCalled };
+    }
+
+    it('停止(stopped)的命名服务不被强制为上游，落回常规路径(auto-build)而非坏路由', () => {
+      const h = setup('stopped');
+      expect(h.upstreamCalledWith()).toBeNull(); // 没有把停止的 llmgw 容器强制成上游
+      expect(h.autoBuildCalled()).toBe(true);    // 落回常规 slug 路径，触发 auto-build
+    });
+
+    it('运行中(running)的命名服务正常命中其容器（门控不误伤可路由服务）', () => {
+      const h = setup('running');
+      expect(h.autoBuildCalled()).toBe(false);
+      expect(h.upstreamCalledWith()).not.toBeNull();
+      expect(h.upstreamCalledWith()!.branchId).toBe('prd-agent-main');
     });
   });
 

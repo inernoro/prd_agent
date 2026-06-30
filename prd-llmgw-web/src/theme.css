@@ -1,0 +1,134 @@
+/* LLM 网关观测台 —— 独立 OpenRouter 风格主题 token。
+   暗色为默认；[data-theme="light"] 为浅色（后续可加切换按钮，token 已对齐）。
+   所有颜色走 var()，组件内禁止写死暗/浅色字面量。 */
+
+:root {
+  --bg-page: #0b0d12;
+  --bg-surface: #14171f;
+  --bg-elevated: #1b1f2a;
+  --bg-input: #0f131b;
+  --bg-base: #090b10;
+
+  --text-primary: #eef1f6;
+  --text-secondary: #aab2c2;
+  --text-muted: #6c7689;
+
+  --border-subtle: rgba(148, 163, 184, 0.16);
+  --border-strong: rgba(148, 163, 184, 0.3);
+
+  --accent: #6e8bff;
+  --accent-soft: rgba(110, 139, 255, 0.16);
+
+  --ok: #34d399;
+  --ok-bg: rgba(52, 211, 153, 0.15);
+  --err: #f87171;
+  --err-bg: rgba(248, 113, 113, 0.15);
+  --warn: #fbbf24;
+  --warn-bg: rgba(251, 191, 36, 0.16);
+  --info: #60a5fa;
+  --info-bg: rgba(96, 165, 250, 0.16);
+
+  --radius: 12px;
+  --radius-sm: 8px;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-drawer: -8px 0 40px rgba(0, 0, 0, 0.5);
+}
+
+[data-theme='light'] {
+  --bg-page: #f4f5f8;
+  --bg-surface: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-input: #ffffff;
+  --bg-base: #eceef2;
+
+  --text-primary: #1a1f2b;
+  --text-secondary: #475063;
+  --text-muted: #8a93a6;
+
+  --border-subtle: rgba(15, 23, 42, 0.1);
+  --border-strong: rgba(15, 23, 42, 0.2);
+
+  --accent: #4f6bf0;
+  --accent-soft: rgba(79, 107, 240, 0.12);
+
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-drawer: -8px 0 40px rgba(15, 23, 42, 0.18);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg-page);
+  color: var(--text-primary);
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    'PingFang SC', 'Microsoft YaHei', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+input,
+select {
+  font-family: inherit;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.lg-truncate {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.lg-row-clickable:hover {
+  background: var(--accent-soft);
+}
+
+@keyframes lg-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+.lg-pulse {
+  animation: lg-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes lg-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.lg-spin {
+  animation: lg-spin 0.9s linear infinite;
+}

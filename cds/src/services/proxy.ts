@@ -9,6 +9,7 @@ import { computePreviewSlug, previewProjectSlugCandidates } from './preview-slug
 import { classifyDeployRuntime } from './deploy-runtime.js';
 import { computeWaitTiming } from './wait-timing.js';
 import { resolveEffectiveProfile } from './container.js';
+import { ROUTABLE_SERVICE_STATUSES } from './forwarder-route-publisher.js';
 import type { DeployDurationMode } from '../types.js';
 import {
   classifyHttpRequestKind,
@@ -472,6 +473,15 @@ export class ProxyService {
     // Each branch gets its own subdomain — no cookies needed, fully independent
     const previewSlug = this.extractPreviewBranch(host);
     if (previewSlug) {
+      // 命名子域兜底:`<previewSlug>-<subdomain>.<root>` 直达声明了该 subdomain 的服务容器。
+      // 转发模式(CDS_USE_FORWARDER=1,生产数据面)下 forwarder 已按 host 精确命中,不会走到这里;
+      // 本兜底只服务非转发部署 + master 反代路径,避免命名 host 落到 auto-build。
+      const svcTarget = this.resolvePreviewServiceSubdomain(previewSlug);
+      if (svcTarget) {
+        // 直接传已解析的 entry(forcedEntry),避免 routeToBranch 二次 resolveBranchEntry 命中错分支。
+        this.routeToBranch(svcTarget.previewSlug, svcTarget.entry.branch, req, res, svcTarget.profileId, svcTarget.entry);
+        return;
+      }
       this.routeToBranch(previewSlug, previewSlug, req, res);
       return;
     }
@@ -537,11 +547,66 @@ export class ProxyService {
    * Route a request to a specific branch (by slug).
    * Used by both normal routing and preview subdomain routing.
    */
-  private routeToBranch(branchSlug: string, branchRef: string, req: http.IncomingMessage, res: http.ServerResponse): void {
+  /**
+   * 命名子域解析(master 兜底):`<previewSlug>-<subdomain>` → 该分支 + 强制走声明了该 subdomain
+   * 的有效 profile。仅当 slug 本身解析不到分支(① 优先)、但去掉 `-<subdomain>` 后缀能命中某分支的
+   * previewSlug、且该分支有匹配 subdomain 的在跑 profile 时才命中——避免与「分支名恰好以 -xxx 结尾」
+   * 混淆。转发模式下 forwarder 已按 host 直接命中,本兜底只服务非转发部署。
+   */
+  private resolvePreviewServiceSubdomain(
+    slug: string,
+  ): { entry: BranchEntry; profileId: string; previewSlug: string } | undefined {
+    // slug 本身就能解析到分支 → 不是命名子域,交回常规路径。
+    if (this.resolveBranchEntry(slug)) return undefined;
+    const state = this.stateService.getState();
+    const projects = this.stateService.getProjects?.() ?? [];
+    const projectById = new Map(projects.map((p) => [p.id, p]));
+    // 收集所有候选,取「previewSlug 最长(最具体)」者——slug `abc-demo-llmgw` 可能同时被
+    // (previewSlug=`abc`, subdomain=`demo-llmgw`) 和 (previewSlug=`abc-demo`, subdomain=`llmgw`) 命中,
+    // 必须按最长 previewSlug 消歧,否则 Object.values 迭代顺序决定胜者→同一 URL 路由不确定(Cursor Bugbot)。
+    // 等长再按 entry.id 字典序稳定 tie-break。
+    let best: { entry: BranchEntry; profileId: string; previewSlug: string } | undefined;
+    for (const entry of Object.values(state.branches)) {
+      if (!entry.branch) continue;
+      const project = entry.projectId ? projectById.get(entry.projectId) : undefined;
+      let profiles: BuildProfile[] | undefined;
+      for (const projectSlug of previewProjectSlugCandidates(project, entry.projectId)) {
+        const ps = computePreviewSlug(entry.branch, projectSlug);
+        if (!ps || !slug.startsWith(`${ps}-`)) continue;
+        const sub = slug.slice(ps.length + 1); // 去掉 `<ps>-`
+        if (!sub) continue;
+        profiles ??= this.stateService
+          .getEffectiveProfilesForBranch(entry)
+          .map((p) => resolveEffectiveProfile(p, entry));
+        // 要求该服务有 hostPort **且** 处于可路由状态——否则停止/错误（但残留 hostPort）的 profile
+        // 会被命名 host 强制命中却拿不到上游，产生 forwarder 本会省略的坏路由。
+        // 与 forwarder 命名路由「只发可路由服务」口径对齐，共用 ROUTABLE_SERVICE_STATUSES（Cursor Bugbot）。
+        const match = profiles.find((p) => {
+          if (!p.subdomain || p.subdomain.toLowerCase() !== sub) return false;
+          const svc = entry.services[p.id];
+          return (svc?.hostPort ?? 0) > 0 && ROUTABLE_SERVICE_STATUSES.has(String(svc?.status));
+        });
+        if (!match) continue;
+        // 返回已解析的 v3 previewSlug(非 slugify(branch.name))——后者对 claude/... 带 `/` 的分支名
+        // 算出的裸 slug 与 resolveBranchEntry 的 v3 前向匹配口径不符,会让命名 URL 在 master 兜底解析不到分支。
+        const better =
+          !best ||
+          ps.length > best.previewSlug.length ||
+          (ps.length === best.previewSlug.length && String(entry.id) < String(best.entry.id));
+        if (better) best = { entry, profileId: match.id, previewSlug: ps };
+      }
+    }
+    return best;
+  }
+
+  private routeToBranch(branchSlug: string, branchRef: string, req: http.IncomingMessage, res: http.ServerResponse, forcedProfileId?: string, forcedEntry?: BranchEntry): void {
+    // 命名子域命中时，调用方已解析出确切 entry（resolvePreviewServiceSubdomain 按最长 previewSlug 消歧）；
+    // 直接用它，**不再** resolveBranchEntry(slug) 二次解析——多分支共享同一 v3 slug 时二次解析可能命中
+    // 另一个 entry，导致 forcedProfileId 被丢、命名 host 路由到错分支（Cursor Bugbot）。
     // Use canonical-id fallback so subdomain hits on non-legacy projects
     // (entries stored as `${projectSlug}-${slug}`) match the bare-slug
     // request without falling through to auto-build on every reload.
-    const branch = this.resolveBranchEntry(branchSlug);
+    const branch = forcedEntry ?? this.resolveBranchEntry(branchSlug);
 
     // Loading states — serve friendly waiting page instead of 502/503 so
     // users never see a raw Cloudflare gateway error during build/restart.
@@ -679,7 +744,10 @@ export class ProxyService {
       return;
     }
 
-    const profileId = this.detectProfileFromRequest(req, branch);
+    // 命名子域命中时强制走该 profile(host 已绑定具体服务,不按路径再分流);否则按请求路径检测。
+    const profileId = forcedProfileId && branch.services[forcedProfileId]
+      ? forcedProfileId
+      : this.detectProfileFromRequest(req, branch);
 
     // Service-level loading: branch is "running" (some services up) but
     // the specific service for this request is still initializing.
@@ -865,7 +933,7 @@ export class ProxyService {
     return { percent: status === 'building' ? 24 : 12, confidence: 'low', matchedLog: false };
   }
 
-  private estimateWaitingProgress(branch: BranchEntry | undefined, waitingProfileId?: string): {
+  private estimateWaitingProgress(branch: BranchEntry | undefined, waitingProfileId?: string, timing?: ReturnType<typeof computeWaitTiming> | null): {
     percent: number;
     confidence: 'low' | 'medium' | 'high';
     label: string;
@@ -915,6 +983,15 @@ export class ProxyService {
       : branch.status === 'starting' || branch.status === 'restarting'
         ? '预计启动进度'
         : '预计处理进度';
+    if (timing?.estimateMedianMs != null && timing.estimateSamples > 0) {
+      const timePercent = timing.overdue
+        ? 96
+        : Math.max(1, Math.min(96, (timing.elapsedMs / timing.estimateMedianMs) * 100));
+      const reason = estimates.some((item) => item.matchedLog)
+        ? `基于 ${services.length} 个服务状态、构建日志与历史耗时估算`
+        : `基于 ${services.length} 个服务状态与历史耗时估算`;
+      return { percent: timePercent, confidence, label, reason };
+    }
     const reason = estimates.some((item) => item.matchedLog)
       ? `基于 ${services.length} 个服务状态与构建日志估算`
       : `基于 ${services.length} 个服务状态与运行时长估算`;
@@ -1074,7 +1151,7 @@ export class ProxyService {
       displayBranch,
       status: branch?.status || 'not-found',
       waitingProfileId: waitingProfileId || null,
-      progress: this.estimateWaitingProgress(branch, waitingProfileId),
+      progress: this.estimateWaitingProgress(branch, waitingProfileId, timing),
       timing,
       buildMode: timing?.mode || null,
       modeLabel: timing ? (timing.mode === 'release' ? '极速版' : '源码') : null,
@@ -1487,7 +1564,14 @@ void main(){
       });
       return;
     }
-    const progress = this.estimateWaitingProgress(branch, waitingProfileId);
+    const { mode: buildMode, estimate } = this.resolveWaitTimingMode(branch, waitingProfileId);
+    const initialTiming = computeWaitTiming({
+      status: branch.status,
+      deployStartedAtMs: this.resolveDeployStartedAtMs(branch),
+      nowMs: Date.now(),
+      estimate,
+    });
+    const progress = this.estimateWaitingProgress(branch, waitingProfileId, initialTiming);
     const safeBranch = this.escapeHtml(displayBranch);
     const safeProgressLabel = this.escapeHtml(progress.label);
     const safeProgressReason = this.escapeHtml(progress.reason);
@@ -1527,7 +1611,6 @@ void main(){
     const branchLabel = ciWaiting ? '准备中' : stageLabel(branchStatus);
     // 构建模式（极速版 = CI 预构建镜像直接部署 / 源码 = 拉代码热加载编译）+ 分支/PR 直达链接，
     // 让等待页一眼知道「这是哪种构建、对应哪个分支与 PR」，不必猜。
-    const { mode: buildMode } = this.resolveWaitTimingMode(branch, waitingProfileId);
     const safeModeLabel = this.escapeHtml(buildMode === 'release' ? '极速版' : '源码');
     const dashBase = this.dashboardBaseUrl();
     const branchPanelUrl = dashBase ? `${dashBase}/branch-panel/${encodeURIComponent(branch.id)}` : '';
@@ -1818,24 +1901,20 @@ ${shouldAutoRefresh ? `;(function(){
       root.appendChild(row);
     });
   }
-  // 百分比状态：display 是当前显示值（两位小数、单调不回退），server 是服务端状态/日志估算，
-  // 时间目标由 elapsed/median 推出。tickPct 每 200ms 把 display 平滑逼近 max(server,时间目标)，
-  // 让数字始终在动；未 ready 前封顶 99.99%（守住"ready 前不显示 100%"）。
+  // 百分比状态：display 是当前显示值（两位小数、单调不回退），server 是服务端状态/日志估算。
+  // 有历史耗时(median)时，进度条必须与"已等待 / 预计还需"同源：elapsed / median。
+  // 无历史样本时才回退 server，避免把状态日志的 86/94% 和 ETA 文案混成两套进度。
   var pct={display:0,server:0,ready:false};
   (function(){var el=document.querySelector('[data-role="progress-percent"]');var v=el?parseFloat(el.textContent):0;pct.display=pct.server=(isNaN(v)?0:v);})();
   // 进度百分比：时间连续驱动，小数位一直在跳。
-  // 有历史耗时(median)时：以服务端日志/状态估算 server 作锚点(下限)，随 ETA 推进(frac=已用/中位)
-  // 平滑爬向 99.99——所以即使 server 卡在某个整数，百分比的小数位仍随秒推进而连续变化，用户看得见在动。
-  // 旧实现 target=max(server,timePct) 会被 server 整数封住、小数冻在 .00（用户实测反馈）。
   function tickPct(){
     var target;
     if(timingState&&timingState.medianMs){
       var elapsed=timingState.baseElapsedMs+(Date.now()-timingState.syncedAt);
       if(elapsed<0)elapsed=0;
-      var frac=elapsed/timingState.medianMs; if(frac>1)frac=1; // 0..1，按 ETA 推进
-      var base=Math.min(pct.server,99.99);                      // 服务端估算作下限锚点
-      // 随时间从 base 连续爬向 99.99；若纯时间比例已超过 base(构建比平时久)则用时间比例继续推。
-      target=Math.max(base+(99.99-base)*frac, frac*100);
+      var frac=elapsed/timingState.medianMs;
+      if(timingState.overdue||frac>=1)target=Math.max(pct.display,96);
+      else target=Math.max(1,Math.min(96,frac*100));
     }else{
       target=pct.server;                                        // 无历史样本：只展示状态估算，不编造时间
     }
