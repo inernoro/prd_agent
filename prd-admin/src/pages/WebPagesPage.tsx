@@ -48,6 +48,7 @@ import { SiteViewersDrawer } from '@/components/web-hosting/SiteViewersDrawer';
 import { ShareAnalyticsDrawer } from '@/components/web-hosting/ShareAnalyticsDrawer';
 import SitePreviewModal from '@/components/web-hosting/SitePreviewModal';
 import { createPortal } from 'react-dom';
+import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
 import type { DocumentStore } from '@/services/contracts/documentStore';
 import { ShareDock, useDockDrag } from '@/components/share-dock';
 
@@ -95,6 +96,7 @@ import {
   MessageSquare,
   Plus,
   Settings2,
+  MoreHorizontal,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { UserAvatar } from '@/components/ui/UserAvatar';
@@ -1974,7 +1976,7 @@ export function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSel
     mime: WEB_PAGE_MIME,
     id: site.id,
     label: site.title,
-    icon: '🌐',
+    icon: 'WEB',
   });
 
   const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes('Files');
@@ -2073,37 +2075,11 @@ export function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSel
           />
 
           <div className="absolute left-3 top-3 z-20 flex items-center gap-1.5">
-            {/* 公开态展示状态并允许创建者取消公开；私有态把原公开快捷位改为高频分享入口。 */}
-            {isPublic ? (
-              c.canSetVisibility ? (
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); onTogglePublic(); }}
-                  className="group/pub inline-flex h-7 cursor-pointer items-center gap-1 rounded-full bg-sky-500/32 px-2.5 text-[11px] font-semibold text-sky-50 shadow-md backdrop-blur-md transition-colors hover:bg-rose-500/45 hover:text-rose-50"
-                  title="点击取消公开"
-                >
-                  <Globe size={12} className="inline-block group-hover/pub:hidden" />
-                  <Lock size={12} className="hidden group-hover/pub:inline-block" />
-                  <span className="group-hover/pub:hidden">公开</span>
-                  <span className="hidden group-hover/pub:inline-block">取消公开</span>
-                </button>
-              ) : (
-                <span className="inline-flex h-7 items-center gap-1 rounded-full bg-sky-500/25 px-2.5 text-[11px] font-semibold text-sky-50 shadow-md backdrop-blur-md">
-                  <Globe size={12} /> 公开
-                </span>
-              )
-            ) : c.canShare ? (
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); onShare(); }}
-                className="inline-flex h-7 cursor-pointer items-center gap-1 rounded-full bg-violet-500/30 px-2.5 text-[11px] font-semibold text-violet-50 shadow-md backdrop-blur-md transition-colors hover:bg-violet-500/45"
-                title="分享"
-                aria-label="分享"
-              >
-                <Share2 size={12} />
-                分享
-              </button>
-            ) : null}
+            {isPublic && (
+              <span className="inline-flex h-7 items-center gap-1 rounded-full bg-sky-500/25 px-2.5 text-[11px] font-semibold text-sky-50 shadow-md backdrop-blur-md">
+                <Globe size={12} /> 公开
+              </span>
+            )}
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onSelect(); }}
@@ -2130,35 +2106,41 @@ export function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSel
             </div>
           )}
 
-          <div className="absolute bottom-3 left-3 z-20 flex items-center gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
+          <div className="pointer-events-none absolute bottom-3 left-3 right-3 z-20 flex min-w-0 items-center justify-end gap-1.5 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
             {c.canShare && (
-              shared ? (
-                // 已分享：单按钮打开 scope 到本站点的分享管理面板（看链接/复制/单条取消/续期/新建都在里面）
-                <IconAction icon={<Settings2 size={12} />} label="分享管理" color="#fcd34d" onClick={onShare} />
-              ) : (
-                <IconAction icon={<Share2 size={12} />} label="分享" onClick={onShare} />
-              )
-            )}
-            <IconAction icon={<QrCode size={12} />} label="二维码" onClick={onQrCode} />
-            {!isPublic && c.canSetVisibility && (
-              <IconAction icon={<Globe size={12} />} label="发布到公开页" color="#7dd3fc" onClick={onTogglePublic} />
-            )}
-            {isPublic && (
               <IconAction
-                icon={<BookOpen size={12} />}
-                label="转存到知识库"
-                onClick={onTransferToLibrary}
+                icon={shared ? <Link2 size={12} /> : <Share2 size={12} />}
+                label={shared ? '已分享' : '分享'}
+                color={shared ? '#fcd34d' : undefined}
+                onClick={onShare}
               />
             )}
-            {onComments && (
-              <IconAction icon={<MessageSquare size={12} />} label="评论管理" onClick={onComments} />
-            )}
-            {onViewers && (
-              <IconAction icon={<Eye size={12} />} label="访客" onClick={onViewers} />
-            )}
-            {c.canEdit && onMove && <IconAction icon={<FolderInput size={12} />} label="移动到空间/文件夹" onClick={onMove} />}
             {c.canEdit && <IconAction icon={<Edit3 size={12} />} label="编辑" onClick={onEdit} />}
-            {c.canDelete && <IconAction icon={<Trash2 size={12} />} label="删除" onClick={onDelete} danger />}
+            <MoreActionsButton
+              actions={[
+                { label: '二维码', icon: <QrCode size={13} />, onClick: onQrCode },
+                c.canSetVisibility
+                  ? isPublic
+                    ? { label: '取消公开', icon: <Lock size={13} />, onClick: onTogglePublic, color: '#fca5a5' }
+                    : { label: '发布到公开页', icon: <Globe size={13} />, onClick: onTogglePublic, color: '#7dd3fc' }
+                  : null,
+                isPublic
+                  ? { label: '转存到知识库', icon: <BookOpen size={13} />, onClick: onTransferToLibrary }
+                  : null,
+                onComments
+                  ? { label: '评论管理', icon: <MessageSquare size={13} />, onClick: onComments }
+                  : null,
+                onViewers
+                  ? { label: '访客', icon: <Eye size={13} />, onClick: onViewers }
+                  : null,
+                c.canEdit && onMove
+                  ? { label: '移动到空间/文件夹', icon: <FolderInput size={13} />, onClick: onMove }
+                  : null,
+                c.canDelete
+                  ? { label: '删除', icon: <Trash2 size={13} />, onClick: onDelete, danger: true }
+                  : null,
+              ]}
+            />
           </div>
         </div>
 
@@ -2260,6 +2242,67 @@ function IconAction({
   );
 }
 
+type MoreAction = {
+  label: string;
+  icon: React.ReactNode;
+  onClick: () => void;
+  danger?: boolean;
+  color?: string;
+} | null;
+
+function MoreActionsButton({ actions }: { actions: MoreAction[] }) {
+  const availableActions = actions.filter((action): action is NonNullable<MoreAction> => Boolean(action));
+  const anchorRef = useRef<HTMLButtonElement | null>(null);
+  const [open, setOpen] = useState(false);
+
+  if (availableActions.length === 0) return null;
+
+  return (
+    <>
+      <button
+        ref={anchorRef}
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-full bg-black/38 text-white/88 shadow-md backdrop-blur-md transition-colors hover:bg-black/58"
+        title="更多设置"
+        aria-label="更多设置"
+        data-no-drag
+      >
+        <MoreHorizontal size={13} />
+      </button>
+      {open && (
+        <AnchoredMenu
+          open={open}
+          onClose={() => setOpen(false)}
+          anchorRef={anchorRef}
+          minWidth={184}
+          align="left"
+          style={{ padding: 6 }}
+        >
+          {availableActions.map((action) => (
+            <button
+              key={action.label}
+              type="button"
+              className="flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-left text-xs font-medium transition-colors hover:bg-white/10"
+              style={{ color: action.color ?? (action.danger ? '#fecaca' : 'var(--text-secondary)') }}
+              onClick={() => {
+                setOpen(false);
+                action.onClick();
+              }}
+            >
+              <span className="inline-flex w-4 shrink-0 items-center justify-center">{action.icon}</span>
+              <span className="truncate">{action.label}</span>
+            </button>
+          ))}
+        </AnchoredMenu>
+      )}
+    </>
+  );
+}
+
 // ─── List View ───
 
 function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete, onShare, onQrCode, onTogglePublic, onComments }: {
@@ -2281,7 +2324,7 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
     mime: WEB_PAGE_MIME,
     id: site.id,
     label: site.title,
-    icon: '🌐',
+    icon: 'WEB',
   });
   // 访问地址与 SiteCard 网格视图一致：统一走 /s/wp/{token}，避免列表/网格切换得到不同 URL
   const handleVisit = () => {
@@ -2361,43 +2404,42 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
       </div>
 
       <div className="flex items-center gap-1 shrink-0">
-        <button onClick={handleVisit} className="p-1 rounded hover:bg-[var(--bg-hover)]">
+        <button onClick={handleVisit} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="打开" aria-label="打开">
           <ExternalLink size={14} style={{ color: 'var(--text-muted)' }} />
         </button>
-        {!isPublic && c.canSetVisibility && (
-          <button onClick={onTogglePublic} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="发布到公开页" aria-label="发布到公开页">
-            <Globe size={14} style={{ color: '#7dd3fc' }} />
-          </button>
-        )}
         {c.canShare && (
-          shared ? (
-            <button onClick={onShare} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="分享管理">
-              <Settings2 size={14} style={{ color: '#fcd34d' }} />
-            </button>
-          ) : (
-            <button onClick={onShare} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="分享">
-              <Share2 size={14} style={{ color: 'var(--text-muted)' }} />
-            </button>
-          )
-        )}
-        <button onClick={onQrCode} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="二维码">
-          <QrCode size={14} style={{ color: 'var(--text-muted)' }} />
-        </button>
-        {onComments && (
-          <button onClick={onComments} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="评论管理">
-            <MessageSquare size={14} style={{ color: 'var(--text-muted)' }} />
+          <button
+            onClick={onShare}
+            className="p-1 rounded hover:bg-[var(--bg-hover)]"
+            title={shared ? '已分享' : '分享'}
+            aria-label={shared ? '已分享' : '分享'}
+          >
+            {shared
+              ? <Link2 size={14} style={{ color: '#fcd34d' }} />
+              : <Share2 size={14} style={{ color: 'var(--text-muted)' }} />}
           </button>
         )}
         {c.canEdit && (
-          <button onClick={onEdit} className="p-1 rounded hover:bg-[var(--bg-hover)]">
+          <button onClick={onEdit} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="编辑" aria-label="编辑">
             <Edit3 size={14} style={{ color: 'var(--text-muted)' }} />
           </button>
         )}
-        {c.canDelete && (
-          <button onClick={onDelete} className="p-1 rounded hover:bg-[var(--bg-hover)]">
-            <Trash2 size={14} style={{ color: '#ef4444' }} />
-          </button>
-        )}
+        <MoreActionsButton
+          actions={[
+            { label: '二维码', icon: <QrCode size={13} />, onClick: onQrCode },
+            c.canSetVisibility
+              ? isPublic
+                ? { label: '取消公开', icon: <Lock size={13} />, onClick: onTogglePublic, color: '#fca5a5' }
+                : { label: '发布到公开页', icon: <Globe size={13} />, onClick: onTogglePublic, color: '#7dd3fc' }
+              : null,
+            onComments
+              ? { label: '评论管理', icon: <MessageSquare size={13} />, onClick: onComments }
+              : null,
+            c.canDelete
+              ? { label: '删除', icon: <Trash2 size={13} />, onClick: onDelete, danger: true }
+              : null,
+          ]}
+        />
       </div>
     </div>
   );
