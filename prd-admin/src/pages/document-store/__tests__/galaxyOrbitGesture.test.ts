@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { rotateOrbitOffsetByPixels } from '../DocumentGalaxyView';
+import { cameraTweenDurationMs, naturalCameraEase, rotateOrbitOffsetByPixels } from '../DocumentGalaxyView';
 
 describe('rotateOrbitOffsetByPixels', () => {
   it('正向滑动使用触摸板自然方向', () => {
@@ -29,5 +29,35 @@ describe('rotateOrbitOffsetByPixels', () => {
     expect(spherical.phi).toBeGreaterThan(0);
     expect(spherical.phi).toBeLessThan(Math.PI);
     expect(next.length()).toBeCloseTo(start.length(), 8);
+  });
+});
+
+describe('natural camera motion', () => {
+  it('使用慢起步和慢停下的自然速度曲线', () => {
+    expect(naturalCameraEase(0)).toBe(0);
+    expect(naturalCameraEase(1)).toBe(1);
+    expect(naturalCameraEase(0.1)).toBeLessThan(0.1);
+    expect(naturalCameraEase(0.9)).toBeGreaterThan(0.9);
+    expect(naturalCameraEase(0.5)).toBeCloseTo(0.5, 8);
+  });
+
+  it('飞行时长随距离增加但保持在可控范围', () => {
+    const origin = new THREE.Vector3(0, 0, 0);
+    const near = cameraTweenDurationMs(
+      origin,
+      new THREE.Vector3(20, 0, 0),
+      new THREE.Vector3(0, 120, 1050),
+      new THREE.Vector3(20, 120, 980),
+    );
+    const far = cameraTweenDurationMs(
+      origin,
+      new THREE.Vector3(900, 0, 0),
+      new THREE.Vector3(0, 120, 1050),
+      new THREE.Vector3(900, 360, 360),
+    );
+
+    expect(near).toBeGreaterThanOrEqual(620);
+    expect(far).toBeGreaterThan(near);
+    expect(far).toBeLessThanOrEqual(1450);
   });
 });
