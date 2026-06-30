@@ -139,6 +139,7 @@ describe('Branch Routes', () => {
   let stateService: StateService;
   let containerService: ContainerService;
   let serverEventLogStore: ServerEventLogSink;
+  let branchOperationCoordinator: BranchOperationCoordinator;
   let registryNodes: any[];
   let operationEvents: Array<{
     category?: string;
@@ -229,7 +230,7 @@ describe('Branch Routes', () => {
         });
       },
     };
-    const branchOperationCoordinator = new BranchOperationCoordinator(serverEventLogStore);
+    branchOperationCoordinator = new BranchOperationCoordinator(serverEventLogStore);
 
     const app = express();
     app.use(express.json());
@@ -2426,6 +2427,38 @@ describe('Branch Routes', () => {
       expect(operationEvents.find((event) =>
         event.branchId === 'hung-flush-delete' && event.action === 'branch.operation.failed',
       )).toBeTruthy();
+    });
+
+    it('does not persist delete cleanup intent when operation lease rejects the delete', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'delete-lease-rejected',
+        projectId: 'default',
+        branch: 'feature/delete-lease-rejected',
+        worktreePath: path.join(tmpDir, 'worktrees', 'delete-lease-rejected'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+      });
+      stateService.save();
+
+      const active = branchOperationCoordinator.begin({
+        branchId: 'delete-lease-rejected',
+        projectId: 'default',
+        kind: 'delete',
+        trigger: 'manual',
+        actor: 'test',
+        source: 'test.active-delete',
+        reason: 'simulate an already-running terminal operation',
+      });
+      expect(active.status).toBe('started');
+
+      const rejectedDelete = await request(server, 'DELETE', '/api/branches/delete-lease-rejected');
+      const branchAfterReject = stateService.getBranch('delete-lease-rejected')!;
+      expect(String(rejectedDelete.body)).toContain('operationStatus');
+      expect(branchAfterReject.lastStopReason || '').not.toContain('删除分支流程已开始');
+      expect(branchAfterReject.lastStopSource).toBeUndefined();
+      expect(branchAfterReject.status).not.toBe('stopping');
     });
 
     it('does not keep delete SSE open for slow best-effort volume cleanup', async () => {

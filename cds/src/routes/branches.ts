@@ -9749,6 +9749,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       : trigger
         ? `CDS 内部触发(${trigger})删除分支`
         : `${actor} 请求删除分支`;
+    const branchOperationLease = beginBranchOperation(req, res, entry, {
+      kind: 'delete',
+      source: 'api.delete-branch',
+      reason: deleteReason,
+      sse: true,
+    });
+    if (branchOperationCoordinator && !branchOperationLease) return;
     const deleteStartedAt = nowIso();
     entry.status = 'stopping';
     entry.lastStoppedAt = deleteStartedAt;
@@ -9764,13 +9771,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
         note: entry.lastStopReason,
       });
     } catch { /* activity log is best-effort */ }
-    const branchOperationLease = beginBranchOperation(req, res, entry, {
-      kind: 'delete',
-      source: 'api.delete-branch',
-      reason: deleteReason,
-      sse: true,
-    });
-    if (branchOperationCoordinator && !branchOperationLease) return;
     const operationAuditFields = {
       operationKind: 'delete',
       operationTrigger: trigger === 'webhook' ? 'webhook' : 'manual',
