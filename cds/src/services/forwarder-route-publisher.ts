@@ -265,6 +265,32 @@ export class ForwarderRoutePublisher {
           // 不写 updatedAt(理由同前两处:dedup 失效防御)
         });
       }
+
+      // 4) 命名子域路由:声明了 subdomain 的服务获得自己的命名 URL
+      //    `<previewSlug>-<subdomain>.<root>`,根路径直达该容器(无 pathPrefix)。
+      //    让「可被别人调用」的独立服务(如 LLM 网关 llmgw-serve → <slug>-llmgw.<root>)
+      //    拥有区别于主应用域名的命名入口,而不是埋在主应用的 /gw/v1 路径下。
+      //    单标签(<previewSlug>-<subdomain>)以匹配 *.<root> 通配证书;subdomain 合法性
+      //    由 branch-extra-services.isValidServiceSubdomain / compose cds.subdomain 入口保证。
+      //    见 .claude/rules/navigation-registry 同源思路 + doc/design.llm-gateway-physical-isolation.md。
+      for (const svc of routableServices) {
+        const bp = profileById.get(svc.profileId);
+        const sub = bp?.subdomain;
+        if (!sub) continue;
+        for (const root of this.opts.rootDomains) {
+          records.push({
+            _id: `${branch.id}:${svc.profileId}:subdom:${idx++}`,
+            host: `${previewSlug}-${sub}.${root}`,
+            upstreamHost: '127.0.0.1',
+            upstreamPort: svc.hostPort,
+            branchId: branch.id,
+            branchName: branch.branch,
+            weight: 100,
+            healthState: svc.status === 'running' ? 'running' : 'unknown',
+            // 不写 updatedAt(理由同前:dedup 失效防御)
+          });
+        }
+      }
     }
     return records;
   }

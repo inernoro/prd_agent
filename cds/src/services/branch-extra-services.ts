@@ -17,6 +17,18 @@ export function isValidExtraProfileId(id: string): boolean {
 }
 
 /**
+ * 服务命名子域 label 合法性:单 DNS label —— 全小写字母/数字/连字符,不以连字符开头/结尾,长度 1..40。
+ *
+ * 约束来由:命名 URL 是 `<previewSlug>-<subdomain>.<rootDomain>`,整段 `<previewSlug>-<subdomain>`
+ * 必须是**单级**子域才能落在 `*.<rootDomain>` 通配证书下(forwarder hostMatches 拒绝多级)。subdomain
+ * 自身禁含 `.`(否则拼出两级)、禁大写(DNS 大小写不敏感但 host 比对走 lowercase)、限长以免和长 previewSlug
+ * 拼接后超过 DNS label 63 上限。
+ */
+export function isValidServiceSubdomain(sub: string): boolean {
+  return typeof sub === 'string' && /^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(sub);
+}
+
+/**
  * 合并「项目级 profile(稳定底座)」+「分支级临时额外服务」。
  *
  * 规则:

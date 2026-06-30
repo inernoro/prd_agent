@@ -472,6 +472,15 @@ export class ProxyService {
     // Each branch gets its own subdomain — no cookies needed, fully independent
     const previewSlug = this.extractPreviewBranch(host);
     if (previewSlug) {
+      // 命名子域兜底:`<previewSlug>-<subdomain>.<root>` 直达声明了该 subdomain 的服务容器。
+      // 转发模式(CDS_USE_FORWARDER=1,生产数据面)下 forwarder 已按 host 精确命中,不会走到这里;
+      // 本兜底只服务非转发部署 + master 反代路径,避免命名 host 落到 auto-build。
+      const svcTarget = this.resolvePreviewServiceSubdomain(previewSlug);
+      if (svcTarget) {
+        const baseSlug = StateService.slugify(svcTarget.entry.branch);
+        this.routeToBranch(baseSlug, svcTarget.entry.branch, req, res, svcTarget.profileId);
+        return;
+      }
       this.routeToBranch(previewSlug, previewSlug, req, res);
       return;
     }
@@ -537,7 +546,46 @@ export class ProxyService {
    * Route a request to a specific branch (by slug).
    * Used by both normal routing and preview subdomain routing.
    */
-  private routeToBranch(branchSlug: string, branchRef: string, req: http.IncomingMessage, res: http.ServerResponse): void {
+  /**
+   * 命名子域解析(master 兜底):`<previewSlug>-<subdomain>` → 该分支 + 强制走声明了该 subdomain
+   * 的有效 profile。仅当 slug 本身解析不到分支(① 优先)、但去掉 `-<subdomain>` 后缀能命中某分支的
+   * previewSlug、且该分支有匹配 subdomain 的在跑 profile 时才命中——避免与「分支名恰好以 -xxx 结尾」
+   * 混淆。转发模式下 forwarder 已按 host 直接命中,本兜底只服务非转发部署。
+   */
+  private resolvePreviewServiceSubdomain(
+    slug: string,
+  ): { entry: BranchEntry; profileId: string } | undefined {
+    // slug 本身就能解析到分支 → 不是命名子域,交回常规路径。
+    if (this.resolveBranchEntry(slug)) return undefined;
+    const state = this.stateService.getState();
+    const projects = this.stateService.getProjects?.() ?? [];
+    const projectById = new Map(projects.map((p) => [p.id, p]));
+    for (const entry of Object.values(state.branches)) {
+      if (!entry.branch) continue;
+      const project = entry.projectId ? projectById.get(entry.projectId) : undefined;
+      let base: string | undefined;
+      for (const projectSlug of previewProjectSlugCandidates(project, entry.projectId)) {
+        const ps = computePreviewSlug(entry.branch, projectSlug);
+        if (ps && slug.startsWith(`${ps}-`)) {
+          base = ps;
+          break;
+        }
+      }
+      if (!base) continue;
+      const sub = slug.slice(base.length + 1); // 去掉 `<base>-`
+      if (!sub) continue;
+      const profiles = this.stateService
+        .getEffectiveProfilesForBranch(entry)
+        .map((p) => resolveEffectiveProfile(p, entry));
+      const match = profiles.find(
+        (p) => p.subdomain && p.subdomain.toLowerCase() === sub && entry.services[p.id],
+      );
+      if (match) return { entry, profileId: match.id };
+    }
+    return undefined;
+  }
+
+  private routeToBranch(branchSlug: string, branchRef: string, req: http.IncomingMessage, res: http.ServerResponse, forcedProfileId?: string): void {
     // Use canonical-id fallback so subdomain hits on non-legacy projects
     // (entries stored as `${projectSlug}-${slug}`) match the bare-slug
     // request without falling through to auto-build on every reload.
@@ -679,7 +727,10 @@ export class ProxyService {
       return;
     }
 
-    const profileId = this.detectProfileFromRequest(req, branch);
+    // 命名子域命中时强制走该 profile(host 已绑定具体服务,不按路径再分流);否则按请求路径检测。
+    const profileId = forcedProfileId && branch.services[forcedProfileId]
+      ? forcedProfileId
+      : this.detectProfileFromRequest(req, branch);
 
     // Service-level loading: branch is "running" (some services up) but
     // the specific service for this request is still initializing.

@@ -13,7 +13,7 @@ import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
-import { isValidExtraProfileId, mergeBranchProfiles } from '../services/branch-extra-services.js';
+import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles } from '../services/branch-extra-services.js';
 import { classifyTriggerSource, deriveDeployMode, deriveCommitMeta, parsePulledSha, shouldRefreshCommitSha } from '../services/build-log-meta.js';
 import { acquireBuildSlot, buildGateStatus } from '../services/build-gate.js';
 import { recordBuild } from '../services/build-activity-tracker.js';
@@ -13123,6 +13123,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
         entrypoint = ep;
       }
+      // 命名子域(Codex「Expose named per-service URL」):声明后该额外服务获得
+      // `<previewSlug>-<subdomain>.<root>` 独立命名 URL(forwarder 直达容器根路径),
+      // 给「可被别人调用」的独立服务(LLM 网关)区别于主应用的入口。须单 DNS label。
+      let subdomain: string | undefined;
+      if (raw?.subdomain !== undefined && String(raw.subdomain).trim() !== '') {
+        const sd = String(raw.subdomain).trim().toLowerCase();
+        if (!isValidServiceSubdomain(sd)) {
+          res.status(400).json({ error: `额外服务 "${id}" 的 subdomain 非法（须为单个 DNS label：小写字母/数字/连字符，不以连字符开头/结尾，长度 1..40）` });
+          return;
+        }
+        subdomain = sd;
+      }
       seen.add(id);
       sanitized.push({
         id,
@@ -13132,6 +13144,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ...(containerWorkDir ? { containerWorkDir } : {}),
         ...(entrypoint !== undefined ? { entrypoint } : {}),
         ...(dbScope !== undefined ? { dbScope } : {}),
+        ...(subdomain ? { subdomain } : {}),
         command: String(raw?.command || ''),
         containerPort,
         projectId: entry.projectId || 'default',

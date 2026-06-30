@@ -210,6 +210,37 @@ describe('ForwarderRoutePublisher', () => {
     expect(apiRoute.upstreamPort).toBe(41201);
   });
 
+  it('声明 subdomain 的服务获得命名 host 路由 `<slug>-<sub>.<root>`（根路径直达容器，无 pathPrefix）', () => {
+    ensureProject('demo', 'demo');
+    // web 主应用 + 分支级额外服务 llmgw（声明 subdomain=llmgw）。
+    addMultiProfileBranch({
+      projectId: 'demo',
+      branch: 'main',
+      services: { web: 41400, llmgw: 41401 },
+    });
+    state.addBuildProfile({ id: 'web', name: 'web', projectId: 'demo' } as Parameters<typeof state.addBuildProfile>[0]);
+    state.setBranchExtraProfiles('demo-main', [
+      { id: 'llmgw', name: 'llmgw', dockerImage: 'nginx:alpine', workDir: '', command: '', containerPort: 8091, projectId: 'demo', subdomain: 'llmgw' } as any,
+    ]);
+
+    publisher = new ForwarderRoutePublisher({ state, outputPath: outFile, rootDomains: ['miduo.org'] });
+    publisher.publishNow();
+    const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+
+    const slug = computePreviewSlug('main', 'demo');
+    // 命名 host：单标签 `<slug>-llmgw.miduo.org` → llmgw 容器端口，根路径（无 pathPrefix）。
+    const namedRoute = data.find((r: { host?: string }) => r.host === `${slug}-llmgw.miduo.org`);
+    expect(namedRoute).toBeDefined();
+    expect(namedRoute.upstreamPort).toBe(41401);
+    expect(namedRoute.pathPrefix).toBeUndefined();
+    // 主应用域名路由仍在（命名 host 是「额外」的，不取代默认入口）。
+    const mainDefault = data.find(
+      (r: { host?: string; pathPrefix?: string }) => r.host === `${slug}.miduo.org` && !r.pathPrefix,
+    );
+    expect(mainDefault).toBeDefined();
+    expect(mainDefault.upstreamPort).toBe(41400);
+  });
+
   it('profileOverrides 配的 pathPrefixes 也发布到 forwarder（Codex P2「Resolve overrides before routing」mirror）', () => {
     ensureProject('demo', 'demo');
     addMultiProfileBranch({

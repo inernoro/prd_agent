@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
 import type { InfraService, InfraVolume, InfraHealthCheck, BuildProfile, RoutingRule, DeployModeOverride, ResourceLimits } from '../types.js';
+import { isValidServiceSubdomain } from './branch-extra-services.js';
 
 /** Parsed infrastructure service from a compose file */
 export interface ComposeServiceDef {
@@ -486,6 +487,12 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
         // Phase 7 fix(B17):cds.prebuilt-image label → BuildProfile.prebuiltImage
         const prebuilt = labels['cds.prebuilt-image'];
         const prebuiltImage = prebuilt === 'true' || prebuilt === '1';
+        // cds.subdomain label → BuildProfile.subdomain:该服务获得 `<previewSlug>-<subdomain>.<root>`
+        // 命名 URL(独立入口,不埋在主应用路径下)。须单 DNS label,非法值忽略(不阻断解析)。
+        const subdomainRaw = labels['cds.subdomain'];
+        const subdomain = subdomainRaw && isValidServiceSubdomain(subdomainRaw.trim().toLowerCase())
+          ? subdomainRaw.trim().toLowerCase()
+          : undefined;
 
         // Bugbot fix(PR #521 第十轮 Bug 1)— build: 指令兜底:
         // - dockerImage 缺失时合成 "cds-build-<id>:latest" 占位(CDS 实际从
@@ -511,6 +518,7 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           resources: parseResourceLimits(entry),
           ...(entrypoint !== undefined ? { entrypoint } : {}),
           ...(prebuiltImage ? { prebuiltImage: true } : {}),
+          ...(subdomain ? { subdomain } : {}),
         });
       } else {
         // Infra service — no source mount, possibly built-from-source custom
@@ -667,6 +675,10 @@ export function toCdsCompose(
     // Phase 7 fix(B10):entrypoint → cds.entrypoint label(round-trip)
     if (p.entrypoint !== undefined) {
       entryLabels['cds.entrypoint'] = p.entrypoint;
+    }
+    // subdomain → cds.subdomain label(round-trip):命名子域 URL 元数据,导出/重导入不丢。
+    if (p.subdomain) {
+      entryLabels['cds.subdomain'] = p.subdomain;
     }
     // Phase 7 fix(B17):prebuiltImage → cds.prebuilt-image label(round-trip)
     if (p.prebuiltImage) {

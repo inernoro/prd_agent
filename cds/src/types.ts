@@ -67,6 +67,18 @@ export interface BuildProfile {
    */
   pathPrefixes?: string[];
   /**
+   * Optional dedicated subdomain label for this service. When set, CDS publishes an
+   * extra host route `<previewSlug>-<subdomain>.<rootDomain>` that routes ALL paths to
+   * this service's container (root path, no prefix) — giving a named, standalone URL
+   * distinct from the main app domain, so a service like the LLM gateway can be called
+   * as its own endpoint instead of buried under the app's `/gw/v1` path.
+   * Must be a single DNS label (lowercase letters/digits/hyphen) so the combined
+   * `<previewSlug>-<subdomain>` host stays a single label under the `*.<rootDomain>`
+   * wildcard cert. Derived from compose label `cds.subdomain`, or supplied on a
+   * branch-local extra service via PUT /branches/:id/extra-services.
+   */
+  subdomain?: string;
+  /**
    * Service dependencies — IDs of infra services or other profiles this app depends on.
    * Derived from compose `depends_on`. Used for startup ordering.
    */
