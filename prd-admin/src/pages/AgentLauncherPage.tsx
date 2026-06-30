@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Search,
@@ -42,8 +42,13 @@ import { deriveLauncherPerms, buildStaticAgents, buildStaticUtilities, buildStat
 import { useChangelogStore, selectUnreadCount } from '@/stores/changelogStore';
 import { useWeeklyPosterStore } from '@/stores/weeklyPosterStore';
 import { WeeklyPosterModal } from '@/components/weekly-poster/WeeklyPosterModal';
-import { useHomepageAssetsStore, useAgentImageUrl, useAgentVideoUrl, useHeroBgUrl } from '@/stores/homepageAssetsStore';
-import { buildDefaultCoverUrl, buildDefaultVideoUrl, buildDefaultHeroUrl } from '@/lib/homepageAssetSlots';
+import {
+  DEFAULT_HOME_QUICK_LINK_IDS,
+  MAX_HOME_QUICK_LINKS,
+  normalizeHomeQuickLinkIds,
+  useHomeLauncherPreferencesStore,
+  type HomeQuickLinkId,
+} from '@/stores/homeLauncherPreferencesStore';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import type { ToolboxItem } from '@/services';
 import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
@@ -53,7 +58,6 @@ import { ProjectRouteAgentCardArt } from '@/pages/ai-toolbox/components/ProjectR
 import { PaAgentCardArt } from '@/pages/ai-toolbox/components/PaAgentCardArt';
 import { PmAgentCardArt } from '@/pages/ai-toolbox/components/PmAgentCardArt';
 import { ProductAgentCardArt } from '@/pages/ai-toolbox/components/ProductAgentCardArt';
-import { HomeAmbientBackdrop } from '@/components/effects/HomeAmbientBackdrop';
 import { Reveal } from '@/pages/home/components/Reveal';
 import { TipsRotator } from '@/components/daily-tips/TipsRotator';
 import { UpdateCenterNewsTeaser } from '@/components/ai-news/UpdateCenterNewsTeaser';
@@ -69,24 +73,24 @@ import { LearningCenterTeaser } from '@/components/daily-tips/LearningCenterTeas
  * 首屏所有 Reveal 都在视口内，useInView 在 mount 时立即 fire；
  * Showcase 在 fold 下方，滚动到视口时才触发，不浪费动画预算。
  */
-const REVEAL_DURATION = 1000; // /home 默认 2000 的一半
+const REVEAL_DURATION = 500; // /home 默认 2000 的四分之一，避免弱网下出现长时间空白
 const REVEAL = {
   heroEyebrow: 0,
-  heroTitle: 30,
-  heroSubtitle: 60,
-  heroSearch: 90,
-  quickLinkBase: 120,
-  quickLinkStep: 30,
-  agentsHeader: 250,
-  agentsCardBase: 280,
-  agentsCardStep: 20,
-  utilitiesHeader: 200,   // 首次出现延迟加速 2x(原 400)，让"实用工具"更快露出；step/duration 不变
-  utilitiesCardBase: 210, // 同步减半(原 420)
-  utilitiesCardStep: 15,
-  infraHeader: 560,
-  infraCardBase: 580,
-  infraCardStep: 15,
-  showcaseHeader: 720, // 仅当首屏即可见时生效；滚动触发走 IntersectionObserver
+  heroTitle: 15,
+  heroSubtitle: 30,
+  heroSearch: 45,
+  quickLinkBase: 60,
+  quickLinkStep: 15,
+  agentsHeader: 125,
+  agentsCardBase: 140,
+  agentsCardStep: 10,
+  utilitiesHeader: 100,
+  utilitiesCardBase: 105,
+  utilitiesCardStep: 8,
+  infraHeader: 280,
+  infraCardBase: 290,
+  infraCardStep: 8,
+  showcaseHeader: 360,
 };
 
 // ── Icon & Color mapping (self-contained, doesn't touch ToolCard) ──
@@ -100,8 +104,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   PaSecretary,
 };
 
-// Agent 封面图/视频默认 CDN 路径由 `lib/homepageAssetSlots.ts` 统一维护
-// （AGENT_COVER_DEFAULTS / AGENT_VIDEO_DEFAULTS），本文件通过 buildDefault*Url 间接消费。
+// 首页 Agent 卡使用内联插画或几何渐变，不消费图片/视频封面背景。
 
 /** 每个图标对应的主题色 */
 const ACCENT: Record<string, { from: string; to: string }> = {
@@ -142,17 +145,7 @@ function getAccent(icon: string) {
   return ACCENT[icon] ?? { from: '#6366F1', to: '#A5B4FC' };
 }
 
-/** 默认 CDN 封面（非 hook 版本，FeaturedCard 内部用；cdnBase 从 authStore 快照取） */
-function getDefaultCoverUrl(agentKey?: string): string | null {
-  return buildDefaultCoverUrl(useAuthStore.getState().cdnBaseUrl ?? '', agentKey);
-}
-
-function getDefaultVideoUrl(agentKey?: string): string | null {
-  return buildDefaultVideoUrl(useAuthStore.getState().cdnBaseUrl ?? '', agentKey);
-}
-
-// Hero banner 背景（上传后优先用上传的；否则回退 icon/title/home.png）
-// 由 `useHeroBgUrl('home')` + `buildDefaultHeroUrl` 组合消费，不再需要此函数。
+// 首页固定使用低干扰 CSS 几何暗场，卡片也不渲染图片背景，避免吞掉玻璃层的透明质感。
 
 function getIcon(name: string): LucideIcon {
   return ICON_MAP[name] || Bot;
@@ -169,22 +162,20 @@ function getGreeting(): string {
 
 type HomeQuickLink = {
   /** 可选 id，配合页面内的徽章逻辑（如 updates 显示未读数） */
-  id?: 'marketplace' | 'library' | 'showcase' | 'updates';
+  id?: HomeQuickLinkId;
   icon: LucideIcon;
   label: string;
   desc: string;
   path: string;
   accent: string;
   gradient: string;
-  /** 管理员上传的背景图 URL（优先级高于 gradient，渲染时作为背景图铺满卡片） */
-  backgroundUrl?: string;
 };
 
 /**
- * 首页顶部四张快捷卡（MAP Primary Gateways）。
+ * 首页顶部快捷卡（MAP Primary Gateways）。
  *
  * 设计约束：
- * - 4 张卡同宽，响应式自适应
+ * - 最多 6 张卡同宽，响应式自适应
  * - 每张卡一个主色（accent）+ 渐变（gradient），源自 /home Hero 的
  *   retro-futurism 色谱（青/橙/蓝/紫/琥珀），保证既显眼又和页面整体和谐
  * - 「更新中心」带未读徽章，通过 `id==='updates'` 触发
@@ -195,6 +186,31 @@ const QUICK_LINKS_BASE: HomeQuickLink[] = [
   { id: 'showcase', icon: Sparkles, label: '作品广场', desc: '探索 AI 驱动的创意作品与灵感', path: '/showcase', accent: '#A855F7', gradient: 'linear-gradient(135deg, #A855F7, #6366F1)' },
   { id: 'updates', icon: Sparkles, label: '更新中心', desc: '代码级周报 · 本周仓库变更速览', path: '/changelog', accent: '#FBBF24', gradient: 'linear-gradient(135deg, #FBBF24, #F97316)' },
 ];
+
+const VOC_QUICK_LINK: HomeQuickLink = {
+  id: 'voc',
+  icon: Radar,
+  label: 'VOC',
+  desc: '用户原声闭环 · 行为洞察与 AI 根因诊断',
+  path: '/team-activity',
+  accent: '#6366F1',
+  gradient: 'linear-gradient(135deg, #6366F1, #8B5CF6)',
+};
+
+const QUICK_LINK_BY_ID: Partial<Record<HomeQuickLinkId, HomeQuickLink>> = {
+  marketplace: QUICK_LINKS_BASE[0],
+  library: QUICK_LINKS_BASE[1],
+  voc: VOC_QUICK_LINK,
+  showcase: QUICK_LINKS_BASE[2],
+  updates: QUICK_LINKS_BASE[3],
+  'document-store': { id: 'document-store', icon: Library, label: '知识库', desc: '文档存储与知识管理，支持文件夹、GitHub 同步', path: '/document-store', accent: '#3B82F6', gradient: 'linear-gradient(135deg, #2563EB, #0EA5E9)' },
+  'my-assets': { id: 'my-assets', icon: FolderHeart, label: '我的资源', desc: '图片、附件、素材等个人资源统一管理', path: '/visual-agent?tab=assets', accent: '#EC4899', gradient: 'linear-gradient(135deg, #EC4899, #8B5CF6)' },
+  'workflow-agent': { id: 'workflow-agent', icon: Workflow, label: '工作流引擎', desc: '可视化工作流编排，自动化多步骤任务串联', path: '/workflow-agent', accent: '#14B8A6', gradient: 'linear-gradient(135deg, #14B8A6, #0EA5E9)' },
+  'web-pages': { id: 'web-pages', icon: Globe, label: '网页托管', desc: '上传 HTML 或 ZIP，托管并分享你的网页', path: '/web-pages', accent: '#0EA5E9', gradient: 'linear-gradient(135deg, #0EA5E9, #6366F1)' },
+  'open-platform': { id: 'open-platform', icon: Code2, label: '开放平台', desc: 'API 签发、应用接入与调用监控', path: '/open-platform', accent: '#10B981', gradient: 'linear-gradient(135deg, #10B981, #14B8A6)' },
+  models: { id: 'models', icon: Cpu, label: '模型中心', desc: '大模型与模型池配置、健康监控', path: '/mds', accent: '#6366F1', gradient: 'linear-gradient(135deg, #6366F1, #A855F7)' },
+  teams: { id: 'teams', icon: Users, label: '团队协作', desc: '团队成员、用户组、分享与协作', path: '/users', accent: '#64748B', gradient: 'linear-gradient(135deg, #475569, #0F766E)' },
+};
 
 /** /home Hero 同款色谱（青 → 紫 → 玫红），用于首页顶部装饰与重点强调 */
 const MAP_ACCENT_GRADIENT = 'linear-gradient(135deg, #00f0ff 0%, #7c3aed 50%, #f43f5e 100%)';
@@ -222,42 +238,16 @@ function dedupeToolboxItems(items: ToolboxItem[]): ToolboxItem[] {
 
 function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => void }) {
   const accent = getAccent(item.icon);
-  // 订阅 store：上传后 store 刷新即触发重渲染；未上传时 fallback 到 CDN 默认路径
-  const uploadedCover = useAgentImageUrl(item.agentKey);
-  const uploadedVideo = useAgentVideoUrl(item.agentKey);
-  const coverUrl = uploadedCover ?? getDefaultCoverUrl(item.agentKey);
-  const videoUrl = uploadedVideo ?? getDefaultVideoUrl(item.agentKey);
-  const [coverFailed, setCoverFailed] = useState(false);
-  const [videoReady, setVideoReady] = useState(false);
-  const [hovering, setHovering] = useState(false);
-  const videoRef = useRef<HTMLVideoElement>(null);
   const Icon = getIcon(item.icon);
   const isPaAgent = item.agentKey === 'pa-agent';
   const cardDescription = isPaAgent
     ? '把模糊想法转成 MECE 执行清单的 MBB 级私人助理'
     : item.description;
 
-  const handleMouseEnter = () => {
-    setHovering(true);
-    if (videoRef.current && videoReady) {
-      videoRef.current.currentTime = 0;
-      videoRef.current.play().catch(() => {});
-    }
-  };
-
-  const handleMouseLeave = () => {
-    setHovering(false);
-    if (videoRef.current) {
-      videoRef.current.pause();
-    }
-  };
-
   return (
     <button
       type="button"
       onClick={onClick}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
       className="group relative w-full text-left rounded-2xl overflow-hidden transition-all duration-300 hover:-translate-y-1"
       style={{
         background: 'var(--bg-elevated, rgba(255,255,255,0.03))',
@@ -265,66 +255,21 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
         height: 200,
       }}
     >
-      {/* Cover visual: inline art / CDN image / gradient fallback */}
+      {/* Cover visual: inline art / geometric gradient fallback. No image backgrounds on homepage. */}
       {/*
-        毒舌秘书走「上传图优先 + inline 插画兜底」：与其他 agent 一致先看运维上传，
-        没上传时不用渐变占位，而是渲染 PaAgentCardArt 内联插画（MBB + 四象限 + 琥珀/青色）。
+        毒舌秘书走 inline 插画兜底，不用图片封面，保持首页卡片简约一致。
         这是规则 #8「Agent 开发完成标准」要求的「看起来是个东西」。
       */}
       {item.agentKey === 'review-agent' ? (
         <ReviewAgentCardArt />
-      ) : item.agentKey === 'pm-agent' && !uploadedCover ? (
+      ) : item.agentKey === 'pm-agent' ? (
         <PmAgentCardArt />
-      ) : item.agentKey === 'product-agent' && !uploadedCover ? (
+      ) : item.agentKey === 'product-agent' ? (
         <ProductAgentCardArt />
       ) : item.agentKey === 'project-route-agent' ? (
         <ProjectRouteAgentCardArt />
-      ) : item.agentKey === 'pa-agent' && !uploadedCover ? (
-        <>
-          <PaAgentCardArt />
-          {videoUrl && (
-            <video
-              ref={videoRef}
-              src={videoUrl}
-              muted
-              loop
-              playsInline
-              preload="metadata"
-              onCanPlayThrough={() => setVideoReady(true)}
-              className="absolute inset-0 w-full h-full object-cover transition-opacity duration-500"
-              style={{ opacity: hovering && videoReady ? 1 : 0, filter: 'saturate(0.86) brightness(0.92)' }}
-            />
-          )}
-        </>
-      ) : coverUrl && !coverFailed ? (
-        <>
-          <img
-            src={coverUrl}
-            alt=""
-            // 卡片封面图体积较大（上传素材可达 1-2MB/张），网格里大量卡片在首屏外。
-            // lazy + async 解码让屏外封面滚动到视口附近才下载，砍掉首屏的整片图片负载，
-            // 不阻塞首屏渲染（治「预览页一次拉几十 MB」）。
-            loading="lazy"
-            decoding="async"
-            className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-            draggable={false}
-            onError={() => setCoverFailed(true)}
-            style={{ filter: 'saturate(0.86) brightness(0.92)' }}
-          />
-          {videoUrl && (
-            <video
-              ref={videoRef}
-              src={videoUrl}
-              muted
-              loop
-              playsInline
-              preload="metadata"
-              onCanPlayThrough={() => setVideoReady(true)}
-              className="absolute inset-0 w-full h-full object-cover transition-opacity duration-500"
-              style={{ opacity: hovering && videoReady ? 1 : 0, filter: 'saturate(0.86) brightness(0.92)' }}
-            />
-          )}
-        </>
+      ) : item.agentKey === 'pa-agent' ? (
+        <PaAgentCardArt />
       ) : (
         <div
           className="absolute inset-0"
@@ -337,7 +282,7 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
         />
       )}
 
-      {/* 统一暗角蒙版：给所有封面图套同一层「玻璃」，让画风各异的图读起来像一家人（A2 核心） */}
+      {/* 统一暗角蒙版：让内联插画和几何渐变读起来像一家人。 */}
       <div
         className="absolute inset-0 pointer-events-none z-[1]"
         style={{
@@ -531,34 +476,37 @@ export default function AgentLauncherPage() {
   // 周报海报(主页弹窗)
   const loadWeeklyPoster = useWeeklyPosterStore((s) => s.loadCurrent);
 
-  // 首页资源（卡片背景 + Agent 封面）—— 上传后覆盖默认素材
-  const homepageAssets = useHomepageAssetsStore((s) => s.assets);
-  const loadHomepageAssets = useHomepageAssetsStore((s) => s.load);
+  const quickLinkIds = useHomeLauncherPreferencesStore((s) => s.quickLinkIds);
+  const loadHomeLauncherPreferences = useHomeLauncherPreferencesStore((s) => s.loadFromServer);
 
   const quickLinks = useMemo<HomeQuickLink[]>(() => {
-    return QUICK_LINKS_BASE.map((link) => {
-      // VOC 很重要：有 team-activity.read 权限者，首页顶部快捷卡用 VOC 替换「智识殿堂」（用户要求）
-      if (link.id === 'library' && launcherPerms.canReadTeamActivity) {
-        return {
-          icon: Radar,
-          label: 'VOC',
-          desc: '用户原声闭环 · 行为洞察与 AI 根因诊断',
-          path: '/team-activity',
-          accent: '#6366F1',
-          gradient: 'linear-gradient(135deg, #6366F1, #8B5CF6)',
-        };
-      }
-      const uploaded = link.id ? homepageAssets[`card.${link.id}`]?.url : undefined;
-      return uploaded ? { ...link, backgroundUrl: uploaded } : link;
+    const canUseQuickLink = (id: HomeQuickLinkId) => {
+      if (id === 'voc') return launcherPerms.canReadTeamActivity;
+      if (id === 'open-platform') return launcherPerms.canManageOpenPlatform;
+      if (id === 'models') return launcherPerms.canReadModels;
+      if (id === 'teams') return launcherPerms.canReadUsers;
+      return true;
+    };
+    const normalizedIds = normalizeHomeQuickLinkIds(quickLinkIds);
+    const visibleIds = normalizedIds.filter(canUseQuickLink);
+    for (const id of DEFAULT_HOME_QUICK_LINK_IDS) {
+      if (visibleIds.length >= MAX_HOME_QUICK_LINKS) break;
+      if (!visibleIds.includes(id) && canUseQuickLink(id)) visibleIds.push(id);
+    }
+
+    return visibleIds.slice(0, MAX_HOME_QUICK_LINKS).flatMap((id) => {
+      const resolvedLink = QUICK_LINK_BY_ID[id];
+      if (!resolvedLink) return [];
+      return resolvedLink;
     });
-  }, [homepageAssets, launcherPerms]);
+  }, [launcherPerms.canManageOpenPlatform, launcherPerms.canReadModels, launcherPerms.canReadTeamActivity, launcherPerms.canReadUsers, quickLinkIds]);
 
   useEffect(() => {
     loadItems();
     void loadChangelogCurrentWeek({ daysLimit: 8 });
-    void loadHomepageAssets();
+    void loadHomeLauncherPreferences();
     void loadWeeklyPoster();
-  }, [loadItems, loadChangelogCurrentWeek, loadHomepageAssets, loadWeeklyPoster]);
+  }, [loadItems, loadChangelogCurrentWeek, loadHomeLauncherPreferences, loadWeeklyPoster]);
 
   // 静态入口（智能体 / 实用工具 / 基础设施）—— 数据源统一在 lib/homeLauncherItems（桌面+移动共用）
   const staticAgents: ToolboxItem[] = useMemo(() => buildStaticAgents(), []);
@@ -625,14 +573,6 @@ export default function AgentLauncherPage() {
   const greeting = getGreeting();
   const displayName = user?.displayName || '';
 
-  // Hero banner：订阅 store；上传后自动重渲染并附缓存爆破参数
-  const uploadedHero = useHeroBgUrl('home');
-  const cdnBase = useAuthStore((s) => s.cdnBaseUrl ?? '');
-  const heroBgUrl = useMemo(
-    () => uploadedHero ?? buildDefaultHeroUrl(cdnBase, 'home') ?? '',
-    [uploadedHero, cdnBase]
-  );
-
   return (
     <div
       className="h-full min-h-0 flex flex-col relative"
@@ -640,66 +580,6 @@ export default function AgentLauncherPage() {
         background: 'transparent',
       }}
     >
-      {/* ── 页面背景大画幅层 (Page Hero Backing) ── */}
-      <div
-        className="absolute top-0 right-0 pointer-events-none"
-        style={{
-          left: isMobile ? 0 : -128,
-          height: isMobile ? '70vh' : '90vh',
-          zIndex: 0,
-          // overflow:hidden 把缩放 1.04 的背景图裁回容器内，避免在 AppShell 滚动容器里撑出横向滚动条
-          overflow: 'hidden',
-          maskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 50%, rgba(0,0,0,0) 100%)',
-          WebkitMaskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 50%, rgba(0,0,0,0) 100%)',
-        }}
-      >
-        {/* Unified glass base: keeps the hero photo from reading as a pasted black rectangle. */}
-        <div
-          className="absolute inset-0"
-          style={{
-            background:
-              'linear-gradient(135deg, rgba(255, 255, 255, 0.16) 0%, rgba(30, 32, 40, 0.88) 34%, rgba(9, 10, 16, 0.98) 100%)',
-          }}
-        />
-        {/* Background image —— 降级为「氛围层」：压暗 + 降饱和 + 轻模糊，从主角照片变墙上光影 */}
-        <div
-          className="absolute inset-0"
-          style={{
-            backgroundImage: `url(${heroBgUrl})`,
-            backgroundSize: 'cover',
-            backgroundPosition: 'center top',
-            backgroundRepeat: 'no-repeat',
-            opacity: 0.28,
-            filter: 'saturate(0.68) brightness(0.64) blur(1.2px)',
-            mixBlendMode: 'screen',
-            maskImage:
-              'linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.18) 7%, rgba(0,0,0,0.78) 18%, #000 42%), linear-gradient(to bottom, #000 0%, #000 58%, transparent 100%)',
-            WebkitMaskImage:
-              'linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.18) 7%, rgba(0,0,0,0.78) 18%, #000 42%), linear-gradient(to bottom, #000 0%, #000 58%, transparent 100%)',
-            transform: 'scale(1.04)',
-          }}
-        />
-        {/* Left fade overlay — text readability */}
-        <div
-          className="absolute inset-0"
-          style={{
-            background: isMobile
-              ? 'linear-gradient(180deg, rgba(34,35,42,0.88) 0%, rgba(12,13,18,0.68) 46%, transparent 100%)'
-              : 'linear-gradient(90deg, rgba(36,37,44,0.82) 0%, rgba(24,25,32,0.58) 18%, rgba(12,13,18,0.34) 48%, transparent 84%)',
-          }}
-        />
-        {/* Bottom scrim —— 让背景图无缝熔进深空底色，卡片区域是干净深色，不再有照片噪点透出（A2 驯服核心） */}
-        <div
-          className="absolute inset-x-0 bottom-0"
-          style={{
-            height: '68%',
-            background: 'linear-gradient(180deg, transparent 0%, rgba(11,12,22,0.58) 52%, var(--bg-base) 100%)',
-          }}
-        />
-      </div>
-
-      {/* 环境光背景层（blobs + film grain + top spotlight） —— 单独一层，不影响布局 */}
-      <HomeAmbientBackdrop />
       <style>{`
         @keyframes gradientSlowFlow {
           0% { background-position: 0% 50%; }
@@ -881,30 +761,7 @@ export default function AgentLauncherPage() {
                       aspectRatio: isMobile ? 'auto' : '21/9',
                     }}
                   >
-                    {/* 管理员上传的背景图（如有）：铺满卡片，底部渐变压暗保证文字可读 */}
-                    {link.backgroundUrl && (
-                      <>
-                        <div
-                          className="absolute inset-0 transition-transform duration-500 group-hover:scale-105 pointer-events-none"
-                          style={{
-                            backgroundImage: `url(${link.backgroundUrl})`,
-                            backgroundSize: 'cover',
-                            backgroundPosition: 'center',
-                            filter: 'saturate(0.86) brightness(0.92)',
-                          }}
-                        />
-                        {/* Downward shifted gradient to expose bright beautiful card tops */}
-                        <div
-                          className="absolute inset-x-0 bottom-0 pointer-events-none h-[75%]"
-                          style={{
-                            background: 'linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.5) 50%, rgba(0,0,0,0.95) 100%)',
-                          }}
-                        />
-                      </>
-                    )}
-
-                    {/* 背景光晕：从卡片右上角散出主色（仅无背景图时展示） */}
-                    {!link.backgroundUrl && (
+                    {/* 简约几何光晕：首页卡片不再铺图片背景。 */}
                     <div
                       className="absolute pointer-events-none transition-opacity duration-300"
                       style={{
@@ -916,7 +773,18 @@ export default function AgentLauncherPage() {
                         opacity: 0.8,
                       }}
                     />
-                    )}
+                    <div
+                      className="absolute pointer-events-none"
+                      style={{
+                        inset: 0,
+                        backgroundImage:
+                          'linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px)',
+                        backgroundSize: '42px 42px',
+                        opacity: 0.18,
+                        maskImage: 'linear-gradient(135deg, rgba(0,0,0,0.78) 0%, transparent 70%)',
+                        WebkitMaskImage: 'linear-gradient(135deg, rgba(0,0,0,0.78) 0%, transparent 70%)',
+                      }}
+                    />
 
                     {/* Hover 边框辉光 */}
                     <div
