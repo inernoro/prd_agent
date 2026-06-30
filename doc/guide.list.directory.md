@@ -375,6 +375,9 @@
 - [文档索引目录页](guide.list.directory) `guide.list.directory`
   > doc/ 目录的结构化索引，供外部同步工具消费
 
+- [系统原则速查（命名原则索引）](guide.platform.principles) `guide.platform.principles`
+  > 把所有有名号的原则（2 秒原则 / 无根之木禁令 / 好用四原则等）汇成速查表，一句话主张 + 出处
+
 - [PRD Agent 快速部署指南](guide.platform.quickstart) `guide.platform.quickstart`
   > 从零开始部署 PRD Agent 的完整步骤
 
