@@ -140,7 +140,18 @@ public sealed class PeerSyncScheduleWorker : BackgroundService
             var store = await db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync(ct);
             if (store == null || !store.PeerSyncAutoEnabled) return;
             if (!PeerSyncSchedule.IsDue(store, DateTime.UtcNow)) return; // double-check：避免和刚结束的手动/别的容器叠跑
-            attempted = true; // 过了双检 = 本周期确实由我处理，无论 node 在不在都推进 AutoLastAt
+
+            // 自动同步永远走非破坏性方向：push/pull/both（Overwrite，绝不 Mirror 删条目）。
+            // 强制对齐（删除）是数据破坏路径，只能在 UI 二次确认后手动触发，自动同步不碰。
+            var direction = NormalizeAutoDirection(store.PeerSyncDirection);
+            if (direction == null)
+            {
+                _logger.LogWarning(
+                    "[PeerSyncScheduleWorker] store {StoreId} has no user-confirmed auto direction ({Direction}), skip",
+                    store.Id, store.PeerSyncDirection);
+                return;
+            }
+            attempted = true; // 过了方向校验 = 本周期确实由我处理；node 缺失也推进 AutoLastAt，避免每分钟空打
 
             var node = await db.PeerNodes
                 .Find(n => n.RemoteNodeId == store.PeerSyncNodeId && n.Status == PeerNodeStatus.Connected)
@@ -164,9 +175,6 @@ public sealed class PeerSyncScheduleWorker : BackgroundService
             var resource = registry.Resolve("document-store");
             if (resource == null) return;
 
-            // 自动同步永远走非破坏性方向：push/pull/both（Overwrite，绝不 Mirror 删条目）。
-            // 强制对齐（删除）是数据破坏路径，只能在 UI 二次确认后手动触发，自动同步不碰。
-            var direction = NormalizeAutoDirection(store.PeerSyncDirection);
             var actor = await transfer.BuildActorAsync(store.OwnerId, isRoot: false, ct);
             // 本节点对外地址：worker 无 Request，按与 ResolveServerUrl 一致的「无请求」来源取——
             // 先 PEER_SELF_BASE_URL，再 config["ServerUrl"]。反代部署只要配了其一，自动 push 的图片本地化
@@ -209,11 +217,12 @@ public sealed class PeerSyncScheduleWorker : BackgroundService
         }
     }
 
-    /// <summary>把库上记录的方向归一成自动同步要跑的方向：push/pull 保留，其余（both/received/align-*）一律 both。</summary>
-    private static string NormalizeAutoDirection(string? direction) => direction switch
+    /// <summary>把库上记录的方向归一成自动同步要跑的方向。received 只是接收审计，不能升级成双向同步。</summary>
+    private static string? NormalizeAutoDirection(string? direction) => direction switch
     {
         "push" => "push",
         "pull" => "pull",
-        _ => "both",
+        "both" or "align-remote" or "align-local" or "align-both" => "both",
+        _ => null,
     };
 }

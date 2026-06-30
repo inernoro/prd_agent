@@ -984,7 +984,7 @@ public sealed class DailyTipsController : ControllerBase
 
             // 8.1 同步知识库教程（手动开讲，非 *-page-guide：知识库页已有自动开讲的本页教程，
             //     这条作为「同步」专题让用户从教程抽屉里主动点开，不与本页教程抢自动弹窗）。
-            //     步骤靠 SpotlightOverlay「下一步元素不在 DOM 时自动点当前按钮」机制切到同步页签。
+            //     旧版本地库配对入口已从顶部页签下架，保留 ?tab=sync 深链用于教程和存量配对管理。
             //     页面 UI 改动时同步更新此处步骤与 data-tour-id（见 .claude/rules/onboarding-tips.md）。
             T("document-store-sync-guide", "card",
                 "同步知识库：跨环境 / 本地库双向同步教程",
@@ -1000,8 +1000,8 @@ public sealed class DailyTipsController : ControllerBase
                     // 这样即使用户当前正在某个知识库详情里开讲，也能落到同步页签而不卡在找不到锚点（Bugbot: detail fallback）。
                     Steps = new List<DailyTipTourStep>
                     {
-                        new() { Selector = "[data-tour-id=sync-toolbar], [data-tour-id=library-sync-tab]", Title = "第 1 步：进入「跨环境同步」页签", Body = "同步让一个知识库的内容在两处保持一致——可以是测试/正式两个环境，也可以是本环境的两个库。这里就是同步管理中心（单库粒度，只搬这一个库的文档，不碰账号或别的库）。", NavigateTo = "/document-store?tab=sync" },
-                        new() { Selector = "[data-tour-id=library-sync-tab], [data-tour-id=sync-toolbar]", Title = "第 2 步：「跨环境同步」页签", Body = "顶部最右的「跨环境同步」页签就是入口，以后从这里进来管理所有同步配对。" },
+                        new() { Selector = "[data-tour-id=sync-toolbar], [data-tour-id=library-sync-tab]", Title = "第 1 步：进入旧版同步配对管理", Body = "这里保留本环境两个库之间的同步配对管理。跨环境同步请优先使用知识库列表右上角「发送到」，由「设置 → 系统互联」配置对端节点。", NavigateTo = "/document-store?tab=sync" },
+                        new() { Selector = "[data-tour-id=sync-toolbar], [data-tour-id=library-sync-tab]", Title = "第 2 步：旧版入口为什么还在", Body = "顶部页签已下架，深链只用于教程和存量配对管理；已有配对仍可从这里运行、改方向或撤销。" },
                         new() { Selector = "[data-tour-id=sync-toolbar]", Title = "第 3 步：同步工具栏", Body = "这里有本地库配对入口和刷新按钮，下面列出你所有的同步配对。" },
                         new() { Selector = "[data-tour-id=sync-start-link]", Title = "第 4 步：建立本地配对", Body = "本环境两个库可直接选 A、B 建立配对，还能选方向：双向 / 只推 / 只拉。" },
                         new() { Selector = "[data-tour-id=sync-start-link]", Title = "第 5 步：跨环境改走系统互联", Body = "跨环境手粘链接路径已下架；需要跨环境时，按顶部提示到「设置 → 系统互联」配对节点，再回到知识库列表用「发送到」。" },

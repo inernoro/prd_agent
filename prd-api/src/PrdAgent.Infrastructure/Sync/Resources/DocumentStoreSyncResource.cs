@@ -314,7 +314,7 @@ public class DocumentStoreSyncResource : ISyncableResource
             await _db.DocumentStores.InsertOneAsync(target, cancellationToken: ct);
         }
 
-        var outcome = await ApplyRecordsAsync(target, bundle.Item, bundle.Records, mode, options, ownerUserId, ownerName, ownerAvatar, ct);
+        var outcome = await ApplyRecordsAsync(target, bundle.Item, bundle.Records, mode, options, actor, ownerUserId, ownerName, ownerAvatar, ct);
         outcome.TargetItemId = target.Id;
         outcome.UnmatchedAuthors = authorMatched ? 0 : 1;
         if (!authorMatched)
@@ -348,6 +348,7 @@ public class DocumentStoreSyncResource : ISyncableResource
     private async Task<SyncApplyOutcome> ApplyRecordsAsync(
         DocumentStore target, SyncBundleItem item, List<SyncRecord> records, SyncApplyMode mode,
         DocumentStorePeerApplyOptions options,
+        SyncActor actor,
         string actorUserId, string actorName, string? actorAvatar, CancellationToken ct)
     {
         records ??= new List<SyncRecord>();
@@ -448,6 +449,8 @@ public class DocumentStoreSyncResource : ISyncableResource
 
         // 文件夹 parent-first 多趟扫描
         var pendingFolders = records.Where(e => e.IsFolder).ToList();
+        var processed = 0;
+        var total = records.Count;
         var guard = 0;
         while (pendingFolders.Count > 0 && guard++ < 5000)
         {
@@ -458,20 +461,45 @@ public class DocumentStoreSyncResource : ISyncableResource
                     && !lineageToTargetId.ContainsKey(f.ParentLineageId)
                     && !byLineage.ContainsKey(f.ParentLineageId))
                     continue;
+                await actor.ReportProgressAsync(new SyncProgressUpdate
+                {
+                    Phase = "本地写入",
+                    Current = processed,
+                    Total = total,
+                    CurrentRecordTitle = f.Title,
+                }, ct);
                 await UpsertFolderAsync(f, ResolveParent(f.ParentLineageId));
+                processed++;
                 pendingFolders.Remove(f);
                 progressed = true;
             }
             if (!progressed) break;
         }
         foreach (var f in pendingFolders)
+        {
+            await actor.ReportProgressAsync(new SyncProgressUpdate
+            {
+                Phase = "本地写入",
+                Current = processed,
+                Total = total,
+                CurrentRecordTitle = f.Title,
+            }, ct);
             await UpsertFolderAsync(f, ResolveParent(f.ParentLineageId));
+            processed++;
+        }
 
         // 文件类记录
         foreach (var fe in records.Where(e => !e.IsFolder))
         {
             try
             {
+                await actor.ReportProgressAsync(new SyncProgressUpdate
+                {
+                    Phase = "本地写入",
+                    Current = processed,
+                    Total = total,
+                    CurrentRecordTitle = fe.Title,
+                }, ct);
                 if (fe.Content == null)
                 {
                     // 二进制 / 文件条目（无正文、走 AttachmentId）：对端导出时带了 peerAttachment 元信息，
@@ -795,6 +823,10 @@ public class DocumentStoreSyncResource : ISyncableResource
             {
                 _logger.LogWarning(ex, "[peer-sync] apply entry failed: {Title}", fe.Title);
                 failed++;
+            }
+            finally
+            {
+                processed++;
             }
         }
 
