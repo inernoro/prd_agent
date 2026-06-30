@@ -2755,9 +2755,48 @@ export class ContainerService {
         // 多已预先存在而少见此竞态）。
         const stderr = (create.stderr || '').toLowerCase();
         if (stderr.includes('already exists')) return;
+        if (this.isBranchNetworkAddressPoolExhausted(target, create)) {
+          const cleanup = await this.cleanupUnusedBranchNetworks();
+          const retry = await this.shell.exec(`docker network create ${target}`);
+          if (retry.exitCode === 0) return;
+          const retryOutput = combinedOutput(retry);
+          const cleanupNote = `已清理 ${cleanup.removed} 个空闲分支网络后重试仍失败`;
+          throw new Error(`创建 Docker 网络 "${target}" 失败:\n${combinedOutput(create)}\n\n${cleanupNote}:\n${retryOutput}`);
+        }
         throw new Error(`创建 Docker 网络 "${target}" 失败:\n${combinedOutput(create)}`);
       }
     }
+  }
+
+  private isBranchNetworkAddressPoolExhausted(network: string, result: ExecResult): boolean {
+    if (!network.startsWith('cds-br-')) return false;
+    const output = combinedOutput(result).toLowerCase();
+    return output.includes('all predefined address pools have been fully subnetted');
+  }
+
+  private async cleanupUnusedBranchNetworks(): Promise<{ inspected: number; removed: number }> {
+    const listed = await this.shell.exec(`docker network ls --format '{{.Name}}'`);
+    if (listed.exitCode !== 0 || !listed.stdout.trim()) return { inspected: 0, removed: 0 };
+
+    let inspected = 0;
+    let removed = 0;
+    const names = listed.stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith('cds-br-'));
+
+    for (const name of names) {
+      inspected += 1;
+      const inspect = await this.shell.exec(`docker network inspect --format='{{len .Containers}}' ${this.shellQuote(name)}`);
+      if (inspect.exitCode !== 0) continue;
+      const attached = Number.parseInt(inspect.stdout.trim(), 10);
+      if (Number.isNaN(attached) || attached > 0) continue;
+
+      const rm = await this.shell.exec(`docker network rm ${this.shellQuote(name)}`);
+      if (rm.exitCode === 0) removed += 1;
+    }
+
+    return { inspected, removed };
   }
 
   /**

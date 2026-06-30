@@ -154,6 +154,47 @@ describe('ContainerService 分支级网络隔离', () => {
     expect(mock.commands.some((c) => c.includes('docker network create cds-br-feature-a'))).toBe(true);
   });
 
+  it('分支网地址池耗尽时清理空闲 cds-br 网络并重试创建', async () => {
+    const service = new ContainerService(mock, makeConfig(), resolver);
+    aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
+    let createAttempts = 0;
+
+    mock.addResponsePattern(/docker network inspect cds-br-feature-a$/, () => ({ stdout: '', stderr: 'No such network', exitCode: 1 }));
+    mock.addResponsePattern(/docker network create cds-br-feature-a$/, () => {
+      createAttempts += 1;
+      if (createAttempts === 1) {
+        return {
+          stdout: '',
+          stderr: 'Error response from daemon: all predefined address pools have been fully subnetted',
+          exitCode: 1,
+        };
+      }
+      return { stdout: 'ok', stderr: '', exitCode: 0 };
+    });
+    mock.addResponsePattern(/docker network ls --format '\{\{\.Name\}\}'/, () => ({
+      stdout: ['bridge', 'cds-br-old-empty', 'cds-proj-a', 'cds-br-old-busy'].join('\n'),
+      stderr: '',
+      exitCode: 0,
+    }));
+    mock.addResponsePattern(/docker network inspect --format='\{\{len \.Containers\}\}' 'cds-br-old-empty'/, () => ({ stdout: '0\n', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker network inspect --format='\{\{len \.Containers\}\}' 'cds-br-old-busy'/, () => ({ stdout: '2\n', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker network rm 'cds-br-old-empty'/, () => ({ stdout: 'cds-br-old-empty\n', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker network connect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker create/, () => ({ stdout: 'cid', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker start/, () => ({ stdout: 'cid', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker run/, () => ({ stdout: 'cid', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/mkdir/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+
+    await service.runService(makeEntry('proj-a'), makeProfile(), makeService());
+
+    expect(createAttempts).toBe(2);
+    expect(mock.commands.some((c) => c.includes("docker network rm 'cds-br-old-empty'"))).toBe(true);
+    expect(mock.commands.some((c) => c.includes("docker network rm 'cds-br-old-busy'"))).toBe(false);
+    expect(mock.commands.some((c) => c.includes('docker network rm cds-proj-a'))).toBe(false);
+  });
+
   it('容忍并发竞态：分支网 create 报 "already exists" 不抛（同分支多服务同时首建）', async () => {
     const service = new ContainerService(mock, makeConfig(), resolver);
     aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
