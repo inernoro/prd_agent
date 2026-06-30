@@ -181,6 +181,7 @@ function keywordScore(keywords: string[] | undefined, trimmed: string): number {
 const STATIC_ACTIONS: ResultItem[] = [
   { key: 'action:project-list',     type: 'action', label: '所有项目',           path: 'CDS',           hint: '回到项目控制台',                href: '/project-list',                  icon: 'project' },
   { key: 'action:cds-settings',     type: 'action', label: 'CDS 系统设置',       path: 'CDS',           hint: '存储 / 集群 / GitHub / 维护',    href: '/cds-settings',                  icon: 'settings' },
+  { key: 'action:task-schedule',     type: 'action', label: '任务调度',           path: 'CDS',           hint: '定时任务 / 手动执行 / 运行记录',  href: '/task-schedule',                 icon: 'settings' },
   { key: 'action:maintenance',      type: 'action', label: '更新与重启',         path: 'CDS 系统设置',  hint: 'self-update / 强制更新 / 历史',  href: '/cds-settings#maintenance',      icon: 'settings' },
   { key: 'action:webhook-log',      type: 'action', label: 'GitHub Webhook 日志', path: 'CDS 系统设置',  hint: '每次 hook 投递详情 + payload',   href: '/cds-settings#webhook-log',      icon: 'settings' },
   { key: 'action:cluster',          type: 'action', label: '集群',               path: 'CDS 系统设置',  hint: '节点列表 / 调度策略 / 加入退出',  href: '/cds-settings#cluster',          icon: 'settings' },

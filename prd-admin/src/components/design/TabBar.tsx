@@ -21,7 +21,7 @@ interface TabBarProps {
   onChange?: (key: string) => void;
   /** 右侧操作按钮 */
   actions?: React.ReactNode;
-  variant?: 'default' | 'gold';
+  variant?: 'default' | 'gold' | 'plain';
 }
 
 export function TabBar({ title, icon, items, activeKey, onChange, actions, variant = 'default' }: TabBarProps) {

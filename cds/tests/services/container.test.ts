@@ -48,10 +48,20 @@ const makeService = (): ServiceState => ({
 describe('ContainerService', () => {
   let mock: MockShellExecutor;
   let service: ContainerService;
+  let prevIsolation: string | undefined;
 
   beforeEach(() => {
     mock = new MockShellExecutor();
     service = new ContainerService(mock, makeConfig());
+    // 本文件断言的是旧的「共享网」run 命令形态（--network cds-network、资源标志等）。分支级网络
+    // 隔离（默认开）会改主网为分支网并追加 network connect，那有独立套件覆盖。这里关掉全局逃生开关，
+    // 保持本套件验证旧契约不变。
+    prevIsolation = process.env.CDS_BRANCH_NETWORK_ISOLATION;
+    process.env.CDS_BRANCH_NETWORK_ISOLATION = '0';
+  });
+  afterEach(() => {
+    if (prevIsolation === undefined) delete process.env.CDS_BRANCH_NETWORK_ISOLATION;
+    else process.env.CDS_BRANCH_NETWORK_ISOLATION = prevIsolation;
   });
 
   describe('runService', () => {
@@ -82,7 +92,7 @@ describe('ContainerService', () => {
       expect(runCmd).toContain('--name cds-feature-a-api');
       expect(runCmd).toContain('--network cds-network');
       expect(runCmd).toContain('-p 10001:8080');
-      expect(runCmd).toContain('-v "/wt/feature-a/prd-api":"/app"');
+      expect(runCmd).toContain(`-v '/wt/feature-a/prd-api':'/app'`);
       expect(runCmd).toContain('--env-file');
       expect(runCmd).toContain('dotnet restore && dotnet watch run');
 
@@ -344,10 +354,50 @@ describe('ContainerService', () => {
       const dockerRuns = mock.commands.filter(c => c.includes('docker run'));
       expect(dockerRuns).toHaveLength(1);
       expect(dockerRuns[0]).toContain('docker run -d');
+      // host-shell 安全（Codex P1）：command 经 shellQuote 单引号转义传给宿主机，宿主机原样交给 docker，
+      // 由**容器内** sh -c 解释 $()/$NICE（这才是 NICE 探测的本意——nice 在容器里）。
+      expect(dockerRuns[0]).toContain("sh -c 'NICE=$(command -v nice >/dev/null 2>&1 && echo ");
       // build/install 动词被 $NICE 降优先级（默认 10），serve(pnpm start) 保持正常优先级；
       // NICE 前导仅在镜像有 nice 时生效，缺则降级为空(不因缺 nice 让构建失败)。
-      expect(dockerRuns[0]).toContain("NICE=$(command -v nice >/dev/null 2>&1 && echo 'nice -n 10');");
+      expect(dockerRuns[0]).toContain('nice -n 10');
       expect(dockerRuns[0]).toContain('$NICE pnpm install && $NICE pnpm build && pnpm start');
+    });
+
+    it('host-shell-quotes image and command so metacharacters cannot inject on the CDS host (Codex P1)', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/mkdir/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+
+      const profile = makeProfile({
+        dockerImage: 'evil:latest; touch /tmp/pwned',
+        command: 'node app.js; touch /tmp/pwned2',
+      });
+      await service.runService(makeEntry(), profile, makeService());
+      const runCmd = mock.commands.find(c => c.includes('docker run'))!;
+      // Image + command are single-quoted; the injected suffix is inside the quotes, so the host shell
+      // never executes it as a separate command (it's passed literally to docker / the container sh -c).
+      // Both the image and the command are single-quoted, so the host shell passes them as literal
+      // args to docker (the `; touch ...` suffix lives inside the quotes, never a separate host command).
+      expect(runCmd).toContain("'evil:latest; touch /tmp/pwned'");
+      expect(runCmd).toContain("sh -c 'node app.js; touch /tmp/pwned2'");
+    });
+
+    it('host-shell-quotes the workDir-derived volume mount and -w so a malicious workDir cannot inject (Codex P1)', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/mkdir/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+
+      // 一个能逃出旧双引号写法的 workDir：含双引号 + shell 运算符。path.join(worktreePath, workDir)
+      // 后整段进 -v 挂载源。无 / 段，避免 path.join 归一化干扰断言。
+      const profile = makeProfile({ workDir: 'svc";id;"' });
+      await service.runService(makeEntry(), profile, makeService());
+      const runCmd = mock.commands.find(c => c.includes('docker run'))!;
+      // 整段挂载源被单引号包住，注入片段留在引号内，宿主机不会把 `;id;` 当独立命令执行。
+      expect(runCmd).toContain(`-v '/wt/feature-a/svc";id;"':`);
+      // 旧的双引号写法（会让 ";id;" 逃出）绝不能再出现。
+      expect(runCmd).not.toContain('-v "/wt/feature-a/svc";id;""');
     });
 
     it('should mount shared caches', async () => {
@@ -365,7 +415,7 @@ describe('ContainerService', () => {
       await service.runService(makeEntry(), profile, makeService());
 
       const runCmd = mock.commands.find(c => c.includes('docker run -d'));
-      expect(runCmd).toContain('-v "/cache/nuget":"/root/.nuget"');
+      expect(runCmd).toContain(`-v '/cache/nuget':'/root/.nuget'`);
     });
 
     // ── Phase 2 cgroup resource limits ──
@@ -494,11 +544,11 @@ describe('ContainerService', () => {
       expect(runCmd).toBeDefined();
       expect(runCmd).not.toContain('docker run -d');
       expect(runCmd).toContain('--network cds-network');
-      expect(runCmd).toContain('-v "/wt/feature-a/prd-api":"/app"');
-      expect(runCmd).toContain(`-v "${nodeModulesVolumeName('feature-a', 'api')}":"/app/node_modules"`);
+      expect(runCmd).toContain(`-v '/wt/feature-a/prd-api':'/app'`);
+      expect(runCmd).toContain(`-v '${nodeModulesVolumeName('feature-a', 'api')}':'/app/node_modules'`);
       expect(runCmd).toContain('--label cds.type=job');
-      expect(runCmd).toContain('node:20');
-      expect(runCmd).toContain('sh -c "pnpm exec prisma migrate deploy"');
+      expect(runCmd).toContain(`'node:20'`);
+      expect(runCmd).toContain(`sh -c 'pnpm exec prisma migrate deploy'`);
 
       const envFileContent = writeSpy.mock.calls[0][1] as string;
       expect(envFileContent).toContain('DATABASE_URL=postgres://user:pass@postgres:5432/app');
@@ -712,6 +762,30 @@ describe('ContainerService', () => {
     it('should return false if container does not exist', async () => {
       mock.addResponsePattern(/docker inspect/, () => ({ stdout: '', stderr: 'No such object', exitCode: 1 }));
       expect(await service.isRunning('c')).toBe(false);
+    });
+  });
+
+  describe('discoverAppContainersWithStatus', () => {
+    it('reports ok=false when docker ps fails so startup prune can fail closed', async () => {
+      mock.addResponsePattern(/docker ps/, () => ({
+        stdout: '',
+        stderr: 'cannot connect to docker daemon',
+        exitCode: 1,
+      }));
+
+      const result = await service.discoverAppContainersWithStatus();
+
+      expect(result.ok).toBe(false);
+      expect(result.containers.size).toBe(0);
+    });
+
+    it('reports ok=true with an empty map when docker ps succeeds with no app containers', async () => {
+      mock.addResponsePattern(/docker ps/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+
+      const result = await service.discoverAppContainersWithStatus();
+
+      expect(result.ok).toBe(true);
+      expect(result.containers.size).toBe(0);
     });
   });
 

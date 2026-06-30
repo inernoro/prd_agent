@@ -31,6 +31,7 @@ import path from 'node:path';
 import type { StateService } from './state.js';
 import type { BranchEntry, BuildProfile } from '../types.js';
 import { buildPreviewUrlForProject } from './comment-template.js';
+import { resolveEffectiveProfile } from './container.js';
 import type { RouteRecord } from '../forwarder/types.js';
 
 /**
@@ -51,7 +52,9 @@ function pickDefaultProfile(profileIds: string[]): string {
   return profileIds[0];
 }
 
-const ROUTABLE_SERVICE_STATUSES = new Set(['running', 'starting', 'building', 'restarting']);
+// 可路由服务状态(SSOT)：forwarder 命名/前缀路由与 proxy.ts master 命名子域兜底共用同一口径，
+// 避免「停止/错误的服务仍被强制为上游」这类两条路径漂移(Cursor Bugbot)。
+export const ROUTABLE_SERVICE_STATUSES = new Set(['running', 'starting', 'building', 'restarting']);
 
 export interface ForwarderRoutePublisherOptions {
   state: StateService;
@@ -147,12 +150,21 @@ export class ForwarderRoutePublisher {
     const projects = this.opts.state.getProjects();
     const projectById = new Map(projects.map((p) => [p.id, p]));
 
-    const buildProfiles = this.opts.state.getBuildProfiles();
-    const profileById = new Map<string, BuildProfile>();
-    for (const bp of buildProfiles) profileById.set(bp.id, bp);
-
     const branches = this.opts.state.getAllBranches();
     for (const branch of branches) {
+      // 用分支**有效** profiles（项目 profiles + 分支级额外服务）建本分支 profile 查找。原先全局只取
+      // getBuildProfiles()（项目级），分支级额外服务的 pathPrefixes（只存在 branch.extraProfiles）发不进
+      // forwarder-routes.json → CDS_USE_FORWARDER=1 时转发流量回退默认/约定路由、额外服务不可达
+      // （Codex P2「Publish extra-service path prefixes to the forwarder」）。
+      // 每个有效 profile 再过 resolveEffectiveProfile 应用 profileOverrides（Codex P2「Resolve overrides
+      // before routing path prefixes」/ mirror）：经 PUT /profile-overrides 配的 pathPrefixes 只由
+      // resolveEffectiveProfile 合并,不在 getEffectiveProfilesForBranch 里;不解析则 override 前缀发不进
+      // forwarder-routes.json,与 proxy.ts 的解析口径保持一致。
+      const profileById = new Map<string, BuildProfile>();
+      for (const bp of this.opts.state.getEffectiveProfilesForBranch(branch)) {
+        profileById.set(bp.id, resolveEffectiveProfile(bp, branch));
+      }
+
       const project = projectById.get(branch.projectId);
       const previewSlug = buildPreviewUrlForProject('', branch.branch, project, branch.projectId).previewSlug;
       if (!previewSlug) continue;
@@ -254,6 +266,52 @@ export class ForwarderRoutePublisher {
           healthState: defaultCandidates.find((s) => s.profileId === defaultProfile)?.status === 'running' ? 'running' : 'unknown',
           // 不写 updatedAt(理由同前两处:dedup 失效防御)
         });
+      }
+
+      // 4) 命名子域路由:声明了 subdomain 的服务获得自己的命名 URL
+      //    `<previewSlug>-<subdomain>.<root>`,根路径直达该容器(无 pathPrefix)。
+      //    让「可被别人调用」的独立服务(如 LLM 网关 llmgw-serve → <slug>-llmgw.<root>)
+      //    拥有区别于主应用域名的命名入口,而不是埋在主应用的 /gw/v1 路径下。
+      //    单标签(<previewSlug>-<subdomain>)以匹配 *.<root> 通配证书;subdomain 合法性
+      //    由 branch-extra-services.isValidServiceSubdomain / compose cds.subdomain 入口保证。
+      //    见 .claude/rules/navigation-registry 同源思路 + doc/design.llm-gateway-physical-isolation.md。
+      // 同一 subdomain 在一个分支内只发一条命名 host 路由：若两个服务复用同一 subdomain（理论上
+      // 入口校验已拒，这里作数据面兜底），保留首个、跳过后续,避免同 host 不同上游端口的撞车路由
+      // 命中错容器(Cursor Bugbot)。
+      // 按 profileId 排序后再去重,保证「保留首个」在 branch.services 对象键序变化时仍确定性命中
+      // 同一容器(否则两次发布可能因键序不同把同名 subdomain 指向不同端口)。
+      const subdomainCandidates = [...routableServices].sort((a, b) => a.profileId.localeCompare(b.profileId));
+      const writtenSubdomains = new Set<string>();
+      for (const svc of subdomainCandidates) {
+        const bp = profileById.get(svc.profileId);
+        const sub = bp?.subdomain;
+        if (!sub) continue;
+        if (writtenSubdomains.has(sub)) continue;
+        // DNS label 上限守卫(Codex P2):命名 host 第一标签 `<previewSlug>-<sub>` 必须 ≤63 octet
+        // (RFC 1035 单 label 上限),否则无法可靠解析,且单标签通配证书 `*.<root>` 不覆盖 → 该命名 URL
+        // 对长分支名**静默失效**。超长则跳过此命名路由并 warn —— 服务仍可经主域名 `<previewSlug>.<root>`
+        // 的 `/gw/v1` 路径访问,不受影响。选 skip 而非截断/哈希:截断会丢唯一性、可能与别的 slug 撞 host。
+        const namedLabel = `${previewSlug}-${sub}`;
+        if (namedLabel.length > 63) {
+          this.opts.logger?.warn?.(
+            `[forwarder-publisher] 跳过命名子域路由 ${namedLabel}.*（第一 DNS 标签 ${namedLabel.length} 字符 > 63 octet 上限，无法解析且通配证书不覆盖）；该服务仍可经主域名 ${previewSlug}.* 的路径访问`,
+          );
+          continue;
+        }
+        writtenSubdomains.add(sub);
+        for (const root of this.opts.rootDomains) {
+          records.push({
+            _id: `${branch.id}:${svc.profileId}:subdom:${idx++}`,
+            host: `${previewSlug}-${sub}.${root}`,
+            upstreamHost: '127.0.0.1',
+            upstreamPort: svc.hostPort,
+            branchId: branch.id,
+            branchName: branch.branch,
+            weight: 100,
+            healthState: svc.status === 'running' ? 'running' : 'unknown',
+            // 不写 updatedAt(理由同前:dedup 失效防御)
+          });
+        }
       }
     }
     return records;

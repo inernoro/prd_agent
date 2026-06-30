@@ -1899,9 +1899,12 @@ function ProjectCard({
             </motion.div>
 
             <div className="absolute bottom-4 left-4 right-4 flex min-w-0 items-center gap-2 text-[13px] text-muted-foreground">
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" aria-hidden />
-              <span className="shrink-0">production</span>
-              <span className="text-muted-foreground/60">·</span>
+              {/* On phones the meta row is width-constrained — hide the static
+                  "production" prefix so live status / online count / CPU don't
+                  get clipped (mobile-layout-fallback.md). Desktop keeps it. */}
+              <span className="hidden h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500 sm:block" aria-hidden />
+              <span className="hidden shrink-0 sm:inline">production</span>
+              <span className="hidden text-muted-foreground/60 sm:inline">·</span>
               <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotTone}`} aria-hidden />
               <span className="shrink-0 text-foreground">
                 {paused ? '已暂停' : isReady ? (running > 0 ? '运行中' : '已就绪') : cloneLabel || '未就绪'}
@@ -1923,8 +1926,8 @@ function ProjectCard({
               ) : null}
               {!paused && recentBuilds1h > 0 ? (
                 <>
-                  <span className="text-muted-foreground/60">·</span>
-                  <span className="shrink-0 tabular-nums" title="近 1 小时构建次数">{recentBuilds1h} 次构建/时</span>
+                  <span className="hidden text-muted-foreground/60 sm:inline">·</span>
+                  <span className="hidden shrink-0 tabular-nums sm:inline" title="近 1 小时构建次数">{recentBuilds1h} 次构建/时</span>
                 </>
               ) : null}
             </div>
@@ -2949,12 +2952,22 @@ function CreateProjectDialog({
         }>;
         moduleCount: number;
         databaseInit?: DatabaseInitRecommendation | null;
+        infraPresets?: string[];
       }>(
         '/api/detect-runtime',
         { method: 'POST', body: { gitRepoUrl: url, gitRef: gitDefaultBranch.trim() || undefined } },
       );
       const svcs = res.services || [];
-      if (svcs.length === 0) { setDetectMsg('没识别出已知技术栈，保留手填(或直接试运行验证)。'); return; }
+      const detectedInfra = Array.isArray(res.infraPresets) ? res.infraPresets.filter(Boolean) : [];
+      const composeInfraText = detectedInfra.length > 0
+        ? `检测到 compose 基础设施：${detectedInfra.join('、')}。创建项目后会按 compose 导入，未勾选基础设施预设。`
+        : '';
+      if (svcs.length === 0) {
+        setDetectMsg(composeInfraText
+          ? `没识别出应用服务。${composeInfraText}请手填应用服务后再创建，或直接试运行验证。`
+          : '没识别出已知技术栈，保留手填(或直接试运行验证)。');
+        return;
+      }
       setAppServices(svcs.map((s) => ({
         id: s.id,
         name: s.name,
@@ -2972,7 +2985,7 @@ function CreateProjectDialog({
       const dbInitText = dbInit
         ? `数据库初始化：${dbInit.command ? `${dbInit.label}，推荐 ${dbInit.command}` : dbInit.summary}。`
         : '未检测到数据库迁移信号；如果后续初始化失败，可在数据库服务卡片里导入 SQL 或填写迁移命令。';
-      setDetectMsg(`检测到 ${svcs.length} 个服务并已填好：${lines.join('；')}。${dbInitText}${uncertain ? '部分把握不高或未完全识别——强烈建议点「试运行验证」确认，或手改命令/镜像后再部署。' : '把握较高，点「试运行验证」确认一下就能部署。'}`);
+      setDetectMsg(`检测到 ${svcs.length} 个服务并已填好：${lines.join('；')}。${composeInfraText}${dbInitText}${uncertain ? '部分把握不高或未完全识别——强烈建议点「试运行验证」确认，或手改命令/镜像后再部署。' : '把握较高，点「试运行验证」确认一下就能部署。'}`);
     } catch (e) {
       setDetectMsg(e instanceof ApiError ? `检测失败：${e.message}` : `检测失败：${String(e)}`);
     } finally {

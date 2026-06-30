@@ -386,6 +386,72 @@ services:
   });
 });
 
+describe('parseStandardCompose — cds.subdomain 命名子域 label', () => {
+  it('cds.subdomain label → BuildProfile.subdomain，且导出 round-trip 不丢', () => {
+    const yaml = `
+services:
+  llmgw:
+    build: ./gw
+    ports:
+      - "8091:8091"
+    labels:
+      cds.subdomain: "llmgw"
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg).not.toBeNull();
+    const bp = cfg!.buildProfiles.find((p) => p.id === 'llmgw');
+    expect(bp).toBeDefined();
+    expect(bp!.subdomain).toBe('llmgw');
+
+    // round-trip：导出回 compose 再解析，subdomain 不丢。
+    const back = parseCdsCompose(
+      toCdsCompose(cfg!.buildProfiles, cfg!.envVars, cfg!.infraServices, cfg!.routingRules),
+    );
+    expect(back!.buildProfiles.find((p) => p.id === 'llmgw')!.subdomain).toBe('llmgw');
+  });
+
+  it('非法 subdomain（含点/大写）被忽略，不写入 BuildProfile', () => {
+    const yaml = `
+services:
+  svc:
+    build: ./svc
+    ports:
+      - "8080:8080"
+    labels:
+      cds.subdomain: "Bad.Sub"
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg).not.toBeNull();
+    expect(cfg!.buildProfiles.find((p) => p.id === 'svc')!.subdomain).toBeUndefined();
+  });
+
+  it('重复 subdomain：首个 service 保留，后续重复者丢弃（避免 host 路由撞车）', () => {
+    const yaml = `
+services:
+  alpha:
+    build: ./alpha
+    ports:
+      - "8001:8001"
+    labels:
+      cds.subdomain: "shared"
+  beta:
+    build: ./beta
+    ports:
+      - "8002:8002"
+    labels:
+      cds.subdomain: "shared"
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg).not.toBeNull();
+    const withSub = cfg!.buildProfiles.filter((p) => p.subdomain === 'shared');
+    // 只有一个 service 拿到该命名子域。
+    expect(withSub).toHaveLength(1);
+    // 首个声明者（alpha）保留，beta 被降级为无命名子域。
+    expect(cfg!.buildProfiles.find((p) => p.id === 'alpha')!.subdomain).toBe('shared');
+    expect(cfg!.buildProfiles.find((p) => p.id === 'beta')!.subdomain).toBeUndefined();
+  });
+});
+
 describe('parseStandardCompose — agent runtime sidecar isolation', () => {
   it('does not import claude-agent-sdk runtime sidecar as a branch BuildProfile', () => {
     const yaml = `

@@ -25,6 +25,11 @@ import type {
   UserProfileResponse,
   BulkDeleteUsersContract,
   BulkDeleteUsersResponse,
+  GetMiduoSsoConfigContract,
+  ImportMiduoSsoBindingsContract,
+  MiduoSsoBindingImportResponse,
+  MiduoSsoConfig,
+  UpdateMiduoSsoConfigContract,
 } from '@/services/contracts/adminUsers';
 import type { AdminUser, PagedResult, UserRole, UserStatus } from '@/types/admin';
 
@@ -160,6 +165,8 @@ export const createUserReal: CreateAdminUserContract = async (input: CreateAdmin
       password: input.password ?? '',
       role: input.role,
       displayName: input.displayName,
+      miduoSsoSubjectType: input.miduoSsoSubjectType,
+      miduoSsoSubjectValue: input.miduoSsoSubjectValue,
     },
     headers: { 'Idempotency-Key': newIdempotencyKey() },
   });
@@ -203,4 +210,33 @@ export const bulkDeleteUsersReal: BulkDeleteUsersContract = async (userIds: stri
     body: { userIds },
   });
   return res;
+};
+
+export const getMiduoSsoConfigReal: GetMiduoSsoConfigContract = async (): Promise<ApiResponse<MiduoSsoConfig>> => {
+  return apiRequest<MiduoSsoConfig>(api.users.miduoSsoConfig());
+};
+
+export const updateMiduoSsoConfigReal: UpdateMiduoSsoConfigContract = async (input): Promise<ApiResponse<MiduoSsoConfig>> => {
+  return apiRequest<MiduoSsoConfig>(api.users.miduoSsoConfig(), {
+    method: 'PUT',
+    body: {
+      enabled: input.enabled,
+      baseUrl: input.baseUrl,
+      appCode: input.appCode,
+      appSecret: input.appSecret,
+      redirectUri: input.redirectUri,
+      label: input.label,
+      subjectType: input.subjectType,
+    },
+  });
+};
+
+export const importMiduoSsoBindingsReal: ImportMiduoSsoBindingsContract = async (
+  text,
+  subjectType = 'mobile'
+): Promise<ApiResponse<MiduoSsoBindingImportResponse>> => {
+  return apiRequest<MiduoSsoBindingImportResponse>(api.users.miduoSsoImport(), {
+    method: 'POST',
+    body: { text, subjectType },
+  });
 };

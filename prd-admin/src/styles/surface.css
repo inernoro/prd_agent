@@ -303,6 +303,16 @@
     0 12px 32px -8px rgba(10, 10, 14, 0.40);
 }
 
+.surface-nav-bar[data-variant="plain"] {
+  padding: 0;
+  overflow: visible;
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
 .surface-nav-content {
   min-height: 46px;
   display: flex;
@@ -457,12 +467,35 @@
 }
 
 .toolbox-page {
+  --toolbox-page-padding-x: 20px;
+  --toolbox-page-padding-y: 20px;
   gap: 16px;
-  background: transparent;
+  margin: calc(var(--toolbox-page-padding-y) * -1) calc(var(--toolbox-page-padding-x) * -1);
+  padding: var(--toolbox-page-padding-y) var(--toolbox-page-padding-x);
+  background:
+    radial-gradient(62% 58% at 14% 8%, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0.09) 34%, transparent 68%),
+    radial-gradient(54% 52% at 86% 14%, rgba(248, 250, 252, 0.16) 0%, rgba(248, 250, 252, 0.06) 36%, transparent 70%),
+    radial-gradient(72% 64% at 52% 92%, rgba(226, 232, 240, 0.10) 0%, rgba(226, 232, 240, 0.04) 44%, transparent 76%),
+    linear-gradient(135deg, rgba(43, 45, 54, 0.96) 0%, rgba(24, 28, 35, 0.98) 48%, rgba(15, 24, 28, 0.98) 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+@media (max-width: 767px) {
+  .toolbox-page {
+    --toolbox-page-padding-x: var(--mobile-padding, 16px);
+    --toolbox-page-padding-y: 12px;
+  }
 }
 
 .toolbox-filter-bar {
   min-height: 46px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.145) 0%, rgba(255, 255, 255, 0.055) 100%);
+  border-color: rgba(255, 255, 255, 0.20);
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.24),
+    inset 0 -1px 1px rgba(0, 0, 0, 0.10),
+    0 16px 38px -26px rgba(255, 255, 255, 0.30);
 }
 
 .toolbox-filter-content {
@@ -518,12 +551,13 @@
 }
 
 .toolbox-segmented-button[data-active="true"] {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.08) 100%);
-  border-color: rgba(255, 255, 255, 0.18);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.19) 0%, rgba(255, 255, 255, 0.10) 100%);
+  border-color: rgba(255, 255, 255, 0.26);
   color: var(--text-primary);
   box-shadow:
-    0 2px 8px -1px rgba(0, 0, 0, 0.30),
-    inset 0 1px 0 rgba(255, 255, 255, 0.16);
+    0 2px 8px -1px rgba(0, 0, 0, 0.24),
+    0 10px 28px -22px rgba(255, 255, 255, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.24);
 }
 
 .toolbox-segmented-icon {
@@ -546,8 +580,8 @@
   white-space: nowrap;
   padding: 4px 10px;
   border-radius: 999px;
-  background: var(--nested-block-bg);
-  border: 1px solid var(--nested-block-border);
+  background: rgba(255, 255, 255, 0.065);
+  border: 1px solid rgba(255, 255, 255, 0.16);
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 600;

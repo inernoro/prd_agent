@@ -83,6 +83,7 @@ describe('release site publishing UI contract', () => {
 
   it('shows release run progress as business steps, not raw logs only', () => {
     expect(branchListSource).toContain('连接服务器');
+    expect(branchListSource).toContain('cds-release-connect-ok');
     expect(branchListSource).toContain('进入站点目录');
     expect(branchListSource).toContain('执行 ${scriptOne.replace');
     expect(branchListSource).toContain('执行 ${scriptTwo.replace');

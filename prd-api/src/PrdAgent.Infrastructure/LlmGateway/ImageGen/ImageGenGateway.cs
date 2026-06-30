@@ -3,9 +3,13 @@ using PrdAgent.Infrastructure.LLM;
 namespace PrdAgent.Infrastructure.LlmGateway.ImageGen;
 
 /// <summary>
-/// IImageGenGateway 的适配器实现。
-/// Phase 2 过渡实现：对外暴露统一接口，内部委托 OpenAIImageClient.GenerateUnifiedAsync。
-/// Phase 3 将在此层直接实现 resolve + send 两阶段，彻底脱离对 OpenAIImageClient 的依赖。
+/// IImageGenGateway 的实现：生图统一入口的事实落点。
+/// 对外暴露统一接口，内部委托 OpenAIImageClient.GenerateUnifiedAsync 完成
+/// "解析模型调度 → 经 ImageGenRequestBuilder 构建上游请求体 → 发送 → 解析响应"。
+///
+/// 边界：参数构建（模型配置 → 上游请求体的尺寸/格式/重命名转换）统一走
+/// ImageGenRequestBuilder + ImageGenModelAdapterRegistry；OpenAIImageClient 已退化为
+/// "纯发送器 + 响应解析"，不再在自身内联拼装标准文生图请求体。
 /// </summary>
 public sealed class ImageGenGateway : IImageGenGateway
 {

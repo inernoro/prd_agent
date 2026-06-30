@@ -88,6 +88,8 @@
   > 长文本/文档转思维导图风格的可演讲材料，首期 mindmap 模式（MVP 已落地）
 
 - [前端搭档智能体产品规格](spec.front-end-agent) `spec.front-end-agent`
+- [AI 大模型网关真实环境 MECE 冒烟测试矩阵](spec.llm-gateway-test-matrix) `spec.llm-gateway-test-matrix`
+  > MECE 矩阵 + 4 层测试（解析/协议保真/跨进程/真机）+ 每层 canary；数据驱动全量见 report.gw-test-matrix
   > 面向后端同事的前端交付助手：接 API、写组件、修报错、看截图现象
 
 ### 二、设计文档
@@ -221,6 +223,12 @@
 - [CDS 构建耗时与发布版/热加载机制设计](design.cds.build-time) `design.cds.build-time`
   > 构建流水线时间去向、>10 分钟根因（Java 重复下载依赖 / buildTimeout 上限 / 自动发布双构建）、发布版 vs 热加载对照与自动发布介入时机
 
+- [CDS 分支级网络隔离](design.cds.branch-network-isolation) `design.cds.branch-network-isolation`
+  > 每分支专属 app 网（cds-br-<id>）+ 共享 infra 网，杜绝跨分支 app 别名串流；自动逐分支默认开、不做项目级硬开关、只留全局 env 逃生
+
+- [CDS 分支级临时额外服务](design.cds.branch-local-extra-services) `design.cds.branch-local-extra-services`
+  > 项目底座稳定（审批改、影响全体）+ 分支可自助加临时额外服务（只在本分支部署、跑分支专属网、删分支即消失、不影响别的分支）；纯增量可选、老行为零回归
+
 - [CDS Agent API 契约设计](design.cds.agent.api) `design.cds.agent.api`
   > MAP/CDS 会话、事件、工具审批、Hook、runtime profile 与工作流调用的 API 契约
 
@@ -290,6 +298,10 @@
 
 - [LLM Gateway 图片生成重构设计](design.platform.llm-gateway-refactor) `design.platform.llm-gateway-refactor`
   > compute-then-send 重构方案，消除二次 Resolve 的根因
+- [LLM 网关物理独立设计](design.llm-gateway-physical-isolation) `design.llm-gateway-physical-isolation`
+  > 从 MAP 剥离 + 跨进程 serving（/gw/v1/*）+ flag inproc|http，含对抗评审
+- [LLM 网关与模型池统一](design.llm-gateway-unification) `design.llm-gateway-unification`
+  > 协议下沉 + 池减负 + 接口绑模型
 
 - [PR Review V2 设计](design.pr-review.v2) `design.pr-review.v2`
   > OAuth Device Flow 每用户独立 + PR 快照 + 笔记的最小可审查工作台
@@ -353,6 +365,9 @@
   > 文档再加工功能中不同智能体（视觉/文学）的调用路由与分发设计
 
 ### 三、指南
+
+- [LLM 网关验收面包屑清单](guide.llm-gateway.acceptance-breadcrumbs) `guide.llm-gateway.acceptance-breadcrumbs`
+  > 逐 UI 面：导航点击路径→截图点→预期→双主题（Playwright 可消费）+ 测试覆盖摘要 + 例外 12 条 + 压测 6 条
 
 - [Agent 开发入门指南（新手必读）](guide.platform.agent-onboarding) `guide.platform.agent-onboarding`
   > 新手 Agent 开发入门：阶段式陪伴、AGENT_WORKSPACE 进度文件、验收标准
@@ -609,6 +624,9 @@
 
 ### 五、计划与方案
 
+- [LLM 网关剥离上线计划](plan.llm-gateway.rollout) `plan.llm-gateway.rollout`
+  > 差异化进度 + 测试纲领（A/B/C/D 四层）+ 局限范围（L1-L9 + apiyi 中转专项）+ 翻 http 上线序列
+
 - [PA Agent 竞品调研与改进方案](plan.product-agent.pa.competitive-improvements) `plan.product-agent.pa.competitive-improvements`
   > 四类竞品谱系、与 Phase 1 差距对照、P2～P4 分期改进包
 
@@ -747,6 +765,8 @@
 - [智能体宇宙 · 债务台账](debt.agent-universe) `debt.agent-universe`
   > MVP 边界：仅视觉创作走真实生图、文学图文一体待补、信封仅再加工接入、img2img 占位
 - [CDS 极速版（CI 预构建）· 已知边界与遗留事项](debt.cds.ci-prebuilt) `debt.cds.ci-prebuilt`
+- [CDS executor 卡死看门狗 · 债务台账](debt.cds.executor-watchdog) `debt.cds.executor-watchdog`
+- [CDS 自更新极速版（预构建产物）· 债务台账](debt.cds.selfupdate-prebuilt) `debt.cds.selfupdate-prebuilt`
   > 7 条 open：ghcr 包需手动设 public / 工作流名硬编码 / 每 push 双镜像 / 仍 git pull worktree / 构建时延 / 切回源码非一键 / ClaudeSdk 回调端口
 - [知识库版本控制/图片插入/大小统计 · 已知边界](debt.knowledge-base.versioning) `debt.knowledge-base.versioning`
   > 图片插入不刷新已修；版本控制独立集合 + 恢复只写文本不删资产；遗留：github 日同步覆盖手动编辑、大小不含外链图片字节、版本留存上限100
@@ -863,6 +883,9 @@
 
 ### 七、周报
 
+- [AI 大模型网关测试矩阵全量报告](report.gw-test-matrix) `report.gw-test-matrix`
+  > 全枚举大表：A 解析 153 入口 + B 协议保真 91 cell + C 跨进程 18 cell + 20 扩展维度；B/C 即 CI 真跑 cell
+
   > 各智能体完备度看板：终极目标、当前进度、TodoList、目前情况、风险点（当前加权进度约 55%）
 
   > CDS Agent 商业级可用闭环目标的完成度审计报告（2026-05-19）
@@ -895,6 +918,9 @@
   > CDS Agent 当前开发进度与状态面板（已合并到权威入口）
 
   > CDS Agent 工作台从连接探活到远程 sandbox 自巡检 PR 闭环的功能清单、坑位、未完成债务和交接提示词
+
+- [周报 2026-W26 (06-22 ~ 06-28)](report.2026-W26) `report.2026-W26`
+  > 2026 年第 26 周工作总结（414 commits / 30 PRs，W25 收口后的反弹周，两条大新功能 + CDS 稳定性深水区三线并进：知识库「文档星系/宇宙图」三维视图 buildDocGalaxy+UnrealBloom 辉光+双链连线+六批交互迭代到演示级、VOC 行为之声「AI 用户分析下钻」端点三段式 证据→大模型→Tab+根因置顶+加载动效 1:1 复刻、CDS 自更新极速版 CI 预构建到 ghcr+决策层+运行层三步基建、CDS 部署卡死收敛器 看门狗租约判活+调度器永不降温主干+持久化投影剥离 runtime 派生(#886 75commits)、CDS 性能治理 构建并发闸+分支列表缓存+状态广播节流+mongo-split 写入合并、CDS 验收报告升级为验收中心 项目级文件夹+匿名分享链+深链+PR 回写+MAP peer-sync+base64 截图内容寻址、知识库跨节点同步支持二进制附件一篇不差、移动端整体重构首批 headbar/首页 Hero/百宝箱发现、生图等待流光进度条+文学配图缩放预览、revert 删除所有催办产品决策；fix 占比 47% 边清债边开新坑）
 
 - [周报 2026-W25 (06-15 ~ 06-21)](report.2026-W25) `report.2026-W25`
   > 2026 年第 25 周工作总结（288 commits / 27 PRs，W24 峰值后的归途收口周：缺陷自动化闭环正式合龙 defect-agent v3+控制台 UI+精确领取+证据链+授权窄 scope、CDS 灰度预览体感升级 构建 ETA+本地账号登录+验收报告项目级鉴权+mongo-split 写入合并+持久化投影剥离 runtime 派生、视觉创作首页重新设计+上传压缩保留透明通道+视频本地超时取消后端 run、知识库图片插入/版本恢复/大库分页三老 Bug 收口、网页托管 PDF 改 PDF.js 治微信打开空白、产品蓝图 Wave1+Wave2+PRD 多轮改稿+设备素材本地上传、教程飞回入口 pill 弹簧接住光效、新增 expectation-management/content-fills-canvas 两条系统规则；fix 占比 50% 名副其实归途周）
@@ -987,6 +1013,7 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-06-28 | 新增 | `report.2026-W26` | 2026-W26 周报（06-22 ~ 06-28）：W25 收口后反弹周，知识库文档星系三维视图 + VOC AI 用户分析下钻 + CDS 自更新极速版/卡死收敛器/性能治理/验收中心 + 跨节点同步二进制附件 + 移动端整体重构首批 + revert 删除所有催办 |
 | 2026-06-21 | 新增 | `report.2026-W25` | 2026-W25 周报（06-15 ~ 06-21）：W24 峰值后归途收口周，缺陷自动化闭环合龙 + CDS 灰度预览体感升级 + 视觉/知识库收口 + 两条新系统规则 |
 | 2026-06-21 | 新增 | `.claude/rules/expectation-management.md` | 预期管理总纲：让用户任何时刻知道在做什么/还要多久/接下来怎样/刚才变了什么/我该做什么 |
 | 2026-06-21 | 新增 | `.claude/rules/content-fills-canvas.md` | 内容填满画布：主产物必须 flex-1 占主导，禁内容小盒子 + 大留白 |

@@ -21,6 +21,13 @@ public static class PeerSyncSchedule
         return v < MinIntervalMinutes ? MinIntervalMinutes : v;
     }
 
+    /// <summary>自动同步只接受用户主动确认过的方向；received 只是接收审计，不能被 worker 捞起。</summary>
+    public static bool IsRunnableDirection(string? direction) => direction switch
+    {
+        "push" or "pull" or "both" or "align-remote" or "align-local" or "align-both" => true,
+        _ => false,
+    };
+
     /// <summary>
     /// 该库当前是否「该自动同步了」。要求：
     /// 1) 已显式开启自动同步；
@@ -34,7 +41,7 @@ public static class PeerSyncSchedule
             return false;
 
         // 没有可复用的对端 / 方向（从没成功手动同步过）→ 自动同步无从下手，跳过。
-        if (string.IsNullOrWhiteSpace(store.PeerSyncNodeId) || string.IsNullOrWhiteSpace(store.PeerSyncDirection))
+        if (string.IsNullOrWhiteSpace(store.PeerSyncNodeId) || !IsRunnableDirection(store.PeerSyncDirection))
             return false;
 
         // 不再用 PeerSyncStatus=="syncing" 判在途 —— 进程在置 syncing 后崩溃会把状态永久卡在 syncing，
@@ -54,7 +61,7 @@ public static class PeerSyncSchedule
     {
         if (!store.PeerSyncAutoEnabled
             || string.IsNullOrWhiteSpace(store.PeerSyncNodeId)
-            || string.IsNullOrWhiteSpace(store.PeerSyncDirection))
+            || !IsRunnableDirection(store.PeerSyncDirection))
             return null;
 
         if (store.PeerSyncAutoLastAt == null)

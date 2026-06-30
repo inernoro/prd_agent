@@ -1,0 +1,100 @@
+name: CDS Prebuilt (self-update express)
+
+# CDS 自更新「极速版」—— 每次 push 改了 cds/** 时，在 GitHub Actions 上把 CDS 编译好
+# （esbuild 后端 + vite 前端 + tsc 类型门），打成 ghcr OCI 产物镜像 cds-dist:sha-<40hex>，
+# 供 CDS 自更新直接 docker pull + 解出，跳过本机编译（tsc 52s + vite 1.6min 卸到 CI）。
+# 自更新逻辑找不到对应 SHA 的预构建产物时，回退到现有「本机现编」路径——故本 workflow
+# 纯增量、不影响存量自更新。SSOT 约定：tag = sha-${github.sha}（完整 40 hex，不可变，
+# 与项目极速版 branch-image.yml 同公式）。
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "cds/**"
+      - ".github/workflows/cds-prebuilt.yml"
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/${{ github.event.repository.name }}/cds-dist
+
+jobs:
+  build-and-push:
+    name: Build & Push CDS Prebuilt
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install CDS deps
+        run: |
+          pnpm -C cds install --frozen-lockfile
+          pnpm -C cds/web install --frozen-lockfile
+
+      # 类型门：把 self-update 现有的 tsc --noEmit 校验挪到 CI。两端都过才出产物，
+      # 等于「预构建产物天生已通过类型检查」，本机自更新不必再花 52s 跑 tsc。
+      - name: Type-check gate (cds + web)
+        run: |
+          pnpm -C cds exec tsc --noEmit
+          pnpm -C cds/web exec tsc --noEmit
+
+      - name: Build backend (esbuild → cds/dist)
+        run: |
+          cd cds
+          OUT_DIR=dist node scripts/build-dist-esbuild.mjs
+
+      - name: Build web (vite → cds/web/dist)
+        run: pnpm -C cds/web build
+
+      - name: Write prebuilt manifest
+        run: |
+          cat > cds/cds-prebuilt-manifest.json <<JSON
+          {
+            "sha": "${{ github.sha }}",
+            "ref": "${{ github.ref_name }}",
+            "builtAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "runId": "${{ github.run_id }}",
+            "schema": 1
+          }
+          JSON
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # 不可变全 SHA tag（自更新按它精确认领），外加每分支移动 tag 便于排查。
+          tags: |
+            type=raw,value=sha-${{ github.sha }}
+            type=ref,event=branch,prefix=branch-
+
+      - name: Build & push CDS prebuilt image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./cds
+          file: ./cds/Dockerfile.dist
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

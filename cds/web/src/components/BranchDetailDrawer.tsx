@@ -12,6 +12,7 @@ import { HistoryRow } from '@/components/deployment/HistoryRow';
 import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
 import { deriveBranchPhases, type PhaseKey } from '@/lib/deploymentPhases';
 import { normalizeContainerLogsForDisplay } from '@/lib/containerLogs';
+import { pickActiveDeployment } from './branchDeploymentSelection';
 import {
   buildBranchResources,
   ResourceIcon,
@@ -142,6 +143,11 @@ interface OperationLog {
   containerLogSnapshots?: DeploymentContainerLogSnapshot[];
   status: 'running' | 'completed' | 'error';
   events: OperationLogEvent[];
+  // 2026-06-27 构建历史元数据（后端 additive block，详见 cds/src/types.ts）。
+  triggerSource?: 'webhook' | 'manual' | 'retry' | 'cooldown-rewarm' | 'system';
+  deployMode?: string;
+  commitSha?: string;
+  shortCommit?: string;
 }
 
 export interface DeploymentContainerLogSnapshot {
@@ -244,6 +250,9 @@ export interface BranchDeploymentItem {
   lastStep?: string;
   phase?: string;
   suggestion?: string;
+  // 2026-06-27 构建历史元数据：触发器 / 部署类型 / 版本短哈希，供历史行展开展示。
+  triggerSource?: 'webhook' | 'manual' | 'retry' | 'cooldown-rewarm' | 'system';
+  deployMode?: string;
 }
 
 type DrawerTab = 'overview' | 'deployments' | 'services' | 'logs' | 'variables' | 'metrics' | 'settings';
@@ -652,8 +661,6 @@ async function copyTextToClipboard(text: string): Promise<void> {
   document.body.removeChild(textarea);
 }
 
-const ACTIVE_DEPLOYMENT_TAIL_MS = 60_000;
-
 function legacyLogToDeploymentItem(log: OperationLog, branchId: string): BranchDeploymentItem {
   const events = log.events || [];
   const lines = events.map(eventText);
@@ -680,6 +687,9 @@ function legacyLogToDeploymentItem(log: OperationLog, branchId: string): BranchD
     runtimeStartedAt,
     containerLogSnapshots: log.containerLogSnapshots || [],
     lastStep,
+    triggerSource: log.triggerSource,
+    deployMode: log.deployMode,
+    commitSha: log.commitSha || undefined,
   };
 }
 
@@ -725,21 +735,6 @@ function PreviewUrlChip({ url }: { url: string }): JSX.Element {
   );
 }
 
-function pickActiveDeployment(items: BranchDeploymentItem[], now: number): BranchDeploymentItem | null {
-  if (items.length === 0) return null;
-  const sorted = items.slice().sort((left, right) => right.startedAt - left.startedAt);
-  // running 优先
-  const running = sorted.find((item) => item.status === 'running');
-  if (running) return running;
-  // 最近 60s 内结束的最近一条也当作 active
-  const recent = sorted.find((item) => {
-    if (!item.finishedAt) return false;
-    return now - item.finishedAt <= ACTIVE_DEPLOYMENT_TAIL_MS;
-  });
-  if (recent) return recent;
-  // 否则第一条（按时间倒序的最新）
-  return sorted[0];
-}
 
 export function BranchDetailDrawer({
   branchId,
@@ -3737,9 +3732,9 @@ function ResourceWorkbenchModal({
 }): JSX.Element | null {
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-[90] bg-black/65 p-3 backdrop-blur-sm md:p-5" role="dialog" aria-modal="true">
-      <div className="mx-auto grid h-full max-w-[1760px] grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-lg border border-[hsl(var(--hairline))] bg-background shadow-2xl">
-        <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-3">
+    <div className="fixed inset-0 z-[90] bg-black/65 p-0 backdrop-blur-sm sm:p-3 md:p-5" role="dialog" aria-modal="true">
+      <div className="mx-auto flex h-full max-w-[1760px] flex-col overflow-hidden border border-[hsl(var(--hairline))] bg-background shadow-2xl sm:rounded-lg">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-3">
           <div className="min-w-0">
             <div className="truncate text-sm font-semibold">{title}</div>
             <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{subtitle}</div>
@@ -3748,7 +3743,11 @@ function ResourceWorkbenchModal({
             <X className="h-4 w-4" />
           </Button>
         </div>
-        {children}
+        {/* Body: on phones the panes stack and the whole body scrolls vertically
+            (lg:overflow-hidden keeps the desktop fill-and-scroll-internally model). */}
+        <div className="min-h-0 flex-1 overflow-y-auto lg:overflow-hidden">
+          {children}
+        </div>
       </div>
     </div>
   );
@@ -3896,8 +3895,8 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
         subtitle={`${databaseLabel}.${selectedCollection || '-'} · ${resource.displayName}`}
         onClose={() => setWorkbenchOpen(false)}
       >
-        <div className="grid min-h-0 text-sm lg:grid-cols-[320px_minmax(0,1fr)]">
-          <aside className="min-h-0 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/25 lg:border-b-0 lg:border-r">
+        <div className="flex min-h-0 flex-col text-sm lg:grid lg:h-full lg:grid-cols-[320px_minmax(0,1fr)]">
+          <aside className="flex min-h-0 flex-col border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/25 lg:border-b-0 lg:border-r">
             <div className="border-b border-[hsl(var(--hairline))] px-3 py-3">
               <div className="flex items-center justify-between gap-2">
                 <div>
@@ -3910,7 +3909,7 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
               </div>
               {configuredDatabaseNotice ? <div className="mt-2 rounded-md border border-[hsl(var(--hairline))] bg-background/55 px-2 py-1.5 text-[11px] text-muted-foreground">{configuredDatabaseNotice}</div> : null}
             </div>
-            <div className="h-full overflow-auto p-2">
+            <div className="min-h-0 max-h-[40vh] overflow-auto p-2 lg:max-h-none lg:flex-1">
               {databasesState.status === 'error' ? (
                 <div className="px-2 py-3 text-xs leading-5 text-destructive">{databasesState.message}</div>
               ) : databasesState.databases.length > 0 ? (
@@ -3974,7 +3973,7 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
             </div>
           </aside>
 
-          <main className="grid min-h-0 min-w-0 grid-rows-[245px_minmax(0,1fr)]">
+          <main className="flex min-h-0 min-w-0 flex-col lg:grid lg:grid-rows-[245px_minmax(0,1fr)]">
             <section className="border-b border-[hsl(var(--hairline))] bg-background/30">
               <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
                 <div className="min-w-0">
@@ -4052,7 +4051,7 @@ function MongoDocumentsView({
   const activeMode: WorkbenchResultMode = viewMode === 'table' && !hasDocuments ? 'output' : viewMode;
 
   return (
-    <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] bg-background/20">
+    <div className="grid min-h-[300px] grid-rows-[auto_minmax(0,1fr)] bg-background/20 lg:min-h-0">
       <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] bg-background/30 px-3 py-2">
         <div className="min-w-0">
           <div className="text-xs font-semibold">结果</div>
@@ -4553,8 +4552,8 @@ function SqlResourceDataPanel({ resource, adapter }: { resource: BranchResource;
         subtitle={`${tablesState.database || '-'}${selectedTable ? `.${selectedTable.schema ? `${selectedTable.schema}.` : ''}${selectedTable.name}` : ''} · ${resource.displayName}`}
         onClose={() => setWorkbenchOpen(false)}
       >
-        <div className="grid min-h-0 text-sm lg:grid-cols-[320px_minmax(0,1fr)]">
-          <aside className="min-h-0 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/25 lg:border-b-0 lg:border-r">
+        <div className="flex min-h-0 flex-col text-sm lg:grid lg:h-full lg:grid-cols-[320px_minmax(0,1fr)]">
+          <aside className="flex min-h-0 flex-col border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/25 lg:border-b-0 lg:border-r">
             <div className="border-b border-[hsl(var(--hairline))] px-3 py-3">
               <div className="flex items-center justify-between gap-2">
                 <div>
@@ -4566,7 +4565,7 @@ function SqlResourceDataPanel({ resource, adapter }: { resource: BranchResource;
                 </Button>
               </div>
             </div>
-            <div className="h-full overflow-auto p-2">
+            <div className="min-h-0 max-h-[40vh] overflow-auto p-2 lg:max-h-none lg:flex-1">
               {tablesState.status === 'error' ? (
                 <div className="px-2 py-3 text-xs leading-5 text-destructive">{tablesState.message}</div>
               ) : tablesState.tables.length > 0 ? (
@@ -4602,7 +4601,7 @@ function SqlResourceDataPanel({ resource, adapter }: { resource: BranchResource;
             </div>
           </aside>
 
-          <main className="grid min-h-0 min-w-0 grid-rows-[245px_minmax(0,1fr)]">
+          <main className="flex min-h-0 min-w-0 flex-col lg:grid lg:grid-rows-[245px_minmax(0,1fr)]">
             <section className="border-b border-[hsl(var(--hairline))] bg-background/30">
               <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
                 <div className="min-w-0">
@@ -4717,7 +4716,7 @@ function DbResultTable({
       : emptyLabel;
 
   return (
-    <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] bg-background/20">
+    <div className="grid min-h-[300px] grid-rows-[auto_minmax(0,1fr)] bg-background/20 lg:min-h-0">
       <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] bg-background/30 px-3 py-2">
         <div className="min-w-0">
           <div className="text-xs font-semibold">结果</div>

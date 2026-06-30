@@ -262,22 +262,28 @@ export class WorktreeService {
       await this.shell.exec(`rm -rf "${targetDir}"`);
     }
 
-    const addResult = await this.shell.exec(
-      `git worktree add "${targetDir}" "origin/${branch}"`,
-      { cwd: repoRoot },
-    );
+    const addCommand = `git worktree add "${targetDir}" "origin/${branch}"`;
+    let addResult = await this.shell.exec(addCommand, { cwd: repoRoot });
+    if (addResult.exitCode !== 0 && isMissingRegisteredWorktreeError(addResult)) {
+      await this.shell.exec('git worktree prune', { cwd: repoRoot });
+      addResult = await this.shell.exec(addCommand, { cwd: repoRoot });
+    }
     if (addResult.exitCode !== 0) {
       throw new Error(`创建工作树 "${branch}" 失败:\n${combinedOutput(addResult)}`);
     }
   }
 
   /** Pull latest code for an existing worktree.
-   *  Returns { head, before, after, updated } so caller can detect "already up to date".
+   *  Returns { head, before, after, afterFull, updated } so caller can detect "already up to date".
+   *  `after` 是短 SHA（rev-parse --short），`afterFull` 是**完整 40 位 SHA**（rev-parse HEAD）——
+   *  刷新 githubCommitSha 必须用 afterFull，该字段被 GitHub check-run / release / acceptance
+   *  元数据 / OperationLog.commitSha（类型注释要求全 SHA）复用，截断成短 SHA 会让外部集成指向
+   *  歧义 revision（Codex P2）。
    *
    *  NOTE: `pull` does not need `repoRoot` because every git command
    *  runs inside `targetDir` (the worktree itself) rather than the
    *  host repo root. Kept at the 2-arg signature for that reason. */
-  async pull(branch: string, targetDir: string): Promise<{ head: string; before: string; after: string; updated: boolean }> {
+  async pull(branch: string, targetDir: string): Promise<{ head: string; before: string; after: string; afterFull: string; updated: boolean }> {
     // Get current SHA before pull
     const beforeResult = await this.shell.exec(
       'git rev-parse --short HEAD',
@@ -300,19 +306,24 @@ export class WorktreeService {
       throw new Error(`重置失败:\n${combinedOutput(resetResult)}`);
     }
 
-    // Get new SHA after pull
+    // Get new SHA after pull（短 + 全 两种：短给日志/比对，全给需要落库的 githubCommitSha）
     const afterResult = await this.shell.exec(
       'git rev-parse --short HEAD',
       { cwd: targetDir },
     );
     const after = afterResult.stdout.trim();
+    const afterFullResult = await this.shell.exec(
+      'git rev-parse HEAD',
+      { cwd: targetDir },
+    );
+    const afterFull = afterFullResult.stdout.trim();
 
     // Return short log of HEAD for confirmation
     const logResult = await this.shell.exec(
       'git log --oneline -1',
       { cwd: targetDir },
     );
-    return { head: logResult.stdout.trim(), before, after, updated: before !== after };
+    return { head: logResult.stdout.trim(), before, after, afterFull, updated: before !== after };
   }
 
   async remove(repoRoot: string, targetDir: string): Promise<void> {
@@ -455,4 +466,8 @@ function isSymlink(p: string): boolean {
   } catch {
     return false;
   }
+}
+
+function isMissingRegisteredWorktreeError(result: Awaited<ReturnType<IShellExecutor['exec']>>): boolean {
+  return /missing but already registered worktree/i.test(combinedOutput(result));
 }

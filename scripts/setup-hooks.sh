@@ -77,7 +77,43 @@ EOF
 
 chmod +x "$HOOKS_DIR/commit-msg"
 
+# 创建 post-checkout hook
+cat > "$HOOKS_DIR/post-checkout" << 'EOF'
+#!/bin/bash
+# Post-checkout hook: worktree 本地技能链接补齐
+
+set -e
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -z "$REPO_ROOT" ]; then
+    exit 0
+fi
+
+cd "$REPO_ROOT"
+
+if [ ! -d ".claude/skills" ] || [ ! -f "scripts/migrate-claude-skills.mjs" ]; then
+    exit 0
+fi
+
+if ! command -v node >/dev/null 2>&1; then
+    echo "[post-checkout] node 不存在，跳过 .claude/skills -> .agents/skills 链接补齐"
+    exit 0
+fi
+
+node scripts/migrate-claude-skills.mjs \
+    --source .claude/skills \
+    --target .agents/skills \
+    --mode link \
+    --all >/dev/null || {
+        echo "[post-checkout] 技能链接补齐失败，可手动运行："
+        echo "  node scripts/migrate-claude-skills.mjs --source .claude/skills --target .agents/skills --mode link --all"
+        exit 0
+    }
+EOF
+
+chmod +x "$HOOKS_DIR/post-checkout"
+
 echo "✓ Git hooks 已设置"
 echo ""
-echo "现在每次 commit 前会自动运行基础检查，并校验 commit message。"
+echo "现在每次 commit 前会自动运行基础检查，并校验 commit message；checkout/worktree 后会补齐本地技能链接。"
 echo "如需跳过检查，使用: git commit --no-verify"

@@ -31,6 +31,9 @@ import {
   Palette,
   PanelTop,
   Plus,
+  Radar,
+  ArrowDown,
+  ArrowUp,
   Save,
   Sparkles,
   Store,
@@ -42,21 +45,22 @@ import {
 import {
   HOMEPAGE_CARD_SLOTS,
   HOMEPAGE_AGENT_SLOTS,
-  HOMEPAGE_HERO_SLOTS,
   MARKETPLACE_BG_SLOTS,
   DEMO_VIDEO_SLOTS,
   type DemoVideoSlot,
   buildDefaultCoverUrl,
   buildDefaultVideoUrl,
-  buildDefaultHeroUrl,
-  type HomepageCardSlot,
   type HomepageAgentSlot,
-  type HomepageHeroSlot,
   type MarketplaceBgSlot,
 } from '@/lib/homepageAssetSlots';
 import { useToolboxStore, BUILTIN_TOOLS } from '@/stores/toolboxStore';
 import { useHomepageAssetsStore } from '@/stores/homepageAssetsStore';
 import { useAuthStore } from '@/stores/authStore';
+import {
+  MAX_HOME_QUICK_LINKS,
+  useHomeLauncherPreferencesStore,
+  type HomeQuickLinkId,
+} from '@/stores/homeLauncherPreferencesStore';
 
 function cn(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(' ');
@@ -239,7 +243,7 @@ export default function AssetsManagePage() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
 
-  // 首页资源（卡片背景 + Agent 封面图/视频）
+  // 首页资源显示项 + 通用 Agent 封面图/视频
   const [homepageAssets, setHomepageAssets] = useState<HomepageAssetsMap>({});
   const [homepageLoading, setHomepageLoading] = useState(false);
   const [homepageCacheBust, setHomepageCacheBust] = useState<number>(() => Date.now());
@@ -708,12 +712,10 @@ export default function AssetsManagePage() {
         <HomepageAssetsSection
           assets={homepageAssets}
           agentSlots={agentSlotList}
-          loading={homepageLoading}
           uploadingId={uploadingId}
           cacheBust={homepageCacheBust}
           onUpload={chooseHomepageUpload}
           onDelete={handleDeleteHomepage}
-          onReload={() => void reloadHomepage()}
           isMobile={isMobile}
         />
       )}
@@ -1161,7 +1163,7 @@ function AssetRowBlock(props: {
   );
 }
 
-// ==================== 首页资源：卡片背景 + Agent 封面 ====================
+// ==================== 首页资源：显示项 + 通用 Agent 封面 ====================
 
 function appendHomepageCache(url: string, bust: number): string {
   const u = String(url || '').trim();
@@ -1181,102 +1183,175 @@ function humanSize(bytes?: number | null) {
 function HomepageAssetsSection({
   assets,
   agentSlots,
-  loading,
   uploadingId,
   cacheBust,
   onUpload,
   onDelete,
-  onReload,
   isMobile,
 }: {
   assets: Record<string, HomepageAssetDto>;
   agentSlots: HomepageAgentSlot[];
-  loading: boolean;
   uploadingId: string;
   cacheBust: number;
   onUpload: (slot: string, accept?: string) => void;
   onDelete: (slot: string) => void;
-  onReload: () => void;
   isMobile: boolean;
 }) {
   // CDN 基址：用于给未上传的 Agent slot 合成「当前默认」预览
   const cdnBase = useAuthStore((s) => s.cdnBaseUrl ?? '');
+  const quickLinkIds = useHomeLauncherPreferencesStore((s) => s.quickLinkIds);
+  const setQuickLinkIds = useHomeLauncherPreferencesStore((s) => s.setQuickLinkIds);
+  const loadHomeLauncherPreferences = useHomeLauncherPreferencesStore((s) => s.loadFromServer);
+
+  useEffect(() => {
+    void loadHomeLauncherPreferences();
+  }, [loadHomeLauncherPreferences]);
+
+  const quickLinkIconMap: Record<string, React.ReactNode> = {
+    marketplace: <Store size={14} />,
+    library: <Layers size={14} />,
+    voc: <Radar size={14} />,
+    showcase: <Sparkles size={14} />,
+    updates: <PanelTop size={14} />,
+    'document-store': <Layers size={14} />,
+    'my-assets': <FolderOpen size={14} />,
+    'workflow-agent': <Home size={14} />,
+    'web-pages': <Monitor size={14} />,
+    'open-platform': <Save size={14} />,
+    models: <PanelTop size={14} />,
+    teams: <User size={14} />,
+  };
+
+  function toggleQuickLink(id: HomeQuickLinkId) {
+    if (quickLinkIds.includes(id)) {
+      setQuickLinkIds(quickLinkIds.filter((x) => x !== id));
+      return;
+    }
+    if (quickLinkIds.length >= MAX_HOME_QUICK_LINKS) return;
+    setQuickLinkIds([...quickLinkIds, id]);
+  }
+
+  function moveQuickLink(id: HomeQuickLinkId, direction: -1 | 1) {
+    const index = quickLinkIds.indexOf(id);
+    const nextIndex = index + direction;
+    if (index < 0 || nextIndex < 0 || nextIndex >= quickLinkIds.length) return;
+    const next = [...quickLinkIds];
+    [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+    setQuickLinkIds(next);
+  }
+
   return (
     <div className="flex flex-col gap-4">
-      {/* 首页顶部 Hero Banner */}
+      {/* 快捷卡显示与背景 */}
       <Surface className="overflow-hidden rounded-[16px] p-4">
         <div className="flex items-center justify-between gap-3 mb-4">
-          <SectionTitle icon={<PanelTop size={16} />} title="首页顶部 Banner" badge={`${HOMEPAGE_HERO_SLOTS.length} 张`} />
-          <Button variant="ghost" size="xs" onClick={onReload} disabled={loading}>
-            {loading ? '加载中…' : '刷新'}
-          </Button>
+          <SectionTitle icon={<Home size={16} />} title="首页快捷入口" badge={`${HOMEPAGE_CARD_SLOTS.length} 个资源位`} />
         </div>
         <p className="mb-4 text-[12px] text-token-muted">
-          登录后首页最上方的大图。建议宽屏 1920×640 左右，文字主要在左侧，右侧留白区域会作为主体显示。
-          上传直接覆盖老路径 <code className="surface-inset rounded px-1 py-0.5 font-mono text-[10px]">icon/title/home.png</code>。
+          登录后首页顶部最多显示 6 张资源卡；选中的资源按编号从左到右展示。首页卡片统一使用简约几何渐变，不再显示图片背景。
         </p>
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-          {HOMEPAGE_HERO_SLOTS.map((hero: HomepageHeroSlot) => (
-            <HomepageSlotTile
-              key={hero.slot}
-              slot={hero.slot}
-              label={hero.label}
-              hint={hero.hint}
-              asset={assets[hero.slot]}
-              defaultUrl={buildDefaultHeroUrl(cdnBase, hero.id)}
-              allowDelete={false}
-              cacheBust={cacheBust}
-              uploading={uploadingId === `homepage::${hero.slot}`}
-              accept="image/*"
-              previewAspect="3 / 1"
-              onUpload={() => onUpload(hero.slot, 'image/*')}
-              onDelete={() => onDelete(hero.slot)}
-            />
-          ))}
+
+        <div className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {HOMEPAGE_CARD_SLOTS.map((card) => {
+            const active = quickLinkIds.includes(card.id);
+            const order = active ? quickLinkIds.indexOf(card.id) + 1 : null;
+            return (
+              <div
+                key={card.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => toggleQuickLink(card.id)}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter' && e.key !== ' ') return;
+                  e.preventDefault();
+                  toggleQuickLink(card.id);
+                }}
+                className={cn(
+                  'surface-inset flex min-h-[76px] cursor-pointer items-center gap-3 rounded-[12px] px-3 py-2 text-left transition-all duration-150',
+                  active
+                    ? 'ring-2 ring-[var(--accent-gold)]/45'
+                    : quickLinkIds.length >= MAX_HOME_QUICK_LINKS
+                      ? 'opacity-60'
+                      : 'hover:ring-1 hover:ring-white/15'
+                )}
+              >
+                <span
+                  className="grid h-8 w-8 shrink-0 place-items-center rounded-[10px]"
+                  style={{
+                    color: active ? 'var(--accent-gold)' : 'var(--text-muted)',
+                    background: active ? 'rgba(245, 158, 11, 0.14)' : 'rgba(255,255,255,0.05)',
+                  }}
+                >
+                  {quickLinkIconMap[card.id] ?? <Home size={14} />}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-2 text-[13px] font-semibold text-token-primary">
+                    <span className="truncate">{card.label}</span>
+                    {order && (
+                      <span className="rounded-full bg-[rgba(245,158,11,0.14)] px-2 py-0.5 text-[10px] text-[var(--accent-gold)]">
+                        第 {order} 张
+                      </span>
+                    )}
+                  </span>
+                  <span className="mt-0.5 block line-clamp-1 text-[11px] text-token-muted">{card.hint}</span>
+                  {active && (
+                    <span className="mt-2 flex gap-1.5">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          moveQuickLink(card.id, -1);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key !== 'Enter' && e.key !== ' ') return;
+                          e.preventDefault();
+                          e.stopPropagation();
+                          moveQuickLink(card.id, -1);
+                        }}
+                        className={cn(
+                          'inline-flex h-6 w-7 items-center justify-center rounded-[8px] transition-colors',
+                          order === 1 ? 'cursor-not-allowed opacity-35' : 'hover:bg-white/10'
+                        )}
+                        aria-label={`${card.label} 上移`}
+                      >
+                        <ArrowUp size={12} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          moveQuickLink(card.id, 1);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key !== 'Enter' && e.key !== ' ') return;
+                          e.preventDefault();
+                          e.stopPropagation();
+                          moveQuickLink(card.id, 1);
+                        }}
+                        className={cn(
+                          'inline-flex h-6 w-7 items-center justify-center rounded-[8px] transition-colors',
+                          order === quickLinkIds.length ? 'cursor-not-allowed opacity-35' : 'hover:bg-white/10'
+                        )}
+                        aria-label={`${card.label} 下移`}
+                      >
+                        <ArrowDown size={12} />
+                      </button>
+                    </span>
+                  )}
+                </span>
+              </div>
+            );
+          })}
         </div>
       </Surface>
 
-      {/* 四张快捷卡背景 */}
+      {/* 通用 Agent 封面图 + 视频 */}
       <Surface className="overflow-hidden rounded-[16px] p-4">
         <div className="flex items-center justify-between gap-3 mb-4">
-          <SectionTitle icon={<Home size={16} />} title="首页快捷卡背景" badge="4 张" />
+          <SectionTitle icon={<Sparkles size={16} />} title="通用 Agent 封面（图片 + 动态视频）" badge={`${agentSlots.length} 个`} />
         </div>
         <p className="mb-4 text-[12px] text-token-muted">
-          登录后首页「海鲜市场 / 智识殿堂 / 作品广场 / 更新中心」四张卡片的背景图。
-          推荐 3:2 横版图片，建议 480×320 以上。未上传时保持默认渐变。
-        </p>
-
-        <div
-          className="grid gap-3"
-          style={{
-            gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(auto-fill, minmax(200px, 1fr))',
-          }}
-        >
-          {HOMEPAGE_CARD_SLOTS.map((card: HomepageCardSlot) => (
-            <HomepageSlotTile
-              key={card.slot}
-              slot={card.slot}
-              label={card.label}
-              hint={card.hint}
-              asset={assets[card.slot]}
-              cacheBust={cacheBust}
-              uploading={uploadingId === `homepage::${card.slot}`}
-              accept="image/*"
-              previewAspect="3 / 2"
-              onUpload={() => onUpload(card.slot, 'image/*')}
-              onDelete={() => onDelete(card.slot)}
-            />
-          ))}
-        </div>
-      </Surface>
-
-      {/* 智能体封面图 + 视频 */}
-      <Surface className="overflow-hidden rounded-[16px] p-4">
-        <div className="flex items-center justify-between gap-3 mb-4">
-          <SectionTitle icon={<Sparkles size={16} />} title="智能体封面（图片 + 动态视频）" badge={`${agentSlots.length} 个`} />
-        </div>
-        <p className="mb-4 text-[12px] text-token-muted">
-          每个 Agent 支持上传一张封面图（静态）+ 一段短视频（hover 时播放）。未上传时回退到 CDN 内置素材。
+          这些素材用于百宝箱等通用 Agent 卡片，不影响首页简约卡片。每个 Agent 支持上传一张封面图（静态）+ 一段短视频（hover 时播放）。未上传时回退到 CDN 内置素材。
           视频建议 mp4 / webm，时长 3–6 秒，单文件 &lt;= 20MB。
         </p>
 

@@ -6,10 +6,11 @@ namespace PrdAgent.Tests;
 
 /// <summary>
 /// ModelResolver 单元测试（CI 可运行）
-/// 使用 InMemoryModelResolver 验证所有三级模型调度逻辑：
+/// 使用 InMemoryModelResolver 验证模型调度逻辑：
 /// 1. DedicatedPool - AppCaller 绑定的专属模型池
 /// 2. DefaultPool - ModelType 对应的默认模型池
-/// 3. Legacy - 传统 IsMain/IsVision/IsImageGen 配置
+/// 3. Legacy - 无池但有 IsMain/IsIntent/IsVision/IsImageGen 标记模型时的直连兜底
+///    （未迁移到 ModelGroups 的部署，Codex P1 恢复）；无池且无 legacy 时才 NotFound。
 /// </summary>
 public class ModelResolverTests
 {
@@ -73,26 +74,22 @@ public class ModelResolverTests
         };
     }
 
-    private static LLMModel CreateLegacyModel(
-        string id,
-        string platformId,
-        string modelName,
-        bool isMain = false,
-        bool isVision = false,
-        bool isImageGen = false,
-        bool isIntent = false)
+    private static LLMModel CreateLegacyModel(string modelName, string platformId, string modelType)
     {
-        return new LLMModel
+        var m = new LLMModel
         {
-            Id = id,
-            PlatformId = platformId,
             ModelName = modelName,
-            Enabled = true,
-            IsMain = isMain,
-            IsVision = isVision,
-            IsImageGen = isImageGen,
-            IsIntent = isIntent
+            PlatformId = platformId,
+            Enabled = true
         };
+        switch (modelType.ToLowerInvariant())
+        {
+            case "chat": m.IsMain = true; break;
+            case "intent": m.IsIntent = true; break;
+            case "vision": m.IsVision = true; break;
+            case "generation": m.IsImageGen = true; break;
+        }
+        return m;
     }
 
     #endregion
@@ -227,94 +224,84 @@ public class ModelResolverTests
 
     #endregion
 
-    #region Level 3: Legacy Configuration Tests
+    #region Level 3: Legacy 直连兜底（未迁移到 ModelGroups 的部署）
 
-    [Fact]
-    public async Task Legacy_WhenNoPoolsConfigured_ShouldUseLegacyIsMain()
+    // legacy 解析层（IsMain/IsIntent/IsVision/IsImageGen 直连兜底）在网关剥离 PR 一度被删，
+    // 但未迁移到 ModelGroups 的部署仍可能只有 flag 标记的 enabled 模型、无默认池（Codex P1）。
+    // 已恢复：无池但有 legacy 模型 → 走 Legacy；无池且无 legacy → NotFound；池全不可用且有 legacy → 降级 Legacy。
+
+    [Theory]
+    [InlineData("chat")]
+    [InlineData("intent")]
+    [InlineData("vision")]
+    [InlineData("generation")]
+    public async Task NoPool_NoLegacy_ForAnyModelType_ShouldReturnNotFound(string modelType)
     {
-        // Arrange
+        // Arrange - 只配置平台，没有任何模型池、也没有 legacy 模型
         var platform = CreatePlatform("plat-1", "OpenAI");
-        var legacyModel = CreateLegacyModel(
-            "model-1", "plat-1", "gpt-3.5-turbo", isMain: true);
 
         var resolver = new InMemoryModelResolver()
-            .WithPlatform(platform, "sk-test")
-            .WithLegacyModel(legacyModel);
+            .WithPlatform(platform, "sk-test");
 
         // Act
-        var result = await resolver.ResolveAsync(
-            "any-app::chat", "chat");
+        var result = await resolver.ResolveAsync($"any-app::{modelType}", modelType);
 
-        // Assert
+        // Assert - 无池且无 legacy → NotFound
+        Assert.False(result.Success);
+        Assert.Equal("NotFound", result.ResolutionType);
+    }
+
+    [Theory]
+    [InlineData("chat")]
+    [InlineData("intent")]
+    [InlineData("vision")]
+    [InlineData("generation")]
+    public async Task NoPool_WithLegacyModel_ShouldResolveLegacy(string modelType)
+    {
+        // Arrange - 无池，但有一个对应 flag 的 enabled legacy 模型（模拟未迁移部署）
+        var platform = CreatePlatform("plat-legacy", "Legacy Platform");
+        var legacy = CreateLegacyModel("legacy-model", "plat-legacy", modelType);
+
+        var resolver = new InMemoryModelResolver()
+            .WithPlatform(platform, "sk-legacy")
+            .WithLegacyModel(legacy, "sk-legacy");
+
+        // Act
+        var result = await resolver.ResolveAsync($"any-app::{modelType}", modelType);
+
+        // Assert - 无池但 legacy 命中 → 走 Legacy 直连
         Assert.True(result.Success);
         Assert.Equal("Legacy", result.ResolutionType);
-        Assert.Equal("gpt-3.5-turbo", result.ActualModel);
+        Assert.Equal("legacy-model", result.ActualModel);
+        Assert.Equal("plat-legacy", result.ActualPlatformId);
     }
 
     [Fact]
-    public async Task Legacy_ForVisionType_ShouldUseLegacyIsVision()
+    public async Task AllUnavailable_WithLegacyModel_ShouldFallbackToLegacy()
     {
-        // Arrange
+        // Arrange - 池存在但全部 Unavailable，且有 legacy chat 模型
         var platform = CreatePlatform("plat-1", "OpenAI");
-        var visionModel = CreateLegacyModel(
-            "model-1", "plat-1", "gpt-4-vision-preview", isVision: true);
+        var pool = CreateModelGroup(
+            "pool-1", "All Unavailable Pool", "chat",
+            isDefault: true, priority: 0,
+            ("plat-1", "unavailable-1", ModelHealthStatus.Unavailable));
+        var legacyPlatform = CreatePlatform("plat-legacy", "Legacy Platform");
+        var legacy = CreateLegacyModel("legacy-chat", "plat-legacy", "chat");
 
         var resolver = new InMemoryModelResolver()
             .WithPlatform(platform, "sk-test")
-            .WithLegacyModel(visionModel);
+            .WithPlatform(legacyPlatform, "sk-legacy")
+            .WithModelGroup(pool)
+            .WithLegacyModel(legacy, "sk-legacy");
 
         // Act
-        var result = await resolver.ResolveAsync(
-            "any-app::vision", "vision");
+        var result = await resolver.ResolveAsync("any::chat", "chat");
 
-        // Assert
+        // Assert - 池全不可用 → 降级到 legacy 直连，带 IsFallback
         Assert.True(result.Success);
         Assert.Equal("Legacy", result.ResolutionType);
-        Assert.Equal("gpt-4-vision-preview", result.ActualModel);
-    }
-
-    [Fact]
-    public async Task Legacy_ForGenerationType_ShouldUseLegacyIsImageGen()
-    {
-        // Arrange
-        var platform = CreatePlatform("plat-1", "OpenAI");
-        var imageGenModel = CreateLegacyModel(
-            "model-1", "plat-1", "dall-e-3", isImageGen: true);
-
-        var resolver = new InMemoryModelResolver()
-            .WithPlatform(platform, "sk-test")
-            .WithLegacyModel(imageGenModel);
-
-        // Act
-        var result = await resolver.ResolveAsync(
-            "any-app::generation", "generation");
-
-        // Assert
-        Assert.True(result.Success);
-        Assert.Equal("Legacy", result.ResolutionType);
-        Assert.Equal("dall-e-3", result.ActualModel);
-    }
-
-    [Fact]
-    public async Task Legacy_ForIntentType_ShouldUseLegacyIsIntent()
-    {
-        // Arrange
-        var platform = CreatePlatform("plat-1", "OpenAI");
-        var intentModel = CreateLegacyModel(
-            "model-1", "plat-1", "gpt-4o-mini", isIntent: true);
-
-        var resolver = new InMemoryModelResolver()
-            .WithPlatform(platform, "sk-test")
-            .WithLegacyModel(intentModel);
-
-        // Act
-        var result = await resolver.ResolveAsync(
-            "any-app::intent", "intent");
-
-        // Assert
-        Assert.True(result.Success);
-        Assert.Equal("Legacy", result.ResolutionType);
-        Assert.Equal("gpt-4o-mini", result.ActualModel);
+        Assert.Equal("legacy-chat", result.ActualModel);
+        Assert.True(result.IsFallback);
     }
 
     #endregion

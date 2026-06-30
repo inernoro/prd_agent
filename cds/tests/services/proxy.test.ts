@@ -269,6 +269,115 @@ describe('ProxyService', () => {
       expect(payload.services).toContainEqual({ profileId: 'admin', status: 'starting' });
     });
 
+    it('keeps waiting progress aligned with elapsed and remaining time when ETA exists', () => {
+      proxy = new ProxyService(stateService, { previewDomain: 'preview.test' } as any);
+      addBranch('eta-branch', 'starting', {
+        admin: { profileId: 'admin', status: 'starting' },
+      }, 'feature/eta-branch');
+      const branch = stateService.getBranch('eta-branch')!;
+      branch.lastDeployStartedAt = new Date(Date.now() - 15_000).toISOString();
+      stateService.recordDeployDuration('default', 'source', 81_000);
+      stateService.save();
+
+      const req = makeReq({ host: 'eta-branch.preview.test', accept: 'application/json' }, '/_cds/waiting-status?profile=admin');
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(written.statusCode).toBe(200);
+      const payload = JSON.parse(written.body) as {
+        progress: { percent: number; reason: string };
+        timing: { elapsedMs: number; estimateMedianMs: number; remainingMs: number } | null;
+      };
+      expect(payload.timing).not.toBeNull();
+      expect(payload.timing!.elapsedMs).toBeGreaterThanOrEqual(14_000);
+      expect(payload.timing!.estimateMedianMs).toBe(81_000);
+      expect(payload.timing!.remainingMs).toBeGreaterThan(60_000);
+      expect(payload.progress.percent).toBeGreaterThan(15);
+      expect(payload.progress.percent).toBeLessThan(25);
+      expect(payload.progress.reason).toContain('历史耗时');
+
+      const htmlReq = makeReq({ host: 'eta-branch.preview.test', accept: 'text/html' });
+      const { res: htmlRes, written: htmlWritten } = makeRes();
+      proxy.handleRequest(htmlReq, htmlRes);
+      const match = htmlWritten.body.match(/data-role="progress-percent">([0-9.]+)%/);
+      expect(match).not.toBeNull();
+      const initialPercent = Number(match![1]);
+      expect(initialPercent).toBeGreaterThan(15);
+      expect(initialPercent).toBeLessThan(25);
+    });
+
+    it('serves the auto-refresh "preparing" page (not the manual-redeploy page) for an express branch waiting on the CI image', () => {
+      // 极速版（CI 预构建）：push 后分支 status 仍是 idle，但 ciImageStatus='waiting' 表示
+      // CDS 在等 GitHub Actions 构建镜像，完成后会自动部署。此窗口必须显示会自动刷新的
+      // 「预览环境准备中 · 极速版正在拉取分支」等待页，绝不能落到「未运行 · 请手动重新部署」。
+      proxy = new ProxyService(stateService, { previewDomain: 'preview.test' } as any);
+      addBranch('ci-wait', 'idle', { api: { profileId: 'api', status: 'stopped' } }, 'claude/ci-wait');
+      const branch = stateService.getBranch('ci-wait')!;
+      branch.ciImageStatus = 'waiting';
+      branch.ciTargetSha = 'abc1234';
+      stateService.save();
+
+      const req = makeReq({ host: 'ci-wait.preview.test', accept: 'text/html' });
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(written.statusCode).toBe(503);
+      expect(written.headers['Content-Type']).toContain('text/html');
+      expect(written.body).toContain('预览环境准备中');
+      expect(written.body).toContain('极速版正在拉取分支');
+      // 会自动刷新的等待页（含轮询脚本），不是静态「手动重新部署」诊断页
+      expect(written.body).toContain('/_cds/waiting-status');
+      expect(written.body).not.toContain('请回到 CDS 控制台确认日志后手动重新部署');
+    });
+
+    it('reports loading=true for an express branch waiting on the CI image (so the page does not self-reload to the diagnostic page)', () => {
+      proxy = new ProxyService(stateService, { previewDomain: 'preview.test' } as any);
+      addBranch('ci-wait2', 'idle', {}, 'claude/ci-wait2');
+      const branch = stateService.getBranch('ci-wait2')!;
+      branch.ciImageStatus = 'waiting';
+      stateService.save();
+
+      const req = makeReq({ host: 'ci-wait2.preview.test', accept: 'application/json' }, '/_cds/waiting-status');
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(written.statusCode).toBe(200);
+      const payload = JSON.parse(written.body) as { ready: boolean; loading: boolean; status: string };
+      expect(payload.ready).toBe(false);
+      expect(payload.loading).toBe(true);
+      expect(payload.status).toBe('idle');
+    });
+
+    it('shows a CI-failure diagnostic (not the generic not-running page) when the express CI image build failed', () => {
+      proxy = new ProxyService(stateService, { previewDomain: 'preview.test' } as any);
+      addBranch('ci-failed', 'idle', {}, 'claude/ci-failed');
+      const branch = stateService.getBranch('ci-failed')!;
+      branch.ciImageStatus = 'failed';
+      branch.ciImageError = 'CI 构建未成功（failure）';
+      stateService.save();
+
+      const req = makeReq({ host: 'ci-failed.preview.test', accept: 'text/html' });
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(written.body).toContain('极速版镜像未就绪');
+      expect(written.body).not.toContain('预览访问不会自动重新部署');
+    });
+
+    it('still shows the manual-redeploy page for a plain idle branch with no CI-image state', () => {
+      // 回归守卫：非极速版的真实 idle（用户停止 / 调度冷却到诊断页）仍走「未运行 · 手动重新部署」，
+      // 不被极速版改动误伤。
+      proxy = new ProxyService(stateService, { previewDomain: 'preview.test' } as any);
+      addBranch('plain-idle', 'idle', { api: { profileId: 'api', status: 'stopped' } }, 'claude/plain-idle');
+
+      const req = makeReq({ host: 'plain-idle.preview.test', accept: 'text/html' });
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(written.body).toContain('分支当前未运行');
+      expect(written.body).not.toContain('预览环境准备中');
+    });
+
     it('uses lastDeployStartedAt (not stale completed logs) for elapsed time while rebuilding', () => {
       // 回归 PR #865 Codex P2「Use the active redeploy start time for waiting ETAs」：
       // 在途构建的 op-log 直到 finalize 才落库，期间 getLogs() 只剩上一轮已完成的部署。
@@ -467,6 +576,35 @@ describe('ProxyService', () => {
       proxy.handleRequest(req, res);
 
       expect(resolvedUpstream).toBe('http://localhost:9000');
+    });
+
+    it('routes by a branch-local extra service pathPrefix (effective profiles, not just project) — Codex P2', () => {
+      // A branch-local extra service `extra-api` with pathPrefixes ['/api/'], plus a project `web`
+      // profile as the convention/default catch-all. /api/* must route to extra-api even though it is
+      // NOT a project build profile — the proxy must consult effective profiles (project + extra).
+      addBranch('extra-branch', 'running', {
+        web: { profileId: 'web', status: 'running' },
+        'extra-api': { profileId: 'extra-api', status: 'running' },
+      });
+      stateService.addBuildProfile({
+        id: 'web', name: 'Web', dockerImage: 'node:20', workDir: 'web', containerPort: 5173, projectId: 'default',
+      });
+      // Branch-local only — deliberately NOT a project build profile.
+      stateService.setBranchExtraProfiles('extra-branch', [{
+        id: 'extra-api', name: 'extra-api', dockerImage: 'nginx:alpine', workDir: '',
+        containerPort: 8080, projectId: 'default', pathPrefixes: ['/api/'],
+      } as any]);
+      stateService.setDefaultBranch('extra-branch');
+      stateService.save();
+
+      let routedProfileId = '';
+      proxy.setResolveUpstream((_branchSlug, profileId) => { routedProfileId = String(profileId); return 'http://localhost:9000'; });
+
+      const req = { headers: { host: 'localhost' }, url: '/api/orders', pipe: () => {} } as unknown as http.IncomingMessage;
+      const { res } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(routedProfileId).toBe('extra-api');
     });
 
     it('should not trigger auto-build for existing idle branches from a preview visit', () => {
@@ -842,6 +980,74 @@ describe('ProxyService', () => {
         'other.com', '/',
       );
       expect(result).toBeNull();
+    });
+  });
+
+  describe('named subdomain — 状态门控（停止服务不被强制为上游）', () => {
+    // resolvePreviewServiceSubdomain（master 命名子域兜底）必须与 forwarder 同口径：
+    // 只有 hostPort>0 **且** 状态可路由（running/starting/building/restarting）的服务才命中命名 host；
+    // 停止/错误但残留 hostPort 的服务不得被命名 host 强制为上游（否则产生 forwarder 本会省略的坏路由）。
+    function makeRes() {
+      const written = { statusCode: 0, headers: {} as Record<string, string>, body: '' };
+      const res = {
+        writeHead(code: number, headers: Record<string, string>) { written.statusCode = code; written.headers = headers; },
+        end(body?: string) { written.body = body || ''; },
+      } as unknown as http.ServerResponse;
+      return { res, written };
+    }
+
+    function setup(svcStatus: string) {
+      stateService.addProject({
+        id: 'prd-agent', slug: 'prd-agent', name: 'PRD Agent', kind: 'git',
+        legacyFlag: false, createdAt: new Date().toISOString(),
+      } as any);
+      stateService.addBranch({
+        id: 'prd-agent-main',
+        projectId: 'prd-agent',
+        branch: 'main',
+        worktreePath: '/tmp/named-sub',
+        // branch-local extra profile 声明命名子域 llmgw
+        extraProfiles: [{ id: 'llmgw', name: 'llmgw', subdomain: 'llmgw' } as any],
+        services: { llmgw: { profileId: 'llmgw', containerName: 'cds-x-llmgw', hostPort: 9200, status: svcStatus } },
+        // 分支顶层状态跟随服务：running 才会进入上游解析路径，否则 routeToBranch 提前返回等待页。
+        status: svcStatus === 'running' ? 'running' : 'idle',
+        createdAt: new Date().toISOString(),
+      } as any);
+      const previewProxy = new ProxyService(stateService, {
+        masterPort: 9900, workerPort: 5500,
+        repoRoot: '/tmp', worktreeBase: '/tmp', portStart: 9000,
+        previewDomain: 'preview.example.com',
+        rootDomains: ['preview.example.com'],
+      } as any);
+      let upstreamCalledWith: { branchId: string } | null = null;
+      previewProxy.setResolveUpstream((branchId: string) => {
+        upstreamCalledWith = { branchId };
+        return 'http://127.0.0.1:9200';
+      });
+      let autoBuildCalled = false;
+      previewProxy.setOnAutoBuild(() => { autoBuildCalled = true; });
+      const req = {
+        // previewSlug(main, prd-agent) = "main-prd-agent" → 命名 host "<slug>-llmgw"
+        headers: { host: 'main-prd-agent-llmgw.preview.example.com' },
+        url: '/',
+        pipe: () => {},
+      } as unknown as http.IncomingMessage;
+      const { res } = makeRes();
+      previewProxy.handleRequest(req, res);
+      return { upstreamCalledWith: () => upstreamCalledWith, autoBuildCalled: () => autoBuildCalled };
+    }
+
+    it('停止(stopped)的命名服务不被强制为上游，落回常规路径(auto-build)而非坏路由', () => {
+      const h = setup('stopped');
+      expect(h.upstreamCalledWith()).toBeNull(); // 没有把停止的 llmgw 容器强制成上游
+      expect(h.autoBuildCalled()).toBe(true);    // 落回常规 slug 路径，触发 auto-build
+    });
+
+    it('运行中(running)的命名服务正常命中其容器（门控不误伤可路由服务）', () => {
+      const h = setup('running');
+      expect(h.autoBuildCalled()).toBe(false);
+      expect(h.upstreamCalledWith()).not.toBeNull();
+      expect(h.upstreamCalledWith()!.branchId).toBe('prd-agent-main');
     });
   });
 

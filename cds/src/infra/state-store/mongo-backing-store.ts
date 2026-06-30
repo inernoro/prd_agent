@@ -88,6 +88,7 @@ import type {
   DataMigration,
 } from '../../types.js';
 import type { StateBackingStore } from './backing-store.js';
+import { pruneWebhookDeliveries } from '../../services/webhook-delivery-retention.js';
 
 /**
  * Minimal MongoDB collection surface we need. Keeping the interface
@@ -156,7 +157,8 @@ export interface StateLogRecordDoc {
 
 const DETACHED_SCOPE = 'cds-state-detached';
 const LOG_RECORD_SCOPE = 'cds-state-log-record';
-const MAX_WEBHOOK_DELIVERIES = 1000;
+// webhook 投递保留改走 pruneWebhookDeliveries（按分支保留，SSOT 在
+// services/webhook-delivery-retention.ts）；不再用纯全局上限二次截断。
 const MAX_LOGS_PER_BRANCH = 10;
 const MAX_EVENTS_PER_OPERATION_LOG = 10;
 const MAX_CONTAINER_ARCHIVES_PER_BRANCH = 10;
@@ -283,7 +285,7 @@ function sanitizeStateForPersistence(state: CdsState): CdsState {
       (logs || []).slice(-1000),
     ]),
   );
-  snapshot.githubWebhookDeliveries = (state.githubWebhookDeliveries || []).slice(-MAX_WEBHOOK_DELIVERIES);
+  snapshot.githubWebhookDeliveries = pruneWebhookDeliveries(state.githubWebhookDeliveries || []);
   snapshot.serviceDeployments = Object.fromEntries(
     Object.entries(state.serviceDeployments || {}).map(([deploymentId, deployment]) => [
       deploymentId,

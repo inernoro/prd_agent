@@ -171,6 +171,12 @@ public class OpenApiController : ControllerBase
                     if (isFirst) { await WriteSseAsync(BuildChunk(chatId, created, resolvedModel, new { role = "assistant" }, null)); isFirst = false; }
                     await WriteSseAsync(BuildChunk(chatId, created, resolvedModel, new { content = chunk.Content }, null));
                 }
+                else if (chunk.Type == GatewayChunkType.ToolCall && chunk.ToolCallDelta != null && !doneSent)
+                {
+                    // 协议保真：函数调用增量按 OpenAI SSE delta.tool_calls 透出（此前流式完全无函数调用）。
+                    if (isFirst) { await WriteSseAsync(BuildChunk(chatId, created, resolvedModel, new { role = "assistant" }, null)); isFirst = false; }
+                    await WriteSseAsync(BuildChunk(chatId, created, resolvedModel, new { tool_calls = chunk.ToolCallDelta }, null));
+                }
                 else if (chunk.Type == GatewayChunkType.Error)
                 {
                     errorCode = "LLM_ERROR";
@@ -269,18 +275,43 @@ public class OpenApiController : ControllerBase
 
             var promptTokens = resp.TokenUsage?.InputTokens;
             var completionTokens = resp.TokenUsage?.OutputTokens;
-            var completion = new
+            // 协议保真：上游若返回函数调用，网关已归一为 OpenAI 形状 tool_calls，这里回吐给客户端，
+            // 而非只回纯文本（此前 tool_calls 被静默丢，函数调用对外是哑的）。
+            var hasTools = resp.ToolCalls != null && resp.ToolCalls.Count > 0;
+            var usage = new { prompt_tokens = promptTokens ?? 0, completion_tokens = completionTokens ?? 0, total_tokens = (promptTokens ?? 0) + (completionTokens ?? 0) };
+            var created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+            string completionJson;
+            if (hasTools)
             {
-                id = $"chatcmpl-{requestId}",
-                @object = "chat.completion",
-                created = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                model = resolvedModel,
-                choices = new[] { new { index = 0, message = new { role = "assistant", content = resp.Content ?? string.Empty }, finish_reason = "stop" } },
-                usage = new { prompt_tokens = promptTokens ?? 0, completion_tokens = completionTokens ?? 0, total_tokens = (promptTokens ?? 0) + (completionTokens ?? 0) }
-            };
+                // OpenAI 约定：有 tool_calls 时 content 为 null、finish_reason 为 "tool_calls"。
+                var completion = new
+                {
+                    id = $"chatcmpl-{requestId}",
+                    @object = "chat.completion",
+                    created,
+                    model = resolvedModel,
+                    choices = new[] { new { index = 0, message = new { role = "assistant", content = (string?)null, tool_calls = resp.ToolCalls }, finish_reason = "tool_calls" } },
+                    usage
+                };
+                completionJson = JsonSerializer.Serialize(completion, SnakeCase);
+            }
+            else
+            {
+                var completion = new
+                {
+                    id = $"chatcmpl-{requestId}",
+                    @object = "chat.completion",
+                    created,
+                    model = resolvedModel,
+                    choices = new[] { new { index = 0, message = new { role = "assistant", content = resp.Content ?? string.Empty }, finish_reason = "stop" } },
+                    usage
+                };
+                completionJson = JsonSerializer.Serialize(completion, SnakeCase);
+            }
 
             Response.ContentType = "application/json";
-            await Response.WriteAsync(JsonSerializer.Serialize(completion, SnakeCase));
+            await Response.WriteAsync(completionJson);
             await LogAsync(key, requestId, "chat", requestedModel, chosen, resp.Resolution, false, 200, null, promptTokens, completionTokens, sw);
             await RecordUsageAsync(key, bound, resp.Resolution, promptTokens, completionTokens);
         }

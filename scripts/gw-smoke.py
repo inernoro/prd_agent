@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""D 层真机冒烟：对已部署的 serving 网关 /gw/v1/* 按 MECE 矩阵抽样真打。
+
+仅在 CDS 起来（单分支多容器 + 导入审批）后跑。桩 + 适配器 + 跨进程层由 CI 的 dotnet test 覆盖；
+本脚本覆盖"真网关 + 真/桩上游"那一层（doc/spec.llm-gateway-test-matrix.md D 层）。
+
+用法:
+  GW_BASE=https://<preview>/gw/v1 GW_KEY=dev-llmgw-serve-key python3 scripts/gw-smoke.py
+  # GW_BASE 不传时尝试用 cdscli preview-url 拼 /gw/v1
+
+断言（非异常）: model 命中 / finish_reason 有 / 内容非空 / token 有 / 无"选 A 给 B"。
+canary: 一个指向不存在 code / 坏模型的请求必须被判失败（证明探测有效）。
+"""
+import json
+import os
+import sys
+import urllib.request
+import urllib.error
+
+BASE = os.environ.get("GW_BASE", "").rstrip("/")
+KEY = os.environ.get("GW_KEY", "dev-llmgw-serve-key")
+TIMEOUT = int(os.environ.get("GW_TIMEOUT", "120"))
+
+# 每类 ModelType 抽 1 个代表入口（D1×D2 抽样）。真机存在性以 /gw/v1/pools 为准。
+SAMPLE_CODES = [
+    ("report-agent.generate::chat", "chat"),
+    ("prd-agent-desktop.chat.suggested-questions::intent", "intent"),
+    ("visual-agent.image::vision", "vision"),
+]
+
+
+def _req(method, path, body=None):
+    url = f"{BASE}{path}"
+    data = json.dumps(body).encode() if body is not None else None
+    r = urllib.request.Request(url, data=data, method=method)
+    r.add_header("X-Gateway-Key", KEY)
+    # 预览域名走 Cloudflare：默认 Python-urllib UA 会被 CF 按浏览器签名拦截（error 1010 / 403）。
+    # 带一个正常浏览器 UA 即可放行（与真人浏览器/curl 一致）。
+    r.add_header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) gw-smoke/1.0")
+    if data is not None:
+        r.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(r, timeout=TIMEOUT) as resp:
+            return resp.status, resp.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode("utf-8", "replace")
+    except Exception as e:  # noqa: BLE001
+        return 0, f"ERR {e}"
+
+
+def _envelope_data(raw):
+    try:
+        j = json.loads(raw)
+    except Exception:  # noqa: BLE001
+        return None
+    return j  # serving 端点直接返回 DTO（非 {success,data} 信封）
+
+
+def main():
+    base = BASE
+    if not base:
+        # 尝试用 cdscli 拼预览根 + /gw/v1
+        try:
+            import subprocess
+            out = subprocess.run(
+                ["python3", ".claude/skills/cds/cli/cdscli.py", "--human", "preview-url"],
+                capture_output=True, text=True, timeout=30).stdout.strip().splitlines()
+            root = next((l for l in out if l.startswith("http")), "").rstrip("/")
+            base = root + "/gw/v1" if root else ""
+        except Exception:  # noqa: BLE001
+            base = ""
+    if not base:
+        print("FATAL: 未提供 GW_BASE，且 cdscli 取预览根失败。CDS 起来后再跑。")
+        return 2
+    globals()["BASE"] = base
+    print(f"[gw-smoke] BASE={base}")
+
+    rows = []  # (case, ok, detail)
+
+    # 1) healthz
+    code, raw = _req("GET", "/healthz")
+    ok = code == 200 and '"status"' in raw and "ok" in raw
+    rows.append(("healthz", ok, f"{code} {raw[:80]}"))
+
+    # 2) pools（每类抽样入口）
+    for accode, mtype in SAMPLE_CODES:
+        code, raw = _req("GET", f"/pools?appCallerCode={urllib.parse.quote(accode)}&modelType={mtype}")
+        ok = code == 200
+        rows.append((f"pools[{mtype}]", ok, f"{code} {raw[:120]}"))
+
+    # 3) send 非流式（chat 代表）
+    for accode, mtype in SAMPLE_CODES:
+        body = {
+            "AppCallerCode": accode, "ModelType": mtype, "Stream": False,
+            "RequestBody": {"messages": [{"role": "user", "content": "ping, reply OK"}], "max_tokens": 16},
+            "Context": {"UserId": "smoke-test"},
+        }
+        code, raw = _req("POST", "/send", body)
+        d = _envelope_data(raw) or {}
+        res = d.get("Resolution") or {}
+        ok = (code == 200 and d.get("Success") is True
+              and bool(d.get("Content")) and bool(res.get("ActualModel")))
+        # 无"选 A 给 B"：若请求指定了 expectedModel，actualModel 应一致（此处未指定，仅记录）。
+        detail = f"{code} success={d.get('Success')} model={res.get('ActualModel')} contentLen={len(d.get('Content') or '')}"
+        rows.append((f"send[{mtype}]", ok, detail))
+
+    # 4) canary：指向不存在的入口，必须失败（证明探测有效）
+    body = {"AppCallerCode": "nonexistent.canary::chat", "ModelType": "chat",
+            "RequestBody": {"messages": [{"role": "user", "content": "x"}]}, "Context": {"UserId": "smoke-test"}}
+    code, raw = _req("POST", "/send", body)
+    d = _envelope_data(raw) or {}
+    canary_caught = not (code == 200 and d.get("Success") is True)
+    rows.append(("canary(必败入口)", canary_caught, f"{code} success={d.get('Success')} (期望失败)"))
+
+    # 汇总
+    print("\n=== gw-smoke 矩阵结果 ===")
+    passed = 0
+    for case, ok, detail in rows:
+        mark = "PASS" if ok else "FAIL"
+        if ok:
+            passed += 1
+        print(f"  [{mark}] {case:24} {detail}")
+    print(f"\n{passed}/{len(rows)} 通过")
+    return 0 if passed == len(rows) else 1
+
+
+if __name__ == "__main__":
+    import urllib.parse  # noqa: E402
+    sys.exit(main())

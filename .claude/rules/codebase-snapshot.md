@@ -26,7 +26,7 @@ prd_agent/
 | **Platform + Model** | `(platformId, modelId)` 替代原 Provider |
 | **App Identity** | Controller 硬编码 `appKey` |
 | **RBAC** | `SystemRole` + `AdminPermissionCatalog` (60+) + Middleware |
-| **LLM Gateway** | `ILlmGateway` + `ModelResolver` + 三级调度 + 健康管理 + `SendRawWithResolutionAsync`（compute-then-send，发送阶段不得二次 Resolve） |
+| **LLM Gateway** | `ILlmGateway` + `ModelResolver` + 三级调度 + 健康管理 + `SendRawWithResolutionAsync`（compute-then-send，发送阶段不得二次 Resolve）。**物理独立（剥离中）**：serving 引擎 `prd-api/src/PrdAgent.LlmGateway`（`/gw/v1/*`，X-Gateway-Key 门）+ MAP 侧 `HttpLlmGatewayClient` + flag `LlmGateway:Mode=inproc\|http\|shadow`（默认 inproc，方法签名不变）+ `ShadowLlmGateway` 影子比对（落 `llmshadow_comparisons`，读端点 `/gw/v1/shadow-comparisons`）+ `HttpAppCallerAllowlist` 灰度。独立观测前端 `prd-llmgw`/`prd-llmgw-web`。详见 `doc/plan.llm-gateway.rollout.md` |
 | **ModelPool** | 6 种策略引擎 (`Infrastructure/ModelPool/`) |
 | **Marketplace** | `CONFIG_TYPE_REGISTRY` + `IForkable` 白名单复制 |
 | **CLI Agent Executor** | `executorType` 分发 + `CliAgentContext` 共享上下文 + 多轮迭代 |

@@ -43,6 +43,13 @@ public class LLMModel
     
     /// <summary>API地址 (可继承自平台)</summary>
     public string? ApiUrl { get; set; }
+
+    /// <summary>
+    /// 调用协议 (可选，下沉到模型级)
+    /// - null 表示沿用平台 PlatformType（向后兼容，存量数据均为 null）
+    /// - 解析优先级：池条目 Protocol > 模型 Protocol > 平台 PlatformType
+    /// </summary>
+    public string? Protocol { get; set; }
     
     /// <summary>API密钥 (可继承自平台，加密存储)</summary>
     public string? ApiKeyEncrypted { get; set; }

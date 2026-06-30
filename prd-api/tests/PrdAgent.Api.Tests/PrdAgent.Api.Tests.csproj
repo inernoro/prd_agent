@@ -23,10 +23,22 @@
     </PackageReference>
   </ItemGroup>
 
+  <!-- 集成自测需起 WebApplication/Kestrel host 住 serving 网关端点 -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <!-- 数据驱动矩阵 cell 目录（scripts/gen-gw-matrix-report.py 生成，B/C 层 [Theory] 读它真跑） -->
+  <ItemGroup>
+    <None Include="Gateway/fixtures/*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\src\PrdAgent.Api\PrdAgent.Api.csproj" />
     <ProjectReference Include="..\..\src\PrdAgent.Core\PrdAgent.Core.csproj" />
     <ProjectReference Include="..\..\src\PrdAgent.Infrastructure\PrdAgent.Infrastructure.csproj" />
+    <!-- serving 网关端点扩展（MapGatewayServingEndpoints）+ DTO，自测复用同一份映射 -->
+    <ProjectReference Include="..\..\src\PrdAgent.LlmGateway\PrdAgent.LlmGateway.csproj" />
   </ItemGroup>
 
 </Project>

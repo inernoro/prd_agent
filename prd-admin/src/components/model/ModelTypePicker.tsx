@@ -240,13 +240,23 @@ function InlineGrid({
 interface ModelTypeFilterBarProps {
   value: string;
   onChange: (value: string) => void;
+  /**
+   * 只渲染"已配置"的类型（OpenRouter 心智：配置才出现，不预铺空类目）。
+   * 传入当前真实存在数据的 modelType 集合时，过滤掉零配置的类型 chip。
+   * 不传则保持渲染全部类型（向后兼容）。当前选中值即使不在集合内也保留，避免选中态丢失。
+   */
+  availableTypes?: string[];
 }
 
-export function ModelTypeFilterBar({ value, onChange }: ModelTypeFilterBarProps) {
+export function ModelTypeFilterBar({ value, onChange, availableTypes }: ModelTypeFilterBarProps) {
+  const available = availableTypes ? new Set(availableTypes) : null;
+  const defs = available
+    ? MODEL_TYPE_DEFINITIONS.filter((def) => available.has(def.value) || value === def.value)
+    : MODEL_TYPE_DEFINITIONS;
   return (
     <div className="flex items-center gap-1 flex-wrap">
       <FilterTag label="全部" isActive={value === 'all'} onClick={() => onChange('all')} />
-      {MODEL_TYPE_DEFINITIONS.map((def) => (
+      {defs.map((def) => (
         <FilterTag
           key={def.value}
           label={def.label}

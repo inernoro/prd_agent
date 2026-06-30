@@ -1,11 +1,14 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode } from '../types.js';
+import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
+import { mergeBranchProfiles, isValidExtraProfileId } from './branch-extra-services.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
 import { sealToken, unsealToken, isSealedSecret } from '../infra/secret-seal.js';
+import { pruneWebhookDeliveries, WEBHOOK_DELIVERY_GLOBAL_MAX } from './webhook-delivery-retention.js';
+import { sanitizeProfileOverride } from './container.js';
 import { normalizeCacheHostPath, resolveCacheBase } from './cache-paths.js';
 import { buildCacheMounts } from './cache-catalog.js';
 import { getGithubAppWhitelistSettings, normalizeGitHubOwnerList } from './github-app-whitelist.js';
@@ -132,6 +135,8 @@ function emptyState(): CdsState {
     defaultBranch: null,
     customEnv: { [GLOBAL_ENV_SCOPE]: {} } as CustomEnvStore,
     infraServices: [],
+    scheduledJobs: [],
+    scheduledJobRuns: [],
     releaseTargets: {},
     releasePlans: {},
     releaseRuns: {},
@@ -289,6 +294,8 @@ export class StateService {
       if (!this.state.resourceCloneTasks) this.state.resourceCloneTasks = [];
       if (!this.state.acceptanceReports) this.state.acceptanceReports = [];
       if (!this.state.cdsPeers) this.state.cdsPeers = [];
+      if (!this.state.scheduledJobs) this.state.scheduledJobs = [];
+      if (!this.state.scheduledJobRuns) this.state.scheduledJobRuns = [];
       if (!this.state.projects) this.state.projects = [];
       // Migrate: backfill cacheMounts for existing build profiles
       this.migrateCacheMounts();
@@ -732,6 +739,58 @@ export class StateService {
     return this.state;
   }
 
+  // ── Scheduled jobs ──
+
+  listScheduledJobs(projectId?: string): ScheduledJob[] {
+    const jobs = (this.state.scheduledJobs || []).map(normalizeScheduledJobShape);
+    return projectId ? jobs.filter((job) => job.projectId === projectId) : [...jobs];
+  }
+
+  getScheduledJob(id: string): ScheduledJob | undefined {
+    const job = (this.state.scheduledJobs || []).find((item) => item.id === id);
+    return job ? normalizeScheduledJobShape(job) : undefined;
+  }
+
+  upsertScheduledJob(job: ScheduledJob): ScheduledJob {
+    if (!this.state.scheduledJobs) this.state.scheduledJobs = [];
+    const idx = this.state.scheduledJobs.findIndex((item) => item.id === job.id);
+    if (idx >= 0) this.state.scheduledJobs[idx] = job;
+    else this.state.scheduledJobs.push(job);
+    this.save();
+    return job;
+  }
+
+  deleteScheduledJob(id: string): boolean {
+    if (!this.state.scheduledJobs) this.state.scheduledJobs = [];
+    const before = this.state.scheduledJobs.length;
+    this.state.scheduledJobs = this.state.scheduledJobs.filter((job) => job.id !== id);
+    if (before === this.state.scheduledJobs.length) return false;
+    this.save();
+    return true;
+  }
+
+  listScheduledJobRuns(options: { projectId?: string; jobId?: string; limit?: number } = {}): ScheduledJobRun[] {
+    const limit = Math.min(Math.max(options.limit || 100, 1), 500);
+    let runs = [...(this.state.scheduledJobRuns || [])];
+    if (options.projectId) runs = runs.filter((run) => run.projectId === options.projectId);
+    if (options.jobId) runs = runs.filter((run) => run.jobId === options.jobId);
+    return runs
+      .sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt))
+      .slice(0, limit);
+  }
+
+  upsertScheduledJobRun(run: ScheduledJobRun): ScheduledJobRun {
+    if (!this.state.scheduledJobRuns) this.state.scheduledJobRuns = [];
+    const idx = this.state.scheduledJobRuns.findIndex((item) => item.id === run.id);
+    if (idx >= 0) this.state.scheduledJobRuns[idx] = run;
+    else this.state.scheduledJobRuns.push(run);
+    this.state.scheduledJobRuns = this.state.scheduledJobRuns
+      .sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt))
+      .slice(0, 1000);
+    this.save();
+    return run;
+  }
+
   // ── Branch management ──
 
   getBranch(id: string): BranchEntry | undefined {
@@ -804,8 +863,11 @@ export class StateService {
     const branch = this.state.branches[branchId];
     if (!branch) throw new Error(`分支 "${branchId}" 不存在`);
     if (!branch.profileOverrides) branch.profileOverrides = {};
+    // writer 端就剥掉 null 结构哨兵字段，让新 override 一开始就干净（不写 containerPort:null /
+    // dockerImage:null 这类「该继承」的伪值）。与 applyProfileOverride 的 merge 端 sanitize 双保险，
+    // 整类 null-覆盖部署故障一次性根治（见 container.ts sanitizeProfileOverride 注释）。
     branch.profileOverrides[profileId] = {
-      ...override,
+      ...(sanitizeProfileOverride(override) ?? {}),
       updatedAt: new Date().toISOString(),
     };
   }
@@ -2234,6 +2296,38 @@ export class StateService {
     );
   }
 
+  /**
+   * 这条分支**实际要部署**的服务清单 = 项目级 profiles(稳定底座) + 本分支临时额外服务
+   * (branch.extraProfiles)。没声明额外服务的分支 = 项目 profiles 原样(老行为零回归)。
+   * 合并规则见 mergeBranchProfiles(额外项只能 ADD 新 id,撞项目 id 以项目为准)。部署 + 资源/拓扑
+   * 展示都走这一函,保证「分支额外服务」在哪都一致可见,且天生 scoped 在本分支。
+   */
+  getEffectiveProfilesForBranch(branch: BranchEntry): BuildProfile[] {
+    return mergeBranchProfiles(
+      this.getBuildProfilesForProject(branch.projectId || 'default'),
+      branch,
+    );
+  }
+
+  /**
+   * 设置/清空一条分支的临时额外服务(branch-local)。空数组 = 清空(回到纯项目底座)。
+   * 非法 id 的额外项被丢弃。仅改这一条分支,不碰项目 profiles、不碰别的分支。
+   */
+  setBranchExtraProfiles(branchId: string, extraProfiles: BuildProfile[]): BranchEntry | null {
+    const branch = this.getBranch(branchId);
+    if (!branch) return null;
+    const sanitized = (extraProfiles || []).filter(
+      (p) => p && isValidExtraProfileId(p.id),
+    );
+    if (sanitized.length === 0) {
+      delete branch.extraProfiles;
+    } else {
+      branch.extraProfiles = sanitized;
+    }
+    this.save();
+    return branch;
+  }
+
   getInfraServicesForProject(projectId: string): InfraService[] {
     return (this.state.infraServices || []).filter(
       (s) => classifyInfraScope(s) === 'project' && (s.projectId || 'default') === projectId,
@@ -2962,19 +3056,20 @@ export class StateService {
 
   /**
    * 2026-05-14: 历史上限从 200 调到 1000。
-   * 单条 delivery ~1KB（含 payloadSnippet 截断），1000 条 ~1MB，state.json 可承受。
-   * 用户反馈"webhook 只有 1 条以为没日志"——根因是上限太小，遇到一阵 push 风暴
-   * 几分钟就被旧条目挤掉。1000 条相当于一个忙项目两天的窗口，足够回溯排查。
-   * 后续若上 MongoDB 持久化，把本 ring buffer 改成 capped collection，参考
-   * doc/debt.cds.state-json.md。
+   * 2026-06-27: 改为「按分支保留」策略（webhook-delivery-retention.ts SSOT）。
+   * 旧的纯全局上限在多项目实例上有致命缺陷：某个忙分支几分钟就用自己的 push/CI
+   * 事件把全局 buffer 灌满，把安静分支（如 main）的 push 历史整段挤光 → 用户看到
+   * 「main webhook 只有 1 条」。更糟的是 mongo-split 持久化层仍按 200 截断，把
+   * 2026-05-14 那次 200→1000 的修复悄悄回退了。现在写入与所有持久化层统一调
+   * pruneWebhookDeliveries：每个分支最近 N 条永不被其它分支挤掉，全局上限只兜总量。
+   * WEBHOOK_DELIVERY_HISTORY_MAX 保留为读接口的 limit 上限（= 全局上限）。
    */
-  static readonly WEBHOOK_DELIVERY_HISTORY_MAX = 1000;
+  static readonly WEBHOOK_DELIVERY_HISTORY_MAX = WEBHOOK_DELIVERY_GLOBAL_MAX;
 
   recordGithubWebhookDelivery(delivery: import('../types.js').GithubWebhookDelivery): void {
     const list = this.state.githubWebhookDeliveries || [];
     list.push(delivery);
-    while (list.length > StateService.WEBHOOK_DELIVERY_HISTORY_MAX) list.shift();
-    this.state.githubWebhookDeliveries = list;
+    this.state.githubWebhookDeliveries = pruneWebhookDeliveries(list);
     try {
       this.save();
     } catch (err) {
@@ -3993,4 +4088,22 @@ export class StateService {
     this.save();
     return true;
   }
+}
+
+function normalizeScheduledJobShape(job: ScheduledJob): ScheduledJob {
+  if (Array.isArray(job.actions) && job.actions.length > 0) {
+    return {
+      ...job,
+      target: job.target || job.actions[0],
+    };
+  }
+  const legacyTarget = job.target;
+  const actions: ScheduledJobAction[] = legacyTarget
+    ? [{ ...legacyTarget, id: 'action_1', name: legacyTarget.type === 'http' ? '调用 HTTP 接口' : '执行命令脚本' }]
+    : [];
+  return {
+    ...job,
+    actions,
+    target: legacyTarget || actions[0],
+  };
 }

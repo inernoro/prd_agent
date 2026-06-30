@@ -1,4 +1,6 @@
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
@@ -107,8 +109,73 @@ public class UsersController : ControllerBase
         };
     }
 
+    private static string NormalizeMiduoSubjectType(string? subjectType)
+    {
+        var t = (subjectType ?? string.Empty).Trim();
+        return t is "wework_userid" or "employeeNo" ? t : "mobile";
+    }
+
+    private static string NormalizeMiduoSubjectValue(string subjectType, string value)
+    {
+        var v = (value ?? string.Empty).Trim();
+        return subjectType == "mobile" ? new string(v.Where(char.IsDigit).ToArray()) : v;
+    }
+
+    private static string HashMiduoSubject(string appCode, string subjectType, string value)
+    {
+        var normalized = NormalizeMiduoSubjectValue(subjectType, value);
+        var material = $"miduo-planet\n{appCode.Trim().ToUpperInvariant()}\n{subjectType}\n{normalized}";
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(material));
+        return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    private static string MaskMiduoSubject(string subjectType, string value)
+    {
+        var normalized = NormalizeMiduoSubjectValue(subjectType, value);
+        if (subjectType != "mobile") return normalized.Length <= 4 ? normalized : $"{normalized[..2]}***{normalized[^2..]}";
+        if (normalized.Length < 7) return normalized;
+        return $"{normalized[..3]}****{normalized[^4..]}";
+    }
+
+    private static bool IsTruthy(string? value)
+    {
+        return string.Equals(value, "1", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "on", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? NormalizeAbsoluteHttpUrl(string? value, bool trimTrailingSlash)
+    {
+        var raw = (value ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(raw) || raw.StartsWith('/')) return null;
+
+        var withScheme = raw.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            || raw.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+                ? raw
+                : $"https://{raw}";
+        if (!Uri.TryCreate(withScheme, UriKind.Absolute, out var uri)
+            || uri.Scheme is not ("http" or "https")
+            || string.IsNullOrWhiteSpace(uri.Host))
+        {
+            return null;
+        }
+
+        var normalized = uri.ToString();
+        return trimTrailingSlash ? normalized.TrimEnd('/') : normalized;
+    }
+
     private string? BuildAvatarUrl(User user)
         => AvatarUrlBuilder.Build(_cfg, user);
+
+    private async Task<string?> GetConfiguredMiduoAppCodeAsync(CancellationToken ct)
+    {
+        var settings = await _db.AppSettings.Find(x => x.Id == "global").FirstOrDefaultAsync(ct);
+        var fromDb = settings?.MiduoSsoAppCode;
+        if (!string.IsNullOrWhiteSpace(fromDb)) return fromDb.Trim();
+        var fromEnv = _cfg["MiduoSso:AppCode"] ?? _cfg["MIDUO_SSO_APP_CODE"] ?? _cfg["MiduoPlanetSso:AppCode"] ?? _cfg["MIDUO_PLANET_SSO_APP_CODE"];
+        return string.IsNullOrWhiteSpace(fromEnv) ? null : fromEnv.Trim();
+    }
 
     /// <summary>
     /// 获取用户列表
@@ -217,6 +284,10 @@ public class UsersController : ControllerBase
                 IsLocked = remaining > 0,
                 LockoutRemainingSeconds = remaining,
                 SystemRoleKey = u.SystemRoleKey,
+                MiduoSsoSubjectType = u.MiduoSsoSubjectType,
+                MiduoSsoSubjectMasked = u.MiduoSsoSubjectMasked,
+                MiduoSsoDisplayNameSnapshot = u.MiduoSsoDisplayNameSnapshot,
+                MiduoSsoBoundAt = u.MiduoSsoBoundAt,
                 GroupCount = groupCountMap.GetValueOrDefault(u.UserId),
                 TotalRunCount = runCountMap.GetValueOrDefault(u.UserId),
                 TotalImageCount = imageCountMap.GetValueOrDefault(u.UserId),
@@ -264,7 +335,11 @@ public class UsersController : ControllerBase
             LastLoginAt = user.LastLoginAt,
             LastActiveAt = user.LastActiveAt,
             IsLocked = remaining > 0,
-            LockoutRemainingSeconds = remaining
+            LockoutRemainingSeconds = remaining,
+            MiduoSsoSubjectType = user.MiduoSsoSubjectType,
+            MiduoSsoSubjectMasked = user.MiduoSsoSubjectMasked,
+            MiduoSsoDisplayNameSnapshot = user.MiduoSsoDisplayNameSnapshot,
+            MiduoSsoBoundAt = user.MiduoSsoBoundAt
         };
 
         return Ok(ApiResponse<UserDetailResponse>.Ok(response));
@@ -572,6 +647,26 @@ public class UsersController : ControllerBase
         if (existed != null)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.USERNAME_EXISTS, "用户名已存在"));
 
+        var miduoSubjectType = NormalizeMiduoSubjectType(request?.MiduoSsoSubjectType);
+        var miduoSubjectValue = NormalizeMiduoSubjectValue(miduoSubjectType, request?.MiduoSsoSubjectValue ?? string.Empty);
+        var miduoAppCode = await GetConfiguredMiduoAppCodeAsync(ct);
+        if (!string.IsNullOrWhiteSpace(miduoSubjectValue) && string.IsNullOrWhiteSpace(miduoAppCode))
+            return BadRequest(ApiResponse<object>.Fail("MIDUO_SSO_NOT_CONFIGURED", "请先配置米多星球 SSO appCode"));
+        var miduoSubjectHash = !string.IsNullOrWhiteSpace(miduoSubjectValue)
+            ? HashMiduoSubject(miduoAppCode!, miduoSubjectType, miduoSubjectValue)
+            : null;
+        if (!string.IsNullOrWhiteSpace(miduoSubjectHash))
+        {
+            var occupied = await _db.Users
+                .Find(u => u.MiduoSsoSubjectType == miduoSubjectType && u.MiduoSsoSubjectHash == miduoSubjectHash)
+                .Limit(1)
+                .FirstOrDefaultAsync(ct);
+            if (occupied != null)
+            {
+                return BadRequest(ApiResponse<object>.Fail("SSO_BINDING_EXISTS", $"该米多星球绑定值已绑定到用户 {occupied.Username}"));
+            }
+        }
+
         var user = new User
         {
             UserId = await _idGenerator.GenerateIdAsync("user"),
@@ -583,6 +678,14 @@ public class UsersController : ControllerBase
             CreatedAt = DateTime.UtcNow,
             MustResetPassword = true  // 首次登录需要重置密码
         };
+        if (!string.IsNullOrWhiteSpace(miduoSubjectValue))
+        {
+            user.MiduoSsoSubjectType = miduoSubjectType;
+            user.MiduoSsoSubjectHash = miduoSubjectHash;
+            user.MiduoSsoSubjectMasked = MaskMiduoSubject(miduoSubjectType, miduoSubjectValue);
+            user.MiduoSsoDisplayNameSnapshot = displayName;
+            user.MiduoSsoBoundAt = DateTime.UtcNow;
+        }
 
         try
         {
@@ -1244,6 +1347,163 @@ public class UsersController : ControllerBase
         return Ok(ApiResponse<InitializeUsersResponse>.Ok(response));
     }
 
+    [HttpGet("miduo-sso/config")]
+    [ProducesResponseType(typeof(ApiResponse<MiduoSsoConfigResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetMiduoSsoConfig(CancellationToken ct)
+    {
+        var settings = await _db.AppSettings.Find(x => x.Id == "global").FirstOrDefaultAsync(ct);
+        var envEnabled = IsTruthy(_cfg["MiduoSso:Enabled"] ?? _cfg["MIDUO_SSO_ENABLED"] ?? _cfg["MiduoPlanetSso:Enabled"] ?? _cfg["MIDUO_PLANET_SSO_ENABLED"]);
+        var response = new MiduoSsoConfigResponse
+        {
+            Enabled = settings?.MiduoSsoEnabled ?? envEnabled,
+            BaseUrl = settings?.MiduoSsoBaseUrl ?? string.Empty,
+            AppCode = settings?.MiduoSsoAppCode ?? string.Empty,
+            HasAppSecret = !string.IsNullOrWhiteSpace(settings?.MiduoSsoAppSecret),
+            RedirectUri = settings?.MiduoSsoRedirectUri ?? string.Empty,
+            Label = settings?.MiduoSsoLabel ?? "米多星球",
+            SubjectType = NormalizeMiduoSubjectType(settings?.MiduoSsoSubjectType)
+        };
+        return Ok(ApiResponse<MiduoSsoConfigResponse>.Ok(response));
+    }
+
+    [HttpPut("miduo-sso/config")]
+    [ProducesResponseType(typeof(ApiResponse<MiduoSsoConfigResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> UpdateMiduoSsoConfig([FromBody] UpdateMiduoSsoConfigRequest request, CancellationToken ct)
+    {
+        var baseUrl = NormalizeAbsoluteHttpUrl(request.BaseUrl, trimTrailingSlash: true);
+        var appCode = (request.AppCode ?? string.Empty).Trim();
+        var appSecret = (request.AppSecret ?? string.Empty).Trim();
+        var redirectUri = NormalizeAbsoluteHttpUrl(request.RedirectUri, trimTrailingSlash: false);
+        var label = string.IsNullOrWhiteSpace(request.Label) ? "米多星球" : request.Label.Trim();
+        var subjectType = NormalizeMiduoSubjectType(request.SubjectType);
+
+        if (request.Enabled)
+        {
+            if (string.IsNullOrWhiteSpace(baseUrl))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "Base URL 必须是有效的 http(s) 地址"));
+            if (string.IsNullOrWhiteSpace(appCode))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "appCode 不能为空"));
+            if (string.IsNullOrWhiteSpace(redirectUri))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "回调地址必须是有效的 http(s) 地址"));
+        }
+
+        var existing = await _db.AppSettings.Find(x => x.Id == "global").FirstOrDefaultAsync(ct);
+        var secretToSave = !string.IsNullOrWhiteSpace(appSecret)
+            ? appSecret
+            : existing?.MiduoSsoAppSecret;
+        if (request.Enabled && string.IsNullOrWhiteSpace(secretToSave))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "appSecret 不能为空"));
+
+        var update = Builders<AppSettings>.Update
+            .Set(x => x.MiduoSsoEnabled, request.Enabled)
+            .Set(x => x.MiduoSsoBaseUrl, baseUrl ?? string.Empty)
+            .Set(x => x.MiduoSsoAppCode, appCode)
+            .Set(x => x.MiduoSsoAppSecret, secretToSave)
+            .Set(x => x.MiduoSsoRedirectUri, redirectUri ?? string.Empty)
+            .Set(x => x.MiduoSsoLabel, label)
+            .Set(x => x.MiduoSsoSubjectType, subjectType)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow)
+            .SetOnInsert(x => x.Id, "global");
+
+        await _db.AppSettings.UpdateOneAsync(x => x.Id == "global", update, new UpdateOptions { IsUpsert = true }, ct);
+        return await GetMiduoSsoConfig(ct);
+    }
+
+    [HttpPost("miduo-sso/bindings/import")]
+    [ProducesResponseType(typeof(ApiResponse<MiduoSsoBindingImportResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> ImportMiduoSsoBindings([FromBody] ImportMiduoSsoBindingsRequest request, CancellationToken ct)
+    {
+        var appCode = await GetConfiguredMiduoAppCodeAsync(ct);
+        if (string.IsNullOrWhiteSpace(appCode))
+            return BadRequest(ApiResponse<object>.Fail("MIDUO_SSO_NOT_CONFIGURED", "请先配置米多星球 SSO appCode"));
+
+        var subjectType = NormalizeMiduoSubjectType(request.SubjectType);
+        var lines = (request.Text ?? string.Empty)
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Take(500)
+            .ToList();
+        if (lines.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "导入内容不能为空"));
+
+        var response = new MiduoSsoBindingImportResponse { RequestedCount = lines.Count };
+        var seenUsernames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seenHashes = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var raw in lines)
+        {
+            var parts = Regex.Split(raw.Trim(), @"[\t,，\s]+").Where(x => !string.IsNullOrWhiteSpace(x)).ToArray();
+            if (parts.Length < 2)
+            {
+                response.FailedItems.Add(new MiduoSsoBindingImportError { Line = raw, Code = ErrorCodes.INVALID_FORMAT, Message = "每行至少需要：用户名 手机号" });
+                continue;
+            }
+
+            var username = parts[0].Trim();
+            var subjectValue = parts[^1].Trim();
+            var displayName = parts.Length >= 3 ? string.Join("", parts.Skip(1).Take(parts.Length - 2)) : null;
+            if (!seenUsernames.Add(username))
+            {
+                response.FailedItems.Add(new MiduoSsoBindingImportError { Line = raw, Username = username, Code = ErrorCodes.INVALID_FORMAT, Message = "用户名在导入内容中重复" });
+                continue;
+            }
+
+            var normalized = NormalizeMiduoSubjectValue(subjectType, subjectValue);
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                response.FailedItems.Add(new MiduoSsoBindingImportError { Line = raw, Username = username, Code = ErrorCodes.INVALID_FORMAT, Message = "绑定值为空" });
+                continue;
+            }
+
+            var hash = HashMiduoSubject(appCode, subjectType, normalized);
+            if (!seenHashes.Add(hash))
+            {
+                response.FailedItems.Add(new MiduoSsoBindingImportError { Line = raw, Username = username, Code = ErrorCodes.INVALID_FORMAT, Message = "绑定值在导入内容中重复" });
+                continue;
+            }
+
+            var user = await _db.Users.Find(u => u.Username == username).FirstOrDefaultAsync(ct);
+            if (user == null)
+            {
+                response.FailedItems.Add(new MiduoSsoBindingImportError { Line = raw, Username = username, Code = "USER_NOT_FOUND", Message = "用户不存在" });
+                continue;
+            }
+
+            var occupied = await _db.Users
+                .Find(u => u.UserId != user.UserId && u.MiduoSsoSubjectType == subjectType && u.MiduoSsoSubjectHash == hash)
+                .Limit(1)
+                .FirstOrDefaultAsync(ct);
+            if (occupied != null)
+            {
+                response.FailedItems.Add(new MiduoSsoBindingImportError { Line = raw, Username = username, Code = "SSO_BINDING_EXISTS", Message = $"该绑定值已绑定到用户 {occupied.Username}" });
+                continue;
+            }
+
+            await _db.Users.UpdateOneAsync(
+                u => u.UserId == user.UserId,
+                Builders<User>.Update
+                    .Set(u => u.MiduoSsoSubjectType, subjectType)
+                    .Set(u => u.MiduoSsoSubjectHash, hash)
+                    .Set(u => u.MiduoSsoSubjectMasked, MaskMiduoSubject(subjectType, normalized))
+                    .Set(u => u.MiduoSsoDisplayNameSnapshot, string.IsNullOrWhiteSpace(displayName) ? user.DisplayName : displayName)
+                    .Set(u => u.MiduoSsoBoundAt, DateTime.UtcNow),
+                cancellationToken: ct);
+
+            response.ImportedItems.Add(new MiduoSsoBindingImportItem
+            {
+                Username = username,
+                DisplayName = string.IsNullOrWhiteSpace(displayName) ? user.DisplayName : displayName,
+                SubjectMasked = MaskMiduoSubject(subjectType, normalized)
+            });
+        }
+
+        response.ImportedCount = response.ImportedItems.Count;
+        response.FailedCount = response.FailedItems.Count;
+        _logger.LogWarning("Admin imported Miduo SSO bindings: requested={Requested} imported={Imported} failed={Failed}",
+            response.RequestedCount, response.ImportedCount, response.FailedCount);
+        return Ok(ApiResponse<MiduoSsoBindingImportResponse>.Ok(response));
+    }
+
     /// <summary>
     /// 批量删除用户
     /// </summary>
@@ -1316,6 +1576,8 @@ public class AdminCreateUserRequest
     /// <summary>PM/DEV/QA/ADMIN</summary>
     public string Role { get; set; } = string.Empty;
     public string? DisplayName { get; set; }
+    public string? MiduoSsoSubjectType { get; set; }
+    public string? MiduoSsoSubjectValue { get; set; }
 }
 
 public class AdminBulkCreateUsersRequest
@@ -1343,6 +1605,54 @@ public class BulkDeleteUsersResponse
     public long DeletedCount { get; set; }
 }
 
+public class MiduoSsoConfigResponse
+{
+    public bool Enabled { get; set; }
+    public string BaseUrl { get; set; } = string.Empty;
+    public string AppCode { get; set; } = string.Empty;
+    public bool HasAppSecret { get; set; }
+    public string RedirectUri { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
+    public string SubjectType { get; set; } = "mobile";
+}
 
+public class UpdateMiduoSsoConfigRequest
+{
+    public bool Enabled { get; set; }
+    public string? BaseUrl { get; set; }
+    public string? AppCode { get; set; }
+    public string? AppSecret { get; set; }
+    public string? RedirectUri { get; set; }
+    public string? Label { get; set; }
+    public string? SubjectType { get; set; }
+}
 
+public class ImportMiduoSsoBindingsRequest
+{
+    public string? SubjectType { get; set; }
+    public string Text { get; set; } = string.Empty;
+}
 
+public class MiduoSsoBindingImportResponse
+{
+    public int RequestedCount { get; set; }
+    public int ImportedCount { get; set; }
+    public int FailedCount { get; set; }
+    public List<MiduoSsoBindingImportItem> ImportedItems { get; set; } = new();
+    public List<MiduoSsoBindingImportError> FailedItems { get; set; } = new();
+}
+
+public class MiduoSsoBindingImportItem
+{
+    public string Username { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
+    public string SubjectMasked { get; set; } = string.Empty;
+}
+
+public class MiduoSsoBindingImportError
+{
+    public string Line { get; set; } = string.Empty;
+    public string? Username { get; set; }
+    public string Code { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+}

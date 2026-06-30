@@ -56,6 +56,7 @@ public class MongoDbContext
     /// </summary>
     public IMongoCollection<SystemPromptSettings> SystemPrompts => _database.GetCollection<SystemPromptSettings>("systemprompts");
     public IMongoCollection<LlmRequestLog> LlmRequestLogs => _database.GetCollection<LlmRequestLog>("llmrequestlogs");
+    public IMongoCollection<LlmShadowComparison> LlmShadowComparisons => _database.GetCollection<LlmShadowComparison>("llmshadow_comparisons");
     public IMongoCollection<ApiRequestLog> ApiRequestLogs => _database.GetCollection<ApiRequestLog>("apirequestlogs");
     public IMongoCollection<PrdComment> PrdComments => _database.GetCollection<PrdComment>("prdcomments");
     public IMongoCollection<ModelLabExperiment> ModelLabExperiments => _database.GetCollection<ModelLabExperiment>("model_lab_experiments");
@@ -498,6 +499,11 @@ public class MongoDbContext
             Users.Indexes.CreateOne(new CreateIndexModel<User>(
                 Builders<User>.IndexKeys.Ascending(u => u.Username),
                 new CreateIndexOptions()));
+            Users.Indexes.CreateOne(new CreateIndexModel<User>(
+                Builders<User>.IndexKeys
+                    .Ascending(u => u.MiduoSsoSubjectType)
+                    .Ascending(u => u.MiduoSsoSubjectHash),
+                new CreateIndexOptions { Sparse = true }));
         }
         catch (MongoCommandException ex) when (IsIndexConflict(ex))
         {

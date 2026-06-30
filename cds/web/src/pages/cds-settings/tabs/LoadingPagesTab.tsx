@@ -398,7 +398,7 @@ function ShapeGridWaitingPreview({
         hoverTrailAmount={0}
       />
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(900px_620px_at_52%_46%,rgba(255,255,255,0.08),transparent_36%,rgba(18,15,23,0.82)_100%),linear-gradient(90deg,rgba(18,15,23,0.9),rgba(18,15,23,0.22)_48%,rgba(18,15,23,0.84))]" />
-      <main className="relative z-10 grid h-full grid-cols-[minmax(280px,720px)_minmax(0,1fr)] items-center px-[clamp(36px,6vw,92px)] py-[clamp(32px,7vw,92px)]">
+      <main className="relative z-10 grid h-full grid-cols-1 items-center px-[clamp(20px,6vw,92px)] py-[clamp(32px,7vw,92px)] lg:grid-cols-[minmax(280px,720px)_minmax(0,1fr)]">
         <section className="max-w-[720px] [text-shadow:0_2px_30px_rgba(0,0,0,0.72)]">
           <div className="mb-7 inline-flex items-center gap-2.5 font-mono text-[11px] uppercase tracking-[0.28em] text-[#ded8ef]">
             <CdsLogoLoader size="sm" className="text-[#f7f5ff]" />

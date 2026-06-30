@@ -92,7 +92,12 @@ requireContains('drawer', 'function chooseMongoDatabase', 'Mongo default databas
 requireContains('drawer', 'configuredDatabaseNotice', 'Mongo configured/default database feedback exists');
 requireContains('drawer', 'function MongoResourceDataPanel', 'Mongo workbench panel exists');
 requireContains('drawer', 'function SqlResourceDataPanel', 'SQL workbench panel exists');
-requireRegex('drawer', /grid min-h-0 text-sm lg:grid-cols-\[320px_minmax\(0,1fr\)\]/, 'workbench uses side tree plus main operation canvas');
+// Desktop keeps the 320px side-tree + main split. Below lg the panes stack
+// (flex flex-col) and the modal body scrolls instead of overlapping — see
+// cds/.claude/rules/mobile-layout-fallback.md. Match only the desktop column
+// invariant so the mobile-flow prefix can evolve without tripping this guard.
+requireRegex('drawer', /lg:grid-cols-\[320px_minmax\(0,1fr\)\]/, 'workbench keeps desktop side tree plus main operation canvas');
+requireContains('drawer', 'overflow-y-auto lg:overflow-hidden', 'workbench modal body scrolls on mobile and fills on desktop');
 
 if (failures.length > 0) {
   console.error('CDS UI regression audit failed:');

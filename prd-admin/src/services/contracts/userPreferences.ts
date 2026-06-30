@@ -58,6 +58,13 @@ export type AgentSwitcherPreferences = {
   usageCounts?: Record<string, number>;
 };
 
+export type HomeLauncherPreferences = {
+  /** 首页第二张快捷卡：library=智识殿堂，voc=VOC */
+  secondaryQuickLink?: 'library' | 'voc';
+  /** 首页顶部资源卡列表，按顺序渲染，最多 6 个 */
+  quickLinkIds?: string[];
+};
+
 /** 文学创作 Agent 偏好设置 */
 export type LiteraryAgentPreferences = {
   /** 用户选择的生图模型池 ID */
@@ -77,6 +84,7 @@ export type UserPreferences = {
   visualAgentPreferences?: VisualAgentPreferences;
   literaryAgentPreferences?: LiteraryAgentPreferences;
   agentSwitcherPreferences?: AgentSwitcherPreferences;
+  homeLauncherPreferences?: HomeLauncherPreferences;
   /** 用户置顶的知识库 ID 列表（按用户视角排前） */
   documentStorePinnedIds?: string[];
 };
@@ -95,6 +103,8 @@ export type UpdateVisualAgentPreferencesContract = (prefs: VisualAgentPreference
 export type UpdateLiteraryAgentPreferencesContract = (prefs: LiteraryAgentPreferences) => Promise<ApiResponse<void>>;
 
 export type UpdateAgentSwitcherPreferencesContract = (prefs: AgentSwitcherPreferences) => Promise<ApiResponse<void>>;
+
+export type UpdateHomeLauncherPreferencesContract = (prefs: HomeLauncherPreferences) => Promise<ApiResponse<void>>;
 
 export type DefaultNavLayout = {
   navOrder: string[];

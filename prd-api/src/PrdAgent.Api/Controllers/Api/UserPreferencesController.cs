@@ -57,6 +57,7 @@ public class UserPreferencesController : ControllerBase
             visualAgentPreferences = prefs?.VisualAgentPreferences,
             literaryAgentPreferences = prefs?.LiteraryAgentPreferences,
             agentSwitcherPreferences = prefs?.AgentSwitcherPreferences,
+            homeLauncherPreferences = prefs?.HomeLauncherPreferences,
             documentStorePinnedIds = prefs?.DocumentStorePinnedIds ?? new List<string>()
         }));
     }
@@ -119,6 +120,64 @@ public class UserPreferencesController : ControllerBase
             new UpdateOptions { IsUpsert = true });
 
         return Ok(ApiResponse<object>.Ok(new { }));
+    }
+
+    /// <summary>
+    /// 更新首页启动器偏好
+    /// </summary>
+    [HttpPut("home-launcher")]
+    public async Task<IActionResult> UpdateHomeLauncherPreferences([FromBody] UpdateHomeLauncherPreferencesRequest request)
+    {
+        var userId = GetCurrentUserId();
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "未登录"));
+
+        if (request.HomeLauncherPreferences == null)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "homeLauncherPreferences 不能为空"));
+
+        var p = request.HomeLauncherPreferences;
+        p.SecondaryQuickLink = NormalizeHomeSecondaryQuickLink(p.SecondaryQuickLink);
+        p.QuickLinkIds = NormalizeHomeQuickLinkIds(p.QuickLinkIds, p.SecondaryQuickLink);
+
+        var update = Builders<UserPreferences>.Update
+            .Set(x => x.HomeLauncherPreferences, p)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+        await _db.UserPreferences.UpdateOneAsync(
+            x => x.UserId == userId,
+            update,
+            new UpdateOptions { IsUpsert = true });
+
+        return Ok(ApiResponse<object>.Ok(new { }));
+    }
+
+    private static string NormalizeHomeSecondaryQuickLink(string? value)
+    {
+        return value is "voc" ? "voc" : "library";
+    }
+
+    private static List<string> NormalizeHomeQuickLinkIds(List<string>? ids, string secondaryQuickLink)
+    {
+        var result = new List<string>();
+        foreach (var id in ids ?? new List<string>())
+        {
+            var normalizedId = id?.Trim();
+            if (normalizedId is null || !IsValidHomeQuickLinkId(normalizedId) || result.Contains(normalizedId)) continue;
+            result.Add(normalizedId);
+            if (result.Count >= 6) break;
+        }
+
+        if (result.Count > 0) return result;
+
+        return secondaryQuickLink == "voc"
+            ? new List<string> { "marketplace", "voc", "showcase", "updates" }
+            : new List<string> { "marketplace", "library", "showcase", "updates" };
+    }
+
+    private static bool IsValidHomeQuickLinkId(string id)
+    {
+        if (string.IsNullOrWhiteSpace(id) || id.Length > 64) return false;
+        return id.All(c => c is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
     }
 
     /// <summary>
@@ -308,4 +367,9 @@ public class UpdateLiteraryAgentPreferencesRequest
 public class UpdateAgentSwitcherPreferencesRequest
 {
     public AgentSwitcherPreferences? AgentSwitcherPreferences { get; set; }
+}
+
+public class UpdateHomeLauncherPreferencesRequest
+{
+    public HomeLauncherPreferences? HomeLauncherPreferences { get; set; }
 }

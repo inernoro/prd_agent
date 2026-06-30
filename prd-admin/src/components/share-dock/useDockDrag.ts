@@ -21,7 +21,7 @@ export interface DockDragOptions {
   id: string;
   /** ghost 上显示的短文案（默认显示 id 前 8 位） */
   label?: string;
-  /** ghost 左侧图标（Emoji 或简短字符） */
+  /** ghost 左侧标识（简短字符） */
   icon?: string;
   /** 开始拖拽前的阈值（px），小于该距离不认为是拖拽，避免误触阻塞 click */
   threshold?: number;
@@ -112,7 +112,7 @@ export function useDockDrag(options: DockDragOptions) {
         // 半透明让 slot 的 hover 发光可以透过来
         'opacity: 0.88',
       ].join(';');
-      el.textContent = `${icon ?? '📦'}  ${label ?? id.slice(0, 8)}`;
+      el.textContent = `${icon ?? 'ITEM'}  ${label ?? id.slice(0, 8)}`;
       return el;
     };
 

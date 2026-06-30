@@ -29,6 +29,10 @@ public record LlmLogStart(
     string? AppCallerCode = null,
     string? PlatformId = null,
     string? PlatformName = null,
+    /// <summary>本次调用使用的协议（池条目 Protocol > 模型 Protocol > 平台 PlatformType）</summary>
+    string? Protocol = null,
+    /// <summary>协议/模型解析来源说明（调试用）</summary>
+    string? ResolutionReason = null,
     /// <summary>模型解析类型（0=直连单模型, 1=默认模型池, 2=专属模型池）</summary>
     ModelResolutionType? ModelResolutionType = null,
     string? ModelGroupId = null,
@@ -45,7 +49,9 @@ public record LlmLogStart(
     string? FallbackReason = null,
     string? ExpectedModel = null,
     // 健康探活标记
-    bool? IsHealthProbe = null);
+    bool? IsHealthProbe = null,
+    /// <summary>本次请求是否流式（来自请求体 stream 字段）</summary>
+    bool? IsStreaming = null);
 
 public record LlmLogDone(
     int? StatusCode,
@@ -63,7 +69,13 @@ public record LlmLogDone(
     string? AssembledTextHash,
     string Status,
     DateTime EndedAt,
-    long? DurationMs);
+    long? DurationMs,
+    /// <summary>函数调用（tool_calls）OpenAI 形状序列化 JSON；无则 null</summary>
+    string? ResponseToolCalls = null,
+    /// <summary>函数调用条数</summary>
+    int? ToolCallCount = null,
+    /// <summary>完成原因（上游 finish_reason / stop_reason）</summary>
+    string? FinishReason = null);
 
 public interface ILlmRequestLogWriter
 {

@@ -1,21 +1,21 @@
 /**
  * 同步中心（MAP 知识库传输协议 · 前端）。
  *
- * 点知识库右上角「同步」进入。四视图：进行中 / 发出去(push) / 收进来(pull) / 历史，
- * 外加「强制对齐」三选项（远端为准 / 本地为准 / 同时对准）。打开时轮询 runs，让进行中「动起来」。
+ * 点知识库右上角「同步」进入。默认按用户心智展示：当前状态 / 正在同步 / 需要处理 / 最近记录。
+ * 发起方向与接收审计仅作为记录细节，避免把“对端推来并被本端接收”误读成“本端主动同步回对端”。
  * 遵守 frontend-modal：createPortal 到 body、inline 高度、min-h:0 滚动、ESC + 蒙版关闭。
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ArrowLeftRight, ArrowRight, ArrowLeft, AlertTriangle, CheckCircle2, Clock3,
-  Globe, RefreshCw, Scale, Send, X, Repeat,
+  Globe, RefreshCw, Scale, Send, X, Repeat, ChevronDown, ChevronRight, FileText,
 } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import {
   listPeerNodes, listPeerSyncRuns, transferToPeer, setAutoSync,
-  type PeerNode, type PeerSyncRun, type PeerAlign,
+  type PeerNode, type PeerSyncRun, type PeerAlign, type TransferItemResult,
 } from '@/services/real/peerSync';
 
 interface Props {
@@ -43,12 +43,14 @@ const AUTO_INTERVAL_OPTS: { v: number; label: string }[] = [
   { v: 1440, label: '每天' },
 ];
 
-type TabKey = 'running' | 'out' | 'in' | 'history';
-const TABS: { key: TabKey; label: string }[] = [
-  { key: 'running', label: '进行中' },
-  { key: 'out', label: '发出去' },
-  { key: 'in', label: '收进来' },
-  { key: 'history', label: '历史' },
+type RecordFilter = 'all' | 'mine' | 'received' | 'failed';
+type ManualDirection = 'push' | 'pull';
+
+const RECORD_FILTERS: { key: RecordFilter; label: string }[] = [
+  { key: 'all', label: '全部' },
+  { key: 'mine', label: '我发起' },
+  { key: 'received', label: '接收审计' },
+  { key: 'failed', label: '失败' },
 ];
 
 const ALIGN_OPTS: { key: PeerAlign; label: string; desc: string; danger: boolean; icon: ReactNode }[] = [
@@ -62,7 +64,7 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
   const [runs, setRuns] = useState<PeerSyncRun[]>([]);
   const [nodes, setNodes] = useState<PeerNode[]>([]);
   const [nodeId, setNodeId] = useState('');
-  const [tab, setTab] = useState<TabKey>('running');
+  const [recordFilter, setRecordFilter] = useState<RecordFilter>('all');
   const [showAlign, setShowAlign] = useState(false);
   const [confirmAlign, setConfirmAlign] = useState<PeerAlign | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -124,21 +126,51 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  const activeRuns = useMemo(() => runs.filter(isRunActive), [runs]);
+  const problemRuns = useMemo(() => runs.filter(r => isProblemRun(r, runs)), [runs]);
+  const latestRun = runs[0] || null;
+  const manualTargetName = activeNodeName(nodes, nodeId) || '对端节点';
+  const routeNodeName = peerNodeName || latestRun?.peerNodeName || manualTargetName;
+  const routeText = syncRouteText(peerSyncDirection, routeNodeName);
+  const autoDirectionNeedsConfirm = shouldConfirmAutoDirection(peerSyncDirection);
+
   const filtered = useMemo(() => {
-    if (tab === 'running') return runs.filter(isRunActive);
-    if (tab === 'out') return runs.filter(r => r.origin === 'outgoing');
-    if (tab === 'in') return runs.filter(r => r.origin === 'incoming');
-    return runs;
-  }, [runs, tab]);
+    const records = runs.filter(r => !isRunActive(r));
+    if (recordFilter === 'mine') return records.filter(r => r.origin === 'outgoing');
+    if (recordFilter === 'received') return records.filter(r => r.origin === 'incoming');
+    if (recordFilter === 'failed') return records.filter(r => isProblemRun(r, runs));
+    return records;
+  }, [runs, recordFilter]);
 
   const counts = useMemo(() => ({
-    running: runs.filter(isRunActive).length,
-    out: runs.filter(r => r.origin === 'outgoing').length,
-    in: runs.filter(r => r.origin === 'incoming').length,
-    history: runs.length,
+    all: runs.filter(r => !isRunActive(r)).length,
+    mine: runs.filter(r => !isRunActive(r) && r.origin === 'outgoing').length,
+    received: runs.filter(r => !isRunActive(r) && r.origin === 'incoming').length,
+    failed: runs.filter(r => isProblemRun(r, runs)).length,
   }), [runs]);
 
   const activeNode = nodes.find(n => n.id === nodeId) || null;
+
+  const runManual = async (direction: ManualDirection) => {
+    if (!nodeId) { setError('请先选择对端节点'); return; }
+    setSubmitting(true);
+    setError(null);
+    const res = await transferToPeer({ nodeId, resourceType, itemIds: [storeId], direction, mode: 'overwrite' });
+    if (!mounted.current) return;
+    setSubmitting(false);
+    const businessError = getTransferFailureMessage(res.success ? res.data : undefined);
+    if (res.success && !businessError) {
+      setRecordFilter('all');
+      await loadRuns();
+      onAfterSync?.();
+    } else if (res.success) {
+      setRecordFilter('failed');
+      setError(businessError || '同步失败');
+      await loadRuns();
+    } else {
+      setError(res.error?.message || '同步失败');
+    }
+  };
 
   const runAlign = async (align: PeerAlign) => {
     if (!nodeId) { setError('请先选择对端节点'); return; }
@@ -148,10 +180,15 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
     const res = await transferToPeer({ nodeId, resourceType, itemIds: [storeId], align });
     if (!mounted.current) return;
     setSubmitting(false);
-    if (res.success) {
-      setTab('history');
+    const businessError = getTransferFailureMessage(res.success ? res.data : undefined);
+    if (res.success && !businessError) {
+      setRecordFilter('all');
       await loadRuns();
       onAfterSync?.();
+    } else if (res.success) {
+      setRecordFilter('failed');
+      setError(businessError || '对齐失败');
+      await loadRuns();
     } else {
       setError(res.error?.message || '对齐失败');
     }
@@ -210,125 +247,168 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
           </div>
         </div>
 
-        <div className="flex min-h-0 flex-col" style={{ height: 'min(680px, calc(88vh - 65px))' }}>
-          {/* 后台自动同步：开启后由服务端定期复用最近一次同步的对端 + 方向，自动保持两端一致（非破坏性，绝不删条目） */}
-          {resourceType === 'document-store' && (
-            <div className="border-b px-6 py-3" style={{ borderColor: 'rgba(148,163,184,0.12)' }}>
-              <div className="flex items-center justify-between gap-3 flex-wrap">
-                <div className="flex items-center gap-2 min-w-0">
-                  <Repeat size={15} style={{ color: autoOn ? 'rgb(94,234,212)' : 'var(--text-muted)' }} />
-                  <span className="text-sm font-semibold">后台自动同步</span>
-                  <span className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                    {autoOn
-                      ? `已开启 · 自动${peerNodeName ? ` 与「${peerNodeName}」` : ''}保持一致`
-                      : everSynced ? '关闭中 · 仅手动同步' : '需先手动同步一次后才能开启'}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  {autoOn && (
-                    <select
-                      value={autoInterval}
-                      onChange={e => applyAuto(true, Number(e.target.value))}
-                      disabled={autoBusy}
-                      className="prd-field h-8 rounded-lg px-2 text-xs outline-none"
-                      style={{ maxWidth: 140 }}
-                    >
-                      {AUTO_INTERVAL_OPTS.map(o => <option key={o.v} value={o.v}>{o.label}</option>)}
-                    </select>
+        <div className="flex min-h-0 flex-col" style={{ height: 'min(700px, calc(88vh - 65px))' }}>
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4" style={{ overscrollBehavior: 'contain' }}>
+            {loading ? <MapSectionLoader text="正在加载…" /> : (
+              <div className="space-y-4">
+                <section className="rounded-xl border p-4" style={{ borderColor: problemRuns.length > 0 ? 'rgba(248,113,113,0.28)' : activeRuns.length > 0 ? 'rgba(245,158,11,0.30)' : 'rgba(45,212,191,0.24)', background: 'rgba(15,23,42,0.34)' }}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 text-base font-semibold">
+                        {problemRuns.length > 0 ? <AlertTriangle size={18} style={{ color: 'rgb(252,165,165)' }} /> : activeRuns.length > 0 ? <MapSpinner size={18} /> : <CheckCircle2 size={18} style={{ color: 'rgb(94,234,212)' }} />}
+                        {problemRuns.length > 0 ? '需要处理' : activeRuns.length > 0 ? '正在同步' : '两边基本一致'}
+                      </div>
+                      <div className="mt-1 text-xs leading-5" style={{ color: 'var(--text-muted)' }}>
+                        {problemRuns.length > 0
+                          ? `${problemRuns.length} 条同步记录需要查看原因。`
+                          : activeRuns.length > 0
+                            ? '关闭面板不影响后台同步，当前进度会自动刷新。'
+                            : latestRun ? `最近一次：${formatTime(latestRun.startedAt)}，${statusText(latestRun)}。` : '还没有同步记录。'}
+                      </div>
+                    </div>
+                    <button onClick={() => loadRuns()} className="rounded-lg p-1.5 hover:bg-white/10" title="刷新"><RefreshCw size={14} /></button>
+                  </div>
+
+                  {resourceType === 'document-store' && (
+                    <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border px-3 py-2" style={{ borderColor: autoDirectionNeedsConfirm ? 'rgba(245,158,11,0.32)' : 'rgba(148,163,184,0.14)', background: 'rgba(2,6,23,0.18)' }}>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 text-sm font-semibold">
+                          <Repeat size={14} style={{ color: autoOn && !autoDirectionNeedsConfirm ? 'rgb(94,234,212)' : 'var(--text-muted)' }} />
+                          自动同步
+                          <span className="text-xs font-normal" style={{ color: autoOn && !autoDirectionNeedsConfirm ? 'rgb(94,234,212)' : 'var(--text-muted)' }}>
+                            {autoDirectionNeedsConfirm ? '方向待确认' : autoOn ? '已开启' : '未开启'}
+                          </span>
+                        </div>
+                        <div className="mt-0.5 truncate text-[11px]" style={{ color: autoDirectionNeedsConfirm ? 'rgb(252,211,77)' : 'var(--text-muted)' }}>
+                          {autoDirectionNeedsConfirm ? '最近只是接收了对端推送，尚未确认自动同步方向。' : routeText}
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        {autoOn && !autoDirectionNeedsConfirm && (
+                          <select
+                            value={autoInterval}
+                            onChange={e => applyAuto(true, Number(e.target.value))}
+                            disabled={autoBusy}
+                            className="prd-field h-8 rounded-lg px-2 text-xs outline-none"
+                            style={{ maxWidth: 130 }}
+                          >
+                            {AUTO_INTERVAL_OPTS.map(o => <option key={o.v} value={o.v}>{o.label}</option>)}
+                          </select>
+                        )}
+                        <Button
+                          size="sm"
+                          variant={autoOn && !autoDirectionNeedsConfirm ? 'primary' : 'secondary'}
+                          onClick={() => applyAuto(!autoOn, autoInterval)}
+                          disabled={autoBusy || (!autoOn && (autoDirectionNeedsConfirm || !everSynced))}
+                          title={autoDirectionNeedsConfirm && !autoOn ? '请先手动选择发送或拉回方向' : !everSynced ? '请先手动同步一次' : autoOn ? '关闭后台自动同步' : '开启后台自动同步'}
+                        >
+                          {autoBusy ? <MapSpinner size={13} /> : <Repeat size={13} />}
+                          {autoOn ? '关闭' : '开启'}
+                        </Button>
+                      </div>
+                    </div>
                   )}
-                  <Button
-                    size="sm"
-                    variant={autoOn ? 'primary' : 'secondary'}
-                    onClick={() => applyAuto(!autoOn, autoInterval)}
-                    disabled={autoBusy || (!autoOn && !everSynced)}
-                    title={!everSynced ? '请先手动同步一次（确定对端与方向）' : autoOn ? '关闭后台自动同步' : '开启后台自动同步'}
-                  >
-                    {autoBusy ? <MapSpinner size={13} /> : <Repeat size={13} />}
-                    {autoOn ? '已开启' : '开启自动'}
-                  </Button>
-                </div>
-              </div>
-            </div>
-          )}
+                </section>
 
-          {/* 强制对齐 */}
-          <div className="border-b px-6 py-3" style={{ borderColor: 'rgba(148,163,184,0.12)' }}>
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div className="flex items-center gap-2">
-                <Scale size={15} style={{ color: 'rgb(252,211,77)' }} />
-                <span className="text-sm font-semibold">手动同步 · 强制对齐</span>
-                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>两边数量对不上时一次拉齐</span>
-              </div>
-              <div className="flex items-center gap-2">
-                {nodes.length > 1 && (
-                  <select value={nodeId} onChange={e => setNodeId(e.target.value)}
-                    className="prd-field h-8 rounded-lg px-2 text-xs outline-none" style={{ maxWidth: 200 }}>
-                    <option value="">选择对端…</option>
-                    {nodes.map(n => <option key={n.id} value={n.id}>{n.displayName}</option>)}
-                  </select>
+                {activeRuns.length > 0 && (
+                  <section>
+                    <SectionTitle title="正在同步" desc="按文章逐条更新进度" />
+                    <div className="mt-2 space-y-2.5">{activeRuns.map(r => <RunCard key={r.id} run={r} />)}</div>
+                  </section>
                 )}
-                <Button size="sm" variant={showAlign ? 'primary' : 'secondary'} onClick={() => setShowAlign(v => !v)} disabled={nodes.length === 0}>
-                  <Scale size={13} /> 强制对齐 {showAlign ? '▴' : '▾'}
-                </Button>
-              </div>
-            </div>
-            {nodes.length === 0 && (
-              <div className="mt-2 flex items-center gap-2 text-xs" style={{ color: 'var(--text-muted)' }}>
-                <Globe size={13} /> 暂无已配对对端，请管理员到「设置 → 系统互联」配对节点后再用。
-              </div>
-            )}
-            {showAlign && nodes.length > 0 && (
-              <div className="mt-3 grid gap-2.5 md:grid-cols-3">
-                {ALIGN_OPTS.map(o => (
-                  <button key={o.key} onClick={() => (o.danger ? setConfirmAlign(o.key) : runAlign(o.key))}
-                    disabled={submitting || !nodeId}
-                    className="rounded-xl border p-3 text-left transition disabled:opacity-50"
-                    style={{ borderColor: 'rgba(148,163,184,0.20)', background: 'rgba(15,23,42,0.40)' }}>
-                    <div className="flex items-center gap-2 text-sm font-semibold">{o.icon}{o.label}</div>
-                    <div className="mt-1 text-[11px] leading-5" style={{ color: 'var(--text-muted)' }}>{o.desc}</div>
-                    {o.danger
-                      ? <div className="mt-2 rounded-md px-2 py-1 text-[10.5px]" style={{ color: 'rgb(252,165,165)', background: 'rgba(127,29,29,0.18)', border: '1px solid rgba(248,113,113,0.34)' }}>会删除条目，需确认</div>
-                      : <div className="mt-2 rounded-md px-2 py-1 text-[10.5px]" style={{ color: 'rgb(94,234,212)', background: 'rgba(20,184,166,0.10)', border: '1px solid rgba(45,212,191,0.34)' }}>不删除，最安全</div>}
-                  </button>
-                ))}
-              </div>
-            )}
-            {error && (
-              <div className="mt-2 flex items-center gap-2 text-xs" style={{ color: 'rgb(252,165,165)' }}>
-                <AlertTriangle size={13} /> {error}
-              </div>
-            )}
-          </div>
 
-          {/* tabs */}
-          <div className="flex items-center gap-1 px-6 pt-3">
-            {TABS.map(t => (
-              <button key={t.key} onClick={() => setTab(t.key)}
-                className="flex items-center gap-1.5 rounded-t-lg px-3 py-2 text-xs transition"
-                style={{
-                  color: tab === t.key ? 'var(--text-primary)' : 'rgb(148,163,184)',
-                  background: tab === t.key ? 'rgba(15,23,42,0.5)' : 'transparent',
-                  borderBottom: tab === t.key ? '2px solid rgba(45,212,191,0.6)' : '2px solid transparent',
-                }}>
-                {t.label}
-                <span className="rounded-full px-1.5 text-[10px]" style={{ background: 'rgba(148,163,184,0.16)' }}>{counts[t.key]}</span>
-              </button>
-            ))}
-            <span className="flex-1" />
-            <button onClick={() => loadRuns()} className="rounded-lg p-1.5 hover:bg-white/10" title="刷新"><RefreshCw size={13} /></button>
-          </div>
+                <section>
+                  <SectionTitle title="需要处理" desc={problemRuns.length > 0 ? '失败记录会默认展开原因' : '没有需要你处理的问题'} />
+                  {problemRuns.length > 0 ? (
+                    <div className="mt-2 space-y-2.5">{problemRuns.map(r => <RunCard key={r.id} run={r} forceExpanded />)}</div>
+                  ) : (
+                    <div className="mt-2 rounded-xl border px-4 py-3 text-sm" style={{ borderColor: 'rgba(45,212,191,0.20)', background: 'rgba(20,184,166,0.08)', color: 'rgb(153,246,228)' }}>
+                      当前没有失败项。已一致的文章会记为“已同步”，不需要处理。
+                    </div>
+                  )}
+                </section>
 
-          {/* run list */}
-          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-3" style={{ overscrollBehavior: 'contain' }}>
-            {loading ? <MapSectionLoader text="正在加载…" /> : filtered.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-16 text-center">
-                <ArrowLeftRight size={28} style={{ color: 'var(--text-muted)', opacity: 0.4, marginBottom: 10 }} />
-                <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                  {tab === 'running' ? '当前没有进行中的同步' : tab === 'in' ? '还没有收到对端推来的同步' : '暂无记录'}
-                </div>
+                <section className="rounded-xl border p-4" style={{ borderColor: 'rgba(148,163,184,0.16)', background: 'rgba(15,23,42,0.28)' }}>
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div>
+                      <div className="text-sm font-semibold">手动处理</div>
+                      <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>日常只用前两个按钮；强制对齐会删除条目，放在高级里。</div>
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap justify-end">
+                      {nodes.length > 1 && (
+                        <select value={nodeId} onChange={e => setNodeId(e.target.value)}
+                          className="prd-field h-8 rounded-lg px-2 text-xs outline-none" style={{ maxWidth: 200 }}>
+                          <option value="">选择对端…</option>
+                          {nodes.map(n => <option key={n.id} value={n.id}>{n.displayName}</option>)}
+                        </select>
+                      )}
+                      <Button size="sm" variant="primary" onClick={() => runManual('push')} disabled={submitting || nodes.length === 0}>
+                        {submitting ? <MapSpinner size={13} /> : <ArrowRight size={13} />} 发送到{manualTargetName}
+                      </Button>
+                      <Button size="sm" variant="secondary" onClick={() => runManual('pull')} disabled={submitting || nodes.length === 0}>
+                        <ArrowLeft size={13} /> 从{manualTargetName}拉回
+                      </Button>
+                      <Button size="sm" variant={showAlign ? 'primary' : 'secondary'} onClick={() => setShowAlign(v => !v)} disabled={nodes.length === 0}>
+                        <Scale size={13} /> 高级对齐
+                      </Button>
+                    </div>
+                  </div>
+                  {nodes.length === 0 && (
+                    <div className="mt-2 flex items-center gap-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+                      <Globe size={13} /> 暂无已配对对端，请管理员到「设置 → 系统互联」配对节点后再用。
+                    </div>
+                  )}
+                  {showAlign && nodes.length > 0 && (
+                    <div className="mt-3 grid gap-2.5 md:grid-cols-3">
+                      {ALIGN_OPTS.map(o => (
+                        <button key={o.key} onClick={() => (o.danger ? setConfirmAlign(o.key) : runAlign(o.key))}
+                          disabled={submitting || !nodeId}
+                          className="rounded-xl border p-3 text-left transition disabled:opacity-50"
+                          style={{ borderColor: 'rgba(148,163,184,0.20)', background: 'rgba(2,6,23,0.22)' }}>
+                          <div className="flex items-center gap-2 text-sm font-semibold">{o.icon}{o.label}</div>
+                          <div className="mt-1 text-[11px] leading-5" style={{ color: 'var(--text-muted)' }}>{o.desc}</div>
+                          {o.danger
+                            ? <div className="mt-2 rounded-md px-2 py-1 text-[10.5px]" style={{ color: 'rgb(252,165,165)', background: 'rgba(127,29,29,0.18)', border: '1px solid rgba(248,113,113,0.34)' }}>会删除条目，需确认</div>
+                            : <div className="mt-2 rounded-md px-2 py-1 text-[10.5px]" style={{ color: 'rgb(94,234,212)', background: 'rgba(20,184,166,0.10)', border: '1px solid rgba(45,212,191,0.34)' }}>不删除，最安全</div>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {error && (
+                    <div className="mt-2 flex items-center gap-2 text-xs" style={{ color: 'rgb(252,165,165)' }}>
+                      <AlertTriangle size={13} /> {error}
+                    </div>
+                  )}
+                </section>
+
+                <section>
+                  <div className="flex items-center justify-between gap-3">
+                    <SectionTitle title="最近记录" desc="接收审计只表示本节点收到了对端推送" />
+                    <div className="flex items-center gap-1">
+                      {RECORD_FILTERS.map(t => (
+                        <button key={t.key} onClick={() => setRecordFilter(t.key)}
+                          className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs transition"
+                          style={{
+                            color: recordFilter === t.key ? 'var(--text-primary)' : 'rgb(148,163,184)',
+                            background: recordFilter === t.key ? 'rgba(45,212,191,0.12)' : 'transparent',
+                            border: `1px solid ${recordFilter === t.key ? 'rgba(45,212,191,0.30)' : 'transparent'}`,
+                          }}>
+                          {t.label}
+                          <span className="rounded-full px-1.5 text-[10px]" style={{ background: 'rgba(148,163,184,0.16)' }}>{counts[t.key]}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {filtered.length === 0 ? (
+                    <div className="mt-2 flex flex-col items-center justify-center rounded-xl border py-10 text-center" style={{ borderColor: 'rgba(148,163,184,0.14)', color: 'var(--text-muted)' }}>
+                      <ArrowLeftRight size={24} style={{ opacity: 0.4, marginBottom: 8 }} />
+                      <div className="text-sm">暂无记录</div>
+                    </div>
+                  ) : (
+                    <div className="mt-2 space-y-2.5">{filtered.slice(0, 12).map(r => <RunCard key={r.id} run={r} />)}</div>
+                  )}
+                </section>
               </div>
-            ) : (
-              <div className="space-y-2.5">{filtered.map(r => <RunCard key={r.id} run={r} />)}</div>
             )}
           </div>
         </div>
@@ -361,17 +441,45 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
   return createPortal(modal, document.body);
 }
 
-function RunCard({ run }: { run: PeerSyncRun }) {
+function SectionTitle({ title, desc }: { title: string; desc?: string }) {
+  return (
+    <div>
+      <div className="text-sm font-semibold">{title}</div>
+      {desc && <div className="mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>{desc}</div>}
+    </div>
+  );
+}
+
+function RunCard({ run, forceExpanded = false }: { run: PeerSyncRun; forceExpanded?: boolean }) {
+  const [expanded, setExpanded] = useState(forceExpanded || run.status === 'error');
   const incoming = run.origin === 'incoming';
   const dirLabel = directionLabel(run.direction);
   // 崩溃残留的陈旧 syncing 行（超 30min）不再显示为「进行中」金色脉冲，按 stale 中性态展示（Bugbot）。
   const active = isRunActive(run);
   const stale = run.status === 'syncing' && !active;
   const st = statusMeta(stale ? 'stale' : run.status);
+  const progressTotal = Math.max(0, run.progressTotal ?? 0);
+  const progressCurrent = progressTotal > 0 ? Math.min(Math.max(0, run.progressCurrent ?? 0), progressTotal) : 0;
+  const progressPercent = progressTotal > 0 ? Math.round((progressCurrent / progressTotal) * 100) : 0;
+  const hasDetails = Boolean(run.message || run.currentRecordTitle || progressTotal > 0 || run.status === 'error' || stale);
   return (
-    <div className="rounded-xl border p-3" style={{ borderColor: active ? 'rgba(245,158,11,0.34)' : 'rgba(148,163,184,0.16)', background: active ? 'rgba(245,158,11,0.10)' : 'rgba(15,23,42,0.34)' }}>
+    <div
+      className="rounded-xl border p-3 transition-colors"
+      style={{ borderColor: active ? 'rgba(245,158,11,0.34)' : 'rgba(148,163,184,0.16)', background: active ? 'rgba(245,158,11,0.10)' : 'rgba(15,23,42,0.34)' }}
+    >
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 min-w-0">
+          {hasDetails && (
+            <button
+              type="button"
+              onClick={() => setExpanded(v => !v)}
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition hover:bg-white/10"
+              aria-label={expanded ? '收起同步详情' : '展开同步详情'}
+              title={expanded ? '收起详情' : '查看失败原因和同步进度'}
+            >
+              {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            </button>
+          )}
           <span className="text-sm font-semibold truncate">{run.itemName || run.itemId}</span>
           <span className="shrink-0 rounded-md px-1.5 py-0.5 text-[10px]" style={{ color: incoming ? 'rgb(147,180,255)' : 'rgb(94,234,212)', background: incoming ? 'rgba(59,130,246,0.12)' : 'rgba(20,184,166,0.12)', border: `1px solid ${incoming ? 'rgba(59,130,246,0.3)' : 'rgba(45,212,191,0.34)'}` }}>{dirLabel}</span>
         </div>
@@ -382,17 +490,68 @@ function RunCard({ run }: { run: PeerSyncRun }) {
       <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
         {run.created > 0 && <span style={{ color: 'rgb(134,239,172)' }}>新增 {run.created}</span>}
         {run.updated > 0 && <span style={{ color: 'rgb(94,234,212)' }}>更新 {run.updated}</span>}
-        {run.skipped > 0 && <span>跳过 {run.skipped}</span>}
+        {run.skipped > 0 && <span>已一致 {run.skipped}</span>}
         {run.deleted > 0 && <span style={{ color: 'rgb(252,165,165)' }}>删除 {run.deleted}</span>}
         {run.failed > 0 && <span style={{ color: 'rgb(252,165,165)' }}>失败 {run.failed}</span>}
         {(run.assetsRewritten > 0 || run.assetRewriteFailed > 0) && <span>图片重传 {run.assetsRewritten}/失败 {run.assetRewriteFailed}</span>}
       </div>
       <div className="mt-1.5 flex flex-wrap gap-x-3 text-[10.5px]" style={{ color: 'var(--text-faint, rgba(148,163,184,0.7))' }}>
-        <span>{incoming ? '来自' : '对端'} {run.peerNodeName}</span>
+        <span>{incoming ? '接收自' : '对端'} {run.peerNodeName}</span>
         <span>{formatTime(run.startedAt)}</span>
         {run.durationMs > 0 && <span>耗时 {(run.durationMs / 1000).toFixed(1)}s</span>}
         {run.triggeredByName && <span>{run.triggeredByName}</span>}
       </div>
+      {(active || progressTotal > 0) && (
+        <div className="mt-3">
+          <div className="mb-1.5 flex items-center justify-between gap-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            <span className="min-w-0 truncate">
+              {run.progressPhase || (active ? '同步中' : '同步进度')}
+              {run.currentRecordTitle && (
+                <span className="ml-1" style={{ color: 'var(--text-primary)' }}>《{run.currentRecordTitle}》</span>
+              )}
+            </span>
+            {progressTotal > 0 && <span className="shrink-0 tabular-nums">{progressCurrent}/{progressTotal}</span>}
+          </div>
+          <div className="h-1.5 overflow-hidden rounded-full" style={{ background: 'rgba(148,163,184,0.16)' }}>
+            <div
+              className="h-full rounded-full transition-all duration-300"
+              style={{
+                width: `${progressTotal > 0 ? progressPercent : active ? 18 : 0}%`,
+                background: active ? 'linear-gradient(90deg, rgba(45,212,191,0.9), rgba(129,140,248,0.95))' : 'rgba(45,212,191,0.75)',
+              }}
+            />
+          </div>
+        </div>
+      )}
+      {expanded && (
+        <div className="mt-3 rounded-lg border p-3 text-[12px] leading-6" style={{ borderColor: run.status === 'error' ? 'rgba(248,113,113,0.26)' : 'rgba(148,163,184,0.14)', background: 'rgba(2,6,23,0.22)' }}>
+          {run.currentRecordTitle && (
+            <div className="mb-1.5 flex items-center gap-1.5" style={{ color: 'var(--text-secondary)' }}>
+              <FileText size={13} />
+              <span>当前处理：{run.currentRecordTitle}</span>
+            </div>
+          )}
+          {run.message ? (
+            <div style={{ color: run.status === 'error' ? 'rgb(252,165,165)' : 'var(--text-secondary)' }}>
+              {run.status === 'error' ? '失败原因：' : '同步结果：'}{run.message}
+            </div>
+          ) : run.status === 'error' ? (
+            <div style={{ color: 'rgb(252,165,165)' }}>失败原因：后端没有返回具体错误，请刷新后重试或检查对端节点日志。</div>
+          ) : (
+            <div style={{ color: 'var(--text-muted)' }}>暂无更多详情。</div>
+          )}
+          {(run.status === 'error' || stale) && (
+            <div className="mt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              建议先确认「设置 → 系统互联」里的对端节点可连通，再重新发起同步。
+            </div>
+          )}
+          {incoming && (
+            <div className="mt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              这是一条接收审计，表示本节点收到了对端推送；不代表本节点主动同步回对端。
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -404,13 +563,17 @@ function isRunActive(r: PeerSyncRun): boolean {
   return r.status === 'syncing' && Date.now() - new Date(r.startedAt).getTime() < RUN_FRESH_MS;
 }
 
-function directionLabel(d: string): string {
+export function shouldConfirmAutoDirection(direction: string | null | undefined): boolean {
+  return direction === 'received';
+}
+
+export function directionLabel(d: string): string {
   // 纯文本，不带任何符号字形（遵守 CLAUDE.md §0 禁止 emoji；方向语义由文案表达，视觉强调走底色）。
   switch (d) {
     case 'push': return '发送';
     case 'pull': return '拉取';
     case 'both': return '双向';
-    case 'received': return '收到';
+    case 'received': return '接收审计';
     case 'align-remote': return '远端为准';
     case 'align-local': return '本地为准';
     case 'align-both': return '同时对准';
@@ -420,11 +583,68 @@ function directionLabel(d: string): string {
 
 function statusMeta(s: string): { label: string; color: string; bg: string; border: string; icon: ReactNode } {
   if (s === 'synced') return { label: '完成', color: 'rgb(134,239,172)', bg: 'rgba(22,101,52,0.18)', border: 'rgba(34,197,94,0.3)', icon: <CheckCircle2 size={12} /> };
-  if (s === 'skipped') return { label: '无变化', color: 'rgb(148,163,184)', bg: 'rgba(148,163,184,0.1)', border: 'rgba(148,163,184,0.28)', icon: <CheckCircle2 size={12} /> };
+  if (s === 'skipped') return { label: '已同步', color: 'rgb(148,163,184)', bg: 'rgba(148,163,184,0.1)', border: 'rgba(148,163,184,0.28)', icon: <CheckCircle2 size={12} /> };
   if (s === 'error') return { label: '失败', color: 'rgb(252,165,165)', bg: 'rgba(127,29,29,0.18)', border: 'rgba(248,113,113,0.34)', icon: <AlertTriangle size={12} /> };
   // 陈旧：标记 syncing 但超 30min 未收尾（多为进程中断），按中性「未完成」展示，不再金色脉冲。
   if (s === 'stale') return { label: '未完成', color: 'rgb(148,163,184)', bg: 'rgba(148,163,184,0.1)', border: 'rgba(148,163,184,0.28)', icon: <AlertTriangle size={12} /> };
   return { label: '进行中', color: 'rgb(252,211,77)', bg: 'rgba(245,158,11,0.12)', border: 'rgba(245,158,11,0.34)', icon: <Clock3 size={12} /> };
+}
+
+function activeNodeName(nodes: PeerNode[], nodeId: string): string | null {
+  return nodes.find(n => n.id === nodeId)?.displayName || null;
+}
+
+function runIdentity(r: Pick<PeerSyncRun, 'itemId' | 'direction' | 'origin'>): string {
+  return `${r.itemId}::${r.origin}::${r.direction}`;
+}
+
+function runStartedAt(r: Pick<PeerSyncRun, 'startedAt'>): number {
+  const t = new Date(r.startedAt).getTime();
+  return Number.isNaN(t) ? 0 : t;
+}
+
+export function isProblemRun(run: PeerSyncRun, allRuns: PeerSyncRun[]): boolean {
+  const stale = run.status === 'syncing' && !isRunActive(run);
+  if (run.status !== 'error' && !stale) return false;
+  const identity = runIdentity(run);
+  const startedAt = runStartedAt(run);
+  return !allRuns.some(other =>
+    other.id !== run.id
+    && runIdentity(other) === identity
+    && runStartedAt(other) > startedAt
+    && (other.status === 'synced' || other.status === 'skipped'));
+}
+
+export function getTransferFailureMessage(data: { anyFail?: boolean; results?: TransferItemResult[] } | null | undefined): string | null {
+  if (!data?.anyFail) return null;
+  const failed = data.results?.find(r => !r.ok);
+  if (!failed) return '同步未完成，部分条目失败';
+  const name = failed.name || failed.itemId || '当前知识库';
+  return failed.message ? `${name}：${failed.message}` : `${name}：同步未完成`;
+}
+
+export function syncRouteText(direction: string | null | undefined, nodeName: string): string {
+  switch (direction) {
+    case 'push': return `自动把本库发送到「${nodeName}」`;
+    case 'pull': return `自动从「${nodeName}」拉回本库`;
+    case 'both': return `自动与「${nodeName}」双向保持一致`;
+    case 'align-remote':
+    case 'align-local':
+    case 'align-both':
+      return `最近做过强制对齐，后续自动同步按双向非删除方式运行`;
+    case 'received':
+      return '最近只是接收过对端推送，尚未确认自动同步方向';
+    default:
+      return '先手动同步一次，确认对端和方向后再开启自动同步';
+  }
+}
+
+export function statusText(run: Pick<PeerSyncRun, 'status' | 'origin' | 'startedAt'>): string {
+  if (run.status === 'error') return '失败';
+  if (run.status === 'syncing') return Date.now() - new Date(run.startedAt).getTime() < RUN_FRESH_MS ? '进行中' : '未完成';
+  if (run.status === 'skipped') return '两边已一致';
+  if (run.status === 'synced') return run.origin === 'incoming' ? '已接收对端推送' : '已完成';
+  return run.status;
 }
 
 function formatTime(value: string): string {

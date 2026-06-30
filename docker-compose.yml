@@ -4,6 +4,9 @@ services:
     container_name: prdagent-gateway
     ports:
       - "5500:80"
+      # 网关前端控制台 prd-llmgw-web 走 _standalone.conf 的独立 server 块（listen 8081，
+      # /gw-api/ 反代到 llmgw:8090）。不发布 8081 主机就到不了该 listener，控制台打不开。
+      - "8081:8081"
     volumes:
       # conf.d/default.conf 是 symlink，由部署模式决定指向哪个 branches/*.conf：
       #   - 独立部署 (exec_dep.sh) → branches/_standalone.conf (真正的 /api → api:8080 反代)
@@ -93,6 +96,11 @@ services:
       - OpenRouter__ApiKey=${OPENROUTER_API_KEY:-}
       - OpenRouter__BaseUrl=${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
       # 视频生成：纯 OpenRouter 直出（2026-04-27 砍掉 Remotion 拆分镜路径），无独立渲染容器
+      # 跨进程 LLM 网关开关：默认 inproc（进程内直调，行为不变）；置 http 则 MAP 自身 LLM
+      # 调用经 HttpLlmGatewayClient 打到 llmgw-serve（/gw/v1/*）。ServeBaseUrl 指向 serving 容器。
+      - LlmGateway__Mode=${LLMGW_MODE:-inproc}
+      - LlmGateway__ServeBaseUrl=${LLMGW_SERVE_BASE_URL:-http://llmgw-serve:8091}
+      - LlmGwServe__ApiKey=${LLMGW_SERVE_KEY:?must set LLMGW_SERVE_KEY in production (gateway /gw/v1 shared key gate, no insecure default)}
     # 重要：此 API 容器建议只读，避免任何本地落盘
     read_only: true
     # 允许少量临时写入到内存（tmpfs），避免 .NET/HTTP 栈因无 /tmp 可写而异常；不会落到磁盘
@@ -108,6 +116,83 @@ services:
     depends_on:
       - mongodb
       - redis
+    networks:
+      - prdagent-network
+    restart: unless-stopped
+
+  # 独立 LLM serving 网关 llmgw-serve —— DI 承载现有 LlmGateway/ModelResolver，HTTP 暴露 /gw/v1/*。
+  # 与 MAP 共享同一 Mongo + 同一 ApiKeyCrypto__Secret（resolve 要解密平台 key）+ 同一资产存储
+  # （日志写入需要）。MAP 置 LlmGateway__Mode=http 时跨进程打到这里；默认 inproc 时本服务可空跑/被外部调用。
+  llmgw-serve:
+    image: ${PRD_AGENT_LLMGW_SERVE_IMAGE:-ghcr.io/inernoro/prd_agent/prdagent-llmgw-serve:latest}
+    container_name: prdagent-llmgw-serve
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:8091
+      - MongoDB__ConnectionString=mongodb://mongodb:27017
+      - MongoDB__DatabaseName=prdagent
+      # 平台 API key 密文解密密钥：必须与 api 一致，否则 resolve 取不出可用 ApiKey
+      - ApiKeyCrypto__Secret=${API_KEY_CRYPTO_SECRET:-}
+      - ApiKeyCrypto__LegacySecrets=${API_KEY_CRYPTO_LEGACY_SECRETS:-}
+      # 资产存储：日志写入正文/图片到对象存储（与 api 同一套配置）
+      - ASSETS_PROVIDER=${ASSETS_PROVIDER:-tencentCos}
+      - TENCENT_COS_BUCKET=${TENCENT_COS_BUCKET}
+      - TENCENT_COS_REGION=${TENCENT_COS_REGION}
+      - TENCENT_COS_SECRET_ID=${TENCENT_COS_SECRET_ID}
+      - TENCENT_COS_SECRET_KEY=${TENCENT_COS_SECRET_KEY}
+      - TENCENT_COS_PUBLIC_BASE_URL=${TENCENT_COS_PUBLIC_BASE_URL}
+      - TENCENT_COS_PREFIX=${TENCENT_COS_PREFIX:-data}
+      - R2_ACCOUNT_ID=${R2_ACCOUNT_ID:-}
+      - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-}
+      - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-}
+      - R2_BUCKET=${R2_BUCKET:-}
+      - R2_PUBLIC_BASE_URL=${R2_PUBLIC_BASE_URL:-}
+      - R2_PREFIX=${R2_PREFIX:-}
+      - R2_ENDPOINT=${R2_ENDPOINT:-}
+      # 内部 M2M 共享密钥门（与 api 侧 LlmGwServe__ApiKey 对齐）
+      - LlmGwServe__ApiKey=${LLMGW_SERVE_KEY:?must set LLMGW_SERVE_KEY in production (gateway /gw/v1 shared key gate, no insecure default)}
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      - mongodb
+    networks:
+      - prdagent-network
+    restart: unless-stopped
+
+  # 独立 LLM 网关服务 llmgw —— 独立 prd-llmgw 镜像（自包含 ASP.NET 服务，监听 8090）。
+  # 与 MAP 共享同一 Mongo（读 llmrequestlogs 做观测）+ 独立 LlmGwJwt__Secret（网关自身账号鉴权，
+  # 跨服务隔离见 cross-project-isolation.md）。不依赖 prd-api 任何项目，剥离失败不波及主站。
+  llmgw:
+    image: ${PRD_AGENT_LLMGW_IMAGE:-ghcr.io/inernoro/prd_agent/prdagent-llmgw:latest}
+    container_name: prdagent-llmgw
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:8090
+      - MongoDB__ConnectionString=mongodb://mongodb:27017
+      - MongoDB__DatabaseName=prdagent
+      # 网关自身鉴权密钥：独立于 api 的 JWT_SECRET（跨服务隔离）
+      - LlmGwJwt__Secret=${LLMGW_JWT_SECRET:?must set LLMGW_JWT_SECRET in production (gateway console JWT signing key, >=32 bytes, no insecure default — empty falls back to a repo-known dev key that lets anyone forge a token to read /gw/*)}
+      - LlmGwJwt__Issuer=prdagent-llmgw
+      # 独立账号种子（首启 upsert 到 llmgw_users）；生产请通过 .env 覆盖密码
+      - LLMGW_ADMIN_USER=${LLMGW_ADMIN_USER:-admin}
+      - LLMGW_ADMIN_PASSWORD=${LLMGW_ADMIN_PASSWORD:?must set LLMGW_ADMIN_PASSWORD in production (gateway console admin account, no insecure default)}
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      - mongodb
+    networks:
+      - prdagent-network
+    restart: unless-stopped
+
+  # 独立 LLM 网关前端静态站 llmgw-web —— 独立 prd-llmgw-web 镜像（nginx 托管构建产物，监听 80）。
+  # SPA 回退 + /gw 反代到 llmgw:8090（见 prd-llmgw-web/nginx.conf）。
+  llmgw-web:
+    image: ${PRD_AGENT_LLMGW_WEB_IMAGE:-ghcr.io/inernoro/prd_agent/prdagent-llmgw-web:latest}
+    container_name: prdagent-llmgw-web
+    depends_on:
+      - llmgw
     networks:
       - prdagent-network
     restart: unless-stopped
