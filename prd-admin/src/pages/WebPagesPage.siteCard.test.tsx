@@ -25,12 +25,12 @@ const baseSite: HostedSite = {
 
 const ownerCaps: SiteCaps = { canEdit: true, canDelete: true, canShare: true, canSetVisibility: true };
 
-function renderSiteCard(site: HostedSite = baseSite, caps: SiteCaps = ownerCaps) {
+function renderSiteCard(site: HostedSite = baseSite, caps: SiteCaps = ownerCaps, shared = false) {
   return renderToStaticMarkup(
     <SiteCard
       site={site}
       selected={false}
-      shared={false}
+      shared={shared}
       caps={caps}
       onSelect={vi.fn()}
       onTogglePublic={vi.fn()}
@@ -45,14 +45,28 @@ function renderSiteCard(site: HostedSite = baseSite, caps: SiteCaps = ownerCaps)
 }
 
 describe('WebPagesPage SiteCard', () => {
-  it('changes the private quick-public action into a visible share action', () => {
+  it('keeps common card actions visible and folds secondary actions into more settings', () => {
     const html = renderSiteCard();
 
     expect(html).not.toContain('设为公开');
     expect(html).not.toContain('>公开<');
-    expect(html).toContain('>分享<');
     expect(html).toContain('aria-label="分享"');
-    expect(html).toContain('aria-label="发布到公开页"');
+    expect(html).toContain('aria-label="编辑"');
+    expect(html).toContain('aria-label="更多设置"');
+    expect(html).toContain('pointer-events-none');
+    expect(html).toContain('group-hover:pointer-events-auto');
+    expect(html).not.toContain('aria-label="发布到公开页"');
+    expect(html).not.toContain('aria-label="二维码"');
+  });
+
+  it('uses the same share entry for public sites and already shared sites', () => {
+    const html = renderSiteCard({ ...baseSite, visibility: 'public' }, ownerCaps, true);
+
+    expect(html).toContain('aria-label="已分享"');
+    expect(html).toContain('公开</span>');
+    expect(html).not.toContain('aria-label="分享管理"');
+    expect(html).not.toContain('点击取消公开');
+    expect(html).not.toContain('aria-label="发布到公开页"');
   });
 
   it('shows the private share action for team editors without visibility permission', () => {
@@ -63,7 +77,6 @@ describe('WebPagesPage SiteCard', () => {
       canSetVisibility: false,
     });
 
-    expect(html).toContain('>分享<');
     expect(html).toContain('aria-label="分享"');
     expect(html).not.toContain('设为公开');
     expect(html).not.toContain('aria-label="发布到公开页"');
