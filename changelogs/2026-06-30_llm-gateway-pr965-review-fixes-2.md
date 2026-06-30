@@ -19,3 +19,4 @@
 | fix | ops | docker-compose.dev.yml 的 llmgw 改从独立 prd-llmgw 项目构建（原误用 api 镜像，/gw/* 端点缺失） |
 | fix | ops | cds-compose.yml 网关极速版镜像补 branch-main 回退（同 api/admin），防只改非 prd-llmgw 的分支选极速版拉不到镜像 |
 | fix | test | 重新生成 protocol-cells/transport-cells 矩阵 fixture，清除 emoji/符号测试向量（U+2728/U+2713），合规规则 §0 |
+| fix | cds | cds-compose llmgw 控制台改用 per-deploy 派生的 admin 密码/JWT（CDS 替换 ${CDS_BRANCH_SLUG}），修复 Production 守卫拒绝仓库默认密码导致容器启动即 exit、部署判失败（Codex P1） |

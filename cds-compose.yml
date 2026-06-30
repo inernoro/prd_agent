@@ -255,11 +255,14 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
       MongoDB__DatabaseName: prdagent
-      # 网关自身鉴权密钥：独立于 api 的 JWT（跨服务隔离）。预览环境用固定占位值即可。
-      LlmGwJwt__Secret: "cds-preview-llmgw-secret-please-change-0001xyz"
+      # 网关自身鉴权密钥：**per-deploy 派生**（CDS 替换 ${CDS_BRANCH_SLUG}，同 Mongo 连接串）。
+      # 不能用仓库固定 dev 默认值——prd-llmgw/Program.cs 的生产守卫会拒绝「Production + 仓库默认 admin 密码」
+      # 导致容器启动即 exit、no-http-readiness 永不就绪、部署判失败（Codex P1）。派生值 != dev 默认、过守卫；
+      # 内网 only 故 SHA/slug 可派生即足够，公开暴露（P2）时再换 CDS 注入的强随机 secret。
+      LlmGwJwt__Secret: "llmgw-jwt-preview-${CDS_BRANCH_SLUG}-9f3a2c7e1b"
       LlmGwJwt__Issuer: prdagent-llmgw
       LLMGW_ADMIN_USER: admin
-      LLMGW_ADMIN_PASSWORD: llmgw-admin-2026
+      LLMGW_ADMIN_PASSWORD: "llmgw-admin-preview-${CDS_BRANCH_SLUG}"
     labels:
       # 安全：CDS 预览**不公开 path-route** 网关 console。它用固定占位 admin 密码 + JWT 密钥，若对外
       # 路由到 `/gw/`，任何可达 *.miduo.org 预览的人都能用已知密码登录读 LLM 日志（提示词/回答）。
