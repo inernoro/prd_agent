@@ -618,6 +618,9 @@
 
 ### 五、计划与方案
 
+- [LLM 网关剥离上线计划](plan.llm-gateway.rollout) `plan.llm-gateway.rollout`
+  > 差异化进度 + 测试纲领（A/B/C/D 四层）+ 局限范围（L1-L9 + apiyi 中转专项）+ 翻 http 上线序列
+
 - [PA Agent 竞品调研与改进方案](plan.product-agent.pa.competitive-improvements) `plan.product-agent.pa.competitive-improvements`
   > 四类竞品谱系、与 Phase 1 差距对照、P2～P4 分期改进包
 

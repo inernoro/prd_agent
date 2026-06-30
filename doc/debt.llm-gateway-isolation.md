@@ -1,8 +1,9 @@
 # debt.llm-gateway-isolation
 
-> 状态：进行中（波1 大部分落地，serving 跨进程 = 波2 未做）
-> 负责人：AI / 待用户 1 次审批
-> 关联设计：`doc/design.llm-gateway-physical-isolation.md`
+> 状态：进行中（波1 + 波2 跨进程 + 波2.5 影子/灰度/命名子域 已落地；生产翻 http = T12 待拍板）
+> 负责人：AI / 待用户拍板（合并到 main + 翻 http 时机）
+> 关联设计：`doc/design.llm-gateway-physical-isolation.md`；上线计划/测试纲领：`doc/plan.llm-gateway.rollout.md`；
+> 验收面包屑：`doc/guide.llm-gateway.acceptance-breadcrumbs.md`
 
 AI 大模型网关从 MAP 剥离的工程债务台账。记录「已做 / 待用户 / 已知边界 / 后续」。
 
@@ -127,6 +128,67 @@ CDS 合并多容器能力（PR #951）后，serving 网关在 `claude/llm-schedu
 - **债务**：`ModelTestStub.FailureMode`（AlwaysFail/Timeout/ConnectionReset 等）当前**未接入** serving 发送路径
   （resolver/gateway 不查 `model_test_stubs`）——失败注入要生效需在 `LlmGateway.SendAsync` resolve 后加 stub-hook，
   是独立改动，本轮未做；canary 改用真实失败路径（桩上游错误 / 坏 URL 模型）规避。
+
+## 波2.5：影子比对 + 灰度 allowlist + CDS 命名子域（已落地，2026-06-30）
+
+- **shadow 影子比对**（`ShadowLlmGateway`）：`LlmGateway:Mode=shadow` 时，inproc 权威返回给 caller，
+  后台对 http 侧 `ResolveModelAsync`（走 `/gw/v1/resolve`，纯 DB、零 LLM 成本）逐字段比对，落
+  `llmshadow_comparisons`（Inproc/Http 各 {ActualModel,Protocol,PlatformType,ResolutionType,ModelGroupId,IsFallback}
+  + Mismatches[severity] + AllMatch + HasCritical）。**默认只比解析**（覆盖「选A给B」最高风险，免费）；
+  `LlmGateway:ShadowFullSamplePercent>0` 才对非流式采样真发 http 比 content/finish/token。http 影子失败一律吞掉，
+  caller 永远拿 inproc。`CreateClient` 绑定 shadow → chat 主链路覆盖。单测 `ShadowLlmGatewayTests` 9 例 CI 真跑绿
+  （1326 passed/0 fail）。
+- **灰度翻 http allowlist**：`LlmGateway:HttpAppCallerAllowlist`（逗号/分号分隔）命中的 appCallerCode 走 http**权威**
+  （不比对），其余按 Mode。纯配置可回滚。
+- **shadow 读端点**：`GET /gw/v1/shadow-comparisons?limit&appCallerCode`（X-Gateway-Key 门内），返回
+  `summary{total,allMatch,critical,httpFail}` + `recent[]`，去黑盒看一致性。
+- **首条真机证据**：`defect-agent.polish::chat` → `qwen/qwen3.6-plus` via DedicatedPool，inproc=http 逐字段一致、
+  `Mismatches:[]`、`AllMatch:true`、`HasCritical:false`、`HttpOk:true`。样本=1，待随流量积累。
+- **CDS 命名子域 URL**（commit a993a073f）：单分支多容器里，声明 `BuildProfile.subdomain` 的服务获得
+  `<previewSlug>-<sub>.miduo.org` 独立命名 URL（forwarder 直达容器根路径，无 pathPrefix），让 serving 网关有区别于
+  主应用域名的独立入口，不再埋在主应用 `/gw/v1` 路径下。三处接入：compose `cds.subdomain` label + PUT
+  `/extra-services` 的 subdomain 字段 + forwarder-route-publisher；proxy master 兜底识别后缀不 auto-build。
+  单标签以匹配 `*.miduo.org` 通配证书。3 测试绿 + cds tsc 干净。**未点亮**（生产 CDS 未 self-update 到本分支）。
+
+## 回滚预案
+
+| 场景 | 回滚动作 | 代价 |
+|---|---|---|
+| http/shadow 行为异常 | 设 `LlmGateway:Mode=inproc`（删 env） | 纯配置，秒级，无需改代码/重建镜像 |
+| 灰度某入口 http 退化 | 从 `HttpAppCallerAllowlist` 删该 appCallerCode | 纯配置 |
+| full-sample 比对成本过高 | `ShadowFullSamplePercent=0`（回 resolve-only 免费） | 纯配置 |
+| serving 容器挂 | MAP 自动？否——http 模式 caller 会拿到 http 失败。生产翻 http 前必须 serving HA + 健康探活兜底 | 见下「翻 http 前置」 |
+| CDS self-update 到本分支后出问题 | `self update --branch main` 翻回（但本分支缺 main 的「修复自更新历史」，可能不干净，故推荐走 PR 合 main 而非 self-update 到 feature 分支） | 系统级风险，见 rollout §6 |
+
+## 翻 http 前置条件（生产 T12 前必须满足）
+
+- serving 容器**高可用**（生产至少 1 容器健康 + 探活；MAP http 客户端遇 serving 不可达要有降级或快速失败可观测）。
+- shadow 一致性证据积累足够（多入口、多平台/中转覆盖、0 critical mismatch 持续）。
+- L1 `GatewayTransport` 标记落地（否则 flip 后日志辨不出某条走 inproc 还是 http，排障困难）。
+
+## 安全边界（已守）
+
+- serving `/gw/v1/*`（除 healthz）走 `X-Gateway-Key` 共享密钥门（内部 M2M，不走 JWT）。
+- `ApiKey` 在 `GatewayModelResolution` 上是 `[JsonIgnore]` → 过 HTTP 线恒为 null；serving 端 `/gw/v1/raw` 按同模型
+  重解析补回 ApiKey 再发（compute-then-send，杜绝跨进程「选A给B」+ 密钥不外泄）。`CrossProcessServingSelfTest`
+  断言 ApiKey 恒 null。
+- 独立观测前端 `prd-llmgw` 用**独立 `LlmGwJwt__Secret`**（与 MAP 主 JWT 解耦），独立账号体系。
+
+## 跨项目隔离影响（对照 `.claude/rules/cross-project-isolation.md`）
+
+- **共享 Mongo**：serving 与 MAP 共享同一库，`llmrequestlogs` / `llmshadow_comparisons` 会**混入其他部署/分支**的记录
+  （分支预览共享基础设施是有意设计）。排障/统计时先按**时间窗 + appCallerCode/branch 特征**区分来源，勿误判。
+- **`Jwt__Secret` 双身份**：MAP 的 `Jwt__Secret` 同时用于 JWT 签名 + 平台 API key 的 AES 静态加密。serving 共享同一
+  Mongo 解密平台 key 时依赖该值由 CDS `container.ts` 注入；**轮换该密钥前必须先解密重加密所有 `ApiKeyEncrypted`**，
+  否则模型池静默 401（见隔离规则事故台账）。
+- **CDS self-update staleness**：见 rollout §6——self-update 生产 CDS 到落后 main 的 feature 分支会系统级影响所有项目 +
+  临时回退 main 的 CDS 修复，推荐走 PR 合 main。
+
+## 翻 http 后的监控建议
+
+- 日志页按 `GatewayTransport`（L1 落地后）过滤，盯 http 路径的成功率/firstByte P95/token 是否与 inproc 持平。
+- shadow 留 7-14 天兜底，`/gw/v1/shadow-comparisons` 的 `critical` 应恒 0；非 0 立即查该 appCallerCode 并回退该入口。
+- serving 容器健康探活 + 资源（连接池/内存）告警。
 
 ## 已知边界 / 后续（波3，未做）
 

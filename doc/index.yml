@@ -262,6 +262,7 @@ docs:
   plan.frontend.animation-optimization: 动画优化计划
   plan.desktop.asset-features: Desktop 资产功能方案
   plan.doc.update: 文档长周期更新计划
+  plan.llm-gateway.rollout: LLM 网关剥离上线计划（差异化进度 + 测试纲领 + 局限范围 + 翻 http 序列）
   plan.visual-agent.merge-image-ref-resolver: 合并计划书：三入口守门员统一
   plan.skill.installation: Claude Code Skill 安装计划
   plan.skill.marketplace-open-api-next: 海鲜市场技能开放接口 — 下一程交接（P2/P3/P4 待办 + UAT 清单 + 环境准备）

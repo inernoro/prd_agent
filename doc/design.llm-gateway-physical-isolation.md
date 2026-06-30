@@ -1,6 +1,6 @@
 # LLM 网关物理独立设计
 
-> 类型: design | 状态: 实施中(用户已拍板) | owner: inernoro | 更新: 2026-06-27
+> 类型: design | 状态: 部分落地（阶段 0-2 影子模式 + CDS 命名子域已实现，灰度翻 http 进行中）| owner: inernoro | 更新: 2026-06-30
 > 来源: 多智能体工作流(5 路勘察 → 综合 → 2 路对抗评审 → 终稿)，两评审均判 needs-revision 并已吸收
 > 关联: .claude/rules/compute-then-send.md / cross-project-isolation.md / server-authority.md / llm-gateway.md / agent-runtime-sdk-boundary.md
 
@@ -43,6 +43,187 @@ I have enough verified ground truth to produce the final vetted design.
 4. **物理独立只覆盖 `ILlmGateway` 一条链**。系统里还有 `IImageGenGateway`/`OpenAIImageClient`（生图主流程，视觉创作走它）和直接 `new ClaudeClient/new OpenAIClient`（ModelLab/Arena/Program.cs DI/ModelDomainService 共 6+ 处，各自读 `ctxAccessor` + 持平台 `apiKey`）两条**并行直连链**。它们拆分后仍在 prd-api 进程内解密密钥、直连上游。本版**撤回 v1"明文密钥永不出 prd-api"的过宽声明**，改为"明文密钥永不过 prd-api↔网关的 HTTP 边界"，并把这两条链显式列为**本期非目标 + 已登记债务**（见 §2.3 / §3.4）。
 
 **另一处事实修正**：v1 §8 开放问题 4 把"`ApiKeyCrypto:Secret` 解耦"列为待办前置——但代码里它**已落地**（`Program.cs:673` 读独立配置项，`PlatformKeyIntegrityWorker` 已自动重加密存量密文、`LegacySecrets` 钥环兜底）。真正要做的只是"确认网关容器注入同一份 `ApiKeyCrypto:Secret` + `LegacySecrets`"，不是去做解耦。
+
+---
+
+## 架构图（actual 实现态）
+
+> 本节为已落地实现态的五张全景图，给没参与开发的读者一个"网关从 MAP 剥离"的整体心智。
+> 与下文 §3-§8 的"设计/规划口径"对照阅读：影子（shadow）模式、CDS 命名子域、影子读端点都已落地，
+> 实现细节与设计文本的差异（端点是 `/gw/v1/*` 而非 `/gw/*`、serving 端口 8091、鉴权头 `X-Gateway-Key`、
+> 配置键 `LlmGateway:ServeBaseUrl` / `LlmGwServe:ApiKey`、新增 `client-stream` 与 `shadow-comparisons` 端点）
+> 以本节与源码为准。三态由 `LlmGateway:Mode`（`inproc` | `http` | `shadow`）+ `HttpAppCallerAllowlist` 灰度白名单驱动。
+
+### 图 1：组件 / 拓扑（MAP ↔ serving 网关 ↔ 上游）
+
+MAP 进程内约 48 个 LLM 调用注入点全部依赖**不变的** `ILlmGateway` 接口，DI 按 `Mode` 注入三种实现之一。`inproc` 直接用进程内 `LlmGateway`；`http` 走 `HttpLlmGatewayClient` 跨进程打 serving 的 `/gw/v1/*`；`shadow`（或仅配了白名单）走 `ShadowLlmGateway` 路由器（白名单命中走 http 权威、否则 inproc 权威 + 后台影子比对）。serving 进程内是同一套 `ModelResolver`/模型池/适配器/转换器实现（同代码迁过去，不重写）。MAP 与 serving **共享同一个 MongoDB**，serving 独占写日志/影子/模型池配置集合。
+
+```mermaid
+flowchart LR
+  subgraph MAP["MAP 主应用 (prd-api)"]
+    callers["约 48 注入点<br/>Controller / Service / Worker"]
+    iface["ILlmGateway 接口（不变）"]
+    callers --> iface
+    iface -->|"Mode=inproc"| inproc["LlmGateway（进程内）"]
+    iface -->|"Mode=shadow / 有白名单"| shadow["ShadowLlmGateway（路由器）"]
+    iface -->|"Mode=http"| httpcli["HttpLlmGatewayClient"]
+    shadow -->|"白名单命中=http 权威<br/>否则 inproc 权威 + 后台影子"| inproc
+    shadow -.->|"后台比对(隔离)"| httpcli
+  end
+
+  subgraph SERVE["serving 网关 PrdAgent.LlmGateway (:8091)"]
+    gw["/gw/v1/{healthz,resolve,send,stream,raw,pools,client-stream,shadow-comparisons}<br/>X-Gateway-Key 门"]
+    resolver["ModelResolver + 模型池（4 层调度）"]
+    adapters["适配器 OpenAIGatewayAdapter / ClaudeGatewayAdapter"]
+    xform["ExchangeTransformerRegistry<br/>Passthrough/FalImage/DoubaoAsr/DoubaoStreamAsr/GeminiNative"]
+    gw --> resolver --> adapters
+    resolver --> xform
+  end
+
+  httpcli -->|"HTTP/1.1 + SSE<br/>(内网, X-Gateway-Key)"| gw
+  inproc -.->|"inproc 同进程同实现"| resolver
+
+  adapters --> upstream["上游：直连 / OpenRouter / 中转(apiyi 等)"]
+  xform --> upstream
+
+  mongo[("共享 MongoDB<br/>llmrequestlogs / llmshadow_comparisons<br/>model_groups / llmplatforms / model_exchanges")]
+  inproc --- mongo
+  resolver --- mongo
+  gw --- mongo
+```
+
+### 图 2：三态时序（inproc / http / shadow 同一调用的路径对比）
+
+同一个调用在三种 Mode 下分叉。`inproc` 全程进程内。`http` 全程跨进程到 serving。`shadow` 是关键：**caller 永远拿 inproc 的权威结果**，serving 的 http 调用只在后台 `Task.Run` 里做 resolve 比对并落 `llmshadow_comparisons`；http 失败被 `try/catch` 吞掉（仅 Warning），主流程零影响。这正是"灰度翻 http 前先攒一致性证据、又不冒险、不二次打大模型"的设计。
+
+```mermaid
+sequenceDiagram
+  participant C as 调用方 (MAP 注入点)
+  participant G as ILlmGateway (DI)
+  participant I as inproc LlmGateway
+  participant H as HttpLlmGatewayClient
+  participant S as serving /gw/v1/*
+  participant DB as MongoDB
+
+  Note over C,DB: Mode=inproc —— 全进程内
+  C->>G: StreamAsync(request)
+  G->>I: 进程内解析+发上游
+  I-->>C: GatewayStreamChunk 流
+
+  Note over C,DB: Mode=http —— 全跨进程
+  C->>G: StreamAsync(request)
+  G->>H: 代理
+  H->>S: POST /gw/v1/stream (X-Gateway-Key)
+  S->>S: 解析(含 ApiKey 解密) + 发上游
+  S-->>H: SSE chunks
+  H-->>C: GatewayStreamChunk 流
+
+  Note over C,DB: Mode=shadow —— inproc 权威 + 后台 http 比对
+  C->>G: StreamAsync(request)
+  G->>I: inproc 解析+发上游(权威)
+  I-->>C: GatewayStreamChunk 流 (调用方拿这个)
+  G-->>H: 后台 Task.Run: resolve 比对(CancellationToken.None)
+  H->>S: POST /gw/v1/resolve
+  S-->>H: 轻量 resolution (ApiKey=null)
+  H->>DB: 写 llmshadow_comparisons (逐字段 Inproc vs Http)
+  Note right of H: http 失败被吞 (仅 Warning)，主流程零影响
+```
+
+### 图 3：compute-then-send（算 / 发两阶段，ApiKey 不过线）
+
+resolve 阶段是纯 DB 查询（选 model/platform/protocol/apiKey），send 阶段只接收已解析结果发上游。跨 HTTP 边界时，`GatewayModelResolution.ApiKey` 标了 `[JsonIgnore]` 不过线——所以 `HttpLlmGatewayClient.SendRawWithResolutionAsync` 刻意**不**把 resolution 发给 serving，而是 serving 在 `/gw/v1/raw` 内部**重新 resolve 一次**（含 ApiKey 解密），把密钥牢牢留在网关进程内。serving 一侧 resolve→send 顺序执行、不存在跨兄弟调用的二次覆盖，因此不复活"选 A 给 B"。
+
+```mermaid
+flowchart TD
+  subgraph compute["算 (resolve)：纯 DB，无网络"]
+    r1["ResolveModelAsync(appCallerCode, modelType, expectedModel)"]
+    r2["选 model / platform / protocol"]
+    r3["解密 apiKey（含 LegacySecrets 钥环）"]
+    r1 --> r2 --> r3
+    r3 --> res["GatewayModelResolution<br/>ApiKey 标 [JsonIgnore]"]
+  end
+
+  subgraph send["发 (send)：只接收已解析结果，不再二次 resolve"]
+    s1["拼上游 Authorization + body"]
+    s2["发上游 / SSE 透传"]
+    s1 --> s2
+  end
+
+  res -->|"同进程：直接带 ApiKey"| s1
+
+  subgraph http["跨 HTTP 边界 (Mode=http)"]
+    note1["HttpLlmGatewayClient 刻意不发 resolution<br/>(ApiKey 不过线)"]
+    note2["serving /gw/v1/raw 内部重新 resolve<br/>密钥留在网关进程内"]
+    note1 --> note2 --> s1
+  end
+
+  classDef sec fill:#fde,stroke:#a44;
+  class res,note1 sec;
+```
+
+### 图 4：部署（CDS 单分支多容器 + 主应用域名 + 命名子域）
+
+一个预览分支起两个容器：api 主应用 + `llmgw-serve:8091`。主应用走 `<slug>.miduo.org`（path `/` 和 `/api/*` 都打 api）。serving 通过 BuildProfile 声明 `subdomain` 拿到**命名子域** `<slug>-llmgw.miduo.org`，forwarder 把该 host 根路径直达 serving 容器（不埋在主应用 `/gw/v1` 路径下）——见 `forwarder-route-publisher.ts` 的命名子域路由（`<previewSlug>-<sub>.<root>`）。生产 docker-compose 同构：api + llmgw 两个 service，同镜像不同 entrypoint，共享 env 锚点防配置漂移。
+
+```mermaid
+flowchart TD
+  user["浏览器 / 外部调用方"]
+  fwd["CDS forwarder（host 路由）"]
+  user --> fwd
+
+  subgraph branch["CDS 单分支（预览环境）"]
+    api["api 主应用容器<br/>path: / 和 /api/*"]
+    serve["llmgw-serve 容器 :8091<br/>/gw/v1/*"]
+    api -->|"Mode=http: HttpLlmGatewayClient<br/>X-Gateway-Key"| serve
+    api --- net["同分支 docker network"]
+    serve --- net
+  end
+
+  fwd -->|"<slug>.miduo.org"| api
+  fwd -->|"<slug>-llmgw.miduo.org（命名子域，根路径直达）"| serve
+
+  mongo[("共享 MongoDB / Redis")]
+  api --- mongo
+  serve --- mongo
+
+  note["生产 docker-compose 同构：同镜像不同 entrypoint<br/>ApiKeyCrypto/Mongo/LlmLogLimits 走同一份 env 锚点"]
+```
+
+### 图 5：数据流 + 观测（落 llmrequestlogs + 影子落 llmshadow_comparisons + 读端点）
+
+一次正常请求由 serving（或 inproc）写 `llmrequestlogs`：`StartAsync` 落 StartedAt + 调度元信息，流式首字回填 `FirstByteAt`，结束写 `EndedAt`/FinishReason/ToolCallCount，超大文本走 COS blackhole 占位；`/api/logs` 的 app-summary 在这之上聚合。影子比对另落 `llmshadow_comparisons`：每条带逐字段 `Inproc`/`Http` 快照 + `Mismatches`（model/protocol 漂移=critical），读端点 `/gw/v1/shadow-comparisons` 给汇总（total/allMatch/critical/httpFail）+ 最近 N 条，是灰度翻 http 前"去黑盒"的观测窗口。
+
+```mermaid
+flowchart LR
+  req["一次 LLM 请求"]
+
+  subgraph log["调用日志（llmrequestlogs）"]
+    l1["StartAsync: StartedAt + Protocol/ModelGroupId/IsStreaming"]
+    l2["MarkFirstByte: FirstByteAt"]
+    l3["MarkDone: EndedAt + FinishReason + ToolCallCount"]
+    l4["超长文本 → COS blackhole 占位"]
+    l1 --> l2 --> l3
+    l1 -.-> l4
+  end
+  req --> l1
+  l3 --> agg["/api/logs app-summary 聚合"]
+
+  subgraph shadow["影子比对（llmshadow_comparisons，仅 shadow 模式）"]
+    c1["逐字段 Inproc / Http 快照"]
+    c2["Mismatches：model/protocol=critical，余=warning"]
+    c3["汇总：total / allMatch / critical / httpFail"]
+    c1 --> c2 --> c3
+  end
+  req -.->|"后台隔离比对"| c1
+  c3 --> read["GET /gw/v1/shadow-comparisons<br/>(汇总 + 最近 N 条，去黑盒)"]
+
+  dbl[("llmrequestlogs")]
+  dbs[("llmshadow_comparisons")]
+  l3 --- dbl
+  agg --- dbl
+  c3 --- dbs
+  read --- dbs
+```
 
 ---
 
@@ -287,6 +468,7 @@ api:
 ### 5.2 CDS compose（预览）
 
 - `cds-compose.yml` 新增 `llmgw` 为应用 service。
+- **命名子域已落地**：serving 通过 BuildProfile 的 `subdomain` 拿到 `<previewSlug>-llmgw.<root>` 命名子域，forwarder 把该 host 根路径直达 serving 容器（**已实现**，见 `cds/src/services/forwarder-route-publisher.ts` 的命名子域路由分支 `<previewSlug>-<sub>.<root>`）。这让"可被别人调用"的网关有区别于主应用域名的入口，而不是埋在主应用 `/gw/v1` 路径下。
 - **DNS 串台是准入阻塞（§3.5），非 debt**：预览环境在"分支前缀别名"治理落地前，`LlmGateway__Mode=inproc` 强制兜底；治理落地后才允许 http。这条同时防 userId 串户与 `GW_AUTH_TOKEN` 被同 commit 邻分支照单全收。
 - 资源开销：每分支多约 +150MB 内存（http 模式时；inproc 兜底则无额外容器）。
 
@@ -319,11 +501,13 @@ api:
 - **可独立上线判据**：是。代码归属变了，运行时仍单进程，行为不变（健康写从 read-modify-write 改 CAS 需回归断言并发计数）。
 - **回滚点**：`git revert`。
 
-### 阶段 2：HTTP 代理 + 网关进程就绪（影子模式）
+### 阶段 2：HTTP 代理 + 网关进程就绪（影子模式）—— 已落地
 
-- 网关加 `Program.cs` + 6 端点，独立容器跑起来，自连 Mongo。
-- prd-api 新增 `HttpLlmGatewayClient : ILlmGateway`，**feature flag `LlmGateway__Mode=inproc|http`**，默认 `inproc`。
-- 影子验证：少量非关键 Agent（如 `report-agent`）切 http，比对日志字段、选模、流式输出与 inproc 一致。
+> 实现态对照（与本节规划口径的差异以代码为准）：serving 端口为 **8091**；端点为 **`/gw/v1/*` 共 8 个**（`healthz/resolve/send/stream/raw/pools/client-stream/shadow-comparisons`，比规划的 6 个多了 `client-stream` 与影子读端点）；鉴权头是 **`X-Gateway-Key`**；配置键是 **`LlmGateway:ServeBaseUrl`** + **`LlmGwServe:ApiKey`**；feature flag 实为 **`LlmGateway:Mode=inproc|http|shadow`** 三态 + **`LlmGateway:HttpAppCallerAllowlist`** 灰度白名单 + **`LlmGateway:ShadowFullSamplePercent`** 采样比例。
+
+- 网关 `PrdAgent.LlmGateway` 项目 + `GatewayHttpEndpoints.MapGatewayServingEndpoints` 8 端点已就绪，独立容器自连同一 Mongo（**已实现**）。
+- prd-api 已有 `HttpLlmGatewayClient : ILlmGateway`（同时实现 Infrastructure + Core 两个接口），DI 按 `Mode` 分支注入（**已实现**，`Program.cs:212-252`）。
+- 影子验证已落地为 `ShadowLlmGateway`（**已实现**）：默认只比**解析**（DB-only、零额外大模型成本），白名单逐个入口灰度翻 http，比对结果落 `llmshadow_comparisons`，读端点 `/gw/v1/shadow-comparisons` 给汇总（total/allMatch/critical/httpFail）+ 最近 N 条。
 - **关键约束（吸收评审）**：影子期日志写**统一由网关承接**（http 路径写网关；inproc 路径要么也调网关 writer、要么 prd-api 不写只透传），prd-api 侧 Watchdog 在任一 caller 走 http 时即关闭——避免双 Watchdog 互杀长请求 / 孤儿 running。
 - **可独立上线判据**：是。flag 默认 inproc，网关容器空跑待命。
 - **回滚点**：flag 切回 `inproc`，无需重新部署 prd-api。
