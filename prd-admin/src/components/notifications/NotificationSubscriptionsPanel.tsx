@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CheckCircle2, FlaskConical, Info, Save, Settings2 } from 'lucide-react';
+import { CheckCircle2, FlaskConical, Info, Save, Settings2, SlidersHorizontal } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import {
   getAdminPushSubscriptions,
@@ -15,6 +15,16 @@ import type {
 } from '@/services/contracts/notifications';
 
 type DraftMap = Record<string, UpdateAdminPushSubscriptionRequest>;
+
+const TOPIC_WORKFLOW_ORDER = [
+  'defect-management',
+  'system-alert',
+  'admin-message',
+  'server-expiry',
+  'user-voice',
+  'api-request-alert',
+  'report-agent',
+];
 
 export const DEFAULT_NOTIFICATION_PUSH_DRAFT: UpdateAdminPushSubscriptionRequest = {
   enabled: false,
@@ -85,6 +95,16 @@ export function getSelectedNotificationPushPresetKey(draft: UpdateAdminPushSubsc
   return matched?.key ?? 'custom';
 }
 
+export function sortNotificationPushTopicsByWorkflow<T extends { key: string }>(items: T[]): T[] {
+  const rank = new Map(TOPIC_WORKFLOW_ORDER.map((key, index) => [key, index]));
+  return [...items].sort((a, b) => {
+    const ai = rank.get(a.key) ?? Number.MAX_SAFE_INTEGER;
+    const bi = rank.get(b.key) ?? Number.MAX_SAFE_INTEGER;
+    if (ai !== bi) return ai - bi;
+    return a.key.localeCompare(b.key);
+  });
+}
+
 export function NotificationSubscriptionsPanel() {
   const [topics, setTopics] = useState<AdminPushTopicDefinition[]>([]);
   const [presets, setPresets] = useState<AdminPushPresetDefinition[]>([]);
@@ -95,6 +115,7 @@ export function NotificationSubscriptionsPanel() {
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [testingKey, setTestingKey] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [selectedTopicKey, setSelectedTopicKey] = useState<string | null>(null);
   const loadSeqRef = useRef(0);
 
   const load = useCallback(async () => {
@@ -134,20 +155,58 @@ export function NotificationSubscriptionsPanel() {
     }));
   }, []);
 
-  const saveTopic = useCallback(async (topicKey: string) => {
-    const draft = drafts[topicKey];
-    if (!draft) return;
-    setSavingKey(topicKey);
+  const firstPreset = presets[0];
+  const resourcesByKey = useMemo(() => new Map(resources.map((x) => [x.key, x])), [resources]);
+  const placeholderText = useMemo(() => placeholders.map((x) => `{{${x}}}`).join('  '), [placeholders]);
+  const orderedTopics = useMemo(() => sortNotificationPushTopicsByWorkflow(topics), [topics]);
+  const selectedTopic = useMemo(
+    () => orderedTopics.find((topic) => topic.key === selectedTopicKey) ?? orderedTopics[0],
+    [orderedTopics, selectedTopicKey]
+  );
+  const selectedDraft = selectedTopic
+    ? drafts[selectedTopic.key] ?? (firstPreset ? buildNotificationPushDraftFromPreset(firstPreset, false) : DEFAULT_NOTIFICATION_PUSH_DRAFT)
+    : null;
+  const selectedResource = selectedTopic ? resourcesByKey.get(selectedTopic.resourceKey) : undefined;
+  const selectedPresetKey = selectedDraft ? getSelectedNotificationPushPresetKey(selectedDraft, presets) : 'custom';
+  const selectedIsBark = selectedDraft?.channelType === 'bark';
+  const selectedIsPost = String(selectedDraft?.method ?? 'GET').toUpperCase() === 'POST';
+  const enabledCount = orderedTopics.reduce((sum, topic) => {
+    const draft = drafts[topic.key];
+    return sum + (draft?.enabled ? 1 : 0);
+  }, 0);
+
+  const saveAllTopics = useCallback(async () => {
+    if (orderedTopics.length === 0) return;
+    setSavingKey('__all__');
     setMessage(null);
-    const res = await updateAdminPushSubscription(topicKey, draft);
-    if (res.success) {
-      setDrafts((prev) => ({ ...prev, [topicKey]: toDraft(res.data.subscription) }));
-      setMessage('推送订阅已保存');
-    } else {
-      setMessage(res.error?.message || '保存失败');
+
+    const barkKeyForReuse = selectedDraft?.channelType === 'bark' ? (selectedDraft.barkKey || '').trim() : '';
+    const saved: AdminPushSubscription[] = [];
+    for (const topic of orderedTopics) {
+      const baseDraft = drafts[topic.key] ?? (firstPreset ? buildNotificationPushDraftFromPreset(firstPreset, false) : DEFAULT_NOTIFICATION_PUSH_DRAFT);
+      const request =
+        baseDraft.enabled && baseDraft.channelType === 'bark' && !baseDraft.barkKey && barkKeyForReuse
+          ? { ...baseDraft, barkKey: barkKeyForReuse }
+          : baseDraft;
+      const res = await updateAdminPushSubscription(topic.key, request);
+      if (!res.success) {
+        setSelectedTopicKey(topic.key);
+        setMessage(`${topic.label}保存失败：${res.error?.message || '保存失败'}`);
+        setSavingKey(null);
+        return;
+      }
+      saved.push(res.data.subscription);
     }
+    setDrafts((prev) => {
+      const next = { ...prev };
+      for (const subscription of saved) {
+        next[subscription.topicKey] = toDraft(subscription);
+      }
+      return next;
+    });
+    setMessage('推送订阅已保存');
     setSavingKey(null);
-  }, [drafts]);
+  }, [drafts, firstPreset, orderedTopics, selectedDraft]);
 
   const testTopic = useCallback(async (topicKey: string) => {
     const draft = drafts[topicKey];
@@ -164,9 +223,15 @@ export function NotificationSubscriptionsPanel() {
     setTestingKey(null);
   }, [drafts]);
 
-  const firstPreset = presets[0];
-  const resourcesByKey = useMemo(() => new Map(resources.map((x) => [x.key, x])), [resources]);
-  const placeholderText = useMemo(() => placeholders.map((x) => `{{${x}}}`).join('  '), [placeholders]);
+  useEffect(() => {
+    if (orderedTopics.length === 0) {
+      if (selectedTopicKey) setSelectedTopicKey(null);
+      return;
+    }
+    if (!selectedTopicKey || !orderedTopics.some((topic) => topic.key === selectedTopicKey)) {
+      setSelectedTopicKey(orderedTopics[0].key);
+    }
+  }, [orderedTopics, selectedTopicKey]);
 
   if (loading) {
     return (
@@ -185,39 +250,11 @@ export function NotificationSubscriptionsPanel() {
         <div className="flex items-start gap-2">
           <Info size={14} className="mt-0.5 shrink-0" />
           <div className="min-w-0">
-            <div style={{ color: 'var(--text-primary)' }}>支持 URL 请求、通用 Webhook、企业微信、飞书、钉钉等推送方式。</div>
+            <div style={{ color: 'var(--text-primary)' }}>支持 Bark、URL 请求、通用 Webhook、企业微信、飞书、钉钉。</div>
             <div className="mt-1 break-words">可用占位符：{placeholderText}</div>
           </div>
         </div>
       </div>
-
-      {resources.length > 0 && (
-        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-          {resources.map((resource) => (
-            <div
-              key={resource.key}
-              className="flex min-w-0 items-center gap-2 rounded-[10px] border px-2.5 py-2"
-              style={{ borderColor: 'rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.04)' }}
-            >
-              <img src={resource.iconUrl} alt="" className="h-8 w-8 shrink-0 rounded-[8px] object-cover" />
-              <div className="min-w-0">
-                <div className="truncate text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>{resource.appName}</div>
-                <div className="truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>{resource.knowledgeStoreName}</div>
-                <div className="mt-1 flex min-w-0 items-center gap-1.5">
-                  <span className="truncate rounded-full px-1.5 py-0.5 text-[10px]" style={{ background: 'rgba(59,130,246,0.12)', color: '#93c5fd' }}>
-                    {resource.defaultGroup}
-                  </span>
-                  {resource.knowledgeTemplateKey && (
-                    <span className="truncate rounded-full px-1.5 py-0.5 text-[10px]" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}>
-                      {resource.knowledgeTemplateKey}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
 
       {message && (
         <div
@@ -228,57 +265,134 @@ export function NotificationSubscriptionsPanel() {
         </div>
       )}
 
-      <div className="flex-1 min-h-0 overflow-auto pr-2 space-y-3" style={{ overscrollBehavior: 'contain' }}>
-        {topics.map((topic) => {
-          const draft = drafts[topic.key] ?? (firstPreset ? buildNotificationPushDraftFromPreset(firstPreset, false) : DEFAULT_NOTIFICATION_PUSH_DRAFT);
-          const selectedPresetKey = getSelectedNotificationPushPresetKey(draft, presets);
-          const isBark = draft.channelType === 'bark';
-          const isPost = String(draft.method).toUpperCase() === 'POST';
-          const resource = resourcesByKey.get(topic.resourceKey);
-          return (
-            <section
-              key={topic.key}
-              className="rounded-[14px] border px-4 py-3"
-              style={{ borderColor: 'rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.045)' }}
-            >
-              <div className="flex flex-col gap-3">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <Settings2 size={15} style={{ color: 'var(--accent-gold)' }} />
-                      <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                        {topic.label}
-                      </div>
+      <div className="grid flex-1 min-h-0 gap-3 lg:grid-cols-[260px_minmax(0,1fr)]">
+        <aside
+          className="flex min-h-0 flex-col rounded-[14px] border"
+          style={{ borderColor: 'rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.035)' }}
+        >
+          <div className="shrink-0 border-b px-3 py-2.5" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                <SlidersHorizontal size={13} />
+                接收范围
+              </div>
+              <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{enabledCount}/{orderedTopics.length} 已选</div>
+            </div>
+          </div>
+          <div className="min-h-0 flex-1 space-y-1 overflow-auto p-2" style={{ overscrollBehavior: 'contain' }}>
+            {orderedTopics.map((topic) => {
+              const draft = drafts[topic.key] ?? (firstPreset ? buildNotificationPushDraftFromPreset(firstPreset, false) : DEFAULT_NOTIFICATION_PUSH_DRAFT);
+              const resource = resourcesByKey.get(topic.resourceKey);
+              const selected = selectedTopic?.key === topic.key;
+              return (
+                <div
+                  key={topic.key}
+                  role="button"
+                  tabIndex={0}
+                  className="group flex min-w-0 cursor-pointer items-center gap-2 rounded-[10px] border px-2.5 py-2 outline-none transition-all"
+                  style={{
+                    borderColor: selected ? 'rgba(129,140,248,0.55)' : 'rgba(255,255,255,0.08)',
+                    background: selected ? 'rgba(99,102,241,0.16)' : 'rgba(255,255,255,0.025)',
+                  }}
+                  onClick={() => setSelectedTopicKey(topic.key)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setSelectedTopicKey(topic.key);
+                    }
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 shrink-0 accent-indigo-400"
+                    checked={draft.enabled}
+                    aria-label={`${topic.label}接收外部推送`}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => {
+                      setSelectedTopicKey(topic.key);
+                      updateDraft(topic.key, { enabled: e.target.checked });
+                    }}
+                  />
+                  {resource && <img src={resource.iconUrl} alt="" className="h-8 w-8 shrink-0 rounded-[8px] object-cover" />}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <span className="truncate text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>{topic.label}</span>
                       <span
-                        className="rounded-full px-2 py-0.5 text-[10px]"
+                        className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px]"
                         style={{
                           background: draft.enabled ? 'rgba(34,197,94,0.14)' : 'rgba(255,255,255,0.06)',
                           color: draft.enabled ? '#86efac' : 'var(--text-muted)',
                         }}
                       >
-                        {draft.enabled ? '已启用' : '未启用'}
+                        {draft.enabled ? '接收' : '关闭'}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      {resource?.knowledgeStoreName || topic.source}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </aside>
+
+        <div className="min-h-0 overflow-auto pr-2" style={{ overscrollBehavior: 'contain' }}>
+          {selectedTopic && selectedDraft ? (
+            <section
+              className="rounded-[14px] border px-4 py-3"
+              style={{ borderColor: 'rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.045)' }}
+            >
+              <div className="flex min-h-0 flex-col gap-3">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <Settings2 size={15} style={{ color: 'var(--accent-gold)' }} />
+                      <div className="truncate text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                        {selectedTopic.label}
+                      </div>
+                      <span
+                        className="shrink-0 rounded-full px-2 py-0.5 text-[10px]"
+                        style={{
+                          background: selectedDraft.enabled ? 'rgba(34,197,94,0.14)' : 'rgba(255,255,255,0.06)',
+                          color: selectedDraft.enabled ? '#86efac' : 'var(--text-muted)',
+                        }}
+                      >
+                        {selectedDraft.enabled ? '已接收' : '已关闭'}
                       </span>
                     </div>
                     <div className="mt-1 text-[12px]" style={{ color: 'var(--text-muted)' }}>
-                      {topic.description}
+                      {selectedTopic.description}
                     </div>
-                    {resource && (
-                      <div className="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full border px-2 py-1 text-[11px]" style={{ borderColor: 'rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}>
-                        <img src={resource.iconUrl} alt="" className="h-4 w-4 shrink-0 rounded-[4px] object-cover" />
-                        <span className="truncate">{resource.appName}</span>
-                      </div>
-                    )}
                   </div>
                   <label className="inline-flex cursor-pointer items-center gap-2 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
                     <input
                       type="checkbox"
                       className="h-4 w-4 accent-indigo-400"
-                      checked={draft.enabled}
-                      onChange={(e) => updateDraft(topic.key, { enabled: e.target.checked })}
+                      checked={selectedDraft.enabled}
+                      onChange={(e) => updateDraft(selectedTopic.key, { enabled: e.target.checked })}
                     />
-                    接收外部推送
+                    接收此类推送
                   </label>
                 </div>
+
+                {selectedResource && (
+                  <div
+                    className="flex min-w-0 items-center gap-2 rounded-[10px] border px-2.5 py-2"
+                    style={{ borderColor: 'rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.035)' }}
+                  >
+                    <img src={selectedResource.iconUrl} alt="" className="h-8 w-8 shrink-0 rounded-[8px] object-cover" />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[12px]" style={{ color: 'var(--text-primary)' }}>
+                        {selectedResource.appName} · {selectedResource.knowledgeStoreName}
+                      </div>
+                      <div className="mt-0.5 truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                        {selectedResource.defaultGroup}
+                        {selectedResource.knowledgeTemplateKey ? ` · ${selectedResource.knowledgeTemplateKey}` : ''}
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <div className="grid gap-3 sm:grid-cols-[1.2fr_0.7fr_0.8fr]">
                   <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
@@ -289,7 +403,7 @@ export function NotificationSubscriptionsPanel() {
                       value={selectedPresetKey}
                       onChange={(e) => {
                         const preset = presets.find((item) => item.key === e.target.value);
-                        if (preset) updateDraft(topic.key, buildNotificationPushDraftFromPreset(preset, draft.enabled));
+                        if (preset) updateDraft(selectedTopic.key, buildNotificationPushDraftFromPreset(preset, selectedDraft.enabled));
                       }}
                     >
                       {selectedPresetKey === 'custom' && <option value="custom">自定义模板</option>}
@@ -303,9 +417,9 @@ export function NotificationSubscriptionsPanel() {
                     <select
                       className="h-9 rounded-[8px] border px-2 text-[12px] outline-none"
                       style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
-                      value={draft.method}
-                      disabled={isBark}
-                      onChange={(e) => updateDraft(topic.key, { method: e.target.value as 'GET' | 'POST' })}
+                      value={selectedDraft.method}
+                      disabled={selectedIsBark}
+                      onChange={(e) => updateDraft(selectedTopic.key, { method: e.target.value as 'GET' | 'POST' })}
                     >
                       <option value="GET">GET</option>
                       <option value="POST">POST</option>
@@ -316,14 +430,14 @@ export function NotificationSubscriptionsPanel() {
                     <input
                       className="h-9 rounded-[8px] border px-2 text-[12px] outline-none"
                       style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
-                      value={draft.contentType}
-                      disabled={isBark}
-                      onChange={(e) => updateDraft(topic.key, { contentType: e.target.value })}
+                      value={selectedDraft.contentType}
+                      disabled={selectedIsBark}
+                      onChange={(e) => updateDraft(selectedTopic.key, { contentType: e.target.value })}
                     />
                   </label>
                 </div>
 
-                {isBark ? (
+                {selectedIsBark ? (
                   <>
                     <div className="grid gap-3 sm:grid-cols-[1fr_1fr]">
                       <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
@@ -332,8 +446,8 @@ export function NotificationSubscriptionsPanel() {
                           className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
                           style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
                           placeholder="只填写 Bark 推送 Key"
-                          value={draft.barkKey || ''}
-                          onChange={(e) => updateDraft(topic.key, { barkKey: e.target.value })}
+                          value={selectedDraft.barkKey || ''}
+                          onChange={(e) => updateDraft(selectedTopic.key, { barkKey: e.target.value })}
                         />
                       </label>
                       <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
@@ -341,85 +455,92 @@ export function NotificationSubscriptionsPanel() {
                         <input
                           className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
                           style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
-                          value={draft.barkServerUrl || 'https://api.day.app'}
-                          onChange={(e) => updateDraft(topic.key, { barkServerUrl: e.target.value })}
+                          value={selectedDraft.barkServerUrl || 'https://api.day.app'}
+                          onChange={(e) => updateDraft(selectedTopic.key, { barkServerUrl: e.target.value })}
                         />
                       </label>
                     </div>
-                    <div className="grid gap-3 sm:grid-cols-[1fr_0.8fr_0.8fr]">
-                      <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                        分组模板
-                        <input
-                          className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
-                          style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
-                          value={draft.barkGroup || ''}
-                          onChange={(e) => updateDraft(topic.key, { barkGroup: e.target.value })}
-                        />
-                      </label>
-                      <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                        声音
-                        <input
-                          className="h-9 rounded-[8px] border px-2 text-[12px] outline-none"
-                          style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
-                          placeholder="默认"
-                          value={draft.barkSound || ''}
-                          onChange={(e) => updateDraft(topic.key, { barkSound: e.target.value })}
-                        />
-                      </label>
-                      <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                        时效级别
-                        <select
-                          className="h-9 rounded-[8px] border px-2 text-[12px] outline-none"
-                          style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
-                          value={draft.barkLevel || ''}
-                          onChange={(e) => updateDraft(topic.key, { barkLevel: e.target.value })}
-                        >
-                          <option value="">默认</option>
-                          <option value="active">active</option>
-                          <option value="timeSensitive">timeSensitive</option>
-                          <option value="passive">passive</option>
-                          <option value="critical">critical</option>
-                        </select>
-                      </label>
-                    </div>
-                    <div className="grid gap-3 sm:grid-cols-[1fr_1fr]">
-                      <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                        跳转 URL 模板
-                        <input
-                          className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
-                          style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
-                          value={draft.barkUrlTemplate || ''}
-                          onChange={(e) => updateDraft(topic.key, { barkUrlTemplate: e.target.value })}
-                        />
-                      </label>
-                      <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                        图标 URL 模板
-                        <input
-                          className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
-                          style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
-                          value={draft.barkIcon || ''}
-                          onChange={(e) => updateDraft(topic.key, { barkIcon: e.target.value })}
-                        />
-                      </label>
-                    </div>
-                    <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                      图片 URL 模板
-                      <input
-                        className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
-                        style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
-                        value={draft.barkImageTemplate || ''}
-                        onChange={(e) => updateDraft(topic.key, { barkImageTemplate: e.target.value })}
-                      />
-                    </label>
-                    <label className="inline-flex cursor-pointer items-center gap-2 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4 accent-indigo-400"
-                        checked={Boolean(draft.barkCall)}
-                        onChange={(e) => updateDraft(topic.key, { barkCall: e.target.checked })}
-                      />
-                      发送响铃通知
-                    </label>
+                    <details className="rounded-[10px] border px-3 py-2" style={{ borderColor: 'rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.025)' }}>
+                      <summary className="cursor-pointer text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+                        高级参数
+                      </summary>
+                      <div className="mt-3 space-y-3">
+                        <div className="grid gap-3 sm:grid-cols-[1fr_0.8fr_0.8fr]">
+                          <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                            分组模板
+                            <input
+                              className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
+                              style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+                              value={selectedDraft.barkGroup || ''}
+                              onChange={(e) => updateDraft(selectedTopic.key, { barkGroup: e.target.value })}
+                            />
+                          </label>
+                          <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                            声音
+                            <input
+                              className="h-9 rounded-[8px] border px-2 text-[12px] outline-none"
+                              style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+                              placeholder="默认"
+                              value={selectedDraft.barkSound || ''}
+                              onChange={(e) => updateDraft(selectedTopic.key, { barkSound: e.target.value })}
+                            />
+                          </label>
+                          <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                            时效级别
+                            <select
+                              className="h-9 rounded-[8px] border px-2 text-[12px] outline-none"
+                              style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+                              value={selectedDraft.barkLevel || ''}
+                              onChange={(e) => updateDraft(selectedTopic.key, { barkLevel: e.target.value })}
+                            >
+                              <option value="">默认</option>
+                              <option value="active">active</option>
+                              <option value="timeSensitive">timeSensitive</option>
+                              <option value="passive">passive</option>
+                              <option value="critical">critical</option>
+                            </select>
+                          </label>
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-[1fr_1fr]">
+                          <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                            跳转 URL 模板
+                            <input
+                              className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
+                              style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+                              value={selectedDraft.barkUrlTemplate || ''}
+                              onChange={(e) => updateDraft(selectedTopic.key, { barkUrlTemplate: e.target.value })}
+                            />
+                          </label>
+                          <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                            图标 URL 模板
+                            <input
+                              className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
+                              style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+                              value={selectedDraft.barkIcon || ''}
+                              onChange={(e) => updateDraft(selectedTopic.key, { barkIcon: e.target.value })}
+                            />
+                          </label>
+                        </div>
+                        <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                          图片 URL 模板
+                          <input
+                            className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
+                            style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+                            value={selectedDraft.barkImageTemplate || ''}
+                            onChange={(e) => updateDraft(selectedTopic.key, { barkImageTemplate: e.target.value })}
+                          />
+                        </label>
+                        <label className="inline-flex cursor-pointer items-center gap-2 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 accent-indigo-400"
+                            checked={Boolean(selectedDraft.barkCall)}
+                            onChange={(e) => updateDraft(selectedTopic.key, { barkCall: e.target.checked })}
+                          />
+                          发送响铃通知
+                        </label>
+                      </div>
+                    </details>
                   </>
                 ) : (
                   <>
@@ -429,63 +550,62 @@ export function NotificationSubscriptionsPanel() {
                         className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
                         style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
                         placeholder="https://api.day.app/YOUR_KEY/MAP System-{{appname}}/{{message}}"
-                        value={draft.urlTemplate}
-                        onChange={(e) => updateDraft(topic.key, { urlTemplate: e.target.value })}
+                        value={selectedDraft.urlTemplate}
+                        onChange={(e) => updateDraft(selectedTopic.key, { urlTemplate: e.target.value })}
                       />
                     </label>
 
-                    {isPost && (
+                    {selectedIsPost && (
                       <label className="flex flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                         Body 模板
                         <textarea
                           className="min-h-[82px] resize-y rounded-[8px] border px-2 py-2 font-mono text-[12px] leading-relaxed outline-none"
                           style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
-                          value={draft.bodyTemplate || ''}
-                          onChange={(e) => updateDraft(topic.key, { bodyTemplate: e.target.value })}
+                          value={selectedDraft.bodyTemplate || ''}
+                          onChange={(e) => updateDraft(selectedTopic.key, { bodyTemplate: e.target.value })}
                         />
                       </label>
                     )}
                   </>
                 )}
 
-                <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
                   <div className="flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                     <CheckCircle2 size={12} />
-                    模板保存后会对新站内通知自动去重投递
+                    保存后对新站内通知去重投递
                   </div>
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
                       className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] transition-all hover:bg-white/15 active:scale-[0.97] disabled:opacity-60"
                       style={{ background: 'rgba(255,255,255,0.08)', color: 'var(--text-primary)' }}
-                      onClick={() => testTopic(topic.key)}
-                      disabled={testingKey === topic.key || savingKey === topic.key}
+                      onClick={() => testTopic(selectedTopic.key)}
+                      disabled={testingKey === selectedTopic.key || savingKey !== null}
                     >
-                      {testingKey === topic.key ? <MapSpinner size={12} /> : <FlaskConical size={13} />}
+                      {testingKey === selectedTopic.key ? <MapSpinner size={12} /> : <FlaskConical size={13} />}
                       测试
                     </button>
                     <button
                       type="button"
                       className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] transition-all hover:brightness-110 active:scale-[0.97] disabled:opacity-60"
                       style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
-                      onClick={() => saveTopic(topic.key)}
-                      disabled={savingKey === topic.key || testingKey === topic.key}
+                      onClick={() => saveAllTopics()}
+                      disabled={savingKey !== null || testingKey === selectedTopic.key}
                     >
-                      {savingKey === topic.key ? <MapSpinner size={12} color="#1a1a1a" /> : <Save size={13} />}
-                      保存
+                      {savingKey ? <MapSpinner size={12} color="#1a1a1a" /> : <Save size={13} />}
+                      保存全部选择
                     </button>
                   </div>
                 </div>
               </div>
             </section>
-          );
-        })}
+          ) : (
+            <div className="rounded-[14px] border border-dashed border-white/10 px-4 py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
+              还没有可订阅的通知来源
+            </div>
+          )}
+        </div>
 
-        {topics.length === 0 && (
-          <div className="rounded-[14px] border border-dashed border-white/10 px-4 py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
-            还没有可订阅的通知来源
-          </div>
-        )}
       </div>
     </div>
   );

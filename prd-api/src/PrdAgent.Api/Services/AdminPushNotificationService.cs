@@ -46,6 +46,7 @@ public sealed class AdminPushNotificationService
         new("defect-management", "缺陷管理", "缺陷提交、指派、验收、AI 修复等提醒", "defect-agent", "defect-management"),
         new("system-alert", "系统预警", "模型池、平台密钥、开放平台额度等运营告警", "system", "system-alert"),
         new("admin-message", "管理员站内信", "服务器到期、配置提醒、人工公告等管理员通知", "admin-notice", "admin-message"),
+        new("server-expiry", "服务器到期", "服务器、证书、域名、部署资源到期提醒", "admin-notice", "server-expiry"),
         new("user-voice", "用户之声", "真实用户反馈、体验痛点、主动提交的缺陷反馈", "user-voice", "user-voice"),
         new("api-request-alert", "API 请求问题", "慢接口、错误率、调用失败、网关异常等请求告警", "api-request-alert", "api-request-alert"),
         new("report-agent", "周报协作", "周报提交、退回、审阅、逾期等提醒", "report-agent", "report-agent"),

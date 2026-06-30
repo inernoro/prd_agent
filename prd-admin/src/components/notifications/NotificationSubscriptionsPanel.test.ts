@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildNotificationPushDraftFromPreset,
   getSelectedNotificationPushPresetKey,
+  sortNotificationPushTopicsByWorkflow,
 } from './NotificationSubscriptionsPanel';
 import type { AdminPushPresetDefinition } from '@/services/contracts/notifications';
 
@@ -64,5 +65,27 @@ describe('NotificationSubscriptionsPanel helpers', () => {
     expect(draft.method).toBe('GET');
     expect(draft.barkServerUrl).toBe('https://api.day.app');
     expect(getSelectedNotificationPushPresetKey(draft, presets)).toBe('bark-protocol');
+  });
+
+  it('sorts push topics by user workflow order', () => {
+    const sorted = sortNotificationPushTopicsByWorkflow([
+      { key: 'report-agent' },
+      { key: 'api-request-alert' },
+      { key: 'defect-management' },
+      { key: 'user-voice' },
+      { key: 'server-expiry' },
+      { key: 'system-alert' },
+      { key: 'admin-message' },
+    ]);
+
+    expect(sorted.map((item) => item.key)).toEqual([
+      'defect-management',
+      'system-alert',
+      'admin-message',
+      'server-expiry',
+      'user-voice',
+      'api-request-alert',
+      'report-agent',
+    ]);
   });
 });

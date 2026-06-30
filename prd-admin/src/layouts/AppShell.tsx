@@ -1650,7 +1650,7 @@ export default function AppShell() {
             onOpenChange={setNotificationDialogOpen}
             title="用户通知"
             description="站内通知、待处理事项与外部推送订阅"
-            maxWidth={620}
+            maxWidth={820}
             content={
               <div className="flex h-full flex-col gap-3">
                 <div
