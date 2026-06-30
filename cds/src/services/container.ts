@@ -2759,6 +2759,7 @@ export class ContainerService {
           const cleanup = await this.cleanupUnusedBranchNetworks();
           const retry = await this.shell.exec(`docker network create ${target}`);
           if (retry.exitCode === 0) return;
+          if (combinedOutput(retry).toLowerCase().includes('already exists')) return;
           const retryOutput = combinedOutput(retry);
           const cleanupNote = `已清理 ${cleanup.removed} 个空闲分支网络后重试仍失败`;
           throw new Error(`创建 Docker 网络 "${target}" 失败:\n${combinedOutput(create)}\n\n${cleanupNote}:\n${retryOutput}`);
