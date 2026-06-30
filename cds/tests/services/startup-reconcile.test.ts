@@ -52,6 +52,12 @@ describe('startup reconcile delete cleanup residue', () => {
     expect(shouldPruneDeletedBranchStartupResidue(branch(), containers)).toBe(false);
   });
 
+  it('does not prune remote-executor branches because master cannot observe executor containers', () => {
+    const remote = branch({ executorId: 'executor-a' });
+
+    expect(shouldPruneDeletedBranchStartupResidue(remote, new Map())).toBe(false);
+  });
+
   it('does not treat a normal manual stop as delete residue', () => {
     const stopped = branch({
       status: 'idle',

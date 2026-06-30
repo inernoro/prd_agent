@@ -26,6 +26,7 @@ export function shouldPruneDeletedBranchStartupResidue(
   appContainers: Map<string, DiscoveredAppContainer>,
 ): boolean {
   if (!hasBranchDeleteCleanupIntent(branch)) return false;
+  if (branch.executorId) return false;
 
   const services = Object.keys(branch.services || {});
   if (services.length === 0) return true;
