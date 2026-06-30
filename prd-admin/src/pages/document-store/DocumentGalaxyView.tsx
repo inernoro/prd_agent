@@ -77,10 +77,25 @@ export function rotateOrbitOffsetByPixels(
   if (radius < 1e-6) return out.copy(offset);
   const spherical = new THREE.Spherical().setFromVector3(offset);
   const rotateScale = 2 * Math.PI * rotateSpeed;
-  spherical.theta -= (dxPx / Math.max(1, viewportWidth)) * rotateScale;
-  spherical.phi -= (dyPx / Math.max(1, viewportHeight)) * rotateScale;
+  spherical.theta += (dxPx / Math.max(1, viewportWidth)) * rotateScale;
+  spherical.phi += (dyPx / Math.max(1, viewportHeight)) * rotateScale;
   spherical.makeSafe();
   return out.setFromSpherical(spherical).setLength(radius);
+}
+
+export function naturalCameraEase(x: number): number {
+  const t = Math.min(1, Math.max(0, x));
+  return t * t * t * (t * (t * 6 - 15) + 10);
+}
+
+export function cameraTweenDurationMs(
+  fromTarget: THREE.Vector3,
+  toTarget: THREE.Vector3,
+  fromPos: THREE.Vector3,
+  toPos: THREE.Vector3,
+): number {
+  const travel = fromTarget.distanceTo(toTarget) * 0.55 + fromPos.distanceTo(toPos) * 0.45;
+  return Math.round(Math.min(1450, Math.max(620, 560 + Math.sqrt(Math.max(0, travel)) * 28)));
 }
 
 // 枢纽节点配色（演示版 SSOT：root 纯白、category 金、appname 冷白、submodule 灰蓝）。
@@ -1393,7 +1408,7 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       return ids;
     };
 
-    // 相机缓动：1s easeInOutCubic 把 controls.target + camera.position 移到聚焦点。
+    // 相机缓动：苹果式自然速度，慢起步 → 加速 → 慢停下。
     let camTween: {
       t0: number;
       dur: number;
@@ -1402,20 +1417,21 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       fromPos: THREE.Vector3;
       toPos: THREE.Vector3;
     } | null = null;
-    const easeInOutCubic = (x: number) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
 
     const startCamTween = (targetPos: THREE.Vector3, distance: number) => {
       // 沿当前相机→目标方向退到 distance 处，保留观察角度，避免镜头乱翻
       const dir = camera.position.clone().sub(controls.target);
       if (dir.lengthSq() < 1e-6) dir.set(0, 0.3, 1);
       dir.normalize();
+      const fromTarget = controls.target.clone();
+      const fromPos = camera.position.clone();
       const toPos = targetPos.clone().add(dir.multiplyScalar(distance));
       camTween = {
         t0: performance.now(),
-        dur: 1000,
-        fromTarget: controls.target.clone(),
+        dur: cameraTweenDurationMs(fromTarget, targetPos, fromPos, toPos),
+        fromTarget,
         toTarget: targetPos.clone(),
-        fromPos: camera.position.clone(),
+        fromPos,
         toPos,
       };
       controls.autoRotate = false;
@@ -1514,13 +1530,17 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       setFocusInfo(null);
       onFocusChangeRef.current?.(null);
       // 相机平滑回到初始机位
+      const fromTarget = controls.target.clone();
+      const fromPos = camera.position.clone();
+      const toTarget = new THREE.Vector3(0, 0, 0);
+      const toPos = new THREE.Vector3(0, 120, 1050);
       camTween = {
         t0: performance.now(),
-        dur: 1000,
-        fromTarget: controls.target.clone(),
-        toTarget: new THREE.Vector3(0, 0, 0),
-        fromPos: camera.position.clone(),
-        toPos: new THREE.Vector3(0, 120, 1050),
+        dur: cameraTweenDurationMs(fromTarget, toTarget, fromPos, toPos),
+        fromTarget,
+        toTarget,
+        fromPos,
+        toPos,
       };
     };
 
@@ -1767,10 +1787,10 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       nebulaGroup.rotation.y += dt * 0.004;
       nebulaGroup.rotation.x += dt * 0.0016;
 
-      // 相机聚焦缓动（easeInOutCubic，~1s）
+      // 相机聚焦缓动：自然速度曲线，距离越远时长略增。
       if (camTween) {
         const k = Math.min(1, (performance.now() - camTween.t0) / camTween.dur);
-        const e = easeInOutCubic(k);
+        const e = naturalCameraEase(k);
         controls.target.lerpVectors(camTween.fromTarget, camTween.toTarget, e);
         camera.position.lerpVectors(camTween.fromPos, camTween.toPos, e);
         if (k >= 1) camTween = null;
