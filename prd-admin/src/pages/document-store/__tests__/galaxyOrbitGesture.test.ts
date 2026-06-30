@@ -3,6 +3,16 @@ import * as THREE from 'three';
 import { rotateOrbitOffsetByPixels } from '../DocumentGalaxyView';
 
 describe('rotateOrbitOffsetByPixels', () => {
+  it('正向滑动使用触摸板自然方向', () => {
+    const start = new THREE.Vector3(120, 80, 1050);
+    const before = new THREE.Spherical().setFromVector3(start);
+    const next = rotateOrbitOffsetByPixels(start, 180, 96, 1440, 900, 0.5);
+    const after = new THREE.Spherical().setFromVector3(next);
+
+    expect(after.theta).toBeGreaterThan(before.theta);
+    expect(after.phi).toBeGreaterThan(before.phi);
+  });
+
   it('双指滑动只改变观察方向，不改变相机距离', () => {
     const start = new THREE.Vector3(120, 80, 1050);
     const next = rotateOrbitOffsetByPixels(start, 180, -96, 1440, 900, 0.5);

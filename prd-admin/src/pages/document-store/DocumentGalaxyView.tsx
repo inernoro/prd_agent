@@ -77,8 +77,8 @@ export function rotateOrbitOffsetByPixels(
   if (radius < 1e-6) return out.copy(offset);
   const spherical = new THREE.Spherical().setFromVector3(offset);
   const rotateScale = 2 * Math.PI * rotateSpeed;
-  spherical.theta -= (dxPx / Math.max(1, viewportWidth)) * rotateScale;
-  spherical.phi -= (dyPx / Math.max(1, viewportHeight)) * rotateScale;
+  spherical.theta += (dxPx / Math.max(1, viewportWidth)) * rotateScale;
+  spherical.phi += (dyPx / Math.max(1, viewportHeight)) * rotateScale;
   spherical.makeSafe();
   return out.setFromSpherical(spherical).setLength(radius);
 }
