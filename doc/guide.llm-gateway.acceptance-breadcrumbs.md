@@ -1,6 +1,9 @@
-# guide.llm-gateway.acceptance-breadcrumbs
+# LLM 网关验收面包屑清单 · 指南
 
-> 类型: guide（How-to — 怎么操作）| 状态: 开发中 | 更新: 2026-06-30
+> **文档版本**: v1.0
+> **最后更新**: 2026-06-30
+> **状态**: 开发中
+> 类型: guide（How-to — 怎么操作）
 > 关联: `doc/spec.llm-gateway-test-matrix.md`（测什么 SSOT）、`doc/report.gw-test-matrix.md`（全量可见报告）、
 > `doc/design.llm-gateway-physical-isolation.md`、`doc/debt.llm-gateway-isolation.md`、
 > `.claude/rules/closed-loop-acceptance.md`（验收必须闭环）、`.claude/skills/create-visual-test-to-kb/`（取证流水线）
