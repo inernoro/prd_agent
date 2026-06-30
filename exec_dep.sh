@@ -67,6 +67,19 @@ if [ -z "${PRD_AGENT_LLMGW_IMAGE:-}" ]; then
   export PRD_AGENT_LLMGW_IMAGE="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-llmgw:latest"
 fi
 
+# 默认 LLM serving 网关镜像（llmgw-serve，DI 承载 LlmGateway/ModelResolver，监听 8091，暴露 /gw/v1/*）。
+# compose 现在随 up 一起拉起 llmgw-serve；docker-compose.yml 默认直连 ghcr.io，需代理的主机会绕过
+# get.miduo.org 预拉/超时路径而卡住或失败，故这里照 PRD_AGENT_LLMGW_IMAGE 范式钉到镜像源。
+if [ -z "${PRD_AGENT_LLMGW_SERVE_IMAGE:-}" ]; then
+  export PRD_AGENT_LLMGW_SERVE_IMAGE="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-llmgw-serve:latest"
+fi
+
+# 默认 LLM 网关前端静态站镜像（llmgw-web，nginx 托管控制台构建产物）。同样随 compose up 拉起，
+# 默认直连 ghcr.io，需代理主机会卡住，故一并钉到 get.miduo.org 镜像源。
+if [ -z "${PRD_AGENT_LLMGW_WEB_IMAGE:-}" ]; then
+  export PRD_AGENT_LLMGW_WEB_IMAGE="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-llmgw-web:latest"
+fi
+
 if command -v docker-compose >/dev/null 2>&1; then
   COMPOSE="docker-compose"
 elif command -v docker >/dev/null 2>&1; then

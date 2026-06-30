@@ -268,11 +268,16 @@ services:
       # 内网 only 故固定 fallback 足够（无公开路由）。
       LlmGwJwt__Secret: "${LLMGW_JWT_SECRET:-llmgw-jwt-cds-preview-internal-9f3a2c7e1b2d4f6}"
       LlmGwJwt__Issuer: prdagent-llmgw
-      # 账户体系走环境变量，默认与 CDS 同账号密码（用户指定 2026-06-30）：CDS 进程做 compose 替换时
-      # 注入自己的 CDS_USERNAME/CDS_PASSWORD（server.ts:1646 同源）→ 网关 console 复用同一套登录；
-      # 未注入则回落非仓库默认的内网值（过 prd-llmgw 生产守卫，不挡启动）。
-      LLMGW_ADMIN_USER: "${CDS_USERNAME:-admin}"
-      LLMGW_ADMIN_PASSWORD: "${CDS_PASSWORD:-llmgw-admin-cds-preview-internal-7k2x9q}"
+      # 账户体系走环境变量，与 CDS dashboard 同账号密码（用户指定 2026-06-30）。bare `${CDS_USERNAME}`/
+      # `${CDS_PASSWORD}` **不带 `:-fallback`**：compose-parser.singlePassResolve 解析顺序为
+      # customEnv ?? process.env ?? default，CDS master 进程的 process.env.CDS_USERNAME/CDS_PASSWORD
+      # （server.ts:1646 CDS 自身 basic 登录同源）即被读入 → 网关 console 登录与 CDS 完全一致、无第二份口令、
+      # 无需把密码写进 _global 或仓库。去掉旧 `:-内网fallback` 是关键修复：那个默认值是**静默分叉源**——
+      # process.env 缺失时 console 落到一个与 CDS 不同的密码，用户拿 CDS 账号登录网关会失败（用户已指出此缺陷）。
+      # 边界：CDS 若未配 basic 账号（process.env 无此二值），missingEnvTemplates 在部署前抛
+      # 「环境变量模板缺少值: CDS_PASSWORD, CDS_USERNAME」= fail-closed 明确报错，而非静默用错密码（一致或显式失败）。
+      LLMGW_ADMIN_USER: "${CDS_USERNAME}"
+      LLMGW_ADMIN_PASSWORD: "${CDS_PASSWORD}"
     labels:
       # 安全：CDS 预览**不公开 path-route** 网关 console。它用固定占位 admin 密码 + JWT 密钥，若对外
       # 路由到 `/gw/`，任何可达 *.miduo.org 预览的人都能用已知密码登录读 LLM 日志（提示词/回答）。

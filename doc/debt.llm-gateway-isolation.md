@@ -235,6 +235,12 @@ CDS 合并多容器能力（PR #951）后，serving 网关在 `claude/llm-schedu
      或丢服务。**当前不修**（命名子域是波3 专项、预览内网 only 不公开路由故非可利用）；波3 随命名子域开放一起补：
      seed `seenSubdomains` 含项目 profile 子域 + 拒绝跨项目/分支撞名。已先行加保留伪值（`null`/`undefined` 等）
      拒绝，堵住最常见的序列化漏网（commit 见 PR #965）。
+  4. **命名 host 受 63 octet DNS label 上限约束**（Codex P2，PR #965，已加守卫）：命名子域 host 第一标签是
+     `<previewSlug>-<sub>`，超过 63 octet（RFC 1035 单 label 上限）则无法可靠解析、单标签通配证书 `*.<root>`
+     不覆盖。`forwarder-route-publisher` 现已加守卫：超长则**跳过该命名路由并 warn**，服务退回经主域名
+     `<previewSlug>.<root>` 的 `/gw/v1` 路径访问（不受影响）。即**超长分支名拿不到命名 URL，但服务仍可达**。
+     选 skip 而非截断/哈希：截断丢唯一性、可能与别的 slug 撞 host。波3 命名子域开放时若需支持超长分支，再评估
+     稳定哈希后缀方案（含碰撞检测）。守卫单测见 `cds/tests/services/forwarder-route-publisher.test.ts`（63 边界）。
 - **Claude 流式 tool_use 未聚合**（Codex P2，PR #965）：网关把 OpenAI 风格 `tools` + `stream=true` 路由到
   Claude 模型时，`ClaudeGatewayAdapter.ParseStreamChunk` 暂未处理 Claude 的 `content_block_start` /
   `input_json_delta` 事件 → 流式函数调用拿不到 `delta.tool_calls`（非流式 `tool_use` 解析正常）。修复需在
