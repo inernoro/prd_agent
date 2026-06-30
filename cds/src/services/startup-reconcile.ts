@@ -1,0 +1,34 @@
+import type { BranchEntry } from '../types.js';
+
+export interface DiscoveredAppContainer {
+  containerName: string;
+  branchId: string;
+  profileId: string;
+  running: boolean;
+}
+
+export function hasBranchDeleteCleanupIntent(branch: BranchEntry): boolean {
+  const reason = branch.lastStopReason || '';
+  if (!reason.includes('删除分支流程已开始')) return false;
+  if (
+    branch.status !== 'stopping'
+    && branch.lastStopSource !== 'system'
+    && branch.lastStopSource !== 'webhook'
+    && branch.lastStopSource !== 'cds'
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export function shouldPruneDeletedBranchStartupResidue(
+  branch: BranchEntry,
+  appContainers: Map<string, DiscoveredAppContainer>,
+): boolean {
+  if (!hasBranchDeleteCleanupIntent(branch)) return false;
+
+  const services = Object.keys(branch.services || {});
+  if (services.length === 0) return true;
+
+  return services.every((profileId) => !appContainers.has(`${branch.id}/${profileId}`));
+}

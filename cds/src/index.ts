@@ -45,6 +45,7 @@ import { ResourceUsageSampler } from './services/resource-usage-sampler.js';
 import { httpLogStoreFromEnv } from './services/http-log-store.js';
 import { serverEventLogStoreFromEnv } from './services/server-event-log-store.js';
 import { resolveStateBootstrapMode, seedStateFromJsonIfAllowed } from './services/state-bootstrap.js';
+import { shouldPruneDeletedBranchStartupResidue } from './services/startup-reconcile.js';
 
 (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT = new Date().toISOString();
 import type { ServerEventLogSink, ServerEventSeverity } from './services/server-event-log-store.js';
@@ -2144,6 +2145,33 @@ janitorService.setRemoveFn(async (slug: string) => {
     let appReconciled = 0;
 
     for (const branch of branches) {
+      if (shouldPruneDeletedBranchStartupResidue(branch, appContainers)) {
+        activeServerEventLogStore?.record({
+          category: 'container',
+          severity: 'warn',
+          source: 'startup-reconcile',
+          action: 'branch.reconcile.deleted-residue-pruned',
+          message: `branch delete cleanup residue pruned on startup: ${branch.id}`,
+          projectId: branch.projectId,
+          branchId: branch.id,
+          details: {
+            reason: 'delete-cleanup-intent-without-app-containers',
+            lastStopSource: branch.lastStopSource || null,
+            lastStopReason: branch.lastStopReason || null,
+            serviceStatuses: Object.fromEntries(
+              Object.entries(branch.services || {}).map(([profileId, svc]) => [profileId, svc.status]),
+            ),
+          },
+        });
+        try {
+          stateService.removeLogs(branch.id);
+        } catch { /* best-effort */ }
+        try {
+          stateService.removeBranch(branch.id);
+          appReconciled++;
+        } catch { /* branch may already be gone */ }
+        continue;
+      }
       for (const [profileId, svc] of Object.entries(branch.services)) {
         const key = `${branch.id}/${profileId}`;
         const found = appContainers.get(key);
