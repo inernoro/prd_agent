@@ -1,9 +1,13 @@
-# LLM 网关剥离：上线计划 / 差异化进度 / 测试纲领 / 局限与范围
+# LLM 网关剥离：上线计划 / 差异化进度 / 测试纲领 / 局限与范围 · 计划
 
+> **文档版本**: v1.1
+> **最后更新**: 2026-06-30
+> **状态**: 进行中（波1/2 已部署；波2.5 影子代码完成、真机待审批 CDS import）
+>
 > 类型：plan（When / 实施计划）。本文件是「网关从 MAP 剥离」整个工程的**进度 + 测试纲领 + 范围边界**单一索引。
 > 设计细节见 `design.llm-gateway-physical-isolation.md`（架构 + 图）；验收取证清单见
 > `guide.llm-gateway.acceptance-breadcrumbs.md`；已知债务见 `debt.llm-gateway-isolation.md`。
-> 状态时点：2026-06-30。分支 `claude/llm-scheduling-model-pool-x58zh4`（领先 main 69 / 落后 15，merge-tree 零冲突）。
+> 时点：分支 `claude/llm-scheduling-model-pool-x58zh4`（领先 main 69 / 落后 15，merge-tree 零冲突）。
 
 ---
 
