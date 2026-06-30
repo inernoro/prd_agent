@@ -80,6 +80,7 @@ import { getAdminNotifications, handleAdminNotification, handleAllAdminNotificat
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
 import { GlobalDefectSubmitDialog, DefectSubmitButton } from '@/components/ui/GlobalDefectSubmitDialog';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
+import { NotificationSubscriptionsPanel } from '@/components/notifications/NotificationSubscriptionsPanel';
 import { ChangelogBell } from '@/components/changelog/ChangelogBell';
 import { useChangelogStore, selectUnreadCount } from '@/stores/changelogStore';
 import { FLOATING_DOCK_COLLAPSED_KEY, FLOATING_DOCK_EVENT } from '@/components/daily-tips/TipsDrawer';
@@ -224,6 +225,7 @@ export default function AppShell() {
   }, [defaultNavHidden, navHidden, navOrder]);
   const [avatarOpen, setAvatarOpen] = useState(false);
   const [notificationDialogOpen, setNotificationDialogOpen] = useState(false);
+  const [notificationDialogTab, setNotificationDialogTab] = useState<'list' | 'subscriptions'>('list');
   const [notifications, setNotifications] = useState<AdminNotificationItem[]>([]);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   // 更新中心：未读数（用于桌面 dropdown 中的徽章）+ 拉取本周更新
@@ -1524,12 +1526,13 @@ export default function AppShell() {
                   className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
                   style={{ color: 'var(--text-secondary)' }}
                   onSelect={() => {
+                    setNotificationDialogTab('list');
                     setNotificationDialogOpen(true);
                     void loadNotifications({ silent: true });
                   }}
                 >
                   <Bell size={16} className="shrink-0" />
-                  <span className="text-[13px]">系统通知</span>
+                  <span className="text-[13px]">用户通知</span>
                   {notificationCount > 0 && (
                     <span
                       className="ml-auto rounded-full px-2 py-0.5 text-[10px]"
@@ -1645,11 +1648,39 @@ export default function AppShell() {
           <Dialog
             open={notificationDialogOpen}
             onOpenChange={setNotificationDialogOpen}
-            title="系统通知"
-            description="系统级通知与待处理事项"
+            title="用户通知"
+            description="站内通知、待处理事项与外部推送订阅"
             maxWidth={620}
             content={
               <div className="flex h-full flex-col gap-3">
+                <div
+                  className="grid grid-cols-2 rounded-[12px] p-1"
+                  style={{ background: 'rgba(255,255,255,0.06)' }}
+                >
+                  {[
+                    { key: 'list' as const, label: '通知列表' },
+                    { key: 'subscriptions' as const, label: '推送订阅' },
+                  ].map((tab) => (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      className="rounded-[9px] px-3 py-1.5 text-[12px] transition-all"
+                      style={
+                        notificationDialogTab === tab.key
+                          ? { background: 'var(--accent-gold)', color: '#1a1a1a' }
+                          : { color: 'var(--text-muted)' }
+                      }
+                      onClick={() => setNotificationDialogTab(tab.key)}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                {notificationDialogTab === 'subscriptions' ? (
+                  <NotificationSubscriptionsPanel />
+                ) : (
+                  <>
                 <div className="flex items-center justify-between">
                   <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
                     {notificationsLoading ? '加载中...' : `未处理 ${notificationCount > 999 ? '999+' : notificationCount} 条`}
@@ -1768,6 +1799,8 @@ export default function AppShell() {
                     );
                   })}
                 </div>
+                  </>
+                )}
               </div>
             }
           />

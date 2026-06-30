@@ -324,6 +324,9 @@ export const api = {
       list: () => '/api/dashboard/notifications',
       handle: (id: string) => `/api/dashboard/notifications/${id}/handle`,
       handleAll: () => '/api/dashboard/notifications/handle-all',
+      subscriptions: () => '/api/dashboard/notifications/subscriptions',
+      subscription: (topicKey: string) => `/api/dashboard/notifications/subscriptions/${encodeURIComponent(topicKey)}`,
+      testSubscription: (topicKey: string) => `/api/dashboard/notifications/subscriptions/${encodeURIComponent(topicKey)}/test`,
     },
     userPreferences: {
       get: () => '/api/dashboard/user-preferences',

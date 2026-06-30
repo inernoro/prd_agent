@@ -22,6 +22,9 @@ import type {
   GetAdminNotificationsContract,
   HandleAdminNotificationContract,
   HandleAllAdminNotificationsContract,
+  GetAdminPushSubscriptionsContract,
+  UpdateAdminPushSubscriptionContract,
+  TestAdminPushSubscriptionContract,
 } from '@/services/contracts/notifications';
 import type {
   GetUsersContract,
@@ -583,6 +586,9 @@ import {
   getAdminNotificationsReal,
   handleAdminNotificationReal,
   handleAllAdminNotificationsReal,
+  getAdminPushSubscriptionsReal,
+  updateAdminPushSubscriptionReal,
+  testAdminPushSubscriptionReal,
 } from '@/services/real/notifications';
 import type {
   GetMobileFeedContract,
@@ -824,6 +830,9 @@ export const updateUserAuthz: UpdateUserAuthzContract = withAuth(updateUserAuthz
 export const getAdminNotifications: GetAdminNotificationsContract = withAuth(getAdminNotificationsReal);
 export const handleAdminNotification: HandleAdminNotificationContract = withAuth(handleAdminNotificationReal);
 export const handleAllAdminNotifications: HandleAllAdminNotificationsContract = withAuth(handleAllAdminNotificationsReal);
+export const getAdminPushSubscriptions: GetAdminPushSubscriptionsContract = withAuth(getAdminPushSubscriptionsReal);
+export const updateAdminPushSubscription: UpdateAdminPushSubscriptionContract = withAuth(updateAdminPushSubscriptionReal);
+export const testAdminPushSubscription: TestAdminPushSubscriptionContract = withAuth(testAdminPushSubscriptionReal);
 
 export const getUsers: GetUsersContract = withAuth(getUsersReal);
 export { searchDirectoryUsers } from '@/services/real/directory';

@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Services;
 using PrdAgent.Api.Models;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -15,19 +17,19 @@ namespace PrdAgent.Api.Controllers.Api;
 public sealed class NotificationsController : ControllerBase
 {
     private readonly MongoDbContext _db;
+    private readonly AdminPushNotificationService _pushService;
 
-    public NotificationsController(MongoDbContext db)
+    public NotificationsController(MongoDbContext db, AdminPushNotificationService pushService)
     {
         _db = db;
+        _pushService = pushService;
     }
-
-    private string? GetUserId() => User.FindFirst("userId")?.Value ?? User.FindFirst("sub")?.Value;
 
     [HttpGet]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
     public async Task<IActionResult> List([FromQuery] bool includeHandled = false, CancellationToken ct = default)
     {
-        var userId = GetUserId();
+        var userId = this.GetRequiredUserId();
         var now = DateTime.UtcNow;
         var filter = Builders<AdminNotification>.Filter.Empty;
 
@@ -51,6 +53,8 @@ public sealed class NotificationsController : ControllerBase
             .Limit(200)
             .ToListAsync(ct);
 
+        await _pushService.DispatchForUserAsync(userId, items, ct);
+
         return Ok(ApiResponse<object>.Ok(new
         {
             items = items.Select(x => new
@@ -72,6 +76,61 @@ public sealed class NotificationsController : ControllerBase
                 x.ExpiresAt
             })
         }));
+    }
+
+    [HttpGet("subscriptions")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> ListSubscriptions(CancellationToken ct = default)
+    {
+        var userId = this.GetRequiredUserId();
+        var subscriptions = await _pushService.GetSubscriptionsAsync(userId, ct);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            topics = AdminPushNotificationService.TopicDefinitions,
+            presets = AdminPushNotificationService.PresetDefinitions,
+            placeholders = new[] { "appname", "title", "message", "level", "source", "actionUrl", "createdAt", "notificationId" },
+            subscriptions
+        }));
+    }
+
+    [HttpPut("subscriptions/{topicKey}")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> UpsertSubscription(
+        [FromRoute] string topicKey,
+        [FromBody] AdminPushSubscriptionUpsertRequest request,
+        CancellationToken ct = default)
+    {
+        request.TopicKey = topicKey;
+        var userId = this.GetRequiredUserId();
+        try
+        {
+            var subscription = await _pushService.UpsertSubscriptionAsync(userId, request, ct);
+            return Ok(ApiResponse<object>.Ok(new { subscription }));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+    }
+
+    [HttpPost("subscriptions/{topicKey}/test")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> TestSubscription(
+        [FromRoute] string topicKey,
+        [FromBody] AdminPushSubscriptionUpsertRequest request,
+        CancellationToken ct = default)
+    {
+        request.TopicKey = topicKey;
+        var userId = this.GetRequiredUserId();
+        try
+        {
+            var delivery = await _pushService.SendTestAsync(userId, request, ct);
+            return Ok(ApiResponse<object>.Ok(new { delivery }));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
     }
 
     [HttpPost("{id}/handle")]

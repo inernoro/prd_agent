@@ -1,0 +1,541 @@
+using System.Diagnostics;
+using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using MongoDB.Driver;
+using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Database;
+
+namespace PrdAgent.Api.Services;
+
+public sealed class AdminPushNotificationService
+{
+    private static readonly Regex PlaceholderRegex = new(@"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}", RegexOptions.Compiled);
+    private static readonly HashSet<string> SupportedMethods = new(StringComparer.OrdinalIgnoreCase) { "GET", "POST" };
+    private static readonly HashSet<string> SupportedBarkLevels = new(StringComparer.OrdinalIgnoreCase) { "active", "timeSensitive", "passive", "critical" };
+    private const int MaxDispatchPerList = 20;
+    private const string DefaultBarkServerUrl = "https://api.day.app";
+
+    private readonly MongoDbContext _db;
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ISafeOutboundUrlValidator _urlValidator;
+    private readonly ILogger<AdminPushNotificationService> _logger;
+
+    public AdminPushNotificationService(
+        MongoDbContext db,
+        IHttpClientFactory httpClientFactory,
+        ISafeOutboundUrlValidator urlValidator,
+        ILogger<AdminPushNotificationService> logger)
+    {
+        _db = db;
+        _httpClientFactory = httpClientFactory;
+        _urlValidator = urlValidator;
+        _logger = logger;
+    }
+
+    public static IReadOnlyList<AdminPushTopicDefinition> TopicDefinitions { get; } =
+    [
+        new("defect-management", "缺陷管理", "缺陷提交、指派、验收、AI 修复等提醒", "defect-agent"),
+        new("report-agent", "周报协作", "周报提交、退回、审阅、逾期等提醒", "report-agent"),
+        new("system-alert", "系统告警", "模型池、平台密钥、开放平台额度等运营告警", "system"),
+    ];
+
+    public static IReadOnlyList<AdminPushPresetDefinition> PresetDefinitions { get; } =
+    [
+        new(
+            "bark-protocol",
+            "Bark 协议",
+            "bark",
+            "GET",
+            "",
+            null,
+            "application/json"),
+        new(
+            "bark-url",
+            "Bark URL 模板",
+            "url",
+            "GET",
+            "https://api.day.app/YOUR_KEY/MAP System-{{appname}}/{{message}}",
+            null,
+            "application/json"),
+        new(
+            "generic-webhook",
+            "通用 Webhook JSON",
+            "webhook",
+            "POST",
+            "https://example.com/webhook",
+            "{\"appname\":\"{{appname}}\",\"title\":\"{{title}}\",\"message\":\"{{message}}\",\"level\":\"{{level}}\",\"source\":\"{{source}}\",\"actionUrl\":\"{{actionUrl}}\"}",
+            "application/json"),
+        new(
+            "wechat-work-bot",
+            "企业微信机器人",
+            "wechat-work",
+            "POST",
+            "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY",
+            "{\"msgtype\":\"text\",\"text\":{\"content\":\"MAP System-{{appname}}\\n{{title}}\\n{{message}}\\n{{actionUrl}}\"}}",
+            "application/json"),
+        new(
+            "feishu-bot",
+            "飞书机器人",
+            "feishu",
+            "POST",
+            "https://open.feishu.cn/open-apis/bot/v2/hook/YOUR_TOKEN",
+            "{\"msg_type\":\"text\",\"content\":{\"text\":\"MAP System-{{appname}}\\n{{title}}\\n{{message}}\\n{{actionUrl}}\"}}",
+            "application/json"),
+        new(
+            "dingtalk-bot",
+            "钉钉机器人",
+            "dingtalk",
+            "POST",
+            "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN",
+            "{\"msgtype\":\"text\",\"text\":{\"content\":\"MAP System-{{appname}}\\n{{title}}\\n{{message}}\\n{{actionUrl}}\"}}",
+            "application/json"),
+    ];
+
+    public async Task<List<AdminPushSubscription>> GetSubscriptionsAsync(string userId, CancellationToken ct)
+    {
+        var existing = await _db.AdminPushSubscriptions
+            .Find(x => x.UserId == userId)
+            .ToListAsync(ct);
+
+        var byTopic = existing
+            .GroupBy(x => x.TopicKey)
+            .ToDictionary(x => x.Key, x => x.OrderByDescending(s => s.UpdatedAt).First(), StringComparer.OrdinalIgnoreCase);
+
+        return TopicDefinitions.Select(topic =>
+        {
+            if (byTopic.TryGetValue(topic.Key, out var sub)) return sub;
+            var preset = PresetDefinitions[0];
+            return new AdminPushSubscription
+            {
+                UserId = userId,
+                TopicKey = topic.Key,
+                Enabled = false,
+                ChannelType = preset.ChannelType,
+                Method = preset.Method,
+                UrlTemplate = preset.UrlTemplate,
+                BodyTemplate = preset.BodyTemplate,
+                ContentType = preset.ContentType,
+                BarkServerUrl = DefaultBarkServerUrl,
+                BarkGroup = "MAP System-{{appname}}",
+            };
+        }).ToList();
+    }
+
+    public async Task<AdminPushSubscription> UpsertSubscriptionAsync(string userId, AdminPushSubscriptionUpsertRequest request, CancellationToken ct)
+    {
+        var topic = TopicDefinitions.FirstOrDefault(x => x.Key.Equals((request.TopicKey ?? string.Empty).Trim(), StringComparison.OrdinalIgnoreCase))
+            ?? throw new InvalidOperationException("未知订阅类型");
+
+        var channelType = NormalizeText(request.ChannelType, "url", 64);
+        var isBark = channelType.Equals("bark", StringComparison.OrdinalIgnoreCase);
+        var method = isBark ? "GET" : (request.Method ?? "GET").Trim().ToUpperInvariant();
+        if (!SupportedMethods.Contains(method))
+            throw new InvalidOperationException("推送请求方式仅支持 GET 或 POST");
+
+        var urlTemplate = (request.UrlTemplate ?? string.Empty).Trim();
+        var barkKey = NormalizeNullableText(request.BarkKey, 256);
+        var barkServerUrl = NormalizeNullableText(request.BarkServerUrl, 512) ?? DefaultBarkServerUrl;
+        var barkLevel = NormalizeNullableText(request.BarkLevel, 32);
+        if (!string.IsNullOrWhiteSpace(barkLevel) && !SupportedBarkLevels.Contains(barkLevel))
+            throw new InvalidOperationException("Bark 时效级别无效");
+
+        if (request.Enabled && isBark && string.IsNullOrWhiteSpace(barkKey))
+            throw new InvalidOperationException("启用 Bark 订阅前必须填写 Bark Key");
+
+        if (request.Enabled && !isBark && string.IsNullOrWhiteSpace(urlTemplate))
+            throw new InvalidOperationException("启用订阅前必须填写请求 URL 模板");
+
+        if (request.Enabled)
+        {
+            var previewUrl = isBark
+                ? BuildBarkUrl(
+                    barkServerUrl,
+                    barkKey ?? string.Empty,
+                    "管理员推送测试",
+                    "这是一条测试通知",
+                    BuildPreviewPlaceholders(topic),
+                    NormalizeNullableText(request.BarkGroup, 128),
+                    NormalizeNullableText(request.BarkSound, 96),
+                    barkLevel,
+                    NormalizeNullableText(request.BarkIcon, 1024),
+                    NormalizeNullableText(request.BarkUrlTemplate, 1024),
+                    request.BarkCall)
+                : RenderTemplate(urlTemplate, BuildPreviewPlaceholders(topic), forUrl: true);
+            await _urlValidator.EnsureSafeHttpUrlAsync(previewUrl, "管理员推送订阅", ct);
+        }
+
+        var now = DateTime.UtcNow;
+        var existing = await _db.AdminPushSubscriptions
+            .Find(x => x.UserId == userId && x.TopicKey == topic.Key)
+            .FirstOrDefaultAsync(ct);
+
+        var entity = existing ?? new AdminPushSubscription
+        {
+            UserId = userId,
+            TopicKey = topic.Key,
+            CreatedAt = now,
+        };
+
+        entity.Enabled = request.Enabled;
+        entity.ChannelType = channelType;
+        entity.Method = method;
+        entity.UrlTemplate = urlTemplate;
+        entity.BodyTemplate = string.IsNullOrWhiteSpace(request.BodyTemplate) ? null : request.BodyTemplate;
+        entity.ContentType = NormalizeText(request.ContentType, "application/json", 96);
+        entity.BarkKey = barkKey;
+        entity.BarkServerUrl = barkServerUrl;
+        entity.BarkGroup = NormalizeNullableText(request.BarkGroup, 128);
+        entity.BarkSound = NormalizeNullableText(request.BarkSound, 96);
+        entity.BarkLevel = barkLevel;
+        entity.BarkIcon = NormalizeNullableText(request.BarkIcon, 1024);
+        entity.BarkUrlTemplate = NormalizeNullableText(request.BarkUrlTemplate, 1024);
+        entity.BarkCall = request.BarkCall;
+        entity.UpdatedAt = now;
+
+        if (existing == null)
+        {
+            await _db.AdminPushSubscriptions.InsertOneAsync(entity, cancellationToken: CancellationToken.None);
+        }
+        else
+        {
+            await _db.AdminPushSubscriptions.ReplaceOneAsync(x => x.Id == entity.Id, entity, cancellationToken: CancellationToken.None);
+        }
+
+        return entity;
+    }
+
+    public async Task<AdminPushDeliveryLog> SendTestAsync(string userId, AdminPushSubscriptionUpsertRequest request, CancellationToken ct)
+    {
+        var topic = TopicDefinitions.FirstOrDefault(x => x.Key.Equals((request.TopicKey ?? string.Empty).Trim(), StringComparison.OrdinalIgnoreCase))
+            ?? TopicDefinitions[0];
+
+        var sub = new AdminPushSubscription
+        {
+            Id = "test",
+            UserId = userId,
+            TopicKey = topic.Key,
+            Enabled = true,
+            ChannelType = NormalizeText(request.ChannelType, "url", 64),
+            Method = NormalizeText(request.ChannelType, "url", 64).Equals("bark", StringComparison.OrdinalIgnoreCase)
+                ? "GET"
+                : (request.Method ?? "GET").Trim().ToUpperInvariant(),
+            UrlTemplate = (request.UrlTemplate ?? string.Empty).Trim(),
+            BodyTemplate = string.IsNullOrWhiteSpace(request.BodyTemplate) ? null : request.BodyTemplate,
+            ContentType = NormalizeText(request.ContentType, "application/json", 96),
+            BarkKey = NormalizeNullableText(request.BarkKey, 256),
+            BarkServerUrl = NormalizeNullableText(request.BarkServerUrl, 512) ?? DefaultBarkServerUrl,
+            BarkGroup = NormalizeNullableText(request.BarkGroup, 128),
+            BarkSound = NormalizeNullableText(request.BarkSound, 96),
+            BarkLevel = NormalizeNullableText(request.BarkLevel, 32),
+            BarkIcon = NormalizeNullableText(request.BarkIcon, 1024),
+            BarkUrlTemplate = NormalizeNullableText(request.BarkUrlTemplate, 1024),
+            BarkCall = request.BarkCall,
+        };
+
+        if (sub.ChannelType.Equals("bark", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(sub.BarkKey))
+            throw new InvalidOperationException("请先填写 Bark Key");
+
+        if (!sub.ChannelType.Equals("bark", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(sub.UrlTemplate))
+            throw new InvalidOperationException("请先填写请求 URL 模板");
+
+        if (!SupportedMethods.Contains(sub.Method))
+            throw new InvalidOperationException("推送请求方式仅支持 GET 或 POST");
+
+        var notification = new AdminNotification
+        {
+            Id = "test",
+            Title = "管理员推送测试",
+            Message = "这是一条测试通知，用于验证占位符模板和外部接口连通性。",
+            Level = "info",
+            Source = topic.Source,
+            ActionUrl = "/notifications",
+            CreatedAt = DateTime.UtcNow,
+        };
+
+        return await DeliverAsync(userId, sub, notification, saveLog: false, ct);
+    }
+
+    public async Task DispatchForUserAsync(string userId, IReadOnlyList<AdminNotification> notifications, CancellationToken ct)
+    {
+        var targets = notifications
+            .Where(x => x.Status == "open")
+            .Take(MaxDispatchPerList)
+            .ToList();
+        if (targets.Count == 0) return;
+
+        var subscriptions = await _db.AdminPushSubscriptions
+            .Find(x => x.UserId == userId && x.Enabled)
+            .ToListAsync(ct);
+        if (subscriptions.Count == 0) return;
+
+        foreach (var notification in targets)
+        {
+            foreach (var subscription in subscriptions)
+            {
+                if (!MatchesTopic(subscription.TopicKey, notification)) continue;
+
+                var exists = await _db.AdminPushDeliveryLogs
+                    .Find(x => x.UserId == userId
+                        && x.SubscriptionId == subscription.Id
+                        && x.NotificationId == notification.Id)
+                    .AnyAsync(ct);
+                if (exists) continue;
+
+                try
+                {
+                    await DeliverAsync(userId, subscription, notification, saveLog: true, ct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "管理员推送失败 user={UserId} subscription={SubscriptionId} notification={NotificationId}", userId, subscription.Id, notification.Id);
+                }
+            }
+        }
+    }
+
+    private async Task<AdminPushDeliveryLog> DeliverAsync(
+        string userId,
+        AdminPushSubscription subscription,
+        AdminNotification notification,
+        bool saveLog,
+        CancellationToken ct)
+    {
+        var placeholders = BuildPlaceholders(notification);
+        var requestUrl = subscription.ChannelType.Equals("bark", StringComparison.OrdinalIgnoreCase)
+            ? BuildBarkUrl(
+                subscription.BarkServerUrl,
+                subscription.BarkKey,
+                notification.Title ?? "PRD Agent 通知",
+                notification.Message ?? notification.Title ?? string.Empty,
+                placeholders,
+                subscription.BarkGroup,
+                subscription.BarkSound,
+                subscription.BarkLevel,
+                subscription.BarkIcon,
+                subscription.BarkUrlTemplate,
+                subscription.BarkCall)
+            : RenderTemplate(subscription.UrlTemplate, placeholders, forUrl: true);
+        var safeUri = await _urlValidator.EnsureSafeHttpUrlAsync(requestUrl, "管理员推送目标", ct);
+        var method = subscription.ChannelType.Equals("bark", StringComparison.OrdinalIgnoreCase)
+            ? HttpMethod.Get
+            : subscription.Method.Equals("POST", StringComparison.OrdinalIgnoreCase) ? HttpMethod.Post : HttpMethod.Get;
+        var body = method == HttpMethod.Post
+            ? RenderTemplate(subscription.BodyTemplate ?? string.Empty, placeholders, forUrl: false)
+            : null;
+
+        var log = new AdminPushDeliveryLog
+        {
+            UserId = userId,
+            SubscriptionId = subscription.Id,
+            NotificationId = notification.Id,
+            TopicKey = subscription.TopicKey,
+            ChannelType = subscription.ChannelType,
+            Method = method.Method,
+            RequestUrl = safeUri.ToString(),
+            RequestBody = body,
+        };
+
+        var sw = Stopwatch.StartNew();
+        try
+        {
+            var client = _httpClientFactory.CreateClient("SafeOutbound");
+            client.Timeout = TimeSpan.FromSeconds(8);
+
+            using var httpRequest = new HttpRequestMessage(method, safeUri);
+            if (method == HttpMethod.Post)
+            {
+                httpRequest.Content = new StringContent(body ?? string.Empty, Encoding.UTF8, subscription.ContentType);
+            }
+
+            using var response = await client.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, CancellationToken.None);
+            log.StatusCode = (int)response.StatusCode;
+            log.Success = response.IsSuccessStatusCode;
+            if (!response.IsSuccessStatusCode)
+            {
+                var responseBody = await response.Content.ReadAsStringAsync(CancellationToken.None);
+                log.ErrorMessage = $"HTTP {(int)response.StatusCode}: {TrimForLog(responseBody, 240)}";
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Success = false;
+            log.ErrorMessage = TrimForLog(ex.Message, 240);
+        }
+        finally
+        {
+            log.DurationMs = sw.ElapsedMilliseconds;
+            log.CreatedAt = DateTime.UtcNow;
+            if (saveLog)
+            {
+                await _db.AdminPushDeliveryLogs.InsertOneAsync(log, cancellationToken: CancellationToken.None);
+            }
+        }
+
+        return log;
+    }
+
+    private static bool MatchesTopic(string topicKey, AdminNotification notification)
+    {
+        var source = (notification.Source ?? string.Empty).Trim();
+        if (topicKey.Equals("defect-management", StringComparison.OrdinalIgnoreCase))
+            return source.Equals("defect-agent", StringComparison.OrdinalIgnoreCase);
+
+        if (topicKey.Equals("report-agent", StringComparison.OrdinalIgnoreCase))
+            return source.Equals("report-agent", StringComparison.OrdinalIgnoreCase);
+
+        if (topicKey.Equals("system-alert", StringComparison.OrdinalIgnoreCase))
+        {
+            if (source.Equals("defect-agent", StringComparison.OrdinalIgnoreCase)
+                || source.Equals("report-agent", StringComparison.OrdinalIgnoreCase))
+                return false;
+            var level = (notification.Level ?? string.Empty).Trim();
+            return level.Equals("warning", StringComparison.OrdinalIgnoreCase)
+                || level.Equals("error", StringComparison.OrdinalIgnoreCase)
+                || source.Contains("platform", StringComparison.OrdinalIgnoreCase)
+                || source.Contains("quota", StringComparison.OrdinalIgnoreCase)
+                || source.Equals("system", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
+    }
+
+    private static Dictionary<string, string> BuildPreviewPlaceholders(AdminPushTopicDefinition topic) => new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["appname"] = topic.Label,
+        ["title"] = "管理员推送测试",
+        ["message"] = "这是一条测试通知",
+        ["level"] = "info",
+        ["source"] = topic.Source,
+        ["actionUrl"] = "/notifications",
+        ["createdAt"] = DateTime.UtcNow.ToString("O"),
+        ["notificationId"] = "test",
+    };
+
+    private static Dictionary<string, string> BuildPlaceholders(AdminNotification notification) => new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["appname"] = ResolveAppName(notification),
+        ["title"] = notification.Title ?? string.Empty,
+        ["message"] = notification.Message ?? notification.Title ?? string.Empty,
+        ["level"] = notification.Level ?? string.Empty,
+        ["source"] = notification.Source ?? string.Empty,
+        ["actionUrl"] = notification.ActionUrl ?? string.Empty,
+        ["createdAt"] = notification.CreatedAt.ToString("O"),
+        ["notificationId"] = notification.Id,
+    };
+
+    private static string ResolveAppName(AdminNotification notification)
+    {
+        var source = (notification.Source ?? string.Empty).Trim();
+        return source switch
+        {
+            "defect-agent" => "缺陷管理",
+            "report-agent" => "周报协作",
+            "llm-gateway-quota" => "模型池",
+            "platform-key-integrity" => "平台密钥",
+            "open-platform" => "开放平台",
+            _ => string.IsNullOrWhiteSpace(source) ? "PRD Agent" : source,
+        };
+    }
+
+    private static string RenderTemplate(string template, IReadOnlyDictionary<string, string> values, bool forUrl)
+    {
+        return PlaceholderRegex.Replace(template ?? string.Empty, match =>
+        {
+            var key = match.Groups[1].Value;
+            values.TryGetValue(key, out var raw);
+            var value = raw ?? string.Empty;
+            return forUrl ? Uri.EscapeDataString(value) : JsonEncodedText.Encode(value).ToString();
+        });
+    }
+
+    private static string BuildBarkUrl(
+        string? serverUrl,
+        string? key,
+        string title,
+        string message,
+        IReadOnlyDictionary<string, string> placeholders,
+        string? groupTemplate,
+        string? sound,
+        string? level,
+        string? icon,
+        string? urlTemplate,
+        bool call)
+    {
+        var baseUrl = (serverUrl ?? DefaultBarkServerUrl).Trim().TrimEnd('/');
+        var safeKey = Uri.EscapeDataString((key ?? string.Empty).Trim());
+        var safeTitle = Uri.EscapeDataString(title);
+        var safeMessage = Uri.EscapeDataString(message);
+        var url = $"{baseUrl}/{safeKey}/{safeTitle}/{safeMessage}";
+        var query = new List<string>();
+
+        var group = string.IsNullOrWhiteSpace(groupTemplate)
+            ? "MAP System"
+            : RenderTemplate(groupTemplate, placeholders, forUrl: false);
+        AddQuery(query, "group", group);
+        AddQuery(query, "sound", sound);
+        AddQuery(query, "level", level);
+        AddQuery(query, "icon", string.IsNullOrWhiteSpace(icon) ? null : RenderTemplate(icon, placeholders, forUrl: false));
+        AddQuery(query, "url", string.IsNullOrWhiteSpace(urlTemplate) ? placeholders.GetValueOrDefault("actionUrl") : RenderTemplate(urlTemplate, placeholders, forUrl: false));
+        if (call) AddQuery(query, "call", "1");
+
+        return query.Count == 0 ? url : $"{url}?{string.Join("&", query)}";
+    }
+
+    private static void AddQuery(List<string> query, string key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+        query.Add($"{Uri.EscapeDataString(key)}={Uri.EscapeDataString(value)}");
+    }
+
+    private static string NormalizeText(string? value, string fallback, int maxLength)
+    {
+        var trimmed = (value ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(trimmed)) trimmed = fallback;
+        return trimmed.Length > maxLength ? trimmed[..maxLength] : trimmed;
+    }
+
+    private static string? NormalizeNullableText(string? value, int maxLength)
+    {
+        var trimmed = (value ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(trimmed)) return null;
+        return trimmed.Length > maxLength ? trimmed[..maxLength] : trimmed;
+    }
+
+    private static string TrimForLog(string? value, int maxLength)
+    {
+        var text = value ?? string.Empty;
+        return text.Length > maxLength ? text[..maxLength] : text;
+    }
+}
+
+public sealed record AdminPushTopicDefinition(string Key, string Label, string Description, string Source);
+
+public sealed record AdminPushPresetDefinition(
+    string Key,
+    string Label,
+    string ChannelType,
+    string Method,
+    string UrlTemplate,
+    string? BodyTemplate,
+    string ContentType);
+
+public sealed class AdminPushSubscriptionUpsertRequest
+{
+    public string? TopicKey { get; set; }
+    public bool Enabled { get; set; }
+    public string? ChannelType { get; set; }
+    public string? Method { get; set; }
+    public string? UrlTemplate { get; set; }
+    public string? BodyTemplate { get; set; }
+    public string? ContentType { get; set; }
+    public string? BarkKey { get; set; }
+    public string? BarkServerUrl { get; set; }
+    public string? BarkGroup { get; set; }
+    public string? BarkSound { get; set; }
+    public string? BarkLevel { get; set; }
+    public string? BarkIcon { get; set; }
+    public string? BarkUrlTemplate { get; set; }
+    public bool BarkCall { get; set; }
+}

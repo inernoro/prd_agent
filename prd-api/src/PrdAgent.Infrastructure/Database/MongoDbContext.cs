@@ -48,6 +48,8 @@ public class MongoDbContext
     public IMongoCollection<LLMModel> LLMModels => _database.GetCollection<LLMModel>("llmmodels");
     public IMongoCollection<AppSettings> AppSettings => _database.GetCollection<AppSettings>("appsettings");
     public IMongoCollection<AdminNotification> AdminNotifications => _database.GetCollection<AdminNotification>("admin_notifications");
+    public IMongoCollection<AdminPushSubscription> AdminPushSubscriptions => _database.GetCollection<AdminPushSubscription>("admin_push_subscriptions");
+    public IMongoCollection<AdminPushDeliveryLog> AdminPushDeliveryLogs => _database.GetCollection<AdminPushDeliveryLog>("admin_push_delivery_logs");
     public IMongoCollection<DailyTip> DailyTips => _database.GetCollection<DailyTip>("daily_tips");
     public IMongoCollection<ChangelogSnapshot> ChangelogSnapshots => _database.GetCollection<ChangelogSnapshot>("changelog_snapshots");
     public IMongoCollection<AutomationRule> AutomationRules => _database.GetCollection<AutomationRule>("automation_rules");
