@@ -522,7 +522,8 @@ public sealed class AdminPushNotificationService
     {
         var source = (notification.Source ?? string.Empty).Trim();
         if (topicKey.Equals("defect-management", StringComparison.OrdinalIgnoreCase))
-            return source.Equals("defect-agent", StringComparison.OrdinalIgnoreCase);
+            return source.Equals("defect-agent", StringComparison.OrdinalIgnoreCase)
+                && !IsDefectReminderNotification(notification);
 
         if (topicKey.Equals("report-agent", StringComparison.OrdinalIgnoreCase))
             return source.Equals("report-agent", StringComparison.OrdinalIgnoreCase);
@@ -565,6 +566,31 @@ public sealed class AdminPushNotificationService
         }
 
         return false;
+    }
+
+    private static bool IsDefectReminderNotification(AdminNotification notification)
+    {
+        var source = notification.Source ?? string.Empty;
+        var key = notification.Key ?? string.Empty;
+        var title = notification.Title ?? string.Empty;
+        var message = notification.Message ?? string.Empty;
+
+        if (source.Equals("defect-escalation", StringComparison.OrdinalIgnoreCase)
+            || source.Equals("defect-reminder", StringComparison.OrdinalIgnoreCase)
+            || source.Equals("pm-reminder", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (key.StartsWith("defect-escalation", StringComparison.OrdinalIgnoreCase)
+            || key.StartsWith("defect-reminder", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (title.Contains("缺陷催办", StringComparison.OrdinalIgnoreCase)
+            || title.Contains("催办", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return message.Contains("请尽快跟进", StringComparison.OrdinalIgnoreCase)
+            || (message.Contains("超时", StringComparison.OrdinalIgnoreCase)
+                && message.Contains("未处理", StringComparison.OrdinalIgnoreCase));
     }
 
     private Dictionary<string, string> BuildPreviewPlaceholders(AdminPushTopicDefinition topic)

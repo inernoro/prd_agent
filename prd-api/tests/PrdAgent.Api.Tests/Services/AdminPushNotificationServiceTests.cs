@@ -210,6 +210,68 @@ public sealed class AdminPushNotificationServiceTests
     }
 
     [Fact]
+    public async Task DispatchPendingAsync_DoesNotPushDefectReminderNotifications()
+    {
+        var testDb = await AdminPushTestDatabase.TryCreateAsync();
+        if (testDb == null) return;
+
+        try
+        {
+            var http = new RecordingHttpClientFactory(HttpStatusCode.OK);
+            var service = CreateService(testDb.Context, http);
+
+            await testDb.Context.AdminPushSubscriptions.InsertOneAsync(new AdminPushSubscription
+            {
+                UserId = "u1",
+                TopicKey = "defect-management",
+                Enabled = true,
+                ChannelType = "url",
+                Method = "GET",
+                UrlTemplate = "https://example.com/push/{{title}}/{{message}}",
+            });
+            await testDb.Context.AdminNotifications.InsertManyAsync(
+            [
+                new AdminNotification
+                {
+                    Id = "n1",
+                    Key = "defect-submitted:n1",
+                    Title = "收到新缺陷：DEF-2026-0106",
+                    Message = "用户提交了带截图的新缺陷",
+                    Source = "defect-agent",
+                    Status = "open",
+                    TargetUserId = "u1",
+                    CreatedAt = DateTime.UtcNow,
+                },
+                new AdminNotification
+                {
+                    Id = "n2",
+                    Key = "defect-escalation:n2",
+                    Title = "缺陷催办：DEF-2026-0082",
+                    Message = "缺陷「产品方案文档中截图这里实际上是有个图片的，但是在这里不显示」已超时 2185 小时未处理，请尽快跟进",
+                    Source = "defect-agent",
+                    Status = "open",
+                    TargetUserId = "u1",
+                    CreatedAt = DateTime.UtcNow.AddSeconds(1),
+                },
+            ]);
+
+            await service.DispatchPendingAsync(CancellationToken.None);
+
+            var request = Assert.Single(http.Requests);
+            Assert.Contains("DEF-2026-0106", WebUtility.UrlDecode(request.Uri.AbsoluteUri), StringComparison.Ordinal);
+            Assert.DoesNotContain("DEF-2026-0082", WebUtility.UrlDecode(request.Uri.AbsoluteUri), StringComparison.Ordinal);
+
+            var logs = await testDb.Context.AdminPushDeliveryLogs.Find(x => true).ToListAsync();
+            Assert.Single(logs);
+            Assert.Equal("n1", logs[0].NotificationId);
+        }
+        finally
+        {
+            await testDb.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task DispatchPendingAsync_RoutesUserVoiceAndApiAlertsToDedicatedTopics()
     {
         var testDb = await AdminPushTestDatabase.TryCreateAsync();
