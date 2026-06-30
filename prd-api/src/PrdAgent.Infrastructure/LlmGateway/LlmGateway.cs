@@ -1397,6 +1397,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private IGatewayAdapter? GetAdapterForResolution(GatewayModelResolution resolution)
         => GetAdapter(string.IsNullOrWhiteSpace(resolution.Protocol) ? resolution.PlatformType : resolution.Protocol);
 
+    // raw 路径用 ModelResolutionResult（与 send/stream 的 GatewayModelResolution 不同类型，两者都有
+    // Protocol/PlatformType）。同样按解析 Protocol 选 adapter，Protocol 空回落 PlatformType。
+    private IGatewayAdapter? GetAdapterForResolution(ModelResolutionResult resolution)
+        => GetAdapter(string.IsNullOrWhiteSpace(resolution.Protocol) ? resolution.PlatformType : resolution.Protocol);
+
     private IGatewayAdapter? GetAdapter(string? platformType)
     {
         if (string.IsNullOrWhiteSpace(platformType))
