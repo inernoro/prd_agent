@@ -18,6 +18,7 @@ import { createProjectComposeRouter } from './routes/project-compose.js';
 import { createProjectMigrationRouter } from './routes/project-migration.js';
 import { createProjectStorageRouter } from './routes/project-storage.js';
 import { createCacheRouter } from './routes/cache.js';
+import { createScheduledJobsRouter } from './routes/scheduled-jobs.js';
 import { createReportsRouter, createPublicReportShareRouter } from './routes/reports.js';
 import { createPeerSyncRouter, createPeerSyncAdminRouter } from './routes/peer-sync.js';
 import { createSnapshotsRouter } from './routes/snapshots.js';
@@ -36,6 +37,7 @@ import { createGithubWebhookRouter } from './routes/github-webhook.js';
 import { GitHubAppClient } from './services/github-app-client.js';
 import { CheckRunRunner } from './services/check-run-runner.js';
 import { resolveGitAuthEnv } from './services/git-auth-env.js';
+import { maskBranchExtraProfilesEnv } from './services/secret-masker.js';
 import { createAuthRouter } from './routes/auth.js';
 import { createAuthLocalRouter } from './routes/auth-local.js';
 import { createWorkspacesRouter } from './routes/workspaces.js';
@@ -74,6 +76,7 @@ import type { ServerEventLogSink, ServerEventCategory, ServerEventSeverity } fro
 import type { BranchOperationCoordinator } from './services/branch-operation-coordinator.js';
 import { computeBundleFreshness } from './services/bundle-freshness.js';
 import { readBundledCdsCliVersion } from './services/cdscli-version.js';
+import { ScheduledJobService } from './services/scheduled-job-service.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -926,6 +929,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/branches\/(.+)\/container-logs$/, '查看容器日志'],
     [/^POST \/branches\/(.+)\/container-env$/, '查看容器环境变量'],
     [/^POST \/branches\/(.+)\/container-exec$/, '容器内执行命令'],
+    [/^GET \/branches\/(.+)\/extra-services$/, '查看分支额外服务'],
+    [/^PUT \/branches\/(.+)\/extra-services$/, '设置分支额外服务'],
     [/^GET \/branches\/(.+)\/git-log$/, '查看 Git 提交历史'],
     [/^PUT \/env\/(.+)$/, '设置环境变量'],
     [/^DELETE \/env\/(.+)$/, '删除环境变量'],
@@ -1222,6 +1227,12 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
 
 export function createServer(deps: ServerDeps): express.Express {
   const app = express();
+  const scheduledJobService = new ScheduledJobService({
+    stateService: deps.stateService,
+    shell: deps.shell,
+    config: { masterPort: deps.config.masterPort, repoRoot: deps.config.repoRoot, dockerNetwork: deps.config.dockerNetwork },
+  });
+  scheduledJobService.start();
   app.set('etag', false);            // Disable ETag — prevents 304 on API polling (CDS is a dev tool, caching is misleading)
   // `/_cds/api/*` is the control-plane passthrough path used by preview
   // pages and the dashboard when `/api/*` might be claimed by a branch app.
@@ -1342,7 +1353,7 @@ export function createServer(deps: ServerDeps): express.Express {
     // The React catch-all owns all non-API dashboard paths, so a wildcard
     // handler is enough to prove deep links can reach the SPA shell.
     const registeredPaths = collectRegisteredPaths(app);
-    const expectedSpaPaths = ['/project-list', '/branch-list', '/cds-settings'];
+    const expectedSpaPaths = ['/project-list', '/branch-list', '/cds-settings', '/task-schedule'];
     const missingRoutes = expectedSpaPaths.filter((p) => {
       // Either an exact match, or a wildcard ('*') is registered (the SPA fallback)
       return !registeredPaths.has(p) && !registeredPaths.has('*');
@@ -2698,7 +2709,11 @@ export function createServer(deps: ServerDeps): express.Express {
     // call (otherwise tab B would still show the old state until reload).
     const data = JSON.stringify({
       seq: ++stateSeq,
-      branches: Object.values(state.branches),
+      // Redact branch-local extra-service env before broadcasting (Codex P1 "Redact extraProfiles
+      // before state-stream broadcasts"): branch list / SSE paths mask via branchForView, but this
+      // full-state broadcaster serialized raw branches, so any /api/state-stream subscriber could
+      // receive extraProfiles.env secrets after a save. Route through the shared SSOT masker.
+      branches: Object.values(state.branches).map(maskBranchExtraProfilesEnv),
       defaultBranch: state.defaultBranch,
       // Cluster state — frontend uses these to update header + branch
       // placement + cluster modal without needing another /api/config call.
@@ -3236,6 +3251,11 @@ export function createServer(deps: ServerDeps): express.Express {
   // Mounted at /api so the nested /projects/:id/pending-import path works
   // alongside the rest of the projects router.
   app.use('/api', createPendingImportRouter({ stateService: deps.stateService }));
+  app.use('/api', createScheduledJobsRouter({
+    stateService: deps.stateService,
+    scheduledJobService,
+    assertProjectAccess: assertProjectAccess as any,
+  }));
 
   // 被动授权 — agent 免密发起授权申请 + 用户右下角一键批准签发授权密钥。
   // 注意 发起/轮询两个端点的 public 放行在上面的全局认证中间件里(搜 access-requests)。

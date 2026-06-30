@@ -100,6 +100,21 @@ public class User
     /// <summary>邮箱地址（用于教程邮件等通知场景）</summary>
     public string? Email { get; set; }
 
+    /// <summary>米多星球 SSO 绑定主体类型（mobile / wework_userid / employeeNo）</summary>
+    public string? MiduoSsoSubjectType { get; set; }
+
+    /// <summary>米多星球 SSO 绑定主体哈希（归一化后加盐 SHA-256，不保存手机号明文）</summary>
+    public string? MiduoSsoSubjectHash { get; set; }
+
+    /// <summary>米多星球 SSO 绑定主体脱敏展示值</summary>
+    public string? MiduoSsoSubjectMasked { get; set; }
+
+    /// <summary>米多星球 SSO 返回姓名快照，仅用于排查，不参与登录匹配</summary>
+    public string? MiduoSsoDisplayNameSnapshot { get; set; }
+
+    /// <summary>米多星球 SSO 绑定时间</summary>
+    public DateTime? MiduoSsoBoundAt { get; set; }
+
     /// <summary>邮箱是否已验证</summary>
     public bool EmailVerified { get; set; }
 

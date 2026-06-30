@@ -575,6 +575,22 @@ export interface BranchEntry {
    */
   profileOverrides?: Record<string, BuildProfileOverride>;
   /**
+   * 分支级「临时额外服务」(branch-local extra services) —— 2026-06-29。
+   *
+   * 设计目标(用户要求):项目级 build profiles 是**稳定底座**(改它走 dashboard 审批、影响全体);
+   * 而**单条分支**可以在底座之上**临时追加自己的服务/容器**(比如把某个模块拆成独立服务做实验),
+   * 这些额外服务:
+   *   - 只在**这条分支**部署,跑在分支专属网(cds-br-<id>)里,**不影响项目、不影响别的分支**;
+   *   - **不进项目 profiles、不需要全局审批**;
+   *   - 随分支生命周期走 —— **删分支即消失**(本字段挂在 BranchEntry 上,删分支连带清掉;
+   *     额外容器由分支 teardown 一并 rm,分支网由 removeBranchNetwork 清理)。
+   *
+   * 兼容性:**纯增量、可选**。未声明(absent/空)的分支 = 与现状完全一致(老行为零回归)。
+   * 合并规则见 `mergeBranchProfiles`:额外服务只能 ADD 新 id;与项目 profile 撞 id 时**以项目为准**
+   * (保护底座,要按分支改项目服务请用 profileOverrides,不是这里)。
+   */
+  extraProfiles?: BuildProfile[];
+  /**
    * GitHub Checks integration — populated when the branch was
    * auto-created by a webhook push or the user linked a repo to the
    * owning project. Used to post check-run status back to GitHub
@@ -690,10 +706,10 @@ export interface BranchEntry {
   /** 最近一次成功部署完成的 ISO 时间戳。 */
   lastDeployAt?: string;
   /**
-   * 2026-06-21：本轮 deploy/build 真正开始执行的 ISO 时间戳。
-   * 在 status 切到 'building' 的那一刻打戳（branches.ts 两处部署起点）。
+   * 2026-06-21：本轮 deploy/build/restart 真正开始执行的 ISO 时间戳。
+   * 在 status 切到 'building' 或 'restarting' 的那一刻打戳（部署、手动重启、预览自动唤醒）。
    * 用途：预览等待页 `/_cds/waiting-status` 的"已等待 / 预计还需"必须以
-   * **本轮构建开始**为锚点。在途构建的 op-log 直到 finalize 才落库，期间
+   * **本轮构建/重启开始**为锚点。在途构建的 op-log 直到 finalize 才落库，期间
    * getLogs() 只有上一轮已完成的部署 → 若以历史 op-log 兜底会算成"几小时/几天"
    * 误判 overdue。本字段是唯一可靠的在途构建起点（修复 PR #865 Codex P2
    * 「Use the active redeploy start time for waiting ETAs」）。
@@ -1081,6 +1097,10 @@ export interface CdsState {
   customEnv: CustomEnvStore;
   /** CDS-managed infrastructure services (databases, caches, etc.) */
   infraServices: InfraService[];
+  /** Project-scoped scheduled jobs owned by CDS. */
+  scheduledJobs?: ScheduledJob[];
+  /** Append-only scheduled job execution history. */
+  scheduledJobRuns?: ScheduledJobRun[];
   /** Mirror acceleration enabled (npm/docker registry mirrors for faster builds in China) */
   mirrorEnabled?: boolean;
   /** Tab title override enabled (updates browser tab title with tag or branch short name) */
@@ -1360,6 +1380,70 @@ export interface CdsState {
   peerNodes?: PeerNodeRecord[];
   /** WS3：待用的一次性配对码（明文不存，只存 hash），见 PeerPairingCode。 */
   peerPairingCodes?: PeerPairingCode[];
+}
+
+export type ScheduledJobSchedule =
+  | { type: 'manual'; timezone?: string }
+  | { type: 'interval'; intervalMinutes: number; timezone?: string }
+  | { type: 'daily'; timeOfDay: string; timezone?: string };
+
+export type ScheduledJobTarget =
+  | {
+      type: 'http';
+      method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+      url: string;
+      headers?: Record<string, string>;
+      body?: string;
+    }
+  | {
+      type: 'command';
+      command: string;
+      cwd?: string;
+    };
+
+export type ScheduledJobAction = ScheduledJobTarget & {
+  id: string;
+  name?: string;
+};
+
+export interface ScheduledJob {
+  id: string;
+  projectId: string;
+  name: string;
+  description?: string;
+  enabled: boolean;
+  schedule: ScheduledJobSchedule;
+  /** Legacy single target kept for old state/API callers. New code should use actions. */
+  target?: ScheduledJobTarget;
+  actions?: ScheduledJobAction[];
+  timeoutSeconds: number;
+  retryCount: number;
+  concurrencyPolicy: 'skip';
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: string;
+  lastRunAt?: string;
+  lastRunStatus?: ScheduledJobRunStatus;
+  lastRunId?: string;
+  nextRunAt?: string | null;
+}
+
+export type ScheduledJobRunStatus = 'queued' | 'running' | 'success' | 'failed' | 'skipped';
+
+export interface ScheduledJobRun {
+  id: string;
+  jobId: string;
+  projectId: string;
+  trigger: 'schedule' | 'manual';
+  status: ScheduledJobRunStatus;
+  queuedAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  durationMs?: number;
+  exitCode?: number;
+  httpStatus?: number;
+  log?: string;
+  error?: string;
 }
 
 /**

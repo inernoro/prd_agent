@@ -186,6 +186,54 @@ describe('ForwarderRoutePublisher', () => {
     expect(defaultRoute.upstreamPort).toBe(41100);
   });
 
+  it('分支级额外服务的 pathPrefixes 也发布到 forwarder（Codex P2「Publish extra-service path prefixes to the forwarder」）', () => {
+    ensureProject('demo', 'demo');
+    // 分支有一个项目 web 服务 + 一个分支级额外服务 extra-api（仅存在于 branch.extraProfiles，不是项目 profile）。
+    addMultiProfileBranch({
+      projectId: 'demo',
+      branch: 'main',
+      services: { web: 41200, 'extra-api': 41201 },
+    });
+    state.addBuildProfile({ id: 'web', name: 'web', projectId: 'demo' } as Parameters<typeof state.addBuildProfile>[0]);
+    // extra-api 只在分支额外服务里声明 pathPrefixes ['/api/']，不进项目 profiles。
+    state.setBranchExtraProfiles('demo-main', [
+      { id: 'extra-api', name: 'extra-api', dockerImage: 'nginx:alpine', workDir: '', command: '', containerPort: 8080, projectId: 'demo', pathPrefixes: ['/api/'] } as any,
+    ]);
+
+    publisher = new ForwarderRoutePublisher({ state, outputPath: outFile, rootDomains: ['miduo.org'] });
+    publisher.publishNow();
+    const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+
+    // /api/* 必须路由到额外服务端口（此前因只取项目 profiles，分支级 prefix 发不出来）。
+    const apiRoute = data.find((r: { pathPrefix?: string }) => r.pathPrefix === '/api/');
+    expect(apiRoute).toBeDefined();
+    expect(apiRoute.upstreamPort).toBe(41201);
+  });
+
+  it('profileOverrides 配的 pathPrefixes 也发布到 forwarder（Codex P2「Resolve overrides before routing」mirror）', () => {
+    ensureProject('demo', 'demo');
+    addMultiProfileBranch({
+      projectId: 'demo',
+      branch: 'main',
+      services: { web: 41300, 'extra-api': 41301 },
+    });
+    state.addBuildProfile({ id: 'web', name: 'web', projectId: 'demo' } as Parameters<typeof state.addBuildProfile>[0]);
+    // extra-api declares NO pathPrefixes itself; the prefix is supplied via a profile override (only
+    // resolveEffectiveProfile merges it, not getEffectiveProfilesForBranch).
+    state.setBranchExtraProfiles('demo-main', [
+      { id: 'extra-api', name: 'extra-api', dockerImage: 'nginx:alpine', workDir: '', command: '', containerPort: 8080, projectId: 'demo' } as any,
+    ]);
+    state.setBranchProfileOverride('demo-main', 'extra-api', { pathPrefixes: ['/api/'] } as any);
+
+    publisher = new ForwarderRoutePublisher({ state, outputPath: outFile, rootDomains: ['miduo.org'] });
+    publisher.publishNow();
+    const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+
+    const apiRoute = data.find((r: { pathPrefix?: string }) => r.pathPrefix === '/api/');
+    expect(apiRoute).toBeDefined();
+    expect(apiRoute.upstreamPort).toBe(41301);
+  });
+
   it('subdomainAliases 每个生成额外路由记录', () => {
     ensureProject('demo', 'demo');
     addRunningBranch({

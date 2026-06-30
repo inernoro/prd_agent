@@ -1288,18 +1288,30 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
                 f"或检查 cds/src/routes/branches.ts",
                 code=3, extra={"branch": b})
             return
-        # 走到这里说明 CDS 没这条分支，落到 fallback（api_failed 时上面 warn 过了，
-        # 不再打 "没找到分支" 的 info 避免双重消息）
+        # 走到这里说明 CDS API 正常返回，但没有当前分支。此时不能继续给本地
+        # fallback URL：它只是公式推算，不代表 CDS state / public proxy 真有
+        # 这条 preview route。之前这里会输出一个格式正确但不可达的地址，导致
+        # PR 验收拿到坏链接。只有 API 失败或没有认证时才允许 fallback。
         if not api_failed:
-            print(f"[info] /api/branches 没找到 git 分支 '{branch}'，回退本地 v3 推算",
-                  file=sys.stderr)
+            raw_same_branch = [b for b in branches_list if b.get("branch") == branch]
+            die(f"/api/branches 没找到当前 git 分支 '{branch}' 的 CDS 分支记录，"
+                f"无法确认预览已发布；拒绝本地 v3 fallback。请先创建/部署 CDS 分支，"
+                f"或检查 GitHub webhook / CDS state 是否把该分支清掉。",
+                code=4, extra={
+                    "branch": branch,
+                    "projectHints": project_slug_hints,
+                    "sameBranchCount": len(raw_same_branch),
+                    "sameBranchMatches": raw_same_branch,
+                })
+            return
     elif cds_host_set:
         # CDS_HOST 设了但没 auth — 给用户明确提示，否则会困惑"为啥不走 API"
         print(f"[warn] CDS_HOST 已设但缺 AI_ACCESS_KEY / CDS_PROJECT_KEY，"
               f"跳过 API 走本地 v3 推算（可能与后端 previewSlug 不一致）",
               file=sys.stderr)
 
-    # Step 2: 本地 v3 公式（fallback）— root 仍走 _preview_root_from_host 不写死 miduo.org
+    # Step 2: 本地 v3 公式（fallback）— 仅用于无认证或 API 故障场景；root 仍走
+    # _preview_root_from_host 不写死 miduo.org
     slug = _compute_preview_slug(branch, fallback_project_slug)
     url = f"https://{slug}.{root}/"
     if _HUMAN:

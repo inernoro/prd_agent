@@ -8,6 +8,7 @@ import { buildWidgetScript } from '../widget-script.js';
 import { computePreviewSlug, previewProjectSlugCandidates } from './preview-slug.js';
 import { classifyDeployRuntime } from './deploy-runtime.js';
 import { computeWaitTiming } from './wait-timing.js';
+import { resolveEffectiveProfile } from './container.js';
 import type { DeployDurationMode } from '../types.js';
 import {
   classifyHttpRequestKind,
@@ -1042,7 +1043,10 @@ export class ProxyService {
     const services = branch ? Object.values(branch.services || {}) : [];
     const waitingService = waitingProfileId && branch ? branch.services?.[waitingProfileId] : undefined;
     const ready = Boolean(branch && branch.status === 'running' && (!waitingProfileId || waitingService?.status === 'running'));
-    const loading = Boolean(branch && (branch.status === 'building' || branch.status === 'starting' || branch.status === 'restarting' || waitingService?.status === 'building' || waitingService?.status === 'starting' || waitingService?.status === 'restarting'));
+    // 极速版「等待 CI 镜像」也算 loading：分支生命周期 status 仍是 idle（容器没起），但
+    // CI 完成后 CDS 会自动拉取部署 —— 等待页必须把它当加载态，否则 poll 会因 loading===false
+    // 连续 3 拍后把访客 reload 到「未运行 / 请手动重新部署」诊断页（其实根本不用手动）。
+    const loading = Boolean(branch && (branch.status === 'building' || branch.status === 'starting' || branch.status === 'restarting' || branch.ciImageStatus === 'waiting' || waitingService?.status === 'building' || waitingService?.status === 'starting' || waitingService?.status === 'restarting'));
     const displayBranch = this.displayBranchName(previewSlug, branch);
 
     let timing: (ReturnType<typeof computeWaitTiming> & { mode: DeployDurationMode }) | null = null;
@@ -1096,6 +1100,20 @@ export class ProxyService {
   private failureCopyForBranch(branch: BranchEntry): { heading: string; description: string; detail?: string } | null {
     const status = String(branch.status || '');
     if (this.isRecoverablePreviewStatus(status) || status === 'running') return null;
+    // 极速版「等待 CI 镜像」不是失败态：push 后 CDS 在等 GitHub Actions 把该 commit 的预构建
+    // 镜像推到 ghcr，完成后会自动拉取部署。此窗口 status 仍是 idle，但绝不能落到下面的
+    // 「未运行 / 请手动重新部署」诊断页（误导用户去手动操作）。返回 null → 走 serveStartingPageV2
+    // 的等待页（「预览环境准备中 · 极速版正在拉取分支」+ 自动刷新）。
+    if (branch.ciImageStatus === 'waiting') return null;
+    // 极速版 CI 构建失败（conclusion 非 success / 看门狗等待超时）：这才是需要人工介入的终态，
+    // 给出明确的 CI 归因 + 下一步（切回源码编译或重跑 CI），而不是泛化的「未运行」。
+    if (branch.ciImageStatus === 'failed') {
+      return {
+        heading: '极速版镜像未就绪',
+        description: '该分支为极速版（CI 预构建镜像）模式，但本次 commit 的镜像构建未成功或等待超时，因此没有可用的运行环境。可在分支详情切回源码编译，或重跑 GitHub Actions 构建后重新部署。',
+        detail: branch.ciImageError || branch.errorMessage || branch.lastStopReason,
+      };
+    }
     if (status === 'idle' || status === 'stopping') {
       return {
         heading: '分支当前未运行',
@@ -1503,7 +1521,10 @@ void main(){
         }).join('')
       : `<div class="svc"><span class="svc-dot" style="--svc-color:#6b7280">●</span><span>服务尚未创建</span></div>`;
 
-    const branchLabel = stageLabel(branchStatus);
+    // 极速版「等待 CI 镜像」：status 仍是 idle，但这是会自动完成的加载态（CI 构建完成后
+    // CDS 自动拉取部署），必须开自动刷新、用「准备中」文案，绝不能显示「未运行 / 手动重部署」。
+    const ciWaiting = branch.ciImageStatus === 'waiting';
+    const branchLabel = ciWaiting ? '准备中' : stageLabel(branchStatus);
     // 构建模式（极速版 = CI 预构建镜像直接部署 / 源码 = 拉代码热加载编译）+ 分支/PR 直达链接，
     // 让等待页一眼知道「这是哪种构建、对应哪个分支与 PR」，不必猜。
     const { mode: buildMode } = this.resolveWaitTimingMode(branch, waitingProfileId);
@@ -1517,15 +1538,19 @@ void main(){
     const safeBranchPanelUrl = this.escapeHtml(branchPanelUrl);
     const safePrUrl = this.escapeHtml(prUrl);
     const safePrLabel = this.escapeHtml(prNum ? `PR #${prNum}` : 'PR');
-    const shouldAutoRefresh = branchStatus === 'building' || branchStatus === 'starting' || branchStatus === 'restarting';
-    const heading = branchStatus === 'stopped' || branchStatus === 'idle'
+    const shouldAutoRefresh = ciWaiting || branchStatus === 'building' || branchStatus === 'starting' || branchStatus === 'restarting';
+    const heading = ciWaiting
+        ? '预览环境准备中'
+      : branchStatus === 'stopped' || branchStatus === 'idle'
         ? '分支当前未运行'
       : branch.status === 'restarting'
         ? '分支环境正在热重启'
         : branch.status === 'building'
           ? '分支环境正在构建'
           : '分支正在刷新中';
-    const subheading = branchStatus === 'stopped' || branchStatus === 'idle'
+    const subheading = ciWaiting
+        ? '极速版正在拉取分支镜像，CI 构建完成后会自动部署，无需手动操作，请稍候。'
+      : branchStatus === 'stopped' || branchStatus === 'idle'
         ? '预览访问不会自动重新部署。请回到 CDS 控制台确认日志后手动重新部署。'
       : waitingProfileId
         ? `CDS 正在等待服务 ${safeWaitingProfile} 完成启动，稳定后会自动切换到真实页面。`
@@ -1755,7 +1780,7 @@ void main(){
 }());
 ${shouldAutoRefresh ? `;(function(){
   var statusUrl='/_cds/waiting-status${waitingProfileId ? `?profile=${encodeURIComponent(waitingProfileId)}` : ''}';
-  var labels={building:'构建中',starting:'启动中',restarting:'重启中',running:'已就绪',error:'失败',stopping:'停止中',stopped:'已停止',idle:'待命'};
+  var labels={building:'构建中',starting:'启动中',restarting:'重启中',running:'已就绪',error:'失败',stopping:'停止中',stopped:'已停止',idle:'准备中'};
   var colors={running:'#f8fafc',error:'#fca5a5',building:'#dbe4ee',starting:'#dbe4ee',restarting:'#dbe4ee',stopping:'#6b7280',stopped:'#6b7280',idle:'#6b7280'};
   var waitingProfile=${JSON.stringify(waitingProfileId || '')};
   var tips=[
@@ -2204,8 +2229,20 @@ ${shouldAutoRefresh ? `;(function(){
     const url = req.url || '/';
     const profileIds = Object.keys(branch.services);
 
-    // Phase 1: Check explicit pathPrefixes on build profiles (config-driven routing)
-    const profiles = this.stateService.getBuildProfiles();
+    // Phase 1: Check explicit pathPrefixes on build profiles (config-driven routing).
+    // Use the branch's EFFECTIVE profiles (project profiles + branch-local extraProfiles), not the
+    // global getBuildProfiles() — otherwise a branch-local extra service's pathPrefixes (now persisted
+    // by PUT /extra-services) is invisible to the proxy and its traffic falls through to convention/
+    // default routing, leaving the extra service unreachable (Codex P2 "Route branch-local path
+    // prefixes in the proxy"). Effective-profiles is also project-scoped, avoiding cross-project id mixups.
+    // Resolve each effective profile against the branch so profileOverrides apply (Codex P2 "Resolve
+    // overrides before routing path prefixes"): pathPrefixes supplied via PUT /profile-overrides are only
+    // merged by resolveEffectiveProfile, not by getEffectiveProfilesForBranch. Without this, an extra
+    // service can be running while requests for its override prefix fall through to convention/default
+    // routing (mirrored in forwarder-route-publisher.ts, which uses the same resolution).
+    const profiles = this.stateService
+      .getEffectiveProfilesForBranch(branch)
+      .map(p => resolveEffectiveProfile(p, branch));
     // Sort: longer prefixes first (most specific match wins)
     const profilesWithRoutes = profiles
       .filter(p => p.pathPrefixes && p.pathPrefixes.length > 0 && profileIds.includes(p.id))

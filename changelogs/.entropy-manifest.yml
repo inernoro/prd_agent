@@ -378,3 +378,8 @@ processed:
   - 2026-06-21_cds-ops-fixes-2.md
   - 2026-06-21_cds-ops-fixes.md
   - 2026-06-21_cds-perf-observability.md
+  - 2026-06-28_cds-express-ci-waiting-page.md
+  - 2026-06-28_entropy-cleanup.md
+  - 2026-06-29_cds-branch-local-extra-services.md
+  - 2026-06-29_cds-branch-network-isolation.md
+  - 2026-06-29_cds-orphan-running-deploy-stuck.md

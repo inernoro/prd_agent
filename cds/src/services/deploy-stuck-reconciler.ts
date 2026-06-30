@@ -199,10 +199,10 @@ function decideBranchFinalization(
   // readyMs >= 0，会把一个真正在 starting 的新部署用上一轮的就绪戳误收敛。无锚点时
   // 落到下方硬超时兜底，不走证据路径。
   // **restarting 排除在证据路径外**（Codex P2「Do not finalize restarts from old deploy
-  // timestamps」）：手动重启 / 自动唤醒把 status 置 restarting 时**不刷新** lastDeployStartedAt，
-  // 上一轮部署的 lastReadyAt 仍 >= 上一轮的 lastDeployStartedAt，会把仍在重启中的分支用旧就绪
-  // 戳误翻成 running。restarting 真完成时 service.status 变 running 由聚合上浮；真卡死则由硬超时
-  // （restarting 不豁免）兜底。两条都不依赖会骗人的旧时间戳。
+  // timestamps」）：历史状态和旧版本可能保留上一轮部署的 lastDeployStartedAt，且
+  // lastReadyAt 也可能来自上一轮。不能用 ready>=start 把仍在重启中的分支误翻成 running。
+  // restarting 真完成时 service.status 变 running 由聚合上浮；真卡死则由硬超时（restarting 不豁免）
+  // 兜底。两条都不依赖会骗人的旧就绪戳。
   if ((status === 'starting' || status === 'building') && startMs > 0 && readyMs >= startMs) {
     if (stoppedMs >= readyMs) {
       return {
@@ -421,7 +421,7 @@ export function reconcileStuckDeployStates(
         && startMs > 0 && readyMs >= startMs
       ) {
         // restarting 同分支级一并排除（Codex P2「Do not finalize restarts from old deploy
-        // timestamps」）：重启不刷新 lastDeployStartedAt，旧就绪戳会把仍在重启的服务误翻 running。
+        // timestamps」）：旧就绪戳会把仍在重启的服务误翻 running。
         // 起来过 ⇒ running（除非随后被停，则 stopped）。仅单服务：branch.lastReadyAt 无歧义指向它。
         const stopped = stoppedMs >= readyMs;
         nextStatus = stopped ? 'stopped' : 'running';
