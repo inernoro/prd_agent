@@ -2698,12 +2698,20 @@ export class ContainerService {
    * 关联,branch 自带 projectId 不会跨项目串数据。
    */
   async discoverAppContainers(): Promise<Map<string, { running: boolean; containerName: string; branchId: string; profileId: string; network?: string }>> {
+    return (await this.discoverAppContainersWithStatus()).containers;
+  }
+
+  async discoverAppContainersWithStatus(): Promise<{
+    ok: boolean;
+    containers: Map<string, { running: boolean; containerName: string; branchId: string; profileId: string; network?: string }>;
+  }> {
     const result = await this.shell.exec(
       `docker ps -a --filter "label=cds.managed=true" --filter "label=cds.type=app" --format '{{.Names}}|{{.State}}|{{.Labels}}'`,
     );
 
     const discovered = new Map<string, { running: boolean; containerName: string; branchId: string; profileId: string; network?: string }>();
-    if (result.exitCode !== 0 || !result.stdout.trim()) return discovered;
+    if (result.exitCode !== 0) return { ok: false, containers: discovered };
+    if (!result.stdout.trim()) return { ok: true, containers: discovered };
 
     for (const line of result.stdout.trim().split('\n')) {
       if (!line) continue;
@@ -2722,7 +2730,7 @@ export class ContainerService {
         });
       }
     }
-    return discovered;
+    return { ok: true, containers: discovered };
   }
 
   /** Check health of an infrastructure container */

@@ -9749,12 +9749,38 @@ export function createBranchRouter(deps: RouterDeps): Router {
       : trigger
         ? `CDS 内部触发(${trigger})删除分支`
         : `${actor} 请求删除分支`;
+    const branchOperationLease = beginBranchOperation(req, res, entry, {
+      kind: 'delete',
+      source: 'api.delete-branch',
+      reason: deleteReason,
+      sse: true,
+    });
+    if (branchOperationCoordinator && !branchOperationLease) return;
     const deleteStartedAt = nowIso();
-    entry.status = 'stopping';
-    entry.lastStoppedAt = deleteStartedAt;
-    entry.lastStopSource = trigger === 'webhook' ? 'system' : 'cds';
-    entry.lastStopReason = `删除分支流程已开始：${deleteReason}`;
-    stateService.save();
+    const previousDeleteIntent = {
+      status: entry.status,
+      lastStoppedAt: entry.lastStoppedAt,
+      lastStopSource: entry.lastStopSource,
+      lastStopReason: entry.lastStopReason,
+    };
+    try {
+      entry.status = 'stopping';
+      entry.lastStoppedAt = deleteStartedAt;
+      entry.lastStopSource = trigger === 'webhook' ? 'system' : 'cds';
+      entry.lastStopReason = `删除分支流程已开始：${deleteReason}`;
+      stateService.save();
+    } catch (err) {
+      entry.status = previousDeleteIntent.status;
+      entry.lastStoppedAt = previousDeleteIntent.lastStoppedAt;
+      entry.lastStopSource = previousDeleteIntent.lastStopSource;
+      entry.lastStopReason = previousDeleteIntent.lastStopReason;
+      completeBranchOperation(branchOperationLease, 'failed', (err as Error).message);
+      res.status(500).json({
+        ok: false,
+        error: `删除分支状态持久化失败: ${(err as Error).message}`,
+      });
+      return;
+    }
     try {
       stateService.appendActivityLog(entry.projectId, {
         type: 'stop',
@@ -9764,13 +9790,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
         note: entry.lastStopReason,
       });
     } catch { /* activity log is best-effort */ }
-    const branchOperationLease = beginBranchOperation(req, res, entry, {
-      kind: 'delete',
-      source: 'api.delete-branch',
-      reason: deleteReason,
-      sse: true,
-    });
-    if (branchOperationCoordinator && !branchOperationLease) return;
     const operationAuditFields = {
       operationKind: 'delete',
       operationTrigger: trigger === 'webhook' ? 'webhook' : 'manual',
