@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Api.Authentication;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Services;
 using PrdAgent.Api.Models;
@@ -216,6 +217,9 @@ public sealed class NotificationsController : ControllerBase
 
     private bool HasAdminNotificationEventPermission()
     {
+        if (string.Equals(User.FindFirst(AiAccessKeyAuthenticationHandler.ClaimTypeIsAiSuperAccess)?.Value, "1", StringComparison.Ordinal))
+            return true;
+
         var permissions = User.FindAll("permissions").Select(x => x.Value).ToHashSet(StringComparer.OrdinalIgnoreCase);
         return permissions.Contains(AdminPermissionCatalog.Super)
             || permissions.Contains(AdminPermissionCatalog.SettingsWrite)

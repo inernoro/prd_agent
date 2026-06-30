@@ -13,3 +13,4 @@
 | feat | prd-api | 管理员推送资源补充知识库对齐元数据和公开 SVG icon 端点 |
 | feat | prd-admin | 推送订阅资源清单展示关联知识库与模板信息 |
 | test | prd-api | 新增管理员通知事件到 Bark topic 路由和图片附件分发测试 |
+| fix | prd-api | 管理员通知事件入口允许 AI 超级访问密钥执行真实预览验证 |
