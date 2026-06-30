@@ -627,9 +627,9 @@ public class PeerSyncController : ControllerBase
         var store = await _db.DocumentStores.Find(s => s.Id == request.ItemId).FirstOrDefaultAsync(ct);
         if (store == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识库不存在"));
 
-        if (request.Enabled && (string.IsNullOrWhiteSpace(store.PeerSyncNodeId) || string.IsNullOrWhiteSpace(store.PeerSyncDirection)))
+        if (request.Enabled && (string.IsNullOrWhiteSpace(store.PeerSyncNodeId) || !IsUserConfirmedAutoDirection(store.PeerSyncDirection)))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
-                "请先手动同步一次（确定对端节点与方向）后，再开启后台自动同步"));
+                "请先手动选择发送或拉回方向后，再开启后台自动同步"));
 
         var interval = PeerSyncSchedule.ClampInterval(request.IntervalMinutes);
         await _db.DocumentStores.UpdateOneAsync(s => s.Id == request.ItemId,
@@ -719,6 +719,12 @@ public class PeerSyncController : ControllerBase
         if (string.IsNullOrWhiteSpace(body)) return null;
         try { return JsonSerializer.Deserialize<T>(body, JsonOpts); } catch { return null; }
     }
+
+    private static bool IsUserConfirmedAutoDirection(string? direction) => direction switch
+    {
+        "push" or "pull" or "both" or "align-remote" or "align-local" or "align-both" => true,
+        _ => false,
+    };
 
     // ── DTO ──
     public class HandshakePayload

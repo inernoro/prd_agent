@@ -5,6 +5,7 @@ import {
   statusText,
   syncRouteText,
 } from '../SyncCenterDialog';
+import documentStorePageSource from '../DocumentStorePage.tsx?raw';
 
 describe('SyncCenterDialog mental model', () => {
   it('treats received as an audit record, not a user sync direction', () => {
@@ -25,5 +26,13 @@ describe('SyncCenterDialog mental model', () => {
   it('uses user language for skipped and incoming records', () => {
     expect(statusText({ status: 'skipped', origin: 'outgoing', startedAt: new Date().toISOString() })).toBe('两边已一致');
     expect(statusText({ status: 'synced', origin: 'incoming', startedAt: new Date().toISOString() })).toBe('已接收对端推送');
+  });
+
+  it('keeps legacy sync management as a hidden compatibility route', () => {
+    expect(documentStorePageSource).toContain("type StoreTab = 'mine' | 'team' | 'favorites' | 'likes' | 'sync'");
+    expect(documentStorePageSource).toContain("const valid: StoreTab[] = ['mine', 'team', 'favorites', 'likes', 'sync']");
+    expect(documentStorePageSource).toContain('<SyncManagerPanel />');
+    expect(documentStorePageSource).toContain('onOpenLegacySyncPanel');
+    expect(documentStorePageSource).not.toContain("key: 'sync', label");
   });
 });

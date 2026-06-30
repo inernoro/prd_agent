@@ -116,6 +116,13 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
         var itemStartedAt = DateTime.UtcNow;
         var result = new PeerItemSyncResult();
         string? runId = null;
+        var created = 0;
+        var updated = 0;
+        var skipped = 0;
+        var deleted = 0;
+        var failed = 0;
+        var assetsRewritten = 0;
+        var assetRewriteFailed = 0;
         try
         {
             // 先落「进行中」运行台账，再开干 —— 这样另一个浏览器 tab / 同步中心轮询能看到 in-progress（动起来）。
@@ -128,13 +135,6 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
             var perItem = new List<string>();
             var itemOk = true;
             var pushOk = true;
-            var created = 0;
-            var updated = 0;
-            var skipped = 0;
-            var deleted = 0;
-            var failed = 0;
-            var assetsRewritten = 0;
-            var assetRewriteFailed = 0;
             if (direction is "push" or "both")
             {
                 await UpdateRunProgressAsync(runId, "准备导出", 0, 0, itemName, ct);
@@ -255,9 +255,12 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
         {
             _logger.LogWarning(ex, "[peer-sync] transfer item {ItemId} failed", itemId);
             await MarkPeerSyncAsync(resource.ResourceType, itemId, "error", direction, node, ex.Message, ct);
-            await FinishRunAsync(runId, PeerSyncRunStatus.Error, 0, 0, 0, 0, 1, 0, 0, ex.Message, itemStartedAt, ct);
+            var finalFailed = failed + 1;
+            await FinishRunAsync(runId, PeerSyncRunStatus.Error, created, updated, skipped, deleted, finalFailed, assetsRewritten, assetRewriteFailed, ex.Message, itemStartedAt, ct);
             result.Ok = false;
-            result.Failed = 1;
+            result.Created = created; result.Updated = updated; result.Skipped = skipped;
+            result.Deleted = deleted; result.Failed = finalFailed;
+            result.AssetsRewritten = assetsRewritten; result.AssetRewriteFailed = assetRewriteFailed;
             result.Message = ex.Message;
             return result;
         }
@@ -294,17 +297,18 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
         var now = DateTime.UtcNow;
         var update = Builders<DocumentStore>.Update
             .Set(s => s.PeerSyncStatus, status)
-            .Set(s => s.PeerSyncNodeId, node.RemoteNodeId)
-            .Set(s => s.PeerSyncNodeName, node.DisplayName)
-            .Set(s => s.PeerSyncNodeBaseUrl, node.BaseUrl)
             .Set(s => s.PeerSyncLastAt, now)
             .Set(s => s.PeerSyncLastResult, result);
         if (updateDirection)
-            update = update.Set(s => s.PeerSyncDirection, direction);
+            update = update
+                .Set(s => s.PeerSyncNodeId, node.RemoteNodeId)
+                .Set(s => s.PeerSyncNodeName, node.DisplayName)
+                .Set(s => s.PeerSyncNodeBaseUrl, node.BaseUrl)
+                .Set(s => s.PeerSyncDirection, direction);
         // 任何一次同步「完成」（不论手动还是自动）都顺带重置自动同步计时基准，
         // 否则手动同步一个已到期的库后，worker 会在约 1 分钟内又自动跑一遍（IsDue 只看 AutoLastAt，Bugbot）。
         // 仅在终态（非 syncing）回写，避免「进行中」就把计时往后推。
-        if (!string.Equals(status, "syncing", StringComparison.Ordinal))
+        if (updateDirection && !string.Equals(status, "syncing", StringComparison.Ordinal))
             update = update.Set(s => s.PeerSyncAutoLastAt, now);
 
         await _db.DocumentStores.UpdateOneAsync(s => s.Id == itemId, update, cancellationToken: ct);

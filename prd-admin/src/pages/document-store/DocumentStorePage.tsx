@@ -57,7 +57,7 @@ import { Button } from '@/components/design/Button';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { TeamScopeBar, type TeamScope } from '@/components/team/TeamScopeBar';
 import { TeamWebPagesSection } from '@/pages/document-store/TeamWebPagesSection';
-import { StoreSyncBadge } from './SyncManagerPanel';
+import { StoreSyncBadge, SyncManagerPanel } from './SyncManagerPanel';
 import { SendToPeerDialog } from '@/components/sync/SendToPeerDialog';
 import { SyncCenterDialog } from './SyncCenterDialog';
 import { listPeerSyncRuns } from '@/services/real/peerSync';
@@ -763,10 +763,11 @@ function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle, onClos
 }
 
 // ── 空间详情视图（文档列表 + 上传）──
-function StoreDetailView({ storeId, onBack, onOpenLibrary, initialEntryId }: {
+function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel, initialEntryId }: {
   storeId: string;
   onBack: () => void;
   onOpenLibrary: (storeId: string) => void;
+  onOpenLegacySyncPanel: () => void;
   /** 进入时直接打开的文档（从账号统计点击文档跳转而来）；组件按 storeId key 重挂载，挂载时消费一次 */
   initialEntryId?: string;
 }) {
@@ -1411,8 +1412,11 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, initialEntryId }: {
               {syncBusy ? <MapSpinner size={11} /> : <ArrowLeftRight size={11} />}
               {syncBusy ? '同步中…' : '同步'}
             </button>
-            {/* 旧版同步链接徽章：仅当本库已加入同步配对时显示，管理入口收敛到当前同步中心 */}
-            <StoreSyncBadge storeId={store.id} onManage={() => setShowSyncCenter(true)} />
+            {/* 旧版同步链接徽章：仅当本库已加入同步配对时显示，点击进入隐藏兼容管理面板。 */}
+            <StoreSyncBadge
+              storeId={store.id}
+              onManage={onOpenLegacySyncPanel}
+            />
             <Button variant="secondary" size="xs" onClick={() => setShowShareDialog(true)}>
               <Share2 size={13} /> 分享
             </Button>
@@ -1964,7 +1968,7 @@ function SubscribeDialog({ storeId, onClose, onCreated }: {
   );
 }
 
-type StoreTab = 'mine' | 'team' | 'favorites' | 'likes';
+type StoreTab = 'mine' | 'team' | 'favorites' | 'likes' | 'sync';
 
 type StoreSort = 'updated-desc' | 'created-desc' | 'name-asc' | 'docs-desc';
 const SORT_OPTIONS: { key: StoreSort; label: string }[] = [
@@ -1981,7 +1985,7 @@ export function DocumentStorePage() {
   const currentUserId = useAuthStore((s) => s.user?.userId ?? null);
   const [tab, setTab] = useState<StoreTab>(() => {
     const saved = sessionStorage.getItem('doc-store-tab') as StoreTab | null;
-    return saved === 'team' || saved === 'favorites' || saved === 'likes' ? saved : 'mine';
+    return saved === 'team' || saved === 'favorites' || saved === 'likes' || saved === 'sync' ? saved : 'mine';
   });
   const [stores, setStores] = useState<DocumentStoreWithPreview[]>([]);
   const [favorites, setFavorites] = useState<InteractionStoreCard[]>([]);
@@ -2012,7 +2016,7 @@ export function DocumentStorePage() {
   const location = useLocation();
   useEffect(() => {
     const t = new URLSearchParams(location.search).get('tab');
-    const valid: StoreTab[] = ['mine', 'team', 'favorites', 'likes'];
+    const valid: StoreTab[] = ['mine', 'team', 'favorites', 'likes', 'sync'];
     if (t && (valid as string[]).includes(t)) {
       setSelectedStoreId(null);
       setTab(t as StoreTab);
@@ -2191,8 +2195,11 @@ export function DocumentStorePage() {
       loadStores('team', effectiveTeamId);
     } else if (tab === 'favorites') {
       loadFavorites();
-    } else {
+    } else if (tab === 'likes') {
       loadLikes();
+    } else {
+      ++listFetchSeq.current;
+      setLoading(false);
     }
   }, [tab, teamScope.teamId, loadStores, loadFavorites, loadLikes]);
 
@@ -2296,18 +2303,30 @@ export function DocumentStorePage() {
 
   // 空间详情视图（仅 mine 标签下可进入编辑视图）—— 早返回必须放在所有 hook 之后
   if (selectedStoreId) {
-    return <StoreDetailView storeId={selectedStoreId} key={selectedStoreId} initialEntryId={pendingEntryId ?? undefined} onBack={() => {
-      setSelectedStoreId(null);
-      setPendingEntryId(null);
-      // 按当前 tab 重新拉对应列表,避免从收藏/点赞返回时仍刷 stores
-      if (tab === 'mine') loadStores('mine', null);
-      else if (tab === 'team') {
-        if (teamScope.teamId) loadStores('team', teamScope.teamId);
-        else { ++listFetchSeq.current; setStores([]); setLoading(false); }
-      }
-      else if (tab === 'favorites') loadFavorites();
-      else if (tab === 'likes') loadLikes();
-    }} onOpenLibrary={(id) => navigate(`/library/${id}`)} />;
+    return <StoreDetailView
+      storeId={selectedStoreId}
+      key={selectedStoreId}
+      initialEntryId={pendingEntryId ?? undefined}
+      onBack={() => {
+        setSelectedStoreId(null);
+        setPendingEntryId(null);
+        // 按当前 tab 重新拉对应列表,避免从收藏/点赞返回时仍刷 stores
+        if (tab === 'mine') loadStores('mine', null);
+        else if (tab === 'team') {
+          if (teamScope.teamId) loadStores('team', teamScope.teamId);
+          else { ++listFetchSeq.current; setStores([]); setLoading(false); }
+        }
+        else if (tab === 'favorites') loadFavorites();
+        else if (tab === 'likes') loadLikes();
+        else setLoading(false);
+      }}
+      onOpenLibrary={(id) => navigate(`/library/${id}`)}
+      onOpenLegacySyncPanel={() => {
+        setSelectedStoreId(null);
+        setPendingEntryId(null);
+        setTab('sync');
+      }}
+    />;
   }
 
   // 统计概览（基于未筛选的原始列表，反映"我拥有/我看到的"全量）
@@ -2630,7 +2649,9 @@ export function DocumentStorePage() {
       </div>
 
       <div className="px-5 pb-6 w-full">
-        {loading ? (
+        {tab === 'sync' ? (
+          <SyncManagerPanel />
+        ) : loading ? (
           <MapSectionLoader text="加载中..." />
         ) : isFilteredOut ? (
           /* 筛选无结果 */
