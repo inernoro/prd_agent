@@ -3,6 +3,7 @@ import {
   buildNotificationPushDraftFromPreset,
   buildNotificationPushProfileDraftFromPreset,
   getSelectedNotificationPushPresetKey,
+  isSameNotificationPushChannel,
   sortNotificationPushTopicsByWorkflow,
 } from './NotificationSubscriptionsPanel';
 import type { AdminPushPresetDefinition } from '@/services/contracts/notifications';
@@ -76,6 +77,21 @@ describe('NotificationSubscriptionsPanel helpers', () => {
     expect(draft.method).toBe('GET');
     expect(draft.barkServerUrl).toBe('https://api.day.app');
     expect(getSelectedNotificationPushPresetKey(draft, presets)).toBe('bark-protocol');
+  });
+
+  it('treats identical override and default channel as the same channel', () => {
+    const defaultDraft = {
+      ...buildNotificationPushProfileDraftFromPreset(presets[0]),
+      barkKey: 'BARK_KEY',
+      barkGroup: 'MAP System-{{appname}}',
+    };
+    const overrideDraft = {
+      ...defaultDraft,
+      enabled: true,
+      useDefaultProfile: false,
+    };
+
+    expect(isSameNotificationPushChannel(overrideDraft, defaultDraft)).toBe(true);
   });
 
   it('sorts push topics by user workflow order', () => {

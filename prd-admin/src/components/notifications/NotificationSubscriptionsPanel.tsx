@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CheckCircle2, FlaskConical, Info, Save, Settings2, SlidersHorizontal, Wrench } from 'lucide-react';
+import { CheckCircle2, FlaskConical, Info, Save, Settings2, SlidersHorizontal } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import {
   getAdminPushSubscriptions,
@@ -126,6 +126,33 @@ export function getSelectedNotificationPushPresetKey(
   return matched?.key ?? 'custom';
 }
 
+function normalizeChannelValue(value: unknown) {
+  return String(value ?? '').trim();
+}
+
+export function isSameNotificationPushChannel(
+  a: UpdateAdminPushProfileRequest | UpdateAdminPushSubscriptionRequest,
+  b: UpdateAdminPushProfileRequest | UpdateAdminPushSubscriptionRequest
+) {
+  const keys: Array<keyof UpdateAdminPushProfileRequest> = [
+    'channelType',
+    'method',
+    'urlTemplate',
+    'bodyTemplate',
+    'contentType',
+    'barkKey',
+    'barkServerUrl',
+    'barkGroup',
+    'barkSound',
+    'barkLevel',
+    'barkIcon',
+    'barkImageTemplate',
+    'barkUrlTemplate',
+  ];
+  return keys.every((key) => normalizeChannelValue(a[key]) === normalizeChannelValue(b[key]))
+    && Boolean(a.barkCall) === Boolean(b.barkCall);
+}
+
 export function sortNotificationPushTopicsByWorkflow<T extends { key: string }>(items: T[]): T[] {
   const rank = new Map(TOPIC_WORKFLOW_ORDER.map((key, index) => [key, index]));
   return [...items].sort((a, b) => {
@@ -161,10 +188,14 @@ export function NotificationSubscriptionsPanel() {
       setPresets(res.data.presets ?? []);
       setResources(res.data.resources ?? []);
       setPlaceholders(res.data.placeholders ?? []);
-      setDefaultProfileDraft(toProfileDraft(res.data.defaultProfile));
+      const nextDefaultProfileDraft = toProfileDraft(res.data.defaultProfile);
+      setDefaultProfileDraft(nextDefaultProfileDraft);
       const next: DraftMap = {};
       for (const sub of res.data.subscriptions ?? []) {
-        next[sub.topicKey] = toDraft(sub);
+        const draft = toDraft(sub);
+        next[sub.topicKey] = draft.useDefaultProfile === false && isSameNotificationPushChannel(draft, nextDefaultProfileDraft)
+          ? { ...draft, useDefaultProfile: true }
+          : draft;
       }
       setDrafts(next);
     } else {
@@ -219,13 +250,14 @@ export function NotificationSubscriptionsPanel() {
     const saved: AdminPushSubscription[] = [];
     for (const topic of orderedTopics) {
       const baseDraft = drafts[topic.key] ?? (firstPreset ? buildNotificationPushDraftFromPreset(firstPreset, false) : DEFAULT_NOTIFICATION_PUSH_DRAFT);
-      const request = baseDraft.useDefaultProfile === false
-        ? baseDraft
-        : {
+      const shouldUseDefault = baseDraft.useDefaultProfile !== false || isSameNotificationPushChannel(baseDraft, defaultProfileDraft);
+      const request = shouldUseDefault
+        ? {
             ...defaultProfileDraft,
             enabled: baseDraft.enabled,
             useDefaultProfile: true,
-          };
+          }
+        : baseDraft;
       const res = await updateAdminPushSubscription(topic.key, request);
       if (!res.success) {
         setSelectedTopicKey(topic.key);
@@ -473,6 +505,26 @@ export function NotificationSubscriptionsPanel() {
     );
   }
 
+  const defaultChannelName = defaultProfileDraft.channelType === 'bark'
+    ? 'Bark'
+    : defaultProfileDraft.channelType === 'webhook'
+      ? 'Webhook'
+      : defaultProfileDraft.channelType === 'wechat-work'
+        ? '企业微信'
+        : defaultProfileDraft.channelType === 'feishu'
+          ? '飞书'
+          : defaultProfileDraft.channelType === 'dingtalk'
+            ? '钉钉'
+            : 'URL';
+  const defaultChannelConfigured = defaultProfileDraft.channelType === 'bark'
+    ? Boolean((defaultProfileDraft.barkKey || '').trim())
+    : Boolean((defaultProfileDraft.urlTemplate || '').trim());
+  const channelChips = [
+    { key: 'bark', label: 'Bark', configured: defaultProfileDraft.channelType === 'bark' && defaultChannelConfigured },
+    { key: 'webhook', label: 'Webhook', configured: defaultProfileDraft.channelType !== 'bark' && defaultChannelConfigured },
+    { key: 'wechat-work', label: '企业微信', configured: defaultProfileDraft.channelType === 'wechat-work' && defaultChannelConfigured },
+  ];
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <div
@@ -501,53 +553,72 @@ export function NotificationSubscriptionsPanel() {
         className="rounded-[14px] border px-4 py-3"
         style={{ borderColor: 'rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.045)' }}
       >
-        <div className="mb-3 flex items-center justify-between gap-2">
+        <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
               <Settings2 size={15} style={{ color: 'var(--accent-gold)' }} />
-              默认推送通道
+              推送通道
             </div>
-            <div className="mt-1 text-[12px]" style={{ color: 'var(--text-muted)' }}>
-              当前用户有效，接收范围默认共用这套 Bark、Webhook 或机器人配置。
+            <div className="mt-2 flex flex-wrap gap-2">
+              {channelChips.map((item) => (
+                <span
+                  key={item.key}
+                  className="rounded-full border px-2.5 py-1 text-[12px]"
+                  style={{
+                    borderColor: item.configured ? 'rgba(34,197,94,0.35)' : 'rgba(255,255,255,0.1)',
+                    background: item.configured ? 'rgba(34,197,94,0.12)' : 'rgba(255,255,255,0.045)',
+                    color: item.configured ? '#86efac' : 'var(--text-muted)',
+                  }}
+                >
+                  {item.label} · {item.configured ? '已配置' : '未配置'}
+                </span>
+              ))}
             </div>
           </div>
-          <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px]" style={{ background: 'rgba(129,140,248,0.16)', color: '#c7d2fe' }}>
-            默认
-          </span>
+          <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px]" style={{ background: 'rgba(129,140,248,0.16)', color: '#c7d2fe' }}>{defaultChannelName}</span>
         </div>
-        {renderChannelFields(defaultProfileDraft, (patch) => setDefaultProfileDraft((prev) => ({ ...prev, ...patch })))}
+        <details className="mt-3 rounded-[10px] border px-3 py-2" style={{ borderColor: 'rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.025)' }}>
+          <summary className="cursor-pointer text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+            配置默认推送通道
+          </summary>
+          <div className="mt-3">
+            {renderChannelFields(defaultProfileDraft, (patch) => setDefaultProfileDraft((prev) => ({ ...prev, ...patch })))}
+          </div>
+        </details>
       </section>
 
-      <div className="grid flex-1 min-h-0 gap-3 lg:grid-cols-[260px_minmax(0,1fr)]">
-        <aside
-          className="flex min-h-0 flex-col rounded-[14px] border"
-          style={{ borderColor: 'rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.035)' }}
-        >
-          <div className="shrink-0 border-b px-3 py-2.5" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5 text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                <SlidersHorizontal size={13} />
-                接收范围
-              </div>
-              <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{enabledCount}/{orderedTopics.length} 已选</div>
+      <section
+        className="flex min-h-0 flex-1 flex-col rounded-[14px] border"
+        style={{ borderColor: 'rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.035)' }}
+      >
+        <div className="shrink-0 border-b px-4 py-3" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              <SlidersHorizontal size={14} />
+              接收范围
             </div>
-            {overrideCount > 0 && (
-              <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                {overrideCount} 个单独配置
-              </div>
-            )}
+            <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+              {enabledCount}/{orderedTopics.length} 已选{overrideCount > 0 ? ` · ${overrideCount} 个单独配置` : ''}
+            </div>
           </div>
-          <div className="min-h-0 flex-1 space-y-1 overflow-auto p-2" style={{ overscrollBehavior: 'contain' }}>
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto p-3" style={{ overscrollBehavior: 'contain' }}>
+          <div className="space-y-1">
             {orderedTopics.map((topic) => {
               const draft = drafts[topic.key] ?? (firstPreset ? buildNotificationPushDraftFromPreset(firstPreset, false) : DEFAULT_NOTIFICATION_PUSH_DRAFT);
               const resource = resourcesByKey.get(topic.resourceKey);
               const selected = selectedTopic?.key === topic.key;
+              const statusText = draft.enabled
+                ? draft.useDefaultProfile === false
+                  ? `单独配置 ${draft.channelType === 'bark' ? 'Bark' : draft.channelType}`
+                  : `使用默认 ${defaultChannelName}`
+                : '关闭';
               return (
                 <div
                   key={topic.key}
                   role="button"
                   tabIndex={0}
-                  className="group flex min-w-0 cursor-pointer items-center gap-2 rounded-[10px] border px-2.5 py-2 outline-none transition-all"
+                  className="grid min-w-0 cursor-pointer grid-cols-[24px_40px_minmax(0,1fr)_160px] items-center gap-2 rounded-[10px] border px-3 py-2 outline-none transition-all"
                   style={{
                     borderColor: selected ? 'rgba(129,140,248,0.55)' : 'rgba(255,255,255,0.08)',
                     background: selected ? 'rgba(99,102,241,0.16)' : 'rgba(255,255,255,0.025)',
@@ -571,7 +642,7 @@ export function NotificationSubscriptionsPanel() {
                       updateDraft(topic.key, { enabled: e.target.checked });
                     }}
                   />
-                  {resource && <img src={resource.iconUrl} alt="" className="h-8 w-8 shrink-0 rounded-[8px] object-cover" />}
+                  {resource && <img src={resource.iconUrl} alt="" className="h-8 w-8 rounded-[8px] object-cover" />}
                   <div className="min-w-0 flex-1">
                     <div className="flex min-w-0 items-center gap-1.5">
                       <span className="truncate text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>{topic.label}</span>
@@ -586,76 +657,34 @@ export function NotificationSubscriptionsPanel() {
                       </span>
                     </div>
                     <div className="mt-0.5 truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                      {draft.useDefaultProfile === false ? '单独配置' : '默认通道'}
+                      {topic.description}
                     </div>
+                  </div>
+                  <div className="truncate text-right text-[12px]" style={{ color: draft.enabled ? 'var(--text-secondary)' : 'var(--text-muted)' }}>
+                    {statusText}
                   </div>
                 </div>
               );
             })}
           </div>
-        </aside>
+        </div>
 
-        <div className="min-h-0 overflow-auto pr-2" style={{ overscrollBehavior: 'contain' }}>
-          {selectedTopic && selectedDraft ? (
-            <section
-              className="rounded-[14px] border px-4 py-3"
-              style={{ borderColor: 'rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.045)' }}
-            >
-              <div className="flex min-h-0 flex-col gap-3">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        {selectedTopic && selectedDraft && (
+          <div className="shrink-0 border-t px-4 py-3" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+            <details className="rounded-[10px] border px-3 py-2" style={{ borderColor: 'rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.025)' }}>
+              <summary className="cursor-pointer text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                高级：单独配置当前类型
+              </summary>
+              <div className="mt-3 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="min-w-0">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <Wrench size={15} style={{ color: 'var(--accent-gold)' }} />
-                      <div className="truncate text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                        {selectedTopic.label}
-                      </div>
-                      <span
-                        className="shrink-0 rounded-full px-2 py-0.5 text-[10px]"
-                        style={{
-                          background: selectedDraft.enabled ? 'rgba(34,197,94,0.14)' : 'rgba(255,255,255,0.06)',
-                          color: selectedDraft.enabled ? '#86efac' : 'var(--text-muted)',
-                        }}
-                      >
-                        {selectedDraft.enabled ? '已接收' : '已关闭'}
-                      </span>
+                    <div className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+                      当前类型：{selectedTopic.label}
                     </div>
-                    <div className="mt-1 text-[12px]" style={{ color: 'var(--text-muted)' }}>
-                      {selectedTopic.description}
+                    <div className="mt-0.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      默认情况下使用上方 {defaultChannelName} 通道，只有特殊目标才需要打开单独配置。
                     </div>
                   </div>
-                  <label className="inline-flex cursor-pointer items-center gap-2 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 accent-indigo-400"
-                      checked={selectedDraft.enabled}
-                      onChange={(e) => updateDraft(selectedTopic.key, { enabled: e.target.checked })}
-                    />
-                    接收此类推送
-                  </label>
-                </div>
-
-                {selectedResource && (
-                  <div
-                    className="flex min-w-0 items-center gap-2 rounded-[10px] border px-2.5 py-2"
-                    style={{ borderColor: 'rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.035)' }}
-                  >
-                    <img src={selectedResource.iconUrl} alt="" className="h-8 w-8 shrink-0 rounded-[8px] object-cover" />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-[12px]" style={{ color: 'var(--text-primary)' }}>
-                        {selectedResource.appName} · {selectedResource.knowledgeStoreName}
-                      </div>
-                      <div className="mt-0.5 truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                        {selectedResource.defaultGroup}
-                        {selectedResource.knowledgeTemplateKey ? ` · ${selectedResource.knowledgeTemplateKey}` : ''}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                <div
-                  className="rounded-[10px] border px-3 py-2"
-                  style={{ borderColor: 'rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.025)' }}
-                >
                   <label className="inline-flex cursor-pointer items-center gap-2 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
                     <input
                       type="checkbox"
@@ -673,54 +702,48 @@ export function NotificationSubscriptionsPanel() {
                         }
                       }}
                     />
-                    此类型单独配置推送通道
+                    单独配置
                   </label>
-                  {selectedDraft.useDefaultProfile !== false && (
-                    <div className="mt-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>
-                      当前使用上方默认推送通道，保存后只记录此类型是否接收外部推送。
-                    </div>
-                  )}
                 </div>
-
                 {selectedDraft.useDefaultProfile === false && renderChannelFields(selectedDraft, (patch) => updateDraft(selectedTopic.key, patch))}
-
-                <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
-                  <div className="flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                    <CheckCircle2 size={12} />
-                    保存后对新站内通知去重投递
+                {selectedResource && (
+                  <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    资源：{selectedResource.appName} · {selectedResource.knowledgeStoreName}
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] transition-all hover:bg-white/15 active:scale-[0.97] disabled:opacity-60"
-                      style={{ background: 'rgba(255,255,255,0.08)', color: 'var(--text-primary)' }}
-                      onClick={() => testTopic(selectedTopic.key)}
-                      disabled={testingKey === selectedTopic.key || savingKey !== null}
-                    >
-                      {testingKey === selectedTopic.key ? <MapSpinner size={12} /> : <FlaskConical size={13} />}
-                      测试当前类型
-                    </button>
-                    <button
-                      type="button"
-                      className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] transition-all hover:brightness-110 active:scale-[0.97] disabled:opacity-60"
-                      style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
-                      onClick={() => saveAllTopics()}
-                      disabled={savingKey !== null || testingKey === selectedTopic.key}
-                    >
-                      {savingKey ? <MapSpinner size={12} color="#1a1a1a" /> : <Save size={13} />}
-                      保存默认通道和接收范围
-                    </button>
-                  </div>
-                </div>
+                )}
               </div>
-            </section>
-          ) : (
-            <div className="rounded-[14px] border border-dashed border-white/10 px-4 py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
-              还没有可订阅的通知来源
+            </details>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                <CheckCircle2 size={12} />
+                保存后对新站内通知去重投递
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] transition-all hover:bg-white/15 active:scale-[0.97] disabled:opacity-60"
+                  style={{ background: 'rgba(255,255,255,0.08)', color: 'var(--text-primary)' }}
+                  onClick={() => testTopic(selectedTopic.key)}
+                  disabled={testingKey === selectedTopic.key || savingKey !== null}
+                >
+                  {testingKey === selectedTopic.key ? <MapSpinner size={12} /> : <FlaskConical size={13} />}
+                  测试当前类型
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] transition-all hover:brightness-110 active:scale-[0.97] disabled:opacity-60"
+                  style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
+                  onClick={() => saveAllTopics()}
+                  disabled={savingKey !== null || testingKey === selectedTopic.key}
+                >
+                  {savingKey ? <MapSpinner size={12} color="#1a1a1a" /> : <Save size={13} />}
+                  保存默认通道和接收范围
+                </button>
+              </div>
             </div>
+          </div>
           )}
-        </div>
-      </div>
+      </section>
     </div>
   );
 }
