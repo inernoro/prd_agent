@@ -289,17 +289,23 @@ public sealed class HttpLlmGatewayClient
             var body = await resp.Content.ReadAsStringAsync(ct);
             if (!resp.IsSuccessStatusCode)
             {
+                // serving 不可达 / 鉴权失败 / 坏负载 不能伪装成「空池」——否则 admin/smoke 看到「无可用池」
+                // 却分不清网关其实是 down 的（Cursor Bugbot）。与 inproc 实现一致：错误向上抛，让调用方区分
+                // 「真的没池」(200 + []) 与「网关故障」。
                 _logger.LogWarning("[HttpLlmGatewayClient] GetAvailablePoolsAsync serving 返回 {Code}: {Body}",
                     (int)resp.StatusCode, Truncate(body));
-                return new List<AvailableModelPool>();
+                throw new InvalidOperationException(
+                    $"serving /gw/v1/pools 返回 {(int)resp.StatusCode}: {Truncate(body)}");
             }
             var result = JsonSerializer.Deserialize<List<AvailableModelPool>>(body, JsonOpts);
+            // 200 + 空数组 = 真的没可用池（合法），照常返回空；只有上面的非成功/异常才视为故障。
             return result ?? new List<AvailableModelPool>();
         }
         catch (Exception ex)
         {
+            // 传输异常（连不上 serving / 超时 / 反序列化失败）同样向上抛，不静默吞成空池。
             _logger.LogError(ex, "[HttpLlmGatewayClient] GetAvailablePoolsAsync 失败 base={Base}", _baseUrl);
-            return new List<AvailableModelPool>();
+            throw;
         }
     }
 

@@ -8,3 +8,4 @@
 | fix | cds | isValidServiceSubdomain 拒绝保留伪值 null/undefined/none/true/false/nan：堵住 JSON 字符串 "null" / compose label cds.subdomain:"null" 当真子域发布 <slug>-null.<root> 伪 host（Cursor Bugbot） |
 | fix | ops | docker-compose.dev.yml llmgw-web 改用 prd-llmgw-web/Dockerfile 真实构建，不再挂不存在的 ./deploy/llmgw-web/dist（空静态根导致 5590 控制台打不开）（Codex P2） |
 | docs | doc | design.llm-gateway-physical-isolation 头部补「· 设计」后缀 + 状态枚举改合法值「开发中」；debt 记 subdomain 撞项目 profile 校验缺口为波3（Cursor Bugbot / Codex P2） |
+| fix | prd-api | HttpLlmGatewayClient.GetAvailablePoolsAsync 非成功/异常不再静默吞成空池，改向上抛（与 inproc 一致），让 admin/smoke 区分「网关 down」与「真的没可用池」（Cursor Bugbot Medium） |
