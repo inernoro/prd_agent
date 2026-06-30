@@ -1428,12 +1428,12 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
               {uploading ? '上传中…' : '上传文档'}
             </Button>
             {/* 知识星球：3D 文档星系直达入口（此前藏在「宇宙图」里，新用户找不到）。
-                借鉴「本页教程」pill 的柔和脉冲光环 + 渐变底，吸引用户点进来探索。 */}
+                借鉴「本页教程」pill 的柔和脉冲光环，并把进入星空收敛成左侧 icon 的小幅动效。 */}
             <button
               type="button"
               onClick={() => navigate(`/document-store/${storeId}/galaxy`)}
               title="知识星球 — 3D 文档星系，悬停看简介、点击进入文档"
-              className="flex h-7 cursor-pointer items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold"
+              className="relative isolate flex h-7 cursor-pointer items-center gap-1.5 overflow-hidden rounded-[8px] px-3 text-[11px] font-semibold"
               style={{
                 color: 'rgba(196,181,253,0.98)',
                 background: 'linear-gradient(135deg, rgba(168,85,247,0.20), rgba(99,102,241,0.16))',
@@ -1441,11 +1441,85 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
                 animation: 'galaxyEntryPulse 2.4s ease-in-out infinite',
               }}
             >
-              <Orbit size={13} /> 知识星球
-              <style>{`@keyframes galaxyEntryPulse {
-                0%, 100% { box-shadow: 0 0 0 0 rgba(168,85,247,0); }
-                50% { box-shadow: 0 0 0 3px rgba(168,85,247,0.18); }
-              }`}</style>
+              <span className="galaxy-entry-icon" aria-hidden="true">
+                <span className="galaxy-entry-star galaxy-entry-star-a" />
+                <span className="galaxy-entry-star galaxy-entry-star-b" />
+                <Orbit className="galaxy-entry-orbit" size={13} />
+              </span>
+              <span className="relative z-[1]">知识星球</span>
+              <style>{`
+                @keyframes galaxyEntryPulse {
+                  0%, 100% { box-shadow: 0 0 0 0 rgba(168,85,247,0); }
+                  50% { box-shadow: 0 0 0 3px rgba(168,85,247,0.18); }
+                }
+
+                @keyframes galaxyEntryFly {
+                  0%, 100% { transform: translateX(0) scale(1); filter: drop-shadow(0 0 0 rgba(196,181,253,0)); }
+                  38% { transform: translateX(2px) scale(1.06); filter: drop-shadow(0 0 5px rgba(196,181,253,0.38)); }
+                  68% { transform: translateX(-0.5px) scale(0.98); filter: drop-shadow(0 0 2px rgba(196,181,253,0.22)); }
+                }
+
+                @keyframes galaxyEntryStarDriftA {
+                  0%, 100% { transform: translate3d(7px, 7px, 0) scale(0.65); opacity: 0; }
+                  28% { opacity: 0.95; }
+                  70% { transform: translate3d(-1px, 1px, 0) scale(1); opacity: 0.7; }
+                }
+
+                @keyframes galaxyEntryStarDriftB {
+                  0%, 100% { transform: translate3d(-2px, 11px, 0) scale(0.55); opacity: 0; }
+                  34% { opacity: 0.8; }
+                  76% { transform: translate3d(8px, 2px, 0) scale(0.9); opacity: 0.45; }
+                }
+
+                .galaxy-entry-icon {
+                  position: relative;
+                  z-index: 1;
+                  width: 15px;
+                  height: 15px;
+                  display: inline-flex;
+                  flex: 0 0 15px;
+                  align-items: center;
+                  justify-content: center;
+                }
+
+                .galaxy-entry-icon::before {
+                  content: '';
+                  position: absolute;
+                  inset: -4px;
+                  border-radius: 999px;
+                  background: radial-gradient(circle, rgba(196,181,253,0.26), rgba(196,181,253,0) 68%);
+                  opacity: 0.7;
+                }
+
+                .galaxy-entry-orbit {
+                  position: relative;
+                  z-index: 1;
+                  animation: galaxyEntryFly 2.8s cubic-bezier(0.34, 1.56, 0.64, 1) infinite;
+                  transform-origin: 50% 50%;
+                }
+
+                .galaxy-entry-star {
+                  position: absolute;
+                  z-index: 0;
+                  width: 2px;
+                  height: 2px;
+                  border-radius: 999px;
+                  background: rgba(245,243,255,0.95);
+                  box-shadow: 0 0 5px rgba(196,181,253,0.75);
+                }
+
+                .galaxy-entry-star-a {
+                  left: 1px;
+                  top: 1px;
+                  animation: galaxyEntryStarDriftA 2.8s ease-in-out infinite;
+                }
+
+                .galaxy-entry-star-b {
+                  left: 4px;
+                  top: 0;
+                  animation: galaxyEntryStarDriftB 2.8s ease-in-out infinite;
+                }
+              `}</style>
             </button>
             {/* 更多：收纳低频管理动作（发布 / 关系图谱 / 统计 / 订阅），折叠屏只占一个位 */}
             <div className="relative" ref={moreRef}>
