@@ -930,7 +930,7 @@ export class ProxyService {
     return { percent: status === 'building' ? 24 : 12, confidence: 'low', matchedLog: false };
   }
 
-  private estimateWaitingProgress(branch: BranchEntry | undefined, waitingProfileId?: string): {
+  private estimateWaitingProgress(branch: BranchEntry | undefined, waitingProfileId?: string, timing?: ReturnType<typeof computeWaitTiming> | null): {
     percent: number;
     confidence: 'low' | 'medium' | 'high';
     label: string;
@@ -980,6 +980,15 @@ export class ProxyService {
       : branch.status === 'starting' || branch.status === 'restarting'
         ? '预计启动进度'
         : '预计处理进度';
+    if (timing?.estimateMedianMs != null && timing.estimateSamples > 0) {
+      const timePercent = timing.overdue
+        ? 96
+        : Math.max(1, Math.min(96, (timing.elapsedMs / timing.estimateMedianMs) * 100));
+      const reason = estimates.some((item) => item.matchedLog)
+        ? `基于 ${services.length} 个服务状态、构建日志与历史耗时估算`
+        : `基于 ${services.length} 个服务状态与历史耗时估算`;
+      return { percent: timePercent, confidence, label, reason };
+    }
     const reason = estimates.some((item) => item.matchedLog)
       ? `基于 ${services.length} 个服务状态与构建日志估算`
       : `基于 ${services.length} 个服务状态与运行时长估算`;
@@ -1139,7 +1148,7 @@ export class ProxyService {
       displayBranch,
       status: branch?.status || 'not-found',
       waitingProfileId: waitingProfileId || null,
-      progress: this.estimateWaitingProgress(branch, waitingProfileId),
+      progress: this.estimateWaitingProgress(branch, waitingProfileId, timing),
       timing,
       buildMode: timing?.mode || null,
       modeLabel: timing ? (timing.mode === 'release' ? '极速版' : '源码') : null,
@@ -1552,7 +1561,14 @@ void main(){
       });
       return;
     }
-    const progress = this.estimateWaitingProgress(branch, waitingProfileId);
+    const { mode: buildMode, estimate } = this.resolveWaitTimingMode(branch, waitingProfileId);
+    const initialTiming = computeWaitTiming({
+      status: branch.status,
+      deployStartedAtMs: this.resolveDeployStartedAtMs(branch),
+      nowMs: Date.now(),
+      estimate,
+    });
+    const progress = this.estimateWaitingProgress(branch, waitingProfileId, initialTiming);
     const safeBranch = this.escapeHtml(displayBranch);
     const safeProgressLabel = this.escapeHtml(progress.label);
     const safeProgressReason = this.escapeHtml(progress.reason);
@@ -1592,7 +1608,6 @@ void main(){
     const branchLabel = ciWaiting ? '准备中' : stageLabel(branchStatus);
     // 构建模式（极速版 = CI 预构建镜像直接部署 / 源码 = 拉代码热加载编译）+ 分支/PR 直达链接，
     // 让等待页一眼知道「这是哪种构建、对应哪个分支与 PR」，不必猜。
-    const { mode: buildMode } = this.resolveWaitTimingMode(branch, waitingProfileId);
     const safeModeLabel = this.escapeHtml(buildMode === 'release' ? '极速版' : '源码');
     const dashBase = this.dashboardBaseUrl();
     const branchPanelUrl = dashBase ? `${dashBase}/branch-panel/${encodeURIComponent(branch.id)}` : '';
@@ -1883,24 +1898,20 @@ ${shouldAutoRefresh ? `;(function(){
       root.appendChild(row);
     });
   }
-  // 百分比状态：display 是当前显示值（两位小数、单调不回退），server 是服务端状态/日志估算，
-  // 时间目标由 elapsed/median 推出。tickPct 每 200ms 把 display 平滑逼近 max(server,时间目标)，
-  // 让数字始终在动；未 ready 前封顶 99.99%（守住"ready 前不显示 100%"）。
+  // 百分比状态：display 是当前显示值（两位小数、单调不回退），server 是服务端状态/日志估算。
+  // 有历史耗时(median)时，进度条必须与"已等待 / 预计还需"同源：elapsed / median。
+  // 无历史样本时才回退 server，避免把状态日志的 86/94% 和 ETA 文案混成两套进度。
   var pct={display:0,server:0,ready:false};
   (function(){var el=document.querySelector('[data-role="progress-percent"]');var v=el?parseFloat(el.textContent):0;pct.display=pct.server=(isNaN(v)?0:v);})();
   // 进度百分比：时间连续驱动，小数位一直在跳。
-  // 有历史耗时(median)时：以服务端日志/状态估算 server 作锚点(下限)，随 ETA 推进(frac=已用/中位)
-  // 平滑爬向 99.99——所以即使 server 卡在某个整数，百分比的小数位仍随秒推进而连续变化，用户看得见在动。
-  // 旧实现 target=max(server,timePct) 会被 server 整数封住、小数冻在 .00（用户实测反馈）。
   function tickPct(){
     var target;
     if(timingState&&timingState.medianMs){
       var elapsed=timingState.baseElapsedMs+(Date.now()-timingState.syncedAt);
       if(elapsed<0)elapsed=0;
-      var frac=elapsed/timingState.medianMs; if(frac>1)frac=1; // 0..1，按 ETA 推进
-      var base=Math.min(pct.server,99.99);                      // 服务端估算作下限锚点
-      // 随时间从 base 连续爬向 99.99；若纯时间比例已超过 base(构建比平时久)则用时间比例继续推。
-      target=Math.max(base+(99.99-base)*frac, frac*100);
+      var frac=elapsed/timingState.medianMs;
+      if(timingState.overdue||frac>=1)target=Math.max(pct.display,96);
+      else target=Math.max(1,Math.min(96,frac*100));
     }else{
       target=pct.server;                                        // 无历史样本：只展示状态估算，不编造时间
     }

@@ -19,7 +19,8 @@ public sealed record SyncActor(
     string UserName,      // 本节点操作者用户名
     string? Email,        // 本节点操作者邮箱（可空）
     bool IsAdmin = false, // 是否持有 super / AI 超级访问（资源据此放行全域）
-    IReadOnlyCollection<string>? Permissions = null) // 完整权限位（资源可按需检查 defect-agent.manage 等模块权限）
+    IReadOnlyCollection<string>? Permissions = null, // 完整权限位（资源可按需检查 defect-agent.manage 等模块权限）
+    Func<SyncProgressUpdate, CancellationToken, Task>? ProgressReporter = null) // 可选：资源内部逐条应用时上报进度
 {
     /// <summary>检查是否持有某个具体权限位（如 "defect-agent.manage"），IsAdmin 自动放行。</summary>
     public bool HasPermission(string permission)
@@ -34,6 +35,18 @@ public sealed record SyncActor(
     public static SyncActor PeerSystem => new(PeerSystemUserId, "对端节点", null, IsAdmin: true);
 
     public bool IsPeerSystem => UserId == PeerSystemUserId;
+
+    public Task ReportProgressAsync(SyncProgressUpdate progress, CancellationToken ct)
+        => ProgressReporter?.Invoke(progress, ct) ?? Task.CompletedTask;
+}
+
+/// <summary>资源内部同步进度（例如知识库逐篇写入时上报当前文章）。</summary>
+public sealed class SyncProgressUpdate
+{
+    public string? Phase { get; set; }
+    public int Current { get; set; }
+    public int Total { get; set; }
+    public string? CurrentRecordTitle { get; set; }
 }
 
 /// <summary>同步应用模式。</summary>

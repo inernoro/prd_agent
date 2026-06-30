@@ -765,6 +765,30 @@ describe('ContainerService', () => {
     });
   });
 
+  describe('discoverAppContainersWithStatus', () => {
+    it('reports ok=false when docker ps fails so startup prune can fail closed', async () => {
+      mock.addResponsePattern(/docker ps/, () => ({
+        stdout: '',
+        stderr: 'cannot connect to docker daemon',
+        exitCode: 1,
+      }));
+
+      const result = await service.discoverAppContainersWithStatus();
+
+      expect(result.ok).toBe(false);
+      expect(result.containers.size).toBe(0);
+    });
+
+    it('reports ok=true with an empty map when docker ps succeeds with no app containers', async () => {
+      mock.addResponsePattern(/docker ps/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+
+      const result = await service.discoverAppContainersWithStatus();
+
+      expect(result.ok).toBe(true);
+      expect(result.containers.size).toBe(0);
+    });
+  });
+
   describe('getLogs', () => {
     it('should return container logs', async () => {
       mock.addResponsePattern(/docker logs/, () => ({ stdout: 'log output', stderr: '', exitCode: 0 }));

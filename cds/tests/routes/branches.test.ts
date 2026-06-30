@@ -139,6 +139,7 @@ describe('Branch Routes', () => {
   let stateService: StateService;
   let containerService: ContainerService;
   let serverEventLogStore: ServerEventLogSink;
+  let branchOperationCoordinator: BranchOperationCoordinator;
   let registryNodes: any[];
   let operationEvents: Array<{
     category?: string;
@@ -229,7 +230,7 @@ describe('Branch Routes', () => {
         });
       },
     };
-    const branchOperationCoordinator = new BranchOperationCoordinator(serverEventLogStore);
+    branchOperationCoordinator = new BranchOperationCoordinator(serverEventLogStore);
 
     const app = express();
     app.use(express.json());
@@ -2428,6 +2429,69 @@ describe('Branch Routes', () => {
       )).toBeTruthy();
     });
 
+    it('does not persist delete cleanup intent when operation lease rejects the delete', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'delete-lease-rejected',
+        projectId: 'default',
+        branch: 'feature/delete-lease-rejected',
+        worktreePath: path.join(tmpDir, 'worktrees', 'delete-lease-rejected'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+      });
+      stateService.save();
+
+      const active = branchOperationCoordinator.begin({
+        branchId: 'delete-lease-rejected',
+        projectId: 'default',
+        kind: 'delete',
+        trigger: 'manual',
+        actor: 'test',
+        source: 'test.active-delete',
+        reason: 'simulate an already-running terminal operation',
+      });
+      expect(active.status).toBe('started');
+
+      const rejectedDelete = await request(server, 'DELETE', '/api/branches/delete-lease-rejected');
+      const branchAfterReject = stateService.getBranch('delete-lease-rejected')!;
+      expect(String(rejectedDelete.body)).toContain('operationStatus');
+      expect(branchAfterReject.lastStopReason || '').not.toContain('删除分支流程已开始');
+      expect(branchAfterReject.lastStopSource).toBeUndefined();
+      expect(branchAfterReject.status).not.toBe('stopping');
+    });
+
+    it('releases the delete lease when persisting delete intent fails', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'delete-save-fails',
+        projectId: 'default',
+        branch: 'feature/delete-save-fails',
+        worktreePath: path.join(tmpDir, 'worktrees', 'delete-save-fails'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+      });
+      stateService.save();
+
+      const originalSave = stateService.save.bind(stateService);
+      let shouldFailSave = true;
+      stateService.save = () => {
+        if (shouldFailSave) throw new Error('disk full');
+        return originalSave();
+      };
+
+      const failedDelete = await request(server, 'DELETE', '/api/branches/delete-save-fails');
+      expect(failedDelete.status).toBe(500);
+      expect(branchOperationCoordinator.getActive('delete-save-fails')).toBeUndefined();
+      expect(stateService.getBranch('delete-save-fails')?.status).toBe('idle');
+      expect(stateService.getBranch('delete-save-fails')?.lastStopReason).toBeUndefined();
+
+      shouldFailSave = false;
+      const nextDelete = await request(server, 'DELETE', '/api/branches/delete-save-fails');
+      expect(String(nextDelete.body)).toContain('complete');
+    });
+
     it('does not keep delete SSE open for slow best-effort volume cleanup', async () => {
       const now = new Date().toISOString();
       stateService.addBranch({
@@ -3699,6 +3763,7 @@ describe('Branch Routes', () => {
       const branch = stateService.getBranch('feat-restart')!;
       expect(branch.status).toBe('running');
       expect(branch.services.api.status).toBe('running');
+      expect(Date.parse(branch.lastDeployStartedAt || '')).toBeGreaterThan(Date.parse('2026-02-12T00:00:00Z'));
       const started = operationEvents.find((event) => event.branchId === 'feat-restart' && event.action === 'branch.operation.started');
       const completed = operationEvents.find((event) => event.branchId === 'feat-restart' && event.action === 'branch.operation.completed');
       expect(started?.details).toMatchObject({ kind: 'restart', source: 'api.restart-branch' });

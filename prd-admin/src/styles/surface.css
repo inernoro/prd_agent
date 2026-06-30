@@ -303,6 +303,16 @@
     0 12px 32px -8px rgba(10, 10, 14, 0.40);
 }
 
+.surface-nav-bar[data-variant="plain"] {
+  padding: 0;
+  overflow: visible;
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
 .surface-nav-content {
   min-height: 46px;
   display: flex;

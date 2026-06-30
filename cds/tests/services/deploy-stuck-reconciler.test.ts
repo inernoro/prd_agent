@@ -516,7 +516,7 @@ describe('reconcileStuckDeployStates — Bugbot review 回归', () => {
 });
 
 describe('reconcileStuckDeployStates — restarting 不被旧时间戳误收敛（Codex P2）', () => {
-  // 重启不刷新 lastDeployStartedAt，上一轮的 lastReadyAt 仍 >= 上一轮 lastDeployStartedAt。
+  // 旧状态可能保留上一轮的 lastReadyAt / lastDeployStartedAt。
   // 旧逻辑会把仍在 restarting 的分支/服务用这对陈旧戳误翻成 running。
 
   it('分支级：restarting + 旧 ready>=start ⇒ 不触碰（无服务兜底也不误翻 running）', () => {

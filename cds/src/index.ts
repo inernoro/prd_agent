@@ -45,6 +45,7 @@ import { ResourceUsageSampler } from './services/resource-usage-sampler.js';
 import { httpLogStoreFromEnv } from './services/http-log-store.js';
 import { serverEventLogStoreFromEnv } from './services/server-event-log-store.js';
 import { resolveStateBootstrapMode, seedStateFromJsonIfAllowed } from './services/state-bootstrap.js';
+import { shouldPruneDeletedBranchStartupResidue } from './services/startup-reconcile.js';
 
 (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT = new Date().toISOString();
 import type { ServerEventLogSink, ServerEventSeverity } from './services/server-event-log-store.js';
@@ -1418,7 +1419,9 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
     // 失败要还原的原始 error 文案（乐观翻 loading 前留存）。
     const prevErrorMessage = branch.errorMessage;
     const prevSvcError: Record<string, string | undefined> = {};
+    const recoveryStartedAt = new Date().toISOString();
     branch.status = 'restarting';
+    branch.lastDeployStartedAt = recoveryStartedAt;
     for (const [pid, svc] of Object.entries(branch.services || {})) {
       if (svc) { prevSvcError[pid] = svc.errorMessage; svc.status = 'building'; svc.errorMessage = undefined; }
     }
@@ -1548,7 +1551,9 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
       // still hits the finally and completes the lease — otherwise the
       // coordinator would keep an active op forever and reject all future
       // deploy/restart/stop on this branch until process restart.
+      const wakeStartedAt = new Date().toISOString();
       branch.status = 'restarting';
+      branch.lastDeployStartedAt = wakeStartedAt;
       for (const svc of services) {
         if (svc.status === 'stopped' || svc.status === 'idle') svc.status = 'starting';
       }
@@ -2135,11 +2140,39 @@ janitorService.setRemoveFn(async (slug: string) => {
     }
 
     // ── Discover and reconcile app containers ──
-    const appContainers = await containerService.discoverAppContainers();
+    const appDiscovery = await containerService.discoverAppContainersWithStatus();
+    const appContainers = appDiscovery.containers;
     const branches = stateService.getAllBranches();
     let appReconciled = 0;
 
     for (const branch of branches) {
+      if (appDiscovery.ok && shouldPruneDeletedBranchStartupResidue(branch, appContainers)) {
+        activeServerEventLogStore?.record({
+          category: 'container',
+          severity: 'warn',
+          source: 'startup-reconcile',
+          action: 'branch.reconcile.deleted-residue-pruned',
+          message: `branch delete cleanup residue pruned on startup: ${branch.id}`,
+          projectId: branch.projectId,
+          branchId: branch.id,
+          details: {
+            reason: 'delete-cleanup-intent-without-app-containers',
+            lastStopSource: branch.lastStopSource || null,
+            lastStopReason: branch.lastStopReason || null,
+            serviceStatuses: Object.fromEntries(
+              Object.entries(branch.services || {}).map(([profileId, svc]) => [profileId, svc.status]),
+            ),
+          },
+        });
+        try {
+          stateService.removeLogs(branch.id);
+        } catch { /* best-effort */ }
+        try {
+          stateService.removeBranch(branch.id);
+          appReconciled++;
+        } catch { /* branch may already be gone */ }
+        continue;
+      }
       for (const [profileId, svc] of Object.entries(branch.services)) {
         const key = `${branch.id}/${profileId}`;
         const found = appContainers.get(key);
