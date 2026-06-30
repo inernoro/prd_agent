@@ -477,8 +477,8 @@ export class ProxyService {
       // 本兜底只服务非转发部署 + master 反代路径,避免命名 host 落到 auto-build。
       const svcTarget = this.resolvePreviewServiceSubdomain(previewSlug);
       if (svcTarget) {
-        const baseSlug = StateService.slugify(svcTarget.entry.branch);
-        this.routeToBranch(baseSlug, svcTarget.entry.branch, req, res, svcTarget.profileId);
+        // 用已解析的 v3 previewSlug 路由(resolveBranchEntry 能命中),不要 slugify(branch.name)。
+        this.routeToBranch(svcTarget.previewSlug, svcTarget.entry.branch, req, res, svcTarget.profileId);
         return;
       }
       this.routeToBranch(previewSlug, previewSlug, req, res);
@@ -554,7 +554,7 @@ export class ProxyService {
    */
   private resolvePreviewServiceSubdomain(
     slug: string,
-  ): { entry: BranchEntry; profileId: string } | undefined {
+  ): { entry: BranchEntry; profileId: string; previewSlug: string } | undefined {
     // slug 本身就能解析到分支 → 不是命名子域,交回常规路径。
     if (this.resolveBranchEntry(slug)) return undefined;
     const state = this.stateService.getState();
@@ -580,7 +580,10 @@ export class ProxyService {
       const match = profiles.find(
         (p) => p.subdomain && p.subdomain.toLowerCase() === sub && entry.services[p.id],
       );
-      if (match) return { entry, profileId: match.id };
+      // 返回已解析出的 v3 previewSlug(base)而非 slugify(branch.name)——后者对 claude/... 这类
+      // 带 `/` 的分支名算出的裸 slug 与 resolveBranchEntry 的 v3 前向匹配口径不符,会让命名 URL
+      // 在 master 兜底路径上解析不到 canonical 分支(Cursor Bugbot)。
+      if (match) return { entry, profileId: match.id, previewSlug: base };
     }
     return undefined;
   }

@@ -32,6 +32,12 @@ public class CrossProcessServingErrorLoadTests : IClassFixture<CrossProcessServi
     private const string TestKey = "test-gateway-key";
     private const string SecretApiKey = "SECRET-must-not-cross";
 
+    // 进程级共享 IHttpClientFactory：整个测试运行复用同一份，HttpMessageHandler 池永不被 GC 终结。
+    // 历史 bug：每个 cell new 一个抛弃式 ServiceProvider 且从不 dispose，其 handler 池被 GC 终结后
+    // 请求返回空/截断响应，导致 CI 同配置 cell 随机 pass/fail。共享 static 工厂根除此 flake。
+    private static readonly IHttpClientFactory SharedHttpFactory =
+        new ServiceCollection().AddHttpClient().BuildServiceProvider().GetRequiredService<IHttpClientFactory>();
+
     private readonly HostFarm _farm;
     public CrossProcessServingErrorLoadTests(HostFarm farm) => _farm = farm;
 
@@ -168,14 +174,12 @@ public class CrossProcessServingErrorLoadTests : IClassFixture<CrossProcessServi
 
     private static HttpLlmGatewayClient BuildClient(string baseUrl, string key)
     {
-        var httpFactory = new ServiceCollection().AddHttpClient().BuildServiceProvider()
-            .GetRequiredService<IHttpClientFactory>();
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["LlmGateway:ServeBaseUrl"] = baseUrl,
             ["LlmGwServe:ApiKey"] = key,
         }).Build();
-        return new HttpLlmGatewayClient(httpFactory, config, NullLogger<HttpLlmGatewayClient>.Instance);
+        return new HttpLlmGatewayClient(SharedHttpFactory, config, NullLogger<HttpLlmGatewayClient>.Instance);
     }
 
     // ─────────────────────── HostFarm：4 个 stub 上游各一个常驻 host ───────────────────────

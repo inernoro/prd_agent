@@ -26,6 +26,7 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
     private readonly string? _expectedModel;
     private readonly JsonSerializerOptions _jsonOpts;
     private readonly ILogger _logger;
+    private readonly ILLMRequestContextAccessor? _ctxAccessor;
 
     public HttpLlmClient(
         IHttpClientFactory httpFactory,
@@ -38,7 +39,8 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
         bool includeThinking,
         string? expectedModel,
         JsonSerializerOptions jsonOpts,
-        ILogger logger)
+        ILogger logger,
+        ILLMRequestContextAccessor? ctxAccessor = null)
     {
         _httpFactory = httpFactory;
         _baseUrl = baseUrl;
@@ -51,6 +53,7 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
         _expectedModel = expectedModel;
         _jsonOpts = jsonOpts;
         _logger = logger;
+        _ctxAccessor = ctxAccessor;
     }
 
     public string Provider => "gateway-http";
@@ -67,6 +70,20 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
         bool enablePromptCache,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        // 把当前 LlmRequestContext 透传给 serving 端（RequestId/SessionId/GroupId/UserId/角色/文档元数据），
+        // 否则跨 HTTP 后 serving 端日志关联与用户归属全断。敏感字段（密钥）本就不在 GatewayRequestContext 内。
+        var current = _ctxAccessor?.Current;
+        var context = current == null ? null : new GatewayRequestContext
+        {
+            RequestId = current.RequestId,
+            GroupId = current.GroupId,
+            SessionId = current.SessionId,
+            UserId = current.UserId,
+            ViewRole = current.ViewRole,
+            DocumentChars = current.DocumentChars,
+            DocumentHash = current.DocumentHash,
+        };
+
         var payload = new
         {
             AppCallerCode = _appCallerCode,
@@ -78,6 +95,7 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
             SystemPrompt = systemPrompt,
             Messages = messages,
             EnablePromptCache = enablePromptCache,
+            Context = context,
         };
 
         var http = _httpFactory.CreateClient();

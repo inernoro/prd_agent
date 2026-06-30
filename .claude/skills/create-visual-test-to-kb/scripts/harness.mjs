@@ -42,7 +42,9 @@ export async function launch(cfg, opts = {}) {
   const videoDir = opts.recordVideoDir || sc.recordVideoDir;
   if (videoDir) {
     require('fs').mkdirSync(videoDir, { recursive: true });
-    ctxOpts.recordVideo = { dir: videoDir, size: { width: sc.width || 1440, height: sc.height || 900 } };
+    // 录像尺寸跟随实际视口 vp（含 opts.viewport 覆盖），否则手机端验收用自定义视口却按桌面尺寸录像，
+    // 视频与截图不一致（Cursor Bugbot）。
+    ctxOpts.recordVideo = { dir: videoDir, size: { width: vp.width, height: vp.height } };
   }
   const ctx = await browser.newContext(ctxOpts);
   const page = await ctx.newPage();

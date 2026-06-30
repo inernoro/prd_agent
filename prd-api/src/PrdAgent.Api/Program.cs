@@ -239,7 +239,8 @@ else if (isShadow || httpAllowlist.Count > 0)
             http: new PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient(
                 sp.GetRequiredService<IHttpClientFactory>(),
                 sp.GetRequiredService<IConfiguration>(),
-                sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>>()),
+                sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>>(),
+                sp.GetService<PrdAgent.Core.Interfaces.ILLMRequestContextAccessor>()),
             logger: sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.ShadowLlmGateway>>(),
             writer: isShadow ? sp.GetService<PrdAgent.Core.Interfaces.ILlmShadowComparisonWriter>() : null,
             fullSamplePercent: shadowSamplePercent,

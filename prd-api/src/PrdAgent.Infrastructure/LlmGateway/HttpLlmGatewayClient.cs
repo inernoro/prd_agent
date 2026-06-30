@@ -26,6 +26,7 @@ public sealed class HttpLlmGatewayClient
 {
     private readonly IHttpClientFactory _httpFactory;
     private readonly ILogger<HttpLlmGatewayClient> _logger;
+    private readonly PrdAgent.Core.Interfaces.ILLMRequestContextAccessor? _ctxAccessor;
     private readonly string _baseUrl;
     private readonly string _gatewayKey;
 
@@ -41,10 +42,12 @@ public sealed class HttpLlmGatewayClient
     public HttpLlmGatewayClient(
         IHttpClientFactory httpFactory,
         IConfiguration config,
-        ILogger<HttpLlmGatewayClient> logger)
+        ILogger<HttpLlmGatewayClient> logger,
+        PrdAgent.Core.Interfaces.ILLMRequestContextAccessor? ctxAccessor = null)
     {
         _httpFactory = httpFactory;
         _logger = logger;
+        _ctxAccessor = ctxAccessor;
         // serving 服务的根地址（如 http://llmgw-serve:8091），去掉尾部斜杠避免拼接出双斜杠。
         _baseUrl = (config["LlmGateway:ServeBaseUrl"] ?? "http://llmgw-serve:8091").TrimEnd('/');
         // 共享密钥门（内部 M2M），与 serving 端 LlmGwServe:ApiKey 对齐。
@@ -166,13 +169,45 @@ public sealed class HttpLlmGatewayClient
         GatewayModelResolution resolution,
         CancellationToken ct = default)
     {
-        // 注意：resolution 参数刻意不发送给 serving 端。serving 端会在 /gw/v1/raw 内部
-        // 重新 Resolve（含 ApiKey 解密），把敏感凭据牢牢留在网关进程内，绝不跨 HTTP 边界回传。
-        // 这里保留该参数只为满足接口签名 + compute-then-send 语义对齐进程内实现。
+        // compute-then-send（见 .claude/rules/compute-then-send.md）：调用方已锁定 resolution，
+        // serving 端 /gw/v1/raw 会基于 ExpectedModel 重 Resolve（仅在服务端 rehydrate ApiKey）。
+        //   - 若调用方的解析本身失败：直接短路返回，绝不让 serving 重新选一个"能用的"模型（防"选 A 给 B"）。
+        //   - 否则：把 request.ExpectedModel 锁定为 resolution.ActualModel，serving 的重 Resolve 被 expectedModel
+        //     锁回同一个模型，与本仓既有 expectedModel-honoring 解析一致。ApiKey 等敏感字段绝不随 request 过线。
+        if (!resolution.Success)
+        {
+            return GatewayRawResponse.Fail(
+                "RESOLUTION_FAILED",
+                resolution.ErrorMessage ?? "调用方 resolution 已失败，http 模式不得重新选模型");
+        }
+
+        var outboundRequest = request;
+        if (!string.IsNullOrWhiteSpace(resolution.ActualModel))
+        {
+            // GatewayRawRequest 是普通类（init-only 属性，非 record），用对象初始化器建副本锁定 ExpectedModel。
+            outboundRequest = new GatewayRawRequest
+            {
+                AppCallerCode = request.AppCallerCode,
+                ModelType = request.ModelType,
+                EndpointPath = request.EndpointPath,
+                ExpectedModel = resolution.ActualModel,
+                RequestBody = request.RequestBody,
+                IsMultipart = request.IsMultipart,
+                MultipartFields = request.MultipartFields,
+                MultipartFiles = request.MultipartFiles,
+                MultipartFileRefs = request.MultipartFileRefs,
+                HttpMethod = request.HttpMethod,
+                ExtraHeaders = request.ExtraHeaders,
+                TimeoutSeconds = request.TimeoutSeconds,
+                ExpectBinaryResponse = request.ExpectBinaryResponse,
+                Context = request.Context,
+            };
+        }
+
         try
         {
             using var http = CreateHttp(infiniteTimeout: false);
-            using var resp = await http.PostAsync($"{_baseUrl}/gw/v1/raw", JsonBody(request), ct);
+            using var resp = await http.PostAsync($"{_baseUrl}/gw/v1/raw", JsonBody(outboundRequest), ct);
             var body = await resp.Content.ReadAsStringAsync(ct);
             if (!resp.IsSuccessStatusCode)
             {
@@ -259,7 +294,7 @@ public sealed class HttpLlmGatewayClient
         return new HttpLlmClient(
             _httpFactory, _baseUrl, _gatewayKey,
             appCallerCode, modelType, maxTokens, temperature, includeThinking, expectedModel,
-            JsonOpts, _logger);
+            JsonOpts, _logger, _ctxAccessor);
     }
 
     private static string Truncate(string? s, int max = 500)

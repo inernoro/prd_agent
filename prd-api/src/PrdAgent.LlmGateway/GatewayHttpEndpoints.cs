@@ -132,17 +132,20 @@ public static class GatewayHttpEndpoints
         });
 
         // ILLMClient 流式生成（SSE）。供 MAP 侧 HttpLlmClient（CreateClient 路径）跨进程调用。
-        // CreateClient 返回的客户端内部自管 LlmRequestContext，本端点无需额外开作用域。
+        // MAP 侧把当前 LlmRequestContext 经 body.Context 透传过来，本端点据此开作用域，
+        // 让 serving 端日志关联（RequestId/SessionId/GroupId/UserId）与用户归属与 send/stream 端点一致。
         // server-authority：客户端断开不取消网关任务，向网关传 CancellationToken.None，仅写失败时静默 break。
         app.MapPost("/gw/v1/client-stream", async (
             HttpContext http,
             ClientStreamRequestDto body,
-            PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway) =>
+            PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+            ILLMRequestContextAccessor accessor) =>
         {
             http.Response.Headers.ContentType = "text/event-stream";
             http.Response.Headers.CacheControl = "no-cache";
             http.Response.Headers["X-Accel-Buffering"] = "no";
 
+            using var _ = OpenContextScope(accessor, body.Context, body.ModelType, body.AppCallerCode);
             var client = gateway.CreateClient(
                 body.AppCallerCode, body.ModelType, body.MaxTokens, body.Temperature, body.IncludeThinking, body.ExpectedModel);
 
@@ -229,4 +232,5 @@ public sealed record ClientStreamRequestDto(
     string? ExpectedModel,
     string SystemPrompt,
     List<PrdAgent.Core.Interfaces.LLMMessage> Messages,
-    bool EnablePromptCache);
+    bool EnablePromptCache,
+    GatewayRequestContext? Context = null);
