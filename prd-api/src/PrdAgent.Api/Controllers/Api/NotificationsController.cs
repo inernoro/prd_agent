@@ -87,6 +87,7 @@ public sealed class NotificationsController : ControllerBase
     public async Task<IActionResult> ListSubscriptions(CancellationToken ct = default)
     {
         var userId = this.GetRequiredUserId();
+        var defaultProfile = await _pushService.GetDefaultProfileAsync(userId, ct);
         var subscriptions = await _pushService.GetSubscriptionsAsync(userId, ct);
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -94,8 +95,27 @@ public sealed class NotificationsController : ControllerBase
             presets = AdminPushNotificationService.PresetDefinitions,
             resources = AdminPushNotificationService.ResourceDefinitions,
             placeholders = new[] { "appname", "title", "message", "level", "source", "actionUrl", "iconUrl", "imageUrl", "createdAt", "notificationId" },
+            defaultProfile,
             subscriptions
         }));
+    }
+
+    [HttpPut("subscriptions/default-profile")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> UpsertDefaultProfile(
+        [FromBody] AdminPushProfileUpsertRequest request,
+        CancellationToken ct = default)
+    {
+        var userId = this.GetRequiredUserId();
+        try
+        {
+            var defaultProfile = await _pushService.UpsertDefaultProfileAsync(userId, request, ct);
+            return Ok(ApiResponse<object>.Ok(new { defaultProfile }));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
     }
 
     [HttpPut("subscriptions/{topicKey}")]

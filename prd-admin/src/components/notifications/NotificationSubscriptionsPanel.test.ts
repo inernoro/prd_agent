@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildNotificationPushDraftFromPreset,
+  buildNotificationPushProfileDraftFromPreset,
   getSelectedNotificationPushPresetKey,
   sortNotificationPushTopicsByWorkflow,
 } from './NotificationSubscriptionsPanel';
@@ -41,9 +42,19 @@ describe('NotificationSubscriptionsPanel helpers', () => {
     const draft = buildNotificationPushDraftFromPreset(presets[2], true);
 
     expect(draft.enabled).toBe(true);
+    expect(draft.useDefaultProfile).toBe(true);
     expect(draft.channelType).toBe('webhook');
     expect(draft.method).toBe('POST');
     expect(draft.bodyTemplate).toContain('{{message}}');
+  });
+
+  it('builds the default channel draft without topic selection state', () => {
+    const draft = buildNotificationPushProfileDraftFromPreset(presets[0]);
+
+    expect(draft.channelType).toBe('bark');
+    expect(draft.method).toBe('GET');
+    expect(draft.barkServerUrl).toBe('https://api.day.app');
+    expect('enabled' in draft).toBe(false);
   });
 
   it('keeps user-provided URL templates as custom presets', () => {

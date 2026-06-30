@@ -64,6 +64,28 @@ export type AdminPushSubscription = {
   userId: string;
   topicKey: string;
   enabled: boolean;
+  useDefaultProfile?: boolean;
+  channelType: string;
+  method: 'GET' | 'POST' | (string & {});
+  urlTemplate: string;
+  bodyTemplate?: string | null;
+  contentType: string;
+  barkKey?: string | null;
+  barkServerUrl?: string | null;
+  barkGroup?: string | null;
+  barkSound?: string | null;
+  barkLevel?: string | null;
+  barkIcon?: string | null;
+  barkImageTemplate?: string | null;
+  barkUrlTemplate?: string | null;
+  barkCall?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type AdminPushProfile = {
+  id?: string;
+  userId?: string;
   channelType: string;
   method: 'GET' | 'POST' | (string & {});
   urlTemplate: string;
@@ -104,11 +126,13 @@ export type GetAdminPushSubscriptionsResponse = {
   presets: AdminPushPresetDefinition[];
   resources: AdminPushResourceDefinition[];
   placeholders: string[];
+  defaultProfile: AdminPushProfile;
   subscriptions: AdminPushSubscription[];
 };
 
 export type UpdateAdminPushSubscriptionRequest = {
   enabled: boolean;
+  useDefaultProfile?: boolean;
   channelType: string;
   method: 'GET' | 'POST' | (string & {});
   urlTemplate: string;
@@ -125,6 +149,8 @@ export type UpdateAdminPushSubscriptionRequest = {
   barkCall?: boolean;
 };
 
+export type UpdateAdminPushProfileRequest = Omit<UpdateAdminPushSubscriptionRequest, 'enabled' | 'useDefaultProfile'>;
+
 export type GetAdminNotificationsContract = (args?: { includeHandled?: boolean }) => Promise<ApiResponse<GetAdminNotificationsResponse>>;
 export type HandleAdminNotificationContract = (id: string) => Promise<ApiResponse<{ handled: boolean }>>;
 export type HandleAllAdminNotificationsContract = () => Promise<ApiResponse<{ handled: boolean }>>;
@@ -133,6 +159,9 @@ export type UpdateAdminPushSubscriptionContract = (
   topicKey: string,
   request: UpdateAdminPushSubscriptionRequest
 ) => Promise<ApiResponse<{ subscription: AdminPushSubscription }>>;
+export type UpdateAdminPushProfileContract = (
+  request: UpdateAdminPushProfileRequest
+) => Promise<ApiResponse<{ defaultProfile: AdminPushProfile }>>;
 export type TestAdminPushSubscriptionContract = (
   topicKey: string,
   request: UpdateAdminPushSubscriptionRequest

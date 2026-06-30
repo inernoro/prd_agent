@@ -198,6 +198,7 @@ public sealed class AdminPushNotificationService
                 UserId = userId,
                 TopicKey = topic.Key,
                 Enabled = false,
+                UseDefaultProfile = true,
                 ChannelType = preset.ChannelType,
                 Method = preset.Method,
                 UrlTemplate = preset.UrlTemplate,
@@ -211,11 +212,69 @@ public sealed class AdminPushNotificationService
         }).ToList();
     }
 
+    public async Task<AdminPushProfile> GetDefaultProfileAsync(string userId, CancellationToken ct)
+    {
+        var profile = await _db.AdminPushProfiles
+            .Find(x => x.UserId == userId)
+            .SortByDescending(x => x.UpdatedAt)
+            .ThenByDescending(x => x.Id)
+            .FirstOrDefaultAsync(ct);
+        if (profile != null) return profile;
+
+        var latestConfiguredSubscription = await _db.AdminPushSubscriptions
+            .Find(x => x.UserId == userId
+                && (x.ChannelType == "bark" || x.UrlTemplate != string.Empty || x.BarkKey != null))
+            .SortByDescending(x => x.UpdatedAt)
+            .ThenByDescending(x => x.Id)
+            .FirstOrDefaultAsync(ct);
+
+        return latestConfiguredSubscription == null
+            ? BuildDefaultProfile(userId)
+            : BuildProfileFromSubscription(userId, latestConfiguredSubscription);
+    }
+
+    public async Task<AdminPushProfile> UpsertDefaultProfileAsync(string userId, AdminPushProfileUpsertRequest request, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var existing = await _db.AdminPushProfiles
+            .Find(x => x.UserId == userId)
+            .SortByDescending(x => x.UpdatedAt)
+            .ThenByDescending(x => x.Id)
+            .FirstOrDefaultAsync(ct);
+
+        var profile = existing ?? new AdminPushProfile
+        {
+            UserId = userId,
+            CreatedAt = now,
+        };
+
+        ApplyProfileRequest(profile, request);
+        profile.UpdatedAt = now;
+
+        await ValidateProfilePreviewAsync(profile, ct);
+
+        if (existing == null)
+        {
+            await _db.AdminPushProfiles.InsertOneAsync(profile, cancellationToken: CancellationToken.None);
+        }
+        else
+        {
+            await _db.AdminPushProfiles.ReplaceOneAsync(x => x.Id == profile.Id, profile, cancellationToken: CancellationToken.None);
+        }
+
+        await _db.AdminPushProfiles.DeleteManyAsync(
+            x => x.UserId == userId && x.Id != profile.Id,
+            CancellationToken.None);
+
+        return profile;
+    }
+
     public async Task<AdminPushSubscription> UpsertSubscriptionAsync(string userId, AdminPushSubscriptionUpsertRequest request, CancellationToken ct)
     {
         var topic = TopicDefinitions.FirstOrDefault(x => x.Key.Equals((request.TopicKey ?? string.Empty).Trim(), StringComparison.OrdinalIgnoreCase))
             ?? throw new InvalidOperationException("未知订阅类型");
 
+        var useDefaultProfile = request.UseDefaultProfile ?? false;
         var channelType = NormalizeText(request.ChannelType, "url", 64);
         var isBark = channelType.Equals("bark", StringComparison.OrdinalIgnoreCase);
         var method = isBark ? "GET" : (request.Method ?? "GET").Trim().ToUpperInvariant();
@@ -228,32 +287,6 @@ public sealed class AdminPushNotificationService
         var barkLevel = NormalizeNullableText(request.BarkLevel, 32);
         if (!string.IsNullOrWhiteSpace(barkLevel) && !SupportedBarkLevels.Contains(barkLevel))
             throw new InvalidOperationException("Bark 时效级别无效");
-
-        if (request.Enabled && isBark && string.IsNullOrWhiteSpace(barkKey))
-            throw new InvalidOperationException("启用 Bark 订阅前必须填写 Bark Key");
-
-        if (request.Enabled && !isBark && string.IsNullOrWhiteSpace(urlTemplate))
-            throw new InvalidOperationException("启用订阅前必须填写请求 URL 模板");
-
-        if (request.Enabled)
-        {
-            var previewUrl = isBark
-                ? BuildBarkUrl(
-                    barkServerUrl,
-                    barkKey ?? string.Empty,
-                    "管理员推送测试",
-                    "这是一条测试通知",
-                    BuildPreviewPlaceholders(topic),
-                    NormalizeNullableText(request.BarkGroup, 128),
-                    NormalizeNullableText(request.BarkSound, 96),
-                    barkLevel,
-                    NormalizeNullableText(request.BarkIcon, 1024),
-                    NormalizeNullableText(request.BarkImageTemplate, 1024),
-                    NormalizeNullableText(request.BarkUrlTemplate, 1024),
-                    request.BarkCall)
-                : RenderTemplate(urlTemplate, BuildPreviewPlaceholders(topic), forUrl: true);
-            await _urlValidator.EnsureSafeHttpUrlAsync(previewUrl, "管理员推送订阅", ct);
-        }
 
         var now = DateTime.UtcNow;
         var existing = await _db.AdminPushSubscriptions
@@ -270,6 +303,7 @@ public sealed class AdminPushNotificationService
         };
 
         entity.Enabled = request.Enabled;
+        entity.UseDefaultProfile = useDefaultProfile;
         entity.ChannelType = channelType;
         entity.Method = method;
         entity.UrlTemplate = urlTemplate;
@@ -285,6 +319,14 @@ public sealed class AdminPushNotificationService
         entity.BarkUrlTemplate = NormalizeNullableText(request.BarkUrlTemplate, 1024);
         entity.BarkCall = request.BarkCall;
         entity.UpdatedAt = now;
+
+        if (entity.Enabled)
+        {
+            var effective = entity.UseDefaultProfile
+                ? ApplyProfileToSubscription(entity, await GetDefaultProfileAsync(userId, ct))
+                : entity;
+            await ValidateSubscriptionPreviewAsync(effective, topic, ct);
+        }
 
         if (existing == null)
         {
@@ -313,6 +355,7 @@ public sealed class AdminPushNotificationService
             UserId = userId,
             TopicKey = topic.Key,
             Enabled = true,
+            UseDefaultProfile = request.UseDefaultProfile ?? false,
             ChannelType = NormalizeText(request.ChannelType, "url", 64),
             Method = NormalizeText(request.ChannelType, "url", 64).Equals("bark", StringComparison.OrdinalIgnoreCase)
                 ? "GET"
@@ -331,14 +374,10 @@ public sealed class AdminPushNotificationService
             BarkCall = request.BarkCall,
         };
 
-        if (sub.ChannelType.Equals("bark", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(sub.BarkKey))
-            throw new InvalidOperationException("请先填写 Bark Key");
+        if (sub.UseDefaultProfile)
+            sub = ApplyProfileToSubscription(sub, await GetDefaultProfileAsync(userId, ct));
 
-        if (!sub.ChannelType.Equals("bark", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(sub.UrlTemplate))
-            throw new InvalidOperationException("请先填写请求 URL 模板");
-
-        if (!SupportedMethods.Contains(sub.Method))
-            throw new InvalidOperationException("推送请求方式仅支持 GET 或 POST");
+        ValidateCompleteSubscription(sub);
 
         var notification = new AdminNotification
         {
@@ -444,28 +483,33 @@ public sealed class AdminPushNotificationService
         bool saveLog,
         CancellationToken ct)
     {
+        var effectiveSubscription = subscription.UseDefaultProfile
+            ? ApplyProfileToSubscription(subscription, await GetDefaultProfileAsync(userId, ct))
+            : subscription;
+        ValidateCompleteSubscription(effectiveSubscription);
+
         var placeholders = BuildPlaceholders(notification);
-        var requestUrl = subscription.ChannelType.Equals("bark", StringComparison.OrdinalIgnoreCase)
+        var requestUrl = effectiveSubscription.ChannelType.Equals("bark", StringComparison.OrdinalIgnoreCase)
             ? BuildBarkUrl(
-                subscription.BarkServerUrl,
-                subscription.BarkKey,
+                effectiveSubscription.BarkServerUrl,
+                effectiveSubscription.BarkKey,
                 notification.Title ?? "PRD Agent 通知",
                 notification.Message ?? notification.Title ?? string.Empty,
                 placeholders,
-                subscription.BarkGroup,
-                subscription.BarkSound,
-                subscription.BarkLevel,
-                subscription.BarkIcon,
-                subscription.BarkImageTemplate,
-                subscription.BarkUrlTemplate,
-                subscription.BarkCall)
-            : RenderTemplate(subscription.UrlTemplate, placeholders, forUrl: true);
+                effectiveSubscription.BarkGroup,
+                effectiveSubscription.BarkSound,
+                effectiveSubscription.BarkLevel,
+                effectiveSubscription.BarkIcon,
+                effectiveSubscription.BarkImageTemplate,
+                effectiveSubscription.BarkUrlTemplate,
+                effectiveSubscription.BarkCall)
+            : RenderTemplate(effectiveSubscription.UrlTemplate, placeholders, forUrl: true);
         var safeUri = await _urlValidator.EnsureSafeHttpUrlAsync(requestUrl, "管理员推送目标", ct);
-        var method = subscription.ChannelType.Equals("bark", StringComparison.OrdinalIgnoreCase)
+        var method = effectiveSubscription.ChannelType.Equals("bark", StringComparison.OrdinalIgnoreCase)
             ? HttpMethod.Get
-            : subscription.Method.Equals("POST", StringComparison.OrdinalIgnoreCase) ? HttpMethod.Post : HttpMethod.Get;
+            : effectiveSubscription.Method.Equals("POST", StringComparison.OrdinalIgnoreCase) ? HttpMethod.Post : HttpMethod.Get;
         var body = method == HttpMethod.Post
-            ? RenderTemplate(subscription.BodyTemplate ?? string.Empty, placeholders, forUrl: false)
+            ? RenderTemplate(effectiveSubscription.BodyTemplate ?? string.Empty, placeholders, forUrl: false)
             : null;
 
         var log = new AdminPushDeliveryLog
@@ -474,7 +518,7 @@ public sealed class AdminPushNotificationService
             SubscriptionId = subscription.Id,
             NotificationId = notification.Id,
             TopicKey = subscription.TopicKey,
-            ChannelType = subscription.ChannelType,
+            ChannelType = effectiveSubscription.ChannelType,
             Method = method.Method,
             RequestUrl = safeUri.ToString(),
             RequestBody = body,
@@ -489,7 +533,7 @@ public sealed class AdminPushNotificationService
             using var httpRequest = new HttpRequestMessage(method, safeUri);
             if (method == HttpMethod.Post)
             {
-                httpRequest.Content = new StringContent(body ?? string.Empty, Encoding.UTF8, subscription.ContentType);
+                httpRequest.Content = new StringContent(body ?? string.Empty, Encoding.UTF8, effectiveSubscription.ContentType);
             }
 
             using var response = await client.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, CancellationToken.None);
@@ -517,6 +561,158 @@ public sealed class AdminPushNotificationService
         }
 
         return log;
+    }
+
+    private async Task ValidateProfilePreviewAsync(AdminPushProfile profile, CancellationToken ct)
+    {
+        if (profile.ChannelType.Equals("bark", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(profile.BarkKey))
+            return;
+        if (!profile.ChannelType.Equals("bark", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(profile.UrlTemplate))
+            return;
+
+        var topic = TopicDefinitions[0];
+        var preview = ApplyProfileToSubscription(new AdminPushSubscription
+        {
+            UserId = profile.UserId,
+            TopicKey = topic.Key,
+            Enabled = true,
+        }, profile);
+        await ValidateSubscriptionPreviewAsync(preview, topic, ct);
+    }
+
+    private async Task ValidateSubscriptionPreviewAsync(AdminPushSubscription subscription, AdminPushTopicDefinition topic, CancellationToken ct)
+    {
+        ValidateCompleteSubscription(subscription);
+        var isBark = subscription.ChannelType.Equals("bark", StringComparison.OrdinalIgnoreCase);
+        var previewUrl = isBark
+            ? BuildBarkUrl(
+                subscription.BarkServerUrl,
+                subscription.BarkKey,
+                "管理员推送测试",
+                "这是一条测试通知",
+                BuildPreviewPlaceholders(topic),
+                subscription.BarkGroup,
+                subscription.BarkSound,
+                subscription.BarkLevel,
+                subscription.BarkIcon,
+                subscription.BarkImageTemplate,
+                subscription.BarkUrlTemplate,
+                subscription.BarkCall)
+            : RenderTemplate(subscription.UrlTemplate, BuildPreviewPlaceholders(topic), forUrl: true);
+        await _urlValidator.EnsureSafeHttpUrlAsync(previewUrl, "管理员推送订阅", ct);
+    }
+
+    private static void ValidateCompleteSubscription(AdminPushSubscription subscription)
+    {
+        if (!SupportedMethods.Contains(subscription.Method))
+            throw new InvalidOperationException("推送请求方式仅支持 GET 或 POST");
+
+        if (subscription.ChannelType.Equals("bark", StringComparison.OrdinalIgnoreCase))
+        {
+            if (string.IsNullOrWhiteSpace(subscription.BarkKey))
+                throw new InvalidOperationException("启用 Bark 订阅前必须填写 Bark Key");
+            var level = NormalizeNullableText(subscription.BarkLevel, 32);
+            if (!string.IsNullOrWhiteSpace(level) && !SupportedBarkLevels.Contains(level))
+                throw new InvalidOperationException("Bark 时效级别无效");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(subscription.UrlTemplate))
+            throw new InvalidOperationException("启用订阅前必须填写请求 URL 模板");
+    }
+
+    private static AdminPushProfile BuildDefaultProfile(string userId)
+    {
+        return new AdminPushProfile
+        {
+            UserId = userId,
+            ChannelType = "bark",
+            Method = "GET",
+            UrlTemplate = string.Empty,
+            BodyTemplate = null,
+            ContentType = "application/json",
+            BarkServerUrl = DefaultBarkServerUrl,
+            BarkGroup = "MAP System-{{appname}}",
+            BarkIcon = "{{iconUrl}}",
+            BarkImageTemplate = "{{imageUrl}}",
+            BarkUrlTemplate = "{{actionUrl}}",
+        };
+    }
+
+    private static AdminPushProfile BuildProfileFromSubscription(string userId, AdminPushSubscription subscription)
+    {
+        return new AdminPushProfile
+        {
+            UserId = userId,
+            ChannelType = subscription.ChannelType,
+            Method = subscription.Method,
+            UrlTemplate = subscription.UrlTemplate,
+            BodyTemplate = subscription.BodyTemplate,
+            ContentType = subscription.ContentType,
+            BarkKey = subscription.BarkKey,
+            BarkServerUrl = subscription.BarkServerUrl,
+            BarkGroup = subscription.BarkGroup,
+            BarkSound = subscription.BarkSound,
+            BarkLevel = subscription.BarkLevel,
+            BarkIcon = subscription.BarkIcon,
+            BarkImageTemplate = subscription.BarkImageTemplate,
+            BarkUrlTemplate = subscription.BarkUrlTemplate,
+            BarkCall = subscription.BarkCall,
+            CreatedAt = subscription.CreatedAt,
+            UpdatedAt = subscription.UpdatedAt,
+        };
+    }
+
+    private static void ApplyProfileRequest(AdminPushProfile profile, AdminPushProfileUpsertRequest request)
+    {
+        var channelType = NormalizeText(request.ChannelType, "bark", 64);
+        var isBark = channelType.Equals("bark", StringComparison.OrdinalIgnoreCase);
+        profile.ChannelType = channelType;
+        profile.Method = isBark ? "GET" : (request.Method ?? "GET").Trim().ToUpperInvariant();
+        if (!SupportedMethods.Contains(profile.Method))
+            throw new InvalidOperationException("推送请求方式仅支持 GET 或 POST");
+        profile.UrlTemplate = (request.UrlTemplate ?? string.Empty).Trim();
+        profile.BodyTemplate = string.IsNullOrWhiteSpace(request.BodyTemplate) ? null : request.BodyTemplate;
+        profile.ContentType = NormalizeText(request.ContentType, "application/json", 96);
+        profile.BarkKey = NormalizeNullableText(request.BarkKey, 256);
+        profile.BarkServerUrl = NormalizeNullableText(request.BarkServerUrl, 512) ?? DefaultBarkServerUrl;
+        profile.BarkGroup = NormalizeNullableText(request.BarkGroup, 128);
+        profile.BarkSound = NormalizeNullableText(request.BarkSound, 96);
+        profile.BarkLevel = NormalizeNullableText(request.BarkLevel, 32);
+        if (!string.IsNullOrWhiteSpace(profile.BarkLevel) && !SupportedBarkLevels.Contains(profile.BarkLevel))
+            throw new InvalidOperationException("Bark 时效级别无效");
+        profile.BarkIcon = NormalizeNullableText(request.BarkIcon, 1024);
+        profile.BarkImageTemplate = NormalizeNullableText(request.BarkImageTemplate, 1024);
+        profile.BarkUrlTemplate = NormalizeNullableText(request.BarkUrlTemplate, 1024);
+        profile.BarkCall = request.BarkCall;
+    }
+
+    private static AdminPushSubscription ApplyProfileToSubscription(AdminPushSubscription subscription, AdminPushProfile profile)
+    {
+        return new AdminPushSubscription
+        {
+            Id = subscription.Id,
+            UserId = subscription.UserId,
+            TopicKey = subscription.TopicKey,
+            Enabled = subscription.Enabled,
+            UseDefaultProfile = true,
+            ChannelType = profile.ChannelType,
+            Method = profile.Method,
+            UrlTemplate = profile.UrlTemplate,
+            BodyTemplate = profile.BodyTemplate,
+            ContentType = profile.ContentType,
+            BarkKey = profile.BarkKey,
+            BarkServerUrl = profile.BarkServerUrl,
+            BarkGroup = profile.BarkGroup,
+            BarkSound = profile.BarkSound,
+            BarkLevel = profile.BarkLevel,
+            BarkIcon = profile.BarkIcon,
+            BarkImageTemplate = profile.BarkImageTemplate,
+            BarkUrlTemplate = profile.BarkUrlTemplate,
+            BarkCall = profile.BarkCall,
+            CreatedAt = subscription.CreatedAt,
+            UpdatedAt = subscription.UpdatedAt,
+        };
     }
 
     private static bool MatchesTopic(string topicKey, AdminNotification notification)
@@ -850,6 +1046,25 @@ public sealed class AdminPushSubscriptionUpsertRequest
 {
     public string? TopicKey { get; set; }
     public bool Enabled { get; set; }
+    public bool? UseDefaultProfile { get; set; }
+    public string? ChannelType { get; set; }
+    public string? Method { get; set; }
+    public string? UrlTemplate { get; set; }
+    public string? BodyTemplate { get; set; }
+    public string? ContentType { get; set; }
+    public string? BarkKey { get; set; }
+    public string? BarkServerUrl { get; set; }
+    public string? BarkGroup { get; set; }
+    public string? BarkSound { get; set; }
+    public string? BarkLevel { get; set; }
+    public string? BarkIcon { get; set; }
+    public string? BarkImageTemplate { get; set; }
+    public string? BarkUrlTemplate { get; set; }
+    public bool BarkCall { get; set; }
+}
+
+public sealed class AdminPushProfileUpsertRequest
+{
     public string? ChannelType { get; set; }
     public string? Method { get; set; }
     public string? UrlTemplate { get; set; }

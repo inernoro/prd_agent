@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CheckCircle2, FlaskConical, Info, Save, Settings2, SlidersHorizontal } from 'lucide-react';
+import { CheckCircle2, FlaskConical, Info, Save, Settings2, SlidersHorizontal, Wrench } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import {
   getAdminPushSubscriptions,
   testAdminPushSubscription,
+  updateAdminPushProfile,
   updateAdminPushSubscription,
 } from '@/services';
 import type {
   AdminPushPresetDefinition,
+  AdminPushProfile,
   AdminPushResourceDefinition,
   AdminPushSubscription,
   AdminPushTopicDefinition,
+  UpdateAdminPushProfileRequest,
   UpdateAdminPushSubscriptionRequest,
 } from '@/services/contracts/notifications';
 
@@ -26,9 +29,8 @@ const TOPIC_WORKFLOW_ORDER = [
   'report-agent',
 ];
 
-export const DEFAULT_NOTIFICATION_PUSH_DRAFT: UpdateAdminPushSubscriptionRequest = {
-  enabled: false,
-  channelType: 'url',
+export const DEFAULT_NOTIFICATION_PUSH_PROFILE_DRAFT: UpdateAdminPushProfileRequest = {
+  channelType: 'bark',
   method: 'GET',
   urlTemplate: '',
   bodyTemplate: '',
@@ -38,53 +40,82 @@ export const DEFAULT_NOTIFICATION_PUSH_DRAFT: UpdateAdminPushSubscriptionRequest
   barkGroup: 'MAP System-{{appname}}',
   barkSound: '',
   barkLevel: '',
-  barkIcon: '',
+  barkIcon: '{{iconUrl}}',
   barkImageTemplate: '{{imageUrl}}',
   barkUrlTemplate: '{{actionUrl}}',
   barkCall: false,
 };
 
+export const DEFAULT_NOTIFICATION_PUSH_DRAFT: UpdateAdminPushSubscriptionRequest = {
+  enabled: false,
+  useDefaultProfile: true,
+  ...DEFAULT_NOTIFICATION_PUSH_PROFILE_DRAFT,
+};
+
+function toProfileDraft(profile?: AdminPushProfile | null): UpdateAdminPushProfileRequest {
+  return {
+    ...DEFAULT_NOTIFICATION_PUSH_PROFILE_DRAFT,
+    channelType: profile?.channelType || DEFAULT_NOTIFICATION_PUSH_PROFILE_DRAFT.channelType,
+    method: profile?.method || DEFAULT_NOTIFICATION_PUSH_PROFILE_DRAFT.method,
+    urlTemplate: profile?.urlTemplate || '',
+    bodyTemplate: profile?.bodyTemplate || '',
+    contentType: profile?.contentType || DEFAULT_NOTIFICATION_PUSH_PROFILE_DRAFT.contentType,
+    barkKey: profile?.barkKey || '',
+    barkServerUrl: profile?.barkServerUrl || DEFAULT_NOTIFICATION_PUSH_PROFILE_DRAFT.barkServerUrl,
+    barkGroup: profile?.barkGroup || DEFAULT_NOTIFICATION_PUSH_PROFILE_DRAFT.barkGroup,
+    barkSound: profile?.barkSound || '',
+    barkLevel: profile?.barkLevel || '',
+    barkIcon: profile?.barkIcon || DEFAULT_NOTIFICATION_PUSH_PROFILE_DRAFT.barkIcon,
+    barkImageTemplate: profile?.barkImageTemplate || DEFAULT_NOTIFICATION_PUSH_PROFILE_DRAFT.barkImageTemplate,
+    barkUrlTemplate: profile?.barkUrlTemplate || DEFAULT_NOTIFICATION_PUSH_PROFILE_DRAFT.barkUrlTemplate,
+    barkCall: Boolean(profile?.barkCall),
+  };
+}
+
 function toDraft(subscription: AdminPushSubscription): UpdateAdminPushSubscriptionRequest {
   return {
     enabled: subscription.enabled,
-    channelType: subscription.channelType || 'url',
-    method: subscription.method || 'GET',
+    useDefaultProfile: Boolean(subscription.useDefaultProfile),
+    channelType: subscription.channelType || DEFAULT_NOTIFICATION_PUSH_PROFILE_DRAFT.channelType,
+    method: subscription.method || DEFAULT_NOTIFICATION_PUSH_PROFILE_DRAFT.method,
     urlTemplate: subscription.urlTemplate || '',
     bodyTemplate: subscription.bodyTemplate || '',
-    contentType: subscription.contentType || 'application/json',
+    contentType: subscription.contentType || DEFAULT_NOTIFICATION_PUSH_PROFILE_DRAFT.contentType,
     barkKey: subscription.barkKey || '',
-    barkServerUrl: subscription.barkServerUrl || 'https://api.day.app',
-    barkGroup: subscription.barkGroup || 'MAP System-{{appname}}',
+    barkServerUrl: subscription.barkServerUrl || DEFAULT_NOTIFICATION_PUSH_PROFILE_DRAFT.barkServerUrl,
+    barkGroup: subscription.barkGroup || DEFAULT_NOTIFICATION_PUSH_PROFILE_DRAFT.barkGroup,
     barkSound: subscription.barkSound || '',
     barkLevel: subscription.barkLevel || '',
-    barkIcon: subscription.barkIcon || '',
-    barkImageTemplate: subscription.barkImageTemplate || '{{imageUrl}}',
-    barkUrlTemplate: subscription.barkUrlTemplate || '{{actionUrl}}',
+    barkIcon: subscription.barkIcon || DEFAULT_NOTIFICATION_PUSH_PROFILE_DRAFT.barkIcon,
+    barkImageTemplate: subscription.barkImageTemplate || DEFAULT_NOTIFICATION_PUSH_PROFILE_DRAFT.barkImageTemplate,
+    barkUrlTemplate: subscription.barkUrlTemplate || DEFAULT_NOTIFICATION_PUSH_PROFILE_DRAFT.barkUrlTemplate,
     barkCall: Boolean(subscription.barkCall),
+  };
+}
+
+export function buildNotificationPushProfileDraftFromPreset(preset: AdminPushPresetDefinition): UpdateAdminPushProfileRequest {
+  return {
+    ...DEFAULT_NOTIFICATION_PUSH_PROFILE_DRAFT,
+    channelType: preset.channelType,
+    method: preset.method,
+    urlTemplate: preset.urlTemplate,
+    bodyTemplate: preset.bodyTemplate || '',
+    contentType: preset.contentType || 'application/json',
   };
 }
 
 export function buildNotificationPushDraftFromPreset(preset: AdminPushPresetDefinition, enabled: boolean): UpdateAdminPushSubscriptionRequest {
   return {
     enabled,
-    channelType: preset.channelType,
-    method: preset.method,
-    urlTemplate: preset.urlTemplate,
-    bodyTemplate: preset.bodyTemplate || '',
-    contentType: preset.contentType || 'application/json',
-    barkKey: '',
-    barkServerUrl: 'https://api.day.app',
-    barkGroup: 'MAP System-{{appname}}',
-    barkSound: '',
-    barkLevel: '',
-    barkIcon: '',
-    barkImageTemplate: '{{imageUrl}}',
-    barkUrlTemplate: '{{actionUrl}}',
-    barkCall: false,
+    useDefaultProfile: true,
+    ...buildNotificationPushProfileDraftFromPreset(preset),
   };
 }
 
-export function getSelectedNotificationPushPresetKey(draft: UpdateAdminPushSubscriptionRequest, presets: AdminPushPresetDefinition[]) {
+export function getSelectedNotificationPushPresetKey(
+  draft: UpdateAdminPushProfileRequest | UpdateAdminPushSubscriptionRequest,
+  presets: AdminPushPresetDefinition[]
+) {
   const matched = presets.find(
     (preset) =>
       preset.channelType === draft.channelType &&
@@ -110,6 +141,7 @@ export function NotificationSubscriptionsPanel() {
   const [presets, setPresets] = useState<AdminPushPresetDefinition[]>([]);
   const [resources, setResources] = useState<AdminPushResourceDefinition[]>([]);
   const [placeholders, setPlaceholders] = useState<string[]>([]);
+  const [defaultProfileDraft, setDefaultProfileDraft] = useState<UpdateAdminPushProfileRequest>(DEFAULT_NOTIFICATION_PUSH_PROFILE_DRAFT);
   const [drafts, setDrafts] = useState<DraftMap>({});
   const [loading, setLoading] = useState(true);
   const [savingKey, setSavingKey] = useState<string | null>(null);
@@ -129,6 +161,7 @@ export function NotificationSubscriptionsPanel() {
       setPresets(res.data.presets ?? []);
       setResources(res.data.resources ?? []);
       setPlaceholders(res.data.placeholders ?? []);
+      setDefaultProfileDraft(toProfileDraft(res.data.defaultProfile));
       const next: DraftMap = {};
       for (const sub of res.data.subscriptions ?? []) {
         next[sub.topicKey] = toDraft(sub);
@@ -144,17 +177,6 @@ export function NotificationSubscriptionsPanel() {
     void load();
   }, [load]);
 
-  const updateDraft = useCallback((topicKey: string, patch: Partial<UpdateAdminPushSubscriptionRequest>) => {
-    setDrafts((prev) => ({
-      ...prev,
-      [topicKey]: {
-        ...DEFAULT_NOTIFICATION_PUSH_DRAFT,
-        ...(prev[topicKey] ?? {}),
-        ...patch,
-      },
-    }));
-  }, []);
-
   const firstPreset = presets[0];
   const resourcesByKey = useMemo(() => new Map(resources.map((x) => [x.key, x])), [resources]);
   const placeholderText = useMemo(() => placeholders.map((x) => `{{${x}}}`).join('  '), [placeholders]);
@@ -167,27 +189,43 @@ export function NotificationSubscriptionsPanel() {
     ? drafts[selectedTopic.key] ?? (firstPreset ? buildNotificationPushDraftFromPreset(firstPreset, false) : DEFAULT_NOTIFICATION_PUSH_DRAFT)
     : null;
   const selectedResource = selectedTopic ? resourcesByKey.get(selectedTopic.resourceKey) : undefined;
-  const selectedPresetKey = selectedDraft ? getSelectedNotificationPushPresetKey(selectedDraft, presets) : 'custom';
-  const selectedIsBark = selectedDraft?.channelType === 'bark';
-  const selectedIsPost = String(selectedDraft?.method ?? 'GET').toUpperCase() === 'POST';
-  const enabledCount = orderedTopics.reduce((sum, topic) => {
-    const draft = drafts[topic.key];
-    return sum + (draft?.enabled ? 1 : 0);
-  }, 0);
+  const enabledCount = orderedTopics.reduce((sum, topic) => sum + (drafts[topic.key]?.enabled ? 1 : 0), 0);
+  const overrideCount = orderedTopics.reduce((sum, topic) => sum + (drafts[topic.key]?.useDefaultProfile === false ? 1 : 0), 0);
+
+  const updateDraft = useCallback((topicKey: string, patch: Partial<UpdateAdminPushSubscriptionRequest>) => {
+    setDrafts((prev) => ({
+      ...prev,
+      [topicKey]: {
+        ...DEFAULT_NOTIFICATION_PUSH_DRAFT,
+        ...(prev[topicKey] ?? {}),
+        ...patch,
+      },
+    }));
+  }, []);
 
   const saveAllTopics = useCallback(async () => {
     if (orderedTopics.length === 0) return;
     setSavingKey('__all__');
     setMessage(null);
 
-    const barkKeyForReuse = selectedDraft?.channelType === 'bark' ? (selectedDraft.barkKey || '').trim() : '';
+    const profileRes = await updateAdminPushProfile(defaultProfileDraft);
+    if (!profileRes.success) {
+      setMessage(`默认推送通道保存失败：${profileRes.error?.message || '保存失败'}`);
+      setSavingKey(null);
+      return;
+    }
+    setDefaultProfileDraft(toProfileDraft(profileRes.data.defaultProfile));
+
     const saved: AdminPushSubscription[] = [];
     for (const topic of orderedTopics) {
       const baseDraft = drafts[topic.key] ?? (firstPreset ? buildNotificationPushDraftFromPreset(firstPreset, false) : DEFAULT_NOTIFICATION_PUSH_DRAFT);
-      const request =
-        baseDraft.enabled && baseDraft.channelType === 'bark' && !baseDraft.barkKey && barkKeyForReuse
-          ? { ...baseDraft, barkKey: barkKeyForReuse }
-          : baseDraft;
+      const request = baseDraft.useDefaultProfile === false
+        ? baseDraft
+        : {
+            ...defaultProfileDraft,
+            enabled: baseDraft.enabled,
+            useDefaultProfile: true,
+          };
       const res = await updateAdminPushSubscription(topic.key, request);
       if (!res.success) {
         setSelectedTopicKey(topic.key);
@@ -204,16 +242,23 @@ export function NotificationSubscriptionsPanel() {
       }
       return next;
     });
-    setMessage('推送订阅已保存');
+    setMessage('默认推送通道和接收范围已保存');
     setSavingKey(null);
-  }, [drafts, firstPreset, orderedTopics, selectedDraft]);
+  }, [defaultProfileDraft, drafts, firstPreset, orderedTopics]);
 
   const testTopic = useCallback(async (topicKey: string) => {
     const draft = drafts[topicKey];
     if (!draft) return;
+    const request = draft.useDefaultProfile === false
+      ? draft
+      : {
+          ...defaultProfileDraft,
+          enabled: draft.enabled,
+          useDefaultProfile: false,
+        };
     setTestingKey(topicKey);
     setMessage(null);
-    const res = await testAdminPushSubscription(topicKey, draft);
+    const res = await testAdminPushSubscription(topicKey, request);
     if (res.success) {
       const delivery = res.data.delivery;
       setMessage(delivery.success ? `测试发送成功，HTTP ${delivery.statusCode ?? 'OK'}` : delivery.errorMessage || '测试发送失败');
@@ -221,7 +266,7 @@ export function NotificationSubscriptionsPanel() {
       setMessage(res.error?.message || '测试发送失败');
     }
     setTestingKey(null);
-  }, [drafts]);
+  }, [defaultProfileDraft, drafts]);
 
   useEffect(() => {
     if (orderedTopics.length === 0) {
@@ -232,6 +277,193 @@ export function NotificationSubscriptionsPanel() {
       setSelectedTopicKey(orderedTopics[0].key);
     }
   }, [orderedTopics, selectedTopicKey]);
+
+  function renderChannelFields(
+    draft: UpdateAdminPushProfileRequest,
+    update: (patch: Partial<UpdateAdminPushProfileRequest>) => void
+  ) {
+    const selectedPresetKey = getSelectedNotificationPushPresetKey(draft, presets);
+    const isBark = draft.channelType === 'bark';
+    const isPost = String(draft.method ?? 'GET').toUpperCase() === 'POST';
+
+    return (
+      <div className="flex min-h-0 flex-col gap-3">
+        <div className="grid gap-3 sm:grid-cols-[1.2fr_0.7fr_0.8fr]">
+          <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            推送方式
+            <select
+              className="h-9 rounded-[8px] border px-2 text-[12px] outline-none"
+              style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+              value={selectedPresetKey}
+              onChange={(e) => {
+                const preset = presets.find((item) => item.key === e.target.value);
+                if (preset) update(buildNotificationPushProfileDraftFromPreset(preset));
+              }}
+            >
+              {selectedPresetKey === 'custom' && <option value="custom">自定义模板</option>}
+              {presets.map((preset) => (
+                <option key={preset.key} value={preset.key}>{preset.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            请求方式
+            <select
+              className="h-9 rounded-[8px] border px-2 text-[12px] outline-none"
+              style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+              value={draft.method}
+              disabled={isBark}
+              onChange={(e) => update({ method: e.target.value as 'GET' | 'POST' })}
+            >
+              <option value="GET">GET</option>
+              <option value="POST">POST</option>
+            </select>
+          </label>
+          <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            Content-Type
+            <input
+              className="h-9 rounded-[8px] border px-2 text-[12px] outline-none"
+              style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+              value={draft.contentType}
+              disabled={isBark}
+              onChange={(e) => update({ contentType: e.target.value })}
+            />
+          </label>
+        </div>
+
+        {isBark ? (
+          <>
+            <div className="grid gap-3 sm:grid-cols-[1fr_1fr]">
+              <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                Bark Key
+                <input
+                  className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
+                  style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+                  placeholder="只填写 Bark 推送 Key"
+                  value={draft.barkKey || ''}
+                  onChange={(e) => update({ barkKey: e.target.value })}
+                />
+              </label>
+              <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                Bark 服务地址
+                <input
+                  className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
+                  style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+                  value={draft.barkServerUrl || 'https://api.day.app'}
+                  onChange={(e) => update({ barkServerUrl: e.target.value })}
+                />
+              </label>
+            </div>
+            <details className="rounded-[10px] border px-3 py-2" style={{ borderColor: 'rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.025)' }}>
+              <summary className="cursor-pointer text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+                高级参数
+              </summary>
+              <div className="mt-3 space-y-3">
+                <div className="grid gap-3 sm:grid-cols-[1fr_0.8fr_0.8fr]">
+                  <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    分组模板
+                    <input
+                      className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
+                      style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+                      value={draft.barkGroup || ''}
+                      onChange={(e) => update({ barkGroup: e.target.value })}
+                    />
+                  </label>
+                  <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    声音
+                    <input
+                      className="h-9 rounded-[8px] border px-2 text-[12px] outline-none"
+                      style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+                      placeholder="默认"
+                      value={draft.barkSound || ''}
+                      onChange={(e) => update({ barkSound: e.target.value })}
+                    />
+                  </label>
+                  <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    时效级别
+                    <select
+                      className="h-9 rounded-[8px] border px-2 text-[12px] outline-none"
+                      style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+                      value={draft.barkLevel || ''}
+                      onChange={(e) => update({ barkLevel: e.target.value })}
+                    >
+                      <option value="">默认</option>
+                      <option value="active">active</option>
+                      <option value="timeSensitive">timeSensitive</option>
+                      <option value="passive">passive</option>
+                      <option value="critical">critical</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-[1fr_1fr]">
+                  <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    跳转 URL 模板
+                    <input
+                      className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
+                      style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+                      value={draft.barkUrlTemplate || ''}
+                      onChange={(e) => update({ barkUrlTemplate: e.target.value })}
+                    />
+                  </label>
+                  <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    图标 URL 模板
+                    <input
+                      className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
+                      style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+                      value={draft.barkIcon || ''}
+                      onChange={(e) => update({ barkIcon: e.target.value })}
+                    />
+                  </label>
+                </div>
+                <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  图片 URL 模板
+                  <input
+                    className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
+                    style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+                    value={draft.barkImageTemplate || ''}
+                    onChange={(e) => update({ barkImageTemplate: e.target.value })}
+                  />
+                </label>
+                <label className="inline-flex cursor-pointer items-center gap-2 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-indigo-400"
+                    checked={Boolean(draft.barkCall)}
+                    onChange={(e) => update({ barkCall: e.target.checked })}
+                  />
+                  发送响铃通知
+                </label>
+              </div>
+            </details>
+          </>
+        ) : (
+          <>
+            <label className="flex flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              URL 模板
+              <input
+                className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
+                style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+                placeholder="https://api.day.app/YOUR_KEY/MAP System-{{appname}}/{{message}}"
+                value={draft.urlTemplate}
+                onChange={(e) => update({ urlTemplate: e.target.value })}
+              />
+            </label>
+            {isPost && (
+              <label className="flex flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                Body 模板
+                <textarea
+                  className="min-h-[82px] resize-y rounded-[8px] border px-2 py-2 font-mono text-[12px] leading-relaxed outline-none"
+                  style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+                  value={draft.bodyTemplate || ''}
+                  onChange={(e) => update({ bodyTemplate: e.target.value })}
+                />
+              </label>
+            )}
+          </>
+        )}
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -250,7 +482,7 @@ export function NotificationSubscriptionsPanel() {
         <div className="flex items-start gap-2">
           <Info size={14} className="mt-0.5 shrink-0" />
           <div className="min-w-0">
-            <div style={{ color: 'var(--text-primary)' }}>支持 Bark、URL 请求、通用 Webhook、企业微信、飞书、钉钉。</div>
+            <div style={{ color: 'var(--text-primary)' }}>先配置当前用户的默认推送通道，再选择哪些通知进入外部推送；少数类型可单独覆盖。</div>
             <div className="mt-1 break-words">可用占位符：{placeholderText}</div>
           </div>
         </div>
@@ -265,6 +497,27 @@ export function NotificationSubscriptionsPanel() {
         </div>
       )}
 
+      <section
+        className="rounded-[14px] border px-4 py-3"
+        style={{ borderColor: 'rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.045)' }}
+      >
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              <Settings2 size={15} style={{ color: 'var(--accent-gold)' }} />
+              默认推送通道
+            </div>
+            <div className="mt-1 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+              当前用户有效，接收范围默认共用这套 Bark、Webhook 或机器人配置。
+            </div>
+          </div>
+          <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px]" style={{ background: 'rgba(129,140,248,0.16)', color: '#c7d2fe' }}>
+            默认
+          </span>
+        </div>
+        {renderChannelFields(defaultProfileDraft, (patch) => setDefaultProfileDraft((prev) => ({ ...prev, ...patch })))}
+      </section>
+
       <div className="grid flex-1 min-h-0 gap-3 lg:grid-cols-[260px_minmax(0,1fr)]">
         <aside
           className="flex min-h-0 flex-col rounded-[14px] border"
@@ -278,6 +531,11 @@ export function NotificationSubscriptionsPanel() {
               </div>
               <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{enabledCount}/{orderedTopics.length} 已选</div>
             </div>
+            {overrideCount > 0 && (
+              <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                {overrideCount} 个单独配置
+              </div>
+            )}
           </div>
           <div className="min-h-0 flex-1 space-y-1 overflow-auto p-2" style={{ overscrollBehavior: 'contain' }}>
             {orderedTopics.map((topic) => {
@@ -328,7 +586,7 @@ export function NotificationSubscriptionsPanel() {
                       </span>
                     </div>
                     <div className="mt-0.5 truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                      {resource?.knowledgeStoreName || topic.source}
+                      {draft.useDefaultProfile === false ? '单独配置' : '默认通道'}
                     </div>
                   </div>
                 </div>
@@ -347,7 +605,7 @@ export function NotificationSubscriptionsPanel() {
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
                     <div className="flex min-w-0 items-center gap-2">
-                      <Settings2 size={15} style={{ color: 'var(--accent-gold)' }} />
+                      <Wrench size={15} style={{ color: 'var(--accent-gold)' }} />
                       <div className="truncate text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                         {selectedTopic.label}
                       </div>
@@ -394,180 +652,37 @@ export function NotificationSubscriptionsPanel() {
                   </div>
                 )}
 
-                <div className="grid gap-3 sm:grid-cols-[1.2fr_0.7fr_0.8fr]">
-                  <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                    推送方式
-                    <select
-                      className="h-9 rounded-[8px] border px-2 text-[12px] outline-none"
-                      style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
-                      value={selectedPresetKey}
-                      onChange={(e) => {
-                        const preset = presets.find((item) => item.key === e.target.value);
-                        if (preset) updateDraft(selectedTopic.key, buildNotificationPushDraftFromPreset(preset, selectedDraft.enabled));
-                      }}
-                    >
-                      {selectedPresetKey === 'custom' && <option value="custom">自定义模板</option>}
-                      {presets.map((preset) => (
-                        <option key={preset.key} value={preset.key}>{preset.label}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                    请求方式
-                    <select
-                      className="h-9 rounded-[8px] border px-2 text-[12px] outline-none"
-                      style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
-                      value={selectedDraft.method}
-                      disabled={selectedIsBark}
-                      onChange={(e) => updateDraft(selectedTopic.key, { method: e.target.value as 'GET' | 'POST' })}
-                    >
-                      <option value="GET">GET</option>
-                      <option value="POST">POST</option>
-                    </select>
-                  </label>
-                  <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                    Content-Type
+                <div
+                  className="rounded-[10px] border px-3 py-2"
+                  style={{ borderColor: 'rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.025)' }}
+                >
+                  <label className="inline-flex cursor-pointer items-center gap-2 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
                     <input
-                      className="h-9 rounded-[8px] border px-2 text-[12px] outline-none"
-                      style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
-                      value={selectedDraft.contentType}
-                      disabled={selectedIsBark}
-                      onChange={(e) => updateDraft(selectedTopic.key, { contentType: e.target.value })}
+                      type="checkbox"
+                      className="h-4 w-4 accent-indigo-400"
+                      checked={selectedDraft.useDefaultProfile === false}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          updateDraft(selectedTopic.key, {
+                            ...defaultProfileDraft,
+                            enabled: selectedDraft.enabled,
+                            useDefaultProfile: false,
+                          });
+                        } else {
+                          updateDraft(selectedTopic.key, { useDefaultProfile: true });
+                        }
+                      }}
                     />
+                    此类型单独配置推送通道
                   </label>
+                  {selectedDraft.useDefaultProfile !== false && (
+                    <div className="mt-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                      当前使用上方默认推送通道，保存后只记录此类型是否接收外部推送。
+                    </div>
+                  )}
                 </div>
 
-                {selectedIsBark ? (
-                  <>
-                    <div className="grid gap-3 sm:grid-cols-[1fr_1fr]">
-                      <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                        Bark Key
-                        <input
-                          className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
-                          style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
-                          placeholder="只填写 Bark 推送 Key"
-                          value={selectedDraft.barkKey || ''}
-                          onChange={(e) => updateDraft(selectedTopic.key, { barkKey: e.target.value })}
-                        />
-                      </label>
-                      <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                        Bark 服务地址
-                        <input
-                          className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
-                          style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
-                          value={selectedDraft.barkServerUrl || 'https://api.day.app'}
-                          onChange={(e) => updateDraft(selectedTopic.key, { barkServerUrl: e.target.value })}
-                        />
-                      </label>
-                    </div>
-                    <details className="rounded-[10px] border px-3 py-2" style={{ borderColor: 'rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.025)' }}>
-                      <summary className="cursor-pointer text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                        高级参数
-                      </summary>
-                      <div className="mt-3 space-y-3">
-                        <div className="grid gap-3 sm:grid-cols-[1fr_0.8fr_0.8fr]">
-                          <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                            分组模板
-                            <input
-                              className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
-                              style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
-                              value={selectedDraft.barkGroup || ''}
-                              onChange={(e) => updateDraft(selectedTopic.key, { barkGroup: e.target.value })}
-                            />
-                          </label>
-                          <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                            声音
-                            <input
-                              className="h-9 rounded-[8px] border px-2 text-[12px] outline-none"
-                              style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
-                              placeholder="默认"
-                              value={selectedDraft.barkSound || ''}
-                              onChange={(e) => updateDraft(selectedTopic.key, { barkSound: e.target.value })}
-                            />
-                          </label>
-                          <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                            时效级别
-                            <select
-                              className="h-9 rounded-[8px] border px-2 text-[12px] outline-none"
-                              style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
-                              value={selectedDraft.barkLevel || ''}
-                              onChange={(e) => updateDraft(selectedTopic.key, { barkLevel: e.target.value })}
-                            >
-                              <option value="">默认</option>
-                              <option value="active">active</option>
-                              <option value="timeSensitive">timeSensitive</option>
-                              <option value="passive">passive</option>
-                              <option value="critical">critical</option>
-                            </select>
-                          </label>
-                        </div>
-                        <div className="grid gap-3 sm:grid-cols-[1fr_1fr]">
-                          <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                            跳转 URL 模板
-                            <input
-                              className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
-                              style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
-                              value={selectedDraft.barkUrlTemplate || ''}
-                              onChange={(e) => updateDraft(selectedTopic.key, { barkUrlTemplate: e.target.value })}
-                            />
-                          </label>
-                          <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                            图标 URL 模板
-                            <input
-                              className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
-                              style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
-                              value={selectedDraft.barkIcon || ''}
-                              onChange={(e) => updateDraft(selectedTopic.key, { barkIcon: e.target.value })}
-                            />
-                          </label>
-                        </div>
-                        <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                          图片 URL 模板
-                          <input
-                            className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
-                            style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
-                            value={selectedDraft.barkImageTemplate || ''}
-                            onChange={(e) => updateDraft(selectedTopic.key, { barkImageTemplate: e.target.value })}
-                          />
-                        </label>
-                        <label className="inline-flex cursor-pointer items-center gap-2 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                          <input
-                            type="checkbox"
-                            className="h-4 w-4 accent-indigo-400"
-                            checked={Boolean(selectedDraft.barkCall)}
-                            onChange={(e) => updateDraft(selectedTopic.key, { barkCall: e.target.checked })}
-                          />
-                          发送响铃通知
-                        </label>
-                      </div>
-                    </details>
-                  </>
-                ) : (
-                  <>
-                    <label className="flex flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                      URL 模板
-                      <input
-                        className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
-                        style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
-                        placeholder="https://api.day.app/YOUR_KEY/MAP System-{{appname}}/{{message}}"
-                        value={selectedDraft.urlTemplate}
-                        onChange={(e) => updateDraft(selectedTopic.key, { urlTemplate: e.target.value })}
-                      />
-                    </label>
-
-                    {selectedIsPost && (
-                      <label className="flex flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                        Body 模板
-                        <textarea
-                          className="min-h-[82px] resize-y rounded-[8px] border px-2 py-2 font-mono text-[12px] leading-relaxed outline-none"
-                          style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
-                          value={selectedDraft.bodyTemplate || ''}
-                          onChange={(e) => updateDraft(selectedTopic.key, { bodyTemplate: e.target.value })}
-                        />
-                      </label>
-                    )}
-                  </>
-                )}
+                {selectedDraft.useDefaultProfile === false && renderChannelFields(selectedDraft, (patch) => updateDraft(selectedTopic.key, patch))}
 
                 <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
                   <div className="flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
@@ -583,7 +698,7 @@ export function NotificationSubscriptionsPanel() {
                       disabled={testingKey === selectedTopic.key || savingKey !== null}
                     >
                       {testingKey === selectedTopic.key ? <MapSpinner size={12} /> : <FlaskConical size={13} />}
-                      测试
+                      测试当前类型
                     </button>
                     <button
                       type="button"
@@ -593,7 +708,7 @@ export function NotificationSubscriptionsPanel() {
                       disabled={savingKey !== null || testingKey === selectedTopic.key}
                     >
                       {savingKey ? <MapSpinner size={12} color="#1a1a1a" /> : <Save size={13} />}
-                      保存全部选择
+                      保存默认通道和接收范围
                     </button>
                   </div>
                 </div>
@@ -605,7 +720,6 @@ export function NotificationSubscriptionsPanel() {
             </div>
           )}
         </div>
-
       </div>
     </div>
   );

@@ -6,10 +6,12 @@ import type {
   HandleAllAdminNotificationsContract,
   GetAdminNotificationsResponse,
   AdminPushDeliveryLog,
+  AdminPushProfile,
   AdminPushSubscription,
   GetAdminPushSubscriptionsContract,
   GetAdminPushSubscriptionsResponse,
   TestAdminPushSubscriptionContract,
+  UpdateAdminPushProfileContract,
   UpdateAdminPushSubscriptionContract,
 } from '@/services/contracts/notifications';
 
@@ -34,6 +36,10 @@ export const getAdminPushSubscriptionsReal: GetAdminPushSubscriptionsContract = 
 
 export const updateAdminPushSubscriptionReal: UpdateAdminPushSubscriptionContract = async (topicKey, request) => {
   return await apiRequest<{ subscription: AdminPushSubscription }>(api.dashboard.notifications.subscription(topicKey), { method: 'PUT', body: request });
+};
+
+export const updateAdminPushProfileReal: UpdateAdminPushProfileContract = async (request) => {
+  return await apiRequest<{ defaultProfile: AdminPushProfile }>(api.dashboard.notifications.subscriptionDefaultProfile(), { method: 'PUT', body: request });
 };
 
 export const testAdminPushSubscriptionReal: TestAdminPushSubscriptionContract = async (topicKey, request) => {

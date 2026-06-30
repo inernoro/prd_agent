@@ -9,7 +9,31 @@ public class AdminPushSubscription
     public string UserId { get; set; } = string.Empty;
     public string TopicKey { get; set; } = string.Empty;
     public bool Enabled { get; set; }
+    public bool UseDefaultProfile { get; set; }
     public string ChannelType { get; set; } = "url";
+    public string Method { get; set; } = "GET";
+    public string UrlTemplate { get; set; } = string.Empty;
+    public string? BodyTemplate { get; set; }
+    public string ContentType { get; set; } = "application/json";
+    public string? BarkKey { get; set; }
+    public string? BarkServerUrl { get; set; }
+    public string? BarkGroup { get; set; }
+    public string? BarkSound { get; set; }
+    public string? BarkLevel { get; set; }
+    public string? BarkIcon { get; set; }
+    public string? BarkImageTemplate { get; set; }
+    public string? BarkUrlTemplate { get; set; }
+    public bool BarkCall { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+[BsonIgnoreExtraElements]
+public class AdminPushProfile
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string UserId { get; set; } = string.Empty;
+    public string ChannelType { get; set; } = "bark";
     public string Method { get; set; } = "GET";
     public string UrlTemplate { get; set; } = string.Empty;
     public string? BodyTemplate { get; set; }

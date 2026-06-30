@@ -105,6 +105,7 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(UpdateUserAuthzRequest))]
 [JsonSerializable(typeof(ValidatePasswordRequest))]
 [JsonSerializable(typeof(ForceExpireRequest))]
+[JsonSerializable(typeof(AdminPushProfileUpsertRequest))]
 [JsonSerializable(typeof(AdminPushSubscriptionUpsertRequest))]
 [JsonSerializable(typeof(AdminNotificationEventRequest))]
 [JsonSerializable(typeof(AdminNotificationEventAttachmentRequest))]

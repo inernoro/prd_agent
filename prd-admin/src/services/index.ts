@@ -23,6 +23,7 @@ import type {
   HandleAdminNotificationContract,
   HandleAllAdminNotificationsContract,
   GetAdminPushSubscriptionsContract,
+  UpdateAdminPushProfileContract,
   UpdateAdminPushSubscriptionContract,
   TestAdminPushSubscriptionContract,
 } from '@/services/contracts/notifications';
@@ -587,6 +588,7 @@ import {
   handleAdminNotificationReal,
   handleAllAdminNotificationsReal,
   getAdminPushSubscriptionsReal,
+  updateAdminPushProfileReal,
   updateAdminPushSubscriptionReal,
   testAdminPushSubscriptionReal,
 } from '@/services/real/notifications';
@@ -831,6 +833,7 @@ export const getAdminNotifications: GetAdminNotificationsContract = withAuth(get
 export const handleAdminNotification: HandleAdminNotificationContract = withAuth(handleAdminNotificationReal);
 export const handleAllAdminNotifications: HandleAllAdminNotificationsContract = withAuth(handleAllAdminNotificationsReal);
 export const getAdminPushSubscriptions: GetAdminPushSubscriptionsContract = withAuth(getAdminPushSubscriptionsReal);
+export const updateAdminPushProfile: UpdateAdminPushProfileContract = withAuth(updateAdminPushProfileReal);
 export const updateAdminPushSubscription: UpdateAdminPushSubscriptionContract = withAuth(updateAdminPushSubscriptionReal);
 export const testAdminPushSubscription: TestAdminPushSubscriptionContract = withAuth(testAdminPushSubscriptionReal);
 
