@@ -334,6 +334,7 @@ export const api = {
       visualAgent: () => '/api/dashboard/user-preferences/visual-agent',
       literaryAgent: () => '/api/dashboard/user-preferences/literary-agent',
       agentSwitcher: () => '/api/dashboard/user-preferences/agent-switcher',
+      homeLauncher: () => '/api/dashboard/user-preferences/home-launcher',
       docStorePins: () => '/api/dashboard/user-preferences/doc-store-pins',
     },
     stats: {
