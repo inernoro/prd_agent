@@ -9,3 +9,7 @@
 | fix | ops | docker-compose.dev.yml llmgw-web 改用 prd-llmgw-web/Dockerfile 真实构建，不再挂不存在的 ./deploy/llmgw-web/dist（空静态根导致 5590 控制台打不开）（Codex P2） |
 | docs | doc | design.llm-gateway-physical-isolation 头部补「· 设计」后缀 + 状态枚举改合法值「开发中」；debt 记 subdomain 撞项目 profile 校验缺口为波3（Cursor Bugbot / Codex P2） |
 | fix | prd-api | HttpLlmGatewayClient.GetAvailablePoolsAsync 非成功/异常不再静默吞成空池，改向上抛（与 inproc 一致），让 admin/smoke 区分「网关 down」与「真的没可用池」（Cursor Bugbot Medium） |
+| fix | prd-api | ModelResolver 恢复 legacy 直连兜底（IsMain/IsIntent/IsVision/IsImageGen）：无 dedicated/default 池或池全不可用时，未迁移到 ModelGroups 的部署回退到 flag 标记的 enabled 直连模型，而非直接 NotFound（Codex P1）；InMemoryModelResolver 同步镜像 + 单测覆盖 |
+| fix | prd-api | LlmGateway 适配器按解析出的 Protocol 选（pool-item 可覆盖），不再只按 PlatformType——混合/代理平台用对 wire 协议；Protocol 为空回落 PlatformType，普通平台零差异（Codex P2） |
+| fix | cds | cds-compose api 服务补 LlmGwServe__ApiKey + LlmGateway__ServeBaseUrl，切 http/shadow 模式时跨进程不再 401；网关 console 账户体系走 ${CDS_USERNAME}/${CDS_PASSWORD}（与 CDS 同账号密码，用户指定），未注入回落非仓库默认内网值（Cursor Bugbot） |
+| security | prd-api | serving Program.cs 生产 fail-closed：缺 LlmGwServe:ApiKey 或仍为仓库默认 dev-llmgw-serve-key 时拒绝启动，避免接受可预测 X-Gateway-Key（Cursor Bugbot） |

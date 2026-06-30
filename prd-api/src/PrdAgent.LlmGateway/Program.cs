@@ -232,7 +232,17 @@ var jsonOpts = new JsonSerializerOptions
 
 // 密钥门 + 全部 /gw/v1/* 端点由可复用扩展装配（SSOT：集成自测 host 复用同一份映射，
 // 见 GatewayHttpEndpoints.cs / doc/design.llm-gateway-physical-isolation.md）。
-var gwApiKey = builder.Configuration["LlmGwServe:ApiKey"] ?? "dev-llmgw-serve-key";
+const string DevServeKey = "dev-llmgw-serve-key"; // 仓库已知 dev 默认值，生产禁用
+var gwApiKey = builder.Configuration["LlmGwServe:ApiKey"];
+if (builder.Environment.IsProduction() && (string.IsNullOrWhiteSpace(gwApiKey) || gwApiKey == DevServeKey))
+{
+    // fail closed：生产缺 key 或仍用仓库默认 key → 拒绝启动，避免 serving 接受可预测的 X-Gateway-Key
+    // （与 HttpLlmGatewayClient 空 key 即 fail-closed 一致，Cursor Bugbot）。部署须注入强随机 M2M key
+    // （CDS 预览经 ${LLMGW_SERVE_API_KEY} 提供非 dev 默认的内网值，故不挡预览启动）。
+    throw new InvalidOperationException(
+        "LlmGwServe:ApiKey 未配置或仍为仓库默认值；生产环境必须由部署注入强随机 M2M key。");
+}
+gwApiKey ??= DevServeKey; // 非生产保留便利回落
 var gitCommit = Environment.GetEnvironmentVariable("GIT_COMMIT") ?? string.Empty;
 
 app.MapGatewayServingEndpoints(jsonOpts, gwApiKey, gitCommit);

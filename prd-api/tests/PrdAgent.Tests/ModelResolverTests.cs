@@ -9,8 +9,8 @@ namespace PrdAgent.Tests;
 /// 使用 InMemoryModelResolver 验证模型调度逻辑：
 /// 1. DedicatedPool - AppCaller 绑定的专属模型池
 /// 2. DefaultPool - ModelType 对应的默认模型池
-/// 注意：legacy 解析层（IsMain/IsVision/IsImageGen 直连兜底）已移除，
-/// 无池可用时直接返回 NotFound。
+/// 3. Legacy - 无池但有 IsMain/IsIntent/IsVision/IsImageGen 标记模型时的直连兜底
+///    （未迁移到 ModelGroups 的部署，Codex P1 恢复）；无池且无 legacy 时才 NotFound。
 /// </summary>
 public class ModelResolverTests
 {
@@ -72,6 +72,24 @@ public class ModelResolverTests
                 ModelGroupIds = r.groupIds
             }).ToList()
         };
+    }
+
+    private static LLMModel CreateLegacyModel(string modelName, string platformId, string modelType)
+    {
+        var m = new LLMModel
+        {
+            ModelName = modelName,
+            PlatformId = platformId,
+            Enabled = true
+        };
+        switch (modelType.ToLowerInvariant())
+        {
+            case "chat": m.IsMain = true; break;
+            case "intent": m.IsIntent = true; break;
+            case "vision": m.IsVision = true; break;
+            case "generation": m.IsImageGen = true; break;
+        }
+        return m;
     }
 
     #endregion
@@ -206,20 +224,20 @@ public class ModelResolverTests
 
     #endregion
 
-    #region Level 3: Legacy 路径已移除 — 无池可用即 NotFound
+    #region Level 3: Legacy 直连兜底（未迁移到 ModelGroups 的部署）
 
-    // legacy 解析层（IsMain/IsIntent/IsVision/IsImageGen 直连兜底）已删除。
-    // 以下用例验证：当没有 dedicated/default 池时，无论哪种 modelType，
-    // 都直接返回 NotFound，不再回退到任何直连模型。
+    // legacy 解析层（IsMain/IsIntent/IsVision/IsImageGen 直连兜底）在网关剥离 PR 一度被删，
+    // 但未迁移到 ModelGroups 的部署仍可能只有 flag 标记的 enabled 模型、无默认池（Codex P1）。
+    // 已恢复：无池但有 legacy 模型 → 走 Legacy；无池且无 legacy → NotFound；池全不可用且有 legacy → 降级 Legacy。
 
     [Theory]
     [InlineData("chat")]
     [InlineData("intent")]
     [InlineData("vision")]
     [InlineData("generation")]
-    public async Task NoPool_ForAnyModelType_ShouldReturnNotFound(string modelType)
+    public async Task NoPool_NoLegacy_ForAnyModelType_ShouldReturnNotFound(string modelType)
     {
-        // Arrange - 只配置平台，没有任何模型池
+        // Arrange - 只配置平台，没有任何模型池、也没有 legacy 模型
         var platform = CreatePlatform("plat-1", "OpenAI");
 
         var resolver = new InMemoryModelResolver()
@@ -228,9 +246,62 @@ public class ModelResolverTests
         // Act
         var result = await resolver.ResolveAsync($"any-app::{modelType}", modelType);
 
-        // Assert - legacy 路径删除后直接 NotFound
+        // Assert - 无池且无 legacy → NotFound
         Assert.False(result.Success);
         Assert.Equal("NotFound", result.ResolutionType);
+    }
+
+    [Theory]
+    [InlineData("chat")]
+    [InlineData("intent")]
+    [InlineData("vision")]
+    [InlineData("generation")]
+    public async Task NoPool_WithLegacyModel_ShouldResolveLegacy(string modelType)
+    {
+        // Arrange - 无池，但有一个对应 flag 的 enabled legacy 模型（模拟未迁移部署）
+        var platform = CreatePlatform("plat-legacy", "Legacy Platform");
+        var legacy = CreateLegacyModel("legacy-model", "plat-legacy", modelType);
+
+        var resolver = new InMemoryModelResolver()
+            .WithPlatform(platform, "sk-legacy")
+            .WithLegacyModel(legacy, "sk-legacy");
+
+        // Act
+        var result = await resolver.ResolveAsync($"any-app::{modelType}", modelType);
+
+        // Assert - 无池但 legacy 命中 → 走 Legacy 直连
+        Assert.True(result.Success);
+        Assert.Equal("Legacy", result.ResolutionType);
+        Assert.Equal("legacy-model", result.ActualModel);
+        Assert.Equal("plat-legacy", result.ActualPlatformId);
+    }
+
+    [Fact]
+    public async Task AllUnavailable_WithLegacyModel_ShouldFallbackToLegacy()
+    {
+        // Arrange - 池存在但全部 Unavailable，且有 legacy chat 模型
+        var platform = CreatePlatform("plat-1", "OpenAI");
+        var pool = CreateModelGroup(
+            "pool-1", "All Unavailable Pool", "chat",
+            isDefault: true, priority: 0,
+            ("plat-1", "unavailable-1", ModelHealthStatus.Unavailable));
+        var legacyPlatform = CreatePlatform("plat-legacy", "Legacy Platform");
+        var legacy = CreateLegacyModel("legacy-chat", "plat-legacy", "chat");
+
+        var resolver = new InMemoryModelResolver()
+            .WithPlatform(platform, "sk-test")
+            .WithPlatform(legacyPlatform, "sk-legacy")
+            .WithModelGroup(pool)
+            .WithLegacyModel(legacy, "sk-legacy");
+
+        // Act
+        var result = await resolver.ResolveAsync("any::chat", "chat");
+
+        // Assert - 池全不可用 → 降级到 legacy 直连，带 IsFallback
+        Assert.True(result.Success);
+        Assert.Equal("Legacy", result.ResolutionType);
+        Assert.Equal("legacy-chat", result.ActualModel);
+        Assert.True(result.IsFallback);
     }
 
     #endregion

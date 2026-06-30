@@ -189,6 +189,11 @@ services:
       MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
       MongoDB__DatabaseName: prdagent
       Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT}"
+      # 网关跨进程：把 LlmGateway:Mode 切 http/shadow（profile override）时，HttpLlmGatewayClient 需要
+      # 与 llmgw-serve 同一把 M2M key + serving 地址，否则 X-Gateway-Key 为空 → serving 401（Cursor Bugbot）。
+      # Mode 默认 inproc，不切就不会用到这两项；切了即就位。serving 地址用 profile-id 网络别名。
+      LlmGwServe__ApiKey: "${LLMGW_SERVE_API_KEY:-llmgw-serve-cds-preview-internal-4d8b1e3a}"
+      LlmGateway__ServeBaseUrl: "http://llmgw-serve-prd-agent:8091"
       # Jwt__Secret 由全局 x-cds-env.JWT_SECRET 自动注入，不在此声明
       Jwt__Issuer: prdagent
       ClaudeSdkExecutor__Enabled: "true"
@@ -263,8 +268,11 @@ services:
       # 内网 only 故固定 fallback 足够（无公开路由）。
       LlmGwJwt__Secret: "${LLMGW_JWT_SECRET:-llmgw-jwt-cds-preview-internal-9f3a2c7e1b2d4f6}"
       LlmGwJwt__Issuer: prdagent-llmgw
-      LLMGW_ADMIN_USER: admin
-      LLMGW_ADMIN_PASSWORD: "${LLMGW_ADMIN_PASSWORD:-llmgw-admin-cds-preview-internal-7k2x9q}"
+      # 账户体系走环境变量，默认与 CDS 同账号密码（用户指定 2026-06-30）：CDS 进程做 compose 替换时
+      # 注入自己的 CDS_USERNAME/CDS_PASSWORD（server.ts:1646 同源）→ 网关 console 复用同一套登录；
+      # 未注入则回落非仓库默认的内网值（过 prd-llmgw 生产守卫，不挡启动）。
+      LLMGW_ADMIN_USER: "${CDS_USERNAME:-admin}"
+      LLMGW_ADMIN_PASSWORD: "${CDS_PASSWORD:-llmgw-admin-cds-preview-internal-7k2x9q}"
     labels:
       # 安全：CDS 预览**不公开 path-route** 网关 console。它用固定占位 admin 密码 + JWT 密钥，若对外
       # 路由到 `/gw/`，任何可达 *.miduo.org 预览的人都能用已知密码登录读 LLM 日志（提示词/回答）。

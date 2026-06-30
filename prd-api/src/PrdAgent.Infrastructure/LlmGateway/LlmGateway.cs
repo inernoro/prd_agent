@@ -91,7 +91,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             }
 
             // 2. 选择适配器
-            var adapter = GetAdapter(resolution.PlatformType);
+            var adapter = GetAdapterForResolution(resolution);
             if (adapter == null)
             {
                 return GatewayResponse.Fail("UNSUPPORTED_PLATFORM",
@@ -250,7 +250,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             gatewayResolution = resolution.ToGatewayResolution();
 
             // 2. 选择适配器
-            var adapter = GetAdapter(resolution.PlatformType);
+            var adapter = GetAdapterForResolution(resolution);
             if (adapter == null)
             {
                 yield return GatewayStreamChunk.Fail($"不支持的平台类型: {resolution.PlatformType}");
@@ -466,7 +466,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     if (!thinkingStarted)
                     {
                         thinkingStarted = true;
-                        _logger.LogInformation("[LlmGateway] ✦ 思考开始。AppCallerCode: {AppCallerCode}", request.AppCallerCode);
+                        _logger.LogInformation("[LlmGateway] 思考开始。AppCallerCode: {AppCallerCode}", request.AppCallerCode);
                     }
                     if (!string.IsNullOrEmpty(chunk.Content))
                     {
@@ -485,7 +485,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     if (!contentStarted)
                     {
                         contentStarted = true;
-                        _logger.LogInformation("[LlmGateway] ✦ 正文开始。AppCallerCode: {AppCallerCode}", request.AppCallerCode);
+                        _logger.LogInformation("[LlmGateway] 正文开始。AppCallerCode: {AppCallerCode}", request.AppCallerCode);
                     }
                     // 通过 ThinkTagStripper 过滤 <think>...</think> 标签
                     var stripped = thinkTagStripper.Process(chunk.Content);
@@ -671,7 +671,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             // 2. 选择适配器并构建 endpoint
             var isExchange = resolution.IsExchange;
-            var adapter = isExchange ? null : GetAdapter(resolution.PlatformType);
+            var adapter = isExchange ? null : GetAdapterForResolution(resolution);
             string endpoint;
 
             if (isExchange)
@@ -1389,6 +1389,13 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private static bool RequestHasTools(System.Text.Json.Nodes.JsonObject requestBody)
         => requestBody.TryGetPropertyValue("tools", out var tools)
            && tools is System.Text.Json.Nodes.JsonArray arr && arr.Count > 0;
+
+    // 按「解析出的 wire 协议」选适配器，而非平台类型。pool-item 可覆盖 Protocol（混合/代理平台
+    // 走不同 wire），此时必须按 resolution.Protocol 选 adapter，否则请求仍用旧平台适配器构造、只有
+    // 日志显示 protocol-from-pool-item（Codex P2）。Protocol 默认回落 PlatformType，普通平台零差异；
+    // Protocol 为空时退回 PlatformType 兜底。
+    private IGatewayAdapter? GetAdapterForResolution(GatewayModelResolution resolution)
+        => GetAdapter(string.IsNullOrWhiteSpace(resolution.Protocol) ? resolution.PlatformType : resolution.Protocol);
 
     private IGatewayAdapter? GetAdapter(string? platformType)
     {
