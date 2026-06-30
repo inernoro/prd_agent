@@ -1,6 +1,6 @@
 # LLM 网关与模型池 · 债务台账
 
-> **版本**：v1.0 | **日期**：2026-06-24 | **状态**：维护中
+> **版本**：v1.0 | **日期**：2026-06-24 | **状态**：开发中
 > **关联设计**：`design.llm-gateway-unification.md`（统一方案）、`design.llm-gateway.md`、`design.model-pool.md`
 
 ## 总览

@@ -1,6 +1,7 @@
-# spec.llm-gateway-test-matrix
+# LLM 网关测试矩阵 · 规格
 
-> 类型: spec（What — 测什么）| 状态: active | 更新: 2026-06-29
+> **版本**：v1.0 | **日期**：2026-06-29 | **状态**：开发中
+> 类型: spec（What — 测什么）
 > 关联: `doc/design.llm-gateway-physical-isolation.md`、`doc/debt.llm-gateway-isolation.md`、
 > `doc/report.gw-test-matrix.md`（全量可见报告）、`prd-api/tests/PrdAgent.Api.Tests/Gateway/`、`scripts/gw-smoke.py`
 

@@ -1,6 +1,7 @@
-# debt.llm-gateway-isolation
+# LLM 网关物理剥离 · 债务台账
 
-> 状态：开发中（波1 + 波2 跨进程 + 波2.5 影子/灰度/命名子域 已落地；生产翻 http = T12 待拍板）
+> **版本**：v1.0 | **日期**：2026-06-30 | **状态**：开发中
+> 进度：波1 + 波2 跨进程 + 波2.5 影子/灰度/命名子域 已落地；生产翻 http = T12 待拍板。
 > 负责人：AI / 待用户拍板（合并到 main + 翻 http 时机）
 > 关联设计：`doc/design.llm-gateway-physical-isolation.md`；上线计划/测试纲领：`doc/plan.llm-gateway.rollout.md`；
 > 验收面包屑：`doc/guide.llm-gateway.acceptance-breadcrumbs.md`

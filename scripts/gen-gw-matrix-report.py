@@ -274,8 +274,9 @@ def render_report(rows, pcells, tcells):
 
     L = []
     A = L.append
-    A("# report.gw-test-matrix —— 网关测试矩阵全量报告")
+    A("# 网关测试矩阵全量报告 · 报告")
     A("")
+    A("> **版本**：自动生成 | **日期**：2026-06-30 | **状态**：开发中")
     A("> 自动生成（`scripts/gen-gw-matrix-report.py`），勿手改。一处定义三处消费：本报告 +")
     A("> `protocol-cells.json`(B 层 [Theory]) + `transport-cells.json`(C 层 [Theory])。")
     A("> 报告里 B/C 的每一行都是 CI 真执行的一个 cell（非只列不跑）。矩阵设计 SSOT：")

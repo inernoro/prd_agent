@@ -1,5 +1,6 @@
-# report.gw-test-matrix —— 网关测试矩阵全量报告
+# 网关测试矩阵全量报告 · 报告
 
+> **版本**：自动生成 | **日期**：2026-06-30 | **状态**：开发中
 > 自动生成（`scripts/gen-gw-matrix-report.py`），勿手改。一处定义三处消费：本报告 +
 > `protocol-cells.json`(B 层 [Theory]) + `transport-cells.json`(C 层 [Theory])。
 > 报告里 B/C 的每一行都是 CI 真执行的一个 cell（非只列不跑）。矩阵设计 SSOT：
