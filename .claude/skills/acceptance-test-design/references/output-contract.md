@@ -27,6 +27,7 @@ Rules:
 - Each commit appears or is intentionally grouped.
 - The assertion describes behavior, not implementation.
 - If there is no user-visible surface, write `无用户可见页面` and classify it as internal-only.
+- Keep `cds` and `CDS Agent` separate. For `cds/` platform changes, write platform surfaces such as CDS branch status, deploy log, smoke result, reports page, preview routing, self-update state, scheduler state, or API response. Do not write `/cds-agent` as the user-visible surface unless the assertion is explicitly about CDS Agent UI/runtime/session behavior.
 
 ## 3. 影响面矩阵
 
@@ -62,3 +63,4 @@ If a critical assertion lacks score 3 or 4 proof, the final visual report cannot
 |------|----------|----------|----------|--------------|----------|----------|----------|
 
 Each row must be executable by a browser-driven agent. If it cannot be executed, move it to the gap table instead of pretending.
+For CDS platform rows, the executable target is a CDS platform page/API/CLI state, not the prd-admin CDS Agent workbench.

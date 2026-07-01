@@ -1477,7 +1477,10 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     IsFallback: resolution.IsFallback ? true : null,
                     FallbackReason: resolution.FallbackReason,
                     ExpectedModel: resolution.ExpectedModel,
-                    IsStreaming: isStreaming),
+                    IsStreaming: isStreaming,
+                    // S2：默认进程内网关路径。若 serving 端处理来自 MAP 的跨进程请求，
+                    // MAP 侧 HttpLlmGatewayClient 已把 Context.GatewayTransport 置为 "http" 过线，此处尊重之。
+                    GatewayTransport: request.Context?.GatewayTransport ?? GatewayTransports.Inproc),
                 ct);
         }
         catch (Exception ex)
@@ -1734,7 +1737,10 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     ImageReferences: request.Context?.ImageReferences,
                     IsFallback: resolution.IsFallback ? true : null,
                     FallbackReason: resolution.FallbackReason,
-                    ExpectedModel: resolution.ExpectedModel),
+                    ExpectedModel: resolution.ExpectedModel,
+                    // S2：默认进程内网关 raw 路径（生图/视频等）。serving 端处理跨进程请求时，
+                    // MAP 侧已把 Context.GatewayTransport 置为 "http"，此处尊重之。
+                    GatewayTransport: request.Context?.GatewayTransport ?? GatewayTransports.Inproc),
                 ct);
         }
         catch (Exception ex)

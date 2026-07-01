@@ -983,6 +983,12 @@ export class ProxyService {
       : branch.status === 'starting' || branch.status === 'restarting'
         ? '预计启动进度'
         : '预计处理进度';
+    if (branch.status === 'restarting') {
+      const reason = estimates.some((item) => item.matchedLog)
+        ? `基于 ${services.length} 个服务状态与热重启状态估算`
+        : `基于 ${services.length} 个服务状态与运行时长估算`;
+      return { percent: Math.max(35, percent), confidence, label: '热重启进度', reason };
+    }
     if (timing?.estimateMedianMs != null && timing.estimateSamples > 0) {
       const timePercent = timing.overdue
         ? 96
@@ -1129,13 +1135,17 @@ export class ProxyService {
     let timing: (ReturnType<typeof computeWaitTiming> & { mode: DeployDurationMode }) | null = null;
     if (branch) {
       const { mode, estimate } = this.resolveWaitTimingMode(branch, waitingProfileId);
-      const computed = computeWaitTiming({
-        status: branch.status,
-        deployStartedAtMs: this.resolveDeployStartedAtMs(branch),
-        nowMs: Date.now(),
-        estimate,
-      });
-      timing = { ...computed, mode };
+      // 热重启是 docker restart 级别的短操作，不是 release/source 构建。若复用发布版
+      // 构建中位耗时，15s 的重启等待会被 7min 构建样本压成 1% 左右，误导为卡死。
+      if (branch.status !== 'restarting') {
+        const computed = computeWaitTiming({
+          status: branch.status,
+          deployStartedAtMs: this.resolveDeployStartedAtMs(branch),
+          nowMs: Date.now(),
+          estimate,
+        });
+        timing = { ...computed, mode };
+      }
     }
 
     res.writeHead(200, {
@@ -1565,12 +1575,14 @@ void main(){
       return;
     }
     const { mode: buildMode, estimate } = this.resolveWaitTimingMode(branch, waitingProfileId);
-    const initialTiming = computeWaitTiming({
-      status: branch.status,
-      deployStartedAtMs: this.resolveDeployStartedAtMs(branch),
-      nowMs: Date.now(),
-      estimate,
-    });
+    const initialTiming = branch.status === 'restarting'
+      ? null
+      : computeWaitTiming({
+          status: branch.status,
+          deployStartedAtMs: this.resolveDeployStartedAtMs(branch),
+          nowMs: Date.now(),
+          estimate,
+        });
     const progress = this.estimateWaitingProgress(branch, waitingProfileId, initialTiming);
     const safeBranch = this.escapeHtml(displayBranch);
     const safeProgressLabel = this.escapeHtml(progress.label);

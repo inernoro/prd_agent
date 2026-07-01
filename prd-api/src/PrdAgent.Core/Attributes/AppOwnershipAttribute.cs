@@ -94,4 +94,8 @@ public static class AppNames
     /// <summary>识途 Agent - 新人文化与制度问答</summary>
     public const string ShituAgent = "shitu-agent";
     public const string ShituAgentDisplay = "识途";
+
+    /// <summary>Email Agent - 邮件模板智能体（常用流程邮件模板库 + 一键复制 + AI 起草）</summary>
+    public const string EmailAgent = "email-agent";
+    public const string EmailAgentDisplay = "邮件模板";
 }

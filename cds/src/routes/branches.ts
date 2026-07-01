@@ -38,6 +38,7 @@ import { classifyEnvKey } from '../config/known-env-keys.js';
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
 import { isAllowedCdsBranchName, isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { buildPreviewUrlForProject } from '../services/comment-template.js';
+import { ROUTABLE_SERVICE_STATUSES } from '../services/forwarder-route-publisher.js';
 import { maskSecrets as maskSecretsText, maskEnvRecord, maskBranchExtraProfilesEnv, isSensitiveKey, looksLikeUrlWithCredentials, shouldMask } from '../services/secret-masker.js';
 import { buildUnifiedBranchResources, type UnifiedBranchResource } from '../services/resources.js';
 import { fetchWithLockRetry } from '../services/git-fetch-retry.js';
@@ -48,7 +49,7 @@ import { installSelfUpdateEventProjector } from '../services/self-update-event-p
 import { nodeModulesVolumePrefix } from '../util/node-modules-volume.js';
 import { analyzeChangeImpact, isWebOnlyChange } from '../services/change-impact-analyzer.js';
 import { computeBundleFreshness } from '../services/bundle-freshness.js';
-import { waitForFlushWithTimeout } from '../services/bounded-flush.js';
+import { waitForFlushWithTimeout, type BoundedFlushResult } from '../services/bounded-flush.js';
 import { readBundledCdsCliVersion } from '../services/cdscli-version.js';
 import { shouldTryCdsPrebuilt } from '../services/cds-prebuilt.js';
 import { fetchCdsPrebuilt } from '../services/cds-prebuilt-runtime.js';
@@ -123,11 +124,18 @@ function installLegacyStreamBridge(): void {
 let broadcastInFlight = false;
 const DELETE_COMPLETION_AUDIT_TIMEOUT_MS = 500;
 const DEFAULT_DELETE_STATE_FLUSH_TIMEOUT_MS = 30_000;
+const DEFAULT_BRANCH_STATE_FLUSH_TIMEOUT_MS = 30_000;
 const SELF_UPDATE_STATE_FLUSH_TIMEOUT_MS = 1000;
 
 function getDeleteStateFlushTimeoutMs(): number {
   const raw = Number(process.env.CDS_DELETE_STATE_FLUSH_TIMEOUT_MS);
   if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_DELETE_STATE_FLUSH_TIMEOUT_MS;
+  return Math.max(100, Math.min(raw, 30_000));
+}
+
+function getBranchStateFlushTimeoutMs(): number {
+  const raw = Number(process.env.CDS_BRANCH_STATE_FLUSH_TIMEOUT_MS);
+  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_BRANCH_STATE_FLUSH_TIMEOUT_MS;
   return Math.max(100, Math.min(raw, 30_000));
 }
 
@@ -248,6 +256,32 @@ function isSyntheticCdsManagedRuntimeBranch(
 ): boolean {
   if (project?.kind !== 'shared-service') return false;
   return branch.branch === 'cds-managed-runtime' && branch.githubCommitSha === 'cds-managed-runtime';
+}
+
+/**
+ * Landing path for a named-subdomain preview link shown in the branch panel.
+ * Known LLM gateway subdomains mount their API under /gw/* (console) or /gw/v1/* (serving) and
+ * 404 at the bare root, so we land on their health endpoint. Every other named service (docs /
+ * metrics / …) is published to the container root by the forwarder, so honor the profile's
+ * readiness path when it declares one, else '/'. Never force a generic service onto /gw/* — that
+ * would 404 despite a valid host (Codex P2).
+ */
+function resolveGatewayLandingPath(subdomain: string, readinessPath?: string): string {
+  const sub = subdomain.toLowerCase();
+  // Gateway console (llmgw-web): a standalone Vite SPA whose nginx falls back to
+  // index.html for any non-/gw/* path, so land on the console root — clicking it
+  // opens the real login → LLM logs UI, not a health JSON. This is the entry we
+  // want most prominent in the panel.
+  if (sub === 'llmgw-web') return '/';
+  // Serving engine (llmgw-serve): API-only, mounts under /gw/v1/* and 404s at the
+  // bare root, so land on its health endpoint.
+  if (sub === 'llmgw-serve') return '/gw/v1/healthz';
+  // Backend/API engine (llmgw): API-only, mounts under /gw/* and 404s at the bare
+  // root, so land on its health endpoint.
+  if (sub === 'llmgw') return '/gw/healthz';
+  const trimmed = (readinessPath ?? '').trim();
+  if (trimmed && trimmed.startsWith('/')) return trimmed;
+  return '/';
 }
 
 function githubLoginFromCommitEmail(email: string): string | null {
@@ -1991,6 +2025,69 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   }
 
+  async function flushBranchStateBeforeSuccess(context: {
+    source: string;
+    actionPrefix: string;
+    branch: BranchEntry;
+    requestId?: string | null;
+    operationId?: string | null;
+    actor?: string | null;
+    trigger?: string | null;
+  }): Promise<BoundedFlushResult> {
+    const timeoutMs = getBranchStateFlushTimeoutMs();
+    const result = await waitForFlushWithTimeout(
+      () => stateService.flush(),
+      timeoutMs,
+      (err) => {
+        serverEventLogStore?.record({
+          category: 'system',
+          severity: 'error',
+          source: context.source,
+          action: `${context.actionPrefix}.state-flush-failed`,
+          message: `branch state flush failed for ${context.branch.id}: ${(err as Error).message}`,
+          projectId: context.branch.projectId,
+          branchId: context.branch.id,
+          requestId: context.requestId || null,
+          operationId: context.operationId || null,
+          error: { message: (err as Error).message },
+          details: {
+            actor: context.actor || null,
+            trigger: context.trigger || null,
+            timeoutMs,
+          },
+        });
+      },
+    );
+
+    if (result === 'timeout') {
+      serverEventLogStore?.record({
+        category: 'system',
+        severity: 'warn',
+        source: context.source,
+        action: `${context.actionPrefix}.state-flush-timeout`,
+        message: `branch state flush timed out for ${context.branch.id}; success was not confirmed`,
+        projectId: context.branch.projectId,
+        branchId: context.branch.id,
+        requestId: context.requestId || null,
+        operationId: context.operationId || null,
+        details: {
+          actor: context.actor || null,
+          trigger: context.trigger || null,
+          timeoutMs,
+        },
+      });
+    }
+
+    return result;
+  }
+
+  function branchStateFlushFailureMessage(result: BoundedFlushResult, successLabel: string): string {
+    if (result === 'timeout') {
+      return `${successLabel}，但 CDS 状态持久化超时；为避免重启后分支记录丢失，本次不报告成功，请稍后刷新后重试。`;
+    }
+    return `${successLabel}，但 CDS 状态持久化失败；为避免重启后分支记录丢失，本次不报告成功，请查看系统事件日志。`;
+  }
+
   // PR_C.3: AI agent / cookie 真人 / 内部组件 三档解析。本地别名指向
   // services/actor-resolver.ts 的共享实现（Bugbot Low review：原本
   // bridge.ts 和这里各有一份一模一样的实现，新增 header 时容易漏一处）。
@@ -3054,6 +3151,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 内部已 guard status==='completed' + runtimeStartedAt 存在，失败/缺戳自动 no-op）。
       recordDeployDurationSample(stateService, entry, profiles, opLog);
       try { stateService.appendLog(entry.id, opLog); } catch { /* tolerate */ }
+      stateService.save();
+      await flushBranchStateBeforeSuccess({
+        source: 'branch-remote-deploy',
+        actionPrefix: 'branch.remote-deploy',
+        branch: entry,
+        requestId: context.requestId || null,
+        operationId: context.operationId || null,
+        actor: context.actor || null,
+        trigger: context.trigger || null,
+      });
       try { res.end(); } catch { /* ignore */ }
     }
     return proxyHasError ? 'failed' : 'completed';
@@ -4933,6 +5040,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
       stateService.save();
+      const flushResult = await flushBranchStateBeforeSuccess({
+        source: 'branch-create',
+        actionPrefix: 'branch.create',
+        branch: entry,
+        requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
+        actor: resolveActorFromRequest(req),
+        trigger: triggerFromRequest(req),
+      });
+      if (flushResult !== 'flushed') {
+        res.status(flushResult === 'timeout' ? 503 : 500).json({
+          error: flushResult === 'timeout' ? 'state_flush_timeout' : 'state_flush_failed',
+          message: branchStateFlushFailureMessage(flushResult, `分支 "${entry.id}" 已创建`),
+          branch: entry,
+        });
+        return;
+      }
 
       // Live UI: notify open dashboards that a branch just got added
       // manually so their card list animates in without a page refresh.
@@ -10365,6 +10488,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
           entry.status = 'idle';
           entry.errorMessage = undefined;
           stateService.save();
+          const flushResult = await flushBranchStateBeforeSuccess({
+            source: 'branch-deploy',
+            actionPrefix: 'branch.deploy-empty-cleanup',
+            branch: entry,
+            requestId: cleanupReqId || null,
+            operationId: cleanupLease?.operationId || null,
+            actor: cActor,
+            trigger: cTrigger,
+          });
+          if (flushResult !== 'flushed') {
+            cleanupStatus = 'failed';
+            completeBranchOperation(cleanupLease, cleanupStatus, branchStateFlushFailureMessage(flushResult, '残留服务已清理'));
+            sendSSE(res, 'error', {
+              message: branchStateFlushFailureMessage(flushResult, '残留服务已清理'),
+              stateFlush: flushResult,
+            });
+            res.end();
+            return;
+          }
         } catch (err) {
           cleanupStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
           completeBranchOperation(cleanupLease, cleanupStatus);
@@ -11328,6 +11470,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
         note: hasError ? `失败服务: ${failedNames.join(', ')}` : undefined,
       });
       stateService.save();
+      const flushResult = await flushBranchStateBeforeSuccess({
+        source: 'branch-deploy',
+        actionPrefix: 'branch.deploy',
+        branch: entry,
+        requestId: requestId || null,
+        operationId: branchOperationLease?.operationId || null,
+        actor: resolveActorFromRequest(req),
+        trigger: triggerFromRequest(req),
+      });
+      if (flushResult !== 'flushed') {
+        branchOperationFinalStatus = 'failed';
+        const message = branchStateFlushFailureMessage(flushResult, completeMsg);
+        logEvent({
+          step: 'state-flush',
+          status: 'error',
+          title: message,
+          detail: { result: flushResult },
+          timestamp: new Date().toISOString(),
+        });
+        sendSSE(res, 'error', { message, stateFlush: flushResult });
+        return;
+      }
       sendSSE(res, 'complete', {
         // 2026-05-14 Codex review P2：把路由自己基于 activeServices 算出的
         // 权威结论 (hasError) 一并下发。消费方（auto-lifecycle redeploy）
@@ -11460,7 +11624,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
           status: entry.status, previousStatus: __deployEntryStatus, ts: nowIso(),
         },
       });
-      sendSSE(res, 'error', { message: errMsg });
+      const flushResult = await flushBranchStateBeforeSuccess({
+        source: 'branch-deploy',
+        actionPrefix: 'branch.deploy',
+        branch: entry,
+        requestId: requestId || null,
+        operationId: branchOperationLease?.operationId || null,
+        actor: resolveActorFromRequest(req),
+        trigger: triggerFromRequest(req),
+      });
+      sendSSE(res, 'error', flushResult === 'flushed'
+        ? { message: errMsg }
+        : { message: errMsg, stateFlush: flushResult, stateMessage: branchStateFlushFailureMessage(flushResult, '部署失败状态已写入内存') });
       try {
         // catch 路径同样按本次 startup-plan 过滤 zombie 服务(profiles 在外层 4724
         // 声明,异常路径仍可见),与成功/失败 finalize 同口径,不让旧 profile 背锅。
@@ -11781,6 +11956,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       const completeMsg = svc.status === 'running' ? `${profile.name} 已启动` : `${profile.name} 启动失败`;
       logDeploy(id, `部署完成: ${completeMsg}`);
+      const flushResult = await flushBranchStateBeforeSuccess({
+        source: 'branch-deploy-profile',
+        actionPrefix: 'branch.deploy-profile',
+        branch: entry,
+        requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
+        operationId: branchOperationLease?.operationId || null,
+        actor: resolveActorFromRequest(req),
+        trigger: triggerFromRequest(req),
+      });
+      if (flushResult !== 'flushed') {
+        branchOperationFinalStatus = 'failed';
+        sendSSE(res, 'error', {
+          message: branchStateFlushFailureMessage(flushResult, completeMsg),
+          stateFlush: flushResult,
+        });
+        return;
+      }
       sendSSE(res, 'complete', {
         // 2026-05-14 Codex review P2：单服务 redeploy 也下发权威 ok，
         // 消费方统一读 ok 而非重推导 entry.services。
@@ -11822,7 +12014,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.appendLog(id, opLog);
       stateService.save();
       logDeploy(id, `部署失败: ${(err as Error).message}`);
-      sendSSE(res, 'error', { message: (err as Error).message });
+      const flushResult = await flushBranchStateBeforeSuccess({
+        source: 'branch-deploy-profile',
+        actionPrefix: 'branch.deploy-profile',
+        branch: entry,
+        requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
+        operationId: branchOperationLease?.operationId || null,
+        actor: resolveActorFromRequest(req),
+        trigger: triggerFromRequest(req),
+      });
+      sendSSE(res, 'error', flushResult === 'flushed'
+        ? { message: (err as Error).message }
+        : {
+            message: (err as Error).message,
+            stateFlush: flushResult,
+            stateMessage: branchStateFlushFailureMessage(flushResult, '单服务部署失败状态已写入内存'),
+          });
     } finally {
       completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
       res.end();
@@ -12686,6 +12893,64 @@ export function createBranchRouter(deps: RouterDeps): Router {
     'cds', 'master', 'dashboard',
   ]);
 
+  // Named gateway entries: build profiles that declare a `cds.subdomain` label get a standalone host
+  // `<previewSlug>-<subdomain>.<root>` routing all paths to that container (e.g. LLM gateway →
+  // <slug>-llmgw.<root>), distinct from the main app domain. Mirror the forwarder-route-publisher
+  // same-origin rules so the panel shows exactly the URLs the forwarder actually publishes: run each
+  // profile through resolveEffectiveProfile (so branch-level readinessProbe / subdomain overrides are
+  // honored, matching the published route — Bugbot "Gateway URLs skip profile resolve"), filter by
+  // routable status, dedupe first-wins on subdomain, and drop labels whose first DNS octet exceeds
+  // 63 chars (unresolvable + not covered by the wildcard cert). See forwarder-route-publisher.ts:159-315.
+  //
+  // SSOT for BOTH the GET and PUT /subdomain-aliases responses — gatewayUrls are branch-derived (not
+  // alias-derived), so PUT must return them too or the panel drops the 网关入口 block after saving
+  // aliases until a full reload (Bugbot "Alias save clears gateway URLs").
+  const computeBranchGatewayUrls = (
+    entry: BranchEntry,
+    primaryRoot: string,
+  ): Array<{ subdomain: string; name: string; url: string }> => {
+    const project = stateService.getProject(entry.projectId);
+    const gwPreviewSlug = buildPreviewUrlForProject('', entry.branch, project, entry.projectId).previewSlug;
+    const gatewayUrls: Array<{ subdomain: string; name: string; url: string }> = [];
+    if (!gwPreviewSlug) return gatewayUrls;
+    const profileById = new Map<string, BuildProfile>();
+    for (const bp of stateService.getEffectiveProfilesForBranch(entry)) {
+      // resolveEffectiveProfile applies branch profileOverrides (subdomain / readinessProbe / …),
+      // exactly like the publisher; without it override-driven landing paths would drift from the
+      // route the forwarder actually serves.
+      profileById.set(bp.id, resolveEffectiveProfile(bp, entry));
+    }
+    // Collect routable services, sorted by profileId so first-wins dedup is deterministic across
+    // object-key ordering changes (mirrors publisher's subdomainCandidates sort).
+    const routable = Object.entries(entry.services ?? {})
+      .filter(([, svc]) => svc?.hostPort && ROUTABLE_SERVICE_STATUSES.has(String(svc.status)))
+      .map(([profileId]) => profileId)
+      .sort((a, b) => a.localeCompare(b));
+    const seenSubdomains = new Set<string>();
+    for (const profileId of routable) {
+      const profile = profileById.get(profileId);
+      const sub = profile?.subdomain;
+      if (!sub) continue;
+      if (seenSubdomains.has(sub)) continue;
+      const namedLabel = `${gwPreviewSlug}-${sub}`;
+      if (namedLabel.length > 63) continue; // RFC 1035 single-label limit + wildcard cert coverage
+      seenSubdomains.add(sub);
+      // Landing path — pick the path most likely to return a live 200 when the entry is clicked
+      // (Codex P2: don't force every named service onto the LLM gateway health path):
+      //   1) Known LLM gateway subdomains mount their API under /gw/* (console) or /gw/v1/* (serving)
+      //      and 404 at the bare root, so land on their health endpoint explicitly.
+      //   2) Any other named service (docs / metrics / …) — the forwarder publishes the named host to
+      //      the container root, so honor the profile's readiness path when set, else land at '/'.
+      const landingPath = resolveGatewayLandingPath(sub, profile?.readinessProbe?.path);
+      gatewayUrls.push({
+        subdomain: sub,
+        name: profileId,
+        url: `http://${namedLabel}.${primaryRoot}${landingPath}`,
+      });
+    }
+    return gatewayUrls;
+  };
+
   router.get('/branches/:id/subdomain-aliases', (req, res) => {
     const { id } = req.params;
     const entry = stateService.getBranch(id);
@@ -12702,11 +12967,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const primaryRoot = rootDomains[0] || 'example.com';
     const previewUrls = aliases.map(a => `http://${a}.${primaryRoot}`);
     const defaultUrl = `http://${id}.${primaryRoot}`;
+
     res.json({
       branchId: id,
       aliases,
       defaultUrl,
       previewUrls,
+      gatewayUrls: computeBranchGatewayUrls(entry, primaryRoot),
       rootDomain: primaryRoot,
     });
   });
@@ -12790,6 +13057,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
         aliases: normalized,
         previewUrls: normalized.map(a => `http://${a}.${primaryRoot}`),
         defaultUrl: `http://${id}.${primaryRoot}`,
+        // gatewayUrls are branch-derived (not alias-derived); return them so the panel keeps the
+        // 网关入口 block + 预览下拉 after saving aliases, instead of dropping them until a full
+        // reload (Bugbot "Alias save clears gateway URLs"). Same SSOT helper as the GET response.
+        gatewayUrls: computeBranchGatewayUrls(entry, primaryRoot),
+        rootDomain: primaryRoot,
         needsRedeploy: false, // aliases are proxy-level, no container restart needed
       });
     } catch (err) {
@@ -16367,7 +16639,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
           if (!p.id) errors.push(`buildProfiles[${i}]: 缺少 id`);
           if (!p.name) errors.push(`buildProfiles[${i}]: 缺少 name`);
           if (!p.dockerImage) errors.push(`buildProfiles[${i}]: 缺少 dockerImage`);
-          if (!p.command) errors.push(`buildProfiles[${i}]: 缺少 command`);
+          // 预构建镜像站点（prebuiltImage）用镜像自带 ENTRYPOINT/CMD 启动，command 合法为空（见
+          // container.ts usePrebuiltEntrypoint）；只对非预构建 profile 强制 command。
+          if (!p.command && p.prebuiltImage !== true) errors.push(`buildProfiles[${i}]: 缺少 command`);
           if (p.containerPort !== undefined) {
             const port = Number(p.containerPort);
             if (!Number.isInteger(port) || port < 1 || port > 65535) {

@@ -1361,7 +1361,11 @@ public class UsersController : ControllerBase
             HasAppSecret = !string.IsNullOrWhiteSpace(settings?.MiduoSsoAppSecret),
             RedirectUri = settings?.MiduoSsoRedirectUri ?? string.Empty,
             Label = settings?.MiduoSsoLabel ?? "米多星球",
-            SubjectType = NormalizeMiduoSubjectType(settings?.MiduoSsoSubjectType)
+            SubjectType = NormalizeMiduoSubjectType(settings?.MiduoSsoSubjectType),
+            PasswordLoginDisabled = settings?.PasswordLoginDisabled == true,
+            PasswordLoginBreakGlassEnabled = IsTruthy(_cfg["MAP_PASSWORD_LOGIN_BREAK_GLASS"])
+                || IsTruthy(_cfg["PASSWORD_LOGIN_BREAK_GLASS"])
+                || IsTruthy(_cfg["MIDUO_SSO_PASSWORD_LOGIN_BREAK_GLASS"])
         };
         return Ok(ApiResponse<MiduoSsoConfigResponse>.Ok(response));
     }
@@ -1386,6 +1390,10 @@ public class UsersController : ControllerBase
             if (string.IsNullOrWhiteSpace(redirectUri))
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "回调地址必须是有效的 http(s) 地址"));
         }
+        if (request.PasswordLoginDisabled && !request.Enabled)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "禁用密码登录前必须先启用 SSO"));
+        }
 
         var existing = await _db.AppSettings.Find(x => x.Id == "global").FirstOrDefaultAsync(ct);
         var secretToSave = !string.IsNullOrWhiteSpace(appSecret)
@@ -1402,6 +1410,7 @@ public class UsersController : ControllerBase
             .Set(x => x.MiduoSsoRedirectUri, redirectUri ?? string.Empty)
             .Set(x => x.MiduoSsoLabel, label)
             .Set(x => x.MiduoSsoSubjectType, subjectType)
+            .Set(x => x.PasswordLoginDisabled, request.PasswordLoginDisabled)
             .Set(x => x.UpdatedAt, DateTime.UtcNow)
             .SetOnInsert(x => x.Id, "global");
 
@@ -1614,6 +1623,8 @@ public class MiduoSsoConfigResponse
     public string RedirectUri { get; set; } = string.Empty;
     public string Label { get; set; } = string.Empty;
     public string SubjectType { get; set; } = "mobile";
+    public bool PasswordLoginDisabled { get; set; }
+    public bool PasswordLoginBreakGlassEnabled { get; set; }
 }
 
 public class UpdateMiduoSsoConfigRequest
@@ -1625,6 +1636,7 @@ public class UpdateMiduoSsoConfigRequest
     public string? RedirectUri { get; set; }
     public string? Label { get; set; }
     public string? SubjectType { get; set; }
+    public bool PasswordLoginDisabled { get; set; }
 }
 
 public class ImportMiduoSsoBindingsRequest

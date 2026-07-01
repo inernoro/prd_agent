@@ -4,6 +4,21 @@ using PrdAgent.Core.Interfaces;
 namespace PrdAgent.Core.Models;
 
 /// <summary>
+/// 网关传输路径观测标记常量（S2）。SSOT，禁止在别处裸写字符串。
+/// </summary>
+public static class GatewayTransports
+{
+    /// <summary>进程内 LlmGateway（默认模式，字节直传）。</summary>
+    public const string Inproc = "inproc";
+    /// <summary>跨进程 HttpLlmGatewayClient（serving /gw/v1/*）。</summary>
+    public const string Http = "http";
+    /// <summary>ShadowLlmGateway 影子/灰度路由入口。</summary>
+    public const string Shadow = "shadow";
+    /// <summary>绕开网关池调度的直连（ModelLab/Arena 锁定 platform+model、ModelDomainService 兜底直连）。</summary>
+    public const string Direct = "direct";
+}
+
+/// <summary>
 /// 大模型请求日志（用于调试与监控；注意：不得存储 PRD 原文与敏感信息）
 /// </summary>
 [AppOwnership(AppNames.Llm, AppNames.LlmDisplay, IsPrimary = true)]
@@ -54,6 +69,16 @@ public class LlmRequestLog
     /// 仅追加字段，存量日志为 null。
     /// </summary>
     public string? ResolutionReason { get; set; }
+
+    /// <summary>
+    /// 本次调用的网关传输路径（观测标记，S2）：
+    /// - "inproc"：进程内 LlmGateway（默认模式，字节直传）
+    /// - "http"：跨进程 HttpLlmGatewayClient（serving /gw/v1/*）
+    /// - "shadow"：ShadowLlmGateway 影子/灰度路由入口
+    /// - "direct"：绕开网关池调度的直连（如 ModelLab/Arena 锁定 platform+model、ModelDomainService 兜底直连）
+    /// 仅追加字段，存量日志为 null；老查询不受影响。用于日志页/排障辨识请求走了哪条传输通道。
+    /// </summary>
+    public string? GatewayTransport { get; set; }
 
     // 模型池信息（来自 ModelGroup）
     /// <summary>

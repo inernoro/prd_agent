@@ -353,7 +353,9 @@ public sealed class ModelPoolHealthProbeService : BackgroundService
                         PlatformName: platform.Name,
                         ModelGroupId: group.Id,
                         ModelGroupName: group.Name,
-                        IsHealthProbe: true),
+                        IsHealthProbe: true,
+                        // S2 观测标记：健康探活由后台直接发 HTTP（非网关路由），标记 direct。
+                        GatewayTransport: GatewayTransports.Direct),
                     ct);
             }
 

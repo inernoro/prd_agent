@@ -99,3 +99,14 @@ Required behavior:
 - Include smoke tests for critical pages and APIs.
 - Block release on P0 defects, missing evidence for critical user paths, or environment drift on the target SHA.
 - Keep known non-blocking issues visible as P1/P2/P3 with owner or next action.
+
+## cds-platform-vs-cds-agent
+
+Treat these as separate acceptance targets:
+
+| Target | Changed surface | Valid proof | Invalid substitution |
+|--------|-----------------|-------------|----------------------|
+| CDS platform | `cds/` deploy, preview, report center, branch network, extra-services, self-update, scheduler, proxy, smoke | cdscli/API branch status, deploy/smoke output, `/reports` page, preview routing result, service/log state | prd-admin `/cds-agent` page |
+| CDS Agent | CDS Agent UI, workbench, runtime/session flow, CdsAgent adapter/event rendering | `/cds-agent` page, session state, runtime events, related API response | generic CDS branch ready proof |
+
+If both targets changed, create two rows and two proof chains. Do not let a CDS Agent entry screenshot satisfy a CDS platform assertion.

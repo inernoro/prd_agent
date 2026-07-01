@@ -5732,7 +5732,9 @@ function safeChart(canvasId, config) {
                     UserPromptChars: userPrompt.Length,
                     StartedAt: startedAt,
                     RequestType: "agent",
-                    AppCallerCode: appCallerCode));
+                    AppCallerCode: appCallerCode,
+                    // S2 观测标记：claude-sdk 直连（非网关路由），标记 direct。
+                    GatewayTransport: GatewayTransports.Direct));
             }
             catch (Exception ex)
             {

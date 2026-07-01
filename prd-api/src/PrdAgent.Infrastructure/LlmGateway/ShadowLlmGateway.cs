@@ -55,6 +55,12 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     /// <summary>该 appCallerCode 是否已灰度翻 http（白名单命中 → http 权威）。</summary>
     private bool RouteToHttp(string appCallerCode) => _httpAllowlist.Contains(appCallerCode);
 
+    // S2 传输观测标记：ShadowLlmGateway 本身不构建/写日志，返回的权威结果由底层网关落库并打真实传输标记——
+    // 白名单命中走 _http（HttpLlmGatewayClient 打 "http"），否则走 _inproc（LlmGateway 打 "inproc"）。
+    // 有意**不**把返回结果统一改写成 GatewayTransports.Shadow：日志应如实反映请求实际在何处执行
+    // （inproc/http），而非 MAP 当前处于 shadow 模式这一编排事实。GatewayTransports.Shadow 保留给
+    // 未来若需要标注影子后台探针自身的日志；当前后台 http 探针经 _http 已被打成 "http"。
+
     // ─────────────────────── 主路径（白名单→http 权威 / 否则 inproc 权威 + 后台影子）───────────────────────
 
     public async Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default)

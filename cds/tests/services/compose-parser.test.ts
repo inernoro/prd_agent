@@ -452,6 +452,87 @@ services:
   });
 });
 
+describe('parseStandardCompose — 预构建镜像 app 站点(cds.prebuilt-image + subdomain)', () => {
+  it('纯 image + cds.prebuilt-image + cds.subdomain（无 volume/build）→ 解析为 app BuildProfile', () => {
+    const yaml = `
+services:
+  llmgw-web:
+    image: "ghcr.io/acme/app-web:sha-\${CDS_COMMIT_SHA}"
+    ports:
+      - "80"
+    fallbackImage:
+      - "ghcr.io/acme/app-web:branch-\${CDS_BRANCH_SLUG}"
+      - "ghcr.io/acme/app-web:branch-main"
+    labels:
+      cds.prebuilt-image: "true"
+      cds.subdomain: "llmgw-web"
+      cds.readiness-path: "/"
+      cds.readiness-timeout: "600"
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg).not.toBeNull();
+    // 核心断言:llmgw-web 出现在 app buildProfiles(此前被 isAppServiceCandidate 丢弃)。
+    const bp = cfg!.buildProfiles.find((p) => p.id === 'llmgw-web');
+    expect(bp).toBeDefined();
+    expect(bp!.subdomain).toBe('llmgw-web');
+    expect(bp!.prebuiltImage).toBe(true);
+    expect(bp!.containerPort).toBe(80);
+    // 基础级 fallbackImage 回退链带到 profile(无 express deployMode 也生效)。
+    expect(bp!.fallbackImage).toEqual([
+      'ghcr.io/acme/app-web:branch-${CDS_BRANCH_SLUG}',
+      'ghcr.io/acme/app-web:branch-main',
+    ]);
+    // readiness 从 label 解析。
+    expect(bp!.readinessProbe?.path).toBe('/');
+    expect(bp!.readinessProbe?.timeoutSeconds).toBe(600);
+    // 不应被误归类为 infra。
+    expect(cfg!.infraServices.map((s) => s.id)).not.toContain('llmgw-web');
+  });
+
+  it('round-trip：导出回 compose 再解析，prebuiltImage/subdomain/fallbackImage 不丢，且不合成假源码 mount', () => {
+    const yaml = `
+services:
+  llmgw-web:
+    image: "ghcr.io/acme/app-web:sha-\${CDS_COMMIT_SHA}"
+    ports:
+      - "80"
+    fallbackImage:
+      - "ghcr.io/acme/app-web:branch-main"
+    labels:
+      cds.prebuilt-image: "true"
+      cds.subdomain: "llmgw-web"
+      cds.readiness-path: "/"
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg).not.toBeNull();
+    const serialized = toCdsCompose(cfg!.buildProfiles, cfg!.envVars, cfg!.infraServices, cfg!.routingRules);
+    // 预构建站点不应被写出源码 volume mount。
+    expect(serialized).not.toMatch(/\.:\/app/);
+    const back = parseCdsCompose(serialized);
+    expect(back).not.toBeNull();
+    const bp = back!.buildProfiles.find((p) => p.id === 'llmgw-web');
+    expect(bp).toBeDefined();
+    expect(bp!.prebuiltImage).toBe(true);
+    expect(bp!.subdomain).toBe('llmgw-web');
+    expect(bp!.fallbackImage).toEqual(['ghcr.io/acme/app-web:branch-main']);
+  });
+
+  it('image + prebuilt-image label 但无 subdomain/path-prefix（无对外路由）→ 不识别为 app', () => {
+    const yaml = `
+services:
+  bare:
+    image: "ghcr.io/acme/x:latest"
+    labels:
+      cds.prebuilt-image: "true"
+`;
+    const cfg = parseCdsCompose(yaml);
+    // 无端口/无 build/无 subdomain/无 path-prefix → 既不进 app 也不进 infra(与旧行为一致)。
+    if (cfg) {
+      expect(cfg.buildProfiles.map((p) => p.id)).not.toContain('bare');
+    }
+  });
+});
+
 describe('parseStandardCompose — agent runtime sidecar isolation', () => {
   it('does not import claude-agent-sdk runtime sidecar as a branch BuildProfile', () => {
     const yaml = `
