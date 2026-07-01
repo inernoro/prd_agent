@@ -202,6 +202,36 @@ public class GatewayRequestContext
     /// 图片引用列表（参考图 COS URL 等元数据，用于日志页展示）
     /// </summary>
     public List<LlmImageReference>? ImageReferences { get; init; }
+
+    /// <summary>
+    /// 网关传输路径观测标记（S2）：inproc / http / shadow / direct。
+    /// http 模式下由 MAP 侧 HttpLlmGatewayClient 置 "http" 后随请求体过线，serving 端 OpenContextScope
+    /// 将其注入 LlmRequestContext，供 serving 的 LlmGateway 权威标注该条日志的传输通道。
+    /// 为 null 时 serving 端 LlmGateway 兜底为 inproc。
+    /// </summary>
+    public string? GatewayTransport { get; init; }
+
+    /// <summary>
+    /// 返回一份把 <see cref="GatewayTransport"/> 覆盖为指定值的副本（其余字段原样拷贝）。
+    /// <paramref name="source"/> 为 null 时新建一个仅含传输标记的最小上下文。
+    /// 用于 http 模式过线前给请求体的 Context 打上 "http" 传输标记（S2 观测）。
+    /// </summary>
+    public static GatewayRequestContext WithTransport(GatewayRequestContext? source, string transport)
+        => new()
+        {
+            RequestId = source?.RequestId,
+            SessionId = source?.SessionId,
+            GroupId = source?.GroupId,
+            UserId = source?.UserId,
+            ViewRole = source?.ViewRole,
+            DocumentChars = source?.DocumentChars,
+            DocumentHash = source?.DocumentHash,
+            QuestionText = source?.QuestionText,
+            SystemPromptChars = source?.SystemPromptChars,
+            SystemPromptText = source?.SystemPromptText,
+            ImageReferences = source?.ImageReferences,
+            GatewayTransport = transport,
+        };
 }
 
 /// <summary>

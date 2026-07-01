@@ -61,7 +61,11 @@ public class MiduoPlanetSsoController : ControllerBase
             }
             : new List<SsoLoginOption>();
 
-        return Ok(ApiResponse<SsoOptionsResponse>.Ok(new SsoOptionsResponse { Items = items }));
+        return Ok(ApiResponse<SsoOptionsResponse>.Ok(new SsoOptionsResponse
+        {
+            Items = items,
+            PasswordLoginDisabled = options.PasswordLoginDisabled
+        }));
     }
 
     [HttpPost("login")]
@@ -160,6 +164,8 @@ public class MiduoPlanetSsoController : ControllerBase
         var settings = await _db.AppSettings.Find(x => x.Id == "global").FirstOrDefaultAsync(ct);
         var enabledFromConfig = IsTruthy(FirstConfig("MiduoSso:Enabled", "MIDUO_SSO_ENABLED", "MiduoPlanetSso:Enabled", "MIDUO_PLANET_SSO_ENABLED"));
         var enabled = settings?.MiduoSsoEnabled ?? enabledFromConfig;
+        var passwordLoginDisabled = settings?.PasswordLoginDisabled == true
+            && !IsTruthy(FirstConfig("MAP_PASSWORD_LOGIN_BREAK_GLASS", "PASSWORD_LOGIN_BREAK_GLASS", "MIDUO_SSO_PASSWORD_LOGIN_BREAK_GLASS"));
 
         var baseUrl = NormalizeAbsoluteHttpUrl(FirstNonEmpty(settings?.MiduoSsoBaseUrl, FirstConfig("MiduoSso:BaseUrl", "MIDUO_SSO_BASE_URL", "MiduoPlanetSso:BaseUrl", "MIDUO_PLANET_SSO_BASE_URL")), trimTrailingSlash: true);
         var appCode = FirstNonEmpty(settings?.MiduoSsoAppCode, FirstConfig("MiduoSso:AppCode", "MIDUO_SSO_APP_CODE", "MiduoPlanetSso:AppCode", "MIDUO_PLANET_SSO_APP_CODE"));
@@ -181,7 +187,8 @@ public class MiduoPlanetSsoController : ControllerBase
             AppCode = appCode ?? string.Empty,
             AppSecret = appSecret ?? string.Empty,
             RedirectUri = redirectUri ?? string.Empty,
-            SubjectType = NormalizeSubjectType(FirstNonEmpty(settings?.MiduoSsoSubjectType, FirstConfig("MiduoSso:SubjectType", "MIDUO_SSO_SUBJECT_TYPE", "MiduoPlanetSso:SubjectType", "MIDUO_PLANET_SSO_SUBJECT_TYPE")))
+            SubjectType = NormalizeSubjectType(FirstNonEmpty(settings?.MiduoSsoSubjectType, FirstConfig("MiduoSso:SubjectType", "MIDUO_SSO_SUBJECT_TYPE", "MiduoPlanetSso:SubjectType", "MIDUO_PLANET_SSO_SUBJECT_TYPE"))),
+            PasswordLoginDisabled = passwordLoginDisabled
         };
     }
 
@@ -348,6 +355,7 @@ public class MiduoPlanetSsoController : ControllerBase
         public string AppSecret { get; set; } = string.Empty;
         public string RedirectUri { get; set; } = string.Empty;
         public string SubjectType { get; set; } = "mobile";
+        public bool PasswordLoginDisabled { get; set; }
     }
 
     private sealed class MiduoPlanetProfile
@@ -360,6 +368,7 @@ public class MiduoPlanetSsoController : ControllerBase
 public class SsoOptionsResponse
 {
     public List<SsoLoginOption> Items { get; set; } = new();
+    public bool PasswordLoginDisabled { get; set; }
 }
 
 public class SsoLoginOption

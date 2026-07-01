@@ -25,20 +25,24 @@ echo "  安装目录:   ${INSTALL_DIR}"
 echo "  仓库根目录: ${REPO_ROOT}"
 echo ""
 
-# 1. 创建安装目录
+# 1. Docker 地址池预检
+echo "[1/5] Docker 地址池预检..."
+bash "${SOURCE_DIR}/scripts/docker-address-pool-preflight.sh" || true
+
+# 2. 创建安装目录
 mkdir -p "${INSTALL_DIR}"
 
-# 2. 同步源码（排除 node_modules、dist、.cds 状态文件）
-echo "[1/4] 同步源码..."
+# 3. 同步源码（排除 node_modules、dist、.cds 状态文件）
+echo "[2/5] 同步源码..."
 rsync -a --delete \
   --exclude='node_modules' \
   --exclude='dist' \
   --exclude='.cds' \
   "${SOURCE_DIR}/" "${INSTALL_DIR}/"
 
-# 3. 生成 cds.config.json（指向真正的仓库）
+# 4. 生成 cds.config.json（指向真正的仓库）
 CONFIG_FILE="${INSTALL_DIR}/cds.config.json"
-echo "[2/4] 生成配置 → ${CONFIG_FILE}"
+echo "[3/5] 生成配置 → ${CONFIG_FILE}"
 cat > "${CONFIG_FILE}" <<CONF
 {
   "repoRoot": "${REPO_ROOT}",
@@ -72,13 +76,13 @@ cat > "${CONFIG_FILE}" <<CONF
 }
 CONF
 
-# 4. 安装依赖
-echo "[3/4] 安装依赖..."
+# 5. 安装依赖
+echo "[4/5] 安装依赖..."
 cd "${INSTALL_DIR}"
 pnpm install --frozen-lockfile 2>/dev/null || pnpm install
 
-# 5. 完成
-echo "[4/4] 安装完成!"
+# 6. 完成
+echo "[5/5] 安装完成!"
 echo ""
 echo "  首次初始化:"
 echo "    cd ${INSTALL_DIR}"

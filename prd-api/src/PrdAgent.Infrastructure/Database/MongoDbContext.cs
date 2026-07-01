@@ -159,6 +159,10 @@ public class MongoDbContext
     public IMongoCollection<PrdAgent.Core.Models.CcasAgent.CcasFlowDiagram> CcasFlowDiagrams
         => _database.GetCollection<PrdAgent.Core.Models.CcasAgent.CcasFlowDiagram>("ccas_flow_diagrams");
 
+    // Email Agent 邮件模板智能体
+    public IMongoCollection<EmailTemplate> EmailTemplates
+        => _database.GetCollection<EmailTemplate>("email_templates");
+
     // Review Agent 产品评审员
     public IMongoCollection<ReviewSubmission> ReviewSubmissions => _database.GetCollection<ReviewSubmission>("review_submissions");
     public IMongoCollection<ReviewResult> ReviewResults => _database.GetCollection<ReviewResult>("review_results");

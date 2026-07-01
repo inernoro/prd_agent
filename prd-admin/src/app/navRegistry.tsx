@@ -46,6 +46,7 @@ const SkillAgentPage = lazy(() => import('@/pages/SkillAgentPage'));
 const ArenaPage = lazy(() => import('@/pages/arena/ArenaPage').then(m => ({ default: m.ArenaPage })));
 const ReviewAgentPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentPage })));
 const CcasAgentPage = lazy(() => import('@/pages/ccas-agent').then(m => ({ default: m.CcasAgentPage })));
+const EmailAgentPage = lazy(() => import('@/pages/email-agent').then(m => ({ default: m.EmailAgentPage })));
 const ShituAgentPage = lazy(() => import('@/pages/shitu-agent').then(m => ({ default: m.ShituAgentPage })));
 const PrReviewPage = lazy(() => import('@/pages/pr-review').then(m => ({ default: m.PrReviewPage })));
 const PaAgentPage = lazy(() => import('@/pages/pa-agent').then(m => ({ default: m.PaAgentPage })));
@@ -375,6 +376,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       section: 'toolbox',
       appKey: 'ccas-agent',
       tags: ['赋码', '采集', '产线', 'PRD', '流程图'],
+    },
+  },
+  {
+    path: '/email-agent',
+    permission: 'email-agent.use',
+    element: shellGuarded('email-agent.use', <EmailAgentPage />),
+    nav: {
+      label: '邮件模板智能体',
+      shortLabel: '邮件',
+      description: '常用流程邮件模板库：内容/发送/抄送对象一键复制 + 变量快填 + AI 起草润色',
+      icon: 'Mail',
+      section: 'toolbox',
+      appKey: 'email-agent',
+      wip: true,
+      tags: ['邮件', '模板', '审批', '汇报', '通知', '一键复制'],
     },
   },
   {

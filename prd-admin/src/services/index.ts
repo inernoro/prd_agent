@@ -2261,6 +2261,30 @@ export type {
   CcasQaReferencePayload,
 } from '@/services/real/ccasAgent';
 
+// ── Email Agent 邮件模板智能体 ──
+export {
+  getEmailAgentMeta,
+  listEmailTemplates,
+  getEmailTemplate,
+  createEmailTemplate,
+  updateEmailTemplate,
+  deleteEmailTemplate,
+  duplicateEmailTemplate,
+  markEmailTemplateUsed,
+  EMAIL_DRAFT_STREAM_URL,
+  EMAIL_POLISH_STREAM_URL,
+} from '@/services/real/emailAgent';
+export type {
+  EmailTemplate,
+  EmailRecipient,
+  EmailTemplateVariable,
+  EmailCategoryOption,
+  EmailAgentMeta,
+  UpsertEmailTemplateInput,
+  EmailDraftRequest,
+  EmailPolishRequest,
+} from '@/services/real/emailAgent';
+
 // ── Shitu Agent 识途（新人文化与制度问答）──
 export {
   getShituMeta,

@@ -38,6 +38,18 @@ HIGH_RISK_RULES = [
     ("验收链路", re.compile(r"acceptance|visual-test|verify-open|archive_report|harness", re.I)),
 ]
 
+MODULE_EVIDENCE_BOUNDARIES = {
+    "cds": (
+        "CDS 平台证据：cdscli/API branch status、deploy/smoke、preview routing、"
+        "reports page、self-update、scheduler、extra-services、network/proxy/logs。"
+        "禁止用 prd-admin 的 /cds-agent 页面证明 cds/ 平台改动；只有 CDS Agent 专项改动才测 /cds-agent。"
+    ),
+    "prd-admin": (
+        "prd-admin 页面证据：真实用户路由、可见状态、交互结果、toast/错误/布局。"
+        "若改动是 CDS Agent 页面或工作台，才使用 /cds-agent。"
+    ),
+}
+
 
 def run(cmd, cwd):
     return subprocess.run(cmd, cwd=cwd, text=True, capture_output=True, check=True).stdout
@@ -189,6 +201,15 @@ def render_markdown(scope):
     for m in scope["modules"]:
         tags = "、".join(m["highRiskTags"]) if m["highRiskTags"] else "无"
         lines.append(f"| {m['module']} | {m['commitCount']} | {m['fileCount']} | {tags} |")
+    boundaries = [
+        (m["module"], MODULE_EVIDENCE_BOUNDARIES[m["module"]])
+        for m in scope["modules"]
+        if m["module"] in MODULE_EVIDENCE_BOUNDARIES
+    ]
+    if boundaries:
+        lines += ["", "## 模块证据边界", "", "| 模块 | 证据边界 |", "|---|---|"]
+        for module, boundary in boundaries:
+            lines.append(f"| {module} | {boundary} |")
     lines += ["", "## Commit 明细", "", "| commit | 模块 | 高风险 | 标题 |", "|---|---|---|---|"]
     for c in scope["commits"]:
         modules = "、".join(c["modules"]) if c["modules"] else "无"
@@ -226,6 +247,7 @@ def main():
         "commitCount": len(commits),
         "commits": commits,
         "modules": summarize_modules(commits),
+        "moduleEvidenceBoundaries": MODULE_EVIDENCE_BOUNDARIES,
         "openPullRequests": open_prs(root),
         "unpublishedBranches": unpublished_branches(root, args.branch_limit),
     }

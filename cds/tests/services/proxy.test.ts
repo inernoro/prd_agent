@@ -306,6 +306,39 @@ describe('ProxyService', () => {
       expect(initialPercent).toBeLessThan(25);
     });
 
+    it('does not use release build ETA for hot restart progress', () => {
+      proxy = new ProxyService(stateService, { previewDomain: 'preview.test' } as any);
+      addBranch('hot-restart', 'restarting', {
+        api: { profileId: 'api', status: 'starting' },
+        admin: { profileId: 'admin', status: 'starting' },
+      }, 'feature/hot-restart');
+      const branch = stateService.getBranch('hot-restart')!;
+      branch.lastDeployStartedAt = new Date(Date.now() - 15_000).toISOString();
+      stateService.recordDeployDuration('default', 'release', 420_000);
+      stateService.save();
+
+      const req = makeReq({ host: 'hot-restart.preview.test', accept: 'application/json' }, '/_cds/waiting-status?profile=admin');
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(written.statusCode).toBe(200);
+      const payload = JSON.parse(written.body) as {
+        progress: { percent: number; label: string; reason: string };
+        timing: { estimateMedianMs: number } | null;
+      };
+      expect(payload.timing).toBeNull();
+      expect(payload.progress.label).toBe('热重启进度');
+      expect(payload.progress.percent).toBeGreaterThan(50);
+      expect(payload.progress.reason).toContain('热重启状态');
+
+      const htmlReq = makeReq({ host: 'hot-restart.preview.test', accept: 'text/html' });
+      const { res: htmlRes, written: htmlWritten } = makeRes();
+      proxy.handleRequest(htmlReq, htmlRes);
+      const match = htmlWritten.body.match(/data-role="progress-percent">([0-9.]+)%/);
+      expect(match).not.toBeNull();
+      expect(Number(match![1])).toBeGreaterThan(50);
+    });
+
     it('serves the auto-refresh "preparing" page (not the manual-redeploy page) for an express branch waiting on the CI image', () => {
       // 极速版（CI 预构建）：push 后分支 status 仍是 idle，但 ciImageStatus='waiting' 表示
       // CDS 在等 GitHub Actions 构建镜像，完成后会自动部署。此窗口必须显示会自动刷新的

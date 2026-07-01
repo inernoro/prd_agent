@@ -26,6 +26,7 @@ import { createRemoteHostsRouter } from './routes/remote-hosts.js';
 import { createReleasesRouter } from './routes/releases.js';
 import { createCdsSystemConnectionsRouter } from './routes/cds-system-connections.js';
 import { createCdsSystemTopologyRouter } from './routes/cds-system-topology.js';
+import { createDockerNetworkHealthRouter } from './routes/docker-network-health.js';
 import { createTopologyAggregator } from './services/topology-aggregator.js';
 import { createInfraBackupRouter } from './routes/infra-backup.js';
 import { createInfraDataRouter } from './routes/infra-data.js';
@@ -745,6 +746,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /cds-system/operator/run': '执行运维控制台操作',
     'POST /cds-system/operator/request': '发起运维操作审批请求',
     'GET /cds-system/operator/requests': '列出运维审批请求',
+    'GET /cds-system/docker-networks': '查看 Docker 分支网络容量',
     'POST /self-update': '自我更新',
     'POST /login': '用户登录',
     'POST /logout': '用户登出',
@@ -3408,6 +3410,7 @@ export function createServer(deps: ServerDeps): express.Express {
     masterPort: deps.config.masterPort,
   });
   app.use('/api', createCdsSystemTopologyRouter({ aggregator: topologyAggregator }));
+  app.use('/api', createDockerNetworkHealthRouter({ shell: deps.shell }));
   // 基础设施数据备份/恢复（mongodump/mongorestore/redis dump.rdb/tar）
   app.use('/api', createInfraBackupRouter({ stateService: deps.stateService, shell: deps.shell, assertProjectAccess: assertProjectAccess as any }));
   app.use('/api', createInfraDataRouter({ stateService: deps.stateService, shell: deps.shell, assertProjectAccess: assertProjectAccess as any }));

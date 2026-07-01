@@ -227,6 +227,7 @@ export const updateMiduoSsoConfigReal: UpdateMiduoSsoConfigContract = async (inp
       redirectUri: input.redirectUri,
       label: input.label,
       subjectType: input.subjectType,
+      passwordLoginDisabled: input.passwordLoginDisabled,
     },
   });
 };
