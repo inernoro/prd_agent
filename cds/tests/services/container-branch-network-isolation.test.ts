@@ -176,8 +176,13 @@ describe('ContainerService 分支级网络隔离', () => {
       stderr: '',
       exitCode: 0,
     }));
-    mock.addResponsePattern(/docker network inspect --format='\{\{len \.Containers\}\}' 'cds-br-old-empty'/, () => ({ stdout: '0\n', stderr: '', exitCode: 0 }));
-    mock.addResponsePattern(/docker network inspect --format='\{\{len \.Containers\}\}' 'cds-br-old-busy'/, () => ({ stdout: '2\n', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker network inspect --format='\{\{json \.Containers\}\}' 'cds-br-old-empty'/, () => ({ stdout: '{}\n', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker network inspect --format='\{\{json \.Containers\}\}' 'cds-br-old-busy'/, () => ({
+      stdout: JSON.stringify({ runningcid: { Name: 'busy' } }),
+      stderr: '',
+      exitCode: 0,
+    }));
+    mock.addResponsePattern(/docker inspect --format='\{\{\.Id\}\} \{\{\.State\.Running\}\}' 'runningcid'/, () => ({ stdout: 'runningcid true\n', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/docker network rm 'cds-br-old-empty'/, () => ({ stdout: 'cds-br-old-empty\n', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/docker network connect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
@@ -217,7 +222,7 @@ describe('ContainerService 分支级网络隔离', () => {
       };
     });
     mock.addResponsePattern(/docker network ls --format '\{\{\.Name\}\}'/, () => ({ stdout: 'cds-br-old-empty\n', stderr: '', exitCode: 0 }));
-    mock.addResponsePattern(/docker network inspect --format='\{\{len \.Containers\}\}' 'cds-br-old-empty'/, () => ({ stdout: '0\n', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker network inspect --format='\{\{json \.Containers\}\}' 'cds-br-old-empty'/, () => ({ stdout: '{}\n', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/docker network rm 'cds-br-old-empty'/, () => ({ stdout: 'cds-br-old-empty\n', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/docker network connect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
@@ -229,6 +234,58 @@ describe('ContainerService 分支级网络隔离', () => {
 
     await expect(service.runService(makeEntry('proj-a'), makeProfile(), makeService())).resolves.toBeUndefined();
     expect(createAttempts).toBe(2);
+  });
+
+  it('分支网地址池耗尽时会释放只挂停止容器的 cds-br 网络', async () => {
+    const service = new ContainerService(mock, makeConfig(), resolver);
+    aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
+    let createAttempts = 0;
+
+    mock.addResponsePattern(/docker network inspect cds-br-feature-a$/, () => ({ stdout: '', stderr: 'No such network', exitCode: 1 }));
+    mock.addResponsePattern(/docker network create cds-br-feature-a$/, () => {
+      createAttempts += 1;
+      if (createAttempts === 1) {
+        return {
+          stdout: '',
+          stderr: 'Error response from daemon: all predefined address pools have been fully subnetted',
+          exitCode: 1,
+        };
+      }
+      return { stdout: 'ok', stderr: '', exitCode: 0 };
+    });
+    mock.addResponsePattern(/docker network ls --format '\{\{\.Name\}\}'/, () => ({
+      stdout: ['cds-br-stopped-only', 'cds-br-running'].join('\n'),
+      stderr: '',
+      exitCode: 0,
+    }));
+    mock.addResponsePattern(/docker network inspect --format='\{\{json \.Containers\}\}' 'cds-br-stopped-only'/, () => ({
+      stdout: JSON.stringify({ stoppedcid: { Name: 'stopped' } }),
+      stderr: '',
+      exitCode: 0,
+    }));
+    mock.addResponsePattern(/docker network inspect --format='\{\{json \.Containers\}\}' 'cds-br-running'/, () => ({
+      stdout: JSON.stringify({ runningcid: { Name: 'running' } }),
+      stderr: '',
+      exitCode: 0,
+    }));
+    mock.addResponsePattern(/docker inspect --format='\{\{\.Id\}\} \{\{\.State\.Running\}\}' 'stoppedcid'/, () => ({ stdout: 'stoppedcid false\n', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker inspect --format='\{\{\.Id\}\} \{\{\.State\.Running\}\}' 'runningcid'/, () => ({ stdout: 'runningcid true\n', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker network disconnect -f 'cds-br-stopped-only' 'stoppedcid'/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker network rm 'cds-br-stopped-only'/, () => ({ stdout: 'cds-br-stopped-only\n', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker network connect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker create/, () => ({ stdout: 'cid', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker start/, () => ({ stdout: 'cid', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker run/, () => ({ stdout: 'cid', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/mkdir/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+
+    await service.runService(makeEntry('proj-a'), makeProfile(), makeService());
+
+    expect(createAttempts).toBe(2);
+    expect(mock.commands.some((c) => c.includes("docker network disconnect -f 'cds-br-stopped-only' 'stoppedcid'"))).toBe(true);
+    expect(mock.commands.some((c) => c.includes("docker network rm 'cds-br-stopped-only'"))).toBe(true);
+    expect(mock.commands.some((c) => c.includes("docker network rm 'cds-br-running'"))).toBe(false);
   });
 
   it('容忍并发竞态：分支网 create 报 "already exists" 不抛（同分支多服务同时首建）', async () => {

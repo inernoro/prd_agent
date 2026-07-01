@@ -346,6 +346,20 @@ describe('Branch Routes', () => {
       expect((res.body as any).branch.id).toBe('feature-test');
     });
 
+    it('persists new branch state before reporting creation success', async () => {
+      const order: string[] = [];
+      stateService.flush = async () => {
+        order.push('flush');
+      };
+
+      const res = await request(server, 'POST', '/api/branches', { branch: 'feature/flush-create' });
+      order.push('response');
+
+      expect(res.status).toBe(201);
+      expect((res.body as any).branch.id).toBe('feature-flush-create');
+      expect(order).toEqual(['flush', 'response']);
+    });
+
     it('should return 400 if branch name missing', async () => {
       const res = await request(server, 'POST', '/api/branches', {});
       expect(res.status).toBe(400);
@@ -2295,6 +2309,42 @@ describe('Branch Routes', () => {
       const res = await request(server, 'POST', '/api/branches/empty-nosvc/deploy');
       expect(res.status).toBe(400);
       expect(String((res.body as any).error)).toContain('构建配置');
+    });
+
+    it('flushes branch state before reporting empty-profile cleanup complete', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'flush-empty-cleanup',
+        projectId: 'default',
+        branch: 'feature/flush-empty-cleanup',
+        worktreePath: path.join(tmpDir, 'worktrees', 'flush-empty-cleanup'),
+        status: 'running',
+        createdAt: now,
+        services: {
+          obsolete: {
+            profileId: 'obsolete',
+            containerName: 'cds-flush-empty-cleanup-obsolete',
+            hostPort: 10001,
+            status: 'running',
+          },
+        },
+      });
+      stateService.save();
+
+      stateService.flush = async () => {
+        operationEvents.push({ action: 'test.state-flushed', branchId: 'flush-empty-cleanup' });
+      };
+
+      const res = await request(server, 'POST', '/api/branches/flush-empty-cleanup/deploy');
+
+      expect(res.status).toBe(200);
+      expect(String(res.body)).toContain('complete');
+      expect(stateService.getBranch('flush-empty-cleanup')?.services.obsolete).toBeUndefined();
+      const actions = operationEvents
+        .filter((event) => event.branchId === 'flush-empty-cleanup')
+        .map((event) => event.action);
+      expect(actions.indexOf('test.state-flushed')).toBeGreaterThanOrEqual(0);
+      expect(actions.indexOf('branch.operation.completed')).toBeGreaterThan(actions.indexOf('test.state-flushed'));
     });
 
     it('records branch delete completion only after state flush succeeds', async () => {

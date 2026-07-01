@@ -311,4 +311,62 @@ describe('MongoSplitStateBackingStore', () => {
     expect(Buffer.byteLength(firstHistory.steps?.[0].text || '', 'utf8')).toBeLessThanOrEqual(2 * 1024);
     expect(Buffer.byteLength(JSON.stringify(global), 'utf8')).toBeLessThan(2 * 1024 * 1024);
   });
+
+  it('compacts aggregate diagnostic state below the mongo single-document limit', async () => {
+    const handle = new FakeSplitHandle();
+    const store = new MongoSplitStateBackingStore(handle);
+    await store.init();
+
+    const state = emptyState();
+    for (let i = 0; i < 260; i++) {
+      const branchId = `branch-${String(i).padStart(3, '0')}`;
+      state.logs[branchId] = [{
+        type: 'build',
+        startedAt: `t-${i}`,
+        status: 'completed',
+        events: Array.from({ length: 6 }, () => ({
+          step: 'line',
+          status: 'info',
+          chunk: 'x'.repeat(20 * 1024),
+        })),
+        containerLogSnapshots: [{
+          profileId: 'api',
+          containerName: 'c',
+          logs: 'y'.repeat(64 * 1024),
+        }],
+      }];
+      state.containerLogArchives = state.containerLogArchives || {};
+      state.containerLogArchives[branchId] = Array.from({ length: 3 }, (_, index) => ({
+        id: `${branchId}:archive-${index}`,
+        ts: `t-${index}`,
+        profileId: 'api',
+        containerName: 'c',
+        logs: 'z'.repeat(64 * 1024),
+      }));
+    }
+    state.serviceDeployments = Object.fromEntries(Array.from({ length: 80 }, (_, index) => [
+      `dep-${index}`,
+      {
+        id: `dep-${index}`,
+        projectId: 'prd-agent',
+        hostId: 'host',
+        status: 'running',
+        seq: 80,
+        startedAt: `t-${index}`,
+        logs: Array.from({ length: 80 }, () => ({
+          at: 't',
+          level: 'info',
+          message: 'd'.repeat(16 * 1024),
+        })),
+      },
+    ])) as any;
+
+    store.save(state);
+    await store.flush();
+
+    const global = handle.global.docs.get('global')!.state;
+    expect(Buffer.byteLength(JSON.stringify(global), 'utf8')).toBeLessThanOrEqual(12 * 1024 * 1024);
+    expect(Object.keys(global.logs || {}).length).toBeLessThan(260);
+    expect(Object.keys(global.containerLogArchives || {}).length).toBeLessThan(260);
+  });
 });
