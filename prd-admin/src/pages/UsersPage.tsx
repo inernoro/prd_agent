@@ -117,6 +117,8 @@ export default function UsersPage() {
   const [miduoHasSecret, setMiduoHasSecret] = useState(false);
   const [miduoRedirectUri, setMiduoRedirectUri] = useState('');
   const [miduoLabel, setMiduoLabel] = useState('米多星球');
+  const [passwordLoginDisabled, setPasswordLoginDisabled] = useState(false);
+  const [passwordLoginBreakGlassEnabled, setPasswordLoginBreakGlassEnabled] = useState(false);
   const [miduoConfigError, setMiduoConfigError] = useState<string | null>(null);
   const [miduoHandoffText, setMiduoHandoffText] = useState('');
 
@@ -242,6 +244,8 @@ export default function UsersPage() {
       setMiduoHasSecret(res.data.hasAppSecret);
       setMiduoRedirectUri(res.data.redirectUri || '');
       setMiduoLabel(res.data.label || '米多星球');
+      setPasswordLoginDisabled(res.data.passwordLoginDisabled);
+      setPasswordLoginBreakGlassEnabled(Boolean(res.data.passwordLoginBreakGlassEnabled));
     } finally {
       if (seq === miduoConfigLoadSeqRef.current) setMiduoConfigLoading(false);
     }
@@ -313,6 +317,7 @@ export default function UsersPage() {
         redirectUri: miduoRedirectUri.trim(),
         label: miduoLabel.trim() || '米多星球',
         subjectType: 'mobile',
+        passwordLoginDisabled,
         hasAppSecret: miduoHasSecret,
       });
       if (!res.success) {
@@ -320,6 +325,8 @@ export default function UsersPage() {
         return;
       }
       setMiduoHasSecret(res.data.hasAppSecret);
+      setPasswordLoginDisabled(res.data.passwordLoginDisabled);
+      setPasswordLoginBreakGlassEnabled(Boolean(res.data.passwordLoginBreakGlassEnabled));
       setMiduoAppSecret('');
       setMiduoConfigOpen(false);
       toast.success('米多星球 SSO 配置已保存');
@@ -1708,6 +1715,25 @@ export default function UsersPage() {
                   />
                   启用登录页米多星球 SSO
                 </label>
+                <label className="flex items-start gap-2 text-sm" style={{ color: 'var(--text-primary)' }}>
+                  <input
+                    type="checkbox"
+                    checked={passwordLoginDisabled}
+                    onChange={(e) => setPasswordLoginDisabled(e.target.checked)}
+                    className="mt-1 accent-[var(--accent-gold)]"
+                  />
+                  <span>
+                    <span className="block">禁用密码登录，仅允许 SSO</span>
+                    <span className="mt-0.5 block text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                      保存后登录页会隐藏账号密码入口；需要破窗恢复时，在服务端设置 MAP_PASSWORD_LOGIN_BREAK_GLASS=true 并重启。
+                    </span>
+                  </span>
+                </label>
+                {passwordLoginBreakGlassEnabled && (
+                  <div className="rounded-[10px] px-3 py-2 text-[12px]" style={{ background: 'rgba(245,158,11,0.10)', border: '1px solid rgba(245,158,11,0.28)', color: 'rgba(252,211,77,0.95)' }}>
+                    当前已启用破窗环境变量，密码登录入口会临时显示。
+                  </div>
+                )}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>Base URL</div>

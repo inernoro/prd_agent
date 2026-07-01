@@ -7,6 +7,8 @@ using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Services;
+using PrdAgent.Infrastructure.Database;
+using MongoDB.Driver;
 
 namespace PrdAgent.Api.Controllers;
 
@@ -21,6 +23,7 @@ public class AuthController : ControllerBase
     private readonly IJwtService _jwtService;
     private readonly ILoginAttemptService _loginAttemptService;
     private readonly IAuthSessionService _authSessionService;
+    private readonly MongoDbContext _db;
     private readonly IConfiguration _cfg;
     private readonly ILogger<AuthController> _logger;
 
@@ -29,6 +32,7 @@ public class AuthController : ControllerBase
         IJwtService jwtService,
         ILoginAttemptService loginAttemptService,
         IAuthSessionService authSessionService,
+        MongoDbContext db,
         IConfiguration cfg,
         ILogger<AuthController> logger)
     {
@@ -36,6 +40,7 @@ public class AuthController : ControllerBase
         _jwtService = jwtService;
         _loginAttemptService = loginAttemptService;
         _authSessionService = authSessionService;
+        _db = db;
         _cfg = cfg;
         _logger = logger;
     }
@@ -60,6 +65,28 @@ public class AuthController : ControllerBase
         var p = GetRootPassword();
         return string.Equals(u, (username ?? string.Empty).Trim(), StringComparison.Ordinal)
                && string.Equals(p, (password ?? string.Empty).Trim(), StringComparison.Ordinal);
+    }
+
+    private static bool IsTruthy(string? value)
+    {
+        return string.Equals(value, "1", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "on", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool IsPasswordLoginBreakGlassEnabled()
+    {
+        return IsTruthy(_cfg["MAP_PASSWORD_LOGIN_BREAK_GLASS"])
+            || IsTruthy(_cfg["PASSWORD_LOGIN_BREAK_GLASS"])
+            || IsTruthy(_cfg["MIDUO_SSO_PASSWORD_LOGIN_BREAK_GLASS"]);
+    }
+
+    private async Task<bool> IsPasswordLoginDisabledAsync(CancellationToken ct)
+    {
+        if (IsPasswordLoginBreakGlassEnabled()) return false;
+        var settings = await _db.AppSettings.Find(x => x.Id == "global").FirstOrDefaultAsync(ct);
+        return settings?.PasswordLoginDisabled == true;
     }
 
     /// <summary>
@@ -191,6 +218,12 @@ public class AuthController : ControllerBase
 
             _logger.LogWarning("ROOT login used (clientType=admin)");
             return Ok(ApiResponse<LoginResponse>.Ok(responseRoot));
+        }
+
+        if (ct == "admin" && await IsPasswordLoginDisabledAsync(HttpContext.RequestAborted))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail("PASSWORD_LOGIN_DISABLED", "当前环境已禁用密码登录，请使用 SSO 登录"));
         }
 
         var user = await _userService.ValidateCredentialsAsync(request.Username, request.Password);
