@@ -432,6 +432,8 @@ public class ModelLabController : ControllerBase
             var httpClient2 = _httpClientFactory.CreateClient("LoggedHttpClient");
             httpClient2.BaseAddress = new Uri(platformApiUrl.TrimEnd('/'));
 
+            // S3 B 类：保留直连（测 admin 明确选中的 platform+model，故意绕开网关池调度以守「选 A 测 A」）。
+            // 传输观测标记 direct 由上方 BeginScope 的 GatewayTransport 承载，日志可辨识为直连锁定路径。
             ILLMClient client2 = fallbackPlatformType == "anthropic" || platformApiUrl.Contains("anthropic.com", StringComparison.OrdinalIgnoreCase)
                 ? new ClaudeClient(httpClient2, platformApiKey, modelName, 4096, 0.2, enablePromptCacheForPlatform, _claudeLogger, _logWriter, _ctxAccessor, platform.Id, platform.Name)
                 : new OpenAIClient(httpClient2, platformApiKey, modelName, 4096, 0.2, enablePromptCacheForPlatform, _logWriter, _ctxAccessor, null, platform.Id, platform.Name);
@@ -533,6 +535,8 @@ public class ModelLabController : ControllerBase
         var httpClient = _httpClientFactory.CreateClient("LoggedHttpClient");
         httpClient.BaseAddress = new Uri(apiUrl.TrimEnd('/'));
 
+        // S3 B 类：保留直连（测 admin 明确选中的 platform+model，故意绕开网关池调度以守「选 A 测 A」）。
+        // 传输观测标记 direct 由上方 BeginScope 的 GatewayTransport 承载，日志可辨识为直连锁定路径。
         ILLMClient client = platformType == "anthropic" || apiUrl.Contains("anthropic.com", StringComparison.OrdinalIgnoreCase)
             ? new ClaudeClient(httpClient, apiKey, model.ModelName, 4096, 0.2, enablePromptCache, _claudeLogger, _logWriter, _ctxAccessor, resolvedPlatformId, resolvedPlatformName)
             : new OpenAIClient(httpClient, apiKey, model.ModelName, 4096, 0.2, enablePromptCache, _logWriter, _ctxAccessor, null, resolvedPlatformId, resolvedPlatformName);
@@ -674,7 +678,11 @@ public class ModelLabController : ControllerBase
                 SystemPromptRedacted: "[MODEL_LAB]",
                 RequestType: requestType,
                 AppCallerCode: appCallerCode,
-                ModelResolutionType: ModelResolutionType.DirectModel));
+                ModelResolutionType: ModelResolutionType.DirectModel,
+                // S2 观测标记：B 类保留直连锁定语义（测 admin 明确选中的 platform+model，故意绕开网关池
+                // 调度，走网关池会破坏「选 A 测 A」语义）。全网关路由留待网关支持 pinned platform+model
+                // 入口后做（见 doc/plan.llm-gateway.full-cutover.md S3）。此处只纳入 transport 观测：direct。
+                GatewayTransport: GatewayTransports.Direct));
 
             var startedAt = item.StartedAt;
             var firstTokenAt = (DateTime?)null;

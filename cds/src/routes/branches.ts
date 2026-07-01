@@ -38,6 +38,7 @@ import { classifyEnvKey } from '../config/known-env-keys.js';
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
 import { isAllowedCdsBranchName, isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { buildPreviewUrlForProject } from '../services/comment-template.js';
+import { ROUTABLE_SERVICE_STATUSES } from '../services/forwarder-route-publisher.js';
 import { maskSecrets as maskSecretsText, maskEnvRecord, maskBranchExtraProfilesEnv, isSensitiveKey, looksLikeUrlWithCredentials, shouldMask } from '../services/secret-masker.js';
 import { buildUnifiedBranchResources, type UnifiedBranchResource } from '../services/resources.js';
 import { fetchWithLockRetry } from '../services/git-fetch-retry.js';
@@ -255,6 +256,25 @@ function isSyntheticCdsManagedRuntimeBranch(
 ): boolean {
   if (project?.kind !== 'shared-service') return false;
   return branch.branch === 'cds-managed-runtime' && branch.githubCommitSha === 'cds-managed-runtime';
+}
+
+/**
+ * Landing path for a named-subdomain preview link shown in the branch panel.
+ * Known LLM gateway subdomains mount their API under /gw/* (console) or /gw/v1/* (serving) and
+ * 404 at the bare root, so we land on their health endpoint. Every other named service (docs /
+ * metrics / …) is published to the container root by the forwarder, so honor the profile's
+ * readiness path when it declares one, else '/'. Never force a generic service onto /gw/* — that
+ * would 404 despite a valid host (Codex P2).
+ */
+function resolveGatewayLandingPath(subdomain: string, readinessPath?: string): string {
+  const sub = subdomain.toLowerCase();
+  // Serving engine (llmgw-serve): API under /gw/v1/*.
+  if (sub === 'llmgw-serve') return '/gw/v1/healthz';
+  // Console (llmgw): API under /gw/*.
+  if (sub === 'llmgw') return '/gw/healthz';
+  const trimmed = (readinessPath ?? '').trim();
+  if (trimmed && trimmed.startsWith('/')) return trimmed;
+  return '/';
 }
 
 function githubLoginFromCommitEmail(email: string): string | null {
@@ -12866,6 +12886,64 @@ export function createBranchRouter(deps: RouterDeps): Router {
     'cds', 'master', 'dashboard',
   ]);
 
+  // Named gateway entries: build profiles that declare a `cds.subdomain` label get a standalone host
+  // `<previewSlug>-<subdomain>.<root>` routing all paths to that container (e.g. LLM gateway →
+  // <slug>-llmgw.<root>), distinct from the main app domain. Mirror the forwarder-route-publisher
+  // same-origin rules so the panel shows exactly the URLs the forwarder actually publishes: run each
+  // profile through resolveEffectiveProfile (so branch-level readinessProbe / subdomain overrides are
+  // honored, matching the published route — Bugbot "Gateway URLs skip profile resolve"), filter by
+  // routable status, dedupe first-wins on subdomain, and drop labels whose first DNS octet exceeds
+  // 63 chars (unresolvable + not covered by the wildcard cert). See forwarder-route-publisher.ts:159-315.
+  //
+  // SSOT for BOTH the GET and PUT /subdomain-aliases responses — gatewayUrls are branch-derived (not
+  // alias-derived), so PUT must return them too or the panel drops the 网关入口 block after saving
+  // aliases until a full reload (Bugbot "Alias save clears gateway URLs").
+  const computeBranchGatewayUrls = (
+    entry: BranchEntry,
+    primaryRoot: string,
+  ): Array<{ subdomain: string; name: string; url: string }> => {
+    const project = stateService.getProject(entry.projectId);
+    const gwPreviewSlug = buildPreviewUrlForProject('', entry.branch, project, entry.projectId).previewSlug;
+    const gatewayUrls: Array<{ subdomain: string; name: string; url: string }> = [];
+    if (!gwPreviewSlug) return gatewayUrls;
+    const profileById = new Map<string, BuildProfile>();
+    for (const bp of stateService.getEffectiveProfilesForBranch(entry)) {
+      // resolveEffectiveProfile applies branch profileOverrides (subdomain / readinessProbe / …),
+      // exactly like the publisher; without it override-driven landing paths would drift from the
+      // route the forwarder actually serves.
+      profileById.set(bp.id, resolveEffectiveProfile(bp, entry));
+    }
+    // Collect routable services, sorted by profileId so first-wins dedup is deterministic across
+    // object-key ordering changes (mirrors publisher's subdomainCandidates sort).
+    const routable = Object.entries(entry.services ?? {})
+      .filter(([, svc]) => svc?.hostPort && ROUTABLE_SERVICE_STATUSES.has(String(svc.status)))
+      .map(([profileId]) => profileId)
+      .sort((a, b) => a.localeCompare(b));
+    const seenSubdomains = new Set<string>();
+    for (const profileId of routable) {
+      const profile = profileById.get(profileId);
+      const sub = profile?.subdomain;
+      if (!sub) continue;
+      if (seenSubdomains.has(sub)) continue;
+      const namedLabel = `${gwPreviewSlug}-${sub}`;
+      if (namedLabel.length > 63) continue; // RFC 1035 single-label limit + wildcard cert coverage
+      seenSubdomains.add(sub);
+      // Landing path — pick the path most likely to return a live 200 when the entry is clicked
+      // (Codex P2: don't force every named service onto the LLM gateway health path):
+      //   1) Known LLM gateway subdomains mount their API under /gw/* (console) or /gw/v1/* (serving)
+      //      and 404 at the bare root, so land on their health endpoint explicitly.
+      //   2) Any other named service (docs / metrics / …) — the forwarder publishes the named host to
+      //      the container root, so honor the profile's readiness path when set, else land at '/'.
+      const landingPath = resolveGatewayLandingPath(sub, profile?.readinessProbe?.path);
+      gatewayUrls.push({
+        subdomain: sub,
+        name: profileId,
+        url: `http://${namedLabel}.${primaryRoot}${landingPath}`,
+      });
+    }
+    return gatewayUrls;
+  };
+
   router.get('/branches/:id/subdomain-aliases', (req, res) => {
     const { id } = req.params;
     const entry = stateService.getBranch(id);
@@ -12882,11 +12960,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const primaryRoot = rootDomains[0] || 'example.com';
     const previewUrls = aliases.map(a => `http://${a}.${primaryRoot}`);
     const defaultUrl = `http://${id}.${primaryRoot}`;
+
     res.json({
       branchId: id,
       aliases,
       defaultUrl,
       previewUrls,
+      gatewayUrls: computeBranchGatewayUrls(entry, primaryRoot),
       rootDomain: primaryRoot,
     });
   });
@@ -12970,6 +13050,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
         aliases: normalized,
         previewUrls: normalized.map(a => `http://${a}.${primaryRoot}`),
         defaultUrl: `http://${id}.${primaryRoot}`,
+        // gatewayUrls are branch-derived (not alias-derived); return them so the panel keeps the
+        // 网关入口 block + 预览下拉 after saving aliases, instead of dropping them until a full
+        // reload (Bugbot "Alias save clears gateway URLs"). Same SSOT helper as the GET response.
+        gatewayUrls: computeBranchGatewayUrls(entry, primaryRoot),
+        rootDomain: primaryRoot,
         needsRedeploy: false, // aliases are proxy-level, no container restart needed
       });
     } catch (err) {

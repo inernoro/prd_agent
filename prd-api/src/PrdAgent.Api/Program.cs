@@ -987,7 +987,14 @@ builder.Services.AddScoped<ILLMClient>(sp =>
     var logWriter = sp.GetRequiredService<ILlmRequestLogWriter>();
     var ctxAccessor = sp.GetRequiredService<ILLMRequestContextAccessor>();
     var claudeLogger = sp.GetRequiredService<ILogger<ClaudeClient>>();
-    
+
+    // S3-A（本工厂）暂不收口到网关，保留原直连以「行为保持」（Cursor Bugbot 2 处 Medium）：
+    // 本 scoped ILLMClient 被 LLMClientFactory 注入消费（非死代码），而 gateway.CreateClient 的采样温度
+    // （默认 0.2 vs 此处 0.7）与「主模型凭据缺失时回落 activeConfig/env」的兜底语义与下方直连不一致——
+    // 直接改走网关会静默改变默认注入客户端的采样行为、并吞掉凭据不全时的兜底。全网关收口留待网关
+    // CreateClient 支持温度透传 + 凭据不全兜底后再做（见 doc/plan.llm-gateway.full-cutover.md S3-A；
+    // 直连守卫 ratchet baseline 已登记本文件）。
+
     // 1. 优先：从数据库获取主模型 (IsMain=true)
     var mainModel = db.LLMModels.Find(m => m.IsMain && m.Enabled).FirstOrDefault();
     var mainEnablePromptCache = mainModel != null ? (mainModel.EnablePromptCache ?? true) : false;

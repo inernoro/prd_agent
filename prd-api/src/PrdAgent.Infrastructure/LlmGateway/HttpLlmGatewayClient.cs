@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using PrdAgent.Core.Models;
 using CoreGateway = PrdAgent.Core.Interfaces.LlmGateway;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
@@ -68,8 +69,28 @@ public sealed class HttpLlmGatewayClient
     private static StringContent JsonBody<T>(T value)
         => new(JsonSerializer.Serialize(value, JsonOpts), Encoding.UTF8, "application/json");
 
+    /// <summary>
+    /// S2 观测：返回一份把 Context.GatewayTransport 打成 "http" 的请求副本（其余字段原样拷贝）。
+    /// serving 端据此把该条日志标为 http 传输（跨进程），区分于本地 inproc。
+    /// </summary>
+    private static GatewayRequest TagHttpTransport(GatewayRequest request)
+        => new()
+        {
+            AppCallerCode = request.AppCallerCode,
+            ModelType = request.ModelType,
+            ExpectedModel = request.ExpectedModel,
+            RequestBody = request.RequestBody,
+            RequestBodyRaw = request.RequestBodyRaw,
+            Stream = request.Stream,
+            EnablePromptCache = request.EnablePromptCache,
+            TimeoutSeconds = request.TimeoutSeconds,
+            IncludeThinking = request.IncludeThinking,
+            Context = GatewayRequestContext.WithTransport(request.Context, GatewayTransports.Http),
+        };
+
     public async Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default)
     {
+        request = TagHttpTransport(request);
         try
         {
             using var http = CreateHttp(infiniteTimeout: false);
@@ -94,6 +115,7 @@ public sealed class HttpLlmGatewayClient
         GatewayRequest request,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
+        request = TagHttpTransport(request);
         HttpClient http = CreateHttp(infiniteTimeout: true);
         HttpResponseMessage? resp = null;
         Stream? stream = null;
@@ -201,28 +223,27 @@ public sealed class HttpLlmGatewayClient
                 "请将该入口暂留 inproc，或等待波3 完成。详见 doc/debt.llm-gateway-isolation.md。");
         }
 
-        var outboundRequest = request;
-        if (!string.IsNullOrWhiteSpace(resolution.ActualModel))
+        // S2 观测：把 Context.GatewayTransport 打成 "http"（跨进程 raw），serving 端据此标注日志传输通道。
+        // 无论是否锁定 ExpectedModel 都重建一份副本以打标记；ActualModel 非空时同时锁定 ExpectedModel。
+        var httpTaggedContext = GatewayRequestContext.WithTransport(request.Context, GatewayTransports.Http);
+        // GatewayRawRequest 是普通类（init-only 属性，非 record），用对象初始化器建副本。
+        var outboundRequest = new GatewayRawRequest
         {
-            // GatewayRawRequest 是普通类（init-only 属性，非 record），用对象初始化器建副本锁定 ExpectedModel。
-            outboundRequest = new GatewayRawRequest
-            {
-                AppCallerCode = request.AppCallerCode,
-                ModelType = request.ModelType,
-                EndpointPath = request.EndpointPath,
-                ExpectedModel = resolution.ActualModel,
-                RequestBody = request.RequestBody,
-                IsMultipart = request.IsMultipart,
-                MultipartFields = request.MultipartFields,
-                MultipartFiles = request.MultipartFiles,
-                MultipartFileRefs = request.MultipartFileRefs,
-                HttpMethod = request.HttpMethod,
-                ExtraHeaders = request.ExtraHeaders,
-                TimeoutSeconds = request.TimeoutSeconds,
-                ExpectBinaryResponse = request.ExpectBinaryResponse,
-                Context = request.Context,
-            };
-        }
+            AppCallerCode = request.AppCallerCode,
+            ModelType = request.ModelType,
+            EndpointPath = request.EndpointPath,
+            ExpectedModel = string.IsNullOrWhiteSpace(resolution.ActualModel) ? request.ExpectedModel : resolution.ActualModel,
+            RequestBody = request.RequestBody,
+            IsMultipart = request.IsMultipart,
+            MultipartFields = request.MultipartFields,
+            MultipartFiles = request.MultipartFiles,
+            MultipartFileRefs = request.MultipartFileRefs,
+            HttpMethod = request.HttpMethod,
+            ExtraHeaders = request.ExtraHeaders,
+            TimeoutSeconds = request.TimeoutSeconds,
+            ExpectBinaryResponse = request.ExpectBinaryResponse,
+            Context = httpTaggedContext,
+        };
 
         try
         {
