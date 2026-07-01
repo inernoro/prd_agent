@@ -9,6 +9,9 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="8.0.11" />
+    <!-- in-process TestServer（GatewayKeyGateContractTests 无 socket 跑密钥门 401 契约，CI 常驻）。
+         Mvc.Testing 已传递引用它，此处显式钉版本，避免扩展方法 UseTestServer/GetTestClient 解析漂移。 -->
+    <PackageReference Include="Microsoft.AspNetCore.TestHost" Version="8.0.11" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageReference Include="Moq" Version="4.20.72" />
     <PackageReference Include="Shouldly" Version="4.3.0" />
