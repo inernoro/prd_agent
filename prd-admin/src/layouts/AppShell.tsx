@@ -1657,8 +1657,9 @@ export default function AppShell() {
             title="用户通知"
             description="站内通知、待处理事项与外部推送订阅"
             maxWidth={820}
+            contentStyle={{ height: 'min(860px, calc(100vh - 48px))' }}
             content={
-              <div className="flex h-full flex-col gap-3">
+              <div className="flex h-full min-h-0 flex-col gap-3">
                 <div
                   className="grid grid-cols-2 rounded-[12px] p-1"
                   style={{ background: 'rgba(255,255,255,0.06)' }}

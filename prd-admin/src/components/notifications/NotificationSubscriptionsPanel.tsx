@@ -234,6 +234,21 @@ export function NotificationSubscriptionsPanel() {
     }));
   }, []);
 
+  const toggleTopicEnabled = useCallback((topicKey: string) => {
+    setSelectedTopicKey(topicKey);
+    setDrafts((prev) => {
+      const current = prev[topicKey] ?? (firstPreset ? buildNotificationPushDraftFromPreset(firstPreset, false) : DEFAULT_NOTIFICATION_PUSH_DRAFT);
+      return {
+        ...prev,
+        [topicKey]: {
+          ...DEFAULT_NOTIFICATION_PUSH_DRAFT,
+          ...current,
+          enabled: !current.enabled,
+        },
+      };
+    });
+  }, [firstPreset]);
+
   const saveAllTopics = useCallback(async () => {
     if (orderedTopics.length === 0) return;
     setSavingKey('__all__');
@@ -602,12 +617,13 @@ export function NotificationSubscriptionsPanel() {
             </div>
           </div>
         </div>
-        <div className="min-h-0 flex-1 overflow-auto p-3" style={{ overscrollBehavior: 'contain' }}>
-          <div className="space-y-1">
+        <div className="min-h-0 flex-1 overflow-auto p-3 pr-2" style={{ overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch' }}>
+          <div className="grid gap-2 md:grid-cols-2">
             {orderedTopics.map((topic) => {
               const draft = drafts[topic.key] ?? (firstPreset ? buildNotificationPushDraftFromPreset(firstPreset, false) : DEFAULT_NOTIFICATION_PUSH_DRAFT);
               const resource = resourcesByKey.get(topic.resourceKey);
-              const selected = selectedTopic?.key === topic.key;
+              const selected = Boolean(draft.enabled);
+              const advancedSelected = selectedTopic?.key === topic.key;
               const statusText = draft.enabled
                 ? draft.useDefaultProfile === false
                   ? `单独配置 ${draft.channelType === 'bark' ? 'Bark' : draft.channelType}`
@@ -617,34 +633,25 @@ export function NotificationSubscriptionsPanel() {
                 <div
                   key={topic.key}
                   role="button"
+                  aria-pressed={draft.enabled}
                   tabIndex={0}
-                  className="grid min-w-0 cursor-pointer grid-cols-[24px_40px_minmax(0,1fr)_160px] items-center gap-2 rounded-[10px] border px-3 py-2 outline-none transition-all"
+                  className="grid min-h-[86px] min-w-0 cursor-pointer grid-cols-[40px_minmax(0,1fr)] items-center gap-3 rounded-[12px] border px-3 py-3 text-left outline-none transition-all hover:border-indigo-300/50 hover:bg-white/[0.055] focus-visible:ring-2 focus-visible:ring-indigo-300/50 active:scale-[0.995]"
                   style={{
-                    borderColor: selected ? 'rgba(129,140,248,0.55)' : 'rgba(255,255,255,0.08)',
+                    borderColor: selected ? 'rgba(129,140,248,0.62)' : advancedSelected ? 'rgba(255,255,255,0.16)' : 'rgba(255,255,255,0.08)',
                     background: selected ? 'rgba(99,102,241,0.16)' : 'rgba(255,255,255,0.025)',
+                    boxShadow: selected ? 'inset 0 0 0 1px rgba(129,140,248,0.18)' : 'none',
                   }}
-                  onClick={() => setSelectedTopicKey(topic.key)}
+                  onClick={() => toggleTopicEnabled(topic.key)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault();
-                      setSelectedTopicKey(topic.key);
+                      toggleTopicEnabled(topic.key);
                     }
                   }}
                 >
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 shrink-0 accent-indigo-400"
-                    checked={draft.enabled}
-                    aria-label={`${topic.label}接收外部推送`}
-                    onClick={(e) => e.stopPropagation()}
-                    onChange={(e) => {
-                      setSelectedTopicKey(topic.key);
-                      updateDraft(topic.key, { enabled: e.target.checked });
-                    }}
-                  />
-                  {resource && <img src={resource.iconUrl} alt="" className="h-8 w-8 rounded-[8px] object-cover" />}
+                  {resource && <img src={resource.iconUrl} alt="" className="h-10 w-10 rounded-[10px] object-cover" />}
                   <div className="min-w-0 flex-1">
-                    <div className="flex min-w-0 items-center gap-1.5">
+                    <div className="flex min-w-0 items-center justify-between gap-2">
                       <span className="truncate text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>{topic.label}</span>
                       <span
                         className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px]"
@@ -659,9 +666,12 @@ export function NotificationSubscriptionsPanel() {
                     <div className="mt-0.5 truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>
                       {topic.description}
                     </div>
-                  </div>
-                  <div className="truncate text-right text-[12px]" style={{ color: draft.enabled ? 'var(--text-secondary)' : 'var(--text-muted)' }}>
-                    {statusText}
+                    <div className="mt-2 flex items-center justify-between gap-2">
+                      <span className="truncate text-[11px]" style={{ color: draft.enabled ? 'var(--text-secondary)' : 'var(--text-muted)' }}>
+                        {statusText}
+                      </span>
+                      {draft.enabled && <CheckCircle2 size={14} className="shrink-0" style={{ color: '#a5b4fc' }} />}
+                    </div>
                   </div>
                 </div>
               );
