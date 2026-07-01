@@ -67,11 +67,14 @@ public class GatewayDirectClientRatchetTests
         // Arena：竞技场按 slot 指定 modelId 直连对战，Claude+OpenAI 一对。
         { "PrdAgent.Api/Services/ArenaRunWorker.cs", 2 },
 
-        // ── A 类未收口 legacy 兜底（B agent 收口后应从 baseline 删除，届时棘轮自动更严）──
+        // ── A 类未收口 legacy 兜底（后续收口后应从 baseline 删除，届时棘轮自动更严）──
         // Program.cs 主客户端工厂：主模型 / 活动 LLMConfig / 环境变量三级兜底，Claude+OpenAI 混合共 6 处。
         { "PrdAgent.Api/Program.cs", 6 },
-        // 说明：ModelDomainService 曾在此直连，已由 S3「直连收口」迁移到网关池调度（现仅剩注释提及，
-        // 无实际 `new ClaudeClient/OpenAIClient(`），故不在 baseline —— 棘轮已就此收紧一格。
+        // ModelDomainService.GetClientAsync 领域客户端：按用途取模型（chat/intent/vision）+ 协议/密钥/URL
+        // 解析后直连 Claude+OpenAI 一对。S3 曾尝试收口到网关 CreateClient，但会丢失 model.MaxTokens 逐模型
+        // 尊重（网关默认统一 maxTokens），故行为保持起见保留直连、登记 baseline，待网关支持 per-model
+        // maxTokens 入口后再收口。
+        { "PrdAgent.Infrastructure/Services/ModelDomainService.cs", 2 },
     };
 
     [Fact]

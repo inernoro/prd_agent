@@ -77,17 +77,19 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
     {
         // 把当前 LlmRequestContext 透传给 serving 端（RequestId/SessionId/GroupId/UserId/角色/文档元数据），
         // 否则跨 HTTP 后 serving 端日志关联与用户归属全断。敏感字段（密钥）本就不在 GatewayRequestContext 内。
+        // S2 观测：client-stream 一定走跨进程 HTTP，故传输通道恒为 http。即便当前没有环境 LlmRequestContext
+        // （无作用域的后台 / 工具型 CreateClient 调用），也必须发一个「只带 transport=http」的最小 Context，
+        // 否则 serving 端收不到 Context → 默认回落 inproc，污染这些无作用域调用的传输证据（Codex P2）。
         var current = _ctxAccessor?.Current;
-        var context = current == null ? null : new GatewayRequestContext
+        var context = new GatewayRequestContext
         {
-            RequestId = current.RequestId,
-            GroupId = current.GroupId,
-            SessionId = current.SessionId,
-            UserId = current.UserId,
-            ViewRole = current.ViewRole,
-            DocumentChars = current.DocumentChars,
-            DocumentHash = current.DocumentHash,
-            // S2 观测：client-stream 走跨进程，标记 http，serving 端据此标注日志传输通道。
+            RequestId = current?.RequestId,
+            GroupId = current?.GroupId,
+            SessionId = current?.SessionId,
+            UserId = current?.UserId,
+            ViewRole = current?.ViewRole,
+            DocumentChars = current?.DocumentChars,
+            DocumentHash = current?.DocumentHash,
             GatewayTransport = PrdAgent.Core.Models.GatewayTransports.Http,
         };
 

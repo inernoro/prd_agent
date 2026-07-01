@@ -251,6 +251,25 @@ function isSyntheticCdsManagedRuntimeBranch(
   return branch.branch === 'cds-managed-runtime' && branch.githubCommitSha === 'cds-managed-runtime';
 }
 
+/**
+ * Landing path for a named-subdomain preview link shown in the branch panel.
+ * Known LLM gateway subdomains mount their API under /gw/* (console) or /gw/v1/* (serving) and
+ * 404 at the bare root, so we land on their health endpoint. Every other named service (docs /
+ * metrics / …) is published to the container root by the forwarder, so honor the profile's
+ * readiness path when it declares one, else '/'. Never force a generic service onto /gw/* — that
+ * would 404 despite a valid host (Codex P2).
+ */
+function resolveGatewayLandingPath(subdomain: string, readinessPath?: string): string {
+  const sub = subdomain.toLowerCase();
+  // Serving engine (llmgw-serve): API under /gw/v1/*.
+  if (sub === 'llmgw-serve') return '/gw/v1/healthz';
+  // Console (llmgw): API under /gw/*.
+  if (sub === 'llmgw') return '/gw/healthz';
+  const trimmed = (readinessPath ?? '').trim();
+  if (trimmed && trimmed.startsWith('/')) return trimmed;
+  return '/';
+}
+
 function githubLoginFromCommitEmail(email: string): string | null {
   const normalized = email.trim().toLowerCase();
   const match = normalized.match(/^(?:(?:\d+)\+)?([a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?)@users\.noreply\.github\.com$/i);
@@ -12727,15 +12746,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
         .sort((a, b) => a.localeCompare(b));
       const seenSubdomains = new Set<string>();
       for (const profileId of routable) {
-        const sub = profileById.get(profileId)?.subdomain;
+        const profile = profileById.get(profileId);
+        const sub = profile?.subdomain;
         if (!sub) continue;
         if (seenSubdomains.has(sub)) continue;
         const namedLabel = `${gwPreviewSlug}-${sub}`;
         if (namedLabel.length > 63) continue; // RFC 1035 single-label limit + wildcard cert coverage
         seenSubdomains.add(sub);
-        // Gateway services mount their API under /gw/* (console) or /gw/v1/* (serving); the bare host root
-        // 404s. Land on the health endpoint so clicking the entry reaches a live 200 page (Codex P2).
-        const landingPath = sub.includes('serve') ? '/gw/v1/healthz' : '/gw/healthz';
+        // Landing path — pick the path most likely to return a live 200 when the entry is clicked
+        // (Codex P2: don't force every named service onto the LLM gateway health path):
+        //   1) Known LLM gateway subdomains mount their API under /gw/* (console) or /gw/v1/* (serving)
+        //      and 404 at the bare root, so land on their health endpoint explicitly.
+        //   2) Any other named service (docs / metrics / …) — the forwarder publishes the named host to
+        //      the container root, so honor the profile's readiness path when set, else land at '/'.
+        const landingPath = resolveGatewayLandingPath(sub, profile?.readinessProbe?.path);
         gatewayUrls.push({
           subdomain: sub,
           name: profileId,
