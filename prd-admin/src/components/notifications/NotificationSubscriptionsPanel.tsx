@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CheckCircle2, FlaskConical, Info, Save, Settings2, SlidersHorizontal } from 'lucide-react';
+import { CheckCircle2, FlaskConical, Save, Settings2, SlidersHorizontal } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import {
   getAdminPushSubscriptions,
@@ -167,7 +167,6 @@ export function NotificationSubscriptionsPanel() {
   const [topics, setTopics] = useState<AdminPushTopicDefinition[]>([]);
   const [presets, setPresets] = useState<AdminPushPresetDefinition[]>([]);
   const [resources, setResources] = useState<AdminPushResourceDefinition[]>([]);
-  const [placeholders, setPlaceholders] = useState<string[]>([]);
   const [defaultProfileDraft, setDefaultProfileDraft] = useState<UpdateAdminPushProfileRequest>(DEFAULT_NOTIFICATION_PUSH_PROFILE_DRAFT);
   const [drafts, setDrafts] = useState<DraftMap>({});
   const [loading, setLoading] = useState(true);
@@ -187,7 +186,6 @@ export function NotificationSubscriptionsPanel() {
       setTopics(res.data.topics ?? []);
       setPresets(res.data.presets ?? []);
       setResources(res.data.resources ?? []);
-      setPlaceholders(res.data.placeholders ?? []);
       const nextDefaultProfileDraft = toProfileDraft(res.data.defaultProfile);
       setDefaultProfileDraft(nextDefaultProfileDraft);
       const next: DraftMap = {};
@@ -210,7 +208,6 @@ export function NotificationSubscriptionsPanel() {
 
   const firstPreset = presets[0];
   const resourcesByKey = useMemo(() => new Map(resources.map((x) => [x.key, x])), [resources]);
-  const placeholderText = useMemo(() => placeholders.map((x) => `{{${x}}}`).join('  '), [placeholders]);
   const orderedTopics = useMemo(() => sortNotificationPushTopicsByWorkflow(topics), [topics]);
   const selectedTopic = useMemo(
     () => orderedTopics.find((topic) => topic.key === selectedTopicKey) ?? orderedTopics[0],
@@ -219,20 +216,7 @@ export function NotificationSubscriptionsPanel() {
   const selectedDraft = selectedTopic
     ? drafts[selectedTopic.key] ?? (firstPreset ? buildNotificationPushDraftFromPreset(firstPreset, false) : DEFAULT_NOTIFICATION_PUSH_DRAFT)
     : null;
-  const selectedResource = selectedTopic ? resourcesByKey.get(selectedTopic.resourceKey) : undefined;
   const enabledCount = orderedTopics.reduce((sum, topic) => sum + (drafts[topic.key]?.enabled ? 1 : 0), 0);
-  const overrideCount = orderedTopics.reduce((sum, topic) => sum + (drafts[topic.key]?.useDefaultProfile === false ? 1 : 0), 0);
-
-  const updateDraft = useCallback((topicKey: string, patch: Partial<UpdateAdminPushSubscriptionRequest>) => {
-    setDrafts((prev) => ({
-      ...prev,
-      [topicKey]: {
-        ...DEFAULT_NOTIFICATION_PUSH_DRAFT,
-        ...(prev[topicKey] ?? {}),
-        ...patch,
-      },
-    }));
-  }, []);
 
   const toggleTopicEnabled = useCallback((topicKey: string) => {
     setSelectedTopicKey(topicKey);
@@ -542,19 +526,6 @@ export function NotificationSubscriptionsPanel() {
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
-      <div
-        className="rounded-[12px] border px-3 py-2 text-[12px] leading-relaxed"
-        style={{ borderColor: 'rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)' }}
-      >
-        <div className="flex items-start gap-2">
-          <Info size={14} className="mt-0.5 shrink-0" />
-          <div className="min-w-0">
-            <div style={{ color: 'var(--text-primary)' }}>先配置当前用户的默认推送通道，再选择哪些通知进入外部推送；少数类型可单独覆盖。</div>
-            <div className="mt-1 break-words">可用占位符：{placeholderText}</div>
-          </div>
-        </div>
-      </div>
-
       {message && (
         <div
           className="rounded-[10px] border px-3 py-2 text-[12px]"
@@ -613,7 +584,7 @@ export function NotificationSubscriptionsPanel() {
               接收范围
             </div>
             <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
-              {enabledCount}/{orderedTopics.length} 已选{overrideCount > 0 ? ` · ${overrideCount} 个单独配置` : ''}
+              {enabledCount}/{orderedTopics.length} 已选
             </div>
           </div>
         </div>
@@ -681,52 +652,9 @@ export function NotificationSubscriptionsPanel() {
 
         {selectedTopic && selectedDraft && (
           <div className="shrink-0 border-t px-4 py-3" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
-            <details className="rounded-[10px] border px-3 py-2" style={{ borderColor: 'rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.025)' }}>
-              <summary className="cursor-pointer text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                高级：单独配置当前类型
-              </summary>
-              <div className="mt-3 space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                      当前类型：{selectedTopic.label}
-                    </div>
-                    <div className="mt-0.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                      默认情况下使用上方 {defaultChannelName} 通道，只有特殊目标才需要打开单独配置。
-                    </div>
-                  </div>
-                  <label className="inline-flex cursor-pointer items-center gap-2 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 accent-indigo-400"
-                      checked={selectedDraft.useDefaultProfile === false}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          updateDraft(selectedTopic.key, {
-                            ...defaultProfileDraft,
-                            enabled: selectedDraft.enabled,
-                            useDefaultProfile: false,
-                          });
-                        } else {
-                          updateDraft(selectedTopic.key, { useDefaultProfile: true });
-                        }
-                      }}
-                    />
-                    单独配置
-                  </label>
-                </div>
-                {selectedDraft.useDefaultProfile === false && renderChannelFields(selectedDraft, (patch) => updateDraft(selectedTopic.key, patch))}
-                {selectedResource && (
-                  <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                    资源：{selectedResource.appName} · {selectedResource.knowledgeStoreName}
-                  </div>
-                )}
-              </div>
-            </details>
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                <CheckCircle2 size={12} />
-                保存后对新站内通知去重投递
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                当前测试：<span style={{ color: 'var(--text-secondary)' }}>{selectedTopic.label}</span>
               </div>
               <div className="flex items-center gap-2">
                 <button
