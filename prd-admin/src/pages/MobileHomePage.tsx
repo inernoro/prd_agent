@@ -20,10 +20,13 @@ import { buildDefaultCoverUrl } from '@/lib/homepageAssetSlots';
 import { AS_COLOR, AS_FONT_FAMILY } from '@/lib/appStoreTokens';
 
 const AMBER = '#FF9F0A';
-const SURFACE = 'rgba(255,255,255,0.105)';
-const HAIRLINE = 'rgba(255,255,255,0.17)';
+const SURFACE = 'rgba(255,255,255,0.082)';
+const SURFACE_STRONG = 'rgba(255,255,255,0.118)';
+const HAIRLINE = 'rgba(255,255,255,0.105)';
+const HAIRLINE_SOFT = 'rgba(255,255,255,0.075)';
 const TEXT_SECONDARY = 'rgba(245,245,247,0.74)';
 const TEXT_TERTIARY = 'rgba(245,245,247,0.52)';
+const PANEL_SHADOW = '0 14px 34px rgba(0,0,0,0.24)';
 
 interface HomeTool {
   key: string;
@@ -125,7 +128,7 @@ export default function MobileHomePage() {
       style={{
         margin: '0 calc(var(--mobile-padding, 16px) * -1)',
         background:
-          'radial-gradient(circle at 72% 8%, rgba(255,159,10,0.22), transparent 32%), radial-gradient(circle at 10% 48%, rgba(52,132,170,0.18), transparent 34%), linear-gradient(180deg, #1c1d24 0%, #12161b 46%, #0c0e12 100%)',
+          'radial-gradient(circle at 76% 0%, rgba(255,159,10,0.13), transparent 30%), linear-gradient(180deg, #18191f 0%, #10141a 46%, #0b0d11 100%)',
         color: AS_COLOR.label,
         fontFamily: AS_FONT_FAMILY,
       }}
@@ -226,8 +229,8 @@ function HeroCarousel({ onNavigate }: { onNavigate: (to: string) => void }) {
               borderRadius: 18,
               border: `1px solid ${HAIRLINE}`,
               background:
-                'linear-gradient(135deg, rgba(42,43,51,0.98), rgba(18,20,25,0.98))',
-              boxShadow: '0 22px 70px rgba(0,0,0,0.36)',
+                'linear-gradient(135deg, rgba(31,32,39,0.98), rgba(17,19,24,0.98))',
+              boxShadow: PANEL_SHADOW,
               color: '#fff',
             }}
           >
@@ -237,7 +240,7 @@ function HeroCarousel({ onNavigate }: { onNavigate: (to: string) => void }) {
               className="absolute inset-0"
               style={{
                 background:
-                  'linear-gradient(90deg, rgba(0,0,0,0.68) 0%, rgba(0,0,0,0.24) 44%, rgba(0,0,0,0.20) 100%)',
+                  'linear-gradient(90deg, rgba(0,0,0,0.64) 0%, rgba(0,0,0,0.24) 46%, rgba(0,0,0,0.08) 100%)',
               }}
             />
             <div
@@ -251,7 +254,7 @@ function HeroCarousel({ onNavigate }: { onNavigate: (to: string) => void }) {
                   fontWeight: 800,
                   letterSpacing: 0,
                   color: '#FFD08A',
-                  textShadow: '0 2px 18px rgba(0,0,0,0.55)',
+                  textShadow: '0 2px 14px rgba(0,0,0,0.46)',
                   whiteSpace: 'nowrap',
                 }}
               >
@@ -298,7 +301,7 @@ function AmberWorkbenchArt() {
         className="absolute inset-0"
         style={{
           background:
-            'radial-gradient(circle at 76% 42%, rgba(255,159,10,0.62), transparent 22%), radial-gradient(circle at 28% 16%, rgba(255,214,120,0.24), transparent 34%), linear-gradient(135deg, #151820 0%, #251809 54%, #0d1118 100%)',
+            'radial-gradient(circle at 76% 40%, rgba(255,159,10,0.48), transparent 24%), linear-gradient(135deg, #151820 0%, #22170c 56%, #0d1118 100%)',
         }}
       />
       <div
@@ -309,9 +312,9 @@ function AmberWorkbenchArt() {
           bottom: 0,
           height: '44%',
           background:
-            'linear-gradient(rgba(255,159,10,0.10) 1px, transparent 1px), linear-gradient(90deg, rgba(255,159,10,0.10) 1px, transparent 1px)',
-          backgroundSize: '34px 24px',
-          opacity: 0.58,
+            'linear-gradient(rgba(255,159,10,0.07) 1px, transparent 1px), linear-gradient(90deg, rgba(255,159,10,0.07) 1px, transparent 1px)',
+          backgroundSize: '38px 28px',
+          opacity: 0.46,
           transform: 'perspective(420px) rotateX(58deg) translateY(18px) scale(1.28)',
           transformOrigin: '50% 100%',
         }}
@@ -324,11 +327,11 @@ function AmberWorkbenchArt() {
           width: '50%',
           height: '66%',
           borderRadius: 18,
-          border: '1px solid rgba(255,198,104,0.62)',
+          border: '1px solid rgba(255,198,104,0.48)',
           background:
-            'linear-gradient(135deg, rgba(255,178,66,0.28), rgba(255,159,10,0.06) 48%, rgba(255,255,255,0.06))',
+            'linear-gradient(135deg, rgba(255,178,66,0.20), rgba(255,159,10,0.055) 52%, rgba(255,255,255,0.05))',
           boxShadow:
-            '0 0 38px rgba(255,159,10,0.32), inset 0 0 30px rgba(255,197,108,0.20)',
+            '0 0 32px rgba(255,159,10,0.22), inset 0 0 28px rgba(255,197,108,0.14)',
           transform: 'perspective(440px) rotateY(-15deg) rotateX(7deg)',
         }}
       >
@@ -340,8 +343,8 @@ function AmberWorkbenchArt() {
             right: 20,
             height: 24,
             borderRadius: 8,
-            border: '1px solid rgba(255,211,132,0.38)',
-            color: 'rgba(255,225,155,0.78)',
+            border: '1px solid rgba(255,211,132,0.28)',
+            color: 'rgba(255,225,155,0.62)',
             fontSize: 8,
             lineHeight: '23px',
             textAlign: 'center',
@@ -358,7 +361,7 @@ function AmberWorkbenchArt() {
             right: 18,
             bottom: 18,
             height: 1,
-            background: 'linear-gradient(90deg, transparent, rgba(255,218,146,0.58), transparent)',
+            background: 'linear-gradient(90deg, transparent, rgba(255,218,146,0.36), transparent)',
           }}
         />
       </div>
@@ -370,8 +373,8 @@ function AmberWorkbenchArt() {
           width: 74,
           height: 74,
           borderRadius: '50%',
-          border: '2px solid rgba(255,220,150,0.78)',
-          boxShadow: '0 0 24px rgba(255,159,10,0.50), inset 0 0 18px rgba(255,159,10,0.20)',
+          border: '2px solid rgba(255,220,150,0.48)',
+          boxShadow: '0 0 20px rgba(255,159,10,0.28), inset 0 0 16px rgba(255,159,10,0.12)',
         }}
       />
       <div
@@ -382,30 +385,10 @@ function AmberWorkbenchArt() {
           width: 40,
           height: 40,
           borderRadius: '50%',
-          border: '1px solid rgba(255,255,255,0.66)',
+          border: '1px solid rgba(255,255,255,0.42)',
           boxShadow: 'inset 0 0 10px rgba(255,255,255,0.16)',
         }}
       />
-      {Array.from({ length: 12 }).map((_, i) => {
-        const angle = i * 30;
-        return (
-          <span
-            key={`tooth-${i}`}
-            className="absolute"
-            style={{
-              right: 81,
-              top: 82,
-              width: 4,
-              height: 54,
-              borderRadius: 999,
-              background: 'rgba(255,198,104,0.58)',
-              boxShadow: '0 0 8px rgba(255,159,10,0.38)',
-              transform: `rotate(${angle}deg) translateY(-27px)`,
-              transformOrigin: '2px 45px',
-            }}
-          />
-        );
-      })}
       <div
         className="absolute"
         style={{
@@ -415,36 +398,20 @@ function AmberWorkbenchArt() {
           height: 8,
           borderRadius: '50%',
           background: '#FFD08A',
-          boxShadow: '0 0 18px rgba(255,159,10,0.85)',
+          boxShadow: '0 0 14px rgba(255,159,10,0.52)',
         }}
       />
-      {Array.from({ length: 11 }).map((_, i) => (
+      {Array.from({ length: 5 }).map((_, i) => (
         <span
           key={`trace-${i}`}
           className="absolute"
           style={{
-            right: 12 + i * 34,
-            bottom: 18 + (i % 3) * 42,
-            width: 46,
+            right: 26 + i * 58,
+            bottom: 28 + (i % 2) * 54,
+            width: 50,
             height: 2,
             borderRadius: 999,
-            background: i % 2 === 0 ? 'rgba(255,204,120,0.42)' : 'rgba(255,159,10,0.28)',
-            boxShadow: '0 0 12px rgba(255,159,10,0.34)',
-          }}
-        />
-      ))}
-      {Array.from({ length: 5 }).map((_, i) => (
-        <span
-          key={`node-${i}`}
-          className="absolute"
-          style={{
-            right: 38 + i * 42,
-            top: 40 + (i % 2) * 78,
-            width: 4,
-            height: 4,
-            borderRadius: '50%',
-            background: 'rgba(255,225,155,0.74)',
-            boxShadow: '0 0 12px rgba(255,159,10,0.76)',
+            background: 'rgba(255,204,120,0.22)',
           }}
         />
       ))}
@@ -465,9 +432,9 @@ function QuickStartStrip({
       style={{
         marginTop: 14,
         borderRadius: 16,
-        background: 'linear-gradient(180deg, rgba(255,255,255,0.135), rgba(255,255,255,0.075))',
-        border: `1px solid ${HAIRLINE}`,
-        boxShadow: '0 18px 58px rgba(0,0,0,0.32)',
+        background: SURFACE_STRONG,
+        border: `1px solid ${HAIRLINE_SOFT}`,
+        boxShadow: PANEL_SHADOW,
       }}
     >
       {items.map((item, index) => {
@@ -481,7 +448,7 @@ function QuickStartStrip({
             style={{
               padding: '10px 10px',
               color: '#fff',
-              borderRight: index < items.length - 1 ? `1px solid ${HAIRLINE}` : undefined,
+              borderRight: index < items.length - 1 ? `1px solid ${HAIRLINE_SOFT}` : undefined,
             }}
           >
             <Icon size={22} strokeWidth={2.1} style={{ color: AMBER }} className="shrink-0" />
@@ -557,8 +524,15 @@ function ToolGrid({
   onNavigate: (to: string) => void;
 }) {
   return (
-    <div className="grid grid-cols-4" style={{ gap: 9 }}>
-      {tools.map((tool) => {
+    <div
+      className="grid grid-cols-4 overflow-hidden"
+      style={{
+        borderRadius: 16,
+        background: SURFACE,
+        border: `1px solid ${HAIRLINE_SOFT}`,
+      }}
+    >
+      {tools.map((tool, index) => {
         const Icon = tool.Icon;
         return (
           <button
@@ -567,9 +541,8 @@ function ToolGrid({
             onClick={() => onNavigate(tool.route)}
             className="min-h-[78px] flex flex-col items-center justify-center transition-transform active:scale-[0.97]"
             style={{
-              borderRadius: 15,
-              background: 'linear-gradient(180deg, rgba(255,255,255,0.135), rgba(255,255,255,0.075))',
-              border: `1px solid ${HAIRLINE}`,
+              background: 'transparent',
+              borderRight: index < tools.length - 1 ? `1px solid ${HAIRLINE_SOFT}` : undefined,
               color: '#fff',
               padding: '9px 6px',
             }}
@@ -583,7 +556,7 @@ function ToolGrid({
                 borderRadius: 999,
                 background: tool.accent,
                 margin: '7px 0 6px',
-                boxShadow: `0 0 10px ${tool.accent}66`,
+                boxShadow: `0 0 8px ${tool.accent}44`,
               }}
             />
             <span style={{ fontSize: 13, lineHeight: 1.15, color: 'rgba(255,255,255,0.82)', letterSpacing: 0 }}>
@@ -611,7 +584,7 @@ function MyActivityList({
           minHeight: 76,
           borderRadius: 16,
           background: SURFACE,
-          border: `1px solid ${HAIRLINE}`,
+          border: `1px solid ${HAIRLINE_SOFT}`,
           padding: '0 14px',
         }}
       >
@@ -637,8 +610,8 @@ function MyActivityList({
     <div
       style={{
         borderRadius: 18,
-        background: 'linear-gradient(180deg, rgba(255,255,255,0.105), rgba(255,255,255,0.055))',
-        border: `1px solid ${HAIRLINE}`,
+        background: SURFACE,
+        border: `1px solid ${HAIRLINE_SOFT}`,
         overflow: 'hidden',
       }}
     >
@@ -656,12 +629,12 @@ function MyActivityList({
               gap: 10,
               padding: '10px 13px',
               color: '#fff',
-              borderBottom: idx < feed.length - 1 ? `1px solid ${AS_COLOR.separator}` : undefined,
+              borderBottom: idx < feed.length - 1 ? `1px solid ${HAIRLINE_SOFT}` : undefined,
             }}
           >
             <div
               className="shrink-0 flex items-center justify-center"
-              style={{ width: 38, height: 38, borderRadius: 11, background: meta.bg }}
+              style={{ width: 38, height: 38, borderRadius: 11, background: meta.bg, border: `1px solid ${HAIRLINE_SOFT}` }}
             >
               <Icon size={18} strokeWidth={2.1} style={{ color: meta.color }} />
             </div>
@@ -722,7 +695,7 @@ function RecommendedAgentRow({
               minHeight: 112,
               borderRadius: 16,
               background: SURFACE,
-              border: `1px solid ${HAIRLINE}`,
+              border: `1px solid ${HAIRLINE_SOFT}`,
               padding: 12,
               color: '#fff',
             }}
