@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Api.Authentication;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Services;
 using PrdAgent.Api.Services.DefectAgent;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -51,6 +52,7 @@ public class DefectAgentController : ControllerBase
     private readonly IConfiguration _config;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly PrdAgent.Api.Services.DefectAgent.DefectPolishService _polishService;
+    private readonly AdminPushDispatchSignal _adminPushDispatchSignal;
     private static readonly TimeSpan ClientBindingTtl = TimeSpan.FromDays(3);
 
     public DefectAgentController(
@@ -65,7 +67,8 @@ public class DefectAgentController : ControllerBase
         IAgentApiKeyService agentApiKeyService,
         IConfiguration config,
         IHttpClientFactory httpClientFactory,
-        PrdAgent.Api.Services.DefectAgent.DefectPolishService polishService)
+        PrdAgent.Api.Services.DefectAgent.DefectPolishService polishService,
+        AdminPushDispatchSignal adminPushDispatchSignal)
     {
         _db = db;
         _gateway = gateway;
@@ -79,6 +82,7 @@ public class DefectAgentController : ControllerBase
         _config = config;
         _httpClientFactory = httpClientFactory;
         _polishService = polishService;
+        _adminPushDispatchSignal = adminPushDispatchSignal;
     }
 
     private string GetUserId()
@@ -934,6 +938,7 @@ public class DefectAgentController : ControllerBase
                 };
 
                 await _db.AdminNotifications.InsertOneAsync(notification, cancellationToken: ct);
+                _adminPushDispatchSignal.NotifyPending();
                 _logger.LogInformation("[{AppKey}] Notification sent to assignee {AssigneeId} for defect {DefectNo}",
                     AppKey, defect.AssigneeId, defect.DefectNo);
             }
@@ -3137,6 +3142,7 @@ public class DefectAgentController : ControllerBase
                 ExpiresAt = DateTime.UtcNow.AddDays(14),
             };
             await _db.AdminNotifications.InsertOneAsync(notification, cancellationToken: ct);
+            _adminPushDispatchSignal.NotifyPending();
             notificationCreated = true;
         }
 
@@ -3633,6 +3639,7 @@ public class DefectAgentController : ControllerBase
             ExpiresAt = DateTime.UtcNow.AddDays(7),
         };
         await _db.AdminNotifications.InsertOneAsync(notification, cancellationToken: CancellationToken.None);
+        _adminPushDispatchSignal.NotifyPending();
 
         _logger.LogInformation("[{AppKey}] Fix report submitted: {ReportId} for share {Token}, {Count} items, appId={AppId}",
             AppKey, report.Id, token, report.Items.Count, appId);
@@ -5286,6 +5293,7 @@ public class DefectAgentController : ControllerBase
                 ExpiresAt = DateTime.UtcNow.AddDays(7),
             };
             await _db.AdminNotifications.InsertOneAsync(notification, cancellationToken: CancellationToken.None);
+            _adminPushDispatchSignal.NotifyPending();
 
             // Webhook 通知
             defect.Status = DefectStatus.Resolved;

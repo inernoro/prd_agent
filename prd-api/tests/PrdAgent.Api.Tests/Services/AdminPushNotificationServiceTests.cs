@@ -354,7 +354,10 @@ public sealed class AdminPushNotificationServiceTests
         {
             var http = new RecordingHttpClientFactory(HttpStatusCode.OK);
             var push = CreateService(testDb.Context, http);
-            var events = new AdminNotificationEventService(testDb.Context, NullLogger<AdminNotificationEventService>.Instance);
+            var events = new AdminNotificationEventService(
+                testDb.Context,
+                new AdminPushDispatchSignal(),
+                NullLogger<AdminNotificationEventService>.Instance);
 
             await testDb.Context.AdminPushSubscriptions.InsertManyAsync(
             [

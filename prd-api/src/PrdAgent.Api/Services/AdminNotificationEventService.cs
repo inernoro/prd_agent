@@ -33,11 +33,16 @@ public sealed class AdminNotificationEventService
     };
 
     private readonly MongoDbContext _db;
+    private readonly AdminPushDispatchSignal _dispatchSignal;
     private readonly ILogger<AdminNotificationEventService> _logger;
 
-    public AdminNotificationEventService(MongoDbContext db, ILogger<AdminNotificationEventService> logger)
+    public AdminNotificationEventService(
+        MongoDbContext db,
+        AdminPushDispatchSignal dispatchSignal,
+        ILogger<AdminNotificationEventService> logger)
     {
         _db = db;
+        _dispatchSignal = dispatchSignal;
         _logger = logger;
     }
 
@@ -78,6 +83,7 @@ public sealed class AdminNotificationEventService
         if (string.IsNullOrWhiteSpace(key))
         {
             await _db.AdminNotifications.InsertOneAsync(notification, cancellationToken: ct);
+            _dispatchSignal.NotifyPending();
             _logger.LogInformation("管理员通知事件已创建 source={Source} actor={ActorUserId} notification={NotificationId}", source, actorUserId, notification.Id);
             return new AdminNotificationEventResult(notification, true);
         }
@@ -90,6 +96,7 @@ public sealed class AdminNotificationEventService
         if (existing == null)
         {
             await _db.AdminNotifications.InsertOneAsync(notification, cancellationToken: ct);
+            _dispatchSignal.NotifyPending();
             _logger.LogInformation("管理员通知事件已创建 source={Source} key={Key} actor={ActorUserId} notification={NotificationId}", source, key, actorUserId, notification.Id);
             return new AdminNotificationEventResult(notification, true);
         }
@@ -110,6 +117,7 @@ public sealed class AdminNotificationEventService
             .Set(x => x.ExpiresAt, notification.ExpiresAt);
 
         await _db.AdminNotifications.UpdateOneAsync(x => x.Id == existing.Id, update, cancellationToken: ct);
+        _dispatchSignal.NotifyPending();
         var updated = await _db.AdminNotifications.Find(x => x.Id == existing.Id).FirstAsync(ct);
         _logger.LogInformation("管理员通知事件已更新 source={Source} key={Key} actor={ActorUserId} notification={NotificationId}", source, key, actorUserId, updated.Id);
         return new AdminNotificationEventResult(updated, false);

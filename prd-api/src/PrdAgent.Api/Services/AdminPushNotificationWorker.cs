@@ -5,13 +5,16 @@ public sealed class AdminPushNotificationWorker : BackgroundService
     private static readonly TimeSpan SweepInterval = TimeSpan.FromMinutes(1);
 
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly AdminPushDispatchSignal _dispatchSignal;
     private readonly ILogger<AdminPushNotificationWorker> _logger;
 
     public AdminPushNotificationWorker(
         IServiceScopeFactory scopeFactory,
+        AdminPushDispatchSignal dispatchSignal,
         ILogger<AdminPushNotificationWorker> logger)
     {
         _scopeFactory = scopeFactory;
+        _dispatchSignal = dispatchSignal;
         _logger = logger;
     }
 
@@ -23,7 +26,7 @@ public sealed class AdminPushNotificationWorker : BackgroundService
 
             try
             {
-                await Task.Delay(SweepInterval, stoppingToken);
+                await _dispatchSignal.WaitAsync(SweepInterval, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
