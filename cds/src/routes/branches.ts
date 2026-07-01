@@ -48,7 +48,7 @@ import { installSelfUpdateEventProjector } from '../services/self-update-event-p
 import { nodeModulesVolumePrefix } from '../util/node-modules-volume.js';
 import { analyzeChangeImpact, isWebOnlyChange } from '../services/change-impact-analyzer.js';
 import { computeBundleFreshness } from '../services/bundle-freshness.js';
-import { waitForFlushWithTimeout } from '../services/bounded-flush.js';
+import { waitForFlushWithTimeout, type BoundedFlushResult } from '../services/bounded-flush.js';
 import { readBundledCdsCliVersion } from '../services/cdscli-version.js';
 import { shouldTryCdsPrebuilt } from '../services/cds-prebuilt.js';
 import { fetchCdsPrebuilt } from '../services/cds-prebuilt-runtime.js';
@@ -123,11 +123,18 @@ function installLegacyStreamBridge(): void {
 let broadcastInFlight = false;
 const DELETE_COMPLETION_AUDIT_TIMEOUT_MS = 500;
 const DEFAULT_DELETE_STATE_FLUSH_TIMEOUT_MS = 30_000;
+const DEFAULT_BRANCH_STATE_FLUSH_TIMEOUT_MS = 30_000;
 const SELF_UPDATE_STATE_FLUSH_TIMEOUT_MS = 1000;
 
 function getDeleteStateFlushTimeoutMs(): number {
   const raw = Number(process.env.CDS_DELETE_STATE_FLUSH_TIMEOUT_MS);
   if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_DELETE_STATE_FLUSH_TIMEOUT_MS;
+  return Math.max(100, Math.min(raw, 30_000));
+}
+
+function getBranchStateFlushTimeoutMs(): number {
+  const raw = Number(process.env.CDS_BRANCH_STATE_FLUSH_TIMEOUT_MS);
+  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_BRANCH_STATE_FLUSH_TIMEOUT_MS;
   return Math.max(100, Math.min(raw, 30_000));
 }
 
@@ -1991,6 +1998,69 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   }
 
+  async function flushBranchStateBeforeSuccess(context: {
+    source: string;
+    actionPrefix: string;
+    branch: BranchEntry;
+    requestId?: string | null;
+    operationId?: string | null;
+    actor?: string | null;
+    trigger?: string | null;
+  }): Promise<BoundedFlushResult> {
+    const timeoutMs = getBranchStateFlushTimeoutMs();
+    const result = await waitForFlushWithTimeout(
+      () => stateService.flush(),
+      timeoutMs,
+      (err) => {
+        serverEventLogStore?.record({
+          category: 'system',
+          severity: 'error',
+          source: context.source,
+          action: `${context.actionPrefix}.state-flush-failed`,
+          message: `branch state flush failed for ${context.branch.id}: ${(err as Error).message}`,
+          projectId: context.branch.projectId,
+          branchId: context.branch.id,
+          requestId: context.requestId || null,
+          operationId: context.operationId || null,
+          error: { message: (err as Error).message },
+          details: {
+            actor: context.actor || null,
+            trigger: context.trigger || null,
+            timeoutMs,
+          },
+        });
+      },
+    );
+
+    if (result === 'timeout') {
+      serverEventLogStore?.record({
+        category: 'system',
+        severity: 'warn',
+        source: context.source,
+        action: `${context.actionPrefix}.state-flush-timeout`,
+        message: `branch state flush timed out for ${context.branch.id}; success was not confirmed`,
+        projectId: context.branch.projectId,
+        branchId: context.branch.id,
+        requestId: context.requestId || null,
+        operationId: context.operationId || null,
+        details: {
+          actor: context.actor || null,
+          trigger: context.trigger || null,
+          timeoutMs,
+        },
+      });
+    }
+
+    return result;
+  }
+
+  function branchStateFlushFailureMessage(result: BoundedFlushResult, successLabel: string): string {
+    if (result === 'timeout') {
+      return `${successLabel}，但 CDS 状态持久化超时；为避免重启后分支记录丢失，本次不报告成功，请稍后刷新后重试。`;
+    }
+    return `${successLabel}，但 CDS 状态持久化失败；为避免重启后分支记录丢失，本次不报告成功，请查看系统事件日志。`;
+  }
+
   // PR_C.3: AI agent / cookie 真人 / 内部组件 三档解析。本地别名指向
   // services/actor-resolver.ts 的共享实现（Bugbot Low review：原本
   // bridge.ts 和这里各有一份一模一样的实现，新增 header 时容易漏一处）。
@@ -3054,6 +3124,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 内部已 guard status==='completed' + runtimeStartedAt 存在，失败/缺戳自动 no-op）。
       recordDeployDurationSample(stateService, entry, profiles, opLog);
       try { stateService.appendLog(entry.id, opLog); } catch { /* tolerate */ }
+      stateService.save();
+      await flushBranchStateBeforeSuccess({
+        source: 'branch-remote-deploy',
+        actionPrefix: 'branch.remote-deploy',
+        branch: entry,
+        requestId: context.requestId || null,
+        operationId: context.operationId || null,
+        actor: context.actor || null,
+        trigger: context.trigger || null,
+      });
       try { res.end(); } catch { /* ignore */ }
     }
     return proxyHasError ? 'failed' : 'completed';
@@ -4933,6 +5013,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
       stateService.save();
+      const flushResult = await flushBranchStateBeforeSuccess({
+        source: 'branch-create',
+        actionPrefix: 'branch.create',
+        branch: entry,
+        requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
+        actor: resolveActorFromRequest(req),
+        trigger: triggerFromRequest(req),
+      });
+      if (flushResult !== 'flushed') {
+        res.status(flushResult === 'timeout' ? 503 : 500).json({
+          error: flushResult === 'timeout' ? 'state_flush_timeout' : 'state_flush_failed',
+          message: branchStateFlushFailureMessage(flushResult, `分支 "${entry.id}" 已创建`),
+          branch: entry,
+        });
+        return;
+      }
 
       // Live UI: notify open dashboards that a branch just got added
       // manually so their card list animates in without a page refresh.
@@ -10365,6 +10461,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
           entry.status = 'idle';
           entry.errorMessage = undefined;
           stateService.save();
+          const flushResult = await flushBranchStateBeforeSuccess({
+            source: 'branch-deploy',
+            actionPrefix: 'branch.deploy-empty-cleanup',
+            branch: entry,
+            requestId: cleanupReqId || null,
+            operationId: cleanupLease?.operationId || null,
+            actor: cActor,
+            trigger: cTrigger,
+          });
+          if (flushResult !== 'flushed') {
+            cleanupStatus = 'failed';
+            completeBranchOperation(cleanupLease, cleanupStatus, branchStateFlushFailureMessage(flushResult, '残留服务已清理'));
+            sendSSE(res, 'error', {
+              message: branchStateFlushFailureMessage(flushResult, '残留服务已清理'),
+              stateFlush: flushResult,
+            });
+            res.end();
+            return;
+          }
         } catch (err) {
           cleanupStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
           completeBranchOperation(cleanupLease, cleanupStatus);
@@ -11328,6 +11443,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
         note: hasError ? `失败服务: ${failedNames.join(', ')}` : undefined,
       });
       stateService.save();
+      const flushResult = await flushBranchStateBeforeSuccess({
+        source: 'branch-deploy',
+        actionPrefix: 'branch.deploy',
+        branch: entry,
+        requestId: requestId || null,
+        operationId: branchOperationLease?.operationId || null,
+        actor: resolveActorFromRequest(req),
+        trigger: triggerFromRequest(req),
+      });
+      if (flushResult !== 'flushed') {
+        branchOperationFinalStatus = 'failed';
+        const message = branchStateFlushFailureMessage(flushResult, completeMsg);
+        logEvent({
+          step: 'state-flush',
+          status: 'error',
+          title: message,
+          detail: { result: flushResult },
+          timestamp: new Date().toISOString(),
+        });
+        sendSSE(res, 'error', { message, stateFlush: flushResult });
+        return;
+      }
       sendSSE(res, 'complete', {
         // 2026-05-14 Codex review P2：把路由自己基于 activeServices 算出的
         // 权威结论 (hasError) 一并下发。消费方（auto-lifecycle redeploy）
@@ -11460,7 +11597,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
           status: entry.status, previousStatus: __deployEntryStatus, ts: nowIso(),
         },
       });
-      sendSSE(res, 'error', { message: errMsg });
+      const flushResult = await flushBranchStateBeforeSuccess({
+        source: 'branch-deploy',
+        actionPrefix: 'branch.deploy',
+        branch: entry,
+        requestId: requestId || null,
+        operationId: branchOperationLease?.operationId || null,
+        actor: resolveActorFromRequest(req),
+        trigger: triggerFromRequest(req),
+      });
+      sendSSE(res, 'error', flushResult === 'flushed'
+        ? { message: errMsg }
+        : { message: errMsg, stateFlush: flushResult, stateMessage: branchStateFlushFailureMessage(flushResult, '部署失败状态已写入内存') });
       try {
         // catch 路径同样按本次 startup-plan 过滤 zombie 服务(profiles 在外层 4724
         // 声明,异常路径仍可见),与成功/失败 finalize 同口径,不让旧 profile 背锅。
@@ -11781,6 +11929,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       const completeMsg = svc.status === 'running' ? `${profile.name} 已启动` : `${profile.name} 启动失败`;
       logDeploy(id, `部署完成: ${completeMsg}`);
+      const flushResult = await flushBranchStateBeforeSuccess({
+        source: 'branch-deploy-profile',
+        actionPrefix: 'branch.deploy-profile',
+        branch: entry,
+        requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
+        operationId: branchOperationLease?.operationId || null,
+        actor: resolveActorFromRequest(req),
+        trigger: triggerFromRequest(req),
+      });
+      if (flushResult !== 'flushed') {
+        branchOperationFinalStatus = 'failed';
+        sendSSE(res, 'error', {
+          message: branchStateFlushFailureMessage(flushResult, completeMsg),
+          stateFlush: flushResult,
+        });
+        return;
+      }
       sendSSE(res, 'complete', {
         // 2026-05-14 Codex review P2：单服务 redeploy 也下发权威 ok，
         // 消费方统一读 ok 而非重推导 entry.services。
@@ -11822,7 +11987,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.appendLog(id, opLog);
       stateService.save();
       logDeploy(id, `部署失败: ${(err as Error).message}`);
-      sendSSE(res, 'error', { message: (err as Error).message });
+      const flushResult = await flushBranchStateBeforeSuccess({
+        source: 'branch-deploy-profile',
+        actionPrefix: 'branch.deploy-profile',
+        branch: entry,
+        requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
+        operationId: branchOperationLease?.operationId || null,
+        actor: resolveActorFromRequest(req),
+        trigger: triggerFromRequest(req),
+      });
+      sendSSE(res, 'error', flushResult === 'flushed'
+        ? { message: (err as Error).message }
+        : {
+            message: (err as Error).message,
+            stateFlush: flushResult,
+            stateMessage: branchStateFlushFailureMessage(flushResult, '单服务部署失败状态已写入内存'),
+          });
     } finally {
       completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
       res.end();
