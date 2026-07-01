@@ -1,0 +1,1 @@
+| fix | cds | 导入/配置校验豁免预构建镜像站点的 command 必填：pending-import 与 branches 配置校验对 prebuiltImage=true 的 profile（如 prd-llmgw-web 纯 nginx 前端站）不再强制 command（部署路径本就走 usePrebuiltEntrypoint 用镜像自带 ENTRYPOINT 启动，注入 command 反而绕过 nginx docker-entrypoint 初始化）。此前 llmgw-web 被解析器识别后仍卡在导入校验「缺少 command」 |

@@ -16639,7 +16639,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
           if (!p.id) errors.push(`buildProfiles[${i}]: 缺少 id`);
           if (!p.name) errors.push(`buildProfiles[${i}]: 缺少 name`);
           if (!p.dockerImage) errors.push(`buildProfiles[${i}]: 缺少 dockerImage`);
-          if (!p.command) errors.push(`buildProfiles[${i}]: 缺少 command`);
+          // 预构建镜像站点（prebuiltImage）用镜像自带 ENTRYPOINT/CMD 启动，command 合法为空（见
+          // container.ts usePrebuiltEntrypoint）；只对非预构建 profile 强制 command。
+          if (!p.command && p.prebuiltImage !== true) errors.push(`buildProfiles[${i}]: 缺少 command`);
           if (p.containerPort !== undefined) {
             const port = Number(p.containerPort);
             if (!Number.isInteger(port) || port < 1 || port > 65535) {
