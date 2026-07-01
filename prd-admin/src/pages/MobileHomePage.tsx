@@ -20,10 +20,10 @@ import { buildDefaultCoverUrl } from '@/lib/homepageAssetSlots';
 import { AS_COLOR, AS_FONT_FAMILY } from '@/lib/appStoreTokens';
 
 const AMBER = '#FF9F0A';
-const SURFACE = 'rgba(255,255,255,0.075)';
-const HAIRLINE = 'rgba(255,255,255,0.13)';
-const TEXT_SECONDARY = 'rgba(245,245,247,0.68)';
-const TEXT_TERTIARY = 'rgba(245,245,247,0.44)';
+const SURFACE = 'rgba(255,255,255,0.105)';
+const HAIRLINE = 'rgba(255,255,255,0.17)';
+const TEXT_SECONDARY = 'rgba(245,245,247,0.74)';
+const TEXT_TERTIARY = 'rgba(245,245,247,0.52)';
 
 interface HomeTool {
   key: string;
@@ -125,7 +125,7 @@ export default function MobileHomePage() {
       style={{
         margin: '0 calc(var(--mobile-padding, 16px) * -1)',
         background:
-          'radial-gradient(circle at 72% 8%, rgba(255,159,10,0.18), transparent 32%), radial-gradient(circle at 8% 46%, rgba(42,126,170,0.13), transparent 34%), linear-gradient(180deg, #131319 0%, #08090c 42%, #050506 100%)',
+          'radial-gradient(circle at 72% 8%, rgba(255,159,10,0.22), transparent 32%), radial-gradient(circle at 10% 48%, rgba(52,132,170,0.18), transparent 34%), linear-gradient(180deg, #1c1d24 0%, #12161b 46%, #0c0e12 100%)',
         color: AS_COLOR.label,
         fontFamily: AS_FONT_FAMILY,
       }}
@@ -226,8 +226,8 @@ function HeroCarousel({ onNavigate }: { onNavigate: (to: string) => void }) {
               borderRadius: 20,
               border: `1px solid ${HAIRLINE}`,
               background:
-                'linear-gradient(135deg, rgba(30,31,38,0.98), rgba(11,12,15,0.98))',
-              boxShadow: '0 22px 70px rgba(0,0,0,0.42)',
+                'linear-gradient(135deg, rgba(42,43,51,0.98), rgba(18,20,25,0.98))',
+              boxShadow: '0 22px 70px rgba(0,0,0,0.36)',
               color: '#fff',
             }}
           >
@@ -298,7 +298,7 @@ function AmberWorkbenchArt() {
         className="absolute inset-0"
         style={{
           background:
-            'radial-gradient(circle at 72% 38%, rgba(255,159,10,0.66), transparent 22%), radial-gradient(circle at 30% 10%, rgba(255,214,120,0.28), transparent 34%), linear-gradient(135deg, #111217 0%, #211609 52%, #08090c 100%)',
+            'radial-gradient(circle at 72% 38%, rgba(255,159,10,0.70), transparent 22%), radial-gradient(circle at 30% 10%, rgba(255,214,120,0.32), transparent 34%), linear-gradient(135deg, #1a1b21 0%, #2a1d0d 52%, #111319 100%)',
         }}
       />
       <div
@@ -372,7 +372,7 @@ function QuickStartStrip({
       style={{
         marginTop: 18,
         borderRadius: 18,
-        background: 'linear-gradient(180deg, rgba(255,255,255,0.105), rgba(255,255,255,0.055))',
+        background: 'linear-gradient(180deg, rgba(255,255,255,0.135), rgba(255,255,255,0.075))',
         border: `1px solid ${HAIRLINE}`,
         boxShadow: '0 18px 58px rgba(0,0,0,0.32)',
       }}
@@ -470,7 +470,7 @@ function ToolGrid({
             className="min-h-[86px] flex flex-col items-center justify-center transition-transform active:scale-[0.97]"
             style={{
               borderRadius: 16,
-              background: 'linear-gradient(180deg, rgba(255,255,255,0.105), rgba(255,255,255,0.052))',
+              background: 'linear-gradient(180deg, rgba(255,255,255,0.135), rgba(255,255,255,0.075))',
               border: `1px solid ${HAIRLINE}`,
               color: '#fff',
               padding: '11px 6px',
@@ -539,7 +539,7 @@ function MyActivityList({
     <div
       style={{
         borderRadius: 18,
-        background: 'linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.030))',
+        background: 'linear-gradient(180deg, rgba(255,255,255,0.105), rgba(255,255,255,0.055))',
         border: `1px solid ${HAIRLINE}`,
         overflow: 'hidden',
       }}
