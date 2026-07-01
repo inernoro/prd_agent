@@ -388,3 +388,8 @@ processed:
   - 2026-06-26_vision-detail-fix.md
   - 2026-06-27_gateway-isolation-design.md
   - 2026-06-27_gateway-phase0.md
+  - 2026-06-27_imagegen-request-builder.md
+  - 2026-06-27_llm-gateway-standalone.md
+  - 2026-06-27_llm-log-observability.md
+  - 2026-06-27_llmgw-deploy-scaffold.md
+  - 2026-06-27_llmgw-web-skeleton.md
