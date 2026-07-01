@@ -2924,15 +2924,12 @@ proxyService.setOnAccess((branchId, method, reqPath, status, duration, profileId
 // Concurrent requests for the same branch wait for the first build to finish.
 const buildLocks = new Map<string, { promise: Promise<void>; listeners: http.ServerResponse[] }>();
 
-// ── "Branch is gone" friendly page ──
+// ── Unroutable preview friendly page ──
 /**
- * Rendered when a preview subdomain resolves to a branch that neither exists
- * locally nor in the remote git repo. Replaces the old SSE-error-inside-
- * transit-page experience (which landed on Chrome's raw 400 for most users)
- * with a proper HTML page that:
- *   - Explains the branch is deleted / never deployed
- *   - Lists live preview branches the user can jump to
- *   - Auto-redirects to the dashboard so the tab doesn't sit blank forever
+ * Rendered when a preview subdomain has no routable app service. That can mean
+ * a deleted branch, but more often it means CDS has not created/deployed the
+ * branch record yet. Do not lead with "deleted"; it makes operators think CDS
+ * removed their GitHub branch even when the remote branch still exists.
  * See .claude/rules/cds-auto-deploy.md (no-blank-wait principle).
  */
 interface BranchGoneLivePreview {
@@ -2975,7 +2972,7 @@ function buildBranchGonePageHtml(slug: string, opts: { dashboardUrl?: string; ma
   return `<!DOCTYPE html>
 <html lang="zh"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>启动失败 — ${escape(slug)}</title>
+<title>预览未部署 — ${escape(slug)}</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
@@ -3000,11 +2997,11 @@ h2{font-size:18px;font-weight:600;color:#f0f6fc;margin-bottom:8px}
 </style>
 </head><body>
 <div class="card">
-  <h2>启动失败</h2>
+  <h2>预览未部署</h2>
   <div class="branch">${escape(slug)}</div>
   <div class="desc">
-    该分支已被删除、从未部署，或 CDS 没有找到可路由的运行环境。<br>
-    这是不可自动恢复状态，请回到控制台重新部署或选择可用分支。
+    CDS 没有找到这个预览域名对应的可运行服务。常见原因是分支尚未在 CDS 创建、尚未部署，或已被显式停止。<br>
+    这不代表 GitHub 分支已被 CDS 删除。请回到控制台手动部署该分支，或选择下方可用预览。
   </div>
   ${liveHtml}
   ${dashHtml}
