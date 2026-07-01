@@ -34,6 +34,7 @@ For daily, PR, commit-range, release, or repeatedly disputed acceptance, run `ac
    - For each module, identify the real user page location as a breadcrumb, such as `首页 -> 导航 -> 百宝箱 -> 文件转换`.
    - Include unpublished branches and preview environments when the user asks for "未发布状态", "昨天全部内容", or branch-specific acceptance.
    - Allow preview-environment test data with a clear prefix such as `每日验收-YYYY-MM-DD-...` when the automation policy permits it. Never use production-destructive data paths.
+   - Keep `cds` and `CDS Agent` separate. `cds/` platform changes use CDS platform evidence: cdscli/API branch status, deploy/smoke result, preview routing, reports page, scheduler/self-update state, logs, or extra-services state. `CDS Agent` evidence means the prd-admin `/cds-agent` workbench or its runtime/session flow, and can only prove CDS Agent-specific assertions.
    - Mark items as `runtime`, `visual`, `api`, `docs/rules`, or `environment-only`.
    - Compute a depth budget before testing: target date, commit count, PR count, module count, high-risk module count, planned evidence count, and whether the run is `广度冒烟`, `深度验收`, or `发布前阻断验收`.
    - For daily/yesterday runs, do not allow a small set of entry screenshots to stand in for deep functional acceptance. If the budget cannot cover real workflows, label the run `广度冒烟` or mark uncovered items explicitly.
@@ -133,6 +134,8 @@ If multiple scenarios match, choose the narrowest scenario as primary and list t
 - Do not use environment health as a substitute for feature acceptance.
 - Do not call a daily/yesterday run `深度验收` when it only checks entry pages and a few API 200s. That is `广度冒烟`.
 - Do not use a nearby screen as proof for a changed behavior. `列表可见`, `按钮可见`, or `页面可达` only prove entry/availability unless the commit itself was about entry/availability.
+- In daily/yesterday reports, evidence cells must be clickable: write full screenshot-name anchors such as `[图01](#fig-01-login-home)` instead of plain `图01`. Legacy `[图01](#fig-01)` is normalized only when the figure number is unique; repeated figure numbers must use full anchors.
+- Do not use the CDS Agent page as evidence for CDS platform changes. A row about CDS deploy/preview/reports/branch network/extra-services/self-update/scheduler/proxy must cite CDS platform proof, not `/cds-agent`. If both changed, split them into separate rows.
 - Do not mark an assertion passed unless the evidence exercises the changed path or inspects the changed result state. Otherwise mark it `未覆盖` or `关联不足`.
 - Do not mark a high-risk module as deeply accepted without an action/result pair or a negative-path/API proof. High-risk modules include auth, async workers, uploads/compression, external downloads, deployment, state transitions, and data restore.
 - Do not publish a MAP report whose share link has not been opened and verified.
