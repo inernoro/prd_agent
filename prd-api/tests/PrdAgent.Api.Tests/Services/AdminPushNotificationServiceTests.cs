@@ -257,6 +257,62 @@ public sealed class AdminPushNotificationServiceTests
     }
 
     [Fact]
+    public async Task DispatchPendingAsync_BarkDerivesPreviewActionUrlFromBranchEnvironment()
+    {
+        var testDb = await AdminPushTestDatabase.TryCreateAsync();
+        if (testDb == null) return;
+
+        try
+        {
+            var http = new RecordingHttpClientFactory();
+            var configuration = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["AGENT_WORKSPACE_GIT_REF"] = "codex/admin-push-bark-protocol",
+                    ["AGENT_WORKSPACE_GITHUB_REPOSITORY"] = "inernoro/prd_agent",
+                    ["CDS_PREVIEW_DOMAIN"] = "miduo.org",
+                })
+                .Build();
+            var service = CreateService(testDb.Context, http, configuration);
+
+            await testDb.Context.AdminPushSubscriptions.InsertOneAsync(new AdminPushSubscription
+            {
+                UserId = "u1",
+                TopicKey = "defect-management",
+                Enabled = true,
+                UseDefaultProfile = false,
+                ChannelType = "bark",
+                Method = "GET",
+                BarkKey = "key",
+                BarkServerUrl = "https://example.com",
+                BarkUrlTemplate = "{{actionUrl}}",
+            });
+            await testDb.Context.AdminNotifications.InsertOneAsync(new AdminNotification
+            {
+                Id = "n-derived-action",
+                Key = "k-derived-action",
+                Title = "收到新缺陷：DEF-2",
+                Message = "需要处理",
+                Source = "defect-agent",
+                Status = "open",
+                TargetUserId = "u1",
+                ActionUrl = "/defect-agent?id=derived123",
+                CreatedAt = DateTime.UtcNow,
+            });
+
+            await service.DispatchPendingAsync(CancellationToken.None);
+
+            var request = Assert.Single(http.Requests);
+            var query = QueryHelpers.ParseQuery(request.Uri.Query);
+            Assert.Equal("https://admin-push-bark-protocol-codex-prd-agent.miduo.org/defect-agent?id=derived123", query["url"]);
+        }
+        finally
+        {
+            await testDb.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task DispatchPendingAsync_DoesNotPushDefectReminderNotifications()
     {
         var testDb = await AdminPushTestDatabase.TryCreateAsync();
@@ -617,23 +673,29 @@ public sealed class AdminPushNotificationServiceTests
         }
     }
 
-    private static AdminPushNotificationService CreateService(MongoDbContext db, RecordingHttpClientFactory http)
+    private static AdminPushNotificationService CreateService(
+        MongoDbContext db,
+        RecordingHttpClientFactory http,
+        IConfiguration? configuration = null)
     {
         return new AdminPushNotificationService(
             db,
             http,
             new AllowAllUrlValidator(),
-            TestConfiguration,
+            configuration ?? TestConfiguration,
             NullLogger<AdminPushNotificationService>.Instance);
     }
 
-    private static AdminPushNotificationService CreateService(MongoDbContext db, DirectHttpClientFactory http)
+    private static AdminPushNotificationService CreateService(
+        MongoDbContext db,
+        DirectHttpClientFactory http,
+        IConfiguration? configuration = null)
     {
         return new AdminPushNotificationService(
             db,
             http,
             new AllowAllUrlValidator(),
-            TestConfiguration,
+            configuration ?? TestConfiguration,
             NullLogger<AdminPushNotificationService>.Instance);
     }
 

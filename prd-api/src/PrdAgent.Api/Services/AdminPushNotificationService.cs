@@ -7,6 +7,8 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services.AgentTools;
+using PrdAgent.Infrastructure.Services.ClaudeSidecar;
 
 namespace PrdAgent.Api.Services;
 
@@ -37,8 +39,7 @@ public sealed class AdminPushNotificationService
         _httpClientFactory = httpClientFactory;
         _urlValidator = urlValidator;
         _logger = logger;
-        _publicBaseUrl = NormalizeBaseUrl(configuration["ServerUrl"])
-            ?? NormalizeBaseUrl(configuration["App:FrontendBaseUrl"]);
+        _publicBaseUrl = ResolvePublicBaseUrl(configuration);
     }
 
     public static IReadOnlyList<AdminPushTopicDefinition> TopicDefinitions { get; } =
@@ -1023,6 +1024,68 @@ public sealed class AdminPushNotificationService
             && !string.Equals(uri.Scheme, "http", StringComparison.OrdinalIgnoreCase))
             return null;
         return trimmed;
+    }
+
+    private static string? ResolvePublicBaseUrl(IConfiguration configuration)
+    {
+        return NormalizeBaseUrl(configuration["ServerUrl"])
+            ?? NormalizeBaseUrl(configuration["App:FrontendBaseUrl"])
+            ?? NormalizeBaseUrl(configuration["FrontendBaseUrl"])
+            ?? NormalizeBaseUrl(configuration["FRONTEND_BASE_URL"])
+            ?? NormalizeBaseUrl(configuration["PUBLIC_BASE_URL"])
+            ?? NormalizeBaseUrl(configuration["APP_PUBLIC_BASE_URL"])
+            ?? NormalizeBaseUrl(configuration["CDS_PREVIEW_URL"])
+            ?? ResolveDerivedPreviewBaseUrl(configuration);
+    }
+
+    private static string? ResolveDerivedPreviewBaseUrl(IConfiguration configuration)
+    {
+        var workspace = AgentWorkspace.Resolve(configuration);
+        var branch = FirstConfigValue(
+                configuration,
+                "MAP_PREVIEW_BRANCH",
+                "VITE_GIT_BRANCH",
+                "AGENT_WORKSPACE_GIT_REF",
+                "GIT_BRANCH",
+                "AgentWorkspace:GitRef")
+            ?? workspace.GitRef;
+        var project = FirstConfigValue(
+            configuration,
+            "MAP_PROJECT_SLUG",
+            "AGENT_WORKSPACE_PROJECT_SLUG",
+            "AgentWorkspace:ProjectSlug");
+
+        if (string.IsNullOrWhiteSpace(project))
+        {
+            var repo = FirstConfigValue(
+                    configuration,
+                    "AGENT_WORKSPACE_GITHUB_REPOSITORY",
+                    "GITHUB_REPOSITORY",
+                    "AgentWorkspace:GitHubRepository")
+                ?? workspace.GitHubRepository;
+            if (!string.IsNullOrWhiteSpace(repo))
+                project = repo.Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
+        }
+
+        var domain = FirstConfigValue(configuration, "MAP_PREVIEW_DOMAIN", "CDS_PREVIEW_DOMAIN", "PREVIEW_DOMAIN", "PreviewDomain")
+            ?? "miduo.org";
+        var slug = ClaudeSidecarRouter.ComputePreviewSlug(branch, project);
+        if (string.IsNullOrWhiteSpace(slug) || string.IsNullOrWhiteSpace(domain))
+            return null;
+
+        return NormalizeBaseUrl($"https://{slug}.{domain.Trim().Trim('.')}");
+    }
+
+    private static string? FirstConfigValue(IConfiguration configuration, params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            var value = configuration[key];
+            if (!string.IsNullOrWhiteSpace(value))
+                return value.Trim();
+        }
+
+        return null;
     }
 
     private static string EscapeXml(string value)
