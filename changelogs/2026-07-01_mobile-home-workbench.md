@@ -5,3 +5,4 @@
 | polish | prd-admin | 统一移动首页面板风格，降低旧式卡片拼装感 |
 | polish | prd-admin | 统一移动端全局顶部栏，固定单行显示当前应用名称 |
 | fix | prd-admin | 修复移动端页面工具栏按钮被压缩后文字竖排换行的问题 |
+| polish | prd-admin | 按 Apple 风格简化移动端缺陷页工具区，扩大主内容可视面积 |
