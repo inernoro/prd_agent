@@ -12733,10 +12733,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const namedLabel = `${gwPreviewSlug}-${sub}`;
         if (namedLabel.length > 63) continue; // RFC 1035 single-label limit + wildcard cert coverage
         seenSubdomains.add(sub);
+        // Gateway services mount their API under /gw/* (console) or /gw/v1/* (serving); the bare host root
+        // 404s. Land on the health endpoint so clicking the entry reaches a live 200 page (Codex P2).
+        const landingPath = sub.includes('serve') ? '/gw/v1/healthz' : '/gw/healthz';
         gatewayUrls.push({
           subdomain: sub,
           name: profileId,
-          url: `http://${namedLabel}.${primaryRoot}`,
+          url: `http://${namedLabel}.${primaryRoot}${landingPath}`,
         });
       }
     }

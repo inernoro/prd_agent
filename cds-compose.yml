@@ -261,12 +261,11 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
       MongoDB__DatabaseName: prdagent
-      # 网关自身鉴权密钥：`${VAR:-fallback}` 形——CDS env 有 LLMGW_JWT_SECRET / LLMGW_ADMIN_PASSWORD 时用真实值
-      # （公开暴露 P2 时在 CDS 钉强随机 secret），否则用**非仓库默认**的内网 fallback。
-      # 不能用仓库固定 dev 默认值（llmgw-admin-2026）——prd-llmgw/Program.cs 生产守卫会拒绝「Production + 仓库默认
-      # admin 密码」→ 容器启动即 exit、no-http-readiness 永不就绪、部署判失败（Codex P1）。fallback != dev 默认、过守卫；
-      # 内网 only 故固定 fallback 足够（无公开路由）。
-      LlmGwJwt__Secret: "${LLMGW_JWT_SECRET:-llmgw-jwt-cds-preview-internal-9f3a2c7e1b2d4f6}"
+      # JWT 签名密钥：**bare `${LLMGW_JWT_SECRET}` 不带 fallback**（Codex P1）。本 console 已公网命名路由
+      # （见 labels.cds.subdomain=llmgw，/gw/* 对外可达）；若回落仓库可见 fallback，任何缺该 env 的预览/fork
+      # 都能自签 token 读 /gw/* 日志（prd-llmgw 守卫只认空/dev 值，长 fallback 会过守卫）。去掉 fallback →
+      # 未注入时解析为空 → 守卫拒绝空 JWT（拒启动、命名路由不发布）= fail-closed；prd-agent 项目变量已钉强随机值。
+      LlmGwJwt__Secret: "${LLMGW_JWT_SECRET}"
       LlmGwJwt__Issuer: prdagent-llmgw
       # 账户体系走环境变量，与 CDS dashboard 同账号密码（用户指定 2026-06-30）。bare `${CDS_USERNAME}`/
       # `${CDS_PASSWORD}` **不带 `:-fallback`**：compose-parser.singlePassResolve 解析顺序为
@@ -307,10 +306,11 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
       MongoDB__DatabaseName: prdagent
-      # 内部 M2M 共享密钥门。仅内网可达（无公开路由），api 经 docker 名 http://llmgw-serve:8091 调用；
-      # `${VAR:-fallback}` 形——CDS env 有 LLMGW_SERVE_API_KEY 时用真实值（公开暴露 P2 时钉强随机），
-      # 否则用非仓库默认的内网 fallback。预览默认 LlmGateway:Mode=inproc，api 根本不调本服务。
-      LlmGwServe__ApiKey: "${LLMGW_SERVE_API_KEY:-llmgw-serve-cds-preview-internal-4d8b1e3a}"
+      # M2M 密钥门：**bare `${LLMGW_SERVE_API_KEY}` 不带 fallback**（Codex P1）。本 serving 已公网命名路由
+      # （见 labels.cds.subdomain=llmgw-serve），/gw/v1/send|stream|raw 对外可达；若回落仓库可见 fallback，
+      # 任何缺该 env 的预览/fork 都暴露已知 X-Gateway-Key 可烧 provider 额度。去掉 fallback → 未注入时解析为空 →
+      # serving Program.cs 生产守卫拒绝空 key（拒启动、命名路由不发布）= fail-closed；prd-agent 项目变量已钉强随机值。
+      LlmGwServe__ApiKey: "${LLMGW_SERVE_API_KEY}"
     labels:
       # 公网命名 URL（用户 2026-07-01 要求）：LLMGW_SERVE_API_KEY 已在项目变量（scope=prd-agent）设为强随机
       # （非仓库默认）。/gw/v1/* 走 X-Gateway-Key 门（无 key 一律 401），故对外发布命名子域后仍需密钥才能调
