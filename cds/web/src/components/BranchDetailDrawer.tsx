@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Braces, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Maximize2, Play, PowerOff, RefreshCw, Rocket, RotateCw, Search, Settings, Square, Table2, Terminal, Trash2, X } from 'lucide-react';
+import { AlertCircle, Braces, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Maximize2, Play, PowerOff, RefreshCw, Rocket, RotateCw, Search, Server, Settings, Square, Table2, Terminal, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { apiRequest, ApiError } from '@/lib/api';
@@ -1756,55 +1756,53 @@ export function BranchDetailDrawer({
           {branch ? (
             <>
               {branch.status === 'running' && branch.previewUrl ? (
-                <div className="mx-5 mt-4 flex flex-col gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5 text-sm font-semibold text-emerald-600 dark:text-emerald-400">
-                      <Rocket className="h-4 w-4" />
-                      应用已上线
-                    </div>
-                    {/* 主应用入口 + 网关入口:声明了 cds.subdomain 的服务(如 LLM 网关 console/serving)
-                        获得独立命名域名,与主应用入口并列展示,让「多出口」在抽屉里一眼可见。 */}
-                    <div className="mt-0.5 text-[11px] font-medium uppercase tracking-wide text-emerald-700/70 dark:text-emerald-300/70">
-                      主应用入口
-                    </div>
+                <div className="mx-5 mt-4 rounded-xl border border-emerald-500/40 bg-emerald-500/[0.07] p-3">
+                  <div className="mb-2 flex items-center gap-1.5 px-1 text-sm font-semibold text-emerald-600 dark:text-emerald-400">
+                    <Rocket className="h-4 w-4" />
+                    应用已上线
+                  </div>
+                  {/* 入口卡片列:主应用入口(主色)在上,声明了 cds.subdomain 的网关入口(中性色)在下,
+                      每条整卡可点、带图标/名称/URL/打开箭头,视觉分层清晰。 */}
+                  <div className="flex flex-col gap-1.5">
                     <a
                       href={branch.previewUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="block min-w-0 truncate font-mono text-xs text-emerald-700/90 hover:underline dark:text-emerald-300"
+                      title="打开主应用入口"
+                      className="group flex items-center gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 transition hover:border-emerald-500/60 hover:bg-emerald-500/[0.18]"
                     >
-                      {branch.previewUrl}
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-emerald-600 text-white">
+                        <Rocket className="h-4 w-4" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-xs font-semibold text-emerald-700 dark:text-emerald-300">主应用入口</span>
+                        <span className="block min-w-0 truncate font-mono text-[11px] text-emerald-700/70 dark:text-emerald-300/70">{branch.previewUrl}</span>
+                      </span>
+                      <ExternalLink className="h-4 w-4 shrink-0 text-emerald-600/60 transition group-hover:text-emerald-600 dark:text-emerald-400/60 dark:group-hover:text-emerald-300" />
                     </a>
-                    {gatewayUrls.length > 0 ? (
-                      <div className="mt-2 border-t border-emerald-500/20 pt-2">
-                        <div className="text-[11px] font-medium uppercase tracking-wide text-emerald-700/70 dark:text-emerald-300/70">
-                          网关入口
-                        </div>
-                        <div className="mt-0.5 flex flex-col gap-1">
-                          {gatewayUrls.map((gw) => (
-                            <div key={gw.subdomain} className="flex min-w-0 items-baseline gap-2">
-                              <span className="shrink-0 font-mono text-[11px] text-emerald-700/70 dark:text-emerald-300/70">{gw.subdomain}</span>
-                              <a
-                                href={gw.url}
-                                target="_blank"
-                                rel="noreferrer"
-                                title={`打开 ${gw.name} 网关入口`}
-                                className="block min-w-0 truncate font-mono text-xs text-emerald-700/90 hover:underline dark:text-emerald-300"
-                              >
-                                {gw.url}
-                              </a>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
+                    {gatewayUrls.map((gw) => (
+                      <a
+                        key={gw.subdomain}
+                        href={gw.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={`打开 ${gw.name} 网关入口`}
+                        className="group flex items-center gap-3 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-3 py-2 transition hover:border-emerald-500/40 hover:bg-emerald-500/[0.08]"
+                      >
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[hsl(var(--surface-raised))] text-muted-foreground">
+                          <Server className="h-4 w-4" />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-center gap-1.5">
+                            <span className="text-xs font-semibold text-foreground">网关入口</span>
+                            <span className="rounded bg-[hsl(var(--surface-raised))] px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{gw.subdomain}</span>
+                          </span>
+                          <span className="block min-w-0 truncate font-mono text-[11px] text-muted-foreground">{gw.url}</span>
+                        </span>
+                        <ExternalLink className="h-4 w-4 shrink-0 text-muted-foreground/60 transition group-hover:text-emerald-600" />
+                      </a>
+                    ))}
                   </div>
-                  <Button asChild size="sm" className="shrink-0 bg-emerald-600 text-white hover:bg-emerald-700">
-                    <a href={branch.previewUrl} target="_blank" rel="noreferrer">
-                      <ExternalLink />
-                      打开预览
-                    </a>
-                  </Button>
                 </div>
               ) : null}
               <section className="border-b border-[hsl(var(--hairline))] px-5 py-4">
