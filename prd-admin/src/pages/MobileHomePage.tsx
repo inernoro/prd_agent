@@ -130,11 +130,11 @@ export default function MobileHomePage() {
         fontFamily: AS_FONT_FAMILY,
       }}
     >
-      <main style={{ padding: '8px 20px 116px' }}>
+      <main style={{ padding: '4px 20px 112px' }}>
         <h1
           style={{
             margin: 0,
-            fontSize: 36,
+            fontSize: 34,
             lineHeight: 1.08,
             fontWeight: 800,
             letterSpacing: 0,
@@ -150,8 +150,8 @@ export default function MobileHomePage() {
         <SectionTitle title="常用入口" />
         <ToolGrid tools={PRIMARY_TOOLS} onNavigate={navigate} />
 
-        <SectionTitle title="我的动态" actionLabel="全部" onAction={() => navigate('/assets')} />
-        <MyActivityList feed={feed.slice(0, 3)} onNavigate={navigate} />
+        <SectionTitle title="我的动态" actionLabel="全部" onAction={() => navigate('/assets')} dense />
+        <MyActivityList feed={feed.slice(0, 4)} onNavigate={navigate} />
 
         {recommendedAgents.length > 0 && (
           <>
@@ -199,7 +199,7 @@ function HeroCarousel({ onNavigate }: { onNavigate: (to: string) => void }) {
   }, []);
 
   return (
-    <section style={{ marginTop: 24 }}>
+    <section style={{ marginTop: 18 }}>
       <div
         ref={scrollerRef}
         className="flex overflow-x-auto snap-x snap-mandatory"
@@ -219,11 +219,11 @@ function HeroCarousel({ onNavigate }: { onNavigate: (to: string) => void }) {
             onClick={() => onNavigate(card.route)}
             className="relative shrink-0 snap-start overflow-hidden text-left transition-transform active:scale-[0.985]"
             style={{
-              width: 'calc(100vw - 96px)',
-              minWidth: 286,
+              width: 'calc(100vw - 76px)',
+              minWidth: 304,
               maxWidth: 720,
-              aspectRatio: '1.52 / 1',
-              borderRadius: 20,
+              aspectRatio: '1.68 / 1',
+              borderRadius: 18,
               border: `1px solid ${HAIRLINE}`,
               background:
                 'linear-gradient(135deg, rgba(42,43,51,0.98), rgba(18,20,25,0.98))',
@@ -242,11 +242,11 @@ function HeroCarousel({ onNavigate }: { onNavigate: (to: string) => void }) {
             />
             <div
               className="absolute left-0 top-0 h-full flex flex-col justify-end"
-              style={{ padding: 22, width: '72%' }}
+              style={{ padding: 20, width: '54%' }}
             >
               <div
                 style={{
-                  fontSize: 26,
+                  fontSize: 25,
                   lineHeight: 1.12,
                   fontWeight: 800,
                   letterSpacing: 0,
@@ -263,7 +263,7 @@ function HeroCarousel({ onNavigate }: { onNavigate: (to: string) => void }) {
                   height: 3,
                   borderRadius: 999,
                   background: '#FFD08A',
-                  margin: '14px 0 12px',
+                  margin: '12px 0 10px',
                 }}
               />
               <div
@@ -282,7 +282,7 @@ function HeroCarousel({ onNavigate }: { onNavigate: (to: string) => void }) {
           </button>
         ))}
       </div>
-      <div className="flex items-center" style={{ gap: 7, marginTop: 12, paddingLeft: 48 }}>
+      <div className="flex items-center" style={{ gap: 7, marginTop: 9, paddingLeft: 48 }}>
         {HERO_CARDS.map((card, index) => (
           <span key={card.key} style={dotStyle(index === activeIndex)} />
         ))}
@@ -298,60 +298,153 @@ function AmberWorkbenchArt() {
         className="absolute inset-0"
         style={{
           background:
-            'radial-gradient(circle at 72% 38%, rgba(255,159,10,0.70), transparent 22%), radial-gradient(circle at 30% 10%, rgba(255,214,120,0.32), transparent 34%), linear-gradient(135deg, #1a1b21 0%, #2a1d0d 52%, #111319 100%)',
+            'radial-gradient(circle at 76% 42%, rgba(255,159,10,0.62), transparent 22%), radial-gradient(circle at 28% 16%, rgba(255,214,120,0.24), transparent 34%), linear-gradient(135deg, #151820 0%, #251809 54%, #0d1118 100%)',
         }}
       />
       <div
         className="absolute"
         style={{
-          right: -12,
-          bottom: 18,
-          width: '66%',
-          height: '72%',
-          borderRadius: 24,
-          border: '1px solid rgba(255,179,64,0.52)',
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: '44%',
           background:
-            'linear-gradient(135deg, rgba(255,159,10,0.30), rgba(255,159,10,0.05) 48%, rgba(255,255,255,0.04))',
-          boxShadow:
-            '0 0 34px rgba(255,159,10,0.26), inset 0 0 28px rgba(255,197,108,0.18)',
-          transform: 'perspective(420px) rotateY(-14deg) rotateX(7deg)',
+            'linear-gradient(rgba(255,159,10,0.10) 1px, transparent 1px), linear-gradient(90deg, rgba(255,159,10,0.10) 1px, transparent 1px)',
+          backgroundSize: '34px 24px',
+          opacity: 0.58,
+          transform: 'perspective(420px) rotateX(58deg) translateY(18px) scale(1.28)',
+          transformOrigin: '50% 100%',
         }}
       />
       <div
         className="absolute"
         style={{
-          right: 54,
-          top: 54,
+          right: 10,
+          top: 30,
+          width: '50%',
+          height: '66%',
+          borderRadius: 18,
+          border: '1px solid rgba(255,198,104,0.62)',
+          background:
+            'linear-gradient(135deg, rgba(255,178,66,0.28), rgba(255,159,10,0.06) 48%, rgba(255,255,255,0.06))',
+          boxShadow:
+            '0 0 38px rgba(255,159,10,0.32), inset 0 0 30px rgba(255,197,108,0.20)',
+          transform: 'perspective(440px) rotateY(-15deg) rotateX(7deg)',
+        }}
+      >
+        <span
+          className="absolute"
+          style={{
+            left: 16,
+            top: 14,
+            right: 20,
+            height: 24,
+            borderRadius: 8,
+            border: '1px solid rgba(255,211,132,0.38)',
+            color: 'rgba(255,225,155,0.78)',
+            fontSize: 8,
+            lineHeight: '23px',
+            textAlign: 'center',
+            fontWeight: 800,
+            letterSpacing: 0,
+          }}
+        >
+          AI WORKBENCH
+        </span>
+        <span
+          className="absolute"
+          style={{
+            left: 20,
+            right: 18,
+            bottom: 18,
+            height: 1,
+            background: 'linear-gradient(90deg, transparent, rgba(255,218,146,0.58), transparent)',
+          }}
+        />
+      </div>
+      <div
+        className="absolute"
+        style={{
+          right: 48,
+          top: 70,
           width: 74,
           height: 74,
           borderRadius: '50%',
-          border: '2px solid rgba(255,220,150,0.72)',
-          boxShadow: '0 0 24px rgba(255,159,10,0.46)',
+          border: '2px solid rgba(255,220,150,0.78)',
+          boxShadow: '0 0 24px rgba(255,159,10,0.50), inset 0 0 18px rgba(255,159,10,0.20)',
         }}
       />
       <div
         className="absolute"
         style={{
-          right: 72,
-          top: 72,
-          width: 38,
-          height: 38,
+          right: 65,
+          top: 87,
+          width: 40,
+          height: 40,
           borderRadius: '50%',
-          border: '1px solid rgba(255,255,255,0.62)',
+          border: '1px solid rgba(255,255,255,0.66)',
+          boxShadow: 'inset 0 0 10px rgba(255,255,255,0.16)',
         }}
       />
-      {Array.from({ length: 8 }).map((_, i) => (
+      {Array.from({ length: 12 }).map((_, i) => {
+        const angle = i * 30;
+        return (
+          <span
+            key={`tooth-${i}`}
+            className="absolute"
+            style={{
+              right: 81,
+              top: 82,
+              width: 4,
+              height: 54,
+              borderRadius: 999,
+              background: 'rgba(255,198,104,0.58)',
+              boxShadow: '0 0 8px rgba(255,159,10,0.38)',
+              transform: `rotate(${angle}deg) translateY(-27px)`,
+              transformOrigin: '2px 45px',
+            }}
+          />
+        );
+      })}
+      <div
+        className="absolute"
+        style={{
+          right: 74,
+          top: 101,
+          width: 8,
+          height: 8,
+          borderRadius: '50%',
+          background: '#FFD08A',
+          boxShadow: '0 0 18px rgba(255,159,10,0.85)',
+        }}
+      />
+      {Array.from({ length: 11 }).map((_, i) => (
         <span
-          key={i}
+          key={`trace-${i}`}
           className="absolute"
           style={{
-            right: 20 + i * 38,
-            bottom: 28 + (i % 2) * 58,
-            width: 52,
+            right: 12 + i * 34,
+            bottom: 18 + (i % 3) * 42,
+            width: 46,
             height: 2,
             borderRadius: 999,
-            background: 'rgba(255,190,96,0.36)',
-            boxShadow: '0 0 12px rgba(255,159,10,0.38)',
+            background: i % 2 === 0 ? 'rgba(255,204,120,0.42)' : 'rgba(255,159,10,0.28)',
+            boxShadow: '0 0 12px rgba(255,159,10,0.34)',
+          }}
+        />
+      ))}
+      {Array.from({ length: 5 }).map((_, i) => (
+        <span
+          key={`node-${i}`}
+          className="absolute"
+          style={{
+            right: 38 + i * 42,
+            top: 40 + (i % 2) * 78,
+            width: 4,
+            height: 4,
+            borderRadius: '50%',
+            background: 'rgba(255,225,155,0.74)',
+            boxShadow: '0 0 12px rgba(255,159,10,0.76)',
           }}
         />
       ))}
@@ -370,8 +463,8 @@ function QuickStartStrip({
     <div
       className="grid grid-cols-3 overflow-hidden"
       style={{
-        marginTop: 18,
-        borderRadius: 18,
+        marginTop: 14,
+        borderRadius: 16,
         background: 'linear-gradient(180deg, rgba(255,255,255,0.135), rgba(255,255,255,0.075))',
         border: `1px solid ${HAIRLINE}`,
         boxShadow: '0 18px 58px rgba(0,0,0,0.32)',
@@ -384,9 +477,9 @@ function QuickStartStrip({
             key={item.key}
             type="button"
             onClick={() => onNavigate(item.route)}
-            className="min-h-[68px] flex items-center gap-2 text-left transition-colors active:bg-white/10"
+            className="min-h-[62px] flex items-center gap-2 text-left transition-colors active:bg-white/10"
             style={{
-              padding: '12px 10px',
+              padding: '10px 10px',
               color: '#fff',
               borderRight: index < items.length - 1 ? `1px solid ${HAIRLINE}` : undefined,
             }}
@@ -412,17 +505,22 @@ function SectionTitle({
   title,
   actionLabel,
   onAction,
+  dense = false,
 }: {
   title: string;
   actionLabel?: string;
   onAction?: () => void;
+  dense?: boolean;
 }) {
   return (
-    <div className="flex items-center justify-between" style={{ marginTop: 28, marginBottom: 14 }}>
+    <div
+      className="flex items-center justify-between"
+      style={{ marginTop: dense ? 22 : 24, marginBottom: dense ? 10 : 12 }}
+    >
       <h2
         style={{
           margin: 0,
-          fontSize: 24,
+          fontSize: 23,
           lineHeight: 1.15,
           fontWeight: 800,
           letterSpacing: 0,
@@ -459,7 +557,7 @@ function ToolGrid({
   onNavigate: (to: string) => void;
 }) {
   return (
-    <div className="grid grid-cols-4" style={{ gap: 10 }}>
+    <div className="grid grid-cols-4" style={{ gap: 9 }}>
       {tools.map((tool) => {
         const Icon = tool.Icon;
         return (
@@ -467,16 +565,16 @@ function ToolGrid({
             key={tool.key}
             type="button"
             onClick={() => onNavigate(tool.route)}
-            className="min-h-[86px] flex flex-col items-center justify-center transition-transform active:scale-[0.97]"
+            className="min-h-[78px] flex flex-col items-center justify-center transition-transform active:scale-[0.97]"
             style={{
-              borderRadius: 16,
+              borderRadius: 15,
               background: 'linear-gradient(180deg, rgba(255,255,255,0.135), rgba(255,255,255,0.075))',
               border: `1px solid ${HAIRLINE}`,
               color: '#fff',
-              padding: '11px 6px',
+              padding: '9px 6px',
             }}
           >
-            <Icon size={27} strokeWidth={1.9} style={{ color: 'rgba(255,255,255,0.86)' }} />
+            <Icon size={25} strokeWidth={1.9} style={{ color: 'rgba(255,255,255,0.86)' }} />
             <span
               aria-hidden
               style={{
@@ -484,11 +582,11 @@ function ToolGrid({
                 height: 2,
                 borderRadius: 999,
                 background: tool.accent,
-                margin: '9px 0 7px',
+                margin: '7px 0 6px',
                 boxShadow: `0 0 10px ${tool.accent}66`,
               }}
             />
-            <span style={{ fontSize: 14, lineHeight: 1.15, color: 'rgba(255,255,255,0.80)', letterSpacing: 0 }}>
+            <span style={{ fontSize: 13, lineHeight: 1.15, color: 'rgba(255,255,255,0.82)', letterSpacing: 0 }}>
               {tool.title}
             </span>
           </button>
@@ -511,10 +609,10 @@ function MyActivityList({
         className="flex items-center gap-3"
         style={{
           minHeight: 76,
-          borderRadius: 18,
+          borderRadius: 16,
           background: SURFACE,
           border: `1px solid ${HAIRLINE}`,
-          padding: '0 16px',
+          padding: '0 14px',
         }}
       >
         <div
@@ -552,36 +650,36 @@ function MyActivityList({
             key={item.id}
             type="button"
             onClick={() => onNavigate(item.navigateTo)}
-            className="w-full min-h-[72px] flex items-center text-left transition-colors active:bg-white/10"
+            className="w-full min-h-[62px] flex items-center text-left transition-colors active:bg-white/10"
             style={{
               display: 'flex',
-              gap: 12,
-              padding: '13px 14px',
+              gap: 10,
+              padding: '10px 13px',
               color: '#fff',
               borderBottom: idx < feed.length - 1 ? `1px solid ${AS_COLOR.separator}` : undefined,
             }}
           >
             <div
               className="shrink-0 flex items-center justify-center"
-              style={{ width: 42, height: 42, borderRadius: 12, background: meta.bg }}
+              style={{ width: 38, height: 38, borderRadius: 11, background: meta.bg }}
             >
-              <Icon size={19} strokeWidth={2.1} style={{ color: meta.color }} />
+              <Icon size={18} strokeWidth={2.1} style={{ color: meta.color }} />
             </div>
             <div className="min-w-0 flex-1">
               <div
                 className="truncate"
-                style={{ fontSize: 15, lineHeight: 1.25, fontWeight: 700, color: '#fff', letterSpacing: 0 }}
+                style={{ fontSize: 14, lineHeight: 1.2, fontWeight: 700, color: '#fff', letterSpacing: 0 }}
               >
                 {normalizeFeedTitle(item)}
               </div>
               <div
                 className="truncate"
-                style={{ marginTop: 4, fontSize: 13, lineHeight: 1.25, color: TEXT_SECONDARY, letterSpacing: 0 }}
+                style={{ marginTop: 3, fontSize: 12, lineHeight: 1.2, color: TEXT_SECONDARY, letterSpacing: 0 }}
               >
                 我 · {formatRelativeTime(item.updatedAt)}
               </div>
             </div>
-            <ChevronRight size={18} style={{ color: TEXT_TERTIARY }} className="shrink-0" />
+            <ChevronRight size={17} style={{ color: TEXT_TERTIARY }} className="shrink-0" />
           </button>
         );
       })}
