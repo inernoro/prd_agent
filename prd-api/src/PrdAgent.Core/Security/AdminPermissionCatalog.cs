@@ -328,6 +328,11 @@ public static class AdminPermissionCatalog
     public const string CcasAgentUse = "ccas-agent.use";
 
     /// <summary>
+    /// 邮件模板智能体权限：常用流程邮件模板库 + 一键复制 + AI 起草/润色
+    /// </summary>
+    public const string EmailAgentUse = "email-agent.use";
+
+    /// <summary>
     /// 识途 Agent 权限：新人文化与制度问答
     /// </summary>
     public const string ShituAgentUse = "shitu-agent.use";
@@ -473,6 +478,7 @@ public static class AdminPermissionCatalog
         new(SkillAgentUse, "技能引导智能体", "AI 引导创建技能、导出技能包"),
 
         new(CcasAgentUse, "赋码采集关联系统智能体", "产线赋码业务的 PRD 生成 + 设备素材库 + 流程示意图绘制"),
+        new(EmailAgentUse, "邮件模板智能体", "常用流程邮件模板库：内容/发送/抄送对象一键复制 + 变量快填 + AI 起草润色"),
         new(ShituAgentUse, "识途智能体", "新人文化与制度问答（企业文化/事故教训/规章制度/奖赏表彰）"),
         new(ShituAgentManage, "识途智能体-管理", "维护识途内嵌分类知识库内容"),
         new(PaAgentUse, "私人助理 Agent", "任务拆解、四象限排序、任务清单管理"),
