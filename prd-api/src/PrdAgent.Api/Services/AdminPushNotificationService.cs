@@ -342,6 +342,14 @@ public sealed class AdminPushNotificationService
             x => x.UserId == userId && x.TopicKey == topic.Key && x.Id != entity.Id,
             CancellationToken.None);
 
+        if (entity.Enabled && existing?.Enabled != true)
+        {
+            var effective = entity.UseDefaultProfile
+                ? ApplyProfileToSubscription(entity, await GetDefaultProfileAsync(userId, ct))
+                : entity;
+            await MarkExistingNotificationsAsDeliveredAsync(effective, now, ct);
+        }
+
         return entity;
     }
 
@@ -465,6 +473,51 @@ public sealed class AdminPushNotificationService
                 && !x.Success)
             .SortByDescending(x => x.CreatedAt)
             .FirstOrDefaultAsync(ct);
+    }
+
+    private async Task MarkExistingNotificationsAsDeliveredAsync(AdminPushSubscription subscription, DateTime enabledAt, CancellationToken ct)
+    {
+        var filter = Builders<AdminNotification>.Filter.Eq(x => x.Status, "open");
+        filter &= Builders<AdminNotification>.Filter.Or(
+            Builders<AdminNotification>.Filter.Eq(x => x.TargetUserId, null),
+            Builders<AdminNotification>.Filter.Eq(x => x.TargetUserId, subscription.UserId));
+        filter &= Builders<AdminNotification>.Filter.Or(
+            Builders<AdminNotification>.Filter.Eq(x => x.ExpiresAt, null),
+            Builders<AdminNotification>.Filter.Gt(x => x.ExpiresAt, enabledAt));
+        filter &= Builders<AdminNotification>.Filter.Lte(x => x.CreatedAt, enabledAt);
+
+        var candidates = await _db.AdminNotifications
+            .Find(filter)
+            .SortByDescending(x => x.CreatedAt)
+            .Limit(500)
+            .ToListAsync(ct);
+
+        if (candidates.Count == 0) return;
+
+        var logs = new List<AdminPushDeliveryLog>();
+        foreach (var notification in candidates)
+        {
+            if (!MatchesTopic(subscription.TopicKey, notification)) continue;
+            if (await HasSuccessfulDeliveryAsync(subscription, notification.Id, ct)) continue;
+
+            logs.Add(new AdminPushDeliveryLog
+            {
+                UserId = subscription.UserId,
+                SubscriptionId = subscription.Id,
+                NotificationId = notification.Id,
+                TopicKey = subscription.TopicKey,
+                ChannelType = subscription.ChannelType,
+                Method = "BASELINE",
+                RequestUrl = "baseline://subscription-enabled",
+                Success = true,
+                ErrorMessage = "订阅开启前已有通知，已作为历史通知跳过外部推送",
+                DurationMs = 0,
+                CreatedAt = enabledAt,
+            });
+        }
+
+        if (logs.Count > 0)
+            await _db.AdminPushDeliveryLogs.InsertManyAsync(logs, cancellationToken: CancellationToken.None);
     }
 
     private static IEnumerable<AdminPushSubscription> PickLatestEnabledSubscriptions(IEnumerable<AdminPushSubscription> subscriptions)
@@ -735,8 +788,7 @@ public sealed class AdminPushNotificationService
         if (topicKey.Equals("user-voice", StringComparison.OrdinalIgnoreCase))
             return source.Equals("user-voice", StringComparison.OrdinalIgnoreCase)
                 || source.Equals("team-activity-voice", StringComparison.OrdinalIgnoreCase)
-                || source.Contains("voice", StringComparison.OrdinalIgnoreCase)
-                || source.Contains("feedback", StringComparison.OrdinalIgnoreCase);
+                || source.Equals("user-feedback", StringComparison.OrdinalIgnoreCase);
 
         if (topicKey.Equals("api-request-alert", StringComparison.OrdinalIgnoreCase))
             return source.Equals("api-request-alert", StringComparison.OrdinalIgnoreCase)
@@ -850,6 +902,7 @@ public sealed class AdminPushNotificationService
             "admin-notice" => "admin-message",
             "user-voice" => "user-voice",
             "team-activity-voice" => "user-voice",
+            "user-feedback" => "user-voice",
             "api-request-alert" => "api-request-alert",
             "api-request-log" => "api-request-alert",
             "gateway-alert" => "api-request-alert",
@@ -858,8 +911,6 @@ public sealed class AdminPushNotificationService
             "open-platform" => "system-alert",
             _ when source.Contains("expire", StringComparison.OrdinalIgnoreCase) => "server-expiry",
             _ when source.Contains("expiry", StringComparison.OrdinalIgnoreCase) => "server-expiry",
-            _ when source.Contains("voice", StringComparison.OrdinalIgnoreCase) => "user-voice",
-            _ when source.Contains("feedback", StringComparison.OrdinalIgnoreCase) => "user-voice",
             _ when source.Contains("api", StringComparison.OrdinalIgnoreCase) => "api-request-alert",
             _ => "system-alert",
         };
@@ -1040,6 +1091,25 @@ public sealed class AdminPushNotificationService
 
     private static string? ResolveDerivedPreviewBaseUrl(IConfiguration configuration)
     {
+        var hasExplicitPreviewSignal = HasAnyConfigValue(
+            configuration,
+            "MAP_PREVIEW_BRANCH",
+            "VITE_GIT_BRANCH",
+            "AGENT_WORKSPACE_GIT_REF",
+            "GIT_BRANCH",
+            "AgentWorkspace:GitRef",
+            "MAP_PROJECT_SLUG",
+            "AGENT_WORKSPACE_PROJECT_SLUG",
+            "AgentWorkspace:ProjectSlug",
+            "AGENT_WORKSPACE_GITHUB_REPOSITORY",
+            "GITHUB_REPOSITORY",
+            "AgentWorkspace:GitHubRepository",
+            "MAP_PREVIEW_DOMAIN",
+            "CDS_PREVIEW_DOMAIN",
+            "PREVIEW_DOMAIN",
+            "PreviewDomain");
+        if (!hasExplicitPreviewSignal) return null;
+
         var workspace = AgentWorkspace.Resolve(configuration);
         var branch = FirstConfigValue(
                 configuration,
@@ -1086,6 +1156,17 @@ public sealed class AdminPushNotificationService
         }
 
         return null;
+    }
+
+    private static bool HasAnyConfigValue(IConfiguration configuration, params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            if (!string.IsNullOrWhiteSpace(configuration[key]))
+                return true;
+        }
+
+        return false;
     }
 
     private static string EscapeXml(string value)

@@ -313,6 +313,54 @@ public sealed class AdminPushNotificationServiceTests
     }
 
     [Fact]
+    public async Task DispatchPendingAsync_BarkDoesNotDeriveMainPreviewUrlWithoutPreviewEnvironment()
+    {
+        var testDb = await AdminPushTestDatabase.TryCreateAsync();
+        if (testDb == null) return;
+
+        try
+        {
+            var http = new RecordingHttpClientFactory();
+            var service = CreateService(testDb.Context, http, EmptyConfiguration);
+
+            await testDb.Context.AdminPushSubscriptions.InsertOneAsync(new AdminPushSubscription
+            {
+                UserId = "u1",
+                TopicKey = "defect-management",
+                Enabled = true,
+                UseDefaultProfile = false,
+                ChannelType = "bark",
+                Method = "GET",
+                BarkKey = "key",
+                BarkServerUrl = "https://example.com",
+                BarkUrlTemplate = "{{actionUrl}}",
+            });
+            await testDb.Context.AdminNotifications.InsertOneAsync(new AdminNotification
+            {
+                Id = "n-no-preview-action",
+                Key = "k-no-preview-action",
+                Title = "收到新缺陷：DEF-3",
+                Message = "需要处理",
+                Source = "defect-agent",
+                Status = "open",
+                TargetUserId = "u1",
+                ActionUrl = "/defect-agent?id=no-preview",
+                CreatedAt = DateTime.UtcNow,
+            });
+
+            await service.DispatchPendingAsync(CancellationToken.None);
+
+            var request = Assert.Single(http.Requests);
+            var query = QueryHelpers.ParseQuery(request.Uri.Query);
+            Assert.Equal("/defect-agent?id=no-preview", query["url"]);
+        }
+        finally
+        {
+            await testDb.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task DispatchPendingAsync_DoesNotPushDefectReminderNotifications()
     {
         var testDb = await AdminPushTestDatabase.TryCreateAsync();
@@ -367,6 +415,111 @@ public sealed class AdminPushNotificationServiceTests
             var logs = await testDb.Context.AdminPushDeliveryLogs.Find(x => true).ToListAsync();
             Assert.Single(logs);
             Assert.Equal("n1", logs[0].NotificationId);
+        }
+        finally
+        {
+            await testDb.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task DispatchPendingAsync_DoesNotRouteGenericFeedbackSourceToUserVoice()
+    {
+        var testDb = await AdminPushTestDatabase.TryCreateAsync();
+        if (testDb == null) return;
+
+        try
+        {
+            var http = new RecordingHttpClientFactory(HttpStatusCode.OK);
+            var service = CreateService(testDb.Context, http);
+
+            await testDb.Context.AdminPushSubscriptions.InsertOneAsync(new AdminPushSubscription
+            {
+                UserId = "u1",
+                TopicKey = "user-voice",
+                Enabled = true,
+                ChannelType = "bark",
+                BarkKey = "test-key",
+                BarkServerUrl = "https://example.com",
+            });
+            await testDb.Context.AdminNotifications.InsertOneAsync(new AdminNotification
+            {
+                Id = "n-feedback-noise",
+                Key = "feedback-noise",
+                Title = "反馈状态变化",
+                Message = "这不是用户之声",
+                Source = "message-feedback",
+                Status = "open",
+                TargetUserId = "u1",
+                CreatedAt = DateTime.UtcNow,
+            });
+
+            await service.DispatchPendingAsync(CancellationToken.None);
+
+            Assert.Empty(http.Requests);
+            var logs = await testDb.Context.AdminPushDeliveryLogs.Find(x => true).ToListAsync();
+            Assert.Empty(logs);
+        }
+        finally
+        {
+            await testDb.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task UpsertSubscriptionAsync_SkipsExistingBacklogWhenEnablingTopic()
+    {
+        var testDb = await AdminPushTestDatabase.TryCreateAsync();
+        if (testDb == null) return;
+
+        try
+        {
+            var http = new RecordingHttpClientFactory(HttpStatusCode.OK);
+            var service = CreateService(testDb.Context, http);
+            await testDb.Context.AdminNotifications.InsertOneAsync(new AdminNotification
+            {
+                Id = "n-old",
+                Key = "old-defect",
+                Title = "旧缺陷",
+                Message = "订阅开启前的旧通知",
+                Source = "defect-agent",
+                Status = "open",
+                TargetUserId = "u1",
+                CreatedAt = DateTime.UtcNow.AddMinutes(-10),
+            });
+
+            await service.UpsertSubscriptionAsync("u1", new AdminPushSubscriptionUpsertRequest
+            {
+                TopicKey = "defect-management",
+                Enabled = true,
+                UseDefaultProfile = false,
+                ChannelType = "bark",
+                Method = "GET",
+                BarkKey = "test-key",
+                BarkServerUrl = "https://example.com",
+            }, CancellationToken.None);
+
+            await service.DispatchPendingAsync(CancellationToken.None);
+            Assert.Empty(http.Requests);
+
+            await testDb.Context.AdminNotifications.InsertOneAsync(new AdminNotification
+            {
+                Id = "n-new",
+                Key = "new-defect",
+                Title = "新缺陷",
+                Message = "订阅开启后的新通知",
+                Source = "defect-agent",
+                Status = "open",
+                TargetUserId = "u1",
+                CreatedAt = DateTime.UtcNow.AddMinutes(1),
+            });
+            await service.DispatchPendingAsync(CancellationToken.None);
+
+            Assert.Single(http.Requests);
+            Assert.Contains("订阅开启后的新通知", WebUtility.UrlDecode(http.Requests[0].Uri.AbsoluteUri), StringComparison.Ordinal);
+            var logs = await testDb.Context.AdminPushDeliveryLogs.Find(x => true).ToListAsync();
+            Assert.Contains(logs, x => x.NotificationId == "n-old" && x.Method == "BASELINE" && x.Success);
+            Assert.Contains(logs, x => x.NotificationId == "n-new" && x.Success);
         }
         finally
         {
@@ -705,6 +858,8 @@ public sealed class AdminPushNotificationServiceTests
             ["App:FrontendBaseUrl"] = "https://admin-push-bark-protocol-codex-prd-agent.miduo.org",
         })
         .Build();
+
+    private static readonly IConfiguration EmptyConfiguration = new ConfigurationBuilder().Build();
 
     private sealed class AdminPushTestDatabase : IAsyncDisposable
     {
