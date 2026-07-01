@@ -27,7 +27,7 @@ namespace PrdAgent.Api.Controllers.Api;
 public class EmailAgentController : ControllerBase
 {
     private const string AppKey = "email-agent";
-    private const string AuthorName = "官方";
+    private const string AuthorName = "魏喜胜";
 
     /// <summary>系统预置模板 Id 前缀（区分 DB 里的用户模板）</summary>
     private const string SystemIdPrefix = "sys:";

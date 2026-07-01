@@ -469,7 +469,7 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
     routePath: '/email-agent',
     permission: 'email-agent.use',
     tags: ['邮件', '模板', '审批', '汇报', '通知'],
-    createdByName: '官方',
+    createdByName: '魏喜胜',
     wip: true,
     usageCount: 0,
     createdAt: new Date().toISOString(),
