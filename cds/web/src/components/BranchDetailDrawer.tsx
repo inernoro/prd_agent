@@ -1780,28 +1780,69 @@ export function BranchDetailDrawer({
                       </span>
                       <ExternalLink className="h-4 w-4 shrink-0 text-emerald-600/60 transition group-hover:text-emerald-600 dark:text-emerald-400/60 dark:group-hover:text-emerald-300" />
                     </a>
-                    {gatewayUrls.map((gw) => (
-                      <a
-                        key={gw.subdomain}
-                        href={gw.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        title={`打开 ${gw.name} 网关入口`}
-                        className="group flex items-center gap-3 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-3 py-2 transition hover:border-emerald-500/40 hover:bg-emerald-500/[0.08]"
-                      >
-                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[hsl(var(--surface-raised))] text-muted-foreground">
-                          <Server className="h-4 w-4" />
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="flex items-center gap-1.5">
-                            <span className="text-xs font-semibold text-foreground">网关入口</span>
-                            <span className="rounded bg-[hsl(var(--surface-raised))] px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{gw.subdomain}</span>
-                          </span>
-                          <span className="block min-w-0 truncate font-mono text-[11px] text-muted-foreground">{gw.url}</span>
-                        </span>
-                        <ExternalLink className="h-4 w-4 shrink-0 text-muted-foreground/60 transition group-hover:text-emerald-600" />
-                      </a>
-                    ))}
+                    {[...gatewayUrls]
+                      .sort((a, b) => {
+                        // 网关控制台(真实可登录页面)排在引擎/健康入口之前。
+                        const rank = (s: string) => (s.toLowerCase() === 'llmgw-web' ? 0 : 1);
+                        return rank(a.subdomain) - rank(b.subdomain) || a.subdomain.localeCompare(b.subdomain);
+                      })
+                      .map((gw) => {
+                        const isConsole = gw.subdomain.toLowerCase() === 'llmgw-web';
+                        return (
+                          <a
+                            key={gw.subdomain}
+                            href={gw.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            title={isConsole ? `打开 ${gw.name} 网关控制台` : `打开 ${gw.name} 网关引擎健康检查`}
+                            className={
+                              isConsole
+                                ? 'group flex items-center gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 transition hover:border-emerald-500/60 hover:bg-emerald-500/[0.18]'
+                                : 'group flex items-center gap-3 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-3 py-2 transition hover:border-emerald-500/40 hover:bg-emerald-500/[0.08]'
+                            }
+                          >
+                            <span
+                              className={
+                                isConsole
+                                  ? 'flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-emerald-600 text-white'
+                                  : 'flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[hsl(var(--surface-raised))] text-muted-foreground'
+                              }
+                            >
+                              {isConsole ? <Terminal className="h-4 w-4" /> : <Server className="h-4 w-4" />}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="flex items-center gap-1.5">
+                                <span
+                                  className={
+                                    isConsole
+                                      ? 'text-xs font-semibold text-emerald-700 dark:text-emerald-300'
+                                      : 'text-xs font-semibold text-foreground'
+                                  }
+                                >
+                                  {isConsole ? '网关控制台' : '网关引擎 · 健康'}
+                                </span>
+                                <span className="rounded bg-[hsl(var(--surface-raised))] px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{gw.subdomain}</span>
+                              </span>
+                              <span
+                                className={
+                                  isConsole
+                                    ? 'block min-w-0 truncate font-mono text-[11px] text-emerald-700/70 dark:text-emerald-300/70'
+                                    : 'block min-w-0 truncate font-mono text-[11px] text-muted-foreground'
+                                }
+                              >
+                                {gw.url}
+                              </span>
+                            </span>
+                            <ExternalLink
+                              className={
+                                isConsole
+                                  ? 'h-4 w-4 shrink-0 text-emerald-600/60 transition group-hover:text-emerald-600 dark:text-emerald-400/60 dark:group-hover:text-emerald-300'
+                                  : 'h-4 w-4 shrink-0 text-muted-foreground/60 transition group-hover:text-emerald-600'
+                              }
+                            />
+                          </a>
+                        );
+                      })}
                   </div>
                 </div>
               ) : null}
