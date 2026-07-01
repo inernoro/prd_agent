@@ -383,3 +383,8 @@ processed:
   - 2026-06-29_cds-branch-local-extra-services.md
   - 2026-06-29_cds-branch-network-isolation.md
   - 2026-06-29_cds-orphan-running-deploy-stuck.md
+  - 2026-06-25_llm-gateway-p1-protocol.md
+  - 2026-06-26_logs-mobile.md
+  - 2026-06-26_vision-detail-fix.md
+  - 2026-06-27_gateway-isolation-design.md
+  - 2026-06-27_gateway-phase0.md
