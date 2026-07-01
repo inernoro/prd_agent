@@ -987,7 +987,21 @@ builder.Services.AddScoped<ILLMClient>(sp =>
     var logWriter = sp.GetRequiredService<ILlmRequestLogWriter>();
     var ctxAccessor = sp.GetRequiredService<ILLMRequestContextAccessor>();
     var claudeLogger = sp.GetRequiredService<ILogger<ClaudeClient>>();
-    
+
+    // S3 直连收口：存在 enabled 主模型时，通用 ILLMClient 改经 ILlmGateway.CreateClient 走统一路由
+    // （网关内含池调度 + 协议/密钥/URL 解析 + 单次 Resolve）。行为保持：网关 ModelResolver 未配置池时
+    // legacy 直连兜底命中 chat→IsMain，与旧「主模型直连」落到同一模型；同时新增池路由能力。
+    // 仅当**没有**任何 enabled 主模型时，才落到下方旧的「活动 LLMConfig → 环境变量」直连兜底
+    // （这两级是网关 ModelResolver 不覆盖的路径，必须保留，否则纯 env 部署会失去可用客户端）。
+    var mainModelForRouting = db.LLMModels.Find(m => m.IsMain && m.Enabled).FirstOrDefault();
+    if (mainModelForRouting != null)
+    {
+        var gateway = sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>();
+        return gateway.CreateClient(
+            PrdAgent.Core.Models.AppCallerRegistry.Core.MainClient,
+            PrdAgent.Core.Models.ModelTypes.Chat);
+    }
+
     // 1. 优先：从数据库获取主模型 (IsMain=true)
     var mainModel = db.LLMModels.Find(m => m.IsMain && m.Enabled).FirstOrDefault();
     var mainEnablePromptCache = mainModel != null ? (mainModel.EnablePromptCache ?? true) : false;

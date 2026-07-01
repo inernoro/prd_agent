@@ -214,7 +214,10 @@ public static class GatewayHttpEndpoints
             DocumentHash: ctx?.DocumentHash,
             SystemPromptRedacted: null,
             RequestType: requestType,
-            AppCallerCode: appCallerCode));
+            AppCallerCode: appCallerCode,
+            // S2：MAP 侧 http 模式已把传输标记随 body.Context 过线，透传进作用域，
+            // 供 serving 端直连客户端（若有）读取；网关日志由 LlmGateway 直接读 request.Context 标注。
+            GatewayTransport: ctx?.GatewayTransport));
     }
 }
 

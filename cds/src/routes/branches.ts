@@ -38,6 +38,7 @@ import { classifyEnvKey } from '../config/known-env-keys.js';
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
 import { isAllowedCdsBranchName, isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { buildPreviewUrlForProject } from '../services/comment-template.js';
+import { ROUTABLE_SERVICE_STATUSES } from '../services/forwarder-route-publisher.js';
 import { maskSecrets as maskSecretsText, maskEnvRecord, maskBranchExtraProfilesEnv, isSensitiveKey, looksLikeUrlWithCredentials, shouldMask } from '../services/secret-masker.js';
 import { buildUnifiedBranchResources, type UnifiedBranchResource } from '../services/resources.js';
 import { fetchWithLockRetry } from '../services/git-fetch-retry.js';
@@ -12702,11 +12703,50 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const primaryRoot = rootDomains[0] || 'example.com';
     const previewUrls = aliases.map(a => `http://${a}.${primaryRoot}`);
     const defaultUrl = `http://${id}.${primaryRoot}`;
+
+    // Named gateway entries: build profiles that declare a `cds.subdomain` label get a
+    // standalone host `<previewSlug>-<subdomain>.<root>` routing all paths to that container
+    // (e.g. LLM gateway → <slug>-llmgw.<root>), distinct from the main app domain. Mirror the
+    // forwarder-route-publisher same-origin rules so the panel shows exactly the URLs the
+    // forwarder actually publishes: filter by routable status, dedupe first-wins on subdomain,
+    // and drop labels whose first DNS octet exceeds 63 chars (unresolvable + not covered by
+    // the wildcard cert). See forwarder-route-publisher.ts:271-315.
+    const project = stateService.getProject(entry.projectId);
+    const gwPreviewSlug = buildPreviewUrlForProject('', entry.branch, project, entry.projectId).previewSlug;
+    const gatewayUrls: Array<{ subdomain: string; name: string; url: string }> = [];
+    if (gwPreviewSlug) {
+      const profileById = new Map<string, BuildProfile>();
+      for (const bp of stateService.getEffectiveProfilesForBranch(entry)) {
+        profileById.set(bp.id, bp);
+      }
+      // Collect routable services, sorted by profileId so first-wins dedup is deterministic
+      // across object-key ordering changes (mirrors publisher's subdomainCandidates sort).
+      const routable = Object.entries(entry.services ?? {})
+        .filter(([, svc]) => svc?.hostPort && ROUTABLE_SERVICE_STATUSES.has(String(svc.status)))
+        .map(([profileId]) => profileId)
+        .sort((a, b) => a.localeCompare(b));
+      const seenSubdomains = new Set<string>();
+      for (const profileId of routable) {
+        const sub = profileById.get(profileId)?.subdomain;
+        if (!sub) continue;
+        if (seenSubdomains.has(sub)) continue;
+        const namedLabel = `${gwPreviewSlug}-${sub}`;
+        if (namedLabel.length > 63) continue; // RFC 1035 single-label limit + wildcard cert coverage
+        seenSubdomains.add(sub);
+        gatewayUrls.push({
+          subdomain: sub,
+          name: profileId,
+          url: `http://${namedLabel}.${primaryRoot}`,
+        });
+      }
+    }
+
     res.json({
       branchId: id,
       aliases,
       defaultUrl,
       previewUrls,
+      gatewayUrls,
       rootDomain: primaryRoot,
     });
   });

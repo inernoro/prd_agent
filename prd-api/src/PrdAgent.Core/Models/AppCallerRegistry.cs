@@ -113,6 +113,40 @@ public static class Desktop
 }
 
 /// <summary>
+/// 平台级通用客户端（S3 直连收口）：DI 注册的通用 ILLMClient 与 ModelDomainService 的按用途取客户端，
+/// 过去直连 new ClaudeClient/OpenAIClient 绕开池调度；改为经 ILlmGateway.CreateClient 走统一路由，
+/// 保留 legacy 直连兜底（ModelResolver 会按 chat→IsMain / intent→IsIntent / vision→IsVision 命中主模型）。
+/// </summary>
+public static class Core
+{
+    public const string AppName = "平台通用";
+
+    [AppCallerMetadata(
+        "通用主客户端-对话",
+        "平台级通用 ILLMClient（DI 注册），未指定专属用途时走主模型（chat→IsMain）",
+        ModelTypes = new[] { ModelTypes.Chat },
+        Category = "System"
+    )]
+    public const string MainClient = "prd-agent.main-client::chat";
+
+    [AppCallerMetadata(
+        "通用意图客户端-意图",
+        "平台级按用途取客户端（Intent），走意图模型（intent→IsIntent），缺失回退主模型",
+        ModelTypes = new[] { ModelTypes.Intent },
+        Category = "System"
+    )]
+    public const string IntentClient = "prd-agent.intent-client::intent";
+
+    [AppCallerMetadata(
+        "通用识图客户端-识图",
+        "平台级按用途取客户端（Vision），走识图模型（vision→IsVision），缺失回退主模型",
+        ModelTypes = new[] { ModelTypes.Vision },
+        Category = "System"
+    )]
+    public const string VisionClient = "prd-agent.vision-client::vision";
+}
+
+/// <summary>
 /// 产品管理智能体
 /// </summary>
 public static class Product

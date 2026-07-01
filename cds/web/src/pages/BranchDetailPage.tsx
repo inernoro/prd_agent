@@ -4,9 +4,11 @@ import {
   AlertTriangle,
   ArrowLeft,
   CheckCircle2,
+  ChevronDown,
   Code2,
   Copy,
   ExternalLink,
+  Router as RouterIcon,
   FileText,
   GitCommitHorizontal,
   Loader2,
@@ -22,6 +24,7 @@ import {
 
 import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
+import { DropdownMenu, DropdownItem, DropdownLabel, DropdownDivider } from '@/components/ui/dropdown-menu';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DisclosurePanel } from '@/components/ui/disclosure-panel';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -148,10 +151,17 @@ interface ProfileOverridesResponse {
   profiles: ProfileRow[];
 }
 
+interface GatewayUrl {
+  subdomain: string;
+  name: string;
+  url: string;
+}
+
 interface AliasResponse {
   aliases: string[];
   defaultUrl?: string;
   previewUrls?: string[];
+  gatewayUrls?: GatewayUrl[];
   rootDomain?: string;
 }
 
@@ -1209,15 +1219,46 @@ export function BranchDetailPage(): JSX.Element {
                 </a>
               </Button>
               {state.status === 'ok' && state.branch.status === 'running' ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  title="在新标签页打开预览"
-                  onClick={() => void openPreview()}
-                >
-                  <ExternalLink />
-                  新标签
-                </Button>
+                (state.aliases.gatewayUrls?.length ?? 0) > 0 ? (
+                  <DropdownMenu
+                    align="end"
+                    width={280}
+                    trigger={
+                      <Button variant="ghost" size="sm" title="打开主应用入口或网关入口">
+                        <ExternalLink />
+                        新标签
+                        <ChevronDown className="ml-0.5 opacity-70" />
+                      </Button>
+                    }
+                  >
+                    <DropdownItem onSelect={() => void openPreview()}>
+                      <ExternalLink />
+                      打开主应用入口
+                    </DropdownItem>
+                    <DropdownDivider />
+                    <DropdownLabel>网关入口</DropdownLabel>
+                    {state.aliases.gatewayUrls!.map((gw) => (
+                      <DropdownItem
+                        key={gw.subdomain}
+                        onSelect={() => window.open(gw.url, '_blank', 'noopener,noreferrer')}
+                      >
+                        <RouterIcon />
+                        <span className="min-w-0 flex-1 truncate">{gw.name}</span>
+                        <span className="shrink-0 font-mono text-xs text-muted-foreground">{gw.subdomain}</span>
+                      </DropdownItem>
+                    ))}
+                  </DropdownMenu>
+                ) : (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    title="在新标签页打开预览"
+                    onClick={() => void openPreview()}
+                  >
+                    <ExternalLink />
+                    新标签
+                  </Button>
+                )
               ) : null}
               {state.status === 'ok' ? (
                 <Button asChild variant="ghost" size="sm" title="项目设置">
@@ -1284,10 +1325,41 @@ export function BranchDetailPage(): JSX.Element {
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      <Button onClick={openPreview} disabled={state.branch.status !== 'running'}>
-                        <ExternalLink />
-                        打开预览
-                      </Button>
+                      {state.branch.status === 'running' && (state.aliases.gatewayUrls?.length ?? 0) > 0 ? (
+                        <DropdownMenu
+                          align="start"
+                          width={280}
+                          trigger={
+                            <Button title="打开主应用入口或网关入口">
+                              <ExternalLink />
+                              打开预览
+                              <ChevronDown className="ml-0.5 opacity-70" />
+                            </Button>
+                          }
+                        >
+                          <DropdownItem onSelect={() => void openPreview()}>
+                            <ExternalLink />
+                            打开主应用入口
+                          </DropdownItem>
+                          <DropdownDivider />
+                          <DropdownLabel>网关入口</DropdownLabel>
+                          {state.aliases.gatewayUrls!.map((gw) => (
+                            <DropdownItem
+                              key={gw.subdomain}
+                              onSelect={() => window.open(gw.url, '_blank', 'noopener,noreferrer')}
+                            >
+                              <RouterIcon />
+                              <span className="min-w-0 flex-1 truncate">{gw.name}</span>
+                              <span className="shrink-0 font-mono text-xs text-muted-foreground">{gw.subdomain}</span>
+                            </DropdownItem>
+                          ))}
+                        </DropdownMenu>
+                      ) : (
+                        <Button onClick={openPreview} disabled={state.branch.status !== 'running'}>
+                          <ExternalLink />
+                          打开预览
+                        </Button>
+                      )}
                       <Button variant="outline" onClick={() => void deploy()}>
                         <Play />
                         部署全部
@@ -1540,7 +1612,7 @@ export function BranchDetailPage(): JSX.Element {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-3 p-5 pt-0 text-sm">
-                  <Field label="默认地址" value={state.aliases.defaultUrl || multiPreviewUrl(state.branch, state.config) || '未配置'} />
+                  <Field label="主应用入口" value={state.aliases.defaultUrl || multiPreviewUrl(state.branch, state.config) || '未配置'} />
                   {state.aliases.aliases.length > 0 ? (
                     <div className="space-y-2">
                       <div className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">别名</div>
@@ -1555,6 +1627,34 @@ export function BranchDetailPage(): JSX.Element {
                       暂无别名。别名保存后立即在代理层生效，不需要重部署。
                     </div>
                   )}
+
+                  {/* 网关入口:声明了 cds.subdomain 的服务(如 LLM 网关)获得独立命名域名
+                      `<previewSlug>-<subdomain>.<root>`,可绕过主应用直连该容器。 */}
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-normal text-muted-foreground">
+                      <RouterIcon className="h-3.5 w-3.5" />
+                      网关入口
+                    </div>
+                    {(state.aliases.gatewayUrls?.length ?? 0) > 0 ? (
+                      state.aliases.gatewayUrls!.map((gw) => (
+                        <a
+                          key={gw.subdomain}
+                          href={gw.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-2 break-all cds-surface-sunken cds-hairline px-3 py-2 transition-colors hover:bg-[hsl(var(--surface-raised))]"
+                          title={`打开 ${gw.name} 网关入口`}
+                        >
+                          <span className="min-w-0 flex-1 break-all">{gw.url}</span>
+                          <span className="shrink-0 rounded bg-primary/15 px-1.5 py-0.5 font-mono text-xs text-foreground">{gw.name}</span>
+                        </a>
+                      ))
+                    ) : (
+                      <div className="rounded-md border border-dashed border-border px-3 py-3 text-muted-foreground">
+                        暂无网关入口。为服务在 compose 里声明 <code className="font-mono">cds.subdomain</code> 标签，即可获得独立命名域名（如 LLM 网关），无需埋在主应用路径下。
+                      </div>
+                    )}
+                  </div>
                 </CardContent>
               </Card>
 

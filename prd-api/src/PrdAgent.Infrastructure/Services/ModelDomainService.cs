@@ -42,61 +42,24 @@ public class ModelDomainService : IModelDomainService
         _claudeLogger = claudeLogger;
     }
 
-    public async Task<ILLMClient> GetClientAsync(ModelPurpose purpose, CancellationToken ct = default)
+    public Task<ILLMClient> GetClientAsync(ModelPurpose purpose, CancellationToken ct = default)
     {
-        // 仅选启用模型；用途模型缺失时回退主模型
-        var mainModel = await _db.LLMModels.Find(m => m.IsMain && m.Enabled).FirstOrDefaultAsync(ct);
-        var model = await FindPurposeModelAsync(purpose, ct) ?? mainModel;
-
-        if (model == null)
+        // S3 直连收口：过去这里直接 new ClaudeClient/OpenAIClient 绕开网关池调度，
+        // 现改为经 ILlmGateway.CreateClient 走统一路由。行为保持：网关的 ModelResolver 在未配置
+        // 专属/默认池时命中 legacy 直连兜底（chat→IsMain / intent→IsIntent / vision→IsVision /
+        // generation→IsImageGen），与旧「按用途取模型、缺失回退主模型」语义一致；协议/密钥/URL 解析
+        // 也统一在网关内完成，不再重复计算。maxTokens/temperature 走网关默认，与旧值（4096/0.2）对齐。
+        var (appCallerCode, modelType) = purpose switch
         {
-            // 极端情况：没有任何主模型，返回一个“空”的客户端不会更好；这里直接抛错由上层转 LLM_ERROR
-            throw new InvalidOperationException("未配置可用模型");
-        }
+            ModelPurpose.Intent => (AppCallerRegistry.Core.IntentClient, ModelTypes.Intent),
+            ModelPurpose.Vision => (AppCallerRegistry.Core.VisionClient, ModelTypes.Vision),
+            // ImageGen 走生图链路（raw），此处按对话客户端场景不适用；统一回退主客户端（chat）以保持可用。
+            ModelPurpose.ImageGen => (AppCallerRegistry.Core.MainClient, ModelTypes.Chat),
+            _ => (AppCallerRegistry.Core.MainClient, ModelTypes.Chat),
+        };
 
-        // 业务规则：不再使用“全局开关”，而是以“主模型是否启用 Prompt Cache”作为总开关；
-        // 同时仍尊重当前模型的 enablePromptCache（不是所有模型都适合开启 cache）。
-        var mainEnablePromptCache = mainModel == null ? false : (mainModel.EnablePromptCache ?? true);
-
-        var (apiUrl, apiKey, platformType, platformId, platformName) = await ResolveApiConfigForModelAsync(model, ct);
-        if (string.IsNullOrWhiteSpace(apiUrl) || string.IsNullOrWhiteSpace(apiKey))
-        {
-            throw new InvalidOperationException("模型 API 配置不完整");
-        }
-
-        var httpClient = _httpClientFactory.CreateClient("LoggedHttpClient");
-        var apiUrlTrim = apiUrl.Trim();
-        // 统一规则：BaseAddress 必须以 "/" 结尾，否则 Uri 合并会丢最后一段路径（例如 /api/v3 + v1/... 会变成 /api/v1/...）
-        // 对于以 "#" 结尾的"完整 endpoint"，OpenAIClient 会使用绝对 URL，不依赖 BaseAddress。
-        httpClient.BaseAddress = new Uri(apiUrlTrim.TrimEnd('#').TrimEnd('/') + "/");
-
-        var enablePromptCache = mainEnablePromptCache && (model.EnablePromptCache ?? true);
-        var maxTokens = model.MaxTokens.HasValue && model.MaxTokens.Value > 0 ? model.MaxTokens.Value : DefaultMaxTokens;
-        if (platformType == "anthropic" || apiUrl.Contains("anthropic.com"))
-        {
-            return new ClaudeClient(httpClient, apiKey, model.ModelName, maxTokens, 0.2, enablePromptCache, _claudeLogger, _logWriter, _ctxAccessor, platformId, platformName);
-        }
-
-        // 默认 OpenAI 兼容：按 baseURL 规则选择 chat/completions 的最终调用方式
-        // - baseURL 以 "/" 结尾：请求 path = "chat/completions"
-        // - baseURL 以 "#" 结尾：请求 endpoint = "{baseURL 去掉#}"（不拼接）
-        // - 其他：请求 path = "v1/chat/completions"
-        var chatEndpointOrPath = apiUrlTrim.EndsWith("#", StringComparison.Ordinal)
-            ? apiUrlTrim.TrimEnd('#')
-            : (apiUrlTrim.EndsWith("/", StringComparison.Ordinal) ? "chat/completions" : "v1/chat/completions");
-
-        return new OpenAIClient(
-            httpClient,
-            apiKey,
-            model.ModelName,
-            maxTokens,
-            0.2,
-            enablePromptCache,
-            _logWriter,
-            _ctxAccessor,
-            chatEndpointOrPath,
-            platformId,
-            platformName);
+        var client = _gateway.CreateClient(appCallerCode, modelType, maxTokens: DefaultMaxTokens, temperature: 0.2);
+        return Task.FromResult(client);
     }
 
     public async Task<string> SuggestGroupNameAsync(string? fileName, string snippet, CancellationToken ct = default)
@@ -212,43 +175,8 @@ public class ModelDomainService : IModelDomainService
         }
         return title;
     }
-
-    private async Task<LLMModel?> FindPurposeModelAsync(ModelPurpose purpose, CancellationToken ct)
-    {
-        var q = purpose switch
-        {
-            ModelPurpose.Intent => _db.LLMModels.Find(m => m.IsIntent && m.Enabled),
-            ModelPurpose.Vision => _db.LLMModels.Find(m => m.IsVision && m.Enabled),
-            ModelPurpose.ImageGen => _db.LLMModels.Find(m => m.IsImageGen && m.Enabled),
-            _ => _db.LLMModels.Find(m => m.IsMain && m.Enabled)
-        };
-        return await q.FirstOrDefaultAsync(ct);
-    }
-
-    private async Task<(string? apiUrl, string? apiKey, string? platformType, string? platformId, string? platformName)> ResolveApiConfigForModelAsync(
-        LLMModel model,
-        CancellationToken ct)
-    {
-        string? apiUrl = model.ApiUrl;
-        string? apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(model.ApiKeyEncrypted, _config);
-        string? platformType = null;
-        string? platformId = model.PlatformId;
-        string? platformName = null;
-
-        if (model.PlatformId != null)
-        {
-            var platform = await _db.LLMPlatforms.Find(p => p.Id == model.PlatformId).FirstOrDefaultAsync(ct);
-            platformType = platform?.PlatformType?.ToLowerInvariant();
-            platformName = platform?.Name;
-            if (platform != null && (string.IsNullOrEmpty(apiUrl) || string.IsNullOrEmpty(apiKey)))
-            {
-                apiUrl ??= platform.ApiUrl;
-                apiKey ??= ApiKeyCryptoKeyRing.DecryptPlainOrNull(platform.ApiKeyEncrypted, _config);
-            }
-        }
-
-        return (apiUrl, apiKey, platformType, platformId, platformName);
-    }
+    // S3 直连收口后，原 FindPurposeModelAsync / ResolveApiConfigForModelAsync（直连选模型 + 解析 API 配置）
+    // 已由网关 ModelResolver 内部统一承担，此处不再重复实现。GetClientAsync 经 _gateway.CreateClient 路由。
 
     private static async Task<string> CollectToTextAsync(
         ILLMClient client,

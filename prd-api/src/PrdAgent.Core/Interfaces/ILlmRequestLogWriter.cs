@@ -51,7 +51,12 @@ public record LlmLogStart(
     // 健康探活标记
     bool? IsHealthProbe = null,
     /// <summary>本次请求是否流式（来自请求体 stream 字段）</summary>
-    bool? IsStreaming = null);
+    bool? IsStreaming = null,
+    /// <summary>
+    /// 网关传输路径观测标记（S2）：inproc / http / shadow / direct。
+    /// 由构建日志的位置权威标注；为 null 时写入器兜底为调用上下文的 GatewayTransport（默认 direct）。
+    /// </summary>
+    string? GatewayTransport = null);
 
 public record LlmLogDone(
     int? StatusCode,

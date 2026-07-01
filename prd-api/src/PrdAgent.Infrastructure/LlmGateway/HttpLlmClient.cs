@@ -87,6 +87,8 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
             ViewRole = current.ViewRole,
             DocumentChars = current.DocumentChars,
             DocumentHash = current.DocumentHash,
+            // S2 观测：client-stream 走跨进程，标记 http，serving 端据此标注日志传输通道。
+            GatewayTransport = PrdAgent.Core.Models.GatewayTransports.Http,
         };
 
         var payload = new
