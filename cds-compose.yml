@@ -279,11 +279,11 @@ services:
       LLMGW_ADMIN_USER: "${CDS_USERNAME}"
       LLMGW_ADMIN_PASSWORD: "${CDS_PASSWORD}"
     labels:
-      # 安全：CDS 预览**不公开 path-route** 网关 console。它用固定占位 admin 密码 + JWT 密钥，若对外
-      # 路由到 `/gw/`，任何可达 *.miduo.org 预览的人都能用已知密码登录读 LLM 日志（提示词/回答）。
-      # 故只在项目内网起容器（api 经 docker 名 http://llmgw:8090 内部可达），不发布公开路由；
-      # no-http-readiness 让 CDS 不经公开路由探活。公开命名 URL + per-deploy 生成密钥 + 访问控制属波3 专项。
-      cds.no-http-readiness: "true"
+      # 公网命名 URL（用户 2026-07-01 要求）：登录走 ${CDS_USERNAME}/${CDS_PASSWORD}（与 CDS 一致、非仓库默认），
+      # JWT 签名密钥 LLMGW_JWT_SECRET 已在项目变量（scope=prd-agent）设为强随机（非仓库默认，杜绝 JWT 伪造绕过登录），
+      # 故可安全对外发布命名子域。<previewSlug>-llmgw.<root> 根路径直达 8090 网关 console（登录后看 LLM 日志）。
+      cds.subdomain: "llmgw"
+      cds.readiness-path: "/gw/healthz"
 
   # 独立 LLM serving 网关 llmgw-serve（DI 承载现有 LlmGateway/ModelResolver，HTTP 暴露 /gw/v1/*）。
   # 与 api 同连一份 CDS 托管 Mongo；resolve 解密平台 key 用全局 x-cds-env.ApiKeyCrypto__Secret，
@@ -312,11 +312,11 @@ services:
       # 否则用非仓库默认的内网 fallback。预览默认 LlmGateway:Mode=inproc，api 根本不调本服务。
       LlmGwServe__ApiKey: "${LLMGW_SERVE_API_KEY:-llmgw-serve-cds-preview-internal-4d8b1e3a}"
     labels:
-      # 安全：与 llmgw console 同处理——CDS 预览**不公开 path-route** serving 网关。它用固定占位 M2M key，
-      # 若对外路由到 `/gw/v1/`，任何可达 *.miduo.org 预览的人都能用已知 key 调 /gw/v1/send 烧 provider 额度
-      # （无鉴权 LLM 调用）。故只在项目内网起容器（api 经 docker 名 http://llmgw-serve:8091 内部可达），
-      # 不发布公开路由；no-http-readiness 让 CDS 不经公开路由探活。公开命名 URL + per-deploy 生成密钥属波3 专项。
-      cds.no-http-readiness: "true"
+      # 公网命名 URL（用户 2026-07-01 要求）：LLMGW_SERVE_API_KEY 已在项目变量（scope=prd-agent）设为强随机
+      # （非仓库默认）。/gw/v1/* 走 X-Gateway-Key 门（无 key 一律 401），故对外发布命名子域后仍需密钥才能调
+      # /gw/v1/send，不再是"任何人可烧额度"。<previewSlug>-llmgw-serve.<root> 根路径直达 8091 serving 网关。
+      cds.subdomain: "llmgw-serve"
+      cds.readiness-path: "/gw/v1/healthz"
 
   # ── Infrastructure Services (无相对路径 mount) ──
 
