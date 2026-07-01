@@ -10,3 +10,4 @@
 | fix | prd-api | 评审修复：A 类直连撤回后移除未使用的 AppCallerRegistry.Core 3 个 caller（main/intent/vision-client），恢复注册表黄金快照一致；直连守卫 baseline 补回 ModelDomainService.cs=2 |
 | fix | prd-api | 评审修复：HttpLlmClient 无环境 LlmRequestContext（无作用域后台/工具型 CreateClient）时也发「只带 transport=http」的最小 Context，避免 serving 端收不到 Context 默认回落 inproc 污染传输证据（Codex P2） |
 | fix | cds | 评审修复：分支详情命名入口落地路径只特判已知网关子域（llmgw→/gw/healthz、llmgw-serve→/gw/v1/healthz），其余命名服务（docs/metrics 等）用 profile readiness path 或落根 /，不再强行套 /gw/* 导致 404（Codex P2） |
+| fix | cds | 评审修复：computeBranchGatewayUrls 抽为 GET/PUT /subdomain-aliases 共用 SSOT，PUT 保存别名后也返回 gatewayUrls，避免面板「网关入口」块 + 预览下拉在保存后消失到整页刷新才恢复（Bugbot Medium）；命名入口 profile 过 resolveEffectiveProfile（对齐 forwarder），应用分支级 readinessProbe/subdomain override，落地路径不再与实际路由漂移（Bugbot Low） |
