@@ -27,6 +27,7 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
 | **cdscli** | 取预览域名 + report/report-folder 命令 | 仓库内 `.claude/skills/cds/cli/cdscli.py`;没有就在 config 填 `previewUrlOverride` |
 
 `report.mode=local` 时**只需 Playwright + Python**,不需要任何密钥/网络——报告写本机临时目录,默认 `/tmp/map-acceptance-local`。不得写入仓库内 `doc/acceptance/`。
+`report.format=html` 是每日验收默认交付格式。报告正文仍用 Markdown 写作,归档脚本会转换成交互 HTML,提供证据导航、指标卡、证据缩略图、表格筛选、章节折叠和图号锚点跳转。HTML 与 Markdown 必须使用不同模板:Markdown 保持审计文本结构不变,HTML 才启用更强的视觉和交互阅读层。只有下游系统明确要求 Markdown 时才改 `format=md`。
 
 接入新仓库:见文末"跨仓库复用",改 `acceptance.config.json` 一处即可。
 
@@ -102,6 +103,25 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
 - 15 分钟后仍未 ready,这轮每日验收判链路可运行但产品环境不可验,生成线上失败报告并通知 Slack。不得把登录页、构建中页面、503 页面、CDS shell 截图当作功能证据。
 - 取证过程中遇到 503/502/preview not ready,必须在报告「重试记录」写清每次 URL、HTTP 状态、时间和最终结论。偶发一次后重试通过可以继续,但首试失败不能从报告里抹掉。
 
+## CDS 平台与 CDS Agent 证据边界
+
+`CDS` 和 `CDS Agent` 是两类验收对象,不能互相替代:
+
+- `CDS 平台`: `cds/` 下的部署、预览、报告中心、branch network、extra-services、self-update、scheduler、proxy、smoke、CDS CLI/API 等。有效证据是 cdscli/API branch status、deploy/smoke 输出、`/reports` 页面、preview routing 结果、服务状态、日志或报告归档结果。
+- `CDS Agent`: prd-admin 的 `/cds-agent` 工作台、CdsAgent adapter/event renderer、runtime/session/tool-call 流程。有效证据是 `/cds-agent` 页面、会话状态、runtime events、相关 API 响应。
+- 每日验收报告里,凡是 `CDS 预览/部署/报告中心/分支网络/extra-services/self-update/scheduler/proxy` 断言,不得用 `CDS Agent 页面可见` 或 `/cds-agent` 截图判通过。若两者都变更,必须拆成两个改动断言和两条证据链。
+- `CDS Agent 入口可见` 最多证明 CDS Agent 工作台入口可见,不能证明 CDS 平台部署、预览、报告归档或 branch ready。
+
+## 交互 HTML 报告（每日验收默认）
+
+每日验收报告应交付 HTML,不是纯 Markdown 长文:
+
+- 写作源仍是 Markdown 模板,继续使用 `{{IMG:name}}`、证据表、缺陷表和截图回读表。
+- `format=md` 输出写作源的原始审计结构,保持现有 Markdown 格式不变。
+- `format=html` 使用独立阅读模板,归档脚本负责生成顶部结论区、指标卡、证据缩略图、左侧证据导航、图号锚点、表格搜索、按未通过/有缺陷/未覆盖过滤、章节折叠。
+- HTML 交互只用于阅读和定位证据,不得把验收结论只藏在 JS 状态里。核心结论、缺陷、未覆盖项仍必须以正文表格存在,保证 raw 内容和跨系统同步可读。
+- 不要手写复杂前端应用或远程依赖。报告 HTML 必须单文件可归档,截图走 CDS report assets,总正文仍受 10MB 上限约束。
+
 ## 线上报告与通知门禁（自动化/每日验收强制）
 
 每日自动化的交付入口必须是线上可打开地址:
@@ -122,6 +142,7 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
 - `关联性` 只允许: `相关`、`弱相关`、`无关`、`未覆盖`。只有 `相关` 可以支撑 pass；`弱相关` 最多支撑有条件通过；`无关/未覆盖` 必须进入缺陷或未覆盖项。
 - `列表可见`、`页面可达`、`按钮可见` 只证明入口/承载可用。除非提交本身改的是入口、路由、布局或按钮显隐，否则不得作为该提交通过证据。
 - 同步、恢复、上传/压缩、鉴权、异步任务、外部下载、部署/canary、状态流转、数据写入类改动必须至少有一个动作/结果证据或 API/log/state 证据。无法安全触发时标 `未深测`，不能用邻近页面截图顶替。
+- CDS 平台改动必须走 CDS 平台证据,不能用 CDS Agent 页面顶替。报告中出现“CDS 预览/部署/报告/branch/extra-services/self-update/scheduler/proxy”与“CDS Agent 页面”绑定为通过证据,属于 `无关证据`,必须改为未覆盖或补 CDS 平台证据。
 - 截图 caption 和图内标签必须写行为断言,不是写模块名。例如正确: `知识库同步：点击同步后同步日志新增成功记录`;错误: `知识库列表：列表可见`。
 
 ## 页面优先证据分层（2026-06-20 反哺）
@@ -233,13 +254,14 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
    - **每日验收报告结构(2026-06-18 固化,2026-06-20 修订)**:每日/昨日验收类报告必须先给类似周报的「昨日工作总结」,说明昨天做了什么、按模块覆盖了哪些内容、哪些没覆盖;紧接「PR/commit 到结果映射」「改动断言到证据表」「改动断言表」「影响面矩阵」「融合测试设计」「证明力矩阵」「覆盖缺口」和「覆盖矩阵」,再按大章节逐页验收。正文**不放目录**,避免目录占位替代证据链。页面章节顺序建议:总结 → PR/commit 到结果映射 → 改动断言到证据表 → 改动断言表 → 影响面矩阵 → 融合测试设计 → 证明力矩阵 → 覆盖缺口 → 覆盖矩阵 → 验收地址 → DoD/自测 → 需求一一对应 → 用例表 → 截图回读检查 → 页面验收章节 → 重试记录 → 缺陷清单 → 总结论。不得直接堆截图。
    - **每日验收必须写明深度预算(2026-06-20 修订)**:每日/昨日验收类报告必须在「覆盖矩阵」前写「改动规模与深度预算」,包含 commit 数、PR 数、模块数、高风险模块、计划证据数、实际证据数。数据来源优先用 `daily_scope.py` 的 JSON。证据不足时顶部结论必须降级为 `广度冒烟` 或 `不通过`,不能把少量入口截图包装成深度验收。
    - **每日验收必须内容充裕(2026-06-21 修订)**:每日/昨日验收类报告不能只有截图清单和短结论。必须充分展开昨日工作总结、commit/PR 映射、改动断言到证据、页面优先分层、覆盖缺口、缺陷清单和总缺口账本。复杂日报里出现 `同上`、`见上文`、`略`、`待补`、`按常规` 等空泛填充,视为半成品。
+   - **每日验收证据引用必须可点击(2026-07-01 修订)**:`PR/commit 到结果映射`、`改动断言到证据表`、`覆盖矩阵`、`需求一一对应表`、`验收用例`、`缺陷清单`、`截图回读检查` 等表格里的证据列,不要只写裸 `图01`。优先写完整截图名锚点,例如 `{{IMG:01-login-home}}` 对应 `[图01](#fig-01-login-home)`；多图写 `[图01](#fig-01-login-home)、[图02](#fig-02-voc)`。`archive_report.py` 会给每个 `{{IMG:<name>}}` 截图自动注入 `fig-<name>` 锚点,并把唯一编号的裸 `图XX` 或旧式 `#fig-XX` 规范化为完整锚点；同编号多图时必须写完整锚点,避免跳错证据。
    - **每日验收必须内置标记法则与验收标准**:每日/昨日验收报告必须有「标记法则与验收标准」章节,把颜色含义、严重级、测试规则、所用验收标准写清楚,让读者不用回看技能文档也知道图上的框是什么意思、为什么最终判通过/不通过。
    - **颜色标记统一**:红色=P0 阻断缺陷(空白/崩溃/核心不可用),橙色=P1/P2 中高风险或体验干扰(遮挡/错位/可用但不稳),蓝色=环境/路径/数据可达性说明(顶栏可见/路由可达/接口返回),绿色=通过证据(主体可见/关键区域正常)。同一张图里同时存在「可达」和「失败」时必须拆成不同颜色标记,不能全用一种颜色。
    - **问题标记必须可定位**:问题区域必须框到具体范围,标签写清严重级 + 现象,如 `P0: 正文区域空白`;禁止只写「有问题」「异常」「看这里」。通过标记也要写清通过了什么,如 `通过: CDS Agent 主体可见`;禁止只写「正常」。
    - **截图回读必须显式写进报告**:截图后不仅要自己看一眼,还要在报告里增加「截图回读检查」表,逐图记录是否截歪、是否加载完成、是否空白、问题是否入镜。发现缓慢加载/半截/空白但不是目标缺陷时,必须重拍;如果空白正是目标缺陷,要在图上框出空白区域并在回读表中说明。
 4. **归档(默认进 CDS 验收中心,职责分离)**:`python3 scripts/archive_report.py --config acceptance.config.json --target "<目标>" --module "<模块>" --feature "<功能>" --type "<新增功能|优化|修复>" --verdict <pass|conditional|fail> --tier <L0|L1|L2> --report-md <正文.md> --manifest <outDir>/manifest.json [--branch --commit --pr]`。
    - **归属唯一:CDS**。验收能力归 CDS(平台自带、按项目分类、证据链内置);技能**不再分流到 MAP 知识库**——MAP 等系统通过知识库开放协议(peer-sync)从 CDS 拉取展示。`report.mode` 缺省=`cds`;`local` 为离线兜底;`doc-store` 仅向后兼容(需 config 显式保留)。详见 `../cds/reference/acceptance-reports.md`。
-   - **自包含 markdown**:正文保留 `{{IMG:name}}`/`{{EVIDENCE}}` 结构,截图**内联为 data-URI**,POST `/api/reports`(format=md)。报告自包含、单份 < 10MB(超了减截图或改用 `cds/cli/acceptance` 的 JPEG 压图取证管线)。CDS 鉴权走 env `CDS_HOST` + (`CDS_PROJECT_KEY` 或 `AI_ACCESS_KEY`)。
+   - **交互 HTML 默认**:正文保留 `{{IMG:name}}`/`{{EVIDENCE}}` 结构作为 Markdown 写作源,归档脚本默认转成 `format=html` 交互报告（证据导航/表格筛选/章节折叠/图号跳转）。截图**内联为 data-URI** 后由 CDS 入库抽成 report assets。报告自包含、单份 < 10MB(超了减截图或改用 `cds/cli/acceptance` 的 JPEG 压图取证管线)。CDS 鉴权走 env `CDS_HOST` + (`CDS_PROJECT_KEY` 或 `AI_ACCESS_KEY`)。仅在下游明确要求 Markdown 时把 config `report.format` 改为 `md`。
    - **按项目 + 文件夹归类**:报告永远带 projectId(config.report.cdsProjectId > env CDS_PROJECT_ID > config.project);`config.report.cdsFolder` 设了就按名 find-or-create 项目级文件夹。`--verdict/--tier/--branch/--commit/--pr` 作为元数据 + E1 部署上下文 stamp 进报告(看板/跨系统/PR 回写都靠这些)。
    - **命名固定结构**(用户定):标题 = `项目 · 模块 · 功能 · 操作方式 · 验收报告`(`--module/--feature/--type` 拼装,空段自动跳过)。**状态(通过/不通过)不进标题——走 verdict 元数据徽章**,不靠改名表达状态。
    - **必给地址**:收尾必打印「验收归档完成 · CDS 验收中心」块 + `/reports?project=&folder=&report=` 直达深链——每次归档都有一个可达地址交付,绝不静默。
@@ -293,7 +315,7 @@ python3 $SKILL/scripts/archive_report.py --config $SKILL/acceptance.config.json 
 | `templates/report-template.md` | 旧版九段骨架(速览卡 + 九段 + 用例表 + `{{EVIDENCE}}` 集中证据) | 要集中证据段时 |
 | `scripts/harness.mjs` | 模拟人类浏览器 helper(点击导航/截图/主题 + ZZ 画框 stepClick/stepShot/box) | 写 driver 时 |
 | `scripts/annotate.mjs` | 通用「框选重点」工具:一条命令对任意页面按 selector/坐标画框+标签再截图(--login/--mobile/--click) | 发任何指向性截图前(§B2 硬要求) |
-| `scripts/archive_report.py` | 配置驱动归档(默认 cds:自包含 markdown 内联截图 → POST /api/reports,按项目+文件夹归类,带 verdict/部署上下文;local 离线兜底;doc-store 向后兼容) | 归档时 |
+| `scripts/archive_report.py` | 配置驱动归档(默认 cds:Markdown 写作源 → 交互 HTML → POST /api/reports,按项目+文件夹归类,带 verdict/部署上下文;local 离线兜底;doc-store 向后兼容) | 归档时 |
 | `scripts/verify-open.mjs` | 归档后自查:headless 打开可达链接断言报告渲染(标题+正文+截图);空/打不开 exit 2 | 归档后(强制) |
 | `../cds/reference/acceptance-reports.md` | CDS 验收中心:报告/文件夹 API、cdscli report 命令、取证管线、深链格式、10MB/份压图注意 | 归档到 CDS 时 |
 | `acceptance.config.json` | 项目配置(预览域名/登录/CDS 项目与文件夹/截图);跨仓库改这个 | 接新仓库时 |
