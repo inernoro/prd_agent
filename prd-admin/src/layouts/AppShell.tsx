@@ -957,7 +957,16 @@ export default function AppShell() {
               </span>
             </div>
           )}
-          {isHomePage && <div className="flex-1" />}
+          {isHomePage && (
+            <div className="flex-1 min-w-0">
+              <span
+                className="text-[22px] font-bold leading-none"
+                style={{ color: 'var(--text-primary)', letterSpacing: 0 }}
+              >
+                MAP
+              </span>
+            </div>
+          )}
           {!isHomePage && <ChangelogBell size={18} compact />}
           {!isHomePage && (
             <button
