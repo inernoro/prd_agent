@@ -370,6 +370,17 @@
     -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
     mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
   }
+  .surface-nav-actions > * {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+  .surface-nav-actions button,
+  .surface-nav-actions select {
+    white-space: nowrap;
+  }
+  .surface-nav-actions .prd-field {
+    min-width: 104px;
+  }
   .surface-nav-actions::-webkit-scrollbar {
     display: none;
   }
