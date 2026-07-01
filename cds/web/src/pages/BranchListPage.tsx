@@ -124,6 +124,8 @@ interface BranchSummary {
   lastAccessedAt?: string;
   lastPullAt?: string;
   lastDeployAt?: string;
+  lastDeployStartedAt?: string;
+  lastDeployDispatchAt?: string;
   lastStoppedAt?: string;
   lastStopReason?: string;
   lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'oom' | 'external' | 'cds' | 'webhook' | 'ai' | 'system';
@@ -4616,7 +4618,10 @@ function BranchCard({
     : (branch.lastPushAt ? formatRelativeTime(branch.lastPushAt) : '');
   const ciImageErrorText = branch.ciImageError || 'CI 预构建镜像未就绪';
   const stopReasonText = branch.lastStopReason || '无停止记录';
-  const stopTimeText = branch.lastStoppedAt ? formatRelativeTime(branch.lastStoppedAt) : '时间未知';
+  const failureAt = branch.lastDeployStartedAt || branch.lastDeployDispatchAt || branch.lastDeployAt || branch.lastPushAt || branch.createdAt;
+  const statusTimeText = isError
+    ? (failureAt ? formatRelativeTime(failureAt) : '时间未知')
+    : (branch.lastStoppedAt ? formatRelativeTime(branch.lastStoppedAt) : '时间未知');
   useEffect(() => {
     if (!tagEditorOpen) return;
     const frame = window.requestAnimationFrame(() => tagInputRef.current?.focus());
@@ -5008,7 +5013,7 @@ function BranchCard({
                 <span className="min-w-0 flex-1 truncate text-muted-foreground/85">{stopReasonText}</span>
               </>
             )}
-            <span className="shrink-0 whitespace-nowrap text-muted-foreground/65">{stopTimeText}</span>
+            <span className="shrink-0 whitespace-nowrap text-muted-foreground/65">{statusTimeText}</span>
           </div>
         ) : (
           <>
