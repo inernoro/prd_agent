@@ -184,6 +184,13 @@ interface DrawerActivityEvent {
   errorSummary?: string;
 }
 
+// GET /api/branches/:id/subdomain-aliases → gatewayUrls[]（声明了 cds.subdomain 的服务的命名入口）。
+interface GatewayUrlEntry {
+  subdomain: string;
+  name: string;
+  url: string;
+}
+
 // 2026-05-18: 分支生命周期系统日志（部署 / 停止 / 崩溃 / 重启 / 回收）。
 // 后端 GET /api/branches/:id/activity-logs 返回，已按最新在前排序。
 interface BranchActivityLog {
@@ -783,6 +790,9 @@ export function BranchDetailDrawer({
   branchStatus?: string;
 }): JSX.Element | null {
   const [branch, setBranch] = useState<BranchDetailData | null>(null);
+  // 网关入口（声明了 cds.subdomain 的服务，如 LLM 网关 console/serving 获得独立命名域名）。
+  // 与主应用入口并列展示，让「多出口」在这个抽屉里可见（用户点名的「右侧面板显示两个入口和名字」）。
+  const [gatewayUrls, setGatewayUrls] = useState<GatewayUrlEntry[]>([]);
   const [logs, setLogs] = useState<OperationLog[]>([]);
   const [loading, setLoading] = useState(false);
   const [headerRefreshing, setHeaderRefreshing] = useState(false);
@@ -864,7 +874,7 @@ export function BranchDetailDrawer({
     try {
       // The backend exposes /api/branches?project=<id> (list) but no
       // single-branch endpoint, mirroring how BranchDetailPage loads.
-      const [branchesRes, logsRes, profilesRes, infraRes, resourcesRes] = await Promise.all([
+      const [branchesRes, logsRes, profilesRes, infraRes, resourcesRes, aliasesRes] = await Promise.all([
         apiRequest<{ branches: BranchDetailData[] }>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`),
         apiRequest<{ logs: OperationLog[] }>(`/api/branches/${encodeURIComponent(branchId)}/logs`).catch(() => ({ logs: [] })),
         apiRequest<{ profiles: ProfileRow[] }>(`/api/branches/${encodeURIComponent(branchId)}/profile-overrides`)
@@ -876,6 +886,8 @@ export function BranchDetailDrawer({
           .catch(() => ({ services: [] })),
         apiRequest<{ resources: BranchResource[] }>(`/api/branches/${encodeURIComponent(branchId)}/resources?live=false`)
           .catch(() => ({ resources: [] })),
+        apiRequest<{ gatewayUrls?: GatewayUrlEntry[] }>(`/api/branches/${encodeURIComponent(branchId)}/subdomain-aliases`)
+          .catch(() => ({ gatewayUrls: [] as GatewayUrlEntry[] })),
       ]);
       const found = (branchesRes.branches || []).find((b) => b.id === branchId);
       if (!found) {
@@ -888,6 +900,7 @@ export function BranchDetailDrawer({
       setProfileState({ status: 'ok', profiles: profilesRes.profiles || [] });
       setInfraServices(infraRes.services || []);
       setResourceSnapshot(resourcesRes.resources || found?.resources || []);
+      setGatewayUrls(aliasesRes.gatewayUrls || []);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -1744,19 +1757,47 @@ export function BranchDetailDrawer({
             <>
               {branch.status === 'running' && branch.previewUrl ? (
                 <div className="mx-5 mt-4 flex flex-col gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5 text-sm font-semibold text-emerald-600 dark:text-emerald-400">
                       <Rocket className="h-4 w-4" />
                       应用已上线
+                    </div>
+                    {/* 主应用入口 + 网关入口:声明了 cds.subdomain 的服务(如 LLM 网关 console/serving)
+                        获得独立命名域名,与主应用入口并列展示,让「多出口」在抽屉里一眼可见。 */}
+                    <div className="mt-0.5 text-[11px] font-medium uppercase tracking-wide text-emerald-700/70 dark:text-emerald-300/70">
+                      主应用入口
                     </div>
                     <a
                       href={branch.previewUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="mt-0.5 block min-w-0 truncate font-mono text-xs text-emerald-700/90 hover:underline dark:text-emerald-300"
+                      className="block min-w-0 truncate font-mono text-xs text-emerald-700/90 hover:underline dark:text-emerald-300"
                     >
                       {branch.previewUrl}
                     </a>
+                    {gatewayUrls.length > 0 ? (
+                      <div className="mt-2 border-t border-emerald-500/20 pt-2">
+                        <div className="text-[11px] font-medium uppercase tracking-wide text-emerald-700/70 dark:text-emerald-300/70">
+                          网关入口
+                        </div>
+                        <div className="mt-0.5 flex flex-col gap-1">
+                          {gatewayUrls.map((gw) => (
+                            <div key={gw.subdomain} className="flex min-w-0 items-baseline gap-2">
+                              <span className="shrink-0 font-mono text-[11px] text-emerald-700/70 dark:text-emerald-300/70">{gw.subdomain}</span>
+                              <a
+                                href={gw.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                title={`打开 ${gw.name} 网关入口`}
+                                className="block min-w-0 truncate font-mono text-xs text-emerald-700/90 hover:underline dark:text-emerald-300"
+                              >
+                                {gw.url}
+                              </a>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                   <Button asChild size="sm" className="shrink-0 bg-emerald-600 text-white hover:bg-emerald-700">
                     <a href={branch.previewUrl} target="_blank" rel="noreferrer">
