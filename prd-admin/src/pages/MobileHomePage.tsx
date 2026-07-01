@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Activity,
@@ -20,10 +20,10 @@ import { buildDefaultCoverUrl } from '@/lib/homepageAssetSlots';
 import { AS_COLOR, AS_FONT_FAMILY } from '@/lib/appStoreTokens';
 
 const AMBER = '#FF9F0A';
-const SURFACE = 'rgba(255,255,255,0.055)';
-const HAIRLINE = 'rgba(255,255,255,0.10)';
-const TEXT_SECONDARY = 'rgba(235,235,245,0.62)';
-const TEXT_TERTIARY = 'rgba(235,235,245,0.38)';
+const SURFACE = 'rgba(255,255,255,0.075)';
+const HAIRLINE = 'rgba(255,255,255,0.13)';
+const TEXT_SECONDARY = 'rgba(245,245,247,0.68)';
+const TEXT_TERTIARY = 'rgba(245,245,247,0.44)';
 
 interface HomeTool {
   key: string;
@@ -125,7 +125,7 @@ export default function MobileHomePage() {
       style={{
         margin: '0 calc(var(--mobile-padding, 16px) * -1)',
         background:
-          'radial-gradient(circle at 62% 8%, rgba(255,159,10,0.12), transparent 32%), #000',
+          'radial-gradient(circle at 72% 8%, rgba(255,159,10,0.18), transparent 32%), radial-gradient(circle at 8% 46%, rgba(42,126,170,0.13), transparent 34%), linear-gradient(180deg, #131319 0%, #08090c 42%, #050506 100%)',
         color: AS_COLOR.label,
         fontFamily: AS_FONT_FAMILY,
       }}
@@ -169,9 +169,39 @@ export default function MobileHomePage() {
 }
 
 function HeroCarousel({ onNavigate }: { onNavigate: (to: string) => void }) {
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const [activeIndex, setActiveIndex] = useState(0);
+
+  useEffect(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+
+    let frame = 0;
+    const updateActiveIndex = () => {
+      const firstCard = scroller.firstElementChild;
+      if (!(firstCard instanceof HTMLElement)) return;
+      const cardWidth = firstCard.getBoundingClientRect().width;
+      const gap = 12;
+      const nextIndex = Math.round(scroller.scrollLeft / (cardWidth + gap));
+      setActiveIndex(Math.max(0, Math.min(HERO_CARDS.length - 1, nextIndex)));
+    };
+    const handleScroll = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(updateActiveIndex);
+    };
+
+    updateActiveIndex();
+    scroller.addEventListener('scroll', handleScroll, { passive: true });
+    return () => {
+      cancelAnimationFrame(frame);
+      scroller.removeEventListener('scroll', handleScroll);
+    };
+  }, []);
+
   return (
     <section style={{ marginTop: 24 }}>
       <div
+        ref={scrollerRef}
         className="flex overflow-x-auto snap-x snap-mandatory"
         style={{
           gap: 12,
@@ -196,8 +226,8 @@ function HeroCarousel({ onNavigate }: { onNavigate: (to: string) => void }) {
               borderRadius: 20,
               border: `1px solid ${HAIRLINE}`,
               background:
-                'linear-gradient(135deg, rgba(20,22,28,0.98), rgba(5,6,8,0.98))',
-              boxShadow: '0 24px 80px rgba(0,0,0,0.50)',
+                'linear-gradient(135deg, rgba(30,31,38,0.98), rgba(11,12,15,0.98))',
+              boxShadow: '0 22px 70px rgba(0,0,0,0.42)',
               color: '#fff',
             }}
           >
@@ -253,9 +283,9 @@ function HeroCarousel({ onNavigate }: { onNavigate: (to: string) => void }) {
         ))}
       </div>
       <div className="flex items-center" style={{ gap: 7, marginTop: 12, paddingLeft: 48 }}>
-        <span style={dotStyle(true)} />
-        <span style={dotStyle(false)} />
-        <span style={dotStyle(false)} />
+        {HERO_CARDS.map((card, index) => (
+          <span key={card.key} style={dotStyle(index === activeIndex)} />
+        ))}
       </div>
     </section>
   );
@@ -268,7 +298,7 @@ function AmberWorkbenchArt() {
         className="absolute inset-0"
         style={{
           background:
-            'radial-gradient(circle at 72% 38%, rgba(255,159,10,0.58), transparent 22%), radial-gradient(circle at 30% 10%, rgba(255,214,120,0.22), transparent 34%), linear-gradient(135deg, #090a0d 0%, #17110a 52%, #030304 100%)',
+            'radial-gradient(circle at 72% 38%, rgba(255,159,10,0.66), transparent 22%), radial-gradient(circle at 30% 10%, rgba(255,214,120,0.28), transparent 34%), linear-gradient(135deg, #111217 0%, #211609 52%, #08090c 100%)',
         }}
       />
       <div
@@ -342,7 +372,7 @@ function QuickStartStrip({
       style={{
         marginTop: 18,
         borderRadius: 18,
-        background: 'linear-gradient(180deg, rgba(255,255,255,0.075), rgba(255,255,255,0.035))',
+        background: 'linear-gradient(180deg, rgba(255,255,255,0.105), rgba(255,255,255,0.055))',
         border: `1px solid ${HAIRLINE}`,
         boxShadow: '0 18px 58px rgba(0,0,0,0.32)',
       }}
@@ -440,7 +470,7 @@ function ToolGrid({
             className="min-h-[86px] flex flex-col items-center justify-center transition-transform active:scale-[0.97]"
             style={{
               borderRadius: 16,
-              background: 'linear-gradient(180deg, rgba(255,255,255,0.075), rgba(255,255,255,0.035))',
+              background: 'linear-gradient(180deg, rgba(255,255,255,0.105), rgba(255,255,255,0.052))',
               border: `1px solid ${HAIRLINE}`,
               color: '#fff',
               padding: '11px 6px',
