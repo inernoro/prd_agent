@@ -139,116 +139,106 @@ public static class SystemEmailTemplates
 
     public static List<EmailTemplate> GetAll() => new()
     {
+        // 设备采购单盖章申请：贴近真实业务的成品邮件，默认值即样例，复制后按本次单据改几处即可。
         new EmailTemplate
         {
-            Title = "费用报销审批",
-            Category = EmailTemplateCategory.Approval,
-            Scenario = "提交报销申请给主管审批，抄送财务打款。",
-            TemplateKey = ReimbursementApproval,
-            IsSystem = true,
-            CreatedBy = "system",
-            Subject = "【报销申请】{{name}} {{expenseType}} 合计 {{amount}} 元",
-            ApprovalTarget = "审批人：直属主管；内容：{{expenseType}} 报销 {{amount}} 元，附发票 {{invoiceCount}} 张。",
-            Body =
-                "{{approver}}，您好：\n\n" +
-                "现提交 {{expenseType}} 报销申请，明细如下：\n\n" +
-                "- 事由：{{reason}}\n" +
-                "- 金额：{{amount}} 元\n" +
-                "- 发生日期：{{expenseDate}}\n" +
-                "- 发票数量：{{invoiceCount}} 张（附件）\n\n" +
-                "请审批，谢谢！\n\n{{name}}\n{{dept}}",
-            ToRecipients = new List<EmailRecipient> { new() { Name = "直属主管", Note = "审批人" } },
-            CcRecipients = new List<EmailRecipient> { new() { Name = "财务部", Note = "打款" } },
-            Variables = new List<EmailTemplateVariable>
-            {
-                new() { Key = "approver", Label = "审批人称呼", DefaultValue = "王经理" },
-                new() { Key = "expenseType", Label = "费用类型", Placeholder = "差旅 / 招待 / 采购" },
-                new() { Key = "reason", Label = "报销事由", Multiline = true },
-                new() { Key = "amount", Label = "金额（元）" },
-                new() { Key = "expenseDate", Label = "发生日期" },
-                new() { Key = "invoiceCount", Label = "发票数量", DefaultValue = "1" },
-                new() { Key = "name", Label = "本人姓名" },
-                new() { Key = "dept", Label = "部门" },
-            },
-        },
-        new EmailTemplate
-        {
-            Title = "维修申请",
+            Title = "设备采购单盖章申请",
             Category = EmailTemplateCategory.Apply,
-            Scenario = "设备 / 设施出现故障，向设备或后勤主管申请安排维修，抄送使用部门。",
-            TemplateKey = RepairApply,
-            IsSystem = true,
-            CreatedBy = "system",
-            Subject = "【维修申请】{{assetName}} 故障报修（{{urgency}}）",
-            ApprovalTarget = "审批人：设备 / 后勤主管；内容：{{assetName}}（{{location}}）出现 {{fault}}，申请安排维修。",
-            Body =
-                "{{approver}}，您好：\n\n" +
-                "现报修如下设备 / 设施，请安排维修处理：\n\n" +
-                "- 设备 / 设施名称：{{assetName}}\n" +
-                "- 所在位置：{{location}}\n" +
-                "- 故障现象：{{fault}}\n" +
-                "- 紧急程度：{{urgency}}\n" +
-                "- 影响范围：{{impact}}\n" +
-                "- 期望完成时间：{{expectDate}}\n\n" +
-                "请协调尽快处理，谢谢！\n\n{{name}}\n{{dept}}\n{{applyDate}}",
-            ToRecipients = new List<EmailRecipient> { new() { Name = "设备/后勤主管", Note = "审批人" } },
-            CcRecipients = new List<EmailRecipient> { new() { Name = "使用部门负责人", Note = "知会" } },
-            Variables = new List<EmailTemplateVariable>
-            {
-                new() { Key = "approver", Label = "审批人称呼", DefaultValue = "张主管" },
-                new() { Key = "assetName", Label = "设备/设施名称", Placeholder = "如：3号裹包机" },
-                new() { Key = "location", Label = "所在位置", Placeholder = "如：二车间东侧" },
-                new() { Key = "fault", Label = "故障现象", Multiline = true },
-                new() { Key = "urgency", Label = "紧急程度", Placeholder = "一般 / 紧急 / 停产", DefaultValue = "一般" },
-                new() { Key = "impact", Label = "影响范围", Multiline = true, DefaultValue = "暂不影响生产" },
-                new() { Key = "expectDate", Label = "期望完成时间", Placeholder = "2026-07-12" },
-                new() { Key = "name", Label = "报修人姓名" },
-                new() { Key = "dept", Label = "部门" },
-                new() { Key = "applyDate", Label = "申请日期" },
-            },
-        },
-        new EmailTemplate
-        {
-            Title = "设备采购申请",
-            Category = EmailTemplateCategory.Apply,
-            Scenario = "需新增 / 更换设备，向部门主管申请采购，抄送采购与财务。",
+            Scenario = "与客户签订产线改造合同后，向供应商下单产线设备，提交采购单盖章审批。",
             TemplateKey = EquipmentPurchase,
             IsSystem = true,
             CreatedBy = "system",
-            Subject = "【采购申请】{{itemName}} ×{{quantity}}（预算 {{totalAmount}} 元）",
-            ApprovalTarget = "审批人：部门主管 + 采购 / 财务；内容：采购 {{itemName}} {{quantity}} 台/件，预算 {{totalAmount}} 元。",
+            Subject = "{{client}}{{project}}设备采购单盖章申请",
+            ApprovalTarget = "审批链：先 @{{approver1}} 审批 → 通过后 @{{approver2}} 复核后盖章。",
             Body =
-                "{{approver}}，您好：\n\n" +
-                "因 {{reason}}，现申请采购以下设备，请审批：\n\n" +
-                "- 名称：{{itemName}}\n" +
-                "- 规格 / 型号：{{spec}}\n" +
-                "- 数量：{{quantity}}\n" +
-                "- 预估单价：{{unitPrice}} 元\n" +
-                "- 预算合计：{{totalAmount}} 元\n" +
-                "- 建议供应商：{{vendor}}\n" +
-                "- 期望到货时间：{{expectDate}}\n\n" +
-                "用途说明：{{purpose}}\n\n" +
-                "请审批，谢谢！\n\n{{name}}\n{{dept}}",
-            ToRecipients = new List<EmailRecipient> { new() { Name = "部门主管", Note = "审批人" } },
-            CcRecipients = new List<EmailRecipient>
+                "各位下午好：\n" +
+                "商户编号：{{merchantNo}}；\n" +
+                "公司名称：{{companyName}}；\n" +
+                "申请：{{date}}【客户-{{client}}】{{project}}设备采购单【供应商{{supplier}}】采购单盖章申请；\n" +
+                "原因：{{reason}}；\n\n" +
+                "备注：\n" +
+                "{{remark}}\n\n" +
+                "请@{{approver1}} 审批。审批通过后请@{{approver2}} 审批，确认后盖章。",
+            ToRecipients = new List<EmailRecipient>
             {
-                new() { Name = "采购部", Note = "询价采购" },
-                new() { Name = "财务部", Note = "预算" },
+                new() { Name = "潘洪玉", Note = "审批" },
+                new() { Name = "王冰倩", Note = "复核盖章" },
             },
+            CcRecipients = new List<EmailRecipient> { new() { Name = "采购/相关同事", Note = "知会" } },
             Variables = new List<EmailTemplateVariable>
             {
-                new() { Key = "approver", Label = "审批人称呼", DefaultValue = "王经理" },
-                new() { Key = "reason", Label = "采购原因", Multiline = true },
-                new() { Key = "itemName", Label = "设备名称" },
-                new() { Key = "spec", Label = "规格/型号" },
-                new() { Key = "quantity", Label = "数量", DefaultValue = "1" },
-                new() { Key = "unitPrice", Label = "预估单价（元）" },
-                new() { Key = "totalAmount", Label = "预算合计（元）" },
-                new() { Key = "vendor", Label = "建议供应商", DefaultValue = "待询价" },
-                new() { Key = "expectDate", Label = "期望到货时间", Placeholder = "2026-07-20" },
-                new() { Key = "purpose", Label = "用途说明", Multiline = true },
-                new() { Key = "name", Label = "申请人姓名" },
-                new() { Key = "dept", Label = "部门" },
+                new() { Key = "client", Label = "客户简称", DefaultValue = "石湾酒厂" },
+                new() { Key = "project", Label = "项目/产线", DefaultValue = "精玉线产线改造" },
+                new() { Key = "merchantNo", Label = "商户编号", DefaultValue = "10003295" },
+                new() { Key = "companyName", Label = "公司名称", DefaultValue = "广东石湾酒厂集团营销有限公司" },
+                new() { Key = "date", Label = "单据日期", DefaultValue = "20260528" },
+                new() { Key = "supplier", Label = "供应商", DefaultValue = "腾坤" },
+                new() { Key = "reason", Label = "申请原因", Multiline = true, DefaultValue = "与客户石湾酒厂签订了产线改造合同，需要从供应商腾坤下单产线设备以供产线完成安装" },
+                new() { Key = "remark", Label = "备注", Multiline = true, DefaultValue = "采购单整体复用以前采购模板，调整部分：\n1、新增第三小节，需要供应商补充硬件通信清单和资料、技术支持以完成 米多赋码采集关联系统 的研发；\n2、第二小节中的《中华人民共和国合同法》已于2021年1月1日被 《中华人民共和国民法典》 取代，已修正。" },
+                new() { Key = "approver1", Label = "一级审批人", DefaultValue = "潘洪玉" },
+                new() { Key = "approver2", Label = "复核盖章人", DefaultValue = "王冰倩" },
+            },
+        },
+        // 费用报销盖章申请
+        new EmailTemplate
+        {
+            Title = "费用报销盖章申请",
+            Category = EmailTemplateCategory.Approval,
+            Scenario = "现场支持/差旅等费用报销，提交审批并转财务打款。",
+            TemplateKey = ReimbursementApproval,
+            IsSystem = true,
+            CreatedBy = "system",
+            Subject = "{{title}}费用报销盖章申请",
+            ApprovalTarget = "审批：@{{approver}} 审批通过后转财务打款。",
+            Body =
+                "各位好：\n" +
+                "现提交费用报销申请如下：\n" +
+                "事由：{{reason}}；\n" +
+                "金额：{{amount}} 元；\n" +
+                "发生日期：{{date}}；\n" +
+                "随附发票 {{invoiceCount}} 张；\n\n" +
+                "请@{{approver}} 审批，审批通过后转财务打款，谢谢。",
+            ToRecipients = new List<EmailRecipient> { new() { Name = "潘洪玉", Note = "审批" } },
+            CcRecipients = new List<EmailRecipient> { new() { Name = "财务部", Note = "打款" } },
+            Variables = new List<EmailTemplateVariable>
+            {
+                new() { Key = "title", Label = "费用主题", DefaultValue = "石湾酒厂现场支持" },
+                new() { Key = "reason", Label = "报销事由", Multiline = true, DefaultValue = "赴石湾酒厂精玉线现场支持产线改造调试产生的交通及住宿费用" },
+                new() { Key = "amount", Label = "金额（元）", DefaultValue = "2860" },
+                new() { Key = "date", Label = "发生日期", DefaultValue = "20260528" },
+                new() { Key = "invoiceCount", Label = "发票张数", DefaultValue = "3" },
+                new() { Key = "approver", Label = "审批人", DefaultValue = "潘洪玉" },
+            },
+        },
+        // 设备维修申请
+        new EmailTemplate
+        {
+            Title = "设备维修申请",
+            Category = EmailTemplateCategory.Apply,
+            Scenario = "产线设备/设施出现故障，申请安排维修。",
+            TemplateKey = RepairApply,
+            IsSystem = true,
+            CreatedBy = "system",
+            Subject = "{{assetName}}维修申请",
+            ApprovalTarget = "审批：@{{approver}} 审批后安排维修。",
+            Body =
+                "各位好：\n" +
+                "现报修设备如下：\n" +
+                "设备/设施：{{assetName}}（{{location}}）；\n" +
+                "故障现象：{{fault}}；\n" +
+                "紧急程度：{{urgency}}；\n" +
+                "影响范围：{{impact}}；\n\n" +
+                "请@{{approver}} 安排维修，谢谢。",
+            ToRecipients = new List<EmailRecipient> { new() { Name = "潘洪玉", Note = "审批" } },
+            CcRecipients = new List<EmailRecipient> { new() { Name = "设备/后勤", Note = "执行" } },
+            Variables = new List<EmailTemplateVariable>
+            {
+                new() { Key = "assetName", Label = "设备/设施", DefaultValue = "精玉线裹包机" },
+                new() { Key = "location", Label = "所在位置", DefaultValue = "精玉线" },
+                new() { Key = "fault", Label = "故障现象", Multiline = true, DefaultValue = "裹膜频繁卡带，无法连续正常运行" },
+                new() { Key = "urgency", Label = "紧急程度", DefaultValue = "紧急" },
+                new() { Key = "impact", Label = "影响范围", DefaultValue = "影响精玉线正常生产" },
+                new() { Key = "approver", Label = "审批人", DefaultValue = "潘洪玉" },
             },
         },
     };
