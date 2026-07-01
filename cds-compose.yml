@@ -318,6 +318,35 @@ services:
       cds.subdomain: "llmgw-serve"
       cds.readiness-path: "/gw/v1/healthz"
 
+  # 独立 LLM 网关前端控制台 llmgw-web —— Vite React SPA（登录页 POST /gw/auth/login → JWT；
+  # LLM 日志页调 /gw/logs），容器内 nginx 监听 80：SPA 回退 index.html + /gw/* 反代到 llmgw:8090。
+  # 纯静态站点、只由 CI 预构建（.github/workflows/branch-image.yml 的 LLMGW_WEB_IMAGE），无源码热重载模式。
+  # 采用「标准形态的预构建 app service」：image + 标准 ports:["80"] + cds.prebuilt-image label，
+  # 让 compose-parser 的 isAppServiceCandidate 识别为可部署 app profile（CDS docker-PULL nginx 镜像、
+  # 非本机源码构建），命名子域 <previewSlug>-llmgw-web.<root> 正常发布。回退链走 base 级 fallbackImage
+  # （同 admin：branch-<slug> → branch-main），镜像 tag 公式 sha-${CDS_COMMIT_SHA} 与 branch-image.yml SSOT。
+  llmgw-web:
+    image: "ghcr.io/inernoro/prd_agent/prdagent-llmgw-web:sha-${CDS_COMMIT_SHA}"
+    # 容器内 nginx 监听 80（见 prd-llmgw-web/nginx.conf listen 80）。标准 ports 供 extractContainerPort 读取。
+    ports:
+      - "80"
+    # 本 commit 未构建 llmgw-web（CI 路径过滤只在 prd-llmgw-web/** 变更时构建）时按顺序回退：
+    #   ① 本分支该组件最近一次构建（branch-<slug>）② 退到固定主分支镜像（branch-main）
+    # 基础级 fallbackImage：无 express deployMode 的裸预构建站点也逐级回退（resolveEffectiveProfile 消费）。
+    fallbackImage:
+      - "ghcr.io/inernoro/prd_agent/prdagent-llmgw-web:branch-${CDS_BRANCH_SLUG}"
+      - "ghcr.io/inernoro/prd_agent/prdagent-llmgw-web:branch-main"
+    labels:
+      # 预构建镜像 app 站点标记：CDS docker-PULL 该 nginx 镜像启动，跳过源码 mount + 本机构建。
+      cds.prebuilt-image: "true"
+      # 公网命名 URL：<previewSlug>-llmgw-web.<root> 根路径直达控制台（登录后看 LLM 日志）。
+      # 浏览器同源，nginx 把 /gw/* 反代到 llmgw:8090，故 SPA 无需额外 VITE_LLMGW_API_BASE（编译期默认 /gw）。
+      cds.subdomain: "llmgw-web"
+      # SPA 站点无独立健康端点，根路径 nginx 返回 index.html 即视为就绪（与 admin 的 cds.readiness-path "/" 同）。
+      cds.readiness-path: "/"
+      # 首次拉取 nginx 镜像 + 容器起就绪窗口，给足 600s 兜底（避免慢拉镜像被误判 error）。
+      cds.readiness-timeout: "600"
+
   # ── Infrastructure Services (无相对路径 mount) ──
 
   mongodb:

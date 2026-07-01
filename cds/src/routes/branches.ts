@@ -268,9 +268,16 @@ function isSyntheticCdsManagedRuntimeBranch(
  */
 function resolveGatewayLandingPath(subdomain: string, readinessPath?: string): string {
   const sub = subdomain.toLowerCase();
-  // Serving engine (llmgw-serve): API under /gw/v1/*.
+  // Gateway console (llmgw-web): a standalone Vite SPA whose nginx falls back to
+  // index.html for any non-/gw/* path, so land on the console root — clicking it
+  // opens the real login → LLM logs UI, not a health JSON. This is the entry we
+  // want most prominent in the panel.
+  if (sub === 'llmgw-web') return '/';
+  // Serving engine (llmgw-serve): API-only, mounts under /gw/v1/* and 404s at the
+  // bare root, so land on its health endpoint.
   if (sub === 'llmgw-serve') return '/gw/v1/healthz';
-  // Console (llmgw): API under /gw/*.
+  // Backend/API engine (llmgw): API-only, mounts under /gw/* and 404s at the bare
+  // root, so land on its health endpoint.
   if (sub === 'llmgw') return '/gw/healthz';
   const trimmed = (readinessPath ?? '').trim();
   if (trimmed && trimmed.startsWith('/')) return trimmed;
