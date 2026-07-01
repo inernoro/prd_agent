@@ -20,16 +20,17 @@ export function formatRecipients(list: EmailRecipient[]): string {
 /** 组装一封可直接粘贴到邮件客户端的完整文本（收件人 / 抄送 / 主题 / 正文）。 */
 export function composeEmail(
   tpl: EmailTemplate,
-  values: Record<string, string>
+  subject: string,
+  body: string
 ): string {
   const lines: string[] = [];
   const to = formatRecipients(tpl.toRecipients);
   const cc = formatRecipients(tpl.ccRecipients);
   if (to) lines.push(`收件人：${to}`);
   if (cc) lines.push(`抄送：${cc}`);
-  lines.push(`主题：${renderText(tpl.subject, values)}`);
+  lines.push(`主题：${subject}`);
   lines.push('');
-  lines.push(renderText(tpl.body, values));
+  lines.push(body);
   return lines.join('\n');
 }
 

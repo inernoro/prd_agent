@@ -27,7 +27,8 @@ export function EmailAgentPage() {
   const [category, setCategory] = useState<string>('');
   const [keyword, setKeyword] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [values, setValues] = useState<Record<string, string>>({});
+  const [editSubject, setEditSubject] = useState('');
+  const [editBody, setEditBody] = useState('');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
 
@@ -65,15 +66,17 @@ export function EmailAgentPage() {
     void loadTemplates();
   }, [loadTemplates]);
 
-  // 切换模板时用默认值初始化变量表单
+  // 切换模板时：用默认值预填主题/正文，直接进可编辑 textarea（不再逐字段填表单）
   useEffect(() => {
     if (!selected) {
-      setValues({});
+      setEditSubject('');
+      setEditBody('');
       return;
     }
-    const init: Record<string, string> = {};
-    for (const v of selected.variables) init[v.key] = v.defaultValue ?? '';
-    setValues(init);
+    const defaults: Record<string, string> = {};
+    for (const v of selected.variables) if (v.defaultValue) defaults[v.key] = v.defaultValue;
+    setEditSubject(renderText(selected.subject, defaults));
+    setEditBody(renderText(selected.body, defaults));
   }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const categories = meta?.categories ?? [];
@@ -228,8 +231,10 @@ export function EmailAgentPage() {
           {selected ? (
             <EmailTemplateDetail
               tpl={selected}
-              values={values}
-              onValueChange={(k, v) => setValues((prev) => ({ ...prev, [k]: v }))}
+              subject={editSubject}
+              body={editBody}
+              onSubjectChange={setEditSubject}
+              onBodyChange={setEditBody}
               catLabel={catLabel}
               copiedKey={copiedKey}
               onCopy={doCopy}
@@ -267,8 +272,9 @@ export function EmailAgentPage() {
         open={aiOpen}
         onClose={() => setAiOpen(false)}
         initialMode={selected ? 'polish' : 'draft'}
-        initialContent={selected ? renderText(selected.body, values) : ''}
+        initialContent={selected ? editBody : ''}
         baseTemplate={selected}
+        onApply={selected ? (t) => setEditBody(t) : undefined}
       />
 
       <EmailHelpDrawer open={helpOpen} onClose={() => setHelpOpen(false)} />
@@ -292,8 +298,10 @@ function CatChip({ active, onClick, children }: { active: boolean; onClick: () =
 
 function EmailTemplateDetail({
   tpl,
-  values,
-  onValueChange,
+  subject,
+  body,
+  onSubjectChange,
+  onBodyChange,
   catLabel,
   copiedKey,
   onCopy,
@@ -303,8 +311,10 @@ function EmailTemplateDetail({
   onPolish,
 }: {
   tpl: EmailTemplate;
-  values: Record<string, string>;
-  onValueChange: (k: string, v: string) => void;
+  subject: string;
+  body: string;
+  onSubjectChange: (v: string) => void;
+  onBodyChange: (v: string) => void;
   catLabel: (k: string) => string;
   copiedKey: string | null;
   onCopy: (text: string, key: string, tpl: EmailTemplate) => void;
@@ -313,9 +323,7 @@ function EmailTemplateDetail({
   onDelete: () => void;
   onPolish: () => void;
 }) {
-  const renderedSubject = renderText(tpl.subject, values);
-  const renderedBody = renderText(tpl.body, values);
-  const fullEmail = composeEmail(tpl, values);
+  const fullEmail = composeEmail(tpl, subject, body);
 
   return (
     <div className="p-5 space-y-4">
@@ -361,59 +369,35 @@ function EmailTemplateDetail({
         <RecipientsBlock title="抄送对象" list={tpl.ccRecipients} />
       </div>
 
-      {/* 内容描述 */}
-      {tpl.approvalTarget && (
-        <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
-          <div className="text-[11px] text-white/45 mb-0.5">内容描述 / 审批对象</div>
-          <div className="text-sm text-white/80 whitespace-pre-wrap">{renderText(tpl.approvalTarget, values)}</div>
-        </div>
-      )}
-
-      {/* 变量快填 */}
-      {tpl.variables.length > 0 && (
-        <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
-          <div className="text-xs text-white/70 mb-2">填写变量（自动套进正文）</div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-            {tpl.variables.map((v) =>
-              v.multiline ? (
-                <div key={v.key} className="sm:col-span-2">
-                  <label className="block text-[11px] text-white/50 mb-1">{v.label}</label>
-                  <textarea
-                    value={values[v.key] ?? ''}
-                    onChange={(e) => onValueChange(v.key, e.target.value)}
-                    placeholder={v.placeholder ?? ''}
-                    rows={2}
-                    className="w-full rounded-lg border border-white/12 bg-white/[0.04] px-3 py-2 text-sm text-white/90 placeholder:text-white/30 outline-none focus:border-sky-400/40 resize-y"
-                  />
-                </div>
-              ) : (
-                <div key={v.key}>
-                  <label className="block text-[11px] text-white/50 mb-1">{v.label}</label>
-                  <input
-                    value={values[v.key] ?? ''}
-                    onChange={(e) => onValueChange(v.key, e.target.value)}
-                    placeholder={v.placeholder ?? ''}
-                    className="w-full h-9 rounded-lg border border-white/12 bg-white/[0.04] px-3 text-sm text-white/90 placeholder:text-white/30 outline-none focus:border-sky-400/40"
-                  />
-                </div>
-              )
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* 成品预览 */}
-      <div className="rounded-xl border border-white/10 bg-white/[0.03] overflow-hidden">
+      {/* 可编辑邮件内容：直接改，改完复制。主题 + 正文两个可编辑框 */}
+      <div className="rounded-xl border border-white/10 bg-white/[0.02] overflow-hidden">
         <div className="px-3 py-2 border-b border-white/10 flex items-center justify-between gap-2">
-          <span className="text-[11px] text-white/45">成品预览</span>
+          <span className="text-[11px] text-white/45">邮件内容（可直接修改后复制）</span>
           <div className="flex items-center gap-1.5">
-            <CopyBtn label="复制主题" active={copiedKey === 'subject'} onClick={() => onCopy(renderedSubject, 'subject', tpl)} />
-            <CopyBtn label="复制正文" active={copiedKey === 'body'} onClick={() => onCopy(renderedBody, 'body', tpl)} />
+            <CopyBtn label="复制主题" active={copiedKey === 'subject'} onClick={() => onCopy(subject, 'subject', tpl)} />
+            <CopyBtn label="复制正文" active={copiedKey === 'body'} onClick={() => onCopy(body, 'body', tpl)} />
           </div>
         </div>
-        <div className="px-3 py-3 space-y-2">
-          <div className="text-sm text-white/90"><span className="text-white/40">主题：</span>{renderedSubject}</div>
-          <pre className="text-sm text-white/80 whitespace-pre-wrap break-words font-sans leading-relaxed">{renderedBody}</pre>
+        <div className="px-3 py-3 space-y-3">
+          <div>
+            <label className="block text-[11px] text-white/45 mb-1">主题</label>
+            <input
+              value={subject}
+              onChange={(e) => onSubjectChange(e.target.value)}
+              placeholder="邮件主题"
+              className="w-full h-9 rounded-lg border border-white/12 bg-white/[0.04] px-3 text-sm text-white/90 placeholder:text-white/30 outline-none focus:border-sky-400/40"
+            />
+          </div>
+          <div>
+            <label className="block text-[11px] text-white/45 mb-1">正文</label>
+            <textarea
+              value={body}
+              onChange={(e) => onBodyChange(e.target.value)}
+              placeholder="邮件正文，可直接修改"
+              rows={16}
+              className="w-full rounded-lg border border-white/12 bg-white/[0.04] px-3 py-2 text-sm text-white/90 placeholder:text-white/30 outline-none focus:border-sky-400/40 resize-y leading-relaxed"
+            />
+          </div>
         </div>
       </div>
 
