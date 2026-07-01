@@ -818,7 +818,8 @@ public sealed class AdminPushNotificationService
             ["message"] = notification.Message ?? notification.Title ?? string.Empty,
             ["level"] = notification.Level ?? string.Empty,
             ["source"] = notification.Source ?? string.Empty,
-            ["actionUrl"] = notification.ActionUrl ?? string.Empty,
+            ["actionUrl"] = ResolveActionUrl(notification.ActionUrl),
+            ["actionPath"] = notification.ActionUrl ?? string.Empty,
             ["iconUrl"] = ResolveIconUrl(resource),
             ["imageUrl"] = ResolveImageUrl(notification),
             ["createdAt"] = notification.CreatedAt.ToString("O"),
@@ -908,6 +909,20 @@ public sealed class AdminPushNotificationService
     {
         if (string.IsNullOrWhiteSpace(_publicBaseUrl)) return resource.IconUrl;
         return $"{_publicBaseUrl}/api/public/admin-push/resources/{Uri.EscapeDataString(resource.Key)}/icon.svg";
+    }
+
+    private string ResolveActionUrl(string? actionUrl)
+    {
+        var trimmed = (actionUrl ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(trimmed)) return string.Empty;
+        if (Uri.TryCreate(trimmed, UriKind.Absolute, out var absolute)
+            && (string.Equals(absolute.Scheme, "https", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(absolute.Scheme, "http", StringComparison.OrdinalIgnoreCase)))
+            return trimmed;
+        if (string.IsNullOrWhiteSpace(_publicBaseUrl)) return trimmed;
+        return trimmed.StartsWith("/", StringComparison.Ordinal)
+            ? $"{_publicBaseUrl}{trimmed}"
+            : $"{_publicBaseUrl}/{trimmed}";
     }
 
     private static string ResolveImageUrl(AdminNotification notification)

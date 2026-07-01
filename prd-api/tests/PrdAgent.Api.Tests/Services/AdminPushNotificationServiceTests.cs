@@ -201,7 +201,54 @@ public sealed class AdminPushNotificationServiceTests
             var request = Assert.Single(http.Requests);
             var query = QueryHelpers.ParseQuery(request.Uri.Query);
             Assert.Equal("https://example.com/defect-image.png", query["image"]);
-            Assert.Equal("https://placehold.co/256x256/e11d48/ffffff/png?text=DEF", query["icon"]);
+            Assert.Equal("https://admin-push-bark-protocol-codex-prd-agent.miduo.org/api/public/admin-push/resources/defect-management/icon.svg", query["icon"]);
+        }
+        finally
+        {
+            await testDb.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task DispatchPendingAsync_BarkExpandsRelativeActionUrlToPublicUrl()
+    {
+        var testDb = await AdminPushTestDatabase.TryCreateAsync();
+        if (testDb == null) return;
+
+        try
+        {
+            var http = new RecordingHttpClientFactory(HttpStatusCode.OK);
+            var service = CreateService(testDb.Context, http);
+
+            await testDb.Context.AdminPushSubscriptions.InsertOneAsync(new AdminPushSubscription
+            {
+                UserId = "u1",
+                TopicKey = "defect-management",
+                Enabled = true,
+                ChannelType = "bark",
+                BarkKey = "test-key",
+                BarkServerUrl = "https://example.com",
+                BarkGroup = "MAP System-{{appname}}",
+                BarkUrlTemplate = "{{actionUrl}}",
+            });
+            await testDb.Context.AdminNotifications.InsertOneAsync(new AdminNotification
+            {
+                Id = "n-action",
+                Key = "k-action",
+                Title = "收到新缺陷：DEF-1",
+                Message = "需要处理",
+                Source = "defect-agent",
+                Status = "open",
+                TargetUserId = "u1",
+                ActionUrl = "/defect-agent?id=abc123",
+                CreatedAt = DateTime.UtcNow,
+            });
+
+            await service.DispatchPendingAsync(CancellationToken.None);
+
+            var request = Assert.Single(http.Requests);
+            var query = QueryHelpers.ParseQuery(request.Uri.Query);
+            Assert.Equal("https://admin-push-bark-protocol-codex-prd-agent.miduo.org/defect-agent?id=abc123", query["url"]);
         }
         finally
         {
@@ -335,8 +382,8 @@ public sealed class AdminPushNotificationServiceTests
             var icons = http.Requests
                 .Select(x => QueryHelpers.ParseQuery(x.Uri.Query)["icon"].ToString())
                 .ToList();
-            Assert.Contains(icons, icon => icon.Contains("text=VOC", StringComparison.Ordinal));
-            Assert.Contains(icons, icon => icon.Contains("text=API", StringComparison.Ordinal));
+            Assert.Contains(icons, icon => icon.Contains("/resources/user-voice/icon.svg", StringComparison.Ordinal));
+            Assert.Contains(icons, icon => icon.Contains("/resources/api-request-alert/icon.svg", StringComparison.Ordinal));
         }
         finally
         {
@@ -590,7 +637,12 @@ public sealed class AdminPushNotificationServiceTests
             NullLogger<AdminPushNotificationService>.Instance);
     }
 
-    private static readonly IConfiguration TestConfiguration = new ConfigurationBuilder().Build();
+    private static readonly IConfiguration TestConfiguration = new ConfigurationBuilder()
+        .AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["App:FrontendBaseUrl"] = "https://admin-push-bark-protocol-codex-prd-agent.miduo.org",
+        })
+        .Build();
 
     private sealed class AdminPushTestDatabase : IAsyncDisposable
     {
