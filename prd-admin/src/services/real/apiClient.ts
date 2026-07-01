@@ -38,6 +38,7 @@ const APP_NAME_ROUTES: readonly [prefix: string, appName: string][] = [
   ['/pr-review', 'pr-review'],
   ['/review-agent', 'review-agent'],
   ['/ccas-agent', 'ccas-agent'],
+  ['/email-agent', 'email-agent'],
   ['/front-end-agent', 'front-end-agent'],
   ['/prd-agent', 'prd-agent'],
   ['/ai-toolbox', 'ai-toolbox'],

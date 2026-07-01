@@ -1521,6 +1521,36 @@ public static class CcasAgent
 }
 
 /// <summary>
+/// Email Agent — 邮件模板智能体（AI 起草 / 润色常用流程邮件）
+/// </summary>
+public static class EmailAgent
+{
+    public const string AppName = "邮件模板智能体";
+
+    public static class Draft
+    {
+        [AppCallerMetadata(
+            "邮件起草-对话",
+            "根据用户的场景描述 + 现有模板库上下文，流式起草一封含主题/正文/收件抄送建议的邮件",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Chat"
+        )]
+        public const string Chat = "email-agent.draft::chat";
+    }
+
+    public static class Polish
+    {
+        [AppCallerMetadata(
+            "邮件润色-对话",
+            "按用户指令润色 / 调整语气 / 精简已有邮件正文，流式返回修订稿",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Chat"
+        )]
+        public const string Chat = "email-agent.polish::chat";
+    }
+}
+
+/// <summary>
 /// Page Agent 工作流胶囊页面/代码生成
 /// </summary>
 public static class PageAgent

@@ -216,6 +216,18 @@
     ]
   },
   {
+    "code": "email-agent.draft::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "email-agent.polish::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
     "code": "emergence-explorer.emerge::chat",
     "modelTypes": [
       "chat"
