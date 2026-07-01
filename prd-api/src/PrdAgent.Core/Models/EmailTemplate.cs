@@ -128,195 +128,22 @@ public static class EmailTemplateCategory
 }
 
 /// <summary>
-/// 系统预置邮件模板：覆盖职场高频流程，开箱即用。首次访问时按 TemplateKey 幂等注入到数据库。
+/// 系统预置邮件模板：聚焦费用报销、维修申请、设备采购三类高频审批/申请流程，开箱即用。
+/// 以代码内置 + sys: 前缀合成返回（不落库），用户可「另存为」派生可编辑副本。
 /// </summary>
 public static class SystemEmailTemplates
 {
-    public const string LeaveApproval = "leave-approval";
-    public const string OvertimeApply = "overtime-apply";
-    public const string ProjectReport = "project-report";
-    public const string MeetingNotice = "meeting-notice";
-    public const string WorkHandover = "work-handover";
     public const string ReimbursementApproval = "reimbursement-approval";
+    public const string RepairApply = "repair-apply";
+    public const string EquipmentPurchase = "equipment-purchase";
 
     public static List<EmailTemplate> GetAll() => new()
     {
         new EmailTemplate
         {
-            Title = "请假审批申请",
-            Category = EmailTemplateCategory.Approval,
-            Scenario = "向直属主管申请请假，抄送人事备案。",
-            TemplateKey = LeaveApproval,
-            IsSystem = true,
-            CreatedBy = "system",
-            Subject = "【请假申请】{{name}} {{startDate}} 至 {{endDate}}（{{leaveType}}）",
-            ApprovalTarget = "审批人：直属主管；内容：{{name}} 因 {{reason}} 申请 {{leaveType}}，共 {{days}} 天。",
-            Body =
-                "尊敬的 {{approver}}：\n\n" +
-                "您好！我是 {{name}}（{{dept}}）。因 {{reason}}，特申请 {{leaveType}}，" +
-                "时间为 {{startDate}} 至 {{endDate}}，共计 {{days}} 天。\n\n" +
-                "请假期间的工作已交接给 {{backup}}，紧急事项可通过 {{phone}} 联系我。\n\n" +
-                "恳请批准，谢谢！\n\n{{name}}\n{{applyDate}}",
-            ToRecipients = new List<EmailRecipient>
-            {
-                new() { Name = "直属主管", Note = "审批人" },
-            },
-            CcRecipients = new List<EmailRecipient>
-            {
-                new() { Name = "人事部", Note = "备案知会" },
-            },
-            Variables = new List<EmailTemplateVariable>
-            {
-                new() { Key = "approver", Label = "审批人称呼", Placeholder = "如：王经理", DefaultValue = "王经理" },
-                new() { Key = "name", Label = "本人姓名", Placeholder = "你的姓名" },
-                new() { Key = "dept", Label = "部门", Placeholder = "如：研发部" },
-                new() { Key = "leaveType", Label = "请假类型", Placeholder = "年假 / 事假 / 病假", DefaultValue = "年假" },
-                new() { Key = "reason", Label = "请假事由", Placeholder = "简述原因", Multiline = true },
-                new() { Key = "startDate", Label = "开始日期", Placeholder = "2026-07-10" },
-                new() { Key = "endDate", Label = "结束日期", Placeholder = "2026-07-11" },
-                new() { Key = "days", Label = "天数", Placeholder = "2" },
-                new() { Key = "backup", Label = "工作交接人", Placeholder = "同事姓名" },
-                new() { Key = "phone", Label = "紧急联系电话", Placeholder = "手机号" },
-                new() { Key = "applyDate", Label = "申请日期", Placeholder = "2026-07-08" },
-            },
-        },
-        new EmailTemplate
-        {
-            Title = "加班申请",
-            Category = EmailTemplateCategory.Apply,
-            Scenario = "因项目需要申请加班，主管审批、人事抄送。",
-            TemplateKey = OvertimeApply,
-            IsSystem = true,
-            CreatedBy = "system",
-            Subject = "【加班申请】{{name}} {{overtimeDate}}（{{hours}} 小时）",
-            ApprovalTarget = "审批人：直属主管；内容：因 {{reason}} 申请加班 {{hours}} 小时。",
-            Body =
-                "{{approver}}，您好：\n\n" +
-                "因 {{reason}}，需在 {{overtimeDate}} {{timeRange}} 加班，预计 {{hours}} 小时，" +
-                "主要处理：{{tasks}}。\n\n" +
-                "特此申请，请审批，谢谢！\n\n{{name}}\n{{dept}}",
-            ToRecipients = new List<EmailRecipient> { new() { Name = "直属主管", Note = "审批人" } },
-            CcRecipients = new List<EmailRecipient> { new() { Name = "人事部", Note = "考勤备案" } },
-            Variables = new List<EmailTemplateVariable>
-            {
-                new() { Key = "approver", Label = "审批人称呼", DefaultValue = "王经理" },
-                new() { Key = "name", Label = "本人姓名" },
-                new() { Key = "dept", Label = "部门" },
-                new() { Key = "reason", Label = "加班原因", Multiline = true },
-                new() { Key = "overtimeDate", Label = "加班日期", Placeholder = "2026-07-12" },
-                new() { Key = "timeRange", Label = "时间段", Placeholder = "19:00-22:00" },
-                new() { Key = "hours", Label = "时长（小时）", Placeholder = "3" },
-                new() { Key = "tasks", Label = "加班事项", Multiline = true },
-            },
-        },
-        new EmailTemplate
-        {
-            Title = "项目进展汇报",
-            Category = EmailTemplateCategory.Report,
-            Scenario = "周期性向项目干系人同步进展、风险与下一步计划。",
-            TemplateKey = ProjectReport,
-            IsSystem = true,
-            CreatedBy = "system",
-            Subject = "【项目周报】{{projectName}} {{weekLabel}} 进展同步",
-            ApprovalTarget = "知会对象：项目干系人；内容：本周进展 / 风险 / 下周计划。",
-            Body =
-                "各位好：\n\n" +
-                "现同步 {{projectName}} {{weekLabel}} 进展如下：\n\n" +
-                "一、本周完成\n{{done}}\n\n" +
-                "二、进行中\n{{inProgress}}\n\n" +
-                "三、风险与阻塞\n{{risks}}\n\n" +
-                "四、下周计划\n{{nextPlan}}\n\n" +
-                "如有疑问欢迎随时沟通，谢谢！\n\n{{name}}\n{{applyDate}}",
-            ToRecipients = new List<EmailRecipient>
-            {
-                new() { Name = "项目经理", Note = "主送" },
-                new() { Name = "产品负责人", Note = "主送" },
-            },
-            CcRecipients = new List<EmailRecipient> { new() { Name = "团队成员", Note = "知会" } },
-            Variables = new List<EmailTemplateVariable>
-            {
-                new() { Key = "projectName", Label = "项目名称" },
-                new() { Key = "weekLabel", Label = "周期标签", Placeholder = "第 28 周 / 7月第2周" },
-                new() { Key = "done", Label = "本周完成", Multiline = true },
-                new() { Key = "inProgress", Label = "进行中", Multiline = true },
-                new() { Key = "risks", Label = "风险与阻塞", Multiline = true, DefaultValue = "暂无" },
-                new() { Key = "nextPlan", Label = "下周计划", Multiline = true },
-                new() { Key = "name", Label = "本人姓名" },
-                new() { Key = "applyDate", Label = "日期" },
-            },
-        },
-        new EmailTemplate
-        {
-            Title = "会议通知",
-            Category = EmailTemplateCategory.Notice,
-            Scenario = "组织会议时通知参会人时间、地点、议程。",
-            TemplateKey = MeetingNotice,
-            IsSystem = true,
-            CreatedBy = "system",
-            Subject = "【会议通知】{{meetingTopic}}（{{meetingTime}}）",
-            ApprovalTarget = "通知对象：参会人；内容：会议时间 / 地点 / 议程 / 需准备事项。",
-            Body =
-                "各位好：\n\n" +
-                "现定于 {{meetingTime}} 在 {{location}} 召开「{{meetingTopic}}」会议，请准时参加。\n\n" +
-                "会议议程：\n{{agenda}}\n\n" +
-                "需提前准备：{{prepare}}\n\n" +
-                "如无法参加请提前告知 {{name}}。谢谢！\n\n{{name}}\n{{dept}}",
-            ToRecipients = new List<EmailRecipient> { new() { Name = "全体参会人", Note = "主送" } },
-            CcRecipients = new List<EmailRecipient> { new() { Name = "部门负责人", Note = "知会" } },
-            Variables = new List<EmailTemplateVariable>
-            {
-                new() { Key = "meetingTopic", Label = "会议主题" },
-                new() { Key = "meetingTime", Label = "会议时间", Placeholder = "2026-07-15 14:00" },
-                new() { Key = "location", Label = "会议地点", Placeholder = "3楼会议室 / 腾讯会议" },
-                new() { Key = "agenda", Label = "会议议程", Multiline = true },
-                new() { Key = "prepare", Label = "需准备事项", DefaultValue = "无" },
-                new() { Key = "name", Label = "组织人姓名" },
-                new() { Key = "dept", Label = "部门" },
-            },
-        },
-        new EmailTemplate
-        {
-            Title = "工作交接",
-            Category = EmailTemplateCategory.Handover,
-            Scenario = "转岗 / 离职 / 休假前向接手人和主管说明交接内容。",
-            TemplateKey = WorkHandover,
-            IsSystem = true,
-            CreatedBy = "system",
-            Subject = "【工作交接】{{name}} 交接给 {{receiver}}",
-            ApprovalTarget = "接手人：{{receiver}}；确认人：直属主管；内容：待办 / 权限 / 文档清单。",
-            Body =
-                "{{receiver}}、{{approver}}，您好：\n\n" +
-                "因 {{reason}}，现将本人工作交接给 {{receiver}}，清单如下：\n\n" +
-                "一、进行中的工作\n{{ongoing}}\n\n" +
-                "二、账号 / 权限\n{{accounts}}\n\n" +
-                "三、关键文档与联系人\n{{docs}}\n\n" +
-                "四、注意事项\n{{notes}}\n\n" +
-                "交接如有遗漏请随时联系我（{{phone}}）。谢谢！\n\n{{name}}\n{{applyDate}}",
-            ToRecipients = new List<EmailRecipient> { new() { Name = "接手人", Note = "主送" } },
-            CcRecipients = new List<EmailRecipient>
-            {
-                new() { Name = "直属主管", Note = "确认" },
-                new() { Name = "人事部", Note = "备案" },
-            },
-            Variables = new List<EmailTemplateVariable>
-            {
-                new() { Key = "receiver", Label = "接手人姓名" },
-                new() { Key = "approver", Label = "主管称呼", DefaultValue = "王经理" },
-                new() { Key = "reason", Label = "交接原因", Placeholder = "转岗 / 离职 / 休假" },
-                new() { Key = "ongoing", Label = "进行中的工作", Multiline = true },
-                new() { Key = "accounts", Label = "账号/权限", Multiline = true },
-                new() { Key = "docs", Label = "关键文档与联系人", Multiline = true },
-                new() { Key = "notes", Label = "注意事项", Multiline = true, DefaultValue = "无" },
-                new() { Key = "name", Label = "本人姓名" },
-                new() { Key = "phone", Label = "联系电话" },
-                new() { Key = "applyDate", Label = "日期" },
-            },
-        },
-        new EmailTemplate
-        {
             Title = "费用报销审批",
             Category = EmailTemplateCategory.Approval,
-            Scenario = "提交报销申请给主管审批，抄送财务。",
+            Scenario = "提交报销申请给主管审批，抄送财务打款。",
             TemplateKey = ReimbursementApproval,
             IsSystem = true,
             CreatedBy = "system",
@@ -341,6 +168,86 @@ public static class SystemEmailTemplates
                 new() { Key = "expenseDate", Label = "发生日期" },
                 new() { Key = "invoiceCount", Label = "发票数量", DefaultValue = "1" },
                 new() { Key = "name", Label = "本人姓名" },
+                new() { Key = "dept", Label = "部门" },
+            },
+        },
+        new EmailTemplate
+        {
+            Title = "维修申请",
+            Category = EmailTemplateCategory.Apply,
+            Scenario = "设备 / 设施出现故障，向设备或后勤主管申请安排维修，抄送使用部门。",
+            TemplateKey = RepairApply,
+            IsSystem = true,
+            CreatedBy = "system",
+            Subject = "【维修申请】{{assetName}} 故障报修（{{urgency}}）",
+            ApprovalTarget = "审批人：设备 / 后勤主管；内容：{{assetName}}（{{location}}）出现 {{fault}}，申请安排维修。",
+            Body =
+                "{{approver}}，您好：\n\n" +
+                "现报修如下设备 / 设施，请安排维修处理：\n\n" +
+                "- 设备 / 设施名称：{{assetName}}\n" +
+                "- 所在位置：{{location}}\n" +
+                "- 故障现象：{{fault}}\n" +
+                "- 紧急程度：{{urgency}}\n" +
+                "- 影响范围：{{impact}}\n" +
+                "- 期望完成时间：{{expectDate}}\n\n" +
+                "请协调尽快处理，谢谢！\n\n{{name}}\n{{dept}}\n{{applyDate}}",
+            ToRecipients = new List<EmailRecipient> { new() { Name = "设备/后勤主管", Note = "审批人" } },
+            CcRecipients = new List<EmailRecipient> { new() { Name = "使用部门负责人", Note = "知会" } },
+            Variables = new List<EmailTemplateVariable>
+            {
+                new() { Key = "approver", Label = "审批人称呼", DefaultValue = "张主管" },
+                new() { Key = "assetName", Label = "设备/设施名称", Placeholder = "如：3号裹包机" },
+                new() { Key = "location", Label = "所在位置", Placeholder = "如：二车间东侧" },
+                new() { Key = "fault", Label = "故障现象", Multiline = true },
+                new() { Key = "urgency", Label = "紧急程度", Placeholder = "一般 / 紧急 / 停产", DefaultValue = "一般" },
+                new() { Key = "impact", Label = "影响范围", Multiline = true, DefaultValue = "暂不影响生产" },
+                new() { Key = "expectDate", Label = "期望完成时间", Placeholder = "2026-07-12" },
+                new() { Key = "name", Label = "报修人姓名" },
+                new() { Key = "dept", Label = "部门" },
+                new() { Key = "applyDate", Label = "申请日期" },
+            },
+        },
+        new EmailTemplate
+        {
+            Title = "设备采购申请",
+            Category = EmailTemplateCategory.Apply,
+            Scenario = "需新增 / 更换设备，向部门主管申请采购，抄送采购与财务。",
+            TemplateKey = EquipmentPurchase,
+            IsSystem = true,
+            CreatedBy = "system",
+            Subject = "【采购申请】{{itemName}} ×{{quantity}}（预算 {{totalAmount}} 元）",
+            ApprovalTarget = "审批人：部门主管 + 采购 / 财务；内容：采购 {{itemName}} {{quantity}} 台/件，预算 {{totalAmount}} 元。",
+            Body =
+                "{{approver}}，您好：\n\n" +
+                "因 {{reason}}，现申请采购以下设备，请审批：\n\n" +
+                "- 名称：{{itemName}}\n" +
+                "- 规格 / 型号：{{spec}}\n" +
+                "- 数量：{{quantity}}\n" +
+                "- 预估单价：{{unitPrice}} 元\n" +
+                "- 预算合计：{{totalAmount}} 元\n" +
+                "- 建议供应商：{{vendor}}\n" +
+                "- 期望到货时间：{{expectDate}}\n\n" +
+                "用途说明：{{purpose}}\n\n" +
+                "请审批，谢谢！\n\n{{name}}\n{{dept}}",
+            ToRecipients = new List<EmailRecipient> { new() { Name = "部门主管", Note = "审批人" } },
+            CcRecipients = new List<EmailRecipient>
+            {
+                new() { Name = "采购部", Note = "询价采购" },
+                new() { Name = "财务部", Note = "预算" },
+            },
+            Variables = new List<EmailTemplateVariable>
+            {
+                new() { Key = "approver", Label = "审批人称呼", DefaultValue = "王经理" },
+                new() { Key = "reason", Label = "采购原因", Multiline = true },
+                new() { Key = "itemName", Label = "设备名称" },
+                new() { Key = "spec", Label = "规格/型号" },
+                new() { Key = "quantity", Label = "数量", DefaultValue = "1" },
+                new() { Key = "unitPrice", Label = "预估单价（元）" },
+                new() { Key = "totalAmount", Label = "预算合计（元）" },
+                new() { Key = "vendor", Label = "建议供应商", DefaultValue = "待询价" },
+                new() { Key = "expectDate", Label = "期望到货时间", Placeholder = "2026-07-20" },
+                new() { Key = "purpose", Label = "用途说明", Multiline = true },
+                new() { Key = "name", Label = "申请人姓名" },
                 new() { Key = "dept", Label = "部门" },
             },
         },
