@@ -58,15 +58,17 @@
   5. 新增 `/gw/auth/change-password`（校验旧口令→新口令≥6 位且≠旧→写新哈希→清标记→**重签发**不带 mcp 的 token）。
   6. 前端 `ChangePasswordPage` + `RequireAuth`/`RequireChangePassword` 守卫：`mustChangePassword` 时强制跳改密页。
   - 运维仍可用项目环境变量 `LLMGW_ADMIN_PASSWORD` 顶掉缺省口令（此时不触发强制改密）。
-- **验证状态（2026-07-02，诚实记录）**：前端 `pnpm tsc -b` 零错误（已验证）；**后端运行时验证被 CDS
-  平台基建阻塞**——`cdscli deploy` 两次均失败：① 首次报 `all predefined address pools have been fully
-  subnetted`（CDS 宿主 Docker 网络地址池耗尽，创建分支网络失败，发生在编译/构建阶段**之前**；CDS 自动
-  回收「已清理 0 个空闲分支网络」= 无安全余量可回收，且回收他人预览分支违反 cross-project-isolation）；
-  ② 重试时 `GET /api/branches` 30s 超时（CDS 宿主 API 降级）。本沙箱无本地 dotnet SDK、无本地 docker
-  daemon，无法离线编译 `prd-llmgw`。**待 CDS 基建恢复（扩容 Docker `default-address-pools` 或回收
-  僵尸分支网络）后**，redeploy prd-agent-main（或本分支预览）即可完成后端首登强制改密全链路取证：
-  login {admin/admin} → mustChangePassword=true → mcp token 访问 `/gw/logs` 应 403 → change-password
-  → 重签发 token 读日志成功 → 重启 llmgw 不回退已改口令。
+- **验证状态（2026-07-02，诚实记录）**：
+  - 前端 `pnpm tsc -b` 零错误（已验证）。
+  - 后端 **`cdscli deploy` 全绿**（CDS 基建恢复后重跑）：5 容器 running，`/gw/healthz` 回显本分支
+    commit → **编译 + 启动 + SeedAdmin 两模式逻辑 + LogsRead 策略注册 + change-password 路由注册全部加载成功**。
+  - **运行时鉴权/路由取证（已验证）**：`/gw/logs` 无 token → 401；`/gw/auth/change-password` 无 token /
+    垃圾 token → 401（新端点已映射 + JWT 校验生效）；login 空参 → 新 `INVALID_CREDENTIALS`「不能为空」信封。
+  - **未运行时取证（仅代码复核）**：弱口令引导 happy-path（`mustChangePassword=true` → mcp token 访问
+    `/gw/logs` 应 403 → change-password → 解锁读日志 → 重启不回退）。**根因是共享 Mongo 约束**：
+    `llmgw_users` 跨分支共享，现网 `admin` 已是非默认口令（本分支默认模式**正确地不回退**它），
+    而系统无「创建一次性弱口令账号」的安全入口（容器无 mongo 客户端、env 掩码、动 `admin` 会打断 main
+    控制台，违反 cross-project-isolation）。留待「空 `llmgw_users` 的全新部署」或加临时管理端点时补齐观测。
 
 ### Point 3 — OpenRouter 风格控制台：**部分（骨架在，需对齐设计）**
 - `prd-llmgw-web` 已有：`LoginPage` / `LogsPage` / `LogsView`（请求日志表）/ `GenerationDetailsDrawer`
