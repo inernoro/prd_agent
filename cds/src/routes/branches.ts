@@ -5957,13 +5957,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       throw new Error(`MongoDB Console 不支持操作 "${verb}"，仅允许 ${[...MONGO_READ_VERBS, ...MONGO_WRITE_VERBS].join(' / ')}`);
     }
 
-    // 安全门（Bugbot High）：分类只看首个 verb，但整段文本会被 mongosh 一次性求值。
-    // 换行分隔或逗号操作符可以让「首句 findOne（判为只读，跳过 data-write/确认）+ 次句 updateMany」
-    // 在只读分类下偷跑写操作。故：只要命令里任意位置出现写方法调用（op 后跟 `(`），而主 verb 不是写，
-    // 即判定为多语句/注入，一律拒绝——合法的单条写命令主 verb 本身就是写，不会命中此门。
-    const writeCallAnywhere = /\b(insertOne|insertMany|updateOne|updateMany|replaceOne|deleteOne|deleteMany|findOneAndUpdate|findOneAndReplace|findOneAndDelete|bulkWrite)\s*\(/i.test(codeSkeleton);
-    if (writeCallAnywhere && !isWrite) {
-      throw new Error('MongoDB Console 一次只允许一条语句：检测到只读语句后夹带写操作（换行/逗号多语句），已拒绝');
+    // 安全门（Bugbot High/Medium）：分类只看首个 verb，但整段文本会被 mongosh 一次性求值。
+    // 换行/逗号多语句能夹带额外写操作：既能在只读语句里偷跑写（findOne(),updateMany()），
+    // 也能在写语句后再跑一个更宽的写（updateOne(),deleteMany()），而 API 只按首个 verb 记录/返回。
+    // 收敛判据：数写方法调用（op 后跟 `(`，对代码骨架数以避开字符串子串）的次数，必须恰等于「主 verb 是写?1:0」——
+    // 多一个即多语句/夹带，一律拒绝。合法单条写恰好 1 次、单条读恰好 0 次。
+    const writeCallCount = (codeSkeleton.match(/\b(insertOne|insertMany|updateOne|updateMany|replaceOne|deleteOne|deleteMany|findOneAndUpdate|findOneAndReplace|findOneAndDelete|bulkWrite)\s*\(/gi) || []).length;
+    if (writeCallCount !== (isWrite ? 1 : 0)) {
+      throw new Error('MongoDB Console 一次只允许一条语句：命令含多个写操作或在只读语句中夹带写（换行/逗号多语句），已拒绝');
     }
 
     if (verb === 'find') {

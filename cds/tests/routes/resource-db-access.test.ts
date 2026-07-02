@@ -1008,6 +1008,14 @@ describe('resource database access', () => {
       { database: 'orders', command: 'db.getCollection("users").findOne({})\ndb.getCollection("users").updateMany({}, { $set: { hacked: 1 } })', confirmResourceName: 'mongo-main' },
       { 'x-test-cookie-auth': '1' },
     );
+    // 写主 verb 后再逗号夹带更宽的写：updateOne(), deleteMany(...) → 400（Bugbot Medium）
+    const writePlusWriteBypass = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
+      { database: 'orders', command: 'db.getCollection("users").updateOne({ _id: 1 }, { $set: { a: 1 } }), db.getCollection("users").deleteMany({})', confirmResourceName: 'mongo-main' },
+      { 'x-test-cookie-auth': '1' },
+    );
     // 逗号操作符：findOne(), updateMany(...) → 400 拦截
     const commaBypass = await request(
       server!,
@@ -1074,6 +1082,8 @@ describe('resource database access', () => {
     expect(multilineBypass.body.error).toContain('一次只允许一条语句');
     expect(commaBypass.status).toBe(400);
     expect(commaBypass.body.error).toContain('一次只允许一条语句');
+    expect(writePlusWriteBypass.status).toBe(400);
+    expect(writePlusWriteBypass.body.error).toContain('一次只允许一条语句');
     expect(multilineWrite.status).toBe(200);
     expect(multilineWrite.body.kind).toBe('write-result');
     expect(findWriteNameInValue.status).toBe(200);
