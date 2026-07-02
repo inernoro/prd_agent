@@ -236,12 +236,12 @@ function PeerSyncBadge({ store, compact = false }: { store: DocumentStore | Docu
   if (compact) {
     return (
       <span
-        className="inline-flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-full border"
+        className="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[9px] border"
         style={{ background, borderColor, color }}
         title={title}
         aria-label={label}
       >
-        <Icon size={11} />
+        <Icon size={14} />
       </span>
     );
   }
@@ -2200,6 +2200,25 @@ export function DocumentStorePage() {
     });
   }, [flushPins]);
 
+  const handleSystemShareStore = useCallback(async (storeId: string, name: string) => {
+    const url = `${window.location.origin}/library/${storeId}`;
+    const nav = navigator as Navigator & {
+      share?: (data: ShareData) => Promise<void>;
+    };
+    try {
+      if (nav.share) {
+        await nav.share({ title: name, text: `知识库：${name}`, url });
+        return;
+      }
+      await navigator.clipboard.writeText(url);
+      toast.success('链接已复制', '当前浏览器不支持系统分享');
+    } catch (err) {
+      if ((err as DOMException)?.name === 'AbortError') return;
+      await navigator.clipboard.writeText(url).catch(() => {});
+      toast.success('链接已复制');
+    }
+  }, []);
+
   // 卡片「更多」菜单点外关闭由 AnchoredMenu 自身处理（菜单已 portal 到 body）
 
   // 第二排：搜索 + 排序（sessionStorage 持久化；CLAUDE.md no-localStorage 规则）
@@ -2477,6 +2496,12 @@ export function DocumentStorePage() {
       <div
         data-tour-id="library-tabs"
         className="sticky top-0 z-20 flex flex-col gap-3 pb-5 -mb-5"
+        style={{
+          background: 'linear-gradient(180deg, color-mix(in srgb, var(--bg-primary, #121218) 98%, transparent) 0%, color-mix(in srgb, var(--bg-primary, #121218) 94%, transparent) 72%, color-mix(in srgb, var(--bg-primary, #121218) 86%, transparent) 100%)',
+          backdropFilter: 'blur(18px) saturate(140%)',
+          WebkitBackdropFilter: 'blur(18px) saturate(140%)',
+          boxShadow: '0 14px 32px -26px rgba(0,0,0,0.75)',
+        }}
       >
         {/* 顶部第一排：左上角空间切换（我的空间 / 团队空间 / 我的收藏 / 我的点赞） */}
         <TabBar
@@ -2775,12 +2800,13 @@ export function DocumentStorePage() {
               <Plus size={13} /> 新建知识库
             </Button>
           )}
-          {isMobile && (
-            <MobileFab onClick={() => setShowCreate(true)} icon={Plus} label="新建" />
-          )}
         </div>
       )}
       </div>
+
+      {isMobile && isStoreTab && (
+        <MobileFab onClick={() => setShowCreate(true)} icon={Plus} label="新建" />
+      )}
 
       <div className="px-5 pb-6 w-full">
         {tab === 'sync' ? (
@@ -2939,15 +2965,15 @@ export function DocumentStorePage() {
                           避免「图标比圆点偏上」——所有指示物在同一行同一基线 */}
                       <div className="flex items-center gap-1 flex-shrink-0">
                         {s.hasActiveShare && (
-                          <span className="inline-flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-full border"
+                          <span className="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[9px] border"
                             style={{ background: 'rgba(234,179,8,0.14)', color: 'rgba(234,179,8,0.95)', borderColor: 'rgba(234,179,8,0.32)' }}
                             title="该知识库已对外分享" aria-label="已分享">
-                            <Share2 size={11} />
+                            <Share2 size={14} />
                           </span>
                         )}
                         <PeerSyncBadge store={s as DocumentStoreWithPreview} compact />
                         <button
-                          className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer transition-colors"
+                          className="h-8 w-8 rounded-[9px] flex items-center justify-center cursor-pointer transition-colors"
                           title={isPinned ? '取消置顶' : '置顶到最前'}
                           aria-label={isPinned ? '取消置顶' : '置顶'}
                           onClick={(e) => { e.stopPropagation(); handleTogglePin(s.id); }}
@@ -2959,7 +2985,7 @@ export function DocumentStorePage() {
                         {canManage && (
                           <div className="relative">
                             <button
-                              className="surface-row h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer transition-colors"
+                              className="surface-row h-8 w-8 rounded-[9px] flex items-center justify-center cursor-pointer transition-colors"
                               title="更多操作"
                               onClick={(e) => { e.stopPropagation(); setCardMenuAnchor(e.currentTarget); setOpenCardMenuId(cardMenuOpen ? null : s.id); }}
                               style={{ color: 'var(--text-muted)' }}>
@@ -2970,6 +2996,10 @@ export function DocumentStorePage() {
                                 <MoreItem icon={<Users size={14} />} label="分享到团队" onClick={() => {
                                   setOpenCardMenuId(null);
                                   setShareTeamTarget({ id: s.id, name: s.name, teamIds: (s as DocumentStoreWithPreview).sharedTeamIds ?? [] });
+                                }} />
+                                <MoreItem icon={<Share2 size={14} />} label="分享到其他应用" onClick={() => {
+                                  setOpenCardMenuId(null);
+                                  void handleSystemShareStore(s.id, s.name);
                                 }} />
                                 <MoreItem icon={<Pencil size={14} />} label="编辑名称与标签" onClick={() => {
                                   setOpenCardMenuId(null);
