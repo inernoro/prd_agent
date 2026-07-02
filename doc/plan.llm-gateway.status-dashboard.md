@@ -10,11 +10,11 @@
 
 ## 0. 一句话现状 + 能不能发布
 
-- **现状**：网关剥离的「硬骨头」（独立 serving 进程 + 跨进程 `/gw/v1/*` + 影子基础设施 + 独立控制台）约 **75%** 完成，但**默认仍是 `inproc`**（真实流量走进程内），配置面**未迁到网关**（控制台只有日志），还有 **8 处 A 类直连**绕过网关。
-- **能不能发布**：
-  - **可以**——把当前分支作为「观测能力增强」发布：默认 `inproc`，行为与 main 一致、纯增量、可秒回滚。
-  - **不可以**——宣称「网关已剥离干净 / 翻 `Mode=http`」：核心命题（真实流量走 HTTP=可追溯）尚未兑现，见 §2 记分卡的红灯。
-- **两条腿**：腿 A（运行时路由剥离）≈75% 基建、未翻 http；腿 B（管理面/配置迁到网关）≈0%。用户最直观的不满在腿 B。
+- **现状（2026-07-02 更新）**：管理面 + 观测面 + serving 基建基本做完；**用户已拍板走「安全路径」完成 /goal**——先开 `Mode=shadow` 攒一致性证据，Gate 绿后再翻 `http`。**shadow 已开启**（`cdscli env set --scope prd-agent LlmGateway__Mode=shadow`，2026-07-02），下次部署生效，开始把每次 LLM 调用的 inproc 与 http 解析结果落 `llmshadow_comparisons`。
+- **shadow 是零风险的**：权威响应仍是 inproc（`HttpAppCallerAllowlist` 为空），http 只在后台 fire-and-forget 探针里跑做对比（异常隔离，不影响主流程）；流式=免费 resolve 比对，非流式=有界采样，生图/视频不 2x。可随时 `env set ... inproc` 秒关。
+- **距离「完全完成」还差**（都在安全路径上）：① 攒够影子证据（样本达阈值 + diff≈0，需 1~2 周真实流量）② 翻 `Mode=http` 一键（见 §5 turnkey）③ 收 A2 直连（热路径，需先建网关 X1/X2 入口 + 评审）。
+- **能不能发布**：当前分支（PR #985）作为「登录/观测/管理面/CDS 数据操作 + 开影子」增量随时可发；默认服务路径仍 inproc、行为与 main 一致、可秒回滚。**翻 http** 仍等 Gate 绿（§2）。
+- **⚠ blast radius**：`LlmGateway__Mode` 设在**项目 scope**（prd-agent），影响该项目**所有分支/主干**的 CDS 部署（下次各自部署时生效）。这是有意的——让 shadow 从主干/生产（若走 CDS）真实流量攒证据。若生产是**独立 docker-compose** 部署，其 shadow 需另在生产 env 设 `LLMGW_MODE=shadow`（`docker-compose.yml:101` 已支持该 env）。
 
 ---
 
@@ -33,10 +33,10 @@
 
 | 维度 | 判据 | 目标 | 当前 | 状态 |
 |---|---|---|---|---|
-| 默认路径 | `LlmGateway:Mode`（`Program.cs:212` `?? "inproc"`） | `http` | `inproc` | partial（基建 done，未翻） |
+| 默认路径 | `LlmGateway:Mode`（`Program.cs:216` `?? "inproc"`） | `http` | **`shadow`（2026-07-02 开，攒证据中）** | in-progress（安全路径：shadow→gate 绿→http） |
 | 调用去老路 | 绕过网关的直连数（`GatewayDirectClientRatchetTests`） | 0（A 类） | A 类 8（Program.cs 6 + ModelDomainService 2）+ B 类 6（有意对照评测） | partial |
 | 配置面迁移 | 网关控制台能看/配模型池/平台/模型 | 100% | **只读已迁（B1）+ 可写第一刀（B2：平台启用/停用、模型池默认互斥切换，写共享 Mongo，MAP 立即生效）**；重写操作（密钥轮换/增删平台）待续 | partial（可看可配布尔开关，重写待续） |
-| 影子证据 | `llmshadow_comparisons` 样本量 / allMatch | 样本 ≥阈值 且 diff ≤阈值 | 样本 n=1（首条 allMatch） | partial（严重不足，建议攒 7-14 天） |
+| 影子证据 | `llmshadow_comparisons` 样本量 / allMatch | 样本 ≥500 且 critical=0 且 allMatch≥99% | shadow 已开，开始积累（阈值见 §5 步骤 1） | in-progress（1~2 周窗口） |
 | serving 密钥 | serving 容器能解密真实平台密文、无 401 | 无解密失败 | **真机取证：所有真实平台可解密，仅 1 个 dev-stub 解不出（预期）** | done（已加 serving 自检 + stub 分类） |
 | 双出口 HTTPS | 网关命名子域走 HTTPS | 2 个 HTTPS | 1 HTTPS + 3 HTTP | 修复已提交（激活见 §3.A） |
 | 回归 | 全量测试 + navCoverage | 全绿 | 后端 shadow 单测 1326 passed | done |
@@ -133,12 +133,26 @@ GatewayTransport 后端打标**已在早前分支合入**（`LlmRequestLog.Gatew
 
 一句话：**能安全自动做的都做完了；剩下的三项要么等时间/证据（http 翻转），要么碰热路径需评审（A2 收口），要么会动现网需你知情（B2 可写）——这些是「需要你在环」的推进，不是我该闷头硬干的。**
 
-## 5. 下一步（优先级）
+## 5. 下一步（安全路径完成 /goal，turnkey）
 
-1. **本次修复落地验证**：部署本分支，确认 serving 侧新 Worker 报不报解密失败（把 §3.B 盲区消掉），网关控制台走一遍视觉验收留证。
-2. **腿 B 第一刀（推荐先做，低风险，直击「没配置的地方」）**：网关控制台加「模型池/平台/模型/影子比对」只读页（`prd-llmgw` 加只读端点 + `prd-llmgw-web` 加页），让网关「看得见能配」。
-3. **腿 A 下一个 gate**：L1 GatewayTransport 日志标记（翻 http 硬前置）。
-4. HTTPS 双出口 + cds-compose 锚点修复合 main，让 CDS 平台级生效。
+**当前进度：shadow 已开（2026-07-02），进入证据积累窗口。** 剩下三步，前两步是完成 /goal 的关键路径：
+
+### 步骤 1（进行中，自动）：攒影子证据
+- shadow 已通过项目 env 开启，随下次部署生效。之后每次 LLM 调用都会把 inproc↔http 的解析/采样结果落 `llmshadow_comparisons`。
+- **怎么看证据**：网关控制台「影子比对」页（`<slug>-llmgw-web.miduo.org/shadow`）或 serving `GET /gw/v1/shadow-comparisons`（X-Gateway-Key 门）。看 `summary.total`（样本量）、`allMatch`（一致数）、`critical`（严重差异）。
+- **Gate 阈值**（达标即可翻 http）：样本 `total ≥ 500`（覆盖主要 appCallerCode）且 `critical == 0` 且 `allMatch/total ≥ 99%`，同时全量回归绿。需 ~1~2 周真实流量。
+
+### 步骤 2（Gate 绿后，一键翻转 = 完成 /goal 核心命题）
+```bash
+# 翻 http（真实流量走独立网关，可追溯）——Gate 绿后执行：
+python3 .claude/skills/cds/cli/cdscli.py env set --scope prd-agent --key LlmGateway__Mode --value http
+# 触发各分支/主干重部署后生效。出问题秒回滚：
+python3 .claude/skills/cds/cli/cdscli.py env set --scope prd-agent --key LlmGateway__Mode --value inproc
+```
+翻转后重度验证关键 LLM 功能（聊天/生图/评审/意图），确认 `llmrequestlogs.gatewayTransport` 全为 `http`。
+
+### 步骤 3（可选，非核心命题的收尾）：A2 收口 8~14 处直连
+- 先给网关补 X1（per-model maxTokens 回填）、X2（pinned platform+model 直连）两个入口，再逐处灰度收口 + 评审。碰热路径，独立推进，不阻塞步骤 2 的「剥离干净」判定。
 
 ---
 
