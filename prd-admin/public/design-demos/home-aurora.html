@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MAP · 极光操作台 — 登录后首页 Demo A</title>
+<style>
+  :root {
+    --bg: #0b0b10;
+    --ink: #f4f4f9;
+    --ink-2: rgba(244, 244, 249, 0.72);
+    --ink-3: rgba(244, 244, 249, 0.45);
+    --line: rgba(255, 255, 255, 0.09);
+    --line-2: rgba(255, 255, 255, 0.16);
+    --glass: rgba(255, 255, 255, 0.045);
+    --glass-2: rgba(255, 255, 255, 0.08);
+    --indigo: #818cf8;
+    --violet: #c084fc;
+    --cyan: #67e8f9;
+    --rose: #fda4af;
+    --amber: #fcd34d;
+    --emerald: #6ee7b7;
+    --font-d: "Space Grotesk", "Avenir Next", "Helvetica Neue", "PingFang SC", "HarmonyOS Sans SC", "Microsoft YaHei", sans-serif;
+    --font-b: -apple-system, "PingFang SC", "HarmonyOS Sans SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
+    --font-m: "SF Mono", "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-b);
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  /* ══ 极光背景 ══ */
+  .sky {
+    position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    overflow: hidden;
+  }
+  .sky::after {
+    content: ""; position: absolute; inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 240 240' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.4'/%3E%3C/svg%3E");
+    opacity: 0.05; mix-blend-mode: overlay;
+  }
+  .aurora {
+    position: absolute; border-radius: 50%;
+    filter: blur(90px); opacity: 0.5;
+    animation: drift 26s ease-in-out infinite alternate;
+  }
+  .aurora.a { width: 62vw; height: 46vh; left: -12vw; top: -18vh;
+    background: radial-gradient(ellipse at center, rgba(99,102,241,0.55), transparent 68%); }
+  .aurora.b { width: 50vw; height: 42vh; right: -14vw; top: -8vh;
+    background: radial-gradient(ellipse at center, rgba(192,132,252,0.38), transparent 68%);
+    animation-delay: -8s; animation-duration: 32s; }
+  .aurora.c { width: 44vw; height: 34vh; left: 30vw; top: -14vh;
+    background: radial-gradient(ellipse at center, rgba(103,232,249,0.22), transparent 68%);
+    animation-delay: -16s; animation-duration: 38s; }
+  @keyframes drift {
+    from { transform: translate3d(0, 0, 0) scale(1); }
+    to   { transform: translate3d(4vw, 3vh, 0) scale(1.12); }
+  }
+  .stars { position: absolute; inset: 0; }
+  .stars i {
+    position: absolute; width: 2px; height: 2px; border-radius: 50%;
+    background: rgba(255,255,255,0.7);
+    animation: twinkle 4s ease-in-out infinite;
+  }
+  @keyframes twinkle { 0%,100% { opacity: 0.1; } 50% { opacity: 0.8; } }
+
+  /* ══ 布局 ══ */
+  .page { position: relative; z-index: 1; max-width: 1280px; margin: 0 auto; padding: 0 40px 80px; }
+
+  /* 顶栏 */
+  .topbar {
+    display: flex; align-items: center; gap: 24px;
+    padding: 22px 0 0;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-family: var(--font-d); }
+  .brand .mark {
+    width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center;
+    background: linear-gradient(135deg, #6366f1, #a78bfa);
+    box-shadow: 0 4px 18px rgba(99,102,241,0.45);
+  }
+  .brand .mark svg { display: block; }
+  .brand b { font-size: 17px; letter-spacing: 0.14em; font-weight: 700; }
+  .brand span { font-size: 11px; color: var(--ink-3); letter-spacing: 0.08em; margin-top: 2px; }
+  .top-search {
+    flex: 1; max-width: 420px; margin-left: auto;
+    display: flex; align-items: center; gap: 10px;
+    height: 38px; padding: 0 14px; border-radius: 12px;
+    border: 1px solid var(--line); background: var(--glass);
+    color: var(--ink-3); font-size: 13px; cursor: pointer;
+    backdrop-filter: blur(12px);
+    transition: border-color 0.2s, background 0.2s;
+  }
+  .top-search:hover { border-color: var(--line-2); background: var(--glass-2); }
+  .top-search kbd {
+    margin-left: auto; font-family: var(--font-m); font-size: 10.5px;
+    padding: 3px 7px; border-radius: 6px; border: 1px solid var(--line);
+    color: var(--ink-3); background: rgba(255,255,255,0.04);
+  }
+  .avatar-ring {
+    position: relative; width: 40px; height: 40px; flex-shrink: 0; cursor: pointer;
+  }
+  .avatar-ring svg.ring { position: absolute; inset: 0; transform: rotate(-90deg); }
+  .avatar-ring .face {
+    position: absolute; inset: 4px; border-radius: 50%;
+    background: linear-gradient(135deg, #312e81, #6366f1);
+    display: grid; place-items: center;
+    font-size: 13px; font-weight: 600; color: #e0e7ff;
+  }
+
+  /* 问候区 */
+  .hero { padding: 72px 0 40px; }
+  .hero .date {
+    font-family: var(--font-m); font-size: 12px; color: var(--ink-3);
+    letter-spacing: 0.18em; text-transform: uppercase;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .hero .date::after { content: ""; height: 1px; width: 64px; background: linear-gradient(90deg, var(--line-2), transparent); }
+  .hero h1 {
+    font-family: var(--font-d);
+    font-size: clamp(34px, 5vw, 56px); font-weight: 650;
+    letter-spacing: -0.02em; line-height: 1.15;
+    margin-top: 18px;
+  }
+  .hero h1 .glow {
+    background: linear-gradient(100deg, #c7d2fe 0%, #818cf8 45%, #c084fc 90%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .hero .sub { margin-top: 14px; font-size: 14.5px; color: var(--ink-2); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .pulse-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--emerald); box-shadow: 0 0 0 0 rgba(110,231,183,0.5); animation: pulse 2.4s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(110,231,183,0.45);} 70% { box-shadow: 0 0 0 9px rgba(110,231,183,0);} 100% { box-shadow: 0 0 0 0 rgba(110,231,183,0);} }
+
+  /* 指令输入 */
+  .omni {
+    margin-top: 34px; position: relative;
+    border-radius: 18px; padding: 1px;
+    background: linear-gradient(120deg, rgba(129,140,248,0.5), rgba(255,255,255,0.08) 30%, rgba(192,132,252,0.35) 85%);
+    box-shadow: 0 24px 70px rgba(0,0,0,0.45), 0 0 60px rgba(99,102,241,0.10);
+  }
+  .omni-inner {
+    border-radius: 17px; background: rgba(15,15,22,0.85);
+    backdrop-filter: blur(20px);
+    display: flex; align-items: center; gap: 14px; padding: 20px 22px;
+  }
+  .omni-inner svg { flex-shrink: 0; opacity: 0.85; }
+  .omni-inner input {
+    flex: 1; background: none; border: none; outline: none;
+    color: var(--ink); font-size: 16px; font-family: var(--font-b);
+  }
+  .omni-inner input::placeholder { color: var(--ink-3); }
+  .omni-send {
+    display: flex; align-items: center; gap: 8px;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    color: #fff; border: none; border-radius: 11px;
+    height: 40px; padding: 0 18px; font-size: 13.5px; font-weight: 600;
+    cursor: pointer; transition: transform 0.15s, box-shadow 0.2s;
+    box-shadow: 0 6px 20px rgba(99,102,241,0.35);
+  }
+  .omni-send:hover { transform: translateY(-1px); box-shadow: 0 10px 26px rgba(99,102,241,0.5); }
+  .chips { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+  .chip {
+    font-size: 12.5px; color: var(--ink-2);
+    padding: 7px 14px; border-radius: 99px;
+    border: 1px solid var(--line); background: var(--glass);
+    cursor: pointer; transition: all 0.18s; backdrop-filter: blur(8px);
+  }
+  .chip:hover { border-color: rgba(129,140,248,0.5); color: #c7d2fe; background: rgba(99,102,241,0.10); }
+
+  /* 主体两栏 */
+  .cols { display: grid; grid-template-columns: 1fr 320px; gap: 28px; margin-top: 56px; }
+  @media (max-width: 980px) { .cols { grid-template-columns: 1fr; } .top-search { display: none; } .page { padding: 0 20px 60px; } }
+
+  .sec-title {
+    display: flex; align-items: baseline; gap: 12px; margin-bottom: 18px;
+  }
+  .sec-title h2 { font-family: var(--font-d); font-size: 15px; font-weight: 650; letter-spacing: 0.02em; }
+  .sec-title span { font-size: 12px; color: var(--ink-3); }
+  .sec-title a { margin-left: auto; font-size: 12.5px; color: var(--indigo); text-decoration: none; }
+  .sec-title a:hover { text-decoration: underline; }
+
+  /* 智能体网格 */
+  .agents { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; }
+  .agent {
+    position: relative; overflow: hidden;
+    border-radius: 16px; border: 1px solid var(--line);
+    background: linear-gradient(160deg, rgba(255,255,255,0.05), rgba(255,255,255,0.015));
+    padding: 20px 18px 18px; cursor: pointer;
+    transition: transform 0.22s cubic-bezier(0.22,1,0.36,1), border-color 0.22s, box-shadow 0.22s;
+    backdrop-filter: blur(10px);
+    animation: rise 0.6s cubic-bezier(0.22,1,0.36,1) backwards;
+  }
+  .agent:nth-child(1){animation-delay:0.05s}.agent:nth-child(2){animation-delay:0.1s}
+  .agent:nth-child(3){animation-delay:0.15s}.agent:nth-child(4){animation-delay:0.2s}
+  .agent:nth-child(5){animation-delay:0.25s}.agent:nth-child(6){animation-delay:0.3s}
+  .agent:nth-child(7){animation-delay:0.35s}.agent:nth-child(8){animation-delay:0.4s}
+  @keyframes rise { from { opacity: 0; transform: translateY(16px);} to { opacity: 1; transform: none;} }
+  .agent::before {
+    content: ""; position: absolute; inset: -40% -40% auto auto; width: 130px; height: 130px;
+    border-radius: 50%; background: var(--hue, var(--indigo));
+    opacity: 0; filter: blur(50px); transition: opacity 0.3s;
+  }
+  .agent:hover { transform: translateY(-4px); border-color: var(--line-2); box-shadow: 0 18px 44px rgba(0,0,0,0.4); }
+  .agent:hover::before { opacity: 0.22; }
+  .agent .icon {
+    width: 40px; height: 40px; border-radius: 12px;
+    display: grid; place-items: center; margin-bottom: 16px;
+    background: color-mix(in srgb, var(--hue, var(--indigo)) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--hue, var(--indigo)) 30%, transparent);
+    color: var(--hue, var(--indigo));
+    position: relative;
+  }
+  .agent h3 { font-size: 14.5px; font-weight: 600; margin-bottom: 5px; position: relative; }
+  .agent p { font-size: 12px; color: var(--ink-3); line-height: 1.55; position: relative; }
+  .agent .go {
+    position: absolute; right: 14px; top: 16px; opacity: 0;
+    transform: translateX(-6px); transition: all 0.22s; color: var(--ink-2);
+  }
+  .agent:hover .go { opacity: 1; transform: none; }
+
+  /* 右栏 */
+  .rail { display: flex; flex-direction: column; gap: 24px; }
+  .panel {
+    border-radius: 16px; border: 1px solid var(--line);
+    background: linear-gradient(170deg, rgba(255,255,255,0.045), rgba(255,255,255,0.015));
+    padding: 18px; backdrop-filter: blur(10px);
+  }
+  .panel h4 { font-family: var(--font-d); font-size: 13px; font-weight: 650; letter-spacing: 0.03em; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+  .run { display: flex; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+  .run:first-of-type { border-top: none; }
+  .run .ric {
+    width: 30px; height: 30px; border-radius: 9px; flex-shrink: 0;
+    display: grid; place-items: center;
+    background: rgba(255,255,255,0.05); border: 1px solid var(--line);
+    color: var(--ink-2);
+  }
+  .run .rt { flex: 1; min-width: 0; }
+  .run .rt b { display: block; font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .run .rt span { font-size: 11px; color: var(--ink-3); }
+  .bar { height: 3px; border-radius: 3px; background: rgba(255,255,255,0.08); margin-top: 7px; overflow: hidden; }
+  .bar i { display: block; height: 100%; border-radius: 3px;
+    background: linear-gradient(90deg, #6366f1, #a78bfa);
+    position: relative; overflow: hidden; }
+  .bar i::after { content:""; position: absolute; inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent);
+    animation: shimmer 1.6s linear infinite; }
+  @keyframes shimmer { from { transform: translateX(-100%);} to { transform: translateX(100%);} }
+  .feed { list-style: none; }
+  .feed li { display: flex; gap: 10px; padding: 9px 0; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--ink-2); line-height: 1.5; }
+  .feed li:first-child { border-top: none; }
+  .feed .tag {
+    flex-shrink: 0; font-family: var(--font-m); font-size: 10px; height: 18px;
+    display: inline-flex; align-items: center; padding: 0 7px; border-radius: 5px; margin-top: 1px;
+    background: rgba(129,140,248,0.14); color: #a5b4fc; border: 1px solid rgba(129,140,248,0.25);
+  }
+  .feed .tag.fix { background: rgba(110,231,183,0.10); color: var(--emerald); border-color: rgba(110,231,183,0.22); }
+
+  /* 底部数据 */
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 52px; }
+  @media (max-width: 720px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+  .stat {
+    border-radius: 14px; border: 1px solid var(--line); padding: 18px;
+    background: var(--glass);
+  }
+  .stat b { font-family: var(--font-d); font-size: 26px; font-weight: 650; letter-spacing: -0.01em; display: block; }
+  .stat span { font-size: 12px; color: var(--ink-3); margin-top: 4px; display: block; }
+
+  .demo-tag {
+    position: fixed; right: 18px; bottom: 16px; z-index: 9;
+    font-family: var(--font-m); font-size: 10.5px; letter-spacing: 0.1em;
+    color: var(--ink-3); border: 1px solid var(--line); border-radius: 8px;
+    padding: 6px 10px; background: rgba(11,11,16,0.7); backdrop-filter: blur(8px);
+  }
+  .demo-tag a { color: var(--indigo); text-decoration: none; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="sky">
+  <div class="aurora a"></div>
+  <div class="aurora b"></div>
+  <div class="aurora c"></div>
+  <div class="stars">
+    <i style="left:8%;top:12%;animation-delay:0s"></i><i style="left:22%;top:6%;animation-delay:1.2s"></i>
+    <i style="left:37%;top:18%;animation-delay:0.6s"></i><i style="left:52%;top:9%;animation-delay:2.1s"></i>
+    <i style="left:68%;top:15%;animation-delay:1.7s"></i><i style="left:81%;top:7%;animation-delay:0.3s"></i>
+    <i style="left:91%;top:20%;animation-delay:2.6s"></i><i style="left:14%;top:26%;animation-delay:3.1s"></i>
+    <i style="left:60%;top:24%;animation-delay:1.1s"></i><i style="left:76%;top:28%;animation-delay:2.4s"></i>
+  </div>
+</div>
+
+<div class="page">
+
+  <!-- 顶栏 -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="mark">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3l2.1 5.7L20 11l-5.9 2.3L12 19l-2.1-5.7L4 11l5.9-2.3z"/>
+        </svg>
+      </div>
+      <div>
+        <b>MAP</b><br>
+        <span>MIDUO AGENT PLATFORM</span>
+      </div>
+    </div>
+    <div class="top-search">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      搜索智能体、文档、作品…
+      <kbd>⌘ K</kbd>
+    </div>
+    <div class="avatar-ring" title="学习进度 9/14">
+      <svg class="ring" width="40" height="40" viewBox="0 0 40 40">
+        <circle cx="20" cy="20" r="18" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="2.5"/>
+        <circle cx="20" cy="20" r="18" fill="none" stroke="url(#rg)" stroke-width="2.5"
+          stroke-dasharray="113" stroke-dashoffset="40" stroke-linecap="round"/>
+        <defs><linearGradient id="rg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#818cf8"/><stop offset="1" stop-color="#c084fc"/>
+        </linearGradient></defs>
+      </svg>
+      <div class="face">王</div>
+    </div>
+  </header>
+
+  <!-- 问候 -->
+  <section class="hero">
+    <div class="date">7 月 2 日 星期四 · 晴</div>
+    <h1>晚上好，王工。<br>今晚想让<span class="glow">哪个智能体</span>替你干活？</h1>
+    <div class="sub">
+      <span class="pulse-dot"></span>
+      3 个任务正在运行 · 模型池 6 平台全部在线 · 本周你的团队产出了 47 件作品
+    </div>
+
+    <!-- 全局指令 -->
+    <div class="omni">
+      <div class="omni-inner">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#a5b4fc" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z"/>
+        </svg>
+        <input placeholder="描述你想做的事，MAP 会路由给最合适的智能体…">
+        <button class="omni-send">
+          开始
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="chips">
+      <span class="chip">给上周的 PRD 生成一版网页 PPT</span>
+      <span class="chip">把这段口语描述整理成 TAPD 缺陷单</span>
+      <span class="chip">为新功能画 4 张宣传图</span>
+      <span class="chip">汇总我这周的提交写周报</span>
+    </div>
+  </section>
+
+  <!-- 两栏 -->
+  <div class="cols">
+    <main>
+      <div class="sec-title">
+        <h2>智能体舰队</h2><span>14 位在岗</span>
+        <a href="#">全部智能体</a>
+      </div>
+      <div class="agents">
+        <div class="agent" style="--hue:#c084fc">
+          <span class="go"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M9 7h8v8"/></svg></span>
+          <div class="icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></svg></div>
+          <h3>视觉创作</h3>
+          <p>文生图 · 参考图 · 水印 · 批量画布</p>
+        </div>
+        <div class="agent" style="--hue:#fda4af">
+          <span class="go"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M9 7h8v8"/></svg></span>
+          <div class="icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><circle cx="11" cy="11" r="2"/></svg></div>
+          <h3>文学创作</h3>
+          <p>长文写作 · 风格提示词 · 一键配图</p>
+        </div>
+        <div class="agent" style="--hue:#6ee7b7">
+          <span class="go"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M9 7h8v8"/></svg></span>
+          <div class="icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="6" width="8" height="14" rx="4"/><path d="M19 7l-3 2M5 7l3 2M19 19l-3-2M5 19l3-2M12 20v2"/></svg></div>
+          <h3>缺陷管理</h3>
+          <p>AI 分析 · 外部 Agent 修复 · 验收闭环</p>
+        </div>
+        <div class="agent" style="--hue:#67e8f9">
+          <span class="go"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M9 7h8v8"/></svg></span>
+          <div class="icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="14" height="14" rx="3"/><path d="M22 8l-6 4 6 4V8z"/></svg></div>
+          <h3>视频创作</h3>
+          <p>Remotion 合成 · 分镜 · 场景代码生成</p>
+        </div>
+        <div class="agent" style="--hue:#fcd34d">
+          <span class="go"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M9 7h8v8"/></svg></span>
+          <div class="icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><rect x="7" y="10" width="3" height="7" rx="1"/><rect x="13" y="6" width="3" height="11" rx="1"/></svg></div>
+          <h3>周报智能体</h3>
+          <p>Git 数据采集 · 分类叙事 · 团队晾晒</p>
+        </div>
+        <div class="agent" style="--hue:#818cf8">
+          <span class="go"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M9 7h8v8"/></svg></span>
+          <div class="icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 009 9"/></svg></div>
+          <h3>PR 审查</h3>
+          <p>快照对比 · AI 评审 · 审查笔记</p>
+        </div>
+        <div class="agent" style="--hue:#f9a8d4">
+          <span class="go"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M9 7h8v8"/></svg></span>
+          <div class="icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg></div>
+          <h3>知识库</h3>
+          <p>双链引用 · 宇宙图谱 · 订阅同步</p>
+        </div>
+        <div class="agent" style="--hue:#93c5fd">
+          <span class="go"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M9 7h8v8"/></svg></span>
+          <div class="icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg></div>
+          <h3>MD 转网页 PPT</h3>
+          <p>Markdown 一键成稿 · reveal.js 渲染</p>
+        </div>
+      </div>
+
+      <!-- 数据 -->
+      <div class="stats">
+        <div class="stat"><b>1,284</b><span>本月 LLM 调用</span></div>
+        <div class="stat"><b>47</b><span>本周新作品</span></div>
+        <div class="stat"><b>6 / 6</b><span>模型平台在线</span></div>
+        <div class="stat"><b>92%</b><span>缺陷修复闭环率</span></div>
+      </div>
+    </main>
+
+    <!-- 右栏 -->
+    <aside class="rail">
+      <div class="panel">
+        <h4>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#a5b4fc" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+          正在进行
+        </h4>
+        <div class="run">
+          <div class="ric"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></svg></div>
+          <div class="rt">
+            <b>批量生成 · 新品宣传图 12 张</b>
+            <span>视觉创作 · 第 8/12 张 · 约 40 秒后完成</span>
+            <div class="bar"><i style="width:66%"></i></div>
+          </div>
+        </div>
+        <div class="run">
+          <div class="ric"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg></div>
+          <div class="rt">
+            <b>Q3 路线图 · 网页 PPT 渲染</b>
+            <span>MD 转 PPT · 正在排版第 6 页</span>
+            <div class="bar"><i style="width:38%"></i></div>
+          </div>
+        </div>
+        <div class="run">
+          <div class="ric"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 009 9"/></svg></div>
+          <div class="rt">
+            <b>PR #988 深度审查</b>
+            <span>PR 审查 · 正在分析 23 个变更文件</span>
+            <div class="bar"><i style="width:81%"></i></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h4>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#a5b4fc" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>
+          本周更新
+        </h4>
+        <ul class="feed">
+          <li><span class="tag">feat</span>知识库上线双链引用与宇宙图谱视图</li>
+          <li><span class="tag">feat</span>视觉创作支持直接粘贴图片作参考图</li>
+          <li><span class="tag fix">fix</span>周报弹窗在 Safari 下的样式错乱已修复</li>
+          <li><span class="tag">feat</span>学习中心新增 14 套页面教程</li>
+        </ul>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<div class="demo-tag">DEMO A · 极光操作台 · <a href="./index.html">返回画廊</a></div>
+
+</body>
+</html>

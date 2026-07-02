@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MAP · 便当画布 — 登录后首页 Demo C</title>
+<style>
+  :root {
+    --bg: #101014;
+    --tile: #17171d;
+    --tile-2: #1c1c24;
+    --ink: #f2f2f7;
+    --ink-2: rgba(242,242,247,0.70);
+    --ink-3: rgba(242,242,247,0.42);
+    --line: rgba(255,255,255,0.07);
+    --line-2: rgba(255,255,255,0.14);
+    --indigo: #818cf8; --violet: #c084fc; --cyan: #5eead4;
+    --rose: #fb7185; --amber: #fbbf24; --lime: #a3e635; --sky: #7dd3fc;
+    --font-d: "Space Grotesk", "Avenir Next", "PingFang SC", "HarmonyOS Sans SC", sans-serif;
+    --font-b: -apple-system, "PingFang SC", "HarmonyOS Sans SC", "Microsoft YaHei", sans-serif;
+    --font-m: "SF Mono", "JetBrains Mono", Consolas, monospace;
+    --r: 20px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--ink); font-family: var(--font-b);
+    -webkit-font-smoothing: antialiased; min-height: 100vh;
+    background-image: radial-gradient(circle at 1px 1px, rgba(255,255,255,0.035) 1px, transparent 0);
+    background-size: 28px 28px;
+  }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 24px 32px 70px; }
+  @media (max-width: 800px) { .wrap { padding: 16px 14px 50px; } }
+
+  /* 顶栏 */
+  .top { display: flex; align-items: center; gap: 18px; padding: 6px 4px 24px; }
+  .logo { display: flex; align-items: center; gap: 10px; }
+  .logo .m {
+    width: 32px; height: 32px; border-radius: 10px;
+    background: conic-gradient(from 210deg, #6366f1, #c084fc, #5eead4, #6366f1);
+    position: relative;
+  }
+  .logo .m::after { content: ""; position: absolute; inset: 3px; border-radius: 8px; background: var(--bg); }
+  .logo .m::before { content: ""; position: absolute; inset: 10px; border-radius: 3px; background: linear-gradient(135deg,#818cf8,#c084fc); z-index: 1; }
+  .logo b { font-family: var(--font-d); font-size: 16px; letter-spacing: 0.16em; }
+  .top .crumbs { font-size: 13px; color: var(--ink-3); }
+  .top .right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+  .icon-btn {
+    width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center;
+    border: 1px solid var(--line); background: var(--tile); color: var(--ink-2); cursor: pointer;
+    transition: all 0.18s; position: relative;
+  }
+  .icon-btn:hover { border-color: var(--line-2); color: var(--ink); }
+  .icon-btn .dot { position: absolute; top: 7px; right: 7px; width: 6px; height: 6px; border-radius: 50%; background: var(--rose); }
+  .me { width: 34px; height: 34px; border-radius: 10px; background: linear-gradient(135deg,#312e81,#6366f1); display: grid; place-items: center; font-size: 13px; font-weight: 600; color: #e0e7ff; cursor: pointer; }
+
+  /* Bento 网格 */
+  .bento {
+    display: grid; gap: 14px;
+    grid-template-columns: repeat(12, 1fr);
+    grid-auto-rows: 88px;
+  }
+  .tile {
+    position: relative; overflow: hidden;
+    background: var(--tile); border: 1px solid var(--line); border-radius: var(--r);
+    padding: 22px; transition: border-color 0.2s, transform 0.25s cubic-bezier(0.22,1,0.36,1), box-shadow 0.25s;
+    animation: pop 0.55s cubic-bezier(0.22,1,0.36,1) backwards;
+  }
+  .tile:hover { border-color: var(--line-2); transform: translateY(-3px); box-shadow: 0 16px 40px rgba(0,0,0,0.45); }
+  .tile:nth-child(1){animation-delay:0.03s}.tile:nth-child(2){animation-delay:0.08s}
+  .tile:nth-child(3){animation-delay:0.13s}.tile:nth-child(4){animation-delay:0.18s}
+  .tile:nth-child(5){animation-delay:0.23s}.tile:nth-child(6){animation-delay:0.28s}
+  .tile:nth-child(7){animation-delay:0.33s}.tile:nth-child(8){animation-delay:0.38s}
+  .tile:nth-child(9){animation-delay:0.43s}
+  @keyframes pop { from { opacity: 0; transform: translateY(14px) scale(0.98); } to { opacity: 1; transform: none; } }
+
+  .t-hero  { grid-column: span 8; grid-row: span 3; display: flex; flex-direction: column; }
+  .t-runs  { grid-column: span 4; grid-row: span 3; }
+  .t-a     { grid-column: span 3; grid-row: span 2; cursor: pointer; }
+  .t-show  { grid-column: span 6; grid-row: span 2; }
+  .t-stats { grid-column: span 3; grid-row: span 2; }
+  .t-news  { grid-column: span 5; grid-row: span 2; }
+  .t-kb    { grid-column: span 4; grid-row: span 2; cursor: pointer; }
+  @media (max-width: 1000px) {
+    .bento { grid-template-columns: repeat(6, 1fr); grid-auto-rows: 84px; }
+    .t-hero { grid-column: span 6; } .t-runs { grid-column: span 6; grid-row: span 2; }
+    .t-a { grid-column: span 3; } .t-show { grid-column: span 6; }
+    .t-stats { grid-column: span 3; } .t-news { grid-column: span 6; } .t-kb { grid-column: span 3; }
+  }
+  @media (max-width: 620px) {
+    .bento { grid-template-columns: repeat(2, 1fr); grid-auto-rows: auto; }
+    .bento .tile { grid-column: span 2 !important; grid-row: auto !important; min-height: 120px; }
+    .t-a { grid-column: span 1 !important; }
+  }
+
+  .t-label {
+    font-family: var(--font-m); font-size: 10px; letter-spacing: 0.2em;
+    text-transform: uppercase; color: var(--ink-3);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .t-label svg { color: var(--hue, var(--indigo)); }
+
+  /* 主 tile */
+  .t-hero {
+    background:
+      radial-gradient(120% 160% at 0% 0%, rgba(99,102,241,0.20), transparent 55%),
+      radial-gradient(120% 160% at 100% 100%, rgba(192,132,252,0.12), transparent 55%),
+      var(--tile);
+  }
+  .t-hero h1 { font-family: var(--font-d); font-size: clamp(22px, 2.6vw, 32px); font-weight: 650; letter-spacing: -0.01em; line-height: 1.3; margin-top: 14px; }
+  .t-hero h1 span { color: var(--indigo); }
+  .t-hero .cmd {
+    margin-top: auto; display: flex; align-items: center; gap: 12px;
+    background: rgba(0,0,0,0.35); border: 1px solid var(--line-2); border-radius: 14px;
+    padding: 14px 16px; backdrop-filter: blur(8px);
+    transition: border-color 0.2s;
+  }
+  .t-hero .cmd:focus-within { border-color: rgba(129,140,248,0.6); box-shadow: 0 0 0 3px rgba(99,102,241,0.15); }
+  .t-hero .cmd input { flex: 1; background: none; border: none; outline: none; color: var(--ink); font-size: 14.5px; font-family: var(--font-b); }
+  .t-hero .cmd input::placeholder { color: var(--ink-3); }
+  .t-hero .cmd kbd { font-family: var(--font-m); font-size: 10px; color: var(--ink-3); border: 1px solid var(--line-2); padding: 3px 7px; border-radius: 6px; }
+  .t-hero .quick { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  .t-hero .quick span {
+    font-size: 11.5px; color: var(--ink-2); border: 1px solid var(--line);
+    background: rgba(255,255,255,0.03); padding: 5px 11px; border-radius: 99px; cursor: pointer;
+    transition: all 0.15s;
+  }
+  .t-hero .quick span:hover { border-color: rgba(129,140,248,0.5); color: #c7d2fe; }
+
+  /* 运行中 tile */
+  .t-runs .run { display: flex; gap: 11px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .t-runs .run:last-child { border-bottom: none; }
+  .t-runs .sq { width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0; display: grid; place-items: center; color: var(--hue); background: color-mix(in srgb, var(--hue) 12%, transparent); border: 1px solid color-mix(in srgb, var(--hue) 26%, transparent); }
+  .t-runs b { font-size: 12.5px; font-weight: 600; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .t-runs small { font-size: 11px; color: var(--ink-3); }
+  .t-runs .rr { flex: 1; min-width: 0; }
+  .mini-bar { height: 3px; background: rgba(255,255,255,0.07); border-radius: 3px; margin-top: 6px; overflow: hidden; }
+  .mini-bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--hue), color-mix(in srgb, var(--hue) 50%, #fff)); border-radius: 3px; position: relative; overflow: hidden; }
+  .mini-bar i::after { content:""; position:absolute; inset:0; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.55), transparent); animation: sweep 1.5s linear infinite; }
+  @keyframes sweep { from { transform: translateX(-100%);} to { transform: translateX(100%);} }
+  .live {
+    display: inline-flex; align-items: center; gap: 6px; margin-left: auto;
+    font-family: var(--font-m); font-size: 10px; color: var(--cyan); letter-spacing: 0.1em;
+  }
+  .live::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--cyan); animation: blink 1.6s infinite; }
+  @keyframes blink { 0%,100% { opacity: 1;} 50% { opacity: 0.2;} }
+
+  /* 智能体快捷 tile */
+  .t-a { display: flex; flex-direction: column; }
+  .t-a .big-icon {
+    width: 42px; height: 42px; border-radius: 13px; display: grid; place-items: center;
+    color: var(--hue); background: color-mix(in srgb, var(--hue) 13%, transparent);
+    border: 1px solid color-mix(in srgb, var(--hue) 30%, transparent);
+    margin-bottom: auto;
+  }
+  .t-a h3 { font-family: var(--font-d); font-size: 15.5px; font-weight: 650; margin-top: 14px; }
+  .t-a p { font-size: 11.5px; color: var(--ink-3); margin-top: 4px; }
+  .t-a::after {
+    content: ""; position: absolute; right: -30px; top: -30px; width: 110px; height: 110px;
+    border-radius: 50%; background: var(--hue); opacity: 0.08; filter: blur(30px);
+    transition: opacity 0.25s;
+  }
+  .t-a:hover::after { opacity: 0.2; }
+  .t-a .arrow { position: absolute; top: 20px; right: 20px; color: var(--ink-3); opacity: 0; transform: translate(-4px, 4px); transition: all 0.2s; }
+  .t-a:hover .arrow { opacity: 1; transform: none; color: var(--hue); }
+
+  /* 作品展柜 tile */
+  .t-show .shelf { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 14px; }
+  .t-show .art {
+    aspect-ratio: 3/4; border-radius: 12px; border: 1px solid var(--line-2);
+    position: relative; overflow: hidden; cursor: pointer;
+    transition: transform 0.22s cubic-bezier(0.22,1,0.36,1);
+  }
+  .t-show .art:hover { transform: translateY(-4px) rotate(-1deg); }
+  .t-show .art i { position: absolute; left: 8px; bottom: 7px; font-style: normal; font-size: 10px; color: rgba(255,255,255,0.85); font-family: var(--font-m); letter-spacing: 0.05em; text-shadow: 0 1px 4px rgba(0,0,0,0.6); }
+  .art.a1 { background: linear-gradient(160deg, #4338ca, #c084fc 70%, #fbcfe8); }
+  .art.a2 { background: conic-gradient(from 40deg at 30% 70%, #0e7490, #5eead4, #172554); }
+  .art.a3 { background: linear-gradient(200deg, #f59e0b, #fb7185 60%, #581c87); }
+  .art.a4 { background: radial-gradient(circle at 70% 20%, #a3e635, #166534 60%, #052e16); }
+
+  /* 统计 tile */
+  .t-stats { display: flex; flex-direction: column; }
+  .t-stats .num { font-family: var(--font-d); font-size: 42px; font-weight: 650; letter-spacing: -0.02em; margin-top: 10px; line-height: 1; }
+  .t-stats .num small { font-size: 14px; color: var(--cyan); font-weight: 600; margin-left: 6px; }
+  .t-stats .cap { font-size: 12px; color: var(--ink-3); margin-top: 6px; }
+  .spark { margin-top: auto; width: 100%; }
+
+  /* 快讯 tile */
+  .t-news ul { list-style: none; margin-top: 12px; }
+  .t-news li { display: flex; gap: 10px; align-items: baseline; padding: 8px 0; border-bottom: 1px dashed var(--line); font-size: 12.5px; color: var(--ink-2); }
+  .t-news li:last-child { border-bottom: none; }
+  .t-news .b {
+    flex-shrink: 0; font-family: var(--font-m); font-size: 9.5px; padding: 2px 7px; border-radius: 5px;
+    letter-spacing: 0.08em;
+  }
+  .b.feat { color: #a5b4fc; background: rgba(129,140,248,0.12); border: 1px solid rgba(129,140,248,0.25); }
+  .b.fix { color: var(--cyan); background: rgba(94,234,212,0.08); border: 1px solid rgba(94,234,212,0.2); }
+
+  /* 知识库 tile */
+  .t-kb {
+    background:
+      radial-gradient(100% 140% at 100% 0%, rgba(94,234,212,0.12), transparent 60%), var(--tile);
+    display: flex; flex-direction: column;
+  }
+  .t-kb .constellation { position: absolute; inset: 0; opacity: 0.55; }
+  .t-kb h3 { font-family: var(--font-d); font-size: 16px; font-weight: 650; margin-top: auto; position: relative; }
+  .t-kb p { font-size: 11.5px; color: var(--ink-3); margin-top: 4px; position: relative; }
+
+  .foot {
+    margin-top: 22px; display: flex; justify-content: space-between;
+    font-family: var(--font-m); font-size: 10.5px; letter-spacing: 0.12em; color: var(--ink-3);
+  }
+  .foot a { color: var(--indigo); text-decoration: none; }
+
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="logo"><div class="m"></div><b>MAP</b></div>
+    <span class="crumbs">工作台</span>
+    <div class="right">
+      <div class="icon-btn" title="搜索">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      </div>
+      <div class="icon-btn" title="通知">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 01-3.4 0"/></svg>
+        <span class="dot"></span>
+      </div>
+      <div class="me">王</div>
+    </div>
+  </header>
+
+  <div class="bento">
+
+    <!-- 主指令 -->
+    <div class="tile t-hero">
+      <div class="t-label" style="--hue:#818cf8">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>
+        COMMAND · 今天
+      </div>
+      <h1>晚上好，王工。<br>一句话，让 <span>14 位智能体</span>开工。</h1>
+      <div class="cmd">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#818cf8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        <input placeholder="描述任务，自动路由给最合适的智能体…">
+        <kbd>⌘K</kbd>
+      </div>
+      <div class="quick">
+        <span>PRD 转网页 PPT</span><span>批量生成宣传图</span><span>口语转缺陷单</span><span>写本周周报</span>
+      </div>
+    </div>
+
+    <!-- 正在运行 -->
+    <div class="tile t-runs">
+      <div class="t-label" style="--hue:#5eead4">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+        RUNNING · 正在进行
+        <span class="live">LIVE</span>
+      </div>
+      <div class="run" style="--hue:#c084fc">
+        <div class="sq"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></svg></div>
+        <div class="rr">
+          <b>新品宣传图 12 张 · 批量生成</b>
+          <small>视觉创作 · 8/12 · 约 40s</small>
+          <div class="mini-bar"><i style="width:66%"></i></div>
+        </div>
+      </div>
+      <div class="run" style="--hue:#7dd3fc">
+        <div class="sq"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg></div>
+        <div class="rr">
+          <b>Q3 路线图 · PPT 排版</b>
+          <small>MD 转 PPT · 第 6 页渲染中</small>
+          <div class="mini-bar"><i style="width:38%"></i></div>
+        </div>
+      </div>
+      <div class="run" style="--hue:#a3e635">
+        <div class="sq"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 009 9"/></svg></div>
+        <div class="rr">
+          <b>PR #988 深度审查</b>
+          <small>PR 审查 · 23 个文件分析中</small>
+          <div class="mini-bar"><i style="width:81%"></i></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 智能体快捷 x2 -->
+    <div class="tile t-a" style="--hue:#c084fc">
+      <span class="arrow"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M9 7h8v8"/></svg></span>
+      <div class="big-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></svg></div>
+      <h3>视觉创作</h3>
+      <p>文生图 · 参考图 · 批量画布</p>
+    </div>
+    <div class="tile t-a" style="--hue:#fb7185">
+      <span class="arrow"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M9 7h8v8"/></svg></span>
+      <div class="big-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg></div>
+      <h3>文学创作</h3>
+      <p>长文 · 风格化 · 一键配图</p>
+    </div>
+
+    <!-- 作品展柜 -->
+    <div class="tile t-show">
+      <div class="t-label" style="--hue:#fbbf24">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.1 5.7L20 11l-5.9 2.3L12 19l-2.1-5.7L4 11l5.9-2.3z"/></svg>
+        SHOWCASE · 团队新作
+      </div>
+      <div class="shelf">
+        <div class="art a1"><i>宣传图 v3</i></div>
+        <div class="art a2"><i>发布会 KV</i></div>
+        <div class="art a3"><i>七月海报</i></div>
+        <div class="art a4"><i>产品插画</i></div>
+      </div>
+    </div>
+
+    <!-- 统计 -->
+    <div class="tile t-stats">
+      <div class="t-label" style="--hue:#5eead4">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>
+        WEEKLY · 本周产出
+      </div>
+      <div class="num">47<small>+18%</small></div>
+      <div class="cap">件作品 · 较上周</div>
+      <svg class="spark" viewBox="0 0 200 44" preserveAspectRatio="none" height="44">
+        <defs><linearGradient id="sp" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="rgba(94,234,212,0.35)"/><stop offset="1" stop-color="rgba(94,234,212,0)"/>
+        </linearGradient></defs>
+        <path d="M0 34 L28 30 L56 32 L84 22 L112 26 L140 14 L168 18 L200 6" fill="none" stroke="#5eead4" stroke-width="2" stroke-linecap="round"/>
+        <path d="M0 34 L28 30 L56 32 L84 22 L112 26 L140 14 L168 18 L200 6 L200 44 L0 44 Z" fill="url(#sp)"/>
+      </svg>
+    </div>
+
+    <!-- 快讯 -->
+    <div class="tile t-news">
+      <div class="t-label" style="--hue:#818cf8">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l18-7-7 18-2.5-7.5z"/></svg>
+        CHANGELOG · 本周更新
+      </div>
+      <ul>
+        <li><span class="b feat">feat</span>知识库上线双链引用与宇宙图谱视图</li>
+        <li><span class="b feat">feat</span>视觉创作支持粘贴图片作参考图</li>
+        <li><span class="b fix">fix</span>周报弹窗 Safari 样式错乱已修复</li>
+        <li><span class="b feat">feat</span>学习中心开放 14 套页面教程</li>
+      </ul>
+    </div>
+
+    <!-- 知识库 -->
+    <div class="tile t-kb">
+      <svg class="constellation" viewBox="0 0 320 180">
+        <g stroke="rgba(94,234,212,0.35)" stroke-width="1">
+          <line x1="40" y1="50" x2="120" y2="30"/><line x1="120" y1="30" x2="190" y2="70"/>
+          <line x1="190" y1="70" x2="270" y2="40"/><line x1="120" y1="30" x2="150" y2="120"/>
+          <line x1="190" y1="70" x2="150" y2="120"/><line x1="40" y1="50" x2="70" y2="130"/>
+          <line x1="70" y1="130" x2="150" y2="120"/><line x1="270" y1="40" x2="250" y2="110"/>
+        </g>
+        <g fill="#5eead4">
+          <circle cx="40" cy="50" r="3"/><circle cx="120" cy="30" r="4.5"/><circle cx="190" cy="70" r="3.5"/>
+          <circle cx="270" cy="40" r="3"/><circle cx="150" cy="120" r="5"/><circle cx="70" cy="130" r="2.5"/>
+          <circle cx="250" cy="110" r="3"/>
+        </g>
+      </svg>
+      <h3>知识库 · 宇宙图谱</h3>
+      <p>217 篇笔记 · 共 134 条双链 · 本周新增 12 篇</p>
+    </div>
+  </div>
+
+  <footer class="foot">
+    <span>MAP · MIDUO AGENT PLATFORM</span>
+    <span>DEMO C · 便当画布 · <a href="./index.html">返回画廊</a></span>
+  </footer>
+</div>
+</body>
+</html>

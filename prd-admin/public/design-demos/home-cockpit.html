@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MAP · 静默驾驶舱 — 登录后首页 Demo D</title>
+<style>
+  :root {
+    --bg: #08080c;
+    --ink: #f5f5fa;
+    --ink-2: rgba(245,245,250,0.68);
+    --ink-3: rgba(245,245,250,0.40);
+    --line: rgba(255,255,255,0.08);
+    --line-2: rgba(255,255,255,0.15);
+    --indigo: #818cf8; --violet: #a78bfa; --cyan: #67e8f9; --emerald: #6ee7b7;
+    --font-d: "Space Grotesk", "Avenir Next", "PingFang SC", "HarmonyOS Sans SC", sans-serif;
+    --font-b: -apple-system, "PingFang SC", "HarmonyOS Sans SC", "Microsoft YaHei", sans-serif;
+    --font-m: "SF Mono", "JetBrains Mono", Consolas, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--ink); font-family: var(--font-b);
+    -webkit-font-smoothing: antialiased; overflow: hidden;
+  }
+
+  /* 舞台 */
+  .stage {
+    position: relative; height: 100vh;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 0 24px;
+  }
+  /* 地平线光 */
+  .stage::before {
+    content: ""; position: absolute; left: 50%; bottom: -34vh; transform: translateX(-50%);
+    width: 130vw; height: 60vh; border-radius: 50%;
+    background: radial-gradient(ellipse at center,
+      rgba(99,102,241,0.28) 0%, rgba(139,92,246,0.12) 38%, transparent 68%);
+    filter: blur(30px); pointer-events: none;
+  }
+  /* 网格地面 */
+  .floor {
+    position: absolute; inset: auto 0 0 0; height: 42vh; pointer-events: none;
+    background-image:
+      linear-gradient(rgba(129,140,248,0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(129,140,248,0.06) 1px, transparent 1px);
+    background-size: 46px 46px;
+    transform: perspective(600px) rotateX(58deg) scale(1.6);
+    transform-origin: 50% 100%;
+    mask-image: linear-gradient(to top, rgba(0,0,0,0.7), transparent 85%);
+    -webkit-mask-image: linear-gradient(to top, rgba(0,0,0,0.7), transparent 85%);
+  }
+
+  /* 顶部状态角标 */
+  .hud {
+    position: absolute; top: 0; left: 0; right: 0;
+    display: flex; align-items: center; padding: 20px 28px; gap: 24px;
+    font-family: var(--font-m); font-size: 11px; letter-spacing: 0.14em; color: var(--ink-3);
+  }
+  .hud .brand { display: flex; align-items: center; gap: 9px; color: var(--ink); font-family: var(--font-d); letter-spacing: 0.18em; font-weight: 700; font-size: 14px; }
+  .hud .brand i {
+    width: 22px; height: 22px; border-radius: 7px; font-style: normal;
+    background: linear-gradient(135deg, #6366f1, #a78bfa);
+    box-shadow: 0 0 18px rgba(99,102,241,0.6);
+  }
+  .hud .sep { flex: 1; }
+  .hud .sig { display: flex; align-items: center; gap: 7px; }
+  .hud .sig::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--emerald); box-shadow: 0 0 8px var(--emerald); }
+  .hud .me {
+    width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center;
+    border: 1px solid var(--line-2); font-family: var(--font-b); font-size: 12px; color: var(--ink-2);
+    cursor: pointer;
+  }
+
+  /* 核心球体 */
+  .orb-wrap { position: relative; width: 108px; height: 108px; margin-bottom: 34px; }
+  .orb {
+    position: absolute; inset: 14px; border-radius: 50%;
+    background:
+      radial-gradient(circle at 32% 28%, rgba(255,255,255,0.9), rgba(199,210,254,0.28) 24%, transparent 40%),
+      conic-gradient(from 0deg, #6366f1, #a78bfa, #67e8f9, #6366f1);
+    filter: saturate(1.15);
+    animation: spin 14s linear infinite;
+    box-shadow: 0 0 60px rgba(99,102,241,0.55), 0 0 140px rgba(139,92,246,0.3);
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .orb-wrap::before, .orb-wrap::after {
+    content: ""; position: absolute; inset: 0; border-radius: 50%;
+    border: 1px solid rgba(129,140,248,0.35);
+    animation: ripple 3.2s ease-out infinite;
+  }
+  .orb-wrap::after { animation-delay: 1.6s; }
+  @keyframes ripple {
+    from { transform: scale(0.86); opacity: 0.9; }
+    to   { transform: scale(1.5); opacity: 0; }
+  }
+
+  /* 问句 */
+  h1 {
+    font-family: var(--font-d); font-weight: 600;
+    font-size: clamp(26px, 3.6vw, 40px); letter-spacing: 0.01em;
+    text-align: center;
+  }
+  .sub { margin-top: 12px; font-size: 13.5px; color: var(--ink-3); text-align: center; }
+  .sub b { color: var(--ink-2); font-weight: 600; }
+
+  /* 指令台 */
+  .console {
+    margin-top: 36px; width: min(680px, 92vw);
+    border-radius: 20px; padding: 1px;
+    background: linear-gradient(130deg, rgba(129,140,248,0.55), rgba(255,255,255,0.07) 40%, rgba(103,232,249,0.35));
+    box-shadow: 0 30px 90px rgba(0,0,0,0.6), 0 0 80px rgba(99,102,241,0.12);
+  }
+  .console-in {
+    border-radius: 19px; background: rgba(13,13,20,0.92); backdrop-filter: blur(24px);
+    padding: 18px 18px 14px;
+  }
+  .console textarea {
+    width: 100%; background: none; border: none; outline: none; resize: none;
+    color: var(--ink); font-size: 15.5px; font-family: var(--font-b); line-height: 1.6;
+    min-height: 54px;
+  }
+  .console textarea::placeholder { color: var(--ink-3); }
+  .console .row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 12px; color: var(--ink-2);
+    border: 1px solid var(--line); border-radius: 99px; padding: 6px 12px; cursor: pointer;
+    transition: all 0.16s;
+  }
+  .pill:hover { border-color: var(--line-2); color: var(--ink); }
+  .pill svg { opacity: 0.7; }
+  .go {
+    margin-left: auto; width: 40px; height: 40px; border-radius: 13px; border: none; cursor: pointer;
+    display: grid; place-items: center; color: #fff;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    box-shadow: 0 6px 22px rgba(99,102,241,0.45);
+    transition: transform 0.15s, box-shadow 0.2s;
+  }
+  .go:hover { transform: translateY(-2px); box-shadow: 0 10px 30px rgba(99,102,241,0.6); }
+
+  /* 建议卡 */
+  .sugg {
+    margin-top: 22px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+    width: min(680px, 92vw);
+  }
+  @media (max-width: 640px) { .sugg { grid-template-columns: repeat(2, 1fr); } }
+  .s-card {
+    border: 1px solid var(--line); border-radius: 14px; padding: 13px 14px;
+    background: rgba(255,255,255,0.025); cursor: pointer;
+    transition: all 0.2s; backdrop-filter: blur(6px);
+    animation: rise 0.6s cubic-bezier(0.22,1,0.36,1) backwards;
+  }
+  .s-card:nth-child(1){animation-delay:0.35s}.s-card:nth-child(2){animation-delay:0.42s}
+  .s-card:nth-child(3){animation-delay:0.49s}.s-card:nth-child(4){animation-delay:0.56s}
+  @keyframes rise { from { opacity: 0; transform: translateY(12px);} to { opacity: 1; transform: none;} }
+  .s-card:hover { border-color: rgba(129,140,248,0.45); background: rgba(99,102,241,0.07); transform: translateY(-2px); }
+  .s-card b { display: flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+  .s-card b svg { color: var(--hue, var(--indigo)); flex-shrink: 0; }
+  .s-card span { display: block; font-size: 11px; color: var(--ink-3); margin-top: 5px; line-height: 1.5; }
+
+  /* Dock */
+  .dock-zone {
+    position: absolute; bottom: 26px; left: 0; right: 0;
+    display: flex; justify-content: center; pointer-events: none;
+  }
+  .dock {
+    pointer-events: auto;
+    display: flex; align-items: flex-end; gap: 6px;
+    padding: 10px 14px; border-radius: 22px;
+    border: 1px solid var(--line-2);
+    background: rgba(16,16,24,0.72); backdrop-filter: blur(26px);
+    box-shadow: 0 18px 50px rgba(0,0,0,0.55);
+  }
+  .d-item { position: relative; display: grid; place-items: center; }
+  .d-item .ic {
+    width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center;
+    color: var(--hue, var(--indigo));
+    background: color-mix(in srgb, var(--hue, var(--indigo)) 13%, rgba(255,255,255,0.03));
+    border: 1px solid color-mix(in srgb, var(--hue, var(--indigo)) 28%, transparent);
+    cursor: pointer;
+    transition: transform 0.18s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.18s;
+  }
+  .d-item:hover .ic { transform: translateY(-10px) scale(1.18); box-shadow: 0 14px 30px rgba(0,0,0,0.5), 0 0 24px color-mix(in srgb, var(--hue) 35%, transparent); }
+  .d-item .tip {
+    position: absolute; bottom: calc(100% + 14px); left: 50%; transform: translateX(-50%) translateY(4px);
+    white-space: nowrap; font-size: 11px; color: var(--ink);
+    background: rgba(24,24,34,0.95); border: 1px solid var(--line-2);
+    border-radius: 8px; padding: 5px 10px; opacity: 0; pointer-events: none;
+    transition: all 0.18s;
+  }
+  .d-item:hover .tip { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .d-item .badge {
+    position: absolute; top: -3px; right: -3px; min-width: 15px; height: 15px;
+    border-radius: 8px; background: #fb7185; color: #fff; font-size: 9px; font-weight: 700;
+    display: grid; place-items: center; padding: 0 4px; z-index: 1;
+    border: 2px solid var(--bg);
+  }
+  .dock .div { width: 1px; height: 34px; background: var(--line-2); margin: 0 6px 5px; align-self: flex-end; }
+
+  .demo-tag {
+    position: fixed; right: 18px; top: 60px; z-index: 9;
+    font-family: var(--font-m); font-size: 10.5px; letter-spacing: 0.1em;
+    color: var(--ink-3); border: 1px solid var(--line); border-radius: 8px;
+    padding: 6px 10px; background: rgba(8,8,12,0.7); backdrop-filter: blur(8px);
+  }
+  .demo-tag a { color: var(--indigo); text-decoration: none; }
+
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+  @media (max-height: 640px) { .orb-wrap { display: none; } }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <div class="floor"></div>
+
+  <!-- HUD -->
+  <header class="hud">
+    <div class="brand"><i></i>MAP</div>
+    <div class="sep"></div>
+    <span class="sig">MODEL POOL 6/6</span>
+    <span>RUNS 3 ACTIVE</span>
+    <span>22:47 CST</span>
+    <div class="me">王</div>
+  </header>
+
+  <!-- 核心 -->
+  <div class="orb-wrap"><div class="orb"></div></div>
+  <h1>今晚想做什么，王工？</h1>
+  <p class="sub">后台有 <b>3 个任务</b>正在替你运行 · 昨天你的团队产出了 <b>9 件作品</b></p>
+
+  <div class="console">
+    <div class="console-in">
+      <textarea rows="2" placeholder="用一句话描述任务——「把上周的 PRD 做成一份深色风格的网页 PPT」"></textarea>
+      <div class="row">
+        <span class="pill">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.4 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l8.57-8.57A4 4 0 1118 8.84l-8.59 8.57a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+          附件
+        </span>
+        <span class="pill">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33h0a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51h0a1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82v0a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+          自动路由
+        </span>
+        <button class="go" title="发送">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 建议 -->
+  <div class="sugg">
+    <div class="s-card" style="--hue:#c084fc">
+      <b><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></svg>继续生成</b>
+      <span>宣传图批次还差 4 张，去画布看看</span>
+    </div>
+    <div class="s-card" style="--hue:#67e8f9">
+      <b><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 009 9"/></svg>待你复测</b>
+      <span>缺陷「分享链接空白页」已修复</span>
+    </div>
+    <div class="s-card" style="--hue:#6ee7b7">
+      <b><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>周五了</b>
+      <span>一键从 32 个提交生成本周周报</span>
+    </div>
+    <div class="s-card" style="--hue:#fbbf24">
+      <b><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>新能力</b>
+      <span>知识库宇宙图谱上线，去看星空</span>
+    </div>
+  </div>
+
+  <!-- Dock -->
+  <div class="dock-zone">
+    <nav class="dock">
+      <div class="d-item" style="--hue:#c084fc">
+        <span class="tip">视觉创作</span>
+        <div class="ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></svg></div>
+      </div>
+      <div class="d-item" style="--hue:#fb7185">
+        <span class="tip">文学创作</span>
+        <div class="ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg></div>
+      </div>
+      <div class="d-item" style="--hue:#6ee7b7">
+        <span class="tip">缺陷管理</span>
+        <div class="ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="6" width="8" height="14" rx="4"/><path d="M19 7l-3 2M5 7l3 2M19 19l-3-2M5 19l3-2M12 20v2"/></svg></div>
+        <span class="badge">2</span>
+      </div>
+      <div class="d-item" style="--hue:#7dd3fc">
+        <span class="tip">视频创作</span>
+        <div class="ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="14" height="14" rx="3"/><path d="M22 8l-6 4 6 4V8z"/></svg></div>
+      </div>
+      <div class="d-item" style="--hue:#fbbf24">
+        <span class="tip">周报智能体</span>
+        <div class="ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><rect x="7" y="10" width="3" height="7" rx="1"/><rect x="13" y="6" width="3" height="11" rx="1"/></svg></div>
+      </div>
+      <div class="d-item" style="--hue:#a3e635">
+        <span class="tip">PR 审查</span>
+        <div class="ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 009 9"/></svg></div>
+      </div>
+      <div class="div"></div>
+      <div class="d-item" style="--hue:#818cf8">
+        <span class="tip">百宝箱 · 全部智能体</span>
+        <div class="ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></div>
+      </div>
+    </nav>
+  </div>
+</div>
+
+<div class="demo-tag">DEMO D · 静默驾驶舱 · <a href="./index.html">返回画廊</a></div>
+
+</body>
+</html>
