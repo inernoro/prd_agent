@@ -143,3 +143,8 @@ GatewayTransport 后端打标**已在早前分支合入**（`LlmRequestLog.Gatew
 - serving 密钥自检真机日志：`[ServingKeyIntegrity] OK：可解密全部真实平台密文（2 个启用平台，跳过 1 个 dev-stub）`。
 - B1 配置面真机验证（2026-07-02，登录后 curl）：`/gw/pools`=20 池、`/gw/models`=12、`/gw/platforms`=2；**密钥防泄漏断言通过**——`/gw/platforms` 与 `/gw/models` 响应体不含 apiKey/Encrypted、只含 `hasKey`；无 token → 401。控制台导航「日志 / 模型池 / 平台 / 影子比对」四页可切。
 - **像素级视觉验收**：本轮受沙箱↔代理↔headless chromium 限制未截到图（`ERR_CONNECTION_CLOSED`，环境限制非应用问题）；已按 `real-visual-acceptance.md` 立规，后续在浏览器可达预览的环境（`/验收` harness）补像素取证。
+- A1（transport 可见性）：代码已部署（healthz=本轮 commit）、前后端 tsc 干净、DTO 以 `Never` 忽略策略序列化故 `transport` 字段必然出现（历史日志值为 null → 前端 chip 隐藏，属预期）。**本轮未能登录控制台做字段活取证**——见下「已知问题」。
+
+## 7. 已知问题（诚实登记，需后续处理）
+
+- **网关控制台 admin 反复登不进（共享库污染 + CDS 基建时序）**：`llmgw_users` 被 main/多分支的**多版本 llmgw** 跨部署 seed，已认领的 admin 口令会被别的部署污染成未知值；自愈只重置未认领账号 → 死锁。本轮加了 break-glass（`LLMGW_ADMIN_FORCE_RESET=1` 启动强制拉回 admin/admin），但其生效卡在两个 CDS 基建问题上：① `express` 档 CI 镜像有构建延迟，break-glass commit 未即时上线（healthz 仍是上一 commit）；② `_global` env 注入不稳定（`LLMGW_ADMIN_FORCE_RESET` 未进容器）。**durable 真修**：把控制台用户存到**独立集合**（不与其它部署共享 `llmgw_users`），或独立库，杜绝跨版本 seed 互相污染。列为下一增量。
