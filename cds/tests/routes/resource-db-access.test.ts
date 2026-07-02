@@ -1031,6 +1031,22 @@ describe('resource database access', () => {
       '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
       { database: 'orders', command: 'db.getCollection("users").find({ note: "see updateOne( docs" }).limit(10);' },
     );
+    // 模板字符串藏写（${} 会被 mongosh 求值）→ 400（Bugbot High）
+    const templateBypass = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
+      { database: 'orders', command: 'db.getCollection("users").findOne(`${db.getCollection("users").updateMany({}, { $set: { h: 1 } })}`)', confirmResourceName: 'mongo-main' },
+      { 'x-test-cookie-auth': '1' },
+    );
+    // 计算成员访问藏方法名（db.x["updateMany"]()）→ 400
+    const computedMemberBypass = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
+      { database: 'orders', command: 'db.getCollection("users")["updateMany"]({}, { $set: { h: 1 } })', confirmResourceName: 'mongo-main' },
+      { 'x-test-cookie-auth': '1' },
+    );
 
     expect(ok.status).toBe(200);
     expect(ok.body.collection).toBe('users');
@@ -1055,6 +1071,8 @@ describe('resource database access', () => {
     expect(multilineWrite.body.kind).toBe('write-result');
     expect(findWriteNameInValue.status).toBe(200);
     expect(findWriteNameInValue.body.kind).toBe('documents');
+    expect(templateBypass.status).toBe(400);
+    expect(computedMemberBypass.status).toBe(400);
   });
 
   it('describes planned workbench capability for SQL Server and RabbitMQ resources', async () => {

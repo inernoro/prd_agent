@@ -5911,9 +5911,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (withoutTrailing.includes(';')) {
       throw new Error('MongoDB Console 一次只允许执行一条命令');
     }
+    // 禁止「能隐藏/触发执行」的 JS 构造——它们在数据控制台里没有任何合法用途，却能绕过按形态的静态扫描：
+    //   1. 反引号模板串：抹字面量会把内容抹掉，但 mongosh 仍会求值 `${...}` 内嵌表达式（Bugbot High）；
+    //   2. 箭头函数 / function 回调：db.x.find().forEach(() => db.y.drop()) 之类的隐藏执行；
+    //   3. 计算成员访问：db.x["drop"]() —— 方法名藏进字符串（被抹），但 mongosh 照常执行。
+    // 反引号在原文查（模板由反引号定义）；箭头/function/计算成员在代码骨架查（避免字符串数据里的同名子串误伤）。
+    if (/`/.test(withoutTrailing)) {
+      throw new Error('MongoDB Console 禁止使用模板字符串（反引号）——其 ${} 内嵌表达式会被执行');
+    }
     // 代码骨架（抹掉字符串/正则字面量内容）——所有「按方法调用/操作符形态」的安全扫描都对它做，
     // 避免把数据/日志/正则示例里的 drop( / updateOne( 等子串误判（Bugbot Medium）。
     const codeSkeleton = stripMongoLiterals(withoutTrailing);
+    if (/=>|\bfunction\s*\(/.test(codeSkeleton)) {
+      throw new Error('MongoDB Console 禁止箭头函数 / function 回调（可内嵌隐藏执行）');
+    }
+    if (/[\w)\]]\s*\[/.test(codeSkeleton)) {
+      throw new Error('MongoDB Console 禁止计算成员访问（如 db.x["drop"]()）——方法名必须是明文');
+    }
     // 始终禁止：高危操作只按「方法调用」形态匹配（op 后跟 `(`）。仍拦截参数里内嵌的危险调用，例如
     // insertOne({ a: db.y.drop() })——mongo shell 会先求值该实参再执行 insertOne，故 `.drop(` 必须挡下。
     // aggregate 一并按方法调用拦截，从根上堵死 $out/$merge 写出。$where 按「操作符键」形态拦截（服务端 JS）。
