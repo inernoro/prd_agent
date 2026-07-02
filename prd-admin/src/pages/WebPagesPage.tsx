@@ -723,8 +723,8 @@ export default function WebPagesPage() {
       <div
         className="grid gap-3"
         style={{
-          gridTemplateColumns: `repeat(auto-fill, minmax(min(100%, ${cardWidth}px), ${cardWidth}px))`,
-          justifyContent: 'start',
+          gridTemplateColumns: isMobile ? 'minmax(0, 1fr)' : `repeat(auto-fill, minmax(min(100%, ${cardWidth}px), ${cardWidth}px))`,
+          justifyContent: isMobile ? 'stretch' : 'start',
         }}
       >
         {items.map(site => (
@@ -978,86 +978,149 @@ export default function WebPagesPage() {
           <SpaceBar current={currentSpace} onChange={enterSpace} />
         </div>
 
-        {/* 第二行：搜索 / 视图 */}
-        <div
-          className={isMobile
-            ? 'px-3 flex items-center gap-2 flex-nowrap overflow-x-auto pb-1'
-            : 'surface-nav-bar flex flex-wrap items-center gap-3'}
-          style={isMobile ? { scrollbarWidth: 'none' } : { overflow: 'visible' }}
-        >
-          {/* Search */}
-          <div className={isMobile ? 'relative shrink-0 w-[260px]' : 'relative flex-1 min-w-[200px]'}>
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
-            <input
-              type="text"
-              placeholder="搜索站点名称、描述..."
-              value={keyword}
-              onChange={e => setKeyword(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 rounded-lg text-sm outline-none"
-              style={{
-                background: 'var(--bg-sunken)',
-                color: 'var(--text-primary)',
-                border: '1px solid var(--border-default)',
-              }}
-            />
-          </div>
+        {/* 第二行：搜索 / 视图。移动端搜索独占一行，筛选单独横滑，避免控件互相压住。 */}
+        {isMobile ? (
+          <>
+            <div className="px-3">
+              <div className="relative w-full">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+                <input
+                  type="text"
+                  placeholder="搜索站点名称、描述..."
+                  value={keyword}
+                  onChange={e => setKeyword(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 rounded-lg text-sm outline-none"
+                  style={{
+                    background: 'var(--bg-sunken)',
+                    color: 'var(--text-primary)',
+                    border: '1px solid var(--border-default)',
+                  }}
+                />
+              </div>
+            </div>
+            <div className="px-3 flex items-center gap-2 flex-nowrap overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
+              <div data-tour-id="webpages-card-size-pills" className="shrink-0" title="调整网页卡片大小，刷新后保持">
+                <SegmentPills
+                  options={CARD_SIZE_OPTIONS.map(({ value, label }) => ({ value, label }))}
+                  value={cardSize}
+                  onChange={(v) => setCardSize(normalizeCardSize(v))}
+                />
+              </div>
+              <div data-tour-id="webpages-sort-pills" className="shrink-0">
+                <SegmentPills
+                  options={SORT_OPTIONS}
+                  value={sort}
+                  onChange={setSort}
+                />
+              </div>
+              <div data-tour-id="webpages-group-pills" className="shrink-0">
+                <SegmentPills
+                  options={[
+                    { value: 'time', label: '日期' },
+                    { value: 'folder', label: currentSpace.kind === 'team' ? '分组' : '文件夹' },
+                  ]}
+                  value={groupMode}
+                  onChange={(v) => setGroupMode(v as GroupMode)}
+                />
+              </div>
+              <div data-tour-id="webpages-view-toggle" className="flex items-center rounded-lg overflow-hidden shrink-0" style={{ border: '1px solid var(--border-default)' }}>
+                <button
+                  onClick={() => setViewMode('grid')}
+                  className="p-2 transition-colors"
+                  style={{ background: viewMode === 'grid' ? 'var(--bg-elevated)' : 'var(--bg-sunken)', color: 'var(--text-primary)' }}
+                >
+                  <Grid3X3 size={14} />
+                </button>
+                <button
+                  onClick={() => setViewMode('list')}
+                  className="p-2 transition-colors"
+                  style={{ background: viewMode === 'list' ? 'var(--bg-elevated)' : 'var(--bg-sunken)', color: 'var(--text-primary)' }}
+                >
+                  <List size={14} />
+                </button>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="surface-nav-bar flex flex-wrap items-center gap-3" style={{ overflow: 'visible' }}>
+            {/* Search */}
+            <div className="relative flex-1 min-w-[200px]">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+              <input
+                type="text"
+                placeholder="搜索站点名称、描述..."
+                value={keyword}
+                onChange={e => setKeyword(e.target.value)}
+                className="w-full pl-9 pr-3 py-2 rounded-lg text-sm outline-none"
+                style={{
+                  background: 'var(--bg-sunken)',
+                  color: 'var(--text-primary)',
+                  border: '1px solid var(--border-default)',
+                }}
+              />
+            </div>
 
-          {/* Card size */}
-          <div data-tour-id="webpages-card-size-pills" className="shrink-0" title="调整网页卡片大小，刷新后保持">
-            <SegmentPills
-              options={CARD_SIZE_OPTIONS.map(({ value, label }) => ({ value, label }))}
-              value={cardSize}
-              onChange={(v) => setCardSize(normalizeCardSize(v))}
-            />
-          </div>
+            {/* Card size */}
+            <div data-tour-id="webpages-card-size-pills" className="shrink-0" title="调整网页卡片大小，刷新后保持">
+              <SegmentPills
+                options={CARD_SIZE_OPTIONS.map(({ value, label }) => ({ value, label }))}
+                value={cardSize}
+                onChange={(v) => setCardSize(normalizeCardSize(v))}
+              />
+            </div>
 
-          {/* 排序 segment pill group：当前项 pill 高亮，点击任意切到那个 */}
-          <div data-tour-id="webpages-sort-pills" className="shrink-0">
-            <SegmentPills
-              options={SORT_OPTIONS}
-              value={sort}
-              onChange={setSort}
-            />
-          </div>
+            {/* 排序 segment pill group：当前项 pill 高亮，点击任意切到那个 */}
+            <div data-tour-id="webpages-sort-pills" className="shrink-0">
+              <SegmentPills
+                options={SORT_OPTIONS}
+                value={sort}
+                onChange={setSort}
+              />
+            </div>
 
-          {/* 分组 segment pill group：二选一（团队空间按专题/分类切分节，个人空间按文件夹） */}
-          <div data-tour-id="webpages-group-pills" className="shrink-0">
-            <SegmentPills
-              options={[
-                { value: 'time', label: '日期' },
-                { value: 'folder', label: currentSpace.kind === 'team' ? '分组' : '文件夹' },
-              ]}
-              value={groupMode}
-              onChange={(v) => setGroupMode(v as GroupMode)}
-            />
-          </div>
+            {/* 分组 segment pill group：二选一（团队空间按专题/分类切分节，个人空间按文件夹） */}
+            <div data-tour-id="webpages-group-pills" className="shrink-0">
+              <SegmentPills
+                options={[
+                  { value: 'time', label: '日期' },
+                  { value: 'folder', label: currentSpace.kind === 'team' ? '分组' : '文件夹' },
+                ]}
+                value={groupMode}
+                onChange={(v) => setGroupMode(v as GroupMode)}
+              />
+            </div>
 
-          {/* View mode */}
-          <div data-tour-id="webpages-view-toggle" className="flex items-center rounded-lg overflow-hidden shrink-0" style={{ border: '1px solid var(--border-default)' }}>
-            <button
-              onClick={() => setViewMode('grid')}
-              className="p-2 transition-colors"
-              style={{ background: viewMode === 'grid' ? 'var(--bg-elevated)' : 'var(--bg-sunken)', color: 'var(--text-primary)' }}
-            >
-              <Grid3X3 size={14} />
-            </button>
-            <button
-              onClick={() => setViewMode('list')}
-              className="p-2 transition-colors"
-              style={{ background: viewMode === 'list' ? 'var(--bg-elevated)' : 'var(--bg-sunken)', color: 'var(--text-primary)' }}
-            >
-              <List size={14} />
-            </button>
+            {/* View mode */}
+            <div data-tour-id="webpages-view-toggle" className="flex items-center rounded-lg overflow-hidden shrink-0" style={{ border: '1px solid var(--border-default)' }}>
+              <button
+                onClick={() => setViewMode('grid')}
+                className="p-2 transition-colors"
+                style={{ background: viewMode === 'grid' ? 'var(--bg-elevated)' : 'var(--bg-sunken)', color: 'var(--text-primary)' }}
+              >
+                <Grid3X3 size={14} />
+              </button>
+              <button
+                onClick={() => setViewMode('list')}
+                className="p-2 transition-colors"
+                style={{ background: viewMode === 'list' ? 'var(--bg-elevated)' : 'var(--bg-sunken)', color: 'var(--text-primary)' }}
+              >
+                <List size={14} />
+              </button>
+            </div>
           </div>
-        </div>
+        )}
 
         {/* 空间内组织（教程引导依赖 webpages-folders selector）：
             个人空间 = 文件夹 chips（站点 folder 字段派生）；
             团队空间 = 左侧分组树导航（见下方 TeamGroupsTree，锚点随之移动，同一时刻 DOM 里只有一个）。 */}
         {currentSpace.kind !== 'team' && (
-        <div data-tour-id="webpages-folders" className="surface-nav-bar">
+        <div
+          data-tour-id="webpages-folders"
+          className={isMobile ? 'px-3 flex items-center gap-1.5 overflow-x-auto pb-1' : 'surface-nav-bar'}
+          style={isMobile ? { scrollbarWidth: 'none' } : undefined}
+        >
           {spaceFolders.length > 0 ? (
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5" style={{ overscrollBehavior: 'contain' }}>
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5" style={{ overscrollBehavior: 'contain', scrollbarWidth: 'none' }}>
               <button type="button" onClick={() => setActiveFolder(null)} className="h-7 px-2.5 rounded-full text-[12px] shrink-0"
                 style={activeFolder === null ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' } : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}>
                 全部
@@ -1087,10 +1150,13 @@ export default function WebPagesPage() {
 
         {/* Tags */}
         {tags.length > 0 && (
-          <div className="surface-nav-bar flex flex-wrap gap-2" style={{ overflow: 'visible' }}>
+          <div
+            className={isMobile ? 'px-3 flex items-center gap-2 overflow-x-auto pb-1' : 'surface-nav-bar flex flex-wrap gap-2'}
+            style={isMobile ? { scrollbarWidth: 'none' } : { overflow: 'visible' }}
+          >
             <button
               onClick={() => setActiveTag(null)}
-              className="px-2 py-0.5 rounded-full text-xs transition-colors"
+              className="px-2 py-0.5 rounded-full text-xs shrink-0 transition-colors"
               style={{
                 background: !activeTag ? 'var(--accent-primary)' : 'var(--bg-sunken)',
                 color: !activeTag ? '#fff' : 'var(--text-muted)',
@@ -1102,7 +1168,7 @@ export default function WebPagesPage() {
               <button
                 key={t.tag}
                 onClick={() => setActiveTag(t.tag === activeTag ? null : t.tag)}
-                className="px-2 py-0.5 rounded-full text-xs transition-colors"
+                className="px-2 py-0.5 rounded-full text-xs shrink-0 transition-colors"
                 style={{
                   background: activeTag === t.tag ? 'var(--accent-primary)' : 'var(--bg-sunken)',
                   color: activeTag === t.tag ? '#fff' : 'var(--text-muted)',

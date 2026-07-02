@@ -98,7 +98,7 @@ export function SpaceBar({
       key={key}
       type="button"
       onClick={onClick}
-      className="h-8 px-3 rounded-[8px] text-[13px] flex items-center gap-1.5 shrink-0 transition-colors"
+      className="h-8 px-3 rounded-[8px] text-[13px] flex items-center gap-1.5 shrink-0 whitespace-nowrap transition-colors"
       style={on
         ? { background: 'var(--accent-gold, #d4af37)', color: '#1a1a1a' }
         : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}
@@ -110,7 +110,7 @@ export function SpaceBar({
   return (
     <div data-tour-id="webpages-space-bar" className="flex flex-col gap-2 w-full">
       {/* 一级导航：个人空间 | 团队空间 */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-0.5" style={{ overscrollBehavior: 'contain' }}>
+      <div className="flex min-w-0 items-center gap-2 overflow-x-auto pb-0.5" style={{ overscrollBehavior: 'contain', scrollbarWidth: 'none' }}>
         {pill(<><User size={13} /> 个人空间</>, current.kind === 'personal', () => onChange({ kind: 'personal' }), 'personal')}
         {pill(<><Users size={13} /> 团队空间{teams.length > 0 && <span className="opacity-60">{teams.length}</span>}</>, current.kind === 'team', enterTeamSection, 'team-section')}
         {/* 「+」常驻一级行：没有任何团队时也能从这里新建/加入；点开后行内展开输入框，不弹浮层 */}

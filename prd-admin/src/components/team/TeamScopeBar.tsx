@@ -212,7 +212,7 @@ export function TeamScopeBar({
   };
 
   const pillBase = 'px-3 h-8 rounded-[8px] text-[13px] font-medium transition-colors flex items-center gap-1.5';
-  const actionBtn = 'h-8 px-2.5 rounded-[8px] text-[12px] flex items-center gap-1 transition-colors';
+  const actionBtn = 'h-8 px-2.5 rounded-[8px] text-[12px] flex items-center gap-1 shrink-0 whitespace-nowrap transition-colors';
   const actionStyle = { background: 'transparent', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-muted)' };
   const popStyle = {
     background: 'var(--bg-elevated)',
@@ -225,7 +225,7 @@ export function TeamScopeBar({
 
   return (
     <>
-      <div className="relative flex min-w-0 items-center gap-2" ref={wrapRef}>
+      <div className={compactExternalMobile ? 'relative flex min-w-max shrink-0 items-center gap-2' : 'relative flex min-w-0 items-center gap-2'} ref={wrapRef}>
         {/* 我的 / 团队空间 双 pill（外部 tab 接管作用域切换时由 hideScopeToggle 隐藏） */}
         {!hideScopeToggle && (
           <div
