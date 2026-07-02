@@ -995,6 +995,30 @@ describe('resource database access', () => {
       { database: 'orders', command: 'db.getCollection("users").insertOne({ ref: db.getCollection("audit").drop() });', confirmResourceName: 'mongo-main' },
       { 'x-test-cookie-auth': '1' },
     );
+    // 换行多语句：首句只读 findOne + 次句写 updateMany（偷跑写）→ 400 拦截（Bugbot High）
+    const multilineBypass = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
+      { database: 'orders', command: 'db.getCollection("users").findOne({})\ndb.getCollection("users").updateMany({}, { $set: { hacked: 1 } })', confirmResourceName: 'mongo-main' },
+      { 'x-test-cookie-auth': '1' },
+    );
+    // 逗号操作符：findOne(), updateMany(...) → 400 拦截
+    const commaBypass = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
+      { database: 'orders', command: 'db.getCollection("users").findOne({}), db.getCollection("users").updateMany({}, { $set: { hacked: 1 } })', confirmResourceName: 'mongo-main' },
+      { 'x-test-cookie-auth': '1' },
+    );
+    // 合法的多行单条写（美化换行）→ 200
+    const multilineWrite = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
+      { database: 'orders', command: 'db.getCollection("users").updateMany(\n  { active: false },\n  { $set: { archived: true } }\n)', confirmResourceName: 'mongo-main' },
+      { 'x-test-cookie-auth': '1' },
+    );
 
     expect(ok.status).toBe(200);
     expect(ok.body.collection).toBe('users');
@@ -1011,6 +1035,12 @@ describe('resource database access', () => {
     expect(writeDropWord.body.kind).toBe('write-result');
     expect(embeddedDrop.status).toBe(400);
     expect(embeddedDrop.body.error).toContain('高危操作');
+    expect(multilineBypass.status).toBe(400);
+    expect(multilineBypass.body.error).toContain('一次只允许一条语句');
+    expect(commaBypass.status).toBe(400);
+    expect(commaBypass.body.error).toContain('一次只允许一条语句');
+    expect(multilineWrite.status).toBe(200);
+    expect(multilineWrite.body.kind).toBe('write-result');
   });
 
   it('describes planned workbench capability for SQL Server and RabbitMQ resources', async () => {

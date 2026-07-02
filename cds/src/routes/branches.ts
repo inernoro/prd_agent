@@ -5891,6 +5891,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
       throw new Error(`MongoDB Console 不支持操作 "${verb}"，仅允许 ${[...MONGO_READ_VERBS, ...MONGO_WRITE_VERBS].join(' / ')}`);
     }
 
+    // 安全门（Bugbot High）：分类只看首个 verb，但整段文本会被 mongosh 一次性求值。
+    // 换行分隔或逗号操作符可以让「首句 findOne（判为只读，跳过 data-write/确认）+ 次句 updateMany」
+    // 在只读分类下偷跑写操作。故：只要命令里任意位置出现写方法调用（op 后跟 `(`），而主 verb 不是写，
+    // 即判定为多语句/注入，一律拒绝——合法的单条写命令主 verb 本身就是写，不会命中此门。
+    const writeCallAnywhere = /\b(insertOne|insertMany|updateOne|updateMany|replaceOne|deleteOne|deleteMany|findOneAndUpdate|findOneAndReplace|findOneAndDelete|bulkWrite)\s*\(/i.test(withoutTrailing);
+    if (writeCallAnywhere && !isWrite) {
+      throw new Error('MongoDB Console 一次只允许一条语句：检测到只读语句后夹带写操作（换行/逗号多语句），已拒绝');
+    }
+
     if (verb === 'find') {
       if (!/\.limit\s*\(\s*\d{1,3}\s*\)\s*$/.test(withoutTrailing)) {
         throw new Error('MongoDB find 查询必须显式追加 limit(1-100)');
