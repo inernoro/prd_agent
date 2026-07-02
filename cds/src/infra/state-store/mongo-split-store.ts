@@ -45,6 +45,7 @@ import type {
   OperationLogEvent,
   Project,
   ProjectActivityLog,
+  ReleaseRun,
   SelfUpdateRecord,
   ServiceDeployment,
   ServiceDeploymentLogEntry,
@@ -101,6 +102,7 @@ const MAX_CONTAINER_ARCHIVE_LOG_BYTES = 16 * 1024;
 const MAX_SERVICE_DEPLOYMENT_LOG_BYTES = 4 * 1024;
 const MAX_SELF_UPDATE_ERROR_BYTES = 8 * 1024;
 const MAX_SELF_UPDATE_STEP_TEXT_BYTES = 2 * 1024;
+const MAX_GLOBAL_REST_BYTES = 12 * 1024 * 1024;
 
 function stableJson(value: unknown): string {
   return JSON.stringify(value);
@@ -176,6 +178,59 @@ function sanitizeSelfUpdateRecord(record: SelfUpdateRecord): SelfUpdateRecord {
   };
 }
 
+function jsonByteLength(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value), 'utf8');
+}
+
+function takeLastRecordEntries<T>(record: Record<string, T> | undefined, maxEntries: number): Record<string, T> {
+  if (!record || maxEntries <= 0) return {};
+  const entries = Object.entries(record);
+  if (entries.length <= maxEntries) return record;
+  return Object.fromEntries(entries.slice(-maxEntries)) as Record<string, T>;
+}
+
+function compactReleaseRuns(
+  runs: Record<string, ReleaseRun> | undefined,
+  maxEntries: number,
+  maxLogsPerRun: number,
+): Record<string, ReleaseRun> {
+  const kept = takeLastRecordEntries(runs, maxEntries);
+  return Object.fromEntries(Object.entries(kept).map(([id, run]) => [
+    id,
+    {
+      ...run,
+      logs: (run.logs || []).slice(-maxLogsPerRun).map((log) => ({
+        ...log,
+        message: truncateTail(log.message, MAX_SERVICE_DEPLOYMENT_LOG_BYTES) || '',
+      })),
+    },
+  ]));
+}
+
+function compactGlobalRestToFit(restOfState: GlobalRest): GlobalRest {
+  if (jsonByteLength(restOfState) <= MAX_GLOBAL_REST_BYTES) return restOfState;
+
+  // These fields are diagnostic/history data. They must never make the
+  // control-plane state unflushable; projects/branches already live in split
+  // collections and stay intact.
+  const retentionSteps = [200, 100, 50, 20, 10, 5, 0];
+  for (const maxEntries of retentionSteps) {
+    restOfState.logs = takeLastRecordEntries(restOfState.logs, maxEntries);
+    restOfState.containerLogArchives = takeLastRecordEntries(restOfState.containerLogArchives, maxEntries);
+    restOfState.serviceDeployments = takeLastRecordEntries(restOfState.serviceDeployments, maxEntries);
+    restOfState.releaseRuns = compactReleaseRuns(restOfState.releaseRuns, maxEntries, Math.min(20, Math.max(0, maxEntries)));
+    restOfState.activityLogs = Object.fromEntries(
+      Object.entries(restOfState.activityLogs || {}).map(([projectId, logs]) => [
+        projectId,
+        (logs || []).slice(-Math.min(50, Math.max(0, maxEntries))) as ProjectActivityLog[],
+      ]),
+    );
+    if (jsonByteLength(restOfState) <= MAX_GLOBAL_REST_BYTES) return restOfState;
+  }
+
+  return restOfState;
+}
+
 function globalRestOf(state: CdsState): GlobalRest {
   const restOfState: GlobalRest = { ...state } as CdsState;
   delete (restOfState as Partial<CdsState>).projects;
@@ -222,7 +277,7 @@ function globalRestOf(state: CdsState): GlobalRest {
       }),
     ) as CdsState['executors'];
   }
-  return restOfState;
+  return compactGlobalRestToFit(restOfState);
 }
 
 function selfUpdateRecordId(record: SelfUpdateRecord, index: number): string {

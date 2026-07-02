@@ -55,6 +55,7 @@ For daily/yesterday, PR, commit-range, or disputed acceptance:
    - Identify who can notice the change and where: page, breadcrumb, entry, status, result row, detail panel, error text, toast, permission state, sync log, or absence of a forbidden action.
    - Trace likely affected areas: upstream inputs, downstream outputs, persisted state, background jobs, permissions, integration boundaries, rollback/restore, and existing user workflows.
    - Mark hidden influence clearly. If users cannot see it directly, describe the expected visible consequence or classify it as internal-only.
+   - Separate `cds` platform changes from `CDS Agent` product/runtime changes. `cds/` deploy, preview, reports, branch network, extra-services, self-update, scheduler, smoke, or proxy changes must be proven with CDS platform evidence such as cdscli/API status, `/reports`, branch/deploy state, smoke results, logs, or preview routing. Do not use the prd-admin `/cds-agent` page as proof for those platform changes. Only use `/cds-agent` when the changed behavior is specifically CDS Agent UI/runtime/session behavior.
 
 4. Design proof, not screenshots.
    - Read `references/proof-strength.md`.
@@ -89,6 +90,7 @@ For daily/yesterday, PR, commit-range, or disputed acceptance:
 - No screenshot-first testing. A screenshot taken before a behavior assertion and proof target exists is not acceptance evidence.
 - No API-first pass for user-facing changes. Internal evidence can explain or corroborate; it cannot replace page proof.
 - No nearby-page substitution. Same module does not mean same behavior.
+- No CDS/CDS Agent substitution. CDS platform changes and CDS Agent user/runtime changes are separate acceptance targets; one cannot prove the other.
 - No fixed 10-image brake. Evidence count is driven by risk, impact, and fusion coverage.
 - No pass without falsifiability. Every planned proof must say what would make it fail.
 - No disappearing commits. Each commit is passed, failed, fused into a higher-level scenario, marked non-runtime, or marked uncovered.

@@ -516,9 +516,14 @@ function parseFloatSafe(s: string): number {
  *   - 'mysql-mdimp'   + 'mysql'
  *   - 'web-2'         + 'web-2'(没有项目后缀,只有自己)
  *
- * 启发式去后缀:profile.id 形如 `<service>-<projectMarker>` 时,projectMarker
- * 通常包含项目 slug 的前几位或全部。我们安全的做法:**只**剥掉 `-<projectId-prefix>`
- * 或 `-<最后一个连字符段>` 当后者长度 ≤ 12,且不会产生空串。
+ * 去后缀两条路(结果并入同一 Set,profile.id 永远是第一个 alias):
+ *   1) 单段启发式(旧):剥掉最后一个连字符段,覆盖「后缀是 projectId/slug 前几位」
+ *      的模糊匹配(如 tail=`mdimp` vs marker=`mdimp`,或 tail 是 marker 前缀)。
+ *   2) 完整 marker 后缀剥离(新,2026-07):沿连字符边界切,若「切点之后 normalize
+ *      后 == 某个完整 normalizedMarker」,则切点之前的 head 就是裸 `<svc>`。这条
+ *      专治「项目 slug 自带连字符」(prd-agent):`llmgw-prd-agent → llmgw`、
+ *      `llmgw-serve-prd-agent → llmgw-serve`、`api-prd-agent → api`;head 本身
+ *      可含连字符也正确。marker 可能是 id 也可能是 slug(已 normalize),任一命中即可。
  *
  * 边界:
  *   - profile.id 不含 '-' → 只有自己一个 alias
@@ -559,6 +564,19 @@ export function computeProfileAliases(
         (m) => m.startsWith(tailNorm) || tailNorm === m.slice(0, tail.length),
       );
     if (looksLikeProjectMarker && head.length >= 2) {
+      aliases.add(head);
+    }
+  }
+
+  // 完整 marker 后缀剥离:沿连字符边界切,找到「切点之后 normalize 后恰好等于某个
+  // 完整 normalizedMarker」的切点,把切点之前的 head 作为裸 <svc> 加入。marker 自带
+  // 连字符(prd-agent)时,单段启发式够不到,靠这里补。head 可含连字符(llmgw-serve)。
+  const segments = profileId.split('-');
+  for (let cut = 1; cut < segments.length; cut++) {
+    const head = segments.slice(0, cut).join('-');
+    if (head.length < 2) continue;
+    const rest = segments.slice(cut).join('-').toLowerCase().replace(/[^a-z0-9]+/g, '');
+    if (rest.length > 0 && normalizedMarkers.includes(rest)) {
       aliases.add(head);
     }
   }

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Braces, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Maximize2, Play, PowerOff, RefreshCw, Rocket, RotateCw, Search, Settings, Square, Table2, Terminal, Trash2, X } from 'lucide-react';
+import { AlertCircle, Braces, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Maximize2, Play, PowerOff, RefreshCw, Rocket, RotateCw, Search, Server, Settings, Square, Table2, Terminal, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { apiRequest, ApiError } from '@/lib/api';
@@ -182,6 +182,13 @@ interface DrawerActivityEvent {
   profileId?: string;
   label?: string;
   errorSummary?: string;
+}
+
+// GET /api/branches/:id/subdomain-aliases → gatewayUrls[]（声明了 cds.subdomain 的服务的命名入口）。
+interface GatewayUrlEntry {
+  subdomain: string;
+  name: string;
+  url: string;
 }
 
 // 2026-05-18: 分支生命周期系统日志（部署 / 停止 / 崩溃 / 重启 / 回收）。
@@ -783,6 +790,9 @@ export function BranchDetailDrawer({
   branchStatus?: string;
 }): JSX.Element | null {
   const [branch, setBranch] = useState<BranchDetailData | null>(null);
+  // 网关入口（声明了 cds.subdomain 的服务，如 LLM 网关 console/serving 获得独立命名域名）。
+  // 与主应用入口并列展示，让「多出口」在这个抽屉里可见（用户点名的「右侧面板显示两个入口和名字」）。
+  const [gatewayUrls, setGatewayUrls] = useState<GatewayUrlEntry[]>([]);
   const [logs, setLogs] = useState<OperationLog[]>([]);
   const [loading, setLoading] = useState(false);
   const [headerRefreshing, setHeaderRefreshing] = useState(false);
@@ -864,7 +874,7 @@ export function BranchDetailDrawer({
     try {
       // The backend exposes /api/branches?project=<id> (list) but no
       // single-branch endpoint, mirroring how BranchDetailPage loads.
-      const [branchesRes, logsRes, profilesRes, infraRes, resourcesRes] = await Promise.all([
+      const [branchesRes, logsRes, profilesRes, infraRes, resourcesRes, aliasesRes] = await Promise.all([
         apiRequest<{ branches: BranchDetailData[] }>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`),
         apiRequest<{ logs: OperationLog[] }>(`/api/branches/${encodeURIComponent(branchId)}/logs`).catch(() => ({ logs: [] })),
         apiRequest<{ profiles: ProfileRow[] }>(`/api/branches/${encodeURIComponent(branchId)}/profile-overrides`)
@@ -876,6 +886,8 @@ export function BranchDetailDrawer({
           .catch(() => ({ services: [] })),
         apiRequest<{ resources: BranchResource[] }>(`/api/branches/${encodeURIComponent(branchId)}/resources?live=false`)
           .catch(() => ({ resources: [] })),
+        apiRequest<{ gatewayUrls?: GatewayUrlEntry[] }>(`/api/branches/${encodeURIComponent(branchId)}/subdomain-aliases`)
+          .catch(() => ({ gatewayUrls: [] as GatewayUrlEntry[] })),
       ]);
       const found = (branchesRes.branches || []).find((b) => b.id === branchId);
       if (!found) {
@@ -888,6 +900,7 @@ export function BranchDetailDrawer({
       setProfileState({ status: 'ok', profiles: profilesRes.profiles || [] });
       setInfraServices(infraRes.services || []);
       setResourceSnapshot(resourcesRes.resources || found?.resources || []);
+      setGatewayUrls(aliasesRes.gatewayUrls || []);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -1743,27 +1756,94 @@ export function BranchDetailDrawer({
           {branch ? (
             <>
               {branch.status === 'running' && branch.previewUrl ? (
-                <div className="mx-5 mt-4 flex flex-col gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5 text-sm font-semibold text-emerald-600 dark:text-emerald-400">
-                      <Rocket className="h-4 w-4" />
-                      应用已上线
-                    </div>
+                <div className="mx-5 mt-4 rounded-xl border border-emerald-500/40 bg-emerald-500/[0.07] p-3">
+                  <div className="mb-2 flex items-center gap-1.5 px-1 text-sm font-semibold text-emerald-600 dark:text-emerald-400">
+                    <Rocket className="h-4 w-4" />
+                    应用已上线
+                  </div>
+                  {/* 入口卡片列:主应用入口(主色)在上,声明了 cds.subdomain 的网关入口(中性色)在下,
+                      每条整卡可点、带图标/名称/URL/打开箭头,视觉分层清晰。 */}
+                  <div className="flex flex-col gap-1.5">
                     <a
                       href={branch.previewUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="mt-0.5 block min-w-0 truncate font-mono text-xs text-emerald-700/90 hover:underline dark:text-emerald-300"
+                      title="打开主应用入口"
+                      className="group flex items-center gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 transition hover:border-emerald-500/60 hover:bg-emerald-500/[0.18]"
                     >
-                      {branch.previewUrl}
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-emerald-600 text-white">
+                        <Rocket className="h-4 w-4" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-xs font-semibold text-emerald-700 dark:text-emerald-300">主应用入口</span>
+                        <span className="block min-w-0 truncate font-mono text-[11px] text-emerald-700/70 dark:text-emerald-300/70">{branch.previewUrl}</span>
+                      </span>
+                      <ExternalLink className="h-4 w-4 shrink-0 text-emerald-600/60 transition group-hover:text-emerald-600 dark:text-emerald-400/60 dark:group-hover:text-emerald-300" />
                     </a>
+                    {[...gatewayUrls]
+                      .sort((a, b) => {
+                        // 网关控制台(真实可登录页面)排在引擎/健康入口之前。
+                        const rank = (s: string) => (s.toLowerCase() === 'llmgw-web' ? 0 : 1);
+                        return rank(a.subdomain) - rank(b.subdomain) || a.subdomain.localeCompare(b.subdomain);
+                      })
+                      .map((gw) => {
+                        const isConsole = gw.subdomain.toLowerCase() === 'llmgw-web';
+                        return (
+                          <a
+                            key={gw.subdomain}
+                            href={gw.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            title={isConsole ? `打开 ${gw.name} 网关控制台` : `打开 ${gw.name} 网关引擎健康检查`}
+                            className={
+                              isConsole
+                                ? 'group flex items-center gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 transition hover:border-emerald-500/60 hover:bg-emerald-500/[0.18]'
+                                : 'group flex items-center gap-3 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-3 py-2 transition hover:border-emerald-500/40 hover:bg-emerald-500/[0.08]'
+                            }
+                          >
+                            <span
+                              className={
+                                isConsole
+                                  ? 'flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-emerald-600 text-white'
+                                  : 'flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[hsl(var(--surface-raised))] text-muted-foreground'
+                              }
+                            >
+                              {isConsole ? <Terminal className="h-4 w-4" /> : <Server className="h-4 w-4" />}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="flex items-center gap-1.5">
+                                <span
+                                  className={
+                                    isConsole
+                                      ? 'text-xs font-semibold text-emerald-700 dark:text-emerald-300'
+                                      : 'text-xs font-semibold text-foreground'
+                                  }
+                                >
+                                  {isConsole ? '网关控制台' : '网关引擎 · 健康'}
+                                </span>
+                                <span className="rounded bg-[hsl(var(--surface-raised))] px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{gw.subdomain}</span>
+                              </span>
+                              <span
+                                className={
+                                  isConsole
+                                    ? 'block min-w-0 truncate font-mono text-[11px] text-emerald-700/70 dark:text-emerald-300/70'
+                                    : 'block min-w-0 truncate font-mono text-[11px] text-muted-foreground'
+                                }
+                              >
+                                {gw.url}
+                              </span>
+                            </span>
+                            <ExternalLink
+                              className={
+                                isConsole
+                                  ? 'h-4 w-4 shrink-0 text-emerald-600/60 transition group-hover:text-emerald-600 dark:text-emerald-400/60 dark:group-hover:text-emerald-300'
+                                  : 'h-4 w-4 shrink-0 text-muted-foreground/60 transition group-hover:text-emerald-600'
+                              }
+                            />
+                          </a>
+                        );
+                      })}
                   </div>
-                  <Button asChild size="sm" className="shrink-0 bg-emerald-600 text-white hover:bg-emerald-700">
-                    <a href={branch.previewUrl} target="_blank" rel="noreferrer">
-                      <ExternalLink />
-                      打开预览
-                    </a>
-                  </Button>
                 </div>
               ) : null}
               <section className="border-b border-[hsl(var(--hairline))] px-5 py-4">

@@ -67,6 +67,8 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 PlatformName = start.PlatformName,
                 Protocol = start.Protocol,
                 ResolutionReason = start.ResolutionReason,
+                // S2 观测标记：网关传输路径（inproc/http/shadow/direct）。构建点未标注则留 null。
+                GatewayTransport = start.GatewayTransport,
                 ModelResolutionType = start.ModelResolutionType,
                 ModelGroupId = start.ModelGroupId,
                 ModelGroupName = start.ModelGroupName,
@@ -142,6 +144,7 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                     AppCallerCodeDisplayName = GetDisplayName(start.AppCallerCode),
                     Provider = start.Provider,
                     Model = start.Model,
+                    GatewayTransport = start.GatewayTransport,
                     StartedAt = start.StartedAt == default ? DateTime.UtcNow : start.StartedAt,
                     EndedAt = DateTime.UtcNow,
                     Status = "blackhole",
