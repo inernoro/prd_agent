@@ -1,8 +1,12 @@
 using System.Net;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Driver;
+using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -710,6 +714,10 @@ public sealed class AdminPushNotificationServiceTests
                 DedupKey = "system-1",
             }, "admin", CancellationToken.None);
 
+            var createdNotifications = await testDb.Context.AdminNotifications.Find(x => x.TargetUserId == "u1").ToListAsync();
+            Assert.Equal(4, createdNotifications.Count);
+            Assert.All(createdNotifications, x => Assert.Equal(AdminNotificationSections.Admin, x.Section));
+
             await push.DispatchPendingAsync(CancellationToken.None);
 
             Assert.Equal(4, http.Requests.Count);
@@ -723,6 +731,56 @@ public sealed class AdminPushNotificationServiceTests
 
             var voice = http.Requests.Single(x => QueryHelpers.ParseQuery(x.Uri.Query)["group"] == "MAP System-用户之声");
             Assert.Equal(imageUrl, QueryHelpers.ParseQuery(voice.Uri.Query)["image"]);
+        }
+        finally
+        {
+            await testDb.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task NotificationsController_HandleAll_ShouldOnlyHandleCurrentUserVisibleNotifications()
+    {
+        var testDb = await AdminPushTestDatabase.TryCreateAsync();
+        if (testDb == null) return;
+
+        try
+        {
+            var now = DateTime.UtcNow;
+            await testDb.Context.AdminNotifications.InsertManyAsync(
+            [
+                new AdminNotification
+                {
+                    Id = "n-u1",
+                    Title = "当前用户通知",
+                    Source = "defect-agent",
+                    Status = "open",
+                    TargetUserId = "u1",
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                },
+                new AdminNotification
+                {
+                    Id = "n-u2",
+                    Title = "其他用户通知",
+                    Source = "defect-agent",
+                    Status = "open",
+                    TargetUserId = "u2",
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                },
+            ]);
+
+            var controller = CreateNotificationsController(testDb.Context, "u1");
+
+            await controller.HandleAll(CancellationToken.None);
+
+            var currentUser = await testDb.Context.AdminNotifications.Find(x => x.Id == "n-u1").FirstAsync();
+            var otherUser = await testDb.Context.AdminNotifications.Find(x => x.Id == "n-u2").FirstAsync();
+            Assert.Equal("handled", currentUser.Status);
+            Assert.NotNull(currentUser.HandledAt);
+            Assert.Equal("open", otherUser.Status);
+            Assert.Null(otherUser.HandledAt);
         }
         finally
         {
@@ -850,6 +908,29 @@ public sealed class AdminPushNotificationServiceTests
             new AllowAllUrlValidator(),
             configuration ?? TestConfiguration,
             NullLogger<AdminPushNotificationService>.Instance);
+    }
+
+    private static NotificationsController CreateNotificationsController(MongoDbContext db, string userId)
+    {
+        var push = CreateService(db, new RecordingHttpClientFactory(HttpStatusCode.OK));
+        var events = new AdminNotificationEventService(
+            db,
+            new AdminPushDispatchSignal(),
+            NullLogger<AdminNotificationEventService>.Instance);
+
+        return new NotificationsController(db, push, events)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    User = new ClaimsPrincipal(new ClaimsIdentity(
+                    [
+                        new Claim("sub", userId),
+                    ], "test")),
+                },
+            },
+        };
     }
 
     private static readonly IConfiguration TestConfiguration = new ConfigurationBuilder()

@@ -37,21 +37,7 @@ public sealed class NotificationsController : ControllerBase
     {
         var userId = this.GetRequiredUserId();
         var now = DateTime.UtcNow;
-        var filter = Builders<AdminNotification>.Filter.Empty;
-
-        // 过滤：全局通知（TargetUserId 为空）或针对当前用户的通知
-        filter &= Builders<AdminNotification>.Filter.Or(
-            Builders<AdminNotification>.Filter.Eq(x => x.TargetUserId, null),
-            Builders<AdminNotification>.Filter.Eq(x => x.TargetUserId, userId));
-
-        filter &= Builders<AdminNotification>.Filter.Or(
-            Builders<AdminNotification>.Filter.Eq(x => x.ExpiresAt, null),
-            Builders<AdminNotification>.Filter.Gt(x => x.ExpiresAt, now));
-
-        if (!includeHandled)
-        {
-            filter &= Builders<AdminNotification>.Filter.Eq(x => x.Status, "open");
-        }
+        var filter = BuildVisibleNotificationFilter(userId, now, includeHandled);
 
         var items = await _db.AdminNotifications
             .Find(filter)
@@ -61,24 +47,7 @@ public sealed class NotificationsController : ControllerBase
 
         return Ok(ApiResponse<object>.Ok(new
         {
-            items = items.Select(x => new
-            {
-                x.Id,
-                x.Key,
-                x.Title,
-                x.Message,
-                x.Level,
-                x.Status,
-                x.ActionLabel,
-                x.ActionUrl,
-                x.ActionKind,
-                x.Source,
-                attachments = x.Attachments,
-                x.CreatedAt,
-                x.UpdatedAt,
-                x.HandledAt,
-                x.ExpiresAt
-            })
+            items = items.Select(ToNotificationDto)
         }));
     }
 
@@ -187,6 +156,9 @@ public sealed class NotificationsController : ControllerBase
                     n.ActionUrl,
                     n.ActionKind,
                     n.Source,
+                    section = AdminNotificationSourceCatalog.ResolveSection(n.Source, n.Section),
+                    sectionLabel = AdminNotificationSections.Label(AdminNotificationSourceCatalog.ResolveSection(n.Source, n.Section)),
+                    sourceLabel = AdminNotificationSourceCatalog.ResolveSourceLabel(n.Source),
                     attachments = n.Attachments,
                     n.CreatedAt,
                     n.UpdatedAt,
@@ -224,8 +196,9 @@ public sealed class NotificationsController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
     public async Task<IActionResult> HandleAll(CancellationToken ct = default)
     {
+        var userId = this.GetRequiredUserId();
         var now = DateTime.UtcNow;
-        var filter = Builders<AdminNotification>.Filter.Eq(x => x.Status, "open");
+        var filter = BuildVisibleNotificationFilter(userId, now, includeHandled: false);
         var update = Builders<AdminNotification>.Update
             .Set(x => x.Status, "handled")
             .Set(x => x.HandledAt, now)
@@ -246,5 +219,51 @@ public sealed class NotificationsController : ControllerBase
             || permissions.Contains(AdminPermissionCatalog.OpenPlatformManage)
             || permissions.Contains(AdminPermissionCatalog.AutomationsManage)
             || permissions.Contains(AdminPermissionCatalog.DefectAgentManage);
+    }
+
+    private static FilterDefinition<AdminNotification> BuildVisibleNotificationFilter(string userId, DateTime now, bool includeHandled)
+    {
+        var filter = Builders<AdminNotification>.Filter.Empty;
+
+        filter &= Builders<AdminNotification>.Filter.Or(
+            Builders<AdminNotification>.Filter.Eq(x => x.TargetUserId, null),
+            Builders<AdminNotification>.Filter.Eq(x => x.TargetUserId, userId));
+
+        filter &= Builders<AdminNotification>.Filter.Or(
+            Builders<AdminNotification>.Filter.Eq(x => x.ExpiresAt, null),
+            Builders<AdminNotification>.Filter.Gt(x => x.ExpiresAt, now));
+
+        if (!includeHandled)
+        {
+            filter &= Builders<AdminNotification>.Filter.Eq(x => x.Status, "open");
+        }
+
+        return filter;
+    }
+
+    private static object ToNotificationDto(AdminNotification n)
+    {
+        var section = AdminNotificationSourceCatalog.ResolveSection(n.Source, n.Section);
+        return new
+        {
+            n.Id,
+            n.Key,
+            n.Title,
+            n.Message,
+            n.Level,
+            n.Status,
+            n.ActionLabel,
+            n.ActionUrl,
+            n.ActionKind,
+            n.Source,
+            section,
+            sectionLabel = AdminNotificationSections.Label(section),
+            sourceLabel = AdminNotificationSourceCatalog.ResolveSourceLabel(n.Source),
+            attachments = n.Attachments,
+            n.CreatedAt,
+            n.UpdatedAt,
+            n.HandledAt,
+            n.ExpiresAt
+        };
     }
 }

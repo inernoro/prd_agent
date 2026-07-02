@@ -6,24 +6,6 @@ namespace PrdAgent.Api.Services;
 
 public sealed class AdminNotificationEventService
 {
-    private static readonly HashSet<string> AllowedSources = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "admin-notice",
-        "server-expiry",
-        "user-voice",
-        "team-activity-voice",
-        "api-request-alert",
-        "api-request-log",
-        "gateway-alert",
-        "system",
-        "system-alert",
-        "platform-key-integrity",
-        "llm-gateway-quota",
-        "open-platform",
-        "defect-agent",
-        "report-agent",
-    };
-
     private static readonly HashSet<string> AllowedLevels = new(StringComparer.OrdinalIgnoreCase)
     {
         "info",
@@ -48,8 +30,8 @@ public sealed class AdminNotificationEventService
 
     public async Task<AdminNotificationEventResult> CreateAsync(AdminNotificationEventRequest request, string actorUserId, CancellationToken ct)
     {
-        var source = NormalizeText(request.Source, "system", 96);
-        if (!AllowedSources.Contains(source))
+        var source = AdminNotificationSourceCatalog.NormalizeSource(NormalizeText(request.Source, "system", 96));
+        if (!AdminNotificationSourceCatalog.AllowedEventSources.Contains(source, StringComparer.OrdinalIgnoreCase))
             throw new InvalidOperationException($"不支持的通知来源：{source}");
 
         var title = NormalizeText(request.Title, string.Empty, 160);
@@ -74,6 +56,7 @@ public sealed class AdminNotificationEventService
             ActionUrl = NormalizeNullableText(request.ActionUrl, 1024),
             ActionKind = NormalizeNullableText(request.ActionKind, 64),
             Source = source,
+            Section = AdminNotificationSourceCatalog.ResolveSection(source, request.Section),
             Attachments = NormalizeAttachments(request.Attachments),
             CreatedAt = now,
             UpdatedAt = now,
@@ -111,6 +94,7 @@ public sealed class AdminNotificationEventService
             .Set(x => x.ActionUrl, notification.ActionUrl)
             .Set(x => x.ActionKind, notification.ActionKind)
             .Set(x => x.Source, notification.Source)
+            .Set(x => x.Section, notification.Section)
             .Set(x => x.Attachments, notification.Attachments)
             .Set(x => x.UpdatedAt, now)
             .Set(x => x.HandledAt, null)
@@ -190,6 +174,7 @@ public sealed class AdminNotificationEventRequest
     public string? ActionLabel { get; set; }
     public string? ActionUrl { get; set; }
     public string? ActionKind { get; set; }
+    public string? Section { get; set; }
     public string? DedupKey { get; set; }
     public int? ExpiresInDays { get; set; }
     public List<AdminNotificationEventAttachmentRequest>? Attachments { get; set; }

@@ -18,6 +18,9 @@ export type AdminNotificationItem = {
   actionUrl?: string | null;
   actionKind?: string | null;
   source?: string | null;
+  section?: 'personal' | 'admin' | (string & {}) | null;
+  sectionLabel?: string | null;
+  sourceLabel?: string | null;
   attachments?: NotificationAttachment[] | null;
   createdAt: string;
   updatedAt: string;
