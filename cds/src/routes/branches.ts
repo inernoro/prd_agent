@@ -66,6 +66,7 @@ import {
   type PendingWebhookDeploy,
 } from '../services/branch-operation-coordinator.js';
 import { waitForRestartSafeBranchOperations, resolveRestartDrainTimeoutFromRequest } from '../services/restart-drain.js';
+import { ensureDockerNetworkWithReclaim } from '../services/docker-network-reclaim.js';
 
 // ── Self-status SSE 模块级状态 ────────────────────────────────────────
 // 2026-05-28 重构:状态权威源迁移到 services/self-status-cache.ts。
@@ -1457,12 +1458,7 @@ async function ensureDockerNetwork(shell: IShellExecutor, network: string): Prom
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(network)) {
     throw new Error(`Docker network 名称非法：${network}`);
   }
-  const inspect = await shell.exec(`docker network inspect ${routeShellQuote(network)}`, { timeout: 10_000 });
-  if (inspect.exitCode === 0) return;
-  const create = await shell.exec(`docker network create ${routeShellQuote(network)}`, { timeout: 15_000 });
-  if (create.exitCode !== 0) {
-    throw new Error(`创建 Docker 网络 "${network}" 失败：${combinedOutput(create)}`);
-  }
+  await ensureDockerNetworkWithReclaim(shell, network, { inspectTimeoutMs: 10_000, createTimeoutMs: 15_000 });
 }
 
 async function cleanupResourceExternalFirewall(shell: IShellExecutor, chain: string, port?: number): Promise<void> {
