@@ -213,7 +213,9 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
 
     var update = Builders<LlmGwUser>.Update
         .Set(u => u.PasswordHash, PasswordHasher.Hash(newPwd))
-        .Set(u => u.MustChangePassword, false);
+        .Set(u => u.MustChangePassword, false)
+        // 标记为真人认领：默认模式下重启不再自愈回 admin/admin，保住用户新口令。
+        .Set(u => u.PasswordChangedByUser, true);
     await users.UpdateOneAsync(u => u.Id == user.Id, update);
 
     // 重新签发 token（此时 MustChangePassword 已清，Issue 不再带 mcp claim）。
@@ -385,13 +387,32 @@ static async Task SeedAdminAsync(IMongoDatabase db, string username, string pass
     {
         if (usingDefaultPwd)
         {
-            // 默认模式（未配置 LLMGW_ADMIN_PASSWORD）：没有权威 env 口令来源，库里存的才是权威——
-            // 用户很可能已经通过「首登强制改密」改过口令。**绝不能**每次启动把它回退回 admin/admin
-            // （否则一重启就把用户改的密码抹掉、强制改密形同虚设）。这里只确保账号处于启用态。
-            if (!existing.IsActive)
+            // 默认模式（未配置 LLMGW_ADMIN_PASSWORD）：没有权威 env 口令来源。
+            if (existing.PasswordChangedByUser)
+            {
+                // 账号已被真人认领（改过口令）→ 库里存的是用户口令，**绝不回退**，只确保启用。
+                if (!existing.IsActive)
+                {
+                    await users.UpdateOneAsync(u => u.Username == username,
+                        Builders<LlmGwUser>.Update.Set(u => u.IsActive, true));
+                }
+                return;
+            }
+
+            // 账号从未被认领（含**历史遗留 admin**：口令未知、PasswordChangedByUser 缺省=false）→
+            // 确定性自愈回 admin/admin + 强制改密，保证控制台永远能从 admin/admin 进入
+            // （「重置」= 重新部署即可）。幂等：仅当已漂移（口令非 admin / 未挂强制改密标记 / 被禁用）时才写。
+            var needsReset = !PasswordHasher.Verify(password, existing.PasswordHash)
+                || !existing.MustChangePassword
+                || !existing.IsActive;
+            if (needsReset)
             {
                 await users.UpdateOneAsync(u => u.Username == username,
-                    Builders<LlmGwUser>.Update.Set(u => u.IsActive, true));
+                    Builders<LlmGwUser>.Update
+                        .Set(u => u.PasswordHash, PasswordHasher.Hash(password))
+                        .Set(u => u.IsActive, true)
+                        .Set(u => u.MustChangePassword, true)
+                        .Set(u => u.PasswordChangedByUser, false));
             }
             return;
         }

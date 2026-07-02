@@ -28,6 +28,13 @@ public class LlmGwUser
     /// </summary>
     public bool MustChangePassword { get; set; }
 
+    /// <summary>
+    /// 口令是否已被真人主动改过（认领）。change-password 成功后置 true。
+    /// 默认模式下：未认领的账号（含历史遗留、无该字段的旧文档=false）每次启动确定性自愈回 admin/admin，
+    /// 保证控制台永远可从 admin/admin 进入；已认领的账号则保留口令、绝不回退。
+    /// </summary>
+    public bool PasswordChangedByUser { get; set; }
+
     public string[] Scopes { get; set; } = Array.Empty<string>();
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

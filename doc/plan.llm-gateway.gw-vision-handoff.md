@@ -74,10 +74,13 @@
     `_global` 的 `env set` 灌进 llmgw profile 容器（seed 每轮都以默认 `admin` 跑默认模式、不覆盖历史 admin
     的未知口令），符合 handoff「改配置必须重新 import + approve，webhook/deploy 不更新 profile 配置」的坑。
     另注：`main-prd-agent-llmgw-web` 当前显示「预览未部署」，无法作参照。
-  - **补齐观测的正确下一步（CDS 侧动作）**：让 `_global` env 真正注入 llmgw profile（重新 import + approve
-    compose，或修 `_global`→profile 的 env 注入），使 `LLMGW_ADMIN_USER`/`LLMGW_ADMIN_PASSWORD` 生效；
-    然后用一个新用户名（默认弱口令、空 `LLMGW_ADMIN_PASSWORD`）触发 `MustChangePassword=true`，即可真机跑通
-    login→mcp→403→change-password→解锁。代码侧无需再改。
+  - **根因升级 + 代码级修复（2026-07-02，取代上面的「等 CDS 注入」结论）**：真正的问题不是取证受阻，而是
+    **控制台从来没人能登录进去**——历史遗留 `admin` 账号口令未知，而旧的「默认模式不回退口令」逻辑恰好在
+    **保护这个没人认领的未知口令**，造成永久锁死；且既不能靠 env（不注入）也不能靠 DB（无客户端）恢复。
+    修复：新增 `LlmGwUser.PasswordChangedByUser`，默认模式下**未被真人认领**的账号（含旧文档=false）每次启动
+    **确定性自愈回 `admin/admin` + `MustChangePassword=true`**——控制台永远能从 admin/admin 进入，「重置」=
+    重新部署；`change-password` 成功置 `PasswordChangedByUser=true`，用户新口令跨重启保留、不被自愈覆盖。
+    此修复同时**解锁了 happy-path 的真机取证**（admin/admin 现在可登 → 强制改密 → mcp 403 → 解锁）。
 
 ### Point 3 — OpenRouter 风格控制台：**部分（骨架在，需对齐设计）**
 - `prd-llmgw-web` 已有：`LoginPage` / `LogsPage` / `LogsView`（请求日志表）/ `GenerationDetailsDrawer`
