@@ -91,8 +91,8 @@
 | 轨道 | 属腿 | 本轮目标 | 风险 |
 |---|---|---|---|
 | B1 网关配置面（只读） | B | 控制台加「模型池/平台/模型/影子」只读端点 + 页面 | **已实现（本轮）** |
-| A1 L1 transport 标记 | A | 每条 llmrequestlog 标 inproc/http/shadow | **调研完：后端已落地，仅差可见性** |
-| A2 S3 直连收口可行性 | A | 分析 8 处 A 类直连能否安全收口 | **调研完：疑似死码，先证伪再删** |
+| A1 L1 transport 标记 | A | 每条 llmrequestlog 标 inproc/http/shadow | **已完成（本轮）：MAP API 投影补齐 + 网关控制台日志加传输通道 chip** |
+| A2 S3 直连收口可行性 | A | 分析 8 处 A 类直连能否安全收口 | **已定论（本轮）：非死码、gated，不删不硬收** |
 
 ### B1 已实现（腿 B 第一刀落地）
 网关控制台不再只有日志。新增（只读、密钥只回 hasKey）：
@@ -103,8 +103,27 @@
 ### A1 调研结论（几乎完工，剩小尾巴）
 GatewayTransport 后端打标**已在早前分支合入**（`LlmRequestLog.GatewayTransport` + `GatewayTransports{Inproc,Http,Shadow,Direct}` 常量 + 各日志构建点按来源打标，shadow 误标风险已规避）。**唯一硬缺口**：`LlmLogsController` 列表投影两处没带 `GatewayTransport`（detail 已带），故日志页列表/筛选看不到。补法（P1，小改）：列表投影补 `x.GatewayTransport` + 前端加列/筛选 + 新建 `transportRegistry.ts`。属 prd-admin + prd-api 小改，未做，作下一增量。
 
-### A2 调研结论（先证伪，别一把梭）
-8 处 A 类直连**跨 4 种语义**（pinned 主模型 / legacy activeConfig / env 冷启动兜底 / per-purpose 领域客户端），不能一把梭。**更关键的前置发现**：`Program.cs:982` 的 scoped `ILLMClient` 疑似**无消费方**、`ModelDomainService.GetClientAsync` 全仓**无调用方**——很可能是**死码**。正确第一步：做一次全链路 DI+调用审计证实/证伪；若确为死码 → 直接**删除式收口**（近零风险，棘轮直接清 A 类）；若活着 → 网关需先补两个入口（per-model MaxTokens 尊重 X1、pinned platform+model 直连 X2）再迁，否则会静默截断 max_tokens / 静默换模型（#971 教训）。**下一增量：先跑 A2 步骤 0 的死码审计。**
+### A1 已完成（transport 可见性收尾）
+- MAP 侧 `LlmLogsController` 两处列表投影补 `x.GatewayTransport`（detail 早已带）。
+- 网关控制台：`prd-llmgw` list DTO + MapListItem 读 `GatewayTransport`；`prd-llmgw-web` LogsView 的模型列加**传输通道 chip**（inproc/http/shadow/direct，历史 null 不显示）。
+- 意义：翻 http 前后排障能一眼看出「这条走了哪条路」，L1 硬 blocker 的可见性缺口补齐。prd-admin 日志页加同款列是**字段已在 API、trivial 的后续小改**。
+
+### A2 已定论（非死码，gated，不删不硬收）
+审计证实**不是死码**：`Program.cs:982` 的 scoped `ILLMClient` 有 `Program.cs:991` 明确注释「被 LLMClientFactory 注入消费（非死代码）」，且存在 `ResilientLLMClient → LLMClientFactory → ILLMClient` 链。故**不删**（拿不准死活标 alive 是本项目纪律）。收口这 8 处需网关先补两个入口：**X1 per-model MaxTokens 尊重**（现 GatewayLLMClient 构造期把 max_tokens 定死，不按解析模型回填 → 硬收会静默截断长文）、**X2 pinned platform+model 直连**（现 CreateClient 会按 appCallerCode 三级池重解析 → 硬收会静默换模型/凭据，#971 教训）。这是**碰 LLM 热路径的中高风险工作**，按 `extraction-readiness-gate` 必须谨慎 + 评审，**不autonomous 硬收**。
+
+---
+
+## 4.6 「完全完成 /goal」的边界（诚实说明，2026-07-02）
+
+/goal 的**安全可自动完成部分已全部推完**（规则/看板/记分卡、HTTPS 双出口、serving 密钥自检、ApiKeyCrypto 定性、B1 只读配置面、A1 transport 可见性、A2 定性）。**剩余 3 项都不是「autonomous 硬推」能安全完成的**，各有硬前置：
+
+| 剩余项 | 为什么不能 autonomous 硬完成 | 解锁前置 |
+|---|---|---|
+| **翻 `Mode=http` + 删 inproc（终态）** | 按本项目 `extraction-readiness-gate` 规则，翻转要 gate 全绿：影子证据攒够（7-14 天）+ 全量回归 + 用户拍板。当前影子样本 n=1。 | 影子攒证据 + gate 全绿 + **你拍板** |
+| **A2 收口 8 处直连** | 碰 LLM 热路径，硬收会静默截断 max_tokens / 静默换模型（#971 血泪）。需先给网关建 X1/X2 两个入口 + 评审。 | 先建网关 X1/X2 入口，再逐处灰度收口 + 评审 |
+| **B2 可写配置面** | 网关控制台写配置 = 写**共享 Mongo 的 live 配置**，即时影响 MAP 现网模型选择（跨分支共享库）。连测试都有现网 blast radius。 | 需你知情同意「控制台写即改现网」后再建（建议加二次确认 + 审计日志） |
+
+一句话：**能安全自动做的都做完了；剩下的三项要么等时间/证据（http 翻转），要么碰热路径需评审（A2 收口），要么会动现网需你知情（B2 可写）——这些是「需要你在环」的推进，不是我该闷头硬干的。**
 
 ## 5. 下一步（优先级）
 

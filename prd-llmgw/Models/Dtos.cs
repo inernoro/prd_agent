@@ -83,6 +83,7 @@ public sealed class LlmLogListItem
     public string? ExpectedModel { get; set; }
     public string? Protocol { get; set; }
     public string? ResolutionReason { get; set; }
+    public string? Transport { get; set; }
     public int? ToolCallCount { get; set; }
     public string? FinishReason { get; set; }
     public bool? IsStreaming { get; set; }

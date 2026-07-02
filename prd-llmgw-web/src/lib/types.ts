@@ -62,6 +62,7 @@ export type LlmLogListItem = {
   expectedModel?: string | null;
   protocol?: string | null;
   resolutionReason?: string | null;
+  transport?: string | null;
   toolCallCount?: number | null;
   finishReason?: string | null;
   isStreaming?: boolean | null;

@@ -550,6 +550,7 @@ static LlmLogListItem MapListItem(BsonDocument d) => new()
     ExpectedModel = d.AsNullableString("ExpectedModel"),
     Protocol = d.AsNullableString("Protocol"),
     ResolutionReason = d.AsNullableString("ResolutionReason"),
+    Transport = d.AsNullableString("GatewayTransport"),
     ToolCallCount = d.AsNullableInt("ToolCallCount"),
     FinishReason = d.AsNullableString("FinishReason"),
     IsStreaming = d.AsNullableBool("IsStreaming"),
