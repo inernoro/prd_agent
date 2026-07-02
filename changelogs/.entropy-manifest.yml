@@ -393,3 +393,8 @@ processed:
   - 2026-06-27_llm-log-observability.md
   - 2026-06-27_llmgw-deploy-scaffold.md
   - 2026-06-27_llmgw-web-skeleton.md
+  - 2026-06-27_logs-lifecycle.md
+  - 2026-06-27_logs-observability-fill.md
+  - 2026-06-27_logs-observability-ui.md
+  - 2026-06-28_llm-gateway-http-client.md
+  - 2026-06-28_llm-gateway-selftest.md
