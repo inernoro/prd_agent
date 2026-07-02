@@ -81,6 +81,9 @@ public class PlatformKeyIntegrityWorker : BackgroundService
 
         foreach (var platform in platforms.Where(p => !string.IsNullOrWhiteSpace(p.ApiKeyEncrypted)))
         {
+            if (PlatformApiKeyPolicy.IsApiKeyOptional(platform))
+                continue;
+
             var result = ApiKeyCryptoKeyRing.Decrypt(platform.ApiKeyEncrypted, _configuration);
             if (!result.Success)
             {
