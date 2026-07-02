@@ -5925,11 +5925,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (/=>|\bfunction\s*\(/.test(codeSkeleton)) {
       throw new Error('MongoDB Console 禁止箭头函数 / function 回调（可内嵌隐藏执行）');
     }
-    // 计算成员访问只认「标识符[ 或 )[」——真正的动态方法查找总是 <标识符>["m"]() 或 <call>()["m"]()，
-    // 首个 [ 前必是 \w 或 )。不含 ] 前缀：`][` 是数组下标链（arr[0][1]），非按字符串取方法，且会误伤相邻嵌套数组
-    // 如 $in:[[1],[2]] 抹字面量后的 ]\s*[（Bugbot Medium）。
-    if (/[\w)]\s*\[/.test(codeSkeleton)) {
-      throw new Error('MongoDB Console 禁止计算成员访问（如 db.x["drop"]()）——方法名必须是明文');
+    // 计算成员「调用」——下标结果被立即调用（db.x["drop"]()），抹字面量后呈 ]\s*(。真正的动态方法查找必是此形态；
+    // 只判 ]( 而不判 identifier[，从而不误伤数组下标/数组字面量（arr[0]、$in:[[1],[2]]）——它们的 ] 后不是 (（Bugbot Medium）。
+    if (/\]\s*\(/.test(codeSkeleton)) {
+      throw new Error('MongoDB Console 禁止对下标结果发起调用（计算成员访问如 db.x["drop"]()）——方法名必须是明文');
     }
     // 始终禁止：高危操作只按「方法调用」形态匹配（op 后跟 `(`）。仍拦截参数里内嵌的危险调用，例如
     // insertOne({ a: db.y.drop() })——mongo shell 会先求值该实参再执行 insertOne，故 `.drop(` 必须挡下。
@@ -5951,20 +5950,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     mongoCollectionFromRequest(collection);
 
-    const isWrite = MONGO_WRITE_VERBS.has(verb);
+    // 命令行只跑只读查询：写操作请走「结构化写入」面板（POST /data/mongo/write，固定 action + JSON 参数，
+    // 完全不 eval 用户文本）。历史上让命令行执行写会引入无穷的 mongosh eval 绕过（多语句/模板串/计算成员…），
+    // 正则消毒任意 JS 本质不收敛，故写入彻底改走结构化路径（用户 2026-07-02 拍板）。
     const isRead = MONGO_READ_VERBS.has(verb);
-    if (!isWrite && !isRead) {
-      throw new Error(`MongoDB Console 不支持操作 "${verb}"，仅允许 ${[...MONGO_READ_VERBS, ...MONGO_WRITE_VERBS].join(' / ')}`);
+    if (!isRead) {
+      if (MONGO_WRITE_VERBS.has(verb)) {
+        throw new Error(`命令行仅支持只读查询；写操作（${verb}）请使用「结构化写入」面板`);
+      }
+      throw new Error(`MongoDB Console 不支持操作 "${verb}"，仅允许只读：${[...MONGO_READ_VERBS].join(' / ')}`);
     }
 
-    // 安全门（Bugbot High/Medium）：分类只看首个 verb，但整段文本会被 mongosh 一次性求值。
-    // 换行/逗号多语句能夹带额外写操作：既能在只读语句里偷跑写（findOne(),updateMany()），
-    // 也能在写语句后再跑一个更宽的写（updateOne(),deleteMany()），而 API 只按首个 verb 记录/返回。
-    // 收敛判据：数写方法调用（op 后跟 `(`，对代码骨架数以避开字符串子串）的次数，必须恰等于「主 verb 是写?1:0」——
-    // 多一个即多语句/夹带，一律拒绝。合法单条写恰好 1 次、单条读恰好 0 次。
+    // 只读命令里也禁止任何写方法调用（例如藏在 filter 实参里的 db.y.updateMany()——mongosh 会先求值实参）。
     const writeCallCount = (codeSkeleton.match(/\b(insertOne|insertMany|updateOne|updateMany|replaceOne|deleteOne|deleteMany|findOneAndUpdate|findOneAndReplace|findOneAndDelete|bulkWrite)\s*\(/gi) || []).length;
-    if (writeCallCount !== (isWrite ? 1 : 0)) {
-      throw new Error('MongoDB Console 一次只允许一条语句：命令含多个写操作或在只读语句中夹带写（换行/逗号多语句），已拒绝');
+    if (writeCallCount !== 0) {
+      throw new Error('命令行仅支持只读查询：检测到写方法调用；写操作请使用「结构化写入」面板');
     }
 
     if (verb === 'find') {
@@ -5978,8 +5978,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return { collection, verb, isWrite: false, script: `JSON.stringify((${withoutTrailing}).toArray())` };
     }
 
-    // findOne/countDocuments/distinct 与所有受控写：返回值可直接 JSON 序列化
-    return { collection, verb, isWrite, script: `JSON.stringify((${withoutTrailing}))` };
+    // findOne/countDocuments/estimatedDocumentCount/distinct：返回值可直接 JSON 序列化
+    return { collection, verb, isWrite: false, script: `JSON.stringify((${withoutTrailing}))` };
   }
 
   async function runRedisCli(service: InfraService, args: string[], timeoutMs = 15_000): Promise<string> {
@@ -8549,37 +8549,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
     let command: { collection: string; verb: string; isWrite: boolean; script: string };
     try {
       database = mongoDatabaseFromRequest(req.body?.database, mongoDatabaseForBranch(ctx.service, ctx.branch));
+      // 命令行只跑只读查询（normalizeMongoConsoleCommand 拒绝一切写）；写操作走 /data/mongo/write 结构化端点。
       command = normalizeMongoConsoleCommand(req.body?.command);
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
       return;
     }
-    // 受控写操作需 data-write 权限 + 资源名二次确认（与 /data/mongo/write 同门槛；灾难操作已在解析阶段拦截）
-    if (command.isWrite) {
-      const resources = await getBranchResourceSnapshot(ctx.branch);
-      const resource = resources.find((item) => item.id === ctx.resourceId);
-      if (!resource) {
-        res.status(404).json({ error: `资源 "${ctx.resourceId}" 不存在` });
-        return;
-      }
-      if (!requireResourcePermission(req, res, 'data-write', ctx.branch, resource)) return;
-      try {
-        ensureResourceNameConfirmed(req.body?.confirmResourceName, resource, '执行 MongoDB Console 写入');
-      } catch (err) {
-        res.status(409).json({ error: (err as Error).message });
-        return;
-      }
-    }
     try {
       const data = await runMongoJson(ctx.service, ctx.branch, command.script, database);
-      if (command.isWrite) {
-        stateService.recordDestructiveOp({
-          type: 'purge-database',
-          projectId: ctx.projectId,
-          summary: `对 ${ctx.resourceName} 执行 MongoDB Console 写入 ${command.verb}：${database}.${command.collection}`,
-          triggeredBy: resolveActorFromRequest(req),
-        });
-      }
       stateService.appendActivityLog(ctx.projectId, {
         type: 'resource-data-query',
         branchId: ctx.branch.id,
@@ -8591,17 +8568,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
         note: `${ctx.resourceName} 执行 MongoDB ${command.verb}：${database}.${command.collection}`,
       });
       stateService.save();
-      // 写操作返回单个结果文档；读操作返回文档数组
-      const documents = Array.isArray(data) ? data : data == null ? [] : [data];
       res.json({
         branchId: ctx.branch.id,
         resourceId: ctx.resourceId,
         database,
         collection: command.collection,
         verb: command.verb,
-        isWrite: command.isWrite,
-        kind: command.isWrite ? 'write-result' : 'documents',
-        documents,
+        kind: 'documents',
+        documents: Array.isArray(data) ? data : data == null ? [] : [data],
       });
     } catch (err) {
       stateService.appendActivityLog(ctx.projectId, {

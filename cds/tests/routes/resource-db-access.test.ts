@@ -1063,35 +1063,31 @@ describe('resource database access', () => {
       { database: 'orders', command: 'db.getCollection("users").find({ $or: [{ roles: { $in: ["a", "b"] } }, { tags: { $all: ["x", "y"] } }] }).limit(10);' },
     );
 
+    // 只读查询正常
     expect(ok.status).toBe(200);
     expect(ok.body.collection).toBe('users');
     expect(ok.body.kind).toBe('documents');
     expect(ok.body.documents).toEqual([{ _id: 'u1', name: 'Ann' }]);
-    expect(write.status).toBe(200);
-    expect(write.body.kind).toBe('write-result');
-    expect(write.body.isWrite).toBe(true);
-    expect(write.body.documents).toEqual([{ acknowledged: true, matchedCount: 2, modifiedCount: 2 }]);
-    expect(writeNoConfirm.status).toBe(409);
+    expect(findWriteNameInValue.status).toBe(200);
+    expect(findWriteNameInValue.body.kind).toBe('documents');
+    expect(findNestedArrays.status).toBe(200);
+    expect(findNestedArrays.body.kind).toBe('documents');
+    // 命令行不再执行任何写：写 verb 一律 400 并指向「结构化写入」面板
+    expect(write.status).toBe(400);
+    expect(write.body.error).toContain('结构化写入');
+    expect(writeNoConfirm.status).toBe(400);
+    expect(writeDropWord.status).toBe(400);
+    expect(multilineWrite.status).toBe(400);
+    expect(writePlusWriteBypass.status).toBe(400);
+    // 高危 / 藏写 / 多语句夹带 / 模板串 / 计算成员：一律 400
     expect(rejected.status).toBe(400);
     expect(rejected.body.error).toContain('高危操作');
-    expect(writeDropWord.status).toBe(200);
-    expect(writeDropWord.body.kind).toBe('write-result');
     expect(embeddedDrop.status).toBe(400);
     expect(embeddedDrop.body.error).toContain('高危操作');
     expect(multilineBypass.status).toBe(400);
-    expect(multilineBypass.body.error).toContain('一次只允许一条语句');
     expect(commaBypass.status).toBe(400);
-    expect(commaBypass.body.error).toContain('一次只允许一条语句');
-    expect(writePlusWriteBypass.status).toBe(400);
-    expect(writePlusWriteBypass.body.error).toContain('一次只允许一条语句');
-    expect(multilineWrite.status).toBe(200);
-    expect(multilineWrite.body.kind).toBe('write-result');
-    expect(findWriteNameInValue.status).toBe(200);
-    expect(findWriteNameInValue.body.kind).toBe('documents');
     expect(templateBypass.status).toBe(400);
     expect(computedMemberBypass.status).toBe(400);
-    expect(findNestedArrays.status).toBe(200);
-    expect(findNestedArrays.body.kind).toBe('documents');
   });
 
   it('describes planned workbench capability for SQL Server and RabbitMQ resources', async () => {
