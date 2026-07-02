@@ -466,19 +466,20 @@ app.MapPut("/gw/pools/{id}/default", async (string id, ToggleDefaultRequest body
 {
     // 缺 isDefault 字段一律拒绝。
     if (body?.IsDefault is not bool isDefault) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "缺少 isDefault 字段（true/false）"), jsonOptions, 400);
+    // 本端点只支持「把某池设为默认」（isDefault=true）。不支持直接取消默认——否则一次调用就能把某 ModelType
+    // 的唯一默认池清空，导致 MAP 调度该类型零默认（Bugbot Medium）。要切换默认：把另一个池设为默认即可，
+    // 同类型互斥会自动取消原默认，全程始终有且仅有一个默认。
+    if (!isDefault) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "不支持直接取消默认；如需切换，请把另一个同类型池设为默认（原默认会自动取消）"), jsonOptions, 400);
     var filter = Builders<BsonDocument>.Filter.Eq("_id", id);
     var doc = await modelGroups.Find(filter).FirstOrDefaultAsync();
     if (doc is null) return Json(ApiEnvelope<PoolItem>.Fail("NOT_FOUND", $"模型池不存在：{id}"), jsonOptions, 404);
     var modelType = doc.GetStringOrEmpty("ModelType");
-    // 先置本池（失败则直接返回，不动其它池）
-    await modelGroups.UpdateOneAsync(filter, Builders<BsonDocument>.Update.Set("IsDefaultForType", isDefault).Set("UpdatedAt", DateTime.UtcNow));
-    if (isDefault)
-    {
-        // 再清同类型其它池：即便这步失败，也是「两个默认」的安全降级，不会零默认
-        var fb = Builders<BsonDocument>.Filter;
-        var others = fb.And(fb.Eq("ModelType", modelType), fb.Ne("_id", id));
-        await modelGroups.UpdateManyAsync(others, Builders<BsonDocument>.Update.Set("IsDefaultForType", false).Set("UpdatedAt", DateTime.UtcNow));
-    }
+    // 非事务安全次序：先置本池为默认、再清同类型其它池。第二步万一失败是「暂时两个默认」（MAP 仍能选到一个），
+    // 远好于「先清后置」失败=零默认。
+    await modelGroups.UpdateOneAsync(filter, Builders<BsonDocument>.Update.Set("IsDefaultForType", true).Set("UpdatedAt", DateTime.UtcNow));
+    var fb = Builders<BsonDocument>.Filter;
+    var others = fb.And(fb.Eq("ModelType", modelType), fb.Ne("_id", id));
+    await modelGroups.UpdateManyAsync(others, Builders<BsonDocument>.Update.Set("IsDefaultForType", false).Set("UpdatedAt", DateTime.UtcNow));
     var fresh = await modelGroups.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<PoolItem>.Ok(MapPool(fresh)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
