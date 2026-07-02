@@ -493,10 +493,12 @@ app.Run();
 
 // ─────────────────────────────── 辅助函数 ───────────────────────────────
 
-// 幂等播种管理员：内置 admin/admin 引导 + 首登强制改密 + UI 改密后保留。完全不依赖 env（免疫 CDS 注入问题）。
-// 语义：未被真人认领的 admin（含历史遗留、口令未知的旧文档）每次启动**确定性自愈回 admin/admin**，
-// 保证控制台永远能从 admin/admin 进入（「重置」= 重新部署）；用户在 UI 改过口令后（PasswordChangedByUser=true）
-// 则保留其口令、跨重启不回退。
+// 幂等播种管理员。优先级（从高到低）：
+//   1) forceReset（LLMGW_ADMIN_FORCE_RESET=1）：破玻璃，无条件回 admin/admin + 强制改密（即使设了 env 口令也生效）。
+//   2) envPassword（LLMGW_ADMIN_PASSWORD）：**权威口令**，每次启动把 admin 对齐到 env 值（用户 2026-07-02 要求：
+//      口令存项目 env、可控可改、永不漂移；UI 改密不覆盖 env——env 才是唯一真源）。已知口令 → 不强制改密。
+//   3) 默认引导：无 env 口令时，内置 admin/admin 引导 + 首登强制改密 + UI 改密后保留（PasswordChangedByUser=true 不回退），
+//      未认领的历史 admin 每次启动确定性自愈回 admin/admin（永不锁死）。
 static async Task SeedAdminAsync(IMongoDatabase db, string username, string defaultPwd, bool forceReset = false, string? envPassword = null)
 {
     var users = db.GetCollection<LlmGwUser>("llmgw_console_users");
@@ -504,6 +506,33 @@ static async Task SeedAdminAsync(IMongoDatabase db, string username, string defa
     // 单管理员模型：禁用历史遗留的其它用户名账号（防「改名后旧账号仍可登」）。真要多用户时再引入用户管理。
     var deactivateOthers = Builders<LlmGwUser>.Update.Set(u => u.IsActive, false);
     await users.UpdateManyAsync(u => u.Username != username && u.IsActive, deactivateOthers);
+
+    // 破玻璃优先级最高（Bugbot Medium）：LLMGW_ADMIN_FORCE_RESET=1 时无条件回 admin/admin，
+    // **即使设了 env 口令也生效**——用于 env 值本身也不可控/登不进时的终极逃生。放在 env 分支之前，否则被其 return 短路。
+    if (forceReset)
+    {
+        var resetHash = PasswordHasher.Hash(defaultPwd);
+        var existingForce = await users.Find(u => u.Username == username).FirstOrDefaultAsync();
+        if (existingForce is not null)
+        {
+            await users.UpdateOneAsync(u => u.Username == username,
+                Builders<LlmGwUser>.Update
+                    .Set(u => u.PasswordHash, resetHash)
+                    .Set(u => u.IsActive, true)
+                    .Set(u => u.MustChangePassword, true)
+                    .Set(u => u.PasswordChangedByUser, false));
+        }
+        else
+        {
+            await users.InsertOneAsync(new LlmGwUser
+            {
+                Username = username, PasswordHash = resetHash, DisplayName = username,
+                IsActive = true, MustChangePassword = true, PasswordChangedByUser = false,
+                Scopes = new[] { "logs:read" }, CreatedAt = DateTime.UtcNow,
+            });
+        }
+        return;
+    }
 
     // env 权威口令（LLMGW_ADMIN_PASSWORD）：设了就每次启动把 admin 口令对齐到 env 值——改 env + 重部署即改密，
     // 永不因 UI/共享库漂移而登不进（用户 2026-07-02 强制要求）。已知口令 → 不强制改密。
@@ -538,21 +567,10 @@ static async Task SeedAdminAsync(IMongoDatabase db, string username, string defa
         return;
     }
 
+    // 到这里：forceReset 与 envPassword 都已在上面处理并 return，本段是「无 env 口令、非破玻璃」的默认引导路径。
     var existing = await users.Find(u => u.Username == username).FirstOrDefaultAsync();
     if (existing is not null)
     {
-        // 破玻璃：LLMGW_ADMIN_FORCE_RESET=1 时无条件把 admin 拉回 admin/admin（用于口令被共享库污染登不进的死锁恢复）。
-        if (forceReset)
-        {
-            await users.UpdateOneAsync(u => u.Username == username,
-                Builders<LlmGwUser>.Update
-                    .Set(u => u.PasswordHash, PasswordHasher.Hash(defaultPwd))
-                    .Set(u => u.IsActive, true)
-                    .Set(u => u.MustChangePassword, true)
-                    .Set(u => u.PasswordChangedByUser, false));
-            return;
-        }
-
         if (existing.PasswordChangedByUser)
         {
             // 已被真人认领（在 UI 改过口令）→ 库里存的是用户口令，**绝不回退**，只确保启用。
