@@ -50,7 +50,8 @@ import { createPortal } from 'react-dom';
 import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
 import type { DocumentStore } from '@/services/contracts/documentStore';
 import { ShareDock, useDockDrag } from '@/components/share-dock';
-import { MobileBottomSheet, MobileSheetRow } from '@/components/mobile/MobileBottomSheet';
+import { MobileBottomSheet } from '@/components/mobile/MobileBottomSheet';
+import { MobileFab } from '@/components/mobile/MobileFab';
 
 /** 网页托管页面专用的 ShareDock MIME 类型 */
 const WEB_PAGE_MIME = 'application/x-map-site-id';
@@ -417,7 +418,7 @@ export default function WebPagesPage() {
   // 评论管理：点击站点卡「评论」按钮打开预览 + 评论面板（owner 可发表/删除 + 允许评论开关）
   const [commentSite, setCommentSite] = useState<HostedSite | null>(null);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
-  const [showMobileActions, setShowMobileActions] = useState(false);
+  const [showDesktopFilters, setShowDesktopFilters] = useState(false);
 
   // ─── Load ───
 
@@ -746,8 +747,8 @@ export default function WebPagesPage() {
       <div
         className="grid gap-3"
         style={{
-          gridTemplateColumns: isMobile ? 'minmax(0, 1fr)' : `repeat(auto-fill, minmax(min(100%, ${cardWidth}px), ${cardWidth}px))`,
-          justifyContent: isMobile ? 'stretch' : 'start',
+          gridTemplateColumns: isMobile ? 'repeat(2, minmax(0, 1fr))' : `repeat(auto-fill, minmax(min(100%, ${cardWidth}px), ${cardWidth}px))`,
+          justifyContent: isMobile ? 'stretch' : 'center',
         }}
       >
         {items.map(site => (
@@ -797,10 +798,13 @@ export default function WebPagesPage() {
   return (
     <div
       data-tour-id="webpages-root"
-      className="h-full flex flex-col gap-4 p-4 overflow-auto"
+      className={isMobile ? 'h-full flex flex-col gap-3 overflow-auto' : 'h-full flex flex-col gap-4 p-4 overflow-auto'}
       style={{
         background:
           'radial-gradient(ellipse 70% 40% at 50% -10%, rgba(99,102,241,0.14) 0%, transparent 55%), linear-gradient(180deg, #20212a 0%, #181a22 480px, #16181f 100%)',
+        maxWidth: isMobile ? undefined : 1360,
+        width: '100%',
+        margin: isMobile ? undefined : '0 auto',
       }}
     >
       {/* 右侧投放面板：桌面保留拖拽工作流；手机端用主按钮与分享入口，避免浮层遮挡首屏。 */}
@@ -914,32 +918,7 @@ export default function WebPagesPage() {
           ]}
         />
       )}
-      {isMobile ? (
-        <div className="px-3 pt-2">
-          <div className="flex items-center justify-between gap-3">
-            <h1 className="text-[22px] font-semibold leading-tight" style={{ color: 'var(--text-primary)' }}>
-              网页托管
-            </h1>
-            <div data-tour-id="webpages-header-actions" className="flex items-center gap-1.5 shrink-0">
-              <button
-                type="button"
-                onClick={() => setShowMobileActions(true)}
-                title="更多操作"
-                aria-label="更多操作"
-                className="h-9 w-9 inline-flex items-center justify-center rounded-[10px] border border-white/10 bg-white/[0.04]"
-                style={{ color: 'var(--text-muted)' }}
-              >
-                <MoreHorizontal size={17} />
-              </button>
-              {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
-                <Button data-tour-id="webpages-upload-primary" size="sm" variant="primary" onClick={openCreateUploadDialog}>
-                  <Upload size={14} className="mr-1" /> 上传站点
-                </Button>
-              )}
-            </div>
-          </div>
-        </div>
-      ) : (
+      {!isMobile && (
         <PageHeader
           title="网页托管"
           actions={
@@ -984,14 +963,9 @@ export default function WebPagesPage() {
 
       {/* Toolbar */}
       <div className="flex flex-col gap-3">
-        {/* 顶部：空间切换器（个人空间 / 团队空间）。搜索行紧随其后，切换空间时搜索框位置稳定 */}
-        {!isMobile && <div className="surface-nav-bar shrink-0" style={{ overflow: 'visible' }}>
-          <SpaceBar current={currentSpace} onChange={enterSpace} />
-        </div>}
-
-        {/* 第二行：搜索 / 视图。移动端搜索独占一行，筛选单独横滑，避免控件互相压住。 */}
+        {/* 搜索 / 筛选：移动端从搜索开始；桌面端默认只保留一条工作台工具区。 */}
         {isMobile ? (
-          <div className="px-3 flex flex-col gap-2">
+          <div className="px-2 pt-1 flex flex-col gap-2">
             <div className="flex items-center gap-2">
               <div className="relative min-w-0 flex-1">
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
@@ -1030,6 +1004,8 @@ export default function WebPagesPage() {
               <span className="truncate">{activeFolderLabel}</span>
               <span className="opacity-45">·</span>
               <span>{activeSortLabel}</span>
+              <span className="opacity-45">·</span>
+              <span className="shrink-0">共 {total} 个站点</span>
               {activeTag && (
                 <>
                   <span className="opacity-45">·</span>
@@ -1039,9 +1015,12 @@ export default function WebPagesPage() {
             </div>
           </div>
         ) : (
-          <div className="surface-nav-bar flex flex-wrap items-center gap-3" style={{ overflow: 'visible' }}>
-            {/* Search */}
-            <div className="relative flex-1 min-w-[200px]">
+          <div className="surface-nav-bar flex items-center gap-3" style={{ overflow: 'visible' }}>
+            <div className="min-w-[240px] max-w-[380px] flex-[0_1_380px]">
+              <SpaceBar current={currentSpace} onChange={enterSpace} />
+            </div>
+
+            <div className="relative min-w-[260px] flex-1">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
               <input
                 type="text"
@@ -1057,169 +1036,173 @@ export default function WebPagesPage() {
               />
             </div>
 
-            {/* Card size */}
-            <div data-tour-id="webpages-card-size-pills" className="shrink-0" title="调整网页卡片大小，刷新后保持">
-              <SegmentPills
-                options={CARD_SIZE_OPTIONS.map(({ value, label }) => ({ value, label }))}
-                value={cardSize}
-                onChange={(v) => setCardSize(normalizeCardSize(v))}
-              />
-            </div>
-
-            {/* 排序 segment pill group：当前项 pill 高亮，点击任意切到那个 */}
-            <div data-tour-id="webpages-sort-pills" className="shrink-0">
-              <SegmentPills
-                options={SORT_OPTIONS}
-                value={sort}
-                onChange={setSort}
-              />
-            </div>
-
-            {/* 分组 segment pill group：二选一（团队空间按专题/分类切分节，个人空间按文件夹） */}
-            <div data-tour-id="webpages-group-pills" className="shrink-0">
-              <SegmentPills
-                options={[
-                  { value: 'time', label: '日期' },
-                  { value: 'folder', label: currentSpace.kind === 'team' ? '分组' : '文件夹' },
-                ]}
-                value={groupMode}
-                onChange={(v) => setGroupMode(v as GroupMode)}
-              />
-            </div>
-
-            {/* View mode */}
-            <div data-tour-id="webpages-view-toggle" className="flex items-center rounded-lg overflow-hidden shrink-0" style={{ border: '1px solid var(--border-default)' }}>
-              <button
-                onClick={() => setViewMode('grid')}
-                className="p-2 transition-colors"
-                style={{ background: viewMode === 'grid' ? 'var(--bg-elevated)' : 'var(--bg-sunken)', color: 'var(--text-primary)' }}
-              >
-                <Grid3X3 size={14} />
-              </button>
-              <button
-                onClick={() => setViewMode('list')}
-                className="p-2 transition-colors"
-                style={{ background: viewMode === 'list' ? 'var(--bg-elevated)' : 'var(--bg-sunken)', color: 'var(--text-primary)' }}
-              >
-                <List size={14} />
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* 空间内组织（教程引导依赖 webpages-folders selector）：
-            个人空间 = 文件夹 chips（站点 folder 字段派生）；
-            团队空间 = 左侧分组树导航（见下方 TeamGroupsTree，锚点随之移动，同一时刻 DOM 里只有一个）。 */}
-        {!isMobile && currentSpace.kind !== 'team' && (
-        <div
-          data-tour-id="webpages-folders"
-          className={isMobile ? 'px-3 flex items-center gap-1.5 overflow-x-auto pb-1' : 'surface-nav-bar'}
-          style={isMobile ? { scrollbarWidth: 'none' } : undefined}
-        >
-          {spaceFolders.length > 0 ? (
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5" style={{ overscrollBehavior: 'contain', scrollbarWidth: 'none' }}>
-              <button type="button" onClick={() => setActiveFolder(null)} className="h-7 px-2.5 rounded-full text-[12px] shrink-0"
-                style={activeFolder === null ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' } : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}>
-                全部
-              </button>
-              {spaceFolders.map((f) => (
-                <button key={f} type="button" onClick={() => setActiveFolder(f)} className="h-7 px-2.5 rounded-full text-[12px] shrink-0 flex items-center gap-1"
-                  style={activeFolder === f ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' } : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}>
-                  <Folder size={11} /> {f}
-                </button>
-              ))}
-            </div>
-          ) : (
-            <div className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full text-[11px]"
-              style={{ background: 'var(--bg-input)', border: '1px dashed rgba(255,255,255,0.12)', color: 'var(--text-muted)' }}>
-              <Folder size={11} /> 文件夹（上传站点时填写「文件夹」字段即可在此分类）
-            </div>
-          )}
-        </div>
-        )}
-
-        {/* 团队空间协作头部：放最下方，出现/消失不顶动上方搜索框（切换统一性） */}
-        {!isMobile && currentSpace.kind === 'team' && (
-          <div className="surface-nav-bar" style={{ overflow: 'visible' }}>
-            <TeamSpaceHeader teamId={currentSpace.teamId} myWebHostingRole={myWebHostingRole} />
-          </div>
-        )}
-
-        {/* Tags */}
-        {!isMobile && tags.length > 0 && (
-          <div
-            className={isMobile ? 'px-3 flex items-center gap-2 overflow-x-auto pb-1' : 'surface-nav-bar flex flex-wrap gap-2'}
-            style={isMobile ? { scrollbarWidth: 'none' } : { overflow: 'visible' }}
-          >
             <button
-              onClick={() => setActiveTag(null)}
-              className="px-2 py-0.5 rounded-full text-xs shrink-0 transition-colors"
+              type="button"
+              onClick={() => setShowDesktopFilters(v => !v)}
+              data-tour-id="webpages-desktop-filter"
+              className="h-9 px-3 rounded-lg inline-flex items-center gap-1.5 shrink-0 text-sm font-semibold"
               style={{
-                background: !activeTag ? 'var(--accent-primary)' : 'var(--bg-sunken)',
-                color: !activeTag ? '#fff' : 'var(--text-muted)',
+                background: showDesktopFilters || filterCount > 0 ? 'rgba(10,132,255,0.14)' : 'var(--bg-input)',
+                border: `1px solid ${showDesktopFilters || filterCount > 0 ? 'rgba(10,132,255,0.34)' : 'var(--border-default)'}`,
+                color: showDesktopFilters || filterCount > 0 ? '#8ab4ff' : 'var(--text-primary)',
               }}
             >
-              全部
+              <Settings2 size={15} />
+              筛选
+              {filterCount > 0 && <span className="text-[12px] tabular-nums">{filterCount}</span>}
             </button>
-            {tags.slice(0, 20).map(t => (
-              <button
-                key={t.tag}
-                onClick={() => setActiveTag(t.tag === activeTag ? null : t.tag)}
-                className="px-2 py-0.5 rounded-full text-xs shrink-0 transition-colors"
-                style={{
-                  background: activeTag === t.tag ? 'var(--accent-primary)' : 'var(--bg-sunken)',
-                  color: activeTag === t.tag ? '#fff' : 'var(--text-muted)',
-                }}
-              >
-                {t.tag} ({t.count})
-              </button>
-            ))}
+
+            <div className="min-w-0 shrink text-[12px] whitespace-nowrap overflow-hidden text-ellipsis" style={{ color: 'var(--text-muted)' }}>
+              {activeFolderLabel} · {activeSortLabel} · 共 {total} 个站点
+            </div>
           </div>
+        )}
+
+        {!isMobile && showDesktopFilters && (
+          <div
+            data-tour-id="webpages-desktop-filter-panel"
+            className="surface-nav-bar grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] items-center gap-3"
+            style={{ overflow: 'visible' }}
+          >
+            <div className="space-y-1">
+              <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>卡片尺寸</div>
+              <div data-tour-id="webpages-card-size-pills" title="调整网页卡片大小，刷新后保持">
+                <SegmentPills
+                  options={CARD_SIZE_OPTIONS.map(({ value, label }) => ({ value, label }))}
+                  value={cardSize}
+                  onChange={(v) => setCardSize(normalizeCardSize(v))}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>排序</div>
+              <div data-tour-id="webpages-sort-pills">
+                <SegmentPills options={SORT_OPTIONS} value={sort} onChange={setSort} />
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>组织方式</div>
+              <div data-tour-id="webpages-group-pills">
+                <SegmentPills
+                  options={[
+                    { value: 'time', label: '日期' },
+                    { value: 'folder', label: currentSpace.kind === 'team' ? '分组' : '文件夹' },
+                  ]}
+                  value={groupMode}
+                  onChange={(v) => setGroupMode(v as GroupMode)}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>视图</div>
+              <div data-tour-id="webpages-view-toggle" className="inline-flex items-center rounded-lg overflow-hidden" style={{ border: '1px solid var(--border-default)' }}>
+                <button
+                  onClick={() => setViewMode('grid')}
+                  className="h-8 px-3 inline-flex items-center gap-1.5 transition-colors text-sm"
+                  style={{ background: viewMode === 'grid' ? 'var(--bg-elevated)' : 'var(--bg-sunken)', color: 'var(--text-primary)' }}
+                >
+                  <Grid3X3 size={14} /> 网格
+                </button>
+                <button
+                  onClick={() => setViewMode('list')}
+                  className="h-8 px-3 inline-flex items-center gap-1.5 transition-colors text-sm"
+                  style={{ background: viewMode === 'list' ? 'var(--bg-elevated)' : 'var(--bg-sunken)', color: 'var(--text-primary)' }}
+                >
+                  <List size={14} /> 列表
+                </button>
+              </div>
+            </div>
+
+            {currentSpace.kind !== 'team' && (
+              <div className="space-y-1 md:col-span-2 xl:col-span-4">
+                <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>文件夹</div>
+                <div
+                  data-tour-id="webpages-folders"
+                  className="flex min-h-8 items-center gap-1.5 overflow-x-auto"
+                  style={{ overscrollBehavior: 'contain', scrollbarWidth: 'none' }}
+                >
+                  {spaceFolders.length > 0 ? (
+                    <>
+                      <button type="button" onClick={() => setActiveFolder(null)} className="h-7 px-2.5 rounded-full text-[12px] shrink-0"
+                        style={activeFolder === null ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' } : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}>
+                        全部
+                      </button>
+                      {spaceFolders.map((f) => (
+                        <button key={f} type="button" onClick={() => setActiveFolder(f)} className="h-7 px-2.5 rounded-full text-[12px] shrink-0 inline-flex items-center gap-1"
+                          style={activeFolder === f ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' } : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}>
+                          <Folder size={11} /> {f}
+                        </button>
+                      ))}
+                    </>
+                  ) : (
+                    <div className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full text-[11px]"
+                      style={{ background: 'var(--bg-input)', border: '1px dashed rgba(255,255,255,0.12)', color: 'var(--text-muted)' }}>
+                      <Folder size={11} /> 文件夹（上传站点时填写「文件夹」字段即可在此分类）
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {currentSpace.kind === 'team' && (
+              <div className="space-y-1 md:col-span-2 xl:col-span-4">
+                <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>团队协作</div>
+                <TeamSpaceHeader teamId={currentSpace.teamId} myWebHostingRole={myWebHostingRole} />
+              </div>
+            )}
+
+            {tags.length > 0 && (
+              <div className="space-y-1 md:col-span-2 xl:col-span-4">
+                <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>标签</div>
+                <div className="flex min-h-8 items-center gap-1.5 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTag(null)}
+                    className="h-7 px-2.5 rounded-full text-[12px] shrink-0 transition-colors"
+                    style={{
+                      background: !activeTag ? 'rgba(212,175,55,0.18)' : 'var(--bg-input)',
+                      border: !activeTag ? '1px solid transparent' : '1px solid rgba(255,255,255,0.1)',
+                      color: !activeTag ? 'var(--accent-gold, #d4af37)' : 'var(--text-muted)',
+                    }}
+                  >
+                    全部
+                  </button>
+                  {tags.slice(0, 20).map(t => (
+                    <button
+                      key={t.tag}
+                      type="button"
+                      onClick={() => setActiveTag(t.tag === activeTag ? null : t.tag)}
+                      className="h-7 px-2.5 rounded-full text-[12px] shrink-0 transition-colors"
+                      style={{
+                        background: activeTag === t.tag ? 'rgba(212,175,55,0.18)' : 'var(--bg-input)',
+                        border: activeTag === t.tag ? '1px solid transparent' : '1px solid rgba(255,255,255,0.1)',
+                        color: activeTag === t.tag ? 'var(--accent-gold, #d4af37)' : 'var(--text-muted)',
+                      }}
+                    >
+                      {t.tag} ({t.count})
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {isMobile && (currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
+          <MobileFab onClick={openCreateUploadDialog} icon={Upload} label="上传" />
         )}
 
         {/* Batch actions */}
         {isMobile && (
-          <>
-            <MobileBottomSheet
-              open={showMobileActions}
-              onClose={() => setShowMobileActions(false)}
-              title="网页托管操作"
-            >
-              <MobileSheetRow
-                icon={<BarChart3 size={18} color="#fff" />}
-                label="分享统计"
-                onClick={() => {
-                  setShowMobileActions(false);
-                  setShowAnalytics(true);
-                }}
-              />
-              <MobileSheetRow
-                icon={<Link2 size={18} color="#fff" />}
-                label="分享管理"
-                onClick={() => {
-                  setShowMobileActions(false);
-                  setShareTargetId(null);
-                  setShowSharesPanel(true);
-                }}
-              />
-              {currentSpace.kind === 'team' && canEditInWebHosting(myWebHostingRole) && (
-                <MobileSheetRow
-                  icon={<FolderInput size={18} color="#fff" />}
-                  label="从个人空间添加"
-                  onClick={() => {
-                    setShowMobileActions(false);
-                    setShowCopyFromPersonal(true);
-                  }}
-                />
-              )}
-            </MobileBottomSheet>
-
-            <MobileBottomSheet
-              open={showMobileFilters}
-              onClose={() => setShowMobileFilters(false)}
-              title="筛选与显示"
-              note={`${activeSpaceLabel} · ${total} 个站点`}
-            >
+          <MobileBottomSheet
+            open={showMobileFilters}
+            onClose={() => setShowMobileFilters(false)}
+            title="筛选与显示"
+            note={`${activeSpaceLabel} · ${total} 个站点`}
+          >
               <div className="px-5 pb-4 space-y-5">
                 <section className="space-y-2">
                   <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>空间</div>
@@ -1366,9 +1349,50 @@ export default function WebPagesPage() {
                     </button>
                   </div>
                 </section>
+
+                <section className="space-y-2">
+                  <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>更多操作</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowMobileFilters(false);
+                        setShowAnalytics(true);
+                      }}
+                      className="h-10 rounded-[12px] inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold"
+                      style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.08)' }}
+                    >
+                      <BarChart3 size={15} /> 分享统计
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowMobileFilters(false);
+                        setShareTargetId(null);
+                        setShowSharesPanel(true);
+                      }}
+                      className="h-10 rounded-[12px] inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold"
+                      style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.08)' }}
+                    >
+                      <Link2 size={15} /> 分享管理
+                    </button>
+                    {currentSpace.kind === 'team' && canEditInWebHosting(myWebHostingRole) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowMobileFilters(false);
+                          setShowCopyFromPersonal(true);
+                        }}
+                        className="h-10 rounded-[12px] inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold col-span-2"
+                        style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.08)' }}
+                      >
+                        <FolderInput size={15} /> 从个人空间添加
+                      </button>
+                    )}
+                  </div>
+                </section>
               </div>
-            </MobileBottomSheet>
-          </>
+          </MobileBottomSheet>
         )}
 
         {selectedIds.size > 0 && (
@@ -1413,15 +1437,9 @@ export default function WebPagesPage() {
         )}
       </div>
 
-      {/* Stats */}
-      <div className="flex items-center gap-4 text-sm" style={{ color: 'var(--text-muted)' }}>
-        <span>共 {total} 个站点</span>
-        {activeTag && <span>标签: {activeTag}</span>}
-      </div>
-
       {/* Content：团队空间左侧挂分组树导航（空间 → 专题 → 分类），个人空间保持原布局 */}
-      <div className={currentSpace.kind === 'team' ? 'flex items-stretch gap-4 flex-1 min-h-0' : 'flex flex-col flex-1 min-h-0'}>
-        {currentSpace.kind === 'team' && (
+      <div className={currentSpace.kind === 'team' && !isMobile ? 'flex items-stretch gap-4 flex-1 min-h-0' : 'flex flex-col flex-1 min-h-0'}>
+        {currentSpace.kind === 'team' && !isMobile && (
           <TeamGroupsTree
             groups={teamGroups}
             activeGroupId={activeGroupId}
