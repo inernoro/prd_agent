@@ -43,15 +43,22 @@ export function OverviewPage() {
 
   useEffect(() => {
     let alive = true;
+    // 每个 slice 失败也置空数组（而非留 null）→ loading 一定会收敛、不卡 spinner；成功的部分照常渲染局部数据。
     Promise.all([getPools(), getPlatforms(), getModels(), getShadowComparisons({ limit: 1 })]).then(
       ([poolsRes, platformsRes, modelsRes, shadowRes]) => {
         if (!alive) return;
-        if (poolsRes.success) setPools(poolsRes.data.items); else setError((e) => e || poolsRes.error?.message || '加载失败');
-        if (platformsRes.success) setPlatforms(platformsRes.data.items); else setError((e) => e || platformsRes.error?.message || '加载失败');
-        if (modelsRes.success) setModels(modelsRes.data.items); else setError((e) => e || modelsRes.error?.message || '加载失败');
+        if (poolsRes.success) setPools(poolsRes.data.items); else { setPools([]); setError((e) => e || poolsRes.error?.message || '加载失败'); }
+        if (platformsRes.success) setPlatforms(platformsRes.data.items); else { setPlatforms([]); setError((e) => e || platformsRes.error?.message || '加载失败'); }
+        if (modelsRes.success) setModels(modelsRes.data.items); else { setModels([]); setError((e) => e || modelsRes.error?.message || '加载失败'); }
         if (shadowRes.success) setShadow(shadowRes.data.summary); else setShadow({ total: 0, allMatch: 0, critical: 0, httpFail: 0 });
       },
-    );
+    ).catch((err) => {
+      // Promise.all/then 里抛错也要收敛 loading（否则永远转圈）。
+      if (!alive) return;
+      setPools((p) => p ?? []); setPlatforms((p) => p ?? []); setModels((p) => p ?? []);
+      setShadow((s) => s ?? { total: 0, allMatch: 0, critical: 0, httpFail: 0 });
+      setError((e) => e || (err instanceof Error ? err.message : '加载失败'));
+    });
     return () => { alive = false; };
   }, []);
 
