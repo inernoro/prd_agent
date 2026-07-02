@@ -4,7 +4,7 @@ namespace PrdAgent.LlmGw.Models;
 
 /// <summary>
 /// 网关自有账户（独立账户体系，与 MAP/prd-api 用户表无关）。
-/// 存放在共享 Mongo 的 llmgw_users 集合。
+/// 存放在共享 Mongo 的独立集合 llmgw_console_users（与其它部署隔离，防跨版本 seed 互相污染）。
 /// </summary>
 [BsonIgnoreExtraElements]
 public class LlmGwUser

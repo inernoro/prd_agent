@@ -127,7 +127,11 @@ var forceResetAdmin = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVaria
 await SeedAdminAsync(database, AdminUser, DefaultAdminPwd, forceResetAdmin);
 
 var logs = database.GetCollection<BsonDocument>("llmrequestlogs");
-var users = database.GetCollection<LlmGwUser>("llmgw_users");
+// 控制台账号用**独立集合** llmgw_console_users（不再用 llmgw_users）：
+// 历史 llmgw_users 被 main/多分支的多版本 llmgw seed 跨部署互相覆盖，导致 admin 口令反复被污染、登不进，
+// 且 CDS 数据库控制台只读、env 注入不稳，无法可靠重置。换到全新集合 → 首次启动 seed 建干净 admin/admin，
+// 不被任何旧部署触碰，改过的口令也能稳定保留。
+var users = database.GetCollection<LlmGwUser>("llmgw_console_users");
 // 网关配置面（只读）：模型池 / 平台 / 模型 / 影子比对。与 MAP 共享同库，控制台只读展示。
 var modelGroups = database.GetCollection<BsonDocument>("model_groups");
 var platforms = database.GetCollection<BsonDocument>("llmplatforms");
@@ -428,7 +432,7 @@ app.Run();
 // 则保留其口令、跨重启不回退。
 static async Task SeedAdminAsync(IMongoDatabase db, string username, string defaultPwd, bool forceReset = false)
 {
-    var users = db.GetCollection<LlmGwUser>("llmgw_users");
+    var users = db.GetCollection<LlmGwUser>("llmgw_console_users");
 
     // 单管理员模型：禁用历史遗留的其它用户名账号（防「改名后旧账号仍可登」）。真要多用户时再引入用户管理。
     var deactivateOthers = Builders<LlmGwUser>.Update.Set(u => u.IsActive, false);
