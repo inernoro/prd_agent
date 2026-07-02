@@ -1093,6 +1093,7 @@ export default function AppShell() {
             collapsed ? 'gap-1.5 items-center' : 'gap-1.5'
           )}
           style={{
+            display: focusHideAside ? 'none' : undefined,
             left: asideGap,
             top: asideGap,
             bottom: asideGap,

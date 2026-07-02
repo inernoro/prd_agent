@@ -619,6 +619,9 @@
 - [首页 / 登录页视觉语言规则](rule.frontend.landing-visual-style) `rule.frontend.landing-visual-style`
   > 首页与登录页的视觉风格、动效与色彩规范
 
+- [移动端视觉检查矩阵规则](rule.frontend.mobile-visual-check-matrix) `rule.frontend.mobile-visual-check-matrix`
+  > 按页面状态而不是路由数量拆分移动端视觉检查范围，固定 P0/P1/P2 视觉回归矩阵
+
 - [LLM Gateway 流式调用与 Reasoning 规则](rule.platform.llm-gateway) `rule.platform.llm-gateway`
   > LLM Gateway 流式场景的关键陷阱与 Reasoning 推理内容处理规则
 

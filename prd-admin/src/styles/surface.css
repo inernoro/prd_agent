@@ -339,13 +339,13 @@
 /* 移动端 headbar 统一形态：单行、紧凑、主内容优先。 */
 @media (max-width: 767px) {
   .surface-nav-bar {
-    min-height: 40px;
-    padding: 0 10px;
-    border-radius: 13px;
+    min-height: 38px;
+    padding: 0 8px;
+    border-radius: 12px;
   }
 
   .surface-nav-content {
-    min-height: 40px;
+    min-height: 38px;
     flex-direction: row;
     align-items: center;
     justify-content: center;
@@ -366,7 +366,7 @@
   }
 
   .surface-nav-tabs {
-    flex: 1 1 auto;
+    flex: 1 1 0;
     min-width: 0;
     justify-content: flex-start;
     overflow-x: auto;
@@ -380,9 +380,9 @@
   }
 
   .surface-nav-actions {
-    flex: 0 1 auto;
+    flex: 0 0 auto;
     min-width: 0;
-    max-width: min(48vw, 220px);
+    max-width: min(38vw, 160px);
     overflow-x: auto;
     scrollbar-width: none;
     -webkit-overflow-scrolling: touch;
@@ -410,14 +410,14 @@
   }
 
   .surface-nav-button {
-    height: 30px;
-    padding: 0 10px;
-    gap: 6px;
+    height: 28px;
+    padding: 0 9px;
+    gap: 5px;
     font-size: 12px;
   }
 
   .surface-nav-indicator {
-    height: 30px;
+    height: 28px;
   }
 }
 
