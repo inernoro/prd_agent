@@ -1047,6 +1047,13 @@ describe('resource database access', () => {
       { database: 'orders', command: 'db.getCollection("users")["updateMany"]({}, { $set: { h: 1 } })', confirmResourceName: 'mongo-main' },
       { 'x-test-cookie-auth': '1' },
     );
+    // 含嵌套数组的合法只读 find（$or/$in/$all，抹字面量后有相邻中括号）：不再误判计算成员访问 → 200（Bugbot Medium）
+    const findNestedArrays = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
+      { database: 'orders', command: 'db.getCollection("users").find({ $or: [{ roles: { $in: ["a", "b"] } }, { tags: { $all: ["x", "y"] } }] }).limit(10);' },
+    );
 
     expect(ok.status).toBe(200);
     expect(ok.body.collection).toBe('users');
@@ -1073,6 +1080,8 @@ describe('resource database access', () => {
     expect(findWriteNameInValue.body.kind).toBe('documents');
     expect(templateBypass.status).toBe(400);
     expect(computedMemberBypass.status).toBe(400);
+    expect(findNestedArrays.status).toBe(200);
+    expect(findNestedArrays.body.kind).toBe('documents');
   });
 
   it('describes planned workbench capability for SQL Server and RabbitMQ resources', async () => {

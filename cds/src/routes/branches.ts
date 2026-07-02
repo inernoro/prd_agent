@@ -5925,7 +5925,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (/=>|\bfunction\s*\(/.test(codeSkeleton)) {
       throw new Error('MongoDB Console 禁止箭头函数 / function 回调（可内嵌隐藏执行）');
     }
-    if (/[\w)\]]\s*\[/.test(codeSkeleton)) {
+    // 计算成员访问只认「标识符[ 或 )[」——真正的动态方法查找总是 <标识符>["m"]() 或 <call>()["m"]()，
+    // 首个 [ 前必是 \w 或 )。不含 ] 前缀：`][` 是数组下标链（arr[0][1]），非按字符串取方法，且会误伤相邻嵌套数组
+    // 如 $in:[[1],[2]] 抹字面量后的 ]\s*[（Bugbot Medium）。
+    if (/[\w)]\s*\[/.test(codeSkeleton)) {
       throw new Error('MongoDB Console 禁止计算成员访问（如 db.x["drop"]()）——方法名必须是明文');
     }
     // 始终禁止：高危操作只按「方法调用」形态匹配（op 后跟 `(`）。仍拦截参数里内嵌的危险调用，例如
