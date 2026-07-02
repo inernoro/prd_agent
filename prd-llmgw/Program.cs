@@ -50,25 +50,14 @@ if (jwtTooShort)
 }
 var jwtIssuer = config["LlmGwJwt:Issuer"] ?? "prdagent-llmgw";
 
-// 网关控制台登录账号（用户 2026-07-02 明确要求：简单清晰，缺省内置 admin/admin，登录后再改）。
-// 缺省即开箱可用的 admin/admin，不再因未配置口令而拒绝启动（旧的 fail-closed 与「简单可用」诉求相悖）。
-// 用户可在「项目环境变量」设 LLMGW_ADMIN_USER / LLMGW_ADMIN_PASSWORD 覆盖，SeedAdmin 会 upsert 生效。
-const string DefaultAdminUser = "admin";
+// 网关控制台登录账号：固定内置 admin/admin 引导，口令改在 UI 里改（首登强制改密），**不依赖任何 env**。
+// 用户 2026-07-02 明确要求「简单清晰，内置初始 admin/admin，登录进去再改；不要 fail-closed 的复杂环境变量
+// 编排」。而且实测 CDS 的 _global env 不保证注入 llmgw 容器：靠 LLMGW_ADMIN_PASSWORD 设口令时，一旦注入
+// 的是陈旧/不可控的值，seed 会把 admin 对齐到未知口令 → 控制台永久锁死、既登不进也无法用 env/DB 恢复。
+// 故彻底移除 env 口令路径：seed 只认「内置 admin/admin 引导 + 首登强制改密 + UI 改密后保留」，
+// 保证控制台永远能从 admin/admin 进入（「重置」= 重新部署即可），完全免疫 env 注入问题。
+const string AdminUser = "admin";
 const string DefaultAdminPwd = "admin";
-var seedAdminUser = Environment.GetEnvironmentVariable("LLMGW_ADMIN_USER");
-if (string.IsNullOrWhiteSpace(seedAdminUser)) seedAdminUser = DefaultAdminUser;
-var configuredAdminPwd = Environment.GetEnvironmentVariable("LLMGW_ADMIN_PASSWORD");
-// 只把「空/未配置」当作走缺省 admin/admin；**不再**把仓库 dev 占位串 llmgw-admin-2026 当默认——
-// 否则运维若真把口令显式设成该值会被静默忽略、登不进（Bugbot）。任何非空值都按用户配置采用。
-var usingDefaultPwd = string.IsNullOrWhiteSpace(configuredAdminPwd);
-var seedAdminPwd = usingDefaultPwd ? DefaultAdminPwd : configuredAdminPwd!;
-if (isProduction && usingDefaultPwd)
-{
-    // 不拒绝启动：仅告警，提示尽快改口令。公网控制台默认弱口令属已知取舍（用户选择「先能用」）。
-    Console.Error.WriteLine(
-        "[llmgw] 警告：网关控制台正在使用默认口令 admin/admin。请尽快在「项目设置 → 项目环境变量」" +
-        "设置 LLMGW_ADMIN_PASSWORD 并重新部署 llmgw 以修改（SeedAdmin 会 upsert 生效）。");
-}
 
 var gitCommit = Environment.GetEnvironmentVariable("GIT_COMMIT") ?? "";
 
@@ -130,8 +119,8 @@ app.UseCors(CorsPolicy);
 app.UseAuthentication();
 app.UseAuthorization();
 
-// ── 启动时幂等播种管理员账户 ──
-await SeedAdminAsync(database, seedAdminUser, seedAdminPwd, usingDefaultPwd);
+// ── 启动时幂等播种管理员账户（内置 admin/admin 引导，env 无关）──
+await SeedAdminAsync(database, AdminUser, DefaultAdminPwd);
 
 var logs = database.GetCollection<BsonDocument>("llmrequestlogs");
 var users = database.GetCollection<LlmGwUser>("llmgw_users");
@@ -370,69 +359,45 @@ app.Run();
 
 // ─────────────────────────────── 辅助函数 ───────────────────────────────
 
-// 幂等播种管理员：按「默认弱口令」/「配置口令」两种模式分流；并禁用其它历史账号（防「改名后旧账号仍可登」）。
-static async Task SeedAdminAsync(IMongoDatabase db, string username, string password, bool usingDefaultPwd)
+// 幂等播种管理员：内置 admin/admin 引导 + 首登强制改密 + UI 改密后保留。完全不依赖 env（免疫 CDS 注入问题）。
+// 语义：未被真人认领的 admin（含历史遗留、口令未知的旧文档）每次启动**确定性自愈回 admin/admin**，
+// 保证控制台永远能从 admin/admin 进入（「重置」= 重新部署）；用户在 UI 改过口令后（PasswordChangedByUser=true）
+// 则保留其口令、跨重启不回退。
+static async Task SeedAdminAsync(IMongoDatabase db, string username, string defaultPwd)
 {
     var users = db.GetCollection<LlmGwUser>("llmgw_users");
 
-    // 安全（Bugbot）：这个控制台是「单管理员从环境变量种子」模型，没有加用户的 UI。若配置的
-    // LLMGW_ADMIN_USER 改了名（或从旧 CDS 绑定凭据切换过来），历史遗留的其它 llmgw_users 行会继续
-    // 带旧口令处于启用态、在公网控制台上可登。故先把「用户名 != 当前配置」的所有账号禁用，确保只有
-    // 当前配置的管理员能登。（真要多用户时再引入用户管理 + 白名单，届时移除本行。）
+    // 单管理员模型：禁用历史遗留的其它用户名账号（防「改名后旧账号仍可登」）。真要多用户时再引入用户管理。
     var deactivateOthers = Builders<LlmGwUser>.Update.Set(u => u.IsActive, false);
     await users.UpdateManyAsync(u => u.Username != username && u.IsActive, deactivateOthers);
 
     var existing = await users.Find(u => u.Username == username).FirstOrDefaultAsync();
     if (existing is not null)
     {
-        if (usingDefaultPwd)
+        if (existing.PasswordChangedByUser)
         {
-            // 默认模式（未配置 LLMGW_ADMIN_PASSWORD）：没有权威 env 口令来源。
-            if (existing.PasswordChangedByUser)
-            {
-                // 账号已被真人认领（改过口令）→ 库里存的是用户口令，**绝不回退**，只确保启用。
-                if (!existing.IsActive)
-                {
-                    await users.UpdateOneAsync(u => u.Username == username,
-                        Builders<LlmGwUser>.Update.Set(u => u.IsActive, true));
-                }
-                return;
-            }
-
-            // 账号从未被认领（含**历史遗留 admin**：口令未知、PasswordChangedByUser 缺省=false）→
-            // 确定性自愈回 admin/admin + 强制改密，保证控制台永远能从 admin/admin 进入
-            // （「重置」= 重新部署即可）。幂等：仅当已漂移（口令非 admin / 未挂强制改密标记 / 被禁用）时才写。
-            var needsReset = !PasswordHasher.Verify(password, existing.PasswordHash)
-                || !existing.MustChangePassword
-                || !existing.IsActive;
-            if (needsReset)
+            // 已被真人认领（在 UI 改过口令）→ 库里存的是用户口令，**绝不回退**，只确保启用。
+            if (!existing.IsActive)
             {
                 await users.UpdateOneAsync(u => u.Username == username,
-                    Builders<LlmGwUser>.Update
-                        .Set(u => u.PasswordHash, PasswordHasher.Hash(password))
-                        .Set(u => u.IsActive, true)
-                        .Set(u => u.MustChangePassword, true)
-                        .Set(u => u.PasswordChangedByUser, false));
+                    Builders<LlmGwUser>.Update.Set(u => u.IsActive, true));
             }
             return;
         }
 
-        // 配置模式（显式设了 LLMGW_ADMIN_PASSWORD）：env 口令是这个账号的**权威来源**，每次启动对齐。
-        // 旧的 insert-only 行为导致「用户改了环境变量里的密码却永远登不进」——因为首次种子后再不更新。
-        // 现在把已存在账号的口令/启用态对齐到当前配置：管理员改 LLMGW_ADMIN_PASSWORD →
-        // 重新部署 llmgw → 立即生效。显式配置的口令视为运维已知，清除首登强制改密标记。
-        // 用 Verify（而非比对哈希）判断是否需要更新：PasswordHasher.Hash 每次带随机盐，直接比对哈希恒不等
-        // 会每次启动都白写。只有「口令不匹配 / 账号被禁用 / 仍挂着强制改密标记」时才写库。
-        var needsUpdate = !PasswordHasher.Verify(password, existing.PasswordHash)
-            || !existing.IsActive
-            || existing.MustChangePassword;
-        if (needsUpdate)
+        // 从未被认领（含**历史遗留 admin**：口令未知、PasswordChangedByUser 缺省=false）→ 确定性自愈回
+        // admin/admin + 强制改密。幂等：仅当已漂移（口令非 admin / 未挂强制改密标记 / 被禁用）时才写库。
+        var needsReset = !PasswordHasher.Verify(defaultPwd, existing.PasswordHash)
+            || !existing.MustChangePassword
+            || !existing.IsActive;
+        if (needsReset)
         {
-            var update = Builders<LlmGwUser>.Update
-                .Set(u => u.PasswordHash, PasswordHasher.Hash(password))
-                .Set(u => u.IsActive, true)
-                .Set(u => u.MustChangePassword, false);
-            await users.UpdateOneAsync(u => u.Username == username, update);
+            await users.UpdateOneAsync(u => u.Username == username,
+                Builders<LlmGwUser>.Update
+                    .Set(u => u.PasswordHash, PasswordHasher.Hash(defaultPwd))
+                    .Set(u => u.IsActive, true)
+                    .Set(u => u.MustChangePassword, true)
+                    .Set(u => u.PasswordChangedByUser, false));
         }
         return;
     }
@@ -440,12 +405,11 @@ static async Task SeedAdminAsync(IMongoDatabase db, string username, string pass
     var user = new LlmGwUser
     {
         Username = username,
-        PasswordHash = PasswordHasher.Hash(password),
+        PasswordHash = PasswordHasher.Hash(defaultPwd),
         DisplayName = username,
         IsActive = true,
-        // 首登强制改密：仅缺省弱口令（admin/admin）种子出来的账号需要，消除「公网 admin/admin 永久裸奔」。
-        // 运维显式配置了口令则视为已知，不强制。
-        MustChangePassword = usingDefaultPwd,
+        MustChangePassword = true,       // 首登强制改密，消除「公网 admin/admin 永久裸奔」
+        PasswordChangedByUser = false,
         Scopes = new[] { "logs:read" },
         CreatedAt = DateTime.UtcNow,
     };
