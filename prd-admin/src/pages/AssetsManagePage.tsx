@@ -1358,7 +1358,7 @@ function HomepageAssetsSection({
         <div
           className="grid gap-3"
           style={{
-            gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(auto-fill, minmax(200px, 1fr))',
+            gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(200px, 1fr))',
           }}
         >
           {agentSlots.map((agent: HomepageAgentSlot) => {

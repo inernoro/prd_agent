@@ -6,6 +6,7 @@ import { UserAvatar } from '@/components/ui/UserAvatar';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { toast } from '@/lib/toast';
 import { WEB_HOSTING_ROLE_LABEL } from '@/lib/webHostingRole';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import {
   addTeamMembers,
   createTeam,
@@ -61,6 +62,7 @@ export function TeamScopeBar({
   hideScopeToggle?: boolean;
 }) {
   const { teams, loadTeams, setScope } = useTeamStore();
+  const { isMobile } = useBreakpoint();
   const [managerOpen, setManagerOpen] = useState(false);
   const [panel, setPanel] = useState<Panel>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -219,10 +221,11 @@ export function TeamScopeBar({
   };
 
   const inTeam = value.scope === 'team' && teams.length > 0;
+  const compactExternalMobile = isMobile && hideScopeToggle;
 
   return (
     <>
-      <div className="relative flex items-center gap-2" ref={wrapRef}>
+      <div className="relative flex min-w-0 items-center gap-2" ref={wrapRef}>
         {/* 我的 / 团队空间 双 pill（外部 tab 接管作用域切换时由 hideScopeToggle 隐藏） */}
         {!hideScopeToggle && (
           <div
@@ -251,7 +254,14 @@ export function TeamScopeBar({
 
         {/* 团队标签平铺（不下拉）：「全部」= 聚合我加入的所有团队 */}
         {inTeam && (
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 max-w-[480px]" style={{ overscrollBehavior: 'contain' }}>
+          <div
+            className="flex min-w-0 items-center gap-1.5 overflow-x-auto pb-0.5"
+            style={{
+              maxWidth: compactExternalMobile ? 'min(58vw, 228px)' : 480,
+              overscrollBehavior: 'contain',
+              scrollbarWidth: 'none',
+            }}
+          >
             <button
               type="button"
               className="h-7 px-2.5 rounded-full text-[12px] shrink-0 transition-colors"
@@ -281,7 +291,7 @@ export function TeamScopeBar({
         {/* banner 操作行：仅团队空间页签出现；成员/邀请/活动需选中具体团队（「全部」视图下隐藏） */}
         {inTeam && (
           <div className="flex items-center gap-1.5">
-            {value.teamId && (
+            {value.teamId && !compactExternalMobile && (
               <>
                 <button type="button" className={actionBtn} style={actionStyle} onClick={() => openPanel('members')}>
                   <Users size={13} /> 成员{selectedTeam ? ` ${selectedTeam.memberCount}` : ''}
@@ -295,7 +305,7 @@ export function TeamScopeBar({
               </>
             )}
             <button type="button" className={actionBtn} style={actionStyle} onClick={() => openPanel('create')}>
-              <FolderPlus size={13} /> 新建团队空间
+              <FolderPlus size={13} /> {compactExternalMobile ? '新建' : '新建团队空间'}
             </button>
           </div>
         )}

@@ -35,6 +35,7 @@ import { AiNewsTimeline } from '@/components/ai-news/AiNewsTimeline';
 import { groupGitHubLogsByWeek } from './lib/groupGitHubLogsByWeek';
 import { burstParticles } from './lib/burstParticles';
 import { AnimatedNumber } from './components/AnimatedNumber';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 import './changelog-dynamic.css';
 
 
@@ -261,6 +262,7 @@ function useIncrementalVisible(
 }
 
 export default function ChangelogPage() {
+  const isMobile = useIsMobile();
   const currentWeek = useChangelogStore((s) => s.currentWeek);
   const releases = useChangelogStore((s) => s.releases);
   const loadingCurrent = useChangelogStore((s) => s.loadingCurrent);
@@ -1067,11 +1069,11 @@ export default function ChangelogPage() {
       {/* ── Header ───────────────────────────────────────── */}
       <header
         style={glassPanel}
-        className="rounded-2xl px-6 py-5 flex flex-col gap-3"
+        className={`${isMobile ? 'rounded-[18px] px-4 py-4' : 'rounded-2xl px-6 py-5'} flex flex-col gap-3`}
       >
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div
+            {!isMobile && <div
               className="h-11 w-11 rounded-xl flex items-center justify-center"
               style={{
                 background: 'linear-gradient(135deg, rgba(251, 191, 36, 0.18), rgba(168, 85, 247, 0.18))',
@@ -1079,14 +1081,14 @@ export default function ChangelogPage() {
               }}
             >
               <Sparkles size={22} style={{ color: 'var(--accent-gold, #fbbf24)' }} />
-            </div>
+            </div>}
             <div>
-              <h1 className="text-xl font-semibold" style={{ color: 'var(--text-primary)' }}>
+              <h1 className={`${isMobile ? 'text-lg' : 'text-xl'} font-semibold`} style={{ color: 'var(--text-primary)' }}>
                 更新中心
               </h1>
-              <p className="text-[12px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+              {!isMobile && <p className="text-[12px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
                 代码级周报 · 数据来自仓库 changelogs/ 与 CHANGELOG.md，每个 PR 都会更新
-              </p>
+              </p>}
               <div className="flex flex-wrap items-center gap-2 mt-1.5 text-[10px]">
                 {sourceLabel && (
                   <span
@@ -1100,13 +1102,13 @@ export default function ChangelogPage() {
                     {sourceLabel.text}
                   </span>
                 )}
-                {fetchedAtRelative && (
+                {!isMobile && fetchedAtRelative && (
                   <span style={{ color: 'var(--text-muted)' }} title={fetchedAt ? new Date(fetchedAt).toLocaleString() : undefined}>
                     更新于 {fetchedAtRelative}
                   </span>
                 )}
                 {/* 更新规则：终身缓存 + 固定周期自动刷新（红框区诉求） */}
-                <span
+                {!isMobile && <span
                   className="px-1.5 py-0.5 rounded inline-flex items-center gap-1"
                   style={{
                     background: 'rgba(255, 255, 255, 0.05)',
@@ -1117,7 +1119,7 @@ export default function ChangelogPage() {
                 >
                   <RefreshCw size={9} />
                   每 {refreshIntervalHours} 小时自动刷新 · 终身缓存
-                </span>
+                </span>}
                 {/* 实时连接状态：连上后有更新会自动 push 过来 */}
                 {liveConnected && (
                   <span
@@ -1151,19 +1153,19 @@ export default function ChangelogPage() {
             title="刷新（绕过服务端缓存并重新拉取）"
           >
             {(loadingReleases || loadingCurrent || loadingGitHubLogs || loadingGitHubPendingReview) ? <MapSpinner size={14} /> : <RefreshCw size={14} />}
-            <span>刷新</span>
+            {!isMobile && <span>刷新</span>}
           </button>
         </div>
 
         {/* 筛选器 */}
         {availableTypes.length > 0 && (
-          <div data-tour-id="changelog-filter" className="flex flex-wrap items-center gap-2 pt-1">
-            <div className="inline-flex items-center gap-1.5 text-[13px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+          <div data-tour-id="changelog-filter" className={isMobile ? 'flex items-center gap-2 overflow-x-auto pt-0' : 'flex flex-wrap items-center gap-2 pt-1'}>
+            <div className={`${isMobile ? 'hidden' : 'inline-flex'} items-center gap-1.5 text-[13px] font-medium`} style={{ color: 'var(--text-secondary)' }}>
               <Filter size={14} />
               筛选
             </div>
             
-            <div className="flex flex-wrap ml-1" style={{ gap: '12px 10px', paddingTop: '6px' }}>
+            <div className={isMobile ? 'flex flex-nowrap gap-2 overflow-x-auto pb-1' : 'flex flex-wrap ml-1'} style={isMobile ? { scrollbarWidth: 'none' } : { gap: '12px 10px', paddingTop: '6px' }}>
               {availableTypes.map((t) => {
                 const meta = getTypeBadge(t);
                 const active = typeFilter === t;
@@ -1180,7 +1182,7 @@ export default function ChangelogPage() {
                       if (!active) burstParticles(e.clientX, e.clientY, meta.color);
                     }}
                     title={`${meta.label} · 近 30 天 ${count} 条${hotRank === 0 ? ' · 最热' : ''}`}
-                    className={`clg-chip h-8 pl-2.5 pr-3 rounded-lg text-[13px] font-medium cursor-pointer inline-flex items-center gap-1.5${hotClass}`}
+                    className={`clg-chip ${isMobile ? 'h-7 pl-2 pr-2.5 text-[12px]' : 'h-8 pl-2.5 pr-3 text-[13px]'} shrink-0 rounded-lg font-medium cursor-pointer inline-flex items-center gap-1.5${hotClass}`}
                     style={{
                       background: meta.bg,
                       border: `1px solid ${meta.border}`,
@@ -1225,14 +1227,14 @@ export default function ChangelogPage() {
               </button>
             )}
 
-            <span
+            {!isMobile && <span
               className="ml-auto inline-flex items-center gap-1 text-[11px] self-end pb-1"
               style={{ color: 'var(--text-muted)', opacity: 0.75 }}
               title="角标统计最近 30 天的条目数，越久没有新增热度自然衰减；火焰徽章 = 近 30 天最热类型"
             >
               <Flame size={10} style={{ color: '#fb923c' }} />
               近 30 天热度
-            </span>
+            </span>}
           </div>
         )}
       </header>

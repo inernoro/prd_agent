@@ -444,9 +444,9 @@ function QuickStartStrip({
             key={item.key}
             type="button"
             onClick={() => onNavigate(item.route)}
-            className="min-h-[62px] flex items-center gap-2 text-left transition-colors active:bg-white/10"
+            className="min-h-[54px] flex items-center gap-2 text-left transition-colors active:bg-white/10"
             style={{
-              padding: '10px 10px',
+              padding: '9px 10px',
               color: '#fff',
               borderRight: index < items.length - 1 ? `1px solid ${HAIRLINE_SOFT}` : undefined,
             }}
@@ -455,9 +455,6 @@ function QuickStartStrip({
             <div className="min-w-0 flex-1">
               <div style={{ fontSize: 14, fontWeight: 700, lineHeight: 1.1, letterSpacing: 0 }}>
                 {item.title}
-              </div>
-              <div style={{ marginTop: 4, fontSize: 11, color: TEXT_TERTIARY, letterSpacing: 0 }}>
-                打开
               </div>
             </div>
             <ChevronRight size={15} style={{ color: TEXT_TERTIARY }} className="shrink-0" />

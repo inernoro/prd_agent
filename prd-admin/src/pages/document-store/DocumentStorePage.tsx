@@ -772,6 +772,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   initialEntryId?: string;
 }) {
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const [store, setStore] = useState<DocumentStore | null>(null);
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
   /** 已被「单篇分享」的文档 id 集合（文件树标黄用） */
@@ -1388,14 +1389,14 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               className="cursor-pointer rounded-[8px] px-2 py-1 text-[12px] text-token-muted transition-colors duration-200 hover:bg-white/6">
               <ArrowLeft size={14} />
             </button>
-            <Library size={14} className="text-token-muted" />
+            {!isMobile && <Library size={14} className="text-token-muted" />}
             <span className="text-[13px] font-semibold text-token-primary">{store.name}</span>
             <span className="text-[11px] text-token-muted tabular-nums">
               <CountUp to={entries.filter(e => e.sourceType !== 'github_directory').length} from={0} duration={0.8} /> 个文档
             </span>
             {/* refreshKey 含各 entry 的 updatedAt：编辑/恢复/替换会 bump updatedAt 但条目数不变，
                 只用 length 会让大小数字停留在旧值；带上 updatedAt 串内容变化即刷新（Codex P2）。 */}
-            <StoreSizeBadge storeId={store.id} refreshKey={`${entries.length}:${entries.map(e => e.updatedAt ?? '').join('|')}`} />
+            {!isMobile && <StoreSizeBadge storeId={store.id} refreshKey={`${entries.length}:${entries.map(e => e.updatedAt ?? '').join('|')}`} />}
           </div>
         }
         actions={
@@ -1410,13 +1411,13 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               title="同步中心：进行中 / 发出去 / 收进来 / 历史，以及强制对齐（远端为准 / 本地为准 / 同时对准）"
             >
               {syncBusy ? <MapSpinner size={11} /> : <ArrowLeftRight size={11} />}
-              {syncBusy ? '同步中…' : '同步'}
+              {syncBusy ? (isMobile ? '同步中' : '同步中…') : '同步'}
             </button>
             {/* 旧版同步链接徽章：仅当本库已加入同步配对时显示，点击进入隐藏兼容管理面板。 */}
-            <StoreSyncBadge
+            {!isMobile && <StoreSyncBadge
               storeId={store.id}
               onManage={onOpenLegacySyncPanel}
-            />
+            />}
             <Button variant="secondary" size="xs" onClick={() => setShowShareDialog(true)}>
               <Share2 size={13} /> 分享
             </Button>
@@ -1428,11 +1429,11 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               disabled={uploading}
             >
               {uploading ? <MapSpinner size={14} /> : <Upload size={13} />}
-              {uploading ? '上传中…' : '上传文档'}
+              {uploading ? (isMobile ? '上传中' : '上传中…') : (isMobile ? '上传' : '上传文档')}
             </Button>
             {/* 知识星球：3D 文档星系直达入口（此前藏在「宇宙图」里，新用户找不到）。
                 保留原始 orbit icon 语义，叠加胶囊背景光扫与 icon 轻动效。 */}
-            <button
+            {!isMobile && <button
               type="button"
               onClick={() => navigate(`/document-store/${storeId}/galaxy`)}
               title="知识星球 — 3D 文档星系，悬停看简介、点击进入文档"
@@ -1574,11 +1575,11 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                   animation-delay: 0.42s;
                 }
               `}</style>
-            </button>
+            </button>}
             {/* 更多：收纳低频管理动作（发布 / 关系图谱 / 统计 / 订阅），折叠屏只占一个位 */}
             <div className="relative" ref={moreRef}>
               <Button variant="secondary" size="xs" onClick={toggleMore} title="更多操作">
-                <MoreHorizontal size={14} /> 更多
+                <MoreHorizontal size={14} /> {!isMobile && '更多'}
               </Button>
               {/* createPortal 到 body：PageHeader 是 overflow-hidden 圆角玻璃条，绝对定位下拉会被裁掉。见 AnchoredMenu / frontend-modal.md */}
               <AnchoredMenu open={moreOpen} onClose={() => setMoreOpen(false)} anchorRef={moreRef} minWidth={200}>

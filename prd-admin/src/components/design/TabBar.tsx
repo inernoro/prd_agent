@@ -45,17 +45,12 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
     if (!hasTabs) return;
     const activeButton = buttonsRef.current.get(currentKey);
     if (activeButton) {
-      const container = activeButton.parentElement;
-      if (container) {
-        const containerRect = container.getBoundingClientRect();
-        const buttonRect = activeButton.getBoundingClientRect();
-        setIndicatorStyle({
-          left: buttonRect.left - containerRect.left,
-          width: buttonRect.width,
-          opacity: 1,
-        });
-        if (!isReady) setIsReady(true);
-      }
+      setIndicatorStyle({
+        left: activeButton.offsetLeft,
+        width: activeButton.offsetWidth,
+        opacity: 1,
+      });
+      if (!isReady) setIsReady(true);
     }
   };
 
