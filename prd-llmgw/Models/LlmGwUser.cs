@@ -21,6 +21,13 @@ public class LlmGwUser
 
     public bool IsActive { get; set; } = true;
 
+    /// <summary>
+    /// 首登强制改密标记。缺省弱口令（admin/admin）种子账号置 true，登录后前端强制跳「设置新口令」，
+    /// 改密成功前 mcp=1 的 token 不放行 /gw/logs*（服务端策略门 + 前端守卫双保险）。
+    /// 运维显式配置 LLMGW_ADMIN_PASSWORD 的账号视为已知口令，不置该标记。
+    /// </summary>
+    public bool MustChangePassword { get; set; }
+
     public string[] Scopes { get; set; } = Array.Empty<string>();
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

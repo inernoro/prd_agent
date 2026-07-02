@@ -19,6 +19,18 @@ export type LoginResult = {
   username?: string | null;
   displayName?: string | null;
   expiresAt?: string | null;
+  /** 首登强制改密：true 时前端须跳「设置新口令」页，改密成功前不放行日志页。 */
+  mustChangePassword?: boolean | null;
+};
+
+// ── 改密 ──
+export type ChangePasswordRequest = { oldPassword: string; newPassword: string };
+export type ChangePasswordResult = {
+  /** 改密后重新签发的 token（不再带 mcp 标记）。 */
+  token: string;
+  username?: string | null;
+  displayName?: string | null;
+  expiresAt?: string | null;
 };
 
 // ── 日志列表项 ──

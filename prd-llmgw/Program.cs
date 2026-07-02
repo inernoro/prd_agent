@@ -98,7 +98,14 @@ builder.Services
             ClockSkew = TimeSpan.FromMinutes(1),
         };
     });
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options =>
+{
+    // 首登强制改密门：拒绝 mcp=1 的 token 访问日志端点（该 token 只能调 change-password）。
+    // 服务端强制（而非仅前端守卫），确保缺省 admin/admin 在改密前无法真正读取观测数据。
+    options.AddPolicy("LogsRead", policy =>
+        policy.RequireAuthenticatedUser()
+            .RequireAssertion(ctx => !ctx.User.HasClaim(c => c.Type == "mcp" && c.Value == "1")));
+});
 
 // ── CORS：内部观测工具，放开来源/头/方法（前端经 nginx 跨源访问）──
 const string CorsPolicy = "llmgw-cors";
@@ -124,7 +131,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 // ── 启动时幂等播种管理员账户 ──
-await SeedAdminAsync(database, seedAdminUser, seedAdminPwd);
+await SeedAdminAsync(database, seedAdminUser, seedAdminPwd, usingDefaultPwd);
 
 var logs = database.GetCollection<BsonDocument>("llmrequestlogs");
 var users = database.GetCollection<LlmGwUser>("llmgw_users");
@@ -161,9 +168,66 @@ app.MapPost("/gw/auth/login", async ([FromBody] LoginRequestDto req) =>
         Username = user.Username,
         DisplayName = string.IsNullOrEmpty(user.DisplayName) ? user.Username : user.DisplayName,
         ExpiresAt = expiresAt.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
+        MustChangePassword = user.MustChangePassword,
     };
     return Json(ApiEnvelope<LoginResultDto>.Ok(data), jsonOptions);
 }).AllowAnonymous();
+
+// ───────────────────────────── 改密（需鉴权，mcp token 也可）─────────────────────────────
+// 首登强制改密：校验旧口令 → 写新哈希 → 清 MustChangePassword → 重新签发不带 mcp 的 token。
+// 用普通 RequireAuthorization（不走 LogsRead 策略），使 mcp=1 的 token 能在此改密后解锁日志。
+app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] ChangePasswordRequestDto req) =>
+{
+    var oldPwd = req.OldPassword ?? "";
+    var newPwd = req.NewPassword ?? "";
+    if (oldPwd.Length == 0 || newPwd.Length == 0)
+    {
+        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("INVALID_INPUT", "旧口令与新口令不能为空"), jsonOptions);
+    }
+    if (newPwd.Length < 6)
+    {
+        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("WEAK_PASSWORD", "新口令至少 6 位"), jsonOptions);
+    }
+    if (newPwd == oldPwd)
+    {
+        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("SAME_PASSWORD", "新口令不能与旧口令相同"), jsonOptions);
+    }
+
+    // 从 token 的 sub（用户 Id）定位账号，避免依赖可变的用户名。
+    var userId = http.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+        ?? http.User.FindFirst("sub")?.Value;
+    if (string.IsNullOrEmpty(userId))
+    {
+        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("UNAUTHORIZED", "无效的登录态"), jsonOptions, statusCode: 401);
+    }
+
+    var user = await users.Find(u => u.Id == userId).FirstOrDefaultAsync();
+    if (user is null || !user.IsActive)
+    {
+        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("UNAUTHORIZED", "账号不存在或已停用"), jsonOptions, statusCode: 401);
+    }
+    if (!PasswordHasher.Verify(oldPwd, user.PasswordHash))
+    {
+        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("INVALID_CREDENTIALS", "旧口令错误"), jsonOptions);
+    }
+
+    var update = Builders<LlmGwUser>.Update
+        .Set(u => u.PasswordHash, PasswordHasher.Hash(newPwd))
+        .Set(u => u.MustChangePassword, false);
+    await users.UpdateOneAsync(u => u.Id == user.Id, update);
+
+    // 重新签发 token（此时 MustChangePassword 已清，Issue 不再带 mcp claim）。
+    user.MustChangePassword = false;
+    var (token, expiresAt) = gwJwt.Issue(user);
+    var data = new ChangePasswordResultDto
+    {
+        Token = token,
+        Username = user.Username,
+        DisplayName = string.IsNullOrEmpty(user.DisplayName) ? user.Username : user.DisplayName,
+        ExpiresAt = expiresAt.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
+    };
+    return Json(ApiEnvelope<ChangePasswordResultDto>.Ok(data), jsonOptions);
+}).RequireAuthorization();
 
 // ───────────────────────────── 日志列表（需鉴权）─────────────────────────────
 app.MapGet("/gw/logs", async (
@@ -190,7 +254,7 @@ app.MapGet("/gw/logs", async (
         PageSize = ps,
     };
     return Json(ApiEnvelope<LogsListData>.Ok(data), jsonOptions);
-}).RequireAuthorization();
+}).RequireAuthorization("LogsRead");
 
 // ───────────────────────────── 元信息（需鉴权）─────────────────────────────
 app.MapGet("/gw/logs/meta", async () =>
@@ -214,7 +278,7 @@ app.MapGet("/gw/logs/meta", async () =>
         .ToList();
 
     return Json(ApiEnvelope<LogsMeta>.Ok(new LogsMeta { Models = models, Statuses = statuses }), jsonOptions);
-}).RequireAuthorization();
+}).RequireAuthorization("LogsRead");
 
 // ───────────────────────────── 时间序列（需鉴权）─────────────────────────────
 app.MapGet("/gw/logs/timeseries", async (string? from, string? to, string? model, string? status) =>
@@ -241,7 +305,7 @@ app.MapGet("/gw/logs/timeseries", async (string? from, string? to, string? model
         .ToList();
 
     return Json(ApiEnvelope<TimeseriesData>.Ok(new TimeseriesData { Items = items }), jsonOptions);
-}).RequireAuthorization();
+}).RequireAuthorization("LogsRead");
 
 // ───────────────────────────── 会话聚合（需鉴权）─────────────────────────────
 app.MapGet("/gw/logs/sessions", async (string? from, string? to, int? page, int? pageSize) =>
@@ -285,7 +349,7 @@ app.MapGet("/gw/logs/sessions", async (string? from, string? to, int? page, int?
         PageSize = ps,
     };
     return Json(ApiEnvelope<SessionsData>.Ok(data), jsonOptions);
-}).RequireAuthorization();
+}).RequireAuthorization("LogsRead");
 
 // ───────────────────────────── 日志详情（需鉴权）─────────────────────────────
 app.MapGet("/gw/logs/{id}", async (string id) =>
@@ -297,15 +361,15 @@ app.MapGet("/gw/logs/{id}", async (string id) =>
         return Json(ApiEnvelope<LlmLogDetail>.Fail("NOT_FOUND", "日志不存在"), jsonOptions, statusCode: 404);
     }
     return Json(ApiEnvelope<LlmLogDetail>.Ok(MapDetail(doc)), jsonOptions);
-}).RequireAuthorization();
+}).RequireAuthorization("LogsRead");
 
 app.Run();
 
 
 // ─────────────────────────────── 辅助函数 ───────────────────────────────
 
-// 幂等播种管理员：configured username → upsert 口令；并禁用其它历史账号（防「改名后旧账号仍可登」）。
-static async Task SeedAdminAsync(IMongoDatabase db, string username, string password)
+// 幂等播种管理员：按「默认弱口令」/「配置口令」两种模式分流；并禁用其它历史账号（防「改名后旧账号仍可登」）。
+static async Task SeedAdminAsync(IMongoDatabase db, string username, string password, bool usingDefaultPwd)
 {
     var users = db.GetCollection<LlmGwUser>("llmgw_users");
 
@@ -319,18 +383,34 @@ static async Task SeedAdminAsync(IMongoDatabase db, string username, string pass
     var existing = await users.Find(u => u.Username == username).FirstOrDefaultAsync();
     if (existing is not null)
     {
-        // Upsert（而非「已存在即跳过」）：配置的 LLMGW_ADMIN_PASSWORD 是这个账号的**权威口令来源**。
+        if (usingDefaultPwd)
+        {
+            // 默认模式（未配置 LLMGW_ADMIN_PASSWORD）：没有权威 env 口令来源，库里存的才是权威——
+            // 用户很可能已经通过「首登强制改密」改过口令。**绝不能**每次启动把它回退回 admin/admin
+            // （否则一重启就把用户改的密码抹掉、强制改密形同虚设）。这里只确保账号处于启用态。
+            if (!existing.IsActive)
+            {
+                await users.UpdateOneAsync(u => u.Username == username,
+                    Builders<LlmGwUser>.Update.Set(u => u.IsActive, true));
+            }
+            return;
+        }
+
+        // 配置模式（显式设了 LLMGW_ADMIN_PASSWORD）：env 口令是这个账号的**权威来源**，每次启动对齐。
         // 旧的 insert-only 行为导致「用户改了环境变量里的密码却永远登不进」——因为首次种子后再不更新。
-        // 现在每次启动都把已存在账号的口令/启用态对齐到当前配置：管理员改 LLMGW_ADMIN_PASSWORD →
-        // 重新部署 llmgw → 立即生效。仅当口令确有变化时才写库（避免每次启动无谓写）。
+        // 现在把已存在账号的口令/启用态对齐到当前配置：管理员改 LLMGW_ADMIN_PASSWORD →
+        // 重新部署 llmgw → 立即生效。显式配置的口令视为运维已知，清除首登强制改密标记。
         // 用 Verify（而非比对哈希）判断是否需要更新：PasswordHasher.Hash 每次带随机盐，直接比对哈希恒不等
-        // 会每次启动都白写。只有「当前配置口令与库里存的不匹配」或「账号被禁用」时才重置。
-        var needsUpdate = !PasswordHasher.Verify(password, existing.PasswordHash) || !existing.IsActive;
+        // 会每次启动都白写。只有「口令不匹配 / 账号被禁用 / 仍挂着强制改密标记」时才写库。
+        var needsUpdate = !PasswordHasher.Verify(password, existing.PasswordHash)
+            || !existing.IsActive
+            || existing.MustChangePassword;
         if (needsUpdate)
         {
             var update = Builders<LlmGwUser>.Update
                 .Set(u => u.PasswordHash, PasswordHasher.Hash(password))
-                .Set(u => u.IsActive, true);
+                .Set(u => u.IsActive, true)
+                .Set(u => u.MustChangePassword, false);
             await users.UpdateOneAsync(u => u.Username == username, update);
         }
         return;
@@ -342,6 +422,9 @@ static async Task SeedAdminAsync(IMongoDatabase db, string username, string pass
         PasswordHash = PasswordHasher.Hash(password),
         DisplayName = username,
         IsActive = true,
+        // 首登强制改密：仅缺省弱口令（admin/admin）种子出来的账号需要，消除「公网 admin/admin 永久裸奔」。
+        // 运维显式配置了口令则视为已知，不强制。
+        MustChangePassword = usingDefaultPwd,
         Scopes = new[] { "logs:read" },
         CreatedAt = DateTime.UtcNow,
     };

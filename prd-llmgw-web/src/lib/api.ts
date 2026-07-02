@@ -13,6 +13,8 @@
 
 import type {
   ApiResponse,
+  ChangePasswordRequest,
+  ChangePasswordResult,
   LoginRequest,
   LoginResult,
   LogsListData,
@@ -25,6 +27,8 @@ import type {
 
 const TOKEN_KEY = 'llmgw.token';
 const USER_KEY = 'llmgw.user';
+// 首登强制改密标记（认证态，遵守 no-localStorage 规则走 sessionStorage）。
+const MCP_KEY = 'llmgw.mustChangePwd';
 
 export const API_BASE = (import.meta.env.VITE_LLMGW_API_BASE || '/gw').replace(/\/$/, '');
 
@@ -48,15 +52,32 @@ export function setSession(result: LoginResult) {
     USER_KEY,
     JSON.stringify({ username: result.username ?? undefined, displayName: result.displayName ?? undefined }),
   );
+  if (result.mustChangePassword) sessionStorage.setItem(MCP_KEY, '1');
+  else sessionStorage.removeItem(MCP_KEY);
+}
+
+// 改密成功后，用重新签发的 token 替换会话并清除强制改密标记。
+export function applyChangePasswordResult(result: ChangePasswordResult) {
+  sessionStorage.setItem(TOKEN_KEY, result.token);
+  sessionStorage.setItem(
+    USER_KEY,
+    JSON.stringify({ username: result.username ?? undefined, displayName: result.displayName ?? undefined }),
+  );
+  sessionStorage.removeItem(MCP_KEY);
 }
 
 export function clearSession() {
   sessionStorage.removeItem(TOKEN_KEY);
   sessionStorage.removeItem(USER_KEY);
+  sessionStorage.removeItem(MCP_KEY);
 }
 
 export function isAuthed(): boolean {
   return !!getToken();
+}
+
+export function mustChangePassword(): boolean {
+  return sessionStorage.getItem(MCP_KEY) === '1';
 }
 
 type RequestOptions = {
@@ -131,6 +152,10 @@ async function apiRequest<T>(path: string, options: RequestOptions = {}): Promis
 // ── 鉴权 ──
 export function login(req: LoginRequest): Promise<ApiResponse<LoginResult>> {
   return apiRequest<LoginResult>('/auth/login', { method: 'POST', body: req });
+}
+
+export function changePassword(req: ChangePasswordRequest): Promise<ApiResponse<ChangePasswordResult>> {
+  return apiRequest<ChangePasswordResult>('/auth/change-password', { method: 'POST', body: req });
 }
 
 // ── 日志 ──

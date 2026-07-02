@@ -28,7 +28,7 @@
   `llmgw-serve` `/gw/v1/healthz`）。预览按钮默认主入口，网关入口并列。
 - prd-agent-main 现 **5 容器**：api / admin / llmgw / llmgw-serve / llmgw-web。
 
-### Point 2 — 简单账号密码：**已达成（PR #978）**
+### Point 2 — 简单账号密码：**已达成（PR #978 + 首登强制改密 2026-07-02）**
 - 后端 `prd-llmgw/Program.cs` 缺省内置 **admin/admin**，开箱可用；不再因未配 `LLMGW_ADMIN_PASSWORD`
   而拒启动（仅告警）。
 - `SeedAdminAsync` 改 **upsert**（配置口令变化即对齐，`Verify` 判定、带盐哈希不空写）+ **禁用用户名≠当前
@@ -47,13 +47,17 @@
   `Console.Error` 告警（已实现），并把 Codex 的安全顾虑落成**待接力的强约束**：
   **首登强制改密（force-change-on-first-login）**——这正是用户原话「登录进去再改」的正确工程化，
   既不牺牲开箱体验，又消除「永久 admin/admin 公网裸奔」。
-- **待接力实现（point 2 收尾，未做）**：
-  1. `LlmGwUser` 加 `MustChangePassword`（bool，seed 缺省账号时置 true）。
-  2. `/gw/auth/login` 成功后若 `MustChangePassword` 为 true，token 标记 `pwd_reset_required`，
-     前端 `LoginPage`/路由守卫强制跳「设置新口令」页，改密成功前不放行 `/gw/logs`。
-  3. 新增 `/gw/auth/change-password`（校验旧口令→写新哈希→清 `MustChangePassword`→禁用缺省态）。
-  4. 改密后缺省 admin/admin 立即失效（upsert 逻辑已支持「口令变化即对齐」，只需前端驱动）。
-  - 在此之前，运维可临时用项目环境变量 `LLMGW_ADMIN_PASSWORD` 顶掉缺省口令（已可用）。
+- **已实现（point 2 收尾，2026-07-02）**：首登强制改密全链路落地，消除「公网 admin/admin 永久裸奔」。
+  1. `LlmGwUser` 加 `MustChangePassword`（bool）；缺省弱口令（admin/admin）种子账号置 true，
+     运维显式配置 `LLMGW_ADMIN_PASSWORD` 的账号视为已知口令、不置标记。
+  2. `SeedAdmin` 分两模式：**默认模式**（未配口令）已存在账号**不回退**口令（库为权威，防重启抹掉用户改的密码）、
+     仅确保启用；**配置模式**每次启动把口令对齐到 env 值并清标记。
+  3. `/gw/auth/login` 返回 `mustChangePassword`；JWT 在该标记为 true 时带 `mcp=1` claim。
+  4. **服务端策略门**（不只前端）：`LogsRead` 授权策略拒绝 `mcp=1` 的 token 访问 `/gw/logs*`，
+     确保改密前无法真正读观测数据。改密端点走普通鉴权（允许 mcp token）。
+  5. 新增 `/gw/auth/change-password`（校验旧口令→新口令≥6 位且≠旧→写新哈希→清标记→**重签发**不带 mcp 的 token）。
+  6. 前端 `ChangePasswordPage` + `RequireAuth`/`RequireChangePassword` 守卫：`mustChangePassword` 时强制跳改密页。
+  - 运维仍可用项目环境变量 `LLMGW_ADMIN_PASSWORD` 顶掉缺省口令（此时不触发强制改密）。
 
 ### Point 3 — OpenRouter 风格控制台：**部分（骨架在，需对齐设计）**
 - `prd-llmgw-web` 已有：`LoginPage` / `LogsPage` / `LogsView`（请求日志表）/ `GenerationDetailsDrawer`

@@ -32,6 +32,25 @@ public sealed class LoginResultDto
     public string? Username { get; init; }
     public string? DisplayName { get; init; }
     public string? ExpiresAt { get; init; }
+
+    /// <summary>首登强制改密：为 true 时前端须跳「设置新口令」页，改密成功前不放行日志页。</summary>
+    public bool MustChangePassword { get; init; }
+}
+
+// ── 改密 ──
+public sealed class ChangePasswordRequestDto
+{
+    public string? OldPassword { get; set; }
+    public string? NewPassword { get; set; }
+}
+
+public sealed class ChangePasswordResultDto
+{
+    /// <summary>改密后重新签发的 token（不再带 mcp 标记），前端替换 session 后即可读日志。</summary>
+    public string Token { get; init; } = string.Empty;
+    public string? Username { get; init; }
+    public string? DisplayName { get; init; }
+    public string? ExpiresAt { get; init; }
 }
 
 // ── 日志列表 ──
