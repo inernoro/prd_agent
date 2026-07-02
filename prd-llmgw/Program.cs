@@ -125,13 +125,14 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 // ── 启动时幂等播种管理员账户（内置 admin/admin 引导，env 无关）──
-// 破玻璃（break-glass）：设 LLMGW_ADMIN_FORCE_RESET=1 时，无条件把 admin 重置回 admin/admin。
-// 用于「账号已被认领但口令被共享库跨部署污染而登不进」的死锁恢复——重置后前端会强制改密。
-// 恢复后请把该 env 清掉（否则每次启动都会强制回 admin/admin）。
+// 破玻璃（break-glass）：设 LLMGW_ADMIN_FORCE_RESET 为真值（1/true/yes/on，大小写不敏感）时，无条件把 admin
+// 重置回 admin/admin。用于「账号被认领但口令登不进」的死锁恢复——重置后前端会强制改密。恢复后请把该 env 清掉。
+// **仅认真值**（Bugbot Medium）：只判「非空」会把 =0 / =false 误当开启，每次启动强制回 admin/admin 反而擦掉 env 口令。
 // 口令来源（用户 2026-07-02 明确要求「口令存项目 env、别再登不进」）：优先 LLMGW_ADMIN_PASSWORD
 // （项目 env，权威，每次启动对齐口令）；未设时回退到内置 admin/admin 引导 + 自愈（永不锁死）。
 // 改密 = 改项目环境变量 LLMGW_ADMIN_PASSWORD 后重部署 llmgw。
-var forceResetAdmin = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("LLMGW_ADMIN_FORCE_RESET"));
+var forceResetRaw = (Environment.GetEnvironmentVariable("LLMGW_ADMIN_FORCE_RESET") ?? string.Empty).Trim();
+var forceResetAdmin = new[] { "1", "true", "yes", "on" }.Contains(forceResetRaw, StringComparer.OrdinalIgnoreCase);
 var adminPwdFromEnv = Environment.GetEnvironmentVariable("LLMGW_ADMIN_PASSWORD");
 await SeedAdminAsync(database, AdminUser, DefaultAdminPwd, forceResetAdmin, adminPwdFromEnv);
 
