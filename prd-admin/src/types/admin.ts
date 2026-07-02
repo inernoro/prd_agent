@@ -44,7 +44,7 @@ export type Platform = {
   apiUrl: string;
   apiKeyMasked?: string | null;
   hasApiKey?: boolean;
-  apiKeyStatus?: 'configured' | 'missing' | 'unreadable' | string;
+  apiKeyStatus?: 'configured' | 'missing' | 'optional' | 'unreadable' | string;
   enabled: boolean;
   /**
    * 平台种类：

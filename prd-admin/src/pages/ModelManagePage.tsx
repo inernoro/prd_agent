@@ -736,7 +736,7 @@ export default function ModelManagePage() {
         platformType: 'openai',
         providerId: 'stub',
         apiUrl: stubBaseUrl,
-        apiKey: 'stub-key-not-required',
+        apiKey: '',
         enabled: true,
       });
 
@@ -1631,6 +1631,8 @@ export default function ModelManagePage() {
                                 ? selectedPlatform.apiKeyMasked || '已保存 API key'
                                 : selectedPlatform.apiKeyStatus === 'unreadable'
                                   ? 'API key 无法读取，请重新保存'
+                                  : selectedPlatform.apiKeyStatus === 'optional'
+                                    ? '无需 API key'
                                   : '未保存 API key'
                             }
                           />
