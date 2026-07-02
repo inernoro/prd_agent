@@ -80,6 +80,7 @@ import { getAdminNotifications, handleAdminNotification, handleAllAdminNotificat
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
 import { GlobalDefectSubmitDialog, DefectSubmitButton } from '@/components/ui/GlobalDefectSubmitDialog';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
+import { NotificationSubscriptionsPanel } from '@/components/notifications/NotificationSubscriptionsPanel';
 import { ChangelogBell } from '@/components/changelog/ChangelogBell';
 import { useChangelogStore, selectUnreadCount } from '@/stores/changelogStore';
 import { FLOATING_DOCK_COLLAPSED_KEY, FLOATING_DOCK_EVENT } from '@/components/daily-tips/TipsDrawer';
@@ -224,8 +225,15 @@ export default function AppShell() {
   }, [defaultNavHidden, navHidden, navOrder]);
   const [avatarOpen, setAvatarOpen] = useState(false);
   const [notificationDialogOpen, setNotificationDialogOpen] = useState(false);
+  const [notificationDialogTab, setNotificationDialogTab] = useState<'list' | 'subscriptions'>('list');
   const [notifications, setNotifications] = useState<AdminNotificationItem[]>([]);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get('panel') !== 'notifications') return;
+    setNotificationDialogOpen(true);
+    setNotificationDialogTab(params.get('tab') === 'subscriptions' ? 'subscriptions' : 'list');
+  }, [location.search]);
   // 更新中心：未读数（用于桌面 dropdown 中的徽章）+ 拉取本周更新
   const changelogUnread = useChangelogStore(selectUnreadCount);
   const loadChangelogCurrentWeek = useChangelogStore((s) => s.loadCurrentWeek);
@@ -522,6 +530,33 @@ export default function AppShell() {
     [notifications]
   );
   const notificationCount = activeNotifications.length;
+  const personalNotifications = useMemo(
+    () => activeNotifications.filter((n) => (n.section ?? 'personal') !== 'admin'),
+    [activeNotifications]
+  );
+  const adminNotifications = useMemo(
+    () => activeNotifications.filter((n) => n.section === 'admin'),
+    [activeNotifications]
+  );
+  const notificationSections = useMemo(
+    () => [
+      {
+        key: 'personal',
+        title: '个人通知',
+        description: '周报月报、缺陷协作、语音转文字和个人待处理事项',
+        empty: '暂无个人通知',
+        items: personalNotifications,
+      },
+      {
+        key: 'admin',
+        title: '管理员通知',
+        description: '额度、服务器、VOC、API 请求和系统运营告警',
+        empty: '暂无管理员通知',
+        items: adminNotifications,
+      },
+    ],
+    [adminNotifications, personalNotifications]
+  );
   const toastNotification = useMemo(
     () => activeNotifications.find((n) => !dismissedToastIds.has(n.id)),
     [activeNotifications, dismissedToastIds]
@@ -1524,12 +1559,13 @@ export default function AppShell() {
                   className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
                   style={{ color: 'var(--text-secondary)' }}
                   onSelect={() => {
+                    setNotificationDialogTab('list');
                     setNotificationDialogOpen(true);
                     void loadNotifications({ silent: true });
                   }}
                 >
                   <Bell size={16} className="shrink-0" />
-                  <span className="text-[13px]">系统通知</span>
+                  <span className="text-[13px]">用户通知</span>
                   {notificationCount > 0 && (
                     <span
                       className="ml-auto rounded-full px-2 py-0.5 text-[10px]"
@@ -1645,11 +1681,40 @@ export default function AppShell() {
           <Dialog
             open={notificationDialogOpen}
             onOpenChange={setNotificationDialogOpen}
-            title="系统通知"
-            description="系统级通知与待处理事项"
-            maxWidth={620}
+            title="用户通知"
+            description="站内通知、待处理事项与外部推送订阅"
+            maxWidth={820}
+            contentStyle={{ height: 'min(860px, calc(100vh - 48px))' }}
             content={
-              <div className="flex h-full flex-col gap-3">
+              <div className="flex h-full min-h-0 flex-col gap-3">
+                <div
+                  className="grid grid-cols-2 rounded-[12px] p-1"
+                  style={{ background: 'rgba(255,255,255,0.06)' }}
+                >
+                  {[
+                    { key: 'list' as const, label: '通知列表' },
+                    { key: 'subscriptions' as const, label: '推送订阅' },
+                  ].map((tab) => (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      className="rounded-[9px] px-3 py-1.5 text-[12px] transition-all"
+                      style={
+                        notificationDialogTab === tab.key
+                          ? { background: 'var(--accent-gold)', color: '#1a1a1a' }
+                          : { color: 'var(--text-muted)' }
+                      }
+                      onClick={() => setNotificationDialogTab(tab.key)}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                {notificationDialogTab === 'subscriptions' ? (
+                  <NotificationSubscriptionsPanel />
+                ) : (
+                  <>
                 <div className="flex items-center justify-between">
                   <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
                     {notificationsLoading ? '加载中...' : `未处理 ${notificationCount > 999 ? '999+' : notificationCount} 条`}
@@ -1666,108 +1731,136 @@ export default function AppShell() {
                   </button>
                 </div>
 
-                <div className="flex-1 overflow-auto pr-2 space-y-3">
-                  {notificationCount === 0 && !notificationsLoading && (
-                    <div className="rounded-[14px] border border-dashed border-white/10 px-4 py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
-                      暂无待处理通知
-                    </div>
-                  )}
-                  {activeNotifications.map((item) => {
-                    const tone = getNotificationTone(item.level);
-                    return (
-                      <div
-                        key={item.id}
-                        className="rounded-[16px] border px-4 py-3"
-                        style={{ borderColor: tone.border, background: tone.bg }}
-                      >
-                        {/* 窄屏竖排（移动端 / 窄浏览器），宽屏水平分栏；按钮列 shrink-0 + 按钮文字 whitespace-nowrap，防止被挤成竖排单字 */}
-                        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-                          <div className="min-w-0 flex-1">
-                            <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                              {item.title}
-                            </div>
-                            {item.message && (
-                              looksLikeMarkdown(item.message) ? (
-                                <div
-                                  className="mt-1 text-[12px] leading-relaxed"
-                                  style={{ color: 'var(--text-muted)' }}
-                                  dangerouslySetInnerHTML={{ __html: renderNotificationMarkdown(item.message) }}
-                                />
-                              ) : (
-                                <div className="mt-1 text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-                                  {item.message}
-                                </div>
-                              )
-                            )}
-                            {item.attachments && item.attachments.length > 0 && (
-                              <div className="mt-2 flex flex-wrap gap-1.5">
-                                {item.attachments.map((att, i) => (
-                                  <a
-                                    key={i}
-                                    href={att.url}
-                                    download={ensureDownloadName(att.name, att.mimeType)}
-                                    onClick={async (e) => {
-                                      e.preventDefault();
-                                      try {
-                                        const resp = await fetch(att.url);
-                                        const blob = await resp.blob();
-                                        const blobUrl = URL.createObjectURL(blob);
-                                        const link = document.createElement('a');
-                                        link.href = blobUrl;
-                                        link.download = ensureDownloadName(att.name, att.mimeType);
-                                        link.click();
-                                        URL.revokeObjectURL(blobUrl);
-                                      } catch {
-                                        window.open(att.url, '_blank');
-                                      }
-                                    }}
-                                    className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-[6px] transition-colors hover:bg-white/10 cursor-pointer no-underline"
-                                    style={{
-                                      background: 'rgba(255,255,255,0.06)',
-                                      border: '1px solid rgba(255,255,255,0.1)',
-                                      color: 'var(--accent-gold)',
-                                    }}
-                                  >
-                                    <Download size={12} />
-                                    <span>{ensureDownloadName(att.name, att.mimeType)}</span>
-                                    {att.sizeBytes > 0 && (
-                                      <span style={{ color: 'var(--text-muted)' }}>
-                                        ({(att.sizeBytes / 1024).toFixed(1)} KB)
-                                      </span>
-                                    )}
-                                  </a>
-                                ))}
-                              </div>
-                            )}
-                            <div className="mt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                              {new Date(item.createdAt).toLocaleString()}
-                            </div>
+                <div className="flex-1 overflow-auto pr-2 space-y-4">
+                  {notificationSections.map((section) => (
+                    <section key={section.key} className="space-y-2">
+                      <div className="flex items-end justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                            {section.title}
                           </div>
-                          <div className="shrink-0 flex flex-row sm:flex-col items-stretch sm:items-end gap-2">
-                            {item.actionUrl && (
-                              <button
-                                type="button"
-                                className="rounded-full px-3 py-1.5 text-[12px] whitespace-nowrap transition-all hover:bg-white/20 active:scale-[0.97]"
-                                style={{ background: 'rgba(255, 255, 255, 0.15)', color: 'var(--text-primary)' }}
-                                onClick={() => handleNotification(item.id, item.actionUrl)}
-                              >
-                                {item.actionLabel || '去处理'}
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              className="rounded-full px-3 py-1.5 text-[12px] whitespace-nowrap transition-all hover:brightness-110 active:scale-[0.97]"
-                              style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
-                              onClick={() => handleNotification(item.id)}
-                            >
-                              标记已处理
-                            </button>
+                          <div className="mt-0.5 text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                            {section.description}
                           </div>
                         </div>
+                        <div className="shrink-0 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                          {section.items.length} 条
+                        </div>
                       </div>
-                    );
-                  })}
+
+                      {section.items.length === 0 && !notificationsLoading && (
+                        <div className="rounded-[12px] border border-dashed border-white/10 px-4 py-4 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                          {section.empty}
+                        </div>
+                      )}
+
+                      {section.items.map((item) => {
+                        const tone = getNotificationTone(item.level);
+                        return (
+                          <div
+                            key={item.id}
+                            className="rounded-[16px] border px-4 py-3"
+                            style={{ borderColor: tone.border, background: tone.bg }}
+                          >
+                            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                                    {item.title}
+                                  </div>
+                                  <span
+                                    className="rounded-full px-2 py-0.5 text-[10px]"
+                                    style={{ background: 'rgba(255,255,255,0.1)', color: tone.text }}
+                                  >
+                                    {item.sourceLabel || item.source || '通知'}
+                                  </span>
+                                </div>
+                                {item.message && (
+                                  looksLikeMarkdown(item.message) ? (
+                                    <div
+                                      className="mt-1 text-[12px] leading-relaxed"
+                                      style={{ color: 'var(--text-muted)' }}
+                                      dangerouslySetInnerHTML={{ __html: renderNotificationMarkdown(item.message) }}
+                                    />
+                                  ) : (
+                                    <div className="mt-1 text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                                      {item.message}
+                                    </div>
+                                  )
+                                )}
+                                {item.attachments && item.attachments.length > 0 && (
+                                  <div className="mt-2 flex flex-wrap gap-1.5">
+                                    {item.attachments.map((att, i) => (
+                                      <a
+                                        key={i}
+                                        href={att.url}
+                                        download={ensureDownloadName(att.name, att.mimeType)}
+                                        onClick={async (e) => {
+                                          e.preventDefault();
+                                          try {
+                                            const resp = await fetch(att.url);
+                                            const blob = await resp.blob();
+                                            const blobUrl = URL.createObjectURL(blob);
+                                            const link = document.createElement('a');
+                                            link.href = blobUrl;
+                                            link.download = ensureDownloadName(att.name, att.mimeType);
+                                            link.click();
+                                            URL.revokeObjectURL(blobUrl);
+                                          } catch {
+                                            window.open(att.url, '_blank');
+                                          }
+                                        }}
+                                        className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-[6px] transition-colors hover:bg-white/10 cursor-pointer no-underline"
+                                        style={{
+                                          background: 'rgba(255,255,255,0.06)',
+                                          border: '1px solid rgba(255,255,255,0.1)',
+                                          color: 'var(--accent-gold)',
+                                        }}
+                                      >
+                                        <Download size={12} />
+                                        <span>{ensureDownloadName(att.name, att.mimeType)}</span>
+                                        {att.sizeBytes > 0 && (
+                                          <span style={{ color: 'var(--text-muted)' }}>
+                                            ({(att.sizeBytes / 1024).toFixed(1)} KB)
+                                          </span>
+                                        )}
+                                      </a>
+                                    ))}
+                                  </div>
+                                )}
+                                <div className="mt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                  {new Date(item.createdAt).toLocaleString()}
+                                </div>
+                              </div>
+                              <div className="shrink-0 flex flex-row sm:flex-col items-stretch sm:items-end gap-2">
+                                {item.actionUrl && (
+                                  <button
+                                    type="button"
+                                    className="rounded-full px-3 py-1.5 text-[12px] whitespace-nowrap transition-all hover:bg-white/20 active:scale-[0.97]"
+                                    style={{ background: 'rgba(255, 255, 255, 0.15)', color: 'var(--text-primary)' }}
+                                    onClick={() => handleNotification(item.id, item.actionUrl)}
+                                  >
+                                    {item.actionLabel || '去处理'}
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  className="rounded-full px-3 py-1.5 text-[12px] whitespace-nowrap transition-all hover:brightness-110 active:scale-[0.97]"
+                                  style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
+                                  onClick={() => handleNotification(item.id)}
+                                >
+                                  标记已处理
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </section>
+                  ))}
                 </div>
+                  </>
+                )}
               </div>
             }
           />

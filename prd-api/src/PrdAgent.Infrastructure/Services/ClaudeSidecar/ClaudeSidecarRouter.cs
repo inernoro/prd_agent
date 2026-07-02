@@ -863,7 +863,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
     ///
     /// 历史踩坑：曾用 v1 公式 `${branchSlug}.miduo.org`，CDS 多项目改造后失效。
     /// </summary>
-    internal static string? ComputePreviewSlug(string? branch, string? project)
+    public static string? ComputePreviewSlug(string? branch, string? project)
     {
         var projectSlug = Slugify(project);
         var branchValue = (branch ?? string.Empty).Trim();
