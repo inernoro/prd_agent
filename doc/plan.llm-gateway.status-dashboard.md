@@ -122,4 +122,5 @@ GatewayTransport 后端打标**已在早前分支合入**（`LlmRequestLog.Gatew
 - 影子比对读端点：`GET /gw/v1/shadow-comparisons`（X-Gateway-Key 门内）
 - 网关控制台**功能验收**（真机 curl，8 断言全过）：登录 admin/admin → mustChangePassword=true → mcp token 读 `/gw/logs` **403** → change-password → **200** → 新口令重登 mustChangePassword=false → 旧口令被拒 → 重启后新口令仍在、admin/admin 被拒。
 - serving 密钥自检真机日志：`[ServingKeyIntegrity] OK：可解密全部真实平台密文（2 个启用平台，跳过 1 个 dev-stub）`。
+- B1 配置面真机验证（2026-07-02，登录后 curl）：`/gw/pools`=20 池、`/gw/models`=12、`/gw/platforms`=2；**密钥防泄漏断言通过**——`/gw/platforms` 与 `/gw/models` 响应体不含 apiKey/Encrypted、只含 `hasKey`；无 token → 401。控制台导航「日志 / 模型池 / 平台 / 影子比对」四页可切。
 - **像素级视觉验收**：本轮受沙箱↔代理↔headless chromium 限制未截到图（`ERR_CONNECTION_CLOSED`，环境限制非应用问题）；已按 `real-visual-acceptance.md` 立规，后续在浏览器可达预览的环境（`/验收` harness）补像素取证。
