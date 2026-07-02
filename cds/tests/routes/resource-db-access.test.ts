@@ -955,8 +955,16 @@ describe('resource database access', () => {
       '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
       { database: 'orders', command: 'db.getCollection("users").find({}).limit(50);' },
     );
-    // 定点写：带写权限 → 200 + write-result
+    // 定点写：带写权限 + 资源名确认 → 200 + write-result
     const write = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
+      { database: 'orders', command: 'db.getCollection("users").updateMany({ active: false }, { $set: { archived: true } });', confirmResourceName: 'mongo-main' },
+      { 'x-test-cookie-auth': '1' },
+    );
+    // 定点写但缺资源名确认 → 409
+    const writeNoConfirm = await request(
       server!,
       'POST',
       '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
@@ -980,6 +988,7 @@ describe('resource database access', () => {
     expect(write.body.kind).toBe('write-result');
     expect(write.body.isWrite).toBe(true);
     expect(write.body.documents).toEqual([{ acknowledged: true, matchedCount: 2, modifiedCount: 2 }]);
+    expect(writeNoConfirm.status).toBe(409);
     expect(rejected.status).toBe(400);
     expect(rejected.body.error).toContain('高危操作');
   });

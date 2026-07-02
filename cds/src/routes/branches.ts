@@ -8476,7 +8476,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(400).json({ error: (err as Error).message });
       return;
     }
-    // 受控写操作需 data-write 权限（灾难操作已在解析阶段拦截）
+    // 受控写操作需 data-write 权限 + 资源名二次确认（与 /data/mongo/write 同门槛；灾难操作已在解析阶段拦截）
     if (command.isWrite) {
       const resources = await getBranchResourceSnapshot(ctx.branch);
       const resource = resources.find((item) => item.id === ctx.resourceId);
@@ -8485,6 +8485,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
       if (!requireResourcePermission(req, res, 'data-write', ctx.branch, resource)) return;
+      try {
+        ensureResourceNameConfirmed(req.body?.confirmResourceName, resource, '执行 MongoDB Console 写入');
+      } catch (err) {
+        res.status(409).json({ error: (err as Error).message });
+        return;
+      }
     }
     try {
       const data = await runMongoJson(ctx.service, ctx.branch, command.script, database);
