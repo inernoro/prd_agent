@@ -3,11 +3,16 @@ import { HardDrive } from 'lucide-react';
 import { getStoreSize, type DocumentStoreSize } from '@/services/real/documentStore';
 
 function fmt(n: number): string {
+  if (!Number.isFinite(n)) return '0 B';
   if (n <= 0) return '0 B';
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
   return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
+function isDocumentStoreSize(value: DocumentStoreSize | null | undefined): value is DocumentStoreSize {
+  return !!value && Number.isFinite(value.totalBytes);
 }
 
 /**
@@ -49,7 +54,7 @@ export function StoreSizeBadge({
     let alive = true;
     void getStoreSize(storeId).then(res => {
       if (!alive) return;
-      if (res.success && res.data) setSize(res.data);
+      if (res.success && isDocumentStoreSize(res.data)) setSize(res.data);
       setLoaded(true);
     });
     return () => { alive = false; };

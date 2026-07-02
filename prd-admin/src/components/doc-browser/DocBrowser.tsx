@@ -314,7 +314,7 @@ import ShinyText from '@/components/reactbits/ShinyText';
 import { systemDialog } from '@/lib/systemDialog';
 import { useViewTracking } from '@/lib/useViewTracking';
 import { useContentSelection, type ContentSelectionInfo } from '@/lib/useContentSelection';
-import { MessageSquareText, MessageSquarePlus, Check, ChevronLeft, PanelRight, ImagePlus } from 'lucide-react';
+import { MessageSquareText, MessageSquarePlus, Check, ChevronLeft, PanelLeftOpen, PanelRight, ImagePlus } from 'lucide-react';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { InlineCommentDrawer, type PendingSelection } from '@/pages/document-store/InlineCommentDrawer';
 import type { DocumentInlineComment } from '@/services/contracts/documentStore';
@@ -1726,22 +1726,26 @@ export function DocBrowser({
   const sidebarWidthRef = useRef(sidebarWidth);
   sidebarWidthRef.current = sidebarWidth;
 
-  // ── 移动端「主从单栏」（手机端友好，桌面端 isMobile=false 时完全不改动原布局）──
-  // 窄屏下列表与正文不再并排挤成两条细栏，而是一次只显示一个：选中文档进正文、点「目录」回列表。
+  // ── 移动端主从布局：正文为主，目录用左侧抽屉承载。桌面端 isMobile=false 时不改动原布局。──
   const { isMobile } = useBreakpoint();
   const [mobileDetail, setMobileDetail] = useState(false);
+  const [mobileDirectoryOpen, setMobileDirectoryOpen] = useState(false);
   const prevSelForMobileRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (!isMobile) return;
     // 选中新文档（含分享深链 ?entry= 初次带值）→ 自动进正文。
-    // 「返回目录」只把 mobileDetail 置 false、不改 selectedEntryId，故 deps 不变、本 effect 不会把它拉回正文。
     if (selectedEntryId && selectedEntryId !== prevSelForMobileRef.current) setMobileDetail(true);
     prevSelForMobileRef.current = selectedEntryId;
   }, [isMobile, selectedEntryId]);
-  // 覆盖「返回目录后再点同一篇」：selectedEntryId 没变、上面的 effect 不触发，靠点击处显式进正文。
+  useEffect(() => {
+    if (!isMobile) setMobileDirectoryOpen(false);
+  }, [isMobile]);
   const handleSelectEntry = useCallback((id: string) => {
     onSelectEntry(id);
-    if (isMobile) setMobileDetail(true);
+    if (isMobile) {
+      setMobileDetail(true);
+      setMobileDirectoryOpen(false);
+    }
   }, [onSelectEntry, isMobile]);
 
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2684,18 +2688,56 @@ export function DocBrowser({
   const sidebarClass = isCards
     ? 'surface-reading relative flex flex-shrink-0 flex-col rounded-xl overflow-hidden'
     : 'bg-token-nested relative flex flex-shrink-0 flex-col border-r border-token-subtle';
+  const sidebarAsMobileDrawer = isMobile && mobileDetail && mobileDirectoryOpen;
+  const sidebarHiddenForMobileDetail = isMobile && mobileDetail && !mobileDirectoryOpen;
 
   return (
     <TagColorsContext.Provider value={tagColorsCtxValue}>
     <div className={rootClass} style={{ minHeight: 0 }}>
+      {sidebarAsMobileDrawer && typeof document !== 'undefined' && createPortal(
+        <div
+          className="fixed inset-0 z-[130]"
+          style={{ background: 'rgba(0,0,0,0.48)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' }}
+          onClick={() => setMobileDirectoryOpen(false)}
+          aria-hidden
+        />,
+        document.body,
+      )}
 
-      {/* 左侧：文件树（液态玻璃效果 + 可拖拽调整宽度）。移动端：占满整宽，进正文时隐藏。 */}
+      {/* 左侧：文件树。移动端阅读时转为左侧抽屉，不再用返回按钮打断正文。 */}
       <div ref={sidebarRef} className={sidebarClass}
         style={{
-          width: isMobile ? '100%' : `${sidebarWidth}px`,
+          width: isMobile ? (sidebarAsMobileDrawer ? 'min(86vw, 340px)' : '100%') : `${sidebarWidth}px`,
           minHeight: 0,
-          display: isMobile && mobileDetail ? 'none' : undefined,
+          display: sidebarHiddenForMobileDetail ? 'none' : undefined,
+          position: sidebarAsMobileDrawer ? 'fixed' : undefined,
+          inset: sidebarAsMobileDrawer ? '0 auto 0 0' : undefined,
+          zIndex: sidebarAsMobileDrawer ? 140 : undefined,
+          height: sidebarAsMobileDrawer ? '100dvh' : undefined,
+          maxHeight: sidebarAsMobileDrawer ? '100dvh' : undefined,
+          borderRadius: sidebarAsMobileDrawer ? 0 : undefined,
+          background: sidebarAsMobileDrawer ? 'rgba(22,22,28,0.96)' : undefined,
+          backdropFilter: sidebarAsMobileDrawer ? 'blur(22px) saturate(160%)' : undefined,
+          WebkitBackdropFilter: sidebarAsMobileDrawer ? 'blur(22px) saturate(160%)' : undefined,
+          boxShadow: sidebarAsMobileDrawer ? '28px 0 64px rgba(0,0,0,0.45)' : undefined,
         }}>
+        {sidebarAsMobileDrawer && (
+          <div
+            className="flex shrink-0 items-center justify-between px-4 py-3"
+            style={{ borderBottom: '1px solid var(--border-faint)' }}
+          >
+            <span className="text-[14px] font-semibold text-token-primary">目录</span>
+            <button
+              type="button"
+              onClick={() => setMobileDirectoryOpen(false)}
+              className="surface-action flex h-8 w-8 cursor-pointer items-center justify-center rounded-[9px]"
+              aria-label="关闭目录"
+              title="关闭目录"
+            >
+              <X size={15} />
+            </button>
+          </div>
+        )}
 
         {/* 批量操作条：选中条目后浮在侧栏底部，支持批量删除（取消即清空选择） */}
         {selectionActive && onDeleteEntry && (
@@ -3148,21 +3190,28 @@ export function DocBrowser({
       >
         {selectedEntryId ? (
           <>
-            {/* 面包屑导航 header（移动端缩小左右内边距 + 允许换行，避免徽章/标签挤出右边缘相互重叠） */}
-            <div className={`flex items-center gap-2 py-2.5 ${isMobile ? 'px-3 flex-wrap' : 'px-5'}`} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-              {/* 移动端「返回目录」：单栏布局下从正文回到文件列表（桌面端 isMobile=false 不渲染） */}
+            {/* 面包屑导航 header：移动端保持单行横滑，正文面积优先。 */}
+            <div
+              className={`flex items-center gap-2 py-2.5 ${isMobile ? 'px-3 flex-nowrap overflow-x-auto' : 'px-5 flex-wrap'}`}
+              style={{
+                borderBottom: '1px solid rgba(255,255,255,0.04)',
+                scrollbarWidth: isMobile ? 'none' : undefined,
+              }}
+            >
+              {/* 移动端目录抽屉入口：不再把正文切回列表。 */}
               {isMobile && (
                 <button
-                  onClick={() => setMobileDetail(false)}
-                  className="flex-shrink-0 inline-flex items-center gap-1 h-7 px-2.5 rounded-[8px] text-[12px] cursor-pointer transition-colors hover:opacity-80"
+                  onClick={() => setMobileDirectoryOpen(true)}
+                  className="flex-shrink-0 inline-flex h-8 w-8 items-center justify-center rounded-[9px] text-[12px] cursor-pointer transition-colors hover:opacity-80"
                   style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)', color: 'var(--text-secondary)' }}
-                  title="返回目录"
+                  aria-label="打开目录"
+                  title="打开目录"
                 >
-                  <ChevronLeft size={14} /> 目录
+                  <PanelLeftOpen size={15} />
                 </button>
               )}
               {/* 阅读区返回按钮：返回当前空间的文档列表（上一层），仅调用方传 onBackToList 才显示 */}
-              {onBackToList && (
+              {onBackToList && !isMobile && (
                 <button
                   onClick={onBackToList}
                   className="flex-shrink-0 inline-flex items-center gap-1 h-6 px-2 rounded-[8px] text-[11px] cursor-pointer transition-colors hover:opacity-80"
@@ -3204,9 +3253,10 @@ export function DocBrowser({
               {(() => {
                 const sel = entries.find(e => e.id === selectedEntryId);
                 if (!sel || sel.isFolder || (sel.tags?.length ?? 0) === 0) return null;
+                const tagLimit = isMobile ? 1 : 4;
                 return (
                   <>
-                    {sel.tags!.slice(0, 4).map(tag => (
+                    {sel.tags!.slice(0, tagLimit).map(tag => (
                       <span key={tag} className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0"
                         style={{
                           background: 'rgba(168,85,247,0.08)',
@@ -3216,9 +3266,9 @@ export function DocBrowser({
                         #{tag}
                       </span>
                     ))}
-                    {sel.tags!.length > 4 && (
+                    {sel.tags!.length > tagLimit && (
                       <span className="text-[10px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
-                        +{sel.tags!.length - 4}
+                        +{sel.tags!.length - tagLimit}
                       </span>
                     )}
                   </>
@@ -3304,7 +3354,7 @@ export function DocBrowser({
                     {showSubtitle && (
                       <button
                         onClick={() => onGenerateSubtitle!(sel.id)}
-                        className="h-6 px-2 rounded-[8px] text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors flex-shrink-0"
+                        className={`rounded-[8px] text-[10px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition-colors flex-shrink-0 ${isMobile ? 'h-8 w-8 px-0' : 'h-6 px-2'}`}
                         style={{
                           background: 'rgba(168,85,247,0.1)',
                           border: '1px solid rgba(168,85,247,0.22)',
@@ -3312,13 +3362,14 @@ export function DocBrowser({
                         }}
                         title="一键生成字幕"
                       >
-                        <Sparkles size={11} /> 生成字幕
+                        <Sparkles size={isMobile ? 14 : 11} />
+                        {!isMobile && '生成字幕'}
                       </button>
                     )}
                     {showReprocess && (
                       <button
                         onClick={() => onReprocess!(sel.id)}
-                        className="h-6 px-2 rounded-[8px] text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors flex-shrink-0"
+                        className={`rounded-[8px] text-[10px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition-colors flex-shrink-0 ${isMobile ? 'h-8 w-8 px-0' : 'h-6 px-2'}`}
                         style={{
                           background: 'rgba(59,130,246,0.08)',
                           border: '1px solid rgba(59,130,246,0.18)',
@@ -3326,7 +3377,8 @@ export function DocBrowser({
                         }}
                         title="用智能体加工文档"
                       >
-                        <Wand2 size={11} /> 智能体
+                        <Wand2 size={isMobile ? 14 : 11} />
+                        {!isMobile && '智能体'}
                       </button>
                     )}
                   </>
@@ -3342,7 +3394,7 @@ export function DocBrowser({
                 return (
                   <button
                     onClick={() => setEvidenceGraphOpen(true)}
-                    className="h-6 px-2 rounded-[8px] text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors flex-shrink-0"
+                    className={`rounded-[8px] text-[10px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition-colors flex-shrink-0 ${isMobile ? 'h-8 w-8 px-0' : 'h-6 px-2'}`}
                     style={{
                       background: 'rgba(99,102,241,0.1)',
                       border: '1px solid rgba(99,102,241,0.22)',
@@ -3350,7 +3402,8 @@ export function DocBrowser({
                     }}
                     title="证据板 — 把「需求/用例 → 证据截图 → 结论」连成关系图，按通过/未做上色"
                   >
-                    <Workflow size={11} /> 证据板
+                    <Workflow size={isMobile ? 14 : 11} />
+                    {!isMobile && '证据板'}
                   </button>
                 );
               })()}
@@ -3389,7 +3442,7 @@ export function DocBrowser({
                 </button>
               )}
               {/* 全屏阅读（CSS 全屏覆盖层，ESC 退出） */}
-              {selectedEntryId && !entries.find(e => e.id === selectedEntryId)?.isFolder && (
+              {selectedEntryId && !isMobile && !entries.find(e => e.id === selectedEntryId)?.isFolder && (
                 <button
                   onClick={toggleReaderFullscreen}
                   className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer flex-shrink-0"
@@ -3406,7 +3459,7 @@ export function DocBrowser({
                 if (!cfg.editable) return null;
                 return (
                   <div className="flex items-center gap-1.5">
-                    {versionApi && !editMode && (
+                    {versionApi && !isMobile && !editMode && (
                       <button
                         onClick={() => setVersionHistoryOpen(true)}
                         className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer flex-shrink-0"

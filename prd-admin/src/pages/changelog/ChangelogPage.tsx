@@ -35,6 +35,7 @@ import { AiNewsTimeline } from '@/components/ai-news/AiNewsTimeline';
 import { groupGitHubLogsByWeek } from './lib/groupGitHubLogsByWeek';
 import { burstParticles } from './lib/burstParticles';
 import { AnimatedNumber } from './components/AnimatedNumber';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 import './changelog-dynamic.css';
 
 
@@ -261,6 +262,7 @@ function useIncrementalVisible(
 }
 
 export default function ChangelogPage() {
+  const isMobile = useIsMobile();
   const currentWeek = useChangelogStore((s) => s.currentWeek);
   const releases = useChangelogStore((s) => s.releases);
   const loadingCurrent = useChangelogStore((s) => s.loadingCurrent);
@@ -1046,7 +1048,7 @@ export default function ChangelogPage() {
 
   return (
     <WeeklyReportSourcesProvider>
-    <div className="flex flex-col gap-5 h-full min-h-0">
+    <div className={`${isMobile ? 'gap-3' : 'gap-5'} flex flex-col h-full min-h-0`}>
       {/* ── 顶部切换导航（周报 tab 下把来源 chip 合并到右侧 actions 槽，省一行） ── */}
       <TabBar
         items={[
@@ -1062,16 +1064,42 @@ export default function ChangelogPage() {
       <WeeklyReportSourceDialog />
 
       {activeTab === 'update_center' && (
-      <div ref={scrollRootRef} className="clg-scroll flex flex-col gap-5 flex-1 min-h-0 overflow-y-auto pr-1"
+      <div ref={scrollRootRef} className={`${isMobile ? 'gap-3 pr-0' : 'gap-5 pr-1'} clg-scroll flex flex-col flex-1 min-h-0 overflow-y-auto`}
         style={{ overscrollBehavior: 'contain' }}>
       {/* ── Header ───────────────────────────────────────── */}
+      {isMobile && (
+        <div data-tour-id="changelog-filter" className="flex items-center justify-between gap-3 px-1">
+          <div className="min-w-0">
+            <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-secondary)' }}>
+              {sourceLabel?.text ?? '本地仓库'} · {liveConnected ? (justUpdatedAt != null ? '已更新' : '实时同步') : '缓存数据'}
+            </div>
+            <div className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
+              {fetchedAtRelative ? `更新于 ${fetchedAtRelative}` : `每 ${refreshIntervalHours} 小时自动刷新`}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={loadingReleases || loadingCurrent || loadingGitHubLogs || loadingGitHubPendingReview}
+            className="h-8 w-8 shrink-0 rounded-full inline-flex items-center justify-center transition-colors disabled:opacity-50"
+            style={{
+              border: '1px solid rgba(255, 255, 255, 0.10)',
+              color: 'var(--text-secondary)',
+              background: 'rgba(255, 255, 255, 0.035)',
+            }}
+            title="刷新"
+          >
+            {(loadingReleases || loadingCurrent || loadingGitHubLogs || loadingGitHubPendingReview) ? <MapSpinner size={13} /> : <RefreshCw size={13} />}
+          </button>
+        </div>
+      )}
       <header
         style={glassPanel}
-        className="rounded-2xl px-6 py-5 flex flex-col gap-3"
+        className={`${isMobile ? 'hidden' : 'rounded-2xl px-6 py-5 gap-3'} flex flex-col`}
       >
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div
+        <div className={`flex ${isMobile ? 'items-center' : 'items-start'} justify-between gap-3 min-w-0`}>
+          <div className="flex items-center gap-3 min-w-0">
+            {!isMobile && <div
               className="h-11 w-11 rounded-xl flex items-center justify-center"
               style={{
                 background: 'linear-gradient(135deg, rgba(251, 191, 36, 0.18), rgba(168, 85, 247, 0.18))',
@@ -1079,15 +1107,15 @@ export default function ChangelogPage() {
               }}
             >
               <Sparkles size={22} style={{ color: 'var(--accent-gold, #fbbf24)' }} />
-            </div>
-            <div>
-              <h1 className="text-xl font-semibold" style={{ color: 'var(--text-primary)' }}>
+            </div>}
+            <div className="min-w-0">
+              <h1 className={`${isMobile ? 'text-base truncate' : 'text-xl'} font-semibold`} style={{ color: 'var(--text-primary)' }}>
                 更新中心
               </h1>
-              <p className="text-[12px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+              {!isMobile && <p className="text-[12px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
                 代码级周报 · 数据来自仓库 changelogs/ 与 CHANGELOG.md，每个 PR 都会更新
-              </p>
-              <div className="flex flex-wrap items-center gap-2 mt-1.5 text-[10px]">
+              </p>}
+              <div className={`${isMobile ? 'flex-nowrap overflow-hidden' : 'flex-wrap'} flex items-center gap-2 mt-1.5 text-[10px] min-w-0`}>
                 {sourceLabel && (
                   <span
                     className="px-1.5 py-0.5 rounded font-mono"
@@ -1100,13 +1128,13 @@ export default function ChangelogPage() {
                     {sourceLabel.text}
                   </span>
                 )}
-                {fetchedAtRelative && (
+                {!isMobile && fetchedAtRelative && (
                   <span style={{ color: 'var(--text-muted)' }} title={fetchedAt ? new Date(fetchedAt).toLocaleString() : undefined}>
                     更新于 {fetchedAtRelative}
                   </span>
                 )}
                 {/* 更新规则：终身缓存 + 固定周期自动刷新（红框区诉求） */}
-                <span
+                {!isMobile && <span
                   className="px-1.5 py-0.5 rounded inline-flex items-center gap-1"
                   style={{
                     background: 'rgba(255, 255, 255, 0.05)',
@@ -1117,7 +1145,7 @@ export default function ChangelogPage() {
                 >
                   <RefreshCw size={9} />
                   每 {refreshIntervalHours} 小时自动刷新 · 终身缓存
-                </span>
+                </span>}
                 {/* 实时连接状态：连上后有更新会自动 push 过来 */}
                 {liveConnected && (
                   <span
@@ -1151,19 +1179,19 @@ export default function ChangelogPage() {
             title="刷新（绕过服务端缓存并重新拉取）"
           >
             {(loadingReleases || loadingCurrent || loadingGitHubLogs || loadingGitHubPendingReview) ? <MapSpinner size={14} /> : <RefreshCw size={14} />}
-            <span>刷新</span>
+            {!isMobile && <span>刷新</span>}
           </button>
         </div>
 
         {/* 筛选器 */}
         {availableTypes.length > 0 && (
-          <div data-tour-id="changelog-filter" className="flex flex-wrap items-center gap-2 pt-1">
-            <div className="inline-flex items-center gap-1.5 text-[13px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+          <div data-tour-id="changelog-filter" className={isMobile ? 'flex items-center gap-2 overflow-x-auto pt-0 -mx-1 px-1' : 'flex flex-wrap items-center gap-2 pt-1'}>
+            <div className={`${isMobile ? 'hidden' : 'inline-flex'} items-center gap-1.5 text-[13px] font-medium`} style={{ color: 'var(--text-secondary)' }}>
               <Filter size={14} />
               筛选
             </div>
             
-            <div className="flex flex-wrap ml-1" style={{ gap: '12px 10px', paddingTop: '6px' }}>
+            <div className={isMobile ? 'flex flex-nowrap gap-2 overflow-x-auto pb-1 min-w-full' : 'flex flex-wrap ml-1'} style={isMobile ? { scrollbarWidth: 'none' } : { gap: '12px 10px', paddingTop: '6px' }}>
               {availableTypes.map((t) => {
                 const meta = getTypeBadge(t);
                 const active = typeFilter === t;
@@ -1180,7 +1208,7 @@ export default function ChangelogPage() {
                       if (!active) burstParticles(e.clientX, e.clientY, meta.color);
                     }}
                     title={`${meta.label} · 近 30 天 ${count} 条${hotRank === 0 ? ' · 最热' : ''}`}
-                    className={`clg-chip h-8 pl-2.5 pr-3 rounded-lg text-[13px] font-medium cursor-pointer inline-flex items-center gap-1.5${hotClass}`}
+                    className={`clg-chip ${isMobile ? 'h-7 pl-2 pr-2.5 text-[12px]' : 'h-8 pl-2.5 pr-3 text-[13px]'} shrink-0 rounded-lg font-medium cursor-pointer inline-flex items-center gap-1.5${hotClass}`}
                     style={{
                       background: meta.bg,
                       border: `1px solid ${meta.border}`,
@@ -1193,7 +1221,11 @@ export default function ChangelogPage() {
                     <Icon size={13} />
                     {meta.label}
                     {count > 0 && (
-                      hotRank === 0 ? (
+                      isMobile ? (
+                        <span className="ml-0.5 tabular-nums opacity-85">
+                          {count}
+                        </span>
+                      ) : hotRank === 0 ? (
                         <span className="clg-badge clg-badge-hot">
                           <Flame size={9} strokeWidth={2.5} />
                           {count}
@@ -1225,14 +1257,14 @@ export default function ChangelogPage() {
               </button>
             )}
 
-            <span
+            {!isMobile && <span
               className="ml-auto inline-flex items-center gap-1 text-[11px] self-end pb-1"
               style={{ color: 'var(--text-muted)', opacity: 0.75 }}
               title="角标统计最近 30 天的条目数，越久没有新增热度自然衰减；火焰徽章 = 近 30 天最热类型"
             >
               <Flame size={10} style={{ color: '#fb923c' }} />
               近 30 天热度
-            </span>
+            </span>}
           </div>
         )}
       </header>
@@ -1266,12 +1298,30 @@ export default function ChangelogPage() {
       )}
 
       {/* ── 更新区：已发布流水 / 未发布碎片 / GitHub 提交 ───────────────────── */}
-      <section style={glassPanel} className="rounded-2xl p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <div className="flex items-center gap-4 flex-wrap">
-            <h2 className="text-[18px] font-semibold tracking-wide" style={{ color: 'var(--text-primary)' }}>
+      <section style={glassPanel} className={`${isMobile ? 'rounded-[18px] px-3 py-4' : 'rounded-2xl p-5'}`}>
+        <div className={`${isMobile ? 'flex flex-col gap-3 mb-3' : 'flex flex-wrap items-center justify-between gap-3 mb-4'}`}>
+          <div className={`${isMobile ? 'flex flex-col gap-2' : 'flex items-center gap-4 flex-wrap'}`}>
+            <div className="flex items-center justify-between gap-3">
+              <h2 className={`${isMobile ? 'text-[17px]' : 'text-[18px]'} font-semibold tracking-wide`} style={{ color: 'var(--text-primary)' }}>
               更新记录
-            </h2>
+              </h2>
+              {isMobile && (
+                <span
+                  className={`clg-sweep h-7 px-2.5 rounded-full inline-flex items-center gap-1 text-[11px] font-medium${totalFlash ? ' clg-sweep-on' : ''}`}
+                  style={{
+                    color: 'var(--text-secondary)',
+                    background: 'rgba(255, 255, 255, 0.04)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                  title={`${activeSummaryLabel}总数量`}
+                >
+                  <AnimatedNumber value={activeTotal} />
+                  {historySubtab === 'github_logs' ? '次提交' : historySubtab === 'github_pending_review' ? '个 PR' : '条'}
+                </span>
+              )}
+            </div>
+            <div className={`${isMobile ? '-mx-1 flex gap-1 overflow-x-auto px-1 pb-1' : 'contents'}`} style={isMobile ? { scrollbarWidth: 'none' } : undefined}>
             {([
               { key: 'releases', label: '已发布', icon: <Calendar size={13} /> },
               { key: 'fragments', label: '未发布', icon: <FileText size={13} /> },
@@ -1279,7 +1329,7 @@ export default function ChangelogPage() {
                 key: 'github_logs',
                 label: 'GitHub 提交',
                 // GitHub 提交 icon 上叠加一颗"动态刷新"指示点（呼吸 + 旋转），强调内容是近实时的
-                icon: (
+                icon: isMobile ? <Github size={13} /> : (
                   <span className="relative inline-flex">
                     <Github size={13} />
                     <span
@@ -1297,6 +1347,11 @@ export default function ChangelogPage() {
               const active = historySubtab === tab.key;
               const count = counts[tab.key];
               const fragmentFileCount = currentWeek?.totalDays ?? currentWeek?.fragments?.length ?? 0;
+              const mobileLabel = tab.key === 'github_logs'
+                ? '提交'
+                : tab.key === 'github_pending_review'
+                  ? '待审'
+                  : tab.label;
               const tabTitle = tab.key === 'fragments' && currentWeek
                 ? `${fragmentFileCount} 个碎片文件 · ${count} 条未发布改动\n来源：changelogs/*.md\n进入已发布流水：发布到 admin 生产环境后合入 CHANGELOG.md`
                 : undefined;
@@ -1306,7 +1361,7 @@ export default function ChangelogPage() {
                   type="button"
                   onClick={() => setHistorySubtab(tab.key)}
                   title={tabTitle}
-                  className="h-8 px-3 rounded-lg inline-flex items-center gap-1.5 text-[12px] font-medium transition-all"
+                  className={`${isMobile ? 'h-8 shrink-0 px-2.5 rounded-full text-[12px]' : 'h-8 px-3 rounded-lg text-[12px]'} inline-flex items-center gap-1.5 font-medium transition-all`}
                   style={{
                     background: active ? 'rgba(99, 102, 241, 0.14)' : 'rgba(255, 255, 255, 0.04)',
                     border: `1px solid ${active ? 'rgba(99, 102, 241, 0.32)' : 'rgba(255, 255, 255, 0.08)'}`,
@@ -1315,8 +1370,8 @@ export default function ChangelogPage() {
                   }}
                 >
                   {tab.icon}
-                  {tab.label}
-                  <span
+                  {isMobile ? mobileLabel : tab.label}
+                  {!isMobile && <span
                     className="ml-0.5 inline-flex h-5 min-w-5 items-center justify-center rounded-md px-1.5 text-[11px] font-semibold"
                     style={{
                       background: active ? 'rgba(199, 210, 254, 0.14)' : 'rgba(255, 255, 255, 0.05)',
@@ -1326,13 +1381,14 @@ export default function ChangelogPage() {
                     }}
                   >
                     <AnimatedNumber value={count} />
-                  </span>
+                  </span>}
                 </button>
               );
             })}
+            </div>
           </div>
-          <div className="flex items-center gap-3 flex-wrap justify-end">
-            <span
+          <div className={`${isMobile ? 'flex items-center justify-between gap-2' : 'flex items-center gap-3 flex-wrap justify-end'}`}>
+            {!isMobile && <span
               className={`clg-sweep h-7 px-2.5 rounded-lg inline-flex items-center gap-1.5 text-[12px] font-medium${totalFlash ? ' clg-sweep-on' : ''}`}
               style={{
                 color: 'var(--text-secondary)',
@@ -1343,8 +1399,8 @@ export default function ChangelogPage() {
               title={`${activeSummaryLabel}总数量`}
             >
               共 <AnimatedNumber value={activeTotal} /> {historySubtab === 'github_logs' ? '次提交' : historySubtab === 'github_pending_review' ? '个 PR' : '条'}
-            </span>
-            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            </span>}
+            {!isMobile && <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
               {historySubtab === 'releases' && '来自 admin 生产发布流水'}
               {historySubtab === 'fragments' && '来自已合并但未上生产的 changelogs/*.md 碎片'}
               {historySubtab === 'github_logs' && (
@@ -1367,12 +1423,17 @@ export default function ChangelogPage() {
                   {githubPendingReview?.fetchedAt ? ` · ${formatRelativeTime(githubPendingReview.fetchedAt)}同步` : ''}
                 </span>
               )}
-            </span>
+            </span>}
+            {isMobile && (
+              <span className="min-w-0 truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                {activeSummaryLabel} · {historySubtab === 'github_logs' ? '最近一周' : historySubtab === 'github_pending_review' ? '待处理' : '按时间排序'}
+              </span>
+            )}
             <button
               type="button"
               onClick={() => { void summarizeCurrentTab(); }}
               disabled={activeSummaryStatus === 'loading'}
-              className={`h-8 px-3 rounded-lg inline-flex items-center gap-1.5 text-[12px] font-medium transition-all disabled:cursor-not-allowed${activeSummaryStatus === 'loading' ? '' : ' clg-ai-shimmer'}`}
+              className={`${isMobile ? 'h-7 px-2.5 rounded-full text-[11px]' : 'h-8 px-3 rounded-lg text-[12px]'} inline-flex shrink-0 items-center gap-1.5 font-medium transition-all disabled:cursor-not-allowed${activeSummaryStatus === 'loading' || isMobile ? '' : ' clg-ai-shimmer'}`}
               style={{
                 background: activeSummaryStatus === 'loading'
                   ? 'rgba(99, 102, 241, 0.10)'
@@ -1901,6 +1962,7 @@ function IncrementalSentinel({
 function EntryRow({ entry, newCutoff }: { entry: FlatEntry; newCutoff: number | null }) {
   const meta = getTypeBadge(entry.type);
   const Icon = meta.icon;
+  const isMobile = useIsMobile();
   const isFresh = (() => {
     if (newCutoff === null) return false;
     if (!entry.commitTimeUtc) return false;
@@ -1908,6 +1970,53 @@ function EntryRow({ entry, newCutoff }: { entry: FlatEntry; newCutoff: number | 
     if (Number.isNaN(t)) return false;
     return t > newCutoff;
   })();
+
+  if (isMobile) {
+    return (
+      <motion.div
+        layout
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.24, ease: [0.25, 0.46, 0.45, 0.94] }}
+        className="rounded-2xl px-3.5 py-3 transition-colors"
+        style={{
+          background: 'rgba(255, 255, 255, 0.026)',
+          border: '1px solid rgba(255, 255, 255, 0.055)',
+        }}
+      >
+        <div
+          className="text-[14px] leading-snug font-medium line-clamp-2"
+          style={{ color: 'var(--text-secondary)' }}
+          title={entry.description}
+        >
+          {entry.description}
+        </div>
+        <div className="mt-2 flex items-center gap-2 text-[11px] min-w-0" style={{ color: 'var(--text-muted)' }}>
+          {isFresh && (
+            <span
+              className="shrink-0 font-semibold tracking-wider"
+              style={{ color: '#86efac' }}
+              title="自上次查看更新中心以来有新提交"
+            >
+              NEW
+            </span>
+          )}
+          <span
+            className="shrink-0 inline-flex items-center gap-1 font-medium"
+            style={{ color: meta.color }}
+          >
+            <Icon size={11} />
+            {meta.label}
+          </span>
+          <span aria-hidden style={{ color: 'rgba(255, 255, 255, 0.18)' }}>·</span>
+          <span className="min-w-0 truncate font-mono">
+            {entry.module}
+          </span>
+        </div>
+      </motion.div>
+    );
+  }
+
   return (
     <motion.div
       layout
