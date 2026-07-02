@@ -12945,7 +12945,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       gatewayUrls.push({
         subdomain: sub,
         name: profileId,
-        url: `http://${namedLabel}.${primaryRoot}${landingPath}`,
+        // 双出口契约（.claude/rules/cds-dual-exit-topology.md）：命名子域走 HTTPS，与主应用一致。
+        // nginx `*.<root>` server 块已在 443 用同一份通配证书服务命名子域，此前误印成 http:// 才导致
+        // 「1 HTTPS + 3 HTTP」。命名子域是单标签（连字符不产生新点），落在 *.<root> 通配证书覆盖内。
+        url: `https://${namedLabel}.${primaryRoot}${landingPath}`,
       });
     }
     return gatewayUrls;
@@ -12965,8 +12968,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       ? config.rootDomains
       : (config.previewDomain ? [config.previewDomain] : []);
     const primaryRoot = rootDomains[0] || 'example.com';
-    const previewUrls = aliases.map(a => `http://${a}.${primaryRoot}`);
-    const defaultUrl = `http://${id}.${primaryRoot}`;
+    const previewUrls = aliases.map(a => `https://${a}.${primaryRoot}`);
+    const defaultUrl = `https://${id}.${primaryRoot}`;
 
     res.json({
       branchId: id,
@@ -13055,8 +13058,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         message: '已保存子域名别名',
         branchId: id,
         aliases: normalized,
-        previewUrls: normalized.map(a => `http://${a}.${primaryRoot}`),
-        defaultUrl: `http://${id}.${primaryRoot}`,
+        previewUrls: normalized.map(a => `https://${a}.${primaryRoot}`),
+        defaultUrl: `https://${id}.${primaryRoot}`,
         // gatewayUrls are branch-derived (not alias-derived); return them so the panel keeps the
         // 网关入口 block + 预览下拉 after saving aliases, instead of dropping them until a full
         // reload (Bugbot "Alias save clears gateway URLs"). Same SSOT helper as the GET response.
