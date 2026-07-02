@@ -81,6 +81,14 @@
     **确定性自愈回 `admin/admin` + `MustChangePassword=true`**——控制台永远能从 admin/admin 进入，「重置」=
     重新部署；`change-password` 成功置 `PasswordChangedByUser=true`，用户新口令跨重启保留、不被自愈覆盖。
     此修复同时**解锁了 happy-path 的真机取证**（admin/admin 现在可登 → 强制改密 → mcp 403 → 解锁）。
+  - **最终形态（2026-07-02，env 无关，真机全链路取证通过）**：进一步**彻底移除 env 口令依赖**——因为
+    CDS `_global` env 注入不可控，靠 `LLMGW_ADMIN_PASSWORD` 设口令反而把控制台锁死。改为用户原始 Point 2
+    愿景：固定内置 `admin/admin` 引导，口令在 UI 里改，seed 完全不读 env。真机验证（deploy 全绿，commit
+    `43585d8c`）8 步全过：① `admin/admin` 登录 → `mustChangePassword=true`；② mcp token 读 `/gw/logs`
+    → **403**；③ change-password→ 200 + 重签发 token；④ 新 token 读 `/gw/logs` → **200**；⑤ 新口令重登
+    → `mustChangePassword=false`；⑥ 旧 `admin/admin` 被拒；⑦ **重启后**新口令仍可登（不回退）；⑧ 重启后
+    `admin/admin` 被拒（`PasswordChangedByUser` 保住用户口令）。现网控制台可用账号：`admin` / 用户已设口令；
+    未认领时「重置」= 重新部署即恢复 `admin/admin`。
 
 ### Point 3 — OpenRouter 风格控制台：**部分（骨架在，需对齐设计）**
 - `prd-llmgw-web` 已有：`LoginPage` / `LogsPage` / `LogsView`（请求日志表）/ `GenerationDetailsDrawer`
