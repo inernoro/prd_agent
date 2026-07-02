@@ -95,6 +95,67 @@ $CLI report-folder list [--project <id>]
 
 完整命令族 → `$CLI --help`，分技能用法 → `cds-project-scan` / `cds-deploy-pipeline` 各自的 SKILL.md。
 
+## Agent 使用任务调度口令的标准流程
+
+当用户说「给 CDS 加一个定时任务」「每天拉一次数据」「先测试一下这个任务」「把这段 curl 定时跑」时，Agent 必须优先走 `cdscli schedule`，不要手写 curl 调 `/api/scheduled-jobs`。
+
+### 决策流程
+
+1. **先确定项目作用域**：
+   - 用户提供 `CDS_PROJECT_ID` / `--project` / 项目名能唯一对应项目时，传 `--project <id>`。
+   - 当前环境已有 `CDS_PROJECT_ID` 时可省略 `--project`。
+   - 项目不明确时先 `project list`，仍不明确再问用户；不要创建无项目任务。
+2. **先解析口令**：
+   ```bash
+   $CLI schedule parse "每天 02:00 调用 POST /api/statistics/sync" --project <id>
+   ```
+   用解析结果确认 `schedule.type`、`timeOfDay/intervalMinutes`、`actions` 是否符合用户话术。
+3. **涉及真实外部调用或命令时，先测试**：
+   ```bash
+   $CLI schedule test "手动 执行命令 echo ok" --project <id>
+   ```
+   `test` 只调用 `/api/scheduled-jobs/check-target`，不创建任务。失败时把失败日志总结给用户，不要继续 create。
+4. **创建时默认带 `--test`**：
+   ```bash
+   $CLI schedule create "每天 03:30 curl -X POST https://old.example/sync" --project <id> --test
+   ```
+   只有用户明确说「先创建，之后再测」时才允许不带 `--test`。
+5. **创建后交付 task id 和验收命令**：
+   - 返回 `job.id`。
+   - 告知可用 `$CLI schedule run <jobId>` 手动触发一次。
+   - 告知可用 `$CLI schedule list --project <id>` 查看。
+
+### 口令格式
+
+调度部分支持：
+- `每天 02:00` / `每日 2点` / `daily 02:00`
+- `每隔 10 分钟` / `每 2 小时`
+- `手动` / `只手动`
+
+动作部分支持：
+- `curl -X POST -H 'Content-Type: application/json' -d '{"a":1}' https://example.com/sync`
+- `调用 POST /api/statistics/sync`
+- `执行命令 node scripts/sync.js`
+
+多个动作可用「然后 / 接着 / 再执行」连接，例如：
+
+```bash
+$CLI schedule create "每天 02:00 curl -X POST https://old.example/pull 然后 执行命令 node clean.js" --project <id> --test
+```
+
+### 失败处理
+
+- `未识别调度口令`：让用户补充「每天/每隔/手动」之一。
+- `未识别执行动作`：让用户提供 `curl`、HTTP URL 或命令脚本。
+- `任务动作检测未通过`：不要创建任务；总结 `checks[].result.log/error`，让用户修正 URL、鉴权、命令或服务状态。
+- `project_mismatch`：说明当前项目 key 不属于目标项目，让用户在目标项目页重新授权 Agent。
+
+### 安全边界
+
+- 命令动作由 CDS 服务端放进 Docker sandbox 执行，Agent 不要在本地代跑危险命令来“帮用户测试”。
+- 含密钥的 curl 可以交给 `schedule test/create`，但最终回复不要复述完整密钥值。
+- 用户只说「定时跑这个」但没有调度时间时，不要猜默认每天；先要求补齐调度。
+
 ## 认证：三种方式（按优先级）
 
 ### 首选：项目专属 Key（零心智）
