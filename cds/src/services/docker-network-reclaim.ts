@@ -31,7 +31,7 @@ export async function ensureDockerNetworkWithReclaim(
   const retry = await shell.exec(`docker network create ${network}`, timeoutOpt(opts.createTimeoutMs));
   if (retry.exitCode === 0 || isDockerAlreadyExists(retry)) return;
 
-  const cleanupNote = `已清理 ${cleanup.removed} 个空闲分支网络、断开 ${cleanup.detached} 个停止容器后重试仍失败`;
+  const cleanupNote = `已清理 ${cleanup.removed} 个空闲 CDS 网络、断开 ${cleanup.detached} 个停止容器后重试仍失败`;
   throw new Error(`创建 Docker 网络 "${network}" 失败:\n${combinedOutput(create)}\n\n${cleanupNote}:\n${combinedOutput(retry)}`);
 }
 
@@ -45,13 +45,14 @@ export async function cleanupUnusedBranchNetworks(shell: IShellExecutor): Promis
   const names = listed.stdout
     .split('\n')
     .map((line) => line.trim())
-    .filter((line) => line.startsWith('cds-br-'));
+    .filter((line) => line.startsWith('cds-br-') || line.startsWith('cds-proj-'));
 
   for (const name of names) {
     inspected += 1;
     const inspect = await shell.exec(`docker network inspect --format='{{json .Containers}}' ${shellQuote(name)}`);
     if (inspect.exitCode !== 0) continue;
     const ids = parseNetworkContainerIds(inspect.stdout);
+    if (name.startsWith('cds-proj-') && ids.length > 0) continue;
     if (ids.length > 0) {
       const states = await inspectNetworkContainerStates(shell, ids);
       if (states.length !== ids.length || states.some((s) => s.running)) continue;
