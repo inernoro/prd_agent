@@ -36,7 +36,7 @@
   }
   @media (max-width: 1020px) {
     .sheet { grid-template-columns: 1fr; background: none; }
-    .spine { display: none; }
+    aside.spine { display: none; }
   }
 
   /* ══ 书脊：竖排 ══ */
@@ -50,12 +50,13 @@
     box-shadow: 2px 2px 0 rgba(29,26,21,0.75);
   }
   .spine .vtext {
-    writing-mode: vertical-rl; font-family: var(--serif);
-    font-size: 13.5px; letter-spacing: 0.5em; color: var(--ink-3);
+    display: flex; flex-direction: column; align-items: center; gap: 7px;
+    font-family: var(--serif); font-size: 13.5px; color: var(--ink-3);
+    flex-shrink: 0;
   }
   .spine .vnum {
-    margin-top: auto; writing-mode: vertical-rl;
-    font-family: var(--mono); font-size: 10px; letter-spacing: 0.3em; color: var(--ink-3);
+    margin-top: auto; display: flex; flex-direction: column; align-items: center; gap: 3px;
+    font-family: var(--mono); font-size: 10px; color: var(--ink-3);
   }
 
   /* ══ 宣言页 ══ */
@@ -185,8 +186,8 @@
   <!-- 书脊 -->
   <aside class="spine">
     <div class="seal">印</div>
-    <div class="vtext">把重复劳动交给智能体</div>
-    <div class="vnum">MMXXVI · VOL.III</div>
+    <div class="vtext"><span>把</span><span>重</span><span>复</span><span>劳</span><span>动</span><span>交</span><span>给</span><span>智</span><span>能</span><span>体</span></div>
+    <div class="vnum"><span>M</span><span>M</span><span>X</span><span>X</span><span>V</span><span>I</span></div>
   </aside>
 
   <!-- 宣言 -->
