@@ -4,33 +4,137 @@ set -eu
 # Best-effort warmup for production deploys. The real deploy is done by
 # exec_dep.sh, so this script must not block a frontend-only release forever.
 release_ref="${PRD_AGENT_RELEASE_REF:-}"
+release_ref_type="ref"
 if [ -z "$release_ref" ] && [ -n "${PRD_AGENT_DEPLOY_COMMIT:-}" ]; then
-  release_ref="sha-${PRD_AGENT_DEPLOY_COMMIT}"
+  release_ref="$PRD_AGENT_DEPLOY_COMMIT"
+  release_ref_type="commit"
 fi
 if [ -z "$release_ref" ] && [ -n "${PRD_AGENT_RELEASE_TAG:-}" ]; then
   release_ref="$PRD_AGENT_RELEASE_TAG"
+  release_ref_type="tag"
 fi
-release_ref="${release_ref:-latest}"
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --commit)
+      shift
+      if [ "$#" -eq 0 ]; then
+        echo "ERROR: --commit 需要一个 commit sha" >&2
+        exit 1
+      fi
+      release_ref="$1"
+      release_ref_type="commit"
+      ;;
+    --commit=*)
+      release_ref="${1#--commit=}"
+      release_ref_type="commit"
+      ;;
+    --tag)
+      shift
+      if [ "$#" -eq 0 ]; then
+        echo "ERROR: --tag 需要一个发布 tag" >&2
+        exit 1
+      fi
+      release_ref="$1"
+      release_ref_type="tag"
+      ;;
+    --tag=*)
+      release_ref="${1#--tag=}"
+      release_ref_type="tag"
+      ;;
+    --ref)
+      shift
+      if [ "$#" -eq 0 ]; then
+        echo "ERROR: --ref 需要一个发布 ref" >&2
+        exit 1
+      fi
+      release_ref="$1"
+      release_ref_type="ref"
+      ;;
+    --ref=*)
+      release_ref="${1#--ref=}"
+      release_ref_type="ref"
+      ;;
+    --repo)
+      shift
+      if [ "$#" -eq 0 ]; then
+        echo "ERROR: --repo 需要 owner/repo" >&2
+        exit 1
+      fi
+      REPO="$1"
+      ;;
+    --repo=*)
+      REPO="${1#--repo=}"
+      ;;
+    --skip-verify)
+      ;;
+    --*)
+      echo "ERROR: 未识别参数：$1" >&2
+      exit 1
+      ;;
+    *)
+      echo "ERROR: 多余参数：$1" >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+if [ -z "$release_ref" ]; then
+  release_ref="latest"
+  release_ref_type="ref"
+fi
+
+normalize_commit_ref() {
+  commit="$1"
+  case "$commit" in
+    sha-*)
+      commit="${commit#sha-}"
+      ;;
+  esac
+  lower_commit="$(printf '%s' "$commit" | tr 'A-F' 'a-f')"
+  if printf '%s' "$lower_commit" | grep -Eq '^[0-9a-f]{40}$'; then
+    printf 'sha-%s' "$lower_commit"
+    return 0
+  fi
+
+  echo "ERROR: commit ref 必须是完整 40 位 SHA 或 sha-<40位SHA>，不能使用短 SHA：$1" >&2
+  return 1
+}
 
 normalize_ref() {
   raw="$1"
+  ref_type="$2"
+  case "$ref_type" in
+    commit)
+      normalize_commit_ref "$raw"
+      return $?
+      ;;
+    tag)
+      if printf '%s' "$raw" | grep -Eq '^[A-Za-z0-9._-]+$'; then
+        printf '%s' "$raw"
+        return 0
+      fi
+      echo "ERROR: 发布 tag 只能包含 A-Z/a-z/0-9/._-：$raw" >&2
+      return 1
+      ;;
+  esac
+
   case "$raw" in
     latest)
       printf '%s' "latest"
       return 0
       ;;
     sha-*)
-      commit="${raw#sha-}"
-      ;;
-    *)
-      commit="$raw"
+      normalize_commit_ref "$raw"
+      return $?
       ;;
   esac
 
-  lower_commit="$(printf '%s' "$commit" | tr 'A-F' 'a-f')"
-  if printf '%s' "$lower_commit" | grep -Eq '^[0-9a-f]{7,40}$'; then
-    printf 'sha-%s' "$lower_commit"
-    return 0
+  lower_raw="$(printf '%s' "$raw" | tr 'A-F' 'a-f')"
+  if printf '%s' "$lower_raw" | grep -Eq '^[0-9a-f]{7,40}$'; then
+    echo "ERROR: 十六进制 ref 存在歧义。部署 commit 请用 --commit <40位SHA>，部署 tag 请用 --tag <tag>：$raw" >&2
+    return 1
   fi
 
   if printf '%s' "$raw" | grep -Eq '^[A-Za-z0-9._-]+$'; then
@@ -42,8 +146,9 @@ normalize_ref() {
   return 1
 }
 
-tag="$(normalize_ref "$release_ref")"
-image="${PRD_AGENT_API_IMAGE:-get.miduo.org/ghcr.io/inernoro/prd_agent/prdagent-server:${tag}}"
+tag="$(normalize_ref "$release_ref" "$release_ref_type")"
+repo="${REPO:-inernoro/prd_agent}"
+image="${PRD_AGENT_API_IMAGE:-get.miduo.org/ghcr.io/${repo}/prdagent-server:${tag}}"
 timeout_seconds="${FAST_PULL_TIMEOUT_SECONDS:-30}"
 
 echo "Warming api image: $image"

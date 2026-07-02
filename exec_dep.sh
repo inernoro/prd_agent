@@ -32,11 +32,14 @@ set -eu
 
 SKIP_VERIFY="${SKIP_VERIFY:-}"
 release_ref="${PRD_AGENT_RELEASE_REF:-}"
+release_ref_type="ref"
 if [ -z "$release_ref" ] && [ -n "${PRD_AGENT_DEPLOY_COMMIT:-}" ]; then
-  release_ref="sha-${PRD_AGENT_DEPLOY_COMMIT}"
+  release_ref="$PRD_AGENT_DEPLOY_COMMIT"
+  release_ref_type="commit"
 fi
 if [ -z "$release_ref" ] && [ -n "${PRD_AGENT_RELEASE_TAG:-}" ]; then
   release_ref="$PRD_AGENT_RELEASE_TAG"
+  release_ref_type="tag"
 fi
 
 pos_index=0
@@ -51,10 +54,12 @@ while [ "$#" -gt 0 ]; do
         echo "ERROR: --commit 需要一个 commit sha" >&2
         exit 1
       fi
-      release_ref="sha-$1"
+      release_ref="$1"
+      release_ref_type="commit"
       ;;
     --commit=*)
-      release_ref="sha-${1#--commit=}"
+      release_ref="${1#--commit=}"
+      release_ref_type="commit"
       ;;
     --tag)
       shift
@@ -63,9 +68,11 @@ while [ "$#" -gt 0 ]; do
         exit 1
       fi
       release_ref="$1"
+      release_ref_type="tag"
       ;;
     --tag=*)
       release_ref="${1#--tag=}"
+      release_ref_type="tag"
       ;;
     --ref)
       shift
@@ -74,9 +81,11 @@ while [ "$#" -gt 0 ]; do
         exit 1
       fi
       release_ref="$1"
+      release_ref_type="ref"
       ;;
     --ref=*)
       release_ref="${1#--ref=}"
+      release_ref_type="ref"
       ;;
     --repo)
       shift
@@ -97,6 +106,7 @@ while [ "$#" -gt 0 ]; do
       pos_index=$((pos_index + 1))
       if [ "$pos_index" -eq 1 ] && [ -z "$release_ref" ]; then
         release_ref="$1"
+        release_ref_type="ref"
       elif [ "$pos_index" -le 2 ] && [ -z "${REPO:-}" ]; then
         REPO="$1"
       else
@@ -108,27 +118,61 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
-release_ref="${release_ref:-latest}"
+if [ -z "$release_ref" ]; then
+  release_ref="latest"
+  release_ref_type="ref"
+fi
+
+normalize_commit_ref() {
+  commit="$1"
+  case "$commit" in
+    sha-*)
+      commit="${commit#sha-}"
+      ;;
+  esac
+  lower_commit="$(printf '%s' "$commit" | tr 'A-F' 'a-f')"
+  if printf '%s' "$lower_commit" | grep -Eq '^[0-9a-f]{40}$'; then
+    printf 'sha-%s' "$lower_commit"
+    return 0
+  fi
+
+  echo "ERROR: commit ref 必须是完整 40 位 SHA 或 sha-<40位SHA>，不能使用短 SHA：$1" >&2
+  return 1
+}
 
 normalize_ref() {
   raw="$1"
+  ref_type="$2"
+  case "$ref_type" in
+    commit)
+      normalize_commit_ref "$raw"
+      return $?
+      ;;
+    tag)
+      if printf '%s' "$raw" | grep -Eq '^[A-Za-z0-9._-]+$'; then
+        printf '%s' "$raw"
+        return 0
+      fi
+      echo "ERROR: 发布 tag 只能包含 A-Z/a-z/0-9/._-：$raw" >&2
+      return 1
+      ;;
+  esac
+
   case "$raw" in
     latest)
       printf '%s' "latest"
       return 0
       ;;
     sha-*)
-      commit="${raw#sha-}"
-      ;;
-    *)
-      commit="$raw"
+      normalize_commit_ref "$raw"
+      return $?
       ;;
   esac
 
-  lower_commit="$(printf '%s' "$commit" | tr 'A-F' 'a-f')"
-  if printf '%s' "$lower_commit" | grep -Eq '^[0-9a-f]{7,40}$'; then
-    printf 'sha-%s' "$lower_commit"
-    return 0
+  lower_raw="$(printf '%s' "$raw" | tr 'A-F' 'a-f')"
+  if printf '%s' "$lower_raw" | grep -Eq '^[0-9a-f]{7,40}$'; then
+    echo "ERROR: 十六进制 ref 存在歧义。部署 commit 请用 --commit <40位SHA>，部署 tag 请用 --tag <tag>：$raw" >&2
+    return 1
   fi
 
   if printf '%s' "$raw" | grep -Eq '^[A-Za-z0-9._-]+$'; then
@@ -140,7 +184,7 @@ normalize_ref() {
   return 1
 }
 
-TAG="$(normalize_ref "$release_ref")"
+TAG="$(normalize_ref "$release_ref" "$release_ref_type")"
 if [ "$TAG" = "latest" ]; then
   echo "Deploy target: latest"
 else

@@ -1,11 +1,12 @@
 ---
 name: production-hotfix-release
+version: 1.0.1
 description: Performs a production hotfix release by merging a specific branch or commit into the currently deployed production baseline, building release artifacts, deploying through the existing production script, and verifying live status. Activates only when the user explicitly requests "热发布线上版本", "线上热修", "hotfix production", "把特定分支发到正式环境", or mentions a production SSH host plus a branch/commit to release. Includes strict rules forbidding secrets from being saved in code or exposed in logs.
 ---
 
 # 线上热修发布
 
-> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/hotfix-prod`、"热发布线上版本"、"线上热修"、"把特定分支发到正式环境"、"production hotfix"
+> **版本**：v1.0.1 | **状态**：已落地 | **触发**：`/hotfix-prod`、"热发布线上版本"、"线上热修"、"把特定分支发到正式环境"、"production hotfix"
 
 把"正式环境当前版本 + 指定分支/提交"做成最小热修发布。适用于用户明确点名要求某个已经合并或未合并的功能进入正式环境，但不希望把当前 `main` 上其它大改动一起带上线。
 
@@ -71,11 +72,12 @@ Task Progress:
 - [ ] Step 3: 创建基于生产 revision 的热修分支
 - [ ] Step 4: cherry-pick 指定提交并处理冲突
 - [ ] Step 5: 跑本地或远端构建校验
-- [ ] Step 6: 推送热修分支并触发 release artifact 构建
-- [ ] Step 7: 等待 CI 成功
-- [ ] Step 8: 执行生产部署脚本
-- [ ] Step 9: 验证线上 revision、容器状态、页面和关键接口
-- [ ] Step 10: 汇报发布结果、验证结果、未改动的配置开关
+- [ ] Step 6: 确认热修分支包含不可变发布基础设施
+- [ ] Step 7: 推送热修分支并触发 release artifact 构建
+- [ ] Step 8: 等待 CI 成功
+- [ ] Step 9: 执行生产部署脚本
+- [ ] Step 10: 验证线上 revision、容器状态、页面和关键接口
+- [ ] Step 11: 汇报发布结果、验证结果、未改动的配置开关
 ```
 
 ### Step 1：确认点名对象
@@ -140,12 +142,25 @@ git diff --check HEAD~1..HEAD
 
 本地校验卡住时可以终止本地进程，但最终必须用 CI 通过作为发布门禁。
 
-### Step 6：推送并触发发布产物
+### Step 6：确认不可变发布基础设施
+
+如果生产基线早于不可变发布改造，热修分支只 cherry-pick 业务提交是不够的：`gh workflow run --ref <branch>` 会使用该分支上的 workflow 文件，旧 workflow 不会产出 `sha-<commit>` 镜像和前端 zip。
+
+在触发 workflow 前必须确认热修分支已经包含以下发布基础设施改动：
+
+- `.github/workflows/server-deploy.yml` 支持 `sha-<commit>` 镜像，手动触发默认不发布 `latest`
+- `.github/workflows/web-latest-pages.yml` 支持 `prd-admin-dist-sha-<commit>.zip`，手动触发默认不刷新 `latest`
+- `exec_dep.sh` 支持 `--commit <40位SHA>`、`--tag <tag>`、`--ref <ref>`
+- `fast.sh` 支持与 `exec_dep.sh` 一致的 ref 参数
+
+若热修分支缺这些文件改动，先 cherry-pick 发布基础设施 commit；这类提交只改 workflow 和发布脚本，不应混入业务功能。禁止在缺不可变产物能力的旧 workflow 上继续执行生产热修。
+
+### Step 7：推送并触发发布产物
 
 ```bash
 git push -u origin codex/hotfix-<short-name>-prod
-gh workflow run server-deploy.yml --ref codex/hotfix-<short-name>-prod -f docker_platforms=linux/amd64
-gh workflow run web-latest-pages.yml --ref codex/hotfix-<short-name>-prod
+gh workflow run server-deploy.yml --ref codex/hotfix-<short-name>-prod -f docker_platforms=linux/amd64 -f publish_latest=false
+gh workflow run web-latest-pages.yml --ref codex/hotfix-<short-name>-prod -f publish_latest=false
 gh run watch <run-id> --exit-status
 ```
 
@@ -156,26 +171,26 @@ gh run watch <run-id> --exit-status
 - 前端校验：`prd-admin-dist-sha-<hotfix-commit>.zip.sha256`
 - 非敏感清单：`release-manifest-sha-<hotfix-commit>.json`
 
-禁止跳过 CI 直接上生产。生产部署必须使用不可变 commit ref，不使用 `latest`。
+禁止跳过 CI 直接上生产。生产部署必须使用不可变 commit ref，不使用 `latest`。只有用户明确要求刷新 `latest` 时，手动 workflow 才允许设置 `publish_latest=true`。
 
-### Step 7：执行生产部署脚本
+### Step 8：执行生产部署脚本
 
 只使用仓库已有发布脚本，并把热修 commit 明确传入。示例：
 
 ```bash
-ssh root@host 'cd /root/inernoro/prd_agent && set -eu; ./exec_dep.sh --commit <hotfix-commit>'
+ssh root@host 'cd /root/inernoro/prd_agent && set -eu; ./fast.sh --commit <完整40位hotfix-commit>; ./exec_dep.sh --commit <完整40位hotfix-commit>'
 ```
 
 如果脚本会下载前端包、拉取后端镜像、重建 compose，必须检查输出中是否出现：
 
-- `Deploy target: immutable ref sha-<hotfix-commit>`
-- `Release manifest: .../release-manifest-sha-<hotfix-commit>.json`
+- `Deploy target: immutable ref sha-<完整40位hotfix-commit>`
+- `Release manifest: .../release-manifest-sha-<完整40位hotfix-commit>.json`
 - 前端包下载成功
 - sha256 校验成功或明确按用户要求跳过
 - 后端镜像拉取成功
 - compose recreate/start 成功
 
-### Step 8：发布后验证
+### Step 9：发布后验证
 
 至少验证以下四类，不输出敏感信息：
 
