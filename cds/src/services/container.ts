@@ -11,6 +11,7 @@ import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js'
 import { applyPerBranchDbIsolation } from './db-scope-isolation.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkPlan } from './branch-network.js';
 import { nodeModulesVolumeName } from '../util/node-modules-volume.js';
+import { ensureDockerNetworkWithReclaim } from './docker-network-reclaim.js';
 import {
   collectContainerDiagnostics,
   recordContainerLifecycleIntent,
@@ -516,9 +517,14 @@ function parseFloatSafe(s: string): number {
  *   - 'mysql-mdimp'   + 'mysql'
  *   - 'web-2'         + 'web-2'(没有项目后缀,只有自己)
  *
- * 启发式去后缀:profile.id 形如 `<service>-<projectMarker>` 时,projectMarker
- * 通常包含项目 slug 的前几位或全部。我们安全的做法:**只**剥掉 `-<projectId-prefix>`
- * 或 `-<最后一个连字符段>` 当后者长度 ≤ 12,且不会产生空串。
+ * 去后缀两条路(结果并入同一 Set,profile.id 永远是第一个 alias):
+ *   1) 单段启发式(旧):剥掉最后一个连字符段,覆盖「后缀是 projectId/slug 前几位」
+ *      的模糊匹配(如 tail=`mdimp` vs marker=`mdimp`,或 tail 是 marker 前缀)。
+ *   2) 完整 marker 后缀剥离(新,2026-07):沿连字符边界切,若「切点之后 normalize
+ *      后 == 某个完整 normalizedMarker」,则切点之前的 head 就是裸 `<svc>`。这条
+ *      专治「项目 slug 自带连字符」(prd-agent):`llmgw-prd-agent → llmgw`、
+ *      `llmgw-serve-prd-agent → llmgw-serve`、`api-prd-agent → api`;head 本身
+ *      可含连字符也正确。marker 可能是 id 也可能是 slug(已 normalize),任一命中即可。
  *
  * 边界:
  *   - profile.id 不含 '-' → 只有自己一个 alias
@@ -559,6 +565,19 @@ export function computeProfileAliases(
         (m) => m.startsWith(tailNorm) || tailNorm === m.slice(0, tail.length),
       );
     if (looksLikeProjectMarker && head.length >= 2) {
+      aliases.add(head);
+    }
+  }
+
+  // 完整 marker 后缀剥离:沿连字符边界切,找到「切点之后 normalize 后恰好等于某个
+  // 完整 normalizedMarker」的切点,把切点之前的 head 作为裸 <svc> 加入。marker 自带
+  // 连字符(prd-agent)时,单段启发式够不到,靠这里补。head 可含连字符(llmgw-serve)。
+  const segments = profileId.split('-');
+  for (let cut = 1; cut < segments.length; cut++) {
+    const head = segments.slice(0, cut).join('-');
+    if (head.length < 2) continue;
+    const rest = segments.slice(cut).join('-').toLowerCase().replace(/[^a-z0-9]+/g, '');
+    if (rest.length > 0 && normalizedMarkers.includes(rest)) {
       aliases.add(head);
     }
   }
@@ -2753,95 +2772,7 @@ export class ContainerService {
    */
   private async ensureNetwork(network?: string): Promise<void> {
     const target = network || this.config.dockerNetwork;
-    const inspect = await this.shell.exec(`docker network inspect ${target}`);
-    if (inspect.exitCode !== 0) {
-      const create = await this.shell.exec(`docker network create ${target}`);
-      if (create.exitCode !== 0) {
-        // 并发竞态：同一分支的多个服务（如 api + admin 在 layer-0 同时启动）首次都发现分支网
-        // 不存在 → 同时 `docker network create` → 一个成功、其余报 "already exists"。docker 网络
-        // create 天然幂等语义下这就是成功，吞掉视为已就绪（分支网是新建的，最易触发，旧共享网因
-        // 多已预先存在而少见此竞态）。
-        const stderr = (create.stderr || '').toLowerCase();
-        if (stderr.includes('already exists')) return;
-        if (this.isBranchNetworkAddressPoolExhausted(target, create)) {
-          const cleanup = await this.cleanupUnusedBranchNetworks();
-          const retry = await this.shell.exec(`docker network create ${target}`);
-          if (retry.exitCode === 0) return;
-          if (combinedOutput(retry).toLowerCase().includes('already exists')) return;
-          const retryOutput = combinedOutput(retry);
-          const cleanupNote = `已清理 ${cleanup.removed} 个空闲分支网络、断开 ${cleanup.detached} 个停止容器后重试仍失败`;
-          throw new Error(`创建 Docker 网络 "${target}" 失败:\n${combinedOutput(create)}\n\n${cleanupNote}:\n${retryOutput}`);
-        }
-        throw new Error(`创建 Docker 网络 "${target}" 失败:\n${combinedOutput(create)}`);
-      }
-    }
-  }
-
-  private isBranchNetworkAddressPoolExhausted(network: string, result: ExecResult): boolean {
-    if (!network.startsWith('cds-br-')) return false;
-    const output = combinedOutput(result).toLowerCase();
-    return output.includes('all predefined address pools have been fully subnetted');
-  }
-
-  private async cleanupUnusedBranchNetworks(): Promise<{ inspected: number; removed: number; detached: number }> {
-    const listed = await this.shell.exec(`docker network ls --format '{{.Name}}'`);
-    if (listed.exitCode !== 0 || !listed.stdout.trim()) return { inspected: 0, removed: 0, detached: 0 };
-
-    let inspected = 0;
-    let removed = 0;
-    let detached = 0;
-    const names = listed.stdout
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.startsWith('cds-br-'));
-
-    for (const name of names) {
-      inspected += 1;
-      const inspect = await this.shell.exec(`docker network inspect --format='{{json .Containers}}' ${this.shellQuote(name)}`);
-      if (inspect.exitCode !== 0) continue;
-      const ids = this.parseNetworkContainerIds(inspect.stdout);
-      if (ids.length > 0) {
-        const states = await this.inspectNetworkContainerStates(ids);
-        if (states.length !== ids.length || states.some((s) => s.running)) continue;
-        for (const id of ids) {
-          const disconnected = await this.shell.exec(`docker network disconnect -f ${this.shellQuote(name)} ${this.shellQuote(id)}`);
-          if (disconnected.exitCode === 0) detached += 1;
-        }
-      }
-
-      const rm = await this.shell.exec(`docker network rm ${this.shellQuote(name)}`);
-      if (rm.exitCode === 0) removed += 1;
-    }
-
-    return { inspected, removed, detached };
-  }
-
-  private parseNetworkContainerIds(raw: string): string[] {
-    const text = raw.trim();
-    if (!text) return [];
-    try {
-      const parsed = JSON.parse(text);
-      if (!parsed || typeof parsed !== 'object') return [];
-      return Object.keys(parsed).filter(Boolean);
-    } catch {
-      return [];
-    }
-  }
-
-  private async inspectNetworkContainerStates(ids: string[]): Promise<Array<{ id: string; running: boolean }>> {
-    if (ids.length === 0) return [];
-    const quotedIds = ids.map((id) => this.shellQuote(id)).join(' ');
-    const inspected = await this.shell.exec(`docker inspect --format='{{.Id}} {{.State.Running}}' ${quotedIds}`);
-    if (inspected.exitCode !== 0) return [];
-    return inspected.stdout
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => {
-        const [id, running] = line.split(/\s+/);
-        return { id, running: running === 'true' };
-      })
-      .filter((state) => !!state.id);
+    await ensureDockerNetworkWithReclaim(this.shell, target);
   }
 
   /**

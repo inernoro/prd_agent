@@ -1119,6 +1119,12 @@ public class MongoDbContext
         MarketplaceSkillShareLinks.Indexes.CreateOne(new CreateIndexModel<MarketplaceSkillShareLink>(
             Builders<MarketplaceSkillShareLink>.IndexKeys.Ascending(x => x.CreatedBy).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_marketplace_skill_share_links_creator" }));
+        MarketplaceSkillShareLinks.Indexes.CreateOne(new CreateIndexModel<MarketplaceSkillShareLink>(
+            Builders<MarketplaceSkillShareLink>.IndexKeys
+                .Ascending(x => x.SkillId)
+                .Ascending(x => x.IsRevoked)
+                .Ascending(x => x.ExpiresAt),
+            new CreateIndexOptions { Name = "idx_marketplace_skill_share_links_skill_active" }));
 
         // DefectFixReports：按分享链接和 Token 查询
         DefectFixReports.Indexes.CreateOne(new CreateIndexModel<DefectFixReport>(

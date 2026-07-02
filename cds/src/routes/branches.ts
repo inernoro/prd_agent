@@ -66,6 +66,7 @@ import {
   type PendingWebhookDeploy,
 } from '../services/branch-operation-coordinator.js';
 import { waitForRestartSafeBranchOperations, resolveRestartDrainTimeoutFromRequest } from '../services/restart-drain.js';
+import { ensureDockerNetworkWithReclaim } from '../services/docker-network-reclaim.js';
 
 // ── Self-status SSE 模块级状态 ────────────────────────────────────────
 // 2026-05-28 重构:状态权威源迁移到 services/self-status-cache.ts。
@@ -268,9 +269,16 @@ function isSyntheticCdsManagedRuntimeBranch(
  */
 function resolveGatewayLandingPath(subdomain: string, readinessPath?: string): string {
   const sub = subdomain.toLowerCase();
-  // Serving engine (llmgw-serve): API under /gw/v1/*.
+  // Gateway console (llmgw-web): a standalone Vite SPA whose nginx falls back to
+  // index.html for any non-/gw/* path, so land on the console root — clicking it
+  // opens the real login → LLM logs UI, not a health JSON. This is the entry we
+  // want most prominent in the panel.
+  if (sub === 'llmgw-web') return '/';
+  // Serving engine (llmgw-serve): API-only, mounts under /gw/v1/* and 404s at the
+  // bare root, so land on its health endpoint.
   if (sub === 'llmgw-serve') return '/gw/v1/healthz';
-  // Console (llmgw): API under /gw/*.
+  // Backend/API engine (llmgw): API-only, mounts under /gw/* and 404s at the bare
+  // root, so land on its health endpoint.
   if (sub === 'llmgw') return '/gw/healthz';
   const trimmed = (readinessPath ?? '').trim();
   if (trimmed && trimmed.startsWith('/')) return trimmed;
@@ -1450,12 +1458,7 @@ async function ensureDockerNetwork(shell: IShellExecutor, network: string): Prom
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(network)) {
     throw new Error(`Docker network 名称非法：${network}`);
   }
-  const inspect = await shell.exec(`docker network inspect ${routeShellQuote(network)}`, { timeout: 10_000 });
-  if (inspect.exitCode === 0) return;
-  const create = await shell.exec(`docker network create ${routeShellQuote(network)}`, { timeout: 15_000 });
-  if (create.exitCode !== 0) {
-    throw new Error(`创建 Docker 网络 "${network}" 失败：${combinedOutput(create)}`);
-  }
+  await ensureDockerNetworkWithReclaim(shell, network, { inspectTimeoutMs: 10_000, createTimeoutMs: 15_000 });
 }
 
 async function cleanupResourceExternalFirewall(shell: IShellExecutor, chain: string, port?: number): Promise<void> {
@@ -16632,7 +16635,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
           if (!p.id) errors.push(`buildProfiles[${i}]: 缺少 id`);
           if (!p.name) errors.push(`buildProfiles[${i}]: 缺少 name`);
           if (!p.dockerImage) errors.push(`buildProfiles[${i}]: 缺少 dockerImage`);
-          if (!p.command) errors.push(`buildProfiles[${i}]: 缺少 command`);
+          // 预构建镜像站点（prebuiltImage）用镜像自带 ENTRYPOINT/CMD 启动，command 合法为空（见
+          // container.ts usePrebuiltEntrypoint）；只对非预构建 profile 强制 command。
+          if (!p.command && p.prebuiltImage !== true) errors.push(`buildProfiles[${i}]: 缺少 command`);
           if (p.containerPort !== undefined) {
             const port = Number(p.containerPort);
             if (!Number.isInteger(port) || port < 1 || port > 65535) {
