@@ -979,6 +979,22 @@ describe('resource database access', () => {
       { database: 'orders', command: 'db.getCollection("users").drop();' },
       { 'x-test-cookie-auth': '1' },
     );
+    // 值里含 "drop" 子串的合法写：不再误判高危 → 200（Bugbot Medium 修复）
+    const writeDropWord = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
+      { database: 'orders', command: 'db.getCollection("users").updateMany({ note: "drop old records" }, { $set: { archived: true } });', confirmResourceName: 'mongo-main' },
+      { 'x-test-cookie-auth': '1' },
+    );
+    // 参数里内嵌危险方法调用（.drop()）：仍 400 拦截
+    const embeddedDrop = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
+      { database: 'orders', command: 'db.getCollection("users").insertOne({ ref: db.getCollection("audit").drop() });', confirmResourceName: 'mongo-main' },
+      { 'x-test-cookie-auth': '1' },
+    );
 
     expect(ok.status).toBe(200);
     expect(ok.body.collection).toBe('users');
@@ -991,6 +1007,10 @@ describe('resource database access', () => {
     expect(writeNoConfirm.status).toBe(409);
     expect(rejected.status).toBe(400);
     expect(rejected.body.error).toContain('高危操作');
+    expect(writeDropWord.status).toBe(200);
+    expect(writeDropWord.body.kind).toBe('write-result');
+    expect(embeddedDrop.status).toBe(400);
+    expect(embeddedDrop.body.error).toContain('高危操作');
   });
 
   it('describes planned workbench capability for SQL Server and RabbitMQ resources', async () => {

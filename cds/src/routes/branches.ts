@@ -5865,13 +5865,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (withoutTrailing.includes(';')) {
       throw new Error('MongoDB Console 一次只允许执行一条命令');
     }
-    // 始终禁止：删库/删集合/索引重建/跨库/服务器级命令/任意 JS/聚合写出
+    // 始终禁止：高危操作只按「方法调用」形态匹配（op 后跟 `(`），避免把出现在 filter/$set/备注等 JSON
+    // 字面量里的 drop/eval 等子串误判为高危（Bugbot Medium）。仍拦截参数里内嵌的危险调用，例如
+    // insertOne({ a: db.y.drop() })——mongo shell 会先求值该实参再执行 insertOne，故 `.drop(` 必须挡下。
+    // aggregate 一并按方法调用拦截，从根上堵死 $out/$merge 写出。$where 按「操作符键」形态拦截（服务端 JS）。
     if (
-      /\b(dropDatabase|dropCollection|dropIndex|dropIndexes|createCollection|renameCollection|createIndex|reIndex|eval|mapReduce|runCommand|adminCommand|getSiblingDB|copyDatabase|shutdownServer|drop)\b/i.test(withoutTrailing)
-      || /\$where/i.test(withoutTrailing)
-      || /\$out\b|\$merge\b/i.test(withoutTrailing)
+      /\b(drop|dropDatabase|dropCollection|dropIndex|dropIndexes|createCollection|renameCollection|createIndex|reIndex|eval|mapReduce|runCommand|adminCommand|getSiblingDB|copyDatabase|shutdownServer|aggregate)\s*\(/i.test(withoutTrailing)
+      || /\$where["']?\s*:/i.test(withoutTrailing)
     ) {
-      throw new Error('MongoDB Console 禁止删库/删集合/索引/跨库/服务器级/eval/aggregate 写出等高危操作');
+      throw new Error('MongoDB Console 禁止删库/删集合/索引/跨库/服务器级/eval/aggregate 写出/$where 等高危操作');
     }
 
     const getCollectionMatch = withoutTrailing.match(/^db\.getCollection\((["'])([^"'\r\n]{1,120})\1\)\.([a-zA-Z]+)\s*\(/);
