@@ -6,3 +6,4 @@
 | polish | prd-admin | 统一移动端全局顶部栏，固定单行显示当前应用名称 |
 | fix | prd-admin | 修复移动端页面工具栏按钮被压缩后文字竖排换行的问题 |
 | polish | prd-admin | 按 Apple 风格简化移动端缺陷页工具区，扩大主内容可视面积 |
+| polish | prd-admin | 按热点页优化知识库、周报、生图的移动端进入与工具栏密度 |

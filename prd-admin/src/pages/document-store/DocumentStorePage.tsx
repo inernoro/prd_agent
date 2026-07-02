@@ -2508,7 +2508,13 @@ export function DocumentStorePage() {
           - 我的空间 / 团队空间：统计 + 搜索 + 排序 + 新建知识库（团队空间多一个 TeamScopeBar）
           - 收藏 / 点赞：不显示 */}
       {isStoreTab && (
-        <div data-tour-id="library-toolbar" className="px-5 flex items-center gap-2 flex-wrap">
+        <div
+          data-tour-id="library-toolbar"
+          className={isMobile
+            ? 'px-5 flex items-center gap-2 flex-nowrap overflow-x-auto pb-1'
+            : 'px-5 flex items-center gap-2 flex-wrap'}
+          style={isMobile ? { scrollbarWidth: 'none' } : undefined}
+        >
           {tab === 'team' && (
             <TeamScopeBar
               moduleKey="document-store"
@@ -2519,21 +2525,23 @@ export function DocumentStorePage() {
           )}
           {/* 统计概览 */}
           {/* 功能区：库数 / 文章数（左侧） */}
-          <span data-tour-id="library-stats" className="text-[12px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
+          <span data-tour-id="library-stats" className="text-[12px] tabular-nums whitespace-nowrap flex-none" style={{ color: 'var(--text-muted)' }}>
             共 <strong style={{ color: 'var(--text-primary)' }}>{totalStores}</strong> 个知识库
             <span className="opacity-50 mx-1.5">·</span>
             <strong style={{ color: 'var(--text-primary)' }}>{totalDocs}</strong> 篇文章
           </span>
 
           {/* 搜索 */}
-          <div className="relative">
+          <div className="relative flex-none">
             <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--text-muted)' }} />
             <input
               data-tour-id="library-search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="按名称或标签筛选…"
-              className="h-8 pl-7 pr-7 rounded-[8px] text-[12px] outline-none w-[200px] focus:w-[260px] transition-all"
+              className={isMobile
+                ? 'h-8 pl-7 pr-7 rounded-[8px] text-[12px] outline-none w-[210px]'
+                : 'h-8 pl-7 pr-7 rounded-[8px] text-[12px] outline-none w-[200px] focus:w-[260px] transition-all'}
               style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-primary)' }}
             />
             {search && (
@@ -2550,7 +2558,7 @@ export function DocumentStorePage() {
           </div>
 
           {/* 标签筛选（多选；激活后用主题色高亮 + 数字徽章） */}
-          <div className="relative" ref={tagWrapRef}>
+          <div className="relative flex-none" ref={tagWrapRef}>
             <button
               type="button"
               data-tour-id="library-tag-filter"
@@ -2653,7 +2661,7 @@ export function DocumentStorePage() {
           </div>
 
           {/* 排序（带高亮 active 状态，让用户一眼知道当前排序规则） */}
-          <div className="relative" ref={sortWrapRef}>
+          <div className="relative flex-none" ref={sortWrapRef}>
             <button
               type="button"
               data-tour-id="library-sort"
@@ -2697,7 +2705,7 @@ export function DocumentStorePage() {
             )}
           </div>
 
-          <span className="flex-1" />
+          <span className={isMobile ? 'hidden' : 'flex-1'} />
           {/* 统计区：账号级访客总计（右侧）。数字 count-up 缓动 + 整段淡入，避免突然蹦出。 */}
           {!isMobile && tab === 'mine' && accountSummary && (
             <FadeIn>

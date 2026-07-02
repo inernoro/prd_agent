@@ -14,6 +14,7 @@ import { ZoomControl, ZOOM_SCALE, type ZoomLevel } from './components/ZoomContro
 import { ThemeControl, type ColorScheme } from './components/ThemeControl';
 import { getMyDefaultTab } from '@/services';
 import type { DefaultTabKey } from '@/services/contracts/reportAgent';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 
 const ZOOM_STORAGE_KEY = 'report-agent:zoom';
 const COLOR_SCHEME_STORAGE_KEY = 'report-agent:color-scheme';
@@ -54,6 +55,7 @@ export default function ReportAgentPage() {
   } = useReportAgentStore();
 
   const userId = useAuthStore((s) => s.user?.userId);
+  const isMobile = useIsMobile();
   const [zoom, setZoom] = useState<ZoomLevel>(readZoomFromStorage);
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -196,7 +198,7 @@ export default function ReportAgentPage() {
         onChange={(key) => {
           setActiveTab(key as typeof activeTab);
         }}
-        actions={usageGuideActions}
+        actions={isMobile ? undefined : usageGuideActions}
       />
 
       {error && (
