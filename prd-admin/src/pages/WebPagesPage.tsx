@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import { PageHeader } from '@/components/design/PageHeader';
@@ -102,6 +101,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 
 // ─── Utility ───
 
@@ -335,6 +335,7 @@ export interface SiteCaps {
 }
 
 export default function WebPagesPage() {
+  const { isMobile } = useBreakpoint();
   const username = useAuthStore(s => s.user?.username);
   const currentUserId = useAuthStore(s => s.user?.userId);
   const [sites, setSites] = useState<HostedSite[]>([]);
@@ -779,20 +780,21 @@ export default function WebPagesPage() {
           'radial-gradient(ellipse 70% 40% at 50% -10%, rgba(99,102,241,0.14) 0%, transparent 55%), linear-gradient(180deg, #20212a 0%, #181a22 480px, #16181f 100%)',
       }}
     >
-      {/* 右侧投放面板：可拖动 + 可收起，拖站点卡片到槽位即可分享/删除 */}
-      <ShareDock
-        mime={WEB_PAGE_MIME}
-        title="投放面板"
-        badgeCount={sites.filter(s => s.visibility === 'public').length}
-        footerHref={username ? `/u/${encodeURIComponent(username)}` : undefined}
-        footerText={
-          sites.filter(s => s.visibility === 'public').length > 0 && username
-            ? `已公开 ${sites.filter(s => s.visibility === 'public').length} 个 · 查看公开页`
-            : '拖卡片到上方槽位'
-        }
-        persistKey="web-pages"
-        compactSlots
-        dropzone={{
+      {/* 右侧投放面板：桌面保留拖拽工作流；手机端用主按钮与分享入口，避免浮层遮挡首屏。 */}
+      {!isMobile && (
+        <ShareDock
+          mime={WEB_PAGE_MIME}
+          title="投放面板"
+          badgeCount={sites.filter(s => s.visibility === 'public').length}
+          footerHref={username ? `/u/${encodeURIComponent(username)}` : undefined}
+          footerText={
+            sites.filter(s => s.visibility === 'public').length > 0 && username
+              ? `已公开 ${sites.filter(s => s.visibility === 'public').length} 个 · 查看公开页`
+              : '拖卡片到上方槽位'
+          }
+          persistKey="web-pages"
+          compactSlots
+          dropzone={{
           hint: '拖文件到此上传',
           accept: ['.html', '.zip', '.md', '.pdf', '.mp4', '.webm'],
           // 两阶段：先只上传，再由用户在 dock 内二选一（无密码 / 有密码）创建分享并自动复制链接
@@ -859,7 +861,7 @@ export default function WebPagesPage() {
             };
           },
         }}
-        slots={[
+          slots={[
           {
             key: 'share',
             icon: <Share2 size={18} />,
@@ -886,58 +888,105 @@ export default function WebPagesPage() {
               if (site) handleDropDelete(site);
             },
           },
-        ]}
-      />
-      <PageHeader
-        title="网页托管"
-        actions={
-          <div data-tour-id="webpages-header-actions" className="flex items-center gap-1.5">
-            <button
-              type="button"
-              data-tour-id="webpages-stats-btn"
-              onClick={() => setShowAnalytics(true)}
-              title="分享统计（PV/IP/时间线）"
-              aria-label="分享统计"
-              className="h-8 w-8 inline-flex items-center justify-center rounded-md transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.06))]"
-              style={{ color: 'var(--text-muted)' }}
-            >
-              <BarChart3 size={15} />
-            </button>
-            <button
-              type="button"
-              data-tour-id="webpages-share-mgmt-btn"
-              onClick={() => { setShareTargetId(null); setShowSharesPanel(true); }}
-              title="分享管理"
-              aria-label="分享管理"
-              className="h-8 w-8 inline-flex items-center justify-center rounded-md transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.06))]"
-              style={{ color: 'var(--text-muted)' }}
-            >
-              <Link2 size={15} />
-            </button>
-            <span className="mx-1 h-5 w-px" style={{ background: 'var(--border-default)' }} />
-            {currentSpace.kind === 'team' && canEditInWebHosting(myWebHostingRole) && (
-              <Button size="sm" variant="secondary" title="把个人空间的网页复制一份进当前团队（原网页不受影响）" onClick={() => setShowCopyFromPersonal(true)}>
-                <FolderInput size={14} className="mr-1" /> 从个人空间添加
-              </Button>
-            )}
-            {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
-              <Button data-tour-id="webpages-upload-primary" size="sm" variant="primary" onClick={openCreateUploadDialog}>
-                <Upload size={14} className="mr-1" /> 上传站点
-              </Button>
-            )}
+          ]}
+        />
+      )}
+      {isMobile ? (
+        <div className="px-3 pt-2">
+          <div className="flex items-center justify-between gap-3">
+            <h1 className="text-[22px] font-semibold leading-tight" style={{ color: 'var(--text-primary)' }}>
+              网页托管
+            </h1>
+            <div data-tour-id="webpages-header-actions" className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                data-tour-id="webpages-stats-btn"
+                onClick={() => setShowAnalytics(true)}
+                title="分享统计"
+                aria-label="分享统计"
+                className="h-9 w-9 inline-flex items-center justify-center rounded-[10px] border border-white/10 bg-white/[0.04]"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                <BarChart3 size={16} />
+              </button>
+              <button
+                type="button"
+                data-tour-id="webpages-share-mgmt-btn"
+                onClick={() => { setShareTargetId(null); setShowSharesPanel(true); }}
+                title="分享管理"
+                aria-label="分享管理"
+                className="h-9 w-9 inline-flex items-center justify-center rounded-[10px] border border-white/10 bg-white/[0.04]"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                <Link2 size={16} />
+              </button>
+              {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
+                <Button data-tour-id="webpages-upload-primary" size="sm" variant="primary" onClick={openCreateUploadDialog}>
+                  <Upload size={14} className="mr-1" /> 上传站点
+                </Button>
+              )}
+            </div>
           </div>
-        }
-      />
+        </div>
+      ) : (
+        <PageHeader
+          title="网页托管"
+          actions={
+            <div data-tour-id="webpages-header-actions" className="flex items-center gap-1.5">
+              <button
+                type="button"
+                data-tour-id="webpages-stats-btn"
+                onClick={() => setShowAnalytics(true)}
+                title="分享统计（PV/IP/时间线）"
+                aria-label="分享统计"
+                className="h-8 w-8 inline-flex items-center justify-center rounded-md transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.06))]"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                <BarChart3 size={15} />
+              </button>
+              <button
+                type="button"
+                data-tour-id="webpages-share-mgmt-btn"
+                onClick={() => { setShareTargetId(null); setShowSharesPanel(true); }}
+                title="分享管理"
+                aria-label="分享管理"
+                className="h-8 w-8 inline-flex items-center justify-center rounded-md transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.06))]"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                <Link2 size={15} />
+              </button>
+              <span className="mx-1 h-5 w-px" style={{ background: 'var(--border-default)' }} />
+              {currentSpace.kind === 'team' && canEditInWebHosting(myWebHostingRole) && (
+                <Button size="sm" variant="secondary" title="把个人空间的网页复制一份进当前团队（原网页不受影响）" onClick={() => setShowCopyFromPersonal(true)}>
+                  <FolderInput size={14} className="mr-1" /> 从个人空间添加
+                </Button>
+              )}
+              {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
+                <Button data-tour-id="webpages-upload-primary" size="sm" variant="primary" onClick={openCreateUploadDialog}>
+                  <Upload size={14} className="mr-1" /> 上传站点
+                </Button>
+              )}
+            </div>
+          }
+        />
+      )}
 
       {/* Toolbar */}
-      <GlassCard className="p-3">
+      <div className="flex flex-col gap-3">
         {/* 顶部：空间切换器（个人空间 / 团队空间）。搜索行紧随其后，切换空间时搜索框位置稳定 */}
-        <SpaceBar current={currentSpace} onChange={enterSpace} />
+        <div className="surface-nav-bar shrink-0" style={{ overflow: 'visible' }}>
+          <SpaceBar current={currentSpace} onChange={enterSpace} />
+        </div>
 
         {/* 第二行：搜索 / 视图 */}
-        <div className="flex flex-wrap items-center gap-3 mt-3">
+        <div
+          className={isMobile
+            ? 'px-3 flex items-center gap-2 flex-nowrap overflow-x-auto pb-1'
+            : 'surface-nav-bar flex flex-wrap items-center gap-3'}
+          style={isMobile ? { scrollbarWidth: 'none' } : { overflow: 'visible' }}
+        >
           {/* Search */}
-          <div className="relative flex-1 min-w-[200px]">
+          <div className={isMobile ? 'relative shrink-0 w-[260px]' : 'relative flex-1 min-w-[200px]'}>
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
             <input
               type="text"
@@ -954,7 +1003,7 @@ export default function WebPagesPage() {
           </div>
 
           {/* Card size */}
-          <div data-tour-id="webpages-card-size-pills" title="调整网页卡片大小，刷新后保持">
+          <div data-tour-id="webpages-card-size-pills" className="shrink-0" title="调整网页卡片大小，刷新后保持">
             <SegmentPills
               options={CARD_SIZE_OPTIONS.map(({ value, label }) => ({ value, label }))}
               value={cardSize}
@@ -963,7 +1012,7 @@ export default function WebPagesPage() {
           </div>
 
           {/* 排序 segment pill group：当前项 pill 高亮，点击任意切到那个 */}
-          <div data-tour-id="webpages-sort-pills">
+          <div data-tour-id="webpages-sort-pills" className="shrink-0">
             <SegmentPills
               options={SORT_OPTIONS}
               value={sort}
@@ -972,7 +1021,7 @@ export default function WebPagesPage() {
           </div>
 
           {/* 分组 segment pill group：二选一（团队空间按专题/分类切分节，个人空间按文件夹） */}
-          <div data-tour-id="webpages-group-pills">
+          <div data-tour-id="webpages-group-pills" className="shrink-0">
             <SegmentPills
               options={[
                 { value: 'time', label: '日期' },
@@ -984,7 +1033,7 @@ export default function WebPagesPage() {
           </div>
 
           {/* View mode */}
-          <div data-tour-id="webpages-view-toggle" className="flex items-center rounded-lg overflow-hidden" style={{ border: '1px solid var(--border-default)' }}>
+          <div data-tour-id="webpages-view-toggle" className="flex items-center rounded-lg overflow-hidden shrink-0" style={{ border: '1px solid var(--border-default)' }}>
             <button
               onClick={() => setViewMode('grid')}
               className="p-2 transition-colors"
@@ -1006,7 +1055,7 @@ export default function WebPagesPage() {
             个人空间 = 文件夹 chips（站点 folder 字段派生）；
             团队空间 = 左侧分组树导航（见下方 TeamGroupsTree，锚点随之移动，同一时刻 DOM 里只有一个）。 */}
         {currentSpace.kind !== 'team' && (
-        <div data-tour-id="webpages-folders" className="mt-3">
+        <div data-tour-id="webpages-folders" className="surface-nav-bar">
           {spaceFolders.length > 0 ? (
             <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5" style={{ overscrollBehavior: 'contain' }}>
               <button type="button" onClick={() => setActiveFolder(null)} className="h-7 px-2.5 rounded-full text-[12px] shrink-0"
@@ -1031,12 +1080,14 @@ export default function WebPagesPage() {
 
         {/* 团队空间协作头部：放最下方，出现/消失不顶动上方搜索框（切换统一性） */}
         {currentSpace.kind === 'team' && (
-          <TeamSpaceHeader teamId={currentSpace.teamId} myWebHostingRole={myWebHostingRole} />
+          <div className="surface-nav-bar" style={{ overflow: 'visible' }}>
+            <TeamSpaceHeader teamId={currentSpace.teamId} myWebHostingRole={myWebHostingRole} />
+          </div>
         )}
 
         {/* Tags */}
         {tags.length > 0 && (
-          <div className="flex flex-wrap gap-2 mt-3 pt-3" style={{ borderTop: '1px solid var(--border-default)' }}>
+          <div className="surface-nav-bar flex flex-wrap gap-2" style={{ overflow: 'visible' }}>
             <button
               onClick={() => setActiveTag(null)}
               className="px-2 py-0.5 rounded-full text-xs transition-colors"
@@ -1065,7 +1116,7 @@ export default function WebPagesPage() {
 
         {/* Batch actions */}
         {selectedIds.size > 0 && (
-          <div className="flex items-center gap-2 mt-3 pt-3" style={{ borderTop: '1px solid var(--border-default)' }}>
+          <div className="surface-nav-bar flex items-center gap-2" style={{ overflow: 'visible' }}>
             <span className="text-sm" style={{ color: 'var(--text-muted)' }}>已选 {selectedIds.size} 项</span>
             {/* 团队作用域按角色门控批量操作；个人作用域全开（站点都是自己的）。后端是最终权威。 */}
             {(teamScope.scope !== 'team' || canShareInWebHosting(myWebHostingRole)) && (
@@ -1104,7 +1155,7 @@ export default function WebPagesPage() {
             <Button size="xs" variant="ghost" onClick={() => setSelectedIds(new Set())}>取消选择</Button>
           </div>
         )}
-      </GlassCard>
+      </div>
 
       {/* Stats */}
       <div className="flex items-center gap-4 text-sm" style={{ color: 'var(--text-muted)' }}>

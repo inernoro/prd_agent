@@ -2536,9 +2536,9 @@ export function DocumentStorePage() {
         <div
           data-tour-id="library-toolbar"
           className={isMobile
-            ? 'surface-nav-bar flex items-center gap-2 flex-nowrap overflow-x-auto'
+            ? 'px-5 flex items-center gap-2 flex-nowrap overflow-x-auto pb-1'
             : 'surface-nav-bar flex items-center gap-2 flex-wrap'}
-          style={isMobile ? { scrollbarWidth: 'none', overflowX: 'auto', overflowY: 'visible' } : { overflow: 'visible' }}
+          style={isMobile ? { scrollbarWidth: 'none' } : { overflow: 'visible' }}
         >
           {tab === 'team' && (
             <TeamScopeBar
@@ -2778,6 +2778,8 @@ export function DocumentStorePage() {
           {isMobile && tab === 'mine' && (
             <MobileOverflowMenu
               title="知识库操作"
+              triggerLabel=""
+              className="h-8 w-8 rounded-[8px] text-[12px] flex items-center justify-center transition-colors active:opacity-70 border border-white/12 text-token-muted"
               items={[
                 { key: 'stats', label: '访客统计', icon: BarChart3, onClick: () => setShowAccountViewers(true) },
                 { key: 'send', label: '发送到 / 同步到其他节点', icon: Send, onClick: () => setShowSendToPeer(true) },
