@@ -37,7 +37,14 @@ describe('docker network reclaim', () => {
       return { stdout: 'network-id', stderr: '', exitCode: 0 };
     });
     shell.addResponsePattern(/docker network ls --format '\{\{\.Name\}\}'/, () => ({
-      stdout: ['cds-br-empty', 'cds-br-stopped', 'cds-br-running', 'cds-proj-prd-agent'].join('\n'),
+      stdout: [
+        'cds-br-empty',
+        'cds-br-stopped',
+        'cds-br-running',
+        'cds-proj-empty',
+        'cds-proj-busy',
+        'cds-proj-prd-agent',
+      ].join('\n'),
       stderr: '',
       exitCode: 0,
     }));
@@ -53,6 +60,16 @@ describe('docker network reclaim', () => {
     }));
     shell.addResponsePattern(/docker network inspect --format='\{\{json \.Containers\}\}' 'cds-br-running'/, () => ({
       stdout: JSON.stringify({ runningcid: { Name: 'running' } }),
+      stderr: '',
+      exitCode: 0,
+    }));
+    shell.addResponsePattern(/docker network inspect --format='\{\{json \.Containers\}\}' 'cds-proj-empty'/, () => ({
+      stdout: '{}',
+      stderr: '',
+      exitCode: 0,
+    }));
+    shell.addResponsePattern(/docker network inspect --format='\{\{json \.Containers\}\}' 'cds-proj-busy'/, () => ({
+      stdout: JSON.stringify({ projectcid: { Name: 'project-busy' } }),
       stderr: '',
       exitCode: 0,
     }));
@@ -73,6 +90,7 @@ describe('docker network reclaim', () => {
     }));
     shell.addResponsePattern(/docker network rm 'cds-br-empty'/, () => ({ stdout: 'cds-br-empty', stderr: '', exitCode: 0 }));
     shell.addResponsePattern(/docker network rm 'cds-br-stopped'/, () => ({ stdout: 'cds-br-stopped', stderr: '', exitCode: 0 }));
+    shell.addResponsePattern(/docker network rm 'cds-proj-empty'/, () => ({ stdout: 'cds-proj-empty', stderr: '', exitCode: 0 }));
 
     await ensureDockerNetworkWithReclaim(shell, 'cds-proj-prd-agent');
 
@@ -81,13 +99,15 @@ describe('docker network reclaim', () => {
     expect(shell.commands.some((cmd) => cmd.includes("docker network disconnect -f 'cds-br-stopped' 'stoppedcid'"))).toBe(true);
     expect(shell.commands.some((cmd) => cmd.includes("docker network rm 'cds-br-stopped'"))).toBe(true);
     expect(shell.commands.some((cmd) => cmd.includes("docker network rm 'cds-br-running'"))).toBe(false);
+    expect(shell.commands.some((cmd) => cmd.includes("docker network rm 'cds-proj-empty'"))).toBe(true);
+    expect(shell.commands.some((cmd) => cmd.includes("docker network rm 'cds-proj-busy'"))).toBe(false);
     expect(shell.commands.some((cmd) => cmd.includes('docker network rm cds-proj-prd-agent'))).toBe(false);
   });
 
-  it('reports cleanup counts for empty and stopped-only branch networks', async () => {
+  it('reports cleanup counts for empty and stopped-only CDS networks', async () => {
     const shell = new MockShellExecutor();
     shell.addResponsePattern(/docker network ls --format '\{\{\.Name\}\}'/, () => ({
-      stdout: ['bridge', 'cds-br-empty', 'cds-br-stopped', 'cds-br-running'].join('\n'),
+      stdout: ['bridge', 'cds-br-empty', 'cds-br-stopped', 'cds-br-running', 'cds-proj-empty', 'cds-proj-busy'].join('\n'),
       stderr: '',
       exitCode: 0,
     }));
@@ -103,6 +123,16 @@ describe('docker network reclaim', () => {
     }));
     shell.addResponsePattern(/docker network inspect --format='\{\{json \.Containers\}\}' 'cds-br-running'/, () => ({
       stdout: JSON.stringify({ runningcid: { Name: 'running' } }),
+      stderr: '',
+      exitCode: 0,
+    }));
+    shell.addResponsePattern(/docker network inspect --format='\{\{json \.Containers\}\}' 'cds-proj-empty'/, () => ({
+      stdout: '{}',
+      stderr: '',
+      exitCode: 0,
+    }));
+    shell.addResponsePattern(/docker network inspect --format='\{\{json \.Containers\}\}' 'cds-proj-busy'/, () => ({
+      stdout: JSON.stringify({ projectcid: { Name: 'project-busy' } }),
       stderr: '',
       exitCode: 0,
     }));
@@ -123,11 +153,13 @@ describe('docker network reclaim', () => {
     }));
     shell.addResponsePattern(/docker network rm 'cds-br-empty'/, () => ({ stdout: 'cds-br-empty', stderr: '', exitCode: 0 }));
     shell.addResponsePattern(/docker network rm 'cds-br-stopped'/, () => ({ stdout: 'cds-br-stopped', stderr: '', exitCode: 0 }));
+    shell.addResponsePattern(/docker network rm 'cds-proj-empty'/, () => ({ stdout: 'cds-proj-empty', stderr: '', exitCode: 0 }));
 
     await expect(cleanupUnusedBranchNetworks(shell)).resolves.toEqual({
-      inspected: 3,
-      removed: 2,
+      inspected: 5,
+      removed: 3,
       detached: 1,
     });
+    expect(shell.commands.some((cmd) => cmd.includes("docker network rm 'cds-proj-busy'"))).toBe(false);
   });
 });
