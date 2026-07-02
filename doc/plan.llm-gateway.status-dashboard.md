@@ -37,7 +37,7 @@
 | 调用去老路 | 绕过网关的直连数（`GatewayDirectClientRatchetTests`） | 0（A 类） | A 类 8（Program.cs 6 + ModelDomainService 2）+ B 类 6（有意对照评测） | partial |
 | 配置面迁移 | 网关控制台有模型/平台/池配置端点 | 100% | 0（`prd-llmgw` 只有 auth+logs） | not-started |
 | 影子证据 | `llmshadow_comparisons` 样本量 / allMatch | 样本 ≥阈值 且 diff ≤阈值 | 样本 n=1（首条 allMatch） | partial（严重不足，建议攒 7-14 天） |
-| serving 密钥 | serving 容器能解密真实平台密文、无 401 | 无解密失败 | **待核**（见 §3.B，serving 侧原本无自检 Worker） | 修复中 |
+| serving 密钥 | serving 容器能解密真实平台密文、无 401 | 无解密失败 | **真机取证：所有真实平台可解密，仅 1 个 dev-stub 解不出（预期）** | done（已加 serving 自检 + stub 分类） |
 | 双出口 HTTPS | 网关命名子域走 HTTPS | 2 个 HTTPS | 1 HTTPS + 3 HTTP | 修复已提交（激活见 §3.A） |
 | 回归 | 全量测试 + navCoverage | 全绿 | 后端 shadow 单测 1326 passed | done |
 
@@ -55,9 +55,8 @@
 ### B. ApiKeyCrypto「Stub 开发桩」解密失败（痛点 5 关键 bug）
 - **根因**：`cds-compose.yml` 的 `llmgw-serve` 没像生产 `docker-compose.yml` 那样从**同一份 env 锚点**显式注入 `ApiKeyCrypto__Secret` + `LegacySecrets`，退化成依赖全局占位符（`TODO`）。serving 的密钥回退链落到硬编码 stub `DefaultEncryptionKey32Bytes!!!!` → 解不出真实平台密文。api 因对 `Jwt:Secret` fail-closed + 钥环含 `Jwt:Secret` 兜底，能解出，故只有 serving 受影响。
 - **重要澄清（避免误修）**：那条 `[PlatformKeyIntegrity]` 告警**只在 api 侧注册**、报的是共享 Mongo 上「**1 个** Stub 开发桩平台」的全局告警。而且：占位符 `ApiKeyCrypto__Secret`（`TODO`）只有 24 字节 < 32，若 llmgw-serve 真拿的是它、api 也会拿它、api 早该在启动时抛异常——api 正常运行，说明**真实密钥已 pin 成 CDS 项目变量**、经全局 `x-cds-env` 注入**所有**容器（含 llmgw-serve）。故极可能 serving **能**解密真实平台，那条告警只是**一个有意的 dev-stub 平台**的良性噪音。
-- **修复策略（证据优先，不盲改 compose 冒险 break api）**：
-  - **已做**：serving `Program.cs` 补 `ServingKeyIntegrityCheck`（只读、仅告警、不重加密），把「serving 到底能不能解密」从盲区变成容器日志里一眼可见的 `[ServingKeyIntegrity]` 行。
-  - **待部署后定论**：读 llmgw-serve 日志——若报 `OK：可解密全部 N 个启用平台` → 无真 bug，那条 api 侧告警是单 stub 良性噪音，收工；若报真实平台解不出 → 再按证据把 `ApiKeyCrypto__LegacySecrets`（旧钥）pin 成 CDS 项目变量（不动 compose 结构、不用 `${...}` 服务级插值，规避 `:-default` 空插值打坏 api 的坑）。
+- **已定论（2026-07-02 真机取证）**：给 serving 补 `ServingKeyIntegrityCheck` 后读 llmgw-serve 日志——只有 **1 个「Stub 开发桩」**解不出，**所有真实平台密文 serving 都能解密**。所以**没有真 serving 解密 bug**，你截图里那条吓人的 `[PlatformKeyIntegrity]` Error 是**单个有意 dev-stub 平台**的良性噪音（api 侧全局告警）。→ **不改 cds-compose、不 pin 密钥**（避免 `${...}` 空插值打坏 api），因为根本不需要。
+- **顺带治「吓人的日志」**：api 侧 `PlatformKeyIntegrityWorker` + serving 侧 `ServingKeyIntegrityCheck` 都改成**把 dev-stub 与真实平台分类**——只有真实平台解不出才 `Error` + 推站内信；纯 stub 解不出降级为 `Info`「已跳过 N 个 dev-stub」，不再误报「模型池调用将全部失败」。容器日志从此干净，真故障仍会大声报。
 
 ### C. 腿 A 下一个硬前置：L1 GatewayTransport 日志标记
 - 未做，是翻 http 的**唯一硬 blocker**（翻后日志页分不清 inproc/http/shadow）。也顺带给控制台日志页加「走了哪条路」列。

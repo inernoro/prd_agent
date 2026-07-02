@@ -289,35 +289,47 @@ sealed class ServingKeyIntegrityCheck : BackgroundService
         }
     }
 
+    // 有意的 dev-stub 平台（如"Stub 开发桩"）的密文本就是占位、天然解不出，属预期噪音，不当作真故障告警。
+    private static bool IsStub(string? name)
+        => !string.IsNullOrWhiteSpace(name)
+        && (name!.Contains("开发桩") || name.Contains("stub", StringComparison.OrdinalIgnoreCase));
+
     private async Task CheckAsync(CancellationToken ct)
     {
-        var unreadable = new List<string>();
+        var real = new List<string>();     // 真实平台/模型/中继解不出 —— 需告警
+        var stubs = new List<string>();    // dev-stub 解不出 —— 预期，不告警
+
+        void Classify(string label, string? name)
+        {
+            if (IsStub(name)) stubs.Add(label);
+            else real.Add(label);
+        }
 
         var platforms = await _db.LLMPlatforms.Find(p => p.Enabled).ToListAsync(ct);
         var withKey = platforms.Where(p => !string.IsNullOrWhiteSpace(p.ApiKeyEncrypted)).ToList();
         foreach (var p in withKey)
-            if (!ApiKeyCryptoKeyRing.Decrypt(p.ApiKeyEncrypted, _cfg).Success) unreadable.Add(p.Name);
+            if (!ApiKeyCryptoKeyRing.Decrypt(p.ApiKeyEncrypted, _cfg).Success) Classify(p.Name, p.Name);
 
         var models = await _db.LLMModels.Find(m => m.Enabled).ToListAsync(ct);
         foreach (var m in models.Where(m => !string.IsNullOrWhiteSpace(m.ApiKeyEncrypted)))
-            if (!ApiKeyCryptoKeyRing.Decrypt(m.ApiKeyEncrypted, _cfg).Success) unreadable.Add($"模型:{m.Name}");
+            if (!ApiKeyCryptoKeyRing.Decrypt(m.ApiKeyEncrypted, _cfg).Success) Classify($"模型:{m.Name}", m.Name);
 
         var exchanges = await _db.ModelExchanges.Find(e => e.Enabled).ToListAsync(ct);
         foreach (var e in exchanges.Where(e => !string.IsNullOrWhiteSpace(e.TargetApiKeyEncrypted)))
-            if (!ApiKeyCryptoKeyRing.Decrypt(e.TargetApiKeyEncrypted, _cfg).Success) unreadable.Add($"中继:{e.Name}");
+            if (!ApiKeyCryptoKeyRing.Decrypt(e.TargetApiKeyEncrypted, _cfg).Success) Classify($"中继:{e.Name}", e.Name);
 
-        if (unreadable.Count == 0)
+        if (real.Count == 0)
         {
             _log.LogInformation(
-                "[ServingKeyIntegrity] OK：serving 用当前 ApiKeyCrypto 钥匙环可解密全部 {Total} 个启用平台密文，Mode=http 时模型池可正常烧额度。",
-                withKey.Count);
+                "[ServingKeyIntegrity] OK：serving 用当前 ApiKeyCrypto 钥匙环可解密全部真实平台密文（{Total} 个启用平台，跳过 {Stubs} 个 dev-stub），Mode=http 时模型池可正常烧额度。",
+                withKey.Count, stubs.Count);
             return;
         }
 
         _log.LogError(
-            "[ServingKeyIntegrity] serving 侧 {Count} 个平台/模型/中继 API key 无法解密：{Names}。" +
+            "[ServingKeyIntegrity] serving 侧 {Count} 个真实平台/模型/中继 API key 无法解密：{Names}。" +
             "说明 llmgw-serve 容器的 ApiKeyCrypto:Secret / LegacySecrets 与存量密文不匹配" +
             "（cds-compose 未把与 api 一致的密钥锚点注入 llmgw-serve）。经 serving 引擎(Mode=http)的模型池调用会以空凭据打上游 401。仅告警不阻断启动。",
-            unreadable.Count, string.Join("、", unreadable));
+            real.Count, string.Join("、", real));
     }
 }
