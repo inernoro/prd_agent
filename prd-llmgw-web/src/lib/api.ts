@@ -27,6 +27,9 @@ import type {
   PlatformsData,
   ModelsData,
   ShadowData,
+  ModelPool,
+  PlatformItem,
+  ModelItem,
 } from './types';
 
 const TOKEN_KEY = 'llmgw.token';
@@ -207,4 +210,15 @@ export function getModels(params?: { platformId?: string; enabled?: boolean }): 
 }
 export function getShadowComparisons(params?: { limit?: number; appCallerCode?: string }): Promise<ApiResponse<ShadowData>> {
   return apiRequest<ShadowData>('/shadow-comparisons', { query: { limit: params?.limit, appCallerCode: params?.appCallerCode } });
+}
+
+// ── 配置面（可写）——布尔开关，写入共享 Mongo 后 MAP 立即生效 ──
+export function setPlatformEnabled(id: string, enabled: boolean): Promise<ApiResponse<PlatformItem>> {
+  return apiRequest<PlatformItem>(`/platforms/${encodeURIComponent(id)}/enabled`, { method: 'PUT', body: { enabled } });
+}
+export function setModelEnabled(id: string, enabled: boolean): Promise<ApiResponse<ModelItem>> {
+  return apiRequest<ModelItem>(`/models/${encodeURIComponent(id)}/enabled`, { method: 'PUT', body: { enabled } });
+}
+export function setPoolDefault(id: string, isDefault: boolean): Promise<ApiResponse<ModelPool>> {
+  return apiRequest<ModelPool>(`/pools/${encodeURIComponent(id)}/default`, { method: 'PUT', body: { isDefault } });
 }

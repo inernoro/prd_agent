@@ -35,7 +35,7 @@
 |---|---|---|---|---|
 | 默认路径 | `LlmGateway:Mode`（`Program.cs:212` `?? "inproc"`） | `http` | `inproc` | partial（基建 done，未翻） |
 | 调用去老路 | 绕过网关的直连数（`GatewayDirectClientRatchetTests`） | 0（A 类） | A 类 8（Program.cs 6 + ModelDomainService 2）+ B 类 6（有意对照评测） | partial |
-| 配置面迁移 | 网关控制台能看/配模型池/平台/模型 | 100% | **只读已迁（B1：pools/platforms/models/shadow 只读页）**，可写待 B2 | partial |
+| 配置面迁移 | 网关控制台能看/配模型池/平台/模型 | 100% | **只读已迁（B1）+ 可写第一刀（B2：平台启用/停用、模型池默认互斥切换，写共享 Mongo，MAP 立即生效）**；重写操作（密钥轮换/增删平台）待续 | partial（可看可配布尔开关，重写待续） |
 | 影子证据 | `llmshadow_comparisons` 样本量 / allMatch | 样本 ≥阈值 且 diff ≤阈值 | 样本 n=1（首条 allMatch） | partial（严重不足，建议攒 7-14 天） |
 | serving 密钥 | serving 容器能解密真实平台密文、无 401 | 无解密失败 | **真机取证：所有真实平台可解密，仅 1 个 dev-stub 解不出（预期）** | done（已加 serving 自检 + stub 分类） |
 | 双出口 HTTPS | 网关命名子域走 HTTPS | 2 个 HTTPS | 1 HTTPS + 3 HTTP | 修复已提交（激活见 §3.A） |
@@ -98,7 +98,15 @@
 网关控制台不再只有日志。新增（只读、密钥只回 hasKey）：
 - 后端 `prd-llmgw`：`GET /gw/pools`（模型池 + 每模型健康 chip）、`/gw/platforms`、`/gw/models`、`/gw/shadow-comparisons`，复用 logs 同款 JWT（LogsRead）+ BsonDocument 安全映射。
 - 前端 `prd-llmgw-web`：`ConsoleLayout` 顶部导航（日志/模型池/平台/影子）+ 三个只读页。
-- **下一刀（B2）**：把只读升级为可配置（增删平台/模型、调池、调度权重），即真正「配置延伸到网关」。
+
+### B2 已落地（腿 B 第二刀：可配置 + 全面概览，2026-07-02 第二批）
+直击「无法配置」「只有一个日志」：
+- **可写配置（安全布尔开关，写共享 Mongo，MAP 侧调度立即生效）**：
+  - `PUT /gw/platforms/{id}/enabled` 平台启用/停用；`PUT /gw/models/{id}/enabled` 模型启用/停用；`PUT /gw/pools/{id}/default` 模型池设默认（同 ModelType 互斥，先清同类再置本池）。
+  - 新 `ConfigWrite` 授权策略（与 LogsRead 同门槛：已登录且非 mcp 首登态；独立命名便于将来收紧成读/写角色）。**不碰密钥、不删数据**——密钥轮换/增删平台等重写留后续（有现网 blast radius，需二次确认+审计）。
+  - 前端：平台页每行「启用/停用」按钮 + toast；模型池卡「设为默认」按钮 + 同类型互斥即时反映。
+- **全面概览页（`prd-llmgw-web` 新首页 `/`）**：一屏聚合 ① 配置计数（平台启用/总、池数/默认池、模型启用/总、影子样本+一致率）② **容器拓扑**（7 容器各标职责/出口，治「多只脚」认知落差）③ 快速入口。日志页移到 `/logs`，导航加「概览」。
+- **下一刀**：密钥轮换 / 增删平台/模型 / 调度权重编辑（重写操作，需现网知情 + 二次确认 + 审计日志）。
 
 ### A1 调研结论（几乎完工，剩小尾巴）
 GatewayTransport 后端打标**已在早前分支合入**（`LlmRequestLog.GatewayTransport` + `GatewayTransports{Inproc,Http,Shadow,Direct}` 常量 + 各日志构建点按来源打标，shadow 误标风险已规避）。**唯一硬缺口**：`LlmLogsController` 列表投影两处没带 `GatewayTransport`（detail 已带），故日志页列表/筛选看不到。补法（P1，小改）：列表投影补 `x.GatewayTransport` + 前端加列/筛选 + 新建 `transportRegistry.ts`。属 prd-admin + prd-api 小改，未做，作下一增量。
@@ -121,7 +129,7 @@ GatewayTransport 后端打标**已在早前分支合入**（`LlmRequestLog.Gatew
 |---|---|---|
 | **翻 `Mode=http` + 删 inproc（终态）** | 按本项目 `extraction-readiness-gate` 规则，翻转要 gate 全绿：影子证据攒够（7-14 天）+ 全量回归 + 用户拍板。当前影子样本 n=1。 | 影子攒证据 + gate 全绿 + **你拍板** |
 | **A2 收口 8 处直连** | 碰 LLM 热路径，硬收会静默截断 max_tokens / 静默换模型（#971 血泪）。需先给网关建 X1/X2 两个入口 + 评审。 | 先建网关 X1/X2 入口，再逐处灰度收口 + 评审 |
-| **B2 可写配置面** | 网关控制台写配置 = 写**共享 Mongo 的 live 配置**，即时影响 MAP 现网模型选择（跨分支共享库）。连测试都有现网 blast radius。 | 需你知情同意「控制台写即改现网」后再建（建议加二次确认 + 审计日志） |
+| **B2 可写配置面（重写部分）** | 密钥轮换/增删平台/模型 = 写**共享 Mongo 的 live 配置**，即时影响 MAP 现网模型选择（跨分支共享库）。连测试都有现网 blast radius。**注：安全的布尔开关（平台/模型启用、池默认）已在本轮落地**，仅重写操作待续。 | 需你知情同意「控制台写即改现网」后再建（建议加二次确认 + 审计日志） |
 
 一句话：**能安全自动做的都做完了；剩下的三项要么等时间/证据（http 翻转），要么碰热路径需评审（A2 收口），要么会动现网需你知情（B2 可写）——这些是「需要你在环」的推进，不是我该闷头硬干的。**
 
@@ -143,6 +151,8 @@ GatewayTransport 后端打标**已在早前分支合入**（`LlmRequestLog.Gatew
 - serving 密钥自检真机日志：`[ServingKeyIntegrity] OK：可解密全部真实平台密文（2 个启用平台，跳过 1 个 dev-stub）`。
 - B1 配置面真机验证（2026-07-02，登录后 curl）：`/gw/pools`=20 池、`/gw/models`=12、`/gw/platforms`=2；**密钥防泄漏断言通过**——`/gw/platforms` 与 `/gw/models` 响应体不含 apiKey/Encrypted、只含 `hasKey`；无 token → 401。控制台导航「日志 / 模型池 / 平台 / 影子比对」四页可切。
 - **像素级视觉验收**：本轮受沙箱↔代理↔headless chromium 限制未截到图（`ERR_CONNECTION_CLOSED`，环境限制非应用问题）；已按 `real-visual-acceptance.md` 立规，后续在浏览器可达预览的环境（`/验收` harness）补像素取证。
+- **B2 可写配置面 + 概览页（2026-07-02 第二批）**：`prd-llmgw` 新增 3 个 `ConfigWrite` PUT 端点（platforms/models enabled、pools default）；`prd-llmgw-web` 新增概览首页（拓扑 + 计数）+ 平台/模型池就地切换按钮。后端无本地 SDK，走 CDS 远端编译验证（`cds-first-verification`）；前端 `pnpm tsc --noEmit` 通过。
+- **CDS Mongo Console 开放受控写（痛点「cds 无法操作」）**：`cds/src/routes/branches.ts` 的 `/data/mongo/command` 端点从「只读 find」升级为「只读 + 受控写」——放行 insertOne/updateOne/updateMany/deleteOne/deleteMany/replaceOne 等定点写（需 `data-write` 权限），删库/删集合/索引/eval/runCommand/跨库/`$where`/aggregate 写出等高危操作**一律 400 拦截**。`cds/tests/routes/resource-db-access.test.ts` 20 tests 全绿（含新的 write 200 + drop 拦截断言）。**激活**：属 CDS 平台代码，需合 main → 生产 CDS 自更新才在生产面板生效。
 - A1（transport 可见性）：代码已部署（healthz=本轮 commit）、前后端 tsc 干净、DTO 以 `Never` 忽略策略序列化故 `transport` 字段必然出现（历史日志值为 null → 前端 chip 隐藏，属预期）。**本轮未能登录控制台做字段活取证**——见下「已知问题」。
 
 ## 7. 已知问题（诚实登记，需后续处理）

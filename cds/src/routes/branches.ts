@@ -5849,7 +5849,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return text;
   }
 
-  function normalizeMongoFindCommand(commandInput: unknown): { collection: string; script: string } {
+  // 只读动词（安全，无需 data-write 权限）
+  const MONGO_READ_VERBS = new Set(['find', 'findOne', 'countDocuments', 'estimatedDocumentCount', 'distinct']);
+  // 受控写动词（需 data-write 权限；均为定点写，非删库删集合类灾难操作）
+  const MONGO_WRITE_VERBS = new Set([
+    'insertOne', 'insertMany',
+    'updateOne', 'updateMany', 'replaceOne',
+    'deleteOne', 'deleteMany',
+    'findOneAndUpdate', 'findOneAndReplace', 'findOneAndDelete',
+    'bulkWrite',
+  ]);
+
+  // 解析 Mongo Console 命令：只读 find 免权限，受控写需 data-write，灾难操作一律禁止。
+  function normalizeMongoConsoleCommand(commandInput: unknown): { collection: string; verb: string; isWrite: boolean; script: string } {
     const command = String(commandInput || '').trim();
     if (!command) throw new Error('MongoDB 命令不能为空');
     if (command.length > 20_000) throw new Error('MongoDB 命令过长（上限 20KB）');
@@ -5857,29 +5869,43 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (withoutTrailing.includes(';')) {
       throw new Error('MongoDB Console 一次只允许执行一条命令');
     }
-    if (/\b(insert|insertOne|insertMany|update|updateOne|updateMany|delete|deleteOne|deleteMany|drop|dropDatabase|dropCollection|create|createCollection|aggregate|mapReduce|eval|runCommand|adminCommand|getSiblingDB|copyDatabase|shutdownServer)\b/i.test(withoutTrailing) || /\$where/i.test(withoutTrailing)) {
-      throw new Error('MongoDB Console 当前只允许只读 find 查询');
+    // 始终禁止：删库/删集合/索引重建/跨库/服务器级命令/任意 JS/聚合写出
+    if (
+      /\b(dropDatabase|dropCollection|dropIndex|dropIndexes|createCollection|renameCollection|createIndex|reIndex|eval|mapReduce|runCommand|adminCommand|getSiblingDB|copyDatabase|shutdownServer|drop)\b/i.test(withoutTrailing)
+      || /\$where/i.test(withoutTrailing)
+      || /\$out\b|\$merge\b/i.test(withoutTrailing)
+    ) {
+      throw new Error('MongoDB Console 禁止删库/删集合/索引/跨库/服务器级/eval/aggregate 写出等高危操作');
     }
 
-    const getCollectionMatch = withoutTrailing.match(/^db\.getCollection\((["'])([^"'\r\n]{1,120})\1\)\.find\s*\(/);
-    const dotCollectionMatch = withoutTrailing.match(/^db\.([a-zA-Z0-9_$-]{1,120})\.find\s*\(/);
+    const getCollectionMatch = withoutTrailing.match(/^db\.getCollection\((["'])([^"'\r\n]{1,120})\1\)\.([a-zA-Z]+)\s*\(/);
+    const dotCollectionMatch = withoutTrailing.match(/^db\.([a-zA-Z0-9_$-]{1,120})\.([a-zA-Z]+)\s*\(/);
     const collection = getCollectionMatch?.[2] || dotCollectionMatch?.[1] || '';
-    if (!collection) {
-      throw new Error('MongoDB Console 当前只支持 db.getCollection("collection").find(...) 或 db.collection.find(...)');
+    const verb = getCollectionMatch?.[3] || dotCollectionMatch?.[2] || '';
+    if (!collection || !verb) {
+      throw new Error('MongoDB Console 仅支持 db.getCollection("collection").<op>(...) 或 db.collection.<op>(...)');
     }
     mongoCollectionFromRequest(collection);
-    if (!/\.limit\s*\(\s*\d{1,3}\s*\)\s*$/.test(withoutTrailing)) {
-      throw new Error('MongoDB find 查询必须显式追加 limit(1-100)');
-    }
-    const limitRaw = Number(withoutTrailing.match(/\.limit\s*\(\s*(\d{1,3})\s*\)\s*$/)?.[1] || 0);
-    if (!Number.isFinite(limitRaw) || limitRaw < 1 || limitRaw > 100) {
-      throw new Error('MongoDB limit 必须在 1-100 之间');
+
+    const isWrite = MONGO_WRITE_VERBS.has(verb);
+    const isRead = MONGO_READ_VERBS.has(verb);
+    if (!isWrite && !isRead) {
+      throw new Error(`MongoDB Console 不支持操作 "${verb}"，仅允许 ${[...MONGO_READ_VERBS, ...MONGO_WRITE_VERBS].join(' / ')}`);
     }
 
-    return {
-      collection,
-      script: `JSON.stringify((${withoutTrailing}).toArray())`,
-    };
+    if (verb === 'find') {
+      if (!/\.limit\s*\(\s*\d{1,3}\s*\)\s*$/.test(withoutTrailing)) {
+        throw new Error('MongoDB find 查询必须显式追加 limit(1-100)');
+      }
+      const limitRaw = Number(withoutTrailing.match(/\.limit\s*\(\s*(\d{1,3})\s*\)\s*$/)?.[1] || 0);
+      if (!Number.isFinite(limitRaw) || limitRaw < 1 || limitRaw > 100) {
+        throw new Error('MongoDB limit 必须在 1-100 之间');
+      }
+      return { collection, verb, isWrite: false, script: `JSON.stringify((${withoutTrailing}).toArray())` };
+    }
+
+    // findOne/countDocuments/distinct 与所有受控写：返回值可直接 JSON 序列化
+    return { collection, verb, isWrite, script: `JSON.stringify((${withoutTrailing}))` };
   }
 
   async function runRedisCli(service: InfraService, args: string[], timeoutMs = 15_000): Promise<string> {
@@ -8446,16 +8472,34 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const ctx = await resolveMongoDataResourceForRequest(req, res);
     if (!ctx) return;
     let database = '';
-    let command: { collection: string; script: string };
+    let command: { collection: string; verb: string; isWrite: boolean; script: string };
     try {
       database = mongoDatabaseFromRequest(req.body?.database, mongoDatabaseForBranch(ctx.service, ctx.branch));
-      command = normalizeMongoFindCommand(req.body?.command);
+      command = normalizeMongoConsoleCommand(req.body?.command);
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
       return;
     }
+    // 受控写操作需 data-write 权限（灾难操作已在解析阶段拦截）
+    if (command.isWrite) {
+      const resources = await getBranchResourceSnapshot(ctx.branch);
+      const resource = resources.find((item) => item.id === ctx.resourceId);
+      if (!resource) {
+        res.status(404).json({ error: `资源 "${ctx.resourceId}" 不存在` });
+        return;
+      }
+      if (!requireResourcePermission(req, res, 'data-write', ctx.branch, resource)) return;
+    }
     try {
       const data = await runMongoJson(ctx.service, ctx.branch, command.script, database);
+      if (command.isWrite) {
+        stateService.recordDestructiveOp({
+          type: 'purge-database',
+          projectId: ctx.projectId,
+          summary: `对 ${ctx.resourceName} 执行 MongoDB Console 写入 ${command.verb}：${database}.${command.collection}`,
+          triggeredBy: resolveActorFromRequest(req),
+        });
+      }
       stateService.appendActivityLog(ctx.projectId, {
         type: 'resource-data-query',
         branchId: ctx.branch.id,
@@ -8464,16 +8508,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
         resourceId: ctx.resourceId,
         resourceName: ctx.resourceName,
         result: 'success',
-        note: `${ctx.resourceName} 执行 MongoDB find：${database}.${command.collection}`,
+        note: `${ctx.resourceName} 执行 MongoDB ${command.verb}：${database}.${command.collection}`,
       });
       stateService.save();
+      // 写操作返回单个结果文档；读操作返回文档数组
+      const documents = Array.isArray(data) ? data : data == null ? [] : [data];
       res.json({
         branchId: ctx.branch.id,
         resourceId: ctx.resourceId,
         database,
         collection: command.collection,
-        kind: 'documents',
-        documents: Array.isArray(data) ? data : [],
+        verb: command.verb,
+        isWrite: command.isWrite,
+        kind: command.isWrite ? 'write-result' : 'documents',
+        documents,
       });
     } catch (err) {
       stateService.appendActivityLog(ctx.projectId, {

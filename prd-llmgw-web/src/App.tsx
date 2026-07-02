@@ -5,6 +5,7 @@ import { AuthProvider, useAuth } from '@/lib/auth';
 import { ConsoleLayout } from '@/components/ConsoleLayout';
 import { LoginPage } from '@/pages/LoginPage';
 import { ChangePasswordPage } from '@/pages/ChangePasswordPage';
+import { OverviewPage } from '@/pages/OverviewPage';
 import { LogsPage } from '@/pages/LogsPage';
 import { ModelPoolsPage } from '@/pages/ModelPoolsPage';
 import { PlatformsPage } from '@/pages/PlatformsPage';
@@ -48,7 +49,8 @@ export function App() {
               </RequireAuth>
             }
           >
-            <Route path="/" element={<LogsPage />} />
+            <Route path="/" element={<OverviewPage />} />
+            <Route path="/logs" element={<LogsPage />} />
             <Route path="/pools" element={<ModelPoolsPage />} />
             <Route path="/platforms" element={<PlatformsPage />} />
             <Route path="/shadow" element={<ShadowPage />} />

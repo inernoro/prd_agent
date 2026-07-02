@@ -175,6 +175,10 @@ public sealed class SessionsData
     public int PageSize { get; set; }
 }
 
+// ── 配置写请求（网关配置面第二刀，可写）──
+public sealed class ToggleEnabledRequest { public bool Enabled { get; set; } }
+public sealed class ToggleDefaultRequest { public bool IsDefault { get; set; } }
+
 // ── 模型池（只读，网关配置面第一刀）──
 public sealed class PoolsData { public List<PoolItem> Items { get; set; } = new(); public long Total { get; set; } }
 public sealed class PoolItem

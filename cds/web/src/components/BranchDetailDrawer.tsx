@@ -3935,7 +3935,7 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
     if (!basePath || !selectedDatabase || !command.trim()) return;
     setCommandState({ status: 'loading', documents: [] });
     try {
-      const res = await apiRequest<{ kind: 'documents' | 'output'; documents?: unknown[]; output?: unknown; collection?: string }>(`${basePath}/command`, {
+      const res = await apiRequest<{ kind: 'documents' | 'output' | 'write-result'; documents?: unknown[]; output?: unknown; collection?: string; isWrite?: boolean; verb?: string }>(`${basePath}/command`, {
         method: 'POST',
         body: {
           database: selectedDatabase,
@@ -3944,10 +3944,20 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
         },
       });
       if (res.collection) setSelectedCollection(res.collection);
-      setCommandState({ status: 'ok', documents: res.documents || [], output: res.output });
-      setResultMode(res.kind === 'documents' ? 'table' : 'output');
-      setSelectedDocumentIndex(0);
-      if (res.kind === 'output') void loadCollections(selectedDatabase, res.collection || selectedCollection);
+      if (res.kind === 'write-result' || res.isWrite) {
+        // 写操作：把返回结果（matchedCount/modifiedCount/insertedId 等）放到 output 面板，
+        // 再刷新该 collection 文档，让用户立刻看到写入效果。
+        const writeResult = Array.isArray(res.documents) ? res.documents[0] : res.documents;
+        setCommandState({ status: 'ok', documents: [], output: writeResult ?? { ok: 1, verb: res.verb } });
+        setResultMode('output');
+        setSelectedDocumentIndex(0);
+        void loadDocuments(selectedDatabase, res.collection || selectedCollection);
+      } else {
+        setCommandState({ status: 'ok', documents: res.documents || [], output: res.output });
+        setResultMode(res.kind === 'documents' ? 'table' : 'output');
+        setSelectedDocumentIndex(0);
+        if (res.kind === 'output') void loadCollections(selectedDatabase, res.collection || selectedCollection);
+      }
     } catch (err) {
       setCommandState({ status: 'error', documents: [], message: err instanceof ApiError ? err.message : String(err) });
       setResultMode('output');
@@ -4082,6 +4092,10 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
                   minHeight={158}
                   placeholder="db.getCollection('users').find({}).limit(50);"
                 />
+                <div className="mt-2 text-[11px] leading-5 text-muted-foreground">
+                  支持只读（find/findOne/countDocuments/distinct）与定点写（insertOne/updateOne/updateMany/deleteOne/deleteMany/replaceOne 等，需写权限）。
+                  禁止删库/删集合/索引/eval/runCommand/跨库等高危操作。
+                </div>
               </div>
             </section>
 

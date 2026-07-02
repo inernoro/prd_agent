@@ -939,6 +939,11 @@ describe('resource database access', () => {
       stderr: '',
       exitCode: 0,
     }));
+    harness.shell.addResponsePattern(/updateMany/, () => ({
+      stdout: '{"acknowledged":true,"matchedCount":2,"modifiedCount":2}\n',
+      stderr: '',
+      exitCode: 0,
+    }));
     harness.shell.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     await new Promise<void>((resolve) => {
       server = harness.app.listen(0, '127.0.0.1', resolve);
@@ -950,19 +955,33 @@ describe('resource database access', () => {
       '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
       { database: 'orders', command: 'db.getCollection("users").find({}).limit(50);' },
     );
+    // 定点写：带写权限 → 200 + write-result
+    const write = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
+      { database: 'orders', command: 'db.getCollection("users").updateMany({ active: false }, { $set: { archived: true } });' },
+      { 'x-test-cookie-auth': '1' },
+    );
+    // 高危操作（drop）：无论权限一律 400 拦截
     const rejected = await request(
       server!,
       'POST',
       '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
-      { database: 'orders', command: 'db.getCollection("users").deleteMany({ active: false }).limit(50);' },
+      { database: 'orders', command: 'db.getCollection("users").drop();' },
+      { 'x-test-cookie-auth': '1' },
     );
 
     expect(ok.status).toBe(200);
     expect(ok.body.collection).toBe('users');
     expect(ok.body.kind).toBe('documents');
     expect(ok.body.documents).toEqual([{ _id: 'u1', name: 'Ann' }]);
+    expect(write.status).toBe(200);
+    expect(write.body.kind).toBe('write-result');
+    expect(write.body.isWrite).toBe(true);
+    expect(write.body.documents).toEqual([{ acknowledged: true, matchedCount: 2, modifiedCount: 2 }]);
     expect(rejected.status).toBe(400);
-    expect(rejected.body.error).toContain('只允许只读 find 查询');
+    expect(rejected.body.error).toContain('高危操作');
   });
 
   it('describes planned workbench capability for SQL Server and RabbitMQ resources', async () => {

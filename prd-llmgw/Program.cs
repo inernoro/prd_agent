@@ -94,6 +94,11 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("LogsRead", policy =>
         policy.RequireAuthenticatedUser()
             .RequireAssertion(ctx => !ctx.User.HasClaim(c => c.Type == "mcp" && c.Value == "1")));
+    // 配置写门：与 LogsRead 同门槛（已登录且非 mcp 首登态）。单管理员控制台，写与读同权；
+    // 独立命名便于将来收紧（如引入只读/可写角色）。写入直接落共享 Mongo，MAP 立即可见（跨部件配置同一份）。
+    options.AddPolicy("ConfigWrite", policy =>
+        policy.RequireAuthenticatedUser()
+            .RequireAssertion(ctx => !ctx.User.HasClaim(c => c.Type == "mcp" && c.Value == "1")));
 });
 
 // ── CORS：内部观测工具，放开来源/头/方法（前端经 nginx 跨源访问）──
@@ -420,6 +425,54 @@ app.MapGet("/gw/shadow-comparisons", async (int? limit, string? appCallerCode) =
     };
     return Json(ApiEnvelope<ShadowData>.Ok(data), jsonOptions);
 }).RequireAuthorization("LogsRead");
+
+// ─────────────── 网关配置面（可写，腿 B 第二刀）───────────────
+// 让控制台不只能看还能配置。当前开放最安全的布尔开关：平台/模型启用态、模型池默认标记。
+// 均为定点字段更新（不碰密钥、不删数据），写入共享 Mongo 后 MAP 侧模型调度立即生效（同一份配置）。
+// 密钥轮换 / 新建平台等更重的写操作后续再开。
+
+// 平台启用/停用
+app.MapPut("/gw/platforms/{id}/enabled", async (string id, ToggleEnabledRequest body) =>
+{
+    var filter = Builders<BsonDocument>.Filter.Eq("_id", id);
+    var doc = await platforms.Find(filter).FirstOrDefaultAsync();
+    if (doc is null) return Json(ApiEnvelope<PlatformItem>.Fail("NOT_FOUND", $"平台不存在：{id}"), jsonOptions, 404);
+    var update = Builders<BsonDocument>.Update.Set("Enabled", body.Enabled).Set("UpdatedAt", DateTime.UtcNow);
+    await platforms.UpdateOneAsync(filter, update);
+    var fresh = await platforms.Find(filter).FirstOrDefaultAsync();
+    return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(fresh)), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+// 模型启用/停用
+app.MapPut("/gw/models/{id}/enabled", async (string id, ToggleEnabledRequest body) =>
+{
+    var filter = Builders<BsonDocument>.Filter.Eq("_id", id);
+    var doc = await models.Find(filter).FirstOrDefaultAsync();
+    if (doc is null) return Json(ApiEnvelope<ModelItem>.Fail("NOT_FOUND", $"模型不存在：{id}"), jsonOptions, 404);
+    var update = Builders<BsonDocument>.Update.Set("Enabled", body.Enabled).Set("UpdatedAt", DateTime.UtcNow);
+    await models.UpdateOneAsync(filter, update);
+    var fresh = await models.Find(filter).FirstOrDefaultAsync();
+    return Json(ApiEnvelope<ModelItem>.Ok(MapModel(fresh)), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+// 模型池默认标记：同一 ModelType 下将该池设为默认（互斥：先清同类型其它池的 IsDefaultForType，再置本池）。
+app.MapPut("/gw/pools/{id}/default", async (string id, ToggleDefaultRequest body) =>
+{
+    var filter = Builders<BsonDocument>.Filter.Eq("_id", id);
+    var doc = await modelGroups.Find(filter).FirstOrDefaultAsync();
+    if (doc is null) return Json(ApiEnvelope<PoolItem>.Fail("NOT_FOUND", $"模型池不存在：{id}"), jsonOptions, 404);
+    var modelType = doc.GetStringOrEmpty("ModelType");
+    if (body.IsDefault)
+    {
+        // 互斥：同类型其它池清默认
+        var fb = Builders<BsonDocument>.Filter;
+        var others = fb.And(fb.Eq("ModelType", modelType), fb.Ne("_id", id));
+        await modelGroups.UpdateManyAsync(others, Builders<BsonDocument>.Update.Set("IsDefaultForType", false).Set("UpdatedAt", DateTime.UtcNow));
+    }
+    await modelGroups.UpdateOneAsync(filter, Builders<BsonDocument>.Update.Set("IsDefaultForType", body.IsDefault).Set("UpdatedAt", DateTime.UtcNow));
+    var fresh = await modelGroups.Find(filter).FirstOrDefaultAsync();
+    return Json(ApiEnvelope<PoolItem>.Ok(MapPool(fresh)), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
 
 app.Run();
 
