@@ -35,6 +35,7 @@ import {
   BarChart3,
   Send,
   MoreHorizontal,
+  SlidersHorizontal,
   Download,
   Pin,
   ClipboardCheck,
@@ -51,8 +52,8 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { useIsMobile } from '@/hooks/useBreakpoint';
-import { MobileOverflowMenu } from '@/components/mobile/MobileOverflowMenu';
 import { MobileFab } from '@/components/mobile/MobileFab';
+import { MobileBottomSheet } from '@/components/mobile/MobileBottomSheet';
 import { Button } from '@/components/design/Button';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { TeamScopeBar, type TeamScope } from '@/components/team/TeamScopeBar';
@@ -2242,6 +2243,7 @@ export function DocumentStorePage() {
   const [tagOpen, setTagOpen] = useState(false);
   const tagWrapRef = useRef<HTMLDivElement | null>(null);
   const [tagQuery, setTagQuery] = useState('');
+  const [showMobileFilters, setShowMobileFilters] = useState(false);
 
   useEffect(() => { sessionStorage.setItem('doc-store-search', search); }, [search]);
   useEffect(() => { sessionStorage.setItem('doc-store-sort', sortKey); }, [sortKey]);
@@ -2480,6 +2482,17 @@ export function DocumentStorePage() {
     ? (stores as DocumentStoreWithPreview[]).reduce((sum, s) => sum + (s.documentCount ?? 0), 0)
     : 0;
   const activeSortLabel = SORT_OPTIONS.find(o => o.key === sortKey)?.label ?? '最近更新';
+  const activeStoreTabLabel = tabs.find(t => t.key === tab)?.label ?? '知识库';
+  const activeTeamLabel = tab === 'team'
+    ? (teamScope.teamId
+        ? (useTeamStore.getState().teams.find(t => t.team.id === teamScope.teamId)?.team.name ?? '团队空间')
+        : '全部团队')
+    : activeStoreTabLabel;
+  const mobileFilterCount = [
+    tab === 'team' && teamScope.teamId,
+    tagFilter.length > 0,
+    sortKey !== 'updated-desc',
+  ].filter(Boolean).length;
 
   const isEmpty = currentList.length === 0;
   // 区分三种空态：1) 筛选有但被过滤掉了；2) 真·空（onboarding 引导）；3) 团队空间未选 team
@@ -2536,11 +2549,11 @@ export function DocumentStorePage() {
         <div
           data-tour-id="library-toolbar"
           className={isMobile
-            ? 'px-5 flex items-center gap-2 flex-nowrap overflow-x-auto pb-1'
+            ? 'px-5 flex flex-col gap-2 pb-1'
             : 'surface-nav-bar flex items-center gap-2 flex-wrap'}
           style={isMobile ? { scrollbarWidth: 'none' } : { overflow: 'visible' }}
         >
-          {tab === 'team' && (
+          {tab === 'team' && !isMobile && (
             <TeamScopeBar
               moduleKey="document-store"
               value={teamScope}
@@ -2550,14 +2563,15 @@ export function DocumentStorePage() {
           )}
           {/* 统计概览 */}
           {/* 功能区：库数 / 文章数（左侧） */}
-          <span data-tour-id="library-stats" className="text-[12px] tabular-nums whitespace-nowrap flex-none" style={{ color: 'var(--text-muted)' }}>
+          <span data-tour-id="library-stats" className={isMobile ? 'hidden' : 'text-[12px] tabular-nums whitespace-nowrap flex-none'} style={{ color: 'var(--text-muted)' }}>
             共 <strong style={{ color: 'var(--text-primary)' }}>{totalStores}</strong> 个知识库
             <span className="opacity-50 mx-1.5">·</span>
             <strong style={{ color: 'var(--text-primary)' }}>{totalDocs}</strong> 篇文章
           </span>
 
           {/* 搜索 */}
-          <div className="relative flex-none">
+          <div className={isMobile ? 'flex items-center gap-2' : 'contents'}>
+          <div className={isMobile ? 'relative min-w-0 flex-1' : 'relative flex-none'}>
             <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--text-muted)' }} />
             <input
               data-tour-id="library-search"
@@ -2565,7 +2579,7 @@ export function DocumentStorePage() {
               onChange={(e) => setSearch(e.target.value)}
               placeholder="按名称或标签筛选…"
               className={isMobile
-                ? 'h-8 pl-7 pr-7 rounded-[8px] text-[12px] outline-none w-[210px]'
+                ? 'h-10 pl-8 pr-8 rounded-[12px] text-[14px] outline-none w-full'
                 : 'h-8 pl-7 pr-7 rounded-[8px] text-[12px] outline-none w-[200px] focus:w-[260px] transition-all'}
               style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-primary)' }}
             />
@@ -2581,9 +2595,43 @@ export function DocumentStorePage() {
               </button>
             )}
           </div>
+          {isMobile && (
+            <button
+              type="button"
+              data-tour-id="library-mobile-filter"
+              onClick={() => setShowMobileFilters(true)}
+              className="h-10 px-3 rounded-[12px] inline-flex items-center gap-1.5 shrink-0"
+              style={{
+                background: mobileFilterCount > 0 ? 'rgba(10,132,255,0.16)' : 'rgba(255,255,255,0.06)',
+                border: `1px solid ${mobileFilterCount > 0 ? 'rgba(10,132,255,0.32)' : 'rgba(255,255,255,0.10)'}`,
+                color: mobileFilterCount > 0 ? '#8ab4ff' : 'var(--text-primary)',
+              }}
+            >
+              <SlidersHorizontal size={15} />
+              <span className="text-[13px] font-semibold">筛选</span>
+              {mobileFilterCount > 0 && <span className="text-[12px] tabular-nums">{mobileFilterCount}</span>}
+            </button>
+          )}
+          </div>
+
+          {isMobile && (
+            <div className="flex items-center gap-1.5 overflow-hidden whitespace-nowrap text-[12px]" style={{ color: 'var(--text-muted)' }}>
+              <span className="truncate">{activeTeamLabel}</span>
+              <span className="opacity-45">·</span>
+              <span>{activeSortLabel}</span>
+              <span className="opacity-45">·</span>
+              <span>{totalStores} 个知识库</span>
+              {tagFilter.length > 0 && (
+                <>
+                  <span className="opacity-45">·</span>
+                  <span className="truncate">标签 {tagFilter.length}</span>
+                </>
+              )}
+            </div>
+          )}
 
           {/* 标签筛选（多选；激活后用主题色高亮 + 数字徽章） */}
-          <div className="relative flex-none" ref={tagWrapRef}>
+          {!isMobile && <div className="relative flex-none" ref={tagWrapRef}>
             <button
               type="button"
               data-tour-id="library-tag-filter"
@@ -2683,10 +2731,10 @@ export function DocumentStorePage() {
                 )}
               </div>
             )}
-          </div>
+          </div>}
 
           {/* 排序（带高亮 active 状态，让用户一眼知道当前排序规则） */}
-          <div className="relative flex-none" ref={sortWrapRef}>
+          {!isMobile && <div className="relative flex-none" ref={sortWrapRef}>
             <button
               type="button"
               data-tour-id="library-sort"
@@ -2728,7 +2776,7 @@ export function DocumentStorePage() {
                 })}
               </div>
             )}
-          </div>
+          </div>}
 
           <span className={isMobile ? 'hidden' : 'flex-1'} />
           {/* 统计区：账号级访客总计（右侧）。数字 count-up 缓动 + 整段淡入，避免突然蹦出。 */}
@@ -2774,19 +2822,6 @@ export function DocumentStorePage() {
               <KeyRound size={13} /> 接入 AI
             </Button>
           )}
-          {/* 移动端：次要操作（统计/发送到/接入AI）收进「⋯ 更多」Sheet，主操作走 FAB —— 见 mobile-first-density */}
-          {isMobile && tab === 'mine' && (
-            <MobileOverflowMenu
-              title="知识库操作"
-              triggerLabel=""
-              className="h-8 w-8 rounded-[8px] text-[12px] flex items-center justify-center transition-colors active:opacity-70 border border-white/12 text-token-muted"
-              items={[
-                { key: 'stats', label: '访客统计', icon: BarChart3, onClick: () => setShowAccountViewers(true) },
-                { key: 'send', label: '发送到 / 同步到其他节点', icon: Send, onClick: () => setShowSendToPeer(true) },
-                { key: 'api', label: '接入 AI（签发 API Key）', icon: KeyRound, onClick: () => setShowOpenApi(true) },
-              ]}
-            />
-          )}
           {!isMobile && (
             <Button
               variant="primary"
@@ -2804,6 +2839,125 @@ export function DocumentStorePage() {
         </div>
       )}
       </div>
+
+      {isMobile && isStoreTab && (
+        <MobileBottomSheet
+          open={showMobileFilters}
+          onClose={() => setShowMobileFilters(false)}
+          title="筛选与操作"
+          note={`${activeTeamLabel} · ${totalStores} 个知识库 · ${totalDocs} 篇文章`}
+        >
+          <div className="px-5 pb-4 space-y-5">
+            {tab === 'team' && (
+              <section className="space-y-2">
+                <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>团队范围</div>
+                <div className="rounded-[14px] p-2" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                  <TeamScopeBar
+                    moduleKey="document-store"
+                    value={teamScope}
+                    onChange={setTeamScope}
+                    hideScopeToggle
+                  />
+                </div>
+              </section>
+            )}
+
+            <section className="space-y-2">
+              <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>排序</div>
+              <div className="flex flex-wrap gap-2">
+                {SORT_OPTIONS.map((opt) => {
+                  const active = opt.key === sortKey;
+                  return (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      onClick={() => setSortKey(opt.key)}
+                      className="h-8 px-3 rounded-full text-[13px] inline-flex items-center gap-1.5"
+                      style={active
+                        ? { background: 'rgba(10,132,255,0.22)', color: '#bfdbfe' }
+                        : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+                    >
+                      {active && <Check size={12} />}
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+
+            {tagStats.length > 0 && (
+              <section className="space-y-2">
+                <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>标签</div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setTagFilter([])}
+                    className="h-8 px-3 rounded-full text-[13px]"
+                    style={tagFilter.length === 0
+                      ? { background: 'rgba(10,132,255,0.22)', color: '#bfdbfe' }
+                      : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+                  >
+                    全部标签
+                  </button>
+                  {tagStats.slice(0, 16).map(({ tag, count }) => {
+                    const active = tagFilter.includes(tag);
+                    return (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => {
+                          setTagFilter(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
+                        }}
+                        className="h-8 px-3 rounded-full text-[13px]"
+                        style={active
+                          ? { background: 'rgba(10,132,255,0.22)', color: '#bfdbfe' }
+                          : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+                      >
+                        {tag} ({count})
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+
+            {tab === 'mine' && (
+              <section className="space-y-2">
+                <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>更多操作</div>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setShowMobileFilters(false); setShowAccountViewers(true); }}
+                    className="h-16 rounded-[14px] flex flex-col items-center justify-center gap-1"
+                    style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-primary)' }}
+                  >
+                    <BarChart3 size={17} />
+                    <span className="text-[12px]">统计</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setShowMobileFilters(false); setShowSendToPeer(true); }}
+                    className="h-16 rounded-[14px] flex flex-col items-center justify-center gap-1"
+                    style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-primary)' }}
+                  >
+                    <Send size={17} />
+                    <span className="text-[12px]">发送到</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setShowMobileFilters(false); setShowOpenApi(true); }}
+                    className="h-16 rounded-[14px] flex flex-col items-center justify-center gap-1"
+                    style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-primary)' }}
+                  >
+                    <KeyRound size={17} />
+                    <span className="text-[12px]">接入 AI</span>
+                  </button>
+                </div>
+              </section>
+            )}
+          </div>
+        </MobileBottomSheet>
+      )}
 
       {isMobile && isStoreTab && (
         <MobileFab onClick={() => setShowCreate(true)} icon={Plus} label="新建" />
