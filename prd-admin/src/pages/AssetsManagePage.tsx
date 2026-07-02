@@ -234,10 +234,19 @@ function SectionTitle({ icon, title, badge }: { icon: React.ReactNode; title: st
 }
 
 type HomepageAssetsMap = Record<string, HomepageAssetDto>;
+type AssetsManageTabKey = 'desktop' | 'single' | 'homepage' | 'marketplace' | 'poster';
+
+const ASSETS_MANAGE_TABS: Array<{ key: AssetsManageTabKey; label: string; icon: React.ReactNode }> = [
+  { key: 'homepage', label: '首页资源', icon: <Home size={14} /> },
+  { key: 'poster', label: '海报设计', icon: <Sparkles size={14} /> },
+  { key: 'marketplace', label: '海鲜市场背景', icon: <Store size={14} /> },
+  { key: 'desktop', label: 'Desktop 皮肤资源', icon: <Monitor size={14} /> },
+  { key: 'single', label: '全局资源', icon: <Layers size={14} /> },
+];
 
 export default function AssetsManagePage() {
   const { isMobile } = useBreakpoint();
-  const [activeTab, setActiveTab] = useState<'desktop' | 'single' | 'homepage' | 'marketplace' | 'poster'>('homepage');
+  const [activeTab, setActiveTab] = useState<AssetsManageTabKey>('homepage');
   const [skins, setSkins] = useState<DesktopAssetSkin[]>([]);
   const [matrixData, setMatrixData] = useState<AdminDesktopAssetMatrixRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -686,18 +695,38 @@ export default function AssetsManagePage() {
         onChange={(e) => void onPickedFile(e.target.files?.[0] ?? null)}
       />
 
-      <TabBar
-        variant="gold"
-        items={[
-          { key: 'homepage', label: '首页资源', icon: <Home size={14} /> },
-          { key: 'poster', label: '海报设计', icon: <Sparkles size={14} /> },
-          { key: 'marketplace', label: '海鲜市场背景', icon: <Store size={14} /> },
-          { key: 'desktop', label: 'Desktop 皮肤资源', icon: <Monitor size={14} /> },
-          { key: 'single', label: '全局资源', icon: <Layers size={14} /> },
-        ]}
-        activeKey={activeTab}
-        onChange={(key) => setActiveTab(key as 'desktop' | 'single' | 'homepage' | 'marketplace' | 'poster')}
-      />
+      {isMobile ? (
+        <div className="surface-nav-bar shrink-0" data-variant="gold">
+          <div className="surface-nav-content">
+            <div className="surface-nav-title">
+              <div className="surface-nav-icon">
+                <FolderOpen size={16} />
+              </div>
+              <span className="surface-nav-title-text">资源</span>
+            </div>
+            <div className="min-w-0 flex-1">
+              <Select
+                value={activeTab}
+                onValueChange={(key) => setActiveTab(key as AssetsManageTabKey)}
+                uiSize="sm"
+                aria-label="切换资源分类"
+                className="w-full"
+              >
+                {ASSETS_MANAGE_TABS.map((tab) => (
+                  <option key={tab.key} value={tab.key}>{tab.label}</option>
+                ))}
+              </Select>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <TabBar
+          variant="gold"
+          items={ASSETS_MANAGE_TABS}
+          activeKey={activeTab}
+          onChange={(key) => setActiveTab(key as AssetsManageTabKey)}
+        />
+      )}
 
       {activeTab === 'poster' && <PosterDesignSection />}
 
