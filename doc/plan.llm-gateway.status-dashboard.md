@@ -35,7 +35,7 @@
 |---|---|---|---|---|
 | 默认路径 | `LlmGateway:Mode`（`Program.cs:212` `?? "inproc"`） | `http` | `inproc` | partial（基建 done，未翻） |
 | 调用去老路 | 绕过网关的直连数（`GatewayDirectClientRatchetTests`） | 0（A 类） | A 类 8（Program.cs 6 + ModelDomainService 2）+ B 类 6（有意对照评测） | partial |
-| 配置面迁移 | 网关控制台有模型/平台/池配置端点 | 100% | 0（`prd-llmgw` 只有 auth+logs） | not-started |
+| 配置面迁移 | 网关控制台能看/配模型池/平台/模型 | 100% | **只读已迁（B1：pools/platforms/models/shadow 只读页）**，可写待 B2 | partial |
 | 影子证据 | `llmshadow_comparisons` 样本量 / allMatch | 样本 ≥阈值 且 diff ≤阈值 | 样本 n=1（首条 allMatch） | partial（严重不足，建议攒 7-14 天） |
 | serving 密钥 | serving 容器能解密真实平台密文、无 401 | 无解密失败 | **真机取证：所有真实平台可解密，仅 1 个 dev-stub 解不出（预期）** | done（已加 serving 自检 + stub 分类） |
 | 双出口 HTTPS | 网关命名子域走 HTTPS | 2 个 HTTPS | 1 HTTPS + 3 HTTP | 修复已提交（激活见 §3.A） |
@@ -90,9 +90,21 @@
 
 | 轨道 | 属腿 | 本轮目标 | 风险 |
 |---|---|---|---|
-| B1 网关配置面（只读） | B | 控制台加「模型池/平台/模型/影子」只读端点 + 页面，让网关「看得见能配」 | 低（只读、独立控制台、共享 Mongo，不碰热路径） |
-| A1 L1 transport 标记 | A | 每条 llmrequestlog 标 inproc/http/shadow（翻 http 唯一硬 blocker） | 中（改日志写，不翻路由） |
-| A2 S3 直连收口可行性 | A | 分析 8 处 A 类直连能否安全收口、缺什么网关入口 | 仅分析，不改（S3 本身高风险） |
+| B1 网关配置面（只读） | B | 控制台加「模型池/平台/模型/影子」只读端点 + 页面 | **已实现（本轮）** |
+| A1 L1 transport 标记 | A | 每条 llmrequestlog 标 inproc/http/shadow | **调研完：后端已落地，仅差可见性** |
+| A2 S3 直连收口可行性 | A | 分析 8 处 A 类直连能否安全收口 | **调研完：疑似死码，先证伪再删** |
+
+### B1 已实现（腿 B 第一刀落地）
+网关控制台不再只有日志。新增（只读、密钥只回 hasKey）：
+- 后端 `prd-llmgw`：`GET /gw/pools`（模型池 + 每模型健康 chip）、`/gw/platforms`、`/gw/models`、`/gw/shadow-comparisons`，复用 logs 同款 JWT（LogsRead）+ BsonDocument 安全映射。
+- 前端 `prd-llmgw-web`：`ConsoleLayout` 顶部导航（日志/模型池/平台/影子）+ 三个只读页。
+- **下一刀（B2）**：把只读升级为可配置（增删平台/模型、调池、调度权重），即真正「配置延伸到网关」。
+
+### A1 调研结论（几乎完工，剩小尾巴）
+GatewayTransport 后端打标**已在早前分支合入**（`LlmRequestLog.GatewayTransport` + `GatewayTransports{Inproc,Http,Shadow,Direct}` 常量 + 各日志构建点按来源打标，shadow 误标风险已规避）。**唯一硬缺口**：`LlmLogsController` 列表投影两处没带 `GatewayTransport`（detail 已带），故日志页列表/筛选看不到。补法（P1，小改）：列表投影补 `x.GatewayTransport` + 前端加列/筛选 + 新建 `transportRegistry.ts`。属 prd-admin + prd-api 小改，未做，作下一增量。
+
+### A2 调研结论（先证伪，别一把梭）
+8 处 A 类直连**跨 4 种语义**（pinned 主模型 / legacy activeConfig / env 冷启动兜底 / per-purpose 领域客户端），不能一把梭。**更关键的前置发现**：`Program.cs:982` 的 scoped `ILLMClient` 疑似**无消费方**、`ModelDomainService.GetClientAsync` 全仓**无调用方**——很可能是**死码**。正确第一步：做一次全链路 DI+调用审计证实/证伪；若确为死码 → 直接**删除式收口**（近零风险，棘轮直接清 A 类）；若活着 → 网关需先补两个入口（per-model MaxTokens 尊重 X1、pinned platform+model 直连 X2）再迁，否则会静默截断 max_tokens / 静默换模型（#971 教训）。**下一增量：先跑 A2 步骤 0 的死码审计。**
 
 ## 5. 下一步（优先级）
 

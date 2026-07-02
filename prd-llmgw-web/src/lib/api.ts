@@ -23,6 +23,10 @@ import type {
   TimeseriesData,
   SessionsData,
   LlmLogDetail,
+  PoolsData,
+  PlatformsData,
+  ModelsData,
+  ShadowData,
 } from './types';
 
 const TOKEN_KEY = 'llmgw.token';
@@ -187,4 +191,20 @@ export function getLogsSessions(params: {
 
 export function getLogDetail(id: string): Promise<ApiResponse<LlmLogDetail>> {
   return apiRequest<LlmLogDetail>(`/logs/${encodeURIComponent(id)}`);
+}
+
+// ── 配置面（只读）──
+export function getPools(modelType?: string): Promise<ApiResponse<PoolsData>> {
+  return apiRequest<PoolsData>('/pools', { query: { modelType } });
+}
+export function getPlatforms(): Promise<ApiResponse<PlatformsData>> {
+  return apiRequest<PlatformsData>('/platforms');
+}
+export function getModels(params?: { platformId?: string; enabled?: boolean }): Promise<ApiResponse<ModelsData>> {
+  return apiRequest<ModelsData>('/models', {
+    query: { platformId: params?.platformId, enabled: params?.enabled === undefined ? undefined : String(params.enabled) },
+  });
+}
+export function getShadowComparisons(params?: { limit?: number; appCallerCode?: string }): Promise<ApiResponse<ShadowData>> {
+  return apiRequest<ShadowData>('/shadow-comparisons', { query: { limit: params?.limit, appCallerCode: params?.appCallerCode } });
 }

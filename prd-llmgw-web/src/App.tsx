@@ -2,9 +2,13 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { AuthProvider, useAuth } from '@/lib/auth';
+import { ConsoleLayout } from '@/components/ConsoleLayout';
 import { LoginPage } from '@/pages/LoginPage';
 import { ChangePasswordPage } from '@/pages/ChangePasswordPage';
 import { LogsPage } from '@/pages/LogsPage';
+import { ModelPoolsPage } from '@/pages/ModelPoolsPage';
+import { PlatformsPage } from '@/pages/PlatformsPage';
+import { ShadowPage } from '@/pages/ShadowPage';
 
 // 受保护路由守卫：未登录跳登录页；已登录但挂着「强制改密」标记则跳改密页（服务端策略门同样拦截，双保险）。
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -38,13 +42,17 @@ export function App() {
             }
           />
           <Route
-            path="/"
             element={
               <RequireAuth>
-                <LogsPage />
+                <ConsoleLayout />
               </RequireAuth>
             }
-          />
+          >
+            <Route path="/" element={<LogsPage />} />
+            <Route path="/pools" element={<ModelPoolsPage />} />
+            <Route path="/platforms" element={<PlatformsPage />} />
+            <Route path="/shadow" element={<ShadowPage />} />
+          </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

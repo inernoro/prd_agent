@@ -173,3 +173,68 @@ public sealed class SessionsData
     public int Page { get; set; }
     public int PageSize { get; set; }
 }
+
+// ── 模型池（只读，网关配置面第一刀）──
+public sealed class PoolsData { public List<PoolItem> Items { get; set; } = new(); public long Total { get; set; } }
+public sealed class PoolItem
+{
+    public string Id { get; set; } = ""; public string Name { get; set; } = ""; public string Code { get; set; } = "";
+    public int Priority { get; set; } public string ModelType { get; set; } = ""; public bool IsDefaultForType { get; set; }
+    public int StrategyType { get; set; } public string? Description { get; set; }
+    public string? CreatedAt { get; set; } public string? UpdatedAt { get; set; }
+    public List<PoolModelItem> Models { get; set; } = new();
+}
+public sealed class PoolModelItem
+{
+    public string ModelId { get; set; } = ""; public string PlatformId { get; set; } = ""; public int Priority { get; set; }
+    public string? Protocol { get; set; } public int HealthStatus { get; set; } public string HealthStatusLabel { get; set; } = "";
+    public string? LastFailedAt { get; set; } public string? LastSuccessAt { get; set; }
+    public int ConsecutiveFailures { get; set; } public int ConsecutiveSuccesses { get; set; }
+    public bool? EnablePromptCache { get; set; } public int? MaxTokens { get; set; }
+    public decimal? InputPricePerMillion { get; set; } public decimal? OutputPricePerMillion { get; set; } public decimal? PricePerCall { get; set; }
+}
+
+// ── 平台（无任何密钥字段，仅 hasKey）──
+public sealed class PlatformsData { public List<PlatformItem> Items { get; set; } = new(); public long Total { get; set; } }
+public sealed class PlatformItem
+{
+    public string Id { get; set; } = ""; public string Name { get; set; } = ""; public string PlatformType { get; set; } = "";
+    public string? ProviderId { get; set; } public string? ApiUrl { get; set; } public bool Enabled { get; set; }
+    public int MaxConcurrency { get; set; } public string? Remark { get; set; } public bool HasKey { get; set; }
+    public string? CreatedAt { get; set; } public string? UpdatedAt { get; set; }
+}
+
+// ── 模型（无密钥，仅 hasKey）──
+public sealed class ModelsData { public List<ModelItem> Items { get; set; } = new(); public long Total { get; set; } }
+public sealed class ModelItem
+{
+    public string Id { get; set; } = ""; public string Name { get; set; } = ""; public string ModelName { get; set; } = "";
+    public string? ApiUrl { get; set; } public string? Protocol { get; set; } public string? PlatformId { get; set; } public string? Group { get; set; }
+    public int Timeout { get; set; } public int MaxRetries { get; set; } public int MaxConcurrency { get; set; } public int? MaxTokens { get; set; }
+    public bool Enabled { get; set; } public int Priority { get; set; }
+    public bool IsMain { get; set; } public bool IsIntent { get; set; } public bool IsVision { get; set; } public bool IsImageGen { get; set; }
+    public bool? EnablePromptCache { get; set; } public string? Remark { get; set; } public bool HasKey { get; set; }
+    public long CallCount { get; set; } public long SuccessCount { get; set; } public long FailCount { get; set; } public long TotalDuration { get; set; }
+    public List<ModelCapabilityItem> Capabilities { get; set; } = new();
+    public string? CreatedAt { get; set; } public string? UpdatedAt { get; set; }
+}
+public sealed class ModelCapabilityItem { public string Type { get; set; } = ""; public string Source { get; set; } = ""; public bool Value { get; set; } }
+
+// ── 影子比对（只读）──
+public sealed class ShadowData { public ShadowSummary Summary { get; set; } = new(); public List<ShadowItem> Recent { get; set; } = new(); }
+public sealed class ShadowSummary { public long Total { get; set; } public long AllMatch { get; set; } public long Critical { get; set; } public long HttpFail { get; set; } }
+public sealed class ShadowItem
+{
+    public string Id { get; set; } = ""; public string Kind { get; set; } = ""; public string? RequestId { get; set; }
+    public string AppCallerCode { get; set; } = ""; public string ModelType { get; set; } = ""; public string? ComparedAt { get; set; }
+    public long ShadowDurationMs { get; set; } public bool HttpOk { get; set; } public string? HttpError { get; set; }
+    public bool AllMatch { get; set; } public bool HasCritical { get; set; }
+    public ShadowSnapshotItem Inproc { get; set; } = new(); public ShadowSnapshotItem Http { get; set; } = new();
+    public List<ShadowMismatchItem> Mismatches { get; set; } = new(); public bool? TextMatches { get; set; }
+}
+public sealed class ShadowSnapshotItem
+{
+    public bool Success { get; set; } public string? ActualModel { get; set; } public string? Protocol { get; set; }
+    public string? PlatformType { get; set; } public string? ResolutionType { get; set; } public string? ModelGroupId { get; set; } public bool IsFallback { get; set; }
+}
+public sealed class ShadowMismatchItem { public string Field { get; set; } = ""; public string? Inproc { get; set; } public string? Http { get; set; } public string Severity { get; set; } = ""; }

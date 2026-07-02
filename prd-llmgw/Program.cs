@@ -124,6 +124,11 @@ await SeedAdminAsync(database, AdminUser, DefaultAdminPwd);
 
 var logs = database.GetCollection<BsonDocument>("llmrequestlogs");
 var users = database.GetCollection<LlmGwUser>("llmgw_users");
+// 网关配置面（只读）：模型池 / 平台 / 模型 / 影子比对。与 MAP 共享同库，控制台只读展示。
+var modelGroups = database.GetCollection<BsonDocument>("model_groups");
+var platforms = database.GetCollection<BsonDocument>("llmplatforms");
+var models = database.GetCollection<BsonDocument>("llmmodels");
+var shadows = database.GetCollection<BsonDocument>("llmshadow_comparisons");
 
 // ───────────────────────────── 健康检查（匿名）─────────────────────────────
 app.MapGet("/gw/healthz", () => Results.Json(new
@@ -352,6 +357,60 @@ app.MapGet("/gw/logs/{id}", async (string id) =>
         return Json(ApiEnvelope<LlmLogDetail>.Fail("NOT_FOUND", "日志不存在"), jsonOptions, statusCode: 404);
     }
     return Json(ApiEnvelope<LlmLogDetail>.Ok(MapDetail(doc)), jsonOptions);
+}).RequireAuthorization("LogsRead");
+
+// ─────────────── 网关配置面（只读，腿 B 第一刀）───────────────
+// 让网关控制台不只有日志，还能看模型池 / 平台 / 模型 / 影子比对。密钥字段一律不返回（只回 hasKey）。
+
+// 模型池列表
+app.MapGet("/gw/pools", async (string? modelType) =>
+{
+    var fb = Builders<BsonDocument>.Filter;
+    var filter = string.IsNullOrWhiteSpace(modelType) ? fb.Empty : fb.Eq("ModelType", modelType);
+    var docs = await modelGroups.Find(filter).Sort(Builders<BsonDocument>.Sort.Ascending("Priority")).ToListAsync();
+    var data = new PoolsData { Items = docs.Select(MapPool).ToList(), Total = docs.Count };
+    return Json(ApiEnvelope<PoolsData>.Ok(data), jsonOptions);
+}).RequireAuthorization("LogsRead");
+
+// 平台列表（密钥字段绝不外泄，只回 hasKey）
+app.MapGet("/gw/platforms", async () =>
+{
+    var docs = await platforms.Find(FilterDefinition<BsonDocument>.Empty)
+        .Sort(Builders<BsonDocument>.Sort.Ascending("Name")).ToListAsync();
+    var data = new PlatformsData { Items = docs.Select(MapPlatform).ToList(), Total = docs.Count };
+    return Json(ApiEnvelope<PlatformsData>.Ok(data), jsonOptions);
+}).RequireAuthorization("LogsRead");
+
+// 模型列表（密钥字段绝不外泄，只回 hasKey）
+app.MapGet("/gw/models", async (string? platformId, bool? enabled) =>
+{
+    var fb = Builders<BsonDocument>.Filter;
+    var fs = new List<FilterDefinition<BsonDocument>>();
+    if (!string.IsNullOrWhiteSpace(platformId)) fs.Add(fb.Eq("PlatformId", platformId));
+    if (enabled is not null) fs.Add(fb.Eq("Enabled", enabled.Value));
+    var filter = fs.Count > 0 ? fb.And(fs) : fb.Empty;
+    var docs = await models.Find(filter).Sort(Builders<BsonDocument>.Sort.Ascending("Priority")).ToListAsync();
+    var data = new ModelsData { Items = docs.Select(MapModel).ToList(), Total = docs.Count };
+    return Json(ApiEnvelope<ModelsData>.Ok(data), jsonOptions);
+}).RequireAuthorization("LogsRead");
+
+// 影子比对：汇总 + 最近 N 条
+app.MapGet("/gw/shadow-comparisons", async (int? limit, string? appCallerCode) =>
+{
+    var n = Math.Clamp(limit ?? 50, 1, 500);
+    var fb = Builders<BsonDocument>.Filter;
+    var filter = string.IsNullOrWhiteSpace(appCallerCode) ? fb.Empty : fb.Eq("AppCallerCode", appCallerCode);
+    var total = await shadows.CountDocumentsAsync(filter);
+    var allMatch = await shadows.CountDocumentsAsync(fb.And(filter, fb.Eq("AllMatch", true)));
+    var critical = await shadows.CountDocumentsAsync(fb.And(filter, fb.Eq("HasCritical", true)));
+    var httpFail = await shadows.CountDocumentsAsync(fb.And(filter, fb.Eq("HttpOk", false)));
+    var recent = await shadows.Find(filter).Sort(Builders<BsonDocument>.Sort.Descending("ComparedAt")).Limit(n).ToListAsync();
+    var data = new ShadowData
+    {
+        Summary = new ShadowSummary { Total = total, AllMatch = allMatch, Critical = critical, HttpFail = httpFail },
+        Recent = recent.Select(MapShadow).ToList(),
+    };
+    return Json(ApiEnvelope<ShadowData>.Ok(data), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
 app.Run();
@@ -583,6 +642,153 @@ static SessionItem BuildSessionItem(string sessionId, List<BsonDocument> docs)
         PrimaryModel = primaryModel,
         PrimaryProvider = primaryProvider,
         SupportingModels = supporting,
+    };
+}
+
+// ─────────────── 配置面只读映射（BsonDocument 安全读取，密钥永不进 DTO）───────────────
+
+static string HealthLabel(int s) => s switch { 0 => "Healthy", 1 => "Degraded", 2 => "Unavailable", _ => "Unknown" };
+
+static PoolItem MapPool(BsonDocument d)
+{
+    var modelsArr = d.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
+    var items = new List<PoolModelItem>();
+    foreach (var m in modelsArr)
+    {
+        if (!m.IsBsonDocument) continue;
+        var md = m.AsBsonDocument;
+        var hs = md.AsNullableInt("HealthStatus") ?? 0;
+        items.Add(new PoolModelItem
+        {
+            ModelId = md.GetStringOrEmpty("ModelId"),
+            PlatformId = md.GetStringOrEmpty("PlatformId"),
+            Priority = md.AsNullableInt("Priority") ?? 0,
+            Protocol = md.AsNullableString("Protocol"),
+            HealthStatus = hs,
+            HealthStatusLabel = HealthLabel(hs),
+            LastFailedAt = md.AsNullableUtcDateTime("LastFailedAt").ToIso(),
+            LastSuccessAt = md.AsNullableUtcDateTime("LastSuccessAt").ToIso(),
+            ConsecutiveFailures = md.AsNullableInt("ConsecutiveFailures") ?? 0,
+            ConsecutiveSuccesses = md.AsNullableInt("ConsecutiveSuccesses") ?? 0,
+            EnablePromptCache = md.AsNullableBool("EnablePromptCache"),
+            MaxTokens = md.AsNullableInt("MaxTokens"),
+            InputPricePerMillion = md.AsNullableDecimal("InputPricePerMillion"),
+            OutputPricePerMillion = md.AsNullableDecimal("OutputPricePerMillion"),
+            PricePerCall = md.AsNullableDecimal("PricePerCall"),
+        });
+    }
+    return new PoolItem
+    {
+        Id = d.GetStringOrEmpty("_id"),
+        Name = d.GetStringOrEmpty("Name"),
+        Code = d.GetStringOrEmpty("Code"),
+        Priority = d.AsNullableInt("Priority") ?? 50,
+        ModelType = d.GetStringOrEmpty("ModelType"),
+        IsDefaultForType = d.AsNullableBool("IsDefaultForType") ?? false,
+        StrategyType = d.AsNullableInt("StrategyType") ?? 0,
+        Description = d.AsNullableString("Description"),
+        CreatedAt = d.AsNullableUtcDateTime("CreatedAt").ToIso(),
+        UpdatedAt = d.AsNullableUtcDateTime("UpdatedAt").ToIso(),
+        Models = items,
+    };
+}
+
+// 硬约束：绝不读 ApiKeyEncrypted 到 DTO，只用它算 hasKey。
+static PlatformItem MapPlatform(BsonDocument d) => new()
+{
+    Id = d.GetStringOrEmpty("_id"),
+    Name = d.GetStringOrEmpty("Name"),
+    PlatformType = d.GetStringOrEmpty("PlatformType"),
+    ProviderId = d.AsNullableString("ProviderId"),
+    ApiUrl = d.AsNullableString("ApiUrl"),
+    Enabled = d.AsNullableBool("Enabled") ?? true,
+    MaxConcurrency = d.AsNullableInt("MaxConcurrency") ?? 0,
+    Remark = d.AsNullableString("Remark"),
+    HasKey = !string.IsNullOrEmpty(d.AsNullableString("ApiKeyEncrypted")),
+    CreatedAt = d.AsNullableUtcDateTime("CreatedAt").ToIso(),
+    UpdatedAt = d.AsNullableUtcDateTime("UpdatedAt").ToIso(),
+};
+
+static ModelItem MapModel(BsonDocument d)
+{
+    var capsArr = d.TryGetValue("Capabilities", out var cv) && cv.IsBsonArray ? cv.AsBsonArray : new BsonArray();
+    var caps = capsArr.Where(c => c.IsBsonDocument).Select(c => c.AsBsonDocument).Select(c => new ModelCapabilityItem
+    {
+        Type = c.GetStringOrEmpty("Type"),
+        Source = c.GetStringOrEmpty("Source"),
+        Value = c.AsNullableBool("Value") ?? false,
+    }).ToList();
+    return new ModelItem
+    {
+        Id = d.GetStringOrEmpty("_id"),
+        Name = d.GetStringOrEmpty("Name"),
+        ModelName = d.GetStringOrEmpty("ModelName"),
+        ApiUrl = d.AsNullableString("ApiUrl"),
+        Protocol = d.AsNullableString("Protocol"),
+        PlatformId = d.AsNullableString("PlatformId"),
+        Group = d.AsNullableString("Group"),
+        Timeout = d.AsNullableInt("Timeout") ?? 0,
+        MaxRetries = d.AsNullableInt("MaxRetries") ?? 0,
+        MaxConcurrency = d.AsNullableInt("MaxConcurrency") ?? 0,
+        MaxTokens = d.AsNullableInt("MaxTokens"),
+        Enabled = d.AsNullableBool("Enabled") ?? true,
+        Priority = d.AsNullableInt("Priority") ?? 100,
+        IsMain = d.AsNullableBool("IsMain") ?? false,
+        IsIntent = d.AsNullableBool("IsIntent") ?? false,
+        IsVision = d.AsNullableBool("IsVision") ?? false,
+        IsImageGen = d.AsNullableBool("IsImageGen") ?? false,
+        EnablePromptCache = d.AsNullableBool("EnablePromptCache"),
+        Remark = d.AsNullableString("Remark"),
+        HasKey = !string.IsNullOrEmpty(d.AsNullableString("ApiKeyEncrypted")),
+        CallCount = d.AsNullableLong("CallCount") ?? 0,
+        SuccessCount = d.AsNullableLong("SuccessCount") ?? 0,
+        FailCount = d.AsNullableLong("FailCount") ?? 0,
+        TotalDuration = d.AsNullableLong("TotalDuration") ?? 0,
+        Capabilities = caps,
+        CreatedAt = d.AsNullableUtcDateTime("CreatedAt").ToIso(),
+        UpdatedAt = d.AsNullableUtcDateTime("UpdatedAt").ToIso(),
+    };
+}
+
+static ShadowSnapshotItem MapSnapshot(BsonDocument s) => new()
+{
+    Success = s.AsNullableBool("Success") ?? false,
+    ActualModel = s.AsNullableString("ActualModel"),
+    Protocol = s.AsNullableString("Protocol"),
+    PlatformType = s.AsNullableString("PlatformType"),
+    ResolutionType = s.AsNullableString("ResolutionType"),
+    ModelGroupId = s.AsNullableString("ModelGroupId"),
+    IsFallback = s.AsNullableBool("IsFallback") ?? false,
+};
+
+static ShadowItem MapShadow(BsonDocument d)
+{
+    var inp = d.TryGetValue("Inproc", out var iv) && iv.IsBsonDocument ? iv.AsBsonDocument : new BsonDocument();
+    var htp = d.TryGetValue("Http", out var hv) && hv.IsBsonDocument ? hv.AsBsonDocument : new BsonDocument();
+    var misArr = d.TryGetValue("Mismatches", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
+    return new ShadowItem
+    {
+        Id = d.GetStringOrEmpty("_id"),
+        Kind = d.GetStringOrEmpty("Kind"),
+        RequestId = d.AsNullableString("RequestId"),
+        AppCallerCode = d.GetStringOrEmpty("AppCallerCode"),
+        ModelType = d.GetStringOrEmpty("ModelType"),
+        ComparedAt = d.AsNullableUtcDateTime("ComparedAt").ToIso(),
+        ShadowDurationMs = d.AsNullableLong("ShadowDurationMs") ?? 0,
+        HttpOk = d.AsNullableBool("HttpOk") ?? false,
+        HttpError = d.AsNullableString("HttpError"),
+        AllMatch = d.AsNullableBool("AllMatch") ?? false,
+        HasCritical = d.AsNullableBool("HasCritical") ?? false,
+        Inproc = MapSnapshot(inp),
+        Http = MapSnapshot(htp),
+        Mismatches = misArr.Where(m => m.IsBsonDocument).Select(m => m.AsBsonDocument).Select(m => new ShadowMismatchItem
+        {
+            Field = m.GetStringOrEmpty("Field"),
+            Inproc = m.AsNullableString("Inproc"),
+            Http = m.AsNullableString("Http"),
+            Severity = m.GetStringOrEmpty("Severity"),
+        }).ToList(),
+        TextMatches = d.AsNullableBool("TextMatches"),
     };
 }
 
