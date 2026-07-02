@@ -149,18 +149,27 @@ gh workflow run web-latest-pages.yml --ref codex/hotfix-<short-name>-prod
 gh run watch <run-id> --exit-status
 ```
 
-具体 workflow 名以仓库实际存在的发布流程为准。禁止跳过 CI 直接上生产。
+具体 workflow 名以仓库实际存在的发布流程为准。当前项目的发布 workflow 会同时产出：
+
+- 后端镜像：`prdagent-server:sha-<hotfix-commit>`
+- 前端包：`prd-admin-dist-sha-<hotfix-commit>.zip`
+- 前端校验：`prd-admin-dist-sha-<hotfix-commit>.zip.sha256`
+- 非敏感清单：`release-manifest-sha-<hotfix-commit>.json`
+
+禁止跳过 CI 直接上生产。生产部署必须使用不可变 commit ref，不使用 `latest`。
 
 ### Step 7：执行生产部署脚本
 
-只使用仓库已有发布脚本。示例：
+只使用仓库已有发布脚本，并把热修 commit 明确传入。示例：
 
 ```bash
-ssh root@host 'cd /root/inernoro/prd_agent && set -eu; ./exec_dep.sh'
+ssh root@host 'cd /root/inernoro/prd_agent && set -eu; ./exec_dep.sh --commit <hotfix-commit>'
 ```
 
 如果脚本会下载前端包、拉取后端镜像、重建 compose，必须检查输出中是否出现：
 
+- `Deploy target: immutable ref sha-<hotfix-commit>`
+- `Release manifest: .../release-manifest-sha-<hotfix-commit>.json`
 - 前端包下载成功
 - sha256 校验成功或明确按用户要求跳过
 - 后端镜像拉取成功
@@ -229,7 +238,7 @@ feature-flag=<true|false|not-applicable>
 3. 从 47a8d7af 创建 codex/hotfix-sso-password-login-prod。
 4. cherry-pick b805ee581，得到 b74cea9d4。
 5. 推送热修分支，触发 server-deploy.yml 和 web-latest-pages.yml。
-6. 两个 workflow 成功后，在生产机执行 ./exec_dep.sh。
+6. 两个 workflow 成功后，在生产机执行 ./exec_dep.sh --commit b74cea9d4。
 7. 验证生产容器 revision 为 b74cea9d4，登录页 200，SSO options 接口 success=true。
 8. 发现 passwordLoginDisabled=false，汇报能力已上线但未擅自开启生产开关。
 ```
