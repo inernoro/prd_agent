@@ -84,6 +84,7 @@ const RichComposerLab = lazy(() => import('@/pages/_dev/RichComposerLab'));
 const StreamingTextLab = lazy(() => import('@/pages/_dev/StreamingTextLab'));
 const MobileAuditPage = lazy(() => import('@/pages/_dev/MobileAuditPage'));
 const PortfolioShowcasePage = lazy(() => import('@/pages/PortfolioShowcasePage'));
+const MarketplacePage = lazy(() => import('@/pages/marketplace').then(m => ({ default: m.MarketplacePage })));
 
 // 全屏路由的子路由组件（NAV_REGISTRY 已注册了主路由，这些是 sub-route 专用）
 const VisualAgentFullscreenPage = lazy(() => import('@/pages/visual-agent/VisualAgentFullscreenPage'));
@@ -239,6 +240,7 @@ export default function App() {
         <Route path="/_dev/rich-composer-lab" element={<RichComposerLab />} />
         <Route path="/_dev/mobile-audit" element={<MobileAuditPage />} />
         <Route path="/_dev/streaming-text-lab" element={<StreamingTextLab />} />
+        <Route path="/_dev/marketplace-card-demo" element={<MarketplacePage />} />
 
         {/* ── NAV_REGISTRY 中 placement='fullscreen' 的条目（独立全屏，不进 AppShell） */}
         {/* 教程入口/引导由 App 根挂载的 TipsDrawer + SpotlightOverlay 统一承载（跨全屏路由不丢失）。 */}
