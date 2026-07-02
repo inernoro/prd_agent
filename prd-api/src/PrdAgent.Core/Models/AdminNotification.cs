@@ -29,6 +29,11 @@ public class AdminNotification
     public string Source { get; set; } = "system";
 
     /// <summary>
+    /// 通知分区：personal / admin。为空时按 <see cref="AdminNotificationSourceCatalog"/> 从 Source 推导。
+    /// </summary>
+    public string? Section { get; set; }
+
+    /// <summary>
     /// 附件列表（COS URL）
     /// </summary>
     public List<NotificationAttachment>? Attachments { get; set; }

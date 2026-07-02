@@ -37,6 +37,7 @@ import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { getLatestResourceUsage, type ProjectResourceUsage } from '../services/resource-usage-sampler.js';
 import { applyDefaultDeployModesToBranch } from '../services/deploy-runtime.js';
+import { ensureDockerNetworkWithReclaim } from '../services/docker-network-reclaim.js';
 import {
   getInfraCatalogEntry,
   infraCatalogIds,
@@ -503,14 +504,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
    * the caller can roll back the state mutation.
    */
   async function ensureDockerNetwork(name: string): Promise<void> {
-    const inspect = await shell.exec(`docker network inspect ${name}`);
-    if (inspect.exitCode === 0) return;
-    const create = await shell.exec(`docker network create ${name}`);
-    if (create.exitCode !== 0) {
-      throw new Error(
-        `Failed to create Docker network "${name}": ${combinedOutput(create)}`,
-      );
-    }
+    await ensureDockerNetworkWithReclaim(shell, name);
   }
 
   /**
