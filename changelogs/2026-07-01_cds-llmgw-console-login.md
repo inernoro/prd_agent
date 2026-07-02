@@ -1,0 +1,1 @@
+| fix | cds | 网关控制台(llmgw-web)登录账号改为项目环境变量可控:cds-compose 的 llmgw 账号从系统级 ${CDS_USERNAME}/${CDS_PASSWORD}(用户在项目环境变量里找不到、改不了)改为项目级 LLMGW_ADMIN_USER/LLMGW_ADMIN_PASSWORD(默认 admin);prd-llmgw SeedAdmin 从 insert-only 改为 upsert——已存在账号在配置口令变化时对齐更新(用 Verify 判定,带盐哈希不空写),用户改 LLMGW_ADMIN_PASSWORD 重新部署即生效。此前用户改环境变量也登不进的根因 |

@@ -299,7 +299,24 @@ static async Task SeedAdminAsync(IMongoDatabase db, string username, string pass
 {
     var users = db.GetCollection<LlmGwUser>("llmgw_users");
     var existing = await users.Find(u => u.Username == username).FirstOrDefaultAsync();
-    if (existing is not null) return;
+    if (existing is not null)
+    {
+        // Upsert（而非「已存在即跳过」）：配置的 LLMGW_ADMIN_PASSWORD 是这个账号的**权威口令来源**。
+        // 旧的 insert-only 行为导致「用户改了环境变量里的密码却永远登不进」——因为首次种子后再不更新。
+        // 现在每次启动都把已存在账号的口令/启用态对齐到当前配置：管理员改 LLMGW_ADMIN_PASSWORD →
+        // 重新部署 llmgw → 立即生效。仅当口令确有变化时才写库（避免每次启动无谓写）。
+        // 用 Verify（而非比对哈希）判断是否需要更新：PasswordHasher.Hash 每次带随机盐，直接比对哈希恒不等
+        // 会每次启动都白写。只有「当前配置口令与库里存的不匹配」或「账号被禁用」时才重置。
+        var needsUpdate = !PasswordHasher.Verify(password, existing.PasswordHash) || !existing.IsActive;
+        if (needsUpdate)
+        {
+            var update = Builders<LlmGwUser>.Update
+                .Set(u => u.PasswordHash, PasswordHasher.Hash(password))
+                .Set(u => u.IsActive, true);
+            await users.UpdateOneAsync(u => u.Username == username, update);
+        }
+        return;
+    }
 
     var user = new LlmGwUser
     {
