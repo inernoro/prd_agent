@@ -115,7 +115,8 @@ public class MarketplaceSkillsController : ControllerBase
         var dbLimit = Math.Max(200 - officialDtos.Count, 0);
 
         var items = await query.Limit(dbLimit).ToListAsync(ct);
-        var dtos = items.Select(s => ToDto(s, userId)).Cast<object>().ToList();
+        var shareCounts = await LoadActiveShareCountsAsync(items.Select(x => x.Id), ct);
+        var dtos = items.Select(s => ToDto(s, userId, shareCounts.GetValueOrDefault(s.Id))).Cast<object>().ToList();
 
         dtos.InsertRange(0, officialDtos);
 
@@ -134,7 +135,8 @@ public class MarketplaceSkillsController : ControllerBase
             .SortByDescending(x => x.UpdatedAt)
             .Limit(50)
             .ToListAsync(ct);
-        return Ok(ApiResponse<object>.Ok(new { items = items.Select(s => ToDto(s, userId)) }));
+        var shareCounts = await LoadActiveShareCountsAsync(items.Select(x => x.Id), ct);
+        return Ok(ApiResponse<object>.Ok(new { items = items.Select(s => ToDto(s, userId, shareCounts.GetValueOrDefault(s.Id))) }));
     }
 
     [HttpGet("tags")]
@@ -561,7 +563,7 @@ public class MarketplaceSkillsController : ControllerBase
         };
         await _db.MarketplaceSkills.InsertOneAsync(skill, cancellationToken: ct);
 
-        return Ok(ApiResponse<object>.Ok(new { item = ToDto(skill, userId) }));
+        return Ok(ApiResponse<object>.Ok(new { item = ToDto(skill, userId, 0) }));
     }
 
     /// <summary>
@@ -683,7 +685,8 @@ public class MarketplaceSkillsController : ControllerBase
         }
 
         var updated = await _db.MarketplaceSkills.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
-        return Ok(ApiResponse<object>.Ok(new { item = ToDto(updated!, userId) }));
+        var shareCount = await CountActiveShareLinksAsync(updated!.Id, ct);
+        return Ok(ApiResponse<object>.Ok(new { item = ToDto(updated!, userId, shareCount) }));
     }
 
     // ======================================================================
@@ -722,7 +725,7 @@ public class MarketplaceSkillsController : ControllerBase
         {
             downloadUrl = skill.ZipUrl,
             fileName = skill.OriginalFileName,
-            item = ToDto(skill, userId)
+            item = ToDto(skill, userId, await CountActiveShareLinksAsync(skill.Id, ct))
         }));
     }
 
@@ -749,7 +752,7 @@ public class MarketplaceSkillsController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("DOCUMENT_NOT_FOUND", "技能不存在或已下架"));
 
         var skill = await _db.MarketplaceSkills.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
-        return Ok(ApiResponse<object>.Ok(new { item = ToDto(skill!, userId) }));
+        return Ok(ApiResponse<object>.Ok(new { item = ToDto(skill!, userId, await CountActiveShareLinksAsync(skill!.Id, ct)) }));
     }
 
     [HttpPost("{id}/unfavorite")]
@@ -771,7 +774,7 @@ public class MarketplaceSkillsController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("DOCUMENT_NOT_FOUND", "技能不存在"));
 
         var skill = await _db.MarketplaceSkills.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
-        return Ok(ApiResponse<object>.Ok(new { item = ToDto(skill!, userId) }));
+        return Ok(ApiResponse<object>.Ok(new { item = ToDto(skill!, userId, await CountActiveShareLinksAsync(skill!.Id, ct)) }));
     }
 
     // ======================================================================
@@ -1140,7 +1143,44 @@ public class MarketplaceSkillsController : ControllerBase
         return normalized.Length > 4 ? normalized[..4] : normalized;
     }
 
-    private static object ToDto(MarketplaceSkill s, string currentUserId)
+    private async Task<Dictionary<string, long>> LoadActiveShareCountsAsync(IEnumerable<string> skillIds, CancellationToken ct)
+    {
+        var ids = skillIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (ids.Count == 0) return new Dictionary<string, long>();
+
+        var now = DateTime.UtcNow;
+        var f = Builders<MarketplaceSkillShareLink>.Filter;
+        var filter =
+            f.In(x => x.SkillId, ids) &
+            f.Eq(x => x.IsRevoked, false) &
+            (f.Eq(x => x.ExpiresAt, null) | f.Gt(x => x.ExpiresAt, now));
+
+        var linkedSkillIds = await _db.MarketplaceSkillShareLinks
+            .Find(filter)
+            .Project(x => x.SkillId)
+            .ToListAsync(ct);
+
+        return linkedSkillIds
+            .GroupBy(id => id)
+            .ToDictionary(g => g.Key, g => (long)g.Count(), StringComparer.Ordinal);
+    }
+
+    private async Task<long> CountActiveShareLinksAsync(string skillId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(skillId)) return 0;
+        var now = DateTime.UtcNow;
+        var f = Builders<MarketplaceSkillShareLink>.Filter;
+        var filter =
+            f.Eq(x => x.SkillId, skillId) &
+            f.Eq(x => x.IsRevoked, false) &
+            (f.Eq(x => x.ExpiresAt, null) | f.Gt(x => x.ExpiresAt, now));
+        return await _db.MarketplaceSkillShareLinks.CountDocumentsAsync(filter, cancellationToken: ct);
+    }
+
+    private static object ToDto(MarketplaceSkill s, string currentUserId, long shareCount)
     {
         return new
         {
@@ -1158,6 +1198,7 @@ public class MarketplaceSkillsController : ControllerBase
             originalFileName = s.OriginalFileName,
             hasSkillMd = s.HasSkillMd,
             downloadCount = s.DownloadCount,
+            shareCount,
             favoriteCount = s.FavoritedByUserIds?.Count ?? 0,
             isFavoritedByCurrentUser = s.FavoritedByUserIds?.Contains(currentUserId) ?? false,
             // 映射到 MarketplaceItemBase 约定，兼容前端通用卡片
