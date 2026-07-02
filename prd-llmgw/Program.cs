@@ -27,7 +27,6 @@ var mongoConn = config["MongoDB:ConnectionString"] ?? "mongodb://localhost:27017
 var mongoDb = config["MongoDB:DatabaseName"] ?? "prdagent";
 
 const string DevJwtSecret = "llmgw-dev-secret-change-me-please-0001";
-const string DevAdminPwd = "llmgw-admin-2026";
 
 // 安全门（修复「仓库已知 dev 密钥可伪造 token 读 /gw/*」）：
 //   /gw/* 暴露在外，bearer 鉴权只校验签名/issuer/有效期。若生产回落到仓库已知的 dev 密钥，
@@ -59,7 +58,9 @@ const string DefaultAdminPwd = "admin";
 var seedAdminUser = Environment.GetEnvironmentVariable("LLMGW_ADMIN_USER");
 if (string.IsNullOrWhiteSpace(seedAdminUser)) seedAdminUser = DefaultAdminUser;
 var configuredAdminPwd = Environment.GetEnvironmentVariable("LLMGW_ADMIN_PASSWORD");
-var usingDefaultPwd = string.IsNullOrWhiteSpace(configuredAdminPwd) || configuredAdminPwd == DevAdminPwd;
+// 只把「空/未配置」当作走缺省 admin/admin；**不再**把仓库 dev 占位串 llmgw-admin-2026 当默认——
+// 否则运维若真把口令显式设成该值会被静默忽略、登不进（Bugbot）。任何非空值都按用户配置采用。
+var usingDefaultPwd = string.IsNullOrWhiteSpace(configuredAdminPwd);
 var seedAdminPwd = usingDefaultPwd ? DefaultAdminPwd : configuredAdminPwd!;
 if (isProduction && usingDefaultPwd)
 {
