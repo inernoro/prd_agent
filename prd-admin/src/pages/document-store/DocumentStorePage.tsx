@@ -2497,10 +2497,9 @@ export function DocumentStorePage() {
         data-tour-id="library-tabs"
         className="sticky top-0 z-20 flex flex-col gap-3 pb-5 -mb-5"
         style={{
-          background: 'linear-gradient(180deg, color-mix(in srgb, var(--bg-primary, #121218) 98%, transparent) 0%, color-mix(in srgb, var(--bg-primary, #121218) 94%, transparent) 72%, color-mix(in srgb, var(--bg-primary, #121218) 86%, transparent) 100%)',
-          backdropFilter: 'blur(18px) saturate(140%)',
-          WebkitBackdropFilter: 'blur(18px) saturate(140%)',
-          boxShadow: '0 14px 32px -26px rgba(0,0,0,0.75)',
+          background: 'linear-gradient(180deg, color-mix(in srgb, var(--bg-primary, #121218) 82%, transparent) 0%, color-mix(in srgb, var(--bg-primary, #121218) 58%, transparent) 74%, transparent 100%)',
+          backdropFilter: 'blur(12px) saturate(130%)',
+          WebkitBackdropFilter: 'blur(12px) saturate(130%)',
         }}
       >
         {/* 顶部第一排：左上角空间切换（我的空间 / 团队空间 / 我的收藏 / 我的点赞） */}
@@ -2527,7 +2526,7 @@ export function DocumentStorePage() {
             setSelectedStoreId(null);
             setTab(next);
           }}
-          variant="plain"
+          variant="gold"
         />
 
       {/* 第二排：按顶部 tab 联动的工具栏
@@ -2537,9 +2536,9 @@ export function DocumentStorePage() {
         <div
           data-tour-id="library-toolbar"
           className={isMobile
-            ? 'px-5 flex items-center gap-2 flex-nowrap overflow-x-auto pb-1'
-            : 'px-5 flex items-center gap-2 flex-wrap'}
-          style={isMobile ? { scrollbarWidth: 'none' } : undefined}
+            ? 'surface-nav-bar flex items-center gap-2 flex-nowrap overflow-x-auto'
+            : 'surface-nav-bar flex items-center gap-2 flex-wrap'}
+          style={isMobile ? { scrollbarWidth: 'none', overflowX: 'auto', overflowY: 'visible' } : { overflow: 'visible' }}
         >
           {tab === 'team' && (
             <TeamScopeBar
