@@ -9,6 +9,15 @@ on:
         description: "Docker platforms (default: linux/amd64). Use 'linux/amd64,linux/arm64' only if you really need multi-arch."
         required: false
         default: "linux/amd64"
+      release_tag:
+        description: "Optional immutable release tag, for example prod-20260702-1. The workflow always publishes sha-<commit>."
+        required: false
+        default: ""
+      publish_latest:
+        description: "Also publish mutable latest on manual dispatch. Pushes to main always publish latest."
+        type: boolean
+        required: false
+        default: false
 
 env:
   REGISTRY: ghcr.io
@@ -53,8 +62,10 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            # 只维护一个版本：latest（main 分支构建完成后即可部署）
-            type=raw,value=latest
+            # push main 兼容现有一键部署路径；手动热修默认只产出不可变 ref，避免污染 latest。
+            type=raw,value=latest,enable=${{ github.event_name == 'push' || inputs.publish_latest == true }}
+            type=raw,value=sha-${{ github.sha }}
+            type=raw,value=${{ inputs.release_tag }},enable=${{ github.event_name == 'workflow_dispatch' && inputs.release_tag != '' }}
 
       - name: Build metadata
         id: build_meta

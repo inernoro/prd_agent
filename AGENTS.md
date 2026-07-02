@@ -416,6 +416,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | **feature-emerge** | `/emerge` | 输入任意模块/痛点 → 扫描该模块能力 + 全局横向能力（Gateway / Bridge / Run-Worker / Attachment）→ 四层发散（基线/差异化/智力/疯狂）→ 收敛推荐波次。通用涌现，不限文档 |
 | **dev-completion-report** | `/dev-report` | 开发完成后 → 输出三段式报告：200 字总结 + 总结清单（改动/风险/测试/验收）+ 行业对比分析 |
 | **create-skill-file** | `/create-skill` | 输入技能需求 → 生成符合规范的 SKILL.md 文件并评分 |
+| **production-hotfix-release** | `/hotfix-prod` | 输入生产环境 + 指定分支/提交 → 基于线上当前 revision 最小 cherry-pick，走 CI 产物 + 生产脚本热发布，严禁保存或输出敏感信息 |
 | **cds-project-scan** | `/cds-scan` | 输入项目目录 → 自动检测技术栈和基础设施，生成 CDS docker-compose YAML |
 | **cds** | `/cds` | 输入项目/分支 → CDS 全生命周期管理：扫描生成 compose YAML + Agent 鉴权 + 推送部署 + 等待就绪 + 分层冒烟 + 故障诊断自动排查，内置 cdscli Python 封装所有 CDS REST API |
 | **theme-transition** | `/theme-transition` | 输入项目 → 添加 View Transition API 圆形水波纹主题切换动效（含降级方案） |
