@@ -198,7 +198,11 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
       const check = parseCdsCompose(composeYaml);
       if (check) {
         const bad = check.buildProfiles
-          .filter((p) => !p.command || !String(p.command).trim())
+          // 预构建镜像站点（cds.prebuilt-image，如 prd-llmgw-web 纯 nginx 前端）没有 command 是合法的：
+          // 部署路径对 prebuiltImage 走 usePrebuiltEntrypoint（用镜像自带 ENTRYPOINT/CMD 启动，见
+          // container.ts），不需要也不应该注入 command（注入会绕过 nginx 的 docker-entrypoint 初始化）。
+          // 故只对「非预构建」profile 强制 command。
+          .filter((p) => (!p.command || !String(p.command).trim()) && p.prebuiltImage !== true)
           .map((p) => p.id);
         if (bad.length > 0) {
           res.status(400).json({

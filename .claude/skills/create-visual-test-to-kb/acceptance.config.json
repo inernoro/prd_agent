@@ -20,6 +20,8 @@
   "report": {
     "_comment": "归档目标。默认 cds（验收中心，按项目归类）。无 CDS / 离线时把 mode 改 local，落本地 md + 截图目录。",
     "mode": "cds",
+    "format": "html",
+    "_formatNote": "CDS/local 报告默认用交互 HTML。报告正文仍用 Markdown 编写，archive_report.py 在归档前转换为带证据导航、表格筛选、章节折叠的 HTML；旧兼容可改为 md。",
     "cdsProjectId": "",
     "_cdsProjectIdNote": "CDS 项目 ID。留空则按 env CDS_PROJECT_ID > config.project 解析；都没有则归到 CDS 自身（全局）。CDS 鉴权走 env CDS_PROJECT_KEY（项目级 cdsp_*，推荐最小权限）或 AI_ACCESS_KEY（全局），CDS_HOST 指向 cds 域名。",
     "cdsFolder": "",

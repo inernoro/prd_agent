@@ -5,6 +5,14 @@ import type {
   HandleAdminNotificationContract,
   HandleAllAdminNotificationsContract,
   GetAdminNotificationsResponse,
+  AdminPushDeliveryLog,
+  AdminPushProfile,
+  AdminPushSubscription,
+  GetAdminPushSubscriptionsContract,
+  GetAdminPushSubscriptionsResponse,
+  TestAdminPushSubscriptionContract,
+  UpdateAdminPushProfileContract,
+  UpdateAdminPushSubscriptionContract,
 } from '@/services/contracts/notifications';
 
 export const getAdminNotificationsReal: GetAdminNotificationsContract = async (args) => {
@@ -20,4 +28,20 @@ export const handleAdminNotificationReal: HandleAdminNotificationContract = asyn
 
 export const handleAllAdminNotificationsReal: HandleAllAdminNotificationsContract = async () => {
   return await apiRequest<{ handled: boolean }>(api.dashboard.notifications.handleAll(), { method: 'POST', body: {} });
+};
+
+export const getAdminPushSubscriptionsReal: GetAdminPushSubscriptionsContract = async () => {
+  return await apiRequest<GetAdminPushSubscriptionsResponse>(api.dashboard.notifications.subscriptions(), { method: 'GET' });
+};
+
+export const updateAdminPushSubscriptionReal: UpdateAdminPushSubscriptionContract = async (topicKey, request) => {
+  return await apiRequest<{ subscription: AdminPushSubscription }>(api.dashboard.notifications.subscription(topicKey), { method: 'PUT', body: request });
+};
+
+export const updateAdminPushProfileReal: UpdateAdminPushProfileContract = async (request) => {
+  return await apiRequest<{ defaultProfile: AdminPushProfile }>(api.dashboard.notifications.subscriptionDefaultProfile(), { method: 'PUT', body: request });
+};
+
+export const testAdminPushSubscriptionReal: TestAdminPushSubscriptionContract = async (topicKey, request) => {
+  return await apiRequest<{ delivery: AdminPushDeliveryLog }>(api.dashboard.notifications.testSubscription(topicKey), { method: 'POST', body: request });
 };

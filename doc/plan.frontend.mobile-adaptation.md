@@ -145,7 +145,7 @@ xl:  1024 - 1279px  → 平板横屏 / 小笔记本
 | **LoginPage** | 居中表单 | 全屏表单，已基本适配 | P0 |
 | **LandingPage** | 多section | 已有响应式，微调间距 | P1 |
 | **UsersPage** | 用户卡片网格 | 单列卡片，搜索栏折叠 | P1 |
-| **LlmLogsPage** | 表格 + 筛选 | 卡片列表 + 折叠筛选 | P1 |
+| **LlmLogsPage** | 表格 + 筛选 | 已完成（2026-06-26，实际方案与本计划不同：隐藏统计柱状图 + 表格精简为核心列撑满视口不横滚 + 控制条合并为单条横向滚动，非卡片列表；移动兼容标记由 limited 升为 full，详见 `changelogs/2026-06-26_logs-mobile.md`） | P1 |
 | **ModelManageTabsPage** | Tab + 表格 | 横向滚动 Tab + 卡片视图 | P2 |
 | **PromptStagesPage** | 提示词列表 | 单列卡片 | P2 |
 | **AuthzPage** | 权限矩阵表格 | 单角色详情视图（非矩阵） | P2 |
@@ -323,6 +323,7 @@ Step 5.3  适配 AiChatPage
 Step 5.4  适配 UsersPage / LlmLogsPage
           - SearchFilterBar + ResponsiveGrid
           - 详情弹窗使用 ResponsiveDialog
+          - LlmLogsPage 部分已完成（2026-06-26，方案见 3.4 节备注），UsersPage 部分仍待办
 
 Step 5.5  适配 DefectAgentPage
           - DefectDetailPanel 600-900px → 移动端全屏 + 左右面板堆叠

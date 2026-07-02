@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Copy, GitBranch, RefreshCw, RotateCw } from 'lucide-react';
+import { AlertTriangle, Copy, GitBranch, Network, RefreshCw, RotateCw } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
@@ -157,6 +157,46 @@ type BranchState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
   | { status: 'ok'; data: SelfBranchesResponse };
+
+interface DockerNetworkHealthResponse {
+  ok: boolean;
+  timestamp: string;
+  error?: string;
+  counts?: {
+    totalDockerNetworks: number;
+    branchNetworks: number;
+    projectNetworks: number;
+    emptyBranchNetworks: number;
+    stoppedOnlyBranchNetworks: number;
+    runningBranchNetworks: number;
+    unknownBranchNetworks: number;
+    stoppedOnlyContainers: number;
+  };
+  softLimit?: {
+    userDefinedBridgeNetworks: number;
+    source: string;
+  };
+  risk?: {
+    level: 'ok' | 'warn' | 'critical';
+    title: string;
+    message: string;
+  };
+  cleanupCandidates?: {
+    empty: string[];
+    stoppedOnly: Array<{ name: string; containers: number }>;
+  };
+  runningNetworks?: string[];
+  unknownNetworks?: string[];
+  suggestedDaemonJson?: {
+    defaultAddressPools: Array<{ base: string; size: number }>;
+    note: string;
+  };
+}
+
+type DockerNetworkHealthState =
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'ok'; data: DockerNetworkHealthResponse };
 
 type UpdateRunState = 'idle' | 'running' | 'success' | 'error';
 
@@ -406,6 +446,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     : 0;
   // 2026-05-04 新增:CDS 自更新可见性面板状态(用户:"我不清楚是否有自动更新")
   const [selfStatus, setSelfStatus] = useState<SelfStatusState>({ status: 'loading' });
+  const [networkHealth, setNetworkHealth] = useState<DockerNetworkHealthState>({ status: 'loading' });
   // 2026-05-28 删除 historyOpen — 列表常驻显示在面板下方,不再走 Dialog
 
   // 2026-05-06 用户反馈"中间没更新左下角在动" — server-authority 同步:
@@ -567,6 +608,20 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     }
   }, []);
 
+  const loadNetworkHealth = useCallback(async () => {
+    setNetworkHealth({ status: 'loading' });
+    try {
+      const data = await apiRequest<DockerNetworkHealthResponse>('/api/cds-system/docker-networks');
+      if (!data.ok) {
+        setNetworkHealth({ status: 'error', message: data.error || 'Docker 网络健康检查失败' });
+        return;
+      }
+      setNetworkHealth({ status: 'ok', data });
+    } catch (err) {
+      setNetworkHealth({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+    }
+  }, []);
+
   // 2026-05-28 重构:不再独立轮询 /api/self-status?probe=remote。改为订阅
   // useCdsEvents store 的 self.status 事件。任何 tab/webhook 触发的自更新都会
   // 经由 cds-events bus 实时推过来,远比 30s 轮询新鲜。窗口事件
@@ -577,6 +632,10 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   useEffect(() => {
     void loadBranches();
   }, [loadBranches]);
+
+  useEffect(() => {
+    void loadNetworkHealth();
+  }, [loadNetworkHealth]);
 
   // snapshot → selfStatus 同步;degraded 时保留旧值显示
   useEffect(() => {
@@ -1003,6 +1062,10 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
         <SelfUpdateHistoryList historyState={selfHistoryState} onManualRefresh={refreshSelfHistory} />
       </Section>
 
+      <Section title="Docker 网络容量" description="分支隔离网络占用、可清理候选与 address pool 风险。">
+        <DockerNetworkHealthPanel state={networkHealth} onRefresh={loadNetworkHealth} />
+      </Section>
+
       <DisclosurePanel title="危险操作" subtitle="影响所有项目的不可逆操作" tone="danger">
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
@@ -1041,6 +1104,167 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
 //   2. 上次系统更新发生在什么时候,谁触发的,成功还是失败?
 //   3. 历史:最近 20 次更新流水
 // ──────────────────────────────────────────────────────────────────────────
+
+function DockerNetworkHealthPanel({
+  state,
+  onRefresh,
+}: {
+  state: DockerNetworkHealthState;
+  onRefresh: () => void | Promise<void>;
+}): JSX.Element {
+  if (state.status === 'loading') {
+    return <LoadingBlock label="检查 Docker 分支网络容量" />;
+  }
+  if (state.status === 'error') {
+    return (
+      <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
+        <div className="flex flex-wrap items-center gap-2 text-amber-700 dark:text-amber-300">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span className="min-w-0 flex-1">读取 Docker 网络状态失败:{state.message}</span>
+          <Button type="button" size="sm" variant="outline" onClick={() => void onRefresh()}>
+            <RefreshCw />
+            重试
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  const data = state.data;
+  const counts = data.counts;
+  const cleanup = data.cleanupCandidates;
+  const risk = data.risk;
+  const daemonJson = data.suggestedDaemonJson
+    ? JSON.stringify({ 'default-address-pools': data.suggestedDaemonJson.defaultAddressPools }, null, 2)
+    : '';
+  const emptyNetworks = cleanup?.empty ?? [];
+  const stoppedNetworks = cleanup?.stoppedOnly ?? [];
+  const cleanupCount = emptyNetworks.length + stoppedNetworks.length;
+  const riskClass = risk?.level === 'critical'
+    ? 'border-destructive/40 bg-destructive/10 text-destructive'
+    : risk?.level === 'warn'
+      ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+      : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300';
+
+  return (
+    <div className="space-y-4 rounded-md border border-border bg-card px-4 py-4">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <Network className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm font-medium">分支网络健康</span>
+            {risk ? (
+              <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs ${riskClass}`}>
+                {risk.title}
+              </span>
+            ) : null}
+          </div>
+          <div className="mt-2 max-w-4xl text-sm leading-6 text-muted-foreground">
+            {risk?.message || '当前没有可用的风险结论。'}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            检查时间 {formatAbsoluteTime(data.timestamp)}
+            {data.softLimit ? ` · 经验阈值 ${data.softLimit.userDefinedBridgeNetworks} 个 bridge 网络` : ''}
+          </div>
+        </div>
+        <Button type="button" variant="outline" onClick={() => void onRefresh()}>
+          <RefreshCw />
+          刷新网络
+        </Button>
+      </div>
+
+      {counts ? (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <DockerNetworkMetric label="分支网" value={counts.branchNetworks} hint={`Docker 网络总数 ${counts.totalDockerNetworks}`} />
+          <DockerNetworkMetric label="运行中" value={counts.runningBranchNetworks} hint="至少有 1 个运行容器" />
+          <DockerNetworkMetric label="空网络" value={counts.emptyBranchNetworks} hint="可优先清理" tone={counts.emptyBranchNetworks > 0 ? 'warn' : 'default'} />
+          <DockerNetworkMetric label="停止容器网" value={counts.stoppedOnlyBranchNetworks} hint={`${counts.stoppedOnlyContainers} 个停止容器`} tone={counts.stoppedOnlyBranchNetworks > 0 ? 'warn' : 'default'} />
+          <DockerNetworkMetric label="项目网" value={counts.projectNetworks} hint="共享 infra 网络" />
+        </div>
+      ) : null}
+
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_440px]">
+        <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-sm font-medium">可清理候选</div>
+            <span className="text-xs text-muted-foreground">{cleanupCount} 个候选</span>
+          </div>
+          {cleanupCount === 0 ? (
+            <div className="mt-3 text-sm text-muted-foreground">
+              当前没有空分支网络，也没有只挂停止容器的分支网络。此时不要合并所有分支到同一个裸 Docker 网络，否则服务别名会跨分支冲突。
+            </div>
+          ) : (
+            <div className="mt-3 space-y-3 text-sm">
+              {emptyNetworks.length > 0 ? (
+                <div>
+                  <div className="mb-1.5 text-xs font-medium text-muted-foreground">空网络</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {emptyNetworks.slice(0, 12).map((name) => <CodePill key={name}>{name}</CodePill>)}
+                    {emptyNetworks.length > 12 ? <span className="text-xs text-muted-foreground">还有 {emptyNetworks.length - 12} 个</span> : null}
+                  </div>
+                </div>
+              ) : null}
+              {stoppedNetworks.length > 0 ? (
+                <div>
+                  <div className="mb-1.5 text-xs font-medium text-muted-foreground">只挂停止容器的网络</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {stoppedNetworks.slice(0, 12).map((item) => (
+                      <CodePill key={item.name}>{item.name} · {item.containers}</CodePill>
+                    ))}
+                    {stoppedNetworks.length > 12 ? <span className="text-xs text-muted-foreground">还有 {stoppedNetworks.length - 12} 个</span> : null}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          )}
+          {(data.unknownNetworks?.length ?? 0) > 0 ? (
+            <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+              有 {data.unknownNetworks?.length} 个网络无法确认容器状态，清理前需要先人工核对 Docker inspect 输出。
+            </div>
+          ) : null}
+        </div>
+
+        <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-3">
+          <div className="text-sm font-medium">地址池扩容模板</div>
+          <div className="mt-1 text-xs leading-5 text-muted-foreground">
+            扩大地址池是短期最稳的容量方案，但需要改 Docker daemon 配置并重启 Docker。重启会中断当前容器，应放在低峰窗口执行。
+          </div>
+          {daemonJson ? (
+            <pre className="mt-3 max-h-48 overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-background px-3 py-2 font-mono text-xs leading-5 text-muted-foreground">
+              {daemonJson}
+            </pre>
+          ) : null}
+          {data.suggestedDaemonJson?.note ? (
+            <div className="mt-2 text-xs leading-5 text-muted-foreground">{data.suggestedDaemonJson.note}</div>
+          ) : null}
+          {data.softLimit?.source ? (
+            <div className="mt-2 text-xs leading-5 text-muted-foreground">{data.softLimit.source}</div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DockerNetworkMetric({
+  label,
+  value,
+  hint,
+  tone = 'default',
+}: {
+  label: string;
+  value: number;
+  hint: string;
+  tone?: 'default' | 'warn';
+}): JSX.Element {
+  return (
+    <div className={`rounded-md border px-3 py-2 ${tone === 'warn' ? 'border-amber-500/30 bg-amber-500/10' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]'}`}>
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="mt-1 font-mono text-xl font-semibold">{value}</div>
+      <div className="mt-1 text-xs text-muted-foreground">{hint}</div>
+    </div>
+  );
+}
 
 function SelfUpdateStatusPanel({
   state,

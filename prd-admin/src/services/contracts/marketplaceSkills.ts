@@ -42,6 +42,8 @@ export interface MarketplaceSkillDto {
   originalFileName: string;
   hasSkillMd: boolean;
   downloadCount: number;
+  /** 有效公开分享链接数量 */
+  shareCount: number;
   favoriteCount: number;
   isFavoritedByCurrentUser: boolean;
 }

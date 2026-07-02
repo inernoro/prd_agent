@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using PrdAgent.Core.Helpers;
+using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Security;
 using Shouldly;
 using Xunit;
@@ -68,6 +69,27 @@ public class ApiKeyCryptoKeyRingTests
         result.Success.ShouldBeTrue();
         result.PlainText.ShouldBe(plainText);
         result.UsedLegacySecret.ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData("Stub 开发桩", "openai", "https://example.com/v1", true)]
+    [InlineData("Local Stub", "stub", "https://example.com/v1", true)]
+    [InlineData("Local Dev", "openai", "https://example.com/api/v1/stub", true)]
+    [InlineData("OpenAI", "openai", "https://api.openai.com/v1", false)]
+    public void PlatformApiKeyPolicy_ShouldTreatStubPlatformAsOptional(
+        string name,
+        string providerId,
+        string apiUrl,
+        bool expected)
+    {
+        var platform = new LLMPlatform
+        {
+            Name = name,
+            ProviderId = providerId,
+            ApiUrl = apiUrl
+        };
+
+        PlatformApiKeyPolicy.IsApiKeyOptional(platform).ShouldBe(expected);
     }
 
     private static IConfiguration BuildConfig(string primary, string jwt)

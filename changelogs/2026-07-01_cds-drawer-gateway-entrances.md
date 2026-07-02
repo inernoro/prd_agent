@@ -1,0 +1,1 @@
+| fix | cds | 分支详情抽屉(BranchDetailDrawer,即从分支列表点开的右侧滑入面板)补齐网关多出口:fetch /subdomain-aliases 的 gatewayUrls,在「应用已上线」卡片里把主应用入口与网关入口(llmgw/llmgw-serve 命名域名)并列展示,不再只显示单个主 URL(此前多出口只落在 BranchDetailPage 全页视图,用户实际看的抽屉里看不到) |

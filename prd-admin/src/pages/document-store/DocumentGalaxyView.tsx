@@ -4,22 +4,27 @@
  * 数据：listDocumentEntriesReal（条目）+ getStoreGraph（双链）。
  * 业务关系识别复用 buildDocGalaxy（SSOT，根→分类→appname→子模块→文档树 + 横向引用）。
  *
- * 渲染内核（2026-06-25 重写 + 视觉对齐）：vanilla three.js（原生 EffectComposer +
- * UnrealBloomPass 选择性 bloom），**完整照搬演示版 doc-tree-3d.html 的视觉数值**（演示是 SSOT）。
- * 这是「白色 group/root 节点不爆成大白团」的关键 —— 不只搬 bloom 双 pass，更搬真实的视觉用量：
+ * 渲染内核（2026-06-25 重写；2026-07-02 艺术升级 art pass v2）：vanilla three.js，
+ * 原生 EffectComposer + UnrealBloomPass 选择性 bloom。布局尺度 / 节点尺寸 / 光晕用量沿用
+ * 演示版 doc-tree-3d.html 的数值基线（LEVEL_R、nodeSize、haloOpacity —— 这是
+ * 「白色 group/root 节点不爆成大白团」的关键），视觉层在其上做了整套深空剧场化：
  *
- *   尺度与布局（照抄演示）：LEVEL_R=[0,120,300,470,620,760] 球面树 + 斐波那契球铺顶级分类 +
- *     圆锥散开子节点；相机 fov 60 / pos (0,120,1050) / 远 12000；OrbitControls 阻尼 0.045。
- *   节点尺寸（照抄演示 nodeSize）：root 16 / category(d1) 10 / appname(d2) 4.5+min(5,√docCount) /
- *     submodule(d≥3) 3.2 / leaf 2.1；核心球半径 = size*0.9。
- *   光晕（白团根因，改成演示同款的小光晕）：缩放 = size*(leaf?7:10)、不透明度
- *     root 0.5 / category 0.46 / appname 0.36 / submodule 0.26 / leaf 0.32；随相机距离衰减(refD=size*26)。
- *   配色（照抄演示，更克制）：TYPE_COLORS + root 纯白 / category 金 / appname 冷白 / submodule 灰蓝。
- *   选择性 bloom 双 pass（保留）：
- *     1) bloomComposer 只渲染 BLOOM_LAYER（星体核心 mesh），其余物体临时变黑/隐藏 → 离屏 glow 纹理；
- *     2) finalComposer 正常渲染整场景，再用 combine ShaderPass 把 glow 叠加上去（×0.85 软叠加）。
- *   核心 MeshBasicMaterial（非 emissive），bloom strength=0.62 / threshold=0.72 / radius=0.4；
- *   ACES 色调映射 + 曝光 0.82：高光柔性滚降，放大时不死白。
+ *   氛围：渐变深空穹顶（BackSide 球，天顶靛蓝 → 地底近黑 + 赤道微光带）、
+ *     双层闪烁星场（自定义 shader points：远景 5000+ 细星 + 近景亮星，各自相位呼吸）、
+ *     程序化星云（384px 多团簇贴图 18 片，缓漂 + 各自微旋）、银心双层辉光、偶发流星。
+ *   星体：核心球换限暗着色器（视线正对处白热、向边缘回落本色、极边缘色相增益），
+ *     bloom 从「整球溢出」变成「热核溢出」；hover 有亮度 + 尺寸的缓动反馈；
+ *     root 与一级分类枢纽带缓旋衍射星芒。
+ *   光路：父子连线改二次贝塞尔弧线（向外微拱），顶点色从父端亮蓝渐隐到子端、
+ *     叶子端混入该文档 type 色；横向引用为拱高更大的能量弧（两端暗中段亮），
+ *     并有流光脉冲沿弧线巡游；聚焦时非子树光路同步压暗。
+ *   编排：入场为「银心向外的生长波」—— 节点按半径 + 层深错峰弹性长出、光路随后淡入、
+ *     相机从远处缓推进场；全程可被用户手势打断。
+ *   后期：combine pass 内联电影级 grade —— 轻色差（边缘）、柔性暗角、阴影提靛、
+ *     胶片颗粒抖动（去深空色带）。bloom strength=0.62 / threshold=0.72 / radius=0.45。
+ *     防死白靠 haloOpacity 压底 + glow x0.85 软叠加 + bloom 阈值的手工调校
+ *    （composer 渲染到 render target 时 three 不应用 renderer.toneMapping，别指望 ACES 兜底）。
+ *   标签：2x 超采样绘制（近看不糊），子模块 / 应用层标签随相机距离淡入淡出（远观不糊屏）。
  *   标签 / 连线 / 星点 / 星云全部不在 bloom 层，始终清晰。
  *
  * 功能层（保留）：type 图例筛选、点叶子复用系统 MarkdownViewer 阅读、hover 显示节点名、
@@ -211,6 +216,69 @@ function makeRadialTexture(stops: Array<[number, string]>): THREE.Texture {
   return tex;
 }
 
+// ── 衍射星芒贴图（root / 一级分类枢纽的十字光斑；水平垂直主臂 + 45 度弱臂）──
+function makeSpikeTexture(): THREE.Texture {
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const c = size / 2;
+  const arm = (angle: number, len: number, alpha: number) => {
+    ctx.save();
+    ctx.translate(c, c);
+    ctx.rotate(angle);
+    const grad = ctx.createLinearGradient(-len, 0, len, 0);
+    grad.addColorStop(0, 'rgba(255,255,255,0)');
+    grad.addColorStop(0.5, `rgba(255,255,255,${alpha})`);
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(-len, -1.6, len * 2, 3.2);
+    ctx.restore();
+  };
+  arm(0, c, 0.9);
+  arm(Math.PI / 2, c, 0.9);
+  arm(Math.PI / 4, c * 0.55, 0.35);
+  arm(-Math.PI / 4, c * 0.55, 0.35);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.needsUpdate = true;
+  return tex;
+}
+
+// ── 流星拖尾贴图（右端亮头、向左渐隐的细长光条）──
+function makeStreakTexture(): THREE.Texture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 32;
+  const ctx = canvas.getContext('2d')!;
+  const grad = ctx.createLinearGradient(0, 0, 256, 0);
+  grad.addColorStop(0, 'rgba(160,190,255,0)');
+  grad.addColorStop(0.75, 'rgba(210,226,255,0.55)');
+  grad.addColorStop(0.97, 'rgba(255,255,255,0.95)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 12, 256, 8);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.needsUpdate = true;
+  return tex;
+}
+
+// 入场生长的弹性缓出（轻微过冲，星体「长出来」的手感）
+export function easeOutBack(t: number): number {
+  const c1 = 1.2;
+  const c3 = c1 + 1;
+  const x = t - 1;
+  return 1 + c3 * x * x * x + c1 * x * x;
+}
+
+const clamp01 = (x: number): number => Math.min(1, Math.max(0, x));
+
+// 确定性伪随机（按索引取相位/速度，避免每次渲染循环 re-random）
+function hash01(n: number): number {
+  const s = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+  return s - Math.floor(s);
+}
+
 // ── 节点视觉尺寸（演示版 nodeSize，数值 SSOT 照抄）──
 // 演示有 root/category/appname/submodule/doc 五类；产品只有 root/group/leaf，
 // 用 depth 把 group 映射到 category(d=1) / appname(d=2) / submodule(d>=3)。
@@ -251,14 +319,55 @@ function groupColor(node: GalaxyNode, depth: number): string {
   return SUB_COLOR;
 }
 
+// 核心星着色器 uniforms（限暗 + 热核；uOpacity 承接聚焦淡出、uBoost 承接 hover 提亮）
+interface CoreUniforms {
+  uColor: { value: THREE.Color };
+  uOpacity: { value: number };
+  uBoost: { value: number };
+}
+
+const CORE_VERT = `
+varying vec3 vN;
+varying vec3 vV;
+void main() {
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  vN = normalize(normalMatrix * normal);
+  vV = normalize(-mv.xyz);
+  gl_Position = projectionMatrix * mv;
+}`;
+
+const CORE_FRAG = `
+uniform vec3 uColor;
+uniform float uOpacity;
+uniform float uBoost;
+varying vec3 vN;
+varying vec3 vV;
+void main() {
+  float ndv = clamp(dot(normalize(vN), normalize(vV)), 0.0, 1.0);
+  float core = pow(ndv, 2.2);
+  vec3 hot = mix(uColor, vec3(1.0), 0.55);
+  vec3 col = mix(uColor * 0.62, hot, core);
+  float rim = pow(1.0 - ndv, 3.0);
+  col += uColor * rim * 0.35;
+  gl_FragColor = vec4(col * uBoost, uOpacity);
+}`;
+
 // ── 节点渲染时挂在 sprite/mesh userData 上的元信息 ──
 interface NodeRender {
   node: GalaxyNode;
   core: THREE.Mesh;
+  coreU: CoreUniforms;
   halo: THREE.Sprite;
   haloBaseSize: number;
   haloBaseOpacity: number;
   size: number;
+  depth: number;
+  /** 光晕呼吸相位（每星错开，避免整场同频闪） */
+  twPhase: number;
+  /** hover 强调的缓动系数（0..1，渲染循环 lerp） */
+  hoverK: number;
+  /** 入场生长波的错峰延迟（ms） */
+  introDelay: number;
 }
 
 /**
@@ -266,22 +375,32 @@ interface NodeRender {
  * 标签在 bloom 层之外 → 永远清晰、不被泛光糊掉。
  */
 // 仅生成标签纹理 + 尺寸（供初次创建 sprite 与切换显示模式时重绘共用）。
+// 2x 超采样绘制：近观标签边缘不糊（世界尺度不变，只提纹理密度）
+const LABEL_RES = 2;
+
+// 文本测量画布单例（每次重绘新建 canvas 纯属浪费）
+let labelMeasureCtx: CanvasRenderingContext2D | null = null;
+function getLabelMeasureCtx(): CanvasRenderingContext2D {
+  if (!labelMeasureCtx) labelMeasureCtx = document.createElement('canvas').getContext('2d')!;
+  return labelMeasureCtx;
+}
+
 function makeLabelTexture(
   text: string,
   kind: GalaxyNode['kind'],
   depth: number,
   color: string,
 ): { tex: THREE.CanvasTexture; w: number; h: number; fontSize: number } {
-  // 演示版字号：root 46 / category 40 / 其余 30
+  // 演示版字号：root 46 / category 40 / 其余 30（逻辑字号；实际按 LABEL_RES 超采样绘制）
   const fontSize = kind === 'root' ? 46 : depth <= 1 ? 40 : 30;
-  const pad = 10;
-  const measure = document.createElement('canvas').getContext('2d')!;
-  const font = `600 ${fontSize}px "PingFang SC","Microsoft YaHei",system-ui,sans-serif`;
+  const pad = 10 * LABEL_RES;
+  const measure = getLabelMeasureCtx();
+  const font = `600 ${fontSize * LABEL_RES}px "PingFang SC","Microsoft YaHei",system-ui,sans-serif`;
   measure.font = font;
   const w = measure.measureText(text || ' ').width;
   const cv = document.createElement('canvas');
   cv.width = Math.ceil(w + pad * 2);
-  cv.height = fontSize + pad * 2;
+  cv.height = fontSize * LABEL_RES + pad * 2;
   const cx = cv.getContext('2d')!;
   cx.font = font;
   // 半透明圆角底 + 描边
@@ -294,17 +413,23 @@ function makeLabelTexture(
     cx.arcTo(x, y, x + ww, y, r);
     cx.closePath();
   };
-  cx.fillStyle = 'rgba(3,6,18,0.6)';
-  rr(0, 0, cv.width, cv.height, 9);
+  cx.fillStyle = 'rgba(3,6,18,0.58)';
+  rr(0, 0, cv.width, cv.height, 9 * LABEL_RES);
   cx.fill();
-  cx.strokeStyle = color + '66';
-  cx.lineWidth = 2;
-  rr(1, 1, cv.width - 2, cv.height - 2, 9);
+  cx.strokeStyle = color + '55';
+  cx.lineWidth = 1.5 * LABEL_RES;
+  rr(1, 1, cv.width - 2, cv.height - 2, 9 * LABEL_RES);
   cx.stroke();
+  // 文字带同色微光（仅 root / 一级分类 —— 深层标签量大且远看即淡出，省掉逐字高斯模糊成本）
   cx.fillStyle = kind === 'root' ? '#ffffff' : color;
   cx.font = font;
   cx.textBaseline = 'middle';
-  cx.fillText(text, pad, cv.height / 2 + 2);
+  if (kind === 'root' || depth <= 1) {
+    cx.shadowColor = color;
+    cx.shadowBlur = 7 * LABEL_RES;
+  }
+  cx.fillText(text, pad, cv.height / 2 + 2 * LABEL_RES);
+  cx.shadowBlur = 0;
   const tex = new THREE.CanvasTexture(cv);
   tex.needsUpdate = true;
   return { tex, w: cv.width, h: cv.height, fontSize };
@@ -315,12 +440,13 @@ function makeLabelSprite(text: string, kind: GalaxyNode['kind'], depth: number, 
   const sp = new THREE.Sprite(
     new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false }),
   );
-  // 演示版世界尺度：sc = 0.34*(fontSize/30)
-  const sc = 0.34 * (fontSize / 30);
+  // 演示版世界尺度：sc = 0.34*(fontSize/30)；超采样后除回 LABEL_RES 保持同一世界尺寸
+  const sc = (0.34 * (fontSize / 30)) / LABEL_RES;
   sp.scale.set(w * sc, h * sc, 1);
   sp.renderOrder = 10;
-  // 记录元数据，供切换显示模式时按相同 kind/depth/color 重绘
+  // 记录元数据 + 当前文本，供切换显示模式时按相同 kind/depth/color 重绘、文本未变时跳过
   sp.userData.labelMeta = { kind, depth, color };
+  sp.userData.labelText = text;
   return sp;
 }
 
@@ -333,7 +459,7 @@ function redrawLabelSprite(sprite: THREE.Sprite, text: string): THREE.CanvasText
   mat.map = tex;
   mat.needsUpdate = true;
   if (old) old.dispose();
-  const sc = 0.34 * (fontSize / 30);
+  const sc = (0.34 * (fontSize / 30)) / LABEL_RES;
   sprite.scale.set(w * sc, h * sc, 1);
   return tex;
 }
@@ -1047,22 +1173,35 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     // 演示版数值 SSOT：深空底色 0x02030a
     renderer.setClearColor(0x02030a, 1);
-    // ACES filmic 色调映射 + 曝光 0.82：高光柔性滚降，放大不死白（演示版同款）
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 0.82;
+    // 注意：走 EffectComposer 渲染到 render target 时 three 不应用 renderer.toneMapping，
+    // 输出实际是线性值在 1.0 硬截断。防死白依赖 haloOpacity 压底 + glow x0.85 软叠加 +
+    // bloom threshold 0.72 的手工调校（视觉按此校准，不要再假设有 ACES 滚降兜底）。
     mount.appendChild(renderer.domElement);
     renderer.domElement.style.display = 'block';
     renderer.domElement.style.width = '100%';
     renderer.domElement.style.height = '100%';
+
+    // 画布整体淡入（重建场景时同样生效，形成柔和交叉淡化）
+    mount.style.opacity = '0';
+    mount.style.transition = 'opacity 900ms ease';
+    requestAnimationFrame(() => {
+      mount.style.opacity = '1';
+    });
+
+    // 入场编排的时间原点（生长波 / 光路淡入 / 相机推进共用）。
+    // 窗口长度在节点建完后按「最大 introDelay + 单节点生长时长」动态收口（见下方赋值），
+    // 固定值会在深层大库上提前关窗，让外围星体从半程直接弹到终态（Bugbot 2b920e92）。
+    const introStart = performance.now();
+    let INTRO_TOTAL = 2600;
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x02030a);
     // 演示版极淡指数雾（大尺度场景，0.00035）
     scene.fog = new THREE.FogExp2(0x02030a, 0.00035);
 
-    // 演示版相机：fov 60、近 1 远 12000、起始位 (0,120,1050)
+    // 演示版相机：fov 60、近 1 远 12000；入场从远处 (0,260,2450) 缓推到常驻位 (0,120,1050)
     const camera = new THREE.PerspectiveCamera(60, W / H, 1, 12000);
-    camera.position.set(0, 120, 1050);
+    camera.position.set(0, 260, 2450);
 
     // 抽屉打开时：把投影窗口右移 inset/2（内容左移），使屏幕中心（聚焦星落点）落在左半可见区中心。
     // 选中环/hover 卡/拾取都走 project(camera)/raycaster，自动跟随该偏移，不需额外处理。
@@ -1120,91 +1259,261 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
     const bloomLayer = new THREE.Layers();
     bloomLayer.set(BLOOM_LAYER);
 
-    // ── 深空星点 starfield（演示版数值 SSOT：N=3000、半径 2200..6400、size 3、opacity 0.8）──
+    // ── 渐变深空穹顶：天顶靛蓝 → 地底近黑 + 赤道微光带，杀死「纯色底」的死板 ──
     {
-      const N = 3000;
-      const positions = new Float32Array(N * 3);
-      const colors = new Float32Array(N * 3);
-      for (let i = 0; i < N; i++) {
-        const r = 2200 + Math.random() * 4200;
+      const domeMat = track(
+        new THREE.ShaderMaterial({
+          side: THREE.BackSide,
+          depthWrite: false,
+          fog: false,
+          vertexShader: `
+varying vec3 vDir;
+void main() {
+  vDir = normalize(position);
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`,
+          fragmentShader: `
+varying vec3 vDir;
+void main() {
+  float h = vDir.y * 0.5 + 0.5;
+  vec3 top = vec3(0.012, 0.015, 0.040);
+  vec3 bottom = vec3(0.004, 0.005, 0.014);
+  vec3 col = mix(bottom, top, smoothstep(0.0, 1.0, h));
+  float by = vDir.y * 2.6;
+  float band = exp(-by * by);
+  col += vec3(0.010, 0.008, 0.024) * band;
+  col += vec3(0.006, 0.002, 0.010) * (vDir.x * 0.5 + 0.5) * band;
+  gl_FragColor = vec4(col, 1.0);
+}`,
+        }),
+      );
+      const dome = new THREE.Mesh(track(new THREE.SphereGeometry(8000, 48, 32)), domeMat);
+      dome.renderOrder = -20;
+      scene.add(dome);
+    }
+
+    // ── 双层闪烁星场（自定义 shader points：逐星尺寸 / 色温 / 相位 / 呼吸速度）──
+    const STAR_VERT = `
+attribute float aSize;
+attribute vec3 aColor;
+attribute float aPhase;
+attribute float aSpin;
+uniform float uTime;
+uniform float uScale;
+varying vec3 vColor;
+varying float vA;
+void main() {
+  vColor = aColor;
+  vA = 0.72 + 0.28 * sin(uTime * aSpin + aPhase);
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  gl_PointSize = max(aSize * uScale / -mv.z, 0.75);
+  gl_Position = projectionMatrix * mv;
+}`;
+    const STAR_FRAG = `
+uniform sampler2D uMap;
+varying vec3 vColor;
+varying float vA;
+void main() {
+  vec4 t = texture2D(uMap, gl_PointCoord);
+  gl_FragColor = vec4(vColor, 1.0) * t * vA;
+}`;
+    const buildStarCloud = (
+      count: number,
+      rMin: number,
+      rMax: number,
+      sizeMin: number,
+      sizeMax: number,
+      warm: number,
+    ): { points: THREE.Points; uniforms: { uTime: { value: number }; uScale: { value: number }; uMap: { value: THREE.Texture } } } => {
+      const positions = new Float32Array(count * 3);
+      const sizes = new Float32Array(count);
+      const colors = new Float32Array(count * 3);
+      const phases = new Float32Array(count);
+      const spins = new Float32Array(count);
+      for (let i = 0; i < count; i++) {
+        const r = rMin + Math.random() * (rMax - rMin);
         const th = Math.random() * Math.PI * 2;
         const ph = Math.acos(2 * Math.random() - 1);
         positions[i * 3] = r * Math.sin(ph) * Math.cos(th);
         positions[i * 3 + 1] = r * Math.sin(ph) * Math.sin(th);
         positions[i * 3 + 2] = r * Math.cos(ph);
-        // 演示版亮度：b=0.35..0.9，蓝偏，克制
-        const b = 0.35 + Math.random() * 0.55;
-        colors[i * 3] = b;
-        colors[i * 3 + 1] = b;
-        colors[i * 3 + 2] = b * (0.85 + Math.random() * 0.2);
+        sizes[i] = sizeMin + Math.pow(Math.random(), 1.8) * (sizeMax - sizeMin);
+        // 色温分布：多数冷白、少数暖金 / 蓝巨星；远星整体压暗
+        const roll = Math.random();
+        let cr: number;
+        let cg: number;
+        let cb: number;
+        if (roll < warm) {
+          cr = 1.0; cg = 0.86; cb = 0.66; // 暖金
+        } else if (roll < warm + 0.16) {
+          cr = 0.66; cg = 0.78; cb = 1.0; // 蓝巨星
+        } else {
+          cr = 0.92; cg = 0.95; cb = 1.0; // 冷白
+        }
+        const distDim = 1 - ((r - rMin) / Math.max(1, rMax - rMin)) * 0.45;
+        const b = (0.4 + Math.random() * 0.6) * distDim;
+        colors[i * 3] = cr * b;
+        colors[i * 3 + 1] = cg * b;
+        colors[i * 3 + 2] = cb * b;
+        phases[i] = Math.random() * Math.PI * 2;
+        spins[i] = 0.4 + Math.random() * 1.6;
       }
       const geo = track(new THREE.BufferGeometry());
       geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-      geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+      geo.setAttribute('aSize', new THREE.Float32BufferAttribute(sizes, 1));
+      geo.setAttribute('aColor', new THREE.Float32BufferAttribute(colors, 3));
+      geo.setAttribute('aPhase', new THREE.Float32BufferAttribute(phases, 1));
+      geo.setAttribute('aSpin', new THREE.Float32BufferAttribute(spins, 1));
+      const uniforms = { uTime: { value: 0 }, uScale: { value: renderer.domElement.height * 0.5 }, uMap: { value: STAR_TEX } };
       const mat = track(
-        new THREE.PointsMaterial({
-          size: 3,
-          sizeAttenuation: true,
-          map: STAR_TEX,
-          vertexColors: true,
+        new THREE.ShaderMaterial({
+          uniforms,
+          vertexShader: STAR_VERT,
+          fragmentShader: STAR_FRAG,
           transparent: true,
           depthWrite: false,
-          opacity: 0.8,
+          blending: THREE.AdditiveBlending,
         }),
       );
-      scene.add(new THREE.Points(geo, mat));
+      const points = new THREE.Points(geo, mat);
+      scene.add(points);
+      return { points, uniforms };
+    };
+    // 远景细星海 + 近景亮星（亮星更大、暖星比例略高，呼吸更明显）
+    const farStars = buildStarCloud(6200, 2600, 7400, 2.0, 5.0, 0.08);
+    const nearStars = buildStarCloud(420, 1600, 5200, 4.5, 9.5, 0.16);
+
+    // ── 银心辉光：暖白内芯 + 冷蓝外晕，赋予全场光源方向感 ──
+    {
+      const inner = new THREE.Sprite(
+        track(
+          new THREE.SpriteMaterial({
+            map: HALO_TEX,
+            color: new THREE.Color('#ffedc8'),
+            transparent: true,
+            opacity: 0.14,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+          }),
+        ),
+      );
+      inner.scale.set(460, 460, 1);
+      inner.renderOrder = -5;
+      scene.add(inner);
+      const outer = new THREE.Sprite(
+        track(
+          new THREE.SpriteMaterial({
+            map: HALO_TEX,
+            color: new THREE.Color('#86a8ff'),
+            transparent: true,
+            opacity: 0.06,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+          }),
+        ),
+      );
+      outer.scale.set(1200, 1200, 1);
+      outer.renderOrder = -6;
+      scene.add(outer);
     }
 
-    // ── EVE 风远景星云（演示版数值 SSOT：14 片、半径 3400..6000、scale 2200..4600、opacity 0.5、additive）──
+    // ── EVE 风远景星云：384px 多团簇贴图、更丰富的靛紫青色相、各片独立微旋 ──
     const nebulaGroup = new THREE.Group();
     scene.add(nebulaGroup);
+    const nebulaSpins: Array<{ mat: THREE.SpriteMaterial; spin: number }> = [];
     {
-      // 演示版 makeNebulaTex：每片由 5 个随机径向云团叠成，wispy
-      const makeNebulaTex = (hue: string): THREE.Texture => {
+      // 每片由主团 + 若干卫星云团叠成，双色渐染更有层次
+      const makeNebulaTex = (hue: string, accent: string): THREE.Texture => {
         const c = document.createElement('canvas');
-        c.width = c.height = 256;
+        c.width = c.height = 384;
         const g = c.getContext('2d')!;
-        for (let k = 0; k < 5; k++) {
-          const cx = 64 + Math.random() * 128;
-          const cy = 64 + Math.random() * 128;
-          const rad = 40 + Math.random() * 90;
+        const blob = (color: string, cx: number, cy: number, rad: number, a: number) => {
           const rg = g.createRadialGradient(cx, cy, 0, cx, cy, rad);
-          rg.addColorStop(0, hue + 'cc');
-          rg.addColorStop(0.5, hue + '44');
-          rg.addColorStop(1, hue + '00');
+          rg.addColorStop(0, color + Math.round(a * 255).toString(16).padStart(2, '0'));
+          rg.addColorStop(0.5, color + Math.round(a * 0.32 * 255).toString(16).padStart(2, '0'));
+          rg.addColorStop(1, color + '00');
           g.fillStyle = rg;
           g.beginPath();
           g.arc(cx, cy, rad, 0, Math.PI * 2);
           g.fill();
+        };
+        blob(hue, 150 + Math.random() * 84, 150 + Math.random() * 84, 120 + Math.random() * 60, 0.75);
+        for (let k = 0; k < 7; k++) {
+          blob(
+            k % 3 === 0 ? accent : hue,
+            70 + Math.random() * 244,
+            70 + Math.random() * 244,
+            36 + Math.random() * 90,
+            0.3 + Math.random() * 0.4,
+          );
         }
         const tex = new THREE.CanvasTexture(c);
         tex.needsUpdate = true;
         return tex;
       };
-      const hues = ['#16243f', '#1c2a52', '#2a1c46', '#102a3a', '#231a3e', '#0f2030'];
-      for (let i = 0; i < 14; i++) {
-        const hue = hues[i % hues.length];
+      const palettes: Array<[string, string]> = [
+        ['#16224a', '#233a72'],
+        ['#1a2a5e', '#2a1c56'],
+        ['#2c1c56', '#4a2a6e'],
+        ['#12304a', '#1a4a62'],
+        ['#251743', '#3a2158'],
+        ['#0f2438', '#123a54'],
+        ['#331a4a', '#22224e'],
+        ['#143a52', '#1c2a5e'],
+      ];
+      for (let i = 0; i < 18; i++) {
+        const [hue, accent] = palettes[i % palettes.length];
         const mat = track(
           new THREE.SpriteMaterial({
-            map: track(makeNebulaTex(hue)),
+            map: track(makeNebulaTex(hue, accent)),
             transparent: true,
-            opacity: 0.5,
+            opacity: 0.34 + Math.random() * 0.26,
             blending: THREE.AdditiveBlending,
             depthWrite: false,
             depthTest: false,
+            rotation: Math.random() * Math.PI * 2,
           }),
         );
         const sp = new THREE.Sprite(mat);
-        const r = 3400 + Math.random() * 2600;
+        const r = 3200 + Math.random() * 3000;
         const th = Math.random() * Math.PI * 2;
         const ph = Math.acos(2 * Math.random() - 1);
         sp.position.set(r * Math.sin(ph) * Math.cos(th), r * Math.sin(ph) * Math.sin(th) * 0.7, r * Math.cos(ph));
-        const sc = 2200 + Math.random() * 2400;
+        const sc = 2000 + Math.random() * 2800;
         sp.scale.set(sc, sc, 1);
         sp.renderOrder = -10;
         nebulaGroup.add(sp);
+        nebulaSpins.push({ mat, spin: (Math.random() - 0.5) * 0.009 });
       }
     }
+
+    // ── 偶发流星：远景一道细长流光划过，6..15 秒随机间隔，一次只有一颗 ──
+    const STREAK_TEX = track(makeStreakTexture());
+    const meteorMat = track(
+      new THREE.SpriteMaterial({
+        map: STREAK_TEX,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        depthTest: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    );
+    const meteorSprite = new THREE.Sprite(meteorMat);
+    meteorSprite.scale.set(460, 8, 1);
+    meteorSprite.visible = false;
+    meteorSprite.renderOrder = -8;
+    scene.add(meteorSprite);
+    const meteor = {
+      active: false,
+      t0: 0,
+      dur: 1200,
+      from: new THREE.Vector3(),
+      dir: new THREE.Vector3(),
+      len: 1400,
+      nextAt: 4 + Math.random() * 6, // clock.elapsedTime 秒
+    };
+    const meteorDirCam = new THREE.Vector3();
 
     // ── 布局 + 节点 mesh / halo / label ──
     const { placed, edges } = layoutGalaxy(galaxy.root);
@@ -1226,6 +1535,11 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       return g;
     };
 
+    // 枢纽衍射星芒（root + 一级分类）：缓旋的十字光斑，宝石切面感
+    const SPIKE_TEX = track(makeSpikeTexture());
+    const sparkles: Array<{ sp: THREE.Sprite; spin: number; nodeId: string; baseOpacity: number }> = [];
+
+    let nodeSeq = 0;
     for (const { node, pos, depth } of placed.values()) {
       const isLeaf = node.kind === 'leaf';
       const color = isLeaf ? colorForDocType(node.docType) : groupColor(node, depth);
@@ -1234,9 +1548,21 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       // 演示版尺度：size 决定核心球半径(size*0.9)、光晕缩放(size*7|10)、标签偏移
       const size = nodeSize(node, depth);
 
-      // 核心：MeshBasicMaterial（非 emissive 泛光）—— 选择性 bloom 只让这层溢出
+      // 核心：限暗着色器（视线正对处白热、边缘回落本色）—— 选择性 bloom 只让热核溢出
       const r = coreRadiusFromSize(size);
-      const coreMat = track(new THREE.MeshBasicMaterial({ color: col }));
+      const coreU: CoreUniforms = {
+        uColor: { value: col.clone() },
+        uOpacity: { value: 1 },
+        uBoost: { value: 1 },
+      };
+      const coreMat = track(
+        new THREE.ShaderMaterial({
+          uniforms: coreU as unknown as Record<string, THREE.IUniform>,
+          vertexShader: CORE_VERT,
+          fragmentShader: CORE_FRAG,
+          transparent: true,
+        }),
+      );
       const core = new THREE.Mesh(sphereGeo(r), coreMat);
       core.position.copy(pos);
       core.userData.node = node;
@@ -1252,7 +1578,7 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
           map: HALO_TEX,
           color: col,
           transparent: true,
-          opacity: haloBaseOpacity,
+          opacity: 0,
           depthWrite: false,
           blending: THREE.AdditiveBlending,
         }),
@@ -1261,6 +1587,34 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       halo.position.copy(pos);
       halo.scale.set(haloSize, haloSize, 1);
       nodeGroup.add(halo);
+
+      // 星芒：root 与一级分类枢纽专属，尺度收敛、透明度极低（点缀而非喧宾）
+      if (node.kind === 'root' || (!isLeaf && depth <= 1)) {
+        const spikeBaseOpacity = node.kind === 'root' ? 0.13 : 0.1;
+        const spikeMat = track(
+          new THREE.SpriteMaterial({
+            map: SPIKE_TEX,
+            color: col,
+            transparent: true,
+            opacity: 0,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+            rotation: Math.random() * Math.PI,
+          }),
+        );
+        const spike = new THREE.Sprite(spikeMat);
+        spike.position.copy(pos);
+        const spikeScale = size * (node.kind === 'root' ? 26 : 20);
+        spike.scale.set(spikeScale, spikeScale, 1);
+        spike.renderOrder = 2;
+        nodeGroup.add(spike);
+        sparkles.push({
+          sp: spike,
+          spin: (Math.random() < 0.5 ? -1 : 1) * (0.02 + Math.random() * 0.03),
+          nodeId: node.id,
+          baseOpacity: spikeBaseOpacity,
+        });
+      }
 
       // 枢纽标签（root / group）。文本随显示模式：结构段名 / 单文档簇取正文标题。
       let labelSprite: THREE.Sprite | null = null;
@@ -1275,68 +1629,253 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
         labelSprite = lab;
       }
 
-      renders.push({ node, core, halo, haloBaseSize: haloSize, haloBaseOpacity, size });
+      renders.push({
+        node,
+        core,
+        coreU,
+        halo,
+        haloBaseSize: haloSize,
+        haloBaseOpacity,
+        size,
+        depth,
+        twPhase: hash01(nodeSeq * 7 + 1) * Math.PI * 2,
+        hoverK: 0,
+        // 入场生长波：银心向外扩散（按半径），同层再按层深微错峰
+        introDelay: pos.length() * 1.05 + depth * 90 + hash01(nodeSeq * 13 + 5) * 120,
+      });
+      nodeSeq += 1;
       if (labelSprite) labelByNodeId.set(node.id, labelSprite);
     }
 
-    // 显示模式切换 → 按当前 labelMode/contentTitles 重绘所有标签纹理（不重建场景）
+    // 标签入场延迟对齐其节点（渲染循环里按距离 + 入场双重淡入）
+    const introDelayById = new Map<string, number>();
+    for (const rec of renders) introDelayById.set(rec.node.id, rec.introDelay);
+
+    // 入场窗口收口：保证最晚出发的节点也完整走完 850ms 生长曲线再关窗（+60ms 余量）
+    INTRO_TOTAL = renders.reduce((m, r) => Math.max(m, r.introDelay), 0) + 850 + 60;
+
+    // 显示模式切换 → 按当前 labelMode/contentTitles 重绘标签纹理（不重建场景）。
+    // 文本没变的标签跳过重绘：多数分组两种模式下同名，白白重画一遍 2x 纹理是纯浪费。
     relabelRef.current = () => {
       const mode = labelModeRef.current;
       const titles = contentTitlesRef.current;
       for (const [id, sprite] of labelByNodeId) {
         const pl = placed.get(id);
         if (!pl) continue;
-        track(redrawLabelSprite(sprite, labelTextFor(pl.node, mode, titles)));
+        const text = labelTextFor(pl.node, mode, titles);
+        if (sprite.userData.labelText === text) continue;
+        sprite.userData.labelText = text;
+        track(redrawLabelSprite(sprite, text));
       }
     };
 
-    // ── 父子连线（偏冷蓝细线，不进 bloom 层）。位置由 applyFilter 填充/重建：
-    //    隐藏叶子的入边折叠为零长，不再连向空处。 ──
+    // ── 父子光路：二次贝塞尔弧线（向外微拱），顶点色父端亮蓝 → 子端渐隐、
+    //    叶子端混入该文档 type 色。位置由 applyFilter 填充：隐藏子树的边折叠为零长。 ──
+    const SEG_H = 12;
+    const HIER_BASE = new THREE.Color('#5a86c8');
+    const edgeCurvePts: THREE.Vector3[][] = [];
+    {
+      const mid = new THREE.Vector3();
+      const ctrl = new THREE.Vector3();
+      for (const e of edges) {
+        mid.copy(e.a).add(e.b).multiplyScalar(0.5);
+        const len = e.a.distanceTo(e.b);
+        const bow = Math.min(40, len * 0.14);
+        ctrl.copy(mid);
+        if (mid.lengthSq() > 1e-6) ctrl.addScaledVector(mid.clone().normalize(), bow);
+        edgeCurvePts.push(new THREE.QuadraticBezierCurve3(e.a.clone(), ctrl.clone(), e.b.clone()).getPoints(SEG_H));
+      }
+    }
     const hierGeo = track(new THREE.BufferGeometry());
-    hierGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(edges.length * 6), 3));
-    // 演示版 EVE 星座线：冷蓝 #5a86c8、additive、opacity 0.42
-    scene.add(
-      new THREE.LineSegments(
-        hierGeo,
-        track(
-          new THREE.LineBasicMaterial({
-            color: new THREE.Color('#5a86c8'),
-            transparent: true,
-            opacity: 0.42,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false,
-          }),
-        ),
-      ),
+    hierGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(edges.length * SEG_H * 2 * 3), 3));
+    // 顶点色基线（聚焦压暗时按倍率重写）：t 从父端到子端，亮度 0.92 → 0.34
+    const hierBase = new Float32Array(edges.length * SEG_H * 2 * 3);
+    {
+      const cA = new THREE.Color();
+      const cB = new THREE.Color();
+      const cT = new THREE.Color();
+      edges.forEach((e, i) => {
+        cA.copy(HIER_BASE);
+        cB.copy(HIER_BASE);
+        if (e.child.kind === 'leaf') cB.lerp(new THREE.Color(colorForDocType(e.child.docType)), 0.5);
+        const o = i * SEG_H * 2 * 3;
+        for (let s = 0; s < SEG_H; s++) {
+          for (let k = 0; k < 2; k++) {
+            const t = (s + k) / SEG_H;
+            cT.copy(cA).lerp(cB, t).multiplyScalar(0.92 - 0.58 * t);
+            const j = o + (s * 2 + k) * 3;
+            hierBase[j] = cT.r;
+            hierBase[j + 1] = cT.g;
+            hierBase[j + 2] = cT.b;
+          }
+        }
+      });
+    }
+    const hierColorAttr = new THREE.Float32BufferAttribute(hierBase.slice(), 3);
+    hierGeo.setAttribute('color', hierColorAttr);
+    const hierMat = track(
+      new THREE.LineBasicMaterial({
+        color: 0xffffff,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
     );
+    scene.add(new THREE.LineSegments(hierGeo, hierMat));
 
-    // ── 横向引用连线（更淡，不进 bloom 层）。任一端隐藏则该段折叠。 ──
+    // ── 横向引用：拱高更大的能量弧（两端暗、中段亮），任一端隐藏则折叠 ──
+    const SEG_M = 16;
     const mentionPairs: Array<{ a: THREE.Vector3; b: THREE.Vector3; source: string; target: string }> = [];
     for (const link of galaxy.links) {
       const a = placed.get(link.source);
       const b = placed.get(link.target);
       if (a && b) mentionPairs.push({ a: a.pos, b: b.pos, source: link.source, target: link.target });
     }
+    const mentionCurvePts: THREE.Vector3[][] = [];
     let mentionGeo: THREE.BufferGeometry | null = null;
+    let mentionColorAttr: THREE.Float32BufferAttribute | null = null;
+    let mentionBase: Float32Array | null = null;
+    let mentionMat: THREE.LineBasicMaterial | null = null;
+    const mentionVisibleArr: boolean[] = mentionPairs.map(() => true);
+    // 聚焦压暗时不在 keep 集合的引用弧 → 其流光脉冲同步驻留（不再在暗弧上亮闪）
+    const mentionFocusKeep: boolean[] = mentionPairs.map(() => true);
     if (mentionPairs.length > 0) {
+      const mid = new THREE.Vector3();
+      const ctrl = new THREE.Vector3();
+      for (const m of mentionPairs) {
+        mid.copy(m.a).add(m.b).multiplyScalar(0.5);
+        const len = m.a.distanceTo(m.b);
+        ctrl.copy(mid);
+        if (mid.lengthSq() > 1e-6) ctrl.addScaledVector(mid.clone().normalize(), len * 0.22);
+        mentionCurvePts.push(new THREE.QuadraticBezierCurve3(m.a.clone(), ctrl.clone(), m.b.clone()).getPoints(SEG_M));
+      }
       mentionGeo = track(new THREE.BufferGeometry());
-      mentionGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(mentionPairs.length * 6), 3));
-      // 横向引用线：略亮冷蓝、additive、opacity 0.32（与父子线同色系，演示风格）
-      scene.add(
-        new THREE.LineSegments(
-          mentionGeo,
-          track(
-            new THREE.LineBasicMaterial({
-              color: new THREE.Color('#8fc4ff'),
-              transparent: true,
-              opacity: 0.32,
-              blending: THREE.AdditiveBlending,
-              depthWrite: false,
-            }),
-          ),
-        ),
+      mentionGeo.setAttribute(
+        'position',
+        new THREE.Float32BufferAttribute(new Float32Array(mentionPairs.length * SEG_M * 2 * 3), 3),
       );
+      mentionBase = new Float32Array(mentionPairs.length * SEG_M * 2 * 3);
+      const cRef = new THREE.Color('#8fc4ff');
+      for (let i = 0; i < mentionPairs.length; i++) {
+        const o = i * SEG_M * 2 * 3;
+        for (let s = 0; s < SEG_M; s++) {
+          for (let k = 0; k < 2; k++) {
+            const t = (s + k) / SEG_M;
+            const lum = 0.25 + 0.75 * Math.sin(Math.PI * t);
+            const j = o + (s * 2 + k) * 3;
+            mentionBase[j] = cRef.r * lum;
+            mentionBase[j + 1] = cRef.g * lum;
+            mentionBase[j + 2] = cRef.b * lum;
+          }
+        }
+      }
+      mentionColorAttr = new THREE.Float32BufferAttribute(mentionBase.slice(), 3);
+      mentionGeo.setAttribute('color', mentionColorAttr);
+      mentionMat = track(
+        new THREE.LineBasicMaterial({
+          color: 0xffffff,
+          vertexColors: true,
+          transparent: true,
+          opacity: 0,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        }),
+      );
+      scene.add(new THREE.LineSegments(mentionGeo, mentionMat));
     }
+
+    // ── 引用流光脉冲：小光点沿引用弧巡游（知识在流动）。上限 320 条控制成本。 ──
+    const pulseCount = Math.min(mentionPairs.length, 320);
+    let pulseGeo: THREE.BufferGeometry | null = null;
+    let pulseMat: THREE.PointsMaterial | null = null;
+    if (pulseCount > 0) {
+      pulseGeo = track(new THREE.BufferGeometry());
+      const pp = new Float32Array(pulseCount * 3);
+      pp.fill(1e7);
+      const attr = new THREE.Float32BufferAttribute(pp, 3);
+      attr.setUsage(THREE.DynamicDrawUsage);
+      pulseGeo.setAttribute('position', attr);
+      pulseMat = track(
+        new THREE.PointsMaterial({
+          size: 6,
+          sizeAttenuation: true,
+          map: STAR_TEX,
+          color: new THREE.Color('#bfe0ff'),
+          transparent: true,
+          opacity: 0,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        }),
+      );
+      // 动态点云禁用视锥剔除：初始位置全部驻留在 1e7 远处，首帧缓存的包围球不可信
+      const pulsePoints = new THREE.Points(pulseGeo, pulseMat);
+      pulsePoints.frustumCulled = false;
+      scene.add(pulsePoints);
+    }
+
+    // ── 主干流光：root → 一级分类的长边上各一粒缓行光点（银心在供能） ──
+    const flowEdges: Array<{ edgeIdx: number }> = [];
+    edges.forEach((e, i) => {
+      if ((placed.get(e.child.id)?.depth ?? 0) === 1) flowEdges.push({ edgeIdx: i });
+    });
+    const flowVisibleArr: boolean[] = flowEdges.map(() => true);
+    const flowFocusKeep: boolean[] = flowEdges.map(() => true);
+    let flowGeo: THREE.BufferGeometry | null = null;
+    let flowMat: THREE.PointsMaterial | null = null;
+    if (flowEdges.length > 0) {
+      flowGeo = track(new THREE.BufferGeometry());
+      const fp = new Float32Array(flowEdges.length * 3);
+      fp.fill(1e7);
+      const attr = new THREE.Float32BufferAttribute(fp, 3);
+      attr.setUsage(THREE.DynamicDrawUsage);
+      flowGeo.setAttribute('position', attr);
+      flowMat = track(
+        new THREE.PointsMaterial({
+          size: 5,
+          sizeAttenuation: true,
+          map: STAR_TEX,
+          color: new THREE.Color('#9db8ff'),
+          transparent: true,
+          opacity: 0,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        }),
+      );
+      // 同上：动态点云禁用视锥剔除
+      const flowPoints = new THREE.Points(flowGeo, flowMat);
+      flowPoints.frustumCulled = false;
+      scene.add(flowPoints);
+    }
+
+    // ── 聚焦时光路同步压暗：keep 集合外的边按倍率重写顶点色（一次性写，非每帧） ──
+    const applyEdgeDim = (keep: Set<string> | null) => {
+      const arr = hierColorAttr.array as Float32Array;
+      const span = SEG_H * 2 * 3;
+      edges.forEach((e, i) => {
+        const f = !keep || keep.has(e.child.id) ? 1 : 0.1;
+        const o = i * span;
+        for (let j = 0; j < span; j++) arr[o + j] = hierBase[o + j] * f;
+      });
+      hierColorAttr.needsUpdate = true;
+      if (mentionColorAttr && mentionBase) {
+        const marr = mentionColorAttr.array as Float32Array;
+        const mspan = SEG_M * 2 * 3;
+        mentionPairs.forEach((m, i) => {
+          const keepThis = !keep || keep.has(m.source) || keep.has(m.target);
+          mentionFocusKeep[i] = keepThis;
+          const f = keepThis ? 1 : 0.08;
+          const o = i * mspan;
+          for (let j = 0; j < mspan; j++) marr[o + j] = mentionBase![o + j] * f;
+        });
+        mentionColorAttr.needsUpdate = true;
+      }
+      // 主干流光跟随聚焦：keep 集合外的分类干线不再流光
+      flowEdges.forEach((fe, k) => {
+        flowFocusKeep[k] = !keep || keep.has(edges[fe.edgeIdx].child.id);
+      });
+    };
 
     // ── type 筛选：隐藏被关类型的叶子 + 「空分组」整体隐藏（核心/光晕/标签）+ 折叠入边/引用线 ──
     const applyFilter = () => {
@@ -1367,24 +1906,43 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
         const lab = labelByNodeId.get(rec.node.id);
         if (lab) lab.visible = visible;
       }
-      // 父子线：child 是隐藏叶子 → 两端折叠成同点（零长，不可见）
+      // 星芒随其节点显隐（root 恒可见；一级分类可能被筛空）
+      for (const s of sparkles) s.sp.visible = vis.get(s.nodeId) ?? true;
+      // 父子弧线：子端隐藏 → 整条折叠到父端（零长，不可见）
       const hp = hierGeo.getAttribute('position') as THREE.BufferAttribute;
       edges.forEach((e, i) => {
         const show = vis.get(e.child.id) ?? true;
-        hp.setXYZ(i * 2, e.a.x, e.a.y, e.a.z);
-        hp.setXYZ(i * 2 + 1, show ? e.b.x : e.a.x, show ? e.b.y : e.a.y, show ? e.b.z : e.a.z);
+        const pts = edgeCurvePts[i];
+        const o = i * SEG_H * 2;
+        for (let s = 0; s < SEG_H; s++) {
+          const p0 = show ? pts[s] : e.a;
+          const p1 = show ? pts[s + 1] : e.a;
+          hp.setXYZ(o + s * 2, p0.x, p0.y, p0.z);
+          hp.setXYZ(o + s * 2 + 1, p1.x, p1.y, p1.z);
+        }
       });
       hp.needsUpdate = true;
-      // 引用线：任一端隐藏 → 折叠
+      // 引用弧：任一端隐藏 → 折叠；同步登记可见性给流光脉冲（隐藏的弧不再巡游）
       if (mentionGeo) {
         const mp = mentionGeo.getAttribute('position') as THREE.BufferAttribute;
-        mentionPairs.forEach((e, i) => {
-          const show = (vis.get(e.source) ?? true) && (vis.get(e.target) ?? true);
-          mp.setXYZ(i * 2, e.a.x, e.a.y, e.a.z);
-          mp.setXYZ(i * 2 + 1, show ? e.b.x : e.a.x, show ? e.b.y : e.a.y, show ? e.b.z : e.a.z);
+        mentionPairs.forEach((m, i) => {
+          const show = (vis.get(m.source) ?? true) && (vis.get(m.target) ?? true);
+          mentionVisibleArr[i] = show;
+          const pts = mentionCurvePts[i];
+          const o = i * SEG_M * 2;
+          for (let s = 0; s < SEG_M; s++) {
+            const p0 = show ? pts[s] : m.a;
+            const p1 = show ? pts[s + 1] : m.a;
+            mp.setXYZ(o + s * 2, p0.x, p0.y, p0.z);
+            mp.setXYZ(o + s * 2 + 1, p1.x, p1.y, p1.z);
+          }
         });
         mp.needsUpdate = true;
       }
+      // 主干流光可见性跟随其分类枢纽
+      flowEdges.forEach((f, k) => {
+        flowVisibleArr[k] = vis.get(edges[f.edgeIdx].child.id) ?? true;
+      });
     };
     applyFilterRef.current = applyFilter;
     applyFilter();
@@ -1473,6 +2031,10 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
         const keep = inSet.has(rec.node.id) || ancestors.has(rec.node.id);
         dimTargetById.set(rec.node.id, keep ? 1 : 0.12);
       }
+      // 光路同步压暗：keep 集合外的弧线一起退场
+      const keepIds = new Set<string>(inSet);
+      for (const id of ancestors) keepIds.add(id);
+      applyEdgeDim(keepIds);
       const depth = placedNode.depth;
       startCamTween(placedNode.pos.clone(), focusDistanceFor(node, depth));
       // 信息面板数据
@@ -1492,6 +2054,7 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       const keep = new Set<string>(findIdPath(galaxy.root, node.id, []) ?? [node.id]);
       keep.add(node.id);
       for (const rec of renders) dimTargetById.set(rec.node.id, keep.has(rec.node.id) ? 1 : 0.12);
+      applyEdgeDim(keep);
       startCamTween(placedNode.pos.clone(), 150);
       pulseLeafId = node.id;
       pulseT0 = performance.now();
@@ -1515,6 +2078,7 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       pulseLeafId = null;
       focusedNodeId = null;
       for (const rec of renders) dimTargetById.set(rec.node.id, 1);
+      applyEdgeDim(null);
       setFocusInfo(null);
       onFocusChangeRef.current?.(null);
     };
@@ -1528,6 +2092,7 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       selectedLeafId = null;
       pulseLeafId = null;
       for (const rec of renders) dimTargetById.set(rec.node.id, 1);
+      applyEdgeDim(null);
       setFocusInfo(null);
       onFocusChangeRef.current?.(null);
       // 相机平滑回到初始机位
@@ -1557,27 +2122,63 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       if (pl) focusNode(pl.node);
     };
 
+    // 入场相机推进：从远处缓推到常驻位（不关自动旋转 —— 推进中带一点公转更有生命感；
+    // 任何用户手势会照常打断该 tween）
+    camTween = {
+      t0: performance.now() + 100,
+      dur: 2400,
+      fromTarget: new THREE.Vector3(0, 0, 0),
+      toTarget: new THREE.Vector3(0, 0, 0),
+      fromPos: camera.position.clone(),
+      toPos: new THREE.Vector3(0, 120, 1050),
+    };
+
     // ── 选择性 bloom 双 pass（演示版同款配方） ──
     const renderTargetSize = new THREE.Vector2(W, H);
     const bloomComposer = new EffectComposer(renderer);
     bloomComposer.renderToScreen = false;
     bloomComposer.addPass(new RenderPass(scene, camera));
-    // strength 0.62 / radius 0.4 / threshold 0.72：只有最亮核心溢出，辉光是点缀不是泛滥
-    const bloomPass = new UnrealBloomPass(renderTargetSize, 0.62, 0.4, 0.72);
+    // strength 0.62 / radius 0.45 / threshold 0.72：核心换限暗着色器后只有热核过阈，
+    // 辉光从「整球溢出」收敛为「星心溢出」，radius 微增让溢出更柔
+    const bloomPass = new UnrealBloomPass(renderTargetSize, 0.62, 0.45, 0.72);
     bloomComposer.addPass(bloomPass);
 
+    // combine + 电影级 grade 一体（单 pass）：软叠加 glow、轻色差、柔性暗角、阴影提靛、胶片颗粒去色带
+    const gradeUniforms = {
+      baseTexture: { value: null as THREE.Texture | null },
+      bloomTexture: { value: bloomComposer.renderTarget2.texture },
+      uTime: { value: 0 },
+    };
     const combineMaterial = new THREE.ShaderMaterial({
-      uniforms: {
-        baseTexture: { value: null },
-        bloomTexture: { value: bloomComposer.renderTarget2.texture },
-      },
+      uniforms: gradeUniforms,
       vertexShader:
         'varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
-      fragmentShader:
-        'uniform sampler2D baseTexture;uniform sampler2D bloomTexture;varying vec2 vUv;' +
-        'void main(){vec4 base=texture2D(baseTexture,vUv);vec4 glow=texture2D(bloomTexture,vUv);' +
-        // 软叠加：glow ×0.85，重叠辉光不超过过曝阈值
-        'gl_FragColor=base + vec4(glow.rgb*0.85,0.0);}',
+      fragmentShader: `
+uniform sampler2D baseTexture;
+uniform sampler2D bloomTexture;
+uniform float uTime;
+varying vec2 vUv;
+float hashN(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+void main() {
+  vec2 c = vUv - 0.5;
+  float r2 = dot(c, c);
+  // 轻色差：中心为零、向边缘二次增大（镜头感，不伤正文标签可读性）
+  vec2 ca = c * r2 * 0.010;
+  vec4 base = texture2D(baseTexture, vUv);
+  base.r = mix(base.r, texture2D(baseTexture, vUv + ca).r, 0.85);
+  base.b = mix(base.b, texture2D(baseTexture, vUv - ca).b, 0.85);
+  vec4 glow = texture2D(bloomTexture, vUv);
+  // 软叠加：glow ×0.85，重叠辉光不超过过曝阈值
+  vec3 col = base.rgb + glow.rgb * 0.85;
+  // 柔性暗角：把视线收向中心
+  col *= 1.0 - smoothstep(0.18, 0.62, r2) * 0.34;
+  // 阴影提靛：极暗处注入一点冷靛，深海而非死黑
+  float lum = dot(col, vec3(0.299, 0.587, 0.114));
+  col += vec3(0.010, 0.012, 0.030) * (1.0 - smoothstep(0.0, 0.22, lum));
+  // 胶片颗粒抖动：杀掉深空渐变的色带
+  col += (hashN(gl_FragCoord.xy + vec2(uTime * 61.7, uTime * 47.3)) - 0.5) * (2.4 / 255.0);
+  gl_FragColor = vec4(col, 1.0);
+}`,
     });
     const combinePass = new ShaderPass(combineMaterial, 'baseTexture');
     combinePass.needsSwap = true;
@@ -1667,6 +2268,7 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
 
     const onPointerMove = (ev: PointerEvent) => {
       if (downXY && (Math.abs(ev.clientX - downXY[0]) > 4 || Math.abs(ev.clientY - downXY[1]) > 4)) {
+        if (!dragMoved) camTween = null; // 真实拖拽才打断相机缓动（与 onWheel 一致，含入场推进）
         dragMoved = true;
       }
       const hit = pick(ev.clientX, ev.clientY);
@@ -1693,6 +2295,8 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       downXY = [ev.clientX, ev.clientY];
       dragMoved = false;
       controls.autoRotate = false;
+      // 注意：不在 pointerdown 打断相机缓动 —— 空白单击（无拖拽）会把入场推进搁浅在远位
+      //（Bugbot 90f25eb6）。真正的打断放在 onPointerMove 判定为拖拽的瞬间。
     };
     const onPointerUp = (ev: PointerEvent) => {
       if (dragMoved) {
@@ -1784,48 +2388,68 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
     const render = () => {
       rafId = requestAnimationFrame(render);
       const dt = clock.getDelta();
-      // 星云缓慢漂移
-      nebulaGroup.rotation.y += dt * 0.004;
-      nebulaGroup.rotation.x += dt * 0.0016;
+      const tNow = clock.elapsedTime;
+      const nowMs = performance.now();
+      const introElapsed = nowMs - introStart;
+      const introActive = introElapsed < INTRO_TOTAL;
+
+      // 星场闪烁 / 后期颗粒的时间推进
+      farStars.uniforms.uTime.value = tNow;
+      nearStars.uniforms.uTime.value = tNow;
+      // 颗粒噪声时间取模：fract(sin(大数)) 在 float32 下约 31 分钟后精度崩塌，包一层 CPU 侧 wrap
+      gradeUniforms.uTime.value = tNow % 64;
+
+      // 星云缓慢漂移 + 各片独立微旋
+      nebulaGroup.rotation.y += dt * 0.0035;
+      nebulaGroup.rotation.x += dt * 0.0013;
+      for (const n of nebulaSpins) n.mat.rotation += dt * n.spin;
 
       // 相机聚焦缓动：自然速度曲线，距离越远时长略增。
       if (camTween) {
-        const k = Math.min(1, (performance.now() - camTween.t0) / camTween.dur);
+        const k = Math.min(1, (nowMs - camTween.t0) / camTween.dur);
         const e = naturalCameraEase(k);
         controls.target.lerpVectors(camTween.fromTarget, camTween.toTarget, e);
         camera.position.lerpVectors(camTween.fromPos, camTween.toPos, e);
         if (k >= 1) camTween = null;
       }
 
-      // 叶子脉冲高亮：聚焦到具体文档后让它"呼吸"约 1.4s（衰减正弦），结束复位
+      // 叶子脉冲高亮生命周期：聚焦到具体文档后"呼吸"约 1.4s（衰减正弦），结束复位
+      let pulseScale = 1;
       if (pulseLeafId) {
-        const elapsed = performance.now() - pulseT0;
-        const rec = renders.find((r) => r.node.id === pulseLeafId);
-        if (!rec || elapsed >= 1400) {
-          if (rec) rec.core.scale.setScalar(1);
+        const elapsed = nowMs - pulseT0;
+        if (elapsed >= 1400) {
           pulseLeafId = null;
         } else {
           const p = elapsed / 1400;
-          rec.core.scale.setScalar(1 + 0.85 * (1 - p) * Math.abs(Math.sin(p * Math.PI * 3)));
+          pulseScale = 1 + 0.85 * (1 - p) * Math.abs(Math.sin(p * Math.PI * 3));
         }
       }
+      const selPhase = Math.sin(tNow * 2.6);
 
-      // 聚焦淡出系数 lerp（平滑过渡，避免硬切）
+      // 每星统一结算：聚焦淡出 lerp + hover 缓动 + 入场生长波 + 交互缩放（单处写 scale，杜绝互相覆盖）
       for (const rec of renders) {
         const cur = dimCurrentById.get(rec.node.id) ?? 1;
         const tgt = dimTargetById.get(rec.node.id) ?? 1;
         const next = cur + (tgt - cur) * 0.12;
         dimCurrentById.set(rec.node.id, next);
-        // 核心球：dim 时调暗其颜色（用 material.color 缩放会污染基色，改用 opacity）
-        const coreMat = rec.core.material as THREE.MeshBasicMaterial;
-        if (!coreMat.transparent) coreMat.transparent = true;
-        coreMat.opacity = 0.15 + 0.85 * next;
-        // 标签：随聚焦淡出
-        const lab = labelByNodeId.get(rec.node.id);
-        if (lab) (lab.material as THREE.SpriteMaterial).opacity = next;
+        rec.coreU.uOpacity.value = 0.15 + 0.85 * next;
+        // hover：亮度 + 尺寸双通道缓动反馈
+        const hovTgt = hoverNode === rec.node ? 1 : 0;
+        rec.hoverK += (hovTgt - rec.hoverK) * 0.14;
+        rec.coreU.uBoost.value = 1 + rec.hoverK * 0.35;
+        // 入场生长波：银心向外错峰弹性长出
+        let intro = 1;
+        if (introActive) intro = easeOutBack(clamp01((introElapsed - rec.introDelay) / 850));
+        // 交互缩放：选中呼吸（首 1.4s 与点击脉冲取大，让「点中了」的爆发感真的播出来）> 点击脉冲 > hover 微放大
+        let s = 1 + rec.hoverK * 0.16;
+        if (selectedLeafId === rec.node.id) {
+          const selS = 1.55 + 0.18 * selPhase;
+          s = pulseLeafId === rec.node.id ? Math.max(selS, pulseScale) : selS;
+        } else if (pulseLeafId === rec.node.id) s = pulseScale;
+        rec.core.scale.setScalar(Math.max(0.0001, intro * s));
       }
 
-      // 光晕距离衰减 + hover 强调（演示版数值 SSOT 照抄）+ 聚焦淡出
+      // 光晕：距离衰减（演示版数值基线）+ 呼吸微闪 + 聚焦淡出 + 入场淡入 + hover/选中强调
       camPos.copy(camera.position);
       for (const rec of renders) {
         if (!rec.halo.visible) continue;
@@ -1834,30 +2458,127 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
         const refD = Math.max(220, rec.size * 26); // 近于 refD 时缩小，避免贴脸过曝
         const att = Math.min(1, d / refD);
         const attScale = 0.35 + 0.65 * att; // 永不完全坍缩，永不超过基准
-        const scale = rec.haloBaseSize * attScale;
-        rec.halo.scale.set(scale, scale, 1);
+        let scale = rec.haloBaseSize * attScale;
         const dim = dimCurrentById.get(rec.node.id) ?? 1;
-        let tgt = rec.haloBaseOpacity * (0.45 + 0.55 * att) * dim; // 极近时淡化辉光，聚焦时集合外淡出
+        const introF = introActive ? clamp01((introElapsed - rec.introDelay) / 850) : 1;
+        // 呼吸微闪：每星错相位，幅度克制（活着，但不闹）
+        const shimmer = 1 + 0.06 * Math.sin(tNow * 1.6 + rec.twPhase);
+        let tgt = rec.haloBaseOpacity * (0.45 + 0.55 * att) * dim * shimmer * introF;
         if (hoverNode === rec.node) tgt = Math.min(0.85, tgt * 1.7);
+        if (selectedLeafId === rec.node.id) {
+          scale = rec.haloBaseSize * (2.2 + 0.3 * selPhase);
+          tgt = Math.min(0.95, rec.haloBaseOpacity * 2.4);
+          rec.coreU.uOpacity.value = 1; // 选中恒亮
+        }
+        if (rec.node.kind === 'root') scale *= 1 + 0.05 * Math.sin(tNow * 0.9); // 银心心跳
+        rec.halo.scale.set(scale, scale, 1);
         const mat = rec.halo.material as THREE.SpriteMaterial;
         mat.opacity += (tgt - mat.opacity) * 0.2;
       }
 
-      // 持续选中态：被选中的文档星 发光（bloom 更强 + 光晕更亮）+ 放大 + 呼吸动效。
-      // 放在常态 dim/halo 之后，覆盖其值，让"哪个是选中的"一眼可见。
-      if (selectedLeafId) {
-        const rec = renders.find((r) => r.node.id === selectedLeafId);
-        if (rec) {
-          const phase = Math.sin(clock.elapsedTime * 2.6);
-          rec.core.scale.setScalar(1.55 + 0.18 * phase); // 放大 + 呼吸（bloom 层 → 自带发光）
-          (rec.core.material as THREE.MeshBasicMaterial).opacity = 1; // 选中恒亮
-          if (rec.halo.visible) {
-            const hs = rec.haloBaseSize * (2.2 + 0.3 * phase);
-            rec.halo.scale.set(hs, hs, 1);
-            (rec.halo.material as THREE.SpriteMaterial).opacity = Math.min(0.95, rec.haloBaseOpacity * 2.4);
+      // 枢纽星芒：缓旋 + 跟随聚焦压暗 + 入场淡入
+      for (const s of sparkles) {
+        if (!s.sp.visible) continue;
+        const m = s.sp.material as THREE.SpriteMaterial;
+        m.rotation += dt * s.spin;
+        const dim = dimCurrentById.get(s.nodeId) ?? 1;
+        const introF = introActive ? clamp01((introElapsed - (introDelayById.get(s.nodeId) ?? 0)) / 850) : 1;
+        m.opacity = s.baseOpacity * dim * introF;
+      }
+
+      // 标签：聚焦淡出 x 入场淡入 x 距离分级淡出（远观只留分类级，靠近才浮现子模块名 —— declutter）
+      // 完全淡没的标签用 material.visible 跳过渲染（object.visible 归 applyFilter 独占，避免互相打架）
+      for (const [id, lab] of labelByNodeId) {
+        if (!lab.visible) continue;
+        const dim = dimCurrentById.get(id) ?? 1;
+        const dCam = camPos.distanceTo(lab.position);
+        const d = depthById.get(id) ?? 0;
+        let fade = 1;
+        if (d >= 3) fade = clamp01((1500 - dCam) / 420);
+        else if (d === 2) fade = clamp01((2600 - dCam) / 700);
+        const introF = introActive ? clamp01((introElapsed - (introDelayById.get(id) ?? 0)) / 850) : 1;
+        const mat = lab.material as THREE.SpriteMaterial;
+        const op = dim * fade * introF;
+        mat.opacity = op;
+        mat.visible = op > 0.01;
+      }
+
+      // 光路入场淡入（节点长出后光路跟上）
+      hierMat.opacity = 0.42 * clamp01((introElapsed - 400) / 1300);
+      if (mentionMat) mentionMat.opacity = 0.3 * clamp01((introElapsed - 900) / 1300);
+
+      // 引用流光脉冲：沿引用弧巡游；隐藏弧的光点驻留远处不可见
+      if (pulseGeo && pulseMat) {
+        pulseMat.opacity = 0.85 * clamp01((introElapsed - 1400) / 900);
+        const pa = pulseGeo.getAttribute('position') as THREE.BufferAttribute;
+        for (let i = 0; i < pulseCount; i++) {
+          if (!mentionVisibleArr[i] || !mentionFocusKeep[i]) {
+            pa.setXYZ(i, 1e7, 1e7, 1e7);
+            continue;
           }
-          const lab = labelByNodeId.get(rec.node.id);
-          if (lab) (lab.material as THREE.SpriteMaterial).opacity = 1;
+          const speed = 0.07 + hash01(i * 7 + 3) * 0.05;
+          const t = (tNow * speed + hash01(i * 11 + 1)) % 1;
+          const pts = mentionCurvePts[i];
+          const x = t * SEG_M;
+          const si = Math.min(SEG_M - 1, Math.floor(x));
+          const f = x - si;
+          const p0 = pts[si];
+          const p1 = pts[si + 1];
+          pa.setXYZ(i, p0.x + (p1.x - p0.x) * f, p0.y + (p1.y - p0.y) * f, p0.z + (p1.z - p0.z) * f);
+        }
+        pa.needsUpdate = true;
+      }
+
+      // 主干流光：root → 一级分类，缓慢外行
+      if (flowGeo && flowMat) {
+        flowMat.opacity = 0.5 * clamp01((introElapsed - 1200) / 900);
+        const fa = flowGeo.getAttribute('position') as THREE.BufferAttribute;
+        for (let k = 0; k < flowEdges.length; k++) {
+          if (!flowVisibleArr[k] || !flowFocusKeep[k]) {
+            fa.setXYZ(k, 1e7, 1e7, 1e7);
+            continue;
+          }
+          const speed = 0.05 + hash01(k * 5 + 2) * 0.03;
+          const t = (tNow * speed + hash01(k * 17 + 9)) % 1;
+          const pts = edgeCurvePts[flowEdges[k].edgeIdx];
+          const x = t * SEG_H;
+          const si = Math.min(SEG_H - 1, Math.floor(x));
+          const f = x - si;
+          const p0 = pts[si];
+          const p1 = pts[si + 1];
+          fa.setXYZ(k, p0.x + (p1.x - p0.x) * f, p0.y + (p1.y - p0.y) * f, p0.z + (p1.z - p0.z) * f);
+        }
+        fa.needsUpdate = true;
+      }
+
+      // 偶发流星：随机方位一道流光划过远景
+      if (!meteor.active && tNow > meteor.nextAt) {
+        meteor.active = true;
+        meteor.t0 = nowMs;
+        meteor.dur = 1000 + Math.random() * 600;
+        meteor.len = 1100 + Math.random() * 900;
+        const th = Math.random() * Math.PI * 2;
+        const ph = Math.acos(2 * Math.random() - 1);
+        const r = 3800 + Math.random() * 1400;
+        meteor.from.set(r * Math.sin(ph) * Math.cos(th), r * Math.sin(ph) * Math.sin(th), r * Math.cos(ph));
+        // 运动方向取该点切平面内的随机向量
+        const radial = meteor.from.clone().normalize();
+        const seed = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
+        meteor.dir.copy(seed.sub(radial.multiplyScalar(seed.dot(radial))).normalize());
+      }
+      if (meteor.active) {
+        const p = (nowMs - meteor.t0) / meteor.dur;
+        if (p >= 1) {
+          meteor.active = false;
+          meteor.nextAt = tNow + 6 + Math.random() * 9;
+          meteorSprite.visible = false;
+        } else {
+          meteorSprite.visible = true;
+          meteorSprite.position.copy(meteor.from).addScaledVector(meteor.dir, p * meteor.len);
+          meteorMat.opacity = 0.5 * Math.sin(Math.PI * p);
+          // 拖尾贴图沿屏幕投影方向旋转（sprite 永远面向相机，rotation 是屏幕面内角度）
+          meteorDirCam.copy(meteor.dir).transformDirection(camera.matrixWorldInverse);
+          meteorMat.rotation = Math.atan2(meteorDirCam.y, meteorDirCam.x);
         }
       }
 
@@ -1915,6 +2636,9 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       renderer.setSize(W, H);
       bloomComposer.setSize(W, H);
       finalComposer.setSize(W, H);
+      // 星场点径随绘制缓冲高度换算（对齐 three PointsMaterial 的 sizeAttenuation 口径）
+      farStars.uniforms.uScale.value = renderer.domElement.height * 0.5;
+      nearStars.uniforms.uScale.value = renderer.domElement.height * 0.5;
     };
     const ro = new ResizeObserver(resize);
     ro.observe(mount);
@@ -1928,6 +2652,9 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       clearSelectionRef.current = null;
       focusHubRef.current = null;
       applyViewOffsetRef.current = null;
+      applyFilterRef.current = null;
+      focusNodeRef.current = null;
+      resetFocusRef.current = null;
       cancelAnimationFrame(rafId);
       ro.disconnect();
       window.removeEventListener('resize', resize);
@@ -3209,7 +3936,26 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
       {/* 画布层（flex-1 撑满图例下方的剩余高度，画布/状态相对它定位） */}
       <div className="flex-1 min-h-0 relative">
         {/* 操作提示 */}
-        <div style={{ position: 'absolute', bottom: 12, left: 12, zIndex: 10, fontSize: 11, color: '#5a5a66' }}>
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 12,
+            left: 12,
+            zIndex: 10,
+            fontSize: 11,
+            color: '#7c8093',
+            background: 'rgba(6,8,16,0.5)',
+            border: '1px solid rgba(255,255,255,0.07)',
+            borderRadius: 999,
+            padding: '5px 12px',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+            maxWidth: 'calc(100% - 160px)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
           拖动旋转 · 两指滑动旋转视角 · 捏合或 ⌘/Ctrl+滚轮缩放 · 悬停看详情/清单 · 点文档星阅读 · 点枢纽聚焦 · 双击空白继续旋转
         </div>
 

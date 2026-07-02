@@ -48,6 +48,9 @@ public class MongoDbContext
     public IMongoCollection<LLMModel> LLMModels => _database.GetCollection<LLMModel>("llmmodels");
     public IMongoCollection<AppSettings> AppSettings => _database.GetCollection<AppSettings>("appsettings");
     public IMongoCollection<AdminNotification> AdminNotifications => _database.GetCollection<AdminNotification>("admin_notifications");
+    public IMongoCollection<AdminPushProfile> AdminPushProfiles => _database.GetCollection<AdminPushProfile>("admin_push_profiles");
+    public IMongoCollection<AdminPushSubscription> AdminPushSubscriptions => _database.GetCollection<AdminPushSubscription>("admin_push_subscriptions");
+    public IMongoCollection<AdminPushDeliveryLog> AdminPushDeliveryLogs => _database.GetCollection<AdminPushDeliveryLog>("admin_push_delivery_logs");
     public IMongoCollection<DailyTip> DailyTips => _database.GetCollection<DailyTip>("daily_tips");
     public IMongoCollection<ChangelogSnapshot> ChangelogSnapshots => _database.GetCollection<ChangelogSnapshot>("changelog_snapshots");
     public IMongoCollection<AutomationRule> AutomationRules => _database.GetCollection<AutomationRule>("automation_rules");
@@ -155,6 +158,10 @@ public class MongoDbContext
         => _database.GetCollection<PrdAgent.Core.Models.CcasAgent.CcasEquipmentAsset>("ccas_equipment_assets");
     public IMongoCollection<PrdAgent.Core.Models.CcasAgent.CcasFlowDiagram> CcasFlowDiagrams
         => _database.GetCollection<PrdAgent.Core.Models.CcasAgent.CcasFlowDiagram>("ccas_flow_diagrams");
+
+    // Email Agent 邮件模板智能体
+    public IMongoCollection<EmailTemplate> EmailTemplates
+        => _database.GetCollection<EmailTemplate>("email_templates");
 
     // Review Agent 产品评审员
     public IMongoCollection<ReviewSubmission> ReviewSubmissions => _database.GetCollection<ReviewSubmission>("review_submissions");
@@ -1112,6 +1119,12 @@ public class MongoDbContext
         MarketplaceSkillShareLinks.Indexes.CreateOne(new CreateIndexModel<MarketplaceSkillShareLink>(
             Builders<MarketplaceSkillShareLink>.IndexKeys.Ascending(x => x.CreatedBy).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_marketplace_skill_share_links_creator" }));
+        MarketplaceSkillShareLinks.Indexes.CreateOne(new CreateIndexModel<MarketplaceSkillShareLink>(
+            Builders<MarketplaceSkillShareLink>.IndexKeys
+                .Ascending(x => x.SkillId)
+                .Ascending(x => x.IsRevoked)
+                .Ascending(x => x.ExpiresAt),
+            new CreateIndexOptions { Name = "idx_marketplace_skill_share_links_skill_active" }));
 
         // DefectFixReports：按分享链接和 Token 查询
         DefectFixReports.Indexes.CreateOne(new CreateIndexModel<DefectFixReport>(

@@ -22,6 +22,10 @@ import type {
   GetAdminNotificationsContract,
   HandleAdminNotificationContract,
   HandleAllAdminNotificationsContract,
+  GetAdminPushSubscriptionsContract,
+  UpdateAdminPushProfileContract,
+  UpdateAdminPushSubscriptionContract,
+  TestAdminPushSubscriptionContract,
 } from '@/services/contracts/notifications';
 import type {
   GetUsersContract,
@@ -585,6 +589,10 @@ import {
   getAdminNotificationsReal,
   handleAdminNotificationReal,
   handleAllAdminNotificationsReal,
+  getAdminPushSubscriptionsReal,
+  updateAdminPushProfileReal,
+  updateAdminPushSubscriptionReal,
+  testAdminPushSubscriptionReal,
 } from '@/services/real/notifications';
 import type {
   GetMobileFeedContract,
@@ -826,6 +834,10 @@ export const updateUserAuthz: UpdateUserAuthzContract = withAuth(updateUserAuthz
 export const getAdminNotifications: GetAdminNotificationsContract = withAuth(getAdminNotificationsReal);
 export const handleAdminNotification: HandleAdminNotificationContract = withAuth(handleAdminNotificationReal);
 export const handleAllAdminNotifications: HandleAllAdminNotificationsContract = withAuth(handleAllAdminNotificationsReal);
+export const getAdminPushSubscriptions: GetAdminPushSubscriptionsContract = withAuth(getAdminPushSubscriptionsReal);
+export const updateAdminPushProfile: UpdateAdminPushProfileContract = withAuth(updateAdminPushProfileReal);
+export const updateAdminPushSubscription: UpdateAdminPushSubscriptionContract = withAuth(updateAdminPushSubscriptionReal);
+export const testAdminPushSubscription: TestAdminPushSubscriptionContract = withAuth(testAdminPushSubscriptionReal);
 
 export const getUsers: GetUsersContract = withAuth(getUsersReal);
 export { searchDirectoryUsers } from '@/services/real/directory';
@@ -2248,6 +2260,30 @@ export type {
   CcasQaRequest,
   CcasQaReferencePayload,
 } from '@/services/real/ccasAgent';
+
+// ── Email Agent 邮件模板智能体 ──
+export {
+  getEmailAgentMeta,
+  listEmailTemplates,
+  getEmailTemplate,
+  createEmailTemplate,
+  updateEmailTemplate,
+  deleteEmailTemplate,
+  duplicateEmailTemplate,
+  markEmailTemplateUsed,
+  EMAIL_DRAFT_STREAM_URL,
+  EMAIL_POLISH_STREAM_URL,
+} from '@/services/real/emailAgent';
+export type {
+  EmailTemplate,
+  EmailRecipient,
+  EmailTemplateVariable,
+  EmailCategoryOption,
+  EmailAgentMeta,
+  UpsertEmailTemplateInput,
+  EmailDraftRequest,
+  EmailPolishRequest,
+} from '@/services/real/emailAgent';
 
 // ── Shitu Agent 识途（新人文化与制度问答）──
 export {

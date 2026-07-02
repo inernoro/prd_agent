@@ -991,11 +991,13 @@
 }
 
 .marketplace-sort-group,
+.marketplace-density-group,
 .marketplace-category-tabs {
   gap: 6px;
 }
 
 .marketplace-nav-pill,
+.marketplace-density-pill,
 .marketplace-tag-pill {
   border: 1px solid transparent;
   background: transparent;
@@ -1021,6 +1023,29 @@
   font-size: 12px;
 }
 
+.marketplace-density-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 2px;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-subtle);
+}
+
+.marketplace-density-pill {
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
 .marketplace-tag-pill {
   height: 24px;
   display: inline-flex;
@@ -1032,6 +1057,7 @@
 }
 
 .marketplace-nav-pill:hover,
+.marketplace-density-pill:hover,
 .marketplace-tag-pill:hover {
   background: var(--bg-card-hover);
   border-color: var(--border-subtle);
@@ -1039,6 +1065,7 @@
 }
 
 .marketplace-nav-pill[data-active="true"],
+.marketplace-density-pill[data-active="true"],
 .marketplace-tag-pill[data-active="true"] {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.08) 100%);
   border-color: rgba(255, 255, 255, 0.18);
@@ -1845,6 +1872,22 @@
     border-color 200ms ease;
 }
 
+.mkt-card-density-short {
+  height: 112px;
+  border-radius: 13px;
+  --mkt-thumb: 58px;
+  --mkt-thumb-offset: 10px;
+  --mkt-split-footer: 36px;
+}
+
+.mkt-card-density-micro {
+  height: 96px;
+  border-radius: 12px;
+  --mkt-thumb: 50px;
+  --mkt-thumb-offset: 9px;
+  --mkt-split-footer: 32px;
+}
+
 /* Cursor spotlight — follows mouse, visible only on hover */
 .mkt-card::before {
   content: '';
@@ -1912,6 +1955,14 @@
   pointer-events: none;
 }
 
+.mkt-card-density-short .mkt-card-icon-zone {
+  bottom: 82px;
+}
+
+.mkt-card-density-micro .mkt-card-icon-zone {
+  bottom: 58px;
+}
+
 /* Preview link badge — top-right */
 .mkt-card-preview-badge {
   position: absolute;
@@ -1955,6 +2006,16 @@
   gap: 4px;
 }
 
+.mkt-card-density-short .mkt-card-glass {
+  padding: 7px 10px 8px;
+  gap: 3px;
+}
+
+.mkt-card-density-micro .mkt-card-glass {
+  padding: 7px 9px;
+  gap: 2px;
+}
+
 [data-theme="light"] .mkt-card-glass {
   background: rgba(248, 245, 255, 0.82);
   border-top-color: rgba(0, 0, 0, 0.06);
@@ -1965,6 +2026,24 @@
   align-items: center;
   gap: 5px;
   min-width: 0;
+}
+
+.mkt-card-title-type-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+[data-theme="light"] .mkt-card-title-type-icon {
+  background: rgba(15, 23, 42, 0.05);
+  border-color: rgba(15, 23, 42, 0.10);
 }
 
 .mkt-card-title {
@@ -1978,6 +2057,16 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.mkt-card-density-short .mkt-card-title {
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.mkt-card-density-micro .mkt-card-title {
+  font-size: 12px;
+  line-height: 1.2;
 }
 
 [data-theme="light"] .mkt-card-title {
@@ -2000,6 +2089,12 @@
   flex-shrink: 0;
 }
 
+.mkt-card-official-footer {
+  height: 20px;
+  padding: 0 7px;
+  flex: 0 0 auto;
+}
+
 [data-theme="light"] .mkt-card-official {
   background: rgba(59, 130, 246, 0.14);
   color: rgba(29, 78, 216, 0.92);
@@ -2016,6 +2111,11 @@
   -webkit-box-orient: vertical;
 }
 
+.mkt-card-density-short .mkt-card-desc {
+  font-size: 9px;
+  line-height: 1.25;
+}
+
 [data-theme="light"] .mkt-card-desc {
   color: rgba(30, 41, 59, 0.88);
 }
@@ -2025,6 +2125,10 @@
   gap: 3px;
   overflow: hidden;
   flex-wrap: nowrap;
+}
+
+.mkt-card-density-short .mkt-card-tags {
+  gap: 3px;
 }
 
 .mkt-card-tag {
@@ -2068,6 +2172,18 @@
   border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 
+.mkt-card-density-short .mkt-card-glass-footer {
+  gap: 5px;
+  margin-top: 1px;
+  padding-top: 5px;
+}
+
+.mkt-card-density-micro .mkt-card-glass-footer {
+  gap: 4px;
+  margin-top: 1px;
+  padding-top: 4px;
+}
+
 [data-theme="light"] .mkt-card-glass-footer {
   border-top-color: rgba(0, 0, 0, 0.06);
 }
@@ -2077,12 +2193,58 @@
   align-items: center;
   gap: 4px;
   min-width: 0;
+  flex: 1 1 auto;
   font-size: 10px;
   color: rgba(203, 213, 225, 0.86);
 }
 
+.mkt-card-owner-name {
+  min-width: max-content;
+  max-width: 112px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 0 1 auto;
+}
+
+.mkt-card-footer-right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.mkt-card-time {
+  min-width: 0;
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 1;
+  font-size: 10px;
+  line-height: 1;
+  color: rgba(148, 163, 184, 0.72);
+}
+
+.mkt-card-action-count {
+  line-height: 1;
+  min-width: 6px;
+  text-align: center;
+  font-size: 10px;
+}
+
+.mkt-card-density-micro .mkt-card-meta {
+  font-size: 9px;
+}
+
 [data-theme="light"] .mkt-card-meta {
   color: rgba(71, 85, 105, 0.80);
+}
+
+[data-theme="light"] .mkt-card-time {
+  color: rgba(71, 85, 105, 0.68);
 }
 
 /* Favorite toggle */
@@ -2102,6 +2264,259 @@
     background 0.15s,
     color 0.15s,
     border-color 0.15s;
+}
+
+.mkt-card-density-short .mkt-card-favorite,
+.mkt-card-density-micro .mkt-card-favorite {
+  width: auto;
+  min-width: 40px;
+  height: 28px;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 7px;
+  border-radius: 9px;
+}
+
+.mkt-card-density-short .mkt-card-fork-label,
+.mkt-card-density-micro .mkt-card-fork-label {
+  display: none;
+}
+
+.mkt-card-density-short .mkt-card-action-button,
+.mkt-card-density-micro .mkt-card-action-button,
+.mkt-card-density-micro .mkt-card-glass-footer .h-\[28px\] {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  padding-left: 0;
+  padding-right: 0;
+  border-radius: 8px;
+}
+
+.mkt-card-density-short .mkt-card-share-button,
+.mkt-card-density-micro .mkt-card-share-button {
+  width: auto;
+  min-width: 40px;
+  gap: 4px;
+  padding-left: 7px;
+  padding-right: 7px;
+}
+
+.mkt-card-density-short .mkt-card-download-button,
+.mkt-card-density-micro .mkt-card-download-button {
+  width: auto;
+  min-width: 40px;
+  gap: 4px;
+  padding-left: 7px;
+  padding-right: 7px;
+}
+
+.mkt-card-density-micro .mkt-card-favorite,
+.mkt-card-density-micro .mkt-card-share-button,
+.mkt-card-density-micro .mkt-card-download-button {
+  width: auto;
+  height: 26px;
+  min-width: 38px;
+}
+
+.mkt-card-density-micro .mkt-card-share-button,
+.mkt-card-density-micro .mkt-card-download-button {
+  width: auto;
+  min-width: 38px;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+.mkt-card-density-short .mkt-card-actions,
+.mkt-card-density-micro .mkt-card-actions {
+  gap: 6px;
+}
+
+.mkt-card-density-short .mkt-card-actions svg,
+.mkt-card-density-short .mkt-card-favorite svg,
+.mkt-card-density-micro .mkt-card-actions svg,
+.mkt-card-density-micro .mkt-card-favorite svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* 半高横向卡：左侧封面/图形，右侧说明，底部独立操作栏 */
+.mkt-card-density-short .mkt-card-bg-img,
+.mkt-card-density-micro .mkt-card-bg-img {
+  top: var(--mkt-thumb-offset);
+  left: var(--mkt-thumb-offset);
+  right: auto;
+  bottom: auto;
+  width: var(--mkt-thumb);
+  height: var(--mkt-thumb);
+  object-fit: contain;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.10),
+    0 8px 20px -14px rgba(0, 0, 0, 0.70);
+}
+
+.mkt-card-density-short.has-cover::after,
+.mkt-card-density-micro.has-cover::after {
+  top: var(--mkt-thumb-offset);
+  left: var(--mkt-thumb-offset);
+  right: auto;
+  bottom: auto;
+  width: var(--mkt-thumb);
+  height: var(--mkt-thumb);
+  border-radius: 12px;
+  background: linear-gradient(
+    180deg,
+    rgba(6, 8, 16, 0.00) 0%,
+    rgba(6, 8, 16, 0.04) 58%,
+    rgba(6, 8, 16, 0.10) 100%
+  );
+}
+
+.mkt-card-density-short .mkt-card-glyph-banner,
+.mkt-card-density-micro .mkt-card-glyph-banner,
+.mkt-card-density-short .mkt-card-icon-zone,
+.mkt-card-density-micro .mkt-card-icon-zone {
+  top: var(--mkt-thumb-offset);
+  left: var(--mkt-thumb-offset);
+  right: auto;
+  bottom: auto;
+  width: var(--mkt-thumb);
+  height: var(--mkt-thumb);
+  border-radius: 12px;
+  overflow: visible;
+  background:
+    radial-gradient(circle at 50% 34%, rgba(255, 255, 255, 0.08), transparent 62%),
+    rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.10),
+    0 8px 20px -14px rgba(0, 0, 0, 0.70);
+}
+
+.mkt-card-density-short .mkt-card-glass,
+.mkt-card-density-micro .mkt-card-glass {
+  inset: 0;
+  padding: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0,
+    transparent calc(var(--mkt-thumb) + var(--mkt-thumb-offset) * 2),
+    rgba(8, 12, 22, 0.90) calc(var(--mkt-thumb) + var(--mkt-thumb-offset) * 2),
+    rgba(8, 12, 22, 0.76) 100%
+  );
+  border-top: 0;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  display: block;
+}
+
+.mkt-card-density-short .mkt-card-title-row,
+.mkt-card-density-short .mkt-card-desc,
+.mkt-card-density-short .mkt-card-tags,
+.mkt-card-density-micro .mkt-card-title-row,
+.mkt-card-density-micro .mkt-card-desc,
+.mkt-card-density-micro .mkt-card-tags {
+  margin-left: calc(var(--mkt-thumb) + var(--mkt-thumb-offset) * 2);
+  min-width: 0;
+}
+
+.mkt-card-density-short .mkt-card-title-row {
+  padding: 8px 12px 0;
+}
+
+.mkt-card-density-micro .mkt-card-title-row {
+  padding: 7px 10px 0;
+}
+
+.mkt-card-density-short .mkt-card-title,
+.mkt-card-density-micro .mkt-card-title {
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.mkt-card-density-short .mkt-card-desc {
+  padding: 2px 12px 0;
+  font-size: 10px;
+  line-height: 1.25;
+  -webkit-line-clamp: 1;
+}
+
+.mkt-card-density-micro .mkt-card-desc {
+  padding: 2px 10px 0;
+  font-size: 9px;
+  line-height: 1.25;
+  -webkit-line-clamp: 1;
+}
+
+.mkt-card-density-short .mkt-card-tags {
+  padding: 5px 12px 0;
+}
+
+.mkt-card-density-micro .mkt-card-tags {
+  display: none;
+}
+
+.mkt-card-density-short .mkt-card-tag,
+.mkt-card-density-micro .mkt-card-tag {
+  height: 14px;
+  max-width: 58px;
+}
+
+.mkt-card-density-short .mkt-card-glass-footer,
+.mkt-card-density-micro .mkt-card-glass-footer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--mkt-split-footer);
+  margin: 0;
+  padding: 0 10px;
+  background: rgba(4, 10, 18, 0.54);
+  backdrop-filter: blur(14px) saturate(160%);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.mkt-card-density-micro .mkt-card-glass-footer {
+  padding: 0 8px;
+}
+
+.mkt-card-density-short .mkt-card-preview-badge,
+.mkt-card-density-micro .mkt-card-preview-badge {
+  top: 5px;
+  left: 5px;
+  right: auto;
+}
+
+.mkt-card-density-short .skill-glyph-wrap {
+  width: 34px;
+  height: 34px;
+}
+
+.mkt-card-density-micro .skill-glyph-wrap {
+  width: 30px;
+  height: 30px;
+}
+
+.mkt-card-density-short .mkt-card-meta,
+.mkt-card-density-micro .mkt-card-meta {
+  max-width: 38%;
+}
+
+.mkt-card-density-short .mkt-card-footer-right,
+.mkt-card-density-micro .mkt-card-footer-right {
+  margin-left: auto;
+}
+
+.mkt-card-density-short .mkt-card-time,
+.mkt-card-density-micro .mkt-card-time {
+  max-width: 64px;
+  text-align: right;
+  font-size: 10px;
+  color: rgba(148, 163, 184, 0.78);
 }
 
 [data-theme="light"] .mkt-card-favorite {
@@ -2751,10 +3166,26 @@
   width: 92px; height: 92px;
   display: grid; place-items: center;
 }
+
+.mkt-card-density-short .skill-glyph-wrap {
+  width: 34px;
+  height: 34px;
+}
+
+.mkt-card-density-micro .skill-glyph-wrap {
+  width: 30px;
+  height: 30px;
+}
 .skill-glyph {
   display: block;
   overflow: visible;
   filter: drop-shadow(0 0 5px var(--glyphGlow));
+}
+
+.mkt-card-density-short .skill-glyph,
+.mkt-card-density-micro .skill-glyph {
+  width: 100%;
+  height: 100%;
 }
 .skill-glyph .ink { opacity: .92; transition: opacity .4s ease; }
 .mkt-card-official-glyph:hover .skill-glyph .ink,

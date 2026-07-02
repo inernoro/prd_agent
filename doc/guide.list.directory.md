@@ -630,6 +630,9 @@
 - [LLM 网关剥离上线计划](plan.llm-gateway.rollout) `plan.llm-gateway.rollout`
   > 差异化进度 + 测试纲领（A/B/C/D 四层）+ 局限范围（L1-L9 + apiyi 中转专项）+ 翻 http 上线序列
 
+- [LLM 网关全面切换执行计划](plan.llm-gateway.full-cutover) `plan.llm-gateway.full-cutover`
+  > 全面撤销 MAP 直连 LLM、清理网关旧代码、全接口 MECE 复测、遗漏排查四项诉求 + CDS 多出口面板
+
 - [PA Agent 竞品调研与改进方案](plan.product-agent.pa.competitive-improvements) `plan.product-agent.pa.competitive-improvements`
   > 四类竞品谱系、与 Phase 1 差距对照、P2～P4 分期改进包
 
@@ -883,6 +886,12 @@
   > 2026-05 手工取证 smoke 的 require_match 硬编码文案随 doc 改写漂移、未接 CI；需整组「修复(锚结构化字段)或退役」而非逐条打补丁
 - [移动端控制条过载治理台账](debt.frontend.mobile-control-bar-overload) `debt.frontend.mobile-control-bar-overload`
   > 移动端控制条过载问题（知识库/缺陷/周报/海鲜市场等页面，进内容前控制条 >1 条），治理机制与进度
+- [LLM 网关与模型池 · 债务台账](debt.llm-gateway) `debt.llm-gateway`
+  > LLM 网关与模型池统一迁移过程中已识别、尚未在代码中偿还的边界与风险
+- [LLM 网关物理剥离 · 债务台账](debt.llm-gateway-isolation) `debt.llm-gateway-isolation`
+  > LLM 网关从 MAP 物理剥离的工程债务台账：已做/待用户/已知边界/后续
+- [debt.llm-gateway-protocol-fidelity](debt.llm-gateway-protocol-fidelity) `debt.llm-gateway-protocol-fidelity`
+  > 函数调用穿协议不丢核心已落地，留下三处已知边界（采样/能力描述符路由细节）下一波补齐
 
 ### 七、周报
 
