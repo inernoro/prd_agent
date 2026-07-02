@@ -98,4 +98,6 @@
 - 网关控制台（本分支）：`https://llm-gateway-handoff-point2-rx224v-claude-prd-agent-llmgw-web.miduo.org/`（admin / 用户已设口令；未认领时重新部署即恢复 admin/admin）
 - 主应用（本分支）：`https://llm-gateway-handoff-point2-rx224v-claude-prd-agent.miduo.org/`
 - 影子比对读端点：`GET /gw/v1/shadow-comparisons`（X-Gateway-Key 门内）
-- 视觉验收报告：见本轮交付（归档进验收知识库）
+- 网关控制台**功能验收**（真机 curl，8 断言全过）：登录 admin/admin → mustChangePassword=true → mcp token 读 `/gw/logs` **403** → change-password → **200** → 新口令重登 mustChangePassword=false → 旧口令被拒 → 重启后新口令仍在、admin/admin 被拒。
+- serving 密钥自检真机日志：`[ServingKeyIntegrity] OK：可解密全部真实平台密文（2 个启用平台，跳过 1 个 dev-stub）`。
+- **像素级视觉验收**：本轮受沙箱↔代理↔headless chromium 限制未截到图（`ERR_CONNECTION_CLOSED`，环境限制非应用问题）；已按 `real-visual-acceptance.md` 立规，后续在浏览器可达预览的环境（`/验收` harness）补像素取证。
