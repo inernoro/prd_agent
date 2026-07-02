@@ -434,10 +434,12 @@ app.MapGet("/gw/shadow-comparisons", async (int? limit, string? appCallerCode) =
 // 平台启用/停用
 app.MapPut("/gw/platforms/{id}/enabled", async (string id, ToggleEnabledRequest body) =>
 {
+    // 缺 enabled 字段（空 body / 漏传）一律拒绝，避免默认 false 误关平台。
+    if (body?.Enabled is not bool enabled) return Json(ApiEnvelope<PlatformItem>.Fail("INVALID_INPUT", "缺少 enabled 字段（true/false）"), jsonOptions, 400);
     var filter = Builders<BsonDocument>.Filter.Eq("_id", id);
     var doc = await platforms.Find(filter).FirstOrDefaultAsync();
     if (doc is null) return Json(ApiEnvelope<PlatformItem>.Fail("NOT_FOUND", $"平台不存在：{id}"), jsonOptions, 404);
-    var update = Builders<BsonDocument>.Update.Set("Enabled", body.Enabled).Set("UpdatedAt", DateTime.UtcNow);
+    var update = Builders<BsonDocument>.Update.Set("Enabled", enabled).Set("UpdatedAt", DateTime.UtcNow);
     await platforms.UpdateOneAsync(filter, update);
     var fresh = await platforms.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(fresh)), jsonOptions);
@@ -446,30 +448,37 @@ app.MapPut("/gw/platforms/{id}/enabled", async (string id, ToggleEnabledRequest 
 // 模型启用/停用
 app.MapPut("/gw/models/{id}/enabled", async (string id, ToggleEnabledRequest body) =>
 {
+    // 缺 enabled 字段一律拒绝，避免默认 false 误关模型。
+    if (body?.Enabled is not bool enabled) return Json(ApiEnvelope<ModelItem>.Fail("INVALID_INPUT", "缺少 enabled 字段（true/false）"), jsonOptions, 400);
     var filter = Builders<BsonDocument>.Filter.Eq("_id", id);
     var doc = await models.Find(filter).FirstOrDefaultAsync();
     if (doc is null) return Json(ApiEnvelope<ModelItem>.Fail("NOT_FOUND", $"模型不存在：{id}"), jsonOptions, 404);
-    var update = Builders<BsonDocument>.Update.Set("Enabled", body.Enabled).Set("UpdatedAt", DateTime.UtcNow);
+    var update = Builders<BsonDocument>.Update.Set("Enabled", enabled).Set("UpdatedAt", DateTime.UtcNow);
     await models.UpdateOneAsync(filter, update);
     var fresh = await models.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<ModelItem>.Ok(MapModel(fresh)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
-// 模型池默认标记：同一 ModelType 下将该池设为默认（互斥：先清同类型其它池的 IsDefaultForType，再置本池）。
+// 模型池默认标记：同一 ModelType 下将该池设为默认（互斥）。
+// 非事务环境下的安全次序（Mongo 单实例无跨文档事务）：**先置本池为默认，再清同类型其它池**。
+// 万一第二步失败，失败态是「同类型暂时两个默认」（MAP 调度仍能选到一个）——远好于「先清后置、第二步失败=零默认」（调度失去默认池）。
 app.MapPut("/gw/pools/{id}/default", async (string id, ToggleDefaultRequest body) =>
 {
+    // 缺 isDefault 字段一律拒绝。
+    if (body?.IsDefault is not bool isDefault) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "缺少 isDefault 字段（true/false）"), jsonOptions, 400);
     var filter = Builders<BsonDocument>.Filter.Eq("_id", id);
     var doc = await modelGroups.Find(filter).FirstOrDefaultAsync();
     if (doc is null) return Json(ApiEnvelope<PoolItem>.Fail("NOT_FOUND", $"模型池不存在：{id}"), jsonOptions, 404);
     var modelType = doc.GetStringOrEmpty("ModelType");
-    if (body.IsDefault)
+    // 先置本池（失败则直接返回，不动其它池）
+    await modelGroups.UpdateOneAsync(filter, Builders<BsonDocument>.Update.Set("IsDefaultForType", isDefault).Set("UpdatedAt", DateTime.UtcNow));
+    if (isDefault)
     {
-        // 互斥：同类型其它池清默认
+        // 再清同类型其它池：即便这步失败，也是「两个默认」的安全降级，不会零默认
         var fb = Builders<BsonDocument>.Filter;
         var others = fb.And(fb.Eq("ModelType", modelType), fb.Ne("_id", id));
         await modelGroups.UpdateManyAsync(others, Builders<BsonDocument>.Update.Set("IsDefaultForType", false).Set("UpdatedAt", DateTime.UtcNow));
     }
-    await modelGroups.UpdateOneAsync(filter, Builders<BsonDocument>.Update.Set("IsDefaultForType", body.IsDefault).Set("UpdatedAt", DateTime.UtcNow));
     var fresh = await modelGroups.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<PoolItem>.Ok(MapPool(fresh)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");

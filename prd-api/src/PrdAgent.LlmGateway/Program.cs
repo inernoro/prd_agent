@@ -290,9 +290,11 @@ sealed class ServingKeyIntegrityCheck : BackgroundService
     }
 
     // 有意的 dev-stub 平台（如"Stub 开发桩"）的密文本就是占位、天然解不出，属预期噪音，不当作真故障告警。
+    // 仅按"开发桩"或独立词 "stub" 判定（词边界，非任意子串），避免真实平台名恰含 stub 子串被误判静默（Bugbot Low）。
     private static bool IsStub(string? name)
         => !string.IsNullOrWhiteSpace(name)
-        && (name!.Contains("开发桩") || name.Contains("stub", StringComparison.OrdinalIgnoreCase));
+        && (name!.Contains("开发桩")
+            || System.Text.RegularExpressions.Regex.IsMatch(name, @"(^|[^a-z])stub([^a-z]|$)", System.Text.RegularExpressions.RegexOptions.IgnoreCase));
 
     private async Task CheckAsync(CancellationToken ct)
     {

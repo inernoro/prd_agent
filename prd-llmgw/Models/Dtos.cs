@@ -176,8 +176,9 @@ public sealed class SessionsData
 }
 
 // ── 配置写请求（网关配置面第二刀，可写）──
-public sealed class ToggleEnabledRequest { public bool Enabled { get; set; } }
-public sealed class ToggleDefaultRequest { public bool IsDefault { get; set; } }
+// 字段用 nullable：缺字段/空 body 时为 null，处理器拒绝（避免默认 false 误关平台/模型/默认池）。
+public sealed class ToggleEnabledRequest { public bool? Enabled { get; set; } }
+public sealed class ToggleDefaultRequest { public bool? IsDefault { get; set; } }
 
 // ── 模型池（只读，网关配置面第一刀）──
 public sealed class PoolsData { public List<PoolItem> Items { get; set; } = new(); public long Total { get; set; } }
