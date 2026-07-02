@@ -93,7 +93,7 @@ public class PlatformsController : ControllerBase
 
         var realItems = platforms.Select(p =>
         {
-            var keyState = ResolveApiKeyState(p.ApiKeyEncrypted);
+            var keyState = ResolveApiKeyState(p);
             return new PlatformListItem
             {
                 Id = p.Id,
@@ -173,6 +173,14 @@ public class PlatformsController : ControllerBase
 
     private sealed record ApiKeyState(bool HasApiKey, string Status, string? Masked);
 
+    private ApiKeyState ResolveApiKeyState(LLMPlatform platform)
+    {
+        if (PlatformApiKeyPolicy.IsApiKeyOptional(platform))
+            return new ApiKeyState(false, PlatformApiKeyPolicy.OptionalStatus, null);
+
+        return ResolveApiKeyState(platform.ApiKeyEncrypted);
+    }
+
     private ApiKeyState ResolveApiKeyState(string? encryptedKey)
     {
         if (string.IsNullOrWhiteSpace(encryptedKey))
@@ -197,7 +205,7 @@ public class PlatformsController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("PLATFORM_NOT_FOUND", "平台不存在"));
         }
 
-        var keyState = ResolveApiKeyState(platform.ApiKeyEncrypted);
+        var keyState = ResolveApiKeyState(platform);
 
         return Ok(ApiResponse<object>.Ok(new
         {
