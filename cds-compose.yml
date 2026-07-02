@@ -267,22 +267,12 @@ services:
       # 未注入时解析为空 → 守卫拒绝空 JWT（拒启动、命名路由不发布）= fail-closed；prd-agent 项目变量已钉强随机值。
       LlmGwJwt__Secret: "${LLMGW_JWT_SECRET}"
       LlmGwJwt__Issuer: prdagent-llmgw
-      # 账户体系走环境变量，与 CDS dashboard 同账号密码（用户指定 2026-06-30）。bare `${CDS_USERNAME}`/
-      # `${CDS_PASSWORD}` **不带 `:-fallback`**：compose-parser.singlePassResolve 解析顺序为
-      # customEnv ?? process.env ?? default，CDS master 进程的 process.env.CDS_USERNAME/CDS_PASSWORD
-      # （server.ts:1646 CDS 自身 basic 登录同源）即被读入 → 网关 console 登录与 CDS 完全一致、无第二份口令、
-      # 无需把密码写进 _global 或仓库。去掉旧 `:-内网fallback` 是关键修复：那个默认值是**静默分叉源**——
-      # process.env 缺失时 console 落到一个与 CDS 不同的密码，用户拿 CDS 账号登录网关会失败（用户已指出此缺陷）。
-      # 边界：CDS 若未配 basic 账号（process.env 无此二值），missingEnvTemplates 在部署前抛
-      # 「环境变量模板缺少值: CDS_PASSWORD, CDS_USERNAME」= fail-closed 明确报错，而非静默用错密码（一致或显式失败）。
-      # 网关控制台（llmgw-web 登录）账号 —— **由「项目环境变量」直接掌控，可见可改**。
-      # 历史坑：过去写 ${CDS_USERNAME}/${CDS_PASSWORD} 取的是 CDS master 系统级凭据，用户在「项目
-      # 环境变量」里根本找不到也改不了；且后端 SeedAdmin 曾是 insert-only（首次种子后永不更新）→
-      # 用户改了环境变量也登不进。现改为读项目级 LLMGW_ADMIN_USER/LLMGW_ADMIN_PASSWORD：在
-      # 「项目设置 → 项目环境变量」设 LLMGW_ADMIN_PASSWORD 即控制台登录口令，重新部署 llmgw 后端
-      # SeedAdmin 会 upsert 生效（见 prd-llmgw/Program.cs）。用户名默认 admin，可用 LLMGW_ADMIN_USER 改。
-      LLMGW_ADMIN_USER: "${LLMGW_ADMIN_USER:-admin}"
-      LLMGW_ADMIN_PASSWORD: "${LLMGW_ADMIN_PASSWORD:-}"
+      # 网关控制台登录账号（用户 2026-07-02：简单清晰，缺省内置 admin/admin，登录后再改）：
+      # **不在 compose 显式声明** LLMGW_ADMIN_USER/PASSWORD —— 缺省由后端 prd-llmgw 内置 admin/admin
+      # 开箱可用（不因缺配置 fail-closed）。要改口令：在「项目设置 → 项目环境变量」设
+      # LLMGW_ADMIN_PASSWORD（CDS 会把项目 customEnv 注入本容器），重新部署 llmgw → 后端 SeedAdmin
+      # upsert 生效。不写成 `${KEY:-default}`：CDS resolveProfileRuntimeEnv 对 profile.env 自引用只在
+      # 值恰好等于 `${KEY}` 时才还原项目变量，带默认会解析成字面量覆盖用户配置（Codex P1）。
     labels:
       # 公网命名 URL（用户 2026-07-01 要求）：登录走项目变量 LLMGW_ADMIN_USER/LLMGW_ADMIN_PASSWORD（可见可改），
       # JWT 签名密钥 LLMGW_JWT_SECRET 已在项目变量（scope=prd-agent）设为强随机（非仓库默认，杜绝 JWT 伪造绕过登录），
