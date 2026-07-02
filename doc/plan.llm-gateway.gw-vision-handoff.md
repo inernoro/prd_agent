@@ -65,10 +65,19 @@
   - **运行时鉴权/路由取证（已验证）**：`/gw/logs` 无 token → 401；`/gw/auth/change-password` 无 token /
     垃圾 token → 401（新端点已映射 + JWT 校验生效）；login 空参 → 新 `INVALID_CREDENTIALS`「不能为空」信封。
   - **未运行时取证（仅代码复核）**：弱口令引导 happy-path（`mustChangePassword=true` → mcp token 访问
-    `/gw/logs` 应 403 → change-password → 解锁读日志 → 重启不回退）。**根因是共享 Mongo 约束**：
-    `llmgw_users` 跨分支共享，现网 `admin` 已是非默认口令（本分支默认模式**正确地不回退**它），
-    而系统无「创建一次性弱口令账号」的安全入口（容器无 mongo 客户端、env 掩码、动 `admin` 会打断 main
-    控制台，违反 cross-project-isolation）。留待「空 `llmgw_users` 的全新部署」或加临时管理端点时补齐观测。
+    `/gw/logs` 应 403 → change-password → 解锁读日志 → 重启不回退）。**根因是 CDS `_global` env 未注入
+    llmgw 容器**（2026-07-02 实测）：为了造一个可登录的验证账号，试过 `cdscli env set` 改
+    `LLMGW_ADMIN_USER` / `LLMGW_ADMIN_PASSWORD`（config 模式给已知口令 / 空值给默认弱口令）并 `branch
+    deploy` 共 5 轮，**任何凭据组合都登不进**（`admin/admin`、`admin/Miduomima..22`、以及本该被 seed 新建
+    的 `gwv/Verify12345` 全 INVALID_CREDENTIALS）。`branch exec` 对这些 env 值全做掩码（`masked:true`，读出
+    空/长度失真，印证 handoff「读环境变量判空不可靠」），无法自证注入值。综合判断：`branch deploy` 没把
+    `_global` 的 `env set` 灌进 llmgw profile 容器（seed 每轮都以默认 `admin` 跑默认模式、不覆盖历史 admin
+    的未知口令），符合 handoff「改配置必须重新 import + approve，webhook/deploy 不更新 profile 配置」的坑。
+    另注：`main-prd-agent-llmgw-web` 当前显示「预览未部署」，无法作参照。
+  - **补齐观测的正确下一步（CDS 侧动作）**：让 `_global` env 真正注入 llmgw profile（重新 import + approve
+    compose，或修 `_global`→profile 的 env 注入），使 `LLMGW_ADMIN_USER`/`LLMGW_ADMIN_PASSWORD` 生效；
+    然后用一个新用户名（默认弱口令、空 `LLMGW_ADMIN_PASSWORD`）触发 `MustChangePassword=true`，即可真机跑通
+    login→mcp→403→change-password→解锁。代码侧无需再改。
 
 ### Point 3 — OpenRouter 风格控制台：**部分（骨架在，需对齐设计）**
 - `prd-llmgw-web` 已有：`LoginPage` / `LogsPage` / `LogsView`（请求日志表）/ `GenerationDetailsDrawer`
