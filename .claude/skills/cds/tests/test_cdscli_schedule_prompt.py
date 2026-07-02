@@ -77,6 +77,32 @@ class CdsCliSchedulePromptTest(unittest.TestCase):
         self.assertEqual(job["actions"][0]["method"], "POST")
         self.assertEqual(job["actions"][0]["url"], "/api/statistics/sync")
 
+    def test_schedule_daily_path_with_manual_keeps_daily(self) -> None:
+        code, out = call_main([
+            "schedule", "parse",
+            "每天 02:00 调用 POST /api/manual-sync",
+            "--project", "demo",
+        ])
+
+        self.assertEqual(code, 0, out)
+        job = parse_last_json(out)["data"]
+        self.assertEqual(job["schedule"]["type"], "daily")
+        self.assertEqual(job["schedule"]["timeOfDay"], "02:00")
+        self.assertEqual(job["actions"][0]["url"], "/api/manual-sync")
+
+    def test_schedule_http_prompt_with_command_line_word_not_command(self) -> None:
+        code, out = call_main([
+            "schedule", "parse",
+            "每天 02:00 命令行调用 POST /api/statistics/sync",
+            "--project", "demo",
+        ])
+
+        self.assertEqual(code, 0, out)
+        action = parse_last_json(out)["data"]["actions"][0]
+        self.assertEqual(action["type"], "http")
+        self.assertEqual(action["method"], "POST")
+        self.assertEqual(action["url"], "/api/statistics/sync")
+
     def test_schedule_parse_interval_command_prompt(self) -> None:
         code, out = call_main([
             "schedule", "parse",
@@ -90,6 +116,19 @@ class CdsCliSchedulePromptTest(unittest.TestCase):
         self.assertEqual(job["schedule"]["intervalMinutes"], 10)
         self.assertEqual(job["actions"][0]["type"], "command")
         self.assertEqual(job["actions"][0]["command"], "echo ok")
+
+    def test_curl_multiple_data_flags_are_joined(self) -> None:
+        code, out = call_main([
+            "schedule", "parse",
+            "手动 curl -d a=1 -d b=2 https://old.example/sync",
+            "--project", "demo",
+        ])
+
+        self.assertEqual(code, 0, out)
+        action = parse_last_json(out)["data"]["actions"][0]
+        self.assertEqual(action["type"], "http")
+        self.assertEqual(action["method"], "POST")
+        self.assertEqual(action["body"], "a=1&b=2")
 
     def test_schedule_create_with_test_checks_actions_before_post(self) -> None:
         calls: list[tuple[str, str, dict | None]] = []
@@ -127,6 +166,30 @@ class CdsCliSchedulePromptTest(unittest.TestCase):
         payload = parse_last_json(out)
         self.assertEqual(payload["data"]["job"]["id"], "sjob_1")
 
+    def test_schedule_create_redacts_secret_metadata_but_sends_header(self) -> None:
+        calls: list[tuple[str, str, dict | None]] = []
+
+        def fake_call(method, path, body=None, timeout=15, quiet=False):
+            calls.append((method, path, body))
+            return {"job": {"id": "sjob_1", **body}}
+
+        prompt = "每天 02:00 curl -H 'Authorization: Bearer SECRET' https://old.example/sync"
+        with mock.patch.object(cdscli, "_call", fake_call):
+            code, out = call_main([
+                "schedule", "create",
+                prompt,
+                "--project", "demo",
+            ])
+
+        self.assertEqual(code, 0, out)
+        create_body = calls[0][2]
+        self.assertNotIn("SECRET", create_body["name"])
+        self.assertNotIn("SECRET", create_body["description"])
+        self.assertEqual(create_body["actions"][0]["headers"]["Authorization"], "Bearer SECRET")
+        self.assertNotIn("SECRET", out)
+        payload = parse_last_json(out)
+        self.assertEqual(payload["data"]["job"]["actions"][0]["headers"]["Authorization"], "[redacted]")
+
     def test_schedule_test_fails_when_check_target_fails(self) -> None:
         with mock.patch.object(
             cdscli,
@@ -144,6 +207,24 @@ class CdsCliSchedulePromptTest(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertIn("检测未通过", payload["error"])
 
+    def test_schedule_test_failure_redacts_header(self) -> None:
+        with mock.patch.object(
+            cdscli,
+            "_call",
+            lambda *a, **kw: {"result": {"ok": False, "httpStatus": 401, "log": "bad"}},
+        ):
+            code, out = call_main([
+                "schedule", "test",
+                "手动 curl -H 'Authorization: Bearer SECRET' https://old.example/sync",
+                "--project", "demo",
+            ])
+
+        self.assertEqual(code, 2)
+        self.assertNotIn("SECRET", out)
+        payload = parse_last_json(out)
+        action = payload["checks"][0]["action"]
+        self.assertEqual(action["headers"]["Authorization"], "[redacted]")
+
     def test_schedule_prompt_without_schedule_dies(self) -> None:
         def fail_call(*_args, **_kwargs):
             raise AssertionError("不应请求 CDS")
@@ -159,6 +240,19 @@ class CdsCliSchedulePromptTest(unittest.TestCase):
         payload = parse_last_json(out)
         self.assertFalse(payload["ok"])
         self.assertIn("未识别调度口令", payload["error"])
+
+    def test_schedule_run_default_timeout_covers_long_jobs(self) -> None:
+        timeouts: list[int] = []
+
+        def fake_call(method, path, body=None, timeout=15, quiet=False):
+            timeouts.append(timeout)
+            return {"jobRun": {"id": "run_1"}}
+
+        with mock.patch.object(cdscli, "_call", fake_call):
+            code, out = call_main(["schedule", "run", "sjob_1"])
+
+        self.assertEqual(code, 0, out)
+        self.assertGreaterEqual(timeouts[0], 3600)
 
 
 if __name__ == "__main__":
