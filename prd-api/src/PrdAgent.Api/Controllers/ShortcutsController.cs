@@ -4,6 +4,7 @@ using MongoDB.Driver;
 using System.Diagnostics;
 using System.Text;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Services;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services;
@@ -18,6 +19,7 @@ namespace PrdAgent.Api.Controllers;
 public class ShortcutsController : ControllerBase
 {
     private const string AppKey = "shortcuts-agent";
+    private const string ShortVideoParserAgentId = "short-video-parser";
     private const int DefaultShortcutGrantYears = 1;
     private const int ExtendedShortcutGrantYears = 3;
 
@@ -60,6 +62,11 @@ public class ShortcutsController : ControllerBase
         if (bindingType != ShortcutBindingType.Collect && string.IsNullOrWhiteSpace(request.BindingTargetId))
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "绑定工作流或智能体时 bindingTargetId 不能为空"));
 
+        if (bindingType == ShortcutBindingType.Agent && !IsSupportedAgentBinding(request.BindingTargetId))
+            return BadRequest(ApiResponse<object>.Fail(
+                "UNSUPPORTED_AGENT_BINDING",
+                $"快捷指令暂不支持绑定智能体「{request.BindingTargetId}」"));
+
         // 获取绑定目标名称（快照）
         string? bindingTargetName = request.BindingTargetName;
         if (bindingType == ShortcutBindingType.Workflow && !string.IsNullOrWhiteSpace(request.BindingTargetId))
@@ -81,7 +88,7 @@ public class ShortcutsController : ControllerBase
             TokenHash = hash,
             TokenPrefix = prefix,
             DeviceType = request.DeviceType ?? "ios",
-            Icon = request.Icon ?? "⚡",
+            Icon = request.Icon ?? "Zap",
             Color = request.Color ?? "#007AFF",
             BindingType = bindingType,
             BindingTargetId = request.BindingTargetId?.Trim(),
@@ -658,6 +665,12 @@ public class ShortcutsController : ControllerBase
             if (!CanUseBoundWorkflow(boundWorkflow, shortcut.UserId))
                 return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权限触发绑定的工作流"));
         }
+        else if (shortcut.BindingType == ShortcutBindingType.Agent && !IsSupportedAgentBinding(shortcut.BindingTargetId))
+        {
+            return BadRequest(ApiResponse<object>.Fail(
+                "UNSUPPORTED_AGENT_BINDING",
+                $"快捷指令暂不支持绑定智能体「{shortcut.BindingTargetId}」"));
+        }
 
         // 从分享文本中自动提取 URL（如抖音口令 "4.84 复制打开抖音...https://v.douyin.com/xxx/"）
         if (string.IsNullOrWhiteSpace(request.Url) && !string.IsNullOrWhiteSpace(request.Text))
@@ -668,6 +681,14 @@ public class ShortcutsController : ControllerBase
                 request.Url = extractedUrl;
                 _logger.LogInformation("Auto-extracted URL from share text: {Url}", extractedUrl);
             }
+        }
+
+        if (shortcut.BindingType == ShortcutBindingType.Agent && shortcut.BindingTargetId == ShortVideoParserAgentId)
+        {
+            var videoUrl = ShortVideoMaterialProcessor.ExtractUrl(request.Url ?? request.Text);
+            if (!IsHttpUrl(videoUrl))
+                return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "未识别到可解析的短视频链接"));
+            request.Url = videoUrl;
         }
 
         // 创建收藏
@@ -732,6 +753,7 @@ public class ShortcutsController : ControllerBase
         // 根据绑定类型，异步触发后台任务（收藏已完成，额外动作后台运行）
         string message = $"已收藏到「{shortcut.Name}」";
         string? executionId = null;
+        string? shortVideoRunId = null;
 
         if (shortcut.BindingType == ShortcutBindingType.Workflow && !string.IsNullOrWhiteSpace(shortcut.BindingTargetId))
         {
@@ -773,8 +795,31 @@ public class ShortcutsController : ControllerBase
         }
         else if (shortcut.BindingType == ShortcutBindingType.Agent && !string.IsNullOrWhiteSpace(shortcut.BindingTargetId))
         {
-            message = $"已收藏，智能体「{shortcut.BindingTargetName ?? shortcut.BindingTargetId}」正在处理...";
-            // TODO: Phase 2 - 路由到对应智能体
+            if (shortcut.BindingTargetId == ShortVideoParserAgentId)
+            {
+                var run = CreateShortVideoMaterialRun(shortcut, request.Url!);
+                await _db.ShortVideoMaterialRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);
+
+                shortVideoRunId = run.Id;
+                message = "已收藏，短视频解析正在处理...";
+
+                await _db.ChannelTasks.UpdateOneAsync(
+                    x => x.Id == task.Id,
+                    Builders<ChannelTask>.Update
+                        .Set(x => x.TargetAgent, ShortVideoParserAgentId)
+                        .Set("Result.Data.shortVideoRunId", run.Id),
+                    cancellationToken: CancellationToken.None);
+
+                _logger.LogInformation(
+                    "Shortcut triggered short video parser: run {RunId} via {ShortcutName}",
+                    run.Id, shortcut.Name);
+            }
+            else
+            {
+                return BadRequest(ApiResponse<object>.Fail(
+                    "UNSUPPORTED_AGENT_BINDING",
+                    $"快捷指令暂不支持绑定智能体「{shortcut.BindingTargetId}」"));
+            }
         }
 
         return Ok(ApiResponse<object>.Ok(new
@@ -785,6 +830,7 @@ public class ShortcutsController : ControllerBase
             ShortcutName = shortcut.Name,
             shortcut.BindingType,
             ExecutionId = executionId,
+            ShortVideoRunId = shortVideoRunId,
             Message = message
         }));
     }
@@ -976,14 +1022,10 @@ public class ShortcutsController : ControllerBase
             Type = "workflow"
         });
 
-        // 内置智能体列表
+        // 内置智能体列表。这里只暴露快捷指令后端已经真正接通的智能体目标。
         var agents = new[]
         {
-            new { Id = "prd-agent", Name = "PRD 智能解读", Description = "PRD 文档解析与问答", Icon = "📋", Type = "agent" },
-            new { Id = "literary-agent", Name = "文学创作", Description = "文章配图、文学创作", Icon = "✍️", Type = "agent" },
-            new { Id = "visual-agent", Name = "视觉创作", Description = "高级视觉创作工作区", Icon = "🎨", Type = "agent" },
-            new { Id = "defect-agent", Name = "缺陷管理", Description = "缺陷提交与跟踪", Icon = "🐛", Type = "agent" },
-            new { Id = "video-agent", Name = "视频生成", Description = "文章转视频教程", Icon = "🎬", Type = "agent" },
+            new { Id = ShortVideoParserAgentId, Name = "短视频解析", Description = "把分享来的短视频链接解析、入库并触发转写", Icon = "Video", Type = "agent" },
         };
 
         return Ok(ApiResponse<object>.Ok(new
@@ -1070,6 +1112,44 @@ public class ShortcutsController : ControllerBase
     #endregion
 
     #region Helper Methods
+
+    private ShortVideoMaterialRun CreateShortVideoMaterialRun(UserShortcut shortcut, string videoUrl)
+    {
+        var now = DateTime.UtcNow;
+        var title = ReadBindingVariable(shortcut, "title") ?? $"短视频素材 {now:yyyyMMdd-HHmm}";
+        var storeId = ReadBindingVariable(shortcut, "store_id") ?? ReadBindingVariable(shortcut, "storeId");
+
+        return new ShortVideoMaterialRun
+        {
+            UserId = shortcut.UserId,
+            OwnerInstanceId = InstanceIdentity.Get(_config),
+            VideoUrl = videoUrl,
+            Platform = ShortVideoMaterialProcessor.DetectPlatform(videoUrl),
+            Title = title,
+            RequestedTitle = title,
+            SourceMode = "resolving",
+            Status = "queued",
+            StoreId = string.IsNullOrWhiteSpace(storeId) ? null : storeId,
+            CreatedAt = now,
+            UpdatedAt = now,
+            Stages = ShortVideoMaterialProcessor.BuildInitialStages(),
+        };
+    }
+
+    private static string? ReadBindingVariable(UserShortcut shortcut, string key)
+    {
+        if (shortcut.BindingVariables == null) return null;
+        return shortcut.BindingVariables.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value)
+            ? value.Trim()
+            : null;
+    }
+
+    private static bool IsHttpUrl(string? value)
+        => Uri.TryCreate(value, UriKind.Absolute, out var uri)
+           && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+
+    private static bool IsSupportedAgentBinding(string? bindingTargetId)
+        => string.Equals(bindingTargetId?.Trim(), ShortVideoParserAgentId, StringComparison.Ordinal);
 
     /// <summary>
     /// 从 Authorization: Bearer scs-xxx 中校验 token，返回对应 UserShortcut
