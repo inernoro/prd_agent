@@ -944,6 +944,11 @@ describe('resource database access', () => {
       stderr: '',
       exitCode: 0,
     }));
+    harness.shell.addResponsePattern(/\.find\(.*\)\.limit\(10\)\)\.toArray/, () => ({
+      stdout: '[]\n',
+      stderr: '',
+      exitCode: 0,
+    }));
     harness.shell.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     await new Promise<void>((resolve) => {
       server = harness.app.listen(0, '127.0.0.1', resolve);
@@ -1019,6 +1024,13 @@ describe('resource database access', () => {
       { database: 'orders', command: 'db.getCollection("users").updateMany(\n  { active: false },\n  { $set: { archived: true } }\n)', confirmResourceName: 'mongo-main' },
       { 'x-test-cookie-auth': '1' },
     );
+    // 只读 find，filter 字符串值里含 "updateOne(" 子串：不再误判为夹带写 → 200（Bugbot Medium）
+    const findWriteNameInValue = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
+      { database: 'orders', command: 'db.getCollection("users").find({ note: "see updateOne( docs" }).limit(10);' },
+    );
 
     expect(ok.status).toBe(200);
     expect(ok.body.collection).toBe('users');
@@ -1041,6 +1053,8 @@ describe('resource database access', () => {
     expect(commaBypass.body.error).toContain('一次只允许一条语句');
     expect(multilineWrite.status).toBe(200);
     expect(multilineWrite.body.kind).toBe('write-result');
+    expect(findWriteNameInValue.status).toBe(200);
+    expect(findWriteNameInValue.body.kind).toBe('documents');
   });
 
   it('describes planned workbench capability for SQL Server and RabbitMQ resources', async () => {

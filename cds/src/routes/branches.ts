@@ -5845,6 +5845,52 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return text;
   }
 
+  // 把命令里的字符串/正则字面量内容抹成空白，只留「代码骨架」，供高危/写操作扫描使用。
+  // 这样 filter/$set/备注/日志/正则示例里出现的 drop( / updateOne( 等子串（本是数据、mongosh 不会当代码执行）
+  // 不再被误判（Bugbot Medium ×2）；而真正内嵌的方法调用（代码位置的 .drop() / updateMany()）仍保留可被检出。
+  function stripMongoLiterals(input: string): string {
+    let out = '';
+    let i = 0;
+    const n = input.length;
+    let prevSignificant = '';
+    while (i < n) {
+      const ch = input[i];
+      if (ch === '"' || ch === "'" || ch === '`') {
+        const quote = ch;
+        i++;
+        while (i < n) {
+          if (input[i] === '\\') { i += 2; continue; }
+          if (input[i] === quote) { i++; break; }
+          i++;
+        }
+        out += ' ';
+        prevSignificant = 'x';
+        continue;
+      }
+      if (ch === '/') {
+        // 正则字面量 vs 除号：仅当前一个有意义字符处于「正则可出现位置」且下一个字符不是 / 或 * 时按正则处理
+        const regexAllowedPrev = prevSignificant === '' || '([,:=!&|?{;'.includes(prevSignificant);
+        const next = input[i + 1];
+        if (regexAllowedPrev && next !== '/' && next !== '*') {
+          i++;
+          while (i < n) {
+            if (input[i] === '\\') { i += 2; continue; }
+            if (input[i] === '/' || input[i] === '\n') { if (input[i] === '/') i++; break; }
+            i++;
+          }
+          while (i < n && /[gimsuy]/.test(input[i])) i++;
+          out += ' ';
+          prevSignificant = 'x';
+          continue;
+        }
+      }
+      out += ch;
+      if (!/\s/.test(ch)) prevSignificant = ch;
+      i++;
+    }
+    return out;
+  }
+
   // 只读动词（安全，无需 data-write 权限）
   const MONGO_READ_VERBS = new Set(['find', 'findOne', 'countDocuments', 'estimatedDocumentCount', 'distinct']);
   // 受控写动词（需 data-write 权限；均为定点写，非删库删集合类灾难操作）
@@ -5865,13 +5911,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (withoutTrailing.includes(';')) {
       throw new Error('MongoDB Console 一次只允许执行一条命令');
     }
-    // 始终禁止：高危操作只按「方法调用」形态匹配（op 后跟 `(`），避免把出现在 filter/$set/备注等 JSON
-    // 字面量里的 drop/eval 等子串误判为高危（Bugbot Medium）。仍拦截参数里内嵌的危险调用，例如
+    // 代码骨架（抹掉字符串/正则字面量内容）——所有「按方法调用/操作符形态」的安全扫描都对它做，
+    // 避免把数据/日志/正则示例里的 drop( / updateOne( 等子串误判（Bugbot Medium）。
+    const codeSkeleton = stripMongoLiterals(withoutTrailing);
+    // 始终禁止：高危操作只按「方法调用」形态匹配（op 后跟 `(`）。仍拦截参数里内嵌的危险调用，例如
     // insertOne({ a: db.y.drop() })——mongo shell 会先求值该实参再执行 insertOne，故 `.drop(` 必须挡下。
     // aggregate 一并按方法调用拦截，从根上堵死 $out/$merge 写出。$where 按「操作符键」形态拦截（服务端 JS）。
+    // 方法调用类高危扫代码骨架；$where 是操作符键（可写成 "$where": 引号键，抹字面量会丢），故对原文按「键形态」扫。
     if (
-      /\b(drop|dropDatabase|dropCollection|dropIndex|dropIndexes|createCollection|renameCollection|createIndex|reIndex|eval|mapReduce|runCommand|adminCommand|getSiblingDB|copyDatabase|shutdownServer|aggregate)\s*\(/i.test(withoutTrailing)
-      || /\$where["']?\s*:/i.test(withoutTrailing)
+      /\b(drop|dropDatabase|dropCollection|dropIndex|dropIndexes|createCollection|renameCollection|createIndex|reIndex|eval|mapReduce|runCommand|adminCommand|getSiblingDB|copyDatabase|shutdownServer|aggregate)\s*\(/i.test(codeSkeleton)
+      || /["']?\$where["']?\s*:/i.test(withoutTrailing)
     ) {
       throw new Error('MongoDB Console 禁止删库/删集合/索引/跨库/服务器级/eval/aggregate 写出/$where 等高危操作');
     }
@@ -5895,7 +5944,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 换行分隔或逗号操作符可以让「首句 findOne（判为只读，跳过 data-write/确认）+ 次句 updateMany」
     // 在只读分类下偷跑写操作。故：只要命令里任意位置出现写方法调用（op 后跟 `(`），而主 verb 不是写，
     // 即判定为多语句/注入，一律拒绝——合法的单条写命令主 verb 本身就是写，不会命中此门。
-    const writeCallAnywhere = /\b(insertOne|insertMany|updateOne|updateMany|replaceOne|deleteOne|deleteMany|findOneAndUpdate|findOneAndReplace|findOneAndDelete|bulkWrite)\s*\(/i.test(withoutTrailing);
+    const writeCallAnywhere = /\b(insertOne|insertMany|updateOne|updateMany|replaceOne|deleteOne|deleteMany|findOneAndUpdate|findOneAndReplace|findOneAndDelete|bulkWrite)\s*\(/i.test(codeSkeleton);
     if (writeCallAnywhere && !isWrite) {
       throw new Error('MongoDB Console 一次只允许一条语句：检测到只读语句后夹带写操作（换行/逗号多语句），已拒绝');
     }

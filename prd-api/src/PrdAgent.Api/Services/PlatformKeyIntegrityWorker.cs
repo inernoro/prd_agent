@@ -177,6 +177,12 @@ public class PlatformKeyIntegrityWorker : BackgroundService
             }
         }
 
+        // dev-stub 解不出属预期，不告警——但留 Info 审计线索（与 serving 侧 ServingKeyIntegrityCheck 对齐，Bugbot Low）。
+        if (stubUnreadable.Count > 0)
+            _logger.LogInformation(
+                "[PlatformKeyIntegrity] 已跳过 {Count} 个 dev-stub（密文为占位、预期解不出，非故障）：{Names}",
+                stubUnreadable.Count, string.Join("、", stubUnreadable));
+
         var existing = await db.AdminNotifications
             .Find(n => n.Key == NotificationKey && n.Status == "open")
             .FirstOrDefaultAsync(ct);
