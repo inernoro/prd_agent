@@ -1187,9 +1187,11 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
       mount.style.opacity = '1';
     });
 
-    // 入场编排的时间原点（生长波 / 光路淡入 / 相机推进共用）
+    // 入场编排的时间原点（生长波 / 光路淡入 / 相机推进共用）。
+    // 窗口长度在节点建完后按「最大 introDelay + 单节点生长时长」动态收口（见下方赋值），
+    // 固定值会在深层大库上提前关窗，让外围星体从半程直接弹到终态（Bugbot 2b920e92）。
     const introStart = performance.now();
-    const INTRO_TOTAL = 2600;
+    let INTRO_TOTAL = 2600;
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x02030a);
@@ -1647,6 +1649,9 @@ void main() {
     // 标签入场延迟对齐其节点（渲染循环里按距离 + 入场双重淡入）
     const introDelayById = new Map<string, number>();
     for (const rec of renders) introDelayById.set(rec.node.id, rec.introDelay);
+
+    // 入场窗口收口：保证最晚出发的节点也完整走完 850ms 生长曲线再关窗（+60ms 余量）
+    INTRO_TOTAL = renders.reduce((m, r) => Math.max(m, r.introDelay), 0) + 850 + 60;
 
     // 显示模式切换 → 按当前 labelMode/contentTitles 重绘标签纹理（不重建场景）。
     // 文本没变的标签跳过重绘：多数分组两种模式下同名，白白重画一遍 2x 纹理是纯浪费。
@@ -2262,6 +2267,7 @@ void main() {
 
     const onPointerMove = (ev: PointerEvent) => {
       if (downXY && (Math.abs(ev.clientX - downXY[0]) > 4 || Math.abs(ev.clientY - downXY[1]) > 4)) {
+        if (!dragMoved) camTween = null; // 真实拖拽才打断相机缓动（与 onWheel 一致，含入场推进）
         dragMoved = true;
       }
       const hit = pick(ev.clientX, ev.clientY);
@@ -2288,7 +2294,8 @@ void main() {
       downXY = [ev.clientX, ev.clientY];
       dragMoved = false;
       controls.autoRotate = false;
-      camTween = null; // 手势打断相机缓动（与 onWheel 一致，含入场推进）
+      // 注意：不在 pointerdown 打断相机缓动 —— 空白单击（无拖拽）会把入场推进搁浅在远位
+      //（Bugbot 90f25eb6）。真正的打断放在 onPointerMove 判定为拖拽的瞬间。
     };
     const onPointerUp = (ev: PointerEvent) => {
       if (dragMoved) {
