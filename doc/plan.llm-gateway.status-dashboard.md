@@ -1,6 +1,6 @@
-# LLM 网关剥离 · 活状态看板（SSOT）
+# LLM 网关剥离活状态看板（SSOT） · 计划
 
-> 类型: plan | owner: inernoro | 最后更新: 2026-07-02
+> **版本**：v1 | **日期**：2026-07-02 | **状态**：开发中
 > **这是网关剥离这条线的「活看板」**：想知道「现在到哪一步了 / 能不能发布 / 下一步是什么」，看这一页，不用再问。
 > 规则依据: `.claude/rules/living-status-board.md`（本文件是它要求的看板实例）。
 > 深度文档: `plan.llm-gateway.full-cutover.md`（切换 SSOT）/ `design.llm-gateway-physical-isolation.md`（架构）/ `plan.llm-gateway.rollout.md`（波次进度）。

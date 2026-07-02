@@ -63,7 +63,8 @@ export function OverviewPage() {
   }, []);
 
   const loading = pools === null || platforms === null || models === null;
-  if (error && loading) return <Empty text={error} />;
+  // 完全没加载出来（都还 null）时才整屏报错/转圈；有部分数据则进入下方渲染，用顶部横幅提示失败（不掩盖故障）。
+  if (loading && error) return <Empty text={error} />;
   if (loading) return <SectionLoader text="正在加载网关概览…" />;
 
   const enabledPlatforms = platforms!.filter((p) => p.enabled).length;
@@ -73,6 +74,12 @@ export function OverviewPage() {
 
   return (
     <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* 部分接口失败：顶部横幅明示故障，避免「计数为 0」被误读为网关健康 */}
+      {error ? (
+        <div style={{ fontSize: 12, color: '#f85149', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid rgba(248,81,73,0.35)', background: 'rgba(248,81,73,0.08)' }}>
+          部分配置接口加载失败（下方计数可能不完整）：{error}
+        </div>
+      ) : null}
       {/* 配置概览计数 */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
         <StatCard icon={<Server size={16} />} label="平台" value={`${enabledPlatforms}/${platforms!.length}`} sub="启用/总数" to="/platforms" />
