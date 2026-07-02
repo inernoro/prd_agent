@@ -1,12 +1,12 @@
 ---
 name: cds
-version: 0.7.1
+version: 0.8.0
 description: CDS (Cloud Dev Space) core skill — hosts the canonical cdscli Python CLI, handles authentication (static AI_ACCESS_KEY / dynamic pairing / project key), manages env vars and project keys, owns CDS service self-update, defines the preview-URL slug formula, and acts as dispatcher when the user's intent is ambiguous between cold-path scanning and hot-path debugging. Activates when the user mentions CDS generically without specifying scan-or-deploy, configures CDS credentials, manages env / keys, updates the CDS service code itself, or asks about preview URL conventions. Does NOT directly perform project scanning (delegates to cds-project-scan, the cold path) or deployment debugging (delegates to cds-deploy-pipeline, the hot path). Trigger phrases include "cds 认证", "AI_ACCESS_KEY", "项目 key", "cds 自更新", "cds self-update", "预览地址公式", "配 cds 环境变量", "/cds", "/cds-auth", and the bare word "cds" when the user has not yet picked a direction.
 ---
 
 # CDS — 核心技能：鉴权 / cdscli / env / self-update / 分诊器
 
-> **版本**：v0.7.1 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"cds 认证"、"AI_ACCESS_KEY"、"项目 key"、"cds 自更新"、"预览地址公式"、"配 cds 环境变量"
+> **版本**：v0.8.0 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"cds 认证"、"AI_ACCESS_KEY"、"项目 key"、"cds 自更新"、"预览地址公式"、"配 cds 环境变量"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -69,6 +69,15 @@ $CLI global-key create --label "for claude onboarding"
 $CLI key list --project <id>             # 项目级 cdsp_* key（只读列出）
 # 注：cdscli 无 key create。项目 Key 由用户在项目页「授权 Agent」按钮签发，
 #     明文只展示一次（见下方「认证」节）。CLI 不签发，避免密钥经 stdout 泄漏。
+
+# 任务调度：一句口令生成/测试/创建任务（自然语言解析为 schedule + actions）
+$CLI schedule parse "每天 02:00 调用 POST /api/statistics/sync" --project <id>
+$CLI schedule test "手动 执行命令 echo ok" --project <id>
+$CLI schedule create "每天 03:30 curl -X POST https://old.example/sync" --project <id> --test
+$CLI schedule list --project <id>
+$CLI schedule run <scheduledJobId>
+# 支持调度口令：每天 02:00 / 每隔 10 分钟 / 手动
+# 支持动作口令：curl ... / 调用 POST https://... / 执行命令 ...
 
 # CDS 服务自更新（仅改 cds/ 代码时）
 $CLI self branches                       # 看 CDS 自身能切到哪些分支

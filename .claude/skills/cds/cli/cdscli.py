@@ -34,6 +34,7 @@ import json
 import os
 import re
 import secrets
+import shlex
 import socket
 import subprocess
 import sys
@@ -43,7 +44,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
-VERSION = "0.7.1"  # ← bumped on each SKILL.md change; 服务端自动读这一行
+VERSION = "0.8.0"  # ← bumped on each SKILL.md change; 服务端自动读这一行
 _TRACE_ID: str = ""
 _HUMAN: bool = False
 _DRIFT_WARNED: bool = False  # 全进程只提示一次，避免每个请求都刷
@@ -6695,6 +6696,279 @@ def cmd_deploy(args: argparse.Namespace) -> None:
        note="deploy 流水线全绿")
 
 
+# ── scheduled jobs prompt helpers ───────────────────────────────────
+
+def _prompt_text(parts: Any) -> str:
+    if isinstance(parts, list):
+        return " ".join(str(p) for p in parts).strip()
+    return str(parts or "").strip()
+
+
+def _schedule_project_id(args: argparse.Namespace, *, required: bool = True) -> str:
+    pid = (getattr(args, "project", None) or os.environ.get("CDS_PROJECT_ID", "")).strip()
+    if required and not pid:
+        die("缺少项目 ID: 请传 --project <projectId> 或设置 CDS_PROJECT_ID")
+    return pid
+
+
+def _parse_schedule_prompt(prompt: str) -> dict[str, Any]:
+    text = re.sub(r"\s+", " ", prompt.strip())
+    if not text:
+        die("口令不能为空")
+
+    timezone = "Asia/Shanghai"
+    tz_match = re.search(r"(?:timezone|tz|时区)\s*[:=：]\s*([A-Za-z0-9_./+-]+)", text, re.I)
+    if tz_match:
+        timezone = tz_match.group(1)
+
+    if re.search(r"\bmanual\b|手动|只手动|不定时", text, re.I):
+        return {"type": "manual", "timezone": timezone}
+
+    interval = re.search(r"(?:每隔|间隔|每)\s*(\d{1,5})\s*(分钟|分|小时|时|hour|hours|minute|minutes)", text, re.I)
+    if interval:
+        value = int(interval.group(1))
+        unit = interval.group(2).lower()
+        minutes = value * 60 if unit in ("小时", "时", "hour", "hours") else value
+        return {"type": "interval", "intervalMinutes": max(1, minutes), "timezone": timezone}
+
+    daily = re.search(
+        r"(?:每天|每日|天天|daily).{0,20}?([01]?\d|2[0-3])\s*(?::|点|时|:)\s*([0-5]\d)?",
+        text,
+        re.I,
+    )
+    if not daily and re.search(r"每天|每日|天天|daily", text, re.I):
+        daily = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", text)
+    if daily:
+        hour = int(daily.group(1))
+        minute = int(daily.group(2) or "0")
+        return {"type": "daily", "timeOfDay": f"{hour:02d}:{minute:02d}", "timezone": timezone}
+
+    die("未识别调度口令: 请包含 '每天 02:00'、'每隔 10 分钟' 或 '手动'")
+
+
+def _parse_actions_prompt(prompt: str) -> list[dict[str, Any]]:
+    clauses = [c.strip() for c in re.split(r"\s*(?:然后|接着|再执行|并且)\s*", prompt) if c.strip()]
+    actions: list[dict[str, Any]] = []
+    for clause in clauses or [prompt]:
+        target = _parse_action_clause(clause)
+        if target:
+            actions.append({
+                **target,
+                "id": f"action_{len(actions) + 1}",
+                "name": _default_schedule_action_name(target),
+            })
+    if not actions:
+        die("未识别执行动作: 请包含 curl、HTTP URL、'/api/...' 或 '执行命令 ...'")
+    return actions
+
+
+def _parse_action_clause(text: str) -> dict[str, Any] | None:
+    if re.search(r"(^|\s)curl(\s|$)", text):
+        return _parse_curl_action(text)
+
+    command = _extract_command_action(text)
+    if command:
+        return {"type": "command", "command": command}
+
+    http = _extract_http_action(text)
+    if http:
+        return http
+    return None
+
+
+def _parse_curl_action(text: str) -> dict[str, Any]:
+    try:
+        tokens = shlex.split(text)
+    except ValueError as exc:
+        die(f"curl 解析失败: {exc}")
+    if "curl" in tokens:
+        tokens = tokens[tokens.index("curl") + 1:]
+
+    method = ""
+    headers: dict[str, str] = {}
+    body: str | None = None
+    url = ""
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        low = token.lower()
+        if low in ("-x", "--request") and i + 1 < len(tokens):
+            method = tokens[i + 1].upper()
+            i += 2
+            continue
+        if low.startswith("-x") and len(token) > 2:
+            method = token[2:].upper()
+            i += 1
+            continue
+        if low in ("-h", "--header") and i + 1 < len(tokens):
+            _append_header(headers, tokens[i + 1])
+            i += 2
+            continue
+        if low.startswith("-h") and len(token) > 2:
+            _append_header(headers, token[2:])
+            i += 1
+            continue
+        if low in ("-d", "--data", "--data-raw", "--data-binary", "--data-stdin") and i + 1 < len(tokens):
+            body = tokens[i + 1]
+            if not method:
+                method = "POST"
+            i += 2
+            continue
+        if low.startswith("--data="):
+            body = token.split("=", 1)[1]
+            if not method:
+                method = "POST"
+            i += 1
+            continue
+        if not token.startswith("-") and (token.startswith("http://") or token.startswith("https://") or token.startswith("/")):
+            url = token
+        i += 1
+
+    if not url:
+        die("curl 口令里没有识别到 URL")
+    return {
+        "type": "http",
+        "method": method or ("POST" if body else "GET"),
+        "url": _clean_prompt_url(url),
+        **({"headers": headers} if headers else {}),
+        **({"body": body} if body else {}),
+    }
+
+
+def _append_header(headers: dict[str, str], raw: str) -> None:
+    if ":" not in raw:
+        return
+    key, value = raw.split(":", 1)
+    key = key.strip()
+    value = value.strip()
+    if key:
+        headers[key] = value
+
+
+def _extract_command_action(text: str) -> str | None:
+    m = re.search(r"(?:执行命令|执行脚本|命令|脚本|command|cmd)\s*[:：]?\s*(.+)$", text, re.I)
+    if not m:
+        return None
+    command = m.group(1).strip()
+    if re.search(r"^curl(\s|$)", command):
+        return None
+    return command or None
+
+
+def _extract_http_action(text: str) -> dict[str, Any] | None:
+    method_match = re.search(r"\b(GET|POST|PUT|PATCH|DELETE)\b", text, re.I)
+    url_match = re.search(r"(https?://[^\s，,]+|/[A-Za-z0-9_./?=&:%+-]+)", text)
+    if not url_match:
+        return None
+    body_match = re.search(r"(?:body|请求体|数据)\s*[:=：]\s*(.+)$", text, re.I)
+    method = method_match.group(1).upper() if method_match else ("POST" if body_match else "GET")
+    body = body_match.group(1).strip() if body_match else None
+    return {
+        "type": "http",
+        "method": method,
+        "url": _clean_prompt_url(url_match.group(1)),
+        **({"body": body} if body else {}),
+    }
+
+
+def _clean_prompt_url(url: str) -> str:
+    return url.strip().strip("'\"`，,。")
+
+
+def _default_schedule_action_name(target: dict[str, Any]) -> str:
+    if target.get("type") == "command":
+        return "执行命令脚本"
+    method = target.get("method") or "POST"
+    return f"调用 HTTP 接口 {method}"
+
+
+def _infer_schedule_name(prompt: str) -> str:
+    explicit = re.search(r"(?:名称|任务名|name)\s*[:=：]\s*([^，,。]+)", prompt, re.I)
+    if explicit:
+        return explicit.group(1).strip()[:80] or "口令定时任务"
+    compact = re.sub(r"\s+", " ", prompt).strip()
+    return (compact[:40] or "口令定时任务")
+
+
+def _build_schedule_job_from_prompt(args: argparse.Namespace, *, require_project: bool) -> dict[str, Any]:
+    prompt = _prompt_text(args.prompt)
+    project_id = _schedule_project_id(args, required=require_project)
+    schedule = _parse_schedule_prompt(prompt)
+    actions = _parse_actions_prompt(prompt)
+    return {
+        **({"projectId": project_id} if project_id else {}),
+        "name": (getattr(args, "name", None) or _infer_schedule_name(prompt)).strip()[:120],
+        "description": getattr(args, "description", None) or prompt,
+        "enabled": not getattr(args, "disabled", False),
+        "schedule": schedule,
+        "actions": actions,
+        "timeoutSeconds": max(1, int(getattr(args, "timeout", 300) or 300)),
+        "retryCount": max(0, int(getattr(args, "retry", 0) or 0)),
+    }
+
+
+def _schedule_check_actions(project_id: str, actions: list[dict[str, Any]], timeout: int) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for action in actions:
+        target = {k: v for k, v in action.items() if k not in ("id", "name")}
+        res = _call("POST", "/api/scheduled-jobs/check-target", body={
+            "projectId": project_id,
+            "target": target,
+            "timeoutSeconds": max(1, int(timeout)),
+        }, timeout=max(5, int(timeout) + 5))
+        result = res.get("result", res) if isinstance(res, dict) else res
+        results.append({"action": action, "result": result})
+    return results
+
+
+def _die_if_schedule_checks_failed(results: list[dict[str, Any]]) -> None:
+    failed = [
+        r for r in results
+        if not isinstance(r.get("result"), dict) or not r["result"].get("ok")
+    ]
+    if failed:
+        die("任务动作检测未通过", code=2, extra={"checks": results})
+
+
+def cmd_schedule_parse(args: argparse.Namespace) -> None:
+    job = _build_schedule_job_from_prompt(args, require_project=False)
+    ok(job, note="口令已解析")
+
+
+def cmd_schedule_test(args: argparse.Namespace) -> None:
+    job = _build_schedule_job_from_prompt(args, require_project=True)
+    checks = _schedule_check_actions(job["projectId"], job["actions"], job["timeoutSeconds"])
+    _die_if_schedule_checks_failed(checks)
+    ok({"job": job, "checks": checks}, note="动作检测通过")
+
+
+def cmd_schedule_create(args: argparse.Namespace) -> None:
+    job = _build_schedule_job_from_prompt(args, require_project=True)
+    checks: list[dict[str, Any]] = []
+    if args.test:
+        checks = _schedule_check_actions(job["projectId"], job["actions"], job["timeoutSeconds"])
+        _die_if_schedule_checks_failed(checks)
+    created = _call("POST", "/api/scheduled-jobs", body=job, timeout=20)
+    ok({"job": created.get("job", created), "checks": checks}, note="定时任务已创建")
+
+
+def cmd_schedule_list(args: argparse.Namespace) -> None:
+    project_id = _schedule_project_id(args, required=False)
+    qs = f"?project={urllib.parse.quote(project_id)}" if project_id else ""
+    data = _call("GET", f"/api/scheduled-jobs{qs}")
+    ok(data)
+
+
+def cmd_schedule_run(args: argparse.Namespace) -> None:
+    data = _call("POST", f"/api/scheduled-jobs/{urllib.parse.quote(args.id)}/run", timeout=max(30, args.timeout))
+    ok(data, note="任务已执行")
+
+
+def cmd_schedule_delete(args: argparse.Namespace) -> None:
+    data = _call("DELETE", f"/api/scheduled-jobs/{urllib.parse.quote(args.id)}")
+    ok(data, note="任务已删除")
+
+
 # ── argparse wiring ────────────────────────────────────────────────
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -6762,6 +7036,49 @@ def _build_parser() -> argparse.ArgumentParser:
     bsm.add_argument("profile", help="构建配置 id(profileId)")
     bsm.add_argument("mode", help="部署模式名(须存在于该 profile 的 deployModes)")
     bsm.set_defaults(func=cmd_branch_set_mode)
+
+    sch = sub.add_parser("schedule", help="任务调度: 口令创建 / 测试动作 / 列表 / 手动执行").add_subparsers(dest="sub", required=True)
+    sp = sch.add_parser("parse", help="解析口令,不请求 CDS")
+    sp.add_argument("prompt", nargs="+", help="例如: 每天 02:00 调用 POST /api/jobs/sync")
+    sp.add_argument("--project", help="projectId(可选,或读 CDS_PROJECT_ID)")
+    sp.add_argument("--name", help="任务名称")
+    sp.add_argument("--description", help="任务描述")
+    sp.add_argument("--timeout", type=int, default=300, help="动作超时秒数")
+    sp.add_argument("--retry", type=int, default=0, help="失败重试次数")
+    sp.add_argument("--disabled", action="store_true", help="创建为禁用状态")
+    sp.set_defaults(func=cmd_schedule_parse)
+
+    st = sch.add_parser("test", help="按口令解析动作并调用 /check-target 检测,不创建任务")
+    st.add_argument("prompt", nargs="+")
+    st.add_argument("--project", help="projectId(或读 CDS_PROJECT_ID)")
+    st.add_argument("--name", help="任务名称")
+    st.add_argument("--description", help="任务描述")
+    st.add_argument("--timeout", type=int, default=300, help="动作超时秒数")
+    st.add_argument("--retry", type=int, default=0, help="失败重试次数")
+    st.add_argument("--disabled", action="store_true", help="按禁用任务解析")
+    st.set_defaults(func=cmd_schedule_test)
+
+    scj = sch.add_parser("create", help="按口令创建任务；加 --test 会先检测动作")
+    scj.add_argument("prompt", nargs="+")
+    scj.add_argument("--project", help="projectId(或读 CDS_PROJECT_ID)")
+    scj.add_argument("--name", help="任务名称")
+    scj.add_argument("--description", help="任务描述")
+    scj.add_argument("--timeout", type=int, default=300, help="动作超时秒数")
+    scj.add_argument("--retry", type=int, default=0, help="失败重试次数")
+    scj.add_argument("--disabled", action="store_true", help="创建为禁用状态")
+    scj.add_argument("--test", action="store_true", help="创建前先检测所有动作")
+    scj.set_defaults(func=cmd_schedule_create)
+
+    sl = sch.add_parser("list", help="列出任务调度")
+    sl.add_argument("--project", help="projectId(或读 CDS_PROJECT_ID)")
+    sl.set_defaults(func=cmd_schedule_list)
+    sr = sch.add_parser("run", help="手动执行任务")
+    sr.add_argument("id", help="scheduledJobId")
+    sr.add_argument("--timeout", type=int, default=300)
+    sr.set_defaults(func=cmd_schedule_run)
+    sd = sch.add_parser("delete", help="删除任务")
+    sd.add_argument("id", help="scheduledJobId")
+    sd.set_defaults(func=cmd_schedule_delete)
 
     # 验收报告(CDS 自托管 HTML/Markdown,登录态门控,可按项目/文件夹归类)
     rep = sub.add_parser("report", help="验收报告:列出/查看/创建/删除/直达深链").add_subparsers(dest="sub", required=True)
