@@ -1,7 +1,7 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, Suspense, useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, Outlet, useLocation } from 'react-router-dom';
 import { CalendarClock, Check, ClipboardCheck, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Rocket, Search, Settings, Sun, X } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { CommitInbox } from '@/components/CommitInbox';
@@ -19,15 +19,26 @@ import { cn } from '@/lib/utils';
 /*
  * AppShell — single source of layout truth.
  *
- * Replaces every `<div className="cds-app-shell"> + custom <nav> + custom <main>`
- * pattern that each page used to re-implement. Pages now render only their
- * workspace content + an optional topbar. See `doc/plan.cds.web-migration.md`
- * Week 4.6 (visual rebuild) for why this exists.
+ * Two-tier architecture (2026-07-02 布局归一重构):
+ *
+ *   <ConsoleLayout />   pathless layout route (App.tsx). Owns the PERSISTENT
+ *                       chrome — rail, mobile drawer, command palette, global
+ *                       overlays, theme toggle, auth state — plus a Suspense
+ *                       boundary around <Outlet />. Navigating between console
+ *                       pages swaps only the outlet; the chrome never unmounts.
+ *                       This removes the old "every route change tears down the
+ *                       whole shell and flashes a full-screen loader" jank.
+ *
+ *   <AppShell />        page-level wrapper (unchanged public API). Inside the
+ *                       frame it renders ONLY `{topbar}<main>…</main>`; outside
+ *                       (standalone usage) it falls back to hosting the full
+ *                       chrome itself, so legacy embedding keeps working.
  *
  * Visual contract:
- *   - Left sidebar: Railway-style workspace rail with text nav.
+ *   - Left sidebar: Railway-style icon rail; active item derived from the URL.
  *   - Topbar (optional): sticky, surface-base, breadcrumb left + actions right.
- *   - Main: surface-base, centered workspace ≤ 1240px (or 1360px wide).
+ *   - Main: surface-base, centered workspace (standard 1240px / wide 1440px /
+ *     fluid — see the workspace scale in index.css).
  */
 
 export type AppNavKey = 'projects' | 'cds-settings' | string;
@@ -88,7 +99,8 @@ function useFocusTrap(active: boolean, ref: React.RefObject<HTMLElement>): void 
 }
 
 export interface AppShellProps {
-  /** Which left-rail item is active. */
+  /** Which left-rail item is active. Ignored inside <ConsoleLayout /> — the
+   *  frame derives it from the URL so the rail stays consistent by construction. */
   active?: AppNavKey;
   /** Topbar content (breadcrumb + actions). Pages should render `<TopBar>`. */
   topbar?: ReactNode;
@@ -118,7 +130,94 @@ function shellLoginHref(mode?: string): string {
   return path;
 }
 
+/*
+ * ShellFrameContext — true when the persistent <ConsoleLayout /> already owns
+ * the chrome. Page-level <AppShell> then renders only topbar + main, so route
+ * changes swap content without unmounting the rail / palette / overlays.
+ */
+const ShellFrameContext = createContext(false);
+
+/** Map a pathname to the rail item that should light up. */
+function activeNavKeyFor(pathname: string): AppNavKey {
+  if (pathname.startsWith('/cds-settings')) return 'cds-settings';
+  if (pathname.startsWith('/release-center')) return 'release-center';
+  if (pathname.startsWith('/task-schedule')) return 'task-schedule';
+  if (pathname.startsWith('/reports')) return 'reports';
+  return 'projects';
+}
+
+/*
+ * ConsoleLayout — pathless layout route (see App.tsx) hosting the persistent
+ * chrome. The Suspense boundary lives INSIDE the frame, so a lazy page chunk
+ * loads behind a workspace-shaped skeleton instead of blanking the screen;
+ * combined with the router's v7_startTransition flag, in-console navigation
+ * keeps the previous page visible until the next chunk is ready.
+ */
+export function ConsoleLayout(): JSX.Element {
+  const { pathname } = useLocation();
+  return (
+    <ShellFrameContext.Provider value={true}>
+      <ShellChrome active={activeNavKeyFor(pathname)}>
+        <Suspense fallback={<ConsoleRouteFallback />}>
+          <Outlet />
+        </Suspense>
+      </ShellChrome>
+    </ShellFrameContext.Provider>
+  );
+}
+
+/*
+ * ConsoleRouteFallback — workspace-shaped skeleton for in-frame chunk loads.
+ * Mirrors the topbar + main geometry so nothing jumps when the page mounts
+ * (artifact-is-experience: the wait state is the product's own silhouette).
+ */
+function ConsoleRouteFallback(): JSX.Element {
+  return (
+    <>
+      <header className="cds-topbar" aria-hidden>
+        <div className="cds-loading-skeleton-line h-4 w-44 max-w-[40vw]" />
+      </header>
+      <main className="cds-main">
+        <div className="cds-workspace flex flex-col gap-4" role="status" aria-label="页面加载中">
+          <div className="cds-loading-skeleton-line h-7 w-64 max-w-[60vw]" />
+          <div className="cds-loading-skeleton-line h-4 w-96 max-w-full" />
+          <div className="mt-2 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {Array.from({ length: 6 }, (_, i) => (
+              <div key={i} className="cds-loading-skeleton-panel h-40 rounded-[10px]" />
+            ))}
+          </div>
+        </div>
+      </main>
+    </>
+  );
+}
+
+/*
+ * AppShell — page-level wrapper. Public API unchanged so the nine console
+ * pages did not need edits: inside the frame it contributes only its topbar
+ * and <main>; standalone it hosts the full chrome (legacy behaviour).
+ */
 export function AppShell({ active = 'projects', topbar, children, wide = false }: AppShellProps): JSX.Element {
+  const framed = useContext(ShellFrameContext);
+  const body = (
+    <>
+      {topbar}
+      <main className={cn('cds-main cds-page-enter', wide ? 'cds-main--wide' : null)}>
+        {children}
+      </main>
+    </>
+  );
+  if (framed) return body;
+  return <ShellChrome active={active}>{body}</ShellChrome>;
+}
+
+/*
+ * ShellChrome — the singleton console chrome: rail + mobile drawer + command
+ * palette + global overlays + theme toggle + auth/logout state. Hosted once
+ * by <ConsoleLayout /> so it survives route changes (auth is fetched once per
+ * session instead of once per navigation, as before).
+ */
+function ShellChrome({ active, children }: { active: AppNavKey; children: ReactNode }): JSX.Element {
   /*
    * Global Cmd/Ctrl+K → CommandPalette opens. Mounting it here means every
    * page gets the palette for free, regardless of which page added the rail.
@@ -207,10 +306,7 @@ export function AppShell({ active = 'projects', topbar, children, wide = false }
         onLogout={() => { void logout(); }}
       />
       <div className="flex min-w-0 min-h-0 flex-col">
-        {topbar}
-        <main className={cn('cds-main', wide ? 'cds-main--wide' : null)}>
-          {children}
-        </main>
+        {children}
       </div>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       {/* 2026-05-04 fix(用户反馈"更新看不出真假"):全局浮动徽章,任何页面

@@ -10,9 +10,10 @@
  *   - 行展开：GET .../agent-sessions/:sid/stream?afterSeq=0 一次性回放完整事件流
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { Activity, ArrowLeft, ChevronDown, ChevronRight, RefreshCw, Search } from 'lucide-react';
+import { useParams } from 'react-router-dom';
+import { ChevronDown, ChevronRight, RefreshCw, Search } from 'lucide-react';
 
+import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { apiRequest, apiUrl, ApiError } from '@/lib/api';
 import { useCdsEvents } from '@/hooks/useCdsEvents';
 
@@ -175,25 +176,33 @@ export function AgentRequestsPage(): JSX.Element {
   const statusOptions = useMemo(() => ['', 'running', 'idle', 'stopped', 'failed'], []);
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-6 flex flex-col gap-4">
-      <div className="flex items-center gap-3 flex-wrap">
-        <Link
-          to={`/branches/${encodeURIComponent(projectId)}`}
-          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft size={15} /> 返回项目
-        </Link>
-        <h1 className="text-lg font-semibold flex items-center gap-2">
-          <Activity size={18} className="text-emerald-500" />
-          Agent 请求观测台
-          <span className="text-xs font-normal text-muted-foreground">{projectId}</span>
-        </h1>
-        <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-muted-foreground" data-testid="live-indicator">
-          <span className={['inline-block w-2 h-2 rounded-full', sseLive ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'].join(' ')} />
-          {sseLive ? '实时已连接（SSE）' : '实时降级（5s 轮询）'}
-        </span>
-      </div>
-
+    // 2026-07-02 布局归一:本页此前游离于 AppShell 之外(无侧栏无顶栏 + 私有
+    // max-w-6xl),是"每页一套秩序"的反例。现接入标准外壳:面包屑进 TopBar,
+    // 实时状态进 right 槽,内容走 Workspace 标准宽度。
+    <AppShell
+      active="projects"
+      topbar={
+        <TopBar
+          left={
+            <Crumb
+              items={[
+                { label: 'CDS' },
+                { label: '项目', href: '/project-list' },
+                { label: projectId, href: `/branches/${encodeURIComponent(projectId)}` },
+                { label: 'Agent 请求观测台' },
+              ]}
+            />
+          }
+          right={
+            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" data-testid="live-indicator">
+              <span className={['inline-block w-2 h-2 rounded-full', sseLive ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'].join(' ')} />
+              {sseLive ? '实时已连接（SSE）' : '实时降级（5s 轮询）'}
+            </span>
+          }
+        />
+      }
+    >
+      <Workspace className="flex flex-col gap-4">
       {/* 筛选条：按用户 / 按应用 / 状态 / 关键字 */}
       <div className="flex items-center gap-2 flex-wrap rounded-lg border border-border bg-card px-3 py-2" data-testid="request-filters">
         <select
@@ -358,6 +367,7 @@ export function AgentRequestsPage(): JSX.Element {
           );
         })}
       </div>
-    </div>
+      </Workspace>
+    </AppShell>
   );
 }

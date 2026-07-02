@@ -96,6 +96,14 @@
     --hairline-strong: 30 12% 70%;
   }
 
+  :root {
+    /* Workspace 宽度三档(主题无关)。语义见 @layer components 里
+       .cds-workspace 处的"宽度秩序"注释;新页面只允许引用这两个 token
+       或 fluid(去上限),禁止再写第四种 max-width。 */
+    --workspace-standard: 1240px;
+    --workspace-wide: 1440px;
+  }
+
   html,
   body,
   #root {
@@ -187,7 +195,7 @@
   }
 
   .cds-workspace.cds-branch-list-workspace {
-    max-width: 3000px;
+    max-width: var(--workspace-wide, 1440px);
   }
 
   .cds-branch-card-grid {
@@ -1250,6 +1258,32 @@
     display: none !important;
   }
 
+  /*
+   * 页面进场微动效:内容区在路由切换后 200ms 内轻微上浮淡入。
+   * 只作用于 <main>(页面级挂载,切页自动重播),外壳(侧栏/顶栏)持久不动 ——
+   * "chrome 稳定、内容过渡"正是大厂控制台的秩序感来源。
+   */
+  @keyframes cds-page-enter {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .cds-page-enter {
+    animation: cds-page-enter 200ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cds-page-enter {
+      animation: none;
+    }
+  }
+
   .cds-main {
     @apply min-w-0 px-8 pb-12 pt-6;
     /*
@@ -1271,9 +1305,20 @@
     }
   }
 
+  /*
+   * Workspace 宽度秩序(2026-07-02 布局归一) —— 全站只允许三档:
+   *
+   *   standard  1240px  阅读/表单/列表类页面(默认)
+   *   wide      1440px  高密度运营台面(分支列表 / 项目设置 / 发布中心)
+   *   fluid     100%    真画布类(拓扑 / 报告全屏预览),配 --fill 满高
+   *
+   * 历史上各页面私拓过 1280 / 1360 / 1650 / 3000px 等专属上限,宽屏下
+   * "有的居中有的满铺",秩序感尽失 —— 那些类名保留(页面零改动)但一律
+   * 折叠映射到这三档。新页面禁止再发明第四种宽度。
+   */
   .cds-workspace {
     width: 100%;
-    max-width: 1240px;
+    max-width: var(--workspace-standard, 1240px);
     margin-left: auto;
     margin-right: auto;
   }
@@ -1294,7 +1339,7 @@
   }
 
   .cds-workspace-wide {
-    max-width: 1360px;
+    max-width: var(--workspace-wide, 1440px);
   }
 
   /*
@@ -1306,12 +1351,13 @@
     max-width: none;
   }
 
+  /* 历史别名 → 三档映射(页面零改动),禁止再新增专属宽度。 */
   .cds-workspace-settings {
-    max-width: 1650px;
+    max-width: var(--workspace-wide, 1440px);
   }
 
   .cds-workspace-project-list {
-    max-width: 1280px;
+    max-width: var(--workspace-standard, 1240px);
   }
 
   .cds-project-card {
@@ -1506,6 +1552,229 @@
   .cds-breadcrumb {
     @apply inline-flex w-fit items-center gap-2 rounded-md px-3 py-2 text-xs text-muted-foreground;
     background-color: hsl(var(--surface-base) / 0.6);
+  }
+
+  /*
+   * Auth（登录页）—— 极简克制的单卡片布局。全部走 surface token,
+   * 双主题自动翻转;禁止任何硬编码暗色(cds-theme-tokens.md 最高原则)。
+   * 结构: header(品牌) / body(居中卡片) / footer(一句话品牌线)。
+   */
+  .cds-auth-page {
+    position: relative;
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    background-color: hsl(var(--surface-base));
+    color: hsl(var(--foreground));
+    overflow: hidden;
+  }
+
+  /* 唯一的视觉修饰:顶部一束主色微光 + 上浅下深的呼吸感,克制到几乎察觉不到。 */
+  .cds-auth-backdrop {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(640px 320px at 50% -120px, hsl(var(--primary) / 0.13), transparent 72%),
+      linear-gradient(180deg, hsl(var(--surface-sunken) / 0.4), transparent 32%);
+  }
+
+  .cds-auth-header {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    height: 3.5rem;
+    padding: 0 1.5rem;
+  }
+
+  .cds-auth-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: hsl(var(--foreground));
+  }
+
+  .cds-auth-body {
+    position: relative;
+    z-index: 1;
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2.5rem 1.25rem;
+  }
+
+  .cds-auth-card-wrap {
+    width: 100%;
+    max-width: 400px;
+  }
+
+  .cds-auth-card {
+    display: block;
+    width: 100%;
+    background-color: hsl(var(--surface-raised));
+    border: 1px solid hsl(var(--hairline));
+    border-radius: 14px;
+    padding: 2rem 1.75rem;
+    box-shadow: 0 24px 64px -44px hsl(var(--foreground) / 0.5);
+  }
+
+  .cds-auth-mark {
+    display: flex;
+    margin-bottom: 1.25rem;
+  }
+
+  .cds-auth-title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+
+  .cds-auth-sub {
+    margin-top: 0.375rem;
+    font-size: 0.8125rem;
+    line-height: 1.6;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .cds-auth-fields {
+    margin-top: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .cds-auth-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+
+  .cds-auth-field > span {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: hsl(var(--foreground) / 0.85);
+  }
+
+  .cds-auth-field > span em {
+    font-style: normal;
+    font-weight: 400;
+    font-size: 0.75rem;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .cds-auth-input {
+    height: 2.5rem;
+    width: 100%;
+    border-radius: 8px;
+    border: 1px solid hsl(var(--hairline));
+    background-color: hsl(var(--surface-sunken) / 0.6);
+    padding: 0 0.75rem;
+    font-size: 0.875rem;
+    color: hsl(var(--foreground));
+    transition: border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
+  }
+
+  .cds-auth-input::placeholder {
+    color: hsl(var(--muted-foreground) / 0.7);
+  }
+
+  .cds-auth-input:focus {
+    outline: none;
+    border-color: hsl(var(--ring) / 0.6);
+    box-shadow: 0 0 0 3px hsl(var(--ring) / 0.14);
+    background-color: hsl(var(--surface-raised));
+  }
+
+  .cds-auth-error {
+    margin-top: 1rem;
+    border: 1px solid hsl(var(--destructive) / 0.35);
+    background-color: hsl(var(--destructive) / 0.08);
+    color: hsl(var(--destructive));
+    border-radius: 8px;
+    padding: 0.625rem 0.75rem;
+    font-size: 0.8125rem;
+    line-height: 1.5;
+  }
+
+  .cds-auth-submit {
+    margin-top: 1.25rem;
+    width: 100%;
+    height: 2.5rem;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+  }
+
+  .cds-auth-divider {
+    margin-top: 1.125rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.75rem;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .cds-auth-divider::before,
+  .cds-auth-divider::after {
+    content: '';
+    height: 1px;
+    flex: 1;
+    background-color: hsl(var(--hairline));
+  }
+
+  .cds-auth-github {
+    margin-top: 1.125rem;
+    width: 100%;
+    height: 2.5rem;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+  }
+
+  .cds-auth-hint {
+    margin-top: 1.375rem;
+    text-align: center;
+    font-size: 0.75rem;
+    color: hsl(var(--muted-foreground) / 0.85);
+  }
+
+  .cds-auth-footer {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 1.25rem;
+    font-size: 0.75rem;
+    color: hsl(var(--muted-foreground) / 0.8);
+  }
+
+  .cds-auth-footer-dot {
+    width: 3px;
+    height: 3px;
+    border-radius: 999px;
+    background-color: hsl(var(--muted-foreground) / 0.5);
+  }
+
+  /* 手机端:卡片让出边框感,内边距收紧,视觉重心交给表单本身。 */
+  @media (max-width: 479px) {
+    .cds-auth-body {
+      padding: 1.5rem 1rem;
+      align-items: flex-start;
+      padding-top: 3rem;
+    }
+
+    .cds-auth-card {
+      padding: 1.5rem 1.25rem;
+    }
   }
 
   .cds-loading-preview-rings-dark {

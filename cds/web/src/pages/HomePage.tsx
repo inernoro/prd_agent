@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import ShapeGrid from '@/components/effects/ShapeGrid';
-import { CdsAccessMorphBoard } from '@/pages/LoginPage';
 import { fetchSessionAuthed } from '@/lib/api';
 import './HomePage.css';
 
@@ -24,7 +23,6 @@ export function HomePage(): JSX.Element {
   const navigate = useNavigate();
   const [feedIndex, setFeedIndex] = useState(0);
   const [feedOff, setFeedOff] = useState(false);
-  const [accessMode, setAccessMode] = useState(false);
   // 后台探测一次「当前会话 cookie 是否仍有效」。承诺在按钮点击前未必返回,
   // 所以 enterConsole() 会 await 这个共享 promise 再决定:已登录直接进控制台,
   // 未登录才弹登录框。probeRef 缓存唯一的探测 promise,ensureProbe() 保证
@@ -61,28 +59,24 @@ export function HomePage(): JSX.Element {
   }, []);
 
   async function enterConsole() {
-    // 已知已登录 → 直接进控制台,跳过登录框。
+    // 已知已登录 → 直接进控制台;未登录 → 全站唯一登录面 /login
+    // (2026-07-02 起首页不再内嵌登录板,认证入口归一)。
     if (authedRef.current === true) {
       navigate('/project-list', { viewTransition: true });
       return;
     }
-    // 已知未登录 → 弹登录框。
     if (authedRef.current === false) {
-      setAccessMode(true);
+      navigate('/login?redirect=/project-list', { viewTransition: true });
       return;
     }
     // 探测尚未完成(点得太快)→ await 同一个共享探测,避免并发误判。
     const ok = await ensureProbe();
     if (ok) navigate('/project-list', { viewTransition: true });
-    else setAccessMode(true);
+    else navigate('/login?redirect=/project-list', { viewTransition: true });
   }
 
   function openAccessMode() {
     void enterConsole();
-  }
-
-  function closeAccessMode() {
-    setAccessMode(false);
   }
 
   useEffect(() => {
@@ -176,12 +170,7 @@ export function HomePage(): JSX.Element {
           </div>
 
           {/* BOARD */}
-          {accessMode ? (
-            <div className="cdsh-login-panel cdsh-home-access-board">
-              <CdsAccessMorphBoard target="/project-list" onHome={closeAccessMode} />
-            </div>
-          ) : (
-            <div className="cdsh-board cdsh-rise" style={{ animationDelay: '.3s' }}>
+          <div className="cdsh-board cdsh-rise" style={{ animationDelay: '.3s' }}>
             <div className="cdsh-board-head">
               <div className="cdsh-left">
                 <BranchIcon />
@@ -274,8 +263,7 @@ export function HomePage(): JSX.Element {
               <span className="cdsh-k">cds</span>&nbsp;&gt;&nbsp;
               <span className={`cdsh-feed${feedOff ? ' cdsh-off' : ''}`}>{FEED_LINES[feedIndex]}</span>
             </p>
-            </div>
-          )}
+          </div>
         </section>
 
         {/* STRIP */}
