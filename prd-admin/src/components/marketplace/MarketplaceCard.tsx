@@ -1,11 +1,10 @@
 import React, { useState } from 'react';
 import { Button } from '@/components/design/Button';
 import {
+  Download,
   Edit3,
   ExternalLink,
-  GitFork,
   Globe,
-  Hand,
   Heart,
   Share2,
   ShieldCheck,
@@ -33,6 +32,7 @@ export interface MarketplaceCardProps {
   onEdit?: (item: MixedMarketplaceItem) => void;
   currentUserId?: string;
   forking?: boolean;
+  density?: 'classic' | 'short' | 'micro';
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -59,6 +59,18 @@ function getDescriptionText(item: MixedMarketplaceItem): string {
 function getTags(item: MixedMarketplaceItem): string[] {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return ((item.data as any).tags as string[]) || [];
+}
+
+function getShareCount(item: MixedMarketplaceItem): number {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const d = item.data as any;
+  return Number(d.shareCount ?? d.shareLinkCount ?? 0);
+}
+
+function getDownloadCount(item: MixedMarketplaceItem): number {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const d = item.data as any;
+  return Number(d.downloadCount ?? d.forkCount ?? 0);
 }
 
 function getPreviewLink(item: MixedMarketplaceItem): { url: string; isHosted: boolean } | null {
@@ -131,6 +143,7 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
   onEdit,
   currentUserId,
   forking = false,
+  density = 'classic',
 }) => {
   const typeDef = CONFIG_TYPE_REGISTRY[item.type] as ConfigTypeDefinition | undefined;
   const [localForking, setLocalForking] = useState(false);
@@ -164,7 +177,22 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
   const tags = getTags(item);
   const coverUrl = getCoverImageUrl(item);
   const previewLink = getPreviewLink(item);
+  const updatedTime = item.data.updatedAt || item.data.createdAt;
+  const shareCount = getShareCount(item);
+  const downloadCount = getDownloadCount(item);
   const isOfficial = item.data.ownerUserId === 'official';
+  const densityClass =
+    density === 'short'
+      ? 'mkt-card-density-short'
+      : density === 'micro'
+        ? 'mkt-card-density-micro'
+        : 'mkt-card-density-classic';
+  const spotlightHeightClass =
+    density === 'short'
+      ? '!h-[112px]'
+      : density === 'micro'
+        ? '!h-[96px]'
+        : '!h-[210px]';
   const canEdit =
     item.type === 'skill' &&
     !!onEdit &&
@@ -248,15 +276,18 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
       <div className="mkt-card-glass">
         {/* Title row */}
         <div className="mkt-card-title-row">
+          {item.type === 'skill' && (
+            <span
+              className="mkt-card-title-type-icon"
+              aria-hidden="true"
+              style={{ color: color.iconColor }}
+            >
+              <TypeIcon size={11} />
+            </span>
+          )}
           <span className="mkt-card-title" title={displayName}>
             {displayName}
           </span>
-          {isOfficial && (
-            <span className="mkt-card-official">
-              <ShieldCheck size={9} />
-              官方
-            </span>
-          )}
         </div>
 
         {/* Description */}
@@ -280,71 +311,83 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
 
         {/* Footer inside glass */}
         <div className="mkt-card-glass-footer">
-          {/* Left: author + fork count */}
+          {/* Left: author */}
           <div className="mkt-card-meta">
-            <UserAvatar
-              src={resolveAvatarUrl({ avatarFileName: item.data.ownerUserAvatar })}
-              className="w-4 h-4 rounded-full object-cover flex-shrink-0"
-            />
-            <span className="truncate max-w-[64px]">
-              {item.data.ownerUserName || '未知'}
-            </span>
-            <span className="opacity-40 flex-shrink-0">·</span>
-            <GitFork size={10} className="opacity-55 flex-shrink-0" />
-            <span className="flex-shrink-0">{item.data.forkCount}</span>
-            {(item.data.updatedAt || item.data.createdAt) && (
+            {isOfficial ? (
+              <span className="mkt-card-official mkt-card-official-footer">
+                <ShieldCheck size={9} />
+                官方
+              </span>
+            ) : (
               <>
-                <span className="opacity-40 flex-shrink-0">·</span>
-                <span className="opacity-55 flex-shrink-0 truncate" title={item.data.updatedAt || item.data.createdAt}>
-                  {formatDistanceToNow(item.data.updatedAt || item.data.createdAt)}
+                <UserAvatar
+                  src={resolveAvatarUrl({ avatarFileName: item.data.ownerUserAvatar })}
+                  className="w-4 h-4 rounded-full object-cover flex-shrink-0"
+                />
+                <span className="mkt-card-owner-name">
+                  {item.data.ownerUserName || '未知'}
                 </span>
               </>
             )}
           </div>
 
-          {/* Right: actions */}
-          <div className="flex items-center gap-1.5 flex-shrink-0">
-            {item.type === 'skill' && (
-              <SkillFavorite item={item.data as MarketplaceSkill} />
+          {/* Right: time + actions */}
+          <div className="mkt-card-footer-right">
+            {updatedTime && (
+              <span className="mkt-card-time" title={updatedTime}>
+                {formatDistanceToNow(updatedTime)}
+              </span>
             )}
-            {item.type === 'skill' && (
+            <div className="mkt-card-actions flex items-center gap-1.5 flex-shrink-0">
+              {item.type === 'skill' && (
+                <SkillFavorite item={item.data as MarketplaceSkill} />
+              )}
+              {item.type === 'skill' && (
+                <Button
+                  size="xs"
+                  variant="secondary"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    skillShareDialog.open({ id: item.data.id, title: (item.data as MarketplaceSkill).title });
+                  }}
+                  title={`生成公开分享链接 · ${shareCount}`}
+                  className="mkt-card-action-button mkt-card-share-button"
+                >
+                  <Share2 size={11} />
+                  <span className="mkt-card-action-count">{shareCount}</span>
+                </Button>
+              )}
+              {canEdit && (
+                <Button
+                  size="xs"
+                  variant="secondary"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onEdit?.(item);
+                  }}
+                  title="编辑"
+                  className="mkt-card-action-button"
+                >
+                  <Edit3 size={11} />
+                </Button>
+              )}
               <Button
                 size="xs"
                 variant="secondary"
+                disabled={forking || localForking}
+                className="mkt-card-action-button mkt-card-download-button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  skillShareDialog.open({ id: item.data.id, title: (item.data as MarketplaceSkill).title });
+                  void handleForkClick();
                 }}
-                title="生成公开分享链接"
-              >
-                <Share2 size={11} />
-              </Button>
-            )}
-            {canEdit && (
-              <Button
-                size="xs"
-                variant="secondary"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onEdit?.(item);
-                }}
-                title="编辑"
-              >
-                <Edit3 size={11} />
-              </Button>
-            )}
-            <Button
-              size="xs"
-              variant="secondary"
-              disabled={forking || localForking}
-              onClick={(e) => {
-                e.stopPropagation();
-                void handleForkClick();
-              }}
+              title="下载"
             >
-              <Hand size={11} />
-              {forking || localForking ? '...' : '拿来吧'}
+              <Download size={11} />
+              <span className="mkt-card-action-count">
+                {forking || localForking ? '...' : downloadCount}
+              </span>
             </Button>
+            </div>
           </div>
         </div>
       </div>
@@ -365,7 +408,7 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
     const skill = item.data as MarketplaceSkill;
     return (
       <div
-        className="mkt-card mkt-card-official-glyph"
+        className={`mkt-card mkt-card-official-glyph ${densityClass}`}
         onClick={handleCardClick}
         style={{
           ['--warm' as string]: glyphWarmBg(skill.id),
@@ -384,12 +427,12 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
   // ── 普通技能 / 其他配置 → SpotlightCard 包裹（光晕跟手）
   return (
     <SpotlightCard
-      className="mkt-card-spotlight-wrap !p-0 !rounded-[14px] !border-0 !bg-transparent !h-[210px] !block"
+      className={`mkt-card-spotlight-wrap !p-0 !rounded-[14px] !border-0 !bg-transparent ${spotlightHeightClass} !block`}
       spotlightColor="rgba(255, 255, 255, 0.18)"
     >
       <div
         ref={cardRef}
-        className={`mkt-card${coverUrl ? ' has-cover' : ''}`}
+        className={`mkt-card ${densityClass}${coverUrl ? ' has-cover' : ''}`}
         onMouseMove={handleMouseMove}
         onMouseLeave={handleMouseLeave}
         onClick={handleCardClick}
