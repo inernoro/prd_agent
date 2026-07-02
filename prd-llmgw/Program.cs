@@ -120,7 +120,11 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 // ── 启动时幂等播种管理员账户（内置 admin/admin 引导，env 无关）──
-await SeedAdminAsync(database, AdminUser, DefaultAdminPwd);
+// 破玻璃（break-glass）：设 LLMGW_ADMIN_FORCE_RESET=1 时，无条件把 admin 重置回 admin/admin。
+// 用于「账号已被认领但口令被共享库跨部署污染而登不进」的死锁恢复——重置后前端会强制改密。
+// 恢复后请把该 env 清掉（否则每次启动都会强制回 admin/admin）。
+var forceResetAdmin = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("LLMGW_ADMIN_FORCE_RESET"));
+await SeedAdminAsync(database, AdminUser, DefaultAdminPwd, forceResetAdmin);
 
 var logs = database.GetCollection<BsonDocument>("llmrequestlogs");
 var users = database.GetCollection<LlmGwUser>("llmgw_users");
@@ -422,7 +426,7 @@ app.Run();
 // 语义：未被真人认领的 admin（含历史遗留、口令未知的旧文档）每次启动**确定性自愈回 admin/admin**，
 // 保证控制台永远能从 admin/admin 进入（「重置」= 重新部署）；用户在 UI 改过口令后（PasswordChangedByUser=true）
 // 则保留其口令、跨重启不回退。
-static async Task SeedAdminAsync(IMongoDatabase db, string username, string defaultPwd)
+static async Task SeedAdminAsync(IMongoDatabase db, string username, string defaultPwd, bool forceReset = false)
 {
     var users = db.GetCollection<LlmGwUser>("llmgw_users");
 
@@ -433,6 +437,18 @@ static async Task SeedAdminAsync(IMongoDatabase db, string username, string defa
     var existing = await users.Find(u => u.Username == username).FirstOrDefaultAsync();
     if (existing is not null)
     {
+        // 破玻璃：LLMGW_ADMIN_FORCE_RESET=1 时无条件把 admin 拉回 admin/admin（用于口令被共享库污染登不进的死锁恢复）。
+        if (forceReset)
+        {
+            await users.UpdateOneAsync(u => u.Username == username,
+                Builders<LlmGwUser>.Update
+                    .Set(u => u.PasswordHash, PasswordHasher.Hash(defaultPwd))
+                    .Set(u => u.IsActive, true)
+                    .Set(u => u.MustChangePassword, true)
+                    .Set(u => u.PasswordChangedByUser, false));
+            return;
+        }
+
         if (existing.PasswordChangedByUser)
         {
             // 已被真人认领（在 UI 改过口令）→ 库里存的是用户口令，**绝不回退**，只确保启用。
