@@ -802,9 +802,7 @@ export default function WebPagesPage() {
       style={{
         background:
           'radial-gradient(ellipse 70% 40% at 50% -10%, rgba(99,102,241,0.14) 0%, transparent 55%), linear-gradient(180deg, #20212a 0%, #181a22 480px, #16181f 100%)',
-        maxWidth: isMobile ? undefined : 1360,
         width: '100%',
-        margin: isMobile ? undefined : '0 auto',
       }}
     >
       {/* 右侧投放面板：桌面保留拖拽工作流；手机端用主按钮与分享入口，避免浮层遮挡首屏。 */}
