@@ -2215,8 +2215,12 @@ export function DocumentStorePage() {
       toast.success('链接已复制', '当前浏览器不支持系统分享');
     } catch (err) {
       if ((err as DOMException)?.name === 'AbortError') return;
-      await navigator.clipboard.writeText(url).catch(() => {});
-      toast.success('链接已复制');
+      try {
+        await navigator.clipboard.writeText(url);
+        toast.success('链接已复制');
+      } catch {
+        toast.error('分享失败', '系统分享和复制链接都未成功，请稍后重试');
+      }
     }
   }, []);
 
@@ -2899,7 +2903,7 @@ export function DocumentStorePage() {
                   >
                     全部标签
                   </button>
-                  {tagStats.slice(0, 16).map(({ tag, count }) => {
+                  {tagStats.map(({ tag, count }) => {
                     const active = tagFilter.includes(tag);
                     return (
                       <button

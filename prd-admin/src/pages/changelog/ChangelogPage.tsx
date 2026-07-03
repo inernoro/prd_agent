@@ -1068,7 +1068,7 @@ export default function ChangelogPage() {
         style={{ overscrollBehavior: 'contain' }}>
       {/* ── Header ───────────────────────────────────────── */}
       {isMobile && (
-        <div data-tour-id="changelog-filter" className="flex items-center justify-between gap-3 px-1">
+        <div data-tour-id="changelog-status" className="flex items-center justify-between gap-3 px-1">
           <div className="min-w-0">
             <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-secondary)' }}>
               {sourceLabel?.text ?? '本地仓库'} · {liveConnected ? (justUpdatedAt != null ? '已更新' : '实时同步') : '缓存数据'}
@@ -1095,9 +1095,9 @@ export default function ChangelogPage() {
       )}
       <header
         style={glassPanel}
-        className={`${isMobile ? 'hidden' : 'rounded-2xl px-6 py-5 gap-3'} flex flex-col`}
+        className={`${isMobile ? 'rounded-[16px] px-2 py-2 gap-2' : 'rounded-2xl px-6 py-5 gap-3'} flex flex-col`}
       >
-        <div className={`flex ${isMobile ? 'items-center' : 'items-start'} justify-between gap-3 min-w-0`}>
+        <div className={`${isMobile ? 'hidden' : 'flex'} items-start justify-between gap-3 min-w-0`}>
           <div className="flex items-center gap-3 min-w-0">
             {!isMobile && <div
               className="h-11 w-11 rounded-xl flex items-center justify-center"
@@ -1185,7 +1185,7 @@ export default function ChangelogPage() {
 
         {/* 筛选器 */}
         {availableTypes.length > 0 && (
-          <div data-tour-id="changelog-filter" className={isMobile ? 'flex items-center gap-2 overflow-x-auto pt-0 -mx-1 px-1' : 'flex flex-wrap items-center gap-2 pt-1'}>
+          <div data-tour-id={isMobile ? 'changelog-type-filter' : 'changelog-filter'} className={isMobile ? 'flex items-center gap-2 overflow-x-auto pt-0 -mx-1 px-1' : 'flex flex-wrap items-center gap-2 pt-1'}>
             <div className={`${isMobile ? 'hidden' : 'inline-flex'} items-center gap-1.5 text-[13px] font-medium`} style={{ color: 'var(--text-secondary)' }}>
               <Filter size={14} />
               筛选

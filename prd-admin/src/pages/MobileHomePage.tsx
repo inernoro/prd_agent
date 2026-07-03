@@ -153,7 +153,7 @@ export default function MobileHomePage() {
         <SectionTitle title="常用入口" />
         <ToolGrid tools={PRIMARY_TOOLS} onNavigate={navigate} />
 
-        <SectionTitle title="我的动态" actionLabel="全部" onAction={() => navigate('/assets')} dense />
+        <SectionTitle title="我的动态" actionLabel="全部" onAction={() => navigate('/my-assets')} dense />
         <MyActivityList feed={feed.slice(0, 4)} onNavigate={navigate} />
 
         {recommendedAgents.length > 0 && (

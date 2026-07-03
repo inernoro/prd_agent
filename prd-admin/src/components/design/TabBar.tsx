@@ -29,6 +29,7 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
   const [internalKey, setInternalKey] = useState(items?.[0]?.key ?? '');
   const currentKey = activeKey ?? internalKey;
   const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0, opacity: 0 });
+  const tabsRef = useRef<HTMLDivElement | null>(null);
   const buttonsRef = useRef<Map<string, HTMLButtonElement>>(new Map());
   const [isReady, setIsReady] = useState(false);
 
@@ -44,15 +45,18 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
   const updateIndicator = useCallback(() => {
     if (!hasTabs) return;
     const activeButton = buttonsRef.current.get(currentKey);
-    if (activeButton) {
-      setIndicatorStyle({
-        left: activeButton.offsetLeft,
-        width: activeButton.offsetWidth,
-        opacity: 1,
-      });
+    const tabs = tabsRef.current;
+    if (activeButton && tabs) {
       if (isMobile) {
         activeButton.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'auto' });
       }
+      const buttonRect = activeButton.getBoundingClientRect();
+      const tabsRect = tabs.getBoundingClientRect();
+      setIndicatorStyle({
+        left: tabs.scrollLeft + buttonRect.left - tabsRect.left,
+        width: activeButton.offsetWidth,
+        opacity: 1,
+      });
       setIsReady(true);
     }
   }, [currentKey, hasTabs, isMobile]);
@@ -84,7 +88,7 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
       <div className="surface-nav-content">
         {/* 左侧：标题或切换栏 */}
         {hasTabs ? (
-          <div className="surface-nav-tabs">
+          <div ref={tabsRef} className="surface-nav-tabs" onScroll={updateIndicator}>
             <div
               className="surface-nav-indicator"
               data-ready={isReady}

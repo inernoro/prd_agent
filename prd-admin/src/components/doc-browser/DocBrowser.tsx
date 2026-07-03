@@ -1733,6 +1733,12 @@ export function DocBrowser({
   const prevSelForMobileRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (!isMobile) return;
+    if (!selectedEntryId) {
+      setMobileDetail(false);
+      setMobileDirectoryOpen(false);
+      prevSelForMobileRef.current = undefined;
+      return;
+    }
     // 选中新文档（含分享深链 ?entry= 初次带值）→ 自动进正文。
     if (selectedEntryId && selectedEntryId !== prevSelForMobileRef.current) setMobileDetail(true);
     prevSelForMobileRef.current = selectedEntryId;
@@ -2690,20 +2696,20 @@ export function DocBrowser({
   const sidebarClass = isCards
     ? 'surface-reading relative flex flex-shrink-0 flex-col rounded-xl overflow-hidden'
     : 'bg-token-nested relative flex flex-shrink-0 flex-col border-r border-token-subtle';
-  const sidebarAsMobileDrawer = isMobile && mobileDetail && mobileDirectoryOpen;
-  const sidebarHiddenForMobileDetail = isMobile && mobileDetail && !mobileDirectoryOpen;
+  const mobileHasSelectedEntry = Boolean(selectedEntryId);
+  const sidebarAsMobileDrawer = isMobile && mobileDetail && mobileDirectoryOpen && mobileHasSelectedEntry;
+  const sidebarHiddenForMobileDetail = isMobile && mobileDetail && !mobileDirectoryOpen && mobileHasSelectedEntry;
 
   return (
     <TagColorsContext.Provider value={tagColorsCtxValue}>
     <div className={rootClass} style={{ minHeight: 0 }}>
-      {sidebarAsMobileDrawer && typeof document !== 'undefined' && createPortal(
+      {sidebarAsMobileDrawer && (
         <div
           className="fixed inset-0 z-[130]"
           style={{ background: 'rgba(0,0,0,0.48)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' }}
           onClick={() => setMobileDirectoryOpen(false)}
           aria-hidden
-        />,
-        document.body,
+        />
       )}
 
       {/* 左侧：文件树。移动端阅读时转为左侧抽屉，不再用返回按钮打断正文。 */}
@@ -3188,7 +3194,7 @@ export function DocBrowser({
       <ReaderColumnFrame fullscreen={readerFullscreen}>
       <div
         className={`flex-1 min-w-0 flex flex-col overflow-hidden${isCards ? ' surface-reading rounded-xl' : ''}`}
-        style={{ minHeight: 0, display: isMobile && !mobileDetail ? 'none' : undefined }}
+        style={{ minHeight: 0, display: isMobile && (!mobileDetail || !selectedEntryId) ? 'none' : undefined }}
       >
         {selectedEntryId ? (
           <>

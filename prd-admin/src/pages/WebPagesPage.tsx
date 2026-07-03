@@ -671,7 +671,6 @@ export default function WebPagesPage() {
         : '全部分组')
     : (activeFolder ?? '全部文件夹');
   const filterCount = [
-    currentSpace.kind === 'team',
     activeFolder != null,
     activeGroupId != null,
     activeTag != null,
@@ -1056,6 +1055,12 @@ export default function WebPagesPage() {
           </div>
         )}
 
+        {!isMobile && currentSpace.kind === 'team' && (
+          <div className="surface-nav-bar" data-tour-id="webpages-team-space-header">
+            <TeamSpaceHeader teamId={currentSpace.teamId} myWebHostingRole={myWebHostingRole} />
+          </div>
+        )}
+
         {!isMobile && showDesktopFilters && (
           <div
             data-tour-id="webpages-desktop-filter-panel"
@@ -1145,13 +1150,6 @@ export default function WebPagesPage() {
               </div>
             )}
 
-            {currentSpace.kind === 'team' && (
-              <div className="space-y-1 md:col-span-2 xl:col-span-4">
-                <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>团队协作</div>
-                <TeamSpaceHeader teamId={currentSpace.teamId} myWebHostingRole={myWebHostingRole} />
-              </div>
-            )}
-
             {tags.length > 0 && (
               <div className="space-y-1 md:col-span-2 xl:col-span-4">
                 <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>标签</div>
@@ -1168,7 +1166,7 @@ export default function WebPagesPage() {
                   >
                     全部
                   </button>
-                  {tags.slice(0, 20).map(t => (
+                  {tags.map(t => (
                     <button
                       key={t.tag}
                       type="button"
@@ -1209,46 +1207,34 @@ export default function WebPagesPage() {
                   </div>
                 </section>
 
+                {currentSpace.kind === 'team' && (
+                  <section className="space-y-2">
+                    <div className="rounded-[14px] p-2" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                      <TeamSpaceHeader teamId={currentSpace.teamId} myWebHostingRole={myWebHostingRole} />
+                    </div>
+                  </section>
+                )}
+
                 <section className="space-y-2">
                   <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>
                     {currentSpace.kind === 'team' ? '团队分组' : '文件夹'}
                   </div>
                   {currentSpace.kind === 'team' ? (
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setActiveGroupId(null)}
-                        className="h-8 px-3 rounded-full text-[13px]"
-                        style={activeGroupId === null
-                          ? { background: 'rgba(10,132,255,0.22)', color: '#bfdbfe' }
-                          : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
-                      >
-                        全部分组
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setActiveGroupId(UNGROUPED_ID)}
-                        className="h-8 px-3 rounded-full text-[13px]"
-                        style={activeGroupId === UNGROUPED_ID
-                          ? { background: 'rgba(10,132,255,0.22)', color: '#bfdbfe' }
-                          : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
-                      >
-                        未分组
-                      </button>
-                      {teamGroups.map((g) => (
-                        <button
-                          key={g.id}
-                          type="button"
-                          onClick={() => setActiveGroupId(g.id)}
-                          className="h-8 px-3 rounded-full text-[13px]"
-                          style={activeGroupId === g.id
-                            ? { background: 'rgba(10,132,255,0.22)', color: '#bfdbfe' }
-                            : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
-                        >
-                          {g.name}
-                        </button>
-                      ))}
-                    </div>
+                    <TeamGroupsTree
+                      groups={teamGroups}
+                      activeGroupId={activeGroupId}
+                      canEdit={canEditInWebHosting(myWebHostingRole)}
+                      canManageAccess={myWebHostingRole === 'owner'}
+                      totalCount={spaceSites.length}
+                      ungroupedCount={groupCounts.ungrouped}
+                      counts={groupCounts.counts}
+                      onSelect={setActiveGroupId}
+                      onCreate={handleCreateGroup}
+                      onDelete={handleDeleteGroup}
+                      onRename={handleRenameGroup}
+                      onOpenAccess={setAccessGroup}
+                      fullWidth
+                    />
                   ) : (
                     <div className="flex flex-wrap gap-2">
                       <button
@@ -1292,7 +1278,7 @@ export default function WebPagesPage() {
                       >
                         全部标签
                       </button>
-                      {tags.slice(0, 12).map((t) => (
+                      {tags.map((t) => (
                         <button
                           key={t.tag}
                           type="button"
@@ -1688,6 +1674,7 @@ function TeamGroupsTree({
   onDelete,
   onRename,
   onOpenAccess,
+  fullWidth = false,
 }: {
   groups: WebPageGroup[];
   activeGroupId: string | null;
@@ -1701,6 +1688,7 @@ function TeamGroupsTree({
   onDelete: (group: WebPageGroup) => void | Promise<void>;
   onRename: (group: WebPageGroup, name: string) => void | Promise<void>;
   onOpenAccess: (group: WebPageGroup) => void;
+  fullWidth?: boolean;
 }) {
   // 节内新建：点击节标题的 + 在该节底部展开输入框
   const [creating, setCreating] = useState<'topic' | 'daily' | null>(null);
@@ -1832,12 +1820,12 @@ function TeamGroupsTree({
   return (
     <aside
       data-tour-id="webpages-folders"
-      className="w-[212px] shrink-0 rounded-xl p-2 space-y-2"
+      className={`${fullWidth ? 'w-full' : 'w-[212px]'} shrink-0 rounded-xl p-2 space-y-2`}
       style={{
-        position: 'sticky',
-        top: 0,
+        position: fullWidth ? undefined : 'sticky',
+        top: fullWidth ? undefined : 0,
         alignSelf: 'flex-start',
-        maxHeight: '80vh',
+        maxHeight: fullWidth ? 360 : '80vh',
         overflowY: 'auto',
         overscrollBehavior: 'contain',
         background: 'var(--bg-card)',
