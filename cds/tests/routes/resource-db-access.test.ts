@@ -939,6 +939,16 @@ describe('resource database access', () => {
       stderr: '',
       exitCode: 0,
     }));
+    harness.shell.addResponsePattern(/updateMany/, () => ({
+      stdout: '{"acknowledged":true,"matchedCount":2,"modifiedCount":2}\n',
+      stderr: '',
+      exitCode: 0,
+    }));
+    harness.shell.addResponsePattern(/\.find\(.*\)\.limit\(10\)\)\.toArray/, () => ({
+      stdout: '[]\n',
+      stderr: '',
+      exitCode: 0,
+    }));
     harness.shell.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     await new Promise<void>((resolve) => {
       server = harness.app.listen(0, '127.0.0.1', resolve);
@@ -950,19 +960,134 @@ describe('resource database access', () => {
       '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
       { database: 'orders', command: 'db.getCollection("users").find({}).limit(50);' },
     );
+    // 定点写：带写权限 + 资源名确认 → 200 + write-result
+    const write = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
+      { database: 'orders', command: 'db.getCollection("users").updateMany({ active: false }, { $set: { archived: true } });', confirmResourceName: 'mongo-main' },
+      { 'x-test-cookie-auth': '1' },
+    );
+    // 定点写但缺资源名确认 → 409
+    const writeNoConfirm = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
+      { database: 'orders', command: 'db.getCollection("users").updateMany({ active: false }, { $set: { archived: true } });' },
+      { 'x-test-cookie-auth': '1' },
+    );
+    // 高危操作（drop）：无论权限一律 400 拦截
     const rejected = await request(
       server!,
       'POST',
       '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
-      { database: 'orders', command: 'db.getCollection("users").deleteMany({ active: false }).limit(50);' },
+      { database: 'orders', command: 'db.getCollection("users").drop();' },
+      { 'x-test-cookie-auth': '1' },
+    );
+    // 值里含 "drop" 子串的合法写：不再误判高危 → 200（Bugbot Medium 修复）
+    const writeDropWord = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
+      { database: 'orders', command: 'db.getCollection("users").updateMany({ note: "drop old records" }, { $set: { archived: true } });', confirmResourceName: 'mongo-main' },
+      { 'x-test-cookie-auth': '1' },
+    );
+    // 参数里内嵌危险方法调用（.drop()）：仍 400 拦截
+    const embeddedDrop = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
+      { database: 'orders', command: 'db.getCollection("users").insertOne({ ref: db.getCollection("audit").drop() });', confirmResourceName: 'mongo-main' },
+      { 'x-test-cookie-auth': '1' },
+    );
+    // 换行多语句：首句只读 findOne + 次句写 updateMany（偷跑写）→ 400 拦截（Bugbot High）
+    const multilineBypass = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
+      { database: 'orders', command: 'db.getCollection("users").findOne({})\ndb.getCollection("users").updateMany({}, { $set: { hacked: 1 } })', confirmResourceName: 'mongo-main' },
+      { 'x-test-cookie-auth': '1' },
+    );
+    // 写主 verb 后再逗号夹带更宽的写：updateOne(), deleteMany(...) → 400（Bugbot Medium）
+    const writePlusWriteBypass = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
+      { database: 'orders', command: 'db.getCollection("users").updateOne({ _id: 1 }, { $set: { a: 1 } }), db.getCollection("users").deleteMany({})', confirmResourceName: 'mongo-main' },
+      { 'x-test-cookie-auth': '1' },
+    );
+    // 逗号操作符：findOne(), updateMany(...) → 400 拦截
+    const commaBypass = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
+      { database: 'orders', command: 'db.getCollection("users").findOne({}), db.getCollection("users").updateMany({}, { $set: { hacked: 1 } })', confirmResourceName: 'mongo-main' },
+      { 'x-test-cookie-auth': '1' },
+    );
+    // 合法的多行单条写（美化换行）→ 200
+    const multilineWrite = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
+      { database: 'orders', command: 'db.getCollection("users").updateMany(\n  { active: false },\n  { $set: { archived: true } }\n)', confirmResourceName: 'mongo-main' },
+      { 'x-test-cookie-auth': '1' },
+    );
+    // 只读 find，filter 字符串值里含 "updateOne(" 子串：不再误判为夹带写 → 200（Bugbot Medium）
+    const findWriteNameInValue = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
+      { database: 'orders', command: 'db.getCollection("users").find({ note: "see updateOne( docs" }).limit(10);' },
+    );
+    // 模板字符串藏写（${} 会被 mongosh 求值）→ 400（Bugbot High）
+    const templateBypass = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
+      { database: 'orders', command: 'db.getCollection("users").findOne(`${db.getCollection("users").updateMany({}, { $set: { h: 1 } })}`)', confirmResourceName: 'mongo-main' },
+      { 'x-test-cookie-auth': '1' },
+    );
+    // 计算成员访问藏方法名（db.x["updateMany"]()）→ 400
+    const computedMemberBypass = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
+      { database: 'orders', command: 'db.getCollection("users")["updateMany"]({}, { $set: { h: 1 } })', confirmResourceName: 'mongo-main' },
+      { 'x-test-cookie-auth': '1' },
+    );
+    // 含嵌套数组的合法只读 find（$or/$in/$all，抹字面量后有相邻中括号）：不再误判计算成员访问 → 200（Bugbot Medium）
+    const findNestedArrays = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
+      { database: 'orders', command: 'db.getCollection("users").find({ $or: [{ roles: { $in: ["a", "b"] } }, { tags: { $all: ["x", "y"] } }] }).limit(10);' },
     );
 
+    // 只读查询正常
     expect(ok.status).toBe(200);
     expect(ok.body.collection).toBe('users');
     expect(ok.body.kind).toBe('documents');
     expect(ok.body.documents).toEqual([{ _id: 'u1', name: 'Ann' }]);
+    expect(findWriteNameInValue.status).toBe(200);
+    expect(findWriteNameInValue.body.kind).toBe('documents');
+    expect(findNestedArrays.status).toBe(200);
+    expect(findNestedArrays.body.kind).toBe('documents');
+    // 命令行不再执行任何写：写 verb 一律 400 并指向「结构化写入」面板
+    expect(write.status).toBe(400);
+    expect(write.body.error).toContain('结构化写入');
+    expect(writeNoConfirm.status).toBe(400);
+    expect(writeDropWord.status).toBe(400);
+    expect(multilineWrite.status).toBe(400);
+    expect(writePlusWriteBypass.status).toBe(400);
+    // 高危 / 藏写 / 多语句夹带 / 模板串 / 计算成员：一律 400
     expect(rejected.status).toBe(400);
-    expect(rejected.body.error).toContain('只允许只读 find 查询');
+    expect(rejected.body.error).toContain('高危操作');
+    expect(embeddedDrop.status).toBe(400);
+    expect(embeddedDrop.body.error).toContain('高危操作');
+    expect(multilineBypass.status).toBe(400);
+    expect(commaBypass.status).toBe(400);
+    expect(templateBypass.status).toBe(400);
+    expect(computedMemberBypass.status).toBe(400);
   });
 
   it('describes planned workbench capability for SQL Server and RabbitMQ resources', async () => {

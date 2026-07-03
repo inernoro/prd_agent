@@ -173,6 +173,14 @@
 | GET | `/api/llm-logs/{id}` | 日志详情 |
 | GET | `/api/llm-logs/meta` | 日志元数据（可用筛选维度） |
 
+### 日志可观测性增强（2026-06-27）
+
+日志页解决"看不清一次调用真实经历了什么"的问题，三处增强：
+
+- **请求生命周期可视化**：列表日期前生命周期色点 + 详情抽屉生命周期 chip，区分「已发·等响应 / 接收中 / 已完成 / 失败 / 已取消」，治"不知道是没发送还是没收到响应"的排障困惑。
+- **直连路径字段补写**：`OpenAIClient` / `ClaudeClient` 直连路径此前未写 `Protocol`（openai/claude）、`ResolutionReason`、`IsStreaming`，也未捕获 `finish_reason` / `stop_reason`，日志页这些字段恒为"—"；补齐后可按协议/终止原因排查。
+- **应用聚合视图 + 正文/图片还原**：新增按「应用前缀 + 类型」矩阵的成功率聚合视图；详情抽屉支持 COS 占位符正文一键还原（Prompt/Completion/Thinking）与生图输入/参考/输出图片缩略图渲染。
+
 ### LLM 配置（LLMConfigController）
 
 | 方法 | 路径 | 用途 |

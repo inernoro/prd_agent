@@ -633,6 +633,12 @@
 - [LLM 网关全面切换执行计划](plan.llm-gateway.full-cutover) `plan.llm-gateway.full-cutover`
   > 全面撤销 MAP 直连 LLM、清理网关旧代码、全接口 MECE 复测、遗漏排查四项诉求 + CDS 多出口面板
 
+- [LLM 网关 GW 用户愿景与交接](plan.llm-gateway.gw-vision-handoff) `plan.llm-gateway.gw-vision-handoff`
+  > 两 web 两域名一主一副 / 简单账号密码 admin-admin / OpenRouter 风格控制台 / 替换项目所有模型请求，四点愿景与接力交接
+
+- [LLM 网关剥离活状态看板](plan.llm-gateway.status-dashboard) `plan.llm-gateway.status-dashboard`
+  > 网关剥离唯一进度真相：一句话现状 + 能不能发布 + 记分卡 + Gate + 下一步 + 验收证据
+
 - [PA Agent 竞品调研与改进方案](plan.product-agent.pa.competitive-improvements) `plan.product-agent.pa.competitive-improvements`
   > 四类竞品谱系、与 Phase 1 差距对照、P2～P4 分期改进包
 

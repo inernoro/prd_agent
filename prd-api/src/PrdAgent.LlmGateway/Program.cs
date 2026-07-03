@@ -10,6 +10,7 @@ using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
+using PrdAgent.Infrastructure.Security;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -213,6 +214,12 @@ builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, Pr
 // LLM Gateway 统一守门员（HOST 既有实现）
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.LlmGateway>();
 
+// serving 侧平台密钥自检（消盲区：serving 到底能不能解密真实平台密文）。
+// 此前密钥完整性 Worker 只在 MAP(api) 侧注册，serving 缺钥时静默用 stub 兜底、无任何自检。
+// 本 Worker 只读、仅告警、不重加密（重加密留 api 侧），启动 20s 后 + 每 6h 扫一次，
+// 把「serving 能不能解密」从盲区变成容器日志里一眼可见的 [ServingKeyIntegrity] 行。
+builder.Services.AddHostedService<ServingKeyIntegrityCheck>();
+
 // JSON：PascalCase（PropertyNamingPolicy = null），与既有 DTO 属性名一一对应，
 // MAP 侧 HttpLlmGatewayClient 用相同口径序列化/反序列化。
 builder.Services.ConfigureHttpJsonOptions(o =>
@@ -248,3 +255,83 @@ var gitCommit = Environment.GetEnvironmentVariable("GIT_COMMIT") ?? string.Empty
 app.MapGatewayServingEndpoints(jsonOpts, gwApiKey, gitCommit);
 
 app.Run();
+
+
+// ─────────────────────── serving 侧平台密钥完整性自检 ───────────────────────
+// 对齐 design.llm-gateway-physical-isolation §3.4「PlatformKeyIntegrityWorker 须在网关侧也跑」。
+// 与 api 侧 PlatformKeyIntegrityWorker 的区别：只读、仅告警、不做旧密文重加密（避免两进程双写）。
+sealed class ServingKeyIntegrityCheck : BackgroundService
+{
+    private readonly MongoDbContext _db;
+    private readonly IConfiguration _cfg;
+    private readonly ILogger<ServingKeyIntegrityCheck> _log;
+
+    public ServingKeyIntegrityCheck(MongoDbContext db, IConfiguration cfg, ILogger<ServingKeyIntegrityCheck> log)
+    {
+        _db = db;
+        _cfg = cfg;
+        _log = log;
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken ct)
+    {
+        try { await Task.Delay(TimeSpan.FromSeconds(20), ct); }
+        catch (OperationCanceledException) { return; }
+
+        while (!ct.IsCancellationRequested)
+        {
+            try { await CheckAsync(ct); }
+            catch (OperationCanceledException) { break; }
+            catch (Exception ex) { _log.LogWarning(ex, "[ServingKeyIntegrity] check loop error"); }
+
+            try { await Task.Delay(TimeSpan.FromHours(6), ct); }
+            catch (OperationCanceledException) { break; }
+        }
+    }
+
+    // 有意的 dev-stub 平台（如"Stub 开发桩"）的密文本就是占位、天然解不出，属预期噪音，不当作真故障告警。
+    // 仅按"开发桩"或独立词 "stub" 判定（词边界，非任意子串），避免真实平台名恰含 stub 子串被误判静默（Bugbot Low）。
+    private static bool IsStub(string? name)
+        => !string.IsNullOrWhiteSpace(name)
+        && (name!.Contains("开发桩")
+            || System.Text.RegularExpressions.Regex.IsMatch(name, @"(^|[^a-z])stub([^a-z]|$)", System.Text.RegularExpressions.RegexOptions.IgnoreCase));
+
+    private async Task CheckAsync(CancellationToken ct)
+    {
+        var real = new List<string>();     // 真实平台/模型/中继解不出 —— 需告警
+        var stubs = new List<string>();    // dev-stub 解不出 —— 预期，不告警
+
+        void Classify(string label, string? name)
+        {
+            if (IsStub(name)) stubs.Add(label);
+            else real.Add(label);
+        }
+
+        var platforms = await _db.LLMPlatforms.Find(p => p.Enabled).ToListAsync(ct);
+        var withKey = platforms.Where(p => !string.IsNullOrWhiteSpace(p.ApiKeyEncrypted)).ToList();
+        foreach (var p in withKey)
+            if (!ApiKeyCryptoKeyRing.Decrypt(p.ApiKeyEncrypted, _cfg).Success) Classify(p.Name, p.Name);
+
+        var models = await _db.LLMModels.Find(m => m.Enabled).ToListAsync(ct);
+        foreach (var m in models.Where(m => !string.IsNullOrWhiteSpace(m.ApiKeyEncrypted)))
+            if (!ApiKeyCryptoKeyRing.Decrypt(m.ApiKeyEncrypted, _cfg).Success) Classify($"模型:{m.Name}", m.Name);
+
+        var exchanges = await _db.ModelExchanges.Find(e => e.Enabled).ToListAsync(ct);
+        foreach (var e in exchanges.Where(e => !string.IsNullOrWhiteSpace(e.TargetApiKeyEncrypted)))
+            if (!ApiKeyCryptoKeyRing.Decrypt(e.TargetApiKeyEncrypted, _cfg).Success) Classify($"中继:{e.Name}", e.Name);
+
+        if (real.Count == 0)
+        {
+            _log.LogInformation(
+                "[ServingKeyIntegrity] OK：serving 用当前 ApiKeyCrypto 钥匙环可解密全部真实平台密文（{Total} 个启用平台，跳过 {Stubs} 个 dev-stub），Mode=http 时模型池可正常烧额度。",
+                withKey.Count, stubs.Count);
+            return;
+        }
+
+        _log.LogError(
+            "[ServingKeyIntegrity] serving 侧 {Count} 个真实平台/模型/中继 API key 无法解密：{Names}。" +
+            "说明 llmgw-serve 容器的 ApiKeyCrypto:Secret / LegacySecrets 与存量密文不匹配" +
+            "（cds-compose 未把与 api 一致的密钥锚点注入 llmgw-serve）。经 serving 引擎(Mode=http)的模型池调用会以空凭据打上游 401。仅告警不阻断启动。",
+            real.Count, string.Join("、", real));
+    }
+}
