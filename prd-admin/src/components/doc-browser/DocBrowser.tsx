@@ -2173,13 +2173,15 @@ export function DocBrowser({
   // 只「打开 + 选中」，不在此 toggle 关闭：关闭统一走批注栏的关闭按钮（onClose），
   // 否则点正在读的那张卡会把面板关掉（Codex P2）。重复点同一条 = 维持打开（幂等）。
   const handleActivateComment = useCallback((key: string) => {
-    // 右侧栏曾被用户收起（rightPanelCollapsed 持久化）时，批注栏挂在 !rightPanelCollapsed 分支下，
-    // 只设 commentPanelOpen 点了也看不到 → 这里一并展开右侧栏并持久化（Codex P2）。
-    setRightPanelCollapsed(false);
-    sessionStorage.setItem('doc-browser-right-collapsed', '0');
+    // 桌面端批注栏挂在右侧栏下，右侧栏曾被收起时需要同步展开；
+    // 移动端批注走底部面板，不写入桌面右栏偏好，避免手机操作污染桌面布局。
+    if (!isMobile) {
+      setRightPanelCollapsed(false);
+      sessionStorage.setItem('doc-browser-right-collapsed', '0');
+    }
     setCommentPanelOpen(true);
     setActiveCommentKey(key);
-  }, []);
+  }, [isMobile]);
 
   // 激活后把正文锚点滚到眼前：用 overlay 已按 findTextRange（去空白 + contextBefore 消歧）放置的
   // data-active-hl 元素，而非 raw indexOf（会被空白归一化/重复短语坑，Bugbot Medium）。
@@ -3748,6 +3750,45 @@ export function DocBrowser({
                 const showMargin = commentPanelOpen && !contentLoading && !editMode
                   && !!tocContent && inlineCommentItems.length > 0;
                 if (showMargin) {
+                  if (isMobile) {
+                    return typeof document !== 'undefined' ? createPortal(
+                      <>
+                        <div
+                          className="fixed inset-0 z-[150]"
+                          style={{ background: 'rgba(0,0,0,0.46)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' }}
+                          onClick={() => { setCommentPanelOpen(false); setActiveCommentKey(null); }}
+                          aria-hidden
+                        />
+                        <div
+                          className="fixed inset-x-0 bottom-0 z-[151] overflow-hidden rounded-t-[22px]"
+                          style={{
+                            height: 'min(76dvh, 620px)',
+                            border: '1px solid rgba(255,255,255,0.10)',
+                            borderBottom: 0,
+                            boxShadow: '0 -24px 64px rgba(0,0,0,0.42)',
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <InlineCommentMargin
+                            comments={inlineCommentItems}
+                            canCreate={commentsCanCreate}
+                            canDelete={canDeleteComment}
+                            hoveredKey={hoveredCommentKey}
+                            activeKey={activeCommentKey}
+                            onHoverKey={setHoveredCommentKey}
+                            onActivate={handleActivateComment}
+                            onCreate={handleCreateComment}
+                            onDelete={handleDeleteComment}
+                            onClose={() => { setCommentPanelOpen(false); setActiveCommentKey(null); }}
+                            width="100%"
+                            variant="sheet"
+                            expandAll
+                          />
+                        </div>
+                      </>,
+                      document.body,
+                    ) : null;
+                  }
                   return (
                     <InlineCommentMargin
                       comments={inlineCommentItems}
@@ -3768,7 +3809,7 @@ export function DocBrowser({
                 ) : null;
               })()}
               {/* 激活批注的牵引连线（active-only，业界 Word/Figma 做法）：批注栏展开且有激活项才出现 */}
-              {commentPanelOpen && !rightPanelCollapsed && !editMode && !contentLoading
+              {commentPanelOpen && !isMobile && !rightPanelCollapsed && !editMode && !contentLoading
                 && tocContent && inlineCommentItems.length > 0 && activeCommentKey && (
                 <InlineCommentConnector activeKey={activeCommentKey} color={threadColor(activeCommentKey)} boundsRef={contentAreaRef} />)}
             </div>
