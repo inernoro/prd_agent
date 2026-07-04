@@ -117,6 +117,9 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       ? body.worktreeRoot.trim()
       : path.resolve(process.cwd(), '..', '.cds-worktrees');
     const composeProject = shellSafeName(`${project.slug}-prod`);
+    const allowedBranch = typeof body.allowedBranch === 'string' && body.allowedBranch.trim()
+      ? body.allowedBranch.trim()
+      : project.gitDefaultBranch || 'main';
     const deployCommand = [
       `CDS_LOCAL_PROD_DOMAIN=${shellQuote(domain)}`,
       `CDS_LOCAL_PROD_PORT=${shellQuote(String(webPort))}`,
@@ -124,7 +127,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       `CDS_LOCAL_PROD_DIR=${shellQuote(appPath)}`,
       `CDS_LOCAL_PROD_COMPOSE_PROJECT=${shellQuote(composeProject)}`,
       `CDS_LOCAL_PROD_PROJECT_SLUG=${shellQuote(project.slug)}`,
-      `CDS_LOCAL_PROD_ALLOWED_BRANCH=${shellQuote('main')}`,
+      `CDS_LOCAL_PROD_ALLOWED_BRANCH=${shellQuote(allowedBranch)}`,
       `CDS_WORKTREE_ROOT=${shellQuote(worktreeRoot)}`,
       shellQuote(releaseScriptPath),
     ].join(' ');

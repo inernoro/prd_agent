@@ -13057,6 +13057,45 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return gatewayUrls;
   };
 
+  const findPreviewHostCollisions = (
+    candidateDomains: string[],
+  ): Array<{ domain: string; conflictWith: string; reason: 'preview' | 'alias' | 'service-subdomain' }> => {
+    const rootDomains = config.rootDomains?.length
+      ? config.rootDomains
+      : (config.previewDomain ? [config.previewDomain] : []);
+    if (rootDomains.length === 0) return [];
+
+    const candidates = new Set(candidateDomains.map((domain) => domain.toLowerCase()));
+    const conflicts: Array<{ domain: string; conflictWith: string; reason: 'preview' | 'alias' | 'service-subdomain' }> = [];
+    for (const other of stateService.getAllBranches()) {
+      const projectId = other.projectId || 'default';
+      const project = stateService.getProject(projectId);
+      const previewSlug = buildPreviewUrlForProject('', other.branch, project, projectId).previewSlug;
+      for (const rawRoot of rootDomains) {
+        const root = rawRoot.toLowerCase();
+        const previewHost = previewSlug ? `${previewSlug}.${root}` : '';
+        if (previewHost && candidates.has(previewHost)) {
+          conflicts.push({ domain: previewHost, conflictWith: other.id, reason: 'preview' });
+        }
+
+        for (const alias of stateService.getBranchSubdomainAliases(other.id)) {
+          const aliasHost = `${alias.toLowerCase()}.${root}`;
+          if (candidates.has(aliasHost)) {
+            conflicts.push({ domain: aliasHost, conflictWith: other.id, reason: 'alias' });
+          }
+        }
+
+        for (const gateway of computeBranchGatewayUrls(other, root)) {
+          const host = new URL(gateway.url).host.toLowerCase();
+          if (candidates.has(host)) {
+            conflicts.push({ domain: host, conflictWith: other.id, reason: 'service-subdomain' });
+          }
+        }
+      }
+    }
+    return conflicts;
+  };
+
   router.get('/branches/:id/subdomain-aliases', (req, res) => {
     const { id } = req.params;
     const entry = stateService.getBranch(id);
@@ -13091,6 +13130,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
+    const access = assertProjectAccess(req as any, entry.projectId || 'default');
+    if (access) {
+      res.status(access.status).json(access.body);
+      return;
+    }
     const domains = stateService.getBranchCustomDomains(id);
     res.json({
       branchId: id,
@@ -13106,6 +13150,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const entry = stateService.getBranch(id);
     if (!entry) {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const access = assertProjectAccess(req as any, entry.projectId || 'default');
+    if (access) {
+      res.status(access.status).json(access.body);
       return;
     }
 
@@ -13136,10 +13185,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
 
     const collisions = stateService.findCustomDomainCollisions(id, normalized);
-    if (collisions.length > 0) {
+    const previewCollisions = findPreviewHostCollisions(normalized);
+    const allCollisions = [...collisions, ...previewCollisions];
+    if (allCollisions.length > 0) {
       res.status(409).json({
-        error: `自定义域名冲突: ${collisions.map((c) => `"${c.domain}" 已被分支 "${c.conflictWith}" 占用`).join('; ')}`,
-        collisions,
+        error: `自定义域名冲突: ${allCollisions.map((c) => `"${c.domain}" 已被分支 "${c.conflictWith}" 占用`).join('; ')}`,
+        collisions: allCollisions,
       });
       return;
     }
