@@ -1,9 +1,9 @@
 /*
  * LoginPage — CDS 控制台的唯一认证入口（2026-07-02 重做）。
  *
- * 设计原则：极简、克制、token 驱动 —— 与控制台共享同一套 surface/hairline
- * 体系，双主题自动翻转（不再硬编码暗色宇宙），移动端单列自适应。
- * 首页的"Enter Console / Log in"未登录时统一跳到这里，全站只有一个登录面。
+ * 设计：左右分屏。左侧是品牌视觉板（动态六边形网格 + 品牌叙事 + 实时部署
+ * feed 流，与首页 hero 同一套视觉语言），右侧是克制的认证卡片。全部走
+ * surface/hairline token，双主题自动翻转；<lg 收起视觉板，单列移动形态。
  *
  * 认证逻辑与旧版完全一致：
  *   - 会话探测：已登录直接跳 redirect 目标，不闪登录框
@@ -14,9 +14,21 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowRight, Github, Loader2 } from 'lucide-react';
+import ShapeGrid from '@/components/effects/ShapeGrid';
+import { ShinyText } from '@/components/effects/ShinyText';
 import { CdsMetallicLogo } from '@/components/brand/CdsMetallicLogo';
 import { Button } from '@/components/ui/button';
 import { apiUrl, fetchBootstrapStatus, bootstrapFirstUser, fetchSessionAuthed } from '@/lib/api';
+import { useTheme } from '@/lib/theme';
+
+/* 与首页 board ticker 同一套"活的控制面"语言,登录时就能看到系统在呼吸。 */
+const FEED_LINES = [
+  'pull origin feature/auth-flow · 3 commits',
+  'detect stack · .NET 8 + React + mongo + redis',
+  'build api :5000 · admin :5500 ......  ok',
+  'container.observed · health checks passing',
+  'preview live · auth-flow-prd-agent.miduo.org',
+];
 
 function redirectTarget(): string {
   if (typeof window === 'undefined') return '/project-list';
@@ -104,6 +116,10 @@ function AuthForm(): JSX.Element {
     <form onSubmit={submit} className="cds-auth-card" aria-busy={busy}>
       <div className="cds-auth-mark" aria-hidden>
         <CdsMetallicLogo className="h-10 w-10" />
+        <span className="cds-auth-secure">
+          <span className="cds-auth-pulse" />
+          same-origin · secure
+        </span>
       </div>
       <h1 className="cds-auth-title">{needsBootstrap ? '创建管理员账号' : '登录 CDS 控制台'}</h1>
       <p className="cds-auth-sub">
@@ -189,6 +205,102 @@ function AuthForm(): JSX.Element {
 }
 
 /*
+ * AuthVisualPanel — 左侧品牌视觉板(仅 lg+ 显示)。与首页 hero 同一套语言:
+ * 六边形动网格打底、品牌大字带流光、要点列表、底部实时部署 feed 流。
+ * 网格颜色按主题显式传入(canvas 无法解析 CSS var),theme 变化时 key 重建。
+ */
+function AuthVisualPanel(): JSX.Element {
+  const { theme } = useTheme();
+  const grid = theme === 'dark'
+    ? { border: 'rgba(255,255,255,0.09)', fill: 'rgba(255,255,255,0.05)' }
+    : { border: 'rgba(68,45,22,0.13)', fill: 'rgba(68,45,22,0.05)' };
+  const shine = theme === 'dark'
+    ? { color: 'rgba(226,226,235,0.58)', shineColor: 'rgba(255,255,255,0.98)' }
+    : { color: 'rgba(92,64,38,0.55)', shineColor: 'rgba(45,28,12,0.98)' };
+
+  const [feedIndex, setFeedIndex] = useState(0);
+  const [feedOff, setFeedOff] = useState(false);
+  useEffect(() => {
+    let fadeTimer: number | undefined;
+    const timer = window.setInterval(() => {
+      setFeedOff(true);
+      fadeTimer = window.setTimeout(() => {
+        setFeedIndex((i) => (i + 1) % FEED_LINES.length);
+        setFeedOff(false);
+      }, 360);
+    }, 2600);
+    return () => {
+      clearInterval(timer);
+      if (fadeTimer !== undefined) clearTimeout(fadeTimer);
+    };
+  }, []);
+
+  return (
+    <aside className="cds-auth-visual" aria-hidden>
+      <ShapeGrid
+        key={theme}
+        className="cds-auth-visual-grid"
+        shape="hexagon"
+        direction="diagonal"
+        speed={0.42}
+        squareSize={34}
+        hoverTrailAmount={12}
+        borderColor={grid.border}
+        hoverFillColor={grid.fill}
+      />
+      <div className="cds-auth-visual-vignette" />
+      <div className="cds-auth-visual-content">
+        <Link to="/" className="cds-auth-visual-brand" viewTransition>
+          <CdsMetallicLogo className="h-7 w-7" />
+          <span>Cloud Dev Suite</span>
+        </Link>
+        <div className="cds-auth-visual-hero">
+          <span className="cds-auth-visual-eyebrow">
+            <span className="cds-auth-pulse" />
+            Controlled cloud runtime
+          </span>
+          <h2 className="cds-auth-visual-title">
+            <span>Every branch,</span>
+            <ShinyText
+              text="a live stack."
+              speed={3.4}
+              spread={112}
+              color={shine.color}
+              shineColor={shine.shineColor}
+              className="block"
+            />
+          </h2>
+          <p className="cds-auth-visual-sub">
+            推送一个分支，得到一整套隔离的在线环境——构建、容器、日志、Webhook 与专属预览域名。
+          </p>
+          <ul className="cds-auth-visual-points">
+            <li>
+              <span className="cds-auth-dot" />
+              同源会话 · 凭据不出控制面
+            </li>
+            <li>
+              <span className="cds-auth-dot" />
+              Push 即部署 · 分钟级预览就绪
+            </li>
+            <li>
+              <span className="cds-auth-dot" />
+              一键恢复 · 控制面永不离线
+            </li>
+          </ul>
+        </div>
+        <p className="cds-auth-visual-ticker">
+          <span className="cds-auth-visual-ticker-k">cds</span>
+          <span className="cds-auth-visual-ticker-gt">&gt;</span>
+          <span className={feedOff ? 'cds-auth-visual-ticker-feed is-off' : 'cds-auth-visual-ticker-feed'}>
+            {FEED_LINES[feedIndex]}
+          </span>
+        </p>
+      </div>
+    </aside>
+  );
+}
+
+/*
  * 会话探测期间的占位:与真实表单同一副轮廓的骨架(产物形状的等待,
  * 不是居中 spinner),探测结束换成表单时零跳动。
  */
@@ -253,23 +365,26 @@ export function LoginPage(): JSX.Element {
 
   return (
     <main className="cds-auth-page">
-      <div className="cds-auth-backdrop" aria-hidden />
-      <header className="cds-auth-header">
-        <Link to="/" className="cds-auth-brand" viewTransition>
-          <CdsMetallicLogo className="h-6 w-6" />
+      <AuthVisualPanel />
+      <div className="cds-auth-side">
+        <div className="cds-auth-backdrop" aria-hidden />
+        <header className="cds-auth-header">
+          <Link to="/" className="cds-auth-brand" viewTransition>
+            <CdsMetallicLogo className="h-6 w-6" />
+            <span>Cloud Dev Suite</span>
+          </Link>
+        </header>
+        <section className="cds-auth-body">
+          <div className="cds-auth-card-wrap cds-page-enter">
+            {authPhase === 'checking' ? <AuthFormSkeleton /> : <AuthForm />}
+          </div>
+        </section>
+        <footer className="cds-auth-footer">
           <span>Cloud Dev Suite</span>
-        </Link>
-      </header>
-      <section className="cds-auth-body">
-        <div className="cds-auth-card-wrap cds-page-enter">
-          {authPhase === 'checking' ? <AuthFormSkeleton /> : <AuthForm />}
-        </div>
-      </section>
-      <footer className="cds-auth-footer">
-        <span>Cloud Dev Suite</span>
-        <span className="cds-auth-footer-dot" aria-hidden />
-        <span>每个分支，都是一套在线环境</span>
-      </footer>
+          <span className="cds-auth-footer-dot" aria-hidden />
+          <span>每个分支，都是一套在线环境</span>
+        </footer>
+      </div>
     </main>
   );
 }

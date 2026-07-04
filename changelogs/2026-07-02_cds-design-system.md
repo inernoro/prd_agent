@@ -4,3 +4,4 @@
 | feat | cds | 登录页重做：token 驱动的极简卡片式设计，双主题自动翻转 + 移动端自适应；首页认证入口统一跳 /login，移除内嵌 CdsAccessMorphBoard 登录板 |
 | refactor | cds | AgentRequestsPage 接入 AppShell + TopBar + Workspace 标准外壳，消除游离布局（原自定义 max-w-6xl 无侧栏形态） |
 | polish | cds | 内容区新增 200ms 进场微动效（chrome 稳定、内容过渡），路由切换有可感知的秩序感 |
+| polish | cds | 登录页升级为左右分屏科技叙事：左侧品牌视觉板（六边形动网格 + 品牌大字流光 + 实时部署 feed 流），右侧认证卡加品牌光线与 same-origin secure 徽记，双主题 + 移动端保持 |

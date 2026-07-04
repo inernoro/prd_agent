@@ -1570,6 +1570,211 @@
     overflow: hidden;
   }
 
+  /* 桌面(lg+)左右分屏:左视觉板弹性占宽,右认证列固定舒适宽。 */
+  @media (min-width: 1024px) {
+    .cds-auth-page {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) clamp(30rem, 42vw, 38rem);
+    }
+  }
+
+  .cds-auth-side {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    min-height: 100dvh;
+    overflow: hidden;
+  }
+
+  /*
+   * 左侧品牌视觉板 —— 六边形动网格 + 品牌叙事 + 实时部署 feed。
+   * 颜色全走 token(canvas 网格色由组件按主题显式传入),双主题成立。
+   */
+  .cds-auth-visual {
+    position: relative;
+    display: none;
+    overflow: hidden;
+    background-color: hsl(var(--surface-sunken));
+    border-right: 1px solid hsl(var(--hairline));
+  }
+
+  @media (min-width: 1024px) {
+    .cds-auth-visual {
+      display: block;
+    }
+
+    /* 分屏时品牌落在左板,右列顶部的品牌行退场,避免双 logo。
+       (加 .cds-auth-side 提特异性:同名基础规则写在本文件更靠后。) */
+    .cds-auth-side .cds-auth-header {
+      display: none;
+    }
+  }
+
+  .cds-auth-visual-grid {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  .cds-auth-visual-vignette {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(58rem 34rem at 16% 86%, hsl(var(--primary) / 0.12), transparent 68%),
+      radial-gradient(120% 96% at 50% 42%, transparent 34%, hsl(var(--surface-sunken) / 0.92) 100%);
+  }
+
+  .cds-auth-visual-content {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    height: 100%;
+    flex-direction: column;
+    padding: 2.5rem 3.25rem 2.25rem;
+  }
+
+  .cds-auth-visual-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.625rem;
+    align-self: flex-start;
+    font-size: 0.9375rem;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    color: hsl(var(--foreground));
+  }
+
+  .cds-auth-visual-hero {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    max-width: 34rem;
+  }
+
+  .cds-auth-visual-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    align-self: flex-start;
+    border: 1px solid hsl(var(--hairline-strong) / 0.8);
+    background-color: hsl(var(--surface-raised) / 0.4);
+    backdrop-filter: blur(6px);
+    border-radius: 999px;
+    padding: 0.375rem 0.875rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .cds-auth-visual-title {
+    margin-top: 1.75rem;
+    font-size: clamp(2.5rem, 3.4vw, 3.75rem);
+    font-weight: 800;
+    line-height: 1.02;
+    letter-spacing: -0.02em;
+    color: hsl(var(--foreground));
+  }
+
+  .cds-auth-visual-title > span {
+    display: block;
+  }
+
+  .cds-auth-visual-sub {
+    margin-top: 1.375rem;
+    max-width: 28rem;
+    font-size: 0.9375rem;
+    line-height: 1.8;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .cds-auth-visual-points {
+    margin-top: 1.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    font-size: 0.8125rem;
+    color: hsl(var(--foreground) / 0.78);
+  }
+
+  .cds-auth-visual-points li {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+  }
+
+  .cds-auth-dot {
+    width: 5px;
+    height: 5px;
+    flex: none;
+    border-radius: 999px;
+    background-color: hsl(var(--primary));
+    box-shadow: 0 0 10px hsl(var(--primary) / 0.65);
+  }
+
+  /* 底部实时 feed:与首页 board ticker 同语言,登录时系统就在"呼吸"。 */
+  .cds-auth-visual-ticker {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.75rem;
+    color: hsl(var(--muted-foreground));
+    border-top: 1px solid hsl(var(--hairline));
+    padding-top: 1.125rem;
+  }
+
+  .cds-auth-visual-ticker-k {
+    color: hsl(var(--primary));
+    font-weight: 700;
+  }
+
+  .cds-auth-visual-ticker-gt {
+    color: hsl(var(--muted-foreground) / 0.6);
+  }
+
+  .cds-auth-visual-ticker-feed {
+    transition: opacity 320ms ease;
+  }
+
+  .cds-auth-visual-ticker-feed.is-off {
+    opacity: 0;
+  }
+
+  @keyframes cds-auth-pulse {
+    0%,
+    100% {
+      transform: scale(0.85);
+      opacity: 0.7;
+      box-shadow: 0 0 0 0 currentColor;
+    }
+    50% {
+      transform: scale(1.15);
+      opacity: 1;
+      box-shadow: 0 0 10px 0 currentColor;
+    }
+  }
+
+  .cds-auth-pulse {
+    width: 6px;
+    height: 6px;
+    flex: none;
+    border-radius: 999px;
+    background-color: currentColor;
+    animation: cds-auth-pulse 1.7s ease-in-out infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cds-auth-pulse {
+      animation: none;
+    }
+  }
+
   /* 唯一的视觉修饰:顶部一束主色微光 + 上浅下深的呼吸感,克制到几乎察觉不到。 */
   .cds-auth-backdrop {
     position: absolute;
@@ -1615,8 +1820,10 @@
   }
 
   .cds-auth-card {
+    position: relative;
     display: block;
     width: 100%;
+    overflow: hidden;
     background-color: hsl(var(--surface-raised));
     border: 1px solid hsl(var(--hairline));
     border-radius: 14px;
@@ -1624,9 +1831,44 @@
     box-shadow: 0 24px 64px -44px hsl(var(--foreground) / 0.5);
   }
 
+  /* 卡片顶部的品牌光线 —— 一条 2px 主色渐变,科技感的点睛而非噪音。 */
+  .cds-auth-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(
+      90deg,
+      transparent 4%,
+      hsl(var(--primary) / 0.85) 38%,
+      hsl(25 95% 58% / 0.55) 62%,
+      transparent 96%
+    );
+  }
+
   .cds-auth-mark {
     display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
     margin-bottom: 1.25rem;
+  }
+
+  /* 右上 secure 徽记:mono 小字 + 呼吸点,来自 Bridge/board 的状态语言。 */
+  .cds-auth-secure {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.6875rem;
+    letter-spacing: 0.02em;
+    color: rgb(16 185 129 / 0.92);
+    border: 1px solid rgb(16 185 129 / 0.28);
+    background-color: rgb(16 185 129 / 0.07);
+    border-radius: 999px;
+    padding: 0.25rem 0.625rem;
   }
 
   .cds-auth-title {
