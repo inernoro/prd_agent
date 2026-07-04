@@ -3,18 +3,28 @@
   报纸版日报模板（米多智能体日报）— daily-report-summary 格式二选项之 html。
 
   使用方法：整页复制，替换日期/期号/统计等具体值与各 article/li 的正文。
-  下方正文是 2026-07-03 期的真实成稿，直接作为「写成什么样」的对照样例。
+  下方正文是 2026-07-03 期（第二印，配图版）的真实成稿，作「写成什么样」的对照样例。
 
   硬约束（publish.py --report-html 会校验）：
-  1. 自包含：内联 CSS、无外部 http 资源；图片仅允许知识库 upload 返回的站内 URL
+  1. 自包含：内联 CSS，无外部 http 资源；图片仅允许知识库 upload 返回的站内 URL
   2. 禁 script 标签：知识库沙箱 iframe 不给 allow-scripts，动效一律纯 CSS
   3. 必带 meta viewport：否则移动端按 980px 桌面视口缩放、整页变小
-  4. 禁 emoji（CLAUDE.md 规则 0），图标一律内联 SVG
-  5. 分层权重同 SKILL.md 纪律 1：今日大事 -> 新增方向(头条展开) -> 优化/修复 -> 计划与遗留；
-     期号 = 当年第几天（date +%j），星期用中文
-  6. 截图占位 {{IMG:<name>}} 放对应 story 内（publish.py 替换成 figure 结构，
-     样式已就绪）；无截图的新功能段必须文字注明原因（.note 块），不留占位
-  7. 修复段聚类计数（.fix-cluster），安全/数据类单独进 .security 专栏点名
+  4. 禁 data:image：后端知识库正文有防破图守卫会直接拒存；纹理用纯 CSS 渐变，
+     插图用内联 <svg> 标签（合法）
+  5. 禁 emoji（CLAUDE.md 规则 0）
+
+  配图纪律（2026-07-04 用户反馈「缺少一些图」后固化，报纸没有图不合格）：
+  A. 头条必须配图，二选一：
+     - 首选：Phase 4.5 真实 UI 截图（{{IMG:<name>}} 占位，publish.py 回填 figure）
+     - 兜底：版画风内联 SVG 示意图（下方 figure.art 样例：双色 ink/terra + hatch
+       纹理 pattern，描边为主），并在「取证说明」注明截图待补原因
+  B. 「数据版」栏目每期必做，两图均从 git 真实数据生成（纪律 5：数字不许编）：
+     - 今日战场：TOP6 模块文件变更横条图（.hbar，主战场用 .hot 红色）
+     - N 格铅字：每格一个提交的瀑布格（.waffle，按类型着色，行宽 10 格，
+       不足补 visibility:hidden 占位格）
+  C. 引语大字（.pull）从头条正文提炼一句，制造版面节奏
+
+  其他：分层权重同 SKILL.md 纪律 1；期号 = 当年第几天（date +%j）；星期用中文
 -->
 <html lang="zh-CN">
 <head>
@@ -165,6 +175,60 @@
     display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap;
     font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; color: var(--ink-3);
   }
+
+  /* 头条图文双栏 + 版画插图 */
+  .lead-grid h3 { font-size: clamp(21px, 2.9vw, 29px); text-wrap: balance; }
+  .lead-grid { display: grid; grid-template-columns: 1.12fr 0.88fr; gap: 28px; align-items: start; margin-top: 4px; }
+  @media (max-width: 760px) { .lead-grid { grid-template-columns: 1fr; } }
+  figure.art { margin: 0; }
+  figure.art .frame {
+    border: 1.5px solid var(--ink); border-radius: 3px; background: var(--paper-2);
+    box-shadow: 4px 4px 0 rgba(33,29,24,0.12); padding: 10px;
+  }
+  figure.art svg { display: block; width: 100%; height: auto; }
+  figure.art figcaption { margin-top: 9px; font-size: 12px; color: var(--ink-3); line-height: 1.7; }
+  figure.art figcaption::before {
+    content: "图"; font-family: var(--mono); font-size: 9.5px; color: var(--terra);
+    border: 1px solid var(--terra); border-radius: 2px; padding: 1px 5px; margin-right: 8px; letter-spacing: 0.1em;
+  }
+  .pull {
+    margin: 22px 0 6px; padding: 4px 0 14px 0; position: relative;
+    border-top: 2px solid var(--ink); border-bottom: 1px solid var(--line);
+    font-family: var(--serif); font-size: 19px; font-weight: 600; line-height: 1.7; color: var(--ink);
+  }
+  .pull .qt::before { content: "「"; color: var(--terra); }
+  .pull .qt::after { content: "」"; color: var(--terra); }
+  .pull .by { display: block; margin-top: 6px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.2em; color: var(--ink-3); }
+
+  /* 数据版 */
+  .data-grid { display: grid; grid-template-columns: 1.15fr 1fr; gap: 0; }
+  .data-grid > section { min-width: 0; padding: 18px 0 6px; }
+  .data-grid > section:first-child { border-right: 1px solid var(--line); padding-right: 26px; }
+  .data-grid > section:last-child { padding-left: 26px; }
+  @media (max-width: 760px) {
+    .data-grid { grid-template-columns: 1fr; }
+    .data-grid > section:first-child { border-right: none; padding-right: 0; }
+    .data-grid > section:last-child { padding-left: 0; }
+  }
+  .chart-title { font-family: var(--serif); font-size: 14.5px; font-weight: 700; margin-bottom: 4px; }
+  .chart-sub { font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em; color: var(--ink-3); margin-bottom: 14px; }
+  .hbar { display: flex; align-items: center; gap: 10px; padding: 5px 0; }
+  .hbar .lb { flex: 0 0 108px; font-family: var(--mono); font-size: 11px; color: var(--ink-2); text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hbar .track { flex: 1; height: 14px; background: rgba(33,29,24,0.05); border: 1px solid var(--line); }
+  .hbar .track i { display: block; height: 100%; background: var(--ink); }
+  .hbar.hot .track i { background: var(--terra); }
+  .hbar .v { flex: 0 0 26px; font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+  .waffle { display: grid; grid-template-columns: repeat(10, 1fr); gap: 5px; max-width: 300px; }
+  .waffle i { aspect-ratio: 1; border: 1px solid var(--line-2); }
+  .waffle .tfix { background: var(--ink); border-color: var(--ink); }
+  .waffle .tdoc { background: rgba(33,29,24,0.22); }
+  .waffle .tfeat { background: var(--terra); border-color: var(--terra); }
+  .waffle .tref { background: var(--indigo); border-color: var(--indigo); }
+  .waffle .tci { background: rgba(79,70,229,0.28); }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; font-family: var(--mono); font-size: 10.5px; color: var(--ink-2); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { width: 10px; height: 10px; border: 1px solid var(--line-2); }
+  .byline-row { margin-top: 14px; padding-top: 10px; border-top: 1px dotted var(--line); font-size: 12px; color: var(--ink-3); }
   .note { margin-top: 14px; font-size: 12px; color: var(--ink-3); line-height: 1.8; }
   .note b { font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; color: var(--terra); }
 </style>
@@ -203,14 +267,72 @@
 
   <article class="lead-story">
     <div class="kicker">头条 · PRD-LLMGW 独立网关</div>
-    <h3>网关控制台迎来「可配置第一刀」，<br>从<em>只能看</em>进化为<em>能看能配</em>。</h3>
-    <p class="prose">
-      <b>是什么：</b>为 LLM 网关物理剥离工程配套的独立控制台（prd-llmgw-web）今天一次落下两块拼图——
-      <b>全面概览页</b>把平台在线状态、模型池、调用量、健康探针收进一屏；
-      <b>四张配置面</b>（模型池 / 平台 / 模型 / 影子对比）以只读形态上线，配置数据第一次在网关自己的地盘可见。
-      <b>解决什么：</b>网关独立之后，运维观测一直要回主站后台绕路；现在看板、配置、证据都在网关侧闭环，
-      为后续「只读转可写」的渐进放开铺好了地基。
-    </p>
+    <div class="lead-grid">
+      <div>
+        <h3>网关控制台迎来「可配置第一刀」，<br>从<em>只能看</em>进化为<em>能看能配</em>。</h3>
+        <p class="prose" style="margin-top:14px">
+          <b>是什么：</b>为 LLM 网关物理剥离工程配套的独立控制台（prd-llmgw-web）今天一次落下两块拼图——
+          <b>全面概览页</b>把平台在线状态、模型池、调用量、健康探针收进一屏；
+          <b>四张配置面</b>（模型池 / 平台 / 模型 / 影子对比）以只读形态上线，配置数据第一次在网关自己的地盘可见。
+          <b>解决什么：</b>网关独立之后，运维观测一直要回主站后台绕路；现在看板、配置、证据都在网关侧闭环，
+          为后续「只读转可写」的渐进放开铺好了地基。
+        </p>
+      </div>
+      <figure class="art">
+        <div class="frame">
+        <svg viewBox="0 0 400 300" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="网关控制台版画示意">
+          <defs>
+            <pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+              <line x1="0" y1="0" x2="0" y2="6" stroke="#211d18" stroke-width="1" opacity="0.35"/>
+            </pattern>
+            <pattern id="hatchT" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
+              <line x1="0" y1="0" x2="0" y2="5" stroke="#c05b3c" stroke-width="1.2" opacity="0.55"/>
+            </pattern>
+          </defs>
+          <circle cx="330" cy="52" r="38" fill="url(#hatchT)" stroke="#c05b3c" stroke-width="1.5"/>
+          <rect x="18" y="112" width="74" height="84" fill="#f7f1e8" stroke="#211d18" stroke-width="2"/>
+          <rect x="18" y="112" width="74" height="18" fill="url(#hatch)" stroke="#211d18" stroke-width="2"/>
+          <text x="55" y="160" text-anchor="middle" font-family="Consolas,monospace" font-size="13" font-weight="bold" fill="#211d18">MAP</text>
+          <text x="55" y="176" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#211d18" opacity="0.55">MAIN STATION</text>
+          <path d="M92 140 H 128" stroke="#c05b3c" stroke-width="2.5"/>
+          <path d="M121 134 L 131 140 L 121 146 Z" fill="#c05b3c"/>
+          <path d="M128 172 H 92" stroke="#211d18" stroke-width="1.8" stroke-dasharray="5 4"/>
+          <path d="M99 166 L 89 172 L 99 178 Z" fill="#211d18"/>
+          <rect x="130" y="34" width="246" height="232" rx="6" fill="#fffdf8" stroke="#211d18" stroke-width="2.5"/>
+          <line x1="130" y1="62" x2="376" y2="62" stroke="#211d18" stroke-width="2"/>
+          <circle cx="148" cy="48" r="4" fill="#c05b3c"/>
+          <circle cx="162" cy="48" r="4" fill="none" stroke="#211d18" stroke-width="1.5"/>
+          <circle cx="176" cy="48" r="4" fill="url(#hatch)" stroke="#211d18" stroke-width="1.5"/>
+          <text x="366" y="52" text-anchor="end" font-family="Consolas,monospace" font-size="9" fill="#211d18" opacity="0.6">LLMGW CONSOLE</text>
+          <rect x="146" y="76" width="140" height="72" fill="url(#hatch)" stroke="#211d18" stroke-width="1.8"/>
+          <polyline points="152,132 172,120 190,126 208,104 226,112 244,92 262,98 280,84" fill="none" stroke="#c05b3c" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+          <rect x="298" y="76" width="62" height="20" fill="none" stroke="#211d18" stroke-width="1.5"/>
+          <rect x="298" y="76" width="42" height="20" fill="#c05b3c" opacity="0.85"/>
+          <rect x="298" y="102" width="62" height="20" fill="none" stroke="#211d18" stroke-width="1.5"/>
+          <rect x="298" y="102" width="52" height="20" fill="url(#hatch)"/>
+          <rect x="298" y="128" width="62" height="20" fill="none" stroke="#211d18" stroke-width="1.5"/>
+          <rect x="298" y="128" width="28" height="20" fill="#211d18" opacity="0.75"/>
+          <circle cx="172" cy="192" r="22" fill="none" stroke="#211d18" stroke-width="2"/>
+          <path d="M172 192 L 186 180" stroke="#c05b3c" stroke-width="2.5" stroke-linecap="round"/>
+          <circle cx="234" cy="192" r="22" fill="none" stroke="#211d18" stroke-width="2"/>
+          <path d="M234 192 L 224 176" stroke="#211d18" stroke-width="2.5" stroke-linecap="round"/>
+          <circle cx="296" cy="192" r="22" fill="none" stroke="#211d18" stroke-width="2"/>
+          <path d="M296 192 L 310 188" stroke="#c05b3c" stroke-width="2.5" stroke-linecap="round"/>
+          <g stroke="#211d18" stroke-width="1.5">
+            <rect x="150" y="230" width="26" height="14" fill="#c05b3c"/>
+            <rect x="184" y="230" width="26" height="14" fill="none"/>
+            <rect x="218" y="230" width="26" height="14" fill="#c05b3c"/>
+            <rect x="252" y="230" width="26" height="14" fill="none"/>
+            <rect x="286" y="230" width="26" height="14" fill="url(#hatch)"/>
+            <rect x="320" y="230" width="26" height="14" fill="none"/>
+          </g>
+          <text x="253" y="258" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#211d18" opacity="0.55">POOL / PLATFORM / MODEL / SHADOW</text>
+        </svg>
+        </div>
+        <figcaption>版画示意：观测与配置从主站（MAP）移进网关自己的控制台，红色实线为本日打通的配置读取链路。</figcaption>
+      </figure>
+    </div>
+    <blockquote class="pull"><span class="qt">看板、配置、证据都在网关自己的地盘闭环，运维不再回主站绕路。</span><span class="by">—— 本日头条要义</span></blockquote>
     <div class="howto">
       <b>怎么用</b>
       打开 llmgw-web 控制台并登录，首页即全面概览；左侧导航进入模型池 / 平台 / 模型 / 影子对比各配置面。
@@ -245,7 +367,7 @@
     </p>
   </div>
 
-  <div class="note"><b>取证说明</b> 本期为 HTML 版式首刊试印；新增功能集中在独立网关控制台，需独立登录凭据取证，本期未附界面截图，下期恢复截图取证。</div>
+  <div class="note"><b>取证说明</b> 本期为 HTML 版式试刊（第二印）：头条配版画示意图，数据版图表由 git 真实数据生成；界面实拍截图需独立网关控制台登录凭据，待 CDS 环境取证后随刊补图。</div>
 
   <!-- 优化 + 修复 双栏 -->
   <div class="two-col">
@@ -277,6 +399,40 @@
           <p>概览页任一接口失败也收敛 loading 并顶部明示故障；发布评论不可变问题修复；CI 的 pnpm workspace 缓存路径修复。</p>
         </li>
       </ul>
+    </section>
+  </div>
+
+  <!-- 数据版 -->
+  <div class="col-head"><h2>数据版</h2><span>BY THE NUMBERS</span><span class="w">全部来自 git 主干</span></div>
+  <div class="data-grid">
+    <section>
+      <div class="chart-title">今日战场</div>
+      <div class="chart-sub">TOP 6 模块 · 按文件变更次数</div>
+      <div class="hbar hot"><span class="lb">prd-llmgw-web</span><span class="track"><i style="width:100%"></i></span><span class="v">24</span></div>
+      <div class="hbar hot"><span class="lb">prd-llmgw</span><span class="track"><i style="width:96%"></i></span><span class="v">23</span></div>
+      <div class="hbar"><span class="lb">doc</span><span class="track"><i style="width:92%"></i></span><span class="v">22</span></div>
+      <div class="hbar"><span class="lb">cds</span><span class="track"><i style="width:88%"></i></span><span class="v">21</span></div>
+      <div class="hbar"><span class="lb">changelogs</span><span class="track"><i style="width:58%"></i></span><span class="v">14</span></div>
+      <div class="hbar"><span class="lb">prd-api</span><span class="track"><i style="width:46%"></i></span><span class="v">11</span></div>
+      <p class="byline-row">红色为本日主战场：独立网关前后端合计 47 次文件变更，占据绝对头版。</p>
+    </section>
+    <section>
+      <div class="chart-title">三十八格铅字</div>
+      <div class="chart-sub">每格一个提交 · 按类型着色</div>
+      <div class="waffle">
+        <i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i>
+        <i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i>
+        <i class="tfix"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i>
+        <i class="tfeat"></i><i class="tfeat"></i><i class="tfeat"></i><i class="tfeat"></i><i class="tref"></i><i class="tci"></i><i class="tdoc" style="visibility:hidden"></i><i class="tdoc" style="visibility:hidden"></i><i class="tdoc" style="visibility:hidden"></i><i class="tdoc" style="visibility:hidden"></i>
+      </div>
+      <div class="legend">
+        <span><i class="tfix" style="background:var(--ink)"></i>fix 21</span>
+        <span><i style="background:rgba(33,29,24,0.22)"></i>docs 9</span>
+        <span><i style="background:var(--terra)"></i>feat 4</span>
+        <span><i style="background:var(--indigo)"></i>refactor 1</span>
+        <span><i style="background:rgba(79,70,229,0.28)"></i>ci 1</span>
+      </div>
+      <p class="byline-row">署名：Claude 34 · inernoro 3 · InerNoro 1（双写法同一人）</p>
     </section>
   </div>
 
