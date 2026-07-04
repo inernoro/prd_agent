@@ -239,14 +239,18 @@ def main():
         # 日报里链 PR/预览地址是正常需求，必须放行（Codex P2）。
         # 加载型覆盖四类（Codex P2 二轮）：HTML src / <link href> / srcset /
         # CSS 的 url(http) 与 @import——沙箱 srcDoc iframe 照样会发起 CSS 图片、字体请求。
-        if re.search(r'\bsrc\s*=\s*["\']https?://', low):
-            errs.append("引用了外部加载资源（src=http 开头）——必须自包含，图片仅允许知识库 upload 返回的站内 URL（{{IMG:}} 占位流程）")
-        if re.search(r'<link\b[^>]*href\s*=\s*["\']https?://', low):
-            errs.append("引用了外部样式/资源 <link href=http>——CSS 必须内联，不得外链")
-        if re.search(r'\bsrcset\s*=\s*["\'][^"\']*https?://', low):
-            errs.append("srcset 引用了外部图片——必须自包含，仅允许站内 URL")
-        if re.search(r'url\(\s*["\']?\s*https?://', low) or re.search(r'@import\s+["\']https?://', low):
-            errs.append("CSS 里有外部加载（url(http…) 或 @import）——背景图/字体必须内联或改纯 CSS，沙箱 iframe 仍会真实发起这些请求")
+        # EXT = 外部地址前缀：http(s):// 或协议相对 //（后者继承页面协议同样出网，Bugbot Medium）
+        EXT = r'(?:https?:)?//'
+        if re.search(r'\bsrc\s*=\s*["\']' + EXT, low):
+            errs.append("引用了外部加载资源（src=http 或 // 开头）——必须自包含，图片仅允许知识库 upload 返回的站内 URL（{{IMG:}} 占位流程）")
+        if re.search(r'<link\b[^>]*href\s*=\s*["\']' + EXT, low):
+            errs.append("引用了外部样式/资源 <link href 外链>——CSS 必须内联，不得外链")
+        for mm in re.finditer(r'\bsrcset\s*=\s*["\']([^"\']*)["\']', low):
+            if re.search(r'(?:^|[\s,])' + EXT, mm.group(1)):
+                errs.append("srcset 引用了外部图片（http 或 // 开头）——必须自包含，仅允许站内 URL")
+                break
+        if re.search(r'url\(\s*["\']?\s*' + EXT, low) or re.search(r'@import\s+["\']\s*' + EXT, low):
+            errs.append("CSS 里有外部加载（url() 或 @import 指向 http/ // 外链）——背景图/字体必须内联或改纯 CSS，沙箱 iframe 仍会真实发起这些请求")
         if errs:
             raise RuntimeError("HTML 报纸版校验未通过：\n  - " + "\n  - ".join(errs))
     else:
