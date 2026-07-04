@@ -398,3 +398,8 @@ processed:
   - 2026-06-27_logs-observability-ui.md
   - 2026-06-28_llm-gateway-http-client.md
   - 2026-06-28_llm-gateway-selftest.md
+  - 2026-06-28_llm-gateway-serve-deploy.md
+  - 2026-06-28_llm-gateway-serving-process.md
+  - 2026-06-29_cds-runtime-detect-compose.md
+  - 2026-06-29_cds-task-schedule.md
+  - 2026-06-29_entropy-cleanup.md
