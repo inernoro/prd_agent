@@ -231,10 +231,13 @@ def main():
             errs.append("含 <script>——知识库沙箱 iframe 不给 allow-scripts，脚本不会执行，请改纯 CSS 实现")
         if "data:image" in low:
             errs.append("含 data:image——后端知识库正文有防破图守卫会直接拒存，纹理/图标请改纯 CSS 渐变或内联 SVG 标签")
-        for pat in ('src="http', "src='http", 'href="http', "href='http"):
-            if pat in low:
-                errs.append("引用了外部资源（http 链接的 src/href）——必须自包含（内联 CSS / data URI），仅允许知识库上传返回的站内图片 URL")
-                break
+        # 只拦"加载型"外部资源（img/script/iframe 等的 src、样式表 link 的 href）。
+        # 导航型 <a href="https://..."> 不往页面加载任何资源，日报里链 PR/预览地址
+        # 是正常需求，必须放行（Codex P2）。
+        if re.search(r'\bsrc\s*=\s*["\']https?://', low):
+            errs.append("引用了外部加载资源（src=http 开头）——必须自包含，图片仅允许知识库 upload 返回的站内 URL（{{IMG:}} 占位流程）")
+        if re.search(r'<link\b[^>]*href\s*=\s*["\']https?://', low):
+            errs.append("引用了外部样式/资源 <link href=http>——CSS 必须内联，不得外链")
         if errs:
             raise RuntimeError("HTML 报纸版校验未通过：\n  - " + "\n  - ".join(errs))
     else:
