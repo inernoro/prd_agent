@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<!--
+  报纸版日报模板（米多智能体日报）— daily-report-summary 格式二选项之 html。
+
+  使用方法：整页复制，替换日期/期号/统计等具体值与各 article/li 的正文。
+  下方正文是 2026-07-03 期（第二印，配图版）的真实成稿，作「写成什么样」的对照样例。
+
+  硬约束（publish.py --report-html 会校验）：
+  1. 自包含：内联 CSS，无外部 http 资源；图片仅允许知识库 upload 返回的站内 URL
+  2. 禁 script 标签：知识库沙箱 iframe 不给 allow-scripts，动效一律纯 CSS
+  3. 必带 meta viewport：否则移动端按 980px 桌面视口缩放、整页变小
+  4. 禁 data:image：后端知识库正文有防破图守卫会直接拒存；纹理用纯 CSS 渐变，
+     插图用内联 <svg> 标签（合法）
+  5. 禁 emoji（CLAUDE.md 规则 0）
+
+  配图纪律（2026-07-04 用户反馈「缺少一些图」后固化，报纸没有图不合格）：
+  A. 头条必须配图，二选一：
+     - 首选：Phase 4.5 真实 UI 截图（{{IMG:<name>}} 占位，publish.py 回填 figure）
+     - 兜底：版画风内联 SVG 示意图（下方 figure.art 样例：双色 ink/terra + hatch
+       纹理 pattern，描边为主），并在「取证说明」注明截图待补原因
+  B. 「数据版」栏目每期必做，两图均从 git 真实数据生成（纪律 5：数字不许编）：
+     - 今日战场：TOP6 模块文件变更横条图（.hbar，主战场用 .hot 红色）
+     - N 格铅字：每格一个提交的瀑布格（.waffle，按类型着色，行宽 10 格，
+       不足补 visibility:hidden 占位格）
+  C. 引语大字（.pull）从头条正文提炼一句，制造版面节奏
+
+  其他：分层权重同 SKILL.md 纪律 1；期号 = 当年第几天（date +%j）；星期用中文
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>日报-2026-07-03-今日大事早知道</title>
+<style>
+  :root {
+    --paper: #f7f1e8;
+    --paper-2: #fffdf8;
+    --ink: #211d18;
+    --ink-2: rgba(33,29,24,0.74);
+    --ink-3: rgba(33,29,24,0.48);
+    --line: rgba(33,29,24,0.14);
+    --line-2: rgba(33,29,24,0.30);
+    --terra: #c05b3c;
+    --indigo: #4f46e5;
+    --serif: "Source Serif 4", "Songti SC", "Noto Serif SC", "STSong", Georgia, serif;
+    --sans: -apple-system, "PingFang SC", "HarmonyOS Sans SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
+    --mono: "SF Mono", "JetBrains Mono", Consolas, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--paper); color: var(--ink); font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+    background-image:
+      radial-gradient(ellipse 80% 40% at 50% -6%, rgba(192,91,60,0.05), transparent),
+      repeating-linear-gradient(0deg, rgba(33,29,24,0.016) 0 1px, transparent 1px 3px);
+    
+  }
+  .paper { max-width: 960px; margin: 0 auto; padding: 26px 34px 60px; }
+  @media (max-width: 640px) { .paper { padding: 18px 16px 44px; } }
+
+  /* ══ 报头 ══ */
+  .masthead { display: flex; align-items: center; gap: 16px; padding-bottom: 14px; border-bottom: 2.5px solid var(--ink); }
+  .stamp {
+    width: 46px; height: 46px; flex-shrink: 0;
+    background: var(--terra); color: #fff7ee; border-radius: 4px;
+    display: grid; place-items: center;
+    font-family: var(--serif); font-weight: 700; font-size: 15px; letter-spacing: 0.04em;
+    box-shadow: 3px 3px 0 rgba(33,29,24,0.82);
+  }
+  .masthead .t b { font-family: var(--serif); font-size: 25px; font-weight: 700; letter-spacing: 0.02em; display: block; }
+  .masthead .t span { font-family: var(--mono); font-size: 10px; color: var(--ink-3); letter-spacing: 0.34em; }
+  .masthead .r { margin-left: auto; text-align: right; font-family: var(--mono); font-size: 10px; color: var(--ink-3); letter-spacing: 0.14em; line-height: 1.9; }
+  .dateline {
+    display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    padding: 9px 0; border-bottom: 1px solid var(--line);
+    font-family: var(--mono); font-size: 11px; color: var(--ink-3); letter-spacing: 0.1em;
+  }
+  .dateline b { color: var(--terra); font-weight: 600; }
+
+  /* ══ 今日大事 ══ */
+  .tldr { margin-top: 26px; border: 1.5px solid var(--ink); border-radius: 3px; background: var(--paper-2); box-shadow: 5px 5px 0 rgba(33,29,24,0.12); }
+  .tldr .hd {
+    display: flex; align-items: baseline; gap: 12px;
+    padding: 13px 20px 11px; border-bottom: 1.5px solid var(--ink);
+  }
+  .tldr .hd h2 { font-family: var(--serif); font-size: 19px; font-weight: 700; }
+  .tldr .hd span { font-family: var(--mono); font-size: 10px; letter-spacing: 0.24em; color: var(--terra); }
+  .tldr ol { list-style: none; counter-reset: n; padding: 6px 20px 12px; }
+  .tldr li { counter-increment: n; display: flex; gap: 14px; padding: 10px 0; border-bottom: 1px dotted var(--line); font-size: 14px; line-height: 1.75; color: var(--ink-2); }
+  .tldr li:last-child { border-bottom: none; }
+  .tldr li::before {
+    content: counter(n, decimal-leading-zero);
+    font-family: var(--mono); font-size: 11px; color: var(--terra); flex-shrink: 0; margin-top: 4px;
+  }
+  .tldr li b { color: var(--ink); font-weight: 600; }
+
+  /* ══ 栏目通用 ══ */
+  .col-head { display: flex; align-items: baseline; gap: 12px; margin: 40px 0 6px; padding-bottom: 10px; border-bottom: 2px solid var(--ink); }
+  .col-head h2 { font-family: var(--serif); font-size: 20px; font-weight: 700; }
+  .col-head span { font-family: var(--mono); font-size: 10px; letter-spacing: 0.24em; color: var(--ink-3); }
+  .col-head .w { margin-left: auto; font-family: var(--mono); font-size: 10.5px; color: var(--terra); letter-spacing: 0.1em; }
+
+  /* 头条 */
+  .lead-story { padding: 22px 0 8px; border-bottom: 1px solid var(--line); }
+  .kicker { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.22em; color: var(--indigo); margin-bottom: 10px; }
+  .lead-story h3 { font-family: var(--serif); font-size: clamp(24px, 3.6vw, 34px); font-weight: 650; line-height: 1.35; }
+  .lead-story h3 em { font-style: normal; position: relative; white-space: nowrap; }
+  .lead-story h3 em::after { content: ""; position: absolute; left: -1%; right: -1%; bottom: 7%; height: 0.3em; background: rgba(192,91,60,0.2); z-index: -1; transform: skewX(-8deg); }
+  .lead-story .prose { margin-top: 16px; font-size: 14.5px; line-height: 2.0; color: var(--ink-2); text-align: justify; }
+  .prose b { color: var(--ink); font-weight: 600; }
+  .prose .q { color: var(--terra); font-weight: 600; }
+  .howto {
+    margin-top: 14px; padding: 12px 16px; border-left: 3px solid var(--terra);
+    background: rgba(192,91,60,0.05); font-size: 13px; line-height: 1.9; color: var(--ink-2);
+  }
+  .howto b { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.18em; color: var(--terra); display: block; margin-bottom: 3px; }
+
+  /* 次级文章 */
+  .story { padding: 20px 0; border-bottom: 1px solid var(--line); }
+  .story:last-child { border-bottom: none; }
+  .story h4 { font-family: var(--serif); font-size: 18.5px; font-weight: 650; line-height: 1.5; margin-top: 6px; }
+  .story .prose { margin-top: 10px; font-size: 13.5px; line-height: 1.95; color: var(--ink-2); text-align: justify; }
+  .story figure { margin: 14px 0 4px; }
+  .story figure img { width: 100%; border: 1.5px solid var(--ink); border-radius: 3px; box-shadow: 4px 4px 0 rgba(33,29,24,0.10); display: block; }
+  .story figcaption { margin-top: 8px; font-size: 12px; color: var(--ink-3); line-height: 1.7; }
+  .story figcaption::before { content: "图"; font-family: var(--mono); font-size: 9.5px; color: var(--terra); border: 1px solid var(--terra); border-radius: 2px; padding: 1px 5px; margin-right: 8px; letter-spacing: 0.1em; }
+
+  /* 安全专栏印章感 */
+  .security { border: 1.5px solid var(--terra); border-radius: 3px; background: rgba(192,91,60,0.04); padding: 16px 18px; margin-top: 20px; }
+  .security .kicker { color: var(--terra); }
+  .security h4 { font-family: var(--serif); font-size: 17px; font-weight: 700; }
+  .security p { margin-top: 8px; font-size: 13px; line-height: 1.9; color: var(--ink-2); }
+
+  /* 双栏（优化 + 修复） */
+  .two-col { display: grid; grid-template-columns: 1fr 1.35fr; gap: 0; }
+  .two-col > section { min-width: 0; }
+  .two-col > section:first-child { border-right: 1px solid var(--line); padding-right: 26px; }
+  .two-col > section:last-child { padding-left: 26px; }
+  @media (max-width: 760px) {
+    .two-col { grid-template-columns: 1fr; }
+    .two-col > section:first-child { border-right: none; padding-right: 0; }
+    .two-col > section:last-child { padding-left: 0; }
+  }
+  .plain { padding: 16px 0; font-size: 13.5px; line-height: 1.95; color: var(--ink-2); text-align: justify; }
+
+  .fix-cluster { list-style: none; padding-top: 6px; }
+  .fix-cluster li { padding: 12px 0; border-bottom: 1px dotted var(--line); }
+  .fix-cluster li:last-child { border-bottom: none; }
+  .fix-cluster .ct {
+    display: flex; align-items: baseline; gap: 10px; margin-bottom: 5px;
+  }
+  .fix-cluster .ct b { font-family: var(--serif); font-size: 14.5px; font-weight: 700; }
+  .fix-cluster .ct i {
+    font-style: normal; font-family: var(--mono); font-size: 10px; color: #fff7ee;
+    background: var(--ink); border-radius: 2px; padding: 2px 7px; letter-spacing: 0.08em;
+  }
+  .fix-cluster p { font-size: 12.5px; line-height: 1.85; color: var(--ink-2); }
+
+  /* 计划与遗留 */
+  .plan { border-top: 2px solid var(--ink); margin-top: 40px; }
+  .plan .col-head { border-bottom: 1px solid var(--line); margin-top: 18px; }
+  .plan ul { list-style: none; padding: 8px 0 0; }
+  .plan li { display: flex; gap: 12px; padding: 9px 0; font-size: 13px; line-height: 1.8; color: var(--ink-2); border-bottom: 1px dotted var(--line); }
+  .plan li:last-child { border-bottom: none; }
+  .plan li::before { content: "—"; color: var(--terra); flex-shrink: 0; }
+
+  /* 数据页脚 */
+  .stat-row { display: flex; margin-top: 34px; border: 1px solid var(--line); border-radius: 3px; overflow: hidden; background: rgba(255,253,248,0.6); }
+  .stat-row div { flex: 1; padding: 14px 6px; text-align: center; border-right: 1px solid var(--line); }
+  .stat-row div:last-child { border-right: none; }
+  .stat-row b { font-family: var(--serif); font-size: 22px; font-weight: 700; display: block; }
+  .stat-row span { font-size: 10.5px; color: var(--ink-3); letter-spacing: 0.04em; }
+  .colophon {
+    margin-top: 26px; padding-top: 12px; border-top: 2px solid var(--ink);
+    display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; color: var(--ink-3);
+  }
+
+  /* 头条图文双栏 + 版画插图 */
+  .lead-grid h3 { font-size: clamp(21px, 2.9vw, 29px); text-wrap: balance; }
+  .lead-grid { display: grid; grid-template-columns: 1.12fr 0.88fr; gap: 28px; align-items: start; margin-top: 4px; }
+  @media (max-width: 760px) { .lead-grid { grid-template-columns: 1fr; } }
+  figure.art { margin: 0; }
+  figure.art .frame {
+    border: 1.5px solid var(--ink); border-radius: 3px; background: var(--paper-2);
+    box-shadow: 4px 4px 0 rgba(33,29,24,0.12); padding: 10px;
+  }
+  figure.art svg { display: block; width: 100%; height: auto; }
+  figure.art figcaption { margin-top: 9px; font-size: 12px; color: var(--ink-3); line-height: 1.7; }
+  figure.art figcaption::before {
+    content: "图"; font-family: var(--mono); font-size: 9.5px; color: var(--terra);
+    border: 1px solid var(--terra); border-radius: 2px; padding: 1px 5px; margin-right: 8px; letter-spacing: 0.1em;
+  }
+  .pull {
+    margin: 22px 0 6px; padding: 4px 0 14px 0; position: relative;
+    border-top: 2px solid var(--ink); border-bottom: 1px solid var(--line);
+    font-family: var(--serif); font-size: 19px; font-weight: 600; line-height: 1.7; color: var(--ink);
+  }
+  .pull .qt::before { content: "「"; color: var(--terra); }
+  .pull .qt::after { content: "」"; color: var(--terra); }
+  .pull .by { display: block; margin-top: 6px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.2em; color: var(--ink-3); }
+
+  /* 数据版 */
+  .data-grid { display: grid; grid-template-columns: 1.15fr 1fr; gap: 0; }
+  .data-grid > section { min-width: 0; padding: 18px 0 6px; }
+  .data-grid > section:first-child { border-right: 1px solid var(--line); padding-right: 26px; }
+  .data-grid > section:last-child { padding-left: 26px; }
+  @media (max-width: 760px) {
+    .data-grid { grid-template-columns: 1fr; }
+    .data-grid > section:first-child { border-right: none; padding-right: 0; }
+    .data-grid > section:last-child { padding-left: 0; }
+  }
+  .chart-title { font-family: var(--serif); font-size: 14.5px; font-weight: 700; margin-bottom: 4px; }
+  .chart-sub { font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em; color: var(--ink-3); margin-bottom: 14px; }
+  .hbar { display: flex; align-items: center; gap: 10px; padding: 5px 0; }
+  .hbar .lb { flex: 0 0 108px; font-family: var(--mono); font-size: 11px; color: var(--ink-2); text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hbar .track { flex: 1; height: 14px; background: rgba(33,29,24,0.05); border: 1px solid var(--line); }
+  .hbar .track i { display: block; height: 100%; background: var(--ink); }
+  .hbar.hot .track i { background: var(--terra); }
+  .hbar .v { flex: 0 0 26px; font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+  .waffle { display: grid; grid-template-columns: repeat(10, 1fr); gap: 5px; max-width: 300px; }
+  .waffle i { aspect-ratio: 1; border: 1px solid var(--line-2); }
+  .waffle .tfix { background: var(--ink); border-color: var(--ink); }
+  .waffle .tdoc { background: rgba(33,29,24,0.22); }
+  .waffle .tfeat { background: var(--terra); border-color: var(--terra); }
+  .waffle .tref { background: var(--indigo); border-color: var(--indigo); }
+  .waffle .tci { background: rgba(79,70,229,0.28); }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; font-family: var(--mono); font-size: 10.5px; color: var(--ink-2); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { width: 10px; height: 10px; border: 1px solid var(--line-2); }
+  .byline-row { margin-top: 14px; padding-top: 10px; border-top: 1px dotted var(--line); font-size: 12px; color: var(--ink-3); }
+  .note { margin-top: 14px; font-size: 12px; color: var(--ink-3); line-height: 1.8; }
+  .note b { font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; color: var(--terra); }
+</style>
+</head>
+<body>
+<div class="paper">
+
+  <!-- 报头 -->
+  <header class="masthead">
+    <div class="stamp">MAP</div>
+    <div class="t">
+      <b>米多智能体日报</b>
+      <span>MIDUO AGENT DAILY</span>
+    </div>
+    <div class="r">今日大事早知道<br>日报智能体 · 自动编印</div>
+  </header>
+  <div class="dateline">
+    <span>2026 年 7 月 3 日 · 星期五 · 第 <b>184</b> 期</span>
+    <span>主干落地 <b>38</b> 次真实提交 · feat 4 / fix 21 / docs 9 / refactor 1 / ci 1 · 3 个署名</span>
+  </div>
+
+  <!-- 今日大事 -->
+  <section class="tldr">
+    <div class="hd"><h2>今日大事</h2><span>TL;DR</span></div>
+    <ol>
+      <li><b>LLM 网关独立控制台落下「可配置第一刀」</b>：全面概览页上线，模型池 / 平台 / 模型 / 影子对比四张配置面以只读形态开放。</li>
+      <li><b>控制台「反复登不进」被连根治好</b>：账号迁独立集合、内置引导账号自愈、首登强制改密，另留「破玻璃」恢复通道。</li>
+      <li><b>CDS Mongo Console 安全大修</b>：重构为「只读命令行 + 结构化写入面板」，连续七刀堵死 eval 注入与多语句写提权。</li>
+      <li><b>「治网关剥离五大痛点」方案落地</b>：5 条规则进仓库 + 活看板追踪 + HTTPS 双出口 + serving 密钥自检。</li>
+      <li><b>三个小而准的修复</b>：Stub 平台密钥误告警、发布评论不可变问题、CI 缓存路径。</li>
+    </ol>
+  </section>
+
+  <!-- 新增方向 -->
+  <div class="col-head"><h2>新增方向</h2><span>FEATURES</span><span class="w">本日 4 项 · 头条展开</span></div>
+
+  <article class="lead-story">
+    <div class="kicker">头条 · PRD-LLMGW 独立网关</div>
+    <div class="lead-grid">
+      <div>
+        <h3>网关控制台迎来「可配置第一刀」，<br>从<em>只能看</em>进化为<em>能看能配</em>。</h3>
+        <p class="prose" style="margin-top:14px">
+          <b>是什么：</b>为 LLM 网关物理剥离工程配套的独立控制台（prd-llmgw-web）今天一次落下两块拼图——
+          <b>全面概览页</b>把平台在线状态、模型池、调用量、健康探针收进一屏；
+          <b>四张配置面</b>（模型池 / 平台 / 模型 / 影子对比）以只读形态上线，配置数据第一次在网关自己的地盘可见。
+          <b>解决什么：</b>网关独立之后，运维观测一直要回主站后台绕路；现在看板、配置、证据都在网关侧闭环，
+          为后续「只读转可写」的渐进放开铺好了地基。
+        </p>
+      </div>
+      <figure class="art">
+        <div class="frame">
+        <svg viewBox="0 0 400 300" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="网关控制台版画示意">
+          <defs>
+            <pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+              <line x1="0" y1="0" x2="0" y2="6" stroke="#211d18" stroke-width="1" opacity="0.35"/>
+            </pattern>
+            <pattern id="hatchT" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
+              <line x1="0" y1="0" x2="0" y2="5" stroke="#c05b3c" stroke-width="1.2" opacity="0.55"/>
+            </pattern>
+          </defs>
+          <circle cx="330" cy="52" r="38" fill="url(#hatchT)" stroke="#c05b3c" stroke-width="1.5"/>
+          <rect x="18" y="112" width="74" height="84" fill="#f7f1e8" stroke="#211d18" stroke-width="2"/>
+          <rect x="18" y="112" width="74" height="18" fill="url(#hatch)" stroke="#211d18" stroke-width="2"/>
+          <text x="55" y="160" text-anchor="middle" font-family="Consolas,monospace" font-size="13" font-weight="bold" fill="#211d18">MAP</text>
+          <text x="55" y="176" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#211d18" opacity="0.55">MAIN STATION</text>
+          <path d="M92 140 H 128" stroke="#c05b3c" stroke-width="2.5"/>
+          <path d="M121 134 L 131 140 L 121 146 Z" fill="#c05b3c"/>
+          <path d="M128 172 H 92" stroke="#211d18" stroke-width="1.8" stroke-dasharray="5 4"/>
+          <path d="M99 166 L 89 172 L 99 178 Z" fill="#211d18"/>
+          <rect x="130" y="34" width="246" height="232" rx="6" fill="#fffdf8" stroke="#211d18" stroke-width="2.5"/>
+          <line x1="130" y1="62" x2="376" y2="62" stroke="#211d18" stroke-width="2"/>
+          <circle cx="148" cy="48" r="4" fill="#c05b3c"/>
+          <circle cx="162" cy="48" r="4" fill="none" stroke="#211d18" stroke-width="1.5"/>
+          <circle cx="176" cy="48" r="4" fill="url(#hatch)" stroke="#211d18" stroke-width="1.5"/>
+          <text x="366" y="52" text-anchor="end" font-family="Consolas,monospace" font-size="9" fill="#211d18" opacity="0.6">LLMGW CONSOLE</text>
+          <rect x="146" y="76" width="140" height="72" fill="url(#hatch)" stroke="#211d18" stroke-width="1.8"/>
+          <polyline points="152,132 172,120 190,126 208,104 226,112 244,92 262,98 280,84" fill="none" stroke="#c05b3c" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+          <rect x="298" y="76" width="62" height="20" fill="none" stroke="#211d18" stroke-width="1.5"/>
+          <rect x="298" y="76" width="42" height="20" fill="#c05b3c" opacity="0.85"/>
+          <rect x="298" y="102" width="62" height="20" fill="none" stroke="#211d18" stroke-width="1.5"/>
+          <rect x="298" y="102" width="52" height="20" fill="url(#hatch)"/>
+          <rect x="298" y="128" width="62" height="20" fill="none" stroke="#211d18" stroke-width="1.5"/>
+          <rect x="298" y="128" width="28" height="20" fill="#211d18" opacity="0.75"/>
+          <circle cx="172" cy="192" r="22" fill="none" stroke="#211d18" stroke-width="2"/>
+          <path d="M172 192 L 186 180" stroke="#c05b3c" stroke-width="2.5" stroke-linecap="round"/>
+          <circle cx="234" cy="192" r="22" fill="none" stroke="#211d18" stroke-width="2"/>
+          <path d="M234 192 L 224 176" stroke="#211d18" stroke-width="2.5" stroke-linecap="round"/>
+          <circle cx="296" cy="192" r="22" fill="none" stroke="#211d18" stroke-width="2"/>
+          <path d="M296 192 L 310 188" stroke="#c05b3c" stroke-width="2.5" stroke-linecap="round"/>
+          <g stroke="#211d18" stroke-width="1.5">
+            <rect x="150" y="230" width="26" height="14" fill="#c05b3c"/>
+            <rect x="184" y="230" width="26" height="14" fill="none"/>
+            <rect x="218" y="230" width="26" height="14" fill="#c05b3c"/>
+            <rect x="252" y="230" width="26" height="14" fill="none"/>
+            <rect x="286" y="230" width="26" height="14" fill="url(#hatch)"/>
+            <rect x="320" y="230" width="26" height="14" fill="none"/>
+          </g>
+          <text x="253" y="258" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#211d18" opacity="0.55">POOL / PLATFORM / MODEL / SHADOW</text>
+        </svg>
+        </div>
+        <figcaption>版画示意：观测与配置从主站（MAP）移进网关自己的控制台，红色实线为本日打通的配置读取链路。</figcaption>
+      </figure>
+    </div>
+    <blockquote class="pull"><span class="qt">看板、配置、证据都在网关自己的地盘闭环，运维不再回主站绕路。</span><span class="by">—— 本日头条要义</span></blockquote>
+    <div class="howto">
+      <b>怎么用</b>
+      打开 llmgw-web 控制台并登录，首页即全面概览；左侧导航进入模型池 / 平台 / 模型 / 影子对比各配置面。
+    </div>
+  </article>
+
+  <article class="story">
+    <div class="kicker">工程治理</div>
+    <h4>「治网关剥离五大痛点」整体方案落地：规则、看板、双出口、自检一次配齐</h4>
+    <p class="prose">
+      针对剥离工程反复出现的五类痛点，今天一次性落地了成套治理：5 条规则写进仓库约束后续开发，
+      活看板实时追踪剥离进度与证据，HTTPS 双出口保证网关与主站各自可达，
+      serving 侧新增密钥自检——并把 dev-stub 与真实平台分开分类，消除了此前「吓人但良性」的误告警。
+    </p>
+  </article>
+
+  <article class="story">
+    <div class="kicker">剥离工程收尾</div>
+    <h4>A1 收口：GatewayTransport 调用路径可见化，A2 定论「非死码、按开关受控」</h4>
+    <p class="prose">
+      剥离主线的 A1 任务收尾，GatewayTransport 的调用路径全程可见；A2 经分析定论为受 flag 门控的活代码而非死码，
+      工程边界就此写清，后续翻转只剩「攒证据、择机切换」两步。
+    </p>
+  </article>
+
+  <div class="security">
+    <div class="kicker">安全专栏 · SECURITY</div>
+    <h4>网关控制台首登强制改密，公网「admin/admin 裸奔」窗口关闭</h4>
+    <p>
+      控制台内置引导账号首次登录即强制改密；配合「破玻璃」恢复变量只认真值（1/true/yes/on），
+      既保住了忘密码时的终极逃生通道，又不给误触发留缝。
+    </p>
+  </div>
+
+  <div class="note"><b>取证说明</b> 本期为 HTML 版式试刊（第二印）：头条配版画示意图，数据版图表由 git 真实数据生成；界面实拍截图需独立网关控制台登录凭据，待 CDS 环境取证后随刊补图。</div>
+
+  <!-- 优化 + 修复 双栏 -->
+  <div class="two-col">
+    <section>
+      <div class="col-head"><h2>优化</h2><span>REFINE</span></div>
+      <p class="plain">
+        CDS <b>Mongo Console 整体重构</b>：从自由 eval 式命令行改为「只读命令行 + 结构化写入面板」。
+        读操作保留命令行的灵活，写操作一律走表单化受控通道——从架构上让注入类攻击失去落点，
+        也让每一次写库都留下可核对的结构化记录。
+      </p>
+    </section>
+    <section>
+      <div class="col-head"><h2>修复</h2><span>FIXES</span><span class="w">21 起 · 按主题聚类</span></div>
+      <ul class="fix-cluster">
+        <li>
+          <div class="ct"><b>网关控制台登录链路</b><i>7 起</i></div>
+          <p>一条「反复登不进」顽疾按根因逐层拆除：口令改为项目 env 权威、账号迁独立集合 llmgw_console_users、内置 admin/admin 引导自愈、彻底移除 env 口令依赖、破玻璃变量收紧取值。</p>
+        </li>
+        <li>
+          <div class="ct"><b>Mongo Console 安全加固</b><i>7 起</i></div>
+          <p>堵死多语句写提权与模板串 / 箭头函数 / 计算成员里的隐藏执行；扫描先抹字面量再匹配，消除数据子串误判；受控写补资源名二次确认，与既有写门同门槛。</p>
+        </li>
+        <li>
+          <div class="ct"><b>网关配置与告警</b><i>4 起</i></div>
+          <p>池默认端点拒绝 isDefault=false（防清空某类型唯一默认池）；密钥自检区分 dev-stub 与真实平台；Stub 平台密钥误告警修复；Bugbot 三项审查意见处理。</p>
+        </li>
+        <li>
+          <div class="ct"><b>体验与工程杂项</b><i>3 起</i></div>
+          <p>概览页任一接口失败也收敛 loading 并顶部明示故障；发布评论不可变问题修复；CI 的 pnpm workspace 缓存路径修复。</p>
+        </li>
+      </ul>
+    </section>
+  </div>
+
+  <!-- 数据版 -->
+  <div class="col-head"><h2>数据版</h2><span>BY THE NUMBERS</span><span class="w">全部来自 git 主干</span></div>
+  <div class="data-grid">
+    <section>
+      <div class="chart-title">今日战场</div>
+      <div class="chart-sub">TOP 6 模块 · 按文件变更次数</div>
+      <div class="hbar hot"><span class="lb">prd-llmgw-web</span><span class="track"><i style="width:100%"></i></span><span class="v">24</span></div>
+      <div class="hbar hot"><span class="lb">prd-llmgw</span><span class="track"><i style="width:96%"></i></span><span class="v">23</span></div>
+      <div class="hbar"><span class="lb">doc</span><span class="track"><i style="width:92%"></i></span><span class="v">22</span></div>
+      <div class="hbar"><span class="lb">cds</span><span class="track"><i style="width:88%"></i></span><span class="v">21</span></div>
+      <div class="hbar"><span class="lb">changelogs</span><span class="track"><i style="width:58%"></i></span><span class="v">14</span></div>
+      <div class="hbar"><span class="lb">prd-api</span><span class="track"><i style="width:46%"></i></span><span class="v">11</span></div>
+      <p class="byline-row">红色为本日主战场：独立网关前后端合计 47 次文件变更，占据绝对头版。</p>
+    </section>
+    <section>
+      <div class="chart-title">三十八格铅字</div>
+      <div class="chart-sub">每格一个提交 · 按类型着色</div>
+      <div class="waffle">
+        <i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i>
+        <i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i>
+        <i class="tfix"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i>
+        <i class="tfeat"></i><i class="tfeat"></i><i class="tfeat"></i><i class="tfeat"></i><i class="tref"></i><i class="tci"></i><i class="tdoc" style="visibility:hidden"></i><i class="tdoc" style="visibility:hidden"></i><i class="tdoc" style="visibility:hidden"></i><i class="tdoc" style="visibility:hidden"></i>
+      </div>
+      <div class="legend">
+        <span><i class="tfix" style="background:var(--ink)"></i>fix 21</span>
+        <span><i style="background:rgba(33,29,24,0.22)"></i>docs 9</span>
+        <span><i style="background:var(--terra)"></i>feat 4</span>
+        <span><i style="background:var(--indigo)"></i>refactor 1</span>
+        <span><i style="background:rgba(79,70,229,0.28)"></i>ci 1</span>
+      </div>
+      <p class="byline-row">署名：Claude 34 · inernoro 3 · InerNoro 1（双写法同一人）</p>
+    </section>
+  </div>
+
+  <!-- 计划与遗留 -->
+  <section class="plan">
+    <div class="col-head"><h2>计划与遗留</h2><span>NEXT &amp; DEBT</span></div>
+    <ul>
+      <li>网关安全路径已达成阶段目标：下一步开启 shadow 影子比对攒证据，证据足够后择机 turnkey 翻转到独立网关。</li>
+      <li>像素级视觉验收暂受沙箱代理限制，看板以功能验收 + serving 自检证据代替，已在看板注明。</li>
+      <li>CDS 的 _global 环境变量未注入 llmgw 容器的问题已记录在案，等基建侧修复后补真机取证。</li>
+      <li>每日熵减计划 2026-W27：完成索引补录与 changelog 到 doc 的补录（D2 / D3 / D6 三项）。</li>
+    </ul>
+  </section>
+
+  <!-- 数据页脚 -->
+  <div class="stat-row">
+    <div><b>38</b><span>真实提交</span></div>
+    <div><b>4</b><span>新增方向</span></div>
+    <div><b>21</b><span>修复</span></div>
+    <div><b>2</b><span>子系统大修</span></div>
+    <div><b>1</b><span>顽疾根治</span></div>
+  </div>
+
+  <footer class="colophon">
+    <span>米多智能体日报 · 数据来自 git 主干当日落地提交</span>
+    <span>MAP DAILY · 2026-07-03 · NO.184</span>
+  </footer>
+</div>
+</body>
+</html>

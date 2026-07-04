@@ -24,6 +24,8 @@ export function InlineCommentMargin({
   onDelete,
   onClose,
   width = 300,
+  variant = 'side',
+  expandAll = false,
 }: {
   comments: DocumentInlineComment[];
   canCreate: boolean;
@@ -44,7 +46,11 @@ export function InlineCommentMargin({
   }, entryId?: string) => Promise<boolean>;
   onDelete: (comment: DocumentInlineComment) => void;
   onClose?: () => void;
-  width?: number;
+  width?: number | string;
+  /** side=桌面右栏；sheet=移动端底部面板，不参与正文分栏。 */
+  variant?: 'side' | 'sheet';
+  /** 移动端空间来自底部面板，批注内容全部展开，避免文字被折叠。 */
+  expandAll?: boolean;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -69,7 +75,7 @@ export function InlineCommentMargin({
 
   const total = comments.length;
   // 密集才折叠：≤3 组时全展开（边读边看不打折），>3 组时非激活折叠成一行
-  const dense = anchored.length > 3;
+  const dense = !expandAll && anchored.length > 3;
 
   // 激活时把对应卡片滚到批注栏可视区
   useEffect(() => {
@@ -99,11 +105,11 @@ export function InlineCommentMargin({
       >
         <div style={{ position: 'absolute', left: 0, top: 10, bottom: 10, width: 3, borderRadius: 3, background: col }} />
         <div
-          className="mb-2 pl-1.5 py-0.5 text-[11px] line-clamp-2"
+          className={`mb-2 pl-1.5 py-0.5 text-[11px] ${expandAll ? 'whitespace-pre-wrap break-words' : 'line-clamp-2'}`}
           style={{ color: 'var(--text-muted)' }}
           title={g.comments[0].selectedText}
         >
-          {g.comments[0].selectedText.length > 120 ? g.comments[0].selectedText.slice(0, 120) + '…' : g.comments[0].selectedText}
+          {expandAll ? g.comments[0].selectedText : (g.comments[0].selectedText.length > 120 ? g.comments[0].selectedText.slice(0, 120) + '…' : g.comments[0].selectedText)}
         </div>
         <div className="space-y-2.5">
           {g.comments.map((c) => <CommentLine key={c.id} comment={c} canDelete={canDelete?.(c)} onDelete={onDelete} />)}
@@ -143,7 +149,15 @@ export function InlineCommentMargin({
   };
 
   return (
-    <div className="flex-none flex flex-col min-h-0" style={{ width, borderLeft: '1px solid rgba(255,255,255,0.05)', background: 'rgba(255,255,255,0.012)' }}>
+    <div
+      className="flex-none flex flex-col min-h-0"
+      style={{
+        width,
+        height: variant === 'sheet' ? '100%' : undefined,
+        borderLeft: variant === 'side' ? '1px solid rgba(255,255,255,0.05)' : undefined,
+        background: variant === 'sheet' ? 'rgba(24,24,30,0.96)' : 'rgba(255,255,255,0.012)',
+      }}
+    >
       <div className="flex items-center justify-between px-3.5 py-3 flex-none" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
         <div className="flex items-center gap-1.5 text-[11px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
           <MessageSquareText size={13} style={{ color: 'rgba(216,180,254,0.95)' }} />

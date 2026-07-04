@@ -22,6 +22,14 @@ function safeQuery(sel: string | null | undefined): Element | null {
   }
 }
 
+function isVisualAuditMode(): boolean {
+  try {
+    return new URLSearchParams(window.location.search).get('visualAudit') === '1';
+  } catch {
+    return false;
+  }
+}
+
 /**
  * 飞回 + 接住的共享时序(SSOT)。两段动画必须挂在同一条「合成层时钟」上,且都用 delay 预约,
  * 不靠「飞完 onfinish → setState → 重渲染」那条主线程链路触发 —— 否则页面卡顿时主线程被占满,
@@ -269,6 +277,7 @@ function EntryLandingFx({
  */
 export function SpotlightOverlay() {
   const navigate = useNavigate();
+  const visualAuditMode = isVisualAuditMode();
   const [rect, setRect] = useState<DOMRect | null>(null);
   const [payload, setPayload] = useState<SpotlightActionPayload | null>(null);
   const [stepIndex, setStepIndex] = useState<number>(0);
@@ -302,6 +311,17 @@ export function SpotlightOverlay() {
   // 解决「同页面点 CTA 时 React Router 不 re-mount」导致 overlay 不启动的 bug。
   useEffect(() => {
     const readAndStart = () => {
+      if (visualAuditMode) {
+        try {
+          sessionStorage.removeItem(SPOTLIGHT_ACTION_KEY);
+          sessionStorage.removeItem(SPOTLIGHT_TARGET_KEY);
+        } catch {
+          /* noop */
+        }
+        setPayload(null);
+        setDismissed(true);
+        return;
+      }
       let initial: SpotlightActionPayload | null = null;
       try {
         const raw = sessionStorage.getItem(SPOTLIGHT_ACTION_KEY);
@@ -349,7 +369,7 @@ export function SpotlightOverlay() {
     return () => {
       window.removeEventListener(SPOTLIGHT_PAYLOAD_UPDATED_EVENT, readAndStart);
     };
-  }, []);
+  }, [visualAuditMode]);
 
   // ---- 当前 step 的 selector(Steps 优先,否则用 payload.selector)----
   const steps = payload?.autoAction?.steps ?? null;

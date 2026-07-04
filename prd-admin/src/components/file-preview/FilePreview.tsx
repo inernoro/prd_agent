@@ -122,14 +122,25 @@ export function FilePreview({ entry, preview }: { entry?: DocBrowserEntry; previ
         // 阅读区一条滚动条（修复「白底 iframe + 暗底外层」双滚动条）。
         // fileUrl（上传 .html，跨源不可量高）：保持最严 sandbox="" + 100% 高，行为不变。
         sandbox={fileUrl ? '' : 'allow-same-origin'}
+        // srcDoc 必须 scrolling="no"：自增高偶有 1px 量差时 iframe 会变成"可滚几个像素"，
+        // 滚轮手势悬在其上会被 iframe 吃掉并 latch（滚一下卡住、停顿后才轮到外层）——
+        // 用户实测手感"像非牛顿流体"。内部滚动一律禁死，滚轮永远直达外层阅读区。
+        scrolling={fileUrl ? undefined : 'no'}
         onLoad={fileUrl ? undefined : (e) => {
           try {
-            const ifr = e.currentTarget as HTMLIFrameElement & { __roFit?: ResizeObserver };
+            const ifr = e.currentTarget as HTMLIFrameElement & { __roFit?: ResizeObserver; __fitH?: number };
             const d = ifr.contentDocument;
             if (!d || !d.documentElement) return;
             const fit = () => {
               const h = Math.max(d.documentElement?.scrollHeight || 0, d.body?.scrollHeight || 0);
-              if (h > 0) ifr.style.height = h + 'px';
+              if (h <= 0) return;
+              // +2px 缓冲吃掉小数像素舍入；±2px 阈值防振荡——否则"外层滚动条出现/消失
+              // → 内容重排 → 高度再变 → RO 再触发"会形成往复写高，滚动锚定跟着来回
+              // 调 scrollTop，与用户手势打架（"某个东西牵动某个东西"的阻滞感）。
+              const target = Math.ceil(h) + 2;
+              if (ifr.__fitH !== undefined && Math.abs(target - ifr.__fitH) <= 2) return;
+              ifr.__fitH = target;
+              ifr.style.height = target + 'px';
             };
             fit();
             // 关键：内容会在 onLoad 之后继续变高（base64 图片/字体异步加载、响应式重排），
@@ -151,7 +162,9 @@ export function FilePreview({ entry, preview }: { entry?: DocBrowserEntry; previ
           } catch { /* 跨源不可量，保持默认高度 */ }
         }}
         className="w-full rounded-lg"
-        style={{ height: fileUrl ? '100%' : 'auto', minHeight: 480, border: '1px solid rgba(255,255,255,0.06)', background: '#fff' }}
+        // overflowAnchor none：把 iframe 从外层滚动器的 scroll anchoring 候选里摘出去，
+        // 自增高过程中浏览器不再为"补偿高度变化"回调 scrollTop（滚动阻滞感的另一半根因）。
+        style={{ height: fileUrl ? '100%' : 'auto', minHeight: 480, border: '1px solid rgba(255,255,255,0.06)', background: '#fff', overflowAnchor: 'none' }}
       />
     );
   }
