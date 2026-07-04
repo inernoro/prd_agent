@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""日报发布到知识库（文档空间），或 --local 落本地 md。
+"""日报发布到知识库（文档空间），或 --local 落本地文件。
 
 find-or-create「日报知识库」→（有截图则先上传图、回填 {{IMG:}}/{{EVIDENCE}} 占位）→
 建条目 → 写正文（带 hasContent 校验 + 空壳兜底）→ 出分享链。
 鉴权：优先 DAILY_DOC_STORE_KEY=sk-ak-*（Bearer，最小权限 document-store:write），
 回退 AI_ACCESS_KEY 超级密钥 + X-AI-Impersonate。
+
+格式二选项（--report-md / --report-html 恰好传一个）：
+  --report-md    Markdown 版（contentType=text/markdown，MarkdownViewer 渲染）
+  --report-html  报纸版（contentType=text/html，知识库 FilePreview 走 srcDoc 沙箱 iframe
+                 真渲染；HTML 必须自包含：内联 CSS、无外部资源、**无 JS**——沙箱不给
+                 allow-scripts，脚本不会执行；必须自带 <meta viewport>）
 
 用法：
   export AI_ACCESS_KEY=...
@@ -12,6 +18,8 @@ find-or-create「日报知识库」→（有截图则先上传图、回填 {{IMG
     --impersonate inernoro --title "日报-2026-05-31-今日大事早知道" \
     --daily-date 2026-05-31 --report-md /tmp/daily.md \
     --manifest /tmp/acc_shots/manifest.json   # 可选：harness 产出的截图清单
+  # HTML 报纸版：
+  python3 publish.py --base ... --title "..." --report-html /tmp/daily.html
   # 无密钥 / 无文档空间时退化为本地：
   python3 publish.py --local --title "..." --report-md /tmp/daily.md --out fallback.md \
     --manifest /tmp/acc_shots/manifest.json
@@ -129,6 +137,18 @@ def apply_evidence(body, name_to_md):
     return content
 
 
+def html_escape(s):
+    return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
+def img_embed(url_or_path, caption, is_html):
+    """按格式生成截图嵌入片段：md 走 ![]()，html 走 <figure>（吃 HTML 模板的 figure 样式）。"""
+    if is_html:
+        cap = html_escape(caption)
+        return f'<figure><img src="{html_escape(url_or_path)}" alt="{cap}"><figcaption>{cap}</figcaption></figure>'
+    return f"![{caption}]({url_or_path})"
+
+
 def assert_no_placeholder(content):
     """发布前硬闸：正文残留 {{IMG:}}/{{EVIDENCE}} 占位 → 拒发，避免读者看到坏占位。"""
     left = PLACEHOLDER_RE.findall(content)
@@ -138,8 +158,9 @@ def assert_no_placeholder(content):
             "：要么传 --manifest 提供对应截图，要么从正文删掉这些占位后再发。")
 
 
-def run_local(a, body, manifest):
-    out = a.out or f"daily-{resolve_daily_date(a.daily_date, a.title) or 'report'}.md"
+def run_local(a, body, manifest, is_html):
+    ext = "html" if is_html else "md"
+    out = a.out or f"daily-{resolve_daily_date(a.daily_date, a.title) or 'report'}.{ext}"
     name_to_md = {}
     if manifest:
         shot_dir = os.path.splitext(out)[0] + "_shots"
@@ -148,7 +169,8 @@ def run_local(a, body, manifest):
             dst = os.path.join(shot_dir, f"{m['name']}.png")
             shutil.copyfile(m["path"], dst)
             cap = m.get("caption", m["name"])
-            name_to_md[m["name"]] = f"![{cap}](./{os.path.basename(shot_dir)}/{m['name']}.png)"
+            rel = f"./{os.path.basename(shot_dir)}/{m['name']}.png"
+            name_to_md[m["name"]] = img_embed(rel, cap, is_html)
             print(f"  拷贝截图 {m['name']} -> {dst}")
     body = apply_evidence(body, name_to_md)
     assert_no_placeholder(body)
@@ -164,20 +186,45 @@ def main():
     ap.add_argument("--base", default="", help="环境 base URL，如 https://main-prd-agent.miduo.org（doc-store 模式必填）")
     ap.add_argument("--impersonate", default="inernoro")
     ap.add_argument("--title", required=True)
-    ap.add_argument("--report-md", required=True, help="正文 md（以 # 标题打头，可含 {{IMG:<name>}}/{{EVIDENCE}} 占位）")
+    ap.add_argument("--report-md", default="", help="Markdown 版正文（以 # 标题打头，可含 {{IMG:<name>}}/{{EVIDENCE}} 占位）")
+    ap.add_argument("--report-html", default="", help="报纸版 HTML 正文（自包含：内联 CSS、自带 viewport、禁 JS/外部资源）")
     ap.add_argument("--daily-date", default="", help="metadata.dailyDate（YYYY-MM-DD）；缺省时从标题提取")
     ap.add_argument("--manifest", default="", help="harness 截图清单 json：[{name,caption,path}]；有截图时必传")
-    ap.add_argument("--local", action="store_true", help="不发网络，落本地 md（无密钥/无文档空间时用）")
+    ap.add_argument("--local", action="store_true", help="不发网络，落本地文件（无密钥/无文档空间时用）")
     ap.add_argument("--out", default="", help="--local 模式输出路径")
     a = ap.parse_args()
 
-    body = open(a.report_md, encoding="utf-8").read().lstrip()
-    if not body.startswith("#"):
-        body = f"# {a.title}\n\n" + body
+    if bool(a.report_md) == bool(a.report_html):
+        sys.stderr.write("[错误] --report-md 与 --report-html 恰好传一个（格式二选项）。\n")
+        sys.exit(6)
+    is_html = bool(a.report_html)
+
+    if is_html:
+        body = open(a.report_html, encoding="utf-8").read().lstrip()
+        low = body.lower()
+        errs = []
+        if "<html" not in low:
+            errs.append("不是完整 HTML 文档（缺 <html>）——报纸版必须是自包含整页")
+        if "viewport" not in low:
+            errs.append("缺 <meta viewport>——移动端会按 980px 桌面视口缩放，整页变小")
+        if "<script" in low:
+            errs.append("含 <script>——知识库沙箱 iframe 不给 allow-scripts，脚本不会执行，请改纯 CSS 实现")
+        if "data:image" in low:
+            errs.append("含 data:image——后端知识库正文有防破图守卫会直接拒存，纹理/图标请改纯 CSS 渐变或内联 SVG 标签")
+        for pat in ('src="http', "src='http", 'href="http', "href='http"):
+            if pat in low:
+                errs.append("引用了外部资源（http 链接的 src/href）——必须自包含（内联 CSS / data URI），仅允许知识库上传返回的站内图片 URL")
+                break
+        if errs:
+            raise RuntimeError("HTML 报纸版校验未通过：\n  - " + "\n  - ".join(errs))
+    else:
+        body = open(a.report_md, encoding="utf-8").read().lstrip()
+        if not body.startswith("#"):
+            body = f"# {a.title}\n\n" + body
     manifest = load_manifest(a.manifest)
 
     if a.local:
-        run_local(a, body, manifest)
+        run_local(a, body, manifest, is_html)
         return
     if not a.base:
         sys.stderr.write("[错误] doc-store 模式需要 --base；或改用 --local。\n")
@@ -220,7 +267,7 @@ def main():
             d = curl(H + ["-F", f"file=@{m['path']}", f"{base}/stores/{rid}/upload"])["data"]
             url = d["fileUrl"]
             cap = m.get("caption", m["name"])
-            name_to_md[m["name"]] = f"![{cap}]({url})"
+            name_to_md[m["name"]] = img_embed(url, cap, is_html)
             # upload 会建一个文件条目，取 URL 后删掉，避免库里多出图片条目
             tmp_eid = (d.get("entry") or {}).get("id")
             if tmp_eid:
@@ -238,11 +285,13 @@ def main():
 
     # create entry（失败则回滚新建的库）
     daily_date = resolve_daily_date(a.daily_date, a.title)
-    meta = {"kind": "daily-report", "dailyDate": daily_date}
+    meta = {"kind": "daily-report", "dailyDate": daily_date,
+            "format": "html" if is_html else "md"}
+    content_type = "text/html" if is_html else "text/markdown"
     try:
         eid = curl(HJ + ["-X", "POST", "-d", json.dumps({
-            "title": a.title, "summary": f"# {a.title}",
-            "sourceType": "reference", "contentType": "text/markdown",
+            "title": a.title, "summary": a.title if is_html else f"# {a.title}",
+            "sourceType": "reference", "contentType": content_type,
             "tags": ["日报", "今日大事"], "metadata": meta,
         }), f"{base}/stores/{rid}/entries"])["data"]["id"]
     except Exception as e:

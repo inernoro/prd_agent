@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<!--
+  报纸版日报模板（米多智能体日报）— daily-report-summary 格式二选项之 html。
+
+  使用方法：整页复制，替换日期/期号/统计等具体值与各 article/li 的正文。
+  下方正文是 2026-07-03 期的真实成稿，直接作为「写成什么样」的对照样例。
+
+  硬约束（publish.py --report-html 会校验）：
+  1. 自包含：内联 CSS、无外部 http 资源；图片仅允许知识库 upload 返回的站内 URL
+  2. 禁 script 标签：知识库沙箱 iframe 不给 allow-scripts，动效一律纯 CSS
+  3. 必带 meta viewport：否则移动端按 980px 桌面视口缩放、整页变小
+  4. 禁 emoji（CLAUDE.md 规则 0），图标一律内联 SVG
+  5. 分层权重同 SKILL.md 纪律 1：今日大事 -> 新增方向(头条展开) -> 优化/修复 -> 计划与遗留；
+     期号 = 当年第几天（date +%j），星期用中文
+  6. 截图占位 {{IMG:<name>}} 放对应 story 内（publish.py 替换成 figure 结构，
+     样式已就绪）；无截图的新功能段必须文字注明原因（.note 块），不留占位
+  7. 修复段聚类计数（.fix-cluster），安全/数据类单独进 .security 专栏点名
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>日报-2026-07-03-今日大事早知道</title>
+<style>
+  :root {
+    --paper: #f7f1e8;
+    --paper-2: #fffdf8;
+    --ink: #211d18;
+    --ink-2: rgba(33,29,24,0.74);
+    --ink-3: rgba(33,29,24,0.48);
+    --line: rgba(33,29,24,0.14);
+    --line-2: rgba(33,29,24,0.30);
+    --terra: #c05b3c;
+    --indigo: #4f46e5;
+    --serif: "Source Serif 4", "Songti SC", "Noto Serif SC", "STSong", Georgia, serif;
+    --sans: -apple-system, "PingFang SC", "HarmonyOS Sans SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
+    --mono: "SF Mono", "JetBrains Mono", Consolas, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--paper); color: var(--ink); font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+    background-image:
+      radial-gradient(ellipse 80% 40% at 50% -6%, rgba(192,91,60,0.05), transparent),
+      repeating-linear-gradient(0deg, rgba(33,29,24,0.016) 0 1px, transparent 1px 3px);
+    
+  }
+  .paper { max-width: 960px; margin: 0 auto; padding: 26px 34px 60px; }
+  @media (max-width: 640px) { .paper { padding: 18px 16px 44px; } }
+
+  /* ══ 报头 ══ */
+  .masthead { display: flex; align-items: center; gap: 16px; padding-bottom: 14px; border-bottom: 2.5px solid var(--ink); }
+  .stamp {
+    width: 46px; height: 46px; flex-shrink: 0;
+    background: var(--terra); color: #fff7ee; border-radius: 4px;
+    display: grid; place-items: center;
+    font-family: var(--serif); font-weight: 700; font-size: 15px; letter-spacing: 0.04em;
+    box-shadow: 3px 3px 0 rgba(33,29,24,0.82);
+  }
+  .masthead .t b { font-family: var(--serif); font-size: 25px; font-weight: 700; letter-spacing: 0.02em; display: block; }
+  .masthead .t span { font-family: var(--mono); font-size: 10px; color: var(--ink-3); letter-spacing: 0.34em; }
+  .masthead .r { margin-left: auto; text-align: right; font-family: var(--mono); font-size: 10px; color: var(--ink-3); letter-spacing: 0.14em; line-height: 1.9; }
+  .dateline {
+    display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    padding: 9px 0; border-bottom: 1px solid var(--line);
+    font-family: var(--mono); font-size: 11px; color: var(--ink-3); letter-spacing: 0.1em;
+  }
+  .dateline b { color: var(--terra); font-weight: 600; }
+
+  /* ══ 今日大事 ══ */
+  .tldr { margin-top: 26px; border: 1.5px solid var(--ink); border-radius: 3px; background: var(--paper-2); box-shadow: 5px 5px 0 rgba(33,29,24,0.12); }
+  .tldr .hd {
+    display: flex; align-items: baseline; gap: 12px;
+    padding: 13px 20px 11px; border-bottom: 1.5px solid var(--ink);
+  }
+  .tldr .hd h2 { font-family: var(--serif); font-size: 19px; font-weight: 700; }
+  .tldr .hd span { font-family: var(--mono); font-size: 10px; letter-spacing: 0.24em; color: var(--terra); }
+  .tldr ol { list-style: none; counter-reset: n; padding: 6px 20px 12px; }
+  .tldr li { counter-increment: n; display: flex; gap: 14px; padding: 10px 0; border-bottom: 1px dotted var(--line); font-size: 14px; line-height: 1.75; color: var(--ink-2); }
+  .tldr li:last-child { border-bottom: none; }
+  .tldr li::before {
+    content: counter(n, decimal-leading-zero);
+    font-family: var(--mono); font-size: 11px; color: var(--terra); flex-shrink: 0; margin-top: 4px;
+  }
+  .tldr li b { color: var(--ink); font-weight: 600; }
+
+  /* ══ 栏目通用 ══ */
+  .col-head { display: flex; align-items: baseline; gap: 12px; margin: 40px 0 6px; padding-bottom: 10px; border-bottom: 2px solid var(--ink); }
+  .col-head h2 { font-family: var(--serif); font-size: 20px; font-weight: 700; }
+  .col-head span { font-family: var(--mono); font-size: 10px; letter-spacing: 0.24em; color: var(--ink-3); }
+  .col-head .w { margin-left: auto; font-family: var(--mono); font-size: 10.5px; color: var(--terra); letter-spacing: 0.1em; }
+
+  /* 头条 */
+  .lead-story { padding: 22px 0 8px; border-bottom: 1px solid var(--line); }
+  .kicker { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.22em; color: var(--indigo); margin-bottom: 10px; }
+  .lead-story h3 { font-family: var(--serif); font-size: clamp(24px, 3.6vw, 34px); font-weight: 650; line-height: 1.35; }
+  .lead-story h3 em { font-style: normal; position: relative; white-space: nowrap; }
+  .lead-story h3 em::after { content: ""; position: absolute; left: -1%; right: -1%; bottom: 7%; height: 0.3em; background: rgba(192,91,60,0.2); z-index: -1; transform: skewX(-8deg); }
+  .lead-story .prose { margin-top: 16px; font-size: 14.5px; line-height: 2.0; color: var(--ink-2); text-align: justify; }
+  .prose b { color: var(--ink); font-weight: 600; }
+  .prose .q { color: var(--terra); font-weight: 600; }
+  .howto {
+    margin-top: 14px; padding: 12px 16px; border-left: 3px solid var(--terra);
+    background: rgba(192,91,60,0.05); font-size: 13px; line-height: 1.9; color: var(--ink-2);
+  }
+  .howto b { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.18em; color: var(--terra); display: block; margin-bottom: 3px; }
+
+  /* 次级文章 */
+  .story { padding: 20px 0; border-bottom: 1px solid var(--line); }
+  .story:last-child { border-bottom: none; }
+  .story h4 { font-family: var(--serif); font-size: 18.5px; font-weight: 650; line-height: 1.5; margin-top: 6px; }
+  .story .prose { margin-top: 10px; font-size: 13.5px; line-height: 1.95; color: var(--ink-2); text-align: justify; }
+  .story figure { margin: 14px 0 4px; }
+  .story figure img { width: 100%; border: 1.5px solid var(--ink); border-radius: 3px; box-shadow: 4px 4px 0 rgba(33,29,24,0.10); display: block; }
+  .story figcaption { margin-top: 8px; font-size: 12px; color: var(--ink-3); line-height: 1.7; }
+  .story figcaption::before { content: "图"; font-family: var(--mono); font-size: 9.5px; color: var(--terra); border: 1px solid var(--terra); border-radius: 2px; padding: 1px 5px; margin-right: 8px; letter-spacing: 0.1em; }
+
+  /* 安全专栏印章感 */
+  .security { border: 1.5px solid var(--terra); border-radius: 3px; background: rgba(192,91,60,0.04); padding: 16px 18px; margin-top: 20px; }
+  .security .kicker { color: var(--terra); }
+  .security h4 { font-family: var(--serif); font-size: 17px; font-weight: 700; }
+  .security p { margin-top: 8px; font-size: 13px; line-height: 1.9; color: var(--ink-2); }
+
+  /* 双栏（优化 + 修复） */
+  .two-col { display: grid; grid-template-columns: 1fr 1.35fr; gap: 0; }
+  .two-col > section { min-width: 0; }
+  .two-col > section:first-child { border-right: 1px solid var(--line); padding-right: 26px; }
+  .two-col > section:last-child { padding-left: 26px; }
+  @media (max-width: 760px) {
+    .two-col { grid-template-columns: 1fr; }
+    .two-col > section:first-child { border-right: none; padding-right: 0; }
+    .two-col > section:last-child { padding-left: 0; }
+  }
+  .plain { padding: 16px 0; font-size: 13.5px; line-height: 1.95; color: var(--ink-2); text-align: justify; }
+
+  .fix-cluster { list-style: none; padding-top: 6px; }
+  .fix-cluster li { padding: 12px 0; border-bottom: 1px dotted var(--line); }
+  .fix-cluster li:last-child { border-bottom: none; }
+  .fix-cluster .ct {
+    display: flex; align-items: baseline; gap: 10px; margin-bottom: 5px;
+  }
+  .fix-cluster .ct b { font-family: var(--serif); font-size: 14.5px; font-weight: 700; }
+  .fix-cluster .ct i {
+    font-style: normal; font-family: var(--mono); font-size: 10px; color: #fff7ee;
+    background: var(--ink); border-radius: 2px; padding: 2px 7px; letter-spacing: 0.08em;
+  }
+  .fix-cluster p { font-size: 12.5px; line-height: 1.85; color: var(--ink-2); }
+
+  /* 计划与遗留 */
+  .plan { border-top: 2px solid var(--ink); margin-top: 40px; }
+  .plan .col-head { border-bottom: 1px solid var(--line); margin-top: 18px; }
+  .plan ul { list-style: none; padding: 8px 0 0; }
+  .plan li { display: flex; gap: 12px; padding: 9px 0; font-size: 13px; line-height: 1.8; color: var(--ink-2); border-bottom: 1px dotted var(--line); }
+  .plan li:last-child { border-bottom: none; }
+  .plan li::before { content: "—"; color: var(--terra); flex-shrink: 0; }
+
+  /* 数据页脚 */
+  .stat-row { display: flex; margin-top: 34px; border: 1px solid var(--line); border-radius: 3px; overflow: hidden; background: rgba(255,253,248,0.6); }
+  .stat-row div { flex: 1; padding: 14px 6px; text-align: center; border-right: 1px solid var(--line); }
+  .stat-row div:last-child { border-right: none; }
+  .stat-row b { font-family: var(--serif); font-size: 22px; font-weight: 700; display: block; }
+  .stat-row span { font-size: 10.5px; color: var(--ink-3); letter-spacing: 0.04em; }
+  .colophon {
+    margin-top: 26px; padding-top: 12px; border-top: 2px solid var(--ink);
+    display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; color: var(--ink-3);
+  }
+  .note { margin-top: 14px; font-size: 12px; color: var(--ink-3); line-height: 1.8; }
+  .note b { font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; color: var(--terra); }
+</style>
+</head>
+<body>
+<div class="paper">
+
+  <!-- 报头 -->
+  <header class="masthead">
+    <div class="stamp">MAP</div>
+    <div class="t">
+      <b>米多智能体日报</b>
+      <span>MIDUO AGENT DAILY</span>
+    </div>
+    <div class="r">今日大事早知道<br>日报智能体 · 自动编印</div>
+  </header>
+  <div class="dateline">
+    <span>2026 年 7 月 3 日 · 星期五 · 第 <b>184</b> 期</span>
+    <span>主干落地 <b>38</b> 次真实提交 · feat 4 / fix 21 / docs 9 / refactor 1 / ci 1 · 3 个署名</span>
+  </div>
+
+  <!-- 今日大事 -->
+  <section class="tldr">
+    <div class="hd"><h2>今日大事</h2><span>TL;DR</span></div>
+    <ol>
+      <li><b>LLM 网关独立控制台落下「可配置第一刀」</b>：全面概览页上线，模型池 / 平台 / 模型 / 影子对比四张配置面以只读形态开放。</li>
+      <li><b>控制台「反复登不进」被连根治好</b>：账号迁独立集合、内置引导账号自愈、首登强制改密，另留「破玻璃」恢复通道。</li>
+      <li><b>CDS Mongo Console 安全大修</b>：重构为「只读命令行 + 结构化写入面板」，连续七刀堵死 eval 注入与多语句写提权。</li>
+      <li><b>「治网关剥离五大痛点」方案落地</b>：5 条规则进仓库 + 活看板追踪 + HTTPS 双出口 + serving 密钥自检。</li>
+      <li><b>三个小而准的修复</b>：Stub 平台密钥误告警、发布评论不可变问题、CI 缓存路径。</li>
+    </ol>
+  </section>
+
+  <!-- 新增方向 -->
+  <div class="col-head"><h2>新增方向</h2><span>FEATURES</span><span class="w">本日 4 项 · 头条展开</span></div>
+
+  <article class="lead-story">
+    <div class="kicker">头条 · PRD-LLMGW 独立网关</div>
+    <h3>网关控制台迎来「可配置第一刀」，<br>从<em>只能看</em>进化为<em>能看能配</em>。</h3>
+    <p class="prose">
+      <b>是什么：</b>为 LLM 网关物理剥离工程配套的独立控制台（prd-llmgw-web）今天一次落下两块拼图——
+      <b>全面概览页</b>把平台在线状态、模型池、调用量、健康探针收进一屏；
+      <b>四张配置面</b>（模型池 / 平台 / 模型 / 影子对比）以只读形态上线，配置数据第一次在网关自己的地盘可见。
+      <b>解决什么：</b>网关独立之后，运维观测一直要回主站后台绕路；现在看板、配置、证据都在网关侧闭环，
+      为后续「只读转可写」的渐进放开铺好了地基。
+    </p>
+    <div class="howto">
+      <b>怎么用</b>
+      打开 llmgw-web 控制台并登录，首页即全面概览；左侧导航进入模型池 / 平台 / 模型 / 影子对比各配置面。
+    </div>
+  </article>
+
+  <article class="story">
+    <div class="kicker">工程治理</div>
+    <h4>「治网关剥离五大痛点」整体方案落地：规则、看板、双出口、自检一次配齐</h4>
+    <p class="prose">
+      针对剥离工程反复出现的五类痛点，今天一次性落地了成套治理：5 条规则写进仓库约束后续开发，
+      活看板实时追踪剥离进度与证据，HTTPS 双出口保证网关与主站各自可达，
+      serving 侧新增密钥自检——并把 dev-stub 与真实平台分开分类，消除了此前「吓人但良性」的误告警。
+    </p>
+  </article>
+
+  <article class="story">
+    <div class="kicker">剥离工程收尾</div>
+    <h4>A1 收口：GatewayTransport 调用路径可见化，A2 定论「非死码、按开关受控」</h4>
+    <p class="prose">
+      剥离主线的 A1 任务收尾，GatewayTransport 的调用路径全程可见；A2 经分析定论为受 flag 门控的活代码而非死码，
+      工程边界就此写清，后续翻转只剩「攒证据、择机切换」两步。
+    </p>
+  </article>
+
+  <div class="security">
+    <div class="kicker">安全专栏 · SECURITY</div>
+    <h4>网关控制台首登强制改密，公网「admin/admin 裸奔」窗口关闭</h4>
+    <p>
+      控制台内置引导账号首次登录即强制改密；配合「破玻璃」恢复变量只认真值（1/true/yes/on），
+      既保住了忘密码时的终极逃生通道，又不给误触发留缝。
+    </p>
+  </div>
+
+  <div class="note"><b>取证说明</b> 本期为 HTML 版式首刊试印；新增功能集中在独立网关控制台，需独立登录凭据取证，本期未附界面截图，下期恢复截图取证。</div>
+
+  <!-- 优化 + 修复 双栏 -->
+  <div class="two-col">
+    <section>
+      <div class="col-head"><h2>优化</h2><span>REFINE</span></div>
+      <p class="plain">
+        CDS <b>Mongo Console 整体重构</b>：从自由 eval 式命令行改为「只读命令行 + 结构化写入面板」。
+        读操作保留命令行的灵活，写操作一律走表单化受控通道——从架构上让注入类攻击失去落点，
+        也让每一次写库都留下可核对的结构化记录。
+      </p>
+    </section>
+    <section>
+      <div class="col-head"><h2>修复</h2><span>FIXES</span><span class="w">21 起 · 按主题聚类</span></div>
+      <ul class="fix-cluster">
+        <li>
+          <div class="ct"><b>网关控制台登录链路</b><i>7 起</i></div>
+          <p>一条「反复登不进」顽疾按根因逐层拆除：口令改为项目 env 权威、账号迁独立集合 llmgw_console_users、内置 admin/admin 引导自愈、彻底移除 env 口令依赖、破玻璃变量收紧取值。</p>
+        </li>
+        <li>
+          <div class="ct"><b>Mongo Console 安全加固</b><i>7 起</i></div>
+          <p>堵死多语句写提权与模板串 / 箭头函数 / 计算成员里的隐藏执行；扫描先抹字面量再匹配，消除数据子串误判；受控写补资源名二次确认，与既有写门同门槛。</p>
+        </li>
+        <li>
+          <div class="ct"><b>网关配置与告警</b><i>4 起</i></div>
+          <p>池默认端点拒绝 isDefault=false（防清空某类型唯一默认池）；密钥自检区分 dev-stub 与真实平台；Stub 平台密钥误告警修复；Bugbot 三项审查意见处理。</p>
+        </li>
+        <li>
+          <div class="ct"><b>体验与工程杂项</b><i>3 起</i></div>
+          <p>概览页任一接口失败也收敛 loading 并顶部明示故障；发布评论不可变问题修复；CI 的 pnpm workspace 缓存路径修复。</p>
+        </li>
+      </ul>
+    </section>
+  </div>
+
+  <!-- 计划与遗留 -->
+  <section class="plan">
+    <div class="col-head"><h2>计划与遗留</h2><span>NEXT &amp; DEBT</span></div>
+    <ul>
+      <li>网关安全路径已达成阶段目标：下一步开启 shadow 影子比对攒证据，证据足够后择机 turnkey 翻转到独立网关。</li>
+      <li>像素级视觉验收暂受沙箱代理限制，看板以功能验收 + serving 自检证据代替，已在看板注明。</li>
+      <li>CDS 的 _global 环境变量未注入 llmgw 容器的问题已记录在案，等基建侧修复后补真机取证。</li>
+      <li>每日熵减计划 2026-W27：完成索引补录与 changelog 到 doc 的补录（D2 / D3 / D6 三项）。</li>
+    </ul>
+  </section>
+
+  <!-- 数据页脚 -->
+  <div class="stat-row">
+    <div><b>38</b><span>真实提交</span></div>
+    <div><b>4</b><span>新增方向</span></div>
+    <div><b>21</b><span>修复</span></div>
+    <div><b>2</b><span>子系统大修</span></div>
+    <div><b>1</b><span>顽疾根治</span></div>
+  </div>
+
+  <footer class="colophon">
+    <span>米多智能体日报 · 数据来自 git 主干当日落地提交</span>
+    <span>MAP DAILY · 2026-07-03 · NO.184</span>
+  </footer>
+</div>
+</body>
+</html>

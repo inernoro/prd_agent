@@ -58,6 +58,22 @@ git log --first-parent "$DEFAULT_BRANCH" --format="%cd%x09%H%x09%an%x09%s" --dat
 
 所有计数（提交数、各类型分布、贡献者）必须来自 git 命令输出。若当日零提交，明确写「今日主干无落地提交」并停止，不要硬凑内容。
 
+### 纪律 6：格式二选项 —— html 报纸版（默认）/ md 朴素版
+
+日报正文有两种格式，发布时**恰好选一种**（publish.py 的 `--report-html` / `--report-md` 二选一）：
+
+| 格式 | 模板 | contentType | 渲染路径 | 何时用 |
+|------|------|-------------|----------|--------|
+| **html 报纸版（默认）** | `reference/report-template-html.html` | `text/html` | 知识库 FilePreview 的 srcDoc 沙箱 iframe 真渲染（分享链同链路） | 日常日报一律用这个（用户 2026-07-04 指定：不喜欢 md 版式） |
+| md 朴素版 | `reference/report-template.md` | `text/markdown` | MarkdownViewer | 用户明确要 md、或需要被双链/全文索引深度消费时 |
+
+html 报纸版硬约束（publish.py 发布前校验，违者拒发）：
+- **自包含**：内联 CSS，无外部 http 资源；图片仅允许知识库 upload 返回的站内 URL
+- **禁 `<script>`**：知识库沙箱 iframe 不给 allow-scripts，动效一律纯 CSS
+- **必带 `<meta viewport>`**：否则移动端按 980px 桌面视口缩放、整页变小
+- 版式即「米多智能体日报」报纸风（报头 + 期号 dateline + 今日大事 + 头条展开 + 双栏优化/修复 + 计划与遗留 + 数据页脚）；期号 = 当年第几天（`date +%j`）
+- 内容分层权重与纪律 1 完全一致，格式只改皮不改骨
+
 ## 触发词
 
 "生成日报" / "写日报" / "今日大事" / "今日大事早知道" / "日报" / "daily report" / "/daily" / "今天干了啥"
@@ -146,7 +162,7 @@ cut -f1 /tmp/today_real.tsv | sort | uniq -c | sort -rn
 
 ### Phase 4：生成报告正文
 
-按 `reference/report-template.md` 模板组织（分层权重见纪律 1）。语言全中文，用户视角，禁止 emoji（CLAUDE.md 规则 0）。
+按纪律 6 选格式：**默认 html 报纸版**（`reference/report-template-html.html`，整页复制后替换日期/期号/统计与正文），用户明确要 md 时用 `reference/report-template.md`。分层权重见纪律 1。语言全中文，用户视角，禁止 emoji（CLAUDE.md 规则 0）。
 
 > **零提交硬闸（纪律 5）**：判据用 Phase 2.2 的**真实提交数**（`wc -l < /tmp/today_real.tsv`），**不是** 2.1 的 first-parent 行数——否则一条孤立的 merge 壳会被误当"有活动"，跳过硬闸却发出 header 显示 0 提交的报告。真实提交数为 0 即**到此为止**：写一句「{date} 主干无落地提交」回报用户，**不进入 Phase 4.5 / Phase 5**，绝不发布空壳条目。
 
@@ -185,9 +201,10 @@ python3 .claude/skills/daily-report-summary/reference/publish.py \
   --impersonate inernoro \
   --title "日报-${TODAY}-今日大事早知道" \
   --daily-date "${TODAY}" \
-  --report-md /tmp/daily-${TODAY}.md \
+  --report-html /tmp/daily-${TODAY}.html \  # 默认报纸版；用户要 md 时换 --report-md /tmp/daily-${TODAY}.md
   --manifest /tmp/acc_shots/manifest.json   # 有 Phase 4.5 截图时必传，脚本据此上传图 + 回填 {{IMG:}} 占位
-# 无密钥 / 无文档空间时退化：加 --local --out <path>，落本地 md（仅自查，不算交付）
+# 二选项：--report-html 与 --report-md 恰好传一个（纪律 6）；html 版发布前有自包含/禁脚本/viewport 硬校验
+# 无密钥 / 无文档空间时退化：加 --local --out <path>，落本地文件（仅自查，不算交付）
 ```
 
 鉴权优先级（同 create-visual-test-to-kb）：
