@@ -1,7 +1,7 @@
 /**
  * 首页资源槽位注册表（共享给设置页上传 UI 和 LandingPage 渲染层使用）。
  *
- * - 卡片 slot：`card.{id}` → 首页资源位身份注册，不再作为图片背景渲染
+ * - 卡片 slot：`card.{id}` → 首页顶部快捷入口背景图，可选覆盖默认视觉兜底
  * - Agent 图片 slot：`agent.{agentKey}.image` → 覆盖 Agent 卡封面静态图
  * - Agent 视频 slot：`agent.{agentKey}.video` → 覆盖 Agent 卡 hover 播放视频
  */

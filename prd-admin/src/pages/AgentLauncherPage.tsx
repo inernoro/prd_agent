@@ -78,7 +78,7 @@ import { Reveal } from '@/pages/home/components/Reveal';
 import { TipsRotator } from '@/components/daily-tips/TipsRotator';
 import { UpdateCenterNewsTeaser } from '@/components/ai-news/UpdateCenterNewsTeaser';
 import { LearningCenterTeaser } from '@/components/daily-tips/LearningCenterTeaser';
-import { buildDefaultCoverUrl, buildDefaultVideoUrl } from '@/lib/homepageAssetSlots';
+import { buildDefaultCoverUrl, buildDefaultVideoUrl, cardSlot } from '@/lib/homepageAssetSlots';
 import { useAgentImageUrl, useAgentVideoUrl, useHomepageAssetsStore } from '@/stores/homepageAssetsStore';
 
 /**
@@ -203,6 +203,16 @@ type HomeQuickLink = {
   accent: string;
   gradient: string;
 };
+
+function assetUrlWithVersion(url: string | undefined, updatedAt?: string | null): string | null {
+  const src = String(url || '').trim();
+  if (!src) return null;
+  if (!updatedAt) return src;
+  const time = Date.parse(updatedAt);
+  if (!Number.isFinite(time)) return src;
+  const version = Math.floor(time / 1000);
+  return src.includes('?') ? `${src}&v=${version}` : `${src}?v=${version}`;
+}
 
 /**
  * 首页顶部快捷卡（MAP Primary Gateways）。
@@ -566,6 +576,7 @@ export default function AgentLauncherPage() {
   const changelogUnread = useChangelogStore(selectUnreadCount);
   const loadChangelogCurrentWeek = useChangelogStore((s) => s.loadCurrentWeek);
   const loadHomepageAssets = useHomepageAssetsStore((s) => s.load);
+  const homepageAssets = useHomepageAssetsStore((s) => s.assets);
 
   // 周报海报(主页弹窗)
   const loadWeeklyPoster = useWeeklyPosterStore((s) => s.loadCurrent);
@@ -835,6 +846,8 @@ export default function AgentLauncherPage() {
                 const Icon = link.icon;
                 const isUpdates = link.id === 'updates';
                 const showUnread = isUpdates && changelogUnread > 0;
+                const cardAsset = link.id ? homepageAssets[cardSlot(link.id)] : undefined;
+                const cardBgUrl = assetUrlWithVersion(cardAsset?.url, cardAsset?.updatedAt);
                 return (
                   <Reveal
                     key={link.path}
@@ -848,7 +861,7 @@ export default function AgentLauncherPage() {
                     onClick={() => navigate(link.path)}
                     className="group relative text-left rounded-2xl overflow-hidden transition-all duration-300 hover:-translate-y-0.5 w-full"
                     style={{
-                      background: 'linear-gradient(180deg, rgba(255,255,255,0.045) 0%, rgba(255,255,255,0.02) 100%)',
+                      background: `linear-gradient(145deg, ${link.accent}24 0%, rgba(255,255,255,0.045) 38%, rgba(0,0,0,0.30) 100%)`,
                       border: '1px solid rgba(255,255,255,0.08)',
                       padding: isMobile ? '14px 14px 16px' : '20px',
                       minHeight: isMobile ? 96 : 140,
@@ -856,7 +869,26 @@ export default function AgentLauncherPage() {
                       aspectRatio: isMobile ? 'auto' : '21/9',
                     }}
                   >
-                    {/* 简约几何光晕：首页卡片不再铺图片背景。 */}
+                    {cardBgUrl && (
+                      <img
+                        src={cardBgUrl}
+                        alt=""
+                        className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-[1.04]"
+                        loading={idx < 4 ? 'eager' : 'lazy'}
+                        decoding="async"
+                        aria-hidden="true"
+                      />
+                    )}
+                    {cardBgUrl && (
+                      <div
+                        className="absolute inset-0 pointer-events-none"
+                        style={{
+                          background:
+                            'linear-gradient(180deg, rgba(6,7,12,0.12) 0%, rgba(6,7,12,0.30) 45%, rgba(6,7,12,0.86) 100%)',
+                        }}
+                      />
+                    )}
+                    {/* 上传图优先；无图时用高可见度默认视觉，避免顶部卡片退成空灰底。 */}
                     <div
                       className="absolute pointer-events-none transition-opacity duration-300"
                       style={{
@@ -864,8 +896,8 @@ export default function AgentLauncherPage() {
                         right: -40,
                         width: 200,
                         height: 200,
-                        background: `radial-gradient(circle at center, ${link.accent}26 0%, ${link.accent}0a 40%, transparent 70%)`,
-                        opacity: 0.8,
+                        background: `radial-gradient(circle at center, ${link.accent}${cardBgUrl ? '30' : '48'} 0%, ${link.accent}${cardBgUrl ? '10' : '20'} 38%, transparent 72%)`,
+                        opacity: cardBgUrl ? 0.55 : 1,
                       }}
                     />
                     <div
@@ -873,13 +905,25 @@ export default function AgentLauncherPage() {
                       style={{
                         inset: 0,
                         backgroundImage:
-                          'linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px)',
+                          `linear-gradient(rgba(255,255,255,${cardBgUrl ? '0.035' : '0.07'}) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,${cardBgUrl ? '0.025' : '0.045'}) 1px, transparent 1px)`,
                         backgroundSize: '42px 42px',
-                        opacity: 0.18,
+                        opacity: cardBgUrl ? 0.14 : 0.28,
                         maskImage: 'linear-gradient(135deg, rgba(0,0,0,0.78) 0%, transparent 70%)',
                         WebkitMaskImage: 'linear-gradient(135deg, rgba(0,0,0,0.78) 0%, transparent 70%)',
                       }}
                     />
+                    {!cardBgUrl && (
+                      <Icon
+                        size={isMobile ? 78 : 116}
+                        className="absolute right-6 top-1/2 -translate-y-1/2 pointer-events-none transition-transform duration-500 group-hover:scale-105"
+                        style={{
+                          color: link.accent,
+                          opacity: 0.15,
+                          filter: `drop-shadow(0 0 24px ${link.accent}55)`,
+                        }}
+                        aria-hidden="true"
+                      />
+                    )}
 
                     {/* Hover 边框辉光 */}
                     <div
