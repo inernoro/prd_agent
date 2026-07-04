@@ -20,7 +20,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { ArrowRight, Eye, EyeOff, Github, Loader2 } from 'lucide-react';
 import ShapeGrid from '@/components/effects/ShapeGrid';
 import { ShinyText } from '@/components/effects/ShinyText';
-import { CdsMetallicLogo } from '@/components/brand/CdsMetallicLogo';
+import { CdsGem } from '@/components/brand/CdsGem';
 import { Button } from '@/components/ui/button';
 import { apiUrl, fetchBootstrapStatus, bootstrapFirstUser, fetchSessionAuthed } from '@/lib/api';
 import { useTheme } from '@/lib/theme';
@@ -130,7 +130,8 @@ function AuthForm(): JSX.Element {
       }}
     >
       <div className="cds-auth-mark" aria-hidden>
-        <CdsMetallicLogo className="h-10 w-10" />
+        {/* 登录卡是品牌标的主舞台:一次性逐面组装入场,之后切面轮流闪辉 */}
+        <CdsGem mode="brand" entrance className="h-10 w-10" />
         <span className="cds-auth-secure">
           <span className="cds-auth-pulse" />
           same-origin · secure
@@ -265,7 +266,7 @@ function AuthFormSkeleton(): JSX.Element {
   return (
     <div className="cds-auth-card" role="status" aria-label="正在检查会话">
       <div className="cds-auth-mark" aria-hidden>
-        <CdsMetallicLogo className="h-10 w-10" />
+        <CdsGem className="h-10 w-10" />
       </div>
       <div className="cds-loading-skeleton-line h-6 w-44 max-w-full" />
       <div className="mt-2 cds-loading-skeleton-line h-4 w-64 max-w-full" />
@@ -352,7 +353,7 @@ export function LoginPage(): JSX.Element {
 
       <header className="cds-auth-header">
         <Link to="/" className="cds-auth-brand" viewTransition>
-          <CdsMetallicLogo className="h-6 w-6" />
+          <CdsGem className="h-6 w-6" />
           <span>Cloud Dev Suite</span>
         </Link>
       </header>

@@ -65,6 +65,10 @@
       0 1px 2px rgb(0 0 0 / 0.32),
       0 12px 28px -12px rgb(0 0 0 / 0.5),
       0 40px 80px -32px rgb(0 0 0 / 0.6);
+
+    /* 品牌宝石(紫晶六芒)的辉光色 — 与功能色 --primary(橙)分离,
+       只用于品牌标 / 加载器的 glow。 */
+    --gem: 258 66% 64%;
   }
 
   [data-theme='light'] {
@@ -110,6 +114,9 @@
       0 1px 2px hsl(24 30% 20% / 0.05),
       0 8px 24px -12px hsl(24 30% 20% / 0.12),
       0 32px 64px -32px hsl(24 30% 20% / 0.15);
+
+    /* 品牌宝石辉光 — 亮色主题降一点亮度,避免紫晕发灰。 */
+    --gem: 258 55% 52%;
   }
 
   :root {
@@ -828,29 +835,7 @@
   .cds-rail-avatar {
     @apply relative flex h-12 w-12 shrink-0 items-center justify-center overflow-visible;
     color: hsl(var(--foreground));
-    filter: drop-shadow(0 0 16px hsl(var(--primary) / 0.2));
-  }
-
-  .cds-rail-avatar::before {
-    content: '';
-    position: absolute;
-    inset: 0.18rem;
-    border-radius: 999px;
-    background:
-      conic-gradient(
-        from 42deg,
-        transparent 0deg,
-        transparent 252deg,
-        hsl(var(--primary) / 0.78) 274deg,
-        hsl(25 95% 58% / 0.84) 288deg,
-        transparent 306deg,
-        transparent 360deg
-      );
-    -webkit-mask: radial-gradient(circle, transparent 0 67%, #000 68% 74%, transparent 75%);
-    mask: radial-gradient(circle, transparent 0 67%, #000 68% 74%, transparent 75%);
-    animation: cds-brand-orbit 6s linear infinite;
-    opacity: 0.9;
-    pointer-events: none;
+    filter: drop-shadow(0 0 16px hsl(var(--gem) / 0.22));
   }
 
   .cds-rail-avatar::after {
@@ -858,7 +843,7 @@
     position: absolute;
     inset: 0;
     border-radius: 999px;
-    background: radial-gradient(circle, hsl(var(--primary) / 0.16), transparent 64%);
+    background: radial-gradient(circle, hsl(var(--gem) / 0.16), transparent 64%);
     opacity: 0.82;
     animation: cds-brand-pulse 3.6s ease-in-out infinite;
     pointer-events: none;
@@ -869,23 +854,85 @@
     z-index: 1;
     width: 2.4rem;
     height: 2.4rem;
-    animation: cds-metallic-drift 8s ease-in-out infinite;
+    animation: cds-gem-drift 8s ease-in-out infinite;
     transform-origin: center;
   }
 
-  .cds-metallic-logo {
+  /* ===== 宝石六芒(CdsGem)— 状态系统设定 v2 =====
+     一颗几何多种矿色各司一态;动效签名与状态紧急度成正比:
+     brand 闪辉 / build·deploy 流波 / live 呼吸 / pending 明暗 /
+     fail 抖动 / stop 静止半亮 / frozen 极缓微波 / loader 组装循环。 */
+
+  .cds-gem {
+    display: block;
     overflow: visible;
-    filter: drop-shadow(0 0 10px hsl(var(--primary) / 0.24));
+    filter: drop-shadow(0 0 10px hsl(var(--gem) / 0.18));
   }
 
-  .cds-metallic-logo-orbits {
-    stroke-width: 3.9;
-    stroke-dasharray: 100 34;
-    animation: cds-metallic-stroke 7.5s ease-in-out infinite;
+  .cds-gem-facet {
+    transform-origin: center;
+    transform-box: fill-box;
   }
 
-  .cds-metallic-logo-core {
-    animation: cds-metallic-core 3.8s ease-in-out infinite;
+  /* 品牌:切面轮流闪辉 */
+  .cds-gem--brand .cds-gem-facet {
+    animation: cds-gem-facet-glow 3.4s ease-in-out infinite alternate;
+    animation-delay: var(--gg, 0s);
+  }
+
+  /* 一次性逐面组装入场(登录卡/冷启动) */
+  .cds-gem--entrance .cds-gem-facet {
+    animation:
+      cds-gem-pop 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both,
+      cds-gem-facet-glow 3.4s ease-in-out 1.2s infinite alternate;
+    animation-delay: var(--gd, 0s), calc(var(--gg, 0s) + 1.2s);
+  }
+
+  /* 构建中:切面流波(光沿宝石跑圈);部署中:更急促的流波 */
+  .cds-gem--build .cds-gem-facet {
+    animation: cds-gem-wave 2s ease-in-out infinite;
+    animation-delay: calc(var(--gi, 0) * 0.155s);
+  }
+
+  .cds-gem--deploy .cds-gem-facet {
+    animation: cds-gem-wave 1.15s ease-in-out infinite;
+    animation-delay: calc(var(--gi, 0) * 0.09s);
+  }
+
+  /* 在线:平稳呼吸(心率最低) */
+  .cds-gem--live {
+    animation: cds-gem-breath 3.8s ease-in-out infinite alternate;
+  }
+
+  /* 排队:慢速明暗 */
+  .cds-gem--pending {
+    animation: cds-gem-pend 2.8s ease-in-out infinite alternate;
+  }
+
+  /* 失败:短促一抖后静止,每 5.5s 提醒一抖 */
+  .cds-gem--fail {
+    animation: cds-gem-shake 5.5s linear infinite;
+  }
+
+  /* 已停止:静止半亮,零动效 */
+  .cds-gem--stop {
+    opacity: 0.5;
+  }
+
+  /* 冻结:极缓微波,冰下有光 */
+  .cds-gem--frozen .cds-gem-facet {
+    animation: cds-gem-frost 5.2s ease-in-out infinite;
+    animation-delay: calc(var(--gi, 0) * 0.32s);
+  }
+
+  /* 加载器:逐面组装 → 保持 → 溶解 → 循环 */
+  .cds-gem--loader {
+    animation: cds-gem-veil 2.9s ease-in-out infinite;
+  }
+
+  .cds-gem--loader .cds-gem-facet {
+    animation: cds-gem-assemble 2.9s cubic-bezier(0.34, 1.56, 0.64, 1) infinite;
+    animation-delay: calc(var(--gi, 0) * 0.1s);
   }
 
   .cds-logo-loader {
@@ -900,27 +947,7 @@
     align-items: center;
     justify-content: center;
     color: currentColor;
-    filter: drop-shadow(0 0 10px hsl(var(--primary) / 0.2));
-  }
-
-  .cds-logo-loader-mark::before {
-    content: '';
-    position: absolute;
-    inset: -0.45em;
-    border-radius: 999px;
-    background:
-      radial-gradient(circle, hsl(var(--primary) / 0.16), transparent 58%),
-      conic-gradient(from 210deg, transparent 0 70%, hsl(var(--primary) / 0.42) 78%, hsl(25 95% 58% / 0.68) 86%, transparent 93% 100%);
-    -webkit-mask: radial-gradient(circle, transparent 0 57%, #000 58% 68%, transparent 69%);
-    mask: radial-gradient(circle, transparent 0 57%, #000 58% 68%, transparent 69%);
-    animation: cds-brand-orbit 4.8s linear infinite;
-    opacity: 0.82;
-  }
-
-  .cds-logo-loader .cds-metallic-logo {
-    position: relative;
-    z-index: 1;
-    animation: cds-metallic-drift 6.5s ease-in-out infinite;
+    filter: drop-shadow(0 0 10px hsl(var(--gem) / 0.16));
   }
 
   .cds-rail-brand-title {
@@ -951,51 +978,124 @@
     animation-duration: 4s;
   }
 
-  @keyframes cds-brand-spin {
+  @keyframes cds-gem-facet-glow {
+    from {
+      opacity: 0.74;
+    }
     to {
-      transform: rotate(360deg);
-    }
-  }
-
-  @keyframes cds-metallic-stroke {
-    0%,
-    100% {
-      stroke-dashoffset: 0;
-      opacity: 0.88;
-      filter: saturate(0.95) brightness(0.95);
-    }
-    50% {
-      stroke-dashoffset: -84;
-      opacity: 1;
-      filter: saturate(1.18) brightness(1.18);
-    }
-  }
-
-  @keyframes cds-metallic-core {
-    0%,
-    100% {
-      transform: scale(0.9);
-      opacity: 0.72;
-    }
-    50% {
-      transform: scale(1.12);
       opacity: 1;
     }
   }
 
-  @keyframes cds-metallic-drift {
+  @keyframes cds-gem-pop {
+    from {
+      transform: scale(0);
+      opacity: 0;
+    }
+    to {
+      transform: scale(1);
+      opacity: 1;
+    }
+  }
+
+  @keyframes cds-gem-wave {
+    0%,
+    100% {
+      opacity: 0.32;
+    }
+    13% {
+      opacity: 1;
+    }
+    30% {
+      opacity: 0.55;
+    }
+  }
+
+  @keyframes cds-gem-breath {
+    from {
+      transform: scale(1);
+      opacity: 0.92;
+    }
+    to {
+      transform: scale(1.03);
+      opacity: 1;
+    }
+  }
+
+  @keyframes cds-gem-pend {
+    from {
+      opacity: 0.42;
+    }
+    to {
+      opacity: 0.85;
+    }
+  }
+
+  @keyframes cds-gem-shake {
+    0%,
+    100% {
+      transform: translate(0, 0);
+    }
+    2% {
+      transform: translate(-2.4px, 0);
+    }
+    4% {
+      transform: translate(2px, 0);
+    }
+    6% {
+      transform: translate(-1.2px, 0);
+    }
+    8% {
+      transform: translate(0.6px, 0);
+    }
+    10% {
+      transform: translate(0, 0);
+    }
+  }
+
+  @keyframes cds-gem-frost {
+    0%,
+    100% {
+      opacity: 0.55;
+    }
+    14% {
+      opacity: 0.95;
+    }
+  }
+
+  @keyframes cds-gem-assemble {
+    0% {
+      transform: scale(0);
+      opacity: 0;
+    }
+    10% {
+      transform: scale(1);
+      opacity: 1;
+    }
+    100% {
+      transform: scale(1);
+      opacity: 1;
+    }
+  }
+
+  @keyframes cds-gem-veil {
+    0%,
+    78% {
+      opacity: 1;
+    }
+    92%,
+    100% {
+      opacity: 0;
+    }
+  }
+
+  @keyframes cds-gem-drift {
     0%,
     100% {
       transform: rotate(-2deg) scale(1);
     }
     50% {
       transform: rotate(2deg) scale(1.04);
-    }
-  }
-
-  @keyframes cds-brand-orbit {
-    to {
-      transform: rotate(-360deg);
     }
   }
 
@@ -1022,15 +1122,12 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .cds-rail-avatar::before,
     .cds-rail-avatar::after,
     .cds-rail-avatar-icon,
-    .cds-metallic-logo-orbits,
-    .cds-metallic-logo-core,
-    .cds-logo-loader-mark::before,
-    .cds-logo-loader .cds-metallic-logo,
+    .cds-gem,
+    .cds-gem-facet,
     .cds-rail-brand-title {
-      animation: none;
+      animation: none !important;
     }
   }
 
