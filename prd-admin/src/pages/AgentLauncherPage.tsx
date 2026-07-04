@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Search,
@@ -15,10 +15,26 @@ import {
   FileSearch,
   BarChart3,
   Bot,
+  AudioLines,
+  Blocks,
+  BookOpen,
+  Clapperboard,
+  Factory,
+  FolderKanban,
+  GitPullRequest,
+  GraduationCap,
   Store,
   Library,
+  Link2,
+  ListTree,
+  Mail,
+  Mic,
+  Plug,
+  Route,
+  Share2,
   Sparkles,
   Sparkle,
+  Terminal,
   Workflow,
   Zap,
   Globe,
@@ -62,6 +78,8 @@ import { Reveal } from '@/pages/home/components/Reveal';
 import { TipsRotator } from '@/components/daily-tips/TipsRotator';
 import { UpdateCenterNewsTeaser } from '@/components/ai-news/UpdateCenterNewsTeaser';
 import { LearningCenterTeaser } from '@/components/daily-tips/LearningCenterTeaser';
+import { buildDefaultCoverUrl, buildDefaultVideoUrl } from '@/lib/homepageAssetSlots';
+import { useAgentImageUrl, useAgentVideoUrl, useHomepageAssetsStore } from '@/stores/homepageAssetsStore';
 
 /**
  * 进场动效节奏 —— 与 /home LandingPage 同款 Reveal 组件，duration 减半（1000ms）让整体速度翻倍。
@@ -96,18 +114,23 @@ const REVEAL = {
 // ── Icon & Color mapping (self-contained, doesn't touch ToolCard) ──
 
 const ICON_MAP: Record<string, LucideIcon> = {
-  FileText, Palette, PenTool, Bug, Video, Swords, FileBarChart, Code2, Languages, FileSearch, BarChart3, Bot, Workflow, Zap, Globe, ClipboardCheck, ScanSearch, Wand2,
+  AudioLines, Blocks, BookOpen, Clapperboard, Factory, FileText, Palette, PenTool, Bug, Video, Swords, FileBarChart, Code2, Languages, FileSearch, BarChart3, Bot, Workflow, Zap, Globe, ClipboardCheck, ScanSearch, Wand2,
   // 迁移自用户菜单的管理工具
   FlaskConical, ScrollText, Sparkle, Sparkles, Library, Store,
   // 基础设施
-  FolderHeart, Cpu, Users, Hammer,
+  FolderHeart, Cpu, Users, Hammer, FolderKanban, GitPullRequest, GraduationCap, Link2, ListTree, Mail, Mic, Plug, Route, Share2, Terminal,
   PaSecretary,
 };
 
-// 首页 Agent 卡使用内联插画或几何渐变，不消费图片/视频封面背景。
+// 首页 Agent 卡与百宝箱共用封面资源体系：上传封面 > 默认 CDN 封面 > 内联插画/几何兜底。
 
 /** 每个图标对应的主题色 */
 const ACCENT: Record<string, { from: string; to: string }> = {
+  AudioLines: { from: '#06B6D4', to: '#67E8F9' },
+  Blocks:    { from: '#6366F1', to: '#A5B4FC' },
+  BookOpen:  { from: '#22C55E', to: '#86EFAC' },
+  Clapperboard: { from: '#EC4899', to: '#F9A8D4' },
+  Factory:   { from: '#F97316', to: '#FDBA74' },
   FileText:  { from: '#3B82F6', to: '#60A5FA' },
   Palette:   { from: '#A855F7', to: '#C084FC' },
   PenTool:   { from: '#10B981', to: '#34D399' },
@@ -137,6 +160,16 @@ const ACCENT: Record<string, { from: string; to: string }> = {
   Cpu:       { from: '#6366F1', to: '#A5B4FC' },
   Users:     { from: '#22D3EE', to: '#67E8F9' },
   Hammer:    { from: '#64748B', to: '#94A3B8' },
+  FolderKanban: { from: '#3B82F6', to: '#93C5FD' },
+  GitPullRequest: { from: '#8B5CF6', to: '#C4B5FD' },
+  GraduationCap: { from: '#3B82F6', to: '#93C5FD' },
+  Link2:     { from: '#14B8A6', to: '#5EEAD4' },
+  Mail:      { from: '#F43F5E', to: '#FDA4AF' },
+  Mic:       { from: '#06B6D4', to: '#67E8F9' },
+  Plug:      { from: '#10B981', to: '#6EE7B7' },
+  Route:     { from: '#8B5CF6', to: '#C4B5FD' },
+  Share2:    { from: '#22D3EE', to: '#A5F3FC' },
+  Terminal:  { from: '#64748B', to: '#CBD5E1' },
   // 毒舌秘书：科幻深蓝，与 PaAgentCardArt 内联插画呼应
   PaSecretary:{ from: '#1D4ED8', to: '#67E8F9' },
 };
@@ -145,7 +178,7 @@ function getAccent(icon: string) {
   return ACCENT[icon] ?? { from: '#6366F1', to: '#A5B4FC' };
 }
 
-// 首页固定使用低干扰 CSS 几何暗场，卡片也不渲染图片背景，避免吞掉玻璃层的透明质感。
+// 图片资源不可用时才使用低干扰 CSS 几何暗场，避免卡片变成纯黑底。
 
 function getIcon(name: string): LucideIcon {
   return ICON_MAP[name] || Bot;
@@ -243,11 +276,38 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
   const cardDescription = isPaAgent
     ? '把模糊想法转成 MECE 执行清单的 MBB 级私人助理'
     : item.description;
+  const cdnBaseUrl = useAuthStore((s) => s.cdnBaseUrl ?? '');
+  const uploadedCover = useAgentImageUrl(item.agentKey);
+  const uploadedVideo = useAgentVideoUrl(item.agentKey);
+  const coverUrl = uploadedCover ?? buildDefaultCoverUrl(cdnBaseUrl, item.agentKey);
+  const videoUrl = uploadedVideo ?? buildDefaultVideoUrl(cdnBaseUrl, item.agentKey);
+  const [coverFailed, setCoverFailed] = useState(false);
+  const [videoReady, setVideoReady] = useState(false);
+  const [hovering, setHovering] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const hasCover = Boolean(coverUrl && !coverFailed);
+
+  const handleMouseEnter = () => {
+    setHovering(true);
+    if (videoRef.current && videoReady) {
+      videoRef.current.currentTime = 0;
+      videoRef.current.play().catch(() => {});
+    }
+  };
+
+  const handleMouseLeave = () => {
+    setHovering(false);
+    if (videoRef.current) {
+      videoRef.current.pause();
+    }
+  };
 
   return (
     <button
       type="button"
       onClick={onClick}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
       className="group relative w-full text-left rounded-2xl overflow-hidden transition-all duration-300 hover:-translate-y-1"
       style={{
         background: 'var(--bg-elevated, rgba(255,255,255,0.03))',
@@ -255,31 +315,64 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
         height: 200,
       }}
     >
-      {/* Cover visual: inline art / geometric gradient fallback. No image backgrounds on homepage. */}
-      {/*
-        毒舌秘书走 inline 插画兜底，不用图片封面，保持首页卡片简约一致。
-        这是规则 #8「Agent 开发完成标准」要求的「看起来是个东西」。
-      */}
-      {item.agentKey === 'review-agent' ? (
+      {/* Cover visual: uploaded image / default CDN / inline art / geometric fallback. */}
+      {item.agentKey === 'review-agent' && !uploadedCover ? (
         <ReviewAgentCardArt />
-      ) : item.agentKey === 'pm-agent' ? (
+      ) : item.agentKey === 'pm-agent' && !uploadedCover ? (
         <PmAgentCardArt />
-      ) : item.agentKey === 'product-agent' ? (
+      ) : item.agentKey === 'product-agent' && !uploadedCover ? (
         <ProductAgentCardArt />
-      ) : item.agentKey === 'project-route-agent' ? (
+      ) : item.agentKey === 'project-route-agent' && !uploadedCover ? (
         <ProjectRouteAgentCardArt />
-      ) : item.agentKey === 'pa-agent' ? (
+      ) : item.agentKey === 'pa-agent' && !uploadedCover ? (
         <PaAgentCardArt />
+      ) : hasCover ? (
+        <>
+          <img
+            src={coverUrl ?? ''}
+            alt={item.name}
+            className="absolute inset-0 z-0 h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-[1.04]"
+            draggable={false}
+            onError={() => setCoverFailed(true)}
+          />
+          {videoUrl && (
+            <video
+              ref={videoRef}
+              src={videoUrl}
+              muted
+              loop
+              playsInline
+              preload="metadata"
+              onCanPlayThrough={() => setVideoReady(true)}
+              className="absolute inset-0 z-[1] h-full w-full object-cover transition-opacity duration-500"
+              style={{ opacity: hovering && videoReady ? 1 : 0 }}
+            />
+          )}
+        </>
       ) : (
         <div
-          className="absolute inset-0"
+          className="absolute inset-0 z-0"
           style={{
             background: `
-              radial-gradient(ellipse at 70% 20%, ${accent.from}18 0%, transparent 60%),
-              radial-gradient(ellipse at 20% 80%, ${accent.from}10 0%, transparent 50%)
+              radial-gradient(circle at 20% 18%, ${accent.from}45 0%, transparent 28%),
+              radial-gradient(ellipse at 78% 22%, ${accent.to}26 0%, transparent 42%),
+              radial-gradient(ellipse at 30% 84%, ${accent.from}20 0%, transparent 50%),
+              linear-gradient(180deg, rgba(26, 28, 40, 0.98) 0%, rgba(8, 9, 14, 1) 100%)
             `,
           }}
-        />
+        >
+          <div
+            className="absolute left-1/2 top-[34%] flex h-20 w-20 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-3xl transition-transform duration-500 group-hover:scale-105"
+            style={{
+              background: `linear-gradient(135deg, ${accent.from}32, rgba(255,255,255,0.06))`,
+              border: `1px solid ${accent.from}38`,
+              boxShadow: `0 18px 60px -22px ${accent.from}, inset 0 1px 0 rgba(255,255,255,0.22)`,
+              backdropFilter: 'blur(10px)',
+            }}
+          >
+            <Icon size={34} strokeWidth={1.45} style={{ color: accent.to, filter: `drop-shadow(0 8px 24px ${accent.from}85)` }} />
+          </div>
+        </div>
       )}
 
       {/* 统一暗角蒙版：让内联插画和几何渐变读起来像一家人。 */}
@@ -308,9 +401,9 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
       <div 
         className="absolute top-4 left-4 z-[10] shrink-0 w-11 h-11 rounded-2xl flex items-center justify-center transition-transform duration-300 group-hover:scale-110"
         style={{
-          background: `linear-gradient(135deg, ${accent.from}50, ${accent.from}15)`,
-          border: `1px solid ${accent.from}60`,
-          boxShadow: `0 8px 24px -8px ${accent.from}90, inset 0 1px 0 rgba(255,255,255,0.25)`,
+          background: `linear-gradient(135deg, ${accent.from}70, rgba(12,14,22,0.78))`,
+          border: `1px solid ${accent.from}80`,
+          boxShadow: `0 10px 30px -10px ${accent.from}, inset 0 1px 0 rgba(255,255,255,0.30)`,
           backdropFilter: 'blur(8px)'
         }}
       >
@@ -472,6 +565,7 @@ export default function AgentLauncherPage() {
   // 更新中心未读数（用于首页快捷卡的红点徽章）
   const changelogUnread = useChangelogStore(selectUnreadCount);
   const loadChangelogCurrentWeek = useChangelogStore((s) => s.loadCurrentWeek);
+  const loadHomepageAssets = useHomepageAssetsStore((s) => s.load);
 
   // 周报海报(主页弹窗)
   const loadWeeklyPoster = useWeeklyPosterStore((s) => s.loadCurrent);
@@ -505,8 +599,9 @@ export default function AgentLauncherPage() {
     loadItems();
     void loadChangelogCurrentWeek({ daysLimit: 8 });
     void loadHomeLauncherPreferences();
+    void loadHomepageAssets();
     void loadWeeklyPoster();
-  }, [loadItems, loadChangelogCurrentWeek, loadHomeLauncherPreferences, loadWeeklyPoster]);
+  }, [loadItems, loadChangelogCurrentWeek, loadHomeLauncherPreferences, loadHomepageAssets, loadWeeklyPoster]);
 
   // 静态入口（智能体 / 实用工具 / 基础设施）—— 数据源统一在 lib/homeLauncherItems（桌面+移动共用）
   const staticAgents: ToolboxItem[] = useMemo(() => buildStaticAgents(), []);
