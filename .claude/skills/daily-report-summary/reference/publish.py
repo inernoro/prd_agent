@@ -219,21 +219,24 @@ class _ReportScanner(HTMLParser):
                 continue
             n, v = name.lower(), val.strip()
             if n in self.LOAD_ATTRS or (n == "data" and tag == "object"):
-                if _is_external(v):
-                    self._err(f"<{tag} {n}> 引用外部加载资源（{v[:60]}）——必须自包含，图片仅允许知识库 upload 返回的站内 URL（{{{{IMG:}}}} 占位流程）")
-                if v.lower().startswith("data:image"):
-                    self._err("加载属性含 data:image——后端知识库正文有防破图守卫会拒存，请改站内 URL 或内联 SVG 标签")
+                self._check_load_url(tag, n, v)
             elif n == "srcset":
                 for part in v.split(","):
                     cand = part.strip().split()[0] if part.strip() else ""
-                    if _is_external(cand):
-                        self._err(f"srcset 引用外部图片（{cand[:60]}）——必须自包含，仅允许站内 URL")
-                        break
+                    if cand:
+                        self._check_load_url(tag, "srcset", cand)
             elif n in ("href", "xlink:href") and tag in self.HREF_LOADING_TAGS:
-                if _is_external(v):
-                    self._err(f"<{tag}> 的 {n} 引用外部资源（{v[:60]}）——样式必须内联、SVG 必须完全内联绘制；导航链接请用 <a href>")
+                self._check_load_url(tag, n, v)
             if n == "style" and v:
                 self.css_chunks.append(v)
+
+    def _check_load_url(self, tag, attr, url):
+        """加载型 URL 的统一判定：外链与 data:image 两条禁令对所有加载位置一视同仁。
+        parser 已完成实体解码，data&#58;image 这类编码形态在此处即原形（Codex P2）。"""
+        if _is_external(url):
+            self._err(f"<{tag} {attr}> 引用外部加载资源（{url[:60]}）——必须自包含，图片仅允许知识库 upload 返回的站内 URL（{{{{IMG:}}}} 占位流程）；导航链接请用 <a href>")
+        if url.lower().lstrip().startswith("data:image"):
+            self._err(f"<{tag} {attr}> 含 data:image——后端知识库正文有防破图守卫会拒存，请改站内 URL 或内联 SVG 标签")
 
 
 def validate_html_report(body):
