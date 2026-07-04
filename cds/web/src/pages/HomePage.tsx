@@ -14,7 +14,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import ShapeGrid from '@/components/effects/ShapeGrid';
 import { ShinyText } from '@/components/effects/ShinyText';
-import { CdsMetallicLogo } from '@/components/brand/CdsMetallicLogo';
+import { CdsGem } from '@/components/brand/CdsGem';
 import { fetchSessionAuthed } from '@/lib/api';
 import './HomePage.css';
 
@@ -277,9 +277,7 @@ export function HomePage(): JSX.Element {
           <nav className="cdsh-nav cdsh-rise" style={{ animationDelay: '0s' }}>
             <Link className="cdsh-brand" to="/">
               <span className="cdsh-logo">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                  <circle cx="12" cy="12" r="2.4" /><path d="M12 2a10 10 0 0 0 0 20M2 12a10 10 0 0 0 20 0" />
-                </svg>
+                <CdsGem mode="brand" className="h-[20px] w-[20px]" />
               </span>
               <b>Cloud Dev Suite</b>
             </Link>
@@ -603,7 +601,7 @@ export function HomePage(): JSX.Element {
           <div className="cdsh-footer-grid">
             <div className="cdsh-footer-brand">
               <div className="cdsh-brand">
-                <CdsMetallicLogo className="h-7 w-7" />
+                <CdsGem mode="brand" className="h-7 w-7" />
                 <b>Cloud Dev Suite</b>
               </div>
               <p>Branch-native control plane for the whole stack.</p>

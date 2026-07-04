@@ -65,10 +65,6 @@
       0 1px 2px rgb(0 0 0 / 0.32),
       0 12px 28px -12px rgb(0 0 0 / 0.5),
       0 40px 80px -32px rgb(0 0 0 / 0.6);
-
-    /* 品牌宝石(紫晶六芒)的辉光色 — 与功能色 --primary(橙)分离,
-       只用于品牌标 / 加载器的 glow。 */
-    --gem: 258 66% 64%;
   }
 
   [data-theme='light'] {
@@ -114,9 +110,6 @@
       0 1px 2px hsl(24 30% 20% / 0.05),
       0 8px 24px -12px hsl(24 30% 20% / 0.12),
       0 32px 64px -32px hsl(24 30% 20% / 0.15);
-
-    /* 品牌宝石辉光 — 亮色主题降一点亮度,避免紫晕发灰。 */
-    --gem: 258 55% 52%;
   }
 
   :root {
@@ -835,7 +828,7 @@
   .cds-rail-avatar {
     @apply relative flex h-12 w-12 shrink-0 items-center justify-center overflow-visible;
     color: hsl(var(--foreground));
-    filter: drop-shadow(0 0 16px hsl(var(--gem) / 0.22));
+    filter: drop-shadow(0 0 16px hsl(var(--primary) / 0.22));
   }
 
   .cds-rail-avatar::after {
@@ -843,7 +836,7 @@
     position: absolute;
     inset: 0;
     border-radius: 999px;
-    background: radial-gradient(circle, hsl(var(--gem) / 0.16), transparent 64%);
+    background: radial-gradient(circle, hsl(var(--primary) / 0.16), transparent 64%);
     opacity: 0.82;
     animation: cds-brand-pulse 3.6s ease-in-out infinite;
     pointer-events: none;
@@ -866,7 +859,7 @@
   .cds-gem {
     display: block;
     overflow: visible;
-    filter: drop-shadow(0 0 10px hsl(var(--gem) / 0.18));
+    filter: drop-shadow(0 0 10px hsl(var(--primary) / 0.18));
   }
 
   .cds-gem-facet {
@@ -874,18 +867,28 @@
     transform-box: fill-box;
   }
 
-  /* 品牌:切面轮流闪辉 */
+  /* 品牌:整体微呼吸 + 每 5.2s 一道流光沿切面扫过一圈(灵动但不聒噪);
+     hover 时流光提速成一圈快旋。 */
+  .cds-gem--brand {
+    animation: cds-gem-breath 4.2s ease-in-out infinite alternate;
+  }
+
   .cds-gem--brand .cds-gem-facet {
-    animation: cds-gem-facet-glow 3.4s ease-in-out infinite alternate;
-    animation-delay: var(--gg, 0s);
+    animation: cds-gem-ripple 5.2s ease-in-out infinite;
+    animation-delay: calc(var(--gi, 0) * 0.12s);
+  }
+
+  .cds-gem--brand:hover .cds-gem-facet {
+    animation-duration: 1.3s;
+    animation-delay: calc(var(--gi, 0) * 0.045s);
   }
 
   /* 一次性逐面组装入场(登录卡/冷启动) */
   .cds-gem--entrance .cds-gem-facet {
     animation:
       cds-gem-pop 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both,
-      cds-gem-facet-glow 3.4s ease-in-out 1.2s infinite alternate;
-    animation-delay: var(--gd, 0s), calc(var(--gg, 0s) + 1.2s);
+      cds-gem-ripple 5.2s ease-in-out 1.2s infinite;
+    animation-delay: var(--gd, 0s), calc(var(--gi, 0) * 0.12s + 1.2s);
   }
 
   /* 构建中:切面流波(光沿宝石跑圈);部署中:更急促的流波 */
@@ -947,7 +950,7 @@
     align-items: center;
     justify-content: center;
     color: currentColor;
-    filter: drop-shadow(0 0 10px hsl(var(--gem) / 0.16));
+    filter: drop-shadow(0 0 10px hsl(var(--primary) / 0.16));
   }
 
   .cds-rail-brand-title {
@@ -978,11 +981,13 @@
     animation-duration: 4s;
   }
 
-  @keyframes cds-gem-facet-glow {
-    from {
-      opacity: 0.74;
+  @keyframes cds-gem-ripple {
+    0%,
+    16%,
+    100% {
+      opacity: 0.82;
     }
-    to {
+    6% {
       opacity: 1;
     }
   }

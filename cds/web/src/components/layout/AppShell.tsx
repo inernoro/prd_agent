@@ -578,12 +578,11 @@ function RailNav({ active, canLogout, logoutState, onLogout, onNavigate }: RailN
 function AppRail(props: RailNavProps): JSX.Element {
   return (
     <nav className="cds-rail" aria-label="主导航">
+      {/* 72px 窄栏放不下标题:此前的空标题块(flex-1)会把头像挤离中心,
+          形成"位置偏移"(2026-07-04 用户验收图3)。窄栏只放居中的宝石。 */}
       <div className="cds-rail-brand">
-        <div className="cds-rail-avatar" aria-label="CDS">
+        <div className="cds-rail-avatar" aria-label="CDS" title="Cloud Dev Suite">
           <CdsMetallicLogo className="cds-rail-avatar-icon" aria-hidden />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="cds-rail-brand-title truncate">Cloud Dev Suite</div>
         </div>
       </div>
       <RailNav {...props} />

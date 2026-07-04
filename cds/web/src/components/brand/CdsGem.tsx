@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils';
  */
 
 export type GemMineral =
+  | 'ember'
   | 'amethyst'
   | 'amber'
   | 'galaxy'
@@ -33,8 +34,10 @@ export type GemMode =
   | 'frozen'
   | 'loader';
 
-/** 十二矿色页比稿选定的色阶(暗 → 亮,6 阶)。 */
+/** 矿色色阶(暗 → 亮,6 阶)。ember 为品牌色:与系统 --primary(hue 24 橙)同调,
+    瓷贴片暖色语言原生适配;amethyst 保留为备选。 */
 export const GEM_SHADES: Record<GemMineral, readonly [string, string, string, string, string, string]> = {
+  ember: ['#7c2d12', '#9a3412', '#c2410c', '#ea580c', '#f97316', '#fb923c'],
   amethyst: ['#2e1065', '#4c1d95', '#6d28d9', '#7c3aed', '#8b5cf6', '#a78bfa'],
   amber: ['#713f12', '#92400e', '#b45309', '#d97706', '#f59e0b', '#fbbf24'],
   galaxy: ['#1e1b4b', '#312e81', '#3730a3', '#1d4ed8', '#0284c7', '#22d3ee'],
@@ -47,9 +50,9 @@ export const GEM_SHADES: Record<GemMineral, readonly [string, string, string, st
 
 /** 状态 → 默认矿色(状态系统设定 v2)。 */
 export const GEM_MODE_MINERAL: Record<GemMode, GemMineral> = {
-  static: 'amethyst',
-  brand: 'amethyst',
-  loader: 'amethyst',
+  static: 'ember',
+  brand: 'ember',
+  loader: 'ember',
   build: 'amber',
   deploy: 'galaxy',
   live: 'emerald',
