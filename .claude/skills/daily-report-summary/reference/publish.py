@@ -229,8 +229,9 @@ def main():
         errs = []
         if "<html" not in low:
             errs.append("不是完整 HTML 文档（缺 <html>）——报纸版必须是自包含整页")
-        if "viewport" not in low:
-            errs.append("缺 <meta viewport>——移动端会按 980px 桌面视口缩放，整页变小")
+        # 必须匹配真实 meta 标签，不能子串扫描——否则正文里出现 viewport 一词即可骗过（Codex P2）
+        if not re.search(r'<meta\b[^>]*\bname\s*=\s*["\']viewport["\']', low):
+            errs.append("缺 <meta name=\"viewport\">——移动端会按 980px 桌面视口缩放，整页变小")
         if "<script" in low:
             errs.append("含 <script>——知识库沙箱 iframe 不给 allow-scripts，脚本不会执行，请改纯 CSS 实现")
         if "data:image" in low:
@@ -251,6 +252,10 @@ def main():
                 break
         if re.search(r'url\(\s*["\']?\s*' + EXT, low) or re.search(r'@import\s+["\']\s*' + EXT, low):
             errs.append("CSS 里有外部加载（url() 或 @import 指向 http/ // 外链）——背景图/字体必须内联或改纯 CSS，沙箱 iframe 仍会真实发起这些请求")
+        # SVG 的加载型 href：<image>/<use>/<feImage> 的 href / xlink:href 会真实拉取外部资源，
+        # 与导航型 <a href> 不同，必须拦（Codex P2）。
+        if re.search(r'<(?:image|use|feimage)\b[^>]*(?:xlink:)?href\s*=\s*["\']' + EXT, low):
+            errs.append("内联 SVG 的 image/use href 引用外部资源——SVG 必须完全内联绘制，不得外链图片")
         if errs:
             raise RuntimeError("HTML 报纸版校验未通过：\n  - " + "\n  - ".join(errs))
     else:
