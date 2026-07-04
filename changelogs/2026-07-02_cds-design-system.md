@@ -8,3 +8,4 @@
 | feat | cds | 首页升级为多分区滚动叙事落地页（对标 Railway）：sticky 玻璃导航 + Workflow 三步（贯穿连接线橙色流光）+ 产品事实带 + Features bento 网格（鼠标跟随光斑 + 实况构建日志打字）+ Observability sticky 叙事实况终端 + Final CTA + 官网级页脚，全部素材来自真实能力 |
 | polish | cds | 登录页中庭植入 token 化「运行时星座」（branch→services→preview 接线图，随 feed 逐站点亮 + 微透视浮游 + hover 归平），认证卡升级多层阴影/立体 CTA/输入焦点编排/密码显隐/失败 shake/级联入场 |
 | polish | cds | 全局质感配方：--shadow-card 五层影 token、grain 噪点工具类、CJK 字体栈 + Inter 字形特性、品牌橙 accent 注入（状态点/数据流/光束）、修剪永动循环动效（logo 常转改 hover、sheen 加驻留） |
+| polish | cds | 登录页 v4「一条线」设计哲学重构：废除分屏拼贴与星座装饰，整页一块画布一个光源，一条部署光路横贯页面（push 0:00 / build 0:40 / live 2:00 时间站点 + 6.5s 电流巡游）终点没入登录卡；文案改用户故事口吻（Push a branch. Watch it come alive. 登录，领取它），底部 mono ticker 作线上电报 |

@@ -1,9 +1,13 @@
 /*
- * LoginPage — CDS 控制台的唯一认证入口（2026-07-02 重做）。
+ * LoginPage — CDS 控制台的唯一认证入口。
  *
- * 设计：左右分屏。左侧是品牌视觉板（动态六边形网格 + 品牌叙事 + 实时部署
- * feed 流，与首页 hero 同一套视觉语言），右侧是克制的认证卡片。全部走
- * surface/hairline token，双主题自动翻转；<lg 收起视觉板，单列移动形态。
+ * 设计哲学「一条线」(2026-07-04 v4,替换 v3 的拼贴式构图):
+ *   CDS 的本质 = 你 push 一个分支,两分钟后它活了。
+ *   于是整页只有一个视觉思想 —— 一条从 push 出发的部署光路,横贯页面,
+ *   途经 push(0:00) → build(0:40) → live(2:00) 三个时间站点,终点没入
+ *   登录卡:你的环境已经活了,登录领取。
+ *   纪律:一块画布(无分屏无接缝)、一个光源、橙色只存在于这条线上(电流);
+ *   不在线上的元素不许存在(星座/要点列表/双 vignette 已全部删除)。
  *
  * 认证逻辑与旧版完全一致：
  *   - 会话探测：已登录直接跳 redirect 目标，不闪登录框
@@ -28,16 +32,6 @@ const FEED_LINES = [
   'build api :5000 · admin :5500 ......  ok',
   'container.observed · health checks passing',
   'preview live · auth-flow-prd-agent.miduo.org',
-];
-
-/* feed 每行对应点亮的星座节点(数据与画面同源:pull/detect 亮分支,
-   build 亮服务,observed 亮数据层,live 亮预览域名)。 */
-const LIVE_TARGETS: string[][] = [
-  ['branch'],
-  ['branch'],
-  ['api', 'admin'],
-  ['mongo', 'redis'],
-  ['preview'],
 ];
 
 function redirectTarget(): string {
@@ -236,231 +230,30 @@ function AuthForm(): JSX.Element {
 }
 
 /*
- * AuthVisualPanel — 左侧品牌视觉板(仅 lg+ 显示)。与首页 hero 同一套语言:
- * 六边形动网格打底、品牌大字带流光、要点列表、底部实时部署 feed 流。
- * 网格颜色按主题显式传入(canvas 无法解析 CSS var),theme 变化时 key 重建。
+ * TheLine — 页面唯一的视觉装置:一条横贯画布的部署光路。
+ * 三个站点是用户故事的时间轴(0:00 push / 0:40 build / 2:00 live),
+ * 一束橙色电流每 6.5s 走完一生,最后没入登录卡(线从卡下方穿过,
+ * 视觉上"进门")。桌面(lg+)专属;reduced-motion 下电流静止为常亮段。
  */
-function AuthVisualPanel(): JSX.Element {
-  const { theme } = useTheme();
-  const grid = theme === 'dark'
-    ? { border: 'rgba(255,255,255,0.09)', fill: 'rgba(255,255,255,0.05)' }
-    : { border: 'rgba(68,45,22,0.13)', fill: 'rgba(68,45,22,0.05)' };
-  const shine = theme === 'dark'
-    ? { color: 'rgba(226,226,235,0.58)', shineColor: 'rgba(255,255,255,0.98)' }
-    : { color: 'rgba(92,64,38,0.55)', shineColor: 'rgba(45,28,12,0.98)' };
+const LINE_STATIONS = [
+  { left: '7%', word: 'push', time: '0:00' },
+  { left: '26%', word: 'build', time: '0:40' },
+  { left: '45%', word: 'live', time: '2:00' },
+];
 
-  const [feedIndex, setFeedIndex] = useState(0);
-  const [feedOff, setFeedOff] = useState(false);
-  useEffect(() => {
-    let fadeTimer: number | undefined;
-    const timer = window.setInterval(() => {
-      setFeedOff(true);
-      fadeTimer = window.setTimeout(() => {
-        setFeedIndex((i) => (i + 1) % FEED_LINES.length);
-        setFeedOff(false);
-      }, 360);
-    }, 2600);
-    return () => {
-      clearInterval(timer);
-      if (fadeTimer !== undefined) clearTimeout(fadeTimer);
-    };
-  }, []);
-
-  const live = LIVE_TARGETS[feedIndex] ?? [];
-  const liveCls = (key: string): string => `cds-authb-node${live.includes(key) ? ' is-live' : ''}`;
-
+function TheLine(): JSX.Element {
   return (
-    <aside className="cds-auth-visual cds-grain" aria-hidden>
-      <ShapeGrid
-        key={theme}
-        className="cds-auth-visual-grid"
-        shape="hexagon"
-        direction="diagonal"
-        speed={0.42}
-        squareSize={34}
-        hoverTrailAmount={12}
-        borderColor={grid.border}
-        hoverFillColor={grid.fill}
-      />
-      <div className="cds-auth-visual-vignette" />
-      {/* 中庭「运行时星座」:branch → api/admin → mongo/redis → preview,
-          随底部 feed 逐站点亮。透视层 hover 归平,节点异相浮游。 */}
-      <div className="cds-auth-scene">
-        <div className="cds-auth-scene-inner">
-          <svg className="cds-authb-wires" viewBox="0 0 1000 760" preserveAspectRatio="none">
-            <path id="cds-authb-p1" className="cds-authb-wire" d="M300 273 H330 V120 H360" />
-            <path className="cds-authb-wire-dash" d="M300 273 H330 V120 H360" />
-            <path id="cds-authb-p2" className="cds-authb-wire" d="M300 273 H330 V395 H360" />
-            <path className="cds-authb-wire-dash" d="M300 273 H330 V395 H360" />
-            <path id="cds-authb-p3" className="cds-authb-wire" d="M650 120 H690" />
-            <path className="cds-authb-wire-dash" d="M650 120 H690" />
-            <path className="cds-authb-wire" d="M650 395 H690" />
-            <path className="cds-authb-wire-dash" d="M650 395 H690" />
-            <path id="cds-authb-p4" className="cds-authb-wire" d="M505 170 V348" />
-            <path className="cds-authb-wire-dash" d="M505 170 V348" />
-            <path className="cds-authb-wire" d="M835 170 V348" />
-            <path className="cds-authb-wire-dash" d="M835 170 V348" />
-            <path id="cds-authb-p5" className="cds-authb-wire" d="M505 445 V615" />
-            <path className="cds-authb-wire-dash" d="M505 445 V615" />
-            <path className="cds-authb-wire" d="M835 445 V585 H700 V615" />
-            <path className="cds-authb-wire-dash" d="M835 445 V585 H700 V615" />
-            <circle className="cds-authb-packet" r="2.6">
-              <animateMotion dur="1.5s" begin="1.0s" repeatCount="indefinite"><mpath href="#cds-authb-p1" /></animateMotion>
-            </circle>
-            <circle className="cds-authb-packet" r="2.6">
-              <animateMotion dur="1.4s" begin="1.5s" repeatCount="indefinite"><mpath href="#cds-authb-p3" /></animateMotion>
-            </circle>
-            <circle className="cds-authb-packet" r="2.6">
-              <animateMotion dur="1.4s" begin="1.6s" repeatCount="indefinite"><mpath href="#cds-authb-p4" /></animateMotion>
-            </circle>
-            <circle className="cds-authb-packet" r="2.6">
-              <animateMotion dur="1.6s" begin="2.0s" repeatCount="indefinite"><mpath href="#cds-authb-p5" /></animateMotion>
-            </circle>
-          </svg>
-
-          <div className="cds-authb-float" style={{ left: '0%', top: '30%', width: '30%', animationDelay: '-1.3s' }}>
-            <div className={liveCls('branch')} style={{ animationDelay: '.5s' }}>
-              <div className="cds-authb-row">
-                <span className="cds-authb-ico">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                    <circle cx="6" cy="6" r="2.4" /><circle cx="6" cy="18" r="2.4" /><circle cx="18" cy="9" r="2.4" />
-                    <path d="M6 8.4v7.2M8.2 7.2 16 8.6M18 11.2c0 4-4 4.4-8.4 4.6" />
-                  </svg>
-                </span>
-                <div>
-                  <div className="cds-authb-title">Branch</div>
-                  <div className="cds-authb-desc">3 commits · pushed</div>
-                </div>
-              </div>
-              <div className="cds-authb-status"><span className="cds-authb-sdot" />Build · profile detected</div>
-            </div>
-          </div>
-
-          <div className="cds-authb-float" style={{ left: '36%', top: '10%', width: '29%', animationDelay: '-2.7s' }}>
-            <div className={liveCls('api')} style={{ animationDelay: '.9s' }}>
-              <div className="cds-authb-row">
-                <span className="cds-authb-ico">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
-                </span>
-                <div>
-                  <div className="cds-authb-title">api</div>
-                  <div className="cds-authb-desc">.NET 8 service</div>
-                </div>
-                <span className="cds-authb-port">:5000</span>
-              </div>
-              <div className="cds-authb-status"><span className="cds-authb-sdot" />Running · healthy</div>
-            </div>
-          </div>
-
-          <div className="cds-authb-float" style={{ left: '69%', top: '10%', width: '29%', animationDelay: '-4.1s' }}>
-            <div className={liveCls('admin')} style={{ animationDelay: '1.1s' }}>
-              <div className="cds-authb-row">
-                <span className="cds-authb-ico">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="14" rx="2" /><path d="M3 9h18" /></svg>
-                </span>
-                <div>
-                  <div className="cds-authb-title">admin</div>
-                  <div className="cds-authb-desc">React · Vite</div>
-                </div>
-                <span className="cds-authb-port">:5500</span>
-              </div>
-              <div className="cds-authb-status"><span className="cds-authb-sdot" />Running · healthy</div>
-            </div>
-          </div>
-
-          <div className="cds-authb-float" style={{ left: '36%', top: '46%', width: '29%', animationDelay: '-5.4s' }}>
-            <div className={liveCls('mongo')} style={{ animationDelay: '1.3s' }}>
-              <div className="cds-authb-row">
-                <span className="cds-authb-ico">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><ellipse cx="12" cy="6" rx="8" ry="3" /><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" /></svg>
-                </span>
-                <div>
-                  <div className="cds-authb-title">mongo</div>
-                  <div className="cds-authb-desc">replica · 1</div>
-                </div>
-              </div>
-              <div className="cds-authb-status"><span className="cds-authb-sdot" />Healthy</div>
-            </div>
-          </div>
-
-          <div className="cds-authb-float" style={{ left: '69%', top: '46%', width: '29%', animationDelay: '-6s' }}>
-            <div className={liveCls('redis')} style={{ animationDelay: '1.5s' }}>
-              <div className="cds-authb-row">
-                <span className="cds-authb-ico">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6c0 1.7 4 3 9 3s9-1.3 9-3-4-3-9-3-9 1.3-9 3z" /><path d="M3 6v6c0 1.7 4 3 9 3s9-1.3 9-3V6M3 12v6c0 1.7 4 3 9 3s9-1.3 9-3v-6" /></svg>
-                </span>
-                <div>
-                  <div className="cds-authb-title">redis</div>
-                  <div className="cds-authb-desc">cache</div>
-                </div>
-              </div>
-              <div className="cds-authb-status"><span className="cds-authb-sdot" />Healthy</div>
-            </div>
-          </div>
-
-          <div className="cds-authb-float" style={{ left: '22%', top: '81%', width: '58%', animationDelay: '-3.2s' }}>
-            <div className={liveCls('preview')} style={{ animationDelay: '2.1s' }}>
-              <div className="cds-authb-row">
-                <span className="cds-authb-ico">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.5 2.6 2.5 15.4 0 18M12 3c-2.5 2.6-2.5 15.4 0 18" /></svg>
-                </span>
-                <div>
-                  <div className="cds-authb-title">Preview · auto-assigned</div>
-                  <div className="cds-authb-desc">auth-flow-prd-agent.miduo.org</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div className="cds-auth-visual-content">
-        <Link to="/" className="cds-auth-visual-brand" viewTransition>
-          <CdsMetallicLogo className="h-7 w-7" />
-          <span>Cloud Dev Suite</span>
-        </Link>
-        <div className="cds-auth-visual-hero">
-          <span className="cds-auth-visual-eyebrow">
-            <span className="cds-auth-pulse" />
-            Controlled cloud runtime
-          </span>
-          <h2 className="cds-auth-visual-title">
-            <span>Every branch,</span>
-            <ShinyText
-              text="a live stack."
-              speed={3.4}
-              spread={112}
-              color={shine.color}
-              shineColor={shine.shineColor}
-              className="block"
-            />
-          </h2>
-          <p className="cds-auth-visual-sub">
-            推送一个分支，得到一整套隔离的在线环境——构建、容器、日志、Webhook 与专属预览域名。
-          </p>
-          <ul className="cds-auth-visual-points">
-            <li>
-              <span className="cds-auth-dot" />
-              同源会话 · 凭据不出控制面
-            </li>
-            <li>
-              <span className="cds-auth-dot" />
-              Push 即部署 · 分钟级预览就绪
-            </li>
-            <li>
-              <span className="cds-auth-dot" />
-              一键恢复 · 控制面永不离线
-            </li>
-          </ul>
-        </div>
-        <p className="cds-auth-visual-ticker">
-          <span className="cds-auth-visual-ticker-k">cds</span>
-          <span className="cds-auth-visual-ticker-gt">&gt;</span>
-          <span className={feedOff ? 'cds-auth-visual-ticker-feed is-off' : 'cds-auth-visual-ticker-feed'}>
-            {FEED_LINES[feedIndex]}
-          </span>
-        </p>
-      </div>
-    </aside>
+    <div className="cds-auth-line" aria-hidden>
+      <span className="cds-auth-line-base" />
+      <span className="cds-auth-line-beam" />
+      {LINE_STATIONS.map((s, idx) => (
+        <span key={s.word} className="cds-auth-station" style={{ left: s.left, animationDelay: `${idx * 0.9 + 0.35}s` }}>
+          <i className="cds-auth-station-dot" />
+          <b>{s.word}</b>
+          <em>{s.time}</em>
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -487,9 +280,21 @@ function AuthFormSkeleton(): JSX.Element {
 
 export function LoginPage(): JSX.Element {
   const navigate = useNavigate();
+  const { theme } = useTheme();
   // 'checking' = 正在探会话态;'anon' = 未登录,展示登录框。已登录则直接跳走,
   // 不会停留在此状态。探测期间用同轮廓骨架占位,避免先闪一下登录框再跳转。
   const [authPhase, setAuthPhase] = useState<'checking' | 'anon'>('checking');
+  // 底部 ticker:线上正在发生的事(与首页 board 同一套语言)。
+  const [feedIndex, setFeedIndex] = useState(0);
+  useEffect(() => {
+    const timer = window.setInterval(() => setFeedIndex((i) => (i + 1) % FEED_LINES.length), 2600);
+    return () => clearInterval(timer);
+  }, []);
+
+  // 暗场纹理:蜂窝调到几乎不可察觉(0.05/0.08),它是"暗场",不是主角。
+  const grid = theme === 'dark'
+    ? { border: 'rgba(255,255,255,0.05)', fill: 'rgba(255,255,255,0.03)' }
+    : { border: 'rgba(68,45,22,0.08)', fill: 'rgba(68,45,22,0.04)' };
 
   // 登录成功后要跳的内容页(默认控制台)是 lazy chunk:登录页一挂载就预取,
   // 提交成功 navigate 时不会触发 Suspense 白屏,配合 viewTransition 丝滑进内容页。
@@ -528,27 +333,67 @@ export function LoginPage(): JSX.Element {
   }, [navigate]);
 
   return (
-    <main className="cds-auth-page">
-      <AuthVisualPanel />
-      <div className="cds-auth-side">
-        <div className="cds-auth-backdrop" aria-hidden />
-        <header className="cds-auth-header">
-          <Link to="/" className="cds-auth-brand" viewTransition>
-            <CdsMetallicLogo className="h-6 w-6" />
-            <span>Cloud Dev Suite</span>
-          </Link>
-        </header>
-        <section className="cds-auth-body">
-          <div className="cds-auth-card-wrap cds-page-enter">
-            {authPhase === 'checking' ? <AuthFormSkeleton /> : <AuthForm />}
-          </div>
-        </section>
-        <footer className="cds-auth-footer">
-          <span>Cloud Dev Suite</span>
-          <span className="cds-auth-footer-dot" aria-hidden />
-          <span>每个分支，都是一套在线环境</span>
-        </footer>
+    <main className="cds-auth-page cds-grain">
+      {/* 一块画布:暗场蜂窝(极弱) + 单一光源,没有分屏没有接缝。 */}
+      <div className="cds-auth-bg" aria-hidden>
+        <ShapeGrid
+          key={theme}
+          className="cds-auth-bg-grid"
+          shape="hexagon"
+          direction="diagonal"
+          speed={0.3}
+          squareSize={34}
+          hoverTrailAmount={0}
+          borderColor={grid.border}
+          hoverFillColor={grid.fill}
+        />
+        <div className="cds-auth-backdrop" />
       </div>
+
+      <header className="cds-auth-header">
+        <Link to="/" className="cds-auth-brand" viewTransition>
+          <CdsMetallicLogo className="h-6 w-6" />
+          <span>Cloud Dev Suite</span>
+        </Link>
+      </header>
+
+      {/* 舞台:左侧用户故事,右侧终点站(登录卡),一条线横贯两者。 */}
+      <section className="cds-auth-stage">
+        <TheLine />
+        <div className="cds-auth-copy">
+          <p className="cds-auth-cmd">$ git push origin your-branch</p>
+          <h1 className="cds-auth-display">
+            <span>Push a branch.</span>
+            <ShinyText
+              text="Watch it come alive."
+              speed={3.4}
+              spread={112}
+              color={theme === 'dark' ? 'rgba(226,226,235,0.58)' : 'rgba(92,64,38,0.55)'}
+              shineColor={theme === 'dark' ? 'rgba(255,247,238,0.98)' : 'rgba(45,28,12,0.98)'}
+              className="block"
+            />
+          </h1>
+          <p className="cds-auth-story">
+            构建、容器、日志、预览域名——大约两分钟，你推送的分支就是一套活的在线环境。登录，领取它。
+          </p>
+          <p className="cds-auth-timeline-compact" aria-hidden>
+            push <span>·</span> build <span>·</span> live — ~2 min
+          </p>
+        </div>
+        <div className="cds-auth-card-wrap cds-page-enter">
+          {authPhase === 'checking' ? <AuthFormSkeleton /> : <AuthForm />}
+        </div>
+      </section>
+
+      <footer className="cds-auth-footer">
+        <p className="cds-auth-ticker" aria-hidden>
+          <span className="cds-auth-ticker-k">cds</span>
+          <span className="cds-auth-ticker-gt">&gt;</span>
+          <span className="cds-auth-ticker-feed" key={feedIndex}>{FEED_LINES[feedIndex]}</span>
+          <span className="cds-auth-ticker-caret" />
+        </p>
+        <span className="cds-auth-footer-tag">每个分支，都是一套在线环境</span>
+      </footer>
     </main>
   );
 }

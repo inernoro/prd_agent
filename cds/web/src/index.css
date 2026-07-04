@@ -1590,65 +1590,6 @@
     overflow: hidden;
   }
 
-  /* 桌面(lg+)左右分屏:左视觉板弹性占宽,右认证列固定舒适宽。 */
-  @media (min-width: 1024px) {
-    .cds-auth-page {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) clamp(30rem, 42vw, 38rem);
-    }
-  }
-
-  .cds-auth-side {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    min-height: 100vh;
-    min-height: 100dvh;
-    overflow: hidden;
-  }
-
-  /*
-   * 左侧品牌视觉板 —— 六边形动网格 + 品牌叙事 + 实时部署 feed。
-   * 颜色全走 token(canvas 网格色由组件按主题显式传入),双主题成立。
-   */
-  .cds-auth-visual {
-    position: relative;
-    display: none;
-    overflow: hidden;
-    background-color: hsl(var(--surface-sunken));
-    border-right: 1px solid hsl(var(--hairline));
-  }
-
-  @media (min-width: 1024px) {
-    .cds-auth-visual {
-      display: block;
-    }
-
-    /* 分屏时品牌落在左板,右列顶部的品牌行退场,避免双 logo。
-       (加 .cds-auth-side 提特异性:同名基础规则写在本文件更靠后。) */
-    .cds-auth-side .cds-auth-header {
-      display: none;
-    }
-  }
-
-  .cds-auth-visual-grid {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-  }
-
-  .cds-auth-visual-vignette {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    /* 主光池随"星座"落位(72% 48%),左下辅光,光的主从关系跟着产物走。 */
-    background:
-      radial-gradient(42rem 30rem at 72% 48%, hsl(var(--primary) / 0.1), transparent 70%),
-      radial-gradient(58rem 34rem at 16% 86%, hsl(var(--primary) / 0.08), transparent 68%),
-      radial-gradient(120% 96% at 50% 42%, transparent 34%, hsl(var(--surface-sunken) / 0.92) 100%);
-  }
-
   /*
    * 全站 grain 噪点(SVG feTurbulence data-URI,零请求零依赖,纯静态)。
    * 大面积平色在高分屏读作塑料,一层 5% 噪点立刻有"材质"。
@@ -1670,322 +1611,6 @@
     mix-blend-mode: soft-light;
   }
 
-  /*
-   * 中庭「运行时星座」—— token 化的 branch → api/admin → mongo/redis → preview
-   * 接线图(与首页 board 同一动效词汇,但走 surface token 双主题)。
-   * 仅 >=1280px 显示;窄屏左板本就不宽,保持文字构图。
-   */
-  .cds-auth-scene {
-    display: none;
-  }
-
-  @media (min-width: 1280px) {
-    .cds-auth-scene {
-      display: block;
-      position: absolute;
-      right: 3.5%;
-      top: 50%;
-      transform: translateY(-50%);
-      width: min(48%, 34rem);
-      aspect-ratio: 1000 / 760;
-      z-index: 0;
-    }
-
-    .cds-auth-visual-hero {
-      position: relative;
-      z-index: 1;
-      max-width: 26rem;
-    }
-  }
-
-  /* 场景层:极轻微透视(超过 8deg 就俗),hover 时"立正"归平。 */
-  .cds-auth-scene-inner {
-    position: absolute;
-    inset: 0;
-    transform: perspective(1400px) rotateX(5deg) rotateY(-7deg);
-    transition: transform 640ms cubic-bezier(0.2, 0.8, 0.2, 1);
-  }
-
-  .cds-auth-scene:hover .cds-auth-scene-inner {
-    transform: perspective(1400px) rotateX(0deg) rotateY(0deg);
-  }
-
-  .cds-authb-wires {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-  }
-
-  .cds-authb-wire {
-    fill: none;
-    stroke: hsl(var(--foreground) / 0.14);
-    stroke-width: 1.5;
-    vector-effect: non-scaling-stroke;
-  }
-
-  .cds-authb-wire-dash {
-    fill: none;
-    stroke: hsl(var(--primary) / 0.5);
-    stroke-width: 1.4;
-    stroke-dasharray: 3 8;
-    vector-effect: non-scaling-stroke;
-    animation: cds-authb-dash 1.1s linear infinite;
-  }
-
-  @keyframes cds-authb-dash {
-    to { stroke-dashoffset: -28; }
-  }
-
-  .cds-authb-packet {
-    fill: hsl(var(--primary));
-    filter: drop-shadow(0 0 5px hsl(var(--primary) / 0.8));
-  }
-
-  /* 节点异相浮游(负 delay 错相),浮游层与节点入场层分离避免 transform 冲突。 */
-  .cds-authb-float {
-    position: absolute;
-    animation: cds-authb-float 6.5s ease-in-out infinite alternate;
-  }
-
-  @keyframes cds-authb-float {
-    to { transform: translateY(-7px); }
-  }
-
-  @keyframes cds-authb-pop {
-    from {
-      opacity: 0;
-      transform: translateY(10px) scale(0.96);
-    }
-    to {
-      opacity: 1;
-      transform: none;
-    }
-  }
-
-  .cds-authb-node {
-    background-color: hsl(var(--surface-raised) / 0.92);
-    border: 1px solid hsl(var(--hairline));
-    border-radius: 12px;
-    padding: 11px 13px;
-    backdrop-filter: blur(8px);
-    box-shadow:
-      inset 0 1px 0 hsl(0 0% 100% / 0.06),
-      0 1px 2px rgb(0 0 0 / 0.25),
-      0 18px 44px -22px hsl(var(--foreground) / 0.35);
-    transition: border-color 480ms ease, box-shadow 480ms ease;
-    animation: cds-authb-pop 0.55s cubic-bezier(0.2, 0.8, 0.2, 1) both;
-  }
-
-  /* feed 流点到哪一站,哪个节点被点亮 —— 数据与画面同源,系统在呼吸。 */
-  .cds-authb-node.is-live {
-    border-color: hsl(var(--primary) / 0.55);
-    box-shadow:
-      0 0 0 1px hsl(var(--primary) / 0.28),
-      0 16px 40px -18px hsl(var(--primary) / 0.5);
-  }
-
-  .cds-authb-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .cds-authb-ico {
-    width: 28px;
-    height: 28px;
-    border-radius: 8px;
-    display: grid;
-    place-items: center;
-    border: 1px solid hsl(var(--hairline));
-    background-color: hsl(var(--surface-sunken) / 0.7);
-    flex: none;
-  }
-
-  .cds-authb-ico svg {
-    width: 15px;
-    height: 15px;
-    color: hsl(var(--foreground));
-  }
-
-  .cds-authb-title {
-    font-size: 12.5px;
-    font-weight: 600;
-    line-height: 1.1;
-  }
-
-  .cds-authb-desc {
-    font-size: 10.5px;
-    color: hsl(var(--muted-foreground));
-    margin-top: 2px;
-  }
-
-  .cds-authb-port {
-    margin-left: auto;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 10px;
-    color: hsl(var(--muted-foreground));
-    border: 1px solid hsl(var(--hairline));
-    border-radius: 5px;
-    padding: 2px 6px;
-  }
-
-  .cds-authb-status {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 10.5px;
-    margin-top: 8px;
-    color: hsl(var(--muted-foreground));
-  }
-
-  .cds-authb-sdot {
-    width: 5px;
-    height: 5px;
-    border-radius: 999px;
-    background-color: hsl(var(--muted-foreground) / 0.7);
-    transition: background-color 480ms ease, box-shadow 480ms ease;
-  }
-
-  .cds-authb-node.is-live .cds-authb-sdot {
-    background-color: hsl(var(--primary));
-    box-shadow: 0 0 8px hsl(var(--primary) / 0.8);
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .cds-authb-float,
-    .cds-authb-node,
-    .cds-authb-wire-dash {
-      animation: none;
-    }
-
-    .cds-authb-packet {
-      display: none;
-    }
-
-    .cds-auth-scene-inner {
-      transition: none;
-    }
-  }
-
-  .cds-auth-visual-content {
-    position: relative;
-    z-index: 1;
-    display: flex;
-    height: 100%;
-    flex-direction: column;
-    padding: 2.5rem 3.25rem 2.25rem;
-  }
-
-  .cds-auth-visual-brand {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.625rem;
-    align-self: flex-start;
-    font-size: 0.9375rem;
-    font-weight: 650;
-    letter-spacing: -0.01em;
-    color: hsl(var(--foreground));
-  }
-
-  .cds-auth-visual-hero {
-    flex: 1 1 auto;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    max-width: 34rem;
-  }
-
-  .cds-auth-visual-eyebrow {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    align-self: flex-start;
-    border: 1px solid hsl(var(--hairline-strong) / 0.8);
-    background-color: hsl(var(--surface-raised) / 0.4);
-    backdrop-filter: blur(6px);
-    border-radius: 999px;
-    padding: 0.375rem 0.875rem;
-    font-size: 0.6875rem;
-    font-weight: 600;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: hsl(var(--muted-foreground));
-  }
-
-  .cds-auth-visual-title {
-    margin-top: 1.75rem;
-    font-size: clamp(2.5rem, 3.4vw, 3.75rem);
-    font-weight: 800;
-    line-height: 1.02;
-    letter-spacing: -0.02em;
-    color: hsl(var(--foreground));
-  }
-
-  .cds-auth-visual-title > span {
-    display: block;
-  }
-
-  .cds-auth-visual-sub {
-    margin-top: 1.375rem;
-    max-width: 28rem;
-    font-size: 0.9375rem;
-    line-height: 1.8;
-    color: hsl(var(--muted-foreground));
-  }
-
-  .cds-auth-visual-points {
-    margin-top: 1.75rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-    font-size: 0.8125rem;
-    color: hsl(var(--foreground) / 0.78);
-  }
-
-  .cds-auth-visual-points li {
-    display: flex;
-    align-items: center;
-    gap: 0.625rem;
-  }
-
-  .cds-auth-dot {
-    width: 5px;
-    height: 5px;
-    flex: none;
-    border-radius: 999px;
-    background-color: hsl(var(--primary));
-    box-shadow: 0 0 10px hsl(var(--primary) / 0.65);
-  }
-
-  /* 底部实时 feed:与首页 board ticker 同语言,登录时系统就在"呼吸"。 */
-  .cds-auth-visual-ticker {
-    display: flex;
-    align-items: baseline;
-    gap: 0.5rem;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.75rem;
-    color: hsl(var(--muted-foreground));
-    border-top: 1px solid hsl(var(--hairline));
-    padding-top: 1.125rem;
-  }
-
-  .cds-auth-visual-ticker-k {
-    color: hsl(var(--primary));
-    font-weight: 700;
-  }
-
-  .cds-auth-visual-ticker-gt {
-    color: hsl(var(--muted-foreground) / 0.6);
-  }
-
-  .cds-auth-visual-ticker-feed {
-    transition: opacity 320ms ease;
-  }
-
-  .cds-auth-visual-ticker-feed.is-off {
-    opacity: 0;
-  }
 
   @keyframes cds-auth-pulse {
     0%,
@@ -2016,14 +1641,28 @@
     }
   }
 
-  /* 唯一的视觉修饰:顶部一束主色微光 + 上浅下深的呼吸感,克制到几乎察觉不到。 */
+  /* 一块画布,一个光源:极弱蜂窝暗场 + 一束压在光路区域的暖光 + 边缘渐暗。 */
+  .cds-auth-bg {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+  }
+
+  .cds-auth-bg-grid {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
   .cds-auth-backdrop {
     position: absolute;
     inset: 0;
     pointer-events: none;
     background:
-      radial-gradient(640px 320px at 50% -120px, hsl(var(--primary) / 0.13), transparent 72%),
-      linear-gradient(180deg, hsl(var(--surface-sunken) / 0.4), transparent 32%);
+      radial-gradient(56rem 30rem at 38% 66%, hsl(var(--primary) / 0.07), transparent 70%),
+      radial-gradient(130% 110% at 50% 40%, transparent 40%, hsl(var(--surface-base) / 0.9) 100%);
   }
 
   .cds-auth-header {
@@ -2045,19 +1684,225 @@
     color: hsl(var(--foreground));
   }
 
-  .cds-auth-body {
+  /*
+   * 舞台:一条线横贯,左侧用户故事,右侧终点站(登录卡)。
+   * 线画在 z-0,卡在 z-1 —— 线从卡下方穿过,视觉上"没入那扇门"。
+   */
+  .cds-auth-stage {
     position: relative;
     z-index: 1;
     flex: 1 1 auto;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 2.5rem;
     padding: 2.5rem 1.25rem;
+    width: 100%;
+    max-width: 82rem;
+    margin: 0 auto;
+  }
+
+  @media (min-width: 1024px) {
+    .cds-auth-stage {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 400px;
+      align-items: center;
+      gap: clamp(3rem, 8vw, 8rem);
+      padding: 2.5rem 4rem 4.5rem;
+    }
+  }
+
+  .cds-auth-copy {
+    position: relative;
+    z-index: 1;
+    max-width: 40rem;
+  }
+
+  /* 故事从用户自己的动作开始:一行命令。 */
+  .cds-auth-cmd {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.8125rem;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .cds-auth-cmd::before {
+    content: '';
+    display: inline-block;
+    width: 20px;
+    height: 1px;
+    background: hsl(var(--primary));
+    vertical-align: 4px;
+    margin-right: 12px;
+  }
+
+  .cds-auth-display {
+    margin-top: 1.5rem;
+    font-size: clamp(2.3rem, 2.9vw, 3.3rem);
+    font-weight: 800;
+    line-height: 1.06;
+    letter-spacing: -0.03em;
+    color: hsl(var(--foreground));
+  }
+
+  .cds-auth-display > span {
+    display: block;
+  }
+
+  .cds-auth-story {
+    margin-top: 1.375rem;
+    max-width: 28rem;
+    font-size: 0.9375rem;
+    line-height: 1.85;
+    color: hsl(var(--muted-foreground));
+  }
+
+  /* 手机端的线:一行 mono 时间轴文字(桌面隐藏,由 TheLine 承担)。 */
+  .cds-auth-timeline-compact {
+    margin-top: 1.5rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.75rem;
+    letter-spacing: 0.04em;
+    color: hsl(var(--muted-foreground) / 0.8);
+  }
+
+  .cds-auth-timeline-compact span {
+    color: hsl(var(--primary));
+    padding: 0 0.25rem;
+  }
+
+  @media (min-width: 1024px) {
+    .cds-auth-timeline-compact {
+      display: none;
+    }
+  }
+
+  /*
+   * 一条线 —— 页面唯一的视觉装置。
+   * 横贯整个舞台(左起文案下方,右端穿入登录卡下层),三个站点是
+   * 用户故事的时间轴;一束电流(beam)每 6.5s 走完一生。
+   */
+  .cds-auth-line {
+    display: none;
+  }
+
+  @media (min-width: 1024px) {
+    .cds-auth-line {
+      display: block;
+      position: absolute;
+      z-index: 0;
+      left: 4rem;
+      right: 4rem;
+      top: 72%;
+      height: 0;
+      pointer-events: none;
+    }
+  }
+
+  .cds-auth-line-base {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      hsl(var(--foreground) / 0.16) 6%,
+      hsl(var(--foreground) / 0.16) 88%,
+      transparent
+    );
+  }
+
+  /* 电流:一段 160px 的橙色光,沿线走完一生(6.5s 周期,含驻留)。 */
+  .cds-auth-line-beam {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 160px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, hsl(var(--primary) / 0.95), transparent);
+    box-shadow: 0 0 12px 0 hsl(var(--primary) / 0.35);
+    opacity: 0;
+    animation: cds-auth-beam 6.5s cubic-bezier(0.3, 0, 0.5, 1) infinite;
+  }
+
+  @keyframes cds-auth-beam {
+    0% { left: -4%; opacity: 0; }
+    6% { opacity: 1; }
+    78% { opacity: 1; }
+    88% { left: 96%; opacity: 0; }
+    100% { left: 96%; opacity: 0; }
+  }
+
+  /* 站点:线上的时间刻度(0:00 push / 0:40 build / 2:00 live)。 */
+  .cds-auth-station {
+    position: absolute;
+    top: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    transform: translateX(-4px);
+  }
+
+  .cds-auth-station-dot {
+    width: 9px;
+    height: 9px;
+    margin-top: -4px;
+    border-radius: 999px;
+    border: 1px solid hsl(var(--foreground) / 0.35);
+    background-color: hsl(var(--surface-base));
+  }
+
+  .cds-auth-station b {
+    margin-top: 0.75rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    color: hsl(var(--foreground) / 0.75);
+  }
+
+  .cds-auth-station em {
+    margin-top: 0.125rem;
+    font-style: normal;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.6875rem;
+    color: hsl(var(--muted-foreground) / 0.7);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 电流经过时站点短暂点亮:与 beam 同周期(6.5s),按站点错相。 */
+  .cds-auth-station {
+    animation: cds-auth-station-glow 6.5s ease-in-out infinite;
+  }
+
+  @keyframes cds-auth-station-glow {
+    0%, 100% { filter: none; }
+    8% {
+      filter: drop-shadow(0 0 6px hsl(var(--primary) / 0.55));
+    }
+    16% { filter: none; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cds-auth-line-beam {
+      animation: none;
+      opacity: 1;
+      left: 30%;
+    }
+
+    .cds-auth-station {
+      animation: none;
+    }
   }
 
   .cds-auth-card-wrap {
+    position: relative;
+    z-index: 1;
     width: 100%;
     max-width: 400px;
+    margin: 0 auto;
   }
 
   .cds-auth-card {
@@ -2449,18 +2294,87 @@
     z-index: 1;
     display: flex;
     align-items: center;
-    justify-content: center;
-    gap: 0.5rem;
-    padding: 1.25rem;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.25rem 1.5rem;
     font-size: 0.75rem;
     color: hsl(var(--muted-foreground) / 0.8);
   }
 
-  .cds-auth-footer-dot {
-    width: 3px;
-    height: 3px;
-    border-radius: 999px;
-    background-color: hsl(var(--muted-foreground) / 0.5);
+  @media (min-width: 1024px) {
+    .cds-auth-footer {
+      padding: 1.25rem 4rem 1.75rem;
+    }
+  }
+
+  /* 线上的电报:与首页 board ticker 同一套语言。 */
+  .cds-auth-ticker {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    min-width: 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.75rem;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .cds-auth-ticker-k {
+    color: hsl(var(--primary));
+    font-weight: 700;
+  }
+
+  .cds-auth-ticker-gt {
+    color: hsl(var(--muted-foreground) / 0.6);
+  }
+
+  .cds-auth-ticker-feed {
+    display: inline-block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    animation: cds-auth-feed-in 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  @keyframes cds-auth-feed-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .cds-auth-ticker-caret {
+    display: inline-block;
+    width: 6px;
+    height: 11px;
+    margin-left: 2px;
+    vertical-align: -1px;
+    background: currentColor;
+    animation: cds-auth-caret 1.06s steps(2, start) infinite;
+  }
+
+  @keyframes cds-auth-caret {
+    to { visibility: hidden; }
+  }
+
+  .cds-auth-footer-tag {
+    flex: none;
+  }
+
+  @media (max-width: 640px) {
+    .cds-auth-footer-tag {
+      display: none;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cds-auth-ticker-feed,
+    .cds-auth-ticker-caret {
+      animation: none;
+    }
   }
 
   /* 手机端:卡片让出边框感,内边距收紧,视觉重心交给表单本身。 */
