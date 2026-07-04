@@ -90,6 +90,32 @@
     `admin/admin` 被拒（`PasswordChangedByUser` 保住用户口令）。现网控制台可用账号：`admin` / 用户已设口令；
     未认领时「重置」= 重新部署即恢复 `admin/admin`。
 
+#### Point 2 目标模式（2026-07-04 新裁决）：GW 独立库，MAP 与 GW 日志分域
+
+用户最新裁决：**MAP 继续负责 MAP 自己的日志，LLM Gateway 负责 LLM Gateway 自己的账号、审计和网关日志**。
+这比“把所有日志搬到一个库”更清晰，避免两个系统互相污染所有权。
+
+目标数据库边界：
+
+| 数据域 | 目标数据库 | 说明 |
+|---|---|---|
+| MAP 业务数据与 MAP 自身日志 | `prdagent` | MAP 的业务流程、业务日志、现有管理后台调试视图继续归 MAP 所有 |
+| GW 控制台账号与鉴权 | `llm_gateway` | `llmgw_console_users`，以及后续 session/token/登录审计 |
+| GW 控制台登录/操作审计 | `llm_gateway` | 建议新增 `llmgw_login_audits`、`llmgw_operation_audits` |
+| GW 作为独立网关的请求日志 | `llm_gateway` | 仅记录真正经过 GW serving/console 的网关侧请求与结果 |
+| 影子比对证据 | `llm_gateway` | 仅记录 GW 迁移与 http/inproc 对账证据；MAP 可保留自己的调试视图 |
+
+目标鉴权规则：
+- GW 控制台只读写 `llm_gateway.llmgw_console_users`，不复用 MAP 用户、不复用 MAP JWT。
+- `LLMGW_ADMIN_PASSWORD` 只能作为一次性 bootstrap/破玻璃手段，**不能作为长期口令权威**；长期权威是 `llm_gateway` 里的账号哈希。
+- 初始状态仍允许 `admin/admin`，但首登必须改密；改密后重启不得被 env 覆盖回旧值。
+- 破玻璃重置必须显式触发，触发后应清理开关，避免每次重启都回到弱口令。
+
+迁移顺序：
+1. 先把 GW 控制台账号与登录审计切到 `llm_gateway`，移除 env 每次启动覆盖密码的行为。
+2. 再让 GW serving 写自己的网关请求日志到 `llm_gateway`；MAP 原有日志不迁移、不删除。
+3. 最后按 Point 4 的 evidence-gated 流程逐步让 MAP 调用 GW；此时 MAP 可继续保留 MAP 侧业务日志，GW 记录网关侧链路日志。
+
 ### Point 3 — OpenRouter 风格控制台：**部分（骨架在，需对齐设计）**
 - `prd-llmgw-web` 已有：`LoginPage` / `LogsPage` / `LogsView`（请求日志表）/ `GenerationDetailsDrawer`
   （单条 generation 详情，OpenRouter Activity 风格）/ `MiniBarChart`（时序）。后端 `/gw/logs` `/gw/logs/{id}`

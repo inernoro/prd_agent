@@ -21,8 +21,20 @@
 
 ## 1. 分阶段执行计划（低风险先行；翻 http/删 inproc 必须被 MECE 测试 gate）
 
+### 1.1 目标数据域（2026-07-04 新裁决）
+
+Point 4 的“全面走网关”不等于“MAP 日志归 GW 管”。目标边界如下：
+
+- **MAP 继续负责自己的日志**：MAP 业务流程、页面、Agent run、管理后台调试所需日志继续落 `prdagent`，由 MAP 自己消费。
+- **LLM Gateway 负责自己的日志**：GW 控制台账号、登录审计、操作审计、GW serving 请求日志、shadow 对账证据落独立数据库 `llm_gateway`。
+- **控制台账号不再由 env 长期托管**：`LLMGW_ADMIN_PASSWORD` 只能用于 bootstrap/破玻璃，长期口令权威必须是 `llm_gateway.llmgw_console_users`。
+- **切网关后的双视角是设计目标**：MAP 侧可以看到“业务调用发生了什么”，GW 侧看到“模型网关如何解析、转发、失败、降级、计费/耗时”。两者用 requestId/sessionId/appCallerCode 关联，不互相吞并。
+
+这条边界优先于下文早期“共享 Mongo 混入其它分支日志”的旧风险描述；旧风险仍成立，但解决方式是**独立 GW 数据库 + 关联 ID**，不是把所有日志混成一个集合。
+
 | 阶段 | 目标 | 风险 | 关键改动 | 验证 |
 |---|---|---|---|---|
+| **S0.5** GW 数据域隔离 | GW 账号/审计/网关日志落 `llm_gateway` | 中 | `prd-llmgw` 账号库切 `llm_gateway`；serving 日志 writer 支持 GW DB；env 口令仅 bootstrap/破玻璃 | `admin/admin` 首登改密后重启不被 env 覆盖；MAP 日志仍留 MAP |
 | **S0** 前置解阻 | 清 self-update + serving 常驻 blocker | 中 | 批准 cds-compose 拓扑导入 + 生产 CDS self-update（先 dry-run）+ serving 项目级常驻 | 命名子域可见 + serving 稳定 |
 | **S1** CDS 面板出口可见性 | 网关命名 URL 回流并在面板渲染（point 0） | 低 | `branches.ts` 端点加 `gatewayUrls` + `BranchDetailPage.tsx` 加「网关入口」分组 + `openPreview` 加「打开网关」+ `resolveApiLabel` 补 label | 面板同显主应用+网关两组 URL；双主题；navCoverage/api-label 无 warning |
 | **S2** L1 观测 | 日志页辨 inproc/http（翻 http 硬前置） | 低 | `GatewayTransport` 每条 llmrequestlog 标 inproc/http/shadow | 日志页可筛 transport |
@@ -92,6 +104,8 @@
 
 ## 5. Point 4 — 遗漏 / 未覆盖清单
 
+- GW 独立数据域未落地：控制台账号仍可能受 `LLMGW_ADMIN_PASSWORD`/共享库影响；目标是 `llm_gateway.llmgw_console_users` 权威。
+- GW 网关侧请求日志尚未独立到 `llm_gateway`；MAP 日志不迁移，但 GW serving 需要自己的请求日志与审计日志。
 - 六处直连未收口（§3）——未收口前 Mode=http 是形式摆设，翻转路由分裂。
 - L1 GatewayTransport 日志标记未做——翻 http 唯一硬 blocker。
 - multipart raw HTTP 化未接通（ASR/图生图）——http 模式内联文件跨进程 fail-fast。
@@ -111,7 +125,8 @@
 4. **multipart http 失败**：生图/ASR 内联文件 http 跨进程失败 → canary 期强制留 inproc/shadow。
 5. **serving 单点**：HA 未验证，serving 挂且无降级 → 全站 LLM 不可用。
 6. **删 legacy 兜底**：默认池覆盖 <60% 时删兜底 → 池全不可用无降级。
-7. **密钥双身份轮换**：Jwt__Secret 兼 JWT 签名 + ApiKeyEncrypted 加密，轮换前须先重加密存量密文（历史 CDS_JWT_SECRET 穿透事故）。
+7. **GW 数据域混乱**：账号由 env/共享库覆盖、日志与 MAP 混在一起，会让控制台无法解释“谁负责哪条记录”。先落 `llm_gateway` 数据域，再推进大规模切换。
+8. **密钥双身份轮换**：Jwt__Secret 兼 JWT 签名 + ApiKeyEncrypted 加密，轮换前须先重加密存量密文（历史 CDS_JWT_SECRET 穿透事故）。
 
 ---
 
