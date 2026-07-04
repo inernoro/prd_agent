@@ -61,6 +61,25 @@ public static class BsonValueHelpers
         };
     }
 
+    /// <summary>读取 decimal（可空）。价格字段以 Decimal128 存储，历史上也可能是 Double/字符串。</summary>
+    public static decimal? AsNullableDecimal(this BsonDocument doc, string name)
+    {
+        if (!doc.TryGetValue(name, out var v) || v.IsBsonNull) return null;
+        return v.BsonType switch
+        {
+            BsonType.Decimal128 => (decimal)v.AsDecimal128,
+            BsonType.Double => (decimal)v.AsDouble,
+            BsonType.Int32 => v.AsInt32,
+            BsonType.Int64 => v.AsInt64,
+            BsonType.String when decimal.TryParse(
+                v.AsString,
+                System.Globalization.NumberStyles.Any,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var p) => p,
+            _ => null,
+        };
+    }
+
     /// <summary>读取 UTC DateTime（可空）。</summary>
     public static DateTime? AsNullableUtcDateTime(this BsonDocument doc, string name)
     {

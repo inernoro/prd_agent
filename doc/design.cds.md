@@ -265,6 +265,16 @@ CDS Compose YAML 解析与生成。
 
 默认 `enabled: false`，保持与老版本完全一致的行为。启用后按 `maxHotBranches` / `idleTTLSeconds` / `pinnedBranches` 配置工作。
 
+### 5.9 ScheduledJobService（项目级任务调度，2026-06-29 新增）
+
+项目级定时任务 MVP，`cds/src/services/scheduled-job-service.ts` + `cds/src/scheduler/`（`dispatcher.ts` / `executor-registry.ts`）+ `cds/src/routes/scheduled-jobs.ts`。
+
+- **配置模型**：一个 `ScheduledJob` = 触发器（`schedule`：cron/interval/manual）+ 一串按顺序执行的 `ScheduledJobAction`（动作步骤，支持 HTTP 请求或命令目标），纵向配置流，非单一目标。
+- **执行方式**：30s tick（`DEFAULT_TICK_MS`）扫描到期任务；命令类动作在 Docker sandbox（默认镜像 `alpine:3`）中执行，隔离宿主文件系统，透传 CDS Docker network 使其可访问项目内服务；每次执行整体共享一个超时预算（`DEFAULT_TIMEOUT_SECONDS=300`），避免多动作/重试突破任务总超时。
+- **API**：`GET /scheduled-jobs`、`GET /scheduled-jobs/runs`、`POST /scheduled-jobs/check-target`（执行前检测）、`POST /scheduled-jobs`、`PATCH /scheduled-jobs/:id`、`DELETE /scheduled-jobs/:id`、`POST /scheduled-jobs/:id/run`（手动触发）。
+- **安全**：项目级 key 的读权限已收敛到自己项目范围（修复过「项目级 key 可无范围读取任务列表与运行日志」的越权问题）；命令动作强制走 sandbox，不直接触达宿主。
+- **已知修复**：按 `retryCount` 重试失败动作；长时间任务不再因重复 tick 产生假跳过记录并覆盖运行状态；编辑非调度字段不再误触发 `nextRunAt` 重算；同一轮 tick 内任务被禁用后不再继续执行；tick 认领逻辑加固（防坏调度阻断启动、空 `nextRunAt` 重复执行、手动运行误挪动自动计划）。
+
 ---
 
 ## 6. 环境变量体系

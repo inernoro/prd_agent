@@ -1,0 +1,1 @@
+| chore | doc | 熵清理 2026-07-03：D1 0 个，D2 +0/-0，D3 +0/-0（疑似幽灵均命中 guide.list 历史变更记录表/CLAUDE.md 加粗术语，非目录条目误报），D4 +0/-0（pnpm 为误报），D6 处理 5 条（llm-gateway serving 部署+进程已有覆盖仅登记；design.cds.onboarding.md 补「compose 服务误判修复」；design.cds.md 补 5.9 ScheduledJobService 项目级任务调度），manifest 累计 400 条 |

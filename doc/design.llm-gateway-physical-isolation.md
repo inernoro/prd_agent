@@ -512,6 +512,7 @@ api:
 - **关键约束（吸收评审）**：影子期日志写**统一由网关承接**（http 路径写网关；inproc 路径要么也调网关 writer、要么 prd-api 不写只透传），prd-api 侧 Watchdog 在任一 caller 走 http 时即关闭——避免双 Watchdog 互杀长请求 / 孤儿 running。
 - **可独立上线判据**：是。flag 默认 inproc，网关容器空跑待命。
 - **回滚点**：flag 切回 `inproc`，无需重新部署 prd-api。
+- **跨进程自测**（2026-06-28 新增）：`CrossProcessServingSelfTest` 起真 Kestrel + 真 `HttpLlmGatewayClient` + stub gateway，断言 resolve/send/stream/raw/pools/client-stream 的 HTTP 往返、ApiKey 不过线、密钥门 401，是"网关剥离没剥漏"的回归底线；serving 端点抽成可复用扩展 `MapGatewayServingEndpoints`（SSOT，`Program.cs` 与自测共用同一份映射），避免自测与生产路由漂移。
 
 ### 阶段 3：流量切换
 
