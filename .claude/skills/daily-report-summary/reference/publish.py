@@ -26,6 +26,7 @@ find-or-create「日报知识库」→（有截图则先上传图、回填 {{IMG
 """
 import argparse, json, os, subprocess, time, sys, re, shutil
 from html import unescape as html_unescape
+from html.parser import HTMLParser
 
 API = "/api/document-store"
 STORE_NAME = "日报知识库"
@@ -150,6 +151,110 @@ def strip_html_comments(html):
     return re.sub(r"<!--.*?-->", "", html, flags=re.S)
 
 
+_EXT_CSS = re.compile(r'url\(\s*["\']?\s*(?:https?:)?//', re.I)
+_EXT_IMPORT = re.compile(r'@import\s+["\']\s*(?:https?:)?//', re.I)
+
+
+def _is_external(url):
+    u = (url or "").strip().lower()
+    return u.startswith("http://") or u.startswith("https://") or u.startswith("//")
+
+
+class _ReportScanner(HTMLParser):
+    """自包含守卫的属性级扫描器（终结正则猫鼠游戏的实现，Codex P2 六轮后重写）。
+
+    为什么用 HTMLParser 而不是正则：convert_charrefs=True（默认）让属性值在回调前
+    完成字符引用解码，与浏览器同口径——&#104;ttps:// 这类实体编码绕过天然失效；
+    无引号/换行/大小写等 HTML 词法变体也全部由 parser 归一，不再逐个打补丁。
+    <style>/<script> 内容按 CDATA 交给 handle_data 原文（浏览器同样不在其中解码实体），
+    CSS 检查用正则扫这些原文块 + 已解码的 style 属性值。
+    """
+
+    # 加载型属性（任意标签上出现即发起请求）；href 单独按标签区分导航型/加载型
+    LOAD_ATTRS = {"src", "poster", "background", "formaction"}
+    HREF_LOADING_TAGS = {"link", "image", "use", "feimage"}  # 样式表/预加载 + SVG 引用
+
+    def __init__(self):
+        super().__init__()
+        self.errs = []
+        self.has_viewport = False
+        self.has_script = False
+        self._in_style = False
+        self.css_chunks = []
+
+    def handle_starttag(self, tag, attrs):
+        self._check(tag, attrs)
+        if tag == "style":
+            self._in_style = True
+        if tag == "script":
+            self.has_script = True
+
+    def handle_startendtag(self, tag, attrs):
+        self._check(tag, attrs)
+
+    def handle_endtag(self, tag):
+        if tag == "style":
+            self._in_style = False
+
+    def handle_data(self, data):
+        if self._in_style:
+            self.css_chunks.append(data)
+
+    def _err(self, msg):
+        if msg not in self.errs:
+            self.errs.append(msg)
+
+    def _check(self, tag, attrs):
+        if tag == "meta":
+            d = dict(attrs)
+            if (d.get("name") or "").strip().lower() == "viewport":
+                self.has_viewport = True
+        for name, val in attrs:
+            if val is None:
+                continue
+            n, v = name.lower(), val.strip()
+            if n in self.LOAD_ATTRS or (n == "data" and tag == "object"):
+                if _is_external(v):
+                    self._err(f"<{tag} {n}> 引用外部加载资源（{v[:60]}）——必须自包含，图片仅允许知识库 upload 返回的站内 URL（{{{{IMG:}}}} 占位流程）")
+                if v.lower().startswith("data:image"):
+                    self._err("加载属性含 data:image——后端知识库正文有防破图守卫会拒存，请改站内 URL 或内联 SVG 标签")
+            elif n == "srcset":
+                for part in v.split(","):
+                    cand = part.strip().split()[0] if part.strip() else ""
+                    if _is_external(cand):
+                        self._err(f"srcset 引用外部图片（{cand[:60]}）——必须自包含，仅允许站内 URL")
+                        break
+            elif n in ("href", "xlink:href") and tag in self.HREF_LOADING_TAGS:
+                if _is_external(v):
+                    self._err(f"<{tag}> 的 {n} 引用外部资源（{v[:60]}）——样式必须内联、SVG 必须完全内联绘制；导航链接请用 <a href>")
+            if n == "style" and v:
+                self.css_chunks.append(v)
+
+
+def validate_html_report(body):
+    """报纸版 HTML 硬校验，返回问题清单（空 = 通过）。属性层走 _ReportScanner，
+    CSS 层正则扫 <style> 原文与 style 属性（已解码）。"""
+    errs = []
+    low = body.lower()
+    if "<html" not in low:
+        errs.append("不是完整 HTML 文档（缺 <html>）——报纸版必须是自包含整页")
+    # 后端守卫按原文子串扫 data:image，这里保持同口径的兜底（属性层另有解码后检查）
+    if "data:image" in low:
+        errs.append("含 data:image——后端知识库正文有防破图守卫会直接拒存，纹理/图标请改纯 CSS 渐变或内联 SVG 标签")
+    sc = _ReportScanner()
+    sc.feed(body)
+    sc.close()
+    if not sc.has_viewport:
+        errs.append("缺 <meta name=\"viewport\">——移动端会按 980px 桌面视口缩放，整页变小")
+    if sc.has_script:
+        errs.append("含 <script>——知识库沙箱 iframe 不给 allow-scripts，脚本不会执行，请改纯 CSS 实现")
+    css = "\n".join(sc.css_chunks)
+    if _EXT_CSS.search(css) or _EXT_IMPORT.search(css):
+        errs.append("CSS 里有外部加载（url() 或 @import 指向 http/ // 外链）——背景图/字体必须内联或改纯 CSS，沙箱 iframe 仍会真实发起这些请求")
+    errs.extend(sc.errs)
+    return errs
+
+
 def html_visible_text(html, limit=200):
     """从 HTML 提取可读文本前 limit 字，作条目摘要（列表/卡片/搜索片段展示用）。
     必须解码实体（与后端 ToIndexableText 的 HtmlDecode 同口径），否则摘要里
@@ -225,42 +330,7 @@ def main():
         # 注释先剥掉再校验/发布：模板头注释里合法出现「data:image」等示例字样，
         # 不剥会误伤模板；后端正文守卫同为子串扫描，注释不剥也会被后端误拒（Codex P2）
         body = strip_html_comments(body)
-        low = body.lower()
-        errs = []
-        if "<html" not in low:
-            errs.append("不是完整 HTML 文档（缺 <html>）——报纸版必须是自包含整页")
-        # 必须匹配真实 meta 标签，不能子串扫描——否则正文里出现 viewport 一词即可骗过（Codex P2）
-        if not re.search(r'<meta\b[^>]*\bname\s*=\s*["\']viewport["\']', low):
-            errs.append("缺 <meta name=\"viewport\">——移动端会按 980px 桌面视口缩放，整页变小")
-        if "<script" in low:
-            errs.append("含 <script>——知识库沙箱 iframe 不给 allow-scripts，脚本不会执行，请改纯 CSS 实现")
-        if "data:image" in low:
-            errs.append("含 data:image——后端知识库正文有防破图守卫会直接拒存，纹理/图标请改纯 CSS 渐变或内联 SVG 标签")
-        # 只拦"加载型"外部资源；导航型 <a href="https://..."> 不往页面加载任何资源，
-        # 日报里链 PR/预览地址是正常需求，必须放行（Codex P2）。
-        # 加载型覆盖四类（Codex P2 二轮）：HTML src / <link href> / srcset /
-        # CSS 的 url(http) 与 @import——沙箱 srcDoc iframe 照样会发起 CSS 图片、字体请求。
-        # EXT = 外部地址前缀：http(s):// 或协议相对 //（后者继承页面协议同样出网，Bugbot Medium）。
-        # 属性值引号可选：HTML 允许 src=https://x 这种无引号写法，正则强制引号会被绕过（Codex P2）。
-        EXT = r'(?:https?:)?//'
-        Q = r'["\']?\s*'
-        if re.search(r'\bsrc\s*=\s*' + Q + EXT, low):
-            errs.append("引用了外部加载资源（src=http 或 // 开头）——必须自包含，图片仅允许知识库 upload 返回的站内 URL（{{IMG:}} 占位流程）")
-        if re.search(r'<link\b[^>]*href\s*=\s*' + Q + EXT, low):
-            errs.append("引用了外部样式/资源 <link href 外链>——CSS 必须内联，不得外链")
-        # srcset：带引号取引号内整值；无引号取到空白/>为止（无引号值不能含空白但可含逗号）
-        srcset_vals = [mm.group(1) for mm in re.finditer(r'\bsrcset\s*=\s*["\']([^"\']*)["\']', low)]
-        srcset_vals += [mm.group(1) for mm in re.finditer(r'\bsrcset\s*=\s*(?!["\'])([^\s>]+)', low)]
-        for val in srcset_vals:
-            if re.search(r'(?:^|[\s,])' + EXT, val):
-                errs.append("srcset 引用了外部图片（http 或 // 开头）——必须自包含，仅允许站内 URL")
-                break
-        if re.search(r'url\(\s*["\']?\s*' + EXT, low) or re.search(r'@import\s+["\']\s*' + EXT, low):
-            errs.append("CSS 里有外部加载（url() 或 @import 指向 http/ // 外链）——背景图/字体必须内联或改纯 CSS，沙箱 iframe 仍会真实发起这些请求")
-        # SVG 的加载型 href：<image>/<use>/<feImage> 的 href / xlink:href 会真实拉取外部资源，
-        # 与导航型 <a href> 不同，必须拦（Codex P2）。
-        if re.search(r'<(?:image|use|feimage)\b[^>]*(?:xlink:)?href\s*=\s*' + Q + EXT, low):
-            errs.append("内联 SVG 的 image/use href 引用外部资源——SVG 必须完全内联绘制，不得外链图片")
+        errs = validate_html_report(body)
         if errs:
             raise RuntimeError("HTML 报纸版校验未通过：\n  - " + "\n  - ".join(errs))
     else:
