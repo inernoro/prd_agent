@@ -267,6 +267,7 @@ docs:
   plan.llm-gateway.rollout: LLM 网关剥离上线计划（差异化进度 + 测试纲领 + 局限范围 + 翻 http 序列）
   plan.llm-gateway.full-cutover: LLM 网关全面切换执行计划（撤销 MAP 直连 + 清理旧代码 + 全接口 MECE 复测 + CDS 多出口面板）
   plan.llm-gateway.gw-vision-handoff: LLM 网关 GW 用户四点愿景与交接（两 web 两域名 / 简单账号密码 admin/admin / OpenRouter 风格控制台 / 替换所有模型请求）
+  plan.llm-gateway.status-dashboard: LLM 网关剥离活状态看板（唯一"现在到哪了/能不能发布"入口，记分卡 + Gate + 下一步 + 验收证据）
   plan.visual-agent.merge-image-ref-resolver: 合并计划书：三入口守门员统一
   plan.skill.installation: Claude Code Skill 安装计划
   plan.skill.marketplace-open-api-next: 海鲜市场技能开放接口 — 下一程交接（P2/P3/P4 待办 + UAT 清单 + 环境准备）

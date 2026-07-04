@@ -173,6 +173,8 @@
 - **Docker Compose 迁移**：解析 services/volumes/networks 映射
 - **缺失信息**：用占位符标注 `"TODO: ..."` 并提示用户确认
 
+**误判修复（2026-06-29）**：项目创建自动检测曾把 CDS 控制面自身、sidecar 进程和测试目录误识别为「待部署应用服务」，导致创建预览里混入不该存在的服务卡片。修复后：compose 里声明的基础设施服务改为「检测提示 + 由 compose 导入」而非当作应用服务硬塞进创建流程；没有 `command` 的 compose 应用服务也会正常出现在创建预览中（此前会被静默跳过）；带 `workDir` 的 compose 命令会在其声明的子目录内做存在性验证，避免跨目录误判。配套地，仓库 Git hooks 安装脚本新增 `post-checkout` 钩子，`checkout`/`worktree add` 后自动补齐 `.claude/skills → .agents/skills` 的本地软链，避免新建 worktree 里技能目录悬空。
+
 ---
 
 ## 5. Dashboard 一键导入 UI

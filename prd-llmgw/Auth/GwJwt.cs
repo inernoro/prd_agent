@@ -38,6 +38,13 @@ public sealed class GwJwt
             new(ClaimTypes.Name, user.Username),
         };
 
+        // 首登强制改密：带 mcp=1 的 token 只能调 /gw/auth/change-password，服务端策略门（LogsRead）拒绝
+        // 其访问 /gw/logs*。改密成功后重新签发的 token 不再带此 claim，方可读日志。
+        if (user.MustChangePassword)
+        {
+            claims.Add(new Claim("mcp", "1"));
+        }
+
         var creds = new SigningCredentials(SigningKey, SecurityAlgorithms.HmacSha256);
         var token = new JwtSecurityToken(
             issuer: _issuer,

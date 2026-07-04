@@ -5845,7 +5845,65 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return text;
   }
 
-  function normalizeMongoFindCommand(commandInput: unknown): { collection: string; script: string } {
+  // 把命令里的字符串/正则字面量内容抹成空白，只留「代码骨架」，供高危/写操作扫描使用。
+  // 这样 filter/$set/备注/日志/正则示例里出现的 drop( / updateOne( 等子串（本是数据、mongosh 不会当代码执行）
+  // 不再被误判（Bugbot Medium ×2）；而真正内嵌的方法调用（代码位置的 .drop() / updateMany()）仍保留可被检出。
+  function stripMongoLiterals(input: string): string {
+    let out = '';
+    let i = 0;
+    const n = input.length;
+    let prevSignificant = '';
+    while (i < n) {
+      const ch = input[i];
+      if (ch === '"' || ch === "'" || ch === '`') {
+        const quote = ch;
+        i++;
+        while (i < n) {
+          if (input[i] === '\\') { i += 2; continue; }
+          if (input[i] === quote) { i++; break; }
+          i++;
+        }
+        out += ' ';
+        prevSignificant = 'x';
+        continue;
+      }
+      if (ch === '/') {
+        // 正则字面量 vs 除号：仅当前一个有意义字符处于「正则可出现位置」且下一个字符不是 / 或 * 时按正则处理
+        const regexAllowedPrev = prevSignificant === '' || '([,:=!&|?{;'.includes(prevSignificant);
+        const next = input[i + 1];
+        if (regexAllowedPrev && next !== '/' && next !== '*') {
+          i++;
+          while (i < n) {
+            if (input[i] === '\\') { i += 2; continue; }
+            if (input[i] === '/' || input[i] === '\n') { if (input[i] === '/') i++; break; }
+            i++;
+          }
+          while (i < n && /[gimsuy]/.test(input[i])) i++;
+          out += ' ';
+          prevSignificant = 'x';
+          continue;
+        }
+      }
+      out += ch;
+      if (!/\s/.test(ch)) prevSignificant = ch;
+      i++;
+    }
+    return out;
+  }
+
+  // 只读动词（安全，无需 data-write 权限）
+  const MONGO_READ_VERBS = new Set(['find', 'findOne', 'countDocuments', 'estimatedDocumentCount', 'distinct']);
+  // 受控写动词（需 data-write 权限；均为定点写，非删库删集合类灾难操作）
+  const MONGO_WRITE_VERBS = new Set([
+    'insertOne', 'insertMany',
+    'updateOne', 'updateMany', 'replaceOne',
+    'deleteOne', 'deleteMany',
+    'findOneAndUpdate', 'findOneAndReplace', 'findOneAndDelete',
+    'bulkWrite',
+  ]);
+
+  // 解析 Mongo Console 命令：只读 find 免权限，受控写需 data-write，灾难操作一律禁止。
+  function normalizeMongoConsoleCommand(commandInput: unknown): { collection: string; verb: string; isWrite: boolean; script: string } {
     const command = String(commandInput || '').trim();
     if (!command) throw new Error('MongoDB 命令不能为空');
     if (command.length > 20_000) throw new Error('MongoDB 命令过长（上限 20KB）');
@@ -5853,29 +5911,75 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (withoutTrailing.includes(';')) {
       throw new Error('MongoDB Console 一次只允许执行一条命令');
     }
-    if (/\b(insert|insertOne|insertMany|update|updateOne|updateMany|delete|deleteOne|deleteMany|drop|dropDatabase|dropCollection|create|createCollection|aggregate|mapReduce|eval|runCommand|adminCommand|getSiblingDB|copyDatabase|shutdownServer)\b/i.test(withoutTrailing) || /\$where/i.test(withoutTrailing)) {
-      throw new Error('MongoDB Console 当前只允许只读 find 查询');
+    // 禁止「能隐藏/触发执行」的 JS 构造——它们在数据控制台里没有任何合法用途，却能绕过按形态的静态扫描：
+    //   1. 反引号模板串：抹字面量会把内容抹掉，但 mongosh 仍会求值 `${...}` 内嵌表达式（Bugbot High）；
+    //   2. 箭头函数 / function 回调：db.x.find().forEach(() => db.y.drop()) 之类的隐藏执行；
+    //   3. 计算成员访问：db.x["drop"]() —— 方法名藏进字符串（被抹），但 mongosh 照常执行。
+    // 反引号在原文查（模板由反引号定义）；箭头/function/计算成员在代码骨架查（避免字符串数据里的同名子串误伤）。
+    if (/`/.test(withoutTrailing)) {
+      throw new Error('MongoDB Console 禁止使用模板字符串（反引号）——其 ${} 内嵌表达式会被执行');
+    }
+    // 代码骨架（抹掉字符串/正则字面量内容）——所有「按方法调用/操作符形态」的安全扫描都对它做，
+    // 避免把数据/日志/正则示例里的 drop( / updateOne( 等子串误判（Bugbot Medium）。
+    const codeSkeleton = stripMongoLiterals(withoutTrailing);
+    if (/=>|\bfunction\s*\(/.test(codeSkeleton)) {
+      throw new Error('MongoDB Console 禁止箭头函数 / function 回调（可内嵌隐藏执行）');
+    }
+    // 计算成员「调用」——下标结果被立即调用（db.x["drop"]()），抹字面量后呈 ]\s*(。真正的动态方法查找必是此形态；
+    // 只判 ]( 而不判 identifier[，从而不误伤数组下标/数组字面量（arr[0]、$in:[[1],[2]]）——它们的 ] 后不是 (（Bugbot Medium）。
+    if (/\]\s*\(/.test(codeSkeleton)) {
+      throw new Error('MongoDB Console 禁止对下标结果发起调用（计算成员访问如 db.x["drop"]()）——方法名必须是明文');
+    }
+    // 始终禁止：高危操作只按「方法调用」形态匹配（op 后跟 `(`）。仍拦截参数里内嵌的危险调用，例如
+    // insertOne({ a: db.y.drop() })——mongo shell 会先求值该实参再执行 insertOne，故 `.drop(` 必须挡下。
+    // aggregate 一并按方法调用拦截，从根上堵死 $out/$merge 写出。$where 按「操作符键」形态拦截（服务端 JS）。
+    // 方法调用类高危扫代码骨架；$where 是操作符键（可写成 "$where": 引号键，抹字面量会丢），故对原文按「键形态」扫。
+    if (
+      /\b(drop|dropDatabase|dropCollection|dropIndex|dropIndexes|createCollection|renameCollection|createIndex|reIndex|eval|mapReduce|runCommand|adminCommand|getSiblingDB|copyDatabase|shutdownServer|aggregate)\s*\(/i.test(codeSkeleton)
+      || /["']?\$where["']?\s*:/i.test(withoutTrailing)
+    ) {
+      throw new Error('MongoDB Console 禁止删库/删集合/索引/跨库/服务器级/eval/aggregate 写出/$where 等高危操作');
     }
 
-    const getCollectionMatch = withoutTrailing.match(/^db\.getCollection\((["'])([^"'\r\n]{1,120})\1\)\.find\s*\(/);
-    const dotCollectionMatch = withoutTrailing.match(/^db\.([a-zA-Z0-9_$-]{1,120})\.find\s*\(/);
+    const getCollectionMatch = withoutTrailing.match(/^db\.getCollection\((["'])([^"'\r\n]{1,120})\1\)\.([a-zA-Z]+)\s*\(/);
+    const dotCollectionMatch = withoutTrailing.match(/^db\.([a-zA-Z0-9_$-]{1,120})\.([a-zA-Z]+)\s*\(/);
     const collection = getCollectionMatch?.[2] || dotCollectionMatch?.[1] || '';
-    if (!collection) {
-      throw new Error('MongoDB Console 当前只支持 db.getCollection("collection").find(...) 或 db.collection.find(...)');
+    const verb = getCollectionMatch?.[3] || dotCollectionMatch?.[2] || '';
+    if (!collection || !verb) {
+      throw new Error('MongoDB Console 仅支持 db.getCollection("collection").<op>(...) 或 db.collection.<op>(...)');
     }
     mongoCollectionFromRequest(collection);
-    if (!/\.limit\s*\(\s*\d{1,3}\s*\)\s*$/.test(withoutTrailing)) {
-      throw new Error('MongoDB find 查询必须显式追加 limit(1-100)');
-    }
-    const limitRaw = Number(withoutTrailing.match(/\.limit\s*\(\s*(\d{1,3})\s*\)\s*$/)?.[1] || 0);
-    if (!Number.isFinite(limitRaw) || limitRaw < 1 || limitRaw > 100) {
-      throw new Error('MongoDB limit 必须在 1-100 之间');
+
+    // 命令行只跑只读查询：写操作请走「结构化写入」面板（POST /data/mongo/write，固定 action + JSON 参数，
+    // 完全不 eval 用户文本）。历史上让命令行执行写会引入无穷的 mongosh eval 绕过（多语句/模板串/计算成员…），
+    // 正则消毒任意 JS 本质不收敛，故写入彻底改走结构化路径（用户 2026-07-02 拍板）。
+    const isRead = MONGO_READ_VERBS.has(verb);
+    if (!isRead) {
+      if (MONGO_WRITE_VERBS.has(verb)) {
+        throw new Error(`命令行仅支持只读查询；写操作（${verb}）请使用「结构化写入」面板`);
+      }
+      throw new Error(`MongoDB Console 不支持操作 "${verb}"，仅允许只读：${[...MONGO_READ_VERBS].join(' / ')}`);
     }
 
-    return {
-      collection,
-      script: `JSON.stringify((${withoutTrailing}).toArray())`,
-    };
+    // 只读命令里也禁止任何写方法调用（例如藏在 filter 实参里的 db.y.updateMany()——mongosh 会先求值实参）。
+    const writeCallCount = (codeSkeleton.match(/\b(insertOne|insertMany|updateOne|updateMany|replaceOne|deleteOne|deleteMany|findOneAndUpdate|findOneAndReplace|findOneAndDelete|bulkWrite)\s*\(/gi) || []).length;
+    if (writeCallCount !== 0) {
+      throw new Error('命令行仅支持只读查询：检测到写方法调用；写操作请使用「结构化写入」面板');
+    }
+
+    if (verb === 'find') {
+      if (!/\.limit\s*\(\s*\d{1,3}\s*\)\s*$/.test(withoutTrailing)) {
+        throw new Error('MongoDB find 查询必须显式追加 limit(1-100)');
+      }
+      const limitRaw = Number(withoutTrailing.match(/\.limit\s*\(\s*(\d{1,3})\s*\)\s*$/)?.[1] || 0);
+      if (!Number.isFinite(limitRaw) || limitRaw < 1 || limitRaw > 100) {
+        throw new Error('MongoDB limit 必须在 1-100 之间');
+      }
+      return { collection, verb, isWrite: false, script: `JSON.stringify((${withoutTrailing}).toArray())` };
+    }
+
+    // findOne/countDocuments/estimatedDocumentCount/distinct：返回值可直接 JSON 序列化
+    return { collection, verb, isWrite: false, script: `JSON.stringify((${withoutTrailing}))` };
   }
 
   async function runRedisCli(service: InfraService, args: string[], timeoutMs = 15_000): Promise<string> {
@@ -8442,10 +8546,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const ctx = await resolveMongoDataResourceForRequest(req, res);
     if (!ctx) return;
     let database = '';
-    let command: { collection: string; script: string };
+    let command: { collection: string; verb: string; isWrite: boolean; script: string };
     try {
       database = mongoDatabaseFromRequest(req.body?.database, mongoDatabaseForBranch(ctx.service, ctx.branch));
-      command = normalizeMongoFindCommand(req.body?.command);
+      // 命令行只跑只读查询（normalizeMongoConsoleCommand 拒绝一切写）；写操作走 /data/mongo/write 结构化端点。
+      command = normalizeMongoConsoleCommand(req.body?.command);
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
       return;
@@ -8460,7 +8565,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         resourceId: ctx.resourceId,
         resourceName: ctx.resourceName,
         result: 'success',
-        note: `${ctx.resourceName} 执行 MongoDB find：${database}.${command.collection}`,
+        note: `${ctx.resourceName} 执行 MongoDB ${command.verb}：${database}.${command.collection}`,
       });
       stateService.save();
       res.json({
@@ -8468,8 +8573,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         resourceId: ctx.resourceId,
         database,
         collection: command.collection,
+        verb: command.verb,
         kind: 'documents',
-        documents: Array.isArray(data) ? data : [],
+        documents: Array.isArray(data) ? data : data == null ? [] : [data],
       });
     } catch (err) {
       stateService.appendActivityLog(ctx.projectId, {
@@ -12941,7 +13047,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       gatewayUrls.push({
         subdomain: sub,
         name: profileId,
-        url: `http://${namedLabel}.${primaryRoot}${landingPath}`,
+        // 双出口契约（.claude/rules/cds-dual-exit-topology.md）：命名子域走 HTTPS，与主应用一致。
+        // nginx `*.<root>` server 块已在 443 用同一份通配证书服务命名子域，此前误印成 http:// 才导致
+        // 「1 HTTPS + 3 HTTP」。命名子域是单标签（连字符不产生新点），落在 *.<root> 通配证书覆盖内。
+        url: `https://${namedLabel}.${primaryRoot}${landingPath}`,
       });
     }
     return gatewayUrls;
@@ -12961,8 +13070,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       ? config.rootDomains
       : (config.previewDomain ? [config.previewDomain] : []);
     const primaryRoot = rootDomains[0] || 'example.com';
-    const previewUrls = aliases.map(a => `http://${a}.${primaryRoot}`);
-    const defaultUrl = `http://${id}.${primaryRoot}`;
+    const previewUrls = aliases.map(a => `https://${a}.${primaryRoot}`);
+    const defaultUrl = `https://${id}.${primaryRoot}`;
 
     res.json({
       branchId: id,
@@ -13051,8 +13160,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         message: '已保存子域名别名',
         branchId: id,
         aliases: normalized,
-        previewUrls: normalized.map(a => `http://${a}.${primaryRoot}`),
-        defaultUrl: `http://${id}.${primaryRoot}`,
+        previewUrls: normalized.map(a => `https://${a}.${primaryRoot}`),
+        defaultUrl: `https://${id}.${primaryRoot}`,
         // gatewayUrls are branch-derived (not alias-derived); return them so the panel keeps the
         // 网关入口 block + 预览下拉 after saving aliases, instead of dropping them until a full
         // reload (Bugbot "Alias save clears gateway URLs"). Same SSOT helper as the GET response.

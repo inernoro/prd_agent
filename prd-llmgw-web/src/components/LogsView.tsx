@@ -32,6 +32,19 @@ import {
 
 const PAGE_SIZE = 30;
 
+// 网关传输通道（GatewayTransport）chip：这次调用走进程内 / 跨进程 HTTP / 影子 / 直连。
+// 是翻 http 前后排障「这条走了哪条路」的关键标记。历史日志为 null → 不显示 chip。
+const TRANSPORT_META: Record<string, { label: string; color: string; bg: string }> = {
+  inproc: { label: 'inproc', color: 'var(--text-muted)', bg: 'var(--bg-elevated)' },
+  http: { label: 'http', color: 'var(--accent)', bg: 'var(--accent-soft)' },
+  shadow: { label: 'shadow', color: '#d29922', bg: 'rgba(210,153,34,0.14)' },
+  direct: { label: 'direct', color: '#f85149', bg: 'rgba(248,81,73,0.14)' },
+};
+function getTransportMeta(t?: string | null) {
+  if (!t) return null;
+  return TRANSPORT_META[t.toLowerCase()] ?? { label: t, color: 'var(--text-secondary)', bg: 'var(--bg-elevated)' };
+}
+
 export function LogsView() {
   const [subtab, setSubtab] = useState<LogsSubTab>('generations');
   const [presetKey, setPresetKey] = useState('30d');
@@ -150,12 +163,14 @@ export function LogsView() {
       }
       case 'model': {
         const proto = getProtocolMeta(it.protocol);
+        const tp = getTransportMeta(it.transport);
         return (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
             <span className="lg-truncate" style={{ fontSize: 11, fontWeight: 500, color: 'var(--text-primary)' }} title={it.model}>
               {it.model || DASH}
             </span>
             {proto ? <Chip label={proto.label} color={proto.color} bg={proto.bg} /> : null}
+            {tp ? <Chip label={tp.label} color={tp.color} bg={tp.bg} title={`网关传输通道：${tp.label}`} /> : null}
           </span>
         );
       }

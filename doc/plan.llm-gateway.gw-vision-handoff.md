@@ -28,7 +28,7 @@
   `llmgw-serve` `/gw/v1/healthz`）。预览按钮默认主入口，网关入口并列。
 - prd-agent-main 现 **5 容器**：api / admin / llmgw / llmgw-serve / llmgw-web。
 
-### Point 2 — 简单账号密码：**已达成（PR #978）**
+### Point 2 — 简单账号密码：**已达成（PR #978 + 首登强制改密 2026-07-02）**
 - 后端 `prd-llmgw/Program.cs` 缺省内置 **admin/admin**，开箱可用；不再因未配 `LLMGW_ADMIN_PASSWORD`
   而拒启动（仅告警）。
 - `SeedAdminAsync` 改 **upsert**（配置口令变化即对齐，`Verify` 判定、带盐哈希不空写）+ **禁用用户名≠当前
@@ -47,13 +47,48 @@
   `Console.Error` 告警（已实现），并把 Codex 的安全顾虑落成**待接力的强约束**：
   **首登强制改密（force-change-on-first-login）**——这正是用户原话「登录进去再改」的正确工程化，
   既不牺牲开箱体验，又消除「永久 admin/admin 公网裸奔」。
-- **待接力实现（point 2 收尾，未做）**：
-  1. `LlmGwUser` 加 `MustChangePassword`（bool，seed 缺省账号时置 true）。
-  2. `/gw/auth/login` 成功后若 `MustChangePassword` 为 true，token 标记 `pwd_reset_required`，
-     前端 `LoginPage`/路由守卫强制跳「设置新口令」页，改密成功前不放行 `/gw/logs`。
-  3. 新增 `/gw/auth/change-password`（校验旧口令→写新哈希→清 `MustChangePassword`→禁用缺省态）。
-  4. 改密后缺省 admin/admin 立即失效（upsert 逻辑已支持「口令变化即对齐」，只需前端驱动）。
-  - 在此之前，运维可临时用项目环境变量 `LLMGW_ADMIN_PASSWORD` 顶掉缺省口令（已可用）。
+- **已实现（point 2 收尾，2026-07-02）**：首登强制改密全链路落地，消除「公网 admin/admin 永久裸奔」。
+  1. `LlmGwUser` 加 `MustChangePassword`（bool）；缺省弱口令（admin/admin）种子账号置 true，
+     运维显式配置 `LLMGW_ADMIN_PASSWORD` 的账号视为已知口令、不置标记。
+  2. `SeedAdmin` 分两模式：**默认模式**（未配口令）已存在账号**不回退**口令（库为权威，防重启抹掉用户改的密码）、
+     仅确保启用；**配置模式**每次启动把口令对齐到 env 值并清标记。
+  3. `/gw/auth/login` 返回 `mustChangePassword`；JWT 在该标记为 true 时带 `mcp=1` claim。
+  4. **服务端策略门**（不只前端）：`LogsRead` 授权策略拒绝 `mcp=1` 的 token 访问 `/gw/logs*`，
+     确保改密前无法真正读观测数据。改密端点走普通鉴权（允许 mcp token）。
+  5. 新增 `/gw/auth/change-password`（校验旧口令→新口令≥6 位且≠旧→写新哈希→清标记→**重签发**不带 mcp 的 token）。
+  6. 前端 `ChangePasswordPage` + `RequireAuth`/`RequireChangePassword` 守卫：`mustChangePassword` 时强制跳改密页。
+  - 运维仍可用项目环境变量 `LLMGW_ADMIN_PASSWORD` 顶掉缺省口令（此时不触发强制改密）。
+- **验证状态（2026-07-02，诚实记录）**：
+  - 前端 `pnpm tsc -b` 零错误（已验证）。
+  - 后端 **`cdscli deploy` 全绿**（CDS 基建恢复后重跑）：5 容器 running，`/gw/healthz` 回显本分支
+    commit → **编译 + 启动 + SeedAdmin 两模式逻辑 + LogsRead 策略注册 + change-password 路由注册全部加载成功**。
+  - **运行时鉴权/路由取证（已验证）**：`/gw/logs` 无 token → 401；`/gw/auth/change-password` 无 token /
+    垃圾 token → 401（新端点已映射 + JWT 校验生效）；login 空参 → 新 `INVALID_CREDENTIALS`「不能为空」信封。
+  - **未运行时取证（仅代码复核）**：弱口令引导 happy-path（`mustChangePassword=true` → mcp token 访问
+    `/gw/logs` 应 403 → change-password → 解锁读日志 → 重启不回退）。**根因是 CDS `_global` env 未注入
+    llmgw 容器**（2026-07-02 实测）：为了造一个可登录的验证账号，试过 `cdscli env set` 改
+    `LLMGW_ADMIN_USER` / `LLMGW_ADMIN_PASSWORD`（config 模式给已知口令 / 空值给默认弱口令）并 `branch
+    deploy` 共 5 轮，**任何凭据组合都登不进**（`admin/admin`、`admin/Miduomima..22`、以及本该被 seed 新建
+    的 `gwv/Verify12345` 全 INVALID_CREDENTIALS）。`branch exec` 对这些 env 值全做掩码（`masked:true`，读出
+    空/长度失真，印证 handoff「读环境变量判空不可靠」），无法自证注入值。综合判断：`branch deploy` 没把
+    `_global` 的 `env set` 灌进 llmgw profile 容器（seed 每轮都以默认 `admin` 跑默认模式、不覆盖历史 admin
+    的未知口令），符合 handoff「改配置必须重新 import + approve，webhook/deploy 不更新 profile 配置」的坑。
+    另注：`main-prd-agent-llmgw-web` 当前显示「预览未部署」，无法作参照。
+  - **根因升级 + 代码级修复（2026-07-02，取代上面的「等 CDS 注入」结论）**：真正的问题不是取证受阻，而是
+    **控制台从来没人能登录进去**——历史遗留 `admin` 账号口令未知，而旧的「默认模式不回退口令」逻辑恰好在
+    **保护这个没人认领的未知口令**，造成永久锁死；且既不能靠 env（不注入）也不能靠 DB（无客户端）恢复。
+    修复：新增 `LlmGwUser.PasswordChangedByUser`，默认模式下**未被真人认领**的账号（含旧文档=false）每次启动
+    **确定性自愈回 `admin/admin` + `MustChangePassword=true`**——控制台永远能从 admin/admin 进入，「重置」=
+    重新部署；`change-password` 成功置 `PasswordChangedByUser=true`，用户新口令跨重启保留、不被自愈覆盖。
+    此修复同时**解锁了 happy-path 的真机取证**（admin/admin 现在可登 → 强制改密 → mcp 403 → 解锁）。
+  - **最终形态（2026-07-02，env 无关，真机全链路取证通过）**：进一步**彻底移除 env 口令依赖**——因为
+    CDS `_global` env 注入不可控，靠 `LLMGW_ADMIN_PASSWORD` 设口令反而把控制台锁死。改为用户原始 Point 2
+    愿景：固定内置 `admin/admin` 引导，口令在 UI 里改，seed 完全不读 env。真机验证（deploy 全绿，commit
+    `43585d8c`）8 步全过：① `admin/admin` 登录 → `mustChangePassword=true`；② mcp token 读 `/gw/logs`
+    → **403**；③ change-password→ 200 + 重签发 token；④ 新 token 读 `/gw/logs` → **200**；⑤ 新口令重登
+    → `mustChangePassword=false`；⑥ 旧 `admin/admin` 被拒；⑦ **重启后**新口令仍可登（不回退）；⑧ 重启后
+    `admin/admin` 被拒（`PasswordChangedByUser` 保住用户口令）。现网控制台可用账号：`admin` / 用户已设口令；
+    未认领时「重置」= 重新部署即恢复 `admin/admin`。
 
 ### Point 3 — OpenRouter 风格控制台：**部分（骨架在，需对齐设计）**
 - `prd-llmgw-web` 已有：`LoginPage` / `LogsPage` / `LogsView`（请求日志表）/ `GenerationDetailsDrawer`
