@@ -151,8 +151,10 @@ def strip_html_comments(html):
     return re.sub(r"<!--.*?-->", "", html, flags=re.S)
 
 
-_EXT_CSS = re.compile(r'url\(\s*["\']?\s*(?:https?:)?//', re.I)
-_EXT_IMPORT = re.compile(r'@import\s+["\']\s*(?:https?:)?//', re.I)
+# CSS 外链的通用形态：引号或函数开括号后跟 http(s):// 或 //。
+# 不枚举 url()/@import/image-set()/cross-fade() 等具体函数——任何 CSS 取值语法里，
+# 外链都必然出现在引号内或某个函数括号后，一条模式全覆盖（Codex P2：image-set 绕过）。
+_EXT_CSS_ANY = re.compile(r'["\'(]\s*(?:https?:)?//', re.I)
 
 
 def _is_external(url):
@@ -205,6 +207,11 @@ class _ReportScanner(HTMLParser):
             self.errs.append(msg)
 
     def _check(self, tag, attrs):
+        if tag in ("iframe", "frame", "frameset", "embed"):
+            # 嵌套文档是整个逃逸面：srcdoc 内嵌文档扫描器不进入、src 可指外部页面，
+            # 自包含报纸无任何正当用途，整类禁用（Codex P2：iframe srcdoc 绕过）
+            self._err(f"含 <{tag}>——嵌套文档/插件标签会加载扫描不到的内容，自包含报纸禁用")
+            return
         if tag == "base":
             # <base> 会把全页相对 URL 的解析基址改走（外域=外链绕过，站内相对 base 也会
             # 静默改写资源解析），自包含报纸没有任何正当用途，整标签禁用（Bugbot Medium）
@@ -261,8 +268,8 @@ def validate_html_report(body):
     if sc.has_script:
         errs.append("含 <script>——知识库沙箱 iframe 不给 allow-scripts，脚本不会执行，请改纯 CSS 实现")
     css = "\n".join(sc.css_chunks)
-    if _EXT_CSS.search(css) or _EXT_IMPORT.search(css):
-        errs.append("CSS 里有外部加载（url() 或 @import 指向 http/ // 外链）——背景图/字体必须内联或改纯 CSS，沙箱 iframe 仍会真实发起这些请求")
+    if _EXT_CSS_ANY.search(css):
+        errs.append("CSS 里有外链取值（url/@import/image-set 等任意形态）——背景图/字体必须内联或改纯 CSS，沙箱 iframe 仍会真实发起这些请求")
     # style 属性值经 parser 实体解码后进 css_chunks，原文子串守卫看不到解码形态，
     # data:image 禁令必须在解码后的 CSS 层再扫一次（Codex P2）
     if "data:image" in css.lower():
