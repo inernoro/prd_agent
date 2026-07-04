@@ -34,6 +34,7 @@ import {
   Radar,
   ArrowDown,
   ArrowUp,
+  Check,
   Save,
   Sparkles,
   Store,
@@ -234,10 +235,19 @@ function SectionTitle({ icon, title, badge }: { icon: React.ReactNode; title: st
 }
 
 type HomepageAssetsMap = Record<string, HomepageAssetDto>;
+type AssetsManageTabKey = 'desktop' | 'single' | 'homepage' | 'marketplace' | 'poster';
+
+const ASSETS_MANAGE_TABS: Array<{ key: AssetsManageTabKey; label: string; icon: React.ReactNode }> = [
+  { key: 'homepage', label: '首页资源', icon: <Home size={14} /> },
+  { key: 'poster', label: '海报设计', icon: <Sparkles size={14} /> },
+  { key: 'marketplace', label: '海鲜市场背景', icon: <Store size={14} /> },
+  { key: 'desktop', label: 'Desktop 皮肤资源', icon: <Monitor size={14} /> },
+  { key: 'single', label: '全局资源', icon: <Layers size={14} /> },
+];
 
 export default function AssetsManagePage() {
   const { isMobile } = useBreakpoint();
-  const [activeTab, setActiveTab] = useState<'desktop' | 'single' | 'homepage' | 'marketplace' | 'poster'>('homepage');
+  const [activeTab, setActiveTab] = useState<AssetsManageTabKey>('homepage');
   const [skins, setSkins] = useState<DesktopAssetSkin[]>([]);
   const [matrixData, setMatrixData] = useState<AdminDesktopAssetMatrixRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -686,18 +696,38 @@ export default function AssetsManagePage() {
         onChange={(e) => void onPickedFile(e.target.files?.[0] ?? null)}
       />
 
-      <TabBar
-        variant="gold"
-        items={[
-          { key: 'homepage', label: '首页资源', icon: <Home size={14} /> },
-          { key: 'poster', label: '海报设计', icon: <Sparkles size={14} /> },
-          { key: 'marketplace', label: '海鲜市场背景', icon: <Store size={14} /> },
-          { key: 'desktop', label: 'Desktop 皮肤资源', icon: <Monitor size={14} /> },
-          { key: 'single', label: '全局资源', icon: <Layers size={14} /> },
-        ]}
-        activeKey={activeTab}
-        onChange={(key) => setActiveTab(key as 'desktop' | 'single' | 'homepage' | 'marketplace' | 'poster')}
-      />
+      {isMobile ? (
+        <div className="surface-nav-bar shrink-0" data-variant="gold">
+          <div className="surface-nav-content">
+            <div className="surface-nav-title">
+              <div className="surface-nav-icon">
+                <FolderOpen size={16} />
+              </div>
+              <span className="surface-nav-title-text">资源</span>
+            </div>
+            <div className="min-w-0 flex-1">
+              <Select
+                value={activeTab}
+                onValueChange={(key) => setActiveTab(key as AssetsManageTabKey)}
+                uiSize="sm"
+                aria-label="切换资源分类"
+                className="w-full"
+              >
+                {ASSETS_MANAGE_TABS.map((tab) => (
+                  <option key={tab.key} value={tab.key}>{tab.label}</option>
+                ))}
+              </Select>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <TabBar
+          variant="gold"
+          items={ASSETS_MANAGE_TABS}
+          activeKey={activeTab}
+          onChange={(key) => setActiveTab(key as AssetsManageTabKey)}
+        />
+      )}
 
       {activeTab === 'poster' && <PosterDesignSection />}
 
@@ -1240,18 +1270,127 @@ function HomepageAssetsSection({
     setQuickLinkIds(next);
   }
 
+  const selectedQuickLinks = quickLinkIds.flatMap((id) => {
+    const card = HOMEPAGE_CARD_SLOTS.find((item) => item.id === id);
+    return card ? [card] : [];
+  });
+  const canAddMoreQuickLinks = quickLinkIds.length < MAX_HOME_QUICK_LINKS;
+
   return (
     <div className="flex flex-col gap-4">
       {/* 快捷卡显示与背景 */}
       <Surface className="overflow-hidden rounded-[16px] p-4">
         <div className="flex items-center justify-between gap-3 mb-4">
-          <SectionTitle icon={<Home size={16} />} title="首页快捷入口" badge={`${HOMEPAGE_CARD_SLOTS.length} 个资源位`} />
+          <SectionTitle icon={<Home size={16} />} title="首页快捷入口" badge={`${quickLinkIds.length}/${MAX_HOME_QUICK_LINKS} 已启用`} />
         </div>
         <p className="mb-4 text-[12px] text-token-muted">
-          登录后首页顶部最多显示 6 张资源卡；选中的资源按编号从左到右展示。首页卡片统一使用简约几何渐变，不再显示图片背景。
+          这里决定登录后首页顶部展示哪些入口，以及从左到右的顺序。它只控制入口，不再管理图片背景。
         </p>
 
-        <div className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        <div className={cn('mb-4 grid gap-3', isMobile ? 'grid-cols-1' : 'grid-cols-[minmax(0,1fr)_280px]')}>
+          <div className="surface-inset rounded-[14px] p-3">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="text-[12px] font-semibold text-token-primary">当前首页展示</div>
+              <div className="text-[11px] text-token-muted">按顺序显示，最多 {MAX_HOME_QUICK_LINKS} 个</div>
+            </div>
+            {selectedQuickLinks.length > 0 ? (
+              <div className={cn('grid gap-2', isMobile ? 'grid-cols-1' : 'grid-cols-2 xl:grid-cols-3')}>
+                {selectedQuickLinks.map((card, index) => (
+                  <div
+                    key={card.id}
+                    className="group rounded-[12px] border border-white/10 bg-white/[0.045] px-3 py-2.5"
+                  >
+                    <div className="flex items-start gap-3">
+                      <span
+                        className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px]"
+                        style={{
+                          color: 'var(--accent-gold)',
+                          background: 'rgba(245, 158, 11, 0.14)',
+                        }}
+                      >
+                        {quickLinkIconMap[card.id] ?? <Home size={14} />}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="truncate text-[13px] font-semibold text-token-primary">{card.label}</span>
+                          <span className="shrink-0 rounded-full bg-[rgba(245,158,11,0.14)] px-2 py-0.5 text-[10px] text-[var(--accent-gold)]">
+                            第 {index + 1} 位
+                          </span>
+                        </span>
+                        <span className="mt-0.5 block line-clamp-1 text-[11px] text-token-muted">{card.hint}</span>
+                      </span>
+                    </div>
+                    <div className="mt-2 flex items-center justify-between gap-2 border-t border-white/10 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => toggleQuickLink(card.id)}
+                        className="rounded-[8px] px-2 py-1 text-[11px] text-token-muted transition-colors hover:bg-white/10 hover:text-token-primary"
+                      >
+                        移除
+                      </button>
+                      <span className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => moveQuickLink(card.id, -1)}
+                          disabled={index === 0}
+                          className={cn(
+                            'inline-flex h-7 w-8 items-center justify-center rounded-[8px] transition-colors',
+                            index === 0 ? 'cursor-not-allowed opacity-35' : 'hover:bg-white/10'
+                          )}
+                          aria-label={`${card.label} 上移`}
+                        >
+                          <ArrowUp size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => moveQuickLink(card.id, 1)}
+                          disabled={index === selectedQuickLinks.length - 1}
+                          className={cn(
+                            'inline-flex h-7 w-8 items-center justify-center rounded-[8px] transition-colors',
+                            index === selectedQuickLinks.length - 1 ? 'cursor-not-allowed opacity-35' : 'hover:bg-white/10'
+                          )}
+                          aria-label={`${card.label} 下移`}
+                        >
+                          <ArrowDown size={13} />
+                        </button>
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-[12px] border border-dashed border-white/15 px-4 py-8 text-center text-[12px] text-token-muted">
+                尚未选择入口。请在下方入口池中添加。
+              </div>
+            )}
+          </div>
+
+          <div className="surface-inset rounded-[14px] p-3">
+            <div className="mb-2 text-[12px] font-semibold text-token-primary">规则</div>
+            <div className="space-y-2 text-[11px] text-token-muted">
+              <div className="flex items-center justify-between gap-3">
+                <span>首页入口数量</span>
+                <span className="text-token-primary">{quickLinkIds.length}/{MAX_HOME_QUICK_LINKS}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span>排序方式</span>
+                <span className="text-token-primary">从左到右</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span>视觉背景</span>
+                <span className="text-token-primary">首页统一生成</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <div className="text-[12px] font-semibold text-token-primary">入口池</div>
+          <div className="text-[11px] text-token-muted">
+            {canAddMoreQuickLinks ? '点击添加或移除' : '已达上限，先移除一个再添加'}
+          </div>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
           {HOMEPAGE_CARD_SLOTS.map((card) => {
             const active = quickLinkIds.includes(card.id);
             const order = active ? quickLinkIds.indexOf(card.id) + 1 : null;
@@ -1267,9 +1406,9 @@ function HomepageAssetsSection({
                   toggleQuickLink(card.id);
                 }}
                 className={cn(
-                  'surface-inset flex min-h-[76px] cursor-pointer items-center gap-3 rounded-[12px] px-3 py-2 text-left transition-all duration-150',
+                  'surface-inset flex min-h-[58px] cursor-pointer items-center gap-3 rounded-[12px] px-3 py-2 text-left transition-all duration-150',
                   active
-                    ? 'ring-2 ring-[var(--accent-gold)]/45'
+                    ? 'ring-1 ring-[var(--accent-gold)]/45'
                     : quickLinkIds.length >= MAX_HOME_QUICK_LINKS
                       ? 'opacity-60'
                       : 'hover:ring-1 hover:ring-white/15'
@@ -1285,59 +1424,23 @@ function HomepageAssetsSection({
                   {quickLinkIconMap[card.id] ?? <Home size={14} />}
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-2 text-[13px] font-semibold text-token-primary">
+                  <span className="flex items-center gap-2 text-[12px] font-semibold text-token-primary">
                     <span className="truncate">{card.label}</span>
                     {order && (
                       <span className="rounded-full bg-[rgba(245,158,11,0.14)] px-2 py-0.5 text-[10px] text-[var(--accent-gold)]">
-                        第 {order} 张
+                        {order}
                       </span>
                     )}
                   </span>
                   <span className="mt-0.5 block line-clamp-1 text-[11px] text-token-muted">{card.hint}</span>
-                  {active && (
-                    <span className="mt-2 flex gap-1.5">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          moveQuickLink(card.id, -1);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key !== 'Enter' && e.key !== ' ') return;
-                          e.preventDefault();
-                          e.stopPropagation();
-                          moveQuickLink(card.id, -1);
-                        }}
-                        className={cn(
-                          'inline-flex h-6 w-7 items-center justify-center rounded-[8px] transition-colors',
-                          order === 1 ? 'cursor-not-allowed opacity-35' : 'hover:bg-white/10'
-                        )}
-                        aria-label={`${card.label} 上移`}
-                      >
-                        <ArrowUp size={12} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          moveQuickLink(card.id, 1);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key !== 'Enter' && e.key !== ' ') return;
-                          e.preventDefault();
-                          e.stopPropagation();
-                          moveQuickLink(card.id, 1);
-                        }}
-                        className={cn(
-                          'inline-flex h-6 w-7 items-center justify-center rounded-[8px] transition-colors',
-                          order === quickLinkIds.length ? 'cursor-not-allowed opacity-35' : 'hover:bg-white/10'
-                        )}
-                        aria-label={`${card.label} 下移`}
-                      >
-                        <ArrowDown size={12} />
-                      </button>
-                    </span>
+                </span>
+                <span
+                  className={cn(
+                    'grid h-7 w-7 shrink-0 place-items-center rounded-[9px]',
+                    active ? 'bg-[rgba(245,158,11,0.14)] text-[var(--accent-gold)]' : 'text-token-muted'
                   )}
+                >
+                  {active ? <Check size={14} /> : <Plus size={14} />}
                 </span>
               </div>
             );
@@ -1358,7 +1461,7 @@ function HomepageAssetsSection({
         <div
           className="grid gap-3"
           style={{
-            gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(auto-fill, minmax(200px, 1fr))',
+            gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(200px, 1fr))',
           }}
         >
           {agentSlots.map((agent: HomepageAgentSlot) => {

@@ -73,6 +73,14 @@ export const FLOATING_DOCK_EVENT = 'floating-dock-collapsed-changed';
 export const FLOATING_DOCK_HEIGHT_EVENT = 'floating-dock-height-changed';
 const AUTO_COLLAPSE_MS = 5000;
 
+function isVisualAuditMode(search: string): boolean {
+  try {
+    return new URLSearchParams(search).get('visualAudit') === '1';
+  } catch {
+    return false;
+  }
+}
+
 function readAutoOpenedIds(): Set<string> {
   try {
     const raw = sessionStorage.getItem(AUTO_OPENED_IDS_KEY);
@@ -102,6 +110,7 @@ export function TipsDrawer() {
   const markLearned = useDailyTipsStore((s) => s.markLearned);
   const items = useDailyTipsStore((s) => s.items);
   const dismissed = useDailyTipsStore((s) => s.dismissed);
+  const visualAuditMode = isVisualAuditMode(location.search);
 
   useEffect(() => {
     if (!loaded) load();
@@ -235,6 +244,7 @@ export function TipsDrawer() {
   // 而 Track 统计埋点会给「看过一眼」的 tip 建 Delivery 记录,被 /visible 误判成 isTargeted,
   // 导致在无教程页面弹出「全部教程」面板(用户 2026-06-11 反馈「莫名其妙弹出,像病毒一样」)。
   useEffect(() => {
+    if (visualAuditMode) return;
     if (!loaded) return;
     if (pageGuideHere) return; // 本页有未走完教程 → 由 Spotlight 自动开讲,不抢着展开抽屉(避免叠加)
     // 本页有未学会的「轻微提醒更新」且其精确目标页正是当前页 → 由下面的 Spotlight 气泡 effect 独占
@@ -259,7 +269,7 @@ export function TipsDrawer() {
     // pageGuideHere 必须进 deps:否则首屏若落在「有教程页」early-return 后,
     // 切到「有更新页」时本 effect 不再 fire,更新提醒整 session 失效(Bugbot)。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, pageTips, pageGuideHere, location.pathname]);
+  }, [loaded, pageTips, pageGuideHere, location.pathname, visualAuditMode]);
 
   // ── 轻微提醒更新:进入页面自动「悬浮气泡」弹一次,看过即不再显示 ──────────────
   // 用户诉求(2026-06-11):刚上线的小功能(如视觉创作首页可粘贴图片),用一个轻量悬浮气泡
@@ -271,6 +281,7 @@ export function TipsDrawer() {
   // 与抽屉自动展开互斥(上面的 effect 已用 isUpdateReminderTip 抑制)。优先级低于本页 *-page-guide
   // 强制开讲(新人先走完整套教程,reminder 等下次进页时再弹)。
   useEffect(() => {
+    if (visualAuditMode) return;
     if (!loaded) return;
     if (pageGuideHere) return; // 本页有未走完的新手教程 → 先让 Spotlight 走完整套,不抢
     const reminder = pageTips.find((t) => isUpdateReminderTip(t) && !t.learned);
@@ -306,7 +317,7 @@ export function TipsDrawer() {
     void trackTip(reminder.id, 'clicked');
     writeSpotlightPayload(reminder); // 在 [data-tour-id=...] 位置弹单步气泡
     void markLearned(reminder.id);   // 看过即标记学会 → 之后永不再弹(取消/知道了都一样)
-  }, [loaded, pageTips, pageGuideHere, markLearned, location.pathname]);
+  }, [loaded, pageTips, pageGuideHere, markLearned, location.pathname, visualAuditMode]);
 
   // ── 新用户兜底自动弹抽屉:已移除 ──────────────────────────
   // 历史上「本日第一次访问且本页有任意 tip 就自动展开抽屉」会在用户没点任何按钮时
@@ -385,6 +396,7 @@ export function TipsDrawer() {
   //   只标 markLearned(末步「完成」)才算过,中途关闭不算,下次进该页(跨 session)会再弹。
   //   本 session 每条只自动弹一次(sessionStorage 记忆),避免同 session 内切来切去反复打断。
   useEffect(() => {
+    if (visualAuditMode) return;
     if (!loaded) return;
     const guide = pageGuideHere;
     if (!guide || !guide.sourceId) return;
@@ -396,7 +408,7 @@ export function TipsDrawer() {
     try { sessionStorage.setItem(AUTO_STARTED_GUIDES_KEY, JSON.stringify(Array.from(started))); } catch { /* noop */ }
     // 两个抽屉自动展开 effect 已用 pageGuideHere 抑制,这里直接用 CTA 同款机制开讲
     handleOpenTip(guide);
-  }, [loaded, pageGuideHere, handleOpenTip]);
+  }, [loaded, pageGuideHere, handleOpenTip, visualAuditMode]);
 
   // 单套教程直接开讲(TipsEntryButton 派发 START_TUTORIAL_EVENT):找到该 tip 直接走 handleOpenTip,不展开面板。
   useEffect(() => {

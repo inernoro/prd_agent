@@ -391,6 +391,13 @@ export default function DataManagePage() {
     return list;
   }, [mappings, selectedApp, searchText]);
 
+  const selectedAppValue = selectedApp === null ? '__all__' : selectedApp === '' ? '__none__' : selectedApp;
+  const handleMobileAppFilterChange = (value: string) => {
+    if (value === '__all__') setSelectedApp(null);
+    else if (value === '__none__') setSelectedApp('');
+    else setSelectedApp(value);
+  };
+
   const doPurge = async (domains: string[]) => {
     setMsg(null); setErr(null);
     const idem = safeIdempotencyKey();
@@ -450,8 +457,8 @@ export default function DataManagePage() {
   return (
     <div className={`h-full min-h-0 flex flex-col overflow-x-hidden overflow-y-auto ${isMobile ? 'gap-4' : 'gap-5'}`}>
       <TabBar title="数据管理" icon={<Database size={16} />} actions={<>
-        <Button variant="secondary" size="sm" onClick={() => { void loadSummary(); void loadMappings(); }} disabled={loading || mappingsLoading}>{loading || mappingsLoading ? <MapSpinner size={14} /> : <RefreshCw size={14} />}刷新</Button>
-        <Button variant="primary" size="sm" onClick={() => setTransferOpen(true)}><Database size={14} />配置导入/导出</Button>
+        {!isMobile && <Button variant="secondary" size="sm" onClick={() => { void loadSummary(); void loadMappings(); }} disabled={loading || mappingsLoading}>{loading || mappingsLoading ? <MapSpinner size={14} /> : <RefreshCw size={14} />}刷新</Button>}
+        <Button variant="primary" size="sm" onClick={() => setTransferOpen(true)} title="配置导入/导出"><Database size={14} />{isMobile ? '导入/导出' : '配置导入/导出'}</Button>
       </>} />
 
       {err && <div className="rounded-[12px] px-4 py-2.5 text-[13px] flex items-center gap-2.5" style={{ background: 'linear-gradient(135deg, rgba(239,68,68,0.08) 0%, rgba(239,68,68,0.04) 100%)', border: '1px solid rgba(239,68,68,0.2)', color: 'rgba(239,68,68,0.9)' }}><AlertTriangle size={15} />{err}</div>}
@@ -484,14 +491,32 @@ export default function DataManagePage() {
           </div>
         </div>
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-4">
-          <div className="flex-1 flex items-center gap-2 flex-wrap">
-            <Button variant={selectedApp === null ? 'primary' : 'secondary'} size="xs" onClick={() => setSelectedApp(null)}>全部</Button>
-            {mappings?.appStats.map((app) => (
-              <Button key={app.appName ?? 'none'} variant={(selectedApp === (app.appName ?? '')) ? 'primary' : 'secondary'} size="xs" onClick={() => setSelectedApp(app.appName ?? '')}>
-                {app.displayName}<Badge variant="subtle" size="sm" className="ml-1">{app.collectionCount}</Badge>
-              </Button>
-            ))}
-          </div>
+          {isMobile ? (
+            <div className="relative w-full">
+              <select
+                value={selectedAppValue}
+                onChange={(e) => handleMobileAppFilterChange(e.target.value)}
+                className="h-[36px] w-full rounded-[10px] px-3 pr-9 text-sm font-semibold outline-none prd-field"
+                aria-label="按应用筛选"
+              >
+                <option value="__all__">全部应用</option>
+                {mappings?.appStats.map((app) => (
+                  <option key={app.appName ?? 'none'} value={app.appName ?? '__none__'}>
+                    {app.displayName}（{app.collectionCount}）
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <div className="flex-1 flex items-center gap-2 flex-wrap">
+              <Button variant={selectedApp === null ? 'primary' : 'secondary'} size="xs" onClick={() => setSelectedApp(null)}>全部</Button>
+              {mappings?.appStats.map((app) => (
+                <Button key={app.appName ?? 'none'} variant={(selectedApp === (app.appName ?? '')) ? 'primary' : 'secondary'} size="xs" onClick={() => setSelectedApp(app.appName ?? '')}>
+                  {app.displayName}<Badge variant="subtle" size="sm" className="ml-1">{app.collectionCount}</Badge>
+                </Button>
+              ))}
+            </div>
+          )}
           <div className="relative">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
             <input type="text" value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="搜索集合或实体..." className="h-[32px] pl-9 pr-3 rounded-[8px] text-sm outline-none transition-all prd-field w-full sm:w-[200px]" />
