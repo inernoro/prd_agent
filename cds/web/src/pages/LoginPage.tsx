@@ -13,7 +13,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowRight, Github, Loader2 } from 'lucide-react';
+import { ArrowRight, Eye, EyeOff, Github, Loader2 } from 'lucide-react';
 import ShapeGrid from '@/components/effects/ShapeGrid';
 import { ShinyText } from '@/components/effects/ShinyText';
 import { CdsMetallicLogo } from '@/components/brand/CdsMetallicLogo';
@@ -28,6 +28,16 @@ const FEED_LINES = [
   'build api :5000 · admin :5500 ......  ok',
   'container.observed · health checks passing',
   'preview live · auth-flow-prd-agent.miduo.org',
+];
+
+/* feed 每行对应点亮的星座节点(数据与画面同源:pull/detect 亮分支,
+   build 亮服务,observed 亮数据层,live 亮预览域名)。 */
+const LIVE_TARGETS: string[][] = [
+  ['branch'],
+  ['branch'],
+  ['api', 'admin'],
+  ['mongo', 'redis'],
+  ['preview'],
 ];
 
 function redirectTarget(): string {
@@ -46,8 +56,11 @@ function AuthForm(): JSX.Element {
   const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // 登录失败时卡片 shake 一次;onAnimationEnd 复位保证连续出错可重播。
+  const [shake, setShake] = useState(false);
   // First-run bootstrap: when the system has zero users, the login form turns
   // into a "create the first system-owner account" form instead.
   const [needsBootstrap, setNeedsBootstrap] = useState(false);
@@ -107,13 +120,21 @@ function AuthForm(): JSX.Element {
       goToTarget();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      setShake(true);
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <form onSubmit={submit} className="cds-auth-card" aria-busy={busy}>
+    <form
+      onSubmit={submit}
+      className={`cds-auth-card${shake ? ' cds-auth-card--shake' : ''}`}
+      aria-busy={busy}
+      onAnimationEnd={(event) => {
+        if (event.animationName === 'cds-auth-shake') setShake(false);
+      }}
+    >
       <div className="cds-auth-mark" aria-hidden>
         <CdsMetallicLogo className="h-10 w-10" />
         <span className="cds-auth-secure">
@@ -158,16 +179,26 @@ function AuthForm(): JSX.Element {
         ) : null}
         <label className="cds-auth-field">
           <span>密码</span>
-          <input
-            className="cds-auth-input"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            type="password"
-            autoComplete={needsBootstrap ? 'new-password' : 'current-password'}
-            required
-            minLength={needsBootstrap ? 8 : undefined}
-            placeholder={needsBootstrap ? '至少 8 位' : '密码'}
-          />
+          <span className="cds-auth-input-wrap">
+            <input
+              className="cds-auth-input"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              type={showPassword ? 'text' : 'password'}
+              autoComplete={needsBootstrap ? 'new-password' : 'current-password'}
+              required
+              minLength={needsBootstrap ? 8 : undefined}
+              placeholder={needsBootstrap ? '至少 8 位' : '密码'}
+            />
+            <button
+              type="button"
+              className="cds-auth-eye"
+              onClick={() => setShowPassword((v) => !v)}
+              aria-label={showPassword ? '隐藏密码' : '显示密码'}
+            >
+              {showPassword ? <EyeOff /> : <Eye />}
+            </button>
+          </span>
         </label>
       </div>
 
@@ -235,8 +266,11 @@ function AuthVisualPanel(): JSX.Element {
     };
   }, []);
 
+  const live = LIVE_TARGETS[feedIndex] ?? [];
+  const liveCls = (key: string): string => `cds-authb-node${live.includes(key) ? ' is-live' : ''}`;
+
   return (
-    <aside className="cds-auth-visual" aria-hidden>
+    <aside className="cds-auth-visual cds-grain" aria-hidden>
       <ShapeGrid
         key={theme}
         className="cds-auth-visual-grid"
@@ -249,6 +283,136 @@ function AuthVisualPanel(): JSX.Element {
         hoverFillColor={grid.fill}
       />
       <div className="cds-auth-visual-vignette" />
+      {/* 中庭「运行时星座」:branch → api/admin → mongo/redis → preview,
+          随底部 feed 逐站点亮。透视层 hover 归平,节点异相浮游。 */}
+      <div className="cds-auth-scene">
+        <div className="cds-auth-scene-inner">
+          <svg className="cds-authb-wires" viewBox="0 0 1000 760" preserveAspectRatio="none">
+            <path id="cds-authb-p1" className="cds-authb-wire" d="M300 273 H330 V120 H360" />
+            <path className="cds-authb-wire-dash" d="M300 273 H330 V120 H360" />
+            <path id="cds-authb-p2" className="cds-authb-wire" d="M300 273 H330 V395 H360" />
+            <path className="cds-authb-wire-dash" d="M300 273 H330 V395 H360" />
+            <path id="cds-authb-p3" className="cds-authb-wire" d="M650 120 H690" />
+            <path className="cds-authb-wire-dash" d="M650 120 H690" />
+            <path className="cds-authb-wire" d="M650 395 H690" />
+            <path className="cds-authb-wire-dash" d="M650 395 H690" />
+            <path id="cds-authb-p4" className="cds-authb-wire" d="M505 170 V348" />
+            <path className="cds-authb-wire-dash" d="M505 170 V348" />
+            <path className="cds-authb-wire" d="M835 170 V348" />
+            <path className="cds-authb-wire-dash" d="M835 170 V348" />
+            <path id="cds-authb-p5" className="cds-authb-wire" d="M505 445 V615" />
+            <path className="cds-authb-wire-dash" d="M505 445 V615" />
+            <path className="cds-authb-wire" d="M835 445 V585 H700 V615" />
+            <path className="cds-authb-wire-dash" d="M835 445 V585 H700 V615" />
+            <circle className="cds-authb-packet" r="2.6">
+              <animateMotion dur="1.5s" begin="1.0s" repeatCount="indefinite"><mpath href="#cds-authb-p1" /></animateMotion>
+            </circle>
+            <circle className="cds-authb-packet" r="2.6">
+              <animateMotion dur="1.4s" begin="1.5s" repeatCount="indefinite"><mpath href="#cds-authb-p3" /></animateMotion>
+            </circle>
+            <circle className="cds-authb-packet" r="2.6">
+              <animateMotion dur="1.4s" begin="1.6s" repeatCount="indefinite"><mpath href="#cds-authb-p4" /></animateMotion>
+            </circle>
+            <circle className="cds-authb-packet" r="2.6">
+              <animateMotion dur="1.6s" begin="2.0s" repeatCount="indefinite"><mpath href="#cds-authb-p5" /></animateMotion>
+            </circle>
+          </svg>
+
+          <div className="cds-authb-float" style={{ left: '0%', top: '30%', width: '30%', animationDelay: '-1.3s' }}>
+            <div className={liveCls('branch')} style={{ animationDelay: '.5s' }}>
+              <div className="cds-authb-row">
+                <span className="cds-authb-ico">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                    <circle cx="6" cy="6" r="2.4" /><circle cx="6" cy="18" r="2.4" /><circle cx="18" cy="9" r="2.4" />
+                    <path d="M6 8.4v7.2M8.2 7.2 16 8.6M18 11.2c0 4-4 4.4-8.4 4.6" />
+                  </svg>
+                </span>
+                <div>
+                  <div className="cds-authb-title">Branch</div>
+                  <div className="cds-authb-desc">3 commits · pushed</div>
+                </div>
+              </div>
+              <div className="cds-authb-status"><span className="cds-authb-sdot" />Build · profile detected</div>
+            </div>
+          </div>
+
+          <div className="cds-authb-float" style={{ left: '36%', top: '10%', width: '29%', animationDelay: '-2.7s' }}>
+            <div className={liveCls('api')} style={{ animationDelay: '.9s' }}>
+              <div className="cds-authb-row">
+                <span className="cds-authb-ico">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
+                </span>
+                <div>
+                  <div className="cds-authb-title">api</div>
+                  <div className="cds-authb-desc">.NET 8 service</div>
+                </div>
+                <span className="cds-authb-port">:5000</span>
+              </div>
+              <div className="cds-authb-status"><span className="cds-authb-sdot" />Running · healthy</div>
+            </div>
+          </div>
+
+          <div className="cds-authb-float" style={{ left: '69%', top: '10%', width: '29%', animationDelay: '-4.1s' }}>
+            <div className={liveCls('admin')} style={{ animationDelay: '1.1s' }}>
+              <div className="cds-authb-row">
+                <span className="cds-authb-ico">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="14" rx="2" /><path d="M3 9h18" /></svg>
+                </span>
+                <div>
+                  <div className="cds-authb-title">admin</div>
+                  <div className="cds-authb-desc">React · Vite</div>
+                </div>
+                <span className="cds-authb-port">:5500</span>
+              </div>
+              <div className="cds-authb-status"><span className="cds-authb-sdot" />Running · healthy</div>
+            </div>
+          </div>
+
+          <div className="cds-authb-float" style={{ left: '36%', top: '46%', width: '29%', animationDelay: '-5.4s' }}>
+            <div className={liveCls('mongo')} style={{ animationDelay: '1.3s' }}>
+              <div className="cds-authb-row">
+                <span className="cds-authb-ico">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><ellipse cx="12" cy="6" rx="8" ry="3" /><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" /></svg>
+                </span>
+                <div>
+                  <div className="cds-authb-title">mongo</div>
+                  <div className="cds-authb-desc">replica · 1</div>
+                </div>
+              </div>
+              <div className="cds-authb-status"><span className="cds-authb-sdot" />Healthy</div>
+            </div>
+          </div>
+
+          <div className="cds-authb-float" style={{ left: '69%', top: '46%', width: '29%', animationDelay: '-6s' }}>
+            <div className={liveCls('redis')} style={{ animationDelay: '1.5s' }}>
+              <div className="cds-authb-row">
+                <span className="cds-authb-ico">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6c0 1.7 4 3 9 3s9-1.3 9-3-4-3-9-3-9 1.3-9 3z" /><path d="M3 6v6c0 1.7 4 3 9 3s9-1.3 9-3V6M3 12v6c0 1.7 4 3 9 3s9-1.3 9-3v-6" /></svg>
+                </span>
+                <div>
+                  <div className="cds-authb-title">redis</div>
+                  <div className="cds-authb-desc">cache</div>
+                </div>
+              </div>
+              <div className="cds-authb-status"><span className="cds-authb-sdot" />Healthy</div>
+            </div>
+          </div>
+
+          <div className="cds-authb-float" style={{ left: '22%', top: '81%', width: '58%', animationDelay: '-3.2s' }}>
+            <div className={liveCls('preview')} style={{ animationDelay: '2.1s' }}>
+              <div className="cds-authb-row">
+                <span className="cds-authb-ico">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.5 2.6 2.5 15.4 0 18M12 3c-2.5 2.6-2.5 15.4 0 18" /></svg>
+                </span>
+                <div>
+                  <div className="cds-authb-title">Preview · auto-assigned</div>
+                  <div className="cds-authb-desc">auth-flow-prd-agent.miduo.org</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
       <div className="cds-auth-visual-content">
         <Link to="/" className="cds-auth-visual-brand" viewTransition>
           <CdsMetallicLogo className="h-7 w-7" />

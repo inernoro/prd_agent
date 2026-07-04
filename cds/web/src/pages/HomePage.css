@@ -14,13 +14,17 @@
   --cdsh-muted: rgba(246, 246, 248, 0.56);
   --cdsh-faint: rgba(246, 246, 248, 0.34);
   --cdsh-wire: rgba(255, 255, 255, 0.16);
+  /* 品牌橙 accent:只用于"活着的东西"(状态点/数据流/光束),面与文字保持灰白。 */
+  --cdsh-accent: hsl(24 100% 60%);
+  --cdsh-accent-soft: hsl(24 100% 60% / 0.14);
 
   position: relative;
   min-height: 100vh;
-  overflow: hidden;
+  /* 多屏落地页需要纵向滚动;clip 仅裁横向溢出(装饰光束),不锁死滚动。 */
+  overflow-x: clip;
   background: var(--cdsh-bg);
   color: var(--cdsh-text);
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-family: 'Inter', system-ui, -apple-system, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 .cdsh-mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -30,7 +34,19 @@
    used by the CDS build-waiting page (ShapeGridWaitingPreview). HomePage and
    LoginPage render <ShapeGrid> into .cdsh-bg with a vignette overlay on top.
    Params live in the TSX (shape=hexagon, speed=0.49, hoverTrailAmount=15). */
-.cdsh-bg { position: absolute; inset: 0; z-index: 0; overflow: hidden; background: var(--cdsh-bg); }
+/* 蜂窝只属于 hero:固定高度 + 底部渐隐,后续 section 落回纯色底。 */
+.cdsh-bg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 140vh;
+  z-index: 0;
+  overflow: hidden;
+  background: var(--cdsh-bg);
+  -webkit-mask-image: linear-gradient(180deg, #000 68%, transparent 100%);
+  mask-image: linear-gradient(180deg, #000 68%, transparent 100%);
+}
 
 /* Canvas fills the background. pointer-events: auto so the hover trail works
    when the cursor crosses empty background (page content sits above at z-1). */
@@ -53,10 +69,26 @@
 @keyframes cdsh-riseup { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
 
 /* ---------- nav ---------- */
-.cdsh-nav { display: flex; align-items: center; justify-content: space-between; height: 76px; }
+/* sticky 玻璃吸附条:滚动 >8px 后加背景模糊 + 底部 hairline。 */
+.cdsh-navbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  border-bottom: 1px solid transparent;
+  transition: background-color 0.24s ease, border-color 0.24s ease, backdrop-filter 0.24s ease;
+}
+.cdsh-navbar.is-scrolled {
+  background: rgba(18, 15, 23, 0.72);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  border-bottom-color: rgba(255, 255, 255, 0.07);
+}
+.cdsh-nav { display: flex; align-items: center; justify-content: space-between; height: 72px; }
 .cdsh-brand { display: flex; align-items: center; gap: 11px; text-decoration: none; color: var(--cdsh-text); }
 .cdsh-logo { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; background: linear-gradient(145deg, rgba(255,255,255,0.12), rgba(255,255,255,0.02)); border: 1px solid var(--cdsh-line); }
-.cdsh-logo svg { animation: cdsh-logospin 18s linear infinite; }
+/* 永动旋转是廉价感来源:改为 hover 时优雅转半圈。 */
+.cdsh-logo svg { transition: transform 0.7s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.cdsh-brand:hover .cdsh-logo svg { transform: rotate(180deg); }
 @keyframes cdsh-logospin { to { transform: rotate(360deg); } }
 .cdsh-brand b { font-weight: 700; font-size: 15px; letter-spacing: -0.01em; }
 .cdsh-navlinks { display: flex; align-items: center; gap: 4px; }
@@ -90,15 +122,15 @@
 /* ---------- hero ---------- */
 .cdsh-hero { display: grid; grid-template-columns: minmax(0,1.02fr) minmax(0,0.98fr); gap: 56px; align-items: center; padding: 54px 0 84px; }
 .cdsh-eyebrow { display: inline-flex; align-items: center; gap: 9px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--cdsh-muted); padding: 7px 13px; border: 1px solid var(--cdsh-line); border-radius: 999px; background: var(--cdsh-panel); }
-.cdsh-eyebrow .cdsh-dot { width: 7px; height: 7px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 0 rgba(255,255,255,0.5); animation: cdsh-breathe 2.4s ease-in-out infinite; }
-@keyframes cdsh-breathe { 0%,100% { box-shadow: 0 0 0 0 rgba(255,255,255,0.5); } 50% { box-shadow: 0 0 0 6px rgba(255,255,255,0); } }
+.cdsh-eyebrow .cdsh-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--cdsh-accent); box-shadow: 0 0 0 0 hsl(24 100% 60% / 0.5); animation: cdsh-breathe 2.4s ease-in-out infinite; }
+@keyframes cdsh-breathe { 0%,100% { box-shadow: 0 0 0 0 hsl(24 100% 60% / 0.5); } 50% { box-shadow: 0 0 0 6px hsl(24 100% 60% / 0); } }
 .cdsh-h1 { margin: 26px 0 0; font-weight: 800; letter-spacing: -0.035em; line-height: 0.97; font-size: clamp(48px, 6vw, 86px); }
 .cdsh-line { display: block; overflow: hidden; }
 .cdsh-line > span { display: block; transform: translateY(105%); animation: cdsh-lineup .9s cubic-bezier(.2,.8,.2,1) forwards; }
 .cdsh-line:nth-child(2) > span { animation-delay: .12s; }
 @keyframes cdsh-lineup { to { transform: none; } }
-.cdsh-sheen { background: linear-gradient(100deg, #6f6f76 0%, #6f6f76 32%, #ffffff 50%, #6f6f76 68%, #6f6f76 100%); background-size: 220% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: cdsh-sheen 4.5s linear infinite; }
-@keyframes cdsh-sheen { to { background-position: -220% 0; } }
+.cdsh-sheen { background: linear-gradient(100deg, #9a9aa4 0%, #9a9aa4 32%, #fff7ee 50%, #9a9aa4 68%, #9a9aa4 100%); background-size: 220% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: cdsh-sheen 8s ease-in-out infinite; }
+@keyframes cdsh-sheen { 0% { background-position: 120% 0; } 42% { background-position: -120% 0; } 100% { background-position: -120% 0; } }
 .cdsh-sub { margin: 28px 0 0; max-width: 540px; font-size: 18px; line-height: 1.66; color: var(--cdsh-muted); }
 .cdsh-cta { margin-top: 34px; display: flex; gap: 14px; flex-wrap: wrap; }
 .cdsh-btn-lg { padding: 14px 24px; font-size: 15px; border-radius: 12px; }
@@ -118,14 +150,29 @@
   box-shadow: 0 22px 60px rgba(0,0,0,0.26);
   overflow: hidden;
 }
-.cdsh-board::before { display: none; }
+.cdsh-board::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 2;
+  transition: opacity 0.3s ease;
+  background: radial-gradient(280px circle at var(--mx, 50%) var(--my, 50%), rgba(255, 255, 255, 0.32), transparent 70%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+.cdsh-board:hover::before { opacity: 1; }
 .cdsh-board-head { position: relative; display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--cdsh-line-soft); }
 .cdsh-board-head .cdsh-left { display: flex; align-items: center; gap: 10px; }
-.cdsh-branch { font-size: 13px; font-weight: 600; }
+.cdsh-branch { font-size: 13px; font-weight: 600; white-space: nowrap; }
 .cdsh-tag { font-size: 11px; color: var(--cdsh-faint); border: 1px solid var(--cdsh-line); border-radius: 6px; padding: 3px 7px; }
 .cdsh-live { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--cdsh-text); }
-.cdsh-pulse { width: 8px; height: 8px; border-radius: 50%; background: #fff; position: relative; }
-.cdsh-pulse::after { content: ''; position: absolute; inset: -4px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.7); animation: cdsh-ping 1.8s ease-out infinite; }
+.cdsh-pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--cdsh-accent, hsl(24 100% 60%)); position: relative; flex: none; }
+.cdsh-pulse::after { content: ''; position: absolute; inset: -4px; border-radius: 50%; border: 1px solid hsl(24 100% 60% / 0.7); animation: cdsh-ping 1.8s ease-out infinite; }
 @keyframes cdsh-ping { 0% { transform: scale(0.5); opacity: .9; } 100% { transform: scale(1.9); opacity: 0; } }
 
 .cdsh-canvas { position: relative; width: 100%; aspect-ratio: 1000 / 640; }
@@ -139,7 +186,7 @@
 @keyframes cdsh-wirein { to { opacity: 1; } }
 .cdsh-wire-dash { fill: none; stroke: rgba(255,255,255,0.42); stroke-width: 1.4; stroke-dasharray: 3 8; vector-effect: non-scaling-stroke; opacity: 0; animation: cdsh-wirein .6s ease forwards, cdsh-dash 1.1s linear infinite; }
 @keyframes cdsh-dash { to { stroke-dashoffset: -28; } }
-.cdsh-packet { fill: #fff; filter: drop-shadow(0 0 5px rgba(255,255,255,0.9)); }
+.cdsh-packet { fill: var(--cdsh-accent); filter: drop-shadow(0 0 5px hsl(24 100% 60% / 0.9)); }
 
 .cdsh-node {
   position: absolute; border: 1px solid var(--cdsh-line); border-radius: 12px;
@@ -148,7 +195,12 @@
   transition: transform .2s, border-color .2s; opacity: 0; animation: cdsh-pop .6s cubic-bezier(.2,.8,.2,1) forwards;
 }
 @keyframes cdsh-pop { from { opacity: 0; transform: translateY(10px) scale(.96); } to { opacity: 1; transform: none; } }
-.cdsh-node:hover { transform: translateY(-3px); border-color: rgba(255,255,255,0.34); }
+.cdsh-node:hover {
+  transform: translateY(-4px) scale(1.012);
+  border-color: rgba(255,255,255,0.38);
+  box-shadow: 0 22px 48px rgba(0,0,0,0.6);
+}
+.cdsh-node:hover .cdsh-sdot { box-shadow: 0 0 12px hsl(24 100% 60% / 1); }
 .cdsh-node-glow { border-color: rgba(255,255,255,0.28); }
 .cdsh-node .cdsh-row { display: flex; align-items: center; gap: 10px; }
 .cdsh-ico { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; border: 1px solid var(--cdsh-line); background: var(--cdsh-panel-2); flex: none; }
@@ -157,7 +209,7 @@
 .cdsh-desc { font-size: 11px; color: var(--cdsh-faint); margin-top: 3px; }
 .cdsh-port { margin-left: auto; font-size: 10.5px; color: var(--cdsh-muted); border: 1px solid var(--cdsh-line); border-radius: 5px; padding: 2px 6px; }
 .cdsh-status { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; margin-top: 8px; color: var(--cdsh-muted); }
-.cdsh-sdot { width: 6px; height: 6px; border-radius: 50%; background: #fff; box-shadow: 0 0 8px rgba(255,255,255,0.8); animation: cdsh-blink 2s ease-in-out infinite; }
+.cdsh-sdot { width: 6px; height: 6px; border-radius: 50%; background: var(--cdsh-accent); box-shadow: 0 0 8px hsl(24 100% 60% / 0.8); animation: cdsh-blink 2s ease-in-out infinite; }
 @keyframes cdsh-blink { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
 
 .cdsh-preview {
@@ -174,8 +226,10 @@
 
 .cdsh-ticker { position: relative; margin: 0; padding: 12px 18px; border-top: 1px solid var(--cdsh-line-soft); font-size: 12px; color: var(--cdsh-muted); display: flex; align-items: center; gap: 9px; min-height: 42px; }
 .cdsh-ticker .cdsh-k { color: var(--cdsh-text); }
-.cdsh-feed { transition: opacity .35s; }
-.cdsh-feed.cdsh-off { opacity: 0; }
+.cdsh-feed { display: inline-block; animation: cdsh-feed-in .24s cubic-bezier(.2,.8,.2,1); }
+@keyframes cdsh-feed-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.cdsh-caret { display: inline-block; width: 7px; height: 13px; margin-left: 2px; vertical-align: -2px; background: currentColor; animation: cdsh-caret 1.06s steps(2, start) infinite; }
+@keyframes cdsh-caret { to { visibility: hidden; } }
 
 .cdsh-login-title-shine {
   text-shadow:
@@ -1174,8 +1228,10 @@
 }
 
 /* ---------- strip ---------- */
-.cdsh-strip { padding: 30px 0 72px; border-top: 1px solid var(--cdsh-line-soft); }
-.cdsh-strip > p { text-align: center; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--cdsh-faint); margin: 0 0 22px; }
+.cdsh-strip { display: flex; align-items: center; gap: 24px; padding: 46px 0 10px; border-top: 0; }
+.cdsh-strip::before, .cdsh-strip::after { content: ''; flex: 1; height: 1px; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.12)); }
+.cdsh-strip::after { transform: scaleX(-1); }
+.cdsh-strip > p { text-align: center; font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--cdsh-faint); margin: 0; white-space: nowrap; }
 .cdsh-chips { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
 .cdsh-chip { font-size: 13px; color: var(--cdsh-muted); border: 1px solid var(--cdsh-line); border-radius: 999px; padding: 9px 16px; background: var(--cdsh-panel); transition: .18s; }
 .cdsh-chip:hover { color: var(--cdsh-text); border-color: rgba(255,255,255,0.2); transform: translateY(-1px); }
@@ -1298,4 +1354,360 @@
   .cdsh-login-inline-input,
   .cdsh-login-access-node,
   .cdsh-login-morph-board { animation: none !important; }
+}
+
+/* ==================================================================
+   2026-07-02 多分区落地页(Railway 式滚动叙事)
+   骨架:strip 分隔字条 → #workflow 三步 → facts 事实带 → #features bento
+   → #observability 实况终端 → final CTA → footer
+   ================================================================== */
+
+/* 滚动显现系统:进入视口加 .is-in;JS 失效或 reduced-motion 时恒可见。 */
+@media (prefers-reduced-motion: no-preference) {
+  .cdsh-reveal {
+    opacity: 0;
+    transform: translateY(26px);
+    transition: opacity 0.7s cubic-bezier(0.2, 0.75, 0.2, 1), transform 0.7s cubic-bezier(0.2, 0.75, 0.2, 1);
+  }
+  .cdsh-reveal.is-in { opacity: 1; transform: none; }
+  /* 父容器 is-in 后,子 reveal 一并显现(transition-delay 由 inline style 级联)。 */
+  .cdsh-reveal.is-in .cdsh-reveal { opacity: 1; transform: none; }
+}
+
+/* 分区节奏与标题范式 */
+.cdsh-section { padding: 104px 0 0; scroll-margin-top: 88px; }
+.cdsh-sec-head { max-width: 640px; }
+.cdsh-sec-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--cdsh-muted);
+}
+.cdsh-sec-eyebrow::before { content: ''; width: 20px; height: 1px; background: var(--cdsh-accent); }
+.cdsh-sec-title { margin: 18px 0 0; font-size: clamp(30px, 3.4vw, 44px); font-weight: 750; letter-spacing: -0.03em; line-height: 1.08; }
+.cdsh-sec-sub { margin: 14px 0 0; font-size: 15.5px; line-height: 1.7; color: var(--cdsh-muted); }
+
+/* ---------- workflow 三步 ---------- */
+.cdsh-flow { position: relative; margin-top: 52px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; }
+/* 贯穿三卡的连接线 + 沿线橙色流光 */
+.cdsh-flow::before {
+  content: '';
+  position: absolute;
+  top: 22px;
+  left: 7%;
+  right: 7%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.14) 18%, rgba(255, 255, 255, 0.14) 82%, transparent);
+}
+.cdsh-flow::after {
+  content: '';
+  position: absolute;
+  top: 22px;
+  left: 7%;
+  width: 120px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, hsl(24 100% 60% / 0.9), transparent);
+  animation: cdsh-flow-beam 3.2s ease-in-out infinite;
+}
+@keyframes cdsh-flow-beam {
+  0% { transform: translateX(0); opacity: 0; }
+  12% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { transform: translateX(min(62vw, 780px)); opacity: 0; }
+}
+.cdsh-flow-card { position: relative; }
+.cdsh-flow-badge {
+  position: relative;
+  z-index: 1;
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  border: 1px solid var(--cdsh-line);
+  background: var(--cdsh-bg);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--cdsh-muted);
+  transition: border-color 0.22s ease, color 0.22s ease, box-shadow 0.22s ease;
+}
+.cdsh-flow-card:hover .cdsh-flow-badge {
+  border-color: hsl(24 100% 60% / 0.55);
+  color: var(--cdsh-text);
+  box-shadow: 0 0 18px -6px hsl(24 100% 60% / 0.6);
+}
+.cdsh-flow-card h3 { margin: 18px 0 0; font-size: 19px; font-weight: 650; letter-spacing: -0.01em; }
+.cdsh-flow-card > p { margin: 8px 0 0; font-size: 13.5px; line-height: 1.65; color: var(--cdsh-muted); }
+.cdsh-flow-visual {
+  margin-top: 16px;
+  border: 1px solid var(--cdsh-line-soft);
+  border-radius: 12px;
+  background: rgba(16, 14, 21, 0.46);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--cdsh-muted);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+.cdsh-flow-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  align-self: flex-start;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--cdsh-text);
+}
+.cdsh-flow-chip svg { width: 12px; height: 12px; color: var(--cdsh-accent); }
+.cdsh-flow-url {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  align-self: flex-start;
+  border: 1px solid hsl(24 100% 60% / 0.4);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 12.5px;
+  color: var(--cdsh-text);
+  box-shadow: 0 0 22px -12px hsl(24 100% 60% / 0.8);
+}
+
+/* 终端行通用形态(flow/bento/obs 共用) */
+.cdsh-term-line { display: flex; align-items: baseline; gap: 10px; line-height: 1.9; min-width: 0; }
+.cdsh-term-line.is-cmd { color: var(--cdsh-text); }
+.cdsh-term-line.is-ok { color: rgba(134, 239, 172, 0.85); }
+.cdsh-term-line.is-url { color: var(--cdsh-text); }
+
+/* ---------- 产品事实带 ---------- */
+.cdsh-facts {
+  margin-top: 104px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border-top: 1px solid var(--cdsh-line-soft);
+  border-bottom: 1px solid var(--cdsh-line-soft);
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.015), transparent 60%);
+}
+.cdsh-fact { padding: 34px 28px; border-left: 1px solid var(--cdsh-line-soft); }
+.cdsh-fact:first-child { border-left: 0; }
+.cdsh-fact-num { font-size: 30px; font-weight: 700; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.cdsh-fact-num em { font-style: normal; color: var(--cdsh-accent); }
+.cdsh-fact-sub { margin-top: 8px; font-size: 12.5px; line-height: 1.6; color: var(--cdsh-muted); }
+
+/* ---------- features bento ---------- */
+.cdsh-bento { margin-top: 52px; display: grid; grid-template-columns: repeat(12, 1fr); grid-auto-rows: minmax(150px, auto); gap: 16px; }
+.cdsh-bento-card {
+  position: relative;
+  overflow: hidden;
+  grid-column: span 4;
+  border: 1px solid var(--cdsh-line-soft);
+  border-radius: 16px;
+  background: rgba(16, 14, 21, 0.46);
+  padding: 22px 24px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 1px 2px rgba(0, 0, 0, 0.4);
+  transition: border-color 0.22s ease, transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.22s ease;
+}
+.cdsh-bento-card:hover {
+  border-color: rgba(255, 255, 255, 0.16);
+  transform: translateY(-3px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 18px 44px -24px rgba(0, 0, 0, 0.85);
+}
+/* 鼠标跟随光斑(仅精确指针设备) */
+@media (hover: hover) and (pointer: fine) {
+  .cdsh-bento-card::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    background: radial-gradient(300px circle at var(--mx, 50%) var(--my, 50%), hsl(24 100% 60% / 0.07), transparent 60%);
+  }
+  .cdsh-bento-card:hover::after { opacity: 1; }
+}
+.cdsh-bento-a { grid-column: span 7; grid-row: span 2; }
+.cdsh-bento-card:nth-child(2) { grid-column: span 5; }
+.cdsh-bento-card:nth-child(3) { grid-column: span 5; }
+.cdsh-bento-card h3 { margin: auto 0 0; padding-top: 18px; font-size: 15.5px; font-weight: 650; letter-spacing: -0.01em; }
+.cdsh-bento-card > p { margin: 6px 0 0; font-size: 12.5px; line-height: 1.65; color: var(--cdsh-muted); }
+.cdsh-bento-head { font-size: 11px; color: var(--cdsh-faint); border-bottom: 1px solid var(--cdsh-line-soft); padding-bottom: 10px; }
+.cdsh-bento-log { padding-top: 12px; font-size: 12px; color: var(--cdsh-muted); min-height: 150px; }
+.cdsh-bento-nodes { display: flex; flex-direction: column; gap: 8px; }
+.cdsh-bento-node {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid var(--cdsh-line);
+  border-radius: 9px;
+  background: var(--cdsh-panel-2);
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--cdsh-text);
+}
+.cdsh-bento-node i { width: 6px; height: 6px; border-radius: 999px; background: var(--cdsh-accent); box-shadow: 0 0 8px hsl(24 100% 60% / 0.8); }
+.cdsh-bento-url { font-size: 16.5px; line-height: 1.5; color: var(--cdsh-muted); word-break: break-all; }
+.cdsh-bento-url em { font-style: normal; color: var(--cdsh-accent); }
+.cdsh-bento-url span { color: var(--cdsh-text); }
+.cdsh-bento-url span.dim { color: var(--cdsh-faint); }
+.cdsh-bento-checks { display: flex; flex-direction: column; gap: 9px; }
+.cdsh-bento-checks span { display: inline-flex; align-items: center; gap: 9px; font-size: 12.5px; color: var(--cdsh-muted); }
+.cdsh-bento-checks svg { width: 14px; height: 14px; color: rgba(134, 239, 172, 0.9); }
+.cdsh-bento-mono { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--cdsh-muted); }
+.cdsh-bento-agent { display: flex; flex-direction: column; gap: 9px; }
+.cdsh-bento-agent span { display: flex; align-items: center; gap: 9px; font-size: 12.5px; color: var(--cdsh-muted); }
+.cdsh-bento-agent i { width: 6px; height: 6px; border-radius: 999px; background: var(--cdsh-accent); flex: none; }
+.cdsh-bento-agent b { margin-left: auto; font-weight: 500; font-size: 11px; color: var(--cdsh-faint); }
+
+/* ---------- observability ---------- */
+.cdsh-obs { margin-top: 52px; display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: 64px; align-items: start; }
+.cdsh-obs-copy { position: sticky; top: 120px; }
+.cdsh-obs-points { list-style: none; margin: 26px 0 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.cdsh-obs-points li { display: flex; align-items: center; gap: 12px; font-size: 14px; color: rgba(246, 246, 248, 0.78); }
+.cdsh-obs-check {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 1px solid hsl(24 100% 60% / 0.4);
+  color: var(--cdsh-accent);
+  flex: none;
+}
+.cdsh-obs-check svg { width: 12px; height: 12px; }
+.cdsh-term {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  background: rgba(16, 14, 21, 0.46);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 24px 64px -32px rgba(0, 0, 0, 0.8);
+}
+.cdsh-term-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 18px;
+  border-bottom: 1px solid var(--cdsh-line-soft);
+  font-size: 12px;
+  color: var(--cdsh-muted);
+}
+.cdsh-term-dots { display: inline-flex; gap: 6px; }
+.cdsh-term-dots i { width: 9px; height: 9px; border-radius: 999px; background: rgba(255, 255, 255, 0.14); }
+.cdsh-term-body { padding: 16px 18px 20px; font-size: 12.5px; color: var(--cdsh-muted); min-height: 320px; }
+.cdsh-term-ts { flex: none; color: var(--cdsh-faint); font-size: 11px; }
+.cdsh-term-url {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 4px;
+  border: 1px solid hsl(24 100% 60% / 0.4);
+  border-radius: 999px;
+  padding: 6px 13px;
+  color: var(--cdsh-text);
+  box-shadow: 0 0 22px -12px hsl(24 100% 60% / 0.8);
+}
+/* 播完后 1px 橙色 hairline 从面板顶部扫过一次 */
+.cdsh-term::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -30%;
+  width: 30%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, hsl(24 100% 60% / 0.8), transparent);
+  opacity: 0;
+}
+.cdsh-term.is-done::after { animation: cdsh-term-sweep 0.72s ease-out; }
+@keyframes cdsh-term-sweep {
+  0% { transform: translateX(0); opacity: 1; }
+  100% { transform: translateX(433%); opacity: 0; }
+}
+
+/* ---------- final CTA ---------- */
+.cdsh-final { position: relative; text-align: center; padding: 150px 0 120px; }
+.cdsh-final::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(560px, 80%);
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.25), transparent);
+}
+/* 注:曾在此加过 radial 橙色顶光,但低透明度渐变在纯暗底上会产生可见的
+   合成层 banding 边界(截图实证),已移除 —— 收尾视觉由流光大字 + 顶部
+   hairline 承担,干净即高级。 */
+.cdsh-final-title { position: relative; z-index: 1; margin: 0; font-size: clamp(36px, 4.5vw, 58px); font-weight: 800; letter-spacing: -0.03em; line-height: 1.05; }
+.cdsh-final-sub { position: relative; z-index: 1; margin: 18px 0 34px; font-size: 15.5px; color: var(--cdsh-muted); }
+.cdsh-final .cdsh-cta { margin-top: 0; position: relative; z-index: 1; }
+
+/* ---------- footer ---------- */
+.cdsh-footer { position: relative; z-index: 1; border-top: 1px solid var(--cdsh-line-soft); padding: 56px 0 40px; }
+.cdsh-footer-grid { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 32px; }
+.cdsh-footer-brand p { margin: 14px 0 0; font-size: 13px; line-height: 1.7; color: var(--cdsh-faint); max-width: 260px; }
+.cdsh-footer-col { display: flex; flex-direction: column; align-items: flex-start; }
+.cdsh-footer-col h4 { margin: 0 0 10px; font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--cdsh-muted); }
+.cdsh-footer-col a { color: var(--cdsh-faint); font-size: 13px; line-height: 2.15; text-decoration: none; transition: color 0.18s ease; }
+.cdsh-footer-col a:hover { color: var(--cdsh-text); }
+.cdsh-footer-base {
+  margin-top: 44px;
+  padding-top: 22px;
+  border-top: 1px solid var(--cdsh-line-soft);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--cdsh-faint);
+}
+
+/* ---------- 新分区响应式 ---------- */
+@media (max-width: 940px) {
+  .cdsh-section { padding-top: 76px; }
+  .cdsh-flow { grid-template-columns: 1fr; gap: 36px; }
+  .cdsh-flow::before, .cdsh-flow::after { display: none; }
+  .cdsh-facts { margin-top: 76px; grid-template-columns: 1fr 1fr; }
+  .cdsh-fact:nth-child(3), .cdsh-fact:nth-child(4) { border-top: 1px solid var(--cdsh-line-soft); }
+  .cdsh-fact:nth-child(3) { border-left: 0; }
+  .cdsh-bento { grid-template-columns: 1fr; grid-auto-rows: auto; }
+  .cdsh-bento-card, .cdsh-bento-a, .cdsh-bento-card:nth-child(2), .cdsh-bento-card:nth-child(3) { grid-column: span 1; grid-row: auto; }
+  .cdsh-obs { grid-template-columns: 1fr; gap: 36px; }
+  .cdsh-obs-copy { position: static; }
+  .cdsh-final { padding: 100px 0 80px; }
+  .cdsh-footer-grid { grid-template-columns: 1fr 1fr; row-gap: 36px; }
+  .cdsh-footer-brand { grid-column: 1 / -1; }
+}
+
+@media (max-width: 560px) {
+  .cdsh-facts { grid-template-columns: 1fr; }
+  .cdsh-fact { border-left: 0; border-top: 1px solid var(--cdsh-line-soft); }
+  .cdsh-fact:first-child { border-top: 0; }
+  .cdsh-footer-grid { grid-template-columns: 1fr; }
+  .cdsh-navlinks { display: none; }
+}
+
+/* ---------- 新增动效的 reduced-motion 降级 ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .cdsh-flow::after,
+  .cdsh-caret,
+  .cdsh-feed,
+  .cdsh-term.is-done::after {
+    animation: none;
+  }
+  .cdsh-caret { visibility: visible; }
+  .cdsh-logo svg,
+  .cdsh-bento-card,
+  .cdsh-node { transition: none; }
 }
