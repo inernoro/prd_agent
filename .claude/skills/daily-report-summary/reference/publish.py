@@ -214,6 +214,10 @@ class _ReportScanner(HTMLParser):
             d = dict(attrs)
             if (d.get("name") or "").strip().lower() == "viewport":
                 self.has_viewport = True
+            # meta refresh 会让沙箱 iframe 立即导航/拉取目标地址（外域即外链绕过），
+            # 报纸页面不存在正当的刷新跳转，整个禁用（Codex P2）
+            if (d.get("http-equiv") or "").strip().lower() == "refresh":
+                self._err("含 <meta http-equiv=refresh>——沙箱 iframe 会立即跳转并拉取目标地址，自包含报纸禁用")
         for name, val in attrs:
             if val is None:
                 continue
