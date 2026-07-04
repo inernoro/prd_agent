@@ -201,13 +201,16 @@ node /tmp/daily-driver.mjs "$PREVIEW_URL"      # 产出 OUT/*.png + OUT/manifest
 
 ```bash
 export AI_ACCESS_KEY=...            # 已在 CDS 远端环境注入
+# 注意：续行反斜杠必须是行尾最后一个字符，行内注释会截断命令（Codex P2 教训）
 python3 .claude/skills/daily-report-summary/reference/publish.py \
   --base https://main-prd-agent.miduo.org \
   --impersonate inernoro \
   --title "日报-${TODAY}-今日大事早知道" \
   --daily-date "${TODAY}" \
-  --report-html /tmp/daily-${TODAY}.html \  # 默认报纸版；用户要 md 时换 --report-md /tmp/daily-${TODAY}.md
-  --manifest /tmp/acc_shots/manifest.json   # 有 Phase 4.5 截图时必传，脚本据此上传图 + 回填 {{IMG:}} 占位
+  --report-html /tmp/daily-${TODAY}.html \
+  --manifest /tmp/acc_shots/manifest.json
+# --report-html 为默认报纸版；用户要 md 时换成 --report-md /tmp/daily-${TODAY}.md
+# --manifest：有 Phase 4.5 截图时必传，脚本据此上传图 + 回填 {{IMG:}} 占位；无截图可省略
 # 二选项：--report-html 与 --report-md 恰好传一个（纪律 6）；html 版发布前有自包含/禁脚本/viewport 硬校验
 # 无密钥 / 无文档空间时退化：加 --local --out <path>，落本地文件（仅自查，不算交付）
 ```

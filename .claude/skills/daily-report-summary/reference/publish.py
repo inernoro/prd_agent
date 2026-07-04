@@ -141,6 +141,23 @@ def html_escape(s):
     return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
 
+def strip_html_comments(html):
+    """剥掉 <!-- --> 注释。两个用途：
+    1. 校验前剥离——模板头部说明注释里合法地写着「禁 data:image」等字样，
+       不剥离会让校验误伤模板本身（Codex P2）；
+    2. 发布前剥离——后端知识库正文守卫同样按子串扫描，注释里的示例字样会被误拒。"""
+    return re.sub(r"<!--.*?-->", "", html, flags=re.S)
+
+
+def html_visible_text(html, limit=200):
+    """从 HTML 提取可读文本前 limit 字，作条目摘要（列表/卡片/搜索片段展示用）。"""
+    text = strip_html_comments(html)
+    text = re.sub(r"<(script|style)\b[^>]*>.*?</\1\s*>", " ", text, flags=re.S | re.I)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:limit]
+
+
 def img_embed(url_or_path, caption, is_html):
     """按格式生成截图嵌入片段：md 走 ![]()，html 走 <figure>（吃 HTML 模板的 figure 样式）。"""
     if is_html:
@@ -201,6 +218,9 @@ def main():
 
     if is_html:
         body = open(a.report_html, encoding="utf-8").read().lstrip()
+        # 注释先剥掉再校验/发布：模板头注释里合法出现「data:image」等示例字样，
+        # 不剥会误伤模板；后端正文守卫同为子串扫描，注释不剥也会被后端误拒（Codex P2）
+        body = strip_html_comments(body)
         low = body.lower()
         errs = []
         if "<html" not in low:
@@ -347,6 +367,18 @@ def main():
         raise RuntimeError(
             f"正文写入结果未确认（PUT 未返回成功且验证接口不可达）。已保留条目 {eid} 避免误删，"
             "请稍后登录该库人工确认/重写，勿盲目重跑造成重复。")
+
+    # html 条目摘要兜底：正文 PUT 会用正文前 200 字重算 summary，旧版后端不剥标签时
+    # 列表/卡片/搜索会展示裸 <!DOCTYPE html> 片段（Bugbot Medium）。发布成功后回写
+    # "剥标签可读文本"摘要，新旧后端行为一致（条目更新端点是部分更新，只动 summary）。
+    if is_html:
+        try:
+            vis = html_visible_text(body)
+            ok = curl(HJ + ["-X", "PUT", "-d", json.dumps({"summary": vis or a.title}),
+                            f"{base}/entries/{eid}"]).get("success")
+            print(f"  摘要回写(html 剥标签) ok={ok}")
+        except Exception as e:
+            print(f"  [告警] 摘要回写失败（列表可能显示原始 HTML 片段，可登录后手动改摘要）：{str(e)[:100]}")
 
     # share link —— 必须带 entryId 把分享限定到本篇；不传 entryId 后端会建"整库分享"，
     # 一条日报链接就能浏览私有「日报知识库」里的全部日报（Codex P2 隐私修复）。

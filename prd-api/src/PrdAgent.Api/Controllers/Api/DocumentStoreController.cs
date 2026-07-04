@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
@@ -1092,9 +1093,11 @@ public class DocumentStoreController : ControllerBase
         var (newDocId, oldContent) = await WriteEntryContentDocAsync(entry, content);
         entry.DocumentId = newDocId;
 
-        // 更新 DocumentEntry 的摘要和内容索引
-        var summary = content.Length > 200 ? content[..200] : content;
-        var contentIndex = content.Length > 2000 ? content[..2000] : content;
+        // 更新 DocumentEntry 的摘要和内容索引。
+        // text/html 条目必须先剥标签取可读文本，否则摘要/搜索片段会展示裸 <!DOCTYPE html> 标记（Bugbot）。
+        var indexable = ToIndexableText(content, request.ContentType ?? entry.ContentType);
+        var summary = indexable.Length > 200 ? indexable[..200] : indexable;
+        var contentIndex = indexable.Length > 2000 ? indexable[..2000] : indexable;
         // 单一时间戳：DB 写入与响应必须用同一个 now，否则前端用响应 updatedAt 推进 loadedContentKey 后，
         // 服务端列表重载返回的是 DB 里那个（差几毫秒的）UpdatedAt → 缓存键不一致 → 多余重拉 + 回顶（Bugbot）。
         var now = DateTime.UtcNow;
@@ -1253,6 +1256,24 @@ public class DocumentStoreController : ControllerBase
     /// 避免产生孤儿文档（Codex P1）。即便旧 ParsedPrd 行已丢失也照样落库（Bugbot High）。
     /// 改动前正文取旧 RawContent，缺失则回退 ContentIndex（无 DocumentId 短文档 ContentIndex 即完整正文）。
     /// </summary>
+    /// <summary>
+    /// 摘要 / 搜索索引取材：text/html 条目先剥注释、script/style 块与标签取可读文本，
+    /// 否则库列表、卡片预览、搜索片段会展示原始 HTML 标记。仅用于派生 Summary/ContentIndex，
+    /// 不改动正文本身。非 html 条目原样返回。
+    /// </summary>
+    private static string ToIndexableText(string content, string? contentType)
+    {
+        if (string.IsNullOrEmpty(content) ||
+            contentType?.Contains("html", StringComparison.OrdinalIgnoreCase) != true)
+            return content;
+        var text = Regex.Replace(content, @"<!--.*?-->", " ", RegexOptions.Singleline);
+        text = Regex.Replace(text, @"<(script|style)\b[^>]*>.*?</\1\s*>", " ",
+            RegexOptions.Singleline | RegexOptions.IgnoreCase);
+        text = Regex.Replace(text, @"<[^>]+>", " ");
+        text = System.Net.WebUtility.HtmlDecode(text);
+        return Regex.Replace(text, @"\s+", " ").Trim();
+    }
+
     private async Task<(string documentId, string? oldContent)> WriteEntryContentDocAsync(DocumentEntry entry, string content)
     {
         var parsed = await _documentService.ParseAsync(content); // parsed.Id = 内容 hash
@@ -1297,8 +1318,10 @@ public class DocumentStoreController : ControllerBase
         entry.DocumentId = newDocId;
 
         var now = DateTime.UtcNow;
-        var summary = content.Length > 200 ? content[..200] : content;
-        var contentIndex = content.Length > 2000 ? content[..2000] : content;
+        // 与 UpdateEntryContent 同口径：html 条目摘要/索引取剥标签后的可读文本
+        var indexable = ToIndexableText(content, entry.ContentType);
+        var summary = indexable.Length > 200 ? indexable[..200] : indexable;
+        var contentIndex = indexable.Length > 2000 ? indexable[..2000] : indexable;
         await _db.DocumentEntries.UpdateOneAsync(e => e.Id == entry.Id, Builders<DocumentEntry>.Update
             .Set(e => e.DocumentId, entry.DocumentId)
             .Set(e => e.Summary, summary.Trim())
