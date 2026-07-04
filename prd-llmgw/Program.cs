@@ -2,8 +2,8 @@
 //
 // 设计意图（见 doc/design.llm-gateway-physical-isolation.md）：
 //   - 本服务与 prd-api 完全解耦，不引用任何 PrdAgent.* 项目，仅依赖 NuGet 包。
-//   - 与 MAP 共享同一个 MongoDB（读取共享集合 llmrequestlogs），但拥有独立的 JWT 账户体系
-//     （独立密钥 LlmGwJwt:Secret），满足 cross-project-isolation 规则——绝不复用 MAP 的 Jwt 密钥。
+//   - MAP 继续负责 MAP 自己的业务日志；GW 控制台账号、登录审计等自有状态落独立数据库 llm_gateway。
+//   - 当前控制台仍读取 MAP 的 llmrequestlogs/模型配置作为观测视图，但不把账号状态写进 MAP 库。
 //   - 共享集合 llmrequestlogs 由 .NET 驱动以 PascalCase 字段名序列化；为规避历史文档里
 //     数值/日期类型混存导致的反序列化异常，日志查询统一以 BsonDocument 读取并手动安全映射。
 
@@ -25,6 +25,7 @@ var config = builder.Configuration;
 
 var mongoConn = config["MongoDB:ConnectionString"] ?? "mongodb://localhost:27017";
 var mongoDb = config["MongoDB:DatabaseName"] ?? "prdagent";
+var gatewayDbName = config["LlmGateway:DatabaseName"] ?? "llm_gateway";
 
 const string DevJwtSecret = "llmgw-dev-secret-change-me-please-0001";
 
@@ -50,12 +51,10 @@ if (jwtTooShort)
 }
 var jwtIssuer = config["LlmGwJwt:Issuer"] ?? "prdagent-llmgw";
 
-// 网关控制台登录账号（用户 2026-07-02 二次拍板：口令存项目 env，别再登不进）：
-// - 优先 **LLMGW_ADMIN_PASSWORD**（项目环境变量，权威）：seed 每次启动把 admin 口令对齐到该值，
-//   改密 = 改项目 env + 重部署 llmgw；env 注入到位时口令永远确定、不受 UI/共享库漂移影响。
-// - 未设该 env 时回退到内置 **admin/admin 引导 + 首登强制改密 + 自愈**（保证 env 缺失也永不锁死）。
-// 历史教训：早期「seed 对齐到未知全局 env 值」会锁死——现改为「项目 env 显式设已知值 + env 缺失自愈 admin/admin」
-// 两头兜底，既满足『口令存 env、可控可改』又不会因 env 不可控而登不进。
+// 网关控制台登录账号：
+// - 长期权威是 llm_gateway.llmgw_console_users 里的 PBKDF2 哈希，UI 改密后重启不再被 env 覆盖。
+// - LLMGW_ADMIN_PASSWORD 仅用于“首次 bootstrap 创建账号”或 LLMGW_ADMIN_FORCE_RESET 破玻璃时的重置口令。
+// - 未设 bootstrap 口令时，内置 admin/admin 引导 + 首登强制改密，避免新环境锁死。
 const string AdminUser = "admin";
 const string DefaultAdminPwd = "admin";
 
@@ -63,9 +62,10 @@ var gitCommit = Environment.GetEnvironmentVariable("GIT_COMMIT") ?? "";
 
 // ── Mongo 客户端（单例）──
 var mongoClient = new MongoClient(mongoConn);
-var database = mongoClient.GetDatabase(mongoDb);
+var mapDatabase = mongoClient.GetDatabase(mongoDb);
+var gatewayDatabase = mongoClient.GetDatabase(gatewayDbName);
 builder.Services.AddSingleton(mongoClient);
-builder.Services.AddSingleton(database);
+builder.Services.AddSingleton(mapDatabase);
 
 // ── JWT 签发器（独立密钥）──
 var gwJwt = new GwJwt(jwtSecret, jwtIssuer);
@@ -124,29 +124,25 @@ app.UseCors(CorsPolicy);
 app.UseAuthentication();
 app.UseAuthorization();
 
-// ── 启动时幂等播种管理员账户（内置 admin/admin 引导，env 无关）──
-// 破玻璃（break-glass）：设 LLMGW_ADMIN_FORCE_RESET 为真值（1/true/yes/on，大小写不敏感）时，无条件把 admin
-// 重置回 admin/admin。用于「账号被认领但口令登不进」的死锁恢复——重置后前端会强制改密。恢复后请把该 env 清掉。
+// ── 启动时幂等播种管理员账户（内置 admin/admin 引导，env 仅 bootstrap/破玻璃）──
+// 破玻璃（break-glass）：设 LLMGW_ADMIN_FORCE_RESET 为真值（1/true/yes/on，大小写不敏感）时，显式重置 admin
+// 口令。用于「账号被认领但口令登不进」的死锁恢复。恢复后请把该 env 清掉。
 // **仅认真值**（Bugbot Medium）：只判「非空」会把 =0 / =false 误当开启，每次启动强制回 admin/admin 反而擦掉 env 口令。
-// 口令来源（用户 2026-07-02 明确要求「口令存项目 env、别再登不进」）：优先 LLMGW_ADMIN_PASSWORD
-// （项目 env，权威，每次启动对齐口令）；未设时回退到内置 admin/admin 引导 + 自愈（永不锁死）。
-// 改密 = 改项目环境变量 LLMGW_ADMIN_PASSWORD 后重部署 llmgw。
+// 口令来源（2026-07-04 目标模式）：数据库是长期权威；LLMGW_ADMIN_PASSWORD 仅在首次创建或 force reset 时使用。
 var forceResetRaw = (Environment.GetEnvironmentVariable("LLMGW_ADMIN_FORCE_RESET") ?? string.Empty).Trim();
 var forceResetAdmin = new[] { "1", "true", "yes", "on" }.Contains(forceResetRaw, StringComparer.OrdinalIgnoreCase);
-var adminPwdFromEnv = Environment.GetEnvironmentVariable("LLMGW_ADMIN_PASSWORD");
-await SeedAdminAsync(database, AdminUser, DefaultAdminPwd, forceResetAdmin, adminPwdFromEnv);
+var adminBootstrapPwd = Environment.GetEnvironmentVariable("LLMGW_ADMIN_PASSWORD");
+await SeedAdminAsync(gatewayDatabase, AdminUser, DefaultAdminPwd, forceResetAdmin, adminBootstrapPwd);
 
-var logs = database.GetCollection<BsonDocument>("llmrequestlogs");
-// 控制台账号用**独立集合** llmgw_console_users（不再用 llmgw_users）：
-// 历史 llmgw_users 被 main/多分支的多版本 llmgw seed 跨部署互相覆盖，导致 admin 口令反复被污染、登不进，
-// 且 CDS 数据库控制台只读、env 注入不稳，无法可靠重置。换到全新集合 → 首次启动 seed 建干净 admin/admin，
-// 不被任何旧部署触碰，改过的口令也能稳定保留。
-var users = database.GetCollection<LlmGwUser>("llmgw_console_users");
-// 网关配置面（只读）：模型池 / 平台 / 模型 / 影子比对。与 MAP 共享同库，控制台只读展示。
-var modelGroups = database.GetCollection<BsonDocument>("model_groups");
-var platforms = database.GetCollection<BsonDocument>("llmplatforms");
-var models = database.GetCollection<BsonDocument>("llmmodels");
-var shadows = database.GetCollection<BsonDocument>("llmshadow_comparisons");
+var logs = mapDatabase.GetCollection<BsonDocument>("llmrequestlogs");
+// GW 自有账号和审计落独立库 llm_gateway，避免被 MAP 项目 env / shared DB 状态覆盖。
+var users = gatewayDatabase.GetCollection<LlmGwUser>("llmgw_console_users");
+var loginAudits = gatewayDatabase.GetCollection<LlmGwLoginAudit>("llmgw_login_audits");
+// 网关配置面（只读/小范围写）：模型池 / 平台 / 模型 / 影子比对仍来自 MAP 库。MAP 继续负责自己的配置和日志。
+var modelGroups = mapDatabase.GetCollection<BsonDocument>("model_groups");
+var platforms = mapDatabase.GetCollection<BsonDocument>("llmplatforms");
+var models = mapDatabase.GetCollection<BsonDocument>("llmmodels");
+var shadows = mapDatabase.GetCollection<BsonDocument>("llmshadow_comparisons");
 
 // ───────────────────────────── 健康检查（匿名）─────────────────────────────
 app.MapGet("/gw/healthz", () => Results.Json(new
@@ -158,20 +154,26 @@ app.MapGet("/gw/healthz", () => Results.Json(new
 
 // ───────────────────────────── 登录（匿名）─────────────────────────────
 // 登录失败返回 HTTP 200 + success:false，避免前端把 401 当作"会话过期"自动清 session。
-app.MapPost("/gw/auth/login", async ([FromBody] LoginRequestDto req) =>
+app.MapPost("/gw/auth/login", async (HttpContext http, [FromBody] LoginRequestDto req) =>
 {
     var username = (req.Username ?? "").Trim();
     var password = req.Password ?? "";
     if (username.Length == 0 || password.Length == 0)
     {
+        await WriteLoginAuditAsync(loginAudits, http, username, null, false, "EMPTY_CREDENTIALS");
         return Json(ApiEnvelope<LoginResultDto>.Fail("INVALID_CREDENTIALS", "用户名或密码不能为空"), jsonOptions);
     }
 
     var user = await users.Find(u => u.Username == username).FirstOrDefaultAsync();
     if (user is null || !user.IsActive || !PasswordHasher.Verify(password, user.PasswordHash))
     {
+        await WriteLoginAuditAsync(loginAudits, http, username, user?.Id, false, user is null ? "USER_NOT_FOUND" : "INVALID_PASSWORD");
         return Json(ApiEnvelope<LoginResultDto>.Fail("INVALID_CREDENTIALS", "用户名或密码错误"), jsonOptions);
     }
+
+    await users.UpdateOneAsync(u => u.Id == user.Id,
+        Builders<LlmGwUser>.Update.Set(u => u.LastLoginAt, DateTime.UtcNow));
+    await WriteLoginAuditAsync(loginAudits, http, username, user.Id, true, null);
 
     var (token, expiresAt) = gwJwt.Issue(user);
     var data = new LoginResultDto
@@ -227,7 +229,8 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
         .Set(u => u.PasswordHash, PasswordHasher.Hash(newPwd))
         .Set(u => u.MustChangePassword, false)
         // 标记为真人认领：默认模式下重启不再自愈回 admin/admin，保住用户新口令。
-        .Set(u => u.PasswordChangedByUser, true);
+        .Set(u => u.PasswordChangedByUser, true)
+        .Set(u => u.UpdatedAt, DateTime.UtcNow);
     await users.UpdateOneAsync(u => u.Id == user.Id, update);
 
     // 重新签发 token（此时 MustChangePassword 已清，Issue 不再带 mcp claim）。
@@ -536,11 +539,9 @@ app.Run();
 // ─────────────────────────────── 辅助函数 ───────────────────────────────
 
 // 幂等播种管理员。优先级（从高到低）：
-//   1) forceReset（LLMGW_ADMIN_FORCE_RESET=1）：破玻璃，无条件回 admin/admin + 强制改密（即使设了 env 口令也生效）。
-//   2) envPassword（LLMGW_ADMIN_PASSWORD）：**权威口令**，每次启动把 admin 对齐到 env 值（用户 2026-07-02 要求：
-//      口令存项目 env、可控可改、永不漂移；UI 改密不覆盖 env——env 才是唯一真源）。已知口令 → 不强制改密。
-//   3) 默认引导：无 env 口令时，内置 admin/admin 引导 + 首登强制改密 + UI 改密后保留（PasswordChangedByUser=true 不回退），
-//      未认领的历史 admin 每次启动确定性自愈回 admin/admin（永不锁死）。
+//   1) forceReset（LLMGW_ADMIN_FORCE_RESET=1）：破玻璃，显式重置 admin 口令 + 强制改密。
+//   2) 已有账号：数据库哈希是长期权威，只保活，不再被 LLMGW_ADMIN_PASSWORD 覆盖。
+//   3) 空库首次 bootstrap：用 LLMGW_ADMIN_PASSWORD；未设则内置 admin/admin + 首登强制改密。
 static async Task SeedAdminAsync(IMongoDatabase db, string username, string defaultPwd, bool forceReset = false, string? envPassword = null)
 {
     var users = db.GetCollection<LlmGwUser>("llmgw_console_users");
@@ -549,11 +550,12 @@ static async Task SeedAdminAsync(IMongoDatabase db, string username, string defa
     var deactivateOthers = Builders<LlmGwUser>.Update.Set(u => u.IsActive, false);
     await users.UpdateManyAsync(u => u.Username != username && u.IsActive, deactivateOthers);
 
-    // 破玻璃优先级最高（Bugbot Medium）：LLMGW_ADMIN_FORCE_RESET=1 时无条件回 admin/admin，
-    // **即使设了 env 口令也生效**——用于 env 值本身也不可控/登不进时的终极逃生。放在 env 分支之前，否则被其 return 短路。
+    // 破玻璃优先级最高：显式打开时才改库中口令，用于账号被认领但口令丢失的死锁恢复。
     if (forceReset)
     {
-        var resetHash = PasswordHasher.Hash(defaultPwd);
+        var resetPassword = string.IsNullOrWhiteSpace(envPassword) ? defaultPwd : envPassword.Trim();
+        var resetHash = PasswordHasher.Hash(resetPassword);
+        var resetMustChange = resetPassword == defaultPwd;
         var existingForce = await users.Find(u => u.Username == username).FirstOrDefaultAsync();
         if (existingForce is not null)
         {
@@ -561,96 +563,50 @@ static async Task SeedAdminAsync(IMongoDatabase db, string username, string defa
                 Builders<LlmGwUser>.Update
                     .Set(u => u.PasswordHash, resetHash)
                     .Set(u => u.IsActive, true)
-                    .Set(u => u.MustChangePassword, true)
-                    .Set(u => u.PasswordChangedByUser, false));
+                    .Set(u => u.MustChangePassword, resetMustChange)
+                    .Set(u => u.PasswordChangedByUser, false)
+                    .Set(u => u.UpdatedAt, DateTime.UtcNow));
         }
         else
         {
             await users.InsertOneAsync(new LlmGwUser
             {
                 Username = username, PasswordHash = resetHash, DisplayName = username,
-                IsActive = true, MustChangePassword = true, PasswordChangedByUser = false,
+                IsActive = true, MustChangePassword = resetMustChange, PasswordChangedByUser = false,
                 Scopes = new[] { "logs:read" }, CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow,
             });
         }
         return;
     }
 
-    // env 权威口令（LLMGW_ADMIN_PASSWORD）：设了就每次启动把 admin 口令对齐到 env 值——改 env + 重部署即改密，
-    // 永不因 UI/共享库漂移而登不进（用户 2026-07-02 强制要求）。已知口令 → 不强制改密。
-    // PasswordChangedByUser 置 false：万一将来清掉 env，fallback 会自愈回 admin/admin，仍不会锁死。
-    if (!string.IsNullOrWhiteSpace(envPassword))
-    {
-        var envHash = PasswordHasher.Hash(envPassword);
-        var existingEnv = await users.Find(u => u.Username == username).FirstOrDefaultAsync();
-        if (existingEnv is not null)
-        {
-            await users.UpdateOneAsync(u => u.Username == username,
-                Builders<LlmGwUser>.Update
-                    .Set(u => u.PasswordHash, envHash)
-                    .Set(u => u.IsActive, true)
-                    .Set(u => u.MustChangePassword, false)
-                    .Set(u => u.PasswordChangedByUser, false));
-        }
-        else
-        {
-            await users.InsertOneAsync(new LlmGwUser
-            {
-                Username = username,
-                PasswordHash = envHash,
-                DisplayName = username,
-                IsActive = true,
-                MustChangePassword = false,
-                PasswordChangedByUser = false,
-                Scopes = new[] { "logs:read" },
-                CreatedAt = DateTime.UtcNow,
-            });
-        }
-        return;
-    }
-
-    // 到这里：forceReset 与 envPassword 都已在上面处理并 return，本段是「无 env 口令、非破玻璃」的默认引导路径。
+    // 已有账号：数据库是长期权威。env 口令即便存在，也不能在每次启动覆盖已认领口令。
     var existing = await users.Find(u => u.Username == username).FirstOrDefaultAsync();
     if (existing is not null)
     {
-        if (existing.PasswordChangedByUser)
-        {
-            // 已被真人认领（在 UI 改过口令）→ 库里存的是用户口令，**绝不回退**，只确保启用。
-            if (!existing.IsActive)
-            {
-                await users.UpdateOneAsync(u => u.Username == username,
-                    Builders<LlmGwUser>.Update.Set(u => u.IsActive, true));
-            }
-            return;
-        }
-
-        // 从未被认领（含**历史遗留 admin**：口令未知、PasswordChangedByUser 缺省=false）→ 确定性自愈回
-        // admin/admin + 强制改密。幂等：仅当已漂移（口令非 admin / 未挂强制改密标记 / 被禁用）时才写库。
-        var needsReset = !PasswordHasher.Verify(defaultPwd, existing.PasswordHash)
-            || !existing.MustChangePassword
-            || !existing.IsActive;
-        if (needsReset)
+        if (!existing.IsActive)
         {
             await users.UpdateOneAsync(u => u.Username == username,
                 Builders<LlmGwUser>.Update
-                    .Set(u => u.PasswordHash, PasswordHasher.Hash(defaultPwd))
                     .Set(u => u.IsActive, true)
-                    .Set(u => u.MustChangePassword, true)
-                    .Set(u => u.PasswordChangedByUser, false));
+                    .Set(u => u.UpdatedAt, DateTime.UtcNow));
         }
         return;
     }
 
+    var bootstrapPassword = string.IsNullOrWhiteSpace(envPassword) ? defaultPwd : envPassword.Trim();
+    var mustChange = bootstrapPassword == defaultPwd;
     var user = new LlmGwUser
     {
         Username = username,
-        PasswordHash = PasswordHasher.Hash(defaultPwd),
+        PasswordHash = PasswordHasher.Hash(bootstrapPassword),
         DisplayName = username,
         IsActive = true,
-        MustChangePassword = true,       // 首登强制改密，消除「公网 admin/admin 永久裸奔」
+        MustChangePassword = mustChange,
         PasswordChangedByUser = false,
         Scopes = new[] { "logs:read" },
         CreatedAt = DateTime.UtcNow,
+        UpdatedAt = DateTime.UtcNow,
     };
     try
     {
@@ -660,6 +616,43 @@ static async Task SeedAdminAsync(IMongoDatabase db, string username, string defa
     {
         // 并发启动场景下可能撞唯一冲突/重复插入，忽略即可（幂等）。
     }
+}
+
+static async Task WriteLoginAuditAsync(
+    IMongoCollection<LlmGwLoginAudit> audits,
+    HttpContext http,
+    string username,
+    string? userId,
+    bool success,
+    string? reason)
+{
+    try
+    {
+        await audits.InsertOneAsync(new LlmGwLoginAudit
+        {
+            Username = username,
+            UserId = userId,
+            Success = success,
+            Reason = reason,
+            RemoteIp = GetClientIp(http),
+            UserAgent = http.Request.Headers.UserAgent.ToString(),
+            CreatedAt = DateTime.UtcNow,
+        });
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"[LlmGw] login audit write failed: {ex.Message}");
+    }
+}
+
+static string? GetClientIp(HttpContext http)
+{
+    var forwardedFor = http.Request.Headers["X-Forwarded-For"].FirstOrDefault();
+    if (!string.IsNullOrWhiteSpace(forwardedFor))
+    {
+        return forwardedFor.Split(',')[0].Trim();
+    }
+    return http.Connection.RemoteIpAddress?.ToString();
 }
 
 // 解析时间窗：from/to 缺省时默认最近 N 天。返回 [fromUtc, toUtc)。

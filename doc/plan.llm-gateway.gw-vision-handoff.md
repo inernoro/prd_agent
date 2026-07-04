@@ -28,15 +28,16 @@
   `llmgw-serve` `/gw/v1/healthz`）。预览按钮默认主入口，网关入口并列。
 - prd-agent-main 现 **5 容器**：api / admin / llmgw / llmgw-serve / llmgw-web。
 
-### Point 2 — 简单账号密码：**已达成（PR #978 + 首登强制改密 2026-07-02）**
+### Point 2 — 简单账号密码：**已达成（PR #978 + 首登强制改密 2026-07-02；独立账号库 2026-07-04）**
 - 后端 `prd-llmgw/Program.cs` 缺省内置 **admin/admin**，开箱可用；不再因未配 `LLMGW_ADMIN_PASSWORD`
   而拒启动（仅告警）。
-- `SeedAdminAsync` 改 **upsert**（配置口令变化即对齐，`Verify` 判定、带盐哈希不空写）+ **禁用用户名≠当前
-  配置的历史账号**（防改名后旧账号仍可登）。
-- 改口令方式：在「项目设置 → 项目环境变量」设 `LLMGW_ADMIN_PASSWORD`（CDS 注入容器）→ 重新部署 llmgw → upsert 生效。
+- `SeedAdminAsync` 现在以 `llm_gateway.llmgw_console_users` 为长期权威；已有账号只保活，不再被
+  `LLMGW_ADMIN_PASSWORD` 每次启动覆盖。
+- `LLMGW_ADMIN_PASSWORD` 只用于空库首次 bootstrap 或 `LLMGW_ADMIN_FORCE_RESET=1` 破玻璃重置；日常改口令走控制台
+  `/gw/auth/change-password`。
 - **坑（Codex P1 · env，已规避）**：compose 里 **不要**写 `LLMGW_ADMIN_*: "${KEY:-default}"`——CDS
   `resolveProfileRuntimeEnv` 对 profile.env 自引用只在值恰好等于 `${KEY}` 时才还原项目变量，带 `:-default`
-  会解析成字面量覆盖用户配置。缺省交给后端 admin/admin，改口令走项目环境变量注入。
+  会解析成字面量覆盖用户配置。缺省交给后端 admin/admin；长期改口令走控制台改密，找回口令走破玻璃重置。
 
 #### Point 2 安全权衡：admin/admin 公网暴露 vs 用户「登录进去再改」（Codex P1 · 安全）
 
@@ -49,15 +50,15 @@
   既不牺牲开箱体验，又消除「永久 admin/admin 公网裸奔」。
 - **已实现（point 2 收尾，2026-07-02）**：首登强制改密全链路落地，消除「公网 admin/admin 永久裸奔」。
   1. `LlmGwUser` 加 `MustChangePassword`（bool）；缺省弱口令（admin/admin）种子账号置 true，
-     运维显式配置 `LLMGW_ADMIN_PASSWORD` 的账号视为已知口令、不置标记。
-  2. `SeedAdmin` 分两模式：**默认模式**（未配口令）已存在账号**不回退**口令（库为权威，防重启抹掉用户改的密码）、
-     仅确保启用；**配置模式**每次启动把口令对齐到 env 值并清标记。
+     `LLMGW_ADMIN_PASSWORD` 只在首次 bootstrap/破玻璃时参与，不作为长期权威。
+  2. `SeedAdmin` 分两模式：**数据库权威模式**已存在账号**不回退**口令（库为权威，防重启抹掉用户改的密码）、
+     仅确保启用；**破玻璃模式**仅在 `LLMGW_ADMIN_FORCE_RESET` 明确为真时重置。
   3. `/gw/auth/login` 返回 `mustChangePassword`；JWT 在该标记为 true 时带 `mcp=1` claim。
   4. **服务端策略门**（不只前端）：`LogsRead` 授权策略拒绝 `mcp=1` 的 token 访问 `/gw/logs*`，
      确保改密前无法真正读观测数据。改密端点走普通鉴权（允许 mcp token）。
   5. 新增 `/gw/auth/change-password`（校验旧口令→新口令≥6 位且≠旧→写新哈希→清标记→**重签发**不带 mcp 的 token）。
   6. 前端 `ChangePasswordPage` + `RequireAuth`/`RequireChangePassword` 守卫：`mustChangePassword` 时强制跳改密页。
-  - 运维仍可用项目环境变量 `LLMGW_ADMIN_PASSWORD` 顶掉缺省口令（此时不触发强制改密）。
+  - 运维不能再靠长期 `LLMGW_ADMIN_PASSWORD` 覆盖已存在账号；需要找回时显式启用 `LLMGW_ADMIN_FORCE_RESET`。
 - **验证状态（2026-07-02，诚实记录）**：
   - 前端 `pnpm tsc -b` 零错误（已验证）。
   - 后端 **`cdscli deploy` 全绿**（CDS 基建恢复后重跑）：5 容器 running，`/gw/healthz` 回显本分支
@@ -67,7 +68,7 @@
   - **未运行时取证（仅代码复核）**：弱口令引导 happy-path（`mustChangePassword=true` → mcp token 访问
     `/gw/logs` 应 403 → change-password → 解锁读日志 → 重启不回退）。**根因是 CDS `_global` env 未注入
     llmgw 容器**（2026-07-02 实测）：为了造一个可登录的验证账号，试过 `cdscli env set` 改
-    `LLMGW_ADMIN_USER` / `LLMGW_ADMIN_PASSWORD`（config 模式给已知口令 / 空值给默认弱口令）并 `branch
+    `LLMGW_ADMIN_USER` / `LLMGW_ADMIN_PASSWORD`（当时的旧 config 模式给已知口令 / 空值给默认弱口令）并 `branch
     deploy` 共 5 轮，**任何凭据组合都登不进**（`admin/admin`、`admin/Miduomima..22`、以及本该被 seed 新建
     的 `gwv/Verify12345` 全 INVALID_CREDENTIALS）。`branch exec` 对这些 env 值全做掩码（`masked:true`，读出
     空/长度失真，印证 handoff「读环境变量判空不可靠」），无法自证注入值。综合判断：`branch deploy` 没把
@@ -150,7 +151,7 @@ B 类（ModelLab/Arena）等网关加 pinned 入口 → 翻 http（灰度 allowl
 | 关注点 | 位置 |
 |---|---|
 | 网关控制台前端 | `prd-llmgw-web/`（Vite React，`nginx.conf` 反代 `/gw`→`llmgw:8090`，运行时 DNS resolver） |
-| 网关控制台后端 | `prd-llmgw/Program.cs`（独立 ASP.NET，`/gw/auth/login` + `/gw/logs*`，SeedAdmin upsert） |
+| 网关控制台后端 | `prd-llmgw/Program.cs`（独立 ASP.NET，`/gw/auth/login` + `/gw/logs*`，SeedAdmin 以 `llm_gateway` 为权威） |
 | serving 引擎 | `prd-api/src/PrdAgent.LlmGateway/`（`/gw/v1/*`，X-Gateway-Key 门） |
 | CDS 预构建镜像 app 站点识别 | `cds/src/services/compose-parser.ts` `isAppServiceCandidate`（image+cds.prebuilt-image+subdomain） |
 | CDS 裸别名（llmgw-prd-agent→llmgw） | `cds/src/services/container.ts` `computeProfileAliases`（剥离完整项目 slug 后缀） |
