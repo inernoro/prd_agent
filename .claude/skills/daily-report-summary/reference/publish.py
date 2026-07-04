@@ -263,6 +263,10 @@ def validate_html_report(body):
     css = "\n".join(sc.css_chunks)
     if _EXT_CSS.search(css) or _EXT_IMPORT.search(css):
         errs.append("CSS 里有外部加载（url() 或 @import 指向 http/ // 外链）——背景图/字体必须内联或改纯 CSS，沙箱 iframe 仍会真实发起这些请求")
+    # style 属性值经 parser 实体解码后进 css_chunks，原文子串守卫看不到解码形态，
+    # data:image 禁令必须在解码后的 CSS 层再扫一次（Codex P2）
+    if "data:image" in css.lower():
+        errs.append("CSS 里含 data:image（含实体编码形态）——后端防破图守卫禁令同样适用，背景图请改纯 CSS 渐变或站内 URL")
     errs.extend(sc.errs)
     return errs
 
