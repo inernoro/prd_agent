@@ -205,6 +205,11 @@ class _ReportScanner(HTMLParser):
             self.errs.append(msg)
 
     def _check(self, tag, attrs):
+        if tag == "base":
+            # <base> 会把全页相对 URL 的解析基址改走（外域=外链绕过，站内相对 base 也会
+            # 静默改写资源解析），自包含报纸没有任何正当用途，整标签禁用（Bugbot Medium）
+            self._err("含 <base> 标签——会改写全页相对路径的解析基址（可指向外域），自包含报纸禁用")
+            return
         if tag == "meta":
             d = dict(attrs)
             if (d.get("name") or "").strip().lower() == "viewport":
