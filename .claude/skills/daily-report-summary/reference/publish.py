@@ -25,6 +25,7 @@ find-or-create「日报知识库」→（有截图则先上传图、回填 {{IMG
     --manifest /tmp/acc_shots/manifest.json
 """
 import argparse, json, os, subprocess, time, sys, re, shutil
+from html import unescape as html_unescape
 
 API = "/api/document-store"
 STORE_NAME = "日报知识库"
@@ -150,10 +151,13 @@ def strip_html_comments(html):
 
 
 def html_visible_text(html, limit=200):
-    """从 HTML 提取可读文本前 limit 字，作条目摘要（列表/卡片/搜索片段展示用）。"""
+    """从 HTML 提取可读文本前 limit 字，作条目摘要（列表/卡片/搜索片段展示用）。
+    必须解码实体（与后端 ToIndexableText 的 HtmlDecode 同口径），否则摘要里
+    出现字面 &amp; 等序列，反而覆盖后端已正确解码的摘要（Bugbot Low）。"""
     text = strip_html_comments(html)
     text = re.sub(r"<(script|style)\b[^>]*>.*?</\1\s*>", " ", text, flags=re.S | re.I)
     text = re.sub(r"<[^>]+>", " ", text)
+    text = html_unescape(text)
     text = re.sub(r"\s+", " ", text).strip()
     return text[:limit]
 
