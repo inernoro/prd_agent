@@ -94,18 +94,16 @@ export interface ColumnDef {
 }
 
 export const GENERATIONS_COLUMNS: ColumnDef[] = [
-  { key: 'date', label: 'Date', width: '1.4fr' },
-  { key: 'model', label: 'Model', width: '1.6fr' },
-  { key: 'provider', label: 'Provider', width: '1.2fr' },
-  { key: 'app', label: 'App', width: '1.8fr' },
-  { key: 'input', label: 'Input', width: '0.7fr', align: 'right' },
-  { key: 'output', label: 'Output', width: '0.7fr', align: 'right' },
+  { key: 'date', label: 'Time', width: '1.1fr' },
+  { key: 'generation', label: 'Generation', width: '1.65fr' },
+  { key: 'model', label: 'Model', width: '1.8fr' },
+  { key: 'provider', label: 'Provider', width: '1.1fr' },
+  { key: 'app', label: 'App', width: '1.35fr' },
+  { key: 'tokens', label: 'Tokens', width: '0.9fr', align: 'right' },
   { key: 'cost', label: 'Cost', width: '0.7fr', align: 'right', tip: '成本计算需后端聚合模型价格，暂未提供（统一显示 —）' },
-  { key: 'usage', label: 'Usage Type', width: '0.9fr', tip: '请求业务类型（chat/vision/generation 等）' },
-  { key: 'speed', label: 'Speed', width: '0.8fr', align: 'right', tip: '吞吐 = outputTokens / durationMs（tok/s）' },
-  { key: 'finish', label: 'Finish', width: '0.8fr', tip: '完成原因 finish_reason（旧日志未记录显示 —）' },
-  { key: 'user', label: 'User', width: '1.1fr' },
-  { key: 'stream', label: 'Stream', width: '0.6fr', align: 'center', tip: '是否流式（旧日志未记录显示 —）' },
+  { key: 'latency', label: 'Latency', width: '0.85fr', align: 'right' },
+  { key: 'status', label: 'Status', width: '0.75fr', align: 'center' },
+  { key: 'finish', label: 'Finish', width: '0.85fr', tip: '完成原因 finish_reason（旧日志未记录显示 —）' },
 ];
 
 export const UPSTREAM_COLUMNS: ColumnDef[] = [

@@ -222,6 +222,16 @@ export function LogsView() {
           </span>
         );
       }
+      case 'generation':
+        return (
+          <span
+            className="lg-truncate"
+            style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+            title={it.requestId || it.id}
+          >
+            {it.requestId || it.id || DASH}
+          </span>
+        );
       case 'model': {
         const proto = getProtocolMeta(it.protocol);
         const tp = getTransportMeta(it.transport);
@@ -255,8 +265,20 @@ export function LogsView() {
         return <span className="tabular" style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{fmtCompact(it.inputTokens)}</span>;
       case 'output':
         return <span className="tabular" style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{fmtCompact(it.outputTokens)}</span>;
+      case 'tokens':
+        return (
+          <span className="tabular" style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+            {it.inputTokens == null && it.outputTokens == null ? DASH : fmtCompact((it.inputTokens ?? 0) + (it.outputTokens ?? 0))}
+          </span>
+        );
       case 'cost':
         return <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{DASH}</span>;
+      case 'latency':
+        return <span className="tabular" style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{fmtMs(it.durationMs)}</span>;
+      case 'status': {
+        const s = statusBadgeStyle(it.status, it.statusCode);
+        return <Chip label={s.label} color={s.color} bg={s.bg} />;
+      }
       case 'usage':
         return <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{it.requestType || DASH}</span>;
       case 'speed': {
@@ -384,22 +406,23 @@ export function LogsView() {
     const alignOf = (a?: ColumnDef['align']): CSSProperties['textAlign'] => (a === 'right' ? 'right' : a === 'center' ? 'center' : 'left');
     return (
       <div style={{ flex: 1, minHeight: 0, overflowX: 'auto', overscrollBehavior: 'contain' }}>
-        <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minWidth: Math.max(880, columns.length * 90) }}>
+        <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minWidth: Math.max(980, columns.length * 92) }}>
           <div
             style={{
               display: 'grid',
-              gap: 8,
-              padding: '8px 12px',
+              gap: 10,
+              padding: '9px 12px',
               flexShrink: 0,
               gridTemplateColumns: gridCols,
               borderBottom: '1px solid var(--border-subtle)',
+              background: 'var(--bg-surface)',
             }}
           >
             {columns.map((c) => (
               <div
                 key={c.key}
                 title={c.tip}
-                style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', textAlign: alignOf(c.align), color: 'var(--text-muted)' }}
+                style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0, textAlign: alignOf(c.align), color: 'var(--text-muted)' }}
               >
                 {c.label}
                 {c.tip ? <span style={{ opacity: 0.6 }}> (i)</span> : null}
@@ -416,8 +439,9 @@ export function LogsView() {
                     className={onRow ? 'lg-row-clickable' : undefined}
                     style={{
                       display: 'grid',
-                      gap: 8,
-                      padding: '8px 12px',
+                      gap: 10,
+                      minHeight: 42,
+                      padding: '7px 12px',
                       alignItems: 'center',
                       cursor: onRow ? 'pointer' : 'default',
                       gridTemplateColumns: gridCols,
@@ -471,9 +495,9 @@ export function LogsView() {
     background: 'var(--bg-input)',
     border: '1px solid var(--border-subtle)',
     color: 'var(--text-secondary)',
-    borderRadius: 8,
-    height: 30,
-    padding: '0 8px',
+    borderRadius: 'var(--radius-sm)',
+    height: 32,
+    padding: '0 9px',
     fontSize: 12,
   };
 
@@ -507,8 +531,8 @@ export function LogsView() {
         style={{
           border: '1px solid var(--border-subtle)',
           borderRadius: 'var(--radius-sm)',
-          background: 'var(--bg-surface)',
-          padding: '10px 12px',
+          background: 'var(--bg-input)',
+          padding: '8px 10px',
           minWidth: 0,
         }}
       >
@@ -516,7 +540,7 @@ export function LogsView() {
           {icon}
           {label}
         </div>
-        <div className="tabular" style={{ marginTop: 6, fontSize: 21, lineHeight: 1.15, fontWeight: 700, color: 'var(--text-primary)' }}>
+        <div className="tabular" style={{ marginTop: 5, fontSize: 18, lineHeight: 1.15, fontWeight: 650, color: 'var(--text-primary)' }}>
           {value}
         </div>
         <div style={{ marginTop: 3, fontSize: 10, color: 'var(--text-muted)' }}>{sub}</div>
@@ -527,72 +551,26 @@ export function LogsView() {
   const primaryTransport = summary?.transportDistribution?.[0];
 
   return (
-    <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', flexShrink: 0 }}>
+    <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', flexShrink: 0 }}>
         <div>
-          <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>Logs</div>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>查看大模型请求日志与历史 · 窗口内 {summary?.total ?? totalReq} 次请求</div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Observability</div>
+          <div style={{ fontSize: 22, lineHeight: 1.15, fontWeight: 650, color: 'var(--text-primary)' }}>Activity</div>
+          <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-muted)' }}>{fmtCompact(summary?.total ?? totalReq)} requests in the selected window</div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <select value={filterProvider} onChange={(e) => setFilterProvider(e.target.value)} style={selectStyle}>
-            <option value="">全部上游</option>
-            {meta.providers.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
-          <select value={filterModel} onChange={(e) => setFilterModel(e.target.value)} style={selectStyle}>
-            <option value="">全部模型</option>
-            {meta.models.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
-          <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} style={selectStyle}>
-            <option value="">全部状态</option>
-            {meta.statuses.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-          <select value={filterAppCaller} onChange={(e) => setFilterAppCaller(e.target.value)} style={selectStyle}>
-            <option value="">全部调用方</option>
-            {meta.appCallers.map((a) => (
-              <option key={a} value={a}>
-                {a}
-              </option>
-            ))}
-          </select>
-          <select value={filterTransport} onChange={(e) => setFilterTransport(e.target.value)} style={selectStyle}>
-            <option value="">全部通道</option>
-            {meta.transports.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-          <select value={filterRequestType} onChange={(e) => setFilterRequestType(e.target.value)} style={selectStyle}>
-            <option value="">全部类型</option>
-            {meta.requestTypes.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-          <div style={{ display: 'inline-flex', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border-subtle)' }}>
+          <div style={{ display: 'inline-flex', borderRadius: 'var(--radius-sm)', overflow: 'hidden', border: '1px solid var(--border-subtle)', background: 'var(--bg-input)' }}>
             {TIME_RANGE_PRESETS.map((p) => (
               <button
                 key={p.key}
                 onClick={() => setPresetKey(p.key)}
                 style={{
                   padding: '0 10px',
-                  height: 30,
+                  height: 32,
                   fontSize: 11,
                   fontWeight: 500,
                   border: 'none',
+                  borderLeft: p.key === TIME_RANGE_PRESETS[0].key ? 'none' : '1px solid var(--border-subtle)',
                   background: presetKey === p.key ? 'var(--accent-soft)' : 'transparent',
                   color: presetKey === p.key ? 'var(--text-primary)' : 'var(--text-muted)',
                 }}
@@ -603,14 +581,77 @@ export function LogsView() {
           </div>
           <Button variant="secondary" size="sm" onClick={refresh} disabled={loading || sessLoading}>
             {loading || sessLoading ? <Spinner size={14} /> : <RefreshCw size={14} />}
-            刷新
+            Refresh
           </Button>
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          flexWrap: 'wrap',
+          flexShrink: 0,
+          padding: 8,
+          border: '1px solid var(--border-subtle)',
+          borderRadius: 'var(--radius)',
+          background: 'var(--bg-surface)',
+        }}
+      >
+          <select value={filterProvider} onChange={(e) => setFilterProvider(e.target.value)} style={selectStyle}>
+            <option value="">All providers</option>
+            {meta.providers.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
+          <select value={filterModel} onChange={(e) => setFilterModel(e.target.value)} style={selectStyle}>
+            <option value="">All models</option>
+            {meta.models.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+          <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} style={selectStyle}>
+            <option value="">All statuses</option>
+            {meta.statuses.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+          <select value={filterAppCaller} onChange={(e) => setFilterAppCaller(e.target.value)} style={selectStyle}>
+            <option value="">All apps</option>
+            {meta.appCallers.map((a) => (
+              <option key={a} value={a}>
+                {a}
+              </option>
+            ))}
+          </select>
+          <select value={filterTransport} onChange={(e) => setFilterTransport(e.target.value)} style={selectStyle}>
+            <option value="">All transports</option>
+            {meta.transports.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+          <select value={filterRequestType} onChange={(e) => setFilterRequestType(e.target.value)} style={selectStyle}>
+            <option value="">All types</option>
+            {meta.requestTypes.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
           {activeFilterCount > 0 ? (
             <Button variant="ghost" size="sm" onClick={clearFilters}>
-              清除 {activeFilterCount}
+              Clear {activeFilterCount}
             </Button>
           ) : null}
-        </div>
       </div>
 
       {metaError || listError || summaryError ? (
@@ -629,18 +670,19 @@ export function LogsView() {
         </div>
       ) : null}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8, flexShrink: 0 }}>
-        <SummaryTile icon={<Activity size={14} />} label="Requests" value={fmtCompact(summary?.total)} sub={`${fmtCompact(summary?.succeeded)} 成功 · ${fmtCompact(summary?.failed)} 失败`} />
-        <SummaryTile icon={<Zap size={14} />} label="Tokens" value={fmtCompact(summary?.totalTokens)} sub={`${fmtCompact(summary?.inputTokens)} 输入 · ${fmtCompact(summary?.outputTokens)} 输出`} />
-        <SummaryTile icon={<Clock size={14} />} label="Avg latency" value={fmtMs(summary?.averageDurationMs)} sub="按已完成 durationMs 计算" />
-        <SummaryTile icon={<GitBranch size={14} />} label="Fallbacks" value={fmtCompact(summary?.fallbacks)} sub="触发降级的请求数" />
-        <SummaryTile icon={<Layers size={14} />} label="Transport" value={primaryTransport?.key ?? DASH} sub={primaryTransport ? `${fmtCompact(primaryTransport.count)} 条主通道` : '暂无通道标记'} />
-        <SummaryTile icon={<Gauge size={14} />} label="Running" value={fmtCompact(summary?.running)} sub={`${fmtCompact(summary?.cancelled)} 已取消`} />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 8, flexShrink: 0 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(126px, 1fr))', gap: 8 }}>
+          <SummaryTile icon={<Activity size={13} />} label="Requests" value={fmtCompact(summary?.total)} sub={`${fmtCompact(summary?.succeeded)} ok · ${fmtCompact(summary?.failed)} failed`} />
+          <SummaryTile icon={<Zap size={13} />} label="Tokens" value={fmtCompact(summary?.totalTokens)} sub={`${fmtCompact(summary?.inputTokens)} in · ${fmtCompact(summary?.outputTokens)} out`} />
+          <SummaryTile icon={<Clock size={13} />} label="Avg latency" value={fmtMs(summary?.averageDurationMs)} sub="completed requests" />
+          <SummaryTile icon={<GitBranch size={13} />} label="Fallbacks" value={fmtCompact(summary?.fallbacks)} sub="fallback requests" />
+          <SummaryTile icon={<Layers size={13} />} label="Transport" value={primaryTransport?.key ?? DASH} sub={primaryTransport ? `${fmtCompact(primaryTransport.count)} requests` : 'no marks'} />
+          <SummaryTile icon={<Gauge size={13} />} label="Running" value={fmtCompact(summary?.running)} sub={`${fmtCompact(summary?.cancelled)} cancelled`} />
+        </div>
+        <Card style={{ padding: 8, minHeight: 92, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+          <MiniBarChart data={series} height={82} />
+        </Card>
       </div>
-
-      <Card style={{ padding: 8, flexShrink: 0 }}>
-        <MiniBarChart data={series} height={140} />
-      </Card>
 
       <TabBar items={LOGS_SUBTABS} activeKey={subtab} onChange={(k) => setSubtab(k)} />
 
