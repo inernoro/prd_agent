@@ -3,9 +3,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
-import { RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
-import { getLogs, getLogsMeta, getLogsTimeseries, getLogsSessions } from '@/lib/api';
-import type { LlmLogListItem, SessionItem, TimeseriesPoint } from '@/lib/types';
+import { RefreshCw, ChevronLeft, ChevronRight, Activity, Clock, GitBranch, Gauge, Layers, Zap } from 'lucide-react';
+import { getLogs, getLogsMeta, getLogsTimeseries, getLogsSessions, getLogsSummary } from '@/lib/api';
+import type { LlmLogListItem, LogsSummaryData, SessionItem, TimeseriesPoint } from '@/lib/types';
 import { Button, Card, Chip, SectionLoader, Spinner, TabBar } from './ui';
 import { MiniBarChart } from './MiniBarChart';
 import { GenerationDetailsDrawer } from './GenerationDetailsDrawer';
@@ -50,8 +50,22 @@ export function LogsView() {
   const [presetKey, setPresetKey] = useState('30d');
   const [filterModel, setFilterModel] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
+  const [filterProvider, setFilterProvider] = useState('');
+  const [filterAppCaller, setFilterAppCaller] = useState('');
+  const [filterTransport, setFilterTransport] = useState('');
+  const [filterRequestType, setFilterRequestType] = useState('');
 
-  const [meta, setMeta] = useState<{ models: string[]; statuses: string[] }>({ models: [], statuses: [] });
+  const [meta, setMeta] = useState<{ models: string[]; statuses: string[]; providers: string[]; appCallers: string[]; transports: string[]; requestTypes: string[] }>({
+    models: [],
+    statuses: [],
+    providers: [],
+    appCallers: [],
+    transports: [],
+    requestTypes: [],
+  });
+  const [metaError, setMetaError] = useState<string | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
 
   const [rows, setRows] = useState<LlmLogListItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -64,6 +78,7 @@ export function LogsView() {
   const [sessLoading, setSessLoading] = useState(false);
 
   const [series, setSeries] = useState<TimeseriesPoint[]>([]);
+  const [summary, setSummary] = useState<LogsSummaryData | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const range = useMemo(() => {
@@ -72,13 +87,34 @@ export function LogsView() {
   }, [presetKey]);
 
   const baseParams = useMemo(
-    () => ({ from: range.from, to: range.to, model: filterModel || undefined, status: filterStatus || undefined }),
-    [range, filterModel, filterStatus],
+    () => ({
+      from: range.from,
+      to: range.to,
+      model: filterModel || undefined,
+      status: filterStatus || undefined,
+      provider: filterProvider || undefined,
+      appCallerCode: filterAppCaller || undefined,
+      transport: filterTransport || undefined,
+      requestType: filterRequestType || undefined,
+    }),
+    [range, filterModel, filterStatus, filterProvider, filterAppCaller, filterTransport, filterRequestType],
   );
 
   useEffect(() => {
     getLogsMeta().then((res) => {
-      if (res.success && res.data) setMeta({ models: res.data.models ?? [], statuses: res.data.statuses ?? [] });
+      if (res.success && res.data) {
+        setMeta({
+          models: res.data.models ?? [],
+          statuses: res.data.statuses ?? [],
+          providers: res.data.providers ?? [],
+          appCallers: res.data.appCallers ?? [],
+          transports: res.data.transports ?? [],
+          requestTypes: res.data.requestTypes ?? [],
+        });
+        setMetaError(null);
+      } else {
+        setMetaError(res.error?.message || '加载筛选项失败');
+      }
     });
   }, []);
 
@@ -86,6 +122,7 @@ export function LogsView() {
   const listSeq = useRef(0);
   const sessSeq = useRef(0);
   const seriesSeq = useRef(0);
+  const summarySeq = useRef(0);
 
   const loadList = useCallback(
     async (p: number) => {
@@ -96,6 +133,9 @@ export function LogsView() {
       if (res.success && res.data) {
         setRows(res.data.items ?? []);
         setTotal(res.data.total ?? 0);
+        setListError(null);
+      } else {
+        setListError(res.error?.message || '加载日志失败');
       }
       setLoading(false);
     },
@@ -106,15 +146,18 @@ export function LogsView() {
     async (p: number) => {
       const seq = ++sessSeq.current;
       setSessLoading(true);
-      const res = await getLogsSessions({ from: range.from, to: range.to, page: p, pageSize: PAGE_SIZE });
+      const res = await getLogsSessions({ ...baseParams, page: p, pageSize: PAGE_SIZE });
       if (seq !== sessSeq.current) return;
       if (res.success && res.data) {
         setSessions(res.data.items ?? []);
         setSessTotal(res.data.total ?? 0);
+        setListError(null);
+      } else {
+        setListError(res.error?.message || '加载会话失败');
       }
       setSessLoading(false);
     },
-    [range],
+    [baseParams],
   );
 
   const loadSeries = useCallback(async () => {
@@ -124,12 +167,29 @@ export function LogsView() {
     if (res.success && res.data) setSeries(res.data.items ?? []);
   }, [baseParams]);
 
+  const loadSummary = useCallback(async () => {
+    const seq = ++summarySeq.current;
+    const res = await getLogsSummary(baseParams);
+    if (seq !== summarySeq.current) return;
+    if (res.success && res.data) {
+      setSummary(res.data);
+      setSummaryError(null);
+    } else {
+      setSummary(null);
+      setSummaryError(res.error?.message || '加载汇总失败');
+    }
+  }, [baseParams]);
+
   useEffect(() => {
     setPage(1);
+    setSessPage(1);
   }, [baseParams]);
   useEffect(() => {
     loadSeries();
   }, [loadSeries]);
+  useEffect(() => {
+    loadSummary();
+  }, [loadSummary]);
   useEffect(() => {
     if (subtab === 'generations' || subtab === 'upstream') loadList(page);
   }, [subtab, page, loadList]);
@@ -139,6 +199,7 @@ export function LogsView() {
 
   const refresh = () => {
     loadSeries();
+    loadSummary();
     if (subtab === 'sessions') loadSessions(sessPage);
     else loadList(page);
   };
@@ -420,14 +481,67 @@ export function LogsView() {
     <div style={{ padding: '64px 0', textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>{text}</div>
   );
 
+  const activeFilterCount = [filterModel, filterStatus, filterProvider, filterAppCaller, filterTransport, filterRequestType].filter(Boolean).length;
+  const clearFilters = () => {
+    setFilterModel('');
+    setFilterStatus('');
+    setFilterProvider('');
+    setFilterAppCaller('');
+    setFilterTransport('');
+    setFilterRequestType('');
+  };
+
+  function SummaryTile({
+    icon,
+    label,
+    value,
+    sub,
+  }: {
+    icon: ReactNode;
+    label: string;
+    value: string;
+    sub: string;
+  }) {
+    return (
+      <div
+        style={{
+          border: '1px solid var(--border-subtle)',
+          borderRadius: 'var(--radius-sm)',
+          background: 'var(--bg-surface)',
+          padding: '10px 12px',
+          minWidth: 0,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-muted)' }}>
+          {icon}
+          {label}
+        </div>
+        <div className="tabular" style={{ marginTop: 6, fontSize: 21, lineHeight: 1.15, fontWeight: 700, color: 'var(--text-primary)' }}>
+          {value}
+        </div>
+        <div style={{ marginTop: 3, fontSize: 10, color: 'var(--text-muted)' }}>{sub}</div>
+      </div>
+    );
+  }
+
+  const primaryTransport = summary?.transportDistribution?.[0];
+
   return (
     <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', flexShrink: 0 }}>
         <div>
           <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>Logs</div>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>查看大模型请求日志与历史 · 窗口内 {totalReq} 次请求</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>查看大模型请求日志与历史 · 窗口内 {summary?.total ?? totalReq} 次请求</div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <select value={filterProvider} onChange={(e) => setFilterProvider(e.target.value)} style={selectStyle}>
+            <option value="">全部上游</option>
+            {meta.providers.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
           <select value={filterModel} onChange={(e) => setFilterModel(e.target.value)} style={selectStyle}>
             <option value="">全部模型</option>
             {meta.models.map((m) => (
@@ -441,6 +555,30 @@ export function LogsView() {
             {meta.statuses.map((s) => (
               <option key={s} value={s}>
                 {s}
+              </option>
+            ))}
+          </select>
+          <select value={filterAppCaller} onChange={(e) => setFilterAppCaller(e.target.value)} style={selectStyle}>
+            <option value="">全部调用方</option>
+            {meta.appCallers.map((a) => (
+              <option key={a} value={a}>
+                {a}
+              </option>
+            ))}
+          </select>
+          <select value={filterTransport} onChange={(e) => setFilterTransport(e.target.value)} style={selectStyle}>
+            <option value="">全部通道</option>
+            {meta.transports.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+          <select value={filterRequestType} onChange={(e) => setFilterRequestType(e.target.value)} style={selectStyle}>
+            <option value="">全部类型</option>
+            {meta.requestTypes.map((t) => (
+              <option key={t} value={t}>
+                {t}
               </option>
             ))}
           </select>
@@ -467,7 +605,37 @@ export function LogsView() {
             {loading || sessLoading ? <Spinner size={14} /> : <RefreshCw size={14} />}
             刷新
           </Button>
+          {activeFilterCount > 0 ? (
+            <Button variant="ghost" size="sm" onClick={clearFilters}>
+              清除 {activeFilterCount}
+            </Button>
+          ) : null}
         </div>
+      </div>
+
+      {metaError || listError || summaryError ? (
+        <div
+          style={{
+            flexShrink: 0,
+            fontSize: 12,
+            color: 'var(--err)',
+            padding: '8px 12px',
+            borderRadius: 'var(--radius-sm)',
+            border: '1px solid rgba(248,113,113,0.35)',
+            background: 'var(--err-bg)',
+          }}
+        >
+          {metaError || listError || summaryError}
+        </div>
+      ) : null}
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8, flexShrink: 0 }}>
+        <SummaryTile icon={<Activity size={14} />} label="Requests" value={fmtCompact(summary?.total)} sub={`${fmtCompact(summary?.succeeded)} 成功 · ${fmtCompact(summary?.failed)} 失败`} />
+        <SummaryTile icon={<Zap size={14} />} label="Tokens" value={fmtCompact(summary?.totalTokens)} sub={`${fmtCompact(summary?.inputTokens)} 输入 · ${fmtCompact(summary?.outputTokens)} 输出`} />
+        <SummaryTile icon={<Clock size={14} />} label="Avg latency" value={fmtMs(summary?.averageDurationMs)} sub="按已完成 durationMs 计算" />
+        <SummaryTile icon={<GitBranch size={14} />} label="Fallbacks" value={fmtCompact(summary?.fallbacks)} sub="触发降级的请求数" />
+        <SummaryTile icon={<Layers size={14} />} label="Transport" value={primaryTransport?.key ?? DASH} sub={primaryTransport ? `${fmtCompact(primaryTransport.count)} 条主通道` : '暂无通道标记'} />
+        <SummaryTile icon={<Gauge size={14} />} label="Running" value={fmtCompact(summary?.running)} sub={`${fmtCompact(summary?.cancelled)} 已取消`} />
       </div>
 
       <Card style={{ padding: 8, flexShrink: 0 }}>

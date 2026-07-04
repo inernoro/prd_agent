@@ -100,6 +100,7 @@ export type LlmLogDetail = {
   expectedModel?: string | null;
   protocol?: string | null;
   resolutionReason?: string | null;
+  transport?: string | null;
   finishReason?: string | null;
   isStreaming?: boolean | null;
   error?: string | null;
@@ -109,6 +110,30 @@ export type LlmLogDetail = {
 export type LogsMeta = {
   models: string[];
   statuses: string[];
+  providers: string[];
+  appCallers: string[];
+  transports: string[];
+  requestTypes: string[];
+};
+
+export type LogsBucketItem = {
+  key: string;
+  count: number;
+};
+
+export type LogsSummaryData = {
+  total: number;
+  succeeded: number;
+  failed: number;
+  running: number;
+  cancelled: number;
+  fallbacks: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  averageDurationMs?: number | null;
+  transportDistribution: LogsBucketItem[];
+  statusDistribution: LogsBucketItem[];
 };
 
 // ── 列表查询参数 ──
@@ -119,6 +144,10 @@ export type LogsListParams = {
   to?: string;
   model?: string;
   status?: string;
+  provider?: string;
+  appCallerCode?: string;
+  transport?: string;
+  requestType?: string;
 };
 
 export type LogsListData = {

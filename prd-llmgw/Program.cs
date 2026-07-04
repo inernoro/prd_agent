@@ -245,13 +245,14 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
 
 // ───────────────────────────── 日志列表（需鉴权）─────────────────────────────
 app.MapGet("/gw/logs", async (
-    int? page, int? pageSize, string? from, string? to, string? model, string? status) =>
+    int? page, int? pageSize, string? from, string? to, string? model, string? status,
+    string? provider, string? appCallerCode, string? transport, string? requestType) =>
 {
     var p = page is > 0 ? page.Value : 1;
     var ps = pageSize is > 0 and <= 500 ? pageSize.Value : 50;
 
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = BuildFilter(fromUtc, toUtc, model, status);
+    var filter = BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType);
 
     var total = await logs.CountDocumentsAsync(filter);
     var docs = await logs.Find(filter)
@@ -278,27 +279,29 @@ app.MapGet("/gw/logs/meta", async () =>
 
     var modelsRaw = await logs.Distinct<string>("Model", recent).ToListAsync();
     var statusesRaw = await logs.Distinct<string>("Status", recent).ToListAsync();
+    var providersRaw = await logs.Distinct<string>("Provider", recent).ToListAsync();
+    var appCallersRaw = await logs.Distinct<string>("AppCallerCode", recent).ToListAsync();
+    var transportsRaw = await logs.Distinct<string>("GatewayTransport", recent).ToListAsync();
+    var requestTypesRaw = await logs.Distinct<string>("RequestType", recent).ToListAsync();
 
-    var models = modelsRaw
-        .Where(m => !string.IsNullOrWhiteSpace(m))
-        .Distinct()
-        .OrderBy(m => m, StringComparer.OrdinalIgnoreCase)
-        .Take(200)
-        .ToList();
-    var statuses = statusesRaw
-        .Where(s => !string.IsNullOrWhiteSpace(s))
-        .Distinct()
-        .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
-        .ToList();
-
-    return Json(ApiEnvelope<LogsMeta>.Ok(new LogsMeta { Models = models, Statuses = statuses }), jsonOptions);
+    return Json(ApiEnvelope<LogsMeta>.Ok(new LogsMeta
+    {
+        Models = NormalizeDistinct(modelsRaw, 200),
+        Statuses = NormalizeDistinct(statusesRaw, 80),
+        Providers = NormalizeDistinct(providersRaw, 200),
+        AppCallers = NormalizeDistinct(appCallersRaw, 300),
+        Transports = NormalizeDistinct(transportsRaw, 40),
+        RequestTypes = NormalizeDistinct(requestTypesRaw, 80),
+    }), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
 // ───────────────────────────── 时间序列（需鉴权）─────────────────────────────
-app.MapGet("/gw/logs/timeseries", async (string? from, string? to, string? model, string? status) =>
+app.MapGet("/gw/logs/timeseries", async (
+    string? from, string? to, string? model, string? status,
+    string? provider, string? appCallerCode, string? transport, string? requestType) =>
 {
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = BuildFilter(fromUtc, toUtc, model, status);
+    var filter = BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType);
 
     // 仅取 StartedAt 字段做内存分组（按 UTC 日期）。
     var projection = Builders<BsonDocument>.Projection.Include("StartedAt");
@@ -321,14 +324,52 @@ app.MapGet("/gw/logs/timeseries", async (string? from, string? to, string? model
     return Json(ApiEnvelope<TimeseriesData>.Ok(new TimeseriesData { Items = items }), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
+// ───────────────────────────── 窗口汇总（需鉴权）─────────────────────────────
+app.MapGet("/gw/logs/summary", async (
+    string? from, string? to, string? model, string? status,
+    string? provider, string? appCallerCode, string? transport, string? requestType) =>
+{
+    var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
+    var filter = BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType);
+    var projection = Builders<BsonDocument>.Projection
+        .Include("Status")
+        .Include("DurationMs")
+        .Include("InputTokens")
+        .Include("OutputTokens")
+        .Include("IsFallback")
+        .Include("GatewayTransport");
+    var docs = await logs.Find(filter).Project(projection).ToListAsync();
+
+    var durations = docs.Select(d => d.AsNullableLong("DurationMs")).Where(d => d is > 0).Select(d => d!.Value).ToList();
+    var data = new LogsSummaryData
+    {
+        Total = docs.Count,
+        Succeeded = docs.LongCount(d => d.GetStringOrEmpty("Status") == "succeeded"),
+        Failed = docs.LongCount(d => d.GetStringOrEmpty("Status") == "failed"),
+        Running = docs.LongCount(d => d.GetStringOrEmpty("Status") == "running"),
+        Cancelled = docs.LongCount(d => d.GetStringOrEmpty("Status") == "cancelled"),
+        Fallbacks = docs.LongCount(d => d.AsNullableBool("IsFallback") == true),
+        InputTokens = docs.Sum(d => (long)(d.AsNullableInt("InputTokens") ?? 0)),
+        OutputTokens = docs.Sum(d => (long)(d.AsNullableInt("OutputTokens") ?? 0)),
+        AverageDurationMs = durations.Count == 0 ? null : (long)Math.Round(durations.Average()),
+        TransportDistribution = BuildBucket(docs, "GatewayTransport", fallbackKey: "unknown"),
+        StatusDistribution = BuildBucket(docs, "Status", fallbackKey: "unknown"),
+    };
+    data.TotalTokens = data.InputTokens + data.OutputTokens;
+
+    return Json(ApiEnvelope<LogsSummaryData>.Ok(data), jsonOptions);
+}).RequireAuthorization("LogsRead");
+
 // ───────────────────────────── 会话聚合（需鉴权）─────────────────────────────
-app.MapGet("/gw/logs/sessions", async (string? from, string? to, int? page, int? pageSize) =>
+app.MapGet("/gw/logs/sessions", async (
+    string? from, string? to, int? page, int? pageSize,
+    string? model, string? status, string? provider, string? appCallerCode, string? transport, string? requestType) =>
 {
     var p = page is > 0 ? page.Value : 1;
     var ps = pageSize is > 0 and <= 500 ? pageSize.Value : 50;
 
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = BuildFilter(fromUtc, toUtc, null, null);
+    var filter = BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType);
 
     var docs = await logs.Find(filter)
         .Sort(Builders<BsonDocument>.Sort.Descending("StartedAt"))
@@ -646,8 +687,16 @@ static DateTime? TryParseUtc(string? s)
     return null;
 }
 
-// 构建 StartedAt 时间窗 + 可选 model/status 过滤器。
-static FilterDefinition<BsonDocument> BuildFilter(DateTime fromUtc, DateTime toUtc, string? model, string? status)
+// 构建 StartedAt 时间窗 + OpenRouter Activity 风格筛选器。
+static FilterDefinition<BsonDocument> BuildFilter(
+    DateTime fromUtc,
+    DateTime toUtc,
+    string? model,
+    string? status,
+    string? provider,
+    string? appCallerCode,
+    string? transport,
+    string? requestType)
 {
     var fb = Builders<BsonDocument>.Filter;
     var filters = new List<FilterDefinition<BsonDocument>>
@@ -657,8 +706,30 @@ static FilterDefinition<BsonDocument> BuildFilter(DateTime fromUtc, DateTime toU
     };
     if (!string.IsNullOrWhiteSpace(model)) filters.Add(fb.Eq("Model", model));
     if (!string.IsNullOrWhiteSpace(status)) filters.Add(fb.Eq("Status", status));
+    if (!string.IsNullOrWhiteSpace(provider)) filters.Add(fb.Eq("Provider", provider));
+    if (!string.IsNullOrWhiteSpace(appCallerCode)) filters.Add(fb.Eq("AppCallerCode", appCallerCode));
+    if (!string.IsNullOrWhiteSpace(transport)) filters.Add(fb.Eq("GatewayTransport", transport));
+    if (!string.IsNullOrWhiteSpace(requestType)) filters.Add(fb.Eq("RequestType", requestType));
     return fb.And(filters);
 }
+
+static List<string> NormalizeDistinct(IEnumerable<string?> values, int limit) =>
+    values
+        .Where(v => !string.IsNullOrWhiteSpace(v))
+        .Select(v => v!.Trim())
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(v => v, StringComparer.OrdinalIgnoreCase)
+        .Take(limit)
+        .ToList();
+
+static List<LogsBucketItem> BuildBucket(IEnumerable<BsonDocument> docs, string field, string fallbackKey) =>
+    docs.Select(d => d.AsNullableString(field))
+        .Select(v => string.IsNullOrWhiteSpace(v) ? fallbackKey : v!.Trim())
+        .GroupBy(v => v, StringComparer.OrdinalIgnoreCase)
+        .Select(g => new LogsBucketItem { Key = g.Key, Count = g.LongCount() })
+        .OrderByDescending(x => x.Count)
+        .ThenBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
+        .ToList();
 
 static LlmLogListItem MapListItem(BsonDocument d) => new()
 {
@@ -727,6 +798,7 @@ static LlmLogDetail MapDetail(BsonDocument d) => new()
     ExpectedModel = d.AsNullableString("ExpectedModel"),
     Protocol = d.AsNullableString("Protocol"),
     ResolutionReason = d.AsNullableString("ResolutionReason"),
+    Transport = d.AsNullableString("GatewayTransport"),
     FinishReason = d.AsNullableString("FinishReason"),
     IsStreaming = d.AsNullableBool("IsStreaming"),
     Error = d.AsNullableString("Error"),

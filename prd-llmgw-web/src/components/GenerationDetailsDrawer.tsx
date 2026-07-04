@@ -109,10 +109,24 @@ function Collapsible({ title, body }: { title: string; body?: string | null }) {
   );
 }
 
+function prettyJson(body?: string | null): string | null {
+  if (!body) return null;
+  try {
+    return JSON.stringify(JSON.parse(body), null, 2);
+  } catch {
+    return body;
+  }
+}
+
+function transportLabel(transport?: string | null): string {
+  return transport && transport.trim() ? transport.trim() : DASH;
+}
+
 function fidelityChips(detail: LlmLogDetail): { label: string; color: string; bg: string }[] {
   const chips: { label: string; color: string; bg: string }[] = [];
   const proto = getProtocolMeta(detail.protocol);
   if (proto) chips.push({ label: proto.label, color: proto.color, bg: proto.bg });
+  if (detail.transport) chips.push({ label: transportLabel(detail.transport), color: 'var(--accent)', bg: 'var(--accent-soft)' });
   try {
     const body = JSON.parse(detail.requestBodyRedacted || '{}');
     if (typeof body?.top_p === 'number') chips.push({ label: `top_p=${body.top_p}`, color: '#a5b4fc', bg: 'rgba(165,180,252,0.16)' });
@@ -243,6 +257,7 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
 
               <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4 }}>
                 <MetricCard title="Provider latency" value={fmtMs(detail.durationMs)} />
+                <MetricCard title="First byte" value={detail.firstByteAt ? fmtMs(Date.parse(detail.firstByteAt) - Date.parse(detail.startedAt)) : DASH} />
                 <MetricCard title="Throughput" value={tps == null ? DASH : `${tps} tok/s`} />
                 <MetricCard title="Cost" value={DASH} note="暂无价格" />
                 <MetricCard title="Tokens" value={`${detail.inputTokens ?? DASH} → ${detail.outputTokens ?? DASH}`} />
@@ -257,7 +272,10 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
                 <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4, color: 'var(--text-primary)' }}>Overview</div>
                 <Row k="Model ID" v={detail.model} mono />
                 <Row k="Protocol" v={detail.protocol} />
+                <Row k="Transport" v={transportLabel(detail.transport)} />
                 <Row k="Status" v={detail.status} />
+                <Row k="Status code" v={detail.statusCode == null ? null : String(detail.statusCode)} />
+                <Row k="Expected model" v={detail.expectedModel} mono />
               </div>
 
               <div>
@@ -265,10 +283,39 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
                 <Row k="App" v={detail.appCallerCodeDisplayName ?? detail.appCallerCode} />
                 <Row k="Request ID" v={detail.requestId} mono copy />
                 <Row k="Generation ID" v={detail.id} mono copy />
+                <Row k="Started" v={detail.startedAt} mono />
+                <Row k="First byte" v={detail.firstByteAt} mono />
+                <Row k="Ended" v={detail.endedAt} mono />
                 <Row k="Finish reason" v={detail.finishReason} />
                 <Row k="Streaming" v={streaming} />
                 <Row k="Resolution" v={detail.resolutionReason} />
               </div>
+
+              {detail.error ? (
+                <div
+                  style={{
+                    borderRadius: 10,
+                    padding: '8px 12px',
+                    background: 'var(--err-bg)',
+                    border: '1px solid rgba(248,113,113,0.28)',
+                  }}
+                >
+                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4, color: 'var(--err)' }}>Error</div>
+                  <pre
+                    style={{
+                      fontSize: 11,
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-all',
+                      color: 'var(--text-secondary)',
+                      maxHeight: 180,
+                      overflow: 'auto',
+                      margin: 0,
+                    }}
+                  >
+                    {detail.error}
+                  </pre>
+                </div>
+              ) : null}
 
               {detail.responseToolCalls ? (
                 <div
@@ -305,6 +352,7 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
               ) : null}
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <Collapsible title="Request body（脱敏）" body={prettyJson(detail.requestBodyRedacted)} />
                 <Collapsible
                   title="Prompt（用户输入 + 系统提示）"
                   body={[detail.questionText, detail.systemPromptText].filter(Boolean).join('\n\n---\n\n') || null}

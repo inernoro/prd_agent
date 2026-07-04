@@ -20,6 +20,7 @@ import type {
   LogsListData,
   LogsListParams,
   LogsMeta,
+  LogsSummaryData,
   TimeseriesData,
   SessionsData,
   LlmLogDetail,
@@ -174,21 +175,15 @@ export function getLogsMeta(): Promise<ApiResponse<LogsMeta>> {
   return apiRequest<LogsMeta>('/logs/meta');
 }
 
-export function getLogsTimeseries(params: {
-  from: string;
-  to: string;
-  model?: string;
-  status?: string;
-}): Promise<ApiResponse<TimeseriesData>> {
+export function getLogsSummary(params: LogsListParams): Promise<ApiResponse<LogsSummaryData>> {
+  return apiRequest<LogsSummaryData>('/logs/summary', { query: { ...params } });
+}
+
+export function getLogsTimeseries(params: LogsListParams): Promise<ApiResponse<TimeseriesData>> {
   return apiRequest<TimeseriesData>('/logs/timeseries', { query: { ...params } });
 }
 
-export function getLogsSessions(params: {
-  from: string;
-  to: string;
-  page?: number;
-  pageSize?: number;
-}): Promise<ApiResponse<SessionsData>> {
+export function getLogsSessions(params: LogsListParams): Promise<ApiResponse<SessionsData>> {
   return apiRequest<SessionsData>('/logs/sessions', { query: { ...params } });
 }
 
