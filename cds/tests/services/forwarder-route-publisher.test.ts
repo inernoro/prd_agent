@@ -349,6 +349,41 @@ describe('ForwarderRoutePublisher', () => {
     expect(data).toHaveLength(3);
   });
 
+  it('customDomains 生成完整 Host 精确路由，不拼接 rootDomains', () => {
+    ensureProject('demo', 'demo');
+    state.addBranch({
+      id: 'demo-main',
+      projectId: 'demo',
+      branch: 'main',
+      worktreePath: path.join(tmpDir, 'main'),
+      services: {
+        web: {
+          profileId: 'web',
+          containerName: 'c-main',
+          hostPort: 41000,
+          status: 'running',
+        },
+      },
+      status: 'running',
+      createdAt: new Date().toISOString(),
+      customDomains: ['app.example.com', 'www.example.com'],
+    } as Parameters<typeof state.addBranch>[0]);
+
+    publisher = new ForwarderRoutePublisher({
+      state,
+      outputPath: outFile,
+      rootDomains: ['miduo.org'],
+    });
+    publisher.publishNow();
+    const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+    const hosts = data.map((r: { host: string }) => r.host).sort();
+
+    expect(hosts).toContain('app.example.com');
+    expect(hosts).toContain('www.example.com');
+    expect(hosts).toContain(`${computePreviewSlug('main', 'demo')}.miduo.org`);
+    expect(hosts).not.toContain('app.example.com.miduo.org');
+  });
+
   it('building / starting 分支有端口时仍发布路由，避免 preview host 消失', () => {
     ensureProject('demo', 'demo');
     state.addBranch({

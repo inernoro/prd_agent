@@ -102,6 +102,30 @@ describe('release control plane project-scope isolation', () => {
     const now = new Date().toISOString();
     stateService.addProject({ id: 'proj-a', slug: 'a', name: 'A', kind: 'git', createdAt: now, updatedAt: now });
     stateService.addProject({ id: 'proj-b', slug: 'b', name: 'B', kind: 'git', createdAt: now, updatedAt: now });
+    stateService.addRemoteHost({
+      id: 'proj-a-host-key',
+      name: 'A production host',
+      host: '127.0.0.1',
+      sshPort: 22,
+      sshUser: 'root',
+      sshPrivateKeyEncrypted: 'test-private-key-a',
+      sshPrivateKeyFingerprint: 'fingerprint-a',
+      tags: ['prod'],
+      isEnabled: true,
+      createdAt: now,
+    });
+    stateService.addRemoteHost({
+      id: 'proj-b-host-key',
+      name: 'B production host',
+      host: '127.0.0.2',
+      sshPort: 2222,
+      sshUser: 'deploy',
+      sshPrivateKeyEncrypted: 'test-private-key-b',
+      sshPrivateKeyFingerprint: 'fingerprint-b',
+      tags: ['prod'],
+      isEnabled: true,
+      createdAt: now,
+    });
     stateService.addBranch(branch('branch-a', 'proj-a'));
     stateService.addBranch(branch('branch-b', 'proj-b'));
     stateService.upsertReleaseTarget(releaseTarget('target-a', 'proj-a'));
@@ -160,6 +184,38 @@ describe('release control plane project-scope isolation', () => {
     expect(res.status).toBe(403);
     expect(res.body.error).toBe('project_mismatch');
     expect(stateService.getReleaseTarget('target-b-hijack')).toBeUndefined();
+  });
+
+  it('creates a simplified local production target with inferred script and healthcheck', async () => {
+    const res = await request(server, 'POST', '/api/releases/targets/local-prod', { 'X-Test-Key': KEY_A }, {
+      projectId: 'proj-a',
+      privateKeyRef: 'proj-a-host-key',
+      domain: 'https://www.a.example.test/admin',
+      webPort: 13000,
+      healthPath: '/api/health',
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.target.projectId).toBe('proj-a');
+    expect(res.body.target.name).toBe('www.a.example.test 本机生产');
+    expect(res.body.target.ssh.host).toBe('127.0.0.1');
+    expect(res.body.target.ssh.user).toBe('root');
+    expect(res.body.target.ssh.appPath).toBe('/opt/a-prod');
+    expect(res.body.target.ssh.healthcheckUrl).toBe('https://www.a.example.test/api/health');
+    expect(res.body.target.ssh.deployCommand).toContain('CDS_LOCAL_PROD_PORT=');
+    expect(res.body.target.ssh.deployCommand).toContain('local-prod-release.sh');
+  });
+
+  it('refuses Project A key creating a quick local production target for Project B', async () => {
+    const res = await request(server, 'POST', '/api/releases/targets/local-prod', { 'X-Test-Key': KEY_A }, {
+      projectId: 'proj-b',
+      privateKeyRef: 'proj-b-host-key',
+      domain: 'www.b.example.test',
+      webPort: 13000,
+    });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('project_mismatch');
   });
 
   it('refuses Project A key patching Project B target command', async () => {

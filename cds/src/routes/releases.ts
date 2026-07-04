@@ -1,7 +1,8 @@
 import crypto from 'node:crypto';
+import path from 'node:path';
 import { Router, type Request, type Response } from 'express';
 import type { StateService } from '../services/state.js';
-import type { ReleaseTarget } from '../types.js';
+import type { ReleaseTarget, RemoteHost } from '../types.js';
 import { ReleaseService, probeHealthcheckStatus } from '../services/release-service.js';
 import { releaseEvents } from '../services/release-events.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
@@ -69,6 +70,83 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
         deployCommand: String(body.deployCommand).trim(),
         rollbackCommand: typeof body.rollbackCommand === 'string' ? body.rollbackCommand.trim() : '',
         healthcheckUrl: String(body.healthcheckUrl).trim(),
+      },
+    };
+    try {
+      service.ensureDefaultPlans(target.projectId);
+      res.status(201).json({ target: deps.stateService.upsertReleaseTarget(target) });
+    } catch (err) {
+      res.status(409).json({ error: (err as Error).message });
+    }
+  });
+
+  router.post('/releases/targets/local-prod', (req, res) => {
+    const body = (req.body || {}) as Record<string, unknown>;
+    const projectId = typeof body.projectId === 'string' ? body.projectId.trim() : '';
+    if (rejectProjectMismatch(req, res, projectId || undefined)) return;
+    const validation = validateLocalProdTargetBody(body);
+    if (validation) {
+      res.status(400).json({ error: validation });
+      return;
+    }
+    const project = deps.stateService.getProject(projectId);
+    if (!project) {
+      res.status(404).json({ error: `project not found: ${projectId}` });
+      return;
+    }
+    const remoteHost = resolveLocalProdRemoteHost(deps.stateService, body);
+    if ('error' in remoteHost) {
+      res.status(400).json({ error: remoteHost.error });
+      return;
+    }
+    if (rejectPrivateKeyRefMismatch(req, res, deps.stateService, project.id, remoteHost.host.id)) return;
+
+    const domain = normalizeDomain(String(body.domain));
+    const webPort = Number(body.webPort || 13000);
+    const healthPath = normalizePath(typeof body.healthPath === 'string' ? body.healthPath : '/api/health');
+    const healthcheckUrl = typeof body.healthcheckUrl === 'string' && body.healthcheckUrl.trim()
+      ? body.healthcheckUrl.trim()
+      : `https://${domain}${healthPath}`;
+    const appPath = typeof body.appPath === 'string' && body.appPath.trim()
+      ? body.appPath.trim()
+      : `/opt/${project.slug}-prod`;
+    const releaseScriptPath = typeof body.releaseScriptPath === 'string' && body.releaseScriptPath.trim()
+      ? body.releaseScriptPath.trim()
+      : path.resolve(process.cwd(), 'scripts/local-prod-release.sh');
+    const worktreeRoot = typeof body.worktreeRoot === 'string' && body.worktreeRoot.trim()
+      ? body.worktreeRoot.trim()
+      : path.resolve(process.cwd(), '..', '.cds-worktrees');
+    const composeProject = shellSafeName(`${project.slug}-prod`);
+    const deployCommand = [
+      `CDS_LOCAL_PROD_DOMAIN=${shellQuote(domain)}`,
+      `CDS_LOCAL_PROD_PORT=${shellQuote(String(webPort))}`,
+      `CDS_LOCAL_PROD_HEALTH_URL=${shellQuote(healthcheckUrl)}`,
+      `CDS_LOCAL_PROD_DIR=${shellQuote(appPath)}`,
+      `CDS_LOCAL_PROD_COMPOSE_PROJECT=${shellQuote(composeProject)}`,
+      `CDS_LOCAL_PROD_PROJECT_SLUG=${shellQuote(project.slug)}`,
+      `CDS_LOCAL_PROD_ALLOWED_BRANCH=${shellQuote('main')}`,
+      `CDS_WORKTREE_ROOT=${shellQuote(worktreeRoot)}`,
+      shellQuote(releaseScriptPath),
+    ].join(' ');
+    const now = new Date().toISOString();
+    const target: ReleaseTarget = {
+      id: typeof body.id === 'string' && body.id.trim() ? body.id.trim() : `rt_${crypto.randomBytes(6).toString('hex')}`,
+      projectId: project.id,
+      name: typeof body.name === 'string' && body.name.trim() ? body.name.trim() : `${domain} 本机生产`,
+      type: 'ssh',
+      createdAt: now,
+      updatedAt: now,
+      createdBy: resolveActorFromRequest(req),
+      isEnabled: body.isEnabled !== false,
+      ssh: {
+        host: remoteHost.host.host,
+        port: remoteHost.host.sshPort || 22,
+        user: remoteHost.host.sshUser,
+        privateKeyRef: remoteHost.host.id,
+        appPath,
+        deployCommand,
+        rollbackCommand: '',
+        healthcheckUrl,
       },
     };
     try {
@@ -411,4 +489,70 @@ function validateSshTargetBody(body: Record<string, unknown>, allowExisting: boo
     return 'id must match [A-Za-z0-9_-]{2,80}';
   }
   return null;
+}
+
+function validateLocalProdTargetBody(body: Record<string, unknown>): string | null {
+  if (typeof body.projectId !== 'string' || !body.projectId.trim()) return 'projectId is required';
+  if (typeof body.domain !== 'string' || !body.domain.trim()) return 'domain is required';
+  const domain = normalizeDomain(String(body.domain));
+  if (!/^[a-z0-9.-]+$/i.test(domain) || domain.includes('..') || domain.startsWith('.') || domain.endsWith('.')) {
+    return 'domain must be a hostname';
+  }
+  const webPort = Number(body.webPort || 13000);
+  if (!Number.isInteger(webPort) || webPort < 1 || webPort > 65535) {
+    return 'webPort must be an integer in [1, 65535]';
+  }
+  if (typeof body.id === 'string' && body.id && !/^[A-Za-z0-9_-]{2,80}$/.test(body.id)) {
+    return 'id must match [A-Za-z0-9_-]{2,80}';
+  }
+  if (typeof body.healthcheckUrl === 'string' && body.healthcheckUrl.trim()) {
+    try {
+      const url = new URL(body.healthcheckUrl.trim());
+      if (!['http:', 'https:'].includes(url.protocol)) return 'healthcheckUrl must be http or https';
+    } catch {
+      return 'healthcheckUrl must be a valid URL';
+    }
+  }
+  return null;
+}
+
+function resolveLocalProdRemoteHost(
+  stateService: StateService,
+  body: Record<string, unknown>,
+): { host: RemoteHost } | { error: string } {
+  const privateKeyRef = typeof body.privateKeyRef === 'string' ? body.privateKeyRef.trim() : '';
+  if (privateKeyRef) {
+    const host = stateService.getRemoteHost(privateKeyRef);
+    if (!host) return { error: `remote host not found: ${privateKeyRef}` };
+    if (!host.isEnabled) return { error: `remote host is disabled: ${privateKeyRef}` };
+    return { host };
+  }
+  const enabledHosts = stateService.getRemoteHosts().filter((host) => host.isEnabled);
+  if (enabledHosts.length === 1) return { host: enabledHosts[0] };
+  if (enabledHosts.length === 0) return { error: 'no enabled remote host' };
+  return { error: 'privateKeyRef is required when multiple remote hosts are enabled' };
+}
+
+function normalizeDomain(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  try {
+    const parsed = new URL(trimmed.includes('://') ? trimmed : `https://${trimmed}`);
+    return parsed.hostname.toLowerCase();
+  } catch {
+    return trimmed.toLowerCase().replace(/^https?:\/\//, '').split('/')[0] || trimmed.toLowerCase();
+  }
+}
+
+function normalizePath(value: string): string {
+  const trimmed = value.trim() || '/';
+  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+}
+
+function shellSafeName(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'app-prod';
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
 }

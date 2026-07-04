@@ -439,7 +439,7 @@ function buildArtifact(branch: BranchEntry, commitSha: string, previewUrl: strin
   };
 }
 
-const RELEASE_SCRIPT_PATH_RE = /\.\/[A-Za-z0-9._/@+-]+\.sh/g;
+const RELEASE_SCRIPT_PATH_RE = /(?:\.\/|\/)[A-Za-z0-9._/@+-]+\.sh/g;
 
 export function extractReleaseScriptPaths(rawCommand: string): string[] {
   const matches = rawCommand.match(RELEASE_SCRIPT_PATH_RE) || [];
@@ -467,9 +467,13 @@ export function releaseScriptPhase(script: string): string {
   return `script:${script.replace(/^\.\//, '').replace(/[^A-Za-z0-9._-]/g, '-')}`;
 }
 
-function buildReleaseCommand(target: ReleaseTarget, run: ReleaseRun, rawCommand: string, releaseIdOverride?: string): string {
+export function buildReleaseCommand(target: ReleaseTarget, run: ReleaseRun, rawCommand: string, releaseIdOverride?: string): string {
   const ssh = target.ssh!;
   const env: Record<string, string> = {
+    CDS_PROJECT_ID: run.projectId,
+    CDS_BRANCH_ID: run.branchId,
+    CDS_TARGET_ID: run.targetId,
+    CDS_PLAN_ID: run.planId,
     CDS_COMMIT_SHA: run.commitSha,
     CDS_RELEASE_ID: releaseIdOverride || run.releaseId,
     CDS_BRANCH_NAME: run.artifact.branchName || '',
@@ -482,7 +486,7 @@ function buildReleaseCommand(target: ReleaseTarget, run: ReleaseRun, rawCommand:
   const renderedEnv = Object.entries(env)
     .map(([key, value]) => `${key}=${shellQuote(value)}`)
     .join(' ');
-  return `cd ${shellQuote(ssh.appPath || '.')} && ${renderedEnv} ${rawCommand}`;
+  return `cd ${shellQuote(ssh.appPath || '.')} && export ${renderedEnv}; ${rawCommand}`;
 }
 
 async function probeHealthcheck(url: string, timeoutMs = 8_000): Promise<void> {
