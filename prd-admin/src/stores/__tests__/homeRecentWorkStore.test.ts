@@ -60,6 +60,27 @@ describe('homeRecentWorkStore', () => {
     expect(mockList).toHaveBeenCalledTimes(2);
   });
 
+  it('登出后飞行中的响应被丢弃（用户 A 的慢请求不会写进用户 B 的首页）', async () => {
+    let resolveSlow!: (v: ApiResponse<{ items: RecentWorkItemDto[] }>) => void;
+    mockList.mockReturnValue(new Promise((resolve) => { resolveSlow = resolve; }));
+
+    const pending = useHomeRecentWorkStore.getState().load();
+    expect(useHomeRecentWorkStore.getState().loading).toBe(true);
+
+    // 请求仍在飞行时登出（触发 reset）
+    for (const fn of logoutResetCallbacks) fn();
+    expect(useHomeRecentWorkStore.getState().loading).toBe(false);
+
+    // 上一个账号的响应此刻才回来：必须被丢弃，不得污染新账号的空态
+    resolveSlow(ok([{ route: '/visual-agent/stale', agentKey: 'visual-agent', title: '上一个账号的脚印', lastActiveAt: '2026-07-05T00:00:00Z' }]));
+    await pending;
+
+    const s = useHomeRecentWorkStore.getState();
+    expect(s.items).toEqual([]);
+    expect(s.loaded).toBe(false);
+    expect(s.loading).toBe(false);
+  });
+
   it('登出重置回调已注册，触发后清空脚印（同浏览器换号不残留上一位用户的标题）', async () => {
     mockList.mockResolvedValue(
       ok([{ route: '/defect-agent?defectId=d1', agentKey: 'defect-agent', title: '登录页崩溃', lastActiveAt: '2026-07-05T00:00:00Z' }])

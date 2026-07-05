@@ -15,6 +15,10 @@ interface HomeRecentWorkState {
 
 const INITIAL_STATE = { loaded: false, loading: false, items: [] as RecentWorkItemDto[] };
 
+// 请求代际：reset()（登出）时 +1，飞行中的 load() 回来发现代际变了就丢弃响应。
+// 否则用户 A 的慢请求可能在用户 B 登录后落地，把 A 的脚印写进 B 的首页（Codex P2）。
+let generation = 0;
+
 export const useHomeRecentWorkStore = create<HomeRecentWorkState>((set, get) => ({
   ...INITIAL_STATE,
 
@@ -22,18 +26,22 @@ export const useHomeRecentWorkStore = create<HomeRecentWorkState>((set, get) => 
     const force = Boolean(opts?.force);
     const state = get();
     if (!force && (state.loaded || state.loading)) return;
+    const gen = generation;
     set({ loading: true });
     try {
       // 24 条：默认收起只露一行，「浏览全部脚印」展开后可翻看更长的足迹
       const res = await listRecentWork({ limit: 24 });
+      if (gen !== generation) return; // 请求期间发生过登出：这是上一个账号的响应，丢弃
       // 拉取失败按空列表处理：该区块「有数据才显示」，失败不打扰用户
       set({ items: res.success && res.data ? res.data.items : [], loading: false, loaded: true });
     } catch {
+      if (gen !== generation) return;
       set({ items: [], loading: false, loaded: true });
     }
   },
 
   reset() {
+    generation += 1;
     set({ ...INITIAL_STATE });
   },
 }));
