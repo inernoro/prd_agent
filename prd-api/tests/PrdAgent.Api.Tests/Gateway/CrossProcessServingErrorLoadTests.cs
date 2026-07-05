@@ -146,9 +146,17 @@ public class CrossProcessServingErrorLoadTests : IClassFixture<CrossProcessServi
 
     private static async Task AssertPools(TransportCell cell, HttpLlmGatewayClient client)
     {
+        if (cell.Bool("poolsFailed"))
+        {
+            var ex = await Should.ThrowAsync<InvalidOperationException>(
+                () => client.GetAvailablePoolsAsync("demo::chat", "chat"));
+            ex.Message.Contains("401", StringComparison.Ordinal).ShouldBeTrue(
+                $"cell {cell.Id}: 错 key 应明确暴露 serving 鉴权失败");
+            return;
+        }
+
         var pools = await client.GetAvailablePoolsAsync("demo::chat", "chat");
         if (cell.Bool("poolsOk")) pools.Count.ShouldBeGreaterThan(0, $"cell {cell.Id}: 期望非空池");
-        if (cell.Bool("poolsFailed")) pools.Count.ShouldBe(0, $"cell {cell.Id}: 错 key 应返回空池");
     }
 
     private static async Task AssertResolve(TransportCell cell, HttpLlmGatewayClient client)
