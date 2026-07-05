@@ -38,10 +38,11 @@ import './emergence.css';
 const INTRO_SEEN_KEY = 'emergence.intro.seen';
 // 一次探索/涌现预期的子节点数（仅用于预留 band 居中，多/少都不影响已落位节点）
 const EXPECTED_CHILDREN = 4;
-// 生成"播放"结束、临时面板消失后，等这么久再出第一个节点
-const REVEAL_DELAY_MS = 1000;
+// 生成"播放"结束、临时面板消失后，等这么久再出第一个节点。
+// 用户已经等完整个 LLM 流，落位只保留"逐个长出"的仪式感，不再追加大段等待
+const REVEAL_DELAY_MS = 400;
 // 之后每个节点渐显的间隔（一个一个长出来）
-const REVEAL_INTERVAL_MS = 1000;
+const REVEAL_INTERVAL_MS = 650;
 
 // ── 自定义节点注册 ──
 const nodeTypes = { emergence: EmergenceFlowNode };
@@ -174,6 +175,8 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
   const slotsRef = useRef<Map<string, GenSlot>>(new Map());
   // 每个 parentId 的临时面板实时 LLM 文本（固定尺寸，绝不影响布局）
   const liveTextRef = useRef<Map<string, string>>(new Map());
+  // 每个 parentId 的 LLM 思考过程文本（thinking 事件），JSON 正文开始前填充等待期
+  const liveThinkingRef = useRef<Map<string, string>>(new Map());
   // 生成期间，每个父节点的到达子节点先缓冲，等"播放"结束再逐个渐显
   const pendingByParentRef = useRef<Map<string, EmergenceNodeType[]>>(new Map());
   // 每个父节点的逐个渐显定时器
@@ -191,7 +194,6 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
   const handleStatusChangeRef = useRef<(nodeId: string, status: string) => void>(() => {});
   // 涌现锚点（涌现无单一父节点，落位挂到这个可见节点下）
   const emergeAnchorRef = useRef<string | null>(null);
-  const [, setEmergeThinking] = useState('');
   // 「整理」过渡：给画布加 .emergence-tidying，节点平滑滑行 600ms
   const [tidying, setTidying] = useState(false);
 
@@ -291,6 +293,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
           isPlaceholder: true,
           placeholderIndex: 0,
           liveText: liveTextRef.current.get(slot.parentId) || undefined,
+          liveThinking: liveThinkingRef.current.get(slot.parentId) || undefined,
         } satisfies EmergenceNodeData,
       });
     }
@@ -337,10 +340,18 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
     const slot = slotsRef.current.get(parentId);
     if (!slot) return;
     const text = liveTextRef.current.get(parentId) || undefined;
+    const thinking = liveThinkingRef.current.get(parentId) || undefined;
     setNodes(prev => prev.map(n =>
-      n.id === slot.slotId ? { ...n, data: { ...n.data, liveText: text } } : n,
+      n.id === slot.slotId ? { ...n, data: { ...n.data, liveText: text, liveThinking: thinking } } : n,
     ));
   }, [setNodes]);
+
+  // 累积 LLM 思考文本并刷新生成槽（explore / emerge 共用）
+  const appendThinking = useCallback((parentId: string, text: string) => {
+    if (!text) return;
+    liveThinkingRef.current.set(parentId, (liveThinkingRef.current.get(parentId) ?? '') + text);
+    pokeSlotText(parentId);
+  }, [pokeSlotText]);
 
   // 标记新到达节点，0.65s 后清除入场动画（只刷该节点，不重排）
   const markArrived = useCallback((nodeId: string) => {
@@ -413,6 +424,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
     if (t) { clearTimeout(t); revealTimersRef.current.delete(parentId); }
     slotsRef.current.delete(parentId);
     liveTextRef.current.delete(parentId);
+    liveThinkingRef.current.delete(parentId);
     pendingByParentRef.current.delete(parentId);
     revealingRef.current.delete(parentId);
     bumpExplore(); // 解锁后刷新 stop 按钮 / 探索态 / 整理·涌现可用性
@@ -491,6 +503,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
     if (!slot) return;
     slot.generating = false;            // 临时面板立即消失
     liveTextRef.current.delete(parentId);
+    liveThinkingRef.current.delete(parentId);
     // 渐显未完成前父节点保持锁定（阻止同父重复探索 / 涌现 / 整理交错）
     revealingRef.current.add(parentId);
     bumpExplore();
@@ -512,7 +525,9 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
       onEvent: {
         thinking: (data) => {
           const t = (data as { text?: string })?.text;
-          if (t) setEmergeThinking(prev => prev + t);
+          const pid = emergeAnchorRef.current;
+          // 思考文本喂给锚点生成槽：JSON 正文开始前占位卡显示"AI 深度思考中"
+          if (t && pid) appendThinking(pid, t);
         },
       },
       onItem: (newNode) => {
@@ -611,6 +626,9 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
               state.typing += t;
               liveTextRef.current.set(nodeId, state.typing);
               pokeSlotText(nodeId);
+            } else if (evt.event === 'thinking') {
+              // 推理模型的思考阶段可长达几十秒，之前被整段丢弃导致纯 shimmer 干等
+              appendThinking(nodeId, (data as { text?: string }).text || '');
             } else if (evt.event === 'node') {
               // abort 后 SSE 可能仍递送已缓冲的 node 事件：本流已非该父的活跃流
               // （stopAll 清空 / 已重启新流）则丢弃，避免塞进无槽 key 孤立（Codex P1）
@@ -636,7 +654,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
       // （若用户手动停止，slot 已被 stopAll 清掉，这里安全 no-op）
       finishGeneration(nodeId);
     }
-  }, [isEmerging, bumpExplore, reserveBand, buildFlow, pokeSlotText, enqueueArrival, finishGeneration, centerOnNode]);
+  }, [isEmerging, bumpExplore, reserveBand, buildFlow, pokeSlotText, appendThinking, enqueueArrival, finishGeneration, centerOnNode]);
 
   // 中止所有活跃流
   const stopAll = useCallback(() => {
@@ -651,6 +669,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
     revealingRef.current.clear();
     slotsRef.current.clear();
     liveTextRef.current.clear();
+    liveThinkingRef.current.clear();
     emergeAnchorRef.current = null;
     bumpExplore();
     buildFlow();
@@ -689,7 +708,6 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
 
   const handleEmerge = useCallback((fantasy: boolean) => {
     if (activeExploresRef.current.size > 0 || isEmerging || revealingRef.current.size > 0) return;
-    setEmergeThinking('');
     const anchorId = backendNodesRef.current[0]?.id ?? null;
     emergeAnchorRef.current = anchorId;
     if (anchorId) {
