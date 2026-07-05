@@ -1,7 +1,8 @@
 import { memo, useMemo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { Sparkle, Zap, Star, CheckCircle2, Pencil, Clock, Lightbulb, AlertTriangle } from 'lucide-react';
+import { Sparkle, Zap, Star, CheckCircle2, Pencil, Clock, Lightbulb, AlertTriangle, BrainCircuit } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { parseLiveNodePreview, stableThinkingWindow } from './liveNodePreview';
 
 // ── 节点数据类型 ──
 export interface EmergenceNodeData {
@@ -30,9 +31,15 @@ export interface EmergenceNodeData {
   isExploring?: boolean;
   /**
    * 流式实时文字（仅对第一个占位卡片有效）：
-   * 有值时用 LLM 正在生成的原文替换 shimmer，让用户能看到 AI 正在打字。
+   * 有值时增量解析成「正在生长的节点卡」替换 shimmer（产物即体验，
+   * 禁止把原始 JSON token 流裸露给用户）。
    */
   liveText?: string;
+  /**
+   * LLM 思考过程文字（thinking 事件累积）：
+   * JSON 正文还没开始前用它填充等待期，消灭推理模型思考阶段的空白。
+   */
+  liveThinking?: string;
 }
 
 type EmergenceNodeType = NodeProps & { data: EmergenceNodeData };
@@ -73,25 +80,78 @@ function StarRating({ score, max = 5 }: { score: number; max?: number }) {
   );
 }
 
-// ── 骨架占位节点（正在生成中的 shimmer 卡片）──
+// ── 流式打字光标（跟随最新长出的文字末尾）──
+function TypingCursor({ accent }: { accent: string }) {
+  return (
+    <span
+      className="inline-block ml-0.5 align-middle emergence-typing-cursor"
+      style={{ width: 4, height: 9, background: accent, borderRadius: 1, boxShadow: `0 0 6px ${accent}` }}
+    />
+  );
+}
+
+/**
+ * 底部锚定日志窗：流式文字自然追加换行，新行把旧行往上推出固定高度的窗口，
+ * 顶部渐隐遮罩。文字永远不重排、只在末尾生长（借鉴 ChatGPT 推理预览 /
+ * 终端日志的呈现方式）——替代"每 chunk 重截尾巴"的滑动窗口，
+ * 后者会让整段文字反复重新换行，看起来像乱码在折叠收缩。
+ */
+function StreamTailWindow({ height, fade = 18, children }: {
+  height: number; fade?: number; children: React.ReactNode;
+}) {
+  const mask = `linear-gradient(180deg, transparent 0, #000 ${fade}px)`;
+  return (
+    <div style={{
+      height,
+      overflow: 'hidden',
+      display: 'flex',
+      flexDirection: 'column',
+      justifyContent: 'flex-end',
+      maskImage: mask,
+      WebkitMaskImage: mask,
+    }}>
+      {children}
+    </div>
+  );
+}
+
+// ── 占位节点（正在生成中）：产物即体验 ──
+// 等待期主视觉 = 节点卡本身在生长：思考中 → 标题逐字出现 → 描述逐字出现
+// → 评分/标签解析到即显示 → 已完成节点变成勾选 chip。
+// 原始 JSON token 流不再裸露给用户（.claude/rules/artifact-is-experience.md）。
+// 注: 不接 <StreamingText> 动效 — 曾导致父节点消失（issue #603），此处全部裸文本渲染。
 function PlaceholderNode({ data }: EmergenceNodeType) {
   const dim = dimensionConfig[data.dimension] ?? dimensionConfig[1];
   const idx = data.placeholderIndex ?? 0;
   // 错开每个占位卡片的动画，制造"波纹"感
   const delay = `${idx * 0.18}s`;
-  const liveText = data.liveText?.trim() ?? '';
-  // 只在首个占位卡片（index = 0）上显示 liveText，其余继续 shimmer
-  const showLive = Boolean(liveText) && idx === 0;
-  // 展示最后 140 字符, 避免卡片被撑变形
-  // 注: 故意保留裸文本渲染。曾尝试用 <StreamingText> 接动效, 但导致父节点消失 (见 issue #603),
-  // 已按用户指示回退此处, 等 Emergence 画布 layout/fitView 修好后再重接。
-  const tail = liveText
-    ? (liveText.length > 140 ? '…' + liveText.slice(-140) : liveText)
-    : '';
+  const liveText = data.liveText ?? '';
+  const liveThinking = (data.liveThinking ?? '').trim();
+
+  // 增量解析 LLM 原文 → 节点卡形状（解析失败自动退化为 shimmer）
+  const preview = useMemo(() => parseLiveNodePreview(liveText), [liveText]);
+  // 只在首个占位卡片（index = 0）上显示实时内容，其余继续 shimmer
+  const showLive = idx === 0 && preview.hasAny;
+  const showThinking = idx === 0 && !preview.hasAny && Boolean(liveThinking);
+
+  const draft = preview.draft;
+  const doneCount = preview.doneTitles.length;
+  // 当前构思序号：草稿存在 = 第 done+1 个；两个对象之间的空档显示"酝酿下一个"
+  const headerLabel = showLive
+    ? (draft ? `正在构思第 ${doneCount + 1} 个` : doneCount > 0 ? '正在酝酿下一个' : 'AI 正在构思')
+    : showThinking ? 'AI 深度思考中' : '';
+  const footerLabel = showLive
+    ? (doneCount > 0 ? `已构思 ${doneCount} 个，继续生成中…` : '构思成形中…')
+    : showThinking ? '思路整理后开始构思…' : '即将涌现…';
+
+  // 光标位置：跟着正在打字的那一段文字走
+  const cursorOnTitle = Boolean(draft?.title) && !draft?.titleDone;
+  const cursorOnDesc = Boolean(draft?.description) && !draft?.descriptionDone && draft?.titleDone;
+  const cursorOnActive = Boolean(draft?.activeField) && !cursorOnTitle && !cursorOnDesc;
 
   return (
     <div
-      className="emergence-placeholder emergence-node-enter p-3"
+      className={`${showLive || showThinking ? '' : 'emergence-placeholder '}emergence-node-enter p-3`}
       style={{
         background: `linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)`,
         border: `1px dashed ${dim.accentBorder}`,
@@ -108,19 +168,18 @@ function PlaceholderNode({ data }: EmergenceNodeType) {
       <Handle type="target" position={Position.Top}
         style={{ background: dim.accent, width: 8, height: 8, border: 'none', opacity: 0.4 }} />
 
-      {/* 标题行骨架（图标 + shimmer 标题条） */}
+      {/* 标题行：图标 + 阶段标签 / shimmer */}
       <div className="flex items-center gap-2 mb-2">
         <div className="w-7 h-7 rounded-[8px] flex items-center justify-center flex-shrink-0"
           style={{ background: dim.accentBg, border: `1px solid ${dim.accentBorder}` }}>
-          <dim.Icon size={13} style={{ color: dim.accent, opacity: showLive ? 0.9 : 0.5 }} />
+          {showThinking
+            ? <BrainCircuit size={13} className="emergence-pulse" style={{ color: dim.accent, opacity: 0.9 }} />
+            : <dim.Icon size={13} style={{ color: dim.accent, opacity: showLive ? 0.9 : 0.5 }} />}
         </div>
         <div className="flex-1 min-w-0">
-          {showLive ? (
-            <div
-              className="text-[10px] tracking-wider uppercase"
-              style={{ color: dim.accent, opacity: 0.85 }}
-            >
-              AI 正在生成
+          {headerLabel ? (
+            <div className="text-[10px] tracking-wider" style={{ color: dim.accent, opacity: 0.85 }}>
+              {headerLabel}
             </div>
           ) : (
             <div className="shimmer-line" style={{ height: 10, width: '70%', borderRadius: 4, animationDelay: delay }} />
@@ -128,34 +187,103 @@ function PlaceholderNode({ data }: EmergenceNodeType) {
         </div>
       </div>
 
-      {/* 描述区：有 liveText → 显示流式文字；否则 shimmer */}
       {showLive ? (
-        <div
-          className="emergence-live-text mb-2"
-          style={{
-            fontSize: 10.5,
-            lineHeight: 1.55,
-            color: 'rgba(255,255,255,0.82)',
-            maxHeight: 80,
-            overflow: 'hidden',
-            wordBreak: 'break-word',
-            whiteSpace: 'pre-wrap',
-          }}
-        >
-          {/* 故意保留裸文本渲染 — 跳过流式动效。曾尝试用 <StreamingText> 接入,
-              即使加 maxTailChars cap, 父节点仍会消失 (Emergence 画布 layout 问题, 见 issue #603)。
-              按用户指示回退此处, 等 #603 修好后再重接动效。 */}
-          {tail}
-          <span
-            className="inline-block ml-0.5 align-middle emergence-typing-cursor"
-            style={{
-              width: 4,
-              height: 9,
-              background: dim.accent,
-              borderRadius: 1,
-              boxShadow: `0 0 6px ${dim.accent}`,
-            }}
-          />
+        <div className="mb-2">
+          {/* 正在生长的节点卡：标题 → 描述 → 评分 → 标签 → 次要长字段 */}
+          {draft?.title ? (
+            <div className="text-[13px] font-semibold mb-1 emergence-live-text"
+              style={{
+                color: 'var(--text-primary)', wordBreak: 'break-word',
+                display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+              }}>
+              {draft.title}
+              {cursorOnTitle && <TypingCursor accent={dim.accent} />}
+            </div>
+          ) : draft ? (
+            <div className="shimmer-line mb-1.5" style={{ height: 12, width: '65%', borderRadius: 4 }} />
+          ) : null}
+
+          {draft?.description ? (
+            <p className="text-[11px] leading-[1.5] mb-1.5 emergence-live-text"
+              style={{
+                color: 'var(--text-muted)', wordBreak: 'break-word',
+                display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+              }}>
+              {draft.description}
+              {cursorOnDesc && <TypingCursor accent={dim.accent} />}
+            </p>
+          ) : draft?.titleDone ? (
+            <div className="shimmer-line mb-1.5" style={{ height: 8, width: '90%', borderRadius: 4 }} />
+          ) : null}
+
+          {(draft?.valueScore !== undefined || draft?.difficultyScore !== undefined) && (
+            <div className="flex items-center gap-3 text-[11px] mb-1.5 emergence-live-text"
+              style={{ color: 'var(--text-muted)' }}>
+              {draft?.valueScore !== undefined && <span>价值 <StarRating score={draft.valueScore} /></span>}
+              {draft?.difficultyScore !== undefined && <span>难度 <StarRating score={draft.difficultyScore} /></span>}
+            </div>
+          )}
+
+          {draft && draft.tags.length > 0 && (
+            <div className="flex gap-1 flex-wrap mb-1.5" style={{ maxHeight: 40, overflow: 'hidden' }}>
+              {draft.tags.slice(0, 3).map((tag) => (
+                <span key={tag} className="surface-row text-[10px] px-1.5 py-0.5 rounded-[6px] emergence-live-text">
+                  {tag}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {draft?.activeField && (
+            <div className="mb-1.5">
+              <StreamTailWindow height={30} fade={10}>
+                <p className="text-[10px] leading-[1.5] emergence-live-text"
+                  style={{ color: 'var(--text-muted)', opacity: 0.75, wordBreak: 'break-word' }}>
+                  <span style={{ color: dim.accent, opacity: 0.9 }}>{draft.activeField.label} </span>
+                  {draft.activeField.text}
+                  {cursorOnActive && <TypingCursor accent={dim.accent} />}
+                </p>
+              </StreamTailWindow>
+            </div>
+          )}
+
+          {/* 已完成的构思：勾选 chip 让进度可感知 */}
+          {doneCount > 0 && (
+            <div className="flex gap-1 flex-wrap pt-1.5 mt-0.5" style={{ borderTop: '1px solid rgba(255,255,255,0.05)', maxHeight: 44, overflow: 'hidden' }}>
+              {preview.doneTitles.map((t) => (
+                <span key={t} className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-[6px] emergence-live-text"
+                  style={{
+                    background: 'rgba(34,197,94,0.08)',
+                    border: '1px solid rgba(34,197,94,0.18)',
+                    color: 'rgba(34,197,94,0.85)',
+                    maxWidth: '100%',
+                  }}>
+                  <CheckCircle2 size={9} className="flex-shrink-0" />
+                  <span className="truncate" style={{ maxWidth: 92 }}>{t}</span>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : showThinking ? (
+        /* 思考期：JSON 正文还没开始，用底部锚定日志窗展示思考流填充等待
+           （次要信息弱化展示；文字只追加不重排，旧行整行滚出顶部渐隐） */
+        <div className="mb-2">
+          <StreamTailWindow height={64}>
+            <div className="emergence-live-text"
+              style={{
+                fontSize: 10,
+                lineHeight: 1.6,
+                fontStyle: 'italic',
+                color: 'var(--text-muted)',
+                opacity: 0.8,
+                wordBreak: 'break-word',
+                whiteSpace: 'pre-wrap',
+              }}>
+              {stableThinkingWindow(liveThinking)}
+              <TypingCursor accent={dim.accent} />
+            </div>
+          </StreamTailWindow>
         </div>
       ) : (
         <>
@@ -170,12 +298,12 @@ function PlaceholderNode({ data }: EmergenceNodeType) {
         </>
       )}
 
-      {/* 底部"闪烁的期待感"文案 */}
+      {/* 底部进度文案（随生成进度变化，不再是静止占位文案） */}
       <div className="pt-2 flex items-center justify-center gap-1.5"
         style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
         <Sparkle size={11} className="emergence-twinkle" style={{ color: dim.accent, animationDelay: delay }} />
         <span className="text-[10px] emergence-pulse" style={{ color: 'var(--text-muted)', animationDelay: delay }}>
-          {showLive ? '即将落位…' : '即将涌现…'}
+          {footerLabel}
         </span>
       </div>
 
