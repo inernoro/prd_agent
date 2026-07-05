@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Api.Authentication;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -25,21 +26,46 @@ public sealed class HomeRecentWorkController : ControllerBase
 {
     private readonly MongoDbContext _db;
     private readonly ITeamService _teams;
+    private readonly IAdminPermissionService _permissions;
 
-    public HomeRecentWorkController(MongoDbContext db, ITeamService teams)
+    public HomeRecentWorkController(MongoDbContext db, ITeamService teams, IAdminPermissionService permissions)
     {
         _db = db;
         _teams = teams;
+        _permissions = permissions;
     }
 
     public record RecentWorkItem(string Route, string AgentKey, string Title, DateTime LastActiveAt);
 
-    /// <summary>与各详情端点同口径的权限判定（permissions claims；Super 全通）。</summary>
-    private bool HasAnyPermission(params string[] perms)
+    /// <summary>
+    /// 各脚印类型对应的模块门禁，与各详情控制器的 [AdminController] 读权限一一对应。
+    /// 被收回模块权限后详情路由已 403，这里同步让该模块的脚印整体消失（Codex P2：防标题泄漏 + 死链）。
+    /// 不在表内的 agentKey 一律默认拒绝。
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, string> ModuleGate = new Dictionary<string, string>(StringComparer.Ordinal)
     {
-        var permissions = User.FindAll("permissions").Select(c => c.Value).ToHashSet(StringComparer.Ordinal);
-        if (permissions.Contains(AdminPermissionCatalog.Super)) return true;
-        return perms.Any(permissions.Contains);
+        ["visual-agent"] = AdminPermissionCatalog.VisualAgentUse,
+        ["literary-agent"] = AdminPermissionCatalog.LiteraryAgentUse,
+        ["workflow-agent"] = AdminPermissionCatalog.WorkflowAgentUse,
+        ["defect-agent"] = AdminPermissionCatalog.DefectAgentUse,
+        ["report-agent"] = AdminPermissionCatalog.ReportAgentUse,
+        ["review-agent"] = AdminPermissionCatalog.ReviewAgentUse,
+        ["document-store"] = AdminPermissionCatalog.DocumentStoreRead,
+    };
+
+    /// <summary>
+    /// 加载当前用户的有效权限集。
+    /// 本路由没有 [AdminController] 标注，AdminPermissionMiddleware 的扫描器匹配不到所需权限，
+    /// 不会把 permissions 注入 User claims —— 所以这里必须走 IAdminPermissionService 直查，
+    /// 禁止改回 User.FindAll("permissions")（在本路由上永远是空集，会让所有权限判定失真）。
+    /// root / AI 超级访问的兜底口径与中间件 IsRoot 一致。
+    /// </summary>
+    private async Task<HashSet<string>> LoadEffectivePermissionsAsync(string userId, CancellationToken ct)
+    {
+        var isRoot = string.Equals(User.FindFirst("isRoot")?.Value, "1", StringComparison.Ordinal)
+                     || string.Equals(User.FindFirst(AiAccessKeyAuthenticationHandler.ClaimTypeIsAiSuperAccess)?.Value, "1", StringComparison.Ordinal);
+        var perms = await _permissions.GetEffectivePermissionsAsync(userId, isRoot, ct);
+        return perms.ToHashSet(StringComparer.Ordinal);
     }
 
     /// <summary>当前用户最近打开的工作实体（最多 limit 条，按本人打开时间倒序）。</summary>
@@ -58,6 +84,17 @@ public sealed class HomeRecentWorkController : ControllerBase
             .Limit(limit * 3)
             .ToListAsync(ct);
 
+        if (opens.Count == 0)
+            return Ok(ApiResponse<object>.Ok(new { items = Array.Empty<RecentWorkItem>() }));
+
+        // 权限口径与 AdminPermissionMiddleware 一致：先过 access 总闸，再看 Super / 具体权限
+        var perms = await LoadEffectivePermissionsAsync(userId, ct);
+        var hasAccess = perms.Contains(AdminPermissionCatalog.Super) || perms.Contains(AdminPermissionCatalog.Access);
+        bool Has(string permission) => hasAccess
+            && (perms.Contains(AdminPermissionCatalog.Super) || perms.Contains(permission));
+
+        // 模块门禁：详情路由已 403 的模块，脚印（标题 + 深链）整体不返回
+        opens = opens.Where(o => ModuleGate.TryGetValue(o.AgentKey, out var gate) && Has(gate)).ToList();
         if (opens.Count == 0)
             return Ok(ApiResponse<object>.Ok(new { items = Array.Empty<RecentWorkItem>() }));
 
@@ -86,8 +123,16 @@ public sealed class HomeRecentWorkController : ControllerBase
         var wfTitles = new Dictionary<string, string>(StringComparer.Ordinal);
         if (wfIds.Count > 0)
         {
+            // 同 GetWorkflow：本人创建，或持有 workflow-agent.manage（管理员可打开他人工作流，
+            // 打点后富化也要认，否则管理场景下继续上次静默失效，Codex P2）
+            var canManageWorkflows = Has(AdminPermissionCatalog.WorkflowAgentManage);
+            var wfFilter = canManageWorkflows
+                ? Builders<Workflow>.Filter.In(x => x.Id, wfIds)
+                : Builders<Workflow>.Filter.And(
+                    Builders<Workflow>.Filter.In(x => x.Id, wfIds),
+                    Builders<Workflow>.Filter.Eq(x => x.CreatedBy, userId));
             var wfs = await _db.Workflows
-                .Find(x => wfIds.Contains(x.Id) && x.CreatedBy == userId)
+                .Find(wfFilter)
                 .Project(x => new { x.Id, x.Name })
                 .ToListAsync(ct);
             foreach (var w in wfs) wfTitles[w.Id] = w.Name;
@@ -99,7 +144,7 @@ public sealed class HomeRecentWorkController : ControllerBase
         if (defectIds.Count > 0)
         {
             // 同 GetDefect：reporter / assignee / 缺陷管理权限
-            var canManageDefects = HasAnyPermission(AdminPermissionCatalog.DefectAgentManage);
+            var canManageDefects = Has(AdminPermissionCatalog.DefectAgentManage);
             var defectFilter = Builders<DefectReport>.Filter.And(
                 Builders<DefectReport>.Filter.In(x => x.Id, defectIds),
                 Builders<DefectReport>.Filter.Eq(x => x.IsDeleted, false));
@@ -123,7 +168,7 @@ public sealed class HomeRecentWorkController : ControllerBase
         {
             // 同 GetReport：本人周报直通；他人周报仅当团队可见性不是 LeadersOnly，
             // 或本人是该团队队长/副队长，或持有 report-agent.view.all
-            var canViewAllReports = HasAnyPermission(AdminPermissionCatalog.ReportAgentViewAll);
+            var canViewAllReports = Has(AdminPermissionCatalog.ReportAgentViewAll);
             var reports = await _db.WeeklyReports
                 .Find(x => reportIds.Contains(x.Id))
                 .Project(x => new { x.Id, x.UserId, x.TeamId, x.WeekYear, x.WeekNumber, x.TeamName })
@@ -165,7 +210,7 @@ public sealed class HomeRecentWorkController : ControllerBase
         if (reviewIds.Count > 0)
         {
             // 同 GetSubmission：本人提交，或持有 review-agent.view-all
-            var canViewAllReviews = HasAnyPermission(AdminPermissionCatalog.ReviewAgentViewAll);
+            var canViewAllReviews = Has(AdminPermissionCatalog.ReviewAgentViewAll);
             var reviewFilter = canViewAllReviews
                 ? Builders<ReviewSubmission>.Filter.In(x => x.Id, reviewIds)
                 : Builders<ReviewSubmission>.Filter.And(

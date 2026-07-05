@@ -15,3 +15,5 @@
 | fix | prd-api | 继续上次的知识库标题富化补访问复核（owner/公开/团队共享三通道），用户被移出团队或库转私有后名称不再出现（Codex P2） |
 | fix | prd-admin | 首页挂载时强制重拉继续上次，修复同一 SPA 会话内返回首页脚印不刷新（Codex P2） |
 | fix | prd-api | 继续上次的缺陷/周报/评审标题富化补与各详情端点同口径的权限复核（改派/移出团队/收权后不再泄漏标题与死链，Codex P2） |
+| fix | prd-api | 继续上次权限判定改走 IAdminPermissionService 直查（本路由无 [AdminController] 标注，中间件不注入 permissions claims，此前判定恒为空集）；新增与各详情控制器一致的模块级门禁（被收回 use/read 权限的模块脚印整体消失）；工作流富化补 workflow-agent.manage 谓词（管理员打开他人工作流不再从脚印静默丢失）（Codex P2 三项） |
+| fix | prd-admin | 继续上次 store 注册登出重置，同浏览器换号不再短暂看到上一位用户的脚印标题（Codex P2） |

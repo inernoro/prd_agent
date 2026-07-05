@@ -4,6 +4,16 @@ vi.mock('@/services', () => ({
   listRecentWork: vi.fn(),
 }));
 
+// 捕获 store 模块加载时注册的 logout 重置回调，供测试直接触发
+// vi.mock 会被提升到 import 之前，回调数组必须走 vi.hoisted 同步提升
+const logoutResetCallbacks = vi.hoisted(() => [] as Array<() => void>);
+vi.mock('@/stores/authStore', () => ({
+  registerLogoutReset: (fn: () => void) => {
+    logoutResetCallbacks.push(fn);
+    return () => {};
+  },
+}));
+
 import { listRecentWork } from '@/services';
 import { useHomeRecentWorkStore } from '@/stores/homeRecentWorkStore';
 import type { ApiResponse } from '@/types/api';
@@ -48,5 +58,21 @@ describe('homeRecentWorkStore', () => {
     expect(mockList).toHaveBeenCalledTimes(1);
     await useHomeRecentWorkStore.getState().load({ force: true });
     expect(mockList).toHaveBeenCalledTimes(2);
+  });
+
+  it('登出重置回调已注册，触发后清空脚印（同浏览器换号不残留上一位用户的标题）', async () => {
+    mockList.mockResolvedValue(
+      ok([{ route: '/defect-agent?defectId=d1', agentKey: 'defect-agent', title: '登录页崩溃', lastActiveAt: '2026-07-05T00:00:00Z' }])
+    );
+    await useHomeRecentWorkStore.getState().load();
+    expect(useHomeRecentWorkStore.getState().items).toHaveLength(1);
+
+    expect(logoutResetCallbacks.length).toBeGreaterThan(0);
+    for (const fn of logoutResetCallbacks) fn();
+
+    const s = useHomeRecentWorkStore.getState();
+    expect(s.items).toEqual([]);
+    expect(s.loaded).toBe(false);
+    expect(s.loading).toBe(false);
   });
 });
