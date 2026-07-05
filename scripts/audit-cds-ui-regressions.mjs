@@ -59,7 +59,14 @@ requireContains('branchList', '<Workspace wide className="cds-branch-list-worksp
 requireContains('branchList', 'className="cds-branch-card-grid"', 'branch list uses adaptive grid class');
 requireNotContains('branchList', 'grid gap-4 sm:grid-cols-2 2xl:grid-cols-3', 'branch list does not use fixed 3-column Tailwind grid');
 requireContains('css', '.cds-workspace.cds-branch-list-workspace', 'branch list workspace overrides generic cap with higher specificity');
-requireContains('css', 'max-width: 3000px', 'branch list workspace has wide cap');
+// 2026-07-05 workspace 三档归一(standard 1240 / wide 1440 / fluid 无上限)后,
+// 分支列表从专属 3000px 上限折叠为 fluid 档(max-width: none)。意图不变:
+// auto-fill 网格在超宽屏必须能继续加列,不许退回任何会造成右侧大留白的窄上限。
+requireRegex(
+  'css',
+  /\.cds-workspace\.cds-branch-list-workspace\s*\{[^}]*max-width:\s*none/,
+  'branch list workspace is fluid (no cap regression)',
+);
 requireContains('css', 'grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr));', 'branch grid keeps empty tracks so a single card does not stretch full-width');
 requireNotContains('css', 'grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));', 'branch grid avoids auto-fit single-card stretch regression');
 

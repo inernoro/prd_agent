@@ -9,6 +9,7 @@ using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Api.Services;
 
@@ -547,6 +548,9 @@ public class WorkflowAgentController : ControllerBase
         // 非管理员只能看自己的
         if (workflow.CreatedBy != GetUserId() && !HasManagePermission())
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        // 每用户「最近打开」台账（首页继续上次）
+        await RecentOpenTracker.TouchAsync(_db, GetUserId(), "workflow-agent", workflow.Id);
 
         return Ok(ApiResponse<object>.Ok(new { workflow }));
     }

@@ -77,14 +77,15 @@
   animation: emergence-typing-cursor-blink 0.9s steps(2, end) infinite;
 }
 
-/* ── 7. 生成槽内的流式文字（替代 shimmer 时显示）── */
+/* ── 7. 生成槽内的实时内容（正在生长的节点卡各段落淡入）──
+   注：不再用等宽字体 —— 渲染的是解析后的产物文案（标题/描述/锚点），
+   不是原始 JSON token 流（artifact-is-experience.md） */
+.emergence-live-text {
+  animation: emergence-live-text-fade 0.4s ease-out both;
+}
 @keyframes emergence-live-text-fade {
   0%   { opacity: 0.15; }
   100% { opacity: 0.92; }
-}
-.emergence-live-text {
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
-  animation: emergence-live-text-fade 0.4s ease-out both;
 }
 
 /* ── 8. 「整理」过渡：仅手动整理时让节点平滑滑行到新位置，

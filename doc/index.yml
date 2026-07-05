@@ -382,6 +382,7 @@ docs:
     status: draft
   debt.platform.emoji-corpus: 历史 emoji 语料清理 · 债务台账（skill/doc 存量 emoji → 对外 generated json，分批 de-emoji + CI 守卫）
   debt.platform.map-mcp-connector: MAP MCP 连接器债务台账
+  debt.platform.home-launcher: 登录后首页(Agent 启动页) · 债务台账（继续上次数据源边界 + 色阶尺纪律）
   debt.cds.performance: CDS 性能债务台账（构建越来越慢/前端缓慢根因 + 逐步解决）
   debt.team-activity.voc-legacy: 行为洞察 / VOC 体验之声 工程债务台账
   debt.frontend.mobile-control-bar-overload: 移动端控制条过载治理台账

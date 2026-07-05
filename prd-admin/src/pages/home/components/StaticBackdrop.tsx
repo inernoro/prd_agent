@@ -10,7 +10,7 @@
  *   1 · 纯深色底 #050510
  *   2 · 顶部点阵网格（Vercel 风，mask fade）
  *   3 · 顶部紫色径向光晕（Linear 签名）
- *   4 · CRT 横向扫描线（0.02 opacity, mix-blend-overlay）
+ *   4 · CRT 横向扫描线（约 0.02 opacity 纯 alpha 叠加；禁止 mix-blend——全屏混合逐帧重算）
  *   5 · 细噪点
  *   6 · 顶栏下暗渐变
  *
@@ -57,19 +57,20 @@ export function StaticBackdrop({ mode = 'fixed' }: StaticBackdropProps = {}) {
         }}
       />
 
-      {/* Layer 3 · CRT 横向扫描线 overlay（极细） */}
+      {/* Layer 3 · CRT 横向扫描线 overlay（极细）
+         不用 mix-blend-mode：全屏 fixed 层挂混合模式会让每一帧滚动都对整个视口做
+         混合运算（实测卡顿来源），2% 透明度下普通 alpha 叠加视觉等效 */}
       <div
         className="absolute inset-0"
         style={{
           background:
-            'repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.022) 0px, rgba(255, 255, 255, 0.022) 1px, transparent 1px, transparent 3px)',
-          mixBlendMode: 'overlay',
+            'repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.016) 0px, rgba(255, 255, 255, 0.016) 1px, transparent 1px, transparent 3px)',
         }}
       />
 
-      {/* Layer 4 · 细噪点 */}
+      {/* Layer 4 · 细噪点（同上，纯 alpha 叠加，不走混合模式） */}
       <div
-        className="absolute inset-0 opacity-[0.04] mix-blend-overlay"
+        className="absolute inset-0 opacity-[0.03]"
         style={{
           backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`,
         }}
