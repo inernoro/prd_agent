@@ -110,6 +110,54 @@ x-cds-deploy-modes:
         - "ghcr.io/inernoro/prd_agent/prdagent-admin:branch-main"
       prebuilt: true
       containerPort: 8080
+  # 独立 LLM 网关后端 llmgw —— 自包含 ASP.NET 服务，读共享 Mongo 做观测 + 独立账号。
+  # 预览域名 /gw/* 路由到本服务（见 services.llmgw 的 cds.path-prefix）。
+  llmgw:
+    dev:
+      label: "开发模式 (dotnet run)"
+      command: >-
+        cd /repo/prd-llmgw &&
+        rm -rf bin obj &&
+        dotnet restore &&
+        dotnet run --no-launch-profile -c Release --urls http://0.0.0.0:8090
+    express:
+      label: "极速版（CI 预构建）"
+      # 无 command：使用镜像自带 ENTRYPOINT（dotnet prd-llmgw.dll）。
+      image: "ghcr.io/inernoro/prd_agent/prdagent-llmgw:sha-${CDS_COMMIT_SHA}"
+      # 回退链同 api/admin：① 本分支最近一次构建（branch-<slug>）② 固定主分支镜像（branch-main）。
+      # 本 PR 合入后 main 即构建 prdagent-llmgw，branch-main 生效；防止只改 prd-admin/doc 的分支
+      # （CI 路径过滤未构建 llmgw）选极速版时 sha/branch-<slug> 都缺、拉不到任何镜像。
+      fallbackImage:
+        - "ghcr.io/inernoro/prd_agent/prdagent-llmgw:branch-${CDS_BRANCH_SLUG}"
+        - "ghcr.io/inernoro/prd_agent/prdagent-llmgw:branch-main"
+      prebuilt: true
+      containerPort: 8090
+      env:
+        ASPNETCORE_ENVIRONMENT: Production
+        ASPNETCORE_URLS: "http://+:8090"
+  # 独立 LLM serving 网关 llmgw-serve —— DI 承载现有 LlmGateway/ModelResolver，HTTP 暴露 /gw/v1/*。
+  # 安全：CDS 预览**不公开 path-route** 本服务（见下 services 块 no-http-readiness）；仅内网可达，
+  # api 经 docker 名 http://llmgw-serve:8091 调用。公开命名 URL 属波3 专项。
+  llmgw-serve:
+    dev:
+      label: "开发模式 (dotnet run)"
+      command: >-
+        cd /repo/prd-api/src/PrdAgent.LlmGateway &&
+        rm -rf bin obj &&
+        dotnet restore &&
+        dotnet run --no-launch-profile -c Release --urls http://0.0.0.0:8091
+    express:
+      label: "极速版（CI 预构建）"
+      image: "ghcr.io/inernoro/prd_agent/prdagent-llmgw-serve:sha-${CDS_COMMIT_SHA}"
+      # 回退链同 api/admin：branch-<slug> → branch-main（防只改非 prd-api 的分支选极速版拉不到镜像）。
+      fallbackImage:
+        - "ghcr.io/inernoro/prd_agent/prdagent-llmgw-serve:branch-${CDS_BRANCH_SLUG}"
+        - "ghcr.io/inernoro/prd_agent/prdagent-llmgw-serve:branch-main"
+      prebuilt: true
+      containerPort: 8091
+      env:
+        ASPNETCORE_ENVIRONMENT: Production
+        ASPNETCORE_URLS: "http://+:8091"
 services:
   # ── App Services (有相对路径 volume mount) ──
 
@@ -141,6 +189,11 @@ services:
       MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
       MongoDB__DatabaseName: prdagent
       Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT}"
+      # 网关跨进程：把 LlmGateway:Mode 切 http/shadow（profile override）时，HttpLlmGatewayClient 需要
+      # 与 llmgw-serve 同一把 M2M key + serving 地址，否则 X-Gateway-Key 为空 → serving 401（Cursor Bugbot）。
+      # Mode 默认 inproc，不切就不会用到这两项；切了即就位。serving 地址用 profile-id 网络别名。
+      LlmGwServe__ApiKey: "${LLMGW_SERVE_API_KEY:-llmgw-serve-cds-preview-internal-4d8b1e3a}"
+      LlmGateway__ServeBaseUrl: "http://llmgw-serve-prd-agent:8091"
       # Jwt__Secret 由全局 x-cds-env.JWT_SECRET 自动注入，不在此声明
       Jwt__Issuer: prdagent
       ClaudeSdkExecutor__Enabled: "true"
@@ -186,6 +239,109 @@ services:
       # 按 base label 取两模式上限：static 冷构建留足余量，dev 秒起也不受影响。
       cds.readiness-timeout: "1200"
       cds.readiness-interval: "3"
+
+  # 独立 LLM 网关后端 llmgw（默认 dotnet run 源码模式；CDS 可切 express 拉预构建镜像）。
+  # 与 api 同连一份 CDS 托管 Mongo（读 llmrequestlogs 观测），独立 JWT 账号体系。
+  llmgw:
+    image: mcr.microsoft.com/dotnet/sdk:8.0
+    working_dir: /repo
+    volumes:
+      - .:/repo
+      - api-nuget-cache:/root/.nuget/packages
+    ports:
+      - "8090"
+    command: >-
+      cd /repo/prd-llmgw &&
+      rm -rf bin obj &&
+      dotnet restore &&
+      dotnet run --no-launch-profile -c Release --urls http://0.0.0.0:8090
+    depends_on:
+      mongodb: { condition: service_healthy }
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
+      MongoDB__DatabaseName: prdagent
+      # JWT 签名密钥：**bare `${LLMGW_JWT_SECRET}` 不带 fallback**（Codex P1）。本 console 已公网命名路由
+      # （见 labels.cds.subdomain=llmgw，/gw/* 对外可达）；若回落仓库可见 fallback，任何缺该 env 的预览/fork
+      # 都能自签 token 读 /gw/* 日志（prd-llmgw 守卫只认空/dev 值，长 fallback 会过守卫）。去掉 fallback →
+      # 未注入时解析为空 → 守卫拒绝空 JWT（拒启动、命名路由不发布）= fail-closed；prd-agent 项目变量已钉强随机值。
+      LlmGwJwt__Secret: "${LLMGW_JWT_SECRET}"
+      LlmGwJwt__Issuer: prdagent-llmgw
+      # 网关控制台登录口令（用户 2026-07-02 二次拍板：口令存项目 env、别再登不进）：
+      # **显式透传** LLMGW_ADMIN_PASSWORD（bare `${KEY}` 不带默认——CDS resolveProfileRuntimeEnv 只在值恰好
+      # 等于 `${KEY}` 时才还原项目变量，带默认会被当字面量覆盖用户配置，Codex P1）。项目变量 scope=prd-agent
+      # 已设该口令；后端 seed 每次启动把 admin 口令对齐到此 env 值（权威），改密=改项目变量+重部署 llmgw。
+      # 未设该 env 时后端回退内置 admin/admin 引导 + 自愈（永不锁死）。显式声明确保该 env 一定注入本容器。
+      LLMGW_ADMIN_PASSWORD: "${LLMGW_ADMIN_PASSWORD}"
+    labels:
+      # 公网命名 URL（用户 2026-07-01 要求）：登录走项目变量 LLMGW_ADMIN_USER/LLMGW_ADMIN_PASSWORD（可见可改），
+      # JWT 签名密钥 LLMGW_JWT_SECRET 已在项目变量（scope=prd-agent）设为强随机（非仓库默认，杜绝 JWT 伪造绕过登录），
+      # 故可安全对外发布命名子域。<previewSlug>-llmgw.<root> 根路径直达 8090 网关 console（登录后看 LLM 日志）。
+      cds.subdomain: "llmgw"
+      cds.readiness-path: "/gw/healthz"
+
+  # 独立 LLM serving 网关 llmgw-serve（DI 承载现有 LlmGateway/ModelResolver，HTTP 暴露 /gw/v1/*）。
+  # 与 api 同连一份 CDS 托管 Mongo；resolve 解密平台 key 用全局 x-cds-env.ApiKeyCrypto__Secret，
+  # 日志写入用全局 TENCENT_COS_*（CDS 自动注入所有容器，无需在此重复声明）。
+  llmgw-serve:
+    image: mcr.microsoft.com/dotnet/sdk:8.0
+    working_dir: /repo
+    volumes:
+      - .:/repo
+      - api-nuget-cache:/root/.nuget/packages
+    ports:
+      - "8091"
+    command: >-
+      cd /repo/prd-api/src/PrdAgent.LlmGateway &&
+      rm -rf bin obj &&
+      dotnet restore &&
+      dotnet run --no-launch-profile -c Release --urls http://0.0.0.0:8091
+    depends_on:
+      mongodb: { condition: service_healthy }
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
+      MongoDB__DatabaseName: prdagent
+      # M2M 密钥门：**bare `${LLMGW_SERVE_API_KEY}` 不带 fallback**（Codex P1）。本 serving 已公网命名路由
+      # （见 labels.cds.subdomain=llmgw-serve），/gw/v1/send|stream|raw 对外可达；若回落仓库可见 fallback，
+      # 任何缺该 env 的预览/fork 都暴露已知 X-Gateway-Key 可烧 provider 额度。去掉 fallback → 未注入时解析为空 →
+      # serving Program.cs 生产守卫拒绝空 key（拒启动、命名路由不发布）= fail-closed；prd-agent 项目变量已钉强随机值。
+      LlmGwServe__ApiKey: "${LLMGW_SERVE_API_KEY}"
+    labels:
+      # 公网命名 URL（用户 2026-07-01 要求）：LLMGW_SERVE_API_KEY 已在项目变量（scope=prd-agent）设为强随机
+      # （非仓库默认）。/gw/v1/* 走 X-Gateway-Key 门（无 key 一律 401），故对外发布命名子域后仍需密钥才能调
+      # /gw/v1/send，不再是"任何人可烧额度"。<previewSlug>-llmgw-serve.<root> 根路径直达 8091 serving 网关。
+      cds.subdomain: "llmgw-serve"
+      cds.readiness-path: "/gw/v1/healthz"
+
+  # 独立 LLM 网关前端控制台 llmgw-web —— Vite React SPA（登录页 POST /gw/auth/login → JWT；
+  # LLM 日志页调 /gw/logs），容器内 nginx 监听 80：SPA 回退 index.html + /gw/* 反代到 llmgw:8090。
+  # 纯静态站点、只由 CI 预构建（.github/workflows/branch-image.yml 的 LLMGW_WEB_IMAGE），无源码热重载模式。
+  # 采用「标准形态的预构建 app service」：image + 标准 ports:["80"] + cds.prebuilt-image label，
+  # 让 compose-parser 的 isAppServiceCandidate 识别为可部署 app profile（CDS docker-PULL nginx 镜像、
+  # 非本机源码构建），命名子域 <previewSlug>-llmgw-web.<root> 正常发布。回退链走 base 级 fallbackImage
+  # （同 admin：branch-<slug> → branch-main），镜像 tag 公式 sha-${CDS_COMMIT_SHA} 与 branch-image.yml SSOT。
+  llmgw-web:
+    image: "ghcr.io/inernoro/prd_agent/prdagent-llmgw-web:sha-${CDS_COMMIT_SHA}"
+    # 容器内 nginx 监听 80（见 prd-llmgw-web/nginx.conf listen 80）。标准 ports 供 extractContainerPort 读取。
+    ports:
+      - "80"
+    # 本 commit 未构建 llmgw-web（CI 路径过滤只在 prd-llmgw-web/** 变更时构建）时按顺序回退：
+    #   ① 本分支该组件最近一次构建（branch-<slug>）② 退到固定主分支镜像（branch-main）
+    # 基础级 fallbackImage：无 express deployMode 的裸预构建站点也逐级回退（resolveEffectiveProfile 消费）。
+    fallbackImage:
+      - "ghcr.io/inernoro/prd_agent/prdagent-llmgw-web:branch-${CDS_BRANCH_SLUG}"
+      - "ghcr.io/inernoro/prd_agent/prdagent-llmgw-web:branch-main"
+    labels:
+      # 预构建镜像 app 站点标记：CDS docker-PULL 该 nginx 镜像启动，跳过源码 mount + 本机构建。
+      cds.prebuilt-image: "true"
+      # 公网命名 URL：<previewSlug>-llmgw-web.<root> 根路径直达控制台（登录后看 LLM 日志）。
+      # 浏览器同源，nginx 把 /gw/* 反代到 llmgw:8090，故 SPA 无需额外 VITE_LLMGW_API_BASE（编译期默认 /gw）。
+      cds.subdomain: "llmgw-web"
+      # SPA 站点无独立健康端点，根路径 nginx 返回 index.html 即视为就绪（与 admin 的 cds.readiness-path "/" 同）。
+      cds.readiness-path: "/"
+      # 首次拉取 nginx 镜像 + 容器起就绪窗口，给足 600s 兜底（避免慢拉镜像被误判 error）。
+      cds.readiness-timeout: "600"
 
   # ── Infrastructure Services (无相对路径 mount) ──
 

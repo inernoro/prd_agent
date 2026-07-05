@@ -5,10 +5,10 @@
 报告永远按项目入库 CDS；MAP 等系统通过知识库开放协议（peer-sync）从 CDS 拉取展示。
 
 三种输出模式（由 acceptance.config.json 的 report.mode 决定，缺省 = cds）：
-  - cds（默认主路）：自包含 markdown（截图内联 data-URI）→ POST /api/reports，
+  - cds（默认主路）：Markdown 写作源 → 交互 HTML（截图内联 data-URI）→ POST /api/reports，
     按项目 + 文件夹归类，带 verdict / tier / 部署上下文元数据 → 出 /reports 直达深链。
     依赖 env：CDS_HOST + (CDS_PROJECT_KEY 或 AI_ACCESS_KEY)。
-  - local：把报告写成本地 md + 截图拷到本地目录，图用相对路径引用。**零依赖**，
+  - local：把报告写成本地 html/md + 截图拷到本地目录，图用相对路径引用。**零依赖**，
     适合没有 CDS / 离线兜底。
   - doc-store（向后兼容，不推荐）：旧 MAP 知识库路径，仅当 config 显式保留 mode=doc-store 才走。
 
@@ -21,7 +21,7 @@
     --manifest <harness 产出的 manifest.json：[{name,caption,path}]> \
     [--branch xxx --commit xxx --pr 922]
 """
-import argparse, json, os, subprocess, datetime, re, shutil, time, base64, tempfile
+import argparse, json, os, subprocess, datetime, re, shutil, time, base64, tempfile, html
 from pathlib import Path
 
 LOCAL_DEFAULT_OUT_DIR = "/tmp/map-acceptance-local"
@@ -122,17 +122,670 @@ def artifact_path_errors(manifest, cfg=None):
     return errs
 
 
-def assemble(title, body, evidence, meta, img_md=None):
+def _figure_key(name):
+    raw = (name or "").strip().lower()
+    if not re.match(r"^[0-9]{1,3}[a-z]?", raw, re.I):
+        return ""
+    return re.sub(r"[^a-z0-9-]+", "-", raw).strip("-")
+
+
+def _figure_number(name):
+    m = re.match(r"^([0-9]{1,3}[A-Za-z]?)", (name or "").strip())
+    return m.group(1).lower() if m else ""
+
+
+def _figure_anchor(key):
+    safe = re.sub(r"[^a-z0-9-]+", "-", (key or "").lower()).strip("-")
+    return f"fig-{safe}" if safe else ""
+
+
+def _with_figure_anchor(name, md):
+    key = _figure_key(name)
+    anchor = _figure_anchor(key)
+    return f'<span id="{anchor}" class="figure-anchor"></span>\n\n{md}' if anchor else md
+
+
+def link_figure_refs(content, manifest_names):
+    """把正文里的裸「图01」引用补成站内锚点链接。
+
+    报告作者仍应主动写 `[图01](#fig-01-login-home)` 这类完整锚点；这里是兜底，避免每日验收长表格
+    只能看不能点。只链接 manifest 里真实存在且编号唯一的截图，重复编号保留纯文本，
+    避免把双主题/多变体截图错连到第一张。
+    """
+    anchors_by_num = {}
+    for name in manifest_names:
+        num = _figure_number(name)
+        anchor = _figure_anchor(_figure_key(name))
+        if num and anchor:
+            anchors_by_num.setdefault(num, []).append(anchor)
+    anchors_by_num = {
+        num: anchors[0]
+        for num, anchors in anchors_by_num.items()
+        if len(set(anchors)) == 1
+    }
+    if not anchors_by_num:
+        return content
+
+    def link_repl(m):
+        anchor = anchors_by_num.get(m.group(1).lower())
+        return "](#" + anchor + ")" if anchor else m.group(0)
+
+    content = re.sub(r"\]\(#fig-([0-9]{1,3}[A-Za-z]?)\)", link_repl, content)
+
+    def repl(m):
+        key = m.group(1).lower()
+        anchor = anchors_by_num.get(key)
+        if not anchor:
+            return m.group(0)
+        return f"[图{m.group(1)}](#{anchor})"
+
+    # 负向前瞻/回顾避免把已经写成 [图01](...) 的链接再包一层。
+    return re.sub(r"(?<!\[)图\s*([0-9]{1,3}[A-Za-z]?)(?!\]\()", repl, content)
+
+
+def assemble(title, body, evidence, meta, img_md=None, manifest_names=None):
     """正文以 H1 标题打头（根治目录 `---`，见标准 §2.1），机读字段在文末注释。
     支持两种图片占位：
       - {{IMG:<截图name>}} —— ZZ 照做风：把该步截图内联到此处（文字在上图在下，逐步配图）
       - {{EVIDENCE}}       —— 旧版：把所有截图集中堆到此处（§9 证据段）
     """
-    content = body
+    names = list(manifest_names or (img_md or {}).keys())
+    content = link_figure_refs(body, names)
     if img_md:
         for name, md in img_md.items():
-            content = content.replace("{{IMG:%s}}" % name, md)
+            content = content.replace("{{IMG:%s}}" % name, _with_figure_anchor(name, md))
+    else:
+        for name in names:
+            ph = "{{IMG:%s}}" % name
+            content = content.replace(ph, _with_figure_anchor(name, ph))
     return f"# {title}\n\n" + content.replace("{{EVIDENCE}}", evidence) + meta
+
+
+def report_format(cfg, mode):
+    if mode == "doc-store":
+        return "md"
+    raw = str((cfg.get("report") or {}).get("format") or "html").strip().lower()
+    return "md" if raw in {"md", "markdown"} else "html"
+
+
+def _html_id(text, fallback):
+    base = re.sub(r"[^a-z0-9一-鿿]+", "-", (text or "").lower()).strip("-")
+    return base[:80] or fallback
+
+
+GITHUB_COMMIT_BASE = "https://github.com/inernoro/prd_agent/commit/"
+METHOD_FOLDER_BASE = "https://cds.miduo.org/reports?project=prd-agent&folder=b01a432f519541dbbd387286018e6721&report="
+METHOD_DOCS = [
+    ("MAP自动化测试规范总览", METHOD_FOLDER_BASE + "0efbef7c40fc4d94a8b14e60113524a9"),
+    ("PR commit 到结果映射与改动断言", METHOD_FOLDER_BASE + "3992cb728a9c4a23958b4ec92933f59b"),
+]
+METHOD_SECTION_DOCS = {
+    "改动规模与深度预算": (
+        "范围预算测试：先量化 commit、模块、高风险和证据预算，避免把大范围日报包装成深度通过。",
+        METHOD_FOLDER_BASE + "cf097d19b4b649ad92b15546bf13d996",
+    ),
+    "PR/commit 到结果映射": (
+        "变更映射测试：把 commit 分组映射到模块和结果，确认没有把变更藏在总述里。",
+        METHOD_FOLDER_BASE + "3992cb728a9c4a23958b4ec92933f59b",
+    ),
+    "改动断言表": (
+        "断言抽取测试：先说明每个 commit 声称改变了什么，再决定需要什么证据。",
+        METHOD_FOLDER_BASE + "3992cb728a9c4a23958b4ec92933f59b",
+    ),
+    "改动断言到证据表": (
+        "证据关联测试：每条断言必须连到页面证据、内部佐证和关联性结论。",
+        METHOD_FOLDER_BASE + "3992cb728a9c4a23958b4ec92933f59b",
+    ),
+    "影响面矩阵": (
+        "影响面测试：沿上游输入、用户路径、下游输出、持久化、权限和异步依赖拆风险。",
+        METHOD_FOLDER_BASE + "2f497f6aabc84974bd8c76bff8c6439a",
+    ),
+    "融合测试设计": (
+        "融合测试：把相关改动合并成用户旅程，验证跨模块行为而不是孤立页面。",
+        METHOD_FOLDER_BASE + "f10edd7d10fd4ed999c936d733980382",
+    ),
+    "证明力矩阵": (
+        "证明力测试：按页面证据、交互动作、内部佐证和失败条件评估证据强度。",
+        METHOD_FOLDER_BASE + "6bca595f70fb4d26b644490471d33680",
+    ),
+    "页面优先证据分层": (
+        "页面优先测试：用户可感知改动先看页面反馈，API 和日志只作第二证据。",
+        METHOD_FOLDER_BASE + "c67d7301c52d41359fc691978d923426",
+    ),
+    "覆盖矩阵": (
+        "覆盖测试：按模块列出已覆盖证据和缺口，防止把抽样误报成全量通过。",
+        METHOD_FOLDER_BASE + "bd3c43a70b44419bbd25dc57ffa18cc3",
+    ),
+    "截图回读检查": (
+        "截图回读测试：每张图都回读核对是否截歪、加载完成、空白和标记准确。",
+        METHOD_FOLDER_BASE + "7bcc189776354b7db1600dcb91c97e17",
+    ),
+}
+
+
+def _method_note(text):
+    title = re.sub(r"\s+", " ", text or "").strip()
+    info = METHOD_SECTION_DOCS.get(title)
+    if not info:
+        return ""
+    desc, url = info
+    doc_links = "、".join(
+        f'<a href="{html.escape(link, quote=True)}" target="_blank" rel="noopener noreferrer">{html.escape(label)}</a>'
+        for label, link in METHOD_DOCS
+    )
+    return (
+        '<div class="method-note">'
+        f'<strong>这是什么测试：</strong>{html.escape(desc)} '
+        f'<span>基础知识：{doc_links}。</span> '
+        f'<a href="{html.escape(url, quote=True)}" target="_blank" rel="noopener noreferrer">了解这种测试的设计根因</a>'
+        '</div>'
+    )
+
+
+def _render_inline(text):
+    tokens = []
+
+    def stash(value):
+        key = f"@@HTML_TOKEN_{len(tokens)}@@"
+        tokens.append((key, value))
+        return key
+
+    def image_repl(m):
+        alt = html.escape(m.group(1).strip())
+        url = html.escape(m.group(2).strip(), quote=True)
+        return stash(f'<img src="{url}" alt="{alt}" loading="lazy"/>')
+
+    def link_repl(m):
+        label = html.escape(m.group(1).strip())
+        url = html.escape(m.group(2).strip(), quote=True)
+        target = ' target="_blank" rel="noopener noreferrer"' if re.match(r"https?://", url) else ""
+        return stash(f'<a href="{url}"{target}>{label}</a>')
+
+    def code_repl(m):
+        value = m.group(1).strip()
+        if re.fullmatch(r"https?://[^\s<>)，。；、]+", value):
+            escaped = html.escape(value)
+            href = html.escape(value, quote=True)
+            return stash(f'<a href="{href}" target="_blank" rel="noopener noreferrer"><code>{escaped}</code></a>')
+        if re.fullmatch(r"[a-f0-9]{8,40}", value, re.I):
+            escaped = html.escape(value)
+            href = GITHUB_COMMIT_BASE + html.escape(value, quote=True)
+            return stash(f'<a href="{href}" target="_blank" rel="noopener noreferrer"><code>{escaped}</code></a>')
+        return stash(f"<code>{html.escape(value)}</code>")
+
+    def strong_repl(m):
+        return stash(f"<strong>{html.escape(m.group(1).strip())}</strong>")
+
+    raw = re.sub(r"!\[([^\]]*)\]\(([^)]+)\)", image_repl, text)
+    raw = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", link_repl, raw)
+    raw = re.sub(r"`([^`]+)`", code_repl, raw)
+    raw = re.sub(r"\*\*([^*]+)\*\*", strong_repl, raw)
+    raw = re.sub(
+        r"(?<![\"'=])(https?://[^\s<>)，。；、]+)",
+        lambda m: stash(
+            f'<a href="{html.escape(m.group(1), quote=True)}" target="_blank" rel="noopener noreferrer">'
+            f'{html.escape(m.group(1))}</a>'
+        ),
+        raw,
+    )
+    raw = re.sub(
+        r"(?<![a-f0-9/])\b([a-f0-9]{8,40})\b(?![a-f0-9])",
+        lambda m: stash(
+            f'<a href="{GITHUB_COMMIT_BASE}{html.escape(m.group(1), quote=True)}" '
+            f'target="_blank" rel="noopener noreferrer"><code>{html.escape(m.group(1))}</code></a>'
+        ),
+        raw,
+    )
+    out = html.escape(raw)
+    for key, value in tokens:
+        out = out.replace(key, value)
+    return out
+
+
+def _split_markdown_table_row(row):
+    cells = []
+    buf = []
+    s = row.strip()
+    i = 0
+    while i < len(s):
+        ch = s[i]
+        if ch == "\\" and i + 1 < len(s) and s[i + 1] == "|":
+            buf.append("|")
+            i += 2
+            continue
+        if ch == "|":
+            cells.append("".join(buf).strip())
+            buf = []
+            i += 1
+            continue
+        buf.append(ch)
+        i += 1
+    cells.append("".join(buf).strip())
+    if cells and cells[0] == "":
+        cells = cells[1:]
+    if cells and cells[-1] == "":
+        cells = cells[:-1]
+    return cells
+
+
+def _render_table(rows):
+    if len(rows) < 2:
+        return ""
+    parsed = [_split_markdown_table_row(row) for row in rows]
+    header = parsed[0]
+    body_rows = parsed[2:] if re.match(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$", rows[1]) else parsed[1:]
+    th = "".join(f"<th>{_render_inline(c)}</th>" for c in header)
+    body = []
+    for row in body_rows:
+        row_text = " ".join(row)
+        cls = []
+        if re.search(r"\bP0\b|未通过|\bfail\b|阻断", row_text, re.I):
+            cls.append("row-fail")
+        elif re.search(r"P1|有缺陷|conditional|风险", row_text, re.I):
+            cls.append("row-risk")
+        elif re.search(r"未覆盖|not-run|未深测|弱相关|无关", row_text, re.I):
+            cls.append("row-gap")
+        tds = "".join(f"<td>{_render_inline(c)}</td>" for c in row)
+        body.append(f'<tr class="{" ".join(cls)}">{tds}</tr>')
+    return '<div class="table-wrap"><table><thead><tr>' + th + "</tr></thead><tbody>" + "".join(body) + "</tbody></table></div>"
+
+
+def _figure_src_map(markdown):
+    """从已组装的 Markdown 里取图号对应的最终图片 src。
+
+    local 模式这里会是相对路径；CDS 模式这里会是 data-URI，入库后再由服务端抽成
+    report asset。HTML 证据画廊必须复用这个 src，不能引用 manifest 里的本地绝对路径。
+    """
+    srcs = {}
+    block_pat = re.compile(
+        r'<span id="(fig-[a-z0-9-]+)" class="figure-anchor"></span>(.*?)(?=<span id="fig-[a-z0-9-]+" class="figure-anchor"></span>|<!-- acceptance-meta|$)',
+        re.I | re.S,
+    )
+    img_pat = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
+    for m in block_pat.finditer(markdown or ""):
+        img = img_pat.search(m.group(2))
+        if img:
+            srcs[m.group(1)] = img.group(1).strip()
+    return srcs
+
+
+def _severity_from_text(text):
+    raw = text or ""
+    if re.search(r"\bP0\b|阻断|未通过|\bfail\b|撑破", raw, re.I):
+        return "P0"
+    if re.search(r"\bP1\b|必修|高风险", raw, re.I):
+        return "P1"
+    if re.search(r"\bP2\b|有缺陷|风险|conditional|弱相关", raw, re.I):
+        return "P2"
+    if re.search(r"\bP3\b|优化建议", raw, re.I):
+        return "P3"
+    return ""
+
+
+def _severity_class(severity):
+    if severity == "P0":
+        return "fail"
+    if severity in {"P1", "P2"}:
+        return "risk"
+    if severity == "P3":
+        return "gap"
+    return ""
+
+
+def _collect_problem_items(markdown, manifest):
+    items = []
+    seen = set()
+    seen_anchor_severity = set()
+
+    def add(severity, title, detail, anchor=""):
+        sev = severity or _severity_from_text(" ".join([title or "", detail or ""]))
+        if not sev:
+            return
+        if anchor:
+            anchor_key = (sev, anchor)
+            if anchor_key in seen_anchor_severity:
+                return
+            seen_anchor_severity.add(anchor_key)
+        key = (sev, title or "", detail or "", anchor or "")
+        if key in seen:
+            return
+        seen.add(key)
+        items.append({
+            "severity": sev,
+            "title": (title or "").strip(),
+            "detail": (detail or "").strip(),
+            "anchor": anchor,
+        })
+
+    in_defects = False
+    table_rows = []
+    for line in (markdown or "").splitlines():
+        stripped = line.strip()
+        if re.match(r"^##\s+缺陷清单", stripped):
+            in_defects = True
+            table_rows = []
+            continue
+        if in_defects and stripped.startswith("## "):
+            in_defects = False
+        if in_defects and stripped.startswith("|"):
+            table_rows.append(stripped)
+        elif in_defects and table_rows:
+            break
+    if len(table_rows) >= 3:
+        for row in table_rows[2:]:
+            cells = _split_markdown_table_row(row)
+            if len(cells) < 2:
+                continue
+            severity = cells[0].strip()
+            if not re.fullmatch(r"P[0-3]", severity, re.I):
+                continue
+            evidence = cells[2] if len(cells) > 2 else ""
+            anchor_m = re.search(r"#(fig-[a-z0-9-]+)", evidence)
+            add(severity.upper(), cells[1], "；".join(c for c in cells[2:] if c), anchor_m.group(1) if anchor_m else "")
+
+    for shot in manifest or []:
+        key = _figure_key(shot.get("name"))
+        anchor = _figure_anchor(key)
+        num = _figure_number(shot.get("name")) or key
+        label = f"图{num.upper()}" if num else (shot.get("name") or "截图")
+        cap = shot.get("caption") or shot.get("name") or label
+        for warning in shot.get("warnings") or []:
+            add(_severity_from_text(warning), f"{label} · {cap}", warning, anchor)
+
+    order = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
+    return sorted(items, key=lambda it: order.get(it["severity"], 9))
+
+
+def markdown_to_html(markdown):
+    meta = ""
+    m = re.search(r"\n?<!-- acceptance-meta.*?-->\s*$", markdown, re.S)
+    if m:
+        meta = m.group(0)
+        markdown = markdown[:m.start()]
+    lines = markdown.splitlines()
+    out = []
+    i = 0
+    in_code = False
+    code_buf = []
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            if in_code:
+                out.append("<pre><code>" + html.escape("\n".join(code_buf)) + "</code></pre>")
+                code_buf = []
+                in_code = False
+            else:
+                in_code = True
+            i += 1
+            continue
+        if in_code:
+            code_buf.append(line)
+            i += 1
+            continue
+        if not stripped:
+            i += 1
+            continue
+        if re.fullmatch(r'<span id="fig-[a-z0-9-]+" class="figure-anchor"></span>', stripped):
+            out.append(stripped)
+            i += 1
+            continue
+        if stripped.startswith("|") and i + 1 < len(lines) and lines[i + 1].strip().startswith("|"):
+            rows = []
+            while i < len(lines) and lines[i].strip().startswith("|"):
+                rows.append(lines[i])
+                i += 1
+            out.append(_render_table(rows))
+            continue
+        hm = re.match(r"^(#{1,6})\s+(.+)$", stripped)
+        if hm:
+            level = len(hm.group(1))
+            text = hm.group(2).strip()
+            hid = _html_id(text, f"section-{i}")
+            out.append(f'<h{level} id="{hid}">{_render_inline(text)}</h{level}>')
+            if level == 2:
+                note = _method_note(text)
+                if note:
+                    out.append(note)
+            i += 1
+            continue
+        if stripped.startswith(">"):
+            out.append(f"<blockquote>{_render_inline(stripped.lstrip('> ').strip())}</blockquote>")
+            i += 1
+            continue
+        if re.match(r"^[-*]\s+", stripped):
+            items = []
+            while i < len(lines) and re.match(r"^[-*]\s+", lines[i].strip()):
+                items.append(re.sub(r"^[-*]\s+", "", lines[i].strip()))
+                i += 1
+            out.append("<ul>" + "".join(f"<li>{_render_inline(item)}</li>" for item in items) + "</ul>")
+            continue
+        if re.match(r"^\d+\.\s+", stripped):
+            items = []
+            while i < len(lines) and re.match(r"^\d+\.\s+", lines[i].strip()):
+                items.append(re.sub(r"^\d+\.\s+", "", lines[i].strip()))
+                i += 1
+            out.append("<ol>" + "".join(f"<li>{_render_inline(item)}</li>" for item in items) + "</ol>")
+            continue
+        out.append(f"<p>{_render_inline(stripped)}</p>")
+        i += 1
+    if in_code:
+        out.append("<pre><code>" + html.escape("\n".join(code_buf)) + "</code></pre>")
+    return "\n".join(out) + (meta or "")
+
+
+def build_interactive_html(title, verdict, markdown_content, manifest):
+    body_html = markdown_to_html(markdown_content)
+    figure_srcs = _figure_src_map(markdown_content)
+    problem_items = _collect_problem_items(markdown_content, manifest)
+    problem_anchors = {
+        it["anchor"]: it["severity"]
+        for it in problem_items
+        if it.get("anchor")
+    }
+    verdict_cn, verdict_class = {
+        "pass": ("通过", "pass"),
+        "conditional": ("有条件通过", "conditional"),
+        "fail": ("不通过", "fail"),
+    }.get(verdict, (verdict, "unknown"))
+    row_fail_count = sum(1 for it in problem_items if it.get("severity") == "P0")
+    row_risk_count = sum(1 for it in problem_items if it.get("severity") in {"P1", "P2"})
+    row_gap_count = len(re.findall(r"未覆盖|not-run|未深测|弱相关|无关", markdown_content, re.I))
+    table_count = len(re.findall(r"^\|.+\|$", markdown_content, re.M))
+    figures = []
+    gallery_cards = []
+    for shot in manifest:
+        key = _figure_key(shot.get("name"))
+        anchor = _figure_anchor(key)
+        if not anchor:
+            continue
+        num = _figure_number(shot.get("name")) or key
+        label = f"图{num.upper()}"
+        cap = html.escape(shot.get("caption") or shot.get("name") or label)
+        raw_src = figure_srcs.get(anchor, "")
+        src = html.escape(raw_src, quote=True)
+        if raw_src.startswith("data:image/") or src:
+            thumb = f'<img src="{src}" alt="{cap}" loading="eager" decoding="async"/>'
+            nav_thumb = f'<img class="nav-thumb" src="{src}" alt="{cap}" loading="eager" decoding="async"/>'
+        else:
+            thumb = '<div class="thumb-placeholder">无缩略图</div>'
+            nav_thumb = '<div class="nav-thumb thumb-placeholder">无图</div>'
+        warnings = " ".join(str(w) for w in (shot.get("warnings") or []))
+        severity = problem_anchors.get(anchor) or _severity_from_text(" ".join([shot.get("caption") or "", warnings]))
+        status_class = _severity_class(severity)
+        nav_class = f' class="is-{status_class}"' if status_class else ""
+        card_class = f"evidence-card is-{status_class}" if status_class else "evidence-card"
+        badge = f'<em class="card-badge {status_class}">{html.escape(severity)}</em>' if severity else ""
+        figures.append(
+            f'<a{nav_class} href="#{anchor}" title="{cap}">{nav_thumb}'
+            f'<div class="nav-copy"><span>{label}</span><small>{cap}</small></div></a>'
+        )
+        gallery_cards.append(
+            f'<a class="{card_class}" href="#{anchor}">{badge}'
+            f'{thumb}<strong>{label}</strong><span>{cap}</span></a>'
+        )
+    summary_cards = [
+        ("证据图", str(len(manifest)), "可点击跳转"),
+        ("P0 定位项", str(row_fail_count), "阻断证据"),
+        ("P1-P2 风险", str(row_risk_count), "风险定位"),
+        ("缺口", str(row_gap_count), "未覆盖与弱相关"),
+        ("表格行", str(table_count), "原始审计数据"),
+    ]
+    summary_html = "".join(
+        f'<div class="metric"><span>{html.escape(label)}</span><strong>{html.escape(value)}</strong><small>{html.escape(note)}</small></div>'
+        for label, value, note in summary_cards
+    )
+    problem_html = ""
+    if problem_items or verdict == "fail":
+        if problem_items:
+            cards = []
+            for item in problem_items[:6]:
+                sev = html.escape(item.get("severity") or "")
+                cls = _severity_class(item.get("severity") or "") or "gap"
+                title_text = html.escape(item.get("title") or "未通过项")
+                detail = html.escape(item.get("detail") or "")
+                href = f' href="#{html.escape(item["anchor"], quote=True)}"' if item.get("anchor") else ""
+                link_label = "查看证据图" if item.get("anchor") else "查看正文缺陷清单"
+                cards.append(
+                    f'<div class="problem-card is-{cls}">'
+                    f'<strong><span>{sev}</span>{title_text}</strong>'
+                    f'<p>{detail}</p>'
+                    f'<a{href}>{link_label}</a>'
+                    f'</div>'
+                )
+            cards_html = "".join(cards)
+        else:
+            cards_html = '<div class="problem-card is-fail"><strong><span>P0/P1</span>请查看正文缺陷清单</strong><p>报告 Verdict 为不通过，但未抽取到结构化缺陷行。</p><a href="#缺陷清单">查看缺陷清单</a></div>'
+        problem_html = (
+            f'<section class="failure-focus is-{verdict_class}">'
+            f'<div class="focus-kicker">不通过定位</div>'
+            f'<h2>先看这里：失败位置和证据</h2>'
+            f'<div class="problem-grid">{cards_html}</div>'
+            f'</section>'
+        )
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>{html.escape(title)}</title>
+<style>
+:root{{color-scheme:light;--text:#1f2328;--muted:#59636e;--line:#d8dee4;--soft:#f6f8fa;--panel:#fff;--pass:#1a7f37;--warn:#9a6700;--fail:#b42318;--link:#0969da;--ink:#0d1117}}
+*{{box-sizing:border-box}}body{{margin:0;background:#f4f6f8;color:var(--text);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}}
+.layout{{display:grid;grid-template-columns:minmax(240px,310px) minmax(0,1fr);min-height:100vh}}
+aside{{position:sticky;top:0;height:100vh;overflow:auto;border-right:1px solid var(--line);background:#0d1117;color:#e6edf3;padding:18px}}
+main{{min-width:0;width:100%;max-width:none;padding:0 32px 72px}}
+.hero{{margin:0 -32px 22px;padding:26px 32px 22px;background:#101820;color:#fff;border-bottom:1px solid #202b36}}
+.title{{margin:0 0 12px;font-size:30px;line-height:1.2;letter-spacing:0}}.badge{{display:inline-block;padding:5px 12px;border-radius:999px;color:#fff;font-weight:800;background:var(--muted);vertical-align:middle}}
+.badge.pass{{background:var(--pass)}}.badge.conditional{{background:var(--warn)}}.badge.fail{{background:var(--fail)}}
+.failure-focus{{margin:0 0 18px;border:2px solid var(--fail);border-radius:8px;background:#fff7f5;box-shadow:0 8px 24px rgba(180,35,24,.12);padding:16px}}.failure-focus h2{{margin:4px 0 12px;padding:0;color:#7f1d1d;font-size:22px}}.focus-kicker{{font-weight:900;color:#b42318;letter-spacing:0}}.problem-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}}.problem-card{{position:relative;border:1px solid var(--line);border-left:6px solid var(--muted);border-radius:8px;background:#fff;padding:12px}}.problem-card.is-fail{{border-left-color:var(--fail);background:#fff1f1}}.problem-card.is-risk{{border-left-color:var(--warn);background:#fff8e6}}.problem-card.is-gap{{border-left-color:#57606a;background:#f6f8fa}}.problem-card strong{{display:block;font-size:14px;line-height:1.4}}.problem-card strong span{{display:inline-block;margin-right:7px;padding:2px 7px;border-radius:999px;background:var(--fail);color:#fff;font-size:12px}}.problem-card.is-risk strong span{{background:var(--warn)}}.problem-card.is-gap strong span{{background:#57606a}}.problem-card p{{border:0;box-shadow:none;background:transparent;margin:7px 0 8px;padding:0;color:#4b5563;font-size:13px;line-height:1.45}}.problem-card a{{font-weight:800;text-decoration:none}}
+.method-note{{margin:-2px 0 12px;border:1px solid #bfdbfe;border-left:5px solid #0969da;border-radius:8px;background:#eff6ff;color:#1f2937;padding:10px 12px;font-size:13px;line-height:1.55;box-shadow:0 1px 2px rgba(16,24,40,.03)}}.method-note strong{{color:#0f172a}}.method-note a{{font-weight:800;text-decoration:none}}.method-note span{{color:#475569}}
+.metric-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-top:18px}}.metric{{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.18);border-radius:8px;padding:12px}}.metric span,.metric small{{display:block;color:#c9d1d9}}.metric strong{{display:block;font-size:28px;line-height:1.1;margin:5px 0;color:#fff}}
+.toolbar{{background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px;margin:0 0 18px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;box-shadow:0 1px 2px rgba(16,24,40,.04)}}
+.toolbar input{{min-width:260px;flex:1;border:1px solid var(--line);border-radius:6px;padding:8px 10px;font:inherit;background:#fff}}button{{border:1px solid var(--line);background:#fff;border-radius:6px;padding:8px 10px;font:inherit;cursor:pointer;transition:background .18s ease,border-color .18s ease,color .18s ease}}button:hover{{border-color:#8c959f;background:#f6f8fa}}button:focus-visible,input:focus-visible,a:focus-visible{{outline:2px solid #0969da;outline-offset:2px}}button.active{{border-color:var(--link);color:var(--link);font-weight:700;background:#eef6ff}}
+.nav-title{{font-weight:800;margin:0 0 8px;color:#fff}}.evidence-nav{{display:flex;flex-direction:column;gap:8px;margin-bottom:18px}}.evidence-nav a{{display:grid;grid-template-columns:76px minmax(0,1fr);gap:9px;align-items:start;text-decoration:none;color:#e6edf3;border:1px solid #30363d;background:#161b22;border-radius:7px;padding:7px;min-height:64px}}.evidence-nav a.is-fail{{border:2px solid #f85149;background:#2d1111;box-shadow:0 0 0 1px rgba(248,81,73,.25)}}.evidence-nav a.is-risk{{border-color:#d29922;background:#2b2111}}.evidence-nav a:hover{{border-color:#58a6ff}}.evidence-nav .nav-thumb{{width:76px;aspect-ratio:16/9;object-fit:cover;border:1px solid #30363d;border-radius:5px;background:#0d1117}}.nav-copy{{min-width:0}}.evidence-nav span{{display:block;font-weight:900;margin:0 0 2px;color:#fff}}.evidence-nav small{{display:block;color:#9da7b3;font-size:12px;line-height:1.35;margin-top:0;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}}
+.gallery-title{{font-size:18px;font-weight:800;margin:8px 0 10px}}.evidence-gallery{{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px;margin:0 0 22px}}.evidence-card{{position:relative;display:block;text-decoration:none;color:var(--text);background:#fff;border:1px solid var(--line);border-radius:8px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.04)}}.evidence-card.is-fail{{border:3px solid var(--fail);box-shadow:0 10px 24px rgba(180,35,24,.18)}}.evidence-card.is-risk{{border:2px solid var(--warn);box-shadow:0 8px 18px rgba(154,103,0,.14)}}.evidence-card img,.thumb-placeholder{{width:100%;aspect-ratio:16/9;object-fit:cover;border:0;border-radius:0;border-bottom:1px solid var(--line);background:#f6f8fa}}.thumb-placeholder{{display:grid;place-items:center;color:var(--muted);font-size:13px}}.card-badge{{position:absolute;top:8px;left:8px;z-index:2;padding:3px 8px;border-radius:999px;background:var(--fail);color:#fff;font-style:normal;font-size:12px;font-weight:900;box-shadow:0 2px 8px rgba(0,0,0,.2)}}.card-badge.risk{{background:var(--warn)}}.card-badge.gap{{background:#57606a}}.evidence-card strong,.evidence-card span{{display:block;padding:0 10px}}.evidence-card strong{{padding-top:9px}}.evidence-card span{{font-size:12px;color:var(--muted);line-height:1.35;padding-bottom:10px}}
+#reportBody{{display:block}}#reportBody>h1{{display:none}}h1,h2,h3{{scroll-margin-top:24px}}h2{{font-size:20px;line-height:1.35;margin:28px 0 10px;padding:0;color:#111827}}h3{{font-size:16px;margin:18px 0 8px}}p,ul,ol,blockquote,pre{{background:#fff;border:1px solid var(--line);border-radius:8px;margin:0 0 12px;padding:12px 14px;box-shadow:0 1px 2px rgba(16,24,40,.03)}}a{{color:var(--link)}}code{{background:var(--soft);border:1px solid var(--line);border-radius:4px;padding:1px 4px}}pre{{background:#0d1117;color:#e6edf3;overflow:auto}}
+.table-wrap{{overflow-x:auto;margin:0 0 16px;border:1px solid var(--line);border-radius:8px;background:#fff;box-shadow:0 1px 2px rgba(16,24,40,.04)}}table{{border-collapse:separate;border-spacing:0;width:100%;font-size:14px;background:#fff}}th,td{{border-bottom:1px solid var(--line);border-right:1px solid var(--line);padding:10px 12px;text-align:left;vertical-align:top}}th{{background:#f6f8fa;color:#24292f;font-weight:800}}tr:last-child td{{border-bottom:0}}th:last-child,td:last-child{{border-right:0}}tbody tr:hover td{{background:#f6fbff}}tr.row-fail td{{background:#fff1f1}}tr.row-risk td{{background:#fff8e6}}tr.row-gap td{{background:#f6f8fa;color:#57606a}}tr.is-hidden{{display:none}}
+figure{{margin:18px 0 28px}}img{{max-width:100%;height:auto;border:1px solid var(--line);border-radius:8px;display:block}}figcaption{{color:var(--muted);font-size:13px;margin-top:6px}}blockquote{{border-left:3px solid var(--line);color:#444}}.section-toggle{{float:right;font-size:12px;padding:4px 8px}}.figure-anchor{{display:block;scroll-margin-top:96px;height:1px}}:target{{outline:3px solid #54aeff;outline-offset:3px;border-radius:6px}}
+@media(prefers-reduced-motion:reduce){{*{{scroll-behavior:auto!important;transition:none!important}}}}
+@media(max-width:980px){{.layout{{display:block}}aside{{position:relative;height:auto;border-right:0;border-bottom:1px solid #30363d}}main{{padding:0 16px 60px}}.hero{{margin:0 -16px 18px;padding:22px 16px}}.metric-grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}.toolbar{{top:0}}}}
+</style>
+</head>
+<body>
+<div class="layout">
+<aside>
+  <div class="nav-title">证据导航</div>
+  <div class="evidence-nav">{''.join(figures) or '<p>无截图证据</p>'}</div>
+</aside>
+<main>
+  <header class="hero"><h1 class="title">{html.escape(title)}</h1><span class="badge {verdict_class}">{html.escape(verdict_cn)}</span><div class="metric-grid">{summary_html}</div></header>
+  {problem_html}
+  <div class="toolbar">
+    <input id="reportFilter" placeholder="筛选表格、缺陷、模块或图号"/>
+    <button data-filter="all" class="active">全部</button>
+    <button data-filter="fail">未通过/P0</button>
+    <button data-filter="risk">有缺陷/P1</button>
+    <button data-filter="gap">未覆盖</button>
+  </div>
+  <section class="evidence-gallery-wrap"><div class="gallery-title">证据缩略图</div><div class="evidence-gallery">{''.join(gallery_cards) or '<p>无截图证据</p>'}</div></section>
+  <article id="reportBody">{body_html}</article>
+</main>
+</div>
+<script>
+(function(){{
+  var filterInput=document.getElementById('reportFilter');
+  var mode='all';
+  function applyFilter(){{
+    var q=(filterInput.value||'').toLowerCase();
+    document.querySelectorAll('tbody tr').forEach(function(row){{
+      var text=row.textContent.toLowerCase();
+      var modeOk=mode==='all'||(mode==='fail'&&/\\bp0\\b|未通过|\\bfail\\b|阻断/i.test(text))||(mode==='risk'&&/p1|有缺陷|conditional|风险/i.test(text))||(mode==='gap'&&/未覆盖|not-run|未深测|弱相关|无关/i.test(text));
+      var queryOk=!q||text.indexOf(q)>=0;
+      row.classList.toggle('is-hidden', !(modeOk&&queryOk));
+    }});
+  }}
+  filterInput.addEventListener('input', applyFilter);
+  document.querySelectorAll('button[data-filter]').forEach(function(btn){{
+    btn.addEventListener('click', function(){{
+      mode=btn.getAttribute('data-filter');
+      document.querySelectorAll('button[data-filter]').forEach(function(b){{b.classList.remove('active')}});
+      btn.classList.add('active');
+      applyFilter();
+    }});
+  }});
+  function expandSectionForTarget(target){{
+    if(!target) return;
+    var h=target.previousElementSibling;
+    while(h&&h.tagName!=='H2') h=h.previousElementSibling;
+    if(!h||!h.classList.contains('collapsed')) return;
+    h.classList.remove('collapsed');
+    var btn=h.querySelector('.section-toggle');
+    if(btn) btn.textContent='收起';
+    var n=h.nextElementSibling;
+    while(n&&n.tagName!=='H2'){{
+      n.style.display='';
+      n=n.nextElementSibling;
+    }}
+  }}
+  document.querySelectorAll('#reportBody h2').forEach(function(h){{
+    var b=document.createElement('button');
+    b.className='section-toggle';
+    b.type='button';
+    b.textContent='收起';
+    h.appendChild(b);
+    b.addEventListener('click', function(ev){{
+      ev.preventDefault();
+      var collapsed=h.classList.toggle('collapsed');
+      b.textContent=collapsed?'展开':'收起';
+      var n=h.nextElementSibling;
+      while(n&&n.tagName!=='H2'){{
+        n.style.display=collapsed?'none':'';
+        n=n.nextElementSibling;
+      }}
+    }});
+  }});
+  document.addEventListener('click', function(ev){{
+    var a=ev.target.closest&&ev.target.closest('a[href^="#fig-"]');
+    if(!a) return;
+    ev.preventDefault();
+    var t=document.querySelector(a.getAttribute('href'));
+    if(!t) return;
+    expandSectionForTarget(t);
+    var h=t&&t.previousElementSibling;
+    while(h&&h.tagName!=='H2') h=h.previousElementSibling;
+    (h||t).scrollIntoView({{block:'start'}});
+    if(history&&history.replaceState) history.replaceState(null,'',a.getAttribute('href'));
+  }});
+  window.addEventListener('hashchange', function(){{
+    var t=location.hash&&document.querySelector(location.hash);
+    expandSectionForTarget(t);
+  }});
+  if(location.hash){{setTimeout(function(){{var t=document.querySelector(location.hash); expandSectionForTarget(t); if(t) t.scrollIntoView({{block:'start'}});}},50);}}
+}})();
+</script>
+</body>
+</html>"""
 
 
 # ── CDS 验收中心（默认主路，职责分离：验收能力归 CDS，MAP 走开放协议消费）──
@@ -203,17 +856,19 @@ def run_cds(cfg, a, title, report_id, body, manifest, now, tags=None):
     except Exception as e:
         print(f"  [告警] 文件夹归类失败（报告仍会入库到项目根）：{str(e)[:120]}")
 
-    # 自包含 markdown：截图内联为 data-URI（CDS format=md 前端渲染 + 净化）。
+    # 自包含报告：Markdown 写作源，归档前可转交互 HTML；截图内联 data-URI 后由 CDS 入库时抽资产。
     evid_parts, img_md = [], {}
     for m in manifest:
         with open(m["path"], "rb") as f:
             data = base64.b64encode(f.read()).decode("ascii")
         uri = f"data:image/png;base64,{data}"
-        evid_parts.append(f"**{m['caption']}**\n\n![{m['caption']}]({uri})")
+        evid_parts.append(_with_figure_anchor(m["name"], f"**{m['caption']}**\n\n![{m['caption']}]({uri})"))
         img_md[m["name"]] = f"![{m['caption']}]({uri})"
         print(f"  内联截图 {m['name']} ({os.path.getsize(m['path'])}B)")
     meta = build_meta(report_id, now, "cds", a, "")
-    content = assemble(title, body, "\n\n".join(evid_parts), meta, img_md)
+    content_md = assemble(title, body, "\n\n".join(evid_parts), meta, img_md)
+    fmt = report_format(cfg, "cds")
+    content = build_interactive_html(title, a.verdict, content_md, manifest) if fmt == "html" else content_md
     size = len(content.encode("utf-8"))
     if size > CDS_REPORT_CAP:
         raise RuntimeError(
@@ -221,7 +876,7 @@ def run_cds(cfg, a, title, report_id, body, manifest, now, tags=None):
             "请减少截图数量、或改用 cds/cli/acceptance 的 JPEG 压图取证管线（chromium-canvas 缩放）后重跑。")
 
     payload = {
-        "title": title, "format": "md", "content": content,
+        "title": title, "format": fmt, "content": content,
         "projectId": project_id, "folderId": folder_id,
         "verdict": a.verdict, "tier": a.tier,
     }
@@ -253,7 +908,8 @@ def run_cds(cfg, a, title, report_id, body, manifest, now, tags=None):
     deeplink = f"{base}/reports?" + "&".join(qs)
     print(json.dumps({
         "mode": "cds", "title": title, "report_id": report_id, "cdsReportId": rid,
-        "projectId": project_id, "folderId": folder_id, "verdict": a.verdict, "deeplink": deeplink,
+        "projectId": project_id, "folderId": folder_id, "format": fmt,
+        "verdict": a.verdict, "deeplink": deeplink,
     }, ensure_ascii=False))
     print("\n===== 验收归档完成 · CDS 验收中心 =====")
     print("直达深链（CDS 登录态可达，按项目+文件夹归类）：" + deeplink)
@@ -270,15 +926,18 @@ def run_local(cfg, a, title, report_id, body, manifest, meta, tags=None):
         dst = os.path.join(shot_dir, f"{m['name']}.png")
         shutil.copyfile(m["path"], dst)
         rel = f"./{report_id}/{m['name']}.png"
-        evid_parts.append(f"**{m['caption']}**\n\n![{m['caption']}]({rel})")
+        evid_parts.append(_with_figure_anchor(m["name"], f"**{m['caption']}**\n\n![{m['caption']}]({rel})"))
         img_md[m["name"]] = f"![{m['caption']}]({rel})"
         print(f"  拷贝截图 {m['name']} -> {dst}")
-    content = assemble(title, body, "\n\n".join(evid_parts), meta, img_md)
-    md_path = os.path.join(out_dir, f"{report_id}.md")
-    with open(md_path, "w", encoding="utf-8") as f:
+    content_md = assemble(title, body, "\n\n".join(evid_parts), meta, img_md)
+    fmt = report_format(cfg, "local")
+    content = build_interactive_html(title, a.verdict, content_md, manifest) if fmt == "html" else content_md
+    ext = "html" if fmt == "html" else "md"
+    report_path = os.path.join(out_dir, f"{report_id}.{ext}")
+    with open(report_path, "w", encoding="utf-8") as f:
         f.write(content)
     print(json.dumps({"mode": "local", "title": title, "report_id": report_id,
-                      "reportPath": md_path, "shotsDir": shot_dir}, ensure_ascii=False))
+                      "format": fmt, "reportPath": report_path, "shotsDir": shot_dir}, ensure_ascii=False))
 
 
 def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=None):
@@ -341,7 +1000,10 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
     # - 截图 bytes 随 PUT /content 的 assets[] 一次提交。
     # - 后端负责上传正式资产、重写 Markdown 图片 URL、写 ParsedPrd 与刷新 document 缓存。
     # 这样技能不再猜图片域名，也不会留下 data:image 破图或“上传临时图条目再删除”的中间状态。
-    evidence = "\n\n".join(f"**{m['caption']}**\n\n{{{{IMG:{m['name']}}}}}" for m in manifest)
+    evidence = "\n\n".join(
+        _with_figure_anchor(m["name"], f"**{m['caption']}**\n\n{{{{IMG:{m['name']}}}}}")
+        for m in manifest
+    )
     assets = []
     for m in manifest:
         with open(m["path"], "rb") as f:
@@ -357,7 +1019,7 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
         print(f"  准备一次性图片资产 {m['name']} ({os.path.getsize(m['path'])}B)")
 
     meta = build_meta(report_id, now, imp, a, preview)
-    content = assemble(title, body, evidence, meta)
+    content = assemble(title, body, evidence, meta, manifest_names=[m["name"] for m in manifest])
 
     # metadata：结论可视(前端按 verdict 渲染绿/琥珀/红徽章) + 跨环境同步幂等(reportId 去重)。
     # kind=acceptance-report 让后端模板校验对本次写入"硬卡"(缺项 422 而非软放行)。
@@ -582,6 +1244,66 @@ def _thin_table_cells(body, section_names):
     return hits
 
 
+CDS_PLATFORM_PAT = re.compile(
+    r"(CDS\s*(?:平台|预览|部署|报告|验收中心|分支|branch|网络|路由|proxy|"
+    r"extra-services|self-update|scheduler|smoke)|"
+    r"\bcds/|cdscli|preview routing|branch status|deploy/smoke)",
+    re.I,
+)
+CDS_AGENT_PAT = re.compile(r"(CDS\s*Agent|/cds-agent|CdsAgent)", re.I)
+CDS_AGENT_ALLOWED_PAT = re.compile(
+    r"(CDS\s*Agent\s*(?:专项|工作台|入口|页面|会话|runtime|session|tool-call)|"
+    r"CdsAgent|/cds-agent|InfraAgent|remote-hosts)",
+    re.I,
+)
+CDS_AGENT_BOUNDARY_NEGATED_PAT = re.compile(
+    r"(无关|不相关|非.*证据|不是.*证据|不能.*证明|不.*证明|不作为|不可作为|"
+    r"禁止.*证明|不得.*证明|未通过|不通过|无效证据|"
+    r"弱相关|弱关联|未覆盖|未深测|关联不足|关联性不足|覆盖不足|"
+    r"\bfail\b|\bfailed\b|\binvalid-evidence\b|\bnot-run\b)",
+    re.I,
+)
+CDS_AGENT_EXPLICIT_BOUNDARY_PAT = re.compile(
+    r"(不(?:能)?证明\s*CDS\s*(?:平台|预览|部署|报告|验收中心|分支)|"
+    r"(?:只|仅)证明\s*CDS\s*Agent|CDS\s*Agent.*不(?:能)?证明\s*CDS\s*平台)",
+    re.I,
+)
+CDS_AGENT_POSITIVE_RESULT_CELLS = {"pass", "passed", "done", "完成", "已完成", "通过", "已通过"}
+
+
+def _row_has_positive_result(line):
+    return any(c.strip().lower() in CDS_AGENT_POSITIVE_RESULT_CELLS for c in _split_markdown_table_row(line))
+
+
+def _cds_agent_substitution_hits(body):
+    """Detect rows that use CDS Agent as proof for CDS platform assertions."""
+    hits = []
+    for line in (body or "").splitlines():
+        ls = line.strip()
+        if not ls.startswith("|"):
+            continue
+        platform_probe = CDS_AGENT_EXPLICIT_BOUNDARY_PAT.sub("", ls)
+        if not CDS_PLATFORM_PAT.search(platform_probe) or not CDS_AGENT_PAT.search(ls):
+            continue
+        has_positive_result = _row_has_positive_result(ls)
+        # Failure/irrelevance rows are valid audit evidence: the gate should reject
+        # substituted proof, not block reports from documenting that substitution failed.
+        if not has_positive_result and CDS_AGENT_EXPLICIT_BOUNDARY_PAT.search(ls):
+            continue
+        if not has_positive_result and CDS_AGENT_BOUNDARY_NEGATED_PAT.search(ls):
+            continue
+        # Rows explicitly scoped to CDS Agent are allowed; mixed platform rows are not.
+        if CDS_AGENT_ALLOWED_PAT.search(ls) and not re.search(
+            r"(CDS\s*(?:平台|预览|部署|报告|验收中心|分支|branch|网络|路由|proxy|"
+            r"extra-services|self-update|scheduler|smoke)|cdscli|branch status)",
+            ls,
+            re.I,
+        ):
+            continue
+        hits.append(ls[:160])
+    return hits
+
+
 def validate_inputs(a, body, manifest, cfg=None):
     """返回拒收原因列表（空 = 通过准入）。结构层校验，语义层(Verdict 一致性)由人/工具把关。"""
     errs = []
@@ -681,6 +1403,13 @@ def validate_inputs(a, body, manifest, cfg=None):
         ))
         if thin_hits:
             errs.append("[内容充裕] 每日/昨日报告关键表格含空泛占位单元（同上/见上文/略/按常规/TBD 等），会遮盖遗漏。示例：" + " | ".join(thin_hits[:3]))
+    cds_agent_hits = _cds_agent_substitution_hits(body)
+    if cds_agent_hits:
+        errs.append(
+            "[证据错配] CDS 平台改动不能用 CDS Agent 页面作为通过证据；请拆分 CDS 平台与 CDS Agent 行，"
+            "或补 cdscli/API/deploy/smoke/reports/preview routing 等平台证据。示例："
+            + " | ".join(cds_agent_hits[:3])
+        )
     if "{{EVIDENCE}}" not in body and "{{IMG:" not in body:
         errs.append("[结构] 报告缺截图占位：{{EVIDENCE}}（集中证据段）或 {{IMG:<name>}}（ZZ 逐步配图）至少要有一种")
     if PLACEHOLDER_PAT.search(body):

@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Api.Authentication;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Services;
 using PrdAgent.Api.Services.DefectAgent;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -51,6 +52,7 @@ public class DefectAgentController : ControllerBase
     private readonly IConfiguration _config;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly PrdAgent.Api.Services.DefectAgent.DefectPolishService _polishService;
+    private readonly AdminPushDispatchSignal _adminPushDispatchSignal;
     private static readonly TimeSpan ClientBindingTtl = TimeSpan.FromDays(3);
 
     public DefectAgentController(
@@ -65,7 +67,8 @@ public class DefectAgentController : ControllerBase
         IAgentApiKeyService agentApiKeyService,
         IConfiguration config,
         IHttpClientFactory httpClientFactory,
-        PrdAgent.Api.Services.DefectAgent.DefectPolishService polishService)
+        PrdAgent.Api.Services.DefectAgent.DefectPolishService polishService,
+        AdminPushDispatchSignal adminPushDispatchSignal)
     {
         _db = db;
         _gateway = gateway;
@@ -79,6 +82,7 @@ public class DefectAgentController : ControllerBase
         _config = config;
         _httpClientFactory = httpClientFactory;
         _polishService = polishService;
+        _adminPushDispatchSignal = adminPushDispatchSignal;
     }
 
     private string GetUserId()
@@ -159,6 +163,24 @@ public class DefectAgentController : ControllerBase
         if (!string.IsNullOrEmpty(defect.AssigneeId) && defect.AssigneeId == userId)
             return DefectUnreadBy.Reporter;
         return null;
+    }
+
+    private static List<NotificationAttachment>? BuildNotificationAttachments(DefectReport defect)
+    {
+        if (defect.Attachments.Count == 0) return null;
+
+        var attachments = defect.Attachments
+            .Where(x => !string.IsNullOrWhiteSpace(x.Url))
+            .Select(x => new NotificationAttachment
+            {
+                Name = x.FileName,
+                Url = x.ThumbnailUrl ?? x.Url,
+                SizeBytes = x.FileSize,
+                MimeType = x.MimeType,
+            })
+            .ToList();
+
+        return attachments.Count == 0 ? null : attachments;
     }
 
     private string? GetSessionKey()
@@ -515,6 +537,9 @@ public class DefectAgentController : ControllerBase
         // 权限检查：只能查看自己提交的、分配给自己的，或管理员可查看全部
         if (!isAdmin && defect.ReporterId != userId && defect.AssigneeId != userId)
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限查看此缺陷"));
+
+        // 每用户「最近打开」台账（首页继续上次）
+        await RecentOpenTracker.TouchAsync(_db, userId, "defect-agent", defect.Id);
 
         // 获取对话消息
         var messages = await _db.DefectMessages
@@ -911,10 +936,12 @@ public class DefectAgentController : ControllerBase
                     ActionLabel = "查看详情",
                     ActionUrl = $"/defect-agent?id={defect.Id}",
                     Source = "defect-agent",
+                    Attachments = BuildNotificationAttachments(defect),
                     ExpiresAt = DateTime.UtcNow.AddDays(7)
                 };
 
                 await _db.AdminNotifications.InsertOneAsync(notification, cancellationToken: ct);
+                _adminPushDispatchSignal.NotifyPending();
                 _logger.LogInformation("[{AppKey}] Notification sent to assignee {AssigneeId} for defect {DefectNo}",
                     AppKey, defect.AssigneeId, defect.DefectNo);
             }
@@ -3114,9 +3141,11 @@ public class DefectAgentController : ControllerBase
                 ActionUrl = actionUrl,
                 ActionKind = actionUrl.StartsWith("/", StringComparison.Ordinal) ? "navigate" : "external",
                 Source = "defect-agent",
+                Attachments = BuildNotificationAttachments(defect),
                 ExpiresAt = DateTime.UtcNow.AddDays(14),
             };
             await _db.AdminNotifications.InsertOneAsync(notification, cancellationToken: ct);
+            _adminPushDispatchSignal.NotifyPending();
             notificationCreated = true;
         }
 
@@ -3613,6 +3642,7 @@ public class DefectAgentController : ControllerBase
             ExpiresAt = DateTime.UtcNow.AddDays(7),
         };
         await _db.AdminNotifications.InsertOneAsync(notification, cancellationToken: CancellationToken.None);
+        _adminPushDispatchSignal.NotifyPending();
 
         _logger.LogInformation("[{AppKey}] Fix report submitted: {ReportId} for share {Token}, {Count} items, appId={AppId}",
             AppKey, report.Id, token, report.Items.Count, appId);
@@ -5262,9 +5292,11 @@ public class DefectAgentController : ControllerBase
                 ActionUrl = $"/defect-agent?defectId={item.DefectId}",
                 ActionKind = "navigate",
                 Source = "defect-agent",
+                Attachments = BuildNotificationAttachments(defect),
                 ExpiresAt = DateTime.UtcNow.AddDays(7),
             };
             await _db.AdminNotifications.InsertOneAsync(notification, cancellationToken: CancellationToken.None);
+            _adminPushDispatchSignal.NotifyPending();
 
             // Webhook 通知
             defect.Status = DefectStatus.Resolved;

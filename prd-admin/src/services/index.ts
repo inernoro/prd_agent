@@ -22,6 +22,10 @@ import type {
   GetAdminNotificationsContract,
   HandleAdminNotificationContract,
   HandleAllAdminNotificationsContract,
+  GetAdminPushSubscriptionsContract,
+  UpdateAdminPushProfileContract,
+  UpdateAdminPushSubscriptionContract,
+  TestAdminPushSubscriptionContract,
 } from '@/services/contracts/notifications';
 import type {
   GetUsersContract,
@@ -47,7 +51,7 @@ import type { GetExecutiveOverviewContract, GetExecutiveTrendsContract, GetExecu
 import type { CreatePlatformContract, DeletePlatformContract, GetPlatformsContract, UpdatePlatformContract } from '@/services/contracts/platforms';
 import type { ClearImageGenModelContract, ClearIntentModelContract, ClearVisionModelContract, CreateModelContract, DeleteModelContract, GetModelsContract, SetImageGenModelContract, SetIntentModelContract, SetMainModelContract, SetVisionModelContract, TestModelContract, UpdateModelContract, UpdateModelPrioritiesContract, GetModelAdapterInfoContract, GetModelsAdapterInfoBatchContract, GetAdapterInfoByModelNameContract } from '@/services/contracts/models';
 import type { ActivateLLMConfigContract, CreateLLMConfigContract, DeleteLLMConfigContract, GetLLMConfigsContract, UpdateLLMConfigContract } from '@/services/contracts/llmConfigs';
-import type { GetLlmLogDetailContract, GetLlmLogsContract, GetLlmLogsMetaContract, GetLlmModelStatsContract, GetReplayCurlContract } from '@/services/contracts/llmLogs';
+import type { GetLlmLogDetailContract, GetLlmLogsContract, GetLlmLogsMetaContract, GetLlmModelStatsContract, GetReplayCurlContract, GetLlmLogsTimeseriesContract, GetLlmLogsSessionsContract, GetLlmLogsAppSummaryContract, RestoreLlmLogTextContract } from '@/services/contracts/llmLogs';
 import type { GetTeamActivityEndpointDetailContract, GetTeamActivityExperienceMapContract, GetTeamActivityExperienceTrendContract, GetTeamActivityInsightsContract, GetTeamActivityLogsContract, GetTeamActivityModulesContract, GetTeamActivityStatsContract, InsightToRequirementContract, SetTeamActivityInsightStateContract } from '@/services/contracts/teamActivity';
 import type { GetAdminDocumentContentContract } from '@/services/contracts/adminDocuments';
 import type { ListUploadArtifactsContract } from '@/services/contracts/uploadArtifacts';
@@ -142,6 +146,8 @@ import type {
   ListHomepageAssetsContract,
   UploadHomepageAssetContract,
 } from '@/services/contracts/homepageAssets';
+import type { ListRecentWorkContract } from '@/services/contracts/homeRecentWork';
+export type { RecentWorkItemDto } from '@/services/contracts/homeRecentWork';
 import type {
   DeleteAdminGroupContract,
   DeleteAdminGroupMessagesContract,
@@ -267,6 +273,7 @@ import type {
   UpdateVisualAgentPreferencesContract,
   UpdateLiteraryAgentPreferencesContract,
   UpdateAgentSwitcherPreferencesContract,
+  UpdateHomeLauncherPreferencesContract,
   UpdateDefaultNavLayoutContract,
   ApplyDefaultNavToAllUsersContract,
 } from '@/services/contracts/userPreferences';
@@ -329,7 +336,7 @@ import { getExecutiveOverviewReal, getExecutiveTrendsReal, getExecutiveTeamReal,
 import { createPlatformReal, deletePlatformReal, getPlatformsReal, updatePlatformReal } from '@/services/real/platforms';
 import { clearImageGenModelReal, clearIntentModelReal, clearVisionModelReal, createModelReal, deleteModelReal, getModelsReal, setImageGenModelReal, setIntentModelReal, setMainModelReal, setVisionModelReal, testModelReal, updateModelReal, updateModelPrioritiesReal, getModelAdapterInfoReal, getModelsAdapterInfoBatchReal, getAdapterInfoByModelNameReal } from '@/services/real/models';
 import { activateLLMConfigReal, createLLMConfigReal, deleteLLMConfigReal, getLLMConfigsReal, updateLLMConfigReal } from '@/services/real/llmConfigs';
-import { getLlmLogDetailReal, getLlmLogsMetaReal, getLlmLogsReal, getLlmModelStatsReal, getBatchModelStatsReal, getReplayCurlReal } from '@/services/real/llmLogs';
+import { getLlmLogDetailReal, getLlmLogsMetaReal, getLlmLogsReal, getLlmModelStatsReal, getBatchModelStatsReal, getReplayCurlReal, getLlmLogsTimeseriesReal, getLlmLogsSessionsReal, getLlmLogsAppSummaryReal, restoreLlmLogTextReal } from '@/services/real/llmLogs';
 import { getTeamActivityEndpointDetailReal, getTeamActivityExperienceMapReal, getTeamActivityExperienceTrendReal, getTeamActivityInsightsReal, getTeamActivityLogsReal, getTeamActivityModulesReal, getTeamActivityStatsReal, insightToRequirementReal, setTeamActivityInsightStateReal } from '@/services/real/teamActivity';
 import { getAdminDocumentContentReal } from '@/services/real/adminDocuments';
 import { listUploadArtifactsReal } from '@/services/real/uploadArtifacts';
@@ -464,6 +471,7 @@ import {
   deleteHomepageAsset as deleteHomepageAssetReal,
   getHomepageAssetsPublic as getHomepageAssetsPublicReal,
 } from '@/services/real/homepageAssets';
+import { listRecentWork as listRecentWorkReal } from '@/services/real/homeRecentWork';
 import {
   listLiteraryPromptsReal,
   createLiteraryPromptReal,
@@ -576,6 +584,7 @@ import {
   updateVisualAgentPreferencesReal,
   updateLiteraryAgentPreferencesReal,
   updateAgentSwitcherPreferencesReal,
+  updateHomeLauncherPreferencesReal,
   updateDefaultNavLayoutReal,
   applyDefaultNavToAllUsersReal,
 } from '@/services/real/userPreferences';
@@ -583,6 +592,10 @@ import {
   getAdminNotificationsReal,
   handleAdminNotificationReal,
   handleAllAdminNotificationsReal,
+  getAdminPushSubscriptionsReal,
+  updateAdminPushProfileReal,
+  updateAdminPushSubscriptionReal,
+  testAdminPushSubscriptionReal,
 } from '@/services/real/notifications';
 import type {
   GetMobileFeedContract,
@@ -824,6 +837,10 @@ export const updateUserAuthz: UpdateUserAuthzContract = withAuth(updateUserAuthz
 export const getAdminNotifications: GetAdminNotificationsContract = withAuth(getAdminNotificationsReal);
 export const handleAdminNotification: HandleAdminNotificationContract = withAuth(handleAdminNotificationReal);
 export const handleAllAdminNotifications: HandleAllAdminNotificationsContract = withAuth(handleAllAdminNotificationsReal);
+export const getAdminPushSubscriptions: GetAdminPushSubscriptionsContract = withAuth(getAdminPushSubscriptionsReal);
+export const updateAdminPushProfile: UpdateAdminPushProfileContract = withAuth(updateAdminPushProfileReal);
+export const updateAdminPushSubscription: UpdateAdminPushSubscriptionContract = withAuth(updateAdminPushSubscriptionReal);
+export const testAdminPushSubscription: TestAdminPushSubscriptionContract = withAuth(testAdminPushSubscriptionReal);
 
 export const getUsers: GetUsersContract = withAuth(getUsersReal);
 export { searchDirectoryUsers } from '@/services/real/directory';
@@ -921,6 +938,10 @@ export const getLlmLogsMeta: GetLlmLogsMetaContract = withAuth(getLlmLogsMetaRea
 export const getLlmModelStats: GetLlmModelStatsContract = withAuth(getLlmModelStatsReal);
 export const getBatchModelStats = withAuth(getBatchModelStatsReal);
 export const getReplayCurl: GetReplayCurlContract = withAuth(getReplayCurlReal);
+export const getLlmLogsTimeseries: GetLlmLogsTimeseriesContract = withAuth(getLlmLogsTimeseriesReal);
+export const getLlmLogsSessions: GetLlmLogsSessionsContract = withAuth(getLlmLogsSessionsReal);
+export const getLlmLogsAppSummary: GetLlmLogsAppSummaryContract = withAuth(getLlmLogsAppSummaryReal);
+export const restoreLlmLogText: RestoreLlmLogTextContract = withAuth(restoreLlmLogTextReal);
 export const listUploadArtifacts: ListUploadArtifactsContract = withAuth(listUploadArtifactsReal);
 export const getAdminDocumentContent: GetAdminDocumentContentContract = withAuth(getAdminDocumentContentReal);
 
@@ -992,6 +1013,7 @@ export const listHomepageAssets: ListHomepageAssetsContract = withAuth(listHomep
 export const uploadHomepageAsset: UploadHomepageAssetContract = withAuth(uploadHomepageAssetReal);
 export const deleteHomepageAsset: DeleteHomepageAssetContract = withAuth(deleteHomepageAssetReal);
 export const getHomepageAssetsPublic: GetHomepageAssetsPublicContract = withAuth(getHomepageAssetsPublicReal);
+export const listRecentWork: ListRecentWorkContract = withAuth(listRecentWorkReal);
 
 export const createVisualAgentSession: CreateVisualAgentSessionContract = withAuth(createVisualAgentSessionReal);
 export const listVisualAgentSessions: ListVisualAgentSessionsContract = withAuth(listVisualAgentSessionsReal);
@@ -1313,6 +1335,13 @@ export const getModelGroups = async () => {
   }
   throw new Error(response.error?.message || '获取模型分组失败');
 };
+export const getModelGroupHealthOverview = async (days?: number) => {
+  const response = await modelGroupsService.getModelGroupHealthOverview(days);
+  if (response.success && response.data) {
+    return response.data;
+  }
+  throw new Error(response.error?.message || '获取模型池健康总览失败');
+};
 export const createModelGroup = (data: Parameters<IModelGroupsService['createModelGroup']>[0]) => modelGroupsService.createModelGroup(data);
 export const updateModelGroup = (id: string, data: Parameters<IModelGroupsService['updateModelGroup']>[1]) => modelGroupsService.updateModelGroup(id, data);
 export const deleteModelGroup = (id: string) => modelGroupsService.deleteModelGroup(id);
@@ -1329,13 +1358,6 @@ export const simulateDowngrade = (groupId: string, modelId: string, platformId: 
 export const simulateRecover = (groupId: string, modelId: string, platformId: string, successCount: number) => modelGroupsService.simulateRecover(groupId, modelId, platformId, successCount);
 export const resetModelHealth = (groupId: string, modelId: string) => modelGroupsService.resetModelHealth(groupId, modelId);
 export const resetAllModelsHealth = (groupId: string) => modelGroupsService.resetAllModelsHealth(groupId);
-export const predictNextDispatch = async (groupId: string) => {
-  const response = await modelGroupsService.predictNextDispatch(groupId);
-  if (response.success && response.data) {
-    return response.data;
-  }
-  throw new Error(response.error?.message || '获取调度预测失败');
-};
 
 export const getAppCallers = async () => {
   const response = await appCallersService.getAppCallers(1, 500);
@@ -1364,6 +1386,7 @@ export const updateThemeConfig: UpdateThemeConfigContract = withAuth(updateTheme
 export const updateVisualAgentPreferences: UpdateVisualAgentPreferencesContract = withAuth(updateVisualAgentPreferencesReal);
 export const updateLiteraryAgentPreferences: UpdateLiteraryAgentPreferencesContract = withAuth(updateLiteraryAgentPreferencesReal);
 export const updateAgentSwitcherPreferences: UpdateAgentSwitcherPreferencesContract = withAuth(updateAgentSwitcherPreferencesReal);
+export const updateHomeLauncherPreferences: UpdateHomeLauncherPreferencesContract = withAuth(updateHomeLauncherPreferencesReal);
 export const updateDefaultNavLayout: UpdateDefaultNavLayoutContract = withAuth(updateDefaultNavLayoutReal);
 export const applyDefaultNavToAllUsers: ApplyDefaultNavToAllUsersContract = withAuth(applyDefaultNavToAllUsersReal);
 
@@ -2241,6 +2264,30 @@ export type {
   CcasQaRequest,
   CcasQaReferencePayload,
 } from '@/services/real/ccasAgent';
+
+// ── Email Agent 邮件模板智能体 ──
+export {
+  getEmailAgentMeta,
+  listEmailTemplates,
+  getEmailTemplate,
+  createEmailTemplate,
+  updateEmailTemplate,
+  deleteEmailTemplate,
+  duplicateEmailTemplate,
+  markEmailTemplateUsed,
+  EMAIL_DRAFT_STREAM_URL,
+  EMAIL_POLISH_STREAM_URL,
+} from '@/services/real/emailAgent';
+export type {
+  EmailTemplate,
+  EmailRecipient,
+  EmailTemplateVariable,
+  EmailCategoryOption,
+  EmailAgentMeta,
+  UpsertEmailTemplateInput,
+  EmailDraftRequest,
+  EmailPolishRequest,
+} from '@/services/real/emailAgent';
 
 // ── Shitu Agent 识途（新人文化与制度问答）──
 export {

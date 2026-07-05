@@ -9,6 +9,9 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="8.0.11" />
+    <!-- in-process TestServer（GatewayKeyGateContractTests 无 socket 跑密钥门 401 契约，CI 常驻）。
+         Mvc.Testing 已传递引用它，此处显式钉版本，避免扩展方法 UseTestServer/GetTestClient 解析漂移。 -->
+    <PackageReference Include="Microsoft.AspNetCore.TestHost" Version="8.0.11" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageReference Include="Moq" Version="4.20.72" />
     <PackageReference Include="Shouldly" Version="4.3.0" />
@@ -23,10 +26,22 @@
     </PackageReference>
   </ItemGroup>
 
+  <!-- 集成自测需起 WebApplication/Kestrel host 住 serving 网关端点 -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <!-- 数据驱动矩阵 cell 目录（scripts/gen-gw-matrix-report.py 生成，B/C 层 [Theory] 读它真跑） -->
+  <ItemGroup>
+    <None Include="Gateway/fixtures/*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\src\PrdAgent.Api\PrdAgent.Api.csproj" />
     <ProjectReference Include="..\..\src\PrdAgent.Core\PrdAgent.Core.csproj" />
     <ProjectReference Include="..\..\src\PrdAgent.Infrastructure\PrdAgent.Infrastructure.csproj" />
+    <!-- serving 网关端点扩展（MapGatewayServingEndpoints）+ DTO，自测复用同一份映射 -->
+    <ProjectReference Include="..\..\src\PrdAgent.LlmGateway\PrdAgent.LlmGateway.csproj" />
   </ItemGroup>
 
 </Project>

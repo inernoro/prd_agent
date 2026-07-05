@@ -143,6 +143,8 @@ internal class ClaudeMessage
 internal class ClaudeDelta
 {
     public string? Text { get; set; }
+    /// <summary>message_delta 事件携带的 stop_reason（end_turn / max_tokens / tool_use 等）。</summary>
+    public string? StopReason { get; set; }
 }
 
 /// <summary>
@@ -231,6 +233,8 @@ internal class OpenAIStreamEvent
 internal class OpenAIChoice
 {
     public OpenAIDelta? Delta { get; set; }
+    /// <summary>完成原因 finish_reason（stop / length / tool_calls 等），仅末个 chunk 带值。</summary>
+    public string? FinishReason { get; set; }
 }
 
 /// <summary>

@@ -101,6 +101,13 @@ public sealed class LlmRequestLogBackground
             thinkingText = thinkingText[..answerMaxChars] + "...[TRUNCATED]";
         }
 
+        // 函数调用 JSON 同样截断保护
+        var toolCalls = done.ResponseToolCalls;
+        if (!string.IsNullOrEmpty(toolCalls) && toolCalls.Length > answerMaxChars)
+        {
+            toolCalls = toolCalls[..answerMaxChars] + "...[TRUNCATED]";
+        }
+
         var update = Builders<LlmRequestLog>.Update
             .Set(l => l.StatusCode, done.StatusCode)
             .Set(l => l.ResponseHeaders, done.ResponseHeaders)
@@ -118,8 +125,13 @@ public sealed class LlmRequestLogBackground
             .Set(l => l.AssembledTextHash, done.AssembledTextHash)
             .Set(l => l.Status, done.Status)
             .Set(l => l.EndedAt, done.EndedAt)
-            .Set(l => l.DurationMs, done.DurationMs);
+            .Set(l => l.DurationMs, done.DurationMs)
+            .Set(l => l.ResponseToolCalls, toolCalls)
+            .Set(l => l.ToolCallCount, done.ToolCallCount)
+            .Set(l => l.FinishReason, done.FinishReason);
 
+        // blackhole 占位记录由 LlmRequestLogWriter.StartAsync 失败路径返回 null 保护——logId 永不复用，
+        // 故这里无需再按 Status 过滤；按主键直接更新即可。
         return _db.LlmRequestLogs.UpdateOneAsync(l => l.Id == logId, update);
     }
 
@@ -133,6 +145,7 @@ public sealed class LlmRequestLogBackground
             .Set(l => l.Status, "failed")
             .Set(l => l.EndedAt, DateTime.UtcNow);
 
+        // 同上：blackhole 占位记录的 logId 不会被复用（StartAsync 失败返回 null），按主键直接更新即可。
         return _db.LlmRequestLogs.UpdateOneAsync(l => l.Id == logId, update);
     }
 

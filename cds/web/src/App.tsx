@@ -3,6 +3,9 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { reportDashboardRenderError } from '@/lib/client-diagnostics';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
+// ConsoleLayout 故意走静态 import:外壳(侧栏/命令面板/全局徽章)进入口 chunk,
+// 首次进控制台立即渲染 chrome,只有页面内容走 lazy —— 这是"切页不卡"的另一半。
+import { ConsoleLayout } from '@/components/layout/AppShell';
 
 const AgentRequestsPage = lazy(() => import('@/pages/AgentRequestsPage').then((m) => ({ default: m.AgentRequestsPage })));
 const BranchDetailPage = lazy(() => import('@/pages/BranchDetailPage').then((m) => ({ default: m.BranchDetailPage })));
@@ -238,25 +241,32 @@ function shouldAutoReloadAfterChunkFailure(): boolean {
 export function App(): JSX.Element {
   return (
     <DashboardErrorBoundary>
-      <BrowserRouter>
+      {/* v7_startTransition:路由切换包进 React startTransition —— 懒加载 chunk
+          就绪前保留上一页(不闪骨架),就绪后一次性切换,消除切页卡顿感。 */}
+      <BrowserRouter future={{ v7_startTransition: true }}>
         <Suspense fallback={<RouteFallback />}>
           <Routes>
+            {/* 独立页面:营销首页 / 登录 / 预览过渡 / 基建演示,不带控制台外壳。 */}
             <Route path="/" element={<HomePage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/preview-preparing" element={<PreviewPreparingPage />} />
             <Route path="/hello" element={<HelloPage />} />
-            <Route path="/cds-settings" element={<CdsSettingsPage />} />
-            <Route path="/project-list" element={<ProjectListPage />} />
-            <Route path="/branches/:projectId" element={<BranchListPage />} />
-            <Route path="/branch-list" element={<BranchListPage />} />
-            <Route path="/branch-panel" element={<BranchDetailPage />} />
-            <Route path="/branch-panel/:branchId" element={<BranchDetailPage />} />
-            <Route path="/branch-topology" element={<BranchTopologyPage />} />
-            <Route path="/release-center" element={<ReleaseCenterPage />} />
-            <Route path="/reports" element={<ReportsPage />} />
-            <Route path="/task-schedule" element={<TaskSchedulePage />} />
-            <Route path="/settings/:projectId" element={<ProjectSettingsPage />} />
-            <Route path="/agent-requests/:projectId" element={<AgentRequestsPage />} />
+            {/* 控制台页面:共享持久化外壳(ConsoleLayout),切页只换 Outlet 内容,
+                侧栏/命令面板/全局浮层永不卸载 —— 布局归一 + 切页流畅的架构保证。 */}
+            <Route element={<ConsoleLayout />}>
+              <Route path="/cds-settings" element={<CdsSettingsPage />} />
+              <Route path="/project-list" element={<ProjectListPage />} />
+              <Route path="/branches/:projectId" element={<BranchListPage />} />
+              <Route path="/branch-list" element={<BranchListPage />} />
+              <Route path="/branch-panel" element={<BranchDetailPage />} />
+              <Route path="/branch-panel/:branchId" element={<BranchDetailPage />} />
+              <Route path="/branch-topology" element={<BranchTopologyPage />} />
+              <Route path="/release-center" element={<ReleaseCenterPage />} />
+              <Route path="/reports" element={<ReportsPage />} />
+              <Route path="/task-schedule" element={<TaskSchedulePage />} />
+              <Route path="/settings/:projectId" element={<ProjectSettingsPage />} />
+              <Route path="/agent-requests/:projectId" element={<AgentRequestsPage />} />
+            </Route>
             <Route path="*" element={<Navigate to="/project-list" replace />} />
           </Routes>
         </Suspense>

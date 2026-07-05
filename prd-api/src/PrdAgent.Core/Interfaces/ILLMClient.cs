@@ -41,6 +41,13 @@ public class LLMAttachment
     public string Url { get; set; } = string.Empty;
     public string? MimeType { get; set; }
     public string? Base64Data { get; set; }
+
+    /// <summary>
+    /// 视觉细节档位（对应 OpenAI 多模态 image_url.detail："high" / "low" / "auto"）。
+    /// null 时 Gateway 默认按 "high" 发送——避免识图被上游默认 "auto" 降级到低保真
+    /// （小目标/远处文字识别不准的根因）。帧抽取等大批量低保真场景可显式传 "low"。
+    /// </summary>
+    public string? Detail { get; set; }
 }
 
 /// <summary>

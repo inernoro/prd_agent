@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 
@@ -21,7 +21,7 @@ interface TabBarProps {
   onChange?: (key: string) => void;
   /** 右侧操作按钮 */
   actions?: React.ReactNode;
-  variant?: 'default' | 'gold';
+  variant?: 'default' | 'gold' | 'plain';
 }
 
 export function TabBar({ title, icon, items, activeKey, onChange, actions, variant = 'default' }: TabBarProps) {
@@ -29,6 +29,7 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
   const [internalKey, setInternalKey] = useState(items?.[0]?.key ?? '');
   const currentKey = activeKey ?? internalKey;
   const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0, opacity: 0 });
+  const tabsRef = useRef<HTMLDivElement | null>(null);
   const buttonsRef = useRef<Map<string, HTMLButtonElement>>(new Map());
   const [isReady, setIsReady] = useState(false);
 
@@ -41,23 +42,24 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
   const hasTabs = items && items.length > 0;
 
   // 更新滑块位置
-  const updateIndicator = () => {
+  const updateIndicator = useCallback(() => {
     if (!hasTabs) return;
     const activeButton = buttonsRef.current.get(currentKey);
-    if (activeButton) {
-      const container = activeButton.parentElement;
-      if (container) {
-        const containerRect = container.getBoundingClientRect();
-        const buttonRect = activeButton.getBoundingClientRect();
-        setIndicatorStyle({
-          left: buttonRect.left - containerRect.left,
-          width: buttonRect.width,
-          opacity: 1,
-        });
-        if (!isReady) setIsReady(true);
+    const tabs = tabsRef.current;
+    if (activeButton && tabs) {
+      if (isMobile) {
+        activeButton.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'auto' });
       }
+      const buttonRect = activeButton.getBoundingClientRect();
+      const tabsRect = tabs.getBoundingClientRect();
+      setIndicatorStyle({
+        left: tabs.scrollLeft + buttonRect.left - tabsRect.left,
+        width: activeButton.offsetWidth,
+        opacity: 1,
+      });
+      setIsReady(true);
     }
-  };
+  }, [currentKey, hasTabs, isMobile]);
 
   // 初始化和 currentKey 变化时更新
   useEffect(() => {
@@ -66,7 +68,7 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
       updateIndicator();
     });
     return () => cancelAnimationFrame(raf);
-  }, [currentKey, items, hasTabs]);
+  }, [items, updateIndicator]);
 
   // 监听字体加载完成后重新计算
   useEffect(() => {
@@ -76,7 +78,7 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
         requestAnimationFrame(updateIndicator);
       });
     }
-  }, [hasTabs]);
+  }, [hasTabs, updateIndicator]);
 
   return (
     <div
@@ -86,7 +88,7 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
       <div className="surface-nav-content">
         {/* 左侧：标题或切换栏 */}
         {hasTabs ? (
-          <div className="surface-nav-tabs">
+          <div ref={tabsRef} className="surface-nav-tabs" onScroll={updateIndicator}>
             <div
               className="surface-nav-indicator"
               data-ready={isReady}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ChevronDown, ChevronRight, Copy, GitBranch, Loader2, RefreshCw, RotateCw } from 'lucide-react';
+import { AlertTriangle, Copy, GitBranch, Network, RefreshCw, RotateCw } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
@@ -78,12 +78,12 @@ interface SelfUpdateRecord {
    *               改了依赖/Dockerfile/tsconfig/.env/路由表/types schema 等。
    *  noOp       = HEAD 已是 .build-sha 的版本,啥都没做(~3s)
    */
-  updateMode?: 'hot-reload' | 'restart' | 'noOp' | 'web-only' | 'doc-only';
+  updateMode?: 'hot-reload' | 'restart' | 'noOp' | 'web-only' | 'doc-only' | 'prebuilt';
   noOp?: boolean;
   /** 完整 SSE 步骤序列。/api/self-status 默认 slim payload 不带这个字段,
    *  改用 stepsCount 作为前端"是否有日志可展开"的提示;真展开时通过
    *  /api/self-update-history?limit=N 拿完整数据。 */
-  steps?: Array<{ ts: string; level: 'info' | 'warning' | 'error'; text: string }>;
+  steps?: SelfUpdateStep[];
   /** /api/self-status slim 模式下返回:本 record 完整 SSE 步骤行数。前端
    *  据此显示「完整步骤(N 行)」按钮 + 用户点开时再 lazy fetch /api/self-update-history。 */
   stepsCount?: number;
@@ -91,6 +91,10 @@ interface SelfUpdateRecord {
    *  历史一直存在,但前端类型漏 → 渲染丢失。用户反馈"可观测性不强"的根因。 */
   timings?: SelfUpdateTimings;
 }
+
+type SelfUpdateStep =
+  | { ts?: string; level?: 'info' | 'warning' | 'error'; text?: string }
+  | string;
 
 interface SystemdUnitDrift {
   repoHash: string;
@@ -153,6 +157,46 @@ type BranchState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
   | { status: 'ok'; data: SelfBranchesResponse };
+
+interface DockerNetworkHealthResponse {
+  ok: boolean;
+  timestamp: string;
+  error?: string;
+  counts?: {
+    totalDockerNetworks: number;
+    branchNetworks: number;
+    projectNetworks: number;
+    emptyBranchNetworks: number;
+    stoppedOnlyBranchNetworks: number;
+    runningBranchNetworks: number;
+    unknownBranchNetworks: number;
+    stoppedOnlyContainers: number;
+  };
+  softLimit?: {
+    userDefinedBridgeNetworks: number;
+    source: string;
+  };
+  risk?: {
+    level: 'ok' | 'warn' | 'critical';
+    title: string;
+    message: string;
+  };
+  cleanupCandidates?: {
+    empty: string[];
+    stoppedOnly: Array<{ name: string; containers: number }>;
+  };
+  runningNetworks?: string[];
+  unknownNetworks?: string[];
+  suggestedDaemonJson?: {
+    defaultAddressPools: Array<{ base: string; size: number }>;
+    note: string;
+  };
+}
+
+type DockerNetworkHealthState =
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'ok'; data: DockerNetworkHealthResponse };
 
 type UpdateRunState = 'idle' | 'running' | 'success' | 'error';
 
@@ -402,9 +446,10 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     : 0;
   // 2026-05-04 新增:CDS 自更新可见性面板状态(用户:"我不清楚是否有自动更新")
   const [selfStatus, setSelfStatus] = useState<SelfStatusState>({ status: 'loading' });
+  const [networkHealth, setNetworkHealth] = useState<DockerNetworkHealthState>({ status: 'loading' });
   // 2026-05-28 删除 historyOpen — 列表常驻显示在面板下方,不再走 Dialog
 
-  // ⚠ 2026-05-06 用户反馈"中间没更新左下角在动" — server-authority 同步:
+  // 2026-05-06 用户反馈"中间没更新左下角在动" — server-authority 同步:
   // 检测到 backend 有 in-progress self-update(可能是别 session/webhook 触发),
   // 自动设 runState='running'。本地 click 也走这条 — useEffect 不会冲突,
   // 因为 activeSelfUpdate 真存在时不会回退到 idle。
@@ -563,6 +608,20 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     }
   }, []);
 
+  const loadNetworkHealth = useCallback(async () => {
+    setNetworkHealth({ status: 'loading' });
+    try {
+      const data = await apiRequest<DockerNetworkHealthResponse>('/api/cds-system/docker-networks');
+      if (!data.ok) {
+        setNetworkHealth({ status: 'error', message: data.error || 'Docker 网络健康检查失败' });
+        return;
+      }
+      setNetworkHealth({ status: 'ok', data });
+    } catch (err) {
+      setNetworkHealth({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+    }
+  }, []);
+
   // 2026-05-28 重构:不再独立轮询 /api/self-status?probe=remote。改为订阅
   // useCdsEvents store 的 self.status 事件。任何 tab/webhook 触发的自更新都会
   // 经由 cds-events bus 实时推过来,远比 30s 轮询新鲜。窗口事件
@@ -573,6 +632,10 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   useEffect(() => {
     void loadBranches();
   }, [loadBranches]);
+
+  useEffect(() => {
+    void loadNetworkHealth();
+  }, [loadNetworkHealth]);
 
   // snapshot → selfStatus 同步;degraded 时保留旧值显示
   useEffect(() => {
@@ -769,7 +832,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
 
   return (
     <div className="space-y-8">
-      <Section title="CDS 更新" description="拉取最新代码,自动校验依赖与编译,通过后重启 CDS。失败时旧版本继续运行,不会让服务下线。">
+      <Section title="CDS 更新" description="拉取最新代码后按影响范围选择极速版、零停机、热路径或源码构建。失败时旧版本继续运行,不会让服务下线。">
         <div className="space-y-5">
           <SelfUpdateStatusPanel
             state={selfStatus}
@@ -784,11 +847,11 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <GitBranch className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm font-medium">当前分支</span>
+                      <span className="text-sm font-medium">更新控制</span>
                       <CodePill>{branchState.data.current || '-'}</CodePill>
                     </div>
-                    <div className="mt-2 text-sm leading-6 text-muted-foreground">
-                      选择目标分支后更新；默认使用当前分支。
+                    <div className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
+                      选择目标分支后更新；默认使用当前分支。若目标 SHA 有 CI 预构建产物，应走极速版路径，跳过本机编译；否则按影响范围自动选择零停机、热路径或源码构建。
                     </div>
                   </div>
                   <Button type="button" variant="outline" onClick={() => void loadBranches()}>
@@ -938,7 +1001,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                     onConfirm={() => runSelfUpdate('/api/self-update', '更新')}
                     trigger={
                       <Button type="button" disabled={runState === 'running'}>
-                        {runState === 'running' ? <Loader2 className="animate-spin" /> : <RotateCw />}
+                        {runState === 'running' ? <RefreshCw className="animate-spin" /> : <RotateCw />}
                         更新
                       </Button>
                     }
@@ -992,6 +1055,17 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
         </div>
       </Section>
 
+      {/* 2026-05-28 改:历史列表常驻显示在面板下方,不再藏到 Dialog 后面。
+          用户反馈"按钮不够明显 + 弹窗内看一眼被闪掉"。
+          2026-06-30 改:历史紧跟更新控制,避免在当前状态和历史记录之间被危险操作隔开。 */}
+      <Section title="自更新历史" description="最近 20 条记录,倒序(最新在前)。每次触发 self-update / force-sync 都会写入。">
+        <SelfUpdateHistoryList historyState={selfHistoryState} onManualRefresh={refreshSelfHistory} />
+      </Section>
+
+      <Section title="Docker 网络容量" description="分支隔离网络占用、可清理候选与 address pool 风险。">
+        <DockerNetworkHealthPanel state={networkHealth} onRefresh={loadNetworkHealth} />
+      </Section>
+
       <DisclosurePanel title="危险操作" subtitle="影响所有项目的不可逆操作" tone="danger">
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
@@ -1018,12 +1092,6 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
           </DialogContent>
         </Dialog>
       </DisclosurePanel>
-
-      {/* 2026-05-28 改:历史列表常驻显示在面板下方,不再藏到 Dialog 后面。
-          用户反馈"按钮不够明显 + 弹窗内看一眼被闪掉"。 */}
-      <Section title="自更新历史" description="最近 20 条记录,倒序(最新在前)。每次触发 self-update / force-sync 都会写入。">
-        <SelfUpdateHistoryList historyState={selfHistoryState} onManualRefresh={refreshSelfHistory} />
-      </Section>
     </div>
   );
 }
@@ -1036,6 +1104,167 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
 //   2. 上次系统更新发生在什么时候,谁触发的,成功还是失败?
 //   3. 历史:最近 20 次更新流水
 // ──────────────────────────────────────────────────────────────────────────
+
+function DockerNetworkHealthPanel({
+  state,
+  onRefresh,
+}: {
+  state: DockerNetworkHealthState;
+  onRefresh: () => void | Promise<void>;
+}): JSX.Element {
+  if (state.status === 'loading') {
+    return <LoadingBlock label="检查 Docker 分支网络容量" />;
+  }
+  if (state.status === 'error') {
+    return (
+      <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
+        <div className="flex flex-wrap items-center gap-2 text-amber-700 dark:text-amber-300">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span className="min-w-0 flex-1">读取 Docker 网络状态失败:{state.message}</span>
+          <Button type="button" size="sm" variant="outline" onClick={() => void onRefresh()}>
+            <RefreshCw />
+            重试
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  const data = state.data;
+  const counts = data.counts;
+  const cleanup = data.cleanupCandidates;
+  const risk = data.risk;
+  const daemonJson = data.suggestedDaemonJson
+    ? JSON.stringify({ 'default-address-pools': data.suggestedDaemonJson.defaultAddressPools }, null, 2)
+    : '';
+  const emptyNetworks = cleanup?.empty ?? [];
+  const stoppedNetworks = cleanup?.stoppedOnly ?? [];
+  const cleanupCount = emptyNetworks.length + stoppedNetworks.length;
+  const riskClass = risk?.level === 'critical'
+    ? 'border-destructive/40 bg-destructive/10 text-destructive'
+    : risk?.level === 'warn'
+      ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+      : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300';
+
+  return (
+    <div className="space-y-4 rounded-md border border-border bg-card px-4 py-4">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <Network className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm font-medium">分支网络健康</span>
+            {risk ? (
+              <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs ${riskClass}`}>
+                {risk.title}
+              </span>
+            ) : null}
+          </div>
+          <div className="mt-2 max-w-4xl text-sm leading-6 text-muted-foreground">
+            {risk?.message || '当前没有可用的风险结论。'}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            检查时间 {formatAbsoluteTime(data.timestamp)}
+            {data.softLimit ? ` · 经验阈值 ${data.softLimit.userDefinedBridgeNetworks} 个 bridge 网络` : ''}
+          </div>
+        </div>
+        <Button type="button" variant="outline" onClick={() => void onRefresh()}>
+          <RefreshCw />
+          刷新网络
+        </Button>
+      </div>
+
+      {counts ? (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <DockerNetworkMetric label="分支网" value={counts.branchNetworks} hint={`Docker 网络总数 ${counts.totalDockerNetworks}`} />
+          <DockerNetworkMetric label="运行中" value={counts.runningBranchNetworks} hint="至少有 1 个运行容器" />
+          <DockerNetworkMetric label="空网络" value={counts.emptyBranchNetworks} hint="可优先清理" tone={counts.emptyBranchNetworks > 0 ? 'warn' : 'default'} />
+          <DockerNetworkMetric label="停止容器网" value={counts.stoppedOnlyBranchNetworks} hint={`${counts.stoppedOnlyContainers} 个停止容器`} tone={counts.stoppedOnlyBranchNetworks > 0 ? 'warn' : 'default'} />
+          <DockerNetworkMetric label="项目网" value={counts.projectNetworks} hint="共享 infra 网络" />
+        </div>
+      ) : null}
+
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_440px]">
+        <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-sm font-medium">可清理候选</div>
+            <span className="text-xs text-muted-foreground">{cleanupCount} 个候选</span>
+          </div>
+          {cleanupCount === 0 ? (
+            <div className="mt-3 text-sm text-muted-foreground">
+              当前没有空分支网络，也没有只挂停止容器的分支网络。此时不要合并所有分支到同一个裸 Docker 网络，否则服务别名会跨分支冲突。
+            </div>
+          ) : (
+            <div className="mt-3 space-y-3 text-sm">
+              {emptyNetworks.length > 0 ? (
+                <div>
+                  <div className="mb-1.5 text-xs font-medium text-muted-foreground">空网络</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {emptyNetworks.slice(0, 12).map((name) => <CodePill key={name}>{name}</CodePill>)}
+                    {emptyNetworks.length > 12 ? <span className="text-xs text-muted-foreground">还有 {emptyNetworks.length - 12} 个</span> : null}
+                  </div>
+                </div>
+              ) : null}
+              {stoppedNetworks.length > 0 ? (
+                <div>
+                  <div className="mb-1.5 text-xs font-medium text-muted-foreground">只挂停止容器的网络</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {stoppedNetworks.slice(0, 12).map((item) => (
+                      <CodePill key={item.name}>{item.name} · {item.containers}</CodePill>
+                    ))}
+                    {stoppedNetworks.length > 12 ? <span className="text-xs text-muted-foreground">还有 {stoppedNetworks.length - 12} 个</span> : null}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          )}
+          {(data.unknownNetworks?.length ?? 0) > 0 ? (
+            <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+              有 {data.unknownNetworks?.length} 个网络无法确认容器状态，清理前需要先人工核对 Docker inspect 输出。
+            </div>
+          ) : null}
+        </div>
+
+        <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-3">
+          <div className="text-sm font-medium">地址池扩容模板</div>
+          <div className="mt-1 text-xs leading-5 text-muted-foreground">
+            扩大地址池是短期最稳的容量方案，但需要改 Docker daemon 配置并重启 Docker。重启会中断当前容器，应放在低峰窗口执行。
+          </div>
+          {daemonJson ? (
+            <pre className="mt-3 max-h-48 overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-background px-3 py-2 font-mono text-xs leading-5 text-muted-foreground">
+              {daemonJson}
+            </pre>
+          ) : null}
+          {data.suggestedDaemonJson?.note ? (
+            <div className="mt-2 text-xs leading-5 text-muted-foreground">{data.suggestedDaemonJson.note}</div>
+          ) : null}
+          {data.softLimit?.source ? (
+            <div className="mt-2 text-xs leading-5 text-muted-foreground">{data.softLimit.source}</div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DockerNetworkMetric({
+  label,
+  value,
+  hint,
+  tone = 'default',
+}: {
+  label: string;
+  value: number;
+  hint: string;
+  tone?: 'default' | 'warn';
+}): JSX.Element {
+  return (
+    <div className={`rounded-md border px-3 py-2 ${tone === 'warn' ? 'border-amber-500/30 bg-amber-500/10' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]'}`}>
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="mt-1 font-mono text-xl font-semibold">{value}</div>
+      <div className="mt-1 text-xs text-muted-foreground">{hint}</div>
+    </div>
+  );
+}
 
 function SelfUpdateStatusPanel({
   state,
@@ -1071,6 +1300,14 @@ function SelfUpdateStatusPanel({
   const remoteAheadCount = Number.isFinite(data.remoteAheadCount) ? data.remoteAheadCount : 0;
   const localAheadCount = Number.isFinite(data.localAheadCount) ? data.localAheadCount : 0;
   const headSha = data.headSha || '';
+  const lastHistorySha = data.lastSelfUpdate?.toSha || '';
+  const historyMatchesHead =
+    !headSha ||
+    !lastHistorySha ||
+    headSha === lastHistorySha ||
+    headSha.startsWith(lastHistorySha) ||
+    lastHistorySha.startsWith(headSha);
+  const showHistoryGap = !!data.lastSelfUpdate && !data.activeSelfUpdate && !historyMatchesHead;
   const aheadColor =
     remoteAheadCount === 0
       ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
@@ -1083,7 +1320,7 @@ function SelfUpdateStatusPanel({
         <CodePill>{headSha || '-'}</CodePill>
         {data.headIso ? (
           <span className="text-xs text-muted-foreground" title={formatAbsoluteTime(data.headIso)}>
-            代码更新于 {formatRelativeTime(data.headIso)}
+            当前提交时间 {formatRelativeTime(data.headIso)}
           </span>
         ) : null}
         <span className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs ${aheadColor}`}>
@@ -1135,6 +1372,21 @@ function SelfUpdateStatusPanel({
           </Button>
         </div>
       </div>
+
+      {showHistoryGap ? (
+        <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-xs">
+          <div className="flex items-center gap-2 font-medium text-destructive">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            <span>历史记录可能不完整</span>
+          </div>
+          <div className="mt-1 leading-5 text-muted-foreground">
+            当前 HEAD 是 <CodePill>{headSha}</CodePill>，最后一条历史只记录到 <CodePill>{lastHistorySha || '-'}</CodePill>。
+            常见原因是 self-update 成功后，重启前状态 flush 失败。请查看 server event 中的
+            <span className="mx-1 font-mono text-foreground">self-update.state-flush-failed</span>
+            或右侧历史详情的缺失记录。
+          </div>
+        </div>
+      ) : null}
 
       {/* 远端领先时,展开显示前 5 条新 commit subject 让用户秒判断「值不值得更新」 */}
       {data.fetchOk && remoteAheadCount > 0 && remoteAheadSubjects.length > 0 ? (
@@ -1206,8 +1458,7 @@ function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
   historyState: HistoryFetchState;
   onManualRefresh: () => void;
 }): JSX.Element {
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const toggle = (key: string): void => setExpanded((cur) => ({ ...cur, [key]: !cur[key] }));
+  const [selectedKey, setSelectedKey] = useState<string>('');
   const manualRefresh = onManualRefresh;
 
   if (historyState.status === 'loading') {
@@ -1225,141 +1476,172 @@ function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
       <div className="py-8 text-center text-sm text-muted-foreground">尚无历史</div>
     );
   }
+  const recordKey = (rec: SelfUpdateRecord, idx: number): string => `${rec.ts}-${rec.fromSha}-${rec.toSha}-${idx}`;
   const stats = summariseHistory(historyState.records);
+  const activeKey = selectedKey || recordKey(historyState.records[0], 0);
+  const selected =
+    historyState.records.find((rec, idx) => recordKey(rec, idx) === activeKey) ||
+    historyState.records[0];
+  const selectedSteps = Array.isArray(selected.steps) ? selected.steps : [];
   return (
-    <div className="max-h-[70vh] overflow-y-auto" style={{ overscrollBehavior: 'contain', minHeight: 0 }}>
-      <div className="flex items-center justify-end pb-2">
-        <Button type="button" variant="ghost" size="sm" onClick={manualRefresh}>
-          <RefreshCw className="h-3 w-3" /> 刷新
+    <div className="space-y-3">
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+        <SelfUpdateHistoryStats stats={stats} />
+        <Button type="button" variant="outline" size="sm" onClick={manualRefresh} className="shrink-0">
+          <RefreshCw className="h-3.5 w-3.5" /> 刷新历史
         </Button>
       </div>
-      <SelfUpdateHistoryStats stats={stats} />
-      <ul className="divide-y divide-[hsl(var(--hairline))]">
-        {historyState.records.map((rec, idx) => (
-          <li key={`${rec.ts}-${idx}`} className="flex flex-col gap-1 py-3 text-sm">
+      <div className="flex min-h-0 flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,1fr)_390px]">
+        <div className="min-w-0 overflow-hidden rounded-md border border-border bg-card">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-[hsl(var(--surface-raised))] px-3 py-2">
+            <div className="text-sm font-medium">历史记录</div>
+            <div className="text-xs text-muted-foreground">点击一行查看完整日志和阶段耗时</div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-[980px] text-sm">
+              <thead className="bg-[hsl(var(--surface-raised))] text-xs text-muted-foreground">
+                <tr className="border-b border-border">
+                  <th className="px-3 py-2 text-left font-medium">时间</th>
+                  <th className="px-3 py-2 text-left font-medium">结果</th>
+                  <th className="px-3 py-2 text-left font-medium">模式</th>
+                  <th className="px-3 py-2 text-left font-medium">触发</th>
+                  <th className="px-3 py-2 text-left font-medium">分支</th>
+                  <th className="px-3 py-2 text-left font-medium">版本</th>
+                  <th className="px-3 py-2 text-left font-medium">耗时</th>
+                  <th className="px-3 py-2 text-left font-medium">日志</th>
+                </tr>
+              </thead>
+              <tbody>
+                {historyState.records.map((rec, idx) => {
+                  const key = recordKey(rec, idx);
+                  const active = key === activeKey;
+                  const mode = rec.updateMode || (rec.noOp ? 'noOp' : undefined);
+                  const stepsLen = Array.isArray(rec.steps) ? rec.steps.length : (rec.stepsCount ?? 0);
+                  return (
+                    <tr
+                      key={key}
+                      className={`border-b border-border last:border-b-0 ${active ? 'bg-[hsl(var(--surface-sunken))]' : 'hover:bg-[hsl(var(--surface-sunken))]/70'}`}
+                    >
+                      <td className="px-3 py-2 align-middle">
+                        <button type="button" className="block w-full text-left" onClick={() => setSelectedKey(key)}>
+                          <div className="font-medium">{formatAbsoluteTime(rec.ts)}</div>
+                          <div className="text-xs text-muted-foreground">{formatRelativeTime(rec.ts)}</div>
+                        </button>
+                      </td>
+                      <td className="px-3 py-2 align-middle">
+                        <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs ${selfUpdateStatusClass(rec.status)}`}>
+                          {selfUpdateStatusLabel(rec.status)}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 align-middle">
+                        {mode ? (
+                          <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs ${selfUpdateModeClass(mode)}`}>
+                            {selfUpdateModeLabel(mode)}
+                          </span>
+                        ) : <span className="text-xs text-muted-foreground">未标记</span>}
+                      </td>
+                      <td className="px-3 py-2 align-middle text-xs text-muted-foreground">
+                        {selfUpdateTriggerLabel(rec.trigger)}
+                        {rec.actor ? <span className="ml-1">· {rec.actor}</span> : null}
+                      </td>
+                      <td className="max-w-[180px] truncate px-3 py-2 align-middle font-mono text-xs" title={rec.branch || '(当前分支)'}>
+                        {rec.branch || '(当前分支)'}
+                      </td>
+                      <td className="px-3 py-2 align-middle font-mono text-xs text-muted-foreground">
+                        {rec.fromSha || '-'}{rec.toSha && rec.toSha !== rec.fromSha ? ` → ${rec.toSha}` : ''}
+                      </td>
+                      <td className="px-3 py-2 align-middle font-mono text-xs">
+                        {fmtMs(rec.durationMs)}
+                      </td>
+                      <td className="px-3 py-2 align-middle text-xs text-muted-foreground">
+                        {stepsLen > 0 ? `${stepsLen} 行` : '-'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <aside className="min-h-[360px] rounded-md border border-border bg-card lg:sticky lg:top-4 lg:max-h-[calc(100vh-8rem)]">
+          <div className="border-b border-border px-4 py-3">
             <div className="flex flex-wrap items-center gap-2">
-              <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs ${selfUpdateStatusClass(rec.status)}`}>
-                {selfUpdateStatusLabel(rec.status)}
+              <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs ${selfUpdateStatusClass(selected.status)}`}>
+                {selfUpdateStatusLabel(selected.status)}
               </span>
-              <span className="text-xs text-muted-foreground">
-                {formatRelativeTime(rec.ts)} · {selfUpdateTriggerLabel(rec.trigger)}
-                {rec.actor ? ` · ${rec.actor}` : ''}
-              </span>
-              {rec.durationMs !== undefined ? (
-                /* 2026-05-07 timing 审视:durationMs = 后端流程,totalElapsedMs = 真实总耗时
-                 * (含 daemon 重启 + SSE 重连)。两者都显示让用户看清楚体感差异。
-                 * report.cds.self-update-timing-audit.md */
-                <span className="text-xs text-muted-foreground" title={
-                  rec.totalElapsedMs
-                    ? `后端流程: ${(rec.durationMs / 1000).toFixed(1)}s · 重启 + SSE 恢复: ${((rec.totalElapsedMs - rec.durationMs) / 1000).toFixed(1)}s`
-                    : '后端流程时间(不含 daemon 重启等待)'
-                }>
-                  {(rec.durationMs / 1000).toFixed(1)}s 流程
-                  {rec.totalElapsedMs && rec.totalElapsedMs > rec.durationMs ? (
-                    <span className="ml-1 text-foreground/70">
-                      + {((rec.totalElapsedMs - rec.durationMs) / 1000).toFixed(1)}s 重启
-                    </span>
-                  ) : null}
-                </span>
-              ) : null}
-              {(() => {
-                const mode = rec.updateMode || (rec.noOp ? 'noOp' : undefined);
-                if (!mode) return null;
-                const tone =
-                  mode === 'hot-reload'
-                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                    : mode === 'web-only'
-                      ? 'border-cyan-500/40 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300'
-                      : mode === 'doc-only'
-                        ? 'border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300'
-                        : mode === 'noOp'
-                          ? 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300'
-                          : 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300';
-                const label =
-                  mode === 'hot-reload'
-                    ? '热重载'
-                    : mode === 'web-only'
-                      ? '零停机·前端'
-                      : mode === 'doc-only'
-                        ? '零停机·文档'
-                        : mode === 'noOp'
-                          ? '已是最新'
-                          : '完整重启';
-                const tip =
-                  mode === 'hot-reload'
-                    ? '应用代码改动,跳过 validate(节省 ~50s)走 systemd 软重启'
-                    : mode === 'web-only'
-                      ? '改动全部落在 cds/web/src/**:只重 web/dist + atomic rename,daemon 持续在线,刷新页面即生效(用户体感 0 停机)'
-                      : mode === 'doc-only'
-                        ? '改动全是文档 / changelogs:只更新 .build-sha 标记,不重 build 不重启'
-                        : mode === 'noOp'
-                          ? 'HEAD 已与 dist 完全一致,啥都没做'
-                          : '改动涉及依赖/配置/路由 schema,走 systemd 完整重启(含 validate)';
-                return (
-                  <span
-                    className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] ${tone}`}
-                    title={tip}
-                  >
-                    {label}
-                  </span>
-                );
-              })()}
-            </div>
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              <CodePill>{rec.branch || '(当前分支)'}</CodePill>
-              {rec.fromSha ? (
-                <span className="font-mono text-muted-foreground">
-                  {rec.fromSha}
-                  {rec.toSha && rec.toSha !== rec.fromSha ? ` → ${rec.toSha}` : ''}
+              {selected.updateMode || selected.noOp ? (
+                <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs ${selfUpdateModeClass(selected.updateMode || 'noOp')}`}>
+                  {selfUpdateModeLabel(selected.updateMode || 'noOp')}
                 </span>
               ) : null}
             </div>
-            {rec.timings ? <SelfUpdateStageBar timings={rec.timings} totalMs={rec.durationMs} /> : null}
-            {rec.error ? (
-              <div className="mt-0.5 text-xs text-destructive/80" title={rec.error}>
-                {rec.error.length > 200 ? rec.error.slice(0, 200) + '…' : rec.error}
+            <div className="mt-2 text-sm font-semibold">{formatAbsoluteTime(selected.ts)}</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {selfUpdateTriggerLabel(selected.trigger)}{selected.actor ? ` · ${selected.actor}` : ''} · {selected.branch || '(当前分支)'}
+            </div>
+          </div>
+          <div className="max-h-[620px] space-y-4 overflow-auto px-4 py-3 lg:max-h-[calc(100vh-16rem)]" style={{ overscrollBehavior: 'contain' }}>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <SelfUpdateDetailMetric label="流程耗时" value={fmtMs(selected.durationMs)} />
+              <SelfUpdateDetailMetric label="体感耗时" value={fmtMs(selected.totalElapsedMs)} />
+              <SelfUpdateDetailMetric label="from" value={selected.fromSha || '-'} mono />
+              <SelfUpdateDetailMetric label="to" value={selected.toSha || '-'} mono />
+            </div>
+            <div>
+              <div className="mb-1.5 text-xs font-medium text-muted-foreground">更新路径</div>
+              <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-sm">
+                {selfUpdateModeDescription(selected.updateMode || (selected.noOp ? 'noOp' : undefined))}
+              </div>
+            </div>
+            {selected.timings ? <SelfUpdateStageBar timings={selected.timings} totalMs={selected.durationMs} /> : null}
+            {selected.error ? (
+              <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                {selected.error}
               </div>
             ) : null}
-            {(() => {
-              const stepsLen = Array.isArray(rec.steps)
-                ? rec.steps.length
-                : (rec.stepsCount ?? 0);
-              if (stepsLen === 0) return null;
-              const hasFullSteps = Array.isArray(rec.steps) && rec.steps.length > 0;
-              return (
-                <div className="mt-1">
-                  <button
-                    type="button"
-                    onClick={() => toggle(`${rec.ts}-${idx}`)}
-                    className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-                    disabled={!hasFullSteps}
-                  >
-                    {expanded[`${rec.ts}-${idx}`] ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-                    完整步骤({stepsLen} 行)
-                    {!hasFullSteps ? <span className="ml-1 text-muted-foreground/60">(仅元数据,打开「历史」抽屉看完整日志)</span> : null}
-                  </button>
-                  {expanded[`${rec.ts}-${idx}`] && hasFullSteps ? (
-                    <pre
-                      className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 font-mono text-[11px] leading-5"
-                      style={{ overscrollBehavior: 'contain' }}
-                    >
-                      {rec.steps!.map((step, sIdx) => (
-                        <div key={sIdx}>
-                          <span className="text-muted-foreground/60">{step.ts.slice(11, 19)} </span>
-                          <StepLevelPrefix level={step.level} />
-                          {step.text}
-                        </div>
-                      ))}
-                    </pre>
-                  ) : null}
-                </div>
-              );
-            })()}
-          </li>
-        ))}
-      </ul>
+            <div>
+              <div className="mb-1.5 flex items-center justify-between gap-2">
+                <div className="text-xs font-medium text-muted-foreground">执行日志</div>
+                <div className="text-xs text-muted-foreground">{selectedSteps.length} 行</div>
+              </div>
+              <div className="max-h-[320px] overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 font-mono text-[11px] leading-5" style={{ overscrollBehavior: 'contain' }}>
+                {selectedSteps.length > 0 ? selectedSteps.map((step, sIdx) => {
+                  const normalized = normalizeSelfUpdateStep(step);
+                  return (
+                    <div key={sIdx} className={normalized.level === 'error' ? 'text-destructive' : normalized.level === 'warning' ? 'text-amber-700 dark:text-amber-300' : ''}>
+                      <span className="text-muted-foreground/60">{normalized.timeText} </span>
+                      <StepLevelPrefix level={normalized.level} />
+                      {normalized.text}
+                    </div>
+                  );
+                }) : (
+                  <div className="text-muted-foreground">这条记录没有保存完整步骤。</div>
+                )}
+              </div>
+            </div>
+          </div>
+        </aside>
+      </div>
     </div>
   );
+}
+
+function SelfUpdateDetailMetric({ label, value, mono = false }: { label: string; value: string; mono?: boolean }): JSX.Element {
+  return (
+    <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2">
+      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className={`mt-1 truncate text-sm font-medium ${mono ? 'font-mono' : ''}`} title={value}>{value}</div>
+    </div>
+  );
+}
+
+function normalizeSelfUpdateStep(step: SelfUpdateStep): { timeText: string; level: 'info' | 'warning' | 'error'; text: string } {
+  if (typeof step === 'string') {
+    return { timeText: '--:--:--', level: 'info', text: step };
+  }
+  const level = step.level === 'warning' || step.level === 'error' ? step.level : 'info';
+  const timeText = typeof step.ts === 'string' && step.ts.length >= 19 ? step.ts.slice(11, 19) : '--:--:--';
+  return { timeText, level, text: step.text || '' };
 }
 
 function selfUpdateStatusClass(status: SelfUpdateRecord['status']): string {
@@ -1390,6 +1672,55 @@ function selfUpdateTriggerLabel(trigger: SelfUpdateRecord['trigger']): string {
     case 'force-sync': return '强制更新';
     case 'auto-poll':  return '自动轮询';
     case 'webhook':    return 'GitHub webhook';
+  }
+}
+
+type SelfUpdateMode = NonNullable<SelfUpdateRecord['updateMode']> | 'noOp';
+
+function selfUpdateModeClass(mode: SelfUpdateMode): string {
+  switch (mode) {
+    case 'prebuilt':
+      return 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300';
+    case 'hot-reload':
+      return 'border-lime-500/40 bg-lime-500/10 text-lime-700 dark:text-lime-300';
+    case 'web-only':
+      return 'border-cyan-500/40 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300';
+    case 'doc-only':
+      return 'border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300';
+    case 'noOp':
+      return 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300';
+    case 'restart':
+      return 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300';
+  }
+}
+
+function selfUpdateModeLabel(mode: SelfUpdateMode): string {
+  switch (mode) {
+    case 'prebuilt': return '极速版';
+    case 'hot-reload': return '热路径';
+    case 'web-only': return '前端零停机';
+    case 'doc-only': return '文档零停机';
+    case 'noOp': return '已是最新';
+    case 'restart': return '源码构建';
+  }
+}
+
+function selfUpdateModeDescription(mode?: SelfUpdateMode): string {
+  switch (mode) {
+    case 'prebuilt':
+      return '命中 CI 预构建产物，跳过本机 pnpm install、tsc、后端编译和 web build，只替换 dist 并确认重启。';
+    case 'hot-reload':
+      return '应用代码热路径，跳过完整 validate，但仍会更新 dist 并执行 systemd 重启。';
+    case 'web-only':
+      return '改动只落在 cds/web/src，重建 web/dist 后立即生效，daemon 不重启。';
+    case 'doc-only':
+      return '只包含文档或 changelog 改动，更新标记后不重 build、不重启。';
+    case 'noOp':
+      return 'HEAD 与当前 dist/web bundle 已一致，本次没有执行构建或重启。';
+    case 'restart':
+      return '源码构建路径，执行依赖校验、类型检查、后端 dist 编译、web build 和重启确认。';
+    default:
+      return '旧记录未标记更新模式，只能从步骤日志和阶段耗时判断执行路径。';
   }
 }
 

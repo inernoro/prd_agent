@@ -67,6 +67,18 @@ export interface BuildProfile {
    */
   pathPrefixes?: string[];
   /**
+   * Optional dedicated subdomain label for this service. When set, CDS publishes an
+   * extra host route `<previewSlug>-<subdomain>.<rootDomain>` that routes ALL paths to
+   * this service's container (root path, no prefix) — giving a named, standalone URL
+   * distinct from the main app domain, so a service like the LLM gateway can be called
+   * as its own endpoint instead of buried under the app's `/gw/v1` path.
+   * Must be a single DNS label (lowercase letters/digits/hyphen) so the combined
+   * `<previewSlug>-<subdomain>` host stays a single label under the `*.<rootDomain>`
+   * wildcard cert. Derived from compose label `cds.subdomain`, or supplied on a
+   * branch-local extra service via PUT /branches/:id/extra-services.
+   */
+  subdomain?: string;
+  /**
    * Service dependencies — IDs of infra services or other profiles this app depends on.
    * Derived from compose `depends_on`. Used for startup ordering.
    */
@@ -575,6 +587,22 @@ export interface BranchEntry {
    */
   profileOverrides?: Record<string, BuildProfileOverride>;
   /**
+   * 分支级「临时额外服务」(branch-local extra services) —— 2026-06-29。
+   *
+   * 设计目标(用户要求):项目级 build profiles 是**稳定底座**(改它走 dashboard 审批、影响全体);
+   * 而**单条分支**可以在底座之上**临时追加自己的服务/容器**(比如把某个模块拆成独立服务做实验),
+   * 这些额外服务:
+   *   - 只在**这条分支**部署,跑在分支专属网(cds-br-<id>)里,**不影响项目、不影响别的分支**;
+   *   - **不进项目 profiles、不需要全局审批**;
+   *   - 随分支生命周期走 —— **删分支即消失**(本字段挂在 BranchEntry 上,删分支连带清掉;
+   *     额外容器由分支 teardown 一并 rm,分支网由 removeBranchNetwork 清理)。
+   *
+   * 兼容性:**纯增量、可选**。未声明(absent/空)的分支 = 与现状完全一致(老行为零回归)。
+   * 合并规则见 `mergeBranchProfiles`:额外服务只能 ADD 新 id;与项目 profile 撞 id 时**以项目为准**
+   * (保护底座,要按分支改项目服务请用 profileOverrides,不是这里)。
+   */
+  extraProfiles?: BuildProfile[];
+  /**
    * GitHub Checks integration — populated when the branch was
    * auto-created by a webhook push or the user linked a repo to the
    * owning project. Used to post check-run status back to GitHub
@@ -690,10 +718,10 @@ export interface BranchEntry {
   /** 最近一次成功部署完成的 ISO 时间戳。 */
   lastDeployAt?: string;
   /**
-   * 2026-06-21：本轮 deploy/build 真正开始执行的 ISO 时间戳。
-   * 在 status 切到 'building' 的那一刻打戳（branches.ts 两处部署起点）。
+   * 2026-06-21：本轮 deploy/build/restart 真正开始执行的 ISO 时间戳。
+   * 在 status 切到 'building' 或 'restarting' 的那一刻打戳（部署、手动重启、预览自动唤醒）。
    * 用途：预览等待页 `/_cds/waiting-status` 的"已等待 / 预计还需"必须以
-   * **本轮构建开始**为锚点。在途构建的 op-log 直到 finalize 才落库，期间
+   * **本轮构建/重启开始**为锚点。在途构建的 op-log 直到 finalize 才落库，期间
    * getLogs() 只有上一轮已完成的部署 → 若以历史 op-log 兜底会算成"几小时/几天"
    * 误判 overdue。本字段是唯一可靠的在途构建起点（修复 PR #865 Codex P2
    * 「Use the active redeploy start time for waiting ETAs」）。
@@ -1791,8 +1819,9 @@ export interface SelfUpdateRecord {
    *   - 'restart':   完整 validate + systemd 重启(~70-95s,默认)
    *   - 'noOp':      HEAD 已与 dist 一致,啥都没做(~3s)
    *   - 'web-only':  改动只触前端,只重 web/dist,daemon 不重启
-   *   - 'doc-only':  改动只触文档/changelogs,完全 noop */
-  updateMode?: 'hot-reload' | 'restart' | 'noOp' | 'web-only' | 'doc-only';
+   *   - 'doc-only':  改动只触文档/changelogs,完全 noop
+   *   - 'prebuilt':  命中 CI 预构建产物,跳过本机编译 */
+  updateMode?: 'hot-reload' | 'restart' | 'noOp' | 'web-only' | 'doc-only' | 'prebuilt';
   /** 结构化耗时明细。用于复查"每次慢在哪里",避免只能解析 steps 文本。
    *  常见字段:fetchMs/pullMs/validateMs/buildBackendMs/webBuildMs/totalMs,
    *  validate 内含 install_cds_ms/tsc_web_ms 等 validateBuildReadiness 原始计时。 */

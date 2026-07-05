@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
-  Boxes, ClipboardCheck, FileCode2, FileText, Folder, FolderOpen, FolderPlus,
+  Boxes, CircleAlert, ClipboardCheck, Clock3, FileCode2, FileText, Folder, FolderOpen, FolderPlus,
   GitPullRequest, Inbox, Layers, Link2, Pencil, Plus, RefreshCw, Share2, Trash2, Upload,
 } from 'lucide-react';
 import { marked } from 'marked';
@@ -49,8 +49,16 @@ type ListState =
   | { status: 'error'; message: string; transient: boolean }
   | { status: 'ok'; reports: AcceptanceReport[] };
 
-// 当前文件夹筛选：'all' 全部 / 'none' 仅未归类 / '<id>' 指定文件夹。
-type FolderFilter = 'all' | 'none' | string;
+type ReportSystemView = 'all' | 'none' | 'recent' | 'shared' | 'failed';
+
+// 当前筛选：系统视图 / '<id>' 指定文件夹。
+type FolderFilter = ReportSystemView | string;
+
+const REPORT_SYSTEM_VIEWS: ReportSystemView[] = ['all', 'none', 'recent', 'shared', 'failed'];
+
+function isReportSystemView(value: FolderFilter): value is ReportSystemView {
+  return REPORT_SYSTEM_VIEWS.includes(value as ReportSystemView);
+}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -143,30 +151,35 @@ export function ReportsPage(): JSX.Element {
   const visibleReports = useMemo(() => {
     if (activeFolder === 'all') return allReports;
     if (activeFolder === 'none') return allReports.filter((r) => !r.folderId);
+    if (activeFolder === 'recent') {
+      const since = Date.now() - 7 * 24 * 60 * 60 * 1000;
+      return allReports.filter((r) => {
+        const created = new Date(r.createdAt).getTime();
+        return !Number.isNaN(created) && created >= since;
+      });
+    }
+    if (activeFolder === 'shared') return allReports.filter((r) => Boolean(r.shareToken));
+    if (activeFolder === 'failed') return allReports.filter((r) => r.verdict === 'fail');
     return allReports.filter((r) => r.folderId === activeFolder);
   }, [allReports, activeFolder]);
 
   const folderCounts = useMemo(() => {
     const m = new Map<string, number>();
     let unfiled = 0;
+    let recent = 0;
+    let shared = 0;
+    let failed = 0;
+    const since = Date.now() - 7 * 24 * 60 * 60 * 1000;
     for (const r of allReports) {
       if (r.folderId) m.set(r.folderId, (m.get(r.folderId) ?? 0) + 1);
       else unfiled += 1;
+      const created = new Date(r.createdAt).getTime();
+      if (!Number.isNaN(created) && created >= since) recent += 1;
+      if (r.shareToken) shared += 1;
+      if (r.verdict === 'fail') failed += 1;
     }
-    return { byFolder: m, unfiled, total: allReports.length };
+    return { byFolder: m, unfiled, recent, shared, failed, total: allReports.length };
   }, [allReports]);
-
-  // E2 验收看板：当前视图(已选文件夹/项目)下的 verdict 计数。
-  const verdictStats = useMemo(() => {
-    const s = { pass: 0, conditional: 0, fail: 0, unknown: 0, total: visibleReports.length };
-    for (const r of visibleReports) {
-      if (r.verdict === 'pass') s.pass += 1;
-      else if (r.verdict === 'conditional') s.conditional += 1;
-      else if (r.verdict === 'fail') s.fail += 1;
-      else s.unknown += 1;
-    }
-    return s;
-  }, [visibleReports]);
 
   const handleCreated = useCallback((report: AcceptanceReport) => {
     setCreateOpen(false);
@@ -280,24 +293,10 @@ export function ReportsPage(): JSX.Element {
       )}
     >
       <Workspace wide className="cds-workspace--fill cds-workspace--fluid">
-        <div className="flex h-full min-h-0 flex-col gap-5">
-          {/* shrink-0：否则在 flex-col + h-full 容器里，加载完成后下方报告列表(flex-1)抢空间，
-              flexbox 会把没锁 shrink 的头部压扁("刷新完成头部就收缩"，2026-06-26 验收反馈)。 */}
-          <section className="cds-surface-raised cds-hairline p-4 shrink-0">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="min-w-0">
-                <h1 className="text-lg font-semibold">
-                  验收报告{projectId ? <span className="ml-2 text-sm font-normal text-muted-foreground">· {projectName || projectId}</span> : <span className="ml-2 text-sm font-normal text-muted-foreground">· 全局（CDS 自身）</span>}
-                </h1>
-              </div>
-            </div>
-            {state.status === 'ok' && verdictStats.total > 0 ? (
-              <VerdictSummary stats={verdictStats} />
-            ) : null}
-            {toast ? (
-              <div className="mt-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-sm">{toast}</div>
-            ) : null}
-          </section>
+        <div className="flex h-full min-h-0 flex-col gap-3">
+          {toast ? (
+            <div className="shrink-0 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-sm">{toast}</div>
+          ) : null}
 
           {state.status === 'loading' ? <LoadingBlock label="正在加载验收报告" /> : null}
           {state.status === 'error' ? <ErrorBlock message={state.message} transient={state.transient} /> : null}
@@ -343,53 +342,10 @@ export function ReportsPage(): JSX.Element {
         projects={projects}
         folders={folders}
         defaultProjectId={projectId}
-        defaultFolderId={typeof activeFolder === 'string' && activeFolder !== 'all' && activeFolder !== 'none' ? activeFolder : ''}
+        defaultFolderId={!isReportSystemView(activeFolder) ? activeFolder : ''}
         onCreated={handleCreated}
       />
     </AppShell>
-  );
-}
-
-/**
- * E2 验收看板：当前视图下 verdict 计数 + 通过率条。颜色为自包含状态胶囊
- * (绿/琥珀/红/灰 + 白字)，两个主题下均可读，不依赖暗色背景 fallback。
- */
-function VerdictSummary({
-  stats,
-}: {
-  stats: { pass: number; conditional: number; fail: number; unknown: number; total: number };
-}): JSX.Element {
-  const judged = stats.pass + stats.conditional + stats.fail;
-  const passRate = judged > 0 ? Math.round((stats.pass / judged) * 100) : null;
-  const chips: Array<{ label: string; n: number; bg: string }> = [
-    { label: '通过', n: stats.pass, bg: '#1a7f37' },
-    { label: '有条件', n: stats.conditional, bg: '#9a6700' },
-    { label: '不通过', n: stats.fail, bg: '#b42318' },
-    { label: '未判定', n: stats.unknown, bg: '#57606a' },
-  ];
-  return (
-    <div className="mt-3 flex flex-wrap items-center gap-3">
-      <span className="text-sm text-muted-foreground">本视图 {stats.total} 份</span>
-      <div className="flex flex-wrap items-center gap-1.5">
-        {chips.filter((c) => c.n > 0).map((c) => (
-          <span
-            key={c.label}
-            className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold text-white"
-            style={{ background: c.bg }}
-          >
-            {c.label} {c.n}
-          </span>
-        ))}
-      </div>
-      {passRate !== null ? (
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold">通过率 {passRate}%</span>
-          <div className="h-1.5 w-28 overflow-hidden rounded-full bg-[hsl(var(--surface-sunken))]">
-            <div className="h-full rounded-full" style={{ width: `${passRate}%`, background: '#1a7f37' }} />
-          </div>
-        </div>
-      ) : null}
-    </div>
   );
 }
 
@@ -397,7 +353,7 @@ function FolderRail({
   folders, counts, active, onSelect, onCreate, onRename, onDelete, projects, scopeProjectId,
 }: {
   folders: ReportFolder[];
-  counts: { byFolder: Map<string, number>; unfiled: number; total: number };
+  counts: { byFolder: Map<string, number>; unfiled: number; recent: number; shared: number; failed: number; total: number };
   active: FolderFilter;
   onSelect: (f: FolderFilter) => void;
   onCreate: (name: string) => void;
@@ -413,6 +369,8 @@ function FolderRail({
 
   const rowCls = (on: boolean) =>
     `group flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-sm transition-colors ${on ? 'bg-primary/10 text-primary' : 'hover:bg-[hsl(var(--surface-sunken))] text-foreground'}`;
+
+  const sectionTitleCls = 'px-2 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80';
 
   // 子文件夹索引（parentId → 直接子文件夹，沿用后端 sortOrder 顺序）。
   const byParent = new Map<string | null, ReportFolder[]>();
@@ -496,14 +454,11 @@ function FolderRail({
 
   return (
     <div className="flex min-h-0 w-full flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] lg:w-[224px] lg:shrink-0">
-      <div className="flex items-center justify-between border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-xs font-medium text-muted-foreground">
-        <span>文件夹</span>
-        <Button variant="ghost" size="icon" className="h-6 w-6" title="新建文件夹" aria-label="新建文件夹"
-          onClick={() => { setCreating(true); setNewName(''); }}>
-          <FolderPlus className="h-4 w-4" />
-        </Button>
+      <div className="border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-xs font-medium text-muted-foreground">
+        <span>报告库</span>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-2" style={{ overscrollBehavior: 'contain' }}>
+        <div className={sectionTitleCls}>视图</div>
         <div className={rowCls(active === 'all')} onClick={() => onSelect('all')}>
           <Layers className="h-4 w-4 shrink-0" />
           <span className="flex-1 truncate">全部</span>
@@ -514,7 +469,29 @@ function FolderRail({
           <span className="flex-1 truncate">未归类</span>
           <span className="text-[11px] text-muted-foreground">{counts.unfiled}</span>
         </div>
-        <div className="my-1.5 border-t border-[hsl(var(--hairline))]" />
+        <div className={rowCls(active === 'recent')} onClick={() => onSelect('recent')}>
+          <Clock3 className="h-4 w-4 shrink-0" />
+          <span className="flex-1 truncate">最近 7 天</span>
+          <span className="text-[11px] text-muted-foreground">{counts.recent}</span>
+        </div>
+        <div className={rowCls(active === 'shared')} onClick={() => onSelect('shared')}>
+          <Share2 className="h-4 w-4 shrink-0" />
+          <span className="flex-1 truncate">已分享</span>
+          <span className="text-[11px] text-muted-foreground">{counts.shared}</span>
+        </div>
+        <div className={rowCls(active === 'failed')} onClick={() => onSelect('failed')}>
+          <CircleAlert className="h-4 w-4 shrink-0" />
+          <span className="flex-1 truncate">不通过</span>
+          <span className="text-[11px] text-muted-foreground">{counts.failed}</span>
+        </div>
+        <div className="my-2 border-t border-[hsl(var(--hairline))]" />
+        <div className="flex items-center justify-between gap-2 px-2 pb-1 pt-1">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">文件夹</span>
+          <Button variant="ghost" size="icon" className="h-5 w-5" title="新建文件夹" aria-label="新建文件夹"
+            onClick={() => { setCreating(true); setNewName(''); }}>
+            <FolderPlus className="h-3.5 w-3.5" />
+          </Button>
+        </div>
         {tree}
         {creating ? (
           <form className="mt-1 flex items-center gap-1 px-1"
@@ -539,10 +516,10 @@ function EmptyReportsState({ onCreate, filtered }: { onCreate: () => void; filte
         <ClipboardCheck className="h-7 w-7" />
       </div>
       <div className="space-y-1">
-        <h2 className="text-base font-semibold">{filtered ? '这个文件夹还没有报告' : '还没有验收报告'}</h2>
+        <h2 className="text-base font-semibold">{filtered ? '当前视图还没有报告' : '还没有验收报告'}</h2>
         <p className="max-w-md text-sm text-muted-foreground">
           {filtered
-            ? '把报告移动到此文件夹，或在此处新建一份。'
+            ? '切换其它视图或文件夹，或在此处新建一份。'
             : '上传或粘贴一份 HTML / Markdown 报告，CDS 会托管它的内容并以沙箱安全渲染。不需要外部知识库，CDS 登录即可访问。'}
         </p>
       </div>
@@ -670,6 +647,7 @@ function ReportViewer({ report }: { report: AcceptanceReport | null }): JSX.Elem
   const [mdHtml, setMdHtml] = useState<string | null>(null);
   const [mdError, setMdError] = useState<string | null>(null);
   const reqRef = useRef(0);
+  const reportFrameSandbox = 'allow-scripts allow-popups allow-popups-to-escape-sandbox';
 
   useEffect(() => {
     setMdHtml(null);
@@ -722,13 +700,13 @@ function ReportViewer({ report }: { report: AcceptanceReport | null }): JSX.Elem
       </div>
       <div className="min-h-0 flex-1 bg-white">
         {report.format === 'html' ? (
-          <iframe key={report.id} title={report.title} src={reportRawUrl(report.id)} sandbox="allow-scripts" className="h-full w-full border-0" />
+          <iframe key={report.id} title={report.title} src={reportRawUrl(report.id)} sandbox={reportFrameSandbox} className="h-full w-full border-0" />
         ) : mdError ? (
           <div className="p-4"><ErrorBlock message={mdError} /></div>
         ) : mdHtml === null ? (
           <div className="p-4"><LoadingBlock label="正在渲染 Markdown" /></div>
         ) : (
-          <iframe key={report.id} title={report.title} srcDoc={mdHtml} sandbox="allow-scripts" className="h-full w-full border-0" />
+          <iframe key={report.id} title={report.title} srcDoc={mdHtml} sandbox={reportFrameSandbox} className="h-full w-full border-0" />
         )}
       </div>
     </div>

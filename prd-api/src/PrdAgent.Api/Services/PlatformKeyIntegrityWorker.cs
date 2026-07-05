@@ -57,6 +57,14 @@ public class PlatformKeyIntegrityWorker : BackgroundService
         }
     }
 
+    // 有意的 dev-stub 平台（如"Stub 开发桩"）密文本就是占位、天然解不出，属预期噪音，不当真故障告警/推站内信。
+    // 注意：仅按"开发桩"或独立词 "stub" 判定（词边界，非任意子串），避免真实平台名恰含 stub 子串被误判静默（Bugbot Low）。
+    // 即便误判，stub 类仍会在 Info 日志列出（非彻底静默），保留审计线索。
+    private static bool IsStub(string? name)
+        => !string.IsNullOrWhiteSpace(name)
+        && (name!.Contains("开发桩")
+            || System.Text.RegularExpressions.Regex.IsMatch(name, @"(^|[^a-z])stub([^a-z]|$)", System.Text.RegularExpressions.RegexOptions.IgnoreCase));
+
     private async Task CheckAsync(CancellationToken ct)
     {
         using var scope = _scopeFactory.CreateScope();
@@ -75,16 +83,25 @@ public class PlatformKeyIntegrityWorker : BackgroundService
             .Find(c => true)
             .ToListAsync(ct);
 
-        var unreadable = new List<string>();
+        var unreadable = new List<string>();       // 真实平台/模型/中继解不出 —— 需告警 + 站内信
+        var stubUnreadable = new List<string>();   // dev-stub 解不出 —— 预期噪音，不告警
         var rotated = 0;
         var canRotate = ApiKeyCryptoKeyRing.HasDedicatedPrimarySecret(_configuration);
 
+        void MarkUnreadable(string label, string? name)
+        {
+            if (IsStub(name)) stubUnreadable.Add(label); else unreadable.Add(label);
+        }
+
         foreach (var platform in platforms.Where(p => !string.IsNullOrWhiteSpace(p.ApiKeyEncrypted)))
         {
+            if (PlatformApiKeyPolicy.IsApiKeyOptional(platform))
+                continue;
+
             var result = ApiKeyCryptoKeyRing.Decrypt(platform.ApiKeyEncrypted, _configuration);
             if (!result.Success)
             {
-                unreadable.Add(platform.Name);
+                MarkUnreadable(platform.Name, platform.Name);
                 continue;
             }
 
@@ -105,7 +122,7 @@ public class PlatformKeyIntegrityWorker : BackgroundService
             var result = ApiKeyCryptoKeyRing.Decrypt(exchange.TargetApiKeyEncrypted, _configuration);
             if (!result.Success)
             {
-                unreadable.Add(exchange.Name);
+                MarkUnreadable(exchange.Name, exchange.Name);
                 continue;
             }
 
@@ -126,7 +143,7 @@ public class PlatformKeyIntegrityWorker : BackgroundService
             var result = ApiKeyCryptoKeyRing.Decrypt(model.ApiKeyEncrypted, _configuration);
             if (!result.Success)
             {
-                unreadable.Add($"模型:{model.Name}");
+                MarkUnreadable($"模型:{model.Name}", model.Name);
                 continue;
             }
 
@@ -147,7 +164,7 @@ public class PlatformKeyIntegrityWorker : BackgroundService
             var result = ApiKeyCryptoKeyRing.Decrypt(config.ApiKeyEncrypted, _configuration);
             if (!result.Success)
             {
-                unreadable.Add($"旧配置:{config.Provider}/{config.Model}");
+                MarkUnreadable($"旧配置:{config.Provider}/{config.Model}", config.Provider);
                 continue;
             }
 
@@ -162,6 +179,12 @@ public class PlatformKeyIntegrityWorker : BackgroundService
                 rotated++;
             }
         }
+
+        // dev-stub 解不出属预期，不告警——但留 Info 审计线索（与 serving 侧 ServingKeyIntegrityCheck 对齐，Bugbot Low）。
+        if (stubUnreadable.Count > 0)
+            _logger.LogInformation(
+                "[PlatformKeyIntegrity] 已跳过 {Count} 个 dev-stub（密文为占位、预期解不出，非故障）：{Names}",
+                stubUnreadable.Count, string.Join("、", stubUnreadable));
 
         var existing = await db.AdminNotifications
             .Find(n => n.Key == NotificationKey && n.Status == "open")

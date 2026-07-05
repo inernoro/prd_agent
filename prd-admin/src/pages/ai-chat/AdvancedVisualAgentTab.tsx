@@ -7717,7 +7717,18 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               paddingBottom: isMobile ? 60 : undefined,
             }}
           >
-            <div className={`flex h-full flex-col ${isMobile ? 'bg-token-nested p-3' : 'surface-popover rounded-[14px] p-2.5'}`}>
+            <div
+              className={`flex h-full flex-col ${isMobile ? 'rounded-[18px] p-3' : 'surface-popover rounded-[14px] p-2.5'}`}
+              style={isMobile
+                ? {
+                  background: 'rgba(24, 25, 31, 0.88)',
+                  border: '1px solid rgba(255,255,255,0.14)',
+                  boxShadow: '0 18px 48px rgba(0,0,0,0.42), inset 0 1px 0 rgba(255,255,255,0.08)',
+                  backdropFilter: 'blur(22px) saturate(155%)',
+                  WebkitBackdropFilter: 'blur(22px) saturate(155%)',
+                }
+                : undefined}
+            >
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0 flex-1">
                 <div className="text-[13px] font-semibold text-token-primary">
@@ -7846,6 +7857,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             <div
               ref={inputPanelRef}
               className={`surface-inset relative mt-2 shrink-0 rounded-[12px] p-2 ${directPrompt ? 'border-token-subtle' : ''}`}
+              style={isMobile
+                ? {
+                  background: 'rgba(34, 35, 42, 0.92)',
+                  border: '1px solid rgba(255,255,255,0.14)',
+                  backdropFilter: 'blur(18px) saturate(150%)',
+                  WebkitBackdropFilter: 'blur(18px) saturate(150%)',
+                }
+                : undefined}
             >
               {/* 智能优化开启时：AUTO 徽章提示，表明 AI 正在自动优化提示词 */}
               {directPrompt ? (

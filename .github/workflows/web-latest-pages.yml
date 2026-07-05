@@ -4,6 +4,16 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Optional immutable release tag, for example prod-20260702-1. The workflow always publishes sha-<commit>."
+        required: false
+        default: ""
+      publish_latest:
+        description: "Also publish mutable latest on manual dispatch. Pushes to main always publish latest."
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -56,6 +66,9 @@ jobs:
         run: pnpm build
 
       - name: Prepare Pages site
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || '' }}
+          PUBLISH_LATEST: ${{ github.event_name == 'push' || inputs.publish_latest == true }}
         run: |
           sudo apt-get update
           sudo apt-get install -y zip
@@ -63,8 +76,53 @@ jobs:
           mkdir -p site/admin
           cp -r prd-admin/dist/* site/
           cp -r prd-admin/dist/* site/admin/
-          (cd prd-admin/dist && zip -r "../../site/prd-admin-dist-latest.zip" .)
-          sha256sum "site/prd-admin-dist-latest.zip" > "site/prd-admin-dist-latest.zip.sha256"
+          make_zip() {
+            name="$1"
+            (cd prd-admin/dist && zip -r "../../site/${name}" .)
+            sha256sum "site/${name}" > "site/${name}.sha256"
+          }
+          make_manifest() {
+            ref="$1"
+            zip_name="$2"
+            sha="$(awk '{print $1}' "site/${zip_name}.sha256")"
+            cat > "site/release-manifest-${ref}.json" <<EOF
+          {
+            "commit": "${GITHUB_SHA}",
+            "ref": "${ref}",
+            "apiImage": "ghcr.io/${GITHUB_REPOSITORY}/prdagent-server:${ref}",
+            "webDist": "${zip_name}",
+            "webSha256": "${sha}"
+          }
+          EOF
+          }
+          preserve_latest_asset() {
+            asset="$1"
+            repo_owner="${GITHUB_REPOSITORY%/*}"
+            repo_name="${GITHUB_REPOSITORY#*/}"
+            pages_base="${PAGES_PRESERVE_BASE_URL:-https://${repo_owner}.github.io/${repo_name}}"
+            if curl -fsSL "${pages_base}/${asset}" -o "site/${asset}"; then
+              echo "Preserved existing ${asset}"
+            else
+              echo "WARN: existing ${asset} not found at ${pages_base}; immutable deploy will not refresh latest" >&2
+              rm -f "site/${asset}"
+            fi
+          }
+
+          sha_ref="sha-${GITHUB_SHA}"
+          make_zip "prd-admin-dist-${sha_ref}.zip"
+          make_manifest "${sha_ref}" "prd-admin-dist-${sha_ref}.zip"
+          if [ "$PUBLISH_LATEST" = "true" ]; then
+            make_zip "prd-admin-dist-latest.zip"
+            make_manifest "latest" "prd-admin-dist-latest.zip"
+          else
+            preserve_latest_asset "prd-admin-dist-latest.zip"
+            preserve_latest_asset "prd-admin-dist-latest.zip.sha256"
+            preserve_latest_asset "release-manifest-latest.json"
+          fi
+          if [ -n "$RELEASE_TAG" ]; then
+            make_zip "prd-admin-dist-${RELEASE_TAG}.zip"
+            make_manifest "${RELEASE_TAG}" "prd-admin-dist-${RELEASE_TAG}.zip"
+          fi
           printf '%s\n' "${GITHUB_SHA}" > "site/commit.txt"
           printf '%s\n' "${GITHUB_SHA}" > "site/admin/commit.txt"
 

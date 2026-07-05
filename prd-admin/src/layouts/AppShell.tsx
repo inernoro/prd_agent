@@ -80,6 +80,7 @@ import { getAdminNotifications, handleAdminNotification, handleAllAdminNotificat
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
 import { GlobalDefectSubmitDialog, DefectSubmitButton } from '@/components/ui/GlobalDefectSubmitDialog';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
+import { NotificationSubscriptionsPanel } from '@/components/notifications/NotificationSubscriptionsPanel';
 import { ChangelogBell } from '@/components/changelog/ChangelogBell';
 import { useChangelogStore, selectUnreadCount } from '@/stores/changelogStore';
 import { FLOATING_DOCK_COLLAPSED_KEY, FLOATING_DOCK_EVENT } from '@/components/daily-tips/TipsDrawer';
@@ -224,8 +225,15 @@ export default function AppShell() {
   }, [defaultNavHidden, navHidden, navOrder]);
   const [avatarOpen, setAvatarOpen] = useState(false);
   const [notificationDialogOpen, setNotificationDialogOpen] = useState(false);
+  const [notificationDialogTab, setNotificationDialogTab] = useState<'list' | 'subscriptions'>('list');
   const [notifications, setNotifications] = useState<AdminNotificationItem[]>([]);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get('panel') !== 'notifications') return;
+    setNotificationDialogOpen(true);
+    setNotificationDialogTab(params.get('tab') === 'subscriptions' ? 'subscriptions' : 'list');
+  }, [location.search]);
   // 更新中心：未读数（用于桌面 dropdown 中的徽章）+ 拉取本周更新
   const changelogUnread = useChangelogStore(selectUnreadCount);
   const loadChangelogCurrentWeek = useChangelogStore((s) => s.loadCurrentWeek);
@@ -485,6 +493,8 @@ export default function AppShell() {
   const isHomePage = location.pathname === '/';
 
   const activeKey = location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`;
+  const activeNavItem = visibleItems.find((it) => it.key === activeKey);
+  const mobileAppName = isHomePage ? 'PRD Agent' : (activeNavItem?.label || 'PRD Agent');
   const isLabPage = location.pathname.startsWith('/lab');
   const suppressFloatingDock = location.pathname.startsWith('/cds-agent');
 
@@ -522,6 +532,33 @@ export default function AppShell() {
     [notifications]
   );
   const notificationCount = activeNotifications.length;
+  const personalNotifications = useMemo(
+    () => activeNotifications.filter((n) => (n.section ?? 'personal') !== 'admin'),
+    [activeNotifications]
+  );
+  const adminNotifications = useMemo(
+    () => activeNotifications.filter((n) => n.section === 'admin'),
+    [activeNotifications]
+  );
+  const notificationSections = useMemo(
+    () => [
+      {
+        key: 'personal',
+        title: '个人通知',
+        description: '周报月报、缺陷协作、语音转文字和个人待处理事项',
+        empty: '暂无个人通知',
+        items: personalNotifications,
+      },
+      {
+        key: 'admin',
+        title: '管理员通知',
+        description: '额度、服务器、VOC、API 请求和系统运营告警',
+        empty: '暂无管理员通知',
+        items: adminNotifications,
+      },
+    ],
+    [adminNotifications, personalNotifications]
+  );
   const toastNotification = useMemo(
     () => activeNotifications.find((n) => !dismissedToastIds.has(n.id)),
     [activeNotifications, dismissedToastIds]
@@ -638,7 +675,7 @@ export default function AppShell() {
     <div
       className="w-full relative overflow-hidden app-aurora"
       style={{
-        // 背景走 .app-aurora 类（极淡彩色光晕 + var(--bg-base) 底），给液态玻璃可折射的深度
+        // 背景走 .app-aurora 类（中性白光 + var(--bg-base) 底），给液态玻璃可折射的深度
         // 移动端：用 dvh 跟随视口（修 iOS Safari 地址栏收缩导致的高度抖动 / 黑带）
         // 桌面端：保持 h:100% 依赖 #root，避免破坏现有侧栏/浮层布局
         minHeight: '100dvh',
@@ -926,17 +963,14 @@ export default function AppShell() {
           </div>
         );
       })()}
-      {/* ── 移动端: 顶部导航栏 ── */}
-      {/* 首页 (isHomePage) 做 Apple Today 式透明顶栏：
-       *   - 左: menu 按钮
-       *   - 中: 空
-       *   - 右: 头像按钮（带通知红点）—— 点击 → /profile
-       *   文字标题职责交给页面内 Hero */}
+      {/* ── 移动端: 全局顶部导航栏 ── */}
       {isMobile && (
         <header
-          className="fixed top-0 left-0 right-0 z-100 flex items-center gap-3 px-4"
+          className="fixed top-0 left-0 right-0 z-100 grid items-center px-3"
           style={{
-            ...(isHomePage ? { background: 'transparent' } : glassMobileHeader),
+            ...glassMobileHeader,
+            gridTemplateColumns: '44px minmax(0, 1fr) 88px',
+            columnGap: 8,
             height: 'calc(var(--mobile-header-height, 48px) + env(safe-area-inset-top, 0px))',
             paddingTop: 'env(safe-area-inset-top, 0px)',
           }}
@@ -950,16 +984,17 @@ export default function AppShell() {
           >
             <Menu size={20} />
           </button>
-          {!isHomePage && (
-            <div className="flex-1 min-w-0 text-center">
-              <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                {visibleItems.find((it) => it.key === activeKey)?.label || 'PRD Agent'}
-              </span>
-            </div>
-          )}
-          {isHomePage && <div className="flex-1" />}
-          {!isHomePage && <ChangelogBell size={18} compact />}
-          {!isHomePage && (
+          <div className="min-w-0 flex items-center justify-center">
+            <span
+              className="block max-w-full truncate text-[16px] font-semibold leading-none"
+              style={{ color: 'var(--text-primary)', letterSpacing: 0 }}
+              title={mobileAppName}
+            >
+              {mobileAppName}
+            </span>
+          </div>
+          <div className="flex items-center justify-end gap-1">
+            <ChangelogBell size={18} compact />
             <button
               type="button"
               onClick={() => {
@@ -973,66 +1008,14 @@ export default function AppShell() {
               <Bell size={18} />
               {notificationCount > 0 && (
                 <span
-                  className="absolute top-1 right-1 h-4 w-4 rounded-full flex items-center justify-center text-[9px] font-bold"
+                  className="absolute top-0.5 right-0.5 h-4 min-w-4 px-1 rounded-full flex items-center justify-center text-[9px] font-bold"
                   style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
                 >
-                  {notificationCount > 999 ? '999+' : notificationCount}
+                  {notificationCount > 99 ? '99+' : notificationCount}
                 </span>
               )}
             </button>
-          )}
-          {/* 首页右上角头像按钮 —— Apple Today 范式 */}
-          {isHomePage && (
-            <button
-              type="button"
-              onClick={() => navigate('/profile')}
-              className="relative h-9 w-9 inline-flex items-center justify-center rounded-full overflow-hidden transition-opacity active:opacity-60"
-              style={{ border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)', padding: 0 }}
-              aria-label="个人中心"
-            >
-              {user?.avatarUrl || user?.avatarFileName ? (
-                <UserAvatar
-                  src={resolveAvatarUrl({
-                    username: user?.username,
-                    userType: user?.userType,
-                    botKind: user?.botKind,
-                    avatarFileName: user?.avatarFileName ?? null,
-                    avatarUrl: user?.avatarUrl,
-                  })}
-                  alt="avatar"
-                  className="h-full w-full object-cover"
-                />
-              ) : (
-                <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  {(user?.displayName || user?.username || '?')[0]}
-                </span>
-              )}
-              {notificationCount > 0 && (
-                <span
-                  className="absolute"
-                  style={{
-                    top: -2,
-                    right: -2,
-                    minWidth: 16,
-                    height: 16,
-                    padding: '0 4px',
-                    borderRadius: 999,
-                    background: '#FF453A',
-                    color: '#fff',
-                    fontSize: 9,
-                    fontWeight: 700,
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    border: '2px solid #000',
-                    lineHeight: 1,
-                  }}
-                >
-                  {notificationCount > 999 ? '999+' : notificationCount}
-                </span>
-              )}
-            </button>
-          )}
+          </div>
         </header>
       )}
 
@@ -1145,6 +1128,7 @@ export default function AppShell() {
             collapsed ? 'gap-1.5 items-center' : 'gap-1.5'
           )}
           style={{
+            display: focusHideAside ? 'none' : undefined,
             left: asideGap,
             top: asideGap,
             bottom: asideGap,
@@ -1158,9 +1142,9 @@ export default function AppShell() {
             willChange: 'transform',
             ...(useSidebarGlass ? glassSidebar : {
               backgroundColor: 'var(--bg-elevated, #1e1e24)',
-              backgroundImage: 'linear-gradient(180deg, rgba(30,30,36,1) 0%, rgba(20,20,24,1) 100%)',
-              border: '1px solid rgba(99,102,241,0.08)',
-              boxShadow: '0 26px 120px rgba(0,0,0,0.60), 0 0 0 1px rgba(99,102,241,0.04) inset',
+              backgroundImage: 'linear-gradient(180deg, rgba(36,38,44,1) 0%, rgba(20,24,28,1) 100%)',
+              border: '1px solid rgba(255,255,255,0.10)',
+              boxShadow: '0 26px 120px rgba(0,0,0,0.60), 0 0 0 1px rgba(255,255,255,0.04) inset',
             }),
             pointerEvents: focusHideAside ? 'none' : 'auto',
           }}
@@ -1207,7 +1191,7 @@ export default function AppShell() {
                   style={{
                     width: 28,
                     height: 28,
-                    color: activeKey === '/' ? '#818cf8' : undefined,
+                    color: activeKey === '/' ? 'rgba(255, 255, 255, 0.88)' : undefined,
                   }}
                 >
                   {homeItem.icon}
@@ -1227,7 +1211,7 @@ export default function AppShell() {
               style={{
                 height: 32,
                 background: 'linear-gradient(to bottom, var(--bg-elevated, #1e1e24) 0%, transparent 100%)',
-                opacity: navScrollState.canScroll && !navScrollState.atTop ? 0.95 : 0,
+                opacity: !isHomePage && navScrollState.canScroll && !navScrollState.atTop ? 0.95 : 0,
               }}
             />
 
@@ -1296,7 +1280,7 @@ export default function AppShell() {
                             style={{
                               width: 28,
                               height: 28,
-                              color: active ? '#818cf8' : undefined,
+                              color: active ? 'rgba(255, 255, 255, 0.88)' : undefined,
                             }}
                           >
                             {it.icon}
@@ -1318,7 +1302,7 @@ export default function AppShell() {
               style={{
                 height: 40,
                 background: 'linear-gradient(to top, var(--bg-elevated, #1e1e24) 0%, transparent 100%)',
-                opacity: navScrollState.canScroll && !navScrollState.atBottom ? 0.95 : 0,
+                opacity: !isHomePage && navScrollState.canScroll && !navScrollState.atBottom ? 0.95 : 0,
               }}
             />
           </div>
@@ -1524,12 +1508,13 @@ export default function AppShell() {
                   className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
                   style={{ color: 'var(--text-secondary)' }}
                   onSelect={() => {
+                    setNotificationDialogTab('list');
                     setNotificationDialogOpen(true);
                     void loadNotifications({ silent: true });
                   }}
                 >
                   <Bell size={16} className="shrink-0" />
-                  <span className="text-[13px]">系统通知</span>
+                  <span className="text-[13px]">用户通知</span>
                   {notificationCount > 0 && (
                     <span
                       className="ml-auto rounded-full px-2 py-0.5 text-[10px]"
@@ -1645,11 +1630,40 @@ export default function AppShell() {
           <Dialog
             open={notificationDialogOpen}
             onOpenChange={setNotificationDialogOpen}
-            title="系统通知"
-            description="系统级通知与待处理事项"
-            maxWidth={620}
+            title="用户通知"
+            description="站内通知、待处理事项与外部推送订阅"
+            maxWidth={820}
+            contentStyle={{ height: 'min(860px, calc(100vh - 48px))' }}
             content={
-              <div className="flex h-full flex-col gap-3">
+              <div className="flex h-full min-h-0 flex-col gap-3">
+                <div
+                  className="grid grid-cols-2 rounded-[12px] p-1"
+                  style={{ background: 'rgba(255,255,255,0.06)' }}
+                >
+                  {[
+                    { key: 'list' as const, label: '通知列表' },
+                    { key: 'subscriptions' as const, label: '推送订阅' },
+                  ].map((tab) => (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      className="rounded-[9px] px-3 py-1.5 text-[12px] transition-all"
+                      style={
+                        notificationDialogTab === tab.key
+                          ? { background: 'var(--accent-gold)', color: '#1a1a1a' }
+                          : { color: 'var(--text-muted)' }
+                      }
+                      onClick={() => setNotificationDialogTab(tab.key)}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                {notificationDialogTab === 'subscriptions' ? (
+                  <NotificationSubscriptionsPanel />
+                ) : (
+                  <>
                 <div className="flex items-center justify-between">
                   <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
                     {notificationsLoading ? '加载中...' : `未处理 ${notificationCount > 999 ? '999+' : notificationCount} 条`}
@@ -1666,108 +1680,136 @@ export default function AppShell() {
                   </button>
                 </div>
 
-                <div className="flex-1 overflow-auto pr-2 space-y-3">
-                  {notificationCount === 0 && !notificationsLoading && (
-                    <div className="rounded-[14px] border border-dashed border-white/10 px-4 py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
-                      暂无待处理通知
-                    </div>
-                  )}
-                  {activeNotifications.map((item) => {
-                    const tone = getNotificationTone(item.level);
-                    return (
-                      <div
-                        key={item.id}
-                        className="rounded-[16px] border px-4 py-3"
-                        style={{ borderColor: tone.border, background: tone.bg }}
-                      >
-                        {/* 窄屏竖排（移动端 / 窄浏览器），宽屏水平分栏；按钮列 shrink-0 + 按钮文字 whitespace-nowrap，防止被挤成竖排单字 */}
-                        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-                          <div className="min-w-0 flex-1">
-                            <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                              {item.title}
-                            </div>
-                            {item.message && (
-                              looksLikeMarkdown(item.message) ? (
-                                <div
-                                  className="mt-1 text-[12px] leading-relaxed"
-                                  style={{ color: 'var(--text-muted)' }}
-                                  dangerouslySetInnerHTML={{ __html: renderNotificationMarkdown(item.message) }}
-                                />
-                              ) : (
-                                <div className="mt-1 text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-                                  {item.message}
-                                </div>
-                              )
-                            )}
-                            {item.attachments && item.attachments.length > 0 && (
-                              <div className="mt-2 flex flex-wrap gap-1.5">
-                                {item.attachments.map((att, i) => (
-                                  <a
-                                    key={i}
-                                    href={att.url}
-                                    download={ensureDownloadName(att.name, att.mimeType)}
-                                    onClick={async (e) => {
-                                      e.preventDefault();
-                                      try {
-                                        const resp = await fetch(att.url);
-                                        const blob = await resp.blob();
-                                        const blobUrl = URL.createObjectURL(blob);
-                                        const link = document.createElement('a');
-                                        link.href = blobUrl;
-                                        link.download = ensureDownloadName(att.name, att.mimeType);
-                                        link.click();
-                                        URL.revokeObjectURL(blobUrl);
-                                      } catch {
-                                        window.open(att.url, '_blank');
-                                      }
-                                    }}
-                                    className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-[6px] transition-colors hover:bg-white/10 cursor-pointer no-underline"
-                                    style={{
-                                      background: 'rgba(255,255,255,0.06)',
-                                      border: '1px solid rgba(255,255,255,0.1)',
-                                      color: 'var(--accent-gold)',
-                                    }}
-                                  >
-                                    <Download size={12} />
-                                    <span>{ensureDownloadName(att.name, att.mimeType)}</span>
-                                    {att.sizeBytes > 0 && (
-                                      <span style={{ color: 'var(--text-muted)' }}>
-                                        ({(att.sizeBytes / 1024).toFixed(1)} KB)
-                                      </span>
-                                    )}
-                                  </a>
-                                ))}
-                              </div>
-                            )}
-                            <div className="mt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                              {new Date(item.createdAt).toLocaleString()}
-                            </div>
+                <div className="flex-1 overflow-auto pr-2 space-y-4">
+                  {notificationSections.map((section) => (
+                    <section key={section.key} className="space-y-2">
+                      <div className="flex items-end justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                            {section.title}
                           </div>
-                          <div className="shrink-0 flex flex-row sm:flex-col items-stretch sm:items-end gap-2">
-                            {item.actionUrl && (
-                              <button
-                                type="button"
-                                className="rounded-full px-3 py-1.5 text-[12px] whitespace-nowrap transition-all hover:bg-white/20 active:scale-[0.97]"
-                                style={{ background: 'rgba(255, 255, 255, 0.15)', color: 'var(--text-primary)' }}
-                                onClick={() => handleNotification(item.id, item.actionUrl)}
-                              >
-                                {item.actionLabel || '去处理'}
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              className="rounded-full px-3 py-1.5 text-[12px] whitespace-nowrap transition-all hover:brightness-110 active:scale-[0.97]"
-                              style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
-                              onClick={() => handleNotification(item.id)}
-                            >
-                              标记已处理
-                            </button>
+                          <div className="mt-0.5 text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                            {section.description}
                           </div>
                         </div>
+                        <div className="shrink-0 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                          {section.items.length} 条
+                        </div>
                       </div>
-                    );
-                  })}
+
+                      {section.items.length === 0 && !notificationsLoading && (
+                        <div className="rounded-[12px] border border-dashed border-white/10 px-4 py-4 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                          {section.empty}
+                        </div>
+                      )}
+
+                      {section.items.map((item) => {
+                        const tone = getNotificationTone(item.level);
+                        return (
+                          <div
+                            key={item.id}
+                            className="rounded-[16px] border px-4 py-3"
+                            style={{ borderColor: tone.border, background: tone.bg }}
+                          >
+                            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                                    {item.title}
+                                  </div>
+                                  <span
+                                    className="rounded-full px-2 py-0.5 text-[10px]"
+                                    style={{ background: 'rgba(255,255,255,0.1)', color: tone.text }}
+                                  >
+                                    {item.sourceLabel || item.source || '通知'}
+                                  </span>
+                                </div>
+                                {item.message && (
+                                  looksLikeMarkdown(item.message) ? (
+                                    <div
+                                      className="mt-1 text-[12px] leading-relaxed"
+                                      style={{ color: 'var(--text-muted)' }}
+                                      dangerouslySetInnerHTML={{ __html: renderNotificationMarkdown(item.message) }}
+                                    />
+                                  ) : (
+                                    <div className="mt-1 text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                                      {item.message}
+                                    </div>
+                                  )
+                                )}
+                                {item.attachments && item.attachments.length > 0 && (
+                                  <div className="mt-2 flex flex-wrap gap-1.5">
+                                    {item.attachments.map((att, i) => (
+                                      <a
+                                        key={i}
+                                        href={att.url}
+                                        download={ensureDownloadName(att.name, att.mimeType)}
+                                        onClick={async (e) => {
+                                          e.preventDefault();
+                                          try {
+                                            const resp = await fetch(att.url);
+                                            const blob = await resp.blob();
+                                            const blobUrl = URL.createObjectURL(blob);
+                                            const link = document.createElement('a');
+                                            link.href = blobUrl;
+                                            link.download = ensureDownloadName(att.name, att.mimeType);
+                                            link.click();
+                                            URL.revokeObjectURL(blobUrl);
+                                          } catch {
+                                            window.open(att.url, '_blank');
+                                          }
+                                        }}
+                                        className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-[6px] transition-colors hover:bg-white/10 cursor-pointer no-underline"
+                                        style={{
+                                          background: 'rgba(255,255,255,0.06)',
+                                          border: '1px solid rgba(255,255,255,0.1)',
+                                          color: 'var(--accent-gold)',
+                                        }}
+                                      >
+                                        <Download size={12} />
+                                        <span>{ensureDownloadName(att.name, att.mimeType)}</span>
+                                        {att.sizeBytes > 0 && (
+                                          <span style={{ color: 'var(--text-muted)' }}>
+                                            ({(att.sizeBytes / 1024).toFixed(1)} KB)
+                                          </span>
+                                        )}
+                                      </a>
+                                    ))}
+                                  </div>
+                                )}
+                                <div className="mt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                  {new Date(item.createdAt).toLocaleString()}
+                                </div>
+                              </div>
+                              <div className="shrink-0 flex flex-row sm:flex-col items-stretch sm:items-end gap-2">
+                                {item.actionUrl && (
+                                  <button
+                                    type="button"
+                                    className="rounded-full px-3 py-1.5 text-[12px] whitespace-nowrap transition-all hover:bg-white/20 active:scale-[0.97]"
+                                    style={{ background: 'rgba(255, 255, 255, 0.15)', color: 'var(--text-primary)' }}
+                                    onClick={() => handleNotification(item.id, item.actionUrl)}
+                                  >
+                                    {item.actionLabel || '去处理'}
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  className="rounded-full px-3 py-1.5 text-[12px] whitespace-nowrap transition-all hover:brightness-110 active:scale-[0.97]"
+                                  style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
+                                  onClick={() => handleNotification(item.id)}
+                                >
+                                  标记已处理
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </section>
+                  ))}
                 </div>
+                  </>
+                )}
               </div>
             }
           />

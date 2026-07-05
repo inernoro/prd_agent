@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
 import type { InfraService, InfraVolume, InfraHealthCheck, BuildProfile, RoutingRule, DeployModeOverride, ResourceLimits } from '../types.js';
+import { isValidServiceSubdomain } from './branch-extra-services.js';
 
 /** Parsed infrastructure service from a compose file */
 export interface ComposeServiceDef {
@@ -100,6 +101,13 @@ interface ComposeServiceEntry {
   command?: string | string[];
   /** docker compose 标准 `restart:` 重启策略(no/always/on-failure/unless-stopped) */
   restart?: string;
+  /**
+   * CDS extension: 预构建镜像 profile(cds.prebuilt-image label)的**基础级** fallbackImage
+   * 回退链(string | 有序数组)。挂在 base service 上,使裸站点(无 express deployMode、image-only)
+   * 也能在本 commit 的 sha 镜像缺失时逐级回退(branch-<slug> → branch-main)。语义/解析与
+   * DeployModeOverride.fallbackImage 完全一致,由 resolveEffectiveProfile → runService 消费。
+   */
+  fallbackImage?: string | string[];
   working_dir?: string;
   depends_on?: Record<string, { condition?: string }> | string[];
   labels?: Record<string, string> | string[];
@@ -203,6 +211,8 @@ export interface CdsComposeConfig {
     entrypoint?: string;
     /** Phase 7 B17 — 预构建镜像模式(对齐 BuildProfile.prebuiltImage) */
     prebuiltImage?: boolean;
+    /** 基础级镜像回退链(对齐 BuildProfile.fallbackImage);裸预构建站点用,无 express mode 也生效 */
+    fallbackImage?: string | string[];
   }>;
   envVars: Record<string, string>;
   /**
@@ -439,6 +449,10 @@ export function parseCdsCompose(yamlString: string): CdsComposeConfig | null {
 function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
   const buildProfiles: CdsComposeConfig['buildProfiles'] = [];
   const infraServices: ComposeServiceDef[] = [];
+  // 命名子域唯一性:两个 service 抢同一个 cds.subdomain 会让 `<slug>-<sub>` host 路由非确定地
+  // 指向其中之一。与 PUT /branches/:id/extra-services 的去重保持一致——首个占用者保留,后续重复者
+  // 丢弃其 subdomain(降级为无命名 URL,仍可走主域名路径前缀),解析不阻断。
+  const seenSubdomains = new Set<string>();
 
   if (doc.services) {
     for (const [serviceId, entry] of Object.entries(doc.services)) {
@@ -486,6 +500,21 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
         // Phase 7 fix(B17):cds.prebuilt-image label → BuildProfile.prebuiltImage
         const prebuilt = labels['cds.prebuilt-image'];
         const prebuiltImage = prebuilt === 'true' || prebuilt === '1';
+        // cds.subdomain label → BuildProfile.subdomain:该服务获得 `<previewSlug>-<subdomain>.<root>`
+        // 命名 URL(独立入口,不埋在主应用路径下)。须单 DNS label,非法值忽略(不阻断解析)。
+        const subdomainRaw = labels['cds.subdomain'];
+        let subdomain = subdomainRaw && isValidServiceSubdomain(subdomainRaw.trim().toLowerCase())
+          ? subdomainRaw.trim().toLowerCase()
+          : undefined;
+        if (subdomain) {
+          if (seenSubdomains.has(subdomain)) {
+            // 重复:已被前一个 service 占用,本 service 丢弃命名子域(避免 host 路由冲突)。
+            console.warn(`[compose-parser] cds.subdomain "${subdomain}" 被多个 service 声明,service "${serviceId}" 的重复值已忽略`);
+            subdomain = undefined;
+          } else {
+            seenSubdomains.add(subdomain);
+          }
+        }
 
         // Bugbot fix(PR #521 第十轮 Bug 1)— build: 指令兜底:
         // - dockerImage 缺失时合成 "cds-build-<id>:latest" 占位(CDS 实际从
@@ -511,6 +540,10 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           resources: parseResourceLimits(entry),
           ...(entrypoint !== undefined ? { entrypoint } : {}),
           ...(prebuiltImage ? { prebuiltImage: true } : {}),
+          // 基础级 fallbackImage(裸预构建站点):base service 上直接声明的回退链带到 profile,
+          // 使无 express deployMode 的站点(如 llmgw-web)也能逐级回退 sha → branch-<slug> → branch-main。
+          ...(entry.fallbackImage ? { fallbackImage: entry.fallbackImage } : {}),
+          ...(subdomain ? { subdomain } : {}),
         });
       } else {
         // Infra service — no source mount, possibly built-from-source custom
@@ -606,14 +639,24 @@ export function toCdsCompose(
       image: p.dockerImage,
     };
 
+    // 预构建镜像站点(prebuiltImage)无源码,不写 working_dir / 源码 volume mount ——
+    // 否则 round-trip 会给纯 image 站点合成假的 `.:/app` mount(re-parse 靠 volume 反被
+    // 归类为源码 app,虽仍是 app profile 但语义漂移)。prebuilt profile 靠 cds.prebuilt-image
+    // label + cds.subdomain 被 isAppServiceCandidate 识别,不需要源码 mount。
+    const isPrebuiltSite = p.prebuiltImage === true;
+
     // working_dir
     const containerWorkDir = p.containerWorkDir || '/app';
-    entry.working_dir = containerWorkDir;
+    if (!isPrebuiltSite) {
+      entry.working_dir = containerWorkDir;
+    }
 
-    // volumes: relative mount for source + cache mounts
+    // volumes: relative mount for source + cache mounts(prebuilt 站点跳过源码 mount)
     const volumes: string[] = [];
-    const workDir = p.workDir === '.' ? '.' : `./${p.workDir.replace(/^\.\//, '')}`;
-    volumes.push(`${workDir}:${containerWorkDir}`);
+    if (!isPrebuiltSite) {
+      const workDir = p.workDir === '.' ? '.' : `./${p.workDir.replace(/^\.\//, '')}`;
+      volumes.push(`${workDir}:${containerWorkDir}`);
+    }
     if (p.cacheMounts) {
       for (const cm of p.cacheMounts) {
         volumes.push(`${cm.hostPath}:${cm.containerPath}`);
@@ -623,10 +666,17 @@ export function toCdsCompose(
         }
       }
     }
-    entry.volumes = volumes;
+    if (volumes.length > 0) {
+      entry.volumes = volumes;
+    }
 
     // ports
     entry.ports = [`${p.containerPort}`];
+
+    // fallbackImage(基础级回退链)round-trip:裸预构建站点在 base service 上带回退链。
+    if (p.fallbackImage) {
+      entry.fallbackImage = p.fallbackImage;
+    }
 
     // command
     if (p.command) {
@@ -667,6 +717,10 @@ export function toCdsCompose(
     // Phase 7 fix(B10):entrypoint → cds.entrypoint label(round-trip)
     if (p.entrypoint !== undefined) {
       entryLabels['cds.entrypoint'] = p.entrypoint;
+    }
+    // subdomain → cds.subdomain label(round-trip):命名子域 URL 元数据,导出/重导入不丢。
+    if (p.subdomain) {
+      entryLabels['cds.subdomain'] = p.subdomain;
     }
     // Phase 7 fix(B17):prebuiltImage → cds.prebuilt-image label(round-trip)
     if (p.prebuiltImage) {
@@ -960,6 +1014,15 @@ function findRelativeMount(volumes?: string[]): { hostPath: string; containerPat
  */
 function isAppServiceCandidate(entry: ComposeServiceEntry): boolean {
   if (hasRelativeVolumeMount(entry.volumes)) return true;
+  // 预构建镜像站点(prd-llmgw-web 这类纯 nginx 前端):无源码 mount、无 build:,只有 image +
+  // cds.prebuilt-image label,由 CI 出镜像、CDS docker-PULL。若不识别为 app 会被丢弃(既非 app
+  // 也非 infra,无端口/无 build 直接 continue),命名子域永不发布。判定:image + 真值 prebuilt-image
+  // label + (cds.subdomain 或 cds.path-prefix) → 是一个有对外路由的预构建 app 站点。
+  const labels = extractLabels(entry.labels);
+  const prebuilt = labels['cds.prebuilt-image'];
+  const isPrebuilt = prebuilt === 'true' || prebuilt === '1';
+  const hasRoute = !!labels['cds.subdomain'] || !!labels['cds.path-prefix'];
+  if (entry.image && isPrebuilt && hasRoute) return true;
   if (!entry.build) return false;
   // Has build but ALSO has docker healthcheck → treat as custom infra
   const hasDockerHealthcheck = !!entry.healthcheck && (entry.healthcheck.test !== undefined);

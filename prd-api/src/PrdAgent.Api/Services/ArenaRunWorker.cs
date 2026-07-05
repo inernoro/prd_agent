@@ -438,8 +438,14 @@ public sealed class ArenaRunWorker : BackgroundService
             SystemPromptRedacted: "[ARENA]",
             RequestType: "reasoning",
             AppCallerCode: "prd-agent.arena.battle::chat",
-            ModelResolutionType: ModelResolutionType.DirectModel));
+            ModelResolutionType: ModelResolutionType.DirectModel,
+            // S2 观测标记：B 类保留直连锁定语义（竞技场对战按 slot 明确指定 platform+model，故意绕开网关
+            // 池调度，走网关池会破坏「选 A 测 A」对战语义）。全网关路由留待网关支持 pinned platform+model
+            // 入口后做（见 doc/plan.llm-gateway.full-cutover.md S3）。此处只纳入 transport 观测：direct。
+            GatewayTransport: GatewayTransports.Direct));
 
+        // S3 B 类：保留直连（对战锁定 slot 的 platform+model，故意绕开网关池调度以守「选 A 测 A」）。
+        // 传输观测标记 direct 由上方 BeginScope 的 GatewayTransport 承载，日志可辨识为直连锁定路径。
         ILLMClient client = platformType == "anthropic" || apiUrl.Contains("anthropic.com", StringComparison.OrdinalIgnoreCase)
             ? new ClaudeClient(httpClient, apiKey, slot.ModelId, 4096, 0.2, false, claudeLogger, logWriter, ctxAccessor, platform.Id, platform.Name)
             : new OpenAIClient(httpClient, apiKey, slot.ModelId, 4096, 0.2, false, logWriter, ctxAccessor, null, platform.Id, platform.Name);

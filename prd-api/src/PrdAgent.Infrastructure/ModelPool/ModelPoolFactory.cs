@@ -32,13 +32,14 @@ public class ModelPoolFactory
     public IModelPool Create(ModelGroup group, IReadOnlyList<LLMPlatform> platforms, IConfiguration configuration)
     {
         var endpoints = BuildEndpoints(group, platforms, configuration);
-        var strategyType = (PoolStrategyType)group.StrategyType;
 
+        // 调度策略已化简为只有 FailFast：非 FailFast 策略引擎是纯管理工具死代码，已删除。
+        // group.StrategyType 字段保留（数据兼容，存量值均为 0=FailFast），但池一律按 FailFast 构建。
         return ModelPoolDispatcher.Create(
             poolId: group.Id,
             poolName: group.Name,
             endpoints: endpoints,
-            strategyType: strategyType,
+            strategyType: PoolStrategyType.FailFast,
             httpDispatcher: _httpDispatcher,
             healthTracker: BuildHealthTracker(group),
             logger: _logger);
@@ -47,13 +48,13 @@ public class ModelPoolFactory
     public IModelPool Create(ModelGroup group, IReadOnlyList<LLMPlatform> platforms, string apiKeySecret)
     {
         var endpoints = BuildEndpoints(group, platforms, apiKeySecret);
-        var strategyType = (PoolStrategyType)group.StrategyType;
 
+        // 同上：一律 FailFast。
         return ModelPoolDispatcher.Create(
             poolId: group.Id,
             poolName: group.Name,
             endpoints: endpoints,
-            strategyType: strategyType,
+            strategyType: PoolStrategyType.FailFast,
             httpDispatcher: _httpDispatcher,
             healthTracker: BuildHealthTracker(group),
             logger: _logger);

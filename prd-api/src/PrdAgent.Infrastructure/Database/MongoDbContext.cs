@@ -48,6 +48,9 @@ public class MongoDbContext
     public IMongoCollection<LLMModel> LLMModels => _database.GetCollection<LLMModel>("llmmodels");
     public IMongoCollection<AppSettings> AppSettings => _database.GetCollection<AppSettings>("appsettings");
     public IMongoCollection<AdminNotification> AdminNotifications => _database.GetCollection<AdminNotification>("admin_notifications");
+    public IMongoCollection<AdminPushProfile> AdminPushProfiles => _database.GetCollection<AdminPushProfile>("admin_push_profiles");
+    public IMongoCollection<AdminPushSubscription> AdminPushSubscriptions => _database.GetCollection<AdminPushSubscription>("admin_push_subscriptions");
+    public IMongoCollection<AdminPushDeliveryLog> AdminPushDeliveryLogs => _database.GetCollection<AdminPushDeliveryLog>("admin_push_delivery_logs");
     public IMongoCollection<DailyTip> DailyTips => _database.GetCollection<DailyTip>("daily_tips");
     public IMongoCollection<ChangelogSnapshot> ChangelogSnapshots => _database.GetCollection<ChangelogSnapshot>("changelog_snapshots");
     public IMongoCollection<AutomationRule> AutomationRules => _database.GetCollection<AutomationRule>("automation_rules");
@@ -56,6 +59,7 @@ public class MongoDbContext
     /// </summary>
     public IMongoCollection<SystemPromptSettings> SystemPrompts => _database.GetCollection<SystemPromptSettings>("systemprompts");
     public IMongoCollection<LlmRequestLog> LlmRequestLogs => _database.GetCollection<LlmRequestLog>("llmrequestlogs");
+    public IMongoCollection<LlmShadowComparison> LlmShadowComparisons => _database.GetCollection<LlmShadowComparison>("llmshadow_comparisons");
     public IMongoCollection<ApiRequestLog> ApiRequestLogs => _database.GetCollection<ApiRequestLog>("apirequestlogs");
     public IMongoCollection<PrdComment> PrdComments => _database.GetCollection<PrdComment>("prdcomments");
     public IMongoCollection<ModelLabExperiment> ModelLabExperiments => _database.GetCollection<ModelLabExperiment>("model_lab_experiments");
@@ -154,6 +158,10 @@ public class MongoDbContext
         => _database.GetCollection<PrdAgent.Core.Models.CcasAgent.CcasEquipmentAsset>("ccas_equipment_assets");
     public IMongoCollection<PrdAgent.Core.Models.CcasAgent.CcasFlowDiagram> CcasFlowDiagrams
         => _database.GetCollection<PrdAgent.Core.Models.CcasAgent.CcasFlowDiagram>("ccas_flow_diagrams");
+
+    // Email Agent 邮件模板智能体
+    public IMongoCollection<EmailTemplate> EmailTemplates
+        => _database.GetCollection<EmailTemplate>("email_templates");
 
     // Review Agent 产品评审员
     public IMongoCollection<ReviewSubmission> ReviewSubmissions => _database.GetCollection<ReviewSubmission>("review_submissions");
@@ -373,6 +381,9 @@ public class MongoDbContext
 
     // 行为洞察处理状态（确认/已修复/忽略 + 转缺陷关联，按 kind|target 指纹持久化）
     public IMongoCollection<BehaviorInsightState> BehaviorInsightStates => _database.GetCollection<BehaviorInsightState>("behavior_insight_states");
+
+    // 每用户「最近打开」台账（首页「继续上次」唯一数据源；打开工作区/工作流详情时 upsert）
+    public IMongoCollection<UserRecentOpen> UserRecentOpens => _database.GetCollection<UserRecentOpen>("home_recent_opens");
 
     // Product Management 产品管理（产品-版本-需求-功能-客户 + 通用表单/状态机引擎）
     public IMongoCollection<Product> Products => _database.GetCollection<Product>("products");
@@ -1111,6 +1122,12 @@ public class MongoDbContext
         MarketplaceSkillShareLinks.Indexes.CreateOne(new CreateIndexModel<MarketplaceSkillShareLink>(
             Builders<MarketplaceSkillShareLink>.IndexKeys.Ascending(x => x.CreatedBy).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_marketplace_skill_share_links_creator" }));
+        MarketplaceSkillShareLinks.Indexes.CreateOne(new CreateIndexModel<MarketplaceSkillShareLink>(
+            Builders<MarketplaceSkillShareLink>.IndexKeys
+                .Ascending(x => x.SkillId)
+                .Ascending(x => x.IsRevoked)
+                .Ascending(x => x.ExpiresAt),
+            new CreateIndexOptions { Name = "idx_marketplace_skill_share_links_skill_active" }));
 
         // DefectFixReports：按分享链接和 Token 查询
         DefectFixReports.Indexes.CreateOne(new CreateIndexModel<DefectFixReport>(

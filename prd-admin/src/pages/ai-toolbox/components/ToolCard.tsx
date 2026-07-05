@@ -50,6 +50,7 @@ import {
   Swords,
   HardHat,
   FolderKanban,
+  Mail,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { PaSecretary } from '@/lib/paSecretaryIconRegistry';
@@ -71,7 +72,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   Bot, Lightbulb, Target, Wrench, Sparkles, Rocket, MessageSquare, Zap,
   Brain, Cpu, Database, Globe, Image, Music, Video, BookOpen,
   GraduationCap, Briefcase, Heart, Star, Shield, Lock, Search, Layers,   Swords,
-  FolderKanban,
+  FolderKanban, Mail,
   PaSecretary,
 };
 

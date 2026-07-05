@@ -135,6 +135,10 @@ builder.Services.AddSingleton<IAdminControllerScanner, PrdAgent.Infrastructure.S
 builder.Services.AddSingleton<ISafeOutboundUrlValidator, PrdAgent.Infrastructure.Services.SafeOutboundUrlValidator>();
 builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory,
     PrdAgent.Infrastructure.Services.SafeOutboundHttpHandlerFactory>();
+builder.Services.AddSingleton<PrdAgent.Api.Services.AdminPushDispatchSignal>();
+builder.Services.AddScoped<PrdAgent.Api.Services.AdminPushNotificationService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.AdminNotificationEventService>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.AdminPushNotificationWorker>();
 
 // 系统级跨节点互传（Peer Sync）—— 详见 doc/design.platform.peer-sync.md
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IPeerNodeService,
@@ -201,8 +205,56 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.PlatformKeyIntegrityWork
 // 模型调度执行器
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
 
-// LLM Gateway 统一守门员（所有大模型调用必须通过此接口）
-builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.LlmGateway>();
+// LLM Gateway 统一守门员（所有大模型调用必须通过此接口）。
+// 特性开关：LlmGateway:Mode（环境变量 LlmGateway__Mode）。默认 inproc = 进程内 LlmGateway（行为不变）；
+// http = 切到 HttpLlmGatewayClient，跨进程调用独立部署的 serving 服务（/gw/v1/*）。
+// HttpLlmGatewayClient 同时实现 Infrastructure + Core 两个 ILlmGateway，下方 Core 桥接强转在两种模式下都成立。
+// 影子比对落库（灰度翻 http 前积累一致性证据；shadow 模式下注入 ShadowLlmGateway）
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.ILlmShadowComparisonWriter,
+    PrdAgent.Infrastructure.LlmGateway.LlmShadowComparisonWriter>();
+
+var gatewayMode = builder.Configuration["LlmGateway:Mode"] ?? "inproc";
+// 灰度翻 http 白名单（按 appCallerCode 逐个切；`,`/`;`/换行分隔）。命中的入口走 http 权威，其余按 Mode。
+var httpAllowlist = (builder.Configuration["LlmGateway:HttpAppCallerAllowlist"] ?? string.Empty)
+    .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+    .Where(x => !string.IsNullOrWhiteSpace(x))
+    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+var isShadow = string.Equals(gatewayMode, "shadow", StringComparison.OrdinalIgnoreCase);
+
+if (string.Equals(gatewayMode, "http", StringComparison.OrdinalIgnoreCase))
+{
+    builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>();
+}
+else if (isShadow || httpAllowlist.Count > 0)
+{
+    // 统一路由器：白名单命中 → http 权威（灰度翻）；否则 inproc 权威。
+    // shadow 模式下，对非白名单请求后台比对落 llmshadow_comparisons（默认只比解析=免费；
+    // LlmGateway:ShadowFullSamplePercent>0 时对采样 send 做完整内容比对）。inproc+仅白名单时不比对（writer=null）。
+    var shadowSamplePercent = int.TryParse(builder.Configuration["LlmGateway:ShadowFullSamplePercent"], out var sp0) ? sp0 : 0;
+    builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>(sp =>
+        new PrdAgent.Infrastructure.LlmGateway.ShadowLlmGateway(
+            inproc: new PrdAgent.Infrastructure.LlmGateway.LlmGateway(
+                sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.IModelResolver>(),
+                sp.GetRequiredService<IHttpClientFactory>(),
+                sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.LlmGateway>>(),
+                sp.GetService<PrdAgent.Core.Interfaces.ILlmRequestLogWriter>(),
+                sp.GetService<PrdAgent.Core.Interfaces.ILLMRequestContextAccessor>(),
+                sp.GetService<PrdAgent.Infrastructure.ModelPool.IPoolFailoverNotifier>()),
+            http: new PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient(
+                sp.GetRequiredService<IHttpClientFactory>(),
+                sp.GetRequiredService<IConfiguration>(),
+                sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>>(),
+                sp.GetService<PrdAgent.Core.Interfaces.ILLMRequestContextAccessor>()),
+            logger: sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.ShadowLlmGateway>>(),
+            writer: isShadow ? sp.GetService<PrdAgent.Core.Interfaces.ILlmShadowComparisonWriter>() : null,
+            fullSamplePercent: shadowSamplePercent,
+            ctx: sp.GetService<PrdAgent.Core.Interfaces.ILLMRequestContextAccessor>(),
+            httpAllowlist: httpAllowlist));
+}
+else
+{
+    builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.LlmGateway>();
+}
 
 // 注册 Core 层的 ILlmGateway 接口（同一实例）
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.LlmGateway.ILlmGateway>(sp =>
@@ -939,7 +991,14 @@ builder.Services.AddScoped<ILLMClient>(sp =>
     var logWriter = sp.GetRequiredService<ILlmRequestLogWriter>();
     var ctxAccessor = sp.GetRequiredService<ILLMRequestContextAccessor>();
     var claudeLogger = sp.GetRequiredService<ILogger<ClaudeClient>>();
-    
+
+    // S3-A（本工厂）暂不收口到网关，保留原直连以「行为保持」（Cursor Bugbot 2 处 Medium）：
+    // 本 scoped ILLMClient 被 LLMClientFactory 注入消费（非死代码），而 gateway.CreateClient 的采样温度
+    // （默认 0.2 vs 此处 0.7）与「主模型凭据缺失时回落 activeConfig/env」的兜底语义与下方直连不一致——
+    // 直接改走网关会静默改变默认注入客户端的采样行为、并吞掉凭据不全时的兜底。全网关收口留待网关
+    // CreateClient 支持温度透传 + 凭据不全兜底后再做（见 doc/plan.llm-gateway.full-cutover.md S3-A；
+    // 直连守卫 ratchet baseline 已登记本文件）。
+
     // 1. 优先：从数据库获取主模型 (IsMain=true)
     var mainModel = db.LLMModels.Find(m => m.IsMain && m.Enabled).FirstOrDefault();
     var mainEnablePromptCache = mainModel != null ? (mainModel.EnablePromptCache ?? true) : false;

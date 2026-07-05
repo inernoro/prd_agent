@@ -88,6 +88,8 @@
   > 长文本/文档转思维导图风格的可演讲材料，首期 mindmap 模式（MVP 已落地）
 
 - [前端搭档智能体产品规格](spec.front-end-agent) `spec.front-end-agent`
+- [AI 大模型网关真实环境 MECE 冒烟测试矩阵](spec.llm-gateway-test-matrix) `spec.llm-gateway-test-matrix`
+  > MECE 矩阵 + 4 层测试（解析/协议保真/跨进程/真机）+ 每层 canary；数据驱动全量见 report.gw-test-matrix
   > 面向后端同事的前端交付助手：接 API、写组件、修报错、看截图现象
 
 ### 二、设计文档
@@ -221,6 +223,12 @@
 - [CDS 构建耗时与发布版/热加载机制设计](design.cds.build-time) `design.cds.build-time`
   > 构建流水线时间去向、>10 分钟根因（Java 重复下载依赖 / buildTimeout 上限 / 自动发布双构建）、发布版 vs 热加载对照与自动发布介入时机
 
+- [CDS 分支级网络隔离](design.cds.branch-network-isolation) `design.cds.branch-network-isolation`
+  > 每分支专属 app 网（cds-br-<id>）+ 共享 infra 网，杜绝跨分支 app 别名串流；自动逐分支默认开、不做项目级硬开关、只留全局 env 逃生
+
+- [CDS 分支级临时额外服务](design.cds.branch-local-extra-services) `design.cds.branch-local-extra-services`
+  > 项目底座稳定（审批改、影响全体）+ 分支可自助加临时额外服务（只在本分支部署、跑分支专属网、删分支即消失、不影响别的分支）；纯增量可选、老行为零回归
+
 - [CDS Agent API 契约设计](design.cds.agent.api) `design.cds.agent.api`
   > MAP/CDS 会话、事件、工具审批、Hook、runtime profile 与工作流调用的 API 契约
 
@@ -290,6 +298,10 @@
 
 - [LLM Gateway 图片生成重构设计](design.platform.llm-gateway-refactor) `design.platform.llm-gateway-refactor`
   > compute-then-send 重构方案，消除二次 Resolve 的根因
+- [LLM 网关物理独立设计](design.llm-gateway-physical-isolation) `design.llm-gateway-physical-isolation`
+  > 从 MAP 剥离 + 跨进程 serving（/gw/v1/*）+ flag inproc|http，含对抗评审
+- [LLM 网关与模型池统一](design.llm-gateway-unification) `design.llm-gateway-unification`
+  > 协议下沉 + 池减负 + 接口绑模型
 
 - [PR Review V2 设计](design.pr-review.v2) `design.pr-review.v2`
   > OAuth Device Flow 每用户独立 + PR 快照 + 笔记的最小可审查工作台
@@ -354,11 +366,17 @@
 
 ### 三、指南
 
+- [LLM 网关验收面包屑清单](guide.llm-gateway.acceptance-breadcrumbs) `guide.llm-gateway.acceptance-breadcrumbs`
+  > 逐 UI 面：导航点击路径→截图点→预期→双主题（Playwright 可消费）+ 测试覆盖摘要 + 例外 12 条 + 压测 6 条
+
 - [Agent 开发入门指南（新手必读）](guide.platform.agent-onboarding) `guide.platform.agent-onboarding`
   > 新手 Agent 开发入门：阶段式陪伴、AGENT_WORKSPACE 进度文件、验收标准
 
 - [文档索引目录页](guide.list.directory) `guide.list.directory`
   > doc/ 目录的结构化索引，供外部同步工具消费
+
+- [系统原则速查（命名原则索引）](guide.platform.principles) `guide.platform.principles`
+  > 把所有有名号的原则（2 秒原则 / 无根之木禁令 / 好用四原则等）汇成速查表，一句话主张 + 出处
 
 - [PRD Agent 快速部署指南](guide.platform.quickstart) `guide.platform.quickstart`
   > 从零开始部署 PRD Agent 的完整步骤
@@ -601,10 +619,25 @@
 - [首页 / 登录页视觉语言规则](rule.frontend.landing-visual-style) `rule.frontend.landing-visual-style`
   > 首页与登录页的视觉风格、动效与色彩规范
 
+- [移动端视觉检查矩阵规则](rule.frontend.mobile-visual-check-matrix) `rule.frontend.mobile-visual-check-matrix`
+  > 按页面状态而不是路由数量拆分移动端视觉检查范围，固定 P0/P1/P2 视觉回归矩阵
+
 - [LLM Gateway 流式调用与 Reasoning 规则](rule.platform.llm-gateway) `rule.platform.llm-gateway`
   > LLM Gateway 流式场景的关键陷阱与 Reasoning 推理内容处理规则
 
 ### 五、计划与方案
+
+- [LLM 网关剥离上线计划](plan.llm-gateway.rollout) `plan.llm-gateway.rollout`
+  > 差异化进度 + 测试纲领（A/B/C/D 四层）+ 局限范围（L1-L9 + apiyi 中转专项）+ 翻 http 上线序列
+
+- [LLM 网关全面切换执行计划](plan.llm-gateway.full-cutover) `plan.llm-gateway.full-cutover`
+  > 全面撤销 MAP 直连 LLM、清理网关旧代码、全接口 MECE 复测、遗漏排查四项诉求 + CDS 多出口面板
+
+- [LLM 网关 GW 用户愿景与交接](plan.llm-gateway.gw-vision-handoff) `plan.llm-gateway.gw-vision-handoff`
+  > 两 web 两域名一主一副 / 简单账号密码 admin-admin / OpenRouter 风格控制台 / 替换项目所有模型请求，四点愿景与接力交接
+
+- [LLM 网关剥离活状态看板](plan.llm-gateway.status-dashboard) `plan.llm-gateway.status-dashboard`
+  > 网关剥离唯一进度真相：一句话现状 + 能不能发布 + 记分卡 + Gate + 下一步 + 验收证据
 
 - [PA Agent 竞品调研与改进方案](plan.product-agent.pa.competitive-improvements) `plan.product-agent.pa.competitive-improvements`
   > 四类竞品谱系、与 Phase 1 差距对照、P2～P4 分期改进包
@@ -850,6 +883,9 @@
 - [MAP MCP 连接器 · 债务台账](debt.platform.map-mcp-connector) `debt.platform.map-mcp-connector`
   > MAP MCP 连接器核心链路已上线，债务台账记录 PR #836 后显式延后的硬化项（共 4 条，open 3）
 
+- [登录后首页(Agent 启动页) · 债务台账](debt.platform.home-launcher) `debt.platform.home-launcher`
+  > 方向 C（工作台·内容优先）首版已落地；记录「继续上次」数据源边界（仅视觉/文学/工作流）、behavior_events 脱敏限制与色阶尺配色纪律
+
 - [行为洞察 / VOC 体验之声 工程债务台账](debt.team-activity.voc-legacy) `debt.team-activity.voc-legacy`
   > 行为洞察页面已知边界、待建造项（顶部 ribbon 流式动画、VOC 信息流等）与跨 session 债务
 
@@ -859,8 +895,17 @@
   > 2026-05 手工取证 smoke 的 require_match 硬编码文案随 doc 改写漂移、未接 CI；需整组「修复(锚结构化字段)或退役」而非逐条打补丁
 - [移动端控制条过载治理台账](debt.frontend.mobile-control-bar-overload) `debt.frontend.mobile-control-bar-overload`
   > 移动端控制条过载问题（知识库/缺陷/周报/海鲜市场等页面，进内容前控制条 >1 条），治理机制与进度
+- [LLM 网关与模型池 · 债务台账](debt.llm-gateway) `debt.llm-gateway`
+  > LLM 网关与模型池统一迁移过程中已识别、尚未在代码中偿还的边界与风险
+- [LLM 网关物理剥离 · 债务台账](debt.llm-gateway-isolation) `debt.llm-gateway-isolation`
+  > LLM 网关从 MAP 物理剥离的工程债务台账：已做/待用户/已知边界/后续
+- [debt.llm-gateway-protocol-fidelity](debt.llm-gateway-protocol-fidelity) `debt.llm-gateway-protocol-fidelity`
+  > 函数调用穿协议不丢核心已落地，留下三处已知边界（采样/能力描述符路由细节）下一波补齐
 
 ### 七、周报
+
+- [AI 大模型网关测试矩阵全量报告](report.gw-test-matrix) `report.gw-test-matrix`
+  > 全枚举大表：A 解析 153 入口 + B 协议保真 91 cell + C 跨进程 18 cell + 20 扩展维度；B/C 即 CI 真跑 cell
 
   > 各智能体完备度看板：终极目标、当前进度、TodoList、目前情况、风险点（当前加权进度约 55%）
 

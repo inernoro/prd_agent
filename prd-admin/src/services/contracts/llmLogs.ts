@@ -113,5 +113,104 @@ export type ReplayCurlData = {
 
 export type GetReplayCurlContract = (id: string) => Promise<ApiResponse<ReplayCurlData>>;
 
+// ── 按天请求量时间序列（OpenRouter 风格柱状图）──
+export type GetLlmLogsTimeseriesParams = {
+  days?: number;
+  from?: string;
+  to?: string;
+  provider?: string;
+  model?: string;
+  status?: string;
+  appCallerCode?: string;
+  userId?: string;
+};
+
+export type LlmLogsTimeseriesPoint = {
+  date: string; // YYYY-MM-DD (UTC)
+  count: number;
+  successCount: number;
+  failCount: number;
+};
+
+export type LlmLogsTimeseriesData = {
+  from: string;
+  to: string;
+  items: LlmLogsTimeseriesPoint[];
+};
+
+export type GetLlmLogsTimeseriesContract = (params?: GetLlmLogsTimeseriesParams) => Promise<ApiResponse<LlmLogsTimeseriesData>>;
+
+// ── 按会话聚合（OpenRouter Sessions tab）──
+export type GetLlmLogsSessionsParams = {
+  page?: number;
+  pageSize?: number;
+  days?: number;
+  from?: string;
+  to?: string;
+  appCallerCode?: string;
+  userId?: string;
+};
+
+export type LlmLogsSessionItem = {
+  sessionId: string | null;
+  requestCount: number;
+  start?: string | null;
+  end?: string | null;
+  appCallerCode?: string | null;
+  primaryModel?: string | null;
+  primaryProvider?: string | null;
+  supportingModels: string[];
+};
+
+export type LlmLogsSessionsData = {
+  items: LlmLogsSessionItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
+export type GetLlmLogsSessionsContract = (params?: GetLlmLogsSessionsParams) => Promise<ApiResponse<LlmLogsSessionsData>>;
+
+// ── 按应用前缀 + 类型聚合（应用视图矩阵）──
+export type GetLlmLogsAppSummaryParams = {
+  from?: string;
+  to?: string;
+  days?: number;
+};
+
+export type LlmLogsAppSummaryItem = {
+  appPrefix: string;
+  requestType: string;
+  requestCount: number;
+  successCount: number;
+  failCount: number;
+  /** 0-1 之间的成功率；总数为 0 时为 null */
+  successRate: number | null;
+  medianDurationMs: number | null;
+};
+
+export type LlmLogsAppSummaryData = {
+  from: string;
+  to: string;
+  items: LlmLogsAppSummaryItem[];
+};
+
+export type GetLlmLogsAppSummaryContract = (
+  params?: GetLlmLogsAppSummaryParams,
+) => Promise<ApiResponse<LlmLogsAppSummaryData>>;
+
+// ── 日志正文 COS 占位符还原 ──
+export type RestoreLlmLogTextData = {
+  id: string;
+  answerText?: string | null;
+  systemPromptText?: string | null;
+  questionText?: string | null;
+  thinkingText?: string | null;
+  restoredCount: number;
+  restoreErrors: string[] | null;
+};
+
+export type RestoreLlmLogTextContract = (id: string) => Promise<ApiResponse<RestoreLlmLogTextData>>;
+
 
 

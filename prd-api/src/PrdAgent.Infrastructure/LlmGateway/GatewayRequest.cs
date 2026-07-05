@@ -202,6 +202,36 @@ public class GatewayRequestContext
     /// 图片引用列表（参考图 COS URL 等元数据，用于日志页展示）
     /// </summary>
     public List<LlmImageReference>? ImageReferences { get; init; }
+
+    /// <summary>
+    /// 网关传输路径观测标记（S2）：inproc / http / shadow / direct。
+    /// http 模式下由 MAP 侧 HttpLlmGatewayClient 置 "http" 后随请求体过线，serving 端 OpenContextScope
+    /// 将其注入 LlmRequestContext，供 serving 的 LlmGateway 权威标注该条日志的传输通道。
+    /// 为 null 时 serving 端 LlmGateway 兜底为 inproc。
+    /// </summary>
+    public string? GatewayTransport { get; init; }
+
+    /// <summary>
+    /// 返回一份把 <see cref="GatewayTransport"/> 覆盖为指定值的副本（其余字段原样拷贝）。
+    /// <paramref name="source"/> 为 null 时新建一个仅含传输标记的最小上下文。
+    /// 用于 http 模式过线前给请求体的 Context 打上 "http" 传输标记（S2 观测）。
+    /// </summary>
+    public static GatewayRequestContext WithTransport(GatewayRequestContext? source, string transport)
+        => new()
+        {
+            RequestId = source?.RequestId,
+            SessionId = source?.SessionId,
+            GroupId = source?.GroupId,
+            UserId = source?.UserId,
+            ViewRole = source?.ViewRole,
+            DocumentChars = source?.DocumentChars,
+            DocumentHash = source?.DocumentHash,
+            QuestionText = source?.QuestionText,
+            SystemPromptChars = source?.SystemPromptChars,
+            SystemPromptText = source?.SystemPromptText,
+            ImageReferences = source?.ImageReferences,
+            GatewayTransport = transport,
+        };
 }
 
 /// <summary>
@@ -258,6 +288,15 @@ public class GatewayRawRequest
     public Dictionary<string, (string FileName, byte[] Content, string MimeType)>? MultipartFiles { get; init; }
 
     /// <summary>
+    /// multipart 文件的"对象存储引用"形态（网关物理独立后跨 HTTP 边界用）。
+    /// 大负载（音/视频 ASR 输入，数 MB~数十 MB）禁止 base64 内联进 JSON——
+    /// prd-api 先把字节存进共享对象存储拿 RefKey，/gw/raw 只传引用，网关再从同一存储拉取拼 multipart。
+    /// 进程内调用仍走 MultipartFiles（字节直传）；本字段仅在 http 模式填充。
+    /// 详见 doc/design.llm-gateway-physical-isolation.md §3.1。
+    /// </summary>
+    public Dictionary<string, MultipartFileRef>? MultipartFileRefs { get; init; }
+
+    /// <summary>
     /// HTTP 方法（默认 POST）
     /// </summary>
     public string HttpMethod { get; init; } = "POST";
@@ -283,6 +322,18 @@ public class GatewayRawRequest
     /// 请求上下文（用于日志）
     /// </summary>
     public GatewayRequestContext? Context { get; init; }
+}
+
+/// <summary>
+/// multipart 文件的对象存储引用（网关物理独立 HTTP 边界用，避免大负载 base64 内联）。
+/// 具名 DTO 替代 ValueTuple+byte[]，可干净 JSON 序列化。详见 design.llm-gateway-physical-isolation.md §3.1。
+/// </summary>
+public sealed class MultipartFileRef
+{
+    /// <summary>对象存储中的引用键（prd-api 上传后产生，网关据此拉取字节）。</summary>
+    public string RefKey { get; init; } = string.Empty;
+    public string FileName { get; init; } = string.Empty;
+    public string MimeType { get; init; } = string.Empty;
 }
 
 /// <summary>

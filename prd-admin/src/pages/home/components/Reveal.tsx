@@ -69,6 +69,7 @@ export function Reveal({
 }: RevealProps) {
   const [ref, inView] = useInView<HTMLDivElement>(undefined, debugLabel);
   const [injected, setInjected] = useState(false);
+  const [settled, setSettled] = useState(false);
 
   useEffect(() => {
     injectRevealKeyframes();
@@ -82,6 +83,10 @@ export function Reveal({
     <Tag
       ref={ref as React.RefObject<HTMLDivElement>}
       className={`${ready ? 'map-reveal-active' : ''} ${className ?? ''}`}
+      onAnimationEnd={(e) => {
+        // 只认自己的进场动画结束（animationend 会从子元素冒泡上来）
+        if (e.target === e.currentTarget) setSettled(true);
+      }}
       style={{
         // 动画未就绪时：不可见
         opacity: ready ? undefined : 0,
@@ -92,7 +97,11 @@ export function Reveal({
         // CSS 变量传递给 @keyframes
         ['--reveal-y' as string]: `${offset}px`,
         ['--reveal-blur' as string]: `${blur}px`,
-        willChange: 'opacity, transform, filter',
+        // will-change 只在动画进行期间保留：页面几十个 Reveal 若永久挂着
+        // will-change（尤其含 filter）会常驻几十个合成层，占显存且拖慢滚动
+        willChange: ready && !settled
+          ? (blur > 0 ? 'opacity, transform, filter' : 'opacity, transform')
+          : undefined,
       }}
     >
       {children}

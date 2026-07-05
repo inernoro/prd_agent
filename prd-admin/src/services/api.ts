@@ -98,9 +98,12 @@ export const api = {
       list: () => '/api/mds/model-groups',
       byId: (id: string) => `/api/mds/model-groups/${id}`,
       forApp: () => '/api/mds/model-groups/for-app',
+      healthOverview: (days?: number) =>
+        days != null
+          ? `/api/mds/model-groups/health-overview?days=${encodeURIComponent(days)}`
+          : '/api/mds/model-groups/health-overview',
       usage: (id: string) => `/api/mds/model-groups/${id}/usage`,
       unbind: (id: string) => `/api/mds/model-groups/${id}/unbind`,
-      predict: (id: string) => `/api/mds/model-groups/${id}/predict`,
       resetModelHealth: (groupId: string, modelId: string) =>
         `/api/mds/model-groups/${groupId}/reset-model-health?modelId=${encodeURIComponent(modelId)}`,
       resetAllHealth: (groupId: string) =>
@@ -179,9 +182,13 @@ export const api = {
       list: () => '/api/logs/llm',
       byId: (id: string) => `/api/logs/llm/${id}`,
       replayCurl: (id: string) => `/api/logs/llm/${id}/replay-curl`,
+      restoreText: (id: string) => `/api/logs/llm/${id}/restore-text`,
       meta: () => '/api/logs/llm/meta',
       modelStats: () => '/api/logs/llm/model-stats',
       batchModelStats: () => '/api/logs/llm/model-stats/batch',
+      appSummary: () => '/api/logs/llm/app-summary',
+      timeseries: () => '/api/logs/llm/timeseries',
+      sessions: () => '/api/logs/llm/sessions',
     },
     desktopPresence: {
       list: () => '/api/logs/desktop-presence',
@@ -301,6 +308,12 @@ export const api = {
   // 首页资源（任意登录用户可读，用于 LandingPage 覆盖默认素材）
   homepageAssets: () => '/api/homepage/assets',
 
+  // ============ 登录后首页 ============
+  home: {
+    // 「继续上次」：跨智能体聚合当前用户最近活跃的工作实体
+    recentWork: () => '/api/home/recent-work',
+  },
+
   // ============ Executive 总裁面板 ============
   executive: {
     overview: () => '/api/executive/overview',
@@ -324,6 +337,10 @@ export const api = {
       list: () => '/api/dashboard/notifications',
       handle: (id: string) => `/api/dashboard/notifications/${id}/handle`,
       handleAll: () => '/api/dashboard/notifications/handle-all',
+      subscriptions: () => '/api/dashboard/notifications/subscriptions',
+      subscriptionDefaultProfile: () => '/api/dashboard/notifications/subscriptions/default-profile',
+      subscription: (topicKey: string) => `/api/dashboard/notifications/subscriptions/${encodeURIComponent(topicKey)}`,
+      testSubscription: (topicKey: string) => `/api/dashboard/notifications/subscriptions/${encodeURIComponent(topicKey)}/test`,
     },
     userPreferences: {
       get: () => '/api/dashboard/user-preferences',
@@ -334,6 +351,7 @@ export const api = {
       visualAgent: () => '/api/dashboard/user-preferences/visual-agent',
       literaryAgent: () => '/api/dashboard/user-preferences/literary-agent',
       agentSwitcher: () => '/api/dashboard/user-preferences/agent-switcher',
+      homeLauncher: () => '/api/dashboard/user-preferences/home-launcher',
       docStorePins: () => '/api/dashboard/user-preferences/doc-store-pins',
     },
     stats: {

@@ -48,6 +48,7 @@ docs:
   spec.platform.short-links: 统一短链系统规格
   spec.speech-agent: 演讲智能体（长文本 → 思维导图演讲）产品规格
   spec.front-end-agent: 前端搭档智能体产品规格
+  spec.llm-gateway-test-matrix: AI 大模型网关真实环境 MECE 冒烟测试矩阵（数据驱动全量见 report.gw-test-matrix）
 
   # ── 二、设计文档 ──
   # 先看核心架构，再看各模块设计
@@ -63,6 +64,8 @@ docs:
   design.skill.unified-skill-system: 技能系统统一设计
   design.platform.llm-gateway: LLM Gateway 统一调用架构设计
   design.platform.llm-gateway-refactor: LLM Gateway 图片生成重构（compute-then-send）
+  design.llm-gateway-physical-isolation: LLM 网关物理独立设计（从 MAP 剥离 + 跨进程 serving + flag）
+  design.llm-gateway-unification: LLM 网关与模型池统一（协议下沉 + 池减负 + 接口绑模型）
   design.platform.model-pool: 大模型池设计（三级调度/三级链路）
   design.open-platform: 开放平台功能概要
   design.platform.external-authorization: 外部授权中心（TAPD/语雀/GitHub 凭证统一管理）
@@ -100,6 +103,8 @@ docs:
   design.platform.network-diagnostics: 网络诊断功能
   design.cds: CDS (Cloud Development Suite) 设计文档
   design.cds.build-time: CDS 构建耗时与发布版/热加载机制设计
+  design.cds.branch-network-isolation: CDS 分支级网络隔离（每分支专属 app 网 + 共享 infra 网，杜绝跨分支服务发现串流）
+  design.cds.branch-local-extra-services: CDS 分支级临时额外服务（分支可在项目底座之上自助加服务，只在本分支部署、删分支即消失、不影响别的分支）
   design.cds.agent.api: CDS Agent API 契约设计
   design.cds.agent.runtime-architecture: CDS Agent 运行时架构设计
   design.cds.agent.official-sdk-adapter: CDS Agent 官方 SDK Adapter 设计
@@ -148,6 +153,7 @@ docs:
   # 先看全貌索引，再看部署/开发，然后是 Agent 使用教程，最后是专题指南
   guide.platform.agent-onboarding: Agent 开发入门指南（新手必读）
   guide.list.directory: 文档索引目录页
+  guide.platform.principles: 系统原则速查（命名原则索引）
   guide.platform.quickstart: PRD Agent 快速部署指南
   guide.platform.development-guide: PRD Agent 开发文档
   guide.cds.cloud-dev-tutorial: Claude Code 云开发教程
@@ -209,6 +215,7 @@ docs:
   guide.infra-sandbox-agent: 基础设施沙箱 Agent 完整手册
   guide.skill.catalog: 技能百科全书指南
   guide.platform.smoke-tests: 冒烟测试指南
+  guide.llm-gateway.acceptance-breadcrumbs: LLM 网关验收面包屑清单（逐 UI 面 导航路径→截图点→预期，自动化可消费）+ 覆盖/例外/压测
 
   # ── 四、规范与规则 ──
   # 先看文档相关规范，再看开发规范，最后是审计报告
@@ -233,6 +240,7 @@ docs:
   rule.cds.project-isolation-audit: CDS 多项目隔离审计规则
   rule.frontend.frontend-modal: 前端模态框布局硬约束规则
   rule.frontend.landing-visual-style: 首页 / 登录页视觉语言规则
+  rule.frontend.mobile-visual-check-matrix: 移动端视觉检查矩阵规则
   rule.platform.llm-gateway: LLM Gateway 流式调用与 Reasoning 规则
 
   # ── 五、计划与方案 ──
@@ -257,6 +265,10 @@ docs:
   plan.frontend.animation-optimization: 动画优化计划
   plan.desktop.asset-features: Desktop 资产功能方案
   plan.doc.update: 文档长周期更新计划
+  plan.llm-gateway.rollout: LLM 网关剥离上线计划（差异化进度 + 测试纲领 + 局限范围 + 翻 http 序列）
+  plan.llm-gateway.full-cutover: LLM 网关全面切换执行计划（撤销 MAP 直连 + 清理旧代码 + 全接口 MECE 复测 + CDS 多出口面板）
+  plan.llm-gateway.gw-vision-handoff: LLM 网关 GW 用户四点愿景与交接（两 web 两域名 / 简单账号密码 admin/admin / OpenRouter 风格控制台 / 替换所有模型请求）
+  plan.llm-gateway.status-dashboard: LLM 网关剥离活状态看板（唯一"现在到哪了/能不能发布"入口，记分卡 + Gate + 下一步 + 验收证据）
   plan.visual-agent.merge-image-ref-resolver: 合并计划书：三入口守门员统一
   plan.skill.installation: Claude Code Skill 安装计划
   plan.skill.marketplace-open-api-next: 海鲜市场技能开放接口 — 下一程交接（P2/P3/P4 待办 + UAT 清单 + 环境准备）
@@ -316,6 +328,9 @@ docs:
   debt.speech-agent: 演讲智能体 · 债务台账（MVP 已知边界 + Phase 2 backlog）
   debt.team-activity: 团队动态（团队脉搏）· 债务台账（排行刷量计分 / 直方图采样 / 深链下钻未通）
   debt.knowledge-base: 知识库（AI Toolbox attachment + 文档空间）债务台账
+  debt.llm-gateway: LLM 网关与模型池 · 债务台账
+  debt.llm-gateway-protocol-fidelity: LLM 网关协议保真（函数调用穿协议 + 能力软门）· 已知边界
+  debt.llm-gateway-isolation: AI 大模型网关从 MAP 剥离（观测/登录独立进程 + 部署 + serving 跨进程 + 数据驱动测试矩阵）· 债务台账
   debt.knowledge-base.inline-comment: 知识库划词评论（批注栏/内联布局 + 就地输入 + 回读闭环）债务台账
   debt.knowledge-base.selection-ai: 知识库划词 AI 局部编辑（AI 改写 + 选区配图）债务台账
   debt.web-hosting: 网页托管 · 债务台账（幻灯片翻页方向兼容垫片边界）
@@ -335,6 +350,7 @@ docs:
   debt.web-hosting.comments: 网页托管评论 · 债务台账
 
   # ── 七、周报（降序：最新在前）──
+  report.gw-test-matrix: AI 大模型网关测试矩阵全量报告（A 解析 153 + B 协议 91 + C 跨进程 18 cell，自动生成）
   report.2026-W26: 周报 2026-W26 (06-22 ~ 06-28)
   report.2026-W25: 周报 2026-W25 (06-15 ~ 06-21)
   report.2026-W24: 周报 2026-W24 (06-08 ~ 06-14)
@@ -366,6 +382,7 @@ docs:
     status: draft
   debt.platform.emoji-corpus: 历史 emoji 语料清理 · 债务台账（skill/doc 存量 emoji → 对外 generated json，分批 de-emoji + CI 守卫）
   debt.platform.map-mcp-connector: MAP MCP 连接器债务台账
+  debt.platform.home-launcher: 登录后首页(Agent 启动页) · 债务台账（继续上次数据源边界 + 色阶尺纪律）
   debt.cds.performance: CDS 性能债务台账（构建越来越慢/前端缓慢根因 + 逐步解决）
   debt.team-activity.voc-legacy: 行为洞察 / VOC 体验之声 工程债务台账
   debt.frontend.mobile-control-bar-overload: 移动端控制条过载治理台账

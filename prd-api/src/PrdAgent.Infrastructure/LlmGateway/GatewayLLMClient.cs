@@ -113,7 +113,10 @@ public class GatewayLLMClient : ILLMClient
                 DocumentHash = scopeCtx?.DocumentHash,
                 QuestionText = messages.LastOrDefault(m => m.Role == "user")?.Content,
                 SystemPromptChars = systemPrompt?.Length,
-                SystemPromptText = systemPrompt
+                SystemPromptText = systemPrompt,
+                // S2 观测标记：透传当前作用域的传输标记。MAP inproc 模式下为 null（LlmGateway 兜底 inproc）；
+                // serving 端 client-stream 场景下作用域已由 OpenContextScope 注入 "http"，据此如实标注。
+                GatewayTransport = scopeCtx?.GatewayTransport,
             }
         };
 
@@ -225,7 +228,10 @@ public class GatewayLLMClient : ILLMClient
                         ["type"] = "image_url",
                         ["image_url"] = new JsonObject
                         {
-                            ["url"] = imageUrl ?? string.Empty
+                            ["url"] = imageUrl ?? string.Empty,
+                            // 识图保真：默认 "high"，避免上游默认 "auto" 把小目标/远处文字识别降级。
+                            // 调用方可在 LLMAttachment.Detail 显式传 "low"/"auto" 覆盖（如帧抽取大批量场景）。
+                            ["detail"] = string.IsNullOrWhiteSpace(attachment.Detail) ? "high" : attachment.Detail
                         }
                     });
                 }

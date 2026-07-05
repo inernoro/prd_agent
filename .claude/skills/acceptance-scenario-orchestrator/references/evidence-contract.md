@@ -11,9 +11,11 @@ Each test unit must connect:
 Rules:
 - If a link in the chain is unknown, write `未知` and mark the unit as not fully accepted.
 - If a screenshot proves a claim, the claim must be visible in the screenshot or the screenshot is invalid.
+- Screenshot references in report tables should be clickable links to the evidence anchor, preferably the full screenshot-name anchor such as `[图01](#fig-01-login-home)` for `{{IMG:01-login-home}}`. Plain `图01` or legacy `#fig-01` is acceptable only as an input that the archive step can normalize when that figure number is unique; repeated figure numbers must use full anchors.
 - If API/log/file evidence proves a non-visual claim, show the exact endpoint, file, or command output summary.
 - If the tested environment SHA differs from the target SHA, the test cannot pass for that PR or commit.
 - The evidence must exercise the changed behavior, not merely the same module. For example, a knowledge-base sync commit requires sync action/result/log evidence; a knowledge-base list screenshot only proves the list page is reachable.
+- `CDS` and `CDS Agent` are different evidence domains. CDS platform changes (`cds/` deploy, preview, report center, branch network, extra-services, self-update, scheduler, proxy, smoke) require CDS platform proof such as cdscli/API state, deploy/smoke logs, `/reports`, preview routing, or service status. The prd-admin `/cds-agent` page proves only CDS Agent UI/runtime/session behavior. If a row uses `/cds-agent` to prove CDS platform work, mark the relevance as `无关` or split the row.
 - For user-facing changes, page evidence is primary. API/log/database/file evidence is secondary corroboration unless the item is explicitly non-visual or internal-only.
 
 ## Page-First Evidence Philosophy
@@ -33,6 +35,7 @@ Rules:
 - Start from the smallest page where the user would notice the change. If there is no page, say `无用户可见页面` and explain why.
 - Do not lead a daily acceptance report with internal data screenshots. Show the page symptom or user result first, then attach the data that proves cause or persistence.
 - A page that only proves entry or navigation is not enough for a behavior change. It can be `入口证据`, but the pass proof must be the changed state or result.
+- A CDS Agent entry screenshot is not CDS platform proof. It can show that the workbench loads, but it cannot prove branch deploy, preview routing, report archive, extra-services, scheduler, or self-update behavior.
 - For backend-only changes, write the expected user-facing consequence if one exists, such as better error text, disabled unsafe action, retry status, sync badge, or absence of duplicate rows. If no consequence exists, classify the item as `内部能力`.
 - A failed page state is valuable evidence. Keep it, mark the visible symptom, and only then show the internal data that explains it.
 

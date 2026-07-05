@@ -10,8 +10,8 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
-import { useSearchParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Clock, Hash, Search, Store, TrendingUp, UploadCloud, Zap } from 'lucide-react';
+import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
+import { ArrowLeft, Clock, Hash, PanelTop, Rows3, Search, Store, TrendingUp, UploadCloud, Zap } from 'lucide-react';
 import { MarketplaceCard } from '@/components/marketplace/MarketplaceCard';
 import type { MixedMarketplaceItem } from '@/lib/marketplaceTypes';
 import { QuickConnectPanel } from './QuickConnectPanel';
@@ -34,15 +34,104 @@ import type { MarketplaceSkillDto } from '@/services/contracts/marketplaceSkills
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 
 type SortMode = 'hot' | 'new';
+type CardDensity = 'classic' | 'short' | 'micro';
+type CardDemoSkill = MarketplaceSkillDto & MarketplaceItemBase & {
+  shareCount?: number;
+};
 
 const SEARCH_FIELD_CLASS = 'prd-field h-8 w-full rounded-lg pl-9 pr-3 text-xs focus:outline-none';
+const CARD_DEMO_COVER =
+  'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 640 360%22%3E%3Cdefs%3E%3ClinearGradient id=%22g%22 x1=%220%22 x2=%221%22 y1=%220%22 y2=%221%22%3E%3Cstop stop-color=%22%2322c55e%22/%3E%3Cstop offset=%221%22 stop-color=%22%2365d647%22/%3E%3C/linearGradient%3E%3Cfilter id=%22b%22%3E%3CfeGaussianBlur stdDeviation=%2218%22/%3E%3C/filter%3E%3C/defs%3E%3Crect width=%22640%22 height=%22360%22 fill=%22url(%23g)%22/%3E%3Ccircle cx=%22108%22 cy=%22100%22 r=%22124%22 fill=%22%23058c45%22 opacity=%22.62%22 filter=%22url(%23b)%22/%3E%3Cpath d=%22M146 32h210c66 0 120 50 130 112h69l-70 40c-15 58-68 100-131 100H146c-76 0-138-56-138-126S70 32 146 32Z%22 fill=%22%23edf7ec%22 opacity=%22.86%22 filter=%22url(%23b)%22/%3E%3Ccircle cx=%22318%22 cy=%22386%22 r=%22192%22 fill=%22%23111827%22 opacity=%22.46%22 filter=%22url(%23b)%22/%3E%3C/svg%3E';
+
+const CARD_DEMO_SKILLS: CardDemoSkill[] = [
+  {
+    id: 'demo-yuque',
+    forkCount: 10,
+    createdAt: '2026-07-01T10:20:00+08:00',
+    updatedAt: '2026-07-01T10:20:00+08:00',
+    ownerUserId: 'demo-user-1',
+    ownerUserName: '蒋云峰',
+    ownerUserAvatar: '',
+    title: '语雀操作技能',
+    version: '1.0.0',
+    description: '能操作语雀获取资料和数据',
+    iconEmoji: '',
+    coverImageUrl: CARD_DEMO_COVER,
+    previewUrl: null,
+    previewSource: null,
+    previewHostedSiteId: null,
+    tags: ['创意', '技能'],
+    zipUrl: '',
+    zipSizeBytes: 0,
+    originalFileName: 'yuque-skill.zip',
+    hasSkillMd: true,
+    downloadCount: 10,
+    shareCount: 2,
+    favoriteCount: 0,
+    isFavoritedByCurrentUser: false,
+  },
+  {
+    id: 'official-acceptance-checklist',
+    forkCount: 8,
+    createdAt: '2026-05-01T09:00:00+08:00',
+    updatedAt: '2026-05-01T09:00:00+08:00',
+    ownerUserId: 'official',
+    ownerUserName: 'PrdAgent 官方',
+    ownerUserAvatar: '',
+    title: 'acceptance-checklist · 真人验收清单',
+    version: '1.0.0',
+    description: '生成真人逐步执行的验收清单，包含预期结果和失败排查手册。',
+    iconEmoji: '',
+    coverImageUrl: null,
+    previewUrl: null,
+    previewSource: null,
+    previewHostedSiteId: null,
+    tags: ['分析', '验收', '官方'],
+    zipUrl: '',
+    zipSizeBytes: 0,
+    originalFileName: 'acceptance-checklist.zip',
+    hasSkillMd: true,
+    downloadCount: 8,
+    shareCount: 4,
+    favoriteCount: 0,
+    isFavoritedByCurrentUser: false,
+  },
+  {
+    id: 'demo-html-ppt',
+    forkCount: 3,
+    createdAt: '2026-06-10T09:00:00+08:00',
+    updatedAt: '2026-06-10T09:00:00+08:00',
+    ownerUserId: 'demo-user-2',
+    ownerUserName: '魏喜胜',
+    ownerUserAvatar: '',
+    title: 'html-ppt-skill',
+    version: '1.0.0',
+    description: '基于内容做出一份 HTML 形式的 PPT，支持多主题和演讲稿模式。',
+    iconEmoji: '',
+    coverImageUrl: null,
+    previewUrl: 'https://example.com',
+    previewSource: 'external',
+    previewHostedSiteId: null,
+    tags: ['文档', '多风格'],
+    zipUrl: '',
+    zipSizeBytes: 0,
+    originalFileName: 'html-ppt-skill.zip',
+    hasSkillMd: true,
+    downloadCount: 3,
+    shareCount: 1,
+    favoriteCount: 1,
+    isFavoritedByCurrentUser: false,
+  },
+];
 
 export const MarketplacePage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const typeFromUrl = searchParams.get('type') || 'skill';
   const sourceApp = searchParams.get('source') || '';
+  const cardDemoEnabled = searchParams.get('demo') === 'cards' || location.pathname === '/_dev/marketplace-card-demo';
   const currentUserId = useAuthStore((s) => s.user?.userId);
 
   const [categoryFilter, setCategoryFilter] = useState(typeFromUrl);
@@ -58,6 +147,7 @@ export const MarketplacePage: React.FC = () => {
   const [openApiOpen, setOpenApiOpen] = useState(false);
   const [quickConnectOpen, setQuickConnectOpen] = useState(false);
   const [quickConnectPos, setQuickConnectPos] = useState({ top: 0, right: 0 });
+  const [cardDensity, setCardDensity] = useState<CardDensity>('short');
   const connectBtnRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -77,11 +167,19 @@ export const MarketplacePage: React.FC = () => {
   useEffect(() => { void loadHomepageAssets(); }, [loadHomepageAssets]);
 
   const loadSkillTags = useCallback(async () => {
+    if (cardDemoEnabled) {
+      setSkillTags([
+        { tag: '创意', count: 1 },
+        { tag: '分析', count: 1 },
+        { tag: '技能', count: 1 },
+      ]);
+      return;
+    }
     try {
       const res = await getMarketplaceSkillTags();
       if (res.success && res.data?.tags) setSkillTags(res.data.tags);
     } catch { /* ignore */ }
-  }, []);
+  }, [cardDemoEnabled]);
 
   useEffect(() => { void loadSkillTags(); }, [loadSkillTags]);
 
@@ -100,6 +198,11 @@ export const MarketplacePage: React.FC = () => {
 
   const loadAllData = useCallback(async () => {
     setLoading(true);
+    if (cardDemoEnabled) {
+      setDataByType({ skill: CARD_DEMO_SKILLS });
+      setLoading(false);
+      return;
+    }
     try {
       const results: Record<string, MarketplaceItemBase[]> = {};
       await Promise.all(
@@ -116,7 +219,7 @@ export const MarketplacePage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [sortBy]);
+  }, [cardDemoEnabled, sortBy]);
 
   useEffect(() => { loadAllData(); }, [loadAllData]);
 
@@ -218,6 +321,39 @@ export const MarketplacePage: React.FC = () => {
                 >
                   <Clock size={14} />
                   最新
+                </button>
+              </div>
+
+              <div className="marketplace-density-group" aria-label="卡片密度">
+                <button
+                  type="button"
+                  onClick={() => setCardDensity('classic')}
+                  data-active={cardDensity === 'classic'}
+                  className="marketplace-density-pill"
+                  title="现版高度"
+                >
+                  <PanelTop size={13} />
+                  现版
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCardDensity('short')}
+                  data-active={cardDensity === 'short'}
+                  className="marketplace-density-pill"
+                  title="半高横向卡"
+                >
+                  <Rows3 size={13} />
+                  半高
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCardDensity('micro')}
+                  data-active={cardDensity === 'micro'}
+                  className="marketplace-density-pill"
+                  title="更矮横向卡"
+                >
+                  <Rows3 size={13} />
+                  迷你
                 </button>
               </div>
 
@@ -357,12 +493,16 @@ export const MarketplacePage: React.FC = () => {
                 }}
                 currentUserId={currentUserId}
                 forking={forkingId === item.data.id}
+                density={cardDensity}
               />
             );
             // 官方与社区同列同序：按当前排序（热门/最新）混排，不再把官方置顶成独立「官方推荐」区。
             // 官方卡自身带「官方」徽章（MarketplaceCard.mkt-card-official）标识身份，无需单独成区。
             const gridStyle = {
-              gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
+              gridTemplateColumns:
+                cardDensity === 'classic'
+                  ? 'repeat(auto-fill, minmax(300px, 1fr))'
+                  : 'repeat(auto-fill, minmax(280px, 1fr))',
               maxWidth: '1400px',
               margin: '0 auto',
             } as const;

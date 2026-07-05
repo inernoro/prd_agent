@@ -91,6 +91,18 @@ public class ModelResolutionResult
     public string? PlatformType { get; init; }
 
     /// <summary>
+    /// 本次调用使用的协议（最终保证有值）。
+    /// 解析优先级：池条目 Protocol > 模型 Protocol > 平台 PlatformType。
+    /// P1 协议下沉：存量数据 Protocol 均为 null，最终落到 PlatformType，路由结果与改动前一致。
+    /// </summary>
+    public string Protocol { get; init; } = string.Empty;
+
+    /// <summary>
+    /// 协议/模型解析来源说明（调试用，记录最终命中的协议层级与原因）。
+    /// </summary>
+    public string? ResolutionReason { get; init; }
+
+    /// <summary>
     /// API URL
     /// </summary>
     public string? ApiUrl { get; init; }
@@ -124,6 +136,13 @@ public class ModelResolutionResult
     /// 模型健康状态
     /// </summary>
     public string? HealthStatus { get; init; }
+
+    /// <summary>
+    /// 是否支持函数调用（function_calling 能力）。
+    /// null = 未知（能力未分类，best-effort 放行）；true = 支持；false = 明确不支持（带 tools 时网关熔断报错，不骗用户）。
+    /// 仅在解析上下文已持有 LLMModel 对象时填充（直连/Legacy 路径）；池路径无模型对象，留 null（见 debt.llm-gateway-protocol-fidelity）。
+    /// </summary>
+    public bool? SupportsFunctionCalling { get; init; }
 
     // ========== Exchange 中继信息 ==========
 
@@ -194,6 +213,8 @@ public class ModelResolutionResult
             ActualPlatformId = ActualPlatformId ?? string.Empty,
             ActualPlatformName = ActualPlatformName,
             PlatformType = PlatformType,
+            Protocol = Protocol,
+            ResolutionReason = ResolutionReason,
             ApiUrl = ApiUrl,
             ModelGroupId = ModelGroupId,
             ModelGroupName = ModelGroupName,
@@ -236,6 +257,24 @@ public class ModelResolutionResult
         };
     }
 
+    /// <summary>
+    /// 计算本次调用使用的协议（P1 协议下沉）。
+    /// 优先级：池条目 Protocol > 模型级 Protocol > 平台 PlatformType（兜底，保证有值）。
+    /// platformType 已经是字符串（LLMPlatform.PlatformType 为 string，默认 "openai"），
+    /// 这里不做大小写归一化，保持与既有把 PlatformType 当字符串透传的逻辑完全一致，
+    /// 从而保证存量数据（Protocol 全为 null）的路由结果与改动前零差异。
+    /// 同时回传命中的层级原因，供日志调试。
+    /// </summary>
+    private static (string Protocol, string Reason) ResolveProtocol(
+        string? itemProtocol, string? modelProtocol, string? platformType)
+    {
+        if (!string.IsNullOrWhiteSpace(itemProtocol))
+            return (itemProtocol, "protocol-from-pool-item");
+        if (!string.IsNullOrWhiteSpace(modelProtocol))
+            return (modelProtocol, "protocol-from-model");
+        return (platformType ?? string.Empty, "protocol-from-platform-type");
+    }
+
     public static ModelResolutionResult FromPool(
         string resolutionType,
         string? expectedModel,
@@ -244,6 +283,11 @@ public class ModelResolutionResult
         LLMPlatform platform,
         string? apiKey)
     {
+        // P1 协议下沉：池条目 Protocol > 模型 Protocol > 平台 PlatformType。
+        // 注意：池条目（ModelGroupItem.ModelId）引用的模型级 Protocol 不在本上下文，
+        // 改动前路由完全依赖 platform.PlatformType，故此处模型级以 null 参与链，
+        // 等价于直接落到 platform.PlatformType（向后兼容零差异）。
+        var (protocol, reason) = ResolveProtocol(model.Protocol, null, platform.PlatformType);
         return new ModelResolutionResult
         {
             Success = true,
@@ -253,6 +297,8 @@ public class ModelResolutionResult
             ActualPlatformId = model.PlatformId,
             ActualPlatformName = platform.Name,
             PlatformType = platform.PlatformType,
+            Protocol = protocol,
+            ResolutionReason = reason,
             ApiUrl = platform.ApiUrl,
             ApiKey = apiKey,
             ModelGroupId = group.Id,
@@ -280,6 +326,12 @@ public class ModelResolutionResult
             ActualPlatformId = model.PlatformId,
             ActualPlatformName = $"Exchange:{exchange.Name}",
             PlatformType = "exchange",
+            // Exchange 中继：改动前 PlatformType 固定为 "exchange"，协议链以 null 模型级参与，
+            // 池条目 Protocol 优先，否则落到 "exchange"，保持与既有行为一致。
+            Protocol = string.IsNullOrWhiteSpace(model.Protocol) ? "exchange" : model.Protocol,
+            ResolutionReason = string.IsNullOrWhiteSpace(model.Protocol)
+                ? "protocol-from-platform-type"
+                : "protocol-from-pool-item",
             ApiUrl = exchange.TargetUrl,
             ApiKey = apiKey,
             ModelGroupId = group.Id,
@@ -303,6 +355,9 @@ public class ModelResolutionResult
         LLMPlatform platform,
         string? apiKey)
     {
+        // P1 协议下沉：直连模型有真实 LLMModel 对象，模型级 Protocol 参与链；
+        // 存量数据 Protocol 为 null → 落到 platform.PlatformType（向后兼容零差异）。
+        var (protocol, reason) = ResolveProtocol(null, model.Protocol, platform.PlatformType);
         return new ModelResolutionResult
         {
             Success = true,
@@ -312,10 +367,24 @@ public class ModelResolutionResult
             ActualPlatformId = model.PlatformId ?? string.Empty,
             ActualPlatformName = platform.Name,
             PlatformType = platform.PlatformType,
+            Protocol = protocol,
+            ResolutionReason = reason,
             ApiUrl = model.ApiUrl ?? platform.ApiUrl,
             ApiKey = apiKey,
-            HealthStatus = "Healthy"
+            HealthStatus = "Healthy",
+            // 直连/Legacy 路径持有真实 LLMModel，可读 function_calling 能力供 G4 软门使用
+            SupportsFunctionCalling = FunctionCallingCapability(model)
         };
+    }
+
+    /// <summary>
+    /// 从模型能力描述符读 function_calling：无该条目返回 null（未知/未分类），有则返回其 Value。
+    /// </summary>
+    private static bool? FunctionCallingCapability(LLMModel model)
+    {
+        var cap = model.Capabilities?.FirstOrDefault(c =>
+            string.Equals(c.Type, "function_calling", StringComparison.OrdinalIgnoreCase));
+        return cap?.Value;
     }
 }
 

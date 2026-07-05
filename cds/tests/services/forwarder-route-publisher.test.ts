@@ -186,6 +186,146 @@ describe('ForwarderRoutePublisher', () => {
     expect(defaultRoute.upstreamPort).toBe(41100);
   });
 
+  it('分支级额外服务的 pathPrefixes 也发布到 forwarder（Codex P2「Publish extra-service path prefixes to the forwarder」）', () => {
+    ensureProject('demo', 'demo');
+    // 分支有一个项目 web 服务 + 一个分支级额外服务 extra-api（仅存在于 branch.extraProfiles，不是项目 profile）。
+    addMultiProfileBranch({
+      projectId: 'demo',
+      branch: 'main',
+      services: { web: 41200, 'extra-api': 41201 },
+    });
+    state.addBuildProfile({ id: 'web', name: 'web', projectId: 'demo' } as Parameters<typeof state.addBuildProfile>[0]);
+    // extra-api 只在分支额外服务里声明 pathPrefixes ['/api/']，不进项目 profiles。
+    state.setBranchExtraProfiles('demo-main', [
+      { id: 'extra-api', name: 'extra-api', dockerImage: 'nginx:alpine', workDir: '', command: '', containerPort: 8080, projectId: 'demo', pathPrefixes: ['/api/'] } as any,
+    ]);
+
+    publisher = new ForwarderRoutePublisher({ state, outputPath: outFile, rootDomains: ['miduo.org'] });
+    publisher.publishNow();
+    const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+
+    // /api/* 必须路由到额外服务端口（此前因只取项目 profiles，分支级 prefix 发不出来）。
+    const apiRoute = data.find((r: { pathPrefix?: string }) => r.pathPrefix === '/api/');
+    expect(apiRoute).toBeDefined();
+    expect(apiRoute.upstreamPort).toBe(41201);
+  });
+
+  it('声明 subdomain 的服务获得命名 host 路由 `<slug>-<sub>.<root>`（根路径直达容器，无 pathPrefix）', () => {
+    ensureProject('demo', 'demo');
+    // web 主应用 + 分支级额外服务 llmgw（声明 subdomain=llmgw）。
+    addMultiProfileBranch({
+      projectId: 'demo',
+      branch: 'main',
+      services: { web: 41400, llmgw: 41401 },
+    });
+    state.addBuildProfile({ id: 'web', name: 'web', projectId: 'demo' } as Parameters<typeof state.addBuildProfile>[0]);
+    state.setBranchExtraProfiles('demo-main', [
+      { id: 'llmgw', name: 'llmgw', dockerImage: 'nginx:alpine', workDir: '', command: '', containerPort: 8091, projectId: 'demo', subdomain: 'llmgw' } as any,
+    ]);
+
+    publisher = new ForwarderRoutePublisher({ state, outputPath: outFile, rootDomains: ['miduo.org'] });
+    publisher.publishNow();
+    const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+
+    const slug = computePreviewSlug('main', 'demo');
+    // 命名 host：单标签 `<slug>-llmgw.miduo.org` → llmgw 容器端口，根路径（无 pathPrefix）。
+    const namedRoute = data.find((r: { host?: string }) => r.host === `${slug}-llmgw.miduo.org`);
+    expect(namedRoute).toBeDefined();
+    expect(namedRoute.upstreamPort).toBe(41401);
+    expect(namedRoute.pathPrefix).toBeUndefined();
+    // 主应用域名路由仍在（命名 host 是「额外」的，不取代默认入口）。
+    const mainDefault = data.find(
+      (r: { host?: string; pathPrefix?: string }) => r.host === `${slug}.miduo.org` && !r.pathPrefix,
+    );
+    expect(mainDefault).toBeDefined();
+    expect(mainDefault.upstreamPort).toBe(41400);
+  });
+
+  it('命名 host 第一 DNS 标签超 63 octet 时跳过该路由（Codex P2「Guard named hosts against overlong DNS labels」），主域名路径访问不受影响', () => {
+    ensureProject('demo', 'demo');
+    // 构造长分支名：无 `/` → previewSlug = `<branch>-demo`。branch 取 55 字 → slug = 60 字，
+    // 命名标签 `<slug>-llmgw` = 60 + 6 = 66 > 63 octet → 必须被守卫跳过。
+    const longBranch = 'b'.repeat(55);
+    const slug = computePreviewSlug(longBranch, 'demo');
+    expect(slug.length).toBe(60);
+    expect(`${slug}-llmgw`.length).toBe(66);
+
+    addMultiProfileBranch({
+      projectId: 'demo',
+      branch: longBranch,
+      services: { web: 41500, llmgw: 41501 },
+    });
+    state.addBuildProfile({ id: 'web', name: 'web', projectId: 'demo' } as Parameters<typeof state.addBuildProfile>[0]);
+    state.setBranchExtraProfiles(`demo-${longBranch}`, [
+      { id: 'llmgw', name: 'llmgw', dockerImage: 'nginx:alpine', workDir: '', command: '', containerPort: 8091, projectId: 'demo', subdomain: 'llmgw' } as any,
+    ]);
+
+    publisher = new ForwarderRoutePublisher({ state, outputPath: outFile, rootDomains: ['miduo.org'] });
+    publisher.publishNow();
+    const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+
+    // 命名 host 超长 → 不发布（避免无法解析 / 通配证书不覆盖的静默失效路由）。
+    const namedRoute = data.find((r: { host?: string }) => r.host === `${slug}-llmgw.miduo.org`);
+    expect(namedRoute).toBeUndefined();
+    // 主应用域名默认路由仍在（第一标签 = 60 字 slug ≤ 63，合法）→ 该服务退回路径访问可达。
+    const mainDefault = data.find(
+      (r: { host?: string; pathPrefix?: string }) => r.host === `${slug}.miduo.org` && !r.pathPrefix,
+    );
+    expect(mainDefault).toBeDefined();
+    expect(mainDefault.upstreamPort).toBe(41500);
+  });
+
+  it('命名 host 第一 DNS 标签恰好 ≤63 octet 时正常发布（守卫边界：63 通过、64 跳过）', () => {
+    ensureProject('demo', 'demo');
+    // slug 取 57 字 → `<slug>-llmgw` = 57 + 6 = 63（恰好上限）→ 应发布。
+    const branch57 = 'c'.repeat(52); // 52 + '-demo'(5) = 57
+    const slug = computePreviewSlug(branch57, 'demo');
+    expect(slug.length).toBe(57);
+    expect(`${slug}-llmgw`.length).toBe(63);
+
+    addMultiProfileBranch({
+      projectId: 'demo',
+      branch: branch57,
+      services: { web: 41600, llmgw: 41601 },
+    });
+    state.addBuildProfile({ id: 'web', name: 'web', projectId: 'demo' } as Parameters<typeof state.addBuildProfile>[0]);
+    state.setBranchExtraProfiles(`demo-${branch57}`, [
+      { id: 'llmgw', name: 'llmgw', dockerImage: 'nginx:alpine', workDir: '', command: '', containerPort: 8091, projectId: 'demo', subdomain: 'llmgw' } as any,
+    ]);
+
+    publisher = new ForwarderRoutePublisher({ state, outputPath: outFile, rootDomains: ['miduo.org'] });
+    publisher.publishNow();
+    const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+
+    const namedRoute = data.find((r: { host?: string }) => r.host === `${slug}-llmgw.miduo.org`);
+    expect(namedRoute).toBeDefined();
+    expect(namedRoute.upstreamPort).toBe(41601);
+  });
+
+  it('profileOverrides 配的 pathPrefixes 也发布到 forwarder（Codex P2「Resolve overrides before routing」mirror）', () => {
+    ensureProject('demo', 'demo');
+    addMultiProfileBranch({
+      projectId: 'demo',
+      branch: 'main',
+      services: { web: 41300, 'extra-api': 41301 },
+    });
+    state.addBuildProfile({ id: 'web', name: 'web', projectId: 'demo' } as Parameters<typeof state.addBuildProfile>[0]);
+    // extra-api declares NO pathPrefixes itself; the prefix is supplied via a profile override (only
+    // resolveEffectiveProfile merges it, not getEffectiveProfilesForBranch).
+    state.setBranchExtraProfiles('demo-main', [
+      { id: 'extra-api', name: 'extra-api', dockerImage: 'nginx:alpine', workDir: '', command: '', containerPort: 8080, projectId: 'demo' } as any,
+    ]);
+    state.setBranchProfileOverride('demo-main', 'extra-api', { pathPrefixes: ['/api/'] } as any);
+
+    publisher = new ForwarderRoutePublisher({ state, outputPath: outFile, rootDomains: ['miduo.org'] });
+    publisher.publishNow();
+    const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+
+    const apiRoute = data.find((r: { pathPrefix?: string }) => r.pathPrefix === '/api/');
+    expect(apiRoute).toBeDefined();
+    expect(apiRoute.upstreamPort).toBe(41301);
+  });
+
   it('subdomainAliases 每个生成额外路由记录', () => {
     ensureProject('demo', 'demo');
     addRunningBranch({

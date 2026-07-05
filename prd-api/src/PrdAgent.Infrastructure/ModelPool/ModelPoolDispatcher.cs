@@ -213,20 +213,14 @@ public class ModelPoolDispatcher : IModelPool
     }
 
     /// <summary>
-    /// 根据策略类型创建策略实例
+    /// 创建策略实例
+    /// 非 FailFast 策略引擎（Race/Sequential/RoundRobin/WeightedRandom/LeastLatency）已删除：
+    /// 它们仅服务于管理端「调度预测」工具，从不在 LLM serving 链路中（ModelResolver 不引用本组件）。
+    /// 存量池 StrategyType 全部为 0(FailFast)，枚举与字段保留仅为数据兼容。这里永远产出 FailFast。
     /// </summary>
     public static IPoolStrategy CreateStrategy(PoolStrategyType strategyType)
     {
-        return strategyType switch
-        {
-            PoolStrategyType.FailFast => new FailFastStrategy(),
-            PoolStrategyType.Race => new RaceStrategy(),
-            PoolStrategyType.Sequential => new SequentialStrategy(),
-            PoolStrategyType.RoundRobin => new RoundRobinStrategy(),
-            PoolStrategyType.WeightedRandom => new WeightedRandomStrategy(),
-            PoolStrategyType.LeastLatency => new LeastLatencyStrategy(),
-            _ => new FailFastStrategy()
-        };
+        return new FailFastStrategy();
     }
 
     private static IAsyncEnumerable<PoolStreamChunk> SingleError(string error)

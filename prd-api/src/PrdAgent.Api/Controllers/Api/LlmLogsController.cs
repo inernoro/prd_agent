@@ -170,7 +170,8 @@ public class LlmLogsController : ControllerBase
             .OrderBy(x => x.displayName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        var statuses = new[] { "running", "succeeded", "failed", "cancelled" };
+        // blackhole = StartAsync 写日志失败时的占位记录（请求体未记录，仅留最小信息），治"完全没发出去/未记录"不可查
+        var statuses = new[] { "running", "succeeded", "failed", "cancelled", "blackhole" };
 
         var userIds = (await _db.LlmRequestLogs
                 .Distinct(x => x.UserId, Builders<LlmRequestLog>.Filter.Empty)
@@ -252,6 +253,9 @@ public class LlmLogsController : ControllerBase
                 x.ModelResolutionType,
                 x.ModelGroupId,
                 x.ModelGroupName,
+                x.Protocol,
+                x.ResolutionReason,
+                x.GatewayTransport,
                 x.GroupId,
                 x.SessionId,
                 x.UserId,
@@ -269,6 +273,9 @@ public class LlmLogsController : ControllerBase
                 x.OutputTokens,
                 x.CacheCreationInputTokens,
                 x.CacheReadInputTokens,
+                x.ToolCallCount,
+                x.FinishReason,
+                x.IsStreaming,
                 x.Error,
                 x.QuestionText,
                 x.AnswerText,
@@ -312,6 +319,9 @@ public class LlmLogsController : ControllerBase
                 x.ModelResolutionType,
                 x.ModelGroupId,
                 x.ModelGroupName,
+                x.Protocol,
+                x.ResolutionReason,
+                x.GatewayTransport,
                 x.GroupId,
                 x.SessionId,
                 x.UserId,
@@ -332,6 +342,9 @@ public class LlmLogsController : ControllerBase
                 x.OutputTokens,
                 x.CacheCreationInputTokens,
                 x.CacheReadInputTokens,
+                x.ToolCallCount,
+                x.FinishReason,
+                x.IsStreaming,
                 x.Error,
                 x.IsFallback,
                 x.ExpectedModel,
@@ -351,6 +364,80 @@ public class LlmLogsController : ControllerBase
         if (log == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "日志不存在"));
 
         return Ok(ApiResponse<LlmRequestLog>.Ok(log));
+    }
+
+    /// <summary>
+    /// 文本一键还原：把 answerText / systemPromptText / questionText 里的
+    /// [TEXT_COS:sha256:charcount] 占位符按 sha256 从 COS 取回原文返回，供前端一键展开完整提示词/回答。
+    /// 长文本写日志时被换成占位符（见 LlmRequestLogWriter.ProcessJsonStringValuesForCosAsync），
+    /// 这里走与 ReplayCurl 一致的 COS 反查写法（domain=logs/type=log）把它复原。
+    /// 占位符无法还原（COS 未找到）时保留原占位符，并在 restoreErrors 里报告。
+    /// </summary>
+    [HttpGet("{id}/restore-text")]
+    public async Task<IActionResult> RestoreText(string id)
+    {
+        var log = await _db.LlmRequestLogs.Find(x => x.Id == id).FirstOrDefaultAsync();
+        if (log == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "日志不存在"));
+
+        var restoreErrors = new List<string>();
+        var restoredCount = 0;
+
+        var answerText = await RestoreTextCosPlaceholdersAsync(log.AnswerText, restoreErrors, c => restoredCount += c);
+        var systemPromptText = await RestoreTextCosPlaceholdersAsync(log.SystemPromptText, restoreErrors, c => restoredCount += c);
+        var questionText = await RestoreTextCosPlaceholdersAsync(log.QuestionText, restoreErrors, c => restoredCount += c);
+        var thinkingText = await RestoreTextCosPlaceholdersAsync(log.ThinkingText, restoreErrors, c => restoredCount += c);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            id = log.Id,
+            answerText,
+            systemPromptText,
+            questionText,
+            thinkingText,
+            restoredCount,
+            restoreErrors = restoreErrors.Count > 0 ? restoreErrors : null
+        }));
+    }
+
+    /// <summary>
+    /// 把单个文本字段里的 [TEXT_COS:sha256:charcount] 占位符替换为 COS 原文。
+    /// 复用 ReplayCurl 同款 COS 反查（domain=logs/type=log）。占位符取不回时保留原样并记错。
+    /// </summary>
+    private async Task<string?> RestoreTextCosPlaceholdersAsync(string? text, List<string> restoreErrors, Action<int> onRestored)
+    {
+        if (string.IsNullOrEmpty(text)) return text;
+
+        var textCosPattern = new Regex(@"\[TEXT_COS:([0-9a-f]{64}):(\d+)\]");
+        var matches = textCosPattern.Matches(text);
+        if (matches.Count == 0) return text;
+
+        var restored = 0;
+        var sb = new StringBuilder(text);
+        // 倒序替换避免偏移
+        for (var i = matches.Count - 1; i >= 0; i--)
+        {
+            var m = matches[i];
+            var sha256 = m.Groups[1].Value;
+
+            var found = await _assetStorage.TryReadByShaAsync(
+                sha256, HttpContext.RequestAborted,
+                domain: AppDomainPaths.DomainLogs,
+                type: AppDomainPaths.TypeLog);
+
+            if (found == null)
+            {
+                restoreErrors.Add($"COS 未找到文本: {sha256[..12]}...");
+                continue;
+            }
+
+            restored++;
+            var original = Encoding.UTF8.GetString(found.Value.bytes);
+            sb.Remove(m.Index, m.Length);
+            sb.Insert(m.Index, original);
+        }
+
+        if (restored > 0) onRestored(restored);
+        return sb.ToString();
     }
 
     /// <summary>
@@ -829,6 +916,190 @@ public class LlmLogsController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { days, items = safeItems }));
     }
 
+    // ── 时间范围解析（from/to 优先；否则按 days 回看）──
+    private static (DateTime start, DateTime end) ResolveRange(string? from, string? to, int days)
+    {
+        var end = DateTime.UtcNow;
+        var start = end.AddDays(-Math.Clamp(days <= 0 ? 30 : days, 1, 90));
+        if (!string.IsNullOrWhiteSpace(from) && DateTime.TryParse(from, null,
+            System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out var f))
+            start = f;
+        if (!string.IsNullOrWhiteSpace(to) && DateTime.TryParse(to, null,
+            System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out var t))
+            end = t;
+        return (start, end);
+    }
+
+    // 用 long 避免 count 超 int.MaxValue 抛 InvalidCast；前端 number 可容纳
+    private static long BsonInt(BsonValue? v) => v == null || v.IsBsonNull ? 0L : Convert.ToInt64(BsonTypeMapper.MapToDotNetValue(v));
+    private static string? BsonStr(BsonValue? v) => v == null || v.IsBsonNull ? null : BsonTypeMapper.MapToDotNetValue(v)?.ToString();
+
+    private FilterDefinition<LlmRequestLog> BuildLogFilter(
+        DateTime start, DateTime end, string? provider, string? model, string? status, string? appCallerCode, string? userId)
+    {
+        var filter = Builders<LlmRequestLog>.Filter.Gte(x => x.StartedAt, start)
+            & Builders<LlmRequestLog>.Filter.Lt(x => x.StartedAt, end);
+        if (!string.IsNullOrWhiteSpace(provider)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.Provider, provider);
+        if (!string.IsNullOrWhiteSpace(model)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.Model, model);
+        if (!string.IsNullOrWhiteSpace(status)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.Status, status);
+        if (!string.IsNullOrWhiteSpace(userId)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.UserId, userId);
+        if (!string.IsNullOrWhiteSpace(appCallerCode)) filter &= Builders<LlmRequestLog>.Filter.Regex(x => x.AppCallerCode, new BsonRegularExpression($"^{Regex.Escape(appCallerCode)}", "i"));
+        return filter;
+    }
+
+    /// <summary>
+    /// 按天的请求量时间序列（OpenRouter 风格柱状图数据源）。
+    /// $dateToString 分组 count，透传与列表一致的筛选；返回 [{date,count,successCount,failCount}]。
+    /// </summary>
+    [HttpGet("timeseries")]
+    public async Task<IActionResult> Timeseries(
+        [FromQuery] int days = 30,
+        [FromQuery] string? from = null,
+        [FromQuery] string? to = null,
+        [FromQuery] string? provider = null,
+        [FromQuery] string? model = null,
+        [FromQuery] string? status = null,
+        [FromQuery] string? appCallerCode = null,
+        [FromQuery] string? userId = null)
+    {
+        var (start, end) = ResolveRange(from, to, days);
+        var filter = BuildLogFilter(start, end, provider, model, status, appCallerCode, userId);
+        var matchDoc = filter.Render(new RenderArgs<LlmRequestLog>(
+            _db.LlmRequestLogs.DocumentSerializer, _db.LlmRequestLogs.Settings.SerializerRegistry));
+
+        var pipeline = new[]
+        {
+            new BsonDocument("$match", matchDoc),
+            new BsonDocument("$group", new BsonDocument
+            {
+                { "_id", new BsonDocument("$dateToString", new BsonDocument { { "format", "%Y-%m-%d" }, { "date", "$StartedAt" }, { "timezone", "UTC" } }) },
+                { "count", new BsonDocument("$sum", 1) },
+                { "successCount", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray { new BsonDocument("$eq", new BsonArray { "$Status", "succeeded" }), 1, 0 })) },
+                { "failCount", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray { new BsonDocument("$eq", new BsonArray { "$Status", "failed" }), 1, 0 })) },
+            }),
+            new BsonDocument("$project", new BsonDocument { { "_id", 0 }, { "date", "$_id" }, { "count", 1 }, { "successCount", 1 }, { "failCount", 1 } }),
+            new BsonDocument("$sort", new BsonDocument("date", 1)),
+        };
+
+        var rows = await _db.LlmRequestLogs.Aggregate<BsonDocument>(pipeline).ToListAsync();
+        var items = rows.Select(d => new
+        {
+            date = BsonStr(d.GetValue("date", BsonNull.Value)),
+            count = BsonInt(d.GetValue("count", 0)),
+            successCount = BsonInt(d.GetValue("successCount", 0)),
+            failCount = BsonInt(d.GetValue("failCount", 0)),
+        }).ToList();
+
+        return Ok(ApiResponse<object>.Ok(new { from = start, to = end, items }));
+    }
+
+    /// <summary>
+    /// 按会话（SessionId）聚合（OpenRouter Sessions tab 数据源）。
+    /// 返回每个会话的 主模型/主平台/支撑模型/请求数/时间范围；primaryModel 等用频率最高项（C# 端算）。
+    /// </summary>
+    [HttpGet("sessions")]
+    public async Task<IActionResult> Sessions(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 30,
+        [FromQuery] int days = 30,
+        [FromQuery] string? from = null,
+        [FromQuery] string? to = null,
+        [FromQuery] string? appCallerCode = null,
+        [FromQuery] string? userId = null)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+        var (start, end) = ResolveRange(from, to, days);
+
+        var filter = BuildLogFilter(start, end, null, null, null, appCallerCode, userId)
+            & Builders<LlmRequestLog>.Filter.Ne(x => x.SessionId, null)
+            & Builders<LlmRequestLog>.Filter.Ne(x => x.SessionId, "");
+        var matchDoc = filter.Render(new RenderArgs<LlmRequestLog>(
+            _db.LlmRequestLogs.DocumentSerializer, _db.LlmRequestLogs.Settings.SerializerRegistry));
+
+        var groupStage = new BsonDocument("$group", new BsonDocument
+        {
+            { "_id", "$SessionId" },
+            { "requestCount", new BsonDocument("$sum", 1) },
+            { "start", new BsonDocument("$min", "$StartedAt") },
+            { "end", new BsonDocument("$max", "$StartedAt") },
+            { "models", new BsonDocument("$push", "$Model") },
+            { "providers", new BsonDocument("$push", "$Provider") },
+            { "apps", new BsonDocument("$push", "$AppCallerCode") },
+        });
+
+        // $facet：同时拿总数 + 当前页（按最近活跃排序）
+        var facet = new BsonDocument("$facet", new BsonDocument
+        {
+            { "total", new BsonArray { new BsonDocument("$count", "n") } },
+            { "rows", new BsonArray
+                {
+                    new BsonDocument("$sort", new BsonDocument("end", -1)),
+                    new BsonDocument("$skip", (page - 1) * pageSize),
+                    new BsonDocument("$limit", pageSize),
+                }
+            },
+        });
+
+        var pipeline = new[] { new BsonDocument("$match", matchDoc), groupStage, facet };
+        var facetResult = await _db.LlmRequestLogs.Aggregate<BsonDocument>(pipeline).FirstOrDefaultAsync();
+
+        long total = 0;
+        var rowsArr = new BsonArray();
+        if (facetResult != null)
+        {
+            if (facetResult["total"] is BsonArray ta && ta.Count > 0 && ta[0] is BsonDocument td)
+                total = BsonInt(td.GetValue("n", 0));
+            if (facetResult["rows"] is BsonArray ra) rowsArr = ra;
+        }
+
+        static string? Mode(BsonValue? arr)
+        {
+            if (arr is not BsonArray a) return null;
+            var counts = new Dictionary<string, int>();
+            foreach (var v in a)
+            {
+                var s = BsonStr(v);
+                if (string.IsNullOrEmpty(s)) continue;
+                counts[s] = counts.GetValueOrDefault(s) + 1;
+            }
+            return counts.Count == 0 ? null : counts.OrderByDescending(kv => kv.Value).First().Key;
+        }
+
+        static List<string> Distinct(BsonValue? arr, string? exclude, int max)
+        {
+            if (arr is not BsonArray a) return new();
+            var seen = new List<string>();
+            foreach (var v in a)
+            {
+                var s = BsonStr(v);
+                if (string.IsNullOrEmpty(s) || s == exclude || seen.Contains(s)) continue;
+                seen.Add(s);
+                if (seen.Count >= max) break;
+            }
+            return seen;
+        }
+
+        var items = rowsArr.OfType<BsonDocument>().Select(d =>
+        {
+            var primaryModel = Mode(d.GetValue("models", new BsonArray()));
+            var primaryProvider = Mode(d.GetValue("providers", new BsonArray()));
+            return new
+            {
+                sessionId = BsonStr(d.GetValue("_id", BsonNull.Value)),
+                requestCount = BsonInt(d.GetValue("requestCount", 0)),
+                start = d.GetValue("start", BsonNull.Value).IsBsonNull ? (DateTime?)null : d["start"].ToUniversalTime(),
+                end = d.GetValue("end", BsonNull.Value).IsBsonNull ? (DateTime?)null : d["end"].ToUniversalTime(),
+                appCallerCode = Mode(d.GetValue("apps", new BsonArray())),
+                primaryModel,
+                primaryProvider,
+                supportingModels = Distinct(d.GetValue("models", new BsonArray()), primaryModel, 5),
+            };
+        }).ToList();
+
+        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
+    }
+
     /// <summary>
     /// 批量获取多个 (appCallerCode, platformId, modelId) 组合的统计数据
     /// 用于模型池页面按应用+模型组合展示调用统计
@@ -899,6 +1170,107 @@ public class LlmLogsController : ControllerBase
         }
 
         return Ok(ApiResponse<object>.Ok(new { days, items = results }));
+    }
+
+    /// <summary>
+    /// 按应用聚合（治"MAP 各业务日志混在一张表"）：按 AppCallerCode 的应用前缀（'.' 之前那段，
+    /// 如 visual-agent / prd-agent / pr-review）+ requestType 分组，返回每应用的请求数 / 成功率 / 中位时延。
+    /// 应用前缀在 Mongo aggregate 用 $split + $arrayElemAt 取（无 '.' 时整串即前缀，'' 归为 unknown）。
+    /// 中位时延把分组内 DurationMs 收集后在 C# 端算中位数（与 Sessions 端点同款"$push 后端内算"模式）。
+    /// </summary>
+    [HttpGet("app-summary")]
+    public async Task<IActionResult> AppSummary(
+        [FromQuery] string? from = null,
+        [FromQuery] string? to = null,
+        [FromQuery] int days = 30)
+    {
+        var (start, end) = ResolveRange(from, to, days);
+
+        var filter = Builders<LlmRequestLog>.Filter.Gte(x => x.StartedAt, start)
+            & Builders<LlmRequestLog>.Filter.Lt(x => x.StartedAt, end);
+        var matchDoc = filter.Render(new RenderArgs<LlmRequestLog>(
+            _db.LlmRequestLogs.DocumentSerializer, _db.LlmRequestLogs.Settings.SerializerRegistry));
+
+        var pipeline = new[]
+        {
+            new BsonDocument("$match", matchDoc),
+            // 计算应用前缀：取 AppCallerCode 在 '.' 之前那段；缺失/空归为 "unknown"
+            new BsonDocument("$project", new BsonDocument
+            {
+                { "appPrefix", new BsonDocument("$let", new BsonDocument
+                    {
+                        { "vars", new BsonDocument("code", new BsonDocument("$ifNull", new BsonArray { "$AppCallerCode", "" })) },
+                        { "in", new BsonDocument("$cond", new BsonArray
+                            {
+                                new BsonDocument("$eq", new BsonArray { "$$code", "" }),
+                                "unknown",
+                                new BsonDocument("$arrayElemAt", new BsonArray { new BsonDocument("$split", new BsonArray { "$$code", "." }), 0 })
+                            })
+                        }
+                    })
+                },
+                { "requestType", new BsonDocument("$ifNull", new BsonArray { "$RequestType", "unknown" }) },
+                { "status", "$Status" },
+                { "durationMs", "$DurationMs" },
+            }),
+            new BsonDocument("$group", new BsonDocument
+            {
+                { "_id", new BsonDocument { { "appPrefix", "$appPrefix" }, { "requestType", "$requestType" } } },
+                { "requestCount", new BsonDocument("$sum", 1) },
+                { "successCount", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
+                    {
+                        new BsonDocument("$eq", new BsonArray { "$status", "succeeded" }), 1, 0
+                    }))
+                },
+                { "failCount", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
+                    {
+                        new BsonDocument("$eq", new BsonArray { "$status", "failed" }), 1, 0
+                    }))
+                },
+                // 收集 durationMs 供 C# 端算中位数（null 项由 MedianMs 过滤）
+                { "durations", new BsonDocument("$push", "$durationMs") },
+            }),
+            new BsonDocument("$sort", new BsonDocument("requestCount", -1)),
+        };
+
+        var rows = await _db.LlmRequestLogs.Aggregate<BsonDocument>(pipeline).ToListAsync();
+
+        static long? MedianMs(BsonValue? arr)
+        {
+            if (arr is not BsonArray a || a.Count == 0) return null;
+            var nums = new List<long>();
+            foreach (var v in a)
+            {
+                if (v == null || v.IsBsonNull) continue;
+                try { nums.Add(Convert.ToInt64(BsonTypeMapper.MapToDotNetValue(v))); }
+                catch { /* 跳过无法转换的项 */ }
+            }
+            if (nums.Count == 0) return null;
+            nums.Sort();
+            var mid = nums.Count / 2;
+            return nums.Count % 2 == 1 ? nums[mid] : (nums[mid - 1] + nums[mid]) / 2;
+        }
+
+        var items = rows.Select(d =>
+        {
+            var idDoc = d.GetValue("_id", new BsonDocument()) as BsonDocument ?? new BsonDocument();
+            var requestCount = BsonInt(d.GetValue("requestCount", 0));
+            var successCount = BsonInt(d.GetValue("successCount", 0));
+            var failCount = BsonInt(d.GetValue("failCount", 0));
+            return new
+            {
+                appPrefix = BsonStr(idDoc.GetValue("appPrefix", BsonNull.Value)),
+                requestType = BsonStr(idDoc.GetValue("requestType", BsonNull.Value)),
+                requestCount,
+                successCount,
+                failCount,
+                // 成功率：成功数 / 总请求数（0~1，保留 4 位小数）；总数为 0 时给 null
+                successRate = requestCount > 0 ? Math.Round((double)successCount / requestCount, 4) : (double?)null,
+                medianDurationMs = MedianMs(d.GetValue("durations", new BsonArray())),
+            };
+        }).ToList();
+
+        return Ok(ApiResponse<object>.Ok(new { from = start, to = end, items }));
     }
 }
 

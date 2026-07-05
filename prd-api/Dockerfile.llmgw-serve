@@ -1,0 +1,29 @@
+# syntax=docker/dockerfile:1.4
+# 独立 LLM 网关承载服务（PrdAgent.LlmGateway）。
+# build context = ./prd-api。通过 DI HOST 既有 LlmGateway + ModelResolver 实现，HTTP 暴露 /gw/v1/*。
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS base
+WORKDIR /app
+EXPOSE 8091
+
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+COPY ["src/PrdAgent.LlmGateway/PrdAgent.LlmGateway.csproj", "src/PrdAgent.LlmGateway/"]
+COPY ["src/PrdAgent.Core/PrdAgent.Core.csproj", "src/PrdAgent.Core/"]
+COPY ["src/PrdAgent.Infrastructure/PrdAgent.Infrastructure.csproj", "src/PrdAgent.Infrastructure/"]
+RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages \
+    dotnet restore "src/PrdAgent.LlmGateway/PrdAgent.LlmGateway.csproj"
+COPY . .
+WORKDIR "/src/src/PrdAgent.LlmGateway"
+RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages \
+    dotnet restore "PrdAgent.LlmGateway.csproj" && \
+    dotnet publish "PrdAgent.LlmGateway.csproj" -c Release -o /app/publish /p:UseAppHost=false --no-restore
+
+FROM base AS final
+WORKDIR /app
+ARG GIT_COMMIT=""
+ARG BUILD_TIME_UTC=""
+ENV GIT_COMMIT=$GIT_COMMIT
+ENV BUILD_TIME_UTC=$BUILD_TIME_UTC
+ENV ASPNETCORE_URLS=http://0.0.0.0:8091
+COPY --from=build /app/publish .
+ENTRYPOINT ["dotnet", "PrdAgent.LlmGateway.dll"]

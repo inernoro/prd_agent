@@ -45,6 +45,7 @@ import { ResourceUsageSampler } from './services/resource-usage-sampler.js';
 import { httpLogStoreFromEnv } from './services/http-log-store.js';
 import { serverEventLogStoreFromEnv } from './services/server-event-log-store.js';
 import { resolveStateBootstrapMode, seedStateFromJsonIfAllowed } from './services/state-bootstrap.js';
+import { shouldPruneDeletedBranchStartupResidue } from './services/startup-reconcile.js';
 
 (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT = new Date().toISOString();
 import type { ServerEventLogSink, ServerEventSeverity } from './services/server-event-log-store.js';
@@ -1418,7 +1419,9 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
     // 失败要还原的原始 error 文案（乐观翻 loading 前留存）。
     const prevErrorMessage = branch.errorMessage;
     const prevSvcError: Record<string, string | undefined> = {};
+    const recoveryStartedAt = new Date().toISOString();
     branch.status = 'restarting';
+    branch.lastDeployStartedAt = recoveryStartedAt;
     for (const [pid, svc] of Object.entries(branch.services || {})) {
       if (svc) { prevSvcError[pid] = svc.errorMessage; svc.status = 'building'; svc.errorMessage = undefined; }
     }
@@ -1548,7 +1551,9 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
       // still hits the finally and completes the lease — otherwise the
       // coordinator would keep an active op forever and reject all future
       // deploy/restart/stop on this branch until process restart.
+      const wakeStartedAt = new Date().toISOString();
       branch.status = 'restarting';
+      branch.lastDeployStartedAt = wakeStartedAt;
       for (const svc of services) {
         if (svc.status === 'stopped' || svc.status === 'idle') svc.status = 'starting';
       }
@@ -2135,11 +2140,39 @@ janitorService.setRemoveFn(async (slug: string) => {
     }
 
     // ── Discover and reconcile app containers ──
-    const appContainers = await containerService.discoverAppContainers();
+    const appDiscovery = await containerService.discoverAppContainersWithStatus();
+    const appContainers = appDiscovery.containers;
     const branches = stateService.getAllBranches();
     let appReconciled = 0;
 
     for (const branch of branches) {
+      if (appDiscovery.ok && shouldPruneDeletedBranchStartupResidue(branch, appContainers)) {
+        activeServerEventLogStore?.record({
+          category: 'container',
+          severity: 'warn',
+          source: 'startup-reconcile',
+          action: 'branch.reconcile.deleted-residue-pruned',
+          message: `branch delete cleanup residue pruned on startup: ${branch.id}`,
+          projectId: branch.projectId,
+          branchId: branch.id,
+          details: {
+            reason: 'delete-cleanup-intent-without-app-containers',
+            lastStopSource: branch.lastStopSource || null,
+            lastStopReason: branch.lastStopReason || null,
+            serviceStatuses: Object.fromEntries(
+              Object.entries(branch.services || {}).map(([profileId, svc]) => [profileId, svc.status]),
+            ),
+          },
+        });
+        try {
+          stateService.removeLogs(branch.id);
+        } catch { /* best-effort */ }
+        try {
+          stateService.removeBranch(branch.id);
+          appReconciled++;
+        } catch { /* branch may already be gone */ }
+        continue;
+      }
       for (const [profileId, svc] of Object.entries(branch.services)) {
         const key = `${branch.id}/${profileId}`;
         const found = appContainers.get(key);
@@ -2891,15 +2924,12 @@ proxyService.setOnAccess((branchId, method, reqPath, status, duration, profileId
 // Concurrent requests for the same branch wait for the first build to finish.
 const buildLocks = new Map<string, { promise: Promise<void>; listeners: http.ServerResponse[] }>();
 
-// ── "Branch is gone" friendly page ──
+// ── Unroutable preview friendly page ──
 /**
- * Rendered when a preview subdomain resolves to a branch that neither exists
- * locally nor in the remote git repo. Replaces the old SSE-error-inside-
- * transit-page experience (which landed on Chrome's raw 400 for most users)
- * with a proper HTML page that:
- *   - Explains the branch is deleted / never deployed
- *   - Lists live preview branches the user can jump to
- *   - Auto-redirects to the dashboard so the tab doesn't sit blank forever
+ * Rendered when a preview subdomain has no routable app service. That can mean
+ * a deleted branch, but more often it means CDS has not created/deployed the
+ * branch record yet. Do not lead with "deleted"; it makes operators think CDS
+ * removed their GitHub branch even when the remote branch still exists.
  * See .claude/rules/cds-auto-deploy.md (no-blank-wait principle).
  */
 interface BranchGoneLivePreview {
@@ -2942,7 +2972,7 @@ function buildBranchGonePageHtml(slug: string, opts: { dashboardUrl?: string; ma
   return `<!DOCTYPE html>
 <html lang="zh"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>启动失败 — ${escape(slug)}</title>
+<title>预览未部署 — ${escape(slug)}</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
@@ -2967,11 +2997,11 @@ h2{font-size:18px;font-weight:600;color:#f0f6fc;margin-bottom:8px}
 </style>
 </head><body>
 <div class="card">
-  <h2>启动失败</h2>
+  <h2>预览未部署</h2>
   <div class="branch">${escape(slug)}</div>
   <div class="desc">
-    该分支已被删除、从未部署，或 CDS 没有找到可路由的运行环境。<br>
-    这是不可自动恢复状态，请回到控制台重新部署或选择可用分支。
+    CDS 没有找到这个预览域名对应的可运行服务。常见原因是分支尚未在 CDS 创建、尚未部署，或已被显式停止。<br>
+    这不代表 GitHub 分支已被 CDS 删除。请回到控制台手动部署该分支，或选择下方可用预览。
   </div>
   ${liveHtml}
   ${dashHtml}

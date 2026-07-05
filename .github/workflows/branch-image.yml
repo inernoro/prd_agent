@@ -28,6 +28,11 @@ env:
   REGISTRY: ghcr.io
   API_IMAGE: ${{ github.repository }}/prdagent-server
   ADMIN_IMAGE: ${{ github.repository }}/prdagent-admin
+  # 独立 LLM 网关 llmgw（当前占位复用 prd-api 同源镜像）+ 网关前端站 llmgw-web
+  LLMGW_IMAGE: ${{ github.repository }}/prdagent-llmgw
+  LLMGW_WEB_IMAGE: ${{ github.repository }}/prdagent-llmgw-web
+  # 独立 LLM 网关承载服务镜像（PrdAgent.LlmGateway，源码在 prd-api/ 下，故随 api 触发）
+  LLMGW_SERVE_IMAGE: ${{ github.repository }}/prdagent-llmgw-serve
 
 jobs:
   changes:
@@ -36,6 +41,8 @@ jobs:
     outputs:
       api: ${{ steps.filter.outputs.api }}
       admin: ${{ steps.filter.outputs.admin }}
+      llmgw: ${{ steps.filter.outputs.llmgw }}
+      llmgw_web: ${{ steps.filter.outputs.llmgw_web }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -51,6 +58,12 @@ jobs:
               - '.github/workflows/branch-image.yml'
             admin:
               - 'prd-admin/**'
+              - '.github/workflows/branch-image.yml'
+            llmgw:
+              - 'prd-llmgw/**'
+              - '.github/workflows/branch-image.yml'
+            llmgw_web:
+              - 'prd-llmgw-web/**'
               - '.github/workflows/branch-image.yml'
 
   api-image:
@@ -152,3 +165,190 @@ jobs:
           platforms: linux/amd64
           cache-from: type=gha,scope=branch-prd-admin
           cache-to: type=gha,mode=max,scope=branch-prd-admin
+
+  # 独立 LLM 网关后端 llmgw 镜像（占位：prd-llmgw 项目拆出后构建独立镜像，tag 规则同 api）。
+  # 仅当 prd-llmgw/ 真实存在 Dockerfile 时才构建，避免对尚未落地的项目硬失败。
+  llmgw-image:
+    name: Build prd-llmgw image
+    needs: changes
+    if: ${{ needs.changes.outputs.llmgw == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check llmgw project exists
+        id: probe
+        shell: bash
+        run: |
+          if [ -f ./prd-llmgw/Dockerfile ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "prd-llmgw/Dockerfile 不存在，跳过 llmgw 镜像构建（项目尚未拆出，占位配置）。"
+          fi
+
+      - name: Setup Docker Buildx
+        if: ${{ steps.probe.outputs.present == 'true' }}
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        if: ${{ steps.probe.outputs.present == 'true' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        if: ${{ steps.probe.outputs.present == 'true' }}
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.LLMGW_IMAGE }}
+          tags: |
+            type=raw,value=sha-${{ github.sha }}
+            type=ref,event=branch,prefix=branch-
+
+      - name: Build metadata
+        if: ${{ steps.probe.outputs.present == 'true' }}
+        id: build_meta
+        shell: bash
+        run: echo "build_time_utc=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        if: ${{ steps.probe.outputs.present == 'true' }}
+        uses: docker/build-push-action@v5
+        with:
+          context: ./prd-llmgw
+          file: ./prd-llmgw/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            GIT_COMMIT=${{ github.sha }}
+            BUILD_TIME_UTC=${{ steps.build_meta.outputs.build_time_utc }}
+          provenance: false
+          sbom: false
+          platforms: linux/amd64
+          cache-from: type=gha,scope=branch-prd-llmgw
+          cache-to: type=gha,mode=max,scope=branch-prd-llmgw
+
+  # 独立 LLM 网关前端站 llmgw-web 镜像（占位：prd-llmgw-web 项目拆出后构建，tag 规则同 admin）。
+  llmgw-web-image:
+    name: Build prd-llmgw-web image
+    needs: changes
+    if: ${{ needs.changes.outputs.llmgw_web == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check llmgw-web project exists
+        id: probe
+        shell: bash
+        run: |
+          if [ -f ./prd-llmgw-web/Dockerfile ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "prd-llmgw-web/Dockerfile 不存在，跳过 llmgw-web 镜像构建（项目尚未拆出，占位配置）。"
+          fi
+
+      - name: Setup Docker Buildx
+        if: ${{ steps.probe.outputs.present == 'true' }}
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        if: ${{ steps.probe.outputs.present == 'true' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        if: ${{ steps.probe.outputs.present == 'true' }}
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.LLMGW_WEB_IMAGE }}
+          tags: |
+            type=raw,value=sha-${{ github.sha }}
+            type=ref,event=branch,prefix=branch-
+
+      - name: Build and push
+        if: ${{ steps.probe.outputs.present == 'true' }}
+        uses: docker/build-push-action@v5
+        with:
+          context: ./prd-llmgw-web
+          file: ./prd-llmgw-web/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: false
+          sbom: false
+          platforms: linux/amd64
+          cache-from: type=gha,scope=branch-prd-llmgw-web
+          cache-to: type=gha,mode=max,scope=branch-prd-llmgw-web
+
+  # 独立 LLM 网关承载服务镜像 llmgw-serve（PrdAgent.LlmGateway）。源码在 prd-api/ 下，
+  # 故触发条件同 api（path-filter api == true 或 main）。镜像 tag 规则同 api。
+  llmgw-serve-image:
+    name: Build prd-llmgw-serve image
+    needs: changes
+    if: ${{ needs.changes.outputs.api == 'true' || github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.LLMGW_SERVE_IMAGE }}
+          tags: |
+            type=raw,value=sha-${{ github.sha }}
+            type=ref,event=branch,prefix=branch-
+
+      - name: Build metadata
+        id: build_meta
+        shell: bash
+        run: echo "build_time_utc=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./prd-api
+          file: ./prd-api/Dockerfile.llmgw-serve
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            GIT_COMMIT=${{ github.sha }}
+            BUILD_TIME_UTC=${{ steps.build_meta.outputs.build_time_utc }}
+          provenance: false
+          sbom: false
+          platforms: linux/amd64
+          cache-from: type=gha,scope=branch-prd-llmgw-serve
+          cache-to: type=gha,mode=max,scope=branch-prd-llmgw-serve

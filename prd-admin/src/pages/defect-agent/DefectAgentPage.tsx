@@ -20,6 +20,7 @@ import { StatsPanel } from './components/StatsPanel';
 import { SharesListPanel } from './components/SharesListPanel';
 import { DefectAutomationPanel } from './components/DefectAutomationPanel';
 import { cn } from '@/lib/cn';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 
 const NOTIFICATION_STORAGE_KEY = 'defect-agent-notified-ids';
 
@@ -55,6 +56,7 @@ export default function DefectAgentPage() {
   const [showSharesPanel, setShowSharesPanel] = useState(false);
   const [showAutomationPanel, setShowAutomationPanel] = useState(false);
   const [searchParams] = useSearchParams();
+  const isMobile = useIsMobile();
   const notifiedRef = useRef(false);
   const directLoadRef = useRef<string | null>(null);
   const queryDefectId = searchParams.get('defectId');
@@ -177,22 +179,45 @@ export default function DefectAgentPage() {
   const isStatsView = viewMode === 'stats';
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-4">
-      {/* Header */}
-      <TabBar
-        title="缺陷管理"
-        icon={<Bug size={16} />}
-        items={tabItems}
-        activeKey={filter}
-        onChange={(key) => setFilter(key as 'submitted' | 'assigned')}
-        actions={
-          <>
-            {/* 项目/团队筛选 */}
+    <div className={cn('h-full min-h-0 flex flex-col', isMobile ? 'gap-2' : 'gap-4')}>
+      {isMobile ? (
+        <div className="shrink-0 px-1 pb-0.5">
+          <div
+            className="mx-auto grid h-8 w-full max-w-[240px] grid-cols-2 rounded-full p-0.5"
+            style={{
+              background: 'rgba(255,255,255,0.07)',
+              border: '1px solid rgba(255,255,255,0.10)',
+            }}
+          >
+            {tabItems.map((item) => {
+              const active = item.key === filter;
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => setFilter(item.key as 'submitted' | 'assigned')}
+                  className="h-7 rounded-full text-[13px] font-semibold transition-colors"
+                  style={{
+                    background: active ? 'rgba(255,255,255,0.16)' : 'transparent',
+                    color: active ? 'var(--text-primary)' : 'var(--text-muted)',
+                    boxShadow: active ? '0 1px 4px rgba(0,0,0,0.22)' : 'none',
+                  }}
+                >
+                  {item.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div
+            className="-mx-1 mt-1.5 flex items-center gap-2 overflow-x-auto px-1 pb-0.5"
+            style={{ scrollbarWidth: 'none' }}
+          >
             <select
               data-tour-id="defect-project-filter"
               value={projectFilter}
               onChange={(e) => setProjectFilter(e.target.value)}
-              className={cn('prd-field h-7 px-2 rounded-lg text-[12px]', !projectFilter && 'text-token-muted')}
+              className={cn('prd-field h-8 min-w-[112px] rounded-full px-3 text-[13px]', !projectFilter && 'text-token-muted')}
             >
               <option value="">全部项目</option>
               {projects.filter(p => !p.isArchived).map((p) => (
@@ -203,7 +228,7 @@ export default function DefectAgentPage() {
               <select
                 value={teamFilter}
                 onChange={(e) => setTeamFilter(e.target.value)}
-                className={cn('prd-field h-7 px-2 rounded-lg text-[12px]', !teamFilter && 'text-token-muted')}
+                className={cn('prd-field h-8 min-w-[112px] rounded-full px-3 text-[13px]', !teamFilter && 'text-token-muted')}
               >
                 <option value="">全部团队</option>
                 {teams.map((t) => (
@@ -212,60 +237,155 @@ export default function DefectAgentPage() {
               </select>
             )}
 
-            {/* 视图切换：卡片 / 列表 / 看板 / 统计 */}
-            <div data-tour-id="defect-view-mode-switcher" className="surface-inset flex items-center rounded-lg overflow-hidden">
+            <div data-tour-id="defect-view-mode-switcher" className="surface-inset flex h-8 shrink-0 items-center rounded-full overflow-hidden">
               {viewButtons.map(({ key, icon: Icon, title }) => (
                 <button
                   key={key}
                   type="button"
                   className={cn(
-                    'flex items-center justify-center w-7 h-7 transition-colors',
+                    'flex h-8 w-8 items-center justify-center transition-colors',
                     viewMode === key ? 'bg-token-nested text-token-primary' : 'text-token-muted hover:text-token-primary'
                   )}
                   onClick={() => setViewMode(key)}
                   title={title}
+                  aria-label={title}
                 >
                   <Icon size={14} />
                 </button>
               ))}
             </div>
-            <Button
-              variant="secondary"
-              size="sm"
+
+            <button
+              type="button"
               onClick={() => setShowAutomationPanel(true)}
+              className="surface-inset inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-token-secondary"
+              title="缺陷自动化"
+              aria-label="缺陷自动化"
             >
               <Bot size={14} />
-              缺陷自动化
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
+            </button>
+            <button
+              type="button"
               onClick={() => setShowProjectDialog(true)}
+              className="surface-inset inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-token-secondary"
+              title="项目管理"
+              aria-label="项目管理"
             >
               <FolderKanban size={14} />
-              项目管理
-            </Button>
-            <Button
+            </button>
+            <button
+              type="button"
               data-tour-id="defect-template-btn"
-              variant="secondary"
-              size="sm"
               onClick={() => setShowTemplateDialog(true)}
+              className="surface-inset inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-token-secondary"
+              title="我的模板"
+              aria-label="我的模板"
             >
               <FileText size={14} />
-              我的模板
-            </Button>
-            <Button
-              variant="primary"
-              size="sm"
+            </button>
+            <button
+              type="button"
               data-tour-id="defect-create"
               onClick={() => setShowSubmitPanel(true)}
+              className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-full px-3 text-[13px] font-semibold text-white"
+              style={{
+                background: 'var(--accent-gold)',
+                color: '#1a1a1a',
+                boxShadow: '0 4px 14px rgba(245, 158, 11, 0.22)',
+              }}
             >
               <Plus size={14} />
-              提交缺陷
-            </Button>
-          </>
-        }
-      />
+              提交
+            </button>
+          </div>
+        </div>
+      ) : (
+        <TabBar
+          title="缺陷管理"
+          icon={<Bug size={16} />}
+          items={tabItems}
+          activeKey={filter}
+          onChange={(key) => setFilter(key as 'submitted' | 'assigned')}
+          actions={
+            <>
+              <select
+                data-tour-id="defect-project-filter"
+                value={projectFilter}
+                onChange={(e) => setProjectFilter(e.target.value)}
+                className={cn('prd-field h-7 px-2 rounded-lg text-[12px]', !projectFilter && 'text-token-muted')}
+              >
+                <option value="">全部项目</option>
+                {projects.filter(p => !p.isArchived).map((p) => (
+                  <option key={p.id} value={p.id}>[{p.key}] {p.name}</option>
+                ))}
+              </select>
+              {teams.length > 0 && (
+                <select
+                  value={teamFilter}
+                  onChange={(e) => setTeamFilter(e.target.value)}
+                  className={cn('prd-field h-7 px-2 rounded-lg text-[12px]', !teamFilter && 'text-token-muted')}
+                >
+                  <option value="">全部团队</option>
+                  {teams.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+              )}
+
+              <div data-tour-id="defect-view-mode-switcher" className="surface-inset flex items-center rounded-lg overflow-hidden">
+                {viewButtons.map(({ key, icon: Icon, title }) => (
+                  <button
+                    key={key}
+                    type="button"
+                    className={cn(
+                      'flex items-center justify-center w-7 h-7 transition-colors',
+                      viewMode === key ? 'bg-token-nested text-token-primary' : 'text-token-muted hover:text-token-primary'
+                    )}
+                    onClick={() => setViewMode(key)}
+                    title={title}
+                  >
+                    <Icon size={14} />
+                  </button>
+                ))}
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setShowAutomationPanel(true)}
+              >
+                <Bot size={14} />
+                缺陷自动化
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setShowProjectDialog(true)}
+              >
+                <FolderKanban size={14} />
+                项目管理
+              </Button>
+              <Button
+                data-tour-id="defect-template-btn"
+                variant="secondary"
+                size="sm"
+                onClick={() => setShowTemplateDialog(true)}
+              >
+                <FileText size={14} />
+                我的模板
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                data-tour-id="defect-create"
+                onClick={() => setShowSubmitPanel(true)}
+              >
+                <Plus size={14} />
+                提交缺陷
+              </Button>
+            </>
+          }
+        />
+      )}
 
       {/* Error */}
       {error && (

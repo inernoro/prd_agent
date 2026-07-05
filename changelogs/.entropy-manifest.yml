@@ -378,3 +378,33 @@ processed:
   - 2026-06-21_cds-ops-fixes-2.md
   - 2026-06-21_cds-ops-fixes.md
   - 2026-06-21_cds-perf-observability.md
+  - 2026-06-28_cds-express-ci-waiting-page.md
+  - 2026-06-28_entropy-cleanup.md
+  - 2026-06-29_cds-branch-local-extra-services.md
+  - 2026-06-29_cds-branch-network-isolation.md
+  - 2026-06-29_cds-orphan-running-deploy-stuck.md
+  - 2026-06-25_llm-gateway-p1-protocol.md
+  - 2026-06-26_logs-mobile.md
+  - 2026-06-26_vision-detail-fix.md
+  - 2026-06-27_gateway-isolation-design.md
+  - 2026-06-27_gateway-phase0.md
+  - 2026-06-27_imagegen-request-builder.md
+  - 2026-06-27_llm-gateway-standalone.md
+  - 2026-06-27_llm-log-observability.md
+  - 2026-06-27_llmgw-deploy-scaffold.md
+  - 2026-06-27_llmgw-web-skeleton.md
+  - 2026-06-27_logs-lifecycle.md
+  - 2026-06-27_logs-observability-fill.md
+  - 2026-06-27_logs-observability-ui.md
+  - 2026-06-28_llm-gateway-http-client.md
+  - 2026-06-28_llm-gateway-selftest.md
+  - 2026-06-28_llm-gateway-serve-deploy.md
+  - 2026-06-28_llm-gateway-serving-process.md
+  - 2026-06-29_cds-runtime-detect-compose.md
+  - 2026-06-29_cds-task-schedule.md
+  - 2026-06-29_entropy-cleanup.md
+  - 2026-06-29_galaxy-trackpad-orbit.md
+  - 2026-06-29_gw-dlayer-realmachine.md
+  - 2026-06-29_gw-shadow-mode.md
+  - 2026-06-29_gw-test-matrix-data-driven.md
+  - 2026-06-29_gw-test-matrix.md

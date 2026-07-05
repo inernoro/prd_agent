@@ -1,0 +1,944 @@
+[
+  {
+    "code": "admin.platforms.available-models::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "admin.platforms.fetch-models::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "admin.platforms.reclassify.fetch-models::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "admin.platforms.refresh-models::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "ai-toolbox.agent.defect::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "ai-toolbox.agent.literary::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "ai-toolbox.agent.prd::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "ai-toolbox.agent.visual::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "ai-toolbox.agent.visual::generation",
+    "modelTypes": [
+      "generation"
+    ]
+  },
+  {
+    "code": "ai-toolbox.agent.visual::vision",
+    "modelTypes": [
+      "vision"
+    ]
+  },
+  {
+    "code": "ai-toolbox.orchestration::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "ai-toolbox.orchestration::intent",
+    "modelTypes": [
+      "intent"
+    ]
+  },
+  {
+    "code": "ai-toolbox.orchestration::vision",
+    "modelTypes": [
+      "vision"
+    ]
+  },
+  {
+    "code": "ccas-agent.equipment::generation",
+    "modelTypes": [
+      "generation"
+    ]
+  },
+  {
+    "code": "ccas-agent.flow::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "ccas-agent.prd::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "ccas-agent.qa::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "ccas-agent.sql-ai::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "channel-adapter.email.classify::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "channel-adapter.email.todo-extract::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "channel-trace-agent.case-import::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "channel-trace-agent.code-diff.keywords::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "channel-trace-agent.code-diff::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "channel-trace-agent.diagnose::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "channel-trace-agent.knowledge::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "channel-trace-agent.knowledge::vision",
+    "modelTypes": [
+      "vision"
+    ]
+  },
+  {
+    "code": "defect-agent.analyze-image::vision",
+    "modelTypes": [
+      "vision"
+    ]
+  },
+  {
+    "code": "defect-agent.extract::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "defect-agent.polish-stream::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "defect-agent.polish::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "defect-agent.review::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "defect-agent.scoring::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "document-store.reprocess::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "document-store.selection-rewrite::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "document-store.subtitle::asr",
+    "modelTypes": [
+      "asr"
+    ]
+  },
+  {
+    "code": "document-store.subtitle::vision",
+    "modelTypes": [
+      "vision"
+    ]
+  },
+  {
+    "code": "email-agent.draft::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "email-agent.polish::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "emergence-explorer.emerge::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "emergence-explorer.explore::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "front-end-agent.assistant::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "front-end-agent.assistant::vision",
+    "modelTypes": [
+      "vision"
+    ]
+  },
+  {
+    "code": "infra-agent.review-lite::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "literary-agent.content::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "literary-agent.illustration.img2img::generation",
+    "modelTypes": [
+      "generation"
+    ]
+  },
+  {
+    "code": "literary-agent.illustration.text2img::generation",
+    "modelTypes": [
+      "generation"
+    ]
+  },
+  {
+    "code": "literary-agent.prompt.optimize::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "marketplace-skill.draft-description::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "marketplace-skill.summary::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "md-to-ppt-agent.chat-refine::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "md-to-ppt-agent.generation::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "md-to-ppt-agent.html-generate::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "md-to-ppt-agent.outline::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "md-to-ppt-agent.patch::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "md-to-ppt-agent.template-extract::vision",
+    "modelTypes": [
+      "vision"
+    ]
+  },
+  {
+    "code": "open-api.proxy::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "open-api.proxy::generation",
+    "modelTypes": [
+      "generation"
+    ]
+  },
+  {
+    "code": "open-platform-agent.proxy::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "open-platform-agent.proxy::embedding",
+    "modelTypes": [
+      "embedding"
+    ]
+  },
+  {
+    "code": "open-platform-agent.proxy::rerank",
+    "modelTypes": [
+      "rerank"
+    ]
+  },
+  {
+    "code": "pa-agent.chat::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "pa-agent.review::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "page-agent.generate::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "pm-agent.assistant::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "pm-agent.briefing::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "pm-agent.closure-report::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "pm-agent.decompose::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "pm-agent.goal-decompose::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "pm-agent.health-diagnosis::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "pm-agent.milestone-suggest::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "pr-review.alignment::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "pr-review.summary::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "prd-admin.ai-news.commentary::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "prd-admin.changelog.ai-summary::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "prd-admin.team-activity.endpoint-diagnose::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "prd-admin.team-activity.insight-brief::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "prd-agent-desktop.chat.sendmessage::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "prd-agent-desktop.chat.suggested-questions::intent",
+    "modelTypes": [
+      "intent"
+    ]
+  },
+  {
+    "code": "prd-agent-desktop.gap.detection::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "prd-agent-desktop.gap.summarization::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "prd-agent-desktop.group-name.suggest::intent",
+    "modelTypes": [
+      "intent"
+    ]
+  },
+  {
+    "code": "prd-agent-desktop.preview-ask.section::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "prd-agent-web.lab::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "prd-agent-web.lab::generation",
+    "modelTypes": [
+      "generation"
+    ]
+  },
+  {
+    "code": "prd-agent-web.lab::vision",
+    "modelTypes": [
+      "vision"
+    ]
+  },
+  {
+    "code": "prd-agent-web.model-lab.run::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "prd-agent-web.platforms.reclassify::intent",
+    "modelTypes": [
+      "intent"
+    ]
+  },
+  {
+    "code": "prd-agent.arena.battle::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "prd-agent.guide::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "prd-agent.skill-gen::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "product-agent.graph-summary::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "product-agent.marketing-consult::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "product-agent.requirement-ai-fill::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "product-agent.trace-relation-analysis::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "product-agent.work-assistant::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "project-route-agent.extract.apps::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "project-route-agent.resolve.routemap::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "report-agent.aggregate::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "report-agent.daily-log.polish::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "report-agent.generate::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "report-agent.import::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "report-agent.weekly-poster.autopilot::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "report-agent.weekly-poster.image::generation",
+    "modelTypes": [
+      "generation"
+    ]
+  },
+  {
+    "code": "review-agent.review::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "shitu-agent.qa::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "skill-agent.export.readme::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "skill-agent.guide::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "speech-agent.mindmap.outline::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "speech-agent.mindmap.speaker-notes::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "speech-agent.node-image::generation",
+    "modelTypes": [
+      "generation"
+    ]
+  },
+  {
+    "code": "speech-agent.node-rewrite::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "system.health-probe::chat",
+    "modelTypes": [
+      "chat",
+      "generation",
+      "intent",
+      "vision"
+    ]
+  },
+  {
+    "code": "system.health-probe::generation",
+    "modelTypes": [
+      "chat",
+      "generation",
+      "intent",
+      "vision"
+    ]
+  },
+  {
+    "code": "system.health-probe::intent",
+    "modelTypes": [
+      "chat",
+      "generation",
+      "intent",
+      "vision"
+    ]
+  },
+  {
+    "code": "system.health-probe::vision",
+    "modelTypes": [
+      "chat",
+      "generation",
+      "intent",
+      "vision"
+    ]
+  },
+  {
+    "code": "tapd-bug-agent.extract::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "task-tree-agent.extract::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "transcript-agent.copywrite::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "transcript-agent.transcribe::asr",
+    "modelTypes": [
+      "asr"
+    ]
+  },
+  {
+    "code": "tutorial-email.generate::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "video-agent.audio::tts",
+    "modelTypes": [
+      "tts"
+    ]
+  },
+  {
+    "code": "video-agent.image.text2img::generation",
+    "modelTypes": [
+      "generation"
+    ]
+  },
+  {
+    "code": "video-agent.scene.codegen::code",
+    "modelTypes": [
+      "code"
+    ]
+  },
+  {
+    "code": "video-agent.script::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "video-agent.text-to-copy::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "video-agent.v2d.analyze::vision",
+    "modelTypes": [
+      "vision"
+    ]
+  },
+  {
+    "code": "video-agent.v2d.transcribe::asr",
+    "modelTypes": [
+      "asr"
+    ]
+  },
+  {
+    "code": "video-agent.video-to-text::asr",
+    "modelTypes": [
+      "asr"
+    ]
+  },
+  {
+    "code": "video-agent.video-to-text::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "video-agent.videogen::video-gen",
+    "modelTypes": [
+      "video-gen"
+    ]
+  },
+  {
+    "code": "visual-agent.compose::generation",
+    "modelTypes": [
+      "generation"
+    ]
+  },
+  {
+    "code": "visual-agent.compose::vision",
+    "modelTypes": [
+      "vision"
+    ]
+  },
+  {
+    "code": "visual-agent.drawing-board::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "visual-agent.image-gen.batch-generate::generation",
+    "modelTypes": [
+      "generation"
+    ]
+  },
+  {
+    "code": "visual-agent.image-gen.clarify::intent",
+    "modelTypes": [
+      "intent"
+    ]
+  },
+  {
+    "code": "visual-agent.image-gen.extract-style::vision",
+    "modelTypes": [
+      "vision"
+    ]
+  },
+  {
+    "code": "visual-agent.image-gen.generate::generation",
+    "modelTypes": [
+      "generation"
+    ]
+  },
+  {
+    "code": "visual-agent.image-gen.plan::intent",
+    "modelTypes": [
+      "intent"
+    ]
+  },
+  {
+    "code": "visual-agent.image.describe::vision",
+    "modelTypes": [
+      "vision"
+    ]
+  },
+  {
+    "code": "visual-agent.image.img2img::generation",
+    "modelTypes": [
+      "generation"
+    ]
+  },
+  {
+    "code": "visual-agent.image.text2img::generation",
+    "modelTypes": [
+      "generation"
+    ]
+  },
+  {
+    "code": "visual-agent.image.vision::generation",
+    "modelTypes": [
+      "generation"
+    ]
+  },
+  {
+    "code": "visual-agent.image::vision",
+    "modelTypes": [
+      "vision"
+    ]
+  },
+  {
+    "code": "visual-agent.scene.codegen::code",
+    "modelTypes": [
+      "code"
+    ]
+  },
+  {
+    "code": "visual-agent.storyboard.script::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "visual-agent.videogen::video-gen",
+    "modelTypes": [
+      "video-gen"
+    ]
+  },
+  {
+    "code": "visual-agent.workspace-title::intent",
+    "modelTypes": [
+      "intent"
+    ]
+  },
+  {
+    "code": "workflow-agent.ai-fill::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "workflow-agent.chat-assistant::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "workflow-agent.chat-repair::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "workflow-agent.cli-agent::code",
+    "modelTypes": [
+      "code"
+    ]
+  },
+  {
+    "code": "workflow-agent.error-analyzer::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "workflow-agent.llm-analyzer::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "workflow-agent.report-generator::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "workflow-agent.webpage-generator::code",
+    "modelTypes": [
+      "code"
+    ]
+  }
+]

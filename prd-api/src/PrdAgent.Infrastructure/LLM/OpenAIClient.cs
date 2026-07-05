@@ -205,9 +205,17 @@ public class OpenAIClient : ILLMClient
                     StartedAt: startedAt,
                     PlatformId: _platformId,
                     PlatformName: _platformName,
+                    // 协议绑模型：OpenAIClient 本身即"openai 协议"的发送端，权威标注（观测性 C′）。
+                    Protocol: "openai",
+                    ResolutionReason: ctx?.ModelResolutionType != null ? "protocol-from-openai-client" : null,
                     ModelResolutionType: ctx?.ModelResolutionType,
                     ModelGroupId: ctx?.ModelGroupId,
-                    ModelGroupName: ctx?.ModelGroupName),
+                    ModelGroupName: ctx?.ModelGroupName,
+                    IsStreaming: true,
+                    // S2 观测标记：OpenAIClient 是"直连发送端"（绕开网关池调度：ModelDomainService 兜底、
+                    // ModelLab/Arena 锁定 platform+model、健康探活）。若上下文已显式指定传输路径则尊重之，
+                    // 否则兜底为 direct。网关路径（inproc/http/shadow）由各自的日志构建点标注，不经此处。
+                    GatewayTransport: ctx?.GatewayTransport ?? GatewayTransports.Direct),
                 cancellationToken);
         }
 
@@ -253,6 +261,7 @@ public class OpenAIClient : ILLMClient
         var assembledChars = 0;
         var answerSb = new StringBuilder(capacity: 1024);
         var answerMaxChars = LlmLogLimits.DefaultAnswerMaxChars;
+        string? finishReason = null; // 观测性 C′：捕获末个 chunk 的 finish_reason 落日志
         using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
 
         try
@@ -315,6 +324,8 @@ public class OpenAIClient : ILLMClient
 
                 if (eventData.Choices?.Length > 0)
                 {
+                    if (!string.IsNullOrEmpty(eventData.Choices[0].FinishReason))
+                        finishReason = eventData.Choices[0].FinishReason;
                     var delta = eventData.Choices[0].Delta;
 
                     // reasoning_content（DeepSeek / QwQ 等模型的思考过程）
@@ -405,7 +416,8 @@ public class OpenAIClient : ILLMClient
                         AssembledTextHash: hash,
                         Status: status,
                         EndedAt: endedAt,
-                        DurationMs: (long)(endedAt - startedAt).TotalMilliseconds));
+                        DurationMs: (long)(endedAt - startedAt).TotalMilliseconds,
+                        FinishReason: finishReason));
             }
         }
     }

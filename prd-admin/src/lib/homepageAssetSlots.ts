@@ -1,14 +1,14 @@
 /**
  * 首页资源槽位注册表（共享给设置页上传 UI 和 LandingPage 渲染层使用）。
  *
- * - 卡片背景 slot：`card.{id}` → 覆盖 LandingPage 顶部 4 张快捷卡的背景
+ * - 卡片 slot：`card.{id}` → 首页顶部快捷入口背景图，可选覆盖默认视觉兜底
  * - Agent 图片 slot：`agent.{agentKey}.image` → 覆盖 Agent 卡封面静态图
  * - Agent 视频 slot：`agent.{agentKey}.video` → 覆盖 Agent 卡 hover 播放视频
  */
 
 export type HomepageCardSlot = {
   /** LandingPage 里 QUICK_LINKS_BASE 的 id，一一对应 */
-  id: 'marketplace' | 'library' | 'showcase' | 'updates';
+  id: string;
   /** 后端 slot 字符串 */
   slot: string;
   /** UI 展示用标签 */
@@ -20,8 +20,16 @@ export type HomepageCardSlot = {
 export const HOMEPAGE_CARD_SLOTS: HomepageCardSlot[] = [
   { id: 'marketplace', slot: 'card.marketplace', label: '海鲜市场', hint: '发现和 Fork 优质提示词与配置' },
   { id: 'library', slot: 'card.library', label: '智识殿堂', hint: '探索社区共享的知识库' },
+  { id: 'voc', slot: 'card.voc', label: 'VOC', hint: '用户原声闭环 · 行为洞察与 AI 根因诊断' },
   { id: 'showcase', slot: 'card.showcase', label: '作品广场', hint: '探索 AI 驱动的创意作品与灵感' },
   { id: 'updates', slot: 'card.updates', label: '更新中心', hint: '代码级周报 · 本周仓库变更速览' },
+  { id: 'document-store', slot: 'card.document-store', label: '知识库', hint: '文档存储与知识管理，支持文件夹、GitHub 同步' },
+  { id: 'my-assets', slot: 'card.my-assets', label: '我的资源', hint: '图片、附件、素材等个人资源统一管理' },
+  { id: 'workflow-agent', slot: 'card.workflow-agent', label: '工作流引擎', hint: '可视化工作流编排，自动化多步骤任务串联' },
+  { id: 'web-pages', slot: 'card.web-pages', label: '网页托管', hint: '上传 HTML 或 ZIP，托管并分享你的网页' },
+  { id: 'open-platform', slot: 'card.open-platform', label: '开放平台', hint: 'API 签发、应用接入与调用监控' },
+  { id: 'models', slot: 'card.models', label: '模型中心', hint: '大模型与模型池配置、健康监控' },
+  { id: 'teams', slot: 'card.teams', label: '团队协作', hint: '团队成员、用户组、分享与协作' },
 ];
 
 export type HomepageAgentSlot = {
@@ -74,8 +82,7 @@ export function cardSlot(id: HomepageCardSlot['id']): string {
 /**
  * 首页顶部 Hero banner（登录后首页最上方那条大图）。
  *
- * 和 Agent 封面一样，上传直接覆盖老 CDN 文件 `icon/title/{id}.{ext}`，
- * 不产生两份拷贝，老逻辑 `getHeroBgUrl()` 自然读取新图。
+ * 管理员上传的 `hero.home` 优先；未上传时首页使用低干扰 CSS 背景。
  */
 export type HomepageHeroSlot = {
   id: 'home';
@@ -85,7 +92,7 @@ export type HomepageHeroSlot = {
 };
 
 export const HOMEPAGE_HERO_SLOTS: HomepageHeroSlot[] = [
-  { id: 'home', slot: 'hero.home', label: '顶部 Banner', hint: '登录后首页最上方的大图，建议宽屏 1920×640 左右' },
+  { id: 'home', slot: 'hero.home', label: '顶部 Banner', hint: '登录后首页最上方的弱氛围图，建议宽屏 1920×640 左右；清除上传后回到系统暗色背景' },
 ];
 
 /**
@@ -156,13 +163,12 @@ export function demoVideoSlot(id: string): string {
   return `demo.${id}.video`;
 }
 
-export const HERO_DEFAULTS: Record<string, string> = {
-  home: 'icon/title/home.png',
-};
+export const HERO_DEFAULTS: Record<string, string> = {};
 
 export function buildDefaultHeroUrl(cdnBase: string, id: HomepageHeroSlot['id']): string | null {
   const path = HERO_DEFAULTS[id];
   if (!path) return null;
+  if (path.startsWith('/')) return path;
   const base = (cdnBase ?? '').replace(/\/+$/, '');
   return base ? `${base}/${path}` : `/${path}`;
 }
@@ -172,8 +178,8 @@ export function heroSlot(id: HomepageHeroSlot['id']): string {
 }
 
 /**
- * 老系统 Agent 封面/视频的默认 CDN 路径表（与 `AgentLauncherPage` 内同名常量对齐）。
- * 存放在共享文件里，让设置页和首页共用同一份「默认素材地图」。
+ * 老系统 Agent 封面/视频的默认 CDN 路径表。
+ * 存放在共享文件里，让设置页和通用 Agent 卡片共用同一份「默认素材地图」。
  *
  * 后端上传 `agent.{key}.image/video` 时会直接覆盖这张表指向的 COS 对象
  * （`icon/backups/agent/{key}.{ext}`），因此上传即替换，不产生二份拷贝。
