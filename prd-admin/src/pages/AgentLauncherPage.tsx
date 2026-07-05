@@ -72,6 +72,7 @@ import { RelativeTime } from '@/components/ui/RelativeTime';
 import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
 import { Reveal } from '@/pages/home/components/Reveal';
+import { AuroraBackground } from '@/components/backgrounds/AuroraBackground';
 import { TipsRotator } from '@/components/daily-tips/TipsRotator';
 import { LearningCenterTeaser } from '@/components/daily-tips/LearningCenterTeaser';
 
@@ -626,7 +627,28 @@ export default function AgentLauncherPage() {
     >
       <div className="flex-1 min-h-0 overflow-auto relative" style={{ zIndex: 1 }}>
 
-        {/* Hero 本地 aurora 光晕 */}
+        {/* 顶带极光（ReactBits Aurora 驯化版）：亮色端锚在右上，补右上角留白的氛围重心。
+            隐藏/离屏自动暂停，reduced-motion 静态一帧，DPR 封顶——不违反首页动画纪律 */}
+        <div
+          className="absolute inset-x-0 top-0 pointer-events-none overflow-hidden"
+          style={{
+            height: isMobile ? 260 : 440,
+            zIndex: 0,
+            opacity: 0.5,
+            maskImage: 'linear-gradient(180deg, black 0%, black 45%, transparent 96%)',
+            WebkitMaskImage: 'linear-gradient(180deg, black 0%, black 45%, transparent 96%)',
+          }}
+        >
+          <AuroraBackground
+            colorStops={['#2E2A55', '#6E56CF', '#5B8DEF']}
+            amplitude={0.9}
+            blend={0.55}
+            speed={0.35}
+            style={{ width: '100%', height: '100%' }}
+          />
+        </div>
+
+        {/* 问候语底光（柔白，静态） */}
         <div
           className="absolute pointer-events-none"
           style={{
@@ -635,7 +657,7 @@ export default function AgentLauncherPage() {
             width: isMobile ? '140%' : 520,
             height: isMobile ? 260 : 340,
             background:
-              'radial-gradient(ellipse at 30% 50%, rgba(255, 255, 255, 0.13) 0%, rgba(226, 232, 240, 0.055) 36%, transparent 66%), radial-gradient(ellipse at 78% 30%, rgba(129, 140, 248, 0.07) 0%, transparent 60%)',
+              'radial-gradient(ellipse at 30% 50%, rgba(255, 255, 255, 0.10) 0%, rgba(226, 232, 240, 0.045) 36%, transparent 66%)',
             filter: 'blur(40px)',
             opacity: 0.82,
             zIndex: 0,
