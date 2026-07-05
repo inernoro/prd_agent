@@ -2142,6 +2142,13 @@ export function DocumentStorePage() {
   // 这样从任意位置（含某个知识库详情内）打开教程都能落到目标页签，再把 query 抹掉避免重复触发。
   const location = useLocation();
   useEffect(() => {
+    // 深链 ?store=xxx：直接打开该知识库详情（首页「继续上次」回跳用），消费后抹掉 query
+    const deepStore = new URLSearchParams(location.search).get('store');
+    if (deepStore) {
+      setSelectedStoreId(deepStore);
+      navigate(location.pathname, { replace: true });
+      return;
+    }
     const t = new URLSearchParams(location.search).get('tab');
     const valid: StoreTab[] = ['mine', 'team', 'favorites', 'likes', 'sync'];
     if (t && (valid as string[]).includes(t)) {

@@ -883,6 +883,9 @@
 - [MAP MCP 连接器 · 债务台账](debt.platform.map-mcp-connector) `debt.platform.map-mcp-connector`
   > MAP MCP 连接器核心链路已上线，债务台账记录 PR #836 后显式延后的硬化项（共 4 条，open 3）
 
+- [登录后首页(Agent 启动页) · 债务台账](debt.platform.home-launcher) `debt.platform.home-launcher`
+  > 方向 C（工作台·内容优先）首版已落地；记录「继续上次」数据源边界（仅视觉/文学/工作流）、behavior_events 脱敏限制与色阶尺配色纪律
+
 - [行为洞察 / VOC 体验之声 工程债务台账](debt.team-activity.voc-legacy) `debt.team-activity.voc-legacy`
   > 行为洞察页面已知边界、待建造项（顶部 ribbon 流式动画、VOC 信息流等）与跨 session 债务
 
