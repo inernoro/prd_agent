@@ -308,7 +308,7 @@ function sendReportContent(res: Response, format: ReportFormat, content: string)
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Cache-Control', 'no-store');
   if (format === 'html') {
-    res.setHeader('Content-Security-Policy', "sandbox allow-scripts; default-src 'self' data: blob: https:; img-src * data: blob:; style-src 'unsafe-inline' *; script-src 'unsafe-inline' 'unsafe-eval' *; frame-ancestors 'self'");
+    res.setHeader('Content-Security-Policy', "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox; default-src 'self' data: blob: https:; img-src * data: blob:; style-src 'unsafe-inline' *; script-src 'unsafe-inline' 'unsafe-eval' *; frame-ancestors 'self'");
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
   } else {
     res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'self'");

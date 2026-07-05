@@ -19,7 +19,7 @@ import express from 'express';
 import { StateService } from '../../src/services/state.js';
 import { createReportsRouter } from '../../src/routes/reports.js';
 
-interface Res { status: number; body: any; }
+interface Res { status: number; body: any; headers: http.IncomingHttpHeaders; }
 
 async function call(
   server: http.Server,
@@ -44,7 +44,7 @@ async function call(
         res.on('end', () => {
           let body: any = raw;
           try { body = JSON.parse(raw); } catch { /* keep raw */ }
-          resolve({ status: res.statusCode!, body });
+          resolve({ status: res.statusCode!, body, headers: res.headers });
         });
       },
     );
@@ -137,6 +137,20 @@ describe('Acceptance report routes — project-scoped key access', () => {
   it('project-a key cannot read another project report raw content (403)', async () => {
     const res = await call(server, 'GET', `/api/reports/${reportB.id}/raw`, { projectKey: 'proj-a' });
     expect(res.status).toBe(403);
+  });
+
+  it('HTML raw reports allow target=_blank links to open from the sandbox', async () => {
+    const report = service.createAcceptanceReport({
+      title: 'HTML report',
+      format: 'html',
+      content: '<!doctype html><a target="_blank" href="https://example.com">open</a>',
+      projectId: 'proj-a',
+      branchId: null,
+      createdBy: 't',
+    });
+    const res = await call(server, 'GET', `/api/reports/${report.id}/raw`, { projectKey: 'proj-a' });
+    expect(res.status).toBe(200);
+    expect(res.headers['content-security-policy']).toContain('sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox');
   });
 
   it('project key cannot read/delete a global (null-project) report (403)', async () => {
