@@ -262,11 +262,11 @@ public class CrossProcessServingErrorLoadTests : IClassFixture<CrossProcessServi
         }
         public Task<GatewayRawResponse> SendRawWithResolutionAsync(GatewayRawRequest r, GatewayModelResolution res, CancellationToken ct = default)
             => Task.FromResult(new GatewayRawResponse { Success = true, StatusCode = 200, Content = "raw-ok" });
-        public Task<GatewayModelResolution> ResolveModelAsync(string a, string m, string? e = null, CancellationToken ct = default)
+        public Task<GatewayModelResolution> ResolveModelAsync(string a, string m, string? e = null, string? pp = null, string? pm = null, CancellationToken ct = default)
             => Task.FromResult(Res());
         public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(string a, string m, CancellationToken ct = default)
             => Task.FromResult(new List<AvailableModelPool> { new() { Id = "pool-1", Name = "默认池", Code = "default", Priority = 1, ResolutionType = "defaultPool", Models = new() } });
-        public ILLMClient CreateClient(string a, string m, int mt = 4096, double t = 0.2, bool it = false, string? e = null)
+        public ILLMClient CreateClient(string a, string m, int mt = 4096, double t = 0.2, bool it = false, string? e = null, string? pp = null, string? pm = null)
             => new EchoLlmClient();
     }
 
@@ -292,11 +292,11 @@ public class CrossProcessServingErrorLoadTests : IClassFixture<CrossProcessServi
         { await Task.Yield(); yield return GatewayStreamChunk.Fail("stub upstream intentional failure"); }
         public Task<GatewayRawResponse> SendRawWithResolutionAsync(GatewayRawRequest r, GatewayModelResolution res, CancellationToken ct = default)
             => Task.FromResult(GatewayRawResponse.Fail("UPSTREAM_DOWN", "fail", 502));
-        public Task<GatewayModelResolution> ResolveModelAsync(string a, string m, string? e = null, CancellationToken ct = default)
+        public Task<GatewayModelResolution> ResolveModelAsync(string a, string m, string? e = null, string? pp = null, string? pm = null, CancellationToken ct = default)
             => Task.FromResult(Res());
         public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(string a, string m, CancellationToken ct = default)
             => Task.FromResult(new List<AvailableModelPool>());
-        public ILLMClient CreateClient(string a, string m, int mt = 4096, double t = 0.2, bool it = false, string? e = null)
+        public ILLMClient CreateClient(string a, string m, int mt = 4096, double t = 0.2, bool it = false, string? e = null, string? pp = null, string? pm = null)
             => throw new NotSupportedException();
     }
 
@@ -308,11 +308,11 @@ public class CrossProcessServingErrorLoadTests : IClassFixture<CrossProcessServi
             => throw new InvalidOperationException("boom");
         public Task<GatewayRawResponse> SendRawWithResolutionAsync(GatewayRawRequest r, GatewayModelResolution res, CancellationToken ct = default)
             => throw new InvalidOperationException("boom");
-        public Task<GatewayModelResolution> ResolveModelAsync(string a, string m, string? e = null, CancellationToken ct = default)
+        public Task<GatewayModelResolution> ResolveModelAsync(string a, string m, string? e = null, string? pp = null, string? pm = null, CancellationToken ct = default)
             => Task.FromResult(Res());
         public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(string a, string m, CancellationToken ct = default)
             => Task.FromResult(new List<AvailableModelPool>());
-        public ILLMClient CreateClient(string a, string m, int mt = 4096, double t = 0.2, bool it = false, string? e = null)
+        public ILLMClient CreateClient(string a, string m, int mt = 4096, double t = 0.2, bool it = false, string? e = null, string? pp = null, string? pm = null)
             => throw new NotSupportedException();
     }
 
@@ -325,11 +325,11 @@ public class CrossProcessServingErrorLoadTests : IClassFixture<CrossProcessServi
         { await Task.Yield(); yield return new GatewayStreamChunk { Type = GatewayChunkType.Done, Seq = 1, FinishReason = "stop" }; }
         public Task<GatewayRawResponse> SendRawWithResolutionAsync(GatewayRawRequest r, GatewayModelResolution res, CancellationToken ct = default)
             => Task.FromResult(new GatewayRawResponse { Success = true, StatusCode = 200, Content = "" });
-        public Task<GatewayModelResolution> ResolveModelAsync(string a, string m, string? e = null, CancellationToken ct = default)
+        public Task<GatewayModelResolution> ResolveModelAsync(string a, string m, string? e = null, string? pp = null, string? pm = null, CancellationToken ct = default)
             => Task.FromResult(Res());
         public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(string a, string m, CancellationToken ct = default)
             => Task.FromResult(new List<AvailableModelPool>());
-        public ILLMClient CreateClient(string a, string m, int mt = 4096, double t = 0.2, bool it = false, string? e = null)
+        public ILLMClient CreateClient(string a, string m, int mt = 4096, double t = 0.2, bool it = false, string? e = null, string? pp = null, string? pm = null)
             => throw new NotSupportedException();
     }
 }

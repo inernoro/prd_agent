@@ -166,7 +166,7 @@ public class OpenAIImageClient
         if (string.IsNullOrWhiteSpace(requestId)) requestId = Guid.NewGuid().ToString("N");
 
         // 通过 Gateway 解析模型调度（获取平台信息用于适配器选择）
-        var resolution = await _gateway.ResolveModelAsync(appCallerCode, "generation", modelName, ct);
+        var resolution = await _gateway.ResolveModelAsync(appCallerCode, "generation", modelName, ct: ct);
         if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
         {
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT,
@@ -1166,7 +1166,7 @@ public class OpenAIImageClient
         if (string.IsNullOrWhiteSpace(requestId)) requestId = Guid.NewGuid().ToString("N");
 
         // 通过 Gateway 解析模型调度
-        var resolution = await _gateway.ResolveModelAsync(appCallerCode, "generation", modelName, ct);
+        var resolution = await _gateway.ResolveModelAsync(appCallerCode, "generation", modelName, ct: ct);
         if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
         {
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT,

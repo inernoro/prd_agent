@@ -201,7 +201,7 @@ public class ImageGenController : ControllerBase
 
         var userMsg = string.IsNullOrWhiteSpace(style) ? brief : $"统一风格要求：{style}\n\n内容：\n{brief}";
 
-        var resolution = await _gateway.ResolveModelAsync(appCallerCode, ModelTypes.Chat, null, ct);
+        var resolution = await _gateway.ResolveModelAsync(appCallerCode, ModelTypes.Chat, null, ct: ct);
         if (!resolution.Success)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.LLM_ERROR, $"模型调度失败：{resolution.ErrorMessage}"));
 

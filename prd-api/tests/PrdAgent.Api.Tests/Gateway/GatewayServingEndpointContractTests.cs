@@ -200,7 +200,8 @@ public class GatewayServingEndpointContractTests
             => Task.FromResult(new GatewayRawResponse { Success = true, StatusCode = 200, Content = "raw-ok" });
 
         public Task<GatewayModelResolution> ResolveModelAsync(
-            string appCallerCode, string modelType, string? expectedModel = null, CancellationToken ct = default)
+            string appCallerCode, string modelType, string? expectedModel = null,
+            string? pinnedPlatformId = null, string? pinnedModelId = null, CancellationToken ct = default)
             => Task.FromResult(Resolve(expectedModel));
 
         public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(
@@ -213,7 +214,8 @@ public class GatewayServingEndpointContractTests
 
         public ILLMClient CreateClient(
             string appCallerCode, string modelType, int maxTokens = 4096,
-            double temperature = 0.2, bool includeThinking = false, string? expectedModel = null)
+            double temperature = 0.2, bool includeThinking = false, string? expectedModel = null,
+            string? pinnedPlatformId = null, string? pinnedModelId = null)
             => throw new NotSupportedException("本骨架不测 CreateClient 路径");
     }
 }

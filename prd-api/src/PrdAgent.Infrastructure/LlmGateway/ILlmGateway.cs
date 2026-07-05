@@ -60,6 +60,8 @@ public interface ILlmGateway
         string appCallerCode,
         string modelType,
         string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null,
         CancellationToken ct = default);
 
     /// <summary>
@@ -85,7 +87,9 @@ public interface ILlmGateway
         int maxTokens = 4096,
         double temperature = 0.2,
         bool includeThinking = false,
-        string? expectedModel = null);
+        string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null);
 }
 
 /// <summary>

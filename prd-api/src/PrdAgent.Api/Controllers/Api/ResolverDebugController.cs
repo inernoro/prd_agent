@@ -82,7 +82,7 @@ public class ResolverDebugController : ControllerBase
         string? actualError = null;
         try
         {
-            actual = await _resolver.ResolveAsync(code, type, expected, ct);
+            actual = await _resolver.ResolveAsync(code, type, expected, ct: ct);
         }
         catch (Exception ex)
         {

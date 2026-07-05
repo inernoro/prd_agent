@@ -135,7 +135,9 @@ public class GatewayReviewRuntimeAdapterTests
             int maxTokens = 4096,
             double temperature = 0.2,
             bool includeThinking = false,
-            string? expectedModel = null)
+            string? expectedModel = null,
+            string? pinnedPlatformId = null,
+            string? pinnedModelId = null)
         {
             LastAppCallerCode = appCallerCode;
             LastModelType = modelType;

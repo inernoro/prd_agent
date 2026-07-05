@@ -74,7 +74,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         if (SampleHit())
             FireFullSendCompare(request, inproc, expectedModel);  // 采样：完整 send 比对（2x 打模型，有界）
         else
-            FireResolveCompare(request.AppCallerCode, request.ModelType, expectedModel, inproc.Resolution, "send");
+            FireResolveCompare(request.AppCallerCode, request.ModelType, expectedModel, request.PinnedPlatformId, request.PinnedModelId, inproc.Resolution, "send");
         return inproc;
     }
 
@@ -98,16 +98,21 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             yield return chunk;
         }
         // 流式只做免费 resolve 比对（不重发 http 流，绝不 2x 打大模型）。
-        FireResolveCompare(request.AppCallerCode, request.ModelType, expectedModel, startResolution, "stream");
+        FireResolveCompare(request.AppCallerCode, request.ModelType, expectedModel, request.PinnedPlatformId, request.PinnedModelId, startResolution, "stream");
     }
 
     public async Task<GatewayModelResolution> ResolveModelAsync(
-        string appCallerCode, string modelType, string? expectedModel = null, CancellationToken ct = default)
+        string appCallerCode,
+        string modelType,
+        string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null,
+        CancellationToken ct = default)
     {
         if (RouteToHttp(appCallerCode))
-            return await _http.ResolveModelAsync(appCallerCode, modelType, expectedModel, ct);
-        var inproc = await _inproc.ResolveModelAsync(appCallerCode, modelType, expectedModel, ct);
-        FireResolveCompare(appCallerCode, modelType, expectedModel, inproc, "resolve");
+            return await _http.ResolveModelAsync(appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, ct);
+        var inproc = await _inproc.ResolveModelAsync(appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, ct);
+        FireResolveCompare(appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, inproc, "resolve");
         return inproc;
     }
 
@@ -136,12 +141,12 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     /// </summary>
     public Core.Interfaces.ILLMClient CreateClient(
         string appCallerCode, string modelType, int maxTokens = 4096, double temperature = 0.2,
-        bool includeThinking = false, string? expectedModel = null)
+        bool includeThinking = false, string? expectedModel = null, string? pinnedPlatformId = null, string? pinnedModelId = null)
         => new GatewayLLMClient(
             this, appCallerCode, modelType,
             platformId: null, platformName: null, enablePromptCache: true,
             maxTokens: maxTokens, temperature: temperature, includeThinking: includeThinking,
-            contextAccessor: _ctx, expectedModel: expectedModel);
+            contextAccessor: _ctx, expectedModel: expectedModel, pinnedPlatformId: pinnedPlatformId, pinnedModelId: pinnedModelId);
 
     // ─────────────────────── 后台比对（fire-and-forget，全隔离）───────────────────────
 
@@ -154,7 +159,13 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     });
 
     private void FireResolveCompare(
-        string appCallerCode, string modelType, string? expectedModel, GatewayModelResolution? inprocResolution, string kind)
+        string appCallerCode,
+        string modelType,
+        string? expectedModel,
+        string? pinnedPlatformId,
+        string? pinnedModelId,
+        GatewayModelResolution? inprocResolution,
+        string kind)
     {
         if (_writer == null) return;
         var requestId = _ctx?.Current?.RequestId;
@@ -163,7 +174,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var sw = Stopwatch.StartNew();
             GatewayModelResolution? httpResolution = null;
             string? httpErr = null;
-            try { httpResolution = await _http.ResolveModelAsync(appCallerCode, modelType, expectedModel, CancellationToken.None); }
+            try { httpResolution = await _http.ResolveModelAsync(appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, CancellationToken.None); }
             catch (Exception ex) { httpErr = ex.Message; }
             sw.Stop();
             var cmp = BuildResolveComparison(kind, requestId, appCallerCode, modelType, inprocResolution, httpResolution, httpErr, sw.ElapsedMilliseconds);
@@ -190,6 +201,8 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             AppCallerCode = request.AppCallerCode,
             ModelType = request.ModelType,
             ExpectedModel = request.ExpectedModel,
+            PinnedPlatformId = request.PinnedPlatformId,
+            PinnedModelId = request.PinnedModelId,
             RequestBody = clonedBody,
             RequestBodyRaw = request.RequestBodyRaw,
             Stream = request.Stream,

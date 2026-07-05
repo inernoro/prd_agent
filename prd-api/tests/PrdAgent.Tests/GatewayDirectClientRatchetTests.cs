@@ -11,11 +11,10 @@ namespace PrdAgent.Tests;
 /// （见 .claude/rules/llm-gateway.md），直连 = 绕过网关的模型解析 / 日志 / 配额 / 密钥管理。
 ///
 /// 棘轮语义（只收不放）：
-///   - baseline = 当前仓库里「已知、暂时保留」的直连点集合（B 类：ModelLab / Arena；
-///     以及尚未收口的 A 类：Program.cs 主客户端工厂 legacy 兜底）。
+///   - baseline = 当前仓库里「已知、暂时保留」的直连点集合。
 ///   - 出现 baseline **之外**的**新**直连 → 测试 red（防止直连债务反弹增长）。
 ///   - baseline 里的某条被真正迁移到网关后，从 baseline 删除即可（棘轮往「更严」方向拧一格）；
-///     当 A 类收口后 baseline 应只剩 B 类（ModelLab / Arena）。baseline 收缩到空 = 直连清零达标。
+///     baseline 收缩到空 = 直连清零达标。
 ///
 /// 排除项（不算直连债务，不入 baseline）：
 ///   - 已迁移到网关的上游客户端 OpenAIImageClient / OpenRouterVideoClient（生图 / 视频走网关侧封装）。
@@ -50,31 +49,10 @@ public class GatewayDirectClientRatchetTests
 
     /// <summary>
     /// baseline：当前已知、暂时保留的直连点，key = 源文件相对路径（正斜杠），value = 该文件里
-    /// 允许存在的直连条数。棘轮只在「文件出现在 src 但不在 baseline」或「baseline 文件里直连条数
-    /// 超过登记值」时 red。收口一条就把对应计数减一 / 删除该行。
-    ///
-    /// 分类（对齐任务决策 A/B 类）：
-    ///   B 类（Model Lab / Arena 竞技场：本就是「对指定平台/模型做对照评测」的场景，
-    ///        走网关三级调度反而抹平差异，故设计上保留直连，长期驻留 baseline）；
-    ///   A 类（Program.cs 主客户端工厂 + ModelDomainService 领域客户端：属于应收口进网关的
-    ///        legacy 兜底，B agent 收口后从 baseline 删除；未收口前登记在此，防止二次增长）。
+    /// 允许存在的直连条数。当前必须为空；任何 Gateway 外 `new ClaudeClient/OpenAIClient` 都直接 red。
     /// </summary>
     private static readonly Dictionary<string, int> Baseline = new(StringComparer.Ordinal)
     {
-        // ── B 类保留直连（对照评测场景，长期驻留）──
-        // ModelLab：平台对照 / 模型对照两处（platform 维度 + model 维度）各 Claude+OpenAI 一对。
-        { "PrdAgent.Api/Controllers/Api/ModelLabController.cs", 4 },
-        // Arena：竞技场按 slot 指定 modelId 直连对战，Claude+OpenAI 一对。
-        { "PrdAgent.Api/Services/ArenaRunWorker.cs", 2 },
-
-        // ── A 类未收口 legacy 兜底（后续收口后应从 baseline 删除，届时棘轮自动更严）──
-        // Program.cs 主客户端工厂：主模型 / 活动 LLMConfig / 环境变量三级兜底，Claude+OpenAI 混合共 6 处。
-        { "PrdAgent.Api/Program.cs", 6 },
-        // ModelDomainService.GetClientAsync 领域客户端：按用途取模型（chat/intent/vision）+ 协议/密钥/URL
-        // 解析后直连 Claude+OpenAI 一对。S3 曾尝试收口到网关 CreateClient，但会丢失 model.MaxTokens 逐模型
-        // 尊重（网关默认统一 maxTokens），故行为保持起见保留直连、登记 baseline，待网关支持 per-model
-        // maxTokens 入口后再收口。
-        { "PrdAgent.Infrastructure/Services/ModelDomainService.cs", 2 },
     };
 
     [Fact]

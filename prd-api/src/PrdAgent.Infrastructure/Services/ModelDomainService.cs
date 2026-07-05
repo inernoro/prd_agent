@@ -54,49 +54,21 @@ public class ModelDomainService : IModelDomainService
             throw new InvalidOperationException("未配置可用模型");
         }
 
-        // 业务规则：不再使用“全局开关”，而是以“主模型是否启用 Prompt Cache”作为总开关；
-        // 同时仍尊重当前模型的 enablePromptCache（不是所有模型都适合开启 cache）。
-        var mainEnablePromptCache = mainModel == null ? false : (mainModel.EnablePromptCache ?? true);
-
-        var (apiUrl, apiKey, platformType, platformId, platformName) = await ResolveApiConfigForModelAsync(model, ct);
+        var (apiUrl, apiKey, _, platformId, _) = await ResolveApiConfigForModelAsync(model, ct);
         if (string.IsNullOrWhiteSpace(apiUrl) || string.IsNullOrWhiteSpace(apiKey))
         {
             throw new InvalidOperationException("模型 API 配置不完整");
         }
 
-        var httpClient = _httpClientFactory.CreateClient("LoggedHttpClient");
-        var apiUrlTrim = apiUrl.Trim();
-        // 统一规则：BaseAddress 必须以 "/" 结尾，否则 Uri 合并会丢最后一段路径（例如 /api/v3 + v1/... 会变成 /api/v1/...）
-        // 对于以 "#" 结尾的"完整 endpoint"，OpenAIClient 会使用绝对 URL，不依赖 BaseAddress。
-        httpClient.BaseAddress = new Uri(apiUrlTrim.TrimEnd('#').TrimEnd('/') + "/");
-
-        var enablePromptCache = mainEnablePromptCache && (model.EnablePromptCache ?? true);
         var maxTokens = model.MaxTokens.HasValue && model.MaxTokens.Value > 0 ? model.MaxTokens.Value : DefaultMaxTokens;
-        if (platformType == "anthropic" || apiUrl.Contains("anthropic.com"))
-        {
-            return new ClaudeClient(httpClient, apiKey, model.ModelName, maxTokens, 0.2, enablePromptCache, _claudeLogger, _logWriter, _ctxAccessor, platformId, platformName);
-        }
-
-        // 默认 OpenAI 兼容：按 baseURL 规则选择 chat/completions 的最终调用方式
-        // - baseURL 以 "/" 结尾：请求 path = "chat/completions"
-        // - baseURL 以 "#" 结尾：请求 endpoint = "{baseURL 去掉#}"（不拼接）
-        // - 其他：请求 path = "v1/chat/completions"
-        var chatEndpointOrPath = apiUrlTrim.EndsWith("#", StringComparison.Ordinal)
-            ? apiUrlTrim.TrimEnd('#')
-            : (apiUrlTrim.EndsWith("/", StringComparison.Ordinal) ? "chat/completions" : "v1/chat/completions");
-
-        return new OpenAIClient(
-            httpClient,
-            apiKey,
-            model.ModelName,
-            maxTokens,
-            0.2,
-            enablePromptCache,
-            _logWriter,
-            _ctxAccessor,
-            chatEndpointOrPath,
-            platformId,
-            platformName);
+        return _gateway.CreateClient(
+            AppCallerRegistry.Admin.Lab.Chat,
+            ModelTypes.Chat,
+            maxTokens: maxTokens,
+            temperature: 0.2,
+            expectedModel: model.ModelName,
+            pinnedPlatformId: platformId,
+            pinnedModelId: model.ModelName);
     }
 
     public async Task<string> SuggestGroupNameAsync(string? fileName, string snippet, CancellationToken ct = default)
@@ -321,4 +293,3 @@ public class ModelDomainService : IModelDomainService
     }
 
 }
-

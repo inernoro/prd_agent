@@ -48,12 +48,12 @@ public static class GatewayHttpEndpoints
             await next();
         });
 
-        app.MapGet("/gw/v1/healthz", () => Results.Json(new
+        app.MapGet("/gw/v1/healthz", () => Results.Content(JsonSerializer.Serialize(new
         {
             status = "ok",
             commit = gitCommit,
             time = DateTime.UtcNow.ToString("o"),
-        }));
+        }, jsonOpts), "application/json"));
 
         // 预解析模型调度结果（不发送请求）。
         app.MapPost("/gw/v1/resolve", async (
@@ -61,7 +61,7 @@ public static class GatewayHttpEndpoints
             PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway) =>
         {
             var resolution = await gateway.ResolveModelAsync(
-                body.AppCallerCode, body.ModelType, body.ExpectedModel, CancellationToken.None);
+                body.AppCallerCode, body.ModelType, body.ExpectedModel, body.PinnedPlatformId, body.PinnedModelId, CancellationToken.None);
             return Results.Json(resolution, jsonOpts);
         });
 
@@ -116,7 +116,7 @@ public static class GatewayHttpEndpoints
         {
             using var _ = OpenContextScope(accessor, request.Context, request.ModelType, request.AppCallerCode);
             var res = await gateway.ResolveModelAsync(
-                request.AppCallerCode, request.ModelType, request.ExpectedModel, CancellationToken.None);
+                request.AppCallerCode, request.ModelType, request.ExpectedModel, request.PinnedPlatformId, request.PinnedModelId, CancellationToken.None);
             var raw = await gateway.SendRawWithResolutionAsync(request, res, CancellationToken.None);
             return Results.Json(raw, jsonOpts);
         });
@@ -147,7 +147,14 @@ public static class GatewayHttpEndpoints
 
             using var _ = OpenContextScope(accessor, body.Context, body.ModelType, body.AppCallerCode);
             var client = gateway.CreateClient(
-                body.AppCallerCode, body.ModelType, body.MaxTokens, body.Temperature, body.IncludeThinking, body.ExpectedModel);
+                body.AppCallerCode,
+                body.ModelType,
+                body.MaxTokens,
+                body.Temperature,
+                body.IncludeThinking,
+                body.ExpectedModel,
+                body.PinnedPlatformId,
+                body.PinnedModelId);
 
             try
             {
@@ -226,7 +233,12 @@ public static class GatewayHttpEndpoints
 }
 
 // /gw/v1/resolve 的请求体 DTO（PascalCase）。
-public sealed record ResolveRequestDto(string AppCallerCode, string ModelType, string? ExpectedModel);
+public sealed record ResolveRequestDto(
+    string AppCallerCode,
+    string ModelType,
+    string? ExpectedModel,
+    string? PinnedPlatformId,
+    string? PinnedModelId);
 
 // /gw/v1/client-stream 的请求体 DTO（PascalCase）。Messages 用 Core 的 LLMMessage，
 // 与 MAP 侧 HttpLlmClient 序列化口径一致。
@@ -237,6 +249,8 @@ public sealed record ClientStreamRequestDto(
     double Temperature,
     bool IncludeThinking,
     string? ExpectedModel,
+    string? PinnedPlatformId,
+    string? PinnedModelId,
     string SystemPrompt,
     List<PrdAgent.Core.Interfaces.LLMMessage> Messages,
     bool EnablePromptCache,

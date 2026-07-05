@@ -452,7 +452,7 @@ public class VideoGenRunWorker : BackgroundService
         };
 
         var resolution = await gateway.ResolveModelAsync(
-            AppCallerRegistry.VideoAgent.Script.Chat, ModelTypes.Chat, null, CancellationToken.None);
+            AppCallerRegistry.VideoAgent.Script.Chat, ModelTypes.Chat, null, ct: CancellationToken.None);
         if (!resolution.Success)
         {
             await FailRunAsync(run, "MODEL_RESOLVE_FAILED", $"模型调度失败: {resolution.ErrorMessage}");
@@ -743,7 +743,7 @@ public class VideoGenRunWorker : BackgroundService
             userMsg = $"统一风格：{run.StyleDescription}\n\n" + userMsg;
 
         var resolution = await gateway.ResolveModelAsync(
-            AppCallerRegistry.VideoAgent.Script.Chat, ModelTypes.Chat, null, CancellationToken.None);
+            AppCallerRegistry.VideoAgent.Script.Chat, ModelTypes.Chat, null, ct: CancellationToken.None);
         if (!resolution.Success)
         {
             await MarkSceneErrorAsync(run.Id, sceneIdx, "模型调度失败: " + resolution.ErrorMessage);

@@ -970,72 +970,28 @@ if (string.IsNullOrWhiteSpace(llmApiKey))
     Log.Warning("LLM:ClaudeApiKey is not configured. Please set LLM__ClaudeApiKey environment variable or LLM:ClaudeApiKey in appsettings.json");
 }
 
-builder.Services.AddHttpClient<ILLMClient, ClaudeClient>()
-    .ConfigureHttpClient(client =>
-    {
-        client.BaseAddress = new Uri("https://api.anthropic.com/");
-        if (!string.IsNullOrWhiteSpace(llmApiKey))
-        {
-            client.DefaultRequestHeaders.Add("x-api-key", llmApiKey);
-        }
-        client.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
-    })
-    .AddHttpMessageHandler<HttpLoggingHandler>();
-
 // 注册 LLM 客户端 - 优先从数据库读取主模型，其次从LLMConfig，最后从环境变量
 builder.Services.AddScoped<ILLMClient>(sp =>
 {
     var db = sp.GetRequiredService<MongoDbContext>();
-    var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
     var config = sp.GetRequiredService<IConfiguration>();
-    var logWriter = sp.GetRequiredService<ILlmRequestLogWriter>();
-    var ctxAccessor = sp.GetRequiredService<ILLMRequestContextAccessor>();
-    var claudeLogger = sp.GetRequiredService<ILogger<ClaudeClient>>();
-
-    // S3-A（本工厂）暂不收口到网关，保留原直连以「行为保持」（Cursor Bugbot 2 处 Medium）：
-    // 本 scoped ILLMClient 被 LLMClientFactory 注入消费（非死代码），而 gateway.CreateClient 的采样温度
-    // （默认 0.2 vs 此处 0.7）与「主模型凭据缺失时回落 activeConfig/env」的兜底语义与下方直连不一致——
-    // 直接改走网关会静默改变默认注入客户端的采样行为、并吞掉凭据不全时的兜底。全网关收口留待网关
-    // CreateClient 支持温度透传 + 凭据不全兜底后再做（见 doc/plan.llm-gateway.full-cutover.md S3-A；
-    // 直连守卫 ratchet baseline 已登记本文件）。
+    var gateway = sp.GetRequiredService<PrdAgent.Core.Interfaces.LlmGateway.ILlmGateway>();
 
     // 1. 优先：从数据库获取主模型 (IsMain=true)
     var mainModel = db.LLMModels.Find(m => m.IsMain && m.Enabled).FirstOrDefault();
-    var mainEnablePromptCache = mainModel != null ? (mainModel.EnablePromptCache ?? true) : false;
     if (mainModel != null)
     {
         var (apiUrl, apiKey) = ResolveApiConfigForModel(mainModel, db, config);
-        
         if (!string.IsNullOrWhiteSpace(apiUrl) && !string.IsNullOrWhiteSpace(apiKey))
         {
-            var httpClient = httpClientFactory.CreateClient("LoggedHttpClient");
-            
-            // 判断平台类型并获取平台信息
-            string? platformType = null;
-            string? platformId = mainModel.PlatformId;
-            string? platformName = null;
-            if (mainModel.PlatformId != null)
-            {
-                var platform = db.LLMPlatforms.Find(p => p.Id == mainModel.PlatformId).FirstOrDefault();
-                platformType = platform?.PlatformType?.ToLower();
-                platformName = platform?.Name;
-            }
-            
-            // 根据平台类型或API URL判断使用哪个客户端
-            // 业务规则：不再使用"全局开关"，而是以"主模型 enablePromptCache"作为总开关
-            var enablePromptCache = mainEnablePromptCache;
-            
-            if (platformType == "anthropic" || apiUrl.Contains("anthropic.com"))
-            {
-                httpClient.BaseAddress = new Uri(apiUrl.TrimEnd('/'));
-                return new ClaudeClient(httpClient, apiKey, mainModel.ModelName, 4096, 0.7, enablePromptCache, claudeLogger, logWriter, ctxAccessor, platformId, platformName);
-            }
-            else
-            {
-                // 默认使用 OpenAI 格式（兼容 openai、google、qwen、zhipu、baidu、other 等）
-                httpClient.BaseAddress = new Uri(apiUrl.TrimEnd('/'));
-                return new OpenAIClient(httpClient, apiKey, mainModel.ModelName, 4096, 0.7, enablePromptCache, logWriter, ctxAccessor, null, platformId, platformName);
-            }
+            return gateway.CreateClient(
+                AppCallerRegistry.Admin.Lab.Chat,
+                ModelTypes.Chat,
+                maxTokens: 4096,
+                temperature: 0.7,
+                expectedModel: mainModel.ModelName,
+                pinnedPlatformId: mainModel.PlatformId,
+                pinnedModelId: mainModel.ModelName);
         }
     }
     
@@ -1047,20 +1003,12 @@ builder.Services.AddScoped<ILLMClient>(sp =>
         
         if (!string.IsNullOrWhiteSpace(apiKey))
         {
-            var httpClient = httpClientFactory.CreateClient("LoggedHttpClient");
-            
-            if (activeConfig.Provider == "Claude")
-            {
-                httpClient.BaseAddress = new Uri(activeConfig.ApiEndpoint ?? "https://api.anthropic.com/");
-                var enablePromptCache = mainEnablePromptCache && activeConfig.EnablePromptCache;
-                return new ClaudeClient(httpClient, apiKey, activeConfig.Model, activeConfig.MaxTokens, activeConfig.Temperature, enablePromptCache, claudeLogger, logWriter, ctxAccessor);
-            }
-            else if (activeConfig.Provider == "OpenAI")
-            {
-                httpClient.BaseAddress = new Uri(activeConfig.ApiEndpoint ?? "https://api.openai.com/");
-                var enablePromptCache = mainEnablePromptCache && activeConfig.EnablePromptCache;
-                return new OpenAIClient(httpClient, apiKey, activeConfig.Model, activeConfig.MaxTokens, activeConfig.Temperature, enablePromptCache, logWriter, ctxAccessor);
-            }
+            return gateway.CreateClient(
+                AppCallerRegistry.Admin.Lab.Chat,
+                ModelTypes.Chat,
+                maxTokens: activeConfig.MaxTokens,
+                temperature: activeConfig.Temperature,
+                expectedModel: activeConfig.Model);
         }
     }
     
@@ -1068,14 +1016,14 @@ builder.Services.AddScoped<ILLMClient>(sp =>
     if (string.IsNullOrWhiteSpace(llmApiKey))
     {
         Log.Warning("No main model or active LLM config found in database and LLM:ClaudeApiKey is not configured. Please set a main model in admin panel or set LLM__ClaudeApiKey environment variable");
-        var httpClient = httpClientFactory.CreateClient("LoggedHttpClient");
-        httpClient.BaseAddress = new Uri("https://api.anthropic.com/");
-        return new ClaudeClient(httpClient, "", llmModel, 4096, 0.7, enablePromptCache: false, claudeLogger, logWriter, ctxAccessor);
     }
-    
-    var fallbackHttpClient = httpClientFactory.CreateClient("LoggedHttpClient");
-    fallbackHttpClient.BaseAddress = new Uri("https://api.anthropic.com/");
-    return new ClaudeClient(fallbackHttpClient, llmApiKey, llmModel, 4096, 0.7, enablePromptCache: mainEnablePromptCache, claudeLogger, logWriter, ctxAccessor);
+
+    return gateway.CreateClient(
+        AppCallerRegistry.Admin.Lab.Chat,
+        ModelTypes.Chat,
+        maxTokens: 4096,
+        temperature: 0.7,
+        expectedModel: llmModel);
 });
 
 // 辅助方法：解析模型的 API 配置（与 AdminModelsController 中的逻辑一致）

@@ -79,7 +79,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // 1. 使用 ModelResolver 解析模型
             var effectiveExpectedModel = request.GetEffectiveExpectedModel();
             resolution = await _modelResolver.ResolveAsync(
-                request.AppCallerCode, request.ModelType, effectiveExpectedModel, ct);
+                request.AppCallerCode, request.ModelType, effectiveExpectedModel, request.PinnedPlatformId, request.PinnedModelId, ct);
 
             if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
             {
@@ -236,7 +236,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // 1. 使用 ModelResolver 解析模型
             var effectiveExpectedModel = request.GetEffectiveExpectedModel();
             resolution = await _modelResolver.ResolveAsync(
-                request.AppCallerCode, request.ModelType, effectiveExpectedModel, ct);
+                request.AppCallerCode, request.ModelType, effectiveExpectedModel, request.PinnedPlatformId, request.PinnedModelId, ct);
 
             if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
             {
@@ -1111,6 +1111,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         string appCallerCode,
         string modelType,
         string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null,
         CancellationToken ct = default)
     {
         if (!TryValidateAppCaller(appCallerCode, modelType, out var error))
@@ -1123,7 +1125,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             };
         }
 
-        var result = await _modelResolver.ResolveAsync(appCallerCode, modelType, expectedModel, ct);
+        var result = await _modelResolver.ResolveAsync(appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, ct);
         return result.ToGatewayResolution();
     }
 
@@ -1838,7 +1840,9 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         int maxTokens = 4096,
         double temperature = 0.2,
         bool includeThinking = false,
-        string? expectedModel = null)
+        string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null)
     {
         if (!TryValidateAppCaller(appCallerCode, modelType, out var error))
         {
@@ -1856,7 +1860,9 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             temperature: temperature,
             includeThinking: includeThinking,
             contextAccessor: _contextAccessor,
-            expectedModel: expectedModel);
+            expectedModel: expectedModel,
+            pinnedPlatformId: pinnedPlatformId,
+            pinnedModelId: pinnedModelId);
     }
 
     private static bool TryValidateAppCaller(string appCallerCode, string modelType, out string error)

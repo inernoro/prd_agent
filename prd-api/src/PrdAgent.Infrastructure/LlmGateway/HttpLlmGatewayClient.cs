@@ -79,6 +79,8 @@ public sealed class HttpLlmGatewayClient
             AppCallerCode = request.AppCallerCode,
             ModelType = request.ModelType,
             ExpectedModel = request.ExpectedModel,
+            PinnedPlatformId = request.PinnedPlatformId,
+            PinnedModelId = request.PinnedModelId,
             RequestBody = request.RequestBody,
             RequestBodyRaw = request.RequestBodyRaw,
             Stream = request.Stream,
@@ -233,6 +235,8 @@ public sealed class HttpLlmGatewayClient
             ModelType = request.ModelType,
             EndpointPath = request.EndpointPath,
             ExpectedModel = string.IsNullOrWhiteSpace(resolution.ActualModel) ? request.ExpectedModel : resolution.ActualModel,
+            PinnedPlatformId = request.PinnedPlatformId,
+            PinnedModelId = request.PinnedModelId,
             RequestBody = request.RequestBody,
             IsMultipart = request.IsMultipart,
             MultipartFields = request.MultipartFields,
@@ -269,6 +273,8 @@ public sealed class HttpLlmGatewayClient
         string appCallerCode,
         string modelType,
         string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null,
         CancellationToken ct = default)
     {
         // 注意：ApiKey 在 HTTP 模式下恒为 null（serving 端 [JsonIgnore] 不序列化敏感字段）。
@@ -276,7 +282,14 @@ public sealed class HttpLlmGatewayClient
         try
         {
             using var http = CreateHttp(infiniteTimeout: false);
-            var dto = new { AppCallerCode = appCallerCode, ModelType = modelType, ExpectedModel = expectedModel };
+            var dto = new
+            {
+                AppCallerCode = appCallerCode,
+                ModelType = modelType,
+                ExpectedModel = expectedModel,
+                PinnedPlatformId = pinnedPlatformId,
+                PinnedModelId = pinnedModelId
+            };
             using var resp = await http.PostAsync($"{_baseUrl}/gw/v1/resolve", JsonBody(dto), ct);
             var body = await resp.Content.ReadAsStringAsync(ct);
             if (!resp.IsSuccessStatusCode)
@@ -336,11 +349,13 @@ public sealed class HttpLlmGatewayClient
         int maxTokens = 4096,
         double temperature = 0.2,
         bool includeThinking = false,
-        string? expectedModel = null)
+        string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null)
     {
         return new HttpLlmClient(
             _httpFactory, _baseUrl, _gatewayKey,
-            appCallerCode, modelType, maxTokens, temperature, includeThinking, expectedModel,
+            appCallerCode, modelType, maxTokens, temperature, includeThinking, expectedModel, pinnedPlatformId, pinnedModelId,
             JsonOpts, _logger, _ctxAccessor);
     }
 

@@ -1529,7 +1529,7 @@ public class ImageGenRunWorker : BackgroundService
 
             // 传递用户期望的模型池 code
             var expectedModelCode = frontendExpectedModelId;
-            var resolved = await gateway.ResolveModelAsync(appCallerCode, "generation", expectedModelCode, ct);
+            var resolved = await gateway.ResolveModelAsync(appCallerCode, "generation", expectedModelCode, ct: ct);
 
             if (resolved != null)
             {

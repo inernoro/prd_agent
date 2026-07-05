@@ -32,6 +32,17 @@ public class GatewayRequest
     public string? ExpectedModel { get; init; }
 
     /// <summary>
+    /// 精确锁定的平台 ID。与 <see cref="PinnedModelId"/> 同时提供时，Resolver 只允许命中该平台该模型。
+    /// 用于 ModelLab/Arena 等“选 A 必须测 A”的场景，避免绕过网关日志、配额和 transport 观测。
+    /// </summary>
+    public string? PinnedPlatformId { get; init; }
+
+    /// <summary>
+    /// 精确锁定的模型 ID/名称。与 <see cref="PinnedPlatformId"/> 同时提供时禁止默认池重排。
+    /// </summary>
+    public string? PinnedModelId { get; init; }
+
+    /// <summary>
     /// 请求体（JSON 格式）
     /// Gateway 会自动替换其中的 "model" 字段
     /// </summary>
@@ -263,6 +274,16 @@ public class GatewayRawRequest
     /// Gateway 在内部 Resolve 时直接透传，防止二次 Resolve 选出不同模型。
     /// </summary>
     public string? ExpectedModel { get; init; }
+
+    /// <summary>
+    /// 精确锁定的平台 ID。与 <see cref="PinnedModelId"/> 同时提供时，raw 调用也只走该平台该模型。
+    /// </summary>
+    public string? PinnedPlatformId { get; init; }
+
+    /// <summary>
+    /// 精确锁定的模型 ID/名称。用于跨进程 raw 调用保持“选 A 用 A”。
+    /// </summary>
+    public string? PinnedModelId { get; init; }
 
     /// <summary>
     /// 请求体（JSON 格式）
