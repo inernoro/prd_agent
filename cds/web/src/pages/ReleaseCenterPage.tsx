@@ -130,6 +130,7 @@ interface SiteDraft {
   privateKeyRef: string;
   host: string;
   port: string;
+  webPort: string;
   user: string;
   sitePath: string;
   publicUrl: string;
@@ -172,9 +173,9 @@ interface RollbackState {
   sourceRun: ReleaseRun;
 }
 
-const DEFAULT_SITE_PATH = '/opt/prd_agent';
+const DEFAULT_SITE_PATH = '/opt/{project}-prod';
 const DEFAULT_DEPLOY_COMMAND = './fast.sh && ./exec_dep.sh';
-const DEFAULT_HEALTH_PATH = '/';
+const DEFAULT_HEALTH_PATH = '/api/health';
 const SCRIPT_LABELS = ['./fast.sh', './exec_dep.sh'];
 
 function emptyDraft(projectId: string): SiteDraft {
@@ -184,8 +185,9 @@ function emptyDraft(projectId: string): SiteDraft {
     privateKeyRef: '',
     host: '',
     port: '22',
+    webPort: '13000',
     user: '',
-    sitePath: DEFAULT_SITE_PATH,
+    sitePath: '',
     publicUrl: '',
     healthPath: DEFAULT_HEALTH_PATH,
     rollbackCommand: '',
@@ -264,12 +266,13 @@ export function ReleaseCenterPage(): JSX.Element {
     setSavingSite(true);
     setToast('');
     try {
-      const body = buildTargetBody(draft, projectId);
       if (draft.id) {
+        const body = buildTargetBody(draft, projectId);
         await apiRequest(`/api/releases/targets/${encodeURIComponent(draft.id)}`, { method: 'PATCH', body });
         setToast('站点发布目标已更新');
       } else {
-        await apiRequest('/api/releases/targets', { method: 'POST', body });
+        const body = buildLocalProdTargetBody(draft, projectId);
+        await apiRequest('/api/releases/targets/local-prod', { method: 'POST', body });
         setToast('站点发布目标已添加');
       }
       setWizardOpen(false);
@@ -358,7 +361,7 @@ export function ReleaseCenterPage(): JSX.Element {
               <div className="min-w-0">
                 <h1 className="text-lg font-semibold">站点发布</h1>
                 <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                  把已验收的预览分支发布到一台服务器上的站点目录。默认发布脚本是 <CodeText>./fast.sh</CodeText> → <CodeText>./exec_dep.sh</CodeText>。
+                  把已验收的预览分支发布到本机生产站点。默认只需要选择服务器、填写域名和本机端口。
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -444,7 +447,7 @@ function EmptySitesState({ hostCount, onAdd }: { hostCount: number; onAdd: () =>
       </div>
       <h2 className="mt-4 text-base font-semibold">还没有站点发布目标</h2>
       <p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">
-        添加一个站点后，CDS 会知道要发布到哪台服务器、哪个站点目录、上线地址是什么，以及默认执行哪些脚本。
+        添加一个站点后，CDS 会自动推断生产目录、发布脚本和健康检查地址，后续可以从成功运行的分支一键发布。
       </p>
       <div className="mt-5 flex flex-wrap justify-center gap-2">
         <Button onClick={onAdd}>
@@ -582,7 +585,9 @@ function SiteWizardDialog({
   onSave: () => void;
 }): JSX.Element {
   const selectedHost = hosts.find((host) => host.id === draft.privateKeyRef);
-  const canSave = Boolean(draft.name.trim() && draft.privateKeyRef && draft.sitePath.trim() && buildHealthcheckUrl(draft));
+  const canSave = draft.id
+    ? Boolean(draft.name.trim() && draft.privateKeyRef && draft.sitePath.trim() && buildHealthcheckUrl(draft))
+    : Boolean(draft.privateKeyRef && normalizeDomainInput(draft.publicUrl) && Number(draft.webPort || 0) > 0);
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
       <DialogContent className="max-w-none" style={{ width: 'min(896px, calc(100vw - 32px))' }}>
@@ -640,11 +645,19 @@ function SiteWizardDialog({
             ) : null}
 
             {step === 'site' ? (
-              <WizardPanel title="填写站点目录" description="用户只需要知道站点在哪台服务器上的哪个目录，不需要手写 SSH 命令。">
-                <div className="grid gap-3 md:grid-cols-2">
-                  <Field label="站点名称" value={draft.name} onChange={(value) => onDraft((c) => ({ ...c, name: value }))} placeholder="生产站点" />
-                  <Field label="站点目录" value={draft.sitePath} onChange={(value) => onDraft((c) => ({ ...c, sitePath: value }))} placeholder="/opt/prd_agent" />
-                </div>
+              <WizardPanel title={draft.id ? '填写站点目录' : '填写生产域名'} description={draft.id ? '已有目标继续保留站点目录编辑。' : 'CDS 会按项目自动推断生产目录，日常只需要填最终访问域名。'}>
+                {draft.id ? (
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <Field label="站点名称" value={draft.name} onChange={(value) => onDraft((c) => ({ ...c, name: value }))} placeholder="生产站点" />
+                    <Field label="站点目录" value={draft.sitePath} onChange={(value) => onDraft((c) => ({ ...c, sitePath: value }))} placeholder="/opt/prd_agent" />
+                  </div>
+                ) : (
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <Field label="站点名称" value={draft.name} onChange={(value) => onDraft((c) => ({ ...c, name: value }))} placeholder="不填则使用域名" />
+                    <Field label="生产域名" value={draft.publicUrl} onChange={(value) => onDraft((c) => ({ ...c, publicUrl: value }))} placeholder="www.example.com" />
+                    <Field label="本机端口" value={draft.webPort} onChange={(value) => onDraft((c) => ({ ...c, webPort: value.replace(/[^0-9]/g, '') }))} placeholder="13000" />
+                  </div>
+                )}
                 <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 p-3 text-sm">
                   <div className="text-muted-foreground">服务器</div>
                   <div className="mt-1 font-mono">{selectedHost ? `${selectedHost.sshUser}@${selectedHost.host}:${selectedHost.sshPort}` : '尚未选择服务器'}</div>
@@ -653,27 +666,39 @@ function SiteWizardDialog({
             ) : null}
 
             {step === 'scripts' ? (
-              <WizardPanel title="检测发布脚本" description="默认发布动作固定为进入站点目录后依次执行 fast.sh 和 exec_dep.sh。">
-                <div className="grid gap-3 md:grid-cols-2">
-                  {SCRIPT_LABELS.map((script) => (
-                    <div key={script} className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3">
-                      <div className="flex items-center gap-2 text-sm font-medium text-emerald-600 dark:text-emerald-300">
-                        <CheckCircle2 className="h-4 w-4" />
-                        将检测 {script}
-                      </div>
-                      <p className="mt-1 text-xs text-muted-foreground">发布前检查会连接服务器；发布过程会单独显示该脚本步骤。</p>
+              <WizardPanel title={draft.id ? '检测发布脚本' : '确认发布方式'} description={draft.id ? '已有目标会按保存的发布命令执行。' : 'CDS 使用内置本机生产脚本，自动同步代码、启动 compose 并做健康检查。'}>
+                {draft.id ? (
+                  <>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      {SCRIPT_LABELS.map((script) => (
+                        <div key={script} className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3">
+                          <div className="flex items-center gap-2 text-sm font-medium text-emerald-600 dark:text-emerald-300">
+                            <CheckCircle2 className="h-4 w-4" />
+                            将检测 {script}
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground">发布前检查会连接服务器；发布过程会单独显示该脚本步骤。</p>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={draft.advancedOpen}
-                    onChange={(event) => onDraft((c) => ({ ...c, advancedOpen: event.target.checked }))}
-                  />
-                  高级配置：自定义发布命令
-                </label>
-                {draft.advancedOpen ? (
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={draft.advancedOpen}
+                        onChange={(event) => onDraft((c) => ({ ...c, advancedOpen: event.target.checked }))}
+                      />
+                      高级配置：自定义发布命令
+                    </label>
+                  </>
+                ) : (
+                  <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm">
+                    <div className="flex items-center gap-2 font-medium text-emerald-600 dark:text-emerald-300">
+                      <CheckCircle2 className="h-4 w-4" />
+                      使用本机生产发布
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">保存后会生成通用发布目标，不需要在页面里维护 shell 命令。</p>
+                  </div>
+                )}
+                {draft.id && draft.advancedOpen ? (
                   <Field label="发布脚本" value={draft.deployCommand} onChange={(value) => onDraft((c) => ({ ...c, deployCommand: value }))} />
                 ) : null}
               </WizardPanel>
@@ -682,8 +707,12 @@ function SiteWizardDialog({
             {step === 'health' ? (
               <WizardPanel title="配置上线地址" description="上线地址用于发布后的健康检查，也会显示在站点卡片上。">
                 <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_160px]">
-                  <Field label="上线地址" value={draft.publicUrl} onChange={(value) => onDraft((c) => ({ ...c, publicUrl: value }))} placeholder="https://xxx.miduo.org" />
-                  <Field label="健康检查路径" value={draft.healthPath} onChange={(value) => onDraft((c) => ({ ...c, healthPath: value || '/' }))} placeholder="/" />
+                  {draft.id ? (
+                    <Field label="上线地址" value={draft.publicUrl} onChange={(value) => onDraft((c) => ({ ...c, publicUrl: value }))} placeholder="https://xxx.miduo.org" />
+                  ) : (
+                    <Field label="生产域名" value={draft.publicUrl} onChange={(value) => onDraft((c) => ({ ...c, publicUrl: value }))} placeholder="www.example.com" />
+                  )}
+                  <Field label="健康检查路径" value={draft.healthPath} onChange={(value) => onDraft((c) => ({ ...c, healthPath: value || DEFAULT_HEALTH_PATH }))} placeholder="/api/health" />
                 </div>
                 <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 p-3 text-sm">
                   <div className="text-muted-foreground">健康检查</div>
@@ -990,6 +1019,7 @@ function draftFromTarget(target: ReleaseTarget): SiteDraft {
     privateKeyRef: ssh?.privateKeyRef || '',
     host: ssh?.host || '',
     port: String(ssh?.port || 22),
+    webPort: '13000',
     user: ssh?.user || '',
     sitePath: ssh?.appPath || DEFAULT_SITE_PATH,
     publicUrl: health.publicUrl,
@@ -1016,12 +1046,35 @@ function buildTargetBody(draft: SiteDraft, projectId: string): Record<string, un
   };
 }
 
+function buildLocalProdTargetBody(draft: SiteDraft, projectId: string): Record<string, unknown> {
+  return {
+    projectId,
+    name: draft.name.trim(),
+    privateKeyRef: draft.privateKeyRef.trim(),
+    domain: normalizeDomainInput(draft.publicUrl),
+    webPort: Number(draft.webPort || 13000),
+    healthPath: draft.healthPath.trim() || DEFAULT_HEALTH_PATH,
+  };
+}
+
 function buildHealthcheckUrl(draft: SiteDraft): string {
   if (draft.healthcheckUrl.trim()) return draft.healthcheckUrl.trim();
-  const base = draft.publicUrl.trim().replace(/\/+$/, '');
-  if (!base) return '';
+  const publicUrl = draft.publicUrl.trim();
+  if (!publicUrl) return '';
+  const base = publicUrl.includes('://') ? publicUrl.replace(/\/+$/, '') : `https://${publicUrl.replace(/\/+$/, '')}`;
   const path = draft.healthPath.trim() || DEFAULT_HEALTH_PATH;
   return `${base}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
+function normalizeDomainInput(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  try {
+    const parsed = new URL(trimmed.includes('://') ? trimmed : `https://${trimmed}`);
+    return parsed.hostname.toLowerCase();
+  } catch {
+    return trimmed.replace(/^https?:\/\//, '').split('/')[0].toLowerCase();
+  }
 }
 
 function publicUrlFromHealth(value: string): string {
@@ -1046,6 +1099,7 @@ function splitHealthUrl(value: string): { publicUrl: string; healthPath: string 
 
 function scriptsFromCommand(command: string): string[] {
   if (!command.trim()) return SCRIPT_LABELS;
+  if (command.includes('local-prod-release.sh')) return ['本机生产发布'];
   const normalized = command.replace(/&&/g, '\n').replace(/;/g, '\n');
   const found = normalized.split('\n').map((item) => item.trim()).filter(Boolean)
     .filter((item) => item.includes('fast.sh') || item.includes('exec_dep.sh'));
@@ -1068,9 +1122,16 @@ function releaseSteps(run: ReleaseRun): StepState[] {
   const execPhase = releaseScriptPhase('./exec_dep.sh');
   const fastSeen = phaseSet.has(fastPhase);
   const execSeen = phaseSet.has(execPhase);
+  const customDeploySeen = phaseSet.has('deploy') && !fastSeen && !execSeen;
   const healthSeen = phaseSet.has('healthcheck');
   const success = run.status === 'success' || run.status === 'rollback_success';
-  const base: StepState[] = [
+  const base: StepState[] = customDeploySeen ? [
+    { id: 'connect', label: '连接服务器', state: phaseSet.has('connect') ? 'done' : 'pending' },
+    { id: 'path', label: '进入站点目录', state: phaseSet.has('prepare') || customDeploySeen || healthSeen || success ? 'done' : 'pending' },
+    { id: 'deploy', label: '执行本机生产发布', state: failedPhase === 'deploy' ? 'failed' : healthSeen || success ? 'done' : customDeploySeen ? 'running' : 'pending' },
+    { id: 'health', label: '检查上线地址', state: failedPhase === 'healthcheck' ? 'failed' : healthSeen ? (failed ? 'failed' : 'done') : 'pending' },
+    { id: 'record', label: '标记完成', state: success ? 'done' : 'pending' },
+  ] : [
     { id: 'connect', label: '连接服务器', state: phaseSet.has('connect') ? 'done' : 'pending' },
     { id: 'path', label: '进入站点目录', state: phaseSet.has('prepare') || fastSeen || execSeen || healthSeen || success ? 'done' : 'pending' },
     { id: 'fast', label: '执行 fast.sh', state: failedPhase === fastPhase ? 'failed' : execSeen || healthSeen || success ? 'done' : fastSeen ? 'running' : 'pending' },
@@ -1164,7 +1225,7 @@ function parseSseJson<T>(event: Event): T | null {
 
 const wizardSteps: Array<{ id: WizardStep; label: string }> = [
   { id: 'server', label: '选择服务器' },
-  { id: 'site', label: '站点目录' },
-  { id: 'scripts', label: '发布脚本' },
-  { id: 'health', label: '上线地址' },
+  { id: 'site', label: '生产域名' },
+  { id: 'scripts', label: '发布方式' },
+  { id: 'health', label: '健康检查' },
 ];

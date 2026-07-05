@@ -112,6 +112,13 @@ describe('computePreviewSlug — v3 格式 (tail-prefix-project)', () => {
     expect(a).toBe('fix-foo-claude-prd-agent');
     expect(b).toBe('fix-foo-claude-my-fork');
   });
+
+  it('caps long preview slugs to the DNS single-label limit with a stable hash', () => {
+    const slug = computePreviewSlug('dependabot/pip/apps-ai-pip-dependencies-d0eedf1dbe', 'brandai-platform');
+    expect(slug.length).toBeLessThanOrEqual(63);
+    expect(slug).toMatch(/^pip-apps-ai-pip-dependencies-d0eedf1dbe-dependabot-[a-z0-9-]+-[a-f0-9]{8}$/);
+    expect(computePreviewSlug('dependabot/pip/apps-ai-pip-dependencies-d0eedf1dbe', 'brandai-platform')).toBe(slug);
+  });
 });
 
 describe('preview project identity helpers', () => {

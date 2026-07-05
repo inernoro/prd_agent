@@ -12990,6 +12990,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   //   - No collision with another branch's slug or aliases
 
   const DNS_LABEL_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
+  const DNS_HOST_RE = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
   const RESERVED_ALIAS_LABELS = new Set([
     'www', 'admin', 'switch', 'preview',
     'cds', 'master', 'dashboard',
@@ -13056,6 +13057,45 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return gatewayUrls;
   };
 
+  const findPreviewHostCollisions = (
+    candidateDomains: string[],
+  ): Array<{ domain: string; conflictWith: string; reason: 'preview' | 'alias' | 'service-subdomain' }> => {
+    const rootDomains = config.rootDomains?.length
+      ? config.rootDomains
+      : (config.previewDomain ? [config.previewDomain] : []);
+    if (rootDomains.length === 0) return [];
+
+    const candidates = new Set(candidateDomains.map((domain) => domain.toLowerCase()));
+    const conflicts: Array<{ domain: string; conflictWith: string; reason: 'preview' | 'alias' | 'service-subdomain' }> = [];
+    for (const other of stateService.getAllBranches()) {
+      const projectId = other.projectId || 'default';
+      const project = stateService.getProject(projectId);
+      const previewSlug = buildPreviewUrlForProject('', other.branch, project, projectId).previewSlug;
+      for (const rawRoot of rootDomains) {
+        const root = rawRoot.toLowerCase();
+        const previewHost = previewSlug ? `${previewSlug}.${root}` : '';
+        if (previewHost && candidates.has(previewHost)) {
+          conflicts.push({ domain: previewHost, conflictWith: other.id, reason: 'preview' });
+        }
+
+        for (const alias of stateService.getBranchSubdomainAliases(other.id)) {
+          const aliasHost = `${alias.toLowerCase()}.${root}`;
+          if (candidates.has(aliasHost)) {
+            conflicts.push({ domain: aliasHost, conflictWith: other.id, reason: 'alias' });
+          }
+        }
+
+        for (const gateway of computeBranchGatewayUrls(other, root)) {
+          const host = new URL(gateway.url).host.toLowerCase();
+          if (candidates.has(host)) {
+            conflicts.push({ domain: host, conflictWith: other.id, reason: 'service-subdomain' });
+          }
+        }
+      }
+    }
+    return conflicts;
+  };
+
   router.get('/branches/:id/subdomain-aliases', (req, res) => {
     const { id } = req.params;
     const entry = stateService.getBranch(id);
@@ -13081,6 +13121,94 @@ export function createBranchRouter(deps: RouterDeps): Router {
       gatewayUrls: computeBranchGatewayUrls(entry, primaryRoot),
       rootDomain: primaryRoot,
     });
+  });
+
+  router.get('/branches/:id/custom-domains', (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const access = assertProjectAccess(req as any, entry.projectId || 'default');
+    if (access) {
+      res.status(access.status).json(access.body);
+      return;
+    }
+    const domains = stateService.getBranchCustomDomains(id);
+    res.json({
+      branchId: id,
+      domains,
+      previewUrls: domains.map((d) => `https://${d}`),
+      needsNginxHosts: domains,
+      needsRedeploy: false,
+    });
+  });
+
+  router.put('/branches/:id/custom-domains', (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const access = assertProjectAccess(req as any, entry.projectId || 'default');
+    if (access) {
+      res.status(access.status).json(access.body);
+      return;
+    }
+
+    const body = (req.body ?? {}) as { domains?: unknown };
+    if (!Array.isArray(body.domains)) {
+      res.status(400).json({ error: '请求体需要 { domains: string[] } 格式' });
+      return;
+    }
+
+    const normalized: string[] = [];
+    const seen = new Set<string>();
+    for (const raw of body.domains) {
+      if (typeof raw !== 'string') continue;
+      const lower = raw.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/\.$/, '');
+      if (!lower) continue;
+      if (seen.has(lower)) continue;
+      seen.add(lower);
+      normalized.push(lower);
+    }
+
+    const invalidDomains = normalized.filter((d) => !DNS_HOST_RE.test(d));
+    if (invalidDomains.length > 0) {
+      res.status(400).json({
+        error: `无效的完整域名: ${invalidDomains.join(', ')}。请填写 example.com 或 www.example.com 这类完整 host。`,
+        invalidDomains,
+      });
+      return;
+    }
+
+    const collisions = stateService.findCustomDomainCollisions(id, normalized);
+    const previewCollisions = findPreviewHostCollisions(normalized);
+    const allCollisions = [...collisions, ...previewCollisions];
+    if (allCollisions.length > 0) {
+      res.status(409).json({
+        error: `自定义域名冲突: ${allCollisions.map((c) => `"${c.domain}" 已被分支 "${c.conflictWith}" 占用`).join('; ')}`,
+        collisions: allCollisions,
+      });
+      return;
+    }
+
+    try {
+      stateService.setBranchCustomDomains(id, normalized);
+      stateService.save();
+      res.json({
+        message: '已保存完整自定义域名',
+        branchId: id,
+        domains: normalized,
+        previewUrls: normalized.map((d) => `https://${d}`),
+        needsNginxHosts: normalized,
+        needsRedeploy: false,
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
   });
 
   router.put('/branches/:id/subdomain-aliases', (req, res) => {

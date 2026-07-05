@@ -578,6 +578,15 @@ export interface BranchEntry {
    */
   subdomainAliases?: string[];
   /**
+   * Full custom hostnames for this branch, such as "example.com" or
+   * "www.example.com". Unlike subdomainAliases these are not combined with
+   * CDS_ROOT_DOMAINS; the forwarder publishes them as exact Host routes.
+   *
+   * Edge/Nginx must also be configured to accept these hosts, typically via
+   * CDS_CUSTOM_PREVIEW_HOSTS, otherwise traffic will never reach the forwarder.
+   */
+  customDomains?: string[];
+  /**
    * Per-branch overrides keyed by BuildProfile.id. Each entry extends (rather
    * than replaces) the shared public BuildProfile — unset fields inherit from
    * the baseline. Merged into the effective profile by `resolveEffectiveProfile`

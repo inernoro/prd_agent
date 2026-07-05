@@ -78,6 +78,12 @@ export const KNOWN_CDS_ENV_KEYS: CdsEnvKeyDef[] = [
   { key: 'CDS_MAIN_DOMAIN', legacyAliases: ['MAIN_DOMAIN'], description: '主域名', isSecret: false, group: 'domain' },
   { key: 'CDS_DASHBOARD_DOMAIN', legacyAliases: ['DASHBOARD_DOMAIN'], description: 'Dashboard 访问域名', isSecret: false, group: 'domain' },
   { key: 'CDS_PREVIEW_DOMAIN', legacyAliases: ['PREVIEW_DOMAIN'], description: '分支预览域名', isSecret: false, group: 'domain' },
+  { key: 'CDS_CUSTOM_PREVIEW_HOSTS', description: '额外完整预览 Host 列表（逗号分隔，如 app.example.com,www.example.com）', isSecret: false, group: 'domain' },
+  { key: 'CDS_CUSTOM_PREVIEW_CERT_DOMAIN', description: '额外完整预览 Host 共用的证书文件名前缀（默认取第一个 Host）', isSecret: false, group: 'domain' },
+  { key: 'CDS_DIRECT_PROXY_HOSTS', description: '直连生产 Host 列表（逗号分隔，不经过 CDS forwarder）', isSecret: false, group: 'domain' },
+  { key: 'CDS_DIRECT_PROXY_UPSTREAM', description: '直连生产 upstream（如 http://127.0.0.1:13000）', isSecret: false, group: 'domain' },
+  { key: 'CDS_DIRECT_PROXY_CERT_DOMAIN', description: '直连生产 Host 共用的证书文件名前缀（默认取第一个 Host）', isSecret: false, group: 'domain' },
+  { key: 'CDS_DIRECT_PROXY_IMMUTABLE_PATHS', description: '直连生产静态不可变资源路径（逗号分隔，如 /_next/static/；未配置则不额外改缓存）', isSecret: false, group: 'domain' },
   { key: 'CDS_SWITCH_DOMAIN', legacyAliases: ['SWITCH_DOMAIN'], description: '流量切换域名', isSecret: false, group: 'domain' },
   { key: 'CDS_PUBLIC_BASE_URL', description: '公网访问基础 URL（GitHub check-run details_url 用）', isSecret: false, group: 'domain' },
 
