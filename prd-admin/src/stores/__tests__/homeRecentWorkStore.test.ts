@@ -12,7 +12,7 @@ import type { RecentWorkItemDto } from '@/services/contracts/homeRecentWork';
 const mockList = vi.mocked(listRecentWork);
 
 function ok(items: RecentWorkItemDto[]): ApiResponse<{ items: RecentWorkItemDto[] }> {
-  return { success: true, data: { items } };
+  return { success: true, data: { items }, error: null };
 }
 
 describe('homeRecentWorkStore', () => {
@@ -34,7 +34,7 @@ describe('homeRecentWorkStore', () => {
   });
 
   it('load 失败时按空列表处理（首页该区块「有数据才显示」，失败不打扰用户）', async () => {
-    mockList.mockResolvedValue({ success: false, error: { code: 'INTERNAL', message: 'boom' } });
+    mockList.mockResolvedValue({ success: false, data: null, error: { code: 'INTERNAL', message: 'boom' } });
     await useHomeRecentWorkStore.getState().load();
     const s = useHomeRecentWorkStore.getState();
     expect(s.loaded).toBe(true);
