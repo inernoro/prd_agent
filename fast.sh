@@ -148,20 +148,32 @@ normalize_ref() {
 
 tag="$(normalize_ref "$release_ref" "$release_ref_type")"
 repo="${REPO:-inernoro/prd_agent}"
-image="${PRD_AGENT_API_IMAGE:-get.miduo.org/ghcr.io/${repo}/prdagent-server:${tag}}"
+api_image="${PRD_AGENT_API_IMAGE:-get.miduo.org/ghcr.io/${repo}/prdagent-server:${tag}}"
+llmgw_image="${PRD_AGENT_LLMGW_IMAGE:-get.miduo.org/ghcr.io/${repo}/prdagent-llmgw:${tag}}"
+llmgw_serve_image="${PRD_AGENT_LLMGW_SERVE_IMAGE:-get.miduo.org/ghcr.io/${repo}/prdagent-llmgw-serve:${tag}}"
+llmgw_web_image="${PRD_AGENT_LLMGW_WEB_IMAGE:-get.miduo.org/ghcr.io/${repo}/prdagent-llmgw-web:${tag}}"
 timeout_seconds="${FAST_PULL_TIMEOUT_SECONDS:-30}"
 
-echo "Warming api image: $image"
-if command -v timeout >/dev/null 2>&1; then
-  if timeout "$timeout_seconds" docker pull "$image"; then
-    echo "Api image warmup completed"
+warm_image() {
+  name="$1"
+  image="$2"
+  echo "Warming ${name} image: $image"
+  if command -v timeout >/dev/null 2>&1; then
+    if timeout "$timeout_seconds" docker pull "$image"; then
+      echo "${name} image warmup completed"
+    else
+      echo "WARN: ${name} image warmup skipped or timed out after ${timeout_seconds}s; exec_dep.sh will enforce release pull" >&2
+    fi
   else
-    echo "WARN: api image warmup skipped or timed out after ${timeout_seconds}s; exec_dep.sh will continue release" >&2
+    if docker pull "$image"; then
+      echo "${name} image warmup completed"
+    else
+      echo "WARN: ${name} image warmup failed; exec_dep.sh will enforce release pull" >&2
+    fi
   fi
-else
-  if docker pull "$image"; then
-    echo "Api image warmup completed"
-  else
-    echo "WARN: api image warmup failed; exec_dep.sh will continue release" >&2
-  fi
-fi
+}
+
+warm_image "api" "$api_image"
+warm_image "llmgw" "$llmgw_image"
+warm_image "llmgw-serve" "$llmgw_serve_image"
+warm_image "llmgw-web" "$llmgw_web_image"
