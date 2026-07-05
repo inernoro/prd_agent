@@ -71,16 +71,10 @@ import { useHomeRecentWorkStore } from '@/stores/homeRecentWorkStore';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
-import { ReviewAgentCardArt } from '@/pages/ai-toolbox/components/ReviewAgentCardArt';
-import { ProjectRouteAgentCardArt } from '@/pages/ai-toolbox/components/ProjectRouteAgentCardArt';
-import { PaAgentCardArt } from '@/pages/ai-toolbox/components/PaAgentCardArt';
-import { PmAgentCardArt } from '@/pages/ai-toolbox/components/PmAgentCardArt';
-import { ProductAgentCardArt } from '@/pages/ai-toolbox/components/ProductAgentCardArt';
 import { Reveal } from '@/pages/home/components/Reveal';
 import { TipsRotator } from '@/components/daily-tips/TipsRotator';
-import { UpdateCenterNewsTeaser } from '@/components/ai-news/UpdateCenterNewsTeaser';
 import { LearningCenterTeaser } from '@/components/daily-tips/LearningCenterTeaser';
-import { buildDefaultCoverUrl, buildDefaultVideoUrl, cardSlot } from '@/lib/homepageAssetSlots';
+import { buildDefaultCoverUrl, buildDefaultVideoUrl } from '@/lib/homepageAssetSlots';
 import { useAgentImageUrl, useAgentVideoUrl, useHomepageAssetsStore } from '@/stores/homepageAssetsStore';
 
 /**
@@ -209,16 +203,6 @@ type HomeQuickLink = {
   hue: number;
 };
 
-function assetUrlWithVersion(url: string | undefined, updatedAt?: string | null): string | null {
-  const src = String(url || '').trim();
-  if (!src) return null;
-  if (!updatedAt) return src;
-  const time = Date.parse(updatedAt);
-  if (!Number.isFinite(time)) return src;
-  const version = Math.floor(time / 1000);
-  return src.includes('?') ? `${src}&v=${version}` : `${src}?v=${version}`;
-}
-
 /**
  * 首页顶部快捷卡（MAP Primary Gateways）。
  *
@@ -313,127 +297,95 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
     }
   };
 
+  /**
+   * 统一瓦片：封面区（16:9）+ 图外信息栏。所有智能体同一规格——
+   * 有上传封面用封面，没有就用同一款色相渐变占位；不再分流到各自画风的
+   * 内联插画组件（五种画风混排是首页不统一感的最大来源），文字不压图，
+   * 不需要 text-shadow 硬撑可读性。
+   */
   return (
     <button
       type="button"
       onClick={onClick}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
-      className="group relative w-full text-left rounded-2xl overflow-hidden transition-all duration-300 hover:-translate-y-1"
+      className="group relative w-full text-left rounded-xl overflow-hidden transition-all duration-200 hover:-translate-y-0.5 flex flex-col"
       style={{
         background: 'var(--bg-elevated, rgba(255,255,255,0.03))',
         border: '1px solid rgba(255,255,255,0.06)',
-        height: 200,
       }}
     >
-      {/* Cover visual: uploaded image / default CDN / inline art / geometric fallback. */}
-      {item.agentKey === 'review-agent' && !uploadedCover ? (
-        <ReviewAgentCardArt />
-      ) : item.agentKey === 'pm-agent' && !uploadedCover ? (
-        <PmAgentCardArt />
-      ) : item.agentKey === 'product-agent' && !uploadedCover ? (
-        <ProductAgentCardArt />
-      ) : item.agentKey === 'project-route-agent' && !uploadedCover ? (
-        <ProjectRouteAgentCardArt />
-      ) : item.agentKey === 'pa-agent' && !uploadedCover ? (
-        <PaAgentCardArt />
-      ) : hasCover ? (
-        <>
-          <img
-            src={coverUrl ?? ''}
-            alt={item.name}
-            className="absolute inset-0 z-0 h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-[1.04]"
-            draggable={false}
-            onError={() => setCoverFailed(true)}
-          />
-          {videoUrl && (
-            <video
-              ref={videoRef}
-              src={videoUrl}
-              muted
-              loop
-              playsInline
-              preload="metadata"
-              onCanPlayThrough={() => setVideoReady(true)}
-              className="absolute inset-0 z-[1] h-full w-full object-cover transition-opacity duration-500"
-              style={{ opacity: hovering && videoReady ? 1 : 0 }}
+      {/* Hover ring（中性，全站统一 hover 语言） */}
+      <div
+        className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none z-[20]"
+        style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.16)' }}
+      />
+
+      {/* 封面区：固定比例，上传封面 / 统一渐变占位 二选一 */}
+      <div className="relative w-full overflow-hidden" style={{ aspectRatio: '16/9' }}>
+        {hasCover ? (
+          <>
+            <img
+              src={coverUrl ?? ''}
+              alt={item.name}
+              className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-[1.04]"
+              draggable={false}
+              onError={() => setCoverFailed(true)}
             />
-          )}
-        </>
-      ) : (
-        <div
-          className="absolute inset-0 z-0"
-          style={{
-            background: `
-              radial-gradient(ellipse at 50% 0%, ${accent.soft} 0%, transparent 55%),
-              linear-gradient(180deg, rgba(24, 26, 36, 0.98) 0%, rgba(8, 9, 14, 1) 100%)
-            `,
-          }}
-        >
+            {videoUrl && (
+              <video
+                ref={videoRef}
+                src={videoUrl}
+                muted
+                loop
+                playsInline
+                preload="metadata"
+                onCanPlayThrough={() => setVideoReady(true)}
+                className="absolute inset-0 h-full w-full object-cover transition-opacity duration-500"
+                style={{ opacity: hovering && videoReady ? 1 : 0 }}
+              />
+            )}
+            {/* 统一压暗一档：让不同来源的封面在网格里亮度一致 */}
+            <div className="absolute inset-0 pointer-events-none" style={{ background: 'rgba(8, 9, 14, 0.18)' }} />
+          </>
+        ) : (
           <div
-            className="absolute left-1/2 top-[34%] flex h-20 w-20 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-3xl transition-transform duration-500 group-hover:scale-105"
+            className="absolute inset-0"
             style={{
-              background: accent.soft,
-              border: `1px solid ${accent.border}`,
+              background: `radial-gradient(ellipse at 50% 130%, ${accent.soft} 0%, transparent 62%), linear-gradient(180deg, #14151d 0%, #0c0d13 100%)`,
             }}
           >
-            <Icon size={34} strokeWidth={1.45} style={{ color: accent.color }} />
+            <Icon
+              size={44}
+              strokeWidth={1.3}
+              className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 transition-transform duration-500 group-hover:scale-105"
+              style={{ color: accent.color, opacity: 0.5 }}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* 信息栏：图外，与 CompactCard 同一套排版语言 */}
+      <div className="flex items-center gap-3 px-3.5 py-3">
+        <div
+          className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center"
+          style={{ background: accent.soft, border: `1px solid ${accent.border}` }}
+        >
+          <Icon size={17} style={{ color: accent.color }} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-[13.5px] font-semibold truncate" style={{ color: 'var(--text-primary, #fff)' }}>
+            {item.name}
+          </div>
+          <div className="text-[11.5px] truncate mt-0.5" style={{ color: 'var(--text-muted, rgba(255,255,255,0.45))' }}>
+            {cardDescription}
           </div>
         </div>
-      )}
-
-      {/* 统一暗角蒙版（中性）：让内联插画和几何底读起来像一家人。 */}
-      <div
-        className="absolute inset-0 pointer-events-none z-[1]"
-        style={{
-          background: 'linear-gradient(180deg, rgba(8,8,12,0.30) 0%, rgba(8,8,12,0.05) 38%, rgba(8,8,12,0.35) 100%)',
-        }}
-      />
-
-      {/* Strong dark fade at the bottom for text readability */}
-      <div
-        className="absolute inset-x-0 bottom-0 pointer-events-none z-[2] h-[65%]"
-        style={{
-          background: 'linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.4) 30%, rgba(0,0,0,0.85) 65%, rgba(0,0,0,0.98) 100%)',
-        }}
-      />
-
-      {/* Hover border ring（中性，全站统一 hover 语言） */}
-      <div
-        className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none flex z-[20]"
-        style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.18)' }}
-      />
-
-      {/* Top Floating App Icon —— 颜色只出现在这枚芯片上 */}
-      <div
-        className="absolute top-4 left-4 z-[10] shrink-0 w-11 h-11 rounded-2xl flex items-center justify-center transition-transform duration-300 group-hover:scale-110"
-        style={{
-          background: 'rgba(12, 14, 22, 0.72)',
-          border: `1px solid ${accent.border}`,
-        }}
-      >
-        <Icon size={22} style={{ color: accent.color }} />
-      </div>
-
-      {/* Top-Right Arrow Indicator */}
-      <div className="absolute top-5 right-5 z-[10] shrink-0 opacity-0 -translate-x-3 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300">
-        <ArrowRight size={18} style={{ color: 'rgba(255,255,255,0.85)' }} />
-      </div>
-
-      {/* Content — Clean Bottom Aligned */}
-      <div className="absolute bottom-0 left-0 right-0 p-5 z-[10]">
-        <h3
-          className="text-[17px] font-semibold truncate transition-all duration-300 group-hover:translate-y-[-2px]"
-          style={{ color: '#ffffff', textShadow: '0 1px 2px rgba(0,0,0,1), 0 2px 8px rgba(0,0,0,0.9), 0 4px 16px rgba(0,0,0,0.5)' }}
-        >
-          {item.name}
-        </h3>
-        <p
-          className="text-[13px] leading-relaxed mt-1.5 line-clamp-1 transition-all duration-300 group-hover:translate-y-[-2px] group-hover:opacity-100 opacity-80"
-          style={{ color: 'rgba(255,255,255,0.95)', textShadow: '0 1px 2px rgba(0,0,0,1), 0 2px 6px rgba(0,0,0,0.8)' }}
-        >
-          {cardDescription}
-        </p>
+        <ArrowRight
+          size={14}
+          className="shrink-0 opacity-0 group-hover:opacity-60 transition-all duration-200 group-hover:translate-x-0.5"
+          style={{ color: 'var(--text-muted)' }}
+        />
       </div>
     </button>
   );
@@ -622,7 +574,6 @@ export default function AgentLauncherPage() {
   const changelogUnread = useChangelogStore(selectUnreadCount);
   const loadChangelogCurrentWeek = useChangelogStore((s) => s.loadCurrentWeek);
   const loadHomepageAssets = useHomepageAssetsStore((s) => s.load);
-  const homepageAssets = useHomepageAssetsStore((s) => s.assets);
 
   // 周报海报(主页弹窗)
   const loadWeeklyPoster = useWeeklyPosterStore((s) => s.loadCurrent);
@@ -859,10 +810,59 @@ export default function AgentLauncherPage() {
             </div>
             {/* end hero content */}
 
+            {/* ── 置顶入口 — 平台级快捷方式（胶囊行：零封面零横幅，入口就长得像入口） ── */}
+            {!searchQuery.trim() && quickLinks.length > 0 && (
+              <Reveal delay={REVEAL.quickLinks} duration={REVEAL_DURATION}>
+                <div className={`relative z-10 flex flex-wrap items-center ${isMobile ? 'px-5 pb-5 gap-2' : 'px-8 pb-6 gap-2.5'}`}>
+                  {quickLinks.map((link) => {
+                    const Icon = link.icon;
+                    const qa = hueAccent(link.hue);
+                    const isUpdates = link.id === 'updates';
+                    const showUnread = isUpdates && changelogUnread > 0;
+                    return (
+                      <button
+                        key={link.path}
+                        type="button"
+                        data-tour-id={`quicklink-${link.id}`}
+                        onClick={() => navigate(link.path)}
+                        title={link.desc}
+                        className="group inline-flex items-center gap-2 h-9 rounded-full transition-colors duration-150 px-3.5"
+                        style={{
+                          background: 'var(--bg-elevated, rgba(255,255,255,0.04))',
+                          border: '1px solid rgba(255,255,255,0.08)',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = 'rgba(255,255,255,0.08)';
+                          e.currentTarget.style.borderColor = 'rgba(255,255,255,0.16)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = 'var(--bg-elevated, rgba(255,255,255,0.04))';
+                          e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
+                        }}
+                      >
+                        <Icon size={15} style={{ color: qa.color }} />
+                        <span className="text-[12.5px] font-medium" style={{ color: 'var(--text-primary, rgba(255,255,255,0.9))' }}>
+                          {link.label}
+                        </span>
+                        {showUnread && (
+                          <span
+                            className="px-1.5 h-[18px] min-w-[18px] rounded-full inline-flex items-center justify-center text-[10px] font-bold"
+                            style={{ background: 'hsl(43 68% 60%)', color: '#1a1a1a' }}
+                          >
+                            {changelogUnread > 9 ? '9+' : changelogUnread}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </Reveal>
+            )}
+
             {/* ── 继续上次 — 回到最近的工作现场（无数据时整体不渲染，新用户不见空壳） ── */}
             {!searchQuery.trim() && recentWorkItems.length > 0 && (
               <Reveal delay={REVEAL.recent} duration={REVEAL_DURATION}>
-                <div className={`relative z-10 ${isMobile ? 'px-5 pb-5' : 'px-8 pb-6'}`}>
+                <div className={`relative z-10 ${isMobile ? 'px-5 pb-6' : 'px-8 pb-8'}`}>
                   <SectionHeader eyebrow="CONTINUE" title="继续上次" subtitle="一键回到你最近的工作现场" />
                   <div
                     className="grid"
@@ -870,10 +870,11 @@ export default function AgentLauncherPage() {
                       gap: 8,
                       gridTemplateColumns: isMobile
                         ? 'repeat(auto-fill, minmax(200px, 1fr))'
-                        : 'repeat(auto-fill, minmax(250px, 1fr))',
+                        : 'repeat(auto-fill, minmax(260px, 1fr))',
                     }}
                   >
-                    {recentWorkItems.map((item) => (
+                    {/* 最多 6 条：保持一到两行的安静密度，不与智能体区抢主角 */}
+                    {recentWorkItems.slice(0, 6).map((item) => (
                       <RecentWorkCard
                         key={`${item.agentKey}:${item.route}`}
                         item={item}
@@ -885,128 +886,6 @@ export default function AgentLauncherPage() {
               </Reveal>
             )}
 
-            {/* ── Quick Links — 平台级入口（紧凑卡：装饰收敛，信息优先） ── */}
-            {!searchQuery.trim() && (
-              <Reveal delay={REVEAL.quickLinks} duration={REVEAL_DURATION}>
-                <div className={`relative z-10 ${isMobile ? 'px-5 pb-6' : 'px-8 pb-10'}`}>
-                  <div
-                    className="grid"
-                    style={{
-                      gap: isMobile ? 8 : 10,
-                      gridTemplateColumns: isMobile
-                        ? 'repeat(auto-fit, minmax(150px, 1fr))'
-                        : 'repeat(auto-fit, minmax(220px, 1fr))',
-                    }}
-                  >
-                    {quickLinks.map((link, idx) => {
-                      const Icon = link.icon;
-                      const qa = hueAccent(link.hue);
-                      const isUpdates = link.id === 'updates';
-                      const showUnread = isUpdates && changelogUnread > 0;
-                      const cardAsset = link.id ? homepageAssets[cardSlot(link.id)] : undefined;
-                      const cardBgUrl = assetUrlWithVersion(cardAsset?.url, cardAsset?.updatedAt);
-                      return (
-                        <button
-                          key={link.path}
-                          type="button"
-                          data-tour-id={`quicklink-${link.id}`}
-                          onClick={() => navigate(link.path)}
-                          className="group relative text-left rounded-xl overflow-hidden transition-all duration-200 hover:-translate-y-0.5 w-full"
-                          style={{
-                            background: 'var(--bg-elevated, rgba(255,255,255,0.03))',
-                            border: '1px solid rgba(255,255,255,0.07)',
-                            padding: isMobile ? '12px 14px' : '14px 16px',
-                            minHeight: isMobile ? 88 : 104,
-                          }}
-                        >
-                          {cardBgUrl && (
-                            <img
-                              src={cardBgUrl}
-                              alt=""
-                              className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-[1.04]"
-                              loading={idx < 4 ? 'eager' : 'lazy'}
-                              decoding="async"
-                              aria-hidden="true"
-                            />
-                          )}
-                          {cardBgUrl && (
-                            <div
-                              className="absolute inset-0 pointer-events-none"
-                              style={{
-                                background:
-                                  'linear-gradient(180deg, rgba(6,7,12,0.20) 0%, rgba(6,7,12,0.45) 45%, rgba(6,7,12,0.88) 100%)',
-                              }}
-                            />
-                          )}
-
-                          {/* Hover ring（中性，与全站卡片一致） */}
-                          <div
-                            className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
-                            style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.16)' }}
-                          />
-
-                          <div className="relative z-10 flex flex-col h-full">
-                            <div className="flex items-start justify-between">
-                              <div
-                                className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center"
-                                style={{
-                                  background: cardBgUrl ? 'rgba(12, 14, 22, 0.72)' : qa.soft,
-                                  border: `1px solid ${qa.border}`,
-                                }}
-                              >
-                                <Icon size={17} style={{ color: qa.color }} />
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <div className="opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200">
-                                  <ArrowRight size={15} style={{ color: 'rgba(255,255,255,0.8)' }} />
-                                </div>
-                                {/* 未读徽章（仅更新中心） */}
-                                {showUnread && (
-                                  <span
-                                    className="px-1.5 h-5 min-w-5 rounded-full inline-flex items-center justify-center text-[10px] font-bold shrink-0"
-                                    style={{
-                                      background: 'hsl(43 68% 60%)',
-                                      color: '#1a1a1a',
-                                      boxShadow: '0 0 0 1.5px rgba(20, 20, 24, 0.92)',
-                                    }}
-                                  >
-                                    {changelogUnread > 9 ? '9+' : changelogUnread}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-
-                            <div className="flex-1" />
-
-                            <div
-                              className="mt-2 font-semibold tracking-tight text-[14px]"
-                              style={{
-                                color: 'var(--text-primary, #ffffff)',
-                                textShadow: cardBgUrl ? '0 1px 2px rgba(0,0,0,1), 0 2px 8px rgba(0,0,0,0.6)' : 'none',
-                              }}
-                            >
-                              {link.label}
-                            </div>
-                            <div
-                              className="text-[11.5px] mt-0.5 leading-relaxed line-clamp-1 opacity-80"
-                              style={{
-                                color: 'var(--text-muted, rgba(255,255,255,0.85))',
-                                textShadow: cardBgUrl ? '0 1px 2px rgba(0,0,0,0.9)' : 'none',
-                              }}
-                            >
-                              {link.desc}
-                            </div>
-                          </div>
-
-                          {/* 更新中心卡：底部偶尔「跳出」一条 AI 资讯标题，点卡进入「AI 大事」时间线 */}
-                          {isUpdates && <UpdateCenterNewsTeaser />}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </Reveal>
-            )}
           </div>
           {/* end expansive hero banner */}
 
