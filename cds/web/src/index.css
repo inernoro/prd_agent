@@ -2,6 +2,14 @@
 @tailwind components;
 @tailwind utilities;
 
+/* AI 操作卡周界光迹的旋转角。注册为 <angle> 才能被 keyframe 连续插值
+   (未注册的自定义属性动画是离散跳变);必须放在 @layer 之外的顶层。 */
+@property --cds-ai-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
 /*
  * CDS design tokens — single source of truth.
  *
@@ -560,10 +568,55 @@
     animation: cds-site-notice-pulse 1.55s ease-in-out infinite;
   }
 
+  /* AI 正在操作的分支卡:一缕细光沿卡片边框巡回——"AI 在描这张卡"。
+     1.5px、低亮度、3.4s 一圈,存在感来自移动本身,不靠亮度轰炸;
+     静态 ring(tsx 里的 ring-sky)保持常亮兜底,光迹只做"活"的那一层。 */
+  .cds-ai-active-card {
+    position: relative;
+  }
+
+  .cds-ai-active-card::after {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    z-index: 2;
+    border-radius: inherit;
+    padding: 1.5px;
+    background: conic-gradient(
+      from var(--cds-ai-angle, 0deg),
+      transparent 0deg 288deg,
+      rgb(56 189 248 / 0.1) 306deg,
+      rgb(125 211 252 / 0.85) 336deg,
+      rgb(186 230 253 / 0.95) 348deg,
+      transparent 360deg
+    );
+    -webkit-mask:
+      linear-gradient(#fff 0 0) content-box,
+      linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#fff 0 0) content-box,
+      linear-gradient(#fff 0 0);
+    mask-composite: exclude;
+    pointer-events: none;
+    animation: cds-ai-trace 3.4s linear infinite;
+  }
+
+  [data-theme='light'] .cds-ai-active-card::after {
+    background: conic-gradient(
+      from var(--cds-ai-angle, 0deg),
+      transparent 0deg 288deg,
+      rgb(2 132 199 / 0.08) 306deg,
+      rgb(2 132 199 / 0.7) 336deg,
+      rgb(14 165 233 / 0.85) 348deg,
+      transparent 360deg
+    );
+  }
+
   .cds-ai-active-card .cds-ai-kinetic-icon {
     transform-origin: center;
-    filter: drop-shadow(0 0 7px rgb(56 189 248 / 0.68));
-    animation: cds-ai-kinetic-icon 1.45s ease-in-out infinite;
+    filter: drop-shadow(0 0 6px rgb(56 189 248 / 0.6));
+    animation: cds-ai-kinetic-icon 2.2s ease-in-out infinite;
   }
 
   .cds-ai-active-card .cds-ai-kinetic-dot {
@@ -685,18 +738,21 @@
     }
   }
 
+  /* 收敛版:去掉左右摇头(±6deg 太闹),只留呼吸级的托举 + 亮度起伏。 */
   @keyframes cds-ai-kinetic-icon {
     0%, 100% {
-      transform: translateY(0) rotate(0deg) scale(1);
-      opacity: 0.78;
+      transform: translateY(0) scale(1);
+      opacity: 0.82;
     }
-    35% {
-      transform: translateY(-1px) rotate(-6deg) scale(1.08);
+    50% {
+      transform: translateY(-0.5px) scale(1.06);
       opacity: 1;
     }
-    68% {
-      transform: translateY(1px) rotate(5deg) scale(0.98);
-      opacity: 0.9;
+  }
+
+  @keyframes cds-ai-trace {
+    to {
+      --cds-ai-angle: 360deg;
     }
   }
 
@@ -753,6 +809,10 @@
     .cds-actor-name-glow,
     .cds-site-notice-trigger--active {
       animation: none;
+    }
+
+    .cds-ai-active-card::after {
+      content: none;
     }
   }
 
@@ -840,8 +900,8 @@
   .cds-rail-avatar-icon {
     position: relative;
     z-index: 1;
-    width: 2rem;
-    height: 2rem;
+    width: 2.25rem;
+    height: 2.25rem;
   }
 
   /* ===== 宝石六芒(CdsGem)— 状态系统设定 v2 =====
@@ -860,10 +920,23 @@
     filter: drop-shadow(0 0 10px hsl(var(--primary) / 0.18));
   }
 
-  /* 小尺寸清晰档:不参与流光/呼吸(透明度波动在小尺寸=发虚),永远满亮度。 */
+  /* 小尺寸清晰档:切面永远满亮度(禁一切透明度波动=不发虚),但保留"活"——
+     brand 待机换成亮度琉光:一道只增不减的高光每 4.8s 沿 12 切面扫一圈,
+     legibility 底线与灵动共存(2026-07-05 "只有动起来才像活跃的")。
+     loader 的组装循环不受此档压制(加载器的使命就是动)。 */
   .cds-gem--simple .cds-gem-facet {
-    animation: none !important;
     opacity: 1 !important;
+  }
+
+  .cds-gem--simple.cds-gem--brand .cds-gem-facet {
+    animation: cds-gem-glint 4.8s ease-in-out infinite;
+    animation-delay: calc(var(--gi, 0) * 0.09s);
+  }
+
+  .cds-gem--simple.cds-gem--brand:hover .cds-gem-facet,
+  .cds-rail-avatar:hover .cds-gem--simple.cds-gem--brand .cds-gem-facet {
+    animation-duration: 1.7s;
+    animation-delay: calc(var(--gi, 0) * 0.035s);
   }
 
   .cds-gem-facet {
@@ -985,6 +1058,19 @@
     }
     6% {
       opacity: 1;
+    }
+  }
+
+  /* simple 档专用琉光:只调 brightness(永不低于 1),高光短促、间隔长——
+     "活着"但一帧暂停下来也永远是满亮度的清晰星形。 */
+  @keyframes cds-gem-glint {
+    0%,
+    18%,
+    100% {
+      filter: brightness(1);
+    }
+    7% {
+      filter: brightness(1.55) saturate(1.12);
     }
   }
 

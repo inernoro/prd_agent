@@ -90,7 +90,9 @@ const GEM_FACETS: readonly GemFacet[] = (() => {
   ];
   const fmt = (pts: Array<[number, number]>): string =>
     pts.map((p) => p.map((n) => +n.toFixed(2)).join(',')).join(' ');
-  const R = 23.5;
+  /* R=28:星形撑满 viewBox 的 87.5%(此前 23.5 只有 73%——那份留白原是给默认
+     辉光滤镜的,辉光已去,留白在小尺寸只会白吃像素。2026-07-05 "增加 logo 比例")。 */
+  const R = 28;
   const r = R / Math.sqrt(3);
   const hex = [0, 1, 2, 3, 4, 5].map((k) => pt(r, -60 + k * 60));
   const facets: GemFacet[] = [];
