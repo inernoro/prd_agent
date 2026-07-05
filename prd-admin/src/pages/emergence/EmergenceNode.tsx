@@ -2,7 +2,7 @@ import { memo, useMemo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { Sparkle, Zap, Star, CheckCircle2, Pencil, Clock, Lightbulb, AlertTriangle, BrainCircuit } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { parseLiveNodePreview } from './liveNodePreview';
+import { parseLiveNodePreview, stableThinkingWindow } from './liveNodePreview';
 
 // ── 节点数据类型 ──
 export interface EmergenceNodeData {
@@ -90,9 +90,29 @@ function TypingCursor({ accent }: { accent: string }) {
   );
 }
 
-/** 取文字尾巴（等待区只展示最新内容，避免卡片被撑变形） */
-function tailOf(text: string, max: number): string {
-  return text.length > max ? '…' + text.slice(-max) : text;
+/**
+ * 底部锚定日志窗：流式文字自然追加换行，新行把旧行往上推出固定高度的窗口，
+ * 顶部渐隐遮罩。文字永远不重排、只在末尾生长（借鉴 ChatGPT 推理预览 /
+ * 终端日志的呈现方式）——替代"每 chunk 重截尾巴"的滑动窗口，
+ * 后者会让整段文字反复重新换行，看起来像乱码在折叠收缩。
+ */
+function StreamTailWindow({ height, fade = 18, children }: {
+  height: number; fade?: number; children: React.ReactNode;
+}) {
+  const mask = `linear-gradient(180deg, transparent 0, #000 ${fade}px)`;
+  return (
+    <div style={{
+      height,
+      overflow: 'hidden',
+      display: 'flex',
+      flexDirection: 'column',
+      justifyContent: 'flex-end',
+      maskImage: mask,
+      WebkitMaskImage: mask,
+    }}>
+      {children}
+    </div>
+  );
 }
 
 // ── 占位节点（正在生成中）：产物即体验 ──
@@ -215,15 +235,16 @@ function PlaceholderNode({ data }: EmergenceNodeType) {
           )}
 
           {draft?.activeField && (
-            <p className="text-[10px] leading-[1.5] mb-1.5 emergence-live-text"
-              style={{
-                color: 'var(--text-muted)', opacity: 0.75, wordBreak: 'break-word',
-                display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
-              }}>
-              <span style={{ color: dim.accent, opacity: 0.9 }}>{draft.activeField.label} </span>
-              {tailOf(draft.activeField.text, 72)}
-              {cursorOnActive && <TypingCursor accent={dim.accent} />}
-            </p>
+            <div className="mb-1.5">
+              <StreamTailWindow height={30} fade={10}>
+                <p className="text-[10px] leading-[1.5] emergence-live-text"
+                  style={{ color: 'var(--text-muted)', opacity: 0.75, wordBreak: 'break-word' }}>
+                  <span style={{ color: dim.accent, opacity: 0.9 }}>{draft.activeField.label} </span>
+                  {draft.activeField.text}
+                  {cursorOnActive && <TypingCursor accent={dim.accent} />}
+                </p>
+              </StreamTailWindow>
+            </div>
           )}
 
           {/* 已完成的构思：勾选 chip 让进度可感知 */}
@@ -245,21 +266,24 @@ function PlaceholderNode({ data }: EmergenceNodeType) {
           )}
         </div>
       ) : showThinking ? (
-        /* 思考期：JSON 正文还没开始，用思考文字尾巴填充等待（次要信息，弱化展示） */
-        <div className="mb-2 emergence-live-text"
-          style={{
-            fontSize: 10,
-            lineHeight: 1.6,
-            fontStyle: 'italic',
-            color: 'var(--text-muted)',
-            opacity: 0.8,
-            maxHeight: 64,
-            overflow: 'hidden',
-            wordBreak: 'break-word',
-            whiteSpace: 'pre-wrap',
-          }}>
-          {tailOf(liveThinking, 110)}
-          <TypingCursor accent={dim.accent} />
+        /* 思考期：JSON 正文还没开始，用底部锚定日志窗展示思考流填充等待
+           （次要信息弱化展示；文字只追加不重排，旧行整行滚出顶部渐隐） */
+        <div className="mb-2">
+          <StreamTailWindow height={64}>
+            <div className="emergence-live-text"
+              style={{
+                fontSize: 10,
+                lineHeight: 1.6,
+                fontStyle: 'italic',
+                color: 'var(--text-muted)',
+                opacity: 0.8,
+                wordBreak: 'break-word',
+                whiteSpace: 'pre-wrap',
+              }}>
+              {stableThinkingWindow(liveThinking)}
+              <TypingCursor accent={dim.accent} />
+            </div>
+          </StreamTailWindow>
         </div>
       ) : (
         <>

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseLiveNodePreview } from '../liveNodePreview';
+import { parseLiveNodePreview, stableThinkingWindow } from '../liveNodePreview';
 
 /**
  * 流式 JSON 增量解析器守卫测试：
@@ -88,5 +88,33 @@ describe('parseLiveNodePreview', () => {
   it('groundingType 枚举值不作为次要信息展示', () => {
     const p = parseLiveNodePreview('[{"title": "A", "description": "B", "groundingType": "docum');
     expect(p.draft?.activeField).toBeUndefined();
+  });
+});
+
+/**
+ * 稳定尾窗守卫：思考流渲染文本的窗口起点必须在步进区间内保持不变——
+ * 这是"文字只追加不重排"的前提。曾因每 chunk 重截尾巴导致整段文字
+ * 反复重新换行，用户反馈"一边折叠一边收缩，像乱码"。
+ */
+describe('stableThinkingWindow', () => {
+  it('短文本原样返回，不加省略号不裁剪', () => {
+    expect(stableThinkingWindow('短思考')).toBe('短思考');
+    expect(stableThinkingWindow('a'.repeat(1300))).toBe('a'.repeat(1300));
+  });
+
+  it('同一步进区间内窗口起点不变：追加文字只在末尾生长', () => {
+    const base = 'w'.repeat(1500) + ' ' + 'x'.repeat(200);
+    const w1 = stableThinkingWindow(base);
+    const w2 = stableThinkingWindow(base + 'yz');
+    // w2 = w1 + 追加内容，前缀完全一致 → 渲染层绝不重排
+    expect(w2.startsWith(w1)).toBe(true);
+    expect(w2).toBe(w1 + 'yz');
+  });
+
+  it('裁剪点向后寻空白，避免切在单词中间', () => {
+    const words = Array.from({ length: 400 }, (_, i) => `word${i}`).join(' ');
+    const w = stableThinkingWindow(words);
+    // 窗口首字符不是被拦腰砍断的单词残段（起点是空白后的完整单词开头）
+    expect(w.startsWith(' ') || /^word\d+/.test(w)).toBe(true);
   });
 });

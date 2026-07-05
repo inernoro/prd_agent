@@ -190,6 +190,23 @@ function parseDraft(partial: string): LiveNodeDraft {
   return draft;
 }
 
+/**
+ * 稳定尾窗：给「底部锚定日志窗」提供渲染文本。
+ * 与"每 chunk 重截最后 N 字符"的滑动窗口不同，裁剪点按 step 步进——
+ * 同一步进区间内窗口起点完全不变，文字只在末尾追加、绝不整段重排
+ * （重排会让等待区看起来像乱码在折叠收缩）。
+ * 裁剪点向后寻最近的空白/换行，避免切在单词或代理对中间。
+ */
+export function stableThinkingWindow(text: string, keep = 1000, step = 400): string {
+  if (text.length <= keep + step) return text;
+  let cut = Math.floor((text.length - keep) / step) * step;
+  const limit = Math.min(cut + 80, text.length);
+  let i = cut;
+  while (i < limit && !/\s/.test(text[i])) i++;
+  if (i < limit) cut = i;
+  return text.slice(cut);
+}
+
 /** 主入口：LLM 原始累积文本 → 实时节点预览 */
 export function parseLiveNodePreview(raw: string | undefined | null): LiveNodePreview {
   const text = (raw ?? '').trim();
