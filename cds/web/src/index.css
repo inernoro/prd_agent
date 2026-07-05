@@ -868,15 +868,39 @@
      * 其滚动条是元素级、被自定义 ::-webkit-scrollbar 渲染成常驻可见的非 overlay 条;
      * 同时左侧导航 + 顶栏被钉住,长页(系统设置→更新与重启)滚动体验更清晰。
      * .cds-workspace--fill 的 height:100% 现在解析到一个有确定高度的 main,只会更稳。
+     *
+     * 2026-07-05「顶部导航贯穿」：从单行双列(rail 通天)改为两行网格——
+     * 第一行 topbar 横贯全宽(grid-column: 1 / -1,品牌宝石入驻其左端),
+     * 第二行 rail + main。rail 不再顶到窗口最上沿,从 header 之下开始,
+     * 与业界(GEO/Linear 式)"品牌在顶栏、导航在其下"的心智一致。
+     * DOM 不动:壳的直接内容包一层 .cds-shell-body(display: contents),
+     * 让页面渲染的 topbar / main 直接成为本网格的 item。
      */
     @apply grid h-screen overflow-hidden;
     background-color: hsl(var(--surface-base));
     color: hsl(var(--foreground));
     grid-template-columns: 72px minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .cds-shell-body {
+    display: contents;
+  }
+
+  .cds-app-shell .cds-topbar {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+
+  .cds-app-shell .cds-main {
+    grid-column: 2;
+    grid-row: 2;
   }
 
   .cds-rail {
-    @apply sticky top-0 flex h-screen flex-col gap-4 px-2 py-5;
+    @apply flex min-h-0 flex-col gap-4 overflow-y-auto px-2 py-4;
+    grid-column: 1;
+    grid-row: 2;
     background-color: hsl(var(--surface-sunken));
     border-right: 1px solid hsl(var(--hairline));
   }
@@ -1258,6 +1282,10 @@
       grid-template-columns: minmax(0, 1fr);
     }
 
+    .cds-app-shell .cds-main {
+      grid-column: 1 / -1;
+    }
+
     .cds-rail {
       display: none;
     }
@@ -1346,6 +1374,14 @@
     background-color: hsl(var(--surface-base) / 0.92);
     backdrop-filter: saturate(180%) blur(10px);
     border-bottom: 1px solid hsl(var(--hairline));
+  }
+
+  /* 顶栏品牌位(2026-07-05「顶部导航贯穿」):裸宝石落在横贯 header 的最左端,
+     紧邻面包屑根段 "CDS" 即 logo + 字标;手机端隐藏(app-bar 空间让给汉堡+标题)。
+     px-6(24px) + 宝石半径 ≈ rail 中轴(36px),与下方导航图标近乎同轴。 */
+  .cds-topbar-brand {
+    @apply hidden shrink-0 items-center md:inline-flex;
+    margin-right: 0.125rem;
   }
 
   /*

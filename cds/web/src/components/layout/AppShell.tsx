@@ -175,6 +175,9 @@ function ConsoleRouteFallback(): JSX.Element {
   return (
     <>
       <header className="cds-topbar" aria-hidden>
+        <span className="cds-topbar-brand">
+          <CdsGem detail="simple" className="h-[26px] w-[26px]" />
+        </span>
         <div className="cds-loading-skeleton-line h-4 w-44 max-w-[40vw]" />
       </header>
       <main className="cds-main">
@@ -305,7 +308,9 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
         logoutState={logoutState}
         onLogout={() => { void logout(); }}
       />
-      <div className="flex min-w-0 min-h-0 flex-col">
+      {/* display: contents —— 让页面渲染的 topbar / main 直接成为壳网格的 item,
+          topbar 才能横贯全宽(2026-07-05「顶部导航贯穿」,见 index.css .cds-app-shell)。 */}
+      <div className="cds-shell-body">
         {children}
       </div>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
@@ -578,13 +583,8 @@ function RailNav({ active, canLogout, logoutState, onLogout, onNavigate }: RailN
 function AppRail(props: RailNavProps): JSX.Element {
   return (
     <nav className="cds-rail" aria-label="主导航">
-      {/* 72px 窄栏放不下标题:此前的空标题块(flex-1)会把头像挤离中心,
-          形成"位置偏移"(2026-07-04 用户验收图3)。窄栏只放居中的宝石。 */}
-      <div className="cds-rail-brand">
-        <div className="cds-rail-avatar" aria-label="CDS" title="Cloud Dev Suite">
-          <CdsGem mode="brand" detail="simple" className="cds-rail-avatar-icon" aria-hidden />
-        </div>
-      </div>
+      {/* 品牌宝石 2026-07-05 起移入横贯全宽的 topbar 左端(用户反馈"logo 放在
+          左侧导航总感觉不对"):rail 从 header 之下开始,只承载导航图标。 */}
       <RailNav {...props} />
       {/* 2026-05-04 主题切换从这里挪到 AppShell 顶层右上(FloatingThemeToggle),
           原因:左下与 GlobalUpdateBadge 浮动徽章在某些状态下视觉重叠;industry
@@ -706,6 +706,19 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
   }, [actionsOpen]);
   return (
     <header className="cds-topbar">
+      {/* 品牌宝石(2026-07-05「顶部导航贯穿」):header 横贯全宽后,logo 从左侧
+          rail 移到这里,紧邻面包屑根段 "CDS" 组成 logo + 字标;点击回项目列表。
+          手机端隐藏(app-bar 空间让给汉堡 + 标题;抽屉头部仍有品牌磁贴)。 */}
+      <Link
+        to="/project-list"
+        className="cds-topbar-brand"
+        aria-label="CDS 项目列表"
+        title="Cloud Dev Suite"
+        onMouseEnter={preloadProjectListPage}
+        onFocus={preloadProjectListPage}
+      >
+        <CdsGem mode="brand" detail="simple" className="h-[26px] w-[26px]" aria-hidden />
+      </Link>
       {/* Hamburger — phone only. Opens the slide-in nav drawer. */}
       <button
         type="button"
