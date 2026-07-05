@@ -647,6 +647,7 @@ function ReportViewer({ report }: { report: AcceptanceReport | null }): JSX.Elem
   const [mdHtml, setMdHtml] = useState<string | null>(null);
   const [mdError, setMdError] = useState<string | null>(null);
   const reqRef = useRef(0);
+  const reportFrameSandbox = 'allow-scripts allow-popups allow-popups-to-escape-sandbox';
 
   useEffect(() => {
     setMdHtml(null);
@@ -699,13 +700,13 @@ function ReportViewer({ report }: { report: AcceptanceReport | null }): JSX.Elem
       </div>
       <div className="min-h-0 flex-1 bg-white">
         {report.format === 'html' ? (
-          <iframe key={report.id} title={report.title} src={reportRawUrl(report.id)} sandbox="allow-scripts" className="h-full w-full border-0" />
+          <iframe key={report.id} title={report.title} src={reportRawUrl(report.id)} sandbox={reportFrameSandbox} className="h-full w-full border-0" />
         ) : mdError ? (
           <div className="p-4"><ErrorBlock message={mdError} /></div>
         ) : mdHtml === null ? (
           <div className="p-4"><LoadingBlock label="正在渲染 Markdown" /></div>
         ) : (
-          <iframe key={report.id} title={report.title} srcDoc={mdHtml} sandbox="allow-scripts" className="h-full w-full border-0" />
+          <iframe key={report.id} title={report.title} srcDoc={mdHtml} sandbox={reportFrameSandbox} className="h-full w-full border-0" />
         )}
       </div>
     </div>

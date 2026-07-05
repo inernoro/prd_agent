@@ -284,7 +284,8 @@
   position: relative;
   overflow: hidden;
   background:
-    linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.06)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.02)) 100%);
+    linear-gradient(180deg, rgba(48, 48, 56, 0.94) 0%, rgba(36, 36, 44, 0.90) 100%),
+    linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.04)) 100%);
   border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.12));
   box-shadow:
     inset 0 1px 1px rgba(255, 255, 255, 0.15),
@@ -336,42 +337,88 @@
   display: none;
 }
 
-/* 移动端 headbar 统一形态（所有页面共用同一效果）：
-   1) 标题居中、独占一行；
-   2) tabs / 操作各自单行横滚，不再 flex-wrap 挤成多行；
-   3) 横滚区右侧渐隐遮罩，暗示"还能往右滑"。
-   仅手机生效，桌面保持 space-between + wrap 不变。
-   见 .claude/rules/mobile-first-density.md。 */
+/* 移动端 headbar 统一形态：单行、紧凑、主内容优先。 */
 @media (max-width: 767px) {
+  .surface-nav-bar {
+    min-height: 38px;
+    padding: 0 8px;
+    border-radius: 12px;
+  }
+
   .surface-nav-content {
-    flex-direction: column;
-    align-items: stretch;
+    min-height: 38px;
+    flex-direction: row;
+    align-items: center;
     justify-content: center;
     flex-wrap: nowrap;
     gap: 8px;
   }
-  /* 标题 + tab 整组水平居中（放得下就居中，放不下退化为可横滚） */
+
   .surface-nav-title {
-    justify-content: center;
-    text-align: center;
+    flex: 1 1 auto;
+    min-width: 0;
   }
+
+  .surface-nav-title-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .surface-nav-tabs {
-    justify-content: safe center;
+    flex: 1 1 0;
+    min-width: 0;
+    justify-content: flex-start;
     overflow-x: auto;
     scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
   }
+
   .surface-nav-tabs::-webkit-scrollbar {
     display: none;
   }
-  /* 操作行：放不下时单行横滚 + 右侧渐隐（滚动可达性提示） */
+
   .surface-nav-actions {
+    flex: 0 0 auto;
+    min-width: 0;
+    max-width: min(38vw, 160px);
     overflow-x: auto;
     scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
     -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
     mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
   }
+
+  .surface-nav-actions > * {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .surface-nav-actions button,
+  .surface-nav-actions select {
+    white-space: nowrap;
+  }
+
+  .surface-nav-actions .prd-field {
+    min-width: 104px;
+  }
+
   .surface-nav-actions::-webkit-scrollbar {
     display: none;
+  }
+
+  .surface-nav-button {
+    height: 28px;
+    padding: 0 9px;
+    gap: 5px;
+    font-size: 12px;
+  }
+
+  .surface-nav-indicator {
+    height: 28px;
   }
 }
 
@@ -380,7 +427,7 @@
   height: 28px;
   border-radius: 9px;
   pointer-events: none;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.08) 100%);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0.14) 100%);
   border: 1px solid rgba(255, 255, 255, 0.18);
   box-shadow:
     0 2px 8px -1px rgba(0, 0, 0, 0.30),
@@ -456,6 +503,18 @@
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+}
+
+[data-theme="light"] .surface-nav-bar {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(248, 250, 252, 0.92) 100%),
+    linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.82)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.70)) 100%);
+  border-color: rgba(15, 23, 42, 0.10);
+}
+
+[data-theme="light"] .surface-nav-bar[data-variant="plain"] {
+  background: transparent;
+  border-color: transparent;
 }
 
 [data-theme="light"] .surface-nav-indicator {

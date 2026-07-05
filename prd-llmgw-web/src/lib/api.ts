@@ -13,6 +13,8 @@
 
 import type {
   ApiResponse,
+  ChangePasswordRequest,
+  ChangePasswordResult,
   LoginRequest,
   LoginResult,
   LogsListData,
@@ -21,10 +23,19 @@ import type {
   TimeseriesData,
   SessionsData,
   LlmLogDetail,
+  PoolsData,
+  PlatformsData,
+  ModelsData,
+  ShadowData,
+  ModelPool,
+  PlatformItem,
+  ModelItem,
 } from './types';
 
 const TOKEN_KEY = 'llmgw.token';
 const USER_KEY = 'llmgw.user';
+// 首登强制改密标记（认证态，遵守 no-localStorage 规则走 sessionStorage）。
+const MCP_KEY = 'llmgw.mustChangePwd';
 
 export const API_BASE = (import.meta.env.VITE_LLMGW_API_BASE || '/gw').replace(/\/$/, '');
 
@@ -48,15 +59,32 @@ export function setSession(result: LoginResult) {
     USER_KEY,
     JSON.stringify({ username: result.username ?? undefined, displayName: result.displayName ?? undefined }),
   );
+  if (result.mustChangePassword) sessionStorage.setItem(MCP_KEY, '1');
+  else sessionStorage.removeItem(MCP_KEY);
+}
+
+// 改密成功后，用重新签发的 token 替换会话并清除强制改密标记。
+export function applyChangePasswordResult(result: ChangePasswordResult) {
+  sessionStorage.setItem(TOKEN_KEY, result.token);
+  sessionStorage.setItem(
+    USER_KEY,
+    JSON.stringify({ username: result.username ?? undefined, displayName: result.displayName ?? undefined }),
+  );
+  sessionStorage.removeItem(MCP_KEY);
 }
 
 export function clearSession() {
   sessionStorage.removeItem(TOKEN_KEY);
   sessionStorage.removeItem(USER_KEY);
+  sessionStorage.removeItem(MCP_KEY);
 }
 
 export function isAuthed(): boolean {
   return !!getToken();
+}
+
+export function mustChangePassword(): boolean {
+  return sessionStorage.getItem(MCP_KEY) === '1';
 }
 
 type RequestOptions = {
@@ -133,6 +161,10 @@ export function login(req: LoginRequest): Promise<ApiResponse<LoginResult>> {
   return apiRequest<LoginResult>('/auth/login', { method: 'POST', body: req });
 }
 
+export function changePassword(req: ChangePasswordRequest): Promise<ApiResponse<ChangePasswordResult>> {
+  return apiRequest<ChangePasswordResult>('/auth/change-password', { method: 'POST', body: req });
+}
+
 // ── 日志 ──
 export function getLogs(params: LogsListParams): Promise<ApiResponse<LogsListData>> {
   return apiRequest<LogsListData>('/logs', { query: { ...params } });
@@ -162,4 +194,31 @@ export function getLogsSessions(params: {
 
 export function getLogDetail(id: string): Promise<ApiResponse<LlmLogDetail>> {
   return apiRequest<LlmLogDetail>(`/logs/${encodeURIComponent(id)}`);
+}
+
+// ── 配置面（只读）──
+export function getPools(modelType?: string): Promise<ApiResponse<PoolsData>> {
+  return apiRequest<PoolsData>('/pools', { query: { modelType } });
+}
+export function getPlatforms(): Promise<ApiResponse<PlatformsData>> {
+  return apiRequest<PlatformsData>('/platforms');
+}
+export function getModels(params?: { platformId?: string; enabled?: boolean }): Promise<ApiResponse<ModelsData>> {
+  return apiRequest<ModelsData>('/models', {
+    query: { platformId: params?.platformId, enabled: params?.enabled === undefined ? undefined : String(params.enabled) },
+  });
+}
+export function getShadowComparisons(params?: { limit?: number; appCallerCode?: string }): Promise<ApiResponse<ShadowData>> {
+  return apiRequest<ShadowData>('/shadow-comparisons', { query: { limit: params?.limit, appCallerCode: params?.appCallerCode } });
+}
+
+// ── 配置面（可写）——布尔开关，写入共享 Mongo 后 MAP 立即生效 ──
+export function setPlatformEnabled(id: string, enabled: boolean): Promise<ApiResponse<PlatformItem>> {
+  return apiRequest<PlatformItem>(`/platforms/${encodeURIComponent(id)}/enabled`, { method: 'PUT', body: { enabled } });
+}
+export function setModelEnabled(id: string, enabled: boolean): Promise<ApiResponse<ModelItem>> {
+  return apiRequest<ModelItem>(`/models/${encodeURIComponent(id)}/enabled`, { method: 'PUT', body: { enabled } });
+}
+export function setPoolDefault(id: string, isDefault: boolean): Promise<ApiResponse<ModelPool>> {
+  return apiRequest<ModelPool>(`/pools/${encodeURIComponent(id)}/default`, { method: 'PUT', body: { isDefault } });
 }

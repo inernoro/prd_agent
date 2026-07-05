@@ -19,6 +19,18 @@ export type LoginResult = {
   username?: string | null;
   displayName?: string | null;
   expiresAt?: string | null;
+  /** 首登强制改密：true 时前端须跳「设置新口令」页，改密成功前不放行日志页。 */
+  mustChangePassword?: boolean | null;
+};
+
+// ── 改密 ──
+export type ChangePasswordRequest = { oldPassword: string; newPassword: string };
+export type ChangePasswordResult = {
+  /** 改密后重新签发的 token（不再带 mcp 标记）。 */
+  token: string;
+  username?: string | null;
+  displayName?: string | null;
+  expiresAt?: string | null;
 };
 
 // ── 日志列表项 ──
@@ -50,6 +62,7 @@ export type LlmLogListItem = {
   expectedModel?: string | null;
   protocol?: string | null;
   resolutionReason?: string | null;
+  transport?: string | null;
   toolCallCount?: number | null;
   finishReason?: string | null;
   isStreaming?: boolean | null;
@@ -137,3 +150,55 @@ export type SessionsData = {
   page: number;
   pageSize: number;
 };
+
+// ── 模型池（只读配置面）──
+export type PoolModelInfo = {
+  modelId: string; platformId: string; priority: number; protocol?: string | null;
+  healthStatus: number; healthStatusLabel: string;
+  lastFailedAt?: string | null; lastSuccessAt?: string | null;
+  consecutiveFailures: number; consecutiveSuccesses: number;
+  enablePromptCache?: boolean | null; maxTokens?: number | null;
+  inputPricePerMillion?: number | null; outputPricePerMillion?: number | null; pricePerCall?: number | null;
+};
+export type ModelPool = {
+  id: string; name: string; code: string; priority: number; modelType: string;
+  isDefaultForType: boolean; strategyType: number; description?: string | null;
+  createdAt?: string | null; updatedAt?: string | null; models: PoolModelInfo[];
+};
+export type PoolsData = { items: ModelPool[]; total: number };
+
+// ── 平台（无密钥，仅 hasKey）──
+export type PlatformItem = {
+  id: string; name: string; platformType: string; providerId?: string | null; apiUrl?: string | null;
+  enabled: boolean; maxConcurrency: number; remark?: string | null; hasKey: boolean;
+  createdAt?: string | null; updatedAt?: string | null;
+};
+export type PlatformsData = { items: PlatformItem[]; total: number };
+
+// ── 模型（无密钥，仅 hasKey）──
+export type ModelCapability = { type: string; source: string; value: boolean };
+export type ModelItem = {
+  id: string; name: string; modelName: string; apiUrl?: string | null; protocol?: string | null;
+  platformId?: string | null; group?: string | null; timeout: number; maxRetries: number;
+  maxConcurrency: number; maxTokens?: number | null; enabled: boolean; priority: number;
+  isMain: boolean; isIntent: boolean; isVision: boolean; isImageGen: boolean;
+  enablePromptCache?: boolean | null; remark?: string | null; hasKey: boolean;
+  callCount: number; successCount: number; failCount: number; totalDuration: number;
+  capabilities: ModelCapability[]; createdAt?: string | null; updatedAt?: string | null;
+};
+export type ModelsData = { items: ModelItem[]; total: number };
+
+// ── 影子比对（只读）──
+export type ShadowSnapshot = {
+  success: boolean; actualModel?: string | null; protocol?: string | null; platformType?: string | null;
+  resolutionType?: string | null; modelGroupId?: string | null; isFallback: boolean;
+};
+export type ShadowMismatch = { field: string; inproc?: string | null; http?: string | null; severity: string };
+export type ShadowItem = {
+  id: string; kind: string; requestId?: string | null; appCallerCode: string; modelType: string;
+  comparedAt?: string | null; shadowDurationMs: number; httpOk: boolean; httpError?: string | null;
+  allMatch: boolean; hasCritical: boolean; inproc: ShadowSnapshot; http: ShadowSnapshot;
+  mismatches: ShadowMismatch[]; textMatches?: boolean | null;
+};
+export type ShadowSummary = { total: number; allMatch: number; critical: number; httpFail: number };
+export type ShadowData = { summary: ShadowSummary; recent: ShadowItem[] };

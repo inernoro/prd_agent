@@ -3856,6 +3856,11 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
   const [resultMode, setResultMode] = useState<WorkbenchResultMode>('table');
   const [commandState, setCommandState] = useState<MongoCommandState>({ status: 'idle', documents: [] });
   const [selectedDocumentIndex, setSelectedDocumentIndex] = useState(0);
+  // 结构化写入面板（走 /data/mongo/write，服务端不 eval 用户文本）
+  const [writeForm, setWriteForm] = useState<{ action: 'insertOne' | 'updateMany' | 'deleteMany'; collection: string; document: string; filter: string; update: string; confirm: string }>({
+    action: 'updateMany', collection: '', document: '{\n  \n}', filter: '{\n  \n}', update: '{\n  "$set": {}\n}', confirm: '',
+  });
+  const [writeState, setWriteState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; result?: unknown; message?: string }>({ status: 'idle' });
   const basePath = resource.branchId
     ? `/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/data/mongo`
     : '';
@@ -3931,6 +3936,7 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
     void loadDocuments(selectedDatabase, selectedCollection);
   }, [loadDocuments, selectedCollection, selectedDatabase]);
 
+  // 命令行只跑只读查询（find/findOne/countDocuments/distinct）；写操作走下方「结构化写入」面板。
   async function runMongoCommand(): Promise<void> {
     if (!basePath || !selectedDatabase || !command.trim()) return;
     setCommandState({ status: 'loading', documents: [] });
@@ -3940,7 +3946,6 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
         body: {
           database: selectedDatabase,
           command,
-          confirmResourceName: resource.serviceName || resource.displayName,
         },
       });
       if (res.collection) setSelectedCollection(res.collection);
@@ -3951,6 +3956,36 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
     } catch (err) {
       setCommandState({ status: 'error', documents: [], message: err instanceof ApiError ? err.message : String(err) });
       setResultMode('output');
+    }
+  }
+
+  // 结构化写入：走 /data/mongo/write（固定 action + JSON 参数，服务端不 eval 用户文本），需 data-write + 资源名确认。
+  async function runStructuredWrite(): Promise<void> {
+    if (!basePath || !selectedDatabase) return;
+    const coll = (writeForm.collection || selectedCollection).trim();
+    if (!coll) { setWriteState({ status: 'error', message: '请填写目标 collection' }); return; }
+    let body: Record<string, unknown> = { database: selectedDatabase, collection: coll, action: writeForm.action, confirmResourceName: writeForm.confirm };
+    try {
+      if (writeForm.action === 'insertOne') {
+        body.document = JSON.parse(writeForm.document || '{}');
+      } else if (writeForm.action === 'updateMany') {
+        body.filter = JSON.parse(writeForm.filter || '{}');
+        body.update = JSON.parse(writeForm.update || '{}');
+      } else if (writeForm.action === 'deleteMany') {
+        body.filter = JSON.parse(writeForm.filter || '{}');
+      }
+    } catch {
+      setWriteState({ status: 'error', message: 'JSON 解析失败：请检查 document / filter / update 是否为合法 JSON' });
+      return;
+    }
+    setWriteState({ status: 'loading' });
+    try {
+      const res = await apiRequest<{ action: string; result: unknown }>(`${basePath}/write`, { method: 'POST', body });
+      setWriteState({ status: 'ok', result: res.result });
+      void loadDocuments(selectedDatabase, coll);
+      void loadCollections(selectedDatabase, coll);
+    } catch (err) {
+      setWriteState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
     }
   }
 
@@ -4054,10 +4089,10 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
           </aside>
 
           <main className="flex min-h-0 min-w-0 flex-col lg:grid lg:grid-rows-[245px_minmax(0,1fr)]">
-            <section className="border-b border-[hsl(var(--hairline))] bg-background/30">
-              <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
+            <section className="flex min-h-0 flex-col border-b border-[hsl(var(--hairline))] bg-background/30">
+              <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
                 <div className="min-w-0">
-                  <div className="text-xs font-semibold">MongoDB Console</div>
+                  <div className="text-xs font-semibold">MongoDB Console<span className="ml-1.5 rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">只读</span></div>
                   <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{databaseLabel}.{selectedCollection || '-'}</div>
                 </div>
                 <Button type="button" size="sm" disabled={!selectedDatabase || !command.trim() || commandState.status === 'loading'} onClick={() => void runMongoCommand()}>
@@ -4066,7 +4101,8 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
                 </Button>
               </div>
               <div
-                className="p-3"
+                className="min-h-0 flex-1 overflow-y-auto p-3"
+                style={{ overscrollBehavior: 'contain' }}
                 onKeyDown={(event) => {
                   if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
                     event.preventDefault();
@@ -4079,8 +4115,21 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
                   value={command}
                   onChange={setCommand}
                   language="mongo"
-                  minHeight={158}
+                  minHeight={120}
                   placeholder="db.getCollection('users').find({}).limit(50);"
+                />
+                <div className="mt-2 text-[11px] leading-5 text-muted-foreground">
+                  命令行仅执行只读查询（find/findOne/countDocuments/distinct）。写操作请用下方「结构化写入」面板——
+                  服务端固定 action + JSON 参数、不 eval 命令文本，从根上杜绝注入。
+                </div>
+                <MongoStructuredWritePanel
+                  form={writeForm}
+                  onFormChange={setWriteForm}
+                  selectedCollection={selectedCollection}
+                  confirmHint={resource.serviceName || resource.displayName}
+                  state={writeState}
+                  disabled={!selectedDatabase}
+                  onSubmit={() => void runStructuredWrite()}
                 />
               </div>
             </section>
@@ -4097,6 +4146,88 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
         </div>
       </ResourceWorkbenchModal>
     </>
+  );
+}
+
+function MongoStructuredWritePanel({
+  form,
+  onFormChange,
+  selectedCollection,
+  confirmHint,
+  state,
+  disabled,
+  onSubmit,
+}: {
+  form: { action: 'insertOne' | 'updateMany' | 'deleteMany'; collection: string; document: string; filter: string; update: string; confirm: string };
+  onFormChange: (next: { action: 'insertOne' | 'updateMany' | 'deleteMany'; collection: string; document: string; filter: string; update: string; confirm: string }) => void;
+  selectedCollection: string;
+  confirmHint: string;
+  state: { status: 'idle' | 'loading' | 'ok' | 'error'; result?: unknown; message?: string };
+  disabled: boolean;
+  onSubmit: () => void;
+}): JSX.Element {
+  const inputCls = 'w-full rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/40 px-2 py-1.5 text-xs outline-none focus:border-primary';
+  const jsonCls = `${inputCls} min-h-[64px] font-mono leading-5`;
+  const canSubmit = !disabled && state.status !== 'loading' && (form.collection || selectedCollection).trim().length > 0 && form.confirm.trim().length > 0;
+  return (
+    <details className="mt-3 rounded-md border border-amber-400/35 bg-amber-400/5">
+      <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold text-amber-700 dark:text-amber-300">
+        结构化写入（insertOne / updateMany / deleteMany）
+      </summary>
+      <div className="space-y-2 border-t border-[hsl(var(--hairline))] p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            className={`${inputCls} h-8 w-auto`}
+            value={form.action}
+            onChange={(e) => onFormChange({ ...form, action: e.target.value as 'insertOne' | 'updateMany' | 'deleteMany' })}
+          >
+            <option value="insertOne">insertOne</option>
+            <option value="updateMany">updateMany</option>
+            <option value="deleteMany">deleteMany</option>
+          </select>
+          <input
+            className={`${inputCls} h-8 w-48`}
+            placeholder={`collection${selectedCollection ? `（默认 ${selectedCollection}）` : ''}`}
+            value={form.collection}
+            onChange={(e) => onFormChange({ ...form, collection: e.target.value })}
+          />
+        </div>
+        {form.action === 'insertOne' ? (
+          <label className="block">
+            <span className="text-[11px] text-muted-foreground">document (JSON)</span>
+            <textarea className={jsonCls} value={form.document} onChange={(e) => onFormChange({ ...form, document: e.target.value })} spellCheck={false} />
+          </label>
+        ) : (
+          <label className="block">
+            <span className="text-[11px] text-muted-foreground">filter (JSON){form.action === 'deleteMany' ? '（deleteMany 必须非空）' : ''}</span>
+            <textarea className={jsonCls} value={form.filter} onChange={(e) => onFormChange({ ...form, filter: e.target.value })} spellCheck={false} />
+          </label>
+        )}
+        {form.action === 'updateMany' ? (
+          <label className="block">
+            <span className="text-[11px] text-muted-foreground">update (JSON，含 $set 等操作符)</span>
+            <textarea className={jsonCls} value={form.update} onChange={(e) => onFormChange({ ...form, update: e.target.value })} spellCheck={false} />
+          </label>
+        ) : null}
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            className={`${inputCls} h-8 flex-1`}
+            placeholder={`输入资源名确认：${confirmHint}`}
+            value={form.confirm}
+            onChange={(e) => onFormChange({ ...form, confirm: e.target.value })}
+          />
+          <Button type="button" size="sm" variant="destructive" disabled={!canSubmit} onClick={onSubmit}>
+            {state.status === 'loading' ? <Loader2 className="animate-spin" /> : <Play />}
+            执行写入
+          </Button>
+        </div>
+        {state.status === 'error' ? (
+          <div className="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">{state.message}</div>
+        ) : state.status === 'ok' ? (
+          <pre className="max-h-40 overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-background/40 p-2 font-mono text-[11px] leading-5">{JSON.stringify(state.result, null, 2)}</pre>
+        ) : null}
+      </div>
+    </details>
   );
 }
 

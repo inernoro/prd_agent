@@ -619,6 +619,9 @@
 - [首页 / 登录页视觉语言规则](rule.frontend.landing-visual-style) `rule.frontend.landing-visual-style`
   > 首页与登录页的视觉风格、动效与色彩规范
 
+- [移动端视觉检查矩阵规则](rule.frontend.mobile-visual-check-matrix) `rule.frontend.mobile-visual-check-matrix`
+  > 按页面状态而不是路由数量拆分移动端视觉检查范围，固定 P0/P1/P2 视觉回归矩阵
+
 - [LLM Gateway 流式调用与 Reasoning 规则](rule.platform.llm-gateway) `rule.platform.llm-gateway`
   > LLM Gateway 流式场景的关键陷阱与 Reasoning 推理内容处理规则
 
@@ -629,6 +632,12 @@
 
 - [LLM 网关全面切换执行计划](plan.llm-gateway.full-cutover) `plan.llm-gateway.full-cutover`
   > 全面撤销 MAP 直连 LLM、清理网关旧代码、全接口 MECE 复测、遗漏排查四项诉求 + CDS 多出口面板
+
+- [LLM 网关 GW 用户愿景与交接](plan.llm-gateway.gw-vision-handoff) `plan.llm-gateway.gw-vision-handoff`
+  > 两 web 两域名一主一副 / 简单账号密码 admin-admin / OpenRouter 风格控制台 / 替换项目所有模型请求，四点愿景与接力交接
+
+- [LLM 网关剥离活状态看板](plan.llm-gateway.status-dashboard) `plan.llm-gateway.status-dashboard`
+  > 网关剥离唯一进度真相：一句话现状 + 能不能发布 + 记分卡 + Gate + 下一步 + 验收证据
 
 - [PA Agent 竞品调研与改进方案](plan.product-agent.pa.competitive-improvements) `plan.product-agent.pa.competitive-improvements`
   > 四类竞品谱系、与 Phase 1 差距对照、P2～P4 分期改进包
