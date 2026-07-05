@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Search,
@@ -74,8 +74,6 @@ import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
 import { Reveal } from '@/pages/home/components/Reveal';
 import { TipsRotator } from '@/components/daily-tips/TipsRotator';
 import { LearningCenterTeaser } from '@/components/daily-tips/LearningCenterTeaser';
-import { buildDefaultCoverUrl, buildDefaultVideoUrl } from '@/lib/homepageAssetSlots';
-import { useAgentImageUrl, useAgentVideoUrl, useHomepageAssetsStore } from '@/stores/homepageAssetsStore';
 
 /**
  * 进场动效节奏 —— 区块级一次 fade，不做逐卡级联。
@@ -106,8 +104,6 @@ const ICON_MAP: Record<string, LucideIcon> = {
   FolderHeart, Cpu, Users, Hammer, FolderKanban, GitPullRequest, GraduationCap, Link2, ListTree, Mail, Mic, Plug, Route, Share2, Terminal,
   PaSecretary,
 };
-
-// 首页 Agent 卡与百宝箱共用封面资源体系：上传封面 > 默认 CDN 封面 > 内联插画/几何兜底。
 
 /**
  * 色阶尺（tonal ladder）：品类色统一取同一饱和度/明度档位，只允许换色相 H。
@@ -177,8 +173,6 @@ function getAccent(icon: string): Accent {
   return hueAccent(ICON_HUE[icon] ?? 239);
 }
 
-// 图片资源不可用时才使用低干扰 CSS 几何暗场，避免卡片变成纯黑底。
-
 function getIcon(name: string): LucideIcon {
   return ICON_MAP[name] || Bot;
 }
@@ -204,12 +198,9 @@ type HomeQuickLink = {
 };
 
 /**
- * 首页顶部快捷卡（MAP Primary Gateways）。
- *
- * 设计约束：
- * - 最多 6 张卡同宽，响应式自适应
- * - 每张卡一个主色（accent）+ 渐变（gradient），源自 /home Hero 的
- *   retro-futurism 色谱（青/橙/蓝/紫/琥珀），保证既显眼又和页面整体和谐
+ * 首页置顶入口（胶囊行）。
+ * - 最多 MAX_HOME_QUICK_LINKS 个，用户可在偏好里定制
+ * - 零封面零横幅：入口只承担导航，desc 收进 title 提示
  * - 「更新中心」带未读徽章，通过 `id==='updates'` 触发
  */
 const QUICK_LINKS_BASE: HomeQuickLink[] = [
@@ -262,7 +253,11 @@ function dedupeToolboxItems(items: ToolboxItem[]): ToolboxItem[] {
   return deduped;
 }
 
-// ── Featured Agent Card (large, with cover image) ──
+// ── Agent Tile（紧凑应用瓦片：图标 + 名称 + 两行描述，无封面） ──
+//
+// 工作台首页要的是密度与秒认：封面图（近似的星云素材）无法帮助用户区分
+// 智能体，却吃掉每张卡大部分面积。封面与悬停视频保留给百宝箱/作品广场
+// 这类"逛"的场景，首页一律紧凑瓦片。
 
 function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => void }) {
   const accent = getAccent(item.icon);
@@ -271,45 +266,12 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
   const cardDescription = isPaAgent
     ? '把模糊想法转成 MECE 执行清单的 MBB 级私人助理'
     : item.description;
-  const cdnBaseUrl = useAuthStore((s) => s.cdnBaseUrl ?? '');
-  const uploadedCover = useAgentImageUrl(item.agentKey);
-  const uploadedVideo = useAgentVideoUrl(item.agentKey);
-  const coverUrl = uploadedCover ?? buildDefaultCoverUrl(cdnBaseUrl, item.agentKey);
-  const videoUrl = uploadedVideo ?? buildDefaultVideoUrl(cdnBaseUrl, item.agentKey);
-  const [coverFailed, setCoverFailed] = useState(false);
-  const [videoReady, setVideoReady] = useState(false);
-  const [hovering, setHovering] = useState(false);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const hasCover = Boolean(coverUrl && !coverFailed);
 
-  const handleMouseEnter = () => {
-    setHovering(true);
-    if (videoRef.current && videoReady) {
-      videoRef.current.currentTime = 0;
-      videoRef.current.play().catch(() => {});
-    }
-  };
-
-  const handleMouseLeave = () => {
-    setHovering(false);
-    if (videoRef.current) {
-      videoRef.current.pause();
-    }
-  };
-
-  /**
-   * 统一瓦片：封面区（16:9）+ 图外信息栏。所有智能体同一规格——
-   * 有上传封面用封面，没有就用同一款色相渐变占位；不再分流到各自画风的
-   * 内联插画组件（五种画风混排是首页不统一感的最大来源），文字不压图，
-   * 不需要 text-shadow 硬撑可读性。
-   */
   return (
     <button
       type="button"
       onClick={onClick}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
-      className="group relative w-full text-left rounded-xl overflow-hidden transition-all duration-200 hover:-translate-y-0.5 flex flex-col"
+      className="group relative w-full h-full text-left rounded-xl transition-all duration-200 hover:-translate-y-0.5 flex flex-col gap-3 p-4"
       style={{
         background: 'var(--bg-elevated, rgba(255,255,255,0.03))',
         border: '1px solid rgba(255,255,255,0.06)',
@@ -317,75 +279,34 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
     >
       {/* Hover ring（中性，全站统一 hover 语言） */}
       <div
-        className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none z-[20]"
+        className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
         style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.16)' }}
       />
 
-      {/* 封面区：固定比例，上传封面 / 统一渐变占位 二选一 */}
-      <div className="relative w-full overflow-hidden" style={{ aspectRatio: '16/9' }}>
-        {hasCover ? (
-          <>
-            <img
-              src={coverUrl ?? ''}
-              alt={item.name}
-              className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-[1.04]"
-              draggable={false}
-              onError={() => setCoverFailed(true)}
-            />
-            {videoUrl && (
-              <video
-                ref={videoRef}
-                src={videoUrl}
-                muted
-                loop
-                playsInline
-                preload="metadata"
-                onCanPlayThrough={() => setVideoReady(true)}
-                className="absolute inset-0 h-full w-full object-cover transition-opacity duration-500"
-                style={{ opacity: hovering && videoReady ? 1 : 0 }}
-              />
-            )}
-            {/* 统一压暗一档：让不同来源的封面在网格里亮度一致 */}
-            <div className="absolute inset-0 pointer-events-none" style={{ background: 'rgba(8, 9, 14, 0.18)' }} />
-          </>
-        ) : (
-          <div
-            className="absolute inset-0"
-            style={{
-              background: `radial-gradient(ellipse at 50% 130%, ${accent.soft} 0%, transparent 62%), linear-gradient(180deg, #14151d 0%, #0c0d13 100%)`,
-            }}
-          >
-            <Icon
-              size={44}
-              strokeWidth={1.3}
-              className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 transition-transform duration-500 group-hover:scale-105"
-              style={{ color: accent.color, opacity: 0.5 }}
-            />
-          </div>
-        )}
-      </div>
-
-      {/* 信息栏：图外，与 CompactCard 同一套排版语言 */}
-      <div className="flex items-center gap-3 px-3.5 py-3">
+      <div className="flex items-start justify-between">
         <div
-          className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center"
+          className="shrink-0 w-10 h-10 rounded-[10px] flex items-center justify-center"
           style={{ background: accent.soft, border: `1px solid ${accent.border}` }}
         >
-          <Icon size={17} style={{ color: accent.color }} />
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-[13.5px] font-semibold truncate" style={{ color: 'var(--text-primary, #fff)' }}>
-            {item.name}
-          </div>
-          <div className="text-[11.5px] truncate mt-0.5" style={{ color: 'var(--text-muted, rgba(255,255,255,0.45))' }}>
-            {cardDescription}
-          </div>
+          <Icon size={19} style={{ color: accent.color }} />
         </div>
         <ArrowRight
-          size={14}
-          className="shrink-0 opacity-0 group-hover:opacity-60 transition-all duration-200 group-hover:translate-x-0.5"
+          size={15}
+          className="shrink-0 mt-1 opacity-0 -translate-x-1 group-hover:opacity-60 group-hover:translate-x-0 transition-all duration-200"
           style={{ color: 'var(--text-muted)' }}
         />
+      </div>
+
+      <div className="min-w-0">
+        <div className="text-[14px] font-semibold truncate" style={{ color: 'var(--text-primary, #fff)' }}>
+          {item.name}
+        </div>
+        <p
+          className="text-[12px] mt-1 leading-relaxed line-clamp-2"
+          style={{ color: 'var(--text-muted, rgba(255,255,255,0.45))' }}
+        >
+          {cardDescription}
+        </p>
       </div>
     </button>
   );
@@ -500,17 +421,20 @@ function RecentWorkCard({ item, onClick }: { item: RecentWorkItemDto; onClick: (
 interface SectionHeaderProps {
   eyebrow: string;
   title: string;
+  /** 一句话上下文；禁止关键词堆砌（"覆盖 A / B / C…"是给搜索引擎看的，不是给人看的） */
   subtitle?: string;
+  /** 条目数：小徽章呈现，替代把数量写进副标题长句 */
+  count?: number;
   /** 区块强调色统一走全站主强调色，不再一区一色 */
   accent?: string;
 }
 
-function SectionHeader({ eyebrow, title, subtitle, accent = 'var(--accent-primary, #818CF8)' }: SectionHeaderProps) {
+function SectionHeader({ eyebrow, title, subtitle, count, accent = 'var(--accent-primary, #818CF8)' }: SectionHeaderProps) {
   return (
-    <div className="mb-5 flex items-end justify-between gap-4">
+    <div className="mb-4 flex items-end justify-between gap-4">
       <div className="min-w-0">
         <div
-          className="inline-flex items-center gap-1.5 text-[10px] font-semibold tracking-[0.14em] uppercase mb-1.5"
+          className="inline-flex items-center gap-1.5 text-[10px] font-semibold tracking-[0.14em] uppercase mb-1"
           style={{ color: accent, opacity: 0.85 }}
         >
           <span
@@ -519,13 +443,21 @@ function SectionHeader({ eyebrow, title, subtitle, accent = 'var(--accent-primar
           />
           {eyebrow}
         </div>
-        <div className="flex items-baseline gap-3">
+        <div className="flex items-baseline gap-2.5">
           <h2
-            className="text-[18px] font-semibold tracking-tight"
+            className="text-[17px] font-semibold tracking-tight"
             style={{ color: 'var(--text-primary, #fff)' }}
           >
             {title}
           </h2>
+          {typeof count === 'number' && (
+            <span
+              className="px-1.5 py-0.5 rounded-md text-[11px] font-medium tabular-nums"
+              style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted, rgba(255,255,255,0.5))' }}
+            >
+              {count}
+            </span>
+          )}
           {subtitle && (
             <span
               className="text-[11.5px] truncate"
@@ -544,8 +476,10 @@ function SectionHeader({ eyebrow, title, subtitle, accent = 'var(--accent-primar
 
 const AUTO_GRID_FEATURED: React.CSSProperties = {
   display: 'grid',
-  gap: 12,
-  gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+  gap: 10,
+  gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))',
+  // 等高：短描述的瓦片与两行描述的瓦片在同一行保持齐平
+  alignItems: 'stretch',
 };
 
 const AUTO_GRID_COMPACT: React.CSSProperties = {
@@ -573,7 +507,6 @@ export default function AgentLauncherPage() {
   // 更新中心未读数（用于首页快捷卡的红点徽章）
   const changelogUnread = useChangelogStore(selectUnreadCount);
   const loadChangelogCurrentWeek = useChangelogStore((s) => s.loadCurrentWeek);
-  const loadHomepageAssets = useHomepageAssetsStore((s) => s.load);
 
   // 周报海报(主页弹窗)
   const loadWeeklyPoster = useWeeklyPosterStore((s) => s.loadCurrent);
@@ -611,10 +544,9 @@ export default function AgentLauncherPage() {
     loadItems();
     void loadChangelogCurrentWeek({ daysLimit: 8 });
     void loadHomeLauncherPreferences();
-    void loadHomepageAssets();
     void loadWeeklyPoster();
     void loadRecentWork();
-  }, [loadItems, loadChangelogCurrentWeek, loadHomeLauncherPreferences, loadHomepageAssets, loadWeeklyPoster, loadRecentWork]);
+  }, [loadItems, loadChangelogCurrentWeek, loadHomeLauncherPreferences, loadWeeklyPoster, loadRecentWork]);
 
   // 静态入口（智能体 / 实用工具 / 基础设施）—— 数据源统一在 lib/homeLauncherItems（桌面+移动共用）
   const staticAgents: ToolboxItem[] = useMemo(() => buildStaticAgents(), []);
@@ -863,7 +795,7 @@ export default function AgentLauncherPage() {
             {!searchQuery.trim() && recentWorkItems.length > 0 && (
               <Reveal delay={REVEAL.recent} duration={REVEAL_DURATION}>
                 <div className={`relative z-10 ${isMobile ? 'px-5 pb-6' : 'px-8 pb-8'}`}>
-                  <SectionHeader eyebrow="CONTINUE" title="继续上次" subtitle="一键回到你最近的工作现场" />
+                  <SectionHeader eyebrow="CONTINUE" title="继续上次" />
                   <div
                     className="grid"
                     style={{
@@ -922,11 +854,7 @@ export default function AgentLauncherPage() {
               {featured.length > 0 && (
                 <section className={isMobile ? 'mb-8' : 'mb-10'}>
                   <Reveal delay={REVEAL.agents} duration={REVEAL_DURATION}>
-                    <SectionHeader
-                      eyebrow="AGENTS"
-                      title="智能体"
-                      subtitle={`${featured.length} 个专属智能体，覆盖 PRD / 视觉 / 文学 / 视频 / 缺陷 / 周报 / 审查 / 竞技场 / 涌现`}
-                    />
+                    <SectionHeader eyebrow="AGENTS" title="智能体" count={featured.length} />
                     <div style={AUTO_GRID_FEATURED}>
                       {featured.map((item) => (
                         <FeaturedCard key={item.id} item={item} onClick={() => handleClick(item)} />
@@ -940,11 +868,7 @@ export default function AgentLauncherPage() {
               {utilities.length > 0 && (
                 <section className={isMobile ? 'mb-8' : 'mb-10'}>
                   <Reveal delay={REVEAL.utilities} duration={REVEAL_DURATION}>
-                    <SectionHeader
-                      eyebrow="UTILITIES"
-                      title="实用工具"
-                      subtitle="快捷指令 · 转录 · 翻译 · 摘要 · 代码审查 · 管理工具 — 按需展开使用"
-                    />
+                    <SectionHeader eyebrow="UTILITIES" title="实用工具" count={utilities.length} />
                     <div style={AUTO_GRID_COMPACT}>
                       {utilities.map((item) => (
                         <CompactCard key={item.id} item={item} onClick={() => handleClick(item)} />
@@ -958,11 +882,7 @@ export default function AgentLauncherPage() {
               {infra.length > 0 && (
                 <section className={isMobile ? 'mb-8' : 'mb-10'}>
                   <Reveal delay={REVEAL.infra} duration={REVEAL_DURATION}>
-                    <SectionHeader
-                      eyebrow="INFRASTRUCTURE"
-                      title="基础设施"
-                      subtitle="知识库 · 我的资源 · 市场 · 模型 · 团队 · 工作流 — 平台级能力，所有智能体共享"
-                    />
+                    <SectionHeader eyebrow="INFRASTRUCTURE" title="基础设施" count={infra.length} subtitle="平台级能力，所有智能体共享" />
                     <div style={AUTO_GRID_COMPACT}>
                       {infra.map((item) => (
                         <CompactCard key={item.id} item={item} onClick={() => handleClick(item)} />
