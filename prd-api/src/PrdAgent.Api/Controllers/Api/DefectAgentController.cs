@@ -538,6 +538,9 @@ public class DefectAgentController : ControllerBase
         if (!isAdmin && defect.ReporterId != userId && defect.AssigneeId != userId)
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限查看此缺陷"));
 
+        // 每用户「最近打开」台账（首页继续上次）
+        await RecentOpenTracker.TouchAsync(_db, userId, "defect-agent", defect.Id);
+
         // 获取对话消息
         var messages = await _db.DefectMessages
             .Find(x => x.DefectId == id)

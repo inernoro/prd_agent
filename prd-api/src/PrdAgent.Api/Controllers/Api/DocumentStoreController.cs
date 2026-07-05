@@ -419,6 +419,9 @@ public class DocumentStoreController : ControllerBase
         if (!await CanReadStoreAsync(store, userId, myTeamIds))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
 
+        // 每用户「最近打开」台账（首页继续上次）
+        await RecentOpenTracker.TouchAsync(_db, userId, "document-store", store.Id);
+
         return Ok(ApiResponse<DocumentStore>.Ok(store));
     }
 
