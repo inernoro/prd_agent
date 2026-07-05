@@ -85,7 +85,8 @@
 }
 .cdsh-nav { display: flex; align-items: center; justify-content: space-between; height: 72px; }
 .cdsh-brand { display: flex; align-items: center; gap: 11px; text-decoration: none; color: var(--cdsh-text); }
-.cdsh-logo { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; background: linear-gradient(145deg, rgba(255,255,255,0.12), rgba(255,255,255,0.02)); border: 1px solid var(--cdsh-line); }
+/* 2026-07-04 去边框盒:大屏下 34px 小盒里的 logo 看不清细节,裸宝石放大直陈 */
+.cdsh-logo { width: 26px; height: 26px; display: grid; place-items: center; }
 /* 永动旋转是廉价感来源:改为 hover 时优雅转半圈。 */
 .cdsh-logo svg { transition: transform 0.7s cubic-bezier(0.2, 0.8, 0.2, 1); }
 .cdsh-brand:hover .cdsh-logo svg { transform: rotate(180deg); }

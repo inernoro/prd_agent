@@ -277,7 +277,7 @@ export function HomePage(): JSX.Element {
           <nav className="cdsh-nav cdsh-rise" style={{ animationDelay: '0s' }}>
             <Link className="cdsh-brand" to="/">
               <span className="cdsh-logo">
-                <CdsGem mode="brand" className="h-[20px] w-[20px]" />
+                <CdsGem mode="brand" className="h-[26px] w-[26px]" />
               </span>
               <b>Cloud Dev Suite</b>
             </Link>

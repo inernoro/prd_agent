@@ -292,10 +292,11 @@ export function LoginPage(): JSX.Element {
     return () => clearInterval(timer);
   }, []);
 
-  // 暗场纹理:蜂窝调到几乎不可察觉(0.05/0.08),它是"暗场",不是主角。
+  // 暗场纹理:蜂窝压到阈下(0.032/0.055)——2026-07-04 用户反馈整体"像 2010",
+  // 大面积几何壁纸是主要年代信号之一;保留质感但退出注意力。
   const grid = theme === 'dark'
-    ? { border: 'rgba(255,255,255,0.05)', fill: 'rgba(255,255,255,0.03)' }
-    : { border: 'rgba(68,45,22,0.08)', fill: 'rgba(68,45,22,0.04)' };
+    ? { border: 'rgba(255,255,255,0.032)', fill: 'rgba(255,255,255,0.02)' }
+    : { border: 'rgba(68,45,22,0.055)', fill: 'rgba(68,45,22,0.03)' };
 
   // 登录成功后要跳的内容页(默认控制台)是 lazy chunk:登录页一挂载就预取,
   // 提交成功 navigate 时不会触发 Suspense 白屏,配合 viewTransition 丝滑进内容页。

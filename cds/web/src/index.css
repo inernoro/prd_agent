@@ -825,28 +825,23 @@
     @apply flex min-w-0 items-center justify-center gap-4 pb-5;
   }
 
+  /* 品牌磁贴:与下方导航 tile 同一表面语言(圆角瓷贴片),宝石居中 —— 治
+     2026-07-04 用户反馈"长方形 + logo 不自在":品牌区不再是悬浮的发光体,
+     而是导航列里第一块磁贴。 */
   .cds-rail-avatar {
-    @apply relative flex h-12 w-12 shrink-0 items-center justify-center overflow-visible;
+    @apply relative flex h-12 w-12 shrink-0 items-center justify-center;
+    border-radius: 14px;
+    background-color: hsl(var(--surface-raised));
+    border: 1px solid hsl(var(--hairline));
+    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.05), 0 1px 2px rgb(0 0 0 / 0.18);
     color: hsl(var(--foreground));
-    filter: drop-shadow(0 0 16px hsl(var(--primary) / 0.22));
-  }
-
-  .cds-rail-avatar::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    border-radius: 999px;
-    background: radial-gradient(circle, hsl(var(--primary) / 0.16), transparent 64%);
-    opacity: 0.82;
-    animation: cds-brand-pulse 3.6s ease-in-out infinite;
-    pointer-events: none;
   }
 
   .cds-rail-avatar-icon {
     position: relative;
     z-index: 1;
-    width: 2.4rem;
-    height: 2.4rem;
+    width: 1.75rem;
+    height: 1.75rem;
     animation: cds-gem-drift 8s ease-in-out infinite;
     transform-origin: center;
   }
@@ -971,10 +966,6 @@
     line-height: 1.05;
     letter-spacing: 0;
     animation: cds-brand-title-shine 7s ease-in-out infinite;
-  }
-
-  .cds-rail-brand:hover .cds-rail-avatar::before {
-    animation-duration: 2.8s;
   }
 
   .cds-rail-brand:hover .cds-rail-avatar-icon {
@@ -1104,18 +1095,6 @@
     }
   }
 
-  @keyframes cds-brand-pulse {
-    0%,
-    100% {
-      opacity: 0.56;
-      transform: scale(0.92);
-    }
-    50% {
-      opacity: 0.96;
-      transform: scale(1.08);
-    }
-  }
-
   @keyframes cds-brand-title-shine {
     0%,
     58% {
@@ -1127,7 +1106,6 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .cds-rail-avatar::after,
     .cds-rail-avatar-icon,
     .cds-gem,
     .cds-gem-facet,
@@ -2116,9 +2094,9 @@
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 0.6875rem;
     letter-spacing: 0.02em;
-    color: rgb(16 185 129 / 0.92);
-    border: 1px solid rgb(16 185 129 / 0.28);
-    background-color: rgb(16 185 129 / 0.07);
+    color: hsl(var(--muted-foreground));
+    border: 1px solid hsl(var(--hairline));
+    background-color: transparent;
     border-radius: 999px;
     padding: 0.25rem 0.625rem;
   }
@@ -2163,7 +2141,7 @@
 
   /* 聚焦哪个字段,哪个标签亮起 —— 视线锚点上下连成一条。 */
   .cds-auth-field:focus-within > span {
-    color: hsl(var(--primary));
+    color: hsl(var(--foreground) / 0.85);
   }
 
   .cds-auth-field > span em {
@@ -2179,17 +2157,12 @@
     border-radius: 8px;
     border: 1px solid hsl(var(--hairline));
     background-color: hsl(var(--surface-sunken) / 0.6);
-    /* inset 接触影让 sunken 真的"凹"下去,不靠色差硬撑。 */
-    box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.22), 0 0 0 0 hsl(var(--ring) / 0);
+    box-shadow: 0 0 0 0 hsl(var(--ring) / 0);
     padding: 0 0.75rem;
     font-size: 0.875rem;
     color: hsl(var(--foreground));
     caret-color: hsl(var(--primary));
     transition: border-color 180ms ease-out, box-shadow 220ms cubic-bezier(0.2, 0.8, 0.2, 1), background-color 180ms ease-out;
-  }
-
-  [data-theme='light'] .cds-auth-input {
-    box-shadow: inset 0 1px 2px hsl(24 30% 20% / 0.06), 0 0 0 0 hsl(var(--ring) / 0);
   }
 
   .cds-auth-input::placeholder {
@@ -2203,14 +2176,10 @@
 
   .cds-auth-input:focus {
     outline: none;
-    border-color: hsl(var(--ring) / 0.6);
+    border-color: hsl(var(--ring) / 0.55);
     /* ring 从 0 生长到 3px(box-shadow spread 可插值),不是瞬间出现。 */
-    box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.22), 0 0 0 3px hsl(var(--ring) / 0.14);
+    box-shadow: 0 0 0 3px hsl(var(--ring) / 0.12);
     background-color: hsl(var(--surface-raised));
-  }
-
-  [data-theme='light'] .cds-auth-input:focus {
-    box-shadow: inset 0 1px 2px hsl(24 30% 20% / 0.06), 0 0 0 3px hsl(var(--ring) / 0.14);
   }
 
   /* Chrome autofill 会刷成默认黄底,暗色主题下极其破相 —— 用 token 压回去。 */
@@ -2268,61 +2237,30 @@
     line-height: 1.5;
   }
 
-  /* 主 CTA 立体配方:上亮下实的品牌橙渐变 + inset 高光/收边 + 品牌色环境影
-     + hover 光泽扫过 + active 按压。CTA 平,整页就平。 */
+  /* 主 CTA 现代扁平:干净的主色实底 + 轻接触影,去掉 bevel 内阴影与扫光
+     (2026-07-04 用户反馈"2010 年风格"的主要信号源之一)。 */
   .cds-auth-submit {
     position: relative;
-    overflow: hidden;
     margin-top: 1.25rem;
     width: 100%;
     height: 2.5rem;
     gap: 0.5rem;
     font-size: 0.875rem;
-    background: linear-gradient(180deg, hsl(27 100% 63%), hsl(22 96% 53%));
-    box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 0.28),
-      inset 0 -1px 0 rgb(0 0 0 / 0.18),
-      0 1px 2px rgb(0 0 0 / 0.3),
-      0 8px 20px -8px hsl(24 100% 55% / 0.55);
+    background: hsl(var(--primary));
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.22), 0 6px 16px -10px hsl(24 100% 55% / 0.45);
     transition: transform 150ms ease, box-shadow 150ms ease, filter 150ms ease;
   }
 
   .cds-auth-submit:hover:not(:disabled) {
-    background: linear-gradient(180deg, hsl(27 100% 63%), hsl(22 96% 53%));
-    filter: brightness(1.06);
-    box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 0.28),
-      inset 0 -1px 0 rgb(0 0 0 / 0.18),
-      0 1px 2px rgb(0 0 0 / 0.3),
-      0 10px 24px -6px hsl(24 100% 55% / 0.65);
+    background: hsl(var(--primary));
+    filter: brightness(1.05);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.22), 0 8px 20px -10px hsl(24 100% 55% / 0.55);
   }
 
   .cds-auth-submit:active:not(:disabled) {
-    transform: translateY(1px) scale(0.985);
+    transform: translateY(1px) scale(0.99);
     transition-duration: 80ms;
-    box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 0.2),
-      inset 0 -1px 0 rgb(0 0 0 / 0.18),
-      0 1px 2px rgb(0 0 0 / 0.24),
-      0 4px 12px -6px hsl(24 100% 55% / 0.5);
-  }
-
-  /* hover 时斜切光带扫过一次(进入播放,离开瞬时复位)。 */
-  .cds-auth-submit::after {
-    content: '';
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    width: 45%;
-    transform: translateX(-160%) skewX(-18deg);
-    background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.32), transparent);
-    pointer-events: none;
-  }
-
-  .cds-auth-submit:hover:not(:disabled)::after {
-    transform: translateX(330%) skewX(-18deg);
-    transition: transform 650ms cubic-bezier(0.2, 0.6, 0.2, 1);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.2), 0 3px 10px -8px hsl(24 100% 55% / 0.4);
   }
 
   .cds-auth-submit svg {
@@ -2334,10 +2272,6 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .cds-auth-submit::after {
-      display: none;
-    }
-
     .cds-auth-submit:active:not(:disabled) {
       transform: none;
     }
