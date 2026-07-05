@@ -556,7 +556,9 @@ export default function AgentLauncherPage() {
     void loadChangelogCurrentWeek({ daysLimit: 8 });
     void loadHomeLauncherPreferences();
     void loadWeeklyPoster();
-    void loadRecentWork();
+    // force：同一 SPA 会话内从工作区/缺陷等页面返回首页时，台账已更新，
+    // 不能吃 store 的 loaded 缓存（Codex P2）；端点轻量，挂载即重拉
+    void loadRecentWork({ force: true });
   }, [loadItems, loadChangelogCurrentWeek, loadHomeLauncherPreferences, loadWeeklyPoster, loadRecentWork]);
 
   // 静态入口（智能体 / 实用工具 / 基础设施）—— 数据源统一在 lib/homeLauncherItems（桌面+移动共用）

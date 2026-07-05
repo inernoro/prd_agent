@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 
@@ -22,10 +23,12 @@ namespace PrdAgent.Api.Controllers.Api;
 public sealed class HomeRecentWorkController : ControllerBase
 {
     private readonly MongoDbContext _db;
+    private readonly ITeamService _teams;
 
-    public HomeRecentWorkController(MongoDbContext db)
+    public HomeRecentWorkController(MongoDbContext db, ITeamService teams)
     {
         _db = db;
+        _teams = teams;
     }
 
     public record RecentWorkItem(string Route, string AgentKey, string Title, DateTime LastActiveAt);
@@ -117,11 +120,22 @@ public sealed class HomeRecentWorkController : ControllerBase
             foreach (var r in subs) reviewTitles[r.Id] = string.IsNullOrWhiteSpace(r.Title) ? "未命名评审" : r.Title;
         }
 
+        // 知识库：按详情端点同口径的主通道复核（owner / 公开 / 团队共享），
+        // 用户被移出团队或库转私有后，名称不再出现在继续上次（Codex P2：防库名泄漏 + 死链）。
+        // PM 项目 / 产品知识库 / 师徒库等专用访问通道不在此复刻（逻辑深耦合在
+        // DocumentStoreController 私有方法里），宁可让这几类从脚印里消失也不泄漏。
         var docStoreTitles = new Dictionary<string, string>(StringComparer.Ordinal);
         if (docStoreIds.Count > 0)
         {
+            var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
+            var storeFilter = Builders<DocumentStore>.Filter.And(
+                Builders<DocumentStore>.Filter.In(x => x.Id, docStoreIds),
+                Builders<DocumentStore>.Filter.Or(
+                    Builders<DocumentStore>.Filter.Eq(x => x.OwnerId, userId),
+                    Builders<DocumentStore>.Filter.Eq(x => x.IsPublic, true),
+                    Builders<DocumentStore>.Filter.AnyIn(x => x.SharedTeamIds, myTeamIds)));
             var stores = await _db.DocumentStores
-                .Find(x => docStoreIds.Contains(x.Id))
+                .Find(storeFilter)
                 .Project(x => new { x.Id, x.Name })
                 .ToListAsync(ct);
             foreach (var st in stores) docStoreTitles[st.Id] = string.IsNullOrWhiteSpace(st.Name) ? "未命名知识库" : st.Name;
