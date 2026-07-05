@@ -90,6 +90,7 @@ describe('release service script preflight helpers', () => {
           branchId: 'branch-main',
           branchName: 'main',
           previewUrl: 'https://main.example.test',
+          artifactPath: '/worktrees/prd-agent/branch-main',
         },
         targetId: 'target-prod',
         planId: 'plan-ssh',
@@ -107,7 +108,9 @@ describe('release service script preflight helpers', () => {
     expect(cmd).toContain("CDS_BRANCH_ID='branch-main'");
     expect(cmd).toContain("CDS_TARGET_ID='target-prod'");
     expect(cmd).toContain("CDS_BRANCH_NAME='main'");
-    expect(cmd).toContain('; if [ "$CDS_BRANCH_NAME" != "main" ]; then exit 43; fi; ./deploy.sh');
+    expect(cmd).toContain("CDS_ARTIFACT_PATH='/worktrees/prd-agent/branch-main'");
+    expect(cmd).toContain('&& if [ "$CDS_BRANCH_NAME" != "main" ]; then exit 43; fi; ./deploy.sh');
+    expect(cmd).not.toContain('; if [ "$CDS_BRANCH_NAME" != "main" ]; then exit 43; fi; ./deploy.sh');
     expect(cmd).not.toContain("CDS_BRANCH_NAME='main' if");
   });
 
@@ -125,6 +128,7 @@ describe('release service script preflight helpers', () => {
           branchId: 'branch-main',
           branchName: 'main',
           previewUrl: 'https://main.example.test',
+          artifactPath: '/worktrees/prd-agent/branch-main',
         },
         targetId: 'target-prod',
         planId: 'plan-ssh',
@@ -138,7 +142,8 @@ describe('release service script preflight helpers', () => {
 
     expect(cmd).toContain("mkdir -p '/opt/a-prod/current' && cd '/opt/a-prod/current' && export ");
     expect(cmd).toContain("CDS_COMMIT_SHA='abc123'");
-    expect(cmd).toContain("'/opt/cds/current/scripts/local-prod-release.sh'");
+    expect(cmd).toContain("CDS_ARTIFACT_PATH='/worktrees/prd-agent/branch-main'");
+    expect(cmd).toContain("&& CDS_LOCAL_PROD_DIR='/opt/a-prod/current' '/opt/cds/current/scripts/local-prod-release.sh'");
   });
 
   it('reports healthcheck response timing and failure details', async () => {

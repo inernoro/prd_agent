@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { Router, type Request, type Response } from 'express';
 import type { StateService } from '../services/state.js';
-import type { ReleaseTarget, RemoteHost } from '../types.js';
+import type { CdsConfig, ReleaseTarget, RemoteHost } from '../types.js';
 import { ReleaseService, probeHealthcheckStatus } from '../services/release-service.js';
 import { releaseEvents } from '../services/release-events.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
@@ -10,6 +10,7 @@ import { assertProjectAccess } from './projects.js';
 
 export interface ReleasesRouterDeps {
   stateService: StateService;
+  config?: Pick<CdsConfig, 'worktreeBase'>;
 }
 
 export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
@@ -115,7 +116,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       : path.resolve(process.cwd(), 'scripts/local-prod-release.sh');
     const worktreeRoot = typeof body.worktreeRoot === 'string' && body.worktreeRoot.trim()
       ? body.worktreeRoot.trim()
-      : path.resolve(process.cwd(), '..', '.cds-worktrees');
+      : deps.config?.worktreeBase || path.resolve(process.cwd(), '..', '.cds-worktrees');
     const composeProject = shellSafeName(`${project.slug}-prod`);
     const allowedBranch = typeof body.allowedBranch === 'string' && body.allowedBranch.trim()
       ? body.allowedBranch.trim()

@@ -449,6 +449,7 @@ function buildArtifact(branch: BranchEntry, commitSha: string, previewUrl: strin
     branchId: branch.id,
     branchName: branch.branch,
     previewUrl,
+    artifactPath: branch.worktreePath,
   };
 }
 
@@ -509,9 +510,9 @@ export function buildReleaseCommand(target: ReleaseTarget, run: ReleaseRun, rawC
     .join(' ');
   const appPath = ssh.appPath || '.';
   if (isLocalProdReleaseCommand(rawCommand) && appPath !== '.') {
-    return `mkdir -p ${shellQuote(appPath)} && cd ${shellQuote(appPath)} && export ${renderedEnv}; ${rawCommand}`;
+    return `mkdir -p ${shellQuote(appPath)} && cd ${shellQuote(appPath)} && export ${renderedEnv} && ${rawCommand}`;
   }
-  return `cd ${shellQuote(ssh.appPath || '.')} && export ${renderedEnv}; ${rawCommand}`;
+  return `cd ${shellQuote(ssh.appPath || '.')} && export ${renderedEnv} && ${rawCommand}`;
 }
 
 async function probeHealthcheck(url: string, timeoutMs = 8_000): Promise<void> {

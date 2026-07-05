@@ -51,6 +51,7 @@ async function request(
 
 describe('release control plane project-scope isolation', () => {
   let tmpDir: string;
+  let configuredWorktreeBase: string;
   let stateService: StateService;
   let server: http.Server;
 
@@ -97,6 +98,7 @@ describe('release control plane project-scope isolation', () => {
 
   beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-release-scope-'));
+    configuredWorktreeBase = path.join(tmpDir, 'configured-worktrees');
     stateService = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
     stateService.load();
     const now = new Date().toISOString();
@@ -152,7 +154,7 @@ describe('release control plane project-scope isolation', () => {
       if (h === KEY_B) (req as any).cdsProjectKey = { projectId: 'proj-b', keyId: 'k-b' };
       next();
     });
-    app.use('/api', createReleasesRouter({ stateService }));
+    app.use('/api', createReleasesRouter({ stateService, config: { worktreeBase: configuredWorktreeBase } }));
 
     await new Promise<void>((resolve) => { server = app.listen(0, '127.0.0.1', resolve); });
   });
@@ -206,6 +208,7 @@ describe('release control plane project-scope isolation', () => {
     expect(res.body.target.ssh.healthcheckUrl).toBe('https://www.a.example.test/api/health');
     expect(res.body.target.ssh.deployCommand).toContain('CDS_LOCAL_PROD_PORT=');
     expect(res.body.target.ssh.deployCommand).toContain("CDS_LOCAL_PROD_ALLOWED_BRANCH='master'");
+    expect(res.body.target.ssh.deployCommand).toContain(`CDS_WORKTREE_ROOT='${configuredWorktreeBase}'`);
     expect(res.body.target.ssh.deployCommand).toContain('local-prod-release.sh');
   });
 

@@ -28,7 +28,7 @@ branch_id="${CDS_BRANCH_ID:-}"
 project_slug="${CDS_LOCAL_PROD_PROJECT_SLUG:-${project_id:-app}}"
 prod_dir="${CDS_LOCAL_PROD_DIR:-$PWD}"
 worktree_root="${CDS_WORKTREE_ROOT:-/root/inernoro/prd_agent/.cds-worktrees}"
-source_dir="${CDS_LOCAL_PROD_SOURCE_DIR:-}"
+source_dir="${CDS_LOCAL_PROD_SOURCE_DIR:-${CDS_ARTIFACT_PATH:-}}"
 if [ -z "$source_dir" ]; then
   [ -n "$project_id" ] || fail "CDS_PROJECT_ID is required"
   [ -n "$branch_id" ] || fail "CDS_BRANCH_ID is required"
@@ -43,6 +43,9 @@ compose_project="${CDS_LOCAL_PROD_COMPOSE_PROJECT:-${project_slug}-prod}"
 health_url="${CDS_LOCAL_PROD_HEALTH_URL:-}"
 health_timeout="${CDS_LOCAL_PROD_HEALTH_TIMEOUT_SECONDS:-180}"
 web_port="${CDS_LOCAL_PROD_PORT:-}"
+if [ -n "$health_url" ]; then
+  require_command curl
+fi
 
 mkdir -p "$current_dir" "$releases_dir"
 
