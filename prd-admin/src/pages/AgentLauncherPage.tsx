@@ -370,17 +370,19 @@ function CompactCard({ item, onClick }: { item: ToolboxItem; onClick: () => void
 
 // ── Recent Work Card（「继续上次」：一键回到最近的工作现场） ──
 
-const RECENT_AGENT_META: Record<string, { icon: LucideIcon; label: string }> = {
-  'visual-agent': { icon: Palette, label: '视觉创作' },
-  'literary-agent': { icon: PenTool, label: '文学创作' },
-  'workflow-agent': { icon: Workflow, label: '工作流' },
+/** 与后端 HomeRecentWorkController 的 agentKey 枚举一一对应（iconKey 走 ICON_HUE 色阶尺） */
+const RECENT_AGENT_META: Record<string, { icon: LucideIcon; label: string; iconKey: string }> = {
+  'visual-agent': { icon: Palette, label: '视觉创作', iconKey: 'Palette' },
+  'literary-agent': { icon: PenTool, label: '文学创作', iconKey: 'PenTool' },
+  'workflow-agent': { icon: Workflow, label: '工作流', iconKey: 'Workflow' },
+  'defect-agent': { icon: Bug, label: '缺陷管理', iconKey: 'Bug' },
+  'report-agent': { icon: FileBarChart, label: '周报', iconKey: 'FileBarChart' },
+  'review-agent': { icon: ClipboardCheck, label: '产品评审', iconKey: 'ClipboardCheck' },
 };
 
 function RecentWorkCard({ item, onClick }: { item: RecentWorkItemDto; onClick: () => void }) {
-  const meta = RECENT_AGENT_META[item.agentKey] ?? { icon: Bot, label: '智能体' };
-  const accent = getAccent(
-    item.agentKey === 'visual-agent' ? 'Palette' : item.agentKey === 'literary-agent' ? 'PenTool' : 'Workflow'
-  );
+  const meta = RECENT_AGENT_META[item.agentKey] ?? { icon: Bot, label: '智能体', iconKey: 'Bot' };
+  const accent = getAccent(meta.iconKey);
   const Icon = meta.icon;
   return (
     <button

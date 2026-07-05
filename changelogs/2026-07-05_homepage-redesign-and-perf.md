@@ -7,3 +7,5 @@
 | fix | prd-api | 修复「继续上次」跨用户数据不准：新增每用户最近打开台账 home_recent_opens（打开视觉/文学工作区、工作流详情时打点），recent-work 端点改为只读本人台账；此前用实体全局时间戳导致共享成员编辑与定时工作流自跑把同一批内容顶进所有用户首页 |
 | polish | prd-admin | 首页微调"活起来"：卡片悬停改为本卡色相描边与同色投影、图标芯片悬停微放大、瓦片静息态左上角极淡渗色、胶囊悬停浅色相底、问候语用户名静态双色渐变、Hero 背景补一缕靛紫（全部零循环动画） |
 | polish | prd-admin | 首页顶带接入 ReactBits Aurora 极光背景（驯化版）：亮色端锚在右上补留白氛围；标签页隐藏/滚出视口自动暂停、prefers-reduced-motion 静态一帧、DPR 封顶 1.5，新增共享组件 AuroraBackground（依赖 ogl） |
+| feat | prd-api | 「继续上次」埋点补齐：缺陷、周报、产品评审三个详情端点接入最近打开台账，聚合端点补对应标题富化与深链路由（/defect-agent?defectId= 、/report-agent/report/:id 、/review-agent/submissions/:id），覆盖从 3 类升到 6 类 |
+| feat | prd-admin | 首页继续上次卡片支持缺陷/周报/产品评审三类图标与标签 |

@@ -9,7 +9,8 @@ namespace PrdAgent.Api.Controllers.Api;
 
 /// <summary>
 /// 首页「继续上次」聚合端点。
-/// 唯一数据源是每用户「最近打开」台账（home_recent_opens，打开工作区/工作流详情时打点）。
+/// 唯一数据源是每用户「最近打开」台账（home_recent_opens）。
+/// 埋点位置（打开详情即打点）：视觉/文学工作区、工作流、缺陷、周报、产品评审。
 /// 禁止退回实体全局时间戳（UpdatedAt / LastOpenedAt / LastExecutedAt）作为排序依据：
 /// 那些字段任何共享成员编辑、定时工作流自跑都会变，会把"别人/机器的活跃"顶进
 /// 当前用户的继续上次，造成"人人看到同一批内容、且不是自己上次操作的"（2026-07-05 用户实测反馈）。
@@ -49,6 +50,9 @@ public sealed class HomeRecentWorkController : ControllerBase
 
         var wsIds = opens.Where(o => o.AgentKey is "visual-agent" or "literary-agent").Select(o => o.EntityId).Distinct().ToList();
         var wfIds = opens.Where(o => o.AgentKey == "workflow-agent").Select(o => o.EntityId).Distinct().ToList();
+        var defectIds = opens.Where(o => o.AgentKey == "defect-agent").Select(o => o.EntityId).Distinct().ToList();
+        var reportIds = opens.Where(o => o.AgentKey == "report-agent").Select(o => o.EntityId).Distinct().ToList();
+        var reviewIds = opens.Where(o => o.AgentKey == "review-agent").Select(o => o.EntityId).Distinct().ToList();
 
         // 标题富化 + 权限复核（工作区：本人是 owner 或 member；工作流：本人创建）
         var wsTitles = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -75,18 +79,62 @@ public sealed class HomeRecentWorkController : ControllerBase
             foreach (var w in wfs) wfTitles[w.Id] = w.Name;
         }
 
+        // 缺陷/周报/评审：打点发生在各详情端点的权限检查之后（打开即有权看），
+        // 这里只做存在性复核（缺陷排除回收站），点击深链后由目标页再做权威鉴权。
+        var defectTitles = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (defectIds.Count > 0)
+        {
+            var defects = await _db.DefectReports
+                .Find(x => defectIds.Contains(x.Id) && !x.IsDeleted)
+                .Project(x => new { x.Id, x.Title })
+                .ToListAsync(ct);
+            foreach (var d in defects) defectTitles[d.Id] = string.IsNullOrWhiteSpace(d.Title) ? "未命名缺陷" : d.Title!;
+        }
+
+        var reportTitles = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (reportIds.Count > 0)
+        {
+            var reports = await _db.WeeklyReports
+                .Find(x => reportIds.Contains(x.Id))
+                .Project(x => new { x.Id, x.WeekYear, x.WeekNumber, x.TeamName })
+                .ToListAsync(ct);
+            foreach (var r in reports)
+            {
+                var team = string.IsNullOrWhiteSpace(r.TeamName) ? "" : $"{r.TeamName} · ";
+                reportTitles[r.Id] = $"{team}{r.WeekYear}-W{r.WeekNumber:D2} 周报";
+            }
+        }
+
+        var reviewTitles = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (reviewIds.Count > 0)
+        {
+            var subs = await _db.ReviewSubmissions
+                .Find(x => reviewIds.Contains(x.Id))
+                .Project(x => new { x.Id, x.Title })
+                .ToListAsync(ct);
+            foreach (var r in subs) reviewTitles[r.Id] = string.IsNullOrWhiteSpace(r.Title) ? "未命名评审" : r.Title;
+        }
+
         var items = new List<RecentWorkItem>();
         foreach (var open in opens)
         {
-            string? title = open.AgentKey == "workflow-agent"
-                ? (wfTitles.TryGetValue(open.EntityId, out var wf) ? wf : null)
-                : (wsTitles.TryGetValue(open.EntityId, out var ws) ? ws : null);
+            string? title = open.AgentKey switch
+            {
+                "workflow-agent" => wfTitles.TryGetValue(open.EntityId, out var wf) ? wf : null,
+                "defect-agent" => defectTitles.TryGetValue(open.EntityId, out var df) ? df : null,
+                "report-agent" => reportTitles.TryGetValue(open.EntityId, out var rp) ? rp : null,
+                "review-agent" => reviewTitles.TryGetValue(open.EntityId, out var rv) ? rv : null,
+                _ => wsTitles.TryGetValue(open.EntityId, out var ws) ? ws : null,
+            };
             if (title == null) continue; // 已删除或已失去权限：从继续上次里消失
 
             var route = open.AgentKey switch
             {
                 "literary-agent" => $"/literary-agent/{open.EntityId}",
                 "workflow-agent" => $"/workflow-agent/{open.EntityId}",
+                "defect-agent" => $"/defect-agent?defectId={open.EntityId}",
+                "report-agent" => $"/report-agent/report/{open.EntityId}",
+                "review-agent" => $"/review-agent/submissions/{open.EntityId}",
                 _ => $"/visual-agent/{open.EntityId}",
             };
             items.Add(new RecentWorkItem(
