@@ -10,7 +10,7 @@ namespace PrdAgent.Api.Controllers.Api;
 /// <summary>
 /// 首页「继续上次」聚合端点。
 /// 唯一数据源是每用户「最近打开」台账（home_recent_opens）。
-/// 埋点位置（打开详情即打点）：视觉/文学工作区、工作流、缺陷、周报、产品评审。
+/// 埋点位置（打开详情即打点）：视觉/文学工作区、工作流、缺陷、周报、产品评审、知识库。
 /// 禁止退回实体全局时间戳（UpdatedAt / LastOpenedAt / LastExecutedAt）作为排序依据：
 /// 那些字段任何共享成员编辑、定时工作流自跑都会变，会把"别人/机器的活跃"顶进
 /// 当前用户的继续上次，造成"人人看到同一批内容、且不是自己上次操作的"（2026-07-05 用户实测反馈）。
@@ -35,7 +35,8 @@ public sealed class HomeRecentWorkController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
     public async Task<IActionResult> RecentWork([FromQuery] int limit = 8, CancellationToken ct = default)
     {
-        limit = Math.Clamp(limit, 1, 12);
+        // 上限 30：首页默认收起一行，「浏览全部脚印」展开后允许翻看更长的足迹
+        limit = Math.Clamp(limit, 1, 30);
         var userId = this.GetRequiredUserId();
 
         // 台账多取一些冗余：富化阶段会丢弃已删除/已失去权限的实体
@@ -53,6 +54,7 @@ public sealed class HomeRecentWorkController : ControllerBase
         var defectIds = opens.Where(o => o.AgentKey == "defect-agent").Select(o => o.EntityId).Distinct().ToList();
         var reportIds = opens.Where(o => o.AgentKey == "report-agent").Select(o => o.EntityId).Distinct().ToList();
         var reviewIds = opens.Where(o => o.AgentKey == "review-agent").Select(o => o.EntityId).Distinct().ToList();
+        var docStoreIds = opens.Where(o => o.AgentKey == "document-store").Select(o => o.EntityId).Distinct().ToList();
 
         // 标题富化 + 权限复核（工作区：本人是 owner 或 member；工作流：本人创建）
         var wsTitles = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -115,6 +117,16 @@ public sealed class HomeRecentWorkController : ControllerBase
             foreach (var r in subs) reviewTitles[r.Id] = string.IsNullOrWhiteSpace(r.Title) ? "未命名评审" : r.Title;
         }
 
+        var docStoreTitles = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (docStoreIds.Count > 0)
+        {
+            var stores = await _db.DocumentStores
+                .Find(x => docStoreIds.Contains(x.Id))
+                .Project(x => new { x.Id, x.Name })
+                .ToListAsync(ct);
+            foreach (var st in stores) docStoreTitles[st.Id] = string.IsNullOrWhiteSpace(st.Name) ? "未命名知识库" : st.Name;
+        }
+
         var items = new List<RecentWorkItem>();
         foreach (var open in opens)
         {
@@ -124,6 +136,7 @@ public sealed class HomeRecentWorkController : ControllerBase
                 "defect-agent" => defectTitles.TryGetValue(open.EntityId, out var df) ? df : null,
                 "report-agent" => reportTitles.TryGetValue(open.EntityId, out var rp) ? rp : null,
                 "review-agent" => reviewTitles.TryGetValue(open.EntityId, out var rv) ? rv : null,
+                "document-store" => docStoreTitles.TryGetValue(open.EntityId, out var ds) ? ds : null,
                 _ => wsTitles.TryGetValue(open.EntityId, out var ws) ? ws : null,
             };
             if (title == null) continue; // 已删除或已失去权限：从继续上次里消失
@@ -135,6 +148,7 @@ public sealed class HomeRecentWorkController : ControllerBase
                 "defect-agent" => $"/defect-agent?defectId={open.EntityId}",
                 "report-agent" => $"/report-agent/report/{open.EntityId}",
                 "review-agent" => $"/review-agent/submissions/{open.EntityId}",
+                "document-store" => $"/document-store?store={open.EntityId}",
                 _ => $"/visual-agent/{open.EntityId}",
             };
             items.Add(new RecentWorkItem(

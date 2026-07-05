@@ -9,3 +9,6 @@
 | polish | prd-admin | 首页顶带接入 ReactBits Aurora 极光背景（驯化版）：亮色端锚在右上补留白氛围；标签页隐藏/滚出视口自动暂停、prefers-reduced-motion 静态一帧、DPR 封顶 1.5，新增共享组件 AuroraBackground（依赖 ogl） |
 | feat | prd-api | 「继续上次」埋点补齐：缺陷、周报、产品评审三个详情端点接入最近打开台账，聚合端点补对应标题富化与深链路由（/defect-agent?defectId= 、/report-agent/report/:id 、/review-agent/submissions/:id），覆盖从 3 类升到 6 类 |
 | feat | prd-admin | 首页继续上次卡片支持缺陷/周报/产品评审三类图标与标签 |
+| feat | prd-admin | 知识库页支持 ?store= 深链直达库详情；首页继续上次默认收起一行、新增「浏览全部脚印」展开卡（后端上限 30 条、前端拉 24 条），并支持知识库类型 |
+| feat | prd-api | 知识库 GetStore 鉴权后接入最近打开台账，继续上次覆盖升到 7 类 |
+| fix | prd-admin | 修复液态玻璃主题下首页极光带出现黑块与左上角分界线：极光画布改 screen 提亮混合，只加光不压暗，浅色底下暗部自动隐形 |

@@ -47,6 +47,7 @@ import {
   Cpu,
   Users,
   Hammer,
+  History,
   Radar,
   type LucideIcon,
 } from 'lucide-react';
@@ -378,6 +379,7 @@ const RECENT_AGENT_META: Record<string, { icon: LucideIcon; label: string; iconK
   'defect-agent': { icon: Bug, label: '缺陷管理', iconKey: 'Bug' },
   'report-agent': { icon: FileBarChart, label: '周报', iconKey: 'FileBarChart' },
   'review-agent': { icon: ClipboardCheck, label: '产品评审', iconKey: 'ClipboardCheck' },
+  'document-store': { icon: Library, label: '知识库', iconKey: 'Library' },
 };
 
 function RecentWorkCard({ item, onClick }: { item: RecentWorkItemDto; onClick: () => void }) {
@@ -499,6 +501,8 @@ const AUTO_GRID_COMPACT: React.CSSProperties = {
 
 export default function AgentLauncherPage() {
   const [searchQuery, setSearchQuery] = useState('');
+  // 「继续上次」默认收起只露一行，展开后允许浏览全部脚印
+  const [recentExpanded, setRecentExpanded] = useState(false);
   const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
   const { items, itemsLoading, loadItems } = useToolboxStore();
   const { isMobile } = useBreakpoint();
@@ -636,7 +640,11 @@ export default function AgentLauncherPage() {
           style={{
             height: isMobile ? 260 : 440,
             zIndex: 0,
-            opacity: 0.5,
+            opacity: 0.55,
+            // screen 提亮混合：极光只加光不压暗。液态玻璃等浅色底下，
+            // 普通 alpha 覆盖会把暗色端画成黑块并在画布边缘露出分界线（2026-07-05 用户反馈），
+            // screen 模式下暗部趋近无操作，边界自然消失
+            mixBlendMode: 'screen',
             maskImage: 'linear-gradient(180deg, black 0%, black 45%, transparent 96%)',
             WebkitMaskImage: 'linear-gradient(180deg, black 0%, black 45%, transparent 96%)',
           }}
@@ -842,14 +850,47 @@ export default function AgentLauncherPage() {
                         : 'repeat(auto-fill, minmax(260px, 1fr))',
                     }}
                   >
-                    {/* 最多 6 条：保持一到两行的安静密度，不与智能体区抢主角 */}
-                    {recentWorkItems.slice(0, 6).map((item) => (
+                    {/* 默认收起只露一行（含展开卡），展开后浏览全部脚印 */}
+                    {(recentExpanded ? recentWorkItems : recentWorkItems.slice(0, isMobile ? 2 : 3)).map((item) => (
                       <RecentWorkCard
                         key={`${item.agentKey}:${item.route}`}
                         item={item}
                         onClick={() => navigate(item.route)}
                       />
                     ))}
+                    {(recentExpanded || recentWorkItems.length > (isMobile ? 2 : 3)) && (
+                      <button
+                        type="button"
+                        onClick={() => setRecentExpanded((v) => !v)}
+                        className="group relative w-full text-left rounded-xl transition-all duration-200 hover:-translate-y-0.5 flex items-center gap-3 px-4 py-3"
+                        style={{
+                          background: 'transparent',
+                          border: '1px dashed rgba(255,255,255,0.14)',
+                        }}
+                      >
+                        <div
+                          className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center transition-transform duration-200 group-hover:scale-105"
+                          style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.10)' }}
+                        >
+                          <History size={17} style={{ color: 'var(--text-muted, rgba(255,255,255,0.55))' }} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary, #fff)' }}>
+                            {recentExpanded ? '收起脚印' : '浏览全部脚印'}
+                          </div>
+                          <div className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted, rgba(255,255,255,0.4))' }}>
+                            {recentExpanded
+                              ? `共 ${recentWorkItems.length} 条`
+                              : `还有 ${recentWorkItems.length - (isMobile ? 2 : 3)} 条`}
+                          </div>
+                        </div>
+                        <ArrowRight
+                          size={14}
+                          className={`shrink-0 opacity-40 transition-transform duration-200 ${recentExpanded ? '-rotate-90' : 'rotate-90'}`}
+                          style={{ color: 'var(--text-muted)' }}
+                        />
+                      </button>
+                    )}
                   </div>
                 </div>
               </Reveal>

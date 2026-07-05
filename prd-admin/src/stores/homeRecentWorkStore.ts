@@ -21,7 +21,8 @@ export const useHomeRecentWorkStore = create<HomeRecentWorkState>((set, get) => 
     if (!force && (state.loaded || state.loading)) return;
     set({ loading: true });
     try {
-      const res = await listRecentWork({ limit: 8 });
+      // 24 条：默认收起只露一行，「浏览全部脚印」展开后可翻看更长的足迹
+      const res = await listRecentWork({ limit: 24 });
       // 拉取失败按空列表处理：该区块「有数据才显示」，失败不打扰用户
       set({ items: res.success && res.data ? res.data.items : [], loading: false, loaded: true });
     } catch {
