@@ -101,6 +101,21 @@ function normalizeResourceChipDisplay(display?: ResourceChipDisplay): Required<R
   return next.icon || next.name || next.port ? next : DEFAULT_RESOURCE_CHIP_DISPLAY;
 }
 
+/* 应用 chips 超过该数才折叠为「+N」;基础容器托盘不参与折叠(通常 1-3 个)。 */
+const APP_CHIP_FOLD_THRESHOLD = 8;
+
+/* 基础容器托盘里的短名:托盘空间金贵,MongoDB → Mongo 这种通行缩写不损失辨识。 */
+const INFRA_RUNTIME_SHORT_NAME: Record<string, string> = {
+  MongoDB: 'Mongo',
+  PostgreSQL: 'Postgres',
+  'SQL Server': 'MSSQL',
+  RabbitMQ: 'Rabbit',
+};
+
+function infraShortName(runtime: string): string {
+  return INFRA_RUNTIME_SHORT_NAME[runtime] || runtime;
+}
+
 interface ServiceState {
   profileId: string;
   containerName: string;
@@ -4488,7 +4503,21 @@ function BranchCard({
   const busy = action?.status === 'running' || isBusy(branch);
   const deleteBusy = action?.status === 'running' && action.kind === 'delete';
   const runningCount = runningServiceCount(branch);
-  const visibleResources = resources.filter((resource) => resource.port).slice(0, 6);
+  /* 容器分类(2026-07-05 方案 C「托盘胶囊」):应用容器与基础容器分开渲染——
+     应用 chips 照旧,基础容器(Mongo/Redis 等)装进虚线托盘并冠名「基础」。
+     历史 bug:这里曾 slice(0, 6) 硬砍 chips,5 应用 + Mongo 恰好 6 个,Redis
+     排第 7 被静默切掉(排序 应用→数据库→缓存)。现改为全部显示;仅应用 chips
+     超过 8 个时折叠为「+N」,基础托盘永远完整。 */
+  const portedResources = resources.filter((resource) => resource.port);
+  const appResources = portedResources.filter((resource) => resource.source !== 'infra');
+  const infraResources = portedResources.filter((resource) => resource.source === 'infra');
+  const [appChipsExpanded, setAppChipsExpanded] = useState(false);
+  const foldedAppCount = appResources.length > APP_CHIP_FOLD_THRESHOLD
+    ? appResources.length - APP_CHIP_FOLD_THRESHOLD
+    : 0;
+  const visibleAppResources = foldedAppCount > 0 && !appChipsExpanded
+    ? appResources.slice(0, APP_CHIP_FOLD_THRESHOLD)
+    : appResources;
   const chipDisplay = normalizeResourceChipDisplay(resourceChipDisplay);
   const previewCapacityWarning = branch.status === 'running' ? '' : capacityWarning;
 
@@ -4943,7 +4972,8 @@ function BranchCard({
         </div>
       ) : null}
 
-      {/* 状态/服务 chip 行 — wrap 不 nowrap,所有 port 全部显示(无 +N 折叠)。
+      {/* 状态/服务 chip 行 — wrap 不 nowrap。应用 chips 全部显示(超过 8 个才
+          折叠为「+N」,可展开);基础容器走虚线托盘、永远完整(2026-07-05 方案 C)。
           用户反馈 2026-05-06:
           - running 时端口 chip 已带绿点,"运行中"chip 完全冗余 → 删
           - 启动中 / 异常 时,端口 chip 色统一跟 branch 状态(以前是
@@ -5131,50 +5161,91 @@ function BranchCard({
             >切回源码编译</button>
           </span>
         ) : null}
-        {visibleResources.length > 0 ? visibleResources.map((resource) => {
-          // 端口 chip 颜色优先跟 branch 整体态:isInterim/isError 时强制对齐
-          // (端口监听了不代表流量已通,容易给用户"绿色=就绪"的错觉);
-          // running 时才用 service 自身状态做精细化区分。
-          const chipStatus = isInterim || isError ? branch.status : resource.status;
-          const chipRailClass = isError ? issueRailClass : statusRailClass(chipStatus);
-          // 基础设施(MongoDB/Redis 等)是"依赖",不是"自己的容器":弱化为次要 —— 不显端口、
-          // 去边框、静默底色,和自有服务 chip 拉开主次(2026-06-26 用户验收 #4)。
-          const isInfra = resource.source === 'infra';
-          // "碎点"治理(2026-06-26 用户验收 #5):running 态由 chip 底色已表达,无需再缀一个
-          // 状态点;只在 error/中间态保留状态点(负面/过渡信号才值得这一点)。
-          const showDot = isError || isInterim;
-          const showPort = chipDisplay.port && !isInfra && typeof resource.port === 'number';
-          const chipToneClass = isInfra
-            ? 'border-transparent bg-transparent text-muted-foreground/70 hover:bg-[hsl(var(--surface-raised))]/55 hover:text-foreground/90'
-            : chipStatus === 'running'
-              ? 'border-emerald-500/25 bg-emerald-500/[0.055] text-foreground/85 hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-foreground'
-              : chipStatus === 'error'
-                ? 'border-destructive/30 bg-destructive/10 text-foreground/85 hover:border-destructive/45 hover:bg-destructive/15 hover:text-foreground'
-                : isInterim
-                  ? 'border-sky-500/30 bg-sky-500/10 text-foreground/85 hover:border-sky-500/45 hover:bg-sky-500/15 hover:text-foreground'
-                  : 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))]/75 text-foreground/75 hover:border-primary/30 hover:bg-[hsl(var(--surface-raised))]/90 hover:text-foreground';
-          return (
-            <button
-              key={resource.id}
-              type="button"
-              className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs transition-[background-color,border-color,color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 ${isInfra ? '' : 'shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]'} ${chipToneClass} ${
-                resource.access === 'external' && !isInfra
-                  ? 'ring-1 ring-[hsl(var(--hairline))]'
-                  : ''
-              }`}
-              title={`${resource.displayName}${isInfra ? '（基础设施依赖）' : ''}\n${resource.serviceName}${resource.containerName ? ` · ${resource.containerName}` : ''}${typeof resource.port === 'number' ? `\n端口 :${resource.port}` : ''}\n点击打开资源面板`}
-              aria-label={`打开 ${resource.displayName} 资源面板`}
-              onClick={(event) => {
-                event.stopPropagation();
-                onResourcePanel?.(resource);
-              }}
-            >
-              {showDot ? <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${chipRailClass}`} aria-hidden /> : null}
-              {(chipDisplay.icon || isInfra) ? <ResourceIcon resource={resource} className={`h-3.5 w-3.5 shrink-0 ${isInfra ? 'opacity-70' : 'opacity-85 saturate-100 brightness-105'}`} /> : null}
-              {showPort ? <span className="font-mono text-foreground/80">:{resource.port}</span> : null}
-            </button>
-          );
-        }) : (
+        {portedResources.length > 0 ? (
+          <>
+            {visibleAppResources.map((resource) => {
+              // 端口 chip 颜色优先跟 branch 整体态:isInterim/isError 时强制对齐
+              // (端口监听了不代表流量已通,容易给用户"绿色=就绪"的错觉);
+              // running 时才用 service 自身状态做精细化区分。
+              const chipStatus = isInterim || isError ? branch.status : resource.status;
+              const chipRailClass = isError ? issueRailClass : statusRailClass(chipStatus);
+              // "碎点"治理(2026-06-26 用户验收 #5):running 态由 chip 底色已表达,无需再缀一个
+              // 状态点;只在 error/中间态保留状态点(负面/过渡信号才值得这一点)。
+              const showDot = isError || isInterim;
+              const showPort = chipDisplay.port && typeof resource.port === 'number';
+              const chipToneClass = chipStatus === 'running'
+                ? 'border-emerald-500/25 bg-emerald-500/[0.055] text-foreground/85 hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-foreground'
+                : chipStatus === 'error'
+                  ? 'border-destructive/30 bg-destructive/10 text-foreground/85 hover:border-destructive/45 hover:bg-destructive/15 hover:text-foreground'
+                  : isInterim
+                    ? 'border-sky-500/30 bg-sky-500/10 text-foreground/85 hover:border-sky-500/45 hover:bg-sky-500/15 hover:text-foreground'
+                    : 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))]/75 text-foreground/75 hover:border-primary/30 hover:bg-[hsl(var(--surface-raised))]/90 hover:text-foreground';
+              return (
+                <button
+                  key={resource.id}
+                  type="button"
+                  className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs shadow-[inset_0_1px_0_rgba(255,255,255,0.035)] transition-[background-color,border-color,color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 ${chipToneClass} ${
+                    resource.access === 'external' ? 'ring-1 ring-[hsl(var(--hairline))]' : ''
+                  }`}
+                  title={`${resource.displayName}\n${resource.serviceName}${resource.containerName ? ` · ${resource.containerName}` : ''}${typeof resource.port === 'number' ? `\n端口 :${resource.port}` : ''}\n点击打开资源面板`}
+                  aria-label={`打开 ${resource.displayName} 资源面板`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onResourcePanel?.(resource);
+                  }}
+                >
+                  {showDot ? <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${chipRailClass}`} aria-hidden /> : null}
+                  {chipDisplay.icon ? <ResourceIcon resource={resource} className="h-3.5 w-3.5 shrink-0 opacity-85 saturate-100 brightness-105" /> : null}
+                  {showPort ? <span className="font-mono text-foreground/80">:{resource.port}</span> : null}
+                </button>
+              );
+            })}
+            {foldedAppCount > 0 || appChipsExpanded ? (
+              <button
+                type="button"
+                className="inline-flex h-6 shrink-0 items-center rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))]/75 px-2 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                title={appChipsExpanded ? '收起服务端口' : `还有 ${foldedAppCount} 个服务端口，点击展开`}
+                aria-expanded={appChipsExpanded}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setAppChipsExpanded((current) => !current);
+                }}
+              >
+                {appChipsExpanded ? '收起' : `+${foldedAppCount}`}
+              </button>
+            ) : null}
+            {/* 方案 C「托盘胶囊」(2026-07-05):基础容器(Mongo/Redis 等分支间共享的
+                基础设施)装进虚线托盘,冠名「基础」+ 实名 + 端口 —— 物理包裹让
+                "它们是一伙的、和应用不是一个物种"不学即会;替换掉旧的"无边框暗图标"
+                弱化方案(弱化过头,用户建立不了基础容器心智)。 */}
+            {infraResources.length > 0 ? (
+              <span
+                className="inline-flex min-w-0 shrink-0 flex-wrap items-center gap-1 rounded-lg border border-dashed border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))]/40 py-[3px] pl-1 pr-[5px]"
+                title="基础容器：分支间共享的基础设施依赖"
+              >
+                <span className="px-1 text-[10px] font-semibold tracking-wider text-muted-foreground/75" aria-hidden>基础</span>
+                {infraResources.map((resource) => (
+                  <button
+                    key={resource.id}
+                    type="button"
+                    className="inline-flex h-[21px] shrink-0 items-center gap-1 rounded-[5px] bg-[hsl(var(--surface-raised))] px-1.5 text-xs text-foreground/75 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                    title={`${resource.displayName}（基础容器 · 分支间共享）\n${resource.serviceName}${resource.containerName ? ` · ${resource.containerName}` : ''}${typeof resource.port === 'number' ? `\n端口 :${resource.port}` : ''}\n点击打开资源面板`}
+                    aria-label={`打开 ${resource.displayName} 基础容器资源面板`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onResourcePanel?.(resource);
+                    }}
+                  >
+                    {resource.status === 'error' ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-destructive" aria-hidden /> : null}
+                    <ResourceIcon resource={resource} className="h-3 w-3 shrink-0" />
+                    <span className="text-[11px] font-semibold">{infraShortName(resource.runtime)}</span>
+                    {typeof resource.port === 'number' ? <span className="font-mono text-[11px] text-muted-foreground">:{resource.port}</span> : null}
+                  </button>
+                ))}
+              </span>
+            ) : null}
+          </>
+        ) : (
           // 没有 port 时显示概览(只有当至少有 service 才显示,否则啥都不显示)
           serviceCount(branch) > 0 ? (
             <span className="inline-flex h-6 shrink-0 items-center rounded-md border border-[hsl(var(--hairline))] px-2 text-xs text-muted-foreground">
