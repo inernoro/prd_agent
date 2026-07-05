@@ -382,6 +382,9 @@ public class MongoDbContext
     // 行为洞察处理状态（确认/已修复/忽略 + 转缺陷关联，按 kind|target 指纹持久化）
     public IMongoCollection<BehaviorInsightState> BehaviorInsightStates => _database.GetCollection<BehaviorInsightState>("behavior_insight_states");
 
+    // 每用户「最近打开」台账（首页「继续上次」唯一数据源；打开工作区/工作流详情时 upsert）
+    public IMongoCollection<UserRecentOpen> UserRecentOpens => _database.GetCollection<UserRecentOpen>("home_recent_opens");
+
     // Product Management 产品管理（产品-版本-需求-功能-客户 + 通用表单/状态机引擎）
     public IMongoCollection<Product> Products => _database.GetCollection<Product>("products");
     public IMongoCollection<ProductVersion> ProductVersions => _database.GetCollection<ProductVersion>("product_versions");

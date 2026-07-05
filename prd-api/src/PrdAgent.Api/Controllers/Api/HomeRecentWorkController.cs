@@ -9,12 +9,11 @@ namespace PrdAgent.Api.Controllers.Api;
 
 /// <summary>
 /// 首页「继续上次」聚合端点。
-/// 汇总当前用户最近活跃的工作实体（视觉/文学工作区、工作流），按最近活跃时间倒序
-/// 返回统一列表，供登录后首页一键回到上次的工作现场。
-/// 工作区归属口径与前端列表页一致：scenarioType == article-illustration 归文学（/literary-agent/:id），
-/// 其余归视觉（/visual-agent/:id）；两者底层共用 image_master_workspaces 集合。
-/// behavior_events 里的路由是脱敏的（实体段已归一为 :id），拿不到具体工作区，
-/// 因此本端点直接查实体集合的归属 + 时间字段，不依赖行为流水。
+/// 唯一数据源是每用户「最近打开」台账（home_recent_opens，打开工作区/工作流详情时打点）。
+/// 禁止退回实体全局时间戳（UpdatedAt / LastOpenedAt / LastExecutedAt）作为排序依据：
+/// 那些字段任何共享成员编辑、定时工作流自跑都会变，会把"别人/机器的活跃"顶进
+/// 当前用户的继续上次，造成"人人看到同一批内容、且不是自己上次操作的"（2026-07-05 用户实测反馈）。
+/// 实体集合只用于标题富化 + 当前权限复核；台账为空（新用户/从未打开过）就返回空，前端隐藏区块。
 /// </summary>
 [ApiController]
 [Route("api/home")]
@@ -30,7 +29,7 @@ public sealed class HomeRecentWorkController : ControllerBase
 
     public record RecentWorkItem(string Route, string AgentKey, string Title, DateTime LastActiveAt);
 
-    /// <summary>最近活跃的工作实体（合并视觉/文学工作区与工作流，最多 limit 条）。</summary>
+    /// <summary>当前用户最近打开的工作实体（最多 limit 条，按本人打开时间倒序）。</summary>
     [HttpGet("recent-work")]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
     public async Task<IActionResult> RecentWork([FromQuery] int limit = 8, CancellationToken ct = default)
@@ -38,62 +37,66 @@ public sealed class HomeRecentWorkController : ControllerBase
         limit = Math.Clamp(limit, 1, 12);
         var userId = this.GetRequiredUserId();
 
-        var wsFilter = Builders<ImageMasterWorkspace>.Filter.Or(
-            Builders<ImageMasterWorkspace>.Filter.Eq(x => x.OwnerUserId, userId),
-            Builders<ImageMasterWorkspace>.Filter.AnyEq(x => x.MemberUserIds, userId));
-
-        // 「最近活跃」= 打开（LastOpenedAt）或编辑（UpdatedAt）的较大者。
-        // Mongo 端按两个字段各取一批，内存里按 Id 合并去重后取较大时间。
-        var wsByUpdated = await _db.ImageMasterWorkspaces.Find(wsFilter)
-            .SortByDescending(x => x.UpdatedAt)
-            .Limit(limit)
-            .Project(x => new { x.Id, x.Title, x.ScenarioType, x.UpdatedAt, x.LastOpenedAt })
-            .ToListAsync(ct);
-        var wsByOpened = await _db.ImageMasterWorkspaces.Find(wsFilter)
+        // 台账多取一些冗余：富化阶段会丢弃已删除/已失去权限的实体
+        var opens = await _db.UserRecentOpens
+            .Find(x => x.UserId == userId)
             .SortByDescending(x => x.LastOpenedAt)
-            .Limit(limit)
-            .Project(x => new { x.Id, x.Title, x.ScenarioType, x.UpdatedAt, x.LastOpenedAt })
+            .Limit(limit * 3)
             .ToListAsync(ct);
-        var workflows = await _db.Workflows.Find(x => x.CreatedBy == userId)
-            .SortByDescending(x => x.UpdatedAt)
-            .Limit(limit)
-            .Project(x => new { x.Id, x.Name, x.UpdatedAt, x.LastExecutedAt })
-            .ToListAsync(ct);
+
+        if (opens.Count == 0)
+            return Ok(ApiResponse<object>.Ok(new { items = Array.Empty<RecentWorkItem>() }));
+
+        var wsIds = opens.Where(o => o.AgentKey is "visual-agent" or "literary-agent").Select(o => o.EntityId).Distinct().ToList();
+        var wfIds = opens.Where(o => o.AgentKey == "workflow-agent").Select(o => o.EntityId).Distinct().ToList();
+
+        // 标题富化 + 权限复核（工作区：本人是 owner 或 member；工作流：本人创建）
+        var wsTitles = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (wsIds.Count > 0)
+        {
+            var wsFilter = Builders<ImageMasterWorkspace>.Filter.And(
+                Builders<ImageMasterWorkspace>.Filter.In(x => x.Id, wsIds),
+                Builders<ImageMasterWorkspace>.Filter.Or(
+                    Builders<ImageMasterWorkspace>.Filter.Eq(x => x.OwnerUserId, userId),
+                    Builders<ImageMasterWorkspace>.Filter.AnyEq(x => x.MemberUserIds, userId)));
+            var wss = await _db.ImageMasterWorkspaces.Find(wsFilter)
+                .Project(x => new { x.Id, x.Title })
+                .ToListAsync(ct);
+            foreach (var w in wss) wsTitles[w.Id] = w.Title;
+        }
+
+        var wfTitles = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (wfIds.Count > 0)
+        {
+            var wfs = await _db.Workflows
+                .Find(x => wfIds.Contains(x.Id) && x.CreatedBy == userId)
+                .Project(x => new { x.Id, x.Name })
+                .ToListAsync(ct);
+            foreach (var w in wfs) wfTitles[w.Id] = w.Name;
+        }
 
         var items = new List<RecentWorkItem>();
-
-        var seenWs = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var ws in wsByUpdated.Concat(wsByOpened))
+        foreach (var open in opens)
         {
-            if (!seenWs.Add(ws.Id)) continue;
-            var lastActive = ws.LastOpenedAt.HasValue && ws.LastOpenedAt.Value > ws.UpdatedAt
-                ? ws.LastOpenedAt.Value
-                : ws.UpdatedAt;
-            var isLiterary = string.Equals(ws.ScenarioType, "article-illustration", StringComparison.Ordinal);
+            string? title = open.AgentKey == "workflow-agent"
+                ? (wfTitles.TryGetValue(open.EntityId, out var wf) ? wf : null)
+                : (wsTitles.TryGetValue(open.EntityId, out var ws) ? ws : null);
+            if (title == null) continue; // 已删除或已失去权限：从继续上次里消失
+
+            var route = open.AgentKey switch
+            {
+                "literary-agent" => $"/literary-agent/{open.EntityId}",
+                "workflow-agent" => $"/workflow-agent/{open.EntityId}",
+                _ => $"/visual-agent/{open.EntityId}",
+            };
             items.Add(new RecentWorkItem(
-                Route: isLiterary ? $"/literary-agent/{ws.Id}" : $"/visual-agent/{ws.Id}",
-                AgentKey: isLiterary ? "literary-agent" : "visual-agent",
-                Title: string.IsNullOrWhiteSpace(ws.Title) ? "未命名" : ws.Title,
-                LastActiveAt: lastActive));
+                Route: route,
+                AgentKey: open.AgentKey,
+                Title: string.IsNullOrWhiteSpace(title) ? "未命名" : title,
+                LastActiveAt: open.LastOpenedAt));
+            if (items.Count >= limit) break;
         }
 
-        foreach (var wf in workflows)
-        {
-            var lastActive = wf.LastExecutedAt.HasValue && wf.LastExecutedAt.Value > wf.UpdatedAt
-                ? wf.LastExecutedAt.Value
-                : wf.UpdatedAt;
-            items.Add(new RecentWorkItem(
-                Route: $"/workflow-agent/{wf.Id}",
-                AgentKey: "workflow-agent",
-                Title: string.IsNullOrWhiteSpace(wf.Name) ? "未命名工作流" : wf.Name,
-                LastActiveAt: lastActive));
-        }
-
-        var merged = items
-            .OrderByDescending(x => x.LastActiveAt)
-            .Take(limit)
-            .ToList();
-
-        return Ok(ApiResponse<object>.Ok(new { items = merged }));
+        return Ok(ApiResponse<object>.Ok(new { items }));
     }
 }

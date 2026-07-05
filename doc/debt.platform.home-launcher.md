@@ -17,8 +17,8 @@
 | # | 边界 | 说明 | 补法 |
 |---|------|------|------|
 | 1 | 「继续上次」数据源仅 3 类 | 目前只聚合视觉/文学工作区与工作流；缺陷单、知识库、周报、涌现树等未纳入 | 在 `HomeRecentWorkController` 按同一模式增加来源（各集合按 owner + 时间字段取 top N 合并） |
-| 2 | behavior_events 不可用作实体级信号 | 行为流水的路由已脱敏（实体段归一为 `:id`），无法得知"最近打开过哪个具体工作区"；当前用实体集合的 `LastOpenedAt/UpdatedAt` 近似 | 如需精确"最近打开"，需在各实体的 open 端点落 `LastOpenedAt`（视觉工作区已有），或行为采集增加非脱敏可选字段（需评估隐私口径） |
-| 3 | 工作流缺 LastOpenedAt | `Workflow` 只有 `UpdatedAt/LastExecutedAt`，"只看不改"不会刷新活跃时间 | 需要时在 workflow 详情端点落 LastOpenedAt |
+| 2 | ~~实体全局时间戳近似~~（已修复 2026-07-05） | 首版用实体 `UpdatedAt/LastOpenedAt/LastExecutedAt` 近似"我的最近"，实测共享成员编辑、定时工作流自跑会顶进所有用户的继续上次（用户反馈"人人一样且不是自己操作的"）。已改为每用户台账 `home_recent_opens`（打开详情时 `RecentOpenTracker.TouchAsync` 打点），端点只读台账 | 已闭环；禁止回退全局时间戳方案 |
+| 3 | 台账冷启动为空 | 上线后所有用户的继续上次会清空，重新打开过工作区/工作流才逐渐积累（每次打开打一条） | 属预期行为（诚实优于杜撰）；如需回填可按各实体 owner 的 LastOpenedAt 一次性初始化，需评估共享工作区归属口径 |
 | 4 | 移动端首页未同步方向 C | `MobileHomePage` 是独立实现（2026-07-01 已另行改版为移动工作台），本次只改桌面 AgentLauncherPage | 如需移动端也加「继续上次」，复用 homeRecentWorkStore 即可 |
 | 5 | 登录后 UI 视觉验收待真人 | 本次自测覆盖 vitest/tsc/lint/pnpm build/CDS 编译 + AI key 冒烟端点；登录态页面截图验收需真实账号走 /验收 流程 | 用户在预览域名登录验收，或提供测试账号后补跑视觉验收归档 |
 

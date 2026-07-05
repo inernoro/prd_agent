@@ -159,13 +159,17 @@ const ICON_HUE: Record<string, number> = {
   PaSecretary: 224,
 };
 
-type Accent = { color: string; soft: string; border: string };
+type Accent = { color: string; soft: string; border: string; faint: string; glow: string };
 
 function hueAccent(h: number): Accent {
   return {
     color: `hsl(${h} 68% 64%)`,
     soft: `hsla(${h}, 68%, 60%, 0.14)`,
     border: `hsla(${h}, 68%, 60%, 0.26)`,
+    // faint: 静息态渗色（远看近乎不可见）；glow: 悬停投影。
+    // 纪律不变：静时安静、碰时呼吸——色彩只在交互瞬间参与。
+    faint: `hsla(${h}, 68%, 60%, 0.07)`,
+    glow: `hsla(${h}, 68%, 60%, 0.3)`,
   };
 }
 
@@ -273,19 +277,19 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
       onClick={onClick}
       className="group relative w-full h-full text-left rounded-xl transition-all duration-200 hover:-translate-y-0.5 flex flex-col gap-3 p-4"
       style={{
-        background: 'var(--bg-elevated, rgba(255,255,255,0.03))',
+        background: `radial-gradient(140px 90px at 14% 0%, ${accent.faint} 0%, transparent 100%), var(--bg-elevated, rgba(255,255,255,0.03))`,
         border: '1px solid rgba(255,255,255,0.06)',
       }}
     >
-      {/* Hover ring（中性，全站统一 hover 语言） */}
+      {/* Hover：本卡色相的描边 + 一缕同色投影（静时安静，碰时呼吸） */}
       <div
         className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
-        style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.16)' }}
+        style={{ boxShadow: `inset 0 0 0 1px ${accent.border}, 0 12px 32px -16px ${accent.glow}` }}
       />
 
       <div className="flex items-start justify-between">
         <div
-          className="shrink-0 w-10 h-10 rounded-[10px] flex items-center justify-center"
+          className="shrink-0 w-10 h-10 rounded-[10px] flex items-center justify-center transition-transform duration-200 group-hover:scale-105"
           style={{ background: accent.soft, border: `1px solid ${accent.border}` }}
         >
           <Icon size={19} style={{ color: accent.color }} />
@@ -328,14 +332,14 @@ function CompactCard({ item, onClick }: { item: ToolboxItem; onClick: () => void
         border: '1px solid rgba(255,255,255,0.06)',
       }}
     >
-      {/* Hover ring（中性） */}
+      {/* Hover：本卡色相描边 + 同色投影 */}
       <div
         className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
-        style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.16)' }}
+        style={{ boxShadow: `inset 0 0 0 1px ${accent.border}, 0 10px 26px -14px ${accent.glow}` }}
       />
 
       <div
-        className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center"
+        className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center transition-transform duration-200 group-hover:scale-105"
         style={{
           background: accent.soft,
           border: `1px solid ${accent.border}`,
@@ -389,10 +393,10 @@ function RecentWorkCard({ item, onClick }: { item: RecentWorkItemDto; onClick: (
     >
       <div
         className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
-        style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.16)' }}
+        style={{ boxShadow: `inset 0 0 0 1px ${accent.border}, 0 10px 26px -14px ${accent.glow}` }}
       />
       <div
-        className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center"
+        className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center transition-transform duration-200 group-hover:scale-105"
         style={{ background: accent.soft, border: `1px solid ${accent.border}` }}
       >
         <Icon size={17} style={{ color: accent.color }} />
@@ -631,7 +635,7 @@ export default function AgentLauncherPage() {
             width: isMobile ? '140%' : 520,
             height: isMobile ? 260 : 340,
             background:
-              'radial-gradient(ellipse at 30% 50%, rgba(255, 255, 255, 0.13) 0%, rgba(226, 232, 240, 0.055) 36%, transparent 66%)',
+              'radial-gradient(ellipse at 30% 50%, rgba(255, 255, 255, 0.13) 0%, rgba(226, 232, 240, 0.055) 36%, transparent 66%), radial-gradient(ellipse at 78% 30%, rgba(129, 140, 248, 0.07) 0%, transparent 60%)',
             filter: 'blur(40px)',
             opacity: 0.82,
             zIndex: 0,
@@ -674,7 +678,16 @@ export default function AgentLauncherPage() {
                       {greeting}
                       {displayName ? '，' : ''}
                       {displayName && (
-                        <span style={{ color: 'var(--accent-primary, #818CF8)' }}>{displayName}</span>
+                        <span
+                          style={{
+                            background: 'linear-gradient(100deg, #8B95F6 0%, #B7A5F0 100%)',
+                            WebkitBackgroundClip: 'text',
+                            WebkitTextFillColor: 'transparent',
+                            backgroundClip: 'text',
+                          }}
+                        >
+                          {displayName}
+                        </span>
                       )}
                     </h1>
                   </Reveal>
@@ -764,8 +777,8 @@ export default function AgentLauncherPage() {
                           border: '1px solid rgba(255,255,255,0.08)',
                         }}
                         onMouseEnter={(e) => {
-                          e.currentTarget.style.background = 'rgba(255,255,255,0.08)';
-                          e.currentTarget.style.borderColor = 'rgba(255,255,255,0.16)';
+                          e.currentTarget.style.background = qa.soft;
+                          e.currentTarget.style.borderColor = qa.border;
                         }}
                         onMouseLeave={(e) => {
                           e.currentTarget.style.background = 'var(--bg-elevated, rgba(255,255,255,0.04))';

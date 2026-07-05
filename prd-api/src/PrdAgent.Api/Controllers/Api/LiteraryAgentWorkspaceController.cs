@@ -8,6 +8,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -274,11 +275,12 @@ public class LiteraryAgentWorkspaceController : ControllerBase
         if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
         if (ws.OwnerUserId == "__FORBIDDEN__") return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
 
-        // Update lastOpenedAt
+        // Update lastOpenedAt + 每用户「最近打开」台账（首页继续上次）
         await _db.ImageMasterWorkspaces.UpdateOneAsync(
             x => x.Id == ws.Id,
             Builders<ImageMasterWorkspace>.Update.Set(x => x.LastOpenedAt, DateTime.UtcNow),
             cancellationToken: ct);
+        await RecentOpenTracker.TouchAsync(_db, adminId, "literary-agent", ws.Id);
 
         var msgLimit = Math.Clamp(messageLimit ?? 100, 1, 500);
         var astLimit = Math.Clamp(assetLimit ?? 200, 1, 1000);
