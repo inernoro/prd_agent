@@ -222,8 +222,12 @@
     animation: cds-drawer-slide-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
   }
 
+  /* 分支列表 = 三档中的 fluid(去上限,非第四种宽度):卡片网格是
+     auto-fill 自适应列,超宽屏应继续加列;若折叠到 wide(1440) 会在
+     4K 屏右侧再造"大片留白"——正是 audit-cds-ui-regressions 守卫
+     诞生时要防的回归(2026-07-05 三档归一时曾误折叠,CI 抓回)。 */
   .cds-workspace.cds-branch-list-workspace {
-    max-width: var(--workspace-wide, 1440px);
+    max-width: none;
   }
 
   .cds-branch-card-grid {
