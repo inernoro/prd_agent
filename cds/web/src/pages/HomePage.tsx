@@ -277,7 +277,7 @@ export function HomePage(): JSX.Element {
           <nav className="cdsh-nav cdsh-rise" style={{ animationDelay: '0s' }}>
             <Link className="cdsh-brand" to="/">
               <span className="cdsh-logo">
-                <CdsGem mode="brand" className="h-[26px] w-[26px]" />
+                <CdsGem mode="brand" detail="simple" className="h-[26px] w-[26px]" />
               </span>
               <b>Cloud Dev Suite</b>
             </Link>
@@ -601,7 +601,7 @@ export function HomePage(): JSX.Element {
           <div className="cdsh-footer-grid">
             <div className="cdsh-footer-brand">
               <div className="cdsh-brand">
-                <CdsGem mode="brand" className="h-7 w-7" />
+                <CdsGem mode="brand" detail="simple" className="h-7 w-7" />
                 <b>Cloud Dev Suite</b>
               </div>
               <p>Branch-native control plane for the whole stack.</p>

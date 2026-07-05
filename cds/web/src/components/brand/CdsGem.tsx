@@ -111,6 +111,14 @@ const GEM_FACETS: readonly GemFacet[] = (() => {
   return facets;
 })();
 
+/* 小尺寸清晰档(detail="simple"):<=32px 时 12 切面的完整明度带会糊成一团——
+   深阶(0/1/2)与暗底混泥。simple 档只用色阶亮部,相邻切面保持一档反差,
+   星形轮廓与切面感在 16-32px 依然可读(治 2026-07-05 "左上角 logo 看不清")。 */
+const SIMPLE_SHADE_IDX: readonly number[] = [
+  // cores(i=0,2,4,...):3/4 交替 —— 中亮双色
+  3, 5, 4, 5, 3, 5, 4, 5, 3, 5, 4, 5,
+];
+
 export interface CdsGemProps extends Omit<SVGProps<SVGSVGElement>, 'children' | 'mode'> {
   /** 状态(决定动效签名 + 默认矿色)。默认 static:静止无动效。 */
   mode?: GemMode;
@@ -118,6 +126,8 @@ export interface CdsGemProps extends Omit<SVGProps<SVGSVGElement>, 'children' | 
   mineral?: GemMineral;
   /** 一次性逐面组装入场(登录卡 / 冷启动场景)。 */
   entrance?: boolean;
+  /** 细节档:full=完整 6 阶色带(>=36px);simple=亮部高反差(<=32px 的顶栏/favicon/行内)。 */
+  detail?: 'full' | 'simple';
   className?: string;
   title?: string;
 }
@@ -126,6 +136,7 @@ export function CdsGem({
   mode = 'static',
   mineral,
   entrance = false,
+  detail = 'full',
   className,
   title = 'CDS',
   ...props
@@ -133,14 +144,20 @@ export function CdsGem({
   const shades = GEM_SHADES[mineral ?? GEM_MODE_MINERAL[mode]];
   return (
     <svg
-      className={cn('cds-gem', mode !== 'static' ? `cds-gem--${mode}` : null, entrance ? 'cds-gem--entrance' : null, className)}
+      className={cn(
+        'cds-gem',
+        mode !== 'static' ? `cds-gem--${mode}` : null,
+        entrance ? 'cds-gem--entrance' : null,
+        detail === 'simple' ? 'cds-gem--simple' : null,
+        className,
+      )}
       viewBox="0 0 64 64"
       role="img"
       aria-label={title}
       {...props}
     >
       {GEM_FACETS.map((facet) => {
-        const shade = shades[facet.shadeIdx];
+        const shade = shades[detail === 'simple' ? SIMPLE_SHADE_IDX[facet.i] : facet.shadeIdx];
         return (
           <polygon
             key={facet.i}
@@ -199,7 +216,13 @@ export function CdsGemLoader({
       aria-label={label ? undefined : 'CDS 正在加载'}
     >
       <span className="cds-logo-loader-mark" aria-hidden="true">
-        <CdsGem mode="loader" mineral={mineral} className={cn(gemLoaderSizes[size], gemClassName)} />
+        {/* xs/sm/md(<=20px)自动走小尺寸清晰档,lg/xl 用完整色带 */}
+        <CdsGem
+          mode="loader"
+          mineral={mineral}
+          detail={size === 'lg' || size === 'xl' ? 'full' : 'simple'}
+          className={cn(gemLoaderSizes[size], gemClassName)}
+        />
       </span>
       {label ? <span>{label}</span> : null}
     </span>

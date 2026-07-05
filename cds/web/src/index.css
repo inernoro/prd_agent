@@ -840,10 +840,8 @@
   .cds-rail-avatar-icon {
     position: relative;
     z-index: 1;
-    width: 1.75rem;
-    height: 1.75rem;
-    animation: cds-gem-drift 8s ease-in-out infinite;
-    transform-origin: center;
+    width: 2rem;
+    height: 2rem;
   }
 
   /* ===== 宝石六芒(CdsGem)— 状态系统设定 v2 =====
@@ -854,7 +852,18 @@
   .cds-gem {
     display: block;
     overflow: visible;
+    /* 不带默认辉光:drop-shadow 在 <=32px 会把切面糊成一团橙(2026-07-05 用户反馈)。
+       需要辉光的大尺寸场景自行加 cds-gem--glow。 */
+  }
+
+  .cds-gem--glow {
     filter: drop-shadow(0 0 10px hsl(var(--primary) / 0.18));
+  }
+
+  /* 小尺寸清晰档:不参与流光/呼吸(透明度波动在小尺寸=发虚),永远满亮度。 */
+  .cds-gem--simple .cds-gem-facet {
+    animation: none !important;
+    opacity: 1 !important;
   }
 
   .cds-gem-facet {
@@ -968,10 +977,6 @@
     animation: cds-brand-title-shine 7s ease-in-out infinite;
   }
 
-  .cds-rail-brand:hover .cds-rail-avatar-icon {
-    animation-duration: 4s;
-  }
-
   @keyframes cds-gem-ripple {
     0%,
     16%,
@@ -1082,16 +1087,6 @@
     92%,
     100% {
       opacity: 0;
-    }
-  }
-
-  @keyframes cds-gem-drift {
-    0%,
-    100% {
-      transform: rotate(-2deg) scale(1);
-    }
-    50% {
-      transform: rotate(2deg) scale(1.04);
     }
   }
 

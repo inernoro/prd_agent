@@ -354,7 +354,7 @@ export function LoginPage(): JSX.Element {
 
       <header className="cds-auth-header">
         <Link to="/" className="cds-auth-brand" viewTransition>
-          <CdsGem className="h-6 w-6" />
+          <CdsGem detail="simple" className="h-6 w-6" />
           <span>Cloud Dev Suite</span>
         </Link>
       </header>

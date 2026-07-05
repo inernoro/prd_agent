@@ -10,7 +10,7 @@ import { OperatorApprovalModal } from '@/components/OperatorApprovalModal';
 import { PendingImportInbox } from '@/components/PendingImportInbox';
 import { AccessRequestInbox } from '@/components/AccessRequestInbox';
 import { SiteNoticeInbox } from '@/components/SiteNoticeInbox';
-import { CdsMetallicLogo } from '@/components/brand/CdsMetallicLogo';
+import { CdsGem } from '@/components/brand/CdsGem';
 import { Button } from '@/components/ui/button';
 import { apiUrl } from '@/lib/api';
 import { applyThemeMode, useTheme } from '@/lib/theme';
@@ -582,7 +582,7 @@ function AppRail(props: RailNavProps): JSX.Element {
           形成"位置偏移"(2026-07-04 用户验收图3)。窄栏只放居中的宝石。 */}
       <div className="cds-rail-brand">
         <div className="cds-rail-avatar" aria-label="CDS" title="Cloud Dev Suite">
-          <CdsMetallicLogo className="cds-rail-avatar-icon" aria-hidden />
+          <CdsGem mode="brand" detail="simple" className="cds-rail-avatar-icon" aria-hidden />
         </div>
       </div>
       <RailNav {...props} />
@@ -628,7 +628,7 @@ function MobileNavDrawer({
         <div className="cds-mobile-drawer-head">
           <div className="cds-rail-brand !pb-0">
             <div className="cds-rail-avatar" aria-label="CDS">
-              <CdsMetallicLogo className="cds-rail-avatar-icon" aria-hidden />
+              <CdsGem mode="brand" detail="simple" className="cds-rail-avatar-icon" aria-hidden />
             </div>
             <div className="min-w-0 flex-1">
               <div className="cds-rail-brand-title truncate">Cloud Dev Suite</div>
