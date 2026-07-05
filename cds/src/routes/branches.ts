@@ -13096,6 +13096,30 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return conflicts;
   };
 
+  const findAliasCustomDomainCollisions = (
+    branchId: string,
+    candidateAliases: string[],
+  ): Array<{ alias: string; domain: string; conflictWith: string; reason: 'custom-domain' }> => {
+    const rootDomains = config.rootDomains?.length
+      ? config.rootDomains
+      : (config.previewDomain ? [config.previewDomain] : []);
+    if (rootDomains.length === 0) return [];
+
+    const conflicts: Array<{ alias: string; domain: string; conflictWith: string; reason: 'custom-domain' }> = [];
+    for (const alias of candidateAliases) {
+      for (const rawRoot of rootDomains) {
+        const host = `${alias.toLowerCase()}.${rawRoot.toLowerCase()}`;
+        for (const other of stateService.getAllBranches()) {
+          if (other.id === branchId) continue;
+          if (other.customDomains?.some((domain) => domain.toLowerCase() === host)) {
+            conflicts.push({ alias, domain: host, conflictWith: other.id, reason: 'custom-domain' });
+          }
+        }
+      }
+    }
+    return conflicts;
+  };
+
   router.get('/branches/:id/subdomain-aliases', (req, res) => {
     const { id } = req.params;
     const entry = stateService.getBranch(id);
@@ -13268,10 +13292,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     // Check collisions with other branches' slugs/aliases
     const collisions = stateService.findAliasCollisions(id, normalized);
-    if (collisions.length > 0) {
+    const customDomainCollisions = findAliasCustomDomainCollisions(id, normalized);
+    const allCollisions = [...collisions, ...customDomainCollisions];
+    if (allCollisions.length > 0) {
       res.status(409).json({
-        error: `子域名冲突: ${collisions.map(c => `"${c.alias}" 已被分支 "${c.conflictWith}" ${c.reason === 'slug' ? '的默认 slug' : '的别名'}占用`).join('; ')}`,
-        collisions,
+        error: `子域名冲突: ${allCollisions.map(c => {
+          if (c.reason === 'slug') return `"${c.alias}" 已被分支 "${c.conflictWith}" 的默认 slug 占用`;
+          if (c.reason === 'alias') return `"${c.alias}" 已被分支 "${c.conflictWith}" 的别名占用`;
+          if ('domain' in c) return `"${c.alias}" 生成的域名 "${c.domain}" 已被分支 "${c.conflictWith}" 的完整自定义域名占用`;
+          return `"${c.alias}" 已被分支 "${c.conflictWith}" 占用`;
+        }).join('; ')}`,
+        collisions: allCollisions,
       });
       return;
     }

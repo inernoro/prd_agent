@@ -522,6 +522,27 @@ describe('Branch Routes', () => {
       expect(reasons).toContain('service-subdomain');
       expect(stateService.getBranchCustomDomains('branch-a')).toEqual([]);
     });
+
+    it('rejects subdomain aliases that shadow another branch custom domain', async () => {
+      seedProject('proj-a', 'a');
+      seedProject('proj-b', 'b');
+      seedBranch('branch-a', 'proj-a', 'main');
+      seedBranch('branch-b', 'proj-b', 'main');
+      stateService.setBranchCustomDomains('branch-b', ['app.example.test']);
+
+      const res = await request(server, 'PUT', '/api/branches/branch-a/subdomain-aliases', {
+        aliases: ['app'],
+      }, { 'X-Test-Key': 'A' });
+
+      expect(res.status).toBe(409);
+      expect((res.body as any).collisions).toContainEqual({
+        alias: 'app',
+        domain: 'app.example.test',
+        conflictWith: 'branch-b',
+        reason: 'custom-domain',
+      });
+      expect(stateService.getBranchSubdomainAliases('branch-a')).toEqual([]);
+    });
   });
 
   describe('分支级额外服务 /api/branches/:id/extra-services', () => {

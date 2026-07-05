@@ -3312,6 +3312,7 @@ export function createServer(deps: ServerDeps): express.Express {
   }));
   app.use('/api', createReleasesRouter({
     stateService: deps.stateService,
+    config: deps.config,
   }));
   // CDS 配对连接（系统级），见 routes/cds-system-connections.ts。
   app.use('/api', createCdsSystemConnectionsRouter({
