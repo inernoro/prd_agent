@@ -344,6 +344,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--allow-out-of-order", script);
         Assert.Contains("validate_ledger_order", script);
         Assert.Contains("append_ledger_entry success", script);
+        Assert.Contains("record_failed_stage_on_exit", script);
+        Assert.Contains("append_ledger_entry failed", script);
+        Assert.Contains("LLM Gateway production stage failed; appending failed rollout ledger entry.", script);
+        Assert.Contains("trap record_failed_stage_on_exit EXIT", script);
         Assert.Contains("append_ledger_entry rollback", script);
         Assert.Contains("scripts/llmgw-rollout-ledger.py validate", script);
         Assert.Contains("scripts/llmgw-rollout-ledger.py append", script);

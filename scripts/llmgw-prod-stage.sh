@@ -384,6 +384,31 @@ append_ledger_entry() {
     --min-stage-observation-hours "$min_observation_hours"
 }
 
+rollout_ledger_status="pending"
+record_failed_stage_on_exit() {
+  exit_code="$?"
+  if [ "$exit_code" = "0" ]; then
+    return 0
+  fi
+  if [ "$execute" != "1" ]; then
+    return 0
+  fi
+  if [ "$stage" = "rollback-inproc" ]; then
+    return 0
+  fi
+  if [ "${rollout_ledger_status:-pending}" != "pending" ]; then
+    return 0
+  fi
+
+  echo "LLM Gateway production stage failed; appending failed rollout ledger entry." >&2
+  if append_ledger_entry failed >/dev/null 2>&1; then
+    rollout_ledger_status="failed"
+  else
+    echo "WARN: failed to append failed rollout ledger entry." >&2
+  fi
+}
+trap record_failed_stage_on_exit EXIT
+
 run_or_print() {
   if [ "$execute" = "1" ]; then
     "$@"
@@ -417,7 +442,7 @@ if [ "$stage" = "rollback-rehearsal" ]; then
   if [ "$execute" = "1" ]; then
     mkdir -p "$evidence_dir"
     LLMGW_ROLLBACK_DRY_RUN=1 scripts/llmgw-rollback-inproc.sh
-    python3 scripts/llmgw-rollout-ledger.py stage-report \
+	    python3 scripts/llmgw-rollout-ledger.py stage-report \
       --json-out "$stage_json" \
       --report-md "$stage_md" \
       --stage "$stage" \
@@ -435,12 +460,13 @@ if [ "$stage" = "rollback-rehearsal" ]; then
       --main-ref "$main_ref" \
       --main-sha "$main_sha" \
       --allow-out-of-order "$allow_out_of_order" \
-      --allow-out-of-order-reason "$allow_out_of_order_reason" \
-      --min-stage-observation-hours "$min_observation_hours"
-    append_ledger_entry success
-  else
-    echo "+ LLMGW_ROLLBACK_DRY_RUN=1 scripts/llmgw-rollback-inproc.sh"
-    echo "Dry-run only. Add --execute to record rollback rehearsal success."
+	      --allow-out-of-order-reason "$allow_out_of_order_reason" \
+	      --min-stage-observation-hours "$min_observation_hours"
+	    append_ledger_entry success
+	    rollout_ledger_status="success"
+	  else
+	    echo "+ LLMGW_ROLLBACK_DRY_RUN=1 scripts/llmgw-rollback-inproc.sh"
+	    echo "Dry-run only. Add --execute to record rollback rehearsal success."
   fi
   exit 0
 fi
@@ -485,7 +511,7 @@ else
 fi
 
 if [ "$execute" = "1" ]; then
-  python3 scripts/llmgw-rollout-ledger.py stage-report \
+	  python3 scripts/llmgw-rollout-ledger.py stage-report \
     --json-out "$stage_json" \
     --report-md "$stage_md" \
     --stage "$stage" \
@@ -503,10 +529,11 @@ if [ "$execute" = "1" ]; then
     --main-ref "$main_ref" \
     --main-sha "$main_sha" \
     --allow-out-of-order "$allow_out_of_order" \
-    --allow-out-of-order-reason "$allow_out_of_order_reason" \
-    --min-stage-observation-hours "$min_observation_hours"
-  append_ledger_entry success
-fi
+	    --allow-out-of-order-reason "$allow_out_of_order_reason" \
+	    --min-stage-observation-hours "$min_observation_hours"
+	  append_ledger_entry success
+	  rollout_ledger_status="success"
+	fi
 
 if [ "$execute" != "1" ]; then
   echo "Dry-run only. Add --execute to run the stage."
