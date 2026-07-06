@@ -85,7 +85,35 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  runner-precheck:
+    runs-on: ubuntu-latest
+    env:
+      INPUT_RUNNER_LABELS_JSON: ${{ github.event.inputs.runner_labels_json || '["self-hosted","prd-agent-prod"]' }}
+      GITHUB_TOKEN: ${{ secrets.PRD_AGENT_PROD_GITHUB_TOKEN || github.token }}
+    steps:
+      - name: Checkout release scripts
+        uses: actions/checkout@v4
+
+      - name: Check production runner availability
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .llmgw-release-evidence
+          python3 scripts/llmgw-prod-runner-precheck.py \
+            --repo "${{ github.repository }}" \
+            --labels-json "$INPUT_RUNNER_LABELS_JSON" \
+            --json-out .llmgw-release-evidence/runner-precheck.json
+
+      - name: Upload runner precheck report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: llmgw-prod-stage-runner-precheck-${{ github.run_id }}
+          path: .llmgw-release-evidence/runner-precheck.json
+          if-no-files-found: ignore
+
   stage:
+    needs: runner-precheck
     runs-on: ${{ fromJSON(github.event.inputs.runner_labels_json || '["self-hosted","prd-agent-prod"]') }}
     environment: production
     env:
