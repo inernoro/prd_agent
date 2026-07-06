@@ -132,8 +132,8 @@ base、health commit、每组 shadow 样本数、critical/httpFail 与最终 ver
 
 ## 5. Point 4 — 遗漏 / 未覆盖清单
 
-- GW 独立数据域主体已落地：控制台账号、登录审计、GW serving 请求日志、shadow 对账证据写 `llm_gateway`；MAP 原有日志不迁移、不删除。
-- GW 操作审计仍待扩展：控制台配置写操作、破玻璃重置等后续应补 `llmgw_operation_audits`。
+- GW 独立数据域主体已落地：控制台账号、登录审计、操作审计、GW serving 请求日志、shadow 对账证据写 `llm_gateway`；MAP 原有日志不迁移、不删除。
+- GW 操作审计已覆盖控制台改密、平台启停、模型启停、默认池切换，写入 `llmgw_operation_audits`；破玻璃启动重置仍只靠启动日志，后续如要可补启动级审计。
 - 六处直连已收口（§3），当前由 `GatewayDirectClientRatchetTests` 空 baseline 守住；后续发现新增直连即 CI red。
 - L1 GatewayTransport 日志标记已落地；后续风险是新增调用点遗漏上下文打标，需继续靠日志页和回归测试发现。
 - multipart raw HTTP 化已接通：MAP 侧 inline multipart 上传为 `MultipartFileRefs`，serving 侧 rehydrate 并校验 size/hash；生产 gate 仍要求 ASR/图生图等类别有真实 http 样本。

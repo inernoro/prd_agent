@@ -138,6 +138,7 @@ var logs = mapDatabase.GetCollection<BsonDocument>("llmrequestlogs");
 // GW 自有账号和审计落独立库 llm_gateway，避免被 MAP 项目 env / shared DB 状态覆盖。
 var users = gatewayDatabase.GetCollection<LlmGwUser>("llmgw_console_users");
 var loginAudits = gatewayDatabase.GetCollection<LlmGwLoginAudit>("llmgw_login_audits");
+var operationAudits = gatewayDatabase.GetCollection<BsonDocument>("llmgw_operation_audits");
 // 网关配置面（只读/小范围写）：模型池 / 平台 / 模型 / 影子比对仍来自 MAP 库。MAP 继续负责自己的配置和日志。
 var modelGroups = mapDatabase.GetCollection<BsonDocument>("model_groups");
 var platforms = mapDatabase.GetCollection<BsonDocument>("llmplatforms");
@@ -222,9 +223,19 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
     }
     if (!PasswordHasher.Verify(oldPwd, user.PasswordHash))
     {
+        await WriteOperationAuditAsync(
+            operationAudits,
+            http,
+            action: "auth.change_password",
+            targetType: "llmgw_console_user",
+            targetId: user.Id,
+            targetName: user.Username,
+            success: false,
+            reason: "INVALID_OLD_PASSWORD");
         return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("INVALID_CREDENTIALS", "旧口令错误"), jsonOptions);
     }
 
+    var wasMustChangePassword = user.MustChangePassword;
     var update = Builders<LlmGwUser>.Update
         .Set(u => u.PasswordHash, PasswordHasher.Hash(newPwd))
         .Set(u => u.MustChangePassword, false)
@@ -232,6 +243,20 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
         .Set(u => u.PasswordChangedByUser, true)
         .Set(u => u.UpdatedAt, DateTime.UtcNow);
     await users.UpdateOneAsync(u => u.Id == user.Id, update);
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        action: "auth.change_password",
+        targetType: "llmgw_console_user",
+        targetId: user.Id,
+        targetName: user.Username,
+        success: true,
+        reason: null,
+        changes: new BsonDocument
+        {
+            { "mustChangePassword", new BsonDocument { { "from", wasMustChangePassword }, { "to", false } } },
+            { "passwordChangedByUser", new BsonDocument { { "from", user.PasswordChangedByUser }, { "to", true } } },
+        });
 
     // 重新签发 token（此时 MustChangePassword 已清，Issue 不再带 mcp claim）。
     user.MustChangePassword = false;
@@ -484,7 +509,7 @@ app.MapGet("/gw/shadow-comparisons", async (int? limit, string? appCallerCode, s
 // 密钥轮换 / 新建平台等更重的写操作后续再开。
 
 // 平台启用/停用
-app.MapPut("/gw/platforms/{id}/enabled", async (string id, ToggleEnabledRequest body) =>
+app.MapPut("/gw/platforms/{id}/enabled", async (HttpContext http, string id, ToggleEnabledRequest body) =>
 {
     // 缺 enabled 字段（空 body / 漏传）一律拒绝，避免默认 false 误关平台。
     if (body?.Enabled is not bool enabled) return Json(ApiEnvelope<PlatformItem>.Fail("INVALID_INPUT", "缺少 enabled 字段（true/false）"), jsonOptions, 400);
@@ -493,12 +518,22 @@ app.MapPut("/gw/platforms/{id}/enabled", async (string id, ToggleEnabledRequest 
     if (doc is null) return Json(ApiEnvelope<PlatformItem>.Fail("NOT_FOUND", $"平台不存在：{id}"), jsonOptions, 404);
     var update = Builders<BsonDocument>.Update.Set("Enabled", enabled).Set("UpdatedAt", DateTime.UtcNow);
     await platforms.UpdateOneAsync(filter, update);
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        action: "platform.set_enabled",
+        targetType: "llmplatform",
+        targetId: id,
+        targetName: doc.AsNullableString("Name"),
+        success: true,
+        reason: null,
+        changes: BuildChangeDocument(("enabled", doc.AsNullableBool("Enabled"), enabled)));
     var fresh = await platforms.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(fresh)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
 // 模型启用/停用
-app.MapPut("/gw/models/{id}/enabled", async (string id, ToggleEnabledRequest body) =>
+app.MapPut("/gw/models/{id}/enabled", async (HttpContext http, string id, ToggleEnabledRequest body) =>
 {
     // 缺 enabled 字段一律拒绝，避免默认 false 误关模型。
     if (body?.Enabled is not bool enabled) return Json(ApiEnvelope<ModelItem>.Fail("INVALID_INPUT", "缺少 enabled 字段（true/false）"), jsonOptions, 400);
@@ -507,6 +542,16 @@ app.MapPut("/gw/models/{id}/enabled", async (string id, ToggleEnabledRequest bod
     if (doc is null) return Json(ApiEnvelope<ModelItem>.Fail("NOT_FOUND", $"模型不存在：{id}"), jsonOptions, 404);
     var update = Builders<BsonDocument>.Update.Set("Enabled", enabled).Set("UpdatedAt", DateTime.UtcNow);
     await models.UpdateOneAsync(filter, update);
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        action: "model.set_enabled",
+        targetType: "llmmodel",
+        targetId: id,
+        targetName: doc.AsNullableString("ModelName") ?? doc.AsNullableString("Name"),
+        success: true,
+        reason: null,
+        changes: BuildChangeDocument(("enabled", doc.AsNullableBool("Enabled"), enabled)));
     var fresh = await models.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<ModelItem>.Ok(MapModel(fresh)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
@@ -514,7 +559,7 @@ app.MapPut("/gw/models/{id}/enabled", async (string id, ToggleEnabledRequest bod
 // 模型池默认标记：同一 ModelType 下将该池设为默认（互斥）。
 // 非事务环境下的安全次序（Mongo 单实例无跨文档事务）：**先置本池为默认，再清同类型其它池**。
 // 万一第二步失败，失败态是「同类型暂时两个默认」（MAP 调度仍能选到一个）——远好于「先清后置、第二步失败=零默认」（调度失去默认池）。
-app.MapPut("/gw/pools/{id}/default", async (string id, ToggleDefaultRequest body) =>
+app.MapPut("/gw/pools/{id}/default", async (HttpContext http, string id, ToggleDefaultRequest body) =>
 {
     // 缺 isDefault 字段一律拒绝。
     if (body?.IsDefault is not bool isDefault) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "缺少 isDefault 字段（true/false）"), jsonOptions, 400);
@@ -531,7 +576,22 @@ app.MapPut("/gw/pools/{id}/default", async (string id, ToggleDefaultRequest body
     await modelGroups.UpdateOneAsync(filter, Builders<BsonDocument>.Update.Set("IsDefaultForType", true).Set("UpdatedAt", DateTime.UtcNow));
     var fb = Builders<BsonDocument>.Filter;
     var others = fb.And(fb.Eq("ModelType", modelType), fb.Ne("_id", id));
-    await modelGroups.UpdateManyAsync(others, Builders<BsonDocument>.Update.Set("IsDefaultForType", false).Set("UpdatedAt", DateTime.UtcNow));
+    var clearOthers = await modelGroups.UpdateManyAsync(others, Builders<BsonDocument>.Update.Set("IsDefaultForType", false).Set("UpdatedAt", DateTime.UtcNow));
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        action: "pool.set_default",
+        targetType: "model_group",
+        targetId: id,
+        targetName: doc.AsNullableString("Name") ?? doc.AsNullableString("Code"),
+        success: true,
+        reason: null,
+        changes: new BsonDocument
+        {
+            { "isDefaultForType", new BsonDocument { { "from", ToBsonAuditValue(doc.AsNullableBool("IsDefaultForType")) }, { "to", true } } },
+            { "modelType", modelType },
+            { "clearedOtherDefaultCount", clearOthers.ModifiedCount },
+        });
     var fresh = await modelGroups.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<PoolItem>.Ok(MapPool(fresh)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
@@ -646,6 +706,68 @@ static async Task WriteLoginAuditAsync(
     {
         Console.Error.WriteLine($"[LlmGw] login audit write failed: {ex.Message}");
     }
+}
+
+static async Task WriteOperationAuditAsync(
+    IMongoCollection<BsonDocument> audits,
+    HttpContext http,
+    string action,
+    string targetType,
+    string? targetId,
+    string? targetName,
+    bool success,
+    string? reason,
+    BsonDocument? changes = null)
+{
+    try
+    {
+        var actorUserId = http.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+            ?? http.User.FindFirst("sub")?.Value;
+        var actorUsername = http.User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value
+            ?? http.User.Identity?.Name;
+
+        var doc = new BsonDocument
+        {
+            { "_id", Guid.NewGuid().ToString("N") },
+            { "Action", action },
+            { "TargetType", targetType },
+            { "TargetId", ToBsonAuditValue(targetId) },
+            { "TargetName", ToBsonAuditValue(targetName) },
+            { "ActorUserId", ToBsonAuditValue(actorUserId) },
+            { "ActorUsername", ToBsonAuditValue(actorUsername) },
+            { "Success", success },
+            { "Reason", ToBsonAuditValue(reason) },
+            { "Changes", changes ?? new BsonDocument() },
+            { "RemoteIp", ToBsonAuditValue(GetClientIp(http)) },
+            { "UserAgent", ToBsonAuditValue(http.Request.Headers.UserAgent.ToString()) },
+            { "CreatedAt", DateTime.UtcNow },
+        };
+        await audits.InsertOneAsync(doc);
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"[LlmGw] operation audit write failed: {ex.Message}");
+    }
+}
+
+static BsonDocument BuildChangeDocument(params (string Field, object? From, object? To)[] changes)
+{
+    var doc = new BsonDocument();
+    foreach (var (field, from, to) in changes)
+    {
+        doc[field] = new BsonDocument
+        {
+            { "from", ToBsonAuditValue(from) },
+            { "to", ToBsonAuditValue(to) },
+        };
+    }
+    return doc;
+}
+
+static BsonValue ToBsonAuditValue(object? value)
+{
+    if (value is null) return BsonNull.Value;
+    return BsonValue.Create(value);
 }
 
 static string? GetClientIp(HttpContext http)

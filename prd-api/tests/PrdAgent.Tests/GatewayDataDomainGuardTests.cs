@@ -45,6 +45,21 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ConsoleWriteOperations_AreAuditedToGatewayDatabase()
+    {
+        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
+
+        Assert.Contains("var operationAudits = gatewayDatabase.GetCollection<BsonDocument>(\"llmgw_operation_audits\");", consoleProgram);
+        Assert.Contains("WriteOperationAuditAsync", consoleProgram);
+        Assert.Contains("action: \"auth.change_password\"", consoleProgram);
+        Assert.Contains("action: \"platform.set_enabled\"", consoleProgram);
+        Assert.Contains("action: \"model.set_enabled\"", consoleProgram);
+        Assert.Contains("action: \"pool.set_default\"", consoleProgram);
+        Assert.Contains("Console.Error.WriteLine($\"[LlmGw] operation audit write failed:", consoleProgram);
+        Assert.DoesNotContain("mapDatabase.GetCollection<BsonDocument>(\"llmgw_operation_audits\")", consoleProgram);
+    }
+
+    [Fact]
     public void Compose_DeclaresGatewayDatabaseName_ForApiAndServing()
     {
         var dockerCompose = ReadRepoFile("docker-compose.yml");
