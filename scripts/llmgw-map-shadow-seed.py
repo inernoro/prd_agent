@@ -144,6 +144,7 @@ def create_seed_user_and_login(
     timeout: float,
     seed_username: str,
     seed_password: str,
+    seed_role: str,
 ) -> tuple[str, str]:
     create_result = request_json(
         "POST",
@@ -151,7 +152,7 @@ def create_seed_user_and_login(
         {
             "username": seed_username,
             "displayName": "LLMGW Shadow Seed",
-            "role": "PM",
+            "role": seed_role,
             "password": seed_password,
         },
         headers={**bearer(admin_token), "Idempotency-Key": f"llmgw-shadow-seed-{seed_username}"},
@@ -288,6 +289,75 @@ def call_open_platform_chat(base: str, api_key: str, group_id: str, timeout: flo
         raise RuntimeError(f"open platform chat failed: {result.body[:500]}")
 
 
+def call_tutorial_email_send(base: str, token: str, timeout: float, tag: str) -> None:
+    result = request_json(
+        "POST",
+        join_url(base, "/api/tutorial-email/generate"),
+        {
+            "topic": f"LLM Gateway shadow send evidence {tag}",
+            "style": "plain operational email",
+            "language": "中文",
+            "extraRequirements": "内容简短，只生成一段欢迎说明和一个按钮。",
+        },
+        headers=bearer(token),
+        timeout=timeout,
+    )
+    api_data(result, "tutorial email generate")
+
+
+def resolve_image_gen_model(base: str, token: str, timeout: float) -> tuple[str, str]:
+    result = request_json(
+        "GET",
+        join_url(base, "/api/mds"),
+        headers=bearer(token),
+        timeout=timeout,
+    )
+    data = api_data(result, "mds models")
+    if not isinstance(data, list):
+        raise RuntimeError(f"mds models returned non-list data: {json.dumps(data, ensure_ascii=False)[:500]}")
+    candidates: list[dict[str, Any]] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        if item.get("enabled") is not True or item.get("isImageGen") is not True:
+            continue
+        platform_id = str(item.get("platformId") or "").strip()
+        model_name = str(item.get("modelName") or "").strip()
+        if platform_id and model_name:
+            candidates.append(item)
+    if not candidates:
+        raise RuntimeError("no enabled image generation model with platformId/modelName found")
+    picked = candidates[0]
+    return str(picked["platformId"]).strip(), str(picked["modelName"]).strip()
+
+
+def call_image_raw_generate(
+    base: str,
+    token: str,
+    timeout: float,
+    tag: str,
+    platform_id: str,
+    model_id: str,
+    size: str,
+    response_format: str,
+) -> None:
+    result = request_json(
+        "POST",
+        join_url(base, "/api/visual-agent/image-gen/generate"),
+        {
+            "prompt": f"Minimal production gateway raw evidence card. tag={tag}. Plain white background, black text only.",
+            "platformId": platform_id,
+            "modelId": model_id,
+            "responseFormat": response_format,
+            "size": size,
+            "n": 1,
+        },
+        headers=bearer(token),
+        timeout=timeout,
+    )
+    api_data(result, "image raw generate")
+
+
 def fetch_gateway_health(gw_base: str, timeout: float) -> dict[str, Any]:
     result = request_json("GET", join_url(gw_base, "/healthz"), timeout=timeout)
     return parse_json_object(result.body, "gateway healthz")
@@ -333,6 +403,39 @@ def format_summary(label: str, summary: dict[str, Any]) -> str:
     )
 
 
+def wait_for_shadow_growth(
+    gw_base: str,
+    key: str,
+    timeout: float,
+    since_hours: float,
+    release_commit: str,
+    baselines: dict[str, int],
+    expected_growth: dict[str, int],
+    poll_seconds: float,
+    poll_interval_seconds: float,
+) -> None:
+    pending = {k: v for k, v in expected_growth.items() if v > 0}
+    if not pending or poll_seconds <= 0:
+        return
+
+    deadline = time.monotonic() + poll_seconds
+    while True:
+        remaining: dict[str, tuple[int, int]] = {}
+        for kind, growth in pending.items():
+            summary = fetch_shadow_summary(gw_base, key, timeout, since_hours, release_commit, kind)
+            total = int(summary.get("total", 0) or 0)
+            target = baselines.get(kind, 0) + growth
+            if total < target:
+                remaining[kind] = (total, target)
+        if not remaining:
+            return
+        if time.monotonic() >= deadline:
+            detail = ", ".join(f"{kind}={total}/{target}" for kind, (total, target) in remaining.items())
+            print(f"shadow growth wait timed out: {detail}")
+            return
+        time.sleep(max(0.5, poll_interval_seconds))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Seed LLM Gateway shadow evidence through MAP API.")
     parser.add_argument("--base", default=os.environ.get("PRD_AGENT_BASE", DEFAULT_BASE), help="MAP API base URL")
@@ -348,6 +451,15 @@ def main() -> int:
     parser.add_argument("--release-commit", default="", help="Release commit filter; defaults to gateway health commit")
     parser.add_argument("--skip-preview-ask", action="store_true", help="Only run session chat, skip preview-ask")
     parser.add_argument("--include-open-platform", action="store_true", help="Also seed one non-stream Open Platform call per iteration")
+    parser.add_argument("--include-tutorial-email-send", action="store_true", help="Also seed one admin non-stream SendAsync call per iteration")
+    parser.add_argument("--include-image-raw", action="store_true", help="Also seed one real image raw call per iteration")
+    parser.add_argument("--image-platform-id", default=read_env_secret("LLMGW_SHADOW_IMAGE_PLATFORM_ID"), help="Pinned image platform id; defaults to first enabled image model from /api/mds")
+    parser.add_argument("--image-model-id", default=read_env_secret("LLMGW_SHADOW_IMAGE_MODEL_ID"), help="Pinned image model id; defaults to first enabled image model from /api/mds")
+    parser.add_argument("--image-size", default="1024x1024", help="Image seed size")
+    parser.add_argument("--image-response-format", default="url", help="Image seed response format")
+    parser.add_argument("--settle-seconds", type=float, default=8, help="Wait before querying shadow summaries because send/raw shadow writes are async")
+    parser.add_argument("--summary-poll-seconds", type=float, default=0, help="Poll shadow summaries until expected kind counts grow; useful during 100% sampling windows")
+    parser.add_argument("--summary-poll-interval-seconds", type=float, default=5, help="Shadow summary poll interval")
     parser.add_argument("--seed-username", default="", help="Optional reusable business user for open-platform seeding")
     parser.add_argument("--seed-password", default=read_env_secret("LLMGW_SHADOW_SEED_PASSWORD"), help="Password for --seed-username; omit for auto generated one-shot user")
     args = parser.parse_args()
@@ -369,11 +481,12 @@ def main() -> int:
         if not args.root_password:
             raise SystemExit("Missing admin token or ROOT_ACCESS_PASSWORD")
         admin_token, user_id = login(base, args.root_username, args.root_password, args.timeout)
-    elif args.include_open_platform:
+    elif args.include_open_platform or args.include_image_raw:
         user_id = fetch_user_id(base, admin_token, args.timeout)
 
     token = admin_token
-    if args.include_open_platform:
+    needs_seed_user = args.include_open_platform or args.include_tutorial_email_send or args.include_image_raw
+    if needs_seed_user:
         seed_username = args.seed_username.strip()
         seed_password = args.seed_password.strip()
         if not seed_username:
@@ -381,12 +494,32 @@ def main() -> int:
             seed_password = secrets.token_urlsafe(24)
         elif not seed_password:
             raise SystemExit("--seed-password or LLMGW_SHADOW_SEED_PASSWORD is required when --seed-username is set")
-        token, user_id = create_seed_user_and_login(base, admin_token, args.timeout, seed_username, seed_password)
+        seed_role = "ADMIN" if args.include_tutorial_email_send or args.include_image_raw else "PM"
+        token, user_id = create_seed_user_and_login(base, admin_token, args.timeout, seed_username, seed_password, seed_role)
+
+    image_platform_id = args.image_platform_id.strip()
+    image_model_id = args.image_model_id.strip()
+    if args.include_image_raw and (not image_platform_id or not image_model_id):
+        image_platform_id, image_model_id = resolve_image_gen_model(base, token, args.timeout)
 
     print(f"base={base}")
     print(f"gwBase={gw_base}")
     print(f"releaseCommit={release_commit}")
     print(f"iterations={args.iterations}")
+    if args.include_image_raw:
+        print(f"imageRawModel={image_platform_id}/{image_model_id}")
+
+    baseline_counts: dict[str, int] = {}
+    if args.gw_key:
+        for kind in ("send", "stream", "raw"):
+            baseline_counts[kind] = int(fetch_shadow_summary(
+                gw_base,
+                args.gw_key,
+                args.timeout,
+                args.since_hours,
+                release_commit,
+                kind,
+            ).get("total", 0) or 0)
 
     for index in range(args.iterations):
         tag = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + f"-{index + 1}"
@@ -399,11 +532,41 @@ def main() -> int:
             group_id = create_group(base, token, document_id, args.timeout)
             api_key = create_open_platform_app(base, admin_token, user_id, group_id, args.timeout, tag)
             call_open_platform_chat(base, api_key, group_id, args.timeout, tag)
+        if args.include_tutorial_email_send:
+            call_tutorial_email_send(base, token, args.timeout, tag)
+        if args.include_image_raw:
+            call_image_raw_generate(
+                base,
+                token,
+                args.timeout,
+                tag,
+                image_platform_id,
+                image_model_id,
+                args.image_size,
+                args.image_response_format,
+            )
         print(f"seed[{index + 1}] sessionId={session_id}")
         if index + 1 < args.iterations and args.sleep_seconds > 0:
             time.sleep(args.sleep_seconds)
 
     if args.gw_key:
+        if args.settle_seconds > 0:
+            time.sleep(args.settle_seconds)
+        wait_for_shadow_growth(
+            gw_base,
+            args.gw_key,
+            args.timeout,
+            args.since_hours,
+            release_commit,
+            baseline_counts,
+            {
+                "stream": args.iterations,
+                "send": args.iterations if args.include_tutorial_email_send else 0,
+                "raw": args.iterations if args.include_image_raw else 0,
+            },
+            args.summary_poll_seconds,
+            args.summary_poll_interval_seconds,
+        )
         print(format_summary(
             "shadow/global",
             fetch_shadow_summary(gw_base, args.gw_key, args.timeout, args.since_hours, release_commit),
@@ -415,6 +578,10 @@ def main() -> int:
         print(format_summary(
             "shadow/stream",
             fetch_shadow_summary(gw_base, args.gw_key, args.timeout, args.since_hours, release_commit, "stream"),
+        ))
+        print(format_summary(
+            "shadow/raw",
+            fetch_shadow_summary(gw_base, args.gw_key, args.timeout, args.since_hours, release_commit, "raw"),
         ))
     else:
         print("shadow summary skipped: missing gateway key")

@@ -255,9 +255,24 @@ fi
 OWNER="${REPO%%/*}"
 REPO_NAME="${REPO##*/}"
 
+default_api_image="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-server:${TAG}"
+default_llmgw_image="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-llmgw:${TAG}"
+default_llmgw_serve_image="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-llmgw-serve:${TAG}"
+default_llmgw_web_image="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-llmgw-web:${TAG}"
+
+if [ "$release_ref_type" = "commit" ] && [ "${PRD_AGENT_ALLOW_IMAGE_OVERRIDE:-0}" != "1" ]; then
+  if [ -n "${PRD_AGENT_API_IMAGE:-}${PRD_AGENT_LLMGW_IMAGE:-}${PRD_AGENT_LLMGW_SERVE_IMAGE:-}${PRD_AGENT_LLMGW_WEB_IMAGE:-}" ]; then
+    echo "WARN: --commit 发布默认忽略 PRD_AGENT_*_IMAGE 覆盖，确保四个镜像钉到 ${TAG}；如确需覆盖请设置 PRD_AGENT_ALLOW_IMAGE_OVERRIDE=1" >&2
+  fi
+  export PRD_AGENT_API_IMAGE="$default_api_image"
+  export PRD_AGENT_LLMGW_IMAGE="$default_llmgw_image"
+  export PRD_AGENT_LLMGW_SERVE_IMAGE="$default_llmgw_serve_image"
+  export PRD_AGENT_LLMGW_WEB_IMAGE="$default_llmgw_web_image"
+fi
+
 # 默认后端镜像。latest 兼容旧部署；指定 ref 时钉到不可变 tag，避免 latest 竞态。
 if [ -z "${PRD_AGENT_API_IMAGE:-}" ]; then
-  export PRD_AGENT_API_IMAGE="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-server:${TAG}"
+  export PRD_AGENT_API_IMAGE="$default_api_image"
 fi
 
 # 默认独立 LLM 网关镜像（控制台 prd-llmgw，自包含 ASP.NET 服务，监听 8090，提供 /gw/healthz、
@@ -266,20 +281,20 @@ fi
 # PrdAgent.Api.dll、/gw/* 端点全缺。指定 --commit 时也必须钉到同一个 sha ref，避免
 # api 是不可变版本而 GW 三容器仍漂在 latest。
 if [ -z "${PRD_AGENT_LLMGW_IMAGE:-}" ]; then
-  export PRD_AGENT_LLMGW_IMAGE="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-llmgw:${TAG}"
+  export PRD_AGENT_LLMGW_IMAGE="$default_llmgw_image"
 fi
 
 # 默认 LLM serving 网关镜像（llmgw-serve，DI 承载 LlmGateway/ModelResolver，监听 8091，暴露 /gw/v1/*）。
 # compose 现在随 up 一起拉起 llmgw-serve；docker-compose.yml 默认直连 ghcr.io，需代理的主机会绕过
 # get.miduo.org 预拉/超时路径而卡住或失败，故这里照 PRD_AGENT_LLMGW_IMAGE 范式钉到镜像源。
 if [ -z "${PRD_AGENT_LLMGW_SERVE_IMAGE:-}" ]; then
-  export PRD_AGENT_LLMGW_SERVE_IMAGE="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-llmgw-serve:${TAG}"
+  export PRD_AGENT_LLMGW_SERVE_IMAGE="$default_llmgw_serve_image"
 fi
 
 # 默认 LLM 网关前端静态站镜像（llmgw-web，nginx 托管控制台构建产物）。同样随 compose up 拉起，
 # 默认直连 ghcr.io，需代理主机会卡住，故一并钉到 get.miduo.org 镜像源。
 if [ -z "${PRD_AGENT_LLMGW_WEB_IMAGE:-}" ]; then
-  export PRD_AGENT_LLMGW_WEB_IMAGE="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-llmgw-web:${TAG}"
+  export PRD_AGENT_LLMGW_WEB_IMAGE="$default_llmgw_web_image"
 fi
 
 intent_value() {
