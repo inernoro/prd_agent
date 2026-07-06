@@ -153,6 +153,8 @@ def _entry_evidence_failures(entry: dict) -> list[str]:
         failures.append(f"ERROR: {stage} missing releaseMainSha")
     elif len(release_main_sha) != 40 or any(ch not in "0123456789abcdef" for ch in release_main_sha):
         failures.append(f"ERROR: {stage} invalid releaseMainSha: {release_main_sha}")
+    if _bool_flag(str(entry.get("allowOutOfOrder") or "0")) and not str(entry.get("allowOutOfOrderReason") or "").strip():
+        failures.append(f"ERROR: {stage} allowOutOfOrder missing reason")
     evidence_json = str(entry.get("evidenceJson") or "")
     try:
         _require_pass_json(evidence_json, f"{stage} stage evidence")
@@ -224,6 +226,12 @@ def validate(args: argparse.Namespace) -> int:
     if not commit:
         print("ERROR: rollout ledger validation requires --commit", file=sys.stderr)
         return 2
+    if args.allow_out_of_order and not str(args.allow_out_of_order_reason or "").strip():
+        print(
+            "ERROR: --allow-out-of-order requires --allow-out-of-order-reason so the release record explains the override.",
+            file=sys.stderr,
+        )
+        return 2
 
     entries = _load(args.ledger)
     successful = _successful_stages(entries, commit)
@@ -236,7 +244,8 @@ def validate(args: argparse.Namespace) -> int:
         return 1
 
     if args.allow_out_of_order:
-        print("WARN: rollout ledger order check skipped by --allow-out-of-order", file=sys.stderr)
+        reason = str(args.allow_out_of_order_reason or "").strip()
+        print(f"WARN: rollout ledger order check skipped by --allow-out-of-order: {reason}", file=sys.stderr)
         return 0
 
     if stage == ROLLBACK_REHEARSAL_STAGE:
@@ -324,6 +333,8 @@ def append(args: argparse.Namespace) -> int:
         "releaseGateJson": args.release_gate_json,
         "releaseGateRequired": _bool_flag(args.release_gate_required),
         "rollbackRehearsal": args.stage == ROLLBACK_REHEARSAL_STAGE,
+        "allowOutOfOrder": _bool_flag(args.allow_out_of_order),
+        "allowOutOfOrderReason": args.allow_out_of_order_reason.strip(),
         "servingProbeJson": args.serving_probe_json,
         "smokeJson": args.smoke_json,
         "releaseMainRef": args.main_ref,
@@ -369,6 +380,8 @@ def _write_markdown(path: str, report: dict) -> None:
         fh.write(f"- allowlist: `{cell(report['allowlist'])}`\n")
         fh.write(f"- releaseGateRequired: `{cell(report['releaseGateRequired'])}`\n")
         fh.write(f"- rollbackRehearsal: `{cell(report['rollbackRehearsal'])}`\n")
+        fh.write(f"- allowOutOfOrder: `{cell(report['allowOutOfOrder'])}`\n")
+        fh.write(f"- allowOutOfOrderReason: `{cell(report['allowOutOfOrderReason'])}`\n")
         fh.write(f"- minStageObservationHours: `{cell(report['minStageObservationHours'])}`\n")
         fh.write(f"- releaseGateJson: `{cell(report['releaseGateJson'])}`\n")
         fh.write(f"- servingProbeJson: `{cell(report['servingProbeJson'])}`\n")
@@ -414,6 +427,8 @@ def stage_report(args: argparse.Namespace) -> int:
         "gateBase": args.gate_base,
         "releaseGateRequired": _bool_flag(args.release_gate_required),
         "rollbackRehearsal": args.stage == ROLLBACK_REHEARSAL_STAGE,
+        "allowOutOfOrder": _bool_flag(args.allow_out_of_order),
+        "allowOutOfOrderReason": args.allow_out_of_order_reason.strip(),
         "minStageObservationHours": args.min_stage_observation_hours,
         "releaseGateJson": args.release_gate_json,
         "servingProbeJson": args.serving_probe_json,
@@ -471,6 +486,8 @@ def audit(args: argparse.Namespace) -> int:
                 "releaseGateJson": latest.get("releaseGateJson") or "",
                 "releaseMainRef": latest.get("releaseMainRef") or "",
                 "releaseMainSha": latest.get("releaseMainSha") or "",
+                "allowOutOfOrder": _bool_flag(str(latest.get("allowOutOfOrder") or "0")),
+                "allowOutOfOrderReason": latest.get("allowOutOfOrderReason") or "",
             }
         )
 
@@ -540,6 +557,7 @@ def main() -> int:
     validate_parser.add_argument("--commit", default="")
     validate_parser.add_argument("--min-observation-hours", default="0")
     validate_parser.add_argument("--allow-out-of-order", action="store_true")
+    validate_parser.add_argument("--allow-out-of-order-reason", default="")
     validate_parser.set_defaults(func=validate)
 
     append_parser = sub.add_parser("append", help="append a rollout ledger entry")
@@ -560,6 +578,8 @@ def main() -> int:
     append_parser.add_argument("--smoke-json", default="")
     append_parser.add_argument("--main-ref", default="")
     append_parser.add_argument("--main-sha", default="")
+    append_parser.add_argument("--allow-out-of-order", default="0")
+    append_parser.add_argument("--allow-out-of-order-reason", default="")
     append_parser.add_argument("--min-stage-observation-hours", default="")
     append_parser.set_defaults(func=append)
 
@@ -580,6 +600,8 @@ def main() -> int:
     report_parser.add_argument("--smoke-json", default="")
     report_parser.add_argument("--main-ref", default="")
     report_parser.add_argument("--main-sha", default="")
+    report_parser.add_argument("--allow-out-of-order", default="0")
+    report_parser.add_argument("--allow-out-of-order-reason", default="")
     report_parser.add_argument("--min-stage-observation-hours", default="")
     report_parser.set_defaults(func=stage_report)
 

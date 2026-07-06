@@ -38,6 +38,8 @@ Options:
   --evidence-dir PATH         Evidence output directory, default .llmgw-release-evidence
   --ledger PATH               Append-only rollout ledger, default <evidence-dir>/rollout-ledger.jsonl
   --allow-out-of-order        Skip ledger stage order validation; requires an explicit release note
+  --allow-out-of-order-reason TEXT
+                              Required with --allow-out-of-order; written to stage evidence and ledger
 EOF
 }
 
@@ -51,6 +53,7 @@ main_ref="${LLMGW_RELEASE_MAIN_REF:-origin/main}"
 evidence_dir="${LLMGW_STAGE_EVIDENCE_DIR:-.llmgw-release-evidence}"
 ledger=""
 allow_out_of_order=0
+allow_out_of_order_reason="${LLMGW_ALLOW_OUT_OF_ORDER_REASON:-}"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -121,6 +124,14 @@ while [ "$#" -gt 0 ]; do
     --allow-out-of-order)
       allow_out_of_order=1
       ;;
+    --allow-out-of-order-reason)
+      shift
+      [ "$#" -gt 0 ] || { echo "ERROR: --allow-out-of-order-reason requires text" >&2; exit 1; }
+      allow_out_of_order_reason="$1"
+      ;;
+    --allow-out-of-order-reason=*)
+      allow_out_of_order_reason="${1#--allow-out-of-order-reason=}"
+      ;;
     --execute)
       execute=1
       ;;
@@ -172,6 +183,12 @@ fi
 
 if [ -z "$ledger" ]; then
   ledger="$evidence_dir/rollout-ledger.jsonl"
+fi
+
+allow_out_of_order_reason="$(printf '%s' "$allow_out_of_order_reason" | xargs || true)"
+if [ "$allow_out_of_order" = "1" ] && [ -z "$allow_out_of_order_reason" ]; then
+  echo "ERROR: --allow-out-of-order requires --allow-out-of-order-reason or LLMGW_ALLOW_OUT_OF_ORDER_REASON" >&2
+  exit 1
 fi
 
 gate_base="${LLMGW_GATE_BASE:-${GW_BASE:-}}"
@@ -269,6 +286,7 @@ print_plan() {
   echo "  execute: $execute"
   echo "  ledger: $ledger"
   echo "  allowOutOfOrder: $allow_out_of_order"
+  echo "  allowOutOfOrderReason: ${allow_out_of_order_reason:-none}"
   echo "  minObservationHours: $min_observation_hours"
   echo "  mainRef: $main_ref"
   if [ "$stage" != "rollback-inproc" ]; then
@@ -326,6 +344,7 @@ validate_ledger_order() {
       --stage "$stage" \
       --commit "$commit" \
       --min-observation-hours "$min_observation_hours" \
+      --allow-out-of-order-reason "$allow_out_of_order_reason" \
       --allow-out-of-order
   else
     python3 scripts/llmgw-rollout-ledger.py validate \
@@ -360,6 +379,8 @@ append_ledger_entry() {
     --smoke-json "$smoke_json" \
     --main-ref "$main_ref" \
     --main-sha "$main_sha" \
+    --allow-out-of-order "$allow_out_of_order" \
+    --allow-out-of-order-reason "$allow_out_of_order_reason" \
     --min-stage-observation-hours "$min_observation_hours"
 }
 
@@ -413,6 +434,8 @@ if [ "$stage" = "rollback-rehearsal" ]; then
       --smoke-json "$smoke_json" \
       --main-ref "$main_ref" \
       --main-sha "$main_sha" \
+      --allow-out-of-order "$allow_out_of_order" \
+      --allow-out-of-order-reason "$allow_out_of_order_reason" \
       --min-stage-observation-hours "$min_observation_hours"
     append_ledger_entry success
   else
@@ -477,6 +500,8 @@ if [ "$execute" = "1" ]; then
     --smoke-json "$smoke_json" \
     --main-ref "$main_ref" \
     --main-sha "$main_sha" \
+    --allow-out-of-order "$allow_out_of_order" \
+    --allow-out-of-order-reason "$allow_out_of_order_reason" \
     --min-stage-observation-hours "$min_observation_hours"
   append_ledger_entry success
 fi

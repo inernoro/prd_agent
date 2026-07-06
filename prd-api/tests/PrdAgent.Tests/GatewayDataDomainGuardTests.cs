@@ -299,6 +299,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("validate_main_ancestry", script);
         Assert.Contains("git merge-base --is-ancestor", script);
         Assert.Contains("release commit does not include latest main", script);
+        Assert.Contains("LLMGW_ALLOW_OUT_OF_ORDER_REASON", script);
+        Assert.Contains("--allow-out-of-order-reason", script);
+        Assert.Contains("requires --allow-out-of-order-reason", script);
+        Assert.Contains("allowOutOfOrderReason", script);
         Assert.Contains("minObservationHours", script);
         Assert.Contains("LLMGW_GATE_KEY, GW_KEY, or LLMGW_SERVE_KEY", script);
         Assert.DoesNotContain("--key", script);
@@ -339,6 +343,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("missing_success", ledger);
         Assert.Contains("requires rollback rehearsal success for the same commit", ledger);
         Assert.Contains("allow-out-of-order", ledger);
+        Assert.Contains("allow-out-of-order-reason", ledger);
+        Assert.Contains("\"allowOutOfOrder\": _bool_flag(args.allow_out_of_order)", ledger);
+        Assert.Contains("\"allowOutOfOrderReason\": args.allow_out_of_order_reason.strip()", ledger);
+        Assert.Contains("allowOutOfOrder missing reason", ledger);
         Assert.Contains("\"status\": args.status", ledger);
         Assert.Contains("\"evidenceJson\": args.evidence_json", ledger);
         Assert.Contains("\"servingProbeJson\": args.serving_probe_json", ledger);
@@ -369,6 +377,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_RELEASE_MAIN_REF", readiness);
         Assert.Contains("validate_main_ancestry", readiness);
         Assert.Contains("release commit does not include latest main", readiness);
+        Assert.Contains("LLMGW_ALLOW_OUT_OF_ORDER_REASON", readiness);
+        Assert.Contains("--allow-out-of-order-reason", readiness);
+        Assert.Contains("allowOutOfOrderReason", readiness);
         Assert.Contains("requires rollback rehearsal success for the same commit", readiness);
         Assert.Contains("rollout stage observation window not satisfied", readiness);
         Assert.Contains("--run-rollout-ledger", readiness);

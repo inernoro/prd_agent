@@ -158,7 +158,8 @@ scripts/llmgw-prod-stage.sh --stage shadow-start --commit <40位SHA> --execute
 同一 commit 的所有前置阶段已有 `success` 记录，且当前阶段写入 `success` 前必须能读到 verdict=pass 的
 stage/serving-probe/gw-smoke 证据；canary/http 阶段还必须读到 verdict=pass 的 release-gate 证据。
 这样可以防止跳过证据期、换 commit 后沿用旧证据，或台账 success 但证据文件缺失。确需人工越级时必须显式
-加 `--allow-out-of-order`，并在发布记录中说明原因；越级不会跳过当前阶段的证据文件校验。
+加 `--allow-out-of-order --allow-out-of-order-reason "<原因>"`（或设置 `LLMGW_ALLOW_OUT_OF_ORDER_REASON`）；
+原因会写入 stage report 与 rollout ledger，缺失时脚本拒绝推进。越级不会跳过当前阶段的证据文件校验。
 脚本执行非回滚阶段前还会校验发布 commit 包含最新 `origin/main`（可用 `--main-ref` /
 `LLMGW_RELEASE_MAIN_REF` 指定其它主干 ref），不满足时拒绝推进；stage report 和 rollout ledger 会记录
 `releaseMainRef` 与 `releaseMainSha`，`audit` 子命令也会要求这些字段存在，防止未合入最新 main 的 commit 被当成生产候选。
