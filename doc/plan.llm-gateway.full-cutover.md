@@ -152,6 +152,9 @@ scripts/llmgw-prod-stage.sh --stage shadow-start --commit <40位SHA> --execute
 `exec_dep.sh --commit <sha>`，并默认设置 `PRD_AGENT_REQUIRE_FAST_INTENT=1` 与
 `.llmgw-release-evidence/<time>_<stage>_<sha>.json|md` 证据输出。脚本不接受 `--key` 参数，
 网关 key 只能从 `LLMGW_GATE_KEY`/`GW_KEY`/`LLMGW_SERVE_KEY` 读取，避免泄漏到 shell history。
+脚本还会维护 `.llmgw-release-evidence/rollout-ledger.jsonl` 台账；除 `shadow-start` 外，每个阶段默认要求
+同一 commit 的所有前置阶段已有 `success` 记录，防止跳过证据期或换 commit 后沿用旧证据。确需人工越级时必须显式
+加 `--allow-out-of-order`，并在发布记录中说明原因。
 灰度阶段会自动设置 `LLMGW_MODE=shadow`、对应 `LLMGW_CANARY_STAGE` 与 allowlist；`http-full`
 会设置 `LLMGW_MODE=http` 并依赖 `exec_dep.sh` 的全量证据门。`rollback-inproc` 只调用
 `scripts/llmgw-rollback-inproc.sh`，不回滚数据库。

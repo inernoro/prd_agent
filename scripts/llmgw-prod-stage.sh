@@ -33,6 +33,8 @@ Options:
   --repo owner/repo           Pass repository through to fast.sh and exec_dep.sh
   --sample-percent N          Shadow full sample percent for shadow/canary stages, default 1
   --evidence-dir PATH         Evidence output directory, default .llmgw-release-evidence
+  --ledger PATH               Append-only rollout ledger, default <evidence-dir>/rollout-ledger.jsonl
+  --allow-out-of-order        Skip ledger stage order validation; requires an explicit release note
 EOF
 }
 
@@ -42,6 +44,8 @@ repo=""
 execute=0
 sample_percent="${LLMGW_STAGE_SHADOW_FULL_SAMPLE_PERCENT:-1}"
 evidence_dir="${LLMGW_STAGE_EVIDENCE_DIR:-.llmgw-release-evidence}"
+ledger=""
+allow_out_of_order=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -85,6 +89,17 @@ while [ "$#" -gt 0 ]; do
     --evidence-dir=*)
       evidence_dir="${1#--evidence-dir=}"
       ;;
+    --ledger)
+      shift
+      [ "$#" -gt 0 ] || { echo "ERROR: --ledger requires a path" >&2; exit 1; }
+      ledger="$1"
+      ;;
+    --ledger=*)
+      ledger="${1#--ledger=}"
+      ;;
+    --allow-out-of-order)
+      allow_out_of_order=1
+      ;;
     --execute)
       execute=1
       ;;
@@ -124,6 +139,10 @@ esac
 if ! printf '%s' "$sample_percent" | grep -Eq '^[0-9]+$'; then
   echo "ERROR: --sample-percent must be an integer percent" >&2
   exit 1
+fi
+
+if [ -z "$ledger" ]; then
+  ledger="$evidence_dir/rollout-ledger.jsonl"
 fi
 
 gate_base="${LLMGW_GATE_BASE:-${GW_BASE:-}}"
@@ -206,6 +225,8 @@ print_plan() {
   echo "LLM Gateway production stage:"
   echo "  stage: $stage"
   echo "  execute: $execute"
+  echo "  ledger: $ledger"
+  echo "  allowOutOfOrder: $allow_out_of_order"
   if [ "$stage" != "rollback-inproc" ]; then
     echo "  commit: $commit"
     echo "  mode: $mode"
@@ -216,6 +237,45 @@ print_plan() {
     echo "  evidenceJson: ${evidence_prefix}.json"
     echo "  evidenceMarkdown: ${evidence_prefix}.md"
   fi
+}
+
+validate_ledger_order() {
+  if [ ! -f "scripts/llmgw-rollout-ledger.py" ]; then
+    echo "ERROR: missing scripts/llmgw-rollout-ledger.py; refusing staged rollout without ledger validation." >&2
+    exit 1
+  fi
+  if [ "$allow_out_of_order" = "1" ]; then
+    python3 scripts/llmgw-rollout-ledger.py validate \
+      --ledger "$ledger" \
+      --stage "$stage" \
+      --commit "$commit" \
+      --allow-out-of-order
+  else
+    python3 scripts/llmgw-rollout-ledger.py validate \
+      --ledger "$ledger" \
+      --stage "$stage" \
+      --commit "$commit"
+  fi
+}
+
+append_ledger_entry() {
+  status="$1"
+  if [ ! -f "scripts/llmgw-rollout-ledger.py" ]; then
+    echo "ERROR: missing scripts/llmgw-rollout-ledger.py; cannot append rollout ledger." >&2
+    exit 1
+  fi
+  python3 scripts/llmgw-rollout-ledger.py append \
+    --ledger "$ledger" \
+    --stage "$stage" \
+    --status "$status" \
+    --commit "$commit" \
+    --mode "$mode" \
+    --canary-stage "$canary_stage" \
+    --allowlist "$allowlist" \
+    --shadow-full-sample-percent "$shadow_percent" \
+    --gate-base "$gate_base" \
+    --evidence-json "${evidence_prefix}.json" \
+    --evidence-md "${evidence_prefix}.md"
 }
 
 run_or_print() {
@@ -239,8 +299,11 @@ if [ "$stage" = "rollback-inproc" ]; then
     exit 0
   fi
   run_or_print scripts/llmgw-rollback-inproc.sh
+  append_ledger_entry rollback
   exit 0
 fi
+
+validate_ledger_order
 
 export LLMGW_MODE="$mode"
 export LLMGW_HTTP_APP_CALLER_ALLOWLIST="$allowlist"
@@ -264,6 +327,10 @@ if [ -n "$repo" ]; then
 else
   run_or_print ./fast.sh --commit "$commit"
   run_or_print ./exec_dep.sh --commit "$commit"
+fi
+
+if [ "$execute" = "1" ]; then
+  append_ledger_entry success
 fi
 
 if [ "$execute" != "1" ]; then

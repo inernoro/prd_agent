@@ -98,6 +98,8 @@ def _static_checks() -> list[dict]:
     serving_probe = _read("scripts/llmgw-serving-probe.py")
     prod_stage_path = ROOT / "scripts/llmgw-prod-stage.sh"
     prod_stage = prod_stage_path.read_text(encoding="utf-8")
+    rollout_ledger_path = ROOT / "scripts/llmgw-rollout-ledger.py"
+    rollout_ledger = rollout_ledger_path.read_text(encoding="utf-8") if rollout_ledger_path.exists() else ""
     ok, detail = _contains_all(
         release_gate,
         [
@@ -188,6 +190,13 @@ def _static_checks() -> list[dict]:
             "PRD_AGENT_REQUIRE_FAST_INTENT",
             "LLMGW_GATE_JSON_OUT",
             "LLMGW_GATE_REPORT_MD",
+            "rollout-ledger.jsonl",
+            "--allow-out-of-order",
+            "validate_ledger_order",
+            "append_ledger_entry success",
+            "append_ledger_entry rollback",
+            "scripts/llmgw-rollout-ledger.py validate",
+            "scripts/llmgw-rollout-ledger.py append",
             "report-agent.generate::chat,prd-agent-desktop.chat.sendmessage::chat,open-platform-agent.proxy::chat",
             "visual-agent.image.text2img::generation,visual-agent.image.img2img::generation",
             "video-agent.videogen::video-gen,document-store.subtitle::asr,transcript-agent.transcribe::asr",
@@ -197,11 +206,27 @@ def _static_checks() -> list[dict]:
         ],
     )
     executable = bool(prod_stage_path.stat().st_mode & stat.S_IXUSR)
-    leaks_key_arg = "--key" in prod_stage or "--gateway-key" in prod_stage
+    ledger_executable = bool(rollout_ledger_path.exists() and (rollout_ledger_path.stat().st_mode & stat.S_IXUSR))
+    ledger_ok, ledger_detail = _contains_all(
+        rollout_ledger,
+        [
+            "LLM Gateway rollout ledger",
+            "STAGES = [",
+            "shadow-start",
+            "canary-video-asr",
+            "http-full",
+            "missing_success",
+            "allow-out-of-order",
+            "ensure_ascii=False",
+            "\"status\": args.status",
+            "\"evidenceJson\": args.evidence_json",
+        ],
+    )
+    leaks_key_arg = "--key" in prod_stage or "--gateway-key" in prod_stage or "--key" in rollout_ledger
     checks.append(_check(
         "prod_stage_runner_sequences_shadow_canary_http_and_rollback",
-        ok and executable and not leaks_key_arg,
-        f"{detail}; executable={executable}; leaksKeyArg={leaks_key_arg}",
+        ok and ledger_ok and executable and ledger_executable and not leaks_key_arg,
+        f"{detail}; ledger={ledger_detail}; executable={executable}; ledgerExecutable={ledger_executable}; leaksKeyArg={leaks_key_arg}",
     ))
 
     fast = _read("fast.sh")

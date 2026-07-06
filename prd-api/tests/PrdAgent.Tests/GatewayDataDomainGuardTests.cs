@@ -272,6 +272,7 @@ public class GatewayDataDomainGuardTests
     public void ProdStageRunner_SequencesShadowCanaryHttpAndRollbackWithoutKeyCli()
     {
         var script = ReadRepoFile("scripts/llmgw-prod-stage.sh");
+        var ledger = ReadRepoFile("scripts/llmgw-rollout-ledger.py");
         var readiness = ReadRepoFile("scripts/llmgw-readiness-audit.py");
 
         Assert.Contains("LLM Gateway production stage runner", script);
@@ -297,12 +298,33 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("export PRD_AGENT_REQUIRE_FAST_INTENT=\"${PRD_AGENT_REQUIRE_FAST_INTENT:-1}\"", script);
         Assert.Contains("export LLMGW_GATE_JSON_OUT=\"${LLMGW_GATE_JSON_OUT:-${evidence_prefix}.json}\"", script);
         Assert.Contains("export LLMGW_GATE_REPORT_MD=\"${LLMGW_GATE_REPORT_MD:-${evidence_prefix}.md}\"", script);
+        Assert.Contains("rollout-ledger.jsonl", script);
+        Assert.Contains("--allow-out-of-order", script);
+        Assert.Contains("validate_ledger_order", script);
+        Assert.Contains("append_ledger_entry success", script);
+        Assert.Contains("append_ledger_entry rollback", script);
+        Assert.Contains("scripts/llmgw-rollout-ledger.py validate", script);
+        Assert.Contains("scripts/llmgw-rollout-ledger.py append", script);
         Assert.Contains("./fast.sh --commit \"$commit\"", script);
         Assert.Contains("./exec_dep.sh --commit \"$commit\"", script);
         Assert.Contains("scripts/llmgw-rollback-inproc.sh", script);
 
+        Assert.Contains("LLM Gateway rollout ledger", ledger);
+        Assert.Contains("STAGES = [", ledger);
+        Assert.Contains("\"shadow-start\"", ledger);
+        Assert.Contains("\"canary-video-asr\"", ledger);
+        Assert.Contains("\"http-full\"", ledger);
+        Assert.Contains("missing_success", ledger);
+        Assert.Contains("allow-out-of-order", ledger);
+        Assert.Contains("\"status\": args.status", ledger);
+        Assert.Contains("\"evidenceJson\": args.evidence_json", ledger);
+        Assert.Contains("ensure_ascii=False", ledger);
+        Assert.DoesNotContain("--key", ledger);
+
         Assert.Contains("prod_stage_runner_sequences_shadow_canary_http_and_rollback", readiness);
         Assert.Contains("scripts/llmgw-prod-stage.sh", readiness);
+        Assert.Contains("scripts/llmgw-rollout-ledger.py", readiness);
+        Assert.Contains("ledgerExecutable", readiness);
         Assert.Contains("leaksKeyArg", readiness);
     }
 
