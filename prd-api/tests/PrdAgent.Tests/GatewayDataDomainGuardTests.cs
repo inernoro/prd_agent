@@ -492,7 +492,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("branch status is not running", script);
         Assert.Contains("lastDeployDispatchCommitSha mismatch", script);
         Assert.Contains("LLMGW_CDS_RELEASE_PROFILES", script);
-        Assert.Contains("llmgw-prd-agent,llmgw-serve-prd-agent", script);
+        Assert.Contains("api-prd-agent,llmgw-prd-agent,llmgw-serve-prd-agent", script);
         Assert.Contains("--run-rollout-ledger", script);
         Assert.Contains("rollout_ledger_completion_state", script);
         Assert.Contains("LLMGW_ROLLOUT_LEDGER", script);

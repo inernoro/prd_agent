@@ -739,6 +739,9 @@ def _cds_runtime(args: argparse.Namespace) -> dict:
         failures.append(f"ciImageStatus is not ready: {status.get('ciImageStatus')}")
 
     services = status.get("services") or {}
+    for profile_id, service in sorted(services.items()):
+        if isinstance(service, dict) and service.get("status") != "running":
+            failures.append(f"{profile_id} status={service.get('status')}")
     for profile_id in _csv(args.cds_release_profiles):
         service = services.get(profile_id)
         if not isinstance(service, dict):
@@ -870,7 +873,7 @@ def main() -> int:
     parser.add_argument("--run-cds-runtime", action="store_true", help="verify CDS preview/grey runtime uses release gateway profiles")
     parser.add_argument("--run-rollout-ledger", action="store_true", help="audit rollout ledger stage evidence for --expect-commit or git HEAD")
     parser.add_argument("--cds-branch-id", default=os.environ.get("CDS_BRANCH_ID", ""), help="CDS branch id for --run-cds-runtime; default: cdscli branch-id")
-    parser.add_argument("--cds-release-profiles", default=os.environ.get("LLMGW_CDS_RELEASE_PROFILES", "llmgw-prd-agent,llmgw-serve-prd-agent"), help="comma-separated CDS profile ids that must run express prebuilt images")
+    parser.add_argument("--cds-release-profiles", default=os.environ.get("LLMGW_CDS_RELEASE_PROFILES", "api-prd-agent,llmgw-prd-agent,llmgw-serve-prd-agent"), help="comma-separated CDS profile ids that must run express prebuilt images")
     parser.add_argument("--cds-running-profiles", default=os.environ.get("LLMGW_CDS_RUNNING_PROFILES", "llmgw-web-prd-agent"), help="comma-separated CDS profile ids that must be running")
     parser.add_argument("--rollout-ledger", default=os.environ.get("LLMGW_ROLLOUT_LEDGER", ".llmgw-release-evidence/rollout-ledger.jsonl"))
     parser.add_argument("--rollout-target-stage", default=os.environ.get("LLMGW_ROLLOUT_TARGET_STAGE", "http-full"))
