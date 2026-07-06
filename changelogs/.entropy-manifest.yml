@@ -411,5 +411,7 @@ processed:
   - 2026-07-04_llmgw-console-openrouter.md
   - 2026-07-04_llmgw-independent-auth-db.md
   - 2026-07-04_llmgw-openrouter-visual-pass.md
+  - 2026-07-05_entropy-cleanup.md
   - 2026-07-06_cds-config-wave1.md
   - 2026-07-06_cds-config-wave2.md
+  - 2026-07-06_cds-local-prod-review-fixes.md
