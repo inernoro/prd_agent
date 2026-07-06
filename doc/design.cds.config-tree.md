@@ -139,8 +139,10 @@ CDS 全局默认(_global 变量层)
   - `POST /api/projects/:id/detect-apply`:用户显式确认后按检测结果建 profile,**空项目守门**
     (已有 profile 则 409),用户发起 = 无 ghost race;
   - ghost race 的根因是「clone 时自动提交」,本波不重开该自动提交,而是走「用户确认再提交」绕开。
-- **仍 open(UI 层)**:空项目态加「检测技术栈」按钮(preview → 确认 → apply),须过双主题 +
-  移动兜底 + 真视觉验收(`real-visual-acceptance`),故本波记 55%。
+- **UI 已落地**:`BranchListPage` 空项目态(`buildProfiles.length===0`)引导「检测技术栈」→
+  `DetectStackDialog`(shadcn Dialog,主题 token 双色,列表勾选)调 detect-preview → detect-apply →
+  刷新,PM 无需 Claude/cdscli 即可 UI 完成接入。
+- **仍 open**:灰度真视觉验收(双主题截图,`real-visual-acceptance`),故本波记 80%。
 
 ---
 

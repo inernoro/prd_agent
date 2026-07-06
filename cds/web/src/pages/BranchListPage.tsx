@@ -39,6 +39,7 @@ import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/la
 import { BranchDetailDrawer, type BranchDeploymentItem, type BranchResourceDetailTab } from '@/components/BranchDetailDrawer';
 import { MonitoringDialog } from '@/components/monitoring/MonitoringDialog';
 import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
+import { DetectStackDialog } from '@/components/branch/DetectStackDialog';
 import { CapacityFullDialog } from '@/components/CapacityFullDialog';
 import { Button } from '@/components/ui/button';
 import {
@@ -1352,6 +1353,8 @@ export function BranchListPage(): JSX.Element {
   // 快照拷贝到新分支(走 POST /api/branches 的 sourceBranchId)。默认 null =
   // 不派生,新分支从项目模板起步(零摩擦:不选也能建)。
   const [configSourceBranchId, setConfigSourceBranchId] = useState<string | null>(null);
+  // 波5:空项目「检测技术栈」对话框(项目无构建配置时的接入入口)。
+  const [detectStackOpen, setDetectStackOpen] = useState(false);
   const [pendingEnvKeys, setPendingEnvKeys] = useState<string[]>([]);
   // 标签过滤:用户点击 BranchCard 上某个标签 chip 时切到只显示该标签的分支;
   // 顶部出现"正在过滤:#xxx ×"chip,点 × 清除。单标签过滤(对齐 legacy)。
@@ -3176,13 +3179,36 @@ export function BranchListPage(): JSX.Element {
             {branches.length === 0 ? (
               <div className="cds-surface-raised cds-hairline px-8 py-16">
                 <div className="mx-auto flex max-w-md flex-col items-center text-center">
-                  <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary">
-                    <GitBranch className="h-6 w-6" />
-                  </div>
-                  <h2 className="mt-5 text-lg font-semibold">还没有分支</h2>
-                  <p className="mt-2 max-w-sm text-sm leading-6 text-muted-foreground">
-                    在顶部搜索框粘贴远程分支名，或在下拉中选择已有远程分支，CDS 会自动创建工作树并打开预览。
-                  </p>
+                  {state.status === 'ok' && state.buildProfiles.length === 0 ? (
+                    // 波5:项目还没有构建配置(webhook 自动 clone / 建时没勾服务)→
+                    // 先引导「检测技术栈」,否则即便建了分支也无从部署。
+                    <>
+                      <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary">
+                        <Server className="h-6 w-6" />
+                      </div>
+                      <h2 className="mt-5 text-lg font-semibold">项目还没有构建配置</h2>
+                      <p className="mt-2 max-w-sm text-sm leading-6 text-muted-foreground">
+                        CDS 可以扫描已克隆的代码，按真实技术栈自动生成构建配置——不用手写。生成后即可创建分支预览。
+                      </p>
+                      <Button className="mt-5" onClick={() => setDetectStackOpen(true)}>
+                        <Server />
+                        检测技术栈
+                      </Button>
+                      <p className="mt-3 text-xs text-muted-foreground">
+                        也可以在顶部搜索框直接粘贴分支名先建分支，稍后到「项目设置」手动配置。
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary">
+                        <GitBranch className="h-6 w-6" />
+                      </div>
+                      <h2 className="mt-5 text-lg font-semibold">还没有分支</h2>
+                      <p className="mt-2 max-w-sm text-sm leading-6 text-muted-foreground">
+                        在顶部搜索框粘贴远程分支名，或在下拉中选择已有远程分支，CDS 会自动创建工作树并打开预览。
+                      </p>
+                    </>
+                  )}
                 </div>
               </div>
             ) : (
@@ -3630,6 +3656,18 @@ export function BranchListPage(): JSX.Element {
               }
               await refresh(false);
               await deployBranch(capacityDialog.branch, false);
+            }}
+          />
+        ) : null}
+
+        {projectId ? (
+          <DetectStackDialog
+            projectId={projectId}
+            open={detectStackOpen}
+            onOpenChange={setDetectStackOpen}
+            onApplied={() => {
+              setToast('已生成构建配置，现在可以创建分支预览了');
+              void refresh(false);
             }}
           />
         ) : null}

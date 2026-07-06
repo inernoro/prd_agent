@@ -27,4 +27,13 @@ describe('BranchListPage preview contract', () => {
     // 后端派生契约:仅在选了来源分支时带 sourceBranchId(默认走项目模板)。
     expect(source).toContain('...(sourceBranchId ? { sourceBranchId } : {})');
   });
+
+  it('wires the 波5 detect-stack dialog into the empty (no build profiles) state', () => {
+    // 空项目(无构建配置)时引导「检测技术栈」,而非只让用户去建分支。
+    expect(source).toContain('<DetectStackDialog');
+    expect(source).toContain('state.buildProfiles.length === 0');
+    expect(source).toContain('检测技术栈');
+    // apply 成功后刷新,让新生成的构建配置可见。
+    expect(source).toContain('onApplied={() =>');
+  });
 });
