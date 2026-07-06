@@ -297,6 +297,7 @@ public class GatewayDataDomainGuardTests
     {
         var script = ReadRepoFile("scripts/llmgw-prod-stage.sh");
         var ledger = ReadRepoFile("scripts/llmgw-rollout-ledger.py");
+        var preflight = ReadRepoFile("scripts/llmgw-prod-preflight.py");
         var readiness = ReadRepoFile("scripts/llmgw-readiness-audit.py");
 
         Assert.Contains("LLM Gateway production stage runner", script);
@@ -414,9 +415,25 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("ensure_ascii=False", ledger);
         Assert.DoesNotContain("--key", ledger);
 
+        Assert.Contains("LLM Gateway production preflight", preflight);
+        Assert.Contains("map_logs_scope", preflight);
+        Assert.Contains("gateway_protected_requires_key", preflight);
+        Assert.Contains("gateway_key_configured", preflight);
+        Assert.Contains("rollout_ledger_completion", preflight);
+        Assert.Contains("PRD_AGENT_API_KEY", preflight);
+        Assert.Contains("LLMGW_GATE_BASE", preflight);
+        Assert.Contains("LLMGW_GATE_KEY", preflight);
+        Assert.Contains("LLMGW_SERVE_KEY", preflight);
+        Assert.Contains("scripts/llmgw-rollout-ledger.py", preflight);
+        Assert.Contains("--require-target-success", preflight);
+        Assert.DoesNotContain("print(key", preflight);
+        Assert.DoesNotContain("LLMGW_GATE_KEY=\"", preflight);
+
         Assert.Contains("prod_stage_runner_sequences_shadow_canary_http_and_rollback", readiness);
         Assert.Contains("scripts/llmgw-prod-stage.sh", readiness);
         Assert.Contains("scripts/llmgw-rollout-ledger.py", readiness);
+        Assert.Contains("scripts/llmgw-prod-preflight.py", readiness);
+        Assert.Contains("preflightExecutable", readiness);
         Assert.Contains("ledgerExecutable", readiness);
         Assert.Contains("serving-probe.json", readiness);
         Assert.Contains("GW_SMOKE_JSON_OUT", readiness);

@@ -100,6 +100,8 @@ def _static_checks() -> list[dict]:
     prod_stage = prod_stage_path.read_text(encoding="utf-8")
     rollout_ledger_path = ROOT / "scripts/llmgw-rollout-ledger.py"
     rollout_ledger = rollout_ledger_path.read_text(encoding="utf-8") if rollout_ledger_path.exists() else ""
+    prod_preflight_path = ROOT / "scripts/llmgw-prod-preflight.py"
+    prod_preflight = prod_preflight_path.read_text(encoding="utf-8") if prod_preflight_path.exists() else ""
     ok, detail = _contains_all(
         release_gate,
         [
@@ -239,6 +241,7 @@ def _static_checks() -> list[dict]:
     )
     executable = bool(prod_stage_path.stat().st_mode & stat.S_IXUSR)
     ledger_executable = bool(rollout_ledger_path.exists() and (rollout_ledger_path.stat().st_mode & stat.S_IXUSR))
+    preflight_executable = bool(prod_preflight_path.exists() and (prod_preflight_path.stat().st_mode & stat.S_IXUSR))
     ledger_ok, ledger_detail = _contains_all(
         rollout_ledger,
         [
@@ -286,11 +289,26 @@ def _static_checks() -> list[dict]:
             "LLM Gateway rollout ledger audit",
         ],
     )
+    preflight_ok, preflight_detail = _contains_all(
+        prod_preflight,
+        [
+            "LLM Gateway production preflight",
+            "map_logs_scope",
+            "gateway_protected_requires_key",
+            "rollout_ledger_completion",
+            "PRD_AGENT_API_KEY",
+            "LLMGW_GATE_BASE",
+            "LLMGW_GATE_KEY",
+            "LLMGW_SERVE_KEY",
+            "scripts/llmgw-rollout-ledger.py",
+            "--require-target-success",
+        ],
+    )
     leaks_key_arg = "--key" in prod_stage or "--gateway-key" in prod_stage or "--key" in rollout_ledger
     checks.append(_check(
         "prod_stage_runner_sequences_shadow_canary_http_and_rollback",
-        ok and ledger_ok and executable and ledger_executable and not leaks_key_arg,
-        f"{detail}; ledger={ledger_detail}; executable={executable}; ledgerExecutable={ledger_executable}; leaksKeyArg={leaks_key_arg}",
+        ok and ledger_ok and preflight_ok and executable and ledger_executable and preflight_executable and not leaks_key_arg,
+        f"{detail}; ledger={ledger_detail}; preflight={preflight_detail}; executable={executable}; ledgerExecutable={ledger_executable}; preflightExecutable={preflight_executable}; leaksKeyArg={leaks_key_arg}",
     ))
 
     fast = _read("fast.sh")
