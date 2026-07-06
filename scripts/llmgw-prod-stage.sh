@@ -387,6 +387,104 @@ append_ledger_entry() {
     --min-stage-observation-hours "$min_observation_hours"
 }
 
+write_dry_run_stage_report() {
+  if [ "$execute" = "1" ]; then
+    return 0
+  fi
+
+  mkdir -p "$evidence_dir"
+  LLMGW_DRY_RUN_STAGE_JSON="$stage_json" \
+  LLMGW_DRY_RUN_STAGE_MD="$stage_md" \
+  LLMGW_DRY_RUN_STAGE="$stage" \
+  LLMGW_DRY_RUN_COMMIT="$commit" \
+  LLMGW_DRY_RUN_MODE="${mode:-}" \
+  LLMGW_DRY_RUN_CANARY_STAGE="${canary_stage:-}" \
+  LLMGW_DRY_RUN_ALLOWLIST="${allowlist:-}" \
+  LLMGW_DRY_RUN_SHADOW_PERCENT="${shadow_percent:-}" \
+  LLMGW_DRY_RUN_GATE_BASE="${gate_base:-}" \
+  LLMGW_DRY_RUN_RELEASE_GATE_REQUIRED="${release_gate_required:-0}" \
+  LLMGW_DRY_RUN_PROD_PREFLIGHT_JSON="${prod_preflight_json:-}" \
+  LLMGW_DRY_RUN_SERVING_PROBE_JSON="${serving_probe_json:-}" \
+  LLMGW_DRY_RUN_SMOKE_JSON="${smoke_json:-}" \
+  LLMGW_DRY_RUN_RELEASE_GATE_JSON="${release_gate_json:-}" \
+  LLMGW_DRY_RUN_MAIN_REF="$main_ref" \
+  LLMGW_DRY_RUN_MIN_OBSERVATION_HOURS="$min_observation_hours" \
+  LLMGW_DRY_RUN_ALLOW_OUT_OF_ORDER="$allow_out_of_order" \
+  LLMGW_DRY_RUN_ALLOW_OUT_OF_ORDER_REASON="$allow_out_of_order_reason" \
+  python3 - <<'PY'
+import json
+import os
+from datetime import datetime, timezone
+
+stage = os.environ["LLMGW_DRY_RUN_STAGE"]
+commit = os.environ["LLMGW_DRY_RUN_COMMIT"]
+commands = []
+if stage == "rollback-inproc":
+    commands.append("scripts/llmgw-rollback-inproc.sh")
+elif stage == "rollback-rehearsal":
+    commands.append("LLMGW_ROLLBACK_DRY_RUN=1 scripts/llmgw-rollback-inproc.sh")
+else:
+    commands.append(
+        "python3 scripts/llmgw-prod-preflight.py --mode start --expect-commit "
+        + commit
+    )
+    commands.append("./fast.sh --commit " + commit)
+    commands.append("./exec_dep.sh --commit " + commit)
+
+report = {
+    "generatedAt": datetime.now(timezone.utc).isoformat(),
+    "verdict": "pass",
+    "stage": stage,
+    "status": "dry-run",
+    "execute": False,
+    "commit": commit.lower(),
+    "mode": os.environ.get("LLMGW_DRY_RUN_MODE", ""),
+    "canaryStage": os.environ.get("LLMGW_DRY_RUN_CANARY_STAGE", ""),
+    "allowlist": os.environ.get("LLMGW_DRY_RUN_ALLOWLIST", ""),
+    "shadowFullSamplePercent": os.environ.get("LLMGW_DRY_RUN_SHADOW_PERCENT", ""),
+    "gateBase": os.environ.get("LLMGW_DRY_RUN_GATE_BASE", ""),
+    "releaseGateRequired": os.environ.get("LLMGW_DRY_RUN_RELEASE_GATE_REQUIRED", "0") == "1",
+    "prodPreflightJson": os.environ.get("LLMGW_DRY_RUN_PROD_PREFLIGHT_JSON", ""),
+    "servingProbeJson": os.environ.get("LLMGW_DRY_RUN_SERVING_PROBE_JSON", ""),
+    "smokeJson": os.environ.get("LLMGW_DRY_RUN_SMOKE_JSON", ""),
+    "releaseGateJson": os.environ.get("LLMGW_DRY_RUN_RELEASE_GATE_JSON", ""),
+    "releaseMainRef": os.environ.get("LLMGW_DRY_RUN_MAIN_REF", ""),
+    "minStageObservationHours": os.environ.get("LLMGW_DRY_RUN_MIN_OBSERVATION_HOURS", ""),
+    "allowOutOfOrder": os.environ.get("LLMGW_DRY_RUN_ALLOW_OUT_OF_ORDER", "0") == "1",
+    "allowOutOfOrderReason": os.environ.get("LLMGW_DRY_RUN_ALLOW_OUT_OF_ORDER_REASON", ""),
+    "plannedCommands": commands,
+}
+
+json_path = os.environ["LLMGW_DRY_RUN_STAGE_JSON"]
+md_path = os.environ["LLMGW_DRY_RUN_STAGE_MD"]
+os.makedirs(os.path.dirname(json_path) or ".", exist_ok=True)
+with open(json_path, "w", encoding="utf-8") as fh:
+    json.dump(report, fh, ensure_ascii=False, indent=2, sort_keys=True)
+    fh.write("\n")
+
+with open(md_path, "w", encoding="utf-8") as fh:
+    fh.write("# LLM Gateway Rollout Stage Dry Run\n\n")
+    for key in (
+        "generatedAt",
+        "verdict",
+        "stage",
+        "status",
+        "commit",
+        "mode",
+        "canaryStage",
+        "allowlist",
+        "releaseGateRequired",
+        "releaseMainRef",
+        "minStageObservationHours",
+    ):
+        fh.write(f"- {key}: `{report[key]}`\n")
+    fh.write("\n## Planned Commands\n\n")
+    for command in commands:
+        fh.write(f"- `{command}`\n")
+PY
+  echo "LLM Gateway dry-run evidence written: $stage_json"
+}
+
 run_prod_preflight() {
   if [ ! -f "scripts/llmgw-prod-preflight.py" ]; then
     echo "ERROR: missing scripts/llmgw-prod-preflight.py; refusing staged rollout without production preflight." >&2
@@ -449,6 +547,7 @@ print_plan
 
 if [ "$stage" = "rollback-inproc" ]; then
   if [ "$execute" != "1" ]; then
+    write_dry_run_stage_report
     echo "Dry-run only. Add --execute to run scripts/llmgw-rollback-inproc.sh."
     echo "+ scripts/llmgw-rollback-inproc.sh"
     exit 0
@@ -492,6 +591,7 @@ if [ "$stage" = "rollback-rehearsal" ]; then
     rollout_ledger_status="success"
   else
     echo "+ LLMGW_ROLLBACK_DRY_RUN=1 scripts/llmgw-rollback-inproc.sh"
+    write_dry_run_stage_report
     echo "Dry-run only. Add --execute to record rollback rehearsal success."
   fi
   exit 0
@@ -569,5 +669,6 @@ if [ "$execute" = "1" ]; then
 fi
 
 if [ "$execute" != "1" ]; then
+  write_dry_run_stage_report
   echo "Dry-run only. Add --execute to run the stage."
 fi
