@@ -177,7 +177,9 @@ scripts/llmgw-prod-stage.sh --stage shadow-start --commit <40位SHA> --execute
 该模式会先执行 `fast.sh` 与 `exec_dep.sh` 部署同一 commit，再运行 MAP 真实入口 seed，并把结果写入
 `.llmgw-release-evidence/<time>_shadow-start_<sha>.map-shadow-seed.json`；如果视频/ASR 等入口因为上游模型池或密钥不可用失败，
 阶段脚本会以非零退出并追加 failed 台账，不能把“部署成功”误记为“证据成功”。默认不开启 seed 时，`shadow-start`
-仍只负责进入受控 shadow 采样窗口，后续由真实流量或人工 seed 补样本。
+仍只负责进入受控 shadow 采样窗口，后续由真实流量或人工 seed 补样本。若为了补证据临时把
+`--sample-percent` 提到高值，seed 失败后必须先恢复低采样再离开生产；阶段脚本会在高采样失败时输出告警，
+但不会自动替 operator 修改生产配置。
 另有低成本前置 gate：`scripts/llmgw-upstream-readiness.py` 会调用 `/gw/v1/resolve` 检查
 `video-agent.videogen::video-gen`、`document-store.subtitle::asr`、`transcript-agent.transcribe::asr`
 是否能解析到非 legacy 的可用模型、启用平台、协议和已解密 API key。`canary-video-asr` 与 `http-full`

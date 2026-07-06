@@ -8,4 +8,5 @@
 | ops | prd-agent | LLM Gateway shadow 采样脚本支持失败后继续执行并输出 JSON 证据，便于生产 gate 归档 |
 | ops | prd-agent | LLM Gateway 生产阶段脚本支持显式运行 MAP shadow seed 并归档证据 |
 | ops | prd-agent | LLM Gateway 发布阶段新增 video/ASR upstream readiness 解析门，防止缺池缺 key 进入灰度或全量 |
+| ops | prd-agent | LLM Gateway shadow-start 高采样失败时输出恢复采样告警 |
 | docs | prd-agent | 在全量迁移计划中补充 shadow 证据不足时的采样方式和 raw gate 边界 |

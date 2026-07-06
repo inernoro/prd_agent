@@ -636,6 +636,9 @@ record_failed_stage_on_exit() {
   fi
 
   echo "LLM Gateway production stage failed; appending failed rollout ledger entry." >&2
+  if [ "$stage" = "shadow-start" ] && [ "${shadow_percent:-0}" != "0" ] && [ "${shadow_percent:-0}" != "1" ]; then
+    echo "WARN: shadow-start failed while ShadowFullSamplePercent=$shadow_percent. Restore a low sampling value before leaving production unattended." >&2
+  fi
   if append_ledger_entry failed >/dev/null 2>&1; then
     rollout_ledger_status="failed"
   else
