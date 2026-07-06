@@ -155,7 +155,11 @@ python3 scripts/llmgw-map-shadow-seed.py --iterations 1
 都会等待 `ImageGenRunWorker` 后台 run 结束；img2img/vision 必须额外传 `--image-ref-shas`
 （vision 至少两张），用于证明 `visual-agent.image.text2img::generation`、
 `visual-agent.image.img2img::generation`、`visual-agent.image.vision::generation` 三条后台生图入口都不是只靠直连同步生成路径覆盖。
-视频、ASR/raw 证据仍必须通过对应真实业务入口产生，不能用文本样本替代 raw gate。脚本执行后会读取
+需要补视频或 ASR/raw 证据时必须显式加 `--include-video-direct` / `--include-transcript-asr` /
+`--include-document-store-subtitle-asr`。视频路径通过 `/api/video-agent/videogen-direct` 只提交真实视频任务并记录
+`video-agent.videogen::video-gen:raw`；ASR 路径会生成短 WAV 文件，分别通过转写工作区上传和文档库字幕任务等待后台 run
+终态，用于证明 `transcript-agent.transcribe::asr:raw` 与 `document-store.subtitle::asr:raw` 不是只靠 resolve 样本。
+视频、ASR/raw 证据必须通过对应真实业务入口产生，不能用文本样本替代 raw gate。脚本执行后会读取
 `/gw/v1/shadow-comparisons` 输出 global/send/stream/raw 覆盖摘要，便于证据期连续采样。
 在 100% 短时采样窗口内补 raw/send 证据时，建议附加 `--summary-poll-seconds 90`，让脚本按执行前 baseline
 轮询对应 kind 是否增长，避免图片/ASR 等长耗时请求的 shadow comparison 晚于业务响应落库造成误判。

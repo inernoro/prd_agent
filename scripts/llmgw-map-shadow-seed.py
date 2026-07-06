@@ -5,20 +5,24 @@ Seed LLM Gateway shadow evidence through real MAP API entry points.
 This script intentionally drives MAP endpoints, not /gw/v1 directly. In
 LlmGateway:Mode=shadow, MAP writes the shadow comparison rows that later gate
 canary/http rollout. Defaults are text-only and low cost; raw/image/video/ASR
-paths must be added explicitly by future flags.
+paths must be added explicitly by flags.
 """
 
 from __future__ import annotations
 
 import argparse
+import io
 import json
+import math
 import os
 import secrets
+import struct
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import wave
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -58,6 +62,45 @@ def request_json(
         req_headers.setdefault("Content-Type", "application/json")
     req_headers.setdefault("User-Agent", "llmgw-map-shadow-seed/1.0")
     req = urllib.request.Request(url, data=data, headers=req_headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+            return ApiResult(resp.status, body, dict(resp.headers.items()))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        if allow_error:
+            return ApiResult(exc.code, body, dict(exc.headers.items()))
+        raise HttpError(method, url, exc.code, body) from exc
+
+
+def request_multipart(
+    method: str,
+    url: str,
+    fields: dict[str, str] | None = None,
+    files: dict[str, tuple[str, bytes, str]] | None = None,
+    headers: dict[str, str] | None = None,
+    timeout: float = 60,
+    allow_error: bool = False,
+) -> ApiResult:
+    boundary = "----llmgw-map-shadow-seed-" + secrets.token_hex(16)
+    chunks: list[bytes] = []
+    for name, value in (fields or {}).items():
+        chunks.append(f"--{boundary}\r\n".encode("ascii"))
+        chunks.append(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8"))
+        chunks.append(str(value).encode("utf-8"))
+        chunks.append(b"\r\n")
+    for name, (filename, content, content_type) in (files or {}).items():
+        chunks.append(f"--{boundary}\r\n".encode("ascii"))
+        disposition = f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'
+        chunks.append(disposition.encode("utf-8"))
+        chunks.append(f"Content-Type: {content_type}\r\n\r\n".encode("ascii"))
+        chunks.append(content)
+        chunks.append(b"\r\n")
+    chunks.append(f"--{boundary}--\r\n".encode("ascii"))
+    req_headers = dict(headers or {})
+    req_headers.setdefault("Content-Type", f"multipart/form-data; boundary={boundary}")
+    req_headers.setdefault("User-Agent", "llmgw-map-shadow-seed/1.0")
+    req = urllib.request.Request(url, data=b"".join(chunks), headers=req_headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read().decode("utf-8", errors="replace")
@@ -564,6 +607,230 @@ def call_image_worker_vision_run(
     return wait_image_run(base, token, timeout, run_id, poll_seconds, poll_interval_seconds, "image worker vision")
 
 
+def make_seed_wav(duration_seconds: float = 1.5, sample_rate: int = 16000) -> bytes:
+    frame_count = max(1, int(sample_rate * max(0.2, duration_seconds)))
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        for index in range(frame_count):
+            tone = math.sin(2 * math.pi * 440 * index / sample_rate)
+            wav.writeframes(struct.pack("<h", int(tone * 1200)))
+    return buffer.getvalue()
+
+
+def call_video_direct(
+    base: str,
+    token: str,
+    timeout: float,
+    tag: str,
+    duration_seconds: int,
+    aspect_ratio: str,
+    resolution: str,
+) -> str:
+    result = request_json(
+        "POST",
+        join_url(base, "/api/video-agent/videogen-direct"),
+        {
+            "prompt": f"Minimal LLM Gateway video raw evidence. tag={tag}. Static test card with plain text.",
+            "aspectRatio": aspect_ratio,
+            "resolution": resolution,
+            "durationSeconds": duration_seconds,
+        },
+        headers=bearer(token),
+        timeout=timeout,
+    )
+    data = api_data(result, "video direct")
+    if isinstance(data, dict) and data.get("success") is False:
+        raise RuntimeError(f"video direct upstream failed: {json.dumps(data, ensure_ascii=False)[:500]}")
+    job_id = str((data or {}).get("jobId") or "")
+    if not job_id:
+        raise RuntimeError(f"video direct response missing jobId: {json.dumps(data, ensure_ascii=False)[:500]}")
+    return job_id
+
+
+def create_transcript_workspace(base: str, token: str, timeout: float, tag: str) -> str:
+    result = request_json(
+        "POST",
+        join_url(base, "/api/transcript-agent/workspaces"),
+        {"title": f"LLMGW shadow seed {tag}"},
+        headers=bearer(token),
+        timeout=timeout,
+    )
+    data = parse_json_object(result.body, "transcript create workspace")
+    workspace_id = str(data.get("id") or data.get("Id") or "")
+    if not workspace_id:
+        raise RuntimeError(f"transcript workspace response missing id: {json.dumps(data, ensure_ascii=False)[:500]}")
+    return workspace_id
+
+
+def upload_transcript_audio(
+    base: str,
+    token: str,
+    timeout: float,
+    workspace_id: str,
+    wav_bytes: bytes,
+    tag: str,
+) -> str:
+    result = request_multipart(
+        "POST",
+        join_url(base, f"/api/transcript-agent/workspaces/{urllib.parse.quote(workspace_id)}/items/upload"),
+        files={"file": (f"llmgw-shadow-{tag}.wav", wav_bytes, "audio/wav")},
+        headers=bearer(token),
+        timeout=timeout,
+    )
+    data = parse_json_object(result.body, "transcript upload audio")
+    run_id = str(data.get("runId") or "")
+    if not run_id:
+        raise RuntimeError(f"transcript upload response missing runId: {json.dumps(data, ensure_ascii=False)[:500]}")
+    return run_id
+
+
+def wait_transcript_run(
+    base: str,
+    token: str,
+    timeout: float,
+    run_id: str,
+    poll_seconds: float,
+    poll_interval_seconds: float,
+) -> str:
+    deadline = time.monotonic() + max(1, poll_seconds)
+    last_status = ""
+    last_body = ""
+    while True:
+        result = request_json(
+            "GET",
+            join_url(base, f"/api/transcript-agent/runs/{urllib.parse.quote(run_id)}"),
+            headers=bearer(token),
+            timeout=timeout,
+        )
+        data = parse_json_object(result.body, "transcript get run")
+        status = str(data.get("status") or "")
+        last_status = status
+        last_body = result.body[:1000]
+        if status in {"completed", "failed"}:
+            if status != "completed":
+                raise RuntimeError(f"transcript asr run {run_id} ended with {status}: {last_body}")
+            return run_id
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"transcript asr run {run_id} timed out at status {last_status}: {last_body}")
+        time.sleep(max(0.5, poll_interval_seconds))
+
+
+def call_transcript_asr(
+    base: str,
+    token: str,
+    timeout: float,
+    tag: str,
+    wav_bytes: bytes,
+    poll_seconds: float,
+    poll_interval_seconds: float,
+) -> str:
+    workspace_id = create_transcript_workspace(base, token, timeout, tag)
+    run_id = upload_transcript_audio(base, token, timeout, workspace_id, wav_bytes, tag)
+    return wait_transcript_run(base, token, timeout, run_id, poll_seconds, poll_interval_seconds)
+
+
+def create_document_store(base: str, token: str, timeout: float, tag: str) -> str:
+    result = request_json(
+        "POST",
+        join_url(base, "/api/document-store/stores"),
+        {
+            "name": f"LLMGW shadow seed {tag}",
+            "description": "Temporary LLM Gateway subtitle evidence store",
+            "appKey": "document-store",
+            "tags": ["llmgw-shadow"],
+            "isPublic": False,
+        },
+        headers=bearer(token),
+        timeout=timeout,
+    )
+    data = api_data(result, "document store create")
+    store_id = str((data or {}).get("id") or (data or {}).get("Id") or "")
+    if not store_id:
+        raise RuntimeError(f"document store create response missing id: {json.dumps(data, ensure_ascii=False)[:500]}")
+    return store_id
+
+
+def upload_document_store_audio(
+    base: str,
+    token: str,
+    timeout: float,
+    store_id: str,
+    wav_bytes: bytes,
+    tag: str,
+) -> str:
+    result = request_multipart(
+        "POST",
+        join_url(base, f"/api/document-store/stores/{urllib.parse.quote(store_id)}/upload"),
+        files={"file": (f"llmgw-shadow-{tag}.wav", wav_bytes, "audio/wav")},
+        headers=bearer(token),
+        timeout=timeout,
+    )
+    data = api_data(result, "document store upload audio")
+    entry = (data or {}).get("entry") if isinstance(data, dict) else None
+    entry_id = str((entry or {}).get("id") or (entry or {}).get("Id") or "")
+    if not entry_id:
+        raise RuntimeError(f"document store upload response missing entry id: {json.dumps(data, ensure_ascii=False)[:500]}")
+    return entry_id
+
+
+def wait_document_store_agent_run(
+    base: str,
+    token: str,
+    timeout: float,
+    run_id: str,
+    poll_seconds: float,
+    poll_interval_seconds: float,
+) -> str:
+    deadline = time.monotonic() + max(1, poll_seconds)
+    last_status = ""
+    last_body = ""
+    while True:
+        result = request_json(
+            "GET",
+            join_url(base, f"/api/document-store/agent-runs/{urllib.parse.quote(run_id)}"),
+            headers=bearer(token),
+            timeout=timeout,
+        )
+        data = api_data(result, "document store get agent run")
+        status = str((data or {}).get("status") or "")
+        last_status = status
+        last_body = result.body[:1000]
+        if status in {"done", "failed", "cancelled"}:
+            if status != "done":
+                raise RuntimeError(f"document store subtitle run {run_id} ended with {status}: {last_body}")
+            return run_id
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"document store subtitle run {run_id} timed out at status {last_status}: {last_body}")
+        time.sleep(max(0.5, poll_interval_seconds))
+
+
+def call_document_store_subtitle_asr(
+    base: str,
+    token: str,
+    timeout: float,
+    tag: str,
+    wav_bytes: bytes,
+    poll_seconds: float,
+    poll_interval_seconds: float,
+) -> str:
+    store_id = create_document_store(base, token, timeout, tag)
+    entry_id = upload_document_store_audio(base, token, timeout, store_id, wav_bytes, tag)
+    result = request_json(
+        "POST",
+        join_url(base, f"/api/document-store/entries/{urllib.parse.quote(entry_id)}/generate-subtitle"),
+        headers=bearer(token),
+        timeout=timeout,
+    )
+    data = api_data(result, "document store generate subtitle")
+    run_id = str((data or {}).get("runId") or "")
+    if not run_id:
+        raise RuntimeError(f"document store subtitle response missing runId: {json.dumps(data, ensure_ascii=False)[:500]}")
+    return wait_document_store_agent_run(base, token, timeout, run_id, poll_seconds, poll_interval_seconds)
+
+
 def fetch_gateway_health(gw_base: str, timeout: float) -> dict[str, Any]:
     result = request_json("GET", join_url(gw_base, "/healthz"), timeout=timeout)
     return parse_json_object(result.body, "gateway healthz")
@@ -662,6 +929,9 @@ def main() -> int:
     parser.add_argument("--include-image-worker-text2img", action="store_true", help="Also seed one ImageGenRunWorker text2img run per iteration")
     parser.add_argument("--include-image-worker-img2img", action="store_true", help="Also seed one ImageGenRunWorker img2img run per iteration; requires --image-ref-shas")
     parser.add_argument("--include-image-worker-vision", action="store_true", help="Also seed one ImageGenRunWorker multi-image vision run per iteration; requires at least two --image-ref-shas")
+    parser.add_argument("--include-video-direct", action="store_true", help="Also seed one video-agent direct video submit raw call per iteration")
+    parser.add_argument("--include-transcript-asr", action="store_true", help="Also seed one transcript-agent ASR raw run per iteration")
+    parser.add_argument("--include-document-store-subtitle-asr", action="store_true", help="Also seed one document-store subtitle ASR raw run per iteration")
     parser.add_argument("--image-platform-id", default=read_env_secret("LLMGW_SHADOW_IMAGE_PLATFORM_ID"), help="Pinned image platform id; defaults to first enabled image model from /api/mds")
     parser.add_argument("--image-model-id", default=read_env_secret("LLMGW_SHADOW_IMAGE_MODEL_ID"), help="Pinned image model id; defaults to first enabled image model from /api/mds")
     parser.add_argument("--image-ref-shas", default=read_env_secret("LLMGW_SHADOW_IMAGE_REF_SHAS"), help="Comma-separated existing image asset sha256 values for img2img/vision evidence")
@@ -669,6 +939,12 @@ def main() -> int:
     parser.add_argument("--image-response-format", default="url", help="Image seed response format")
     parser.add_argument("--image-worker-poll-seconds", type=float, default=360, help="How long to wait for ImageGenRunWorker runs")
     parser.add_argument("--image-worker-poll-interval-seconds", type=float, default=5, help="ImageGenRunWorker run poll interval")
+    parser.add_argument("--video-duration-seconds", type=int, default=5, help="Video seed requested duration")
+    parser.add_argument("--video-aspect-ratio", default="16:9", help="Video seed aspect ratio")
+    parser.add_argument("--video-resolution", default="720p", help="Video seed resolution")
+    parser.add_argument("--asr-wav-seconds", type=float, default=1.5, help="Generated WAV duration for ASR seed paths")
+    parser.add_argument("--asr-run-poll-seconds", type=float, default=360, help="How long to wait for transcript/document-store ASR runs")
+    parser.add_argument("--asr-run-poll-interval-seconds", type=float, default=5, help="ASR run poll interval")
     parser.add_argument("--settle-seconds", type=float, default=8, help="Wait before querying shadow summaries because send/raw shadow writes are async")
     parser.add_argument("--summary-poll-seconds", type=float, default=0, help="Poll shadow summaries until expected kind counts grow; useful during 100% sampling windows")
     parser.add_argument("--summary-poll-interval-seconds", type=float, default=5, help="Shadow summary poll interval")
@@ -699,6 +975,9 @@ def main() -> int:
         or args.include_image_worker_text2img
         or args.include_image_worker_img2img
         or args.include_image_worker_vision
+        or args.include_video_direct
+        or args.include_transcript_asr
+        or args.include_document_store_subtitle_asr
     ):
         user_id = fetch_user_id(base, admin_token, args.timeout)
 
@@ -710,6 +989,9 @@ def main() -> int:
         or args.include_image_worker_text2img
         or args.include_image_worker_img2img
         or args.include_image_worker_vision
+        or args.include_video_direct
+        or args.include_transcript_asr
+        or args.include_document_store_subtitle_asr
     )
     if needs_seed_user:
         seed_username = args.seed_username.strip()
@@ -727,6 +1009,9 @@ def main() -> int:
                 or args.include_image_worker_text2img
                 or args.include_image_worker_img2img
                 or args.include_image_worker_vision
+                or args.include_video_direct
+                or args.include_transcript_asr
+                or args.include_document_store_subtitle_asr
             )
             else "PM"
         )
@@ -749,6 +1034,10 @@ def main() -> int:
     if args.include_image_worker_vision:
         image_ref_shas = require_image_ref_shas(args.image_ref_shas, 2, "image worker vision")
 
+    wav_bytes = b""
+    if args.include_transcript_asr or args.include_document_store_subtitle_asr:
+        wav_bytes = make_seed_wav(args.asr_wav_seconds)
+
     print(f"base={base}")
     print(f"gwBase={gw_base}")
     print(f"releaseCommit={release_commit}")
@@ -763,6 +1052,10 @@ def main() -> int:
     if args.include_image_worker_vision:
         print(f"imageWorkerVisionModel={image_platform_id}/{image_model_id}")
         print(f"imageWorkerVisionRefShas={','.join(image_ref_shas[:2])}")
+    if args.include_video_direct:
+        print(f"videoDirect={args.video_aspect_ratio}/{args.video_resolution}/{args.video_duration_seconds}s")
+    if args.include_transcript_asr or args.include_document_store_subtitle_asr:
+        print(f"asrSeedWavBytes={len(wav_bytes)}")
 
     baseline_counts: dict[str, int] = {}
     if args.gw_key:
@@ -844,6 +1137,39 @@ def main() -> int:
                 args.image_worker_poll_interval_seconds,
             )
             print(f"seed[{index + 1}] imageWorkerVisionRunId={run_id}")
+        if args.include_video_direct:
+            job_id = call_video_direct(
+                base,
+                token,
+                args.timeout,
+                tag,
+                args.video_duration_seconds,
+                args.video_aspect_ratio,
+                args.video_resolution,
+            )
+            print(f"seed[{index + 1}] videoDirectJobId={job_id}")
+        if args.include_transcript_asr:
+            run_id = call_transcript_asr(
+                base,
+                token,
+                args.timeout,
+                tag,
+                wav_bytes,
+                args.asr_run_poll_seconds,
+                args.asr_run_poll_interval_seconds,
+            )
+            print(f"seed[{index + 1}] transcriptAsrRunId={run_id}")
+        if args.include_document_store_subtitle_asr:
+            run_id = call_document_store_subtitle_asr(
+                base,
+                token,
+                args.timeout,
+                tag,
+                wav_bytes,
+                args.asr_run_poll_seconds,
+                args.asr_run_poll_interval_seconds,
+            )
+            print(f"seed[{index + 1}] documentStoreSubtitleRunId={run_id}")
         print(f"seed[{index + 1}] sessionId={session_id}")
         if index + 1 < args.iterations and args.sleep_seconds > 0:
             time.sleep(args.sleep_seconds)
@@ -867,6 +1193,9 @@ def main() -> int:
                     + int(args.include_image_worker_text2img)
                     + int(args.include_image_worker_img2img)
                     + int(args.include_image_worker_vision)
+                    + int(args.include_video_direct)
+                    + int(args.include_transcript_asr)
+                    + int(args.include_document_store_subtitle_asr)
                 ),
             },
             args.summary_poll_seconds,
