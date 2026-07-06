@@ -74,7 +74,6 @@ public class GatewayDirectClientRatchetTests
     private static readonly Dictionary<string, string> DirectTransportMarkerBaseline = new(StringComparer.Ordinal)
     {
         ["PrdAgent.Api/Controllers/Api/PlatformsController.cs"] = "admin 拉取模型列表是管理探测路径，不是用户生成请求",
-        ["PrdAgent.Api/Services/CapsuleExecutor.cs"] = "claude-sdk sidecar 仍是待迁移的真实 direct AI 路径",
     };
 
     [Fact]

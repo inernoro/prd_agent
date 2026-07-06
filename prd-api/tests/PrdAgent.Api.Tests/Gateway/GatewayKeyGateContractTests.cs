@@ -65,6 +65,7 @@ public class GatewayKeyGateContractTests
         new object[] { HttpMethod.Post, "/gw/v1/profile-test" },
         new object[] { HttpMethod.Post, "/gw/v1/stream" },
         new object[] { HttpMethod.Post, "/gw/v1/client-stream" },
+        new object[] { HttpMethod.Post, "/v1/chat/completions" },
         new object[] { HttpMethod.Get, "/gw/v1/pools?appCallerCode=demo.app::chat&modelType=chat" },
         new object[] { HttpMethod.Get, "/gw/v1/shadow-comparisons?sinceHours=24" },
     };
@@ -117,6 +118,38 @@ public class GatewayKeyGateContractTests
     }
 
     [Fact]
+    public async Task OpenAiCompatibleEndpoint_AcceptsBearerGatewayKey()
+    {
+        await using var app = BuildHostWithGateway(new EchoingGateway());
+        await app.StartAsync();
+        try
+        {
+            var client = app.GetTestClient();
+            var req = new HttpRequestMessage(HttpMethod.Post, "/v1/chat/completions")
+            {
+                Content = JsonContent.Create(new
+                {
+                    model = "sidecar-picked",
+                    messages = new[] { new { role = "user", content = "hi" } },
+                    stream = false,
+                }),
+            };
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", GatewayKey);
+
+            var resp = await client.SendAsync(req);
+            var body = await resp.Content.ReadAsStringAsync();
+
+            resp.StatusCode.ShouldBe(HttpStatusCode.OK);
+            body.ShouldContain("\"model\":\"sidecar-picked\"");
+            body.ShouldContain("\"content\":\"sent:sidecar-picked\"");
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
     public async Task Healthz_IsExemptFromKeyGate()
     {
         // healthz 是密钥门的显式豁免（存活探针），无 key 也应 200——反证密钥门是「白名单 healthz + 其余全拦」。
@@ -154,5 +187,51 @@ public class GatewayKeyGateContractTests
         public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(string appCallerCode, string modelType, CancellationToken ct = default) => throw Boom();
 
         public ILLMClient CreateClient(string appCallerCode, string modelType, int maxTokens = 4096, double temperature = 0.2, bool includeThinking = false, string? expectedModel = null, string? pinnedPlatformId = null, string? pinnedModelId = null) => throw Boom();
+    }
+
+    private static WebApplication BuildHostWithGateway(PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway)
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.Logging.ClearProviders();
+        builder.WebHost.UseTestServer();
+        builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.PropertyNamingPolicy = null);
+        builder.Services.AddSingleton(gateway);
+        builder.Services.AddSingleton<ILLMRequestContextAccessor, PrdAgent.Core.Services.LLMRequestContextAccessor>();
+
+        var app = builder.Build();
+        var pascalJson = new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = null,
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        };
+        app.MapGatewayServingEndpoints(pascalJson, GatewayKey, "keygate-contract-test");
+        return app;
+    }
+
+    private sealed class EchoingGateway : PrdAgent.Infrastructure.LlmGateway.ILlmGateway
+    {
+        private static GatewayModelResolution Resolve(string? expected) => new()
+        {
+            Success = true,
+            ExpectedModel = expected,
+            ActualModel = expected ?? "default-model",
+            ActualPlatformId = "plat-1",
+            Protocol = "openai",
+            ResolutionType = expected != null ? "directModel" : "defaultPool",
+        };
+
+        public Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default)
+            => Task.FromResult(GatewayResponse.Ok($"sent:{request.ExpectedModel}", Resolve(request.ExpectedModel)));
+
+        public IAsyncEnumerable<GatewayStreamChunk> StreamAsync(GatewayRequest request, CancellationToken ct = default) => throw new NotSupportedException();
+
+        public Task<GatewayRawResponse> SendRawWithResolutionAsync(GatewayRawRequest request, GatewayModelResolution resolution, CancellationToken ct = default) => throw new NotSupportedException();
+
+        public Task<GatewayModelResolution> ResolveModelAsync(string appCallerCode, string modelType, string? expectedModel = null, string? pinnedPlatformId = null, string? pinnedModelId = null, CancellationToken ct = default)
+            => Task.FromResult(Resolve(expectedModel));
+
+        public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(string appCallerCode, string modelType, CancellationToken ct = default) => throw new NotSupportedException();
+
+        public ILLMClient CreateClient(string appCallerCode, string modelType, int maxTokens = 4096, double temperature = 0.2, bool includeThinking = false, string? expectedModel = null, string? pinnedPlatformId = null, string? pinnedModelId = null) => throw new NotSupportedException();
     }
 }

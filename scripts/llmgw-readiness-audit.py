@@ -574,7 +574,6 @@ def _static_checks() -> list[dict]:
             "DirectTransportMarkers_AreOnlyInTrackedNonGatewayPaths",
             "DirectTransportMarkerBaseline",
             "PrdAgent.Api/Controllers/Api/PlatformsController.cs",
-            "PrdAgent.Api/Services/CapsuleExecutor.cs",
         ],
     )
     checks.append(_check(

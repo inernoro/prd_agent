@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Jint;
 using Jint.Runtime;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
@@ -5629,7 +5630,7 @@ function safeChart(canvasId, config) {
         }
 
         var runId = Guid.NewGuid().ToString("N");
-        var appCallerCode = "page-agent.claude-sdk::agent";
+        var appCallerCode = AppCallerRegistry.PageAgent.Generate;
         var effectiveModel = string.IsNullOrWhiteSpace(model) ? "claude-opus-4-5" : model;
 
         // 工具白名单：node.config.tools 是逗号分隔的工具名列表，从 IAgentToolRegistry 解析
@@ -5661,6 +5662,25 @@ function safeChart(canvasId, config) {
             sb.AppendLine($"[claude-sdk] tools whitelist=[{toolsCsv}] resolved={tools.Count}");
         }
 
+        var configuration = sp.GetService<IConfiguration>();
+        var gatewayServeBaseUrl = configuration?["LlmGateway:ServeBaseUrl"]?.Trim().TrimEnd('/');
+        var gatewayApiKey = configuration?["LlmGwServe:ApiKey"]?.Trim();
+        var hasDirectUpstreamOverride =
+            !string.IsNullOrWhiteSpace(profile)
+            || !string.IsNullOrWhiteSpace(baseUrl)
+            || !string.IsNullOrWhiteSpace(apiKey);
+        if (hasDirectUpstreamOverride)
+        {
+            throw new InvalidOperationException(
+                "claude-sdk sidecar direct upstream override is disabled. Route model calls through llmgw-serve by configuring LlmGateway:ServeBaseUrl and LlmGwServe:ApiKey.");
+        }
+
+        if (string.IsNullOrWhiteSpace(gatewayServeBaseUrl) || string.IsNullOrWhiteSpace(gatewayApiKey))
+        {
+            throw new InvalidOperationException(
+                "claude-sdk sidecar requires llmgw-serve routing. Missing LlmGateway:ServeBaseUrl or LlmGwServe:ApiKey.");
+        }
+
         var request = new SidecarRunRequest
         {
             RunId = runId,
@@ -5678,9 +5698,11 @@ function safeChart(canvasId, config) {
             AppCallerCode = appCallerCode,
             SidecarTag = string.IsNullOrWhiteSpace(sidecarTag) ? null : sidecarTag,
             StickyKey = string.IsNullOrWhiteSpace(stickyKey) ? runId : stickyKey,
-            Profile = string.IsNullOrWhiteSpace(profile) ? null : profile,
-            BaseUrl = string.IsNullOrWhiteSpace(baseUrl) ? null : baseUrl,
-            ApiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey,
+            Profile = null,
+            BaseUrl = gatewayServeBaseUrl,
+            ApiKey = gatewayApiKey,
+            Protocol = "openai-compatible",
+            RuntimeAdapter = "legacy-sidecar",
         };
 
         // 把 LlmRequestContext 推上 scope（与 .claude/rules/llm-gateway.md 对齐），
@@ -5733,8 +5755,7 @@ function safeChart(canvasId, config) {
                     StartedAt: startedAt,
                     RequestType: "agent",
                     AppCallerCode: appCallerCode,
-                    // S2 观测标记：claude-sdk 直连（非网关路由），标记 direct。
-                    GatewayTransport: GatewayTransports.Direct));
+                    GatewayTransport: GatewayTransports.Http));
             }
             catch (Exception ex)
             {
@@ -5744,10 +5765,7 @@ function safeChart(canvasId, config) {
 
         sb.AppendLine($"[claude-sdk] runId={runId} model={request.Model} maxTurns={maxTurns}");
         sb.AppendLine($"[claude-sdk] systemPrompt={systemPrompt.Length}c userPrompt={userPrompt.Length}c tools={tools.Count}");
-        if (!string.IsNullOrWhiteSpace(profile))
-            sb.AppendLine($"[claude-sdk] upstream profile={profile}");
-        else if (!string.IsNullOrWhiteSpace(baseUrl))
-            sb.AppendLine($"[claude-sdk] upstream baseUrl={baseUrl} (override)");
+        sb.AppendLine("[claude-sdk] upstream=llmgw-serve openai-compatible runtimeAdapter=legacy-sidecar");
 
         if (emitEvent != null)
             await emitEvent("cli-agent-phase", new { phase = "running", message = "Claude Agent SDK 执行中…" });

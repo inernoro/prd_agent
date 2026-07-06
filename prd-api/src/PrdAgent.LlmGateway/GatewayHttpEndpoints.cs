@@ -1,5 +1,7 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
@@ -20,6 +22,12 @@ namespace PrdAgent.LlmGatewayHost;
 /// </summary>
 public static class GatewayHttpEndpoints
 {
+    private static readonly JsonSerializerOptions SnakeJson = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
+
     /// <summary>
     /// 装配 X-Gateway-Key 密钥门 + /gw/v1/* 全部 serving 端点。
     /// </summary>
@@ -33,15 +41,19 @@ public static class GatewayHttpEndpoints
         string gatewayApiKey,
         string gitCommit)
     {
-        // 共享密钥门（内部 M2M，不走 JWT）：/gw/v1/* 除 healthz 外必须带 X-Gateway-Key。
+        // 共享密钥门（内部 M2M，不走 JWT）：
+        // - /gw/v1/* 除 healthz 外必须带 X-Gateway-Key。
+        // - /v1/chat/completions 是给 sidecar / OpenAI-compatible M2M 客户端用的兼容入口，
+        //   同样只接受 gateway key；为兼容 OpenAI SDK，允许 Authorization: Bearer <key>。
         app.Use(async (context, next) =>
         {
             var path = context.Request.Path.Value ?? string.Empty;
-            if (path.StartsWith("/gw/v1", StringComparison.OrdinalIgnoreCase)
-                && !path.StartsWith("/gw/v1/healthz", StringComparison.OrdinalIgnoreCase))
+            var protectedGatewayPath = path.StartsWith("/gw/v1", StringComparison.OrdinalIgnoreCase)
+                                       && !path.StartsWith("/gw/v1/healthz", StringComparison.OrdinalIgnoreCase);
+            var protectedOpenAiCompatPath = path.Equals("/v1/chat/completions", StringComparison.OrdinalIgnoreCase);
+            if (protectedGatewayPath || protectedOpenAiCompatPath)
             {
-                var provided = context.Request.Headers["X-Gateway-Key"].FirstOrDefault();
-                if (!string.Equals(provided, gatewayApiKey, StringComparison.Ordinal))
+                if (!HasGatewayKey(context, gatewayApiKey))
                 {
                     context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                     await context.Response.WriteAsync("unauthorized");
@@ -57,6 +69,63 @@ public static class GatewayHttpEndpoints
             commit = gitCommit,
             time = DateTime.UtcNow.ToString("o"),
         }, jsonOpts), "application/json"));
+
+        // OpenAI-compatible M2M 入口。用于 claude-sdk-sidecar 的 legacy/openai-compatible
+        // 工具循环：sidecar 继续负责多轮 tool calls，模型请求统一穿过 llmgw-serve。
+        app.MapPost("/v1/chat/completions", async (
+            HttpContext http,
+            PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+            ILLMRequestContextAccessor accessor) =>
+        {
+            var requestId = ResolveHeader(http, "X-Request-Id") ?? Guid.NewGuid().ToString("N");
+            var appCallerCode = ResolveHeader(http, "X-Gateway-App-Caller")
+                                ?? AppCallerRegistry.PageAgent.Generate;
+            var userId = ResolveHeader(http, "X-Gateway-User-Id");
+
+            var body = await ReadJsonBodyAsync(http.Request, CancellationToken.None);
+            if (body == null)
+            {
+                http.Response.StatusCode = StatusCodes.Status400BadRequest;
+                http.Response.ContentType = "application/json";
+                await http.Response.WriteAsync(JsonSerializer.Serialize(new
+                {
+                    error = new { message = "请求体必须是合法 JSON object", type = "invalid_request_error", code = "invalid_json" }
+                }, SnakeJson));
+                return;
+            }
+
+            var requestedModel = ReadString(body, "model");
+            var stream = ReadBool(body, "stream");
+            body.Remove("model");
+
+            var gatewayRequest = new GatewayRequest
+            {
+                AppCallerCode = appCallerCode,
+                ModelType = ModelTypes.Chat,
+                ExpectedModel = string.IsNullOrWhiteSpace(requestedModel) ? null : requestedModel,
+                RequestBody = body,
+                Stream = stream,
+                IncludeThinking = true,
+                TimeoutSeconds = 600,
+                Context = new GatewayRequestContext
+                {
+                    RequestId = requestId,
+                    UserId = userId,
+                    QuestionText = ExtractQuestionText(body),
+                    GatewayTransport = GatewayTransports.Http,
+                }
+            };
+
+            using var _ = OpenContextScope(accessor, gatewayRequest.Context, gatewayRequest.ModelType, gatewayRequest.AppCallerCode);
+            if (stream)
+            {
+                await StreamOpenAiCompatibleAsync(http, gateway, gatewayRequest, requestId, requestedModel);
+            }
+            else
+            {
+                await SendOpenAiCompatibleAsync(http, gateway, gatewayRequest, requestId, requestedModel);
+            }
+        });
 
         // 预解析模型调度结果（不发送请求）。
         app.MapPost("/gw/v1/resolve", async (
@@ -260,6 +329,232 @@ public static class GatewayHttpEndpoints
             trimmed = trimmed[4..];
         return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed.ToLowerInvariant();
     }
+
+    private static bool HasGatewayKey(HttpContext context, string gatewayApiKey)
+    {
+        var provided = context.Request.Headers["X-Gateway-Key"].FirstOrDefault();
+        if (string.Equals(provided, gatewayApiKey, StringComparison.Ordinal))
+            return true;
+
+        var auth = context.Request.Headers.Authorization.FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(auth)
+            && auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(auth["Bearer ".Length..].Trim(), gatewayApiKey, StringComparison.Ordinal))
+            return true;
+
+        return false;
+    }
+
+    private static async Task<JsonObject?> ReadJsonBodyAsync(HttpRequest request, CancellationToken ct)
+    {
+        try
+        {
+            var body = await JsonNode.ParseAsync(request.Body, cancellationToken: ct);
+            return body as JsonObject;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? ResolveHeader(HttpContext http, string name)
+    {
+        var value = http.Request.Headers[name].FirstOrDefault();
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static string? ReadString(JsonObject body, string key)
+        => body.TryGetPropertyValue(key, out var node) && node is JsonValue value && value.TryGetValue<string>(out var s)
+            ? s
+            : null;
+
+    private static bool ReadBool(JsonObject body, string key)
+        => body.TryGetPropertyValue(key, out var node) && node is JsonValue value && value.TryGetValue<bool>(out var b) && b;
+
+    private static string? ExtractQuestionText(JsonObject body)
+    {
+        if (body.TryGetPropertyValue("messages", out var messagesNode) && messagesNode is JsonArray messages)
+        {
+            for (var i = messages.Count - 1; i >= 0; i--)
+            {
+                if (messages[i] is not JsonObject message) continue;
+                if (!string.Equals(ReadString(message, "role"), "user", StringComparison.OrdinalIgnoreCase)) continue;
+                var content = message["content"];
+                if (content is JsonValue v && v.TryGetValue<string>(out var s)) return s;
+                if (content is JsonArray arr) return arr.ToJsonString();
+            }
+        }
+        return null;
+    }
+
+    private static async Task SendOpenAiCompatibleAsync(
+        HttpContext http,
+        PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+        GatewayRequest request,
+        string requestId,
+        string? requestedModel)
+    {
+        var response = await gateway.SendAsync(request, CancellationToken.None);
+        var model = response.Resolution?.ActualModel ?? requestedModel ?? "auto";
+        if (!response.Success)
+        {
+            http.Response.StatusCode = response.StatusCode > 0 ? response.StatusCode : StatusCodes.Status502BadGateway;
+            http.Response.ContentType = "application/json";
+            await http.Response.WriteAsync(JsonSerializer.Serialize(new
+            {
+                error = new { message = response.ErrorMessage ?? "上游模型调用失败", type = "api_error", code = response.ErrorCode }
+            }, SnakeJson));
+            return;
+        }
+
+        var usage = new
+        {
+            promptTokens = response.TokenUsage?.InputTokens ?? 0,
+            completionTokens = response.TokenUsage?.OutputTokens ?? 0,
+            totalTokens = (response.TokenUsage?.InputTokens ?? 0) + (response.TokenUsage?.OutputTokens ?? 0),
+        };
+        var created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        http.Response.ContentType = "application/json";
+        if (response.ToolCalls is { Count: > 0 })
+        {
+            var toolCompletion = new
+            {
+                id = $"chatcmpl-{requestId}",
+                @object = "chat.completion",
+                created,
+                model,
+                choices = new[] { new { index = 0, message = new { role = "assistant", content = (string?)null, toolCalls = response.ToolCalls }, finishReason = "tool_calls" } },
+                usage,
+            };
+            await http.Response.WriteAsync(JsonSerializer.Serialize(toolCompletion, SnakeJson));
+            return;
+        }
+
+        var textCompletion = new
+        {
+            id = $"chatcmpl-{requestId}",
+            @object = "chat.completion",
+            created,
+            model,
+            choices = new[] { new { index = 0, message = new { role = "assistant", content = response.Content ?? string.Empty, toolCalls = (JsonArray?)null }, finishReason = "stop" } },
+            usage,
+        };
+        await http.Response.WriteAsync(JsonSerializer.Serialize(textCompletion, SnakeJson));
+    }
+
+    private static async Task StreamOpenAiCompatibleAsync(
+        HttpContext http,
+        PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+        GatewayRequest request,
+        string requestId,
+        string? requestedModel)
+    {
+        http.Response.Headers.ContentType = "text/event-stream";
+        http.Response.Headers.CacheControl = "no-cache";
+        http.Response.Headers["X-Accel-Buffering"] = "no";
+
+        var created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var model = requestedModel ?? "auto";
+        var sentRole = false;
+        var doneSent = false;
+
+        async Task WriteSseAsync(object data)
+        {
+            await http.Response.WriteAsync("data: " + JsonSerializer.Serialize(data, SnakeJson) + "\n\n");
+            await http.Response.Body.FlushAsync();
+        }
+
+        async Task SendDoneAsync()
+        {
+            if (doneSent) return;
+            doneSent = true;
+            await http.Response.WriteAsync("data: [DONE]\n\n");
+            await http.Response.Body.FlushAsync();
+        }
+
+        try
+        {
+            await foreach (var chunk in gateway.StreamAsync(request, CancellationToken.None))
+            {
+                if (chunk.Type == GatewayChunkType.Start && chunk.Resolution != null)
+                {
+                    model = chunk.Resolution.ActualModel ?? model;
+                }
+                else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    if (!sentRole)
+                    {
+                        await WriteSseAsync(BuildOpenAiChunk(requestId, created, model, new { role = "assistant" }, null));
+                        sentRole = true;
+                    }
+                    await WriteSseAsync(BuildOpenAiChunk(requestId, created, model, new { content = chunk.Content }, null));
+                }
+                else if (chunk.Type == GatewayChunkType.Thinking && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    await WriteSseAsync(BuildOpenAiChunk(requestId, created, model, new { reasoning = chunk.Content, reasoningContent = chunk.Content }, null));
+                }
+                else if (chunk.Type == GatewayChunkType.ToolCall && chunk.ToolCallDelta != null)
+                {
+                    if (!sentRole)
+                    {
+                        await WriteSseAsync(BuildOpenAiChunk(requestId, created, model, new { role = "assistant" }, null));
+                        sentRole = true;
+                    }
+                    await WriteSseAsync(BuildOpenAiChunk(requestId, created, model, new { toolCalls = chunk.ToolCallDelta }, null));
+                }
+                else if (chunk.Type == GatewayChunkType.Error)
+                {
+                    await WriteSseAsync(new
+                    {
+                        id = $"chatcmpl-{requestId}",
+                        @object = "chat.completion.chunk",
+                        created,
+                        model,
+                        choices = new[] { new { index = 0, delta = new { }, finishReason = "error" } },
+                        error = new { message = chunk.Error ?? "上游模型调用失败", type = "api_error", code = "upstream_error" },
+                    });
+                    await SendDoneAsync();
+                    return;
+                }
+                else if (chunk.Type == GatewayChunkType.Done)
+                {
+                    var promptTokens = chunk.TokenUsage?.InputTokens ?? 0;
+                    var completionTokens = chunk.TokenUsage?.OutputTokens ?? 0;
+                    await WriteSseAsync(new
+                    {
+                        id = $"chatcmpl-{requestId}",
+                        @object = "chat.completion.chunk",
+                        created,
+                        model,
+                        choices = new[] { new { index = 0, delta = new { }, finishReason = chunk.FinishReason ?? "stop" } },
+                        usage = new { promptTokens, completionTokens, totalTokens = promptTokens + completionTokens },
+                    });
+                    await SendDoneAsync();
+                }
+            }
+
+            await SendDoneAsync();
+        }
+        catch (OperationCanceledException)
+        {
+            // 客户端断开或写中断：保持 server-authority，不向网关传递取消。
+        }
+        catch (ObjectDisposedException)
+        {
+            // 响应已释放：静默停止。
+        }
+    }
+
+    private static object BuildOpenAiChunk(string requestId, long created, string model, object delta, string? finishReason)
+        => new
+        {
+            id = $"chatcmpl-{requestId}",
+            @object = "chat.completion.chunk",
+            created,
+            model,
+            choices = new[] { new { index = 0, delta, finishReason } },
+        };
 
     // 把 GatewayRequestContext 转成 LlmRequestContext 并打开作用域。
     // LlmRequestContext 必填位置参数：RequestId / GroupId / SessionId / UserId / ViewRole /
