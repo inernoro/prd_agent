@@ -161,6 +161,8 @@ python3 scripts/llmgw-map-shadow-seed.py --iterations 1
 终态，用于证明 `transcript-agent.transcribe::asr:raw` 与 `document-store.subtitle::asr:raw` 不是只靠 resolve 样本。
 视频、ASR/raw 证据必须通过对应真实业务入口产生，不能用文本样本替代 raw gate。脚本执行后会读取
 `/gw/v1/shadow-comparisons` 输出 global/send/stream/raw 覆盖摘要，便于证据期连续采样。
+生产补证据建议加 `--continue-on-error --evidence-out <path>`：任一入口失败时继续跑剩余入口，最终仍以非零退出码阻止
+误放行，并把每个入口的成功/失败、错误信息、summary 与期望增长写入 JSON，供发布证据归档。
 在 100% 短时采样窗口内补 raw/send 证据时，建议附加 `--summary-poll-seconds 90`，让脚本按执行前 baseline
 轮询对应 kind 是否增长，避免图片/ASR 等长耗时请求的 shadow comparison 晚于业务响应落库造成误判。
 注意：`send` 和 `raw` 完整比对只有命中 `ShadowFullSamplePercent` 时才会双发；常态 `1%` 采样适合低成本观察，

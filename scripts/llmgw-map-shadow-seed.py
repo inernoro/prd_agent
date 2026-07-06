@@ -47,6 +47,12 @@ class HttpError(RuntimeError):
         self.body = body
 
 
+@dataclass(frozen=True)
+class StepOutcome:
+    ok: bool
+    result: Any = None
+
+
 def request_json(
     method: str,
     url: str,
@@ -866,6 +872,65 @@ def read_env_secret(*names: str) -> str:
     return ""
 
 
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, list):
+        return [json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [json_safe(item) for item in value]
+    if isinstance(value, dict):
+        return {str(k): json_safe(v) for k, v in value.items()}
+    return str(value)
+
+
+def run_seed_step(
+    evidence: dict[str, Any],
+    name: str,
+    continue_on_error: bool,
+    func: Any,
+) -> StepOutcome:
+    started_at = now_iso()
+    try:
+        result = func()
+        evidence.setdefault("steps", []).append({
+            "name": name,
+            "ok": True,
+            "startedAt": started_at,
+            "endedAt": now_iso(),
+            "result": json_safe(result),
+        })
+        return StepOutcome(True, result)
+    except Exception as exc:
+        evidence.setdefault("steps", []).append({
+            "name": name,
+            "ok": False,
+            "startedAt": started_at,
+            "endedAt": now_iso(),
+            "errorType": type(exc).__name__,
+            "error": str(exc),
+        })
+        print(f"seed step failed: {name}: {exc}", file=sys.stderr)
+        if not continue_on_error:
+            raise
+        return StepOutcome(False)
+
+
+def write_evidence(path: str, evidence: dict[str, Any]) -> None:
+    if not path:
+        return
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(evidence, handle, ensure_ascii=False, indent=2, sort_keys=True)
+        handle.write("\n")
+
+
 def format_summary(label: str, summary: dict[str, Any]) -> str:
     return (
         f"{label}: total={summary.get('total', 0)} "
@@ -948,6 +1013,8 @@ def main() -> int:
     parser.add_argument("--settle-seconds", type=float, default=8, help="Wait before querying shadow summaries because send/raw shadow writes are async")
     parser.add_argument("--summary-poll-seconds", type=float, default=0, help="Poll shadow summaries until expected kind counts grow; useful during 100% sampling windows")
     parser.add_argument("--summary-poll-interval-seconds", type=float, default=5, help="Shadow summary poll interval")
+    parser.add_argument("--continue-on-error", action="store_true", help="Run remaining seed paths after a path fails; exits non-zero if any path failed")
+    parser.add_argument("--evidence-out", default="", help="Optional JSON evidence output path; secrets are not written")
     parser.add_argument("--seed-username", default="", help="Optional reusable business user for open-platform seeding")
     parser.add_argument("--seed-password", default=read_env_secret("LLMGW_SHADOW_SEED_PASSWORD"), help="Password for --seed-username; omit for auto generated one-shot user")
     args = parser.parse_args()
@@ -1038,6 +1105,17 @@ def main() -> int:
     if args.include_transcript_asr or args.include_document_store_subtitle_asr:
         wav_bytes = make_seed_wav(args.asr_wav_seconds)
 
+    evidence: dict[str, Any] = {
+        "startedAt": now_iso(),
+        "base": base,
+        "gwBase": gw_base,
+        "releaseCommit": release_commit,
+        "iterations": args.iterations,
+        "continueOnError": bool(args.continue_on_error),
+        "steps": [],
+        "summaries": {},
+    }
+
     print(f"base={base}")
     print(f"gwBase={gw_base}")
     print(f"releaseCommit={release_commit}")
@@ -1069,107 +1147,208 @@ def main() -> int:
                 kind,
             ).get("total", 0) or 0)
 
+    stream_successes = 0
+    send_successes = 0
+    raw_successes = 0
+
     for index in range(args.iterations):
         tag = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + f"-{index + 1}"
-        session_id, document_id = create_document(base, token, args.timeout, tag)
-        call_session_chat(base, token, session_id, args.timeout, tag)
+        prefix = f"seed[{index + 1}]"
+        document_step = run_seed_step(
+            evidence,
+            f"{prefix}.create_document",
+            args.continue_on_error,
+            lambda: create_document(base, token, args.timeout, tag),
+        )
+        if not document_step.ok:
+            if index + 1 < args.iterations and args.sleep_seconds > 0:
+                time.sleep(args.sleep_seconds)
+            continue
+        session_id, document_id = document_step.result
+        chat_step = run_seed_step(
+            evidence,
+            f"{prefix}.session_chat",
+            args.continue_on_error,
+            lambda: call_session_chat(base, token, session_id, args.timeout, tag),
+        )
+        if chat_step.ok:
+            stream_successes += 1
         if not args.skip_preview_ask:
-            call_preview_ask(base, token, session_id, args.timeout, tag)
+            preview_step = run_seed_step(
+                evidence,
+                f"{prefix}.preview_ask",
+                args.continue_on_error,
+                lambda: call_preview_ask(base, token, session_id, args.timeout, tag),
+            )
         group_id = ""
         if args.include_open_platform:
-            group_id = create_group(base, token, document_id, args.timeout)
-            api_key = create_open_platform_app(base, admin_token, user_id, group_id, args.timeout, tag)
-            call_open_platform_chat(base, api_key, group_id, args.timeout, tag)
+            group_step = run_seed_step(
+                evidence,
+                f"{prefix}.create_group",
+                args.continue_on_error,
+                lambda: create_group(base, token, document_id, args.timeout),
+            )
+            if group_step.ok:
+                group_id = group_step.result
+                app_step = run_seed_step(
+                    evidence,
+                    f"{prefix}.create_open_platform_app",
+                    args.continue_on_error,
+                    lambda: create_open_platform_app(base, admin_token, user_id, group_id, args.timeout, tag),
+                )
+                if app_step.ok:
+                    open_platform_step = run_seed_step(
+                        evidence,
+                        f"{prefix}.open_platform_chat",
+                        args.continue_on_error,
+                        lambda: call_open_platform_chat(base, app_step.result, group_id, args.timeout, tag),
+                    )
         if args.include_tutorial_email_send:
-            call_tutorial_email_send(base, token, args.timeout, tag)
+            tutorial_step = run_seed_step(
+                evidence,
+                f"{prefix}.tutorial_email_send",
+                args.continue_on_error,
+                lambda: call_tutorial_email_send(base, token, args.timeout, tag),
+            )
+            if tutorial_step.ok:
+                send_successes += 1
         if args.include_image_raw:
-            call_image_raw_generate(
-                base,
-                token,
-                args.timeout,
-                tag,
-                image_platform_id,
-                image_model_id,
-                args.image_size,
-                args.image_response_format,
+            image_raw_step = run_seed_step(
+                evidence,
+                f"{prefix}.image_raw_generate",
+                args.continue_on_error,
+                lambda: call_image_raw_generate(
+                    base,
+                    token,
+                    args.timeout,
+                    tag,
+                    image_platform_id,
+                    image_model_id,
+                    args.image_size,
+                    args.image_response_format,
+                ),
             )
+            if image_raw_step.ok:
+                raw_successes += 1
         if args.include_image_worker_text2img:
-            run_id = call_image_worker_text2img_run(
-                base,
-                token,
-                args.timeout,
-                tag,
-                image_platform_id,
-                image_model_id,
-                args.image_size,
-                args.image_response_format,
-                args.image_worker_poll_seconds,
-                args.image_worker_poll_interval_seconds,
+            text2img_step = run_seed_step(
+                evidence,
+                f"{prefix}.image_worker_text2img",
+                args.continue_on_error,
+                lambda: call_image_worker_text2img_run(
+                    base,
+                    token,
+                    args.timeout,
+                    tag,
+                    image_platform_id,
+                    image_model_id,
+                    args.image_size,
+                    args.image_response_format,
+                    args.image_worker_poll_seconds,
+                    args.image_worker_poll_interval_seconds,
+                ),
             )
-            print(f"seed[{index + 1}] imageWorkerText2ImgRunId={run_id}")
+            if text2img_step.ok:
+                raw_successes += 1
+                print(f"seed[{index + 1}] imageWorkerText2ImgRunId={text2img_step.result}")
         if args.include_image_worker_img2img:
-            run_id = call_image_worker_img2img_run(
-                base,
-                token,
-                args.timeout,
-                tag,
-                image_platform_id,
-                image_model_id,
-                args.image_size,
-                args.image_response_format,
-                image_ref_shas[0],
-                args.image_worker_poll_seconds,
-                args.image_worker_poll_interval_seconds,
+            img2img_step = run_seed_step(
+                evidence,
+                f"{prefix}.image_worker_img2img",
+                args.continue_on_error,
+                lambda: call_image_worker_img2img_run(
+                    base,
+                    token,
+                    args.timeout,
+                    tag,
+                    image_platform_id,
+                    image_model_id,
+                    args.image_size,
+                    args.image_response_format,
+                    image_ref_shas[0],
+                    args.image_worker_poll_seconds,
+                    args.image_worker_poll_interval_seconds,
+                ),
             )
-            print(f"seed[{index + 1}] imageWorkerImg2ImgRunId={run_id}")
+            if img2img_step.ok:
+                raw_successes += 1
+                print(f"seed[{index + 1}] imageWorkerImg2ImgRunId={img2img_step.result}")
         if args.include_image_worker_vision:
-            run_id = call_image_worker_vision_run(
-                base,
-                token,
-                args.timeout,
-                tag,
-                image_platform_id,
-                image_model_id,
-                args.image_size,
-                args.image_response_format,
-                image_ref_shas[:2],
-                args.image_worker_poll_seconds,
-                args.image_worker_poll_interval_seconds,
+            vision_step = run_seed_step(
+                evidence,
+                f"{prefix}.image_worker_vision",
+                args.continue_on_error,
+                lambda: call_image_worker_vision_run(
+                    base,
+                    token,
+                    args.timeout,
+                    tag,
+                    image_platform_id,
+                    image_model_id,
+                    args.image_size,
+                    args.image_response_format,
+                    image_ref_shas[:2],
+                    args.image_worker_poll_seconds,
+                    args.image_worker_poll_interval_seconds,
+                ),
             )
-            print(f"seed[{index + 1}] imageWorkerVisionRunId={run_id}")
+            if vision_step.ok:
+                raw_successes += 1
+                print(f"seed[{index + 1}] imageWorkerVisionRunId={vision_step.result}")
         if args.include_video_direct:
-            job_id = call_video_direct(
-                base,
-                token,
-                args.timeout,
-                tag,
-                args.video_duration_seconds,
-                args.video_aspect_ratio,
-                args.video_resolution,
+            video_step = run_seed_step(
+                evidence,
+                f"{prefix}.video_direct",
+                args.continue_on_error,
+                lambda: call_video_direct(
+                    base,
+                    token,
+                    args.timeout,
+                    tag,
+                    args.video_duration_seconds,
+                    args.video_aspect_ratio,
+                    args.video_resolution,
+                ),
             )
-            print(f"seed[{index + 1}] videoDirectJobId={job_id}")
+            if video_step.ok:
+                raw_successes += 1
+                print(f"seed[{index + 1}] videoDirectJobId={video_step.result}")
         if args.include_transcript_asr:
-            run_id = call_transcript_asr(
-                base,
-                token,
-                args.timeout,
-                tag,
-                wav_bytes,
-                args.asr_run_poll_seconds,
-                args.asr_run_poll_interval_seconds,
+            transcript_step = run_seed_step(
+                evidence,
+                f"{prefix}.transcript_asr",
+                args.continue_on_error,
+                lambda: call_transcript_asr(
+                    base,
+                    token,
+                    args.timeout,
+                    tag,
+                    wav_bytes,
+                    args.asr_run_poll_seconds,
+                    args.asr_run_poll_interval_seconds,
+                ),
             )
-            print(f"seed[{index + 1}] transcriptAsrRunId={run_id}")
+            if transcript_step.ok:
+                raw_successes += 1
+                print(f"seed[{index + 1}] transcriptAsrRunId={transcript_step.result}")
         if args.include_document_store_subtitle_asr:
-            run_id = call_document_store_subtitle_asr(
-                base,
-                token,
-                args.timeout,
-                tag,
-                wav_bytes,
-                args.asr_run_poll_seconds,
-                args.asr_run_poll_interval_seconds,
+            subtitle_step = run_seed_step(
+                evidence,
+                f"{prefix}.document_store_subtitle_asr",
+                args.continue_on_error,
+                lambda: call_document_store_subtitle_asr(
+                    base,
+                    token,
+                    args.timeout,
+                    tag,
+                    wav_bytes,
+                    args.asr_run_poll_seconds,
+                    args.asr_run_poll_interval_seconds,
+                ),
             )
-            print(f"seed[{index + 1}] documentStoreSubtitleRunId={run_id}")
+            if subtitle_step.ok:
+                raw_successes += 1
+                print(f"seed[{index + 1}] documentStoreSubtitleRunId={subtitle_step.result}")
         print(f"seed[{index + 1}] sessionId={session_id}")
         if index + 1 < args.iterations and args.sleep_seconds > 0:
             time.sleep(args.sleep_seconds)
@@ -1185,42 +1364,37 @@ def main() -> int:
             release_commit,
             baseline_counts,
             {
-                "stream": args.iterations,
-                "send": args.iterations if args.include_tutorial_email_send else 0,
-                "raw": args.iterations
-                * (
-                    int(args.include_image_raw)
-                    + int(args.include_image_worker_text2img)
-                    + int(args.include_image_worker_img2img)
-                    + int(args.include_image_worker_vision)
-                    + int(args.include_video_direct)
-                    + int(args.include_transcript_asr)
-                    + int(args.include_document_store_subtitle_asr)
-                ),
+                "stream": stream_successes,
+                "send": send_successes,
+                "raw": raw_successes,
             },
             args.summary_poll_seconds,
             args.summary_poll_interval_seconds,
         )
-        print(format_summary(
-            "shadow/global",
-            fetch_shadow_summary(gw_base, args.gw_key, args.timeout, args.since_hours, release_commit),
-        ))
-        print(format_summary(
-            "shadow/send",
-            fetch_shadow_summary(gw_base, args.gw_key, args.timeout, args.since_hours, release_commit, "send"),
-        ))
-        print(format_summary(
-            "shadow/stream",
-            fetch_shadow_summary(gw_base, args.gw_key, args.timeout, args.since_hours, release_commit, "stream"),
-        ))
-        print(format_summary(
-            "shadow/raw",
-            fetch_shadow_summary(gw_base, args.gw_key, args.timeout, args.since_hours, release_commit, "raw"),
-        ))
+        for label, kind in (
+            ("shadow/global", None),
+            ("shadow/send", "send"),
+            ("shadow/stream", "stream"),
+            ("shadow/raw", "raw"),
+        ):
+            summary = fetch_shadow_summary(gw_base, args.gw_key, args.timeout, args.since_hours, release_commit, kind)
+            evidence["summaries"][label] = summary
+            print(format_summary(label, summary))
     else:
         print("shadow summary skipped: missing gateway key")
 
-    return 0
+    failed_steps = [step for step in evidence.get("steps", []) if not step.get("ok")]
+    evidence["expectedGrowth"] = {
+        "stream": stream_successes,
+        "send": send_successes,
+        "raw": raw_successes,
+    }
+    evidence["ok"] = len(failed_steps) == 0
+    evidence["failedStepCount"] = len(failed_steps)
+    evidence["endedAt"] = now_iso()
+    write_evidence(args.evidence_out, evidence)
+
+    return 0 if evidence["ok"] else 1
 
 
 if __name__ == "__main__":

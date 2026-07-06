@@ -5,4 +5,5 @@
 | ops | prd-agent | LLM Gateway shadow 采样脚本新增 ImageGenRunWorker 文生图路径，补齐后台生图 raw 证据入口 |
 | ops | prd-agent | LLM Gateway shadow 采样脚本新增 ImageGenRunWorker 图生图与多图 vision 路径，支持用既有图片资产 SHA 取证 |
 | ops | prd-agent | LLM Gateway shadow 采样脚本新增视频提交、转写 ASR 与文档字幕 ASR 真实业务入口取证 |
+| ops | prd-agent | LLM Gateway shadow 采样脚本支持失败后继续执行并输出 JSON 证据，便于生产 gate 归档 |
 | docs | prd-agent | 在全量迁移计划中补充 shadow 证据不足时的采样方式和 raw gate 边界 |
