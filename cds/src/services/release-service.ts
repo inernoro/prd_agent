@@ -138,6 +138,12 @@ export class ReleaseService {
 
     const deployCommand = !projectMismatch ? target?.ssh?.deployCommand?.trim() || '' : '';
     const deployScripts = extractReleaseScriptPaths(deployCommand);
+    const previousRelease = target ? this.stateService.getLatestSuccessfulReleaseRun(target.id) : undefined;
+    const isFirstLocalProdRelease = Boolean(
+      target?.ssh
+      && isLocalProdReleaseCommand(deployCommand)
+      && !previousRelease,
+    );
 
     if (deployCommand) {
       push({ id: 'deploy-command', label: '发布脚本已配置', status: 'pass', message: deployCommand, blocking: false });
@@ -146,7 +152,15 @@ export class ReleaseService {
     }
 
     if (!projectMismatch && target?.ssh?.healthcheckUrl?.trim()) {
-      if (canProbeTarget) {
+      if (isFirstLocalProdRelease) {
+        push({
+          id: 'healthcheck',
+          label: '上线地址可访问',
+          status: 'warn',
+          message: '首次本机生产发布前跳过上线地址探测，发布后仍会执行健康检查',
+          blocking: false,
+        });
+      } else if (canProbeTarget) {
         try {
           await probeHealthcheck(target.ssh.healthcheckUrl);
           push({ id: 'healthcheck', label: '上线地址可访问', status: 'pass', message: target.ssh.healthcheckUrl, blocking: false });
@@ -189,7 +203,6 @@ export class ReleaseService {
       push({ id: 'scripts', label: '发布脚本可执行', status: 'fail', message: '站点发布目标缺少服务器凭据，无法检查脚本', blocking: true });
     }
 
-    const previousRelease = target ? this.stateService.getLatestSuccessfulReleaseRun(target.id) : undefined;
     if (previousRelease) {
       push({ id: 'rollback-version', label: '可回滚版本', status: 'pass', message: `${previousRelease.commitSha.slice(0, 12)} (${previousRelease.releaseId})`, blocking: false });
     } else {
@@ -436,10 +449,11 @@ function buildArtifact(branch: BranchEntry, commitSha: string, previewUrl: strin
     branchId: branch.id,
     branchName: branch.branch,
     previewUrl,
+    artifactPath: branch.worktreePath,
   };
 }
 
-const RELEASE_SCRIPT_PATH_RE = /\.\/[A-Za-z0-9._/@+-]+\.sh/g;
+const RELEASE_SCRIPT_PATH_RE = /(?:\.\/|\/)[A-Za-z0-9._/@+-]+\.sh/g;
 
 export function extractReleaseScriptPaths(rawCommand: string): string[] {
   const matches = rawCommand.match(RELEASE_SCRIPT_PATH_RE) || [];
@@ -453,6 +467,11 @@ export function isDefaultScriptChain(rawCommand: string, scripts = extractReleas
     && scripts[1] === './exec_dep.sh';
 }
 
+export function isLocalProdReleaseCommand(rawCommand: string): boolean {
+  return extractReleaseScriptPaths(rawCommand)
+    .some((script) => script.endsWith('/local-prod-release.sh') || script === './local-prod-release.sh');
+}
+
 export function buildScriptCheckCommand(target: ReleaseTarget, scripts: string[]): string {
   if (!target.ssh) throw new Error('target is not SSH');
   const uniqueScripts = Array.from(new Set(scripts));
@@ -460,6 +479,9 @@ export function buildScriptCheckCommand(target: ReleaseTarget, scripts: string[]
     return `cd ${shellQuote(target.ssh.appPath || '.')} && true`;
   }
   const renderedScripts = uniqueScripts.map((script) => shellQuote(script)).join(' ');
+  if (uniqueScripts.some((script) => script.endsWith('/local-prod-release.sh') || script === './local-prod-release.sh')) {
+    return `for f in ${renderedScripts}; do test -f "$f" || { echo "missing script: $f"; exit 41; }; test -x "$f" || { echo "script is not executable: $f"; exit 42; }; done`;
+  }
   return `cd ${shellQuote(target.ssh.appPath || '.')} && for f in ${renderedScripts}; do test -f "$f" || { echo "missing script: $f"; exit 41; }; test -x "$f" || { echo "script is not executable: $f"; exit 42; }; done`;
 }
 
@@ -467,9 +489,13 @@ export function releaseScriptPhase(script: string): string {
   return `script:${script.replace(/^\.\//, '').replace(/[^A-Za-z0-9._-]/g, '-')}`;
 }
 
-function buildReleaseCommand(target: ReleaseTarget, run: ReleaseRun, rawCommand: string, releaseIdOverride?: string): string {
+export function buildReleaseCommand(target: ReleaseTarget, run: ReleaseRun, rawCommand: string, releaseIdOverride?: string): string {
   const ssh = target.ssh!;
   const env: Record<string, string> = {
+    CDS_PROJECT_ID: run.projectId,
+    CDS_BRANCH_ID: run.branchId,
+    CDS_TARGET_ID: run.targetId,
+    CDS_PLAN_ID: run.planId,
     CDS_COMMIT_SHA: run.commitSha,
     CDS_RELEASE_ID: releaseIdOverride || run.releaseId,
     CDS_BRANCH_NAME: run.artifact.branchName || '',
@@ -482,7 +508,11 @@ function buildReleaseCommand(target: ReleaseTarget, run: ReleaseRun, rawCommand:
   const renderedEnv = Object.entries(env)
     .map(([key, value]) => `${key}=${shellQuote(value)}`)
     .join(' ');
-  return `cd ${shellQuote(ssh.appPath || '.')} && ${renderedEnv} ${rawCommand}`;
+  const appPath = ssh.appPath || '.';
+  if (isLocalProdReleaseCommand(rawCommand) && appPath !== '.') {
+    return `mkdir -p ${shellQuote(appPath)} && cd ${shellQuote(appPath)} && export ${renderedEnv} && ${rawCommand}`;
+  }
+  return `cd ${shellQuote(ssh.appPath || '.')} && export ${renderedEnv} && ${rawCommand}`;
 }
 
 async function probeHealthcheck(url: string, timeoutMs = 8_000): Promise<void> {

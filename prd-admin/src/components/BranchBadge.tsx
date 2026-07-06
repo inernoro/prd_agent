@@ -22,6 +22,13 @@ export function BranchBadge() {
   const [dismissed, setDismissed] = useState(false);
   const [visible, setVisible] = useState(true);
   const [position, setPosition] = useState({ x: 12, y: 12 }); // {left, bottom}
+  const [isMobile, setIsMobile] = useState(() => {
+    try {
+      return window.matchMedia('(max-width: 767px)').matches;
+    } catch {
+      return false;
+    }
+  });
   const dragging = useRef(false);
   const dragStart = useRef({ mouseX: 0, mouseY: 0, posX: 0, posY: 0 });
   const badgeRef = useRef<HTMLDivElement>(null);
@@ -29,16 +36,25 @@ export function BranchBadge() {
   const branch = typeof __GIT_BRANCH__ === 'string' ? __GIT_BRANCH__ : '';
   const deployMode = isDeployMode();
 
-  // Auto-hide after 5s in deploy mode
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 767px)');
+    const sync = () => setIsMobile(media.matches);
+    sync();
+    media.addEventListener('change', sync);
+    return () => media.removeEventListener('change', sync);
+  }, []);
+
+  // Auto-hide after 5s in deploy mode; mobile always auto-hides to keep the tab bar usable.
   useEffect(() => {
     if (!branch || HIDDEN_BRANCHES.includes(branch) || dismissed) return;
-    if (deployMode) {
+    if (deployMode || isMobile) {
       const timer = setTimeout(() => setVisible(false), 5000);
       return () => clearTimeout(timer);
     }
-  }, [branch, dismissed, deployMode]);
+  }, [branch, dismissed, deployMode, isMobile]);
 
   const onMouseDown = useCallback((e: React.MouseEvent) => {
+    if (isMobile) return;
     if ((e.target as HTMLElement).closest('button')) return;
     dragging.current = true;
     dragStart.current = {
@@ -48,7 +64,7 @@ export function BranchBadge() {
       posY: position.y,
     };
     e.preventDefault();
-  }, [position]);
+  }, [position, isMobile]);
 
   useEffect(() => {
     const onMouseMove = (e: MouseEvent) => {
@@ -69,7 +85,7 @@ export function BranchBadge() {
     };
   }, []);
 
-  if (!branch || HIDDEN_BRANCHES.includes(branch) || dismissed || !visible) return null;
+  if (!branch || HIDDEN_BRANCHES.includes(branch) || dismissed || !visible || isMobile) return null;
 
   // Normal badge — sole trusted identity source via __GIT_BRANCH__
   const modeColor = deployMode
@@ -83,8 +99,9 @@ export function BranchBadge() {
       onMouseDown={onMouseDown}
       style={{
         position: 'fixed',
-        left: position.x,
-        bottom: position.y,
+        left: isMobile ? 12 : position.x,
+        right: isMobile ? 12 : undefined,
+        bottom: isMobile ? 'calc(var(--mobile-tab-height, 60px) + env(safe-area-inset-bottom, 0px) + 10px)' : position.y,
         zIndex: 99999,
         display: 'flex',
         alignItems: 'center',
@@ -101,11 +118,12 @@ export function BranchBadge() {
         border: `1px solid ${deployMode ? 'rgba(63, 185, 80, 0.3)' : 'rgba(218, 139, 69, 0.3)'}`,
         boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
         userSelect: 'none',
-        cursor: 'grab',
+        cursor: isMobile ? 'default' : 'grab',
+        maxWidth: isMobile ? 'calc(100vw - 24px)' : undefined,
       }}
     >
       <GitBranch size={13} style={{ flexShrink: 0, opacity: 0.8 }} />
-      <span style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      <span style={{ maxWidth: isMobile ? 'calc(100vw - 130px)' : 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {branch}
       </span>
       <span style={{

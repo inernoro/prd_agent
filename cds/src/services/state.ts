@@ -892,6 +892,10 @@ export class StateService {
     return this.state.branches[branchId]?.subdomainAliases || [];
   }
 
+  getBranchCustomDomains(branchId: string): string[] {
+    return this.state.branches[branchId]?.customDomains || [];
+  }
+
   /**
    * Replace the alias list for a branch. Validates that the branch exists
    * but does NOT validate DNS format or cross-branch collisions — those
@@ -906,6 +910,16 @@ export class StateService {
       return;
     }
     branch.subdomainAliases = [...aliases];
+  }
+
+  setBranchCustomDomains(branchId: string, domains: string[]): void {
+    const branch = this.state.branches[branchId];
+    if (!branch) throw new Error(`分支 "${branchId}" 不存在`);
+    if (!domains || domains.length === 0) {
+      delete branch.customDomains;
+      return;
+    }
+    branch.customDomains = [...domains];
   }
 
   /**
@@ -947,6 +961,20 @@ export class StateService {
         // Collision: candidate equals another branch's alias
         if (other.subdomainAliases?.some(a => a.toLowerCase() === normalized)) {
           conflicts.push({ alias: candidate, conflictWith: other.id, reason: 'alias' });
+        }
+      }
+    }
+    return conflicts;
+  }
+
+  findCustomDomainCollisions(branchId: string, candidateDomains: string[]): Array<{ domain: string; conflictWith: string }> {
+    const conflicts: Array<{ domain: string; conflictWith: string }> = [];
+    for (const candidate of candidateDomains) {
+      const normalized = candidate.toLowerCase();
+      for (const other of Object.values(this.state.branches)) {
+        if (other.id === branchId) continue;
+        if (other.customDomains?.some((d) => d.toLowerCase() === normalized)) {
+          conflicts.push({ domain: candidate, conflictWith: other.id });
         }
       }
     }
@@ -1586,6 +1614,23 @@ export class StateService {
     if ('ciWorkflowRunUrl' in updates) branch.ciWorkflowRunUrl = updates.ciWorkflowRunUrl;
     if ('ciWaitingSince' in updates) branch.ciWaitingSince = updates.ciWaitingSince;
     if ('ciImageError' in updates) branch.ciImageError = updates.ciImageError;
+  }
+
+  /**
+   * 波3 配置树:写分支派生指针(derivedFrom*)。仅当尚未设置时写入(idempotent,
+   * 不覆盖已有溯源——手动创建时写的显式来源优先于 PR base 推断)。
+   * 必须走本方法改内存权威对象再由调用方 save() —— mongo-split 下 getBranch
+   * 可能返回副本,直接改返回值不落盘(见 dispatcher 既往教训)。
+   * @returns 是否发生写入
+   */
+  setBranchDerivedFrom(branchId: string, source: { branchId: string; branchName: string }): boolean {
+    const branch = this.state.branches[branchId];
+    if (!branch) return false;
+    if (branch.derivedFromBranchId) return false;
+    branch.derivedFromBranchId = source.branchId;
+    branch.derivedFromBranchName = source.branchName;
+    branch.derivedAt = new Date().toISOString();
+    return true;
   }
 
   // ── Remote hosts (shared-service deployment targets, 2026-05-06) ──
@@ -3504,11 +3549,32 @@ export class StateService {
     projectId?: string | null;
     triggeredBy?: string;
   }): ConfigSnapshot {
+    // 波3 配置树:分支层配置一并入快照(只收有配置的分支,控体积;projectId 过滤对齐快照 scope)。
+    const branchConfigs: NonNullable<ConfigSnapshot['payload']['branchConfigs']> = {};
+    for (const [branchId, branch] of Object.entries(this.state.branches)) {
+      if (params.projectId && (branch.projectId || 'default') !== params.projectId) continue;
+      const hasOverrides = branch.profileOverrides && Object.keys(branch.profileOverrides).length > 0;
+      const hasExtras = branch.extraProfiles && branch.extraProfiles.length > 0;
+      if (!hasOverrides && !hasExtras && !branch.derivedFromBranchId) continue;
+      branchConfigs[branchId] = JSON.parse(JSON.stringify({
+        ...(hasOverrides ? { profileOverrides: branch.profileOverrides } : {}),
+        ...(hasExtras ? { extraProfiles: branch.extraProfiles } : {}),
+        ...(branch.derivedFromBranchId ? {
+          derivedFromBranchId: branch.derivedFromBranchId,
+          derivedFromBranchName: branch.derivedFromBranchName,
+          derivedAt: branch.derivedAt,
+        } : {}),
+      }));
+    }
+    // branchConfigs **总是**写入(即使空对象):回滚的对称语义依赖它区分「新快照拍照时
+    // 确无分支配置(空对象 → 回滚要清掉事后新增的配置)」vs「旧快照没拍过分支层
+    // (字段缺失 → 回滚 no-op,向后兼容)」。
     const payload = {
       buildProfiles: JSON.parse(JSON.stringify(this.state.buildProfiles)),
       customEnv: JSON.parse(JSON.stringify(this.state.customEnv)),
       infraServices: JSON.parse(JSON.stringify(this.state.infraServices)),
       routingRules: JSON.parse(JSON.stringify(this.state.routingRules)),
+      branchConfigs,
     };
     const serialized = JSON.stringify(payload);
     const snapshot: ConfigSnapshot = {
@@ -3550,6 +3616,38 @@ export class StateService {
     this.state.customEnv = JSON.parse(JSON.stringify(target.payload.customEnv));
     this.state.infraServices = JSON.parse(JSON.stringify(target.payload.infraServices));
     this.state.routingRules = JSON.parse(JSON.stringify(target.payload.routingRules));
+    // 波3 配置树:分支层回滚。仅恢复**仍存在**的分支(快照后新建的不动、已删的不复活);
+    // 旧快照无 branchConfigs → no-op(向后兼容,零迁移)。快照 scope 为项目时,
+    // 该项目下「快照里没有配置、现在有了」的分支也要清掉(对称恢复到拍照时刻)。
+    if (target.payload.branchConfigs) {
+      const snapConfigs = target.payload.branchConfigs;
+      for (const [branchId, branch] of Object.entries(this.state.branches)) {
+        if (target.projectId && (branch.projectId || 'default') !== target.projectId) continue;
+        const snap = snapConfigs[branchId];
+        if (snap) {
+          if (snap.profileOverrides) branch.profileOverrides = JSON.parse(JSON.stringify(snap.profileOverrides));
+          else delete branch.profileOverrides;
+          if (snap.extraProfiles) branch.extraProfiles = JSON.parse(JSON.stringify(snap.extraProfiles));
+          else delete branch.extraProfiles;
+          if (snap.derivedFromBranchId) {
+            branch.derivedFromBranchId = snap.derivedFromBranchId;
+            branch.derivedFromBranchName = snap.derivedFromBranchName;
+            branch.derivedAt = snap.derivedAt;
+          } else {
+            delete branch.derivedFromBranchId;
+            delete branch.derivedFromBranchName;
+            delete branch.derivedAt;
+          }
+        } else {
+          // 拍照时该分支没有任何分支层配置 → 恢复为无配置
+          delete branch.profileOverrides;
+          delete branch.extraProfiles;
+          delete branch.derivedFromBranchId;
+          delete branch.derivedFromBranchName;
+          delete branch.derivedAt;
+        }
+      }
+    }
     this.save();
     return target;
   }

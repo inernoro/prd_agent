@@ -14,6 +14,8 @@ import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
 import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles } from '../services/branch-extra-services.js';
+import { resolveProfileRuntimeEnvWithProvenance, type EnvLayer } from '../services/env-provenance.js';
+import { branchAppNetworkName, branchNetworkIsolationEnabled } from '../services/branch-network.js';
 import { classifyTriggerSource, deriveDeployMode, deriveCommitMeta, parsePulledSha, shouldRefreshCommitSha } from '../services/build-log-meta.js';
 import { acquireBuildSlot, buildGateStatus } from '../services/build-gate.js';
 import { recordBuild } from '../services/build-activity-tracker.js';
@@ -21,7 +23,7 @@ import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { JanitorService } from '../services/janitor.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
-import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogContainerSnapshot, OperationLogEvent, BuildProfile, BuildProfileOverride, ReadinessProbe, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project, ProjectActivityLog, ResourceExternalAccessPolicy, ContainerLogArchiveEntry } from '../types.js';
+import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogContainerSnapshot, OperationLogEvent, BuildProfile, BuildProfileOverride, ReadinessProbe, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project, ProjectActivityLog, ResourceExternalAccessPolicy, ContainerLogArchiveEntry, EnvSource, EnvKeyProvenance } from '../types.js';
 import { discoverComposeFiles, parseComposeFile, parseComposeString, resolveEnvTemplates, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
@@ -4903,7 +4905,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.post('/branches', async (req, res) => {
     try {
-      const { branch, projectId } = req.body as { branch?: string; projectId?: string };
+      const { branch, projectId, sourceBranchId } = req.body as { branch?: string; projectId?: string; sourceBranchId?: string };
       if (!branch) {
         res.status(400).json({ error: '分支名称不能为空' });
         return;
@@ -5001,6 +5003,27 @@ export function createBranchRouter(deps: RouterDeps): Router {
       await shell.exec(`mkdir -p "${path.posix.dirname(worktreePath)}"`);
       await worktreeService.create(branchRepoRoot, branch, worktreePath);
 
+      // 波3 配置树:分支从分支派生(快照拷贝语义,design.cds.config-tree)。
+      // sourceBranchId 必须在建 worktree 之前校验,避免坏参数留下孤儿 worktree。
+      let sourceBranch: BranchEntry | undefined;
+      if (sourceBranchId !== undefined) {
+        if (typeof sourceBranchId !== 'string' || !sourceBranchId.trim()) {
+          res.status(400).json({ error: 'sourceBranchId 必须是非空字符串(来源分支的 CDS branch id)' });
+          return;
+        }
+        sourceBranch = stateService.getBranch(sourceBranchId.trim());
+        if (!sourceBranch) {
+          res.status(400).json({ error: `来源分支 "${sourceBranchId}" 不存在` });
+          return;
+        }
+        // 跨项目派生禁止:profileOverrides 引用的 profileId、extraProfiles 的 projectId
+        // 都是项目内语义,跨项目拷贝会产出悬空引用 + 隔离穿透。
+        if ((sourceBranch.projectId || 'default') !== effectiveProjectId) {
+          res.status(400).json({ error: `来源分支 "${sourceBranchId}" 属于项目 "${sourceBranch.projectId}",不能跨项目派生配置` });
+          return;
+        }
+      }
+
       const entry: BranchEntry = {
         id,
         projectId: effectiveProjectId,
@@ -5010,11 +5033,29 @@ export function createBranchRouter(deps: RouterDeps): Router {
         status: 'idle',
         createdAt: new Date().toISOString(),
       };
+      // 先套项目模板(保底),再用来源分支快照覆盖(拷贝赢模板)——之后两分支各自独立。
       applyProjectDefaultDeployModes(
         entry,
         targetProject.defaultDeployModes,
         stateService.getBuildProfilesForProject(effectiveProjectId),
       );
+      if (sourceBranch) {
+        // 深拷贝:改新分支不得串改来源分支(JSON round-trip 对这两个纯数据字段安全)。
+        if (sourceBranch.profileOverrides && Object.keys(sourceBranch.profileOverrides).length > 0) {
+          entry.profileOverrides = {
+            ...(entry.profileOverrides || {}),
+            ...JSON.parse(JSON.stringify(sourceBranch.profileOverrides)),
+          };
+        }
+        if (sourceBranch.extraProfiles && sourceBranch.extraProfiles.length > 0) {
+          // extraProfiles 的 subdomain 是分支内约束(命名 URL 按各自 previewSlug 拼),
+          // 原样拷贝跨分支不撞车,无需改写。
+          entry.extraProfiles = JSON.parse(JSON.stringify(sourceBranch.extraProfiles));
+        }
+        entry.derivedFromBranchId = sourceBranch.id;
+        entry.derivedFromBranchName = sourceBranch.branch;
+        entry.derivedAt = new Date().toISOString();
+      }
       stateService.addBranch(entry);
       // Phase 8 — 新分支自动继承项目级 defaultEnv → 写入项目级 customEnv。
       //
@@ -9811,6 +9852,264 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.json({ key, value: entry.value, source: entry.source });
   });
 
+  // GET /api/branches/:id/effective-config — 分支生效配置全景(波2 配置检查器)
+  //
+  // 回答三个此前没有任何端点能回答的问题:
+  //   1. 这个分支的每个容器最终拿到的 env,**逐 key 从哪一层来**(段A customEnv 六层 +
+  //      段B profile/branch-override/deploy-mode/platform-injected/per-branch-db)
+  //   2. 每个容器的有效配置(镜像/端口/部署模式/数据库隔离)以及是否被本分支覆盖
+  //   3. CDS 预计为这个分支做什么(plan:起哪些容器、连哪些网、拉起哪些共享 infra)
+  //
+  // 溯源实现:env-provenance.ts 的纯函数(与部署路径同一条代码,部署行为逐字节不变);
+  // 段A来源口径与 effective-env 端点(buildBranchEnvMap)完全一致。
+  // 脱敏:所有 value 过 maskSecrets SSOT,不提供 reveal(要明文走既有 effective-env/reveal)。
+  // plan 的 infra 判定用**记录态**(不打 docker,stateBasis='recorded'),保持端点轻量只读。
+  router.get('/branches/:id/effective-config', (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const projectId = entry.projectId || 'default';
+    const m = assertProjectAccess(req as any, projectId);
+    if (m) {
+      res.status(m.status).json(m.body);
+      return;
+    }
+    const project = stateService.getProject(projectId);
+
+    // ── 段A:customEnv 六层(顺序 = 合并顺序,与 getMergedEnv/buildBranchEnvMap 一致)──
+    const cdsEnv = stateService.getCdsEnvVars(projectId);
+    const mirrorEnv = stateService.getMirrorEnvVars();
+    const rawGlobal = stateService.getCustomEnvScope('_global');
+    const rawProjectScoped = projectId === '_global' ? {} : stateService.getCustomEnvScope(projectId);
+    const rawBranchScoped = stateService.getCustomEnvScope(entry.id);
+    const derivedReserved: Record<string, string> = {};
+    if (project) {
+      derivedReserved.CDS_PROJECT_ID = project.id;
+      derivedReserved.CDS_PROJECT_SLUG = project.slug;
+    }
+    const customLayers: EnvLayer[] = [
+      { source: 'cds-builtin' as const, env: cdsEnv },
+      { source: 'mirror' as const, env: mirrorEnv },
+      { source: 'global' as const, env: rawGlobal },
+      { source: 'project' as const, env: rawProjectScoped },
+      { source: 'branch' as const, env: rawBranchScoped },
+      // 项目身份保留 key 放最后 —— 即便 global/project 写了同名 key,生效的也是系统派生真值
+      { source: 'cds-derived' as const, env: derivedReserved },
+    ].filter((l) => Object.keys(l.env).length > 0);
+
+    const envLayers = customLayers.map((l) => ({
+      source: l.source,
+      count: Object.keys(l.env).length,
+      keys: Object.keys(l.env).sort(),
+    }));
+
+    // ── 每个有效 profile(项目底座 + 分支临时额外服务)的逐 key 溯源 ──
+    const extraIds = new Set((entry.extraProfiles || []).map((p) => p.id));
+    const effectiveProfiles = stateService.getEffectiveProfilesForBranch(entry);
+    const profiles = effectiveProfiles.map((baseline) => {
+      const isExtra = extraIds.has(baseline.id);
+      const override = entry.profileOverrides?.[baseline.id];
+      const effective = resolveEffectiveProfile(baseline, entry);
+      // profile env 三层拆分,相对顺序与部署合并链一致:
+      // baseline.env → override.env(applyProfileOverride) → deployModes[mode].env(resolveProfileWithMode)
+      const activeMode = override?.activeDeployMode !== undefined
+        ? override.activeDeployMode
+        : baseline.activeDeployMode;
+      const modeEnv = (activeMode && baseline.deployModes?.[activeMode]?.env) || undefined;
+      const profileLayers: EnvLayer[] = [
+        { source: (isExtra ? 'extra-service' : 'profile') as EnvSource, env: baseline.env || {} },
+        { source: 'branch-override' as const, env: override?.env || {} },
+        { source: 'deploy-mode' as const, env: modeEnv || {} },
+      ].filter((l) => Object.keys(l.env).length > 0);
+
+      let envProvenance: EnvKeyProvenance[] = [];
+      let envError: string | undefined;
+      try {
+        const resolved = resolveProfileRuntimeEnvWithProvenance(
+          entry, effective, customLayers, profileLayers, { jwtIssuer: config.jwt.issuer },
+        );
+        // 脱敏走 maskSecrets SSOT:按 key 名或 URL 凭据值判定,provenance 的 value 同步替换
+        const maskedEnv = maskSecrets(resolved.env);
+        envProvenance = resolved.provenance.map((p) => ({ ...p, value: maskedEnv[p.key] ?? p.value }));
+      } catch (err) {
+        // 缺模板值等解析失败:不 fail 整个端点,把缺口显性化(这正是检查器要暴露的问题)
+        envError = (err as Error).message;
+      }
+      return {
+        profileId: baseline.id,
+        profileName: baseline.name || baseline.id,
+        isExtra,
+        hasOverride: !!override && Object.keys(override).some((k) => k !== 'updatedAt' && k !== 'notes'),
+        dockerImage: effective.dockerImage,
+        containerPort: effective.containerPort,
+        activeDeployMode: effective.activeDeployMode || null,
+        prebuilt: effective.prebuiltImage === true,
+        dbScope: effective.dbScope || 'shared',
+        dbScopeSource: override?.dbScope !== undefined ? 'branch-override' : (baseline.dbScope !== undefined ? 'baseline' : 'default'),
+        envProvenance,
+        ...(envError ? { envError } : {}),
+      };
+    });
+
+    // ── plan:CDS 预计为该分支做什么(记录态,不打 docker)──
+    const projectInfra = stateService.getInfraServicesForProject(projectId);
+    const recordedInfraState = new Map(
+      projectInfra.map((svc) => [svc.containerName, {
+        running: svc.status === 'running',
+        containerName: svc.containerName,
+        serviceId: svc.id,
+      }]),
+    );
+    const requiredInfraIds = computeRequiredInfra(effectiveProfiles, projectInfra, recordedInfraState);
+    const isolationOn = branchNetworkIsolationEnabled(process.env as Record<string, string | undefined>);
+    const plan = {
+      stateBasis: 'recorded' as const,
+      containers: profiles.map((p) => ({
+        profileId: p.profileId,
+        containerName: `cds-${entry.id}-${p.profileId}`,
+        dockerImage: p.dockerImage,
+        containerPort: p.containerPort,
+        deployMode: p.activeDeployMode,
+        prebuilt: p.prebuilt,
+        isExtra: p.isExtra,
+      })),
+      networks: {
+        isolation: isolationOn,
+        branchNetwork: isolationOn ? branchAppNetworkName(entry.id) : null,
+        sharedNetwork: project?.dockerNetwork || config.dockerNetwork,
+      },
+      requiredInfra: projectInfra
+        .filter((svc) => requiredInfraIds.has(svc.id))
+        .map((svc) => ({ id: svc.id, containerName: svc.containerName, status: svc.status, shared: true })),
+    };
+
+    // 波3 配置树:派生溯源指针(快照拷贝语义,来源被删后 branchName 仍可展示)
+    const derivedFrom = entry.derivedFromBranchId
+      ? {
+          branchId: entry.derivedFromBranchId,
+          branchName: entry.derivedFromBranchName || entry.derivedFromBranchId,
+          derivedAt: entry.derivedAt || null,
+          sourceStillExists: !!stateService.getBranch(entry.derivedFromBranchId),
+        }
+      : null;
+
+    res.json({
+      branchId: entry.id,
+      projectId,
+      projectSlug: project?.slug || projectId,
+      branchStatus: entry.status,
+      derivedFrom,
+      envLayers,
+      profiles,
+      plan,
+    });
+  });
+
+  // POST /api/branches/:id/copy-config-from/:sourceId — 显式一键拉取来源分支配置(波3)
+  //
+  // 派生三层策略的补偿路径:PR opened 只回填溯源指针不拷贝配置(最小惊讶),
+  // 用户想真拷贝时走这里显式触发。语义 = 快照拷贝:
+  //   - 深拷贝来源分支的 profileOverrides + extraProfiles **整体替换**本分支现有分支层配置
+  //   - 拷贝前自动拍 ConfigSnapshot(误拷可从快照回滚,快照含分支层)
+  //   - 写 derivedFrom* 指针(显式拷贝允许覆盖已有指针)
+  //   - ?redeploy=1 时落库后触发一次重部署让配置真正生效
+  router.post('/branches/:id/copy-config-from/:sourceId', async (req, res) => {
+    const entry = stateService.getBranch(req.params.id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
+      return;
+    }
+    const projectId = entry.projectId || 'default';
+    const m = assertProjectAccess(req as any, projectId);
+    if (m) {
+      res.status(m.status).json(m.body);
+      return;
+    }
+    const source = stateService.getBranch(req.params.sourceId);
+    if (!source) {
+      res.status(404).json({ error: `来源分支 "${req.params.sourceId}" 不存在` });
+      return;
+    }
+    if (source.id === entry.id) {
+      res.status(400).json({ error: '不能从自己拷贝配置' });
+      return;
+    }
+    if ((source.projectId || 'default') !== projectId) {
+      res.status(400).json({ error: `来源分支 "${source.id}" 属于项目 "${source.projectId}",不能跨项目拷贝配置(profileId 引用与隔离语义均为项目内)` });
+      return;
+    }
+    // 拷贝前自动快照(含分支层),误拷可回滚
+    const snapshot = stateService.createConfigSnapshot({
+      trigger: 'pre-destructive',
+      label: `分支 ${entry.id} 拉取 ${source.id} 配置前的自动备份`,
+      projectId,
+      triggeredBy: resolveActorFromRequest(req) || undefined,
+    });
+    // 深拷贝整体替换(快照拷贝语义:之后各自独立)。getBranch 返回内存权威对象,
+    // 直改后统一 save(与 setBranchProfileOverride 等既有写路径同一口径)。
+    const target = stateService.getBranch(entry.id)!;
+    if (source.profileOverrides && Object.keys(source.profileOverrides).length > 0) {
+      target.profileOverrides = JSON.parse(JSON.stringify(source.profileOverrides));
+    } else {
+      delete target.profileOverrides;
+    }
+    stateService.setBranchExtraProfiles(entry.id, JSON.parse(JSON.stringify(source.extraProfiles || [])));
+    target.derivedFromBranchId = source.id;
+    target.derivedFromBranchName = source.branch;
+    target.derivedAt = new Date().toISOString();
+    stateService.save();
+
+    // ?redeploy=1 → 与 extra-services 同款 localhost 自 POST,等 deploy 被「接受」再回包
+    const wantRedeploy = req.query?.redeploy === '1' || req.query?.redeploy === 'true';
+    let redeployTriggered = false;
+    let redeployRejected: { status: number; message: string } | null = null;
+    if (wantRedeploy) {
+      const url = `http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(entry.id)}/deploy`;
+      try {
+        const upstream = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CDS-Internal': '1',
+            'X-CDS-Trigger': 'system',
+            ...(entry.projectId ? { 'X-CDS-Source-Project-Id': entry.projectId } : {}),
+            'X-CDS-Source-Branch-Id': entry.id,
+          },
+          body: JSON.stringify({}),
+        });
+        if (upstream.ok) {
+          redeployTriggered = true;
+          void upstream.text().catch(() => { /* drain best-effort */ });
+        } else {
+          const errText = await upstream.text().catch(() => '');
+          let msg = errText;
+          try { const j = JSON.parse(errText) as { error?: unknown }; if (typeof j?.error === 'string') msg = j.error; } catch { /* 保留原文 */ }
+          redeployRejected = { status: upstream.status, message: (msg || '').slice(0, 300) };
+        }
+      } catch (err) {
+        redeployRejected = { status: 0, message: (err as Error).message };
+      }
+    }
+
+    const refreshed = stateService.getBranch(entry.id)!;
+    res.json({
+      copied: true,
+      sourceBranchId: source.id,
+      sourceBranchName: source.branch,
+      snapshotId: snapshot.id,
+      profileOverrideCount: Object.keys(refreshed.profileOverrides || {}).length,
+      extraProfileCount: (refreshed.extraProfiles || []).length,
+      redeployTriggered,
+      ...(redeployRejected ? { redeployRejected } : {}),
+      hint: redeployTriggered
+        ? '配置已拷贝并触发重部署;误拷可用 snapshotId 回滚(快照含分支层)'
+        : '配置已拷贝(纯配置变更,重新部署后生效);误拷可用 snapshotId 回滚',
+    });
+  });
+
   // GET /api/branches/:id/metrics — 该分支所有 service 的 docker stats 瞬时值(Phase B)
   //
   // 用户反馈(2026-05-04):「想看 Railway 那种 CPU/内存 实时图」。这个端点返回
@@ -12940,6 +13239,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
         envOverride = cleaned;
       }
 
+      // dbScope 透传 + 枚举校验（波1 W1c）：BuildProfileOverride.dbScope 与合并端 applyProfileOverride
+      // 早已支持按分支覆盖数据库隔离档位，但此白名单一直漏透传——UI/API 设了也会被静默丢弃，
+      // per-branch DB 开关因此永远无法按分支生效。合法值仅 'shared' | 'per-branch'，其余显式 400。
+      if (body.dbScope !== undefined && body.dbScope !== 'shared' && body.dbScope !== 'per-branch') {
+        res.status(400).json({ error: `dbScope 非法（仅允许 'shared' 或 'per-branch'）` });
+        return;
+      }
+
       const override = {
         dockerImage: typeof body.dockerImage === 'string' ? body.dockerImage : undefined,
         command: typeof body.command === 'string' ? body.command : undefined,
@@ -12950,6 +13257,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         resources: body.resources && typeof body.resources === 'object' && !Array.isArray(body.resources) ? body.resources as { memoryMB?: number; cpus?: number } : undefined,
         activeDeployMode: typeof body.activeDeployMode === 'string' ? body.activeDeployMode : undefined,
         startupSignal: typeof body.startupSignal === 'string' ? body.startupSignal : undefined,
+        dbScope: body.dbScope as 'shared' | 'per-branch' | undefined,
         notes: typeof body.notes === 'string' ? body.notes : undefined,
       };
       stateService.setBranchProfileOverride(id, profileId, override);
@@ -12990,6 +13298,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   //   - No collision with another branch's slug or aliases
 
   const DNS_LABEL_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
+  const DNS_HOST_RE = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
   const RESERVED_ALIAS_LABELS = new Set([
     'www', 'admin', 'switch', 'preview',
     'cds', 'master', 'dashboard',
@@ -13056,6 +13365,69 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return gatewayUrls;
   };
 
+  const findPreviewHostCollisions = (
+    candidateDomains: string[],
+  ): Array<{ domain: string; conflictWith: string; reason: 'preview' | 'alias' | 'service-subdomain' }> => {
+    const rootDomains = config.rootDomains?.length
+      ? config.rootDomains
+      : (config.previewDomain ? [config.previewDomain] : []);
+    if (rootDomains.length === 0) return [];
+
+    const candidates = new Set(candidateDomains.map((domain) => domain.toLowerCase()));
+    const conflicts: Array<{ domain: string; conflictWith: string; reason: 'preview' | 'alias' | 'service-subdomain' }> = [];
+    for (const other of stateService.getAllBranches()) {
+      const projectId = other.projectId || 'default';
+      const project = stateService.getProject(projectId);
+      const previewSlug = buildPreviewUrlForProject('', other.branch, project, projectId).previewSlug;
+      for (const rawRoot of rootDomains) {
+        const root = rawRoot.toLowerCase();
+        const previewHost = previewSlug ? `${previewSlug}.${root}` : '';
+        if (previewHost && candidates.has(previewHost)) {
+          conflicts.push({ domain: previewHost, conflictWith: other.id, reason: 'preview' });
+        }
+
+        for (const alias of stateService.getBranchSubdomainAliases(other.id)) {
+          const aliasHost = `${alias.toLowerCase()}.${root}`;
+          if (candidates.has(aliasHost)) {
+            conflicts.push({ domain: aliasHost, conflictWith: other.id, reason: 'alias' });
+          }
+        }
+
+        for (const gateway of computeBranchGatewayUrls(other, root)) {
+          const host = new URL(gateway.url).host.toLowerCase();
+          if (candidates.has(host)) {
+            conflicts.push({ domain: host, conflictWith: other.id, reason: 'service-subdomain' });
+          }
+        }
+      }
+    }
+    return conflicts;
+  };
+
+  const findAliasCustomDomainCollisions = (
+    branchId: string,
+    candidateAliases: string[],
+  ): Array<{ alias: string; domain: string; conflictWith: string; reason: 'custom-domain' }> => {
+    const rootDomains = config.rootDomains?.length
+      ? config.rootDomains
+      : (config.previewDomain ? [config.previewDomain] : []);
+    if (rootDomains.length === 0) return [];
+
+    const conflicts: Array<{ alias: string; domain: string; conflictWith: string; reason: 'custom-domain' }> = [];
+    for (const alias of candidateAliases) {
+      for (const rawRoot of rootDomains) {
+        const host = `${alias.toLowerCase()}.${rawRoot.toLowerCase()}`;
+        for (const other of stateService.getAllBranches()) {
+          if (other.id === branchId) continue;
+          if (other.customDomains?.some((domain) => domain.toLowerCase() === host)) {
+            conflicts.push({ alias, domain: host, conflictWith: other.id, reason: 'custom-domain' });
+          }
+        }
+      }
+    }
+    return conflicts;
+  };
+
   router.get('/branches/:id/subdomain-aliases', (req, res) => {
     const { id } = req.params;
     const entry = stateService.getBranch(id);
@@ -13081,6 +13453,94 @@ export function createBranchRouter(deps: RouterDeps): Router {
       gatewayUrls: computeBranchGatewayUrls(entry, primaryRoot),
       rootDomain: primaryRoot,
     });
+  });
+
+  router.get('/branches/:id/custom-domains', (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const access = assertProjectAccess(req as any, entry.projectId || 'default');
+    if (access) {
+      res.status(access.status).json(access.body);
+      return;
+    }
+    const domains = stateService.getBranchCustomDomains(id);
+    res.json({
+      branchId: id,
+      domains,
+      previewUrls: domains.map((d) => `https://${d}`),
+      needsNginxHosts: domains,
+      needsRedeploy: false,
+    });
+  });
+
+  router.put('/branches/:id/custom-domains', (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const access = assertProjectAccess(req as any, entry.projectId || 'default');
+    if (access) {
+      res.status(access.status).json(access.body);
+      return;
+    }
+
+    const body = (req.body ?? {}) as { domains?: unknown };
+    if (!Array.isArray(body.domains)) {
+      res.status(400).json({ error: '请求体需要 { domains: string[] } 格式' });
+      return;
+    }
+
+    const normalized: string[] = [];
+    const seen = new Set<string>();
+    for (const raw of body.domains) {
+      if (typeof raw !== 'string') continue;
+      const lower = raw.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/\.$/, '');
+      if (!lower) continue;
+      if (seen.has(lower)) continue;
+      seen.add(lower);
+      normalized.push(lower);
+    }
+
+    const invalidDomains = normalized.filter((d) => !DNS_HOST_RE.test(d));
+    if (invalidDomains.length > 0) {
+      res.status(400).json({
+        error: `无效的完整域名: ${invalidDomains.join(', ')}。请填写 example.com 或 www.example.com 这类完整 host。`,
+        invalidDomains,
+      });
+      return;
+    }
+
+    const collisions = stateService.findCustomDomainCollisions(id, normalized);
+    const previewCollisions = findPreviewHostCollisions(normalized);
+    const allCollisions = [...collisions, ...previewCollisions];
+    if (allCollisions.length > 0) {
+      res.status(409).json({
+        error: `自定义域名冲突: ${allCollisions.map((c) => `"${c.domain}" 已被分支 "${c.conflictWith}" 占用`).join('; ')}`,
+        collisions: allCollisions,
+      });
+      return;
+    }
+
+    try {
+      stateService.setBranchCustomDomains(id, normalized);
+      stateService.save();
+      res.json({
+        message: '已保存完整自定义域名',
+        branchId: id,
+        domains: normalized,
+        previewUrls: normalized.map((d) => `https://${d}`),
+        needsNginxHosts: normalized,
+        needsRedeploy: false,
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
   });
 
   router.put('/branches/:id/subdomain-aliases', (req, res) => {
@@ -13140,10 +13600,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     // Check collisions with other branches' slugs/aliases
     const collisions = stateService.findAliasCollisions(id, normalized);
-    if (collisions.length > 0) {
+    const customDomainCollisions = findAliasCustomDomainCollisions(id, normalized);
+    const allCollisions = [...collisions, ...customDomainCollisions];
+    if (allCollisions.length > 0) {
       res.status(409).json({
-        error: `子域名冲突: ${collisions.map(c => `"${c.alias}" 已被分支 "${c.conflictWith}" ${c.reason === 'slug' ? '的默认 slug' : '的别名'}占用`).join('; ')}`,
-        collisions,
+        error: `子域名冲突: ${allCollisions.map(c => {
+          if (c.reason === 'slug') return `"${c.alias}" 已被分支 "${c.conflictWith}" 的默认 slug 占用`;
+          if (c.reason === 'alias') return `"${c.alias}" 已被分支 "${c.conflictWith}" 的别名占用`;
+          if ('domain' in c) return `"${c.alias}" 生成的域名 "${c.domain}" 已被分支 "${c.conflictWith}" 的完整自定义域名占用`;
+          return `"${c.alias}" 已被分支 "${c.conflictWith}" 占用`;
+        }).join('; ')}`,
+        collisions: allCollisions,
       });
       return;
     }

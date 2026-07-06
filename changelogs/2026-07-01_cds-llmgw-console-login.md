@@ -1,1 +1,0 @@
-| fix | cds | 网关控制台(llmgw-web)登录简化为开箱可用:后端 prd-llmgw 缺省内置 admin/admin(不再因未配口令 fail-closed 拒启动,仅告警),要改口令在「项目环境变量」设 LLMGW_ADMIN_PASSWORD 重新部署即生效;SeedAdmin 从 insert-only 改为 upsert(Verify 判定带盐哈希不空写)并禁用「用户名≠当前配置」的历史账号(防改名后旧账号仍可登);cds-compose 不再显式声明 LLMGW_ADMIN_* 自引用(避免 CDS resolveProfileRuntimeEnv 对 `${KEY:-default}` 覆盖项目变量的坑,Codex P1) |

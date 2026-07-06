@@ -35,6 +35,7 @@ import {
   BarChart3,
   Send,
   MoreHorizontal,
+  SlidersHorizontal,
   Download,
   Pin,
   ClipboardCheck,
@@ -51,8 +52,8 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { useIsMobile } from '@/hooks/useBreakpoint';
-import { MobileOverflowMenu } from '@/components/mobile/MobileOverflowMenu';
 import { MobileFab } from '@/components/mobile/MobileFab';
+import { MobileBottomSheet } from '@/components/mobile/MobileBottomSheet';
 import { Button } from '@/components/design/Button';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { TeamScopeBar, type TeamScope } from '@/components/team/TeamScopeBar';
@@ -236,12 +237,12 @@ function PeerSyncBadge({ store, compact = false }: { store: DocumentStore | Docu
   if (compact) {
     return (
       <span
-        className="inline-flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-full border"
+        className="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[9px] border"
         style={{ background, borderColor, color }}
         title={title}
         aria-label={label}
       >
-        <Icon size={11} />
+        <Icon size={14} />
       </span>
     );
   }
@@ -772,6 +773,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   initialEntryId?: string;
 }) {
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const [store, setStore] = useState<DocumentStore | null>(null);
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
   /** 已被「单篇分享」的文档 id 集合（文件树标黄用） */
@@ -1388,14 +1390,14 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               className="cursor-pointer rounded-[8px] px-2 py-1 text-[12px] text-token-muted transition-colors duration-200 hover:bg-white/6">
               <ArrowLeft size={14} />
             </button>
-            <Library size={14} className="text-token-muted" />
+            {!isMobile && <Library size={14} className="text-token-muted" />}
             <span className="text-[13px] font-semibold text-token-primary">{store.name}</span>
             <span className="text-[11px] text-token-muted tabular-nums">
               <CountUp to={entries.filter(e => e.sourceType !== 'github_directory').length} from={0} duration={0.8} /> 个文档
             </span>
             {/* refreshKey 含各 entry 的 updatedAt：编辑/恢复/替换会 bump updatedAt 但条目数不变，
                 只用 length 会让大小数字停留在旧值；带上 updatedAt 串内容变化即刷新（Codex P2）。 */}
-            <StoreSizeBadge storeId={store.id} refreshKey={`${entries.length}:${entries.map(e => e.updatedAt ?? '').join('|')}`} />
+            {!isMobile && <StoreSizeBadge storeId={store.id} refreshKey={`${entries.length}:${entries.map(e => e.updatedAt ?? '').join('|')}`} />}
           </div>
         }
         actions={
@@ -1410,13 +1412,13 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               title="同步中心：进行中 / 发出去 / 收进来 / 历史，以及强制对齐（远端为准 / 本地为准 / 同时对准）"
             >
               {syncBusy ? <MapSpinner size={11} /> : <ArrowLeftRight size={11} />}
-              {syncBusy ? '同步中…' : '同步'}
+              {syncBusy ? (isMobile ? '同步中' : '同步中…') : '同步'}
             </button>
             {/* 旧版同步链接徽章：仅当本库已加入同步配对时显示，点击进入隐藏兼容管理面板。 */}
-            <StoreSyncBadge
+            {!isMobile && <StoreSyncBadge
               storeId={store.id}
               onManage={onOpenLegacySyncPanel}
-            />
+            />}
             <Button variant="secondary" size="xs" onClick={() => setShowShareDialog(true)}>
               <Share2 size={13} /> 分享
             </Button>
@@ -1428,11 +1430,11 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               disabled={uploading}
             >
               {uploading ? <MapSpinner size={14} /> : <Upload size={13} />}
-              {uploading ? '上传中…' : '上传文档'}
+              {uploading ? (isMobile ? '上传中' : '上传中…') : (isMobile ? '上传' : '上传文档')}
             </Button>
             {/* 知识星球：3D 文档星系直达入口（此前藏在「宇宙图」里，新用户找不到）。
                 保留原始 orbit icon 语义，叠加胶囊背景光扫与 icon 轻动效。 */}
-            <button
+            {!isMobile && <button
               type="button"
               onClick={() => navigate(`/document-store/${storeId}/galaxy`)}
               title="知识星球 — 3D 文档星系，悬停看简介、点击进入文档"
@@ -1574,11 +1576,11 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                   animation-delay: 0.42s;
                 }
               `}</style>
-            </button>
+            </button>}
             {/* 更多：收纳低频管理动作（发布 / 关系图谱 / 统计 / 订阅），折叠屏只占一个位 */}
             <div className="relative" ref={moreRef}>
               <Button variant="secondary" size="xs" onClick={toggleMore} title="更多操作">
-                <MoreHorizontal size={14} /> 更多
+                <MoreHorizontal size={14} /> {!isMobile && '更多'}
               </Button>
               {/* createPortal 到 body：PageHeader 是 overflow-hidden 圆角玻璃条，绝对定位下拉会被裁掉。见 AnchoredMenu / frontend-modal.md */}
               <AnchoredMenu open={moreOpen} onClose={() => setMoreOpen(false)} anchorRef={moreRef} minWidth={200}>
@@ -2140,6 +2142,13 @@ export function DocumentStorePage() {
   // 这样从任意位置（含某个知识库详情内）打开教程都能落到目标页签，再把 query 抹掉避免重复触发。
   const location = useLocation();
   useEffect(() => {
+    // 深链 ?store=xxx：直接打开该知识库详情（首页「继续上次」回跳用），消费后抹掉 query
+    const deepStore = new URLSearchParams(location.search).get('store');
+    if (deepStore) {
+      setSelectedStoreId(deepStore);
+      navigate(location.pathname, { replace: true });
+      return;
+    }
     const t = new URLSearchParams(location.search).get('tab');
     const valid: StoreTab[] = ['mine', 'team', 'favorites', 'likes', 'sync'];
     if (t && (valid as string[]).includes(t)) {
@@ -2199,6 +2208,29 @@ export function DocumentStorePage() {
     });
   }, [flushPins]);
 
+  const handleSystemShareStore = useCallback(async (storeId: string, name: string) => {
+    const url = `${window.location.origin}/library/${storeId}`;
+    const nav = navigator as Navigator & {
+      share?: (data: ShareData) => Promise<void>;
+    };
+    try {
+      if (nav.share) {
+        await nav.share({ title: name, text: `知识库：${name}`, url });
+        return;
+      }
+      await navigator.clipboard.writeText(url);
+      toast.success('链接已复制', '当前浏览器不支持系统分享');
+    } catch (err) {
+      if ((err as DOMException)?.name === 'AbortError') return;
+      try {
+        await navigator.clipboard.writeText(url);
+        toast.success('链接已复制');
+      } catch {
+        toast.error('分享失败', '系统分享和复制链接都未成功，请稍后重试');
+      }
+    }
+  }, []);
+
   // 卡片「更多」菜单点外关闭由 AnchoredMenu 自身处理（菜单已 portal 到 body）
 
   // 第二排：搜索 + 排序（sessionStorage 持久化；CLAUDE.md no-localStorage 规则）
@@ -2222,6 +2254,7 @@ export function DocumentStorePage() {
   const [tagOpen, setTagOpen] = useState(false);
   const tagWrapRef = useRef<HTMLDivElement | null>(null);
   const [tagQuery, setTagQuery] = useState('');
+  const [showMobileFilters, setShowMobileFilters] = useState(false);
 
   useEffect(() => { sessionStorage.setItem('doc-store-search', search); }, [search]);
   useEffect(() => { sessionStorage.setItem('doc-store-sort', sortKey); }, [sortKey]);
@@ -2460,6 +2493,17 @@ export function DocumentStorePage() {
     ? (stores as DocumentStoreWithPreview[]).reduce((sum, s) => sum + (s.documentCount ?? 0), 0)
     : 0;
   const activeSortLabel = SORT_OPTIONS.find(o => o.key === sortKey)?.label ?? '最近更新';
+  const activeStoreTabLabel = tabs.find(t => t.key === tab)?.label ?? '知识库';
+  const activeTeamLabel = tab === 'team'
+    ? (teamScope.teamId
+        ? (useTeamStore.getState().teams.find(t => t.team.id === teamScope.teamId)?.team.name ?? '团队空间')
+        : '全部团队')
+    : activeStoreTabLabel;
+  const mobileFilterCount = [
+    tab === 'team' && teamScope.teamId,
+    tagFilter.length > 0,
+    sortKey !== 'updated-desc',
+  ].filter(Boolean).length;
 
   const isEmpty = currentList.length === 0;
   // 区分三种空态：1) 筛选有但被过滤掉了；2) 真·空（onboarding 引导）；3) 团队空间未选 team
@@ -2476,6 +2520,11 @@ export function DocumentStorePage() {
       <div
         data-tour-id="library-tabs"
         className="sticky top-0 z-20 flex flex-col gap-3 pb-5 -mb-5"
+        style={{
+          background: 'linear-gradient(180deg, color-mix(in srgb, var(--bg-primary, #121218) 82%, transparent) 0%, color-mix(in srgb, var(--bg-primary, #121218) 58%, transparent) 74%, transparent 100%)',
+          backdropFilter: 'blur(12px) saturate(130%)',
+          WebkitBackdropFilter: 'blur(12px) saturate(130%)',
+        }}
       >
         {/* 顶部第一排：左上角空间切换（我的空间 / 团队空间 / 我的收藏 / 我的点赞） */}
         <TabBar
@@ -2501,15 +2550,21 @@ export function DocumentStorePage() {
             setSelectedStoreId(null);
             setTab(next);
           }}
-          variant="plain"
+          variant="gold"
         />
 
       {/* 第二排：按顶部 tab 联动的工具栏
           - 我的空间 / 团队空间：统计 + 搜索 + 排序 + 新建知识库（团队空间多一个 TeamScopeBar）
           - 收藏 / 点赞：不显示 */}
       {isStoreTab && (
-        <div data-tour-id="library-toolbar" className="px-5 flex items-center gap-2 flex-wrap">
-          {tab === 'team' && (
+        <div
+          data-tour-id="library-toolbar"
+          className={isMobile
+            ? 'px-5 flex flex-col gap-2 pb-1'
+            : 'surface-nav-bar flex items-center gap-2 flex-wrap'}
+          style={isMobile ? { scrollbarWidth: 'none' } : { overflow: 'visible' }}
+        >
+          {tab === 'team' && !isMobile && (
             <TeamScopeBar
               moduleKey="document-store"
               value={teamScope}
@@ -2519,21 +2574,24 @@ export function DocumentStorePage() {
           )}
           {/* 统计概览 */}
           {/* 功能区：库数 / 文章数（左侧） */}
-          <span data-tour-id="library-stats" className="text-[12px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
+          <span data-tour-id="library-stats" className={isMobile ? 'hidden' : 'text-[12px] tabular-nums whitespace-nowrap flex-none'} style={{ color: 'var(--text-muted)' }}>
             共 <strong style={{ color: 'var(--text-primary)' }}>{totalStores}</strong> 个知识库
             <span className="opacity-50 mx-1.5">·</span>
             <strong style={{ color: 'var(--text-primary)' }}>{totalDocs}</strong> 篇文章
           </span>
 
           {/* 搜索 */}
-          <div className="relative">
+          <div className={isMobile ? 'flex items-center gap-2' : 'contents'}>
+          <div className={isMobile ? 'relative min-w-0 flex-1' : 'relative flex-none'}>
             <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--text-muted)' }} />
             <input
               data-tour-id="library-search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="按名称或标签筛选…"
-              className="h-8 pl-7 pr-7 rounded-[8px] text-[12px] outline-none w-[200px] focus:w-[260px] transition-all"
+              className={isMobile
+                ? 'h-10 pl-8 pr-8 rounded-[12px] text-[14px] outline-none w-full'
+                : 'h-8 pl-7 pr-7 rounded-[8px] text-[12px] outline-none w-[200px] focus:w-[260px] transition-all'}
               style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-primary)' }}
             />
             {search && (
@@ -2548,9 +2606,43 @@ export function DocumentStorePage() {
               </button>
             )}
           </div>
+          {isMobile && (
+            <button
+              type="button"
+              data-tour-id="library-mobile-filter"
+              onClick={() => setShowMobileFilters(true)}
+              className="h-10 px-3 rounded-[12px] inline-flex items-center gap-1.5 shrink-0"
+              style={{
+                background: mobileFilterCount > 0 ? 'rgba(10,132,255,0.16)' : 'rgba(255,255,255,0.06)',
+                border: `1px solid ${mobileFilterCount > 0 ? 'rgba(10,132,255,0.32)' : 'rgba(255,255,255,0.10)'}`,
+                color: mobileFilterCount > 0 ? '#8ab4ff' : 'var(--text-primary)',
+              }}
+            >
+              <SlidersHorizontal size={15} />
+              <span className="text-[13px] font-semibold">筛选</span>
+              {mobileFilterCount > 0 && <span className="text-[12px] tabular-nums">{mobileFilterCount}</span>}
+            </button>
+          )}
+          </div>
+
+          {isMobile && (
+            <div className="flex items-center gap-1.5 overflow-hidden whitespace-nowrap text-[12px]" style={{ color: 'var(--text-muted)' }}>
+              <span className="truncate">{activeTeamLabel}</span>
+              <span className="opacity-45">·</span>
+              <span>{activeSortLabel}</span>
+              <span className="opacity-45">·</span>
+              <span>{totalStores} 个知识库</span>
+              {tagFilter.length > 0 && (
+                <>
+                  <span className="opacity-45">·</span>
+                  <span className="truncate">标签 {tagFilter.length}</span>
+                </>
+              )}
+            </div>
+          )}
 
           {/* 标签筛选（多选；激活后用主题色高亮 + 数字徽章） */}
-          <div className="relative" ref={tagWrapRef}>
+          {!isMobile && <div className="relative flex-none" ref={tagWrapRef}>
             <button
               type="button"
               data-tour-id="library-tag-filter"
@@ -2650,10 +2742,10 @@ export function DocumentStorePage() {
                 )}
               </div>
             )}
-          </div>
+          </div>}
 
           {/* 排序（带高亮 active 状态，让用户一眼知道当前排序规则） */}
-          <div className="relative" ref={sortWrapRef}>
+          {!isMobile && <div className="relative flex-none" ref={sortWrapRef}>
             <button
               type="button"
               data-tour-id="library-sort"
@@ -2695,9 +2787,9 @@ export function DocumentStorePage() {
                 })}
               </div>
             )}
-          </div>
+          </div>}
 
-          <span className="flex-1" />
+          <span className={isMobile ? 'hidden' : 'flex-1'} />
           {/* 统计区：账号级访客总计（右侧）。数字 count-up 缓动 + 整段淡入，避免突然蹦出。 */}
           {!isMobile && tab === 'mine' && accountSummary && (
             <FadeIn>
@@ -2741,17 +2833,6 @@ export function DocumentStorePage() {
               <KeyRound size={13} /> 接入 AI
             </Button>
           )}
-          {/* 移动端：次要操作（统计/发送到/接入AI）收进「⋯ 更多」Sheet，主操作走 FAB —— 见 mobile-first-density */}
-          {isMobile && tab === 'mine' && (
-            <MobileOverflowMenu
-              title="知识库操作"
-              items={[
-                { key: 'stats', label: '访客统计', icon: BarChart3, onClick: () => setShowAccountViewers(true) },
-                { key: 'send', label: '发送到 / 同步到其他节点', icon: Send, onClick: () => setShowSendToPeer(true) },
-                { key: 'api', label: '接入 AI（签发 API Key）', icon: KeyRound, onClick: () => setShowOpenApi(true) },
-              ]}
-            />
-          )}
           {!isMobile && (
             <Button
               variant="primary"
@@ -2766,12 +2847,132 @@ export function DocumentStorePage() {
               <Plus size={13} /> 新建知识库
             </Button>
           )}
-          {isMobile && (
-            <MobileFab onClick={() => setShowCreate(true)} icon={Plus} label="新建" />
-          )}
         </div>
       )}
       </div>
+
+      {isMobile && isStoreTab && (
+        <MobileBottomSheet
+          open={showMobileFilters}
+          onClose={() => setShowMobileFilters(false)}
+          title="筛选与操作"
+          note={`${activeTeamLabel} · ${totalStores} 个知识库 · ${totalDocs} 篇文章`}
+        >
+          <div className="px-5 pb-4 space-y-5">
+            {tab === 'team' && (
+              <section className="space-y-2">
+                <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>团队范围</div>
+                <div className="rounded-[14px] p-2" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                  <TeamScopeBar
+                    moduleKey="document-store"
+                    value={teamScope}
+                    onChange={setTeamScope}
+                    hideScopeToggle
+                  />
+                </div>
+              </section>
+            )}
+
+            <section className="space-y-2">
+              <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>排序</div>
+              <div className="flex flex-wrap gap-2">
+                {SORT_OPTIONS.map((opt) => {
+                  const active = opt.key === sortKey;
+                  return (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      onClick={() => setSortKey(opt.key)}
+                      className="h-8 px-3 rounded-full text-[13px] inline-flex items-center gap-1.5"
+                      style={active
+                        ? { background: 'rgba(10,132,255,0.22)', color: '#bfdbfe' }
+                        : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+                    >
+                      {active && <Check size={12} />}
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+
+            {tagStats.length > 0 && (
+              <section className="space-y-2">
+                <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>标签</div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setTagFilter([])}
+                    className="h-8 px-3 rounded-full text-[13px]"
+                    style={tagFilter.length === 0
+                      ? { background: 'rgba(10,132,255,0.22)', color: '#bfdbfe' }
+                      : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+                  >
+                    全部标签
+                  </button>
+                  {tagStats.map(({ tag, count }) => {
+                    const active = tagFilter.includes(tag);
+                    return (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => {
+                          setTagFilter(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
+                        }}
+                        className="h-8 px-3 rounded-full text-[13px]"
+                        style={active
+                          ? { background: 'rgba(10,132,255,0.22)', color: '#bfdbfe' }
+                          : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+                      >
+                        {tag} ({count})
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+
+            {tab === 'mine' && (
+              <section className="space-y-2">
+                <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>更多操作</div>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setShowMobileFilters(false); setShowAccountViewers(true); }}
+                    className="h-16 rounded-[14px] flex flex-col items-center justify-center gap-1"
+                    style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-primary)' }}
+                  >
+                    <BarChart3 size={17} />
+                    <span className="text-[12px]">统计</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setShowMobileFilters(false); setShowSendToPeer(true); }}
+                    className="h-16 rounded-[14px] flex flex-col items-center justify-center gap-1"
+                    style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-primary)' }}
+                  >
+                    <Send size={17} />
+                    <span className="text-[12px]">发送到</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setShowMobileFilters(false); setShowOpenApi(true); }}
+                    className="h-16 rounded-[14px] flex flex-col items-center justify-center gap-1"
+                    style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-primary)' }}
+                  >
+                    <KeyRound size={17} />
+                    <span className="text-[12px]">接入 AI</span>
+                  </button>
+                </div>
+              </section>
+            )}
+          </div>
+        </MobileBottomSheet>
+      )}
+
+      {isMobile && isStoreTab && (
+        <MobileFab onClick={() => setShowCreate(true)} icon={Plus} label="新建" />
+      )}
 
       <div className="px-5 pb-6 w-full">
         {tab === 'sync' ? (
@@ -2930,15 +3131,15 @@ export function DocumentStorePage() {
                           避免「图标比圆点偏上」——所有指示物在同一行同一基线 */}
                       <div className="flex items-center gap-1 flex-shrink-0">
                         {s.hasActiveShare && (
-                          <span className="inline-flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-full border"
+                          <span className="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[9px] border"
                             style={{ background: 'rgba(234,179,8,0.14)', color: 'rgba(234,179,8,0.95)', borderColor: 'rgba(234,179,8,0.32)' }}
                             title="该知识库已对外分享" aria-label="已分享">
-                            <Share2 size={11} />
+                            <Share2 size={14} />
                           </span>
                         )}
                         <PeerSyncBadge store={s as DocumentStoreWithPreview} compact />
                         <button
-                          className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer transition-colors"
+                          className="h-8 w-8 rounded-[9px] flex items-center justify-center cursor-pointer transition-colors"
                           title={isPinned ? '取消置顶' : '置顶到最前'}
                           aria-label={isPinned ? '取消置顶' : '置顶'}
                           onClick={(e) => { e.stopPropagation(); handleTogglePin(s.id); }}
@@ -2950,7 +3151,7 @@ export function DocumentStorePage() {
                         {canManage && (
                           <div className="relative">
                             <button
-                              className="surface-row h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer transition-colors"
+                              className="surface-row h-8 w-8 rounded-[9px] flex items-center justify-center cursor-pointer transition-colors"
                               title="更多操作"
                               onClick={(e) => { e.stopPropagation(); setCardMenuAnchor(e.currentTarget); setOpenCardMenuId(cardMenuOpen ? null : s.id); }}
                               style={{ color: 'var(--text-muted)' }}>
@@ -2961,6 +3162,10 @@ export function DocumentStorePage() {
                                 <MoreItem icon={<Users size={14} />} label="分享到团队" onClick={() => {
                                   setOpenCardMenuId(null);
                                   setShareTeamTarget({ id: s.id, name: s.name, teamIds: (s as DocumentStoreWithPreview).sharedTeamIds ?? [] });
+                                }} />
+                                <MoreItem icon={<Share2 size={14} />} label="分享到其他应用" onClick={() => {
+                                  setOpenCardMenuId(null);
+                                  void handleSystemShareStore(s.id, s.name);
                                 }} />
                                 <MoreItem icon={<Pencil size={14} />} label="编辑名称与标签" onClick={() => {
                                   setOpenCardMenuId(null);

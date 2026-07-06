@@ -663,6 +663,7 @@ export function resolveApiLabel(method: string, path: string): string {
     // 发布控制面（preview → release，2026-06-10）
     'GET /releases/targets': '列出发布目标',
     'POST /releases/targets': '创建发布目标',
+    'POST /releases/targets/local-prod': '创建本机生产发布目标',
     'PATCH /releases/targets/:id': '更新发布目标',
     'DELETE /releases/targets/:id': '删除发布目标',
     'POST /releases/branches/:branchId/preflight': '执行发布前检查',
@@ -1016,6 +1017,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/branches\/(.+)\/smoke$/, '分支冒烟测试'],
     [/^GET \/branches\/(.+)\/subdomain-aliases$/, '列出分支域名别名'],
     [/^PUT \/branches\/(.+)\/subdomain-aliases$/, '设置分支域名别名'],
+    [/^GET \/branches\/(.+)\/custom-domains$/, '列出分支完整自定义域名'],
+    [/^PUT \/branches\/(.+)\/custom-domains$/, '设置分支完整自定义域名'],
     [/^GET \/branches\/(.+)\/profile-overrides$/, '获取构建覆写'],
     [/^PUT \/branches\/(.+)\/profile-overrides\/(.+)$/, '更新构建覆写'],
     [/^DELETE \/branches\/(.+)\/profile-overrides\/(.+)$/, '删除构建覆写'],
@@ -1027,6 +1030,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/branches\/[^/]+$/, '查看分支详情'],
     [/^GET \/branches\/[^/]+\/effective-env$/, '查看生效环境变量'],
     [/^GET \/branches\/[^/]+\/effective-env\/reveal$/, '查看密钥明文'],
+    [/^GET \/branches\/[^/]+\/effective-config$/, '查分支生效配置'],
+    [/^POST \/branches\/[^/]+\/copy-config-from\/[^/]+$/, '拉取来源分支配置'],
     [/^GET \/branches\/[^/]+\/metrics$/, '查看分支指标'],
     [/^GET \/branches\/[^/]+\/failure-diagnosis$/, '诊断失败原因'],
     // 构建 Profile 扩展
@@ -3309,6 +3314,7 @@ export function createServer(deps: ServerDeps): express.Express {
   }));
   app.use('/api', createReleasesRouter({
     stateService: deps.stateService,
+    config: deps.config,
   }));
   // CDS 配对连接（系统级），见 routes/cds-system-connections.ts。
   app.use('/api', createCdsSystemConnectionsRouter({

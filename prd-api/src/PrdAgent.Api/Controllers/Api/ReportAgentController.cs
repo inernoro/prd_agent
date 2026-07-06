@@ -1516,6 +1516,9 @@ public class ReportAgentController : ControllerBase
         var canReview = (await IsTeamLeaderOrDeputy(report.TeamId, userId))
             || HasPermission(AdminPermissionCatalog.ReportAgentViewAll);
 
+        // 每用户「最近打开」台账（首页继续上次）
+        await RecentOpenTracker.TouchAsync(_db, userId, "report-agent", report.Id);
+
         return Ok(ApiResponse<object>.Ok(new { report, canReview }));
     }
 

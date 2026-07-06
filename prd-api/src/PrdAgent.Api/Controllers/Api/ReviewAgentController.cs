@@ -6,6 +6,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using System.Security.Claims;
@@ -555,6 +556,9 @@ public class ReviewAgentController : ControllerBase
 
         if (submission.SubmitterId != userId && !HasViewAllPermission())
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限查看该提交"));
+
+        // 每用户「最近打开」台账（首页继续上次）
+        await RecentOpenTracker.TouchAsync(_db, userId, "review-agent", submission.Id);
 
         ReviewResult? result = null;
         if (!string.IsNullOrEmpty(submission.ResultId))

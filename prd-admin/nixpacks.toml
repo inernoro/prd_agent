@@ -1,5 +1,8 @@
 [build]
 cmds = ["NODE_OPTIONS='--max-old-space-size=2048' pnpm install --frozen-lockfile", "VITE_BUILD_ID=$(date +%Y%m%d%H%M%S) NODE_OPTIONS='--max-old-space-size=2048' pnpm run build"]
 
+# serve 配置 SSOT = public/serve.json（Vite 原样拷进 dist/serve.json，serve 自动读取）。
+# 不再用 -c ../serve.json 显式指路：显式路径会绕过 dist/serve.json，导致 cleanUrls 等
+# 配置在 Nixpacks 预览与 Dockerfile 两条部署路径上不一致（Codex P2）。
 [start]
-cmd = "npx serve -s dist -l 8080 -c ../serve.json -n"
+cmd = "npx serve -s dist -l 8080 -n"

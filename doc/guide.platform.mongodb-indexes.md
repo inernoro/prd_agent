@@ -1387,3 +1387,21 @@ db.document_entry_versions.createIndex(
   { name: "uniq_doc_entry_versions_entry_version", unique: true }
 )
 ```
+
+### home_recent_opens
+
+首页「继续上次」每用户最近打开台账。读路径固定为 `(UserId) + LastOpenedAt desc` 前 N 条；
+写路径为 `(UserId, AgentKey, EntityId)` upsert，唯一索引可同时兜住并发 upsert 产生重复行。
+
+```js
+// 读：按用户取最近打开
+db.home_recent_opens.createIndex(
+  { "UserId": 1, "LastOpenedAt": -1 },
+  { name: "idx_home_recent_opens_user_time" }
+)
+// 写：每用户每实体一条（并发 upsert 去重兜底）
+db.home_recent_opens.createIndex(
+  { "UserId": 1, "AgentKey": 1, "EntityId": 1 },
+  { name: "uniq_home_recent_opens_user_entity", unique: true }
+)
+```

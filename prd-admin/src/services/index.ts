@@ -146,6 +146,8 @@ import type {
   ListHomepageAssetsContract,
   UploadHomepageAssetContract,
 } from '@/services/contracts/homepageAssets';
+import type { ListRecentWorkContract } from '@/services/contracts/homeRecentWork';
+export type { RecentWorkItemDto } from '@/services/contracts/homeRecentWork';
 import type {
   DeleteAdminGroupContract,
   DeleteAdminGroupMessagesContract,
@@ -469,6 +471,7 @@ import {
   deleteHomepageAsset as deleteHomepageAssetReal,
   getHomepageAssetsPublic as getHomepageAssetsPublicReal,
 } from '@/services/real/homepageAssets';
+import { listRecentWork as listRecentWorkReal } from '@/services/real/homeRecentWork';
 import {
   listLiteraryPromptsReal,
   createLiteraryPromptReal,
@@ -1010,6 +1013,7 @@ export const listHomepageAssets: ListHomepageAssetsContract = withAuth(listHomep
 export const uploadHomepageAsset: UploadHomepageAssetContract = withAuth(uploadHomepageAssetReal);
 export const deleteHomepageAsset: DeleteHomepageAssetContract = withAuth(deleteHomepageAssetReal);
 export const getHomepageAssetsPublic: GetHomepageAssetsPublicContract = withAuth(getHomepageAssetsPublicReal);
+export const listRecentWork: ListRecentWorkContract = withAuth(listRecentWorkReal);
 
 export const createVisualAgentSession: CreateVisualAgentSessionContract = withAuth(createVisualAgentSessionReal);
 export const listVisualAgentSessions: ListVisualAgentSessionsContract = withAuth(listVisualAgentSessionsReal);

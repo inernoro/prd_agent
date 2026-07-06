@@ -70,16 +70,11 @@
       letter-spacing: -0.01em;
     }
     .cds-logo-mark {
+      /* 2026-07-04 品牌换代:宝石六芒(ember)内联 SVG,不再是渐变 C 字块 */
       width: 22px;
       height: 22px;
-      border-radius: 6px;
-      background: linear-gradient(135deg, var(--accent) 0%, var(--blue, #38bdf8) 100%);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: #fff;
-      font-size: 11px;
-      font-weight: 800;
+      display: block;
+      flex-shrink: 0;
     }
 
     /* Workspace switcher pill */
@@ -1116,7 +1111,7 @@
           </svg>
         </button>
         <div class="cds-logo">
-          <div class="cds-logo-mark">C</div>
+          <svg class="cds-logo-mark" viewBox="0 0 64 64" width="22" height="22" role="img" aria-label="CDS"><polygon points="32,32 40.08,18 48.17,32" fill="#ea580c" stroke="#ea580c" stroke-width="0.5" stroke-linejoin="round"/><polygon points="32,32 48.17,32 40.08,46" fill="#f97316" stroke="#f97316" stroke-width="0.5" stroke-linejoin="round"/><polygon points="32,32 40.08,46 23.92,46" fill="#ea580c" stroke="#ea580c" stroke-width="0.5" stroke-linejoin="round"/><polygon points="32,32 23.92,46 15.83,32" fill="#f97316" stroke="#f97316" stroke-width="0.5" stroke-linejoin="round"/><polygon points="32,32 15.83,32 23.92,18" fill="#ea580c" stroke="#ea580c" stroke-width="0.5" stroke-linejoin="round"/><polygon points="32,32 23.92,18 40.08,18" fill="#f97316" stroke="#f97316" stroke-width="0.5" stroke-linejoin="round"/><polygon points="32,4 23.92,18 40.08,18" fill="#fb923c" stroke="#fb923c" stroke-width="0.5" stroke-linejoin="round"/><polygon points="56.25,18 40.08,18 48.17,32" fill="#fb923c" stroke="#fb923c" stroke-width="0.5" stroke-linejoin="round"/><polygon points="56.25,46 48.17,32 40.08,46" fill="#fb923c" stroke="#fb923c" stroke-width="0.5" stroke-linejoin="round"/><polygon points="32,60 40.08,46 23.92,46" fill="#fb923c" stroke="#fb923c" stroke-width="0.5" stroke-linejoin="round"/><polygon points="7.75,46 23.92,46 15.83,32" fill="#fb923c" stroke="#fb923c" stroke-width="0.5" stroke-linejoin="round"/><polygon points="7.75,18 15.83,32 23.92,18" fill="#fb923c" stroke="#fb923c" stroke-width="0.5" stroke-linejoin="round"/></svg>
           <span>Cloud Dev Suite</span>
         </div>
         <button id="projectsThemeBtn" onclick="_projectsToggleTheme(this)" title="切换主题"

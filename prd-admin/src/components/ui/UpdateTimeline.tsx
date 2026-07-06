@@ -137,6 +137,48 @@ const TIMELINE_CSS = `
   background:color-mix(in srgb, var(--tl-accent,#a855f7) 9%, transparent);
   box-shadow:0 8px 20px -10px color-mix(in srgb, var(--tl-accent,#a855f7) 60%, transparent);
 }
+@media (max-width: 640px){
+  .upd-tl-title{
+    margin-bottom:12px;
+    text-align:left;
+    font-size:14px;
+  }
+  .upd-tl-spine{
+    left:9px!important;
+    top:44px!important;
+  }
+  .upd-tl-section{
+    flex-direction:column;
+    gap:8px;
+    padding-left:22px;
+  }
+  .upd-tl-date{
+    width:auto!important;
+  }
+  .upd-tl-dot{
+    left:-18px!important;
+    top:8px!important;
+  }
+  .upd-tl-date-inner{
+    padding-left:0!important;
+    flex-direction:row;
+    align-items:center;
+    gap:8px;
+  }
+  .upd-tl-date-label{
+    max-width:calc(100vw - 120px);
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+  .upd-tl-grid{
+    grid-template-columns:minmax(0,1fr)!important;
+    gap:8px;
+  }
+  .upd-tl-card{
+    padding:9px 10px;
+  }
+}
 `;
 
 function TimelineBody({ data }: { data: ParsedTimeline }) {
@@ -145,7 +187,7 @@ function TimelineBody({ data }: { data: ParsedTimeline }) {
       <style>{TIMELINE_CSS}</style>
 
       {data.title && (
-        <div className="text-[15px] font-semibold mb-5 text-center" style={{ color: 'var(--text-primary)' }}>
+        <div className="upd-tl-title text-[15px] font-semibold mb-5 text-center" style={{ color: 'var(--text-primary)' }}>
           {data.title}
         </div>
       )}
@@ -153,19 +195,19 @@ function TimelineBody({ data }: { data: ParsedTimeline }) {
       {/* 时间轴主轴线（贯穿全部 section，左侧 spine） */}
       <span
         aria-hidden
-        className="absolute"
+        className="upd-tl-spine absolute"
         style={{ left: 7, top: data.title ? 44 : 6, bottom: 6, width: 2, background: 'var(--border-faint)' }}
       />
 
       <div className="flex flex-col gap-5">
         {data.sections.map((section, si) => (
-          <div key={`${section.label}-${si}`} className="relative flex gap-3 sm:gap-4">
+          <div key={`${section.label}-${si}`} className="upd-tl-section relative flex gap-3 sm:gap-4">
             {/* 左侧：轴上节点 + 日期标签 + 当天计数 */}
-            <div className="relative shrink-0" style={{ width: 104 }}>
+            <div className="upd-tl-date relative shrink-0" style={{ width: 104 }}>
               {section.label && (
                 <span
                   aria-hidden
-                  className="absolute rounded-full"
+                  className="upd-tl-dot absolute rounded-full"
                   style={{
                     left: 1.5,
                     top: 7,
@@ -177,9 +219,9 @@ function TimelineBody({ data }: { data: ParsedTimeline }) {
                 />
               )}
               {section.label && (
-                <div style={{ paddingLeft: 24 }} className="flex flex-col gap-1 items-start">
+                <div style={{ paddingLeft: 24 }} className="upd-tl-date-inner flex flex-col gap-1 items-start">
                   <span
-                    className="inline-flex items-center text-[12px] font-semibold px-2.5 py-1 rounded-md whitespace-nowrap"
+                    className="upd-tl-date-label inline-flex items-center text-[12px] font-semibold px-2.5 py-1 rounded-md whitespace-nowrap"
                     style={{
                       background: 'rgba(168,85,247,0.14)',
                       color: '#d8b4fe',
@@ -198,7 +240,7 @@ function TimelineBody({ data }: { data: ParsedTimeline }) {
 
             {/* 右侧：事件卡片墙，宽屏自动多列铺满，窄屏单列 */}
             <div
-              className="flex-1 grid gap-2.5"
+              className="upd-tl-grid flex-1 grid gap-2.5"
               style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', alignItems: 'start' }}
             >
               {section.events.map((ev, ei) => {

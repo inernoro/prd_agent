@@ -229,6 +229,9 @@
 - [CDS 分支级临时额外服务](design.cds.branch-local-extra-services) `design.cds.branch-local-extra-services`
   > 项目底座稳定（审批改、影响全体）+ 分支可自助加临时额外服务（只在本分支部署、跑分支专属网、删分支即消失、不影响别的分支）；纯增量可选、老行为零回归
 
+- [CDS 配置树](design.cds.config-tree) `design.cds.config-tree`
+  > 全局→项目→分支→派生分支四层继承；派生=快照拷贝（保留溯源指针）；生效配置检查器（env 逐 key 溯源 + 部署计划预览）；快照覆盖分支层；波4/5 方向（repo compose 纯结构种子、无 Agent 接入）
+
 - [CDS Agent API 契约设计](design.cds.agent.api) `design.cds.agent.api`
   > MAP/CDS 会话、事件、工具审批、Hook、runtime profile 与工作流调用的 API 契约
 
@@ -619,6 +622,9 @@
 - [首页 / 登录页视觉语言规则](rule.frontend.landing-visual-style) `rule.frontend.landing-visual-style`
   > 首页与登录页的视觉风格、动效与色彩规范
 
+- [移动端视觉检查矩阵规则](rule.frontend.mobile-visual-check-matrix) `rule.frontend.mobile-visual-check-matrix`
+  > 按页面状态而不是路由数量拆分移动端视觉检查范围，固定 P0/P1/P2 视觉回归矩阵
+
 - [LLM Gateway 流式调用与 Reasoning 规则](rule.platform.llm-gateway) `rule.platform.llm-gateway`
   > LLM Gateway 流式场景的关键陷阱与 Reasoning 推理内容处理规则
 
@@ -880,6 +886,9 @@
 - [MAP MCP 连接器 · 债务台账](debt.platform.map-mcp-connector) `debt.platform.map-mcp-connector`
   > MAP MCP 连接器核心链路已上线，债务台账记录 PR #836 后显式延后的硬化项（共 4 条，open 3）
 
+- [登录后首页(Agent 启动页) · 债务台账](debt.platform.home-launcher) `debt.platform.home-launcher`
+  > 方向 C（工作台·内容优先）首版已落地；记录「继续上次」数据源边界（仅视觉/文学/工作流）、behavior_events 脱敏限制与色阶尺配色纪律
+
 - [行为洞察 / VOC 体验之声 工程债务台账](debt.team-activity.voc-legacy) `debt.team-activity.voc-legacy`
   > 行为洞察页面已知边界、待建造项（顶部 ribbon 流式动画、VOC 信息流等）与跨 session 债务
 
@@ -933,6 +942,9 @@
   > CDS Agent 当前开发进度与状态面板（已合并到权威入口）
 
   > CDS Agent 工作台从连接探活到远程 sandbox 自巡检 PR 闭环的功能清单、坑位、未完成债务和交接提示词
+
+- [周报 2026-W27 (06-29 ~ 07-05)](report.2026-W27) `report.2026-W27`
+  > 2026 年第 27 周工作总结（356 commits / 44 PRs，剥离落地周 + 视觉归一周：LLM 网关从 MAP 物理剥离 跨进程 serving+shadow 影子比对+CDS 命名子域+双出口面板+真实观测控制台 prd-llmgw-web 可登录可观测可配置+Mongo Console 受控写(#965/#971~#985 八连)、首页/登录页/CDS 品牌视觉语言归一 首页工作台重构继续上次+极光氛围+落地页性能+CDS 宝石六芒标+布局架构归一+日报报纸版 HTML、米多星球 SSO 登录+禁用密码登录、知识星球 3D 星系视觉艺术升级 v2 深空穹顶+星云+热核着色、CDS 稳定性 分支级网络隔离+docker 网络跨路径回收+不可变生产发布、新增邮件模板智能体+用户通知推送订阅 Bark 协议+涌现探索器流式生长节点+快捷指令短视频解析；fix 占比 43% 大功能落地+密集收口）
 
 - [周报 2026-W26 (06-22 ~ 06-28)](report.2026-W26) `report.2026-W26`
   > 2026 年第 26 周工作总结（414 commits / 30 PRs，W25 收口后的反弹周，两条大新功能 + CDS 稳定性深水区三线并进：知识库「文档星系/宇宙图」三维视图 buildDocGalaxy+UnrealBloom 辉光+双链连线+六批交互迭代到演示级、VOC 行为之声「AI 用户分析下钻」端点三段式 证据→大模型→Tab+根因置顶+加载动效 1:1 复刻、CDS 自更新极速版 CI 预构建到 ghcr+决策层+运行层三步基建、CDS 部署卡死收敛器 看门狗租约判活+调度器永不降温主干+持久化投影剥离 runtime 派生(#886 75commits)、CDS 性能治理 构建并发闸+分支列表缓存+状态广播节流+mongo-split 写入合并、CDS 验收报告升级为验收中心 项目级文件夹+匿名分享链+深链+PR 回写+MAP peer-sync+base64 截图内容寻址、知识库跨节点同步支持二进制附件一篇不差、移动端整体重构首批 headbar/首页 Hero/百宝箱发现、生图等待流光进度条+文学配图缩放预览、revert 删除所有催办产品决策；fix 占比 47% 边清债边开新坑）

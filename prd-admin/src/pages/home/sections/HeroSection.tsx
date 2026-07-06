@@ -13,7 +13,8 @@ import { useLanguage } from '../contexts/LanguageContext';
  *     fixed 中部亮带穿透后续 section 产生"银色光带"伪影
  *   · CTA 重做为对称两颗（主实 pill + 次对称 outline pill，同高同 radius）
  *   · 所有进入视口元素走 Reveal 组件做 fade-up 滚动动效
- *   · Hero 主标题接入 ambient neon pulse（极慢呼吸发光）
+ *   · Hero 主标题辉光为静态 text-shadow —— 禁止改回无限循环的
+ *     text-shadow / box-shadow 动画（绘制属性逐帧重绘，实测导致整页卡顿）
  */
 export const HERO_GRADIENT = 'linear-gradient(135deg, #00f0ff 0%, #7c3aed 50%, #f43f5e 100%)';
 export const HERO_GRADIENT_TEXT = {
@@ -132,7 +133,6 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
               boxShadow:
                 '0 0 28px rgba(148, 163, 184, 0.18), inset 0 0 14px rgba(148, 163, 184, 0.05)',
               fontFamily: 'var(--font-terminal)',
-              animation: 'hud-pulse 4s ease-in-out infinite',
             }}
           >
             <span className="relative flex h-2 w-2">
@@ -175,7 +175,11 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
               lineHeight: 1.02,
               letterSpacing: '-0.035em',
               maxWidth: '16ch',
-              animation: 'hero-title-pulse 5s ease-in-out infinite',
+              // 静态辉光（原 hero-title-pulse 呼吸动画的中间值）：
+              // text-shadow 是纯绘制属性，无限循环动画它会让大标题区域每帧重绘，
+              // 是整页滚动卡顿的头号来源，故固定为常量。
+              textShadow:
+                '0 0 34px rgba(213, 221, 232, 0.38), 0 0 100px rgba(0, 240, 255, 0.26), 0 0 150px rgba(59, 130, 246, 0.15)',
             }}
           >
             {t.hero.title}
@@ -254,43 +258,12 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
       </div>
 
       {/* ── Phase 3 · 产品壳 mockup — 核心信息就位后，视觉证据最后浮出 ── */}
-      <Reveal delay={1800} offset={60} blur={6} duration={3000}>
+      {/* 不带 blur：对 ~1000px 宽的大块做 3s 滤镜动画 = 大面积逐帧重绘，只保留 fade + rise */}
+      <Reveal delay={1800} offset={60} duration={3000}>
         <div className="relative z-10 pb-32 md:pb-40 px-4 md:px-8">
           <ProductMockup />
         </div>
       </Reveal>
-
-      <style>{`
-        @keyframes hero-title-pulse {
-          0%, 100% {
-            text-shadow:
-              0 0 30px rgba(203, 213, 225, 0.32),
-              0 0 90px rgba(0, 240, 255, 0.22),
-              0 0 140px rgba(59, 130, 246, 0.12);
-          }
-          50% {
-            text-shadow:
-              0 0 40px rgba(226, 232, 240, 0.45),
-              0 0 110px rgba(0, 240, 255, 0.30),
-              0 0 160px rgba(59, 130, 246, 0.18);
-          }
-        }
-        @keyframes hud-pulse {
-          0%, 100% {
-            box-shadow:
-              0 0 28px rgba(148, 163, 184, 0.18),
-              inset 0 0 14px rgba(148, 163, 184, 0.05);
-          }
-          50% {
-            box-shadow:
-              0 0 38px rgba(203, 213, 225, 0.28),
-              inset 0 0 20px rgba(203, 213, 225, 0.08);
-          }
-        }
-        @media (prefers-reduced-motion: reduce) {
-          h1, [style*="hud-pulse"] { animation: none !important; }
-        }
-      `}</style>
     </section>
   );
 }
