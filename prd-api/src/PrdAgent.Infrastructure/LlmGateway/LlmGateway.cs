@@ -656,6 +656,75 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         return await ExecuteRawWithResolutionAsync(request, internalResolution, startedAt, ct);
     }
 
+    /// <inheritdoc />
+    public Task<GatewayRawResponse> TestUpstreamProfileAsync(
+        GatewayUpstreamProfileTestRequest request,
+        CancellationToken ct = default)
+    {
+        if (!TryValidateAppCaller(request.AppCallerCode, ModelTypes.Chat, out var error))
+            return Task.FromResult(GatewayRawResponse.Fail(InvalidAppCallerErrorCode, error, 400));
+
+        var protocol = NormalizeProfileTestProtocol(request.Protocol);
+        var baseUrl = request.BaseUrl.TrimEnd('/');
+        var profileId = string.IsNullOrWhiteSpace(request.ProfileId)
+            ? "runtime-profile-test"
+            : request.ProfileId.Trim();
+        var profileName = string.IsNullOrWhiteSpace(request.ProfileName)
+            ? "Runtime profile test"
+            : request.ProfileName.Trim();
+
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "DirectModel",
+            ExpectedModel = request.Model,
+            ActualModel = request.Model,
+            ActualPlatformId = profileId,
+            ActualPlatformName = profileName,
+            PlatformType = protocol,
+            Protocol = protocol,
+            ResolutionReason = "infra-agent-runtime-profile-test",
+            ApiUrl = baseUrl,
+            ApiKey = request.ApiKey
+        };
+
+        var rawRequest = new GatewayRawRequest
+        {
+            AppCallerCode = request.AppCallerCode,
+            ModelType = ModelTypes.Chat,
+            ExpectedModel = request.Model,
+            RequestBody = new JsonObject
+            {
+                ["model"] = request.Model,
+                ["max_tokens"] = 8,
+                ["stream"] = false,
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["role"] = "user",
+                        ["content"] = "Reply with ok."
+                    }
+                }
+            },
+            TimeoutSeconds = Math.Clamp(request.TimeoutSeconds, 5, 120),
+            ExtraHeaders = new Dictionary<string, string>
+            {
+                ["User-Agent"] = "prd-agent-runtime-profile-test/1.0"
+            },
+            Context = new GatewayRequestContext
+            {
+                RequestId = string.IsNullOrWhiteSpace(request.RequestId)
+                    ? Guid.NewGuid().ToString("N")
+                    : request.RequestId.Trim(),
+                UserId = request.UserId,
+                QuestionText = "[Runtime Profile Test] Reply with ok."
+            }
+        };
+
+        return SendRawWithResolutionAsync(rawRequest, resolution, ct);
+    }
+
     /// <summary>
     /// 发送阶段的核心实现：接收已解析的 <see cref="ModelResolutionResult"/>，
     /// 执行 HTTP 请求、日志写入、健康状态回写等所有"发送后"逻辑。
@@ -1653,6 +1722,18 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             "claude" or "anthropic" => "x-api-key",
             "google" or "gemini" => "x-goog-api-key",
             _ => "Bearer"
+        };
+    }
+
+    private static string NormalizeProfileTestProtocol(string protocol)
+    {
+        var normalized = protocol.Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "anthropic" => "claude",
+            "openai-compatible" => "openai",
+            "gemini" => "google",
+            _ => normalized
         };
     }
 

@@ -5,3 +5,4 @@
 | test | prd-api | 扩展 LLM Gateway 直连棘轮，显式跟踪模型池探活和 Infra Agent profile 校验中的手写上游 HTTP 待迁移债务 |
 | refactor | prd-api | 模型池健康探活改走 LLM Gateway raw pinned 调用，保留 IsHealthProbe 日志标记并收紧手写上游 HTTP baseline |
 | fix | prd-api | LLM Gateway raw 非 Exchange 路径按协议设置 Claude 和 Google 原生鉴权头，避免探活或 raw 请求误用 Bearer |
+| refactor | prd-api | Infra Agent runtime profile 连通性测试改走 llmgw-serve profile-test 契约，清零手写 completion/messages 上游 HTTP baseline |

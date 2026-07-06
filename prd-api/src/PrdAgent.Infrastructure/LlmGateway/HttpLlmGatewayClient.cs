@@ -281,6 +281,31 @@ public sealed class HttpLlmGatewayClient
         }
     }
 
+    public async Task<GatewayRawResponse> TestUpstreamProfileAsync(
+        GatewayUpstreamProfileTestRequest request,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            using var http = CreateHttp(infiniteTimeout: false);
+            using var resp = await http.PostAsync($"{_baseUrl}/gw/v1/profile-test", JsonBody(request), ct);
+            var body = await resp.Content.ReadAsStringAsync(ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                return GatewayRawResponse.Fail("GATEWAY_HTTP_ERROR",
+                    $"serving 返回 {(int)resp.StatusCode}: {Truncate(body)}", (int)resp.StatusCode);
+            }
+
+            var result = JsonSerializer.Deserialize<GatewayRawResponse>(body, JsonOpts);
+            return result ?? GatewayRawResponse.Fail("GATEWAY_HTTP_ERROR", "serving 响应反序列化为空");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[HttpLlmGatewayClient] TestUpstreamProfileAsync 失败 base={Base}", _baseUrl);
+            return GatewayRawResponse.Fail("GATEWAY_HTTP_ERROR", ex.Message);
+        }
+    }
+
     private static async Task<Dictionary<string, MultipartFileRef>> UploadMultipartFileRefsAsync(
         Dictionary<string, (string FileName, byte[] Content, string MimeType)> files,
         IAssetStorage storage,

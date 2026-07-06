@@ -136,6 +136,15 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             : _inproc.SendRawWithResolutionAsync(request, resolution, ct);
 
     /// <summary>
+    /// Runtime profile 测试是管理侧连通性验证，目标就是证明 llmgw-serve 能代表 MAP 触达上游；
+    /// shadow 模式下直接以 http 网关为权威，避免继续在 MAP 进程内直连。
+    /// </summary>
+    public Task<GatewayRawResponse> TestUpstreamProfileAsync(
+        GatewayUpstreamProfileTestRequest request,
+        CancellationToken ct = default)
+        => _http.TestUpstreamProfileAsync(request, ct);
+
+    /// <summary>
     /// 返回绑定到 <c>this</c>（影子）的客户端，使 chat 的 <c>StreamGenerateAsync → ShadowLlmGateway.StreamAsync</c>，
     /// 每条消息做免费 resolve 比对（chat 主链路覆盖）。
     /// </summary>

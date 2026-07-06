@@ -132,6 +132,17 @@ public static class GatewayHttpEndpoints
             return JsonContentResult(raw, jsonOpts);
         });
 
+        // 用户保存的 Infra Agent runtime profile 连通性测试。
+        // 该端点只接受内部 M2M 调用（受 X-Gateway-Key 保护），上游 API key 只用于本次测试发送，
+        // 不向 MAP 进程暴露任何网关发送细节。
+        app.MapPost("/gw/v1/profile-test", async (
+            GatewayUpstreamProfileTestRequest request,
+            PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway) =>
+        {
+            var raw = await gateway.TestUpstreamProfileAsync(request, CancellationToken.None);
+            return JsonContentResult(raw, jsonOpts);
+        });
+
         // 可用模型池列表。
         app.MapGet("/gw/v1/pools", async (
             string appCallerCode,

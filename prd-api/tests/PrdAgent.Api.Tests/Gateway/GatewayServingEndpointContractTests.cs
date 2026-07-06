@@ -116,6 +116,33 @@ public class GatewayServingEndpointContractTests
     }
 
     [Fact]
+    public async Task ProfileTest_RoundTrips_OverRealHttp()
+    {
+        await using var app = await StartServingHostAsync();
+        try
+        {
+            var client = BuildClient(ResolveBaseUrl(app), TestKey);
+
+            var resp = await client.TestUpstreamProfileAsync(new GatewayUpstreamProfileTestRequest
+            {
+                AppCallerCode = "infra-agent.runtime-profile-test::chat",
+                Protocol = "openai",
+                BaseUrl = "https://example.invalid/v1",
+                Model = "runtime-picked-model",
+                ApiKey = "SECRET-profile-test-key",
+                ProfileId = "profile-1",
+                ProfileName = "测试配置",
+                UserId = "user-1",
+            });
+
+            resp.Success.ShouldBeTrue();
+            resp.StatusCode.ShouldBe(200);
+            resp.Content.ShouldBe("profile-test:runtime-picked-model");
+        }
+        finally { await app.StopAsync(); }
+    }
+
+    [Fact]
     public async Task Pools_ReturnsNonEmpty()
     {
         await using var app = await StartServingHostAsync();
@@ -198,6 +225,10 @@ public class GatewayServingEndpointContractTests
         public Task<GatewayRawResponse> SendRawWithResolutionAsync(
             GatewayRawRequest request, GatewayModelResolution resolution, CancellationToken ct = default)
             => Task.FromResult(new GatewayRawResponse { Success = true, StatusCode = 200, Content = "raw-ok" });
+
+        public Task<GatewayRawResponse> TestUpstreamProfileAsync(
+            GatewayUpstreamProfileTestRequest request, CancellationToken ct = default)
+            => Task.FromResult(new GatewayRawResponse { Success = true, StatusCode = 200, Content = $"profile-test:{request.Model}" });
 
         public Task<GatewayModelResolution> ResolveModelAsync(
             string appCallerCode, string modelType, string? expectedModel = null,

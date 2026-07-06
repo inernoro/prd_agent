@@ -352,6 +352,24 @@ public class GatewayRawRequest
 }
 
 /// <summary>
+/// 运行时 profile 上游连通性测试请求。它是受 X-Gateway-Key 保护的内部 M2M 契约：
+/// MAP 负责读取/解密用户保存的 profile，llmgw-serve 负责真正触达上游并写网关日志。
+/// </summary>
+public sealed class GatewayUpstreamProfileTestRequest
+{
+    public required string AppCallerCode { get; init; }
+    public required string Protocol { get; init; }
+    public required string BaseUrl { get; init; }
+    public required string Model { get; init; }
+    public required string ApiKey { get; init; }
+    public string? ProfileId { get; init; }
+    public string? ProfileName { get; init; }
+    public string? UserId { get; init; }
+    public string? RequestId { get; init; }
+    public int TimeoutSeconds { get; init; } = 30;
+}
+
+/// <summary>
 /// multipart 文件的对象存储引用（网关物理独立 HTTP 边界用，避免大负载 base64 内联）。
 /// 具名 DTO 替代 ValueTuple+byte[]，可干净 JSON 序列化。详见 design.llm-gateway-physical-isolation.md §3.1。
 /// </summary>

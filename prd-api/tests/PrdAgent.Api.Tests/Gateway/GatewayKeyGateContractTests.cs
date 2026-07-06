@@ -62,6 +62,7 @@ public class GatewayKeyGateContractTests
         new object[] { HttpMethod.Post, "/gw/v1/send" },
         new object[] { HttpMethod.Post, "/gw/v1/resolve" },
         new object[] { HttpMethod.Post, "/gw/v1/raw" },
+        new object[] { HttpMethod.Post, "/gw/v1/profile-test" },
         new object[] { HttpMethod.Post, "/gw/v1/stream" },
         new object[] { HttpMethod.Post, "/gw/v1/client-stream" },
         new object[] { HttpMethod.Get, "/gw/v1/pools?appCallerCode=demo.app::chat&modelType=chat" },
