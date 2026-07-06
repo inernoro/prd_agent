@@ -179,8 +179,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_GATE_RUN_SMOKE", script);
         Assert.Contains("scripts/gw-smoke.py", script);
         Assert.Contains("LLMGW_GATE_SMOKE_TIMEOUT_SECONDS", script);
+        Assert.Contains("GW_SMOKE_JSON_OUT", script);
+        Assert.Contains("GW_SMOKE_REPORT_MD", script);
         Assert.Contains("GW_BASE=\"$gate_base\" GW_KEY=\"$gate_key\" GW_TIMEOUT=\"${LLMGW_GATE_SMOKE_TIMEOUT_SECONDS:-120}\" python3 scripts/gw-smoke.py", script);
         Assert.Contains("LLMGW_GATE_RUN_SERVING_PROBE", script);
+        Assert.Contains("LLMGW_SERVING_PROBE_JSON_OUT", script);
+        Assert.Contains("LLMGW_SERVING_PROBE_REPORT_MD", script);
         Assert.Contains("scripts/llmgw-serving-probe.py", script);
         Assert.Contains("probe_args=\"--base $gate_base\"", script);
         Assert.Contains("python3 scripts/llmgw-serving-probe.py $probe_args", script);
@@ -296,8 +300,14 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("visual-agent.image.text2img::generation,visual-agent.image.img2img::generation", script);
         Assert.Contains("video-agent.videogen::video-gen,document-store.subtitle::asr,transcript-agent.transcribe::asr", script);
         Assert.Contains("export PRD_AGENT_REQUIRE_FAST_INTENT=\"${PRD_AGENT_REQUIRE_FAST_INTENT:-1}\"", script);
-        Assert.Contains("export LLMGW_GATE_JSON_OUT=\"${LLMGW_GATE_JSON_OUT:-${evidence_prefix}.json}\"", script);
-        Assert.Contains("export LLMGW_GATE_REPORT_MD=\"${LLMGW_GATE_REPORT_MD:-${evidence_prefix}.md}\"", script);
+        Assert.Contains("release-gate.json", script);
+        Assert.Contains("serving-probe.json", script);
+        Assert.Contains("gw-smoke.json", script);
+        Assert.Contains("stage-report", script);
+        Assert.Contains("export LLMGW_GATE_JSON_OUT=\"${LLMGW_GATE_JSON_OUT:-$release_gate_json}\"", script);
+        Assert.Contains("export LLMGW_GATE_REPORT_MD=\"${LLMGW_GATE_REPORT_MD:-$release_gate_md}\"", script);
+        Assert.Contains("export LLMGW_SERVING_PROBE_JSON_OUT=\"${LLMGW_SERVING_PROBE_JSON_OUT:-$serving_probe_json}\"", script);
+        Assert.Contains("export GW_SMOKE_JSON_OUT=\"${GW_SMOKE_JSON_OUT:-$smoke_json}\"", script);
         Assert.Contains("rollout-ledger.jsonl", script);
         Assert.Contains("--allow-out-of-order", script);
         Assert.Contains("validate_ledger_order", script);
@@ -318,6 +328,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("allow-out-of-order", ledger);
         Assert.Contains("\"status\": args.status", ledger);
         Assert.Contains("\"evidenceJson\": args.evidence_json", ledger);
+        Assert.Contains("\"servingProbeJson\": args.serving_probe_json", ledger);
+        Assert.Contains("\"smokeJson\": args.smoke_json", ledger);
+        Assert.Contains("_require_pass_json", ledger);
+        Assert.Contains("stage-report", ledger);
         Assert.Contains("ensure_ascii=False", ledger);
         Assert.DoesNotContain("--key", ledger);
 
@@ -325,6 +339,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("scripts/llmgw-prod-stage.sh", readiness);
         Assert.Contains("scripts/llmgw-rollout-ledger.py", readiness);
         Assert.Contains("ledgerExecutable", readiness);
+        Assert.Contains("serving-probe.json", readiness);
+        Assert.Contains("GW_SMOKE_JSON_OUT", readiness);
         Assert.Contains("leaksKeyArg", readiness);
     }
 
@@ -491,6 +507,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("\"/client-stream\"", script);
         Assert.Contains("client-stream[chat]", script);
         Assert.Contains("\"Messages\": [{\"Role\": \"user\", \"Content\": \"ping, client stream reply OK\"}]", script);
+        Assert.Contains("GW_SMOKE_JSON_OUT", script);
+        Assert.Contains("GW_SMOKE_REPORT_MD", script);
+        Assert.Contains("\"verdict\": \"pass\" if passed == len(rows) else \"fail\"", script);
     }
 
     private static string ReadRepoFile(string relativePath)

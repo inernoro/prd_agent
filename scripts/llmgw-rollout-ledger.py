@@ -44,6 +44,32 @@ def _load(path: str) -> list[dict]:
     return entries
 
 
+def _load_json_file(path: str, label: str) -> dict:
+    if not path:
+        raise SystemExit(f"ERROR: missing {label} path")
+    if not os.path.exists(path):
+        raise SystemExit(f"ERROR: missing {label}: {path}")
+    with open(path, "r", encoding="utf-8") as fh:
+        try:
+            payload = json.load(fh)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"ERROR: invalid {label} JSON: {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise SystemExit(f"ERROR: {label} is not a JSON object: {path}")
+    return payload
+
+
+def _require_pass_json(path: str, label: str) -> None:
+    payload = _load_json_file(path, label)
+    verdict = str(payload.get("verdict") or payload.get("Verdict") or "").lower()
+    if verdict != "pass":
+        raise SystemExit(f"ERROR: {label} verdict is not pass: {path} verdict={verdict or 'empty'}")
+
+
+def _bool_flag(value: str) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 def _successful_stages(entries: list[dict], commit: str) -> set[str]:
     return {
         str(item.get("stage") or "")
@@ -97,6 +123,12 @@ def append(args: argparse.Namespace) -> int:
     parent = os.path.dirname(args.ledger)
     if parent:
         os.makedirs(parent, exist_ok=True)
+    if args.status == "success":
+        _require_pass_json(args.evidence_json, "stage evidence")
+        _require_pass_json(args.serving_probe_json, "serving probe evidence")
+        _require_pass_json(args.smoke_json, "D-layer smoke evidence")
+        if _bool_flag(args.release_gate_required):
+            _require_pass_json(args.release_gate_json, "release gate evidence")
 
     entry = {
         "recordedAt": datetime.now(timezone.utc).isoformat(),
@@ -110,11 +142,100 @@ def append(args: argparse.Namespace) -> int:
         "gateBase": args.gate_base,
         "evidenceJson": args.evidence_json,
         "evidenceMarkdown": args.evidence_md,
+        "releaseGateJson": args.release_gate_json,
+        "releaseGateRequired": _bool_flag(args.release_gate_required),
+        "servingProbeJson": args.serving_probe_json,
+        "smokeJson": args.smoke_json,
     }
     with open(args.ledger, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry, ensure_ascii=False, sort_keys=True))
         fh.write("\n")
     print(f"LLM Gateway rollout ledger: appended {args.status} for {args.stage}")
+    return 0
+
+
+def _write_json(path: str, report: dict) -> None:
+    if not path:
+        return
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(report, fh, ensure_ascii=False, indent=2, sort_keys=True)
+        fh.write("\n")
+
+
+def _write_markdown(path: str, report: dict) -> None:
+    if not path:
+        return
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+    def cell(value: object) -> str:
+        return str(value).replace("|", "\\|")
+
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("# LLM Gateway Rollout Stage Report\n\n")
+        fh.write(f"- generatedAt: `{cell(report['generatedAt'])}`\n")
+        fh.write(f"- verdict: `{cell(report['verdict'])}`\n")
+        fh.write(f"- stage: `{cell(report['stage'])}`\n")
+        fh.write(f"- commit: `{cell(report['commit'])}`\n")
+        fh.write(f"- mode: `{cell(report['mode'])}`\n")
+        fh.write(f"- canaryStage: `{cell(report['canaryStage'])}`\n")
+        fh.write(f"- allowlist: `{cell(report['allowlist'])}`\n")
+        fh.write(f"- releaseGateRequired: `{cell(report['releaseGateRequired'])}`\n")
+        fh.write(f"- releaseGateJson: `{cell(report['releaseGateJson'])}`\n")
+        fh.write(f"- servingProbeJson: `{cell(report['servingProbeJson'])}`\n")
+        fh.write(f"- smokeJson: `{cell(report['smokeJson'])}`\n\n")
+        fh.write("## Failures\n\n")
+        failures = report.get("failures") or []
+        if failures:
+            for failure in failures:
+                fh.write(f"- {failure}\n")
+        else:
+            fh.write("- none\n")
+
+
+def stage_report(args: argparse.Namespace) -> int:
+    failures: list[str] = []
+    checks = [
+        ("servingProbeJson", args.serving_probe_json, True),
+        ("smokeJson", args.smoke_json, True),
+        ("releaseGateJson", args.release_gate_json, _bool_flag(args.release_gate_required)),
+    ]
+    for label, path, required in checks:
+        if not required:
+            continue
+        try:
+            _require_pass_json(path, label)
+        except SystemExit as exc:
+            failures.append(str(exc))
+
+    report = {
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "verdict": "fail" if failures else "pass",
+        "stage": args.stage,
+        "status": args.status,
+        "commit": args.commit.lower(),
+        "mode": args.mode,
+        "canaryStage": args.canary_stage,
+        "allowlist": args.allowlist,
+        "shadowFullSamplePercent": args.shadow_full_sample_percent,
+        "gateBase": args.gate_base,
+        "releaseGateRequired": _bool_flag(args.release_gate_required),
+        "releaseGateJson": args.release_gate_json,
+        "servingProbeJson": args.serving_probe_json,
+        "smokeJson": args.smoke_json,
+        "failures": failures,
+    }
+    _write_json(args.json_out, report)
+    _write_markdown(args.report_md, report)
+    if failures:
+        for failure in failures:
+            print(failure, file=sys.stderr)
+        return 1
+    print(f"LLM Gateway rollout stage report: PASS for {args.stage}")
     return 0
 
 
@@ -141,7 +262,28 @@ def main() -> int:
     append_parser.add_argument("--gate-base", default="")
     append_parser.add_argument("--evidence-json", default="")
     append_parser.add_argument("--evidence-md", default="")
+    append_parser.add_argument("--release-gate-json", default="")
+    append_parser.add_argument("--release-gate-required", default="0")
+    append_parser.add_argument("--serving-probe-json", default="")
+    append_parser.add_argument("--smoke-json", default="")
     append_parser.set_defaults(func=append)
+
+    report_parser = sub.add_parser("stage-report", help="write and validate stage evidence")
+    report_parser.add_argument("--json-out", required=True)
+    report_parser.add_argument("--report-md", default="")
+    report_parser.add_argument("--stage", required=True)
+    report_parser.add_argument("--status", required=True)
+    report_parser.add_argument("--commit", default="")
+    report_parser.add_argument("--mode", default="")
+    report_parser.add_argument("--canary-stage", default="")
+    report_parser.add_argument("--allowlist", default="")
+    report_parser.add_argument("--shadow-full-sample-percent", default="")
+    report_parser.add_argument("--gate-base", default="")
+    report_parser.add_argument("--release-gate-json", default="")
+    report_parser.add_argument("--release-gate-required", default="0")
+    report_parser.add_argument("--serving-probe-json", default="")
+    report_parser.add_argument("--smoke-json", default="")
+    report_parser.set_defaults(func=stage_report)
 
     args = parser.parse_args()
     return int(args.func(args))

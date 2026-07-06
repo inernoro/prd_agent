@@ -220,6 +220,14 @@ fi
 ts="$(date -u '+%Y%m%dT%H%M%SZ' 2>/dev/null || date '+%Y%m%dT%H%M%SZ')"
 short_commit="$(printf '%s' "$commit" | cut -c1-12)"
 evidence_prefix="$evidence_dir/${ts}_${stage}_${short_commit}"
+release_gate_json="${evidence_prefix}.release-gate.json"
+release_gate_md="${evidence_prefix}.release-gate.md"
+serving_probe_json="${evidence_prefix}.serving-probe.json"
+serving_probe_md="${evidence_prefix}.serving-probe.md"
+smoke_json="${evidence_prefix}.gw-smoke.json"
+smoke_md="${evidence_prefix}.gw-smoke.md"
+stage_json="${evidence_prefix}.stage.json"
+stage_md="${evidence_prefix}.stage.md"
 
 print_plan() {
   echo "LLM Gateway production stage:"
@@ -234,8 +242,10 @@ print_plan() {
     echo "  allowlist: ${allowlist:-empty}"
     echo "  shadowFullSamplePercent: $shadow_percent"
     echo "  gateBase: $gate_base"
-    echo "  evidenceJson: ${evidence_prefix}.json"
-    echo "  evidenceMarkdown: ${evidence_prefix}.md"
+    echo "  releaseGateJson: $release_gate_json"
+    echo "  servingProbeJson: $serving_probe_json"
+    echo "  smokeJson: $smoke_json"
+    echo "  stageJson: $stage_json"
   fi
 }
 
@@ -274,8 +284,12 @@ append_ledger_entry() {
     --allowlist "$allowlist" \
     --shadow-full-sample-percent "$shadow_percent" \
     --gate-base "$gate_base" \
-    --evidence-json "${evidence_prefix}.json" \
-    --evidence-md "${evidence_prefix}.md"
+    --evidence-json "$stage_json" \
+    --evidence-md "$stage_md" \
+    --release-gate-json "$release_gate_json" \
+    --release-gate-required "${release_gate_required:-0}" \
+    --serving-probe-json "$serving_probe_json" \
+    --smoke-json "$smoke_json"
 }
 
 run_or_print() {
@@ -311,11 +325,24 @@ export LLMGW_CANARY_STAGE="$canary_stage"
 export LLMGW_SHADOW_FULL_SAMPLE_PERCENT="$shadow_percent"
 export LLMGW_GATE_BASE="$gate_base"
 export PRD_AGENT_REQUIRE_FAST_INTENT="${PRD_AGENT_REQUIRE_FAST_INTENT:-1}"
-export LLMGW_GATE_JSON_OUT="${LLMGW_GATE_JSON_OUT:-${evidence_prefix}.json}"
-export LLMGW_GATE_REPORT_MD="${LLMGW_GATE_REPORT_MD:-${evidence_prefix}.md}"
+export LLMGW_GATE_JSON_OUT="${LLMGW_GATE_JSON_OUT:-$release_gate_json}"
+export LLMGW_GATE_REPORT_MD="${LLMGW_GATE_REPORT_MD:-$release_gate_md}"
+export LLMGW_SERVING_PROBE_JSON_OUT="${LLMGW_SERVING_PROBE_JSON_OUT:-$serving_probe_json}"
+export LLMGW_SERVING_PROBE_REPORT_MD="${LLMGW_SERVING_PROBE_REPORT_MD:-$serving_probe_md}"
+export GW_SMOKE_JSON_OUT="${GW_SMOKE_JSON_OUT:-$smoke_json}"
+export GW_SMOKE_REPORT_MD="${GW_SMOKE_REPORT_MD:-$smoke_md}"
 export LLMGW_GATE_SHADOW_SINCE_HOURS="${LLMGW_GATE_SHADOW_SINCE_HOURS:-24}"
 export LLMGW_GATE_HEALTH_SAMPLES="${LLMGW_GATE_HEALTH_SAMPLES:-3}"
 export LLMGW_GATE_HEALTH_INTERVAL_SECONDS="${LLMGW_GATE_HEALTH_INTERVAL_SECONDS:-5}"
+
+case "$stage" in
+  shadow-start)
+    release_gate_required=0
+    ;;
+  *)
+    release_gate_required=1
+    ;;
+esac
 
 if [ "$execute" = "1" ]; then
   mkdir -p "$evidence_dir"
@@ -330,6 +357,21 @@ else
 fi
 
 if [ "$execute" = "1" ]; then
+  python3 scripts/llmgw-rollout-ledger.py stage-report \
+    --json-out "$stage_json" \
+    --report-md "$stage_md" \
+    --stage "$stage" \
+    --status success \
+    --commit "$commit" \
+    --mode "$mode" \
+    --canary-stage "$canary_stage" \
+    --allowlist "$allowlist" \
+    --shadow-full-sample-percent "$shadow_percent" \
+    --gate-base "$gate_base" \
+    --release-gate-json "$release_gate_json" \
+    --release-gate-required "$release_gate_required" \
+    --serving-probe-json "$serving_probe_json" \
+    --smoke-json "$smoke_json"
   append_ledger_entry success
 fi
 

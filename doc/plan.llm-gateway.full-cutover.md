@@ -150,11 +150,15 @@ scripts/llmgw-prod-stage.sh --stage shadow-start --commit <40位SHA> --execute
 `canary-image`、`canary-video-asr`、`http-full`、`rollback-inproc`。脚本默认 dry-run，只有显式
 `--execute` 才会真实运行；deploy 阶段会先跑 `fast.sh --commit <sha>`，再用同一个 sha 跑
 `exec_dep.sh --commit <sha>`，并默认设置 `PRD_AGENT_REQUIRE_FAST_INTENT=1` 与
-`.llmgw-release-evidence/<time>_<stage>_<sha>.json|md` 证据输出。脚本不接受 `--key` 参数，
+`.llmgw-release-evidence/<time>_<stage>_<sha>.*.json|md` 证据输出。证据分四类：
+`*.release-gate.*`（shadow 样本门）、`*.serving-probe.*`（health/401/commit 稳定）、
+`*.gw-smoke.*`（D 层真机冒烟）、`*.stage.*`（阶段汇总）。脚本不接受 `--key` 参数，
 网关 key 只能从 `LLMGW_GATE_KEY`/`GW_KEY`/`LLMGW_SERVE_KEY` 读取，避免泄漏到 shell history。
 脚本还会维护 `.llmgw-release-evidence/rollout-ledger.jsonl` 台账；除 `shadow-start` 外，每个阶段默认要求
-同一 commit 的所有前置阶段已有 `success` 记录，防止跳过证据期或换 commit 后沿用旧证据。确需人工越级时必须显式
-加 `--allow-out-of-order`，并在发布记录中说明原因。
+同一 commit 的所有前置阶段已有 `success` 记录，且当前阶段写入 `success` 前必须能读到 verdict=pass 的
+stage/serving-probe/gw-smoke 证据；canary/http 阶段还必须读到 verdict=pass 的 release-gate 证据。
+这样可以防止跳过证据期、换 commit 后沿用旧证据，或台账 success 但证据文件缺失。确需人工越级时必须显式
+加 `--allow-out-of-order`，并在发布记录中说明原因；越级不会跳过当前阶段的证据文件校验。
 灰度阶段会自动设置 `LLMGW_MODE=shadow`、对应 `LLMGW_CANARY_STAGE` 与 allowlist；`http-full`
 会设置 `LLMGW_MODE=http` 并依赖 `exec_dep.sh` 的全量证据门。`rollback-inproc` 只调用
 `scripts/llmgw-rollback-inproc.sh`，不回滚数据库。

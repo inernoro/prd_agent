@@ -60,8 +60,10 @@ set -eu
 #   - LLMGW_GATE_RUN_SERVING_PROBE：是否在 http/canary 发布时强制运行 llmgw-serving-probe.py，默认 1
 #   - LLMGW_GATE_SERVING_PROBE_SAMPLES：serving probe healthz 连续采样次数，默认跟随 LLMGW_GATE_HEALTH_SAMPLES
 #   - LLMGW_GATE_SERVING_PROBE_INTERVAL_SECONDS：serving probe 连续采样间隔秒数，默认跟随 LLMGW_GATE_HEALTH_INTERVAL_SECONDS
+#   - LLMGW_SERVING_PROBE_JSON_OUT / LLMGW_SERVING_PROBE_REPORT_MD：保存 post-deploy serving probe 证据
 #   - LLMGW_GATE_RUN_SMOKE：是否在 http/canary 发布时强制运行 gw-smoke.py，默认 1
 #   - LLMGW_GATE_SMOKE_TIMEOUT_SECONDS：gw-smoke.py 单请求超时，默认 120
+#   - GW_SMOKE_JSON_OUT / GW_SMOKE_REPORT_MD：保存 post-deploy D 层 smoke 证据
 #   - LLMGW_SKIP_RELEASE_GATE=1：仅紧急回滚/人工强制时跳过 http gate（会打印警告）
 
 SKIP_VERIFY="${SKIP_VERIFY:-}"
@@ -804,6 +806,12 @@ run_llmgw_post_deploy_verification_if_needed() {
     probe_args="--base $gate_base"
     probe_args="$probe_args --samples ${LLMGW_GATE_SERVING_PROBE_SAMPLES:-${LLMGW_GATE_HEALTH_SAMPLES:-3}}"
     probe_args="$probe_args --interval ${LLMGW_GATE_SERVING_PROBE_INTERVAL_SECONDS:-${LLMGW_GATE_HEALTH_INTERVAL_SECONDS:-5}}"
+    if [ -n "${LLMGW_SERVING_PROBE_JSON_OUT:-}" ]; then
+      probe_args="$probe_args --json-out $LLMGW_SERVING_PROBE_JSON_OUT"
+    fi
+    if [ -n "${LLMGW_SERVING_PROBE_REPORT_MD:-}" ]; then
+      probe_args="$probe_args --report-md $LLMGW_SERVING_PROBE_REPORT_MD"
+    fi
     if [ -n "$expect_commit" ]; then
       probe_args="$probe_args --expect-commit $expect_commit"
     fi

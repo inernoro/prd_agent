@@ -16,10 +16,13 @@ import os
 import sys
 import urllib.request
 import urllib.error
+from datetime import datetime, timezone
 
 BASE = os.environ.get("GW_BASE", "").rstrip("/")
 KEY = os.environ.get("GW_KEY", "dev-llmgw-serve-key")
 TIMEOUT = int(os.environ.get("GW_TIMEOUT", "120"))
+JSON_OUT = os.environ.get("GW_SMOKE_JSON_OUT", "")
+REPORT_MD = os.environ.get("GW_SMOKE_REPORT_MD", "")
 
 # 每类 ModelType 抽 1 个代表入口（D1×D2 抽样）。真机存在性以 /gw/v1/pools 为准。
 SAMPLE_CODES = [
@@ -84,6 +87,40 @@ def _envelope_data(raw):
     return j  # serving 端点直接返回 DTO（非 {success,data} 信封）
 
 
+def _write_json(path, report):
+    if not path:
+        return
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(report, fh, ensure_ascii=False, indent=2, sort_keys=True)
+        fh.write("\n")
+
+
+def _write_markdown(path, report):
+    if not path:
+        return
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+    def cell(value):
+        return str(value).replace("|", "\\|")
+
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("# LLM Gateway D-Layer Smoke Report\n\n")
+        fh.write(f"- generatedAt: `{cell(report['generatedAt'])}`\n")
+        fh.write(f"- verdict: `{cell(report['verdict'])}`\n")
+        fh.write(f"- base: `{cell(report['base'])}`\n")
+        fh.write(f"- passed: `{cell(report['passed'])}`\n")
+        fh.write(f"- total: `{cell(report['total'])}`\n\n")
+        fh.write("| case | status | detail |\n")
+        fh.write("|---|---|---|\n")
+        for row in report["rows"]:
+            fh.write(f"| {cell(row['case'])} | {cell(row['status'])} | {cell(row['detail'])} |\n")
+
+
 def main():
     base = BASE
     if not base:
@@ -99,6 +136,17 @@ def main():
             base = ""
     if not base:
         print("FATAL: 未提供 GW_BASE，且 cdscli 取预览根失败。CDS 起来后再跑。")
+        report = {
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "verdict": "fail",
+            "base": "",
+            "passed": 0,
+            "total": 0,
+            "rows": [],
+            "failures": ["missing GW_BASE"],
+        }
+        _write_json(JSON_OUT, report)
+        _write_markdown(REPORT_MD, report)
         return 2
     globals()["BASE"] = base
     print(f"[gw-smoke] BASE={base}")
@@ -200,7 +248,27 @@ def main():
             passed += 1
         print(f"  [{mark}] {case:24} {detail}")
     print(f"\n{passed}/{len(rows)} 通过")
-    return 0 if passed == len(rows) else 1
+    report_rows = [
+        {
+            "case": case,
+            "status": "pass" if ok else "fail",
+            "ok": ok,
+            "detail": detail,
+        }
+        for case, ok, detail in rows
+    ]
+    report = {
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "verdict": "pass" if passed == len(rows) else "fail",
+        "base": base,
+        "passed": passed,
+        "total": len(rows),
+        "rows": report_rows,
+        "failures": [f"{case}: {detail}" for case, ok, detail in rows if not ok],
+    }
+    _write_json(JSON_OUT, report)
+    _write_markdown(REPORT_MD, report)
+    return 0 if report["verdict"] == "pass" else 1
 
 
 if __name__ == "__main__":
