@@ -133,10 +133,18 @@ http/canary 发布默认还会强制运行 `scripts/gw-smoke.py`，真打 health
 用 `LLMGW_GATE_REQUIRED_KINDS=send:30,stream:30` 和
 `LLMGW_GATE_REQUIRED_APP_KINDS=report-agent.generate::chat:send:30` 强制指定真实 http 样本。
 全量 `LLMGW_MODE=http` 时如果未显式设置 `LLMGW_GATE_REQUIRED_KINDS`，`exec_dep.sh` 会默认要求
-`send:${LLMGW_GATE_FULL_HTTP_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}` 和
-`stream:${LLMGW_GATE_FULL_HTTP_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}` 两类 shadow 样本达标，避免只靠
-resolve-only 或单一路径证据放行全量切换；canary allowlist 阶段不自动追加全局 kind，仍按 allowlist/app-kind
+`send:${LLMGW_GATE_FULL_HTTP_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}`、
+`stream:${LLMGW_GATE_FULL_HTTP_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}` 和
+`raw:${LLMGW_GATE_FULL_HTTP_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}` 三类 shadow 样本达标，避免只靠
+resolve-only 或单一路径证据放行全量切换；raw 样本由 `ShadowFullSamplePercent>0` 的生图/ASR/视频原始代理采样产生，
+用于证明 multipart/raw 已真实跨进程通过 serving；canary allowlist 阶段不自动追加全局 kind，仍按 allowlist/app-kind
 逐批收紧。
+全量 `LLMGW_MODE=http` 时如果未显式设置 `LLMGW_GATE_APP_CALLERS`，`exec_dep.sh` 还会默认要求
+`report-agent.generate::chat`、`prd-agent-desktop.chat.sendmessage::chat`、`open-platform-agent.proxy::chat`、
+`prd-agent-web.model-lab.run::chat`、`prd-agent.arena.battle::chat`、`visual-agent.image.text2img::generation`、
+`visual-agent.image.img2img::generation`、`visual-agent.image.vision::generation`、`video-agent.videogen::video-gen`、
+`document-store.subtitle::asr`、`transcript-agent.transcribe::asr` 每个入口样本达标；可用
+`LLMGW_GATE_FULL_HTTP_APP_CALLERS` 显式替换这组核心入口。
 正式发布脚本默认 `LLMGW_GATE_SHADOW_SINCE_HOURS=24`，只接受最近 24 小时内的 shadow 样本；
 如需更长证据期，应显式调大该值，禁止用很久以前的历史样本放行当前 commit 的 http/canary 发布。
 需要留存第三方可复核证据时，设置 `LLMGW_GATE_JSON_OUT` 与 `LLMGW_GATE_REPORT_MD`，报告只写

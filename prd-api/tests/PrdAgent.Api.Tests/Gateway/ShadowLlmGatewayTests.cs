@@ -113,6 +113,64 @@ public class ShadowLlmGatewayTests
         http.SendCount.ShouldBe(0, "流式只做免费 resolve 比对，绝不重发 http 流");
     }
 
+    [Fact]
+    public async Task Raw_DefaultSampleZero_DoesNotDoubleHitModel()
+    {
+        var inproc = new FakeGateway(Res("m1", "openai", "openai")) { RawContent = "raw-inproc" };
+        var http = new FakeGateway(Res("m1", "openai", "openai")) { RawContent = "raw-http" };
+        var writer = new CapturingWriter();
+        var shadow = new ShadowLlmGateway(inproc, http, NullLogger<ShadowLlmGateway>.Instance, writer, fullSamplePercent: 0);
+
+        var resp = await shadow.SendRawWithResolutionAsync(RawReq(), Res("m1", "openai", "openai"));
+
+        resp.Success.ShouldBeTrue();
+        resp.Content.ShouldBe("raw-inproc", "默认 raw 仍以 inproc 为权威");
+        http.RawCount.ShouldBe(0, "ShadowFullSamplePercent=0 时 raw 不应 2x 打模型");
+        await Task.Delay(200);
+        writer.Records.ShouldBeEmpty("默认 raw 不落 shadow 记录，避免 resolve-only 伪装成真实 raw 样本");
+    }
+
+    [Fact]
+    public async Task Raw_FullSample_WritesRawComparison()
+    {
+        var inproc = new FakeGateway(Res("m1", "openai", "openai")) { RawContent = "raw-inproc" };
+        var http = new FakeGateway(Res("m1", "openai", "openai")) { RawContent = "raw-http" };
+        var writer = new CapturingWriter();
+        var shadow = new ShadowLlmGateway(inproc, http, NullLogger<ShadowLlmGateway>.Instance, writer, fullSamplePercent: 100);
+
+        var resp = await shadow.SendRawWithResolutionAsync(RawReq(), Res("m1", "openai", "openai"));
+
+        resp.Content.ShouldBe("raw-inproc", "采样命中也不能改变调用方返回");
+        var cmp = await writer.WaitForRecordAsync();
+        cmp.Kind.ShouldBe("raw");
+        cmp.AppCallerCode.ShouldBe("demo.app::generation");
+        cmp.ModelType.ShouldBe("generation");
+        cmp.HttpOk.ShouldBeTrue();
+        cmp.AllMatch.ShouldBeTrue();
+        cmp.InprocTextChars.ShouldBe("raw-inproc".Length);
+        cmp.HttpTextChars.ShouldBe("raw-http".Length);
+        http.RawCount.ShouldBe(1, "raw 采样命中时应产生真实 http raw 样本");
+    }
+
+    [Fact]
+    public async Task Raw_HttpFailure_IsRecordedWithoutBreakingCaller()
+    {
+        var inproc = new FakeGateway(Res("m1", "openai", "openai")) { RawContent = "raw-inproc" };
+        var http = new FakeGateway(Res("m1", "openai", "openai")) { ThrowOnRaw = true };
+        var writer = new CapturingWriter();
+        var shadow = new ShadowLlmGateway(inproc, http, NullLogger<ShadowLlmGateway>.Instance, writer, fullSamplePercent: 100);
+
+        var resp = await shadow.SendRawWithResolutionAsync(RawReq(), Res("m1", "openai", "openai"));
+
+        resp.Success.ShouldBeTrue("http raw 影子失败绝不能影响 caller");
+        resp.Content.ShouldBe("raw-inproc");
+        var cmp = await writer.WaitForRecordAsync();
+        cmp.Kind.ShouldBe("raw");
+        cmp.HttpOk.ShouldBeFalse("release gate 的 httpFail 必须能挡住 raw serving/upstream 失败");
+        cmp.HttpError.ShouldNotBeNullOrEmpty();
+        cmp.AllMatch.ShouldBeFalse();
+    }
+
     // ── 灰度翻 http：白名单命中 → http 权威（返回 http 结果，不比对）；未命中 → inproc 权威 ──
     [Fact]
     public async Task Allowlist_Hit_RoutesToHttpAuthoritative()
@@ -175,6 +233,7 @@ public class ShadowLlmGatewayTests
     };
 
     private static GatewayRequest Req() => new() { AppCallerCode = "demo.app::chat", ModelType = "chat" };
+    private static GatewayRawRequest RawReq() => new() { AppCallerCode = "demo.app::generation", ModelType = "generation" };
 
     private sealed class CapturingWriter : ILlmShadowComparisonWriter
     {
@@ -204,8 +263,11 @@ public class ShadowLlmGatewayTests
 
         public bool ThrowOnResolve { get; init; }
         public bool ThrowOnSend { get; init; }
+        public bool ThrowOnRaw { get; init; }
         public string Content { get; init; } = "inproc-content";
+        public string RawContent { get; init; } = "raw";
         public int SendCount;
+        public int RawCount;
         public int ResolveCount;
 
         public Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default)
@@ -235,7 +297,17 @@ public class ShadowLlmGatewayTests
 
         public Task<GatewayRawResponse> SendRawWithResolutionAsync(
             GatewayRawRequest request, GatewayModelResolution resolution, CancellationToken ct = default)
-            => Task.FromResult(new GatewayRawResponse { Success = true, StatusCode = 200, Content = "raw" });
+        {
+            Interlocked.Increment(ref RawCount);
+            if (ThrowOnRaw) throw new InvalidOperationException("stub http raw boom");
+            return Task.FromResult(new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Content = RawContent,
+                Resolution = _res,
+            });
+        }
 
         public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(
             string appCallerCode, string modelType, CancellationToken ct = default)

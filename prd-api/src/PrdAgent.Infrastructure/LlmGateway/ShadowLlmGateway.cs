@@ -127,13 +127,21 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     }
 
     /// <summary>
-    /// raw（生图/视频）走预解析 resolution。白名单命中走 http 权威；否则透传 inproc（比对会 2x 打模型且不在本波 chat 范围内）。
+    /// raw（生图/视频/ASR）走预解析 resolution。白名单命中走 http 权威；否则透传 inproc 权威。
+    /// 当 ShadowFullSamplePercent 命中时，后台额外发一次 http raw 并落 kind=raw 证据，供 S5/S6 发布门
+    /// 验证 multipart/raw 真实跨进程样本；默认 0% 时不双发，避免无意增加图片/ASR/视频成本。
     /// </summary>
-    public Task<GatewayRawResponse> SendRawWithResolutionAsync(
+    public async Task<GatewayRawResponse> SendRawWithResolutionAsync(
         GatewayRawRequest request, GatewayModelResolution resolution, CancellationToken ct = default)
-        => RouteToHttp(request.AppCallerCode)
-            ? _http.SendRawWithResolutionAsync(request, resolution, ct)
-            : _inproc.SendRawWithResolutionAsync(request, resolution, ct);
+    {
+        if (RouteToHttp(request.AppCallerCode))
+            return await _http.SendRawWithResolutionAsync(request, resolution, ct);
+
+        var inproc = await _inproc.SendRawWithResolutionAsync(request, resolution, ct);
+        if (SampleHit())
+            FireRawCompare(request, resolution, inproc);
+        return inproc;
+    }
 
     /// <summary>
     /// Runtime profile 测试是管理侧连通性验证，目标就是证明 llmgw-serve 能代表 MAP 触达上游；
@@ -253,6 +261,91 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         });
     }
 
+    private void FireRawCompare(
+        GatewayRawRequest request,
+        GatewayModelResolution resolution,
+        GatewayRawResponse inproc)
+    {
+        if (_writer == null) return;
+        var requestId = _ctx?.Current?.RequestId;
+        var shadowReq = CloneRawRequest(request);
+        SafeRun(async () =>
+        {
+            var sw = Stopwatch.StartNew();
+            GatewayRawResponse? http = null;
+            string? httpErr = null;
+            try
+            {
+                http = await _http.SendRawWithResolutionAsync(shadowReq, resolution, CancellationToken.None);
+                if (http.Success == false)
+                    httpErr = http.ErrorMessage ?? http.ErrorCode ?? $"HTTP raw failed with status {http.StatusCode}";
+            }
+            catch (Exception ex) { httpErr = ex.Message; }
+            sw.Stop();
+
+            var cmp = BuildResolveComparison(
+                "raw",
+                requestId,
+                request.AppCallerCode,
+                request.ModelType,
+                inproc.Resolution ?? resolution,
+                http?.Resolution,
+                httpErr,
+                sw.ElapsedMilliseconds);
+
+            cmp.InprocTextChars = RawSize(inproc);
+            cmp.HttpTextChars = http == null ? null : RawSize(http);
+            cmp.InprocFinishReason = inproc.Success ? "success" : inproc.ErrorCode ?? "failed";
+            cmp.HttpFinishReason = http == null ? null : http.Success ? "success" : http.ErrorCode ?? "failed";
+
+            if (http != null && inproc.Success != http.Success)
+            {
+                cmp.Mismatches.Add(new FieldMismatch
+                {
+                    Field = "rawSuccess",
+                    Inproc = inproc.Success.ToString(),
+                    Http = http.Success.ToString(),
+                    Severity = "warning",
+                });
+            }
+
+            cmp.HasCritical = cmp.Mismatches.Any(m => m.Severity == "critical");
+            cmp.AllMatch = cmp.HttpOk && (inproc.Resolution ?? resolution) != null && http?.Resolution != null && cmp.Mismatches.Count == 0;
+            await _writer!.RecordAsync(cmp, CancellationToken.None);
+        });
+    }
+
+    private static GatewayRawRequest CloneRawRequest(GatewayRawRequest request) => new()
+    {
+        AppCallerCode = request.AppCallerCode,
+        ModelType = request.ModelType,
+        EndpointPath = request.EndpointPath,
+        ExpectedModel = request.ExpectedModel,
+        PinnedPlatformId = request.PinnedPlatformId,
+        PinnedModelId = request.PinnedModelId,
+        RequestBody = request.RequestBody?.DeepClone().AsObject(),
+        IsMultipart = request.IsMultipart,
+        MultipartFields = request.MultipartFields == null
+            ? null
+            : new Dictionary<string, object>(request.MultipartFields, StringComparer.Ordinal),
+        MultipartFiles = request.MultipartFiles == null
+            ? null
+            : new Dictionary<string, (string FileName, byte[] Content, string MimeType)>(request.MultipartFiles, StringComparer.Ordinal),
+        MultipartFileRefs = request.MultipartFileRefs == null
+            ? null
+            : new Dictionary<string, MultipartFileRef>(request.MultipartFileRefs, StringComparer.Ordinal),
+        HttpMethod = request.HttpMethod,
+        ExtraHeaders = request.ExtraHeaders == null
+            ? null
+            : new Dictionary<string, string>(request.ExtraHeaders, StringComparer.Ordinal),
+        TimeoutSeconds = request.TimeoutSeconds,
+        ExpectBinaryResponse = request.ExpectBinaryResponse,
+        Context = request.Context,
+    };
+
+    private static int RawSize(GatewayRawResponse response)
+        => response.BinaryContent?.Length ?? response.Content?.Length ?? 0;
+
     private void FirePoolsCompare(string appCallerCode, string modelType, List<AvailableModelPool> inproc)
     {
         if (_writer == null) return;
@@ -272,10 +365,11 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             };
             if (cmp.HttpOk)
             {
+                var httpPools = http ?? [];
                 var a = string.Join(",", inproc.Select(p => p.Id).OrderBy(x => x));
-                var b = string.Join(",", http!.Select(p => p.Id).OrderBy(x => x));
-                if (inproc.Count != http.Count)
-                    cmp.Mismatches.Add(new FieldMismatch { Field = "poolCount", Inproc = inproc.Count.ToString(), Http = http.Count.ToString(), Severity = "warning" });
+                var b = string.Join(",", httpPools.Select(p => p.Id).OrderBy(x => x));
+                if (inproc.Count != httpPools.Count)
+                    cmp.Mismatches.Add(new FieldMismatch { Field = "poolCount", Inproc = inproc.Count.ToString(), Http = httpPools.Count.ToString(), Severity = "warning" });
                 if (!string.Equals(a, b, StringComparison.Ordinal))
                     cmp.Mismatches.Add(new FieldMismatch { Field = "poolIds", Inproc = a, Http = b, Severity = "warning" });
             }
