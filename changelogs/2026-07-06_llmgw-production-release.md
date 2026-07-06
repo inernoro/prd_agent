@@ -25,3 +25,4 @@
 | ops | prd-agent | exec_dep.sh 在 http/canary 发布时默认强制运行 serving probe，防止滚动未稳定或鉴权裸奔时进入发布 |
 | ops | prd-agent | exec_dep.sh 在 shadow 采样证据期启动时强制 serving/smoke 预检，避免坏 serving 产生无效 shadow 证据 |
 | ops | prd-agent | readiness audit 新增 CDS runtime 检查，要求预览/灰度网关后端与 serving 以 express 预构建镜像运行并匹配发布 commit，避免源码容器或旧容器假阳性 |
+| test | prd-api | 新增 HttpLlmGatewayClientFailureTests，覆盖 serving 不可达或 401 时 send/stream/raw/profile-test/resolve/pools/client-stream 全部显式失败且不伪成功 |

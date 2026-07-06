@@ -202,6 +202,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--run-dotnet", script);
         Assert.Contains("--run-smoke", script);
         Assert.Contains("scripts/gw-smoke.py", script);
+        Assert.Contains("HttpLlmGatewayClientFailureTests", script);
         Assert.Contains("GW_TIMEOUT", script);
         Assert.Contains("--require-release-gate", script);
         Assert.Contains("scripts/llmgw-release-gate.py", script);
