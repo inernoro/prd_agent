@@ -1,0 +1,113 @@
+name: LLM Gateway Production Preflight
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Preflight mode: start before shadow-start, completion before claiming full cutover."
+        required: false
+        default: "start"
+        type: choice
+        options:
+          - start
+          - completion
+      map_base:
+        description: "MAP/API base URL. Defaults to vars.PRD_AGENT_PROD_BASE."
+        required: false
+        default: ""
+      gw_base:
+        description: "Gateway serving base URL, for example https://host/gw/v1. Defaults to vars.LLMGW_PROD_GATE_BASE."
+        required: false
+        default: ""
+      expect_commit:
+        description: "Production commit to verify. Defaults to vars.LLMGW_PROD_EXPECT_COMMIT."
+        required: false
+        default: ""
+      rollout_target_stage:
+        description: "Rollout ledger target stage for completion mode."
+        required: false
+        default: "http-full"
+      rollout_min_observation_hours:
+        description: "Minimum observation hours between rollout ledger stages."
+        required: false
+        default: "24"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: llmgw-prod-preflight
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    env:
+      INPUT_MODE: ${{ github.event.inputs.mode || 'start' }}
+      INPUT_MAP_BASE: ${{ github.event.inputs.map_base || '' }}
+      DEFAULT_MAP_BASE: ${{ vars.PRD_AGENT_PROD_BASE || '' }}
+      INPUT_GW_BASE: ${{ github.event.inputs.gw_base || '' }}
+      DEFAULT_GW_BASE: ${{ vars.LLMGW_PROD_GATE_BASE || '' }}
+      INPUT_EXPECT_COMMIT: ${{ github.event.inputs.expect_commit || '' }}
+      EXPECT_COMMIT: ${{ github.event.inputs.expect_commit || vars.LLMGW_PROD_EXPECT_COMMIT || '' }}
+      PRD_AGENT_API_KEY: ${{ secrets.PRD_AGENT_PROD_API_KEY }}
+      LLMGW_GATE_KEY: ${{ secrets.LLMGW_PROD_GATE_KEY }}
+      ROLLOUT_TARGET_STAGE: ${{ github.event.inputs.rollout_target_stage || 'http-full' }}
+      ROLLOUT_MIN_OBSERVATION_HOURS: ${{ github.event.inputs.rollout_min_observation_hours || '24' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run production preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mode="$(printf '%s' "$INPUT_MODE" | xargs)"
+          map_base="$(printf '%s' "${INPUT_MAP_BASE:-$DEFAULT_MAP_BASE}" | xargs)"
+          gw_base="$(printf '%s' "${INPUT_GW_BASE:-$DEFAULT_GW_BASE}" | xargs)"
+          expect_commit="$(printf '%s' "${INPUT_EXPECT_COMMIT:-$EXPECT_COMMIT}" | xargs)"
+
+          if [ "$mode" != "start" ] && [ "$mode" != "completion" ]; then
+            echo "ERROR: mode must be start or completion; got: $mode" >&2
+            exit 1
+          fi
+          if [ -z "$map_base" ]; then
+            echo "ERROR: missing MAP base URL. Set vars.PRD_AGENT_PROD_BASE or workflow_dispatch input map_base." >&2
+            exit 1
+          fi
+          if [ -z "$gw_base" ]; then
+            echo "ERROR: missing gateway base URL. Set vars.LLMGW_PROD_GATE_BASE or workflow_dispatch input gw_base." >&2
+            exit 1
+          fi
+          if [ -z "$(printf '%s' "${PRD_AGENT_API_KEY:-}" | xargs)" ]; then
+            echo "ERROR: missing MAP API key. Set secrets.PRD_AGENT_PROD_API_KEY with logs:read access." >&2
+            exit 1
+          fi
+          if [ -z "$(printf '%s' "${LLMGW_GATE_KEY:-}" | xargs)" ]; then
+            echo "ERROR: missing gateway key. Set secrets.LLMGW_PROD_GATE_KEY." >&2
+            exit 1
+          fi
+          if [ "$mode" = "completion" ] && [ -z "$expect_commit" ]; then
+            echo "ERROR: completion mode requires expect_commit or vars.LLMGW_PROD_EXPECT_COMMIT." >&2
+            exit 1
+          fi
+
+          mkdir -p artifacts/llmgw-prod-preflight
+          python3 scripts/llmgw-prod-preflight.py \
+            --mode "$mode" \
+            --map-base "$map_base" \
+            --gw-base "$gw_base" \
+            --expect-commit "$expect_commit" \
+            --rollout-target-stage "$ROLLOUT_TARGET_STAGE" \
+            --rollout-min-observation-hours "$ROLLOUT_MIN_OBSERVATION_HOURS" \
+            --json-out artifacts/llmgw-prod-preflight/prod-preflight.json
+
+      - name: Upload production preflight report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: llmgw-prod-preflight-${{ github.run_id }}
+          path: artifacts/llmgw-prod-preflight/
+          if-no-files-found: ignore

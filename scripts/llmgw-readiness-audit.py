@@ -96,6 +96,7 @@ def _static_checks() -> list[dict]:
     release_gate = _read("scripts/llmgw-release-gate.py")
     shadow_coverage = _read("scripts/llmgw-shadow-coverage-report.py")
     serving_probe = _read("scripts/llmgw-serving-probe.py")
+    prod_preflight_workflow = _read(".github/workflows/llmgw-prod-preflight.yml")
     prod_stage_path = ROOT / "scripts/llmgw-prod-stage.sh"
     prod_stage = prod_stage_path.read_text(encoding="utf-8")
     rollout_ledger_path = ROOT / "scripts/llmgw-rollout-ledger.py"
@@ -162,6 +163,38 @@ def _static_checks() -> list[dict]:
         ],
     )
     checks.append(_check("shadow_watch_workflow_runs_scheduled_evidence_gate", ok, detail))
+
+    ok, detail = _contains_all(
+        prod_preflight_workflow,
+        [
+            "LLM Gateway Production Preflight",
+            "workflow_dispatch:",
+            "mode:",
+            "start",
+            "completion",
+            "PRD_AGENT_PROD_BASE",
+            "PRD_AGENT_PROD_API_KEY",
+            "LLMGW_PROD_GATE_BASE",
+            "LLMGW_PROD_GATE_KEY",
+            "LLMGW_PROD_EXPECT_COMMIT",
+            "logs:read access",
+            "scripts/llmgw-prod-preflight.py",
+            "--mode \"$mode\"",
+            "--map-base \"$map_base\"",
+            "--gw-base \"$gw_base\"",
+            "--expect-commit \"$expect_commit\"",
+            "--rollout-target-stage \"$ROLLOUT_TARGET_STAGE\"",
+            "--rollout-min-observation-hours \"$ROLLOUT_MIN_OBSERVATION_HOURS\"",
+            "artifacts/llmgw-prod-preflight/prod-preflight.json",
+            "actions/upload-artifact@v4",
+        ],
+    )
+    leaks_preflight_secret = "echo \"$PRD_AGENT_API_KEY\"" in prod_preflight_workflow or "echo \"$LLMGW_GATE_KEY\"" in prod_preflight_workflow
+    checks.append(_check(
+        "prod_preflight_workflow_uploads_redacted_start_completion_report",
+        ok and not leaks_preflight_secret,
+        f"{detail}; leaksPreflightSecret={leaks_preflight_secret}",
+    ))
 
     ok, detail = _contains_all(
         serving_probe,

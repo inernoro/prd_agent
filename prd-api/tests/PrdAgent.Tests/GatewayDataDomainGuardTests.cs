@@ -718,6 +718,39 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ProdPreflightWorkflow_RunsStartAndCompletionPreflightWithoutLeakingKeys()
+    {
+        var workflow = ReadRepoFile(".github/workflows/llmgw-prod-preflight.yml");
+        var readiness = ReadRepoFile("scripts/llmgw-readiness-audit.py");
+
+        Assert.Contains("LLM Gateway Production Preflight", workflow);
+        Assert.Contains("workflow_dispatch:", workflow);
+        Assert.Contains("mode:", workflow);
+        Assert.Contains("- start", workflow);
+        Assert.Contains("- completion", workflow);
+        Assert.Contains("PRD_AGENT_PROD_BASE", workflow);
+        Assert.Contains("PRD_AGENT_PROD_API_KEY", workflow);
+        Assert.Contains("LLMGW_PROD_GATE_BASE", workflow);
+        Assert.Contains("LLMGW_PROD_GATE_KEY", workflow);
+        Assert.Contains("LLMGW_PROD_EXPECT_COMMIT", workflow);
+        Assert.Contains("logs:read access", workflow);
+        Assert.Contains("scripts/llmgw-prod-preflight.py", workflow);
+        Assert.Contains("--mode \"$mode\"", workflow);
+        Assert.Contains("--map-base \"$map_base\"", workflow);
+        Assert.Contains("--gw-base \"$gw_base\"", workflow);
+        Assert.Contains("--expect-commit \"$expect_commit\"", workflow);
+        Assert.Contains("--rollout-target-stage \"$ROLLOUT_TARGET_STAGE\"", workflow);
+        Assert.Contains("--rollout-min-observation-hours \"$ROLLOUT_MIN_OBSERVATION_HOURS\"", workflow);
+        Assert.Contains("artifacts/llmgw-prod-preflight/prod-preflight.json", workflow);
+        Assert.Contains("actions/upload-artifact@v4", workflow);
+        Assert.DoesNotContain("echo \"$PRD_AGENT_API_KEY\"", workflow);
+        Assert.DoesNotContain("echo \"$LLMGW_GATE_KEY\"", workflow);
+
+        Assert.Contains("prod_preflight_workflow_uploads_redacted_start_completion_report", readiness);
+        Assert.Contains("leaksPreflightSecret", readiness);
+    }
+
+    [Fact]
     public void GwSmoke_CoversStreamingAndClientStreamBoundaries()
     {
         var script = ReadRepoFile("scripts/gw-smoke.py");
