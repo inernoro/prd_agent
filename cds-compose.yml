@@ -188,6 +188,7 @@ services:
       Changelog__GitHubToken: "${GITHUB_PAT:-}"
       MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
       MongoDB__DatabaseName: prdagent
+      LlmGateway__DatabaseName: llm_gateway
       Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT}"
       # 网关跨进程：把 LlmGateway:Mode 切 http/shadow（profile override）时，HttpLlmGatewayClient 需要
       # 与 llmgw-serve 同一把 M2M key + serving 地址，否则 X-Gateway-Key 为空 → serving 401（Cursor Bugbot）。
@@ -261,6 +262,7 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
       MongoDB__DatabaseName: prdagent
+      LlmGateway__DatabaseName: llm_gateway
       # JWT 签名密钥：**bare `${LLMGW_JWT_SECRET}` 不带 fallback**（Codex P1）。本 console 已公网命名路由
       # （见 labels.cds.subdomain=llmgw，/gw/* 对外可达）；若回落仓库可见 fallback，任何缺该 env 的预览/fork
       # 都能自签 token 读 /gw/* 日志（prd-llmgw 守卫只认空/dev 值，长 fallback 会过守卫）。去掉 fallback →
@@ -302,6 +304,7 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
       MongoDB__DatabaseName: prdagent
+      LlmGateway__DatabaseName: llm_gateway
       # M2M 密钥门：**bare `${LLMGW_SERVE_API_KEY}` 不带 fallback**（Codex P1）。本 serving 已公网命名路由
       # （见 labels.cds.subdomain=llmgw-serve），/gw/v1/send|stream|raw 对外可达；若回落仓库可见 fallback，
       # 任何缺该 env 的预览/fork 都暴露已知 X-Gateway-Key 可烧 provider 额度。去掉 fallback → 未注入时解析为空 →

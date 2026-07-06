@@ -127,7 +127,9 @@ builder.Services.AddSwaggerGen(c =>
 var mongoConnectionString = builder.Configuration["MongoDB:ConnectionString"] 
     ?? "mongodb://localhost:27017";
 var mongoDatabaseName = builder.Configuration["MongoDB:DatabaseName"] ?? "prdagent";
+var llmGatewayDatabaseName = builder.Configuration["LlmGateway:DatabaseName"] ?? "llm_gateway";
 builder.Services.AddSingleton(new MongoDbContext(mongoConnectionString, mongoDatabaseName));
+builder.Services.AddSingleton(new LlmGatewayDataContext(mongoConnectionString, llmGatewayDatabaseName));
 builder.Services.AddSingleton<IWatermarkFontAssetSource, MongoWatermarkFontAssetSource>();
 builder.Services.AddSingleton<ISystemRoleCacheService, PrdAgent.Infrastructure.Services.SystemRoleCacheService>();
 builder.Services.AddSingleton<IAdminPermissionService, PrdAgent.Infrastructure.Services.AdminPermissionService>();
@@ -210,8 +212,10 @@ builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, Pr
 // http = 切到 HttpLlmGatewayClient，跨进程调用独立部署的 serving 服务（/gw/v1/*）。
 // HttpLlmGatewayClient 同时实现 Infrastructure + Core 两个 ILlmGateway，下方 Core 桥接强转在两种模式下都成立。
 // 影子比对落库（灰度翻 http 前积累一致性证据；shadow 模式下注入 ShadowLlmGateway）
-builder.Services.AddScoped<PrdAgent.Core.Interfaces.ILlmShadowComparisonWriter,
-    PrdAgent.Infrastructure.LlmGateway.LlmShadowComparisonWriter>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.ILlmShadowComparisonWriter>(sp =>
+    new PrdAgent.Infrastructure.LlmGateway.LlmShadowComparisonWriter(
+        sp.GetRequiredService<LlmGatewayDataContext>().Context,
+        sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.LlmShadowComparisonWriter>>()));
 
 var gatewayMode = builder.Configuration["LlmGateway:Mode"] ?? "inproc";
 // 灰度翻 http 白名单（按 appCallerCode 逐个切；`,`/`;`/换行分隔）。命中的入口走 http 权威，其余按 Mode。

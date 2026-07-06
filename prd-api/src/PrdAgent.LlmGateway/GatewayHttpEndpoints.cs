@@ -186,18 +186,20 @@ public static class GatewayHttpEndpoints
             }
         });
 
-        // 影子比对读端点（观测）：X-Gateway-Key 门内，读 llmshadow_comparisons 给汇总 + 最近 N 条。
-        // 灰度翻 http 前看「inproc vs http 逐字段一致性」的窗口（去黑盒）。serving 进程与 MAP 共享同一 Mongo，故能读到。
+        // 影子比对读端点（观测）：X-Gateway-Key 门内，读 llm_gateway.llmshadow_comparisons 给汇总 + 最近 N 条。
+        // 灰度翻 http 前看「inproc vs http 逐字段一致性」的窗口（去黑盒）。
         app.MapGet("/gw/v1/shadow-comparisons", async (
-            // [FromServices] 必填：GET 端点不允许「推断 body」参数，MongoDbContext 若被推断为 body，
+            // [FromServices] 必填：GET 端点不允许「推断 body」参数，IServiceProvider 若被推断为 body，
             // RequestDelegateFactory 在首个请求构建 endpoint matcher 时会抛
             // InvalidOperationException（"Body was inferred but the method does not allow inferred body
             // parameters"），进而拖垮整张路由表（含 healthz / 全部 /gw/v1/*）。见 GatewayKeyGateContractTests。
-            [Microsoft.AspNetCore.Mvc.FromServices] MongoDbContext db,
+            [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services,
             int? limit,
             string? appCallerCode) =>
         {
             var n = Math.Clamp(limit ?? 50, 1, 500);
+            var db = services.GetService<LlmGatewayDataContext>()?.Context
+                ?? services.GetRequiredService<MongoDbContext>();
             var col = db.LlmShadowComparisons;
             var filter = string.IsNullOrWhiteSpace(appCallerCode)
                 ? FilterDefinition<LlmShadowComparison>.Empty

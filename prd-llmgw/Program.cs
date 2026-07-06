@@ -142,7 +142,7 @@ var loginAudits = gatewayDatabase.GetCollection<LlmGwLoginAudit>("llmgw_login_au
 var modelGroups = mapDatabase.GetCollection<BsonDocument>("model_groups");
 var platforms = mapDatabase.GetCollection<BsonDocument>("llmplatforms");
 var models = mapDatabase.GetCollection<BsonDocument>("llmmodels");
-var shadows = mapDatabase.GetCollection<BsonDocument>("llmshadow_comparisons");
+var shadows = gatewayDatabase.GetCollection<BsonDocument>("llmshadow_comparisons");
 
 // ───────────────────────────── 健康检查（匿名）─────────────────────────────
 app.MapGet("/gw/healthz", () => Results.Json(new
