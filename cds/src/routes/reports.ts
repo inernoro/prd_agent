@@ -663,6 +663,13 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       : {};
     const title = typeof body.title === 'string' ? body.title.trim() : undefined;
     const content = typeof body.content === 'string' ? body.content : undefined;
+    const hasFormat = Object.prototype.hasOwnProperty.call(body, 'format');
+    const format = hasFormat && typeof body.format === 'string'
+      ? inferFormat(body.format, undefined, undefined)
+      : undefined;
+    if (hasFormat && !format) {
+      return res.status(400).json({ error: 'unknown_format', message: 'format 仅支持 html 或 md' });
+    }
     // 验收元数据可单独 PATCH（看板改判定 / E4 回写后补 prNumber 等）。
     // hasOwnProperty 区分「显式传 null 清空」与「缺省不动」。
     const metaUpdates: Parameters<typeof stateService.updateAcceptanceReport>[1] = {};
@@ -673,10 +680,14 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     if (Object.prototype.hasOwnProperty.call(body, 'branch')) metaUpdates.branch = normShort(body.branch);
     if (Object.prototype.hasOwnProperty.call(body, 'prNumber')) metaUpdates.prNumber = normPrNumber(body.prNumber);
     if (Object.prototype.hasOwnProperty.call(body, 'deployMode')) metaUpdates.deployMode = normShort(body.deployMode, 40);
+    if (Object.prototype.hasOwnProperty.call(body, 'sourceId')) metaUpdates.sourceId = normShort(body.sourceId, 120);
+    if (Object.prototype.hasOwnProperty.call(body, 'sourcePath')) metaUpdates.sourcePath = normShort(body.sourcePath, 240);
+    if (Object.prototype.hasOwnProperty.call(body, 'contentHash')) metaUpdates.contentHash = normShort(body.contentHash, 120);
+    if (Object.prototype.hasOwnProperty.call(body, 'publishedAt')) metaUpdates.publishedAt = normShort(body.publishedAt, 80);
     const hasMeta = Object.keys(metaUpdates).length > 0;
     // folderId: 字符串=移入该文件夹；null / 'none' / '' = 移出文件夹；缺省=不改动。
     const hasFolder = Object.prototype.hasOwnProperty.call(body, 'folderId');
-    if (title === undefined && content === undefined && !hasFolder && !hasMeta) {
+    if (title === undefined && content === undefined && !hasFormat && !hasFolder && !hasMeta) {
       return res.status(400).json({ error: 'nothing_to_update', message: '没有可更新的字段' });
     }
     if (content !== undefined && exceedsCap(content)) {
@@ -695,8 +706,8 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       }
     }
     let updated = existing;
-    if (title !== undefined || content !== undefined || hasMeta) {
-      updated = stateService.updateAcceptanceReport(req.params.id, { title, content, ...metaUpdates }) ?? existing;
+    if (title !== undefined || content !== undefined || hasFormat || hasMeta) {
+      updated = stateService.updateAcceptanceReport(req.params.id, { title, content, format, ...metaUpdates }) ?? existing;
     }
     if (hasFolder) {
       const moved = stateService.setReportFolder(req.params.id, nextFolder ?? null);

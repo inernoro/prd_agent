@@ -9,7 +9,7 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
 > **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/验收`、`/视觉验收`、"视觉验收"、"验收"、"视觉测试"、"验收归档"、"create visual test"
 
 > 一条不可分的流水线:**标准定义测什么/怎么截/怎么命名 → 模拟人类浏览器取证 → 证据落 CDS 验收中心出直达深链**。
-> 主纲在此,完整规则按需加载(见下"按需文件")。**先读 `reference/standard-v2.md`**——那是下限基线,不是参考是必读。
+> 主纲在此,完整规则按需加载(见下"按需文件")。规则 SSOT 先读仓库 `doc/`,外部技能包才读 `references/rules/`;`reference/standard-v2.md` 是执行协议和准入下限,同样必读。
 
 ## 何时用
 
@@ -30,6 +30,16 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
 `report.format=html` 是每日验收默认交付格式。报告正文仍用 Markdown 写作,归档脚本会转换成交互 HTML,提供证据导航、指标卡、证据缩略图、表格筛选、章节折叠和图号锚点跳转。HTML 与 Markdown 必须使用不同模板:Markdown 保持审计文本结构不变,HTML 才启用更强的视觉和交互阅读层。只有下游系统明确要求 Markdown 时才改 `format=md`。
 
 接入新仓库:见文末"跨仓库复用",改 `acceptance.config.json` 一处即可。
+
+## Rule Source SSOT
+
+执行任何验收前,按以下顺序加载规范:
+
+1. 仓库 SSOT: `doc/rule.acceptance.map-enterprise.md`, `doc/rule.acceptance.ssot.md`, `doc/guide.acceptance.daily-sop.md`, `doc/guide.acceptance.report-evidence.md`, `doc/design.acceptance.knowledge-governance.md`。
+2. 技能包离线快照: `references/rules/*.md` 与 `references/rules/manifest.json`。仅当技能安装在外部项目、没有本仓库 `doc/` 时使用。
+3. 执行协议: `reference/standard-v2.md`。它定义归档准入、截图命名、报告结构和脚本约束,不得替代上面的规则源。
+
+`doc/` 是唯一主源。`references/rules/` 由 `python3 scripts/sync-acceptance-rule-snapshots.py` 生成,用于官方技能下载包离线运行。若两者都不存在,必须失败并说明缺少验收规范源;不得临时编一套规则。报告里的“这是什么测试”必须先用自己的语言解释,再链接这些规范文档。
 
 ## 三个核心规矩(v2 相对 v1 的升级,违反即不合格)
 

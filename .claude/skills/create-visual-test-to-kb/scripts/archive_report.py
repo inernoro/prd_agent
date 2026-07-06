@@ -215,50 +215,64 @@ def _html_id(text, fallback):
 
 GITHUB_COMMIT_BASE = "https://github.com/inernoro/prd_agent/commit/"
 METHOD_FOLDER_BASE = "https://cds.miduo.org/reports?project=prd-agent&folder=b01a432f519541dbbd387286018e6721&report="
+METHOD_DOC_ENTERPRISE = METHOD_FOLDER_BASE + "0efbef7c40fc4d94a8b14e60113524a9"
+METHOD_DOC_DAILY = METHOD_FOLDER_BASE + "cf097d19b4b649ad92b15546bf13d996"
+METHOD_DOC_SSOT = METHOD_FOLDER_BASE + "3992cb728a9c4a23958b4ec92933f59b"
+METHOD_DOC_EVIDENCE = METHOD_FOLDER_BASE + "7bcc189776354b7db1600dcb91c97e17"
+METHOD_DOC_GOVERNANCE = METHOD_FOLDER_BASE + "c67d7301c52d41359fc691978d923426"
 METHOD_DOCS = [
-    ("MAP自动化测试规范总览", METHOD_FOLDER_BASE + "0efbef7c40fc4d94a8b14e60113524a9"),
-    ("PR commit 到结果映射与改动断言", METHOD_FOLDER_BASE + "3992cb728a9c4a23958b4ec92933f59b"),
+    ("MAP 企业级自动化验收规范", METHOD_DOC_ENTERPRISE),
+    ("MAP 验收规范 SSOT", METHOD_DOC_SSOT),
+    ("验收报告与证据交互规范", METHOD_DOC_EVIDENCE),
 ]
 METHOD_SECTION_DOCS = {
     "改动规模与深度预算": (
         "范围预算测试：先量化 commit、模块、高风险和证据预算，避免把大范围日报包装成深度通过。",
-        METHOD_FOLDER_BASE + "cf097d19b4b649ad92b15546bf13d996",
+        METHOD_DOC_DAILY,
     ),
     "PR/commit 到结果映射": (
         "变更映射测试：把 commit 分组映射到模块和结果，确认没有把变更藏在总述里。",
-        METHOD_FOLDER_BASE + "3992cb728a9c4a23958b4ec92933f59b",
+        METHOD_DOC_ENTERPRISE,
     ),
     "改动断言表": (
         "断言抽取测试：先说明每个 commit 声称改变了什么，再决定需要什么证据。",
-        METHOD_FOLDER_BASE + "3992cb728a9c4a23958b4ec92933f59b",
+        METHOD_DOC_ENTERPRISE,
     ),
     "改动断言到证据表": (
         "证据关联测试：每条断言必须连到页面证据、内部佐证和关联性结论。",
-        METHOD_FOLDER_BASE + "3992cb728a9c4a23958b4ec92933f59b",
+        METHOD_DOC_ENTERPRISE,
     ),
     "影响面矩阵": (
         "影响面测试：沿上游输入、用户路径、下游输出、持久化、权限和异步依赖拆风险。",
-        METHOD_FOLDER_BASE + "2f497f6aabc84974bd8c76bff8c6439a",
+        METHOD_DOC_ENTERPRISE,
     ),
     "融合测试设计": (
         "融合测试：把相关改动合并成用户旅程，验证跨模块行为而不是孤立页面。",
-        METHOD_FOLDER_BASE + "f10edd7d10fd4ed999c936d733980382",
+        METHOD_DOC_ENTERPRISE,
     ),
     "证明力矩阵": (
         "证明力测试：按页面证据、交互动作、内部佐证和失败条件评估证据强度。",
-        METHOD_FOLDER_BASE + "6bca595f70fb4d26b644490471d33680",
+        METHOD_DOC_ENTERPRISE,
     ),
     "页面优先证据分层": (
         "页面优先测试：用户可感知改动先看页面反馈，API 和日志只作第二证据。",
-        METHOD_FOLDER_BASE + "c67d7301c52d41359fc691978d923426",
+        METHOD_DOC_EVIDENCE,
     ),
     "覆盖矩阵": (
         "覆盖测试：按模块列出已覆盖证据和缺口，防止把抽样误报成全量通过。",
-        METHOD_FOLDER_BASE + "bd3c43a70b44419bbd25dc57ffa18cc3",
+        METHOD_DOC_ENTERPRISE,
     ),
     "截图回读检查": (
         "截图回读测试：每张图都回读核对是否截歪、加载完成、空白和标记准确。",
-        METHOD_FOLDER_BASE + "7bcc189776354b7db1600dcb91c97e17",
+        METHOD_DOC_EVIDENCE,
+    ),
+    "验收规范 SSOT": (
+        "规范同步测试：确认仓库文档、技能快照和 CDS Markdown 文档引用同一套规则,避免报告流程和规范描述分叉。",
+        METHOD_DOC_SSOT,
+    ),
+    "知识库治理": (
+        "知识治理测试：确认长期规范以可同步文档存在,验收报告只保存证据和结论,避免把临时报告混入代码文档。",
+        METHOD_DOC_GOVERNANCE,
     ),
 }
 

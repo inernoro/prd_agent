@@ -1,0 +1,37 @@
+{
+  "kind": "acceptance-rule-snapshots",
+  "sourceCommit": "9470a73fe45ec7dbf0b0386d0f74bc2cff7a39f3",
+  "generatedAt": "2026-07-06T19:57:31.528761+00:00",
+  "sources": [
+    {
+      "sourceId": "acceptance.rule.enterprise",
+      "sourcePath": "doc/rule.acceptance.map-enterprise.md",
+      "snapshotPath": "references/rules/rule.acceptance.map-enterprise.md",
+      "contentHash": "sha256:d1ec531f30df93cbabe8c561e56125e6d5ffea87a45ef4b4dab4b3c7d66f28fd"
+    },
+    {
+      "sourceId": "acceptance.rule.ssot",
+      "sourcePath": "doc/rule.acceptance.ssot.md",
+      "snapshotPath": "references/rules/rule.acceptance.ssot.md",
+      "contentHash": "sha256:60a52e60b7f5270aa01527838b07a92c74d18a81f1ded276829d4881fe4b7d63"
+    },
+    {
+      "sourceId": "acceptance.guide.daily-sop",
+      "sourcePath": "doc/guide.acceptance.daily-sop.md",
+      "snapshotPath": "references/rules/guide.acceptance.daily-sop.md",
+      "contentHash": "sha256:57d8049764a093499e9eda6a376d51be6ed3b710e114ca3347f7804784dfac28"
+    },
+    {
+      "sourceId": "acceptance.guide.report-evidence",
+      "sourcePath": "doc/guide.acceptance.report-evidence.md",
+      "snapshotPath": "references/rules/guide.acceptance.report-evidence.md",
+      "contentHash": "sha256:e1173492a69faf77da1ad98a79b591982b62f20c369e8efc3b7286815721dfdf"
+    },
+    {
+      "sourceId": "acceptance.design.knowledge-governance",
+      "sourcePath": "doc/design.acceptance.knowledge-governance.md",
+      "snapshotPath": "references/rules/design.acceptance.knowledge-governance.md",
+      "contentHash": "sha256:b3a2163d124d03d461f58496e4bb098a16b3fe96e546762d21a9725d319ff00a"
+    }
+  ]
+}

@@ -16,6 +16,16 @@ This skill does not replace browser取证 or MAP归档. It is the scene planner 
 
 For daily, PR, commit-range, release, or repeatedly disputed acceptance, run `acceptance-test-design` first. This skill consumes that design brief and turns it into executable browser/test units.
 
+## Rule Source SSOT
+
+Before building the scenario plan, load the acceptance rule source in this order:
+
+1. Repository SSOT when available: `doc/rule.acceptance.map-enterprise.md`, `doc/rule.acceptance.ssot.md`, `doc/guide.acceptance.daily-sop.md`, `doc/guide.acceptance.report-evidence.md`, `doc/design.acceptance.knowledge-governance.md`.
+2. Skill-package fallback when the skill is installed outside this repository: `references/rules/*.md` and `references/rules/manifest.json`.
+3. If neither source exists, fail closed and state that the acceptance rule source is missing. Do not invent a local substitute.
+
+The `doc/` files are authoritative. The bundled `references/rules/` files are generated snapshots for marketplace/offline users. Preserve the upstream `acceptance-test-design` decisions unless the SSOT documents require a stricter correction.
+
 ## Workflow
 
 1. Classify the scenario.

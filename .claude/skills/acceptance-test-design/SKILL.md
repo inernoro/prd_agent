@@ -14,6 +14,16 @@ Use this skill before visual acceptance or MAP report archiving when the hard pa
 
 This skill does not take screenshots and does not archive reports. Its output is an acceptance test design brief that downstream skills, especially `acceptance-scenario-orchestrator` and `create-visual-test-to-kb`, must follow.
 
+## Rule Source SSOT
+
+Before designing tests, load the acceptance rule source in this order:
+
+1. Repository SSOT when available: `doc/rule.acceptance.map-enterprise.md`, `doc/rule.acceptance.ssot.md`, `doc/guide.acceptance.daily-sop.md`, `doc/guide.acceptance.report-evidence.md`, `doc/design.acceptance.knowledge-governance.md`.
+2. Skill-package fallback when the skill is installed outside this repository: `references/rules/*.md` and `references/rules/manifest.json`.
+3. If neither source exists, fail closed and state that the acceptance rule source is missing. Do not invent a local substitute.
+
+The `doc/` files are authoritative. The bundled `references/rules/` files are generated snapshots for marketplace/offline users. When local instructions conflict with these rule documents, the rule documents win.
+
 ## Core Rule
 
 Do not start from pages. Start from changed behavior.

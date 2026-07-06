@@ -224,6 +224,31 @@ describe('Acceptance report routes — project-scoped key access', () => {
     expect(service.getAcceptanceReport(reportA.id)!.folderId).toBe(folderA.id);
   });
 
+  it('PATCH can switch report format to Markdown together with content', async () => {
+    const res = await call(server, 'PATCH', `/api/reports/${reportA.id}`, {
+      body: {
+        title: '规范文档',
+        format: 'md',
+        content: '# 规范文档\n\n正文',
+        sourceId: 'acceptance.rule.enterprise',
+        sourcePath: 'doc/rule.acceptance.map-enterprise.md',
+        contentHash: 'sha256:abc',
+        publishedAt: '2026-07-07T00:00:00.000Z',
+      },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.report.format).toBe('md');
+    expect(res.body.report.sourceId).toBe('acceptance.rule.enterprise');
+    expect(res.body.report.sourcePath).toBe('doc/rule.acceptance.map-enterprise.md');
+    expect(res.body.report.contentHash).toBe('sha256:abc');
+    expect(res.body.report.publishedAt).toBe('2026-07-07T00:00:00.000Z');
+    expect(service.readAcceptanceReportContent(reportA.id)).toContain('# 规范文档');
+
+    const raw = await call(server, 'GET', `/api/reports/${reportA.id}/raw`);
+    expect(raw.status).toBe(200);
+    expect(raw.headers['content-type']).toContain('text/markdown');
+  });
+
   it('extracts inline base64 images into content-addressed assets on ingest', async () => {
     // Minimal valid 1x1 PNG.
     const b64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
