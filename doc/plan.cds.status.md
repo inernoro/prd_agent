@@ -19,10 +19,10 @@
 | 波1 最后一公里(extraProfiles UI+CLI / dbScope 开关 / 看板) | 90 | 进行中 | 无 | push 后灰度真机验证(添加 Nacos 预设 → redeploy → 分支网 → 命名 URL 可达) | vitest 180 文件绿 + pytest 149 绿 + tsc 双侧绿(2026-07-06 本地);真机证据待补 |
 | 波2 配置检查器(env 逐 key 溯源 + effective-config 端点 + 面板) | 90 | 进行中 | 无 | 灰度真机验证(部署热路径重构是合并前置门槛);验证通过后波1+2 一并收 | env-provenance.test.ts 14 例绿 + effective-config 端点 3 例绿 + container.test.ts 43 例行为等价护栏绿 + 全量 vitest 181 文件绿(2026-07-06 本地) |
 | 波3 配置树补全(分支派生快照拷贝 + 快照分支层 + design.cds.config-tree + 建分支来源选择器 UI) | 95 | 进行中 | 无 | 灰度真机验证(与波1/2 一并) | 派生拷贝/copy-config/快照分支层/PR 回填 7 例 + 建分支来源选择器 contract 1 例新测试绿 + 全量 vitest 绿(server-integration 10 例存量环境失败无关)+ web tsc/build 绿(2026-07-06);design.cds.config-tree.md 已归档 |
-| 波4 双SSOT收敛(repo compose 纯结构种子 + drift 巡检 + 还 D1 债) | 0 | 未开始(方向已定) | 等波1-3 | 见 design.cds.config-tree.md(波3产出)「波4方向」 | — |
+| 波4 双SSOT收敛(repo compose 纯结构种子 + drift 巡检 + 还 D1 债) | 80 | 进行中 | **运行实例上验证 env scope prd-agent 注入 6 密钥不丢**(隔离穿透高风险,需 CDS 管理者读权限,AI 无法自闭环)→ 验证通过前 D1 记 in-progress | 上述注入验证通过后 D1 判 paid;可选补 drift-scan 自动触发(webhook push)+ 面板漂移入口 UI | classifyEnvSeed 5 例 + computeComposeDrift 7 例(compose-drift.test)+ drift-scan 端点 5 例(project-compose-drift.test)新测试绿;repo cds-compose.yml 剥离 8 密钥后 parseCdsCompose 仍出 5 profile+2 infra、envVars 零密钥零 TODO;全量 vitest 2598 passed(server-integration 10 例存量环境失败无关);backend tsc 绿(2026-07-06 本地) |
 | 波5 无 Agent 接入(scan 逻辑进 onboarding 向导) | 0 | 未开始(方向已定) | 等波1-3 | 同上 | — |
 
-**距离可发布**:波1 代码完成待真机验证;波2/3 未开始。
+**距离可发布**:波1-3 代码完成待灰度真机验证;波4 代码层完成(repo compose 剥离密钥 + drift 巡检 + 端点 + 测试),仅剩「运行实例上验证 env scope 注入不丢」一环 blocker,通过后 D1 判 paid;波5 未开始。
 
 ---
 

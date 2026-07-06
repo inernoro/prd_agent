@@ -6,30 +6,29 @@ x-cds-project:
   description: "PRD Agent 全栈项目 (.NET 8 + React 18 + Tauri 2.0)"
   repo: https://github.com/inernoro/prd_agent.git
 
-# 全局共享环境变量 — CDS 自动注入所有容器，禁止在 services.*.environment 中重复
+# 全局共享结构默认（波4：repo cds-compose.yml = 纯结构种子）
+#
+# 本段只声明「非密钥的结构默认值」。所有密钥/凭据/部署环境值
+# （TENCENT_COS_* / JWT_SECRET / ApiKeyCrypto__Secret / AI_ACCESS_KEY 等）
+# 一律**不写进仓库**，只存在于 CDS env scope：
+#   cdscli env get --scope prd-agent      # 查看
+#   cdscli env set KEY=VALUE --scope prd-agent
+# CDS 部署时按 env scope 注入容器，优先级高于本段结构默认。
+#
+# 为什么剥离：仓库携带 `TODO: 请填写实际值` 占位符会让全量 `cdscli import`
+# 被审核拒绝（占位值覆盖线上真实密钥），结构变更无法落地（见
+# doc/debt.cds.compose-secrets.md D1）。剥离占位后 import 不再覆盖密钥即可通过。
+#
+# 应用所需的密钥清单（去 CDS env scope 配，勿写回本文件）：
+#   ASSETS_PROVIDER=tencentCos 时：TENCENT_COS_BUCKET / TENCENT_COS_REGION /
+#     TENCENT_COS_SECRET_ID / TENCENT_COS_SECRET_KEY / TENCENT_COS_PUBLIC_BASE_URL
+#   通用：JWT_SECRET / ApiKeyCrypto__Secret / AI_ACCESS_KEY
+#   （切 cloudflareR2 时改配 R2_* 系列，语义同上）
 x-cds-env:
-  # 资产存储（tencentCos / cloudflareR2 二选一）
+  # 资产存储提供方（tencentCos / cloudflareR2 二选一）——结构默认，非密钥
   ASSETS_PROVIDER: tencentCos
-  # --- Tencent COS ---
-  TENCENT_COS_BUCKET: "TODO: 请填写实际值"
-  TENCENT_COS_REGION: "TODO: 请填写实际值"
-  TENCENT_COS_SECRET_ID: "TODO: 请填写实际值"
-  TENCENT_COS_SECRET_KEY: "TODO: 请填写实际值"
-  TENCENT_COS_PUBLIC_BASE_URL: "TODO: 请填写实际值"
+  # 对象存储路径前缀——结构约定，非密钥
   TENCENT_COS_PREFIX: data
-  # --- Cloudflare R2（如使用 R2 则将 ASSETS_PROVIDER 改为 cloudflareR2）---
-  # R2_ACCOUNT_ID: ""
-  # R2_ACCESS_KEY_ID: ""
-  # R2_SECRET_ACCESS_KEY: ""
-  # R2_BUCKET: ""
-  # R2_PUBLIC_BASE_URL: ""
-  # R2_PREFIX: ""
-  # R2_ENDPOINT: ""
-  JWT_SECRET: "TODO: 请填写实际值"
-  ApiKeyCrypto__Secret: "TODO: 请填写实际值"
-  # 如需迁移旧平台密文，可临时填写旧数据加密密钥，多个用英文分号分隔；迁移完成后删除。
-  # ApiKeyCrypto__LegacySecrets: ""
-  AI_ACCESS_KEY: "TODO: 请填写实际值"
 
 # 部署模式 — 每个服务可在 CDS 左侧面板下拉切换
 # dev: 热重载开发模式（改代码自动刷新）

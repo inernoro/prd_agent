@@ -111,12 +111,20 @@ CDS 全局默认(_global 变量层)
 
 ## 七、波4 / 波5 方向(未实施,只定方向)
 
-**波4 双 SSOT 收敛(repo compose = 纯结构种子)**
+**波4 双 SSOT 收敛(repo compose = 纯结构种子)—— 代码层已实现(2026-07-06)**
 
-- 仓库 `cds-compose.yml` 只声明结构(服务/依赖/路由/资源),密钥与环境值全部剥离到 CDS env scope → 直接偿还 `debt.cds.compose-secrets.md` D1(TODO 占位卡死全量 import);
-- `composeSource='repo-sync'` 枚举落地:repo 侧 compose 变更触发漂移巡检,diff 出「同步建议」进 pending-import 审批流,人审后落 CDS 配置树;CDS 侧的运行时改动不回写 repo(单向种子);
-- `config-authority` 增加 seed 级:结构字段以 repo 为权威、运行时字段以 CDS 为权威,漂移检测按权威分级分别报告;
-- 「CDS 级默认 profile 片段」与结构种子一起设计,避免出现第二个结构默认源。
+- **已落地**:仓库 `cds-compose.yml` 的 `x-cds-env` 已剥离全部密钥/占位符键(仅留
+  `ASSETS_PROVIDER` / `TENCENT_COS_PREFIX` 结构默认),密钥统一走 CDS env scope →
+  消除 `debt.cds.compose-secrets.md` D1 的 import-reject 根因(占位覆盖真实密钥);
+- **已落地**:`config-authority.classifyEnvSeed(key,value)` = seed 级判定(`repo-structural`
+  vs `cds-env-scope`);`compose-drift.computeComposeDrift(repo, live)` 纯函数按权威分级
+  产出漂移报告(密钥应剥离 / 结构漂移同步建议 / CDS 运行时独占不回写);
+- **已落地**:`POST /api/projects/:id/compose-drift-scan` 读 repo 结构种子 diff 配置树,
+  `createImport=true` 时用 `composeSource='repo-sync'` 语义开一条 `repo-sync` PendingImport
+  走既有人审流(去重,单向:CDS 运行时改动不回写 repo);
+- **仍 open**:运行实例上验证 env scope 注入不丢(D1 判 paid 的最后一环,见 debt 台账);
+  可选增强:drift-scan 由 webhook push 自动触发 + 面板漂移入口 UI + 「CDS 级默认 profile
+  片段」结构默认源统一。
 
 **波5 无 Agent 接入**
 

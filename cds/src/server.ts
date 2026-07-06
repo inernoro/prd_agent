@@ -1004,6 +1004,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/projects\/(.+)\/compose\.yml$/, '下载项目配置'],
     [/^GET \/projects\/(.+)\/compose$/, '获取项目配置'],
     [/^PUT \/projects\/(.+)\/compose$/, '保存项目配置'],
+    [/^POST \/projects\/(.+)\/compose-drift-scan$/, '巡检配置漂移'],
     // 项目基础设施重新同步
     [/^GET \/projects\/(.+)\/infra\/resync\/sources$/, '列出同步配置来源'],
     [/^POST \/projects\/(.+)\/infra\/resync\/preview$/, '预览基础设施同步'],
@@ -3279,6 +3280,7 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use('/api', createProjectComposeRouter({
     stateService: deps.stateService,
     assertProjectAccess: assertProjectAccess as any,
+    repoRootFallback: deps.config.repoRoot,
   }));
   // 项目迁移:配置打包复刻 + 数据迁移扫描,把项目移植到另一个 CDS 节点(2026-06-23)
   app.use('/api', createProjectMigrationRouter({
