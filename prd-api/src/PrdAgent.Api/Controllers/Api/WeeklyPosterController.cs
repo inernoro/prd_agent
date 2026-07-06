@@ -11,6 +11,7 @@ using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.LlmGateway.ImageGen;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Infrastructure.Services.Poster;
 
@@ -44,7 +45,7 @@ public sealed class WeeklyPosterController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly ILogger<WeeklyPosterController> _logger;
     private readonly IPosterAutopilotService _autopilot;
-    private readonly OpenAIImageClient _imageClient;
+    private readonly IImageGenerationClient _imageClient;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IAssetStorage _assetStorage;
 
@@ -52,7 +53,7 @@ public sealed class WeeklyPosterController : ControllerBase
         MongoDbContext db,
         ILogger<WeeklyPosterController> logger,
         IPosterAutopilotService autopilot,
-        OpenAIImageClient imageClient,
+        IImageGenerationClient imageClient,
         ILLMRequestContextAccessor llmRequestContext,
         IAssetStorage assetStorage)
     {

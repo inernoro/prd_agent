@@ -18,6 +18,7 @@ using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Infrastructure.LLM.Adapters;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.LlmGateway.ImageGen;
 
 namespace PrdAgent.Infrastructure.LLM;
 
@@ -30,7 +31,7 @@ namespace PrdAgent.Infrastructure.LLM;
 ///   <see cref="ImageGenRequestBuilder"/>，本类不再内联拼装该请求体。
 ///   Exchange / Google / OpenRouter 因上游协议形状不同，仍走各自专属构建分支。
 /// </summary>
-public class OpenAIImageClient
+public class OpenAIImageClient : IImageGenerationClient
 {
     private readonly MongoDbContext _db;
     private readonly ILlmGateway _gateway;

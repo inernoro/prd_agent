@@ -9,6 +9,7 @@ using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.LlmGateway.ImageGen;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Infrastructure.Services.CcasAgent;
 using SixLabors.ImageSharp;
@@ -37,7 +38,7 @@ public class CcasAgentController : ControllerBase
 
     private readonly MongoDbContext _db;
     private readonly ILlmGateway _gateway;
-    private readonly OpenAIImageClient _imageClient;
+    private readonly IImageGenerationClient _imageClient;
     private readonly IAssetStorage _assetStorage;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly ILogger<CcasAgentController> _logger;
@@ -45,7 +46,7 @@ public class CcasAgentController : ControllerBase
     public CcasAgentController(
         MongoDbContext db,
         ILlmGateway gateway,
-        OpenAIImageClient imageClient,
+        IImageGenerationClient imageClient,
         IAssetStorage assetStorage,
         ILLMRequestContextAccessor llmRequestContext,
         ILogger<CcasAgentController> logger)
