@@ -10,8 +10,8 @@ AI 大模型网关「真实调用面」MECE 冒烟测试矩阵。目标：按维
 
 ## 全量可见报告（不压缩）+ 数据驱动 SSOT
 
-矩阵不是几行摘要，而是**全枚举的大表**，落在 `doc/report.gw-test-matrix.md`（约 282 行）：A 层 153 个入口逐条真实解析
-结果 + B 层 91 个协议保真 cell + C 层 18 个跨进程 cell + 20 个扩展维度。报告里 B/C 的**每一行 = CI 真执行的一个 cell**
+矩阵不是几行摘要，而是**全枚举的大表**，落在 `doc/report.gw-test-matrix.md`（约 284 行）：A 层 153 个入口逐条真实解析
+结果 + B 层 93 个协议保真 cell + C 层 18 个跨进程 cell + 20 个扩展维度。报告里 B/C 的**每一行 = CI 真执行的一个 cell**
 （非只列不跑）。三处同源、一处生成：`scripts/gen-gw-matrix-report.py` 产出报告 + `protocol-cells.json` + `transport-cells.json`，
 后两者被 `GatewayProtocolFidelityTests` / `CrossProcessServingErrorLoadTests` 的 `[Theory]/[MemberData]` 读取逐 cell 真跑。
 改维度只改这一个脚本，报告与测试不漂移。
@@ -21,7 +21,7 @@ AI 大模型网关「真实调用面」MECE 冒烟测试矩阵。目标：按维
 | 层 | 跑在哪 | 依赖 | 现状 |
 |----|--------|------|------|
 | A 解析/调度 | CI 单元(golden) | 反射，无 Mongo；集成那条需 Mongo | 复用 `AppCallerRegistryGoldenSnapshotTests` + `LlmResolutionGoldenIntegrationTests`；新增 `GwResolutionMatrixTests`（153 反射 `[Theory]`，校验命名 + ModelType 合法） |
-| B 协议保真 | CI 单元 | 无（纯函数喂 canned payload） | `GatewayProtocolFidelityTests`（数据驱动 `[Theory]` 读 `protocol-cells.json`，91 cell） |
+| B 协议保真 | CI 单元 | 无（纯函数喂 canned payload） | `GatewayProtocolFidelityTests`（数据驱动 `[Theory]` 读 `protocol-cells.json`，93 cell） |
 | C 跨进程传输 | CI 单元 | 无（真 Kestrel loopback + stub gateway） | `CrossProcessServingSelfTest`（端到端 1 例）+ `CrossProcessServingErrorLoadTests`（数据驱动 `[Theory]` 读 `transport-cells.json`，18 cell） |
 | D 真机 | CDS 起来后脚本 | 真网关 + 真/桩上游 | `scripts/gw-smoke.py`（全 153 resolve + 抽样真打），待 CDS 跑 |
 

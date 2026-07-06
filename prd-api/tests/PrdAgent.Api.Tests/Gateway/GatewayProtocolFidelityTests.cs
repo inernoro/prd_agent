@@ -27,7 +27,7 @@ public class GatewayProtocolFidelityTests
         _ => throw new ArgumentException($"未知 adapter: {name}"),
     };
 
-    // ── 全部 91 个协议保真 cell 逐个真跑（[Theory] over protocol-cells.json）──
+    // ── 全部 93 个协议保真 cell 逐个真跑（[Theory] over protocol-cells.json）──
     [Theory]
     [MemberData(nameof(GatewayMatrixCells.ProtocolIds), MemberType = typeof(GatewayMatrixCells))]
     public void ProtocolCell(string id)
@@ -69,6 +69,21 @@ public class GatewayProtocolFidelityTests
         }
         if (cell.Has("outputTokens"))
             chunk.TokenUsage!.OutputTokens.ShouldBe(cell.Int("outputTokens"), $"cell {cell.Id}: outputTokens 不符");
+        if (cell.Has("toolDeltaCount"))
+        {
+            chunk.ToolCallDelta.ShouldNotBeNull($"cell {cell.Id}: 期望 ToolCallDelta");
+            chunk.ToolCallDelta!.Count.ShouldBe(cell.Int("toolDeltaCount"), $"cell {cell.Id}: tool delta 数量不符");
+            var first = chunk.ToolCallDelta[0]!.AsObject();
+            if (cell.Has("toolFirstIndex"))
+                first["index"]!.GetValue<int>().ShouldBe(cell.Int("toolFirstIndex"), $"cell {cell.Id}: tool index 不符");
+            if (cell.Has("toolFirstId"))
+                first["id"]!.GetValue<string>().ShouldBe(cell.Str("toolFirstId"), $"cell {cell.Id}: tool id 不符");
+            var fn = first["function"]!.AsObject();
+            if (cell.Has("toolFirstName"))
+                fn["name"]!.GetValue<string>().ShouldBe(cell.Str("toolFirstName"), $"cell {cell.Id}: tool name 不符");
+            if (cell.Has("toolFirstArguments"))
+                fn["arguments"]!.GetValue<string>().ShouldBe(cell.Str("toolFirstArguments"), $"cell {cell.Id}: tool arguments 不符");
+        }
     }
 
     private static void AssertTokenUsage(ProtocolCell cell)

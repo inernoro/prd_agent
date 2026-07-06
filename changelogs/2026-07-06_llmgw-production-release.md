@@ -30,3 +30,4 @@
 | ops | prd-agent | 生产 compose 不再强制要求 LLMGW_ADMIN_PASSWORD，网关控制台恢复 admin/admin 首登改密引导，env 仅作首次 bootstrap 或破玻璃输入 |
 | feat | prd-api | ShadowLlmGateway 为 raw 图片/ASR/视频原始代理增加采样 shadow 证据，发布 gate 全量 http 默认要求 raw 样本和核心 appCaller 覆盖 |
 | fix | prd-api | 补齐 Claude 流式 tool_use 到 OpenAI tool_calls delta 的网关归一，避免切 http 后流式工具调用丢失 |
+| test | prd-api | 将 Claude 流式 tool_use 纳入 LLM Gateway 协议保真矩阵，B 层数据驱动 cell 从 91 扩展到 93 |

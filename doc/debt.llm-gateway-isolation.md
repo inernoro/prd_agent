@@ -117,9 +117,9 @@ CDS 合并多容器能力（PR #951）后，serving 网关在 `claude/llm-schedu
 
 - 用户反馈「这么少的表，能有效吗，是内容压缩了吗」——v1 确实压缩了（14 维摘要 + 18 手写 [Fact]）。v2 改为：
   - `scripts/gen-gw-matrix-report.py`（纯 Python，无需 SDK，一处定义三处消费）→ `doc/report.gw-test-matrix.md`
-    （约 282 行可见大表）+ `protocol-cells.json`(91 B cell) + `transport-cells.json`(18 C cell)。报告里 B/C 每一行
+    （约 284 行可见大表）+ `protocol-cells.json`(93 B cell) + `transport-cells.json`(18 C cell)。报告里 B/C 每一行
     = CI 真执行的一个 cell（非只列不跑）。
-  - **B 层** `GatewayProtocolFidelityTests` 改 `[Theory]+MemberData` 读 `protocol-cells.json`（91 cell：think 三形态/
+  - **B 层** `GatewayProtocolFidelityTests` 改 `[Theory]+MemberData` 读 `protocol-cells.json`（93 cell：think 三形态/
     tool 归一/token+cache/finish 全枚举/字符集 9 变体/edge→null；payload 全按适配器源码行为构造）。
   - **C 层** `CrossProcessServingErrorLoadTests` 改 `[Theory]` 读 `transport-cells.json`（18 cell：方法×上游
     {echo/failing/throwing/empty}×鉴权×并发，4 stub host 经 IClassFixture 复用）。
