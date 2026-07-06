@@ -269,7 +269,19 @@ def _dotnet_checks() -> list[dict]:
             ROOT / "prd-api",
         ),
         (
-            "gateway_multipart_http_tests",
+            "gateway_protocol_and_shadow_unit_tests",
+            [
+                "dotnet",
+                "test",
+                "tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj",
+                "--no-restore",
+                "--filter",
+                "FullyQualifiedName~GatewayProtocolFidelityTests|FullyQualifiedName~ClaudeToolTranslationTests|FullyQualifiedName~ShadowLlmGatewayTests",
+            ],
+            ROOT / "prd-api",
+        ),
+        (
+            "gateway_http_boundary_unit_tests",
             [
                 "dotnet",
                 "test",
@@ -277,6 +289,30 @@ def _dotnet_checks() -> list[dict]:
                 "--no-restore",
                 "--filter",
                 "FullyQualifiedName~GatewayMultipartHttpTests|FullyQualifiedName~GatewayKeyGateContractTests|FullyQualifiedName~HttpLlmGatewayClientFailureTests",
+            ],
+            ROOT / "prd-api",
+        ),
+        (
+            "gateway_cross_process_matrix_tests",
+            [
+                "dotnet",
+                "test",
+                "tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj",
+                "--no-restore",
+                "--filter",
+                "FullyQualifiedName~CrossProcessServingSelfTest|FullyQualifiedName~CrossProcessServingErrorLoadTests|FullyQualifiedName~GatewayServingEndpointContractTests",
+            ],
+            ROOT / "prd-api",
+        ),
+        (
+            "gateway_media_contract_tests",
+            [
+                "dotnet",
+                "test",
+                "tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj",
+                "--no-restore",
+                "--filter",
+                "FullyQualifiedName~GatewayDoubaoStreamAsrTests|FullyQualifiedName~OpenRouterVideoClientGatewayTests",
             ],
             ROOT / "prd-api",
         ),

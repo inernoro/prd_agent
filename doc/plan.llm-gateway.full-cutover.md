@@ -104,6 +104,8 @@ python3 scripts/llmgw-readiness-audit.py \
 
 `scripts/llmgw-readiness-audit.py` 是 S5/S6 发布前总 gate：静态检查 release gate/`exec_dep.sh`/compose/GW 数据域、
 直连棘轮空 baseline、multipart HTTP rehydrate、回滚脚本 dry-run；传 `--run-dotnet` 时会跑关键 xUnit 守卫；
+当前 `--run-dotnet` 覆盖直连/数据域、93-cell 协议保真、Claude 工具翻译、shadow/raw 对账、
+multipart/key-gate/http-failure、C 层跨进程矩阵、serving 端点合同、Doubao ASR 与 OpenRouter 视频合同；
 传 `--run-smoke` 时会调用 `scripts/gw-smoke.py` 真打 `/gw/v1/healthz`、`/pools`、`/send`、`/stream`、
 `/client-stream` 与 canary 必败；
 传 `--run-serving-probe` 时会调用 `scripts/llmgw-serving-probe.py` 连续探测 healthz commit 稳定性，
