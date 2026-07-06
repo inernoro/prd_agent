@@ -51,18 +51,22 @@ public class GatewayDataDomainGuardTests
         var cdsCompose = ReadRepoFile("cds-compose.yml");
 
         Assert.Contains("LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}", dockerCompose);
+        Assert.Contains("LlmGateway__HttpAppCallerAllowlist=${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}", dockerCompose);
+        Assert.Contains("LlmGateway__ShadowFullSamplePercent=${LLMGW_SHADOW_FULL_SAMPLE_PERCENT:-0}", dockerCompose);
         Assert.Contains("LlmGateway__DatabaseName: llm_gateway", cdsCompose);
     }
 
     [Fact]
-    public void ExecDep_RequiresReleaseGateBeforeFullHttpMode()
+    public void ExecDep_RequiresReleaseGateBeforeFullHttpOrCanaryMode()
     {
         var script = ReadRepoFile("exec_dep.sh");
 
         Assert.Contains("run_llmgw_release_gate_if_needed", script);
-        Assert.Contains("if [ \"$mode\" != \"http\" ]; then", script);
-        Assert.Contains("LLMGW_MODE=http 需要提供 LLMGW_GATE_BASE 或 GW_BASE", script);
-        Assert.Contains("LLMGW_MODE=http 需要提供 LLMGW_GATE_KEY/GW_KEY 或 LLMGW_SERVE_KEY", script);
+        Assert.Contains("LLMGW_HTTP_APP_CALLER_ALLOWLIST", script);
+        Assert.Contains("allowlist_compact", script);
+        Assert.Contains("if [ \"$mode\" != \"http\" ] && [ -z \"$allowlist_compact\" ]; then", script);
+        Assert.Contains("LLM Gateway http/canary 发布需要提供 LLMGW_GATE_BASE 或 GW_BASE", script);
+        Assert.Contains("LLM Gateway http/canary 发布需要提供 LLMGW_GATE_KEY/GW_KEY 或 LLMGW_SERVE_KEY", script);
         Assert.Contains("expect_commit=\"${TAG#sha-}\"", script);
         Assert.Contains("args=\"$args --expect-commit $expect_commit\"", script);
         Assert.Contains("LLMGW_GATE_HEALTH_SAMPLES", script);
@@ -73,6 +77,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("args=\"$args --require-kind $kind_req_trimmed\"", script);
         Assert.Contains("LLMGW_GATE_REQUIRED_APP_KINDS", script);
         Assert.Contains("args=\"$args --require-app-kind $app_kind_req_trimmed\"", script);
+        Assert.Contains("for app in ${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}; do", script);
+        Assert.Contains("LLM Gateway release gate: required (LLMGW_MODE=", script);
         Assert.Contains("LLMGW_GATE_JSON_OUT", script);
         Assert.Contains("args=\"$args --json-out $LLMGW_GATE_JSON_OUT\"", script);
         Assert.Contains("LLMGW_GATE_REPORT_MD", script);

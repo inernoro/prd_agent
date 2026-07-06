@@ -99,6 +99,8 @@ services:
       # 跨进程 LLM 网关开关：默认 inproc（进程内直调，行为不变）；置 http 则 MAP 自身 LLM
       # 调用经 HttpLlmGatewayClient 打到 llmgw-serve（/gw/v1/*）。ServeBaseUrl 指向 serving 容器。
       - LlmGateway__Mode=${LLMGW_MODE:-inproc}
+      - LlmGateway__HttpAppCallerAllowlist=${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}
+      - LlmGateway__ShadowFullSamplePercent=${LLMGW_SHADOW_FULL_SAMPLE_PERCENT:-0}
       - LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}
       - LlmGateway__ServeBaseUrl=${LLMGW_SERVE_BASE_URL:-http://llmgw-serve:8091}
       - LlmGwServe__ApiKey=${LLMGW_SERVE_KEY:?must set LLMGW_SERVE_KEY in production (gateway /gw/v1 shared key gate, no insecure default)}
