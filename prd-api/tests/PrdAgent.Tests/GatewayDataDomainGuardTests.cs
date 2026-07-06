@@ -89,6 +89,13 @@ public class GatewayDataDomainGuardTests
         var script = ReadRepoFile("exec_dep.sh");
 
         Assert.Contains("run_llmgw_release_gate_if_needed", script);
+        Assert.Contains("check_fast_release_intent", script);
+        Assert.Contains("PRD_AGENT_RELEASE_INTENT_FILE", script);
+        Assert.Contains(".prd-agent-release-intent.env", script);
+        Assert.Contains("PRD_AGENT_REQUIRE_FAST_INTENT", script);
+        Assert.Contains("PRD_AGENT_IGNORE_FAST_INTENT", script);
+        Assert.Contains("fast.sh / exec_dep.sh release ref mismatch", script);
+        Assert.Contains("Release intent: matched fast.sh warmup", script);
         Assert.Contains("LLMGW_HTTP_APP_CALLER_ALLOWLIST", script);
         Assert.Contains("allowlist_compact", script);
         Assert.Contains("LLMGW_CANARY_STAGE", script);
@@ -172,6 +179,37 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_GATE_SERVING_PROBE_SAMPLES", script);
         Assert.Contains("LLMGW_GATE_SERVING_PROBE_INTERVAL_SECONDS", script);
         Assert.Contains("LLMGW_SKIP_RELEASE_GATE=1", script);
+    }
+
+    [Fact]
+    public void FastAndExecDep_KeepApiAndGatewayImagesOnSameReleaseRef()
+    {
+        var fast = ReadRepoFile("fast.sh");
+        var execDep = ReadRepoFile("exec_dep.sh");
+
+        Assert.Contains("PRD_AGENT_RELEASE_INTENT_FILE", fast);
+        Assert.Contains(".prd-agent-release-intent.env", fast);
+        Assert.Contains("write_release_intent", fast);
+        Assert.Contains("RELEASE_TAG=%s", fast);
+        Assert.Contains("RELEASE_REF_TYPE=%s", fast);
+        Assert.Contains("REPO=%s", fast);
+        Assert.Contains("PRD_AGENT_API_IMAGE=%s", fast);
+        Assert.Contains("PRD_AGENT_LLMGW_IMAGE=%s", fast);
+        Assert.Contains("PRD_AGENT_LLMGW_SERVE_IMAGE=%s", fast);
+        Assert.Contains("PRD_AGENT_LLMGW_WEB_IMAGE=%s", fast);
+        Assert.Contains("Release intent written:", fast);
+
+        Assert.Contains("intent_value", execDep);
+        Assert.Contains("check_fast_release_intent", execDep);
+        Assert.Contains("PRD_AGENT_REQUIRE_FAST_INTENT=1", execDep);
+        Assert.Contains("PRD_AGENT_IGNORE_FAST_INTENT=1", execDep);
+        Assert.Contains("intent_tag", execDep);
+        Assert.Contains("intent_repo", execDep);
+        Assert.Contains("fast.sh warmed:", execDep);
+        Assert.Contains("exec_dep wants:", execDep);
+        Assert.Contains("fast.sh repo:", execDep);
+        Assert.Contains("exec_dep repo:", execDep);
+        Assert.Contains("Release intent: matched fast.sh warmup", execDep);
     }
 
     [Fact]
@@ -273,6 +311,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--run-shadow-coverage", script);
         Assert.Contains("scripts/llmgw-shadow-coverage-report.py", script);
         Assert.Contains("serving_probe_available", script);
+        Assert.Contains("fast_writes_same_commit_release_intent", script);
         Assert.Contains("--run-serving-probe", script);
         Assert.Contains("scripts/llmgw-serving-probe.py", script);
         Assert.Contains("serving_stability_and_auth_probe", script);

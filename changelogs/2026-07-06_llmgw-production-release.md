@@ -34,3 +34,4 @@
 | test | prd-agent | 扩展 llmgw-readiness-audit --run-dotnet，发布前总 gate 覆盖协议矩阵、跨进程矩阵、shadow/raw、媒体合同与 HTTP 边界 |
 | ops | prd-agent | 全量 LLMGW_MODE=http 发布默认要求图片、视频、ASR 等 raw appCaller 逐个具备 raw shadow 样本，避免入口级证据搭车过关 |
 | ops | prd-agent | 灰度 LLMGW_HTTP_APP_CALLER_ALLOWLIST 发布必须声明 LLMGW_CANARY_STAGE，并按阶段限制入口与自动补齐 send/stream/raw 样本门 |
+| ops | prd-agent | fast.sh 写入 release intent，exec_dep.sh 校验同一 commit/tag/repo 后才继续部署，防止正式发布时 API 与 LLMGW 镜像组漂移 |

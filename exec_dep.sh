@@ -21,6 +21,9 @@ set -eu
 #   - PRD_AGENT_RELEASE_REF：指定发布 ref（latest / sha-<commit> / <tag>）
 #   - PRD_AGENT_DEPLOY_COMMIT：指定 commit，等价于 PRD_AGENT_RELEASE_REF=sha-<commit>
 #   - PRD_AGENT_RELEASE_TAG：指定发布 tag，等价于 PRD_AGENT_RELEASE_REF=<tag>
+#   - PRD_AGENT_RELEASE_INTENT_FILE：fast.sh 写入、exec_dep.sh 校验的同 commit 发布意图文件，默认 .prd-agent-release-intent.env
+#   - PRD_AGENT_REQUIRE_FAST_INTENT=1：强制要求先跑 fast.sh 生成发布意图文件
+#   - PRD_AGENT_IGNORE_FAST_INTENT=1：紧急场景忽略 fast.sh 发布意图文件漂移校验
 #   - PRD_AGENT_API_IMAGE：覆盖后端镜像（默认按 REPO + 发布 ref 组装，并优先走 get.miduo.org 镜像代理）
 #   - PRD_AGENT_LLMGW_IMAGE：覆盖独立 LLM 网关镜像（默认按 REPO + 发布 ref 组装；compose 已含 llmgw service，随 up 一起拉起）
 #   - API_PULL_TIMEOUT_SECONDS：后端镜像拉取超时时间，默认 30 秒
@@ -275,6 +278,59 @@ fi
 if [ -z "${PRD_AGENT_LLMGW_WEB_IMAGE:-}" ]; then
   export PRD_AGENT_LLMGW_WEB_IMAGE="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-llmgw-web:${TAG}"
 fi
+
+intent_value() {
+  intent_key="$1"
+  intent_file="$2"
+  awk -F= -v key="$intent_key" '$1 == key { print substr($0, index($0, "=") + 1); exit }' "$intent_file"
+}
+
+check_fast_release_intent() {
+  release_intent_file="${PRD_AGENT_RELEASE_INTENT_FILE:-.prd-agent-release-intent.env}"
+  if [ -z "$release_intent_file" ]; then
+    echo "Release intent: disabled (PRD_AGENT_RELEASE_INTENT_FILE empty)"
+    return 0
+  fi
+  if [ "${PRD_AGENT_IGNORE_FAST_INTENT:-}" = "1" ]; then
+    echo "WARN: Release intent check skipped because PRD_AGENT_IGNORE_FAST_INTENT=1" >&2
+    return 0
+  fi
+  if [ ! -f "$release_intent_file" ]; then
+    if [ "${PRD_AGENT_REQUIRE_FAST_INTENT:-}" = "1" ]; then
+      echo "ERROR: PRD_AGENT_REQUIRE_FAST_INTENT=1 but release intent file is missing: $release_intent_file" >&2
+      echo "       先运行 ./fast.sh --commit <40位SHA>，再用同一个 commit 运行 ./exec_dep.sh --commit <40位SHA>。" >&2
+      exit 1
+    fi
+    echo "Release intent: none ($release_intent_file not found); exec_dep.sh will deploy requested ref directly"
+    return 0
+  fi
+
+  intent_tag="$(intent_value RELEASE_TAG "$release_intent_file")"
+  intent_repo="$(intent_value REPO "$release_intent_file")"
+  if [ -z "$intent_tag" ] || [ -z "$intent_repo" ]; then
+    echo "ERROR: release intent file is invalid: $release_intent_file" >&2
+    echo "       缺少 RELEASE_TAG 或 REPO；请重新运行 ./fast.sh --commit <40位SHA>。" >&2
+    exit 1
+  fi
+  if [ "$intent_tag" != "$TAG" ]; then
+    echo "ERROR: fast.sh / exec_dep.sh release ref mismatch." >&2
+    echo "       fast.sh warmed:  $intent_tag" >&2
+    echo "       exec_dep wants: $TAG" >&2
+    echo "       必须用同一个 commit/tag 重新运行两步；紧急绕过需显式 PRD_AGENT_IGNORE_FAST_INTENT=1。" >&2
+    exit 1
+  fi
+  if [ "$intent_repo" != "$REPO" ]; then
+    echo "ERROR: fast.sh / exec_dep.sh repo mismatch." >&2
+    echo "       fast.sh repo:   $intent_repo" >&2
+    echo "       exec_dep repo:  $REPO" >&2
+    echo "       必须用同一个 REPO 重新运行两步；紧急绕过需显式 PRD_AGENT_IGNORE_FAST_INTENT=1。" >&2
+    exit 1
+  fi
+
+  echo "Release intent: matched fast.sh warmup (tag=$TAG repo=$REPO)"
+}
+
+check_fast_release_intent
 
 if command -v docker-compose >/dev/null 2>&1; then
   COMPOSE="docker-compose"

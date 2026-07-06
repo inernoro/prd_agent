@@ -130,11 +130,33 @@ def _static_checks() -> list[dict]:
     )
     checks.append(_check("serving_probe_available", ok, detail))
 
+    fast = _read("fast.sh")
+    ok, detail = _contains_all(
+        fast,
+        [
+            "PRD_AGENT_RELEASE_INTENT_FILE",
+            ".prd-agent-release-intent.env",
+            "write_release_intent",
+            "RELEASE_TAG=%s",
+            "RELEASE_REF_TYPE=%s",
+            "PRD_AGENT_LLMGW_SERVE_IMAGE=%s",
+            "PRD_AGENT_LLMGW_WEB_IMAGE=%s",
+            "Release intent written:",
+        ],
+    )
+    checks.append(_check("fast_writes_same_commit_release_intent", ok, detail))
+
     exec_dep = _read("exec_dep.sh")
     ok, detail = _contains_all(
         exec_dep,
         [
             "run_llmgw_release_gate_if_needed",
+            "check_fast_release_intent",
+            "PRD_AGENT_RELEASE_INTENT_FILE",
+            "PRD_AGENT_REQUIRE_FAST_INTENT",
+            "PRD_AGENT_IGNORE_FAST_INTENT",
+            "fast.sh / exec_dep.sh release ref mismatch",
+            "Release intent: matched fast.sh warmup",
             "LLMGW_HTTP_APP_CALLER_ALLOWLIST",
             "LLMGW_CANARY_STAGE",
             "canary_allowed_app_callers=\"report-agent.generate::chat prd-agent-desktop.chat.sendmessage::chat open-platform-agent.proxy::chat\"",
