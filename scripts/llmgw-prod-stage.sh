@@ -277,6 +277,7 @@ serving_probe_json="${evidence_prefix}.serving-probe.json"
 serving_probe_md="${evidence_prefix}.serving-probe.md"
 smoke_json="${evidence_prefix}.gw-smoke.json"
 smoke_md="${evidence_prefix}.gw-smoke.md"
+prod_preflight_json="${evidence_prefix}.prod-preflight.json"
 stage_json="${evidence_prefix}.stage.json"
 stage_md="${evidence_prefix}.stage.md"
 
@@ -299,6 +300,7 @@ print_plan() {
     echo "  releaseGateJson: $release_gate_json"
     echo "  servingProbeJson: $serving_probe_json"
     echo "  smokeJson: $smoke_json"
+    echo "  prodPreflightJson: $prod_preflight_json"
     echo "  stageJson: $stage_json"
   fi
 }
@@ -375,6 +377,7 @@ append_ledger_entry() {
     --evidence-md "$stage_md" \
     --release-gate-json "$release_gate_json" \
     --release-gate-required "${release_gate_required:-0}" \
+    --prod-preflight-json "$prod_preflight_json" \
     --serving-probe-json "$serving_probe_json" \
     --smoke-json "$smoke_json" \
     --main-ref "$main_ref" \
@@ -382,6 +385,23 @@ append_ledger_entry() {
     --allow-out-of-order "$allow_out_of_order" \
     --allow-out-of-order-reason "$allow_out_of_order_reason" \
     --min-stage-observation-hours "$min_observation_hours"
+}
+
+run_prod_preflight() {
+  if [ ! -f "scripts/llmgw-prod-preflight.py" ]; then
+    echo "ERROR: missing scripts/llmgw-prod-preflight.py; refusing staged rollout without production preflight." >&2
+    exit 1
+  fi
+
+  if [ "$execute" = "1" ]; then
+    mkdir -p "$evidence_dir"
+    python3 scripts/llmgw-prod-preflight.py \
+      --mode start \
+      --expect-commit "$commit" \
+      --json-out "$prod_preflight_json"
+  else
+    echo "+ python3 scripts/llmgw-prod-preflight.py --mode start --expect-commit \"$commit\" --json-out \"$prod_preflight_json\""
+  fi
 }
 
 rollout_ledger_status="pending"
@@ -453,6 +473,7 @@ if [ "$stage" = "rollback-rehearsal" ]; then
       --gate-base "$gate_base" \
       --release-gate-json "$release_gate_json" \
       --release-gate-required "$release_gate_required" \
+      --prod-preflight-json "$prod_preflight_json" \
       --serving-probe-json "$serving_probe_json" \
       --smoke-json "$smoke_json" \
       --main-ref "$main_ref" \
@@ -500,6 +521,8 @@ if [ "$execute" = "1" ]; then
   mkdir -p "$evidence_dir"
 fi
 
+run_prod_preflight
+
 if [ -n "$repo" ]; then
   run_or_print ./fast.sh --commit "$commit" --repo "$repo"
   run_or_print ./exec_dep.sh --commit "$commit" --repo "$repo"
@@ -522,6 +545,7 @@ if [ "$execute" = "1" ]; then
     --gate-base "$gate_base" \
     --release-gate-json "$release_gate_json" \
     --release-gate-required "$release_gate_required" \
+    --prod-preflight-json "$prod_preflight_json" \
     --serving-probe-json "$serving_probe_json" \
     --smoke-json "$smoke_json" \
     --main-ref "$main_ref" \

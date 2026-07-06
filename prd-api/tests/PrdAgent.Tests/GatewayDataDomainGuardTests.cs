@@ -355,6 +355,10 @@ public class GatewayDataDomainGuardTests
         var failureTrap = script[
             script.IndexOf("record_failed_stage_on_exit()", StringComparison.Ordinal)..script.IndexOf("trap record_failed_stage_on_exit EXIT", StringComparison.Ordinal)];
         Assert.DoesNotContain("rollback-inproc", failureTrap);
+        Assert.Contains("prod-preflight.json", script);
+        Assert.Contains("run_prod_preflight", script);
+        Assert.Contains("scripts/llmgw-prod-preflight.py --mode start", script);
+        Assert.Contains("--prod-preflight-json \"$prod_preflight_json\"", script);
         Assert.Contains("scripts/llmgw-rollout-ledger.py validate", script);
         Assert.Contains("scripts/llmgw-rollout-ledger.py append", script);
         Assert.Contains("./fast.sh --commit \"$commit\"", script);
@@ -378,6 +382,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("allowOutOfOrder missing reason", ledger);
         Assert.Contains("\"status\": args.status", ledger);
         Assert.Contains("\"evidenceJson\": args.evidence_json", ledger);
+        Assert.Contains("\"prodPreflightJson\": args.prod_preflight_json", ledger);
+        Assert.Contains("_require_prod_preflight_for_commit", ledger);
+        Assert.Contains("production preflight evidence", ledger);
         Assert.Contains("\"servingProbeJson\": args.serving_probe_json", ledger);
         Assert.Contains("\"smokeJson\": args.smoke_json", ledger);
         Assert.Contains("\"rollbackRehearsal\": args.stage == ROLLBACK_REHEARSAL_STAGE", ledger);
@@ -430,6 +437,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_SERVE_KEY", preflight);
         Assert.Contains("scripts/llmgw-rollout-ledger.py", preflight);
         Assert.Contains("--require-target-success", preflight);
+        Assert.Contains("\"expectCommit\"", preflight);
         Assert.DoesNotContain("print(key", preflight);
         Assert.DoesNotContain("LLMGW_GATE_KEY=\"", preflight);
 
@@ -439,6 +447,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("scripts/llmgw-prod-preflight.py", readiness);
         Assert.Contains("preflightExecutable", readiness);
         Assert.Contains("ledgerExecutable", readiness);
+        Assert.Contains("prod-preflight.json", readiness);
+        Assert.Contains("run_prod_preflight", readiness);
+        Assert.Contains("scripts/llmgw-prod-preflight.py --mode start", readiness);
+        Assert.Contains("--prod-preflight-json \\\"$prod_preflight_json\\\"", readiness);
         Assert.Contains("serving-probe.json", readiness);
         Assert.Contains("GW_SMOKE_JSON_OUT", readiness);
         Assert.Contains("LLMGW_STAGE_MIN_OBSERVATION_HOURS", readiness);
@@ -468,12 +480,16 @@ public class GatewayDataDomainGuardTests
             var commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
             var mainSha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
             var stageJson = Path.Combine(tempDir, "stage.json");
+            var prodPreflightJson = Path.Combine(tempDir, "prod-preflight.json");
             var servingJson = Path.Combine(tempDir, "serving.json");
             var smokeJson = Path.Combine(tempDir, "smoke.json");
             var ledger = Path.Combine(tempDir, "ledger.jsonl");
 
             File.WriteAllText(stageJson, $$"""
             {"verdict":"pass","commit":"{{commit}}","releaseMainRef":"origin/main","releaseMainSha":"{{mainSha}}"}
+            """);
+            File.WriteAllText(prodPreflightJson, $$"""
+            {"verdict":"pass","mode":"start","expectCommit":"{{commit}}","checks":[]}
             """);
             File.WriteAllText(servingJson, $$"""
             {"verdict":"pass","expectedCommit":"{{commit}}","healthSamples":[{"commit":"{{commit}}"}]}
@@ -483,7 +499,7 @@ public class GatewayDataDomainGuardTests
             """);
 
             File.WriteAllText(ledger, $$"""
-            {"recordedAt":"2026-07-07T00:00:00+00:00","stage":"shadow-start","status":"success","commit":"{{commit}}","evidenceJson":"{{JsonPath(stageJson)}}","servingProbeJson":"{{JsonPath(servingJson)}}","smokeJson":"{{JsonPath(smokeJson)}}","releaseMainRef":"origin/main","releaseMainSha":"{{mainSha}}","allowOutOfOrder":false}
+            {"recordedAt":"2026-07-07T00:00:00+00:00","stage":"shadow-start","status":"success","commit":"{{commit}}","evidenceJson":"{{JsonPath(stageJson)}}","prodPreflightJson":"{{JsonPath(prodPreflightJson)}}","servingProbeJson":"{{JsonPath(servingJson)}}","smokeJson":"{{JsonPath(smokeJson)}}","releaseMainRef":"origin/main","releaseMainSha":"{{mainSha}}","allowOutOfOrder":false}
             {"recordedAt":"2026-07-07T01:00:00+00:00","stage":"rollback-inproc","status":"rollback","commit":"{{commit}}","evidenceJson":"","servingProbeJson":"","smokeJson":"","releaseMainRef":"origin/main","releaseMainSha":"{{mainSha}}","allowOutOfOrder":false}
             """);
 

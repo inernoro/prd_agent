@@ -192,6 +192,23 @@ def _require_release_gate_for_commit(path: str, label: str, commit: str) -> None
             )
 
 
+def _require_prod_preflight_for_commit(path: str, label: str, commit: str) -> None:
+    payload = _require_pass_json(path, label)
+    expected = _normalize_commit(commit)
+    if not expected:
+        raise SystemExit(f"ERROR: {label} cannot validate commit because ledger commit is empty: {path}")
+
+    expected_commit = _normalize_commit(payload.get("expectCommit") or payload.get("expectedCommit"))
+    if expected_commit != expected:
+        raise SystemExit(
+            f"ERROR: {label} expectedCommit mismatch: {path} actual={expected_commit or 'empty'} expected={expected}"
+        )
+
+    mode = str(payload.get("mode") or "").strip().lower()
+    if mode != "start":
+        raise SystemExit(f"ERROR: {label} mode mismatch: {path} actual={mode or 'empty'} expected=start")
+
+
 def _bool_flag(value: str) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
@@ -309,6 +326,11 @@ def _entry_evidence_failures(entry: dict) -> list[str]:
 
     if stage == ROLLBACK_REHEARSAL_STAGE:
         return failures
+
+    try:
+        _require_prod_preflight_for_commit(str(entry.get("prodPreflightJson") or ""), f"{stage} production preflight evidence", commit)
+    except SystemExit as exc:
+        failures.append(str(exc))
 
     for key, label in [
         ("servingProbeJson", "serving probe evidence"),
@@ -492,6 +514,7 @@ def append(args: argparse.Namespace) -> int:
     if args.status == "success":
         _require_stage_evidence_for_commit(args.evidence_json, "stage evidence", args.commit)
         if args.stage != ROLLBACK_REHEARSAL_STAGE:
+            _require_prod_preflight_for_commit(args.prod_preflight_json, "production preflight evidence", args.commit)
             _require_serving_probe_for_commit(args.serving_probe_json, "serving probe evidence", args.commit)
             _require_smoke_for_commit(args.smoke_json, "D-layer smoke evidence", args.commit)
             if _bool_flag(args.release_gate_required):
@@ -511,6 +534,7 @@ def append(args: argparse.Namespace) -> int:
         "evidenceMarkdown": args.evidence_md,
         "releaseGateJson": args.release_gate_json,
         "releaseGateRequired": _bool_flag(args.release_gate_required),
+        "prodPreflightJson": args.prod_preflight_json,
         "rollbackRehearsal": args.stage == ROLLBACK_REHEARSAL_STAGE,
         "allowOutOfOrder": _bool_flag(args.allow_out_of_order),
         "allowOutOfOrderReason": args.allow_out_of_order_reason.strip(),
@@ -563,6 +587,7 @@ def _write_markdown(path: str, report: dict) -> None:
         fh.write(f"- allowOutOfOrderReason: `{cell(report['allowOutOfOrderReason'])}`\n")
         fh.write(f"- minStageObservationHours: `{cell(report['minStageObservationHours'])}`\n")
         fh.write(f"- releaseGateJson: `{cell(report['releaseGateJson'])}`\n")
+        fh.write(f"- prodPreflightJson: `{cell(report['prodPreflightJson'])}`\n")
         fh.write(f"- servingProbeJson: `{cell(report['servingProbeJson'])}`\n")
         fh.write(f"- smokeJson: `{cell(report['smokeJson'])}`\n\n")
         fh.write(f"- releaseMainRef: `{cell(report['releaseMainRef'])}`\n")
@@ -579,6 +604,7 @@ def _write_markdown(path: str, report: dict) -> None:
 def stage_report(args: argparse.Namespace) -> int:
     failures: list[str] = []
     checks = [
+        ("prodPreflightJson", args.prod_preflight_json, True),
         ("servingProbeJson", args.serving_probe_json, True),
         ("smokeJson", args.smoke_json, True),
         ("releaseGateJson", args.release_gate_json, _bool_flag(args.release_gate_required)),
@@ -593,6 +619,8 @@ def stage_report(args: argparse.Namespace) -> int:
                 _require_serving_probe_for_commit(path, label, args.commit)
             elif label == "releaseGateJson":
                 _require_release_gate_for_commit(path, label, args.commit)
+            elif label == "prodPreflightJson":
+                _require_prod_preflight_for_commit(path, label, args.commit)
             else:
                 _require_smoke_for_commit(path, label, args.commit)
         except SystemExit as exc:
@@ -615,6 +643,7 @@ def stage_report(args: argparse.Namespace) -> int:
         "allowOutOfOrderReason": args.allow_out_of_order_reason.strip(),
         "minStageObservationHours": args.min_stage_observation_hours,
         "releaseGateJson": args.release_gate_json,
+        "prodPreflightJson": args.prod_preflight_json,
         "servingProbeJson": args.serving_probe_json,
         "smokeJson": args.smoke_json,
         "releaseMainRef": args.main_ref,
@@ -770,6 +799,7 @@ def main() -> int:
     append_parser.add_argument("--evidence-md", default="")
     append_parser.add_argument("--release-gate-json", default="")
     append_parser.add_argument("--release-gate-required", default="0")
+    append_parser.add_argument("--prod-preflight-json", default="")
     append_parser.add_argument("--serving-probe-json", default="")
     append_parser.add_argument("--smoke-json", default="")
     append_parser.add_argument("--main-ref", default="")
@@ -792,6 +822,7 @@ def main() -> int:
     report_parser.add_argument("--gate-base", default="")
     report_parser.add_argument("--release-gate-json", default="")
     report_parser.add_argument("--release-gate-required", default="0")
+    report_parser.add_argument("--prod-preflight-json", default="")
     report_parser.add_argument("--serving-probe-json", default="")
     report_parser.add_argument("--smoke-json", default="")
     report_parser.add_argument("--main-ref", default="")
