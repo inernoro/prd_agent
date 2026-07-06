@@ -925,10 +925,27 @@ fi
 
 run_llmgw_release_gate_if_needed
 
+refresh_gateway_after_compose() {
+  gateway_service="${PRD_AGENT_GATEWAY_SERVICE:-gateway}"
+  if [ -z "$(printf '%s' "$gateway_service" | xargs || true)" ]; then
+    echo "Gateway refresh skipped: PRD_AGENT_GATEWAY_SERVICE is empty"
+    return 0
+  fi
+
+  if $COMPOSE config --services 2>/dev/null | grep -Fxq "$gateway_service"; then
+    echo "Refreshing gateway service to pick up recreated upstream container IPs..."
+    $COMPOSE up -d --no-deps --force-recreate "$gateway_service"
+  else
+    echo "Gateway refresh skipped: service '$gateway_service' not found in compose"
+  fi
+}
+
 echo "Ensuring Docker network exists..."
 docker network inspect prdagent-network >/dev/null 2>&1 || docker network create prdagent-network
 
 echo "Starting compose (force recreate to ensure new image is used)..."
 $COMPOSE up -d --force-recreate
+
+refresh_gateway_after_compose
 
 run_llmgw_post_deploy_verification_if_needed
