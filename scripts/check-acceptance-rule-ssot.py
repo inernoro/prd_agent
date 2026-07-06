@@ -8,6 +8,7 @@ bundles, and CDS publishing from drifting into separate rule copies.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -37,6 +38,12 @@ SNAPSHOTS = [
     "design.acceptance.knowledge-governance.md",
 ]
 
+DOC_HEADER_RE = re.compile(
+    r"^# .+\n\n> \*\*版本\*\*：v[0-9.]+ \| \*\*日期\*\*：\d{4}-\d{2}-\d{2} \| \*\*状态\*\*："
+    r"(草案|规划中|开发中|已落地|已废弃)",
+    re.M,
+)
+
 
 def fail(message: str) -> None:
     raise SystemExit(message)
@@ -55,6 +62,12 @@ def require_contains(path: str, needle: str) -> None:
     text = rel(path).read_text(encoding="utf-8")
     if needle not in text:
         fail(f"{path} missing required text: {needle}")
+
+
+def require_doc_header(path: str) -> None:
+    text = rel(path).read_text(encoding="utf-8")
+    if not DOC_HEADER_RE.search(text):
+        fail(f"{path} missing required doc metadata header: 版本 | 日期 | 状态")
 
 
 def run_snapshot_check() -> None:
@@ -91,6 +104,7 @@ def check_official_catalog() -> None:
 def main() -> None:
     for path in SOURCE_DOCS:
         require_file(path)
+        require_doc_header(path)
         key = Path(path).with_suffix("").name
         require_contains("doc/index.yml", key)
         require_contains("doc/guide.list.directory.md", key)

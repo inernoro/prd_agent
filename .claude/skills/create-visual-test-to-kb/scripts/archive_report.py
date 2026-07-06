@@ -1290,11 +1290,7 @@ VISUAL_PROBLEM_PAT = re.compile(
     r"contrast|overflow|blank|overlap|blocked|invisible|missing image)",
     re.I,
 )
-NON_VISUAL_EVIDENCE_PAT = re.compile(
-    r"(API|接口|日志|数据库|DB|SQL|cdscli|branch status|smoke|deploy|"
-    r"HTTP|header|CSP|sandbox|env|配置|文件|命令|stdout|stderr)",
-    re.I,
-)
+DEFECT_SEVERITY_PAT = re.compile(r"\b(P[0-2])\b", re.I)
 
 
 def _figure_anchor_to_manifest(manifest):
@@ -1316,32 +1312,46 @@ def _problem_localization_errors(body, manifest):
     errs = []
     anchor_map = _figure_anchor_to_manifest(manifest)
     in_defects = False
-    table_rows = []
+    candidates = []
     for line in (body or "").splitlines():
         stripped = line.strip()
         if re.match(r"^##\s+缺陷清单", stripped):
             in_defects = True
-            table_rows = []
             continue
         if in_defects and stripped.startswith("## "):
             in_defects = False
-        if in_defects and stripped.startswith("|"):
-            table_rows.append(stripped)
-        elif in_defects and table_rows:
-            break
-    if len(table_rows) < 3:
-        return errs
-    for row in table_rows[2:]:
-        cells = _split_markdown_table_row(row)
-        if len(cells) < 2:
+        if not in_defects or not stripped:
             continue
-        severity = cells[0].strip().upper()
+        if re.match(r"^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$", stripped):
+            continue
+        if stripped.startswith("|"):
+            cells = _split_markdown_table_row(stripped)
+            if not cells or all(c in {"", "---"} for c in cells):
+                continue
+            severity_match = DEFECT_SEVERITY_PAT.search(cells[0]) or DEFECT_SEVERITY_PAT.search(" ".join(cells))
+            if not severity_match:
+                continue
+            severity = severity_match.group(1).upper()
+            row_text = " ".join(cells)
+        else:
+            row_text = re.sub(r"^[-*+]\s+", "", stripped)
+            row_text = re.sub(r"^\d+[.)]\s+", "", row_text)
+            row_text = re.sub(r"^\*\*(P[0-2])\*\*", r"\1", row_text, flags=re.I)
+            severity_match = DEFECT_SEVERITY_PAT.search(row_text)
+            if not severity_match:
+                continue
+            severity = severity_match.group(1).upper()
+        candidates.append((severity, row_text))
+    for severity, row_text in candidates:
         if severity not in {"P0", "P1", "P2"}:
             continue
-        row_text = " ".join(cells)
-        if not VISUAL_PROBLEM_PAT.search(row_text) or NON_VISUAL_EVIDENCE_PAT.search(row_text):
+        if not VISUAL_PROBLEM_PAT.search(row_text):
             continue
         anchors = re.findall(r"#(fig-[a-z0-9-]+)", row_text, re.I)
+        for img_name in re.findall(r"\{\{IMG:([^}]+)\}\}", row_text):
+            anchor = _figure_anchor(_figure_key(img_name))
+            if anchor:
+                anchors.append(anchor)
         if not anchors:
             refs = re.findall(r"图\s*([0-9]+[a-zA-Z]?)", row_text)
             for ref in refs:
@@ -1354,18 +1364,18 @@ def _problem_localization_errors(body, manifest):
         if not anchors:
             errs.append(
                 f"[问题定位] {severity} 视觉缺陷没有链接到截图锚点。"
-                f"缺陷行必须写成 [图XX](#fig-完整截图名), 并在图内框出问题：{row[:120]}"
+                f"缺陷行必须写成 [图XX](#fig-完整截图名), 并在图内框出问题：{row_text[:120]}"
             )
             continue
         for anchor in anchors:
             shot = anchor_map.get(anchor)
             if not shot:
-                errs.append(f"[问题定位] 缺陷行引用 {anchor}，但 manifest 中找不到对应截图：{row[:120]}")
+                errs.append(f"[问题定位] 缺陷行引用 {anchor}，但 manifest 中找不到对应截图：{row_text[:120]}")
                 continue
-            if shot.get("annotated") is not True and not shot.get("overview"):
+            if shot.get("annotated") is not True:
                 errs.append(
                     f"[问题定位] {severity} 视觉缺陷引用的截图未记录为已标注：{shot.get('name') or anchor}。"
-                    f"必须用 box/stepShot/stepClick 在图内框出具体问题, 不能只在文字里说：{row[:120]}"
+                    f"必须用 box/stepShot/stepClick 在图内框出具体问题, 不能只在文字里说：{row_text[:120]}"
                 )
     return errs
 

@@ -1,9 +1,8 @@
-# MAP 自动化验收知识库治理设计
+# MAP 自动化验收知识库治理 · 设计
 
-> 类型: design  
-> 状态: active  
-> 版本: v1.0  
-> 关联规范: `doc/rule.acceptance.map-enterprise.md`
+> **版本**：v1.0 | **日期**：2026-07-07 | **状态**：已落地
+
+关联规范: `doc/rule.acceptance.map-enterprise.md`。
 
 ## 1. 目标
 

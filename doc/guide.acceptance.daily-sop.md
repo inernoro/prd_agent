@@ -1,9 +1,8 @@
-# MAP 每日自动化验收 SOP
+# MAP 每日自动化验收 SOP · 指南
 
-> 类型: guide  
-> 状态: active  
-> 版本: v1.0  
-> 关联规范: `doc/rule.acceptance.map-enterprise.md`
+> **版本**：v1.0 | **日期**：2026-07-07 | **状态**：已落地
+
+关联规范: `doc/rule.acceptance.map-enterprise.md`。
 
 ## 1. 目标
 
@@ -137,4 +136,3 @@ Slack 通知必须短，不承载详细证据。详细内容放报告。
 | 截止日期 | 何时关闭 |
 
 下一次 automation memory 只保存缺口 ID 和运行事实，不保存规则正文。
-

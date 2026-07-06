@@ -1,9 +1,8 @@
-# MAP 验收报告与证据交互规范
+# MAP 验收报告与证据交互 · 指南
 
-> 类型: guide  
-> 状态: active  
-> 版本: v1.0  
-> 关联规范: `doc/rule.acceptance.map-enterprise.md`
+> **版本**：v1.0 | **日期**：2026-07-07 | **状态**：已落地
+
+关联规范: `doc/rule.acceptance.map-enterprise.md`。
 
 ## 1. 目标
 

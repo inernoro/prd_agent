@@ -1,11 +1,8 @@
-# MAP 企业级自动化验收规范
+# MAP 企业级自动化验收规范 · 规则
 
-> 类型: rule  
-> 状态: active  
-> 版本: v1.0  
-> Owner: MAP 验收规范 Owner  
-> 复核: 产品 Owner、技术 Owner、CDS Owner  
-> 关联技能: `acceptance-test-design` -> `acceptance-scenario-orchestrator` -> `create-visual-test-to-kb`
+> **版本**：v1.0 | **日期**：2026-07-07 | **状态**：已落地
+
+Owner: MAP 验收规范 Owner。复核: 产品 Owner、技术 Owner、CDS Owner。关联技能: `acceptance-test-design` -> `acceptance-scenario-orchestrator` -> `create-visual-test-to-kb`。
 
 ## 1. 目标
 
