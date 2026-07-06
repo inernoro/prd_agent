@@ -69,6 +69,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("args=\"$args --require-kind $kind_req_trimmed\"", script);
         Assert.Contains("LLMGW_GATE_REQUIRED_APP_KINDS", script);
         Assert.Contains("args=\"$args --require-app-kind $app_kind_req_trimmed\"", script);
+        Assert.Contains("LLMGW_GATE_JSON_OUT", script);
+        Assert.Contains("args=\"$args --json-out $LLMGW_GATE_JSON_OUT\"", script);
+        Assert.Contains("LLMGW_GATE_REPORT_MD", script);
+        Assert.Contains("args=\"$args --report-md $LLMGW_GATE_REPORT_MD\"", script);
         Assert.Contains("python3 scripts/llmgw-release-gate.py", script);
         Assert.Contains("LLMGW_SKIP_RELEASE_GATE=1", script);
     }
@@ -87,6 +91,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("query_items[\"kind\"] = kind", releaseGate);
         Assert.Contains("--require-kind", releaseGate);
         Assert.Contains("--require-app-kind", releaseGate);
+        Assert.Contains("--json-out", releaseGate);
+        Assert.Contains("--report-md", releaseGate);
+        Assert.Contains("\"shadowChecks\"", releaseGate);
     }
 
     [Fact]

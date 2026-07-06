@@ -28,6 +28,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 
 
 def _default_base() -> str:
@@ -77,7 +78,7 @@ def _json(raw: str) -> dict:
     return value
 
 
-def _check_shadow(base: str, key: str, app: str | None, min_total: int, kind: str | None = None) -> list[str]:
+def _shadow_check(base: str, key: str, app: str | None, min_total: int, kind: str | None = None) -> dict:
     label = "global"
     query_items: dict[str, str] = {}
     if app:
@@ -89,14 +90,34 @@ def _check_shadow(base: str, key: str, app: str | None, min_total: int, kind: st
     query = ("?" + urllib.parse.urlencode(query_items)) if query_items else ""
 
     code, raw = _request("GET", base, "/shadow-comparisons" + query, key)
+    result = {
+        "label": label,
+        "appCallerCode": app,
+        "kind": kind,
+        "requiredTotal": min_total,
+        "httpStatus": code,
+        "total": 0,
+        "allMatch": 0,
+        "critical": 0,
+        "httpFail": 0,
+        "ok": False,
+        "failures": [],
+        "query": query_items,
+    }
     if code != 200:
-        return [f"shadow[{label}] HTTP {code}: {raw[:200]}"]
+        result["failures"].append(f"shadow[{label}] HTTP {code}: {raw[:200]}")
+        return result
 
     payload = _json(raw)
     summary = payload.get("summary") or payload.get("Summary") or {}
     total = int(summary.get("total") or summary.get("Total") or 0)
+    all_match = int(summary.get("allMatch") or summary.get("AllMatch") or 0)
     critical = int(summary.get("critical") or summary.get("Critical") or 0)
     http_fail = int(summary.get("httpFail") or summary.get("HttpFail") or 0)
+    result["total"] = total
+    result["allMatch"] = all_match
+    result["critical"] = critical
+    result["httpFail"] = http_fail
 
     failures: list[str] = []
     if total < min_total:
@@ -105,7 +126,13 @@ def _check_shadow(base: str, key: str, app: str | None, min_total: int, kind: st
         failures.append(f"shadow[{label}] critical mismatch 未清零: {critical}")
     if http_fail != 0:
         failures.append(f"shadow[{label}] httpFail 未清零: {http_fail}")
-    return failures
+    result["failures"] = failures
+    result["ok"] = not failures
+    return result
+
+
+def _check_shadow(base: str, key: str, app: str | None, min_total: int, kind: str | None = None) -> list[str]:
+    return list(_shadow_check(base, key, app, min_total, kind).get("failures") or [])
 
 
 def _parse_kind_requirement(raw: str, default_min: int) -> tuple[str, int]:
@@ -127,6 +154,66 @@ def _parse_app_kind_requirement(raw: str) -> tuple[str, str, int]:
     return parts[0].strip(), parts[1].strip(), int(parts[2].strip())
 
 
+def _write_json(path: str, report: dict) -> None:
+    if not path:
+        return
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(report, fh, ensure_ascii=False, indent=2, sort_keys=True)
+        fh.write("\n")
+
+
+def _write_markdown(path: str, report: dict) -> None:
+    if not path:
+        return
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+    def cell(value: object) -> str:
+        return str(value).replace("|", "\\|")
+
+    health = report.get("health") or {}
+    checks = report.get("shadowChecks") or []
+    failures = report.get("failures") or []
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("# LLM Gateway Release Gate Report\n\n")
+        fh.write(f"- generatedAt: `{cell(report.get('generatedAt'))}`\n")
+        fh.write(f"- verdict: `{cell(report.get('verdict'))}`\n")
+        fh.write(f"- base: `{cell(report.get('base'))}`\n")
+        fh.write(f"- healthStatus: `{cell(health.get('httpStatus'))}`\n")
+        fh.write(f"- healthCommit: `{cell(health.get('commit') or '')}`\n")
+        fh.write(f"- expectedCommit: `{cell(report.get('expectedCommit') or '')}`\n\n")
+        fh.write("| label | required | total | allMatch | critical | httpFail | status |\n")
+        fh.write("|---|---:|---:|---:|---:|---:|---|\n")
+        for item in checks:
+            status = "pass" if item.get("ok") else "fail"
+            fh.write(
+                f"| {cell(item.get('label'))} | {cell(item.get('requiredTotal'))} | "
+                f"{cell(item.get('total'))} | {cell(item.get('allMatch'))} | "
+                f"{cell(item.get('critical'))} | {cell(item.get('httpFail'))} | {status} |\n"
+            )
+        fh.write("\n")
+        if failures:
+            fh.write("## Failures\n\n")
+            for item in failures:
+                fh.write(f"- {item}\n")
+        else:
+            fh.write("## Failures\n\n- none\n")
+
+
+def _finalize(report: dict, failures: list[str], json_out: str, report_md: str, print_json: bool) -> int:
+    report["failures"] = failures
+    report["verdict"] = "fail" if failures else "pass"
+    _write_json(json_out, report)
+    _write_markdown(report_md, report)
+    if print_json:
+        print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+    return 1 if failures else 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="LLM Gateway 发布前证据门")
     parser.add_argument("--base", default="", help="serving base URL, e.g. https://host/gw/v1")
@@ -139,54 +226,99 @@ def main() -> int:
     parser.add_argument("--require-app-kind", action="append", default=[],
                         help="要求某个 appCallerCode 的某类 Kind 达到最小样本数，格式 appCallerCode:kind:min，可重复")
     parser.add_argument("--expect-commit", default=os.environ.get("GIT_COMMIT", ""), help="可选：healthz commit 必须匹配")
+    parser.add_argument("--json-out", default=os.environ.get("LLMGW_GATE_JSON_OUT", ""),
+                        help="可选：把 gate 证据写成 JSON 文件，内容不包含密钥")
+    parser.add_argument("--report-md", default=os.environ.get("LLMGW_GATE_REPORT_MD", ""),
+                        help="可选：把 gate 证据写成 Markdown 报告，内容不包含密钥")
+    parser.add_argument("--print-json", action="store_true", help="可选：向 stdout 打印完整 JSON 证据")
     args = parser.parse_args()
 
     base = (args.base or _default_base()).rstrip("/")
+    report: dict = {
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "base": base,
+        "expectedCommit": args.expect_commit,
+        "thresholds": {
+            "minTotal": args.min_total,
+            "minPerApp": args.min_per_app,
+        },
+        "health": {
+            "httpStatus": 0,
+            "commit": "",
+        },
+        "shadowChecks": [],
+        "failures": [],
+        "verdict": "fail",
+    }
+
     if not base:
         print("FAIL: 缺少 GW_BASE/--base，且 cdscli preview-url 未取到根域名")
+        _finalize(
+            report,
+            ["缺少 GW_BASE/--base，且 cdscli preview-url 未取到根域名"],
+            args.json_out,
+            args.report_md,
+            args.print_json,
+        )
         return 2
     if not args.key:
         print("FAIL: 缺少 GW_KEY/--key，无法读取受保护 shadow-comparisons")
+        _finalize(
+            report,
+            ["缺少 GW_KEY/--key，无法读取受保护 shadow-comparisons"],
+            args.json_out,
+            args.report_md,
+            args.print_json,
+        )
         return 2
 
     failures: list[str] = []
 
     code, raw = _request("GET", base, "/healthz", None)
+    report["health"]["httpStatus"] = code
     if code != 200:
         failures.append(f"healthz HTTP {code}: {raw[:200]}")
     else:
         try:
             health = _json(raw)
             commit = str(health.get("commit") or health.get("Commit") or "")
+            report["health"]["commit"] = commit
             if args.expect_commit and commit and commit != args.expect_commit:
                 failures.append(f"healthz commit 不匹配: actual={commit}, expected={args.expect_commit}")
         except ValueError as exc:
             failures.append(str(exc))
 
-    failures.extend(_check_shadow(base, args.key, None, args.min_total))
+    shadow_checks: list[dict] = []
+    shadow_checks.append(_shadow_check(base, args.key, None, args.min_total))
     for app in args.app_caller:
-        failures.extend(_check_shadow(base, args.key, app, args.min_per_app))
+        shadow_checks.append(_shadow_check(base, args.key, app, args.min_per_app))
     for raw in args.require_kind:
         try:
             kind, min_total = _parse_kind_requirement(raw, args.min_per_app)
         except ValueError as exc:
             failures.append(str(exc))
             continue
-        failures.extend(_check_shadow(base, args.key, None, min_total, kind=kind))
+        shadow_checks.append(_shadow_check(base, args.key, None, min_total, kind=kind))
     for raw in args.require_app_kind:
         try:
             app, kind, min_total = _parse_app_kind_requirement(raw)
         except ValueError as exc:
             failures.append(str(exc))
             continue
-        failures.extend(_check_shadow(base, args.key, app, min_total, kind=kind))
+        shadow_checks.append(_shadow_check(base, args.key, app, min_total, kind=kind))
+
+    report["shadowChecks"] = shadow_checks
+    for item in shadow_checks:
+        failures.extend(item.get("failures") or [])
 
     if failures:
+        _finalize(report, failures, args.json_out, args.report_md, args.print_json)
         print("LLM Gateway release gate: FAIL")
         for item in failures:
             print(f"- {item}")
         return 1
 
+    _finalize(report, failures, args.json_out, args.report_md, args.print_json)
     print("LLM Gateway release gate: PASS")
     print(f"- base={base}")
     print(f"- global_min_total={args.min_total}")

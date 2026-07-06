@@ -37,6 +37,8 @@ set -eu
 #   - LLMGW_GATE_APP_CALLERS：逗号/分号分隔的 appCallerCode 列表，逐个 gate
 #   - LLMGW_GATE_REQUIRED_KINDS：逗号/分号分隔的 kind[:min] 列表，例如 send:30,stream:30，防 resolve-only 放行
 #   - LLMGW_GATE_REQUIRED_APP_KINDS：逗号/分号分隔的 appCallerCode:kind:min 列表，例如 report-agent.generate::chat:send:30
+#   - LLMGW_GATE_JSON_OUT：可选，保存 release gate JSON 证据报告（不含密钥）
+#   - LLMGW_GATE_REPORT_MD：可选，保存 release gate Markdown 证据报告（不含密钥）
 #   - LLMGW_SKIP_RELEASE_GATE=1：仅紧急回滚/人工强制时跳过 http gate（会打印警告）
 
 SKIP_VERIFY="${SKIP_VERIFY:-}"
@@ -507,6 +509,12 @@ run_llmgw_release_gate_if_needed() {
   args="--base $gate_base --min-total ${LLMGW_GATE_MIN_TOTAL:-30} --min-per-app ${LLMGW_GATE_MIN_PER_APP:-30}"
   if [ -n "$expect_commit" ]; then
     args="$args --expect-commit $expect_commit"
+  fi
+  if [ -n "${LLMGW_GATE_JSON_OUT:-}" ]; then
+    args="$args --json-out $LLMGW_GATE_JSON_OUT"
+  fi
+  if [ -n "${LLMGW_GATE_REPORT_MD:-}" ]; then
+    args="$args --report-md $LLMGW_GATE_REPORT_MD"
   fi
 
   old_ifs="$IFS"
