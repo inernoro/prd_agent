@@ -141,6 +141,12 @@ http/canary 发布默认还会强制运行 `scripts/gw-smoke.py`，真打 health
 resolve-only 或单一路径证据放行全量切换；raw 样本由 `ShadowFullSamplePercent>0` 的生图/ASR/视频原始代理采样产生，
 用于证明 multipart/raw 已真实跨进程通过 serving；canary allowlist 阶段不自动追加全局 kind，仍按 allowlist/app-kind
 逐批收紧。
+全量 `LLMGW_MODE=http` 时如果未显式设置 `LLMGW_GATE_REQUIRED_APP_KINDS`，`exec_dep.sh` 还会默认要求
+`visual-agent.image.text2img::generation:raw`、`visual-agent.image.img2img::generation:raw`、
+`visual-agent.image.vision::generation:raw`、`video-agent.videogen::video-gen:raw`、
+`document-store.subtitle::asr:raw`、`transcript-agent.transcribe::asr:raw` 分别达到
+`LLMGW_GATE_FULL_HTTP_APP_KIND_MIN`（默认继承 kind/app 样本门槛），避免某个图片/视频/ASR 入口只靠
+其它入口的 raw 样本或自身 resolve 样本被误放行。
 全量 `LLMGW_MODE=http` 时如果未显式设置 `LLMGW_GATE_APP_CALLERS`，`exec_dep.sh` 还会默认要求
 `report-agent.generate::chat`、`prd-agent-desktop.chat.sendmessage::chat`、`open-platform-agent.proxy::chat`、
 `prd-agent-web.model-lab.run::chat`、`prd-agent.arena.battle::chat`、`visual-agent.image.text2img::generation`、

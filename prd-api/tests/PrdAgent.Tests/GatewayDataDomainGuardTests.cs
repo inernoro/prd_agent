@@ -126,6 +126,16 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("required_kinds_raw=\"send:${full_http_kind_min},stream:${full_http_kind_min},raw:${full_http_kind_min}\"", script);
         Assert.Contains("args=\"$args --require-kind $kind_req_trimmed\"", script);
         Assert.Contains("LLMGW_GATE_REQUIRED_APP_KINDS", script);
+        Assert.Contains("LLMGW_GATE_FULL_HTTP_APP_KINDS", script);
+        Assert.Contains("required_app_kinds_raw=\"${LLMGW_GATE_REQUIRED_APP_KINDS:-}\"", script);
+        Assert.Contains("full_http_app_kind_min=\"${LLMGW_GATE_FULL_HTTP_APP_KIND_MIN:-${LLMGW_GATE_FULL_HTTP_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}}\"", script);
+        Assert.Contains("visual-agent.image.text2img::generation:raw:", script);
+        Assert.Contains("visual-agent.image.img2img::generation:raw:", script);
+        Assert.Contains("visual-agent.image.vision::generation:raw:", script);
+        Assert.Contains("video-agent.videogen::video-gen:raw:", script);
+        Assert.Contains("document-store.subtitle::asr:raw:", script);
+        Assert.Contains("transcript-agent.transcribe::asr:raw:", script);
+        Assert.Contains("LLM Gateway release gate: LLMGW_MODE=http 未设置 LLMGW_GATE_REQUIRED_APP_KINDS，默认要求 raw 入口逐个具备 raw 样本", script);
         Assert.Contains("args=\"$args --require-app-kind $app_kind_req_trimmed\"", script);
         Assert.Contains("for app in ${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}; do", script);
         Assert.Contains("LLM Gateway release gate: required (LLMGW_MODE=", script);

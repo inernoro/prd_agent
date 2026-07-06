@@ -45,6 +45,8 @@ set -eu
 #   - LLMGW_GATE_REQUIRED_KINDS：逗号/分号分隔的 kind[:min] 列表，例如 send:30,stream:30，防 resolve-only 放行
 #     全量 LLMGW_MODE=http 时若未显式设置，默认要求 send/stream/raw 各达到 LLMGW_GATE_MIN_PER_APP（默认 30）
 #   - LLMGW_GATE_REQUIRED_APP_KINDS：逗号/分号分隔的 appCallerCode:kind:min 列表，例如 report-agent.generate::chat:send:30
+#     全量 LLMGW_MODE=http 时若未显式设置，默认要求图片/视频/ASR 等 raw 入口各自达到 raw 样本门槛
+#   - LLMGW_GATE_FULL_HTTP_APP_KINDS：全量 http 未显式设置 LLMGW_GATE_REQUIRED_APP_KINDS 时默认逐个 gate 的 appCallerCode:kind:min 列表
 #   - LLMGW_GATE_JSON_OUT：可选，保存 release gate JSON 证据报告（不含密钥）
 #   - LLMGW_GATE_REPORT_MD：可选，保存 release gate Markdown 证据报告（不含密钥）
 #   - LLMGW_GATE_RUN_SERVING_PROBE：是否在 http/canary 发布时强制运行 llmgw-serving-probe.py，默认 1
@@ -595,7 +597,14 @@ run_llmgw_release_gate_if_needed() {
       args="$args --require-kind $kind_req_trimmed"
     fi
   done
-  for app_kind_req in ${LLMGW_GATE_REQUIRED_APP_KINDS:-}; do
+  required_app_kinds_raw="${LLMGW_GATE_REQUIRED_APP_KINDS:-}"
+  required_app_kinds_compact="$(printf '%s' "$required_app_kinds_raw" | tr ',;\n\r' '    ' | xargs || true)"
+  if [ "$mode" = "http" ] && [ -z "$required_app_kinds_compact" ]; then
+    full_http_app_kind_min="${LLMGW_GATE_FULL_HTTP_APP_KIND_MIN:-${LLMGW_GATE_FULL_HTTP_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}}"
+    required_app_kinds_raw="${LLMGW_GATE_FULL_HTTP_APP_KINDS:-visual-agent.image.text2img::generation:raw:${full_http_app_kind_min},visual-agent.image.img2img::generation:raw:${full_http_app_kind_min},visual-agent.image.vision::generation:raw:${full_http_app_kind_min},video-agent.videogen::video-gen:raw:${full_http_app_kind_min},document-store.subtitle::asr:raw:${full_http_app_kind_min},transcript-agent.transcribe::asr:raw:${full_http_app_kind_min}}"
+    echo "LLM Gateway release gate: LLMGW_MODE=http 未设置 LLMGW_GATE_REQUIRED_APP_KINDS，默认要求 raw 入口逐个具备 raw 样本"
+  fi
+  for app_kind_req in ${required_app_kinds_raw}; do
     app_kind_req_trimmed="$(printf '%s' "$app_kind_req" | xargs)"
     if [ -n "$app_kind_req_trimmed" ]; then
       args="$args --require-app-kind $app_kind_req_trimmed"
