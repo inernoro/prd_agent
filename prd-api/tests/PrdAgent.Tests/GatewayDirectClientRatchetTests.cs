@@ -216,6 +216,47 @@ public class GatewayDirectClientRatchetTests
             $"OK 手写上游 HTTP 守卫通过：当前剩余 {actual.Count} 个文件，均已登记为待迁移 debt。");
     }
 
+    [Theory]
+    [InlineData("/v1/chat/completions")]
+    [InlineData("/v1/messages")]
+    [InlineData("/v1/responses")]
+    [InlineData("/v1/images/generations")]
+    [InlineData("/v1/images/edits")]
+    [InlineData("/v1/audio/transcriptions")]
+    [InlineData("/v1/audio/speech")]
+    [InlineData("/v1/embeddings")]
+    [InlineData("/v1/rerank")]
+    [InlineData("/videos")]
+    public void ManualUpstreamHttpDetector_CoversTextImageAudioVideoEndpoints(string endpoint)
+    {
+        var directHttp = $$"""
+            using var req = new HttpRequestMessage(HttpMethod.Post, "https://api.example.com{{endpoint}}");
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            using var resp = await http.SendAsync(req, ct);
+            """;
+
+        Assert.True(
+            LooksLikeManualUpstreamHttp(directHttp),
+            $"手写上游 HTTP 检测必须覆盖 {endpoint}，否则图片/ASR/视频可能绕过 llmgw-serve。");
+    }
+
+    [Fact]
+    public void ManualUpstreamHttpDetector_DoesNotFlagGatewayRawRequests()
+    {
+        var gatewayRaw = """
+            var rawRequest = new GatewayRawRequest
+            {
+                EndpointPath = "/v1/images/generations",
+                RequestBody = body,
+            };
+            var rawResp = await _llmGateway.SendRawWithResolutionAsync(rawRequest, resolution, ct);
+            """;
+
+        Assert.False(
+            LooksLikeManualUpstreamHttp(gatewayRaw),
+            "业务代码通过 GatewayRawRequest 进入 ILlmGateway 时不应被识别为手写上游 HTTP。");
+    }
+
     [Fact]
     public void NoProductionDoubaoStreamAsrDirectUsage_OutsideGatewayMigrationStub()
     {
@@ -368,12 +409,12 @@ public class GatewayDirectClientRatchetTests
 
     private static bool LooksLikeManualUpstreamHttp(string content)
     {
-        if (!ContainsProviderCompletionEndpoint(content)) return false;
+        if (!ContainsProviderModelEndpoint(content)) return false;
 
         var lines = content.Split('\n');
         for (var i = 0; i < lines.Length; i++)
         {
-            if (!ContainsProviderCompletionEndpoint(lines[i])) continue;
+            if (!ContainsProviderModelEndpoint(lines[i])) continue;
 
             var from = Math.Max(0, i - 80);
             var to = Math.Min(lines.Length - 1, i + 80);
@@ -388,10 +429,18 @@ public class GatewayDirectClientRatchetTests
                && content.Contains("http.SendAsync(req", StringComparison.Ordinal);
     }
 
-    private static bool ContainsProviderCompletionEndpoint(string content)
+    private static bool ContainsProviderModelEndpoint(string content)
     {
         return content.Contains("/v1/chat/completions", StringComparison.Ordinal)
-               || content.Contains("/v1/messages", StringComparison.Ordinal);
+               || content.Contains("/v1/messages", StringComparison.Ordinal)
+               || content.Contains("/v1/responses", StringComparison.Ordinal)
+               || content.Contains("/v1/images/generations", StringComparison.Ordinal)
+               || content.Contains("/v1/images/edits", StringComparison.Ordinal)
+               || content.Contains("/v1/audio/transcriptions", StringComparison.Ordinal)
+               || content.Contains("/v1/audio/speech", StringComparison.Ordinal)
+               || content.Contains("/v1/embeddings", StringComparison.Ordinal)
+               || content.Contains("/v1/rerank", StringComparison.Ordinal)
+               || content.Contains("/videos", StringComparison.Ordinal);
     }
 
     private static bool ContainsHttpSendEvidence(string content)

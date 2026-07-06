@@ -365,6 +365,31 @@ def _static_checks() -> list[dict]:
     direct_empty = _dictionary_block_is_empty(direct, "Baseline")
     manual_empty = _dictionary_block_is_empty(direct, "ManualUpstreamHttpBaseline")
     checks.append(_check("direct_client_ratchet_baselines_are_empty", direct_empty and manual_empty, f"Baseline={direct_empty}; ManualUpstreamHttpBaseline={manual_empty}"))
+    ok, detail = _contains_all(
+        direct,
+        [
+            "ManualUpstreamHttpDetector_CoversTextImageAudioVideoEndpoints",
+            "ManualUpstreamHttpDetector_DoesNotFlagGatewayRawRequests",
+            "ContainsProviderModelEndpoint",
+            "/v1/chat/completions",
+            "/v1/messages",
+            "/v1/responses",
+            "/v1/images/generations",
+            "/v1/images/edits",
+            "/v1/audio/transcriptions",
+            "/v1/audio/speech",
+            "/v1/embeddings",
+            "/v1/rerank",
+            "/videos",
+            "GatewayRawRequest",
+            "SendRawWithResolutionAsync",
+        ],
+    )
+    checks.append(_check(
+        "manual_upstream_http_guard_covers_text_image_audio_video",
+        ok,
+        detail,
+    ))
 
     gateway_src = _read("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs")
     multipart_tests = _read("prd-api/tests/PrdAgent.Api.Tests/Gateway/GatewayMultipartHttpTests.cs")
