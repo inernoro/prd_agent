@@ -75,7 +75,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}", dockerCompose);
         Assert.Contains("LlmGateway__HttpAppCallerAllowlist=${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}", dockerCompose);
         Assert.Contains("LlmGateway__ShadowFullSamplePercent=${LLMGW_SHADOW_FULL_SAMPLE_PERCENT:-0}", dockerCompose);
+        Assert.Contains("LLMGW_ADMIN_PASSWORD=${LLMGW_ADMIN_PASSWORD:-}", dockerCompose);
+        Assert.Contains("LLMGW_ADMIN_FORCE_RESET=${LLMGW_ADMIN_FORCE_RESET:-}", dockerCompose);
+        Assert.DoesNotContain("LLMGW_ADMIN_PASSWORD=${LLMGW_ADMIN_PASSWORD:?", dockerCompose);
+        Assert.DoesNotContain("LLMGW_ADMIN_USER", dockerCompose);
         Assert.Contains("LlmGateway__DatabaseName: llm_gateway", cdsCompose);
+        Assert.Contains("控制台账号长期权威是 llm_gateway.llmgw_console_users", cdsCompose);
     }
 
     [Fact]
@@ -197,6 +202,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("direct_client_ratchet_baselines_are_empty", script);
         Assert.Contains("multipart_http_path_has_refs_rehydrate_and_hash_guard", script);
         Assert.Contains("compose_exposes_gateway_mode_and_data_domain_controls", script);
+        Assert.Contains("adminPasswordRequired", script);
+        Assert.Contains("adminUserEnv", script);
         Assert.Contains("rollback_dry_run", script);
         Assert.Contains("gw_smoke_d_layer", script);
         Assert.Contains("--run-dotnet", script);

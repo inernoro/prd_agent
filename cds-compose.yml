@@ -269,16 +269,15 @@ services:
       # 未注入时解析为空 → 守卫拒绝空 JWT（拒启动、命名路由不发布）= fail-closed；prd-agent 项目变量已钉强随机值。
       LlmGwJwt__Secret: "${LLMGW_JWT_SECRET}"
       LlmGwJwt__Issuer: prdagent-llmgw
-      # 网关控制台登录口令（用户 2026-07-02 二次拍板：口令存项目 env、别再登不进）：
-      # **显式透传** LLMGW_ADMIN_PASSWORD（bare `${KEY}` 不带默认——CDS resolveProfileRuntimeEnv 只在值恰好
-      # 等于 `${KEY}` 时才还原项目变量，带默认会被当字面量覆盖用户配置，Codex P1）。项目变量 scope=prd-agent
-      # 已设该口令；后端 seed 每次启动把 admin 口令对齐到此 env 值（权威），改密=改项目变量+重部署 llmgw。
-      # 未设该 env 时后端回退内置 admin/admin 引导 + 自愈（永不锁死）。显式声明确保该 env 一定注入本容器。
+      # 控制台账号长期权威是 llm_gateway.llmgw_console_users。未设置 bootstrap 口令时内置 admin/admin
+      # 并强制首登改密；LLMGW_ADMIN_PASSWORD 仅用于空库首次创建或 LLMGW_ADMIN_FORCE_RESET 破玻璃，
+      # 不能作为每次启动覆盖数据库口令的长期权威。bare `${KEY}` 保留为可选透传，不带默认，避免 CDS
+      # 把 `${KEY:-default}` 解析成字面量覆盖项目变量。
       LLMGW_ADMIN_PASSWORD: "${LLMGW_ADMIN_PASSWORD}"
     labels:
-      # 公网命名 URL（用户 2026-07-01 要求）：登录走项目变量 LLMGW_ADMIN_USER/LLMGW_ADMIN_PASSWORD（可见可改），
-      # JWT 签名密钥 LLMGW_JWT_SECRET 已在项目变量（scope=prd-agent）设为强随机（非仓库默认，杜绝 JWT 伪造绕过登录），
-      # 故可安全对外发布命名子域。<previewSlug>-llmgw.<root> 根路径直达 8090 网关 console（登录后看 LLM 日志）。
+      # 公网命名 URL（用户 2026-07-01 要求）：账号库在 llm_gateway，初始 admin/admin 只能进入改密门；
+      # JWT 签名密钥 LLMGW_JWT_SECRET 已在项目变量（scope=prd-agent）设为强随机（非仓库默认，杜绝 JWT 伪造绕过登录）。
+      # <previewSlug>-llmgw.<root> 根路径直达 8090 网关 console（登录后看 LLM 日志）。
       cds.subdomain: "llmgw"
       cds.readiness-path: "/gw/healthz"
 

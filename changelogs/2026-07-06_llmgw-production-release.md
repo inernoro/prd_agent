@@ -27,3 +27,4 @@
 | ops | prd-agent | readiness audit 新增 CDS runtime 检查，要求预览/灰度网关后端与 serving 以 express 预构建镜像运行并匹配发布 commit，避免源码容器或旧容器假阳性 |
 | test | prd-api | 新增 HttpLlmGatewayClientFailureTests，覆盖 serving 不可达或 401 时 send/stream/raw/profile-test/resolve/pools/client-stream 全部显式失败且不伪成功 |
 | ops | prd-agent | serving 运行态探针扩展到所有 /gw/v1 受保护边界，覆盖 GET pools/shadow 与 POST resolve/send/stream/client-stream/raw/profile-test 的无 key 401 |
+| ops | prd-agent | 生产 compose 不再强制要求 LLMGW_ADMIN_PASSWORD，网关控制台恢复 admin/admin 首登改密引导，env 仅作首次 bootstrap 或破玻璃输入 |

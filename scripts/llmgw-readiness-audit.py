@@ -204,9 +204,17 @@ def _static_checks() -> list[dict]:
             "LlmGateway__ShadowFullSamplePercent=${LLMGW_SHADOW_FULL_SAMPLE_PERCENT:-0}",
             "LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}",
             "LlmGwServe__ApiKey=${LLMGW_SERVE_KEY:?",
+            "LLMGW_ADMIN_PASSWORD=${LLMGW_ADMIN_PASSWORD:-}",
+            "LLMGW_ADMIN_FORCE_RESET=${LLMGW_ADMIN_FORCE_RESET:-}",
         ],
     )
-    checks.append(_check("compose_exposes_gateway_mode_and_data_domain_controls", ok, detail))
+    admin_password_required = "LLMGW_ADMIN_PASSWORD=${LLMGW_ADMIN_PASSWORD:?" in compose
+    admin_user_env = "LLMGW_ADMIN_USER" in compose
+    checks.append(_check(
+        "compose_exposes_gateway_mode_and_data_domain_controls",
+        ok and not admin_password_required and not admin_user_env,
+        f"{detail}; adminPasswordRequired={admin_password_required}; adminUserEnv={admin_user_env}",
+    ))
 
     return checks
 
