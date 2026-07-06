@@ -272,7 +272,7 @@ public sealed class ModelPoolHealthProbeService : BackgroundService
     }
 
     /// <summary>
-    /// 发送轻量级探活请求（直接 HTTP，不走 Gateway 避免循环）
+    /// 发送轻量级探活请求。探活也走 LLM Gateway，确保密钥门、日志、transport 观测与生产调用一致。
     /// </summary>
     private async Task<bool> SendProbeRequestAsync(
         IServiceProvider sp,
@@ -282,15 +282,10 @@ public sealed class ModelPoolHealthProbeService : BackgroundService
         ModelGroup group,
         CancellationToken ct)
     {
-        var logWriter = sp.GetService<ILlmRequestLogWriter>();
-        var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
-
-        var startedAt = DateTime.UtcNow;
-        string? logId = null;
-
         try
         {
-            // 构建最小化请求
+            var gateway = sp.GetRequiredService<ILlmGateway>();
+
             var requestBody = new JsonObject
             {
                 ["model"] = modelId,
@@ -306,13 +301,6 @@ public sealed class ModelPoolHealthProbeService : BackgroundService
                 ["stream"] = false
             };
 
-            // 确定 API endpoint
-            var baseUrl = platform.ApiUrl?.TrimEnd('/') ?? "";
-            var endpoint = platform.PlatformType?.ToLowerInvariant() == "claude"
-                ? $"{baseUrl}/v1/messages"
-                : $"{baseUrl}/v1/chat/completions";
-
-            // 写入日志（标记为探活）
             var probeAppCallerCode = group.ModelType?.ToLowerInvariant() switch
             {
                 "intent" => AppCallerRegistry.System.HealthProbe.Intent,
@@ -321,128 +309,77 @@ public sealed class ModelPoolHealthProbeService : BackgroundService
                 _ => AppCallerRegistry.System.HealthProbe.Chat
             };
 
-            if (logWriter != null)
+            var resolution = new GatewayModelResolution
             {
-                logId = await logWriter.StartAsync(
-                    new LlmLogStart(
-                        RequestId: Guid.NewGuid().ToString("N"),
-                        Provider: platform.Name,
-                        Model: modelId,
-                        ApiBase: baseUrl,
-                        Path: "v1/chat/completions",
-                        HttpMethod: "POST",
-                        RequestHeadersRedacted: new Dictionary<string, string> { ["content-type"] = "application/json" },
-                        RequestBodyRedacted: "[Health Probe]",
-                        RequestBodyHash: null,
-                        QuestionText: "[Health Probe] hi",
-                        SystemPromptChars: null,
-                        SystemPromptHash: null,
-                        SystemPromptText: null,
-                        MessageCount: 1,
-                        GroupId: null,
-                        SessionId: null,
-                        UserId: null,
-                        ViewRole: null,
-                        DocumentChars: null,
-                        DocumentHash: null,
-                        UserPromptChars: 2,
-                        StartedAt: startedAt,
-                        RequestType: group.ModelType,
-                        AppCallerCode: probeAppCallerCode,
-                        PlatformId: platform.Id,
-                        PlatformName: platform.Name,
-                        ModelGroupId: group.Id,
-                        ModelGroupName: group.Name,
-                        IsHealthProbe: true,
-                        // S2 观测标记：健康探活由后台直接发 HTTP（非网关路由），标记 direct。
-                        GatewayTransport: GatewayTransports.Direct),
-                    ct);
-            }
-
-            // 发送 HTTP 请求
-            var httpClient = httpClientFactory.CreateClient();
-            httpClient.Timeout = TimeSpan.FromSeconds(ProbeTimeoutSeconds);
-
-            var httpRequest = new HttpRequestMessage(System.Net.Http.HttpMethod.Post, endpoint)
-            {
-                Content = new StringContent(
-                    requestBody.ToJsonString(),
-                    System.Text.Encoding.UTF8,
-                    "application/json")
+                Success = true,
+                ResolutionType = "DirectModel",
+                ExpectedModel = modelId,
+                ActualModel = modelId,
+                ActualPlatformId = platform.Id,
+                ActualPlatformName = platform.Name,
+                PlatformType = platform.PlatformType,
+                Protocol = NormalizeProbeProtocol(platform.PlatformType),
+                ResolutionReason = "model-pool-health-probe-pinned",
+                ApiUrl = platform.ApiUrl?.TrimEnd('/'),
+                ModelGroupId = group.Id,
+                ModelGroupName = group.Name,
+                ModelGroupCode = group.Code,
+                HealthStatus = "HealthProbe",
+                ApiKey = apiKey
             };
 
-            if (!string.IsNullOrWhiteSpace(apiKey))
+            var rawRequest = new GatewayRawRequest
             {
-                if (platform.PlatformType?.ToLowerInvariant() == "claude")
+                AppCallerCode = probeAppCallerCode,
+                ModelType = string.IsNullOrWhiteSpace(group.ModelType) ? ModelTypes.Chat : group.ModelType,
+                ExpectedModel = modelId,
+                PinnedPlatformId = platform.Id,
+                PinnedModelId = modelId,
+                RequestBody = requestBody,
+                TimeoutSeconds = ProbeTimeoutSeconds,
+                Context = new GatewayRequestContext
                 {
-                    httpRequest.Headers.TryAddWithoutValidation("x-api-key", apiKey);
-                    httpRequest.Headers.TryAddWithoutValidation("anthropic-version", "2023-06-01");
+                    RequestId = Guid.NewGuid().ToString("N"),
+                    QuestionText = "[Health Probe] hi",
+                    IsHealthProbe = true
                 }
-                else
-                {
-                    httpRequest.Headers.Authorization =
-                        new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
-                }
-            }
+            };
 
-            var response = await httpClient.SendAsync(httpRequest, ct);
-            var durationMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
-
-            if (response.IsSuccessStatusCode)
+            var response = await gateway.SendRawWithResolutionAsync(rawRequest, resolution, ct);
+            if (response.Success && response.StatusCode is >= 200 and < 300)
             {
-                if (logId != null)
-                {
-                    logWriter?.MarkDone(logId, new LlmLogDone(
-                        StatusCode: (int)response.StatusCode,
-                        ResponseHeaders: null,
-                        InputTokens: null,
-                        OutputTokens: null,
-                        CacheCreationInputTokens: null,
-                        CacheReadInputTokens: null,
-                        TokenUsageSource: "missing",
-                        ImageSuccessCount: null,
-                        AnswerText: "[Health Probe OK]",
-                        ThinkingText: null,
-                        AssembledTextChars: 0,
-                        AssembledTextHash: null,
-                        Status: "succeeded",
-                        EndedAt: DateTime.UtcNow,
-                        DurationMs: durationMs));
-                }
                 return true;
             }
-            else
-            {
-                var errorBody = await response.Content.ReadAsStringAsync(ct);
-                var errorPreview = errorBody.Length > 200 ? errorBody[..200] : errorBody;
 
-                if (logId != null)
-                {
-                    logWriter?.MarkError(logId, $"HTTP {(int)response.StatusCode}: {errorPreview}", (int)response.StatusCode);
-                }
+            var errorPreview = response.ErrorMessage ?? response.Content ?? "无响应";
+            if (errorPreview.Length > 200) errorPreview = errorPreview[..200];
 
-                _logger.LogDebug(
-                    "[HealthProbe] HTTP {StatusCode} from {Model}@{Platform}: {Error}",
-                    (int)response.StatusCode, modelId, platform.Name, errorPreview);
+            _logger.LogDebug(
+                "[HealthProbe] Gateway raw probe failed HTTP {StatusCode} from {Model}@{Platform}: {Error}",
+                response.StatusCode, modelId, platform.Name, errorPreview);
 
-                return false;
-            }
+            return false;
         }
         catch (TaskCanceledException)
         {
-            if (logId != null)
-            {
-                logWriter?.MarkError(logId, "Probe timeout");
-            }
             return false;
         }
         catch (HttpRequestException ex)
         {
-            if (logId != null)
-            {
-                logWriter?.MarkError(logId, $"Network error: {ex.Message}");
-            }
+            _logger.LogDebug(ex, "[HealthProbe] Gateway raw probe network error: Model={Model}@{Platform}",
+                modelId, platform.Name);
             return false;
         }
+    }
+
+    private static string? NormalizeProbeProtocol(string? platformType)
+    {
+        var normalized = platformType?.Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "anthropic" => "claude",
+            "gemini" => "google",
+            _ => normalized
+        };
     }
 }

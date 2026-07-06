@@ -61,8 +61,6 @@ public class GatewayDirectClientRatchetTests
     /// </summary>
     private static readonly Dictionary<string, string> ManualUpstreamHttpBaseline = new(StringComparer.Ordinal)
     {
-        ["PrdAgent.Infrastructure/ModelPool/ModelPoolHealthProbeService.cs"] =
-            "模型池后台探活仍直接 POST 上游，用 IsHealthProbe + transport=direct 标记；后续应改为 llmgw-serve 探活。",
         ["PrdAgent.Infrastructure/Services/InfraAgentSessions/InfraAgentRuntimeProfileService.cs"] =
             "Infra Agent runtime profile 保存/测试时仍直接请求上游；属于管理校验路径，后续应改为网关托管校验。",
     };

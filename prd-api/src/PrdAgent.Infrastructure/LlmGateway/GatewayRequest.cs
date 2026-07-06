@@ -223,6 +223,11 @@ public class GatewayRequestContext
     public string? GatewayTransport { get; init; }
 
     /// <summary>
+    /// 是否为模型池健康探活请求。探活也必须走网关，但日志需要明确区分，避免被误认为用户流量。
+    /// </summary>
+    public bool? IsHealthProbe { get; init; }
+
+    /// <summary>
     /// 返回一份把 <see cref="GatewayTransport"/> 覆盖为指定值的副本（其余字段原样拷贝）。
     /// <paramref name="source"/> 为 null 时新建一个仅含传输标记的最小上下文。
     /// 用于 http 模式过线前给请求体的 Context 打上 "http" 传输标记（S2 观测）。
@@ -242,6 +247,7 @@ public class GatewayRequestContext
             SystemPromptText = source?.SystemPromptText,
             ImageReferences = source?.ImageReferences,
             GatewayTransport = transport,
+            IsHealthProbe = source?.IsHealthProbe,
         };
 }
 

@@ -853,9 +853,12 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // 4. 设置请求头（支持 Exchange 可配置认证方案）
             if (!string.IsNullOrWhiteSpace(resolution.ApiKey))
             {
-                var authScheme = isExchange ? resolution.ExchangeAuthScheme : "Bearer";
+                var authScheme = isExchange
+                    ? resolution.ExchangeAuthScheme
+                    : GetDefaultAuthSchemeForResolution(resolution);
                 SetAuthHeader(httpRequest, authScheme ?? "Bearer", resolution.ApiKey);
             }
+            ApplyRequiredProviderHeaders(httpRequest, resolution);
 
             if (request.ExtraHeaders != null)
             {
@@ -1638,6 +1641,34 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         }
     }
 
+    private static string GetDefaultAuthSchemeForResolution(ModelResolutionResult resolution)
+    {
+        var protocol = string.IsNullOrWhiteSpace(resolution.Protocol)
+            ? resolution.PlatformType
+            : resolution.Protocol;
+        var normalized = protocol?.Trim().ToLowerInvariant();
+
+        return normalized switch
+        {
+            "claude" or "anthropic" => "x-api-key",
+            "google" or "gemini" => "x-goog-api-key",
+            _ => "Bearer"
+        };
+    }
+
+    private static void ApplyRequiredProviderHeaders(HttpRequestMessage httpRequest, ModelResolutionResult resolution)
+    {
+        var protocol = string.IsNullOrWhiteSpace(resolution.Protocol)
+            ? resolution.PlatformType
+            : resolution.Protocol;
+        var normalized = protocol?.Trim().ToLowerInvariant();
+
+        if (normalized is "claude" or "anthropic")
+        {
+            httpRequest.Headers.TryAddWithoutValidation("anthropic-version", "2023-06-01");
+        }
+    }
+
     /// <summary>
     /// 将 multipart 请求的字段和文件合并为 JSON 对象，供 Exchange 转换器使用。
     /// MultipartFields → JSON 属性，MultipartFiles 中的图片 → base64 data URI 放入 image_urls。
@@ -1799,6 +1830,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     IsFallback: resolution.IsFallback ? true : null,
                     FallbackReason: resolution.FallbackReason,
                     ExpectedModel: resolution.ExpectedModel,
+                    IsHealthProbe: request.Context?.IsHealthProbe,
                     IsStreaming: isStreaming,
                     // S2：默认进程内网关路径。若 serving 端处理来自 MAP 的跨进程请求，
                     // MAP 侧 HttpLlmGatewayClient 已把 Context.GatewayTransport 置为 "http" 过线，此处尊重之。
@@ -2060,6 +2092,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     IsFallback: resolution.IsFallback ? true : null,
                     FallbackReason: resolution.FallbackReason,
                     ExpectedModel: resolution.ExpectedModel,
+                    IsHealthProbe: request.Context?.IsHealthProbe,
                     // S2：默认进程内网关 raw 路径（生图/视频等）。serving 端处理跨进程请求时，
                     // MAP 侧已把 Context.GatewayTransport 置为 "http"，此处尊重之。
                     GatewayTransport: request.Context?.GatewayTransport ?? GatewayTransports.Inproc),
