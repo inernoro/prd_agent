@@ -395,12 +395,19 @@ run_prod_preflight() {
 
   if [ "$execute" = "1" ]; then
     mkdir -p "$evidence_dir"
+    preflight_args="--mode start --expect-commit $commit --json-out $prod_preflight_json"
+    if [ "$stage" = "shadow-start" ]; then
+      preflight_args="$preflight_args --allow-missing-gateway --allow-missing-map-logs"
+    fi
+    # shellcheck disable=SC2086
     python3 scripts/llmgw-prod-preflight.py \
-      --mode start \
-      --expect-commit "$commit" \
-      --json-out "$prod_preflight_json"
+      $preflight_args
   else
-    echo "+ python3 scripts/llmgw-prod-preflight.py --mode start --expect-commit \"$commit\" --json-out \"$prod_preflight_json\""
+    suffix=""
+    if [ "$stage" = "shadow-start" ]; then
+      suffix=" --allow-missing-gateway --allow-missing-map-logs"
+    fi
+    echo "+ python3 scripts/llmgw-prod-preflight.py --mode start --expect-commit \"$commit\" --json-out \"$prod_preflight_json\"$suffix"
   fi
 }
 
@@ -497,6 +504,8 @@ export LLMGW_HTTP_APP_CALLER_ALLOWLIST="$allowlist"
 export LLMGW_CANARY_STAGE="$canary_stage"
 export LLMGW_SHADOW_FULL_SAMPLE_PERCENT="$shadow_percent"
 export LLMGW_GATE_BASE="$gate_base"
+export LLMGW_GATE_KEY="${LLMGW_GATE_KEY:-$gate_key}"
+export LLMGW_SERVE_KEY="${LLMGW_SERVE_KEY:-$gate_key}"
 export LLMGW_GATE_SHADOW_RELEASE_COMMIT="${LLMGW_GATE_SHADOW_RELEASE_COMMIT:-$commit}"
 export LLMGW_SHADOW_COVERAGE_RELEASE_COMMIT="${LLMGW_SHADOW_COVERAGE_RELEASE_COMMIT:-$commit}"
 export PRD_AGENT_REQUIRE_FAST_INTENT="${PRD_AGENT_REQUIRE_FAST_INTENT:-1}"

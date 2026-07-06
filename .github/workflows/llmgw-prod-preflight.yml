@@ -42,6 +42,16 @@ on:
         description: "Final evidence artifact name. Defaults to llmgw-prod-stage-<rollout_evidence_run_id>."
         required: false
         default: ""
+      allow_missing_gateway:
+        description: "Allow start-mode preflight to defer gateway probes for the first shadow-start deploy."
+        required: true
+        default: false
+        type: boolean
+      allow_missing_map_logs:
+        description: "Allow start-mode preflight to defer MAP logs:read scope for the first shadow-start deploy."
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -68,6 +78,8 @@ jobs:
       ROLLOUT_MIN_OBSERVATION_HOURS: ${{ github.event.inputs.rollout_min_observation_hours || '24' }}
       INPUT_ROLLOUT_EVIDENCE_RUN_ID: ${{ github.event.inputs.rollout_evidence_run_id || '' }}
       INPUT_ROLLOUT_EVIDENCE_ARTIFACT: ${{ github.event.inputs.rollout_evidence_artifact || '' }}
+      INPUT_ALLOW_MISSING_GATEWAY: ${{ github.event.inputs.allow_missing_gateway || 'false' }}
+      INPUT_ALLOW_MISSING_MAP_LOGS: ${{ github.event.inputs.allow_missing_map_logs || 'false' }}
 
     steps:
       - name: Checkout
@@ -127,14 +139,23 @@ jobs:
           fi
 
           mkdir -p artifacts/llmgw-prod-preflight
-          python3 scripts/llmgw-prod-preflight.py \
-            --mode "$mode" \
-            --map-base "$map_base" \
-            --gw-base "$gw_base" \
-            --expect-commit "$expect_commit" \
-            --rollout-target-stage "$ROLLOUT_TARGET_STAGE" \
-            --rollout-min-observation-hours "$ROLLOUT_MIN_OBSERVATION_HOURS" \
+          args=(
+            --mode "$mode"
+            --map-base "$map_base"
+            --gw-base "$gw_base"
+            --expect-commit "$expect_commit"
+            --rollout-target-stage "$ROLLOUT_TARGET_STAGE"
+            --rollout-min-observation-hours "$ROLLOUT_MIN_OBSERVATION_HOURS"
             --json-out artifacts/llmgw-prod-preflight/prod-preflight.json
+          )
+          if [ "$INPUT_ALLOW_MISSING_GATEWAY" = "true" ]; then
+            args+=(--allow-missing-gateway)
+          fi
+          if [ "$INPUT_ALLOW_MISSING_MAP_LOGS" = "true" ]; then
+            args+=(--allow-missing-map-logs)
+          fi
+
+          python3 scripts/llmgw-prod-preflight.py "${args[@]}"
 
       - name: Upload production preflight report
         if: always()

@@ -99,7 +99,14 @@ def _map_checks(args: argparse.Namespace) -> list[dict]:
     })
 
     if not key:
-        checks.append({"name": "map_logs_scope", "ok": False, "detail": f"missing {args.map_key_env} or PRD_AGENT_API_KEY"})
+        if args.allow_missing_map_logs and args.mode == "start":
+            checks.append({
+                "name": "map_logs_scope_deferred",
+                "ok": True,
+                "detail": f"missing {args.map_key_env} or PRD_AGENT_API_KEY; deferred for initial shadow-start bootstrap",
+            })
+        else:
+            checks.append({"name": "map_logs_scope", "ok": False, "detail": f"missing {args.map_key_env} or PRD_AGENT_API_KEY"})
         return checks
 
     logs_url = f"{base}/api/logs/llm?" + urllib.parse.urlencode({"page": 1, "pageSize": 10})
@@ -108,15 +115,17 @@ def _map_checks(args: argparse.Namespace) -> list[dict]:
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
     error = payload.get("error") if isinstance(payload.get("error"), dict) else {}
     total = data.get("total") if isinstance(data, dict) else None
+    logs_ok = logs["ok"] and isinstance(total, int)
     checks.append({
-        "name": "map_logs_scope",
-        "ok": logs["ok"] and isinstance(total, int),
+        "name": "map_logs_scope" if logs_ok or not (args.allow_missing_map_logs and args.mode == "start") else "map_logs_scope_deferred",
+        "ok": logs_ok or (args.allow_missing_map_logs and args.mode == "start"),
         "detail": json.dumps({
             "status": logs["status"],
             "keyEnv": key_name,
             "total": total,
             "errorCode": error.get("code"),
             "errorMessage": error.get("message"),
+            "deferred": not logs_ok and args.allow_missing_map_logs and args.mode == "start",
         }, ensure_ascii=False),
     })
     return checks
@@ -127,6 +136,18 @@ def _gateway_checks(args: argparse.Namespace) -> list[dict]:
     base = (args.gw_base or os.environ.get("LLMGW_GATE_BASE") or os.environ.get("GW_BASE") or "").strip().rstrip("/")
     key_env_names = [args.gw_key_env, "LLMGW_GATE_KEY", "GW_KEY", "LLMGW_SERVE_KEY"]
     key_name, key = _env_first(key_env_names)
+    if args.allow_missing_gateway and args.mode == "start":
+        checks.append({
+            "name": "gateway_bootstrap_deferred",
+            "ok": True,
+            "detail": json.dumps({
+                "reason": "initial shadow-start may deploy the gateway route for the first time; post-deploy serving probe remains required",
+                "baseConfigured": bool(base),
+                "keyConfigured": bool(key),
+                "keyEnv": key_name,
+            }, ensure_ascii=False),
+        })
+        return checks
     if not base:
         checks.append({"name": "gateway_base_configured", "ok": False, "detail": "missing LLMGW_GATE_BASE/GW_BASE or --gw-base"})
         checks.append({
@@ -201,8 +222,18 @@ def main() -> int:
     parser.add_argument("--mode", choices=["start", "completion"], default=os.environ.get("LLMGW_PROD_PREFLIGHT_MODE", "completion"))
     parser.add_argument("--map-base", default="")
     parser.add_argument("--map-key-env", default="PRD_AGENT_API_KEY")
+    parser.add_argument(
+        "--allow-missing-map-logs",
+        action="store_true",
+        help="Start-mode bootstrap escape hatch when a logs:read key is not available before the first shadow-start deploy.",
+    )
     parser.add_argument("--gw-base", default="")
     parser.add_argument("--gw-key-env", default="LLMGW_GATE_KEY")
+    parser.add_argument(
+        "--allow-missing-gateway",
+        action="store_true",
+        help="Start-mode bootstrap escape hatch for the first shadow-start deploy. Gateway probes are deferred until post-deploy gates.",
+    )
     parser.add_argument("--expect-commit", default="")
     parser.add_argument("--rollout-ledger", default=os.environ.get("LLMGW_ROLLOUT_LEDGER", ".llmgw-release-evidence/rollout-ledger.jsonl"))
     parser.add_argument("--rollout-target-stage", default=os.environ.get("LLMGW_ROLLOUT_TARGET_STAGE", "http-full"))
