@@ -506,10 +506,16 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_PROD_GATE_BASE", workflow);
         Assert.Contains("LLMGW_PROD_GATE_KEY", workflow);
         Assert.Contains("PRD_AGENT_PROD_GITHUB_TOKEN", workflow);
+        Assert.Contains("rollout_evidence_run_id", workflow);
+        Assert.Contains("actions: read", workflow);
         Assert.Contains("logs:read access", workflow);
         Assert.Contains("fetch-depth: 0", workflow);
+        Assert.Contains("actions/download-artifact@v4", workflow);
+        Assert.Contains("Restore previous rollout evidence", workflow);
+        Assert.Contains("llmgw-prod-stage-{0}", workflow);
         Assert.Contains("[ \"$stage\" != \"rollback-inproc\" ] && [ \"$stage\" != \"rollback-rehearsal\" ] && [ -z \"$map_base\" ]", workflow);
         Assert.Contains("[ \"$stage\" != \"rollback-inproc\" ] && [ \"$stage\" != \"rollback-rehearsal\" ] && [ -z \"$(printf '%s' \"${PRD_AGENT_API_KEY:-}\" | xargs)\" ]", workflow);
+        Assert.Contains("stage $stage requires rollout_evidence_run_id so prior rollout ledger evidence is restored", workflow);
         Assert.Contains("scripts/llmgw-prod-stage.sh", workflow);
         Assert.Contains("--stage \"$stage\"", workflow);
         Assert.Contains("--commit \"$commit\"", workflow);
@@ -533,6 +539,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("prod_stage_workflow_runs_on_production_runner_and_uploads_rollout_evidence", readiness);
         Assert.Contains(".github/workflows/llmgw-prod-stage.yml", readiness);
         Assert.Contains("leaksStageSecret", readiness);
+        Assert.Contains("Restore previous rollout evidence", readiness);
     }
 
     [Fact]
@@ -787,11 +794,19 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("mode:", workflow);
         Assert.Contains("- start", workflow);
         Assert.Contains("- completion", workflow);
+        Assert.Contains("rollout_evidence_run_id", workflow);
+        Assert.Contains("actions: read", workflow);
         Assert.Contains("PRD_AGENT_PROD_BASE", workflow);
         Assert.Contains("PRD_AGENT_PROD_API_KEY", workflow);
         Assert.Contains("LLMGW_PROD_GATE_BASE", workflow);
         Assert.Contains("LLMGW_PROD_GATE_KEY", workflow);
         Assert.Contains("LLMGW_PROD_EXPECT_COMMIT", workflow);
+        Assert.Contains("actions/download-artifact@v4", workflow);
+        Assert.Contains("Restore rollout evidence for completion", workflow);
+        Assert.Contains("llmgw-prod-stage-{0}", workflow);
+        Assert.Contains(".llmgw-release-evidence/", workflow);
+        Assert.Contains("completion mode requires rollout_evidence_run_id", workflow);
+        Assert.Contains("completion mode could not find .llmgw-release-evidence/rollout-ledger.jsonl after artifact restore", workflow);
         Assert.Contains("logs:read access", workflow);
         Assert.Contains("scripts/llmgw-prod-preflight.py", workflow);
         Assert.Contains("--mode \"$mode\"", workflow);
@@ -807,6 +822,7 @@ public class GatewayDataDomainGuardTests
 
         Assert.Contains("prod_preflight_workflow_uploads_redacted_start_completion_report", readiness);
         Assert.Contains("leaksPreflightSecret", readiness);
+        Assert.Contains("Restore rollout evidence for completion", readiness);
     }
 
     [Fact]

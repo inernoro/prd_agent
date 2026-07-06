@@ -31,9 +31,18 @@ on:
         description: "Minimum observation hours between rollout ledger stages."
         required: false
         default: "24"
+      rollout_evidence_run_id:
+        description: "Final llmgw-prod-stage run id to download before completion audit."
+        required: false
+        default: ""
+      rollout_evidence_artifact:
+        description: "Final evidence artifact name. Defaults to llmgw-prod-stage-<rollout_evidence_run_id>."
+        required: false
+        default: ""
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: llmgw-prod-preflight
@@ -54,10 +63,21 @@ jobs:
       LLMGW_GATE_KEY: ${{ secrets.LLMGW_PROD_GATE_KEY }}
       ROLLOUT_TARGET_STAGE: ${{ github.event.inputs.rollout_target_stage || 'http-full' }}
       ROLLOUT_MIN_OBSERVATION_HOURS: ${{ github.event.inputs.rollout_min_observation_hours || '24' }}
+      INPUT_ROLLOUT_EVIDENCE_RUN_ID: ${{ github.event.inputs.rollout_evidence_run_id || '' }}
+      INPUT_ROLLOUT_EVIDENCE_ARTIFACT: ${{ github.event.inputs.rollout_evidence_artifact || '' }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Restore rollout evidence for completion
+        if: ${{ github.event.inputs.mode == 'completion' && github.event.inputs.rollout_evidence_run_id != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.event.inputs.rollout_evidence_run_id }}
+          name: ${{ github.event.inputs.rollout_evidence_artifact != '' && github.event.inputs.rollout_evidence_artifact || format('llmgw-prod-stage-{0}', github.event.inputs.rollout_evidence_run_id) }}
+          path: .llmgw-release-evidence/
+          github-token: ${{ secrets.PRD_AGENT_PROD_GITHUB_TOKEN || github.token }}
 
       - name: Run production preflight
         shell: bash
@@ -68,6 +88,7 @@ jobs:
           map_base="$(printf '%s' "${INPUT_MAP_BASE:-$DEFAULT_MAP_BASE}" | xargs)"
           gw_base="$(printf '%s' "${INPUT_GW_BASE:-$DEFAULT_GW_BASE}" | xargs)"
           expect_commit="$(printf '%s' "${INPUT_EXPECT_COMMIT:-$EXPECT_COMMIT}" | xargs)"
+          rollout_evidence_run_id="$(printf '%s' "$INPUT_ROLLOUT_EVIDENCE_RUN_ID" | xargs)"
 
           if [ "$mode" != "start" ] && [ "$mode" != "completion" ]; then
             echo "ERROR: mode must be start or completion; got: $mode" >&2
@@ -91,6 +112,14 @@ jobs:
           fi
           if [ "$mode" = "completion" ] && [ -z "$expect_commit" ]; then
             echo "ERROR: completion mode requires expect_commit or vars.LLMGW_PROD_EXPECT_COMMIT." >&2
+            exit 1
+          fi
+          if [ "$mode" = "completion" ] && [ -z "$rollout_evidence_run_id" ]; then
+            echo "ERROR: completion mode requires rollout_evidence_run_id so final rollout evidence is restored." >&2
+            exit 1
+          fi
+          if [ "$mode" = "completion" ] && [ ! -f .llmgw-release-evidence/rollout-ledger.jsonl ]; then
+            echo "ERROR: completion mode could not find .llmgw-release-evidence/rollout-ledger.jsonl after artifact restore." >&2
             exit 1
           fi
 
