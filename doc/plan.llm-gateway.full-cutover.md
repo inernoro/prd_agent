@@ -146,7 +146,7 @@ LLMGW_GATE_KEY=<X-Gateway-Key> \
 scripts/llmgw-prod-stage.sh --stage shadow-start --commit <40位SHA> --execute
 ```
 
-支持阶段：`shadow-start`、`canary-intent-text`、`canary-chat`、`canary-streaming`、`canary-vision`、
+支持阶段：`shadow-start`、`rollback-rehearsal`、`canary-intent-text`、`canary-chat`、`canary-streaming`、`canary-vision`、
 `canary-image`、`canary-video-asr`、`http-full`、`rollback-inproc`。脚本默认 dry-run，只有显式
 `--execute` 才会真实运行；deploy 阶段会先跑 `fast.sh --commit <sha>`，再用同一个 sha 跑
 `exec_dep.sh --commit <sha>`，并默认设置 `PRD_AGENT_REQUIRE_FAST_INTENT=1` 与
@@ -162,6 +162,8 @@ stage/serving-probe/gw-smoke 证据；canary/http 阶段还必须读到 verdict=
 阶段推进还默认要求前一阶段 `success` 记录至少已观察 24 小时（`LLMGW_STAGE_MIN_OBSERVATION_HOURS` /
 `--min-observation-hours` 可调），因此 canary 批次不能在同一小时内连续推进；只有 shadow 样本门、serving probe、
 D 层 smoke 与阶段观察窗口都满足后，台账才允许进入下一阶段。
+`rollback-rehearsal` 只用 `LLMGW_ROLLBACK_DRY_RUN=1` 演练回滚脚本，不重启 API；任何 canary/http 阶段都必须
+先在同一 commit 的台账里看到 `rollback-rehearsal success`，防止没有回滚路径演练就进入灰度或全量。
 灰度阶段会自动设置 `LLMGW_MODE=shadow`、对应 `LLMGW_CANARY_STAGE` 与 allowlist；`http-full`
 会设置 `LLMGW_MODE=http` 并依赖 `exec_dep.sh` 的全量证据门。`rollback-inproc` 只调用
 `scripts/llmgw-rollback-inproc.sh`，不回滚数据库。

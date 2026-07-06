@@ -287,6 +287,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("canary-vision", script);
         Assert.Contains("canary-image", script);
         Assert.Contains("canary-video-asr", script);
+        Assert.Contains("rollback-rehearsal", script);
         Assert.Contains("http-full", script);
         Assert.Contains("rollback-inproc", script);
         Assert.Contains("execute=0", script);
@@ -321,18 +322,23 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("./fast.sh --commit \"$commit\"", script);
         Assert.Contains("./exec_dep.sh --commit \"$commit\"", script);
         Assert.Contains("scripts/llmgw-rollback-inproc.sh", script);
+        Assert.Contains("LLMGW_ROLLBACK_DRY_RUN=1 scripts/llmgw-rollback-inproc.sh", script);
 
         Assert.Contains("LLM Gateway rollout ledger", ledger);
         Assert.Contains("STAGES = [", ledger);
+        Assert.Contains("ROLLBACK_REHEARSAL_STAGE = \"rollback-rehearsal\"", ledger);
+        Assert.Contains("_stage_requires_rehearsal", ledger);
         Assert.Contains("\"shadow-start\"", ledger);
         Assert.Contains("\"canary-video-asr\"", ledger);
         Assert.Contains("\"http-full\"", ledger);
         Assert.Contains("missing_success", ledger);
+        Assert.Contains("requires rollback rehearsal success for the same commit", ledger);
         Assert.Contains("allow-out-of-order", ledger);
         Assert.Contains("\"status\": args.status", ledger);
         Assert.Contains("\"evidenceJson\": args.evidence_json", ledger);
         Assert.Contains("\"servingProbeJson\": args.serving_probe_json", ledger);
         Assert.Contains("\"smokeJson\": args.smoke_json", ledger);
+        Assert.Contains("\"rollbackRehearsal\": args.stage == ROLLBACK_REHEARSAL_STAGE", ledger);
         Assert.Contains("min_observation_hours", ledger);
         Assert.Contains("rollout stage observation window not satisfied", ledger);
         Assert.Contains("\"minStageObservationHours\": args.min_stage_observation_hours", ledger);
@@ -348,6 +354,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("serving-probe.json", readiness);
         Assert.Contains("GW_SMOKE_JSON_OUT", readiness);
         Assert.Contains("LLMGW_STAGE_MIN_OBSERVATION_HOURS", readiness);
+        Assert.Contains("requires rollback rehearsal success for the same commit", readiness);
         Assert.Contains("rollout stage observation window not satisfied", readiness);
         Assert.Contains("leaksKeyArg", readiness);
     }
@@ -361,6 +368,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("export LLMGW_HTTP_APP_CALLER_ALLOWLIST=", script);
         Assert.Contains("export LLMGW_SHADOW_FULL_SAMPLE_PERCENT=0", script);
         Assert.Contains("up -d --no-deps --force-recreate \"$service_name\"", script);
+        Assert.Contains("LLMGW_ROLLBACK_DRY_RUN", script);
+        Assert.Contains("LLM Gateway rollback dry-run", script);
         Assert.Contains("database: unchanged", script);
         Assert.Contains("images: unchanged", script);
         Assert.Contains("LLMGW_ROLLBACK_API_SERVICE:-api", script);

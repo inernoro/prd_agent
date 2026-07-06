@@ -181,6 +181,7 @@ def _static_checks() -> list[dict]:
             "canary-vision",
             "canary-image",
             "canary-video-asr",
+            "rollback-rehearsal",
             "http-full",
             "rollback-inproc",
             "LLMGW_GATE_KEY, GW_KEY, or LLMGW_SERVE_KEY",
@@ -212,6 +213,7 @@ def _static_checks() -> list[dict]:
             "./fast.sh --commit \"$commit\"",
             "./exec_dep.sh --commit \"$commit\"",
             "scripts/llmgw-rollback-inproc.sh",
+            "LLMGW_ROLLBACK_DRY_RUN=1 scripts/llmgw-rollback-inproc.sh",
         ],
     )
     executable = bool(prod_stage_path.stat().st_mode & stat.S_IXUSR)
@@ -221,10 +223,13 @@ def _static_checks() -> list[dict]:
         [
             "LLM Gateway rollout ledger",
             "STAGES = [",
+            "ROLLBACK_REHEARSAL_STAGE = \"rollback-rehearsal\"",
+            "_stage_requires_rehearsal",
             "shadow-start",
             "canary-video-asr",
             "http-full",
             "missing_success",
+            "requires rollback rehearsal success for the same commit",
             "min_observation_hours",
             "rollout stage observation window not satisfied",
             "allow-out-of-order",
@@ -233,6 +238,7 @@ def _static_checks() -> list[dict]:
             "\"evidenceJson\": args.evidence_json",
             "\"servingProbeJson\": args.serving_probe_json",
             "\"smokeJson\": args.smoke_json",
+            "\"rollbackRehearsal\": args.stage == ROLLBACK_REHEARSAL_STAGE",
             "\"minStageObservationHours\": args.min_stage_observation_hours",
             "_require_pass_json",
             "stage-report",
@@ -332,6 +338,8 @@ def _static_checks() -> list[dict]:
             "export LLMGW_MODE=inproc",
             "export LLMGW_HTTP_APP_CALLER_ALLOWLIST=",
             "export LLMGW_SHADOW_FULL_SAMPLE_PERCENT=0",
+            "LLMGW_ROLLBACK_DRY_RUN",
+            "LLM Gateway rollback dry-run",
             "up -d --no-deps --force-recreate",
             "database: unchanged",
             "images: unchanged",
@@ -406,16 +414,19 @@ def _rollback_dry_run() -> dict:
         env["PATH"] = f"{tmp}:{env.get('PATH', '')}"
         env["FAKE_ROLLBACK_OUT"] = str(out_path)
         env["LLMGW_ROLLBACK_COMPOSE_FILE"] = str(ROOT / "docker-compose.yml")
+        env["LLMGW_ROLLBACK_DRY_RUN"] = "1"
         result = _run(["scripts/llmgw-rollback-inproc.sh"], env=env, timeout=60)
         captured = out_path.read_text(encoding="utf-8") if out_path.exists() else ""
+        stdout = str(result.get("stdout") or "")
         ok = (
             result["ok"]
-            and "up -d --no-deps --force-recreate api" in captured
-            and "LLMGW_MODE=inproc" in captured
-            and "ALLOWLIST=" in captured
-            and "SHADOW=0" in captured
+            and not captured
+            and "dryRun: 1" in stdout
+            and "LLM Gateway rollback dry-run" in stdout
+            and "up -d --no-deps --force-recreate api" in stdout
+            and "API would restart with LLMGW_MODE=inproc" in stdout
         )
-        return {"name": "rollback_dry_run", "ok": ok, "detail": captured, "command": result}
+        return {"name": "rollback_dry_run", "ok": ok, "detail": stdout + captured, "command": result}
 
 
 def _dotnet_checks() -> list[dict]:

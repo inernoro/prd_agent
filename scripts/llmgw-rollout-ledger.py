@@ -24,6 +24,11 @@ STAGES = [
     "canary-video-asr",
     "http-full",
 ]
+ROLLBACK_REHEARSAL_STAGE = "rollback-rehearsal"
+
+
+def _stage_requires_rehearsal(stage: str) -> bool:
+    return stage not in {"shadow-start", ROLLBACK_REHEARSAL_STAGE}
 
 
 def _load(path: str) -> list[dict]:
@@ -100,24 +105,36 @@ def validate(args: argparse.Namespace) -> int:
     if stage == "rollback-inproc":
         print("LLM Gateway rollout ledger: rollback does not require prior stages")
         return 0
-    if stage not in STAGES:
+    if stage not in STAGES and stage != ROLLBACK_REHEARSAL_STAGE:
         print(f"ERROR: unknown rollout stage: {stage}", file=sys.stderr)
         return 2
     if not commit:
         print("ERROR: rollout ledger validation requires --commit", file=sys.stderr)
         return 2
 
+    entries = _load(args.ledger)
+    successful = _successful_stages(entries, commit)
+    if _stage_requires_rehearsal(stage) and ROLLBACK_REHEARSAL_STAGE not in successful:
+        print(
+            "ERROR: rollout stage requires rollback rehearsal success for the same commit. "
+            f"stage={stage} commit={commit} missing_success={ROLLBACK_REHEARSAL_STAGE} ledger={args.ledger}",
+            file=sys.stderr,
+        )
+        return 1
+
     if args.allow_out_of_order:
         print("WARN: rollout ledger order check skipped by --allow-out-of-order", file=sys.stderr)
         return 0
 
-    entries = _load(args.ledger)
+    if stage == ROLLBACK_REHEARSAL_STAGE:
+        print("LLM Gateway rollout ledger: rollback rehearsal does not require prior stages")
+        return 0
+
     required = STAGES[: STAGES.index(stage)]
     if not required:
         print("LLM Gateway rollout ledger: no prior stage required")
         return 0
 
-    successful = _successful_stages(entries, commit)
     missing = [item for item in required if item not in successful]
     if missing:
         print(
@@ -173,10 +190,11 @@ def append(args: argparse.Namespace) -> int:
         os.makedirs(parent, exist_ok=True)
     if args.status == "success":
         _require_pass_json(args.evidence_json, "stage evidence")
-        _require_pass_json(args.serving_probe_json, "serving probe evidence")
-        _require_pass_json(args.smoke_json, "D-layer smoke evidence")
-        if _bool_flag(args.release_gate_required):
-            _require_pass_json(args.release_gate_json, "release gate evidence")
+        if args.stage != ROLLBACK_REHEARSAL_STAGE:
+            _require_pass_json(args.serving_probe_json, "serving probe evidence")
+            _require_pass_json(args.smoke_json, "D-layer smoke evidence")
+            if _bool_flag(args.release_gate_required):
+                _require_pass_json(args.release_gate_json, "release gate evidence")
 
     entry = {
         "recordedAt": datetime.now(timezone.utc).isoformat(),
@@ -192,6 +210,7 @@ def append(args: argparse.Namespace) -> int:
         "evidenceMarkdown": args.evidence_md,
         "releaseGateJson": args.release_gate_json,
         "releaseGateRequired": _bool_flag(args.release_gate_required),
+        "rollbackRehearsal": args.stage == ROLLBACK_REHEARSAL_STAGE,
         "servingProbeJson": args.serving_probe_json,
         "smokeJson": args.smoke_json,
         "minStageObservationHours": args.min_stage_observation_hours,
@@ -234,6 +253,7 @@ def _write_markdown(path: str, report: dict) -> None:
         fh.write(f"- canaryStage: `{cell(report['canaryStage'])}`\n")
         fh.write(f"- allowlist: `{cell(report['allowlist'])}`\n")
         fh.write(f"- releaseGateRequired: `{cell(report['releaseGateRequired'])}`\n")
+        fh.write(f"- rollbackRehearsal: `{cell(report['rollbackRehearsal'])}`\n")
         fh.write(f"- minStageObservationHours: `{cell(report['minStageObservationHours'])}`\n")
         fh.write(f"- releaseGateJson: `{cell(report['releaseGateJson'])}`\n")
         fh.write(f"- servingProbeJson: `{cell(report['servingProbeJson'])}`\n")
@@ -254,6 +274,8 @@ def stage_report(args: argparse.Namespace) -> int:
         ("smokeJson", args.smoke_json, True),
         ("releaseGateJson", args.release_gate_json, _bool_flag(args.release_gate_required)),
     ]
+    if args.stage == ROLLBACK_REHEARSAL_STAGE:
+        checks = []
     for label, path, required in checks:
         if not required:
             continue
@@ -274,6 +296,7 @@ def stage_report(args: argparse.Namespace) -> int:
         "shadowFullSamplePercent": args.shadow_full_sample_percent,
         "gateBase": args.gate_base,
         "releaseGateRequired": _bool_flag(args.release_gate_required),
+        "rollbackRehearsal": args.stage == ROLLBACK_REHEARSAL_STAGE,
         "minStageObservationHours": args.min_stage_observation_hours,
         "releaseGateJson": args.release_gate_json,
         "servingProbeJson": args.serving_probe_json,

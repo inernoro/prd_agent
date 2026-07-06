@@ -9,6 +9,7 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 compose_file="${LLMGW_ROLLBACK_COMPOSE_FILE:-$repo_root/docker-compose.yml}"
 service_name="${LLMGW_ROLLBACK_API_SERVICE:-api}"
+dry_run="${LLMGW_ROLLBACK_DRY_RUN:-0}"
 
 if [ ! -f "$compose_file" ]; then
   echo "ERROR: 找不到 compose 文件: $compose_file" >&2
@@ -29,12 +30,17 @@ echo "  compose: $compose_file"
 echo "  service: $service_name"
 echo "  database: unchanged"
 echo "  images: unchanged"
+echo "  dryRun: $dry_run"
 
 export LLMGW_MODE=inproc
 export LLMGW_HTTP_APP_CALLER_ALLOWLIST=
 export LLMGW_SHADOW_FULL_SAMPLE_PERCENT=0
 
-# shellcheck disable=SC2086
-$COMPOSE -f "$compose_file" up -d --no-deps --force-recreate "$service_name"
-
-echo "LLM Gateway rollback completed: API restarted with LLMGW_MODE=inproc"
+if [ "$dry_run" = "1" ] || [ "$dry_run" = "true" ]; then
+  echo "LLM Gateway rollback dry-run: $COMPOSE -f $compose_file up -d --no-deps --force-recreate $service_name"
+  echo "LLM Gateway rollback dry-run completed: API would restart with LLMGW_MODE=inproc"
+else
+  # shellcheck disable=SC2086
+  $COMPOSE -f "$compose_file" up -d --no-deps --force-recreate "$service_name"
+  echo "LLM Gateway rollback completed: API restarted with LLMGW_MODE=inproc"
+fi

@@ -44,3 +44,4 @@
 | ops | prd-agent | LLM Gateway 生产阶段推进脚本新增 JSONL 台账和同 commit 顺序校验，防止跳过 shadow/canary 证据阶段 |
 | ops | prd-agent | LLM Gateway 生产阶段台账 success 前强制校验 stage、serving probe、gw-smoke 与 release gate 证据 verdict=pass |
 | ops | prd-agent | LLM Gateway 生产阶段推进默认要求前一阶段 success 至少观察 24 小时，防止连续跳过 canary 观察窗口 |
+| ops | prd-agent | LLM Gateway 生产阶段新增 rollback-rehearsal，同一 commit 未演练回滚脚本时禁止进入 canary/http 阶段 |

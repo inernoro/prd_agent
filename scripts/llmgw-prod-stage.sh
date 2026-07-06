@@ -20,6 +20,7 @@ Stages:
   canary-vision      Canary vision raw entry
   canary-image       Canary text2img/img2img raw entries
   canary-video-asr   Canary video and ASR raw entries
+  rollback-rehearsal Dry-run rollback command and record same-commit rehearsal
   http-full          Full LLMGW_MODE=http cutover, gated by all core evidence
   rollback-inproc    Execute rollback script to return MAP API to inproc mode
 
@@ -208,6 +209,10 @@ case "$stage" in
     allowlist="video-agent.videogen::video-gen,document-store.subtitle::asr,transcript-agent.transcribe::asr"
     shadow_percent="$sample_percent"
     ;;
+  rollback-rehearsal)
+    mode="inproc"
+    canary_stage="rollback-rehearsal"
+    ;;
   http-full)
     mode="http"
     ;;
@@ -220,7 +225,7 @@ case "$stage" in
     ;;
 esac
 
-if [ "$stage" != "rollback-inproc" ]; then
+if [ "$stage" != "rollback-inproc" ] && [ "$stage" != "rollback-rehearsal" ]; then
   if [ -z "$gate_base" ]; then
     echo "ERROR: $stage requires LLMGW_GATE_BASE or GW_BASE" >&2
     exit 1
@@ -256,7 +261,7 @@ print_plan() {
     echo "  canaryStage: ${canary_stage:-none}"
     echo "  allowlist: ${allowlist:-empty}"
     echo "  shadowFullSamplePercent: $shadow_percent"
-    echo "  gateBase: $gate_base"
+    echo "  gateBase: ${gate_base:-none}"
     echo "  releaseGateJson: $release_gate_json"
     echo "  servingProbeJson: $serving_probe_json"
     echo "  smokeJson: $smoke_json"
@@ -336,6 +341,35 @@ if [ "$stage" = "rollback-inproc" ]; then
 fi
 
 validate_ledger_order
+
+if [ "$stage" = "rollback-rehearsal" ]; then
+  release_gate_required=0
+  if [ "$execute" = "1" ]; then
+    mkdir -p "$evidence_dir"
+    LLMGW_ROLLBACK_DRY_RUN=1 scripts/llmgw-rollback-inproc.sh
+    python3 scripts/llmgw-rollout-ledger.py stage-report \
+      --json-out "$stage_json" \
+      --report-md "$stage_md" \
+      --stage "$stage" \
+      --status success \
+      --commit "$commit" \
+      --mode "$mode" \
+      --canary-stage "$canary_stage" \
+      --allowlist "$allowlist" \
+      --shadow-full-sample-percent "$shadow_percent" \
+      --gate-base "$gate_base" \
+      --release-gate-json "$release_gate_json" \
+      --release-gate-required "$release_gate_required" \
+      --serving-probe-json "$serving_probe_json" \
+      --smoke-json "$smoke_json" \
+      --min-stage-observation-hours "$min_observation_hours"
+    append_ledger_entry success
+  else
+    echo "+ LLMGW_ROLLBACK_DRY_RUN=1 scripts/llmgw-rollback-inproc.sh"
+    echo "Dry-run only. Add --execute to record rollback rehearsal success."
+  fi
+  exit 0
+fi
 
 export LLMGW_MODE="$mode"
 export LLMGW_HTTP_APP_CALLER_ALLOWLIST="$allowlist"
