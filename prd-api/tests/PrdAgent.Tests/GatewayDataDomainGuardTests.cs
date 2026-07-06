@@ -369,6 +369,13 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("rollout stage observation window not satisfied", ledger);
         Assert.Contains("\"minStageObservationHours\": args.min_stage_observation_hours", ledger);
         Assert.Contains("_require_pass_json", ledger);
+        Assert.Contains("_require_stage_evidence_for_commit", ledger);
+        Assert.Contains("_require_serving_probe_for_commit", ledger);
+        Assert.Contains("_require_release_gate_for_commit", ledger);
+        Assert.Contains("shadowReleaseCommit mismatch", ledger);
+        Assert.Contains("health sample commit mismatch", ledger);
+        Assert.Contains("commit mismatch", ledger);
+        Assert.Contains("missing shadowChecks for same-commit evidence", ledger);
         Assert.Contains("stage-report", ledger);
         Assert.Contains("ROLLOUT_SEQUENCE", ledger);
         Assert.Contains("audit", ledger);

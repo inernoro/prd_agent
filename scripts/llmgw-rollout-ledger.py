@@ -75,11 +75,76 @@ def _load_json_file(path: str, label: str) -> dict:
     return payload
 
 
-def _require_pass_json(path: str, label: str) -> None:
+def _normalize_commit(value: object) -> str:
+    raw = str(value or "").strip()
+    if raw.lower().startswith("sha-"):
+        raw = raw[4:]
+    return raw.lower()
+
+
+def _require_pass_json(path: str, label: str) -> dict:
     payload = _load_json_file(path, label)
     verdict = str(payload.get("verdict") or payload.get("Verdict") or "").lower()
     if verdict != "pass":
         raise SystemExit(f"ERROR: {label} verdict is not pass: {path} verdict={verdict or 'empty'}")
+    return payload
+
+
+def _require_stage_evidence_for_commit(path: str, label: str, commit: str) -> None:
+    payload = _require_pass_json(path, label)
+    expected = _normalize_commit(commit)
+    actual = _normalize_commit(payload.get("commit") or payload.get("Commit"))
+    if not expected:
+        raise SystemExit(f"ERROR: {label} cannot validate commit because ledger commit is empty: {path}")
+    if actual != expected:
+        raise SystemExit(f"ERROR: {label} commit mismatch: {path} actual={actual or 'empty'} expected={expected}")
+
+
+def _require_serving_probe_for_commit(path: str, label: str, commit: str) -> None:
+    payload = _require_pass_json(path, label)
+    expected = _normalize_commit(commit)
+    if not expected:
+        raise SystemExit(f"ERROR: {label} cannot validate commit because ledger commit is empty: {path}")
+
+    expected_commit = _normalize_commit(payload.get("expectedCommit") or payload.get("ExpectedCommit"))
+    if expected_commit and expected_commit != expected:
+        raise SystemExit(f"ERROR: {label} expectedCommit mismatch: {path} actual={expected_commit} expected={expected}")
+
+    samples = payload.get("healthSamples") or payload.get("HealthSamples") or []
+    sample_commits = sorted({
+        _normalize_commit(sample.get("commit") or sample.get("Commit"))
+        for sample in samples
+        if isinstance(sample, dict) and _normalize_commit(sample.get("commit") or sample.get("Commit"))
+    })
+    if sample_commits and sample_commits != [expected]:
+        raise SystemExit(
+            f"ERROR: {label} health sample commit mismatch: {path} actual={','.join(sample_commits)} expected={expected}"
+        )
+
+
+def _require_release_gate_for_commit(path: str, label: str, commit: str) -> None:
+    payload = _require_pass_json(path, label)
+    expected = _normalize_commit(commit)
+    if not expected:
+        raise SystemExit(f"ERROR: {label} cannot validate commit because ledger commit is empty: {path}")
+
+    shadow_commit = _normalize_commit(payload.get("shadowReleaseCommit") or payload.get("ShadowReleaseCommit"))
+    if shadow_commit != expected:
+        raise SystemExit(f"ERROR: {label} shadowReleaseCommit mismatch: {path} actual={shadow_commit or 'empty'} expected={expected}")
+
+    checks = payload.get("shadowChecks") or payload.get("ShadowChecks") or []
+    if not isinstance(checks, list) or not checks:
+        raise SystemExit(f"ERROR: {label} missing shadowChecks for same-commit evidence: {path}")
+    for index, item in enumerate(checks, start=1):
+        if not isinstance(item, dict):
+            raise SystemExit(f"ERROR: {label} shadowChecks[{index}] is not an object: {path}")
+        item_commit = _normalize_commit(item.get("releaseCommit") or item.get("ReleaseCommit"))
+        if item_commit != expected:
+            item_label = item.get("label") or item.get("Label") or index
+            raise SystemExit(
+                f"ERROR: {label} shadowChecks[{item_label}] releaseCommit mismatch: "
+                f"{path} actual={item_commit or 'empty'} expected={expected}"
+            )
 
 
 def _bool_flag(value: str) -> bool:
@@ -144,6 +209,7 @@ def _required_rollout_stages(target_stage: str, require_target_success: bool) ->
 
 def _entry_evidence_failures(entry: dict) -> list[str]:
     stage = str(entry.get("stage") or "")
+    commit = _normalize_commit(entry.get("commit"))
     failures: list[str] = []
     release_main_ref = str(entry.get("releaseMainRef") or "").strip()
     release_main_sha = str(entry.get("releaseMainSha") or "").strip().lower()
@@ -157,7 +223,7 @@ def _entry_evidence_failures(entry: dict) -> list[str]:
         failures.append(f"ERROR: {stage} allowOutOfOrder missing reason")
     evidence_json = str(entry.get("evidenceJson") or "")
     try:
-        _require_pass_json(evidence_json, f"{stage} stage evidence")
+        _require_stage_evidence_for_commit(evidence_json, f"{stage} stage evidence", commit)
     except SystemExit as exc:
         failures.append(str(exc))
 
@@ -169,12 +235,15 @@ def _entry_evidence_failures(entry: dict) -> list[str]:
         ("smokeJson", "D-layer smoke evidence"),
     ]:
         try:
-            _require_pass_json(str(entry.get(key) or ""), f"{stage} {label}")
+            if key == "servingProbeJson":
+                _require_serving_probe_for_commit(str(entry.get(key) or ""), f"{stage} {label}", commit)
+            else:
+                _require_pass_json(str(entry.get(key) or ""), f"{stage} {label}")
         except SystemExit as exc:
             failures.append(str(exc))
     if _bool_flag(str(entry.get("releaseGateRequired") or "0")):
         try:
-            _require_pass_json(str(entry.get("releaseGateJson") or ""), f"{stage} release gate evidence")
+            _require_release_gate_for_commit(str(entry.get("releaseGateJson") or ""), f"{stage} release gate evidence", commit)
         except SystemExit as exc:
             failures.append(str(exc))
     return failures
@@ -311,12 +380,12 @@ def append(args: argparse.Namespace) -> int:
     if parent:
         os.makedirs(parent, exist_ok=True)
     if args.status == "success":
-        _require_pass_json(args.evidence_json, "stage evidence")
+        _require_stage_evidence_for_commit(args.evidence_json, "stage evidence", args.commit)
         if args.stage != ROLLBACK_REHEARSAL_STAGE:
-            _require_pass_json(args.serving_probe_json, "serving probe evidence")
+            _require_serving_probe_for_commit(args.serving_probe_json, "serving probe evidence", args.commit)
             _require_pass_json(args.smoke_json, "D-layer smoke evidence")
             if _bool_flag(args.release_gate_required):
-                _require_pass_json(args.release_gate_json, "release gate evidence")
+                _require_release_gate_for_commit(args.release_gate_json, "release gate evidence", args.commit)
 
     entry = {
         "recordedAt": datetime.now(timezone.utc).isoformat(),
@@ -410,7 +479,12 @@ def stage_report(args: argparse.Namespace) -> int:
         if not required:
             continue
         try:
-            _require_pass_json(path, label)
+            if label == "servingProbeJson":
+                _require_serving_probe_for_commit(path, label, args.commit)
+            elif label == "releaseGateJson":
+                _require_release_gate_for_commit(path, label, args.commit)
+            else:
+                _require_pass_json(path, label)
         except SystemExit as exc:
             failures.append(str(exc))
 
