@@ -116,6 +116,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("scripts/gw-smoke.py", script);
         Assert.Contains("LLMGW_GATE_SMOKE_TIMEOUT_SECONDS", script);
         Assert.Contains("GW_BASE=\"$gate_base\" GW_KEY=\"$gate_key\" GW_TIMEOUT=\"${LLMGW_GATE_SMOKE_TIMEOUT_SECONDS:-120}\" python3 scripts/gw-smoke.py", script);
+        Assert.Contains("LLMGW_GATE_RUN_SERVING_PROBE", script);
+        Assert.Contains("scripts/llmgw-serving-probe.py", script);
+        Assert.Contains("probe_args=\"--base $gate_base\"", script);
+        Assert.Contains("python3 scripts/llmgw-serving-probe.py $probe_args", script);
+        Assert.Contains("LLMGW_GATE_SERVING_PROBE_SAMPLES", script);
+        Assert.Contains("LLMGW_GATE_SERVING_PROBE_INTERVAL_SECONDS", script);
         Assert.Contains("LLMGW_SKIP_RELEASE_GATE=1", script);
     }
 

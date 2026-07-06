@@ -45,6 +45,9 @@ set -eu
 #   - LLMGW_GATE_REQUIRED_APP_KINDS：逗号/分号分隔的 appCallerCode:kind:min 列表，例如 report-agent.generate::chat:send:30
 #   - LLMGW_GATE_JSON_OUT：可选，保存 release gate JSON 证据报告（不含密钥）
 #   - LLMGW_GATE_REPORT_MD：可选，保存 release gate Markdown 证据报告（不含密钥）
+#   - LLMGW_GATE_RUN_SERVING_PROBE：是否在 http/canary 发布时强制运行 llmgw-serving-probe.py，默认 1
+#   - LLMGW_GATE_SERVING_PROBE_SAMPLES：serving probe healthz 连续采样次数，默认跟随 LLMGW_GATE_HEALTH_SAMPLES
+#   - LLMGW_GATE_SERVING_PROBE_INTERVAL_SECONDS：serving probe 连续采样间隔秒数，默认跟随 LLMGW_GATE_HEALTH_INTERVAL_SECONDS
 #   - LLMGW_GATE_RUN_SMOKE：是否在 http/canary 发布时强制运行 gw-smoke.py，默认 1
 #   - LLMGW_GATE_SMOKE_TIMEOUT_SECONDS：gw-smoke.py 单请求超时，默认 120
 #   - LLMGW_SKIP_RELEASE_GATE=1：仅紧急回滚/人工强制时跳过 http gate（会打印警告）
@@ -501,6 +504,10 @@ run_llmgw_release_gate_if_needed() {
     echo "ERROR: LLM Gateway http/canary 发布但缺少 scripts/gw-smoke.py，拒绝发布。" >&2
     exit 1
   fi
+  if [ "${LLMGW_GATE_RUN_SERVING_PROBE:-1}" != "0" ] && [ ! -f "scripts/llmgw-serving-probe.py" ]; then
+    echo "ERROR: LLM Gateway http/canary 发布但缺少 scripts/llmgw-serving-probe.py，拒绝发布。" >&2
+    exit 1
+  fi
 
   gate_base="${LLMGW_GATE_BASE:-${GW_BASE:-}}"
   gate_key="${LLMGW_GATE_KEY:-${GW_KEY:-${LLMGW_SERVE_KEY:-}}}"
@@ -575,6 +582,20 @@ run_llmgw_release_gate_if_needed() {
   echo "LLM Gateway release gate: required (LLMGW_MODE=${LLMGW_MODE:-inproc}, allowlist=${allowlist_compact:-empty})"
   # shellcheck disable=SC2086
   GW_KEY="$gate_key" python3 scripts/llmgw-release-gate.py $args
+
+  if [ "${LLMGW_GATE_RUN_SERVING_PROBE:-1}" != "0" ]; then
+    probe_args="--base $gate_base"
+    probe_args="$probe_args --samples ${LLMGW_GATE_SERVING_PROBE_SAMPLES:-${LLMGW_GATE_HEALTH_SAMPLES:-3}}"
+    probe_args="$probe_args --interval ${LLMGW_GATE_SERVING_PROBE_INTERVAL_SECONDS:-${LLMGW_GATE_HEALTH_INTERVAL_SECONDS:-5}}"
+    if [ -n "$expect_commit" ]; then
+      probe_args="$probe_args --expect-commit $expect_commit"
+    fi
+    echo "LLM Gateway serving probe: required (healthz commit stability + no-key auth)"
+    # shellcheck disable=SC2086
+    python3 scripts/llmgw-serving-probe.py $probe_args
+  else
+    echo "WARN: LLM Gateway serving probe skipped because LLMGW_GATE_RUN_SERVING_PROBE=0" >&2
+  fi
 
   if [ "${LLMGW_GATE_RUN_SMOKE:-1}" != "0" ]; then
     echo "LLM Gateway D-layer smoke: required (healthz/pools/send/stream/client-stream/canary)"
