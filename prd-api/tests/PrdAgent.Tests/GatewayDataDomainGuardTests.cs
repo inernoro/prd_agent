@@ -197,6 +197,19 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_READINESS_REPORT_MD", script);
     }
 
+    [Fact]
+    public void GwSmoke_CoversStreamingAndClientStreamBoundaries()
+    {
+        var script = ReadRepoFile("scripts/gw-smoke.py");
+
+        Assert.Contains("_sse_req", script);
+        Assert.Contains("\"/stream\"", script);
+        Assert.Contains("stream[chat]", script);
+        Assert.Contains("\"/client-stream\"", script);
+        Assert.Contains("client-stream[chat]", script);
+        Assert.Contains("\"Messages\": [{\"Role\": \"user\", \"Content\": \"ping, client stream reply OK\"}]", script);
+    }
+
     private static string ReadRepoFile(string relativePath)
     {
         var root = LocateRepoRoot();

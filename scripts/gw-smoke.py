@@ -48,6 +48,34 @@ def _req(method, path, body=None):
         return 0, f"ERR {e}"
 
 
+def _sse_req(path, body):
+    code, raw = _req("POST", path, body)
+    events = []
+    if code != 200:
+        return code, raw, events
+
+    current = []
+    for line in raw.splitlines():
+        if not line.strip():
+            if current:
+                payload = "\n".join(current)
+                try:
+                    events.append(json.loads(payload))
+                except Exception:  # noqa: BLE001
+                    events.append({"_raw": payload})
+                current = []
+            continue
+        if line.startswith("data:"):
+            current.append(line[5:].strip())
+    if current:
+        payload = "\n".join(current)
+        try:
+            events.append(json.loads(payload))
+        except Exception:  # noqa: BLE001
+            events.append({"_raw": payload})
+    return code, raw, events
+
+
 def _envelope_data(raw):
     try:
         j = json.loads(raw)
@@ -104,7 +132,58 @@ def main():
         detail = f"{code} success={d.get('Success')} model={res.get('ActualModel')} contentLen={len(d.get('Content') or '')}"
         rows.append((f"send[{mtype}]", ok, detail))
 
-    # 4) canary：指向不存在的入口，必须失败（证明探测有效）
+    # 4) stream：真实 SSE 边界。只抽 chat 一类，避免 D 层冒烟成本膨胀。
+    stream_body = {
+        "AppCallerCode": "report-agent.generate::chat",
+        "ModelType": "chat",
+        "Stream": True,
+        "RequestBody": {
+            "messages": [{"role": "user", "content": "ping, stream reply OK"}],
+            "max_tokens": 16,
+            "stream": True,
+        },
+        "Context": {"UserId": "smoke-test"},
+    }
+    code, raw, events = _sse_req("/stream", stream_body)
+    stream_text = "".join(str(e.get("Content") or "") for e in events if isinstance(e, dict))
+    stream_model = next(
+        (
+            (e.get("Resolution") or {}).get("ActualModel")
+            for e in events
+            if isinstance(e, dict) and isinstance(e.get("Resolution"), dict)
+        ),
+        None,
+    )
+    stream_done = any(
+        isinstance(e, dict)
+        and (e.get("FinishReason") or str(e.get("Type")).lower() in {"done", "4"})
+        for e in events
+    )
+    ok = code == 200 and len(events) >= 2 and bool(stream_text) and bool(stream_model) and stream_done
+    rows.append(("stream[chat]", ok, f"{code} events={len(events)} model={stream_model} contentLen={len(stream_text)}"))
+
+    # 5) client-stream：CreateClient/ILLMClient 跨进程 SSE 边界。
+    client_stream_body = {
+        "AppCallerCode": "report-agent.generate::chat",
+        "ModelType": "chat",
+        "MaxTokens": 16,
+        "Temperature": 0.2,
+        "IncludeThinking": False,
+        "SystemPrompt": "Reply briefly.",
+        "Messages": [{"Role": "user", "Content": "ping, client stream reply OK"}],
+        "EnablePromptCache": True,
+        "Context": {"UserId": "smoke-test"},
+    }
+    code, raw, events = _sse_req("/client-stream", client_stream_body)
+    client_stream_text = "".join(str(e.get("Content") or "") for e in events if isinstance(e, dict))
+    client_stream_done = any(
+        isinstance(e, dict) and str(e.get("Type")).lower() in {"done", "4"}
+        for e in events
+    )
+    ok = code == 200 and len(events) >= 2 and bool(client_stream_text) and client_stream_done
+    rows.append(("client-stream[chat]", ok, f"{code} events={len(events)} contentLen={len(client_stream_text)}"))
+
+    # 6) canary：指向不存在的入口，必须失败（证明探测有效）
     body = {"AppCallerCode": "nonexistent.canary::chat", "ModelType": "chat",
             "RequestBody": {"messages": [{"role": "user", "content": "x"}]}, "Context": {"UserId": "smoke-test"}}
     code, raw = _req("POST", "/send", body)
