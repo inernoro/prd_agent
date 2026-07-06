@@ -358,6 +358,55 @@ def call_image_raw_generate(
     api_data(result, "image raw generate")
 
 
+def parse_csv_values(raw: str) -> list[str]:
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+def require_image_ref_shas(raw: str, minimum: int, context: str) -> list[str]:
+    shas = [value.lower() for value in parse_csv_values(raw)]
+    if len(shas) < minimum:
+        raise RuntimeError(f"{context} requires at least {minimum} sha values via --image-ref-shas")
+    for sha in shas[:minimum]:
+        if len(sha) != 64 or any(ch not in "0123456789abcdef" for ch in sha):
+            raise RuntimeError(f"{context} got invalid sha value: {sha}")
+    return shas
+
+
+def wait_image_run(
+    base: str,
+    token: str,
+    timeout: float,
+    run_id: str,
+    poll_seconds: float,
+    poll_interval_seconds: float,
+    context: str,
+) -> str:
+    deadline = time.monotonic() + max(1, poll_seconds)
+    terminal_statuses = {"Completed", "Failed", "Cancelled"}
+    last_status = ""
+    last_body = ""
+    while True:
+        run_result = request_json(
+            "GET",
+            join_url(base, f"/api/visual-agent/image-gen/runs/{urllib.parse.quote(run_id)}")
+            + "?includeItems=true&includeImages=false",
+            headers=bearer(token),
+            timeout=timeout,
+        )
+        run_data = api_data(run_result, f"{context} get run")
+        run_doc = (run_data or {}).get("run") if isinstance(run_data, dict) else None
+        status = str((run_doc or {}).get("status") or "")
+        last_status = status
+        last_body = run_result.body[:1000]
+        if status in terminal_statuses:
+            if status != "Completed":
+                raise RuntimeError(f"{context} run {run_id} ended with {status}: {last_body}")
+            return run_id
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"{context} run {run_id} timed out at status {last_status}: {last_body}")
+        time.sleep(max(0.5, poll_interval_seconds))
+
+
 def call_image_worker_text2img_run(
     base: str,
     token: str,
@@ -399,30 +448,120 @@ def call_image_worker_text2img_run(
     if not run_id:
         raise RuntimeError(f"image worker text2img create run response missing runId: {json.dumps(data, ensure_ascii=False)[:500]}")
 
-    deadline = time.monotonic() + max(1, poll_seconds)
-    terminal_statuses = {"Completed", "Failed", "Cancelled"}
-    last_status = ""
-    last_body = ""
-    while True:
-        run_result = request_json(
-            "GET",
-            join_url(base, f"/api/visual-agent/image-gen/runs/{urllib.parse.quote(run_id)}")
-            + "?includeItems=true&includeImages=false",
-            headers=bearer(token),
-            timeout=timeout,
-        )
-        run_data = api_data(run_result, "image worker text2img get run")
-        run_doc = (run_data or {}).get("run") if isinstance(run_data, dict) else None
-        status = str((run_doc or {}).get("status") or "")
-        last_status = status
-        last_body = run_result.body[:1000]
-        if status in terminal_statuses:
-            if status != "Completed":
-                raise RuntimeError(f"image worker text2img run {run_id} ended with {status}: {last_body}")
-            return run_id
-        if time.monotonic() >= deadline:
-            raise RuntimeError(f"image worker text2img run {run_id} timed out at status {last_status}: {last_body}")
-        time.sleep(max(0.5, poll_interval_seconds))
+    return wait_image_run(base, token, timeout, run_id, poll_seconds, poll_interval_seconds, "image worker text2img")
+
+
+def call_image_worker_img2img_run(
+    base: str,
+    token: str,
+    timeout: float,
+    tag: str,
+    platform_id: str,
+    model_id: str,
+    size: str,
+    response_format: str,
+    image_ref_sha: str,
+    poll_seconds: float,
+    poll_interval_seconds: float,
+) -> str:
+    result = request_json(
+        "POST",
+        join_url(base, "/api/visual-agent/image-gen/runs"),
+        {
+            "platformId": platform_id,
+            "modelId": model_id,
+            "items": [
+                {
+                    "prompt": (
+                        "Minimal production gateway worker img2img evidence. "
+                        f"tag={tag}. Preserve the reference composition and add a small black label."
+                    ),
+                    "count": 1,
+                    "size": size,
+                }
+            ],
+            "size": size,
+            "responseFormat": response_format,
+            "maxConcurrency": 1,
+            "appKey": "visual-agent",
+            "initImageAssetSha256": image_ref_sha,
+        },
+        headers={**bearer(token), "Idempotency-Key": f"llmgw-shadow-image-worker-img2img-{tag}"},
+        timeout=timeout,
+    )
+    data = api_data(result, "image worker img2img create run")
+    run_id = str((data or {}).get("runId") or "")
+    if not run_id:
+        raise RuntimeError(f"image worker img2img create run response missing runId: {json.dumps(data, ensure_ascii=False)[:500]}")
+    return wait_image_run(base, token, timeout, run_id, poll_seconds, poll_interval_seconds, "image worker img2img")
+
+
+def create_image_master_workspace(base: str, token: str, timeout: float, tag: str) -> str:
+    result = request_json(
+        "POST",
+        join_url(base, "/api/visual-agent/image-master/workspaces"),
+        {
+            "title": f"LLMGW shadow seed {tag}",
+            "scenarioType": "image-gen",
+        },
+        headers={**bearer(token), "Idempotency-Key": f"llmgw-shadow-image-master-workspace-{tag}"},
+        timeout=timeout,
+    )
+    data = api_data(result, "image master create workspace")
+    workspace = (data or {}).get("workspace") if isinstance(data, dict) else None
+    workspace_id = str((workspace or {}).get("id") or (workspace or {}).get("Id") or "")
+    if not workspace_id:
+        raise RuntimeError(f"image master create workspace response missing id: {json.dumps(data, ensure_ascii=False)[:500]}")
+    return workspace_id
+
+
+def call_image_worker_vision_run(
+    base: str,
+    token: str,
+    timeout: float,
+    tag: str,
+    platform_id: str,
+    model_id: str,
+    size: str,
+    response_format: str,
+    image_ref_shas: list[str],
+    poll_seconds: float,
+    poll_interval_seconds: float,
+) -> str:
+    workspace_id = create_image_master_workspace(base, token, timeout, tag)
+    refs = [
+        {
+            "refId": index + 1,
+            "assetSha256": sha,
+            "label": f"reference {index + 1}",
+            "role": "reference",
+        }
+        for index, sha in enumerate(image_ref_shas[:2])
+    ]
+    result = request_json(
+        "POST",
+        join_url(base, f"/api/visual-agent/image-master/workspaces/{urllib.parse.quote(workspace_id)}/image-gen/runs"),
+        {
+            "prompt": (
+                "Use @img1 and @img2 as references. Minimal production gateway worker vision evidence. "
+                f"tag={tag}. Create a simple combined comparison card."
+            ),
+            "targetKey": f"llmgw-shadow-vision-{tag}",
+            "platformId": platform_id,
+            "modelId": model_id,
+            "size": size,
+            "responseFormat": response_format,
+            "imageRefs": refs,
+            "userMessageContent": f"Use @img1 and @img2 for LLM Gateway shadow vision evidence. tag={tag}",
+        },
+        headers={**bearer(token), "Idempotency-Key": f"llmgw-shadow-image-worker-vision-{tag}"},
+        timeout=timeout,
+    )
+    data = api_data(result, "image worker vision create run")
+    run_id = str((data or {}).get("runId") or "")
+    if not run_id:
+        raise RuntimeError(f"image worker vision create run response missing runId: {json.dumps(data, ensure_ascii=False)[:500]}")
+    return wait_image_run(base, token, timeout, run_id, poll_seconds, poll_interval_seconds, "image worker vision")
 
 
 def fetch_gateway_health(gw_base: str, timeout: float) -> dict[str, Any]:
@@ -521,8 +660,11 @@ def main() -> int:
     parser.add_argument("--include-tutorial-email-send", action="store_true", help="Also seed one admin non-stream SendAsync call per iteration")
     parser.add_argument("--include-image-raw", action="store_true", help="Also seed one real image raw call per iteration")
     parser.add_argument("--include-image-worker-text2img", action="store_true", help="Also seed one ImageGenRunWorker text2img run per iteration")
+    parser.add_argument("--include-image-worker-img2img", action="store_true", help="Also seed one ImageGenRunWorker img2img run per iteration; requires --image-ref-shas")
+    parser.add_argument("--include-image-worker-vision", action="store_true", help="Also seed one ImageGenRunWorker multi-image vision run per iteration; requires at least two --image-ref-shas")
     parser.add_argument("--image-platform-id", default=read_env_secret("LLMGW_SHADOW_IMAGE_PLATFORM_ID"), help="Pinned image platform id; defaults to first enabled image model from /api/mds")
     parser.add_argument("--image-model-id", default=read_env_secret("LLMGW_SHADOW_IMAGE_MODEL_ID"), help="Pinned image model id; defaults to first enabled image model from /api/mds")
+    parser.add_argument("--image-ref-shas", default=read_env_secret("LLMGW_SHADOW_IMAGE_REF_SHAS"), help="Comma-separated existing image asset sha256 values for img2img/vision evidence")
     parser.add_argument("--image-size", default="1024x1024", help="Image seed size")
     parser.add_argument("--image-response-format", default="url", help="Image seed response format")
     parser.add_argument("--image-worker-poll-seconds", type=float, default=360, help="How long to wait for ImageGenRunWorker runs")
@@ -551,7 +693,13 @@ def main() -> int:
         if not args.root_password:
             raise SystemExit("Missing admin token or ROOT_ACCESS_PASSWORD")
         admin_token, user_id = login(base, args.root_username, args.root_password, args.timeout)
-    elif args.include_open_platform or args.include_image_raw or args.include_image_worker_text2img:
+    elif (
+        args.include_open_platform
+        or args.include_image_raw
+        or args.include_image_worker_text2img
+        or args.include_image_worker_img2img
+        or args.include_image_worker_vision
+    ):
         user_id = fetch_user_id(base, admin_token, args.timeout)
 
     token = admin_token
@@ -560,6 +708,8 @@ def main() -> int:
         or args.include_tutorial_email_send
         or args.include_image_raw
         or args.include_image_worker_text2img
+        or args.include_image_worker_img2img
+        or args.include_image_worker_vision
     )
     if needs_seed_user:
         seed_username = args.seed_username.strip()
@@ -569,13 +719,35 @@ def main() -> int:
             seed_password = secrets.token_urlsafe(24)
         elif not seed_password:
             raise SystemExit("--seed-password or LLMGW_SHADOW_SEED_PASSWORD is required when --seed-username is set")
-        seed_role = "ADMIN" if args.include_tutorial_email_send or args.include_image_raw or args.include_image_worker_text2img else "PM"
+        seed_role = (
+            "ADMIN"
+            if (
+                args.include_tutorial_email_send
+                or args.include_image_raw
+                or args.include_image_worker_text2img
+                or args.include_image_worker_img2img
+                or args.include_image_worker_vision
+            )
+            else "PM"
+        )
         token, user_id = create_seed_user_and_login(base, admin_token, args.timeout, seed_username, seed_password, seed_role)
 
     image_platform_id = args.image_platform_id.strip()
     image_model_id = args.image_model_id.strip()
-    if (args.include_image_raw or args.include_image_worker_text2img) and (not image_platform_id or not image_model_id):
+    needs_image_model = (
+        args.include_image_raw
+        or args.include_image_worker_text2img
+        or args.include_image_worker_img2img
+        or args.include_image_worker_vision
+    )
+    if needs_image_model and (not image_platform_id or not image_model_id):
         image_platform_id, image_model_id = resolve_image_gen_model(base, token, args.timeout)
+
+    image_ref_shas: list[str] = []
+    if args.include_image_worker_img2img:
+        image_ref_shas = require_image_ref_shas(args.image_ref_shas, 1, "image worker img2img")
+    if args.include_image_worker_vision:
+        image_ref_shas = require_image_ref_shas(args.image_ref_shas, 2, "image worker vision")
 
     print(f"base={base}")
     print(f"gwBase={gw_base}")
@@ -585,6 +757,12 @@ def main() -> int:
         print(f"imageRawModel={image_platform_id}/{image_model_id}")
     if args.include_image_worker_text2img:
         print(f"imageWorkerText2ImgModel={image_platform_id}/{image_model_id}")
+    if args.include_image_worker_img2img:
+        print(f"imageWorkerImg2ImgModel={image_platform_id}/{image_model_id}")
+        print(f"imageWorkerImg2ImgRefSha={image_ref_shas[0]}")
+    if args.include_image_worker_vision:
+        print(f"imageWorkerVisionModel={image_platform_id}/{image_model_id}")
+        print(f"imageWorkerVisionRefShas={','.join(image_ref_shas[:2])}")
 
     baseline_counts: dict[str, int] = {}
     if args.gw_key:
@@ -636,6 +814,36 @@ def main() -> int:
                 args.image_worker_poll_interval_seconds,
             )
             print(f"seed[{index + 1}] imageWorkerText2ImgRunId={run_id}")
+        if args.include_image_worker_img2img:
+            run_id = call_image_worker_img2img_run(
+                base,
+                token,
+                args.timeout,
+                tag,
+                image_platform_id,
+                image_model_id,
+                args.image_size,
+                args.image_response_format,
+                image_ref_shas[0],
+                args.image_worker_poll_seconds,
+                args.image_worker_poll_interval_seconds,
+            )
+            print(f"seed[{index + 1}] imageWorkerImg2ImgRunId={run_id}")
+        if args.include_image_worker_vision:
+            run_id = call_image_worker_vision_run(
+                base,
+                token,
+                args.timeout,
+                tag,
+                image_platform_id,
+                image_model_id,
+                args.image_size,
+                args.image_response_format,
+                image_ref_shas[:2],
+                args.image_worker_poll_seconds,
+                args.image_worker_poll_interval_seconds,
+            )
+            print(f"seed[{index + 1}] imageWorkerVisionRunId={run_id}")
         print(f"seed[{index + 1}] sessionId={session_id}")
         if index + 1 < args.iterations and args.sleep_seconds > 0:
             time.sleep(args.sleep_seconds)
@@ -653,7 +861,13 @@ def main() -> int:
             {
                 "stream": args.iterations,
                 "send": args.iterations if args.include_tutorial_email_send else 0,
-                "raw": args.iterations * int(args.include_image_raw) + args.iterations * int(args.include_image_worker_text2img),
+                "raw": args.iterations
+                * (
+                    int(args.include_image_raw)
+                    + int(args.include_image_worker_text2img)
+                    + int(args.include_image_worker_img2img)
+                    + int(args.include_image_worker_vision)
+                ),
             },
             args.summary_poll_seconds,
             args.summary_poll_interval_seconds,
