@@ -667,7 +667,7 @@ def _dotnet_checks() -> list[dict]:
                 "tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj",
                 "--no-restore",
                 "--filter",
-                "FullyQualifiedName~GatewayProtocolFidelityTests|FullyQualifiedName~ClaudeToolTranslationTests|FullyQualifiedName~ShadowLlmGatewayTests",
+                "FullyQualifiedName~GatewayPinnedModelTests|FullyQualifiedName~GatewayProtocolFidelityTests|FullyQualifiedName~ClaudeToolTranslationTests|FullyQualifiedName~ShadowLlmGatewayTests",
             ],
             ROOT / "prd-api",
         ),

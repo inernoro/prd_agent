@@ -664,6 +664,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--run-smoke", script);
         Assert.Contains("scripts/gw-smoke.py", script);
         Assert.Contains("gateway_protocol_and_shadow_unit_tests", script);
+        Assert.Contains("GatewayPinnedModelTests", script);
         Assert.Contains("GatewayProtocolFidelityTests", script);
         Assert.Contains("ClaudeToolTranslationTests", script);
         Assert.Contains("ShadowLlmGatewayTests", script);
