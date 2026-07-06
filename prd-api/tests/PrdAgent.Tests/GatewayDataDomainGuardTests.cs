@@ -54,6 +54,19 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LlmGateway__DatabaseName: llm_gateway", cdsCompose);
     }
 
+    [Fact]
+    public void ExecDep_RequiresReleaseGateBeforeFullHttpMode()
+    {
+        var script = ReadRepoFile("exec_dep.sh");
+
+        Assert.Contains("run_llmgw_release_gate_if_needed", script);
+        Assert.Contains("if [ \"$mode\" != \"http\" ]; then", script);
+        Assert.Contains("LLMGW_MODE=http 需要提供 LLMGW_GATE_BASE 或 GW_BASE", script);
+        Assert.Contains("LLMGW_MODE=http 需要提供 LLMGW_GATE_KEY/GW_KEY 或 LLMGW_SERVE_KEY", script);
+        Assert.Contains("python3 scripts/llmgw-release-gate.py", script);
+        Assert.Contains("LLMGW_SKIP_RELEASE_GATE=1", script);
+    }
+
     private static string ReadRepoFile(string relativePath)
     {
         var root = LocateRepoRoot();

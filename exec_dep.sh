@@ -29,6 +29,13 @@ set -eu
 #   - DIST_URL：直接指定静态 zip 下载地址（完全跳过 Release/Pages 逻辑）
 #   - PAGES_BASE_URL：覆盖 GitHub Pages 根地址（默认优先走 get.miduo.org 代理）
 #   - GITHUB_TOKEN：仅当 Release 资产为私有时需要（公开 Pages 下载不需要）
+#   - LLMGW_MODE=http：全量切 HTTP 时必须先通过 scripts/llmgw-release-gate.py
+#   - LLMGW_GATE_BASE / GW_BASE：release gate 使用的 serving base URL（形如 https://host/gw/v1）
+#   - LLMGW_GATE_KEY / GW_KEY：release gate 使用的 X-Gateway-Key；未设时回退 LLMGW_SERVE_KEY
+#   - LLMGW_GATE_MIN_TOTAL：全局 shadow 最小样本数，默认 30
+#   - LLMGW_GATE_MIN_PER_APP：每个 appCaller 最小样本数，默认 30
+#   - LLMGW_GATE_APP_CALLERS：逗号/分号分隔的 appCallerCode 列表，逐个 gate
+#   - LLMGW_SKIP_RELEASE_GATE=1：仅紧急回滚/人工强制时跳过 http gate（会打印警告）
 
 SKIP_VERIFY="${SKIP_VERIFY:-}"
 release_ref="${PRD_AGENT_RELEASE_REF:-}"
@@ -460,6 +467,61 @@ ensure_ffmpeg() {
 
 ensure_ffmpeg || echo "WARN: ffmpeg 自动安装失败，视频创作 / 转录相关功能可能报错。" >&2
 
+run_llmgw_release_gate_if_needed() {
+  mode="$(printf '%s' "${LLMGW_MODE:-inproc}" | tr 'A-Z' 'a-z' | xargs)"
+  if [ "$mode" != "http" ]; then
+    echo "LLM Gateway release gate: skipped (LLMGW_MODE=${LLMGW_MODE:-inproc})"
+    return 0
+  fi
+
+  if [ "${LLMGW_SKIP_RELEASE_GATE:-}" = "1" ]; then
+    echo "WARN: LLMGW_MODE=http 但 LLMGW_SKIP_RELEASE_GATE=1，已跳过发布证据门。仅允许紧急回滚/人工强制场景。" >&2
+    return 0
+  fi
+
+  if [ ! -f "scripts/llmgw-release-gate.py" ]; then
+    echo "ERROR: LLMGW_MODE=http 但缺少 scripts/llmgw-release-gate.py，拒绝全量切 HTTP。" >&2
+    exit 1
+  fi
+
+  gate_base="${LLMGW_GATE_BASE:-${GW_BASE:-}}"
+  gate_key="${LLMGW_GATE_KEY:-${GW_KEY:-${LLMGW_SERVE_KEY:-}}}"
+  if [ -z "$gate_base" ]; then
+    echo "ERROR: LLMGW_MODE=http 需要提供 LLMGW_GATE_BASE 或 GW_BASE（形如 https://host/gw/v1）以校验当前 shadow 证据。" >&2
+    exit 1
+  fi
+  if [ -z "$gate_key" ]; then
+    echo "ERROR: LLMGW_MODE=http 需要提供 LLMGW_GATE_KEY/GW_KEY 或 LLMGW_SERVE_KEY 以读取 /gw/v1/shadow-comparisons。" >&2
+    exit 1
+  fi
+
+  expect_commit=""
+  case "$TAG" in
+    sha-*)
+      expect_commit="${TAG#sha-}"
+      ;;
+  esac
+
+  args="--base $gate_base --min-total ${LLMGW_GATE_MIN_TOTAL:-30} --min-per-app ${LLMGW_GATE_MIN_PER_APP:-30}"
+  if [ -n "$expect_commit" ]; then
+    args="$args --expect-commit $expect_commit"
+  fi
+
+  old_ifs="$IFS"
+  IFS=',;'
+  for app in ${LLMGW_GATE_APP_CALLERS:-}; do
+    app_trimmed="$(printf '%s' "$app" | xargs)"
+    if [ -n "$app_trimmed" ]; then
+      args="$args --app-caller $app_trimmed"
+    fi
+  done
+  IFS="$old_ifs"
+
+  echo "LLM Gateway release gate: required because LLMGW_MODE=http"
+  # shellcheck disable=SC2086
+  GW_KEY="$gate_key" python3 scripts/llmgw-release-gate.py $args
+}
+
 if [ -n "${SKIP_API_PULL:-}" ]; then
   echo "Skipping release image pull (SKIP_API_PULL=1)"
 else
@@ -487,6 +549,8 @@ else
     fi
   fi
 fi
+
+run_llmgw_release_gate_if_needed
 
 echo "Ensuring Docker network exists..."
 docker network inspect prdagent-network >/dev/null 2>&1 || docker network create prdagent-network

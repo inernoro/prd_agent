@@ -89,6 +89,10 @@ python3 scripts/llmgw-release-gate.py --min-total 30 \
   --app-caller report-agent.generate::chat --min-per-app 30
 ```
 
+`exec_dep.sh` 也内置同一 gate：当且仅当 `LLMGW_MODE=http` 时强制执行。缺少
+`LLMGW_GATE_BASE`/`GW_BASE` 或 `LLMGW_GATE_KEY`/`GW_KEY`/`LLMGW_SERVE_KEY` 会拒绝部署；
+`LLMGW_MODE=shadow|inproc` 不挡发布，便于先以 shadow 积累证据。
+
 ---
 
 ## 3. Point 1 — MAP 直连收口清单（6 处，全改走 ILlmGateway）
