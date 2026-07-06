@@ -167,6 +167,28 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("git checkout", script);
     }
 
+    [Fact]
+    public void ReadinessAudit_ComposesStaticRollbackDotnetAndLiveReleaseGates()
+    {
+        var script = ReadRepoFile("scripts/llmgw-readiness-audit.py");
+
+        Assert.Contains("LLM Gateway full-cutover readiness audit", script);
+        Assert.Contains("release_gate_supports_required_shadow_and_health_gates", script);
+        Assert.Contains("exec_dep_gates_http_and_canary_release", script);
+        Assert.Contains("rollback_script_is_safe_and_executable", script);
+        Assert.Contains("direct_client_ratchet_baselines_are_empty", script);
+        Assert.Contains("multipart_http_path_has_refs_rehydrate_and_hash_guard", script);
+        Assert.Contains("compose_exposes_gateway_mode_and_data_domain_controls", script);
+        Assert.Contains("rollback_dry_run", script);
+        Assert.Contains("--run-dotnet", script);
+        Assert.Contains("--require-release-gate", script);
+        Assert.Contains("scripts/llmgw-release-gate.py", script);
+        Assert.Contains("GW_KEY", script);
+        Assert.Contains("LLMGW_GATE_SHADOW_SINCE_HOURS", script);
+        Assert.Contains("LLMGW_READINESS_JSON_OUT", script);
+        Assert.Contains("LLMGW_READINESS_REPORT_MD", script);
+    }
+
     private static string ReadRepoFile(string relativePath)
     {
         var root = LocateRepoRoot();

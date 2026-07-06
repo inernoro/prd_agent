@@ -1,0 +1,333 @@
+#!/usr/bin/env python3
+"""LLM Gateway full-cutover readiness audit.
+
+This script is a coordinator for release readiness. It does not mutate
+production state. It combines static release invariants, rollback dry-run,
+optional dotnet gate tests, and optional live release-gate evidence.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _read(rel: str) -> str:
+    return (ROOT / rel).read_text(encoding="utf-8")
+
+
+def _run(cmd: list[str], *, cwd: Path = ROOT, env: dict[str, str] | None = None, timeout: int = 300) -> dict:
+    proc = subprocess.run(
+        cmd,
+        cwd=str(cwd),
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=timeout,
+        check=False,
+    )
+    return {
+        "cmd": cmd,
+        "cwd": str(cwd),
+        "exitCode": proc.returncode,
+        "stdout": proc.stdout[-6000:],
+        "stderr": proc.stderr[-6000:],
+        "ok": proc.returncode == 0,
+    }
+
+
+def _check(name: str, ok: bool, detail: str = "") -> dict:
+    return {"name": name, "ok": bool(ok), "detail": detail}
+
+
+def _contains_all(text: str, needles: list[str]) -> tuple[bool, str]:
+    missing = [item for item in needles if item not in text]
+    return not missing, "missing: " + ", ".join(missing) if missing else "ok"
+
+
+def _dictionary_block_is_empty(text: str, name: str) -> bool:
+    pattern = re.compile(
+        rf"{re.escape(name)}\s*=\s*new\([^)]*\)\s*\{{(?P<body>.*?)\}};",
+        re.DOTALL,
+    )
+    match = pattern.search(text)
+    if not match:
+        return False
+    body = re.sub(r"//.*", "", match.group("body")).strip()
+    return body == ""
+
+
+def _static_checks() -> list[dict]:
+    checks: list[dict] = []
+
+    release_gate = _read("scripts/llmgw-release-gate.py")
+    ok, detail = _contains_all(
+        release_gate,
+        [
+            "--since-hours",
+            "--require-kind",
+            "--require-app-kind",
+            "--health-samples",
+            "--json-out",
+            "critical mismatch",
+            "httpFail",
+        ],
+    )
+    checks.append(_check("release_gate_supports_required_shadow_and_health_gates", ok, detail))
+
+    exec_dep = _read("exec_dep.sh")
+    ok, detail = _contains_all(
+        exec_dep,
+        [
+            "run_llmgw_release_gate_if_needed",
+            "LLMGW_HTTP_APP_CALLER_ALLOWLIST",
+            "LLMGW_GATE_SHADOW_SINCE_HOURS",
+            "--since-hours ${LLMGW_GATE_SHADOW_SINCE_HOURS:-24}",
+            "--health-samples ${LLMGW_GATE_HEALTH_SAMPLES:-3}",
+            "--expect-commit $expect_commit",
+            "LLMGW_SKIP_RELEASE_GATE=1",
+        ],
+    )
+    checks.append(_check("exec_dep_gates_http_and_canary_release", ok, detail))
+
+    rollback_path = ROOT / "scripts/llmgw-rollback-inproc.sh"
+    rollback = rollback_path.read_text(encoding="utf-8")
+    ok, detail = _contains_all(
+        rollback,
+        [
+            "export LLMGW_MODE=inproc",
+            "export LLMGW_HTTP_APP_CALLER_ALLOWLIST=",
+            "export LLMGW_SHADOW_FULL_SAMPLE_PERCENT=0",
+            "up -d --no-deps --force-recreate",
+            "database: unchanged",
+            "images: unchanged",
+        ],
+    )
+    executable = bool(rollback_path.stat().st_mode & stat.S_IXUSR)
+    destructive = any(item in rollback for item in ["down -v", "docker volume rm", "mongorestore", "db.dropDatabase", "git checkout"])
+    checks.append(_check("rollback_script_is_safe_and_executable", ok and executable and not destructive, f"{detail}; executable={executable}; destructive={destructive}"))
+
+    direct = _read("prd-api/tests/PrdAgent.Tests/GatewayDirectClientRatchetTests.cs")
+    direct_empty = _dictionary_block_is_empty(direct, "Baseline")
+    manual_empty = _dictionary_block_is_empty(direct, "ManualUpstreamHttpBaseline")
+    checks.append(_check("direct_client_ratchet_baselines_are_empty", direct_empty and manual_empty, f"Baseline={direct_empty}; ManualUpstreamHttpBaseline={manual_empty}"))
+
+    gateway_src = _read("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs")
+    multipart_tests = _read("prd-api/tests/PrdAgent.Api.Tests/Gateway/GatewayMultipartHttpTests.cs")
+    no_unsupported = "MULTIPART_HTTP_UNSUPPORTED" not in "\n".join(
+        path.read_text(encoding="utf-8", errors="ignore")
+        for path in (ROOT / "prd-api/src").rglob("*.cs")
+    )
+    ok, detail = _contains_all(
+        gateway_src + "\n" + multipart_tests,
+        [
+            "RehydrateMultipartFileRefsAsync",
+            "MultipartFileRefs",
+            "MULTIPART_REF_HASH_MISMATCH",
+            "HttpClient_UploadsInlineMultipartFiles_AsRefs_WithoutSerializingBytes",
+            "RawEndpoint_RehydratesMultipartFileRefs_BeforeGatewaySend",
+        ],
+    )
+    checks.append(_check("multipart_http_path_has_refs_rehydrate_and_hash_guard", ok and no_unsupported, f"{detail}; noUnsupported={no_unsupported}"))
+
+    compose = _read("docker-compose.yml")
+    ok, detail = _contains_all(
+        compose,
+        [
+            "LlmGateway__Mode=${LLMGW_MODE:-inproc}",
+            "LlmGateway__HttpAppCallerAllowlist=${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}",
+            "LlmGateway__ShadowFullSamplePercent=${LLMGW_SHADOW_FULL_SAMPLE_PERCENT:-0}",
+            "LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}",
+            "LlmGwServe__ApiKey=${LLMGW_SERVE_KEY:?",
+        ],
+    )
+    checks.append(_check("compose_exposes_gateway_mode_and_data_domain_controls", ok, detail))
+
+    return checks
+
+
+def _rollback_dry_run() -> dict:
+    with tempfile.TemporaryDirectory(prefix="llmgw-rollback-audit-") as tmp:
+        tmp_path = Path(tmp)
+        fake_compose = tmp_path / "docker-compose"
+        out_path = tmp_path / "compose.out"
+        fake_compose.write_text(
+            "#!/usr/bin/env sh\n"
+            "printf 'ARGS=%s\\n' \"$*\" > \"$FAKE_ROLLBACK_OUT\"\n"
+            "printf 'LLMGW_MODE=%s\\n' \"$LLMGW_MODE\" >> \"$FAKE_ROLLBACK_OUT\"\n"
+            "printf 'ALLOWLIST=%s\\n' \"$LLMGW_HTTP_APP_CALLER_ALLOWLIST\" >> \"$FAKE_ROLLBACK_OUT\"\n"
+            "printf 'SHADOW=%s\\n' \"$LLMGW_SHADOW_FULL_SAMPLE_PERCENT\" >> \"$FAKE_ROLLBACK_OUT\"\n",
+            encoding="utf-8",
+        )
+        fake_compose.chmod(0o755)
+        env = os.environ.copy()
+        env["PATH"] = f"{tmp}:{env.get('PATH', '')}"
+        env["FAKE_ROLLBACK_OUT"] = str(out_path)
+        env["LLMGW_ROLLBACK_COMPOSE_FILE"] = str(ROOT / "docker-compose.yml")
+        result = _run(["scripts/llmgw-rollback-inproc.sh"], env=env, timeout=60)
+        captured = out_path.read_text(encoding="utf-8") if out_path.exists() else ""
+        ok = (
+            result["ok"]
+            and "up -d --no-deps --force-recreate api" in captured
+            and "LLMGW_MODE=inproc" in captured
+            and "ALLOWLIST=" in captured
+            and "SHADOW=0" in captured
+        )
+        return {"name": "rollback_dry_run", "ok": ok, "detail": captured, "command": result}
+
+
+def _dotnet_checks() -> list[dict]:
+    checks: list[dict] = []
+    tests = [
+        (
+            "gateway_data_domain_and_direct_ratchet_tests",
+            [
+                "dotnet",
+                "test",
+                "tests/PrdAgent.Tests/PrdAgent.Tests.csproj",
+                "--no-restore",
+                "--filter",
+                "FullyQualifiedName~GatewayDataDomainGuardTests|FullyQualifiedName~GatewayDirectClientRatchetTests",
+            ],
+            ROOT / "prd-api",
+        ),
+        (
+            "gateway_multipart_http_tests",
+            [
+                "dotnet",
+                "test",
+                "tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj",
+                "--no-restore",
+                "--filter",
+                "FullyQualifiedName~GatewayMultipartHttpTests|FullyQualifiedName~GatewayKeyGateContractTests",
+            ],
+            ROOT / "prd-api",
+        ),
+    ]
+    env = os.environ.copy()
+    env["DOTNET_ROLL_FORWARD"] = env.get("DOTNET_ROLL_FORWARD", "Major")
+    for name, cmd, cwd in tests:
+        result = _run(cmd, cwd=cwd, env=env, timeout=600)
+        checks.append({"name": name, "ok": result["ok"], "detail": result["stdout"] + result["stderr"], "command": result})
+    return checks
+
+
+def _release_gate(args: argparse.Namespace) -> dict:
+    cmd = [
+        "python3",
+        "scripts/llmgw-release-gate.py",
+        "--base",
+        args.base,
+        "--key",
+        args.key,
+        "--min-total",
+        str(args.min_total),
+        "--min-per-app",
+        str(args.min_per_app),
+        "--since-hours",
+        str(args.since_hours),
+        "--health-samples",
+        str(args.health_samples),
+        "--health-interval",
+        str(args.health_interval),
+    ]
+    if args.expect_commit:
+        cmd.extend(["--expect-commit", args.expect_commit])
+    for item in args.app_caller:
+        cmd.extend(["--app-caller", item])
+    for item in args.require_kind:
+        cmd.extend(["--require-kind", item])
+    for item in args.require_app_kind:
+        cmd.extend(["--require-app-kind", item])
+    result = _run(cmd, timeout=600)
+    return {"name": "live_release_gate", "ok": result["ok"], "detail": result["stdout"] + result["stderr"], "command": result}
+
+
+def _write_outputs(report: dict, json_out: str, report_md: str) -> None:
+    if json_out:
+        path = Path(json_out)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if report_md:
+        path = Path(report_md)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lines = [
+            "# LLM Gateway Readiness Audit",
+            "",
+            f"- generatedAt: `{report['generatedAt']}`",
+            f"- verdict: `{report['verdict']}`",
+            f"- base: `{report.get('base') or ''}`",
+            "",
+            "| gate | status | detail |",
+            "|---|---|---|",
+        ]
+        for item in report["checks"]:
+            detail = str(item.get("detail") or "").replace("|", "\\|").replace("\n", "<br>")
+            lines.append(f"| {item['name']} | {'pass' if item.get('ok') else 'fail'} | {detail[:1000]} |")
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="LLM Gateway full-cutover readiness audit")
+    parser.add_argument("--base", default=os.environ.get("GW_BASE", "").strip().rstrip("/"), help="serving base URL, e.g. https://host/gw/v1")
+    parser.add_argument("--key", default=os.environ.get("GW_KEY", ""), help="X-Gateway-Key for live release gate")
+    parser.add_argument("--expect-commit", default=os.environ.get("GIT_COMMIT", ""), help="optional healthz commit assertion")
+    parser.add_argument("--min-total", type=int, default=30)
+    parser.add_argument("--min-per-app", type=int, default=30)
+    parser.add_argument("--since-hours", type=float, default=float(os.environ.get("LLMGW_GATE_SHADOW_SINCE_HOURS", "24")))
+    parser.add_argument("--health-samples", type=int, default=int(os.environ.get("LLMGW_GATE_HEALTH_SAMPLES", "3")))
+    parser.add_argument("--health-interval", type=float, default=float(os.environ.get("LLMGW_GATE_HEALTH_INTERVAL_SECONDS", "5")))
+    parser.add_argument("--app-caller", action="append", default=[])
+    parser.add_argument("--require-kind", action="append", default=[])
+    parser.add_argument("--require-app-kind", action="append", default=[])
+    parser.add_argument("--run-dotnet", action="store_true", help="run xUnit gateway guard tests")
+    parser.add_argument("--require-release-gate", action="store_true", help="fail when --base/--key are missing and run live release gate")
+    parser.add_argument("--json-out", default=os.environ.get("LLMGW_READINESS_JSON_OUT", ""))
+    parser.add_argument("--report-md", default=os.environ.get("LLMGW_READINESS_REPORT_MD", ""))
+    parser.add_argument("--print-json", action="store_true")
+    args = parser.parse_args()
+
+    checks = _static_checks()
+    checks.append(_rollback_dry_run())
+    if args.run_dotnet:
+        checks.extend(_dotnet_checks())
+    if args.require_release_gate:
+        if not args.base or not args.key:
+            checks.append(_check("live_release_gate", False, "missing --base/--key"))
+        else:
+            checks.append(_release_gate(args))
+
+    failures = [item for item in checks if not item.get("ok")]
+    report = {
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "verdict": "fail" if failures else "pass",
+        "base": args.base,
+        "checks": checks,
+        "failureCount": len(failures),
+    }
+    _write_outputs(report, args.json_out, args.report_md)
+    if args.print_json:
+        print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+    if failures:
+        print("LLM Gateway readiness audit: FAIL")
+        for item in failures:
+            print(f"- {item['name']}: {item.get('detail', '')[:300]}")
+        return 1
+    print("LLM Gateway readiness audit: PASS")
+    print(f"- checks={len(checks)}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

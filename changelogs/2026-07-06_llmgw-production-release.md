@@ -15,3 +15,4 @@
 | security | prd-llmgw | 首次 bootstrap、破玻璃 reset、admin 重新激活和历史账号禁用也写入 llmgw_operation_audits，补齐启动级账号审计 |
 | ops | prd-agent | 发布 gate 支持 shadow sinceHours 新鲜度窗口，exec_dep.sh 默认只接受最近 24 小时样本，避免旧证据误放行 http/canary |
 | ops | prd-agent | 新增 LLMGW http/canary 紧急回滚脚本，一键将 MAP API 切回 inproc 且不回滚数据库或 GW 证据 |
+| ops | prd-agent | 新增 LLMGW 全量迁移 readiness audit，总结直连、multipart、发布脚本、回滚 dry-run 与 live release gate 证据 |
