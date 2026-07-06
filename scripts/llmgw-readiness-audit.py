@@ -584,7 +584,10 @@ def _static_checks() -> list[dict]:
             "export LLMGW_HTTP_APP_CALLER_ALLOWLIST=",
             "export LLMGW_SHADOW_FULL_SAMPLE_PERCENT=\"$sample_percent\"",
             "LLMGW_RESTORE_DRY_RUN",
+            "LLMGW_RESTORE_ENV_FILE",
+            "LLMGW_RESTORE_PERSIST_ENV",
             "LLMGW_RESTORE_SHADOW_FULL_SAMPLE_PERCENT",
+            "persist_env_file",
             "LLM Gateway restore dry-run",
             "up -d --no-deps --force-recreate",
             "database: unchanged",
@@ -734,7 +737,9 @@ def _restore_shadow_dry_run() -> dict:
         env = os.environ.copy()
         env["PATH"] = f"{tmp}:{env.get('PATH', '')}"
         env["FAKE_RESTORE_OUT"] = str(out_path)
+        env_file = tmp_path / "prod.env"
         env["LLMGW_RESTORE_COMPOSE_FILE"] = str(ROOT / "docker-compose.yml")
+        env["LLMGW_RESTORE_ENV_FILE"] = str(env_file)
         env["LLMGW_RESTORE_DRY_RUN"] = "1"
         env["LLMGW_RESTORE_SHADOW_FULL_SAMPLE_PERCENT"] = "1"
         result = _run(["scripts/llmgw-restore-shadow-safe.sh"], env=env, timeout=60)
@@ -743,12 +748,62 @@ def _restore_shadow_dry_run() -> dict:
         ok = (
             result["ok"]
             and not captured
+            and not env_file.exists()
             and "dryRun: 1" in stdout
+            and "env file would be updated" in stdout
             and "LLM Gateway restore dry-run" in stdout
             and "up -d --no-deps --force-recreate api" in stdout
             and "API would restart with LLMGW_MODE=shadow and sample=1" in stdout
         )
         return {"name": "restore_shadow_dry_run", "ok": ok, "detail": stdout + captured, "command": result}
+
+
+def _restore_shadow_persist_env_test() -> dict:
+    with tempfile.TemporaryDirectory(prefix="llmgw-restore-persist-audit-") as tmp:
+        tmp_path = Path(tmp)
+        fake_compose = tmp_path / "docker-compose"
+        out_path = tmp_path / "compose.out"
+        env_path = tmp_path / "prod.env"
+        env_path.write_text(
+            "UNCHANGED=value\n"
+            "LLMGW_MODE=http\n"
+            "LLMGW_HTTP_APP_CALLER_ALLOWLIST=image-worker.text2img\n"
+            "LLMGW_SHADOW_FULL_SAMPLE_PERCENT=100\n",
+            encoding="utf-8",
+        )
+        fake_compose.write_text(
+            "#!/usr/bin/env sh\n"
+            "printf 'ARGS=%s\\n' \"$*\" >> \"$FAKE_RESTORE_OUT\"\n"
+            "printf 'LLMGW_MODE=%s\\n' \"$LLMGW_MODE\" >> \"$FAKE_RESTORE_OUT\"\n"
+            "printf 'ALLOWLIST=%s\\n' \"$LLMGW_HTTP_APP_CALLER_ALLOWLIST\" >> \"$FAKE_RESTORE_OUT\"\n"
+            "printf 'SHADOW=%s\\n' \"$LLMGW_SHADOW_FULL_SAMPLE_PERCENT\" >> \"$FAKE_RESTORE_OUT\"\n",
+            encoding="utf-8",
+        )
+        fake_compose.chmod(0o755)
+        env = os.environ.copy()
+        env["PATH"] = f"{tmp}:{env.get('PATH', '')}"
+        env["FAKE_RESTORE_OUT"] = str(out_path)
+        env["LLMGW_RESTORE_COMPOSE_FILE"] = str(ROOT / "docker-compose.yml")
+        env["LLMGW_RESTORE_ENV_FILE"] = str(env_path)
+        env["LLMGW_RESTORE_GATEWAY_SERVICE"] = ""
+        env["LLMGW_RESTORE_DRY_RUN"] = "0"
+        env["LLMGW_RESTORE_SHADOW_FULL_SAMPLE_PERCENT"] = "1"
+        result = _run(["scripts/llmgw-restore-shadow-safe.sh"], env=env, timeout=60)
+        captured = out_path.read_text(encoding="utf-8") if out_path.exists() else ""
+        persisted = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
+        ok = (
+            result["ok"]
+            and "LLMGW_MODE=shadow" in persisted
+            and "LLMGW_HTTP_APP_CALLER_ALLOWLIST=\n" in persisted
+            and "LLMGW_SHADOW_FULL_SAMPLE_PERCENT=1" in persisted
+            and "UNCHANGED=value" in persisted
+            and "LLMGW_MODE=shadow" in captured
+            and "ALLOWLIST=\n" in captured
+            and "SHADOW=1" in captured
+            and "up -d --no-deps --force-recreate api" in captured
+        )
+        detail = str(result.get("stdout") or "") + captured + "\n" + persisted
+        return {"name": "restore_shadow_persist_env_test", "ok": ok, "detail": detail, "command": result}
 
 
 def _dotnet_checks() -> list[dict]:
@@ -1149,6 +1204,7 @@ def main() -> int:
     checks = _static_checks()
     checks.append(_rollback_dry_run())
     checks.append(_restore_shadow_dry_run())
+    checks.append(_restore_shadow_persist_env_test())
     if args.run_dotnet:
         checks.extend(_dotnet_checks())
     if args.run_smoke:

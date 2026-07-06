@@ -9,10 +9,12 @@ set -eu
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 compose_file="${LLMGW_RESTORE_COMPOSE_FILE:-$repo_root/docker-compose.yml}"
+env_file="${LLMGW_RESTORE_ENV_FILE:-$repo_root/.env}"
 service_name="${LLMGW_RESTORE_API_SERVICE:-api}"
 gateway_service="${LLMGW_RESTORE_GATEWAY_SERVICE:-gateway}"
 dry_run="${LLMGW_RESTORE_DRY_RUN:-0}"
 sample_percent="${LLMGW_RESTORE_SHADOW_FULL_SAMPLE_PERCENT:-1}"
+persist_env="${LLMGW_RESTORE_PERSIST_ENV:-1}"
 
 if [ ! -f "$compose_file" ]; then
   echo "ERROR: 找不到 compose 文件: $compose_file" >&2
@@ -33,13 +35,72 @@ else
   exit 1
 fi
 
+persist_env_file() {
+  if [ "$persist_env" = "0" ] || [ "$persist_env" = "false" ]; then
+    echo "LLM Gateway restore: env persistence disabled"
+    return
+  fi
+
+  env_dir=$(dirname -- "$env_file")
+  if [ ! -d "$env_dir" ]; then
+    echo "ERROR: env file parent directory does not exist: $env_dir" >&2
+    exit 1
+  fi
+
+  if [ "$dry_run" = "1" ] || [ "$dry_run" = "true" ]; then
+    echo "LLM Gateway restore dry-run: env file would be updated: $env_file"
+    return
+  fi
+
+  tmp_file="${env_file}.tmp.$$"
+  ENV_FILE="$env_file" TMP_FILE="$tmp_file" RESTORE_SAMPLE_PERCENT="$sample_percent" python3 - <<'PY'
+import os
+import re
+from pathlib import Path
+
+env_path = Path(os.environ["ENV_FILE"])
+tmp_path = Path(os.environ["TMP_FILE"])
+updates = {
+    "LLMGW_MODE": "shadow",
+    "LLMGW_HTTP_APP_CALLER_ALLOWLIST": "",
+    "LLMGW_SHADOW_FULL_SAMPLE_PERCENT": os.environ["RESTORE_SAMPLE_PERCENT"],
+}
+
+lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
+seen = {key: False for key in updates}
+out = []
+pattern = re.compile(r"^(\s*)(export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
+
+for line in lines:
+    match = pattern.match(line)
+    if match and match.group(3) in updates:
+        key = match.group(3)
+        out.append(f"{match.group(1)}{match.group(2) or ''}{key}={updates[key]}")
+        seen[key] = True
+    else:
+        out.append(line)
+
+if out and out[-1] != "":
+    out.append("")
+for key, value in updates.items():
+    if not seen[key]:
+        out.append(f"{key}={value}")
+
+tmp_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+PY
+  mv "$tmp_file" "$env_file"
+  echo "LLM Gateway restore: persisted conservative shadow env to $env_file"
+}
+
 echo "LLM Gateway restore: forcing MAP API back to conservative shadow mode"
 echo "  compose: $compose_file"
+echo "  envFile: $env_file"
 echo "  service: $service_name"
 echo "  gatewayService: ${gateway_service:-none}"
 echo "  mode: shadow"
 echo "  allowlist: empty"
 echo "  shadowFullSamplePercent: $sample_percent"
+echo "  persistEnv: $persist_env"
 echo "  database: unchanged"
 echo "  images: unchanged"
 echo "  dryRun: $dry_run"
@@ -47,6 +108,8 @@ echo "  dryRun: $dry_run"
 export LLMGW_MODE=shadow
 export LLMGW_HTTP_APP_CALLER_ALLOWLIST=
 export LLMGW_SHADOW_FULL_SAMPLE_PERCENT="$sample_percent"
+
+persist_env_file
 
 if [ "$dry_run" = "1" ] || [ "$dry_run" = "true" ]; then
   echo "LLM Gateway restore dry-run: $COMPOSE -f $compose_file up -d --no-deps --force-recreate $service_name"

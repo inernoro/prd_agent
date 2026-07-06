@@ -10,4 +10,5 @@
 | ops | prd-agent | LLM Gateway 发布阶段新增 video/ASR upstream readiness 解析门，防止缺池缺 key 进入灰度或全量 |
 | ops | prd-agent | LLM Gateway shadow-start 高采样失败时输出恢复采样告警 |
 | ops | prd-agent | 新增 LLM Gateway shadow 安全恢复脚本，并在高采样 shadow-start 失败时自动恢复低采样 |
+| ops | prd-agent | LLM Gateway shadow 安全恢复脚本默认持久化低采样环境配置，避免后续 compose 重启恢复高采样 |
 | docs | prd-agent | 在全量迁移计划中补充 shadow 证据不足时的采样方式和 raw gate 边界 |
