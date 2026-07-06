@@ -63,8 +63,19 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("if [ \"$mode\" != \"http\" ]; then", script);
         Assert.Contains("LLMGW_MODE=http 需要提供 LLMGW_GATE_BASE 或 GW_BASE", script);
         Assert.Contains("LLMGW_MODE=http 需要提供 LLMGW_GATE_KEY/GW_KEY 或 LLMGW_SERVE_KEY", script);
+        Assert.Contains("expect_commit=\"${TAG#sha-}\"", script);
+        Assert.Contains("args=\"$args --expect-commit $expect_commit\"", script);
         Assert.Contains("python3 scripts/llmgw-release-gate.py", script);
         Assert.Contains("LLMGW_SKIP_RELEASE_GATE=1", script);
+    }
+
+    [Fact]
+    public void ExecDep_ProvidesNoUnderscoreCompatibilityWrapper()
+    {
+        var wrapper = ReadRepoFile("execdep.sh");
+
+        Assert.Contains("exec_dep.sh", wrapper);
+        Assert.Contains("exec \"$script_dir/exec_dep.sh\" \"$@\"", wrapper);
     }
 
     private static string ReadRepoFile(string relativePath)
