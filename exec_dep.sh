@@ -827,7 +827,7 @@ run_llmgw_post_deploy_verification_if_needed() {
 
   if [ "${LLMGW_GATE_RUN_SMOKE:-1}" != "0" ]; then
     echo "LLM Gateway post-deploy D-layer smoke: required (healthz/pools/send/stream/client-stream/canary)"
-    GW_BASE="$gate_base" GW_KEY="$gate_key" GW_TIMEOUT="${LLMGW_GATE_SMOKE_TIMEOUT_SECONDS:-120}" python3 scripts/gw-smoke.py
+    GW_BASE="$gate_base" GW_KEY="$gate_key" GW_TIMEOUT="${LLMGW_GATE_SMOKE_TIMEOUT_SECONDS:-120}" GW_EXPECT_COMMIT="$expect_commit" python3 scripts/gw-smoke.py
   else
     echo "WARN: LLM Gateway post-deploy D-layer smoke skipped because LLMGW_GATE_RUN_SMOKE=0" >&2
   fi

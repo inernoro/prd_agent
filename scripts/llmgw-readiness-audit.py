@@ -265,6 +265,8 @@ def _static_checks() -> list[dict]:
             "\"minStageObservationHours\": args.min_stage_observation_hours",
             "missing releaseMainSha",
             "_require_pass_json",
+            "_require_smoke_for_commit",
+            "D-layer smoke healthCommit mismatch",
             "stage-report",
             "audit",
             "ROLLOUT_SEQUENCE",
@@ -347,7 +349,7 @@ def _static_checks() -> list[dict]:
             "LLMGW_GATE_CANARY_APP_KINDS",
             "canary 阶段 $canary_stage 默认要求 raw app-kind 样本逐个达标",
             "LLMGW_GATE_RUN_SMOKE",
-            "GW_BASE=\"$gate_base\" GW_KEY=\"$gate_key\" GW_TIMEOUT=\"${LLMGW_GATE_SMOKE_TIMEOUT_SECONDS:-120}\" python3 scripts/gw-smoke.py",
+            "GW_BASE=\"$gate_base\" GW_KEY=\"$gate_key\" GW_TIMEOUT=\"${LLMGW_GATE_SMOKE_TIMEOUT_SECONDS:-120}\" GW_EXPECT_COMMIT=\"$expect_commit\" python3 scripts/gw-smoke.py",
             "LLMGW_GATE_RUN_SERVING_PROBE",
             "LLMGW_SERVING_PROBE_JSON_OUT",
             "GW_SMOKE_JSON_OUT",
@@ -594,6 +596,8 @@ def _gw_smoke(args: argparse.Namespace) -> dict:
     env["GW_KEY"] = args.key
     if args.smoke_timeout_seconds > 0:
         env["GW_TIMEOUT"] = str(args.smoke_timeout_seconds)
+    if args.expect_commit:
+        env["GW_EXPECT_COMMIT"] = args.expect_commit
     result = _run(["python3", "scripts/gw-smoke.py"], env=env, timeout=max(60, args.smoke_timeout_seconds * 10))
     return {"name": "gw_smoke_d_layer", "ok": result["ok"], "detail": result["stdout"] + result["stderr"], "command": result}
 

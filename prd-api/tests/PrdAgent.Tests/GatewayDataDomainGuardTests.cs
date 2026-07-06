@@ -182,7 +182,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_GATE_SMOKE_TIMEOUT_SECONDS", script);
         Assert.Contains("GW_SMOKE_JSON_OUT", script);
         Assert.Contains("GW_SMOKE_REPORT_MD", script);
-        Assert.Contains("GW_BASE=\"$gate_base\" GW_KEY=\"$gate_key\" GW_TIMEOUT=\"${LLMGW_GATE_SMOKE_TIMEOUT_SECONDS:-120}\" python3 scripts/gw-smoke.py", script);
+        Assert.Contains("GW_EXPECT_COMMIT=\"$expect_commit\"", script);
+        Assert.Contains("GW_BASE=\"$gate_base\" GW_KEY=\"$gate_key\" GW_TIMEOUT=\"${LLMGW_GATE_SMOKE_TIMEOUT_SECONDS:-120}\" GW_EXPECT_COMMIT=\"$expect_commit\" python3 scripts/gw-smoke.py", script);
         Assert.Contains("LLMGW_GATE_RUN_SERVING_PROBE", script);
         Assert.Contains("LLMGW_SERVING_PROBE_JSON_OUT", script);
         Assert.Contains("LLMGW_SERVING_PROBE_REPORT_MD", script);
@@ -371,9 +372,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("_require_pass_json", ledger);
         Assert.Contains("_require_stage_evidence_for_commit", ledger);
         Assert.Contains("_require_serving_probe_for_commit", ledger);
+        Assert.Contains("_require_smoke_for_commit", ledger);
         Assert.Contains("_require_release_gate_for_commit", ledger);
         Assert.Contains("shadowReleaseCommit mismatch", ledger);
         Assert.Contains("health sample commit mismatch", ledger);
+        Assert.Contains("D-layer smoke healthCommit mismatch", ledger);
         Assert.Contains("commit mismatch", ledger);
         Assert.Contains("missing shadowChecks for same-commit evidence", ledger);
         Assert.Contains("stage-report", ledger);
@@ -463,6 +466,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("GatewayDoubaoStreamAsrTests", script);
         Assert.Contains("OpenRouterVideoClientGatewayTests", script);
         Assert.Contains("GW_TIMEOUT", script);
+        Assert.Contains("GW_EXPECT_COMMIT", ReadRepoFile("scripts/gw-smoke.py"));
         Assert.Contains("--require-release-gate", script);
         Assert.Contains("scripts/llmgw-release-gate.py", script);
         Assert.Contains("GW_KEY", script);

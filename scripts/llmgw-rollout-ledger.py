@@ -122,6 +122,23 @@ def _require_serving_probe_for_commit(path: str, label: str, commit: str) -> Non
         )
 
 
+def _require_smoke_for_commit(path: str, label: str, commit: str) -> None:
+    payload = _require_pass_json(path, label)
+    expected = _normalize_commit(commit)
+    if not expected:
+        raise SystemExit(f"ERROR: {label} cannot validate commit because ledger commit is empty: {path}")
+
+    expected_commit = _normalize_commit(payload.get("expectedCommit") or payload.get("ExpectedCommit"))
+    if expected_commit and expected_commit != expected:
+        raise SystemExit(f"ERROR: {label} expectedCommit mismatch: {path} actual={expected_commit} expected={expected}")
+
+    health_commit = _normalize_commit(payload.get("healthCommit") or payload.get("HealthCommit"))
+    if not health_commit:
+        raise SystemExit(f"ERROR: {label} missing healthCommit for same-commit evidence: {path}")
+    if health_commit != expected:
+        raise SystemExit(f"ERROR: {label} D-layer smoke healthCommit mismatch: {path} actual={health_commit} expected={expected}")
+
+
 def _require_release_gate_for_commit(path: str, label: str, commit: str) -> None:
     payload = _require_pass_json(path, label)
     expected = _normalize_commit(commit)
@@ -238,7 +255,7 @@ def _entry_evidence_failures(entry: dict) -> list[str]:
             if key == "servingProbeJson":
                 _require_serving_probe_for_commit(str(entry.get(key) or ""), f"{stage} {label}", commit)
             else:
-                _require_pass_json(str(entry.get(key) or ""), f"{stage} {label}")
+                _require_smoke_for_commit(str(entry.get(key) or ""), f"{stage} {label}", commit)
         except SystemExit as exc:
             failures.append(str(exc))
     if _bool_flag(str(entry.get("releaseGateRequired") or "0")):
@@ -383,7 +400,7 @@ def append(args: argparse.Namespace) -> int:
         _require_stage_evidence_for_commit(args.evidence_json, "stage evidence", args.commit)
         if args.stage != ROLLBACK_REHEARSAL_STAGE:
             _require_serving_probe_for_commit(args.serving_probe_json, "serving probe evidence", args.commit)
-            _require_pass_json(args.smoke_json, "D-layer smoke evidence")
+            _require_smoke_for_commit(args.smoke_json, "D-layer smoke evidence", args.commit)
             if _bool_flag(args.release_gate_required):
                 _require_release_gate_for_commit(args.release_gate_json, "release gate evidence", args.commit)
 
@@ -484,7 +501,7 @@ def stage_report(args: argparse.Namespace) -> int:
             elif label == "releaseGateJson":
                 _require_release_gate_for_commit(path, label, args.commit)
             else:
-                _require_pass_json(path, label)
+                _require_smoke_for_commit(path, label, args.commit)
         except SystemExit as exc:
             failures.append(str(exc))
 

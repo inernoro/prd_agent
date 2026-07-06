@@ -23,6 +23,7 @@ KEY = os.environ.get("GW_KEY", "dev-llmgw-serve-key")
 TIMEOUT = int(os.environ.get("GW_TIMEOUT", "120"))
 JSON_OUT = os.environ.get("GW_SMOKE_JSON_OUT", "")
 REPORT_MD = os.environ.get("GW_SMOKE_REPORT_MD", "")
+EXPECTED_COMMIT = os.environ.get("GW_EXPECT_COMMIT", "").strip().lower()
 
 # 每类 ModelType 抽 1 个代表入口（D1×D2 抽样）。真机存在性以 /gw/v1/pools 为准。
 SAMPLE_CODES = [
@@ -87,6 +88,13 @@ def _envelope_data(raw):
     return j  # serving 端点直接返回 DTO（非 {success,data} 信封）
 
 
+def _normalize_commit(value):
+    raw = str(value or "").strip().lower()
+    if raw.startswith("sha-"):
+        raw = raw[4:]
+    return raw
+
+
 def _write_json(path, report):
     if not path:
         return
@@ -113,6 +121,8 @@ def _write_markdown(path, report):
         fh.write(f"- generatedAt: `{cell(report['generatedAt'])}`\n")
         fh.write(f"- verdict: `{cell(report['verdict'])}`\n")
         fh.write(f"- base: `{cell(report['base'])}`\n")
+        fh.write(f"- expectedCommit: `{cell(report.get('expectedCommit') or '')}`\n")
+        fh.write(f"- healthCommit: `{cell(report.get('healthCommit') or '')}`\n")
         fh.write(f"- passed: `{cell(report['passed'])}`\n")
         fh.write(f"- total: `{cell(report['total'])}`\n\n")
         fh.write("| case | status | detail |\n")
@@ -140,6 +150,8 @@ def main():
             "generatedAt": datetime.now(timezone.utc).isoformat(),
             "verdict": "fail",
             "base": "",
+            "expectedCommit": EXPECTED_COMMIT,
+            "healthCommit": "",
             "passed": 0,
             "total": 0,
             "rows": [],
@@ -155,8 +167,13 @@ def main():
 
     # 1) healthz
     code, raw = _req("GET", "/healthz")
-    ok = code == 200 and '"status"' in raw and "ok" in raw
-    rows.append(("healthz", ok, f"{code} {raw[:80]}"))
+    health = _envelope_data(raw) or {}
+    health_status = str(health.get("status") or health.get("Status") or "").lower()
+    health_commit = _normalize_commit(health.get("commit") or health.get("Commit"))
+    ok = code == 200 and health_status == "ok"
+    if EXPECTED_COMMIT and health_commit != EXPECTED_COMMIT:
+        ok = False
+    rows.append(("healthz", ok, f"{code} status={health_status or 'empty'} commit={health_commit or 'empty'} expected={EXPECTED_COMMIT or 'none'}"))
 
     # 2) pools（每类抽样入口）
     for accode, mtype in SAMPLE_CODES:
@@ -261,6 +278,8 @@ def main():
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "verdict": "pass" if passed == len(rows) else "fail",
         "base": base,
+        "expectedCommit": EXPECTED_COMMIT,
+        "healthCommit": health_commit,
         "passed": passed,
         "total": len(rows),
         "rows": report_rows,
