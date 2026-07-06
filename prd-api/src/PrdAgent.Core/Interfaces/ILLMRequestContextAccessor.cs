@@ -21,8 +21,7 @@ public record LlmRequestContext(
     string? ModelGroupName = null,
     /// <summary>
     /// 网关传输路径观测标记（S2）：inproc / http / shadow / direct。
-    /// 供直连客户端（ModelDomainService 兜底、ModelLab/Arena 锁定 platform+model）在构建日志时
-    /// 读取本上下文的传输标记；网关路径由各自的日志构建点权威标注，不依赖此字段。
+    /// 仅真实直连路径需要显式设置 direct；网关路径由各自的日志构建点权威标注，不依赖此字段。
     /// </summary>
     string? GatewayTransport = null);
 
@@ -31,4 +30,3 @@ public interface ILLMRequestContextAccessor
     LlmRequestContext? Current { get; }
     IDisposable BeginScope(LlmRequestContext context);
 }
-

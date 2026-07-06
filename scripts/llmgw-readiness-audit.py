@@ -568,6 +568,20 @@ def _static_checks() -> list[dict]:
         ok,
         detail,
     ))
+    ok, detail = _contains_all(
+        direct,
+        [
+            "DirectTransportMarkers_AreOnlyInTrackedNonGatewayPaths",
+            "DirectTransportMarkerBaseline",
+            "PrdAgent.Api/Controllers/Api/PlatformsController.cs",
+            "PrdAgent.Api/Services/CapsuleExecutor.cs",
+        ],
+    )
+    checks.append(_check(
+        "direct_transport_markers_are_tracked",
+        ok,
+        detail,
+    ))
 
     gateway_src = _read("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs")
     multipart_tests = _read("prd-api/tests/PrdAgent.Api.Tests/Gateway/GatewayMultipartHttpTests.cs")
