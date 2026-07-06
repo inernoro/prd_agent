@@ -36,7 +36,7 @@ set -eu
 #   - LLMGW_HTTP_APP_CALLER_ALLOWLIST：灰度入口列表；非空时这些入口会走 http 权威，也必须先通过 release gate
 #   - LLMGW_CANARY_STAGE：灰度阶段，allowlist 非空且非全量 http 时必填；枚举 intent-text/chat/streaming/vision/image/video-asr
 #   - LLMGW_SHADOW_FULL_SAMPLE_PERCENT：shadow 模式非流式完整比对采样比例，默认 0
-#     非 0 时会强制 serving probe + gw-smoke 预检，但不会要求已有 shadow 样本数
+#     非 0 时会强制部署后 serving probe + gw-smoke 校验，但不会要求已有 shadow 样本数
 #   - LLMGW_GATE_BASE / GW_BASE：release gate 使用的 serving base URL（形如 https://host/gw/v1）
 #   - LLMGW_GATE_KEY / GW_KEY：release gate 使用的 X-Gateway-Key；未设时回退 LLMGW_SERVE_KEY
 #   - LLMGW_GATE_MIN_TOTAL：全局 shadow 最小样本数，默认 30
@@ -548,6 +548,11 @@ ensure_ffmpeg() {
 ensure_ffmpeg || echo "WARN: ffmpeg 自动安装失败，视频创作 / 转录相关功能可能报错。" >&2
 
 run_llmgw_release_gate_if_needed() {
+  LLMGW_POST_DEPLOY_VERIFY_NEEDED=0
+  LLMGW_POST_DEPLOY_GATE_BASE=""
+  LLMGW_POST_DEPLOY_GATE_KEY=""
+  LLMGW_POST_DEPLOY_EXPECT_COMMIT=""
+
   mode="$(printf '%s' "${LLMGW_MODE:-inproc}" | tr 'A-Z' 'a-z' | xargs)"
   allowlist_raw="${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}"
   allowlist_compact="$(printf '%s' "$allowlist_raw" | tr ',;\n\r' '    ' | xargs || true)"
@@ -662,6 +667,11 @@ run_llmgw_release_gate_if_needed() {
       ;;
   esac
 
+  LLMGW_POST_DEPLOY_VERIFY_NEEDED=1
+  LLMGW_POST_DEPLOY_GATE_BASE="$gate_base"
+  LLMGW_POST_DEPLOY_GATE_KEY="$gate_key"
+  LLMGW_POST_DEPLOY_EXPECT_COMMIT="$expect_commit"
+
   args="--base $gate_base --min-total ${LLMGW_GATE_MIN_TOTAL:-30} --min-per-app ${LLMGW_GATE_MIN_PER_APP:-30}"
   args="$args --since-hours ${LLMGW_GATE_SHADOW_SINCE_HOURS:-24}"
   gate_min_coverage_hours="${LLMGW_GATE_MIN_COVERAGE_HOURS:-}"
@@ -673,9 +683,6 @@ run_llmgw_release_gate_if_needed() {
     args="$args --min-coverage-hours $gate_min_coverage_hours"
   fi
   args="$args --health-samples ${LLMGW_GATE_HEALTH_SAMPLES:-3} --health-interval ${LLMGW_GATE_HEALTH_INTERVAL_SECONDS:-5}"
-  if [ -n "$expect_commit" ]; then
-    args="$args --expect-commit $expect_commit"
-  fi
   if [ -n "${LLMGW_GATE_JSON_OUT:-}" ]; then
     args="$args --json-out $LLMGW_GATE_JSON_OUT"
   fi
@@ -766,11 +773,31 @@ run_llmgw_release_gate_if_needed() {
   IFS="$old_ifs"
 
   if [ "$release_gate_required" = "1" ]; then
-    echo "LLM Gateway release gate: required (LLMGW_MODE=${LLMGW_MODE:-inproc}, allowlist=${allowlist_compact:-empty})"
+    echo "LLM Gateway release gate: required before deploy (shadow evidence only; commit probe runs after compose up)"
     # shellcheck disable=SC2086
     GW_KEY="$gate_key" python3 scripts/llmgw-release-gate.py $args
   else
-    echo "LLM Gateway release gate: skipped shadow sample startup (LLMGW_MODE=${LLMGW_MODE:-inproc}, shadowSample=${shadow_sample_compact:-0}); running serving/smoke preflight only"
+    echo "LLM Gateway release gate: skipped shadow sample startup (LLMGW_MODE=${LLMGW_MODE:-inproc}, shadowSample=${shadow_sample_compact:-0}); serving/smoke verification runs after compose up"
+  fi
+}
+
+run_llmgw_post_deploy_verification_if_needed() {
+  if [ "${LLMGW_POST_DEPLOY_VERIFY_NEEDED:-0}" != "1" ]; then
+    echo "LLM Gateway post-deploy verification: skipped"
+    return 0
+  fi
+
+  gate_base="${LLMGW_POST_DEPLOY_GATE_BASE:-}"
+  gate_key="${LLMGW_POST_DEPLOY_GATE_KEY:-}"
+  expect_commit="${LLMGW_POST_DEPLOY_EXPECT_COMMIT:-}"
+
+  if [ -z "$gate_base" ]; then
+    echo "ERROR: LLM Gateway post-deploy verification missing gate base." >&2
+    exit 1
+  fi
+  if [ -z "$gate_key" ]; then
+    echo "ERROR: LLM Gateway post-deploy verification missing gate key." >&2
+    exit 1
   fi
 
   if [ "${LLMGW_GATE_RUN_SERVING_PROBE:-1}" != "0" ]; then
@@ -780,18 +807,18 @@ run_llmgw_release_gate_if_needed() {
     if [ -n "$expect_commit" ]; then
       probe_args="$probe_args --expect-commit $expect_commit"
     fi
-    echo "LLM Gateway serving probe: required (healthz commit stability + no-key auth)"
+    echo "LLM Gateway post-deploy serving probe: required (healthz commit stability + no-key auth)"
     # shellcheck disable=SC2086
     python3 scripts/llmgw-serving-probe.py $probe_args
   else
-    echo "WARN: LLM Gateway serving probe skipped because LLMGW_GATE_RUN_SERVING_PROBE=0" >&2
+    echo "WARN: LLM Gateway post-deploy serving probe skipped because LLMGW_GATE_RUN_SERVING_PROBE=0" >&2
   fi
 
   if [ "${LLMGW_GATE_RUN_SMOKE:-1}" != "0" ]; then
-    echo "LLM Gateway D-layer smoke: required (healthz/pools/send/stream/client-stream/canary)"
+    echo "LLM Gateway post-deploy D-layer smoke: required (healthz/pools/send/stream/client-stream/canary)"
     GW_BASE="$gate_base" GW_KEY="$gate_key" GW_TIMEOUT="${LLMGW_GATE_SMOKE_TIMEOUT_SECONDS:-120}" python3 scripts/gw-smoke.py
   else
-    echo "WARN: LLM Gateway D-layer smoke skipped because LLMGW_GATE_RUN_SMOKE=0" >&2
+    echo "WARN: LLM Gateway post-deploy D-layer smoke skipped because LLMGW_GATE_RUN_SMOKE=0" >&2
   fi
 }
 
@@ -830,3 +857,5 @@ docker network inspect prdagent-network >/dev/null 2>&1 || docker network create
 
 echo "Starting compose (force recreate to ensure new image is used)..."
 $COMPOSE up -d --force-recreate
+
+run_llmgw_post_deploy_verification_if_needed

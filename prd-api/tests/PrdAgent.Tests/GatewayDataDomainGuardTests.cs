@@ -97,6 +97,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("fast.sh / exec_dep.sh release ref mismatch", script);
         Assert.Contains("Release intent: matched fast.sh warmup", script);
         Assert.Contains("LLMGW_HTTP_APP_CALLER_ALLOWLIST", script);
+        Assert.Contains("LLMGW_POST_DEPLOY_VERIFY_NEEDED", script);
+        Assert.Contains("LLMGW_POST_DEPLOY_GATE_BASE", script);
+        Assert.Contains("run_llmgw_post_deploy_verification_if_needed", script);
         Assert.Contains("allowlist_compact", script);
         Assert.Contains("LLMGW_CANARY_STAGE", script);
         Assert.Contains("canary_allowed_app_callers=\"report-agent.generate::chat\"", script);
@@ -112,10 +115,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("release_gate_required=0", script);
         Assert.Contains("if [ \"$release_gate_required\" != \"1\" ] && [ \"$shadow_sample_enabled\" != \"1\" ]; then", script);
         Assert.Contains("shadow sample startup", script);
+        Assert.Contains("serving/smoke verification runs after compose up", script);
         Assert.Contains("LLM Gateway http/canary/shadow sample 发布需要提供 LLMGW_GATE_BASE 或 GW_BASE", script);
         Assert.Contains("LLM Gateway http/canary/shadow sample 发布需要提供 LLMGW_GATE_KEY/GW_KEY 或 LLMGW_SERVE_KEY", script);
         Assert.Contains("expect_commit=\"${TAG#sha-}\"", script);
-        Assert.Contains("args=\"$args --expect-commit $expect_commit\"", script);
+        Assert.DoesNotContain("args=\"$args --expect-commit $expect_commit\"", script);
+        Assert.Contains("probe_args=\"$probe_args --expect-commit $expect_commit\"", script);
         Assert.Contains("LLMGW_GATE_HEALTH_SAMPLES", script);
         Assert.Contains("LLMGW_GATE_HEALTH_INTERVAL_SECONDS", script);
         Assert.Contains("--health-samples ${LLMGW_GATE_HEALTH_SAMPLES:-3}", script);
@@ -165,7 +170,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLM Gateway release gate: canary 阶段 $canary_stage 默认要求 raw app-kind 样本逐个达标", script);
         Assert.Contains("args=\"$args --require-app-kind $app_kind_req_trimmed\"", script);
         Assert.Contains("for app in ${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}; do", script);
-        Assert.Contains("LLM Gateway release gate: required (LLMGW_MODE=", script);
+        Assert.Contains("LLM Gateway release gate: required before deploy (shadow evidence only; commit probe runs after compose up)", script);
         Assert.Contains("LLMGW_GATE_JSON_OUT", script);
         Assert.Contains("args=\"$args --json-out $LLMGW_GATE_JSON_OUT\"", script);
         Assert.Contains("LLMGW_GATE_REPORT_MD", script);
@@ -179,6 +184,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("scripts/llmgw-serving-probe.py", script);
         Assert.Contains("probe_args=\"--base $gate_base\"", script);
         Assert.Contains("python3 scripts/llmgw-serving-probe.py $probe_args", script);
+        Assert.Contains("LLM Gateway post-deploy serving probe: required", script);
+        Assert.Contains("LLM Gateway post-deploy D-layer smoke: required", script);
         Assert.Contains("LLMGW_GATE_SERVING_PROBE_SAMPLES", script);
         Assert.Contains("LLMGW_GATE_SERVING_PROBE_INTERVAL_SECONDS", script);
         Assert.Contains("LLMGW_SKIP_RELEASE_GATE=1", script);
