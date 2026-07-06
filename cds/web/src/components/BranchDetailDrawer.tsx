@@ -11,6 +11,7 @@ import { ActiveDeployment } from '@/components/deployment/ActiveDeployment';
 import { HistoryRow } from '@/components/deployment/HistoryRow';
 import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
 import { ExtraServicesPanel } from '@/components/branch/ExtraServicesPanel';
+import { EffectiveConfigPanel } from '@/components/branch/EffectiveConfigPanel';
 import { deriveBranchPhases, type PhaseKey } from '@/lib/deploymentPhases';
 import { normalizeContainerLogsForDisplay } from '@/lib/containerLogs';
 import { pickActiveDeployment } from './branchDeploymentSelection';
@@ -266,7 +267,7 @@ export interface BranchDeploymentItem {
   deployMode?: string;
 }
 
-type DrawerTab = 'overview' | 'deployments' | 'services' | 'logs' | 'variables' | 'metrics' | 'settings';
+type DrawerTab = 'overview' | 'deployments' | 'services' | 'logs' | 'variables' | 'config' | 'metrics' | 'settings';
 export type BranchResourceDetailTab = 'overview' | 'connection' | 'data' | 'backups' | 'variables' | 'metrics' | 'logs' | 'settings';
 type ResourceCloneMode = 'empty' | 'clone-main' | 'restore-backup' | 'connect-existing';
 
@@ -297,6 +298,7 @@ const drawerTabs: Array<{ key: DrawerTab; label: string; planned?: boolean }> = 
   { key: 'services', label: '资源' },
   { key: 'logs', label: '日志' },
   { key: 'variables', label: '变量' },           // 2026-05-04 Phase A 落地
+  { key: 'config', label: '配置' },              // 2026-07-06 波2 配置检查器(逐 key 溯源 + 部署计划)
   { key: 'metrics', label: '指标' },             // 2026-05-04 Phase B 落地
   { key: 'settings', label: '设置' },            // 2026-05-04 Phase C 落地
 ];
@@ -2350,6 +2352,10 @@ export function BranchDetailDrawer({
                     onEnvChanged={() => void loadEnv()}
                     onToast={(message) => onToast?.(message)}
                   />
+                ) : null}
+
+                {activeTab === 'config' && branchId ? (
+                  <EffectiveConfigPanel branchId={branchId} />
                 ) : null}
 
                 {activeTab === 'settings' ? (

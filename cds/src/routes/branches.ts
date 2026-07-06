@@ -14,6 +14,8 @@ import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
 import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles } from '../services/branch-extra-services.js';
+import { resolveProfileRuntimeEnvWithProvenance, type EnvLayer } from '../services/env-provenance.js';
+import { branchAppNetworkName, branchNetworkIsolationEnabled } from '../services/branch-network.js';
 import { classifyTriggerSource, deriveDeployMode, deriveCommitMeta, parsePulledSha, shouldRefreshCommitSha } from '../services/build-log-meta.js';
 import { acquireBuildSlot, buildGateStatus } from '../services/build-gate.js';
 import { recordBuild } from '../services/build-activity-tracker.js';
@@ -21,7 +23,7 @@ import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { JanitorService } from '../services/janitor.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
-import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogContainerSnapshot, OperationLogEvent, BuildProfile, BuildProfileOverride, ReadinessProbe, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project, ProjectActivityLog, ResourceExternalAccessPolicy, ContainerLogArchiveEntry } from '../types.js';
+import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogContainerSnapshot, OperationLogEvent, BuildProfile, BuildProfileOverride, ReadinessProbe, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project, ProjectActivityLog, ResourceExternalAccessPolicy, ContainerLogArchiveEntry, EnvSource, EnvKeyProvenance } from '../types.js';
 import { discoverComposeFiles, parseComposeFile, parseComposeString, resolveEnvTemplates, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
@@ -9809,6 +9811,151 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     res.json({ key, value: entry.value, source: entry.source });
+  });
+
+  // GET /api/branches/:id/effective-config — 分支生效配置全景(波2 配置检查器)
+  //
+  // 回答三个此前没有任何端点能回答的问题:
+  //   1. 这个分支的每个容器最终拿到的 env,**逐 key 从哪一层来**(段A customEnv 六层 +
+  //      段B profile/branch-override/deploy-mode/platform-injected/per-branch-db)
+  //   2. 每个容器的有效配置(镜像/端口/部署模式/数据库隔离)以及是否被本分支覆盖
+  //   3. CDS 预计为这个分支做什么(plan:起哪些容器、连哪些网、拉起哪些共享 infra)
+  //
+  // 溯源实现:env-provenance.ts 的纯函数(与部署路径同一条代码,部署行为逐字节不变);
+  // 段A来源口径与 effective-env 端点(buildBranchEnvMap)完全一致。
+  // 脱敏:所有 value 过 maskSecrets SSOT,不提供 reveal(要明文走既有 effective-env/reveal)。
+  // plan 的 infra 判定用**记录态**(不打 docker,stateBasis='recorded'),保持端点轻量只读。
+  router.get('/branches/:id/effective-config', (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const projectId = entry.projectId || 'default';
+    const m = assertProjectAccess(req as any, projectId);
+    if (m) {
+      res.status(m.status).json(m.body);
+      return;
+    }
+    const project = stateService.getProject(projectId);
+
+    // ── 段A:customEnv 六层(顺序 = 合并顺序,与 getMergedEnv/buildBranchEnvMap 一致)──
+    const cdsEnv = stateService.getCdsEnvVars(projectId);
+    const mirrorEnv = stateService.getMirrorEnvVars();
+    const rawGlobal = stateService.getCustomEnvScope('_global');
+    const rawProjectScoped = projectId === '_global' ? {} : stateService.getCustomEnvScope(projectId);
+    const rawBranchScoped = stateService.getCustomEnvScope(entry.id);
+    const derivedReserved: Record<string, string> = {};
+    if (project) {
+      derivedReserved.CDS_PROJECT_ID = project.id;
+      derivedReserved.CDS_PROJECT_SLUG = project.slug;
+    }
+    const customLayers: EnvLayer[] = [
+      { source: 'cds-builtin' as const, env: cdsEnv },
+      { source: 'mirror' as const, env: mirrorEnv },
+      { source: 'global' as const, env: rawGlobal },
+      { source: 'project' as const, env: rawProjectScoped },
+      { source: 'branch' as const, env: rawBranchScoped },
+      // 项目身份保留 key 放最后 —— 即便 global/project 写了同名 key,生效的也是系统派生真值
+      { source: 'cds-derived' as const, env: derivedReserved },
+    ].filter((l) => Object.keys(l.env).length > 0);
+
+    const envLayers = customLayers.map((l) => ({
+      source: l.source,
+      count: Object.keys(l.env).length,
+      keys: Object.keys(l.env).sort(),
+    }));
+
+    // ── 每个有效 profile(项目底座 + 分支临时额外服务)的逐 key 溯源 ──
+    const extraIds = new Set((entry.extraProfiles || []).map((p) => p.id));
+    const effectiveProfiles = stateService.getEffectiveProfilesForBranch(entry);
+    const profiles = effectiveProfiles.map((baseline) => {
+      const isExtra = extraIds.has(baseline.id);
+      const override = entry.profileOverrides?.[baseline.id];
+      const effective = resolveEffectiveProfile(baseline, entry);
+      // profile env 三层拆分,相对顺序与部署合并链一致:
+      // baseline.env → override.env(applyProfileOverride) → deployModes[mode].env(resolveProfileWithMode)
+      const activeMode = override?.activeDeployMode !== undefined
+        ? override.activeDeployMode
+        : baseline.activeDeployMode;
+      const modeEnv = (activeMode && baseline.deployModes?.[activeMode]?.env) || undefined;
+      const profileLayers: EnvLayer[] = [
+        { source: (isExtra ? 'extra-service' : 'profile') as EnvSource, env: baseline.env || {} },
+        { source: 'branch-override' as const, env: override?.env || {} },
+        { source: 'deploy-mode' as const, env: modeEnv || {} },
+      ].filter((l) => Object.keys(l.env).length > 0);
+
+      let envProvenance: EnvKeyProvenance[] = [];
+      let envError: string | undefined;
+      try {
+        const resolved = resolveProfileRuntimeEnvWithProvenance(
+          entry, effective, customLayers, profileLayers, { jwtIssuer: config.jwt.issuer },
+        );
+        // 脱敏走 maskSecrets SSOT:按 key 名或 URL 凭据值判定,provenance 的 value 同步替换
+        const maskedEnv = maskSecrets(resolved.env);
+        envProvenance = resolved.provenance.map((p) => ({ ...p, value: maskedEnv[p.key] ?? p.value }));
+      } catch (err) {
+        // 缺模板值等解析失败:不 fail 整个端点,把缺口显性化(这正是检查器要暴露的问题)
+        envError = (err as Error).message;
+      }
+      return {
+        profileId: baseline.id,
+        profileName: baseline.name || baseline.id,
+        isExtra,
+        hasOverride: !!override && Object.keys(override).some((k) => k !== 'updatedAt' && k !== 'notes'),
+        dockerImage: effective.dockerImage,
+        containerPort: effective.containerPort,
+        activeDeployMode: effective.activeDeployMode || null,
+        prebuilt: effective.prebuiltImage === true,
+        dbScope: effective.dbScope || 'shared',
+        dbScopeSource: override?.dbScope !== undefined ? 'branch-override' : (baseline.dbScope !== undefined ? 'baseline' : 'default'),
+        envProvenance,
+        ...(envError ? { envError } : {}),
+      };
+    });
+
+    // ── plan:CDS 预计为该分支做什么(记录态,不打 docker)──
+    const projectInfra = stateService.getInfraServicesForProject(projectId);
+    const recordedInfraState = new Map(
+      projectInfra.map((svc) => [svc.containerName, {
+        running: svc.status === 'running',
+        containerName: svc.containerName,
+        serviceId: svc.id,
+      }]),
+    );
+    const requiredInfraIds = computeRequiredInfra(effectiveProfiles, projectInfra, recordedInfraState);
+    const isolationOn = branchNetworkIsolationEnabled(process.env as Record<string, string | undefined>);
+    const plan = {
+      stateBasis: 'recorded' as const,
+      containers: profiles.map((p) => ({
+        profileId: p.profileId,
+        containerName: `cds-${entry.id}-${p.profileId}`,
+        dockerImage: p.dockerImage,
+        containerPort: p.containerPort,
+        deployMode: p.activeDeployMode,
+        prebuilt: p.prebuilt,
+        isExtra: p.isExtra,
+      })),
+      networks: {
+        isolation: isolationOn,
+        branchNetwork: isolationOn ? branchAppNetworkName(entry.id) : null,
+        sharedNetwork: project?.dockerNetwork || config.dockerNetwork,
+      },
+      requiredInfra: projectInfra
+        .filter((svc) => requiredInfraIds.has(svc.id))
+        .map((svc) => ({ id: svc.id, containerName: svc.containerName, status: svc.status, shared: true })),
+    };
+
+    res.json({
+      branchId: entry.id,
+      projectId,
+      projectSlug: project?.slug || projectId,
+      branchStatus: entry.status,
+      envLayers,
+      profiles,
+      plan,
+    });
   });
 
   // GET /api/branches/:id/metrics — 该分支所有 service 的 docker stats 瞬时值(Phase B)

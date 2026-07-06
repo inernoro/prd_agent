@@ -919,6 +919,72 @@ describe('Branch Routes', () => {
       expect(stateService.getBranch('b1')!.profileOverrides?.['api']?.dbScope).toBe('shared');
     });
 
+    describe('GET /api/branches/:id/effective-config(波2 配置检查器)', () => {
+      it('返回逐 key 溯源:extra-service/branch-override 打标 + 密钥脱敏 + plan 形状', async () => {
+        stateService.addBuildProfile({ id: 'api', name: 'API', dockerImage: 'img', workDir: 'api', command: 'run', containerPort: 8080, projectId: 'default', env: { FROM_PROFILE: 'p' } });
+        seedBranch('b1');
+        // 项目级 env + 分支级临时服务(带密钥 env)+ 分支覆盖
+        stateService.setCustomEnvVar('API_TOKEN', 'tok_supersecret_value', 'default');
+        stateService.setCustomEnvVar('PLAIN', 'visible', 'default');
+        await request(server, 'PUT', '/api/branches/b1/extra-services', {
+          extraProfiles: [{ id: 'nacos', name: 'nacos', dockerImage: 'nacos/nacos-server:v2.3.2', containerPort: 8848, env: { MODE: 'standalone' }, prebuiltImage: true }],
+        });
+        await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { env: { FROM_PROFILE: 'overridden' }, dbScope: 'per-branch' });
+
+        const res = await request(server, 'GET', '/api/branches/b1/effective-config');
+        expect(res.status).toBe(200);
+        const body = res.body as any;
+        expect(body.branchId).toBe('b1');
+        // envLayers 是段A分层摘要(至少含 project 层)
+        expect(body.envLayers.some((l: any) => l.source === 'project' && l.keys.includes('API_TOKEN'))).toBe(true);
+        // profiles 含项目底座 + 临时服务
+        const api = body.profiles.find((p: any) => p.profileId === 'api');
+        const nacos = body.profiles.find((p: any) => p.profileId === 'nacos');
+        expect(api).toBeTruthy();
+        expect(nacos).toBeTruthy();
+        expect(nacos.isExtra).toBe(true);
+        // 溯源打标:被 branch-override 覆盖的 key 记录 shadow 链
+        const fromProfile = api.envProvenance.find((p: any) => p.key === 'FROM_PROFILE');
+        expect(fromProfile).toMatchObject({ source: 'branch-override', shadowed: ['profile'] });
+        // 临时服务自带 env 打 extra-service
+        const mode = nacos.envProvenance.find((p: any) => p.key === 'MODE');
+        expect(mode).toMatchObject({ source: 'extra-service' });
+        // 项目 env 到达容器,来源 project
+        const plain = api.envProvenance.find((p: any) => p.key === 'PLAIN');
+        expect(plain).toMatchObject({ source: 'project', value: 'visible' });
+        // 密钥脱敏:API_TOKEN 不得以明文出现
+        const token = api.envProvenance.find((p: any) => p.key === 'API_TOKEN');
+        expect(token.value).not.toBe('tok_supersecret_value');
+        // dbScope 覆盖生效 + 来源标注
+        expect(api.dbScope).toBe('per-branch');
+        expect(api.dbScopeSource).toBe('branch-override');
+        // plan 形状:容器清单含两个服务,infra 判定为记录态
+        expect(body.plan.stateBasis).toBe('recorded');
+        expect(body.plan.containers.map((c: any) => c.profileId).sort()).toEqual(['api', 'nacos']);
+        expect(body.plan.networks.sharedNetwork).toBeTruthy();
+      });
+
+      it('缺失 ${VAR} 模板值时不 fail 端点,该 profile 带 envError 显性化缺口', async () => {
+        stateService.addBuildProfile({ id: 'api', name: 'API', dockerImage: 'img', workDir: 'api', command: 'run', containerPort: 8080, projectId: 'default', env: { DB_URL: 'mysql://h:${NOT_SET_ANYWHERE_XYZ}/app' } });
+        seedBranch('b1');
+        const res = await request(server, 'GET', '/api/branches/b1/effective-config');
+        expect(res.status).toBe(200);
+        const api = (res.body as any).profiles.find((p: any) => p.profileId === 'api');
+        expect(api.envError).toContain('NOT_SET_ANYWHERE_XYZ');
+        expect(api.envProvenance).toEqual([]);
+      });
+
+      it('跨项目 agent key 越权拿不到别的项目分支的生效配置(assertProjectAccess)', async () => {
+        const now = new Date().toISOString();
+        stateService.addProject({ id: 'proj-a', slug: 'proj-a', name: 'A', kind: 'git', createdAt: now, updatedAt: now });
+        stateService.addBranch({ id: 'ba', projectId: 'proj-a', branch: 'ba', worktreePath: '/tmp/wt/ba', services: {}, status: 'idle', createdAt: now });
+        const denied = await request(server, 'GET', '/api/branches/ba/effective-config', undefined, { 'x-test-key': 'B' });
+        expect(denied.status).toBe(403);
+        const ok = await request(server, 'GET', '/api/branches/ba/effective-config', undefined, { 'x-test-key': 'A' });
+        expect(ok.status).toBe(200);
+      });
+    });
+
     it('PUT /profile-overrides rejects a shell-injecting dockerImage override (Codex P1)', async () => {
       seedBranch('b1');
       await request(server, 'PUT', '/api/branches/b1/extra-services', {

@@ -11,6 +11,7 @@ import {
   Router as RouterIcon,
   FileText,
   GitCommitHorizontal,
+  Layers,
   Loader2,
   Network,
   Play,
@@ -31,6 +32,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { apiRequest, ApiError, apiUrl } from '@/lib/api';
 import { BranchDetailLoadingSkeleton, CodePill, ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
 import { ExtraServicesPanel } from '@/components/branch/ExtraServicesPanel';
+import { EffectiveConfigPanel } from '@/components/branch/EffectiveConfigPanel';
 
 interface ProjectSummary {
   id: string;
@@ -1579,6 +1581,16 @@ export function BranchDetailPage(): JSX.Element {
                 onToast={setToast}
                 onChanged={() => void load(false)}
               />
+
+              {/* 波2:配置检查器(逐 key 溯源 + 部署计划预览)。 */}
+              <DisclosurePanel
+                icon={<Layers className="h-4 w-4" />}
+                title="生效配置"
+                subtitle="每项配置从哪继承、被谁覆盖、部署时 CDS 会做什么"
+                contentClassName="p-5"
+              >
+                <EffectiveConfigPanel branchId={state.branch.id} />
+              </DisclosurePanel>
 
               <DisclosurePanel
                 icon={<FileText className="h-4 w-4" />}
