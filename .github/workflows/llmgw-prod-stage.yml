@@ -246,4 +246,5 @@ jobs:
         with:
           name: llmgw-prod-stage-${{ github.run_id }}
           path: .llmgw-release-evidence/
+          include-hidden-files: true
           if-no-files-found: ignore
