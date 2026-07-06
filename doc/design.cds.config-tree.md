@@ -126,11 +126,21 @@ CDS 全局默认(_global 变量层)
   可选增强:drift-scan 由 webhook push 自动触发 + 面板漂移入口 UI + 「CDS 级默认 profile
   片段」结构默认源统一。
 
-**波5 无 Agent 接入**
+**波5 无 Agent 接入 —— 后端 race-free 检测已实现(2026-07-06)**
 
-- 把 cdscli scan 的检测逻辑(栈识别/infra 识别/env 三色)以服务端等价物进 onboarding 向导,解决「无 compose 项目 clone 后停在保留为手动配置」的断头路;
-- 解决 ghost profile race(服务端 detect 与 cdscli scan 并发)后重新默认打开 clone 后自动检测;
-- 目标画像:产品经理不借 Claude,也能 UI 三步完成「选仓库 → 确认检测结果 → 首个分支预览」。
+- **关键发现**:建项目对话框(`ProjectListPage`)**已**提供 URL 式 3 步接入 —— 粘贴 Git URL →
+  「检测」调 `POST /api/detect-runtime`(浅克隆 + `detectModules` 填 runtime/命令/端口)→
+  确认应用服务 → 建项目时 `onboardingServices` + `autoDetectOnClone` 走 `applyRuntimeHintProfiles`
+  (用户确认 = race-free,不产 ghost profile)。所以「PM 无法在 UI 接入」的旧前提大体已过时。
+- **本波补齐的真实断头路** = 「已 clone 的空项目」事后检测(webhook 自动 clone / 建时没勾服务 /
+  检测为空的项目,clone 后停在「保留为手动配置」):
+  - `GET /api/projects/:id/detect-preview`:只读扫描项目**已 clone** 的 worktree(不再重复克隆、
+    不写状态),复用抽出的 `buildDetectedServicesFromDir`;
+  - `POST /api/projects/:id/detect-apply`:用户显式确认后按检测结果建 profile,**空项目守门**
+    (已有 profile 则 409),用户发起 = 无 ghost race;
+  - ghost race 的根因是「clone 时自动提交」,本波不重开该自动提交,而是走「用户确认再提交」绕开。
+- **仍 open(UI 层)**:空项目态加「检测技术栈」按钮(preview → 确认 → apply),须过双主题 +
+  移动兜底 + 真视觉验收(`real-visual-acceptance`),故本波记 55%。
 
 ---
 

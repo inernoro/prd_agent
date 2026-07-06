@@ -988,6 +988,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/projects\/(.+)\/github\/link$/, '关联 GitHub 仓库'],
     [/^DELETE \/projects\/(.+)\/github\/link$/, '解除 GitHub 关联'],
     [/^POST \/projects\/(.+)\/clone$/, '克隆代码'],
+    [/^GET \/projects\/(.+)\/detect-preview$/, '预览栈检测'],
+    [/^POST \/projects\/(.+)\/detect-apply$/, '应用栈检测'],
     [/^GET \/projects\/(.+)\/storage$/, '获取项目存储'],
     [/^GET \/projects\/(.+)$/, '查询项目'],
     [/^PUT \/projects\/(.+)$/, '更新项目'],
