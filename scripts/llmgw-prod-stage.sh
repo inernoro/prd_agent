@@ -32,6 +32,7 @@ Options:
   --dry-run                   Print the exact stage plan without mutating state
   --repo owner/repo           Pass repository through to fast.sh and exec_dep.sh
   --sample-percent N          Shadow full sample percent for shadow/canary stages, default 1
+  --min-observation-hours N   Require previous stage success to be at least N hours old, default 24
   --evidence-dir PATH         Evidence output directory, default .llmgw-release-evidence
   --ledger PATH               Append-only rollout ledger, default <evidence-dir>/rollout-ledger.jsonl
   --allow-out-of-order        Skip ledger stage order validation; requires an explicit release note
@@ -43,6 +44,7 @@ commit=""
 repo=""
 execute=0
 sample_percent="${LLMGW_STAGE_SHADOW_FULL_SAMPLE_PERCENT:-1}"
+min_observation_hours="${LLMGW_STAGE_MIN_OBSERVATION_HOURS:-24}"
 evidence_dir="${LLMGW_STAGE_EVIDENCE_DIR:-.llmgw-release-evidence}"
 ledger=""
 allow_out_of_order=0
@@ -80,6 +82,14 @@ while [ "$#" -gt 0 ]; do
       ;;
     --sample-percent=*)
       sample_percent="${1#--sample-percent=}"
+      ;;
+    --min-observation-hours)
+      shift
+      [ "$#" -gt 0 ] || { echo "ERROR: --min-observation-hours requires a number" >&2; exit 1; }
+      min_observation_hours="$1"
+      ;;
+    --min-observation-hours=*)
+      min_observation_hours="${1#--min-observation-hours=}"
       ;;
     --evidence-dir)
       shift
@@ -138,6 +148,10 @@ esac
 
 if ! printf '%s' "$sample_percent" | grep -Eq '^[0-9]+$'; then
   echo "ERROR: --sample-percent must be an integer percent" >&2
+  exit 1
+fi
+if ! printf '%s' "$min_observation_hours" | grep -Eq '^[0-9]+([.][0-9]+)?$'; then
+  echo "ERROR: --min-observation-hours must be a non-negative number" >&2
   exit 1
 fi
 
@@ -235,6 +249,7 @@ print_plan() {
   echo "  execute: $execute"
   echo "  ledger: $ledger"
   echo "  allowOutOfOrder: $allow_out_of_order"
+  echo "  minObservationHours: $min_observation_hours"
   if [ "$stage" != "rollback-inproc" ]; then
     echo "  commit: $commit"
     echo "  mode: $mode"
@@ -259,12 +274,14 @@ validate_ledger_order() {
       --ledger "$ledger" \
       --stage "$stage" \
       --commit "$commit" \
+      --min-observation-hours "$min_observation_hours" \
       --allow-out-of-order
   else
     python3 scripts/llmgw-rollout-ledger.py validate \
       --ledger "$ledger" \
       --stage "$stage" \
-      --commit "$commit"
+      --commit "$commit" \
+      --min-observation-hours "$min_observation_hours"
   fi
 }
 
@@ -289,7 +306,8 @@ append_ledger_entry() {
     --release-gate-json "$release_gate_json" \
     --release-gate-required "${release_gate_required:-0}" \
     --serving-probe-json "$serving_probe_json" \
-    --smoke-json "$smoke_json"
+    --smoke-json "$smoke_json" \
+    --min-stage-observation-hours "$min_observation_hours"
 }
 
 run_or_print() {
@@ -371,7 +389,8 @@ if [ "$execute" = "1" ]; then
     --release-gate-json "$release_gate_json" \
     --release-gate-required "$release_gate_required" \
     --serving-probe-json "$serving_probe_json" \
-    --smoke-json "$smoke_json"
+    --smoke-json "$smoke_json" \
+    --min-stage-observation-hours "$min_observation_hours"
   append_ledger_entry success
 fi
 

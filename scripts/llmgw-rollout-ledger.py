@@ -70,6 +70,21 @@ def _bool_flag(value: str) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _parse_recorded_at(value: object) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        parsed = datetime.fromisoformat(raw)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
 def _successful_stages(entries: list[dict], commit: str) -> set[str]:
     return {
         str(item.get("stage") or "")
@@ -112,6 +127,39 @@ def validate(args: argparse.Namespace) -> int:
         )
         return 1
 
+    try:
+        min_observation_hours = max(0.0, float(args.min_observation_hours or 0))
+    except (TypeError, ValueError):
+        print(f"ERROR: --min-observation-hours must be a non-negative number: {args.min_observation_hours}", file=sys.stderr)
+        return 2
+    if min_observation_hours > 0 and required:
+        previous_stage = required[-1]
+        previous_successes = [
+            item
+            for item in entries
+            if str(item.get("commit") or "").lower() == commit
+            and str(item.get("status") or "") == "success"
+            and str(item.get("stage") or "") == previous_stage
+        ]
+        previous_times = [parsed for parsed in (_parse_recorded_at(item.get("recordedAt")) for item in previous_successes) if parsed]
+        if not previous_times:
+            print(
+                "ERROR: rollout stage observation gate cannot read previous stage success time. "
+                f"stage={stage} previous_stage={previous_stage} ledger={args.ledger}",
+                file=sys.stderr,
+            )
+            return 1
+        latest_previous_success = max(previous_times)
+        observed_hours = (datetime.now(timezone.utc) - latest_previous_success).total_seconds() / 3600.0
+        if observed_hours < min_observation_hours:
+            print(
+                "ERROR: rollout stage observation window not satisfied. "
+                f"stage={stage} previous_stage={previous_stage} observed_hours={observed_hours:.2f} "
+                f"required_hours={min_observation_hours:g} ledger={args.ledger}",
+                file=sys.stderr,
+            )
+            return 1
+
     print(f"LLM Gateway rollout ledger: prior stages satisfied for {stage}")
     return 0
 
@@ -146,6 +194,7 @@ def append(args: argparse.Namespace) -> int:
         "releaseGateRequired": _bool_flag(args.release_gate_required),
         "servingProbeJson": args.serving_probe_json,
         "smokeJson": args.smoke_json,
+        "minStageObservationHours": args.min_stage_observation_hours,
     }
     with open(args.ledger, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry, ensure_ascii=False, sort_keys=True))
@@ -185,6 +234,7 @@ def _write_markdown(path: str, report: dict) -> None:
         fh.write(f"- canaryStage: `{cell(report['canaryStage'])}`\n")
         fh.write(f"- allowlist: `{cell(report['allowlist'])}`\n")
         fh.write(f"- releaseGateRequired: `{cell(report['releaseGateRequired'])}`\n")
+        fh.write(f"- minStageObservationHours: `{cell(report['minStageObservationHours'])}`\n")
         fh.write(f"- releaseGateJson: `{cell(report['releaseGateJson'])}`\n")
         fh.write(f"- servingProbeJson: `{cell(report['servingProbeJson'])}`\n")
         fh.write(f"- smokeJson: `{cell(report['smokeJson'])}`\n\n")
@@ -224,6 +274,7 @@ def stage_report(args: argparse.Namespace) -> int:
         "shadowFullSamplePercent": args.shadow_full_sample_percent,
         "gateBase": args.gate_base,
         "releaseGateRequired": _bool_flag(args.release_gate_required),
+        "minStageObservationHours": args.min_stage_observation_hours,
         "releaseGateJson": args.release_gate_json,
         "servingProbeJson": args.serving_probe_json,
         "smokeJson": args.smoke_json,
@@ -247,6 +298,7 @@ def main() -> int:
     validate_parser.add_argument("--ledger", required=True)
     validate_parser.add_argument("--stage", required=True)
     validate_parser.add_argument("--commit", default="")
+    validate_parser.add_argument("--min-observation-hours", default="0")
     validate_parser.add_argument("--allow-out-of-order", action="store_true")
     validate_parser.set_defaults(func=validate)
 
@@ -266,6 +318,7 @@ def main() -> int:
     append_parser.add_argument("--release-gate-required", default="0")
     append_parser.add_argument("--serving-probe-json", default="")
     append_parser.add_argument("--smoke-json", default="")
+    append_parser.add_argument("--min-stage-observation-hours", default="")
     append_parser.set_defaults(func=append)
 
     report_parser = sub.add_parser("stage-report", help="write and validate stage evidence")
@@ -283,6 +336,7 @@ def main() -> int:
     report_parser.add_argument("--release-gate-required", default="0")
     report_parser.add_argument("--serving-probe-json", default="")
     report_parser.add_argument("--smoke-json", default="")
+    report_parser.add_argument("--min-stage-observation-hours", default="")
     report_parser.set_defaults(func=stage_report)
 
     args = parser.parse_args()

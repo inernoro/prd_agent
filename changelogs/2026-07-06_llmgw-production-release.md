@@ -43,3 +43,4 @@
 | ops | prd-agent | 新增 LLM Gateway 生产阶段推进脚本，统一 shadow、canary、http 全量和 inproc 回滚入口，避免正式发布手工拼环境变量 |
 | ops | prd-agent | LLM Gateway 生产阶段推进脚本新增 JSONL 台账和同 commit 顺序校验，防止跳过 shadow/canary 证据阶段 |
 | ops | prd-agent | LLM Gateway 生产阶段台账 success 前强制校验 stage、serving probe、gw-smoke 与 release gate 证据 verdict=pass |
+| ops | prd-agent | LLM Gateway 生产阶段推进默认要求前一阶段 success 至少观察 24 小时，防止连续跳过 canary 观察窗口 |

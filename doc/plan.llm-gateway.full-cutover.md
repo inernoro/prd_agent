@@ -159,6 +159,9 @@ scripts/llmgw-prod-stage.sh --stage shadow-start --commit <40位SHA> --execute
 stage/serving-probe/gw-smoke 证据；canary/http 阶段还必须读到 verdict=pass 的 release-gate 证据。
 这样可以防止跳过证据期、换 commit 后沿用旧证据，或台账 success 但证据文件缺失。确需人工越级时必须显式
 加 `--allow-out-of-order`，并在发布记录中说明原因；越级不会跳过当前阶段的证据文件校验。
+阶段推进还默认要求前一阶段 `success` 记录至少已观察 24 小时（`LLMGW_STAGE_MIN_OBSERVATION_HOURS` /
+`--min-observation-hours` 可调），因此 canary 批次不能在同一小时内连续推进；只有 shadow 样本门、serving probe、
+D 层 smoke 与阶段观察窗口都满足后，台账才允许进入下一阶段。
 灰度阶段会自动设置 `LLMGW_MODE=shadow`、对应 `LLMGW_CANARY_STAGE` 与 allowlist；`http-full`
 会设置 `LLMGW_MODE=http` 并依赖 `exec_dep.sh` 的全量证据门。`rollback-inproc` 只调用
 `scripts/llmgw-rollback-inproc.sh`，不回滚数据库。

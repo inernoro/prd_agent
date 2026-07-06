@@ -291,6 +291,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("rollback-inproc", script);
         Assert.Contains("execute=0", script);
         Assert.Contains("--execute", script);
+        Assert.Contains("--min-observation-hours", script);
+        Assert.Contains("LLMGW_STAGE_MIN_OBSERVATION_HOURS", script);
+        Assert.Contains("minObservationHours", script);
         Assert.Contains("LLMGW_GATE_KEY, GW_KEY, or LLMGW_SERVE_KEY", script);
         Assert.DoesNotContain("--key", script);
         Assert.DoesNotContain("--gateway-key", script);
@@ -330,6 +333,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("\"evidenceJson\": args.evidence_json", ledger);
         Assert.Contains("\"servingProbeJson\": args.serving_probe_json", ledger);
         Assert.Contains("\"smokeJson\": args.smoke_json", ledger);
+        Assert.Contains("min_observation_hours", ledger);
+        Assert.Contains("rollout stage observation window not satisfied", ledger);
+        Assert.Contains("\"minStageObservationHours\": args.min_stage_observation_hours", ledger);
         Assert.Contains("_require_pass_json", ledger);
         Assert.Contains("stage-report", ledger);
         Assert.Contains("ensure_ascii=False", ledger);
@@ -341,6 +347,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("ledgerExecutable", readiness);
         Assert.Contains("serving-probe.json", readiness);
         Assert.Contains("GW_SMOKE_JSON_OUT", readiness);
+        Assert.Contains("LLMGW_STAGE_MIN_OBSERVATION_HOURS", readiness);
+        Assert.Contains("rollout stage observation window not satisfied", readiness);
         Assert.Contains("leaksKeyArg", readiness);
     }
 
