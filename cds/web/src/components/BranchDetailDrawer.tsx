@@ -10,6 +10,8 @@ import { EnvEditor } from '@/pages/cds-settings/EnvEditor';
 import { ActiveDeployment } from '@/components/deployment/ActiveDeployment';
 import { HistoryRow } from '@/components/deployment/HistoryRow';
 import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
+import { ExtraServicesPanel } from '@/components/branch/ExtraServicesPanel';
+import { EffectiveConfigPanel } from '@/components/branch/EffectiveConfigPanel';
 import { deriveBranchPhases, type PhaseKey } from '@/lib/deploymentPhases';
 import { normalizeContainerLogsForDisplay } from '@/lib/containerLogs';
 import { pickActiveDeployment } from './branchDeploymentSelection';
@@ -94,6 +96,7 @@ interface BuildProfileOverride {
   resources?: { memoryMB?: number; cpus?: number };
   activeDeployMode?: string;
   startupSignal?: string;
+  dbScope?: 'shared' | 'per-branch';
   notes?: string;
 }
 
@@ -105,6 +108,7 @@ interface ProfileRow {
     name: string;
     deployModes?: Record<string, { label?: string }>;
     activeDeployMode?: string;
+    dbScope?: 'shared' | 'per-branch';
   };
   override?: BuildProfileOverride | null;
   effective?: {
@@ -115,6 +119,7 @@ interface ProfileRow {
     dependsOn?: string[];
     activeDeployMode?: string;
     deployModes?: Record<string, { label?: string }>;
+    dbScope?: 'shared' | 'per-branch';
   };
   hasOverride?: boolean;
 }
@@ -262,7 +267,7 @@ export interface BranchDeploymentItem {
   deployMode?: string;
 }
 
-type DrawerTab = 'overview' | 'deployments' | 'services' | 'logs' | 'variables' | 'metrics' | 'settings';
+type DrawerTab = 'overview' | 'deployments' | 'services' | 'logs' | 'variables' | 'config' | 'metrics' | 'settings';
 export type BranchResourceDetailTab = 'overview' | 'connection' | 'data' | 'backups' | 'variables' | 'metrics' | 'logs' | 'settings';
 type ResourceCloneMode = 'empty' | 'clone-main' | 'restore-backup' | 'connect-existing';
 
@@ -293,6 +298,7 @@ const drawerTabs: Array<{ key: DrawerTab; label: string; planned?: boolean }> = 
   { key: 'services', label: '资源' },
   { key: 'logs', label: '日志' },
   { key: 'variables', label: '变量' },           // 2026-05-04 Phase A 落地
+  { key: 'config', label: '配置' },              // 2026-07-06 波2 配置检查器(逐 key 溯源 + 部署计划)
   { key: 'metrics', label: '指标' },             // 2026-05-04 Phase B 落地
   { key: 'settings', label: '设置' },            // 2026-05-04 Phase C 落地
 ];
@@ -1326,6 +1332,40 @@ export function BranchDetailDrawer({
     }
   }, [branchId, load, onActionComplete, onToast]);
 
+  // 波1 W1c:按分支切换数据库隔离档位(dbScope)。与部署模式不同,**只保存不自动重部署**——
+  // 切库是重操作(应用重启后连到另一个 database),用户应自己决定重部署时机(最小惊讶)。
+  const setProfileDbScope = useCallback(async (profile: ProfileRow, scope: '' | 'shared' | 'per-branch'): Promise<void> => {
+    if (!branchId) return;
+    setModeSavingProfileId(profile.profileId);
+    try {
+      const next: BuildProfileOverride = { ...(profile.override || {}) };
+      if (scope === '') delete next.dbScope;
+      else next.dbScope = scope;
+      const compacted = compactProfileOverride(next);
+      if (!hasProfileOverrideFields(compacted)) {
+        await apiRequest(`/api/branches/${encodeURIComponent(branchId)}/profile-overrides/${encodeURIComponent(profile.profileId)}`, {
+          method: 'DELETE',
+        });
+      } else {
+        await apiRequest(`/api/branches/${encodeURIComponent(branchId)}/profile-overrides/${encodeURIComponent(profile.profileId)}`, {
+          method: 'PUT',
+          body: compacted,
+        });
+      }
+      onToast?.(scope === 'per-branch'
+        ? '已切为分支独立库(DB 名加分支后缀),重新部署后生效'
+        : scope === 'shared'
+          ? '已切为共享库,重新部署后生效'
+          : '已恢复继承项目配置,重新部署后生效');
+      await load();
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : String(err);
+      onToast?.(`切换数据库隔离失败:${message}`);
+    } finally {
+      setModeSavingProfileId(null);
+    }
+  }, [branchId, load, onToast]);
+
   const loadServiceLogs = useCallback(async (profileId: string) => {
     if (!branchId) return;
     setSelectedServiceId(profileId);
@@ -2314,6 +2354,10 @@ export function BranchDetailDrawer({
                   />
                 ) : null}
 
+                {activeTab === 'config' && branchId ? (
+                  <EffectiveConfigPanel branchId={branchId} onToast={onToast} />
+                ) : null}
+
                 {activeTab === 'settings' ? (
                   <SettingsPanel
                     branch={branch}
@@ -2325,6 +2369,8 @@ export function BranchDetailDrawer({
                     onConfirmDelete={setConfirmDelete}
                     onRunAction={runBranchAction}
                     onSetProfileDeployMode={setProfileDeployMode}
+                    onSetProfileDbScope={setProfileDbScope}
+                    onToast={onToast}
                   />
                 ) : null}
 
@@ -5984,6 +6030,7 @@ function compactProfileOverride(override: BuildProfileOverride): BuildProfileOve
   if (override.resources && Object.keys(override.resources).length > 0) next.resources = override.resources;
   if (override.activeDeployMode !== undefined) next.activeDeployMode = override.activeDeployMode.trim();
   if (override.startupSignal?.trim()) next.startupSignal = override.startupSignal.trim();
+  if (override.dbScope === 'shared' || override.dbScope === 'per-branch') next.dbScope = override.dbScope;
   if (override.notes?.trim()) next.notes = override.notes.trim();
   return next;
 }
@@ -6019,6 +6066,8 @@ function SettingsPanel({
   onConfirmDelete,
   onRunAction,
   onSetProfileDeployMode,
+  onSetProfileDbScope,
+  onToast,
 }: {
   branch: BranchDetailData | null;
   projectId: string;
@@ -6032,6 +6081,8 @@ function SettingsPanel({
     label: string,
   ) => void;
   onSetProfileDeployMode: (profile: ProfileRow, mode: string) => void;
+  onSetProfileDbScope: (profile: ProfileRow, scope: '' | 'shared' | 'per-branch') => void;
+  onToast?: (message: string) => void;
 }): JSX.Element {
   if (!branch) {
     return (
@@ -6085,6 +6136,9 @@ function SettingsPanel({
               const activeMode = hasBranchModeOverride
                 ? (profile.override?.activeDeployMode || '')
                 : (profile.effective?.activeDeployMode || '');
+              // 波1 W1c:数据库隔离档位。override 有值 = 本分支覆盖;否则显示「继承」。
+              const dbScopeOverride = profile.override?.dbScope;
+              const inheritedDbScope = profile.baseline?.dbScope || 'shared';
               return (
                 <div key={profile.profileId} className="flex flex-wrap items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2">
                   <div className="min-w-0 flex-1">
@@ -6094,6 +6148,11 @@ function SettingsPanel({
                       <span className={`rounded border px-1.5 py-0.5 ${hasBranchModeOverride ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300' : 'border-[hsl(var(--hairline))]'}`}>
                         {hasBranchModeOverride ? '本分支覆盖' : '继承默认'}
                       </span>
+                      {(dbScopeOverride ?? inheritedDbScope) === 'per-branch' ? (
+                        <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-emerald-700 dark:text-emerald-300">
+                          分支独立库
+                        </span>
+                      ) : null}
                     </div>
                   </div>
                   <select
@@ -6110,6 +6169,17 @@ function SettingsPanel({
                       </option>
                     ))}
                   </select>
+                  <select
+                    className="h-9 min-w-[150px] rounded-md border border-input bg-background px-3 text-sm"
+                    value={dbScopeOverride ?? ''}
+                    onChange={(event) => onSetProfileDbScope(profile, event.target.value as '' | 'shared' | 'per-branch')}
+                    disabled={modeSavingProfileId === profile.profileId}
+                    title="数据库隔离:分支独立库会给 DB 名追加分支后缀;切换后需重新部署生效"
+                  >
+                    <option value="">{`数据库:继承(${inheritedDbScope === 'per-branch' ? '分支独立库' : '共享库'})`}</option>
+                    <option value="shared">数据库:共享库</option>
+                    <option value="per-branch">数据库:分支独立库</option>
+                  </select>
                   {modeSavingProfileId === profile.profileId ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : null}
                 </div>
               );
@@ -6117,6 +6187,10 @@ function SettingsPanel({
           </div>
         ) : null}
       </div>
+
+      {/* 波1 W1b:分支级临时额外服务(Nacos 场景)。运行模式卡讲「怎么跑项目服务」,
+          这张卡讲「本分支额外多跑什么」,同属分支级配置,放一起。 */}
+      <ExtraServicesPanel branchId={branch.id} onToast={onToast} />
 
       {/* 主操作 */}
       <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-4 py-3">
