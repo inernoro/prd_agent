@@ -3,7 +3,8 @@
 
 This script is a coordinator for release readiness. It does not mutate
 production state. It combines static release invariants, rollback dry-run,
-optional dotnet gate tests, optional D-layer smoke, and optional live release-gate evidence.
+optional dotnet gate tests, optional D-layer smoke, optional shadow coverage matrix,
+and optional live release-gate evidence.
 """
 
 from __future__ import annotations
@@ -72,6 +73,7 @@ def _static_checks() -> list[dict]:
     checks: list[dict] = []
 
     release_gate = _read("scripts/llmgw-release-gate.py")
+    shadow_coverage = _read("scripts/llmgw-shadow-coverage-report.py")
     ok, detail = _contains_all(
         release_gate,
         [
@@ -85,6 +87,23 @@ def _static_checks() -> list[dict]:
         ],
     )
     checks.append(_check("release_gate_supports_required_shadow_and_health_gates", ok, detail))
+
+    ok, detail = _contains_all(
+        shadow_coverage,
+        [
+            "LLM Gateway shadow coverage",
+            "/shadow-comparisons",
+            "--app-caller",
+            "--kind",
+            "--min-per-cell",
+            "LLMGW_HTTP_APP_CALLER_ALLOWLIST",
+            "critical",
+            "httpFail",
+            "LLMGW_SHADOW_COVERAGE_JSON_OUT",
+            "LLMGW_SHADOW_COVERAGE_REPORT_MD",
+        ],
+    )
+    checks.append(_check("shadow_coverage_report_available", ok, detail))
 
     exec_dep = _read("exec_dep.sh")
     ok, detail = _contains_all(
@@ -268,6 +287,27 @@ def _gw_smoke(args: argparse.Namespace) -> dict:
     return {"name": "gw_smoke_d_layer", "ok": result["ok"], "detail": result["stdout"] + result["stderr"], "command": result}
 
 
+def _shadow_coverage(args: argparse.Namespace) -> dict:
+    cmd = [
+        "python3",
+        "scripts/llmgw-shadow-coverage-report.py",
+        "--base",
+        args.base,
+        "--key",
+        args.key,
+        "--min-per-cell",
+        str(args.min_per_app),
+        "--since-hours",
+        str(args.since_hours),
+    ]
+    for item in args.app_caller:
+        cmd.extend(["--app-caller", item])
+    for item in args.kind:
+        cmd.extend(["--kind", item])
+    result = _run(cmd, timeout=600)
+    return {"name": "shadow_coverage_matrix", "ok": result["ok"], "detail": result["stdout"] + result["stderr"], "command": result}
+
+
 def _write_outputs(report: dict, json_out: str, report_md: str) -> None:
     if json_out:
         path = Path(json_out)
@@ -303,10 +343,12 @@ def main() -> int:
     parser.add_argument("--health-samples", type=int, default=int(os.environ.get("LLMGW_GATE_HEALTH_SAMPLES", "3")))
     parser.add_argument("--health-interval", type=float, default=float(os.environ.get("LLMGW_GATE_HEALTH_INTERVAL_SECONDS", "5")))
     parser.add_argument("--app-caller", action="append", default=[])
+    parser.add_argument("--kind", action="append", default=[])
     parser.add_argument("--require-kind", action="append", default=[])
     parser.add_argument("--require-app-kind", action="append", default=[])
     parser.add_argument("--run-dotnet", action="store_true", help="run xUnit gateway guard tests")
     parser.add_argument("--run-smoke", action="store_true", help="run D-layer scripts/gw-smoke.py against --base/--key")
+    parser.add_argument("--run-shadow-coverage", action="store_true", help="run appCaller x kind shadow coverage matrix")
     parser.add_argument("--smoke-timeout-seconds", type=int, default=int(os.environ.get("GW_TIMEOUT", "120")))
     parser.add_argument("--require-release-gate", action="store_true", help="fail when --base/--key are missing and run live release gate")
     parser.add_argument("--json-out", default=os.environ.get("LLMGW_READINESS_JSON_OUT", ""))
@@ -323,6 +365,11 @@ def main() -> int:
             checks.append(_check("gw_smoke_d_layer", False, "missing --base/--key"))
         else:
             checks.append(_gw_smoke(args))
+    if args.run_shadow_coverage:
+        if not args.base or not args.key:
+            checks.append(_check("shadow_coverage_matrix", False, "missing --base/--key"))
+        else:
+            checks.append(_shadow_coverage(args))
     if args.require_release_gate:
         if not args.base or not args.key:
             checks.append(_check("live_release_gate", False, "missing --base/--key"))

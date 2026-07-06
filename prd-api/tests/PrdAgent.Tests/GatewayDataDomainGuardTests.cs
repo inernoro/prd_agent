@@ -197,8 +197,30 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("scripts/llmgw-release-gate.py", script);
         Assert.Contains("GW_KEY", script);
         Assert.Contains("LLMGW_GATE_SHADOW_SINCE_HOURS", script);
+        Assert.Contains("shadow_coverage_report_available", script);
+        Assert.Contains("--run-shadow-coverage", script);
+        Assert.Contains("scripts/llmgw-shadow-coverage-report.py", script);
         Assert.Contains("LLMGW_READINESS_JSON_OUT", script);
         Assert.Contains("LLMGW_READINESS_REPORT_MD", script);
+    }
+
+    [Fact]
+    public void ShadowCoverageReport_RendersAppCallerKindMatrixWithoutLeakingKey()
+    {
+        var script = ReadRepoFile("scripts/llmgw-shadow-coverage-report.py");
+
+        Assert.Contains("LLM Gateway shadow coverage", script);
+        Assert.Contains("/shadow-comparisons", script);
+        Assert.Contains("--app-caller", script);
+        Assert.Contains("--kind", script);
+        Assert.Contains("--min-per-cell", script);
+        Assert.Contains("LLMGW_HTTP_APP_CALLER_ALLOWLIST", script);
+        Assert.Contains("LLMGW_SHADOW_COVERAGE_JSON_OUT", script);
+        Assert.Contains("LLMGW_SHADOW_COVERAGE_REPORT_MD", script);
+        Assert.Contains("critical", script);
+        Assert.Contains("httpFail", script);
+        Assert.DoesNotContain("print(key", script);
+        Assert.DoesNotContain("GW_KEY=\"", script);
     }
 
     [Fact]

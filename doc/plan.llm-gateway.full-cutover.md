@@ -88,6 +88,7 @@ GW_KEY=<X-Gateway-Key> \
 python3 scripts/llmgw-readiness-audit.py \
   --run-dotnet \
   --run-smoke \
+  --run-shadow-coverage \
   --require-release-gate \
   --min-total 30 \
   --health-samples 3 --health-interval 5 \
@@ -103,6 +104,8 @@ python3 scripts/llmgw-readiness-audit.py \
 直连棘轮空 baseline、multipart HTTP rehydrate、回滚脚本 dry-run；传 `--run-dotnet` 时会跑关键 xUnit 守卫；
 传 `--run-smoke` 时会调用 `scripts/gw-smoke.py` 真打 `/gw/v1/healthz`、`/pools`、`/send`、`/stream`、
 `/client-stream` 与 canary 必败；
+传 `--run-shadow-coverage` 时会调用 `scripts/llmgw-shadow-coverage-report.py` 输出 global/kind/appCaller×kind
+覆盖矩阵，明确每个格子的 total、allMatch、critical、httpFail 与是否达标；
 传 `--require-release-gate` 时会调用 `scripts/llmgw-release-gate.py` 检查真实 health/shadow 样本。
 
 `exec_dep.sh` 也内置同一 live release gate：全量 `LLMGW_MODE=http` 或灰度 `LLMGW_HTTP_APP_CALLER_ALLOWLIST` 非空时
