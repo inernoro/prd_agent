@@ -5,3 +5,4 @@
 | test | prd-api | 增加 direct transport 标记守卫，防止全量迁移证据被 stale direct 上下文污染 |
 | feat | prd-api | 为 llmgw-serve 增加受密钥保护的 OpenAI-compatible chat/completions 入口，供 sidecar 工具循环经网关调用模型 |
 | refactor | prd-api | CapsuleExecutor 的 claude-sdk 执行器默认改为经 llmgw-serve 的 openai-compatible 路径，不再向 sidecar 下发真实上游密钥 |
+| ci | prd-agent | Branch Image 在 API/llmgw-serve 改动时同步产出 llmgw 与 llmgw-web 同 SHA 镜像，避免生产 commit 发布缺 tag |
