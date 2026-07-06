@@ -477,6 +477,62 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ProdStageWorkflow_RunsStageRunnerOnProductionRunnerAndUploadsEvidence()
+    {
+        var workflow = ReadRepoFile(".github/workflows/llmgw-prod-stage.yml");
+        var readiness = ReadRepoFile("scripts/llmgw-readiness-audit.py");
+
+        Assert.Contains("LLM Gateway Production Stage", workflow);
+        Assert.Contains("workflow_dispatch:", workflow);
+        Assert.Contains("stage:", workflow);
+        Assert.Contains("shadow-start", workflow);
+        Assert.Contains("rollback-rehearsal", workflow);
+        Assert.Contains("canary-intent-text", workflow);
+        Assert.Contains("canary-chat", workflow);
+        Assert.Contains("canary-streaming", workflow);
+        Assert.Contains("canary-vision", workflow);
+        Assert.Contains("canary-image", workflow);
+        Assert.Contains("canary-video-asr", workflow);
+        Assert.Contains("http-full", workflow);
+        Assert.Contains("rollback-inproc", workflow);
+        Assert.Contains("execute:", workflow);
+        Assert.Contains("default: false", workflow);
+        Assert.Contains("runner_labels_json", workflow);
+        Assert.Contains("[\\\"self-hosted\\\",\\\"prd-agent-prod\\\"]", workflow);
+        Assert.Contains("environment: production", workflow);
+        Assert.Contains("PRD_AGENT_PROD_BASE", workflow);
+        Assert.Contains("PRD_AGENT_PROD_API_KEY", workflow);
+        Assert.Contains("LLMGW_PROD_GATE_BASE", workflow);
+        Assert.Contains("LLMGW_PROD_GATE_KEY", workflow);
+        Assert.Contains("PRD_AGENT_PROD_GITHUB_TOKEN", workflow);
+        Assert.Contains("logs:read access", workflow);
+        Assert.Contains("fetch-depth: 0", workflow);
+        Assert.Contains("scripts/llmgw-prod-stage.sh", workflow);
+        Assert.Contains("--stage \"$stage\"", workflow);
+        Assert.Contains("--commit \"$commit\"", workflow);
+        Assert.Contains("--execute", workflow);
+        Assert.Contains("--dry-run", workflow);
+        Assert.Contains("--repo \"$repo\"", workflow);
+        Assert.Contains("--sample-percent \"$sample_percent\"", workflow);
+        Assert.Contains("--min-observation-hours \"$min_observation_hours\"", workflow);
+        Assert.Contains("--main-ref \"$main_ref\"", workflow);
+        Assert.Contains("--evidence-dir \".llmgw-release-evidence\"", workflow);
+        Assert.Contains("--allow-out-of-order-reason \"$allow_out_of_order_reason\"", workflow);
+        Assert.Contains("scripts/llmgw-rollout-ledger.py audit", workflow);
+        Assert.Contains("--require-target-success", workflow);
+        Assert.Contains("stage-audit.json", workflow);
+        Assert.Contains("stage-audit.md", workflow);
+        Assert.Contains("actions/upload-artifact@v4", workflow);
+        Assert.Contains(".llmgw-release-evidence/", workflow);
+        Assert.DoesNotContain("echo \"$PRD_AGENT_API_KEY\"", workflow);
+        Assert.DoesNotContain("echo \"$LLMGW_GATE_KEY\"", workflow);
+
+        Assert.Contains("prod_stage_workflow_runs_on_production_runner_and_uploads_rollout_evidence", readiness);
+        Assert.Contains(".github/workflows/llmgw-prod-stage.yml", readiness);
+        Assert.Contains("leaksStageSecret", readiness);
+    }
+
+    [Fact]
     public void RolloutLedgerAudit_FailsWhenTargetSuccessWasLaterRolledBack()
     {
         var root = LocateRepoRoot();

@@ -97,6 +97,7 @@ def _static_checks() -> list[dict]:
     shadow_coverage = _read("scripts/llmgw-shadow-coverage-report.py")
     serving_probe = _read("scripts/llmgw-serving-probe.py")
     prod_preflight_workflow = _read(".github/workflows/llmgw-prod-preflight.yml")
+    prod_stage_workflow = _read(".github/workflows/llmgw-prod-stage.yml")
     prod_stage_path = ROOT / "scripts/llmgw-prod-stage.sh"
     prod_stage = prod_stage_path.read_text(encoding="utf-8")
     rollout_ledger_path = ROOT / "scripts/llmgw-rollout-ledger.py"
@@ -194,6 +195,59 @@ def _static_checks() -> list[dict]:
         "prod_preflight_workflow_uploads_redacted_start_completion_report",
         ok and not leaks_preflight_secret,
         f"{detail}; leaksPreflightSecret={leaks_preflight_secret}",
+    ))
+
+    ok, detail = _contains_all(
+        prod_stage_workflow,
+        [
+            "LLM Gateway Production Stage",
+            "workflow_dispatch:",
+            "stage:",
+            "shadow-start",
+            "rollback-rehearsal",
+            "canary-intent-text",
+            "canary-chat",
+            "canary-streaming",
+            "canary-vision",
+            "canary-image",
+            "canary-video-asr",
+            "http-full",
+            "rollback-inproc",
+            "execute:",
+            "default: false",
+            "runner_labels_json",
+            "[\\\"self-hosted\\\",\\\"prd-agent-prod\\\"]",
+            "environment: production",
+            "PRD_AGENT_PROD_BASE",
+            "PRD_AGENT_PROD_API_KEY",
+            "LLMGW_PROD_GATE_BASE",
+            "LLMGW_PROD_GATE_KEY",
+            "PRD_AGENT_PROD_GITHUB_TOKEN",
+            "logs:read access",
+            "scripts/llmgw-prod-stage.sh",
+            "--stage \"$stage\"",
+            "--commit \"$commit\"",
+            "--execute",
+            "--dry-run",
+            "--repo \"$repo\"",
+            "--sample-percent \"$sample_percent\"",
+            "--min-observation-hours \"$min_observation_hours\"",
+            "--main-ref \"$main_ref\"",
+            "--evidence-dir \".llmgw-release-evidence\"",
+            "--allow-out-of-order-reason \"$allow_out_of_order_reason\"",
+            "scripts/llmgw-rollout-ledger.py audit",
+            "--require-target-success",
+            "stage-audit.json",
+            "stage-audit.md",
+            "actions/upload-artifact@v4",
+            ".llmgw-release-evidence/",
+        ],
+    )
+    leaks_stage_secret = "echo \"$PRD_AGENT_API_KEY\"" in prod_stage_workflow or "echo \"$LLMGW_GATE_KEY\"" in prod_stage_workflow
+    checks.append(_check(
+        "prod_stage_workflow_runs_on_production_runner_and_uploads_rollout_evidence",
+        ok and not leaks_stage_secret,
+        f"{detail}; leaksStageSecret={leaks_stage_secret}",
     ))
 
     ok, detail = _contains_all(
