@@ -65,7 +65,6 @@ CDS 全局默认(_global 变量层)
 
 - 派生拷贝会把来源分支覆盖里**硬编码的连接串原样带过来**(per-branch DB 名会自动按新分支后缀化,但硬编码串穿透)。检查器把这类 key 的来源显示为「分支覆盖」,用户可辨;后续可对 `PER_BRANCH_DB_ENV_KEYS` 命中的覆盖 key 加警示徽标。
 - 跨项目派生被显式拒绝(profileId 引用与隔离语义均为项目内)。
-- 分支列表页的「新建分支」对话框暂未提供来源分支选择器(API 与 cdscli 已支持),待补 UI 入口。
 
 ---
 
@@ -104,7 +103,7 @@ CDS 全局默认(_global 变量层)
 | 分支临时服务 | GET/PUT `/branches/:id/extra-services[?redeploy=1]` | `cdscli branch extra-services list/set/remove` | 分支抽屉「设置」tab + 详情页面板(预设:Nacos/Kafka/RabbitMQ/Redis/MinIO) |
 | per-branch DB 开关 | PUT `/branches/:id/profile-overrides/:pid`(dbScope) | — | 分支抽屉运行模式区选择器 |
 | 生效配置检查器 | GET `/branches/:id/effective-config` | — | 抽屉「配置」tab / 详情页「生效配置」 |
-| 派生建分支 | POST `/branches`(sourceBranchId) | `branch create --from <id>` | 待补(见已知边界) |
+| 派生建分支 | POST `/branches`(sourceBranchId) | `branch create --from <id>` | 分支列表页搜索下拉「配置来源」选择器(默认项目模板,不派生) |
 | 显式拉取配置 | POST `/branches/:id/copy-config-from/:sourceId[?redeploy=1]` | — | 检查器派生行按钮 |
 | 快照/回滚 | `/api/config-snapshots*`(含分支层) | — | 项目设置快照 tab |
 
