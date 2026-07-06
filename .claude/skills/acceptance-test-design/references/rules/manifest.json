@@ -1,7 +1,7 @@
 {
   "kind": "acceptance-rule-snapshots",
-  "sourceCommit": "9470a73fe45ec7dbf0b0386d0f74bc2cff7a39f3",
-  "generatedAt": "2026-07-06T19:57:31.528761+00:00",
+  "sourceCommit": "b11b7f0ed2eddb4e613d2977306a6f8d49060052",
+  "generatedAt": "2026-07-06T20:01:47.959334+00:00",
   "sources": [
     {
       "sourceId": "acceptance.rule.enterprise",

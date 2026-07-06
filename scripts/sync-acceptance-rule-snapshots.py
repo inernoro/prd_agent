@@ -57,9 +57,14 @@ SKILLS = [
 
 def git_commit() -> str:
     try:
-        return subprocess.check_output(
+        commit = subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
         ).strip()
+        source_paths = [item["path"] for item in SOURCES]
+        dirty = subprocess.check_output(
+            ["git", "status", "--porcelain", "--", *source_paths], cwd=ROOT, text=True
+        ).strip()
+        return commit + ("+worktree" if dirty else "")
     except Exception:
         return "unknown"
 
