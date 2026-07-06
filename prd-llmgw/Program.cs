@@ -132,13 +132,13 @@ app.UseAuthorization();
 var forceResetRaw = (Environment.GetEnvironmentVariable("LLMGW_ADMIN_FORCE_RESET") ?? string.Empty).Trim();
 var forceResetAdmin = new[] { "1", "true", "yes", "on" }.Contains(forceResetRaw, StringComparer.OrdinalIgnoreCase);
 var adminBootstrapPwd = Environment.GetEnvironmentVariable("LLMGW_ADMIN_PASSWORD");
-await SeedAdminAsync(gatewayDatabase, AdminUser, DefaultAdminPwd, forceResetAdmin, adminBootstrapPwd);
+var operationAudits = gatewayDatabase.GetCollection<BsonDocument>("llmgw_operation_audits");
+await SeedAdminAsync(gatewayDatabase, operationAudits, AdminUser, DefaultAdminPwd, forceResetAdmin, adminBootstrapPwd);
 
 var logs = mapDatabase.GetCollection<BsonDocument>("llmrequestlogs");
 // GW 自有账号和审计落独立库 llm_gateway，避免被 MAP 项目 env / shared DB 状态覆盖。
 var users = gatewayDatabase.GetCollection<LlmGwUser>("llmgw_console_users");
 var loginAudits = gatewayDatabase.GetCollection<LlmGwLoginAudit>("llmgw_login_audits");
-var operationAudits = gatewayDatabase.GetCollection<BsonDocument>("llmgw_operation_audits");
 // 网关配置面（只读/小范围写）：模型池 / 平台 / 模型 / 影子比对仍来自 MAP 库。MAP 继续负责自己的配置和日志。
 var modelGroups = mapDatabase.GetCollection<BsonDocument>("model_groups");
 var platforms = mapDatabase.GetCollection<BsonDocument>("llmplatforms");
@@ -605,13 +605,31 @@ app.Run();
 //   1) forceReset（LLMGW_ADMIN_FORCE_RESET=1）：破玻璃，显式重置 admin 口令 + 强制改密。
 //   2) 已有账号：数据库哈希是长期权威，只保活，不再被 LLMGW_ADMIN_PASSWORD 覆盖。
 //   3) 空库首次 bootstrap：用 LLMGW_ADMIN_PASSWORD；未设则内置 admin/admin + 首登强制改密。
-static async Task SeedAdminAsync(IMongoDatabase db, string username, string defaultPwd, bool forceReset = false, string? envPassword = null)
+static async Task SeedAdminAsync(
+    IMongoDatabase db,
+    IMongoCollection<BsonDocument> operationAudits,
+    string username,
+    string defaultPwd,
+    bool forceReset = false,
+    string? envPassword = null)
 {
     var users = db.GetCollection<LlmGwUser>("llmgw_console_users");
 
     // 单管理员模型：禁用历史遗留的其它用户名账号（防「改名后旧账号仍可登」）。真要多用户时再引入用户管理。
     var deactivateOthers = Builders<LlmGwUser>.Update.Set(u => u.IsActive, false);
-    await users.UpdateManyAsync(u => u.Username != username && u.IsActive, deactivateOthers);
+    var deactivated = await users.UpdateManyAsync(u => u.Username != username && u.IsActive, deactivateOthers);
+    if (deactivated.ModifiedCount > 0)
+    {
+        await WriteSystemOperationAuditAsync(
+            operationAudits,
+            action: "admin.deactivate_legacy_users",
+            targetType: "llmgw_console_user",
+            targetId: null,
+            targetName: "non-admin active users",
+            success: true,
+            reason: null,
+            changes: new BsonDocument { { "deactivatedCount", deactivated.ModifiedCount } });
+    }
 
     // 破玻璃优先级最高：显式打开时才改库中口令，用于账号被认领但口令丢失的死锁恢复。
     if (forceReset)
@@ -629,16 +647,45 @@ static async Task SeedAdminAsync(IMongoDatabase db, string username, string defa
                     .Set(u => u.MustChangePassword, resetMustChange)
                     .Set(u => u.PasswordChangedByUser, false)
                     .Set(u => u.UpdatedAt, DateTime.UtcNow));
+            await WriteSystemOperationAuditAsync(
+                operationAudits,
+                action: "admin.force_reset",
+                targetType: "llmgw_console_user",
+                targetId: existingForce.Id,
+                targetName: username,
+                success: true,
+                reason: null,
+                changes: new BsonDocument
+                {
+                    { "passwordSource", string.IsNullOrWhiteSpace(envPassword) ? "default" : "env" },
+                    { "mustChangePassword", new BsonDocument { { "from", existingForce.MustChangePassword }, { "to", resetMustChange } } },
+                    { "passwordChangedByUser", new BsonDocument { { "from", existingForce.PasswordChangedByUser }, { "to", false } } },
+                    { "wasActive", existingForce.IsActive },
+                });
         }
         else
         {
-            await users.InsertOneAsync(new LlmGwUser
+            var resetUser = new LlmGwUser
             {
                 Username = username, PasswordHash = resetHash, DisplayName = username,
                 IsActive = true, MustChangePassword = resetMustChange, PasswordChangedByUser = false,
                 Scopes = new[] { "logs:read" }, CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow,
-            });
+            };
+            await users.InsertOneAsync(resetUser);
+            await WriteSystemOperationAuditAsync(
+                operationAudits,
+                action: "admin.force_reset_bootstrap",
+                targetType: "llmgw_console_user",
+                targetId: resetUser.Id,
+                targetName: username,
+                success: true,
+                reason: null,
+                changes: new BsonDocument
+                {
+                    { "passwordSource", string.IsNullOrWhiteSpace(envPassword) ? "default" : "env" },
+                    { "mustChangePassword", resetMustChange },
+                });
         }
         return;
     }
@@ -653,6 +700,15 @@ static async Task SeedAdminAsync(IMongoDatabase db, string username, string defa
                 Builders<LlmGwUser>.Update
                     .Set(u => u.IsActive, true)
                     .Set(u => u.UpdatedAt, DateTime.UtcNow));
+            await WriteSystemOperationAuditAsync(
+                operationAudits,
+                action: "admin.reactivate",
+                targetType: "llmgw_console_user",
+                targetId: existing.Id,
+                targetName: username,
+                success: true,
+                reason: null,
+                changes: BuildChangeDocument(("isActive", false, true)));
         }
         return;
     }
@@ -674,6 +730,19 @@ static async Task SeedAdminAsync(IMongoDatabase db, string username, string defa
     try
     {
         await users.InsertOneAsync(user);
+        await WriteSystemOperationAuditAsync(
+            operationAudits,
+            action: "admin.bootstrap",
+            targetType: "llmgw_console_user",
+            targetId: user.Id,
+            targetName: username,
+            success: true,
+            reason: null,
+            changes: new BsonDocument
+            {
+                { "passwordSource", string.IsNullOrWhiteSpace(envPassword) ? "default" : "env" },
+                { "mustChangePassword", mustChange },
+            });
     }
     catch (MongoWriteException)
     {
@@ -747,6 +816,42 @@ static async Task WriteOperationAuditAsync(
     catch (Exception ex)
     {
         Console.Error.WriteLine($"[LlmGw] operation audit write failed: {ex.Message}");
+    }
+}
+
+static async Task WriteSystemOperationAuditAsync(
+    IMongoCollection<BsonDocument> audits,
+    string action,
+    string targetType,
+    string? targetId,
+    string? targetName,
+    bool success,
+    string? reason,
+    BsonDocument? changes = null)
+{
+    try
+    {
+        var doc = new BsonDocument
+        {
+            { "_id", Guid.NewGuid().ToString("N") },
+            { "Action", action },
+            { "TargetType", targetType },
+            { "TargetId", ToBsonAuditValue(targetId) },
+            { "TargetName", ToBsonAuditValue(targetName) },
+            { "ActorUserId", BsonNull.Value },
+            { "ActorUsername", "system" },
+            { "Success", success },
+            { "Reason", ToBsonAuditValue(reason) },
+            { "Changes", changes ?? new BsonDocument() },
+            { "RemoteIp", BsonNull.Value },
+            { "UserAgent", "startup" },
+            { "CreatedAt", DateTime.UtcNow },
+        };
+        await audits.InsertOneAsync(doc);
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"[LlmGw] system operation audit write failed: {ex.Message}");
     }
 }
 

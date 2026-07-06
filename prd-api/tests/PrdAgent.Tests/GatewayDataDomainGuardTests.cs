@@ -55,7 +55,14 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("action: \"platform.set_enabled\"", consoleProgram);
         Assert.Contains("action: \"model.set_enabled\"", consoleProgram);
         Assert.Contains("action: \"pool.set_default\"", consoleProgram);
+        Assert.Contains("WriteSystemOperationAuditAsync", consoleProgram);
+        Assert.Contains("action: \"admin.force_reset\"", consoleProgram);
+        Assert.Contains("action: \"admin.force_reset_bootstrap\"", consoleProgram);
+        Assert.Contains("action: \"admin.bootstrap\"", consoleProgram);
+        Assert.Contains("action: \"admin.reactivate\"", consoleProgram);
+        Assert.Contains("action: \"admin.deactivate_legacy_users\"", consoleProgram);
         Assert.Contains("Console.Error.WriteLine($\"[LlmGw] operation audit write failed:", consoleProgram);
+        Assert.Contains("Console.Error.WriteLine($\"[LlmGw] system operation audit write failed:", consoleProgram);
         Assert.DoesNotContain("mapDatabase.GetCollection<BsonDocument>(\"llmgw_operation_audits\")", consoleProgram);
     }
 

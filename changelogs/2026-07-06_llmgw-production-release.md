@@ -12,3 +12,4 @@
 | ops | prd-agent | 发布 gate 增加 serving health 连续采样与 commit 稳定性检查，正式 LLMGW_MODE=http 前默认 3 次探活 |
 | ops | prd-agent | 正式部署透传 LLMGW_HTTP_APP_CALLER_ALLOWLIST 与 LLMGW_SHADOW_FULL_SAMPLE_PERCENT，并让 allowlist canary 发布也强制执行 GW release gate |
 | security | prd-llmgw | 控制台改密、平台启停、模型启停、默认池切换写入 llm_gateway.llmgw_operation_audits，补齐 GW 自有操作审计 |
+| security | prd-llmgw | 首次 bootstrap、破玻璃 reset、admin 重新激活和历史账号禁用也写入 llmgw_operation_audits，补齐启动级账号审计 |
