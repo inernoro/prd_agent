@@ -65,6 +65,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_MODE=http 需要提供 LLMGW_GATE_KEY/GW_KEY 或 LLMGW_SERVE_KEY", script);
         Assert.Contains("expect_commit=\"${TAG#sha-}\"", script);
         Assert.Contains("args=\"$args --expect-commit $expect_commit\"", script);
+        Assert.Contains("LLMGW_GATE_HEALTH_SAMPLES", script);
+        Assert.Contains("LLMGW_GATE_HEALTH_INTERVAL_SECONDS", script);
+        Assert.Contains("--health-samples ${LLMGW_GATE_HEALTH_SAMPLES:-3}", script);
+        Assert.Contains("--health-interval ${LLMGW_GATE_HEALTH_INTERVAL_SECONDS:-5}", script);
         Assert.Contains("LLMGW_GATE_REQUIRED_KINDS", script);
         Assert.Contains("args=\"$args --require-kind $kind_req_trimmed\"", script);
         Assert.Contains("LLMGW_GATE_REQUIRED_APP_KINDS", script);
@@ -91,6 +95,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("query_items[\"kind\"] = kind", releaseGate);
         Assert.Contains("--require-kind", releaseGate);
         Assert.Contains("--require-app-kind", releaseGate);
+        Assert.Contains("--health-samples", releaseGate);
+        Assert.Contains("--health-interval", releaseGate);
+        Assert.Contains("\"stable\"", releaseGate);
         Assert.Contains("--json-out", releaseGate);
         Assert.Contains("--report-md", releaseGate);
         Assert.Contains("\"shadowChecks\"", releaseGate);

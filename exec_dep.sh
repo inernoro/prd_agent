@@ -34,6 +34,8 @@ set -eu
 #   - LLMGW_GATE_KEY / GW_KEY：release gate 使用的 X-Gateway-Key；未设时回退 LLMGW_SERVE_KEY
 #   - LLMGW_GATE_MIN_TOTAL：全局 shadow 最小样本数，默认 30
 #   - LLMGW_GATE_MIN_PER_APP：每个 appCaller 最小样本数，默认 30
+#   - LLMGW_GATE_HEALTH_SAMPLES：全量 http 前 healthz 连续采样次数，默认 3
+#   - LLMGW_GATE_HEALTH_INTERVAL_SECONDS：healthz 连续采样间隔秒数，默认 5
 #   - LLMGW_GATE_APP_CALLERS：逗号/分号分隔的 appCallerCode 列表，逐个 gate
 #   - LLMGW_GATE_REQUIRED_KINDS：逗号/分号分隔的 kind[:min] 列表，例如 send:30,stream:30，防 resolve-only 放行
 #   - LLMGW_GATE_REQUIRED_APP_KINDS：逗号/分号分隔的 appCallerCode:kind:min 列表，例如 report-agent.generate::chat:send:30
@@ -507,6 +509,7 @@ run_llmgw_release_gate_if_needed() {
   esac
 
   args="--base $gate_base --min-total ${LLMGW_GATE_MIN_TOTAL:-30} --min-per-app ${LLMGW_GATE_MIN_PER_APP:-30}"
+  args="$args --health-samples ${LLMGW_GATE_HEALTH_SAMPLES:-3} --health-interval ${LLMGW_GATE_HEALTH_INTERVAL_SECONDS:-5}"
   if [ -n "$expect_commit" ]; then
     args="$args --expect-commit $expect_commit"
   fi

@@ -29,6 +29,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
+from time import sleep
 
 
 def _default_base() -> str:
@@ -135,6 +136,54 @@ def _check_shadow(base: str, key: str, app: str | None, min_total: int, kind: st
     return list(_shadow_check(base, key, app, min_total, kind).get("failures") or [])
 
 
+def _health_check(base: str, expected_commit: str, samples: int, interval_seconds: float) -> dict:
+    sample_count = max(1, samples)
+    result = {
+        "ok": False,
+        "httpStatus": 0,
+        "commit": "",
+        "stable": False,
+        "sampleCount": sample_count,
+        "intervalSeconds": interval_seconds,
+        "samples": [],
+        "failures": [],
+    }
+
+    commits: list[str] = []
+    failures: list[str] = []
+    for idx in range(sample_count):
+        code, raw = _request("GET", base, "/healthz", None)
+        sample = {"index": idx + 1, "httpStatus": code, "commit": "", "raw": raw[:200]}
+        if code != 200:
+            failures.append(f"healthz sample {idx + 1}/{sample_count} HTTP {code}: {raw[:200]}")
+        else:
+            try:
+                health = _json(raw)
+                commit = str(health.get("commit") or health.get("Commit") or "")
+                sample["commit"] = commit
+                if commit:
+                    commits.append(commit)
+                if expected_commit and commit and commit != expected_commit:
+                    failures.append(f"healthz sample {idx + 1}/{sample_count} commit 不匹配: actual={commit}, expected={expected_commit}")
+            except ValueError as exc:
+                failures.append(str(exc))
+        result["samples"].append(sample)
+        if idx < sample_count - 1 and interval_seconds > 0:
+            sleep(interval_seconds)
+
+    distinct_commits = sorted(set(commits))
+    if len(distinct_commits) > 1:
+        failures.append(f"healthz commit 漂移: {', '.join(distinct_commits)}")
+
+    last_sample = result["samples"][-1] if result["samples"] else {}
+    result["httpStatus"] = int(last_sample.get("httpStatus") or 0)
+    result["commit"] = str(last_sample.get("commit") or "")
+    result["stable"] = len(failures) == 0 and len(distinct_commits) <= 1
+    result["failures"] = failures
+    result["ok"] = not failures
+    return result
+
+
 def _parse_kind_requirement(raw: str, default_min: int) -> tuple[str, int]:
     value = raw.strip()
     if not value:
@@ -185,6 +234,8 @@ def _write_markdown(path: str, report: dict) -> None:
         fh.write(f"- base: `{cell(report.get('base'))}`\n")
         fh.write(f"- healthStatus: `{cell(health.get('httpStatus'))}`\n")
         fh.write(f"- healthCommit: `{cell(health.get('commit') or '')}`\n")
+        fh.write(f"- healthStable: `{cell(health.get('stable'))}`\n")
+        fh.write(f"- healthSamples: `{cell(health.get('sampleCount'))}`\n")
         fh.write(f"- expectedCommit: `{cell(report.get('expectedCommit') or '')}`\n\n")
         fh.write("| label | required | total | allMatch | critical | httpFail | status |\n")
         fh.write("|---|---:|---:|---:|---:|---:|---|\n")
@@ -226,6 +277,10 @@ def main() -> int:
     parser.add_argument("--require-app-kind", action="append", default=[],
                         help="要求某个 appCallerCode 的某类 Kind 达到最小样本数，格式 appCallerCode:kind:min，可重复")
     parser.add_argument("--expect-commit", default=os.environ.get("GIT_COMMIT", ""), help="可选：healthz commit 必须匹配")
+    parser.add_argument("--health-samples", type=int, default=int(os.environ.get("LLMGW_GATE_HEALTH_SAMPLES", "1")),
+                        help="healthz 连续采样次数，默认 1；正式全量 http 建议 >=3")
+    parser.add_argument("--health-interval", type=float, default=float(os.environ.get("LLMGW_GATE_HEALTH_INTERVAL_SECONDS", "0")),
+                        help="healthz 多次采样间隔秒数，默认 0")
     parser.add_argument("--json-out", default=os.environ.get("LLMGW_GATE_JSON_OUT", ""),
                         help="可选：把 gate 证据写成 JSON 文件，内容不包含密钥")
     parser.add_argument("--report-md", default=os.environ.get("LLMGW_GATE_REPORT_MD", ""),
@@ -241,10 +296,17 @@ def main() -> int:
         "thresholds": {
             "minTotal": args.min_total,
             "minPerApp": args.min_per_app,
+            "healthSamples": max(1, args.health_samples),
+            "healthIntervalSeconds": args.health_interval,
         },
         "health": {
             "httpStatus": 0,
             "commit": "",
+            "stable": False,
+            "sampleCount": max(1, args.health_samples),
+            "intervalSeconds": args.health_interval,
+            "samples": [],
+            "failures": [],
         },
         "shadowChecks": [],
         "failures": [],
@@ -274,19 +336,9 @@ def main() -> int:
 
     failures: list[str] = []
 
-    code, raw = _request("GET", base, "/healthz", None)
-    report["health"]["httpStatus"] = code
-    if code != 200:
-        failures.append(f"healthz HTTP {code}: {raw[:200]}")
-    else:
-        try:
-            health = _json(raw)
-            commit = str(health.get("commit") or health.get("Commit") or "")
-            report["health"]["commit"] = commit
-            if args.expect_commit and commit and commit != args.expect_commit:
-                failures.append(f"healthz commit 不匹配: actual={commit}, expected={args.expect_commit}")
-        except ValueError as exc:
-            failures.append(str(exc))
+    health = _health_check(base, args.expect_commit, args.health_samples, args.health_interval)
+    report["health"] = health
+    failures.extend(health.get("failures") or [])
 
     shadow_checks: list[dict] = []
     shadow_checks.append(_shadow_check(base, args.key, None, args.min_total))

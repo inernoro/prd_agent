@@ -9,3 +9,4 @@
 | ops | prd-agent | 新增 execdep.sh 兼容入口并补发布 gate 守卫，确保 LLMGW_MODE=http 时 shadow 证据钉到同一不可变 commit |
 | ops | prd-agent | 发布 gate 支持按 shadow kind 与 appCaller+kind 强制最小样本数，避免全量切 http 时仅靠 resolve-only 证据放行 |
 | ops | prd-agent | 发布 gate 支持输出 JSON 与 Markdown 证据报告，并由 exec_dep.sh 透传报告路径，便于正式发布前第三方复核 |
+| ops | prd-agent | 发布 gate 增加 serving health 连续采样与 commit 稳定性检查，正式 LLMGW_MODE=http 前默认 3 次探活 |
