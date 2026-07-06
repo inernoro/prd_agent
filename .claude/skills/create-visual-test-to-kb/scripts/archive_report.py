@@ -1270,6 +1270,91 @@ CDS_AGENT_EXPLICIT_BOUNDARY_PAT = re.compile(
 )
 CDS_AGENT_POSITIVE_RESULT_CELLS = {"pass", "passed", "done", "完成", "已完成", "通过", "已通过"}
 
+VISUAL_PROBLEM_PAT = re.compile(
+    r"(遮挡|覆盖|错位|溢出|截断|空白|留白|不可见|看不到|打不开|点击无效|"
+    r"无响应|图片缺失|无图|右侧为空|左侧为空|布局|重叠|压住|挡住|"
+    r"contrast|overflow|blank|overlap|blocked|invisible|missing image)",
+    re.I,
+)
+NON_VISUAL_EVIDENCE_PAT = re.compile(
+    r"(API|接口|日志|数据库|DB|SQL|cdscli|branch status|smoke|deploy|"
+    r"HTTP|header|CSP|sandbox|env|配置|文件|命令|stdout|stderr)",
+    re.I,
+)
+
+
+def _figure_anchor_to_manifest(manifest):
+    out = {}
+    for m in manifest or []:
+        key = _figure_key(m.get("name"))
+        anchor = _figure_anchor(key)
+        if anchor:
+            out[anchor] = m
+    return out
+
+
+def _problem_localization_errors(body, manifest):
+    """P0/P1/P2 visual defects must point to a marked screenshot.
+
+    This closes the common failure mode where the report says "遮挡/错位"
+    but the reader cannot tell where the issue is in the image.
+    """
+    errs = []
+    anchor_map = _figure_anchor_to_manifest(manifest)
+    in_defects = False
+    table_rows = []
+    for line in (body or "").splitlines():
+        stripped = line.strip()
+        if re.match(r"^##\s+缺陷清单", stripped):
+            in_defects = True
+            table_rows = []
+            continue
+        if in_defects and stripped.startswith("## "):
+            in_defects = False
+        if in_defects and stripped.startswith("|"):
+            table_rows.append(stripped)
+        elif in_defects and table_rows:
+            break
+    if len(table_rows) < 3:
+        return errs
+    for row in table_rows[2:]:
+        cells = _split_markdown_table_row(row)
+        if len(cells) < 2:
+            continue
+        severity = cells[0].strip().upper()
+        if severity not in {"P0", "P1", "P2"}:
+            continue
+        row_text = " ".join(cells)
+        if not VISUAL_PROBLEM_PAT.search(row_text) or NON_VISUAL_EVIDENCE_PAT.search(row_text):
+            continue
+        anchors = re.findall(r"#(fig-[a-z0-9-]+)", row_text, re.I)
+        if not anchors:
+            refs = re.findall(r"图\s*([0-9]+[a-zA-Z]?)", row_text)
+            for ref in refs:
+                matches = [
+                    _figure_anchor(_figure_key(m.get("name")))
+                    for m in manifest or []
+                    if (m.get("name") or "").lower().startswith(ref.lower())
+                ]
+                anchors.extend(a for a in matches if a)
+        if not anchors:
+            errs.append(
+                f"[问题定位] {severity} 视觉缺陷没有链接到截图锚点。"
+                f"缺陷行必须写成 [图XX](#fig-完整截图名), 并在图内框出问题：{row[:120]}"
+            )
+            continue
+        for anchor in anchors:
+            shot = anchor_map.get(anchor)
+            if not shot:
+                errs.append(f"[问题定位] 缺陷行引用 {anchor}，但 manifest 中找不到对应截图：{row[:120]}")
+                continue
+            if shot.get("annotated") is not True and not shot.get("overview"):
+                errs.append(
+                    f"[问题定位] {severity} 视觉缺陷引用的截图未记录为已标注：{shot.get('name') or anchor}。"
+                    f"必须用 box/stepShot/stepClick 在图内框出具体问题, 不能只在文字里说：{row[:120]}"
+                )
+    return errs
+
 
 def _row_has_positive_result(line):
     return any(c.strip().lower() in CDS_AGENT_POSITIVE_RESULT_CELLS for c in _split_markdown_table_row(line))
@@ -1410,6 +1495,7 @@ def validate_inputs(a, body, manifest, cfg=None):
             "或补 cdscli/API/deploy/smoke/reports/preview routing 等平台证据。示例："
             + " | ".join(cds_agent_hits[:3])
         )
+    errs.extend(_problem_localization_errors(body, manifest))
     if "{{EVIDENCE}}" not in body and "{{IMG:" not in body:
         errs.append("[结构] 报告缺截图占位：{{EVIDENCE}}（集中证据段）或 {{IMG:<name>}}（ZZ 逐步配图）至少要有一种")
     if PLACEHOLDER_PAT.search(body):
