@@ -293,8 +293,12 @@ def _static_checks() -> list[dict]:
         prod_preflight,
         [
             "LLM Gateway production preflight",
+            "--mode",
+            "start",
+            "completion",
             "map_logs_scope",
             "gateway_protected_requires_key",
+            "rollout_ledger_start_ready",
             "rollout_ledger_completion",
             "PRD_AGENT_API_KEY",
             "LLMGW_GATE_BASE",

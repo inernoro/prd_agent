@@ -4,7 +4,8 @@
 This script is a read-only operator check for the full-cutover release path. It
 does not deploy or mutate data. It verifies that the operator has enough
 production access to inspect MAP logs, probe llmgw-serve, and audit the rollout
-ledger before claiming a full HTTP cutover is complete.
+ledger before claiming a full HTTP cutover is complete. Use --mode start before
+the first shadow-start stage, and --mode completion for the final release gate.
 """
 
 from __future__ import annotations
@@ -85,7 +86,8 @@ def _map_checks(args: argparse.Namespace) -> list[dict]:
     payload = version.get("payload") if isinstance(version.get("payload"), dict) else {}
     commit = str(payload.get("commit") or payload.get("commitSha") or "").strip()
     expected = (args.expect_commit or "").strip().lower()
-    version_ok = version["ok"] and (not expected or commit.lower() == expected)
+    requires_expected_commit = args.mode == "completion"
+    version_ok = version["ok"] and (not requires_expected_commit or not expected or commit.lower() == expected)
     checks.append({
         "name": "map_version_commit",
         "ok": version_ok,
@@ -139,7 +141,8 @@ def _gateway_checks(args: argparse.Namespace) -> list[dict]:
     payload = health.get("payload") if isinstance(health.get("payload"), dict) else {}
     commit = str(payload.get("commit") or payload.get("commitSha") or "").strip()
     expected = (args.expect_commit or "").strip().lower()
-    health_ok = health["ok"] and (not expected or commit.lower() == expected)
+    requires_expected_commit = args.mode == "completion"
+    health_ok = health["ok"] and (not requires_expected_commit or not expected or commit.lower() == expected)
     checks.append({
         "name": "gateway_health_commit",
         "ok": health_ok,
@@ -165,6 +168,8 @@ def _gateway_checks(args: argparse.Namespace) -> list[dict]:
 
 
 def _rollout_check(args: argparse.Namespace) -> dict:
+    if args.mode == "start":
+        return {"name": "rollout_ledger_start_ready", "ok": True, "detail": "rollout ledger completion is not required before shadow-start"}
     commit = (args.expect_commit or "").strip()
     if not commit:
         return {"name": "rollout_ledger_completion", "ok": False, "detail": "missing --expect-commit"}
@@ -193,6 +198,7 @@ def _rollout_check(args: argparse.Namespace) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="LLM Gateway production preflight")
+    parser.add_argument("--mode", choices=["start", "completion"], default=os.environ.get("LLMGW_PROD_PREFLIGHT_MODE", "completion"))
     parser.add_argument("--map-base", default="")
     parser.add_argument("--map-key-env", default="PRD_AGENT_API_KEY")
     parser.add_argument("--gw-base", default="")
@@ -213,6 +219,7 @@ def main() -> int:
     report = {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "verdict": "pass" if all(item.get("ok") for item in checks) else "fail",
+        "mode": args.mode,
         "expectCommit": args.expect_commit,
         "checks": checks,
     }

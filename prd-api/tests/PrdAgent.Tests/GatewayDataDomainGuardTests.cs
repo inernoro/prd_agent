@@ -416,9 +416,13 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("--key", ledger);
 
         Assert.Contains("LLM Gateway production preflight", preflight);
+        Assert.Contains("--mode", preflight);
+        Assert.Contains("start", preflight);
+        Assert.Contains("completion", preflight);
         Assert.Contains("map_logs_scope", preflight);
         Assert.Contains("gateway_protected_requires_key", preflight);
         Assert.Contains("gateway_key_configured", preflight);
+        Assert.Contains("rollout_ledger_start_ready", preflight);
         Assert.Contains("rollout_ledger_completion", preflight);
         Assert.Contains("PRD_AGENT_API_KEY", preflight);
         Assert.Contains("LLMGW_GATE_BASE", preflight);
