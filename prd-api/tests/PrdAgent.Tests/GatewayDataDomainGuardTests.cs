@@ -371,9 +371,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("\"minStageObservationHours\": args.min_stage_observation_hours", ledger);
         Assert.Contains("_require_pass_json", ledger);
         Assert.Contains("_require_stage_evidence_for_commit", ledger);
+        Assert.Contains("_require_stage_evidence_matches_entry", ledger);
         Assert.Contains("_require_serving_probe_for_commit", ledger);
         Assert.Contains("_require_smoke_for_commit", ledger);
         Assert.Contains("_require_release_gate_for_commit", ledger);
+        Assert.Contains("missing expectedCommit for same-commit evidence", ledger);
+        Assert.Contains("releaseMainSha mismatch", ledger);
         Assert.Contains("shadowReleaseCommit mismatch", ledger);
         Assert.Contains("health sample commit mismatch", ledger);
         Assert.Contains("D-layer smoke healthCommit mismatch", ledger);

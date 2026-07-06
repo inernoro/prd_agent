@@ -100,6 +100,30 @@ def _require_stage_evidence_for_commit(path: str, label: str, commit: str) -> No
         raise SystemExit(f"ERROR: {label} commit mismatch: {path} actual={actual or 'empty'} expected={expected}")
 
 
+def _require_stage_evidence_matches_entry(path: str, label: str, entry: dict) -> None:
+    payload = _require_pass_json(path, label)
+    expected = _normalize_commit(entry.get("commit"))
+    actual = _normalize_commit(payload.get("commit") or payload.get("Commit"))
+    if not expected:
+        raise SystemExit(f"ERROR: {label} cannot validate commit because ledger commit is empty: {path}")
+    if actual != expected:
+        raise SystemExit(f"ERROR: {label} commit mismatch: {path} actual={actual or 'empty'} expected={expected}")
+
+    expected_main_ref = str(entry.get("releaseMainRef") or "").strip().lower()
+    actual_main_ref = str(payload.get("releaseMainRef") or payload.get("ReleaseMainRef") or "").strip().lower()
+    if expected_main_ref != actual_main_ref:
+        raise SystemExit(
+            f"ERROR: {label} releaseMainRef mismatch: {path} actual={actual_main_ref or 'empty'} expected={expected_main_ref or 'empty'}"
+        )
+
+    expected_main_sha = str(entry.get("releaseMainSha") or "").strip().lower()
+    actual_main_sha = str(payload.get("releaseMainSha") or payload.get("ReleaseMainSha") or "").strip().lower()
+    if expected_main_sha != actual_main_sha:
+        raise SystemExit(
+            f"ERROR: {label} releaseMainSha mismatch: {path} actual={actual_main_sha or 'empty'} expected={expected_main_sha or 'empty'}"
+        )
+
+
 def _require_serving_probe_for_commit(path: str, label: str, commit: str) -> None:
     payload = _require_pass_json(path, label)
     expected = _normalize_commit(commit)
@@ -107,7 +131,9 @@ def _require_serving_probe_for_commit(path: str, label: str, commit: str) -> Non
         raise SystemExit(f"ERROR: {label} cannot validate commit because ledger commit is empty: {path}")
 
     expected_commit = _normalize_commit(payload.get("expectedCommit") or payload.get("ExpectedCommit"))
-    if expected_commit and expected_commit != expected:
+    if not expected_commit:
+        raise SystemExit(f"ERROR: {label} missing expectedCommit for same-commit evidence: {path}")
+    if expected_commit != expected:
         raise SystemExit(f"ERROR: {label} expectedCommit mismatch: {path} actual={expected_commit} expected={expected}")
 
     samples = payload.get("healthSamples") or payload.get("HealthSamples") or []
@@ -129,7 +155,9 @@ def _require_smoke_for_commit(path: str, label: str, commit: str) -> None:
         raise SystemExit(f"ERROR: {label} cannot validate commit because ledger commit is empty: {path}")
 
     expected_commit = _normalize_commit(payload.get("expectedCommit") or payload.get("ExpectedCommit"))
-    if expected_commit and expected_commit != expected:
+    if not expected_commit:
+        raise SystemExit(f"ERROR: {label} missing expectedCommit for same-commit evidence: {path}")
+    if expected_commit != expected:
         raise SystemExit(f"ERROR: {label} expectedCommit mismatch: {path} actual={expected_commit} expected={expected}")
 
     health_commit = _normalize_commit(payload.get("healthCommit") or payload.get("HealthCommit"))
@@ -240,7 +268,7 @@ def _entry_evidence_failures(entry: dict) -> list[str]:
         failures.append(f"ERROR: {stage} allowOutOfOrder missing reason")
     evidence_json = str(entry.get("evidenceJson") or "")
     try:
-        _require_stage_evidence_for_commit(evidence_json, f"{stage} stage evidence", commit)
+        _require_stage_evidence_matches_entry(evidence_json, f"{stage} stage evidence", entry)
     except SystemExit as exc:
         failures.append(str(exc))
 
