@@ -19,3 +19,4 @@
 | ops | prd-agent | readiness audit 支持 --run-smoke，把 gw-smoke.py D 层真机冒烟纳入 S5/S6 发布前总 gate |
 | ops | prd-agent | 全量 LLMGW_MODE=http 发布默认要求 send 与 stream 两类 shadow 样本达标，避免只靠总样本或 resolve-only 证据放行 |
 | ops | prd-agent | gw-smoke.py D 层真机冒烟扩展到 /stream 与 /client-stream，覆盖流式和 ILLMClient 跨进程发布风险 |
+| ops | prd-agent | exec_dep.sh 在 http/canary 发布时默认强制运行 gw-smoke.py，避免人工漏跑 D 层真机冒烟 |

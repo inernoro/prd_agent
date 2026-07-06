@@ -98,6 +98,8 @@ def _static_checks() -> list[dict]:
             "--expect-commit $expect_commit",
             "required_kinds_raw=\"${LLMGW_GATE_REQUIRED_KINDS:-}\"",
             "required_kinds_raw=\"send:${full_http_kind_min},stream:${full_http_kind_min}\"",
+            "LLMGW_GATE_RUN_SMOKE",
+            "GW_BASE=\"$gate_base\" GW_KEY=\"$gate_key\" GW_TIMEOUT=\"${LLMGW_GATE_SMOKE_TIMEOUT_SECONDS:-120}\" python3 scripts/gw-smoke.py",
             "LLMGW_SKIP_RELEASE_GATE=1",
         ],
     )

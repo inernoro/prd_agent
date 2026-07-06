@@ -110,6 +110,8 @@ python3 scripts/llmgw-readiness-audit.py \
 `LLMGW_GATE_KEY`/`GW_KEY`/`LLMGW_SERVE_KEY` 会拒绝部署；`LLMGW_MODE=shadow|inproc`
 且 allowlist 为空时不挡发布，便于先以 shadow 积累证据。生产 compose 已透传
 `LLMGW_HTTP_APP_CALLER_ALLOWLIST` 和 `LLMGW_SHADOW_FULL_SAMPLE_PERCENT`，避免灰度配置只停留在脚本层。
+http/canary 发布默认还会强制运行 `scripts/gw-smoke.py`，真打 healthz/pools/send/stream/client-stream/canary；
+仅在人工强制场景显式设置 `LLMGW_GATE_RUN_SMOKE=0` 才跳过，并会打印警告。
 全量 `http` 或 allowlist canary 时 `exec_dep.sh` 默认用
 `LLMGW_GATE_HEALTH_SAMPLES=3` 和 `LLMGW_GATE_HEALTH_INTERVAL_SECONDS=5` 连续采样 healthz，任一
 采样失败、commit 与发布 sha 不一致或多次采样 commit 漂移都会拒绝发布。需要防止 resolve-only 证据误放行时，

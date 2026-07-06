@@ -45,6 +45,8 @@ set -eu
 #   - LLMGW_GATE_REQUIRED_APP_KINDS：逗号/分号分隔的 appCallerCode:kind:min 列表，例如 report-agent.generate::chat:send:30
 #   - LLMGW_GATE_JSON_OUT：可选，保存 release gate JSON 证据报告（不含密钥）
 #   - LLMGW_GATE_REPORT_MD：可选，保存 release gate Markdown 证据报告（不含密钥）
+#   - LLMGW_GATE_RUN_SMOKE：是否在 http/canary 发布时强制运行 gw-smoke.py，默认 1
+#   - LLMGW_GATE_SMOKE_TIMEOUT_SECONDS：gw-smoke.py 单请求超时，默认 120
 #   - LLMGW_SKIP_RELEASE_GATE=1：仅紧急回滚/人工强制时跳过 http gate（会打印警告）
 
 SKIP_VERIFY="${SKIP_VERIFY:-}"
@@ -495,6 +497,10 @@ run_llmgw_release_gate_if_needed() {
     echo "ERROR: LLM Gateway http/canary 发布但缺少 scripts/llmgw-release-gate.py，拒绝发布。" >&2
     exit 1
   fi
+  if [ "${LLMGW_GATE_RUN_SMOKE:-1}" != "0" ] && [ ! -f "scripts/gw-smoke.py" ]; then
+    echo "ERROR: LLM Gateway http/canary 发布但缺少 scripts/gw-smoke.py，拒绝发布。" >&2
+    exit 1
+  fi
 
   gate_base="${LLMGW_GATE_BASE:-${GW_BASE:-}}"
   gate_key="${LLMGW_GATE_KEY:-${GW_KEY:-${LLMGW_SERVE_KEY:-}}}"
@@ -569,6 +575,13 @@ run_llmgw_release_gate_if_needed() {
   echo "LLM Gateway release gate: required (LLMGW_MODE=${LLMGW_MODE:-inproc}, allowlist=${allowlist_compact:-empty})"
   # shellcheck disable=SC2086
   GW_KEY="$gate_key" python3 scripts/llmgw-release-gate.py $args
+
+  if [ "${LLMGW_GATE_RUN_SMOKE:-1}" != "0" ]; then
+    echo "LLM Gateway D-layer smoke: required (healthz/pools/send/stream/client-stream/canary)"
+    GW_BASE="$gate_base" GW_KEY="$gate_key" GW_TIMEOUT="${LLMGW_GATE_SMOKE_TIMEOUT_SECONDS:-120}" python3 scripts/gw-smoke.py
+  else
+    echo "WARN: LLM Gateway D-layer smoke skipped because LLMGW_GATE_RUN_SMOKE=0" >&2
+  fi
 }
 
 if [ -n "${SKIP_API_PULL:-}" ]; then
