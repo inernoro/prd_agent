@@ -55,6 +55,18 @@ public class GatewayDirectClientRatchetTests
     {
     };
 
+    /// <summary>
+    /// 手写上游 HTTP 端点的剩余债务。它们不是主业务生成链路，但仍然会直接访问模型供应商；
+    /// 零惊吓发布前必须逐项迁入 llmgw-serve，或在发布 gate 中继续明确排除。
+    /// </summary>
+    private static readonly Dictionary<string, string> ManualUpstreamHttpBaseline = new(StringComparer.Ordinal)
+    {
+        ["PrdAgent.Infrastructure/ModelPool/ModelPoolHealthProbeService.cs"] =
+            "模型池后台探活仍直接 POST 上游，用 IsHealthProbe + transport=direct 标记；后续应改为 llmgw-serve 探活。",
+        ["PrdAgent.Infrastructure/Services/InfraAgentSessions/InfraAgentRuntimeProfileService.cs"] =
+            "Infra Agent runtime profile 保存/测试时仍直接请求上游；属于管理校验路径，后续应改为网关托管校验。",
+    };
+
     [Fact]
     public void NoNewDirectUpstreamClient_OutsideGatewayAndBaseline()
     {
@@ -164,6 +176,48 @@ public class GatewayDirectClientRatchetTests
         Assert.DoesNotMatch(DirectClientNewPattern, "new ClaudeClientFactory(...)");
 
         _output.WriteLine($"OK baseline {Baseline.Count} 个文件均存在且含真实直连，正则正/负控制通过。");
+    }
+
+    [Fact]
+    public void ManualUpstreamHttpCalls_AreExplicitlyTracked_AndDoNotGrow()
+    {
+        var srcRoot = LocateSrcRoot();
+        Assert.True(Directory.Exists(srcRoot), $"找不到源码目录: {srcRoot}");
+
+        var actual = DiscoverManualUpstreamHttpFiles(srcRoot);
+        var violations = new List<string>();
+
+        foreach (var rel in actual.OrderBy(x => x, StringComparer.Ordinal))
+        {
+            if (!ManualUpstreamHttpBaseline.ContainsKey(rel))
+            {
+                violations.Add($"  X 未登记的手写上游 HTTP 调用: {rel}");
+            }
+        }
+
+        foreach (var rel in ManualUpstreamHttpBaseline.Keys.OrderBy(x => x, StringComparer.Ordinal))
+        {
+            if (!actual.Contains(rel))
+            {
+                violations.Add($"  ! baseline 已过期，应删除或收紧: {rel}");
+            }
+        }
+
+        if (violations.Count > 0)
+        {
+            var msg = string.Join('\n', new[]
+            {
+                "检测到 LLM Gateway 外手写上游 HTTP 调用清单漂移。",
+                "这些路径会绕过 llmgw-serve 的密钥门、transport 观测、shadow 证据和回滚 gate；",
+                "若是新业务 AI 请求，必须改走 ILlmGateway；若是管理/探活路径，必须先登记原因并作为后续收口 debt。",
+                "",
+            }.Concat(violations));
+            _output.WriteLine(msg);
+            Assert.Fail(msg);
+        }
+
+        _output.WriteLine(
+            $"OK 手写上游 HTTP 守卫通过：当前剩余 {actual.Count} 个文件，均已登记为待迁移 debt。");
     }
 
     [Fact]
@@ -289,5 +343,75 @@ public class GatewayDirectClientRatchetTests
             dir = dir.Parent;
         }
         return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "src"));
+    }
+
+    private static HashSet<string> DiscoverManualUpstreamHttpFiles(string srcRoot)
+    {
+        var result = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var file in Directory.EnumerateFiles(srcRoot, "*.cs", SearchOption.AllDirectories))
+        {
+            var rel = Path.GetRelativePath(srcRoot, file).Replace('\\', '/');
+            if (rel.Contains("/bin/") || rel.Contains("/obj/")) continue;
+
+            var relForFragment = "/" + rel;
+            if (GatewayInternalPathFragments.Any(frag =>
+                    relForFragment.Contains(frag, StringComparison.Ordinal)))
+                continue;
+
+            string content;
+            try { content = File.ReadAllText(file); }
+            catch { continue; }
+
+            if (LooksLikeManualUpstreamHttp(content))
+                result.Add(rel);
+        }
+
+        return result;
+    }
+
+    private static bool LooksLikeManualUpstreamHttp(string content)
+    {
+        if (!ContainsProviderCompletionEndpoint(content)) return false;
+
+        var lines = content.Split('\n');
+        for (var i = 0; i < lines.Length; i++)
+        {
+            if (!ContainsProviderCompletionEndpoint(lines[i])) continue;
+
+            var from = Math.Max(0, i - 80);
+            var to = Math.Min(lines.Length - 1, i + 80);
+            var window = string.Join('\n', lines[from..(to + 1)]);
+            if (ContainsHttpSendEvidence(window) && ContainsProviderAuthEvidence(window))
+                return true;
+        }
+
+        // Infra runtime profile 把 endpoint 构造、鉴权和发送拆成多个 helper，单个窗口不一定覆盖完整。
+        return content.Contains("BuildTestUrl(secret.BaseUrl", StringComparison.Ordinal)
+               && content.Contains("ApplyAuthHeaders(req", StringComparison.Ordinal)
+               && content.Contains("http.SendAsync(req", StringComparison.Ordinal);
+    }
+
+    private static bool ContainsProviderCompletionEndpoint(string content)
+    {
+        return content.Contains("/v1/chat/completions", StringComparison.Ordinal)
+               || content.Contains("/v1/messages", StringComparison.Ordinal);
+    }
+
+    private static bool ContainsHttpSendEvidence(string content)
+    {
+        return content.Contains("new HttpRequestMessage", StringComparison.Ordinal)
+               || content.Contains(".SendAsync(", StringComparison.Ordinal)
+               || content.Contains(".PostAsync(", StringComparison.Ordinal)
+               || content.Contains(".GetAsync(", StringComparison.Ordinal);
+    }
+
+    private static bool ContainsProviderAuthEvidence(string content)
+    {
+        return content.Contains("AuthenticationHeaderValue(\"Bearer\"", StringComparison.Ordinal)
+               || content.Contains("Headers.Authorization", StringComparison.Ordinal)
+               || content.Contains("TryAddWithoutValidation(\"x-api-key\"", StringComparison.Ordinal)
+               || content.Contains("Headers.Add(\"x-api-key\"", StringComparison.Ordinal)
+               || content.Contains("TryAddWithoutValidation(\"Authorization\"", StringComparison.Ordinal);
     }
 }
