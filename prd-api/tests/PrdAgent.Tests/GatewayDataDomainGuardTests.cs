@@ -99,6 +99,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("guard_llmgw_prod_stage_context_if_needed", script);
         Assert.Contains("Release intent: matched fast.sh warmup", script);
         Assert.Contains("LLMGW_HTTP_APP_CALLER_ALLOWLIST", script);
+        Assert.Contains("read_dotenv_value", script);
+        Assert.Contains("config_value LLMGW_MODE LlmGateway__Mode", script);
+        Assert.Contains("config_value LLMGW_HTTP_APP_CALLER_ALLOWLIST LlmGateway__HttpAppCallerAllowlist", script);
+        Assert.Contains("config_value LLMGW_SHADOW_FULL_SAMPLE_PERCENT LlmGateway__ShadowFullSamplePercent", script);
+        Assert.Contains("mode_raw=\"$(llmgw_mode_value)\"", script);
         Assert.Contains("LLMGW_POST_DEPLOY_VERIFY_NEEDED", script);
         Assert.Contains("LLMGW_POST_DEPLOY_GATE_BASE", script);
         Assert.Contains("run_llmgw_post_deploy_verification_if_needed", script);

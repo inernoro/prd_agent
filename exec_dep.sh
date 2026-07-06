@@ -356,10 +356,74 @@ check_fast_release_intent() {
   echo "Release intent: matched fast.sh warmup (tag=$TAG repo=$REPO)"
 }
 
+read_dotenv_value() {
+  dotenv_key="$1"
+  dotenv_file="${PRD_AGENT_DOTENV_FILE:-.env}"
+  if [ ! -f "$dotenv_file" ]; then
+    return 0
+  fi
+  awk -v key="$dotenv_key" '
+    {
+      line=$0
+      sub(/\r$/, "", line)
+      sub(/^[[:space:]]*export[[:space:]]+/, "", line)
+      if (line ~ "^[[:space:]]*" key "[[:space:]]*=") {
+        sub("^[[:space:]]*" key "[[:space:]]*=", "", line)
+        sub(/^[[:space:]]+/, "", line)
+        sub(/[[:space:]]+$/, "", line)
+        if ((line ~ /^".*"$/) || (line ~ /^'\''.*'\''$/)) {
+          line=substr(line, 2, length(line)-2)
+        }
+        print line
+        exit
+      }
+    }
+  ' "$dotenv_file"
+}
+
+config_value() {
+  for config_key in "$@"; do
+    eval "config_current=\${$config_key:-}"
+    if [ -n "$config_current" ]; then
+      printf '%s' "$config_current"
+      return 0
+    fi
+    config_current="$(read_dotenv_value "$config_key")"
+    if [ -n "$config_current" ]; then
+      printf '%s' "$config_current"
+      return 0
+    fi
+  done
+  return 0
+}
+
+llmgw_mode_value() {
+  value="$(config_value LLMGW_MODE LlmGateway__Mode)"
+  if [ -z "$value" ]; then
+    value="inproc"
+  fi
+  printf '%s' "$value"
+}
+
+llmgw_allowlist_value() {
+  config_value LLMGW_HTTP_APP_CALLER_ALLOWLIST LlmGateway__HttpAppCallerAllowlist
+}
+
+llmgw_shadow_sample_value() {
+  value="$(config_value LLMGW_SHADOW_FULL_SAMPLE_PERCENT LlmGateway__ShadowFullSamplePercent)"
+  if [ -z "$value" ]; then
+    value="0"
+  fi
+  printf '%s' "$value"
+}
+
 guard_llmgw_prod_stage_context_if_needed() {
-  mode="$(printf '%s' "${LLMGW_MODE:-inproc}" | tr 'A-Z' 'a-z' | xargs)"
-  allowlist_compact="$(printf '%s' "${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}" | tr ',;\n\r' '    ' | xargs || true)"
-  shadow_sample_compact="$(printf '%s' "${LLMGW_SHADOW_FULL_SAMPLE_PERCENT:-0}" | xargs || true)"
+  mode_raw="$(llmgw_mode_value)"
+  mode="$(printf '%s' "$mode_raw" | tr 'A-Z' 'a-z' | xargs)"
+  allowlist_raw="$(llmgw_allowlist_value)"
+  allowlist_compact="$(printf '%s' "$allowlist_raw" | tr ',;\n\r' '    ' | xargs || true)"
+  shadow_sample_raw="$(llmgw_shadow_sample_value)"
+  shadow_sample_compact="$(printf '%s' "$shadow_sample_raw" | xargs || true)"
   shadow_sample_enabled=0
   if [ "$mode" = "shadow" ]; then
     case "$shadow_sample_compact" in
@@ -609,10 +673,11 @@ run_llmgw_release_gate_if_needed() {
   LLMGW_POST_DEPLOY_GATE_KEY=""
   LLMGW_POST_DEPLOY_EXPECT_COMMIT=""
 
-  mode="$(printf '%s' "${LLMGW_MODE:-inproc}" | tr 'A-Z' 'a-z' | xargs)"
-  allowlist_raw="${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}"
+  mode_raw="$(llmgw_mode_value)"
+  mode="$(printf '%s' "$mode_raw" | tr 'A-Z' 'a-z' | xargs)"
+  allowlist_raw="$(llmgw_allowlist_value)"
   allowlist_compact="$(printf '%s' "$allowlist_raw" | tr ',;\n\r' '    ' | xargs || true)"
-  shadow_sample_raw="${LLMGW_SHADOW_FULL_SAMPLE_PERCENT:-0}"
+  shadow_sample_raw="$(llmgw_shadow_sample_value)"
   shadow_sample_compact="$(printf '%s' "$shadow_sample_raw" | xargs || true)"
   shadow_sample_enabled=0
   if [ "$mode" = "shadow" ]; then
@@ -629,7 +694,7 @@ run_llmgw_release_gate_if_needed() {
     release_gate_required=1
   fi
   if [ "$release_gate_required" != "1" ] && [ "$shadow_sample_enabled" != "1" ]; then
-    echo "LLM Gateway release gate: skipped (LLMGW_MODE=${LLMGW_MODE:-inproc}, allowlist=empty, shadowSample=${shadow_sample_compact:-0})"
+    echo "LLM Gateway release gate: skipped (LLMGW_MODE=${mode:-inproc}, allowlist=empty, shadowSample=${shadow_sample_compact:-0})"
     return 0
   fi
 
@@ -844,7 +909,7 @@ run_llmgw_release_gate_if_needed() {
     # shellcheck disable=SC2086
     GW_KEY="$gate_key" python3 scripts/llmgw-release-gate.py $args
   else
-    echo "LLM Gateway release gate: skipped shadow sample startup (LLMGW_MODE=${LLMGW_MODE:-inproc}, shadowSample=${shadow_sample_compact:-0}); serving/smoke verification runs after compose up"
+    echo "LLM Gateway release gate: skipped shadow sample startup (LLMGW_MODE=${mode:-inproc}, shadowSample=${shadow_sample_compact:-0}); serving/smoke verification runs after compose up"
   fi
 }
 
