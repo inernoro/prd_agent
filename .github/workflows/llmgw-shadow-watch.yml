@@ -1,0 +1,130 @@
+name: LLM Gateway Shadow Watch
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "Gateway serving base URL, for example https://host/gw/v1. Defaults to vars.LLMGW_PROD_GATE_BASE."
+        required: false
+        default: ""
+      min_total:
+        description: "Global minimum shadow samples."
+        required: false
+        default: "30"
+      min_per_cell:
+        description: "Minimum samples per appCaller/kind cell."
+        required: false
+        default: "30"
+      since_hours:
+        description: "Only count shadow samples within the latest N hours."
+        required: false
+        default: "24"
+      min_coverage_hours:
+        description: "Required earliest-to-latest coverage hours per shadow cell."
+        required: false
+        default: "24"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: llmgw-shadow-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    env:
+      INPUT_BASE: ${{ github.event.inputs.base || '' }}
+      DEFAULT_BASE: ${{ vars.LLMGW_PROD_GATE_BASE || '' }}
+      GW_KEY: ${{ secrets.LLMGW_PROD_GATE_KEY }}
+      MIN_TOTAL: ${{ github.event.inputs.min_total || '30' }}
+      MIN_PER_CELL: ${{ github.event.inputs.min_per_cell || '30' }}
+      SINCE_HOURS: ${{ github.event.inputs.since_hours || '24' }}
+      MIN_COVERAGE_HOURS: ${{ github.event.inputs.min_coverage_hours || '24' }}
+      HEALTH_SAMPLES: ${{ vars.LLMGW_WATCH_HEALTH_SAMPLES || '3' }}
+      HEALTH_INTERVAL_SECONDS: ${{ vars.LLMGW_WATCH_HEALTH_INTERVAL_SECONDS || '5' }}
+      SERVING_PROBE_SAMPLES: ${{ vars.LLMGW_WATCH_SERVING_PROBE_SAMPLES || '3' }}
+      SERVING_PROBE_INTERVAL_SECONDS: ${{ vars.LLMGW_WATCH_SERVING_PROBE_INTERVAL_SECONDS || '5' }}
+      EXPECT_COMMIT: ${{ vars.LLMGW_PROD_EXPECT_COMMIT || '' }}
+      WATCH_APP_CALLERS: ${{ vars.LLMGW_WATCH_APP_CALLERS || 'report-agent.generate::chat,prd-agent-desktop.chat.sendmessage::chat,open-platform-agent.proxy::chat,prd-agent-web.model-lab.run::chat,prd-agent.arena.battle::chat,visual-agent.image.text2img::generation,visual-agent.image.img2img::generation,visual-agent.image.vision::generation,video-agent.videogen::video-gen,document-store.subtitle::asr,transcript-agent.transcribe::asr' }}
+      WATCH_COVERAGE_KINDS: ${{ vars.LLMGW_WATCH_COVERAGE_KINDS || 'send,stream,raw' }}
+      WATCH_REQUIRED_KINDS: ${{ vars.LLMGW_WATCH_REQUIRED_KINDS || '' }}
+      WATCH_REQUIRED_APP_KINDS: ${{ vars.LLMGW_WATCH_REQUIRED_APP_KINDS || '' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run shadow evidence gates
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          base="${INPUT_BASE:-$DEFAULT_BASE}"
+          if [ -z "$(printf '%s' "$base" | xargs)" ]; then
+            echo "ERROR: missing gateway base URL. Set vars.LLMGW_PROD_GATE_BASE or workflow_dispatch input base." >&2
+            exit 1
+          fi
+          if [ -z "$(printf '%s' "$GW_KEY" | xargs)" ]; then
+            echo "ERROR: missing gateway key. Set secrets.LLMGW_PROD_GATE_KEY." >&2
+            exit 1
+          fi
+
+          mkdir -p artifacts/llmgw-shadow-watch
+          cmd=(
+            python3 scripts/llmgw-readiness-audit.py
+            --base "$base"
+            --key "$GW_KEY"
+            --run-serving-probe
+            --run-shadow-coverage
+            --require-release-gate
+            --min-total "$MIN_TOTAL"
+            --min-per-app "$MIN_PER_CELL"
+            --since-hours "$SINCE_HOURS"
+            --min-coverage-hours "$MIN_COVERAGE_HOURS"
+            --health-samples "$HEALTH_SAMPLES"
+            --health-interval "$HEALTH_INTERVAL_SECONDS"
+            --serving-probe-samples "$SERVING_PROBE_SAMPLES"
+            --serving-probe-interval "$SERVING_PROBE_INTERVAL_SECONDS"
+            --json-out artifacts/llmgw-shadow-watch/readiness.json
+            --report-md artifacts/llmgw-shadow-watch/readiness.md
+          )
+
+          append_csv_args() {
+            local flag="$1"
+            local raw="$2"
+            local old_ifs="$IFS"
+            IFS=',;'
+            for item in $raw; do
+              item="$(printf '%s' "$item" | xargs)"
+              if [ -n "$item" ]; then
+                cmd+=("$flag" "$item")
+              fi
+            done
+            IFS="$old_ifs"
+          }
+
+          required_kinds="${WATCH_REQUIRED_KINDS:-send:${MIN_PER_CELL},stream:${MIN_PER_CELL},raw:${MIN_PER_CELL}}"
+          required_app_kinds="${WATCH_REQUIRED_APP_KINDS:-visual-agent.image.text2img::generation:raw:${MIN_PER_CELL},visual-agent.image.img2img::generation:raw:${MIN_PER_CELL},visual-agent.image.vision::generation:raw:${MIN_PER_CELL},video-agent.videogen::video-gen:raw:${MIN_PER_CELL},document-store.subtitle::asr:raw:${MIN_PER_CELL},transcript-agent.transcribe::asr:raw:${MIN_PER_CELL}}"
+
+          append_csv_args "--app-caller" "$WATCH_APP_CALLERS"
+          append_csv_args "--kind" "$WATCH_COVERAGE_KINDS"
+          append_csv_args "--require-kind" "$required_kinds"
+          append_csv_args "--require-app-kind" "$required_app_kinds"
+
+          if [ -n "$(printf '%s' "$EXPECT_COMMIT" | xargs)" ]; then
+            cmd+=(--expect-commit "$EXPECT_COMMIT")
+          fi
+
+          "${cmd[@]}"
+
+      - name: Upload shadow watch report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: llmgw-shadow-watch-${{ github.run_id }}
+          path: artifacts/llmgw-shadow-watch/
+          if-no-files-found: ignore

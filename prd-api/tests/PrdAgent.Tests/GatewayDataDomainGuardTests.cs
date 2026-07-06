@@ -379,8 +379,38 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("critical", script);
         Assert.Contains("httpFail", script);
         Assert.Contains("coverageHours", script);
+        Assert.Contains("--min-coverage-hours", script);
+        Assert.Contains("minCoverageHours", script);
+        Assert.Contains("覆盖时长不足", script);
         Assert.DoesNotContain("print(key", script);
         Assert.DoesNotContain("GW_KEY=\"", script);
+    }
+
+    [Fact]
+    public void ShadowWatchWorkflow_RunsScheduledEvidenceGateWithoutLeakingKey()
+    {
+        var workflow = ReadRepoFile(".github/workflows/llmgw-shadow-watch.yml");
+        var readiness = ReadRepoFile("scripts/llmgw-readiness-audit.py");
+
+        Assert.Contains("cron: \"17 */6 * * *\"", workflow);
+        Assert.Contains("workflow_dispatch:", workflow);
+        Assert.Contains("LLMGW_PROD_GATE_BASE", workflow);
+        Assert.Contains("LLMGW_PROD_GATE_KEY", workflow);
+        Assert.Contains("--run-serving-probe", workflow);
+        Assert.Contains("--run-shadow-coverage", workflow);
+        Assert.Contains("--require-release-gate", workflow);
+        Assert.Contains("--min-coverage-hours \"$MIN_COVERAGE_HOURS\"", workflow);
+        Assert.Contains("WATCH_APP_CALLERS", workflow);
+        Assert.Contains("WATCH_COVERAGE_KINDS", workflow);
+        Assert.Contains("WATCH_REQUIRED_KINDS", workflow);
+        Assert.Contains("WATCH_REQUIRED_APP_KINDS", workflow);
+        Assert.Contains("actions/upload-artifact@v4", workflow);
+
+        Assert.Contains("_redact_cmd", readiness);
+        Assert.Contains("if item in {\"--key\", \"--gateway-key\"}", readiness);
+        Assert.Contains("\"cmd\": _redact_cmd(cmd)", readiness);
+        Assert.Contains("--min-coverage-hours", readiness);
+        Assert.Contains("str(args.min_coverage_hours)", readiness);
     }
 
     [Fact]

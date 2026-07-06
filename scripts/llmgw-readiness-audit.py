@@ -28,6 +28,20 @@ def _read(rel: str) -> str:
     return (ROOT / rel).read_text(encoding="utf-8")
 
 
+def _redact_cmd(cmd: list[str]) -> list[str]:
+    redacted: list[str] = []
+    redact_next = False
+    for item in cmd:
+        if redact_next:
+            redacted.append("***")
+            redact_next = False
+            continue
+        redacted.append(item)
+        if item in {"--key", "--gateway-key"}:
+            redact_next = True
+    return redacted
+
+
 def _run(
     cmd: list[str],
     *,
@@ -46,7 +60,7 @@ def _run(
         check=False,
     )
     return {
-        "cmd": cmd,
+        "cmd": _redact_cmd(cmd),
         "cwd": str(cwd),
         "exitCode": proc.returncode,
         "stdout": proc.stdout if tail is None else proc.stdout[-tail:],
@@ -106,6 +120,7 @@ def _static_checks() -> list[dict]:
             "--app-caller",
             "--kind",
             "--min-per-cell",
+            "--min-coverage-hours",
             "LLMGW_HTTP_APP_CALLER_ALLOWLIST",
             "critical",
             "httpFail",
@@ -115,6 +130,24 @@ def _static_checks() -> list[dict]:
         ],
     )
     checks.append(_check("shadow_coverage_report_available", ok, detail))
+
+    shadow_watch = _read(".github/workflows/llmgw-shadow-watch.yml")
+    ok, detail = _contains_all(
+        shadow_watch,
+        [
+            "cron: \"17 */6 * * *\"",
+            "LLMGW_PROD_GATE_BASE",
+            "LLMGW_PROD_GATE_KEY",
+            "--run-serving-probe",
+            "--run-shadow-coverage",
+            "--require-release-gate",
+            "--min-coverage-hours \"$MIN_COVERAGE_HOURS\"",
+            "WATCH_APP_CALLERS",
+            "WATCH_REQUIRED_APP_KINDS",
+            "actions/upload-artifact@v4",
+        ],
+    )
+    checks.append(_check("shadow_watch_workflow_runs_scheduled_evidence_gate", ok, detail))
 
     ok, detail = _contains_all(
         serving_probe,
@@ -384,6 +417,8 @@ def _release_gate(args: argparse.Namespace) -> dict:
         str(args.min_per_app),
         "--since-hours",
         str(args.since_hours),
+        "--min-coverage-hours",
+        str(args.min_coverage_hours),
         "--health-samples",
         str(args.health_samples),
         "--health-interval",
@@ -423,6 +458,8 @@ def _shadow_coverage(args: argparse.Namespace) -> dict:
         str(args.min_per_app),
         "--since-hours",
         str(args.since_hours),
+        "--min-coverage-hours",
+        str(args.min_coverage_hours),
     ]
     for item in args.app_caller:
         cmd.extend(["--app-caller", item])
@@ -603,6 +640,7 @@ def main() -> int:
     parser.add_argument("--min-total", type=int, default=30)
     parser.add_argument("--min-per-app", type=int, default=30)
     parser.add_argument("--since-hours", type=float, default=float(os.environ.get("LLMGW_GATE_SHADOW_SINCE_HOURS", "24")))
+    parser.add_argument("--min-coverage-hours", type=float, default=float(os.environ.get("LLMGW_GATE_MIN_COVERAGE_HOURS", "0")))
     parser.add_argument("--health-samples", type=int, default=int(os.environ.get("LLMGW_GATE_HEALTH_SAMPLES", "3")))
     parser.add_argument("--health-interval", type=float, default=float(os.environ.get("LLMGW_GATE_HEALTH_INTERVAL_SECONDS", "5")))
     parser.add_argument("--app-caller", action="append", default=[])

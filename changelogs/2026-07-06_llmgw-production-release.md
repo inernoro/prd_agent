@@ -37,3 +37,5 @@
 | ops | prd-agent | fast.sh 写入 release intent，exec_dep.sh 校验同一 commit/tag/repo 后才继续部署，防止正式发布时 API 与 LLMGW 镜像组漂移 |
 | ops | prd-agent | LLM Gateway release gate 增加 shadow 覆盖时长检查，http/canary 发布默认要求每个证据格覆盖 24 小时 |
 | polish | prd-llmgw-web | Shadow 页面展示影子比对覆盖时长，便于人工复核 S5 灰度观察窗口 |
+| ci | prd-agent | 新增 LLM Gateway shadow watch 定时巡检，持续归档 serving 探针、shadow 覆盖矩阵与 live release gate 证据 |
+| security | prd-agent | readiness audit 证据报告脱敏子命令中的 --key 参数，避免上传 GW key |
