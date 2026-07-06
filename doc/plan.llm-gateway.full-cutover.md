@@ -87,6 +87,7 @@ GW_BASE=https://<preview-or-prod-llmgw-serve>/gw/v1 \
 GW_KEY=<X-Gateway-Key> \
 python3 scripts/llmgw-release-gate.py --min-total 30 \
   --health-samples 3 --health-interval 5 \
+  --since-hours 24 \
   --app-caller report-agent.generate::chat --min-per-app 30 \
   --require-kind send:30 \
   --require-app-kind report-agent.generate::chat:send:30 \
@@ -104,6 +105,8 @@ python3 scripts/llmgw-release-gate.py --min-total 30 \
 采样失败、commit 与发布 sha 不一致或多次采样 commit 漂移都会拒绝发布。需要防止 resolve-only 证据误放行时，
 用 `LLMGW_GATE_REQUIRED_KINDS=send:30,stream:30` 和
 `LLMGW_GATE_REQUIRED_APP_KINDS=report-agent.generate::chat:send:30` 强制指定真实 http 样本。
+正式发布脚本默认 `LLMGW_GATE_SHADOW_SINCE_HOURS=24`，只接受最近 24 小时内的 shadow 样本；
+如需更长证据期，应显式调大该值，禁止用很久以前的历史样本放行当前 commit 的 http/canary 发布。
 需要留存第三方可复核证据时，设置 `LLMGW_GATE_JSON_OUT` 与 `LLMGW_GATE_REPORT_MD`，报告只写
 base、health commit、每组 shadow 样本数、critical/httpFail 与最终 verdict，不写 `X-Gateway-Key`。
 

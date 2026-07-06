@@ -13,3 +13,4 @@
 | ops | prd-agent | 正式部署透传 LLMGW_HTTP_APP_CALLER_ALLOWLIST 与 LLMGW_SHADOW_FULL_SAMPLE_PERCENT，并让 allowlist canary 发布也强制执行 GW release gate |
 | security | prd-llmgw | 控制台改密、平台启停、模型启停、默认池切换写入 llm_gateway.llmgw_operation_audits，补齐 GW 自有操作审计 |
 | security | prd-llmgw | 首次 bootstrap、破玻璃 reset、admin 重新激活和历史账号禁用也写入 llmgw_operation_audits，补齐启动级账号审计 |
+| ops | prd-agent | 发布 gate 支持 shadow sinceHours 新鲜度窗口，exec_dep.sh 默认只接受最近 24 小时样本，避免旧证据误放行 http/canary |

@@ -95,6 +95,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_GATE_HEALTH_INTERVAL_SECONDS", script);
         Assert.Contains("--health-samples ${LLMGW_GATE_HEALTH_SAMPLES:-3}", script);
         Assert.Contains("--health-interval ${LLMGW_GATE_HEALTH_INTERVAL_SECONDS:-5}", script);
+        Assert.Contains("LLMGW_GATE_SHADOW_SINCE_HOURS", script);
+        Assert.Contains("--since-hours ${LLMGW_GATE_SHADOW_SINCE_HOURS:-24}", script);
         Assert.Contains("LLMGW_GATE_REQUIRED_KINDS", script);
         Assert.Contains("args=\"$args --require-kind $kind_req_trimmed\"", script);
         Assert.Contains("LLMGW_GATE_REQUIRED_APP_KINDS", script);
@@ -117,10 +119,15 @@ public class GatewayDataDomainGuardTests
         var releaseGate = ReadRepoFile("scripts/llmgw-release-gate.py");
 
         Assert.Contains("string? kind", servingEndpoints);
+        Assert.Contains("double? sinceHours", servingEndpoints);
         Assert.Contains("Builders<LlmShadowComparison>.Filter.Eq(x => x.Kind, kind.Trim())", servingEndpoints);
+        Assert.Contains("Builders<LlmShadowComparison>.Filter.Gte(x => x.ComparedAt, since.Value)", servingEndpoints);
         Assert.Contains("string? kind", consoleProgram);
         Assert.Contains("fb.Eq(\"Kind\", kind.Trim())", consoleProgram);
         Assert.Contains("query_items[\"kind\"] = kind", releaseGate);
+        Assert.Contains("query_items[\"sinceHours\"] = f\"{since_hours:g}\"", releaseGate);
+        Assert.Contains("--since-hours", releaseGate);
+        Assert.Contains("\"shadowSinceHours\"", releaseGate);
         Assert.Contains("--require-kind", releaseGate);
         Assert.Contains("--require-app-kind", releaseGate);
         Assert.Contains("--health-samples", releaseGate);

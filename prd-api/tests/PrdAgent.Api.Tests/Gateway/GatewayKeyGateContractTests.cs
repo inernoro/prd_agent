@@ -66,6 +66,7 @@ public class GatewayKeyGateContractTests
         new object[] { HttpMethod.Post, "/gw/v1/stream" },
         new object[] { HttpMethod.Post, "/gw/v1/client-stream" },
         new object[] { HttpMethod.Get, "/gw/v1/pools?appCallerCode=demo.app::chat&modelType=chat" },
+        new object[] { HttpMethod.Get, "/gw/v1/shadow-comparisons?sinceHours=24" },
     };
 
     [Theory]

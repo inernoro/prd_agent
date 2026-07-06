@@ -7,6 +7,7 @@
   - critical mismatch 必须为 0
   - httpFail 必须为 0
   - total 样本数必须达到阈值
+  - 可选：只统计最近 N 小时 shadow 样本，避免旧证据误放行
   - 可选：指定 kind/appCaller+kind 的真实样本数必须达到阈值，避免只靠 resolve-only 放行
 
 用法：
@@ -14,6 +15,7 @@
   GW_KEY=<X-Gateway-Key> \
   python3 scripts/llmgw-release-gate.py --min-total 30 \
     --app-caller report-agent.generate::chat --min-per-app 30 \
+    --since-hours 24 \
     --require-kind send:30 \
     --require-app-kind report-agent.generate::chat:send:30
 """
@@ -79,7 +81,14 @@ def _json(raw: str) -> dict:
     return value
 
 
-def _shadow_check(base: str, key: str, app: str | None, min_total: int, kind: str | None = None) -> dict:
+def _shadow_check(
+    base: str,
+    key: str,
+    app: str | None,
+    min_total: int,
+    kind: str | None = None,
+    since_hours: float = 0,
+) -> dict:
     label = "global"
     query_items: dict[str, str] = {}
     if app:
@@ -88,6 +97,8 @@ def _shadow_check(base: str, key: str, app: str | None, min_total: int, kind: st
     if kind:
         query_items["kind"] = kind
         label = f"{label}/{kind}"
+    if since_hours > 0:
+        query_items["sinceHours"] = f"{since_hours:g}"
     query = ("?" + urllib.parse.urlencode(query_items)) if query_items else ""
 
     code, raw = _request("GET", base, "/shadow-comparisons" + query, key)
@@ -101,6 +112,7 @@ def _shadow_check(base: str, key: str, app: str | None, min_total: int, kind: st
         "allMatch": 0,
         "critical": 0,
         "httpFail": 0,
+        "sinceHours": since_hours,
         "ok": False,
         "failures": [],
         "query": query_items,
@@ -237,12 +249,13 @@ def _write_markdown(path: str, report: dict) -> None:
         fh.write(f"- healthStable: `{cell(health.get('stable'))}`\n")
         fh.write(f"- healthSamples: `{cell(health.get('sampleCount'))}`\n")
         fh.write(f"- expectedCommit: `{cell(report.get('expectedCommit') or '')}`\n\n")
-        fh.write("| label | required | total | allMatch | critical | httpFail | status |\n")
-        fh.write("|---|---:|---:|---:|---:|---:|---|\n")
+        fh.write(f"- shadowSinceHours: `{cell((report.get('thresholds') or {}).get('shadowSinceHours'))}`\n\n")
+        fh.write("| label | sinceHours | required | total | allMatch | critical | httpFail | status |\n")
+        fh.write("|---|---:|---:|---:|---:|---:|---:|---|\n")
         for item in checks:
             status = "pass" if item.get("ok") else "fail"
             fh.write(
-                f"| {cell(item.get('label'))} | {cell(item.get('requiredTotal'))} | "
+                f"| {cell(item.get('label'))} | {cell(item.get('sinceHours'))} | {cell(item.get('requiredTotal'))} | "
                 f"{cell(item.get('total'))} | {cell(item.get('allMatch'))} | "
                 f"{cell(item.get('critical'))} | {cell(item.get('httpFail'))} | {status} |\n"
             )
@@ -276,6 +289,8 @@ def main() -> int:
                         help="要求某类 shadow Kind 达到最小样本数，格式 kind 或 kind:min，可重复")
     parser.add_argument("--require-app-kind", action="append", default=[],
                         help="要求某个 appCallerCode 的某类 Kind 达到最小样本数，格式 appCallerCode:kind:min，可重复")
+    parser.add_argument("--since-hours", type=float, default=float(os.environ.get("LLMGW_GATE_SHADOW_SINCE_HOURS", "0")),
+                        help="只统计最近 N 小时 shadow 样本；0 表示不限制。生产 http/canary 发布建议 >=24")
     parser.add_argument("--expect-commit", default=os.environ.get("GIT_COMMIT", ""), help="可选：healthz commit 必须匹配")
     parser.add_argument("--health-samples", type=int, default=int(os.environ.get("LLMGW_GATE_HEALTH_SAMPLES", "1")),
                         help="healthz 连续采样次数，默认 1；正式全量 http 建议 >=3")
@@ -296,6 +311,7 @@ def main() -> int:
         "thresholds": {
             "minTotal": args.min_total,
             "minPerApp": args.min_per_app,
+            "shadowSinceHours": max(0, args.since_hours),
             "healthSamples": max(1, args.health_samples),
             "healthIntervalSeconds": args.health_interval,
         },
@@ -341,23 +357,24 @@ def main() -> int:
     failures.extend(health.get("failures") or [])
 
     shadow_checks: list[dict] = []
-    shadow_checks.append(_shadow_check(base, args.key, None, args.min_total))
+    since_hours = max(0, args.since_hours)
+    shadow_checks.append(_shadow_check(base, args.key, None, args.min_total, since_hours=since_hours))
     for app in args.app_caller:
-        shadow_checks.append(_shadow_check(base, args.key, app, args.min_per_app))
+        shadow_checks.append(_shadow_check(base, args.key, app, args.min_per_app, since_hours=since_hours))
     for raw in args.require_kind:
         try:
             kind, min_total = _parse_kind_requirement(raw, args.min_per_app)
         except ValueError as exc:
             failures.append(str(exc))
             continue
-        shadow_checks.append(_shadow_check(base, args.key, None, min_total, kind=kind))
+        shadow_checks.append(_shadow_check(base, args.key, None, min_total, kind=kind, since_hours=since_hours))
     for raw in args.require_app_kind:
         try:
             app, kind, min_total = _parse_app_kind_requirement(raw)
         except ValueError as exc:
             failures.append(str(exc))
             continue
-        shadow_checks.append(_shadow_check(base, args.key, app, min_total, kind=kind))
+        shadow_checks.append(_shadow_check(base, args.key, app, min_total, kind=kind, since_hours=since_hours))
 
     report["shadowChecks"] = shadow_checks
     for item in shadow_checks:
@@ -374,6 +391,8 @@ def main() -> int:
     print("LLM Gateway release gate: PASS")
     print(f"- base={base}")
     print(f"- global_min_total={args.min_total}")
+    if since_hours > 0:
+        print(f"- shadow_since_hours={since_hours:g}")
     if args.app_caller:
         print(f"- app_callers={len(args.app_caller)} min_per_app={args.min_per_app}")
     if args.require_kind:

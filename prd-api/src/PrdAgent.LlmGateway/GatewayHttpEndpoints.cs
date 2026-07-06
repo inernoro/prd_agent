@@ -207,7 +207,8 @@ public static class GatewayHttpEndpoints
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services,
             int? limit,
             string? appCallerCode,
-            string? kind) =>
+            string? kind,
+            double? sinceHours) =>
         {
             var n = Math.Clamp(limit ?? 50, 1, 500);
             var db = services.GetService<LlmGatewayDataContext>()?.Context
@@ -218,6 +219,9 @@ public static class GatewayHttpEndpoints
                 filters.Add(Builders<LlmShadowComparison>.Filter.Eq(x => x.AppCallerCode, appCallerCode.Trim()));
             if (!string.IsNullOrWhiteSpace(kind))
                 filters.Add(Builders<LlmShadowComparison>.Filter.Eq(x => x.Kind, kind.Trim()));
+            var since = sinceHours is > 0 ? DateTime.UtcNow.AddHours(-sinceHours.Value) : (DateTime?)null;
+            if (since is not null)
+                filters.Add(Builders<LlmShadowComparison>.Filter.Gte(x => x.ComparedAt, since.Value));
             var filter = filters.Count == 0
                 ? FilterDefinition<LlmShadowComparison>.Empty
                 : Builders<LlmShadowComparison>.Filter.And(filters);
@@ -230,7 +234,7 @@ public static class GatewayHttpEndpoints
 
             return Results.Json(new
             {
-                summary = new { total, allMatch, critical, httpFail },
+                summary = new { total, allMatch, critical, httpFail, sinceHours, since },
                 recent,
             }, jsonOpts);
         });
