@@ -91,6 +91,15 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("run_llmgw_release_gate_if_needed", script);
         Assert.Contains("LLMGW_HTTP_APP_CALLER_ALLOWLIST", script);
         Assert.Contains("allowlist_compact", script);
+        Assert.Contains("LLMGW_CANARY_STAGE", script);
+        Assert.Contains("canary_allowed_app_callers=\"report-agent.generate::chat\"", script);
+        Assert.Contains("canary_allowed_app_callers=\"report-agent.generate::chat prd-agent-desktop.chat.sendmessage::chat open-platform-agent.proxy::chat\"", script);
+        Assert.Contains("canary_allowed_app_callers=\"visual-agent.image.vision::generation\"", script);
+        Assert.Contains("canary_allowed_app_callers=\"visual-agent.image.text2img::generation visual-agent.image.img2img::generation\"", script);
+        Assert.Contains("canary_allowed_app_callers=\"video-agent.videogen::video-gen document-store.subtitle::asr transcript-agent.transcribe::asr\"", script);
+        Assert.Contains("LLM Gateway canary 发布设置了 LLMGW_HTTP_APP_CALLER_ALLOWLIST，但未设置 LLMGW_CANARY_STAGE", script);
+        Assert.Contains("LLM Gateway canary 阶段 $canary_stage 不允许入口 $app_trimmed", script);
+        Assert.Contains("LLM Gateway canary stage: $canary_stage allowlist=$allowlist_compact", script);
         Assert.Contains("LLMGW_SHADOW_FULL_SAMPLE_PERCENT", script);
         Assert.Contains("shadow_sample_enabled=0", script);
         Assert.Contains("release_gate_required=0", script);
@@ -124,6 +133,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("if [ \"$mode\" = \"http\" ] && [ -z \"$required_kinds_compact\" ]; then", script);
         Assert.Contains("full_http_kind_min=\"${LLMGW_GATE_FULL_HTTP_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}\"", script);
         Assert.Contains("required_kinds_raw=\"send:${full_http_kind_min},stream:${full_http_kind_min},raw:${full_http_kind_min}\"", script);
+        Assert.Contains("LLMGW_GATE_CANARY_KIND_MIN", script);
+        Assert.Contains("required_kinds_raw=\"send:${canary_kind_min}\"", script);
+        Assert.Contains("required_kinds_raw=\"stream:${canary_kind_min}\"", script);
+        Assert.Contains("required_kinds_raw=\"raw:${canary_kind_min}\"", script);
+        Assert.Contains("LLM Gateway release gate: canary 阶段 $canary_stage 未设置 LLMGW_GATE_REQUIRED_KINDS，默认要求 $required_kinds_raw", script);
         Assert.Contains("args=\"$args --require-kind $kind_req_trimmed\"", script);
         Assert.Contains("LLMGW_GATE_REQUIRED_APP_KINDS", script);
         Assert.Contains("LLMGW_GATE_FULL_HTTP_APP_KINDS", script);
@@ -136,6 +150,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("document-store.subtitle::asr:raw:", script);
         Assert.Contains("transcript-agent.transcribe::asr:raw:", script);
         Assert.Contains("LLM Gateway release gate: LLMGW_MODE=http 未设置 LLMGW_GATE_REQUIRED_APP_KINDS，默认要求 raw 入口逐个具备 raw 样本", script);
+        Assert.Contains("LLMGW_GATE_CANARY_APP_KIND_MIN", script);
+        Assert.Contains("LLMGW_GATE_CANARY_APP_KINDS", script);
+        Assert.Contains("LLM Gateway release gate: canary 阶段 $canary_stage 默认要求 raw app-kind 样本逐个达标", script);
         Assert.Contains("args=\"$args --require-app-kind $app_kind_req_trimmed\"", script);
         Assert.Contains("for app in ${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}; do", script);
         Assert.Contains("LLM Gateway release gate: required (LLMGW_MODE=", script);

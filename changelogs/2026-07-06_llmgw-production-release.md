@@ -33,3 +33,4 @@
 | test | prd-api | 将 Claude 流式 tool_use 纳入 LLM Gateway 协议保真矩阵，B 层数据驱动 cell 从 91 扩展到 93 |
 | test | prd-agent | 扩展 llmgw-readiness-audit --run-dotnet，发布前总 gate 覆盖协议矩阵、跨进程矩阵、shadow/raw、媒体合同与 HTTP 边界 |
 | ops | prd-agent | 全量 LLMGW_MODE=http 发布默认要求图片、视频、ASR 等 raw appCaller 逐个具备 raw shadow 样本，避免入口级证据搭车过关 |
+| ops | prd-agent | 灰度 LLMGW_HTTP_APP_CALLER_ALLOWLIST 发布必须声明 LLMGW_CANARY_STAGE，并按阶段限制入口与自动补齐 send/stream/raw 样本门 |

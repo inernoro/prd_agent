@@ -31,6 +31,7 @@ set -eu
 #   - GITHUB_TOKEN：仅当 Release 资产为私有时需要（公开 Pages 下载不需要）
 #   - LLMGW_MODE=http：全量切 HTTP 时必须先通过 scripts/llmgw-release-gate.py
 #   - LLMGW_HTTP_APP_CALLER_ALLOWLIST：灰度入口列表；非空时这些入口会走 http 权威，也必须先通过 release gate
+#   - LLMGW_CANARY_STAGE：灰度阶段，allowlist 非空且非全量 http 时必填；枚举 intent-text/chat/streaming/vision/image/video-asr
 #   - LLMGW_SHADOW_FULL_SAMPLE_PERCENT：shadow 模式非流式完整比对采样比例，默认 0
 #     非 0 时会强制 serving probe + gw-smoke 预检，但不会要求已有 shadow 样本数
 #   - LLMGW_GATE_BASE / GW_BASE：release gate 使用的 serving base URL（形如 https://host/gw/v1）
@@ -47,6 +48,9 @@ set -eu
 #   - LLMGW_GATE_REQUIRED_APP_KINDS：逗号/分号分隔的 appCallerCode:kind:min 列表，例如 report-agent.generate::chat:send:30
 #     全量 LLMGW_MODE=http 时若未显式设置，默认要求图片/视频/ASR 等 raw 入口各自达到 raw 样本门槛
 #   - LLMGW_GATE_FULL_HTTP_APP_KINDS：全量 http 未显式设置 LLMGW_GATE_REQUIRED_APP_KINDS 时默认逐个 gate 的 appCallerCode:kind:min 列表
+#   - LLMGW_GATE_CANARY_KIND_MIN：canary 阶段默认 kind 样本门槛，默认跟随 LLMGW_GATE_MIN_PER_APP
+#   - LLMGW_GATE_CANARY_APP_KIND_MIN：canary 阶段 raw app-kind 样本门槛，默认跟随 LLMGW_GATE_CANARY_KIND_MIN
+#   - LLMGW_GATE_CANARY_APP_KINDS：canary 阶段自定义 appCallerCode:kind:min 列表
 #   - LLMGW_GATE_JSON_OUT：可选，保存 release gate JSON 证据报告（不含密钥）
 #   - LLMGW_GATE_REPORT_MD：可选，保存 release gate Markdown 证据报告（不含密钥）
 #   - LLMGW_GATE_RUN_SERVING_PROBE：是否在 http/canary 发布时强制运行 llmgw-serving-probe.py，默认 1
@@ -511,6 +515,60 @@ run_llmgw_release_gate_if_needed() {
     return 0
   fi
 
+  canary_stage=""
+  canary_allowed_app_callers=""
+  if [ -n "$allowlist_compact" ] && [ "$mode" != "http" ]; then
+    canary_stage="$(printf '%s' "${LLMGW_CANARY_STAGE:-}" | tr 'A-Z' 'a-z' | xargs || true)"
+    case "$canary_stage" in
+      intent-text)
+        canary_allowed_app_callers="report-agent.generate::chat"
+        ;;
+      chat)
+        canary_allowed_app_callers="report-agent.generate::chat prd-agent-desktop.chat.sendmessage::chat open-platform-agent.proxy::chat"
+        ;;
+      streaming)
+        canary_allowed_app_callers="report-agent.generate::chat prd-agent-desktop.chat.sendmessage::chat open-platform-agent.proxy::chat"
+        ;;
+      vision)
+        canary_allowed_app_callers="visual-agent.image.vision::generation"
+        ;;
+      image)
+        canary_allowed_app_callers="visual-agent.image.text2img::generation visual-agent.image.img2img::generation"
+        ;;
+      video-asr)
+        canary_allowed_app_callers="video-agent.videogen::video-gen document-store.subtitle::asr transcript-agent.transcribe::asr"
+        ;;
+      "")
+        echo "ERROR: LLM Gateway canary 发布设置了 LLMGW_HTTP_APP_CALLER_ALLOWLIST，但未设置 LLMGW_CANARY_STAGE。" >&2
+        echo "       允许阶段：intent-text/chat/streaming/vision/image/video-asr；必须按低风险到高风险逐段推进。" >&2
+        exit 1
+        ;;
+      *)
+        echo "ERROR: LLMGW_CANARY_STAGE=$canary_stage 不合法；允许 intent-text/chat/streaming/vision/image/video-asr。" >&2
+        exit 1
+        ;;
+    esac
+
+    old_ifs="$IFS"
+    IFS=',;'
+    for app in ${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}; do
+      app_trimmed="$(printf '%s' "$app" | xargs)"
+      if [ -n "$app_trimmed" ]; then
+        case " $canary_allowed_app_callers " in
+          *" $app_trimmed "*)
+            ;;
+          *)
+            echo "ERROR: LLM Gateway canary 阶段 $canary_stage 不允许入口 $app_trimmed。" >&2
+            echo "       本阶段允许：$canary_allowed_app_callers" >&2
+            exit 1
+            ;;
+        esac
+      fi
+    done
+    IFS="$old_ifs"
+    echo "LLM Gateway canary stage: $canary_stage allowlist=$allowlist_compact"
+  fi
+
   if [ "${LLMGW_SKIP_RELEASE_GATE:-}" = "1" ]; then
     echo "WARN: LLM Gateway http/canary 发布但 LLMGW_SKIP_RELEASE_GATE=1，已跳过发布证据门。仅允许紧急回滚/人工强制场景。" >&2
     return 0
@@ -590,6 +648,20 @@ run_llmgw_release_gate_if_needed() {
     full_http_kind_min="${LLMGW_GATE_FULL_HTTP_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}"
     required_kinds_raw="send:${full_http_kind_min},stream:${full_http_kind_min},raw:${full_http_kind_min}"
     echo "LLM Gateway release gate: LLMGW_MODE=http 未设置 LLMGW_GATE_REQUIRED_KINDS，默认要求 $required_kinds_raw"
+  elif [ -n "$canary_stage" ] && [ -z "$required_kinds_compact" ]; then
+    canary_kind_min="${LLMGW_GATE_CANARY_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}"
+    case "$canary_stage" in
+      intent-text|chat)
+        required_kinds_raw="send:${canary_kind_min}"
+        ;;
+      streaming)
+        required_kinds_raw="stream:${canary_kind_min}"
+        ;;
+      vision|image|video-asr)
+        required_kinds_raw="raw:${canary_kind_min}"
+        ;;
+    esac
+    echo "LLM Gateway release gate: canary 阶段 $canary_stage 未设置 LLMGW_GATE_REQUIRED_KINDS，默认要求 $required_kinds_raw"
   fi
   for kind_req in ${required_kinds_raw}; do
     kind_req_trimmed="$(printf '%s' "$kind_req" | xargs)"
@@ -603,6 +675,22 @@ run_llmgw_release_gate_if_needed() {
     full_http_app_kind_min="${LLMGW_GATE_FULL_HTTP_APP_KIND_MIN:-${LLMGW_GATE_FULL_HTTP_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}}"
     required_app_kinds_raw="${LLMGW_GATE_FULL_HTTP_APP_KINDS:-visual-agent.image.text2img::generation:raw:${full_http_app_kind_min},visual-agent.image.img2img::generation:raw:${full_http_app_kind_min},visual-agent.image.vision::generation:raw:${full_http_app_kind_min},video-agent.videogen::video-gen:raw:${full_http_app_kind_min},document-store.subtitle::asr:raw:${full_http_app_kind_min},transcript-agent.transcribe::asr:raw:${full_http_app_kind_min}}"
     echo "LLM Gateway release gate: LLMGW_MODE=http 未设置 LLMGW_GATE_REQUIRED_APP_KINDS，默认要求 raw 入口逐个具备 raw 样本"
+  elif [ -n "$canary_stage" ] && [ -z "$required_app_kinds_compact" ]; then
+    canary_app_kind_min="${LLMGW_GATE_CANARY_APP_KIND_MIN:-${LLMGW_GATE_CANARY_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}}"
+    case "$canary_stage" in
+      vision)
+        required_app_kinds_raw="${LLMGW_GATE_CANARY_APP_KINDS:-visual-agent.image.vision::generation:raw:${canary_app_kind_min}}"
+        ;;
+      image)
+        required_app_kinds_raw="${LLMGW_GATE_CANARY_APP_KINDS:-visual-agent.image.text2img::generation:raw:${canary_app_kind_min},visual-agent.image.img2img::generation:raw:${canary_app_kind_min}}"
+        ;;
+      video-asr)
+        required_app_kinds_raw="${LLMGW_GATE_CANARY_APP_KINDS:-video-agent.videogen::video-gen:raw:${canary_app_kind_min},document-store.subtitle::asr:raw:${canary_app_kind_min},transcript-agent.transcribe::asr:raw:${canary_app_kind_min}}"
+        ;;
+    esac
+    if [ -n "$required_app_kinds_raw" ]; then
+      echo "LLM Gateway release gate: canary 阶段 $canary_stage 默认要求 raw app-kind 样本逐个达标"
+    fi
   fi
   for app_kind_req in ${required_app_kinds_raw}; do
     app_kind_req_trimmed="$(printf '%s' "$app_kind_req" | xargs)"
