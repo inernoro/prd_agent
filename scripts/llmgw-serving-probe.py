@@ -40,9 +40,20 @@ def _default_base() -> str:
     return ""
 
 
-def _request(base: str, path: str, key: str | None = None) -> tuple[int, str, float]:
-    req = urllib.request.Request(base + path, method="GET")
+def _request(
+    base: str,
+    path: str,
+    key: str | None = None,
+    method: str = "GET",
+    body: object | None = None,
+) -> tuple[int, str, float]:
+    data: bytes | None = None
+    if body is not None:
+        data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(base + path, data=data, method=method.upper())
     req.add_header("User-Agent", "Mozilla/5.0 llmgw-serving-probe/1.0")
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
     if key:
         req.add_header("X-Gateway-Key", key)
     started = time.monotonic()
@@ -56,6 +67,58 @@ def _request(base: str, path: str, key: str | None = None) -> tuple[int, str, fl
     except Exception as exc:
         elapsed_ms = (time.monotonic() - started) * 1000
         return 0, f"ERR {exc}", elapsed_ms
+
+
+def _default_protected_checks() -> list[dict]:
+    chat_body = {
+        "AppCallerCode": "report-agent.generate::chat",
+        "ModelType": "chat",
+    }
+    raw_body = {
+        "AppCallerCode": "report-agent.generate::chat",
+        "ModelType": "chat",
+        "Protocol": "openai",
+        "BaseUrl": "https://example.invalid/v1",
+        "Path": "/chat/completions",
+        "Method": "POST",
+        "Body": {"model": "probe-model", "messages": []},
+    }
+    profile_body = {
+        "AppCallerCode": "infra-agent.runtime-profile-test::chat",
+        "Protocol": "openai",
+        "BaseUrl": "https://example.invalid/v1",
+        "Model": "probe-model",
+        "ApiKey": "probe-key",
+    }
+    return [
+        {"method": "GET", "path": "/pools?appCallerCode=report-agent.generate%3A%3Achat&modelType=chat", "body": None},
+        {"method": "GET", "path": "/shadow-comparisons", "body": None},
+        {"method": "POST", "path": "/resolve", "body": chat_body},
+        {"method": "POST", "path": "/send", "body": chat_body},
+        {"method": "POST", "path": "/stream", "body": chat_body},
+        {"method": "POST", "path": "/client-stream", "body": chat_body},
+        {"method": "POST", "path": "/raw", "body": raw_body},
+        {"method": "POST", "path": "/profile-test", "body": profile_body},
+    ]
+
+
+def _parse_protected_endpoint(raw: str) -> dict:
+    value = raw.strip()
+    if not value:
+        raise ValueError("empty protected endpoint")
+    if " " in value:
+        method, path = value.split(None, 1)
+    elif ":" in value:
+        method, path = value.split(":", 1)
+    else:
+        method, path = "GET", value
+    method = method.strip().upper()
+    path = path.strip()
+    if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
+        raise ValueError(f"unsupported method in protected endpoint: {raw}")
+    if not path.startswith("/"):
+        raise ValueError(f"protected endpoint path must start with '/': {raw}")
+    return {"method": method, "path": path, "body": {} if method != "GET" else None}
 
 
 def _json(raw: str) -> dict:
@@ -110,10 +173,10 @@ def _write_markdown(path: str, report: dict) -> None:
                 f"| {cell(sample['index'])} | {cell(sample['httpStatus'])} | "
                 f"{cell(sample.get('commit') or '')} | {cell(round(sample['latencyMs'], 1))} |\n"
             )
-        fh.write("\n| protectedPath | status | expected |\n")
-        fh.write("|---|---:|---|\n")
+        fh.write("\n| method | protectedPath | status | expected |\n")
+        fh.write("|---|---|---:|---|\n")
         for item in report["protectedChecks"]:
-            fh.write(f"| {cell(item['path'])} | {cell(item['httpStatus'])} | 401 |\n")
+            fh.write(f"| {cell(item['method'])} | {cell(item['path'])} | {cell(item['httpStatus'])} | 401 |\n")
         fh.write("\n## Failures\n\n")
         failures = report.get("failures") or []
         if failures:
@@ -130,7 +193,9 @@ def main() -> int:
     parser.add_argument("--samples", type=int, default=int(os.environ.get("LLMGW_SERVING_PROBE_SAMPLES", "12")))
     parser.add_argument("--interval", type=float, default=float(os.environ.get("LLMGW_SERVING_PROBE_INTERVAL_SECONDS", "5")))
     parser.add_argument("--protected-path", action="append", default=[],
-                        help="protected GET path that must reject missing key; repeatable")
+                        help="backward compatible protected GET path that must reject missing key; repeatable")
+    parser.add_argument("--protected-endpoint", action="append", default=[],
+                        help="protected endpoint that must reject missing key, format 'METHOD /path' or METHOD:/path; repeatable")
     parser.add_argument("--json-out", default=os.environ.get("LLMGW_SERVING_PROBE_JSON_OUT", ""))
     parser.add_argument("--report-md", default=os.environ.get("LLMGW_SERVING_PROBE_REPORT_MD", ""))
     parser.add_argument("--print-json", action="store_true")
@@ -139,10 +204,15 @@ def main() -> int:
     base = (args.base or "").strip().rstrip("/")
     sample_count = max(1, args.samples)
     interval = max(0, args.interval)
-    protected_paths = args.protected_path or [
-        "/pools?appCallerCode=report-agent.generate%3A%3Achat&modelType=chat",
-        "/shadow-comparisons",
-    ]
+    try:
+        protected_checks = [{"method": "GET", "path": path, "body": None} for path in args.protected_path]
+        protected_checks.extend(_parse_protected_endpoint(item) for item in args.protected_endpoint)
+        if not protected_checks:
+            protected_checks = _default_protected_checks()
+        protected_parse_failure = ""
+    except ValueError as exc:
+        protected_checks = []
+        protected_parse_failure = str(exc)
 
     report = {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
@@ -159,6 +229,8 @@ def main() -> int:
 
     if not base:
         report["failures"].append("missing --base/GW_BASE")
+    if protected_parse_failure:
+        report["failures"].append(protected_parse_failure)
     if not report["failures"]:
         commits: list[str] = []
         latencies: list[float] = []
@@ -194,11 +266,20 @@ def main() -> int:
             "max": round(max(latencies) if latencies else 0, 1),
         }
 
-        for path in protected_paths:
-            code, raw, latency = _request(base, path)
-            item = {"path": path, "httpStatus": code, "latencyMs": latency, "raw": raw[:200], "ok": code == 401}
+        for check in protected_checks:
+            method = str(check["method"]).upper()
+            path = str(check["path"])
+            code, raw, latency = _request(base, path, method=method, body=check.get("body"))
+            item = {
+                "method": method,
+                "path": path,
+                "httpStatus": code,
+                "latencyMs": latency,
+                "raw": raw[:200],
+                "ok": code == 401,
+            }
             if code != 401:
-                report["failures"].append(f"protected path {path} should reject missing key with 401, actual={code}")
+                report["failures"].append(f"protected endpoint {method} {path} should reject missing key with 401, actual={code}")
             report["protectedChecks"].append(item)
 
     report["verdict"] = "fail" if report["failures"] else "pass"

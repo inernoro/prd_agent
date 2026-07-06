@@ -234,11 +234,17 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--samples", script);
         Assert.Contains("--interval", script);
         Assert.Contains("--protected-path", script);
+        Assert.Contains("--protected-endpoint", script);
+        Assert.Contains("\"method\": \"POST\", \"path\": \"/send\"", script);
+        Assert.Contains("\"method\": \"POST\", \"path\": \"/stream\"", script);
+        Assert.Contains("\"method\": \"POST\", \"path\": \"/client-stream\"", script);
+        Assert.Contains("\"method\": \"POST\", \"path\": \"/raw\"", script);
+        Assert.Contains("\"method\": \"POST\", \"path\": \"/profile-test\"", script);
         Assert.Contains("expectedCommit", script);
         Assert.Contains("healthSamples", script);
         Assert.Contains("protectedChecks", script);
         Assert.Contains("commit drift", script);
-        Assert.Contains("should reject missing key with 401", script);
+        Assert.Contains("protected endpoint {method} {path} should reject missing key with 401", script);
         Assert.Contains("LLMGW_SERVING_PROBE_JSON_OUT", script);
         Assert.Contains("LLMGW_SERVING_PROBE_REPORT_MD", script);
         Assert.DoesNotContain("GW_KEY", script);

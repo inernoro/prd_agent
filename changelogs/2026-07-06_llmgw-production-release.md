@@ -26,3 +26,4 @@
 | ops | prd-agent | exec_dep.sh 在 shadow 采样证据期启动时强制 serving/smoke 预检，避免坏 serving 产生无效 shadow 证据 |
 | ops | prd-agent | readiness audit 新增 CDS runtime 检查，要求预览/灰度网关后端与 serving 以 express 预构建镜像运行并匹配发布 commit，避免源码容器或旧容器假阳性 |
 | test | prd-api | 新增 HttpLlmGatewayClientFailureTests，覆盖 serving 不可达或 401 时 send/stream/raw/profile-test/resolve/pools/client-stream 全部显式失败且不伪成功 |
+| ops | prd-agent | serving 运行态探针扩展到所有 /gw/v1 受保护边界，覆盖 GET pools/shadow 与 POST resolve/send/stream/client-stream/raw/profile-test 的无 key 401 |
