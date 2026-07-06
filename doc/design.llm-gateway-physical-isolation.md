@@ -582,3 +582,16 @@ api:
 - **本期非目标、登记债务**：`ImageGen/ImageGenGateway.cs`、`LLM/OpenAIImageClient.cs`、`LLM/OpenAIClient.cs`、`LLM/ClaudeClient.cs` 及其 6+ 处直连构造点（ModelLabController、ArenaRunWorker、Program.cs DI、ModelDomainService）
 - 配置：`docker-compose.yml`、`cds-compose.yml`、`Program.cs`(prd-api DI 切换 + feature flag)；密钥/Mongo/LlmLogLimits 用同一份 env 锚点注入两 service
 - 集合归属（网关独占写）：`llmplatforms`、`llmmodels`、`model_groups`、`model_exchanges`、`llm_app_callers`、`llmrequestlogs`
+
+---
+
+## 9. 控制台与运维闭环（实施进展，2026-07-04）
+
+网关物理拆分落地后，`prd-llmgw-web`（观测前端）与 `prd-llmgw`（serving）本身也需要独立于 MAP 的账号体系与可观测面，避免"引擎已拆、运维还得回 MAP 借壳"：
+
+- **控制台账号独立建库**：网关控制台的登录账号与登录审计记录迁到独立的 `llm_gateway` Mongo 数据库，不再与 MAP 主库（`llmrequestlogs` 等业务集合所在库）混用，呼应 `.claude/rules/cross-project-isolation.md` 的隔离总纲——控制台鉴权是独立于日志读写的另一条数据面。
+- **修复口令被覆盖**：`LLMGW_ADMIN_PASSWORD` 此前会在服务每次启动时覆盖已存在的控制台口令，导致运维改过的密码重启后失效；已改为仅在账号不存在时用该变量初始化，不再覆盖已存在口令。
+- **只读日志 API 扩展**：网关日志只读 API 新增多维筛选、元信息与窗口汇总接口，供控制台的筛选/汇总/详情排障使用。
+- **控制台视觉重做**：`prd-llmgw-web` 的 Logs / Generation 页从早期原型样式改为 OpenRouter 风格的高密度 Activity 控制台，信息架构与筛选/汇总/详情排障字段一并打磨。
+
+以上四项均不改变 §3-§8 定义的边界与迁移方案，属于该边界内"控制台可用性"层面的补强；本节记录落地事实，供后续核对控制台功能演进历史。
