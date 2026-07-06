@@ -240,6 +240,41 @@ public class GatewayDirectClientRatchetTests
         _output.WriteLine("OK 图片直连守卫通过：API 层只依赖生图网关接口，不直接引用 OpenAIImageClient。");
     }
 
+    [Fact]
+    public void ApiLayer_DoesNotDependOnConcreteOpenRouterVideoClient_OutsideCompositionRoot()
+    {
+        var srcRoot = LocateSrcRoot();
+        var apiRoot = Path.Combine(srcRoot, "PrdAgent.Api");
+        Assert.True(Directory.Exists(apiRoot), $"找不到 API 源码目录: {apiRoot}");
+
+        var violations = new List<string>();
+        foreach (var file in Directory.EnumerateFiles(apiRoot, "*.cs", SearchOption.AllDirectories))
+        {
+            var rel = Path.GetRelativePath(srcRoot, file).Replace('\\', '/');
+            if (rel.Contains("/bin/") || rel.Contains("/obj/")) continue;
+            if (rel == "PrdAgent.Api/Program.cs") continue;
+
+            var content = File.ReadAllText(file);
+            if (Regex.IsMatch(content, @"\bOpenRouterVideoClient\b"))
+                violations.Add($"  X API 层直接依赖具体视频客户端: {rel}");
+        }
+
+        if (violations.Count > 0)
+        {
+            var msg = string.Join('\n', new[]
+            {
+                "检测到 API/Worker 层直接引用 OpenRouterVideoClient。",
+                "LLM Gateway 全量迁移要求视频请求经视频网关接口进入，业务层不得持有具体上游客户端；",
+                "请改为依赖 IOpenRouterVideoClient，并只在 Program.cs composition root 注册具体实现。",
+                "",
+            }.Concat(violations));
+            _output.WriteLine(msg);
+            Assert.Fail(msg);
+        }
+
+        _output.WriteLine("OK 视频直连守卫通过：API 层只依赖视频网关接口，不直接引用 OpenRouterVideoClient。");
+    }
+
     private static string LocateSrcRoot()
     {
         // 测试进程 cwd 通常是 bin/Debug/net8.0/；向上找到仓库根，定位 prd-api/src。
