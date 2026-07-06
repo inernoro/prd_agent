@@ -12940,6 +12940,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
         envOverride = cleaned;
       }
 
+      // dbScope 透传 + 枚举校验（波1 W1c）：BuildProfileOverride.dbScope 与合并端 applyProfileOverride
+      // 早已支持按分支覆盖数据库隔离档位，但此白名单一直漏透传——UI/API 设了也会被静默丢弃，
+      // per-branch DB 开关因此永远无法按分支生效。合法值仅 'shared' | 'per-branch'，其余显式 400。
+      if (body.dbScope !== undefined && body.dbScope !== 'shared' && body.dbScope !== 'per-branch') {
+        res.status(400).json({ error: `dbScope 非法（仅允许 'shared' 或 'per-branch'）` });
+        return;
+      }
+
       const override = {
         dockerImage: typeof body.dockerImage === 'string' ? body.dockerImage : undefined,
         command: typeof body.command === 'string' ? body.command : undefined,
@@ -12950,6 +12958,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         resources: body.resources && typeof body.resources === 'object' && !Array.isArray(body.resources) ? body.resources as { memoryMB?: number; cpus?: number } : undefined,
         activeDeployMode: typeof body.activeDeployMode === 'string' ? body.activeDeployMode : undefined,
         startupSignal: typeof body.startupSignal === 'string' ? body.startupSignal : undefined,
+        dbScope: body.dbScope as 'shared' | 'per-branch' | undefined,
         notes: typeof body.notes === 'string' ? body.notes : undefined,
       };
       stateService.setBranchProfileOverride(id, profileId, override);

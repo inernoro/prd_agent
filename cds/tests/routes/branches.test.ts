@@ -897,6 +897,28 @@ describe('Branch Routes', () => {
       expect(stateService.getBranch('b1')!.profileOverrides?.['demo-extra']?.env?.FOO).toBe('bar');
     });
 
+    it('PUT /profile-overrides passes dbScope through and enforces the enum (波1 W1c)', async () => {
+      // dbScope 在 BuildProfileOverride/applyProfileOverride 早已支持,但 PUT 白名单一直漏透传,
+      // per-branch DB 开关因此永远无法按分支生效——本测试钉死透传 + 枚举校验。
+      stateService.addBuildProfile({ id: 'api', name: 'API', dockerImage: 'img', workDir: 'api', command: 'run', containerPort: 8080, projectId: 'default' });
+      seedBranch('b1');
+      // 合法值落库
+      const put = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { dbScope: 'per-branch' });
+      expect(put.status).toBe(200);
+      expect(stateService.getBranch('b1')!.profileOverrides?.['api']?.dbScope).toBe('per-branch');
+      // 覆盖生效链:resolveEffectiveProfile 合并出的有效 profile 带 per-branch
+      expect(((put.body as any).effective as any).dbScope).toBe('per-branch');
+      // 切回 shared 同样生效
+      const back = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { dbScope: 'shared' });
+      expect(back.status).toBe(200);
+      expect(stateService.getBranch('b1')!.profileOverrides?.['api']?.dbScope).toBe('shared');
+      // 非法值 400,且不改动已存覆盖
+      const bad = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { dbScope: 'everything' });
+      expect(bad.status).toBe(400);
+      expect(String((bad.body as any).error)).toContain('dbScope');
+      expect(stateService.getBranch('b1')!.profileOverrides?.['api']?.dbScope).toBe('shared');
+    });
+
     it('PUT /profile-overrides rejects a shell-injecting dockerImage override (Codex P1)', async () => {
       seedBranch('b1');
       await request(server, 'PUT', '/api/branches/b1/extra-services', {

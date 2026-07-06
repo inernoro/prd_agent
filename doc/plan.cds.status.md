@@ -1,10 +1,28 @@
 # CDS 当前状态看板 · 计划
 
-> **类型**:plan(总览看板) · **更新**:2026-05-03 · **状态**:活的 — 每次 handoff 必须更新本文件
+> **类型**:plan(总览看板) · **更新**:2026-07-06 · **状态**:活的 — 每次 handoff 必须更新本文件
 >
 > 这是 **CDS 唯一的"我在哪"入口**。任何 AI / 人类接手 CDS 改动前先读本页 30 秒,然后按需深入子文档。
 >
 > **不要**给 CDS 新建额外的 handoff/进度文档 — 全部归口本文件 + `plan.cds.backlog-matrix.md`(碎片项 SSOT)。
+
+---
+
+## 〇、配置体系三波演进看板(2026-07-06 起,当前主线)
+
+> 背景:用户 2026-07-06 提出「拔高上限的同时降低下限」——配置树(全局→项目→分支→派生分支)、
+> 分支临时容器产品化、配置可观测性。方案定盘:派生=快照拷贝、repo compose=纯结构种子(波4)。
+> 分支:`claude/session-y2bpgw`。
+
+| 阶段 | 进度% | 状态 | 当前 blocker | 下一步 | 验收证据 |
+|---|---|---|---|---|---|
+| 波1 最后一公里(extraProfiles UI+CLI / dbScope 开关 / 看板) | 90 | 进行中 | 无 | push 后灰度真机验证(添加 Nacos 预设 → redeploy → 分支网 → 命名 URL 可达) | vitest 180 文件绿 + pytest 149 绿 + tsc 双侧绿(2026-07-06 本地);真机证据待补 |
+| 波2 配置检查器(env 逐 key 溯源 + effective-config 端点 + 面板) | 0 | 未开始 | 依赖波1 dbScope 透传合入 | env-provenance.ts 段A拆层 → container.ts 段B带溯源变体 → GET /effective-config | — |
+| 波3 配置树补全(分支派生快照拷贝 + 快照分支层 + design.cds.config-tree) | 0 | 未开始 | 依赖波2 溯源数据模型 | BranchEntry.derivedFrom* 字段 + POST sourceBranchId + PR opened 指针回填 | — |
+| 波4 双SSOT收敛(repo compose 纯结构种子 + drift 巡检 + 还 D1 债) | 0 | 未开始(方向已定) | 等波1-3 | 见 design.cds.config-tree.md(波3产出)「波4方向」 | — |
+| 波5 无 Agent 接入(scan 逻辑进 onboarding 向导) | 0 | 未开始(方向已定) | 等波1-3 | 同上 | — |
+
+**距离可发布**:波1 代码完成待真机验证;波2/3 未开始。
 
 ---
 
@@ -46,14 +64,17 @@
 | **mongo-split storage** | 2026-05 | 默认 `CDS_STORAGE_MODE=mongo-split` |
 | **per-branch DB 隔离机制(代码层)** | 2026-05 | `applyPerBranchDbIsolation` + `dbScope='per-branch'` |
 | **Onboarding 收尾第二波(F11/F12 + 3 UI bug)** | 2026-05-03 | `claude/cds-loose-ends-wrap-up` |
+| **分支专属网络隔离(cds-br-*)** | 2026-06-29 | `branch-network.ts`(见 design.cds.branch-network-isolation) |
+| **分支级临时额外服务(后端+API)** | 2026-06-29 | `BranchEntry.extraProfiles` + PUT /extra-services(见 design.cds.branch-local-extra-services) |
+| **临时额外服务产品化(UI+cdscli)+ dbScope 分支开关(波1)** | 2026-07-06 | `claude/session-y2bpgw`(ExtraServicesPanel + cdscli branch extra-services + override 白名单补 dbScope) |
 
 ### 进行中
 
 | 项 | 进度 | 阻塞 |
 |---|---|---|
+| **配置体系三波演进(§〇)** | 波1 90% | 见顶部看板 |
 | **Onboarding UAT 真人验收剩余 22%** | 待真人浏览器跑 | 需用户跑[剩余清单](report.cds.onboarding-uat.md#真人-uat-剩余清单) |
 | **React 迁移**(`cds/web-legacy/` → `cds/web/`) | ~60% | 见 [plan.cds.web-migration](plan.cds.web-migration.md) |
-| **F16-UI**(BuildProfile 暴露 dbScope toggle) | 后端能力齐 / React 编辑器缺 | 等 React 迁移更进一步 |
 
 ### 未启动
 
@@ -86,11 +107,11 @@
 | F13 | P4 | cdscli scan 不识别 init.sql | ✅ 已修 2026-05-03(verify INFO `infra-init-script-detected`) |
 | F14 | P4 | `schemaful-db-no-migration` 误报 | ✅ 已修 2026-05-03(挂 init.sql 时不再 WARN) |
 | F15 | HIGH | container-exec 输出回显 secret | ✅ 已修(`secret-masker.ts`) |
-| F16 | P2 | per-branch DB 后缀未实施 | 🔨 后端能力齐(`dbScope='per-branch'`),UI 入口缺(F16-UI) |
+| F16 | P2 | per-branch DB 后缀未实施 | ✅ 已修 2026-07-06(波1:override 白名单补 dbScope 透传 + 分支抽屉「数据库隔离」选择器) |
 | F17 | 契约违反 | 预览过渡页是纯文本 | ✅ 已修(SVG 双圈+CDS 字样) |
 | F18 | P4 | repo picker 命名歧义(Tab vs Dialog) | ✅ 已修 2026-05-03(dropdown 直接弹 picker) |
 
-**F 系列状态**:18 项中 **17 项已修**,剩 F16-UI(后端齐 / 前端 React 端没 BuildProfile 编辑器,等迁移)。
+**F 系列状态**:18 项 **全部已修**(F16 于 2026-07-06 波1 收尾)。
 
 ### Bug 系列(2026-05-03 用户反馈的 UI bug)
 

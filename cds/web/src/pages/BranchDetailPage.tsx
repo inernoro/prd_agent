@@ -30,6 +30,7 @@ import { DisclosurePanel } from '@/components/ui/disclosure-panel';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { apiRequest, ApiError, apiUrl } from '@/lib/api';
 import { BranchDetailLoadingSkeleton, CodePill, ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
+import { ExtraServicesPanel } from '@/components/branch/ExtraServicesPanel';
 
 interface ProjectSummary {
   id: string;
@@ -144,6 +145,7 @@ interface BuildProfileOverride {
   pathPrefixes?: string[];
   activeDeployMode?: string;
   startupSignal?: string;
+  dbScope?: 'shared' | 'per-branch';
   notes?: string;
 }
 
@@ -1570,6 +1572,13 @@ export function BranchDetailPage(): JSX.Element {
                   })}
                 </CardContent>
               </Card>
+
+              {/* 波1 W1b:分支级临时额外服务(只作用于本分支的实验容器,如 Nacos)。 */}
+              <ExtraServicesPanel
+                branchId={state.branch.id}
+                onToast={setToast}
+                onChanged={() => void load(false)}
+              />
 
               <DisclosurePanel
                 icon={<FileText className="h-4 w-4" />}
