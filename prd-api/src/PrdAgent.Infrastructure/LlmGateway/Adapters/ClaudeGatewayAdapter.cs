@@ -367,11 +367,28 @@ public class ClaudeGatewayAdapter : IGatewayAdapter
 
             switch (eventType)
             {
+                case "content_block_start":
+                    if (root.TryGetProperty("content_block", out var contentBlock) &&
+                        contentBlock.ValueKind == JsonValueKind.Object &&
+                        contentBlock.TryGetProperty("type", out var blockType) &&
+                        blockType.GetString() == "tool_use")
+                    {
+                        return GatewayStreamChunk.ToolCallChunk(BuildToolCallStartDelta(root, contentBlock));
+                    }
+                    break;
+
                 case "content_block_delta":
                     if (root.TryGetProperty("delta", out var delta) &&
                         delta.TryGetProperty("text", out var textEl))
                     {
                         return GatewayStreamChunk.Text(textEl.GetString() ?? "");
+                    }
+                    if (root.TryGetProperty("delta", out var toolDelta) &&
+                        toolDelta.TryGetProperty("type", out var deltaType) &&
+                        deltaType.GetString() == "input_json_delta" &&
+                        toolDelta.TryGetProperty("partial_json", out var partialJsonEl))
+                    {
+                        return GatewayStreamChunk.ToolCallChunk(BuildToolCallArgumentsDelta(root, partialJsonEl.GetString() ?? ""));
                     }
                     break;
 
@@ -425,6 +442,52 @@ public class ClaudeGatewayAdapter : IGatewayAdapter
         {
             return null;
         }
+    }
+
+    private static JsonArray BuildToolCallStartDelta(JsonElement root, JsonElement contentBlock)
+    {
+        var index = TryGetIndex(root);
+        var id = contentBlock.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
+        var name = contentBlock.TryGetProperty("name", out var nameEl) ? nameEl.GetString() : null;
+
+        return new JsonArray
+        {
+            new JsonObject
+            {
+                ["index"] = index,
+                ["id"] = string.IsNullOrWhiteSpace(id) ? $"call_{index}" : id,
+                ["type"] = "function",
+                ["function"] = new JsonObject
+                {
+                    ["name"] = name ?? string.Empty,
+                    ["arguments"] = string.Empty
+                }
+            }
+        };
+    }
+
+    private static JsonArray BuildToolCallArgumentsDelta(JsonElement root, string partialJson)
+    {
+        return new JsonArray
+        {
+            new JsonObject
+            {
+                ["index"] = TryGetIndex(root),
+                ["function"] = new JsonObject
+                {
+                    ["arguments"] = partialJson
+                }
+            }
+        };
+    }
+
+    private static int TryGetIndex(JsonElement root)
+    {
+        return root.TryGetProperty("index", out var indexEl) &&
+               indexEl.ValueKind == JsonValueKind.Number &&
+               indexEl.TryGetInt32(out var index)
+            ? index
+            : 0;
     }
 
     public GatewayTokenUsage? ParseTokenUsage(string responseBody)

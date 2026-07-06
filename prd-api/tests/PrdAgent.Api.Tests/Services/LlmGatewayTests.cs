@@ -754,6 +754,46 @@ public class LlmGatewayTests
         Assert.Equal("你好", chunk.Content);
     }
 
+    [Fact]
+    public void ClaudeAdapter_ParseStreamChunk_ToolUseStart_EmitsToolCallChunk()
+    {
+        var adapter = new ClaudeGatewayAdapter();
+        var sse = """
+        {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"get_weather","input":{}}}
+        """;
+
+        var chunk = adapter.ParseStreamChunk(sse);
+
+        Assert.NotNull(chunk);
+        Assert.Equal(GatewayChunkType.ToolCall, chunk!.Type);
+        Assert.NotNull(chunk.ToolCallDelta);
+        var call = Assert.IsType<JsonObject>(Assert.Single(chunk.ToolCallDelta!));
+        Assert.Equal(1, (int?)call["index"]);
+        Assert.Equal("toolu_1", (string?)call["id"]);
+        var fn = Assert.IsType<JsonObject>(call["function"]);
+        Assert.Equal("get_weather", (string?)fn["name"]);
+        Assert.Equal("", (string?)fn["arguments"]);
+    }
+
+    [Fact]
+    public void ClaudeAdapter_ParseStreamChunk_InputJsonDelta_EmitsArgumentsDelta()
+    {
+        var adapter = new ClaudeGatewayAdapter();
+        var sse = """
+        {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"city\":\"上海\"}"}}
+        """;
+
+        var chunk = adapter.ParseStreamChunk(sse);
+
+        Assert.NotNull(chunk);
+        Assert.Equal(GatewayChunkType.ToolCall, chunk!.Type);
+        Assert.NotNull(chunk.ToolCallDelta);
+        var call = Assert.IsType<JsonObject>(Assert.Single(chunk.ToolCallDelta!));
+        Assert.Equal(1, (int?)call["index"]);
+        var fn = Assert.IsType<JsonObject>(call["function"]);
+        Assert.Equal("{\"city\":\"上海\"}", (string?)fn["arguments"]);
+    }
+
     // 守护流式函数调用增量「按 index 合并」（日志可视化用）：首个 delta 带 id/name，
     // 后续 delta 只追加 function.arguments 片段 → 合并成一条完整 tool_call。
     // AccumulateToolCallDeltas / BuildAccumulatedToolCalls 为 LlmGateway 私有静态，走反射。

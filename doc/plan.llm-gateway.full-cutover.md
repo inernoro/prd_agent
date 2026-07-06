@@ -192,7 +192,7 @@ S5 allowlist 或 S6 全量 http 前必须先在目标机器 dry-run/演练这条
 - multipart raw HTTP 化已接通：MAP 侧 inline multipart 上传为 `MultipartFileRefs`，serving 侧 rehydrate 并校验 size/hash；生产 gate 仍要求 ASR/图生图等类别有真实 http 样本。
 - serving 容器 HA 未验证——翻 http 前须探活 + 不可达可观测降级。
 - shadow 一致性证据不足——仅首条真机 allMatch（样本=1），建议影子 7-14 天。
-- Claude 流式 tool_use 未聚合——流式函数调用拿不到 delta.tool_calls。
+- Claude 流式 tool_use 已补齐聚合：`content_block_start/tool_use` 与 `input_json_delta` 归一为 OpenAI `tool_calls` delta，继续由 `LlmGateway` 累加进日志与 OpenAI SSE 兼容输出。
 - legacy 标记查询未清除（删前置见 §4）。
 - CDS 出口可见性缺口（point 0，S1 修）+ 生产 CDS 落后 5 天（S0 self-update）。
 - 60-80 MECE 用例骨架已备未编写——S6 gate 前必须补齐。
