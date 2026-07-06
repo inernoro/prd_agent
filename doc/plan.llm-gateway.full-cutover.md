@@ -153,6 +153,11 @@ stage report 与 rollout ledger 证据包，避免证据只存在某台生产机
 注意：GitHub `workflow_dispatch` 只会把默认分支（default branch）上的 workflow 暴露为手动入口；这些 production workflow
 必须先合入默认分支，才能在 GitHub UI/API 中调度。合入前只能用 `scripts/llmgw-prod-stage.sh` 在生产机器上直接执行同一阶段逻辑，
 不能把“分支里已有 workflow 文件”误当成可点击的生产发布入口。
+如果 `LLM Gateway Production Stage` 在 `runner-precheck` 失败，先在真实生产机执行 `scripts/llmgw-prod-runner-bootstrap.sh`
+注册带 `self-hosted,prd-agent-prod` 标签的 runner；该脚本只负责注册 runner，不执行发布。runner 预检需要能读取 repo
+self-hosted runner 列表；默认 `GITHUB_TOKEN` 权限不足时，应配置具备 runner 查询权限的 `PRD_AGENT_PROD_GITHUB_TOKEN`，
+否则预检会以 403 失败并拒绝进入 stage。禁止把 `runner_labels_json` 改成 `ubuntu-latest` 来跑 `execute=true`，
+因为 `fast.sh` / `exec_dep.sh` 必须操作生产机本地 Docker/compose 状态。
 正式发布如果先跑 `fast.sh --commit <sha>` 预热镜像，脚本会写入
 `${PRD_AGENT_RELEASE_INTENT_FILE:-.prd-agent-release-intent.env}`，记录 api/llmgw/llmgw-serve/llmgw-web
 四个镜像的同一 release ref；随后 `exec_dep.sh --commit <sha>` 会读取该 intent 并拒绝不同 commit/tag/repo 的部署。
