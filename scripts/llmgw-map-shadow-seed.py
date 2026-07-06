@@ -1,0 +1,429 @@
+#!/usr/bin/env python3
+"""
+Seed LLM Gateway shadow evidence through real MAP API entry points.
+
+This script intentionally drives MAP endpoints, not /gw/v1 directly. In
+LlmGateway:Mode=shadow, MAP writes the shadow comparison rows that later gate
+canary/http rollout. Defaults are text-only and low cost; raw/image/video/ASR
+paths must be added explicitly by future flags.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import secrets
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any
+
+
+DEFAULT_BASE = "http://127.0.0.1:5500"
+
+
+@dataclass(frozen=True)
+class ApiResult:
+    status: int
+    body: str
+    headers: dict[str, str]
+
+
+class HttpError(RuntimeError):
+    def __init__(self, method: str, url: str, status: int, body: str):
+        super().__init__(f"{method} {url} failed: HTTP {status}: {body[:500]}")
+        self.method = method
+        self.url = url
+        self.status = status
+        self.body = body
+
+
+def request_json(
+    method: str,
+    url: str,
+    payload: Any | None = None,
+    headers: dict[str, str] | None = None,
+    timeout: float = 60,
+    allow_error: bool = False,
+) -> ApiResult:
+    data: bytes | None = None
+    req_headers = dict(headers or {})
+    if payload is not None:
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        req_headers.setdefault("Content-Type", "application/json")
+    req_headers.setdefault("User-Agent", "llmgw-map-shadow-seed/1.0")
+    req = urllib.request.Request(url, data=data, headers=req_headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+            return ApiResult(resp.status, body, dict(resp.headers.items()))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        if allow_error:
+            return ApiResult(exc.code, body, dict(exc.headers.items()))
+        raise HttpError(method, url, exc.code, body) from exc
+
+
+def parse_json_object(text: str, context: str) -> dict[str, Any]:
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"{context} returned non-json: {text[:500]}") from exc
+    if not isinstance(value, dict):
+        raise RuntimeError(f"{context} returned non-object json: {text[:500]}")
+    return value
+
+
+def api_data(result: ApiResult, context: str) -> Any:
+    doc = parse_json_object(result.body, context)
+    if doc.get("success") is not True:
+        raise RuntimeError(f"{context} failed: {json.dumps(doc, ensure_ascii=False)[:500]}")
+    return doc.get("data")
+
+
+def accept_json_or_sse(result: ApiResult, context: str) -> None:
+    body = result.body.lstrip()
+    if body.startswith("event:") or body.startswith("data:"):
+        if "type\":\"error\"" in body or "\"type\":\"error\"" in body:
+            raise RuntimeError(f"{context} returned SSE error: {result.body[:500]}")
+        return
+    api_data(result, context)
+
+
+def bearer(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+def join_url(base: str, path: str) -> str:
+    return base.rstrip("/") + "/" + path.lstrip("/")
+
+
+def login(base: str, username: str, password: str, timeout: float) -> tuple[str, str]:
+    result = request_json(
+        "POST",
+        join_url(base, "/api/v1/auth/login"),
+        {
+            "username": username,
+            "password": password,
+            "clientType": "admin",
+        },
+        timeout=timeout,
+    )
+    data = api_data(result, "login")
+    token = (data or {}).get("accessToken") or (data or {}).get("token")
+    if not token:
+        raise RuntimeError("login succeeded but access token is missing")
+    user_id = str(((data or {}).get("user") or {}).get("userId") or "")
+    if not user_id:
+        raise RuntimeError("login succeeded but user id is missing")
+    return str(token), user_id
+
+
+def fetch_user_id(base: str, token: str, timeout: float) -> str:
+    result = request_json(
+        "GET",
+        join_url(base, "/api/authz/me"),
+        headers=bearer(token),
+        timeout=timeout,
+    )
+    data = api_data(result, "authz me")
+    user_id = str((data or {}).get("userId") or "")
+    if not user_id:
+        raise RuntimeError(f"authz me response missing userId: {json.dumps(data, ensure_ascii=False)[:500]}")
+    return user_id
+
+
+def create_seed_user_and_login(
+    base: str,
+    admin_token: str,
+    timeout: float,
+    seed_username: str,
+    seed_password: str,
+) -> tuple[str, str]:
+    create_result = request_json(
+        "POST",
+        join_url(base, "/api/users"),
+        {
+            "username": seed_username,
+            "displayName": "LLMGW Shadow Seed",
+            "role": "PM",
+            "password": seed_password,
+        },
+        headers={**bearer(admin_token), "Idempotency-Key": f"llmgw-shadow-seed-{seed_username}"},
+        timeout=timeout,
+        allow_error=True,
+    )
+    if create_result.status >= 400 and "USERNAME_EXISTS" not in create_result.body:
+        raise HttpError("POST", join_url(base, "/api/users"), create_result.status, create_result.body)
+
+    result = request_json(
+        "POST",
+        join_url(base, "/api/v1/auth/login"),
+        {
+            "username": seed_username,
+            "password": seed_password,
+            "clientType": "desktop",
+        },
+        timeout=timeout,
+    )
+    data = api_data(result, "seed user login")
+    token = str((data or {}).get("accessToken") or "")
+    user_id = str(((data or {}).get("user") or {}).get("userId") or "")
+    if not token or not user_id:
+        raise RuntimeError("seed user login succeeded but token or user id is missing")
+    return token, user_id
+
+
+def create_document(base: str, token: str, timeout: float, tag: str) -> tuple[str, str]:
+    title = f"LLMGW shadow seed {tag}"
+    content = (
+        "# Intro\n"
+        "This is a short production shadow evidence document.\n\n"
+        "## Scope\n"
+        "Answer briefly. Do not perform external actions.\n"
+    )
+    result = request_json(
+        "POST",
+        join_url(base, "/api/v1/documents"),
+        {"title": title, "content": content},
+        headers=bearer(token),
+        timeout=timeout,
+    )
+    data = api_data(result, "create document")
+    session_id = str((data or {}).get("sessionId") or "")
+    document_id = str(((data or {}).get("document") or {}).get("id") or "")
+    if not session_id or not document_id:
+        raise RuntimeError(f"create document response missing ids: {json.dumps(data, ensure_ascii=False)[:500]}")
+    return session_id, document_id
+
+
+def create_group(base: str, token: str, document_id: str, timeout: float) -> str:
+    result = request_json(
+        "POST",
+        join_url(base, "/api/v1/groups"),
+        {"prdDocumentId": document_id},
+        headers=bearer(token),
+        timeout=timeout,
+    )
+    data = api_data(result, "create group")
+    group_id = str((data or {}).get("groupId") or "")
+    if not group_id:
+        raise RuntimeError(f"create group response missing groupId: {json.dumps(data, ensure_ascii=False)[:500]}")
+    return group_id
+
+
+def call_session_chat(base: str, token: str, session_id: str, timeout: float, tag: str) -> None:
+    result = request_json(
+        "POST",
+        join_url(base, f"/api/v1/sessions/{urllib.parse.quote(session_id)}/messages/run"),
+        {"content": f"Shadow evidence ping {tag}. Reply with one short sentence."},
+        headers=bearer(token),
+        timeout=timeout,
+    )
+    api_data(result, "session chat")
+
+
+def call_preview_ask(base: str, token: str, session_id: str, timeout: float, tag: str) -> None:
+    result = request_json(
+        "POST",
+        join_url(base, f"/api/v1/sessions/{urllib.parse.quote(session_id)}/preview-ask"),
+        {
+            "question": f"Summarize this section briefly. seed={tag}",
+            "headingId": "intro",
+            "headingTitle": "Intro",
+        },
+        headers=bearer(token),
+        timeout=timeout,
+    )
+    accept_json_or_sse(result, "preview ask")
+
+
+def create_open_platform_app(base: str, admin_token: str, user_id: str, group_id: str, timeout: float, tag: str) -> str:
+    result = request_json(
+        "POST",
+        join_url(base, "/api/open-platform/apps"),
+        {
+            "appName": f"LLMGW Shadow Seed {tag}",
+            "description": "Temporary low-risk shadow evidence seed",
+            "boundUserId": user_id,
+            "boundGroupId": group_id,
+            "ignoreUserSystemPrompt": False,
+            "disableGroupContext": False,
+        },
+        headers=bearer(admin_token),
+        timeout=timeout,
+    )
+    data = api_data(result, "create open platform app")
+    api_key = str((data or {}).get("apiKey") or "")
+    if not api_key:
+        raise RuntimeError(f"create open platform app response missing apiKey: {json.dumps(data, ensure_ascii=False)[:500]}")
+    return api_key
+
+
+def call_open_platform_chat(base: str, api_key: str, group_id: str, timeout: float, tag: str) -> None:
+    result = request_json(
+        "POST",
+        join_url(base, "/api/v1/open-platform/v1/chat/completions"),
+        {
+            "model": "prdagent",
+            "stream": False,
+            "groupId": group_id,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": f"Open Platform shadow evidence ping {tag}. Reply with one short sentence.",
+                }
+            ],
+        },
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=timeout,
+    )
+    doc = parse_json_object(result.body, "open platform chat")
+    if "choices" not in doc and doc.get("success") is not True:
+        raise RuntimeError(f"open platform chat failed: {result.body[:500]}")
+
+
+def fetch_gateway_health(gw_base: str, timeout: float) -> dict[str, Any]:
+    result = request_json("GET", join_url(gw_base, "/healthz"), timeout=timeout)
+    return parse_json_object(result.body, "gateway healthz")
+
+
+def fetch_shadow_summary(
+    gw_base: str,
+    key: str,
+    timeout: float,
+    since_hours: float,
+    release_commit: str,
+    kind: str | None = None,
+) -> dict[str, Any]:
+    query: dict[str, str] = {"sinceHours": str(since_hours)}
+    if release_commit:
+        query["releaseCommit"] = release_commit
+    if kind:
+        query["kind"] = kind
+    url = join_url(gw_base, "/shadow-comparisons") + "?" + urllib.parse.urlencode(query)
+    result = request_json("GET", url, headers={"X-Gateway-Key": key}, timeout=timeout)
+    doc = parse_json_object(result.body, "shadow comparisons")
+    summary = doc.get("summary")
+    if not isinstance(summary, dict):
+        raise RuntimeError(f"shadow comparisons missing summary: {result.body[:500]}")
+    return summary
+
+
+def read_env_secret(*names: str) -> str:
+    for name in names:
+        value = (os.environ.get(name) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def format_summary(label: str, summary: dict[str, Any]) -> str:
+    return (
+        f"{label}: total={summary.get('total', 0)} "
+        f"allMatch={summary.get('allMatch', 0)} "
+        f"critical={summary.get('critical', 0)} "
+        f"httpFail={summary.get('httpFail', 0)} "
+        f"coverageHours={summary.get('coverageHours', 0)}"
+    )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Seed LLM Gateway shadow evidence through MAP API.")
+    parser.add_argument("--base", default=os.environ.get("PRD_AGENT_BASE", DEFAULT_BASE), help="MAP API base URL")
+    parser.add_argument("--gw-base", default=os.environ.get("LLMGW_GATE_BASE") or os.environ.get("GW_BASE") or "", help="Gateway /gw/v1 base URL")
+    parser.add_argument("--gw-key", default=read_env_secret("LLMGW_GATE_KEY", "GW_KEY", "LLMGW_SERVE_KEY"), help="Gateway key, preferably via env")
+    parser.add_argument("--admin-token", default=read_env_secret("PRD_TEST_ADMIN_TOKEN", "MAP_ADMIN_TOKEN"), help="Existing MAP admin JWT")
+    parser.add_argument("--root-username", default=read_env_secret("ROOT_ACCESS_USERNAME") or "root", help="Root username for login")
+    parser.add_argument("--root-password", default=read_env_secret("ROOT_ACCESS_PASSWORD"), help="Root password for login, preferably via env")
+    parser.add_argument("--iterations", type=int, default=1, help="How many text seed iterations to run")
+    parser.add_argument("--sleep-seconds", type=float, default=0, help="Sleep between iterations")
+    parser.add_argument("--timeout", type=float, default=90, help="HTTP timeout seconds")
+    parser.add_argument("--since-hours", type=float, default=168, help="Shadow summary window")
+    parser.add_argument("--release-commit", default="", help="Release commit filter; defaults to gateway health commit")
+    parser.add_argument("--skip-preview-ask", action="store_true", help="Only run session chat, skip preview-ask")
+    parser.add_argument("--include-open-platform", action="store_true", help="Also seed one non-stream Open Platform call per iteration")
+    parser.add_argument("--seed-username", default="", help="Optional reusable business user for open-platform seeding")
+    parser.add_argument("--seed-password", default=read_env_secret("LLMGW_SHADOW_SEED_PASSWORD"), help="Password for --seed-username; omit for auto generated one-shot user")
+    args = parser.parse_args()
+
+    if args.iterations < 1:
+        raise SystemExit("--iterations must be >= 1")
+
+    base = args.base.rstrip("/")
+    gw_base = (args.gw_base or join_url(base, "/gw/v1")).rstrip("/")
+
+    release_commit = args.release_commit.strip()
+    if not release_commit:
+        health = fetch_gateway_health(gw_base, args.timeout)
+        release_commit = str(health.get("commit") or "")
+
+    admin_token = args.admin_token.strip()
+    user_id = ""
+    if not admin_token:
+        if not args.root_password:
+            raise SystemExit("Missing admin token or ROOT_ACCESS_PASSWORD")
+        admin_token, user_id = login(base, args.root_username, args.root_password, args.timeout)
+    elif args.include_open_platform:
+        user_id = fetch_user_id(base, admin_token, args.timeout)
+
+    token = admin_token
+    if args.include_open_platform:
+        seed_username = args.seed_username.strip()
+        seed_password = args.seed_password.strip()
+        if not seed_username:
+            seed_username = "llmgw_seed_" + datetime.now(timezone.utc).strftime("%m%d%H%M%S")
+            seed_password = secrets.token_urlsafe(24)
+        elif not seed_password:
+            raise SystemExit("--seed-password or LLMGW_SHADOW_SEED_PASSWORD is required when --seed-username is set")
+        token, user_id = create_seed_user_and_login(base, admin_token, args.timeout, seed_username, seed_password)
+
+    print(f"base={base}")
+    print(f"gwBase={gw_base}")
+    print(f"releaseCommit={release_commit}")
+    print(f"iterations={args.iterations}")
+
+    for index in range(args.iterations):
+        tag = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + f"-{index + 1}"
+        session_id, document_id = create_document(base, token, args.timeout, tag)
+        call_session_chat(base, token, session_id, args.timeout, tag)
+        if not args.skip_preview_ask:
+            call_preview_ask(base, token, session_id, args.timeout, tag)
+        group_id = ""
+        if args.include_open_platform:
+            group_id = create_group(base, token, document_id, args.timeout)
+            api_key = create_open_platform_app(base, admin_token, user_id, group_id, args.timeout, tag)
+            call_open_platform_chat(base, api_key, group_id, args.timeout, tag)
+        print(f"seed[{index + 1}] sessionId={session_id}")
+        if index + 1 < args.iterations and args.sleep_seconds > 0:
+            time.sleep(args.sleep_seconds)
+
+    if args.gw_key:
+        print(format_summary(
+            "shadow/global",
+            fetch_shadow_summary(gw_base, args.gw_key, args.timeout, args.since_hours, release_commit),
+        ))
+        print(format_summary(
+            "shadow/send",
+            fetch_shadow_summary(gw_base, args.gw_key, args.timeout, args.since_hours, release_commit, "send"),
+        ))
+        print(format_summary(
+            "shadow/stream",
+            fetch_shadow_summary(gw_base, args.gw_key, args.timeout, args.since_hours, release_commit, "stream"),
+        ))
+    else:
+        print("shadow summary skipped: missing gateway key")
+
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        raise SystemExit(130)
