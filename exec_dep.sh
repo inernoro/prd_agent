@@ -657,8 +657,9 @@ run_llmgw_release_gate_if_needed() {
   fi
 
   if [ "${LLMGW_SKIP_RELEASE_GATE:-}" = "1" ]; then
-    echo "WARN: LLM Gateway http/canary 发布但 LLMGW_SKIP_RELEASE_GATE=1，已跳过发布证据门。仅允许紧急回滚/人工强制场景。" >&2
-    return 0
+    echo "ERROR: LLMGW_SKIP_RELEASE_GATE=1 is not allowed when LLM Gateway release evidence is required." >&2
+    echo "       Use scripts/llmgw-rollback-inproc.sh for emergency rollback; do not bypass shadow/canary/http gates." >&2
+    exit 1
   fi
 
   if [ ! -f "scripts/llmgw-release-gate.py" ]; then

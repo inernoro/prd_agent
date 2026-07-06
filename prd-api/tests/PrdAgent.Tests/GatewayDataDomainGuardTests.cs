@@ -195,6 +195,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_GATE_SERVING_PROBE_SAMPLES", script);
         Assert.Contains("LLMGW_GATE_SERVING_PROBE_INTERVAL_SECONDS", script);
         Assert.Contains("LLMGW_SKIP_RELEASE_GATE=1", script);
+        Assert.Contains("LLMGW_SKIP_RELEASE_GATE=1 is not allowed when LLM Gateway release evidence is required", script);
+        Assert.Contains("Use scripts/llmgw-rollback-inproc.sh for emergency rollback", script);
+        Assert.DoesNotContain("已跳过发布证据门", script);
     }
 
     [Fact]

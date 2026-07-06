@@ -370,6 +370,8 @@ def _static_checks() -> list[dict]:
             "LLM Gateway post-deploy serving probe",
             "LLM Gateway post-deploy D-layer smoke",
             "LLMGW_SKIP_RELEASE_GATE=1",
+            "LLMGW_SKIP_RELEASE_GATE=1 is not allowed when LLM Gateway release evidence is required",
+            "Use scripts/llmgw-rollback-inproc.sh for emergency rollback",
         ],
     )
     checks.append(_check("exec_dep_gates_http_canary_and_shadow_sample_release", ok, detail))
