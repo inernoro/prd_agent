@@ -28,6 +28,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private readonly Dictionary<string, IGatewayAdapter> _adapters = new(StringComparer.OrdinalIgnoreCase);
     private readonly ExchangeTransformerRegistry _transformerRegistry = new();
     private const string InvalidAppCallerErrorCode = "APP_CALLER_INVALID";
+    private const string MaxTokensField = "max_tokens";
 
     public LlmGateway(
         IModelResolver modelResolver,
@@ -65,6 +66,52 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     {
         return includeThinking
             && !string.Equals(modelType, ModelTypes.Intent, StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static int? ApplyResolvedMaxTokensCap(JsonObject requestBody, ModelResolutionResult resolution)
+    {
+        var cap = resolution.MaxTokens;
+        if (cap is not > 0)
+            return null;
+
+        if (!requestBody.TryGetPropertyValue(MaxTokensField, out var raw) || raw == null)
+        {
+            requestBody[MaxTokensField] = cap.Value;
+            return cap.Value;
+        }
+
+        if (!TryReadInt(raw, out var requested))
+            return null;
+
+        if (requested > cap.Value)
+        {
+            requestBody[MaxTokensField] = cap.Value;
+            return cap.Value;
+        }
+
+        return null;
+    }
+
+    private static bool TryReadInt(JsonNode node, out int value)
+    {
+        if (node is JsonValue jsonValue)
+        {
+            if (jsonValue.TryGetValue<int>(out value))
+                return true;
+            if (jsonValue.TryGetValue<long>(out var longValue)
+                && longValue >= int.MinValue
+                && longValue <= int.MaxValue)
+            {
+                value = (int)longValue;
+                return true;
+            }
+            if (jsonValue.TryGetValue<string>(out var text)
+                && int.TryParse(text, out value))
+                return true;
+        }
+
+        value = default;
+        return false;
     }
 
     /// <inheritdoc />
@@ -107,6 +154,13 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var requestBody = request.GetEffectiveRequestBody();
             requestBody["model"] = resolution.ActualModel;
             requestBody["stream"] = false;
+            var cappedMaxTokens = ApplyResolvedMaxTokensCap(requestBody, resolution);
+            if (cappedMaxTokens.HasValue)
+            {
+                _logger.LogInformation(
+                    "[LlmGateway] max_tokens 已按模型上限裁剪: AppCallerCode={AppCallerCode}, Model={Model}, MaxTokens={MaxTokens}",
+                    request.AppCallerCode, resolution.ActualModel, cappedMaxTokens.Value);
+            }
 
             // G4 能力软门：带 tools 但模型能力明确不支持 function_calling → 熔断报错（不骗用户）。
             // 未知/未分类（null）放行（best-effort）。
@@ -266,6 +320,13 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var requestBody = request.GetEffectiveRequestBody();
             requestBody["model"] = resolution.ActualModel;
             requestBody["stream"] = true;
+            var cappedMaxTokens = ApplyResolvedMaxTokensCap(requestBody, resolution);
+            if (cappedMaxTokens.HasValue)
+            {
+                _logger.LogInformation(
+                    "[LlmGateway] max_tokens 已按模型上限裁剪: AppCallerCode={AppCallerCode}, Model={Model}, MaxTokens={MaxTokens}",
+                    request.AppCallerCode, resolution.ActualModel, cappedMaxTokens.Value);
+            }
 
             // G4 能力软门：带 tools 但模型能力明确不支持 function_calling → 熔断报错（不骗用户）。未知放行。
             if (RequestHasTools(requestBody) && resolution.SupportsFunctionCalling == false)
@@ -839,6 +900,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 }
 
                 // 智能路由：根据请求内容决定实际目标 URL
+                ApplyResolvedMaxTokensCap(rawBody, resolution);
                 var resolvedUrl = transformer.ResolveTargetUrl(endpoint, rawBody, resolution.ExchangeTransformerConfig);
                 if (resolvedUrl != null) endpoint = resolvedUrl;
 
@@ -910,6 +972,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 // JSON 请求
                 var requestBody = request.RequestBody ?? new JsonObject();
                 requestBody["model"] = resolution.ActualModel;
+                ApplyResolvedMaxTokensCap(requestBody, resolution);
 
                 var jsonContent = requestBody.ToJsonString();
                 httpRequest = new HttpRequestMessage(new HttpMethod(request.HttpMethod), endpoint)

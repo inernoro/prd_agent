@@ -196,6 +196,12 @@ public class GatewayModelResolution
     public string? HealthStatus { get; init; }
 
     /// <summary>
+    /// 当前模型允许的最大输出 Token 数。
+    /// null 表示未配置，调用方请求值保持不变。
+    /// </summary>
+    public int? MaxTokens { get; init; }
+
+    /// <summary>
     /// 是否匹配期望（ExpectedModel == ActualModel）
     /// </summary>
     public bool MatchedExpectation =>

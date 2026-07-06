@@ -140,6 +140,12 @@ public class ModelResolutionResult
     public string? HealthStatus { get; init; }
 
     /// <summary>
+    /// 当前解析模型允许的最大输出 Token 数。
+    /// null 表示模型/池未声明上限，Gateway 保持调用方请求值不变。
+    /// </summary>
+    public int? MaxTokens { get; init; }
+
+    /// <summary>
     /// 是否支持函数调用（function_calling 能力）。
     /// null = 未知（能力未分类，best-effort 放行）；true = 支持；false = 明确不支持（带 tools 时网关熔断报错，不骗用户）。
     /// 仅在解析上下文已持有 LLMModel 对象时填充（直连/Legacy 路径）；池路径无模型对象，留 null（见 debt.llm-gateway-protocol-fidelity）。
@@ -223,6 +229,7 @@ public class ModelResolutionResult
             ModelGroupCode = ModelGroupCode,
             ModelPriority = ModelPriority,
             HealthStatus = HealthStatus,
+            MaxTokens = MaxTokens,
             // 降级信息
             IsFallback = IsFallback,
             FallbackReason = FallbackReason,
@@ -307,7 +314,8 @@ public class ModelResolutionResult
             ModelGroupName = group.Name,
             ModelGroupCode = group.Code,
             ModelPriority = model.Priority,
-            HealthStatus = model.HealthStatus.ToString()
+            HealthStatus = model.HealthStatus.ToString(),
+            MaxTokens = model.MaxTokens
         };
     }
 
@@ -341,6 +349,7 @@ public class ModelResolutionResult
             ModelGroupCode = group.Code,
             ModelPriority = model.Priority,
             HealthStatus = model.HealthStatus.ToString(),
+            MaxTokens = model.MaxTokens,
             // Exchange 特有
             IsExchange = true,
             ExchangeId = exchange.Id,
@@ -374,6 +383,7 @@ public class ModelResolutionResult
             ApiUrl = model.ApiUrl ?? platform.ApiUrl,
             ApiKey = apiKey,
             HealthStatus = "Healthy",
+            MaxTokens = model.MaxTokens,
             // 直连/Legacy 路径持有真实 LLMModel，可读 function_calling 能力供 G4 软门使用
             SupportsFunctionCalling = FunctionCallingCapability(model)
         };
@@ -400,6 +410,7 @@ public class ModelResolutionResult
             ApiUrl = result.ApiUrl,
             ApiKey = result.ApiKey,
             HealthStatus = result.HealthStatus,
+            MaxTokens = result.MaxTokens,
             SupportsFunctionCalling = result.SupportsFunctionCalling
         };
     }

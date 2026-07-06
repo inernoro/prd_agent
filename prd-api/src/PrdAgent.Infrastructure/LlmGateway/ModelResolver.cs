@@ -356,6 +356,7 @@ public class ModelResolver : IModelResolver
                     ApiUrl = fallbackLegacyModel.ApiUrl ?? fallbackPlatform.ApiUrl,
                     ApiKey = fallbackApiKey,
                     HealthStatus = "Healthy",
+                    MaxTokens = fallbackLegacyModel.MaxTokens,
                     IsFallback = true,
                     FallbackReason = $"模型池 '{originalPool?.Name}' 中所有模型不可用，回退到直连模型",
                     OriginalPoolId = originalPool?.Id,
