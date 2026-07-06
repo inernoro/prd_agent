@@ -114,6 +114,11 @@ python3 scripts/llmgw-readiness-audit.py \
 采样失败、commit 与发布 sha 不一致或多次采样 commit 漂移都会拒绝发布。需要防止 resolve-only 证据误放行时，
 用 `LLMGW_GATE_REQUIRED_KINDS=send:30,stream:30` 和
 `LLMGW_GATE_REQUIRED_APP_KINDS=report-agent.generate::chat:send:30` 强制指定真实 http 样本。
+全量 `LLMGW_MODE=http` 时如果未显式设置 `LLMGW_GATE_REQUIRED_KINDS`，`exec_dep.sh` 会默认要求
+`send:${LLMGW_GATE_FULL_HTTP_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}` 和
+`stream:${LLMGW_GATE_FULL_HTTP_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}` 两类 shadow 样本达标，避免只靠
+resolve-only 或单一路径证据放行全量切换；canary allowlist 阶段不自动追加全局 kind，仍按 allowlist/app-kind
+逐批收紧。
 正式发布脚本默认 `LLMGW_GATE_SHADOW_SINCE_HOURS=24`，只接受最近 24 小时内的 shadow 样本；
 如需更长证据期，应显式调大该值，禁止用很久以前的历史样本放行当前 commit 的 http/canary 发布。
 需要留存第三方可复核证据时，设置 `LLMGW_GATE_JSON_OUT` 与 `LLMGW_GATE_REPORT_MD`，报告只写

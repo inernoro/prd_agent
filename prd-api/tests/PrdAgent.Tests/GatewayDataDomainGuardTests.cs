@@ -98,6 +98,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_GATE_SHADOW_SINCE_HOURS", script);
         Assert.Contains("--since-hours ${LLMGW_GATE_SHADOW_SINCE_HOURS:-24}", script);
         Assert.Contains("LLMGW_GATE_REQUIRED_KINDS", script);
+        Assert.Contains("required_kinds_raw=\"${LLMGW_GATE_REQUIRED_KINDS:-}\"", script);
+        Assert.Contains("if [ \"$mode\" = \"http\" ] && [ -z \"$required_kinds_compact\" ]; then", script);
+        Assert.Contains("full_http_kind_min=\"${LLMGW_GATE_FULL_HTTP_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}\"", script);
+        Assert.Contains("required_kinds_raw=\"send:${full_http_kind_min},stream:${full_http_kind_min}\"", script);
         Assert.Contains("args=\"$args --require-kind $kind_req_trimmed\"", script);
         Assert.Contains("LLMGW_GATE_REQUIRED_APP_KINDS", script);
         Assert.Contains("args=\"$args --require-app-kind $app_kind_req_trimmed\"", script);

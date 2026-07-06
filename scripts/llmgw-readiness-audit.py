@@ -96,6 +96,8 @@ def _static_checks() -> list[dict]:
             "--since-hours ${LLMGW_GATE_SHADOW_SINCE_HOURS:-24}",
             "--health-samples ${LLMGW_GATE_HEALTH_SAMPLES:-3}",
             "--expect-commit $expect_commit",
+            "required_kinds_raw=\"${LLMGW_GATE_REQUIRED_KINDS:-}\"",
+            "required_kinds_raw=\"send:${full_http_kind_min},stream:${full_http_kind_min}\"",
             "LLMGW_SKIP_RELEASE_GATE=1",
         ],
     )

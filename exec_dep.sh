@@ -41,6 +41,7 @@ set -eu
 #   - LLMGW_GATE_HEALTH_INTERVAL_SECONDS：healthz 连续采样间隔秒数，默认 5
 #   - LLMGW_GATE_APP_CALLERS：逗号/分号分隔的 appCallerCode 列表，逐个 gate
 #   - LLMGW_GATE_REQUIRED_KINDS：逗号/分号分隔的 kind[:min] 列表，例如 send:30,stream:30，防 resolve-only 放行
+#     全量 LLMGW_MODE=http 时若未显式设置，默认要求 send/stream 各达到 LLMGW_GATE_MIN_PER_APP（默认 30）
 #   - LLMGW_GATE_REQUIRED_APP_KINDS：逗号/分号分隔的 appCallerCode:kind:min 列表，例如 report-agent.generate::chat:send:30
 #   - LLMGW_GATE_JSON_OUT：可选，保存 release gate JSON 证据报告（不含密钥）
 #   - LLMGW_GATE_REPORT_MD：可选，保存 release gate Markdown 证据报告（不含密钥）
@@ -544,7 +545,14 @@ run_llmgw_release_gate_if_needed() {
 
   old_ifs="$IFS"
   IFS=',;'
-  for kind_req in ${LLMGW_GATE_REQUIRED_KINDS:-}; do
+  required_kinds_raw="${LLMGW_GATE_REQUIRED_KINDS:-}"
+  required_kinds_compact="$(printf '%s' "$required_kinds_raw" | tr ',;\n\r' '    ' | xargs || true)"
+  if [ "$mode" = "http" ] && [ -z "$required_kinds_compact" ]; then
+    full_http_kind_min="${LLMGW_GATE_FULL_HTTP_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}"
+    required_kinds_raw="send:${full_http_kind_min},stream:${full_http_kind_min}"
+    echo "LLM Gateway release gate: LLMGW_MODE=http 未设置 LLMGW_GATE_REQUIRED_KINDS，默认要求 $required_kinds_raw"
+  fi
+  for kind_req in ${required_kinds_raw}; do
     kind_req_trimmed="$(printf '%s' "$kind_req" | xargs)"
     if [ -n "$kind_req_trimmed" ]; then
       args="$args --require-kind $kind_req_trimmed"
