@@ -200,8 +200,33 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("shadow_coverage_report_available", script);
         Assert.Contains("--run-shadow-coverage", script);
         Assert.Contains("scripts/llmgw-shadow-coverage-report.py", script);
+        Assert.Contains("serving_probe_available", script);
+        Assert.Contains("--run-serving-probe", script);
+        Assert.Contains("scripts/llmgw-serving-probe.py", script);
+        Assert.Contains("serving_stability_and_auth_probe", script);
         Assert.Contains("LLMGW_READINESS_JSON_OUT", script);
         Assert.Contains("LLMGW_READINESS_REPORT_MD", script);
+    }
+
+    [Fact]
+    public void ServingProbe_ChecksHealthCommitStabilityAndNoKeyAuth()
+    {
+        var script = ReadRepoFile("scripts/llmgw-serving-probe.py");
+
+        Assert.Contains("LLM Gateway serving probe", script);
+        Assert.Contains("/healthz", script);
+        Assert.Contains("--expect-commit", script);
+        Assert.Contains("--samples", script);
+        Assert.Contains("--interval", script);
+        Assert.Contains("--protected-path", script);
+        Assert.Contains("expectedCommit", script);
+        Assert.Contains("healthSamples", script);
+        Assert.Contains("protectedChecks", script);
+        Assert.Contains("commit drift", script);
+        Assert.Contains("should reject missing key with 401", script);
+        Assert.Contains("LLMGW_SERVING_PROBE_JSON_OUT", script);
+        Assert.Contains("LLMGW_SERVING_PROBE_REPORT_MD", script);
+        Assert.DoesNotContain("GW_KEY", script);
     }
 
     [Fact]

@@ -88,6 +88,7 @@ GW_KEY=<X-Gateway-Key> \
 python3 scripts/llmgw-readiness-audit.py \
   --run-dotnet \
   --run-smoke \
+  --run-serving-probe \
   --run-shadow-coverage \
   --require-release-gate \
   --min-total 30 \
@@ -104,6 +105,8 @@ python3 scripts/llmgw-readiness-audit.py \
 直连棘轮空 baseline、multipart HTTP rehydrate、回滚脚本 dry-run；传 `--run-dotnet` 时会跑关键 xUnit 守卫；
 传 `--run-smoke` 时会调用 `scripts/gw-smoke.py` 真打 `/gw/v1/healthz`、`/pools`、`/send`、`/stream`、
 `/client-stream` 与 canary 必败；
+传 `--run-serving-probe` 时会调用 `scripts/llmgw-serving-probe.py` 连续探测 healthz commit 稳定性，
+并确认 `/gw/v1/*` 受保护读端点未带 key 时返回 401，防止 serving 滚动中或鉴权裸奔时进入灰度；
 传 `--run-shadow-coverage` 时会调用 `scripts/llmgw-shadow-coverage-report.py` 输出 global/kind/appCaller×kind
 覆盖矩阵，明确每个格子的 total、allMatch、critical、httpFail 与是否达标；
 传 `--require-release-gate` 时会调用 `scripts/llmgw-release-gate.py` 检查真实 health/shadow 样本。

@@ -4,7 +4,7 @@
 This script is a coordinator for release readiness. It does not mutate
 production state. It combines static release invariants, rollback dry-run,
 optional dotnet gate tests, optional D-layer smoke, optional shadow coverage matrix,
-and optional live release-gate evidence.
+optional serving stability/auth probe, and optional live release-gate evidence.
 """
 
 from __future__ import annotations
@@ -74,6 +74,7 @@ def _static_checks() -> list[dict]:
 
     release_gate = _read("scripts/llmgw-release-gate.py")
     shadow_coverage = _read("scripts/llmgw-shadow-coverage-report.py")
+    serving_probe = _read("scripts/llmgw-serving-probe.py")
     ok, detail = _contains_all(
         release_gate,
         [
@@ -104,6 +105,23 @@ def _static_checks() -> list[dict]:
         ],
     )
     checks.append(_check("shadow_coverage_report_available", ok, detail))
+
+    ok, detail = _contains_all(
+        serving_probe,
+        [
+            "LLM Gateway serving probe",
+            "/healthz",
+            "--protected-path",
+            "expectedCommit",
+            "healthSamples",
+            "protectedChecks",
+            "commit drift",
+            "should reject missing key with 401",
+            "LLMGW_SERVING_PROBE_JSON_OUT",
+            "LLMGW_SERVING_PROBE_REPORT_MD",
+        ],
+    )
+    checks.append(_check("serving_probe_available", ok, detail))
 
     exec_dep = _read("exec_dep.sh")
     ok, detail = _contains_all(
@@ -308,6 +326,23 @@ def _shadow_coverage(args: argparse.Namespace) -> dict:
     return {"name": "shadow_coverage_matrix", "ok": result["ok"], "detail": result["stdout"] + result["stderr"], "command": result}
 
 
+def _serving_probe(args: argparse.Namespace) -> dict:
+    cmd = [
+        "python3",
+        "scripts/llmgw-serving-probe.py",
+        "--base",
+        args.base,
+        "--samples",
+        str(args.serving_probe_samples),
+        "--interval",
+        str(args.serving_probe_interval),
+    ]
+    if args.expect_commit:
+        cmd.extend(["--expect-commit", args.expect_commit])
+    result = _run(cmd, timeout=max(120, int(args.serving_probe_samples * max(1, args.serving_probe_interval + 30))))
+    return {"name": "serving_stability_and_auth_probe", "ok": result["ok"], "detail": result["stdout"] + result["stderr"], "command": result}
+
+
 def _write_outputs(report: dict, json_out: str, report_md: str) -> None:
     if json_out:
         path = Path(json_out)
@@ -349,6 +384,9 @@ def main() -> int:
     parser.add_argument("--run-dotnet", action="store_true", help="run xUnit gateway guard tests")
     parser.add_argument("--run-smoke", action="store_true", help="run D-layer scripts/gw-smoke.py against --base/--key")
     parser.add_argument("--run-shadow-coverage", action="store_true", help="run appCaller x kind shadow coverage matrix")
+    parser.add_argument("--run-serving-probe", action="store_true", help="run serving health stability and no-key auth probe")
+    parser.add_argument("--serving-probe-samples", type=int, default=int(os.environ.get("LLMGW_SERVING_PROBE_SAMPLES", "12")))
+    parser.add_argument("--serving-probe-interval", type=float, default=float(os.environ.get("LLMGW_SERVING_PROBE_INTERVAL_SECONDS", "5")))
     parser.add_argument("--smoke-timeout-seconds", type=int, default=int(os.environ.get("GW_TIMEOUT", "120")))
     parser.add_argument("--require-release-gate", action="store_true", help="fail when --base/--key are missing and run live release gate")
     parser.add_argument("--json-out", default=os.environ.get("LLMGW_READINESS_JSON_OUT", ""))
@@ -370,6 +408,11 @@ def main() -> int:
             checks.append(_check("shadow_coverage_matrix", False, "missing --base/--key"))
         else:
             checks.append(_shadow_coverage(args))
+    if args.run_serving_probe:
+        if not args.base:
+            checks.append(_check("serving_stability_and_auth_probe", False, "missing --base"))
+        else:
+            checks.append(_serving_probe(args))
     if args.require_release_gate:
         if not args.base or not args.key:
             checks.append(_check("live_release_gate", False, "missing --base/--key"))

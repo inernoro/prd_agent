@@ -21,3 +21,4 @@
 | ops | prd-agent | gw-smoke.py D 层真机冒烟扩展到 /stream 与 /client-stream，覆盖流式和 ILLMClient 跨进程发布风险 |
 | ops | prd-agent | exec_dep.sh 在 http/canary 发布时默认强制运行 gw-smoke.py，避免人工漏跑 D 层真机冒烟 |
 | ops | prd-agent | 新增 llmgw-shadow-coverage-report.py，生成 appCaller x kind shadow 覆盖矩阵供 S5/S6 发布前复核 |
+| ops | prd-agent | 新增 llmgw-serving-probe.py，发布前连续检查 serving health commit 稳定性与受保护端点未认证拒绝 |
