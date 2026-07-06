@@ -51,3 +51,4 @@
 | ops | prd-agent | LLM Gateway 生产阶段越级推进必须填写原因并写入 stage report 与 rollout ledger，避免 allow-out-of-order 成为无记录后门 |
 | ops | prd-agent | LLM Gateway shadow 证据新增 release commit 归属字段，release gate 与覆盖矩阵可按候选 commit 过滤，防止旧样本误放行新版本 |
 | ops | prd-agent | LLM Gateway rollout ledger 审计升级为校验证据文件 commit 归属，防止错 commit 的 stage、serving 或 release gate 报告挂账通过 |
+| ci | prd-agent | LLM Gateway shadow watch 要求显式生产目标 commit，缺少 commit 时拒绝巡检，避免旧 shadow 样本证明新版本 |

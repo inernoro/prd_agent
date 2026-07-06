@@ -25,6 +25,10 @@ on:
         description: "Required earliest-to-latest coverage hours per shadow cell."
         required: false
         default: "24"
+      expect_commit:
+        description: "Production MAP/API commit that shadow evidence must belong to. Defaults to vars.LLMGW_PROD_EXPECT_COMMIT."
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -48,7 +52,8 @@ jobs:
       HEALTH_INTERVAL_SECONDS: ${{ vars.LLMGW_WATCH_HEALTH_INTERVAL_SECONDS || '5' }}
       SERVING_PROBE_SAMPLES: ${{ vars.LLMGW_WATCH_SERVING_PROBE_SAMPLES || '3' }}
       SERVING_PROBE_INTERVAL_SECONDS: ${{ vars.LLMGW_WATCH_SERVING_PROBE_INTERVAL_SECONDS || '5' }}
-      EXPECT_COMMIT: ${{ vars.LLMGW_PROD_EXPECT_COMMIT || '' }}
+      INPUT_EXPECT_COMMIT: ${{ github.event.inputs.expect_commit || '' }}
+      EXPECT_COMMIT: ${{ github.event.inputs.expect_commit || vars.LLMGW_PROD_EXPECT_COMMIT || '' }}
       WATCH_APP_CALLERS: ${{ vars.LLMGW_WATCH_APP_CALLERS || 'report-agent.generate::chat,prd-agent-desktop.chat.sendmessage::chat,open-platform-agent.proxy::chat,prd-agent-web.model-lab.run::chat,prd-agent.arena.battle::chat,visual-agent.image.text2img::generation,visual-agent.image.img2img::generation,visual-agent.image.vision::generation,video-agent.videogen::video-gen,document-store.subtitle::asr,transcript-agent.transcribe::asr' }}
       WATCH_COVERAGE_KINDS: ${{ vars.LLMGW_WATCH_COVERAGE_KINDS || 'send,stream,raw' }}
       WATCH_REQUIRED_KINDS: ${{ vars.LLMGW_WATCH_REQUIRED_KINDS || '' }}
@@ -72,6 +77,11 @@ jobs:
             echo "ERROR: missing gateway key. Set secrets.LLMGW_PROD_GATE_KEY." >&2
             exit 1
           fi
+          expect_commit="$(printf '%s' "${INPUT_EXPECT_COMMIT:-$EXPECT_COMMIT}" | xargs)"
+          if [ -z "$expect_commit" ]; then
+            echo "ERROR: missing production expected commit. Set workflow input expect_commit or vars.LLMGW_PROD_EXPECT_COMMIT so shadow evidence is filtered by release commit." >&2
+            exit 1
+          fi
 
           mkdir -p artifacts/llmgw-shadow-watch
           cmd=(
@@ -89,6 +99,7 @@ jobs:
             --health-interval "$HEALTH_INTERVAL_SECONDS"
             --serving-probe-samples "$SERVING_PROBE_SAMPLES"
             --serving-probe-interval "$SERVING_PROBE_INTERVAL_SECONDS"
+            --expect-commit "$expect_commit"
             --json-out artifacts/llmgw-shadow-watch/readiness.json
             --report-md artifacts/llmgw-shadow-watch/readiness.md
           )
@@ -114,10 +125,6 @@ jobs:
           append_csv_args "--kind" "$WATCH_COVERAGE_KINDS"
           append_csv_args "--require-kind" "$required_kinds"
           append_csv_args "--require-app-kind" "$required_app_kinds"
-
-          if [ -n "$(printf '%s' "$EXPECT_COMMIT" | xargs)" ]; then
-            cmd+=(--expect-commit "$EXPECT_COMMIT")
-          fi
 
           "${cmd[@]}"
 
