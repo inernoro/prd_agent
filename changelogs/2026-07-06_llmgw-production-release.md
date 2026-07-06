@@ -58,3 +58,4 @@
 | ops | prd-agent | rollout ledger 越级推进前仍复核已有前置 success 证据，防止 allow-out-of-order 跳过坏证据 |
 | ops | prd-agent | readiness audit 要求 CDS 分支 running 且部署派发 commit 匹配，防止 building 或旧容器被误判为可发布 |
 | ops | prd-agent | readiness runtime gate 默认纳入 API express 镜像并检查所有 CDS 服务 running，防止 MAP 入口不在候选发布上 |
+| ops | prd-agent | exec_dep.sh 校验 fast.sh 预热的 API/GW/GW serving/GW Web 镜像与实际部署镜像逐项一致 |

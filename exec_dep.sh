@@ -330,6 +330,29 @@ check_fast_release_intent() {
     exit 1
   fi
 
+  check_intent_image_match() {
+    image_key="$1"
+    actual_image="$2"
+    intent_image="$(intent_value "$image_key" "$release_intent_file")"
+    if [ -z "$intent_image" ]; then
+      echo "ERROR: release intent file is invalid: $release_intent_file" >&2
+      echo "       缺少 $image_key；请重新运行 ./fast.sh --commit <40位SHA>。" >&2
+      exit 1
+    fi
+    if [ "$intent_image" != "$actual_image" ]; then
+      echo "ERROR: fast.sh / exec_dep.sh image mismatch: $image_key" >&2
+      echo "       fast.sh warmed:  $intent_image" >&2
+      echo "       exec_dep wants: $actual_image" >&2
+      echo "       必须用同一个 commit/tag 重新运行两步；紧急绕过需显式 PRD_AGENT_IGNORE_FAST_INTENT=1。" >&2
+      exit 1
+    fi
+  }
+
+  check_intent_image_match PRD_AGENT_API_IMAGE "$PRD_AGENT_API_IMAGE"
+  check_intent_image_match PRD_AGENT_LLMGW_IMAGE "$PRD_AGENT_LLMGW_IMAGE"
+  check_intent_image_match PRD_AGENT_LLMGW_SERVE_IMAGE "$PRD_AGENT_LLMGW_SERVE_IMAGE"
+  check_intent_image_match PRD_AGENT_LLMGW_WEB_IMAGE "$PRD_AGENT_LLMGW_WEB_IMAGE"
+
   echo "Release intent: matched fast.sh warmup (tag=$TAG repo=$REPO)"
 }
 

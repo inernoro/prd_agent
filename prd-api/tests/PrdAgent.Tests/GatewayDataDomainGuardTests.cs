@@ -221,6 +221,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("PRD_AGENT_IGNORE_FAST_INTENT=1", execDep);
         Assert.Contains("intent_tag", execDep);
         Assert.Contains("intent_repo", execDep);
+        Assert.Contains("check_intent_image_match PRD_AGENT_API_IMAGE", execDep);
+        Assert.Contains("check_intent_image_match PRD_AGENT_LLMGW_IMAGE", execDep);
+        Assert.Contains("check_intent_image_match PRD_AGENT_LLMGW_SERVE_IMAGE", execDep);
+        Assert.Contains("check_intent_image_match PRD_AGENT_LLMGW_WEB_IMAGE", execDep);
+        Assert.Contains("fast.sh / exec_dep.sh image mismatch", execDep);
         Assert.Contains("fast.sh warmed:", execDep);
         Assert.Contains("exec_dep wants:", execDep);
         Assert.Contains("fast.sh repo:", execDep);
