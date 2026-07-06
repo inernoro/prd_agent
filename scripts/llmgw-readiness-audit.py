@@ -914,7 +914,7 @@ def main() -> int:
             checks.append(_serving_probe(args))
     if args.run_cds_runtime:
         checks.append(_cds_runtime(args))
-    if args.run_rollout_ledger:
+    if args.run_rollout_ledger or args.require_rollout_complete:
         checks.append(_rollout_ledger(args))
     if args.require_release_gate:
         if not args.base or not args.key:

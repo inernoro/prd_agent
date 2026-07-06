@@ -504,6 +504,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_ROLLOUT_TARGET_STAGE", script);
         Assert.Contains("LLMGW_STAGE_MIN_OBSERVATION_HOURS", script);
         Assert.Contains("--require-rollout-complete", script);
+        Assert.Contains("args.run_rollout_ledger or args.require_rollout_complete", script);
         Assert.Contains("LLMGW_READINESS_JSON_OUT", script);
         Assert.Contains("LLMGW_READINESS_REPORT_MD", script);
     }
