@@ -349,6 +349,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLM Gateway production stage failed; appending failed rollout ledger entry.", script);
         Assert.Contains("trap record_failed_stage_on_exit EXIT", script);
         Assert.Contains("append_ledger_entry rollback", script);
+        Assert.Contains("rollout_ledger_status=\"rollback\"", script);
+        var failureTrap = script[
+            script.IndexOf("record_failed_stage_on_exit()", StringComparison.Ordinal)..script.IndexOf("trap record_failed_stage_on_exit EXIT", StringComparison.Ordinal)];
+        Assert.DoesNotContain("rollback-inproc", failureTrap);
         Assert.Contains("scripts/llmgw-rollout-ledger.py validate", script);
         Assert.Contains("scripts/llmgw-rollout-ledger.py append", script);
         Assert.Contains("./fast.sh --commit \"$commit\"", script);

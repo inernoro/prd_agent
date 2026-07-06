@@ -219,6 +219,7 @@ def _static_checks() -> list[dict]:
             "append_ledger_entry failed",
             "LLM Gateway production stage failed; appending failed rollout ledger entry.",
             "append_ledger_entry rollback",
+            "rollout_ledger_status=\"rollback\"",
             "release-gate.json",
             "serving-probe.json",
             "gw-smoke.json",
