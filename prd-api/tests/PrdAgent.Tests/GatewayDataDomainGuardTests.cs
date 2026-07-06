@@ -147,6 +147,26 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("exec \"$script_dir/exec_dep.sh\" \"$@\"", wrapper);
     }
 
+    [Fact]
+    public void RollbackScript_ReturnsApiToInprocWithoutDatabaseRollback()
+    {
+        var script = ReadRepoFile("scripts/llmgw-rollback-inproc.sh");
+
+        Assert.Contains("export LLMGW_MODE=inproc", script);
+        Assert.Contains("export LLMGW_HTTP_APP_CALLER_ALLOWLIST=", script);
+        Assert.Contains("export LLMGW_SHADOW_FULL_SAMPLE_PERCENT=0", script);
+        Assert.Contains("up -d --no-deps --force-recreate \"$service_name\"", script);
+        Assert.Contains("database: unchanged", script);
+        Assert.Contains("images: unchanged", script);
+        Assert.Contains("LLMGW_ROLLBACK_API_SERVICE:-api", script);
+        Assert.DoesNotContain("down -v", script);
+        Assert.DoesNotContain("docker volume rm", script);
+        Assert.DoesNotContain("mongodump", script);
+        Assert.DoesNotContain("mongorestore", script);
+        Assert.DoesNotContain("db.dropDatabase", script);
+        Assert.DoesNotContain("git checkout", script);
+    }
+
     private static string ReadRepoFile(string relativePath)
     {
         var root = LocateRepoRoot();

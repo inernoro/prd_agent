@@ -110,6 +110,16 @@ python3 scripts/llmgw-release-gate.py --min-total 30 \
 需要留存第三方可复核证据时，设置 `LLMGW_GATE_JSON_OUT` 与 `LLMGW_GATE_REPORT_MD`，报告只写
 base、health commit、每组 shadow 样本数、critical/httpFail 与最终 verdict，不写 `X-Gateway-Key`。
 
+紧急回滚只改 MAP API 的网关路由模式，不回滚数据库、不删 GW 证据、不回退镜像：
+
+```bash
+./scripts/llmgw-rollback-inproc.sh
+```
+
+脚本会设置 `LLMGW_MODE=inproc`、清空 `LLMGW_HTTP_APP_CALLER_ALLOWLIST`、关闭
+`LLMGW_SHADOW_FULL_SAMPLE_PERCENT`，然后仅 `up -d --no-deps --force-recreate api`。
+S5 allowlist 或 S6 全量 http 前必须先在目标机器 dry-run/演练这条回滚路径，确认 API 能回到 inproc。
+
 ---
 
 ## 3. Point 1 — MAP 直连收口清单（6 处，全改走 ILlmGateway）
@@ -151,7 +161,7 @@ base、health commit、每组 shadow 样本数、critical/httpFail 与最终 ver
 ## 6. 最高风险（翻 http 前必须闭合）
 
 1. **路由分裂回归**：S3 已收口，但任何新增直连都会让部分请求绕过 GW。必须保持 `GatewayDirectClientRatchetTests` 空 baseline 绿灯。
-2. **断头翻转无 gate**：S6 必须由 S7 MECE 全绿（尤其 D 层 gw-smoke + shadow 多样本）gate，保留 revert commit 秒回 inproc。
+2. **断头翻转无 gate**：S6 必须由 S7 MECE 全绿（尤其 D 层 gw-smoke + shadow 多样本）gate，并演练 `scripts/llmgw-rollback-inproc.sh` 秒回 inproc。
 3. **L1 观测回退**：transport 标记已落地，但新增调用点若不透传 context，会让故障定位退化；发布前必须抽查日志 transport 分布。
 4. **multipart http 真实样本不足**：代码与集成测试已接通跨进程文件引用，但生图/ASR/字幕类必须有真实 http/shadow 样本，不能只靠 resolve-only 或单元测试放行。
 5. **serving 单点**：HA 未验证，serving 挂且无降级 → 全站 LLM 不可用。
