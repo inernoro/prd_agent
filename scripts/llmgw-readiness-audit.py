@@ -129,6 +129,10 @@ def _static_checks() -> list[dict]:
         [
             "run_llmgw_release_gate_if_needed",
             "LLMGW_HTTP_APP_CALLER_ALLOWLIST",
+            "LLMGW_SHADOW_FULL_SAMPLE_PERCENT",
+            "shadow_sample_enabled=0",
+            "release_gate_required=0",
+            "shadow sample startup",
             "LLMGW_GATE_SHADOW_SINCE_HOURS",
             "--since-hours ${LLMGW_GATE_SHADOW_SINCE_HOURS:-24}",
             "--health-samples ${LLMGW_GATE_HEALTH_SAMPLES:-3}",
@@ -142,7 +146,7 @@ def _static_checks() -> list[dict]:
             "LLMGW_SKIP_RELEASE_GATE=1",
         ],
     )
-    checks.append(_check("exec_dep_gates_http_and_canary_release", ok, detail))
+    checks.append(_check("exec_dep_gates_http_canary_and_shadow_sample_release", ok, detail))
 
     rollback_path = ROOT / "scripts/llmgw-rollback-inproc.sh"
     rollback = rollback_path.read_text(encoding="utf-8")

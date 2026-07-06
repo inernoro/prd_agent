@@ -86,9 +86,13 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("run_llmgw_release_gate_if_needed", script);
         Assert.Contains("LLMGW_HTTP_APP_CALLER_ALLOWLIST", script);
         Assert.Contains("allowlist_compact", script);
-        Assert.Contains("if [ \"$mode\" != \"http\" ] && [ -z \"$allowlist_compact\" ]; then", script);
-        Assert.Contains("LLM Gateway http/canary 发布需要提供 LLMGW_GATE_BASE 或 GW_BASE", script);
-        Assert.Contains("LLM Gateway http/canary 发布需要提供 LLMGW_GATE_KEY/GW_KEY 或 LLMGW_SERVE_KEY", script);
+        Assert.Contains("LLMGW_SHADOW_FULL_SAMPLE_PERCENT", script);
+        Assert.Contains("shadow_sample_enabled=0", script);
+        Assert.Contains("release_gate_required=0", script);
+        Assert.Contains("if [ \"$release_gate_required\" != \"1\" ] && [ \"$shadow_sample_enabled\" != \"1\" ]; then", script);
+        Assert.Contains("shadow sample startup", script);
+        Assert.Contains("LLM Gateway http/canary/shadow sample 发布需要提供 LLMGW_GATE_BASE 或 GW_BASE", script);
+        Assert.Contains("LLM Gateway http/canary/shadow sample 发布需要提供 LLMGW_GATE_KEY/GW_KEY 或 LLMGW_SERVE_KEY", script);
         Assert.Contains("expect_commit=\"${TAG#sha-}\"", script);
         Assert.Contains("args=\"$args --expect-commit $expect_commit\"", script);
         Assert.Contains("LLMGW_GATE_HEALTH_SAMPLES", script);
@@ -188,7 +192,7 @@ public class GatewayDataDomainGuardTests
 
         Assert.Contains("LLM Gateway full-cutover readiness audit", script);
         Assert.Contains("release_gate_supports_required_shadow_and_health_gates", script);
-        Assert.Contains("exec_dep_gates_http_and_canary_release", script);
+        Assert.Contains("exec_dep_gates_http_canary_and_shadow_sample_release", script);
         Assert.Contains("rollback_script_is_safe_and_executable", script);
         Assert.Contains("direct_client_ratchet_baselines_are_empty", script);
         Assert.Contains("multipart_http_path_has_refs_rehydrate_and_hash_guard", script);

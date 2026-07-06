@@ -23,3 +23,4 @@
 | ops | prd-agent | 新增 llmgw-shadow-coverage-report.py，生成 appCaller x kind shadow 覆盖矩阵供 S5/S6 发布前复核 |
 | ops | prd-agent | 新增 llmgw-serving-probe.py，发布前连续检查 serving health commit 稳定性与受保护端点未认证拒绝 |
 | ops | prd-agent | exec_dep.sh 在 http/canary 发布时默认强制运行 serving probe，防止滚动未稳定或鉴权裸奔时进入发布 |
+| ops | prd-agent | exec_dep.sh 在 shadow 采样证据期启动时强制 serving/smoke 预检，避免坏 serving 产生无效 shadow 证据 |

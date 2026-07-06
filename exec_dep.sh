@@ -32,6 +32,7 @@ set -eu
 #   - LLMGW_MODE=http：全量切 HTTP 时必须先通过 scripts/llmgw-release-gate.py
 #   - LLMGW_HTTP_APP_CALLER_ALLOWLIST：灰度入口列表；非空时这些入口会走 http 权威，也必须先通过 release gate
 #   - LLMGW_SHADOW_FULL_SAMPLE_PERCENT：shadow 模式非流式完整比对采样比例，默认 0
+#     非 0 时会强制 serving probe + gw-smoke 预检，但不会要求已有 shadow 样本数
 #   - LLMGW_GATE_BASE / GW_BASE：release gate 使用的 serving base URL（形如 https://host/gw/v1）
 #   - LLMGW_GATE_KEY / GW_KEY：release gate 使用的 X-Gateway-Key；未设时回退 LLMGW_SERVE_KEY
 #   - LLMGW_GATE_MIN_TOTAL：全局 shadow 最小样本数，默认 30
@@ -486,8 +487,24 @@ run_llmgw_release_gate_if_needed() {
   mode="$(printf '%s' "${LLMGW_MODE:-inproc}" | tr 'A-Z' 'a-z' | xargs)"
   allowlist_raw="${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}"
   allowlist_compact="$(printf '%s' "$allowlist_raw" | tr ',;\n\r' '    ' | xargs || true)"
-  if [ "$mode" != "http" ] && [ -z "$allowlist_compact" ]; then
-    echo "LLM Gateway release gate: skipped (LLMGW_MODE=${LLMGW_MODE:-inproc}, allowlist=empty)"
+  shadow_sample_raw="${LLMGW_SHADOW_FULL_SAMPLE_PERCENT:-0}"
+  shadow_sample_compact="$(printf '%s' "$shadow_sample_raw" | xargs || true)"
+  shadow_sample_enabled=0
+  if [ "$mode" = "shadow" ]; then
+    case "$shadow_sample_compact" in
+      ""|0|0.0|0.00|0.000)
+        ;;
+      *)
+        shadow_sample_enabled=1
+        ;;
+    esac
+  fi
+  release_gate_required=0
+  if [ "$mode" = "http" ] || [ -n "$allowlist_compact" ]; then
+    release_gate_required=1
+  fi
+  if [ "$release_gate_required" != "1" ] && [ "$shadow_sample_enabled" != "1" ]; then
+    echo "LLM Gateway release gate: skipped (LLMGW_MODE=${LLMGW_MODE:-inproc}, allowlist=empty, shadowSample=${shadow_sample_compact:-0})"
     return 0
   fi
 
@@ -497,26 +514,26 @@ run_llmgw_release_gate_if_needed() {
   fi
 
   if [ ! -f "scripts/llmgw-release-gate.py" ]; then
-    echo "ERROR: LLM Gateway http/canary 发布但缺少 scripts/llmgw-release-gate.py，拒绝发布。" >&2
+    echo "ERROR: LLM Gateway http/canary/shadow sample 发布但缺少 scripts/llmgw-release-gate.py，拒绝发布。" >&2
     exit 1
   fi
   if [ "${LLMGW_GATE_RUN_SMOKE:-1}" != "0" ] && [ ! -f "scripts/gw-smoke.py" ]; then
-    echo "ERROR: LLM Gateway http/canary 发布但缺少 scripts/gw-smoke.py，拒绝发布。" >&2
+    echo "ERROR: LLM Gateway http/canary/shadow sample 发布但缺少 scripts/gw-smoke.py，拒绝发布。" >&2
     exit 1
   fi
   if [ "${LLMGW_GATE_RUN_SERVING_PROBE:-1}" != "0" ] && [ ! -f "scripts/llmgw-serving-probe.py" ]; then
-    echo "ERROR: LLM Gateway http/canary 发布但缺少 scripts/llmgw-serving-probe.py，拒绝发布。" >&2
+    echo "ERROR: LLM Gateway http/canary/shadow sample 发布但缺少 scripts/llmgw-serving-probe.py，拒绝发布。" >&2
     exit 1
   fi
 
   gate_base="${LLMGW_GATE_BASE:-${GW_BASE:-}}"
   gate_key="${LLMGW_GATE_KEY:-${GW_KEY:-${LLMGW_SERVE_KEY:-}}}"
   if [ -z "$gate_base" ]; then
-    echo "ERROR: LLM Gateway http/canary 发布需要提供 LLMGW_GATE_BASE 或 GW_BASE（形如 https://host/gw/v1）以校验当前 shadow 证据。" >&2
+    echo "ERROR: LLM Gateway http/canary/shadow sample 发布需要提供 LLMGW_GATE_BASE 或 GW_BASE（形如 https://host/gw/v1）以校验 serving 与 shadow 证据。" >&2
     exit 1
   fi
   if [ -z "$gate_key" ]; then
-    echo "ERROR: LLM Gateway http/canary 发布需要提供 LLMGW_GATE_KEY/GW_KEY 或 LLMGW_SERVE_KEY 以读取 /gw/v1/shadow-comparisons。" >&2
+    echo "ERROR: LLM Gateway http/canary/shadow sample 发布需要提供 LLMGW_GATE_KEY/GW_KEY 或 LLMGW_SERVE_KEY 以读取 /gw/v1/shadow-comparisons 并运行 smoke。" >&2
     exit 1
   fi
 
@@ -579,9 +596,13 @@ run_llmgw_release_gate_if_needed() {
   done
   IFS="$old_ifs"
 
-  echo "LLM Gateway release gate: required (LLMGW_MODE=${LLMGW_MODE:-inproc}, allowlist=${allowlist_compact:-empty})"
-  # shellcheck disable=SC2086
-  GW_KEY="$gate_key" python3 scripts/llmgw-release-gate.py $args
+  if [ "$release_gate_required" = "1" ]; then
+    echo "LLM Gateway release gate: required (LLMGW_MODE=${LLMGW_MODE:-inproc}, allowlist=${allowlist_compact:-empty})"
+    # shellcheck disable=SC2086
+    GW_KEY="$gate_key" python3 scripts/llmgw-release-gate.py $args
+  else
+    echo "LLM Gateway release gate: skipped shadow sample startup (LLMGW_MODE=${LLMGW_MODE:-inproc}, shadowSample=${shadow_sample_compact:-0}); running serving/smoke preflight only"
+  fi
 
   if [ "${LLMGW_GATE_RUN_SERVING_PROBE:-1}" != "0" ]; then
     probe_args="--base $gate_base"
