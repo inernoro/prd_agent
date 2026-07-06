@@ -145,6 +145,14 @@ def _required_rollout_stages(target_stage: str, require_target_success: bool) ->
 def _entry_evidence_failures(entry: dict) -> list[str]:
     stage = str(entry.get("stage") or "")
     failures: list[str] = []
+    release_main_ref = str(entry.get("releaseMainRef") or "").strip()
+    release_main_sha = str(entry.get("releaseMainSha") or "").strip().lower()
+    if not release_main_ref:
+        failures.append(f"ERROR: {stage} missing releaseMainRef")
+    if not release_main_sha:
+        failures.append(f"ERROR: {stage} missing releaseMainSha")
+    elif len(release_main_sha) != 40 or any(ch not in "0123456789abcdef" for ch in release_main_sha):
+        failures.append(f"ERROR: {stage} invalid releaseMainSha: {release_main_sha}")
     evidence_json = str(entry.get("evidenceJson") or "")
     try:
         _require_pass_json(evidence_json, f"{stage} stage evidence")
@@ -318,6 +326,8 @@ def append(args: argparse.Namespace) -> int:
         "rollbackRehearsal": args.stage == ROLLBACK_REHEARSAL_STAGE,
         "servingProbeJson": args.serving_probe_json,
         "smokeJson": args.smoke_json,
+        "releaseMainRef": args.main_ref,
+        "releaseMainSha": args.main_sha.lower(),
         "minStageObservationHours": args.min_stage_observation_hours,
     }
     with open(args.ledger, "a", encoding="utf-8") as fh:
@@ -363,6 +373,8 @@ def _write_markdown(path: str, report: dict) -> None:
         fh.write(f"- releaseGateJson: `{cell(report['releaseGateJson'])}`\n")
         fh.write(f"- servingProbeJson: `{cell(report['servingProbeJson'])}`\n")
         fh.write(f"- smokeJson: `{cell(report['smokeJson'])}`\n\n")
+        fh.write(f"- releaseMainRef: `{cell(report['releaseMainRef'])}`\n")
+        fh.write(f"- releaseMainSha: `{cell(report['releaseMainSha'])}`\n\n")
         fh.write("## Failures\n\n")
         failures = report.get("failures") or []
         if failures:
@@ -406,6 +418,8 @@ def stage_report(args: argparse.Namespace) -> int:
         "releaseGateJson": args.release_gate_json,
         "servingProbeJson": args.serving_probe_json,
         "smokeJson": args.smoke_json,
+        "releaseMainRef": args.main_ref,
+        "releaseMainSha": args.main_sha.lower(),
         "failures": failures,
     }
     _write_json(args.json_out, report)
@@ -455,6 +469,8 @@ def audit(args: argparse.Namespace) -> int:
                 "servingProbeJson": latest.get("servingProbeJson") or "",
                 "smokeJson": latest.get("smokeJson") or "",
                 "releaseGateJson": latest.get("releaseGateJson") or "",
+                "releaseMainRef": latest.get("releaseMainRef") or "",
+                "releaseMainSha": latest.get("releaseMainSha") or "",
             }
         )
 
@@ -542,6 +558,8 @@ def main() -> int:
     append_parser.add_argument("--release-gate-required", default="0")
     append_parser.add_argument("--serving-probe-json", default="")
     append_parser.add_argument("--smoke-json", default="")
+    append_parser.add_argument("--main-ref", default="")
+    append_parser.add_argument("--main-sha", default="")
     append_parser.add_argument("--min-stage-observation-hours", default="")
     append_parser.set_defaults(func=append)
 
@@ -560,6 +578,8 @@ def main() -> int:
     report_parser.add_argument("--release-gate-required", default="0")
     report_parser.add_argument("--serving-probe-json", default="")
     report_parser.add_argument("--smoke-json", default="")
+    report_parser.add_argument("--main-ref", default="")
+    report_parser.add_argument("--main-sha", default="")
     report_parser.add_argument("--min-stage-observation-hours", default="")
     report_parser.set_defaults(func=stage_report)
 

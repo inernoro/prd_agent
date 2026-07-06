@@ -294,6 +294,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--execute", script);
         Assert.Contains("--min-observation-hours", script);
         Assert.Contains("LLMGW_STAGE_MIN_OBSERVATION_HOURS", script);
+        Assert.Contains("--main-ref", script);
+        Assert.Contains("LLMGW_RELEASE_MAIN_REF", script);
+        Assert.Contains("validate_main_ancestry", script);
+        Assert.Contains("git merge-base --is-ancestor", script);
+        Assert.Contains("release commit does not include latest main", script);
         Assert.Contains("minObservationHours", script);
         Assert.Contains("LLMGW_GATE_KEY, GW_KEY, or LLMGW_SERVE_KEY", script);
         Assert.DoesNotContain("--key", script);
@@ -339,6 +344,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("\"servingProbeJson\": args.serving_probe_json", ledger);
         Assert.Contains("\"smokeJson\": args.smoke_json", ledger);
         Assert.Contains("\"rollbackRehearsal\": args.stage == ROLLBACK_REHEARSAL_STAGE", ledger);
+        Assert.Contains("\"releaseMainRef\": args.main_ref", ledger);
+        Assert.Contains("\"releaseMainSha\": args.main_sha.lower()", ledger);
+        Assert.Contains("missing releaseMainSha", ledger);
         Assert.Contains("min_observation_hours", ledger);
         Assert.Contains("rollout stage observation window not satisfied", ledger);
         Assert.Contains("\"minStageObservationHours\": args.min_stage_observation_hours", ledger);
@@ -358,6 +366,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("serving-probe.json", readiness);
         Assert.Contains("GW_SMOKE_JSON_OUT", readiness);
         Assert.Contains("LLMGW_STAGE_MIN_OBSERVATION_HOURS", readiness);
+        Assert.Contains("LLMGW_RELEASE_MAIN_REF", readiness);
+        Assert.Contains("validate_main_ancestry", readiness);
+        Assert.Contains("release commit does not include latest main", readiness);
         Assert.Contains("requires rollback rehearsal success for the same commit", readiness);
         Assert.Contains("rollout stage observation window not satisfied", readiness);
         Assert.Contains("--run-rollout-ledger", readiness);

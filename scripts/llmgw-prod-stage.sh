@@ -34,6 +34,7 @@ Options:
   --repo owner/repo           Pass repository through to fast.sh and exec_dep.sh
   --sample-percent N          Shadow full sample percent for shadow/canary stages, default 1
   --min-observation-hours N   Require previous stage success to be at least N hours old, default 24
+  --main-ref REF              Mainline ref that must be included by --commit, default origin/main
   --evidence-dir PATH         Evidence output directory, default .llmgw-release-evidence
   --ledger PATH               Append-only rollout ledger, default <evidence-dir>/rollout-ledger.jsonl
   --allow-out-of-order        Skip ledger stage order validation; requires an explicit release note
@@ -46,6 +47,7 @@ repo=""
 execute=0
 sample_percent="${LLMGW_STAGE_SHADOW_FULL_SAMPLE_PERCENT:-1}"
 min_observation_hours="${LLMGW_STAGE_MIN_OBSERVATION_HOURS:-24}"
+main_ref="${LLMGW_RELEASE_MAIN_REF:-origin/main}"
 evidence_dir="${LLMGW_STAGE_EVIDENCE_DIR:-.llmgw-release-evidence}"
 ledger=""
 allow_out_of_order=0
@@ -91,6 +93,14 @@ while [ "$#" -gt 0 ]; do
       ;;
     --min-observation-hours=*)
       min_observation_hours="${1#--min-observation-hours=}"
+      ;;
+    --main-ref)
+      shift
+      [ "$#" -gt 0 ] || { echo "ERROR: --main-ref requires a git ref" >&2; exit 1; }
+      main_ref="$1"
+      ;;
+    --main-ref=*)
+      main_ref="${1#--main-ref=}"
       ;;
     --evidence-dir)
       shift
@@ -155,6 +165,10 @@ if ! printf '%s' "$min_observation_hours" | grep -Eq '^[0-9]+([.][0-9]+)?$'; the
   echo "ERROR: --min-observation-hours must be a non-negative number" >&2
   exit 1
 fi
+if [ -z "$(printf '%s' "$main_ref" | xargs)" ]; then
+  echo "ERROR: --main-ref must not be empty" >&2
+  exit 1
+fi
 
 if [ -z "$ledger" ]; then
   ledger="$evidence_dir/rollout-ledger.jsonl"
@@ -167,6 +181,7 @@ mode=""
 allowlist=""
 canary_stage=""
 shadow_percent="0"
+main_sha=""
 
 case "$stage" in
   shadow-start)
@@ -255,6 +270,7 @@ print_plan() {
   echo "  ledger: $ledger"
   echo "  allowOutOfOrder: $allow_out_of_order"
   echo "  minObservationHours: $min_observation_hours"
+  echo "  mainRef: $main_ref"
   if [ "$stage" != "rollback-inproc" ]; then
     echo "  commit: $commit"
     echo "  mode: $mode"
@@ -267,6 +283,36 @@ print_plan() {
     echo "  smokeJson: $smoke_json"
     echo "  stageJson: $stage_json"
   fi
+}
+
+validate_main_ancestry() {
+  if [ "$stage" = "rollback-inproc" ]; then
+    return 0
+  fi
+  if [ "$execute" != "1" ]; then
+    if printf '%s' "$main_ref" | grep -Eq '^origin/'; then
+      echo "+ git fetch --quiet origin ${main_ref#origin/}"
+    fi
+    echo "+ git merge-base --is-ancestor \"$main_ref\" \"$commit\""
+    return 0
+  fi
+  if printf '%s' "$main_ref" | grep -Eq '^origin/'; then
+    git fetch --quiet origin "${main_ref#origin/}"
+  fi
+  if ! git rev-parse --verify "$main_ref^{commit}" >/dev/null 2>&1; then
+    echo "ERROR: main ref not found: $main_ref. Fetch main before production rollout." >&2
+    exit 1
+  fi
+  if ! git rev-parse --verify "$commit^{commit}" >/dev/null 2>&1; then
+    echo "ERROR: release commit is not available locally: $commit" >&2
+    exit 1
+  fi
+  main_sha="$(git rev-parse "$main_ref^{commit}")"
+  if ! git merge-base --is-ancestor "$main_sha" "$commit"; then
+    echo "ERROR: release commit does not include latest main. mainRef=$main_ref mainSha=$main_sha commit=$commit" >&2
+    exit 1
+  fi
+  echo "LLM Gateway release main ancestry: OK mainRef=$main_ref mainSha=$main_sha"
 }
 
 validate_ledger_order() {
@@ -312,6 +358,8 @@ append_ledger_entry() {
     --release-gate-required "${release_gate_required:-0}" \
     --serving-probe-json "$serving_probe_json" \
     --smoke-json "$smoke_json" \
+    --main-ref "$main_ref" \
+    --main-sha "$main_sha" \
     --min-stage-observation-hours "$min_observation_hours"
 }
 
@@ -341,6 +389,7 @@ if [ "$stage" = "rollback-inproc" ]; then
 fi
 
 validate_ledger_order
+validate_main_ancestry
 
 if [ "$stage" = "rollback-rehearsal" ]; then
   release_gate_required=0
@@ -362,6 +411,8 @@ if [ "$stage" = "rollback-rehearsal" ]; then
       --release-gate-required "$release_gate_required" \
       --serving-probe-json "$serving_probe_json" \
       --smoke-json "$smoke_json" \
+      --main-ref "$main_ref" \
+      --main-sha "$main_sha" \
       --min-stage-observation-hours "$min_observation_hours"
     append_ledger_entry success
   else
@@ -424,6 +475,8 @@ if [ "$execute" = "1" ]; then
     --release-gate-required "$release_gate_required" \
     --serving-probe-json "$serving_probe_json" \
     --smoke-json "$smoke_json" \
+    --main-ref "$main_ref" \
+    --main-sha "$main_sha" \
     --min-stage-observation-hours "$min_observation_hours"
   append_ledger_entry success
 fi

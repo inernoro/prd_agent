@@ -159,6 +159,9 @@ scripts/llmgw-prod-stage.sh --stage shadow-start --commit <40位SHA> --execute
 stage/serving-probe/gw-smoke 证据；canary/http 阶段还必须读到 verdict=pass 的 release-gate 证据。
 这样可以防止跳过证据期、换 commit 后沿用旧证据，或台账 success 但证据文件缺失。确需人工越级时必须显式
 加 `--allow-out-of-order`，并在发布记录中说明原因；越级不会跳过当前阶段的证据文件校验。
+脚本执行非回滚阶段前还会校验发布 commit 包含最新 `origin/main`（可用 `--main-ref` /
+`LLMGW_RELEASE_MAIN_REF` 指定其它主干 ref），不满足时拒绝推进；stage report 和 rollout ledger 会记录
+`releaseMainRef` 与 `releaseMainSha`，`audit` 子命令也会要求这些字段存在，防止未合入最新 main 的 commit 被当成生产候选。
 阶段推进还默认要求前一阶段 `success` 记录至少已观察 24 小时（`LLMGW_STAGE_MIN_OBSERVATION_HOURS` /
 `--min-observation-hours` 可调），因此 canary 批次不能在同一小时内连续推进；只有 shadow 样本门、serving probe、
 D 层 smoke 与阶段观察窗口都满足后，台账才允许进入下一阶段。

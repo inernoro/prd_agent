@@ -46,3 +46,4 @@
 | ops | prd-agent | LLM Gateway 生产阶段推进默认要求前一阶段 success 至少观察 24 小时，防止连续跳过 canary 观察窗口 |
 | ops | prd-agent | LLM Gateway 生产阶段新增 rollback-rehearsal，同一 commit 未演练回滚脚本时禁止进入 canary/http 阶段 |
 | ops | prd-agent | LLM Gateway readiness 新增 rollout ledger 完成态审计，http-full 未落同 commit 证据时不能宣称全量迁移完成 |
+| ops | prd-agent | LLM Gateway 生产阶段执行前强制校验发布 commit 包含最新 main，并在阶段证据中记录 main ref/SHA |
