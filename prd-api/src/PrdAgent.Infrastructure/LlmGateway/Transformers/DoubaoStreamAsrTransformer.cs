@@ -6,9 +6,9 @@ namespace PrdAgent.Infrastructure.LlmGateway.Transformers;
 /// <summary>
 /// 豆包流式 ASR 转换器（WebSocket 二进制协议标记）
 ///
-/// 此转换器为标记类型，实际的 WebSocket 通信由 DoubaoStreamAsrService 处理。
-/// Exchange 系统中注册此类型，使其出现在转换器列表中，
-/// 但 HTTP 管线不会使用 TransformRequest/TransformResponse。
+/// 此转换器为标记类型。MAP 生产路径禁止在 API 进程内直连 WebSocket 上游；
+/// 只有该协议迁入 llmgw-serve 后才能重新启用。
+/// Exchange 系统中注册此类型，使其出现在转换器列表中。
 ///
 /// TransformerConfig 字段：
 /// - wsUrl: WebSocket URL（默认 wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream）

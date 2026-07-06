@@ -45,7 +45,6 @@ public class SubtitleGenerationProcessorTests
             });
 
         var processor = new SubtitleGenerationProcessor(
-            streamAsr: null!,
             modelResolver: Mock.Of<IModelResolver>(),
             llmGateway: gateway.Object,
             documentService: Mock.Of<IDocumentService>(),

@@ -157,13 +157,50 @@ public class GatewayDirectClientRatchetTests
         }
 
         // 正/负控制：正则命中真代码、拒绝封装型客户端。
-        Assert.True(DirectClientNewPattern.IsMatch("var c = new ClaudeClient(httpClient, key);"));
-        Assert.True(DirectClientNewPattern.IsMatch("return new OpenAIClient(\n    httpClient, key, model);"));
-        Assert.False(DirectClientNewPattern.IsMatch("new GatewayLLMClient(...)"));
-        Assert.False(DirectClientNewPattern.IsMatch("new OpenAIImageClient(...)"));
-        Assert.False(DirectClientNewPattern.IsMatch("new ClaudeClientFactory(...)"));
+        Assert.Matches(DirectClientNewPattern, "var c = new ClaudeClient(httpClient, key);");
+        Assert.Matches(DirectClientNewPattern, "return new OpenAIClient(\n    httpClient, key, model);");
+        Assert.DoesNotMatch(DirectClientNewPattern, "new GatewayLLMClient(...)");
+        Assert.DoesNotMatch(DirectClientNewPattern, "new OpenAIImageClient(...)");
+        Assert.DoesNotMatch(DirectClientNewPattern, "new ClaudeClientFactory(...)");
 
         _output.WriteLine($"OK baseline {Baseline.Count} 个文件均存在且含真实直连，正则正/负控制通过。");
+    }
+
+    [Fact]
+    public void NoProductionDoubaoStreamAsrDirectUsage_OutsideGatewayMigrationStub()
+    {
+        var srcRoot = LocateSrcRoot();
+        Assert.True(Directory.Exists(srcRoot), $"找不到源码目录: {srcRoot}");
+
+        var violations = new List<string>();
+        foreach (var file in Directory.EnumerateFiles(srcRoot, "*.cs", SearchOption.AllDirectories))
+        {
+            var rel = Path.GetRelativePath(srcRoot, file).Replace('\\', '/');
+            if (rel.Contains("/bin/") || rel.Contains("/obj/")) continue;
+            if (rel == "PrdAgent.Api/Services/DoubaoStreamAsrService.cs") continue;
+
+            var content = File.ReadAllText(file);
+            if (content.Contains("DoubaoStreamAsrService", StringComparison.Ordinal)
+                || content.Contains("TranscribeWithCallbackAsync(", StringComparison.Ordinal))
+            {
+                violations.Add($"  X ASR WebSocket 直连残留: {rel}");
+            }
+        }
+
+        if (violations.Count > 0)
+        {
+            var msg = string.Join('\n', new[]
+            {
+                "检测到 MAP 生产路径仍引用 DoubaoStreamAsrService 或其 WebSocket 调用。",
+                "LLM Gateway 全量迁移要求 ASR 不能在 API 进程内直连上游；",
+                "请改走 ILlmGateway.SendRawWithResolutionAsync（HTTP ASR/Exchange），或先 fail-closed，直到 WebSocket 协议迁入 llmgw-serve。",
+                "",
+            }.Concat(violations));
+            _output.WriteLine(msg);
+            Assert.Fail(msg);
+        }
+
+        _output.WriteLine("OK ASR WebSocket 直连守卫通过：业务路径没有引用 DoubaoStreamAsrService。");
     }
 
     private static string LocateSrcRoot()

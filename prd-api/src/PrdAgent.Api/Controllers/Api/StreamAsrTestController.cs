@@ -7,8 +7,8 @@ using PrdAgent.Core.Models;
 namespace PrdAgent.Api.Controllers.Api;
 
 /// <summary>
-/// 流式 ASR 测试端点（独立 Controller，无权限限制）
-/// 用于验证 DoubaoStreamAsrService 的 WebSocket 二进制协议
+/// 流式 ASR 测试端点（独立 Controller，无权限限制）。
+/// 该 WebSocket 直连测试已禁用，避免 MAP API 进程绕过 llmgw-serve。
 /// </summary>
 [ApiController]
 [Route("api/test")]
@@ -27,37 +27,11 @@ public class StreamAsrTestController : ControllerBase
     /// POST /api/test/stream-asr
     /// </summary>
     [HttpPost("stream-asr")]
-    public async Task<IActionResult> TestStreamAsr(
-        [FromBody] StreamAsrTestInput input,
-        [FromServices] DoubaoStreamAsrService streamAsr,
-        CancellationToken ct)
+    public IActionResult TestStreamAsr([FromBody] StreamAsrTestInput input)
     {
-        var (audioData, error) = await DownloadAudio(input.AudioUrl, ct);
-        if (error != null) return Ok(ApiResponse<object>.Ok(new { error }));
-        if (string.IsNullOrWhiteSpace(input.ApiKey))
-            return BadRequest(ApiResponse<object>.Fail("INVALID", "请提供 apiKey"));
-
-        var (appKey, accessKey) = ParseApiKey(input.ApiKey);
-        var config = BuildConfig(input.ResourceId);
-
-        var startedAt = DateTime.UtcNow;
-        var result = await streamAsr.TranscribeAsync(
-            input.WsUrl ?? "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream",
-            appKey, accessKey, audioData!, config, ct);
-        var durationMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
-
-        return Ok(ApiResponse<object>.Ok(new
-        {
-            success = result.Success,
-            text = result.FullText,
-            segmentCount = result.Segments.Count,
-            segments = result.Segments.Select(s => new { s.Text, s.DurationSec }),
-            responseFrameCount = result.Responses.Count,
-            error = result.Error,
-            durationMs,
-            audioSizeBytes = audioData!.Length,
-            wsUrl = input.WsUrl ?? "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream"
-        }));
+        return BadRequest(ApiResponse<object>.Fail(
+            "LLMGW_ASR_STREAM_DIRECT_DISABLED",
+            "WebSocket 流式 ASR 测试已禁用：MAP 不再允许在 API 进程内直连豆包上游。请改用 doubao-asr HTTP Exchange/Whisper ASR，或等该协议迁入 llmgw-serve。"));
     }
 
     /// <summary>
@@ -73,7 +47,6 @@ public class StreamAsrTestController : ControllerBase
     [HttpPost("stream-asr/sse")]
     public async Task TestStreamAsrSse(
         [FromBody] StreamAsrTestInput input,
-        [FromServices] DoubaoStreamAsrService streamAsr,
         CancellationToken ct)
     {
         Response.ContentType = "text/event-stream";
@@ -91,61 +64,11 @@ public class StreamAsrTestController : ControllerBase
             catch (OperationCanceledException) { /* 客户端断开 */ }
         }
 
-        var startedAt = DateTime.UtcNow;
-
-        try
+        await SendEvent("error", new
         {
-            // 1. 下载音频
-            await SendEvent("stage", new { stage = "downloading", message = "正在下载音频文件..." });
-            var (audioData, dlError) = await DownloadAudio(input.AudioUrl, ct);
-            if (dlError != null)
-            {
-                await SendEvent("error", new { error = dlError });
-                return;
-            }
-            await SendEvent("stage", new { stage = "downloaded", message = $"音频下载完成 ({audioData!.Length / 1024}KB)", sizeBytes = audioData.Length });
-
-            if (string.IsNullOrWhiteSpace(input.ApiKey))
-            {
-                await SendEvent("error", new { error = "请提供 apiKey" });
-                return;
-            }
-
-            var (appKey, accessKey) = ParseApiKey(input.ApiKey);
-            var config = BuildConfig(input.ResourceId);
-            var wsUrl = input.WsUrl ?? "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream";
-
-            // 2. 使用带回调的转录方法
-            await SendEvent("stage", new { stage = "processing", message = "正在处理音频..." });
-
-            var result = await streamAsr.TranscribeWithCallbackAsync(
-                wsUrl, appKey, accessKey, audioData, config,
-                onStage: async (stage, msg) => await SendEvent("stage", new { stage, message = msg }),
-                onProgress: async (sent, total) => await SendEvent("progress", new { sent, total }),
-                onFrame: async (seq, text, isLast) => await SendEvent("frame", new { seq, text, isLast }),
-                ct: ct);
-
-            var durationMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
-
-            // 3. 最终结果
-            await SendEvent("result", new
-            {
-                success = result.Success,
-                text = result.FullText,
-                segmentCount = result.Segments.Count,
-                segments = result.Segments.Select(s => new { s.Text, s.DurationSec }),
-                responseFrameCount = result.Responses.Count,
-                error = result.Error,
-                durationMs,
-                audioSizeBytes = audioData.Length
-            });
-
-            await SendEvent("stage", new { stage = "done", message = $"转录完成 ({durationMs}ms)" });
-        }
-        catch (Exception ex)
-        {
-            await SendEvent("error", new { error = ex.Message });
-        }
+            error = "WebSocket 流式 ASR 测试已禁用：MAP 不再允许在 API 进程内直连豆包上游。请改用 doubao-asr HTTP Exchange/Whisper ASR，或等该协议迁入 llmgw-serve。",
+            code = "LLMGW_ASR_STREAM_DIRECT_DISABLED"
+        });
     }
 
     // ═══════════════════════════════════════════════════════════

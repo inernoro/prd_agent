@@ -382,7 +382,6 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.ArenaRunWorker>();
 
 // 转录 Agent 后台执行器（ASR 转写 + 模板转文案）
 builder.Services.AddHostedService<PrdAgent.Api.Services.TranscriptRunWorker>();
-builder.Services.AddSingleton<PrdAgent.Api.Services.DoubaoStreamAsrService>();
 
 // 首页「AI 大事早知道」资讯雷达：代理拉取 ai-news-radar 公共静态 JSON（5min 内存缓存 + 6h stale 保底）
 // 摘要抓取会请求 feed 内的任意文章 URL（外部不可信），必须走 SafeOutbound 处理器：
@@ -400,7 +399,7 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAiNewsService, PrdAgent.Inf
 // 后台每 4 分钟预热「AI 大事」缓存，让用户访问路径永不同步等外网（卡顿排查 2026-06-03）。
 builder.Services.AddHostedService<PrdAgent.Infrastructure.Services.AiNewsCacheWarmer>();
 
-// 知识库 Agent 后台执行器（字幕生成 + 文档再加工，复用 DoubaoStreamAsrService 和 ILlmGateway）
+// 知识库 Agent 后台执行器（字幕生成 + 文档再加工，ASR/vision 统一走 ILlmGateway）
 builder.Services.AddHttpClient("DocStoreAgent");
 // MCP 连接器网关：回环转发当前 sk-ak Bearer 到自身真实接口（McpGatewayController）。
 // 该 client 只用于回环调用自身，故放行证书校验，兼容仅配置 https 监听时对 127.0.0.1 的 TLS 主机名不匹配。

@@ -168,8 +168,10 @@ public class TranscriptRunWorker : BackgroundService
         {
             if (resolution.ExchangeTransformerType == "doubao-asr-stream")
             {
-                // WebSocket 流式 ASR：必须走专用 WebSocket 客户端，不能走 HTTP Gateway
-                await ProcessAsrViaStreamAsync(db, run, item, resolution);
+                throw new InvalidOperationException(
+                    "ASR 模型命中了 doubao-asr-stream，但 MAP 生产路径已禁止在 API 进程内直连豆包 WebSocket。"
+                    + "请把该 AppCallerCode 绑定到 doubao-asr HTTP Exchange 或 OpenAI 兼容 Whisper ASR；"
+                    + "WebSocket 流式 ASR 只有迁入 llmgw-serve 后才能重新启用。");
             }
             else if (resolution.ExchangeTransformerType == "doubao-asr")
             {
@@ -190,129 +192,6 @@ public class TranscriptRunWorker : BackgroundService
             // 非 Exchange 模型（Whisper 等）：走 Gateway HTTP 路径
             await ProcessAsrViaGatewayAsync(db, gateway, run, item, resolution.ToGatewayResolution());
         }
-    }
-
-    /// <summary>
-    /// 通过 DoubaoStreamAsrService（WebSocket 流式）处理 ASR
-    /// </summary>
-    private async Task ProcessAsrViaStreamAsync(
-        MongoDbContext db, TranscriptRun run, TranscriptItem item,
-        ModelResolutionResult resolution)
-    {
-        _logger.LogInformation("[transcript-agent] 使用流式 ASR 路径: Exchange={ExchangeName}", resolution.ExchangeName);
-
-        // 下载音频文件
-        using var httpClient = new HttpClient();
-        httpClient.Timeout = TimeSpan.FromSeconds(120);
-        var audioBytes = await httpClient.GetByteArrayAsync(item.FileUrl);
-        await UpdateProgress(db, run.Id, 30);
-
-        // 解析 API Key
-        var apiKey = resolution.ApiKey ?? "";
-        string appKey = "", accessKey = apiKey;
-        if (apiKey.Contains('|'))
-        {
-            var parts = apiKey.Split('|', 2);
-            appKey = parts[0];
-            accessKey = parts[1];
-        }
-
-        var wsUrl = resolution.ApiUrl ?? "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel";
-        var config = resolution.ExchangeTransformerConfig ?? new Dictionary<string, object>
-        {
-            ["resourceId"] = "volc.bigasr.sauc.duration",
-            ["enableItn"] = true,
-            ["enablePunc"] = true,
-            ["enableDdc"] = true
-        };
-
-        await UpdateProgress(db, run.Id, 50);
-
-        // 调用 DoubaoStreamAsrService
-        using var scope3 = _scopeFactory.CreateScope();
-        var streamAsr = scope3.ServiceProvider.GetRequiredService<DoubaoStreamAsrService>();
-
-        var result = await streamAsr.TranscribeWithCallbackAsync(
-            wsUrl, appKey, accessKey, audioBytes, config,
-            onStage: async (stage, msg) =>
-            {
-                _logger.LogInformation("[transcript-agent] StreamASR stage: {Stage} - {Msg}", stage, msg);
-                await Task.CompletedTask;
-            },
-            onProgress: async (sent, total) =>
-            {
-                var pct = 50 + (int)(30.0 * sent / Math.Max(total, 1));
-                await UpdateProgress(db, run.Id, Math.Min(pct, 80));
-            },
-            onFrame: async (seq, text, isLast) =>
-            {
-                if (!string.IsNullOrEmpty(text))
-                {
-                    await db.TranscriptRuns.UpdateOneAsync(
-                        Builders<TranscriptRun>.Filter.Eq(r => r.Id, run.Id),
-                        Builders<TranscriptRun>.Update.Set(r => r.Result, text),
-                        cancellationToken: CancellationToken.None);
-                }
-            },
-            ct: CancellationToken.None);
-
-        if (!result.Success)
-            throw new InvalidOperationException($"流式 ASR 转写失败: {result.Error}");
-
-        await UpdateProgress(db, run.Id, 80);
-
-        // 将流式结果转为 TranscriptSegment
-        // 流式 ASR 每帧包含累积文本，需要去重：只取最后一帧的 utterances
-        // 如果有 utterances（含时间戳），按 utterance 分段；否则用 FullText 作为单段
-        var segments = new List<TranscriptSegment>();
-
-        // 从最后一帧的 utterances 提取（有时间戳的精细分段）
-        var lastResponse = result.Responses.LastOrDefault(r => r.PayloadMsg != null);
-        if (lastResponse?.PayloadMsg != null)
-        {
-            try
-            {
-                var payload = lastResponse.PayloadMsg.Value;
-                if (payload.TryGetProperty("result", out var res) &&
-                    res.TryGetProperty("utterances", out var utts) &&
-                    utts.ValueKind == System.Text.Json.JsonValueKind.Array)
-                {
-                    double runningTime = 0;
-                    foreach (var utt in utts.EnumerateArray())
-                    {
-                        var text = utt.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
-                        if (string.IsNullOrWhiteSpace(text)) continue;
-                        double startMs = utt.TryGetProperty("start_time", out var st) ? st.GetDouble() : 0;
-                        double endMs = utt.TryGetProperty("end_time", out var et) ? et.GetDouble() : 0;
-                        segments.Add(new TranscriptSegment
-                        {
-                            Start = startMs / 1000.0,
-                            End = endMs / 1000.0,
-                            Text = text.Trim()
-                        });
-                        runningTime = endMs / 1000.0;
-                    }
-                }
-            }
-            catch { /* fallback below */ }
-        }
-
-        // 兜底：用 FullText 作为单段
-        if (segments.Count == 0 && !string.IsNullOrEmpty(result.FullText))
-        {
-            segments.Add(new TranscriptSegment { Start = 0, End = 0, Text = result.FullText });
-        }
-
-        _logger.LogInformation("[transcript-agent] 流式 ASR 完成: {SegmentCount} 段, 全文={TextLen}字",
-            segments.Count, result.FullText?.Length ?? 0);
-
-        // 保存转写结果到 Item
-        await db.TranscriptItems.UpdateOneAsync(
-            Builders<TranscriptItem>.Filter.Eq(i => i.Id, item.Id),
-            Builders<TranscriptItem>.Update
-                .Set(i => i.Segments, segments)
-                .Set(i => i.TranscribeStatus, "completed")
-                .Set(i => i.UpdatedAt, DateTime.UtcNow));
     }
 
     /// <summary>
