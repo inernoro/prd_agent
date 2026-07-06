@@ -178,6 +178,12 @@ scripts/llmgw-prod-stage.sh --stage shadow-start --commit <40位SHA> --execute
 `.llmgw-release-evidence/<time>_shadow-start_<sha>.map-shadow-seed.json`；如果视频/ASR 等入口因为上游模型池或密钥不可用失败，
 阶段脚本会以非零退出并追加 failed 台账，不能把“部署成功”误记为“证据成功”。默认不开启 seed 时，`shadow-start`
 仍只负责进入受控 shadow 采样窗口，后续由真实流量或人工 seed 补样本。
+另有低成本前置 gate：`scripts/llmgw-upstream-readiness.py` 会调用 `/gw/v1/resolve` 检查
+`video-agent.videogen::video-gen`、`document-store.subtitle::asr`、`transcript-agent.transcribe::asr`
+是否能解析到非 legacy 的可用模型、启用平台、协议和已解密 API key。`canary-video-asr` 与 `http-full`
+阶段默认运行该 gate，并把 `.upstream-readiness.json/md` 写入 stage report 与 rollout ledger；其它阶段可用
+`LLMGW_STAGE_RUN_UPSTREAM_READINESS=1` 显式开启。该 gate 只能证明配置可解析，不能证明上游 provider 仍有可用 channel；
+`no available channels`、`Invalid X-Api-Key`、401 等真实发送失败必须继续由 MAP seed/raw shadow 样本证明和阻断。
 在 100% 短时采样窗口内补 raw/send 证据时，建议附加 `--summary-poll-seconds 90`，让脚本按执行前 baseline
 轮询对应 kind 是否增长，避免图片/ASR 等长耗时请求的 shadow comparison 晚于业务响应落库造成误判。
 注意：`send` 和 `raw` 完整比对只有命中 `ShadowFullSamplePercent` 时才会双发；常态 `1%` 采样适合低成本观察，
@@ -231,6 +237,7 @@ scripts/llmgw-prod-stage.sh --stage shadow-start --commit <40位SHA> --execute
 `.llmgw-release-evidence/<time>_<stage>_<sha>.*.json|md` 证据输出。证据分四类：
 `*.release-gate.*`（shadow 样本门）、`*.serving-probe.*`（health/401/commit 稳定）、
 `*.gw-smoke.*`（D 层真机冒烟）、`*.map-shadow-seed.json`（可选 MAP 真实入口 seed 结果）、
+`*.upstream-readiness.*`（video/ASR/full 阶段的 resolve 配置门）、
 `*.stage.*`（阶段汇总）。脚本不接受 `--key` 参数，
 网关 key 只能从 `LLMGW_GATE_KEY`/`GW_KEY`/`LLMGW_SERVE_KEY` 读取，避免泄漏到 shell history。
 脚本还会维护 `.llmgw-release-evidence/rollout-ledger.jsonl` 台账；除 `shadow-start` 外，每个阶段默认要求

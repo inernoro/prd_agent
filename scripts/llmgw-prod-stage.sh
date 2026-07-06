@@ -30,6 +30,7 @@ Required environment for deploy stages:
   LLMGW_STAGE_RUN_SHADOW_SEED=1 enables MAP shadow seed evidence after shadow-start deploy
   LLMGW_STAGE_MAP_BASE          MAP base URL for shadow seed, for example https://host
   LLMGW_STAGE_SHADOW_SEED_FLAGS Extra llmgw-map-shadow-seed.py flags, for example --include-video-direct
+  LLMGW_STAGE_RUN_UPSTREAM_READINESS=1 enables /gw/v1/resolve upstream readiness evidence
 
 Options:
   --execute                   Actually run fast.sh/exec_dep.sh or rollback
@@ -282,8 +283,20 @@ smoke_json="${evidence_prefix}.gw-smoke.json"
 smoke_md="${evidence_prefix}.gw-smoke.md"
 prod_preflight_json="${evidence_prefix}.prod-preflight.json"
 shadow_seed_json="${evidence_prefix}.map-shadow-seed.json"
+upstream_readiness_json="${evidence_prefix}.upstream-readiness.json"
+upstream_readiness_md="${evidence_prefix}.upstream-readiness.md"
 stage_json="${evidence_prefix}.stage.json"
 stage_md="${evidence_prefix}.stage.md"
+
+case "$stage" in
+  canary-video-asr|http-full)
+    upstream_readiness_default=1
+    ;;
+  *)
+    upstream_readiness_default=0
+    ;;
+esac
+run_upstream_readiness="${LLMGW_STAGE_RUN_UPSTREAM_READINESS:-$upstream_readiness_default}"
 
 print_plan() {
   echo "LLM Gateway production stage:"
@@ -306,6 +319,8 @@ print_plan() {
     echo "  smokeJson: $smoke_json"
     echo "  prodPreflightJson: $prod_preflight_json"
     echo "  shadowSeedJson: $shadow_seed_json"
+    echo "  upstreamReadinessJson: $upstream_readiness_json"
+    echo "  upstreamReadinessEnabled: $run_upstream_readiness"
     echo "  stageJson: $stage_json"
   fi
 }
@@ -384,6 +399,8 @@ append_ledger_entry() {
     --release-gate-required "${release_gate_required:-0}" \
     --prod-preflight-json "$prod_preflight_json" \
     --shadow-seed-json "$shadow_seed_json" \
+    --upstream-readiness-json "$upstream_readiness_json" \
+    --upstream-readiness-required "$run_upstream_readiness" \
     --serving-probe-json "$serving_probe_json" \
     --smoke-json "$smoke_json" \
     --main-ref "$main_ref" \
@@ -411,6 +428,8 @@ write_dry_run_stage_report() {
   LLMGW_DRY_RUN_RELEASE_GATE_REQUIRED="${release_gate_required:-0}" \
   LLMGW_DRY_RUN_PROD_PREFLIGHT_JSON="${prod_preflight_json:-}" \
   LLMGW_DRY_RUN_SHADOW_SEED_JSON="${shadow_seed_json:-}" \
+  LLMGW_DRY_RUN_UPSTREAM_READINESS_JSON="${upstream_readiness_json:-}" \
+  LLMGW_DRY_RUN_UPSTREAM_READINESS_ENABLED="${run_upstream_readiness:-0}" \
   LLMGW_DRY_RUN_SERVING_PROBE_JSON="${serving_probe_json:-}" \
   LLMGW_DRY_RUN_SMOKE_JSON="${smoke_json:-}" \
   LLMGW_DRY_RUN_RELEASE_GATE_JSON="${release_gate_json:-}" \
@@ -437,6 +456,12 @@ else:
     )
     commands.append("./fast.sh --commit " + commit)
     commands.append("./exec_dep.sh --commit " + commit)
+    if os.environ.get("LLMGW_DRY_RUN_UPSTREAM_READINESS_ENABLED", "0") == "1":
+        commands.append(
+            "python3 scripts/llmgw-upstream-readiness.py --gw-base ${LLMGW_GATE_BASE} "
+            "--gw-key-env LLMGW_GATE_KEY --json-out "
+            + os.environ.get("LLMGW_DRY_RUN_UPSTREAM_READINESS_JSON", "")
+        )
     if stage == "shadow-start" and os.environ.get("LLMGW_STAGE_RUN_SHADOW_SEED", "0") == "1":
         flags = os.environ.get("LLMGW_STAGE_SHADOW_SEED_FLAGS", "").strip()
         seed = (
@@ -465,6 +490,8 @@ report = {
     "prodPreflightJson": os.environ.get("LLMGW_DRY_RUN_PROD_PREFLIGHT_JSON", ""),
     "shadowSeedJson": os.environ.get("LLMGW_DRY_RUN_SHADOW_SEED_JSON", ""),
     "shadowSeedEnabled": os.environ.get("LLMGW_STAGE_RUN_SHADOW_SEED", "0") == "1",
+    "upstreamReadinessJson": os.environ.get("LLMGW_DRY_RUN_UPSTREAM_READINESS_JSON", ""),
+    "upstreamReadinessEnabled": os.environ.get("LLMGW_DRY_RUN_UPSTREAM_READINESS_ENABLED", "0") == "1",
     "servingProbeJson": os.environ.get("LLMGW_DRY_RUN_SERVING_PROBE_JSON", ""),
     "smokeJson": os.environ.get("LLMGW_DRY_RUN_SMOKE_JSON", ""),
     "releaseGateJson": os.environ.get("LLMGW_DRY_RUN_RELEASE_GATE_JSON", ""),
@@ -496,6 +523,8 @@ with open(md_path, "w", encoding="utf-8") as fh:
         "releaseGateRequired",
         "shadowSeedEnabled",
         "shadowSeedJson",
+        "upstreamReadinessEnabled",
+        "upstreamReadinessJson",
         "releaseMainRef",
         "minStageObservationHours",
     ):
@@ -565,6 +594,31 @@ run_shadow_seed_evidence() {
       $seed_flags
   else
     echo "+ python3 scripts/llmgw-map-shadow-seed.py --base \"$map_base\" --gw-base \"$gate_base\" --gw-key \"<redacted>\" --continue-on-error --evidence-out \"$shadow_seed_json\" $seed_flags"
+  fi
+}
+
+run_upstream_readiness_evidence() {
+  if [ "$run_upstream_readiness" != "1" ]; then
+    if [ "$execute" = "1" ]; then
+      echo "LLM Gateway upstream readiness skipped: LLMGW_STAGE_RUN_UPSTREAM_READINESS is not 1"
+    else
+      echo "LLM Gateway upstream readiness dry-run skipped for this stage"
+    fi
+    return 0
+  fi
+  if [ ! -f "scripts/llmgw-upstream-readiness.py" ]; then
+    echo "ERROR: missing scripts/llmgw-upstream-readiness.py; cannot collect upstream readiness evidence." >&2
+    exit 1
+  fi
+  if [ "$execute" = "1" ]; then
+    mkdir -p "$evidence_dir"
+    python3 scripts/llmgw-upstream-readiness.py \
+      --gw-base "$gate_base" \
+      --gw-key-env LLMGW_GATE_KEY \
+      --json-out "$upstream_readiness_json" \
+      --report-md "$upstream_readiness_md"
+  else
+    echo "+ python3 scripts/llmgw-upstream-readiness.py --gw-base \"$gate_base\" --gw-key-env LLMGW_GATE_KEY --json-out \"$upstream_readiness_json\" --report-md \"$upstream_readiness_md\""
   fi
 }
 
@@ -640,6 +694,8 @@ if [ "$stage" = "rollback-rehearsal" ]; then
       --release-gate-required "$release_gate_required" \
       --prod-preflight-json "$prod_preflight_json" \
       --shadow-seed-json "$shadow_seed_json" \
+      --upstream-readiness-json "$upstream_readiness_json" \
+      --upstream-readiness-required "$run_upstream_readiness" \
       --serving-probe-json "$serving_probe_json" \
       --smoke-json "$smoke_json" \
       --main-ref "$main_ref" \
@@ -702,6 +758,7 @@ else
   run_or_print ./exec_dep.sh --commit "$commit"
 fi
 
+run_upstream_readiness_evidence
 run_shadow_seed_evidence
 
 if [ "$execute" = "1" ]; then
@@ -720,6 +777,8 @@ if [ "$execute" = "1" ]; then
     --release-gate-required "$release_gate_required" \
     --prod-preflight-json "$prod_preflight_json" \
     --shadow-seed-json "$shadow_seed_json" \
+    --upstream-readiness-json "$upstream_readiness_json" \
+    --upstream-readiness-required "$run_upstream_readiness" \
     --serving-probe-json "$serving_probe_json" \
     --smoke-json "$smoke_json" \
     --main-ref "$main_ref" \

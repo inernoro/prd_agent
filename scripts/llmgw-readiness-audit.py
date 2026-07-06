@@ -104,6 +104,8 @@ def _static_checks() -> list[dict]:
     rollout_ledger = rollout_ledger_path.read_text(encoding="utf-8") if rollout_ledger_path.exists() else ""
     prod_preflight_path = ROOT / "scripts/llmgw-prod-preflight.py"
     prod_preflight = prod_preflight_path.read_text(encoding="utf-8") if prod_preflight_path.exists() else ""
+    upstream_readiness_path = ROOT / "scripts/llmgw-upstream-readiness.py"
+    upstream_readiness = upstream_readiness_path.read_text(encoding="utf-8") if upstream_readiness_path.exists() else ""
     ok, detail = _contains_all(
         release_gate,
         [
@@ -331,9 +333,15 @@ def _static_checks() -> list[dict]:
             "prod-preflight.json",
             "serving-probe.json",
             "gw-smoke.json",
+            "upstream-readiness.json",
+            "LLMGW_STAGE_RUN_UPSTREAM_READINESS",
+            "run_upstream_readiness_evidence",
+            "scripts/llmgw-upstream-readiness.py",
             "run_prod_preflight",
             "scripts/llmgw-prod-preflight.py --mode start",
             "--prod-preflight-json \"$prod_preflight_json\"",
+            "--upstream-readiness-json \"$upstream_readiness_json\"",
+            "--upstream-readiness-required \"$run_upstream_readiness\"",
             "stage-report",
             "GW_SMOKE_JSON_OUT",
             "LLMGW_SERVING_PROBE_JSON_OUT",
@@ -351,6 +359,7 @@ def _static_checks() -> list[dict]:
     executable = bool(prod_stage_path.stat().st_mode & stat.S_IXUSR)
     ledger_executable = bool(rollout_ledger_path.exists() and (rollout_ledger_path.stat().st_mode & stat.S_IXUSR))
     preflight_executable = bool(prod_preflight_path.exists() and (prod_preflight_path.stat().st_mode & stat.S_IXUSR))
+    upstream_executable = bool(upstream_readiness_path.exists() and (upstream_readiness_path.stat().st_mode & stat.S_IXUSR))
     ledger_ok, ledger_detail = _contains_all(
         rollout_ledger,
         [
@@ -379,6 +388,10 @@ def _static_checks() -> list[dict]:
             "\"status\": args.status",
             "\"evidenceJson\": args.evidence_json",
             "\"prodPreflightJson\": args.prod_preflight_json",
+            "\"upstreamReadinessJson\": args.upstream_readiness_json",
+            "\"upstreamReadinessRequired\": _bool_flag(args.upstream_readiness_required)",
+            "_require_upstream_readiness",
+            "upstream readiness evidence",
             "_require_prod_preflight_for_commit",
             "production preflight evidence",
             "\"servingProbeJson\": args.serving_probe_json",
@@ -421,11 +434,30 @@ def _static_checks() -> list[dict]:
             "\"expectCommit\"",
         ],
     )
+    upstream_ok, upstream_detail = _contains_all(
+        upstream_readiness,
+        [
+            "LLM Gateway upstream resolution readiness gate",
+            "DEFAULT_REQUIREMENTS",
+            "video-agent.videogen::video-gen=video-gen",
+            "document-store.subtitle::asr=asr",
+            "transcript-agent.transcribe::asr=asr",
+            "/resolve",
+            "X-Gateway-Key",
+            "apiKeyPresent",
+            "--allow-legacy",
+            "--allow-missing-api-key",
+            "--fail-on-degraded",
+            "--json-out",
+            "--report-md",
+            "\"verdict\": \"pass\" if not failures else \"fail\"",
+        ],
+    )
     leaks_key_arg = "--key" in prod_stage or "--gateway-key" in prod_stage or "--key" in rollout_ledger
     checks.append(_check(
         "prod_stage_runner_sequences_shadow_canary_http_and_rollback",
-        ok and ledger_ok and preflight_ok and executable and ledger_executable and preflight_executable and not leaks_key_arg,
-        f"{detail}; ledger={ledger_detail}; preflight={preflight_detail}; executable={executable}; ledgerExecutable={ledger_executable}; preflightExecutable={preflight_executable}; leaksKeyArg={leaks_key_arg}",
+        ok and ledger_ok and preflight_ok and upstream_ok and executable and ledger_executable and preflight_executable and upstream_executable and not leaks_key_arg,
+        f"{detail}; ledger={ledger_detail}; preflight={preflight_detail}; upstream={upstream_detail}; executable={executable}; ledgerExecutable={ledger_executable}; preflightExecutable={preflight_executable}; upstreamExecutable={upstream_executable}; leaksKeyArg={leaks_key_arg}",
     ))
 
     fast = _read("fast.sh")
