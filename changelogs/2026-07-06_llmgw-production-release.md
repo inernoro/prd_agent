@@ -54,3 +54,4 @@
 | ci | prd-agent | LLM Gateway shadow watch 要求显式生产目标 commit，缺少 commit 时拒绝巡检，避免旧 shadow 样本证明新版本 |
 | ops | prd-agent | D 层 gw-smoke 证据绑定 healthz commit，rollout ledger 拒绝错 commit 或缺 healthCommit 的 smoke 报告 |
 | ops | prd-agent | rollout ledger 审计要求 serving/smoke 证据显式 expectedCommit，并校验 stage report 的 main ref/SHA 与台账一致 |
+| ops | prd-agent | rollout ledger 阶段推进前复核所有前置 success 证据文件，坏证据不能等到最终 audit 才暴露 |

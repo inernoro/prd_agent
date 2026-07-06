@@ -241,6 +241,17 @@ def _latest_success(entries: list[dict], commit: str, stage: str) -> dict | None
     return max(candidates, key=key)
 
 
+def _latest_success_evidence_failures(entries: list[dict], commit: str, stage: str) -> list[str]:
+    latest = _latest_success(entries, commit, stage)
+    if not latest:
+        return [f"missing success stage for commit: stage={stage} commit={commit}"]
+    failures = _entry_evidence_failures(latest)
+    return [
+        f"prior stage evidence invalid before rollout: stage={stage} {failure}"
+        for failure in failures
+    ]
+
+
 def _required_rollout_stages(target_stage: str, require_target_success: bool) -> list[str]:
     if target_stage == "rollback-inproc":
         return []
@@ -378,6 +389,21 @@ def validate(args: argparse.Namespace) -> int:
             f"stage={stage} commit={commit} missing_success={','.join(missing)} ledger={args.ledger}",
             file=sys.stderr,
         )
+        return 1
+
+    evidence_failures: list[str] = []
+    if _stage_requires_rehearsal(stage):
+        evidence_failures.extend(_latest_success_evidence_failures(entries, commit, ROLLBACK_REHEARSAL_STAGE))
+    for prior_stage in required:
+        evidence_failures.extend(_latest_success_evidence_failures(entries, commit, prior_stage))
+    if evidence_failures:
+        print(
+            "ERROR: rollout stage prior evidence validation failed. "
+            f"stage={stage} commit={commit} ledger={args.ledger}",
+            file=sys.stderr,
+        )
+        for failure in evidence_failures:
+            print(f"ERROR: {failure}", file=sys.stderr)
         return 1
 
     try:
