@@ -180,7 +180,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("multipart_http_path_has_refs_rehydrate_and_hash_guard", script);
         Assert.Contains("compose_exposes_gateway_mode_and_data_domain_controls", script);
         Assert.Contains("rollback_dry_run", script);
+        Assert.Contains("gw_smoke_d_layer", script);
         Assert.Contains("--run-dotnet", script);
+        Assert.Contains("--run-smoke", script);
+        Assert.Contains("scripts/gw-smoke.py", script);
+        Assert.Contains("GW_TIMEOUT", script);
         Assert.Contains("--require-release-gate", script);
         Assert.Contains("scripts/llmgw-release-gate.py", script);
         Assert.Contains("GW_KEY", script);

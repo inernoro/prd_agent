@@ -87,6 +87,7 @@ GW_BASE=https://<preview-or-prod-llmgw-serve>/gw/v1 \
 GW_KEY=<X-Gateway-Key> \
 python3 scripts/llmgw-readiness-audit.py \
   --run-dotnet \
+  --run-smoke \
   --require-release-gate \
   --min-total 30 \
   --health-samples 3 --health-interval 5 \
@@ -100,6 +101,7 @@ python3 scripts/llmgw-readiness-audit.py \
 
 `scripts/llmgw-readiness-audit.py` 是 S5/S6 发布前总 gate：静态检查 release gate/`exec_dep.sh`/compose/GW 数据域、
 直连棘轮空 baseline、multipart HTTP rehydrate、回滚脚本 dry-run；传 `--run-dotnet` 时会跑关键 xUnit 守卫；
+传 `--run-smoke` 时会调用 `scripts/gw-smoke.py` 真打 `/gw/v1/healthz`、`/pools`、`/send` 与 canary 必败；
 传 `--require-release-gate` 时会调用 `scripts/llmgw-release-gate.py` 检查真实 health/shadow 样本。
 
 `exec_dep.sh` 也内置同一 live release gate：全量 `LLMGW_MODE=http` 或灰度 `LLMGW_HTTP_APP_CALLER_ALLOWLIST` 非空时

@@ -16,3 +16,4 @@
 | ops | prd-agent | 发布 gate 支持 shadow sinceHours 新鲜度窗口，exec_dep.sh 默认只接受最近 24 小时样本，避免旧证据误放行 http/canary |
 | ops | prd-agent | 新增 LLMGW http/canary 紧急回滚脚本，一键将 MAP API 切回 inproc 且不回滚数据库或 GW 证据 |
 | ops | prd-agent | 新增 LLMGW 全量迁移 readiness audit，总结直连、multipart、发布脚本、回滚 dry-run 与 live release gate 证据 |
+| ops | prd-agent | readiness audit 支持 --run-smoke，把 gw-smoke.py D 层真机冒烟纳入 S5/S6 发布前总 gate |

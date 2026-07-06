@@ -3,7 +3,7 @@
 
 This script is a coordinator for release readiness. It does not mutate
 production state. It combines static release invariants, rollback dry-run,
-optional dotnet gate tests, and optional live release-gate evidence.
+optional dotnet gate tests, optional D-layer smoke, and optional live release-gate evidence.
 """
 
 from __future__ import annotations
@@ -254,6 +254,16 @@ def _release_gate(args: argparse.Namespace) -> dict:
     return {"name": "live_release_gate", "ok": result["ok"], "detail": result["stdout"] + result["stderr"], "command": result}
 
 
+def _gw_smoke(args: argparse.Namespace) -> dict:
+    env = os.environ.copy()
+    env["GW_BASE"] = args.base
+    env["GW_KEY"] = args.key
+    if args.smoke_timeout_seconds > 0:
+        env["GW_TIMEOUT"] = str(args.smoke_timeout_seconds)
+    result = _run(["python3", "scripts/gw-smoke.py"], env=env, timeout=max(60, args.smoke_timeout_seconds * 10))
+    return {"name": "gw_smoke_d_layer", "ok": result["ok"], "detail": result["stdout"] + result["stderr"], "command": result}
+
+
 def _write_outputs(report: dict, json_out: str, report_md: str) -> None:
     if json_out:
         path = Path(json_out)
@@ -292,6 +302,8 @@ def main() -> int:
     parser.add_argument("--require-kind", action="append", default=[])
     parser.add_argument("--require-app-kind", action="append", default=[])
     parser.add_argument("--run-dotnet", action="store_true", help="run xUnit gateway guard tests")
+    parser.add_argument("--run-smoke", action="store_true", help="run D-layer scripts/gw-smoke.py against --base/--key")
+    parser.add_argument("--smoke-timeout-seconds", type=int, default=int(os.environ.get("GW_TIMEOUT", "120")))
     parser.add_argument("--require-release-gate", action="store_true", help="fail when --base/--key are missing and run live release gate")
     parser.add_argument("--json-out", default=os.environ.get("LLMGW_READINESS_JSON_OUT", ""))
     parser.add_argument("--report-md", default=os.environ.get("LLMGW_READINESS_REPORT_MD", ""))
@@ -302,6 +314,11 @@ def main() -> int:
     checks.append(_rollback_dry_run())
     if args.run_dotnet:
         checks.extend(_dotnet_checks())
+    if args.run_smoke:
+        if not args.base or not args.key:
+            checks.append(_check("gw_smoke_d_layer", False, "missing --base/--key"))
+        else:
+            checks.append(_gw_smoke(args))
     if args.require_release_gate:
         if not args.base or not args.key:
             checks.append(_check("live_release_gate", False, "missing --base/--key"))
