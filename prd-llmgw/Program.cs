@@ -457,11 +457,14 @@ app.MapGet("/gw/models", async (string? platformId, bool? enabled) =>
 }).RequireAuthorization("LogsRead");
 
 // 影子比对：汇总 + 最近 N 条
-app.MapGet("/gw/shadow-comparisons", async (int? limit, string? appCallerCode) =>
+app.MapGet("/gw/shadow-comparisons", async (int? limit, string? appCallerCode, string? kind) =>
 {
     var n = Math.Clamp(limit ?? 50, 1, 500);
     var fb = Builders<BsonDocument>.Filter;
-    var filter = string.IsNullOrWhiteSpace(appCallerCode) ? fb.Empty : fb.Eq("AppCallerCode", appCallerCode);
+    var filters = new List<FilterDefinition<BsonDocument>>();
+    if (!string.IsNullOrWhiteSpace(appCallerCode)) filters.Add(fb.Eq("AppCallerCode", appCallerCode.Trim()));
+    if (!string.IsNullOrWhiteSpace(kind)) filters.Add(fb.Eq("Kind", kind.Trim()));
+    var filter = filters.Count == 0 ? fb.Empty : fb.And(filters);
     var total = await shadows.CountDocumentsAsync(filter);
     var allMatch = await shadows.CountDocumentsAsync(fb.And(filter, fb.Eq("AllMatch", true)));
     var critical = await shadows.CountDocumentsAsync(fb.And(filter, fb.Eq("HasCritical", true)));

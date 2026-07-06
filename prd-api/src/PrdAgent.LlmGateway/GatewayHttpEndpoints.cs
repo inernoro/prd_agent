@@ -206,15 +206,21 @@ public static class GatewayHttpEndpoints
             // parameters"），进而拖垮整张路由表（含 healthz / 全部 /gw/v1/*）。见 GatewayKeyGateContractTests。
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services,
             int? limit,
-            string? appCallerCode) =>
+            string? appCallerCode,
+            string? kind) =>
         {
             var n = Math.Clamp(limit ?? 50, 1, 500);
             var db = services.GetService<LlmGatewayDataContext>()?.Context
                 ?? services.GetRequiredService<MongoDbContext>();
             var col = db.LlmShadowComparisons;
-            var filter = string.IsNullOrWhiteSpace(appCallerCode)
+            var filters = new List<FilterDefinition<LlmShadowComparison>>();
+            if (!string.IsNullOrWhiteSpace(appCallerCode))
+                filters.Add(Builders<LlmShadowComparison>.Filter.Eq(x => x.AppCallerCode, appCallerCode.Trim()));
+            if (!string.IsNullOrWhiteSpace(kind))
+                filters.Add(Builders<LlmShadowComparison>.Filter.Eq(x => x.Kind, kind.Trim()));
+            var filter = filters.Count == 0
                 ? FilterDefinition<LlmShadowComparison>.Empty
-                : Builders<LlmShadowComparison>.Filter.Eq(x => x.AppCallerCode, appCallerCode);
+                : Builders<LlmShadowComparison>.Filter.And(filters);
 
             var total = await col.CountDocumentsAsync(filter);
             var allMatch = await col.CountDocumentsAsync(filter & Builders<LlmShadowComparison>.Filter.Eq(x => x.AllMatch, true));

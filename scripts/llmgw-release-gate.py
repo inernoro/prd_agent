@@ -7,12 +7,15 @@
   - critical mismatch 必须为 0
   - httpFail 必须为 0
   - total 样本数必须达到阈值
+  - 可选：指定 kind/appCaller+kind 的真实样本数必须达到阈值，避免只靠 resolve-only 放行
 
 用法：
   GW_BASE=https://<preview>-llmgw-serve.miduo.org/gw/v1 \
   GW_KEY=<X-Gateway-Key> \
   python3 scripts/llmgw-release-gate.py --min-total 30 \
-    --app-caller report-agent.generate::chat --min-per-app 30
+    --app-caller report-agent.generate::chat --min-per-app 30 \
+    --require-kind send:30 \
+    --require-app-kind report-agent.generate::chat:send:30
 """
 
 from __future__ import annotations
@@ -74,12 +77,16 @@ def _json(raw: str) -> dict:
     return value
 
 
-def _check_shadow(base: str, key: str, app: str | None, min_total: int) -> list[str]:
-    query = ""
+def _check_shadow(base: str, key: str, app: str | None, min_total: int, kind: str | None = None) -> list[str]:
     label = "global"
+    query_items: dict[str, str] = {}
     if app:
-        query = "?appCallerCode=" + urllib.parse.quote(app)
+        query_items["appCallerCode"] = app
         label = app
+    if kind:
+        query_items["kind"] = kind
+        label = f"{label}/{kind}"
+    query = ("?" + urllib.parse.urlencode(query_items)) if query_items else ""
 
     code, raw = _request("GET", base, "/shadow-comparisons" + query, key)
     if code != 200:
@@ -101,6 +108,25 @@ def _check_shadow(base: str, key: str, app: str | None, min_total: int) -> list[
     return failures
 
 
+def _parse_kind_requirement(raw: str, default_min: int) -> tuple[str, int]:
+    value = raw.strip()
+    if not value:
+        raise ValueError("空 kind requirement")
+    if ":" not in value:
+        return value, default_min
+    kind, min_raw = value.rsplit(":", 1)
+    if not kind.strip() or not min_raw.strip().isdigit():
+        raise ValueError(f"kind requirement 格式应为 kind 或 kind:min: {raw}")
+    return kind.strip(), int(min_raw.strip())
+
+
+def _parse_app_kind_requirement(raw: str) -> tuple[str, str, int]:
+    parts = raw.strip().rsplit(":", 2)
+    if len(parts) != 3 or not parts[0].strip() or not parts[1].strip() or not parts[2].strip().isdigit():
+        raise ValueError(f"app kind requirement 格式应为 appCallerCode:kind:min: {raw}")
+    return parts[0].strip(), parts[1].strip(), int(parts[2].strip())
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="LLM Gateway 发布前证据门")
     parser.add_argument("--base", default="", help="serving base URL, e.g. https://host/gw/v1")
@@ -108,6 +134,10 @@ def main() -> int:
     parser.add_argument("--min-total", type=int, default=30, help="全局 shadow 最小样本数")
     parser.add_argument("--min-per-app", type=int, default=30, help="每个 --app-caller 的最小样本数")
     parser.add_argument("--app-caller", action="append", default=[], help="需要逐个 gate 的 appCallerCode，可重复")
+    parser.add_argument("--require-kind", action="append", default=[],
+                        help="要求某类 shadow Kind 达到最小样本数，格式 kind 或 kind:min，可重复")
+    parser.add_argument("--require-app-kind", action="append", default=[],
+                        help="要求某个 appCallerCode 的某类 Kind 达到最小样本数，格式 appCallerCode:kind:min，可重复")
     parser.add_argument("--expect-commit", default=os.environ.get("GIT_COMMIT", ""), help="可选：healthz commit 必须匹配")
     args = parser.parse_args()
 
@@ -136,6 +166,20 @@ def main() -> int:
     failures.extend(_check_shadow(base, args.key, None, args.min_total))
     for app in args.app_caller:
         failures.extend(_check_shadow(base, args.key, app, args.min_per_app))
+    for raw in args.require_kind:
+        try:
+            kind, min_total = _parse_kind_requirement(raw, args.min_per_app)
+        except ValueError as exc:
+            failures.append(str(exc))
+            continue
+        failures.extend(_check_shadow(base, args.key, None, min_total, kind=kind))
+    for raw in args.require_app_kind:
+        try:
+            app, kind, min_total = _parse_app_kind_requirement(raw)
+        except ValueError as exc:
+            failures.append(str(exc))
+            continue
+        failures.extend(_check_shadow(base, args.key, app, min_total, kind=kind))
 
     if failures:
         print("LLM Gateway release gate: FAIL")
@@ -148,6 +192,10 @@ def main() -> int:
     print(f"- global_min_total={args.min_total}")
     if args.app_caller:
         print(f"- app_callers={len(args.app_caller)} min_per_app={args.min_per_app}")
+    if args.require_kind:
+        print(f"- required_kinds={len(args.require_kind)}")
+    if args.require_app_kind:
+        print(f"- required_app_kinds={len(args.require_app_kind)}")
     return 0
 
 

@@ -35,6 +35,8 @@ set -eu
 #   - LLMGW_GATE_MIN_TOTAL：全局 shadow 最小样本数，默认 30
 #   - LLMGW_GATE_MIN_PER_APP：每个 appCaller 最小样本数，默认 30
 #   - LLMGW_GATE_APP_CALLERS：逗号/分号分隔的 appCallerCode 列表，逐个 gate
+#   - LLMGW_GATE_REQUIRED_KINDS：逗号/分号分隔的 kind[:min] 列表，例如 send:30,stream:30，防 resolve-only 放行
+#   - LLMGW_GATE_REQUIRED_APP_KINDS：逗号/分号分隔的 appCallerCode:kind:min 列表，例如 report-agent.generate::chat:send:30
 #   - LLMGW_SKIP_RELEASE_GATE=1：仅紧急回滚/人工强制时跳过 http gate（会打印警告）
 
 SKIP_VERIFY="${SKIP_VERIFY:-}"
@@ -513,6 +515,22 @@ run_llmgw_release_gate_if_needed() {
     app_trimmed="$(printf '%s' "$app" | xargs)"
     if [ -n "$app_trimmed" ]; then
       args="$args --app-caller $app_trimmed"
+    fi
+  done
+  IFS="$old_ifs"
+
+  old_ifs="$IFS"
+  IFS=',;'
+  for kind_req in ${LLMGW_GATE_REQUIRED_KINDS:-}; do
+    kind_req_trimmed="$(printf '%s' "$kind_req" | xargs)"
+    if [ -n "$kind_req_trimmed" ]; then
+      args="$args --require-kind $kind_req_trimmed"
+    fi
+  done
+  for app_kind_req in ${LLMGW_GATE_REQUIRED_APP_KINDS:-}; do
+    app_kind_req_trimmed="$(printf '%s' "$app_kind_req" | xargs)"
+    if [ -n "$app_kind_req_trimmed" ]; then
+      args="$args --require-app-kind $app_kind_req_trimmed"
     fi
   done
   IFS="$old_ifs"

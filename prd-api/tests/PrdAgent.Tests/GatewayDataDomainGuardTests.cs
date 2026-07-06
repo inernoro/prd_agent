@@ -65,8 +65,28 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_MODE=http 需要提供 LLMGW_GATE_KEY/GW_KEY 或 LLMGW_SERVE_KEY", script);
         Assert.Contains("expect_commit=\"${TAG#sha-}\"", script);
         Assert.Contains("args=\"$args --expect-commit $expect_commit\"", script);
+        Assert.Contains("LLMGW_GATE_REQUIRED_KINDS", script);
+        Assert.Contains("args=\"$args --require-kind $kind_req_trimmed\"", script);
+        Assert.Contains("LLMGW_GATE_REQUIRED_APP_KINDS", script);
+        Assert.Contains("args=\"$args --require-app-kind $app_kind_req_trimmed\"", script);
         Assert.Contains("python3 scripts/llmgw-release-gate.py", script);
         Assert.Contains("LLMGW_SKIP_RELEASE_GATE=1", script);
+    }
+
+    [Fact]
+    public void ShadowComparisonReadEndpoints_CanFilterByKind()
+    {
+        var servingEndpoints = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
+        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
+        var releaseGate = ReadRepoFile("scripts/llmgw-release-gate.py");
+
+        Assert.Contains("string? kind", servingEndpoints);
+        Assert.Contains("Builders<LlmShadowComparison>.Filter.Eq(x => x.Kind, kind.Trim())", servingEndpoints);
+        Assert.Contains("string? kind", consoleProgram);
+        Assert.Contains("fb.Eq(\"Kind\", kind.Trim())", consoleProgram);
+        Assert.Contains("query_items[\"kind\"] = kind", releaseGate);
+        Assert.Contains("--require-kind", releaseGate);
+        Assert.Contains("--require-app-kind", releaseGate);
     }
 
     [Fact]

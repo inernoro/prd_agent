@@ -7,3 +7,4 @@
 | fix | prd-api | LLM Gateway raw 非 Exchange 路径按协议设置 Claude 和 Google 原生鉴权头，避免探活或 raw 请求误用 Bearer |
 | refactor | prd-api | Infra Agent runtime profile 连通性测试改走 llmgw-serve profile-test 契约，清零手写 completion/messages 上游 HTTP baseline |
 | ops | prd-agent | 新增 execdep.sh 兼容入口并补发布 gate 守卫，确保 LLMGW_MODE=http 时 shadow 证据钉到同一不可变 commit |
+| ops | prd-agent | 发布 gate 支持按 shadow kind 与 appCaller+kind 强制最小样本数，避免全量切 http 时仅靠 resolve-only 证据放行 |
