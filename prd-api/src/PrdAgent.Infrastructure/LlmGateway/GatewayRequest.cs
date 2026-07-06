@@ -355,6 +355,9 @@ public sealed class MultipartFileRef
     public string RefKey { get; init; } = string.Empty;
     public string FileName { get; init; } = string.Empty;
     public string MimeType { get; init; } = string.Empty;
+    public long SizeBytes { get; init; }
+    public string Sha256 { get; init; } = string.Empty;
+    public string? Url { get; init; }
 }
 
 /// <summary>

@@ -5,7 +5,7 @@
 
 ## 总览
 
-当前 open: 20 / paid: 0 / 总计: 20
+当前 open: 19 / paid: 1 / 总计: 20
 
 本台账记录"LLM 网关与模型池统一"迁移过程中已识别、但尚未在代码中偿还的边界与风险。详细方案见 `design.llm-gateway-unification.md`。
 
@@ -34,11 +34,10 @@
 | 2026-06-25-retire-openplatformapp | medium | 2026-06-25 | 原 apigateway = OpenPlatformApp(`sk-*`，绑死 PRD-chat、无 scope) 与现代 OpenApiController+AgentApiKey(`sk-ak-*`) 并存；目标统一到后者 | P6 平台收口 | open | 退役 sk- 老平台 + 清 open-platform-agent.proxy 悬挂 code；迁移现有 sk- 客户 |
 | 2026-06-25-openapi-quota-stub | medium | 2026-06-25 | per-key 配额/限流字段已声明未执行（`PassUsageGateAsync` 仍 stub），scope→模型门、动态模型列表、用量聚合面板缺失 | 对外开放前（内部用可暂缓但留 seam） | open | 平台 Phase2；内部为主可延后硬执行，架构留好闸口 |
 | 2026-06-25-model-name-public-contract | high | 2026-06-25 | 模型名/池 code 对外即成公开 API 契约；auto-* 脏池/空池/stub 默认对外=事故 | 开放对外入口前 | open | H3/H5 清理升级为对外稳定性前置；模型命名需定稳定公开方案 |
-| 2026-07-06-multipart-http-rehydrate | high | 2026-07-06 | `MultipartFileRefs` 只有 DTO，ASR/字幕/视频 raw 仍以内联 `MultipartFiles` 走进程内字节传递，http 模式缺共享对象存储 rehydrate 协议 | 将 ASR/字幕/图生图/视频 raw appCaller 加入 `HttpAppCallerAllowlist` 或全量 `Mode=http` 前 | open | Phase 1/2 已清零文本直连；Phase 3 必须补对象存储写入、serving 读取、hash 一致性测试后才能发布 multipart 类 |
-
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘
 
 | ID | 修复 PR | 修复日期 | 备注 |
 |----|---------|---------|------|
+| 2026-07-06-multipart-http-rehydrate | 待 PR | 2026-07-06 | 已实现 MAP 侧 inline multipart 上传为 `MultipartFileRefs`、serving `/gw/v1/raw` 侧按 ref 下载并校验 size/hash 后 rehydrate 为 `MultipartFiles`；新增 `GatewayMultipartHttpTests` 覆盖上传过线、rehydrate、hash mismatch 拦截。生产 shadow 样本与 allowlist 灰度仍是发布 gate。 |

@@ -1,11 +1,14 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.LlmGatewayHost;
 
@@ -112,13 +115,21 @@ public static class GatewayHttpEndpoints
         app.MapPost("/gw/v1/raw", async (
             GatewayRawRequest request,
             PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
-            ILLMRequestContextAccessor accessor) =>
+            ILLMRequestContextAccessor accessor,
+            IServiceProvider services) =>
         {
             using var _ = OpenContextScope(accessor, request.Context, request.ModelType, request.AppCallerCode);
+            var rehydrated = await RehydrateMultipartFileRefsAsync(request, services.GetService<IAssetStorage>(), CancellationToken.None);
+            if (!rehydrated.Success)
+            {
+                return JsonContentResult(rehydrated.Error, jsonOpts);
+            }
+
+            request = rehydrated.Request ?? request;
             var res = await gateway.ResolveModelAsync(
                 request.AppCallerCode, request.ModelType, request.ExpectedModel, request.PinnedPlatformId, request.PinnedModelId, CancellationToken.None);
             var raw = await gateway.SendRawWithResolutionAsync(request, res, CancellationToken.None);
-            return Results.Json(raw, jsonOpts);
+            return JsonContentResult(raw, jsonOpts);
         });
 
         // 可用模型池列表。
@@ -229,6 +240,109 @@ public static class GatewayHttpEndpoints
             // S2：MAP 侧 http 模式已把传输标记随 body.Context 过线，透传进作用域，
             // 供 serving 端直连客户端（若有）读取；网关日志由 LlmGateway 直接读 request.Context 标注。
             GatewayTransport: ctx?.GatewayTransport));
+    }
+
+    private static IResult JsonContentResult<T>(T value, JsonSerializerOptions jsonOpts)
+        => Results.Content(JsonSerializer.Serialize(value, jsonOpts), "application/json");
+
+    private static async Task<RehydrateResult> RehydrateMultipartFileRefsAsync(
+        GatewayRawRequest request,
+        IAssetStorage? storage,
+        CancellationToken ct)
+    {
+        if (!request.IsMultipart
+            || request.MultipartFileRefs is not { Count: > 0 }
+            || request.MultipartFiles is { Count: > 0 })
+        {
+            return RehydrateResult.Ok(request);
+        }
+
+        if (storage == null)
+        {
+            return RehydrateResult.Fail(
+                "MULTIPART_STORAGE_UNAVAILABLE",
+                "serving 未注册 IAssetStorage，无法按 MultipartFileRefs rehydrate 文件。");
+        }
+
+        var files = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>(StringComparer.Ordinal);
+        foreach (var (fieldName, fileRef) in request.MultipartFileRefs)
+        {
+            if (string.IsNullOrWhiteSpace(fileRef.RefKey))
+            {
+                return RehydrateResult.Fail("MULTIPART_REF_INVALID", $"multipart 字段 {fieldName} 缺少 RefKey。", 400);
+            }
+
+            var bytes = await storage.TryDownloadBytesAsync(fileRef.RefKey, ct);
+            if (bytes == null)
+            {
+                return RehydrateResult.Fail("MULTIPART_REF_NOT_FOUND", $"multipart 字段 {fieldName} 引用的对象不存在。", 404);
+            }
+
+            if (fileRef.SizeBytes > 0 && bytes.LongLength != fileRef.SizeBytes)
+            {
+                return RehydrateResult.Fail(
+                    "MULTIPART_REF_SIZE_MISMATCH",
+                    $"multipart 字段 {fieldName} 文件大小不一致：ref={fileRef.SizeBytes}, actual={bytes.LongLength}。",
+                    400);
+            }
+
+            var actualSha = Sha256Hex(bytes);
+            if (!string.IsNullOrWhiteSpace(fileRef.Sha256)
+                && !string.Equals(actualSha, fileRef.Sha256, StringComparison.OrdinalIgnoreCase))
+            {
+                return RehydrateResult.Fail(
+                    "MULTIPART_REF_HASH_MISMATCH",
+                    $"multipart 字段 {fieldName} 文件 hash 不一致。",
+                    400);
+            }
+
+            var fileName = string.IsNullOrWhiteSpace(fileRef.FileName)
+                ? $"{fieldName}.bin"
+                : Path.GetFileName(fileRef.FileName);
+            var mime = string.IsNullOrWhiteSpace(fileRef.MimeType)
+                ? "application/octet-stream"
+                : fileRef.MimeType;
+            files[fieldName] = (fileName, bytes, mime);
+        }
+
+        var hydrated = new GatewayRawRequest
+        {
+            AppCallerCode = request.AppCallerCode,
+            ModelType = request.ModelType,
+            EndpointPath = request.EndpointPath,
+            ExpectedModel = request.ExpectedModel,
+            PinnedPlatformId = request.PinnedPlatformId,
+            PinnedModelId = request.PinnedModelId,
+            RequestBody = request.RequestBody,
+            IsMultipart = request.IsMultipart,
+            MultipartFields = request.MultipartFields,
+            MultipartFiles = files,
+            MultipartFileRefs = request.MultipartFileRefs,
+            HttpMethod = request.HttpMethod,
+            ExtraHeaders = request.ExtraHeaders,
+            TimeoutSeconds = request.TimeoutSeconds,
+            ExpectBinaryResponse = request.ExpectBinaryResponse,
+            Context = request.Context,
+        };
+
+        return RehydrateResult.Ok(hydrated);
+    }
+
+    private static string Sha256Hex(byte[] bytes)
+    {
+        using var sha = SHA256.Create();
+        return Convert.ToHexString(sha.ComputeHash(bytes)).ToLowerInvariant();
+    }
+
+    private sealed record RehydrateResult(
+        bool Success,
+        GatewayRawRequest? Request,
+        GatewayRawResponse? Error)
+    {
+        public static RehydrateResult Ok(GatewayRawRequest request) => new(true, request, null);
+
+        public static RehydrateResult Fail(string code, string message, int statusCode = 500)
+            => new(false, null, GatewayRawResponse.Fail(code, message, statusCode));
     }
 }
 
