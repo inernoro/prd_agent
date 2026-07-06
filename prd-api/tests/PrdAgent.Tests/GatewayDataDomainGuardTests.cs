@@ -497,6 +497,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("rollback-inproc", workflow);
         Assert.Contains("execute:", workflow);
         Assert.Contains("default: false", workflow);
+        Assert.Contains("commit:\n        description: \"40-char release commit. Required for every non-rollback-inproc stage.\"\n        required: false", workflow);
         Assert.Contains("runner_labels_json", workflow);
         Assert.Contains("[\\\"self-hosted\\\",\\\"prd-agent-prod\\\"]", workflow);
         Assert.Contains("environment: production", workflow);
@@ -507,6 +508,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("PRD_AGENT_PROD_GITHUB_TOKEN", workflow);
         Assert.Contains("logs:read access", workflow);
         Assert.Contains("fetch-depth: 0", workflow);
+        Assert.Contains("[ \"$stage\" != \"rollback-inproc\" ] && [ \"$stage\" != \"rollback-rehearsal\" ] && [ -z \"$map_base\" ]", workflow);
+        Assert.Contains("[ \"$stage\" != \"rollback-inproc\" ] && [ \"$stage\" != \"rollback-rehearsal\" ] && [ -z \"$(printf '%s' \"${PRD_AGENT_API_KEY:-}\" | xargs)\" ]", workflow);
         Assert.Contains("scripts/llmgw-prod-stage.sh", workflow);
         Assert.Contains("--stage \"$stage\"", workflow);
         Assert.Contains("--commit \"$commit\"", workflow);

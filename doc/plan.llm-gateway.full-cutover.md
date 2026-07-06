@@ -140,11 +140,12 @@ raw 入口样本达标，并且每格 shadow 样本覆盖至少 24 小时。
 `completion` 模式还会把 rollout ledger 终态纳入检查，防止没有 `http-full` 成功台账时宣称完成。
 `.github/workflows/llmgw-prod-stage.yml` 是正式阶段执行入口，默认跑在 `["self-hosted","prd-agent-prod"]`
 生产 runner 且绑定 GitHub `production` environment；默认 `execute=false` 只做 dry-run，只有显式打开
-`execute=true` 才会调用 `scripts/llmgw-prod-stage.sh --execute`。workflow 复用同一组生产 vars/secrets，
+`execute=true` 才会调用 `scripts/llmgw-prod-stage.sh --execute`。真正发布阶段复用同一组生产 vars/secrets，
 并把 `.llmgw-release-evidence/` 上传为 `llmgw-prod-stage-<runId>` artifact；执行成功后还会对当前阶段
 调用 `scripts/llmgw-rollout-ledger.py audit --require-target-success` 生成 `stage-audit.json/md`。这样每个
 shadow/canary/http/rollback 阶段都留下可下载、可复核、无密钥的 release-gate、serving-probe、gw-smoke、
-stage report 与 rollout ledger 证据包，避免证据只存在某台生产机器本地。
+stage report 与 rollout ledger 证据包，避免证据只存在某台生产机器本地。`rollback-inproc` 不要求 commit、
+MAP logs key 或 gateway key，确保紧急回滚只依赖生产 runner 与本地 docker/compose。
 正式发布如果先跑 `fast.sh --commit <sha>` 预热镜像，脚本会写入
 `${PRD_AGENT_RELEASE_INTENT_FILE:-.prd-agent-release-intent.env}`，记录 api/llmgw/llmgw-serve/llmgw-web
 四个镜像的同一 release ref；随后 `exec_dep.sh --commit <sha>` 会读取该 intent 并拒绝不同 commit/tag/repo 的部署。

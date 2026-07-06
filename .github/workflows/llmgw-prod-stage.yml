@@ -20,7 +20,7 @@ on:
           - rollback-inproc
       commit:
         description: "40-char release commit. Required for every non-rollback-inproc stage."
-        required: true
+        required: false
         default: ""
       execute:
         description: "Actually execute fast.sh/exec_dep.sh or rollback. Leave false for dry-run."
@@ -125,7 +125,7 @@ jobs:
             echo "ERROR: non-rollback stages require a full 40-char commit." >&2
             exit 1
           fi
-          if [ -z "$map_base" ]; then
+          if [ "$stage" != "rollback-inproc" ] && [ "$stage" != "rollback-rehearsal" ] && [ -z "$map_base" ]; then
             echo "ERROR: missing MAP base URL. Set vars.PRD_AGENT_PROD_BASE or workflow input map_base." >&2
             exit 1
           fi
@@ -133,7 +133,7 @@ jobs:
             echo "ERROR: missing gateway base URL. Set vars.LLMGW_PROD_GATE_BASE or workflow input gw_base." >&2
             exit 1
           fi
-          if [ -z "$(printf '%s' "${PRD_AGENT_API_KEY:-}" | xargs)" ]; then
+          if [ "$stage" != "rollback-inproc" ] && [ "$stage" != "rollback-rehearsal" ] && [ -z "$(printf '%s' "${PRD_AGENT_API_KEY:-}" | xargs)" ]; then
             echo "ERROR: missing MAP API key. Set secrets.PRD_AGENT_PROD_API_KEY with logs:read access." >&2
             exit 1
           fi
