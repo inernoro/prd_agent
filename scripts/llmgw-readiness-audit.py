@@ -337,6 +337,8 @@ def _static_checks() -> list[dict]:
             "LLMGW_STAGE_RUN_UPSTREAM_READINESS",
             "run_upstream_readiness_evidence",
             "scripts/llmgw-upstream-readiness.py",
+            "LLMGW_STAGE_AUTO_RESTORE_SHADOW_ON_FAILURE",
+            "scripts/llmgw-restore-shadow-safe.sh",
             "run_prod_preflight",
             "scripts/llmgw-prod-preflight.py --mode start",
             "--prod-preflight-json \"$prod_preflight_json\"",
@@ -573,6 +575,30 @@ def _static_checks() -> list[dict]:
     destructive = any(item in rollback for item in ["down -v", "docker volume rm", "mongorestore", "db.dropDatabase", "git checkout"])
     checks.append(_check("rollback_script_is_safe_and_executable", ok and executable and not destructive, f"{detail}; executable={executable}; destructive={destructive}"))
 
+    restore_path = ROOT / "scripts/llmgw-restore-shadow-safe.sh"
+    restore = restore_path.read_text(encoding="utf-8") if restore_path.exists() else ""
+    ok, detail = _contains_all(
+        restore,
+        [
+            "export LLMGW_MODE=shadow",
+            "export LLMGW_HTTP_APP_CALLER_ALLOWLIST=",
+            "export LLMGW_SHADOW_FULL_SAMPLE_PERCENT=\"$sample_percent\"",
+            "LLMGW_RESTORE_DRY_RUN",
+            "LLMGW_RESTORE_SHADOW_FULL_SAMPLE_PERCENT",
+            "LLM Gateway restore dry-run",
+            "up -d --no-deps --force-recreate",
+            "database: unchanged",
+            "images: unchanged",
+        ],
+    )
+    restore_executable = bool(restore_path.exists() and (restore_path.stat().st_mode & stat.S_IXUSR))
+    restore_destructive = any(item in restore for item in ["down -v", "docker volume rm", "mongorestore", "db.dropDatabase", "git checkout"])
+    checks.append(_check(
+        "restore_shadow_script_is_safe_and_executable",
+        ok and restore_executable and not restore_destructive,
+        f"{detail}; executable={restore_executable}; destructive={restore_destructive}",
+    ))
+
     direct = _read("prd-api/tests/PrdAgent.Tests/GatewayDirectClientRatchetTests.cs")
     direct_empty = _dictionary_block_is_empty(direct, "Baseline")
     manual_empty = _dictionary_block_is_empty(direct, "ManualUpstreamHttpBaseline")
@@ -689,6 +715,40 @@ def _rollback_dry_run() -> dict:
             and "API would restart with LLMGW_MODE=inproc" in stdout
         )
         return {"name": "rollback_dry_run", "ok": ok, "detail": stdout + captured, "command": result}
+
+
+def _restore_shadow_dry_run() -> dict:
+    with tempfile.TemporaryDirectory(prefix="llmgw-restore-audit-") as tmp:
+        tmp_path = Path(tmp)
+        fake_compose = tmp_path / "docker-compose"
+        out_path = tmp_path / "compose.out"
+        fake_compose.write_text(
+            "#!/usr/bin/env sh\n"
+            "printf 'ARGS=%s\\n' \"$*\" > \"$FAKE_RESTORE_OUT\"\n"
+            "printf 'LLMGW_MODE=%s\\n' \"$LLMGW_MODE\" >> \"$FAKE_RESTORE_OUT\"\n"
+            "printf 'ALLOWLIST=%s\\n' \"$LLMGW_HTTP_APP_CALLER_ALLOWLIST\" >> \"$FAKE_RESTORE_OUT\"\n"
+            "printf 'SHADOW=%s\\n' \"$LLMGW_SHADOW_FULL_SAMPLE_PERCENT\" >> \"$FAKE_RESTORE_OUT\"\n",
+            encoding="utf-8",
+        )
+        fake_compose.chmod(0o755)
+        env = os.environ.copy()
+        env["PATH"] = f"{tmp}:{env.get('PATH', '')}"
+        env["FAKE_RESTORE_OUT"] = str(out_path)
+        env["LLMGW_RESTORE_COMPOSE_FILE"] = str(ROOT / "docker-compose.yml")
+        env["LLMGW_RESTORE_DRY_RUN"] = "1"
+        env["LLMGW_RESTORE_SHADOW_FULL_SAMPLE_PERCENT"] = "1"
+        result = _run(["scripts/llmgw-restore-shadow-safe.sh"], env=env, timeout=60)
+        captured = out_path.read_text(encoding="utf-8") if out_path.exists() else ""
+        stdout = str(result.get("stdout") or "")
+        ok = (
+            result["ok"]
+            and not captured
+            and "dryRun: 1" in stdout
+            and "LLM Gateway restore dry-run" in stdout
+            and "up -d --no-deps --force-recreate api" in stdout
+            and "API would restart with LLMGW_MODE=shadow and sample=1" in stdout
+        )
+        return {"name": "restore_shadow_dry_run", "ok": ok, "detail": stdout + captured, "command": result}
 
 
 def _dotnet_checks() -> list[dict]:
@@ -1088,6 +1148,7 @@ def main() -> int:
 
     checks = _static_checks()
     checks.append(_rollback_dry_run())
+    checks.append(_restore_shadow_dry_run())
     if args.run_dotnet:
         checks.extend(_dotnet_checks())
     if args.run_smoke:

@@ -31,6 +31,7 @@ Required environment for deploy stages:
   LLMGW_STAGE_MAP_BASE          MAP base URL for shadow seed, for example https://host
   LLMGW_STAGE_SHADOW_SEED_FLAGS Extra llmgw-map-shadow-seed.py flags, for example --include-video-direct
   LLMGW_STAGE_RUN_UPSTREAM_READINESS=1 enables /gw/v1/resolve upstream readiness evidence
+  LLMGW_STAGE_AUTO_RESTORE_SHADOW_ON_FAILURE=1 restores shadow/low-sample after failed high-sample shadow-start (default)
 
 Options:
   --execute                   Actually run fast.sh/exec_dep.sh or rollback
@@ -638,6 +639,21 @@ record_failed_stage_on_exit() {
   echo "LLM Gateway production stage failed; appending failed rollout ledger entry." >&2
   if [ "$stage" = "shadow-start" ] && [ "${shadow_percent:-0}" != "0" ] && [ "${shadow_percent:-0}" != "1" ]; then
     echo "WARN: shadow-start failed while ShadowFullSamplePercent=$shadow_percent. Restore a low sampling value before leaving production unattended." >&2
+    if [ "${LLMGW_STAGE_AUTO_RESTORE_SHADOW_ON_FAILURE:-1}" = "1" ]; then
+      if [ -f "scripts/llmgw-restore-shadow-safe.sh" ]; then
+        echo "LLM Gateway production stage failed; restoring conservative shadow sampling." >&2
+        if LLMGW_RESTORE_SHADOW_FULL_SAMPLE_PERCENT="${LLMGW_STAGE_RESTORE_SHADOW_FULL_SAMPLE_PERCENT:-1}" \
+          scripts/llmgw-restore-shadow-safe.sh >/dev/null 2>&1; then
+          echo "LLM Gateway production stage: conservative shadow sampling restored." >&2
+        else
+          echo "WARN: failed to restore conservative shadow sampling automatically; run scripts/llmgw-restore-shadow-safe.sh manually." >&2
+        fi
+      else
+        echo "WARN: missing scripts/llmgw-restore-shadow-safe.sh; cannot restore conservative shadow sampling automatically." >&2
+      fi
+    else
+      echo "WARN: automatic shadow sampling restore disabled by LLMGW_STAGE_AUTO_RESTORE_SHADOW_ON_FAILURE." >&2
+    fi
   fi
   if append_ledger_entry failed >/dev/null 2>&1; then
     rollout_ledger_status="failed"

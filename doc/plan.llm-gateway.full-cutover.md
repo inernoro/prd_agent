@@ -179,7 +179,9 @@ scripts/llmgw-prod-stage.sh --stage shadow-start --commit <40位SHA> --execute
 阶段脚本会以非零退出并追加 failed 台账，不能把“部署成功”误记为“证据成功”。默认不开启 seed 时，`shadow-start`
 仍只负责进入受控 shadow 采样窗口，后续由真实流量或人工 seed 补样本。若为了补证据临时把
 `--sample-percent` 提到高值，seed 失败后必须先恢复低采样再离开生产；阶段脚本会在高采样失败时输出告警，
-但不会自动替 operator 修改生产配置。
+并默认调用 `scripts/llmgw-restore-shadow-safe.sh` 将 MAP API 恢复为 `Mode=shadow`、allowlist 空、
+`ShadowFullSamplePercent=1`。该恢复脚本只重建 API/gateway 服务，不回滚镜像、不改数据库；确需人工接管时可设置
+`LLMGW_STAGE_AUTO_RESTORE_SHADOW_ON_FAILURE=0`，但必须随后手动执行恢复脚本。
 另有低成本前置 gate：`scripts/llmgw-upstream-readiness.py` 会调用 `/gw/v1/resolve` 检查
 `video-agent.videogen::video-gen`、`document-store.subtitle::asr`、`transcript-agent.transcribe::asr`
 是否能解析到非 legacy 的可用模型、启用平台、协议和已解密 API key。`canary-video-asr` 与 `http-full`
@@ -258,6 +260,9 @@ stage/serving-probe/gw-smoke 证据；canary/http 阶段还必须读到 verdict=
 D 层 smoke 与阶段观察窗口都满足后，台账才允许进入下一阶段。
 `rollback-rehearsal` 只用 `LLMGW_ROLLBACK_DRY_RUN=1` 演练回滚脚本，不重启 API；任何 canary/http 阶段都必须
 先在同一 commit 的台账里看到 `rollback-rehearsal success`，防止没有回滚路径演练就进入灰度或全量。
+`scripts/llmgw-restore-shadow-safe.sh` 是证据期失败后的低风险恢复脚本：保留 shadow 观测，但清空 allowlist 并把
+完整采样恢复到低值，适合 `shadow-start --sample-percent 100` seed 失败后的收尾；真正 http/canary 回滚仍使用
+`scripts/llmgw-rollback-inproc.sh`。
 需要回答“当前 commit 是否已满足某个发布阶段”时，不人工翻 JSONL；统一跑：
 `python3 scripts/llmgw-rollout-ledger.py audit --ledger .llmgw-release-evidence/rollout-ledger.jsonl --commit <sha> --target-stage http-full --require-target-success`。
 该审计会检查同一 commit 的 shadow、rollback rehearsal、各 canary 与 http-full 成功记录，重新读取每个阶段的
