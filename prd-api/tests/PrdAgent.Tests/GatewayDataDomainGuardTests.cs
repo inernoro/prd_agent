@@ -147,6 +147,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("open-platform-agent.proxy::chat", script);
         Assert.Contains("prd-agent-web.model-lab.run::chat", script);
         Assert.Contains("prd-agent.arena.battle::chat", script);
+        Assert.Contains("visual-agent.image-gen.generate::generation", script);
         Assert.Contains("visual-agent.image.text2img::generation", script);
         Assert.Contains("visual-agent.image.img2img::generation", script);
         Assert.Contains("visual-agent.image.vision::generation", script);
@@ -169,6 +170,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_GATE_FULL_HTTP_APP_KINDS", script);
         Assert.Contains("required_app_kinds_raw=\"${LLMGW_GATE_REQUIRED_APP_KINDS:-}\"", script);
         Assert.Contains("full_http_app_kind_min=\"${LLMGW_GATE_FULL_HTTP_APP_KIND_MIN:-${LLMGW_GATE_FULL_HTTP_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}}\"", script);
+        Assert.Contains("visual-agent.image-gen.generate::generation:raw:", script);
         Assert.Contains("visual-agent.image.text2img::generation:raw:", script);
         Assert.Contains("visual-agent.image.img2img::generation:raw:", script);
         Assert.Contains("visual-agent.image.vision::generation:raw:", script);
@@ -341,7 +343,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("mode=\"shadow\"", script);
         Assert.Contains("mode=\"http\"", script);
         Assert.Contains("report-agent.generate::chat,prd-agent-desktop.chat.sendmessage::chat,open-platform-agent.proxy::chat", script);
-        Assert.Contains("visual-agent.image.text2img::generation,visual-agent.image.img2img::generation", script);
+        Assert.Contains("visual-agent.image-gen.generate::generation,visual-agent.image.text2img::generation,visual-agent.image.img2img::generation", script);
         Assert.Contains("video-agent.videogen::video-gen,document-store.subtitle::asr,transcript-agent.transcribe::asr", script);
         Assert.Contains("export PRD_AGENT_REQUIRE_FAST_INTENT=\"${PRD_AGENT_REQUIRE_FAST_INTENT:-1}\"", script);
         Assert.Contains("export LLMGW_PROD_STAGE_ACTIVE=1", script);

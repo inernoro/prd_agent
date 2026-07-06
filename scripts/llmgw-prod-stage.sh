@@ -232,7 +232,7 @@ case "$stage" in
   canary-image)
     mode="shadow"
     canary_stage="image"
-    allowlist="visual-agent.image.text2img::generation,visual-agent.image.img2img::generation"
+    allowlist="visual-agent.image-gen.generate::generation,visual-agent.image.text2img::generation,visual-agent.image.img2img::generation"
     shadow_percent="$sample_percent"
     ;;
   canary-video-asr)
