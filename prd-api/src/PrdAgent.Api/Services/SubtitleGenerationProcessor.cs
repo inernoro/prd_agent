@@ -195,11 +195,14 @@ public class SubtitleGenerationProcessor
             switch (resolution.ExchangeTransformerType)
             {
                 case "doubao-asr-stream":
-                    throw new SubtitleAsrException(
-                        "ASR 模型命中了 doubao-asr-stream，但 MAP 生产路径已禁止在 API 进程内直连豆包 WebSocket。"
-                        + "请把该 AppCallerCode 绑定到 doubao-asr HTTP Exchange 或 OpenAI 兼容 Whisper ASR；"
-                        + "WebSocket 流式 ASR 只有迁入 llmgw-serve 后才能重新启用。",
-                        BuildResolverDiagnostic(resolution, "MAP 禁止 WebSocket ASR 直连"));
+                    // WebSocket 协议由 LlmGateway/llmgw-serve 执行；本处理器仍只提交 GatewayRawRequest。
+                    return await TranscribeViaGatewayAsync(run, bytes, resolution.ToGatewayResolution(),
+                        new Dictionary<string, object>
+                        {
+                            ["model"] = resolution.ActualModel ?? "doubao-asr-stream",
+                            ["response_format"] = "verbose_json",
+                            ["timestamp_granularities[]"] = "segment",
+                        });
 
                 case "doubao-asr":
                     // doubao-asr 异步模式 ≠ Whisper multipart：DoubaoAsrTransformer.TransformRequest

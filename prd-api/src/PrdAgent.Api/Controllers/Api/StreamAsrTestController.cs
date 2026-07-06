@@ -31,7 +31,7 @@ public class StreamAsrTestController : ControllerBase
     {
         return BadRequest(ApiResponse<object>.Fail(
             "LLMGW_ASR_STREAM_DIRECT_DISABLED",
-            "WebSocket 流式 ASR 测试已禁用：MAP 不再允许在 API 进程内直连豆包上游。请改用 doubao-asr HTTP Exchange/Whisper ASR，或等该协议迁入 llmgw-serve。"));
+            "WebSocket 流式 ASR 直连测试已禁用：MAP 不再允许在 API 进程内直连豆包上游。该协议已迁入 LLM Gateway raw 路径，请通过业务 ASR 流程或 /gw/v1/raw 验证。"));
     }
 
     /// <summary>
@@ -66,7 +66,7 @@ public class StreamAsrTestController : ControllerBase
 
         await SendEvent("error", new
         {
-            error = "WebSocket 流式 ASR 测试已禁用：MAP 不再允许在 API 进程内直连豆包上游。请改用 doubao-asr HTTP Exchange/Whisper ASR，或等该协议迁入 llmgw-serve。",
+            error = "WebSocket 流式 ASR 直连测试已禁用：MAP 不再允许在 API 进程内直连豆包上游。该协议已迁入 LLM Gateway raw 路径，请通过业务 ASR 流程或 /gw/v1/raw 验证。",
             code = "LLMGW_ASR_STREAM_DIRECT_DISABLED"
         });
     }

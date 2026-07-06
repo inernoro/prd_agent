@@ -6408,8 +6408,8 @@ function safeChart(canvasId, config) {
         var urlValidator = sp.GetRequiredService<ISafeOutboundUrlValidator>();
 
         // 解析 ASR 模型（fallback 链：先专属 → 再 v2d.transcribe → 再 document-store.subtitle）。
-        // 只选择能经 ILlmGateway/llmgw-serve 执行的 ASR；doubao-asr-stream 是 WebSocket 协议，
-        // 在迁入 serving 前不得由 MAP 进程直连上游。
+        // 只选择能经 ILlmGateway/llmgw-serve 执行的 ASR；doubao-asr-stream 的 WebSocket 协议
+        // 已迁入网关 raw 发送路径，不再由 MAP 进程直连上游服务类。
         var asrCallerChain = new[]
         {
             AppCallerRegistry.VideoAgent.VideoToText.Asr,
@@ -6429,7 +6429,7 @@ function safeChart(canvasId, config) {
                 firstSuccessfulResolution = r;
                 firstSuccessfulCaller = caller;
             }
-            if (r.Success && !(r.IsExchange && r.ExchangeTransformerType == "doubao-asr-stream"))
+            if (r.Success)
             {
                 resolution = r;
                 resolvedCaller = caller;
@@ -6439,14 +6439,6 @@ function safeChart(canvasId, config) {
         }
         if (resolution == null && firstSuccessfulResolution != null)
         {
-            if (firstSuccessfulResolution.IsExchange && firstSuccessfulResolution.ExchangeTransformerType == "doubao-asr-stream")
-            {
-                throw new InvalidOperationException(
-                    "ASR 模型只命中了 doubao-asr-stream，但 MAP 生产路径已禁止在 API 进程内直连豆包 WebSocket。"
-                    + "请把 video-agent.video-to-text::asr / video-agent.v2d.transcribe::asr / document-store.subtitle::asr "
-                    + "绑定到 doubao-asr HTTP Exchange 或 OpenAI 兼容 Whisper ASR。");
-            }
-
             resolution = firstSuccessfulResolution;
             resolvedCaller = firstSuccessfulCaller;
         }

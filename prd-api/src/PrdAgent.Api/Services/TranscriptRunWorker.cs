@@ -168,10 +168,9 @@ public class TranscriptRunWorker : BackgroundService
         {
             if (resolution.ExchangeTransformerType == "doubao-asr-stream")
             {
-                throw new InvalidOperationException(
-                    "ASR 模型命中了 doubao-asr-stream，但 MAP 生产路径已禁止在 API 进程内直连豆包 WebSocket。"
-                    + "请把该 AppCallerCode 绑定到 doubao-asr HTTP Exchange 或 OpenAI 兼容 Whisper ASR；"
-                    + "WebSocket 流式 ASR 只有迁入 llmgw-serve 后才能重新启用。");
+                // WebSocket 协议已迁入 LlmGateway raw 发送路径；MAP 仍只经 ILlmGateway 调用。
+                _logger.LogInformation("[transcript-agent] 使用豆包 WebSocket ASR 网关路径: Exchange={ExchangeName}", resolution.ExchangeName);
+                await ProcessAsrViaGatewayAsync(db, gateway, run, item, resolution.ToGatewayResolution());
             }
             else if (resolution.ExchangeTransformerType == "doubao-asr")
             {

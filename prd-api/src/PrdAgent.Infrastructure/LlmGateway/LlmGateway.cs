@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LLM;
@@ -23,6 +24,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private readonly ILlmRequestLogWriter? _logWriter;
     private readonly ILLMRequestContextAccessor? _contextAccessor;
     private readonly ModelPool.IPoolFailoverNotifier? _failoverNotifier;
+    private readonly IDoubaoStreamAsrExecutor _doubaoStreamAsr;
     private readonly Dictionary<string, IGatewayAdapter> _adapters = new(StringComparer.OrdinalIgnoreCase);
     private readonly ExchangeTransformerRegistry _transformerRegistry = new();
     private const string InvalidAppCallerErrorCode = "APP_CALLER_INVALID";
@@ -33,7 +35,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         ILogger<LlmGateway> logger,
         ILlmRequestLogWriter? logWriter = null,
         ILLMRequestContextAccessor? contextAccessor = null,
-        ModelPool.IPoolFailoverNotifier? failoverNotifier = null)
+        ModelPool.IPoolFailoverNotifier? failoverNotifier = null,
+        IDoubaoStreamAsrExecutor? doubaoStreamAsr = null)
     {
         _modelResolver = modelResolver;
         _httpClientFactory = httpClientFactory;
@@ -41,6 +44,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         _logWriter = logWriter;
         _contextAccessor = contextAccessor;
         _failoverNotifier = failoverNotifier;
+        _doubaoStreamAsr = doubaoStreamAsr
+            ?? new DoubaoStreamAsrService(NullLogger<DoubaoStreamAsrService>.Instance);
 
         // 注册适配器
         RegisterAdapter(new OpenAIGatewayAdapter());
@@ -669,6 +674,17 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         {
             var gatewayResolution = resolution.ToGatewayResolution();
 
+            if (resolution.IsExchange
+                && string.Equals(resolution.ExchangeTransformerType, "doubao-asr-stream", StringComparison.OrdinalIgnoreCase))
+            {
+                return await ExecuteDoubaoStreamAsrWithResolutionAsync(
+                    request,
+                    resolution,
+                    gatewayResolution,
+                    startedAt,
+                    ct);
+            }
+
             // 2. 选择适配器并构建 endpoint
             var isExchange = resolution.IsExchange;
             var adapter = isExchange ? null : GetAdapterForResolution(resolution);
@@ -1104,6 +1120,310 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             }
             return GatewayRawResponse.Fail("GATEWAY_ERROR", msg, code);
         }
+    }
+
+    private async Task<GatewayRawResponse> ExecuteDoubaoStreamAsrWithResolutionAsync(
+        GatewayRawRequest request,
+        ModelResolutionResult resolution,
+        GatewayModelResolution gatewayResolution,
+        DateTime startedAt,
+        CancellationToken ct)
+    {
+        var wsUrl = ResolveDoubaoStreamAsrUrl(resolution);
+        var requestBodyForLog = BuildDoubaoStreamAsrRequestLogBody(request);
+        var logId = await StartRawLogAsync(request, gatewayResolution, wsUrl, requestBodyForLog, startedAt, ct);
+
+        try
+        {
+            if (!TryGetAsrAudioBytes(request, out var audioBytes, out var audioName, out var audioError))
+            {
+                var duration = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
+                await FinishRawLogAsync(logId, 400, audioError, duration, ct);
+                return new GatewayRawResponse
+                {
+                    Success = false,
+                    StatusCode = 400,
+                    Content = audioError,
+                    ErrorCode = "ASR_AUDIO_MISSING",
+                    ErrorMessage = audioError,
+                    Resolution = gatewayResolution,
+                    DurationMs = duration,
+                    LogId = logId
+                };
+            }
+
+            var (appKey, accessKey) = SplitDoubaoApiKey(resolution.ApiKey, resolution.ExchangeTransformerConfig);
+            if (string.IsNullOrWhiteSpace(accessKey))
+            {
+                var duration = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
+                var message = "doubao-asr-stream 缺少 Access Key，无法建立 WebSocket ASR 连接。";
+                await FinishRawLogAsync(logId, 401, message, duration, ct);
+                return new GatewayRawResponse
+                {
+                    Success = false,
+                    StatusCode = 401,
+                    Content = message,
+                    ErrorCode = "ASR_KEY_MISSING",
+                    ErrorMessage = message,
+                    Resolution = gatewayResolution,
+                    DurationMs = duration,
+                    LogId = logId
+                };
+            }
+
+            _logger.LogInformation(
+                "[LlmGateway.DoubaoStreamAsr] 经网关执行 WebSocket ASR appCaller={AppCallerCode} model={Model} audio={AudioName} bytes={Bytes}",
+                request.AppCallerCode,
+                resolution.ActualModel,
+                audioName,
+                audioBytes.Length);
+
+            var streamResult = await _doubaoStreamAsr.TranscribeAsync(
+                wsUrl,
+                appKey,
+                accessKey,
+                audioBytes,
+                resolution.ExchangeTransformerConfig,
+                ct);
+
+            var endedAt = DateTime.UtcNow;
+            var durationMs = (long)(endedAt - startedAt).TotalMilliseconds;
+            var statusCode = streamResult.Success ? 200 : 502;
+            var content = BuildDoubaoStreamAsrVerboseJson(streamResult);
+
+            if (!string.IsNullOrWhiteSpace(resolution.ModelGroupId))
+            {
+                if (streamResult.Success)
+                    await _modelResolver.RecordSuccessAsync(resolution, ct);
+                else
+                    await _modelResolver.RecordFailureAsync(resolution, ct);
+            }
+
+            await FinishRawLogAsync(logId, statusCode, content, durationMs, ct);
+
+            var headers = new Dictionary<string, string>
+            {
+                ["x-gateway-exchange-protocol"] = "websocket",
+                ["x-gateway-transformer"] = "doubao-asr-stream",
+            };
+
+            if (!streamResult.Success)
+            {
+                var message = streamResult.Error
+                    ?? streamResult.Diagnostic.FriendlyError
+                    ?? "豆包 WebSocket ASR 调用失败";
+                return new GatewayRawResponse
+                {
+                    Success = false,
+                    StatusCode = statusCode,
+                    Content = content,
+                    ContentType = "application/json",
+                    ResponseHeaders = headers,
+                    ErrorCode = "DOUBAO_STREAM_ASR_FAILED",
+                    ErrorMessage = message,
+                    Resolution = gatewayResolution,
+                    DurationMs = durationMs,
+                    LogId = logId
+                };
+            }
+
+            return new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Content = content,
+                ContentType = "application/json",
+                ResponseHeaders = headers,
+                Resolution = gatewayResolution,
+                DurationMs = durationMs,
+                LogId = logId
+            };
+        }
+        catch (Exception ex)
+        {
+            var (msg, code) = ClassifyTransportException(ex, ct.IsCancellationRequested);
+            _logger.LogError(ex, "[LlmGateway.DoubaoStreamAsr] 请求失败 status={Code}", code);
+            if (logId != null)
+                _logWriter?.MarkError(logId, msg, code);
+            return GatewayRawResponse.Fail("GATEWAY_ERROR", msg, code);
+        }
+    }
+
+    private static string ResolveDoubaoStreamAsrUrl(ModelResolutionResult resolution)
+    {
+        if (resolution.ExchangeTransformerConfig != null
+            && resolution.ExchangeTransformerConfig.TryGetValue("wsUrl", out var configured)
+            && !string.IsNullOrWhiteSpace(configured?.ToString()))
+        {
+            return configured.ToString()!;
+        }
+
+        if (!string.IsNullOrWhiteSpace(resolution.ApiUrl))
+            return resolution.ApiUrl!;
+
+        return "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel";
+    }
+
+    private static (string AppKey, string AccessKey) SplitDoubaoApiKey(
+        string? apiKey,
+        Dictionary<string, object>? config)
+    {
+        var configuredAppKey = config?.GetValueOrDefault("appKey")?.ToString() ?? "";
+        var raw = apiKey ?? "";
+        if (raw.Contains('|', StringComparison.Ordinal))
+        {
+            var parts = raw.Split('|', 2);
+            return (parts[0], parts[1]);
+        }
+
+        return (configuredAppKey, raw);
+    }
+
+    private static bool TryGetAsrAudioBytes(
+        GatewayRawRequest request,
+        out byte[] audioBytes,
+        out string audioName,
+        out string error)
+    {
+        if (request.MultipartFiles is { Count: > 0 })
+        {
+            var entry = request.MultipartFiles.TryGetValue("file", out var named)
+                ? named
+                : request.MultipartFiles.Values.First();
+            audioBytes = entry.Content;
+            audioName = entry.FileName;
+            error = "";
+            return audioBytes.Length > 0;
+        }
+
+        if (request.RequestBody != null)
+        {
+            var base64 = TryGetString(request.RequestBody, "audio_data")
+                         ?? TryGetString(request.RequestBody, "audioData")
+                         ?? TryGetString(request.RequestBody, "file_data")
+                         ?? TryGetString(request.RequestBody, "fileData");
+            if (!string.IsNullOrWhiteSpace(base64))
+            {
+                try
+                {
+                    audioBytes = Convert.FromBase64String(base64);
+                    audioName = TryGetString(request.RequestBody, "file_name")
+                                ?? TryGetString(request.RequestBody, "fileName")
+                                ?? "audio.wav";
+                    error = "";
+                    return audioBytes.Length > 0;
+                }
+                catch (FormatException)
+                {
+                    audioBytes = [];
+                    audioName = "";
+                    error = "doubao-asr-stream RequestBody.audio_data 不是合法 base64。";
+                    return false;
+                }
+            }
+        }
+
+        audioBytes = [];
+        audioName = "";
+        error = "doubao-asr-stream 需要 multipart file 或 RequestBody.audio_data。";
+        return false;
+    }
+
+    private static string? TryGetString(JsonObject body, string key)
+        => body.TryGetPropertyValue(key, out var node) ? node?.GetValue<string>() : null;
+
+    private static string BuildDoubaoStreamAsrRequestLogBody(GatewayRawRequest request)
+    {
+        var fileCount = request.MultipartFiles?.Count ?? request.MultipartFileRefs?.Count ?? 0;
+        var fields = request.MultipartFields?.Keys.OrderBy(x => x).ToArray() ?? [];
+        var bodyKeys = request.RequestBody?.Select(kv => kv.Key).OrderBy(x => x).ToArray() ?? [];
+        return JsonSerializer.Serialize(new
+        {
+            protocol = "doubao-asr-stream",
+            isMultipart = request.IsMultipart,
+            fileCount,
+            fields,
+            bodyKeys,
+        });
+    }
+
+    private static string BuildDoubaoStreamAsrVerboseJson(StreamAsrResult result)
+    {
+        var segments = new JsonArray();
+        var segmentId = 0;
+        foreach (var (startSec, endSec, text) in ExtractDoubaoSegments(result))
+        {
+            segments.Add(new JsonObject
+            {
+                ["id"] = segmentId++,
+                ["seek"] = 0,
+                ["start"] = startSec,
+                ["end"] = endSec,
+                ["text"] = text,
+            });
+        }
+
+        var root = new JsonObject
+        {
+            ["text"] = result.FullText ?? "",
+            ["segments"] = segments,
+            ["language"] = "zh",
+            ["gateway"] = new JsonObject
+            {
+                ["provider"] = "doubao",
+                ["protocol"] = "websocket",
+                ["success"] = result.Success,
+                ["error"] = result.Error,
+                ["diagnostic"] = JsonSerializer.SerializeToNode(result.Diagnostic),
+            },
+        };
+
+        return root.ToJsonString();
+    }
+
+    private static IEnumerable<(double StartSec, double EndSec, string Text)> ExtractDoubaoSegments(StreamAsrResult result)
+    {
+        foreach (var response in result.Responses)
+        {
+            if (response.PayloadMsg == null) continue;
+            var payload = response.PayloadMsg.Value;
+            if (!payload.TryGetProperty("result", out var responseResult)
+                || responseResult.ValueKind != JsonValueKind.Object
+                || !responseResult.TryGetProperty("utterances", out var utterances)
+                || utterances.ValueKind != JsonValueKind.Array)
+            {
+                continue;
+            }
+
+            foreach (var utterance in utterances.EnumerateArray())
+            {
+                var text = utterance.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
+                if (string.IsNullOrWhiteSpace(text)) continue;
+                var startMs = utterance.TryGetProperty("start_time", out var st) && st.ValueKind == JsonValueKind.Number
+                    ? st.GetDouble()
+                    : 0;
+                var endMs = utterance.TryGetProperty("end_time", out var et) && et.ValueKind == JsonValueKind.Number
+                    ? et.GetDouble()
+                    : startMs;
+                yield return (startMs / 1000.0, endMs / 1000.0, text.Trim());
+            }
+        }
+
+        if (result.Segments.Count > 0)
+        {
+            var cursor = 0.0;
+            foreach (var segment in result.Segments)
+            {
+                if (string.IsNullOrWhiteSpace(segment.Text)) continue;
+                var end = cursor + Math.Max(0, segment.DurationSec);
+                yield return (cursor, end, segment.Text.Trim());
+                cursor = end;
+            }
+            yield break;
+        }
+
+        if (!string.IsNullOrWhiteSpace(result.FullText))
+            yield return (0, 0, result.FullText.Trim());
     }
 
     /// <inheritdoc />

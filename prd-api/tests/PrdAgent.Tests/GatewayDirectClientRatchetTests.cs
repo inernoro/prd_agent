@@ -177,7 +177,9 @@ public class GatewayDirectClientRatchetTests
         {
             var rel = Path.GetRelativePath(srcRoot, file).Replace('\\', '/');
             if (rel.Contains("/bin/") || rel.Contains("/obj/")) continue;
-            if (rel == "PrdAgent.Api/Services/DoubaoStreamAsrService.cs") continue;
+            if (rel == "PrdAgent.Infrastructure/LlmGateway/Asr/DoubaoStreamAsrService.cs") continue;
+            if (rel.StartsWith("PrdAgent.Infrastructure/LlmGateway/", StringComparison.Ordinal)) continue;
+            if (rel.StartsWith("PrdAgent.LlmGateway/", StringComparison.Ordinal)) continue;
 
             var content = File.ReadAllText(file);
             if (content.Contains("DoubaoStreamAsrService", StringComparison.Ordinal)
