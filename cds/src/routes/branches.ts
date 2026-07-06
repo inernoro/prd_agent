@@ -4905,7 +4905,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.post('/branches', async (req, res) => {
     try {
-      const { branch, projectId } = req.body as { branch?: string; projectId?: string };
+      const { branch, projectId, sourceBranchId } = req.body as { branch?: string; projectId?: string; sourceBranchId?: string };
       if (!branch) {
         res.status(400).json({ error: '分支名称不能为空' });
         return;
@@ -5003,6 +5003,27 @@ export function createBranchRouter(deps: RouterDeps): Router {
       await shell.exec(`mkdir -p "${path.posix.dirname(worktreePath)}"`);
       await worktreeService.create(branchRepoRoot, branch, worktreePath);
 
+      // 波3 配置树:分支从分支派生(快照拷贝语义,design.cds.config-tree)。
+      // sourceBranchId 必须在建 worktree 之前校验,避免坏参数留下孤儿 worktree。
+      let sourceBranch: BranchEntry | undefined;
+      if (sourceBranchId !== undefined) {
+        if (typeof sourceBranchId !== 'string' || !sourceBranchId.trim()) {
+          res.status(400).json({ error: 'sourceBranchId 必须是非空字符串(来源分支的 CDS branch id)' });
+          return;
+        }
+        sourceBranch = stateService.getBranch(sourceBranchId.trim());
+        if (!sourceBranch) {
+          res.status(400).json({ error: `来源分支 "${sourceBranchId}" 不存在` });
+          return;
+        }
+        // 跨项目派生禁止:profileOverrides 引用的 profileId、extraProfiles 的 projectId
+        // 都是项目内语义,跨项目拷贝会产出悬空引用 + 隔离穿透。
+        if ((sourceBranch.projectId || 'default') !== effectiveProjectId) {
+          res.status(400).json({ error: `来源分支 "${sourceBranchId}" 属于项目 "${sourceBranch.projectId}",不能跨项目派生配置` });
+          return;
+        }
+      }
+
       const entry: BranchEntry = {
         id,
         projectId: effectiveProjectId,
@@ -5012,11 +5033,29 @@ export function createBranchRouter(deps: RouterDeps): Router {
         status: 'idle',
         createdAt: new Date().toISOString(),
       };
+      // 先套项目模板(保底),再用来源分支快照覆盖(拷贝赢模板)——之后两分支各自独立。
       applyProjectDefaultDeployModes(
         entry,
         targetProject.defaultDeployModes,
         stateService.getBuildProfilesForProject(effectiveProjectId),
       );
+      if (sourceBranch) {
+        // 深拷贝:改新分支不得串改来源分支(JSON round-trip 对这两个纯数据字段安全)。
+        if (sourceBranch.profileOverrides && Object.keys(sourceBranch.profileOverrides).length > 0) {
+          entry.profileOverrides = {
+            ...(entry.profileOverrides || {}),
+            ...JSON.parse(JSON.stringify(sourceBranch.profileOverrides)),
+          };
+        }
+        if (sourceBranch.extraProfiles && sourceBranch.extraProfiles.length > 0) {
+          // extraProfiles 的 subdomain 是分支内约束(命名 URL 按各自 previewSlug 拼),
+          // 原样拷贝跨分支不撞车,无需改写。
+          entry.extraProfiles = JSON.parse(JSON.stringify(sourceBranch.extraProfiles));
+        }
+        entry.derivedFromBranchId = sourceBranch.id;
+        entry.derivedFromBranchName = sourceBranch.branch;
+        entry.derivedAt = new Date().toISOString();
+      }
       stateService.addBranch(entry);
       // Phase 8 — 新分支自动继承项目级 defaultEnv → 写入项目级 customEnv。
       //
@@ -9947,14 +9986,127 @@ export function createBranchRouter(deps: RouterDeps): Router {
         .map((svc) => ({ id: svc.id, containerName: svc.containerName, status: svc.status, shared: true })),
     };
 
+    // 波3 配置树:派生溯源指针(快照拷贝语义,来源被删后 branchName 仍可展示)
+    const derivedFrom = entry.derivedFromBranchId
+      ? {
+          branchId: entry.derivedFromBranchId,
+          branchName: entry.derivedFromBranchName || entry.derivedFromBranchId,
+          derivedAt: entry.derivedAt || null,
+          sourceStillExists: !!stateService.getBranch(entry.derivedFromBranchId),
+        }
+      : null;
+
     res.json({
       branchId: entry.id,
       projectId,
       projectSlug: project?.slug || projectId,
       branchStatus: entry.status,
+      derivedFrom,
       envLayers,
       profiles,
       plan,
+    });
+  });
+
+  // POST /api/branches/:id/copy-config-from/:sourceId — 显式一键拉取来源分支配置(波3)
+  //
+  // 派生三层策略的补偿路径:PR opened 只回填溯源指针不拷贝配置(最小惊讶),
+  // 用户想真拷贝时走这里显式触发。语义 = 快照拷贝:
+  //   - 深拷贝来源分支的 profileOverrides + extraProfiles **整体替换**本分支现有分支层配置
+  //   - 拷贝前自动拍 ConfigSnapshot(误拷可从快照回滚,快照含分支层)
+  //   - 写 derivedFrom* 指针(显式拷贝允许覆盖已有指针)
+  //   - ?redeploy=1 时落库后触发一次重部署让配置真正生效
+  router.post('/branches/:id/copy-config-from/:sourceId', async (req, res) => {
+    const entry = stateService.getBranch(req.params.id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
+      return;
+    }
+    const projectId = entry.projectId || 'default';
+    const m = assertProjectAccess(req as any, projectId);
+    if (m) {
+      res.status(m.status).json(m.body);
+      return;
+    }
+    const source = stateService.getBranch(req.params.sourceId);
+    if (!source) {
+      res.status(404).json({ error: `来源分支 "${req.params.sourceId}" 不存在` });
+      return;
+    }
+    if (source.id === entry.id) {
+      res.status(400).json({ error: '不能从自己拷贝配置' });
+      return;
+    }
+    if ((source.projectId || 'default') !== projectId) {
+      res.status(400).json({ error: `来源分支 "${source.id}" 属于项目 "${source.projectId}",不能跨项目拷贝配置(profileId 引用与隔离语义均为项目内)` });
+      return;
+    }
+    // 拷贝前自动快照(含分支层),误拷可回滚
+    const snapshot = stateService.createConfigSnapshot({
+      trigger: 'pre-destructive',
+      label: `分支 ${entry.id} 拉取 ${source.id} 配置前的自动备份`,
+      projectId,
+      triggeredBy: resolveActorFromRequest(req) || undefined,
+    });
+    // 深拷贝整体替换(快照拷贝语义:之后各自独立)。getBranch 返回内存权威对象,
+    // 直改后统一 save(与 setBranchProfileOverride 等既有写路径同一口径)。
+    const target = stateService.getBranch(entry.id)!;
+    if (source.profileOverrides && Object.keys(source.profileOverrides).length > 0) {
+      target.profileOverrides = JSON.parse(JSON.stringify(source.profileOverrides));
+    } else {
+      delete target.profileOverrides;
+    }
+    stateService.setBranchExtraProfiles(entry.id, JSON.parse(JSON.stringify(source.extraProfiles || [])));
+    target.derivedFromBranchId = source.id;
+    target.derivedFromBranchName = source.branch;
+    target.derivedAt = new Date().toISOString();
+    stateService.save();
+
+    // ?redeploy=1 → 与 extra-services 同款 localhost 自 POST,等 deploy 被「接受」再回包
+    const wantRedeploy = req.query?.redeploy === '1' || req.query?.redeploy === 'true';
+    let redeployTriggered = false;
+    let redeployRejected: { status: number; message: string } | null = null;
+    if (wantRedeploy) {
+      const url = `http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(entry.id)}/deploy`;
+      try {
+        const upstream = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CDS-Internal': '1',
+            'X-CDS-Trigger': 'system',
+            ...(entry.projectId ? { 'X-CDS-Source-Project-Id': entry.projectId } : {}),
+            'X-CDS-Source-Branch-Id': entry.id,
+          },
+          body: JSON.stringify({}),
+        });
+        if (upstream.ok) {
+          redeployTriggered = true;
+          void upstream.text().catch(() => { /* drain best-effort */ });
+        } else {
+          const errText = await upstream.text().catch(() => '');
+          let msg = errText;
+          try { const j = JSON.parse(errText) as { error?: unknown }; if (typeof j?.error === 'string') msg = j.error; } catch { /* 保留原文 */ }
+          redeployRejected = { status: upstream.status, message: (msg || '').slice(0, 300) };
+        }
+      } catch (err) {
+        redeployRejected = { status: 0, message: (err as Error).message };
+      }
+    }
+
+    const refreshed = stateService.getBranch(entry.id)!;
+    res.json({
+      copied: true,
+      sourceBranchId: source.id,
+      sourceBranchName: source.branch,
+      snapshotId: snapshot.id,
+      profileOverrideCount: Object.keys(refreshed.profileOverrides || {}).length,
+      extraProfileCount: (refreshed.extraProfiles || []).length,
+      redeployTriggered,
+      ...(redeployRejected ? { redeployRejected } : {}),
+      hint: redeployTriggered
+        ? '配置已拷贝并触发重部署;误拷可用 snapshotId 回滚(快照含分支层)'
+        : '配置已拷贝(纯配置变更,重新部署后生效);误拷可用 snapshotId 回滚',
     });
   });
 

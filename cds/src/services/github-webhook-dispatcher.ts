@@ -1044,6 +1044,23 @@ export class GitHubWebhookDispatcher {
           githubSenderLogin: event.sender?.login,
           githubSenderAvatarUrl: event.sender?.avatar_url,
         });
+        // 波3 配置树:PR base 分支是可靠的派生信号 → **仅回填溯源指针,不拷贝配置**
+        // (分支往往已按项目模板部署,静默改写 overrides 违反最小惊讶;要拷贝走显式
+        // POST /branches/:id/copy-config-from/:sourceId)。已设指针不覆盖(idempotent)。
+        const baseRef = event.pull_request.base?.ref;
+        if (baseRef && baseRef !== branchName) {
+          const baseSlug = StateServiceClass.slugify(baseRef);
+          const baseCanonicalId = project.legacyFlag ? baseSlug : `${project.slug}-${baseSlug}`;
+          const baseEntry =
+            this.deps.stateService.getBranch(baseCanonicalId) ??
+            this.deps.stateService.findBranchByProjectAndName(project.id, baseRef);
+          if (baseEntry && baseEntry.id !== branchId) {
+            this.deps.stateService.setBranchDerivedFrom(branchId, {
+              branchId: baseEntry.id,
+              branchName: baseEntry.branch,
+            });
+          }
+        }
         this.deps.stateService.save();
       }
       return {

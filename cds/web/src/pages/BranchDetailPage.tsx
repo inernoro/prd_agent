@@ -1589,7 +1589,7 @@ export function BranchDetailPage(): JSX.Element {
                 subtitle="每项配置从哪继承、被谁覆盖、部署时 CDS 会做什么"
                 contentClassName="p-5"
               >
-                <EffectiveConfigPanel branchId={state.branch.id} />
+                <EffectiveConfigPanel branchId={state.branch.id} onToast={setToast} />
               </DisclosurePanel>
 
               <DisclosurePanel

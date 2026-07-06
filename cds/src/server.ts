@@ -1031,6 +1031,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/branches\/[^/]+\/effective-env$/, '查看生效环境变量'],
     [/^GET \/branches\/[^/]+\/effective-env\/reveal$/, '查看密钥明文'],
     [/^GET \/branches\/[^/]+\/effective-config$/, '查分支生效配置'],
+    [/^POST \/branches\/[^/]+\/copy-config-from\/[^/]+$/, '拉取来源分支配置'],
     [/^GET \/branches\/[^/]+\/metrics$/, '查看分支指标'],
     [/^GET \/branches\/[^/]+\/failure-diagnosis$/, '诊断失败原因'],
     // 构建 Profile 扩展

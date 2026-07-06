@@ -2355,7 +2355,7 @@ export function BranchDetailDrawer({
                 ) : null}
 
                 {activeTab === 'config' && branchId ? (
-                  <EffectiveConfigPanel branchId={branchId} />
+                  <EffectiveConfigPanel branchId={branchId} onToast={onToast} />
                 ) : null}
 
                 {activeTab === 'settings' ? (

@@ -18,7 +18,7 @@
 |---|---|---|---|---|---|
 | 波1 最后一公里(extraProfiles UI+CLI / dbScope 开关 / 看板) | 90 | 进行中 | 无 | push 后灰度真机验证(添加 Nacos 预设 → redeploy → 分支网 → 命名 URL 可达) | vitest 180 文件绿 + pytest 149 绿 + tsc 双侧绿(2026-07-06 本地);真机证据待补 |
 | 波2 配置检查器(env 逐 key 溯源 + effective-config 端点 + 面板) | 90 | 进行中 | 无 | 灰度真机验证(部署热路径重构是合并前置门槛);验证通过后波1+2 一并收 | env-provenance.test.ts 14 例绿 + effective-config 端点 3 例绿 + container.test.ts 43 例行为等价护栏绿 + 全量 vitest 181 文件绿(2026-07-06 本地) |
-| 波3 配置树补全(分支派生快照拷贝 + 快照分支层 + design.cds.config-tree) | 0 | 未开始 | 依赖波2 溯源数据模型 | BranchEntry.derivedFrom* 字段 + POST sourceBranchId + PR opened 指针回填 | — |
+| 波3 配置树补全(分支派生快照拷贝 + 快照分支层 + design.cds.config-tree) | 90 | 进行中 | 无 | 灰度真机验证(与波1/2 一并);建分支对话框的来源分支选择器待补 UI(API/cdscli 已支持) | 派生拷贝/copy-config/快照分支层/PR 回填 7 例新测试绿 + 全量 vitest 绿(2026-07-06 本地);design.cds.config-tree.md 已归档 |
 | 波4 双SSOT收敛(repo compose 纯结构种子 + drift 巡检 + 还 D1 债) | 0 | 未开始(方向已定) | 等波1-3 | 见 design.cds.config-tree.md(波3产出)「波4方向」 | — |
 | 波5 无 Agent 接入(scan 逻辑进 onboarding 向导) | 0 | 未开始(方向已定) | 等波1-3 | 同上 | — |
 

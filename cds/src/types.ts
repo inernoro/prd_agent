@@ -645,6 +645,24 @@ export interface BranchEntry {
    */
   extraProfiles?: BuildProfile[];
   /**
+   * 波3 配置树:分支派生溯源(2026-07-06,快照拷贝语义)。
+   *
+   * 三层判定策略(design.cds.config-tree):
+   *   1. 手动创建(POST /branches 带 sourceBranchId)= 显式选择、**真拷贝**:
+   *      深拷贝来源分支的 profileOverrides + extraProfiles(拷贝赢项目模板),之后各自独立;
+   *   2. webhook push 自动建分支 = 保持项目模板,**不猜**来源(push payload 无可靠派生信号);
+   *   3. PR opened/reopened = 仅回填指针(base 分支),**不拷贝配置**(分支往往已按模板部署,
+   *      静默改写违反最小惊讶);要拷贝走显式端点 POST /branches/:id/copy-config-from/:sourceId。
+   *
+   * 快照拷贝(用户拍板):拷贝后两分支各自独立,父分支后续改动**不会**跟随;
+   * 指针仅用于溯源展示与「一键拉取配置」入口。纯增量可选字段,旧数据零迁移。
+   */
+  derivedFromBranchId?: string;
+  /** 来源分支的 git 分支名(来源被删后仍可展示) */
+  derivedFromBranchName?: string;
+  /** 派生指针写入时间(ISO) */
+  derivedAt?: string;
+  /**
    * GitHub Checks integration — populated when the branch was
    * auto-created by a webhook push or the user linked a repo to the
    * owning project. Used to post check-run status back to GitHub
@@ -2083,6 +2101,18 @@ export interface ConfigSnapshot {
     customEnv: CustomEnvStore;
     infraServices: InfraService[];
     routingRules: RoutingRule[];
+    /**
+     * 波3 配置树:分支层配置(profileOverrides / extraProfiles / 派生指针)。
+     * 只收「有配置」的分支(控体积);旧快照无此字段 → 回滚时分支层 no-op。
+     * 回滚语义:仅恢复**仍存在**的分支(快照后新建的不动、已删的不复活)。
+     */
+    branchConfigs?: Record<string, {
+      profileOverrides?: Record<string, BuildProfileOverride>;
+      extraProfiles?: BuildProfile[];
+      derivedFromBranchId?: string;
+      derivedFromBranchName?: string;
+      derivedAt?: string;
+    }>;
   };
   /** 快照字节数（存 state.json 时粗略统计，用于 UI 展示） */
   sizeBytes?: number;

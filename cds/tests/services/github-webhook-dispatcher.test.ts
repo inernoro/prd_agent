@@ -595,6 +595,57 @@ describe('GitHubWebhookDispatcher', () => {
       expect(result.branchId).toBe('proj-feature');
       const branch = stateService.getBranch('proj-feature');
       expect(branch!.githubPrNumber).toBe(99);
+      // base 分支(main)不在 CDS 里 → 派生指针不回填(不猜)
+      expect(branch!.derivedFromBranchId).toBeUndefined();
+    });
+
+    it('backfills derivedFrom pointer from PR base when the base branch exists (波3,只回填指针不拷贝配置)', async () => {
+      stateService.addBranch({
+        id: 'proj-main',
+        projectId: 'p1',
+        branch: 'main',
+        worktreePath: '/tmp/wt-main',
+        services: {},
+        status: 'running',
+        createdAt: new Date().toISOString(),
+        profileOverrides: { web: { env: { FROM_MAIN: '1' } } },
+      });
+      const d = buildDispatcher();
+      const prEvent = {
+        action: 'opened',
+        number: 100,
+        pull_request: {
+          number: 100,
+          state: 'open',
+          head: { ref: 'feature', sha: 'abc' },
+          base: { ref: 'main' },
+          html_url: 'https://github.com/octocat/repo/pull/100',
+          title: 'Feature',
+        },
+        repository: { full_name: 'octocat/repo' },
+        installation: { id: 42 },
+      };
+      await d.handle('pull_request', prEvent);
+      const branch = stateService.getBranch('proj-feature')!;
+      expect(branch.derivedFromBranchId).toBe('proj-main');
+      expect(branch.derivedFromBranchName).toBe('main');
+      expect(branch.derivedAt).toBeTruthy();
+      // 只回填指针,不拷贝配置(最小惊讶)
+      expect(branch.profileOverrides).toBeUndefined();
+
+      // idempotent:已设指针不被后续事件覆盖
+      const firstAt = branch.derivedAt;
+      stateService.addBranch({
+        id: 'proj-develop', projectId: 'p1', branch: 'develop', worktreePath: '/tmp/wt-dev',
+        services: {}, status: 'idle', createdAt: new Date().toISOString(),
+      });
+      await d.handle('pull_request', {
+        ...prEvent,
+        pull_request: { ...prEvent.pull_request, base: { ref: 'develop' } },
+      });
+      const after = stateService.getBranch('proj-feature')!;
+      expect(after.derivedFromBranchId).toBe('proj-main');
+      expect(after.derivedAt).toBe(firstAt);
     });
 
     it('returns pr-branch-stopped on closed with stopRequest', async () => {

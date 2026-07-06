@@ -49,6 +49,12 @@ interface EffectiveConfigResponse {
   projectId: string;
   projectSlug: string;
   branchStatus: string;
+  derivedFrom: {
+    branchId: string;
+    branchName: string;
+    derivedAt: string | null;
+    sourceStillExists: boolean;
+  } | null;
   envLayers: Array<{ source: EnvSource; count: number; keys: string[] }>;
   profiles: EffectiveConfigProfile[];
   plan: {
@@ -169,8 +175,9 @@ function ProfileConfigCard({ profile }: { profile: EffectiveConfigProfile }): JS
   );
 }
 
-export function EffectiveConfigPanel({ branchId }: { branchId: string }): JSX.Element {
+export function EffectiveConfigPanel({ branchId, onToast }: { branchId: string; onToast?: (message: string) => void }): JSX.Element {
   const [state, setState] = useState<PanelState>({ status: 'idle' });
+  const [copying, setCopying] = useState(false);
 
   const load = useCallback(async (): Promise<void> => {
     setState({ status: 'loading' });
@@ -185,6 +192,23 @@ export function EffectiveConfigPanel({ branchId }: { branchId: string }): JSX.El
   }, [branchId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // 波3:显式一键拉取来源分支配置(拷贝前服务端自动拍快照,误拷可回滚)
+  const copyFromSource = useCallback(async (sourceId: string): Promise<void> => {
+    setCopying(true);
+    try {
+      const res = await apiRequest<{ copied: boolean; snapshotId: string; hint?: string }>(
+        `/api/branches/${encodeURIComponent(branchId)}/copy-config-from/${encodeURIComponent(sourceId)}`,
+        { method: 'POST' },
+      );
+      onToast?.(res.hint || '配置已从来源分支拷贝(重新部署后生效)');
+      await load();
+    } catch (err) {
+      onToast?.(`拷贝失败:${err instanceof ApiError ? err.message : String(err)}`);
+    } finally {
+      setCopying(false);
+    }
+  }, [branchId, load, onToast]);
 
   return (
     <section className="space-y-3">
@@ -218,6 +242,30 @@ export function EffectiveConfigPanel({ branchId }: { branchId: string }): JSX.El
 
       {state.status === 'ok' ? (
         <>
+          {/* 波3:派生溯源(快照拷贝语义 —— 指针仅溯源展示,配置各自独立) */}
+          {state.data.derivedFrom ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-[hsl(var(--hairline))] bg-card px-4 py-2.5">
+              <div className="min-w-0 text-xs text-muted-foreground">
+                派生自分支
+                <span className="mx-1 font-mono text-foreground">{state.data.derivedFrom.branchName}</span>
+                {state.data.derivedFrom.derivedAt ? `(${new Date(state.data.derivedFrom.derivedAt).toLocaleString('zh-CN')})` : ''}
+                {!state.data.derivedFrom.sourceStillExists ? <span className="ml-1">;来源分支已删除</span> : null}
+                <span className="ml-1">配置为快照拷贝,两边各自独立。</span>
+              </div>
+              {state.data.derivedFrom.sourceStillExists ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={copying}
+                  onClick={() => void copyFromSource(state.data.derivedFrom!.branchId)}
+                  title="用来源分支当前的分支级配置整体替换本分支(拷贝前自动拍快照,误拷可回滚)"
+                >
+                  {copying ? '拉取中…' : '重新拉取来源配置'}
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+
           {/* 继承链概览:段A customEnv 分层(合并顺序从左到右,靠右覆盖靠左) */}
           <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-4 py-3">
             <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">

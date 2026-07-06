@@ -1443,9 +1443,13 @@ def cmd_branch_create(args: argparse.Namespace) -> None:
     branch = (args.branch or "").strip()
     if not branch:
         die("--branch 必填", code=1)
-    body = _call("POST", "/api/branches",
-                 body={"projectId": project, "branch": branch},
-                 timeout=60)
+    payload: dict[str, Any] = {"projectId": project, "branch": branch}
+    # 波3 配置树:--from <sourceBranchId> = 从来源分支快照拷贝分支级配置
+    # (profileOverrides + extraProfiles,拷贝后各自独立,并写派生溯源指针)
+    source = (getattr(args, "from_branch", None) or "").strip()
+    if source:
+        payload["sourceBranchId"] = source
+    body = _call("POST", "/api/branches", body=payload, timeout=60)
     if _HUMAN:
         bid = body.get("id") if isinstance(body, dict) else "?"
         status = body.get("status") if isinstance(body, dict) else "?"
@@ -7238,6 +7242,9 @@ def _build_parser() -> argparse.ArgumentParser:
                             "API body 字段是 projectId,这里用 --project 抹平。")
     bc.add_argument("--project", help="projectId(或读 CDS_PROJECT_ID)")
     bc.add_argument("--branch", required=True, help="git 分支名(必填)")
+    bc.add_argument("--from", dest="from_branch", metavar="SOURCE_BRANCH_ID",
+                    help="从来源分支快照拷贝分支级配置(profileOverrides+extraProfiles,"
+                         "拷贝后各自独立,写派生溯源指针)")
     bc.set_defaults(func=cmd_branch_create)
     bsm = br.add_parser("set-mode",
                         help="设置单分支的部署模式覆盖(activeDeployMode)。"
