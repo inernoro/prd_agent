@@ -56,3 +56,4 @@
 | ops | prd-agent | rollout ledger 审计要求 serving/smoke 证据显式 expectedCommit，并校验 stage report 的 main ref/SHA 与台账一致 |
 | ops | prd-agent | rollout ledger 阶段推进前复核所有前置 success 证据文件，坏证据不能等到最终 audit 才暴露 |
 | ops | prd-agent | rollout ledger 越级推进前仍复核已有前置 success 证据，防止 allow-out-of-order 跳过坏证据 |
+| ops | prd-agent | readiness audit 要求 CDS 分支 running 且部署派发 commit 匹配，防止 building 或旧容器被误判为可发布 |

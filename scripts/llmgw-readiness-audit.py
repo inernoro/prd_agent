@@ -717,6 +717,10 @@ def _cds_runtime(args: argparse.Namespace) -> dict:
         }
 
     failures: list[str] = []
+    branch_status = str(status.get("status") or "")
+    if branch_status != "running":
+        failures.append(f"branch status is not running: {branch_status or 'empty'}")
+
     commit_candidates = [
         str(status.get("githubCommitSha") or ""),
         str(status.get("commitSha") or ""),
@@ -725,6 +729,11 @@ def _cds_runtime(args: argparse.Namespace) -> dict:
     ]
     if args.expect_commit and args.expect_commit not in commit_candidates:
         failures.append(f"commit mismatch: expected={args.expect_commit}, actual={','.join(item for item in commit_candidates if item)}")
+    if args.expect_commit and str(status.get("lastDeployDispatchCommitSha") or "") != args.expect_commit:
+        failures.append(
+            "lastDeployDispatchCommitSha mismatch: "
+            f"expected={args.expect_commit}, actual={status.get('lastDeployDispatchCommitSha') or 'empty'}"
+        )
 
     if status.get("ciImageStatus") not in (None, "", "ready"):
         failures.append(f"ciImageStatus is not ready: {status.get('ciImageStatus')}")
@@ -754,8 +763,10 @@ def _cds_runtime(args: argparse.Namespace) -> dict:
 
     detail = {
         "branchId": branch_id,
+        "branchStatus": branch_status,
         "commitCandidates": [item for item in commit_candidates if item],
         "ciImageStatus": status.get("ciImageStatus"),
+        "lastDeployDispatchCommitSha": status.get("lastDeployDispatchCommitSha"),
         "releaseProfiles": {
             profile_id: services.get(profile_id, {})
             for profile_id in _csv(args.cds_release_profiles)

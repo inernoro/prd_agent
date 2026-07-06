@@ -489,6 +489,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("serving_stability_and_auth_probe", script);
         Assert.Contains("--run-cds-runtime", script);
         Assert.Contains("cds_runtime_uses_release_gateway_profiles", script);
+        Assert.Contains("branch status is not running", script);
+        Assert.Contains("lastDeployDispatchCommitSha mismatch", script);
         Assert.Contains("LLMGW_CDS_RELEASE_PROFILES", script);
         Assert.Contains("llmgw-prd-agent,llmgw-serve-prd-agent", script);
         Assert.Contains("--run-rollout-ledger", script);
