@@ -24,3 +24,4 @@
 | ops | prd-agent | 新增 llmgw-serving-probe.py，发布前连续检查 serving health commit 稳定性与受保护端点未认证拒绝 |
 | ops | prd-agent | exec_dep.sh 在 http/canary 发布时默认强制运行 serving probe，防止滚动未稳定或鉴权裸奔时进入发布 |
 | ops | prd-agent | exec_dep.sh 在 shadow 采样证据期启动时强制 serving/smoke 预检，避免坏 serving 产生无效 shadow 证据 |
+| ops | prd-agent | readiness audit 新增 CDS runtime 检查，要求预览/灰度网关后端与 serving 以 express 预构建镜像运行并匹配发布 commit，避免源码容器或旧容器假阳性 |

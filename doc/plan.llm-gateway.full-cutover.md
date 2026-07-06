@@ -89,6 +89,7 @@ python3 scripts/llmgw-readiness-audit.py \
   --run-dotnet \
   --run-smoke \
   --run-serving-probe \
+  --run-cds-runtime \
   --run-shadow-coverage \
   --require-release-gate \
   --min-total 30 \
@@ -107,6 +108,10 @@ python3 scripts/llmgw-readiness-audit.py \
 `/client-stream` 与 canary 必败；
 传 `--run-serving-probe` 时会调用 `scripts/llmgw-serving-probe.py` 连续探测 healthz commit 稳定性，
 并确认 `/gw/v1/*` 受保护读端点未带 key 时返回 401，防止 serving 滚动中或鉴权裸奔时进入灰度；
+传 `--run-cds-runtime` 时会调用 `cdscli branch status` 校验当前预览/灰度分支的网关运行形态：
+`llmgw-prd-agent` 与 `llmgw-serve-prd-agent` 必须是 running 且 `deployedMode=express`，
+commit 必须匹配 `--expect-commit`，`llmgw-web-prd-agent` 必须 running。这样可以防止“CI 镜像已绿，
+但灰度仍在源码模式或旧容器上验证”的假阳性；
 传 `--run-shadow-coverage` 时会调用 `scripts/llmgw-shadow-coverage-report.py` 输出 global/kind/appCaller×kind
 覆盖矩阵，明确每个格子的 total、allMatch、critical、httpFail 与是否达标；
 传 `--require-release-gate` 时会调用 `scripts/llmgw-release-gate.py` 检查真实 health/shadow 样本。

@@ -28,7 +28,14 @@ def _read(rel: str) -> str:
     return (ROOT / rel).read_text(encoding="utf-8")
 
 
-def _run(cmd: list[str], *, cwd: Path = ROOT, env: dict[str, str] | None = None, timeout: int = 300) -> dict:
+def _run(
+    cmd: list[str],
+    *,
+    cwd: Path = ROOT,
+    env: dict[str, str] | None = None,
+    timeout: int = 300,
+    tail: int | None = 6000,
+) -> dict:
     proc = subprocess.run(
         cmd,
         cwd=str(cwd),
@@ -42,8 +49,8 @@ def _run(cmd: list[str], *, cwd: Path = ROOT, env: dict[str, str] | None = None,
         "cmd": cmd,
         "cwd": str(cwd),
         "exitCode": proc.returncode,
-        "stdout": proc.stdout[-6000:],
-        "stderr": proc.stderr[-6000:],
+        "stdout": proc.stdout if tail is None else proc.stdout[-tail:],
+        "stderr": proc.stderr if tail is None else proc.stderr[-tail:],
         "ok": proc.returncode == 0,
     }
 
@@ -349,6 +356,128 @@ def _serving_probe(args: argparse.Namespace) -> dict:
     return {"name": "serving_stability_and_auth_probe", "ok": result["ok"], "detail": result["stdout"] + result["stderr"], "command": result}
 
 
+def _parse_json_object(output: str) -> dict:
+    start = output.find("{")
+    end = output.rfind("}")
+    if start < 0 or end < start:
+        raise ValueError("no JSON object in command output")
+    return json.loads(output[start:end + 1])
+
+
+def _csv(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _extract_branch_id(output: str) -> str:
+    stripped = output.strip()
+    if stripped.startswith("{"):
+        data = _parse_json_object(stripped)
+        payload = data.get("data") if isinstance(data.get("data"), dict) else data
+        branch_id = payload.get("branchId") if isinstance(payload, dict) else ""
+        if branch_id:
+            return str(branch_id).strip()
+    return stripped.splitlines()[-1].strip() if stripped else ""
+
+
+def _cds_runtime(args: argparse.Namespace) -> dict:
+    branch_id = args.cds_branch_id.strip()
+    if not branch_id:
+        branch_result = _run(["python3", ".claude/skills/cds/cli/cdscli.py", "branch-id"], timeout=60)
+        if not branch_result["ok"]:
+            return {
+                "name": "cds_runtime_uses_release_gateway_profiles",
+                "ok": False,
+                "detail": branch_result["stdout"] + branch_result["stderr"],
+                "command": branch_result,
+            }
+        branch_id = _extract_branch_id(branch_result["stdout"] or "")
+        if not branch_id:
+            return {
+                "name": "cds_runtime_uses_release_gateway_profiles",
+                "ok": False,
+                "detail": f"failed to parse branch id from cdscli output: {branch_result['stdout'][:1000]}",
+                "command": branch_result,
+            }
+
+    result = _run(["python3", ".claude/skills/cds/cli/cdscli.py", "branch", "status", branch_id], timeout=120, tail=None)
+    if not result["ok"]:
+        return {
+            "name": "cds_runtime_uses_release_gateway_profiles",
+            "ok": False,
+            "detail": result["stdout"] + result["stderr"],
+            "command": result,
+        }
+
+    try:
+        status = _parse_json_object(result["stdout"])
+        if isinstance(status.get("data"), dict):
+            status = status["data"]
+    except Exception as exc:
+        return {
+            "name": "cds_runtime_uses_release_gateway_profiles",
+            "ok": False,
+            "detail": f"failed to parse cdscli branch status JSON: {exc}; stdout={result['stdout'][:1000]}",
+            "command": result,
+        }
+
+    failures: list[str] = []
+    commit_candidates = [
+        str(status.get("githubCommitSha") or ""),
+        str(status.get("commitSha") or ""),
+        str(status.get("ciTargetSha") or ""),
+        str(status.get("lastDeployDispatchCommitSha") or ""),
+    ]
+    if args.expect_commit and args.expect_commit not in commit_candidates:
+        failures.append(f"commit mismatch: expected={args.expect_commit}, actual={','.join(item for item in commit_candidates if item)}")
+
+    if status.get("ciImageStatus") not in (None, "", "ready"):
+        failures.append(f"ciImageStatus is not ready: {status.get('ciImageStatus')}")
+
+    services = status.get("services") or {}
+    for profile_id in _csv(args.cds_release_profiles):
+        service = services.get(profile_id)
+        if not isinstance(service, dict):
+            failures.append(f"missing release profile: {profile_id}")
+            continue
+        if service.get("status") != "running":
+            failures.append(f"{profile_id} status={service.get('status')}")
+        if service.get("deployedMode") != "express":
+            failures.append(f"{profile_id} deployedMode={service.get('deployedMode')!r}, expected 'express'")
+
+    for profile_id in _csv(args.cds_running_profiles):
+        service = services.get(profile_id)
+        if not isinstance(service, dict):
+            failures.append(f"missing running profile: {profile_id}")
+            continue
+        if service.get("status") != "running":
+            failures.append(f"{profile_id} status={service.get('status')}")
+
+    runtime = status.get("deployRuntime") or {}
+    if runtime.get("drift", {}).get("hasDrift") is True:
+        failures.append("deployRuntime.drift.hasDrift=true")
+
+    detail = {
+        "branchId": branch_id,
+        "commitCandidates": [item for item in commit_candidates if item],
+        "ciImageStatus": status.get("ciImageStatus"),
+        "releaseProfiles": {
+            profile_id: services.get(profile_id, {})
+            for profile_id in _csv(args.cds_release_profiles)
+        },
+        "runningProfiles": {
+            profile_id: services.get(profile_id, {})
+            for profile_id in _csv(args.cds_running_profiles)
+        },
+        "failures": failures,
+    }
+    return {
+        "name": "cds_runtime_uses_release_gateway_profiles",
+        "ok": not failures,
+        "detail": json.dumps(detail, ensure_ascii=False, sort_keys=True),
+        "command": result,
+    }
+
+
 def _write_outputs(report: dict, json_out: str, report_md: str) -> None:
     if json_out:
         path = Path(json_out)
@@ -391,6 +520,10 @@ def main() -> int:
     parser.add_argument("--run-smoke", action="store_true", help="run D-layer scripts/gw-smoke.py against --base/--key")
     parser.add_argument("--run-shadow-coverage", action="store_true", help="run appCaller x kind shadow coverage matrix")
     parser.add_argument("--run-serving-probe", action="store_true", help="run serving health stability and no-key auth probe")
+    parser.add_argument("--run-cds-runtime", action="store_true", help="verify CDS preview/grey runtime uses release gateway profiles")
+    parser.add_argument("--cds-branch-id", default=os.environ.get("CDS_BRANCH_ID", ""), help="CDS branch id for --run-cds-runtime; default: cdscli branch-id")
+    parser.add_argument("--cds-release-profiles", default=os.environ.get("LLMGW_CDS_RELEASE_PROFILES", "llmgw-prd-agent,llmgw-serve-prd-agent"), help="comma-separated CDS profile ids that must run express prebuilt images")
+    parser.add_argument("--cds-running-profiles", default=os.environ.get("LLMGW_CDS_RUNNING_PROFILES", "llmgw-web-prd-agent"), help="comma-separated CDS profile ids that must be running")
     parser.add_argument("--serving-probe-samples", type=int, default=int(os.environ.get("LLMGW_SERVING_PROBE_SAMPLES", "12")))
     parser.add_argument("--serving-probe-interval", type=float, default=float(os.environ.get("LLMGW_SERVING_PROBE_INTERVAL_SECONDS", "5")))
     parser.add_argument("--smoke-timeout-seconds", type=int, default=int(os.environ.get("GW_TIMEOUT", "120")))
@@ -419,6 +552,8 @@ def main() -> int:
             checks.append(_check("serving_stability_and_auth_probe", False, "missing --base"))
         else:
             checks.append(_serving_probe(args))
+    if args.run_cds_runtime:
+        checks.append(_cds_runtime(args))
     if args.require_release_gate:
         if not args.base or not args.key:
             checks.append(_check("live_release_gate", False, "missing --base/--key"))

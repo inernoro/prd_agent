@@ -214,6 +214,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--run-serving-probe", script);
         Assert.Contains("scripts/llmgw-serving-probe.py", script);
         Assert.Contains("serving_stability_and_auth_probe", script);
+        Assert.Contains("--run-cds-runtime", script);
+        Assert.Contains("cds_runtime_uses_release_gateway_profiles", script);
+        Assert.Contains("LLMGW_CDS_RELEASE_PROFILES", script);
+        Assert.Contains("llmgw-prd-agent,llmgw-serve-prd-agent", script);
         Assert.Contains("LLMGW_READINESS_JSON_OUT", script);
         Assert.Contains("LLMGW_READINESS_REPORT_MD", script);
     }
