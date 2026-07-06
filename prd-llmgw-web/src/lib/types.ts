@@ -224,7 +224,7 @@ export type ShadowSnapshot = {
 };
 export type ShadowMismatch = { field: string; inproc?: string | null; http?: string | null; severity: string };
 export type ShadowItem = {
-  id: string; kind: string; requestId?: string | null; appCallerCode: string; modelType: string;
+  id: string; kind: string; requestId?: string | null; releaseCommit?: string | null; appCallerCode: string; modelType: string;
   comparedAt?: string | null; shadowDurationMs: number; httpOk: boolean; httpError?: string | null;
   allMatch: boolean; hasCritical: boolean; inproc: ShadowSnapshot; http: ShadowSnapshot;
   mismatches: ShadowMismatch[]; textMatches?: boolean | null;
@@ -236,6 +236,7 @@ export type ShadowSummary = {
   httpFail: number;
   sinceHours?: number | null;
   since?: string | null;
+  releaseCommit?: string | null;
   firstComparedAt?: string | null;
   lastComparedAt?: string | null;
   coverageHours?: number;

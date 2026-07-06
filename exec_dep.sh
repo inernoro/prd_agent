@@ -691,6 +691,9 @@ run_llmgw_release_gate_if_needed() {
   if [ -n "${LLMGW_GATE_REPORT_MD:-}" ]; then
     args="$args --report-md $LLMGW_GATE_REPORT_MD"
   fi
+  if [ -n "$expect_commit" ]; then
+    args="$args --shadow-release-commit $expect_commit"
+  fi
 
   old_ifs="$IFS"
   IFS=',;'
@@ -775,7 +778,7 @@ run_llmgw_release_gate_if_needed() {
   IFS="$old_ifs"
 
   if [ "$release_gate_required" = "1" ]; then
-    echo "LLM Gateway release gate: required before deploy (shadow evidence only; commit probe runs after compose up)"
+    echo "LLM Gateway release gate: required before deploy (same-commit shadow evidence only; commit probe runs after compose up)"
     # shellcheck disable=SC2086
     GW_KEY="$gate_key" python3 scripts/llmgw-release-gate.py $args
   else

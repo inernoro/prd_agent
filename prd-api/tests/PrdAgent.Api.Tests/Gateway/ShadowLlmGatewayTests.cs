@@ -91,6 +91,25 @@ public class ShadowLlmGatewayTests
         cmp.HttpOk.ShouldBeFalse();
     }
 
+    [Fact]
+    public async Task ShadowComparison_RecordsReleaseCommit()
+    {
+        var inproc = new FakeGateway(Res("m1", "openai", "openai"));
+        var http = new FakeGateway(Res("m1", "openai", "openai"));
+        var writer = new CapturingWriter();
+        var shadow = new ShadowLlmGateway(
+            inproc,
+            http,
+            NullLogger<ShadowLlmGateway>.Instance,
+            writer,
+            releaseCommit: "sha-ABCDEF1234");
+
+        await shadow.ResolveModelAsync("demo.app::chat", "chat");
+
+        var cmp = await writer.WaitForRecordAsync();
+        cmp.ReleaseCommit.ShouldBe("abcdef1234");
+    }
+
     // ② stream：inproc chunk 原样透传给 caller；流末做一次 resolve 比对（chat 主链路覆盖）
     [Fact]
     public async Task Stream_PassesThroughInproc_AndComparesResolve()

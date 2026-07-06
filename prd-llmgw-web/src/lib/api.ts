@@ -203,8 +203,8 @@ export function getModels(params?: { platformId?: string; enabled?: boolean }): 
     query: { platformId: params?.platformId, enabled: params?.enabled === undefined ? undefined : String(params.enabled) },
   });
 }
-export function getShadowComparisons(params?: { limit?: number; appCallerCode?: string; kind?: string; sinceHours?: number }): Promise<ApiResponse<ShadowData>> {
-  return apiRequest<ShadowData>('/shadow-comparisons', { query: { limit: params?.limit, appCallerCode: params?.appCallerCode, kind: params?.kind, sinceHours: params?.sinceHours } });
+export function getShadowComparisons(params?: { limit?: number; appCallerCode?: string; kind?: string; releaseCommit?: string; sinceHours?: number }): Promise<ApiResponse<ShadowData>> {
+  return apiRequest<ShadowData>('/shadow-comparisons', { query: { limit: params?.limit, appCallerCode: params?.appCallerCode, kind: params?.kind, releaseCommit: params?.releaseCommit, sinceHours: params?.sinceHours } });
 }
 
 // ── 配置面（可写）——布尔开关，写入共享 Mongo 后 MAP 立即生效 ──

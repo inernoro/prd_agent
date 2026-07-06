@@ -170,7 +170,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLM Gateway release gate: canary 阶段 $canary_stage 默认要求 raw app-kind 样本逐个达标", script);
         Assert.Contains("args=\"$args --require-app-kind $app_kind_req_trimmed\"", script);
         Assert.Contains("for app in ${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}; do", script);
-        Assert.Contains("LLM Gateway release gate: required before deploy (shadow evidence only; commit probe runs after compose up)", script);
+        Assert.Contains("LLM Gateway release gate: required before deploy (same-commit shadow evidence only; commit probe runs after compose up)", script);
+        Assert.Contains("args=\"$args --shadow-release-commit $expect_commit\"", script);
         Assert.Contains("LLMGW_GATE_JSON_OUT", script);
         Assert.Contains("args=\"$args --json-out $LLMGW_GATE_JSON_OUT\"", script);
         Assert.Contains("LLMGW_GATE_REPORT_MD", script);
@@ -234,19 +235,28 @@ public class GatewayDataDomainGuardTests
         var releaseGate = ReadRepoFile("scripts/llmgw-release-gate.py");
 
         Assert.Contains("string? kind", servingEndpoints);
+        Assert.Contains("string? releaseCommit", servingEndpoints);
         Assert.Contains("double? sinceHours", servingEndpoints);
         Assert.Contains("Builders<LlmShadowComparison>.Filter.Eq(x => x.Kind, kind.Trim())", servingEndpoints);
+        Assert.Contains("Builders<LlmShadowComparison>.Filter.Eq(x => x.ReleaseCommit, normalizedReleaseCommit)", servingEndpoints);
         Assert.Contains("Builders<LlmShadowComparison>.Filter.Gte(x => x.ComparedAt, since.Value)", servingEndpoints);
+        Assert.Contains("releaseCommit = normalizedReleaseCommit", servingEndpoints);
         Assert.Contains("firstComparedAt = first", servingEndpoints);
         Assert.Contains("lastComparedAt = last", servingEndpoints);
         Assert.Contains("coverageHours", servingEndpoints);
         Assert.Contains("string? kind", consoleProgram);
+        Assert.Contains("string? releaseCommit", consoleProgram);
         Assert.Contains("double? sinceHours", consoleProgram);
         Assert.Contains("fb.Eq(\"Kind\", kind.Trim())", consoleProgram);
+        Assert.Contains("fb.Eq(\"ReleaseCommit\", normalizedReleaseCommit)", consoleProgram);
         Assert.Contains("FirstComparedAt", ReadRepoFile("prd-llmgw/Models/Dtos.cs"));
         Assert.Contains("CoverageHours", ReadRepoFile("prd-llmgw/Models/Dtos.cs"));
+        Assert.Contains("ReleaseCommit", ReadRepoFile("prd-llmgw/Models/Dtos.cs"));
         Assert.Contains("query_items[\"kind\"] = kind", releaseGate);
+        Assert.Contains("query_items[\"releaseCommit\"] = normalized_release_commit", releaseGate);
         Assert.Contains("query_items[\"sinceHours\"] = f\"{since_hours:g}\"", releaseGate);
+        Assert.Contains("--shadow-release-commit", releaseGate);
+        Assert.Contains("\"shadowReleaseCommit\"", releaseGate);
         Assert.Contains("--since-hours", releaseGate);
         Assert.Contains("--min-coverage-hours", releaseGate);
         Assert.Contains("\"shadowSinceHours\"", releaseGate);
@@ -516,6 +526,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("httpFail", script);
         Assert.Contains("coverageHours", script);
         Assert.Contains("--min-coverage-hours", script);
+        Assert.Contains("--release-commit", script);
+        Assert.Contains("LLMGW_SHADOW_COVERAGE_RELEASE_COMMIT", script);
+        Assert.Contains("releaseCommit", script);
         Assert.Contains("minCoverageHours", script);
         Assert.Contains("覆盖时长不足", script);
         Assert.DoesNotContain("print(key", script);

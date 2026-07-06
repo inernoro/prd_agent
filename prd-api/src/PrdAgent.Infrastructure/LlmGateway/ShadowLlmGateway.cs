@@ -33,6 +33,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private readonly int _fullSamplePercent;
     private readonly ILLMRequestContextAccessor? _ctx;
     private readonly IReadOnlySet<string> _httpAllowlist;
+    private readonly string? _releaseCommit;
 
     public ShadowLlmGateway(
         ILlmGateway inproc,
@@ -41,7 +42,8 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         ILlmShadowComparisonWriter? writer = null,
         int fullSamplePercent = 0,
         ILLMRequestContextAccessor? ctx = null,
-        IReadOnlySet<string>? httpAllowlist = null)
+        IReadOnlySet<string>? httpAllowlist = null,
+        string? releaseCommit = null)
     {
         _inproc = inproc;
         _http = http;
@@ -50,6 +52,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         _fullSamplePercent = Math.Clamp(fullSamplePercent, 0, 100);
         _ctx = ctx;
         _httpAllowlist = httpAllowlist ?? new HashSet<string>();
+        _releaseCommit = NormalizeCommit(releaseCommit);
     }
 
     /// <summary>该 appCallerCode 是否已灰度翻 http（白名单命中 → http 权威）。</summary>
@@ -194,7 +197,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             try { httpResolution = await _http.ResolveModelAsync(appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, CancellationToken.None); }
             catch (Exception ex) { httpErr = ex.Message; }
             sw.Stop();
-            var cmp = BuildResolveComparison(kind, requestId, appCallerCode, modelType, inprocResolution, httpResolution, httpErr, sw.ElapsedMilliseconds);
+            var cmp = BuildResolveComparison(kind, requestId, appCallerCode, modelType, inprocResolution, httpResolution, httpErr, sw.ElapsedMilliseconds, _releaseCommit);
             await _writer!.RecordAsync(cmp, CancellationToken.None);
         });
     }
@@ -237,7 +240,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             catch (Exception ex) { httpErr = ex.Message; }
             sw.Stop();
             var cmp = BuildResolveComparison("send", requestId, request.AppCallerCode, request.ModelType,
-                inproc.Resolution, http?.Resolution, httpErr, sw.ElapsedMilliseconds);
+                inproc.Resolution, http?.Resolution, httpErr, sw.ElapsedMilliseconds, _releaseCommit);
             if (http != null)
             {
                 cmp.InprocTextChars = inproc.Content?.Length;
@@ -291,7 +294,8 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 inproc.Resolution ?? resolution,
                 http?.Resolution,
                 httpErr,
-                sw.ElapsedMilliseconds);
+                sw.ElapsedMilliseconds,
+                _releaseCommit);
 
             cmp.InprocTextChars = RawSize(inproc);
             cmp.HttpTextChars = http == null ? null : RawSize(http);
@@ -361,6 +365,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var cmp = new LlmShadowComparison
             {
                 Kind = "pools", RequestId = requestId, AppCallerCode = appCallerCode, ModelType = modelType,
+                ReleaseCommit = _releaseCommit,
                 ShadowDurationMs = sw.ElapsedMilliseconds, HttpOk = httpErr == null && http != null, HttpError = httpErr,
             };
             if (cmp.HttpOk)
@@ -391,11 +396,13 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
     private static LlmShadowComparison BuildResolveComparison(
         string kind, string? requestId, string appCallerCode, string modelType,
-        GatewayModelResolution? inproc, GatewayModelResolution? http, string? httpErr, long ms)
+        GatewayModelResolution? inproc, GatewayModelResolution? http, string? httpErr, long ms,
+        string? releaseCommit)
     {
         var cmp = new LlmShadowComparison
         {
             Kind = kind, RequestId = requestId, AppCallerCode = appCallerCode, ModelType = modelType,
+            ReleaseCommit = releaseCommit,
             ShadowDurationMs = ms, HttpOk = httpErr == null && http != null, HttpError = httpErr,
             Inproc = Snap(inproc), Http = Snap(http),
         };
@@ -434,5 +441,13 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         // all-match 必须**两边解析都在**且零不一致；缺一边一律不算 match。
         cmp.AllMatch = cmp.HttpOk && inproc != null && http != null && cmp.Mismatches.Count == 0;
         return cmp;
+    }
+
+    private static string? NormalizeCommit(string? value)
+    {
+        var trimmed = (value ?? string.Empty).Trim();
+        if (trimmed.StartsWith("sha-", StringComparison.OrdinalIgnoreCase))
+            trimmed = trimmed[4..];
+        return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed.ToLowerInvariant();
     }
 }

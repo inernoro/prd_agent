@@ -63,6 +63,13 @@ def _request(base: str, key: str, query: dict[str, str]) -> tuple[int, str]:
         return 0, f"ERR {exc}"
 
 
+def _normalize_commit(value: str | None) -> str:
+    raw = (value or "").strip()
+    if raw.lower().startswith("sha-"):
+        raw = raw[4:]
+    return raw.lower()
+
+
 def _summary_from_payload(raw: str) -> dict:
     payload = json.loads(raw)
     summary = payload.get("summary") or payload.get("Summary") or {}
@@ -85,6 +92,7 @@ def _cell(
     min_total: int,
     since_hours: float,
     min_coverage_hours: float,
+    release_commit: str,
 ) -> dict:
     query: dict[str, str] = {}
     label = "global"
@@ -96,6 +104,9 @@ def _cell(
         label = f"{label}/{kind}"
     if since_hours > 0:
         query["sinceHours"] = f"{since_hours:g}"
+    normalized_release_commit = _normalize_commit(release_commit)
+    if normalized_release_commit:
+        query["releaseCommit"] = normalized_release_commit
 
     code, raw = _request(base, key, query)
     result = {
@@ -105,6 +116,7 @@ def _cell(
         "requiredTotal": min_total,
         "sinceHours": since_hours,
         "minCoverageHours": min_coverage_hours,
+        "releaseCommit": normalized_release_commit,
         "httpStatus": code,
         "total": 0,
         "allMatch": 0,
@@ -167,6 +179,7 @@ def _write_markdown(path: str, report: dict) -> None:
         fh.write(f"- verdict: `{cell(report['verdict'])}`\n")
         fh.write(f"- base: `{cell(report['base'])}`\n")
         fh.write(f"- sinceHours: `{cell(report['sinceHours'])}`\n")
+        fh.write(f"- releaseCommit: `{cell(report.get('releaseCommit') or '')}`\n")
         fh.write(f"- minPerCell: `{cell(report['minPerCell'])}`\n\n")
         fh.write(f"- minCoverageHours: `{cell(report['minCoverageHours'])}`\n\n")
         fh.write("| label | required | minCoverageHours | total | coverageHours | allMatch | critical | httpFail | status | failures |\n")
@@ -193,6 +206,8 @@ def main() -> int:
     parser.add_argument("--min-per-cell", type=int, default=int(os.environ.get("LLMGW_GATE_MIN_PER_APP", "30")))
     parser.add_argument("--since-hours", type=float, default=float(os.environ.get("LLMGW_GATE_SHADOW_SINCE_HOURS", "24")))
     parser.add_argument("--min-coverage-hours", type=float, default=float(os.environ.get("LLMGW_GATE_MIN_COVERAGE_HOURS", "0")))
+    parser.add_argument("--release-commit", default=os.environ.get("LLMGW_SHADOW_COVERAGE_RELEASE_COMMIT", os.environ.get("GIT_COMMIT", "")),
+                        help="可选：只统计指定 MAP/API commit 产生的 shadow 样本")
     parser.add_argument("--json-out", default=os.environ.get("LLMGW_SHADOW_COVERAGE_JSON_OUT", ""))
     parser.add_argument("--report-md", default=os.environ.get("LLMGW_SHADOW_COVERAGE_REPORT_MD", ""))
     parser.add_argument("--print-json", action="store_true")
@@ -208,6 +223,7 @@ def main() -> int:
         "verdict": "fail",
         "base": base,
         "sinceHours": max(0, args.since_hours),
+        "releaseCommit": _normalize_commit(args.release_commit),
         "minPerCell": args.min_per_cell,
         "minCoverageHours": max(0, args.min_coverage_hours),
         "appCallers": app_callers,
@@ -223,12 +239,12 @@ def main() -> int:
 
     if not report["failures"]:
         min_coverage_hours = max(0, args.min_coverage_hours)
-        report["cells"].append(_cell(base, key, None, None, args.min_per_cell, max(0, args.since_hours), min_coverage_hours))
+        report["cells"].append(_cell(base, key, None, None, args.min_per_cell, max(0, args.since_hours), min_coverage_hours, args.release_commit))
         for kind in kinds:
-            report["cells"].append(_cell(base, key, None, kind, args.min_per_cell, max(0, args.since_hours), min_coverage_hours))
+            report["cells"].append(_cell(base, key, None, kind, args.min_per_cell, max(0, args.since_hours), min_coverage_hours, args.release_commit))
         for app in app_callers:
             for kind in kinds:
-                report["cells"].append(_cell(base, key, app, kind, args.min_per_cell, max(0, args.since_hours), min_coverage_hours))
+                report["cells"].append(_cell(base, key, app, kind, args.min_per_cell, max(0, args.since_hours), min_coverage_hours, args.release_commit))
         for item in report["cells"]:
             for failure in item.get("failures") or []:
                 report["failures"].append(f"{item['label']}: {failure}")

@@ -254,7 +254,8 @@ else if (isShadow || httpAllowlist.Count > 0)
             writer: isShadow ? sp.GetService<PrdAgent.Core.Interfaces.ILlmShadowComparisonWriter>() : null,
             fullSamplePercent: shadowSamplePercent,
             ctx: sp.GetService<PrdAgent.Core.Interfaces.ILLMRequestContextAccessor>(),
-            httpAllowlist: httpAllowlist));
+            httpAllowlist: httpAllowlist,
+            releaseCommit: FirstEnv("GIT_COMMIT", "COMMIT_SHA", "GITHUB_SHA", "SOURCE_VERSION", "CDS_COMMIT_SHA")));
 }
 else
 {

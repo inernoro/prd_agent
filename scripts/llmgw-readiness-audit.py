@@ -107,11 +107,13 @@ def _static_checks() -> list[dict]:
             "--min-coverage-hours",
             "--require-kind",
             "--require-app-kind",
+            "--shadow-release-commit",
             "--health-samples",
             "--json-out",
             "critical mismatch",
             "httpFail",
             "coverageHours",
+            "shadowReleaseCommit",
         ],
     )
     checks.append(_check("release_gate_supports_required_shadow_and_health_gates", ok, detail))
@@ -125,12 +127,14 @@ def _static_checks() -> list[dict]:
             "--kind",
             "--min-per-cell",
             "--min-coverage-hours",
+            "--release-commit",
             "LLMGW_HTTP_APP_CALLER_ALLOWLIST",
             "critical",
             "httpFail",
             "coverageHours",
             "LLMGW_SHADOW_COVERAGE_JSON_OUT",
             "LLMGW_SHADOW_COVERAGE_REPORT_MD",
+            "releaseCommit",
         ],
     )
     checks.append(_check("shadow_coverage_report_available", ok, detail))
@@ -316,7 +320,8 @@ def _static_checks() -> list[dict]:
             "LLMGW_GATE_MIN_COVERAGE_HOURS",
             "--min-coverage-hours $gate_min_coverage_hours",
             "默认要求 shadow 证据覆盖 24 小时",
-            "before deploy (shadow evidence only; commit probe runs after compose up)",
+            "same-commit shadow evidence only; commit probe runs after compose up",
+            "--shadow-release-commit $expect_commit",
             "--health-samples ${LLMGW_GATE_HEALTH_SAMPLES:-3}",
             "probe_args=\"$probe_args --expect-commit $expect_commit\"",
             "LLMGW_GATE_FULL_HTTP_APP_CALLERS",
@@ -604,6 +609,8 @@ def _shadow_coverage(args: argparse.Namespace) -> dict:
         "--min-coverage-hours",
         str(args.min_coverage_hours),
     ]
+    if args.expect_commit:
+        cmd.extend(["--release-commit", args.expect_commit])
     for item in args.app_caller:
         cmd.extend(["--app-caller", item])
     for item in args.kind:

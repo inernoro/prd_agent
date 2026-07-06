@@ -107,6 +107,7 @@ def _shadow_check(
     kind: str | None = None,
     since_hours: float = 0,
     min_coverage_hours: float = 0,
+    release_commit: str = "",
 ) -> dict:
     label = "global"
     query_items: dict[str, str] = {}
@@ -118,6 +119,9 @@ def _shadow_check(
         label = f"{label}/{kind}"
     if since_hours > 0:
         query_items["sinceHours"] = f"{since_hours:g}"
+    normalized_release_commit = _normalize_commit(release_commit)
+    if normalized_release_commit:
+        query_items["releaseCommit"] = normalized_release_commit
     query = ("?" + urllib.parse.urlencode(query_items)) if query_items else ""
 
     code, raw = _request("GET", base, "/shadow-comparisons" + query, key)
@@ -133,6 +137,7 @@ def _shadow_check(
         "httpFail": 0,
         "sinceHours": since_hours,
         "minCoverageHours": min_coverage_hours,
+        "releaseCommit": normalized_release_commit,
         "firstComparedAt": None,
         "lastComparedAt": None,
         "coverageHours": 0.0,
@@ -187,6 +192,13 @@ def _shadow_check(
 
 def _check_shadow(base: str, key: str, app: str | None, min_total: int, kind: str | None = None) -> list[str]:
     return list(_shadow_check(base, key, app, min_total, kind).get("failures") or [])
+
+
+def _normalize_commit(value: str | None) -> str:
+    raw = (value or "").strip()
+    if raw.lower().startswith("sha-"):
+        raw = raw[4:]
+    return raw.lower()
 
 
 def _health_check(base: str, expected_commit: str, samples: int, interval_seconds: float) -> dict:
@@ -290,6 +302,7 @@ def _write_markdown(path: str, report: dict) -> None:
         fh.write(f"- healthStable: `{cell(health.get('stable'))}`\n")
         fh.write(f"- healthSamples: `{cell(health.get('sampleCount'))}`\n")
         fh.write(f"- expectedCommit: `{cell(report.get('expectedCommit') or '')}`\n\n")
+        fh.write(f"- shadowReleaseCommit: `{cell(report.get('shadowReleaseCommit') or '')}`\n")
         fh.write(f"- shadowSinceHours: `{cell((report.get('thresholds') or {}).get('shadowSinceHours'))}`\n")
         fh.write(f"- minCoverageHours: `{cell((report.get('thresholds') or {}).get('minCoverageHours'))}`\n\n")
         fh.write("| label | sinceHours | minCoverageHours | coverageHours | required | total | allMatch | critical | httpFail | status |\n")
@@ -337,6 +350,8 @@ def main() -> int:
     parser.add_argument("--min-coverage-hours", type=float, default=float(os.environ.get("LLMGW_GATE_MIN_COVERAGE_HOURS", "0")),
                         help="要求每个 shadow 检查覆盖至少 N 小时；0 表示不限制。S5/S6 发布建议 >=24")
     parser.add_argument("--expect-commit", default=os.environ.get("GIT_COMMIT", ""), help="可选：healthz commit 必须匹配")
+    parser.add_argument("--shadow-release-commit", default=os.environ.get("LLMGW_GATE_SHADOW_RELEASE_COMMIT", ""),
+                        help="可选：只统计指定 MAP/API commit 产生的 shadow 样本；默认复用 --expect-commit")
     parser.add_argument("--health-samples", type=int, default=int(os.environ.get("LLMGW_GATE_HEALTH_SAMPLES", "1")),
                         help="healthz 连续采样次数，默认 1；正式全量 http 建议 >=3")
     parser.add_argument("--health-interval", type=float, default=float(os.environ.get("LLMGW_GATE_HEALTH_INTERVAL_SECONDS", "0")),
@@ -349,10 +364,13 @@ def main() -> int:
     args = parser.parse_args()
 
     base = (args.base or _default_base()).rstrip("/")
+    shadow_release_commit = _normalize_commit(args.shadow_release_commit or args.expect_commit)
+
     report: dict = {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "base": base,
         "expectedCommit": args.expect_commit,
+        "shadowReleaseCommit": shadow_release_commit,
         "thresholds": {
             "minTotal": args.min_total,
             "minPerApp": args.min_per_app,
@@ -405,23 +423,57 @@ def main() -> int:
     shadow_checks: list[dict] = []
     since_hours = max(0, args.since_hours)
     min_coverage_hours = max(0, args.min_coverage_hours)
-    shadow_checks.append(_shadow_check(base, args.key, None, args.min_total, since_hours=since_hours, min_coverage_hours=min_coverage_hours))
+    shadow_checks.append(_shadow_check(
+        base,
+        args.key,
+        None,
+        args.min_total,
+        since_hours=since_hours,
+        min_coverage_hours=min_coverage_hours,
+        release_commit=shadow_release_commit,
+    ))
     for app in args.app_caller:
-        shadow_checks.append(_shadow_check(base, args.key, app, args.min_per_app, since_hours=since_hours, min_coverage_hours=min_coverage_hours))
+        shadow_checks.append(_shadow_check(
+            base,
+            args.key,
+            app,
+            args.min_per_app,
+            since_hours=since_hours,
+            min_coverage_hours=min_coverage_hours,
+            release_commit=shadow_release_commit,
+        ))
     for raw in args.require_kind:
         try:
             kind, min_total = _parse_kind_requirement(raw, args.min_per_app)
         except ValueError as exc:
             failures.append(str(exc))
             continue
-        shadow_checks.append(_shadow_check(base, args.key, None, min_total, kind=kind, since_hours=since_hours, min_coverage_hours=min_coverage_hours))
+        shadow_checks.append(_shadow_check(
+            base,
+            args.key,
+            None,
+            min_total,
+            kind=kind,
+            since_hours=since_hours,
+            min_coverage_hours=min_coverage_hours,
+            release_commit=shadow_release_commit,
+        ))
     for raw in args.require_app_kind:
         try:
             app, kind, min_total = _parse_app_kind_requirement(raw)
         except ValueError as exc:
             failures.append(str(exc))
             continue
-        shadow_checks.append(_shadow_check(base, args.key, app, min_total, kind=kind, since_hours=since_hours, min_coverage_hours=min_coverage_hours))
+        shadow_checks.append(_shadow_check(
+            base,
+            args.key,
+            app,
+            min_total,
+            kind=kind,
+            since_hours=since_hours,
+            min_coverage_hours=min_coverage_hours,
+            release_commit=shadow_release_commit,
+        ))
 
     report["shadowChecks"] = shadow_checks
     for item in shadow_checks:

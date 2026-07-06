@@ -208,6 +208,7 @@ public static class GatewayHttpEndpoints
             int? limit,
             string? appCallerCode,
             string? kind,
+            string? releaseCommit,
             double? sinceHours) =>
         {
             var n = Math.Clamp(limit ?? 50, 1, 500);
@@ -219,6 +220,9 @@ public static class GatewayHttpEndpoints
                 filters.Add(Builders<LlmShadowComparison>.Filter.Eq(x => x.AppCallerCode, appCallerCode.Trim()));
             if (!string.IsNullOrWhiteSpace(kind))
                 filters.Add(Builders<LlmShadowComparison>.Filter.Eq(x => x.Kind, kind.Trim()));
+            var normalizedReleaseCommit = NormalizeCommitFilter(releaseCommit);
+            if (normalizedReleaseCommit is not null)
+                filters.Add(Builders<LlmShadowComparison>.Filter.Eq(x => x.ReleaseCommit, normalizedReleaseCommit));
             var since = sinceHours is > 0 ? DateTime.UtcNow.AddHours(-sinceHours.Value) : (DateTime?)null;
             if (since is not null)
                 filters.Add(Builders<LlmShadowComparison>.Filter.Gte(x => x.ComparedAt, since.Value));
@@ -243,10 +247,18 @@ public static class GatewayHttpEndpoints
 
             return Results.Json(new
             {
-                summary = new { total, allMatch, critical, httpFail, sinceHours, since, firstComparedAt = first, lastComparedAt = last, coverageHours },
+                summary = new { total, allMatch, critical, httpFail, sinceHours, since, releaseCommit = normalizedReleaseCommit, firstComparedAt = first, lastComparedAt = last, coverageHours },
                 recent,
             }, jsonOpts);
         });
+    }
+
+    static string? NormalizeCommitFilter(string? value)
+    {
+        var trimmed = (value ?? string.Empty).Trim();
+        if (trimmed.StartsWith("sha-", StringComparison.OrdinalIgnoreCase))
+            trimmed = trimmed[4..];
+        return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed.ToLowerInvariant();
     }
 
     // 把 GatewayRequestContext 转成 LlmRequestContext 并打开作用域。

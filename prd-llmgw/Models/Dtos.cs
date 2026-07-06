@@ -264,6 +264,7 @@ public sealed class ShadowSummary
     public long HttpFail { get; set; }
     public double? SinceHours { get; set; }
     public string? Since { get; set; }
+    public string? ReleaseCommit { get; set; }
     public string? FirstComparedAt { get; set; }
     public string? LastComparedAt { get; set; }
     public double CoverageHours { get; set; }
@@ -271,6 +272,7 @@ public sealed class ShadowSummary
 public sealed class ShadowItem
 {
     public string Id { get; set; } = ""; public string Kind { get; set; } = ""; public string? RequestId { get; set; }
+    public string? ReleaseCommit { get; set; }
     public string AppCallerCode { get; set; } = ""; public string ModelType { get; set; } = ""; public string? ComparedAt { get; set; }
     public long ShadowDurationMs { get; set; } public bool HttpOk { get; set; } public string? HttpError { get; set; }
     public bool AllMatch { get; set; } public bool HasCritical { get; set; }

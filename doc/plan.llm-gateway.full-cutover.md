@@ -116,14 +116,16 @@ multipart/key-gate/http-failure、C 层跨进程矩阵、serving 端点合同、
 commit 必须匹配 `--expect-commit`，`llmgw-web-prd-agent` 必须 running。这样可以防止“CI 镜像已绿，
 但灰度仍在源码模式或旧容器上验证”的假阳性；
 传 `--run-shadow-coverage` 时会调用 `scripts/llmgw-shadow-coverage-report.py` 输出 global/kind/appCaller×kind
-覆盖矩阵，明确每个格子的 total、allMatch、critical、httpFail 与是否达标；
-传 `--require-release-gate` 时会调用 `scripts/llmgw-release-gate.py` 检查真实 health/shadow 样本。
+覆盖矩阵，明确每个格子的 total、allMatch、critical、httpFail 与是否达标；传 `--expect-commit` 时矩阵默认只统计
+该 commit 产生的 shadow 样本，防止旧版本证据搭车。
+传 `--require-release-gate` 时会调用 `scripts/llmgw-release-gate.py` 检查真实 health/shadow 样本；release gate
+同样会在 `--expect-commit` 或 `--shadow-release-commit` 存在时只统计该 commit 的 shadow 记录。
 
 `exec_dep.sh` 也内置同一 live release gate：全量 `LLMGW_MODE=http` 或灰度 `LLMGW_HTTP_APP_CALLER_ALLOWLIST` 非空时
-都会强制执行。这个 gate 分两段：`docker compose up` 前只用当前线上 serving 检查 shadow 证据是否满足
+都会强制执行。这个 gate 分两段：`docker compose up` 前只用当前线上 serving 检查同 commit shadow 证据是否满足
 critical/httpFail/样本/覆盖时长门槛；`docker compose up` 后再对新镜像运行 serving probe 与 D 层 smoke，
 并在不可变 `--commit <sha>` 发布时要求 `/gw/v1/healthz` 的 commit 匹配该 sha。这样避免“新 commit 尚未部署，
-发布前 healthz 却被要求等于新 commit”的假失败，也避免部署后漏验新 serving。缺少 `LLMGW_GATE_BASE`/`GW_BASE` 或
+发布前 healthz 却被要求等于新 commit”的假失败，也避免部署后漏验新 serving；同时避免不同 commit 复用旧 shadow 样本。缺少 `LLMGW_GATE_BASE`/`GW_BASE` 或
 `LLMGW_GATE_KEY`/`GW_KEY`/`LLMGW_SERVE_KEY` 会拒绝部署；`LLMGW_MODE=shadow|inproc`
 且 allowlist 为空时不挡发布，便于先以 shadow 积累证据。生产 compose 已透传
 `LLMGW_HTTP_APP_CALLER_ALLOWLIST` 和 `LLMGW_SHADOW_FULL_SAMPLE_PERCENT`，避免灰度配置只停留在脚本层。

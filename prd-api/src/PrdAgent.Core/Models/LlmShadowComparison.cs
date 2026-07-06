@@ -23,6 +23,9 @@ public class LlmShadowComparison
     /// <summary>对应 LlmRequestContext.RequestId（可关联 llmrequestlogs）</summary>
     public string? RequestId { get; set; }
 
+    /// <summary>产生本条 shadow 证据的 MAP/API 发布 commit。release gate 用它防止旧样本误放行新版本。</summary>
+    public string? ReleaseCommit { get; set; }
+
     /// <summary>请求入口</summary>
     public string AppCallerCode { get; set; } = string.Empty;
 

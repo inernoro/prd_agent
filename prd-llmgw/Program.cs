@@ -482,13 +482,15 @@ app.MapGet("/gw/models", async (string? platformId, bool? enabled) =>
 }).RequireAuthorization("LogsRead");
 
 // 影子比对：汇总 + 最近 N 条
-app.MapGet("/gw/shadow-comparisons", async (int? limit, string? appCallerCode, string? kind, double? sinceHours) =>
+app.MapGet("/gw/shadow-comparisons", async (int? limit, string? appCallerCode, string? kind, string? releaseCommit, double? sinceHours) =>
 {
     var n = Math.Clamp(limit ?? 50, 1, 500);
     var fb = Builders<BsonDocument>.Filter;
     var filters = new List<FilterDefinition<BsonDocument>>();
     if (!string.IsNullOrWhiteSpace(appCallerCode)) filters.Add(fb.Eq("AppCallerCode", appCallerCode.Trim()));
     if (!string.IsNullOrWhiteSpace(kind)) filters.Add(fb.Eq("Kind", kind.Trim()));
+    var normalizedReleaseCommit = NormalizeCommitFilter(releaseCommit);
+    if (normalizedReleaseCommit is not null) filters.Add(fb.Eq("ReleaseCommit", normalizedReleaseCommit));
     var since = sinceHours is > 0 ? DateTime.UtcNow.AddHours(-sinceHours.Value) : (DateTime?)null;
     if (since is not null) filters.Add(fb.Gte("ComparedAt", since.Value));
     var filter = filters.Count == 0 ? fb.Empty : fb.And(filters);
@@ -518,6 +520,7 @@ app.MapGet("/gw/shadow-comparisons", async (int? limit, string? appCallerCode, s
             HttpFail = httpFail,
             SinceHours = sinceHours,
             Since = since?.ToString("O"),
+            ReleaseCommit = normalizedReleaseCommit,
             FirstComparedAt = first.ToIso(),
             LastComparedAt = last.ToIso(),
             CoverageHours = coverageHours,
@@ -1230,6 +1233,7 @@ static ShadowItem MapShadow(BsonDocument d)
         Id = d.GetStringOrEmpty("_id"),
         Kind = d.GetStringOrEmpty("Kind"),
         RequestId = d.AsNullableString("RequestId"),
+        ReleaseCommit = d.AsNullableString("ReleaseCommit"),
         AppCallerCode = d.GetStringOrEmpty("AppCallerCode"),
         ModelType = d.GetStringOrEmpty("ModelType"),
         ComparedAt = d.AsNullableUtcDateTime("ComparedAt").ToIso(),
@@ -1254,3 +1258,11 @@ static ShadowItem MapShadow(BsonDocument d)
 // 统一 JSON 输出（带信封 + 指定状态码）。
 static IResult Json<T>(T value, JsonSerializerOptions options, int statusCode = 200)
     => Results.Json(value, options, statusCode: statusCode);
+
+static string? NormalizeCommitFilter(string? value)
+{
+    var trimmed = (value ?? string.Empty).Trim();
+    if (trimmed.StartsWith("sha-", StringComparison.OrdinalIgnoreCase))
+        trimmed = trimmed[4..];
+    return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed.ToLowerInvariant();
+}
