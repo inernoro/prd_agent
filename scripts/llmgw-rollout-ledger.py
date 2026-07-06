@@ -25,6 +25,17 @@ STAGES = [
     "http-full",
 ]
 ROLLBACK_REHEARSAL_STAGE = "rollback-rehearsal"
+ROLLOUT_SEQUENCE = [
+    "shadow-start",
+    ROLLBACK_REHEARSAL_STAGE,
+    "canary-intent-text",
+    "canary-chat",
+    "canary-streaming",
+    "canary-vision",
+    "canary-image",
+    "canary-video-asr",
+    "http-full",
+]
 
 
 def _stage_requires_rehearsal(stage: str) -> bool:
@@ -97,6 +108,100 @@ def _successful_stages(entries: list[dict], commit: str) -> set[str]:
         if str(item.get("commit") or "").lower() == commit.lower()
         and str(item.get("status") or "") == "success"
     }
+
+
+def _successful_entries(entries: list[dict], commit: str, stage: str) -> list[dict]:
+    return [
+        item
+        for item in entries
+        if str(item.get("commit") or "").lower() == commit.lower()
+        and str(item.get("status") or "") == "success"
+        and str(item.get("stage") or "") == stage
+    ]
+
+
+def _latest_success(entries: list[dict], commit: str, stage: str) -> dict | None:
+    candidates = _successful_entries(entries, commit, stage)
+    if not candidates:
+        return None
+
+    def key(item: dict) -> datetime:
+        return _parse_recorded_at(item.get("recordedAt")) or datetime.min.replace(tzinfo=timezone.utc)
+
+    return max(candidates, key=key)
+
+
+def _required_rollout_stages(target_stage: str, require_target_success: bool) -> list[str]:
+    if target_stage == "rollback-inproc":
+        return []
+    if target_stage not in ROLLOUT_SEQUENCE:
+        raise SystemExit(f"ERROR: unknown rollout target stage: {target_stage}")
+    end = ROLLOUT_SEQUENCE.index(target_stage)
+    if require_target_success:
+        end += 1
+    return ROLLOUT_SEQUENCE[:end]
+
+
+def _entry_evidence_failures(entry: dict) -> list[str]:
+    stage = str(entry.get("stage") or "")
+    failures: list[str] = []
+    evidence_json = str(entry.get("evidenceJson") or "")
+    try:
+        _require_pass_json(evidence_json, f"{stage} stage evidence")
+    except SystemExit as exc:
+        failures.append(str(exc))
+
+    if stage == ROLLBACK_REHEARSAL_STAGE:
+        return failures
+
+    for key, label in [
+        ("servingProbeJson", "serving probe evidence"),
+        ("smokeJson", "D-layer smoke evidence"),
+    ]:
+        try:
+            _require_pass_json(str(entry.get(key) or ""), f"{stage} {label}")
+        except SystemExit as exc:
+            failures.append(str(exc))
+    if _bool_flag(str(entry.get("releaseGateRequired") or "0")):
+        try:
+            _require_pass_json(str(entry.get("releaseGateJson") or ""), f"{stage} release gate evidence")
+        except SystemExit as exc:
+            failures.append(str(exc))
+    return failures
+
+
+def _write_audit_markdown(path: str, report: dict) -> None:
+    if not path:
+        return
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+    def cell(value: object) -> str:
+        return str(value).replace("|", "\\|")
+
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("# LLM Gateway Rollout Ledger Audit\n\n")
+        fh.write(f"- generatedAt: `{cell(report['generatedAt'])}`\n")
+        fh.write(f"- verdict: `{cell(report['verdict'])}`\n")
+        fh.write(f"- ledger: `{cell(report['ledger'])}`\n")
+        fh.write(f"- commit: `{cell(report['commit'])}`\n")
+        fh.write(f"- targetStage: `{cell(report['targetStage'])}`\n")
+        fh.write(f"- requireTargetSuccess: `{cell(report['requireTargetSuccess'])}`\n")
+        fh.write(f"- minObservationHours: `{cell(report['minObservationHours'])}`\n\n")
+        fh.write("## Required Stages\n\n")
+        for item in report.get("stageResults") or []:
+            fh.write(
+                f"- {cell(item['stage'])}: status=`{cell(item['status'])}` "
+                f"recordedAt=`{cell(item.get('recordedAt') or '')}`\n"
+            )
+        fh.write("\n## Failures\n\n")
+        failures = report.get("failures") or []
+        if failures:
+            for failure in failures:
+                fh.write(f"- {failure}\n")
+        else:
+            fh.write("- none\n")
 
 
 def validate(args: argparse.Namespace) -> int:
@@ -313,6 +418,102 @@ def stage_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def audit(args: argparse.Namespace) -> int:
+    commit = args.commit.lower().strip()
+    if not commit:
+        print("ERROR: rollout ledger audit requires --commit", file=sys.stderr)
+        return 2
+    try:
+        min_observation_hours = max(0.0, float(args.min_observation_hours or 0))
+    except (TypeError, ValueError):
+        print(f"ERROR: --min-observation-hours must be a non-negative number: {args.min_observation_hours}", file=sys.stderr)
+        return 2
+
+    entries = _load(args.ledger)
+    required_stages = _required_rollout_stages(args.target_stage, bool(args.require_target_success))
+    failures: list[str] = []
+    stage_results: list[dict] = []
+    latest_by_stage: dict[str, dict] = {}
+
+    for stage in required_stages:
+        latest = _latest_success(entries, commit, stage)
+        if not latest:
+            failures.append(f"missing success stage for commit: stage={stage} commit={commit}")
+            stage_results.append({"stage": stage, "status": "missing", "recordedAt": ""})
+            continue
+        latest_by_stage[stage] = latest
+        recorded_at = str(latest.get("recordedAt") or "")
+        evidence_failures = _entry_evidence_failures(latest)
+        failures.extend(evidence_failures)
+        stage_results.append(
+            {
+                "stage": stage,
+                "status": "success" if not evidence_failures else "evidence-fail",
+                "recordedAt": recorded_at,
+                "releaseGateRequired": _bool_flag(str(latest.get("releaseGateRequired") or "0")),
+                "evidenceJson": latest.get("evidenceJson") or "",
+                "servingProbeJson": latest.get("servingProbeJson") or "",
+                "smokeJson": latest.get("smokeJson") or "",
+                "releaseGateJson": latest.get("releaseGateJson") or "",
+            }
+        )
+
+    canary_or_http = [
+        stage
+        for stage in required_stages
+        if stage.startswith("canary-") or stage == "http-full"
+    ]
+    rehearsal = latest_by_stage.get(ROLLBACK_REHEARSAL_STAGE)
+    rehearsal_time = _parse_recorded_at(rehearsal.get("recordedAt")) if rehearsal else None
+    for stage in canary_or_http:
+        stage_entry = latest_by_stage.get(stage)
+        stage_time = _parse_recorded_at(stage_entry.get("recordedAt")) if stage_entry else None
+        if not rehearsal_time:
+            failures.append(f"missing rollback rehearsal time before stage={stage}")
+        elif stage_time and rehearsal_time > stage_time:
+            failures.append(
+                "rollback rehearsal must be recorded before canary/http stage. "
+                f"stage={stage} rehearsalAt={rehearsal_time.isoformat()} stageAt={stage_time.isoformat()}"
+            )
+
+    ordered_real_stages = [stage for stage in STAGES if stage in required_stages]
+    for previous_stage, current_stage in zip(ordered_real_stages, ordered_real_stages[1:]):
+        previous = latest_by_stage.get(previous_stage)
+        current = latest_by_stage.get(current_stage)
+        previous_time = _parse_recorded_at(previous.get("recordedAt")) if previous else None
+        current_time = _parse_recorded_at(current.get("recordedAt")) if current else None
+        if not previous_time or not current_time:
+            continue
+        observed_hours = (current_time - previous_time).total_seconds() / 3600.0
+        if observed_hours < min_observation_hours:
+            failures.append(
+                "rollout stage observation window not satisfied. "
+                f"previous_stage={previous_stage} current_stage={current_stage} "
+                f"observed_hours={observed_hours:.2f} required_hours={min_observation_hours:g}"
+            )
+
+    report = {
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "verdict": "fail" if failures else "pass",
+        "ledger": args.ledger,
+        "commit": commit,
+        "targetStage": args.target_stage,
+        "requireTargetSuccess": bool(args.require_target_success),
+        "minObservationHours": min_observation_hours,
+        "requiredStages": required_stages,
+        "stageResults": stage_results,
+        "failures": failures,
+    }
+    _write_json(args.json_out, report)
+    _write_audit_markdown(args.report_md, report)
+    if failures:
+        for failure in failures:
+            print(f"ERROR: {failure}", file=sys.stderr)
+        return 1
+    print(f"LLM Gateway rollout ledger audit: PASS for {args.target_stage}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="LLM Gateway rollout ledger")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -361,6 +562,16 @@ def main() -> int:
     report_parser.add_argument("--smoke-json", default="")
     report_parser.add_argument("--min-stage-observation-hours", default="")
     report_parser.set_defaults(func=stage_report)
+
+    audit_parser = sub.add_parser("audit", help="audit rollout ledger completion state")
+    audit_parser.add_argument("--ledger", required=True)
+    audit_parser.add_argument("--commit", required=True)
+    audit_parser.add_argument("--target-stage", default="http-full")
+    audit_parser.add_argument("--require-target-success", action="store_true")
+    audit_parser.add_argument("--min-observation-hours", default="24")
+    audit_parser.add_argument("--json-out", default="")
+    audit_parser.add_argument("--report-md", default="")
+    audit_parser.set_defaults(func=audit)
 
     args = parser.parse_args()
     return int(args.func(args))

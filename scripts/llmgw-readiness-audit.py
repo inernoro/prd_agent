@@ -242,6 +242,10 @@ def _static_checks() -> list[dict]:
             "\"minStageObservationHours\": args.min_stage_observation_hours",
             "_require_pass_json",
             "stage-report",
+            "audit",
+            "ROLLOUT_SEQUENCE",
+            "requireTargetSuccess",
+            "LLM Gateway rollout ledger audit",
         ],
     )
     leaks_key_arg = "--key" in prod_stage or "--gateway-key" in prod_stage or "--key" in rollout_ledger
@@ -706,6 +710,45 @@ def _cds_runtime(args: argparse.Namespace) -> dict:
     }
 
 
+def _current_commit() -> str:
+    result = _run(["git", "rev-parse", "HEAD"], timeout=30)
+    if not result["ok"]:
+        return ""
+    return str(result.get("stdout") or "").strip().splitlines()[-1].strip()
+
+
+def _rollout_ledger(args: argparse.Namespace) -> dict:
+    commit = (args.expect_commit or _current_commit()).strip()
+    if not commit:
+        return {
+            "name": "rollout_ledger_completion_state",
+            "ok": False,
+            "detail": "missing --expect-commit and failed to resolve git HEAD",
+        }
+    cmd = [
+        "python3",
+        "scripts/llmgw-rollout-ledger.py",
+        "audit",
+        "--ledger",
+        args.rollout_ledger,
+        "--commit",
+        commit,
+        "--target-stage",
+        args.rollout_target_stage,
+        "--min-observation-hours",
+        str(args.rollout_min_observation_hours),
+    ]
+    if args.require_rollout_complete:
+        cmd.append("--require-target-success")
+    result = _run(cmd, timeout=120)
+    return {
+        "name": "rollout_ledger_completion_state",
+        "ok": result["ok"],
+        "detail": result["stdout"] + result["stderr"],
+        "command": result,
+    }
+
+
 def _write_outputs(report: dict, json_out: str, report_md: str) -> None:
     if json_out:
         path = Path(json_out)
@@ -750,9 +793,14 @@ def main() -> int:
     parser.add_argument("--run-shadow-coverage", action="store_true", help="run appCaller x kind shadow coverage matrix")
     parser.add_argument("--run-serving-probe", action="store_true", help="run serving health stability and no-key auth probe")
     parser.add_argument("--run-cds-runtime", action="store_true", help="verify CDS preview/grey runtime uses release gateway profiles")
+    parser.add_argument("--run-rollout-ledger", action="store_true", help="audit rollout ledger stage evidence for --expect-commit or git HEAD")
     parser.add_argument("--cds-branch-id", default=os.environ.get("CDS_BRANCH_ID", ""), help="CDS branch id for --run-cds-runtime; default: cdscli branch-id")
     parser.add_argument("--cds-release-profiles", default=os.environ.get("LLMGW_CDS_RELEASE_PROFILES", "llmgw-prd-agent,llmgw-serve-prd-agent"), help="comma-separated CDS profile ids that must run express prebuilt images")
     parser.add_argument("--cds-running-profiles", default=os.environ.get("LLMGW_CDS_RUNNING_PROFILES", "llmgw-web-prd-agent"), help="comma-separated CDS profile ids that must be running")
+    parser.add_argument("--rollout-ledger", default=os.environ.get("LLMGW_ROLLOUT_LEDGER", ".llmgw-release-evidence/rollout-ledger.jsonl"))
+    parser.add_argument("--rollout-target-stage", default=os.environ.get("LLMGW_ROLLOUT_TARGET_STAGE", "http-full"))
+    parser.add_argument("--rollout-min-observation-hours", type=float, default=float(os.environ.get("LLMGW_STAGE_MIN_OBSERVATION_HOURS", "24")))
+    parser.add_argument("--require-rollout-complete", action="store_true", help="require target stage success in rollout ledger audit")
     parser.add_argument("--serving-probe-samples", type=int, default=int(os.environ.get("LLMGW_SERVING_PROBE_SAMPLES", "12")))
     parser.add_argument("--serving-probe-interval", type=float, default=float(os.environ.get("LLMGW_SERVING_PROBE_INTERVAL_SECONDS", "5")))
     parser.add_argument("--smoke-timeout-seconds", type=int, default=int(os.environ.get("GW_TIMEOUT", "120")))
@@ -783,6 +831,8 @@ def main() -> int:
             checks.append(_serving_probe(args))
     if args.run_cds_runtime:
         checks.append(_cds_runtime(args))
+    if args.run_rollout_ledger:
+        checks.append(_rollout_ledger(args))
     if args.require_release_gate:
         if not args.base or not args.key:
             checks.append(_check("live_release_gate", False, "missing --base/--key"))

@@ -344,6 +344,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("\"minStageObservationHours\": args.min_stage_observation_hours", ledger);
         Assert.Contains("_require_pass_json", ledger);
         Assert.Contains("stage-report", ledger);
+        Assert.Contains("ROLLOUT_SEQUENCE", ledger);
+        Assert.Contains("audit", ledger);
+        Assert.Contains("requireTargetSuccess", ledger);
+        Assert.Contains("LLM Gateway rollout ledger audit", ledger);
         Assert.Contains("ensure_ascii=False", ledger);
         Assert.DoesNotContain("--key", ledger);
 
@@ -356,6 +360,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_STAGE_MIN_OBSERVATION_HOURS", readiness);
         Assert.Contains("requires rollback rehearsal success for the same commit", readiness);
         Assert.Contains("rollout stage observation window not satisfied", readiness);
+        Assert.Contains("--run-rollout-ledger", readiness);
+        Assert.Contains("rollout_ledger_completion_state", readiness);
+        Assert.Contains("scripts/llmgw-rollout-ledger.py", readiness);
+        Assert.Contains("--require-rollout-complete", readiness);
         Assert.Contains("leaksKeyArg", readiness);
     }
 
@@ -432,6 +440,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("cds_runtime_uses_release_gateway_profiles", script);
         Assert.Contains("LLMGW_CDS_RELEASE_PROFILES", script);
         Assert.Contains("llmgw-prd-agent,llmgw-serve-prd-agent", script);
+        Assert.Contains("--run-rollout-ledger", script);
+        Assert.Contains("rollout_ledger_completion_state", script);
+        Assert.Contains("LLMGW_ROLLOUT_LEDGER", script);
+        Assert.Contains("LLMGW_ROLLOUT_TARGET_STAGE", script);
+        Assert.Contains("LLMGW_STAGE_MIN_OBSERVATION_HOURS", script);
+        Assert.Contains("--require-rollout-complete", script);
         Assert.Contains("LLMGW_READINESS_JSON_OUT", script);
         Assert.Contains("LLMGW_READINESS_REPORT_MD", script);
     }

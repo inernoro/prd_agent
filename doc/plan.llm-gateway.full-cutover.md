@@ -164,6 +164,12 @@ stage/serving-probe/gw-smoke 证据；canary/http 阶段还必须读到 verdict=
 D 层 smoke 与阶段观察窗口都满足后，台账才允许进入下一阶段。
 `rollback-rehearsal` 只用 `LLMGW_ROLLBACK_DRY_RUN=1` 演练回滚脚本，不重启 API；任何 canary/http 阶段都必须
 先在同一 commit 的台账里看到 `rollback-rehearsal success`，防止没有回滚路径演练就进入灰度或全量。
+需要回答“当前 commit 是否已满足某个发布阶段”时，不人工翻 JSONL；统一跑：
+`python3 scripts/llmgw-rollout-ledger.py audit --ledger .llmgw-release-evidence/rollout-ledger.jsonl --commit <sha> --target-stage http-full --require-target-success`。
+该审计会检查同一 commit 的 shadow、rollback rehearsal、各 canary 与 http-full 成功记录，重新读取每个阶段的
+stage/serving-probe/gw-smoke/release-gate 证据文件 verdict，并校验相邻正式阶段观察窗口。readiness 总 gate 可加
+`--run-rollout-ledger --require-rollout-complete` 把这本台账纳入最终 PASS/FAIL；没有 http-full success 时必须返回 fail，
+禁止把“代码门禁齐了”误报成“生产全量迁移完成”。
 灰度阶段会自动设置 `LLMGW_MODE=shadow`、对应 `LLMGW_CANARY_STAGE` 与 allowlist；`http-full`
 会设置 `LLMGW_MODE=http` 并依赖 `exec_dep.sh` 的全量证据门。`rollback-inproc` 只调用
 `scripts/llmgw-rollback-inproc.sh`，不回滚数据库。
