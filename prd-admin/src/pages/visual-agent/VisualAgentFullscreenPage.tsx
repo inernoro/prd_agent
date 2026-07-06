@@ -3,20 +3,16 @@
  * 不受外层 AppShell 布局影响
  */
 import { ArrowLeft } from 'lucide-react';
-import { useNavigate, useParams, useLocation } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { SystemDialogHost } from '@/components/ui/SystemDialogHost';
 import { GlobalDefectSubmitDialog } from '@/components/ui/GlobalDefectSubmitDialog';
 import VisualAgentWorkspaceListPage from './VisualAgentWorkspaceListPage';
 import VisualAgentWorkspaceEditorPage from './VisualAgentWorkspaceEditorPage';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
-import { MobileCompatGate } from '@/components/MobileCompatGate';
-import { useBreakpoint } from '@/hooks/useBreakpoint';
 
 export default function VisualAgentFullscreenPage() {
   const navigate = useNavigate();
   const params = useParams();
-  const location = useLocation();
-  const { isMobile } = useBreakpoint();
   const workspaceId = params.workspaceId;
 
   // 判断是列表页还是编辑页
@@ -38,12 +34,6 @@ export default function VisualAgentFullscreenPage() {
         background: '#0a0a0c',
       }}
     >
-      {/* 手机端 pc-only 门槛：本页是独立全屏路由、不进 AppShell，AppShell 渲染的
-          MobileCompatGate 对本页失效，导致手机用户直接走进为桌面鼠标设计的画布(留白/露背景)。
-          在此补回门槛，让手机访问显示「建议用电脑」+ 复制链接（仍可「继续浏览」）。
-          见 .claude/rules/mobile-first-density.md 与 lib/mobileCompatibility.ts（/visual-agent = pc-only）。 */}
-      {isMobile && <MobileCompatGate pathname={location.pathname} />}
-
       {/* SystemDialogHost - 独立页面需要自己渲染对话框 */}
       <SystemDialogHost />
       {/* GlobalDefectSubmitDialog - 全局缺陷提交对话框 */}

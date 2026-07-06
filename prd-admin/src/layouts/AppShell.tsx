@@ -493,6 +493,8 @@ export default function AppShell() {
   const isHomePage = location.pathname === '/';
 
   const activeKey = location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`;
+  const activeNavItem = visibleItems.find((it) => it.key === activeKey);
+  const mobileAppName = isHomePage ? 'PRD Agent' : (activeNavItem?.label || 'PRD Agent');
   const isLabPage = location.pathname.startsWith('/lab');
   const suppressFloatingDock = location.pathname.startsWith('/cds-agent');
 
@@ -961,17 +963,14 @@ export default function AppShell() {
           </div>
         );
       })()}
-      {/* ── 移动端: 顶部导航栏 ── */}
-      {/* 首页 (isHomePage) 做 Apple Today 式透明顶栏：
-       *   - 左: menu 按钮
-       *   - 中: 空
-       *   - 右: 头像按钮（带通知红点）—— 点击 → /profile
-       *   文字标题职责交给页面内 Hero */}
+      {/* ── 移动端: 全局顶部导航栏 ── */}
       {isMobile && (
         <header
-          className="fixed top-0 left-0 right-0 z-100 flex items-center gap-3 px-4"
+          className="fixed top-0 left-0 right-0 z-100 grid items-center px-3"
           style={{
-            ...(isHomePage ? { background: 'transparent' } : glassMobileHeader),
+            ...glassMobileHeader,
+            gridTemplateColumns: '44px minmax(0, 1fr) 88px',
+            columnGap: 8,
             height: 'calc(var(--mobile-header-height, 48px) + env(safe-area-inset-top, 0px))',
             paddingTop: 'env(safe-area-inset-top, 0px)',
           }}
@@ -985,16 +984,17 @@ export default function AppShell() {
           >
             <Menu size={20} />
           </button>
-          {!isHomePage && (
-            <div className="flex-1 min-w-0 text-center">
-              <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                {visibleItems.find((it) => it.key === activeKey)?.label || 'PRD Agent'}
-              </span>
-            </div>
-          )}
-          {isHomePage && <div className="flex-1" />}
-          {!isHomePage && <ChangelogBell size={18} compact />}
-          {!isHomePage && (
+          <div className="min-w-0 flex items-center justify-center">
+            <span
+              className="block max-w-full truncate text-[16px] font-semibold leading-none"
+              style={{ color: 'var(--text-primary)', letterSpacing: 0 }}
+              title={mobileAppName}
+            >
+              {mobileAppName}
+            </span>
+          </div>
+          <div className="flex items-center justify-end gap-1">
+            <ChangelogBell size={18} compact />
             <button
               type="button"
               onClick={() => {
@@ -1008,66 +1008,14 @@ export default function AppShell() {
               <Bell size={18} />
               {notificationCount > 0 && (
                 <span
-                  className="absolute top-1 right-1 h-4 w-4 rounded-full flex items-center justify-center text-[9px] font-bold"
+                  className="absolute top-0.5 right-0.5 h-4 min-w-4 px-1 rounded-full flex items-center justify-center text-[9px] font-bold"
                   style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
                 >
-                  {notificationCount > 999 ? '999+' : notificationCount}
+                  {notificationCount > 99 ? '99+' : notificationCount}
                 </span>
               )}
             </button>
-          )}
-          {/* 首页右上角头像按钮 —— Apple Today 范式 */}
-          {isHomePage && (
-            <button
-              type="button"
-              onClick={() => navigate('/profile')}
-              className="relative h-9 w-9 inline-flex items-center justify-center rounded-full overflow-hidden transition-opacity active:opacity-60"
-              style={{ border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)', padding: 0 }}
-              aria-label="个人中心"
-            >
-              {user?.avatarUrl || user?.avatarFileName ? (
-                <UserAvatar
-                  src={resolveAvatarUrl({
-                    username: user?.username,
-                    userType: user?.userType,
-                    botKind: user?.botKind,
-                    avatarFileName: user?.avatarFileName ?? null,
-                    avatarUrl: user?.avatarUrl,
-                  })}
-                  alt="avatar"
-                  className="h-full w-full object-cover"
-                />
-              ) : (
-                <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  {(user?.displayName || user?.username || '?')[0]}
-                </span>
-              )}
-              {notificationCount > 0 && (
-                <span
-                  className="absolute"
-                  style={{
-                    top: -2,
-                    right: -2,
-                    minWidth: 16,
-                    height: 16,
-                    padding: '0 4px',
-                    borderRadius: 999,
-                    background: '#FF453A',
-                    color: '#fff',
-                    fontSize: 9,
-                    fontWeight: 700,
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    border: '2px solid #000',
-                    lineHeight: 1,
-                  }}
-                >
-                  {notificationCount > 999 ? '999+' : notificationCount}
-                </span>
-              )}
-            </button>
-          )}
+          </div>
         </header>
       )}
 
@@ -1180,6 +1128,7 @@ export default function AppShell() {
             collapsed ? 'gap-1.5 items-center' : 'gap-1.5'
           )}
           style={{
+            display: focusHideAside ? 'none' : undefined,
             left: asideGap,
             top: asideGap,
             bottom: asideGap,

@@ -12,6 +12,7 @@ using MongoDB.Driver.Core.Servers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Infrastructure.Services.VisualAgent;
 using PrdAgent.Api.Extensions;
@@ -828,7 +829,7 @@ public class ImageMasterController : ControllerBase
             .ThenByDescending(x => x.CreatedAt)
             .FirstOrDefaultAsync(ct);
 
-        // best-effort：更新 lastOpenedAt
+        // best-effort：更新 lastOpenedAt + 每用户「最近打开」台账（首页继续上次）
         try
         {
             var now = DateTime.UtcNow;
@@ -838,6 +839,7 @@ public class ImageMasterController : ControllerBase
         {
             // ignore
         }
+        await RecentOpenTracker.TouchAsync(_db, adminId, "visual-agent", wid);
 
         ImageMasterViewport? viewport = null;
         try

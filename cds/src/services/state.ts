@@ -892,6 +892,10 @@ export class StateService {
     return this.state.branches[branchId]?.subdomainAliases || [];
   }
 
+  getBranchCustomDomains(branchId: string): string[] {
+    return this.state.branches[branchId]?.customDomains || [];
+  }
+
   /**
    * Replace the alias list for a branch. Validates that the branch exists
    * but does NOT validate DNS format or cross-branch collisions — those
@@ -906,6 +910,16 @@ export class StateService {
       return;
     }
     branch.subdomainAliases = [...aliases];
+  }
+
+  setBranchCustomDomains(branchId: string, domains: string[]): void {
+    const branch = this.state.branches[branchId];
+    if (!branch) throw new Error(`分支 "${branchId}" 不存在`);
+    if (!domains || domains.length === 0) {
+      delete branch.customDomains;
+      return;
+    }
+    branch.customDomains = [...domains];
   }
 
   /**
@@ -947,6 +961,20 @@ export class StateService {
         // Collision: candidate equals another branch's alias
         if (other.subdomainAliases?.some(a => a.toLowerCase() === normalized)) {
           conflicts.push({ alias: candidate, conflictWith: other.id, reason: 'alias' });
+        }
+      }
+    }
+    return conflicts;
+  }
+
+  findCustomDomainCollisions(branchId: string, candidateDomains: string[]): Array<{ domain: string; conflictWith: string }> {
+    const conflicts: Array<{ domain: string; conflictWith: string }> = [];
+    for (const candidate of candidateDomains) {
+      const normalized = candidate.toLowerCase();
+      for (const other of Object.values(this.state.branches)) {
+        if (other.id === branchId) continue;
+        if (other.customDomains?.some((d) => d.toLowerCase() === normalized)) {
+          conflicts.push({ domain: candidate, conflictWith: other.id });
         }
       }
     }

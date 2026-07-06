@@ -8,6 +8,522 @@
 
 ## [未发布]
 
+### 2026-07-05
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| feat | cds | 顶部导航贯穿全宽:壳布局从"rail 通天 + 列内 header"改为两行网格,header 横贯窗口全宽,品牌宝石从左侧 rail 移入 header 左端(紧邻面包屑根段组成 logo + 字标),左侧导航从 header 之下开始只承载图标 |
+| polish | cds | 路由切换骨架 header 同步补品牌位;手机端 app-bar 形态不变(汉堡 + 标题,品牌仍在抽屉头部) |
+| polish | cds | 品牌标活性化:simple 档新增亮度琉光待机(brightness-only 高光每 4.8s 沿切面扫一圈,hover 提速),满亮度底线不破——灵动与清晰共存;修复上一轮 simple 档误杀小尺寸加载器组装动画 |
+| polish | cds | logo 比例加大:宝石几何 R 23.5 到 28(星形占 viewBox 87.5%),rail 图标 32px 到 36px,favicon(双栈)与 legacy 内联标同步重生成 |
+| feat | cds | AI 操作分支卡新增周界光迹动效:1.5px 细光沿卡片边框 3.4s 巡回(双主题配色),AI 图标摇头动画收敛为呼吸级托举,prefers-reduced-motion 下光迹关闭 |
+| ci | cds | UI 回归守卫适配 workspace 三档体系:分支列表工作区归入 fluid 档(max-width none,超宽屏 auto-fill 网格继续加列),守卫断言从过时的 3000px 字面量改为钉住 fluid 写法的正则,意图不变(防退回窄上限造成宽屏大留白) |
+| fix | cds | 设计复审二轮:favicon 去掉厚重磁贴底(纯宝石透明底);rail 品牌区改为与导航同语言的圆角瓷贴片(治"长方形+logo 不自在");首页导航 logo 去边框盒并放大(34px 小盒改 26px 裸宝石,大屏可见细节) |
+| polish | cds | 登录卡现代化:主 CTA 去 bevel 内阴影与斜切扫光改扁平实底;输入框去拟物内阴影、焦点只留细环;聚焦标签不再变橙;secure 徽记降噪;蜂窝暗场压到阈下(去 2010 年代信号) |
+| fix | cds | 宝石品牌标小尺寸清晰度:新增 detail=simple 清晰档(仅用色阶亮部、相邻切面保持一档反差),rail/首页导航/页脚/favicon/legacy 内联标全部切换,治"左上角 logo 看不清" |
+| polish | cds | 品牌标渲染降噪:去掉默认辉光滤镜(改为可选 .cds-gem--glow),simple 档禁用流光压暗动效;rail 图标放大至 32px 并移除漂移动画 |
+| fix | cds | 分支卡 Redis 基础容器不显示:去掉端口 chips 的 slice(0,6) 硬砍(排序 应用-数据库-缓存,5 应用 + Mongo 恰好 6 个,Redis 排第 7 被静默切掉);应用 chips 超过 8 个才折叠为「+N」,可点击展开/收起 |
+| feat | cds | 分支卡基础容器改为「托盘胶囊」(方案 C):Mongo/Redis 等基础设施装进虚线托盘,冠名「基础」+ 品牌图标 + 实名 + 端口,替换旧的"无边框暗图标"过度弱化方案,用户一眼建立"基础容器 = 分支间共享的一伙依赖"心智 |
+| feat | prd-admin | 涌现探索器生成节点体验重做：占位卡实时解析 LLM 流式 JSON 渲染成"正在生长的节点卡"（标题/描述逐字出现、评分标签解析到即显示、已完成构思变勾选 chip），不再向用户裸露原始 JSON token 流 |
+| feat | prd-admin | 涌现探索器接住 explore/emerge 的 thinking 事件：推理模型思考阶段占位卡显示"AI 深度思考中"+思考文字尾巴，消灭最长一段空白等待 |
+| polish | prd-admin | 涌现节点落位节奏提速（流结束后 1s+每个 1s 压缩为 0.4s+0.65s），底部文案随生成进度变化 |
+| fix | prd-admin | 涌现思考流/长字段流改为底部锚定日志窗（文字只追加不重排+顶部渐隐），修复滑动窗口截尾导致的"折叠收缩乱码感" |
+| perf | prd-admin | 修复未登录首页 /home 滚动卡顿：主标题与 HUD 辉光由无限循环动画改为静态值、全屏背景层去掉 mix-blend 混合、Reveal 动画结束后释放 will-change、首屏之下区块改为滚近视口才渲染 |
+| feat | prd-api | 新增首页「继续上次」聚合端点 GET /api/home/recent-work：合并当前用户最近活跃的视觉/文学工作区与工作流，按活跃时间倒序返回 |
+| feat | prd-admin | 登录后首页新增「继续上次」区块：一键回到最近的工作现场（无数据时不渲染） |
+| polish | prd-admin | 登录后首页视觉纪律收敛：46 对渐变强调色统一为同阶色阶尺（颜色只出现在图标芯片）、三种卡片统一同一配方、快捷卡装饰四层删三、问候语彩虹渐变动画移除、进场动画降为区块级一次 fade、区块标题强调色统一 |
+| polish | prd-admin | 登录后首页统一性再设计：智能体卡全体统一为「封面区 16:9 + 图外信息栏」瓦片（撤下五种画风的内联插画，无封面统一色相渐变占位）；快捷入口由横幅卡改为胶囊行；继续上次限 6 条保持安静密度；卡片物种收敛为行/瓦片/胶囊三种 |
+| polish | prd-admin | 首页智能体卡撤掉封面改为紧凑应用瓦片（图标芯片 + 名称 + 两行描述，封面与悬停视频留给百宝箱/作品广场）；区块标题副标题去关键词堆砌改数量徽章；网格密度收紧 |
+| fix | prd-api | 修复「继续上次」跨用户数据不准：新增每用户最近打开台账 home_recent_opens（打开视觉/文学工作区、工作流详情时打点），recent-work 端点改为只读本人台账；此前用实体全局时间戳导致共享成员编辑与定时工作流自跑把同一批内容顶进所有用户首页 |
+| polish | prd-admin | 首页微调"活起来"：卡片悬停改为本卡色相描边与同色投影、图标芯片悬停微放大、瓦片静息态左上角极淡渗色、胶囊悬停浅色相底、问候语用户名静态双色渐变、Hero 背景补一缕靛紫（全部零循环动画） |
+| polish | prd-admin | 首页顶带接入 ReactBits Aurora 极光背景（驯化版）：亮色端锚在右上补留白氛围；标签页隐藏/滚出视口自动暂停、prefers-reduced-motion 静态一帧、DPR 封顶 1.5，新增共享组件 AuroraBackground（依赖 ogl） |
+| feat | prd-api | 「继续上次」埋点补齐：缺陷、周报、产品评审三个详情端点接入最近打开台账，聚合端点补对应标题富化与深链路由（/defect-agent?defectId= 、/report-agent/report/:id 、/review-agent/submissions/:id），覆盖从 3 类升到 6 类 |
+| feat | prd-admin | 首页继续上次卡片支持缺陷/周报/产品评审三类图标与标签 |
+| feat | prd-admin | 知识库页支持 ?store= 深链直达库详情；首页继续上次默认收起一行、新增「浏览全部脚印」展开卡（后端上限 30 条、前端拉 24 条），并支持知识库类型 |
+| feat | prd-api | 知识库 GetStore 鉴权后接入最近打开台账，继续上次覆盖升到 7 类 |
+| fix | prd-admin | 修复液态玻璃主题下首页极光带出现黑块与左上角分界线：极光画布改 screen 提亮混合，只加光不压暗，浅色底下暗部自动隐形 |
+| fix | prd-api | 继续上次的知识库标题富化补访问复核（owner/公开/团队共享三通道），用户被移出团队或库转私有后名称不再出现（Codex P2） |
+| fix | prd-admin | 首页挂载时强制重拉继续上次，修复同一 SPA 会话内返回首页脚印不刷新（Codex P2） |
+| fix | prd-api | 继续上次的缺陷/周报/评审标题富化补与各详情端点同口径的权限复核（改派/移出团队/收权后不再泄漏标题与死链，Codex P2） |
+| fix | prd-api | 继续上次权限判定改走 IAdminPermissionService 直查（本路由无 [AdminController] 标注，中间件不注入 permissions claims，此前判定恒为空集）；新增与各详情控制器一致的模块级门禁（被收回 use/read 权限的模块脚印整体消失）；工作流富化补 workflow-agent.manage 谓词（管理员打开他人工作流不再从脚印静默丢失）（Codex P2 三项） |
+| fix | prd-admin | 继续上次 store 注册登出重置，同浏览器换号不再短暂看到上一位用户的脚印标题（Codex P2） |
+
+### 2026-07-04
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| feat | cds | 品牌标换代为「宝石六芒」状态系统:新增 CdsGem/CdsGemLoader 组件(十二切面紫晶本体,自身色封边防黑缝),八种运行状态映射八种矿色动效(琥珀构建/银河部署/翡翠在线/月长石排队/石榴石失败/石墨停止/海蓝宝冻结),加载器为逐面组装循环 |
+| polish | cds | 登录卡品牌标一次性逐面组装入场;预览准备页加载器切换为琥珀构建矿色;rail 头像辉光由橙色改为宝石紫(--gem token 双主题定义) |
+| chore | cds | favicon 更新为紫晶六芒磁贴(cds/web/public + web-legacy 同步);CdsMetallicLogo 转为兼容层,全部旧调用点自动升级 |
+| fix | cds | 宝石品牌复审修复:品牌矿色由紫晶改为与系统 --primary 同调的燃橙 ember(瓷贴片暖色语言原生适配),辉光统一走 --primary token |
+| polish | cds | 品牌宝石待机更灵动:整体微呼吸 + 每 5.2 秒一道流光沿切面扫过,hover 流光提速快旋;登录卡入场后接同款流光 |
+| fix | cds | 修复 rail 头像位置偏移:72px 窄栏中移除幽灵标题块(flex-1 空元素把宝石挤离中心),头像严格居中(实测偏移 0.5px) |
+| fix | cds | 老 logo 全量清剿:首页导航轨道圆圈 SVG、页脚、legacy 项目列表渐变 C 字块全部替换为 ember 宝石;favicon 同步换 ember 暖底磁贴 |
+| feat | cds | 新增本机生产快捷发布目标，自动生成生产目录、发布脚本和健康检查配置 |
+| ops | cds | 增加通用 local-prod 发布脚本，支持从 CDS worktree 同步到独立生产 compose |
+| fix | cds | 修复本机生产首次发布预检、默认分支和自定义域名冲突校验 |
+| fix | cds | 修复超长分支预览域名单标签超过 DNS 63 字符限制的问题 |
+| fix | cds | 修复验收报告 iframe 内方法论链接点击无效的问题，允许用户点击报告内链接打开目标文档 |
+| fix | create-visual-test-to-kb | 验收报告方法论说明改为引用 MAP自动化测试规范 文件夹内报告，并强化失败定位、缩略图和证据跳转 |
+| feat | skill | 日报生成技能新增格式二选项：报纸版 HTML（米多智能体日报版式，默认，含头条版画插图 + 数据版图表配图纪律）与 md 朴素版并存；publish.py 支持 --report-html 并带自包含/禁脚本/viewport/禁 data:image 硬校验 |
+| fix | prd-api | 知识库 HTML 条目摘要与搜索索引改为剥标签后的可读文本：修复正文保存/版本恢复后列表、卡片预览、搜索片段展示裸 HTML 标记的问题 |
+| fix | prd-admin | 修复知识库 HTML 条目阅读滚动阻滞：srcDoc 沙箱 iframe 禁内部滚动杜绝滚轮 latch，量高加缓冲与防振荡阈值，并对外层滚动锚定免疫 |
+| fix | prd-admin | serve 静态托管配置统一 SSOT 到 public/serve.json（cleanUrls 关闭 + 缓存头），nixpacks 启动命令改为自动发现 dist/serve.json，消除双部署路径配置不一致 |
+| fix | skill | 日报发布脚本校验与发布前剥离 HTML 注释（防模板说明字样误触发校验与后端守卫），发布成功后回写剥标签可读摘要兜底旧版后端 |
+| chore | doc | 熵清理：D1 0 个，D2 +0/-0，D3 +0/-0，D4 +0/-0，D6 5 条（gw-shadow-mode/gw-dlayer-realmachine/gw-test-matrix/gw-test-matrix-data-driven 内容已由既有 plan/spec/report 文档覆盖；galaxy-trackpad-orbit 补充 design.knowledge-base.mention-network.md 4.3.1 手势与入口动效小节） |
+| fix | prd-admin | 修复移动端首页动态入口、知识库目录与评论、更新中心筛选、网页托管团队管理等 PR 评审问题 |
+| fix | prd-admin | 恢复桌面首页智能体卡片封面资源加载与图标映射，避免卡片退化为纯黑背景 |
+| polish | prd-admin | 重排 PC 端首页资源管理页，将当前展示、排序规则和入口池分区呈现 |
+| fix | prd-admin | 恢复桌面首页顶部快捷入口背景资源加载，并补充默认视觉兜底 |
+
+### 2026-07-03
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| chore | doc | 熵清理 2026-07-03：D1 0 个，D2 +0/-0，D3 +0/-0（疑似幽灵均命中 guide.list 历史变更记录表/CLAUDE.md 加粗术语，非目录条目误报），D4 +0/-0（pnpm 为误报），D6 处理 5 条（llm-gateway serving 部署+进程已有覆盖仅登记；design.cds.onboarding.md 补「compose 服务误判修复」；design.cds.md 补 5.9 ScheduledJobService 项目级任务调度），manifest 累计 400 条 |
+| polish | prd-admin | 按苹果移动端原则收敛知识库与网页托管顶部工具区 |
+| fix | prd-admin | 修复知识库与网页托管移动端工具栏溢出、遮挡和卡片宽度问题 |
+| fix | prd-admin | 修复知识库移动端查看批注时正文被右侧评论栏挤窄的问题 |
+| polish | prd-admin | 收敛网页托管移动端与桌面端工具区密度 |
+| rule | doc | 补充移动端标题归属与桌面工具区收纳规则 |
+
+### 2026-07-02
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| refactor | cds | 控制台外壳架构归一：新增 ConsoleLayout 持久化布局路由，切页只换内容区，侧栏/命令面板/全局浮层跨路由不再卸载重建，auth 状态每会话只取一次 |
+| perf | cds | 治理切页卡顿：启用 React Router v7_startTransition + 内容区级 Suspense 骨架，懒加载页面切换保留上一屏，不再出现全屏 loader 闪烁 |
+| refactor | cds | Workspace 宽度体系归一为三档 token（standard 1240 / wide 1440 / fluid），收敛 1280/1360/1650/3000 等页面私有宽度上限 |
+| feat | cds | 登录页重做：token 驱动的极简卡片式设计，双主题自动翻转 + 移动端自适应；首页认证入口统一跳 /login，移除内嵌 CdsAccessMorphBoard 登录板 |
+| refactor | cds | AgentRequestsPage 接入 AppShell + TopBar + Workspace 标准外壳，消除游离布局（原自定义 max-w-6xl 无侧栏形态） |
+| polish | cds | 内容区新增 200ms 进场微动效（chrome 稳定、内容过渡），路由切换有可感知的秩序感 |
+| polish | cds | 登录页升级为左右分屏科技叙事：左侧品牌视觉板（六边形动网格 + 品牌大字流光 + 实时部署 feed 流），右侧认证卡加品牌光线与 same-origin secure 徽记，双主题 + 移动端保持 |
+| feat | cds | 首页升级为多分区滚动叙事落地页（对标 Railway）：sticky 玻璃导航 + Workflow 三步（贯穿连接线橙色流光）+ 产品事实带 + Features bento 网格（鼠标跟随光斑 + 实况构建日志打字）+ Observability sticky 叙事实况终端 + Final CTA + 官网级页脚，全部素材来自真实能力 |
+| polish | cds | 登录页中庭植入 token 化「运行时星座」（branch→services→preview 接线图，随 feed 逐站点亮 + 微透视浮游 + hover 归平），认证卡升级多层阴影/立体 CTA/输入焦点编排/密码显隐/失败 shake/级联入场 |
+| polish | cds | 全局质感配方：--shadow-card 五层影 token、grain 噪点工具类、CJK 字体栈 + Inter 字形特性、品牌橙 accent 注入（状态点/数据流/光束）、修剪永动循环动效（logo 常转改 hover、sheen 加驻留） |
+| polish | cds | 登录页 v4「一条线」设计哲学重构：废除分屏拼贴与星座装饰，整页一块画布一个光源，一条部署光路横贯页面（push 0:00 / build 0:40 / live 2:00 时间站点 + 6.5s 电流巡游）终点没入登录卡；文案改用户故事口吻（Push a branch. Watch it come alive. 登录，领取它），底部 mono ticker 作线上电报 |
+| fix | cds | Docker address pool 耗尽时的自动回收逻辑抽成公共 helper，并覆盖项目网 / 分支网 / 资源公网 TCP proxy 等所有 `docker network create` 路径；避免只有 `cds-br-*` 分支网触发清理，`cds-proj-*` 项目网仍直接失败 |
+| fix | cds | 地址池耗尽善后增加空 `cds-proj-*` 项目网回收；线上确认空项目网会占用 Docker 子网，清理后可立即恢复 network create |
+| feat | cds | cdscli 升级到 v0.8.0，新增 schedule 口令解析、动作检测和创建任务命令 |
+| fix | cds | 修复 cdscli schedule 口令误判、curl 多数据段丢失、敏感头泄露和 run 默认等待过短问题 |
+| test | cds | 新增 cdscli schedule 口令解析与创建前检测单元测试 |
+| docs | cds | 补充 Agent 使用 cdscli schedule 的标准流程、口令格式、失败处理和安全边界 |
+| fix | prd-admin | 修复知识库列表页顶部导航黑底裸露与工具栏缺少统一背景的问题 |
+| chore | doc | 每日熵减：D2 index.yml +1，D3 guide.list +2，D6 changelog→doc 补录 5 条（LLM 网关日志可观测性 + 跨进程剥离自测），D1/D4 无违规，D3/D4 疑似幽灵条目核实后均为误报未删除 |
+| polish | prd-admin | 知识星球 3D 星系视觉艺术升级：渐变深空穹顶、双层闪烁星场、程序化星云增强、限暗热核星体着色器、枢纽衍射星芒、弧形渐变光路、引用流光脉冲、主干流光、偶发流星、银心辉光、入场生长波编排（相机推进 + 节点错峰长出 + 光路淡入）、聚焦时光路同步压暗、标签 2x 超采样 + 距离分级淡入淡出、电影级后期（色差/暗角/阴影提靛/胶片颗粒去色带） |
+| feat | prd-api | A1 收尾：LlmLogsController 两处列表投影补 x.GatewayTransport，MAP 日志 API 暴露网关传输通道（inproc/http/shadow/direct），翻 http 前后排障可辨路径 |
+| feat | prd-llmgw | 网关控制台日志 DTO/MapListItem 读 GatewayTransport；LogsView 模型列加传输通道 chip（历史 null 不显示） |
+| feat | prd-llmgw | 网关配置面第一刀（只读）：新增 GET /gw/pools（模型池+每模型健康）、/gw/platforms、/gw/models、/gw/shadow-comparisons，复用 logs 同款 JWT（LogsRead）+ BsonDocument 安全映射；平台/模型密钥字段一律不返回，只回 hasKey |
+| feat | prd-llmgw-web | 控制台从「只有日志」升级为多页：ConsoleLayout 顶部导航（日志/模型池/平台/影子比对）+ 三个只读页（模型池健康、平台清单、影子比对汇总+对照），让网关看得见能配的第一步 |
+| feat | prd-llmgw | 网关控制台配置可写第一刀：ConfigWrite 策略 + 平台/模型启用停用、模型池默认互斥切换端点（写共享 Mongo，MAP 立即生效，不碰密钥不删数据） |
+| feat | prd-llmgw | 网关控制台新增「概览」首页：容器拓扑（7 容器职责，治「多只脚」）+ 配置计数 + 影子一致率 + 快速入口；日志页移到 /logs |
+| feat | prd-llmgw-web | 网关控制台前端接入配置写：平台页启用/停用按钮、模型池「设为默认」按钮、概览页 |
+| feat | cds | Mongo Console 数据操作：自由命令行保持只读（find/findOne/countDocuments/distinct，多重防注入），写操作改走新增的「结构化写入」面板——固定 action(insertOne/updateMany/deleteMany) + JSON 参数，服务端不 eval 用户文本，需 data-write 权限 + 资源名确认，从根上杜绝 mongosh eval 注入 |
+| fix | prd-llmgw | 网关控制台口令改为项目 env 权威：seed 优先读 LLMGW_ADMIN_PASSWORD（每次启动对齐、改 env+重部署即改密），未设时回退内置 admin/admin 自愈；cds-compose 显式透传该 env 保证注入。根治反复登不进 |
+| rule | doc | 新增 5 条规则治网关剥离痛点：living-status-board（活状态看板 SSOT）/ real-visual-acceptance（真视觉验收）/ parallel-workstreams（默认并线 Workflow fan-out）/ extraction-readiness-gate（剥离干净度记分卡 + 可发布 gate）/ cds-dual-exit-topology（双出口须 2 HTTPS + 容器职责透明） |
+| docs | llm-gateway | 新增活状态看板 plan.llm-gateway.status-dashboard.md（记分卡 + 容器拓扑澄清 2前端+3后端+2共享infra + 可发布 gate），以后看这一页不用反复问 |
+| fix | cds | 双出口 HTTPS：branches.ts 命名子域/网关/别名出口 5 处硬编码 http:// 改 https://（nginx *.<root> 已在 443 用同一通配证书服务命名子域，此前误印成 http 才致「1 HTTPS + 3 HTTP」）；激活需合 main/CDS 自更新 |
+| feat | prd-llmgw-serve | serving 引擎补 ServingKeyIntegrityCheck（只读、仅告警、不重加密）：把「serving 到底能不能解密真实平台密文」从盲区变成容器日志里可见的 [ServingKeyIntegrity] 行，对齐 design §3.4「网关侧也跑密钥自检」 |
+| ops | prd-agent | 生产部署支持 sha-commit/tag 不可变产物，降低 latest 竞态发布风险 |
+| security | prd-llmgw | 网关控制台首登强制改密：缺省 admin/admin 账号种子 MustChangePassword，登录返回标记 + JWT 带 mcp claim，LogsRead 策略门在改密前拒绝该 token 访问 /gw/logs* |
+| feat | prd-llmgw | 新增 /gw/auth/change-password 端点（校验旧口令→写新哈希→清标记→重签发不带 mcp 的 token）；SeedAdmin 分「默认弱口令/配置口令」两模式，默认模式重启不再回退已改口令 |
+| feat | prd-llmgw-web | 新增首登强制改密页 ChangePasswordPage + 路由守卫（mustChangePassword 时强制跳转），auth/api 接线改密流程 |
+| fix | prd-api | 网关控制台登录去掉 dev 占位口令特判，仅「空/未配置」走缺省 admin/admin，显式配置任何非空值均按用户口令生效 |
+| docs | prd-api | 新增 plan.llm-gateway.gw-vision-handoff 交接文档（用户四点愿景映射 + 首登强制改密安全权衡） |
+| fix | prd-llmgw | 修复网关控制台永久锁死：历史遗留 admin 账号口令未知且旧逻辑在保护它，导致从没人能登录进去。改为内置 admin/admin 引导 + 首登强制改密，完全移除 env 口令依赖（CDS _global env 注入不可控，靠 env 设口令会锁死控制台）。未被真人认领的账号每次启动确定性自愈回 admin/admin（重置=重新部署），UI 改过口令的账号保留不回退 |
+| feat | prd-llmgw | LlmGwUser 加 PasswordChangedByUser；change-password 成功置 true，保住用户新口令跨重启不被自愈覆盖。真机全链路取证通过（登录→强制改密→mcp 403→解锁→重启不回退） |
+| fix | prd-admin | 优化资产管理页移动端资源分类导航，避免长标签横滑造成顶部拥挤 |
+| fix | prd-admin | 修复移动端知识库导航过透明、目录返回链路、分享入口和周报时间线挤压问题 |
+| rule | doc | 补充移动端顶部可读性、主按钮优先、系统分享、目录抽屉和时间线单列规则 |
+| fix | prd-admin | 修复设置数据管理页移动端主按钮截断与应用筛选标签过密问题 |
+| fix | prd-admin | 优化知识库移动端二级工具栏与网页托管工具区背景层级 |
+| fix | prd-admin | 修复移动端视觉验收中的底部浮条遮挡、教程遮挡、隐藏侧栏溢出和横向 Tab 当前项不可见问题 |
+| docs | doc | 新增移动端视觉检查矩阵规则，沉淀 P0/P1/P2 页面状态和修正表模板 |
+| fix | prd-agent | 修复不可变生产发布脚本的 ref 解析、热修 workflow latest 污染风险和热修技能版本元数据 |
+| fix | prd-api | 打通快捷指令绑定短视频解析智能体后的后台解析任务入队 |
+| fix | prd-api | Stub 开发桩标记为无需 API key，避免占位密文解不开时反复触发平台密钥事故告警 |
+| fix | prd-admin | 一键创建 Stub 平台不再写入占位 API key 密文 |
+| ci | prd-admin | 修正 pnpm-workspace allowBuilds/packages 配置，兼容 CI 获取 pnpm store path |
+
+### 2026-07-01
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| polish | prd-admin | 用户通知推送订阅收敛为推送通道、接收范围、高级单独配置三段式紧凑界面 |
+| fix | prd-admin | 修复用户通知推送订阅弹窗内容无法滚动的问题 |
+| polish | prd-admin | 接收范围改为整张卡片点击切换接收状态，降低复选框精准点击成本 |
+| polish | prd-admin | 精简用户通知推送订阅说明与高级配置入口，保留普通用户主流程 |
+| fix | prd-api | 缺陷通知写入后立即唤醒管理员推送 Worker，减少 Bark 推送等待下一轮扫描的延迟 |
+| fix | prd-api | Bark 推送跳转链接自动补全为外部可访问地址，避免手机端只显示相对路径 |
+| fix | prd-api | Bark 推送在缺少前端地址配置时复用 CDS 分支域名推导，保证缺陷链接可点击跳转 |
+| fix | prd-api | 管理员推送仅在明确预览环境下推导 CDS 域名，避免普通服务器误用 main 预览地址 |
+| fix | prd-api | 收紧用户之声推送来源匹配并跳过订阅开启前的历史通知，降低误推和通知海啸风险 |
+| feat | prd-api | 新增通知来源目录与个人/管理员分区字段，让后续通知接入时显式选择归属 |
+| polish | prd-admin | 用户通知列表按个人通知和管理员通知上下分区展示，并显示来源标签 |
+| fix | prd-api | 一键处理通知时仅处理当前用户可见范围，避免误处理其他用户通知 |
+| feat | prd-api | 管理员推送新增当前用户默认推送通道 Profile，接收范围可复用默认通道或单独覆盖 |
+| polish | prd-admin | 用户通知推送订阅改为默认通道、接收范围、单独覆盖三段式配置 |
+| polish | prd-admin | 优化用户通知推送订阅界面，改为接收范围清单加当前类型配置，减少误触按钮 |
+| feat | prd-api | 新增服务器到期独立推送订阅主题 |
+| fix | cds | 修复分支网络地址池耗尽时只清空网、不释放停止容器挂载网络的问题 |
+| fix | cds | 修复分支卡片错误态缺少部署时间时显示时间未知的问题 |
+| feat | cds | 新增 Docker 分支网络容量健康检查与维护页风险提示 |
+| ops | cds | 安装脚本新增 Docker 地址池预检，提前提示 default-address-pools 扩容方案 |
+| polish | cds | 将未知预览域名错误页改为“预览未部署”，避免误导为 CDS 删除 GitHub 分支 |
+| fix | cds | 分支创建和部署完成前等待状态持久化，避免 CDS 自更新后预览分支丢失 |
+| fix | cds | 为 mongo-split 全局状态增加总量裁剪，避免诊断日志撑爆 Mongo 单文档上限 |
+| fix | cds | 热重启等待页不再套用发布版构建耗时，避免进度长期显示 1% |
+| fix | cds | 分支详情抽屉(BranchDetailDrawer,即从分支列表点开的右侧滑入面板)补齐网关多出口:fetch /subdomain-aliases 的 gatewayUrls,在「应用已上线」卡片里把主应用入口与网关入口(llmgw/llmgw-serve 命名域名)并列展示,不再只显示单个主 URL(此前多出口只落在 BranchDetailPage 全页视图,用户实际看的抽屉里看不到) |
+| polish | cds | 分支详情抽屉「应用已上线」入口区重设计:主应用入口(主色卡)+网关入口(中性卡)改为整卡可点的图标卡片列(图标方块+标签+子域名 chip+URL+打开箭头 hover),替换此前拥挤的单行等宽文本,视觉分层清晰 |
+| fix | cds | 网关控制台(llmgw-web)登录简化为开箱可用:后端 prd-llmgw 缺省内置 admin/admin(不再因未配口令 fail-closed 拒启动,仅告警),要改口令在「项目环境变量」设 LLMGW_ADMIN_PASSWORD 重新部署即生效;SeedAdmin 从 insert-only 改为 upsert(Verify 判定带盐哈希不空写)并禁用「用户名≠当前配置」的历史账号(防改名后旧账号仍可登);cds-compose 不再显式声明 LLMGW_ADMIN_* 自引用(避免 CDS resolveProfileRuntimeEnv 对 `${KEY:-default}` 覆盖项目变量的坑,Codex P1) |
+| feat | cds | 网关入口打开真实控制台 prd-llmgw-web（登录→LLM日志），替换 /gw/healthz 心跳落地：compose 新增 llmgw-web 预构建镜像服务（子域 llmgw-web）+ branches.ts 落地路径 llmgw-web→/ + BranchDetailDrawer 网关卡片分层（控制台主色置顶 / 引擎中性） |
+| fix | cds | compose-parser 识别「预构建镜像 app 站点」：isAppServiceCandidate 对 image + cds.prebuilt-image + (cds.subdomain\|path-prefix) 判为 app（否则纯 nginx 前端站无源码 mount/无 build 被丢弃，命名子域永不发布）；ComposeServiceEntry/BuildProfile 支持基础级 fallbackImage 逐级回退 + 序列化跳过预构建站点的假源码 mount |
+| fix | cds | computeProfileAliases 剥离完整项目 slug/id 后缀，llmgw-prd-agent→裸别名 llmgw（llmgw-serve→llmgw-serve、api→api…），让同分支网内 llmgw-web 的 nginx 反代 http://llmgw:8090 可解析（零回归，保留旧单段启发式） |
+| fix | cds | prd-llmgw-web/nginx.conf 反代改运行时 DNS 解析（resolver 127.0.0.11 + 变量 upstream），消除 nginx 启动期缓存 llmgw IP 导致的「别名未就绪崩溃 / llmgw 换 IP 后持久 502」竞态 |
+| fix | cds | 导入/配置校验豁免预构建镜像站点的 command 必填：pending-import 与 branches 配置校验对 prebuiltImage=true 的 profile（如 prd-llmgw-web 纯 nginx 前端站）不再强制 command（部署路径本就走 usePrebuiltEntrypoint 用镜像自带 ENTRYPOINT 启动，注入 command 反而绕过 nginx docker-entrypoint 初始化）。此前 llmgw-web 被解析器识别后仍卡在导入校验「缺少 command」 |
+| feat | prd-api | 新增邮件模板智能体（email-agent）：模板库 CRUD + AI 起草/润色 SSE；系统预置聚焦费用报销/维修申请/设备采购 |
+| feat | prd-admin | 新增邮件模板智能体页面：模板库/变量快填/一键复制整封邮件/AI 起草润色，注册百宝箱与导航 |
+| chore | doc | 每日熵减 2026-07-01：合并昨日重复 PR #967（D3 debt.llm-gateway 系列 3 条 + D6 manifest 标记 5 条）；本次新增 D2/D3 补缺 plan.llm-gateway.full-cutover 1 条，D6 changelog→doc 覆盖处理 5 条（imagegen-request-builder/llm-gateway-standalone/llm-log-observability/llmgw-deploy-scaffold/llmgw-web-skeleton，内容均已在既有 debt.llm-gateway-isolation.md / plan.llm-gateway.rollout.md 覆盖，无需新增章节） |
+| docs | doc | D5 复查发现工程债务：codebase-snapshot.md 声称 MongoDB 集合数（118/120）与实际 MongoDbContext.cs 统计（249）严重漂移，需人工审查后批量更新，遵循 D5 需人工确认原则本次未自动改写 |
+| feat | cds | 分支详情面板多出口：GET /branches/:id/subdomain-aliases 新增 gatewayUrls（读 cds.subdomain 标签、复用 forwarder 同源判定 + 63 octet 守卫 + 去重），BranchDetailPage 显示「主应用入口」+「网关入口」两组 + 有网关时预览按钮带下拉「打开网关」（point 0） |
+| refactor | prd-api | A 类直连（Program.cs ILLMClient 工厂 + ModelDomainService.GetClientAsync）经评审后保留原直连以行为保持：二者均非死代码（工厂被 LLMClientFactory 注入；GetClientAsync 逐模型尊重 model.MaxTokens），改走 gateway.CreateClient 会丢采样温度/凭据兜底/per-model maxTokens；登记进直连守卫 baseline（Program.cs=6 / ModelDomainService=2），待网关支持 per-model 入口后再收口 |
+| feat | prd-api | LLM 请求 transport 观测标记：LlmRequestLog/LlmLogStart/LlmRequestContext 加 nullable GatewayTransport（inproc/http/shadow/direct SSOT），网关/HttpClient/直连各标来源，日志页可辨请求走哪条路径（L1，翻 http 前置） |
+| refactor | prd-api | 六处直连 B 类（ModelLab/Arena）保留直连锁定语义（测 admin 选中 platform+model、故意绕池，走池会破坏「选 A 测 A」），仅补 direct 观测标记 + 注释；全网关路由留待网关支持 pinned 入口 |
+| test | prd-api | MECE 网关测试：直连守卫棘轮（baseline 外新直连即 fail）+ 网关 no-key 401 契约常开 [Fact] + 网关端点解析/防串号集成骨架 |
+| fix | prd-api | 评审修复：Program.cs ILLMClient 工厂撤回 A 类网关短路（本工厂被 LLMClientFactory 注入非死代码，gateway.CreateClient 采样温度 0.2≠0.7 且吞掉凭据不全兜底），保留原直连以行为保持（Cursor Bugbot ×2）；新增 2 测试文件补 using Microsoft.Extensions.Logging（修 ClearProviders 编译错误） |
+| security | cds | 评审修复：网关 console/serving 已公网命名路由，去掉 cds-compose 里 LlmGwJwt__Secret / LlmGwServe__ApiKey 的仓库可见 fallback，改 bare `${VAR}`——未注入即解析空 → 生产守卫拒启动、命名路由不发布 = fail-closed（Codex P1 ×2，防自签 token 读日志 / 已知 key 烧额度）；prd-agent 项目变量已钉强随机值 |
+| fix | cds | 评审修复：分支详情「网关入口」链接补落地路径（console→/gw/healthz，serving→/gw/v1/healthz），点击落到 200 健康页而非裸 host 404（Codex P2）；plan 文档头部三字段移进 blockquote（Bugbot doc header） |
+| fix | prd-api | 评审修复（CI 修绿）：/gw/v1/shadow-comparisons GET 的 MongoDbContext 参数补 [FromServices]（否则被推断为 body → GET 不允许推断 body，首个请求构建 endpoint matcher 时抛异常拖垮整张路由表含 healthz/全部 /gw/v1/*，致 GatewayKeyGateContractTests 8 例全挂） |
+| fix | prd-api | 评审修复：A 类直连撤回后移除未使用的 AppCallerRegistry.Core 3 个 caller（main/intent/vision-client），恢复注册表黄金快照一致；直连守卫 baseline 补回 ModelDomainService.cs=2 |
+| fix | prd-api | 评审修复：HttpLlmClient 无环境 LlmRequestContext（无作用域后台/工具型 CreateClient）时也发「只带 transport=http」的最小 Context，避免 serving 端收不到 Context 默认回落 inproc 污染传输证据（Codex P2） |
+| fix | cds | 评审修复：分支详情命名入口落地路径只特判已知网关子域（llmgw→/gw/healthz、llmgw-serve→/gw/v1/healthz），其余命名服务（docs/metrics 等）用 profile readiness path 或落根 /，不再强行套 /gw/* 导致 404（Codex P2） |
+| fix | cds | 评审修复：computeBranchGatewayUrls 抽为 GET/PUT /subdomain-aliases 共用 SSOT，PUT 保存别名后也返回 gatewayUrls，避免面板「网关入口」块 + 预览下拉在保存后消失到整页刷新才恢复（Bugbot Medium）；命名入口 profile 过 resolveEffectiveProfile（对齐 forwarder），应用分支级 readinessProbe/subdomain override，落地路径不再与实际路由漂移（Bugbot Low） |
+| ops | cds | 网关公网命名 URL：cds-compose 给 llmgw/llmgw-serve 加 cds.subdomain + cds.readiness-path，发布 <previewSlug>-llmgw（console）/ <previewSlug>-llmgw-serve（serving）命名地址；替换原 no-http-readiness 内网 only。配套把 LLMGW_JWT_SECRET / LLMGW_SERVE_API_KEY 在 CDS 项目变量(scope=prd-agent)设为强随机（非仓库默认），保证公网暴露安全：console 登录走 ${CDS_USERNAME}/${CDS_PASSWORD}（与 CDS 一致）+ JWT 防伪造，serving 走 X-Gateway-Key 门（无 key 401） |
+| polish | prd-admin | 海鲜市场默认启用半高卡片，补齐点赞、分享、下载计数与官方标识展示 |
+| feat | prd-api | 海鲜市场技能 DTO 新增有效分享数 shareCount |
+| polish | prd-admin | 调整移动端首页为知识库、周报、生图、缺陷优先的工作台版型 |
+| fix | prd-admin | 修复移动首页轮播指示点不会随滑动更新的问题 |
+| polish | prd-admin | 调亮移动首页背景与卡片层次，降低纯黑压迫感 |
+| polish | prd-admin | 提升移动首页信息密度并优化工作台首图视觉效果 |
+| polish | prd-admin | 统一移动首页面板风格，降低旧式卡片拼装感 |
+| polish | prd-admin | 统一移动端全局顶部栏，固定单行显示当前应用名称 |
+| fix | prd-admin | 修复移动端页面工具栏按钮被压缩后文字竖排换行的问题 |
+| polish | prd-admin | 按 Apple 风格简化移动端缺陷页工具区，扩大主内容可视面积 |
+| polish | prd-admin | 按热点页优化知识库、周报、生图的移动端进入与工具栏密度 |
+| fix | prd-admin | 修复移动端知识库、更新中心、资产、设置、生图对话等热点页顶部拥挤、透明度过低与横向错乱问题 |
+
+### 2026-06-30
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| feat | prd-api | 新增管理员通知外部推送订阅配置、Bark 协议投递、模板投递与去重日志 |
+| feat | prd-admin | 在左下角用户通知中新增推送订阅页签，支持 Bark 协议、URL/Webhook/企业微信/飞书/钉钉模板 |
+| test | prd-admin | 新增用户通知推送模板选择行为测试 |
+| fix | prd-api | 将管理员推送投递移入后台扫描任务，避免通知列表请求阻塞并修复重复投递、失败重试和 Bark 查询参数编码 |
+| fix | prd-admin | 为推送订阅加载流程增加过期响应保护 |
+| test | prd-api | 新增管理员推送后台投递、失败重试和 Bark 查询参数回归测试 |
+| feat | prd-api | Bark 协议补充 image 推送图片参数，支持从通知图片附件填充占位符 |
+| feat | prd-admin | 推送订阅 Bark 协议新增图片 URL 模板配置 |
+| feat | prd-api | 新增推送 appname 资源目录，为缺陷、预警、站内信、服务器到期、用户之声和 API 请求问题提供独立 icon |
+| feat | prd-admin | 推送订阅面板展示 appname 图标资源清单 |
+| feat | prd-api | 缺陷管理员通知携带用户上传图片附件，Bark 推送可直接展示问题截图 |
+| feat | prd-api | 新增管理员通知事件入口，支持用户之声、API 请求问题、服务器到期和系统预警按真实系统事件进入推送链路 |
+| feat | prd-api | 管理员推送资源补充知识库对齐元数据和公开 SVG icon 端点 |
+| feat | prd-admin | 推送订阅资源清单展示关联知识库与模板信息 |
+| test | prd-api | 新增管理员通知事件到 Bark topic 路由和图片附件分发测试 |
+| fix | prd-api | 管理员通知事件入口允许 AI 超级访问密钥执行真实预览验证 |
+| fix | prd-api | 缺陷管理外部推送过滤缺陷催办通知，避免 Bark 重复提醒已超时缺陷 |
+| fix | cds | 分支 Docker 网络地址池耗尽时自动清理空闲 cds-br 网络并重试创建 |
+| fix | cds | 修复 webhook 删除分支后状态落盘失败导致残留分支被误报为容器丢失的问题 |
+| feat | cds | 单分支多容器支持「命名子域 URL」：BuildProfile 新增 subdomain 字段，声明后该服务获得 `<previewSlug>-<subdomain>.<root>` 独立命名入口（forwarder 直达容器根路径，无 pathPrefix），让 LLM 网关这类「可被别人调用」的独立服务拥有区别于主应用域名的命名 URL，而不是埋在主应用 /gw/v1 路径下。单标签以匹配 *.<root> 通配证书 |
+| feat | cds | 命名子域三处接入：compose `cds.subdomain` label（解析+导出 round-trip）、PUT /branches/:id/extra-services 的 subdomain 字段（单 DNS label 校验）、forwarder-route-publisher 发命名 host 路由；proxy master 兜底识别 `<slug>-<sub>` 后缀 → 解析基分支 + 强制走对应 profile，不触发 auto-build（转发模式下 forwarder 已按 host 精确命中） |
+| test | cds | 新增命名子域测试：forwarder-route-publisher 发 `<slug>-llmgw` host 路由直达容器、主应用域名路由仍在；compose-parser cds.subdomain 解析 + round-trip + 非法值忽略 |
+| fix | cds | 修复站点发布弹窗将 SSH 连接等待误显示为进入站点目录，并收紧发布日志流 snapshot 竞态 |
+| polish | cds | 验收报告页左侧改为报告库结构，区分系统视图与自定义文件夹 |
+| polish | cds | 移除验收报告页内容区顶部报告头，扩大报告阅读视野 |
+| fix | cds | 修复预览热重启等待页沿用旧部署起点导致已等待时间和进度异常放大的问题 |
+| fix | cds | 自更新历史从 Mongo 全局状态拆出独立集合，避免重启前 flush 因大文档失败导致历史缺失 |
+| feat | cds | 自更新命中 CI 预构建产物时走极速版路径，跳过本机校验与编译并保留源码构建回退 |
+| polish | cds | 重做 CDS 更新页历史审计布局，新增表格详情联动、历史缺失诊断和极速版路径展示 |
+| fix | cds | 修复预览等待页进度条与已等待/预计剩余时间不一致 |
+| polish | prd-admin | 去掉知识库列表顶部 tab 底板，并移除过时的跨环境同步一级入口 |
+| fix | prd-admin | 同步中心运行卡片支持展开查看失败原因、当前文章和进度 |
+| fix | prd-api | 跨节点知识库同步台账补充阶段进度、当前文章标题和对端错误摘要 |
+| polish | prd-admin | 同步中心改为状态优先视图，弱化方向术语并明确接收审计含义 |
+| fix | prd-api | 修复接收对端推送污染自动同步方向导致误触发双向同步的问题 |
+| fix | prd-api | 修复接收审计更新对端节点与自动同步计时导致后台方向漂移的问题 |
+| fix | prd-api | 修复双向同步拉取失败时清空已完成发送统计的问题 |
+| fix | prd-api | 修复接收审计方向仍被自动同步调度器反复捞起的问题 |
+| fix | prd-api | 修复同步进度阶段结束后仍残留上一篇文章标题的问题 |
+| fix | prd-admin | 恢复旧版同步配对的隐藏深链管理入口并保留教程兼容 |
+| fix | prd-admin | 修复同步中心手动同步失败无提示、按钮目标名滞后和历史失败常驻的问题 |
+| test | prd-admin | 新增同步中心方向心智与接收审计兼容性测试 |
+| chore | doc | 熵清理：D1 0 个，D2 +0/-0，D3 +3/-0（debt.llm-gateway 系列三篇补登 guide.list.directory.md），D4 +0/-0，D6 处理 5 条（均已在既有 design/debt 文档中覆盖，仅 manifest 标记） |
+| fix | prd-api | 跨进程真 socket 测试（CrossProcessServingErrorLoadTests/SelfTest）在 pull_request runner 上对成功响应体读取环境敏感（workflow_dispatch 全绿 + 生产 gw-smoke 8/8 + 影子正常证实非产品 bug），按本仓既有约定改标 Integration（CI 默认跳过、可手动跑）；新增纯单元 GatewaySerializationSecurityTests 在 CI 常驻守住「ApiKey 不过 HTTP 线」安全契约 |
+| security | prd-api | docker-compose 生产 LLMGW_SERVE_KEY/LLMGW_ADMIN_PASSWORD 改为必填（${VAR:?}，删默认值），避免默认部署用众所周知的 key/password 暴露公网 /gw/*（Codex P1）；CDS 预览走 cds-compose 显式 env 不受影响 |
+| fix | cds | 命名子域 master 兜底解析改取「previewSlug 最长(最具体)」候选 + entry.id 字典序 tie-break，消除两分支 previewSlug 互为前缀时同一 URL 路由不确定（Cursor Bugbot） |
+| security | prd-api | HttpLlmGatewayClient 不再回退众所周知占位 key（dev-llmgw-serve-key）：http 模式未配 LlmGwServe:ApiKey 时用空串让密钥门 401 响亮失败，而非用可预测共享密钥静默通过（Cursor Bugbot） |
+| fix | prd-api | LlmShadowComparison/ResolveSnapshot/FieldMismatch 补 [BsonIgnoreExtraElements]，未来加字段/手工文档多余字段不致读端点反序列化失败（Cursor Bugbot 学习规则） |
+| fix | cds | 命名子域分支内唯一：PUT extra-services 拒绝重复 subdomain + forwarder 数据面对同 subdomain 去重，消除同 host 不同端口撞车路由（Cursor Bugbot） |
+| fix | cds | 命名子域 master 兜底要求服务有 hostPort（可路由）才命中，与 forwarder「只发可路由服务」口径对齐，避免停止/缺端口 profile 被强制命中拿不到上游（Cursor Bugbot） |
+| security | cds | llmgw-serve 与 llmgw console 同处理：CDS 预览删 `cds.path-prefix:/gw/v1/` 改 no-http-readiness，关闭已知 M2M key 的公开 /gw/v1/send 路由（防无鉴权 LLM 调用烧额度）；ApiKey 改 `${LLMGW_SERVE_API_KEY:-内网fallback}` 非仓库默认（Cursor Bugbot High） |
+| fix | prd-llmgw-web | dev 代理默认指向独立网关 console（localhost:5090，docker-compose.dev 映射 5090:8090），不再误指主 API 5000——后者无 /gw/auth/login 等 console 端点，导致 pnpm dev 登录/日志 404（Codex P2） |
+| fix | ops | _standalone.conf 8081 网关前端站 /gw-api/ 反代补 /gw/ 重写：proxy_pass 末尾带 /gw/ 把 /gw-api/auth/login 改写为后端认的 /gw/auth/login，修复原样透传导致的 404（Cursor Bugbot Medium） |
+| fix | cds | isValidServiceSubdomain 拒绝保留伪值 null/undefined/none/true/false/nan：堵住 JSON 字符串 "null" / compose label cds.subdomain:"null" 当真子域发布 <slug>-null.<root> 伪 host（Cursor Bugbot） |
+| fix | ops | docker-compose.dev.yml llmgw-web 改用 prd-llmgw-web/Dockerfile 真实构建，不再挂不存在的 ./deploy/llmgw-web/dist（空静态根导致 5590 控制台打不开）（Codex P2） |
+| docs | doc | design.llm-gateway-physical-isolation 头部补「· 设计」后缀 + 状态枚举改合法值「开发中」；debt 记 subdomain 撞项目 profile 校验缺口为波3（Cursor Bugbot / Codex P2） |
+| fix | prd-api | HttpLlmGatewayClient.GetAvailablePoolsAsync 非成功/异常不再静默吞成空池，改向上抛（与 inproc 一致），让 admin/smoke 区分「网关 down」与「真的没可用池」（Cursor Bugbot Medium） |
+| fix | prd-api | ModelResolver 恢复 legacy 直连兜底（IsMain/IsIntent/IsVision/IsImageGen）：无 dedicated/default 池或池全不可用时，未迁移到 ModelGroups 的部署回退到 flag 标记的 enabled 直连模型，而非直接 NotFound（Codex P1）；InMemoryModelResolver 同步镜像 + 单测覆盖 |
+| fix | prd-api | LlmGateway 适配器按解析出的 Protocol 选（pool-item 可覆盖），不再只按 PlatformType——混合/代理平台用对 wire 协议；Protocol 为空回落 PlatformType，普通平台零差异（Codex P2） |
+| fix | cds | cds-compose api 服务补 LlmGwServe__ApiKey + LlmGateway__ServeBaseUrl，切 http/shadow 模式时跨进程不再 401；网关 console 账户体系走 ${CDS_USERNAME}/${CDS_PASSWORD}（与 CDS 同账号密码，用户指定），未注入回落非仓库默认内网值（Cursor Bugbot） |
+| security | prd-api | serving Program.cs 生产 fail-closed：缺 LlmGwServe:ApiKey 或仍为仓库默认 dev-llmgw-serve-key 时拒绝启动，避免接受可预测 X-Gateway-Key（Cursor Bugbot） |
+| fix | cds | 网关 console 账户与 CDS 真一致：cds-compose 的 LLMGW_ADMIN_USER/PASSWORD 去掉 `:-内网fallback` 改 bare `${CDS_USERNAME}`/`${CDS_PASSWORD}`——compose-parser 解析顺序 customEnv ?? process.env ?? default，直接读 CDS master 进程 env（与 server.ts CDS 自身 basic 登录同源）→ 网关登录与 CDS 完全一致，无第二份口令、不入 _global/仓库；CDS 未配 basic 账号时 missingEnvTemplates 部署前 fail-closed 明确报错，而非旧 fallback 的静默分叉（用户指出密码不一致） |
+| fix | cds | forwarder 命名子域加 DNS label 上限守卫（Codex P2）：命名 host 第一标签 `<previewSlug>-<sub>` >63 octet 时跳过该路由并 warn，避免长分支名生成无法解析、通配证书不覆盖的静默失效 URL；服务仍可经主域名 `<previewSlug>.<root>` 路径访问。配 63 边界单测 |
+| fix | ops | exec_dep.sh 补 PRD_AGENT_LLMGW_SERVE_IMAGE / PRD_AGENT_LLMGW_WEB_IMAGE 默认走 get.miduo.org 镜像源（Codex P2）：standalone compose 现随 up 拉起 llmgw-serve/llmgw-web，二者默认直连 ghcr.io，需代理主机会绕过预拉/超时路径而卡住，照 PRD_AGENT_LLMGW_IMAGE 范式钉到镜像源 |
+| fix | prd-api | LLM 网关跨进程测试 flake 修复：CrossProcessServing 测试每 cell 新建抛弃式 ServiceProvider 取 IHttpClientFactory，其 HttpMessageHandler 被 GC 终结导致随机空响应；改为进程级共享 static factory |
+| fix | prd-api | 守 compute-then-send：http 模式 SendRawWithResolutionAsync 不再丢弃 resolution——调用方解析失败则短路返回、否则把 ExpectedModel 锁定为 resolution.ActualModel，serving 重解析锁回同一模型（防生图/视频「选 A 给 B」），ApiKey 仍不过线 |
+| fix | prd-api | http 模式 CreateClient 流式补传 GatewayRequestContext：client-stream payload 带 Context、serving /gw/v1/client-stream 开 ILLMRequestContextAccessor 作用域，恢复 RequestId/SessionId/UserId 日志关联与归属 |
+| fix | prd-api | blackhole 占位日志不再被覆盖：UpdateDone/UpdateError 过滤加 Status != "blackhole"，上游成功时不把「日志写入失败」故障改写成 succeeded/failed |
+| fix | cds | 命名子域 master 兜底路由用已解析的 v3 previewSlug 而非 slugify(branch.name)，修 claude/* 分支命名 URL 在非转发路径解析不到 canonical 分支 |
+| fix | cds | 视觉验收 harness 录像尺寸跟随实际视口（含手机端 viewport 覆盖），不再按桌面尺寸录像导致视频与截图不一致 |
+| polish | prd-admin | 更新首页 Hero 与快捷卡默认背景，统一 MAP 深色玻璃风格 |
+| polish | prd-admin | 首页大背景与卡片背景改为低干扰几何暗场，暂不渲染图片背景以保留玻璃质感 |
+| polish | prd-admin | 移除首页顶部背景层灰条，并在首页关闭侧栏滚动渐变阴影 |
+| fix | prd-admin | 资源管理首页资源区同步智识殿堂默认卡片，补齐 VOC 资源位并避免空背景 |
+| feat | prd-admin | 首页资源卡支持在资源设置页扩展资源池并配置最多 6 个显示项与顺序 |
+| feat | prd-api | 用户偏好新增首页快捷入口配置接口 |
+| security | prd-llmgw | 生产环境强制显式配置 LLMGW_JWT_SECRET / LLMGW_ADMIN_PASSWORD（缺失或为仓库 dev 占位值则拒绝启动），防止 /gw/* 被自签 token 读取 |
+| security | prd-api | docker-compose 的 LLMGW_JWT_SECRET 改为必填（删除空默认），与 SERVE_KEY/ADMIN_PASSWORD 对齐 |
+| fix | prd-api | 修复 blackhole 日志误标成功调用：StartAsync 失败返回 null 使记录不被覆盖/反向误标，移除 Status 兜底过滤 |
+| fix | prd-admin | LLM 日志 blackhole 状态标签「未发出」改为「记录降级」（请求可能已成功，仅日志未落库） |
+| fix | prd-llmgw | LLM 日志 blackhole 状态标签「未发出」改为「记录降级」 |
+| fix | prd-api | http 模式 multipart raw（ASR/图生图）跨进程未接通时快速失败（MULTIPART_HTTP_UNSUPPORTED），防止静默发出丢文件的请求 |
+| fix | cds | compose cds.subdomain 重复声明时去重（首个保留，后续丢弃），forwarder 命名子域去重按 profileId 排序保证确定性 |
+| fix | cds | master 命名子域兜底增加状态门控：仅 hostPort>0 且状态可路由(running/starting/building/restarting)的服务才命中命名 host，停止/错误服务不再被强制为坏上游(与 forwarder 共用 ROUTABLE_SERVICE_STATUSES) |
+| fix | ops | exec_dep.sh 默认 PRD_AGENT_LLMGW_IMAGE 改指向独立 prdagent-llmgw 镜像（原误用 api 镜像导致 llmgw 服务错跑 PrdAgent.Api.dll、/gw/* 端点全缺） |
+| fix | ops | docker-compose gateway 发布 8081 端口，让 standalone 部署能打开网关前端控制台（_standalone.conf 的 llmgw-web listener） |
+| docs | ops | debt 记录命名子域 master 反代兜底两处已知局限（widget header scope / 分支级门控），标注 forwarder 生产路径完整可用，波3 补 |
+| security | cds | CDS 预览网关 console(/gw/)+serving(/gw/v1/) 改为仅内网不公开路由，关闭用仓库已知 dev 密钥从公网登录读日志/调用 provider 额度的暴露（公开命名 URL 留波3 配 per-deploy 密钥） |
+| fix | prd-api | 影子 resolve 比对改用 GetEffectiveExpectedModel（含 RequestBody[model] 回退），消除 model 只放 body 时的假阳性 critical mismatch |
+| fix | scripts | 去除 gw-matrix 报告脚本测试向量里的 emoji/符号（U+2728 / U+2713），换非 emoji 非 ASCII 样本（拉丁重音/CJK），合规规则 §0 |
+| docs | ops | debt 记录 Claude OpenAI 兼容工具链不完整（流式 tool_use/tool_choice:none/tool_result 多轮三处合并波3 专项） |
+| fix | prd-api | 影子比对在 inproc 改写 body[model] 前捕获有效期望模型（send/stream/full-send），修复 http 探针拿到 inproc 答案当输入导致永远 match、影子形同虚设 |
+| fix | prd-api | HttpLlmClient 三参 StreamGenerateAsync 重载改用默认 prompt-cache 开关（与 inproc 一致默认 true），修复 http 模式静默丢 Claude prompt-cache 头抬高时延/成本 |
+| feat | prd-api | Claude 适配器 OpenAI 兼容工具链非流式做透：tool_choice:none 不附 tools + assistant.tool_calls/role:tool 多轮消息翻译成 tool_use/tool_result（并行结果合并同一 user 轮），配 ClaudeToolTranslationTests 5 例 |
+| fix | ops | docker-compose.dev.yml 的 llmgw 改从独立 prd-llmgw 项目构建（原误用 api 镜像，/gw/* 端点缺失） |
+| fix | ops | cds-compose.yml 网关极速版镜像补 branch-main 回退（同 api/admin），防只改非 prd-llmgw 的分支选极速版拉不到镜像 |
+| fix | test | 重新生成 protocol-cells/transport-cells 矩阵 fixture，清除 emoji/符号测试向量（U+2728/U+2713），合规规则 §0 |
+| fix | cds | cds-compose llmgw 控制台改用 per-deploy 派生的 admin 密码/JWT（CDS 替换 ${CDS_BRANCH_SLUG}），修复 Production 守卫拒绝仓库默认密码导致容器启动即 exit、部署判失败（Codex P1） |
+| fix | cds | 命名子域 master 路由直接用已解析 entry（forcedEntry），不再二次 resolveBranchEntry，避免多分支共享 v3 slug 时丢 forcedProfileId 路由到错分支 |
+| fix | cds | extra-services PUT 省略 subdomain 字段时继承旧值（同 env 合并语义），避免纯 env redeploy 静默抹掉命名 URL；显式空串才清空 |
+| fix | prd-api | 影子流式比对：inproc 流未 yield Start（错误/早退）致 startResolution=null 时不再误判 all-match，标 resolutionPresence 不一致（all-match 须两边解析都在） |
+| fix | cds | extra-services subdomain 显式 JSON null 视为清空（原 String(null)="null" 会落伪命名 host <slug>-null） |
+| fix | prd-api | 影子 full-send 比对用 DeepClone 私有副本发送，不再在后台任务改写调用方仍持有的 request.RequestBody（消除与调用方复用/读取的竞态） |
+| feat | prd-api | SSO 配置新增禁用管理后台密码登录开关，并支持 MAP_PASSWORD_LOGIN_BREAK_GLASS 破窗恢复 |
+| feat | prd-admin | 用户管理 SSO 接入弹窗新增禁用密码登录选项，登录页支持仅展示 SSO 入口 |
+| polish | prd-admin | 优化网页托管卡片操作区，常用操作外露并将低频设置收拢到更多菜单 |
+
+### 2026-06-29
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| feat | cds | 分支级临时额外服务：分支可在项目底座之上自助声明额外服务/容器（PUT /branches/:id/extra-services），只在本分支部署、跑分支专属网、不进项目、不需全局审批、删分支即消失、不影响别的分支 |
+| feat | cds | 部署与资源/拓扑展示统一走 getEffectiveProfilesForBranch（项目 profiles + 分支 extraProfiles 合并）；纯增量可选，未声明额外服务的分支老行为零回归 |
+| feat | cds | 分支删除收尾清理分支专属网（removeBranchNetwork），让「删分支即消失」覆盖到网络层 |
+| feat | cds | 分支额外服务接入全部部署/重部署/db-init/端口/env 预览/主分支部署/孤儿剪枝/列表与拓扑展示路径(首版只接了 executor payload),声明的额外服务真正起容器、不被孤儿剪枝误删 |
+| feat | cds | PUT /branches/:id/extra-services 支持 ?redeploy=1：声明额外服务后一步触发真正重部署,补上「声明即生效」(纯配置变更不会自动重建已运行分支的痛点) |
+| fix | cds | 部署对称收尾：服务从期望清单移除(额外服务被清/项目 profile 被删)时,部署会真正拆掉它的容器并删条目(此前只对 error 态打 warning、容器残留),让分支额外服务「加能起、删能下」对称 |
+| fix | cds | 孤儿服务移除补操作租约校验（Bugbot Medium）：deploy-finalize 拆孤儿服务的循环在 containerService.remove 前后各 assertBranchOperationCurrent，租约被更高优先级操作取代时中止，杜绝在已取消的 deploy 下删 entry.services + save |
+| fix | cds | 远端执行器 redeploy 收敛期望清单（Codex P2）：/exec/deploy 对 payload profiles 里没有的 service 主动下掉容器+删条目，否则 redeploy=1 清掉额外服务后 worker 上旧分支本地容器仍在跑(此前只有 master 侧 deploy 做了孤儿清理) |
+| fix | cds | PUT extra-services?redeploy=1 不再谎报已触发（Bugbot Medium）：await 自调 deploy 的 HTTP 接受结果再定 redeployTriggered，被拒(暂停423/缺必填环境412/in-flight冲突409)时回 false + redeployRejected{status,message} + hint「未成功」，接受后后台 drain SSE、构建服务端异步继续 |
+| fix | cds | 清空最后一个额外服务后残留容器（Codex P2）：deploy 期望清单为空但仍有在跑服务时，不再直接 400 跑路，而是 fencing-safe 拆掉残留服务容器+删条目(本地就地拆；远端 owned 放行到 /exec/deploy 收敛空 payload)；env 必填闸门在 profiles 为空时跳过 |
+| fix | cds | 执行器空清单收敛标 idle 而非 error（Bugbot/Codex P2）：/exec/deploy 孤儿清理把服务全删后 entry.services 为空，原状态计算落到 error，心跳同步把一次成功清空误标失败；改为无服务=idle（与 master 空清单清理一致），complete 文案区分「已清空所有服务」 |
+| fix | cds | extra-services PUT 剥离 env 掩码哨兵（Bugbot Medium）：GET→编辑→PUT 往返带回 ***[masked]*** 等哨兵时，按同 id 旧值回填、无旧值则丢弃，杜绝把字面哨兵当密钥持久化进容器 env |
+| fix | cds | container-exec 掩码用分支有效 profiles 查 env（Codex P2）：原用项目级 getBuildProfile 查不到分支额外服务的敏感 env，导致 echo $TOKEN 吐明文；改用 getEffectiveProfilesForBranch（项目+额外）查，额外服务密钥同样被值替换掩码 |
+| fix | cds | extra-services PUT env 改为 merge 不 replace（Bugbot High）：入参省略 env 不再丢失已存密钥、部分 env 不再删未提及的旧 key（以同 id 旧 profile env 为基底叠加，与 build-profiles PUT 口径一致），叠加掩码哨兵剥离 |
+| security | cds | extra-services 响应给 env 脱敏（Codex P1）：GET/PUT extra-services + 分支详情/列表/SSE 快照序列化 extraProfiles 时对敏感 env 值打掩码（***），状态层保持明文供 deploy 直读；杜绝任何可查看分支的调用方拿到额外服务原始密钥 |
+| fix | cds | 远端清空收敛 master 服务表（Bugbot Medium）：远端 owned 分支空清单部署后，executor complete 的 services 是权威集合，master 不再只 patch deployedMode，而是按其删除本地已不存在的服务条目，杜绝清空后 UI 残留 ghost 服务到下次心跳 |
+| security | cds | 分支列表 SSE 流式事件也给 extra env 脱敏（Bugbot/Codex P1）：branchForView 此前只作用于初始 snapshot，后续 branch.status/branch.updated 经 exposeBranchForStream 取原始 branch 泄露额外服务明文密钥；现 exposeBranchForStream 统一过 branchForView |
+| security | cds | profile-overrides 面板给额外服务 env 脱敏（Codex P1）：切到 getEffectiveProfilesForBranch 后额外服务进了 override 面板，baseline/effective.env 原样返回会泄露分支本地密钥；现仅对额外服务 maskSecrets（项目 profile 行为不变） |
+| security | cds | 修复 deploy 宿主机命令注入（Codex P1）：dockerImage/command 来自用户可控 BuildProfile（含分支额外服务），runService 拼 docker create/run 时镜像未引用、command 在宿主机双引号内（$()/反引号会在 CDS 宿主机执行）；现 container.ts 对镜像与 command 走 shellQuote 单引号（容器内 sh -c 仍正常解释运算符），extra-services PUT 另加严格镜像引用校验作边界防御 |
+| fix | cds | 远端 complete 后对 entry.services 做完整对账（Bugbot Medium x3）：按 executor 权威 svcMap 一次性 patch 存活服务 status/deployedMode + upsert executor-only 新服务 + prune master-only 残留 + 重算分支态（无服务=idle、有 running=running、否则 error）；修复 building 滞留、ghost 残留、以及 running 但 services 不全（漏 upsert）三类要等下次心跳才收敛的滞后 |
+| security | cds | GET/PUT /branches/:id/extra-services 补 assertProjectAccess 项目级访问控制(Bugbot High)：此前缺校验，项目 A 的 cdsp_ key 可读取/改动项目 B 分支的额外服务并触发跨项目重部署；现与其他分支路由一致，跨项目返回 403 project_mismatch |
+| security | cds | 修复 deploy 宿主机命令注入第二处——挂载路径与一次性命令路径（Codex P1「Validate extra-service workDir」）：workDir/containerWorkDir 经 path.join 进 `-v "src":"dst"` 与 `-w`，旧双引号写法下 workDir 含双引号+$()/反引号可在 CDS 宿主机越权执行；现 buildProfileVolumeFlags 的 -v 挂载（含 node_modules/cacheMounts）与两条 runCmd 的 -w 全部走 shellQuote 单引号，runProfileCommand 一次性命令路径的 dockerImage/command 同步补 shellQuote（此前仍是裸拼+双引号）；extra-services PUT 另加 workDir 严格白名单（相对路径、禁 .. 穿越与 shell 元字符）作边界防御 |
+| fix | cds | 远端 complete 对账补同步 hostPort/containerName/errorMessage（Bugbot Medium）：上一轮全量对账只把 status/deployedMode 覆盖到存活服务行，svcMap 是远端权威全量却漏了端口/容器名，远端部署后 master 仍持本地旧端口 → 预览与路由用错端口直到下次心跳；现存活行也按权威值覆盖 containerName/hostPort，转非 error 态时清掉残留 errorMessage |
+| docs | cds | 两篇 CDS 设计文档头部对齐 rule.doc.naming（Bugbot Low）：H1 补 ` · 设计` 后缀、改 blockquote 标准头 `版本/日期/状态` 且状态用枚举值「开发中」（原自由文「进行中（…）」降为正文「进度」行） |
+| fix | cds | extra-services PUT 保留分支级路由/依赖/就绪元数据（Codex P2）：早期白名单只留 id/image/workDir/command/port/env，把 pathPrefixes（路由前缀）/dependsOn（启动顺序）/readinessProbe/startupSignal（就绪判定）这些 deploy 真正消费的字段静默丢了，拆服务实验里靠路由前缀/启动顺序的额外服务不可达或起错序；现按受支持字段透传 + 校验（数组去空、readinessProbe 逐字段校验） |
+| fix | cds | 本地部署 finalize 空期望清单落 idle 不落 error（Bugbot Medium「Empty deploy marks branch error」）：分支挂在线 executor 时本地 empty-cleanup 早返回被 remoteOwned 跳过，executor 离线→分发回退本地路径走到 finalize，原 `entry.status = … : 'error'` 末位兜底把「成功清空」误标 error；现末位加 `activeStatuses.length===0 ? 'idle'`，与 executor 端 + 本地 empty-cleanup 的 idle 口径对齐（profiles>0 零服务的真失败仍由 noServiceStarted 置 error） |
+| security | cds | /api/state-stream 全量广播补 extraProfiles env 脱敏（Codex P1）：doBroadcastState 序列化 `Object.values(state.branches)` 未过 branchForView，分支列表/分支 SSE 已脱敏但这条全状态广播仍漏，任何 dashboard/state-stream 订阅者 save 后即可拿到额外服务明文密钥；现经共享 SSOT maskBranchExtraProfilesEnv 脱敏后再广播 |
+| security | cds | 额外服务 env 掩码补 URL 内联凭据识别（Codex P2）：原 maskSecrets 只按 key 名（secret/password/token/key/credential）判敏感，DATABASE_URL/MONGODB_URI/REDIS_URL 这类 key 名不命中但值是 `scheme://user:pass@host` 的连接串明文返回；新增共享 maskEnvRecord 对「值为含内联凭据的 URL」也打掩码（GET/PUT extra-services、分支序列化、profile-overrides 经同一 SSOT 全部覆盖） |
+| fix | cds | 空清空路径归属离线执行器时拒绝清理（Bugbot High「Offline executor skips empty cleanup」）：分支 owned 的远端执行器离线时，远端分发够不到、本地 remove 也够不到 worker 上的容器，原逻辑放行到本地路径会删掉 entry.services 行却留 ghost 容器（下次心跳还回填）；现归属节点存在但 status!='online' 时直接 503 owning_executor_offline、不动 state，等执行器恢复重试（与 resolveDeployTarget 的 online 判定对齐） |
+| fix | cds | 空清空路径改走 SSE 不再回 JSON（Bugbot Medium「Deploy route returns JSON not SSE」）：POST /deploy 契约是 event-stream，原「就地清空残留服务」成功路径回 200 JSON，EventSource 客户端因 content-type 不符报错/挂起；现 initSSE + 逐服务 step 事件 + complete 收尾（租约被拒由 beginBranchOperation sse:true 发 SSE 终止事件）；前置校验门（未配置/暂停/执行器离线）仍按既有惯例回非 200 JSON |
+| fix | cds | 预览代理按分支有效 profiles 路由 pathPrefixes（Codex P2「Route branch-local path prefixes in the proxy」）：detectProfileFromRequest 原用 stateService.getBuildProfiles()（仅项目级、且跨项目全量），分支级额外服务的 pathPrefixes（已由 PUT extra-services 持久化）对代理不可见，/api 流量回退到约定/默认路由致额外服务不可达；改用 getEffectiveProfilesForBranch（项目+额外，且项目内聚），额外服务路由前缀生效、顺带消除跨项目 id 串扰 |
+| security | cds | container-exec 字面值掩码补 URL 内联凭据识别（Codex P2「Mask URL-style env values in exec output」）：echo $DATABASE_URL 类调用的明文遮蔽只按 key 名（secret/password/token/key/credential/pwd/passphrase）收集敏感值，DATABASE_URL/MONGODB_URI/REDIS_URL 这类 key 名不命中漏遮 → 连接串明文回显；新增共享 looksLikeUrlWithCredentials 预判，与 maskEnvRecord 同口径，值为含内联凭据 URL 时也加入遮蔽集 |
+| fix | cds | executor /exec/deploy 期望清单收敛上移到 git pull 之前（Codex P2「Run executor cleanup before git pull」）：清空/移除额外服务的容器拆除不依赖最新代码，原放在 pull 之后，分支被上游删除或 git 瞬时失败会走 catch 直接报错、漏拆 worker 上被移除的容器（master 已存空清单 → ghost）；现先按 payload 收敛孤儿容器，payload 为空（纯清空）时直接跳过 pull 落 idle + complete 返回 |
+| fix | cds | 远端部署状态重算 error 优先于 running（Bugbot Medium「Remote deploy ignores service errors」）：master complete reconcile 与 executor 端原「任一 running 即 running」，running+error 混合时分支误报 running（构建日志却以 error 结尾），与本地 finalize「任一服务失败即 error」不一致；两处均改为 无服务=idle → 有 error=error → 有 running=running → 否则 error，error 优先 |
+| fix | cds | 远端部署失败也对账 services 防 ghost（Bugbot Medium「Remote deploy error stale services」）：孤儿收敛上移到 pull 之前后，pull 失败走 error 事件，executor 已删 worker 上的服务但原 error 不带 services 快照，master 只从 complete.services 对账 → 已移除服务在控制面残留 running/错端口到下次心跳；现 executor error 事件带 entry.services 快照，master 对 complete 和 error 都做 services 对账（patch/upsert/prune），但分支态重算与 runtime-ready 仍仅 complete（失败态由 proxyHasError finalize 主导，不被误标 idle/running） |
+| security | cds | extra env 掩码扩到 webhook/SMTP/AUTH 等敏感 key（Codex P1「Mask webhook-style env secrets」）：maskEnvRecord 原用窄正则 secret/password/token/key/credential，WEBHOOK_URL/SLACK_WEBHOOK/SMTP_URL/AUTH_URL 这类存密钥 URL 的 key 名不命中、值又非 user:pass@ 时泄露给任何能查看分支的调用方；改为复用 isSensitiveKey 完整覆盖（含 WEBHOOK/SMTP_*/AUTH/JWT/PAT/*_KEY），叠加 URL 内联凭据兜底，extra-services/分支序列化/state-stream/profile-overrides 同一 SSOT 全覆盖 |
+| fix | cds | 删分支即删分支网覆盖所有清理路径（Codex P2「Remove branch networks from all cleanup flows」）：removeBranchNetwork 此前仅 DELETE /branches/:id 调用，批量清理已停止/`/cleanup`/`/cleanup-orphans`/恢复出厂都删容器+state 却漏删 cds-br-* 隔离网（worker/host 上堆积）；现四条路径 removeBranch 前均补 removeBranchNetwork |
+| fix | cds | 远端部署流式 error 不再卡死「构建中」（Bugbot Medium「Remote deploy error stuck building」）：executor 部署失败发 SSE error 事件时 master 只置 proxyHasError + 对账 services，分支态重算仅 complete 跑，派发钉的 building 没人改 → UI 卡构建中到下次心跳；finally 兜底：失败且分支仍 building 时落 error + 回填 errorMessage（执行器 error.message 优先） |
+| fix | cds | 一次性 job 隔离时也跑分支网解析兄弟 app（Bugbot Medium「Job containers miss branch app DNS」）：runProfileCommand（db-init/migration）原只挂共享项目网，隔离后 app 的 --network-alias 落分支网，job 解析不到兄弟 app 主机名（如 http://api:8080）；现 job 与 app 同口径走 netPlan——隔离时 create(分支网)→connect(共享 infra 网)→start→wait→logs→rm（同时可达兄弟 app 与 mysql/redis），未隔离仍 docker run --rm 零回归 |
+| fix | cds | extra-services 保留 containerWorkDir（Codex P2「Preserve container workdir for extra services」）：白名单此前丢弃 containerWorkDir，需要非默认容器工作目录的镜像/monorepo 服务被强制部署在 /app 运行期失败；现保留 + 校验（容器内绝对路径、字母/数字/._-/、禁 .. 穿越与 shell 元字符） |
+| fix | cds | 远端纯清空不再 stamp lastDeployAt（Bugbot Medium「Idle clear stamps lastDeployAt」）：远端 executor 完成空期望清单部署（拆服务→idle）时，proxy 成功块仍在 proxyHasError=false 下 stamp lastDeployAt/runtimeStartedAt，把 teardown-only 当成功重部署，扰乱 auto-lifecycle 陈旧检测/dispatch 对账/「最近部署」语义；现 stamp 仅在 profiles.length>0（确有期望部署的 profile）时执行，纯清空跳过 |
+| fix | cds | 远端部署失败时 worker 自身分支态落 error（Bugbot Medium「Failed remote deploy reverts to building」）：/exec/deploy 孤儿收敛后 pull 失败走 catch 只回传 services 快照，worker 副本停在部署前钉的 building，下一次心跳以 worker status 为准会把 master 已 finalize 的 error 覆盖回 building；现 catch 里把 worker entry.status 落 error + 回填 errorMessage 再发 error 事件，与 master finally 兜底同口径 |
+| fix | cds | profile-overrides PUT 解析分支级额外服务（Bugbot Medium「Extra profile overrides PUT fails」）：GET /profile-overrides 已用 getEffectiveProfilesForBranch 列出额外服务并标可覆盖，但 PUT /profile-overrides/:profileId 仍用项目级 getBuildProfile 解析，extra-only profileId 永远 404；改用 getEffectiveProfilesForBranch 查找（项目+额外，天然项目内聚） |
+| security | cds | container-exec 字面值掩码改用 isSensitiveKey 完整覆盖（Codex P2「Reuse sensitive-key coverage for exec masking」）：exec 输出明文遮蔽的敏感判定仍用旧窄正则 secret/password/token/key/credential/pwd/passphrase，WEBHOOK_URL/SLACK_WEBHOOK/AUTH_URL 这类 GET/PUT 已脱敏的密钥 key 名不命中、值又非 user:pass@ 时从 echo 原样吐出；改用与 maskEnvRecord 同口径的 isSensitiveKey（含 WEBHOOK/SMTP_*/AUTH/JWT/PAT/*_KEY）+ URL 内联凭据兜底 |
+| fix | cds | 远端 complete 部分服务失败补顶层 errorMessage（Bugbot Medium「Remote partial failure missing errorMessage」）：complete 带 error 服务（无单独 error 事件）时 ③ 已把 entry.status 置 error，却没设顶层 errorMessage，分支显示失败但原因空、详情只散落 entry.services；现 finally 失败兜底改为 proxyHasError 即落 error 态 + 回填 errorMessage（来源优先级：executor error 事件原因 → 失败服务 per-service 汇总 → 通用兜底），统一覆盖「卡 building」与「complete 部分失败」两类 |
+| security | cds | profile-overrides PUT 响应给额外服务 env 脱敏（Codex P1「Mask extra profile env in override save responses」）：round-21 让 PUT 可命中 extra-only profile 后，保存响应里的 effective/override 直接回原 env，与 GET 面板脱敏口径不一致 → 任何能保存覆盖的调用方拿到额外服务密钥明文；现仅对额外服务遮蔽 effective.env + override.env（项目 profile 不变），状态层保持明文供 deploy 直读 |
+| fix | cds | 远端部署成功补刷 entry.lastReadyAt（Bugbot Medium「Remote deploy skips lastReadyAt」）：master 远端 proxy 成功 complete 后只置 entry.status=running，没更新 lastReadyAt，executor-backed 分支显示 running 却留着上一轮旧就绪时刻，auto-lifecycle 陈旧检测/就绪调度按错误时间算；现与本地 finalize 对齐——确有服务 running 时把 lastReadyAt 刷到本次远端就绪时刻（remoteRuntimeReadyAt），纯清空跳过 |
+| security | cds | profile-overrides GET 也给额外服务 override.env 脱敏（Codex P1「Mask override env in profile-overrides GET」）：round-24 补了 PUT 响应脱敏，但 GET 面板只遮蔽 baseline/effective，override 原样回吐 → PUT 存 env 覆盖后 GET 即可读明文；现 override 与 baseline/effective 同口径对额外服务 maskSecrets |
+| fix | cds | forwarder 路由发布按分支有效 profiles 取 pathPrefixes（Codex P2「Publish extra-service path prefixes to the forwarder」）：CDS_USE_FORWARDER=1 时 ForwarderRoutePublisher.buildRoutes 的 profileById 原只取项目级 getBuildProfiles()，分支级额外服务 pathPrefixes 发不进 forwarder-routes.json → 转发流量回退默认路由、额外服务不可达；改为每分支用 getEffectiveProfilesForBranch 建 profile 查找 |
+| fix | cds | executor 进入部署窗口立即钉 building（Bugbot Medium「Executor deploy skips building status」）：孤儿收敛上移到 pull 之前后，worker entry.status 仍在 pull 成功后才设 building，这段窗口里 worker 副本是上一轮 running/idle，心跳同步覆盖 master 派发钉的 building，UI 大半个部署期看不出「构建中」；现拆容器/pull 之前就钉 building + save |
+| security | cds | 分支视图也给额外服务的 profileOverrides env 脱敏（Codex P1「Mask extra-profile override env in branch views」）：PUT /profile-overrides 给额外服务存的 env 落在 branch.profileOverrides[<extraId>]，branchForView 此前只遮蔽 extraProfiles.env，/branches、/branches/:id、分支流仍吐 override 明文；现共享 maskBranchExtraProfilesEnv 同时遮蔽 profileOverrides 中属于额外服务 id 的 env，branchForView 改为委派该 SSOT |
+| fix | cds | 离线执行器护栏扩到「拆任一现有服务」（Codex P2「Block offline executor removals with remaining profiles」）：round-17 离线 503 护栏只在期望清单全空时挡，删一个额外服务但项目 profiles 还在（profiles.length>0）会绕过 → 本地/另一执行器 redeploy 把被删服务从 master state 抹掉、旧容器仍在离线 worker 跑（ghost）；现 deploy 前置门改为「凡有现有服务不在新期望清单且归属执行器离线就 503」，空清单是其子集 |
+| fix | cds | profile-overrides PUT 剥离 env 掩码哨兵（Bugbot High「Extra override PUT keeps mask sentinels」）：额外服务的 GET /profile-overrides 把 override.env 打掩码，GET→编辑→PUT 往返若把字面 *** 原样持久化进 setBranchProfileOverride，deploy 时真实密钥被抹；现 PUT 命中哨兵则从已存覆盖的同 key 旧值恢复、无旧值则丢弃（与 extra-services PUT 同口径） |
+| security | cds | 分支视图遮蔽所有 profileOverrides env 防孤立覆盖泄露（Bugbot Medium「Stale extra overrides leak secrets」）：maskBranchExtraProfilesEnv 原在 extraProfiles 缺失时直接 return raw，清掉额外服务后 branch.profileOverrides 里残留的覆盖密钥仍被 /branches、分支流、state-stream 明文吐出（按 id 已无从辨识是不是额外服务）；现分支视图一律遮蔽所有 override env（编辑走 profile-overrides 面板自身脱敏，状态层存明文供 deploy） |
+| fix | cds | 离线执行器护栏覆盖「注册表查不到归属执行器」（Bugbot Medium「Missing executor skips offline guard」）：round-17/27 的拆服务护栏只在「注册表查到该 executor 且离线」时挡，漏了 executorId 指向远端但注册表无匹配节点（已注销/陈旧归属/registry 不可用）——这些情况本地 redeploy 删 master state 却够不到那台 worker 容器留 ghost；现判定改为「本地归属（executorId 缺省或 master-* embedded）放行；远端归属必须查到在线非 embedded 节点才放行，否则 503」 |
+| fix | cds | extra-services?redeploy=1 破坏性移除被拒时回滚（Codex P2「Defer destructive extra-service saves until redeploy is accepted」）：删掉仍挂 entry.services 运行行的额外服务时,setBranchExtraProfiles 在自调 deploy 被接受前就落库,若 deploy 随即被拒(典型 owning_executor_offline:owning executor 离线无法真正下掉远端 worker 容器),master 已丢 profile 元数据却留着在跑的 worker 容器(幽灵服务);现落库前先快照旧额外服务并算出「被删且仍有运行行」的 id,被拒且含此类破坏性移除时回滚到旧配置(removalRolledBack+rolledBackServiceIds),纯增/暂停/改 env 不回滚(被拒仍保留已声明配置) |
+| fix | cds | extra-services 保留 entrypoint 覆盖（Codex P2「Preserve extra-service entrypoint overrides」）：白名单此前止于 prebuiltImage,丢弃了 BuildProfile.entrypoint,带 wrapper entrypoint 的镜像(典型 DB/CRM 镜像自跑初始化脚本)无法清空/覆盖入口 → 运行期抢跑失败;现保留 + 校验(""=清空 image ENTRYPOINT,否则须单 token 可执行名/路径、无空格与 shell 元字符,与 container.ts 的 --entrypoint 单 token 约束一致) |
+| fix | cds | 本地部署期望清单收敛上移到 git pull 之前（Codex P2「Move local orphan cleanup before fallible deploy steps」）：「服务从期望清单移除」(额外服务被清/项目 profile 被删)的容器拆除原只在 deploy-finalize(pull+infra+db-init+整个构建循环之后)才做,若这些 fallible 步骤在 PUT extra-services?redeploy=1 落库缩短 extraProfiles 之后中途 abort,被移除服务的容器与 entry.services 行就留在原地却无有效 profile 元数据(pathPrefixes 等路由信息消失而旧容器仍跑);现与 executor 路径同款前移到 pull 之前(fencing-safe,remove 前后各 assertCurrent),pull/构建失败也不会留幽灵服务 |
+| security | cds | 修复 profile-overrides 覆盖镜像绕过校验的宿主机命令注入（Codex P1「Validate extra-profile override images before deploy」）：PUT profile-overrides 现可覆盖分支额外服务的 dockerImage,调用方可先建 prebuiltImage 额外服务再在此覆盖 dockerImage 绕过 extra-services 严格镜像白名单,覆盖值并入有效 profile 后 prebuilt 路径用宿主机 `docker pull ${image}` 拉取 →「alpine; touch /tmp/pwn」在 CDS 宿主机执行;两层修复:① container.ts 对 docker pull 的镜像 shellQuote 兜底(关掉所有路径的注入面);② override PUT 入口对 dockerImage/containerWorkDir 施加与 extra-services PUT 同款白名单(对所有 profile 覆盖生效) |
+| security | cds | container-exec 字面值掩码先解析 profileOverrides（Codex P2「Resolve overrides before masking exec output」）：经 PUT profile-overrides 存的额外服务密钥只由 resolveEffectiveProfile 合并,不在 getEffectiveProfilesForBranch 里;原 exec 掩码直接读未合并 profile 的 env → `echo $TOKEN` 仍吐 override 密钥明文(尽管 override 响应/分支视图已脱敏);现先 resolveEffectiveProfile(baseProfile, entry) 把 override env 并入再收集敏感值 |
+| fix | cds | 预览代理 + forwarder 路由先解析 profileOverrides 的 pathPrefixes（Codex P2「Resolve overrides before routing path prefixes」）：经 PUT profile-overrides 配的 pathPrefixes 只由 resolveEffectiveProfile 合并,proxy.detectProfileFromRequest 与 ForwarderRoutePublisher 原直接用 getEffectiveProfilesForBranch(未含 override)→ 额外服务在跑但其 override 前缀的请求回退默认/约定路由不可达;两处均改为对每个有效 profile 再过 resolveEffectiveProfile(branch) 后再建路由表 |
+| fix | cds | extra-services 保留 dbScope（Codex P2「Preserve dbScope on extra services」）：白名单此前丢弃 BuildProfile.dbScope,resolveProfileRuntimeEnv 见 undefined 就跳过 per-branch 数据库改写,声明 dbScope:'per-branch' 的额外服务(跑迁移/测试)会落回共享库、破坏分支隔离;现保留 + 校验枚举(shared/per-branch),非法值显式 400 拒绝(不静默丢弃) |
+| fix | cds | executor /exec/deploy 缺省 profiles 归一为空清单（Bugbot Low「Executor deploy missing profiles guard」）：pre-pull 孤儿收敛上移后 profilesData.map 成了 body 解析后第一处使用,旧 master / 手工调用省略 profiles 字段时 profilesData 为 undefined → map/length 直接 throw,把一次合法的「空清单 teardown」变成不透明部署错误;现解构后 `Array.isArray(profilesRaw) ? profilesRaw : []` 归一,空/缺省都正常走孤儿收敛 + 落 idle |
+| fix | cds | 移除额外服务时清掉其孤立 profileOverride（Codex P2「Clear stale overrides when removing extra services」）：删一个有 profileOverride 的额外服务时只改 extraProfiles 会把 entry.profileOverrides[id] 留下,该分支之后用同 id 新建另一临时服务时 resolveEffectiveProfile 会把旧 override(镜像/env/路由)悄悄套到新服务上,部署成上一轮的值;现按最终(已结算回滚)的 extraProfiles 算出真正被移除的 id,清掉其 override(回滚时 final==prev 不误删,额外 id 不撞项目 profile 故清除安全) |
+| fix | cds | 移除额外服务清 override 后补 stateService.save()（Bugbot Medium「Extra removal override not persisted」）：clearBranchProfileOverride 只改内存,extraProfiles 已由 setBranchExtraProfiles 落盘但 override 清除没 save → 重启重载旧 profileOverrides,同 id 新服务又套陈旧 env/镜像;现清掉任意 override 后显式 save(),并加「重载 StateService 也读不到旧 override」持久化断言 |
+| feat | cds | 分支级网络隔离：每分支专属 app 网（cds-br-<id>）承载 app↔app 服务发现，共享 infra 网（cds-proj-<id>）承载 app↔infra，杜绝多分支同名服务别名（如 apigateway）在共享网上 DNS 串流 |
+| feat | cds | 一个分支随便部署多少临时/实验容器都只落在自己的分支网，永远影响不到别的分支；隔离为每分支天然默认，不做项目级硬开关、不限制分支，仅留全局逃生开关 CDS_BRANCH_NETWORK_ISOLATION=0 |
+| fix | cds | 隔离启动时序（Codex P1）：app 容器改用 create→connect(infra)→start，infra 共享网在进程启动前就连上，避免 entrypoint 阶段就开 DB 连接的镜像（极速版/API）在 infra 网就位前连库失败 |
+| fix | cds | 远端执行器分支网清理（Bugbot Medium）：cds-br-* 网创建在执行器 docker host，删分支时执行器 /exec/delete 顺手 removeBranchNetwork，避免隔离网在 worker 节点随删分支不断堆积 |
+| fix | cds | 超长分支网名保唯一（Codex P2）：branchAppNetworkName 超 60 字符时截断并追加完整 id 的短哈希，避免两个共享前 60 安全字符的分支 id 撞同一张 cds-br-* 网而重新引入跨分支 DNS 串流；≤60 的常规 id 输出零回归 |
+| fix | cds | 陈旧别名清理扫对网（Bugbot Medium）：隔离后 app 的 --network-alias 落在分支网而非共享项目网，pruneStaleAppContainersForProfile 改扫 netPlan.runNetwork（隔离=分支网），否则失败/半成功重部署后分支网上残留同别名僵尸端点、DNS 轮询复发 |
+| fix | cds | 分支网名截断阈值算上前缀（Codex P2 二修）：返回名 = "cds-br-"(7)+safe，docker DNS label 上限 63，故 safe 阈值取 56 而非 60，否则 57~60 字符的分支 id 产出 64~67 字符网名超限 |
+| fix | cds | 共享 infra 网连接失败不再静默吞（Bugbot Medium「Infra connect failure ignored silently」）：connectContainerToSharedNetwork 原把 `no such container` 当成功返回，但唯一调用方是 create→connect→start 时序、容器在连接前刚 `docker create` 成功，故该错误是真异常而非并发 race；吞掉会让后续 docker start 把 app 只挂分支网、连不上共享 mysql/redis（DB/redis DNS 失败却 deploy 报成功）；现一律 record + throw，部署显式失败 |
+| fix | cds | 修复健康分支被误报「疑似卡住 ≥1h」：从未 finalize 的孤儿 running 部署日志若已被更新的成功部署取代，不再被选为「当前部署」（前端 pickActiveDeployment 加陈旧守卫 + 后端派发收敛器 finalize 孤儿日志） |
+| fix | cds | 分支卡片「上次部署 N 分钟前」标签纠正为「最近访问」：原取 lastAccessedAt（预览访问时间）却标成部署时间，导致刚打开预览被误显示成刚部署 |
+| fix | cds | 陈旧 running 守卫改比「完成时间」而非「开始时间」（Bugbot Medium）：卡死的 running 若在某次已完成部署的 startedAt 之后、finishedAt 之前开始，旧逻辑仍会误选它为活跃 →「疑似卡住」复发；改用已完成部署的最晚 finishedAt 当门槛，并把 pickActiveDeployment 抽成纯函数加单测 |
+| fix | cds | pickActiveDeployment 兜底也跳过僵尸 running（Codex P2）：tail 窗口过期后旧逻辑直接返回 sorted[0]，若最新一条恰是被取代的僵尸 running 会把「疑似卡住」卡片选回来；改取最新的非僵尸条目兜底 |
+| fix | cds | 分支卡片成功部署不再误显示「最近访问」（Bugbot Medium）：lastAccessedAt 同时被预览访问和部署尝试盖戳，卡片优先它会把成功部署显示成预览访问；改为比较 lastDeployAt 与 lastAccessedAt，部署时间不早于访问时间即显示「部署成功」 |
+| fix | cds | 修复项目创建自动检测误把 CDS 控制面、sidecar 和测试目录识别为应用服务的问题；compose 基础设施改为检测提示并由 compose 导入，无 command 的 compose 应用服务也会出现在创建预览中，带 workDir 的 compose 命令会在对应子目录验证 |
+| chore | scripts | Git hooks 安装脚本新增 post-checkout 钩子，checkout/worktree 后自动补齐 .claude/skills 到 .agents/skills 的本地链接 |
+| feat | cds | 新增任务调度 MVP，支持项目级定时任务、手动执行、HTTP/命令目标和运行记录 |
+| feat | cds | 任务调度动作支持检测执行与 curl 导入，并补充多组解析和检测测试 |
+| security | cds | 任务调度命令动作改为 Docker sandbox 执行，隔离宿主文件系统并限制工作目录逃逸 |
+| feat | cds | 任务调度改为触发器加动作步骤的纵向配置流，支持多个动作按顺序执行 |
+| security | cds | 修复项目级 key 可无范围读取任务调度列表与运行日志的问题 |
+| fix | cds | 任务调度执行时按 retryCount 重试失败动作 |
+| fix | cds | 修复长时间定时任务重复 tick 产生假跳过记录并覆盖运行状态的问题 |
+| fix | cds | 任务调度命令 sandbox 透传 CDS Docker network，支持访问项目内服务 |
+| fix | cds | 任务调度改为整次执行共享超时预算，避免多动作和重试突破任务总超时 |
+| fix | cds | 修复编辑任务非调度字段时错误重算 nextRunAt 的问题 |
+| fix | cds | 修复同一轮 tick 中任务被禁用后仍可能继续执行的问题 |
+| fix | cds | 加固任务调度 tick 认领逻辑，避免坏调度阻断启动、空 nextRunAt 重复执行和手动运行挪动自动计划 |
+| chore | doc | 熵清理 2026-W27：D1 0 个，D2 +0/-0，D3 +0/-0（幽灵均在 changelog 历史段非目录条目），D4 +0/-0（pnpm 为误报），D6 5 条，manifest 累计 381 条 |
+| fix | prd-admin | 调整文档星系触摸板双指滑动为围绕中心旋转视角 |
+| polish | prd-admin | 优化文档星系点击聚焦时的相机自然速度缓动 |
+| polish | prd-admin | 为文档星系入口添加简化星空进入 icon 动效 |
+| polish | prd-admin | 将文档星系入口动效调整为原始 icon 加胶囊光扫组合 |
+| test | prd-api | 网关 D 层真机跑通：CDS 自更新到 main 取多容器能力后，用分支级额外服务把 llmgw-serve 作为单分支第 3 容器部署（/gw/v1 最长前缀路由 + Mongo 模板 env 部署期展开），scripts/gw-smoke.py 对实时预览 8/8 绿（pools/send 真打 qwen/deepseek + canary 必败被抓） |
+| fix | prd-api | gw-smoke.py 补浏览器 User-Agent 头，绕过预览 Cloudflare 对 Python-urllib UA 的 1010/403 拦截 |
+| feat | prd-api | LLM 网关新增 shadow 影子比对模式：inproc 权威返回 + 后台对跨进程 http 网关做逐字段比对落 llmshadow_comparisons，灰度翻 http 前积累一致性证据。默认只比解析(免费,覆盖选A给B)，ShadowFullSamplePercent>0 才采样完整 send 比对。CreateClient 绑定 shadow 覆盖 chat 主链路；http 影子失败全隔离，caller 永远拿 inproc |
+| feat | prd-api | LLM 网关灰度翻 http：新增 LlmGateway:HttpAppCallerAllowlist(按 appCallerCode 逐个切)，命中入口走 http 权威、其余按 Mode；ShadowLlmGateway 统一影子+灰度路由(白名单命中=真正切 http 不比对，未命中=inproc 权威+后台比对)。纯配置可回滚 |
+| test | prd-api | 新增 ShadowLlmGatewayTests(数据驱动)：caller 永远拿 inproc / 比对 critical+warning 分级正确 / http 抛异常不破坏 caller / resolve-only 不 2x 打模型 / 白名单命中走 http 权威不比对 / 未命中走 inproc 且比对。CI 真跑绿(1326 passed/0 fail) |
+| feat | prd-api | serving 网关新增 GET /gw/v1/shadow-comparisons(X-Gateway-Key 门内)：读 llmshadow_comparisons 给汇总(total/allMatch/critical/httpFail)+最近 N 条,灰度翻 http 前看 inproc vs http 一致性(去黑盒观测) |
+| test | prd-api | 网关测试矩阵从压缩版扩成数据驱动全枚举：GatewayProtocolFidelityTests 改 [Theory] 读 protocol-cells.json(91 协议保真 cell)，CrossProcessServingErrorLoadTests 改 [Theory] 读 transport-cells.json(18 跨进程 cell，4 stub host 复用)，新增 GwResolutionMatrixTests(153 反射 [Theory] 校验入口命名+ModelType 合法) |
+| docs | doc | 新增 report.gw-test-matrix（约 282 行全量可见报告：A 解析 153 入口 + B 91 cell + C 18 cell + 20 扩展维度），由 scripts/gen-gw-matrix-report.py 自动生成并产出两份 cell 目录 SSOT |
+| test | prd-api | 新增网关协议保真 MECE 自测 GatewayProtocolFidelityTests（think 三形态/tool_calls 归一/token+cache/finish_reason/跨chunk think 标签 + canary 探测元断言） |
+| test | prd-api | 新增跨进程传输 D11/D12 自测 CrossProcessServingErrorLoadTests（上游失败→Fail/抛异常不崩/并发16不串扰/错key 401） |
+| docs | prd-agent | 新增 spec.llm-gateway-test-matrix（14 维 MECE 矩阵 + 4 层分工 + 每层 canary），含 D 层真机冒烟脚本 scripts/gw-smoke.py |
+| polish | prd-admin | 调整首页、百宝箱与全局玻璃背景融合方式，改为白色柔光并改善与玻璃侧栏的衔接 |
+| fix | cds | 修复预览分支 stale worktree 导致 CDS 分支创建失败，并阻止 preview-url 输出未发布的本地 fallback 地址 |
+| feat | prd-api | 新增环境变量门控的米多星球开放 SSO 签名验令牌登录接口 |
+| feat | prd-admin | 登录页按后端配置显示米多星球 SSO 登录桥入口并支持令牌回跳登录 |
+| feat | prd-admin | 用户管理支持配置米多星球 SSO 与批量导入手机号绑定 |
+| fix | prd-api | 修复米多星球 SSO 禁用开关、绑定查重和 subject 字段匹配边界 |
+| fix | prd-admin | 修复米多星球 SSO 登录回跳 state 校验、Base URL 规范化和配置弹窗异步竞态 |
+| polish | prd-admin | 将网页卡片私有态的公开快捷位改为分享入口，并保留低频发布到公开页路径 |
+
+### 2026-06-28
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | cds | 极速版分支等待 CI 镜像期间预览页显示「预览环境准备中 · 极速版正在拉取分支」自动刷新等待页，不再误导为「分支当前未运行 · 请手动重新部署」 |
+| fix | cds | waiting-status 接口对 ciImageStatus=waiting 分支返回 loading=true，避免等待页每 6 秒自刷新跳到诊断页 |
+| feat | cds | CI 预构建镜像构建失败（ciImageStatus=failed）时预览页给出「极速版镜像未就绪」专属归因，替代泛化未运行文案 |
+| chore | doc | 熵清理 2026-W26：D1 0 个，D2 +0/-0，D3 +0/-0，D4 +0/-0，D6 0 条，六维全净 |
+| feat | prd-api | 新增 HttpLlmGatewayClient（实现 Infrastructure+Core 两个 ILlmGateway）+ HttpLlmClient（ILLMClient 代理），把 MAP 自身 LLM 调用经 /gw/v1/* 跨进程打到独立 serving 网关 |
+| feat | prd-api | LlmGateway__Mode 特性开关（inproc|http，默认 inproc）：http 时 DI 切到 HttpLlmGatewayClient，48 个注入点零改动，方法签名不变 |
+| feat | prd-llmgw-serve | serving 网关新增 /gw/v1/client-stream 端点，承接 CreateClient 流式路径（SSE） |
+| test | prd-api | 新增跨进程 serving 网关集成自测 CrossProcessServingSelfTest（真 Kestrel + 真 HttpLlmGatewayClient + stub gateway），断言 resolve/send/stream/raw/pools/client-stream HTTP 往返 + ApiKey 不过线 + 密钥门 401 |
+| refactor | prd-llmgw-serve | serving 端点抽成可复用扩展 MapGatewayServingEndpoints（SSOT，Program.cs 与自测共用同一份映射） |
+| ops | prd-agent | docker-compose 新增 llmgw-serve 服务（serving 网关，8091）+ api 注入 LlmGateway__Mode/ServeBaseUrl/LlmGwServe__ApiKey（默认 inproc） |
+| ops | prd-agent | cds-compose 接入 llmgw-serve（预览 /gw/v1/* 路由，dev+express 双模式）；_standalone.conf 加 /gw/v1/ → llmgw-serve:8091 反代 |
+| feat | prd-llmgw-serve | 新增独立 LLM serving 网关进程（PrdAgent.LlmGateway 升级为 ASP.NET 服务，DI 承载现有 LlmGateway/ModelResolver，HTTP 暴露 /gw/v1/{resolve,send,stream,raw,pools}，可被 MAP 及外部跨进程调用） |
+| refactor | prd-api | 移除 Api 对 PrdAgent.LlmGateway 的 ProjectReference，serving 网关与 api 主镜像彻底解耦（其编译错误不再阻塞 MAP 部署） |
+| ci | prd-agent | branch-image 新增 llmgw-serve-image 构建任务（prdagent-llmgw-serve 镜像，随 api path-filter 触发） |
+
+### 2026-06-27
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| docs | doc | 新增 LLM 网关物理独立设计(design.llm-gateway-physical-isolation)：多智能体工作流产出+对抗评审，分阶段迁移方案+决策清单 |
+| chore | prd-api | 网关物理独立 阶段0 契约固化：GatewayStreamChunk 加 Seq(断线续传序号)、GatewayRawRequest 加 MultipartFileRefs + MultipartFileRef DTO(大负载COS引用)，additive 零行为变化 |
+| refactor | prd-api | 新增 ImageGenRequestBuilder 收口"模型配置 → 上游请求体"转换（尺寸归一化/size·width-height·aspect_ratio·none 格式/参数重命名），OpenAIImageClient 退化为发送器+响应解析，加新生图模型只需在 ImageGenModelConfigs 加一条配置 |
+| feat | prd-llmgw | 新增独立 AI 大模型网关观测后端（自包含 ASP.NET 服务，共享 Mongo 读 llmrequestlogs，独立 JWT 账号体系，/gw/auth/login + /gw/logs/* 端点） |
+| feat | prd-llmgw-web | 网关前端独立站补 Dockerfile + nginx（SPA 回退 + /gw 反代 llmgw:8090） |
+| ops | prd-agent | docker-compose 的 llmgw/llmgw-web 切换到独立 prdagent-llmgw / prdagent-llmgw-web 镜像（不再复用 api 占位镜像） |
+| ops | prd-agent | cds-compose 接入 llmgw 服务（预览域名 /gw/* 路由到独立网关，dev 源码模式 + express 预构建镜像两套部署模式） |
+| feat | prd-api | LLM 日志黑洞可见：StartAsync 写日志失败时落一条 Status=blackhole 最小记录，让"未发出/未记录"也可在日志页查到 |
+| feat | prd-api | LLM 日志内容一键还原：新增 GET /api/logs/llm/{id}/restore-text，把 answer/system/question/thinking 里的 [TEXT_COS] 占位符从 COS 取回原文 |
+| feat | prd-api | LLM 日志按应用聚合：新增 GET /api/logs/llm/app-summary，按 appCallerCode 应用前缀+requestType 聚合请求数/成功率/中位时延 |
+| chore | ops | docker-compose.yml/dev 新增 llmgw（占位复用 api 镜像，端口 8090，read_only+tmpfs，注入 Mongo/ApiKeyCrypto/独立 LlmGwJwt 密钥）+ llmgw-web 静态站 service |
+| chore | ops | deploy/nginx _standalone.conf 新增 /gw/ → llmgw:8090 路由（SSE proxy_buffering off + 长超时）及 8081 独立 server 块托管 llmgw-web 静态站 |
+| chore | ops | cds-compose.yml 新增 llmgw + llmgw-web service（dev/static/express 三模式 + healthcheck label + cds.path-prefix）+ x-cds-env 补 LLMGW_JWT_SECRET |
+| ci | ops | branch-image.yml 新增 llmgw / llmgw-web 镜像构建 job（path-filter 触发 + Dockerfile 存在性探测兜底，tag 规则 sha-/branch- 同 api/admin） |
+| chore | ops | exec_dep.sh 补 PRD_AGENT_LLMGW_IMAGE（默认与 api 同源），llmgw 随 compose up 一起拉起 |
+| feat | prd-llmgw-web | 新增独立 LLM 网关观测前端 mini-app（独立账号/路由/组件风格，含登录页 + OpenRouter 风格日志主页 4 tab + 详情抽屉 + 请求生命周期 chip） |
+| feat | prd-admin | 日志页请求生命周期可视化（治"不知道没发送还是没收到"）：列表日期前生命周期色点 + 详情抽屉生命周期 chip，区分 已发·等响应/接收中/已完成/失败/已取消 |
+| fix | prd-api | 观测性：OpenAIClient/ClaudeClient 直连路径补写 Protocol(openai/claude)/ResolutionReason/IsStreaming + 捕获 finish_reason/stop_reason 落库，修复日志页这些字段恒为"—" |
+| feat | prd-admin | 大模型日志页新增「应用」聚合视图（按应用前缀+类型矩阵，成功率着色） |
+| feat | prd-admin | 日志详情抽屉支持 COS 占位符正文一键还原（Prompt/Completion/Thinking） |
+| feat | prd-admin | 日志详情抽屉渲染生图输入/参考/输出图片缩略图（COS URL，可点开大图） |
+
+### 2026-06-26
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| polish | prd-admin | 大模型日志页手机端优化：隐藏统计柱状图、表格精简为核心列（撑满视口不横滚）、控制条合并为单条横向滚动 |
+| polish | prd-admin | 日志页移动兼容标记由 limited 升为 full（已专项适配，移除"建议横屏"过时提示） |
+| fix | prd-api | 修复识图不准根因：LLMAttachment 新增 Detail 字段，GatewayLLMClient 构建 image_url 时透传 detail 并默认 "high"，避免 7 条走 LLMAttachment 的视觉路径丢 detail 导致上游降级到 "auto" 低保真 |
+| docs | prd-api | 修订决策一：删掉"协议全归一"，改为"下沉 + 协议原生处理器 + 透传保真 + 按模态契约"，识图不准作为拍平有损反例固化 |
+| test | prd-api | 修正视觉 detail 单测 harness：NewVisionClient 改用注册了 vision modelType 的 AppCaller(Admin.Lab.Vision)，原用 Admin.Lab.Chat 触发 CreateClient 的 modelType 校验异常导致 4 条用例全挂(CI 实测发现) |
+| fix | prd-api | 协议保真 F3a：ClaudeGatewayAdapter.ConvertToClaudeFormat 不再"只抄 5 个字段"拍平采样参数，透传 Claude 原生兼容的 top_p/top_k，OpenAI 的 stop 改名为 Claude 的 stop_sequences；OpenAI 专有字段(frequency_penalty 等)按白名单挡掉避免 400。Open Platform 兼容代理路由到 Claude 池时采样参数不再静默丢失 |
+| feat | prd-api | 协议保真 G1-G5：函数调用(tools/tool_calls)穿协议不丢。Extensions/ToolCalls 容器 + IGatewayAdapter.ParseToolCalls；OpenAI 线 tool_calls 透传(流式+非流式)；Claude 线 tools/tool_choice 原生互转(OpenAI function 包裹↔Claude input_schema) + tool_use 响应→OpenAI tool_calls；能力软门(模型明确不支持 function_calling 且带 tools→熔断报错，未知放行)；Open Platform 代理回吐 tool_calls。修复"宣称 OpenAI 兼容但函数调用对外是哑的" |
+| docs | prd-api | 新增 debt.llm-gateway-protocol-fidelity 记录三处已知边界(Claude 流式 tool_use 增量未映射 / 能力软门池路径为 null / Extensions 已建未消费)；design.llm-gateway-unification 决策一标记 G1-G5 已实现 |
+| feat | prd-api | 日志观测性：协议保真改动在 /logs 页可瞥见。后端 LlmRequestLog 新增 ResponseToolCalls/ToolCallCount 并从网关 SendAsync(非流)+StreamAsync(流式增量按 index 合并)落盘；list 投影补 Protocol/ResolutionReason/ToolCallCount。修复网关流式从不转发 ToolCall chunk 的 G2/G5 缺口 |
+| feat | prd-admin | 日志页协议保真可视化：列表行新增协议 chip(openai/claude/exchange 着色，存量流量即可见)+ 函数调用 chip；详情面板新增 protocol 字段 + 保真参数 chips(从请求体解析 detail/top_p/top_k/tools)+ tool_calls 段。新增 lib/protocolRegistry.ts 注册表 |
+| feat | prd-api | 大模型日志观测端点：GET /api/logs/llm/timeseries(按天计数,柱状图源) + GET /api/logs/llm/sessions(按 SessionId $facet 聚合主模型/支撑模型/请求数);LlmRequestLog 落库 FinishReason/IsStreaming;list 投影暴露 |
+| feat | prd-admin | 大模型日志页重做为 OpenRouter 风格:顶部按天柱状图 + 时间范围段控 + 4 子 tab(Generations/Upstream Requests/Sessions/Jobs)表格 + 右侧 Generation details 抽屉(6 指标卡 + Overview + Request + tool_calls + Prompt/Completion)。视觉保留本系统液态玻璃风;无字段项(Cost/Canonical/Attempts)统一「—」并注明;Jobs 无概念渲染空态说明。新增 components/llm-logs/(LlmGenerationsView/GenerationDetailsDrawer/helpers)。嵌入式 LlmLogsPanel 保留旧紧凑视图 |
+
+### 2026-06-25
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| refactor | prd-api | LLM 网关 P1 协议下沉：LLMModel/ModelGroupItem 新增可空 Protocol 字段，resolver 按 item??model??platform 计算并透传到 Resolution，全向后兼容（null⇒平台 PlatformType，路由不变） |
+| feat | prd-api | LlmRequestLog 新增 Protocol/ResolutionReason 字段（仅追加），解析协议与原因可观测 |
+| test | prd-api | 新增注册表黄金快照护栏（反射 153 个 appCallerCode + ModelTypes，新增/改名即红）+ 解析黄金集成测试（Category=Integration，比对 153 code 解析底片） |
+| fix | prd-api | 止血：deepseek-v4-flash chat 默认池陈旧 Unavailable 健康标记已重置为 Healthy，53 个 chat code 停止静默 fallback |
+| refactor | prd-admin | 模型池管理类型筛选 chip 改为"配置才出现"：ModelTypeFilterBar 新增可空 availableTypes，只渲染已有池的 modelType，不再预铺 14 个空类目（OpenRouter 心智，向后兼容） |
+| refactor | prd-api | P3 删死策略引擎：移除 5 个非 FailFast 策略类(Race/RoundRobin/WeightedRandom/Sequential/LeastLatency)+ 调度预测端点/工具，池调度化简为只有 FailFast；保留 PoolStrategyType 枚举+StrategyType 字段(数据兼容,无 DB 迁移)；serving 路径零影响 |
+| refactor | prd-admin | P3 删调度预测 UI：移除 PoolPredictionDialog + predictNextDispatch service + 池编辑表单策略选择器，对齐"只有 FailFast" |
+| feat | prd-api | 新增只读端点 GET /api/mds/model-groups/health-overview：聚合各池健康(healthy/degraded/unavailable)+ 近 N 天按 modelType 的 fallback 率 + 死池/高fallback 一级告警，全只读不碰 serving/DB |
+| feat | prd-admin | 模型池管理页顶部新增"健康总览"告警卡(PoolHealthOverview)：死池/高fallback 红色一级告警可点击定位 + 近7天 fallback 率迷你列表，把静默降级一眼暴露 |
+| feat | prd-api | P3 删 legacy 前置(生产配置,行为保持):chat 默认池补 deepseek-v4-pro 池内兜底(取代 step7 legacy 容灾)、解绑 ccas 死 auto 专属池使其落到 generation 默认池;实测全 153 code 零 actualModel 变化、零 code 仍走 Legacy |
+| refactor | prd-api | P3 删 legacy 解析层：ModelResolver 删第四步 legacy 解析 + 第七步 legacy 兜底 + FindLegacyModelAsync，池全不可用改返回 NotFound(容灾已下沉到池内兜底)；保留 IsMain/IsVision/IsIntent/IsImageGen 字段及其它消费方(P4 再清)。前置已证 153 code 零走 legacy，删码为行为 no-op |
+| refactor | prd-admin | 应用模型池管理页类型筛选 chip 同步"配置才出现"：ModelTypeFilterBar 传入应用实际用到的 modelType(来自 modelRequirements)，不再预铺 14 个空类目 |
+
+
 ### 2026-06-27
 
 | 类型 | 模块 | 描述 |

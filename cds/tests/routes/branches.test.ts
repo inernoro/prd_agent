@@ -26,6 +26,8 @@ function makeConfig(tmpDir: string): CdsConfig {
     workerPort: 5500,
     dockerNetwork: 'cds-network',
     portStart: 10001,
+    rootDomains: ['example.test'],
+    previewDomain: 'example.test',
     sharedEnv: { MONGODB_HOST: 'db:27017' },
     jwt: { secret: 'test-secret', issuer: 'prdagent' },
   };
@@ -234,6 +236,12 @@ describe('Branch Routes', () => {
 
     const app = express();
     app.use(express.json());
+    app.use((req, _res, next) => {
+      const h = req.headers['x-test-key'] as string | undefined;
+      if (h === 'A') (req as any).cdsProjectKey = { projectId: 'proj-a', keyId: 'key-a' };
+      if (h === 'B') (req as any).cdsProjectKey = { projectId: 'proj-b', keyId: 'key-b' };
+      next();
+    });
     app.use('/api', createBranchRouter({
       stateService, worktreeService, containerService, shell: mock, config, registry, branchOperationCoordinator, serverEventLogStore,
     }));
@@ -435,6 +443,106 @@ describe('Branch Routes', () => {
     // 极速版部署不再硬闸门(用户 2026-06-23 决策:没有镜像逐组件回退固定主分支,不硬失败)。
     // 镜像可用性由 container.ts runService 处理(本 commit 镜像拉不到→回退主分支镜像),
     // 单测见 tests/services/ci-prebuilt-express.test.ts 的 fallbackImage 用例。
+  });
+
+  describe('完整自定义域名 /api/branches/:id/custom-domains', () => {
+    function seedProject(id: string, slug: string): void {
+      const now = new Date().toISOString();
+      stateService.addProject({
+        id,
+        slug,
+        name: slug,
+        kind: 'git',
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    function seedBranch(id: string, projectId: string, branchName: string): void {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id,
+        projectId,
+        branch: branchName,
+        worktreePath: `/tmp/wt/${id}`,
+        services: {},
+        status: 'running',
+        createdAt: now,
+      });
+    }
+
+    it('rejects project-scoped keys reading or writing another project custom domain config', async () => {
+      seedProject('proj-a', 'a');
+      seedProject('proj-b', 'b');
+      seedBranch('branch-a', 'proj-a', 'main');
+      seedBranch('branch-b', 'proj-b', 'main');
+
+      const get = await request(server, 'GET', '/api/branches/branch-b/custom-domains', undefined, { 'X-Test-Key': 'A' });
+      expect(get.status).toBe(403);
+      expect((get.body as any).error).toBe('project_mismatch');
+
+      const put = await request(server, 'PUT', '/api/branches/branch-b/custom-domains', {
+        domains: ['www.example.test'],
+      }, { 'X-Test-Key': 'A' });
+      expect(put.status).toBe(403);
+      expect((put.body as any).error).toBe('project_mismatch');
+      expect(stateService.getBranchCustomDomains('branch-b')).toEqual([]);
+    });
+
+    it('rejects custom domains that collide with generated preview hosts and aliases', async () => {
+      seedProject('proj-a', 'a');
+      seedProject('proj-b', 'b');
+      seedBranch('branch-a', 'proj-a', 'main');
+      seedBranch('branch-b', 'proj-b', 'feature/demo');
+      stateService.addBuildProfile({
+        id: 'docs',
+        projectId: 'proj-b',
+        name: 'Docs',
+        dockerImage: 'nginx:alpine',
+        workDir: '.',
+        containerPort: 80,
+        subdomain: 'docs',
+      });
+      stateService.getBranch('branch-b')!.services.docs = {
+        profileId: 'docs',
+        containerName: 'docs-container',
+        hostPort: 18080,
+        status: 'running',
+      };
+      stateService.setBranchSubdomainAliases('branch-b', ['stable']);
+
+      const res = await request(server, 'PUT', '/api/branches/branch-a/custom-domains', {
+        domains: ['demo-feature-b.example.test', 'stable.example.test', 'demo-feature-b-docs.example.test'],
+      }, { 'X-Test-Key': 'A' });
+
+      expect(res.status).toBe(409);
+      const reasons = ((res.body as any).collisions as Array<{ reason: string }>).map((collision) => collision.reason);
+      expect(reasons).toContain('preview');
+      expect(reasons).toContain('alias');
+      expect(reasons).toContain('service-subdomain');
+      expect(stateService.getBranchCustomDomains('branch-a')).toEqual([]);
+    });
+
+    it('rejects subdomain aliases that shadow another branch custom domain', async () => {
+      seedProject('proj-a', 'a');
+      seedProject('proj-b', 'b');
+      seedBranch('branch-a', 'proj-a', 'main');
+      seedBranch('branch-b', 'proj-b', 'main');
+      stateService.setBranchCustomDomains('branch-b', ['app.example.test']);
+
+      const res = await request(server, 'PUT', '/api/branches/branch-a/subdomain-aliases', {
+        aliases: ['app'],
+      }, { 'X-Test-Key': 'A' });
+
+      expect(res.status).toBe(409);
+      expect((res.body as any).collisions).toContainEqual({
+        alias: 'app',
+        domain: 'app.example.test',
+        conflictWith: 'branch-b',
+        reason: 'custom-domain',
+      });
+      expect(stateService.getBranchSubdomainAliases('branch-a')).toEqual([]);
+    });
   });
 
   describe('分支级额外服务 /api/branches/:id/extra-services', () => {

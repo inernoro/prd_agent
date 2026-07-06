@@ -62,7 +62,7 @@ export function MobileOverflowMenu({
         aria-label={title}
       >
         <MoreHorizontal size={14} />
-        <span>{triggerLabel}</span>
+        {triggerLabel ? <span>{triggerLabel}</span> : null}
       </button>
 
       <MobileBottomSheet open={open} onClose={() => setOpen(false)} title={title}>

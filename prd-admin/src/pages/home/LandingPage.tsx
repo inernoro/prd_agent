@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { HeroSection, HERO_GRADIENT } from './sections/HeroSection';
@@ -65,6 +65,12 @@ function MapLogo({ className = 'w-10 h-10' }: { className?: string }) {
     </svg>
   );
 }
+
+/** 首屏之下区块的渲染跳过策略：离视口远时不渲染（含内部动画），滚近时自动补渲染 */
+const BELOW_FOLD_SECTION: CSSProperties = {
+  contentVisibility: 'auto',
+  containIntrinsicSize: 'auto 720px',
+};
 
 export default function LandingPage() {
   return (
@@ -238,52 +244,54 @@ function LandingInner() {
         </div>
       )}
 
-      {/* 十一幕内容 */}
+      {/* 十一幕内容 —— 首屏之下的每一幕都挂 content-visibility:auto：
+          屏外区块跳过渲染与内部无限动画的绘制（13 幕全常驻渲染是滚动卡顿主因之一）。
+          containIntrinsicSize 提供占位高度估值，避免滚动条跳动。 */}
       <div id="hero">
         <HeroSection onGetStarted={handleGetStarted} onWatchDemo={handleWatchDemo} />
       </div>
 
-      <div id="stats">
+      <div id="stats" style={BELOW_FOLD_SECTION}>
         <StatsStrip />
       </div>
 
-      <div id="pillars">
+      <div id="pillars" style={BELOW_FOLD_SECTION}>
         <ThreePillars />
       </div>
 
-      <div id="features">
+      <div id="features" style={BELOW_FOLD_SECTION}>
         <FeatureDeepDive />
       </div>
 
-      <div id="workflow">
+      <div id="workflow" style={BELOW_FOLD_SECTION}>
         <WorkflowCanvas />
       </div>
 
-      <div id="cinema">
+      <div id="cinema" style={BELOW_FOLD_SECTION}>
         <SignatureCinema />
       </div>
 
-      <div id="how">
+      <div id="how" style={BELOW_FOLD_SECTION}>
         <HowItWorks />
       </div>
 
-      <div id="agents">
+      <div id="agents" style={BELOW_FOLD_SECTION}>
         <AgentGrid />
       </div>
 
-      <div id="compat">
+      <div id="compat" style={BELOW_FOLD_SECTION}>
         <CompatibilityStack />
       </div>
 
-      <div id="pulse">
+      <div id="pulse" style={BELOW_FOLD_SECTION}>
         <CommunityPulse />
       </div>
 
-      <div id="download">
+      <div id="download" style={BELOW_FOLD_SECTION}>
         <DesktopDownload />
       </div>
 
-      <div id="cta">
+      <div id="cta" style={BELOW_FOLD_SECTION}>
         <FinalCta onGetStarted={handleGetStarted} onContact={handleContact} />
       </div>
 

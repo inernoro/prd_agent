@@ -240,6 +240,7 @@ docs:
   rule.cds.project-isolation-audit: CDS 多项目隔离审计规则
   rule.frontend.frontend-modal: 前端模态框布局硬约束规则
   rule.frontend.landing-visual-style: 首页 / 登录页视觉语言规则
+  rule.frontend.mobile-visual-check-matrix: 移动端视觉检查矩阵规则
   rule.platform.llm-gateway: LLM Gateway 流式调用与 Reasoning 规则
 
   # ── 五、计划与方案 ──
@@ -267,6 +268,7 @@ docs:
   plan.llm-gateway.rollout: LLM 网关剥离上线计划（差异化进度 + 测试纲领 + 局限范围 + 翻 http 序列）
   plan.llm-gateway.full-cutover: LLM 网关全面切换执行计划（撤销 MAP 直连 + 清理旧代码 + 全接口 MECE 复测 + CDS 多出口面板）
   plan.llm-gateway.gw-vision-handoff: LLM 网关 GW 用户四点愿景与交接（两 web 两域名 / 简单账号密码 admin/admin / OpenRouter 风格控制台 / 替换所有模型请求）
+  plan.llm-gateway.status-dashboard: LLM 网关剥离活状态看板（唯一"现在到哪了/能不能发布"入口，记分卡 + Gate + 下一步 + 验收证据）
   plan.visual-agent.merge-image-ref-resolver: 合并计划书：三入口守门员统一
   plan.skill.installation: Claude Code Skill 安装计划
   plan.skill.marketplace-open-api-next: 海鲜市场技能开放接口 — 下一程交接（P2/P3/P4 待办 + UAT 清单 + 环境准备）
@@ -349,6 +351,7 @@ docs:
 
   # ── 七、周报（降序：最新在前）──
   report.gw-test-matrix: AI 大模型网关测试矩阵全量报告（A 解析 153 + B 协议 91 + C 跨进程 18 cell，自动生成）
+  report.2026-W27: 周报 2026-W27 (06-29 ~ 07-05)
   report.2026-W26: 周报 2026-W26 (06-22 ~ 06-28)
   report.2026-W25: 周报 2026-W25 (06-15 ~ 06-21)
   report.2026-W24: 周报 2026-W24 (06-08 ~ 06-14)
@@ -380,6 +383,7 @@ docs:
     status: draft
   debt.platform.emoji-corpus: 历史 emoji 语料清理 · 债务台账（skill/doc 存量 emoji → 对外 generated json，分批 de-emoji + CI 守卫）
   debt.platform.map-mcp-connector: MAP MCP 连接器债务台账
+  debt.platform.home-launcher: 登录后首页(Agent 启动页) · 债务台账（继续上次数据源边界 + 色阶尺纪律）
   debt.cds.performance: CDS 性能债务台账（构建越来越慢/前端缓慢根因 + 逐步解决）
   debt.team-activity.voc-legacy: 行为洞察 / VOC 体验之声 工程债务台账
   debt.frontend.mobile-control-bar-overload: 移动端控制条过载治理台账

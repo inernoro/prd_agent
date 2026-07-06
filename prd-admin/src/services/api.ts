@@ -308,6 +308,12 @@ export const api = {
   // 首页资源（任意登录用户可读，用于 LandingPage 覆盖默认素材）
   homepageAssets: () => '/api/homepage/assets',
 
+  // ============ 登录后首页 ============
+  home: {
+    // 「继续上次」：跨智能体聚合当前用户最近活跃的工作实体
+    recentWork: () => '/api/home/recent-work',
+  },
+
   // ============ Executive 总裁面板 ============
   executive: {
     overview: () => '/api/executive/overview',

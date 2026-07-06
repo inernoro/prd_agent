@@ -29,6 +29,7 @@ cdscli — CDS 管理 CLI (MVP)
 """
 from __future__ import annotations
 import argparse
+import hashlib
 import http.client  # noqa: F401  -- 用于 IncompleteRead 类型捕获
 import json
 import os
@@ -59,6 +60,8 @@ _GENERIC_WORKSPACE_SLUGS = {
     "src",
     "app",
 }
+_DNS_LABEL_MAX_LENGTH = 63
+_PREVIEW_SLUG_HASH_LENGTH = 8
 
 
 # ── HTTP helpers ───────────────────────────────────────────────────
@@ -1001,20 +1004,28 @@ def _compute_preview_slug(branch: str, project_slug: str) -> str:
 
     本仓库其它任何 Python 脚本都不应再自己实现这套逻辑——import 这里。
     """
+    def cap(slug: str) -> str:
+        if len(slug) <= _DNS_LABEL_MAX_LENGTH:
+            return slug
+        digest = hashlib.sha1(slug.encode("utf-8")).hexdigest()[:_PREVIEW_SLUG_HASH_LENGTH]
+        prefix_len = _DNS_LABEL_MAX_LENGTH - _PREVIEW_SLUG_HASH_LENGTH - 1
+        prefix = slug[:prefix_len].rstrip("-") or slug[:prefix_len]
+        return f"{prefix}-{digest}"
+
     project = _slugify_for_preview(project_slug)
     if not branch:
-        return project
+        return cap(project)
     cut_at = branch.find('/')
     if cut_at < 0:
         tail = _slugify_for_preview(branch)
-        return f"{tail}-{project}" if tail else project
+        return cap(f"{tail}-{project}" if tail else project)
     prefix = _slugify_for_preview(branch[:cut_at])
     tail = _slugify_for_preview(branch[cut_at + 1:])
     if not prefix:
-        return f"{tail}-{project}" if tail else project
+        return cap(f"{tail}-{project}" if tail else project)
     if not tail:
-        return f"{prefix}-{project}"
-    return f"{tail}-{prefix}-{project}"
+        return cap(f"{prefix}-{project}")
+    return cap(f"{tail}-{prefix}-{project}")
 
 
 def _preview_root_from_host() -> str:

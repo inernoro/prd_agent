@@ -1,11 +1,38 @@
+/*
+ * LoginPage — CDS 控制台的唯一认证入口。
+ *
+ * 设计哲学「一条线」(2026-07-04 v4,替换 v3 的拼贴式构图):
+ *   CDS 的本质 = 你 push 一个分支,两分钟后它活了。
+ *   于是整页只有一个视觉思想 —— 一条从 push 出发的部署光路,横贯页面,
+ *   途经 push(0:00) → build(0:40) → live(2:00) 三个时间站点,终点没入
+ *   登录卡:你的环境已经活了,登录领取。
+ *   纪律:一块画布(无分屏无接缝)、一个光源、橙色只存在于这条线上(电流);
+ *   不在线上的元素不许存在(星座/要点列表/双 vignette 已全部删除)。
+ *
+ * 认证逻辑与旧版完全一致：
+ *   - 会话探测：已登录直接跳 redirect 目标，不闪登录框
+ *   - 首次启动 bootstrap：零用户时表单变身"创建系统所有者账号"
+ *   - 本地登录双端点回退（/api/auth/login → 404 → /api/login）
+ *   - GitHub OAuth 入口
+ */
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowRight, Github, Home, KeyRound, Loader2, Server, Shield, Terminal, UserRound } from 'lucide-react';
+import { ArrowRight, Eye, EyeOff, Github, Loader2 } from 'lucide-react';
 import ShapeGrid from '@/components/effects/ShapeGrid';
 import { ShinyText } from '@/components/effects/ShinyText';
+import { CdsGem } from '@/components/brand/CdsGem';
 import { Button } from '@/components/ui/button';
 import { apiUrl, fetchBootstrapStatus, bootstrapFirstUser, fetchSessionAuthed } from '@/lib/api';
-import './HomePage.css';
+import { useTheme } from '@/lib/theme';
+
+/* 与首页 board ticker 同一套"活的控制面"语言,登录时就能看到系统在呼吸。 */
+const FEED_LINES = [
+  'pull origin feature/auth-flow · 3 commits',
+  'detect stack · .NET 8 + React + mongo + redis',
+  'build api :5000 · admin :5500 ......  ok',
+  'container.observed · health checks passing',
+  'preview live · auth-flow-prd-agent.miduo.org',
+];
 
 function redirectTarget(): string {
   if (typeof window === 'undefined') return '/project-list';
@@ -19,24 +46,20 @@ function redirectTarget(): string {
   return raw;
 }
 
-const LoginBranchGlyph = (props: { className?: string }) => (
-  <svg className={props.className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-    <circle cx="6" cy="6" r="2.4" /><circle cx="6" cy="18" r="2.4" /><circle cx="18" cy="9" r="2.4" />
-    <path d="M6 8.4v7.2M8.2 7.2 16 8.6M18 11.2c0 4-4 4.4-8.4 4.6" />
-  </svg>
-);
-
-export function CdsAccessMorphBoard(props: { target?: string; onHome?: () => void }): JSX.Element {
+function AuthForm(): JSX.Element {
   const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // 登录失败时卡片 shake 一次;onAnimationEnd 复位保证连续出错可重播。
+  const [shake, setShake] = useState(false);
   // First-run bootstrap: when the system has zero users, the login form turns
   // into a "create the first system-owner account" form instead.
   const [needsBootstrap, setNeedsBootstrap] = useState(false);
   const [bootstrapName, setBootstrapName] = useState('');
-  const target = useMemo(() => props.target ?? redirectTarget(), [props.target]);
+  const target = useMemo(() => redirectTarget(), []);
   const githubLoginHref = useMemo(() => apiUrl(`/api/auth/github/login?redirect=${encodeURIComponent(target)}`), [target]);
 
   useEffect(() => {
@@ -48,6 +71,8 @@ export function CdsAccessMorphBoard(props: { target?: string; onHome?: () => voi
   }, []);
 
   function goToTarget() {
+    // Legacy server 路径(/settings.html?project=… 等)必须 hard-load,让 Express
+    // 的 legacy→React 重定向生效;干净的 React 路由走 SPA navigate + view transition。
     if (/\.html(?:$|[?#])/i.test(target)) {
       window.location.assign(target);
     } else {
@@ -61,13 +86,12 @@ export function CdsAccessMorphBoard(props: { target?: string; onHome?: () => voi
     setBusy(true);
     try {
       if (needsBootstrap) {
-        // Create the first local system-owner account, then enter the console.
         await bootstrapFirstUser({ username, password, name: bootstrapName || undefined });
         goToTarget();
         return;
       }
-      // Try the github-mode local-login route first; fall back to the legacy
-      // basic-auth /api/login so single-user CDS_USERNAME deployments still work.
+      // github-mode 本地登录端点优先;404 时回退 legacy basic-auth /api/login,
+      // 保证单用户 CDS_USERNAME 部署仍可用。
       let res = await fetch(apiUrl('/api/auth/login'), {
         method: 'POST',
         credentials: 'include',
@@ -84,184 +108,195 @@ export function CdsAccessMorphBoard(props: { target?: string; onHome?: () => voi
       }
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        const message = typeof body?.error === 'string' ? body.error : 'Access denied';
+        const message = typeof body?.error === 'string' ? body.error : '账号或密码不正确';
         throw new Error(message);
       }
-      // Auth cookie is already set by the response above.
-      // - Clean React route → SPA navigate (no bundle re-download) + view transition.
-      //   `target` is validated internal in redirectTarget(); `replace` drops /login from history.
-      // - Legacy server path (`/settings.html?project=…`, `/index.html?project=…` 等) →
-      //   hard-load so the Express legacy→React redirects rewrite it; SPA navigate would let
-      //   React Router treat `/settings.html` as unknown and fall through to `/project-list`
-      //   (Bugbot #741 Medium「Login SPA skips legacy redirects」).
       goToTarget();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      setShake(true);
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <form onSubmit={submit} className="cdsh-login-morph-board">
-      <div className="cdsh-login-board-head">
-        <div className="cdsh-left">
-          <LoginBranchGlyph className="h-10 w-10 text-white" />
-          <span className="cdsh-login-branch cdsh-mono">access/auth-flow</span>
-          <span className="cdsh-tag cdsh-mono">operator</span>
-        </div>
-        <span className="cdsh-login-live">
-          <span className="cdsh-pulse" />
-          secure
+    <form
+      onSubmit={submit}
+      className={`cds-auth-card${shake ? ' cds-auth-card--shake' : ''}`}
+      aria-busy={busy}
+      onAnimationEnd={(event) => {
+        if (event.animationName === 'cds-auth-shake') setShake(false);
+      }}
+    >
+      <div className="cds-auth-mark" aria-hidden>
+        {/* 登录卡是品牌标的主舞台:一次性逐面组装入场,之后切面轮流闪辉 */}
+        <CdsGem mode="brand" entrance className="h-10 w-10" />
+        <span className="cds-auth-secure">
+          <span className="cds-auth-pulse" />
+          same-origin · secure
         </span>
       </div>
+      <h1 className="cds-auth-title">{needsBootstrap ? '创建管理员账号' : '登录 CDS 控制台'}</h1>
+      <p className="cds-auth-sub">
+        {needsBootstrap
+          ? '首次启动：先创建系统所有者账号，随后直接进入控制台。'
+          : '使用操作员账号进入分支预览控制台。'}
+      </p>
 
-      <div className="cdsh-login-morph-canvas">
-        <svg className="cdsh-login-morph-wires" viewBox="0 0 1000 640" preserveAspectRatio="none" aria-hidden>
-          <path d="M320 246 H348 V144 H360" />
-          <path d="M320 246 H348 V361 H360" />
-          <path d="M640 144 H680" />
-          <path d="M640 361 H680" />
-          <path d="M500 212 V294" />
-          <path d="M820 212 V294" />
-          <path d="M500 429 V499" />
-          <path d="M820 429 V470 H700 V499" />
-        </svg>
-
-        <div className="cdsh-node cdsh-login-operator-node cdsh-node-glow">
-          <div className="cdsh-row">
-            <span className="cdsh-ico"><LoginBranchGlyph /></span>
-            <div><div className="cdsh-title">Operator</div><div className="cdsh-desc cdsh-mono">credentials required</div></div>
-          </div>
-          <div className="cdsh-status"><span className="cdsh-sdot" />Same-origin access gate</div>
-        </div>
-
-        <label className="cdsh-node cdsh-login-identity-node">
-          <div className="cdsh-row">
-            <span className="cdsh-ico"><UserRound /></span>
-            <div><div className="cdsh-title">identity</div><div className="cdsh-desc cdsh-mono">{needsBootstrap ? 'new operator' : 'operator'}</div></div>
-          </div>
-          <span className="cdsh-login-inline-input">
-            <input
-              value={username}
-              onChange={(event) => setUsername(event.target.value)}
-              autoComplete="username"
-              autoFocus
-              required
-              className="cdsh-login-morph-input"
-              placeholder="username"
-            />
-          </span>
+      <div className="cds-auth-fields">
+        <label className="cds-auth-field">
+          <span>用户名</span>
+          <input
+            className="cds-auth-input"
+            value={username}
+            onChange={(event) => setUsername(event.target.value)}
+            autoComplete="username"
+            autoFocus
+            required
+            placeholder="操作员用户名"
+          />
         </label>
-
         {needsBootstrap ? (
-          <label className="cdsh-node cdsh-login-session-node">
-            <div className="cdsh-row">
-              <span className="cdsh-ico"><UserRound /></span>
-              <div><div className="cdsh-title">display</div><div className="cdsh-desc cdsh-mono">optional</div></div>
-            </div>
-            <span className="cdsh-login-inline-input">
-              <input
-                value={bootstrapName}
-                onChange={(event) => setBootstrapName(event.target.value)}
-                autoComplete="name"
-                className="cdsh-login-morph-input"
-                placeholder="display name"
-              />
+          <label className="cds-auth-field">
+            <span>
+              显示名称
+              <em>可选</em>
             </span>
-          </label>
-        ) : (
-          <div className="cdsh-node cdsh-login-session-node" aria-hidden>
-            <div className="cdsh-row">
-              <span className="cdsh-ico"><Shield /></span>
-              <div><div className="cdsh-title">session</div><div className="cdsh-desc cdsh-mono">same-origin cookie</div></div>
-            </div>
-            <div className="cdsh-status"><span className="cdsh-sdot" />No local secret</div>
-          </div>
-        )}
-
-        <div className="cdsh-node cdsh-login-console-node" aria-hidden>
-          <div className="cdsh-row">
-            <span className="cdsh-ico"><Server /></span>
-            <div><div className="cdsh-title">console</div><div className="cdsh-desc cdsh-mono">/project-list</div></div>
-          </div>
-          <div className="cdsh-status"><span className="cdsh-sdot" />Ready after auth</div>
-        </div>
-
-        <label className="cdsh-node cdsh-login-secret-node">
-          <div className="cdsh-row">
-            <span className="cdsh-ico"><KeyRound /></span>
-            <div><div className="cdsh-title">secret</div><div className="cdsh-desc cdsh-mono">same-origin only</div></div>
-          </div>
-          <span className="cdsh-login-inline-input">
             <input
+              className="cds-auth-input"
+              value={bootstrapName}
+              onChange={(event) => setBootstrapName(event.target.value)}
+              autoComplete="name"
+              placeholder="展示给团队成员的名字"
+            />
+          </label>
+        ) : null}
+        <label className="cds-auth-field">
+          <span>密码</span>
+          <span className="cds-auth-input-wrap">
+            <input
+              className="cds-auth-input"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              type="password"
+              type={showPassword ? 'text' : 'password'}
               autoComplete={needsBootstrap ? 'new-password' : 'current-password'}
               required
               minLength={needsBootstrap ? 8 : undefined}
-              className="cdsh-login-morph-input"
-              placeholder={needsBootstrap ? 'password (8+ chars)' : 'password'}
+              placeholder={needsBootstrap ? '至少 8 位' : '密码'}
             />
+            <button
+              type="button"
+              className="cds-auth-eye"
+              onClick={() => setShowPassword((v) => !v)}
+              aria-label={showPassword ? '隐藏密码' : '显示密码'}
+            >
+              {showPassword ? <EyeOff /> : <Eye />}
+            </button>
           </span>
         </label>
-
-        <div className="cdsh-node cdsh-login-oauth-node" aria-hidden>
-          <div className="cdsh-row">
-            <span className="cdsh-ico"><Github /></span>
-            <div><div className="cdsh-title">oauth</div><div className="cdsh-desc cdsh-mono">GitHub route</div></div>
-          </div>
-          <div className="cdsh-status"><span className="cdsh-sdot" />Optional handoff</div>
-        </div>
-
-        <div className={`cdsh-login-access-node${error ? ' cdsh-login-access-node-error' : ''}`}>
-          <Terminal className="h-4 w-4" />
-          <div className="min-w-0 flex-1">
-            <div className="cdsh-lbl">{error ? 'Access · rejected' : busy ? (needsBootstrap ? 'Access · provisioning' : 'Access · verifying') : (needsBootstrap ? 'Access · first run' : 'Access · contracted')}</div>
-            <div className="cdsh-url cdsh-mono truncate">{error || (needsBootstrap ? 'bootstrap / create-system-owner' : 'auth-flow / enter-system')}</div>
-          </div>
-          <Button type="submit" disabled={busy} className="cdsh-login-access-submit">
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
-          </Button>
-        </div>
       </div>
 
-      <div className="cdsh-login-morph-actions">
-        <Button asChild type="button" variant="outline" className="cdsh-login-side-action">
-          <a href={githubLoginHref}>
-            <Github className="mr-2 h-4 w-4" />
-            GitHub
-          </a>
-        </Button>
-        {props.onHome ? (
-          <Button type="button" variant="outline" className="cdsh-login-side-action" onClick={props.onHome}>
-            <Home className="mr-2 h-4 w-4" />
-            Home
-          </Button>
-        ) : (
-          <Button asChild type="button" variant="outline" className="cdsh-login-side-action">
-            <Link to="/" viewTransition>
-              <Home className="mr-2 h-4 w-4" />
-              Home
-            </Link>
-          </Button>
-        )}
-      </div>
+      {error ? (
+        <div className="cds-auth-error" role="alert">
+          {error}
+        </div>
+      ) : null}
 
-      <p className="cdsh-ticker cdsh-mono">
-        <span className="cdsh-k">cds</span>&nbsp;&gt;&nbsp;
-        <span>{busy ? 'authorize operator · session handoff' : 'await identity · secret · enter console'}</span>
-      </p>
+      <Button type="submit" disabled={busy} className="cds-auth-submit">
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+        {busy
+          ? (needsBootstrap ? '正在创建…' : '正在验证…')
+          : (needsBootstrap ? '创建并进入控制台' : '登录')}
+        {busy ? null : <ArrowRight className="h-4 w-4" />}
+      </Button>
+
+      {needsBootstrap ? null : (
+        <>
+          <div className="cds-auth-divider" aria-hidden>
+            <span>或</span>
+          </div>
+          <Button asChild type="button" variant="outline" className="cds-auth-github">
+            <a href={githubLoginHref}>
+              <Github className="h-4 w-4" />
+              使用 GitHub 登录
+            </a>
+          </Button>
+        </>
+      )}
+
+      <p className="cds-auth-hint">同源会话 Cookie · 凭据不落本地存储</p>
     </form>
+  );
+}
+
+/*
+ * TheLine — 页面唯一的视觉装置:一条横贯画布的部署光路。
+ * 三个站点是用户故事的时间轴(0:00 push / 0:40 build / 2:00 live),
+ * 一束橙色电流每 6.5s 走完一生,最后没入登录卡(线从卡下方穿过,
+ * 视觉上"进门")。桌面(lg+)专属;reduced-motion 下电流静止为常亮段。
+ */
+const LINE_STATIONS = [
+  { left: '7%', word: 'push', time: '0:00' },
+  { left: '26%', word: 'build', time: '0:40' },
+  { left: '45%', word: 'live', time: '2:00' },
+];
+
+function TheLine(): JSX.Element {
+  return (
+    <div className="cds-auth-line" aria-hidden>
+      <span className="cds-auth-line-base" />
+      <span className="cds-auth-line-beam" />
+      {LINE_STATIONS.map((s, idx) => (
+        <span key={s.word} className="cds-auth-station" style={{ left: s.left, animationDelay: `${idx * 0.9 + 0.35}s` }}>
+          <i className="cds-auth-station-dot" />
+          <b>{s.word}</b>
+          <em>{s.time}</em>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/*
+ * 会话探测期间的占位:与真实表单同一副轮廓的骨架(产物形状的等待,
+ * 不是居中 spinner),探测结束换成表单时零跳动。
+ */
+function AuthFormSkeleton(): JSX.Element {
+  return (
+    <div className="cds-auth-card" role="status" aria-label="正在检查会话">
+      <div className="cds-auth-mark" aria-hidden>
+        <CdsGem className="h-10 w-10" />
+      </div>
+      <div className="cds-loading-skeleton-line h-6 w-44 max-w-full" />
+      <div className="mt-2 cds-loading-skeleton-line h-4 w-64 max-w-full" />
+      <div className="cds-auth-fields">
+        <div className="cds-loading-skeleton-line h-10 w-full" />
+        <div className="cds-loading-skeleton-line h-10 w-full" />
+      </div>
+      <div className="mt-5 cds-loading-skeleton-line h-10 w-full" />
+    </div>
   );
 }
 
 export function LoginPage(): JSX.Element {
   const navigate = useNavigate();
+  const { theme } = useTheme();
   // 'checking' = 正在探会话态;'anon' = 未登录,展示登录框。已登录则直接跳走,
-  // 不会停留在此状态。探测期间用加载态占位,避免先闪一下登录框再跳转。
+  // 不会停留在此状态。探测期间用同轮廓骨架占位,避免先闪一下登录框再跳转。
   const [authPhase, setAuthPhase] = useState<'checking' | 'anon'>('checking');
+  // 底部 ticker:线上正在发生的事(与首页 board 同一套语言)。
+  const [feedIndex, setFeedIndex] = useState(0);
+  useEffect(() => {
+    const timer = window.setInterval(() => setFeedIndex((i) => (i + 1) % FEED_LINES.length), 2600);
+    return () => clearInterval(timer);
+  }, []);
+
+  // 暗场纹理:蜂窝压到阈下(0.032/0.055)——2026-07-04 用户反馈整体"像 2010",
+  // 大面积几何壁纸是主要年代信号之一;保留质感但退出注意力。
+  const grid = theme === 'dark'
+    ? { border: 'rgba(255,255,255,0.032)', fill: 'rgba(255,255,255,0.02)' }
+    : { border: 'rgba(68,45,22,0.055)', fill: 'rgba(68,45,22,0.03)' };
 
   // 登录成功后要跳的内容页(默认控制台)是 lazy chunk:登录页一挂载就预取,
   // 提交成功 navigate 时不会触发 Suspense 白屏,配合 viewTransition 丝滑进内容页。
@@ -281,7 +316,7 @@ export function LoginPage(): JSX.Element {
         return;
       }
       const target = redirectTarget();
-      // 兜底:若目标解析后仍等于当前路径,navigate 是 no-op,spinner 会卡死 ——
+      // 兜底:若目标解析后仍等于当前路径,navigate 是 no-op,骨架会卡死 ——
       // 这种情况直接落到登录框(redirectTarget 已排除 /login,这里只是双保险)。
       if (target.split(/[?#]/)[0] === window.location.pathname) {
         setAuthPhase('anon');
@@ -300,55 +335,67 @@ export function LoginPage(): JSX.Element {
   }, [navigate]);
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#120f17] text-[#f6f6f8]">
-      <div className="cdsh-bg">
+    <main className="cds-auth-page cds-grain">
+      {/* 一块画布:暗场蜂窝(极弱) + 单一光源,没有分屏没有接缝。 */}
+      <div className="cds-auth-bg" aria-hidden>
         <ShapeGrid
-          className="cdsh-shapegrid"
+          key={theme}
+          className="cds-auth-bg-grid"
           shape="hexagon"
           direction="diagonal"
-          speed={0.49}
+          speed={0.3}
           squareSize={34}
-          hoverTrailAmount={15}
-          borderColor="rgba(255,255,255,0.09)"
-          hoverFillColor="rgba(255,255,255,0.05)"
+          hoverTrailAmount={0}
+          borderColor={grid.border}
+          hoverFillColor={grid.fill}
         />
-        <div className="cdsh-vignette" />
+        <div className="cds-auth-backdrop" />
       </div>
 
-      <section className="relative z-10 flex min-h-screen items-center justify-center px-5 py-10">
-        <div className="grid w-full max-w-6xl items-center gap-10 lg:grid-cols-[minmax(0,1fr)_560px]">
-          <div className="cdsh-rise hidden lg:block [text-shadow:0_2px_30px_rgba(0,0,0,0.72)]" style={{ animationDelay: '.05s' }}>
-            <div className="inline-flex items-center gap-3 rounded-full border border-white/12 bg-white/[0.035] px-4 py-2 text-xs uppercase tracking-normal text-white/70 backdrop-blur-xl">
-              <span className="h-1.5 w-1.5 rounded-full bg-[#dbe4ee] shadow-[0_0_14px_#dbe4ee]" />
-              Operator gate
-            </div>
-            <h1 className="mt-8 max-w-xl text-balance text-[clamp(3.25rem,4.6vw,5.4rem)] font-[880] leading-[0.92] tracking-normal text-white">
-              Enter the quiet
-              <ShinyText
-                text="control plane."
-                speed={3.4}
-                spread={112}
-                color="rgba(226,226,235,0.62)"
-                shineColor="rgba(255,255,255,0.98)"
-                className="block cdsh-login-title-shine"
-              />
-            </h1>
-            <p className="mt-6 max-w-lg text-base leading-8 text-white/70">
-              A restrained access point for the systems that build, observe and recover cloud branch runtime.
-            </p>
-          </div>
+      <header className="cds-auth-header">
+        <Link to="/" className="cds-auth-brand" viewTransition>
+          <CdsGem detail="simple" className="h-6 w-6" />
+          <span>Cloud Dev Suite</span>
+        </Link>
+      </header>
 
-          <div className="cdsh-login-panel cdsh-rise" style={{ animationDelay: '.18s' }}>
-            {authPhase === 'checking' ? (
-              <div className="flex min-h-[420px] items-center justify-center" role="status" aria-label="checking session">
-                <Loader2 className="h-6 w-6 animate-spin text-white/70" />
-              </div>
-            ) : (
-              <CdsAccessMorphBoard />
-            )}
-          </div>
+      {/* 舞台:左侧用户故事,右侧终点站(登录卡),一条线横贯两者。 */}
+      <section className="cds-auth-stage">
+        <TheLine />
+        <div className="cds-auth-copy">
+          <p className="cds-auth-cmd">$ git push origin your-branch</p>
+          <h1 className="cds-auth-display">
+            <span>Push a branch.</span>
+            <ShinyText
+              text="Watch it come alive."
+              speed={3.4}
+              spread={112}
+              color={theme === 'dark' ? 'rgba(226,226,235,0.58)' : 'rgba(92,64,38,0.55)'}
+              shineColor={theme === 'dark' ? 'rgba(255,247,238,0.98)' : 'rgba(45,28,12,0.98)'}
+              className="block"
+            />
+          </h1>
+          <p className="cds-auth-story">
+            构建、容器、日志、预览域名——大约两分钟，你推送的分支就是一套活的在线环境。登录，领取它。
+          </p>
+          <p className="cds-auth-timeline-compact" aria-hidden>
+            push <span>·</span> build <span>·</span> live — ~2 min
+          </p>
+        </div>
+        <div className="cds-auth-card-wrap cds-page-enter">
+          {authPhase === 'checking' ? <AuthFormSkeleton /> : <AuthForm />}
         </div>
       </section>
+
+      <footer className="cds-auth-footer">
+        <p className="cds-auth-ticker" aria-hidden>
+          <span className="cds-auth-ticker-k">cds</span>
+          <span className="cds-auth-ticker-gt">&gt;</span>
+          <span className="cds-auth-ticker-feed" key={feedIndex}>{FEED_LINES[feedIndex]}</span>
+          <span className="cds-auth-ticker-caret" />
+        </p>
+        <span className="cds-auth-footer-tag">每个分支，都是一套在线环境</span>
+      </footer>
     </main>
   );
 }

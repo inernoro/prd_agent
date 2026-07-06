@@ -30,9 +30,10 @@ export const MOBILE_COMPAT_REGISTRY: Record<string, MobileCompatEntry> = {
   // 注：/prd-agent Web 端已下线，不参与移动兼容性矩阵
   '/defect-agent':            { level: 'full' },
   '/report-agent':            { level: 'full' },
+  '/visual-agent':            { level: 'full' },
+  '/settings':                { level: 'full' },
+  '/assets':                  { level: 'full' },
   '/skills':                  { level: 'full' },
-  // 日志页手机端已专项适配：隐藏统计图、表格精简为 3 个核心列撑满视口、控制条合并为单条横滚
-  '/logs':                    { level: 'full' },
   '/literary-agent':          { level: 'full', note: '阅读/查看正常，深度编辑建议 PC' },
   '/marketplace':             { level: 'full' },
   '/library':                 { level: 'full' },
@@ -42,10 +43,9 @@ export const MOBILE_COMPAT_REGISTRY: Record<string, MobileCompatEntry> = {
   '/executive':               { level: 'limited', note: '图表较宽，横屏查看更佳' },
   '/users':                   { level: 'limited', note: '表格较宽，横向滑动查看' },
   '/mds':                     { level: 'limited', note: '模型配置项较多，建议 PC 编辑' },
-  '/settings':                { level: 'limited' },
+  '/logs':                    { level: 'limited', note: '日志表格较宽，建议横屏' },
   '/prompts':                 { level: 'limited' },
   '/automations':             { level: 'limited' },
-  '/assets':                  { level: 'limited' },
   '/open-platform':           { level: 'limited' },
   '/team-activity':           { level: 'limited', note: '行为洞察图表较宽，横屏查看更佳' },
   '/review-agent':            { level: 'limited' },
@@ -53,8 +53,7 @@ export const MOBILE_COMPAT_REGISTRY: Record<string, MobileCompatEntry> = {
   '/lab':                     { level: 'limited' },
 
   // ── PC 专属：画布 / 拖拽 / 大屏复杂交互 ──
-  '/visual-agent':            { level: 'pc-only', note: '视觉创作画布需要桌面端鼠标操作' },
-  '/visual-agent-fullscreen': { level: 'pc-only' },
+  '/visual-agent-fullscreen': { level: 'limited', note: '全屏画布在手机上可查看，精细编辑建议横屏' },
   '/workflow-agent':          { level: 'pc-only', note: '工作流画布需要桌面端鼠标操作' },
   '/video-agent':             { level: 'pc-only', note: '视频生成需要大屏预览' },
   '/transcript-agent':        { level: 'pc-only', note: '转录工作台信息密度高' },

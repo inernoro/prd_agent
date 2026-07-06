@@ -124,6 +124,35 @@ export function AppStorePill({ label, onClick, caption, variant = 'default' }: P
   );
 }
 
+function AppStorePillLabel({ label, caption, variant = 'default' }: Omit<PillButtonProps, 'onClick'>) {
+  const bg = variant === 'onImage' ? 'rgba(255, 255, 255, 0.20)' : AS_COLOR.pillBg;
+  const fg = variant === 'onImage' ? AS_COLOR.label : AS_COLOR.blue;
+  return (
+    <span className="flex flex-col items-center gap-0.5 shrink-0" style={{ fontFamily: AS_FONT_FAMILY }}>
+      <span
+        className="inline-flex items-center justify-center"
+        style={{
+          height: AS_SIZE.pillHeight,
+          minWidth: 78,
+          padding: '0 18px',
+          borderRadius: AS_SPACE.pillRadius,
+          background: bg,
+          color: fg,
+          backdropFilter: variant === 'onImage' ? 'blur(20px) saturate(180%)' : undefined,
+          WebkitBackdropFilter: variant === 'onImage' ? 'blur(20px) saturate(180%)' : undefined,
+          ...AS_TYPE.pill,
+          border: 'none',
+        }}
+      >
+        {label}
+      </span>
+      {caption && (
+        <span style={{ ...AS_TYPE.caption, color: AS_COLOR.labelTertiary }}>{caption}</span>
+      )}
+    </span>
+  );
+}
+
 /* ─────────────────────── AppIcon：圆角 52×52 图标格 ─────────────────────── */
 
 interface AppIconProps {
@@ -530,10 +559,9 @@ function FeaturedSlide({ item, isActive }: { item: FeaturedItem; isActive: boole
             {item.footer.tagline}
           </div>
         </div>
-        <AppStorePill
+        <AppStorePillLabel
           label={item.pillLabel ?? '打开'}
           variant="onImage"
-          onClick={(e) => { e.stopPropagation(); item.onClick(); }}
         />
       </div>
     </button>
@@ -621,7 +649,7 @@ function ShelfCard({ item }: { item: ShelfItem }) {
         </div>
       </div>
       {item.pillLabel && (
-        <AppStorePill label={item.pillLabel} onClick={(e) => { e.stopPropagation(); item.onClick(); }} />
+        <AppStorePillLabel label={item.pillLabel} />
       )}
       {item.tag && (
         <span
@@ -726,10 +754,9 @@ function RankedRow({ item, rank, isLast }: { item: RankedItem; rank: number | nu
           {item.subtitle}
         </div>
       </div>
-      <AppStorePill
+      <AppStorePillLabel
         label={item.pillLabel ?? '打开'}
         caption={item.pillCaption}
-        onClick={(e) => { e.stopPropagation(); item.onClick(); }}
       />
       {/* iOS 分隔线 —— 从 icon 右侧开始 */}
       {!isLast && (

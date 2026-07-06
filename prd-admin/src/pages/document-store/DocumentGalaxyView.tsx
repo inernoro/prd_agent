@@ -44,6 +44,7 @@ import { GalaxyConstellationLoader } from './GalaxyConstellationLoader';
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { listDocumentEntriesReal, getDocumentContent } from '@/services/real/documentStore';
 import { getStoreGraph } from '@/services/real/mentions';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 import {
   buildDocGalaxy,
   DOC_TYPES,
@@ -3198,6 +3199,7 @@ export interface DocumentGalaxyViewProps {
 }
 
 export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', onContextChange, openEntryRef, onBack, onToggleLabelMode }: DocumentGalaxyViewProps) {
+  const isMobile = useIsMobile();
   const [galaxy, setGalaxy] = useState<DocGalaxy | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -3690,12 +3692,14 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
           className="shrink-0"
           style={{
             display: 'flex',
-            flexWrap: 'wrap',
+            flexWrap: isMobile ? 'nowrap' : 'wrap',
             alignItems: 'center',
-            gap: 8,
-            padding: '8px 12px',
+            gap: isMobile ? 6 : 8,
+            padding: isMobile ? '6px 8px' : '8px 12px',
             background: 'rgba(18,18,26,0.82)',
             borderBottom: '1px solid rgba(255,255,255,0.08)',
+            overflowX: isMobile ? 'auto' : undefined,
+            scrollbarWidth: isMobile ? 'none' : undefined,
           }}
         >
           {onBack && (
@@ -3710,45 +3714,45 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
                 background: 'rgba(45,45,55,0.85)',
                 border: '1px solid rgba(255,255,255,0.12)',
                 borderRadius: 6,
-                padding: '5px 9px',
+                padding: isMobile ? '5px 8px' : '5px 9px',
                 color: '#cfcfd6',
                 cursor: 'pointer',
                 fontSize: 12,
               }}
             >
-              <ArrowLeft size={13} /> 返回
+              <ArrowLeft size={13} /> {!isMobile && '返回'}
             </button>
           )}
           {storeName && (
             <span
-              style={{ flexShrink: 0, fontSize: 13, fontWeight: 600, color: '#eaeaf0', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+              style={{ flexShrink: 0, fontSize: 13, fontWeight: 600, color: '#eaeaf0', maxWidth: isMobile ? 96 : 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
               title={storeName}
             >
               {storeName}
             </span>
           )}
-          <span style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.12)', flexShrink: 0 }} />
+          {!isMobile && <span style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.12)', flexShrink: 0 }} />}
           {/* 关系链面包屑（左上角，紧挨库名左对齐；用户要求放左上角，不再居中）。
               可收缩 + 省略，后面的弹性占位把统计/搜索/开关推到最右。 */}
-          <div
+          {!isMobile && <div
             ref={crumbOverlayRef}
             style={{ flex: '0 1 auto', minWidth: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-start', overflow: 'hidden' }}
           >
             {breadcrumbNode ?? (
               <span style={{ fontSize: 11.5, color: '#5a5c6a' }}>点枢纽或文档，这里显示所在关系链</span>
             )}
-          </div>
+          </div>}
           {/* 弹性占位：把右侧统计/搜索/开关推到最右，面包屑因此停在左侧 */}
-          <div style={{ flex: 1, minWidth: 8 }} />
-          <div style={{ fontSize: 11, color: '#8a8a96', borderLeft: '1px solid rgba(255,255,255,0.1)', paddingLeft: 8 }}>
-            共 {galaxy.stats.totalDocs} 篇 · {linksFailed ? '引用未知' : `${galaxy.links.length} 引用`}
-            {galaxy.stats.orphanCount > 0 && (
+          {!isMobile && <div style={{ flex: 1, minWidth: 8 }} />}
+          <div style={{ flexShrink: 0, fontSize: 11, color: '#8a8a96', borderLeft: isMobile ? 'none' : '1px solid rgba(255,255,255,0.1)', paddingLeft: isMobile ? 0 : 8, whiteSpace: 'nowrap' }}>
+            {isMobile ? `${galaxy.stats.totalDocs} 篇` : `共 ${galaxy.stats.totalDocs} 篇 · ${linksFailed ? '引用未知' : `${galaxy.links.length} 引用`}`}
+            {!isMobile && galaxy.stats.orphanCount > 0 && (
               <span style={{ color: '#9a8a6a' }} title="未能从命名归到 canonical 分类、落「未分类」的文档数">
                 {' '}· {galaxy.stats.orphanCount} 悬空
               </span>
             )}
           </div>
-          {linksFailed && (
+          {!isMobile && linksFailed && (
             <div
               style={{
                 fontSize: 11,
@@ -3763,7 +3767,7 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
               引用关系加载失败
             </div>
           )}
-          {partial && (
+          {!isMobile && partial && (
             <div
               style={{
                 fontSize: 11,
@@ -3789,15 +3793,15 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
                 background: 'rgba(255,255,255,0.06)',
                 border: '1px solid rgba(255,255,255,0.12)',
                 borderRadius: 8,
-                padding: '4px 8px',
+                padding: isMobile ? '4px 7px' : '4px 8px',
               }}
             >
               <Search size={13} style={{ color: '#8a8c9a', flexShrink: 0 }} />
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="搜索文档…"
-                style={{ background: 'transparent', border: 'none', outline: 'none', color: '#e8e8ee', fontSize: 12, width: 150 }}
+                placeholder={isMobile ? '搜索' : '搜索文档…'}
+                style={{ background: 'transparent', border: 'none', outline: 'none', color: '#e8e8ee', fontSize: 12, width: isMobile ? 74 : 150 }}
               />
               {search && (
                 <button
@@ -3912,18 +3916,18 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
                 flexShrink: 0,
                 display: 'flex',
                 alignItems: 'center',
-                gap: 5,
+                gap: isMobile ? 4 : 5,
                 background: 'rgba(45,45,55,0.85)',
                 border: '1px solid rgba(255,255,255,0.12)',
                 borderRadius: 6,
-                padding: '5px 9px',
+                padding: isMobile ? '5px 7px' : '5px 9px',
                 color: '#cfcfd6',
                 cursor: 'pointer',
                 fontSize: 12,
               }}
             >
               {labelMode === 'content' ? <ToggleRight size={14} style={{ color: '#8ab4ff' }} /> : <ToggleLeft size={14} />}
-              {labelMode === 'content' ? '正文标题' : '结构名'}
+              {!isMobile && (labelMode === 'content' ? '正文标题' : '结构名')}
             </button>
           )}
         </div>
