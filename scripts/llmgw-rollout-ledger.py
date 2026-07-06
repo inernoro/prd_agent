@@ -241,6 +241,19 @@ def _latest_success(entries: list[dict], commit: str, stage: str) -> dict | None
     return max(candidates, key=key)
 
 
+def _entries_after(entries: list[dict], commit: str, after: datetime, statuses: set[str]) -> list[dict]:
+    later: list[dict] = []
+    for item in entries:
+        if str(item.get("commit") or "").lower() != commit.lower():
+            continue
+        if str(item.get("status") or "") not in statuses:
+            continue
+        recorded_at = _parse_recorded_at(item.get("recordedAt"))
+        if recorded_at and recorded_at > after:
+            later.append(item)
+    return later
+
+
 def _latest_success_evidence_failures(entries: list[dict], commit: str, stage: str) -> list[str]:
     latest = _latest_success(entries, commit, stage)
     if not latest:
@@ -679,6 +692,18 @@ def audit(args: argparse.Namespace) -> int:
                 "rollback rehearsal must be recorded before canary/http stage. "
                 f"stage={stage} rehearsalAt={rehearsal_time.isoformat()} stageAt={stage_time.isoformat()}"
             )
+
+    if bool(args.require_target_success) and args.target_stage != "rollback-inproc":
+        target = latest_by_stage.get(args.target_stage)
+        target_time = _parse_recorded_at(target.get("recordedAt")) if target else None
+        if target_time:
+            later_negative = _entries_after(entries, commit, target_time, {"failed", "rollback"})
+            for item in later_negative:
+                failures.append(
+                    "rollout target success is stale because a later negative event exists. "
+                    f"target_stage={args.target_stage} event_stage={item.get('stage') or ''} "
+                    f"event_status={item.get('status') or ''} recordedAt={item.get('recordedAt') or ''}"
+                )
 
     ordered_real_stages = [stage for stage in STAGES if stage in required_stages]
     for previous_stage, current_stage in zip(ordered_real_stages, ordered_real_stages[1:]):

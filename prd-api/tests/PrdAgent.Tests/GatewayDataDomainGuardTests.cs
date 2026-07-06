@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Xunit;
 
 namespace PrdAgent.Tests;
@@ -389,6 +390,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("rollout stage prior evidence validation failed", ledger);
         Assert.Contains("prior stage evidence invalid before rollout", ledger);
         Assert.Contains("existing prior stage evidence invalid before out-of-order rollout", ledger);
+        Assert.Contains("rollout target success is stale because a later negative event exists", ledger);
+        Assert.Contains("_entries_after", ledger);
         Assert.Contains("\"minStageObservationHours\": args.min_stage_observation_hours", ledger);
         Assert.Contains("_require_pass_json", ledger);
         Assert.Contains("_require_stage_evidence_for_commit", ledger);
@@ -431,6 +434,76 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("scripts/llmgw-rollout-ledger.py", readiness);
         Assert.Contains("--require-rollout-complete", readiness);
         Assert.Contains("leaksKeyArg", readiness);
+    }
+
+    [Fact]
+    public void RolloutLedgerAudit_FailsWhenTargetSuccessWasLaterRolledBack()
+    {
+        var root = LocateRepoRoot();
+        var tempDir = Path.Combine(Path.GetTempPath(), "llmgw-ledger-audit-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+            var mainSha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+            var stageJson = Path.Combine(tempDir, "stage.json");
+            var servingJson = Path.Combine(tempDir, "serving.json");
+            var smokeJson = Path.Combine(tempDir, "smoke.json");
+            var ledger = Path.Combine(tempDir, "ledger.jsonl");
+
+            File.WriteAllText(stageJson, $$"""
+            {"verdict":"pass","commit":"{{commit}}","releaseMainRef":"origin/main","releaseMainSha":"{{mainSha}}"}
+            """);
+            File.WriteAllText(servingJson, $$"""
+            {"verdict":"pass","expectedCommit":"{{commit}}","healthSamples":[{"commit":"{{commit}}"}]}
+            """);
+            File.WriteAllText(smokeJson, $$"""
+            {"verdict":"pass","expectedCommit":"{{commit}}","healthCommit":"{{commit}}"}
+            """);
+
+            File.WriteAllText(ledger, $$"""
+            {"recordedAt":"2026-07-07T00:00:00+00:00","stage":"shadow-start","status":"success","commit":"{{commit}}","evidenceJson":"{{JsonPath(stageJson)}}","servingProbeJson":"{{JsonPath(servingJson)}}","smokeJson":"{{JsonPath(smokeJson)}}","releaseMainRef":"origin/main","releaseMainSha":"{{mainSha}}","allowOutOfOrder":false}
+            {"recordedAt":"2026-07-07T01:00:00+00:00","stage":"rollback-inproc","status":"rollback","commit":"{{commit}}","evidenceJson":"","servingProbeJson":"","smokeJson":"","releaseMainRef":"origin/main","releaseMainSha":"{{mainSha}}","allowOutOfOrder":false}
+            """);
+
+            using var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = "python3",
+                WorkingDirectory = root,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                ArgumentList =
+                {
+                    "scripts/llmgw-rollout-ledger.py",
+                    "audit",
+                    "--ledger",
+                    ledger,
+                    "--commit",
+                    commit,
+                    "--target-stage",
+                    "shadow-start",
+                    "--require-target-success",
+                    "--min-observation-hours",
+                    "0"
+                }
+            })!;
+
+            var stdout = process.StandardOutput.ReadToEnd();
+            var stderr = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+
+            Assert.NotEqual(0, process.ExitCode);
+            Assert.Contains("rollout target success is stale because a later negative event exists", stderr + stdout);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+        }
+
+        static string JsonPath(string path) => path.Replace("\\", "\\\\");
     }
 
     [Fact]
