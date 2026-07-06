@@ -150,6 +150,9 @@ artifact 恢复 `.llmgw-release-evidence/rollout-ledger.jsonl`，再继续执行
 shadow/canary/http/rollback 阶段都留下可下载、可复核、无密钥的 release-gate、serving-probe、gw-smoke、
 stage report 与 rollout ledger 证据包，避免证据只存在某台生产机器本地，也避免 checkout 清理未跟踪目录后丢失前序台账。
 `rollback-inproc` 不要求 commit、MAP logs key 或 gateway key，确保紧急回滚只依赖生产 runner 与本地 docker/compose。
+注意：GitHub `workflow_dispatch` 只会把默认分支（default branch）上的 workflow 暴露为手动入口；这些 production workflow
+必须先合入默认分支，才能在 GitHub UI/API 中调度。合入前只能用 `scripts/llmgw-prod-stage.sh` 在生产机器上直接执行同一阶段逻辑，
+不能把“分支里已有 workflow 文件”误当成可点击的生产发布入口。
 正式发布如果先跑 `fast.sh --commit <sha>` 预热镜像，脚本会写入
 `${PRD_AGENT_RELEASE_INTENT_FILE:-.prd-agent-release-intent.env}`，记录 api/llmgw/llmgw-serve/llmgw-web
 四个镜像的同一 release ref；随后 `exec_dep.sh --commit <sha>` 会读取该 intent 并拒绝不同 commit/tag/repo 的部署。

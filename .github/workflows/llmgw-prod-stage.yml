@@ -1,5 +1,8 @@
 name: LLM Gateway Production Stage
 
+# GitHub only exposes workflow_dispatch entries from the default branch.
+# Merge this workflow to the default branch before treating it as a clickable production rollout entry.
+
 on:
   workflow_dispatch:
     inputs:

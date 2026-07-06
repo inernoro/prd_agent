@@ -5,3 +5,4 @@
 | ci | prd-agent | 新增 llmgw-prod-stage workflow，支持在生产 self-hosted runner 上执行分阶段网关发布并上传 rollout evidence |
 | fix | prd-agent | 放宽 llmgw-prod-stage 紧急回滚入口，rollback-inproc 不再要求 commit、MAP logs key 或 gateway key |
 | fix | prd-agent | llmgw-prod-stage 和 llmgw-prod-preflight 支持下载 rollout evidence artifact，保证跨 workflow run 的台账审计不断链 |
+| docs | prd-agent | 记录 llmgw 生产 workflow 必须合入默认分支后才能通过 GitHub workflow_dispatch 调度 |
