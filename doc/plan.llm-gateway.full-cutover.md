@@ -163,6 +163,21 @@ python3 scripts/llmgw-map-shadow-seed.py --iterations 1
 `/gw/v1/shadow-comparisons` 输出 global/send/stream/raw 覆盖摘要，便于证据期连续采样。
 生产补证据建议加 `--continue-on-error --evidence-out <path>`：任一入口失败时继续跑剩余入口，最终仍以非零退出码阻止
 误放行，并把每个入口的成功/失败、错误信息、summary 与期望增长写入 JSON，供发布证据归档。
+`shadow-start` 生产阶段也可以把这一步纳入同一发布脚本，但必须显式开启，避免默认发布产生额外模型成本：
+
+```bash
+LLMGW_STAGE_RUN_SHADOW_SEED=1 \
+LLMGW_STAGE_MAP_BASE=https://<prod-map> \
+LLMGW_STAGE_SHADOW_SEED_FLAGS="--include-image-worker-text2img --include-image-worker-img2img --include-image-worker-vision --include-video-direct --include-transcript-asr --include-document-store-subtitle-asr --summary-poll-seconds 240" \
+LLMGW_GATE_BASE=https://<prod-llmgw-serve>/gw/v1 \
+LLMGW_GATE_KEY=<X-Gateway-Key> \
+scripts/llmgw-prod-stage.sh --stage shadow-start --commit <40位SHA> --execute
+```
+
+该模式会先执行 `fast.sh` 与 `exec_dep.sh` 部署同一 commit，再运行 MAP 真实入口 seed，并把结果写入
+`.llmgw-release-evidence/<time>_shadow-start_<sha>.map-shadow-seed.json`；如果视频/ASR 等入口因为上游模型池或密钥不可用失败，
+阶段脚本会以非零退出并追加 failed 台账，不能把“部署成功”误记为“证据成功”。默认不开启 seed 时，`shadow-start`
+仍只负责进入受控 shadow 采样窗口，后续由真实流量或人工 seed 补样本。
 在 100% 短时采样窗口内补 raw/send 证据时，建议附加 `--summary-poll-seconds 90`，让脚本按执行前 baseline
 轮询对应 kind 是否增长，避免图片/ASR 等长耗时请求的 shadow comparison 晚于业务响应落库造成误判。
 注意：`send` 和 `raw` 完整比对只有命中 `ShadowFullSamplePercent` 时才会双发；常态 `1%` 采样适合低成本观察，
@@ -215,7 +230,8 @@ scripts/llmgw-prod-stage.sh --stage shadow-start --commit <40位SHA> --execute
 `exec_dep.sh --commit <sha>`，并默认设置 `PRD_AGENT_REQUIRE_FAST_INTENT=1` 与
 `.llmgw-release-evidence/<time>_<stage>_<sha>.*.json|md` 证据输出。证据分四类：
 `*.release-gate.*`（shadow 样本门）、`*.serving-probe.*`（health/401/commit 稳定）、
-`*.gw-smoke.*`（D 层真机冒烟）、`*.stage.*`（阶段汇总）。脚本不接受 `--key` 参数，
+`*.gw-smoke.*`（D 层真机冒烟）、`*.map-shadow-seed.json`（可选 MAP 真实入口 seed 结果）、
+`*.stage.*`（阶段汇总）。脚本不接受 `--key` 参数，
 网关 key 只能从 `LLMGW_GATE_KEY`/`GW_KEY`/`LLMGW_SERVE_KEY` 读取，避免泄漏到 shell history。
 脚本还会维护 `.llmgw-release-evidence/rollout-ledger.jsonl` 台账；除 `shadow-start` 外，每个阶段默认要求
 同一 commit 的所有前置阶段已有 `success` 记录，且当前阶段写入 `success` 前必须能读到 verdict=pass 的

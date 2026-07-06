@@ -535,6 +535,7 @@ def append(args: argparse.Namespace) -> int:
         "releaseGateJson": args.release_gate_json,
         "releaseGateRequired": _bool_flag(args.release_gate_required),
         "prodPreflightJson": args.prod_preflight_json,
+        "shadowSeedJson": args.shadow_seed_json,
         "rollbackRehearsal": args.stage == ROLLBACK_REHEARSAL_STAGE,
         "allowOutOfOrder": _bool_flag(args.allow_out_of_order),
         "allowOutOfOrderReason": args.allow_out_of_order_reason.strip(),
@@ -588,6 +589,7 @@ def _write_markdown(path: str, report: dict) -> None:
         fh.write(f"- minStageObservationHours: `{cell(report['minStageObservationHours'])}`\n")
         fh.write(f"- releaseGateJson: `{cell(report['releaseGateJson'])}`\n")
         fh.write(f"- prodPreflightJson: `{cell(report['prodPreflightJson'])}`\n")
+        fh.write(f"- shadowSeedJson: `{cell(report['shadowSeedJson'])}`\n")
         fh.write(f"- servingProbeJson: `{cell(report['servingProbeJson'])}`\n")
         fh.write(f"- smokeJson: `{cell(report['smokeJson'])}`\n\n")
         fh.write(f"- releaseMainRef: `{cell(report['releaseMainRef'])}`\n")
@@ -644,6 +646,7 @@ def stage_report(args: argparse.Namespace) -> int:
         "minStageObservationHours": args.min_stage_observation_hours,
         "releaseGateJson": args.release_gate_json,
         "prodPreflightJson": args.prod_preflight_json,
+        "shadowSeedJson": args.shadow_seed_json,
         "servingProbeJson": args.serving_probe_json,
         "smokeJson": args.smoke_json,
         "releaseMainRef": args.main_ref,
@@ -697,6 +700,7 @@ def audit(args: argparse.Namespace) -> int:
                 "servingProbeJson": latest.get("servingProbeJson") or "",
                 "smokeJson": latest.get("smokeJson") or "",
                 "releaseGateJson": latest.get("releaseGateJson") or "",
+                "shadowSeedJson": latest.get("shadowSeedJson") or "",
                 "releaseMainRef": latest.get("releaseMainRef") or "",
                 "releaseMainSha": latest.get("releaseMainSha") or "",
                 "allowOutOfOrder": _bool_flag(str(latest.get("allowOutOfOrder") or "0")),
@@ -800,6 +804,7 @@ def main() -> int:
     append_parser.add_argument("--release-gate-json", default="")
     append_parser.add_argument("--release-gate-required", default="0")
     append_parser.add_argument("--prod-preflight-json", default="")
+    append_parser.add_argument("--shadow-seed-json", default="")
     append_parser.add_argument("--serving-probe-json", default="")
     append_parser.add_argument("--smoke-json", default="")
     append_parser.add_argument("--main-ref", default="")
@@ -823,6 +828,7 @@ def main() -> int:
     report_parser.add_argument("--release-gate-json", default="")
     report_parser.add_argument("--release-gate-required", default="0")
     report_parser.add_argument("--prod-preflight-json", default="")
+    report_parser.add_argument("--shadow-seed-json", default="")
     report_parser.add_argument("--serving-probe-json", default="")
     report_parser.add_argument("--smoke-json", default="")
     report_parser.add_argument("--main-ref", default="")

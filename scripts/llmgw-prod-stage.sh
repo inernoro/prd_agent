@@ -27,6 +27,9 @@ Stages:
 Required environment for deploy stages:
   LLMGW_GATE_BASE or GW_BASE   Serving base URL, for example https://host/gw/v1
   LLMGW_GATE_KEY, GW_KEY, or LLMGW_SERVE_KEY
+  LLMGW_STAGE_RUN_SHADOW_SEED=1 enables MAP shadow seed evidence after shadow-start deploy
+  LLMGW_STAGE_MAP_BASE          MAP base URL for shadow seed, for example https://host
+  LLMGW_STAGE_SHADOW_SEED_FLAGS Extra llmgw-map-shadow-seed.py flags, for example --include-video-direct
 
 Options:
   --execute                   Actually run fast.sh/exec_dep.sh or rollback
@@ -278,6 +281,7 @@ serving_probe_md="${evidence_prefix}.serving-probe.md"
 smoke_json="${evidence_prefix}.gw-smoke.json"
 smoke_md="${evidence_prefix}.gw-smoke.md"
 prod_preflight_json="${evidence_prefix}.prod-preflight.json"
+shadow_seed_json="${evidence_prefix}.map-shadow-seed.json"
 stage_json="${evidence_prefix}.stage.json"
 stage_md="${evidence_prefix}.stage.md"
 
@@ -301,6 +305,7 @@ print_plan() {
     echo "  servingProbeJson: $serving_probe_json"
     echo "  smokeJson: $smoke_json"
     echo "  prodPreflightJson: $prod_preflight_json"
+    echo "  shadowSeedJson: $shadow_seed_json"
     echo "  stageJson: $stage_json"
   fi
 }
@@ -378,6 +383,7 @@ append_ledger_entry() {
     --release-gate-json "$release_gate_json" \
     --release-gate-required "${release_gate_required:-0}" \
     --prod-preflight-json "$prod_preflight_json" \
+    --shadow-seed-json "$shadow_seed_json" \
     --serving-probe-json "$serving_probe_json" \
     --smoke-json "$smoke_json" \
     --main-ref "$main_ref" \
@@ -404,6 +410,7 @@ write_dry_run_stage_report() {
   LLMGW_DRY_RUN_GATE_BASE="${gate_base:-}" \
   LLMGW_DRY_RUN_RELEASE_GATE_REQUIRED="${release_gate_required:-0}" \
   LLMGW_DRY_RUN_PROD_PREFLIGHT_JSON="${prod_preflight_json:-}" \
+  LLMGW_DRY_RUN_SHADOW_SEED_JSON="${shadow_seed_json:-}" \
   LLMGW_DRY_RUN_SERVING_PROBE_JSON="${serving_probe_json:-}" \
   LLMGW_DRY_RUN_SMOKE_JSON="${smoke_json:-}" \
   LLMGW_DRY_RUN_RELEASE_GATE_JSON="${release_gate_json:-}" \
@@ -430,6 +437,17 @@ else:
     )
     commands.append("./fast.sh --commit " + commit)
     commands.append("./exec_dep.sh --commit " + commit)
+    if stage == "shadow-start" and os.environ.get("LLMGW_STAGE_RUN_SHADOW_SEED", "0") == "1":
+        flags = os.environ.get("LLMGW_STAGE_SHADOW_SEED_FLAGS", "").strip()
+        seed = (
+            "python3 scripts/llmgw-map-shadow-seed.py --base ${LLMGW_STAGE_MAP_BASE} "
+            "--gw-base ${LLMGW_GATE_BASE} --gw-key ${LLMGW_GATE_KEY} "
+            "--continue-on-error --evidence-out "
+            + os.environ.get("LLMGW_DRY_RUN_SHADOW_SEED_JSON", "")
+        )
+        if flags:
+            seed += " " + flags
+        commands.append(seed)
 
 report = {
     "generatedAt": datetime.now(timezone.utc).isoformat(),
@@ -445,6 +463,8 @@ report = {
     "gateBase": os.environ.get("LLMGW_DRY_RUN_GATE_BASE", ""),
     "releaseGateRequired": os.environ.get("LLMGW_DRY_RUN_RELEASE_GATE_REQUIRED", "0") == "1",
     "prodPreflightJson": os.environ.get("LLMGW_DRY_RUN_PROD_PREFLIGHT_JSON", ""),
+    "shadowSeedJson": os.environ.get("LLMGW_DRY_RUN_SHADOW_SEED_JSON", ""),
+    "shadowSeedEnabled": os.environ.get("LLMGW_STAGE_RUN_SHADOW_SEED", "0") == "1",
     "servingProbeJson": os.environ.get("LLMGW_DRY_RUN_SERVING_PROBE_JSON", ""),
     "smokeJson": os.environ.get("LLMGW_DRY_RUN_SMOKE_JSON", ""),
     "releaseGateJson": os.environ.get("LLMGW_DRY_RUN_RELEASE_GATE_JSON", ""),
@@ -474,6 +494,8 @@ with open(md_path, "w", encoding="utf-8") as fh:
         "canaryStage",
         "allowlist",
         "releaseGateRequired",
+        "shadowSeedEnabled",
+        "shadowSeedJson",
         "releaseMainRef",
         "minStageObservationHours",
     ):
@@ -506,6 +528,43 @@ run_prod_preflight() {
       suffix=" --allow-missing-gateway --allow-missing-map-logs"
     fi
     echo "+ python3 scripts/llmgw-prod-preflight.py --mode start --expect-commit \"$commit\" --json-out \"$prod_preflight_json\"$suffix"
+  fi
+}
+
+run_shadow_seed_evidence() {
+  if [ "$stage" != "shadow-start" ]; then
+    return 0
+  fi
+  if [ "${LLMGW_STAGE_RUN_SHADOW_SEED:-0}" != "1" ]; then
+    if [ "$execute" = "1" ]; then
+      echo "LLM Gateway MAP shadow seed skipped: LLMGW_STAGE_RUN_SHADOW_SEED is not 1"
+    else
+      echo "LLM Gateway MAP shadow seed dry-run skipped by default; set LLMGW_STAGE_RUN_SHADOW_SEED=1 to include it"
+    fi
+    return 0
+  fi
+  if [ ! -f "scripts/llmgw-map-shadow-seed.py" ]; then
+    echo "ERROR: missing scripts/llmgw-map-shadow-seed.py; cannot collect MAP shadow seed evidence." >&2
+    exit 1
+  fi
+  map_base="${LLMGW_STAGE_MAP_BASE:-${PRD_AGENT_BASE:-}}"
+  if [ -z "$(printf '%s' "$map_base" | xargs || true)" ]; then
+    echo "ERROR: LLMGW_STAGE_RUN_SHADOW_SEED=1 requires LLMGW_STAGE_MAP_BASE or PRD_AGENT_BASE." >&2
+    exit 1
+  fi
+  seed_flags="${LLMGW_STAGE_SHADOW_SEED_FLAGS:-}"
+  if [ "$execute" = "1" ]; then
+    mkdir -p "$evidence_dir"
+    # shellcheck disable=SC2086
+    python3 scripts/llmgw-map-shadow-seed.py \
+      --base "$map_base" \
+      --gw-base "$gate_base" \
+      --gw-key "$gate_key" \
+      --continue-on-error \
+      --evidence-out "$shadow_seed_json" \
+      $seed_flags
+  else
+    echo "+ python3 scripts/llmgw-map-shadow-seed.py --base \"$map_base\" --gw-base \"$gate_base\" --gw-key \"<redacted>\" --continue-on-error --evidence-out \"$shadow_seed_json\" $seed_flags"
   fi
 }
 
@@ -580,6 +639,7 @@ if [ "$stage" = "rollback-rehearsal" ]; then
       --release-gate-json "$release_gate_json" \
       --release-gate-required "$release_gate_required" \
       --prod-preflight-json "$prod_preflight_json" \
+      --shadow-seed-json "$shadow_seed_json" \
       --serving-probe-json "$serving_probe_json" \
       --smoke-json "$smoke_json" \
       --main-ref "$main_ref" \
@@ -642,6 +702,8 @@ else
   run_or_print ./exec_dep.sh --commit "$commit"
 fi
 
+run_shadow_seed_evidence
+
 if [ "$execute" = "1" ]; then
   python3 scripts/llmgw-rollout-ledger.py stage-report \
     --json-out "$stage_json" \
@@ -657,6 +719,7 @@ if [ "$execute" = "1" ]; then
     --release-gate-json "$release_gate_json" \
     --release-gate-required "$release_gate_required" \
     --prod-preflight-json "$prod_preflight_json" \
+    --shadow-seed-json "$shadow_seed_json" \
     --serving-probe-json "$serving_probe_json" \
     --smoke-json "$smoke_json" \
     --main-ref "$main_ref" \
