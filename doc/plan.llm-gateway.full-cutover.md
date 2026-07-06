@@ -146,10 +146,13 @@ python3 scripts/llmgw-map-shadow-seed.py --iterations 1
 ```
 
 该脚本默认只跑文档 session chat 与 preview-ask 两条低成本文本路径；需要补 send 或图片 raw 证据时必须显式加
-`--include-tutorial-email-send` / `--include-image-raw`，其中图片 raw 会通过 `/api/visual-agent/image-gen/generate`
-走 MAP 真实业务入口并自动选择启用的生图模型（也可用 `LLMGW_SHADOW_IMAGE_PLATFORM_ID` 和
-`LLMGW_SHADOW_IMAGE_MODEL_ID` 钉死模型）。视频、ASR/raw 证据仍必须通过对应真实业务入口产生，不能用文本样本替代
-raw gate。脚本执行后会读取 `/gw/v1/shadow-comparisons` 输出 global/send/stream/raw 覆盖摘要，便于证据期连续采样。
+`--include-tutorial-email-send` / `--include-image-raw` / `--include-image-worker-text2img`，其中图片 raw 会通过
+`/api/visual-agent/image-gen/generate` 与 `/api/visual-agent/image-gen/runs` 走 MAP 真实业务入口并自动选择启用的
+生图模型（也可用 `LLMGW_SHADOW_IMAGE_PLATFORM_ID` 和 `LLMGW_SHADOW_IMAGE_MODEL_ID` 钉死模型）。
+`--include-image-worker-text2img` 会等待 `ImageGenRunWorker` 后台 run 结束，用于证明
+`visual-agent.image.text2img::generation` 不是只靠直连同步生成路径覆盖。视频、ASR/raw 证据仍必须通过对应真实业务入口产生，
+不能用文本样本替代 raw gate。脚本执行后会读取 `/gw/v1/shadow-comparisons` 输出 global/send/stream/raw 覆盖摘要，
+便于证据期连续采样。
 在 100% 短时采样窗口内补 raw/send 证据时，建议附加 `--summary-poll-seconds 90`，让脚本按执行前 baseline
 轮询对应 kind 是否增长，避免图片/ASR 等长耗时请求的 shadow comparison 晚于业务响应落库造成误判。
 注意：`send` 和 `raw` 完整比对只有命中 `ShadowFullSamplePercent` 时才会双发；常态 `1%` 采样适合低成本观察，
