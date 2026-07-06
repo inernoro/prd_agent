@@ -455,14 +455,14 @@ else:
         "python3 scripts/llmgw-prod-preflight.py --mode start --expect-commit "
         + commit
     )
-    commands.append("./fast.sh --commit " + commit)
-    commands.append("./exec_dep.sh --commit " + commit)
     if os.environ.get("LLMGW_DRY_RUN_UPSTREAM_READINESS_ENABLED", "0") == "1":
         commands.append(
             "python3 scripts/llmgw-upstream-readiness.py --gw-base ${LLMGW_GATE_BASE} "
             "--gw-key-env LLMGW_GATE_KEY --json-out "
             + os.environ.get("LLMGW_DRY_RUN_UPSTREAM_READINESS_JSON", "")
         )
+    commands.append("./fast.sh --commit " + commit)
+    commands.append("./exec_dep.sh --commit " + commit)
     if stage == "shadow-start" and os.environ.get("LLMGW_STAGE_RUN_SHADOW_SEED", "0") == "1":
         flags = os.environ.get("LLMGW_STAGE_SHADOW_SEED_FLAGS", "").strip()
         seed = (
@@ -769,6 +769,8 @@ fi
 
 run_prod_preflight
 
+run_upstream_readiness_evidence
+
 if [ -n "$repo" ]; then
   run_or_print ./fast.sh --commit "$commit" --repo "$repo"
   run_or_print ./exec_dep.sh --commit "$commit" --repo "$repo"
@@ -777,7 +779,6 @@ else
   run_or_print ./exec_dep.sh --commit "$commit"
 fi
 
-run_upstream_readiness_evidence
 run_shadow_seed_evidence
 
 if [ "$execute" = "1" ]; then

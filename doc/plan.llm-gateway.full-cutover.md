@@ -187,7 +187,8 @@ scripts/llmgw-prod-stage.sh --stage shadow-start --commit <40位SHA> --execute
 另有低成本前置 gate：`scripts/llmgw-upstream-readiness.py` 会调用 `/gw/v1/resolve` 检查
 `video-agent.videogen::video-gen`、`document-store.subtitle::asr`、`transcript-agent.transcribe::asr`
 是否能解析到非 legacy 的可用模型、启用平台、协议和已解密 API key。`canary-video-asr` 与 `http-full`
-阶段默认运行该 gate，并把 `.upstream-readiness.json/md` 写入 stage report 与 rollout ledger；其它阶段可用
+阶段默认在 `fast.sh` / `exec_dep.sh` 之前运行该 gate，失败时不得进入镜像部署，并把 `.upstream-readiness.json/md`
+写入 stage report 与 rollout ledger；其它阶段可用
 `LLMGW_STAGE_RUN_UPSTREAM_READINESS=1` 显式开启。该 gate 只能证明配置可解析，不能证明上游 provider 仍有可用 channel；
 `no available channels`、`Invalid X-Api-Key`、401 等真实发送失败必须继续由 MAP seed/raw shadow 样本证明和阻断。
 在 100% 短时采样窗口内补 raw/send 证据时，建议附加 `--summary-poll-seconds 90`，让脚本按执行前 baseline
@@ -238,7 +239,8 @@ scripts/llmgw-prod-stage.sh --stage shadow-start --commit <40位SHA> --execute
 
 支持阶段：`shadow-start`、`rollback-rehearsal`、`canary-intent-text`、`canary-chat`、`canary-streaming`、`canary-vision`、
 `canary-image`、`canary-video-asr`、`http-full`、`rollback-inproc`。脚本默认 dry-run，只有显式
-`--execute` 才会真实运行；deploy 阶段会先跑 `fast.sh --commit <sha>`，再用同一个 sha 跑
+`--execute` 才会真实运行；deploy 阶段会先跑生产 preflight，随后对 `canary-video-asr` / `http-full`
+前置运行 upstream readiness gate，确认 video/ASR 解析能力可用后才跑 `fast.sh --commit <sha>`，再用同一个 sha 跑
 `exec_dep.sh --commit <sha>`，并默认设置 `PRD_AGENT_REQUIRE_FAST_INTENT=1` 与
 `.llmgw-release-evidence/<time>_<stage>_<sha>.*.json|md` 证据输出。证据分四类：
 `*.release-gate.*`（shadow 样本门）、`*.serving-probe.*`（health/401/commit 稳定）、

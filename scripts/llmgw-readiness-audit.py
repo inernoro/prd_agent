@@ -362,6 +362,10 @@ def _static_checks() -> list[dict]:
     ledger_executable = bool(rollout_ledger_path.exists() and (rollout_ledger_path.stat().st_mode & stat.S_IXUSR))
     preflight_executable = bool(prod_preflight_path.exists() and (prod_preflight_path.stat().st_mode & stat.S_IXUSR))
     upstream_executable = bool(upstream_readiness_path.exists() and (upstream_readiness_path.stat().st_mode & stat.S_IXUSR))
+    preflight_idx = prod_stage.find("run_prod_preflight\n\nrun_upstream_readiness_evidence")
+    upstream_idx = prod_stage.find("run_upstream_readiness_evidence\n\nif [ -n \"$repo\" ]")
+    fast_idx = prod_stage.find("run_or_print ./fast.sh")
+    upstream_before_deploy = preflight_idx >= 0 and upstream_idx >= 0 and upstream_idx < fast_idx
     ledger_ok, ledger_detail = _contains_all(
         rollout_ledger,
         [
@@ -458,8 +462,8 @@ def _static_checks() -> list[dict]:
     leaks_key_arg = "--key" in prod_stage or "--gateway-key" in prod_stage or "--key" in rollout_ledger
     checks.append(_check(
         "prod_stage_runner_sequences_shadow_canary_http_and_rollback",
-        ok and ledger_ok and preflight_ok and upstream_ok and executable and ledger_executable and preflight_executable and upstream_executable and not leaks_key_arg,
-        f"{detail}; ledger={ledger_detail}; preflight={preflight_detail}; upstream={upstream_detail}; executable={executable}; ledgerExecutable={ledger_executable}; preflightExecutable={preflight_executable}; upstreamExecutable={upstream_executable}; leaksKeyArg={leaks_key_arg}",
+        ok and ledger_ok and preflight_ok and upstream_ok and upstream_before_deploy and executable and ledger_executable and preflight_executable and upstream_executable and not leaks_key_arg,
+        f"{detail}; ledger={ledger_detail}; preflight={preflight_detail}; upstream={upstream_detail}; upstreamBeforeDeploy={upstream_before_deploy}; executable={executable}; ledgerExecutable={ledger_executable}; preflightExecutable={preflight_executable}; upstreamExecutable={upstream_executable}; leaksKeyArg={leaks_key_arg}",
     ))
 
     fast = _read("fast.sh")

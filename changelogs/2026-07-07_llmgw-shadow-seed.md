@@ -8,6 +8,7 @@
 | ops | prd-agent | LLM Gateway shadow 采样脚本支持失败后继续执行并输出 JSON 证据，便于生产 gate 归档 |
 | ops | prd-agent | LLM Gateway 生产阶段脚本支持显式运行 MAP shadow seed 并归档证据 |
 | ops | prd-agent | LLM Gateway 发布阶段新增 video/ASR upstream readiness 解析门，防止缺池缺 key 进入灰度或全量 |
+| ops | prd-agent | LLM Gateway canary-video-asr 与 http-full 阶段在部署前执行 upstream readiness，避免上游配置不可用时先发镜像 |
 | ops | prd-agent | LLM Gateway shadow-start 高采样失败时输出恢复采样告警 |
 | ops | prd-agent | 新增 LLM Gateway shadow 安全恢复脚本，并在高采样 shadow-start 失败时自动恢复低采样 |
 | ops | prd-agent | LLM Gateway shadow 安全恢复脚本默认持久化低采样环境配置，避免后续 compose 重启恢复高采样 |
