@@ -55,6 +55,7 @@ import { waitForFlushWithTimeout, type BoundedFlushResult } from '../services/bo
 import { readBundledCdsCliVersion } from '../services/cdscli-version.js';
 import { shouldTryCdsPrebuilt } from '../services/cds-prebuilt.js';
 import { fetchCdsPrebuilt } from '../services/cds-prebuilt-runtime.js';
+import { preparePrebuiltImageClaim } from '../services/prebuilt-image-claim.js';
 import { ProxyService } from '../services/proxy.js';
 import { archiveBranchContainerLogs } from '../services/container-log-archiver.js';
 import { normalizeLogText, type ServerEventLogSink } from '../services/server-event-log-store.js';
@@ -10740,6 +10741,80 @@ export function createBranchRouter(deps: RouterDeps): Router {
       completeBranchOperation(branchOperationLease, 'failed');
       res.status(500).json({ ok: false, error: (err as Error).message });
     }
+  });
+
+  router.post('/branches/:id/prebuilt-image/claim', async (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    {
+      const m = assertProjectAccess(req as any, entry.projectId || 'default');
+      if (m) { res.status(m.status).json(m.body); return; }
+    }
+
+    const commitSha = typeof req.body?.commitSha === 'string' ? req.body.commitSha.trim() : '';
+    const workflowRunUrl = typeof req.body?.workflowRunUrl === 'string' ? req.body.workflowRunUrl.trim() : '';
+    const dryRun = req.body?.dryRun === true || req.query?.dryRun === '1' || req.query?.dryRun === 'true';
+    const profiles = stateService.getEffectiveProfilesForBranch(entry);
+    const plan = preparePrebuiltImageClaim(entry, profiles, {
+      commitSha,
+      workflowRunUrl,
+      nowIso: new Date().toISOString(),
+    });
+    if (!plan.ok) {
+      res.status(plan.status).json({ error: plan.error, message: plan.message });
+      return;
+    }
+
+    if (!dryRun) {
+      stateService.updateBranchGithubMeta(id, plan.patch);
+      stateService.save();
+      branchEvents.emitEvent({
+        type: 'branch.updated',
+        payload: {
+          branchId: id,
+          projectId: entry.projectId,
+          patch: {
+            githubCommitSha: plan.patch.githubCommitSha,
+            lastPushAt: plan.patch.lastPushAt,
+            ciImageStatus: plan.patch.ciImageStatus,
+            ciTargetSha: plan.patch.ciTargetSha,
+            ciWorkflowConclusion: plan.patch.ciWorkflowConclusion,
+            ciWorkflowRunUrl: plan.patch.ciWorkflowRunUrl,
+          },
+          ts: plan.patch.lastPushAt,
+        },
+      });
+      serverEventLogStore?.record({
+        category: 'system',
+        severity: 'info',
+        source: 'api.prebuilt-image-claim',
+        action: 'branch.prebuilt-image.claimed',
+        message: `手动认领 CI 预构建镜像 ${commitSha.slice(0, 12)}`,
+        projectId: entry.projectId,
+        branchId: id,
+        requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined,
+        details: {
+          actor: resolveActorFromRequest(req),
+          commitSha,
+          workflowRunUrl: plan.patch.ciWorkflowRunUrl || undefined,
+          previous: plan.previous,
+          noChange: plan.noChange,
+        },
+      });
+    }
+
+    res.json({
+      ok: true,
+      branchId: id,
+      dryRun,
+      noChange: plan.noChange,
+      patch: plan.patch,
+      previous: plan.previous,
+    });
   });
 
   // ── Build & Run (SSE stream) ──
