@@ -356,7 +356,38 @@ check_fast_release_intent() {
   echo "Release intent: matched fast.sh warmup (tag=$TAG repo=$REPO)"
 }
 
+guard_llmgw_prod_stage_context_if_needed() {
+  mode="$(printf '%s' "${LLMGW_MODE:-inproc}" | tr 'A-Z' 'a-z' | xargs)"
+  allowlist_compact="$(printf '%s' "${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}" | tr ',;\n\r' '    ' | xargs || true)"
+  shadow_sample_compact="$(printf '%s' "${LLMGW_SHADOW_FULL_SAMPLE_PERCENT:-0}" | xargs || true)"
+  shadow_sample_enabled=0
+  if [ "$mode" = "shadow" ]; then
+    case "$shadow_sample_compact" in
+      ""|0|0.0|0.00|0.000)
+        ;;
+      *)
+        shadow_sample_enabled=1
+        ;;
+    esac
+  fi
+  release_gate_required=0
+  if [ "$mode" = "http" ] || [ -n "$allowlist_compact" ]; then
+    release_gate_required=1
+  fi
+  if [ "$release_gate_required" != "1" ] && [ "$shadow_sample_enabled" != "1" ]; then
+    return 0
+  fi
+
+  if [ "${LLMGW_PROD_STAGE_ACTIVE:-}" != "1" ] || [ -z "$(printf '%s' "${LLMGW_PROD_STAGE:-}" | xargs || true)" ]; then
+    echo "ERROR: LLM Gateway shadow/canary/http 发布必须通过 scripts/llmgw-prod-stage.sh 执行。" >&2
+    echo "       直接运行 exec_dep.sh 会绕过 rollout ledger、生产预检和阶段顺序审计。" >&2
+    echo "       示例：scripts/llmgw-prod-stage.sh --stage shadow-start --commit <40位SHA> --execute" >&2
+    exit 1
+  fi
+}
+
 check_fast_release_intent
+guard_llmgw_prod_stage_context_if_needed
 
 if command -v docker-compose >/dev/null 2>&1; then
   COMPOSE="docker-compose"
@@ -600,6 +631,13 @@ run_llmgw_release_gate_if_needed() {
   if [ "$release_gate_required" != "1" ] && [ "$shadow_sample_enabled" != "1" ]; then
     echo "LLM Gateway release gate: skipped (LLMGW_MODE=${LLMGW_MODE:-inproc}, allowlist=empty, shadowSample=${shadow_sample_compact:-0})"
     return 0
+  fi
+
+  if [ "${LLMGW_PROD_STAGE_ACTIVE:-}" != "1" ] || [ -z "$(printf '%s' "${LLMGW_PROD_STAGE:-}" | xargs || true)" ]; then
+    echo "ERROR: LLM Gateway shadow/canary/http 发布必须通过 scripts/llmgw-prod-stage.sh 执行。" >&2
+    echo "       直接运行 exec_dep.sh 会绕过 rollout ledger、生产预检和阶段顺序审计。" >&2
+    echo "       示例：scripts/llmgw-prod-stage.sh --stage shadow-start --commit <40位SHA> --execute" >&2
+    exit 1
   fi
 
   canary_stage=""

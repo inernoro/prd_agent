@@ -96,6 +96,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("PRD_AGENT_REQUIRE_FAST_INTENT", script);
         Assert.Contains("PRD_AGENT_IGNORE_FAST_INTENT", script);
         Assert.Contains("fast.sh / exec_dep.sh release ref mismatch", script);
+        Assert.Contains("guard_llmgw_prod_stage_context_if_needed", script);
         Assert.Contains("Release intent: matched fast.sh warmup", script);
         Assert.Contains("LLMGW_HTTP_APP_CALLER_ALLOWLIST", script);
         Assert.Contains("LLMGW_POST_DEPLOY_VERIFY_NEEDED", script);
@@ -115,6 +116,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("shadow_sample_enabled=0", script);
         Assert.Contains("release_gate_required=0", script);
         Assert.Contains("if [ \"$release_gate_required\" != \"1\" ] && [ \"$shadow_sample_enabled\" != \"1\" ]; then", script);
+        Assert.Contains("LLMGW_PROD_STAGE_ACTIVE", script);
+        Assert.Contains("LLMGW_PROD_STAGE", script);
+        Assert.Contains("必须通过 scripts/llmgw-prod-stage.sh 执行", script);
+        Assert.Contains("绕过 rollout ledger、生产预检和阶段顺序审计", script);
         Assert.Contains("shadow sample startup", script);
         Assert.Contains("serving/smoke verification runs after compose up", script);
         Assert.Contains("LLM Gateway http/canary/shadow sample 发布需要提供 LLMGW_GATE_BASE 或 GW_BASE", script);
@@ -334,6 +339,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("visual-agent.image.text2img::generation,visual-agent.image.img2img::generation", script);
         Assert.Contains("video-agent.videogen::video-gen,document-store.subtitle::asr,transcript-agent.transcribe::asr", script);
         Assert.Contains("export PRD_AGENT_REQUIRE_FAST_INTENT=\"${PRD_AGENT_REQUIRE_FAST_INTENT:-1}\"", script);
+        Assert.Contains("export LLMGW_PROD_STAGE_ACTIVE=1", script);
+        Assert.Contains("export LLMGW_PROD_STAGE=\"$stage\"", script);
         Assert.Contains("release-gate.json", script);
         Assert.Contains("serving-probe.json", script);
         Assert.Contains("gw-smoke.json", script);

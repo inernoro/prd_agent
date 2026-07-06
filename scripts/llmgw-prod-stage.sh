@@ -491,6 +491,8 @@ if [ "$stage" = "rollback-rehearsal" ]; then
 fi
 
 export LLMGW_MODE="$mode"
+export LLMGW_PROD_STAGE_ACTIVE=1
+export LLMGW_PROD_STAGE="$stage"
 export LLMGW_HTTP_APP_CALLER_ALLOWLIST="$allowlist"
 export LLMGW_CANARY_STAGE="$canary_stage"
 export LLMGW_SHADOW_FULL_SAMPLE_PERCENT="$shadow_percent"
