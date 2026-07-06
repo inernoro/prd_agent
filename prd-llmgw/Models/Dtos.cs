@@ -256,7 +256,18 @@ public sealed class ModelCapabilityItem { public string Type { get; set; } = "";
 
 // ── 影子比对（只读）──
 public sealed class ShadowData { public ShadowSummary Summary { get; set; } = new(); public List<ShadowItem> Recent { get; set; } = new(); }
-public sealed class ShadowSummary { public long Total { get; set; } public long AllMatch { get; set; } public long Critical { get; set; } public long HttpFail { get; set; } }
+public sealed class ShadowSummary
+{
+    public long Total { get; set; }
+    public long AllMatch { get; set; }
+    public long Critical { get; set; }
+    public long HttpFail { get; set; }
+    public double? SinceHours { get; set; }
+    public string? Since { get; set; }
+    public string? FirstComparedAt { get; set; }
+    public string? LastComparedAt { get; set; }
+    public double CoverageHours { get; set; }
+}
 public sealed class ShadowItem
 {
     public string Id { get; set; } = ""; public string Kind { get; set; } = ""; public string? RequestId { get; set; }

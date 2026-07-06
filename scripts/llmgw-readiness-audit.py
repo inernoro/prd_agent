@@ -86,12 +86,14 @@ def _static_checks() -> list[dict]:
         release_gate,
         [
             "--since-hours",
+            "--min-coverage-hours",
             "--require-kind",
             "--require-app-kind",
             "--health-samples",
             "--json-out",
             "critical mismatch",
             "httpFail",
+            "coverageHours",
         ],
     )
     checks.append(_check("release_gate_supports_required_shadow_and_health_gates", ok, detail))
@@ -107,6 +109,7 @@ def _static_checks() -> list[dict]:
             "LLMGW_HTTP_APP_CALLER_ALLOWLIST",
             "critical",
             "httpFail",
+            "coverageHours",
             "LLMGW_SHADOW_COVERAGE_JSON_OUT",
             "LLMGW_SHADOW_COVERAGE_REPORT_MD",
         ],
@@ -169,6 +172,9 @@ def _static_checks() -> list[dict]:
             "shadow sample startup",
             "LLMGW_GATE_SHADOW_SINCE_HOURS",
             "--since-hours ${LLMGW_GATE_SHADOW_SINCE_HOURS:-24}",
+            "LLMGW_GATE_MIN_COVERAGE_HOURS",
+            "--min-coverage-hours $gate_min_coverage_hours",
+            "默认要求 shadow 证据覆盖 24 小时",
             "--health-samples ${LLMGW_GATE_HEALTH_SAMPLES:-3}",
             "--expect-commit $expect_commit",
             "LLMGW_GATE_FULL_HTTP_APP_CALLERS",

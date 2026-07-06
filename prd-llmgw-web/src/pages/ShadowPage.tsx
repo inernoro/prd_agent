@@ -42,11 +42,13 @@ export function ShadowPage() {
   if (!data) return <SectionLoader text="正在加载影子比对…" />;
 
   const s = data.summary;
+  const coverageHours = typeof s.coverageHours === 'number' ? s.coverageHours : 0;
   const tiles = [
     { label: '总样本', value: s.total, color: 'var(--text-primary)' },
     { label: '全字段一致', value: s.allMatch, color: '#3fb950' },
     { label: 'critical 差异', value: s.critical, color: s.critical > 0 ? '#f85149' : 'var(--text-muted)' },
     { label: 'http 失败', value: s.httpFail, color: s.httpFail > 0 ? '#d29922' : 'var(--text-muted)' },
+    { label: '覆盖时长', value: coverageHours >= 24 ? `${Math.floor(coverageHours)}h` : `${coverageHours.toFixed(1)}h`, color: coverageHours >= 24 ? '#3fb950' : 'var(--text-muted)' },
   ];
   const recent = data.recent.filter((r) => {
     if (quick === 'critical') return r.hasCritical;

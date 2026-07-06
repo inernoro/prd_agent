@@ -122,6 +122,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--health-interval ${LLMGW_GATE_HEALTH_INTERVAL_SECONDS:-5}", script);
         Assert.Contains("LLMGW_GATE_SHADOW_SINCE_HOURS", script);
         Assert.Contains("--since-hours ${LLMGW_GATE_SHADOW_SINCE_HOURS:-24}", script);
+        Assert.Contains("LLMGW_GATE_MIN_COVERAGE_HOURS", script);
+        Assert.Contains("--min-coverage-hours $gate_min_coverage_hours", script);
+        Assert.Contains("默认要求 shadow 证据覆盖 24 小时", script);
         Assert.Contains("LLMGW_GATE_FULL_HTTP_APP_CALLERS", script);
         Assert.Contains("gate_app_callers_raw=\"${LLMGW_GATE_FULL_HTTP_APP_CALLERS:-report-agent.generate::chat", script);
         Assert.Contains("prd-agent-desktop.chat.sendmessage::chat", script);
@@ -223,12 +226,22 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("double? sinceHours", servingEndpoints);
         Assert.Contains("Builders<LlmShadowComparison>.Filter.Eq(x => x.Kind, kind.Trim())", servingEndpoints);
         Assert.Contains("Builders<LlmShadowComparison>.Filter.Gte(x => x.ComparedAt, since.Value)", servingEndpoints);
+        Assert.Contains("firstComparedAt = first", servingEndpoints);
+        Assert.Contains("lastComparedAt = last", servingEndpoints);
+        Assert.Contains("coverageHours", servingEndpoints);
         Assert.Contains("string? kind", consoleProgram);
+        Assert.Contains("double? sinceHours", consoleProgram);
         Assert.Contains("fb.Eq(\"Kind\", kind.Trim())", consoleProgram);
+        Assert.Contains("FirstComparedAt", ReadRepoFile("prd-llmgw/Models/Dtos.cs"));
+        Assert.Contains("CoverageHours", ReadRepoFile("prd-llmgw/Models/Dtos.cs"));
         Assert.Contains("query_items[\"kind\"] = kind", releaseGate);
         Assert.Contains("query_items[\"sinceHours\"] = f\"{since_hours:g}\"", releaseGate);
         Assert.Contains("--since-hours", releaseGate);
+        Assert.Contains("--min-coverage-hours", releaseGate);
         Assert.Contains("\"shadowSinceHours\"", releaseGate);
+        Assert.Contains("\"minCoverageHours\"", releaseGate);
+        Assert.Contains("\"coverageHours\"", releaseGate);
+        Assert.Contains("观察时长不足", releaseGate);
         Assert.Contains("--require-kind", releaseGate);
         Assert.Contains("--require-app-kind", releaseGate);
         Assert.Contains("--health-samples", releaseGate);
@@ -365,6 +378,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_SHADOW_COVERAGE_REPORT_MD", script);
         Assert.Contains("critical", script);
         Assert.Contains("httpFail", script);
+        Assert.Contains("coverageHours", script);
         Assert.DoesNotContain("print(key", script);
         Assert.DoesNotContain("GW_KEY=\"", script);
     }

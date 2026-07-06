@@ -71,6 +71,9 @@ def _summary_from_payload(raw: str) -> dict:
         "allMatch": int(summary.get("allMatch") or summary.get("AllMatch") or 0),
         "critical": int(summary.get("critical") or summary.get("Critical") or 0),
         "httpFail": int(summary.get("httpFail") or summary.get("HttpFail") or 0),
+        "firstComparedAt": summary.get("firstComparedAt") or summary.get("FirstComparedAt"),
+        "lastComparedAt": summary.get("lastComparedAt") or summary.get("LastComparedAt"),
+        "coverageHours": float(summary.get("coverageHours") or summary.get("CoverageHours") or 0),
     }
 
 
@@ -98,6 +101,9 @@ def _cell(base: str, key: str, app: str | None, kind: str | None, min_total: int
         "allMatch": 0,
         "critical": 0,
         "httpFail": 0,
+        "firstComparedAt": None,
+        "lastComparedAt": None,
+        "coverageHours": 0.0,
         "ok": False,
         "failures": [],
     }
@@ -149,14 +155,15 @@ def _write_markdown(path: str, report: dict) -> None:
         fh.write(f"- base: `{cell(report['base'])}`\n")
         fh.write(f"- sinceHours: `{cell(report['sinceHours'])}`\n")
         fh.write(f"- minPerCell: `{cell(report['minPerCell'])}`\n\n")
-        fh.write("| label | required | total | allMatch | critical | httpFail | status | failures |\n")
-        fh.write("|---|---:|---:|---:|---:|---:|---|---|\n")
+        fh.write("| label | required | total | coverageHours | allMatch | critical | httpFail | status | failures |\n")
+        fh.write("|---|---:|---:|---:|---:|---:|---:|---|---|\n")
         for item in report["cells"]:
             status = "pass" if item.get("ok") else "fail"
             failures = "; ".join(item.get("failures") or [])
             fh.write(
                 f"| {cell(item.get('label'))} | {cell(item.get('requiredTotal'))} | "
-                f"{cell(item.get('total'))} | {cell(item.get('allMatch'))} | "
+                f"{cell(item.get('total'))} | {cell(round(float(item.get('coverageHours') or 0), 2))} | "
+                f"{cell(item.get('allMatch'))} | "
                 f"{cell(item.get('critical'))} | {cell(item.get('httpFail'))} | "
                 f"{status} | {cell(failures)} |\n"
             )

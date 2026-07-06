@@ -95,6 +95,7 @@ python3 scripts/llmgw-readiness-audit.py \
   --min-total 30 \
   --health-samples 3 --health-interval 5 \
   --since-hours 24 \
+  --min-coverage-hours 24 \
   --app-caller report-agent.generate::chat --min-per-app 30 \
   --require-kind send:30 \
   --require-app-kind report-agent.generate::chat:send:30 \
@@ -144,6 +145,9 @@ http/canary 发布默认还会强制运行 `scripts/gw-smoke.py`，真打 health
 采样失败、commit 与发布 sha 不一致或多次采样 commit 漂移都会拒绝发布。需要防止 resolve-only 证据误放行时，
 用 `LLMGW_GATE_REQUIRED_KINDS=send:30,stream:30` 和
 `LLMGW_GATE_REQUIRED_APP_KINDS=report-agent.generate::chat:send:30` 强制指定真实 http 样本。
+全量 `http` 或 allowlist canary 时 `exec_dep.sh` 还会默认设置 `LLMGW_GATE_MIN_COVERAGE_HOURS=24`，
+要求每个 shadow 检查的最早样本到最晚样本至少覆盖 24 小时；这和 `LLMGW_GATE_SHADOW_SINCE_HOURS=24`
+一起使用，防止短时间突刺凑满样本后立即放行。只有明确的人工强制场景才允许设为 `0` 关闭。
 全量 `LLMGW_MODE=http` 时如果未显式设置 `LLMGW_GATE_REQUIRED_KINDS`，`exec_dep.sh` 会默认要求
 `send:${LLMGW_GATE_FULL_HTTP_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}`、
 `stream:${LLMGW_GATE_FULL_HTTP_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}` 和

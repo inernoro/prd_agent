@@ -229,5 +229,15 @@ export type ShadowItem = {
   allMatch: boolean; hasCritical: boolean; inproc: ShadowSnapshot; http: ShadowSnapshot;
   mismatches: ShadowMismatch[]; textMatches?: boolean | null;
 };
-export type ShadowSummary = { total: number; allMatch: number; critical: number; httpFail: number };
+export type ShadowSummary = {
+  total: number;
+  allMatch: number;
+  critical: number;
+  httpFail: number;
+  sinceHours?: number | null;
+  since?: string | null;
+  firstComparedAt?: string | null;
+  lastComparedAt?: string | null;
+  coverageHours?: number;
+};
 export type ShadowData = { summary: ShadowSummary; recent: ShadowItem[] };

@@ -230,11 +230,20 @@ public static class GatewayHttpEndpoints
             var allMatch = await col.CountDocumentsAsync(filter & Builders<LlmShadowComparison>.Filter.Eq(x => x.AllMatch, true));
             var critical = await col.CountDocumentsAsync(filter & Builders<LlmShadowComparison>.Filter.Eq(x => x.HasCritical, true));
             var httpFail = await col.CountDocumentsAsync(filter & Builders<LlmShadowComparison>.Filter.Eq(x => x.HttpOk, false));
+            var first = total > 0
+                ? (await col.Find(filter).SortBy(x => x.ComparedAt).Limit(1).FirstOrDefaultAsync())?.ComparedAt
+                : null;
+            var last = total > 0
+                ? (await col.Find(filter).SortByDescending(x => x.ComparedAt).Limit(1).FirstOrDefaultAsync())?.ComparedAt
+                : null;
+            var coverageHours = first is not null && last is not null
+                ? Math.Max(0, (last.Value - first.Value).TotalHours)
+                : 0;
             var recent = await col.Find(filter).SortByDescending(x => x.ComparedAt).Limit(n).ToListAsync();
 
             return Results.Json(new
             {
-                summary = new { total, allMatch, critical, httpFail, sinceHours, since },
+                summary = new { total, allMatch, critical, httpFail, sinceHours, since, firstComparedAt = first, lastComparedAt = last, coverageHours },
                 recent,
             }, jsonOpts);
         });

@@ -8,6 +8,7 @@
   - httpFail 必须为 0
   - total 样本数必须达到阈值
   - 可选：只统计最近 N 小时 shadow 样本，避免旧证据误放行
+  - 可选：要求 shadow 样本覆盖至少 N 小时，避免短时间突刺样本误放行灰度/全量
   - 可选：指定 kind/appCaller+kind 的真实样本数必须达到阈值，避免只靠 resolve-only 放行
 
 用法：
@@ -81,6 +82,23 @@ def _json(raw: str) -> dict:
     return value
 
 
+def _parse_utc(value: object) -> datetime | None:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    try:
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        parsed = datetime.fromisoformat(raw)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
 def _shadow_check(
     base: str,
     key: str,
@@ -88,6 +106,7 @@ def _shadow_check(
     min_total: int,
     kind: str | None = None,
     since_hours: float = 0,
+    min_coverage_hours: float = 0,
 ) -> dict:
     label = "global"
     query_items: dict[str, str] = {}
@@ -113,6 +132,10 @@ def _shadow_check(
         "critical": 0,
         "httpFail": 0,
         "sinceHours": since_hours,
+        "minCoverageHours": min_coverage_hours,
+        "firstComparedAt": None,
+        "lastComparedAt": None,
+        "coverageHours": 0.0,
         "ok": False,
         "failures": [],
         "query": query_items,
@@ -127,14 +150,32 @@ def _shadow_check(
     all_match = int(summary.get("allMatch") or summary.get("AllMatch") or 0)
     critical = int(summary.get("critical") or summary.get("Critical") or 0)
     http_fail = int(summary.get("httpFail") or summary.get("HttpFail") or 0)
+    first_raw = summary.get("firstComparedAt") or summary.get("FirstComparedAt")
+    last_raw = summary.get("lastComparedAt") or summary.get("LastComparedAt")
+    coverage_raw = summary.get("coverageHours") or summary.get("CoverageHours")
+    first = _parse_utc(first_raw)
+    last = _parse_utc(last_raw)
+    try:
+        coverage_hours = float(coverage_raw) if coverage_raw is not None else 0.0
+    except (TypeError, ValueError):
+        coverage_hours = 0.0
+    if coverage_hours <= 0 and first is not None and last is not None:
+        coverage_hours = max(0.0, (last - first).total_seconds() / 3600.0)
     result["total"] = total
     result["allMatch"] = all_match
     result["critical"] = critical
     result["httpFail"] = http_fail
+    result["firstComparedAt"] = first.isoformat() if first is not None else None
+    result["lastComparedAt"] = last.isoformat() if last is not None else None
+    result["coverageHours"] = coverage_hours
 
     failures: list[str] = []
     if total < min_total:
         failures.append(f"shadow[{label}] 样本不足: total={total}, required={min_total}")
+    if min_coverage_hours > 0 and coverage_hours < min_coverage_hours:
+        failures.append(
+            f"shadow[{label}] 观察时长不足: coverageHours={coverage_hours:.2f}, required={min_coverage_hours:g}"
+        )
     if critical != 0:
         failures.append(f"shadow[{label}] critical mismatch 未清零: {critical}")
     if http_fail != 0:
@@ -249,14 +290,16 @@ def _write_markdown(path: str, report: dict) -> None:
         fh.write(f"- healthStable: `{cell(health.get('stable'))}`\n")
         fh.write(f"- healthSamples: `{cell(health.get('sampleCount'))}`\n")
         fh.write(f"- expectedCommit: `{cell(report.get('expectedCommit') or '')}`\n\n")
-        fh.write(f"- shadowSinceHours: `{cell((report.get('thresholds') or {}).get('shadowSinceHours'))}`\n\n")
-        fh.write("| label | sinceHours | required | total | allMatch | critical | httpFail | status |\n")
-        fh.write("|---|---:|---:|---:|---:|---:|---:|---|\n")
+        fh.write(f"- shadowSinceHours: `{cell((report.get('thresholds') or {}).get('shadowSinceHours'))}`\n")
+        fh.write(f"- minCoverageHours: `{cell((report.get('thresholds') or {}).get('minCoverageHours'))}`\n\n")
+        fh.write("| label | sinceHours | minCoverageHours | coverageHours | required | total | allMatch | critical | httpFail | status |\n")
+        fh.write("|---|---:|---:|---:|---:|---:|---:|---:|---:|---|\n")
         for item in checks:
             status = "pass" if item.get("ok") else "fail"
             fh.write(
-                f"| {cell(item.get('label'))} | {cell(item.get('sinceHours'))} | {cell(item.get('requiredTotal'))} | "
-                f"{cell(item.get('total'))} | {cell(item.get('allMatch'))} | "
+                f"| {cell(item.get('label'))} | {cell(item.get('sinceHours'))} | "
+                f"{cell(item.get('minCoverageHours'))} | {cell(round(float(item.get('coverageHours') or 0), 2))} | "
+                f"{cell(item.get('requiredTotal'))} | {cell(item.get('total'))} | {cell(item.get('allMatch'))} | "
                 f"{cell(item.get('critical'))} | {cell(item.get('httpFail'))} | {status} |\n"
             )
         fh.write("\n")
@@ -291,6 +334,8 @@ def main() -> int:
                         help="要求某个 appCallerCode 的某类 Kind 达到最小样本数，格式 appCallerCode:kind:min，可重复")
     parser.add_argument("--since-hours", type=float, default=float(os.environ.get("LLMGW_GATE_SHADOW_SINCE_HOURS", "0")),
                         help="只统计最近 N 小时 shadow 样本；0 表示不限制。生产 http/canary 发布建议 >=24")
+    parser.add_argument("--min-coverage-hours", type=float, default=float(os.environ.get("LLMGW_GATE_MIN_COVERAGE_HOURS", "0")),
+                        help="要求每个 shadow 检查覆盖至少 N 小时；0 表示不限制。S5/S6 发布建议 >=24")
     parser.add_argument("--expect-commit", default=os.environ.get("GIT_COMMIT", ""), help="可选：healthz commit 必须匹配")
     parser.add_argument("--health-samples", type=int, default=int(os.environ.get("LLMGW_GATE_HEALTH_SAMPLES", "1")),
                         help="healthz 连续采样次数，默认 1；正式全量 http 建议 >=3")
@@ -312,6 +357,7 @@ def main() -> int:
             "minTotal": args.min_total,
             "minPerApp": args.min_per_app,
             "shadowSinceHours": max(0, args.since_hours),
+            "minCoverageHours": max(0, args.min_coverage_hours),
             "healthSamples": max(1, args.health_samples),
             "healthIntervalSeconds": args.health_interval,
         },
@@ -358,23 +404,24 @@ def main() -> int:
 
     shadow_checks: list[dict] = []
     since_hours = max(0, args.since_hours)
-    shadow_checks.append(_shadow_check(base, args.key, None, args.min_total, since_hours=since_hours))
+    min_coverage_hours = max(0, args.min_coverage_hours)
+    shadow_checks.append(_shadow_check(base, args.key, None, args.min_total, since_hours=since_hours, min_coverage_hours=min_coverage_hours))
     for app in args.app_caller:
-        shadow_checks.append(_shadow_check(base, args.key, app, args.min_per_app, since_hours=since_hours))
+        shadow_checks.append(_shadow_check(base, args.key, app, args.min_per_app, since_hours=since_hours, min_coverage_hours=min_coverage_hours))
     for raw in args.require_kind:
         try:
             kind, min_total = _parse_kind_requirement(raw, args.min_per_app)
         except ValueError as exc:
             failures.append(str(exc))
             continue
-        shadow_checks.append(_shadow_check(base, args.key, None, min_total, kind=kind, since_hours=since_hours))
+        shadow_checks.append(_shadow_check(base, args.key, None, min_total, kind=kind, since_hours=since_hours, min_coverage_hours=min_coverage_hours))
     for raw in args.require_app_kind:
         try:
             app, kind, min_total = _parse_app_kind_requirement(raw)
         except ValueError as exc:
             failures.append(str(exc))
             continue
-        shadow_checks.append(_shadow_check(base, args.key, app, min_total, kind=kind, since_hours=since_hours))
+        shadow_checks.append(_shadow_check(base, args.key, app, min_total, kind=kind, since_hours=since_hours, min_coverage_hours=min_coverage_hours))
 
     report["shadowChecks"] = shadow_checks
     for item in shadow_checks:
@@ -393,6 +440,8 @@ def main() -> int:
     print(f"- global_min_total={args.min_total}")
     if since_hours > 0:
         print(f"- shadow_since_hours={since_hours:g}")
+    if min_coverage_hours > 0:
+        print(f"- min_coverage_hours={min_coverage_hours:g}")
     if args.app_caller:
         print(f"- app_callers={len(args.app_caller)} min_per_app={args.min_per_app}")
     if args.require_kind:

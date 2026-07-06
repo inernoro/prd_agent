@@ -482,22 +482,46 @@ app.MapGet("/gw/models", async (string? platformId, bool? enabled) =>
 }).RequireAuthorization("LogsRead");
 
 // 影子比对：汇总 + 最近 N 条
-app.MapGet("/gw/shadow-comparisons", async (int? limit, string? appCallerCode, string? kind) =>
+app.MapGet("/gw/shadow-comparisons", async (int? limit, string? appCallerCode, string? kind, double? sinceHours) =>
 {
     var n = Math.Clamp(limit ?? 50, 1, 500);
     var fb = Builders<BsonDocument>.Filter;
     var filters = new List<FilterDefinition<BsonDocument>>();
     if (!string.IsNullOrWhiteSpace(appCallerCode)) filters.Add(fb.Eq("AppCallerCode", appCallerCode.Trim()));
     if (!string.IsNullOrWhiteSpace(kind)) filters.Add(fb.Eq("Kind", kind.Trim()));
+    var since = sinceHours is > 0 ? DateTime.UtcNow.AddHours(-sinceHours.Value) : (DateTime?)null;
+    if (since is not null) filters.Add(fb.Gte("ComparedAt", since.Value));
     var filter = filters.Count == 0 ? fb.Empty : fb.And(filters);
     var total = await shadows.CountDocumentsAsync(filter);
     var allMatch = await shadows.CountDocumentsAsync(fb.And(filter, fb.Eq("AllMatch", true)));
     var critical = await shadows.CountDocumentsAsync(fb.And(filter, fb.Eq("HasCritical", true)));
     var httpFail = await shadows.CountDocumentsAsync(fb.And(filter, fb.Eq("HttpOk", false)));
+    var firstDoc = total > 0
+        ? await shadows.Find(filter).Sort(Builders<BsonDocument>.Sort.Ascending("ComparedAt")).Limit(1).FirstOrDefaultAsync()
+        : null;
+    var lastDoc = total > 0
+        ? await shadows.Find(filter).Sort(Builders<BsonDocument>.Sort.Descending("ComparedAt")).Limit(1).FirstOrDefaultAsync()
+        : null;
+    var first = firstDoc?.AsNullableUtcDateTime("ComparedAt");
+    var last = lastDoc?.AsNullableUtcDateTime("ComparedAt");
+    var coverageHours = first is not null && last is not null
+        ? Math.Max(0, (last.Value - first.Value).TotalHours)
+        : 0;
     var recent = await shadows.Find(filter).Sort(Builders<BsonDocument>.Sort.Descending("ComparedAt")).Limit(n).ToListAsync();
     var data = new ShadowData
     {
-        Summary = new ShadowSummary { Total = total, AllMatch = allMatch, Critical = critical, HttpFail = httpFail },
+        Summary = new ShadowSummary
+        {
+            Total = total,
+            AllMatch = allMatch,
+            Critical = critical,
+            HttpFail = httpFail,
+            SinceHours = sinceHours,
+            Since = since?.ToString("O"),
+            FirstComparedAt = first.ToIso(),
+            LastComparedAt = last.ToIso(),
+            CoverageHours = coverageHours,
+        },
         Recent = recent.Select(MapShadow).ToList(),
     };
     return Json(ApiEnvelope<ShadowData>.Ok(data), jsonOptions);
