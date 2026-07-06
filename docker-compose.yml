@@ -57,8 +57,9 @@ services:
       # 生产环境：必须显式设置 JWT_SECRET（禁止使用仓库内默认值）
       - Jwt__Secret=${JWT_SECRET}
       - Jwt__Issuer=prdagent
-      # 项目数据加密密钥：用于模型平台 API key 等持久化密文，必须独立于 JWT_SECRET
-      - ApiKeyCrypto__Secret=${API_KEY_CRYPTO_SECRET:-}
+      # 项目数据加密密钥：用于模型平台 API key 等持久化密文，必须独立于 JWT_SECRET。
+      # 生产必须显式配置；旧密文迁移期用 API_KEY_CRYPTO_LEGACY_SECRETS 注入历史 JWT/旧密钥。
+      - ApiKeyCrypto__Secret=${API_KEY_CRYPTO_SECRET:?must set API_KEY_CRYPTO_SECRET in production (platform API key encryption, shared by api and llmgw-serve)}
       - ApiKeyCrypto__LegacySecrets=${API_KEY_CRYPTO_LEGACY_SECRETS:-}
       - Session__TimeoutMinutes=30
       # 资产存储：tencentCos / cloudflareR2
@@ -137,7 +138,7 @@ services:
       - MongoDB__DatabaseName=prdagent
       - LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}
       # 平台 API key 密文解密密钥：必须与 api 一致，否则 resolve 取不出可用 ApiKey
-      - ApiKeyCrypto__Secret=${API_KEY_CRYPTO_SECRET:-}
+      - ApiKeyCrypto__Secret=${API_KEY_CRYPTO_SECRET:?must set API_KEY_CRYPTO_SECRET in production (platform API key encryption, shared by api and llmgw-serve)}
       - ApiKeyCrypto__LegacySecrets=${API_KEY_CRYPTO_LEGACY_SECRETS:-}
       # 资产存储：日志写入正文/图片到对象存储（与 api 同一套配置）
       - ASSETS_PROVIDER=${ASSETS_PROVIDER:-tencentCos}
