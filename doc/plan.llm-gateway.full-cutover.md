@@ -136,6 +136,26 @@ raw 入口样本达标，并且每格 shadow 样本覆盖至少 24 小时。
 四个镜像的同一 release ref；随后 `exec_dep.sh --commit <sha>` 会读取该 intent 并拒绝不同 commit/tag/repo 的部署。
 生产可设置 `PRD_AGENT_REQUIRE_FAST_INTENT=1` 强制“先 fast 后 exec”；紧急人工绕过必须显式设置
 `PRD_AGENT_IGNORE_FAST_INTENT=1` 并留下发布记录。
+
+生产阶段推进统一走 `scripts/llmgw-prod-stage.sh`，避免人工拼 `LLMGW_MODE`、allowlist、canary stage 和
+证据输出路径：
+
+```bash
+LLMGW_GATE_BASE=https://<prod-llmgw-serve>/gw/v1 \
+LLMGW_GATE_KEY=<X-Gateway-Key> \
+scripts/llmgw-prod-stage.sh --stage shadow-start --commit <40位SHA> --execute
+```
+
+支持阶段：`shadow-start`、`canary-intent-text`、`canary-chat`、`canary-streaming`、`canary-vision`、
+`canary-image`、`canary-video-asr`、`http-full`、`rollback-inproc`。脚本默认 dry-run，只有显式
+`--execute` 才会真实运行；deploy 阶段会先跑 `fast.sh --commit <sha>`，再用同一个 sha 跑
+`exec_dep.sh --commit <sha>`，并默认设置 `PRD_AGENT_REQUIRE_FAST_INTENT=1` 与
+`.llmgw-release-evidence/<time>_<stage>_<sha>.json|md` 证据输出。脚本不接受 `--key` 参数，
+网关 key 只能从 `LLMGW_GATE_KEY`/`GW_KEY`/`LLMGW_SERVE_KEY` 读取，避免泄漏到 shell history。
+灰度阶段会自动设置 `LLMGW_MODE=shadow`、对应 `LLMGW_CANARY_STAGE` 与 allowlist；`http-full`
+会设置 `LLMGW_MODE=http` 并依赖 `exec_dep.sh` 的全量证据门。`rollback-inproc` 只调用
+`scripts/llmgw-rollback-inproc.sh`，不回滚数据库。
+
 灰度 `LLMGW_HTTP_APP_CALLER_ALLOWLIST` 非空且不是全量 `LLMGW_MODE=http` 时，必须显式设置
 `LLMGW_CANARY_STAGE=intent-text|chat|streaming|vision|image|video-asr`；`exec_dep.sh` 会校验 allowlist
 只能包含该阶段允许的 appCaller，防止越级把 image/video/ASR 混进低风险文本灰度。canary 阶段如果未显式设置

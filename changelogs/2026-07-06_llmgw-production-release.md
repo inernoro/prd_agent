@@ -40,3 +40,4 @@
 | ci | prd-agent | 新增 LLM Gateway shadow watch 定时巡检，持续归档 serving 探针、shadow 覆盖矩阵与 live release gate 证据 |
 | security | prd-agent | readiness audit 证据报告脱敏子命令中的 --key 参数，避免上传 GW key |
 | ops | prd-agent | 调整 LLM Gateway 正式部署 gate 顺序，发布前只校验 shadow 证据，compose 起新镜像后再校验 serving commit 与 D 层 smoke |
+| ops | prd-agent | 新增 LLM Gateway 生产阶段推进脚本，统一 shadow、canary、http 全量和 inproc 回滚入口，避免正式发布手工拼环境变量 |

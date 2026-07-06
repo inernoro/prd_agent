@@ -269,6 +269,44 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ProdStageRunner_SequencesShadowCanaryHttpAndRollbackWithoutKeyCli()
+    {
+        var script = ReadRepoFile("scripts/llmgw-prod-stage.sh");
+        var readiness = ReadRepoFile("scripts/llmgw-readiness-audit.py");
+
+        Assert.Contains("LLM Gateway production stage runner", script);
+        Assert.Contains("shadow-start", script);
+        Assert.Contains("canary-intent-text", script);
+        Assert.Contains("canary-chat", script);
+        Assert.Contains("canary-streaming", script);
+        Assert.Contains("canary-vision", script);
+        Assert.Contains("canary-image", script);
+        Assert.Contains("canary-video-asr", script);
+        Assert.Contains("http-full", script);
+        Assert.Contains("rollback-inproc", script);
+        Assert.Contains("execute=0", script);
+        Assert.Contains("--execute", script);
+        Assert.Contains("LLMGW_GATE_KEY, GW_KEY, or LLMGW_SERVE_KEY", script);
+        Assert.DoesNotContain("--key", script);
+        Assert.DoesNotContain("--gateway-key", script);
+        Assert.Contains("mode=\"shadow\"", script);
+        Assert.Contains("mode=\"http\"", script);
+        Assert.Contains("report-agent.generate::chat,prd-agent-desktop.chat.sendmessage::chat,open-platform-agent.proxy::chat", script);
+        Assert.Contains("visual-agent.image.text2img::generation,visual-agent.image.img2img::generation", script);
+        Assert.Contains("video-agent.videogen::video-gen,document-store.subtitle::asr,transcript-agent.transcribe::asr", script);
+        Assert.Contains("export PRD_AGENT_REQUIRE_FAST_INTENT=\"${PRD_AGENT_REQUIRE_FAST_INTENT:-1}\"", script);
+        Assert.Contains("export LLMGW_GATE_JSON_OUT=\"${LLMGW_GATE_JSON_OUT:-${evidence_prefix}.json}\"", script);
+        Assert.Contains("export LLMGW_GATE_REPORT_MD=\"${LLMGW_GATE_REPORT_MD:-${evidence_prefix}.md}\"", script);
+        Assert.Contains("./fast.sh --commit \"$commit\"", script);
+        Assert.Contains("./exec_dep.sh --commit \"$commit\"", script);
+        Assert.Contains("scripts/llmgw-rollback-inproc.sh", script);
+
+        Assert.Contains("prod_stage_runner_sequences_shadow_canary_http_and_rollback", readiness);
+        Assert.Contains("scripts/llmgw-prod-stage.sh", readiness);
+        Assert.Contains("leaksKeyArg", readiness);
+    }
+
+    [Fact]
     public void RollbackScript_ReturnsApiToInprocWithoutDatabaseRollback()
     {
         var script = ReadRepoFile("scripts/llmgw-rollback-inproc.sh");

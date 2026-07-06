@@ -96,6 +96,8 @@ def _static_checks() -> list[dict]:
     release_gate = _read("scripts/llmgw-release-gate.py")
     shadow_coverage = _read("scripts/llmgw-shadow-coverage-report.py")
     serving_probe = _read("scripts/llmgw-serving-probe.py")
+    prod_stage_path = ROOT / "scripts/llmgw-prod-stage.sh"
+    prod_stage = prod_stage_path.read_text(encoding="utf-8")
     ok, detail = _contains_all(
         release_gate,
         [
@@ -165,6 +167,42 @@ def _static_checks() -> list[dict]:
         ],
     )
     checks.append(_check("serving_probe_available", ok, detail))
+
+    ok, detail = _contains_all(
+        prod_stage,
+        [
+            "LLM Gateway production stage runner",
+            "shadow-start",
+            "canary-intent-text",
+            "canary-chat",
+            "canary-streaming",
+            "canary-vision",
+            "canary-image",
+            "canary-video-asr",
+            "http-full",
+            "rollback-inproc",
+            "LLMGW_GATE_KEY, GW_KEY, or LLMGW_SERVE_KEY",
+            "execute=0",
+            "--execute",
+            "LLMGW_GATE_BASE",
+            "PRD_AGENT_REQUIRE_FAST_INTENT",
+            "LLMGW_GATE_JSON_OUT",
+            "LLMGW_GATE_REPORT_MD",
+            "report-agent.generate::chat,prd-agent-desktop.chat.sendmessage::chat,open-platform-agent.proxy::chat",
+            "visual-agent.image.text2img::generation,visual-agent.image.img2img::generation",
+            "video-agent.videogen::video-gen,document-store.subtitle::asr,transcript-agent.transcribe::asr",
+            "./fast.sh --commit \"$commit\"",
+            "./exec_dep.sh --commit \"$commit\"",
+            "scripts/llmgw-rollback-inproc.sh",
+        ],
+    )
+    executable = bool(prod_stage_path.stat().st_mode & stat.S_IXUSR)
+    leaks_key_arg = "--key" in prod_stage or "--gateway-key" in prod_stage
+    checks.append(_check(
+        "prod_stage_runner_sequences_shadow_canary_http_and_rollback",
+        ok and executable and not leaks_key_arg,
+        f"{detail}; executable={executable}; leaksKeyArg={leaks_key_arg}",
+    ))
 
     fast = _read("fast.sh")
     ok, detail = _contains_all(
