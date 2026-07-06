@@ -258,6 +258,12 @@
     ]
   },
   {
+    "code": "infra-agent.runtime-profile-test::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
     "code": "literary-agent.content::chat",
     "modelTypes": [
       "chat"

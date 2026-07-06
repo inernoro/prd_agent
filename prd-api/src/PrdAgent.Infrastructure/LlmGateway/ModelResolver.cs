@@ -31,6 +31,8 @@ public class ModelResolver : IModelResolver
         string appCallerCode,
         string modelType,
         string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null,
         CancellationToken ct = default)
     {
         var plan = new ModelResolutionPlan
@@ -52,6 +54,12 @@ public class ModelResolver : IModelResolver
                 appCallerCode);
             return ModelResolutionResult.NotFound(expectedModel,
                 $"AppCallerCode '{appCallerCode}' 未在数据库中注册，请在管理后台点击「初始化应用」");
+        }
+
+        var pinned = await TryResolvePinnedModelAsync(expectedModel, pinnedPlatformId, pinnedModelId, ct);
+        if (pinned != null)
+        {
+            return pinned;
         }
 
         List<ModelGroup>? candidateGroups = null;
@@ -119,6 +127,12 @@ public class ModelResolver : IModelResolver
                         modelType, legacyModel.ModelName, legacyPlatform.Name);
                     return ModelResolutionResult.FromLegacy(expectedModel, legacyModel, legacyPlatform, legacyApiKey);
                 }
+            }
+
+            var legacyConfig = await TryResolveLegacyConfigFallbackAsync(modelType, expectedModel, ct);
+            if (legacyConfig != null)
+            {
+                return legacyConfig;
             }
 
             _logger.LogWarning(
@@ -349,6 +363,12 @@ public class ModelResolver : IModelResolver
                     OriginalModels = originalModels
                 };
             }
+        }
+
+        var legacyConfigFallback = await TryResolveLegacyConfigFallbackAsync(modelType, expectedModel, ct);
+        if (legacyConfigFallback != null)
+        {
+            return legacyConfigFallback;
         }
 
         _logger.LogWarning(
@@ -640,6 +660,125 @@ public class ModelResolver : IModelResolver
         return result;
     }
 
+    private async Task<ModelResolutionResult?> TryResolvePinnedModelAsync(
+        string? expectedModel,
+        string? pinnedPlatformId,
+        string? pinnedModelId,
+        CancellationToken ct)
+    {
+        var platformId = pinnedPlatformId?.Trim();
+        var modelId = pinnedModelId?.Trim();
+        var hasAnyPin = !string.IsNullOrWhiteSpace(platformId) || !string.IsNullOrWhiteSpace(modelId);
+        if (!hasAnyPin)
+            return null;
+
+        if (string.IsNullOrWhiteSpace(platformId) || string.IsNullOrWhiteSpace(modelId))
+        {
+            return ModelResolutionResult.NotFound(
+                expectedModel ?? modelId,
+                "PinnedModel 调用必须同时提供 pinnedPlatformId 与 pinnedModelId");
+        }
+
+        var platform = await _db.LLMPlatforms
+            .Find(p => p.Id == platformId && p.Enabled)
+            .FirstOrDefaultAsync(ct);
+        if (platform == null)
+        {
+            return ModelResolutionResult.NotFound(
+                expectedModel ?? modelId,
+                $"PinnedModel 平台不存在或未启用: {platformId}");
+        }
+
+        var model = await _db.LLMModels
+            .Find(m => m.Enabled
+                && m.PlatformId == platformId
+                && (m.ModelName == modelId || m.Id == modelId))
+            .FirstOrDefaultAsync(ct);
+        if (model == null)
+        {
+            return ModelResolutionResult.NotFound(
+                expectedModel ?? modelId,
+                $"PinnedModel 模型不存在或未启用: platform={platformId}, model={modelId}");
+        }
+
+        var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(model.ApiKeyEncrypted, _config);
+        if (string.IsNullOrWhiteSpace(apiKey))
+            apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(platform.ApiKeyEncrypted, _config);
+
+        if (string.IsNullOrWhiteSpace(model.ApiUrl) && string.IsNullOrWhiteSpace(platform.ApiUrl))
+        {
+            return ModelResolutionResult.NotFound(
+                expectedModel ?? modelId,
+                $"PinnedModel API URL 配置不完整: platform={platformId}, model={modelId}");
+        }
+
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            return ModelResolutionResult.NotFound(
+                expectedModel ?? modelId,
+                $"PinnedModel API Key 配置不完整: platform={platformId}, model={modelId}");
+        }
+
+        _logger.LogInformation(
+            "[ModelResolver] PinnedModel 调度完成: Expected={Expected}, Platform={Platform}, Model={Model}",
+            expectedModel ?? modelId,
+            platform.Name,
+            model.ModelName);
+
+        return ModelResolutionResult.FromPinned(expectedModel ?? model.ModelName, model, platform, apiKey);
+    }
+
+    private async Task<ModelResolutionResult?> TryResolveLegacyConfigFallbackAsync(string modelType, string? expectedModel, CancellationToken ct)
+    {
+        if (!string.Equals(modelType, ModelTypes.Chat, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(modelType, ModelTypes.Intent, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var activeConfig = await _db.LLMConfigs.Find(c => c.IsActive).FirstOrDefaultAsync(ct);
+        if (activeConfig != null)
+        {
+            var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(activeConfig.ApiKeyEncrypted, _config);
+            if (!string.IsNullOrWhiteSpace(apiKey))
+            {
+                var endpoint = activeConfig.ApiEndpoint
+                    ?? (string.Equals(activeConfig.Provider, "Claude", StringComparison.OrdinalIgnoreCase)
+                        ? "https://api.anthropic.com/"
+                        : "https://api.openai.com/");
+                _logger.LogWarning(
+                    "[ModelResolver] 使用 legacy LLMConfig 兜底: Provider={Provider}, Model={Model}",
+                    activeConfig.Provider,
+                    activeConfig.Model);
+                return ModelResolutionResult.FromLegacyConfig(
+                    expectedModel,
+                    "LegacyConfig",
+                    activeConfig.Provider,
+                    activeConfig.Model,
+                    endpoint,
+                    apiKey);
+            }
+        }
+
+        var envApiKey = Environment.GetEnvironmentVariable("LLM__ClaudeApiKey") ?? _config["LLM:ClaudeApiKey"];
+        if (string.IsNullOrWhiteSpace(envApiKey))
+            return null;
+
+        var envModel = Environment.GetEnvironmentVariable("LLM__Model")
+            ?? _config["LLM:Model"]
+            ?? "claude-3-5-sonnet-20241022";
+        _logger.LogWarning(
+            "[ModelResolver] 使用环境变量 LLM 配置兜底: Model={Model}",
+            envModel);
+        return ModelResolutionResult.FromLegacyConfig(
+            expectedModel,
+            "LegacyEnvironment",
+            "Claude",
+            envModel,
+            "https://api.anthropic.com/",
+            envApiKey);
+    }
+
     private ModelGroupItem? SelectBestModel(ModelGroup group)
     {
         if (group.Models == null || group.Models.Count == 0)
@@ -790,12 +929,39 @@ public class InMemoryModelResolver : IModelResolver
         string appCallerCode,
         string modelType,
         string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null,
         CancellationToken ct = default)
     {
         // Step 1: 查找 AppCaller
         var appCaller = _appCallers.FirstOrDefault(a => a.AppCode == appCallerCode);
         List<ModelGroup>? candidateGroups = null;
         string resolutionType = "NotFound";
+
+        var platformId = pinnedPlatformId?.Trim();
+        var modelId = pinnedModelId?.Trim();
+        if (!string.IsNullOrWhiteSpace(platformId) || !string.IsNullOrWhiteSpace(modelId))
+        {
+            if (string.IsNullOrWhiteSpace(platformId) || string.IsNullOrWhiteSpace(modelId))
+            {
+                return Task.FromResult(ModelResolutionResult.NotFound(expectedModel ?? modelId,
+                    "PinnedModel 调用必须同时提供 pinnedPlatformId 与 pinnedModelId"));
+            }
+
+            var platform = _platforms.FirstOrDefault(p => p.Id == platformId && p.Enabled);
+            var model = _legacyModels.FirstOrDefault(m => m.Enabled
+                && m.PlatformId == platformId
+                && (m.ModelName == modelId || m.Id == modelId));
+
+            if (platform == null || model == null)
+            {
+                return Task.FromResult(ModelResolutionResult.NotFound(expectedModel ?? modelId,
+                    $"PinnedModel 模型不存在或未启用: platform={platformId}, model={modelId}"));
+            }
+
+            _apiKeys.TryGetValue(platform.Id, out var apiKey);
+            return Task.FromResult(ModelResolutionResult.FromPinned(expectedModel ?? model.ModelName, model, platform, apiKey));
+        }
 
         if (appCaller != null)
         {

@@ -100,6 +100,7 @@ export type LlmLogDetail = {
   expectedModel?: string | null;
   protocol?: string | null;
   resolutionReason?: string | null;
+  transport?: string | null;
   finishReason?: string | null;
   isStreaming?: boolean | null;
   error?: string | null;
@@ -109,6 +110,30 @@ export type LlmLogDetail = {
 export type LogsMeta = {
   models: string[];
   statuses: string[];
+  providers: string[];
+  appCallers: string[];
+  transports: string[];
+  requestTypes: string[];
+};
+
+export type LogsBucketItem = {
+  key: string;
+  count: number;
+};
+
+export type LogsSummaryData = {
+  total: number;
+  succeeded: number;
+  failed: number;
+  running: number;
+  cancelled: number;
+  fallbacks: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  averageDurationMs?: number | null;
+  transportDistribution: LogsBucketItem[];
+  statusDistribution: LogsBucketItem[];
 };
 
 // ── 列表查询参数 ──
@@ -119,6 +144,10 @@ export type LogsListParams = {
   to?: string;
   model?: string;
   status?: string;
+  provider?: string;
+  appCallerCode?: string;
+  transport?: string;
+  requestType?: string;
 };
 
 export type LogsListData = {
@@ -195,10 +224,21 @@ export type ShadowSnapshot = {
 };
 export type ShadowMismatch = { field: string; inproc?: string | null; http?: string | null; severity: string };
 export type ShadowItem = {
-  id: string; kind: string; requestId?: string | null; appCallerCode: string; modelType: string;
+  id: string; kind: string; requestId?: string | null; releaseCommit?: string | null; appCallerCode: string; modelType: string;
   comparedAt?: string | null; shadowDurationMs: number; httpOk: boolean; httpError?: string | null;
   allMatch: boolean; hasCritical: boolean; inproc: ShadowSnapshot; http: ShadowSnapshot;
   mismatches: ShadowMismatch[]; textMatches?: boolean | null;
 };
-export type ShadowSummary = { total: number; allMatch: number; critical: number; httpFail: number };
+export type ShadowSummary = {
+  total: number;
+  allMatch: number;
+  critical: number;
+  httpFail: number;
+  sinceHours?: number | null;
+  since?: string | null;
+  releaseCommit?: string | null;
+  firstComparedAt?: string | null;
+  lastComparedAt?: string | null;
+  coverageHours?: number;
+};
 export type ShadowData = { summary: ShadowSummary; recent: ShadowItem[] };

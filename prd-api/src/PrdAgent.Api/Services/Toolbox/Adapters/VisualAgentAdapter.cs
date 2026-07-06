@@ -4,6 +4,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Core.Models.Toolbox;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.LlmGateway.ImageGen;
 
 namespace PrdAgent.Api.Services.Toolbox.Adapters;
 
@@ -14,7 +15,7 @@ namespace PrdAgent.Api.Services.Toolbox.Adapters;
 public class VisualAgentAdapter : IAgentAdapter
 {
     private readonly ILlmGateway _gateway;
-    private readonly OpenAIImageClient _imageClient;
+    private readonly IImageGenerationClient _imageClient;
     private readonly ILogger<VisualAgentAdapter> _logger;
 
     public string AgentKey => "visual-agent";
@@ -28,7 +29,7 @@ public class VisualAgentAdapter : IAgentAdapter
         "compose"
     };
 
-    public VisualAgentAdapter(ILlmGateway gateway, OpenAIImageClient imageClient, ILogger<VisualAgentAdapter> logger)
+    public VisualAgentAdapter(ILlmGateway gateway, IImageGenerationClient imageClient, ILogger<VisualAgentAdapter> logger)
     {
         _gateway = gateway;
         _imageClient = imageClient;
@@ -118,7 +119,7 @@ public class VisualAgentAdapter : IAgentAdapter
         var size = context.Input.TryGetValue("size", out var sizeVal) ? sizeVal?.ToString() : null;
         var modelName = context.Input.TryGetValue("model", out var modelVal) ? modelVal?.ToString() : null;
 
-        // 走真实生图客户端（与主视觉创作同一引擎 OpenAIImageClient）：它会按模型能力
+        // 走真实生图网关客户端（与主视觉创作同一引擎）：它会按模型能力
         // 构造请求（尺寸归一化、response_format 适配、quality 仅在模型支持时下发）。
         // 不再手搓 raw body 硬塞 quality/size —— 那会被部分模型拒绝（"不支持quality"）。
         var res = await _imageClient.GenerateUnifiedAsync(

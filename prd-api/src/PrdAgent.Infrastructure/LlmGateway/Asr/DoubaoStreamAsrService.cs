@@ -3,8 +3,20 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.Logging;
 
-namespace PrdAgent.Api.Services;
+namespace PrdAgent.Infrastructure.LlmGateway;
+
+public interface IDoubaoStreamAsrExecutor
+{
+    Task<StreamAsrResult> TranscribeAsync(
+        string wsUrl,
+        string appKey,
+        string accessKey,
+        byte[] audioData,
+        Dictionary<string, object>? config = null,
+        CancellationToken ct = default);
+}
 
 /// <summary>
 /// 豆包流式 ASR WebSocket 客户端
@@ -20,7 +32,7 @@ namespace PrdAgent.Api.Services;
 /// 3. 最后一片标记 NEG_WITH_SEQUENCE
 /// 4. 接收 ServerFullResponse 直到 is_last_package
 /// </summary>
-public class DoubaoStreamAsrService
+public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
 {
     private readonly ILogger<DoubaoStreamAsrService> _logger;
 
@@ -314,6 +326,11 @@ public class DoubaoStreamAsrService
         CancellationToken ct = default)
     {
         var result = new StreamAsrResult();
+        if (audioData == null || audioData.Length == 0)
+        {
+            result.Error = "音频数据为空";
+            return result;
+        }
 
         // 诊断信息：从入参立即捕获，握手前/握手中/握手后逐步补充
         var diag = result.Diagnostic;
@@ -331,7 +348,7 @@ public class DoubaoStreamAsrService
             "[DoubaoStreamAsr] 入参: url={Url} resourceId={ResId} requestId={ReqId} " +
             "authMode={Mode} appKey={AppKey} accessKey={AccessKey} audio={Bytes}B",
             diag.WsUrl, diag.ResourceId, diag.RequestId, diag.AuthMode,
-            diag.AppKeyPreview, diag.AccessKeyPreview, audioData?.Length ?? 0);
+            diag.AppKeyPreview, diag.AccessKeyPreview, audioData.Length);
 
         // 音频预处理（复用 TranscribeAsync 的逻辑）
         byte[] pcmData;

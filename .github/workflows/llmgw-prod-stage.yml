@@ -1,0 +1,250 @@
+name: LLM Gateway Production Stage
+
+# GitHub only exposes workflow_dispatch entries from the default branch.
+# Merge this workflow to the default branch before treating it as a clickable production rollout entry.
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "Rollout stage to run."
+        required: true
+        type: choice
+        options:
+          - shadow-start
+          - rollback-rehearsal
+          - canary-intent-text
+          - canary-chat
+          - canary-streaming
+          - canary-vision
+          - canary-image
+          - canary-video-asr
+          - http-full
+          - rollback-inproc
+      commit:
+        description: "40-char release commit. Required for every non-rollback-inproc stage."
+        required: false
+        default: ""
+      execute:
+        description: "Actually execute fast.sh/exec_dep.sh or rollback. Leave false for dry-run."
+        required: true
+        default: false
+        type: boolean
+      repo:
+        description: "GitHub owner/repo passed to fast.sh and exec_dep.sh."
+        required: false
+        default: "inernoro/prd_agent"
+      map_base:
+        description: "MAP/API production base URL. Defaults to vars.PRD_AGENT_PROD_BASE."
+        required: false
+        default: ""
+      gw_base:
+        description: "Gateway serving production base URL. Defaults to vars.LLMGW_PROD_GATE_BASE."
+        required: false
+        default: ""
+      runner_labels_json:
+        description: "Self-hosted production runner labels JSON."
+        required: false
+        default: "[\"self-hosted\",\"prd-agent-prod\"]"
+      sample_percent:
+        description: "Shadow full sample percent for shadow/canary stages."
+        required: false
+        default: "1"
+      min_observation_hours:
+        description: "Minimum observation hours required before advancing stages."
+        required: false
+        default: "24"
+      main_ref:
+        description: "Mainline ref that the release commit must include."
+        required: false
+        default: "origin/main"
+      allow_out_of_order:
+        description: "Allow stage order override. Requires allow_out_of_order_reason."
+        required: true
+        default: false
+        type: boolean
+      allow_out_of_order_reason:
+        description: "Required reason when allow_out_of_order is true."
+        required: false
+        default: ""
+      rollout_evidence_run_id:
+        description: "Previous llmgw-prod-stage run id to restore .llmgw-release-evidence before continuing."
+        required: false
+        default: ""
+      rollout_evidence_artifact:
+        description: "Previous evidence artifact name. Defaults to llmgw-prod-stage-<rollout_evidence_run_id>."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: llmgw-prod-stage
+  cancel-in-progress: false
+
+jobs:
+  runner-precheck:
+    runs-on: ubuntu-latest
+    env:
+      INPUT_RUNNER_LABELS_JSON: ${{ github.event.inputs.runner_labels_json || '["self-hosted","prd-agent-prod"]' }}
+      GITHUB_TOKEN: ${{ secrets.PRD_AGENT_PROD_GITHUB_TOKEN || github.token }}
+    steps:
+      - name: Checkout release scripts
+        uses: actions/checkout@v4
+
+      - name: Check production runner availability
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .llmgw-release-evidence
+          python3 scripts/llmgw-prod-runner-precheck.py \
+            --repo "${{ github.repository }}" \
+            --labels-json "$INPUT_RUNNER_LABELS_JSON" \
+            --json-out .llmgw-release-evidence/runner-precheck.json
+
+      - name: Upload runner precheck report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: llmgw-prod-stage-runner-precheck-${{ github.run_id }}
+          path: .llmgw-release-evidence/runner-precheck.json
+          if-no-files-found: ignore
+
+  stage:
+    needs: runner-precheck
+    runs-on: ${{ fromJSON(github.event.inputs.runner_labels_json || '["self-hosted","prd-agent-prod"]') }}
+    environment: production
+    env:
+      INPUT_STAGE: ${{ github.event.inputs.stage || '' }}
+      INPUT_COMMIT: ${{ github.event.inputs.commit || '' }}
+      INPUT_EXECUTE: ${{ github.event.inputs.execute || 'false' }}
+      INPUT_REPO: ${{ github.event.inputs.repo || 'inernoro/prd_agent' }}
+      INPUT_MAP_BASE: ${{ github.event.inputs.map_base || '' }}
+      DEFAULT_MAP_BASE: ${{ vars.PRD_AGENT_PROD_BASE || '' }}
+      INPUT_GW_BASE: ${{ github.event.inputs.gw_base || '' }}
+      DEFAULT_GW_BASE: ${{ vars.LLMGW_PROD_GATE_BASE || '' }}
+      INPUT_SAMPLE_PERCENT: ${{ github.event.inputs.sample_percent || '1' }}
+      INPUT_MIN_OBSERVATION_HOURS: ${{ github.event.inputs.min_observation_hours || '24' }}
+      INPUT_MAIN_REF: ${{ github.event.inputs.main_ref || 'origin/main' }}
+      INPUT_ALLOW_OUT_OF_ORDER: ${{ github.event.inputs.allow_out_of_order || 'false' }}
+      INPUT_ALLOW_OUT_OF_ORDER_REASON: ${{ github.event.inputs.allow_out_of_order_reason || '' }}
+      INPUT_ROLLOUT_EVIDENCE_RUN_ID: ${{ github.event.inputs.rollout_evidence_run_id || '' }}
+      INPUT_ROLLOUT_EVIDENCE_ARTIFACT: ${{ github.event.inputs.rollout_evidence_artifact || '' }}
+      PRD_AGENT_API_KEY: ${{ secrets.PRD_AGENT_PROD_API_KEY }}
+      LLMGW_GATE_KEY: ${{ secrets.LLMGW_PROD_GATE_KEY }}
+      GITHUB_TOKEN: ${{ secrets.PRD_AGENT_PROD_GITHUB_TOKEN || github.token }}
+
+    steps:
+      - name: Checkout release scripts
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Restore previous rollout evidence
+        if: ${{ github.event.inputs.rollout_evidence_run_id != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.event.inputs.rollout_evidence_run_id }}
+          name: ${{ github.event.inputs.rollout_evidence_artifact != '' && github.event.inputs.rollout_evidence_artifact || format('llmgw-prod-stage-{0}', github.event.inputs.rollout_evidence_run_id) }}
+          path: .llmgw-release-evidence/
+          github-token: ${{ secrets.PRD_AGENT_PROD_GITHUB_TOKEN || github.token }}
+
+      - name: Run production stage
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          stage="$(printf '%s' "$INPUT_STAGE" | xargs)"
+          commit="$(printf '%s' "$INPUT_COMMIT" | xargs)"
+          execute="$(printf '%s' "$INPUT_EXECUTE" | xargs)"
+          repo="$(printf '%s' "$INPUT_REPO" | xargs)"
+          map_base="$(printf '%s' "${INPUT_MAP_BASE:-$DEFAULT_MAP_BASE}" | xargs)"
+          gw_base="$(printf '%s' "${INPUT_GW_BASE:-$DEFAULT_GW_BASE}" | xargs)"
+          sample_percent="$(printf '%s' "$INPUT_SAMPLE_PERCENT" | xargs)"
+          min_observation_hours="$(printf '%s' "$INPUT_MIN_OBSERVATION_HOURS" | xargs)"
+          main_ref="$(printf '%s' "$INPUT_MAIN_REF" | xargs)"
+          allow_out_of_order="$(printf '%s' "$INPUT_ALLOW_OUT_OF_ORDER" | xargs)"
+          allow_out_of_order_reason="$(printf '%s' "$INPUT_ALLOW_OUT_OF_ORDER_REASON" | xargs)"
+          rollout_evidence_run_id="$(printf '%s' "$INPUT_ROLLOUT_EVIDENCE_RUN_ID" | xargs)"
+
+          if [ -z "$stage" ]; then
+            echo "ERROR: missing rollout stage." >&2
+            exit 1
+          fi
+          if [ "$stage" != "rollback-inproc" ] && ! printf '%s' "$commit" | grep -Eq '^[0-9a-fA-F]{40}$'; then
+            echo "ERROR: non-rollback stages require a full 40-char commit." >&2
+            exit 1
+          fi
+          if [ "$stage" != "rollback-inproc" ] && [ "$stage" != "rollback-rehearsal" ] && [ -z "$map_base" ]; then
+            echo "ERROR: missing MAP base URL. Set vars.PRD_AGENT_PROD_BASE or workflow input map_base." >&2
+            exit 1
+          fi
+          if [ "$stage" != "rollback-inproc" ] && [ "$stage" != "rollback-rehearsal" ] && [ -z "$gw_base" ]; then
+            echo "ERROR: missing gateway base URL. Set vars.LLMGW_PROD_GATE_BASE or workflow input gw_base." >&2
+            exit 1
+          fi
+          if [ "$stage" != "rollback-inproc" ] && [ "$stage" != "rollback-rehearsal" ] && [ -z "$(printf '%s' "${PRD_AGENT_API_KEY:-}" | xargs)" ]; then
+            echo "ERROR: missing MAP API key. Set secrets.PRD_AGENT_PROD_API_KEY with logs:read access." >&2
+            exit 1
+          fi
+          if [ "$stage" != "rollback-inproc" ] && [ "$stage" != "rollback-rehearsal" ] && [ -z "$(printf '%s' "${LLMGW_GATE_KEY:-}" | xargs)" ]; then
+            echo "ERROR: missing gateway key. Set secrets.LLMGW_PROD_GATE_KEY." >&2
+            exit 1
+          fi
+          if [ "$allow_out_of_order" = "true" ] && [ -z "$allow_out_of_order_reason" ]; then
+            echo "ERROR: allow_out_of_order requires allow_out_of_order_reason." >&2
+            exit 1
+          fi
+          if [ "$stage" != "shadow-start" ] && [ "$stage" != "rollback-inproc" ] && [ -z "$rollout_evidence_run_id" ]; then
+            echo "ERROR: stage $stage requires rollout_evidence_run_id so prior rollout ledger evidence is restored." >&2
+            exit 1
+          fi
+
+          export PRD_AGENT_BASE="$map_base"
+          export LLMGW_GATE_BASE="$gw_base"
+          export LLMGW_STAGE_EVIDENCE_DIR=".llmgw-release-evidence"
+
+          args=(
+            --stage "$stage"
+            --commit "$commit"
+            --repo "$repo"
+            --sample-percent "$sample_percent"
+            --min-observation-hours "$min_observation_hours"
+            --main-ref "$main_ref"
+            --evidence-dir ".llmgw-release-evidence"
+          )
+          if [ "$execute" = "true" ]; then
+            args+=(--execute)
+          else
+            args+=(--dry-run)
+          fi
+          if [ "$allow_out_of_order" = "true" ]; then
+            args+=(--allow-out-of-order --allow-out-of-order-reason "$allow_out_of_order_reason")
+          fi
+
+          scripts/llmgw-prod-stage.sh "${args[@]}"
+
+      - name: Audit recorded rollout stage
+        if: ${{ github.event.inputs.execute == 'true' && github.event.inputs.stage != 'rollback-inproc' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/llmgw-rollout-ledger.py audit \
+            --ledger .llmgw-release-evidence/rollout-ledger.jsonl \
+            --commit "${{ github.event.inputs.commit }}" \
+            --target-stage "${{ github.event.inputs.stage }}" \
+            --require-target-success \
+            --min-observation-hours "${{ github.event.inputs.min_observation_hours || '24' }}" \
+            --json-out .llmgw-release-evidence/stage-audit.json \
+            --report-md .llmgw-release-evidence/stage-audit.md
+
+      - name: Upload rollout evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: llmgw-prod-stage-${{ github.run_id }}
+          path: .llmgw-release-evidence/
+          include-hidden-files: true
+          if-no-files-found: ignore

@@ -3,6 +3,9 @@ set -eu
 
 # Best-effort warmup for production deploys. The real deploy is done by
 # exec_dep.sh, so this script must not block a frontend-only release forever.
+# When both scripts are used, this script writes a release intent file and
+# exec_dep.sh refuses to deploy a different ref. This keeps api / llmgw /
+# llmgw-serve / llmgw-web on the same immutable commit during GW cutover.
 release_ref="${PRD_AGENT_RELEASE_REF:-}"
 release_ref_type="ref"
 if [ -z "$release_ref" ] && [ -n "${PRD_AGENT_DEPLOY_COMMIT:-}" ]; then
@@ -148,20 +151,61 @@ normalize_ref() {
 
 tag="$(normalize_ref "$release_ref" "$release_ref_type")"
 repo="${REPO:-inernoro/prd_agent}"
-image="${PRD_AGENT_API_IMAGE:-get.miduo.org/ghcr.io/${repo}/prdagent-server:${tag}}"
+api_image="${PRD_AGENT_API_IMAGE:-get.miduo.org/ghcr.io/${repo}/prdagent-server:${tag}}"
+llmgw_image="${PRD_AGENT_LLMGW_IMAGE:-get.miduo.org/ghcr.io/${repo}/prdagent-llmgw:${tag}}"
+llmgw_serve_image="${PRD_AGENT_LLMGW_SERVE_IMAGE:-get.miduo.org/ghcr.io/${repo}/prdagent-llmgw-serve:${tag}}"
+llmgw_web_image="${PRD_AGENT_LLMGW_WEB_IMAGE:-get.miduo.org/ghcr.io/${repo}/prdagent-llmgw-web:${tag}}"
 timeout_seconds="${FAST_PULL_TIMEOUT_SECONDS:-30}"
+release_intent_file="${PRD_AGENT_RELEASE_INTENT_FILE:-.prd-agent-release-intent.env}"
 
-echo "Warming api image: $image"
-if command -v timeout >/dev/null 2>&1; then
-  if timeout "$timeout_seconds" docker pull "$image"; then
-    echo "Api image warmup completed"
+warm_image() {
+  name="$1"
+  image="$2"
+  echo "Warming ${name} image: $image"
+  if command -v timeout >/dev/null 2>&1; then
+    if timeout "$timeout_seconds" docker pull "$image"; then
+      echo "${name} image warmup completed"
+    else
+      echo "WARN: ${name} image warmup skipped or timed out after ${timeout_seconds}s; exec_dep.sh will enforce release pull" >&2
+    fi
   else
-    echo "WARN: api image warmup skipped or timed out after ${timeout_seconds}s; exec_dep.sh will continue release" >&2
+    if docker pull "$image"; then
+      echo "${name} image warmup completed"
+    else
+      echo "WARN: ${name} image warmup failed; exec_dep.sh will enforce release pull" >&2
+    fi
   fi
-else
-  if docker pull "$image"; then
-    echo "Api image warmup completed"
-  else
-    echo "WARN: api image warmup failed; exec_dep.sh will continue release" >&2
+}
+
+warm_image "api" "$api_image"
+warm_image "llmgw" "$llmgw_image"
+warm_image "llmgw-serve" "$llmgw_serve_image"
+warm_image "llmgw-web" "$llmgw_web_image"
+
+write_release_intent() {
+  if [ -z "$release_intent_file" ]; then
+    return 0
   fi
-fi
+
+  intent_dir="$(dirname "$release_intent_file")"
+  if [ "$intent_dir" != "." ]; then
+    mkdir -p "$intent_dir"
+  fi
+
+  tmp_intent="${release_intent_file}.tmp.$$"
+  {
+    printf 'RELEASE_TAG=%s\n' "$tag"
+    printf 'RELEASE_REF_TYPE=%s\n' "$release_ref_type"
+    printf 'RELEASE_REF=%s\n' "$release_ref"
+    printf 'REPO=%s\n' "$repo"
+    printf 'PRD_AGENT_API_IMAGE=%s\n' "$api_image"
+    printf 'PRD_AGENT_LLMGW_IMAGE=%s\n' "$llmgw_image"
+    printf 'PRD_AGENT_LLMGW_SERVE_IMAGE=%s\n' "$llmgw_serve_image"
+    printf 'PRD_AGENT_LLMGW_WEB_IMAGE=%s\n' "$llmgw_web_image"
+    printf 'WRITTEN_AT_UTC=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%SZ')"
+  } > "$tmp_intent"
+  mv "$tmp_intent" "$release_intent_file"
+  echo "Release intent written: $release_intent_file (tag=$tag repo=$repo)"
+}
+
+write_release_intent

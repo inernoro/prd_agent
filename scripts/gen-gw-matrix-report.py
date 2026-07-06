@@ -154,6 +154,17 @@ def build_protocol_cells():
     add(group="claude-error", dim="D11", adapter="claude", method="stream",
         payload=jd({"type": "error", "error": {"message": "upstream boom"}}),
         expect={"chunkType": "Error", "error": "upstream boom"})
+    # Claude stream — tool_use streaming: content_block_start + input_json_delta → OpenAI tool_calls delta
+    add(group="claude-stream-tool-start", dim="D6/E8", adapter="claude", method="stream",
+        payload=jd({"type": "content_block_start", "index": 0,
+                    "content_block": {"type": "tool_use", "id": "toolu_1", "name": "search", "input": {}}}),
+        expect={"chunkType": "ToolCall", "toolDeltaCount": 1, "toolFirstIndex": 0,
+                "toolFirstId": "toolu_1", "toolFirstName": "search", "toolFirstArguments": ""})
+    add(group="claude-stream-tool-args", dim="D6/E8", adapter="claude", method="stream",
+        payload=jd({"type": "content_block_delta", "index": 0,
+                    "delta": {"type": "input_json_delta", "partial_json": "{\"q\":\"x\"}"}}),
+        expect={"chunkType": "ToolCall", "toolDeltaCount": 1, "toolFirstIndex": 0,
+                "toolFirstArguments": "{\"q\":\"x\"}"})
     # Claude stream — edge null
     for sfx, payload in [("empty", ""), ("unknown-type", jd({"type": "ping"}))]:
         add(group="claude-edge-null", dim="E1", adapter="claude", method="stream",

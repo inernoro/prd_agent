@@ -1,0 +1,1093 @@
+#!/usr/bin/env python3
+"""LLM Gateway full-cutover readiness audit.
+
+This script is a coordinator for release readiness. It does not mutate
+production state. It combines static release invariants, rollback dry-run,
+optional dotnet gate tests, optional D-layer smoke, optional shadow coverage matrix,
+optional serving stability/auth probe, and optional live release-gate evidence.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _read(rel: str) -> str:
+    return (ROOT / rel).read_text(encoding="utf-8")
+
+
+def _redact_cmd(cmd: list[str]) -> list[str]:
+    redacted: list[str] = []
+    redact_next = False
+    for item in cmd:
+        if redact_next:
+            redacted.append("***")
+            redact_next = False
+            continue
+        redacted.append(item)
+        if item in {"--key", "--gateway-key"}:
+            redact_next = True
+    return redacted
+
+
+def _run(
+    cmd: list[str],
+    *,
+    cwd: Path = ROOT,
+    env: dict[str, str] | None = None,
+    timeout: int = 300,
+    tail: int | None = 6000,
+) -> dict:
+    proc = subprocess.run(
+        cmd,
+        cwd=str(cwd),
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=timeout,
+        check=False,
+    )
+    return {
+        "cmd": _redact_cmd(cmd),
+        "cwd": str(cwd),
+        "exitCode": proc.returncode,
+        "stdout": proc.stdout if tail is None else proc.stdout[-tail:],
+        "stderr": proc.stderr if tail is None else proc.stderr[-tail:],
+        "ok": proc.returncode == 0,
+    }
+
+
+def _check(name: str, ok: bool, detail: str = "") -> dict:
+    return {"name": name, "ok": bool(ok), "detail": detail}
+
+
+def _contains_all(text: str, needles: list[str]) -> tuple[bool, str]:
+    missing = [item for item in needles if item not in text]
+    return not missing, "missing: " + ", ".join(missing) if missing else "ok"
+
+
+def _dictionary_block_is_empty(text: str, name: str) -> bool:
+    pattern = re.compile(
+        rf"{re.escape(name)}\s*=\s*new\([^)]*\)\s*\{{(?P<body>.*?)\}};",
+        re.DOTALL,
+    )
+    match = pattern.search(text)
+    if not match:
+        return False
+    body = re.sub(r"//.*", "", match.group("body")).strip()
+    return body == ""
+
+
+def _static_checks() -> list[dict]:
+    checks: list[dict] = []
+
+    release_gate = _read("scripts/llmgw-release-gate.py")
+    shadow_coverage = _read("scripts/llmgw-shadow-coverage-report.py")
+    serving_probe = _read("scripts/llmgw-serving-probe.py")
+    prod_preflight_workflow = _read(".github/workflows/llmgw-prod-preflight.yml")
+    prod_stage_workflow = _read(".github/workflows/llmgw-prod-stage.yml")
+    prod_stage_path = ROOT / "scripts/llmgw-prod-stage.sh"
+    prod_stage = prod_stage_path.read_text(encoding="utf-8")
+    rollout_ledger_path = ROOT / "scripts/llmgw-rollout-ledger.py"
+    rollout_ledger = rollout_ledger_path.read_text(encoding="utf-8") if rollout_ledger_path.exists() else ""
+    prod_preflight_path = ROOT / "scripts/llmgw-prod-preflight.py"
+    prod_preflight = prod_preflight_path.read_text(encoding="utf-8") if prod_preflight_path.exists() else ""
+    ok, detail = _contains_all(
+        release_gate,
+        [
+            "--since-hours",
+            "--min-coverage-hours",
+            "--require-kind",
+            "--require-app-kind",
+            "--shadow-release-commit",
+            "--health-samples",
+            "--json-out",
+            "critical mismatch",
+            "httpFail",
+            "coverageHours",
+            "shadowReleaseCommit",
+        ],
+    )
+    checks.append(_check("release_gate_supports_required_shadow_and_health_gates", ok, detail))
+
+    ok, detail = _contains_all(
+        shadow_coverage,
+        [
+            "LLM Gateway shadow coverage",
+            "/shadow-comparisons",
+            "--app-caller",
+            "--kind",
+            "--min-per-cell",
+            "--min-coverage-hours",
+            "--release-commit",
+            "LLMGW_HTTP_APP_CALLER_ALLOWLIST",
+            "critical",
+            "httpFail",
+            "coverageHours",
+            "LLMGW_SHADOW_COVERAGE_JSON_OUT",
+            "LLMGW_SHADOW_COVERAGE_REPORT_MD",
+            "releaseCommit",
+        ],
+    )
+    checks.append(_check("shadow_coverage_report_available", ok, detail))
+
+    shadow_watch = _read(".github/workflows/llmgw-shadow-watch.yml")
+    ok, detail = _contains_all(
+        shadow_watch,
+        [
+            "cron: \"17 */6 * * *\"",
+            "LLMGW_PROD_GATE_BASE",
+            "LLMGW_PROD_GATE_KEY",
+            "expect_commit",
+            "INPUT_EXPECT_COMMIT",
+            "missing production expected commit",
+            "--expect-commit \"$expect_commit\"",
+            "--run-serving-probe",
+            "--run-shadow-coverage",
+            "--require-release-gate",
+            "--min-coverage-hours \"$MIN_COVERAGE_HOURS\"",
+            "WATCH_APP_CALLERS",
+            "WATCH_REQUIRED_APP_KINDS",
+            "actions/upload-artifact@v4",
+        ],
+    )
+    checks.append(_check("shadow_watch_workflow_runs_scheduled_evidence_gate", ok, detail))
+
+    ok, detail = _contains_all(
+        prod_preflight_workflow,
+        [
+            "LLM Gateway Production Preflight",
+            "workflow_dispatch:",
+            "mode:",
+            "start",
+            "completion",
+            "PRD_AGENT_PROD_BASE",
+            "PRD_AGENT_PROD_API_KEY",
+            "LLMGW_PROD_GATE_BASE",
+            "LLMGW_PROD_GATE_KEY",
+            "LLMGW_PROD_EXPECT_COMMIT",
+            "rollout_evidence_run_id",
+            "actions: read",
+            "logs:read access",
+            "actions/download-artifact@v4",
+            "Restore rollout evidence for completion",
+            "llmgw-prod-stage-{0}",
+            ".llmgw-release-evidence/",
+            "default branch",
+            "completion mode requires rollout_evidence_run_id",
+            "completion mode could not find .llmgw-release-evidence/rollout-ledger.jsonl after artifact restore",
+            "scripts/llmgw-prod-preflight.py",
+            "--mode \"$mode\"",
+            "--map-base \"$map_base\"",
+            "--gw-base \"$gw_base\"",
+            "--expect-commit \"$expect_commit\"",
+            "--rollout-target-stage \"$ROLLOUT_TARGET_STAGE\"",
+            "--rollout-min-observation-hours \"$ROLLOUT_MIN_OBSERVATION_HOURS\"",
+            "artifacts/llmgw-prod-preflight/prod-preflight.json",
+            "actions/upload-artifact@v4",
+        ],
+    )
+    leaks_preflight_secret = "echo \"$PRD_AGENT_API_KEY\"" in prod_preflight_workflow or "echo \"$LLMGW_GATE_KEY\"" in prod_preflight_workflow
+    checks.append(_check(
+        "prod_preflight_workflow_uploads_redacted_start_completion_report",
+        ok and not leaks_preflight_secret,
+        f"{detail}; leaksPreflightSecret={leaks_preflight_secret}",
+    ))
+
+    ok, detail = _contains_all(
+        prod_stage_workflow,
+        [
+            "LLM Gateway Production Stage",
+            "workflow_dispatch:",
+            "stage:",
+            "shadow-start",
+            "rollback-rehearsal",
+            "canary-intent-text",
+            "canary-chat",
+            "canary-streaming",
+            "canary-vision",
+            "canary-image",
+            "canary-video-asr",
+            "http-full",
+            "rollback-inproc",
+            "execute:",
+            "default: false",
+            "runner_labels_json",
+            "[\\\"self-hosted\\\",\\\"prd-agent-prod\\\"]",
+            "environment: production",
+            "PRD_AGENT_PROD_BASE",
+            "PRD_AGENT_PROD_API_KEY",
+            "LLMGW_PROD_GATE_BASE",
+            "LLMGW_PROD_GATE_KEY",
+            "PRD_AGENT_PROD_GITHUB_TOKEN",
+            "rollout_evidence_run_id",
+            "actions: read",
+            "logs:read access",
+            "actions/download-artifact@v4",
+            "Restore previous rollout evidence",
+            "llmgw-prod-stage-{0}",
+            "default branch",
+            "scripts/llmgw-prod-stage.sh",
+            "stage $stage requires rollout_evidence_run_id so prior rollout ledger evidence is restored",
+            "--stage \"$stage\"",
+            "--commit \"$commit\"",
+            "--execute",
+            "--dry-run",
+            "--repo \"$repo\"",
+            "--sample-percent \"$sample_percent\"",
+            "--min-observation-hours \"$min_observation_hours\"",
+            "--main-ref \"$main_ref\"",
+            "--evidence-dir \".llmgw-release-evidence\"",
+            "--allow-out-of-order-reason \"$allow_out_of_order_reason\"",
+            "scripts/llmgw-rollout-ledger.py audit",
+            "--require-target-success",
+            "stage-audit.json",
+            "stage-audit.md",
+            "actions/upload-artifact@v4",
+            ".llmgw-release-evidence/",
+        ],
+    )
+    leaks_stage_secret = "echo \"$PRD_AGENT_API_KEY\"" in prod_stage_workflow or "echo \"$LLMGW_GATE_KEY\"" in prod_stage_workflow
+    checks.append(_check(
+        "prod_stage_workflow_runs_on_production_runner_and_uploads_rollout_evidence",
+        ok and not leaks_stage_secret,
+        f"{detail}; leaksStageSecret={leaks_stage_secret}",
+    ))
+
+    ok, detail = _contains_all(
+        serving_probe,
+        [
+            "LLM Gateway serving probe",
+            "/healthz",
+            "--protected-path",
+            "expectedCommit",
+            "healthSamples",
+            "protectedChecks",
+            "commit drift",
+            "should reject missing key with 401",
+            "LLMGW_SERVING_PROBE_JSON_OUT",
+            "LLMGW_SERVING_PROBE_REPORT_MD",
+        ],
+    )
+    checks.append(_check("serving_probe_available", ok, detail))
+
+    ok, detail = _contains_all(
+        prod_stage,
+        [
+            "LLM Gateway production stage runner",
+            "shadow-start",
+            "canary-intent-text",
+            "canary-chat",
+            "canary-streaming",
+            "canary-vision",
+            "canary-image",
+            "canary-video-asr",
+            "rollback-rehearsal",
+            "http-full",
+            "rollback-inproc",
+            "LLMGW_GATE_KEY, GW_KEY, or LLMGW_SERVE_KEY",
+            "execute=0",
+            "--execute",
+            "LLMGW_GATE_BASE",
+            "LLMGW_STAGE_MIN_OBSERVATION_HOURS",
+            "--min-observation-hours",
+            "LLMGW_RELEASE_MAIN_REF",
+            "--main-ref",
+            "validate_main_ancestry",
+            "git merge-base --is-ancestor",
+            "release commit does not include latest main",
+            "LLMGW_ALLOW_OUT_OF_ORDER_REASON",
+            "--allow-out-of-order-reason",
+            "requires --allow-out-of-order-reason",
+            "allowOutOfOrderReason",
+            "minObservationHours",
+            "PRD_AGENT_REQUIRE_FAST_INTENT",
+            "LLMGW_PROD_STAGE_ACTIVE=1",
+            "LLMGW_PROD_STAGE=\"$stage\"",
+            "LLMGW_GATE_JSON_OUT",
+            "LLMGW_GATE_REPORT_MD",
+            "rollout-ledger.jsonl",
+            "--allow-out-of-order",
+            "validate_ledger_order",
+            "append_ledger_entry success",
+            "record_failed_stage_on_exit",
+            "append_ledger_entry failed",
+            "LLM Gateway production stage failed; appending failed rollout ledger entry.",
+            "append_ledger_entry rollback",
+            "rollout_ledger_status=\"rollback\"",
+            "release-gate.json",
+            "prod-preflight.json",
+            "serving-probe.json",
+            "gw-smoke.json",
+            "run_prod_preflight",
+            "scripts/llmgw-prod-preflight.py --mode start",
+            "--prod-preflight-json \"$prod_preflight_json\"",
+            "stage-report",
+            "GW_SMOKE_JSON_OUT",
+            "LLMGW_SERVING_PROBE_JSON_OUT",
+            "scripts/llmgw-rollout-ledger.py validate",
+            "scripts/llmgw-rollout-ledger.py append",
+            "report-agent.generate::chat,prd-agent-desktop.chat.sendmessage::chat,open-platform-agent.proxy::chat",
+            "visual-agent.image.text2img::generation,visual-agent.image.img2img::generation",
+            "video-agent.videogen::video-gen,document-store.subtitle::asr,transcript-agent.transcribe::asr",
+            "./fast.sh --commit \"$commit\"",
+            "./exec_dep.sh --commit \"$commit\"",
+            "scripts/llmgw-rollback-inproc.sh",
+            "LLMGW_ROLLBACK_DRY_RUN=1 scripts/llmgw-rollback-inproc.sh",
+        ],
+    )
+    executable = bool(prod_stage_path.stat().st_mode & stat.S_IXUSR)
+    ledger_executable = bool(rollout_ledger_path.exists() and (rollout_ledger_path.stat().st_mode & stat.S_IXUSR))
+    preflight_executable = bool(prod_preflight_path.exists() and (prod_preflight_path.stat().st_mode & stat.S_IXUSR))
+    ledger_ok, ledger_detail = _contains_all(
+        rollout_ledger,
+        [
+            "LLM Gateway rollout ledger",
+            "STAGES = [",
+            "ROLLBACK_REHEARSAL_STAGE = \"rollback-rehearsal\"",
+            "_stage_requires_rehearsal",
+            "shadow-start",
+            "canary-video-asr",
+            "http-full",
+            "missing_success",
+            "requires rollback rehearsal success for the same commit",
+            "min_observation_hours",
+            "rollout stage observation window not satisfied",
+            "_latest_success_evidence_failures",
+            "_existing_success_evidence_failures",
+            "rollout stage prior evidence validation failed",
+            "prior stage evidence invalid before rollout",
+            "existing prior stage evidence invalid before out-of-order rollout",
+            "allow-out-of-order",
+            "allow-out-of-order-reason",
+            "\"allowOutOfOrder\": _bool_flag(args.allow_out_of_order)",
+            "\"allowOutOfOrderReason\": args.allow_out_of_order_reason.strip()",
+            "allowOutOfOrder missing reason",
+            "ensure_ascii=False",
+            "\"status\": args.status",
+            "\"evidenceJson\": args.evidence_json",
+            "\"prodPreflightJson\": args.prod_preflight_json",
+            "_require_prod_preflight_for_commit",
+            "production preflight evidence",
+            "\"servingProbeJson\": args.serving_probe_json",
+            "\"smokeJson\": args.smoke_json",
+            "\"rollbackRehearsal\": args.stage == ROLLBACK_REHEARSAL_STAGE",
+            "\"releaseMainRef\": args.main_ref",
+            "\"releaseMainSha\": args.main_sha.lower()",
+            "\"minStageObservationHours\": args.min_stage_observation_hours",
+            "missing releaseMainSha",
+            "_require_pass_json",
+            "_require_smoke_for_commit",
+            "_require_stage_evidence_matches_entry",
+            "missing expectedCommit for same-commit evidence",
+            "releaseMainSha mismatch",
+            "D-layer smoke healthCommit mismatch",
+            "stage-report",
+            "audit",
+            "ROLLOUT_SEQUENCE",
+            "requireTargetSuccess",
+            "LLM Gateway rollout ledger audit",
+        ],
+    )
+    preflight_ok, preflight_detail = _contains_all(
+        prod_preflight,
+        [
+            "LLM Gateway production preflight",
+            "--mode",
+            "start",
+            "completion",
+            "map_logs_scope",
+            "gateway_protected_requires_key",
+            "rollout_ledger_start_ready",
+            "rollout_ledger_completion",
+            "PRD_AGENT_API_KEY",
+            "LLMGW_GATE_BASE",
+            "LLMGW_GATE_KEY",
+            "LLMGW_SERVE_KEY",
+            "scripts/llmgw-rollout-ledger.py",
+            "--require-target-success",
+            "\"expectCommit\"",
+        ],
+    )
+    leaks_key_arg = "--key" in prod_stage or "--gateway-key" in prod_stage or "--key" in rollout_ledger
+    checks.append(_check(
+        "prod_stage_runner_sequences_shadow_canary_http_and_rollback",
+        ok and ledger_ok and preflight_ok and executable and ledger_executable and preflight_executable and not leaks_key_arg,
+        f"{detail}; ledger={ledger_detail}; preflight={preflight_detail}; executable={executable}; ledgerExecutable={ledger_executable}; preflightExecutable={preflight_executable}; leaksKeyArg={leaks_key_arg}",
+    ))
+
+    fast = _read("fast.sh")
+    ok, detail = _contains_all(
+        fast,
+        [
+            "PRD_AGENT_RELEASE_INTENT_FILE",
+            ".prd-agent-release-intent.env",
+            "write_release_intent",
+            "RELEASE_TAG=%s",
+            "RELEASE_REF_TYPE=%s",
+            "PRD_AGENT_LLMGW_SERVE_IMAGE=%s",
+            "PRD_AGENT_LLMGW_WEB_IMAGE=%s",
+            "Release intent written:",
+        ],
+    )
+    checks.append(_check("fast_writes_same_commit_release_intent", ok, detail))
+
+    exec_dep = _read("exec_dep.sh")
+    ok, detail = _contains_all(
+        exec_dep,
+        [
+            "run_llmgw_release_gate_if_needed",
+            "run_llmgw_post_deploy_verification_if_needed",
+            "LLMGW_POST_DEPLOY_VERIFY_NEEDED",
+            "check_fast_release_intent",
+            "PRD_AGENT_RELEASE_INTENT_FILE",
+            "PRD_AGENT_REQUIRE_FAST_INTENT",
+            "PRD_AGENT_IGNORE_FAST_INTENT",
+            "fast.sh / exec_dep.sh release ref mismatch",
+            "guard_llmgw_prod_stage_context_if_needed",
+            "check_intent_image_match PRD_AGENT_API_IMAGE",
+            "check_intent_image_match PRD_AGENT_LLMGW_IMAGE",
+            "check_intent_image_match PRD_AGENT_LLMGW_SERVE_IMAGE",
+            "check_intent_image_match PRD_AGENT_LLMGW_WEB_IMAGE",
+            "fast.sh / exec_dep.sh image mismatch",
+            "Release intent: matched fast.sh warmup",
+            "LLMGW_HTTP_APP_CALLER_ALLOWLIST",
+            "LLMGW_CANARY_STAGE",
+            "canary_allowed_app_callers=\"report-agent.generate::chat prd-agent-desktop.chat.sendmessage::chat open-platform-agent.proxy::chat\"",
+            "ERROR: LLM Gateway canary 发布设置了 LLMGW_HTTP_APP_CALLER_ALLOWLIST，但未设置 LLMGW_CANARY_STAGE。",
+            "LLMGW_PROD_STAGE_ACTIVE",
+            "LLMGW_PROD_STAGE",
+            "必须通过 scripts/llmgw-prod-stage.sh 执行",
+            "绕过 rollout ledger、生产预检和阶段顺序审计",
+            "ERROR: LLM Gateway canary 阶段 $canary_stage 不允许入口 $app_trimmed。",
+            "LLM Gateway canary stage: $canary_stage allowlist=$allowlist_compact",
+            "LLMGW_SHADOW_FULL_SAMPLE_PERCENT",
+            "shadow_sample_enabled=0",
+            "release_gate_required=0",
+            "shadow sample startup",
+            "serving/smoke verification runs after compose up",
+            "LLMGW_GATE_SHADOW_SINCE_HOURS",
+            "--since-hours ${LLMGW_GATE_SHADOW_SINCE_HOURS:-24}",
+            "LLMGW_GATE_MIN_COVERAGE_HOURS",
+            "--min-coverage-hours $gate_min_coverage_hours",
+            "默认要求 shadow 证据覆盖 24 小时",
+            "same-commit shadow evidence only; commit probe runs after compose up",
+            "--shadow-release-commit $expect_commit",
+            "--health-samples ${LLMGW_GATE_HEALTH_SAMPLES:-3}",
+            "probe_args=\"$probe_args --expect-commit $expect_commit\"",
+            "LLMGW_GATE_FULL_HTTP_APP_CALLERS",
+            "gate_app_callers_raw=\"${LLMGW_GATE_FULL_HTTP_APP_CALLERS:-report-agent.generate::chat",
+            "visual-agent.image.img2img::generation",
+            "document-store.subtitle::asr",
+            "required_kinds_raw=\"${LLMGW_GATE_REQUIRED_KINDS:-}\"",
+            "required_kinds_raw=\"send:${full_http_kind_min},stream:${full_http_kind_min},raw:${full_http_kind_min}\"",
+            "LLMGW_GATE_CANARY_KIND_MIN",
+            "required_kinds_raw=\"stream:${canary_kind_min}\"",
+            "required_kinds_raw=\"raw:${canary_kind_min}\"",
+            "LLMGW_GATE_FULL_HTTP_APP_KINDS",
+            "required_app_kinds_raw=\"${LLMGW_GATE_REQUIRED_APP_KINDS:-}\"",
+            "full_http_app_kind_min=\"${LLMGW_GATE_FULL_HTTP_APP_KIND_MIN:-${LLMGW_GATE_FULL_HTTP_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}}\"",
+            "visual-agent.image.img2img::generation:raw:",
+            "video-agent.videogen::video-gen:raw:",
+            "transcript-agent.transcribe::asr:raw:",
+            "LLMGW_GATE_CANARY_APP_KIND_MIN",
+            "LLMGW_GATE_CANARY_APP_KINDS",
+            "canary 阶段 $canary_stage 默认要求 raw app-kind 样本逐个达标",
+            "LLMGW_GATE_RUN_SMOKE",
+            "GW_BASE=\"$gate_base\" GW_KEY=\"$gate_key\" GW_TIMEOUT=\"${LLMGW_GATE_SMOKE_TIMEOUT_SECONDS:-120}\" GW_EXPECT_COMMIT=\"$expect_commit\" python3 scripts/gw-smoke.py",
+            "LLMGW_GATE_RUN_SERVING_PROBE",
+            "LLMGW_SERVING_PROBE_JSON_OUT",
+            "GW_SMOKE_JSON_OUT",
+            "python3 scripts/llmgw-serving-probe.py $probe_args",
+            "LLM Gateway post-deploy serving probe",
+            "LLM Gateway post-deploy D-layer smoke",
+            "LLMGW_SKIP_RELEASE_GATE=1",
+            "LLMGW_SKIP_RELEASE_GATE=1 is not allowed when LLM Gateway release evidence is required",
+            "Use scripts/llmgw-rollback-inproc.sh for emergency rollback",
+        ],
+    )
+    checks.append(_check("exec_dep_gates_http_canary_and_shadow_sample_release", ok, detail))
+
+    rollback_path = ROOT / "scripts/llmgw-rollback-inproc.sh"
+    rollback = rollback_path.read_text(encoding="utf-8")
+    ok, detail = _contains_all(
+        rollback,
+        [
+            "export LLMGW_MODE=inproc",
+            "export LLMGW_HTTP_APP_CALLER_ALLOWLIST=",
+            "export LLMGW_SHADOW_FULL_SAMPLE_PERCENT=0",
+            "LLMGW_ROLLBACK_DRY_RUN",
+            "LLM Gateway rollback dry-run",
+            "up -d --no-deps --force-recreate",
+            "database: unchanged",
+            "images: unchanged",
+        ],
+    )
+    executable = bool(rollback_path.stat().st_mode & stat.S_IXUSR)
+    destructive = any(item in rollback for item in ["down -v", "docker volume rm", "mongorestore", "db.dropDatabase", "git checkout"])
+    checks.append(_check("rollback_script_is_safe_and_executable", ok and executable and not destructive, f"{detail}; executable={executable}; destructive={destructive}"))
+
+    direct = _read("prd-api/tests/PrdAgent.Tests/GatewayDirectClientRatchetTests.cs")
+    direct_empty = _dictionary_block_is_empty(direct, "Baseline")
+    manual_empty = _dictionary_block_is_empty(direct, "ManualUpstreamHttpBaseline")
+    checks.append(_check("direct_client_ratchet_baselines_are_empty", direct_empty and manual_empty, f"Baseline={direct_empty}; ManualUpstreamHttpBaseline={manual_empty}"))
+    ok, detail = _contains_all(
+        direct,
+        [
+            "ManualUpstreamHttpDetector_CoversTextImageAudioVideoEndpoints",
+            "ManualUpstreamHttpDetector_DoesNotFlagGatewayRawRequests",
+            "ContainsProviderModelEndpoint",
+            "/v1/chat/completions",
+            "/v1/messages",
+            "/v1/responses",
+            "/v1/images/generations",
+            "/v1/images/edits",
+            "/v1/audio/transcriptions",
+            "/v1/audio/speech",
+            "/v1/embeddings",
+            "/v1/rerank",
+            "/videos",
+            "GatewayRawRequest",
+            "SendRawWithResolutionAsync",
+        ],
+    )
+    checks.append(_check(
+        "manual_upstream_http_guard_covers_text_image_audio_video",
+        ok,
+        detail,
+    ))
+
+    gateway_src = _read("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs")
+    multipart_tests = _read("prd-api/tests/PrdAgent.Api.Tests/Gateway/GatewayMultipartHttpTests.cs")
+    no_unsupported = "MULTIPART_HTTP_UNSUPPORTED" not in "\n".join(
+        path.read_text(encoding="utf-8", errors="ignore")
+        for path in (ROOT / "prd-api/src").rglob("*.cs")
+    )
+    ok, detail = _contains_all(
+        gateway_src + "\n" + multipart_tests,
+        [
+            "RehydrateMultipartFileRefsAsync",
+            "MultipartFileRefs",
+            "MULTIPART_REF_HASH_MISMATCH",
+            "HttpClient_UploadsInlineMultipartFiles_AsRefs_WithoutSerializingBytes",
+            "RawEndpoint_RehydratesMultipartFileRefs_BeforeGatewaySend",
+        ],
+    )
+    checks.append(_check("multipart_http_path_has_refs_rehydrate_and_hash_guard", ok and no_unsupported, f"{detail}; noUnsupported={no_unsupported}"))
+
+    compose = _read("docker-compose.yml")
+    ok, detail = _contains_all(
+        compose,
+        [
+            "LlmGateway__Mode=${LLMGW_MODE:-inproc}",
+            "LlmGateway__HttpAppCallerAllowlist=${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}",
+            "LlmGateway__ShadowFullSamplePercent=${LLMGW_SHADOW_FULL_SAMPLE_PERCENT:-0}",
+            "LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}",
+            "LlmGwServe__ApiKey=${LLMGW_SERVE_KEY:?",
+            "LLMGW_ADMIN_PASSWORD=${LLMGW_ADMIN_PASSWORD:-}",
+            "LLMGW_ADMIN_FORCE_RESET=${LLMGW_ADMIN_FORCE_RESET:-}",
+        ],
+    )
+    admin_password_required = "LLMGW_ADMIN_PASSWORD=${LLMGW_ADMIN_PASSWORD:?" in compose
+    admin_user_env = "LLMGW_ADMIN_USER" in compose
+    checks.append(_check(
+        "compose_exposes_gateway_mode_and_data_domain_controls",
+        ok and not admin_password_required and not admin_user_env,
+        f"{detail}; adminPasswordRequired={admin_password_required}; adminUserEnv={admin_user_env}",
+    ))
+
+    return checks
+
+
+def _rollback_dry_run() -> dict:
+    with tempfile.TemporaryDirectory(prefix="llmgw-rollback-audit-") as tmp:
+        tmp_path = Path(tmp)
+        fake_compose = tmp_path / "docker-compose"
+        out_path = tmp_path / "compose.out"
+        fake_compose.write_text(
+            "#!/usr/bin/env sh\n"
+            "printf 'ARGS=%s\\n' \"$*\" > \"$FAKE_ROLLBACK_OUT\"\n"
+            "printf 'LLMGW_MODE=%s\\n' \"$LLMGW_MODE\" >> \"$FAKE_ROLLBACK_OUT\"\n"
+            "printf 'ALLOWLIST=%s\\n' \"$LLMGW_HTTP_APP_CALLER_ALLOWLIST\" >> \"$FAKE_ROLLBACK_OUT\"\n"
+            "printf 'SHADOW=%s\\n' \"$LLMGW_SHADOW_FULL_SAMPLE_PERCENT\" >> \"$FAKE_ROLLBACK_OUT\"\n",
+            encoding="utf-8",
+        )
+        fake_compose.chmod(0o755)
+        env = os.environ.copy()
+        env["PATH"] = f"{tmp}:{env.get('PATH', '')}"
+        env["FAKE_ROLLBACK_OUT"] = str(out_path)
+        env["LLMGW_ROLLBACK_COMPOSE_FILE"] = str(ROOT / "docker-compose.yml")
+        env["LLMGW_ROLLBACK_DRY_RUN"] = "1"
+        result = _run(["scripts/llmgw-rollback-inproc.sh"], env=env, timeout=60)
+        captured = out_path.read_text(encoding="utf-8") if out_path.exists() else ""
+        stdout = str(result.get("stdout") or "")
+        ok = (
+            result["ok"]
+            and not captured
+            and "dryRun: 1" in stdout
+            and "LLM Gateway rollback dry-run" in stdout
+            and "up -d --no-deps --force-recreate api" in stdout
+            and "API would restart with LLMGW_MODE=inproc" in stdout
+        )
+        return {"name": "rollback_dry_run", "ok": ok, "detail": stdout + captured, "command": result}
+
+
+def _dotnet_checks() -> list[dict]:
+    checks: list[dict] = []
+    tests = [
+        (
+            "gateway_data_domain_and_direct_ratchet_tests",
+            [
+                "dotnet",
+                "test",
+                "tests/PrdAgent.Tests/PrdAgent.Tests.csproj",
+                "--no-restore",
+                "--filter",
+                "FullyQualifiedName~GatewayDataDomainGuardTests|FullyQualifiedName~GatewayDirectClientRatchetTests",
+            ],
+            ROOT / "prd-api",
+        ),
+        (
+            "gateway_protocol_and_shadow_unit_tests",
+            [
+                "dotnet",
+                "test",
+                "tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj",
+                "--no-restore",
+                "--filter",
+                "FullyQualifiedName~GatewayProtocolFidelityTests|FullyQualifiedName~ClaudeToolTranslationTests|FullyQualifiedName~ShadowLlmGatewayTests",
+            ],
+            ROOT / "prd-api",
+        ),
+        (
+            "gateway_http_boundary_unit_tests",
+            [
+                "dotnet",
+                "test",
+                "tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj",
+                "--no-restore",
+                "--filter",
+                "FullyQualifiedName~GatewayMultipartHttpTests|FullyQualifiedName~GatewayKeyGateContractTests|FullyQualifiedName~HttpLlmGatewayClientFailureTests",
+            ],
+            ROOT / "prd-api",
+        ),
+        (
+            "gateway_cross_process_matrix_tests",
+            [
+                "dotnet",
+                "test",
+                "tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj",
+                "--no-restore",
+                "--filter",
+                "FullyQualifiedName~CrossProcessServingSelfTest|FullyQualifiedName~CrossProcessServingErrorLoadTests|FullyQualifiedName~GatewayServingEndpointContractTests",
+            ],
+            ROOT / "prd-api",
+        ),
+        (
+            "gateway_media_contract_tests",
+            [
+                "dotnet",
+                "test",
+                "tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj",
+                "--no-restore",
+                "--filter",
+                "FullyQualifiedName~GatewayDoubaoStreamAsrTests|FullyQualifiedName~OpenRouterVideoClientGatewayTests",
+            ],
+            ROOT / "prd-api",
+        ),
+    ]
+    env = os.environ.copy()
+    env["DOTNET_ROLL_FORWARD"] = env.get("DOTNET_ROLL_FORWARD", "Major")
+    for name, cmd, cwd in tests:
+        result = _run(cmd, cwd=cwd, env=env, timeout=600)
+        checks.append({"name": name, "ok": result["ok"], "detail": result["stdout"] + result["stderr"], "command": result})
+    return checks
+
+
+def _release_gate(args: argparse.Namespace) -> dict:
+    cmd = [
+        "python3",
+        "scripts/llmgw-release-gate.py",
+        "--base",
+        args.base,
+        "--key",
+        args.key,
+        "--min-total",
+        str(args.min_total),
+        "--min-per-app",
+        str(args.min_per_app),
+        "--since-hours",
+        str(args.since_hours),
+        "--min-coverage-hours",
+        str(args.min_coverage_hours),
+        "--health-samples",
+        str(args.health_samples),
+        "--health-interval",
+        str(args.health_interval),
+    ]
+    if args.expect_commit:
+        cmd.extend(["--expect-commit", args.expect_commit])
+    for item in args.app_caller:
+        cmd.extend(["--app-caller", item])
+    for item in args.require_kind:
+        cmd.extend(["--require-kind", item])
+    for item in args.require_app_kind:
+        cmd.extend(["--require-app-kind", item])
+    result = _run(cmd, timeout=600)
+    return {"name": "live_release_gate", "ok": result["ok"], "detail": result["stdout"] + result["stderr"], "command": result}
+
+
+def _gw_smoke(args: argparse.Namespace) -> dict:
+    env = os.environ.copy()
+    env["GW_BASE"] = args.base
+    env["GW_KEY"] = args.key
+    if args.smoke_timeout_seconds > 0:
+        env["GW_TIMEOUT"] = str(args.smoke_timeout_seconds)
+    if args.expect_commit:
+        env["GW_EXPECT_COMMIT"] = args.expect_commit
+    result = _run(["python3", "scripts/gw-smoke.py"], env=env, timeout=max(60, args.smoke_timeout_seconds * 10))
+    return {"name": "gw_smoke_d_layer", "ok": result["ok"], "detail": result["stdout"] + result["stderr"], "command": result}
+
+
+def _shadow_coverage(args: argparse.Namespace) -> dict:
+    cmd = [
+        "python3",
+        "scripts/llmgw-shadow-coverage-report.py",
+        "--base",
+        args.base,
+        "--key",
+        args.key,
+        "--min-per-cell",
+        str(args.min_per_app),
+        "--since-hours",
+        str(args.since_hours),
+        "--min-coverage-hours",
+        str(args.min_coverage_hours),
+    ]
+    if args.expect_commit:
+        cmd.extend(["--release-commit", args.expect_commit])
+    for item in args.app_caller:
+        cmd.extend(["--app-caller", item])
+    for item in args.kind:
+        cmd.extend(["--kind", item])
+    result = _run(cmd, timeout=600)
+    return {"name": "shadow_coverage_matrix", "ok": result["ok"], "detail": result["stdout"] + result["stderr"], "command": result}
+
+
+def _serving_probe(args: argparse.Namespace) -> dict:
+    cmd = [
+        "python3",
+        "scripts/llmgw-serving-probe.py",
+        "--base",
+        args.base,
+        "--samples",
+        str(args.serving_probe_samples),
+        "--interval",
+        str(args.serving_probe_interval),
+    ]
+    if args.expect_commit:
+        cmd.extend(["--expect-commit", args.expect_commit])
+    result = _run(cmd, timeout=max(120, int(args.serving_probe_samples * max(1, args.serving_probe_interval + 30))))
+    return {"name": "serving_stability_and_auth_probe", "ok": result["ok"], "detail": result["stdout"] + result["stderr"], "command": result}
+
+
+def _parse_json_object(output: str) -> dict:
+    start = output.find("{")
+    end = output.rfind("}")
+    if start < 0 or end < start:
+        raise ValueError("no JSON object in command output")
+    return json.loads(output[start:end + 1])
+
+
+def _csv(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _extract_branch_id(output: str) -> str:
+    stripped = output.strip()
+    if stripped.startswith("{"):
+        data = _parse_json_object(stripped)
+        payload = data.get("data") if isinstance(data.get("data"), dict) else data
+        branch_id = payload.get("branchId") if isinstance(payload, dict) else ""
+        if branch_id:
+            return str(branch_id).strip()
+    return stripped.splitlines()[-1].strip() if stripped else ""
+
+
+def _cds_runtime(args: argparse.Namespace) -> dict:
+    branch_id = args.cds_branch_id.strip()
+    if not branch_id:
+        branch_result = _run(["python3", ".claude/skills/cds/cli/cdscli.py", "branch-id"], timeout=60)
+        if not branch_result["ok"]:
+            return {
+                "name": "cds_runtime_uses_release_gateway_profiles",
+                "ok": False,
+                "detail": branch_result["stdout"] + branch_result["stderr"],
+                "command": branch_result,
+            }
+        branch_id = _extract_branch_id(branch_result["stdout"] or "")
+        if not branch_id:
+            return {
+                "name": "cds_runtime_uses_release_gateway_profiles",
+                "ok": False,
+                "detail": f"failed to parse branch id from cdscli output: {branch_result['stdout'][:1000]}",
+                "command": branch_result,
+            }
+
+    result = _run(["python3", ".claude/skills/cds/cli/cdscli.py", "branch", "status", branch_id], timeout=120, tail=None)
+    if not result["ok"]:
+        return {
+            "name": "cds_runtime_uses_release_gateway_profiles",
+            "ok": False,
+            "detail": result["stdout"] + result["stderr"],
+            "command": result,
+        }
+
+    try:
+        status = _parse_json_object(result["stdout"])
+        if isinstance(status.get("data"), dict):
+            status = status["data"]
+    except Exception as exc:
+        return {
+            "name": "cds_runtime_uses_release_gateway_profiles",
+            "ok": False,
+            "detail": f"failed to parse cdscli branch status JSON: {exc}; stdout={result['stdout'][:1000]}",
+            "command": result,
+        }
+
+    failures: list[str] = []
+    branch_status = str(status.get("status") or "")
+    if branch_status != "running":
+        failures.append(f"branch status is not running: {branch_status or 'empty'}")
+
+    commit_candidates = [
+        str(status.get("githubCommitSha") or ""),
+        str(status.get("commitSha") or ""),
+        str(status.get("ciTargetSha") or ""),
+        str(status.get("lastDeployDispatchCommitSha") or ""),
+    ]
+    if args.expect_commit and args.expect_commit not in commit_candidates:
+        failures.append(f"commit mismatch: expected={args.expect_commit}, actual={','.join(item for item in commit_candidates if item)}")
+    if args.expect_commit and str(status.get("lastDeployDispatchCommitSha") or "") != args.expect_commit:
+        failures.append(
+            "lastDeployDispatchCommitSha mismatch: "
+            f"expected={args.expect_commit}, actual={status.get('lastDeployDispatchCommitSha') or 'empty'}"
+        )
+
+    if status.get("ciImageStatus") not in (None, "", "ready"):
+        failures.append(f"ciImageStatus is not ready: {status.get('ciImageStatus')}")
+
+    services = status.get("services") or {}
+    for profile_id, service in sorted(services.items()):
+        if isinstance(service, dict) and service.get("status") != "running":
+            failures.append(f"{profile_id} status={service.get('status')}")
+    for profile_id in _csv(args.cds_release_profiles):
+        service = services.get(profile_id)
+        if not isinstance(service, dict):
+            failures.append(f"missing release profile: {profile_id}")
+            continue
+        if service.get("status") != "running":
+            failures.append(f"{profile_id} status={service.get('status')}")
+        if service.get("deployedMode") != "express":
+            failures.append(f"{profile_id} deployedMode={service.get('deployedMode')!r}, expected 'express'")
+
+    for profile_id in _csv(args.cds_running_profiles):
+        service = services.get(profile_id)
+        if not isinstance(service, dict):
+            failures.append(f"missing running profile: {profile_id}")
+            continue
+        if service.get("status") != "running":
+            failures.append(f"{profile_id} status={service.get('status')}")
+
+    runtime = status.get("deployRuntime") or {}
+    if runtime.get("drift", {}).get("hasDrift") is True:
+        failures.append("deployRuntime.drift.hasDrift=true")
+
+    detail = {
+        "branchId": branch_id,
+        "branchStatus": branch_status,
+        "commitCandidates": [item for item in commit_candidates if item],
+        "ciImageStatus": status.get("ciImageStatus"),
+        "lastDeployDispatchCommitSha": status.get("lastDeployDispatchCommitSha"),
+        "releaseProfiles": {
+            profile_id: services.get(profile_id, {})
+            for profile_id in _csv(args.cds_release_profiles)
+        },
+        "runningProfiles": {
+            profile_id: services.get(profile_id, {})
+            for profile_id in _csv(args.cds_running_profiles)
+        },
+        "failures": failures,
+    }
+    return {
+        "name": "cds_runtime_uses_release_gateway_profiles",
+        "ok": not failures,
+        "detail": json.dumps(detail, ensure_ascii=False, sort_keys=True),
+        "command": result,
+    }
+
+
+def _current_commit() -> str:
+    result = _run(["git", "rev-parse", "HEAD"], timeout=30)
+    if not result["ok"]:
+        return ""
+    return str(result.get("stdout") or "").strip().splitlines()[-1].strip()
+
+
+def _rollout_ledger(args: argparse.Namespace) -> dict:
+    commit = (args.expect_commit or _current_commit()).strip()
+    if not commit:
+        return {
+            "name": "rollout_ledger_completion_state",
+            "ok": False,
+            "detail": "missing --expect-commit and failed to resolve git HEAD",
+        }
+    cmd = [
+        "python3",
+        "scripts/llmgw-rollout-ledger.py",
+        "audit",
+        "--ledger",
+        args.rollout_ledger,
+        "--commit",
+        commit,
+        "--target-stage",
+        args.rollout_target_stage,
+        "--min-observation-hours",
+        str(args.rollout_min_observation_hours),
+    ]
+    if args.require_rollout_complete:
+        cmd.append("--require-target-success")
+    result = _run(cmd, timeout=120)
+    return {
+        "name": "rollout_ledger_completion_state",
+        "ok": result["ok"],
+        "detail": result["stdout"] + result["stderr"],
+        "command": result,
+    }
+
+
+def _write_outputs(report: dict, json_out: str, report_md: str) -> None:
+    if json_out:
+        path = Path(json_out)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if report_md:
+        path = Path(report_md)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lines = [
+            "# LLM Gateway Readiness Audit",
+            "",
+            f"- generatedAt: `{report['generatedAt']}`",
+            f"- verdict: `{report['verdict']}`",
+            f"- base: `{report.get('base') or ''}`",
+            "",
+            "| gate | status | detail |",
+            "|---|---|---|",
+        ]
+        for item in report["checks"]:
+            detail = str(item.get("detail") or "").replace("|", "\\|").replace("\n", "<br>")
+            lines.append(f"| {item['name']} | {'pass' if item.get('ok') else 'fail'} | {detail[:1000]} |")
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="LLM Gateway full-cutover readiness audit")
+    parser.add_argument("--base", default=os.environ.get("GW_BASE", "").strip().rstrip("/"), help="serving base URL, e.g. https://host/gw/v1")
+    parser.add_argument("--key", default=os.environ.get("GW_KEY", ""), help="X-Gateway-Key for live release gate")
+    parser.add_argument("--expect-commit", default=os.environ.get("GIT_COMMIT", ""), help="optional healthz commit assertion")
+    parser.add_argument("--min-total", type=int, default=30)
+    parser.add_argument("--min-per-app", type=int, default=30)
+    parser.add_argument("--since-hours", type=float, default=float(os.environ.get("LLMGW_GATE_SHADOW_SINCE_HOURS", "24")))
+    parser.add_argument("--min-coverage-hours", type=float, default=float(os.environ.get("LLMGW_GATE_MIN_COVERAGE_HOURS", "0")))
+    parser.add_argument("--health-samples", type=int, default=int(os.environ.get("LLMGW_GATE_HEALTH_SAMPLES", "3")))
+    parser.add_argument("--health-interval", type=float, default=float(os.environ.get("LLMGW_GATE_HEALTH_INTERVAL_SECONDS", "5")))
+    parser.add_argument("--app-caller", action="append", default=[])
+    parser.add_argument("--kind", action="append", default=[])
+    parser.add_argument("--require-kind", action="append", default=[])
+    parser.add_argument("--require-app-kind", action="append", default=[])
+    parser.add_argument("--run-dotnet", action="store_true", help="run xUnit gateway guard tests")
+    parser.add_argument("--run-smoke", action="store_true", help="run D-layer scripts/gw-smoke.py against --base/--key")
+    parser.add_argument("--run-shadow-coverage", action="store_true", help="run appCaller x kind shadow coverage matrix")
+    parser.add_argument("--run-serving-probe", action="store_true", help="run serving health stability and no-key auth probe")
+    parser.add_argument("--run-cds-runtime", action="store_true", help="verify CDS preview/grey runtime uses release gateway profiles")
+    parser.add_argument("--run-rollout-ledger", action="store_true", help="audit rollout ledger stage evidence for --expect-commit or git HEAD")
+    parser.add_argument("--cds-branch-id", default=os.environ.get("CDS_BRANCH_ID", ""), help="CDS branch id for --run-cds-runtime; default: cdscli branch-id")
+    parser.add_argument("--cds-release-profiles", default=os.environ.get("LLMGW_CDS_RELEASE_PROFILES", "api-prd-agent,llmgw-prd-agent,llmgw-serve-prd-agent"), help="comma-separated CDS profile ids that must run express prebuilt images")
+    parser.add_argument("--cds-running-profiles", default=os.environ.get("LLMGW_CDS_RUNNING_PROFILES", "llmgw-web-prd-agent"), help="comma-separated CDS profile ids that must be running")
+    parser.add_argument("--rollout-ledger", default=os.environ.get("LLMGW_ROLLOUT_LEDGER", ".llmgw-release-evidence/rollout-ledger.jsonl"))
+    parser.add_argument("--rollout-target-stage", default=os.environ.get("LLMGW_ROLLOUT_TARGET_STAGE", "http-full"))
+    parser.add_argument("--rollout-min-observation-hours", type=float, default=float(os.environ.get("LLMGW_STAGE_MIN_OBSERVATION_HOURS", "24")))
+    parser.add_argument("--require-rollout-complete", action="store_true", help="require target stage success in rollout ledger audit")
+    parser.add_argument("--serving-probe-samples", type=int, default=int(os.environ.get("LLMGW_SERVING_PROBE_SAMPLES", "12")))
+    parser.add_argument("--serving-probe-interval", type=float, default=float(os.environ.get("LLMGW_SERVING_PROBE_INTERVAL_SECONDS", "5")))
+    parser.add_argument("--smoke-timeout-seconds", type=int, default=int(os.environ.get("GW_TIMEOUT", "120")))
+    parser.add_argument("--require-release-gate", action="store_true", help="fail when --base/--key are missing and run live release gate")
+    parser.add_argument("--json-out", default=os.environ.get("LLMGW_READINESS_JSON_OUT", ""))
+    parser.add_argument("--report-md", default=os.environ.get("LLMGW_READINESS_REPORT_MD", ""))
+    parser.add_argument("--print-json", action="store_true")
+    args = parser.parse_args()
+
+    checks = _static_checks()
+    checks.append(_rollback_dry_run())
+    if args.run_dotnet:
+        checks.extend(_dotnet_checks())
+    if args.run_smoke:
+        if not args.base or not args.key:
+            checks.append(_check("gw_smoke_d_layer", False, "missing --base/--key"))
+        else:
+            checks.append(_gw_smoke(args))
+    if args.run_shadow_coverage:
+        if not args.base or not args.key:
+            checks.append(_check("shadow_coverage_matrix", False, "missing --base/--key"))
+        else:
+            checks.append(_shadow_coverage(args))
+    if args.run_serving_probe:
+        if not args.base:
+            checks.append(_check("serving_stability_and_auth_probe", False, "missing --base"))
+        else:
+            checks.append(_serving_probe(args))
+    if args.run_cds_runtime:
+        checks.append(_cds_runtime(args))
+    if args.run_rollout_ledger or args.require_rollout_complete:
+        checks.append(_rollout_ledger(args))
+    if args.require_release_gate:
+        if not args.base or not args.key:
+            checks.append(_check("live_release_gate", False, "missing --base/--key"))
+        else:
+            checks.append(_release_gate(args))
+
+    failures = [item for item in checks if not item.get("ok")]
+    report = {
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "verdict": "fail" if failures else "pass",
+        "base": args.base,
+        "checks": checks,
+        "failureCount": len(failures),
+    }
+    _write_outputs(report, args.json_out, args.report_md)
+    if args.print_json:
+        print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+    if failures:
+        print("LLM Gateway readiness audit: FAIL")
+        for item in failures:
+            print(f"- {item['name']}: {item.get('detail', '')[:300]}")
+        return 1
+    print("LLM Gateway readiness audit: PASS")
+    print(f"- checks={len(checks)}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

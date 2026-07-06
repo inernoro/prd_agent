@@ -132,7 +132,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
         // 仅在 appCallerCode 匹配时复用缓存，防止跨上下文重用错误的解析结果
         var statusResolution = (_submitResolution?.Success == true && _submitAppCallerCode == appCallerCode)
             ? _submitResolution
-            : await _gateway.ResolveModelAsync(appCallerCode, ModelTypes.VideoGen, null, ct);
+            : await _gateway.ResolveModelAsync(appCallerCode, ModelTypes.VideoGen, null, ct: ct);
         if (!statusResolution.Success)
             return new OpenRouterVideoStatus { Status = "failed", ErrorMessage = statusResolution.ErrorMessage };
 
@@ -188,7 +188,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
         // 复用已有 resolution，避免重复查 DB
         var resolution = (_submitResolution?.Success == true && _submitAppCallerCode == appCallerCode)
             ? _submitResolution
-            : await _gateway.ResolveModelAsync(appCallerCode, ModelTypes.VideoGen, null, ct);
+            : await _gateway.ResolveModelAsync(appCallerCode, ModelTypes.VideoGen, null, ct: ct);
         if (!resolution.Success)
             return new OpenRouterVideoDownload { Success = false, ErrorMessage = resolution.ErrorMessage };
 

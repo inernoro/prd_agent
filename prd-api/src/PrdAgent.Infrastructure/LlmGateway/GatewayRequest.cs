@@ -32,6 +32,17 @@ public class GatewayRequest
     public string? ExpectedModel { get; init; }
 
     /// <summary>
+    /// 精确锁定的平台 ID。与 <see cref="PinnedModelId"/> 同时提供时，Resolver 只允许命中该平台该模型。
+    /// 用于 ModelLab/Arena 等“选 A 必须测 A”的场景，避免绕过网关日志、配额和 transport 观测。
+    /// </summary>
+    public string? PinnedPlatformId { get; init; }
+
+    /// <summary>
+    /// 精确锁定的模型 ID/名称。与 <see cref="PinnedPlatformId"/> 同时提供时禁止默认池重排。
+    /// </summary>
+    public string? PinnedModelId { get; init; }
+
+    /// <summary>
     /// 请求体（JSON 格式）
     /// Gateway 会自动替换其中的 "model" 字段
     /// </summary>
@@ -212,6 +223,11 @@ public class GatewayRequestContext
     public string? GatewayTransport { get; init; }
 
     /// <summary>
+    /// 是否为模型池健康探活请求。探活也必须走网关，但日志需要明确区分，避免被误认为用户流量。
+    /// </summary>
+    public bool? IsHealthProbe { get; init; }
+
+    /// <summary>
     /// 返回一份把 <see cref="GatewayTransport"/> 覆盖为指定值的副本（其余字段原样拷贝）。
     /// <paramref name="source"/> 为 null 时新建一个仅含传输标记的最小上下文。
     /// 用于 http 模式过线前给请求体的 Context 打上 "http" 传输标记（S2 观测）。
@@ -231,6 +247,7 @@ public class GatewayRequestContext
             SystemPromptText = source?.SystemPromptText,
             ImageReferences = source?.ImageReferences,
             GatewayTransport = transport,
+            IsHealthProbe = source?.IsHealthProbe,
         };
 }
 
@@ -263,6 +280,16 @@ public class GatewayRawRequest
     /// Gateway 在内部 Resolve 时直接透传，防止二次 Resolve 选出不同模型。
     /// </summary>
     public string? ExpectedModel { get; init; }
+
+    /// <summary>
+    /// 精确锁定的平台 ID。与 <see cref="PinnedModelId"/> 同时提供时，raw 调用也只走该平台该模型。
+    /// </summary>
+    public string? PinnedPlatformId { get; init; }
+
+    /// <summary>
+    /// 精确锁定的模型 ID/名称。用于跨进程 raw 调用保持“选 A 用 A”。
+    /// </summary>
+    public string? PinnedModelId { get; init; }
 
     /// <summary>
     /// 请求体（JSON 格式）
@@ -325,6 +352,24 @@ public class GatewayRawRequest
 }
 
 /// <summary>
+/// 运行时 profile 上游连通性测试请求。它是受 X-Gateway-Key 保护的内部 M2M 契约：
+/// MAP 负责读取/解密用户保存的 profile，llmgw-serve 负责真正触达上游并写网关日志。
+/// </summary>
+public sealed class GatewayUpstreamProfileTestRequest
+{
+    public required string AppCallerCode { get; init; }
+    public required string Protocol { get; init; }
+    public required string BaseUrl { get; init; }
+    public required string Model { get; init; }
+    public required string ApiKey { get; init; }
+    public string? ProfileId { get; init; }
+    public string? ProfileName { get; init; }
+    public string? UserId { get; init; }
+    public string? RequestId { get; init; }
+    public int TimeoutSeconds { get; init; } = 30;
+}
+
+/// <summary>
 /// multipart 文件的对象存储引用（网关物理独立 HTTP 边界用，避免大负载 base64 内联）。
 /// 具名 DTO 替代 ValueTuple+byte[]，可干净 JSON 序列化。详见 design.llm-gateway-physical-isolation.md §3.1。
 /// </summary>
@@ -334,6 +379,9 @@ public sealed class MultipartFileRef
     public string RefKey { get; init; } = string.Empty;
     public string FileName { get; init; } = string.Empty;
     public string MimeType { get; init; } = string.Empty;
+    public long SizeBytes { get; init; }
+    public string Sha256 { get; init; } = string.Empty;
+    public string? Url { get; init; }
 }
 
 /// <summary>

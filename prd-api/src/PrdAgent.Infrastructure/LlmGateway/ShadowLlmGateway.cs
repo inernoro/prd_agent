@@ -33,6 +33,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private readonly int _fullSamplePercent;
     private readonly ILLMRequestContextAccessor? _ctx;
     private readonly IReadOnlySet<string> _httpAllowlist;
+    private readonly string? _releaseCommit;
 
     public ShadowLlmGateway(
         ILlmGateway inproc,
@@ -41,7 +42,8 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         ILlmShadowComparisonWriter? writer = null,
         int fullSamplePercent = 0,
         ILLMRequestContextAccessor? ctx = null,
-        IReadOnlySet<string>? httpAllowlist = null)
+        IReadOnlySet<string>? httpAllowlist = null,
+        string? releaseCommit = null)
     {
         _inproc = inproc;
         _http = http;
@@ -50,6 +52,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         _fullSamplePercent = Math.Clamp(fullSamplePercent, 0, 100);
         _ctx = ctx;
         _httpAllowlist = httpAllowlist ?? new HashSet<string>();
+        _releaseCommit = NormalizeCommit(releaseCommit);
     }
 
     /// <summary>该 appCallerCode 是否已灰度翻 http（白名单命中 → http 权威）。</summary>
@@ -74,7 +77,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         if (SampleHit())
             FireFullSendCompare(request, inproc, expectedModel);  // 采样：完整 send 比对（2x 打模型，有界）
         else
-            FireResolveCompare(request.AppCallerCode, request.ModelType, expectedModel, inproc.Resolution, "send");
+            FireResolveCompare(request.AppCallerCode, request.ModelType, expectedModel, request.PinnedPlatformId, request.PinnedModelId, inproc.Resolution, "send");
         return inproc;
     }
 
@@ -98,16 +101,21 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             yield return chunk;
         }
         // 流式只做免费 resolve 比对（不重发 http 流，绝不 2x 打大模型）。
-        FireResolveCompare(request.AppCallerCode, request.ModelType, expectedModel, startResolution, "stream");
+        FireResolveCompare(request.AppCallerCode, request.ModelType, expectedModel, request.PinnedPlatformId, request.PinnedModelId, startResolution, "stream");
     }
 
     public async Task<GatewayModelResolution> ResolveModelAsync(
-        string appCallerCode, string modelType, string? expectedModel = null, CancellationToken ct = default)
+        string appCallerCode,
+        string modelType,
+        string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null,
+        CancellationToken ct = default)
     {
         if (RouteToHttp(appCallerCode))
-            return await _http.ResolveModelAsync(appCallerCode, modelType, expectedModel, ct);
-        var inproc = await _inproc.ResolveModelAsync(appCallerCode, modelType, expectedModel, ct);
-        FireResolveCompare(appCallerCode, modelType, expectedModel, inproc, "resolve");
+            return await _http.ResolveModelAsync(appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, ct);
+        var inproc = await _inproc.ResolveModelAsync(appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, ct);
+        FireResolveCompare(appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, inproc, "resolve");
         return inproc;
     }
 
@@ -122,13 +130,30 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     }
 
     /// <summary>
-    /// raw（生图/视频）走预解析 resolution。白名单命中走 http 权威；否则透传 inproc（比对会 2x 打模型且不在本波 chat 范围内）。
+    /// raw（生图/视频/ASR）走预解析 resolution。白名单命中走 http 权威；否则透传 inproc 权威。
+    /// 当 ShadowFullSamplePercent 命中时，后台额外发一次 http raw 并落 kind=raw 证据，供 S5/S6 发布门
+    /// 验证 multipart/raw 真实跨进程样本；默认 0% 时不双发，避免无意增加图片/ASR/视频成本。
     /// </summary>
-    public Task<GatewayRawResponse> SendRawWithResolutionAsync(
+    public async Task<GatewayRawResponse> SendRawWithResolutionAsync(
         GatewayRawRequest request, GatewayModelResolution resolution, CancellationToken ct = default)
-        => RouteToHttp(request.AppCallerCode)
-            ? _http.SendRawWithResolutionAsync(request, resolution, ct)
-            : _inproc.SendRawWithResolutionAsync(request, resolution, ct);
+    {
+        if (RouteToHttp(request.AppCallerCode))
+            return await _http.SendRawWithResolutionAsync(request, resolution, ct);
+
+        var inproc = await _inproc.SendRawWithResolutionAsync(request, resolution, ct);
+        if (SampleHit())
+            FireRawCompare(request, resolution, inproc);
+        return inproc;
+    }
+
+    /// <summary>
+    /// Runtime profile 测试是管理侧连通性验证，目标就是证明 llmgw-serve 能代表 MAP 触达上游；
+    /// shadow 模式下直接以 http 网关为权威，避免继续在 MAP 进程内直连。
+    /// </summary>
+    public Task<GatewayRawResponse> TestUpstreamProfileAsync(
+        GatewayUpstreamProfileTestRequest request,
+        CancellationToken ct = default)
+        => _http.TestUpstreamProfileAsync(request, ct);
 
     /// <summary>
     /// 返回绑定到 <c>this</c>（影子）的客户端，使 chat 的 <c>StreamGenerateAsync → ShadowLlmGateway.StreamAsync</c>，
@@ -136,12 +161,12 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     /// </summary>
     public Core.Interfaces.ILLMClient CreateClient(
         string appCallerCode, string modelType, int maxTokens = 4096, double temperature = 0.2,
-        bool includeThinking = false, string? expectedModel = null)
+        bool includeThinking = false, string? expectedModel = null, string? pinnedPlatformId = null, string? pinnedModelId = null)
         => new GatewayLLMClient(
             this, appCallerCode, modelType,
             platformId: null, platformName: null, enablePromptCache: true,
             maxTokens: maxTokens, temperature: temperature, includeThinking: includeThinking,
-            contextAccessor: _ctx, expectedModel: expectedModel);
+            contextAccessor: _ctx, expectedModel: expectedModel, pinnedPlatformId: pinnedPlatformId, pinnedModelId: pinnedModelId);
 
     // ─────────────────────── 后台比对（fire-and-forget，全隔离）───────────────────────
 
@@ -154,7 +179,13 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     });
 
     private void FireResolveCompare(
-        string appCallerCode, string modelType, string? expectedModel, GatewayModelResolution? inprocResolution, string kind)
+        string appCallerCode,
+        string modelType,
+        string? expectedModel,
+        string? pinnedPlatformId,
+        string? pinnedModelId,
+        GatewayModelResolution? inprocResolution,
+        string kind)
     {
         if (_writer == null) return;
         var requestId = _ctx?.Current?.RequestId;
@@ -163,10 +194,10 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var sw = Stopwatch.StartNew();
             GatewayModelResolution? httpResolution = null;
             string? httpErr = null;
-            try { httpResolution = await _http.ResolveModelAsync(appCallerCode, modelType, expectedModel, CancellationToken.None); }
+            try { httpResolution = await _http.ResolveModelAsync(appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, CancellationToken.None); }
             catch (Exception ex) { httpErr = ex.Message; }
             sw.Stop();
-            var cmp = BuildResolveComparison(kind, requestId, appCallerCode, modelType, inprocResolution, httpResolution, httpErr, sw.ElapsedMilliseconds);
+            var cmp = BuildResolveComparison(kind, requestId, appCallerCode, modelType, inprocResolution, httpResolution, httpErr, sw.ElapsedMilliseconds, _releaseCommit);
             await _writer!.RecordAsync(cmp, CancellationToken.None);
         });
     }
@@ -190,6 +221,8 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             AppCallerCode = request.AppCallerCode,
             ModelType = request.ModelType,
             ExpectedModel = request.ExpectedModel,
+            PinnedPlatformId = request.PinnedPlatformId,
+            PinnedModelId = request.PinnedModelId,
             RequestBody = clonedBody,
             RequestBodyRaw = request.RequestBodyRaw,
             Stream = request.Stream,
@@ -207,7 +240,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             catch (Exception ex) { httpErr = ex.Message; }
             sw.Stop();
             var cmp = BuildResolveComparison("send", requestId, request.AppCallerCode, request.ModelType,
-                inproc.Resolution, http?.Resolution, httpErr, sw.ElapsedMilliseconds);
+                inproc.Resolution, http?.Resolution, httpErr, sw.ElapsedMilliseconds, _releaseCommit);
             if (http != null)
             {
                 cmp.InprocTextChars = inproc.Content?.Length;
@@ -231,6 +264,92 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         });
     }
 
+    private void FireRawCompare(
+        GatewayRawRequest request,
+        GatewayModelResolution resolution,
+        GatewayRawResponse inproc)
+    {
+        if (_writer == null) return;
+        var requestId = _ctx?.Current?.RequestId;
+        var shadowReq = CloneRawRequest(request);
+        SafeRun(async () =>
+        {
+            var sw = Stopwatch.StartNew();
+            GatewayRawResponse? http = null;
+            string? httpErr = null;
+            try
+            {
+                http = await _http.SendRawWithResolutionAsync(shadowReq, resolution, CancellationToken.None);
+                if (http.Success == false)
+                    httpErr = http.ErrorMessage ?? http.ErrorCode ?? $"HTTP raw failed with status {http.StatusCode}";
+            }
+            catch (Exception ex) { httpErr = ex.Message; }
+            sw.Stop();
+
+            var cmp = BuildResolveComparison(
+                "raw",
+                requestId,
+                request.AppCallerCode,
+                request.ModelType,
+                inproc.Resolution ?? resolution,
+                http?.Resolution,
+                httpErr,
+                sw.ElapsedMilliseconds,
+                _releaseCommit);
+
+            cmp.InprocTextChars = RawSize(inproc);
+            cmp.HttpTextChars = http == null ? null : RawSize(http);
+            cmp.InprocFinishReason = inproc.Success ? "success" : inproc.ErrorCode ?? "failed";
+            cmp.HttpFinishReason = http == null ? null : http.Success ? "success" : http.ErrorCode ?? "failed";
+
+            if (http != null && inproc.Success != http.Success)
+            {
+                cmp.Mismatches.Add(new FieldMismatch
+                {
+                    Field = "rawSuccess",
+                    Inproc = inproc.Success.ToString(),
+                    Http = http.Success.ToString(),
+                    Severity = "warning",
+                });
+            }
+
+            cmp.HasCritical = cmp.Mismatches.Any(m => m.Severity == "critical");
+            cmp.AllMatch = cmp.HttpOk && (inproc.Resolution ?? resolution) != null && http?.Resolution != null && cmp.Mismatches.Count == 0;
+            await _writer!.RecordAsync(cmp, CancellationToken.None);
+        });
+    }
+
+    private static GatewayRawRequest CloneRawRequest(GatewayRawRequest request) => new()
+    {
+        AppCallerCode = request.AppCallerCode,
+        ModelType = request.ModelType,
+        EndpointPath = request.EndpointPath,
+        ExpectedModel = request.ExpectedModel,
+        PinnedPlatformId = request.PinnedPlatformId,
+        PinnedModelId = request.PinnedModelId,
+        RequestBody = request.RequestBody?.DeepClone().AsObject(),
+        IsMultipart = request.IsMultipart,
+        MultipartFields = request.MultipartFields == null
+            ? null
+            : new Dictionary<string, object>(request.MultipartFields, StringComparer.Ordinal),
+        MultipartFiles = request.MultipartFiles == null
+            ? null
+            : new Dictionary<string, (string FileName, byte[] Content, string MimeType)>(request.MultipartFiles, StringComparer.Ordinal),
+        MultipartFileRefs = request.MultipartFileRefs == null
+            ? null
+            : new Dictionary<string, MultipartFileRef>(request.MultipartFileRefs, StringComparer.Ordinal),
+        HttpMethod = request.HttpMethod,
+        ExtraHeaders = request.ExtraHeaders == null
+            ? null
+            : new Dictionary<string, string>(request.ExtraHeaders, StringComparer.Ordinal),
+        TimeoutSeconds = request.TimeoutSeconds,
+        ExpectBinaryResponse = request.ExpectBinaryResponse,
+        Context = request.Context,
+    };
+
+    private static int RawSize(GatewayRawResponse response)
+        => response.BinaryContent?.Length ?? response.Content?.Length ?? 0;
+
     private void FirePoolsCompare(string appCallerCode, string modelType, List<AvailableModelPool> inproc)
     {
         if (_writer == null) return;
@@ -246,14 +365,16 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var cmp = new LlmShadowComparison
             {
                 Kind = "pools", RequestId = requestId, AppCallerCode = appCallerCode, ModelType = modelType,
+                ReleaseCommit = _releaseCommit,
                 ShadowDurationMs = sw.ElapsedMilliseconds, HttpOk = httpErr == null && http != null, HttpError = httpErr,
             };
             if (cmp.HttpOk)
             {
+                var httpPools = http ?? [];
                 var a = string.Join(",", inproc.Select(p => p.Id).OrderBy(x => x));
-                var b = string.Join(",", http!.Select(p => p.Id).OrderBy(x => x));
-                if (inproc.Count != http.Count)
-                    cmp.Mismatches.Add(new FieldMismatch { Field = "poolCount", Inproc = inproc.Count.ToString(), Http = http.Count.ToString(), Severity = "warning" });
+                var b = string.Join(",", httpPools.Select(p => p.Id).OrderBy(x => x));
+                if (inproc.Count != httpPools.Count)
+                    cmp.Mismatches.Add(new FieldMismatch { Field = "poolCount", Inproc = inproc.Count.ToString(), Http = httpPools.Count.ToString(), Severity = "warning" });
                 if (!string.Equals(a, b, StringComparison.Ordinal))
                     cmp.Mismatches.Add(new FieldMismatch { Field = "poolIds", Inproc = a, Http = b, Severity = "warning" });
             }
@@ -275,11 +396,13 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
     private static LlmShadowComparison BuildResolveComparison(
         string kind, string? requestId, string appCallerCode, string modelType,
-        GatewayModelResolution? inproc, GatewayModelResolution? http, string? httpErr, long ms)
+        GatewayModelResolution? inproc, GatewayModelResolution? http, string? httpErr, long ms,
+        string? releaseCommit)
     {
         var cmp = new LlmShadowComparison
         {
             Kind = kind, RequestId = requestId, AppCallerCode = appCallerCode, ModelType = modelType,
+            ReleaseCommit = releaseCommit,
             ShadowDurationMs = ms, HttpOk = httpErr == null && http != null, HttpError = httpErr,
             Inproc = Snap(inproc), Http = Snap(http),
         };
@@ -318,5 +441,13 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         // all-match 必须**两边解析都在**且零不一致；缺一边一律不算 match。
         cmp.AllMatch = cmp.HttpOk && inproc != null && http != null && cmp.Mismatches.Count == 0;
         return cmp;
+    }
+
+    private static string? NormalizeCommit(string? value)
+    {
+        var trimmed = (value ?? string.Empty).Trim();
+        if (trimmed.StartsWith("sha-", StringComparison.OrdinalIgnoreCase))
+            trimmed = trimmed[4..];
+        return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed.ToLowerInvariant();
     }
 }

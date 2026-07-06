@@ -897,6 +897,194 @@ describe('Branch Routes', () => {
       expect(stateService.getBranch('b1')!.profileOverrides?.['demo-extra']?.env?.FOO).toBe('bar');
     });
 
+    it('PUT /profile-overrides passes dbScope through and enforces the enum (波1 W1c)', async () => {
+      // dbScope 在 BuildProfileOverride/applyProfileOverride 早已支持,但 PUT 白名单一直漏透传,
+      // per-branch DB 开关因此永远无法按分支生效——本测试钉死透传 + 枚举校验。
+      stateService.addBuildProfile({ id: 'api', name: 'API', dockerImage: 'img', workDir: 'api', command: 'run', containerPort: 8080, projectId: 'default' });
+      seedBranch('b1');
+      // 合法值落库
+      const put = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { dbScope: 'per-branch' });
+      expect(put.status).toBe(200);
+      expect(stateService.getBranch('b1')!.profileOverrides?.['api']?.dbScope).toBe('per-branch');
+      // 覆盖生效链:resolveEffectiveProfile 合并出的有效 profile 带 per-branch
+      expect(((put.body as any).effective as any).dbScope).toBe('per-branch');
+      // 切回 shared 同样生效
+      const back = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { dbScope: 'shared' });
+      expect(back.status).toBe(200);
+      expect(stateService.getBranch('b1')!.profileOverrides?.['api']?.dbScope).toBe('shared');
+      // 非法值 400,且不改动已存覆盖
+      const bad = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { dbScope: 'everything' });
+      expect(bad.status).toBe(400);
+      expect(String((bad.body as any).error)).toContain('dbScope');
+      expect(stateService.getBranch('b1')!.profileOverrides?.['api']?.dbScope).toBe('shared');
+    });
+
+    describe('GET /api/branches/:id/effective-config(波2 配置检查器)', () => {
+      it('返回逐 key 溯源:extra-service/branch-override 打标 + 密钥脱敏 + plan 形状', async () => {
+        stateService.addBuildProfile({ id: 'api', name: 'API', dockerImage: 'img', workDir: 'api', command: 'run', containerPort: 8080, projectId: 'default', env: { FROM_PROFILE: 'p' } });
+        seedBranch('b1');
+        // 项目级 env + 分支级临时服务(带密钥 env)+ 分支覆盖
+        stateService.setCustomEnvVar('API_TOKEN', 'tok_supersecret_value', 'default');
+        stateService.setCustomEnvVar('PLAIN', 'visible', 'default');
+        await request(server, 'PUT', '/api/branches/b1/extra-services', {
+          extraProfiles: [{ id: 'nacos', name: 'nacos', dockerImage: 'nacos/nacos-server:v2.3.2', containerPort: 8848, env: { MODE: 'standalone' }, prebuiltImage: true }],
+        });
+        await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { env: { FROM_PROFILE: 'overridden' }, dbScope: 'per-branch' });
+
+        const res = await request(server, 'GET', '/api/branches/b1/effective-config');
+        expect(res.status).toBe(200);
+        const body = res.body as any;
+        expect(body.branchId).toBe('b1');
+        // envLayers 是段A分层摘要(至少含 project 层)
+        expect(body.envLayers.some((l: any) => l.source === 'project' && l.keys.includes('API_TOKEN'))).toBe(true);
+        // profiles 含项目底座 + 临时服务
+        const api = body.profiles.find((p: any) => p.profileId === 'api');
+        const nacos = body.profiles.find((p: any) => p.profileId === 'nacos');
+        expect(api).toBeTruthy();
+        expect(nacos).toBeTruthy();
+        expect(nacos.isExtra).toBe(true);
+        // 溯源打标:被 branch-override 覆盖的 key 记录 shadow 链
+        const fromProfile = api.envProvenance.find((p: any) => p.key === 'FROM_PROFILE');
+        expect(fromProfile).toMatchObject({ source: 'branch-override', shadowed: ['profile'] });
+        // 临时服务自带 env 打 extra-service
+        const mode = nacos.envProvenance.find((p: any) => p.key === 'MODE');
+        expect(mode).toMatchObject({ source: 'extra-service' });
+        // 项目 env 到达容器,来源 project
+        const plain = api.envProvenance.find((p: any) => p.key === 'PLAIN');
+        expect(plain).toMatchObject({ source: 'project', value: 'visible' });
+        // 密钥脱敏:API_TOKEN 不得以明文出现
+        const token = api.envProvenance.find((p: any) => p.key === 'API_TOKEN');
+        expect(token.value).not.toBe('tok_supersecret_value');
+        // dbScope 覆盖生效 + 来源标注
+        expect(api.dbScope).toBe('per-branch');
+        expect(api.dbScopeSource).toBe('branch-override');
+        // plan 形状:容器清单含两个服务,infra 判定为记录态
+        expect(body.plan.stateBasis).toBe('recorded');
+        expect(body.plan.containers.map((c: any) => c.profileId).sort()).toEqual(['api', 'nacos']);
+        expect(body.plan.networks.sharedNetwork).toBeTruthy();
+      });
+
+      it('缺失 ${VAR} 模板值时不 fail 端点,该 profile 带 envError 显性化缺口', async () => {
+        stateService.addBuildProfile({ id: 'api', name: 'API', dockerImage: 'img', workDir: 'api', command: 'run', containerPort: 8080, projectId: 'default', env: { DB_URL: 'mysql://h:${NOT_SET_ANYWHERE_XYZ}/app' } });
+        seedBranch('b1');
+        const res = await request(server, 'GET', '/api/branches/b1/effective-config');
+        expect(res.status).toBe(200);
+        const api = (res.body as any).profiles.find((p: any) => p.profileId === 'api');
+        expect(api.envError).toContain('NOT_SET_ANYWHERE_XYZ');
+        expect(api.envProvenance).toEqual([]);
+      });
+
+      it('跨项目 agent key 越权拿不到别的项目分支的生效配置(assertProjectAccess)', async () => {
+        const now = new Date().toISOString();
+        stateService.addProject({ id: 'proj-a', slug: 'proj-a', name: 'A', kind: 'git', createdAt: now, updatedAt: now });
+        stateService.addBranch({ id: 'ba', projectId: 'proj-a', branch: 'ba', worktreePath: '/tmp/wt/ba', services: {}, status: 'idle', createdAt: now });
+        const denied = await request(server, 'GET', '/api/branches/ba/effective-config', undefined, { 'x-test-key': 'B' });
+        expect(denied.status).toBe(403);
+        const ok = await request(server, 'GET', '/api/branches/ba/effective-config', undefined, { 'x-test-key': 'A' });
+        expect(ok.status).toBe(200);
+      });
+    });
+
+    describe('分支派生快照拷贝(波3 配置树)', () => {
+      const seedSourceWithConfig = async (id: string) => {
+        seedBranch(id);
+        await request(server, 'PUT', `/api/branches/${id}/extra-services`, {
+          extraProfiles: [{ id: 'nacos', name: 'nacos', dockerImage: 'nacos/nacos-server:v2.3.2', containerPort: 8848, env: { MODE: 'standalone' }, prebuiltImage: true }],
+        });
+        stateService.addBuildProfile({ id: 'api', name: 'API', dockerImage: 'img', workDir: 'api', command: 'run', containerPort: 8080, projectId: 'default' });
+        await request(server, 'PUT', `/api/branches/${id}/profile-overrides/api`, { env: { KEY: 'from-source' }, dbScope: 'per-branch' });
+      };
+
+      it('POST /branches 带 sourceBranchId:深拷贝 overrides+extraProfiles,写派生指针,改新不串旧', async () => {
+        await seedSourceWithConfig('src-branch');
+        const res = await request(server, 'POST', '/api/branches', { branch: 'derived-x', sourceBranchId: 'src-branch' });
+        expect(res.status).toBe(201);
+        const created = stateService.getBranch('derived-x')!;
+        expect(created.derivedFromBranchId).toBe('src-branch');
+        expect(created.derivedFromBranchName).toBe('src-branch');
+        expect(created.derivedAt).toBeTruthy();
+        expect(created.profileOverrides?.['api']?.env?.KEY).toBe('from-source');
+        expect(created.profileOverrides?.['api']?.dbScope).toBe('per-branch');
+        expect(created.extraProfiles?.map((p) => p.id)).toEqual(['nacos']);
+        // 深拷贝隔离:改新分支的配置不得串改来源分支
+        created.profileOverrides!['api']!.env!.KEY = 'mutated';
+        created.extraProfiles![0].env!.MODE = 'mutated';
+        const source = stateService.getBranch('src-branch')!;
+        expect(source.profileOverrides?.['api']?.env?.KEY).toBe('from-source');
+        expect(source.extraProfiles?.[0].env?.MODE).toBe('standalone');
+      });
+
+      it('POST /branches sourceBranchId 校验:不存在 400,跨项目 400,且不留孤儿分支', async () => {
+        const now = new Date().toISOString();
+        const missing = await request(server, 'POST', '/api/branches', { branch: 'd1', sourceBranchId: 'ghost' });
+        expect(missing.status).toBe(400);
+        expect(stateService.getBranch('d1')).toBeUndefined();
+        stateService.addProject({ id: 'proj-a', slug: 'proj-a', name: 'A', kind: 'git', createdAt: now, updatedAt: now });
+        stateService.addBranch({ id: 'other', projectId: 'proj-a', branch: 'other', worktreePath: '/tmp/wt/other', services: {}, status: 'idle', createdAt: now });
+        const cross = await request(server, 'POST', '/api/branches', { branch: 'd2', sourceBranchId: 'other' });
+        expect(cross.status).toBe(400);
+        expect(String((cross.body as any).error)).toContain('跨项目');
+      });
+
+      it('POST /branches/:id/copy-config-from/:sourceId:先拍快照再整体替换,可从快照回滚', async () => {
+        await seedSourceWithConfig('src-branch');
+        seedBranch('target');
+        // target 先有自己的配置(将被替换)
+        await request(server, 'PUT', '/api/branches/target/profile-overrides/api', { env: { KEY: 'target-own' } });
+
+        const res = await request(server, 'POST', '/api/branches/target/copy-config-from/src-branch');
+        expect(res.status).toBe(200);
+        const body = res.body as any;
+        expect(body.copied).toBe(true);
+        expect(body.snapshotId).toBeTruthy();
+        const target = stateService.getBranch('target')!;
+        expect(target.profileOverrides?.['api']?.env?.KEY).toBe('from-source');
+        expect(target.extraProfiles?.map((p) => p.id)).toEqual(['nacos']);
+        expect(target.derivedFromBranchId).toBe('src-branch');
+
+        // 误拷回滚:快照分支层恢复 target 拷贝前的配置
+        const rollback = await request(server, 'POST', `/api/config-snapshots/${body.snapshotId}/rollback`, {});
+        // snapshots 路由不在本测试 app 里 → 直接走 state 层验证回滚语义
+        if (rollback.status === 404 || typeof rollback.body === 'string') {
+          stateService.rollbackToConfigSnapshot(body.snapshotId);
+        }
+        const restored = stateService.getBranch('target')!;
+        expect(restored.profileOverrides?.['api']?.env?.KEY).toBe('target-own');
+        expect(restored.extraProfiles).toBeUndefined();
+        expect(restored.derivedFromBranchId).toBeUndefined();
+      });
+
+      it('copy-config-from 校验:自拷 400 / 跨项目 400', async () => {
+        const now = new Date().toISOString();
+        seedBranch('b1');
+        const self = await request(server, 'POST', '/api/branches/b1/copy-config-from/b1');
+        expect(self.status).toBe(400);
+        stateService.addProject({ id: 'proj-a', slug: 'proj-a', name: 'A', kind: 'git', createdAt: now, updatedAt: now });
+        stateService.addBranch({ id: 'other', projectId: 'proj-a', branch: 'other', worktreePath: '/tmp/wt/other', services: {}, status: 'idle', createdAt: now });
+        const cross = await request(server, 'POST', '/api/branches/b1/copy-config-from/other');
+        expect(cross.status).toBe(400);
+      });
+
+      it('快照分支层:旧快照(无 branchConfigs)回滚分支层 no-op;新快照不复活已删分支', async () => {
+        seedBranch('keeper');
+        await request(server, 'PUT', '/api/branches/keeper/extra-services', {
+          extraProfiles: [{ id: 'svc', name: 'svc', dockerImage: 'nginx:alpine', containerPort: 80, prebuiltImage: true }],
+        });
+        // 旧格式快照:手工去掉 branchConfigs 字段 → 回滚不碰分支层
+        const legacySnap = stateService.createConfigSnapshot({ trigger: 'manual', label: 'legacy', projectId: null });
+        delete (legacySnap.payload as any).branchConfigs;
+        stateService.rollbackToConfigSnapshot(legacySnap.id);
+        expect(stateService.getBranch('keeper')!.extraProfiles?.length).toBe(1);
+
+        // 新快照:拍照后删分支,回滚不复活分支
+        const snap = stateService.createConfigSnapshot({ trigger: 'manual', label: 'with-branches', projectId: null });
+        expect(snap.payload.branchConfigs?.['keeper']?.extraProfiles?.length).toBe(1);
+        stateService.removeBranch('keeper');
+        stateService.rollbackToConfigSnapshot(snap.id);
+        expect(stateService.getBranch('keeper')).toBeUndefined();
+      });
+    });
+
     it('PUT /profile-overrides rejects a shell-injecting dockerImage override (Codex P1)', async () => {
       seedBranch('b1');
       await request(server, 'PUT', '/api/branches/b1/extra-services', {

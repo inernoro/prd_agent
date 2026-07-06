@@ -151,7 +151,7 @@ public class AdminOpenApiController : ControllerBase
         try
         {
             var res = await _gateway.ResolveModelAsync(code, modelType,
-                expectedModel: string.IsNullOrWhiteSpace(binding) ? null : binding, ct);
+                expectedModel: string.IsNullOrWhiteSpace(binding) ? null : binding, ct: ct);
             return res.Success ? (res.ActualModel, res.ResolutionType, res.IsFallback) : (null, "NotFound", false);
         }
         catch (Exception ex)

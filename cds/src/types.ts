@@ -240,6 +240,39 @@ export interface EnvMeta {
 }
 
 /**
+ * 波2 配置检查器 — env 逐 key 溯源(公开契约,GET /branches/:id/effective-config)。
+ *
+ * 来源枚举分两段(与容器注入的两段式一致):
+ *   段A 分支 customEnv 合并(与既有 effective-env 端点口径完全一致):
+ *     cds-builtin(CDS_HOST 等系统注入) / cds-derived(CDS_PROJECT_ID/SLUG 项目身份,
+ *     保留 key 不可覆盖) / mirror(镜像加速) / global(CDS 全局变量 _global) /
+ *     project(项目环境变量) / branch(分支级 env scope)
+ *   段B 单容器运行时注入(resolveProfileRuntimeEnv 的分层):
+ *     profile(项目 BuildProfile.env 底座) / extra-service(分支临时额外服务自带 env) /
+ *     branch-override(分支 profileOverrides[x].env) / deploy-mode(部署模式 env) /
+ *     platform-injected(JWT 兜底 / node PATH / 版本元数据等平台注入,detail 细分) /
+ *     per-branch-db(per-branch DB 隔离对库名 key 的改写)
+ */
+export type EnvSource =
+  | 'cds-builtin' | 'cds-derived' | 'mirror' | 'global' | 'project' | 'branch'
+  | 'profile' | 'extra-service' | 'branch-override' | 'deploy-mode'
+  | 'platform-injected' | 'per-branch-db';
+
+export interface EnvKeyProvenance {
+  key: string;
+  /** 输出到 API 前必须过 maskSecrets SSOT,状态层保持明文 */
+  value: string;
+  /** 最终生效值来自哪一层(last-writer-wins) */
+  source: EnvSource;
+  /** 细分说明:'jwt-fallback' | 'node-runtime' | 'version-metadata' | 'per-branch-db-suffix' 等 */
+  detail?: string;
+  /** 被更高层覆盖(shadow)的更低层来源,按合并顺序排列 — 继承链展示用 */
+  shadowed?: EnvSource[];
+  /** 值经过 ${VAR} 模板展开 */
+  templated?: boolean;
+}
+
+/**
  * Phase 9.5 — env 修改审计条目。
  *
  * 每次 PUT /env 或 PUT /env/:key 时追加一条,记录"谁、何时、改了哪些 key"。
@@ -611,6 +644,24 @@ export interface BranchEntry {
    * (保护底座,要按分支改项目服务请用 profileOverrides,不是这里)。
    */
   extraProfiles?: BuildProfile[];
+  /**
+   * 波3 配置树:分支派生溯源(2026-07-06,快照拷贝语义)。
+   *
+   * 三层判定策略(design.cds.config-tree):
+   *   1. 手动创建(POST /branches 带 sourceBranchId)= 显式选择、**真拷贝**:
+   *      深拷贝来源分支的 profileOverrides + extraProfiles(拷贝赢项目模板),之后各自独立;
+   *   2. webhook push 自动建分支 = 保持项目模板,**不猜**来源(push payload 无可靠派生信号);
+   *   3. PR opened/reopened = 仅回填指针(base 分支),**不拷贝配置**(分支往往已按模板部署,
+   *      静默改写违反最小惊讶);要拷贝走显式端点 POST /branches/:id/copy-config-from/:sourceId。
+   *
+   * 快照拷贝(用户拍板):拷贝后两分支各自独立,父分支后续改动**不会**跟随;
+   * 指针仅用于溯源展示与「一键拉取配置」入口。纯增量可选字段,旧数据零迁移。
+   */
+  derivedFromBranchId?: string;
+  /** 来源分支的 git 分支名(来源被删后仍可展示) */
+  derivedFromBranchName?: string;
+  /** 派生指针写入时间(ISO) */
+  derivedAt?: string;
   /**
    * GitHub Checks integration — populated when the branch was
    * auto-created by a webhook push or the user linked a repo to the
@@ -2058,6 +2109,18 @@ export interface ConfigSnapshot {
     customEnv: CustomEnvStore;
     infraServices: InfraService[];
     routingRules: RoutingRule[];
+    /**
+     * 波3 配置树:分支层配置(profileOverrides / extraProfiles / 派生指针)。
+     * 只收「有配置」的分支(控体积);旧快照无此字段 → 回滚时分支层 no-op。
+     * 回滚语义:仅恢复**仍存在**的分支(快照后新建的不动、已删的不复活)。
+     */
+    branchConfigs?: Record<string, {
+      profileOverrides?: Record<string, BuildProfileOverride>;
+      extraProfiles?: BuildProfile[];
+      derivedFromBranchId?: string;
+      derivedFromBranchName?: string;
+      derivedAt?: string;
+    }>;
   };
   /** 快照字节数（存 state.json 时粗略统计，用于 UI 展示） */
   sizeBytes?: number;

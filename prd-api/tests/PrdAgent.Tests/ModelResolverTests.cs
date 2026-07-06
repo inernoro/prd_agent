@@ -94,6 +94,48 @@ public class ModelResolverTests
 
     #endregion
 
+    [Fact]
+    public async Task PinnedModel_WhenPlatformAndModelSpecified_ShouldBypassDefaultPool()
+    {
+        var defaultPlatform = CreatePlatform("plat-default", "Default");
+        var pinnedPlatform = CreatePlatform("plat-pinned", "Pinned");
+        var defaultPool = CreateModelGroup(
+            "pool-default",
+            "Default Chat Pool",
+            "chat",
+            isDefault: true,
+            priority: 0,
+            ("plat-default", "default-fast-model", ModelHealthStatus.Healthy));
+        var appCaller = CreateAppCaller("prd-agent-web.model-lab.run::chat", "Model Lab", ("chat", new List<string>()));
+        var pinnedModel = new LLMModel
+        {
+            ModelName = "user-selected-model",
+            PlatformId = "plat-pinned",
+            Enabled = true,
+            IsMain = true
+        };
+
+        var resolver = new InMemoryModelResolver()
+            .WithPlatform(defaultPlatform, "sk-default")
+            .WithPlatform(pinnedPlatform, "sk-pinned")
+            .WithModelGroup(defaultPool)
+            .WithLegacyModel(pinnedModel, "sk-pinned")
+            .WithAppCaller(appCaller);
+
+        var result = await resolver.ResolveAsync(
+            "prd-agent-web.model-lab.run::chat",
+            "chat",
+            expectedModel: "user-selected-model",
+            pinnedPlatformId: "plat-pinned",
+            pinnedModelId: "user-selected-model");
+
+        Assert.True(result.Success);
+        Assert.Equal("PinnedModel", result.ResolutionType);
+        Assert.Equal("user-selected-model", result.ActualModel);
+        Assert.Equal("plat-pinned", result.ActualPlatformId);
+        Assert.Null(result.ModelGroupId);
+    }
+
     #region Level 1: DedicatedPool Tests
 
     [Fact]

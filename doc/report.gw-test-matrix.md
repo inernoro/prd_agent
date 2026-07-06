@@ -8,10 +8,10 @@
 
 全枚举、不压缩：
 - **A 层解析全量**：153 个 appCallerCode 真实解析结果（golden SSOT，第 2 节）。
-- **B 层协议保真**：91 个数据驱动 cell，CI `GatewayProtocolFidelityTests` 真跑（第 3 节）。
+- **B 层协议保真**：93 个数据驱动 cell，CI `GatewayProtocolFidelityTests` 真跑（第 3 节）。
 - **C 层跨进程传输**：18 个数据驱动 cell，CI `CrossProcessServingErrorLoadTests` 真跑（第 4 节）。
 - **扩展维度**：20 个 emerge 维度（第 5 节）。
-- **合计可见行数**：约 282 行。
+- **合计可见行数**：约 284 行。
 
 ## 1. 概览（分布统计）
 
@@ -223,12 +223,12 @@
 | 152 | workflow-agent.report-generator::chat | chat | DedicatedPool | qwen/qwen3.6-plus | openai | openai | Healthy | 否 | protocol-from-platform-type |
 | 153 | workflow-agent.webpage-generator::code | code | NotFound | — | — | — | — | 否 | — |
 
-## 3. B 层：协议保真数据驱动 cell（91 个，CI 真跑）
+## 3. B 层：协议保真数据驱动 cell（93 个，CI 真跑）
 
 > 喂 canned 上游 payload 给真实 `OpenAIGatewayAdapter`/`ClaudeGatewayAdapter`/`ThinkTagStripper`，
 > 断言归一结果。`GatewayProtocolFidelityTests` 经 `[Theory]` 读 `protocol-cells.json` 逐 cell 执行。
 
-分组小计：claude-content-text=9 · claude-edge-null=2 · claude-error=1 · claude-message-content=9 · claude-message-stop=1 · claude-stop-reason=4 · claude-tooluse-2=1 · claude-tooluse-normalize=1 · claude-usage-cache=3 · openai-content-text=9 · openai-edge-null=4 · openai-finish=4 · openai-finish-with-content=1 · openai-message-content=9 · openai-nonstream-tool=1 · openai-nonstream-tool-2=1 · openai-nonstream-usage=3 · openai-stream-usage=3 · openai-think-reasoning=9 · openai-think-reasoning_content=9 · openai-tool-delta=1 · openai-tool-delta-2=1 · think-cross-chunk=1 · think-inline=1 · think-nonascii-after=1 · think-only=1 · think-plain=1
+分组小计：claude-content-text=9 · claude-edge-null=2 · claude-error=1 · claude-message-content=9 · claude-message-stop=1 · claude-stop-reason=4 · claude-stream-tool-args=1 · claude-stream-tool-start=1 · claude-tooluse-2=1 · claude-tooluse-normalize=1 · claude-usage-cache=3 · openai-content-text=9 · openai-edge-null=4 · openai-finish=4 · openai-finish-with-content=1 · openai-message-content=9 · openai-nonstream-tool=1 · openai-nonstream-tool-2=1 · openai-nonstream-usage=3 · openai-stream-usage=3 · openai-think-reasoning=9 · openai-think-reasoning_content=9 · openai-tool-delta=1 · openai-tool-delta-2=1 · think-cross-chunk=1 · think-inline=1 · think-nonascii-after=1 · think-only=1 · think-plain=1
 
 | # | adapter | method | 维度 | payload(节选) | 期望 |
 |---|---|---|---|---|---|
@@ -302,27 +302,29 @@
 | B068 | claude | stream | E3 | {"type": "message_delta", "delta": {"stop_rea… | chunkType=Done, finishReason=stop_sequence |
 | B069 | claude | stream | E3 | {"type": "message_stop"} | chunkType=Done, finishReason=stop |
 | B070 | claude | stream | D11 | {"type": "error", "error": {"message": "upstr… | chunkType=Error, error=upstream boom |
-| B071 | claude | stream | E1 | chunks:[] | chunkType=null |
-| B072 | claude | stream | E1 | {"type": "ping"} | chunkType=null |
-| B073 | claude | tokenUsage | D7/E9 | {"usage": {"input_tokens": 40, "output_tokens… | inputTokens=40, outputTokens=9, cacheCreation=15, cacheRead=3 |
-| B074 | claude | tokenUsage | D7/E9 | {"usage": {"input_tokens": 100, "output_token… | inputTokens=100, outputTokens=50, cacheCreation=0, cacheRead=0 |
-| B075 | claude | tokenUsage | D7/E9 | {"usage": {"input_tokens": 10, "output_tokens… | inputTokens=10, outputTokens=5, cacheCreation=7, cacheRead=2 |
-| B076 | claude | toolCalls | D6 | {"content": [{"type": "tool_use", "id": "tu_1… | toolCount=1, toolFirstName=search, toolFirstType=function |
-| B077 | claude | toolCalls | D6/E8 | {"content": [{"type": "tool_use", "id": "t1",… | toolCount=2, toolFirstName=alpha, toolFirstType=function |
-| B078 | claude | messageContent | D9/E2 | {"content": [{"type": "text", "text": "hello"… | content=hello |
-| B079 | claude | messageContent | D9/E2 | {"content": [{"type": "text", "text": "café-n… | content=café-naïve-Zürich |
-| B080 | claude | messageContent | D9/E2 | {"content": [{"type": "text", "text": "中文深度思考… | content=中文深度思考内容 |
-| B081 | claude | messageContent | D9/E2 | {"content": [{"type": "text", "text": "مرحبا … | content=مرحبا بالعالم |
-| B082 | claude | messageContent | D9/E2 | {"content": [{"type": "text", "text": "a   b … | content=a   b   c |
-| B083 | claude | messageContent | D9/E2 | {"content": [{"type": "text", "text": "he sai… | content=he said "hi" to me |
-| B084 | claude | messageContent | D9/E2 | {"content": [{"type": "text", "text": "line1\… | content=line1\nline2 |
-| B085 | claude | messageContent | D9/E2 | {"content": [{"type": "text", "text": "Omega-… | content=Omega-Ω-approx-≈-sqrt-√ |
-| B086 | claude | messageContent | D9/E2 | {"content": [{"type": "text", "text": "xxxxxx… | content=xxxxxxxxxxxxxxxxxxxxxxx… |
-| B087 | — | thinkStripper | D5 | chunks:["<think>推理内容</think>正式回答"] | thinkVisible=正式回答, thinkCaptured=推理内容 |
-| B088 | — | thinkStripper | D5/E4 | chunks:["abc<thi", "nk>secret</thi", "nk>xyz"] | thinkVisible=abcxyz |
-| B089 | — | thinkStripper | D5 | chunks:["just text"] | thinkVisible=just text, thinkCapturedEmpty=True |
-| B090 | — | thinkStripper | D5 | chunks:["<think>only thinking</think>"] | thinkVisible=, thinkCaptured=only thinking |
-| B091 | — | thinkStripper | D5/E2 | chunks:["<think>t</think>done-完成"] | thinkVisible=done-完成, thinkCaptured=t |
+| B071 | claude | stream | D6/E8 | {"type": "content_block_start", "index": 0, "… | chunkType=ToolCall, toolDeltaCount=1, toolFirstIndex=0, toolFirstId=toolu_1, toolFirstName=search, toolFirstArguments= |
+| B072 | claude | stream | D6/E8 | {"type": "content_block_delta", "index": 0, "… | chunkType=ToolCall, toolDeltaCount=1, toolFirstIndex=0, toolFirstArguments={"q":"x"} |
+| B073 | claude | stream | E1 | chunks:[] | chunkType=null |
+| B074 | claude | stream | E1 | {"type": "ping"} | chunkType=null |
+| B075 | claude | tokenUsage | D7/E9 | {"usage": {"input_tokens": 40, "output_tokens… | inputTokens=40, outputTokens=9, cacheCreation=15, cacheRead=3 |
+| B076 | claude | tokenUsage | D7/E9 | {"usage": {"input_tokens": 100, "output_token… | inputTokens=100, outputTokens=50, cacheCreation=0, cacheRead=0 |
+| B077 | claude | tokenUsage | D7/E9 | {"usage": {"input_tokens": 10, "output_tokens… | inputTokens=10, outputTokens=5, cacheCreation=7, cacheRead=2 |
+| B078 | claude | toolCalls | D6 | {"content": [{"type": "tool_use", "id": "tu_1… | toolCount=1, toolFirstName=search, toolFirstType=function |
+| B079 | claude | toolCalls | D6/E8 | {"content": [{"type": "tool_use", "id": "t1",… | toolCount=2, toolFirstName=alpha, toolFirstType=function |
+| B080 | claude | messageContent | D9/E2 | {"content": [{"type": "text", "text": "hello"… | content=hello |
+| B081 | claude | messageContent | D9/E2 | {"content": [{"type": "text", "text": "café-n… | content=café-naïve-Zürich |
+| B082 | claude | messageContent | D9/E2 | {"content": [{"type": "text", "text": "中文深度思考… | content=中文深度思考内容 |
+| B083 | claude | messageContent | D9/E2 | {"content": [{"type": "text", "text": "مرحبا … | content=مرحبا بالعالم |
+| B084 | claude | messageContent | D9/E2 | {"content": [{"type": "text", "text": "a   b … | content=a   b   c |
+| B085 | claude | messageContent | D9/E2 | {"content": [{"type": "text", "text": "he sai… | content=he said "hi" to me |
+| B086 | claude | messageContent | D9/E2 | {"content": [{"type": "text", "text": "line1\… | content=line1\nline2 |
+| B087 | claude | messageContent | D9/E2 | {"content": [{"type": "text", "text": "Omega-… | content=Omega-Ω-approx-≈-sqrt-√ |
+| B088 | claude | messageContent | D9/E2 | {"content": [{"type": "text", "text": "xxxxxx… | content=xxxxxxxxxxxxxxxxxxxxxxx… |
+| B089 | — | thinkStripper | D5 | chunks:["<think>推理内容</think>正式回答"] | thinkVisible=正式回答, thinkCaptured=推理内容 |
+| B090 | — | thinkStripper | D5/E4 | chunks:["abc<thi", "nk>secret</thi", "nk>xyz"] | thinkVisible=abcxyz |
+| B091 | — | thinkStripper | D5 | chunks:["just text"] | thinkVisible=just text, thinkCapturedEmpty=True |
+| B092 | — | thinkStripper | D5 | chunks:["<think>only thinking</think>"] | thinkVisible=, thinkCaptured=only thinking |
+| B093 | — | thinkStripper | D5/E2 | chunks:["<think>t</think>done-完成"] | thinkVisible=done-完成, thinkCaptured=t |
 
 ## 4. C 层：跨进程传输数据驱动 cell（18 个，CI 真跑）
 

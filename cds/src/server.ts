@@ -922,6 +922,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/branches\/(.+)\/pull$/, '拉取分支代码'],
     [/^POST \/branches\/(.+)\/deploy\/(.+)$/, '部署单服务'],
     [/^POST \/branches\/(.+)\/deploy$/, '全量部署'],
+    [/^POST \/branches\/(.+)\/prebuilt-image\/claim$/, '认领预构建镜像'],
     [/^POST \/branches\/(.+)\/database-init\/run$/, '执行数据库初始化命令'],
     [/^POST \/branches\/(.+)\/stop$/, '停止分支服务'],
     [/^POST \/branches\/(.+)\/restart$/, '重新启动分支'],
@@ -1030,6 +1031,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/branches\/[^/]+$/, '查看分支详情'],
     [/^GET \/branches\/[^/]+\/effective-env$/, '查看生效环境变量'],
     [/^GET \/branches\/[^/]+\/effective-env\/reveal$/, '查看密钥明文'],
+    [/^GET \/branches\/[^/]+\/effective-config$/, '查分支生效配置'],
+    [/^POST \/branches\/[^/]+\/copy-config-from\/[^/]+$/, '拉取来源分支配置'],
     [/^GET \/branches\/[^/]+\/metrics$/, '查看分支指标'],
     [/^GET \/branches\/[^/]+\/failure-diagnosis$/, '诊断失败原因'],
     // 构建 Profile 扩展

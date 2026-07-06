@@ -16,10 +16,14 @@ import os
 import sys
 import urllib.request
 import urllib.error
+from datetime import datetime, timezone
 
 BASE = os.environ.get("GW_BASE", "").rstrip("/")
 KEY = os.environ.get("GW_KEY", "dev-llmgw-serve-key")
 TIMEOUT = int(os.environ.get("GW_TIMEOUT", "120"))
+JSON_OUT = os.environ.get("GW_SMOKE_JSON_OUT", "")
+REPORT_MD = os.environ.get("GW_SMOKE_REPORT_MD", "")
+EXPECTED_COMMIT = os.environ.get("GW_EXPECT_COMMIT", "").strip().lower()
 
 # 每类 ModelType 抽 1 个代表入口（D1×D2 抽样）。真机存在性以 /gw/v1/pools 为准。
 SAMPLE_CODES = [
@@ -48,12 +52,83 @@ def _req(method, path, body=None):
         return 0, f"ERR {e}"
 
 
+def _sse_req(path, body):
+    code, raw = _req("POST", path, body)
+    events = []
+    if code != 200:
+        return code, raw, events
+
+    current = []
+    for line in raw.splitlines():
+        if not line.strip():
+            if current:
+                payload = "\n".join(current)
+                try:
+                    events.append(json.loads(payload))
+                except Exception:  # noqa: BLE001
+                    events.append({"_raw": payload})
+                current = []
+            continue
+        if line.startswith("data:"):
+            current.append(line[5:].strip())
+    if current:
+        payload = "\n".join(current)
+        try:
+            events.append(json.loads(payload))
+        except Exception:  # noqa: BLE001
+            events.append({"_raw": payload})
+    return code, raw, events
+
+
 def _envelope_data(raw):
     try:
         j = json.loads(raw)
     except Exception:  # noqa: BLE001
         return None
     return j  # serving 端点直接返回 DTO（非 {success,data} 信封）
+
+
+def _normalize_commit(value):
+    raw = str(value or "").strip().lower()
+    if raw.startswith("sha-"):
+        raw = raw[4:]
+    return raw
+
+
+def _write_json(path, report):
+    if not path:
+        return
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(report, fh, ensure_ascii=False, indent=2, sort_keys=True)
+        fh.write("\n")
+
+
+def _write_markdown(path, report):
+    if not path:
+        return
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+    def cell(value):
+        return str(value).replace("|", "\\|")
+
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("# LLM Gateway D-Layer Smoke Report\n\n")
+        fh.write(f"- generatedAt: `{cell(report['generatedAt'])}`\n")
+        fh.write(f"- verdict: `{cell(report['verdict'])}`\n")
+        fh.write(f"- base: `{cell(report['base'])}`\n")
+        fh.write(f"- expectedCommit: `{cell(report.get('expectedCommit') or '')}`\n")
+        fh.write(f"- healthCommit: `{cell(report.get('healthCommit') or '')}`\n")
+        fh.write(f"- passed: `{cell(report['passed'])}`\n")
+        fh.write(f"- total: `{cell(report['total'])}`\n\n")
+        fh.write("| case | status | detail |\n")
+        fh.write("|---|---|---|\n")
+        for row in report["rows"]:
+            fh.write(f"| {cell(row['case'])} | {cell(row['status'])} | {cell(row['detail'])} |\n")
 
 
 def main():
@@ -71,6 +146,19 @@ def main():
             base = ""
     if not base:
         print("FATAL: 未提供 GW_BASE，且 cdscli 取预览根失败。CDS 起来后再跑。")
+        report = {
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "verdict": "fail",
+            "base": "",
+            "expectedCommit": EXPECTED_COMMIT,
+            "healthCommit": "",
+            "passed": 0,
+            "total": 0,
+            "rows": [],
+            "failures": ["missing GW_BASE"],
+        }
+        _write_json(JSON_OUT, report)
+        _write_markdown(REPORT_MD, report)
         return 2
     globals()["BASE"] = base
     print(f"[gw-smoke] BASE={base}")
@@ -79,8 +167,13 @@ def main():
 
     # 1) healthz
     code, raw = _req("GET", "/healthz")
-    ok = code == 200 and '"status"' in raw and "ok" in raw
-    rows.append(("healthz", ok, f"{code} {raw[:80]}"))
+    health = _envelope_data(raw) or {}
+    health_status = str(health.get("status") or health.get("Status") or "").lower()
+    health_commit = _normalize_commit(health.get("commit") or health.get("Commit"))
+    ok = code == 200 and health_status == "ok"
+    if EXPECTED_COMMIT and health_commit != EXPECTED_COMMIT:
+        ok = False
+    rows.append(("healthz", ok, f"{code} status={health_status or 'empty'} commit={health_commit or 'empty'} expected={EXPECTED_COMMIT or 'none'}"))
 
     # 2) pools（每类抽样入口）
     for accode, mtype in SAMPLE_CODES:
@@ -104,7 +197,58 @@ def main():
         detail = f"{code} success={d.get('Success')} model={res.get('ActualModel')} contentLen={len(d.get('Content') or '')}"
         rows.append((f"send[{mtype}]", ok, detail))
 
-    # 4) canary：指向不存在的入口，必须失败（证明探测有效）
+    # 4) stream：真实 SSE 边界。只抽 chat 一类，避免 D 层冒烟成本膨胀。
+    stream_body = {
+        "AppCallerCode": "report-agent.generate::chat",
+        "ModelType": "chat",
+        "Stream": True,
+        "RequestBody": {
+            "messages": [{"role": "user", "content": "ping, stream reply OK"}],
+            "max_tokens": 16,
+            "stream": True,
+        },
+        "Context": {"UserId": "smoke-test"},
+    }
+    code, raw, events = _sse_req("/stream", stream_body)
+    stream_text = "".join(str(e.get("Content") or "") for e in events if isinstance(e, dict))
+    stream_model = next(
+        (
+            (e.get("Resolution") or {}).get("ActualModel")
+            for e in events
+            if isinstance(e, dict) and isinstance(e.get("Resolution"), dict)
+        ),
+        None,
+    )
+    stream_done = any(
+        isinstance(e, dict)
+        and (e.get("FinishReason") or str(e.get("Type")).lower() in {"done", "4"})
+        for e in events
+    )
+    ok = code == 200 and len(events) >= 2 and bool(stream_text) and bool(stream_model) and stream_done
+    rows.append(("stream[chat]", ok, f"{code} events={len(events)} model={stream_model} contentLen={len(stream_text)}"))
+
+    # 5) client-stream：CreateClient/ILLMClient 跨进程 SSE 边界。
+    client_stream_body = {
+        "AppCallerCode": "report-agent.generate::chat",
+        "ModelType": "chat",
+        "MaxTokens": 16,
+        "Temperature": 0.2,
+        "IncludeThinking": False,
+        "SystemPrompt": "Reply briefly.",
+        "Messages": [{"Role": "user", "Content": "ping, client stream reply OK"}],
+        "EnablePromptCache": True,
+        "Context": {"UserId": "smoke-test"},
+    }
+    code, raw, events = _sse_req("/client-stream", client_stream_body)
+    client_stream_text = "".join(str(e.get("Content") or "") for e in events if isinstance(e, dict))
+    client_stream_done = any(
+        isinstance(e, dict) and str(e.get("Type")).lower() in {"done", "4"}
+        for e in events
+    )
+    ok = code == 200 and len(events) >= 2 and bool(client_stream_text) and client_stream_done
+    rows.append(("client-stream[chat]", ok, f"{code} events={len(events)} contentLen={len(client_stream_text)}"))
+
+    # 6) canary：指向不存在的入口，必须失败（证明探测有效）
     body = {"AppCallerCode": "nonexistent.canary::chat", "ModelType": "chat",
             "RequestBody": {"messages": [{"role": "user", "content": "x"}]}, "Context": {"UserId": "smoke-test"}}
     code, raw = _req("POST", "/send", body)
@@ -121,7 +265,29 @@ def main():
             passed += 1
         print(f"  [{mark}] {case:24} {detail}")
     print(f"\n{passed}/{len(rows)} 通过")
-    return 0 if passed == len(rows) else 1
+    report_rows = [
+        {
+            "case": case,
+            "status": "pass" if ok else "fail",
+            "ok": ok,
+            "detail": detail,
+        }
+        for case, ok, detail in rows
+    ]
+    report = {
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "verdict": "pass" if passed == len(rows) else "fail",
+        "base": base,
+        "expectedCommit": EXPECTED_COMMIT,
+        "healthCommit": health_commit,
+        "passed": passed,
+        "total": len(rows),
+        "rows": report_rows,
+        "failures": [f"{case}: {detail}" for case, ok, detail in rows if not ok],
+    }
+    _write_json(JSON_OUT, report)
+    _write_markdown(REPORT_MD, report)
+    return 0 if report["verdict"] == "pass" else 1
 
 
 if __name__ == "__main__":

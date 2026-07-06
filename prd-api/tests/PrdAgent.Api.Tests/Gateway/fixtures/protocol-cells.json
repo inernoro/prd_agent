@@ -827,6 +827,36 @@
     "id": "B070"
   },
   {
+    "group": "claude-stream-tool-start",
+    "dim": "D6/E8",
+    "adapter": "claude",
+    "method": "stream",
+    "payload": "{\"type\": \"content_block_start\", \"index\": 0, \"content_block\": {\"type\": \"tool_use\", \"id\": \"toolu_1\", \"name\": \"search\", \"input\": {}}}",
+    "expect": {
+      "chunkType": "ToolCall",
+      "toolDeltaCount": 1,
+      "toolFirstIndex": 0,
+      "toolFirstId": "toolu_1",
+      "toolFirstName": "search",
+      "toolFirstArguments": ""
+    },
+    "id": "B071"
+  },
+  {
+    "group": "claude-stream-tool-args",
+    "dim": "D6/E8",
+    "adapter": "claude",
+    "method": "stream",
+    "payload": "{\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"input_json_delta\", \"partial_json\": \"{\\\"q\\\":\\\"x\\\"}\"}}",
+    "expect": {
+      "chunkType": "ToolCall",
+      "toolDeltaCount": 1,
+      "toolFirstIndex": 0,
+      "toolFirstArguments": "{\"q\":\"x\"}"
+    },
+    "id": "B072"
+  },
+  {
     "group": "claude-edge-null",
     "dim": "E1",
     "adapter": "claude",
@@ -835,7 +865,7 @@
     "expect": {
       "chunkType": "null"
     },
-    "id": "B071"
+    "id": "B073"
   },
   {
     "group": "claude-edge-null",
@@ -846,7 +876,7 @@
     "expect": {
       "chunkType": "null"
     },
-    "id": "B072"
+    "id": "B074"
   },
   {
     "group": "claude-usage-cache",
@@ -860,7 +890,7 @@
       "cacheCreation": 15,
       "cacheRead": 3
     },
-    "id": "B073"
+    "id": "B075"
   },
   {
     "group": "claude-usage-cache",
@@ -874,7 +904,7 @@
       "cacheCreation": 0,
       "cacheRead": 0
     },
-    "id": "B074"
+    "id": "B076"
   },
   {
     "group": "claude-usage-cache",
@@ -888,7 +918,7 @@
       "cacheCreation": 7,
       "cacheRead": 2
     },
-    "id": "B075"
+    "id": "B077"
   },
   {
     "group": "claude-tooluse-normalize",
@@ -901,7 +931,7 @@
       "toolFirstName": "search",
       "toolFirstType": "function"
     },
-    "id": "B076"
+    "id": "B078"
   },
   {
     "group": "claude-tooluse-2",
@@ -914,7 +944,7 @@
       "toolFirstName": "alpha",
       "toolFirstType": "function"
     },
-    "id": "B077"
+    "id": "B079"
   },
   {
     "group": "claude-message-content",
@@ -925,7 +955,7 @@
     "expect": {
       "content": "hello"
     },
-    "id": "B078"
+    "id": "B080"
   },
   {
     "group": "claude-message-content",
@@ -936,7 +966,7 @@
     "expect": {
       "content": "café-naïve-Zürich"
     },
-    "id": "B079"
+    "id": "B081"
   },
   {
     "group": "claude-message-content",
@@ -947,7 +977,7 @@
     "expect": {
       "content": "中文深度思考内容"
     },
-    "id": "B080"
+    "id": "B082"
   },
   {
     "group": "claude-message-content",
@@ -958,7 +988,7 @@
     "expect": {
       "content": "مرحبا بالعالم"
     },
-    "id": "B081"
+    "id": "B083"
   },
   {
     "group": "claude-message-content",
@@ -969,7 +999,7 @@
     "expect": {
       "content": "a   b   c"
     },
-    "id": "B082"
+    "id": "B084"
   },
   {
     "group": "claude-message-content",
@@ -980,7 +1010,7 @@
     "expect": {
       "content": "he said \"hi\" to me"
     },
-    "id": "B083"
+    "id": "B085"
   },
   {
     "group": "claude-message-content",
@@ -991,7 +1021,7 @@
     "expect": {
       "content": "line1\nline2"
     },
-    "id": "B084"
+    "id": "B086"
   },
   {
     "group": "claude-message-content",
@@ -1002,7 +1032,7 @@
     "expect": {
       "content": "Omega-Ω-approx-≈-sqrt-√"
     },
-    "id": "B085"
+    "id": "B087"
   },
   {
     "group": "claude-message-content",
@@ -1013,7 +1043,7 @@
     "expect": {
       "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
     },
-    "id": "B086"
+    "id": "B088"
   },
   {
     "group": "think-inline",
@@ -1027,7 +1057,7 @@
       "thinkVisible": "正式回答",
       "thinkCaptured": "推理内容"
     },
-    "id": "B087"
+    "id": "B089"
   },
   {
     "group": "think-cross-chunk",
@@ -1042,7 +1072,7 @@
     "expect": {
       "thinkVisible": "abcxyz"
     },
-    "id": "B088"
+    "id": "B090"
   },
   {
     "group": "think-plain",
@@ -1056,7 +1086,7 @@
       "thinkVisible": "just text",
       "thinkCapturedEmpty": true
     },
-    "id": "B089"
+    "id": "B091"
   },
   {
     "group": "think-only",
@@ -1070,7 +1100,7 @@
       "thinkVisible": "",
       "thinkCaptured": "only thinking"
     },
-    "id": "B090"
+    "id": "B092"
   },
   {
     "group": "think-nonascii-after",
@@ -1084,6 +1114,6 @@
       "thinkVisible": "done-完成",
       "thinkCaptured": "t"
     },
-    "id": "B091"
+    "id": "B093"
   }
 ]

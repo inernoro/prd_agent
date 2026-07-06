@@ -14,14 +14,13 @@ namespace PrdAgent.Api.Services;
 /// 输出格式：带时间戳的 Markdown 字幕文件。
 ///
 /// 分派规则（按 entry.ContentType 前缀）：
-///   audio/*         → DoubaoStreamAsrService（支持 mp3/wav/m4a/ogg/flac，内部走 ffmpeg 转码）
+///   audio/*         → ILlmGateway ASR（支持 mp3/wav/m4a/ogg/flac，必要时 ffmpeg 转码）
 ///   video/*         → 下载后 ffmpeg 抽音频 → 走 ASR（ffmpeg 由 host 挂载，见 docker-compose.yml）
 ///   image/*         → ILlmGateway Vision 模型 → 直译图片文字
 ///   其他            → 不支持，直接失败
 /// </summary>
 public class SubtitleGenerationProcessor
 {
-    private readonly DoubaoStreamAsrService _streamAsr;
     private readonly IModelResolver _modelResolver;
     private readonly ILlmGateway _llmGateway;
     private readonly IDocumentService _documentService;
@@ -29,14 +28,12 @@ public class SubtitleGenerationProcessor
     private readonly IHttpClientFactory _httpClientFactory;
 
     public SubtitleGenerationProcessor(
-        DoubaoStreamAsrService streamAsr,
         IModelResolver modelResolver,
         ILlmGateway llmGateway,
         IDocumentService documentService,
         IHttpClientFactory httpClientFactory,
         ILogger<SubtitleGenerationProcessor> logger)
     {
-        _streamAsr = streamAsr;
         _modelResolver = modelResolver;
         _llmGateway = llmGateway;
         _documentService = documentService;
@@ -161,7 +158,7 @@ public class SubtitleGenerationProcessor
 
         await UpdateProgressAsync(db, runStore, run, 35, isVideo ? "提取音轨" : "解析音频");
 
-        // 如果是视频，先用 ffmpeg 抽音频；音频直接交给 DoubaoStreamAsrService（内部会自动 ffmpeg 兜底）
+        // 如果是视频，先用 ffmpeg 抽音频；音频直接走 LLM Gateway ASR。
         if (isVideo)
             bytes = await ExtractAudioWithFfmpegAsync(bytes);
 
@@ -198,7 +195,14 @@ public class SubtitleGenerationProcessor
             switch (resolution.ExchangeTransformerType)
             {
                 case "doubao-asr-stream":
-                    return await TranscribeViaDoubaoStreamAsync(run, db, runStore, bytes, resolution);
+                    // WebSocket 协议由 LlmGateway/llmgw-serve 执行；本处理器仍只提交 GatewayRawRequest。
+                    return await TranscribeViaGatewayAsync(run, bytes, resolution.ToGatewayResolution(),
+                        new Dictionary<string, object>
+                        {
+                            ["model"] = resolution.ActualModel ?? "doubao-asr-stream",
+                            ["response_format"] = "verbose_json",
+                            ["timestamp_granularities[]"] = "segment",
+                        });
 
                 case "doubao-asr":
                     // doubao-asr 异步模式 ≠ Whisper multipart：DoubaoAsrTransformer.TransformRequest
@@ -212,7 +216,7 @@ public class SubtitleGenerationProcessor
                     throw new SubtitleAsrException(
                         $"字幕生成未支持的 Exchange 转换器类型: '{resolution.ExchangeTransformerType}'。\n" +
                         $"  当前模型: {resolution.ActualModel ?? "未知"}（Exchange={resolution.ExchangeName}）\n" +
-                        $"  支持的类型: doubao-asr-stream（WebSocket 流式）, doubao-asr（HTTP 异步）, 或非 Exchange 的 OpenAI 兼容 Whisper。\n" +
+                        $"  支持的类型: doubao-asr（HTTP 异步）, 或非 Exchange 的 OpenAI 兼容 Whisper。\n" +
                         "  解决方案：把模型池绑到上述任一类型的 Exchange，或换用 Whisper（HTTP /v1/audio/transcriptions）。",
                         BuildResolverDiagnostic(resolution, "Exchange 类型不支持"));
             }
@@ -250,90 +254,7 @@ public class SubtitleGenerationProcessor
     }
 
     // ──────────────────────────────────────────────────────
-    // 路径 A：豆包 WebSocket 流式 ASR
-    // ──────────────────────────────────────────────────────
-
-    private async Task<List<SubtitleSegment>> TranscribeViaDoubaoStreamAsync(
-        DocumentStoreAgentRun run,
-        MongoDbContext db,
-        IRunEventStore runStore,
-        byte[] bytes,
-        ModelResolutionResult resolution)
-    {
-        // 解析 appKey|accessKey
-        var apiKey = resolution.ApiKey ?? "";
-        string appKey = "", accessKey = apiKey;
-        if (apiKey.Contains('|'))
-        {
-            var parts = apiKey.Split('|', 2);
-            appKey = parts[0];
-            accessKey = parts[1];
-        }
-        var wsUrl = resolution.ApiUrl ?? "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel";
-        var config = resolution.ExchangeTransformerConfig ?? new Dictionary<string, object>
-        {
-            ["resourceId"] = "volc.bigasr.sauc.duration",
-            ["enableItn"] = true,
-            ["enablePunc"] = true,
-            ["enableDdc"] = true,
-        };
-
-        var result = await _streamAsr.TranscribeWithCallbackAsync(
-            wsUrl, appKey, accessKey, bytes, config,
-            onStage: async (stage, msg) =>
-            {
-                _logger.LogInformation("[doc-store-agent] StreamASR {Stage}: {Msg}", stage, msg);
-                await Task.CompletedTask;
-            },
-            onProgress: async (sent, total) =>
-            {
-                var pct = 50 + (int)(30.0 * sent / Math.Max(total, 1));
-                await UpdateProgressAsync(db, runStore, run, Math.Min(pct, 80), "识别中");
-            },
-            onFrame: async (_, __, ___) => { await Task.CompletedTask; },
-            ct: CancellationToken.None);
-
-        if (!result.Success)
-        {
-            // 把 DoubaoStreamAsrService 的 AsrDiagnostic 升级为 SubtitleDiagnostic
-            throw new SubtitleAsrException(
-                $"ASR 失败: {result.Error}",
-                BuildStreamDiagnostic(resolution, result));
-        }
-
-        // 从最后一帧提取带时间戳的 utterances
-        var segments = new List<SubtitleSegment>();
-        var lastResponse = result.Responses.LastOrDefault(r => r.PayloadMsg != null);
-        if (lastResponse?.PayloadMsg != null)
-        {
-            try
-            {
-                var payload = lastResponse.PayloadMsg.Value;
-                if (payload.TryGetProperty("result", out var res) &&
-                    res.TryGetProperty("utterances", out var utts) &&
-                    utts.ValueKind == System.Text.Json.JsonValueKind.Array)
-                {
-                    foreach (var utt in utts.EnumerateArray())
-                    {
-                        var text = utt.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
-                        if (string.IsNullOrWhiteSpace(text)) continue;
-                        double startMs = utt.TryGetProperty("start_time", out var st) ? st.GetDouble() : 0;
-                        double endMs = utt.TryGetProperty("end_time", out var et) ? et.GetDouble() : 0;
-                        segments.Add(new SubtitleSegment(startMs / 1000.0, endMs / 1000.0, text.Trim()));
-                    }
-                }
-            }
-            catch { /* fall through to FullText */ }
-        }
-        if (segments.Count == 0 && !string.IsNullOrEmpty(result.FullText))
-        {
-            segments.Add(new SubtitleSegment(0, 0, result.FullText));
-        }
-        return segments;
-    }
-
-    // ──────────────────────────────────────────────────────
-    // 路径 B：Whisper / 异步豆包，统一走 LlmGateway HTTP
+    // Whisper / 异步豆包，统一走 LlmGateway HTTP
     // ──────────────────────────────────────────────────────
 
     private async Task<List<SubtitleSegment>> TranscribeViaGatewayAsync(

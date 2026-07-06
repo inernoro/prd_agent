@@ -106,6 +106,7 @@ docs:
   design.cds.build-time: CDS 构建耗时与发布版/热加载机制设计
   design.cds.branch-network-isolation: CDS 分支级网络隔离（每分支专属 app 网 + 共享 infra 网，杜绝跨分支服务发现串流）
   design.cds.branch-local-extra-services: CDS 分支级临时额外服务（分支可在项目底座之上自助加服务，只在本分支部署、删分支即消失、不影响别的分支）
+  design.cds.config-tree: CDS 配置树（全局→项目→分支→派生分支四层继承、派生=快照拷贝、env 逐 key 溯源检查器、快照分支层；波4 repo compose 纯结构种子方向）
   design.cds.agent.api: CDS Agent API 契约设计
   design.cds.agent.runtime-architecture: CDS Agent 运行时架构设计
   design.cds.agent.official-sdk-adapter: CDS Agent 官方 SDK Adapter 设计

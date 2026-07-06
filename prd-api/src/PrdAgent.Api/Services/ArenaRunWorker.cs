@@ -4,7 +4,6 @@ using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
-using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.Security;
 using MongoDB.Driver;
 
@@ -184,9 +183,8 @@ public sealed class ArenaRunWorker : BackgroundService
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
         var httpClientFactory = scope.ServiceProvider.GetRequiredService<IHttpClientFactory>();
-        var logWriter = scope.ServiceProvider.GetRequiredService<ILlmRequestLogWriter>();
         var ctxAccessor = scope.ServiceProvider.GetRequiredService<ILLMRequestContextAccessor>();
-        var claudeLogger = scope.ServiceProvider.GetRequiredService<ILogger<ClaudeClient>>();
+        var gateway = scope.ServiceProvider.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>();
 
         // Check for cancel
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
@@ -280,7 +278,7 @@ public sealed class ArenaRunWorker : BackgroundService
                 await sem.WaitAsync(CancellationToken.None);
                 try
                 {
-                    await RunOneSlotAsync(runId, slot, input.Prompt, input.UserId, llmAttachments, db, httpClientFactory, logWriter, ctxAccessor, claudeLogger, slotTexts, cts.Token);
+                    await RunOneSlotAsync(runId, slot, input.Prompt, input.UserId, llmAttachments, db, gateway, ctxAccessor, slotTexts, cts.Token);
                 }
                 catch (OperationCanceledException) { /* expected on cancel */ }
                 catch (Exception ex)
@@ -379,10 +377,8 @@ public sealed class ArenaRunWorker : BackgroundService
         string userId,
         List<LLMAttachment> llmAttachments,
         MongoDbContext db,
-        IHttpClientFactory httpClientFactory,
-        ILlmRequestLogWriter logWriter,
+        PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
         ILLMRequestContextAccessor ctxAccessor,
-        ILogger<ClaudeClient> claudeLogger,
         Dictionary<string, StringBuilder> slotTexts,
         CancellationToken ct)
     {
@@ -401,7 +397,6 @@ public sealed class ArenaRunWorker : BackgroundService
 
         var apiUrl = platform.ApiUrl;
         var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(platform.ApiKeyEncrypted, _config);
-        var platformType = platform.PlatformType?.ToLowerInvariant();
 
         // Check if model exists in llm_models for override config
         var model = await db.LLMModels.Find(m => m.PlatformId == slot.PlatformId && m.ModelName == slot.ModelId).FirstOrDefaultAsync(CancellationToken.None);
@@ -423,9 +418,6 @@ public sealed class ArenaRunWorker : BackgroundService
             return;
         }
 
-        var httpClient = httpClientFactory.CreateClient("LoggedHttpClient");
-        httpClient.BaseAddress = new Uri(apiUrl.TrimEnd('/'));
-
         // 设置 LLM 请求上下文（确保 AppCallerCode 不为空，日志可追溯）
         using var _ = ctxAccessor.BeginScope(new LlmRequestContext(
             RequestId: Guid.NewGuid().ToString("N"),
@@ -438,17 +430,16 @@ public sealed class ArenaRunWorker : BackgroundService
             SystemPromptRedacted: "[ARENA]",
             RequestType: "reasoning",
             AppCallerCode: "prd-agent.arena.battle::chat",
-            ModelResolutionType: ModelResolutionType.DirectModel,
-            // S2 观测标记：B 类保留直连锁定语义（竞技场对战按 slot 明确指定 platform+model，故意绕开网关
-            // 池调度，走网关池会破坏「选 A 测 A」对战语义）。全网关路由留待网关支持 pinned platform+model
-            // 入口后做（见 doc/plan.llm-gateway.full-cutover.md S3）。此处只纳入 transport 观测：direct。
-            GatewayTransport: GatewayTransports.Direct));
+            ModelResolutionType: ModelResolutionType.DirectModel));
 
-        // S3 B 类：保留直连（对战锁定 slot 的 platform+model，故意绕开网关池调度以守「选 A 测 A」）。
-        // 传输观测标记 direct 由上方 BeginScope 的 GatewayTransport 承载，日志可辨识为直连锁定路径。
-        ILLMClient client = platformType == "anthropic" || apiUrl.Contains("anthropic.com", StringComparison.OrdinalIgnoreCase)
-            ? new ClaudeClient(httpClient, apiKey, slot.ModelId, 4096, 0.2, false, claudeLogger, logWriter, ctxAccessor, platform.Id, platform.Name)
-            : new OpenAIClient(httpClient, apiKey, slot.ModelId, 4096, 0.2, false, logWriter, ctxAccessor, null, platform.Id, platform.Name);
+        ILLMClient client = gateway.CreateClient(
+            AppCallerRegistry.Desktop.Arena.BattleChat,
+            ModelTypes.Chat,
+            maxTokens: 4096,
+            temperature: 0.2,
+            expectedModel: slot.ModelId,
+            pinnedPlatformId: platform.Id,
+            pinnedModelId: slot.ModelId);
 
         // Emit modelStart
         var startedAt = DateTime.UtcNow;

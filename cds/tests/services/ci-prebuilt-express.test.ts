@@ -20,6 +20,7 @@ import { WorktreeService } from '../../src/services/worktree.js';
 import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry } from '../../src/types.js';
 import { GitHubWebhookDispatcher } from '../../src/services/github-webhook-dispatcher.js';
 import { resolveImageTemplate, slugifyBranchForImage, resolveEffectiveProfile, normalizeFallbackImages } from '../../src/services/container.js';
+import { preparePrebuiltImageClaim } from '../../src/services/prebuilt-image-claim.js';
 import {
   resolveActiveDeployModeId,
   branchUsesPrebuiltMode,
@@ -115,6 +116,63 @@ describe('极速版 — 纯函数', () => {
   it('classifyDeployRuntime 把 express 归类为 release', () => {
     expect(classifyDeployRuntime('express', '极速版（CI 预构建）')).toBe('release');
     expect(classifyDeployRuntime('dev', '开发模式')).toBe('source');
+  });
+
+  it('preparePrebuiltImageClaim 拒绝非 40 位 SHA', () => {
+    const plan = preparePrebuiltImageClaim({} as BranchEntry, [expressApiProfile()], {
+      commitSha: 'deadbeef',
+      nowIso: '2026-07-07T00:00:00.000Z',
+    });
+    expect(plan.ok).toBe(false);
+    if (!plan.ok) expect(plan.error).toBe('invalid_commit_sha');
+  });
+
+  it('preparePrebuiltImageClaim 拒绝非 prebuilt 分支', () => {
+    const profile = expressApiProfile();
+    const branch = {
+      id: 'p1-feature',
+      branch: 'feature',
+      profileOverrides: { api: { activeDeployMode: 'dev' } },
+    } as unknown as BranchEntry;
+    const plan = preparePrebuiltImageClaim(branch, [profile], {
+      commitSha: FULL_SHA,
+      nowIso: '2026-07-07T00:00:00.000Z',
+    });
+    expect(plan.ok).toBe(false);
+    if (!plan.ok) expect(plan.error).toBe('branch_not_prebuilt');
+  });
+
+  it('preparePrebuiltImageClaim 将已成功的 prebuilt 镜像认领为当前 ciTargetSha', () => {
+    const oldSha = 'aaaaaaaa00112233445566778899aabbccddeeff';
+    const branch = {
+      id: 'p1-feature',
+      branch: 'feature',
+      githubCommitSha: oldSha,
+      ciImageStatus: 'ready',
+      ciTargetSha: oldSha,
+      profileOverrides: { api: { activeDeployMode: 'express' } },
+    } as unknown as BranchEntry;
+
+    const plan = preparePrebuiltImageClaim(branch, [expressApiProfile()], {
+      commitSha: FULL_SHA,
+      workflowRunUrl: 'https://github.com/inernoro/prd_agent/actions/runs/123',
+      nowIso: '2026-07-07T00:00:00.000Z',
+    });
+
+    expect(plan.ok).toBe(true);
+    if (plan.ok) {
+      expect(plan.patch).toMatchObject({
+        githubCommitSha: FULL_SHA,
+        ciImageStatus: 'ready',
+        ciTargetSha: FULL_SHA,
+        ciWorkflowConclusion: 'success',
+        ciWorkflowRunUrl: 'https://github.com/inernoro/prd_agent/actions/runs/123',
+        ciWaitingSince: '',
+        ciImageError: '',
+      });
+      expect(plan.previous.ciTargetSha).toBe(oldSha);
+      expect(plan.noChange).toBe(false);
+    }
   });
 
   it('resolveEffectiveProfile 在 express 下应用 prebuilt + containerPort + 镜像模板', () => {

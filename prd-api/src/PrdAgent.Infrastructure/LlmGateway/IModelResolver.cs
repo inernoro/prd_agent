@@ -20,6 +20,8 @@ public interface IModelResolver
         string appCallerCode,
         string modelType,
         string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null,
         CancellationToken ct = default);
 
     /// <summary>
@@ -374,6 +376,61 @@ public class ModelResolutionResult
             HealthStatus = "Healthy",
             // 直连/Legacy 路径持有真实 LLMModel，可读 function_calling 能力供 G4 软门使用
             SupportsFunctionCalling = FunctionCallingCapability(model)
+        };
+    }
+
+    public static ModelResolutionResult FromPinned(
+        string? expectedModel,
+        LLMModel model,
+        LLMPlatform platform,
+        string? apiKey)
+    {
+        var result = FromLegacy(expectedModel, model, platform, apiKey);
+        return new ModelResolutionResult
+        {
+            Success = result.Success,
+            ResolutionType = "PinnedModel",
+            ExpectedModel = result.ExpectedModel,
+            ActualModel = result.ActualModel,
+            ActualPlatformId = result.ActualPlatformId,
+            ActualPlatformName = result.ActualPlatformName,
+            PlatformType = result.PlatformType,
+            Protocol = result.Protocol,
+            ResolutionReason = result.ResolutionReason,
+            ApiUrl = result.ApiUrl,
+            ApiKey = result.ApiKey,
+            HealthStatus = result.HealthStatus,
+            SupportsFunctionCalling = result.SupportsFunctionCalling
+        };
+    }
+
+    public static ModelResolutionResult FromLegacyConfig(
+        string? expectedModel,
+        string resolutionType,
+        string provider,
+        string model,
+        string? apiUrl,
+        string? apiKey)
+    {
+        var protocol = string.Equals(provider, "Claude", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(provider, "Anthropic", StringComparison.OrdinalIgnoreCase)
+            ? "anthropic"
+            : "openai";
+
+        return new ModelResolutionResult
+        {
+            Success = true,
+            ResolutionType = resolutionType,
+            ExpectedModel = expectedModel,
+            ActualModel = model,
+            ActualPlatformId = resolutionType,
+            ActualPlatformName = provider,
+            PlatformType = protocol,
+            Protocol = protocol,
+            ResolutionReason = "protocol-from-legacy-config",
+            ApiUrl = apiUrl,
+            ApiKey = apiKey,
+            HealthStatus = "Healthy"
         };
     }
 

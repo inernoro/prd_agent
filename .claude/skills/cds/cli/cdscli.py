@@ -601,7 +601,10 @@ def cmd_branch_deploy(args: argparse.Namespace) -> None:
 
     # Step 1: 安全触发 deploy —— IncompleteRead 不再抛 traceback
     deploy_path = f"/api/branches/{urllib.parse.quote(branch_id)}/deploy"
-    trigger = _request_stream_safe("POST", deploy_path, timeout=5)
+    trigger_body: dict[str, Any] | None = None
+    if getattr(args, "commit", None):
+        trigger_body = {"commitSha": args.commit}
+    trigger = _request_stream_safe("POST", deploy_path, body=trigger_body, timeout=5)
 
     # 触发失败,或者 HTTP 4xx/5xx (auth/not found/服务器错误)——立刻 fail,不进 300s 轮询
     trigger_status = trigger.get("status")
@@ -666,6 +669,30 @@ def cmd_branch_deploy(args: argparse.Namespace) -> None:
                 "lastBranch": last_branch,
             },
         })
+
+
+def cmd_branch_claim_prebuilt(args: argparse.Namespace) -> None:
+    payload: dict[str, Any] = {"commitSha": args.commit}
+    if args.workflow_url:
+        payload["workflowRunUrl"] = args.workflow_url
+    if args.dry_run:
+        payload["dryRun"] = True
+    body = _call(
+        "POST",
+        f"/api/branches/{urllib.parse.quote(args.id)}/prebuilt-image/claim",
+        body=payload,
+        timeout=30,
+    )
+    if args.deploy and not args.dry_run:
+        deploy_args = argparse.Namespace(id=args.id, timeout=args.timeout, commit=args.commit)
+        cmd_branch_deploy(deploy_args)
+        return
+    if _HUMAN:
+        status = "未变更" if body.get("noChange") else "已认领"
+        print(f"[OK] prebuilt 镜像{status}: {args.id}@{args.commit[:12]}")
+        print(json.dumps(body, ensure_ascii=False, indent=2))
+        return
+    ok(body)
 
 
 def _fallback_branch_id(branch: str) -> str:
@@ -1443,9 +1470,13 @@ def cmd_branch_create(args: argparse.Namespace) -> None:
     branch = (args.branch or "").strip()
     if not branch:
         die("--branch 必填", code=1)
-    body = _call("POST", "/api/branches",
-                 body={"projectId": project, "branch": branch},
-                 timeout=60)
+    payload: dict[str, Any] = {"projectId": project, "branch": branch}
+    # 波3 配置树:--from <sourceBranchId> = 从来源分支快照拷贝分支级配置
+    # (profileOverrides + extraProfiles,拷贝后各自独立,并写派生溯源指针)
+    source = (getattr(args, "from_branch", None) or "").strip()
+    if source:
+        payload["sourceBranchId"] = source
+    body = _call("POST", "/api/branches", body=payload, timeout=60)
     if _HUMAN:
         bid = body.get("id") if isinstance(body, dict) else "?"
         status = body.get("status") if isinstance(body, dict) else "?"
@@ -1998,6 +2029,143 @@ def cmd_branch_set_mode(args: argparse.Namespace) -> None:
                  body=existing)
     ok(body, note=f"分支 {args.id} / profile {args.profile} 部署模式覆盖 -> {args.mode}"
                   "(已保留其它覆盖字段；需重新部署生效)")
+
+
+# ── 分支级临时额外服务（branch-local extra services）────────────────────
+# 场景:某分支临时要接 Nacos/Kafka 等实验容器,只作用于本分支、不进项目配置、
+# 删分支即消失。后端契约(design.cds.branch-local-extra-services):
+#   GET  /api/branches/:id/extra-services            → {extraProfiles:[...(env 已脱敏 ***)]}
+#   PUT  /api/branches/:id/extra-services[?redeploy=1] → 整体替换(数组),空数组=清空
+# 两条服务端铁律(cds/src/routes/branches.ts PUT handler),CLI 依赖它们:
+#   1. env merge 不 replace:同 id 旧 env 为基底叠加入参,省略 env 不丢旧密钥;
+#   2. 掩码哨兵剥离:入参值为 *** 等哨兵时保留旧值 → GET 的脱敏结果直接回传 PUT 是安全的。
+# 因此 set/remove 走「GET → 本地改 → PUT 全量」读改写,无需 reveal 明文。
+
+def _parse_env_pairs(pairs: list[str] | None) -> dict[str, str]:
+    env: dict[str, str] = {}
+    for raw in pairs or []:
+        if "=" not in raw:
+            die(f"--env 需要 KEY=VALUE 形式,收到: {raw}", code=1)
+        k, _, v = raw.partition("=")
+        if not k.strip():
+            die(f"--env 的 KEY 不能为空: {raw}", code=1)
+        env[k.strip()] = v
+    return env
+
+
+def _get_extra_profiles(branch_id: str) -> list[dict]:
+    body = _call("GET", f"/api/branches/{urllib.parse.quote(branch_id)}/extra-services",
+                 timeout=30)
+    lst = (body or {}).get("extraProfiles") if isinstance(body, dict) else None
+    return [p for p in (lst or []) if isinstance(p, dict)]
+
+
+def _put_extra_profiles(branch_id: str, profiles: list[dict],
+                        redeploy: bool) -> dict:
+    path = f"/api/branches/{urllib.parse.quote(branch_id)}/extra-services"
+    if redeploy:
+        path += "?redeploy=1"
+    # PUT 触发 redeploy 时服务端会等 deploy 请求被「接受」才回包,给足超时
+    return _call("PUT", path, body={"extraProfiles": profiles},
+                 timeout=120 if redeploy else 30)
+
+
+def _extra_summary(p: dict) -> str:
+    bits = [f"{p.get('id','?')}", f"image={p.get('dockerImage','?')}",
+            f"port={p.get('containerPort','?')}"]
+    if p.get("subdomain"):
+        bits.append(f"subdomain={p['subdomain']}")
+    if p.get("dbScope"):
+        bits.append(f"dbScope={p['dbScope']}")
+    if p.get("env"):
+        bits.append(f"env×{len(p['env'])}")
+    return "  ".join(bits)
+
+
+def cmd_branch_extra_list(args: argparse.Namespace) -> None:
+    profiles = _get_extra_profiles(args.id)
+    if _HUMAN:
+        print(f"分支 {args.id} 的临时额外服务: {len(profiles)} 个")
+        for p in profiles:
+            print(f"  - {_extra_summary(p)}")
+        return
+    ok({"branchId": args.id, "extraProfiles": profiles})
+
+
+def cmd_branch_extra_set(args: argparse.Namespace) -> None:
+    """upsert 单个额外服务(--id + 字段旗标),或 --file 整体替换。
+
+    读改写:先 GET 现有列表(env 已脱敏,回传安全),再按 --id 合并字段,最后 PUT 全量。
+    --redeploy 让声明的服务真正起容器(否则纯配置落库,下次部署才生效)。
+    """
+    if args.file:
+        with open(args.file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        profiles = data.get("extraProfiles") if isinstance(data, dict) else data
+        if not isinstance(profiles, list):
+            die("--file 内容必须是数组,或 {\"extraProfiles\": [...]} 对象", code=1)
+        body = _put_extra_profiles(args.id, profiles, args.redeploy)
+        ok(body, note=f"分支 {args.id} 额外服务已整体替换({len(profiles)} 个)"
+                      + (";已触发重部署" if body.get("redeployTriggered") else
+                         ";纯配置变更,--redeploy 或下次部署时生效"))
+        return
+    if not args.service_id:
+        die("必须提供 --id(upsert 单个服务)或 --file(整体替换)", code=1)
+    profiles = _get_extra_profiles(args.id)
+    existing = next((p for p in profiles if p.get("id") == args.service_id), None)
+    svc: dict[str, Any] = dict(existing or {"id": args.service_id})
+    if existing is None and not args.image:
+        die(f"新建额外服务 \"{args.service_id}\" 必须提供 --image", code=1)
+    if args.image:
+        svc["dockerImage"] = args.image
+    if args.port is not None:
+        svc["containerPort"] = args.port
+    if existing is None and args.port is None:
+        die(f"新建额外服务 \"{args.service_id}\" 必须提供 --port(容器端口)", code=1)
+    if args.command is not None:
+        svc["command"] = args.command
+    if args.work_dir is not None:
+        svc["workDir"] = args.work_dir
+    if args.container_work_dir is not None:
+        svc["containerWorkDir"] = args.container_work_dir
+    if args.entrypoint is not None:
+        svc["entrypoint"] = args.entrypoint
+    if args.db_scope is not None:
+        svc["dbScope"] = args.db_scope
+    if args.subdomain is not None:
+        # 显式空串 = 有意清空命名 URL;省略 = 服务端继承旧值
+        svc["subdomain"] = args.subdomain
+    env_pairs = _parse_env_pairs(args.env)
+    if env_pairs:
+        # 服务端 merge 不 replace:只需带上改动的 key(旧 env 由服务端基底保留)
+        svc["env"] = {**(svc.get("env") or {}), **env_pairs}
+    if args.depends_on:
+        svc["dependsOn"] = args.depends_on
+    if args.path_prefix:
+        svc["pathPrefixes"] = args.path_prefix
+    merged = [p for p in profiles if p.get("id") != args.service_id] + [svc]
+    body = _put_extra_profiles(args.id, merged, args.redeploy)
+    verb = "已更新" if existing else "已声明"
+    ok(body, note=f"分支 {args.id} 额外服务 \"{args.service_id}\" {verb}"
+                  + (";已触发重部署,几十秒后容器就位" if body.get("redeployTriggered") else
+                     ";纯配置变更,--redeploy 或下次部署时生效"))
+
+
+def cmd_branch_extra_remove(args: argparse.Namespace) -> None:
+    profiles = _get_extra_profiles(args.id)
+    remaining = [p for p in profiles if p.get("id") != args.service_id]
+    if len(remaining) == len(profiles):
+        die(f"分支 {args.id} 没有 id 为 \"{args.service_id}\" 的额外服务", code=2)
+    body = _put_extra_profiles(args.id, remaining, args.redeploy)
+    note = f"分支 {args.id} 额外服务 \"{args.service_id}\" 已移除"
+    if body.get("removalRolledBack"):
+        note = (f"移除被回滚:重部署被拒且该服务仍在运行,为避免幽灵服务已恢复配置"
+                f"(详见 redeployRejected)")
+    elif body.get("redeployTriggered"):
+        note += ";已触发重部署,在跑容器将被下掉"
+    else:
+        note += ";纯配置变更,若容器在跑需 --redeploy 才真正下掉"
+    ok(body, note=note)
 
 
 # ── 验收报告 / 报告文件夹（CDS 自托管，POST /api/reports + /api/report-folders）──
@@ -7084,7 +7252,19 @@ def _build_parser() -> argparse.ArgumentParser:
     bl = br.add_parser("list"); bl.add_argument("--project"); bl.set_defaults(func=cmd_branch_list)
     bs = br.add_parser("status"); bs.add_argument("id"); bs.set_defaults(func=cmd_branch_status)
     bd = br.add_parser("deploy"); bd.add_argument("id"); bd.add_argument("--timeout", type=int, default=300)
+    bd.add_argument("--commit", help="显式按指定 commit 触发部署(40 位 SHA)")
     bd.set_defaults(func=cmd_branch_deploy)
+    bcp = br.add_parser(
+        "claim-prebuilt",
+        help="手动认领已成功的 CI 预构建镜像,修复 webhook 漏投导致的 ciTargetSha 落后",
+    )
+    bcp.add_argument("id", help="CDS canonical branch id")
+    bcp.add_argument("--commit", required=True, help="已由 Branch Image 成功构建的 40 位 commit SHA")
+    bcp.add_argument("--workflow-url", help="GitHub Actions run 链接(证据)")
+    bcp.add_argument("--dry-run", action="store_true", help="只校验并展示将写入的 metadata")
+    bcp.add_argument("--deploy", action="store_true", help="认领后立即按同一 commit 触发部署")
+    bcp.add_argument("--timeout", type=int, default=300, help="--deploy 时等待部署完成的秒数")
+    bcp.set_defaults(func=cmd_branch_claim_prebuilt)
     blg = br.add_parser("logs"); blg.add_argument("id"); blg.add_argument("--profile", required=True)
     blg.add_argument("--tail", type=int, default=100); blg.set_defaults(func=cmd_branch_logs)
     be = br.add_parser("exec"); be.add_argument("id"); be.add_argument("--profile", required=True)
@@ -7101,6 +7281,9 @@ def _build_parser() -> argparse.ArgumentParser:
                             "API body 字段是 projectId,这里用 --project 抹平。")
     bc.add_argument("--project", help="projectId(或读 CDS_PROJECT_ID)")
     bc.add_argument("--branch", required=True, help="git 分支名(必填)")
+    bc.add_argument("--from", dest="from_branch", metavar="SOURCE_BRANCH_ID",
+                    help="从来源分支快照拷贝分支级配置(profileOverrides+extraProfiles,"
+                         "拷贝后各自独立,写派生溯源指针)")
     bc.set_defaults(func=cmd_branch_create)
     bsm = br.add_parser("set-mode",
                         help="设置单分支的部署模式覆盖(activeDeployMode)。"
@@ -7109,6 +7292,41 @@ def _build_parser() -> argparse.ArgumentParser:
     bsm.add_argument("profile", help="构建配置 id(profileId)")
     bsm.add_argument("mode", help="部署模式名(须存在于该 profile 的 deployModes)")
     bsm.set_defaults(func=cmd_branch_set_mode)
+
+    bx = br.add_parser(
+        "extra-services",
+        help="分支级临时额外服务(只作用于本分支,如临时接 Nacos;删分支即消失)",
+    ).add_subparsers(dest="sub2", required=True)
+    bxl = bx.add_parser("list", help="列出分支的临时额外服务(env 已脱敏)")
+    bxl.add_argument("id", help="CDS canonical branch id")
+    bxl.set_defaults(func=cmd_branch_extra_list)
+    bxs = bx.add_parser("set", help="声明/更新一个额外服务(--id + 字段),或 --file 整体替换")
+    bxs.add_argument("id", help="CDS canonical branch id")
+    bxs.add_argument("--id", dest="service_id", help="额外服务 id(字母/数字开头,可含 - _)")
+    bxs.add_argument("--image", help="镜像引用,如 nacos/nacos-server:v2.3.2")
+    bxs.add_argument("--port", type=int, help="容器端口,如 8848")
+    bxs.add_argument("--command", help="启动命令(镜像默认 CMD 够用则省略)")
+    bxs.add_argument("--work-dir", help="宿主机相对路径挂载(纯镜像服务省略)")
+    bxs.add_argument("--container-work-dir", help="容器内工作目录(绝对路径)")
+    bxs.add_argument("--entrypoint", help="入口覆盖(单 token;空串=清空镜像 ENTRYPOINT)")
+    bxs.add_argument("--db-scope", choices=["shared", "per-branch"],
+                     help="数据库隔离档位(per-branch=DB 名追加分支后缀)")
+    bxs.add_argument("--subdomain", help="命名子域(单 DNS label;空串=清空命名 URL)")
+    bxs.add_argument("--env", action="append", metavar="KEY=VALUE",
+                     help="环境变量,可重复;服务端按 key 合并,不会丢未提及的旧值")
+    bxs.add_argument("--depends-on", action="append", metavar="SERVICE_ID",
+                     help="启动依赖,可重复")
+    bxs.add_argument("--path-prefix", action="append", metavar="PREFIX",
+                     help="路由前缀,可重复(如 /nacos)")
+    bxs.add_argument("--file", help="JSON 文件整体替换(数组或 {extraProfiles:[...]})")
+    bxs.add_argument("--redeploy", action="store_true",
+                     help="落库后立即触发分支重部署,让容器真正起来")
+    bxs.set_defaults(func=cmd_branch_extra_set)
+    bxr = bx.add_parser("remove", help="移除一个额外服务(--redeploy 才会真正下掉在跑容器)")
+    bxr.add_argument("id", help="CDS canonical branch id")
+    bxr.add_argument("service_id", help="要移除的额外服务 id")
+    bxr.add_argument("--redeploy", action="store_true", help="移除后立即重部署下掉容器")
+    bxr.set_defaults(func=cmd_branch_extra_remove)
 
     sch = sub.add_parser("schedule", help="任务调度: 口令创建 / 测试动作 / 列表 / 手动执行").add_subparsers(dest="sub", required=True)
     sp = sch.add_parser("parse", help="解析口令,不请求 CDS")
