@@ -369,8 +369,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("min_observation_hours", ledger);
         Assert.Contains("rollout stage observation window not satisfied", ledger);
         Assert.Contains("_latest_success_evidence_failures", ledger);
+        Assert.Contains("_existing_success_evidence_failures", ledger);
         Assert.Contains("rollout stage prior evidence validation failed", ledger);
         Assert.Contains("prior stage evidence invalid before rollout", ledger);
+        Assert.Contains("existing prior stage evidence invalid before out-of-order rollout", ledger);
         Assert.Contains("\"minStageObservationHours\": args.min_stage_observation_hours", ledger);
         Assert.Contains("_require_pass_json", ledger);
         Assert.Contains("_require_stage_evidence_for_commit", ledger);

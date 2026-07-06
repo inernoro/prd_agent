@@ -252,6 +252,17 @@ def _latest_success_evidence_failures(entries: list[dict], commit: str, stage: s
     ]
 
 
+def _existing_success_evidence_failures(entries: list[dict], commit: str, stage: str) -> list[str]:
+    latest = _latest_success(entries, commit, stage)
+    if not latest:
+        return []
+    failures = _entry_evidence_failures(latest)
+    return [
+        f"existing prior stage evidence invalid before out-of-order rollout: stage={stage} {failure}"
+        for failure in failures
+    ]
+
+
 def _required_rollout_stages(target_stage: str, require_target_success: bool) -> list[str]:
     if target_stage == "rollback-inproc":
         return []
@@ -369,6 +380,21 @@ def validate(args: argparse.Namespace) -> int:
         return 1
 
     if args.allow_out_of_order:
+        required = STAGES[: STAGES.index(stage)] if stage in STAGES else []
+        evidence_failures: list[str] = []
+        if stage in STAGES and _stage_requires_rehearsal(stage):
+            evidence_failures.extend(_existing_success_evidence_failures(entries, commit, ROLLBACK_REHEARSAL_STAGE))
+        for prior_stage in required:
+            evidence_failures.extend(_existing_success_evidence_failures(entries, commit, prior_stage))
+        if evidence_failures:
+            print(
+                "ERROR: rollout stage prior evidence validation failed. "
+                f"stage={stage} commit={commit} ledger={args.ledger}",
+                file=sys.stderr,
+            )
+            for failure in evidence_failures:
+                print(f"ERROR: {failure}", file=sys.stderr)
+            return 1
         reason = str(args.allow_out_of_order_reason or "").strip()
         print(f"WARN: rollout ledger order check skipped by --allow-out-of-order: {reason}", file=sys.stderr)
         return 0
