@@ -515,6 +515,8 @@ export default function AppShell() {
   // 专注模式（fullBleedMain）、移动端下隐藏侧栏，主区最大化
   const focusHideAside = fullBleedMain || isMobile;
   const mainPadLeft = focusHideAside ? (isMobile ? 0 : asideGap) : asideWidth + asideGap * 2;
+  // 桌面端（非专注模式）内容区渲染为全屏画布面板；移动端与 fullBleed 保持原结构
+  const useCanvasPanel = !isMobile && !fullBleedMain;
 
   // 移动端底部 Tab 栏: 5 固定 Tab（首页/浏览/+/资产/我的），不再依赖后端菜单
 
@@ -1816,7 +1818,10 @@ export default function AppShell() {
         </aside>
 
         <main
-          className="relative h-full w-full overflow-auto flex flex-col transition-[padding-left] duration-220 ease-out"
+          className={cn(
+            'relative h-full w-full flex flex-col transition-[padding-left] duration-220 ease-out',
+            useCanvasPanel ? 'overflow-hidden' : 'overflow-auto'
+          )}
           style={{
             // 透明 → 让外层 .app-aurora 的彩色光晕透到内容区(否则不透明 base 会盖住 aurora,
             // 半透卡片/玻璃只能折射到平底色)。aurora 自身以 var(--bg-base) 收底,floor 色不变。
@@ -1827,11 +1832,39 @@ export default function AppShell() {
             paddingBottom: isMobile ? 'calc(var(--mobile-tab-height, 60px) + env(safe-area-inset-bottom, 0px))' : undefined,
           }}
         >
+          {/*
+           * 桌面端全屏画布面板（治「页面半截子」）：
+           * 内容不再是"深色虚空里漂浮的卡片"，而是一块与侧栏同 12px 网格对齐、
+           * 常驻撑满视口的圆角画布——滚动发生在画布内部，页面内容再短，
+           * 画布也始终占满整屏（content-fills-canvas / full-height-layout）。
+           * 材质走主题 token（color-mix 半透），暗色下不遮 app-aurora 光晕，
+           * 浅色主题自动翻转。移动端与专注模式（fullBleedMain）保持原结构。
+           */}
           <div
             className={cn(
               'relative w-full flex-1 min-h-0 flex flex-col',
-              isMobile ? 'px-[var(--mobile-padding,16px)] py-3' : fullBleedMain ? 'p-0' : isHomePage ? 'px-3 py-3' : 'px-5 py-5'
+              useCanvasPanel && 'overflow-auto',
+              isMobile
+                ? 'px-[var(--mobile-padding,16px)] py-3'
+                : fullBleedMain
+                  ? 'p-0'
+                  : isHomePage
+                    ? 'p-0'
+                    : 'px-5 py-4'
             )}
+            style={
+              useCanvasPanel
+                ? {
+                    margin: `${asideGap}px ${asideGap}px ${asideGap}px 0`,
+                    borderRadius: 18,
+                    border: '1px solid var(--border-faint, rgba(255,255,255,0.08))',
+                    background:
+                      'color-mix(in srgb, var(--bg-elevated, #1e1e24) 42%, transparent)',
+                    boxShadow: '0 18px 60px rgba(0, 0, 0, 0.22)',
+                    overscrollBehavior: 'contain',
+                  }
+                : undefined
+            }
           >
             <div className="flex-1 min-h-0 relative">
               {/* 移动端兼容门槛：根据路由显示 banner / 模态，非阻断式 */}
