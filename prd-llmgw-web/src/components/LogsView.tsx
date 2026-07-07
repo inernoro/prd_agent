@@ -3,9 +3,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
-import { RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
-import { getLogs, getLogsMeta, getLogsTimeseries, getLogsSessions } from '@/lib/api';
-import type { LlmLogListItem, SessionItem, TimeseriesPoint } from '@/lib/types';
+import { RefreshCw, ChevronLeft, ChevronRight, Activity, Clock, GitBranch, Gauge, Layers, Zap } from 'lucide-react';
+import { getLogs, getLogsMeta, getLogsTimeseries, getLogsSessions, getLogsSummary } from '@/lib/api';
+import type { LlmLogListItem, LogsSummaryData, SessionItem, TimeseriesPoint } from '@/lib/types';
 import { Button, Card, Chip, SectionLoader, Spinner, TabBar } from './ui';
 import { MiniBarChart } from './MiniBarChart';
 import { GenerationDetailsDrawer } from './GenerationDetailsDrawer';
@@ -50,8 +50,22 @@ export function LogsView() {
   const [presetKey, setPresetKey] = useState('30d');
   const [filterModel, setFilterModel] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
+  const [filterProvider, setFilterProvider] = useState('');
+  const [filterAppCaller, setFilterAppCaller] = useState('');
+  const [filterTransport, setFilterTransport] = useState('');
+  const [filterRequestType, setFilterRequestType] = useState('');
 
-  const [meta, setMeta] = useState<{ models: string[]; statuses: string[] }>({ models: [], statuses: [] });
+  const [meta, setMeta] = useState<{ models: string[]; statuses: string[]; providers: string[]; appCallers: string[]; transports: string[]; requestTypes: string[] }>({
+    models: [],
+    statuses: [],
+    providers: [],
+    appCallers: [],
+    transports: [],
+    requestTypes: [],
+  });
+  const [metaError, setMetaError] = useState<string | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
 
   const [rows, setRows] = useState<LlmLogListItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -64,6 +78,7 @@ export function LogsView() {
   const [sessLoading, setSessLoading] = useState(false);
 
   const [series, setSeries] = useState<TimeseriesPoint[]>([]);
+  const [summary, setSummary] = useState<LogsSummaryData | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const range = useMemo(() => {
@@ -72,13 +87,34 @@ export function LogsView() {
   }, [presetKey]);
 
   const baseParams = useMemo(
-    () => ({ from: range.from, to: range.to, model: filterModel || undefined, status: filterStatus || undefined }),
-    [range, filterModel, filterStatus],
+    () => ({
+      from: range.from,
+      to: range.to,
+      model: filterModel || undefined,
+      status: filterStatus || undefined,
+      provider: filterProvider || undefined,
+      appCallerCode: filterAppCaller || undefined,
+      transport: filterTransport || undefined,
+      requestType: filterRequestType || undefined,
+    }),
+    [range, filterModel, filterStatus, filterProvider, filterAppCaller, filterTransport, filterRequestType],
   );
 
   useEffect(() => {
     getLogsMeta().then((res) => {
-      if (res.success && res.data) setMeta({ models: res.data.models ?? [], statuses: res.data.statuses ?? [] });
+      if (res.success && res.data) {
+        setMeta({
+          models: res.data.models ?? [],
+          statuses: res.data.statuses ?? [],
+          providers: res.data.providers ?? [],
+          appCallers: res.data.appCallers ?? [],
+          transports: res.data.transports ?? [],
+          requestTypes: res.data.requestTypes ?? [],
+        });
+        setMetaError(null);
+      } else {
+        setMetaError(res.error?.message || '加载筛选项失败');
+      }
     });
   }, []);
 
@@ -86,6 +122,7 @@ export function LogsView() {
   const listSeq = useRef(0);
   const sessSeq = useRef(0);
   const seriesSeq = useRef(0);
+  const summarySeq = useRef(0);
 
   const loadList = useCallback(
     async (p: number) => {
@@ -96,6 +133,9 @@ export function LogsView() {
       if (res.success && res.data) {
         setRows(res.data.items ?? []);
         setTotal(res.data.total ?? 0);
+        setListError(null);
+      } else {
+        setListError(res.error?.message || '加载日志失败');
       }
       setLoading(false);
     },
@@ -106,15 +146,18 @@ export function LogsView() {
     async (p: number) => {
       const seq = ++sessSeq.current;
       setSessLoading(true);
-      const res = await getLogsSessions({ from: range.from, to: range.to, page: p, pageSize: PAGE_SIZE });
+      const res = await getLogsSessions({ ...baseParams, page: p, pageSize: PAGE_SIZE });
       if (seq !== sessSeq.current) return;
       if (res.success && res.data) {
         setSessions(res.data.items ?? []);
         setSessTotal(res.data.total ?? 0);
+        setListError(null);
+      } else {
+        setListError(res.error?.message || '加载会话失败');
       }
       setSessLoading(false);
     },
-    [range],
+    [baseParams],
   );
 
   const loadSeries = useCallback(async () => {
@@ -124,12 +167,29 @@ export function LogsView() {
     if (res.success && res.data) setSeries(res.data.items ?? []);
   }, [baseParams]);
 
+  const loadSummary = useCallback(async () => {
+    const seq = ++summarySeq.current;
+    const res = await getLogsSummary(baseParams);
+    if (seq !== summarySeq.current) return;
+    if (res.success && res.data) {
+      setSummary(res.data);
+      setSummaryError(null);
+    } else {
+      setSummary(null);
+      setSummaryError(res.error?.message || '加载汇总失败');
+    }
+  }, [baseParams]);
+
   useEffect(() => {
     setPage(1);
+    setSessPage(1);
   }, [baseParams]);
   useEffect(() => {
     loadSeries();
   }, [loadSeries]);
+  useEffect(() => {
+    loadSummary();
+  }, [loadSummary]);
   useEffect(() => {
     if (subtab === 'generations' || subtab === 'upstream') loadList(page);
   }, [subtab, page, loadList]);
@@ -139,6 +199,7 @@ export function LogsView() {
 
   const refresh = () => {
     loadSeries();
+    loadSummary();
     if (subtab === 'sessions') loadSessions(sessPage);
     else loadList(page);
   };
@@ -161,6 +222,16 @@ export function LogsView() {
           </span>
         );
       }
+      case 'generation':
+        return (
+          <span
+            className="lg-truncate"
+            style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+            title={it.requestId || it.id}
+          >
+            {it.requestId || it.id || DASH}
+          </span>
+        );
       case 'model': {
         const proto = getProtocolMeta(it.protocol);
         const tp = getTransportMeta(it.transport);
@@ -194,8 +265,20 @@ export function LogsView() {
         return <span className="tabular" style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{fmtCompact(it.inputTokens)}</span>;
       case 'output':
         return <span className="tabular" style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{fmtCompact(it.outputTokens)}</span>;
+      case 'tokens':
+        return (
+          <span className="tabular" style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+            {it.inputTokens == null && it.outputTokens == null ? DASH : fmtCompact((it.inputTokens ?? 0) + (it.outputTokens ?? 0))}
+          </span>
+        );
       case 'cost':
         return <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{DASH}</span>;
+      case 'latency':
+        return <span className="tabular" style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{fmtMs(it.durationMs)}</span>;
+      case 'status': {
+        const s = statusBadgeStyle(it.status, it.statusCode);
+        return <Chip label={s.label} color={s.color} bg={s.bg} />;
+      }
       case 'usage':
         return <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{it.requestType || DASH}</span>;
       case 'speed': {
@@ -323,22 +406,23 @@ export function LogsView() {
     const alignOf = (a?: ColumnDef['align']): CSSProperties['textAlign'] => (a === 'right' ? 'right' : a === 'center' ? 'center' : 'left');
     return (
       <div style={{ flex: 1, minHeight: 0, overflowX: 'auto', overscrollBehavior: 'contain' }}>
-        <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minWidth: Math.max(880, columns.length * 90) }}>
+        <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minWidth: Math.max(980, columns.length * 92) }}>
           <div
             style={{
               display: 'grid',
-              gap: 8,
-              padding: '8px 12px',
+              gap: 10,
+              padding: '9px 12px',
               flexShrink: 0,
               gridTemplateColumns: gridCols,
               borderBottom: '1px solid var(--border-subtle)',
+              background: 'var(--bg-surface)',
             }}
           >
             {columns.map((c) => (
               <div
                 key={c.key}
                 title={c.tip}
-                style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', textAlign: alignOf(c.align), color: 'var(--text-muted)' }}
+                style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0, textAlign: alignOf(c.align), color: 'var(--text-muted)' }}
               >
                 {c.label}
                 {c.tip ? <span style={{ opacity: 0.6 }}> (i)</span> : null}
@@ -355,8 +439,9 @@ export function LogsView() {
                     className={onRow ? 'lg-row-clickable' : undefined}
                     style={{
                       display: 'grid',
-                      gap: 8,
-                      padding: '8px 12px',
+                      gap: 10,
+                      minHeight: 42,
+                      padding: '7px 12px',
                       alignItems: 'center',
                       cursor: onRow ? 'pointer' : 'default',
                       gridTemplateColumns: gridCols,
@@ -410,9 +495,9 @@ export function LogsView() {
     background: 'var(--bg-input)',
     border: '1px solid var(--border-subtle)',
     color: 'var(--text-secondary)',
-    borderRadius: 8,
-    height: 30,
-    padding: '0 8px',
+    borderRadius: 'var(--radius-sm)',
+    height: 32,
+    padding: '0 9px',
     fontSize: 12,
   };
 
@@ -420,41 +505,72 @@ export function LogsView() {
     <div style={{ padding: '64px 0', textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>{text}</div>
   );
 
+  const activeFilterCount = [filterModel, filterStatus, filterProvider, filterAppCaller, filterTransport, filterRequestType].filter(Boolean).length;
+  const clearFilters = () => {
+    setFilterModel('');
+    setFilterStatus('');
+    setFilterProvider('');
+    setFilterAppCaller('');
+    setFilterTransport('');
+    setFilterRequestType('');
+  };
+
+  function SummaryTile({
+    icon,
+    label,
+    value,
+    sub,
+  }: {
+    icon: ReactNode;
+    label: string;
+    value: string;
+    sub: string;
+  }) {
+    return (
+      <div
+        style={{
+          border: '1px solid var(--border-subtle)',
+          borderRadius: 'var(--radius-sm)',
+          background: 'var(--bg-input)',
+          padding: '8px 10px',
+          minWidth: 0,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-muted)' }}>
+          {icon}
+          {label}
+        </div>
+        <div className="tabular" style={{ marginTop: 5, fontSize: 18, lineHeight: 1.15, fontWeight: 650, color: 'var(--text-primary)' }}>
+          {value}
+        </div>
+        <div style={{ marginTop: 3, fontSize: 10, color: 'var(--text-muted)' }}>{sub}</div>
+      </div>
+    );
+  }
+
+  const primaryTransport = summary?.transportDistribution?.[0];
+
   return (
-    <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', flexShrink: 0 }}>
+    <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', flexShrink: 0 }}>
         <div>
-          <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>Logs</div>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>查看大模型请求日志与历史 · 窗口内 {totalReq} 次请求</div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Observability</div>
+          <div style={{ fontSize: 22, lineHeight: 1.15, fontWeight: 650, color: 'var(--text-primary)' }}>Activity</div>
+          <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-muted)' }}>{fmtCompact(summary?.total ?? totalReq)} requests in the selected window</div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <select value={filterModel} onChange={(e) => setFilterModel(e.target.value)} style={selectStyle}>
-            <option value="">全部模型</option>
-            {meta.models.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
-          <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} style={selectStyle}>
-            <option value="">全部状态</option>
-            {meta.statuses.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-          <div style={{ display: 'inline-flex', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border-subtle)' }}>
+          <div style={{ display: 'inline-flex', borderRadius: 'var(--radius-sm)', overflow: 'hidden', border: '1px solid var(--border-subtle)', background: 'var(--bg-input)' }}>
             {TIME_RANGE_PRESETS.map((p) => (
               <button
                 key={p.key}
                 onClick={() => setPresetKey(p.key)}
                 style={{
                   padding: '0 10px',
-                  height: 30,
+                  height: 32,
                   fontSize: 11,
                   fontWeight: 500,
                   border: 'none',
+                  borderLeft: p.key === TIME_RANGE_PRESETS[0].key ? 'none' : '1px solid var(--border-subtle)',
                   background: presetKey === p.key ? 'var(--accent-soft)' : 'transparent',
                   color: presetKey === p.key ? 'var(--text-primary)' : 'var(--text-muted)',
                 }}
@@ -465,14 +581,108 @@ export function LogsView() {
           </div>
           <Button variant="secondary" size="sm" onClick={refresh} disabled={loading || sessLoading}>
             {loading || sessLoading ? <Spinner size={14} /> : <RefreshCw size={14} />}
-            刷新
+            Refresh
           </Button>
         </div>
       </div>
 
-      <Card style={{ padding: 8, flexShrink: 0 }}>
-        <MiniBarChart data={series} height={140} />
-      </Card>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          flexWrap: 'wrap',
+          flexShrink: 0,
+          padding: 8,
+          border: '1px solid var(--border-subtle)',
+          borderRadius: 'var(--radius)',
+          background: 'var(--bg-surface)',
+        }}
+      >
+          <select value={filterProvider} onChange={(e) => setFilterProvider(e.target.value)} style={selectStyle}>
+            <option value="">All providers</option>
+            {meta.providers.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
+          <select value={filterModel} onChange={(e) => setFilterModel(e.target.value)} style={selectStyle}>
+            <option value="">All models</option>
+            {meta.models.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+          <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} style={selectStyle}>
+            <option value="">All statuses</option>
+            {meta.statuses.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+          <select value={filterAppCaller} onChange={(e) => setFilterAppCaller(e.target.value)} style={selectStyle}>
+            <option value="">All apps</option>
+            {meta.appCallers.map((a) => (
+              <option key={a} value={a}>
+                {a}
+              </option>
+            ))}
+          </select>
+          <select value={filterTransport} onChange={(e) => setFilterTransport(e.target.value)} style={selectStyle}>
+            <option value="">All transports</option>
+            {meta.transports.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+          <select value={filterRequestType} onChange={(e) => setFilterRequestType(e.target.value)} style={selectStyle}>
+            <option value="">All types</option>
+            {meta.requestTypes.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+          {activeFilterCount > 0 ? (
+            <Button variant="ghost" size="sm" onClick={clearFilters}>
+              Clear {activeFilterCount}
+            </Button>
+          ) : null}
+      </div>
+
+      {metaError || listError || summaryError ? (
+        <div
+          style={{
+            flexShrink: 0,
+            fontSize: 12,
+            color: 'var(--err)',
+            padding: '8px 12px',
+            borderRadius: 'var(--radius-sm)',
+            border: '1px solid rgba(248,113,113,0.35)',
+            background: 'var(--err-bg)',
+          }}
+        >
+          {metaError || listError || summaryError}
+        </div>
+      ) : null}
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 8, flexShrink: 0 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(126px, 1fr))', gap: 8 }}>
+          <SummaryTile icon={<Activity size={13} />} label="Requests" value={fmtCompact(summary?.total)} sub={`${fmtCompact(summary?.succeeded)} ok · ${fmtCompact(summary?.failed)} failed`} />
+          <SummaryTile icon={<Zap size={13} />} label="Tokens" value={fmtCompact(summary?.totalTokens)} sub={`${fmtCompact(summary?.inputTokens)} in · ${fmtCompact(summary?.outputTokens)} out`} />
+          <SummaryTile icon={<Clock size={13} />} label="Avg latency" value={fmtMs(summary?.averageDurationMs)} sub="completed requests" />
+          <SummaryTile icon={<GitBranch size={13} />} label="Fallbacks" value={fmtCompact(summary?.fallbacks)} sub="fallback requests" />
+          <SummaryTile icon={<Layers size={13} />} label="Transport" value={primaryTransport?.key ?? DASH} sub={primaryTransport ? `${fmtCompact(primaryTransport.count)} requests` : 'no marks'} />
+          <SummaryTile icon={<Gauge size={13} />} label="Running" value={fmtCompact(summary?.running)} sub={`${fmtCompact(summary?.cancelled)} cancelled`} />
+        </div>
+        <Card style={{ padding: 8, minHeight: 92, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+          <MiniBarChart data={series} height={82} />
+        </Card>
+      </div>
 
       <TabBar items={LOGS_SUBTABS} activeKey={subtab} onChange={(k) => setSubtab(k)} />
 

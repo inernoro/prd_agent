@@ -908,7 +908,7 @@
 ### 七、周报
 
 - [AI 大模型网关测试矩阵全量报告](report.gw-test-matrix) `report.gw-test-matrix`
-  > 全枚举大表：A 解析 153 入口 + B 协议保真 91 cell + C 跨进程 18 cell + 20 扩展维度；B/C 即 CI 真跑 cell
+  > 全枚举大表：A 解析 153 入口 + B 协议保真 93 cell + C 跨进程 18 cell + 20 扩展维度；B/C 即 CI 真跑 cell
 
   > 各智能体完备度看板：终极目标、当前进度、TodoList、目前情况、风险点（当前加权进度约 55%）
 

@@ -1,10 +1,12 @@
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 using CoreGateway = PrdAgent.Core.Interfaces.LlmGateway;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
@@ -28,6 +30,7 @@ public sealed class HttpLlmGatewayClient
     private readonly IHttpClientFactory _httpFactory;
     private readonly ILogger<HttpLlmGatewayClient> _logger;
     private readonly PrdAgent.Core.Interfaces.ILLMRequestContextAccessor? _ctxAccessor;
+    private readonly IAssetStorage? _assetStorage;
     private readonly string _baseUrl;
     private readonly string _gatewayKey;
 
@@ -44,11 +47,13 @@ public sealed class HttpLlmGatewayClient
         IHttpClientFactory httpFactory,
         IConfiguration config,
         ILogger<HttpLlmGatewayClient> logger,
-        PrdAgent.Core.Interfaces.ILLMRequestContextAccessor? ctxAccessor = null)
+        PrdAgent.Core.Interfaces.ILLMRequestContextAccessor? ctxAccessor = null,
+        IAssetStorage? assetStorage = null)
     {
         _httpFactory = httpFactory;
         _logger = logger;
         _ctxAccessor = ctxAccessor;
+        _assetStorage = assetStorage;
         // serving 服务的根地址（如 http://llmgw-serve:8091），去掉尾部斜杠避免拼接出双斜杠。
         _baseUrl = (config["LlmGateway:ServeBaseUrl"] ?? "http://llmgw-serve:8091").TrimEnd('/');
         // 共享密钥门（内部 M2M），与 serving 端 LlmGwServe:ApiKey 对齐。
@@ -79,6 +84,8 @@ public sealed class HttpLlmGatewayClient
             AppCallerCode = request.AppCallerCode,
             ModelType = request.ModelType,
             ExpectedModel = request.ExpectedModel,
+            PinnedPlatformId = request.PinnedPlatformId,
+            PinnedModelId = request.PinnedModelId,
             RequestBody = request.RequestBody,
             RequestBodyRaw = request.RequestBodyRaw,
             Stream = request.Stream,
@@ -205,22 +212,29 @@ public sealed class HttpLlmGatewayClient
                 resolution.ErrorMessage ?? "调用方 resolution 已失败，http 模式不得重新选模型");
         }
 
-        // 多 part 文件跨 HTTP 边界尚未接通（波3）：MultipartFiles 的元素类型是 ValueTuple
-        // (string,byte[],string)，System.Text.Json 默认不序列化 ValueTuple 字段 → 过线后文件内容丢失，
-        // serving 端会发出缺文件的 multipart 或在到达上游前失败。设计的可序列化形态是 MultipartFileRefs
-        // （具名 DTO + 对象存储引用），但该 rehydrate 管线属波3，尚未填充/落地。
-        // 在此之前**快速失败**，把"静默发坏请求"变成一条明确错误，而不是让 ASR/图生图等悄悄断掉。
-        // 进程内（inproc）模式不受影响：字节经 MultipartFiles 直传，不过 HTTP。
+        var multipartFileRefs = request.MultipartFileRefs;
         var hasInlineMultipartFiles = request.IsMultipart
             && request.MultipartFiles is { Count: > 0 }
             && (request.MultipartFileRefs is null || request.MultipartFileRefs.Count == 0);
         if (hasInlineMultipartFiles)
         {
-            return GatewayRawResponse.Fail(
-                "MULTIPART_HTTP_UNSUPPORTED",
-                "http 模式暂不支持携带内联文件的 multipart raw 调用（ASR/图生图等）。" +
-                "需先经对象存储引用（MultipartFileRefs）跨进程 rehydrate——属网关物理隔离波3，尚未接通。" +
-                "请将该入口暂留 inproc，或等待波3 完成。详见 doc/debt.llm-gateway-isolation.md。");
+            if (_assetStorage == null)
+            {
+                return GatewayRawResponse.Fail(
+                    "MULTIPART_STORAGE_UNAVAILABLE",
+                    "http 模式需要 IAssetStorage 将 multipart 文件转换为 MultipartFileRefs 后跨进程发送，但当前服务未注册对象存储。",
+                    500);
+            }
+
+            try
+            {
+                multipartFileRefs = await UploadMultipartFileRefsAsync(request.MultipartFiles!, _assetStorage, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[HttpLlmGatewayClient] multipart 文件上传对象存储失败 base={Base}", _baseUrl);
+                return GatewayRawResponse.Fail("MULTIPART_UPLOAD_FAILED", ex.Message, 500);
+            }
         }
 
         // S2 观测：把 Context.GatewayTransport 打成 "http"（跨进程 raw），serving 端据此标注日志传输通道。
@@ -233,11 +247,13 @@ public sealed class HttpLlmGatewayClient
             ModelType = request.ModelType,
             EndpointPath = request.EndpointPath,
             ExpectedModel = string.IsNullOrWhiteSpace(resolution.ActualModel) ? request.ExpectedModel : resolution.ActualModel,
+            PinnedPlatformId = request.PinnedPlatformId,
+            PinnedModelId = request.PinnedModelId,
             RequestBody = request.RequestBody,
             IsMultipart = request.IsMultipart,
             MultipartFields = request.MultipartFields,
-            MultipartFiles = request.MultipartFiles,
-            MultipartFileRefs = request.MultipartFileRefs,
+            MultipartFiles = null,
+            MultipartFileRefs = multipartFileRefs,
             HttpMethod = request.HttpMethod,
             ExtraHeaders = request.ExtraHeaders,
             TimeoutSeconds = request.TimeoutSeconds,
@@ -265,10 +281,106 @@ public sealed class HttpLlmGatewayClient
         }
     }
 
+    public async Task<GatewayRawResponse> TestUpstreamProfileAsync(
+        GatewayUpstreamProfileTestRequest request,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            using var http = CreateHttp(infiniteTimeout: false);
+            using var resp = await http.PostAsync($"{_baseUrl}/gw/v1/profile-test", JsonBody(request), ct);
+            var body = await resp.Content.ReadAsStringAsync(ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                return GatewayRawResponse.Fail("GATEWAY_HTTP_ERROR",
+                    $"serving 返回 {(int)resp.StatusCode}: {Truncate(body)}", (int)resp.StatusCode);
+            }
+
+            var result = JsonSerializer.Deserialize<GatewayRawResponse>(body, JsonOpts);
+            return result ?? GatewayRawResponse.Fail("GATEWAY_HTTP_ERROR", "serving 响应反序列化为空");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[HttpLlmGatewayClient] TestUpstreamProfileAsync 失败 base={Base}", _baseUrl);
+            return GatewayRawResponse.Fail("GATEWAY_HTTP_ERROR", ex.Message);
+        }
+    }
+
+    private static async Task<Dictionary<string, MultipartFileRef>> UploadMultipartFileRefsAsync(
+        Dictionary<string, (string FileName, byte[] Content, string MimeType)> files,
+        IAssetStorage storage,
+        CancellationToken ct)
+    {
+        var refs = new Dictionary<string, MultipartFileRef>(StringComparer.Ordinal);
+        var requestSegment = Guid.NewGuid().ToString("N");
+        foreach (var (fieldName, fileInfo) in files)
+        {
+            var safeField = SafeKeySegment(fieldName, "file");
+            var safeFileName = SafeFileName(fileInfo.FileName, $"{safeField}.bin");
+            var ext = SafeExtension(Path.GetExtension(safeFileName));
+            var sha256 = Sha256Hex(fileInfo.Content);
+            var key = $"llmgw/multipart/{DateTime.UtcNow:yyyyMMdd}/{requestSegment}/{safeField}-{sha256[..16]}{ext}";
+
+            await storage.UploadToKeyAsync(key, fileInfo.Content, fileInfo.MimeType, ct, "private, max-age=3600");
+
+            refs[fieldName] = new MultipartFileRef
+            {
+                RefKey = key,
+                FileName = safeFileName,
+                MimeType = string.IsNullOrWhiteSpace(fileInfo.MimeType) ? "application/octet-stream" : fileInfo.MimeType,
+                SizeBytes = fileInfo.Content.LongLength,
+                Sha256 = sha256,
+                Url = storage.BuildUrlForKey(key),
+            };
+        }
+
+        return refs;
+    }
+
+    private static string Sha256Hex(byte[] bytes)
+    {
+        using var sha = SHA256.Create();
+        return Convert.ToHexString(sha.ComputeHash(bytes)).ToLowerInvariant();
+    }
+
+    private static string SafeFileName(string? fileName, string fallback)
+    {
+        var name = Path.GetFileName((fileName ?? string.Empty).Trim());
+        return string.IsNullOrWhiteSpace(name) ? fallback : name;
+    }
+
+    private static string SafeExtension(string? ext)
+    {
+        var e = (ext ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(e)) return ".bin";
+        if (!e.StartsWith('.')) e = "." + e;
+        return e.Length <= 16 && e.Skip(1).All(ch => char.IsLetterOrDigit(ch)) ? e : ".bin";
+    }
+
+    private static string SafeKeySegment(string? value, string fallback)
+    {
+        var raw = (value ?? string.Empty).Trim().ToLowerInvariant();
+        var sb = new StringBuilder(raw.Length);
+        foreach (var ch in raw)
+        {
+            sb.Append(char.IsLetterOrDigit(ch) ? ch : '-');
+        }
+
+        var cleaned = sb.ToString().Trim('-');
+        while (cleaned.Contains("--", StringComparison.Ordinal))
+        {
+            cleaned = cleaned.Replace("--", "-", StringComparison.Ordinal);
+        }
+
+        return string.IsNullOrWhiteSpace(cleaned) ? fallback : cleaned;
+    }
+
     public async Task<GatewayModelResolution> ResolveModelAsync(
         string appCallerCode,
         string modelType,
         string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null,
         CancellationToken ct = default)
     {
         // 注意：ApiKey 在 HTTP 模式下恒为 null（serving 端 [JsonIgnore] 不序列化敏感字段）。
@@ -276,7 +388,14 @@ public sealed class HttpLlmGatewayClient
         try
         {
             using var http = CreateHttp(infiniteTimeout: false);
-            var dto = new { AppCallerCode = appCallerCode, ModelType = modelType, ExpectedModel = expectedModel };
+            var dto = new
+            {
+                AppCallerCode = appCallerCode,
+                ModelType = modelType,
+                ExpectedModel = expectedModel,
+                PinnedPlatformId = pinnedPlatformId,
+                PinnedModelId = pinnedModelId
+            };
             using var resp = await http.PostAsync($"{_baseUrl}/gw/v1/resolve", JsonBody(dto), ct);
             var body = await resp.Content.ReadAsStringAsync(ct);
             if (!resp.IsSuccessStatusCode)
@@ -336,11 +455,13 @@ public sealed class HttpLlmGatewayClient
         int maxTokens = 4096,
         double temperature = 0.2,
         bool includeThinking = false,
-        string? expectedModel = null)
+        string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null)
     {
         return new HttpLlmClient(
             _httpFactory, _baseUrl, _gatewayKey,
-            appCallerCode, modelType, maxTokens, temperature, includeThinking, expectedModel,
+            appCallerCode, modelType, maxTokens, temperature, includeThinking, expectedModel, pinnedPlatformId, pinnedModelId,
             JsonOpts, _logger, _ctxAccessor);
     }
 

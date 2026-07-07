@@ -18,6 +18,7 @@ using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Infrastructure.LLM.Adapters;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.LlmGateway.ImageGen;
 
 namespace PrdAgent.Infrastructure.LLM;
 
@@ -30,7 +31,7 @@ namespace PrdAgent.Infrastructure.LLM;
 ///   <see cref="ImageGenRequestBuilder"/>，本类不再内联拼装该请求体。
 ///   Exchange / Google / OpenRouter 因上游协议形状不同，仍走各自专属构建分支。
 /// </summary>
-public class OpenAIImageClient
+public class OpenAIImageClient : IImageGenerationClient
 {
     private readonly MongoDbContext _db;
     private readonly ILlmGateway _gateway;
@@ -166,7 +167,7 @@ public class OpenAIImageClient
         if (string.IsNullOrWhiteSpace(requestId)) requestId = Guid.NewGuid().ToString("N");
 
         // 通过 Gateway 解析模型调度（获取平台信息用于适配器选择）
-        var resolution = await _gateway.ResolveModelAsync(appCallerCode, "generation", modelName, ct);
+        var resolution = await _gateway.ResolveModelAsync(appCallerCode, "generation", modelName, ct: ct);
         if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
         {
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT,
@@ -1166,7 +1167,7 @@ public class OpenAIImageClient
         if (string.IsNullOrWhiteSpace(requestId)) requestId = Guid.NewGuid().ToString("N");
 
         // 通过 Gateway 解析模型调度
-        var resolution = await _gateway.ResolveModelAsync(appCallerCode, "generation", modelName, ct);
+        var resolution = await _gateway.ResolveModelAsync(appCallerCode, "generation", modelName, ct: ct);
         if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
         {
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT,

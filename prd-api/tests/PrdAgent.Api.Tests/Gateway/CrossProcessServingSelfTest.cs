@@ -101,12 +101,24 @@ public class CrossProcessServingSelfTest
             raw.Success.ShouldBeTrue();
             raw.Content.ShouldBe("raw-ok");
 
-            // 5) pools：列表往返。
+            // 5) profile-test：运行配置连通性测试经 llmgw-serve HTTP 边界委托，不允许 MAP 直连上游。
+            var profile = await client.TestUpstreamProfileAsync(new GatewayUpstreamProfileTestRequest
+            {
+                AppCallerCode = "infra-agent.runtime-profile-test::chat",
+                Protocol = "openai",
+                BaseUrl = "https://example.invalid/v1",
+                Model = "runtime-profile-model",
+                ApiKey = "SECRET-profile-test-key",
+            });
+            profile.Success.ShouldBeTrue();
+            profile.Content.ShouldBe("profile-ok:runtime-profile-model");
+
+            // 6) pools：列表往返。
             var pools = await client.GetAvailablePoolsAsync("demo.app::chat", "chat");
             pools.Count.ShouldBe(1);
             pools[0].Id.ShouldBe("pool-1");
 
-            // 6) CreateClient → ILLMClient 流式（/gw/v1/client-stream）。
+            // 7) CreateClient → ILLMClient 流式（/gw/v1/client-stream）。
             var llmClient = client.CreateClient("demo.app::chat", "chat");
             llmClient.Provider.ShouldBe("gateway-http");
             var msgs = new List<LLMMessage> { new() { Role = "user", Content = "hi" } };
@@ -116,7 +128,7 @@ public class CrossProcessServingSelfTest
             llmChunks.Select(c => c.Type).ShouldBe(new[] { "start", "delta", "delta", "done" });
             string.Concat(llmChunks.Where(c => c.Type == "delta").Select(c => c.Content)).ShouldBe("hi-there");
 
-            // 7) 密钥门：错 key 的 client，send 应失败且 401。
+            // 8) 密钥门：错 key 的 client，send 应失败且 401。
             var badClient = BuildClient(baseUrl, "WRONG-KEY");
             var denied = await badClient.SendAsync(new GatewayRequest { AppCallerCode = "demo.app::chat", ModelType = "chat" });
             denied.Success.ShouldBeFalse();
@@ -177,8 +189,13 @@ public class CrossProcessServingSelfTest
             GatewayRawRequest request, GatewayModelResolution resolution, CancellationToken ct = default)
             => Task.FromResult(new GatewayRawResponse { Success = true, StatusCode = 200, Content = "raw-ok" });
 
+        public Task<GatewayRawResponse> TestUpstreamProfileAsync(
+            GatewayUpstreamProfileTestRequest request, CancellationToken ct = default)
+            => Task.FromResult(new GatewayRawResponse { Success = true, StatusCode = 200, Content = $"profile-ok:{request.Model}" });
+
         public Task<GatewayModelResolution> ResolveModelAsync(
-            string appCallerCode, string modelType, string? expectedModel = null, CancellationToken ct = default)
+            string appCallerCode, string modelType, string? expectedModel = null,
+            string? pinnedPlatformId = null, string? pinnedModelId = null, CancellationToken ct = default)
             => Task.FromResult(Res());
 
         public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(
@@ -190,7 +207,8 @@ public class CrossProcessServingSelfTest
 
         public ILLMClient CreateClient(
             string appCallerCode, string modelType, int maxTokens = 4096,
-            double temperature = 0.2, bool includeThinking = false, string? expectedModel = null)
+            double temperature = 0.2, bool includeThinking = false, string? expectedModel = null,
+            string? pinnedPlatformId = null, string? pinnedModelId = null)
             => new FakeLlmClient();
     }
 

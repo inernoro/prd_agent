@@ -11,6 +11,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.LlmGateway.ImageGen;
 using PrdAgent.Infrastructure.Prompts.Templates;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Infrastructure.Services.VisualAgent;
@@ -33,7 +34,7 @@ public class ImageGenController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly IModelDomainService _modelDomain;
     private readonly IModelPoolQueryService _modelPoolQuery;
-    private readonly OpenAIImageClient _imageClient;
+    private readonly IImageGenerationClient _imageClient;
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly ILogger<ImageGenController> _logger;
@@ -57,7 +58,7 @@ public class ImageGenController : ControllerBase
         MongoDbContext db,
         IModelDomainService modelDomain,
         IModelPoolQueryService modelPoolQuery,
-        OpenAIImageClient imageClient,
+        IImageGenerationClient imageClient,
         ILlmGateway gateway,
         ILLMRequestContextAccessor llmRequestContext,
         ILogger<ImageGenController> logger,
@@ -201,7 +202,7 @@ public class ImageGenController : ControllerBase
 
         var userMsg = string.IsNullOrWhiteSpace(style) ? brief : $"统一风格要求：{style}\n\n内容：\n{brief}";
 
-        var resolution = await _gateway.ResolveModelAsync(appCallerCode, ModelTypes.Chat, null, ct);
+        var resolution = await _gateway.ResolveModelAsync(appCallerCode, ModelTypes.Chat, null, ct: ct);
         if (!resolution.Success)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.LLM_ERROR, $"模型调度失败：{resolution.ErrorMessage}"));
 

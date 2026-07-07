@@ -14,15 +14,15 @@ function MetricCard({ title, value, note }: { title: string; value: string; note
     <div
       style={{
         flexShrink: 0,
-        borderRadius: 12,
-        padding: '8px 12px',
-        minWidth: 150,
+        borderRadius: 'var(--radius-sm)',
+        padding: '8px 10px',
+        minWidth: 132,
         border: '1px solid var(--border-subtle)',
-        background: 'var(--bg-base)',
+        background: 'var(--bg-input)',
       }}
     >
       <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{title}</div>
-      <div className="tabular" style={{ marginTop: 2, fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>{value}</div>
+      <div className="tabular" style={{ marginTop: 3, fontSize: 14, fontWeight: 650, color: 'var(--text-primary)' }}>{value}</div>
       {note ? <div style={{ fontSize: 10, marginTop: 2, color: 'var(--text-muted)' }}>{note}</div> : null}
     </div>
   );
@@ -66,53 +66,48 @@ function Row({ k, v, mono, copy }: { k: string; v?: string | null; mono?: boolea
   );
 }
 
-function Collapsible({ title, body }: { title: string; body?: string | null }) {
-  const [open, setOpen] = useState(false);
-  if (!body) return null;
+function CodeBlock({ body, empty = 'No data' }: { body?: string | null; empty?: string }) {
   return (
-    <div style={{ borderRadius: 10, border: '1px solid var(--border-subtle)' }}>
-      <button
-        style={{
-          width: '100%',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '8px 12px',
-          fontSize: 12,
-          fontWeight: 600,
-          color: 'var(--text-secondary)',
-          background: 'none',
-          border: 'none',
-        }}
-        onClick={() => setOpen((o) => !o)}
-      >
-        <span>{title}</span>
-        <span style={{ color: 'var(--text-muted)' }}>{open ? '收起' : `展开 (${body.length} 字符)`}</span>
-      </button>
-      {open ? (
-        <pre
-          style={{
-            padding: '0 12px 12px',
-            fontSize: 11,
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-all',
-            color: 'var(--text-secondary)',
-            maxHeight: 320,
-            overflow: 'auto',
-            margin: 0,
-          }}
-        >
-          {body}
-        </pre>
-      ) : null}
-    </div>
+    <pre
+      style={{
+        margin: 0,
+        minHeight: 220,
+        maxHeight: 420,
+        overflow: 'auto',
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-word',
+        fontSize: 11,
+        lineHeight: 1.55,
+        color: body ? 'var(--text-secondary)' : 'var(--text-muted)',
+        background: 'var(--bg-base)',
+        border: '1px solid var(--border-subtle)',
+        borderRadius: 'var(--radius-sm)',
+        padding: 12,
+      }}
+    >
+      {body || empty}
+    </pre>
   );
+}
+
+function prettyJson(body?: string | null): string | null {
+  if (!body) return null;
+  try {
+    return JSON.stringify(JSON.parse(body), null, 2);
+  } catch {
+    return body;
+  }
+}
+
+function transportLabel(transport?: string | null): string {
+  return transport && transport.trim() ? transport.trim() : DASH;
 }
 
 function fidelityChips(detail: LlmLogDetail): { label: string; color: string; bg: string }[] {
   const chips: { label: string; color: string; bg: string }[] = [];
   const proto = getProtocolMeta(detail.protocol);
   if (proto) chips.push({ label: proto.label, color: proto.color, bg: proto.bg });
+  if (detail.transport) chips.push({ label: transportLabel(detail.transport), color: 'var(--accent)', bg: 'var(--accent-soft)' });
   try {
     const body = JSON.parse(detail.requestBodyRedacted || '{}');
     if (typeof body?.top_p === 'number') chips.push({ label: `top_p=${body.top_p}`, color: '#a5b4fc', bg: 'rgba(165,180,252,0.16)' });
@@ -128,6 +123,7 @@ function fidelityChips(detail: LlmLogDetail): { label: string; color: string; bg
 export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onClose: () => void }) {
   const [detail, setDetail] = useState<LlmLogDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [bodyTab, setBodyTab] = useState<'request' | 'response' | 'raw'>('request');
 
   useEffect(() => {
     let alive = true;
@@ -152,10 +148,27 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
 
   const tps = detail ? computeTokPerSec(detail.outputTokens, detail.durationMs) : null;
   const streaming = detail?.isStreaming == null ? DASH : detail.isStreaming ? '是' : '否';
+  const promptBody = detail ? [detail.questionText, detail.systemPromptText].filter(Boolean).join('\n\n---\n\n') || null : null;
+  const responseBody = detail
+    ? [detail.answerText, detail.thinkingText ? `Thinking\n${detail.thinkingText}` : null, detail.responseToolCalls ? `Tool calls\n${prettyJson(detail.responseToolCalls)}` : null]
+        .filter(Boolean)
+        .join('\n\n---\n\n') || null
+    : null;
+  const rawBody = detail
+    ? [
+        `id: ${detail.id}`,
+        `requestId: ${detail.requestId}`,
+        `status: ${detail.status}`,
+        `model: ${detail.model}`,
+        `provider: ${detail.provider}`,
+        '',
+        prettyJson(detail.requestBodyRedacted) || '',
+      ].join('\n')
+    : null;
 
   const node = (
     <div
-      style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(2px)' }}
+      style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(0,0,0,0.58)', backdropFilter: 'blur(2px)' }}
       onClick={onClose}
     >
       <div
@@ -165,10 +178,10 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
           top: 0,
           right: 0,
           height: '100vh',
-          width: 'min(720px, 94vw)',
+          width: 'min(760px, 94vw)',
           display: 'flex',
           flexDirection: 'column',
-          background: 'var(--bg-elevated)',
+          background: 'var(--bg-page)',
           borderLeft: '1px solid var(--border-subtle)',
           boxShadow: 'var(--shadow-drawer)',
         }}
@@ -183,8 +196,13 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
             borderBottom: '1px solid var(--border-subtle)',
           }}
         >
-          <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>Generation details</div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', opacity: 0.7, color: 'var(--text-secondary)' }}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 650, color: 'var(--text-primary)' }}>Generation</div>
+            <div style={{ marginTop: 2, fontSize: 11, color: 'var(--text-muted)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+              {detail?.requestId || logId}
+            </div>
+          </div>
+          <button aria-label="关闭详情" onClick={onClose} style={{ background: 'none', border: 'none', opacity: 0.7, color: 'var(--text-secondary)' }}>
             <X size={18} />
           </button>
         </div>
@@ -193,9 +211,9 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
           {loading || !detail ? (
             <SectionLoader text="正在加载详情…" />
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{detail.model || DASH}</span>
+                <span style={{ fontSize: 16, fontWeight: 650, color: 'var(--text-primary)' }}>{detail.model || DASH}</span>
                 {detail.provider ? <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>· {detail.provider}</span> : null}
                 {(() => {
                   const lc = deriveLifecycle(detail);
@@ -243,6 +261,7 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
 
               <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4 }}>
                 <MetricCard title="Provider latency" value={fmtMs(detail.durationMs)} />
+                <MetricCard title="First byte" value={detail.firstByteAt ? fmtMs(Date.parse(detail.firstByteAt) - Date.parse(detail.startedAt)) : DASH} />
                 <MetricCard title="Throughput" value={tps == null ? DASH : `${tps} tok/s`} />
                 <MetricCard title="Cost" value={DASH} note="暂无价格" />
                 <MetricCard title="Tokens" value={`${detail.inputTokens ?? DASH} → ${detail.outputTokens ?? DASH}`} />
@@ -253,22 +272,54 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
                 />
               </div>
 
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4, color: 'var(--text-primary)' }}>Overview</div>
+              <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: 2 }}>
+                <div style={{ fontSize: 12, fontWeight: 650, margin: '8px 0 4px', color: 'var(--text-primary)' }}>Overview</div>
                 <Row k="Model ID" v={detail.model} mono />
                 <Row k="Protocol" v={detail.protocol} />
+                <Row k="Transport" v={transportLabel(detail.transport)} />
                 <Row k="Status" v={detail.status} />
+                <Row k="Status code" v={detail.statusCode == null ? null : String(detail.statusCode)} />
+                <Row k="Expected model" v={detail.expectedModel} mono />
               </div>
 
               <div>
-                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4, color: 'var(--text-primary)' }}>Request</div>
+                <div style={{ fontSize: 12, fontWeight: 650, marginBottom: 4, color: 'var(--text-primary)' }}>Request metadata</div>
                 <Row k="App" v={detail.appCallerCodeDisplayName ?? detail.appCallerCode} />
                 <Row k="Request ID" v={detail.requestId} mono copy />
                 <Row k="Generation ID" v={detail.id} mono copy />
+                <Row k="Started" v={detail.startedAt} mono />
+                <Row k="First byte" v={detail.firstByteAt} mono />
+                <Row k="Ended" v={detail.endedAt} mono />
                 <Row k="Finish reason" v={detail.finishReason} />
                 <Row k="Streaming" v={streaming} />
                 <Row k="Resolution" v={detail.resolutionReason} />
               </div>
+
+              {detail.error ? (
+                <div
+                  style={{
+                    borderRadius: 10,
+                    padding: '8px 12px',
+                    background: 'var(--err-bg)',
+                    border: '1px solid rgba(248,113,113,0.28)',
+                  }}
+                >
+                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4, color: 'var(--err)' }}>Error</div>
+                  <pre
+                    style={{
+                      fontSize: 11,
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-all',
+                      color: 'var(--text-secondary)',
+                      maxHeight: 180,
+                      overflow: 'auto',
+                      margin: 0,
+                    }}
+                  >
+                    {detail.error}
+                  </pre>
+                </div>
+              ) : null}
 
               {detail.responseToolCalls ? (
                 <div
@@ -305,12 +356,36 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
               ) : null}
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <Collapsible
-                  title="Prompt（用户输入 + 系统提示）"
-                  body={[detail.questionText, detail.systemPromptText].filter(Boolean).join('\n\n---\n\n') || null}
-                />
-                <Collapsible title="Completion（模型输出）" body={detail.answerText} />
-                <Collapsible title="Thinking（思考过程）" body={detail.thinkingText} />
+                <div style={{ display: 'flex', gap: 2, borderBottom: '1px solid var(--border-subtle)' }}>
+                  {[
+                    ['request', 'Request'],
+                    ['response', 'Response'],
+                    ['raw', 'Raw'],
+                  ].map(([key, label]) => {
+                    const active = bodyTab === key;
+                    return (
+                      <button
+                        key={key}
+                        onClick={() => setBodyTab(key as typeof bodyTab)}
+                        style={{
+                          background: 'transparent',
+                          border: 'none',
+                          borderBottom: active ? '1px solid var(--text-primary)' : '1px solid transparent',
+                          color: active ? 'var(--text-primary)' : 'var(--text-muted)',
+                          fontSize: 12,
+                          fontWeight: active ? 650 : 500,
+                          padding: '9px 10px',
+                          marginBottom: -1,
+                        }}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+                {bodyTab === 'request' ? <CodeBlock body={promptBody || prettyJson(detail.requestBodyRedacted)} empty="No request payload recorded" /> : null}
+                {bodyTab === 'response' ? <CodeBlock body={responseBody} empty="No response payload recorded" /> : null}
+                {bodyTab === 'raw' ? <CodeBlock body={rawBody} empty="No raw payload recorded" /> : null}
               </div>
             </div>
           )}

@@ -325,7 +325,7 @@ public class AppCallersController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail("APP_CODE_NOT_REGISTERED", "appCallerCode 未注册或不支持该 modelType"));
         }
 
-        var result = await _gateway.ResolveModelAsync(appCallerCode, modelType, null, ct);
+        var result = await _gateway.ResolveModelAsync(appCallerCode, modelType, null, ct: ct);
 
         return Ok(ApiResponse<GatewayModelResolution?>.Ok(result));
     }
@@ -366,7 +366,7 @@ public class AppCallersController : ControllerBase
         var tasks = validItems.Select(async item =>
         {
             var key = item.AppCallerCode;
-            var result = await _gateway.ResolveModelAsync(item.AppCallerCode, item.ModelType, null, ct);
+            var result = await _gateway.ResolveModelAsync(item.AppCallerCode, item.ModelType, null, ct: ct);
             var dto = MapToResolvedModelInfo(result);
             return (key, dto);
         });

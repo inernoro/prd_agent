@@ -1,58 +1,61 @@
-/* LLM 网关观测台 —— 独立 OpenRouter 风格主题 token。
-   暗色为默认；[data-theme="light"] 为浅色（后续可加切换按钮，token 已对齐）。
-   所有颜色走 var()，组件内禁止写死暗/浅色字面量。 */
+/* LLM 网关观测台 —— OpenRouter-inspired developer console tokens.
+   暗色为默认；[data-theme="light"] 为浅色。所有颜色走 var()。 */
 
 :root {
-  --bg-page: #0b0d12;
-  --bg-surface: #14171f;
-  --bg-elevated: #1b1f2a;
-  --bg-input: #0f131b;
-  --bg-base: #090b10;
+  --bg-page: #08090b;
+  --bg-surface: #0d0f12;
+  --bg-elevated: #111419;
+  --bg-input: #0a0c0f;
+  --bg-base: #050607;
+  --bg-hover: rgba(255, 255, 255, 0.035);
 
-  --text-primary: #eef1f6;
-  --text-secondary: #aab2c2;
-  --text-muted: #6c7689;
+  --text-primary: #f4f4f5;
+  --text-secondary: #a1a1aa;
+  --text-muted: #71717a;
 
-  --border-subtle: rgba(148, 163, 184, 0.16);
-  --border-strong: rgba(148, 163, 184, 0.3);
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.14);
 
-  --accent: #6e8bff;
-  --accent-soft: rgba(110, 139, 255, 0.16);
+  --accent: #f4f4f5;
+  --accent-contrast: #08090b;
+  --accent-soft: rgba(244, 244, 245, 0.08);
 
-  --ok: #34d399;
-  --ok-bg: rgba(52, 211, 153, 0.15);
-  --err: #f87171;
-  --err-bg: rgba(248, 113, 113, 0.15);
-  --warn: #fbbf24;
-  --warn-bg: rgba(251, 191, 36, 0.16);
-  --info: #60a5fa;
-  --info-bg: rgba(96, 165, 250, 0.16);
+  --ok: #22c55e;
+  --ok-bg: rgba(34, 197, 94, 0.12);
+  --err: #ef4444;
+  --err-bg: rgba(239, 68, 68, 0.12);
+  --warn: #eab308;
+  --warn-bg: rgba(234, 179, 8, 0.12);
+  --info: #38bdf8;
+  --info-bg: rgba(56, 189, 248, 0.12);
 
-  --radius: 12px;
-  --radius-sm: 8px;
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-drawer: -8px 0 40px rgba(0, 0, 0, 0.5);
+  --radius: 8px;
+  --radius-sm: 6px;
+  --shadow-card: none;
+  --shadow-drawer: -18px 0 48px rgba(0, 0, 0, 0.5);
 }
 
 [data-theme='light'] {
-  --bg-page: #f4f5f8;
+  --bg-page: #fafafa;
   --bg-surface: #ffffff;
   --bg-elevated: #ffffff;
   --bg-input: #ffffff;
-  --bg-base: #eceef2;
+  --bg-base: #f4f4f5;
+  --bg-hover: rgba(24, 24, 27, 0.035);
 
-  --text-primary: #1a1f2b;
-  --text-secondary: #475063;
-  --text-muted: #8a93a6;
+  --text-primary: #18181b;
+  --text-secondary: #52525b;
+  --text-muted: #71717a;
 
-  --border-subtle: rgba(15, 23, 42, 0.1);
-  --border-strong: rgba(15, 23, 42, 0.2);
+  --border-subtle: rgba(24, 24, 27, 0.1);
+  --border-strong: rgba(24, 24, 27, 0.18);
 
-  --accent: #4f6bf0;
-  --accent-soft: rgba(79, 107, 240, 0.12);
+  --accent: #18181b;
+  --accent-contrast: #ffffff;
+  --accent-soft: rgba(24, 24, 27, 0.08);
 
-  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.06);
-  --shadow-drawer: -8px 0 40px rgba(15, 23, 42, 0.18);
+  --shadow-card: none;
+  --shadow-drawer: -18px 0 48px rgba(15, 23, 42, 0.12);
 }
 
 * {
@@ -67,7 +70,7 @@ body,
   height: 100%;
   background: var(--bg-page);
   color: var(--text-primary);
-  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+  font-family: 'Inter', 'DM Sans', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
     'PingFang SC', 'Microsoft YaHei', sans-serif;
   -webkit-font-smoothing: antialiased;
 }
@@ -80,6 +83,19 @@ button {
 input,
 select {
   font-family: inherit;
+}
+
+button,
+input,
+select {
+  outline: none;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+a:focus-visible {
+  box-shadow: 0 0 0 2px var(--bg-page), 0 0 0 4px rgba(244, 244, 245, 0.34);
 }
 
 ::-webkit-scrollbar {
@@ -108,7 +124,28 @@ select {
 }
 
 .lg-row-clickable:hover {
-  background: var(--accent-soft);
+  background: var(--bg-hover);
+}
+
+.lg-console-shell {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.018), transparent 240px),
+    var(--bg-page);
+}
+
+.lg-console-nav {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.lg-console-nav::-webkit-scrollbar {
+  display: none;
+}
+
+@media (max-width: 860px) {
+  .lg-global-search {
+    display: none !important;
+  }
 }
 
 @keyframes lg-pulse {

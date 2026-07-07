@@ -601,7 +601,10 @@ def cmd_branch_deploy(args: argparse.Namespace) -> None:
 
     # Step 1: 安全触发 deploy —— IncompleteRead 不再抛 traceback
     deploy_path = f"/api/branches/{urllib.parse.quote(branch_id)}/deploy"
-    trigger = _request_stream_safe("POST", deploy_path, timeout=5)
+    trigger_body: dict[str, Any] | None = None
+    if getattr(args, "commit", None):
+        trigger_body = {"commitSha": args.commit}
+    trigger = _request_stream_safe("POST", deploy_path, body=trigger_body, timeout=5)
 
     # 触发失败,或者 HTTP 4xx/5xx (auth/not found/服务器错误)——立刻 fail,不进 300s 轮询
     trigger_status = trigger.get("status")
@@ -666,6 +669,30 @@ def cmd_branch_deploy(args: argparse.Namespace) -> None:
                 "lastBranch": last_branch,
             },
         })
+
+
+def cmd_branch_claim_prebuilt(args: argparse.Namespace) -> None:
+    payload: dict[str, Any] = {"commitSha": args.commit}
+    if args.workflow_url:
+        payload["workflowRunUrl"] = args.workflow_url
+    if args.dry_run:
+        payload["dryRun"] = True
+    body = _call(
+        "POST",
+        f"/api/branches/{urllib.parse.quote(args.id)}/prebuilt-image/claim",
+        body=payload,
+        timeout=30,
+    )
+    if args.deploy and not args.dry_run:
+        deploy_args = argparse.Namespace(id=args.id, timeout=args.timeout, commit=args.commit)
+        cmd_branch_deploy(deploy_args)
+        return
+    if _HUMAN:
+        status = "未变更" if body.get("noChange") else "已认领"
+        print(f"[OK] prebuilt 镜像{status}: {args.id}@{args.commit[:12]}")
+        print(json.dumps(body, ensure_ascii=False, indent=2))
+        return
+    ok(body)
 
 
 def _fallback_branch_id(branch: str) -> str:
@@ -7225,7 +7252,19 @@ def _build_parser() -> argparse.ArgumentParser:
     bl = br.add_parser("list"); bl.add_argument("--project"); bl.set_defaults(func=cmd_branch_list)
     bs = br.add_parser("status"); bs.add_argument("id"); bs.set_defaults(func=cmd_branch_status)
     bd = br.add_parser("deploy"); bd.add_argument("id"); bd.add_argument("--timeout", type=int, default=300)
+    bd.add_argument("--commit", help="显式按指定 commit 触发部署(40 位 SHA)")
     bd.set_defaults(func=cmd_branch_deploy)
+    bcp = br.add_parser(
+        "claim-prebuilt",
+        help="手动认领已成功的 CI 预构建镜像,修复 webhook 漏投导致的 ciTargetSha 落后",
+    )
+    bcp.add_argument("id", help="CDS canonical branch id")
+    bcp.add_argument("--commit", required=True, help="已由 Branch Image 成功构建的 40 位 commit SHA")
+    bcp.add_argument("--workflow-url", help="GitHub Actions run 链接(证据)")
+    bcp.add_argument("--dry-run", action="store_true", help="只校验并展示将写入的 metadata")
+    bcp.add_argument("--deploy", action="store_true", help="认领后立即按同一 commit 触发部署")
+    bcp.add_argument("--timeout", type=int, default=300, help="--deploy 时等待部署完成的秒数")
+    bcp.set_defaults(func=cmd_branch_claim_prebuilt)
     blg = br.add_parser("logs"); blg.add_argument("id"); blg.add_argument("--profile", required=True)
     blg.add_argument("--tail", type=int, default=100); blg.set_defaults(func=cmd_branch_logs)
     be = br.add_parser("exec"); be.add_argument("id"); be.add_argument("--profile", required=True)

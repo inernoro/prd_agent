@@ -146,9 +146,17 @@ public class CrossProcessServingErrorLoadTests : IClassFixture<CrossProcessServi
 
     private static async Task AssertPools(TransportCell cell, HttpLlmGatewayClient client)
     {
+        if (cell.Bool("poolsFailed"))
+        {
+            var ex = await Should.ThrowAsync<InvalidOperationException>(
+                () => client.GetAvailablePoolsAsync("demo::chat", "chat"));
+            ex.Message.Contains("401", StringComparison.Ordinal).ShouldBeTrue(
+                $"cell {cell.Id}: 错 key 应明确暴露 serving 鉴权失败");
+            return;
+        }
+
         var pools = await client.GetAvailablePoolsAsync("demo::chat", "chat");
         if (cell.Bool("poolsOk")) pools.Count.ShouldBeGreaterThan(0, $"cell {cell.Id}: 期望非空池");
-        if (cell.Bool("poolsFailed")) pools.Count.ShouldBe(0, $"cell {cell.Id}: 错 key 应返回空池");
     }
 
     private static async Task AssertResolve(TransportCell cell, HttpLlmGatewayClient client)
@@ -254,11 +262,11 @@ public class CrossProcessServingErrorLoadTests : IClassFixture<CrossProcessServi
         }
         public Task<GatewayRawResponse> SendRawWithResolutionAsync(GatewayRawRequest r, GatewayModelResolution res, CancellationToken ct = default)
             => Task.FromResult(new GatewayRawResponse { Success = true, StatusCode = 200, Content = "raw-ok" });
-        public Task<GatewayModelResolution> ResolveModelAsync(string a, string m, string? e = null, CancellationToken ct = default)
+        public Task<GatewayModelResolution> ResolveModelAsync(string a, string m, string? e = null, string? pp = null, string? pm = null, CancellationToken ct = default)
             => Task.FromResult(Res());
         public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(string a, string m, CancellationToken ct = default)
             => Task.FromResult(new List<AvailableModelPool> { new() { Id = "pool-1", Name = "默认池", Code = "default", Priority = 1, ResolutionType = "defaultPool", Models = new() } });
-        public ILLMClient CreateClient(string a, string m, int mt = 4096, double t = 0.2, bool it = false, string? e = null)
+        public ILLMClient CreateClient(string a, string m, int mt = 4096, double t = 0.2, bool it = false, string? e = null, string? pp = null, string? pm = null)
             => new EchoLlmClient();
     }
 
@@ -284,11 +292,11 @@ public class CrossProcessServingErrorLoadTests : IClassFixture<CrossProcessServi
         { await Task.Yield(); yield return GatewayStreamChunk.Fail("stub upstream intentional failure"); }
         public Task<GatewayRawResponse> SendRawWithResolutionAsync(GatewayRawRequest r, GatewayModelResolution res, CancellationToken ct = default)
             => Task.FromResult(GatewayRawResponse.Fail("UPSTREAM_DOWN", "fail", 502));
-        public Task<GatewayModelResolution> ResolveModelAsync(string a, string m, string? e = null, CancellationToken ct = default)
+        public Task<GatewayModelResolution> ResolveModelAsync(string a, string m, string? e = null, string? pp = null, string? pm = null, CancellationToken ct = default)
             => Task.FromResult(Res());
         public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(string a, string m, CancellationToken ct = default)
             => Task.FromResult(new List<AvailableModelPool>());
-        public ILLMClient CreateClient(string a, string m, int mt = 4096, double t = 0.2, bool it = false, string? e = null)
+        public ILLMClient CreateClient(string a, string m, int mt = 4096, double t = 0.2, bool it = false, string? e = null, string? pp = null, string? pm = null)
             => throw new NotSupportedException();
     }
 
@@ -300,11 +308,11 @@ public class CrossProcessServingErrorLoadTests : IClassFixture<CrossProcessServi
             => throw new InvalidOperationException("boom");
         public Task<GatewayRawResponse> SendRawWithResolutionAsync(GatewayRawRequest r, GatewayModelResolution res, CancellationToken ct = default)
             => throw new InvalidOperationException("boom");
-        public Task<GatewayModelResolution> ResolveModelAsync(string a, string m, string? e = null, CancellationToken ct = default)
+        public Task<GatewayModelResolution> ResolveModelAsync(string a, string m, string? e = null, string? pp = null, string? pm = null, CancellationToken ct = default)
             => Task.FromResult(Res());
         public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(string a, string m, CancellationToken ct = default)
             => Task.FromResult(new List<AvailableModelPool>());
-        public ILLMClient CreateClient(string a, string m, int mt = 4096, double t = 0.2, bool it = false, string? e = null)
+        public ILLMClient CreateClient(string a, string m, int mt = 4096, double t = 0.2, bool it = false, string? e = null, string? pp = null, string? pm = null)
             => throw new NotSupportedException();
     }
 
@@ -317,11 +325,11 @@ public class CrossProcessServingErrorLoadTests : IClassFixture<CrossProcessServi
         { await Task.Yield(); yield return new GatewayStreamChunk { Type = GatewayChunkType.Done, Seq = 1, FinishReason = "stop" }; }
         public Task<GatewayRawResponse> SendRawWithResolutionAsync(GatewayRawRequest r, GatewayModelResolution res, CancellationToken ct = default)
             => Task.FromResult(new GatewayRawResponse { Success = true, StatusCode = 200, Content = "" });
-        public Task<GatewayModelResolution> ResolveModelAsync(string a, string m, string? e = null, CancellationToken ct = default)
+        public Task<GatewayModelResolution> ResolveModelAsync(string a, string m, string? e = null, string? pp = null, string? pm = null, CancellationToken ct = default)
             => Task.FromResult(Res());
         public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(string a, string m, CancellationToken ct = default)
             => Task.FromResult(new List<AvailableModelPool>());
-        public ILLMClient CreateClient(string a, string m, int mt = 4096, double t = 0.2, bool it = false, string? e = null)
+        public ILLMClient CreateClient(string a, string m, int mt = 4096, double t = 0.2, bool it = false, string? e = null, string? pp = null, string? pm = null)
             => throw new NotSupportedException();
     }
 }

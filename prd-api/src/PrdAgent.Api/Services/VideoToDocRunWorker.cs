@@ -248,7 +248,7 @@ public class VideoToDocRunWorker : BackgroundService
         // ASR 模型池统一管理语音识别模型（Whisper / TeleSpeechASR / Qwen3-ASR 等）
         // API 兼容 OpenAI /v1/audio/transcriptions 端点
         var asrResolution = await gateway.ResolveModelAsync(
-            AppCallerRegistry.VideoAgent.VideoToDoc.Transcribe, ModelTypes.Asr, null, CancellationToken.None);
+            AppCallerRegistry.VideoAgent.VideoToDoc.Transcribe, ModelTypes.Asr, null, ct: CancellationToken.None);
         if (!asrResolution.Success)
         {
             _logger.LogWarning("VideoToDoc ASR 模型调度失败，降级为无转写模式: runId={RunId}, reason={Reason}",

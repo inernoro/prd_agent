@@ -7,6 +7,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Core.Models.MultiImage;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
+using PrdAgent.Infrastructure.LlmGateway.ImageGen;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Core.Interfaces;
@@ -258,7 +259,7 @@ public class ImageGenRunWorker : BackgroundService
         var tasks = new List<Task>();
 
         using var scope = _scopeFactory.CreateScope();
-        var imageClient = scope.ServiceProvider.GetRequiredService<OpenAIImageClient>();
+        var imageClient = scope.ServiceProvider.GetRequiredService<IImageGenerationClient>();
         var assetStorage = scope.ServiceProvider.GetRequiredService<IAssetStorage>();
 
         for (var itemIndex = 0; itemIndex < items.Count; itemIndex++)
@@ -1022,7 +1023,7 @@ public class ImageGenRunWorker : BackgroundService
         var adminId = (run.OwnerAdminId ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(wid) || string.IsNullOrWhiteSpace(adminId)) return null;
 
-        // 原图已在 OpenAIImageClient 保存到 imagemaster 目录
+        // 原图已由生图网关客户端保存到 imagemaster 目录
         // 这里只需创建 ImageAsset 记录，不需要重新下载保存
         // 如果没有 originalUrl/originalSha256，则回退到下载 url
 
@@ -1529,7 +1530,7 @@ public class ImageGenRunWorker : BackgroundService
 
             // 传递用户期望的模型池 code
             var expectedModelCode = frontendExpectedModelId;
-            var resolved = await gateway.ResolveModelAsync(appCallerCode, "generation", expectedModelCode, ct);
+            var resolved = await gateway.ResolveModelAsync(appCallerCode, "generation", expectedModelCode, ct: ct);
 
             if (resolved != null)
             {

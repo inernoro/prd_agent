@@ -2,8 +2,8 @@
 //
 // 设计意图（见 doc/design.llm-gateway-physical-isolation.md）：
 //   - 本服务与 prd-api 完全解耦，不引用任何 PrdAgent.* 项目，仅依赖 NuGet 包。
-//   - 与 MAP 共享同一个 MongoDB（读取共享集合 llmrequestlogs），但拥有独立的 JWT 账户体系
-//     （独立密钥 LlmGwJwt:Secret），满足 cross-project-isolation 规则——绝不复用 MAP 的 Jwt 密钥。
+//   - MAP 继续负责 MAP 自己的业务日志；GW 控制台账号、登录审计等自有状态落独立数据库 llm_gateway。
+//   - 当前控制台仍读取 MAP 的 llmrequestlogs/模型配置作为观测视图，但不把账号状态写进 MAP 库。
 //   - 共享集合 llmrequestlogs 由 .NET 驱动以 PascalCase 字段名序列化；为规避历史文档里
 //     数值/日期类型混存导致的反序列化异常，日志查询统一以 BsonDocument 读取并手动安全映射。
 
@@ -25,6 +25,7 @@ var config = builder.Configuration;
 
 var mongoConn = config["MongoDB:ConnectionString"] ?? "mongodb://localhost:27017";
 var mongoDb = config["MongoDB:DatabaseName"] ?? "prdagent";
+var gatewayDbName = config["LlmGateway:DatabaseName"] ?? "llm_gateway";
 
 const string DevJwtSecret = "llmgw-dev-secret-change-me-please-0001";
 
@@ -50,12 +51,10 @@ if (jwtTooShort)
 }
 var jwtIssuer = config["LlmGwJwt:Issuer"] ?? "prdagent-llmgw";
 
-// 网关控制台登录账号（用户 2026-07-02 二次拍板：口令存项目 env，别再登不进）：
-// - 优先 **LLMGW_ADMIN_PASSWORD**（项目环境变量，权威）：seed 每次启动把 admin 口令对齐到该值，
-//   改密 = 改项目 env + 重部署 llmgw；env 注入到位时口令永远确定、不受 UI/共享库漂移影响。
-// - 未设该 env 时回退到内置 **admin/admin 引导 + 首登强制改密 + 自愈**（保证 env 缺失也永不锁死）。
-// 历史教训：早期「seed 对齐到未知全局 env 值」会锁死——现改为「项目 env 显式设已知值 + env 缺失自愈 admin/admin」
-// 两头兜底，既满足『口令存 env、可控可改』又不会因 env 不可控而登不进。
+// 网关控制台登录账号：
+// - 长期权威是 llm_gateway.llmgw_console_users 里的 PBKDF2 哈希，UI 改密后重启不再被 env 覆盖。
+// - LLMGW_ADMIN_PASSWORD 仅用于“首次 bootstrap 创建账号”或 LLMGW_ADMIN_FORCE_RESET 破玻璃时的重置口令。
+// - 未设 bootstrap 口令时，内置 admin/admin 引导 + 首登强制改密，避免新环境锁死。
 const string AdminUser = "admin";
 const string DefaultAdminPwd = "admin";
 
@@ -63,9 +62,10 @@ var gitCommit = Environment.GetEnvironmentVariable("GIT_COMMIT") ?? "";
 
 // ── Mongo 客户端（单例）──
 var mongoClient = new MongoClient(mongoConn);
-var database = mongoClient.GetDatabase(mongoDb);
+var mapDatabase = mongoClient.GetDatabase(mongoDb);
+var gatewayDatabase = mongoClient.GetDatabase(gatewayDbName);
 builder.Services.AddSingleton(mongoClient);
-builder.Services.AddSingleton(database);
+builder.Services.AddSingleton(mapDatabase);
 
 // ── JWT 签发器（独立密钥）──
 var gwJwt = new GwJwt(jwtSecret, jwtIssuer);
@@ -124,29 +124,26 @@ app.UseCors(CorsPolicy);
 app.UseAuthentication();
 app.UseAuthorization();
 
-// ── 启动时幂等播种管理员账户（内置 admin/admin 引导，env 无关）──
-// 破玻璃（break-glass）：设 LLMGW_ADMIN_FORCE_RESET 为真值（1/true/yes/on，大小写不敏感）时，无条件把 admin
-// 重置回 admin/admin。用于「账号被认领但口令登不进」的死锁恢复——重置后前端会强制改密。恢复后请把该 env 清掉。
+// ── 启动时幂等播种管理员账户（内置 admin/admin 引导，env 仅 bootstrap/破玻璃）──
+// 破玻璃（break-glass）：设 LLMGW_ADMIN_FORCE_RESET 为真值（1/true/yes/on，大小写不敏感）时，显式重置 admin
+// 口令。用于「账号被认领但口令登不进」的死锁恢复。恢复后请把该 env 清掉。
 // **仅认真值**（Bugbot Medium）：只判「非空」会把 =0 / =false 误当开启，每次启动强制回 admin/admin 反而擦掉 env 口令。
-// 口令来源（用户 2026-07-02 明确要求「口令存项目 env、别再登不进」）：优先 LLMGW_ADMIN_PASSWORD
-// （项目 env，权威，每次启动对齐口令）；未设时回退到内置 admin/admin 引导 + 自愈（永不锁死）。
-// 改密 = 改项目环境变量 LLMGW_ADMIN_PASSWORD 后重部署 llmgw。
+// 口令来源（2026-07-04 目标模式）：数据库是长期权威；LLMGW_ADMIN_PASSWORD 仅在首次创建或 force reset 时使用。
 var forceResetRaw = (Environment.GetEnvironmentVariable("LLMGW_ADMIN_FORCE_RESET") ?? string.Empty).Trim();
 var forceResetAdmin = new[] { "1", "true", "yes", "on" }.Contains(forceResetRaw, StringComparer.OrdinalIgnoreCase);
-var adminPwdFromEnv = Environment.GetEnvironmentVariable("LLMGW_ADMIN_PASSWORD");
-await SeedAdminAsync(database, AdminUser, DefaultAdminPwd, forceResetAdmin, adminPwdFromEnv);
+var adminBootstrapPwd = Environment.GetEnvironmentVariable("LLMGW_ADMIN_PASSWORD");
+var operationAudits = gatewayDatabase.GetCollection<BsonDocument>("llmgw_operation_audits");
+await SeedAdminAsync(gatewayDatabase, operationAudits, AdminUser, DefaultAdminPwd, forceResetAdmin, adminBootstrapPwd);
 
-var logs = database.GetCollection<BsonDocument>("llmrequestlogs");
-// 控制台账号用**独立集合** llmgw_console_users（不再用 llmgw_users）：
-// 历史 llmgw_users 被 main/多分支的多版本 llmgw seed 跨部署互相覆盖，导致 admin 口令反复被污染、登不进，
-// 且 CDS 数据库控制台只读、env 注入不稳，无法可靠重置。换到全新集合 → 首次启动 seed 建干净 admin/admin，
-// 不被任何旧部署触碰，改过的口令也能稳定保留。
-var users = database.GetCollection<LlmGwUser>("llmgw_console_users");
-// 网关配置面（只读）：模型池 / 平台 / 模型 / 影子比对。与 MAP 共享同库，控制台只读展示。
-var modelGroups = database.GetCollection<BsonDocument>("model_groups");
-var platforms = database.GetCollection<BsonDocument>("llmplatforms");
-var models = database.GetCollection<BsonDocument>("llmmodels");
-var shadows = database.GetCollection<BsonDocument>("llmshadow_comparisons");
+var logs = mapDatabase.GetCollection<BsonDocument>("llmrequestlogs");
+// GW 自有账号和审计落独立库 llm_gateway，避免被 MAP 项目 env / shared DB 状态覆盖。
+var users = gatewayDatabase.GetCollection<LlmGwUser>("llmgw_console_users");
+var loginAudits = gatewayDatabase.GetCollection<LlmGwLoginAudit>("llmgw_login_audits");
+// 网关配置面（只读/小范围写）：模型池 / 平台 / 模型 / 影子比对仍来自 MAP 库。MAP 继续负责自己的配置和日志。
+var modelGroups = mapDatabase.GetCollection<BsonDocument>("model_groups");
+var platforms = mapDatabase.GetCollection<BsonDocument>("llmplatforms");
+var models = mapDatabase.GetCollection<BsonDocument>("llmmodels");
+var shadows = gatewayDatabase.GetCollection<BsonDocument>("llmshadow_comparisons");
 
 // ───────────────────────────── 健康检查（匿名）─────────────────────────────
 app.MapGet("/gw/healthz", () => Results.Json(new
@@ -158,20 +155,26 @@ app.MapGet("/gw/healthz", () => Results.Json(new
 
 // ───────────────────────────── 登录（匿名）─────────────────────────────
 // 登录失败返回 HTTP 200 + success:false，避免前端把 401 当作"会话过期"自动清 session。
-app.MapPost("/gw/auth/login", async ([FromBody] LoginRequestDto req) =>
+app.MapPost("/gw/auth/login", async (HttpContext http, [FromBody] LoginRequestDto req) =>
 {
     var username = (req.Username ?? "").Trim();
     var password = req.Password ?? "";
     if (username.Length == 0 || password.Length == 0)
     {
+        await WriteLoginAuditAsync(loginAudits, http, username, null, false, "EMPTY_CREDENTIALS");
         return Json(ApiEnvelope<LoginResultDto>.Fail("INVALID_CREDENTIALS", "用户名或密码不能为空"), jsonOptions);
     }
 
     var user = await users.Find(u => u.Username == username).FirstOrDefaultAsync();
     if (user is null || !user.IsActive || !PasswordHasher.Verify(password, user.PasswordHash))
     {
+        await WriteLoginAuditAsync(loginAudits, http, username, user?.Id, false, user is null ? "USER_NOT_FOUND" : "INVALID_PASSWORD");
         return Json(ApiEnvelope<LoginResultDto>.Fail("INVALID_CREDENTIALS", "用户名或密码错误"), jsonOptions);
     }
+
+    await users.UpdateOneAsync(u => u.Id == user.Id,
+        Builders<LlmGwUser>.Update.Set(u => u.LastLoginAt, DateTime.UtcNow));
+    await WriteLoginAuditAsync(loginAudits, http, username, user.Id, true, null);
 
     var (token, expiresAt) = gwJwt.Issue(user);
     var data = new LoginResultDto
@@ -220,15 +223,40 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
     }
     if (!PasswordHasher.Verify(oldPwd, user.PasswordHash))
     {
+        await WriteOperationAuditAsync(
+            operationAudits,
+            http,
+            action: "auth.change_password",
+            targetType: "llmgw_console_user",
+            targetId: user.Id,
+            targetName: user.Username,
+            success: false,
+            reason: "INVALID_OLD_PASSWORD");
         return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("INVALID_CREDENTIALS", "旧口令错误"), jsonOptions);
     }
 
+    var wasMustChangePassword = user.MustChangePassword;
     var update = Builders<LlmGwUser>.Update
         .Set(u => u.PasswordHash, PasswordHasher.Hash(newPwd))
         .Set(u => u.MustChangePassword, false)
         // 标记为真人认领：默认模式下重启不再自愈回 admin/admin，保住用户新口令。
-        .Set(u => u.PasswordChangedByUser, true);
+        .Set(u => u.PasswordChangedByUser, true)
+        .Set(u => u.UpdatedAt, DateTime.UtcNow);
     await users.UpdateOneAsync(u => u.Id == user.Id, update);
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        action: "auth.change_password",
+        targetType: "llmgw_console_user",
+        targetId: user.Id,
+        targetName: user.Username,
+        success: true,
+        reason: null,
+        changes: new BsonDocument
+        {
+            { "mustChangePassword", new BsonDocument { { "from", wasMustChangePassword }, { "to", false } } },
+            { "passwordChangedByUser", new BsonDocument { { "from", user.PasswordChangedByUser }, { "to", true } } },
+        });
 
     // 重新签发 token（此时 MustChangePassword 已清，Issue 不再带 mcp claim）。
     user.MustChangePassword = false;
@@ -245,13 +273,14 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
 
 // ───────────────────────────── 日志列表（需鉴权）─────────────────────────────
 app.MapGet("/gw/logs", async (
-    int? page, int? pageSize, string? from, string? to, string? model, string? status) =>
+    int? page, int? pageSize, string? from, string? to, string? model, string? status,
+    string? provider, string? appCallerCode, string? transport, string? requestType) =>
 {
     var p = page is > 0 ? page.Value : 1;
     var ps = pageSize is > 0 and <= 500 ? pageSize.Value : 50;
 
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = BuildFilter(fromUtc, toUtc, model, status);
+    var filter = BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType);
 
     var total = await logs.CountDocumentsAsync(filter);
     var docs = await logs.Find(filter)
@@ -278,27 +307,29 @@ app.MapGet("/gw/logs/meta", async () =>
 
     var modelsRaw = await logs.Distinct<string>("Model", recent).ToListAsync();
     var statusesRaw = await logs.Distinct<string>("Status", recent).ToListAsync();
+    var providersRaw = await logs.Distinct<string>("Provider", recent).ToListAsync();
+    var appCallersRaw = await logs.Distinct<string>("AppCallerCode", recent).ToListAsync();
+    var transportsRaw = await logs.Distinct<string>("GatewayTransport", recent).ToListAsync();
+    var requestTypesRaw = await logs.Distinct<string>("RequestType", recent).ToListAsync();
 
-    var models = modelsRaw
-        .Where(m => !string.IsNullOrWhiteSpace(m))
-        .Distinct()
-        .OrderBy(m => m, StringComparer.OrdinalIgnoreCase)
-        .Take(200)
-        .ToList();
-    var statuses = statusesRaw
-        .Where(s => !string.IsNullOrWhiteSpace(s))
-        .Distinct()
-        .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
-        .ToList();
-
-    return Json(ApiEnvelope<LogsMeta>.Ok(new LogsMeta { Models = models, Statuses = statuses }), jsonOptions);
+    return Json(ApiEnvelope<LogsMeta>.Ok(new LogsMeta
+    {
+        Models = NormalizeDistinct(modelsRaw, 200),
+        Statuses = NormalizeDistinct(statusesRaw, 80),
+        Providers = NormalizeDistinct(providersRaw, 200),
+        AppCallers = NormalizeDistinct(appCallersRaw, 300),
+        Transports = NormalizeDistinct(transportsRaw, 40),
+        RequestTypes = NormalizeDistinct(requestTypesRaw, 80),
+    }), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
 // ───────────────────────────── 时间序列（需鉴权）─────────────────────────────
-app.MapGet("/gw/logs/timeseries", async (string? from, string? to, string? model, string? status) =>
+app.MapGet("/gw/logs/timeseries", async (
+    string? from, string? to, string? model, string? status,
+    string? provider, string? appCallerCode, string? transport, string? requestType) =>
 {
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = BuildFilter(fromUtc, toUtc, model, status);
+    var filter = BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType);
 
     // 仅取 StartedAt 字段做内存分组（按 UTC 日期）。
     var projection = Builders<BsonDocument>.Projection.Include("StartedAt");
@@ -321,14 +352,52 @@ app.MapGet("/gw/logs/timeseries", async (string? from, string? to, string? model
     return Json(ApiEnvelope<TimeseriesData>.Ok(new TimeseriesData { Items = items }), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
+// ───────────────────────────── 窗口汇总（需鉴权）─────────────────────────────
+app.MapGet("/gw/logs/summary", async (
+    string? from, string? to, string? model, string? status,
+    string? provider, string? appCallerCode, string? transport, string? requestType) =>
+{
+    var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
+    var filter = BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType);
+    var projection = Builders<BsonDocument>.Projection
+        .Include("Status")
+        .Include("DurationMs")
+        .Include("InputTokens")
+        .Include("OutputTokens")
+        .Include("IsFallback")
+        .Include("GatewayTransport");
+    var docs = await logs.Find(filter).Project(projection).ToListAsync();
+
+    var durations = docs.Select(d => d.AsNullableLong("DurationMs")).Where(d => d is > 0).Select(d => d!.Value).ToList();
+    var data = new LogsSummaryData
+    {
+        Total = docs.Count,
+        Succeeded = docs.LongCount(d => d.GetStringOrEmpty("Status") == "succeeded"),
+        Failed = docs.LongCount(d => d.GetStringOrEmpty("Status") == "failed"),
+        Running = docs.LongCount(d => d.GetStringOrEmpty("Status") == "running"),
+        Cancelled = docs.LongCount(d => d.GetStringOrEmpty("Status") == "cancelled"),
+        Fallbacks = docs.LongCount(d => d.AsNullableBool("IsFallback") == true),
+        InputTokens = docs.Sum(d => (long)(d.AsNullableInt("InputTokens") ?? 0)),
+        OutputTokens = docs.Sum(d => (long)(d.AsNullableInt("OutputTokens") ?? 0)),
+        AverageDurationMs = durations.Count == 0 ? null : (long)Math.Round(durations.Average()),
+        TransportDistribution = BuildBucket(docs, "GatewayTransport", fallbackKey: "unknown"),
+        StatusDistribution = BuildBucket(docs, "Status", fallbackKey: "unknown"),
+    };
+    data.TotalTokens = data.InputTokens + data.OutputTokens;
+
+    return Json(ApiEnvelope<LogsSummaryData>.Ok(data), jsonOptions);
+}).RequireAuthorization("LogsRead");
+
 // ───────────────────────────── 会话聚合（需鉴权）─────────────────────────────
-app.MapGet("/gw/logs/sessions", async (string? from, string? to, int? page, int? pageSize) =>
+app.MapGet("/gw/logs/sessions", async (
+    string? from, string? to, int? page, int? pageSize,
+    string? model, string? status, string? provider, string? appCallerCode, string? transport, string? requestType) =>
 {
     var p = page is > 0 ? page.Value : 1;
     var ps = pageSize is > 0 and <= 500 ? pageSize.Value : 50;
 
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = BuildFilter(fromUtc, toUtc, null, null);
+    var filter = BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType);
 
     var docs = await logs.Find(filter)
         .Sort(Builders<BsonDocument>.Sort.Descending("StartedAt"))
@@ -413,19 +482,49 @@ app.MapGet("/gw/models", async (string? platformId, bool? enabled) =>
 }).RequireAuthorization("LogsRead");
 
 // 影子比对：汇总 + 最近 N 条
-app.MapGet("/gw/shadow-comparisons", async (int? limit, string? appCallerCode) =>
+app.MapGet("/gw/shadow-comparisons", async (int? limit, string? appCallerCode, string? kind, string? releaseCommit, double? sinceHours) =>
 {
     var n = Math.Clamp(limit ?? 50, 1, 500);
     var fb = Builders<BsonDocument>.Filter;
-    var filter = string.IsNullOrWhiteSpace(appCallerCode) ? fb.Empty : fb.Eq("AppCallerCode", appCallerCode);
+    var filters = new List<FilterDefinition<BsonDocument>>();
+    if (!string.IsNullOrWhiteSpace(appCallerCode)) filters.Add(fb.Eq("AppCallerCode", appCallerCode.Trim()));
+    if (!string.IsNullOrWhiteSpace(kind)) filters.Add(fb.Eq("Kind", kind.Trim()));
+    var normalizedReleaseCommit = NormalizeCommitFilter(releaseCommit);
+    if (normalizedReleaseCommit is not null) filters.Add(fb.Eq("ReleaseCommit", normalizedReleaseCommit));
+    var since = sinceHours is > 0 ? DateTime.UtcNow.AddHours(-sinceHours.Value) : (DateTime?)null;
+    if (since is not null) filters.Add(fb.Gte("ComparedAt", since.Value));
+    var filter = filters.Count == 0 ? fb.Empty : fb.And(filters);
     var total = await shadows.CountDocumentsAsync(filter);
     var allMatch = await shadows.CountDocumentsAsync(fb.And(filter, fb.Eq("AllMatch", true)));
     var critical = await shadows.CountDocumentsAsync(fb.And(filter, fb.Eq("HasCritical", true)));
     var httpFail = await shadows.CountDocumentsAsync(fb.And(filter, fb.Eq("HttpOk", false)));
+    var firstDoc = total > 0
+        ? await shadows.Find(filter).Sort(Builders<BsonDocument>.Sort.Ascending("ComparedAt")).Limit(1).FirstOrDefaultAsync()
+        : null;
+    var lastDoc = total > 0
+        ? await shadows.Find(filter).Sort(Builders<BsonDocument>.Sort.Descending("ComparedAt")).Limit(1).FirstOrDefaultAsync()
+        : null;
+    var first = firstDoc?.AsNullableUtcDateTime("ComparedAt");
+    var last = lastDoc?.AsNullableUtcDateTime("ComparedAt");
+    var coverageHours = first is not null && last is not null
+        ? Math.Max(0, (last.Value - first.Value).TotalHours)
+        : 0;
     var recent = await shadows.Find(filter).Sort(Builders<BsonDocument>.Sort.Descending("ComparedAt")).Limit(n).ToListAsync();
     var data = new ShadowData
     {
-        Summary = new ShadowSummary { Total = total, AllMatch = allMatch, Critical = critical, HttpFail = httpFail },
+        Summary = new ShadowSummary
+        {
+            Total = total,
+            AllMatch = allMatch,
+            Critical = critical,
+            HttpFail = httpFail,
+            SinceHours = sinceHours,
+            Since = since?.ToString("O"),
+            ReleaseCommit = normalizedReleaseCommit,
+            FirstComparedAt = first.ToIso(),
+            LastComparedAt = last.ToIso(),
+            CoverageHours = coverageHours,
+        },
         Recent = recent.Select(MapShadow).ToList(),
     };
     return Json(ApiEnvelope<ShadowData>.Ok(data), jsonOptions);
@@ -437,7 +536,7 @@ app.MapGet("/gw/shadow-comparisons", async (int? limit, string? appCallerCode) =
 // 密钥轮换 / 新建平台等更重的写操作后续再开。
 
 // 平台启用/停用
-app.MapPut("/gw/platforms/{id}/enabled", async (string id, ToggleEnabledRequest body) =>
+app.MapPut("/gw/platforms/{id}/enabled", async (HttpContext http, string id, ToggleEnabledRequest body) =>
 {
     // 缺 enabled 字段（空 body / 漏传）一律拒绝，避免默认 false 误关平台。
     if (body?.Enabled is not bool enabled) return Json(ApiEnvelope<PlatformItem>.Fail("INVALID_INPUT", "缺少 enabled 字段（true/false）"), jsonOptions, 400);
@@ -446,12 +545,22 @@ app.MapPut("/gw/platforms/{id}/enabled", async (string id, ToggleEnabledRequest 
     if (doc is null) return Json(ApiEnvelope<PlatformItem>.Fail("NOT_FOUND", $"平台不存在：{id}"), jsonOptions, 404);
     var update = Builders<BsonDocument>.Update.Set("Enabled", enabled).Set("UpdatedAt", DateTime.UtcNow);
     await platforms.UpdateOneAsync(filter, update);
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        action: "platform.set_enabled",
+        targetType: "llmplatform",
+        targetId: id,
+        targetName: doc.AsNullableString("Name"),
+        success: true,
+        reason: null,
+        changes: BuildChangeDocument(("enabled", doc.AsNullableBool("Enabled"), enabled)));
     var fresh = await platforms.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(fresh)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
 // 模型启用/停用
-app.MapPut("/gw/models/{id}/enabled", async (string id, ToggleEnabledRequest body) =>
+app.MapPut("/gw/models/{id}/enabled", async (HttpContext http, string id, ToggleEnabledRequest body) =>
 {
     // 缺 enabled 字段一律拒绝，避免默认 false 误关模型。
     if (body?.Enabled is not bool enabled) return Json(ApiEnvelope<ModelItem>.Fail("INVALID_INPUT", "缺少 enabled 字段（true/false）"), jsonOptions, 400);
@@ -460,6 +569,16 @@ app.MapPut("/gw/models/{id}/enabled", async (string id, ToggleEnabledRequest bod
     if (doc is null) return Json(ApiEnvelope<ModelItem>.Fail("NOT_FOUND", $"模型不存在：{id}"), jsonOptions, 404);
     var update = Builders<BsonDocument>.Update.Set("Enabled", enabled).Set("UpdatedAt", DateTime.UtcNow);
     await models.UpdateOneAsync(filter, update);
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        action: "model.set_enabled",
+        targetType: "llmmodel",
+        targetId: id,
+        targetName: doc.AsNullableString("ModelName") ?? doc.AsNullableString("Name"),
+        success: true,
+        reason: null,
+        changes: BuildChangeDocument(("enabled", doc.AsNullableBool("Enabled"), enabled)));
     var fresh = await models.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<ModelItem>.Ok(MapModel(fresh)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
@@ -467,7 +586,7 @@ app.MapPut("/gw/models/{id}/enabled", async (string id, ToggleEnabledRequest bod
 // 模型池默认标记：同一 ModelType 下将该池设为默认（互斥）。
 // 非事务环境下的安全次序（Mongo 单实例无跨文档事务）：**先置本池为默认，再清同类型其它池**。
 // 万一第二步失败，失败态是「同类型暂时两个默认」（MAP 调度仍能选到一个）——远好于「先清后置、第二步失败=零默认」（调度失去默认池）。
-app.MapPut("/gw/pools/{id}/default", async (string id, ToggleDefaultRequest body) =>
+app.MapPut("/gw/pools/{id}/default", async (HttpContext http, string id, ToggleDefaultRequest body) =>
 {
     // 缺 isDefault 字段一律拒绝。
     if (body?.IsDefault is not bool isDefault) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "缺少 isDefault 字段（true/false）"), jsonOptions, 400);
@@ -484,7 +603,22 @@ app.MapPut("/gw/pools/{id}/default", async (string id, ToggleDefaultRequest body
     await modelGroups.UpdateOneAsync(filter, Builders<BsonDocument>.Update.Set("IsDefaultForType", true).Set("UpdatedAt", DateTime.UtcNow));
     var fb = Builders<BsonDocument>.Filter;
     var others = fb.And(fb.Eq("ModelType", modelType), fb.Ne("_id", id));
-    await modelGroups.UpdateManyAsync(others, Builders<BsonDocument>.Update.Set("IsDefaultForType", false).Set("UpdatedAt", DateTime.UtcNow));
+    var clearOthers = await modelGroups.UpdateManyAsync(others, Builders<BsonDocument>.Update.Set("IsDefaultForType", false).Set("UpdatedAt", DateTime.UtcNow));
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        action: "pool.set_default",
+        targetType: "model_group",
+        targetId: id,
+        targetName: doc.AsNullableString("Name") ?? doc.AsNullableString("Code"),
+        success: true,
+        reason: null,
+        changes: new BsonDocument
+        {
+            { "isDefaultForType", new BsonDocument { { "from", ToBsonAuditValue(doc.AsNullableBool("IsDefaultForType")) }, { "to", true } } },
+            { "modelType", modelType },
+            { "clearedOtherDefaultCount", clearOthers.ModifiedCount },
+        });
     var fresh = await modelGroups.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<PoolItem>.Ok(MapPool(fresh)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
@@ -495,24 +629,41 @@ app.Run();
 // ─────────────────────────────── 辅助函数 ───────────────────────────────
 
 // 幂等播种管理员。优先级（从高到低）：
-//   1) forceReset（LLMGW_ADMIN_FORCE_RESET=1）：破玻璃，无条件回 admin/admin + 强制改密（即使设了 env 口令也生效）。
-//   2) envPassword（LLMGW_ADMIN_PASSWORD）：**权威口令**，每次启动把 admin 对齐到 env 值（用户 2026-07-02 要求：
-//      口令存项目 env、可控可改、永不漂移；UI 改密不覆盖 env——env 才是唯一真源）。已知口令 → 不强制改密。
-//   3) 默认引导：无 env 口令时，内置 admin/admin 引导 + 首登强制改密 + UI 改密后保留（PasswordChangedByUser=true 不回退），
-//      未认领的历史 admin 每次启动确定性自愈回 admin/admin（永不锁死）。
-static async Task SeedAdminAsync(IMongoDatabase db, string username, string defaultPwd, bool forceReset = false, string? envPassword = null)
+//   1) forceReset（LLMGW_ADMIN_FORCE_RESET=1）：破玻璃，显式重置 admin 口令 + 强制改密。
+//   2) 已有账号：数据库哈希是长期权威，只保活，不再被 LLMGW_ADMIN_PASSWORD 覆盖。
+//   3) 空库首次 bootstrap：用 LLMGW_ADMIN_PASSWORD；未设则内置 admin/admin + 首登强制改密。
+static async Task SeedAdminAsync(
+    IMongoDatabase db,
+    IMongoCollection<BsonDocument> operationAudits,
+    string username,
+    string defaultPwd,
+    bool forceReset = false,
+    string? envPassword = null)
 {
     var users = db.GetCollection<LlmGwUser>("llmgw_console_users");
 
     // 单管理员模型：禁用历史遗留的其它用户名账号（防「改名后旧账号仍可登」）。真要多用户时再引入用户管理。
     var deactivateOthers = Builders<LlmGwUser>.Update.Set(u => u.IsActive, false);
-    await users.UpdateManyAsync(u => u.Username != username && u.IsActive, deactivateOthers);
+    var deactivated = await users.UpdateManyAsync(u => u.Username != username && u.IsActive, deactivateOthers);
+    if (deactivated.ModifiedCount > 0)
+    {
+        await WriteSystemOperationAuditAsync(
+            operationAudits,
+            action: "admin.deactivate_legacy_users",
+            targetType: "llmgw_console_user",
+            targetId: null,
+            targetName: "non-admin active users",
+            success: true,
+            reason: null,
+            changes: new BsonDocument { { "deactivatedCount", deactivated.ModifiedCount } });
+    }
 
-    // 破玻璃优先级最高（Bugbot Medium）：LLMGW_ADMIN_FORCE_RESET=1 时无条件回 admin/admin，
-    // **即使设了 env 口令也生效**——用于 env 值本身也不可控/登不进时的终极逃生。放在 env 分支之前，否则被其 return 短路。
+    // 破玻璃优先级最高：显式打开时才改库中口令，用于账号被认领但口令丢失的死锁恢复。
     if (forceReset)
     {
-        var resetHash = PasswordHasher.Hash(defaultPwd);
+        var resetPassword = string.IsNullOrWhiteSpace(envPassword) ? defaultPwd : envPassword.Trim();
+        var resetHash = PasswordHasher.Hash(resetPassword);
+        var resetMustChange = resetPassword == defaultPwd;
         var existingForce = await users.Find(u => u.Username == username).FirstOrDefaultAsync();
         if (existingForce is not null)
         {
@@ -520,105 +671,245 @@ static async Task SeedAdminAsync(IMongoDatabase db, string username, string defa
                 Builders<LlmGwUser>.Update
                     .Set(u => u.PasswordHash, resetHash)
                     .Set(u => u.IsActive, true)
-                    .Set(u => u.MustChangePassword, true)
-                    .Set(u => u.PasswordChangedByUser, false));
+                    .Set(u => u.MustChangePassword, resetMustChange)
+                    .Set(u => u.PasswordChangedByUser, false)
+                    .Set(u => u.UpdatedAt, DateTime.UtcNow));
+            await WriteSystemOperationAuditAsync(
+                operationAudits,
+                action: "admin.force_reset",
+                targetType: "llmgw_console_user",
+                targetId: existingForce.Id,
+                targetName: username,
+                success: true,
+                reason: null,
+                changes: new BsonDocument
+                {
+                    { "passwordSource", string.IsNullOrWhiteSpace(envPassword) ? "default" : "env" },
+                    { "mustChangePassword", new BsonDocument { { "from", existingForce.MustChangePassword }, { "to", resetMustChange } } },
+                    { "passwordChangedByUser", new BsonDocument { { "from", existingForce.PasswordChangedByUser }, { "to", false } } },
+                    { "wasActive", existingForce.IsActive },
+                });
         }
         else
         {
-            await users.InsertOneAsync(new LlmGwUser
+            var resetUser = new LlmGwUser
             {
                 Username = username, PasswordHash = resetHash, DisplayName = username,
-                IsActive = true, MustChangePassword = true, PasswordChangedByUser = false,
+                IsActive = true, MustChangePassword = resetMustChange, PasswordChangedByUser = false,
                 Scopes = new[] { "logs:read" }, CreatedAt = DateTime.UtcNow,
-            });
+                UpdatedAt = DateTime.UtcNow,
+            };
+            await users.InsertOneAsync(resetUser);
+            await WriteSystemOperationAuditAsync(
+                operationAudits,
+                action: "admin.force_reset_bootstrap",
+                targetType: "llmgw_console_user",
+                targetId: resetUser.Id,
+                targetName: username,
+                success: true,
+                reason: null,
+                changes: new BsonDocument
+                {
+                    { "passwordSource", string.IsNullOrWhiteSpace(envPassword) ? "default" : "env" },
+                    { "mustChangePassword", resetMustChange },
+                });
         }
         return;
     }
 
-    // env 权威口令（LLMGW_ADMIN_PASSWORD）：设了就每次启动把 admin 口令对齐到 env 值——改 env + 重部署即改密，
-    // 永不因 UI/共享库漂移而登不进（用户 2026-07-02 强制要求）。已知口令 → 不强制改密。
-    // PasswordChangedByUser 置 false：万一将来清掉 env，fallback 会自愈回 admin/admin，仍不会锁死。
-    if (!string.IsNullOrWhiteSpace(envPassword))
-    {
-        var envHash = PasswordHasher.Hash(envPassword);
-        var existingEnv = await users.Find(u => u.Username == username).FirstOrDefaultAsync();
-        if (existingEnv is not null)
-        {
-            await users.UpdateOneAsync(u => u.Username == username,
-                Builders<LlmGwUser>.Update
-                    .Set(u => u.PasswordHash, envHash)
-                    .Set(u => u.IsActive, true)
-                    .Set(u => u.MustChangePassword, false)
-                    .Set(u => u.PasswordChangedByUser, false));
-        }
-        else
-        {
-            await users.InsertOneAsync(new LlmGwUser
-            {
-                Username = username,
-                PasswordHash = envHash,
-                DisplayName = username,
-                IsActive = true,
-                MustChangePassword = false,
-                PasswordChangedByUser = false,
-                Scopes = new[] { "logs:read" },
-                CreatedAt = DateTime.UtcNow,
-            });
-        }
-        return;
-    }
-
-    // 到这里：forceReset 与 envPassword 都已在上面处理并 return，本段是「无 env 口令、非破玻璃」的默认引导路径。
+    // 已有账号：数据库是长期权威。env 口令即便存在，也不能在每次启动覆盖已认领口令。
     var existing = await users.Find(u => u.Username == username).FirstOrDefaultAsync();
     if (existing is not null)
     {
-        if (existing.PasswordChangedByUser)
-        {
-            // 已被真人认领（在 UI 改过口令）→ 库里存的是用户口令，**绝不回退**，只确保启用。
-            if (!existing.IsActive)
-            {
-                await users.UpdateOneAsync(u => u.Username == username,
-                    Builders<LlmGwUser>.Update.Set(u => u.IsActive, true));
-            }
-            return;
-        }
-
-        // 从未被认领（含**历史遗留 admin**：口令未知、PasswordChangedByUser 缺省=false）→ 确定性自愈回
-        // admin/admin + 强制改密。幂等：仅当已漂移（口令非 admin / 未挂强制改密标记 / 被禁用）时才写库。
-        var needsReset = !PasswordHasher.Verify(defaultPwd, existing.PasswordHash)
-            || !existing.MustChangePassword
-            || !existing.IsActive;
-        if (needsReset)
+        if (!existing.IsActive)
         {
             await users.UpdateOneAsync(u => u.Username == username,
                 Builders<LlmGwUser>.Update
-                    .Set(u => u.PasswordHash, PasswordHasher.Hash(defaultPwd))
                     .Set(u => u.IsActive, true)
-                    .Set(u => u.MustChangePassword, true)
-                    .Set(u => u.PasswordChangedByUser, false));
+                    .Set(u => u.UpdatedAt, DateTime.UtcNow));
+            await WriteSystemOperationAuditAsync(
+                operationAudits,
+                action: "admin.reactivate",
+                targetType: "llmgw_console_user",
+                targetId: existing.Id,
+                targetName: username,
+                success: true,
+                reason: null,
+                changes: BuildChangeDocument(("isActive", false, true)));
         }
         return;
     }
 
+    var bootstrapPassword = string.IsNullOrWhiteSpace(envPassword) ? defaultPwd : envPassword.Trim();
+    var mustChange = bootstrapPassword == defaultPwd;
     var user = new LlmGwUser
     {
         Username = username,
-        PasswordHash = PasswordHasher.Hash(defaultPwd),
+        PasswordHash = PasswordHasher.Hash(bootstrapPassword),
         DisplayName = username,
         IsActive = true,
-        MustChangePassword = true,       // 首登强制改密，消除「公网 admin/admin 永久裸奔」
+        MustChangePassword = mustChange,
         PasswordChangedByUser = false,
         Scopes = new[] { "logs:read" },
         CreatedAt = DateTime.UtcNow,
+        UpdatedAt = DateTime.UtcNow,
     };
     try
     {
         await users.InsertOneAsync(user);
+        await WriteSystemOperationAuditAsync(
+            operationAudits,
+            action: "admin.bootstrap",
+            targetType: "llmgw_console_user",
+            targetId: user.Id,
+            targetName: username,
+            success: true,
+            reason: null,
+            changes: new BsonDocument
+            {
+                { "passwordSource", string.IsNullOrWhiteSpace(envPassword) ? "default" : "env" },
+                { "mustChangePassword", mustChange },
+            });
     }
     catch (MongoWriteException)
     {
         // 并发启动场景下可能撞唯一冲突/重复插入，忽略即可（幂等）。
     }
+}
+
+static async Task WriteLoginAuditAsync(
+    IMongoCollection<LlmGwLoginAudit> audits,
+    HttpContext http,
+    string username,
+    string? userId,
+    bool success,
+    string? reason)
+{
+    try
+    {
+        await audits.InsertOneAsync(new LlmGwLoginAudit
+        {
+            Username = username,
+            UserId = userId,
+            Success = success,
+            Reason = reason,
+            RemoteIp = GetClientIp(http),
+            UserAgent = http.Request.Headers.UserAgent.ToString(),
+            CreatedAt = DateTime.UtcNow,
+        });
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"[LlmGw] login audit write failed: {ex.Message}");
+    }
+}
+
+static async Task WriteOperationAuditAsync(
+    IMongoCollection<BsonDocument> audits,
+    HttpContext http,
+    string action,
+    string targetType,
+    string? targetId,
+    string? targetName,
+    bool success,
+    string? reason,
+    BsonDocument? changes = null)
+{
+    try
+    {
+        var actorUserId = http.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+            ?? http.User.FindFirst("sub")?.Value;
+        var actorUsername = http.User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value
+            ?? http.User.Identity?.Name;
+
+        var doc = new BsonDocument
+        {
+            { "_id", Guid.NewGuid().ToString("N") },
+            { "Action", action },
+            { "TargetType", targetType },
+            { "TargetId", ToBsonAuditValue(targetId) },
+            { "TargetName", ToBsonAuditValue(targetName) },
+            { "ActorUserId", ToBsonAuditValue(actorUserId) },
+            { "ActorUsername", ToBsonAuditValue(actorUsername) },
+            { "Success", success },
+            { "Reason", ToBsonAuditValue(reason) },
+            { "Changes", changes ?? new BsonDocument() },
+            { "RemoteIp", ToBsonAuditValue(GetClientIp(http)) },
+            { "UserAgent", ToBsonAuditValue(http.Request.Headers.UserAgent.ToString()) },
+            { "CreatedAt", DateTime.UtcNow },
+        };
+        await audits.InsertOneAsync(doc);
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"[LlmGw] operation audit write failed: {ex.Message}");
+    }
+}
+
+static async Task WriteSystemOperationAuditAsync(
+    IMongoCollection<BsonDocument> audits,
+    string action,
+    string targetType,
+    string? targetId,
+    string? targetName,
+    bool success,
+    string? reason,
+    BsonDocument? changes = null)
+{
+    try
+    {
+        var doc = new BsonDocument
+        {
+            { "_id", Guid.NewGuid().ToString("N") },
+            { "Action", action },
+            { "TargetType", targetType },
+            { "TargetId", ToBsonAuditValue(targetId) },
+            { "TargetName", ToBsonAuditValue(targetName) },
+            { "ActorUserId", BsonNull.Value },
+            { "ActorUsername", "system" },
+            { "Success", success },
+            { "Reason", ToBsonAuditValue(reason) },
+            { "Changes", changes ?? new BsonDocument() },
+            { "RemoteIp", BsonNull.Value },
+            { "UserAgent", "startup" },
+            { "CreatedAt", DateTime.UtcNow },
+        };
+        await audits.InsertOneAsync(doc);
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"[LlmGw] system operation audit write failed: {ex.Message}");
+    }
+}
+
+static BsonDocument BuildChangeDocument(params (string Field, object? From, object? To)[] changes)
+{
+    var doc = new BsonDocument();
+    foreach (var (field, from, to) in changes)
+    {
+        doc[field] = new BsonDocument
+        {
+            { "from", ToBsonAuditValue(from) },
+            { "to", ToBsonAuditValue(to) },
+        };
+    }
+    return doc;
+}
+
+static BsonValue ToBsonAuditValue(object? value)
+{
+    if (value is null) return BsonNull.Value;
+    return BsonValue.Create(value);
+}
+
+static string? GetClientIp(HttpContext http)
+{
+    var forwardedFor = http.Request.Headers["X-Forwarded-For"].FirstOrDefault();
+    if (!string.IsNullOrWhiteSpace(forwardedFor))
+    {
+        return forwardedFor.Split(',')[0].Trim();
+    }
+    return http.Connection.RemoteIpAddress?.ToString();
 }
 
 // 解析时间窗：from/to 缺省时默认最近 N 天。返回 [fromUtc, toUtc)。
@@ -646,8 +937,16 @@ static DateTime? TryParseUtc(string? s)
     return null;
 }
 
-// 构建 StartedAt 时间窗 + 可选 model/status 过滤器。
-static FilterDefinition<BsonDocument> BuildFilter(DateTime fromUtc, DateTime toUtc, string? model, string? status)
+// 构建 StartedAt 时间窗 + OpenRouter Activity 风格筛选器。
+static FilterDefinition<BsonDocument> BuildFilter(
+    DateTime fromUtc,
+    DateTime toUtc,
+    string? model,
+    string? status,
+    string? provider,
+    string? appCallerCode,
+    string? transport,
+    string? requestType)
 {
     var fb = Builders<BsonDocument>.Filter;
     var filters = new List<FilterDefinition<BsonDocument>>
@@ -657,8 +956,30 @@ static FilterDefinition<BsonDocument> BuildFilter(DateTime fromUtc, DateTime toU
     };
     if (!string.IsNullOrWhiteSpace(model)) filters.Add(fb.Eq("Model", model));
     if (!string.IsNullOrWhiteSpace(status)) filters.Add(fb.Eq("Status", status));
+    if (!string.IsNullOrWhiteSpace(provider)) filters.Add(fb.Eq("Provider", provider));
+    if (!string.IsNullOrWhiteSpace(appCallerCode)) filters.Add(fb.Eq("AppCallerCode", appCallerCode));
+    if (!string.IsNullOrWhiteSpace(transport)) filters.Add(fb.Eq("GatewayTransport", transport));
+    if (!string.IsNullOrWhiteSpace(requestType)) filters.Add(fb.Eq("RequestType", requestType));
     return fb.And(filters);
 }
+
+static List<string> NormalizeDistinct(IEnumerable<string?> values, int limit) =>
+    values
+        .Where(v => !string.IsNullOrWhiteSpace(v))
+        .Select(v => v!.Trim())
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(v => v, StringComparer.OrdinalIgnoreCase)
+        .Take(limit)
+        .ToList();
+
+static List<LogsBucketItem> BuildBucket(IEnumerable<BsonDocument> docs, string field, string fallbackKey) =>
+    docs.Select(d => d.AsNullableString(field))
+        .Select(v => string.IsNullOrWhiteSpace(v) ? fallbackKey : v!.Trim())
+        .GroupBy(v => v, StringComparer.OrdinalIgnoreCase)
+        .Select(g => new LogsBucketItem { Key = g.Key, Count = g.LongCount() })
+        .OrderByDescending(x => x.Count)
+        .ThenBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
+        .ToList();
 
 static LlmLogListItem MapListItem(BsonDocument d) => new()
 {
@@ -727,6 +1048,7 @@ static LlmLogDetail MapDetail(BsonDocument d) => new()
     ExpectedModel = d.AsNullableString("ExpectedModel"),
     Protocol = d.AsNullableString("Protocol"),
     ResolutionReason = d.AsNullableString("ResolutionReason"),
+    Transport = d.AsNullableString("GatewayTransport"),
     FinishReason = d.AsNullableString("FinishReason"),
     IsStreaming = d.AsNullableBool("IsStreaming"),
     Error = d.AsNullableString("Error"),
@@ -911,6 +1233,7 @@ static ShadowItem MapShadow(BsonDocument d)
         Id = d.GetStringOrEmpty("_id"),
         Kind = d.GetStringOrEmpty("Kind"),
         RequestId = d.AsNullableString("RequestId"),
+        ReleaseCommit = d.AsNullableString("ReleaseCommit"),
         AppCallerCode = d.GetStringOrEmpty("AppCallerCode"),
         ModelType = d.GetStringOrEmpty("ModelType"),
         ComparedAt = d.AsNullableUtcDateTime("ComparedAt").ToIso(),
@@ -935,3 +1258,11 @@ static ShadowItem MapShadow(BsonDocument d)
 // 统一 JSON 输出（带信封 + 指定状态码）。
 static IResult Json<T>(T value, JsonSerializerOptions options, int statusCode = 200)
     => Results.Json(value, options, statusCode: statusCode);
+
+static string? NormalizeCommitFilter(string? value)
+{
+    var trimmed = (value ?? string.Empty).Trim();
+    if (trimmed.StartsWith("sha-", StringComparison.OrdinalIgnoreCase))
+        trimmed = trimmed[4..];
+    return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed.ToLowerInvariant();
+}

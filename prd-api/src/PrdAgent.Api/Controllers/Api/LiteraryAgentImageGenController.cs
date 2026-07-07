@@ -65,7 +65,7 @@ public class LiteraryAgentImageGenController : ControllerBase
 
         try
         {
-            var resolution = await _gateway.ResolveModelAsync(appCallerCode, "generation", null, ct);
+            var resolution = await _gateway.ResolveModelAsync(appCallerCode, "generation", null, ct: ct);
 
             if (resolution == null || !resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
             {
@@ -99,7 +99,7 @@ public class LiteraryAgentImageGenController : ControllerBase
 
         try
         {
-            var resolution = await _gateway.ResolveModelAsync(appCallerCode, "chat", null, ct);
+            var resolution = await _gateway.ResolveModelAsync(appCallerCode, "chat", null, ct: ct);
 
             if (resolution == null || !resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
             {

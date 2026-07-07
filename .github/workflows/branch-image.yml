@@ -18,6 +18,10 @@ name: Branch Image
 # cds/docs 而跳过构建，该 `sha-<commit>` 镜像不存在 → CDS docker pull 404、分支显示「部署出现
 # 异常 / 无法构建」（旧版 CDS 无回退链时直接硬失败）。让 main 永远产出自身 sha 镜像，从 CI 侧
 # 根治此问题，且不依赖 CDS 服务版本。feature 分支保留 path-filter 优化（缺组件回退 `:branch-main`）。
+#
+# 手动触发(workflow_dispatch)用于正式环境热修前补齐不可变镜像组，必须全组件构建；否则
+# exec_dep.sh --commit 会把 api/llmgw/llmgw-serve/llmgw-web 全部钉到同一 sha，但其中某个
+# 镜像可能因 path-filter 跳过而不存在。
 
 on:
   push:
@@ -70,7 +74,7 @@ jobs:
     name: Build prd-api image
     needs: changes
     # main 始终构建（回退镜像源 + 自身 sha 镜像必须存在，见文件头注释）；其它分支按 path-filter。
-    if: ${{ needs.changes.outputs.api == 'true' || github.ref == 'refs/heads/main' }}
+    if: ${{ needs.changes.outputs.api == 'true' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -124,7 +128,7 @@ jobs:
     name: Build prd-admin image
     needs: changes
     # main 始终构建（回退镜像源 + 自身 sha 镜像必须存在，见文件头注释）；其它分支按 path-filter。
-    if: ${{ needs.changes.outputs.admin == 'true' || github.ref == 'refs/heads/main' }}
+    if: ${{ needs.changes.outputs.admin == 'true' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -171,7 +175,7 @@ jobs:
   llmgw-image:
     name: Build prd-llmgw image
     needs: changes
-    if: ${{ needs.changes.outputs.llmgw == 'true' }}
+    if: ${{ needs.changes.outputs.llmgw == 'true' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -241,7 +245,7 @@ jobs:
   llmgw-web-image:
     name: Build prd-llmgw-web image
     needs: changes
-    if: ${{ needs.changes.outputs.llmgw_web == 'true' }}
+    if: ${{ needs.changes.outputs.llmgw_web == 'true' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -303,7 +307,7 @@ jobs:
   llmgw-serve-image:
     name: Build prd-llmgw-serve image
     needs: changes
-    if: ${{ needs.changes.outputs.api == 'true' || github.ref == 'refs/heads/main' }}
+    if: ${{ needs.changes.outputs.api == 'true' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

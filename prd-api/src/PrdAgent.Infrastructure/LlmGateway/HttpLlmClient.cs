@@ -24,6 +24,8 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
     private readonly double _temperature;
     private readonly bool _includeThinking;
     private readonly string? _expectedModel;
+    private readonly string? _pinnedPlatformId;
+    private readonly string? _pinnedModelId;
     // 默认 prompt-cache 开关：与进程内 GatewayLLMClient 对齐（CreateClient 默认 true）。三参 StreamGenerateAsync
     // 重载（不显式传 enablePromptCache）走这个默认值，否则 http 模式会静默丢掉 Claude prompt-cache 头、抬高时延/成本。
     private readonly bool _defaultEnablePromptCache;
@@ -41,6 +43,8 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
         double temperature,
         bool includeThinking,
         string? expectedModel,
+        string? pinnedPlatformId,
+        string? pinnedModelId,
         JsonSerializerOptions jsonOpts,
         ILogger logger,
         ILLMRequestContextAccessor? ctxAccessor = null,
@@ -55,6 +59,8 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
         _temperature = temperature;
         _includeThinking = includeThinking;
         _expectedModel = expectedModel;
+        _pinnedPlatformId = pinnedPlatformId;
+        _pinnedModelId = pinnedModelId;
         _jsonOpts = jsonOpts;
         _logger = logger;
         _ctxAccessor = ctxAccessor;
@@ -101,6 +107,8 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
             Temperature = _temperature,
             IncludeThinking = _includeThinking,
             ExpectedModel = _expectedModel,
+            PinnedPlatformId = _pinnedPlatformId,
+            PinnedModelId = _pinnedModelId,
             SystemPrompt = systemPrompt,
             Messages = messages,
             EnablePromptCache = enablePromptCache,

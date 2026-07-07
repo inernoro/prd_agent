@@ -1794,6 +1794,17 @@ public static class InfraAgent
         )]
         public const string Chat = "infra-agent.review-lite::chat";
     }
+
+    public static class RuntimeProfileTest
+    {
+        [AppCallerMetadata(
+            "CDS Agent运行配置测试",
+            "测试用户保存的 Infra Agent runtime profile 是否可通过 LLM Gateway 触达上游",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Infrastructure"
+        )]
+        public const string Chat = "infra-agent.runtime-profile-test::chat";
+    }
 }
 
 /// <summary>

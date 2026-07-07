@@ -99,6 +99,9 @@ services:
       # 跨进程 LLM 网关开关：默认 inproc（进程内直调，行为不变）；置 http 则 MAP 自身 LLM
       # 调用经 HttpLlmGatewayClient 打到 llmgw-serve（/gw/v1/*）。ServeBaseUrl 指向 serving 容器。
       - LlmGateway__Mode=${LLMGW_MODE:-inproc}
+      - LlmGateway__HttpAppCallerAllowlist=${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}
+      - LlmGateway__ShadowFullSamplePercent=${LLMGW_SHADOW_FULL_SAMPLE_PERCENT:-0}
+      - LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}
       - LlmGateway__ServeBaseUrl=${LLMGW_SERVE_BASE_URL:-http://llmgw-serve:8091}
       - LlmGwServe__ApiKey=${LLMGW_SERVE_KEY:?must set LLMGW_SERVE_KEY in production (gateway /gw/v1 shared key gate, no insecure default)}
     # 重要：此 API 容器建议只读，避免任何本地落盘
@@ -121,8 +124,9 @@ services:
     restart: unless-stopped
 
   # 独立 LLM serving 网关 llmgw-serve —— DI 承载现有 LlmGateway/ModelResolver，HTTP 暴露 /gw/v1/*。
-  # 与 MAP 共享同一 Mongo + 同一 ApiKeyCrypto__Secret（resolve 要解密平台 key）+ 同一资产存储
-  # （日志写入需要）。MAP 置 LlmGateway__Mode=http 时跨进程打到这里；默认 inproc 时本服务可空跑/被外部调用。
+  # 与 MAP 共享同一 Mongo 读取模型配置 + 同一 ApiKeyCrypto__Secret（resolve 要解密平台 key）+ 同一资产存储；
+  # serving 自有请求日志与 shadow 证据写入 LlmGateway__DatabaseName（默认 llm_gateway）。
+  # MAP 置 LlmGateway__Mode=http 时跨进程打到这里；默认 inproc 时本服务可空跑/被外部调用。
   llmgw-serve:
     image: ${PRD_AGENT_LLMGW_SERVE_IMAGE:-ghcr.io/inernoro/prd_agent/prdagent-llmgw-serve:latest}
     container_name: prdagent-llmgw-serve
@@ -131,6 +135,7 @@ services:
       - ASPNETCORE_URLS=http://+:8091
       - MongoDB__ConnectionString=mongodb://mongodb:27017
       - MongoDB__DatabaseName=prdagent
+      - LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}
       # 平台 API key 密文解密密钥：必须与 api 一致，否则 resolve 取不出可用 ApiKey
       - ApiKeyCrypto__Secret=${API_KEY_CRYPTO_SECRET:-}
       - ApiKeyCrypto__LegacySecrets=${API_KEY_CRYPTO_LEGACY_SECRETS:-}
@@ -171,12 +176,15 @@ services:
       - ASPNETCORE_URLS=http://+:8090
       - MongoDB__ConnectionString=mongodb://mongodb:27017
       - MongoDB__DatabaseName=prdagent
+      - LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}
       # 网关自身鉴权密钥：独立于 api 的 JWT_SECRET（跨服务隔离）
       - LlmGwJwt__Secret=${LLMGW_JWT_SECRET:?must set LLMGW_JWT_SECRET in production (gateway console JWT signing key, >=32 bytes, no insecure default — empty falls back to a repo-known dev key that lets anyone forge a token to read /gw/*)}
       - LlmGwJwt__Issuer=prdagent-llmgw
-      # 独立账号种子（首启 upsert 到 llmgw_users）；生产请通过 .env 覆盖密码
-      - LLMGW_ADMIN_USER=${LLMGW_ADMIN_USER:-admin}
-      - LLMGW_ADMIN_PASSWORD=${LLMGW_ADMIN_PASSWORD:?must set LLMGW_ADMIN_PASSWORD in production (gateway console admin account, no insecure default)}
+      # 控制台账号长期权威是 llm_gateway.llmgw_console_users；未设 bootstrap 口令时内置 admin/admin
+      # 并由服务端强制首登改密。LLMGW_ADMIN_PASSWORD 仅作为首次 bootstrap 或 FORCE_RESET 破玻璃输入，
+      # 不得作为每次启动覆盖数据库口令的长期权威。
+      - LLMGW_ADMIN_PASSWORD=${LLMGW_ADMIN_PASSWORD:-}
+      - LLMGW_ADMIN_FORCE_RESET=${LLMGW_ADMIN_FORCE_RESET:-}
     read_only: true
     tmpfs:
       - /tmp
@@ -205,4 +213,3 @@ volumes:
 networks:
   prdagent-network:
     external: true
-

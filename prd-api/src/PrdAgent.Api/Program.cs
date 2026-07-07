@@ -127,7 +127,9 @@ builder.Services.AddSwaggerGen(c =>
 var mongoConnectionString = builder.Configuration["MongoDB:ConnectionString"] 
     ?? "mongodb://localhost:27017";
 var mongoDatabaseName = builder.Configuration["MongoDB:DatabaseName"] ?? "prdagent";
+var llmGatewayDatabaseName = builder.Configuration["LlmGateway:DatabaseName"] ?? "llm_gateway";
 builder.Services.AddSingleton(new MongoDbContext(mongoConnectionString, mongoDatabaseName));
+builder.Services.AddSingleton(new LlmGatewayDataContext(mongoConnectionString, llmGatewayDatabaseName));
 builder.Services.AddSingleton<IWatermarkFontAssetSource, MongoWatermarkFontAssetSource>();
 builder.Services.AddSingleton<ISystemRoleCacheService, PrdAgent.Infrastructure.Services.SystemRoleCacheService>();
 builder.Services.AddSingleton<IAdminPermissionService, PrdAgent.Infrastructure.Services.AdminPermissionService>();
@@ -210,8 +212,10 @@ builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, Pr
 // http = 切到 HttpLlmGatewayClient，跨进程调用独立部署的 serving 服务（/gw/v1/*）。
 // HttpLlmGatewayClient 同时实现 Infrastructure + Core 两个 ILlmGateway，下方 Core 桥接强转在两种模式下都成立。
 // 影子比对落库（灰度翻 http 前积累一致性证据；shadow 模式下注入 ShadowLlmGateway）
-builder.Services.AddScoped<PrdAgent.Core.Interfaces.ILlmShadowComparisonWriter,
-    PrdAgent.Infrastructure.LlmGateway.LlmShadowComparisonWriter>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.ILlmShadowComparisonWriter>(sp =>
+    new PrdAgent.Infrastructure.LlmGateway.LlmShadowComparisonWriter(
+        sp.GetRequiredService<LlmGatewayDataContext>().Context,
+        sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.LlmShadowComparisonWriter>>()));
 
 var gatewayMode = builder.Configuration["LlmGateway:Mode"] ?? "inproc";
 // 灰度翻 http 白名单（按 appCallerCode 逐个切；`,`/`;`/换行分隔）。命中的入口走 http 权威，其余按 Mode。
@@ -244,12 +248,14 @@ else if (isShadow || httpAllowlist.Count > 0)
                 sp.GetRequiredService<IHttpClientFactory>(),
                 sp.GetRequiredService<IConfiguration>(),
                 sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>>(),
-                sp.GetService<PrdAgent.Core.Interfaces.ILLMRequestContextAccessor>()),
+                sp.GetService<PrdAgent.Core.Interfaces.ILLMRequestContextAccessor>(),
+                sp.GetService<IAssetStorage>()),
             logger: sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.ShadowLlmGateway>>(),
             writer: isShadow ? sp.GetService<PrdAgent.Core.Interfaces.ILlmShadowComparisonWriter>() : null,
             fullSamplePercent: shadowSamplePercent,
             ctx: sp.GetService<PrdAgent.Core.Interfaces.ILLMRequestContextAccessor>(),
-            httpAllowlist: httpAllowlist));
+            httpAllowlist: httpAllowlist,
+            releaseCommit: FirstEnv("GIT_COMMIT", "COMMIT_SHA", "GITHUB_SHA", "SOURCE_VERSION", "CDS_COMMIT_SHA")));
 }
 else
 {
@@ -262,6 +268,8 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.LlmGateway.ILlmGateway>(sp =
 
 // OpenAI 兼容 Images API（用于"生图模型"）
 builder.Services.AddScoped<OpenAIImageClient>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ImageGen.IImageGenerationClient>(sp =>
+    sp.GetRequiredService<OpenAIImageClient>());
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ImageGen.IImageGenGateway,
     PrdAgent.Infrastructure.LlmGateway.ImageGen.ImageGenGateway>();
 builder.Services.AddSingleton<WatermarkFontRegistry>();
@@ -377,7 +385,6 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.ArenaRunWorker>();
 
 // 转录 Agent 后台执行器（ASR 转写 + 模板转文案）
 builder.Services.AddHostedService<PrdAgent.Api.Services.TranscriptRunWorker>();
-builder.Services.AddSingleton<PrdAgent.Api.Services.DoubaoStreamAsrService>();
 
 // 首页「AI 大事早知道」资讯雷达：代理拉取 ai-news-radar 公共静态 JSON（5min 内存缓存 + 6h stale 保底）
 // 摘要抓取会请求 feed 内的任意文章 URL（外部不可信），必须走 SafeOutbound 处理器：
@@ -395,7 +402,7 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAiNewsService, PrdAgent.Inf
 // 后台每 4 分钟预热「AI 大事」缓存，让用户访问路径永不同步等外网（卡顿排查 2026-06-03）。
 builder.Services.AddHostedService<PrdAgent.Infrastructure.Services.AiNewsCacheWarmer>();
 
-// 知识库 Agent 后台执行器（字幕生成 + 文档再加工，复用 DoubaoStreamAsrService 和 ILlmGateway）
+// 知识库 Agent 后台执行器（字幕生成 + 文档再加工，ASR/vision 统一走 ILlmGateway）
 builder.Services.AddHttpClient("DocStoreAgent");
 // MCP 连接器网关：回环转发当前 sk-ak Bearer 到自身真实接口（McpGatewayController）。
 // 该 client 只用于回环调用自身，故放行证书校验，兼容仅配置 https 监听时对 127.0.0.1 的 TLS 主机名不匹配。
@@ -970,72 +977,28 @@ if (string.IsNullOrWhiteSpace(llmApiKey))
     Log.Warning("LLM:ClaudeApiKey is not configured. Please set LLM__ClaudeApiKey environment variable or LLM:ClaudeApiKey in appsettings.json");
 }
 
-builder.Services.AddHttpClient<ILLMClient, ClaudeClient>()
-    .ConfigureHttpClient(client =>
-    {
-        client.BaseAddress = new Uri("https://api.anthropic.com/");
-        if (!string.IsNullOrWhiteSpace(llmApiKey))
-        {
-            client.DefaultRequestHeaders.Add("x-api-key", llmApiKey);
-        }
-        client.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
-    })
-    .AddHttpMessageHandler<HttpLoggingHandler>();
-
 // 注册 LLM 客户端 - 优先从数据库读取主模型，其次从LLMConfig，最后从环境变量
 builder.Services.AddScoped<ILLMClient>(sp =>
 {
     var db = sp.GetRequiredService<MongoDbContext>();
-    var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
     var config = sp.GetRequiredService<IConfiguration>();
-    var logWriter = sp.GetRequiredService<ILlmRequestLogWriter>();
-    var ctxAccessor = sp.GetRequiredService<ILLMRequestContextAccessor>();
-    var claudeLogger = sp.GetRequiredService<ILogger<ClaudeClient>>();
-
-    // S3-A（本工厂）暂不收口到网关，保留原直连以「行为保持」（Cursor Bugbot 2 处 Medium）：
-    // 本 scoped ILLMClient 被 LLMClientFactory 注入消费（非死代码），而 gateway.CreateClient 的采样温度
-    // （默认 0.2 vs 此处 0.7）与「主模型凭据缺失时回落 activeConfig/env」的兜底语义与下方直连不一致——
-    // 直接改走网关会静默改变默认注入客户端的采样行为、并吞掉凭据不全时的兜底。全网关收口留待网关
-    // CreateClient 支持温度透传 + 凭据不全兜底后再做（见 doc/plan.llm-gateway.full-cutover.md S3-A；
-    // 直连守卫 ratchet baseline 已登记本文件）。
+    var gateway = sp.GetRequiredService<PrdAgent.Core.Interfaces.LlmGateway.ILlmGateway>();
 
     // 1. 优先：从数据库获取主模型 (IsMain=true)
     var mainModel = db.LLMModels.Find(m => m.IsMain && m.Enabled).FirstOrDefault();
-    var mainEnablePromptCache = mainModel != null ? (mainModel.EnablePromptCache ?? true) : false;
     if (mainModel != null)
     {
         var (apiUrl, apiKey) = ResolveApiConfigForModel(mainModel, db, config);
-        
         if (!string.IsNullOrWhiteSpace(apiUrl) && !string.IsNullOrWhiteSpace(apiKey))
         {
-            var httpClient = httpClientFactory.CreateClient("LoggedHttpClient");
-            
-            // 判断平台类型并获取平台信息
-            string? platformType = null;
-            string? platformId = mainModel.PlatformId;
-            string? platformName = null;
-            if (mainModel.PlatformId != null)
-            {
-                var platform = db.LLMPlatforms.Find(p => p.Id == mainModel.PlatformId).FirstOrDefault();
-                platformType = platform?.PlatformType?.ToLower();
-                platformName = platform?.Name;
-            }
-            
-            // 根据平台类型或API URL判断使用哪个客户端
-            // 业务规则：不再使用"全局开关"，而是以"主模型 enablePromptCache"作为总开关
-            var enablePromptCache = mainEnablePromptCache;
-            
-            if (platformType == "anthropic" || apiUrl.Contains("anthropic.com"))
-            {
-                httpClient.BaseAddress = new Uri(apiUrl.TrimEnd('/'));
-                return new ClaudeClient(httpClient, apiKey, mainModel.ModelName, 4096, 0.7, enablePromptCache, claudeLogger, logWriter, ctxAccessor, platformId, platformName);
-            }
-            else
-            {
-                // 默认使用 OpenAI 格式（兼容 openai、google、qwen、zhipu、baidu、other 等）
-                httpClient.BaseAddress = new Uri(apiUrl.TrimEnd('/'));
-                return new OpenAIClient(httpClient, apiKey, mainModel.ModelName, 4096, 0.7, enablePromptCache, logWriter, ctxAccessor, null, platformId, platformName);
-            }
+            return gateway.CreateClient(
+                AppCallerRegistry.Admin.Lab.Chat,
+                ModelTypes.Chat,
+                maxTokens: 4096,
+                temperature: 0.7,
+                expectedModel: mainModel.ModelName,
+                pinnedPlatformId: mainModel.PlatformId,
+                pinnedModelId: mainModel.ModelName);
         }
     }
     
@@ -1047,20 +1010,12 @@ builder.Services.AddScoped<ILLMClient>(sp =>
         
         if (!string.IsNullOrWhiteSpace(apiKey))
         {
-            var httpClient = httpClientFactory.CreateClient("LoggedHttpClient");
-            
-            if (activeConfig.Provider == "Claude")
-            {
-                httpClient.BaseAddress = new Uri(activeConfig.ApiEndpoint ?? "https://api.anthropic.com/");
-                var enablePromptCache = mainEnablePromptCache && activeConfig.EnablePromptCache;
-                return new ClaudeClient(httpClient, apiKey, activeConfig.Model, activeConfig.MaxTokens, activeConfig.Temperature, enablePromptCache, claudeLogger, logWriter, ctxAccessor);
-            }
-            else if (activeConfig.Provider == "OpenAI")
-            {
-                httpClient.BaseAddress = new Uri(activeConfig.ApiEndpoint ?? "https://api.openai.com/");
-                var enablePromptCache = mainEnablePromptCache && activeConfig.EnablePromptCache;
-                return new OpenAIClient(httpClient, apiKey, activeConfig.Model, activeConfig.MaxTokens, activeConfig.Temperature, enablePromptCache, logWriter, ctxAccessor);
-            }
+            return gateway.CreateClient(
+                AppCallerRegistry.Admin.Lab.Chat,
+                ModelTypes.Chat,
+                maxTokens: activeConfig.MaxTokens,
+                temperature: activeConfig.Temperature,
+                expectedModel: activeConfig.Model);
         }
     }
     
@@ -1068,14 +1023,14 @@ builder.Services.AddScoped<ILLMClient>(sp =>
     if (string.IsNullOrWhiteSpace(llmApiKey))
     {
         Log.Warning("No main model or active LLM config found in database and LLM:ClaudeApiKey is not configured. Please set a main model in admin panel or set LLM__ClaudeApiKey environment variable");
-        var httpClient = httpClientFactory.CreateClient("LoggedHttpClient");
-        httpClient.BaseAddress = new Uri("https://api.anthropic.com/");
-        return new ClaudeClient(httpClient, "", llmModel, 4096, 0.7, enablePromptCache: false, claudeLogger, logWriter, ctxAccessor);
     }
-    
-    var fallbackHttpClient = httpClientFactory.CreateClient("LoggedHttpClient");
-    fallbackHttpClient.BaseAddress = new Uri("https://api.anthropic.com/");
-    return new ClaudeClient(fallbackHttpClient, llmApiKey, llmModel, 4096, 0.7, enablePromptCache: mainEnablePromptCache, claudeLogger, logWriter, ctxAccessor);
+
+    return gateway.CreateClient(
+        AppCallerRegistry.Admin.Lab.Chat,
+        ModelTypes.Chat,
+        maxTokens: 4096,
+        temperature: 0.7,
+        expectedModel: llmModel);
 });
 
 // 辅助方法：解析模型的 API 配置（与 AdminModelsController 中的逻辑一致）

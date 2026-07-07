@@ -6403,14 +6403,13 @@ function safeChart(canvasId, config) {
 
         // DI
         var modelResolver = sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.IModelResolver>();
-        var streamAsr = sp.GetRequiredService<DoubaoStreamAsrService>();
         var httpFactory = sp.GetRequiredService<IHttpClientFactory>();
         var gateway = sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>();
         var urlValidator = sp.GetRequiredService<ISafeOutboundUrlValidator>();
 
         // 解析 ASR 模型（fallback 链：先专属 → 再 v2d.transcribe → 再 document-store.subtitle）。
-        // 优先使用 doubao-asr-stream；如果线上模型池只绑定普通 Whisper/OpenAI 兼容 ASR，
-        // 则走 Gateway multipart /v1/audio/transcriptions，避免要求用户额外改模型池。
+        // 只选择能经 ILlmGateway/llmgw-serve 执行的 ASR；doubao-asr-stream 的 WebSocket 协议
+        // 已迁入网关 raw 发送路径，不再由 MAP 进程直连上游服务类。
         var asrCallerChain = new[]
         {
             AppCallerRegistry.VideoAgent.VideoToText.Asr,
@@ -6430,7 +6429,7 @@ function safeChart(canvasId, config) {
                 firstSuccessfulResolution = r;
                 firstSuccessfulCaller = caller;
             }
-            if (r.Success && r.IsExchange && r.ExchangeTransformerType == "doubao-asr-stream")
+            if (r.Success)
             {
                 resolution = r;
                 resolvedCaller = caller;
@@ -6449,25 +6448,7 @@ function safeChart(canvasId, config) {
                 "ASR 模型调度失败：尝试了 video-agent.video-to-text::asr / video-agent.v2d.transcribe::asr / document-store.subtitle::asr 三个 caller，无一可用。诊断："
                 + string.Join(" | ", resolutionErrors));
         }
-        var useDoubaoStream = resolution.IsExchange && resolution.ExchangeTransformerType == "doubao-asr-stream";
-        sb.AppendLine($"[VideoToText:asr] ASR caller={resolvedCaller} mode={(useDoubaoStream ? "doubao-stream" : "gateway-multipart")}");
-
-        var apiKeyRaw = resolution.ApiKey ?? "";
-        string appKey = "", accessKey = apiKeyRaw;
-        if (apiKeyRaw.Contains('|'))
-        {
-            var parts = apiKeyRaw.Split('|', 2);
-            appKey = parts[0];
-            accessKey = parts[1];
-        }
-        var wsUrl = resolution.ApiUrl ?? "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel";
-        var asrConfig = resolution.ExchangeTransformerConfig ?? new Dictionary<string, object>
-        {
-            ["resourceId"] = "volc.bigasr.sauc.duration",
-            ["enableItn"] = true,
-            ["enablePunc"] = true,
-            ["enableDdc"] = true,
-        };
+        sb.AppendLine($"[VideoToText:asr] ASR caller={resolvedCaller} mode=gateway-multipart");
 
         // ffmpeg 启动前探测，防止错误被误读为 ASR/网络问题
         await EnsureFfmpegAvailableAsync();
@@ -6530,81 +6511,23 @@ function safeChart(canvasId, config) {
                     var audioBytes = await ExtractAudioWithFfmpegFromFileAsync(tmpVideoPath);
                     sb.AppendLine($"[VideoToText:asr] item#{idx} 音频 {audioBytes.Length} 字节，提交 ASR");
 
-                    if (useDoubaoStream)
+                    var gwRes = resolution.ToGatewayResolution();
+                    // chat-audio(OpenAI input_audio→/v1/chat/completions)只用于非 Exchange 的 OpenAI 兼容平台。
+                    // Exchange 走自己的 transformer(doubao-asr 已在上游单独分流;gemini-native 的
+                    // GeminiNativeTransformer 只转 text/image_url、会丢掉音频部分),其 PlatformType=exchange
+                    // 不在 google/gemini 排除内,若误走 chat-audio 会把音频丢失导致 ASR 失败(Codex P2)。
+                    var gatewayResult = !gwRes.IsExchange && IsChatAudioModel(gwRes.ActualModel, gwRes.PlatformType)
+                        ? await TranscribeAudioViaChatAsync(gateway, resolvedCaller!, audioBytes, gwRes)
+                        : await TranscribeAudioViaGatewayAsync(gateway, resolvedCaller!, audioBytes, gwRes);
+                    transcript = gatewayResult.Transcript;
+                    if (gatewayResult.Cues.Count > 0)
                     {
-                        var asrResult = await streamAsr.TranscribeWithCallbackAsync(
-                            wsUrl, appKey, accessKey, audioBytes, asrConfig,
-                            onStage: (_, _) => Task.CompletedTask,
-                            onProgress: (_, _) => Task.CompletedTask,
-                            onFrame: (_, _, _) => Task.CompletedTask,
-                            ct: CancellationToken.None);
-
-                        if (asrResult.Success)
-                        {
-                            transcript = asrResult.FullText ?? "";
-                            sb.AppendLine($"[VideoToText:asr] item#{idx} ASR 完成，转写 {transcript.Length} 字");
-
-                            // 从最后一帧 raw response 抽取 utterances 时间戳（豆包 ASR 返回毫秒）→ TranscriptCue 数组
-                            try
-                            {
-                                var cuesArr = new JsonArray();
-                                var lastResp = asrResult.Responses.LastOrDefault(r => r.PayloadMsg != null);
-                                if (lastResp?.PayloadMsg != null)
-                                {
-                                    var payload = lastResp.PayloadMsg.Value;
-                                    if (payload.TryGetProperty("result", out var res) && res.TryGetProperty("utterances", out var utts) && utts.ValueKind == JsonValueKind.Array)
-                                    {
-                                        foreach (var utt in utts.EnumerateArray())
-                                        {
-                                            var cueText = utt.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
-                                            if (string.IsNullOrWhiteSpace(cueText)) continue;
-                                            double startMs = utt.TryGetProperty("start_time", out var stEl) && stEl.ValueKind == JsonValueKind.Number ? stEl.GetDouble() : 0;
-                                            double endMs = utt.TryGetProperty("end_time", out var etEl) && etEl.ValueKind == JsonValueKind.Number ? etEl.GetDouble() : 0;
-                                            cuesArr.Add(new JsonObject
-                                            {
-                                                ["startSec"] = startMs / 1000.0,
-                                                ["endSec"] = endMs / 1000.0,
-                                                ["text"] = cueText.Trim(),
-                                            });
-                                        }
-                                    }
-                                }
-                                if (cuesArr.Count > 0)
-                                {
-                                    enriched["transcriptCues"] = cuesArr;
-                                    sb.AppendLine($"[VideoToText:asr] item#{idx} 提取 {cuesArr.Count} 条带时间戳字幕");
-                                }
-                            }
-                            catch (Exception cueEx)
-                            {
-                                sb.AppendLine($"[VideoToText:asr] item#{idx} cue 抽取异常（不影响 transcript）: {cueEx.Message}");
-                            }
-                        }
-                        else
-                        {
-                            sb.AppendLine($"[VideoToText:asr] item#{idx} ASR 失败: {asrResult.Error}");
-                        }
+                        enriched["transcriptCues"] = gatewayResult.Cues;
+                        sb.AppendLine($"[VideoToText:asr] item#{idx} Gateway ASR 完成，转写 {transcript.Length} 字，时间戳 {gatewayResult.Cues.Count} 条");
                     }
                     else
                     {
-                        var gwRes = resolution.ToGatewayResolution();
-                        // chat-audio(OpenAI input_audio→/v1/chat/completions)只用于非 Exchange 的 OpenAI 兼容平台。
-                        // Exchange 走自己的 transformer(doubao-asr 已在上游单独分流;gemini-native 的
-                        // GeminiNativeTransformer 只转 text/image_url、会丢掉音频部分),其 PlatformType=exchange
-                        // 不在 google/gemini 排除内,若误走 chat-audio 会把音频丢失导致 ASR 失败(Codex P2)。
-                        var gatewayResult = !gwRes.IsExchange && IsChatAudioModel(gwRes.ActualModel, gwRes.PlatformType)
-                            ? await TranscribeAudioViaChatAsync(gateway, resolvedCaller!, audioBytes, gwRes)
-                            : await TranscribeAudioViaGatewayAsync(gateway, resolvedCaller!, audioBytes, gwRes);
-                        transcript = gatewayResult.Transcript;
-                        if (gatewayResult.Cues.Count > 0)
-                        {
-                            enriched["transcriptCues"] = gatewayResult.Cues;
-                            sb.AppendLine($"[VideoToText:asr] item#{idx} Gateway ASR 完成，转写 {transcript.Length} 字，时间戳 {gatewayResult.Cues.Count} 条");
-                        }
-                        else
-                        {
-                            sb.AppendLine($"[VideoToText:asr] item#{idx} Gateway ASR 完成（model={gwRes.ActualModel}），转写 {transcript.Length} 字");
-                        }
+                        sb.AppendLine($"[VideoToText:asr] item#{idx} Gateway ASR 完成（model={gwRes.ActualModel}），转写 {transcript.Length} 字");
                     }
                 }
                 catch (Exception ex)
