@@ -213,6 +213,10 @@ def _require_upstream_readiness(path: str, label: str) -> None:
     _require_pass_json(path, label)
 
 
+def _require_provider_audit(path: str, label: str) -> None:
+    _require_pass_json(path, label)
+
+
 def _bool_flag(value: str) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
@@ -355,6 +359,11 @@ def _entry_evidence_failures(entry: dict) -> list[str]:
     if _bool_flag(str(entry.get("upstreamReadinessRequired") or "0")):
         try:
             _require_upstream_readiness(str(entry.get("upstreamReadinessJson") or ""), f"{stage} upstream readiness evidence")
+        except SystemExit as exc:
+            failures.append(str(exc))
+    if _bool_flag(str(entry.get("providerAuditRequired") or "0")):
+        try:
+            _require_provider_audit(str(entry.get("providerAuditJson") or ""), f"{stage} provider config audit evidence")
         except SystemExit as exc:
             failures.append(str(exc))
     return failures
@@ -530,6 +539,8 @@ def append(args: argparse.Namespace) -> int:
                 _require_release_gate_for_commit(args.release_gate_json, "release gate evidence", args.commit)
             if _bool_flag(args.upstream_readiness_required):
                 _require_upstream_readiness(args.upstream_readiness_json, "upstream readiness evidence")
+            if _bool_flag(args.provider_audit_required):
+                _require_provider_audit(args.provider_audit_json, "provider config audit evidence")
 
     entry = {
         "recordedAt": datetime.now(timezone.utc).isoformat(),
@@ -549,6 +560,8 @@ def append(args: argparse.Namespace) -> int:
         "shadowSeedJson": args.shadow_seed_json,
         "upstreamReadinessJson": args.upstream_readiness_json,
         "upstreamReadinessRequired": _bool_flag(args.upstream_readiness_required),
+        "providerAuditJson": args.provider_audit_json,
+        "providerAuditRequired": _bool_flag(args.provider_audit_required),
         "rollbackRehearsal": args.stage == ROLLBACK_REHEARSAL_STAGE,
         "allowOutOfOrder": _bool_flag(args.allow_out_of_order),
         "allowOutOfOrderReason": args.allow_out_of_order_reason.strip(),
@@ -605,6 +618,8 @@ def _write_markdown(path: str, report: dict) -> None:
         fh.write(f"- shadowSeedJson: `{cell(report['shadowSeedJson'])}`\n")
         fh.write(f"- upstreamReadinessRequired: `{cell(report['upstreamReadinessRequired'])}`\n")
         fh.write(f"- upstreamReadinessJson: `{cell(report['upstreamReadinessJson'])}`\n")
+        fh.write(f"- providerAuditRequired: `{cell(report['providerAuditRequired'])}`\n")
+        fh.write(f"- providerAuditJson: `{cell(report['providerAuditJson'])}`\n")
         fh.write(f"- servingProbeJson: `{cell(report['servingProbeJson'])}`\n")
         fh.write(f"- smokeJson: `{cell(report['smokeJson'])}`\n\n")
         fh.write(f"- releaseMainRef: `{cell(report['releaseMainRef'])}`\n")
@@ -626,6 +641,7 @@ def stage_report(args: argparse.Namespace) -> int:
         ("smokeJson", args.smoke_json, True),
         ("releaseGateJson", args.release_gate_json, _bool_flag(args.release_gate_required)),
         ("upstreamReadinessJson", args.upstream_readiness_json, _bool_flag(args.upstream_readiness_required)),
+        ("providerAuditJson", args.provider_audit_json, _bool_flag(args.provider_audit_required)),
     ]
     if args.stage == ROLLBACK_REHEARSAL_STAGE:
         checks = []
@@ -641,6 +657,8 @@ def stage_report(args: argparse.Namespace) -> int:
                 _require_prod_preflight_for_commit(path, label, args.commit)
             elif label == "upstreamReadinessJson":
                 _require_upstream_readiness(path, label)
+            elif label == "providerAuditJson":
+                _require_provider_audit(path, label)
             else:
                 _require_smoke_for_commit(path, label, args.commit)
         except SystemExit as exc:
@@ -667,6 +685,8 @@ def stage_report(args: argparse.Namespace) -> int:
         "shadowSeedJson": args.shadow_seed_json,
         "upstreamReadinessJson": args.upstream_readiness_json,
         "upstreamReadinessRequired": _bool_flag(args.upstream_readiness_required),
+        "providerAuditJson": args.provider_audit_json,
+        "providerAuditRequired": _bool_flag(args.provider_audit_required),
         "servingProbeJson": args.serving_probe_json,
         "smokeJson": args.smoke_json,
         "releaseMainRef": args.main_ref,
@@ -723,6 +743,8 @@ def audit(args: argparse.Namespace) -> int:
                 "shadowSeedJson": latest.get("shadowSeedJson") or "",
                 "upstreamReadinessJson": latest.get("upstreamReadinessJson") or "",
                 "upstreamReadinessRequired": _bool_flag(str(latest.get("upstreamReadinessRequired") or "0")),
+                "providerAuditJson": latest.get("providerAuditJson") or "",
+                "providerAuditRequired": _bool_flag(str(latest.get("providerAuditRequired") or "0")),
                 "releaseMainRef": latest.get("releaseMainRef") or "",
                 "releaseMainSha": latest.get("releaseMainSha") or "",
                 "allowOutOfOrder": _bool_flag(str(latest.get("allowOutOfOrder") or "0")),
@@ -829,6 +851,8 @@ def main() -> int:
     append_parser.add_argument("--shadow-seed-json", default="")
     append_parser.add_argument("--upstream-readiness-json", default="")
     append_parser.add_argument("--upstream-readiness-required", default="0")
+    append_parser.add_argument("--provider-audit-json", default="")
+    append_parser.add_argument("--provider-audit-required", default="0")
     append_parser.add_argument("--serving-probe-json", default="")
     append_parser.add_argument("--smoke-json", default="")
     append_parser.add_argument("--main-ref", default="")
@@ -855,6 +879,8 @@ def main() -> int:
     report_parser.add_argument("--shadow-seed-json", default="")
     report_parser.add_argument("--upstream-readiness-json", default="")
     report_parser.add_argument("--upstream-readiness-required", default="0")
+    report_parser.add_argument("--provider-audit-json", default="")
+    report_parser.add_argument("--provider-audit-required", default="0")
     report_parser.add_argument("--serving-probe-json", default="")
     report_parser.add_argument("--smoke-json", default="")
     report_parser.add_argument("--main-ref", default="")

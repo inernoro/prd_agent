@@ -31,6 +31,7 @@ Required environment for deploy stages:
   LLMGW_STAGE_MAP_BASE          MAP base URL for shadow seed, for example https://host
   LLMGW_STAGE_SHADOW_SEED_FLAGS Extra llmgw-map-shadow-seed.py flags, for example --include-video-direct
   LLMGW_STAGE_RUN_UPSTREAM_READINESS=1 enables /gw/v1/resolve upstream readiness evidence
+  LLMGW_STAGE_RUN_PROVIDER_AUDIT=1 enables read-only video/ASR provider config audit
   LLMGW_STAGE_AUTO_RESTORE_SHADOW_ON_FAILURE=1 restores shadow/low-sample after failed high-sample shadow-start (default)
 
 Options:
@@ -286,6 +287,8 @@ prod_preflight_json="${evidence_prefix}.prod-preflight.json"
 shadow_seed_json="${evidence_prefix}.map-shadow-seed.json"
 upstream_readiness_json="${evidence_prefix}.upstream-readiness.json"
 upstream_readiness_md="${evidence_prefix}.upstream-readiness.md"
+provider_audit_json="${evidence_prefix}.provider-audit.json"
+provider_audit_md="${evidence_prefix}.provider-audit.md"
 stage_json="${evidence_prefix}.stage.json"
 stage_md="${evidence_prefix}.stage.md"
 
@@ -298,6 +301,16 @@ case "$stage" in
     ;;
 esac
 run_upstream_readiness="${LLMGW_STAGE_RUN_UPSTREAM_READINESS:-$upstream_readiness_default}"
+
+case "$stage" in
+  canary-video-asr|http-full)
+    provider_audit_default=1
+    ;;
+  *)
+    provider_audit_default=0
+    ;;
+esac
+run_provider_audit="${LLMGW_STAGE_RUN_PROVIDER_AUDIT:-$provider_audit_default}"
 
 print_plan() {
   echo "LLM Gateway production stage:"
@@ -322,6 +335,8 @@ print_plan() {
     echo "  shadowSeedJson: $shadow_seed_json"
     echo "  upstreamReadinessJson: $upstream_readiness_json"
     echo "  upstreamReadinessEnabled: $run_upstream_readiness"
+    echo "  providerAuditJson: $provider_audit_json"
+    echo "  providerAuditEnabled: $run_provider_audit"
     echo "  stageJson: $stage_json"
   fi
 }
@@ -402,6 +417,8 @@ append_ledger_entry() {
     --shadow-seed-json "$shadow_seed_json" \
     --upstream-readiness-json "$upstream_readiness_json" \
     --upstream-readiness-required "$run_upstream_readiness" \
+    --provider-audit-json "$provider_audit_json" \
+    --provider-audit-required "$run_provider_audit" \
     --serving-probe-json "$serving_probe_json" \
     --smoke-json "$smoke_json" \
     --main-ref "$main_ref" \
@@ -431,6 +448,8 @@ write_dry_run_stage_report() {
   LLMGW_DRY_RUN_SHADOW_SEED_JSON="${shadow_seed_json:-}" \
   LLMGW_DRY_RUN_UPSTREAM_READINESS_JSON="${upstream_readiness_json:-}" \
   LLMGW_DRY_RUN_UPSTREAM_READINESS_ENABLED="${run_upstream_readiness:-0}" \
+  LLMGW_DRY_RUN_PROVIDER_AUDIT_JSON="${provider_audit_json:-}" \
+  LLMGW_DRY_RUN_PROVIDER_AUDIT_ENABLED="${run_provider_audit:-0}" \
   LLMGW_DRY_RUN_SERVING_PROBE_JSON="${serving_probe_json:-}" \
   LLMGW_DRY_RUN_SMOKE_JSON="${smoke_json:-}" \
   LLMGW_DRY_RUN_RELEASE_GATE_JSON="${release_gate_json:-}" \
@@ -460,6 +479,11 @@ else:
             "python3 scripts/llmgw-upstream-readiness.py --gw-base ${LLMGW_GATE_BASE} "
             "--gw-key-env LLMGW_GATE_KEY --json-out "
             + os.environ.get("LLMGW_DRY_RUN_UPSTREAM_READINESS_JSON", "")
+        )
+    if os.environ.get("LLMGW_DRY_RUN_PROVIDER_AUDIT_ENABLED", "0") == "1":
+        commands.append(
+            "python3 scripts/llmgw-prod-provider-config-audit.py --json-out "
+            + os.environ.get("LLMGW_DRY_RUN_PROVIDER_AUDIT_JSON", "")
         )
     commands.append("./fast.sh --commit " + commit)
     commands.append("./exec_dep.sh --commit " + commit)
@@ -493,6 +517,8 @@ report = {
     "shadowSeedEnabled": os.environ.get("LLMGW_STAGE_RUN_SHADOW_SEED", "0") == "1",
     "upstreamReadinessJson": os.environ.get("LLMGW_DRY_RUN_UPSTREAM_READINESS_JSON", ""),
     "upstreamReadinessEnabled": os.environ.get("LLMGW_DRY_RUN_UPSTREAM_READINESS_ENABLED", "0") == "1",
+    "providerAuditJson": os.environ.get("LLMGW_DRY_RUN_PROVIDER_AUDIT_JSON", ""),
+    "providerAuditRequired": os.environ.get("LLMGW_DRY_RUN_PROVIDER_AUDIT_ENABLED", "0") == "1",
     "servingProbeJson": os.environ.get("LLMGW_DRY_RUN_SERVING_PROBE_JSON", ""),
     "smokeJson": os.environ.get("LLMGW_DRY_RUN_SMOKE_JSON", ""),
     "releaseGateJson": os.environ.get("LLMGW_DRY_RUN_RELEASE_GATE_JSON", ""),
@@ -623,6 +649,36 @@ run_upstream_readiness_evidence() {
   fi
 }
 
+run_provider_audit_evidence() {
+  if [ "$run_provider_audit" != "1" ]; then
+    if [ "$execute" = "1" ]; then
+      echo "LLM Gateway provider config audit skipped: LLMGW_STAGE_RUN_PROVIDER_AUDIT is not 1"
+    else
+      echo "LLM Gateway provider config audit dry-run skipped for this stage"
+    fi
+    return 0
+  fi
+  if [ ! -f "scripts/llmgw-prod-provider-config-audit.py" ]; then
+    echo "ERROR: missing scripts/llmgw-prod-provider-config-audit.py; cannot collect provider config audit evidence." >&2
+    exit 1
+  fi
+  seed_evidence_arg=""
+  seed_evidence_path="${LLMGW_STAGE_PROVIDER_AUDIT_SEED_EVIDENCE_JSON:-}"
+  if [ -n "$(printf '%s' "$seed_evidence_path" | xargs || true)" ]; then
+    seed_evidence_arg=" --seed-evidence-json $seed_evidence_path"
+  fi
+  if [ "$execute" = "1" ]; then
+    mkdir -p "$evidence_dir"
+    # shellcheck disable=SC2086
+    python3 scripts/llmgw-prod-provider-config-audit.py \
+      --json-out "$provider_audit_json" \
+      --report-md "$provider_audit_md" \
+      $seed_evidence_arg
+  else
+    echo "+ python3 scripts/llmgw-prod-provider-config-audit.py --json-out \"$provider_audit_json\" --report-md \"$provider_audit_md\"$seed_evidence_arg"
+  fi
+}
+
 rollout_ledger_status="pending"
 record_failed_stage_on_exit() {
   exit_code="$?"
@@ -715,6 +771,8 @@ if [ "$stage" = "rollback-rehearsal" ]; then
       --shadow-seed-json "$shadow_seed_json" \
       --upstream-readiness-json "$upstream_readiness_json" \
       --upstream-readiness-required "$run_upstream_readiness" \
+      --provider-audit-json "$provider_audit_json" \
+      --provider-audit-required "$run_provider_audit" \
       --serving-probe-json "$serving_probe_json" \
       --smoke-json "$smoke_json" \
       --main-ref "$main_ref" \
@@ -771,6 +829,8 @@ run_prod_preflight
 
 run_upstream_readiness_evidence
 
+run_provider_audit_evidence
+
 if [ -n "$repo" ]; then
   run_or_print ./fast.sh --commit "$commit" --repo "$repo"
   run_or_print ./exec_dep.sh --commit "$commit" --repo "$repo"
@@ -799,6 +859,8 @@ if [ "$execute" = "1" ]; then
     --shadow-seed-json "$shadow_seed_json" \
     --upstream-readiness-json "$upstream_readiness_json" \
     --upstream-readiness-required "$run_upstream_readiness" \
+    --provider-audit-json "$provider_audit_json" \
+    --provider-audit-required "$run_provider_audit" \
     --serving-probe-json "$serving_probe_json" \
     --smoke-json "$smoke_json" \
     --main-ref "$main_ref" \

@@ -13,6 +13,7 @@
 | fix | prd-agent | 修正 upstream readiness 对 /gw/v1/resolve 脱敏响应的误判，密钥解密改由 ServingKeyIntegrity 和 raw seed 证明 |
 | ops | prd-agent | 记录生产 ASR raw seed 返回 Invalid X-Api-Key 的阻断证据，禁止 video-asr 灰度误放行 |
 | ops | prd-agent | 新增 LLM Gateway 生产 provider 配置只读审计脚本，诊断 video/ASR 模型池、caller 绑定和 key 形态 |
+| ops | prd-agent | 将 provider 配置审计接入 LLM Gateway 生产 stage 与 rollout ledger，video-asr/http-full 部署前自动阻断异常配置 |
 | ops | prd-agent | LLM Gateway shadow-start 高采样失败时输出恢复采样告警 |
 | ops | prd-agent | 新增 LLM Gateway shadow 安全恢复脚本，并在高采样 shadow-start 失败时自动恢复低采样 |
 | ops | prd-agent | LLM Gateway shadow 安全恢复脚本默认持久化低采样环境配置，避免后续 compose 重启恢复高采样 |

@@ -392,9 +392,14 @@ def _static_checks() -> list[dict]:
             "serving-probe.json",
             "gw-smoke.json",
             "upstream-readiness.json",
+            "provider-audit.json",
             "LLMGW_STAGE_RUN_UPSTREAM_READINESS",
             "run_upstream_readiness_evidence",
             "scripts/llmgw-upstream-readiness.py",
+            "LLMGW_STAGE_RUN_PROVIDER_AUDIT",
+            "run_provider_audit_evidence",
+            "scripts/llmgw-prod-provider-config-audit.py",
+            "providerAuditRequired",
             "LLMGW_STAGE_AUTO_RESTORE_SHADOW_ON_FAILURE",
             "scripts/llmgw-restore-shadow-safe.sh",
             "run_prod_preflight",
@@ -402,6 +407,8 @@ def _static_checks() -> list[dict]:
             "--prod-preflight-json \"$prod_preflight_json\"",
             "--upstream-readiness-json \"$upstream_readiness_json\"",
             "--upstream-readiness-required \"$run_upstream_readiness\"",
+            "--provider-audit-json \"$provider_audit_json\"",
+            "--provider-audit-required \"$run_provider_audit\"",
             "stage-report",
             "GW_SMOKE_JSON_OUT",
             "LLMGW_SERVING_PROBE_JSON_OUT",
@@ -421,9 +428,15 @@ def _static_checks() -> list[dict]:
     preflight_executable = bool(prod_preflight_path.exists() and (prod_preflight_path.stat().st_mode & stat.S_IXUSR))
     upstream_executable = bool(upstream_readiness_path.exists() and (upstream_readiness_path.stat().st_mode & stat.S_IXUSR))
     preflight_idx = prod_stage.find("run_prod_preflight\n\nrun_upstream_readiness_evidence")
-    upstream_idx = prod_stage.find("run_upstream_readiness_evidence\n\nif [ -n \"$repo\" ]")
+    upstream_idx = prod_stage.find("run_upstream_readiness_evidence\n\nrun_provider_audit_evidence")
+    provider_idx = prod_stage.find("run_provider_audit_evidence\n\nif [ -n \"$repo\" ]")
     fast_idx = prod_stage.find("run_or_print ./fast.sh")
-    upstream_before_deploy = preflight_idx >= 0 and upstream_idx >= 0 and upstream_idx < fast_idx
+    upstream_before_deploy = (
+        preflight_idx >= 0
+        and upstream_idx >= 0
+        and provider_idx >= 0
+        and preflight_idx < upstream_idx < provider_idx < fast_idx
+    )
     ledger_ok, ledger_detail = _contains_all(
         rollout_ledger,
         [
@@ -456,6 +469,10 @@ def _static_checks() -> list[dict]:
             "\"upstreamReadinessRequired\": _bool_flag(args.upstream_readiness_required)",
             "_require_upstream_readiness",
             "upstream readiness evidence",
+            "\"providerAuditJson\": args.provider_audit_json",
+            "\"providerAuditRequired\": _bool_flag(args.provider_audit_required)",
+            "_require_provider_audit",
+            "provider config audit evidence",
             "_require_prod_preflight_for_commit",
             "production preflight evidence",
             "\"servingProbeJson\": args.serving_probe_json",
