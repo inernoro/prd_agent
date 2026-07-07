@@ -189,6 +189,12 @@ def _static_checks() -> list[dict]:
             "--min-coverage-hours \"$MIN_COVERAGE_HOURS\"",
             "WATCH_APP_CALLERS",
             "WATCH_REQUIRED_APP_KINDS",
+            "visual-agent.image-gen.generate::generation",
+            "visual-agent.image-gen.generate::generation:raw:${MIN_PER_CELL}",
+            "video-agent.v2d.transcribe::asr",
+            "video-agent.v2d.transcribe::asr:raw:${MIN_PER_CELL}",
+            "video-agent.video-to-text::asr",
+            "video-agent.video-to-text::asr:raw:${MIN_PER_CELL}",
             "actions/upload-artifact@v4",
         ],
     )

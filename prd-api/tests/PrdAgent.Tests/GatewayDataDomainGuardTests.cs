@@ -851,6 +851,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("WATCH_COVERAGE_KINDS", workflow);
         Assert.Contains("WATCH_REQUIRED_KINDS", workflow);
         Assert.Contains("WATCH_REQUIRED_APP_KINDS", workflow);
+        Assert.Contains("visual-agent.image-gen.generate::generation", workflow);
+        Assert.Contains("visual-agent.image-gen.generate::generation:raw:${MIN_PER_CELL}", workflow);
+        Assert.Contains("video-agent.v2d.transcribe::asr", workflow);
+        Assert.Contains("video-agent.v2d.transcribe::asr:raw:${MIN_PER_CELL}", workflow);
+        Assert.Contains("video-agent.video-to-text::asr", workflow);
+        Assert.Contains("video-agent.video-to-text::asr:raw:${MIN_PER_CELL}", workflow);
         Assert.Contains("actions/upload-artifact@v4", workflow);
 
         Assert.Contains("_redact_cmd", readiness);
@@ -858,6 +864,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("\"cmd\": _redact_cmd(cmd)", readiness);
         Assert.Contains("--min-coverage-hours", readiness);
         Assert.Contains("str(args.min_coverage_hours)", readiness);
+        Assert.Contains("visual-agent.image-gen.generate::generation:raw:${MIN_PER_CELL}", readiness);
+        Assert.Contains("video-agent.v2d.transcribe::asr:raw:${MIN_PER_CELL}", readiness);
+        Assert.Contains("video-agent.video-to-text::asr:raw:${MIN_PER_CELL}", readiness);
     }
 
     [Fact]
