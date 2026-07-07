@@ -3,7 +3,7 @@ import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft, Boxes, Check, ChevronRight, CircleAlert, CircleCheck, CircleX, ClipboardCheck, Clock3, FileCode2, FileText, FolderOpen,
-  GitPullRequest, Inbox, Layers, Link2, Maximize2, Minimize2, MoreVertical, Plus, RefreshCw, Share2, SlidersHorizontal, Trash2, Upload,
+  GitPullRequest, Inbox, Layers, Link2, Maximize2, Minimize2, MoreVertical, Pencil, Plus, RefreshCw, Share2, SlidersHorizontal, Trash2, Upload,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { marked } from 'marked';
@@ -25,6 +25,7 @@ import {
   createReportFromFile,
   createReportFromText,
   deleteReport,
+  deleteReportFolder,
   disableReportShare,
   enableReportShare,
   fetchReportRaw,
@@ -32,6 +33,7 @@ import {
   pushReportToPr,
   listReports,
   moveReportToFolder,
+  renameReportFolder,
   reportRawUrl,
   type AcceptanceReport,
   type ReportFolder,
@@ -117,6 +119,7 @@ export function ReportsPage(): JSX.Element {
   const [activeFolder, setActiveFolder] = useState<FolderFilter>('all');
   const [createOpen, setCreateOpen] = useState(false);
   const [folderCreateOpen, setFolderCreateOpen] = useState(false);
+  const [renamingFolder, setRenamingFolder] = useState<ReportFolder | null>(null);
   const [selected, setSelected] = useState<AcceptanceReport | null>(null);
   const [navDrawerOpen, setNavDrawerOpen] = useState(false);
   const [toast, setToast] = useState('');
@@ -231,6 +234,12 @@ export function ReportsPage(): JSX.Element {
     return { byProject: m, self, total: allReports.length };
   }, [allReports]);
 
+  const folderCreateProjectId = useMemo(() => {
+    if (projectId) return projectId;
+    if (activeProjectFilter === 'all' || activeProjectFilter === 'self') return null;
+    return activeProjectFilter;
+  }, [projectId, activeProjectFilter]);
+
   const handleProjectFilterChange = useCallback((next: ProjectFilter) => {
     setActiveProjectFilter(next);
     setActiveFolder((current) => (isReportSystemView(current) ? current : 'all'));
@@ -292,7 +301,7 @@ export function ReportsPage(): JSX.Element {
 
   const handleCreateFolder = useCallback(async (name: string): Promise<boolean> => {
     try {
-      const folder = await createReportFolder(name, projectId || null);
+      const folder = await createReportFolder(name, folderCreateProjectId);
       setFolders((cur) => [...cur, folder]);
       setActiveFolder((current) => (isReportSystemView(current) ? current : 'all'));
       setToast(`已新建文件夹「${folder.name}」`);
@@ -301,7 +310,36 @@ export function ReportsPage(): JSX.Element {
       setToast(`新建文件夹失败：${err instanceof ApiError ? err.message : String(err)}`);
       return false;
     }
-  }, [projectId]);
+  }, [folderCreateProjectId]);
+
+  const handleRenameFolder = useCallback(async (folder: ReportFolder, name: string): Promise<boolean> => {
+    try {
+      const updated = await renameReportFolder(folder.id, name);
+      setFolders((cur) => cur.map((item) => (item.id === updated.id ? updated : item)));
+      setToast(`已重命名文件夹「${updated.name}」`);
+      return true;
+    } catch (err) {
+      setToast(`重命名文件夹失败：${err instanceof ApiError ? err.message : String(err)}`);
+      return false;
+    }
+  }, []);
+
+  const handleDeleteFolder = useCallback(async (folder: ReportFolder): Promise<void> => {
+    try {
+      await deleteReportFolder(folder.id);
+      const nextParentId = folder.parentId ?? null;
+      setFolders((cur) => cur
+        .filter((item) => item.id !== folder.id)
+        .map((item) => ((item.parentId ?? null) === folder.id ? { ...item, parentId: nextParentId } : item)));
+      setState((cur) => (cur.status === 'ok'
+        ? { status: 'ok', reports: cur.reports.map((report) => (report.folderId === folder.id ? { ...report, folderId: null } : report)) }
+        : cur));
+      setActiveFolder((current) => (current === folder.id ? 'all' : current));
+      setToast(`已删除文件夹「${folder.name}」`);
+    } catch (err) {
+      setToast(`删除文件夹失败：${err instanceof ApiError ? err.message : String(err)}`);
+    }
+  }, []);
 
   return (
     <AppShell
@@ -377,6 +415,8 @@ export function ReportsPage(): JSX.Element {
                       onProjectFilterSelect={handleProjectFilterChange}
                       onFilterSelect={setActiveFolder}
                       onCreateFolder={() => setFolderCreateOpen(true)}
+                      onRenameFolderRequest={setRenamingFolder}
+                      onDeleteFolder={(folder) => void handleDeleteFolder(folder)}
                       showProjectFilter={!projectId}
                       className={selected ? 'hidden lg:flex' : undefined}
                     />
@@ -413,6 +453,8 @@ export function ReportsPage(): JSX.Element {
                       onProjectFilterSelect={handleProjectFilterChange}
                       onFilterSelect={setActiveFolder}
                       onCreateFolder={() => setFolderCreateOpen(true)}
+                      onRenameFolderRequest={setRenamingFolder}
+                      onDeleteFolder={(folder) => void handleDeleteFolder(folder)}
                       showProjectFilter={!projectId}
                       resizable={false}
                       className="min-h-0 flex-1 rounded-none border-0"
@@ -438,6 +480,11 @@ export function ReportsPage(): JSX.Element {
         open={folderCreateOpen}
         onOpenChange={setFolderCreateOpen}
         onCreate={handleCreateFolder}
+      />
+      <RenameFolderDialog
+        folder={renamingFolder}
+        onOpenChange={(open) => { if (!open) setRenamingFolder(null); }}
+        onRename={handleRenameFolder}
       />
     </AppShell>
   );
@@ -622,7 +669,7 @@ function reportTooltip(report: AcceptanceReport, projectName: string | undefined
 
 function ReportList({
   reports, folders, projects, projectCounts, activeProjectFilter, counts, activeFilter, selectedId, onSelect, onDelete, onMove, onCopy,
-  onProjectFilterSelect, onFilterSelect, onCreateFolder, showProjectFilter, resizable = true, className,
+  onProjectFilterSelect, onFilterSelect, onCreateFolder, onRenameFolderRequest, onDeleteFolder, showProjectFilter, resizable = true, className,
 }: {
   reports: AcceptanceReport[];
   folders: ReportFolder[];
@@ -639,6 +686,8 @@ function ReportList({
   onProjectFilterSelect: (f: ProjectFilter) => void;
   onFilterSelect: (f: FolderFilter) => void;
   onCreateFolder: () => void;
+  onRenameFolderRequest: (folder: ReportFolder) => void;
+  onDeleteFolder: (folder: ReportFolder) => void;
   showProjectFilter: boolean;
   resizable?: boolean;
   className?: string;
@@ -744,7 +793,7 @@ function ReportList({
         aria-label={`打开报告：${report.title}`}>
         <VerdictIcon verdict={report.verdict} />
         <span className="min-w-0 flex-1 truncate">{report.title}</span>
-        <div className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100" onClick={(event) => event.stopPropagation()}>
+        <div className="shrink-0 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100" onClick={(event) => event.stopPropagation()}>
           <ReportRowActions
             report={report}
             folders={folders}
@@ -779,6 +828,13 @@ function ReportList({
         <FolderOpen className="h-4 w-4 shrink-0" />
         <span className="min-w-0 flex-1 truncate">{folder.name}</span>
         <span className="shrink-0 text-[11px] text-muted-foreground">{count}</span>
+        <div className="shrink-0 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100" onClick={(event) => event.stopPropagation()}>
+          <FolderRowActions
+            folder={folder}
+            onRename={() => onRenameFolderRequest(folder)}
+            onDelete={() => onDeleteFolder(folder)}
+          />
+        </div>
       </div>,
     ];
     if (!collapsed) {
@@ -900,6 +956,45 @@ function ReportRowActions({
   );
 }
 
+function FolderRowActions({
+  folder, onRename, onDelete,
+}: {
+  folder: ReportFolder;
+  onRename: () => void;
+  onDelete: () => void;
+}): JSX.Element {
+  const confirmDelete = (): void => {
+    if (window.confirm(`删除文件夹「${folder.name}」？其中的报告会移到未归类，子文件夹会上移一层。`)) onDelete();
+  };
+
+  return (
+    <DropdownMenu
+      align="end"
+      width={200}
+      trigger={(
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 text-muted-foreground opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"
+          aria-label="打开文件夹操作菜单"
+          title="文件夹操作"
+        >
+          <MoreVertical className="h-4 w-4" />
+        </Button>
+      )}
+    >
+      <DropdownItem onSelect={onRename}>
+        <Pencil className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate">重命名文件夹</span>
+      </DropdownItem>
+      <DropdownItem destructive onSelect={confirmDelete}>
+        <Trash2 className="h-4 w-4 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">删除文件夹</span>
+      </DropdownItem>
+    </DropdownMenu>
+  );
+}
+
 function CreateFolderDialog({
   open, onOpenChange, onCreate,
 }: {
@@ -953,6 +1048,66 @@ function CreateFolderDialog({
           <div className="flex justify-end gap-2">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>取消</Button>
             <Button type="submit" disabled={submitting}>{submitting ? '创建中' : '创建'}</Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function RenameFolderDialog({
+  folder, onOpenChange, onRename,
+}: {
+  folder: ReportFolder | null;
+  onOpenChange: (open: boolean) => void;
+  onRename: (folder: ReportFolder, name: string) => Promise<boolean>;
+}): JSX.Element {
+  const [name, setName] = useState('');
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!folder) return;
+    setName(folder.name);
+    setError('');
+    setSubmitting(false);
+  }, [folder]);
+
+  const submit = useCallback(async () => {
+    if (!folder) return;
+    const clean = name.trim();
+    if (!clean) {
+      setError('请填写文件夹名称');
+      return;
+    }
+    setSubmitting(true);
+    setError('');
+    const ok = await onRename(folder, clean);
+    setSubmitting(false);
+    if (ok) onOpenChange(false);
+  }, [folder, name, onOpenChange, onRename]);
+
+  return (
+    <Dialog open={Boolean(folder)} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>重命名文件夹</DialogTitle>
+          <DialogDescription>只修改文件夹名称，已有报告与子文件夹会保持原位置。</DialogDescription>
+        </DialogHeader>
+        <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+          <label className="block space-y-1.5">
+            <span className="text-sm font-medium">文件夹名称</span>
+            <input
+              autoFocus
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              className="h-9 w-full rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 text-sm outline-none focus:border-primary/60"
+            />
+          </label>
+          {error ? <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div> : null}
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>取消</Button>
+            <Button type="submit" disabled={submitting}>{submitting ? '保存中' : '保存'}</Button>
           </div>
         </form>
       </DialogContent>
