@@ -468,6 +468,8 @@ append_ledger_entry() {
     --provider-audit-required "$run_provider_audit" \
     --video-canary-json "$video_canary_json" \
     --video-canary-required "$run_video_canary" \
+    --asr-http-canary-json "$asr_http_canary_json" \
+    --asr-http-canary-required "$run_asr_http_canary" \
     --serving-probe-json "$serving_probe_json" \
     --smoke-json "$smoke_json" \
     --main-ref "$main_ref" \
@@ -905,6 +907,8 @@ if [ "$stage" = "rollback-rehearsal" ]; then
       --provider-audit-required "$run_provider_audit" \
       --video-canary-json "$video_canary_json" \
       --video-canary-required "$run_video_canary" \
+      --asr-http-canary-json "$asr_http_canary_json" \
+      --asr-http-canary-required "$run_asr_http_canary" \
       --serving-probe-json "$serving_probe_json" \
       --smoke-json "$smoke_json" \
       --main-ref "$main_ref" \
@@ -1002,6 +1006,8 @@ if [ "$execute" = "1" ]; then
     --provider-audit-required "$run_provider_audit" \
     --video-canary-json "$video_canary_json" \
     --video-canary-required "$run_video_canary" \
+    --asr-http-canary-json "$asr_http_canary_json" \
+    --asr-http-canary-required "$run_asr_http_canary" \
     --serving-probe-json "$serving_probe_json" \
     --smoke-json "$smoke_json" \
     --main-ref "$main_ref" \

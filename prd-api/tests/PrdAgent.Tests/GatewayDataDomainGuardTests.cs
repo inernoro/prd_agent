@@ -459,6 +459,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("\"videoCanaryRequired\": _bool_flag(args.video_canary_required)", ledger);
         Assert.Contains("_require_video_canary", ledger);
         Assert.Contains("video canary evidence", ledger);
+        Assert.Contains("\"asrHttpCanaryJson\": args.asr_http_canary_json", ledger);
+        Assert.Contains("\"asrHttpCanaryRequired\": _bool_flag(args.asr_http_canary_required)", ledger);
+        Assert.Contains("_require_asr_http_canary", ledger);
+        Assert.Contains("ASR HTTP canary evidence", ledger);
         Assert.Contains("missing expectedCommit for same-commit evidence", ledger);
         Assert.Contains("releaseMainSha mismatch", ledger);
         Assert.Contains("shadowReleaseCommit mismatch", ledger);
@@ -520,8 +524,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_VIDEO_CANARY_JSON_OUT", readiness);
         Assert.Contains("--video-canary-json \\\"$video_canary_json\\\"", readiness);
         Assert.Contains("--video-canary-required \\\"$run_video_canary\\\"", readiness);
+        Assert.Contains("--asr-http-canary-json \\\"$asr_http_canary_json\\\"", readiness);
+        Assert.Contains("--asr-http-canary-required \\\"$run_asr_http_canary\\\"", readiness);
         Assert.Contains("videoCanaryJson", readiness);
         Assert.Contains("videoCanaryRequired", readiness);
+        Assert.Contains("asrHttpCanaryJson", readiness);
+        Assert.Contains("asrHttpCanaryRequired", readiness);
         Assert.Contains("run_prod_preflight", readiness);
         Assert.Contains("scripts/llmgw-prod-preflight.py --mode start", readiness);
         Assert.Contains("--prod-preflight-json \\\"$prod_preflight_json\\\"", readiness);

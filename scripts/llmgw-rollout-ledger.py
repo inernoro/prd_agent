@@ -221,6 +221,10 @@ def _require_video_canary(path: str, label: str) -> None:
     _require_pass_json(path, label)
 
 
+def _require_asr_http_canary(path: str, label: str) -> None:
+    _require_pass_json(path, label)
+
+
 def _bool_flag(value: str) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
@@ -373,6 +377,11 @@ def _entry_evidence_failures(entry: dict) -> list[str]:
     if _bool_flag(str(entry.get("videoCanaryRequired") or "0")):
         try:
             _require_video_canary(str(entry.get("videoCanaryJson") or ""), f"{stage} video canary evidence")
+        except SystemExit as exc:
+            failures.append(str(exc))
+    if _bool_flag(str(entry.get("asrHttpCanaryRequired") or "0")):
+        try:
+            _require_asr_http_canary(str(entry.get("asrHttpCanaryJson") or ""), f"{stage} ASR HTTP canary evidence")
         except SystemExit as exc:
             failures.append(str(exc))
     return failures
@@ -552,6 +561,8 @@ def append(args: argparse.Namespace) -> int:
                 _require_provider_audit(args.provider_audit_json, "provider config audit evidence")
             if _bool_flag(args.video_canary_required):
                 _require_video_canary(args.video_canary_json, "video canary evidence")
+            if _bool_flag(args.asr_http_canary_required):
+                _require_asr_http_canary(args.asr_http_canary_json, "ASR HTTP canary evidence")
 
     entry = {
         "recordedAt": datetime.now(timezone.utc).isoformat(),
@@ -575,6 +586,8 @@ def append(args: argparse.Namespace) -> int:
         "providerAuditRequired": _bool_flag(args.provider_audit_required),
         "videoCanaryJson": args.video_canary_json,
         "videoCanaryRequired": _bool_flag(args.video_canary_required),
+        "asrHttpCanaryJson": args.asr_http_canary_json,
+        "asrHttpCanaryRequired": _bool_flag(args.asr_http_canary_required),
         "rollbackRehearsal": args.stage == ROLLBACK_REHEARSAL_STAGE,
         "allowOutOfOrder": _bool_flag(args.allow_out_of_order),
         "allowOutOfOrderReason": args.allow_out_of_order_reason.strip(),
@@ -635,6 +648,8 @@ def _write_markdown(path: str, report: dict) -> None:
         fh.write(f"- providerAuditJson: `{cell(report['providerAuditJson'])}`\n")
         fh.write(f"- videoCanaryRequired: `{cell(report['videoCanaryRequired'])}`\n")
         fh.write(f"- videoCanaryJson: `{cell(report['videoCanaryJson'])}`\n")
+        fh.write(f"- asrHttpCanaryRequired: `{cell(report['asrHttpCanaryRequired'])}`\n")
+        fh.write(f"- asrHttpCanaryJson: `{cell(report['asrHttpCanaryJson'])}`\n")
         fh.write(f"- servingProbeJson: `{cell(report['servingProbeJson'])}`\n")
         fh.write(f"- smokeJson: `{cell(report['smokeJson'])}`\n\n")
         fh.write(f"- releaseMainRef: `{cell(report['releaseMainRef'])}`\n")
@@ -658,6 +673,7 @@ def stage_report(args: argparse.Namespace) -> int:
         ("upstreamReadinessJson", args.upstream_readiness_json, _bool_flag(args.upstream_readiness_required)),
         ("providerAuditJson", args.provider_audit_json, _bool_flag(args.provider_audit_required)),
         ("videoCanaryJson", args.video_canary_json, _bool_flag(args.video_canary_required)),
+        ("asrHttpCanaryJson", args.asr_http_canary_json, _bool_flag(args.asr_http_canary_required)),
     ]
     if args.stage == ROLLBACK_REHEARSAL_STAGE:
         checks = []
@@ -677,6 +693,8 @@ def stage_report(args: argparse.Namespace) -> int:
                 _require_provider_audit(path, label)
             elif label == "videoCanaryJson":
                 _require_video_canary(path, label)
+            elif label == "asrHttpCanaryJson":
+                _require_asr_http_canary(path, label)
             else:
                 _require_smoke_for_commit(path, label, args.commit)
         except SystemExit as exc:
@@ -707,6 +725,8 @@ def stage_report(args: argparse.Namespace) -> int:
         "providerAuditRequired": _bool_flag(args.provider_audit_required),
         "videoCanaryJson": args.video_canary_json,
         "videoCanaryRequired": _bool_flag(args.video_canary_required),
+        "asrHttpCanaryJson": args.asr_http_canary_json,
+        "asrHttpCanaryRequired": _bool_flag(args.asr_http_canary_required),
         "servingProbeJson": args.serving_probe_json,
         "smokeJson": args.smoke_json,
         "releaseMainRef": args.main_ref,
@@ -767,6 +787,8 @@ def audit(args: argparse.Namespace) -> int:
                 "providerAuditRequired": _bool_flag(str(latest.get("providerAuditRequired") or "0")),
                 "videoCanaryJson": latest.get("videoCanaryJson") or "",
                 "videoCanaryRequired": _bool_flag(str(latest.get("videoCanaryRequired") or "0")),
+                "asrHttpCanaryJson": latest.get("asrHttpCanaryJson") or "",
+                "asrHttpCanaryRequired": _bool_flag(str(latest.get("asrHttpCanaryRequired") or "0")),
                 "releaseMainRef": latest.get("releaseMainRef") or "",
                 "releaseMainSha": latest.get("releaseMainSha") or "",
                 "allowOutOfOrder": _bool_flag(str(latest.get("allowOutOfOrder") or "0")),
@@ -877,6 +899,8 @@ def main() -> int:
     append_parser.add_argument("--provider-audit-required", default="0")
     append_parser.add_argument("--video-canary-json", default="")
     append_parser.add_argument("--video-canary-required", default="0")
+    append_parser.add_argument("--asr-http-canary-json", default="")
+    append_parser.add_argument("--asr-http-canary-required", default="0")
     append_parser.add_argument("--serving-probe-json", default="")
     append_parser.add_argument("--smoke-json", default="")
     append_parser.add_argument("--main-ref", default="")
@@ -907,6 +931,8 @@ def main() -> int:
     report_parser.add_argument("--provider-audit-required", default="0")
     report_parser.add_argument("--video-canary-json", default="")
     report_parser.add_argument("--video-canary-required", default="0")
+    report_parser.add_argument("--asr-http-canary-json", default="")
+    report_parser.add_argument("--asr-http-canary-required", default="0")
     report_parser.add_argument("--serving-probe-json", default="")
     report_parser.add_argument("--smoke-json", default="")
     report_parser.add_argument("--main-ref", default="")
