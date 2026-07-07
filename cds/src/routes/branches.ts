@@ -41,7 +41,7 @@ import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js'
 import { isAllowedCdsBranchName, isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { buildPreviewUrlForProject } from '../services/comment-template.js';
 import { ROUTABLE_SERVICE_STATUSES } from '../services/forwarder-route-publisher.js';
-import { maskSecrets as maskSecretsText, maskEnvRecord, maskBranchExtraProfilesEnv, isSensitiveKey, looksLikeUrlWithCredentials, shouldMask } from '../services/secret-masker.js';
+import { maskSecrets as maskSecretsText, maskEnvRecord, maskBranchExtraProfilesEnv, isSensitiveKey, looksLikeSecretBearingValue, shouldMask } from '../services/secret-masker.js';
 import { buildUnifiedBranchResources, type UnifiedBranchResource } from '../services/resources.js';
 import { fetchWithLockRetry } from '../services/git-fetch-retry.js';
 import { resolveGitAuthEnv } from '../services/git-auth-env.js';
@@ -14430,10 +14430,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
           for (const [k, v] of Object.entries(profEnv)) {
             if (typeof v !== 'string' || v.length < 6) continue;
             // 敏感判定与 maskEnvRecord 完全同口径：key 名走 isSensitiveKey 完整覆盖（含 WEBHOOK/SMTP_*/
-            // AUTH/JWT/PAT/*_KEY，旧窄正则不含这些）OR 值是含内联凭据的 URL（DATABASE_URL/MONGODB_URI 等 key
-            // 名不命中但值泄密）。否则 `echo $WEBHOOK_URL` 在 GET/PUT 已脱敏的同一密钥仍从 exec 输出原样吐出
-            // （Codex P2「Reuse sensitive-key coverage for exec masking」）。
-            if (!isSensitiveKey(k) && !looksLikeUrlWithCredentials(v)) continue;
+            // AUTH/JWT/PAT/*_KEY + camelCase/.NET 键）OR 值是含内联凭据的 shape —— looksLikeSecretBearingValue
+            // 统一涵盖 URL(user:pass@)、连接串(;Password=) 与已知密钥前缀(ghp_/sk-/JWT/PEM…)。否则
+            // `echo $SQLSERVER_URL`（连接串口令）或 `echo $NEUTRAL`（中性 key 下的 ghp_ 令牌）在
+            // GET/effective-config 已脱敏，却仍从 exec 输出原样吐出（Codex PR #1008 review「Use the new
+            // detector for exec-output masking」；早期 Codex P2「Reuse sensitive-key coverage for exec masking」）。
+            if (!isSensitiveKey(k) && !looksLikeSecretBearingValue(v)) continue;
             sensitiveValues.push(v);
           }
           // Sort longest-first so a value that contains another value as a

@@ -7,6 +7,7 @@ import {
   maskEnvRecord,
   maskBranchExtraProfilesEnv,
   looksLikeUrlWithCredentials,
+  looksLikeSecretBearingValue,
   shouldMask,
 } from '../../src/services/secret-masker.js';
 
@@ -68,6 +69,31 @@ describe('secret-masker.isSensitiveKey', () => {
   ])('does NOT flag %s as sensitive', (k) => {
     expect(isSensitiveKey(k)).toBe(false);
   });
+
+  // Regression: .NET / camelCase config keys (Changelog__GitHubToken, etc.) put
+  // the sensitive word at a camelCase boundary the `_`-anchored patterns never
+  // saw, so these secrets leaked in plaintext through the provenance endpoint.
+  it.each([
+    'Changelog__GitHubToken',
+    'GitHubOAuth__ClientSecret',
+    'ApiKeyCrypto__LegacySecrets',
+    'ApiKeyCrypto__Secret',
+    'ClaudeSdkExecutor__CdsDiscovery__SharedSidecarToken',
+    'Jwt__Secret',
+  ])('flags .NET/camelCase key %s as sensitive', (k) => {
+    expect(isSensitiveKey(k)).toBe(true);
+  });
+
+  it.each([
+    'MongoDB__DatabaseName',
+    'MongoDB__ConnectionString',
+    'AspNetCoreEnvironment',
+    'PreviewDomain',
+    'Changelog__RootPath',
+    'GitHubOAuth__ClientId', // OAuth kept atomic → public client id stays visible
+  ])('does NOT over-flag innocuous camelCase key %s', (k) => {
+    expect(isSensitiveKey(k)).toBe(false);
+  });
 });
 
 describe('secret-masker.maskLine', () => {
@@ -91,6 +117,56 @@ describe('secret-masker.maskLine', () => {
   it('preserves NODE_ENV=production', () => {
     const result = maskLine('NODE_ENV=production');
     expect(result).toBe('NODE_ENV=production');
+  });
+
+  // Value-shape masking in line mode: a secret VALUE under a non-sensitive KEY
+  // must be masked in log lines too (Codex PR #1008 review — log snapshots /
+  // resource logs / container logs go through maskLine, not the exec collector).
+  it('masks a vendor-prefix token under a neutral key', () => {
+    const result = maskLine('NEUTRAL_A=ghp_' + 'a'.repeat(36));
+    expect(result).toBe('NEUTRAL_A=***[masked]***');
+    expect(result).not.toContain('ghp_');
+  });
+
+  it('masks an inline-credential URL under a neutral key', () => {
+    const result = maskLine('DATABASE_URL=postgres://user:pass@host:5432/db');
+    expect(result).toBe('DATABASE_URL=***[masked]***');
+    expect(result).not.toContain('pass@');
+  });
+
+  it('does NOT mask a commit SHA or plain value under a neutral key', () => {
+    expect(maskLine('COMMIT=6779b9f2fb4531af95e007d1446c53141fc75621')).toBe(
+      'COMMIT=6779b9f2fb4531af95e007d1446c53141fc75621',
+    );
+    expect(maskLine('LOG_LEVEL=info')).toBe('LOG_LEVEL=info');
+  });
+
+  // Step 4 line-level scrub: the KEY=VALUE pass truncates values at `;` and its
+  // prefix class excludes `;`, so a `;Password=` segment deeper in a connection
+  // string was never seen (Codex PR #1008 review). Also covers secrets not in
+  // KEY=VALUE form at all.
+  it('masks the Password= segment inside a truncated ADO.NET connection string', () => {
+    const result = maskLine('SQLSERVER_URL=Server=x;User Id=sa;Password=hunter2;TrustServerCertificate=True;');
+    expect(result).not.toContain('hunter2');
+    expect(result).toContain('Password=***[masked]***');
+    expect(result).toContain('Server=x'); // non-secret parts preserved
+  });
+
+  it('masks a bare vendor-prefix token in free (non KEY=VALUE) log text', () => {
+    const result = maskLine('Cloning into repo using ghp_' + 'a'.repeat(36) + ' now');
+    expect(result).not.toContain('ghp_a');
+    expect(result).toContain('***[masked]***');
+  });
+
+  it('masks the password of an inline-credential URL mid-line, keeping user/host', () => {
+    const result = maskLine('remote: pushing to https://gituser:s3cr3tpw@github.com/o/r.git');
+    expect(result).not.toContain('s3cr3tpw');
+    expect(result).toContain('https://gituser:***[masked]***@github.com/o/r.git');
+  });
+
+  it('does NOT over-mask reset-password flags or plain URLs', () => {
+    expect(maskLine('opts: resetPassword=true')).toBe('opts: resetPassword=true');
+    expect(maskLine('API=https://api.example.com/v1')).toBe('API=https://api.example.com/v1');
   });
 
   it('preserves PATH=/usr/bin:/bin', () => {
@@ -253,6 +329,50 @@ describe('secret-masker.maskEnvRecord', () => {
     expect(out.REDIS_URL).toBe('***');
     expect(out.PUBLIC_API_URL).toBe('https://api.example.com/v1');
   });
+
+  it('masks ADO.NET/SQL connection-string values with inline Password= (provenance leak fix)', () => {
+    const out = maskEnvRecord({
+      SQLSERVER_URL: 'Server=sqlserver,1433;Database=master;User Id=sa;Password=hunter2;TrustServerCertificate=True;',
+      MongoDB__ConnectionString: 'mongodb://172.17.0.1:10001', // no creds → not masked
+      R2_PUBLIC_BASE_URL: 'https://cfi.miduo.org', // plain public URL → not masked
+    });
+    expect(out.SQLSERVER_URL).toBe('***');
+    expect(out['MongoDB__ConnectionString']).toBe('mongodb://172.17.0.1:10001');
+    expect(out.R2_PUBLIC_BASE_URL).toBe('https://cfi.miduo.org');
+  });
+
+  it('masks .NET/camelCase secret keys (provenance leak fix)', () => {
+    const out = maskEnvRecord({
+      Changelog__GitHubToken: 'ghp_realtoken',
+      GitHubOAuth__ClientSecret: 'oauthsecret',
+      ApiKeyCrypto__LegacySecrets: 'legacy==',
+      GitHubOAuth__ClientId: 'Ov23liPublicId', // public client id → stays visible
+      MongoDB__DatabaseName: 'prdagent', // neutral camelCase key → not masked
+    });
+    expect(out['Changelog__GitHubToken']).toBe('***');
+    expect(out['GitHubOAuth__ClientSecret']).toBe('***');
+    expect(out['ApiKeyCrypto__LegacySecrets']).toBe('***');
+    expect(out['GitHubOAuth__ClientId']).toBe('Ov23liPublicId');
+    expect(out['MongoDB__DatabaseName']).toBe('prdagent');
+  });
+
+  it('masks recognizable secret VALUE shapes under neutral key names (defense in depth)', () => {
+    const out = maskEnvRecord({
+      NEUTRAL_A: 'ghp_' + 'a'.repeat(36), // GitHub PAT shape
+      NEUTRAL_B: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U', // JWT
+      NEUTRAL_C: 'AKIAIOSFODNN7EXAMPLE', // AWS access key id
+      // must NOT be masked: not secret shapes
+      CDS_COMMIT_SHA: '6779b9f2fb4531af95e007d1446c53141fc75621', // 40-hex commit
+      R2_ACCOUNT_ID: 'b821db9da72264f7e790a2b8d8cc6a58', // 32-hex public id
+      APP_NAME: 'prd-agent',
+    });
+    expect(out.NEUTRAL_A).toBe('***');
+    expect(out.NEUTRAL_B).toBe('***');
+    expect(out.NEUTRAL_C).toBe('***');
+    expect(out.CDS_COMMIT_SHA).toBe('6779b9f2fb4531af95e007d1446c53141fc75621');
+    expect(out.R2_ACCOUNT_ID).toBe('b821db9da72264f7e790a2b8d8cc6a58');
+    expect(out.APP_NAME).toBe('prd-agent');
+  });
 });
 
 describe('secret-masker.looksLikeUrlWithCredentials', () => {
@@ -266,6 +386,33 @@ describe('secret-masker.looksLikeUrlWithCredentials', () => {
     expect(looksLikeUrlWithCredentials('redis://redis:6379')).toBe(false);
     expect(looksLikeUrlWithCredentials('info')).toBe(false);
     expect(looksLikeUrlWithCredentials('')).toBe(false);
+  });
+});
+
+// SSOT for value-shape secret detection — consumed by BOTH maskEnvRecord (GET
+// responses / effective-config provenance) and the container-exec output masker
+// (`echo $VAR` in stdout/stderr, cds/src/routes/branches.ts). Locking the
+// contract here keeps the two paths from drifting (Codex PR #1008 review).
+describe('secret-masker.looksLikeSecretBearingValue', () => {
+  it('flags inline-credential URLs, connection strings, and known secret prefixes', () => {
+    expect(looksLikeSecretBearingValue('postgres://u:p@h:5432/db')).toBe(true);
+    expect(looksLikeSecretBearingValue('Server=x;User Id=sa;Password=hunter2;')).toBe(true);
+    expect(looksLikeSecretBearingValue('ghp_' + 'a'.repeat(36))).toBe(true);
+    expect(looksLikeSecretBearingValue('AKIAIOSFODNN7EXAMPLE')).toBe(true);
+    expect(
+      looksLikeSecretBearingValue(
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U',
+      ),
+    ).toBe(true);
+    expect(looksLikeSecretBearingValue('-----BEGIN RSA PRIVATE KEY-----')).toBe(true);
+  });
+  it('does not flag plain URLs, commit SHAs, account ids, or short strings', () => {
+    expect(looksLikeSecretBearingValue('https://cfi.miduo.org')).toBe(false);
+    expect(looksLikeSecretBearingValue('mongodb://172.17.0.1:10001')).toBe(false);
+    expect(looksLikeSecretBearingValue('6779b9f2fb4531af95e007d1446c53141fc75621')).toBe(false);
+    expect(looksLikeSecretBearingValue('b821db9da72264f7e790a2b8d8cc6a58')).toBe(false);
+    expect(looksLikeSecretBearingValue('prd-agent')).toBe(false);
+    expect(looksLikeSecretBearingValue('')).toBe(false);
   });
 });
 
