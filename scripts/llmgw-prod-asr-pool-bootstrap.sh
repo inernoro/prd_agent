@@ -10,9 +10,33 @@ compose_file="${LLMGW_ASR_BOOTSTRAP_COMPOSE_FILE:-$repo_root/docker-compose.yml}
 mongo_service="${LLMGW_ASR_BOOTSTRAP_MONGO_SERVICE:-mongodb}"
 mongo_db="${LLMGW_ASR_BOOTSTRAP_DB:-prdagent}"
 dry_run="${LLMGW_ASR_BOOTSTRAP_DRY_RUN:-1}"
+bootstrap_mode="$(printf '%s' "${LLMGW_ASR_BOOTSTRAP_MODE:-bigmodel}" | tr 'A-Z' 'a-z' | xargs || true)"
 backup_root="${LLMGW_ASR_BOOTSTRAP_BACKUP_ROOT:-/root/backups}"
 backup_stamp="$(date '+%Y%m%dT%H%M%S%z' 2>/dev/null || date '+%Y%m%dT%H%M%S')"
 backup_dir="${LLMGW_ASR_BOOTSTRAP_BACKUP_DIR:-$backup_root/llmgw-prod-before-asr-pool-bootstrap-$backup_stamp}"
+
+case "$bootstrap_mode" in
+  bigmodel|"")
+    default_pool_id="asr_doubao_bigmodel_pool"
+    default_pool_name="ASR 豆包 BigModel"
+    default_pool_code="asr-doubao-bigmodel"
+    default_model_id="doubao-asr-bigmodel"
+    default_transformer="doubao-asr"
+    default_description="LLM Gateway ASR 发布门默认池：豆包 BigModel 异步 ASR exchange"
+    ;;
+  stream)
+    default_pool_id="asr_doubao_stream_pool"
+    default_pool_name="ASR 豆包 Stream"
+    default_pool_code="asr-doubao-stream"
+    default_model_id="doubao-asr-stream"
+    default_transformer="doubao-asr-stream"
+    default_description="LLM Gateway ASR 发布门候选池：豆包 WebSocket Stream ASR exchange"
+    ;;
+  *)
+    echo "ERROR: LLMGW_ASR_BOOTSTRAP_MODE=$bootstrap_mode 不合法；允许 bigmodel 或 stream。" >&2
+    exit 1
+    ;;
+esac
 
 if [ ! -f "$compose_file" ]; then
   echo "ERROR: 找不到 compose 文件: $compose_file" >&2
@@ -38,6 +62,7 @@ echo "  compose: $compose_file"
 echo "  mongoService: $mongo_service"
 echo "  database: $mongo_db"
 echo "  dryRun: $dry_run"
+echo "  mode: $bootstrap_mode"
 echo "  backupDir: $backup_dir"
 
 if [ "$dry_run" = "1" ] || [ "$dry_run" = "true" ]; then
@@ -55,11 +80,12 @@ fi
 # shellcheck disable=SC2086
 $COMPOSE -f "$compose_file" exec -T \
   -e LLMGW_ASR_BOOTSTRAP_DRY_RUN="$dry_run" \
-  -e LLMGW_ASR_BOOTSTRAP_POOL_ID="${LLMGW_ASR_BOOTSTRAP_POOL_ID:-asr_doubao_bigmodel_pool}" \
-  -e LLMGW_ASR_BOOTSTRAP_POOL_NAME="${LLMGW_ASR_BOOTSTRAP_POOL_NAME:-ASR 豆包 BigModel}" \
-  -e LLMGW_ASR_BOOTSTRAP_POOL_CODE="${LLMGW_ASR_BOOTSTRAP_POOL_CODE:-asr-doubao-bigmodel}" \
-  -e LLMGW_ASR_BOOTSTRAP_MODEL_ID="${LLMGW_ASR_BOOTSTRAP_MODEL_ID:-doubao-asr-bigmodel}" \
-  -e LLMGW_ASR_BOOTSTRAP_TRANSFORMER="${LLMGW_ASR_BOOTSTRAP_TRANSFORMER:-doubao-asr}" \
+  -e LLMGW_ASR_BOOTSTRAP_POOL_ID="${LLMGW_ASR_BOOTSTRAP_POOL_ID:-$default_pool_id}" \
+  -e LLMGW_ASR_BOOTSTRAP_POOL_NAME="${LLMGW_ASR_BOOTSTRAP_POOL_NAME:-$default_pool_name}" \
+  -e LLMGW_ASR_BOOTSTRAP_POOL_CODE="${LLMGW_ASR_BOOTSTRAP_POOL_CODE:-$default_pool_code}" \
+  -e LLMGW_ASR_BOOTSTRAP_MODEL_ID="${LLMGW_ASR_BOOTSTRAP_MODEL_ID:-$default_model_id}" \
+  -e LLMGW_ASR_BOOTSTRAP_TRANSFORMER="${LLMGW_ASR_BOOTSTRAP_TRANSFORMER:-$default_transformer}" \
+  -e LLMGW_ASR_BOOTSTRAP_DESCRIPTION="${LLMGW_ASR_BOOTSTRAP_DESCRIPTION:-$default_description}" \
   "$mongo_service" mongosh "$mongo_db" --quiet < "$script_dir/llmgw-prod-asr-pool-bootstrap.js"
 
 if [ "$dry_run" = "1" ] || [ "$dry_run" = "true" ]; then

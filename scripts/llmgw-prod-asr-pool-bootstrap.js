@@ -1,5 +1,5 @@
 // Idempotently bind production ASR app callers to an ASR model pool backed by
-// the existing Doubao BigModel exchange. Run through
+// an existing Doubao ASR exchange. Run through
 // scripts/llmgw-prod-asr-pool-bootstrap.sh so production data is backed up first.
 
 const dryRunRaw = (process.env.LLMGW_ASR_BOOTSTRAP_DRY_RUN || "1").toLowerCase();
@@ -9,6 +9,7 @@ const poolName = process.env.LLMGW_ASR_BOOTSTRAP_POOL_NAME || "ASR 豆包 BigMod
 const poolCode = process.env.LLMGW_ASR_BOOTSTRAP_POOL_CODE || "asr-doubao-bigmodel";
 const modelId = process.env.LLMGW_ASR_BOOTSTRAP_MODEL_ID || "doubao-asr-bigmodel";
 const transformerType = process.env.LLMGW_ASR_BOOTSTRAP_TRANSFORMER || "doubao-asr";
+const description = process.env.LLMGW_ASR_BOOTSTRAP_DESCRIPTION || "LLM Gateway ASR 发布门默认池：豆包 ASR exchange";
 
 const appCallers = [
   "document-store.subtitle::asr",
@@ -77,7 +78,7 @@ const poolDoc = {
     },
   ],
   StrategyType: 0,
-  Description: "LLM Gateway ASR 发布门默认池：豆包 BigModel 异步 ASR exchange",
+  Description: description,
   UpdatedAt: now,
 };
 

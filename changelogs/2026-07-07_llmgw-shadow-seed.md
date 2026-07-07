@@ -21,3 +21,4 @@
 | ops | prd-agent | exec_dep.sh 在 LLM Gateway http 与 video-asr 灰度发布前重复执行 provider 配置审计，防止绕过 stage 脚本误发 |
 | ops | prd-agent | 新增 LLM Gateway 生产磁盘空间 guard，并接入 ASR 备份、prod-stage 与 exec_dep 发布路径 |
 | ops | prd-agent | LLM Gateway provider 审计识别 ASR seed 的 Invalid X-Api-Key，并输出明确的凭据修复指引 |
+| ops | prd-agent | LLM Gateway ASR bootstrap 与 provider 审计支持 stream 候选池参数化，便于在 BigModel 凭据失败时安全切换取证 |

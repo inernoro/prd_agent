@@ -27,8 +27,9 @@ ASR_APP_CALLERS = [
     "video-agent.video-to-text::asr",
 ]
 VIDEO_APP_CALLER = "video-agent.videogen::video-gen"
-ASR_POOL_ID = "asr_doubao_bigmodel_pool"
-ASR_MODEL_ID = "doubao-asr-bigmodel"
+DEFAULT_ASR_POOL_ID = "asr_doubao_bigmodel_pool"
+DEFAULT_ASR_MODEL_ID = "doubao-asr-bigmodel"
+DEFAULT_ASR_TRANSFORMER = "doubao-asr"
 
 
 def _run(cmd: list[str], cwd: str | None = None, input_text: str | None = None) -> str:
@@ -221,7 +222,14 @@ def _sanitize_exchange(exchange: dict[str, Any], secret: str | None) -> dict[str
     return clean
 
 
-def _audit(data: dict[str, Any], secret: str | None, seed_evidence: dict[str, Any] | None) -> dict[str, Any]:
+def _audit(
+    data: dict[str, Any],
+    secret: str | None,
+    seed_evidence: dict[str, Any] | None,
+    asr_pool_id: str,
+    asr_model_id: str,
+    asr_transformer: str,
+) -> dict[str, Any]:
     failures: list[str] = []
     warnings: list[str] = []
     exchanges = data.get("exchanges") or []
@@ -232,17 +240,17 @@ def _audit(data: dict[str, Any], secret: str | None, seed_evidence: dict[str, An
     asr_exchange = next(
         (
             x for x in exchanges
-            if str(x.get("TransformerType") or "") == "doubao-asr"
+            if str(x.get("TransformerType") or "") == asr_transformer
             and (
-                str(x.get("ModelAlias") or "") == ASR_MODEL_ID
-                or ASR_MODEL_ID in (x.get("ModelAliases") or [])
-                or any(str(m.get("ModelId") or "") == ASR_MODEL_ID for m in (x.get("Models") or []))
+                str(x.get("ModelAlias") or "") == asr_model_id
+                or asr_model_id in (x.get("ModelAliases") or [])
+                or any(str(m.get("ModelId") or "") == asr_model_id for m in (x.get("Models") or []))
             )
         ),
         None,
     )
     if not asr_exchange:
-        failures.append(f"ASR exchange missing for model {ASR_MODEL_ID}")
+        failures.append(f"ASR exchange missing for transformer={asr_transformer} model={asr_model_id}")
         asr_clean = None
         shape = {}
     else:
@@ -250,8 +258,10 @@ def _audit(data: dict[str, Any], secret: str | None, seed_evidence: dict[str, An
         shape = asr_clean.get("targetApiKeyShape") or {}
         if asr_exchange.get("Enabled") is not True:
             failures.append("ASR exchange is not enabled")
-        if not str(asr_exchange.get("TargetUrl") or "").startswith("https://openspeech.bytedance.com/api/v3/auc/bigmodel/submit"):
+        if asr_transformer == "doubao-asr" and not str(asr_exchange.get("TargetUrl") or "").startswith("https://openspeech.bytedance.com/api/v3/auc/bigmodel/submit"):
             warnings.append("ASR exchange TargetUrl is not the expected Doubao BigModel submit endpoint")
+        if asr_transformer == "doubao-asr-stream" and not str(asr_exchange.get("TargetUrl") or "").startswith("wss://openspeech.bytedance.com/api/v3/sauc/"):
+            warnings.append("ASR stream exchange TargetUrl is not the expected Doubao WebSocket endpoint")
         if not (asr_exchange.get("TransformerConfig") or {}).get("resourceId"):
             failures.append("ASR exchange TransformerConfig.resourceId is missing")
         if secret is not None and not shape.get("decryptOk"):
@@ -261,17 +271,17 @@ def _audit(data: dict[str, Any], secret: str | None, seed_evidence: dict[str, An
         if shape.get("looksUuidOnly") and str(asr_exchange.get("TargetAuthScheme") or "").lower() not in {"xapikey", "x-api-key"}:
             warnings.append("ASR key looks like a single UUID but TargetAuthScheme is not XApiKey")
 
-    asr_pool = next((g for g in groups if str(g.get("_id")) == ASR_POOL_ID), None)
+    asr_pool = next((g for g in groups if str(g.get("_id")) == asr_pool_id), None)
     if not asr_pool:
-        failures.append(f"ASR pool missing: {ASR_POOL_ID}")
+        failures.append(f"ASR pool missing: {asr_pool_id}")
     else:
         models = asr_pool.get("Models") or []
-        match = next((m for m in models if str(m.get("ModelId") or "") == ASR_MODEL_ID), None)
+        match = next((m for m in models if str(m.get("ModelId") or "") == asr_model_id), None)
         if not match:
-            failures.append(f"ASR pool {ASR_POOL_ID} does not contain model {ASR_MODEL_ID}")
+            failures.append(f"ASR pool {asr_pool_id} does not contain model {asr_model_id}")
         else:
             if asr_exchange and str(match.get("PlatformId") or "") != str(asr_exchange.get("_id") or ""):
-                failures.append("ASR pool model PlatformId does not point to the Doubao BigModel exchange")
+                failures.append("ASR pool model PlatformId does not point to the selected ASR exchange")
             if int(match.get("HealthStatus") or 0) != 0:
                 failures.append(f"ASR pool model is not Healthy: {_health_name(match.get('HealthStatus'))}")
 
@@ -283,8 +293,8 @@ def _audit(data: dict[str, Any], secret: str | None, seed_evidence: dict[str, An
             continue
         req = _req_for(caller, "asr")
         ids = [str(x) for x in ((req or {}).get("ModelGroupIds") or [])]
-        if not req or ASR_POOL_ID not in ids:
-            failures.append(f"ASR appCaller is not bound to {ASR_POOL_ID}: {code}")
+        if not req or asr_pool_id not in ids:
+            failures.append(f"ASR appCaller is not bound to {asr_pool_id}: {code}")
 
     video_caller = by_caller.get(VIDEO_APP_CALLER)
     if not video_caller:
@@ -356,8 +366,9 @@ def _audit(data: dict[str, Any], secret: str | None, seed_evidence: dict[str, An
         "warnings": warnings,
         "asr": {
             "exchange": _sanitize_exchange(asr_exchange, secret) if asr_exchange else None,
-            "poolId": ASR_POOL_ID,
-            "modelId": ASR_MODEL_ID,
+            "poolId": asr_pool_id,
+            "modelId": asr_model_id,
+            "transformer": asr_transformer,
             "appCallers": ASR_APP_CALLERS,
         },
         "video": {
@@ -391,6 +402,10 @@ def _write_md(path: str, report: dict[str, Any]) -> None:
         fh.write("# LLM Gateway Provider Config Audit\n\n")
         fh.write(f"- generatedAt: `{report.get('generatedAt')}`\n")
         fh.write(f"- verdict: `{report.get('verdict')}`\n")
+        asr = report.get("asr") or {}
+        fh.write(f"- ASR pool: `{asr.get('poolId') or ''}`\n")
+        fh.write(f"- ASR model: `{asr.get('modelId') or ''}`\n")
+        fh.write(f"- ASR transformer: `{asr.get('transformer') or ''}`\n")
         fh.write(f"- ASR exchange: `{((report.get('asr') or {}).get('exchange') or {}).get('name') or ((report.get('asr') or {}).get('exchange') or {}).get('Name') or ''}`\n")
         fh.write(f"- video healthy models: `{len((report.get('video') or {}).get('healthyModels') or [])}`\n\n")
         fh.write("## Failures\n\n")
@@ -415,6 +430,9 @@ def main() -> int:
     parser.add_argument("--mongo-service", default=os.environ.get("LLMGW_PROVIDER_AUDIT_MONGO_SERVICE", "mongodb"))
     parser.add_argument("--api-service", default=os.environ.get("LLMGW_PROVIDER_AUDIT_API_SERVICE", "api"))
     parser.add_argument("--mongo-db", default=os.environ.get("LLMGW_PROVIDER_AUDIT_DB", "prdagent"))
+    parser.add_argument("--asr-pool-id", default=os.environ.get("LLMGW_PROVIDER_AUDIT_ASR_POOL_ID", DEFAULT_ASR_POOL_ID))
+    parser.add_argument("--asr-model-id", default=os.environ.get("LLMGW_PROVIDER_AUDIT_ASR_MODEL_ID", DEFAULT_ASR_MODEL_ID))
+    parser.add_argument("--asr-transformer", default=os.environ.get("LLMGW_PROVIDER_AUDIT_ASR_TRANSFORMER", DEFAULT_ASR_TRANSFORMER))
     parser.add_argument("--input-json", default="", help="Optional pre-collected Mongo snapshot JSON")
     parser.add_argument("--seed-evidence-json", default="", help="Optional llmgw-map-shadow-seed evidence JSON")
     parser.add_argument("--skip-key-shape", action="store_true", help="Do not decrypt key shape metadata")
@@ -427,7 +445,14 @@ def main() -> int:
         data = _load_snapshot(args.input_json) if args.input_json else _mongo_snapshot(args.compose_file, args.mongo_service, args.mongo_db)
         secret = None if args.skip_key_shape else _primary_secret(args.compose_file, args.api_service)
         seed_evidence = _load_snapshot(args.seed_evidence_json) if args.seed_evidence_json else None
-        report = _audit(data, secret, seed_evidence)
+        report = _audit(
+            data,
+            secret,
+            seed_evidence,
+            args.asr_pool_id.strip(),
+            args.asr_model_id.strip(),
+            args.asr_transformer.strip(),
+        )
     except Exception as exc:
         report = {
             "generatedAt": datetime.now(timezone.utc).isoformat(),
