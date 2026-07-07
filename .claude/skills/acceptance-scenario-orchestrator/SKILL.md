@@ -26,6 +26,8 @@ Before building the scenario plan, load the acceptance rule source in this order
 
 The `doc/` files are authoritative. The bundled `references/rules/` files are generated snapshots for marketplace/offline users. Preserve the upstream `acceptance-test-design` decisions unless the SSOT documents require a stricter correction.
 
+The chain boundary is controlled by `doc/rule.acceptance.map-enterprise.md` section “验收链路总控矩阵”. This skill only orchestrates complex acceptance scenarios; it must not route daily-report requests into acceptance reports or let daily-report styling replace the CDS acceptance report structure.
+
 ## Workflow
 
 1. Classify the scenario.

@@ -10,6 +10,18 @@
 
 自动化只做调度壳。报告结构、证据规则、深度门禁、CDS ready、归档、`verify-open` 和失败降级必须来自技能链和规范文档，不在 automation prompt 中复制维护。
 
+每日验收和日报不是同一类产物。链路边界以 `doc/rule.acceptance.map-enterprise.md` 的“验收链路总控矩阵”为准:
+
+| 项目 | 每日验收 | 日报 |
+|---|---|---|
+| 目标 | 判断上一自然日变更是否通过验收 | 讲清当日主干落地了什么价值 |
+| 技能 | `acceptance-test-design -> acceptance-scenario-orchestrator -> create-visual-test-to-kb` | `daily-report-summary`，必要时借用验收 harness 配图 |
+| 样式 | CDS 标准交互验收报告 | 日报知识库报纸版或 Markdown 朴素版 |
+| Verdict | 可以产生验收 Verdict | 不单独产生验收 Verdict |
+| 证据 | 必须有范围、断言、证据、缺口和打开验证 | 可引用验收报告，不替代验收报告 |
+
+如果用户同时要“每日验收”和“日报”，必须拆成两个链接: 验收链接负责质量结论，日报链接负责阅读传播。
+
 ## 2. 生命周期
 
 | 阶段 | 输入 | 动作 | 输出 | 不合格处理 |

@@ -24,6 +24,8 @@ Before designing tests, load the acceptance rule source in this order:
 
 The `doc/` files are authoritative. The bundled `references/rules/` files are generated snapshots for marketplace/offline users. When local instructions conflict with these rule documents, the rule documents win.
 
+Use `doc/rule.acceptance.map-enterprise.md` section “验收链路总控矩阵” to decide whether the request belongs to single acceptance, daily acceptance, or daily-report communication. This skill designs acceptance tests only; it does not design the newspaper-style daily report except to provide acceptance conclusions that the report may cite.
+
 ## Core Rule
 
 Do not start from pages. Start from changed behavior.
