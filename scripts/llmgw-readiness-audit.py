@@ -1020,7 +1020,7 @@ def _static_checks() -> list[dict]:
             "report-agent.generate::chat:send:",
             "prd-agent-desktop.chat.sendmessage::chat:stream:",
             "prd-agent-desktop.preview-ask.section::chat:stream:",
-            "open-platform-agent.proxy::chat:send:",
+            "open-platform-agent.proxy::chat:stream:",
             "open-api.proxy::chat:send:",
             "open-api.proxy::generation:raw:",
             "prd-agent-web.model-lab.run::chat:stream:",

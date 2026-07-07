@@ -184,7 +184,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("report-agent.generate::chat:send:", script);
         Assert.Contains("prd-agent-desktop.chat.sendmessage::chat:stream:", script);
         Assert.Contains("prd-agent-desktop.preview-ask.section::chat:stream:", script);
-        Assert.Contains("open-platform-agent.proxy::chat:send:", script);
+        Assert.Contains("open-platform-agent.proxy::chat:stream:", script);
         Assert.Contains("open-api.proxy::chat:send:", script);
         Assert.Contains("open-api.proxy::generation:raw:", script);
         Assert.Contains("prd-agent-web.model-lab.run::chat:stream:", script);

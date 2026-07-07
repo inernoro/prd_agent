@@ -381,7 +381,7 @@ resolve-only 或单一路径证据放行全量切换；raw 样本由 `ShadowFull
 逐批收紧。
 全量 `LLMGW_MODE=http` 时如果未显式设置 `LLMGW_GATE_REQUIRED_APP_KINDS`，`exec_dep.sh` 还会默认要求
 `report-agent.generate::chat:send`、`prd-agent-desktop.chat.sendmessage::chat:stream`、
-`prd-agent-desktop.preview-ask.section::chat:stream`、`open-platform-agent.proxy::chat:send`、
+`prd-agent-desktop.preview-ask.section::chat:stream`、`open-platform-agent.proxy::chat:stream`、
 `open-api.proxy::chat:send`、`open-api.proxy::generation:raw`、`prd-agent-web.model-lab.run::chat:stream`、
 `prd-agent.arena.battle::chat:stream`、`tutorial-email.generate::chat:send`、
 `visual-agent.image-gen.generate::generation:raw`、`visual-agent.image.text2img::generation:raw`、

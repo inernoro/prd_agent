@@ -133,6 +133,26 @@ public class ShadowLlmGatewayTests
     }
 
     [Fact]
+    public async Task Stream_WhenConsumerBreaksAfterDone_StillComparesResolve()
+    {
+        var inproc = new FakeGateway(Res("m1", "openai", "openai"));
+        var http = new FakeGateway(Res("m1", "openai", "openai"));
+        var writer = new CapturingWriter();
+        var shadow = new ShadowLlmGateway(inproc, http, NullLogger<ShadowLlmGateway>.Instance, writer);
+
+        await foreach (var c in shadow.StreamAsync(Req()))
+        {
+            if (c.Type == GatewayChunkType.Done)
+                break;
+        }
+
+        var cmp = await writer.WaitForRecordAsync();
+        cmp.Kind.ShouldBe("stream");
+        cmp.AllMatch.ShouldBeTrue();
+        http.SendCount.ShouldBe(0, "调用方提前结束枚举时仍只做免费 resolve 比对");
+    }
+
+    [Fact]
     public async Task Raw_DefaultSampleZero_DoesNotDoubleHitModel()
     {
         var inproc = new FakeGateway(Res("m1", "openai", "openai")) { RawContent = "raw-inproc" };

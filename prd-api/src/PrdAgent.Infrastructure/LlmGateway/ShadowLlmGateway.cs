@@ -97,14 +97,20 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         // 否则影子探针拿到 inproc 选中的模型当输入 → 永远 match（评审 P2）。
         var expectedModel = request.GetEffectiveExpectedModel();
         GatewayModelResolution? startResolution = null;
-        await foreach (var chunk in _inproc.StreamAsync(request, ct))
+        try
         {
-            if (chunk.Type == GatewayChunkType.Start && chunk.Resolution != null)
-                startResolution = chunk.Resolution;
-            yield return chunk;
+            await foreach (var chunk in _inproc.StreamAsync(request, ct))
+            {
+                if (chunk.Type == GatewayChunkType.Start && chunk.Resolution != null)
+                    startResolution = chunk.Resolution;
+                yield return chunk;
+            }
         }
-        // 流式只做免费 resolve 比对（不重发 http 流，绝不 2x 打大模型）。
-        FireResolveCompare(request.AppCallerCode, request.ModelType, expectedModel, request.PinnedPlatformId, request.PinnedModelId, startResolution, "stream");
+        finally
+        {
+            if (startResolution != null)
+                FireResolveCompare(request.AppCallerCode, request.ModelType, expectedModel, request.PinnedPlatformId, request.PinnedModelId, startResolution, "stream");
+        }
     }
 
     public async Task<GatewayModelResolution> ResolveModelAsync(
