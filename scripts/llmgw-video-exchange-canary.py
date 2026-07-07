@@ -106,7 +106,9 @@ def _classify(response: dict[str, Any]) -> tuple[bool, list[str], list[str]]:
     if success:
         return True, failures, warnings
 
-    if VOLCENGINE_MODEL_NOT_OPEN_CODE.lower() in normalized or "has not activated the model" in normalized or "not activated the model" in normalized:
+    if "模型池内所有模型不可用" in error or ("all models" in normalized and "unavailable" in normalized):
+        failures.append("video-gen model pool has no available model; restore pool health only after upstream activation passes.")
+    elif VOLCENGINE_MODEL_NOT_OPEN_CODE.lower() in normalized or "has not activated the model" in normalized or "not activated the model" in normalized:
         failures.append("Volcengine Ark account has not activated the requested video model.")
     elif "no available channels" in normalized:
         failures.append("Video upstream has no available channels.")
