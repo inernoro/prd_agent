@@ -16,6 +16,18 @@ This skill does not replace browser取证 or MAP归档. It is the scene planner 
 
 For daily, PR, commit-range, release, or repeatedly disputed acceptance, run `acceptance-test-design` first. This skill consumes that design brief and turns it into executable browser/test units.
 
+## Rule Source SSOT
+
+Before building the scenario plan, load the acceptance rule source in this order:
+
+1. Repository SSOT when available: `doc/rule.acceptance.map-enterprise.md`, `doc/rule.acceptance.ssot.md`, `doc/guide.acceptance.daily-sop.md`, `doc/guide.acceptance.report-evidence.md`, `doc/design.acceptance.knowledge-governance.md`.
+2. Skill-package fallback when the skill is installed outside this repository: `references/rules/*.md` and `references/rules/manifest.json`.
+3. If neither source exists, fail closed and state that the acceptance rule source is missing. Do not invent a local substitute.
+
+The `doc/` files are authoritative. The bundled `references/rules/` files are generated snapshots for marketplace/offline users. Preserve the upstream `acceptance-test-design` decisions unless the SSOT documents require a stricter correction.
+
+The chain boundary is controlled by `doc/rule.acceptance.map-enterprise.md` section “验收链路总控矩阵”. This skill only orchestrates complex acceptance scenarios; it must not route daily-report requests into acceptance reports or let daily-report styling replace the CDS acceptance report structure.
+
 ## Workflow
 
 1. Classify the scenario.
@@ -38,6 +50,8 @@ For daily, PR, commit-range, release, or repeatedly disputed acceptance, run `ac
    - Mark items as `runtime`, `visual`, `api`, `docs/rules`, or `environment-only`.
    - Compute a depth budget before testing: target date, commit count, PR count, module count, high-risk module count, planned evidence count, and whether the run is `广度冒烟`, `深度验收`, or `发布前阻断验收`.
    - For daily/yesterday runs, do not allow a small set of entry screenshots to stand in for deep functional acceptance. If the budget cannot cover real workflows, label the run `广度冒烟` or mark uncovered items explicitly.
+   - Compute a proportionality ceiling as well as a depth floor. The brief must say where testing stops: which low-risk rows are grouped, which are non-runtime, which are observation-only, and which are intentionally left to follow-up because more evidence would not change the current Verdict.
+   - Do not let the scenario plan become a search for every possible imperfection. The plan should find meaningful product risk and user-visible failure, not manufacture noise.
 
 3. Produce the指差法 execution brief.
    For every test unit, write this before opening the page:
@@ -49,6 +63,7 @@ For daily, PR, commit-range, release, or repeatedly disputed acceptance, run `ac
    - `预期结果`: user-visible observable conditions that must appear before the test can pass.
    - `证据要求`: page screenshot first, then API response, log, database state, or file evidence as corroboration.
    - `用户心智`: what a user or reviewer should understand from the page before seeing internal evidence.
+   - `停止条件`: what evidence is sufficient for this unit and what would be over-testing.
 
    The brief must be verbose enough to execute safely:
    - Announce the expected result before testing. A step that says only "open page and observe" is not executable acceptance.
@@ -80,6 +95,8 @@ For daily, PR, commit-range, release, or repeatedly disputed acceptance, run `ac
    - Ensure the速览卡 verdict matches the mapped results and the worst meaningful failed/conditional item.
    - Require content fullness. Daily/yesterday reports must contain enough narrative and table rows to explain the day, the covered modules, the uncovered modules, the evidence strength, and the downgrade reasons. A report that only has a few screenshots plus a short conclusion is not a valid daily acceptance report.
    - Require anti-omission wording. Each high-risk or runtime assertion must end as `pass`, `conditional`, `fail`, `internal-only`, `non-runtime`, or `uncovered`; no assertion can be left implicit.
+   - Require a `规范一致性自测` section for daily/yesterday, disputed, or user-feedback-driven reports. It must answer: whether the actual report follows the selected skills, whether the depth label matches the evidence, and whether any new enterprise rule was applied only in prose but not in execution.
+   - Require a `问题定位自测` section when the report lists P0/P1/P2 visual problems. Each problem must name the exact page area, blocking object, blocked object, user impact, and evidence link. For example, `右下缺陷通知卡遮挡知识库卡片操作区` is acceptable; `遮挡问题` is not.
 
 ## Scenario Selection
 
@@ -113,14 +130,16 @@ If multiple scenarios match, choose the narrowest scenario as primary and list t
 |-----------|----------|----------|----------|------------|----------|
 
 ## 指差法开测清单
-| 顺序 | 现在开测 | 归属模块 | 页面位置 | 测试目的 | 预期结果 | 证据要求 |
-|------|----------|----------|----------|----------|----------|----------|
+| 顺序 | 现在开测 | 归属模块 | 页面位置 | 测试目的 | 预期结果 | 证据要求 | 停止条件 |
+|------|----------|----------|----------|----------|----------|----------|----------|
 
 ## 报告契约
 - 顶部结论:
 - PR/commit 到结果映射:
 - 标记法则与验收标准:
 - 截图回读检查:
+- 规范一致性自测:
+- 问题定位自测:
 - 重试记录:
 - 未覆盖项:
 ```
@@ -142,6 +161,8 @@ If multiple scenarios match, choose the narrowest scenario as primary and list t
 - Do not include an in-body table of contents for daily acceptance reports.
 - Do not accept thin daily reports. If the report cannot teach a reviewer what changed, where it was tested, why the evidence is relevant, what was not covered, and why the verdict is downgraded, send it back for expansion before archiving.
 - Do not use filler as fullness. More screenshots or repeated prose do not count unless they add source scope, expected result, actual result, evidence linkage, or risk explanation.
+- Do not accept over-testing as rigor. If additional checks do not change the risk, proof strength, or Verdict, mark them out of scope or observation-only.
+- Do not publish a visual defect that the reader cannot locate. P0/P1/P2 visual findings must link to a marked screenshot where the affected area is boxed or circled and the label states severity plus phenomenon.
 
 ## References
 

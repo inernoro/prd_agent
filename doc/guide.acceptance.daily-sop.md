@@ -1,0 +1,163 @@
+# MAP 每日自动化验收 SOP · 指南
+
+> **版本**：v1.0 | **日期**：2026-07-07 | **状态**：已落地
+
+关联规范: `doc/rule.acceptance.map-enterprise.md`。
+
+## 1. 目标
+
+每日验收 SOP 定义自动化从启动到 Slack 通知的完整生命周期。它的目标不是“每天生成一份报告”，而是确保上一 Asia/Shanghai 自然日完成和变更过的内容都被纳入范围、设计、取证、归档、打开验证和缺口管理。
+
+自动化只做调度壳。报告结构、证据规则、深度门禁、CDS ready、归档、`verify-open` 和失败降级必须来自技能链和规范文档，不在 automation prompt 中复制维护。
+
+每日验收和日报不是同一类产物。链路边界以 `doc/rule.acceptance.map-enterprise.md` 的“验收链路总控矩阵”为准:
+
+| 项目 | 每日验收 | 日报 |
+|---|---|---|
+| 目标 | 判断上一自然日变更是否通过验收 | 讲清当日主干落地了什么价值 |
+| 技能 | `acceptance-test-design -> acceptance-scenario-orchestrator -> create-visual-test-to-kb` | `daily-report-summary`，必要时借用验收 harness 配图 |
+| 样式 | CDS 标准交互验收报告 | 日报知识库报纸版或 Markdown 朴素版 |
+| Verdict | 可以产生验收 Verdict | 不单独产生验收 Verdict |
+| 证据 | 必须有范围、断言、证据、缺口和打开验证 | 可引用验收报告，不替代验收报告 |
+
+如果用户同时要“每日验收”和“日报”，必须拆成两个链接: 验收链接负责质量结论，日报链接负责阅读传播。
+
+## 2. 生命周期
+
+| 阶段 | 输入 | 动作 | 输出 | 不合格处理 |
+|---|---|---|---|---|
+| 0. 调度启动 | automation prompt、memory、env | 读取 `AGENTS.md`，确认 worktree 干净，解析目标日期 | 运行上下文 | 生成失败报告并通知 Slack |
+| 1. 范围冻结 | 目标日期、仓库 | 跑 `daily_scope.py`，收集 commit、PR、模块、高风险、未发布分支 | `/tmp/daily-scope.json` 和摘要 | 无 scope 不准截图 |
+| 2. 环境门禁 | branch、preview | `git fetch --all --prune`，同步最新 `origin/main`，记录测试 SHA 和 origin/main SHA | SHA 记录、预览地址 | SHA 漂移必须解释或降级 |
+| 3. CDS ready | CDS API、smoke | 检查 branch status、deploy/smoke；每 30 秒重试，总等待不超过 15 分钟 | ready 和重试记录 | 不 ready 判环境不可验 |
+| 4. 测试设计 | daily scope | 抽取改动断言、影响面、证明力、融合测试、覆盖缺口 | 验收测试设计稿 | 断言不清不得截图 |
+| 5. 场景编排 | 设计稿 | 生成指差法清单、页面位置、预期结果、证据要求 | execution brief | 高风险缺动作/结果对则降级 |
+| 6. 浏览器取证 | brief、preview | 真人路径进入页面，截图、标注、读图回查 | manifest、result.json、截图 | 弱 caption、截歪、裸图拒收 |
+| 7. 报告生成 | scope、brief、manifest | HTML 默认，写昨日总结、映射表、页面优先分层、覆盖矩阵、缺口账本 | Markdown 源和 HTML 报告 | 结构缺项不得归档 |
+| 8. CDS 归档 | 报告、manifest | 归 CDS 验收中心，写入元数据；执行类 HTML 必须通过模板血统门禁 | `/reports` 深链或 `/r/token` | 归档失败仍发失败摘要 |
+| 9. verify-open | 线上链接 | 最多 3 次打开验证标题、正文、图片 | 打开验证结果 | 三次失败判链路失败 |
+| 10. Slack 通知 | 报告结论 | 发送短摘要和线上链接 | 通知闭环 | 禁发 `/tmp`、`file://` |
+
+## 3. RACI
+
+| 事项 | R 负责 | A 拍板 | C 咨询 | I 通知 |
+|---|---|---|---|---|
+| 自动化调度 | Automation Runner | 验收负责人 | 平台工程 | Slack 频道 |
+| 范围盘点 | `acceptance-test-design` | 验收负责人 | 开发负责人 | Slack 频道 |
+| 证据契约 | `acceptance-scenario-orchestrator` | 验收负责人 | 模块 Owner | 开发团队 |
+| 浏览器取证 | `create-visual-test-to-kb` | 验收负责人 | QA、设计 | Slack 频道 |
+| CDS ready 与归档 | CDS 平台 | 平台 Owner | 验收执行者 | Slack 频道 |
+| 缺口处置 | 模块 Owner | 产品或研发负责人 | 验收负责人 | Slack 频道 |
+
+## 4. Prompt 和 memory 契约
+
+### 4.1 Automation prompt 只允许保留
+
+- 工作目录和必须使用的专用验收 worktree。
+- 目标日期规则。
+- 允许创建或修改的预览测试数据前缀。
+- 禁止触碰生产破坏性数据。
+- Slack 频道和 channel_id。
+- 必要 env 名称，例如 `MAP_AI_USER`、`MAP_ACCEPT_PASS`、`MAP_DOC_STORE_KEY`、`AI_ACCESS_KEY`。
+- 必用技能链: `acceptance-test-design -> acceptance-scenario-orchestrator -> create-visual-test-to-kb`。
+- 一句话说明: 结构、门禁、归档、通知以技能和规范为准。
+
+### 4.2 Automation prompt 禁止
+
+- 明文账号、密码、token。
+- 复制每日验收章节结构、截图数量、颜色规则、CDS 检查细则。
+- 复制 Slack 长格式模板。
+- 把一次事故的临时结论写成长期规则。
+
+### 4.3 Automation memory 只允许存事实
+
+| 允许 | 禁止 |
+|---|---|
+| 上次运行时间、报告链接、report id、未覆盖项、失败原因、重试次数、待补测 owner | 账号密码、token、整套规则副本、过时 prompt、不可验证口头结论 |
+
+memory 的作用是帮助下一次复跑关闭缺口，不是替代规范。
+
+## 5. 环境与安全门禁
+
+1. 启动后先读 `AGENTS.md`。
+2. 保持 tracked 工作区干净。
+3. 不得使用用户正在开发的脏工作区验收。
+4. 每日验收默认测试最新 `origin/main`，必须记录测试 commit 与 origin/main commit。
+5. 预览 URL 只能来自 CDS CLI 或系统 API，禁止手拼域名。
+6. 缺少必要 env 时，仍必须生成失败报告并通知 Slack。
+7. 预览测试数据必须使用约定前缀，例如 `每日验收-YYYY-MM-DD-`。
+8. 禁止触碰生产破坏性数据路径。
+
+## 6. 深度与降级
+
+| 失败类型 | Verdict | Slack 说法 | 后续动作 |
+|---|---|---|---|
+| 缺 env 或登录失败 | fail | 验收链路失败 | 补凭据后重跑 |
+| CDS 15 分钟未 ready | fail 或 conditional | 环境不可验 | 平台 Owner 排查 branch/deploy |
+| scope 有高风险但证据不足 | conditional | 降级为广度冒烟 | 开专项深测 |
+| 截图弱相关或未框选 | fail | 证据不合格 | 重拍，不改 caption 迁就错图 |
+| 归档成功但 verify-open 失败 | fail | 线上归档不可打开 | 重新归档或切换分享链 |
+| 产品 P0/P1 | fail | 产品验收不通过 | 开缺陷并阻断发布 |
+| 仅 P2/P3 | conditional | 有条件通过 | 记录 owner 和补测日期 |
+| HTML 模板血统失败 | fail | 归档链路拒收临时 HTML | 用 Markdown 源和 manifest 重新跑 `archive_report.py` |
+
+深度验收必须满足:
+
+- 至少 12 张有效截图。
+- 每个高风险模块至少两个证据点。
+- 至少包含一个负面、边界或失败路径说明。
+- 高风险缺口必须进入总缺口账本。
+
+不满足时只能称为广度冒烟或有条件通过。
+
+## 7. Slack 通知字段
+
+Slack 通知必须短，不承载详细证据。详细内容放报告。
+
+| 字段 | 要求 |
+|---|---|
+| 标题 | `每日验收 <YYYY-MM-DD>: <Verdict>` |
+| Verdict | 英文枚举加中文说明 |
+| 报告链接 | CDS `/reports?...` 或 `/r/<token>`，必须为 HTTPS |
+| 目标日期 | Asia/Shanghai 绝对日期 |
+| 测试 commit | 实测 SHA |
+| origin/main commit | 远端基线 SHA |
+| 深度 | 广度冒烟、深度验收、发布前阻断验收 |
+| 范围 | commit 数、PR 数、模块数、高风险模块数 |
+| 缺陷 | P0/P1/P2/P3 数量 |
+| 未覆盖 | 数量和最高风险项 |
+| 归档结果 | CDS report id、folder、format |
+| 打开验证 | 第几次通过；失败时写失败原因 |
+| 下一步 | owner、动作、期限 |
+
+禁止发送 `/tmp`、`file://` 或本机 HTML 作为报告入口。
+
+## 7.1 错误报告恢复
+
+如果每日 automation 已经发布了错误样式、空白证据栏或不可点击的报告，处理顺序固定:
+
+1. 保留旧 report id 作为事故证据，不原地改写历史内容。
+2. 用同一 target date、测试 commit、origin/main commit、manifest 和 Markdown 源重新运行标准归档，生成新的 CDS report id。
+3. 对新链接跑 `verify-open`，确认标题、正文、图片和图号跳转可用。
+4. Slack 和 automation memory 改指向新报告链接，注明旧链接已废弃。
+5. 若 CDS 支持撤销分享，撤销旧 `/r/<token>`；否则在摘要中标记“废弃链接，不作为验收入口”。
+
+恢复报告不是修改规范文档。规范文档仍从 `doc/` Markdown 发布；执行报告必须由标准交互模板重建。
+
+## 8. 总缺口账本
+
+每日报告必须有总缺口账本:
+
+| 字段 | 含义 |
+|---|---|
+| 缺口 ID | 稳定编号，便于下次复跑 |
+| 来源 | PR、commit、模块或分支 |
+| 分类 | uncovered、weak-related、internal-only、non-runtime、unsafe-to-test、environment-blocked |
+| 风险 | P0/P1/P2/P3 或 H/M/L |
+| 原因 | 为什么没有覆盖或只能弱覆盖 |
+| 当前结论 | 如何影响 Verdict |
+| owner | 谁负责关闭 |
+| 补测动作 | 下一步怎么测 |
+| 截止日期 | 何时关闭 |
+
+下一次 automation memory 只保存缺口 ID 和运行事实，不保存规则正文。

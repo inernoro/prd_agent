@@ -215,50 +215,64 @@ def _html_id(text, fallback):
 
 GITHUB_COMMIT_BASE = "https://github.com/inernoro/prd_agent/commit/"
 METHOD_FOLDER_BASE = "https://cds.miduo.org/reports?project=prd-agent&folder=b01a432f519541dbbd387286018e6721&report="
+METHOD_DOC_ENTERPRISE = METHOD_FOLDER_BASE + "0efbef7c40fc4d94a8b14e60113524a9"
+METHOD_DOC_DAILY = METHOD_FOLDER_BASE + "cf097d19b4b649ad92b15546bf13d996"
+METHOD_DOC_SSOT = METHOD_FOLDER_BASE + "3992cb728a9c4a23958b4ec92933f59b"
+METHOD_DOC_EVIDENCE = METHOD_FOLDER_BASE + "7bcc189776354b7db1600dcb91c97e17"
+METHOD_DOC_GOVERNANCE = METHOD_FOLDER_BASE + "c67d7301c52d41359fc691978d923426"
 METHOD_DOCS = [
-    ("MAP自动化测试规范总览", METHOD_FOLDER_BASE + "0efbef7c40fc4d94a8b14e60113524a9"),
-    ("PR commit 到结果映射与改动断言", METHOD_FOLDER_BASE + "3992cb728a9c4a23958b4ec92933f59b"),
+    ("MAP 企业级自动化验收规范", METHOD_DOC_ENTERPRISE),
+    ("MAP 验收规范 SSOT", METHOD_DOC_SSOT),
+    ("验收报告与证据交互规范", METHOD_DOC_EVIDENCE),
 ]
 METHOD_SECTION_DOCS = {
     "改动规模与深度预算": (
         "范围预算测试：先量化 commit、模块、高风险和证据预算，避免把大范围日报包装成深度通过。",
-        METHOD_FOLDER_BASE + "cf097d19b4b649ad92b15546bf13d996",
+        METHOD_DOC_DAILY,
     ),
     "PR/commit 到结果映射": (
         "变更映射测试：把 commit 分组映射到模块和结果，确认没有把变更藏在总述里。",
-        METHOD_FOLDER_BASE + "3992cb728a9c4a23958b4ec92933f59b",
+        METHOD_DOC_ENTERPRISE,
     ),
     "改动断言表": (
         "断言抽取测试：先说明每个 commit 声称改变了什么，再决定需要什么证据。",
-        METHOD_FOLDER_BASE + "3992cb728a9c4a23958b4ec92933f59b",
+        METHOD_DOC_ENTERPRISE,
     ),
     "改动断言到证据表": (
         "证据关联测试：每条断言必须连到页面证据、内部佐证和关联性结论。",
-        METHOD_FOLDER_BASE + "3992cb728a9c4a23958b4ec92933f59b",
+        METHOD_DOC_ENTERPRISE,
     ),
     "影响面矩阵": (
         "影响面测试：沿上游输入、用户路径、下游输出、持久化、权限和异步依赖拆风险。",
-        METHOD_FOLDER_BASE + "2f497f6aabc84974bd8c76bff8c6439a",
+        METHOD_DOC_ENTERPRISE,
     ),
     "融合测试设计": (
         "融合测试：把相关改动合并成用户旅程，验证跨模块行为而不是孤立页面。",
-        METHOD_FOLDER_BASE + "f10edd7d10fd4ed999c936d733980382",
+        METHOD_DOC_ENTERPRISE,
     ),
     "证明力矩阵": (
         "证明力测试：按页面证据、交互动作、内部佐证和失败条件评估证据强度。",
-        METHOD_FOLDER_BASE + "6bca595f70fb4d26b644490471d33680",
+        METHOD_DOC_ENTERPRISE,
     ),
     "页面优先证据分层": (
         "页面优先测试：用户可感知改动先看页面反馈，API 和日志只作第二证据。",
-        METHOD_FOLDER_BASE + "c67d7301c52d41359fc691978d923426",
+        METHOD_DOC_EVIDENCE,
     ),
     "覆盖矩阵": (
         "覆盖测试：按模块列出已覆盖证据和缺口，防止把抽样误报成全量通过。",
-        METHOD_FOLDER_BASE + "bd3c43a70b44419bbd25dc57ffa18cc3",
+        METHOD_DOC_ENTERPRISE,
     ),
     "截图回读检查": (
         "截图回读测试：每张图都回读核对是否截歪、加载完成、空白和标记准确。",
-        METHOD_FOLDER_BASE + "7bcc189776354b7db1600dcb91c97e17",
+        METHOD_DOC_EVIDENCE,
+    ),
+    "验收规范 SSOT": (
+        "规范同步测试：确认仓库文档、技能快照和 CDS Markdown 文档引用同一套规则,避免报告流程和规范描述分叉。",
+        METHOD_DOC_SSOT,
+    ),
+    "知识库治理": (
+        "知识治理测试：确认长期规范以可同步文档存在,验收报告只保存证据和结论,避免把临时报告混入代码文档。",
+        METHOD_DOC_GOVERNANCE,
     ),
 }
 
@@ -664,10 +678,12 @@ def build_interactive_html(title, verdict, markdown_content, manifest):
             f'</section>'
         )
     return f"""<!doctype html>
-<html lang="zh-CN">
+<!-- map-acceptance-template: interactive-html-v2 -->
+<html lang="zh-CN" data-template="map-acceptance-interactive-html-v2">
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="map-acceptance-template" content="interactive-html-v2"/>
 <title>{html.escape(title)}</title>
 <style>
 :root{{color-scheme:light;--text:#1f2328;--muted:#59636e;--line:#d8dee4;--soft:#f6f8fa;--panel:#fff;--pass:#1a7f37;--warn:#9a6700;--fail:#b42318;--link:#0969da;--ink:#0d1117}}
@@ -1270,6 +1286,107 @@ CDS_AGENT_EXPLICIT_BOUNDARY_PAT = re.compile(
 )
 CDS_AGENT_POSITIVE_RESULT_CELLS = {"pass", "passed", "done", "完成", "已完成", "通过", "已通过"}
 
+VISUAL_PROBLEM_PAT = re.compile(
+    r"(遮挡|覆盖|错位|溢出|截断|空白|留白|不可见|看不到|打不开|点击无效|"
+    r"无响应|图片缺失|无图|右侧为空|左侧为空|布局|重叠|压住|挡住|"
+    r"contrast|overflow|blank|overlap|blocked|invisible|missing image)",
+    re.I,
+)
+COVERAGE_GAP_PAT = re.compile(
+    r"(未覆盖|没有覆盖|覆盖不足|覆盖缺口|覆盖率|测试覆盖|用例覆盖|场景覆盖|路径覆盖|缺少覆盖|未测|漏测)",
+    re.I,
+)
+DEFECT_SEVERITY_PAT = re.compile(r"\b(P[0-2])\b", re.I)
+
+
+def _figure_anchor_to_manifest(manifest):
+    out = {}
+    for m in manifest or []:
+        key = _figure_key(m.get("name"))
+        anchor = _figure_anchor(key)
+        if anchor:
+            out[anchor] = m
+    return out
+
+
+def _problem_localization_errors(body, manifest):
+    """P0/P1/P2 visual defects must point to a marked screenshot.
+
+    This closes the common failure mode where the report says "遮挡/错位"
+    but the reader cannot tell where the issue is in the image.
+    """
+    errs = []
+    anchor_map = _figure_anchor_to_manifest(manifest)
+    in_defects = False
+    candidates = []
+    for line in (body or "").splitlines():
+        stripped = line.strip()
+        if re.match(r"^##\s+缺陷清单", stripped):
+            in_defects = True
+            continue
+        if in_defects and stripped.startswith("## "):
+            in_defects = False
+        if not in_defects or not stripped:
+            continue
+        if re.match(r"^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$", stripped):
+            continue
+        if stripped.startswith("|"):
+            cells = _split_markdown_table_row(stripped)
+            if not cells or all(c in {"", "---"} for c in cells):
+                continue
+            severity_match = DEFECT_SEVERITY_PAT.search(cells[0]) or DEFECT_SEVERITY_PAT.search(" ".join(cells))
+            if not severity_match:
+                continue
+            severity = severity_match.group(1).upper()
+            row_text = " ".join(cells)
+        else:
+            row_text = re.sub(r"^[-*+]\s+", "", stripped)
+            row_text = re.sub(r"^\d+[.)]\s+", "", row_text)
+            row_text = re.sub(r"^\*\*(P[0-2])\*\*", r"\1", row_text, flags=re.I)
+            severity_match = DEFECT_SEVERITY_PAT.search(row_text)
+            if not severity_match:
+                continue
+            severity = severity_match.group(1).upper()
+        candidates.append((severity, row_text))
+    for severity, row_text in candidates:
+        if severity not in {"P0", "P1", "P2"}:
+            continue
+        if COVERAGE_GAP_PAT.search(row_text):
+            continue
+        if not VISUAL_PROBLEM_PAT.search(row_text):
+            continue
+        anchors = re.findall(r"#(fig-[a-z0-9-]+)", row_text, re.I)
+        for img_name in re.findall(r"\{\{IMG:([^}]+)\}\}", row_text):
+            anchor = _figure_anchor(_figure_key(img_name))
+            if anchor:
+                anchors.append(anchor)
+        if not anchors:
+            refs = re.findall(r"图\s*([0-9]+[a-zA-Z]?)", row_text)
+            for ref in refs:
+                matches = [
+                    _figure_anchor(_figure_key(m.get("name")))
+                    for m in manifest or []
+                    if (m.get("name") or "").lower().startswith(ref.lower())
+                ]
+                anchors.extend(a for a in matches if a)
+        if not anchors:
+            errs.append(
+                f"[问题定位] {severity} 视觉缺陷没有链接到截图锚点。"
+                f"缺陷行必须写成 [图XX](#fig-完整截图名), 并在图内框出问题：{row_text[:120]}"
+            )
+            continue
+        for anchor in anchors:
+            shot = anchor_map.get(anchor)
+            if not shot:
+                errs.append(f"[问题定位] 缺陷行引用 {anchor}，但 manifest 中找不到对应截图：{row_text[:120]}")
+                continue
+            if shot.get("annotated") is not True:
+                errs.append(
+                    f"[问题定位] {severity} 视觉缺陷引用的截图未记录为已标注：{shot.get('name') or anchor}。"
+                    f"必须用 box/stepShot/stepClick 在图内框出具体问题, 不能只在文字里说：{row_text[:120]}"
+                )
+    return errs
+
 
 def _row_has_positive_result(line):
     return any(c.strip().lower() in CDS_AGENT_POSITIVE_RESULT_CELLS for c in _split_markdown_table_row(line))
@@ -1410,6 +1527,7 @@ def validate_inputs(a, body, manifest, cfg=None):
             "或补 cdscli/API/deploy/smoke/reports/preview routing 等平台证据。示例："
             + " | ".join(cds_agent_hits[:3])
         )
+    errs.extend(_problem_localization_errors(body, manifest))
     if "{{EVIDENCE}}" not in body and "{{IMG:" not in body:
         errs.append("[结构] 报告缺截图占位：{{EVIDENCE}}（集中证据段）或 {{IMG:<name>}}（ZZ 逐步配图）至少要有一种")
     if PLACEHOLDER_PAT.search(body):

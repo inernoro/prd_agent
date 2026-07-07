@@ -3864,6 +3864,10 @@ export class StateService {
     branch?: string | null;
     prNumber?: number | null;
     deployMode?: string | null;
+    sourceId?: string | null;
+    sourcePath?: string | null;
+    contentHash?: string | null;
+    publishedAt?: string | null;
     createdBy?: string;
   }): AcceptanceReportMeta {
     if (!this.state.acceptanceReports) this.state.acceptanceReports = [];
@@ -3888,6 +3892,10 @@ export class StateService {
       branch: input.branch ?? null,
       prNumber: input.prNumber ?? null,
       deployMode: input.deployMode ?? null,
+      sourceId: input.sourceId ?? null,
+      sourcePath: input.sourcePath ?? null,
+      contentHash: input.contentHash ?? null,
+      publishedAt: input.publishedAt ?? null,
       createdBy: input.createdBy,
       createdAt: now,
       updatedAt: now,
@@ -3908,6 +3916,7 @@ export class StateService {
     id: string,
     updates: {
       title?: string;
+      format?: 'html' | 'md';
       content?: string;
       verdict?: 'pass' | 'conditional' | 'fail' | null;
       tier?: string | null;
@@ -3916,15 +3925,35 @@ export class StateService {
       branch?: string | null;
       prNumber?: number | null;
       deployMode?: string | null;
+      sourceId?: string | null;
+      sourcePath?: string | null;
+      contentHash?: string | null;
+      publishedAt?: string | null;
     },
   ): AcceptanceReportMeta | null {
     const meta = this.getAcceptanceReport(id);
     if (!meta) return null;
+    const previousPath = this.reportFilePath(meta);
     if (typeof updates.title === 'string') meta.title = updates.title;
+    let formatChanged = false;
+    if (updates.format !== undefined && updates.format !== meta.format) {
+      meta.format = updates.format;
+      formatChanged = true;
+    }
     if (typeof updates.content === 'string') {
       fs.mkdirSync(this.getReportsBase(), { recursive: true });
       fs.writeFileSync(this.reportFilePath(meta), updates.content, 'utf-8');
       meta.sizeBytes = Buffer.byteLength(updates.content, 'utf8');
+      const nextPath = this.reportFilePath(meta);
+      if (previousPath !== nextPath && fs.existsSync(previousPath)) {
+        try { fs.unlinkSync(previousPath); } catch { /* best-effort cleanup of old extension */ }
+      }
+    } else if (formatChanged) {
+      const nextPath = this.reportFilePath(meta);
+      if (previousPath !== nextPath && fs.existsSync(previousPath) && !fs.existsSync(nextPath)) {
+        fs.mkdirSync(this.getReportsBase(), { recursive: true });
+        fs.renameSync(previousPath, nextPath);
+      }
     }
     if (updates.verdict !== undefined) meta.verdict = updates.verdict;
     if (updates.tier !== undefined) meta.tier = updates.tier;
@@ -3933,6 +3962,10 @@ export class StateService {
     if (updates.branch !== undefined) meta.branch = updates.branch;
     if (updates.prNumber !== undefined) meta.prNumber = updates.prNumber;
     if (updates.deployMode !== undefined) meta.deployMode = updates.deployMode;
+    if (updates.sourceId !== undefined) meta.sourceId = updates.sourceId;
+    if (updates.sourcePath !== undefined) meta.sourcePath = updates.sourcePath;
+    if (updates.contentHash !== undefined) meta.contentHash = updates.contentHash;
+    if (updates.publishedAt !== undefined) meta.publishedAt = updates.publishedAt;
     meta.updatedAt = new Date().toISOString();
     this.save();
     return meta;
