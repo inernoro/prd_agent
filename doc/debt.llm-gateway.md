@@ -54,6 +54,15 @@
 - 同步后在生产机完成脚本语法校验：`python3 -m py_compile scripts/llmgw-prod-provider-config-audit.py scripts/llmgw-upstream-readiness.py scripts/llmgw-readiness-audit.py` 与 `sh -n exec_dep.sh scripts/llmgw-prod-stage.sh` 均通过。
 - 生产只读 provider config audit 使用新脚本跑出预期 FAIL，证据为 `.llmgw-release-evidence/20260707T030620Z_provider-config-video-visual-gate.json`。首要失败项为 `visual-agent.videogen::video-gen` 没有 video-gen `ModelGroupIds`；同时仍有 no Healthy video-gen model、视频上游 404/503、ASR `Invalid X-Api-Key`/502/503 等阻塞。
 - 结论不变：当前只允许继续 shadow 与文本类证据收集；禁止发布 `canary-video-asr` 或全量 `LLMGW_MODE=http`。
+
+## 最新生产取证（2026-07-07 11:21 CST）
+
+- 已新增并执行 `scripts/llmgw-prod-video-caller-bootstrap.sh`，将 `visual-agent.videogen::video-gen` 绑定到 `video-agent.videogen::video-gen` 使用的 `video_seedance_2_0_fast_pool`。该动作只补 appCaller 漏绑，不修改模型健康状态，不替换上游 key，不切 `LLMGW_MODE`。
+- 执行前脚本备份：`/root/backups/llmgw-prod-video-bootstrap-scripts-before-sync-20260707T111603+0800`；生产写库备份：`/root/backups/llmgw-prod-before-video-caller-bootstrap-20260707T111717+0800`。
+- dry-run 先确认计划变更：sourceCaller=`video-agent.videogen::video-gen`，sourcePoolIds=`video_seedance_2_0_fast_pool`，targetCallers=`visual-agent.videogen::video-gen`；真实执行返回 `matchedCount=1`、`modifiedCount=1`。
+- provider config audit 复验文件：`.llmgw-release-evidence/20260707T032001Z_provider-config-after-video-caller-bootstrap.json`。`HAS_VISUAL_BINDING_FAILURE=false`，说明视觉视频漏绑项已消除；audit 仍 FAIL，因为生产没有 Healthy video-gen model，且历史 video/ASR 上游错误仍存在。
+- upstream readiness 复验文件：`.llmgw-release-evidence/20260707T032044Z_upstream-readiness-after-video-caller-bootstrap.json`。`video-agent.videogen::video-gen` 与 `visual-agent.videogen::video-gen` 均失败于“模型池内所有模型不可用”，不再是视觉入口独有配置漏绑。
+- 结论更新：video/ASR 发布阻塞从“视觉视频漏绑 + 上游不可用”缩小为“video-gen 上游模型池不可用 + ASR 凭据/通道失败”。仍禁止进入 `canary-video-asr` 或全量 `LLMGW_MODE=http`。
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘
