@@ -2,8 +2,8 @@
 """LLM Gateway shadow coverage report.
 
 This is a read-only evidence collector for S5/S6 rollout. It queries
-/gw/v1/shadow-comparisons and renders an appCaller x kind coverage matrix
-without printing the gateway key.
+/gw/v1/shadow-comparisons and renders explicit global, kind, appCaller, and
+appCaller:kind coverage cells without printing the gateway key.
 """
 
 from __future__ import annotations
@@ -68,6 +68,53 @@ def _normalize_commit(value: str | None) -> str:
     if raw.lower().startswith("sha-"):
         raw = raw[4:]
     return raw.lower()
+
+
+def _parse_kind_requirement(raw: str, default_min: int) -> tuple[str, int]:
+    value = raw.strip()
+    if not value:
+        raise ValueError("空 kind requirement")
+    if ":" not in value:
+        return value, default_min
+    kind, min_raw = value.rsplit(":", 1)
+    if not kind.strip() or not min_raw.strip().isdigit():
+        raise ValueError(f"kind requirement 格式应为 kind 或 kind:min: {raw}")
+    return kind.strip(), int(min_raw.strip())
+
+
+def _parse_app_kind_requirement(raw: str) -> tuple[str, str, int]:
+    parts = raw.strip().rsplit(":", 2)
+    if len(parts) != 3 or not parts[0].strip() or not parts[1].strip() or not parts[2].strip().isdigit():
+        raise ValueError(f"app kind requirement 格式应为 appCallerCode:kind:min: {raw}")
+    return parts[0].strip(), parts[1].strip(), int(parts[2].strip())
+
+
+def _upsert_cell_spec(
+    specs: list[dict],
+    index: dict[tuple[str | None, str | None], dict],
+    *,
+    app: str | None,
+    kind: str | None,
+    required_total: int,
+    source: str,
+) -> None:
+    key = (app, kind)
+    existing = index.get(key)
+    if existing is not None:
+        existing["requiredTotal"] = max(int(existing["requiredTotal"]), required_total)
+        sources = existing.setdefault("sources", [])
+        if source not in sources:
+            sources.append(source)
+        return
+
+    spec = {
+        "appCallerCode": app,
+        "kind": kind,
+        "requiredTotal": required_total,
+        "sources": [source],
+    }
+    specs.append(spec)
+    index[key] = spec
 
 
 def _payload_from_raw(raw: str) -> dict:
@@ -167,6 +214,7 @@ def _cell(
         "ok": False,
         "failures": [],
         "failureSamples": [],
+        "sources": [],
     }
     if code != 200:
         result["failures"].append(f"HTTP {code}: {raw[:200]}")
@@ -268,8 +316,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="LLM Gateway shadow coverage matrix report")
     parser.add_argument("--base", default=_default_base(), help="serving base URL, e.g. https://host/gw/v1")
     parser.add_argument("--key", default=os.environ.get("GW_KEY", ""), help="X-Gateway-Key")
-    parser.add_argument("--app-caller", action="append", default=[], help="appCallerCode to include; repeatable")
-    parser.add_argument("--kind", action="append", default=[], help="shadow kind to include; repeatable, default send+stream")
+    parser.add_argument("--app-caller", action="append", default=[], help="appCallerCode aggregate cell to include; repeatable")
+    parser.add_argument("--kind", action="append", default=[], help="shadow kind aggregate cell to include; repeatable, default send+stream")
+    parser.add_argument("--require-kind", action="append", default=[],
+                        help="required shadow Kind aggregate cell, format kind or kind:min; repeatable")
+    parser.add_argument("--require-app-kind", action="append", default=[],
+                        help="required appCallerCode + Kind cell, format appCallerCode:kind:min; repeatable")
     parser.add_argument("--min-per-cell", type=int, default=int(os.environ.get("LLMGW_GATE_MIN_PER_APP", "30")))
     parser.add_argument("--since-hours", type=float, default=float(os.environ.get("LLMGW_GATE_SHADOW_SINCE_HOURS", "24")))
     parser.add_argument("--min-coverage-hours", type=float, default=float(os.environ.get("LLMGW_GATE_MIN_COVERAGE_HOURS", "0")))
@@ -298,6 +350,8 @@ def main() -> int:
         "appCallers": app_callers,
         "kinds": kinds,
         "failureSampleLimit": max(0, args.failure_sample_limit),
+        "requiredKinds": args.require_kind,
+        "requiredAppKinds": args.require_app_kind,
         "cells": [],
         "failures": [],
     }
@@ -310,12 +364,42 @@ def main() -> int:
     if not report["failures"]:
         min_coverage_hours = max(0, args.min_coverage_hours)
         failure_sample_limit = report["failureSampleLimit"]
-        report["cells"].append(_cell(base, key, None, None, args.min_per_cell, max(0, args.since_hours), min_coverage_hours, args.release_commit, failure_sample_limit))
+        specs: list[dict] = []
+        spec_index: dict[tuple[str | None, str | None], dict] = {}
+        _upsert_cell_spec(specs, spec_index, app=None, kind=None, required_total=args.min_per_cell, source="global")
         for kind in kinds:
-            report["cells"].append(_cell(base, key, None, kind, args.min_per_cell, max(0, args.since_hours), min_coverage_hours, args.release_commit, failure_sample_limit))
+            _upsert_cell_spec(specs, spec_index, app=None, kind=kind, required_total=args.min_per_cell, source="kind")
         for app in app_callers:
-            for kind in kinds:
-                report["cells"].append(_cell(base, key, app, kind, args.min_per_cell, max(0, args.since_hours), min_coverage_hours, args.release_commit, failure_sample_limit))
+            _upsert_cell_spec(specs, spec_index, app=app, kind=None, required_total=args.min_per_cell, source="appCaller")
+        for raw in args.require_kind:
+            try:
+                kind, min_total = _parse_kind_requirement(raw, args.min_per_cell)
+            except ValueError as exc:
+                report["failures"].append(str(exc))
+                continue
+            _upsert_cell_spec(specs, spec_index, app=None, kind=kind, required_total=min_total, source="requireKind")
+        for raw in args.require_app_kind:
+            try:
+                app, kind, min_total = _parse_app_kind_requirement(raw)
+            except ValueError as exc:
+                report["failures"].append(str(exc))
+                continue
+            _upsert_cell_spec(specs, spec_index, app=app, kind=kind, required_total=min_total, source="requireAppKind")
+
+        for spec in specs:
+            item = _cell(
+                base,
+                key,
+                spec["appCallerCode"],
+                spec["kind"],
+                int(spec["requiredTotal"]),
+                max(0, args.since_hours),
+                min_coverage_hours,
+                args.release_commit,
+                failure_sample_limit,
+            )
+            item["sources"] = spec["sources"]
+            report["cells"].append(item)
         for item in report["cells"]:
             for failure in item.get("failures") or []:
                 report["failures"].append(f"{item['label']}: {failure}")

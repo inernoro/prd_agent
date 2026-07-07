@@ -162,6 +162,8 @@ def _static_checks() -> list[dict]:
             "/shadow-comparisons",
             "--app-caller",
             "--kind",
+            "--require-kind",
+            "--require-app-kind",
             "--min-per-cell",
             "--min-coverage-hours",
             "--release-commit",
@@ -1461,6 +1463,10 @@ def _shadow_coverage(args: argparse.Namespace) -> dict:
         cmd.extend(["--app-caller", item])
     for item in args.kind:
         cmd.extend(["--kind", item])
+    for item in args.require_kind:
+        cmd.extend(["--require-kind", item])
+    for item in args.require_app_kind:
+        cmd.extend(["--require-app-kind", item])
     result = _run(cmd, timeout=600)
     return {"name": "shadow_coverage_matrix", "ok": result["ok"], "detail": result["stdout"] + result["stderr"], "command": result}
 

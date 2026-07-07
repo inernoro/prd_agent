@@ -115,9 +115,11 @@ multipart/key-gate/http-failure、C 层跨进程矩阵、serving 端点合同、
 `llmgw-prd-agent` 与 `llmgw-serve-prd-agent` 必须是 running 且 `deployedMode=express`，
 commit 必须匹配 `--expect-commit`，`llmgw-web-prd-agent` 必须 running。这样可以防止“CI 镜像已绿，
 但灰度仍在源码模式或旧容器上验证”的假阳性；
-传 `--run-shadow-coverage` 时会调用 `scripts/llmgw-shadow-coverage-report.py` 输出 global/kind/appCaller×kind
-覆盖矩阵，明确每个格子的 total、allMatch、critical、httpFail 与是否达标；传 `--expect-commit` 时矩阵默认只统计
-该 commit 产生的 shadow 样本，防止旧版本证据搭车。
+传 `--run-shadow-coverage` 时会调用 `scripts/llmgw-shadow-coverage-report.py` 输出显式 coverage cells：
+global、`--kind`/`--require-kind` 的 kind 聚合、`--app-caller` 的 appCaller 聚合，以及
+`--require-app-kind` 指定的 appCaller:kind 单元。报告不再把所有 appCaller 和所有 kind 做笛卡尔积，
+避免 ModelLab/Arena、图片、视频、ASR 这类不适用组合被误判为未达标；每个单元都会明确 total、allMatch、
+critical、httpFail 与是否达标。传 `--expect-commit` 时矩阵默认只统计该 commit 产生的 shadow 样本，防止旧版本证据搭车。
 传 `--require-release-gate` 时会调用 `scripts/llmgw-release-gate.py` 检查真实 health/shadow 样本；release gate
 同样会在 `--expect-commit` 或 `--shadow-release-commit` 存在时只统计该 commit 的 shadow 记录。
 

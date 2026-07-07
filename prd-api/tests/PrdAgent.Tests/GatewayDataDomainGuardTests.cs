@@ -868,7 +868,7 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
-    public void ShadowCoverageReport_RendersAppCallerKindMatrixWithoutLeakingKey()
+    public void ShadowCoverageReport_RendersExplicitCoverageCellsWithoutLeakingKey()
     {
         var script = ReadRepoFile("scripts/llmgw-shadow-coverage-report.py");
         var endpoint = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
@@ -877,6 +877,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("/shadow-comparisons", script);
         Assert.Contains("--app-caller", script);
         Assert.Contains("--kind", script);
+        Assert.Contains("--require-kind", script);
+        Assert.Contains("--require-app-kind", script);
+        Assert.Contains("_parse_kind_requirement", script);
+        Assert.Contains("_parse_app_kind_requirement", script);
+        Assert.Contains("_upsert_cell_spec", script);
         Assert.Contains("--min-per-cell", script);
         Assert.Contains("LLMGW_HTTP_APP_CALLER_ALLOWLIST", script);
         Assert.Contains("LLMGW_SHADOW_COVERAGE_JSON_OUT", script);
@@ -898,6 +903,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("failureLimit", endpoint);
         Assert.Contains("failureRecent", endpoint);
         Assert.Contains("Filter.Eq(x => x.HttpOk, false)", endpoint);
+        Assert.DoesNotContain("for app in app_callers:\n            for kind in kinds:", script);
         Assert.DoesNotContain("print(key", script);
         Assert.DoesNotContain("GW_KEY=\"", script);
     }
@@ -933,9 +939,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("\"cmd\": _redact_cmd(cmd)", readiness);
         Assert.Contains("--min-coverage-hours", readiness);
         Assert.Contains("str(args.min_coverage_hours)", readiness);
-        Assert.Contains("visual-agent.image-gen.generate::generation:raw:${MIN_PER_CELL}", readiness);
-        Assert.Contains("video-agent.v2d.transcribe::asr:raw:${MIN_PER_CELL}", readiness);
-        Assert.Contains("video-agent.video-to-text::asr:raw:${MIN_PER_CELL}", readiness);
+        Assert.Contains("cmd.extend([\"--require-kind\", item])", readiness);
+        Assert.Contains("cmd.extend([\"--require-app-kind\", item])", readiness);
+        Assert.Contains("visual-agent.image-gen.generate::generation:raw:${MIN_PER_CELL}", workflow);
+        Assert.Contains("video-agent.v2d.transcribe::asr:raw:${MIN_PER_CELL}", workflow);
+        Assert.Contains("video-agent.video-to-text::asr:raw:${MIN_PER_CELL}", workflow);
     }
 
     [Fact]
