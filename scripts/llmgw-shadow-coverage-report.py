@@ -163,6 +163,12 @@ def _failure_samples_from_payload(payload: dict) -> list[dict]:
             "httpModel": http.get("actualModel") or http.get("ActualModel"),
             "inprocGroup": inproc.get("modelGroupId") or inproc.get("ModelGroupId"),
             "httpGroup": http.get("modelGroupId") or http.get("ModelGroupId"),
+            "inprocPlatformType": inproc.get("platformType") or inproc.get("PlatformType"),
+            "httpPlatformType": http.get("platformType") or http.get("PlatformType"),
+            "inprocResolutionType": inproc.get("resolutionType") or inproc.get("ResolutionType"),
+            "httpResolutionType": http.get("resolutionType") or http.get("ResolutionType"),
+            "inprocFallback": inproc.get("isFallback") if "isFallback" in inproc else inproc.get("IsFallback"),
+            "httpFallback": http.get("isFallback") if "isFallback" in http else http.get("IsFallback"),
         })
     return out
 
@@ -298,17 +304,24 @@ def _write_markdown(path: str, report: dict) -> None:
 
         if samples:
             fh.write("\n## Failure Samples\n\n")
-            fh.write("| cell | comparedAt | appCaller | kind | model | httpError |\n")
-            fh.write("|---|---|---|---|---|---|\n")
+            fh.write("| cell | comparedAt | appCaller | kind | httpOk | critical | inprocModel | httpModel | inprocGroup | httpGroup | platform | resolution | fallback | httpError |\n")
+            fh.write("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
             for label, sample in samples:
-                model = sample.get("httpModel") or sample.get("inprocModel") or ""
                 error = str(sample.get("httpError") or "")
                 if len(error) > 180:
                     error = error[:177] + "..."
+                platform = sample.get("httpPlatformType") or sample.get("inprocPlatformType") or ""
+                resolution = sample.get("httpResolutionType") or sample.get("inprocResolutionType") or ""
+                fallback = sample.get("httpFallback")
+                if fallback is None:
+                    fallback = sample.get("inprocFallback")
                 fh.write(
                     f"| {cell(label)} | {cell(sample.get('comparedAt') or '')} | "
                     f"{cell(sample.get('appCallerCode') or '')} | {cell(sample.get('kind') or '')} | "
-                    f"{cell(model)} | {cell(error)} |\n"
+                    f"{cell(sample.get('httpOk'))} | {cell(sample.get('hasCritical'))} | "
+                    f"{cell(sample.get('inprocModel') or '')} | {cell(sample.get('httpModel') or '')} | "
+                    f"{cell(sample.get('inprocGroup') or '')} | {cell(sample.get('httpGroup') or '')} | "
+                    f"{cell(platform)} | {cell(resolution)} | {cell(fallback)} | {cell(error)} |\n"
                 )
 
 
