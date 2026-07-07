@@ -11,3 +11,5 @@
 | fix | prd-agent | LLM Gateway 发布脚本持久化四个 release 镜像 pin，避免后续单服务重启读取旧 `.env` 镜像 |
 | fix | prd-agent | `llmgw-restore-shadow-safe.sh` 恢复 shadow 时保留当前运行镜像并同步写回 `.env`，防止 API 回退到旧版本 |
 | test | prd-api | 补充 LLM Gateway 发布镜像 pin 与 shadow restore 镜像保留的静态守卫 |
+| fix | prd-api | `video-gen`/`asr` 专属模型池不可用时拒绝 legacy 直连兜底，避免迁移 gate 误打旧上游路径 |
+| test | prd-api | 补充 raw 专属池 fail-closed 与 expectedModel 直连兜底守卫 |

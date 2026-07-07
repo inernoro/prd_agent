@@ -1077,6 +1077,18 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("\"PRD_AGENT_API_IMAGE\": os.environ.get(\"RESTORE_PRD_AGENT_API_IMAGE\", \"\")", restore);
     }
 
+    [Fact]
+    public void ModelResolver_FailClosesRawDedicatedPoolsBeforeLegacyFallback()
+    {
+        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+
+        Assert.Contains("ShouldFailClosedWhenDedicatedPoolUnavailable", resolver);
+        Assert.Contains("ModelTypes.VideoGen", resolver);
+        Assert.Contains("ModelTypes.Asr", resolver);
+        Assert.Contains("跳过 expectedModel 的 LLMModels 直连兜底", resolver);
+        Assert.Contains("拒绝降级 legacy 直连", resolver);
+    }
+
     private static string ReadRepoFile(string relativePath)
     {
         var root = LocateRepoRoot();

@@ -63,6 +63,7 @@ public class ModelResolver : IModelResolver
         }
 
         List<ModelGroup>? candidateGroups = null;
+        var hasDedicatedBinding = false;
         string resolutionType = "NotFound";
 
         if (appCaller != null)
@@ -81,6 +82,7 @@ public class ModelResolver : IModelResolver
                 if (candidateGroups.Count > 0)
                 {
                     resolutionType = "DedicatedPool";
+                    hasDedicatedBinding = true;
                     _logger.LogDebug(
                         "[ModelResolver] 找到专属模型池: AppCallerCode={Code}, PoolCount={Count}, PoolNames={Names}",
                         appCallerCode, candidateGroups.Count,
@@ -189,21 +191,30 @@ public class ModelResolver : IModelResolver
                 // 档 3：LLMModels 直连（按 ModelName 查）
                 if (preferredGroup == null)
                 {
-                    var direct = await _db.LLMModels
-                        .Find(x => x.Enabled && x.ModelName == expectedModel.Trim())
-                        .FirstOrDefaultAsync(ct);
-                    if (direct != null)
+                    if (hasDedicatedBinding && ShouldFailClosedWhenDedicatedPoolUnavailable(modelType))
                     {
-                        var platform = await _db.LLMPlatforms
-                            .Find(p => p.Id == direct.PlatformId && p.Enabled)
+                        _logger.LogInformation(
+                            "[ModelResolver] {ModelType} 已绑定专属模型池，跳过 expectedModel 的 LLMModels 直连兜底: AppCallerCode={Code}, Expected={Expected}",
+                            modelType, appCallerCode, expectedModel);
+                    }
+                    else
+                    {
+                        var direct = await _db.LLMModels
+                            .Find(x => x.Enabled && x.ModelName == expectedModel.Trim())
                             .FirstOrDefaultAsync(ct);
-                        if (platform != null)
+                        if (direct != null)
                         {
-                            var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(platform.ApiKeyEncrypted, _config);
-                            _logger.LogInformation(
-                                "[ModelResolver] 命中 expectedModel（LLMModels 直连）: {Expected} → platform={Platform}",
-                                expectedModel, platform.Name);
-                            return ModelResolutionResult.FromLegacy(expectedModel, direct, platform, apiKey);
+                            var platform = await _db.LLMPlatforms
+                                .Find(p => p.Id == direct.PlatformId && p.Enabled)
+                                .FirstOrDefaultAsync(ct);
+                            if (platform != null)
+                            {
+                                var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(platform.ApiKeyEncrypted, _config);
+                                _logger.LogInformation(
+                                    "[ModelResolver] 命中 expectedModel（LLMModels 直连）: {Expected} → platform={Platform}",
+                                    expectedModel, platform.Name);
+                                return ModelResolutionResult.FromLegacy(expectedModel, direct, platform, apiKey);
+                            }
                         }
                     }
 
@@ -331,6 +342,15 @@ public class ModelResolver : IModelResolver
             IsAvailable = m.HealthStatus != ModelHealthStatus.Unavailable,
             ConsecutiveFailures = m.ConsecutiveFailures
         }).ToList();
+
+        if (hasDedicatedBinding && ModelResolver.ShouldFailClosedWhenDedicatedPoolUnavailable(modelType))
+        {
+            _logger.LogWarning(
+                "[ModelResolver] {ModelType} 专属模型池全部不可用，拒绝降级 legacy 直连: AppCallerCode={Code}, Pool={Pool}",
+                modelType, appCallerCode, originalPool?.Name);
+            return ModelResolutionResult.NotFound(expectedModel,
+                $"模型池内所有模型不可用: AppCallerCode={appCallerCode}, ModelType={modelType}");
+        }
 
         var fallbackLegacyModel = await FindLegacyModelAsync(modelType, ct);
         if (fallbackLegacyModel != null)
@@ -810,6 +830,10 @@ public class ModelResolver : IModelResolver
             .FirstOrDefault();
     }
 
+    internal static bool ShouldFailClosedWhenDedicatedPoolUnavailable(string modelType)
+        => string.Equals(modelType, ModelTypes.VideoGen, StringComparison.OrdinalIgnoreCase)
+           || string.Equals(modelType, ModelTypes.Asr, StringComparison.OrdinalIgnoreCase);
+
     private async Task<AvailableModelPool> MapToAvailablePoolAsync(
         ModelGroup group,
         string resolutionType,
@@ -937,6 +961,7 @@ public class InMemoryModelResolver : IModelResolver
         // Step 1: 查找 AppCaller
         var appCaller = _appCallers.FirstOrDefault(a => a.AppCode == appCallerCode);
         List<ModelGroup>? candidateGroups = null;
+        var hasDedicatedBinding = false;
         string resolutionType = "NotFound";
 
         var platformId = pinnedPlatformId?.Trim();
@@ -978,7 +1003,10 @@ public class InMemoryModelResolver : IModelResolver
                     .ToList();
 
                 if (candidateGroups.Count > 0)
+                {
                     resolutionType = "DedicatedPool";
+                    hasDedicatedBinding = true;
+                }
             }
         }
 
@@ -1030,6 +1058,13 @@ public class InMemoryModelResolver : IModelResolver
             _apiKeys.TryGetValue(platform.Id, out var apiKey);
             return Task.FromResult(ModelResolutionResult.FromPool(
                 resolutionType, expectedModel, selectedModel, group, platform, apiKey));
+        }
+
+        // 池存在但全部不可用 → legacy 直连降级（镜像生产 ModelResolver）。
+        if (hasDedicatedBinding && ModelResolver.ShouldFailClosedWhenDedicatedPoolUnavailable(modelType))
+        {
+            return Task.FromResult(ModelResolutionResult.NotFound(expectedModel,
+                $"模型池内所有模型不可用: AppCallerCode={appCallerCode}, ModelType={modelType}"));
         }
 
         // 池存在但全部不可用 → legacy 直连降级（镜像生产 ModelResolver）。

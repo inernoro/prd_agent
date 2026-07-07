@@ -346,6 +346,24 @@ public class ModelResolverTests
         Assert.True(result.IsFallback);
     }
 
+    [Theory]
+    [InlineData("video-gen")]
+    [InlineData("asr")]
+    public void DedicatedPoolUnavailableFailClosedTypes_ShouldNotUseLegacyFallback(string modelType)
+    {
+        Assert.True(ModelResolver.ShouldFailClosedWhenDedicatedPoolUnavailable(modelType));
+    }
+
+    [Theory]
+    [InlineData("chat")]
+    [InlineData("intent")]
+    [InlineData("vision")]
+    [InlineData("generation")]
+    public void GeneralModelTypes_ShouldKeepLegacyFallbackCompatibility(string modelType)
+    {
+        Assert.False(ModelResolver.ShouldFailClosedWhenDedicatedPoolUnavailable(modelType));
+    }
+
     #endregion
 
     #region Health Status Tests
