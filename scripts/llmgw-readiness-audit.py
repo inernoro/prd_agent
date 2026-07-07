@@ -881,6 +881,7 @@ def _static_checks() -> list[dict]:
             "LLMGW_HTTP_APP_CALLER_ALLOWLIST",
             "LLMGW_CANARY_STAGE",
             "canary_allowed_app_callers=\"report-agent.generate::chat prd-agent-desktop.chat.sendmessage::chat open-platform-agent.proxy::chat\"",
+            "canary_allowed_app_callers=\"visual-agent.image-gen.generate::generation visual-agent.image.text2img::generation visual-agent.image.img2img::generation\"",
             "ERROR: LLM Gateway canary 发布设置了 LLMGW_HTTP_APP_CALLER_ALLOWLIST，但未设置 LLMGW_CANARY_STAGE。",
             "LLMGW_PROD_STAGE_ACTIVE",
             "LLMGW_PROD_STAGE",

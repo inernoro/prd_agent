@@ -112,7 +112,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("canary_allowed_app_callers=\"report-agent.generate::chat\"", script);
         Assert.Contains("canary_allowed_app_callers=\"report-agent.generate::chat prd-agent-desktop.chat.sendmessage::chat open-platform-agent.proxy::chat\"", script);
         Assert.Contains("canary_allowed_app_callers=\"visual-agent.image.vision::generation\"", script);
-        Assert.Contains("canary_allowed_app_callers=\"visual-agent.image.text2img::generation visual-agent.image.img2img::generation\"", script);
+        Assert.Contains("canary_allowed_app_callers=\"visual-agent.image-gen.generate::generation visual-agent.image.text2img::generation visual-agent.image.img2img::generation\"", script);
         Assert.Contains("canary_allowed_app_callers=\"video-agent.videogen::video-gen visual-agent.videogen::video-gen document-store.subtitle::asr transcript-agent.transcribe::asr video-agent.v2d.transcribe::asr video-agent.video-to-text::asr\"", script);
         Assert.Contains("LLM Gateway canary 发布设置了 LLMGW_HTTP_APP_CALLER_ALLOWLIST，但未设置 LLMGW_CANARY_STAGE", script);
         Assert.Contains("LLM Gateway canary 阶段 $canary_stage 不允许入口 $app_trimmed", script);

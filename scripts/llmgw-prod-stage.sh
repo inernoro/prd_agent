@@ -18,7 +18,7 @@ Stages:
   canary-chat        Canary normal chat entries
   canary-streaming   Canary streaming entries
   canary-vision      Canary vision raw entry
-  canary-image       Canary text2img/img2img raw entries
+  canary-image       Canary image-gen/text2img/img2img raw entries
   canary-video-asr   Canary video and ASR raw entries
   rollback-rehearsal Dry-run rollback command and record same-commit rehearsal
   http-full          Full LLMGW_MODE=http cutover, gated by all core evidence

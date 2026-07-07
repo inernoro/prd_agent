@@ -752,7 +752,7 @@ run_llmgw_release_gate_if_needed() {
         canary_allowed_app_callers="visual-agent.image.vision::generation"
         ;;
       image)
-        canary_allowed_app_callers="visual-agent.image.text2img::generation visual-agent.image.img2img::generation"
+        canary_allowed_app_callers="visual-agent.image-gen.generate::generation visual-agent.image.text2img::generation visual-agent.image.img2img::generation"
         ;;
       video-asr)
         canary_allowed_app_callers="video-agent.videogen::video-gen visual-agent.videogen::video-gen document-store.subtitle::asr transcript-agent.transcribe::asr video-agent.v2d.transcribe::asr video-agent.video-to-text::asr"
