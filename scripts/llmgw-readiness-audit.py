@@ -649,6 +649,7 @@ def _static_checks() -> list[dict]:
             "gw-smoke.json",
             "upstream-readiness.json",
             "provider-audit.json",
+            "video-canary.json",
             "asr-http-canary.json",
             "LLMGW_STAGE_RUN_UPSTREAM_READINESS",
             "run_upstream_readiness_evidence",
@@ -656,6 +657,10 @@ def _static_checks() -> list[dict]:
             "LLMGW_STAGE_RUN_PROVIDER_AUDIT",
             "run_provider_audit_evidence",
             "scripts/llmgw-prod-provider-config-audit.py",
+            "LLMGW_STAGE_RUN_VIDEO_CANARY",
+            "run_video_canary_evidence",
+            "scripts/llmgw-video-exchange-canary.py",
+            "LLMGW_VIDEO_CANARY_JSON_OUT",
             "LLMGW_STAGE_RUN_ASR_HTTP_CANARY",
             "run_asr_http_canary_evidence",
             "scripts/llmgw-asr-http-canary.py",
@@ -675,6 +680,10 @@ def _static_checks() -> list[dict]:
             "--upstream-readiness-required \"$run_upstream_readiness\"",
             "--provider-audit-json \"$provider_audit_json\"",
             "--provider-audit-required \"$run_provider_audit\"",
+            "--video-canary-json \"$video_canary_json\"",
+            "--video-canary-required \"$run_video_canary\"",
+            "videoCanaryJson",
+            "videoCanaryRequired",
             "asrHttpCanaryJson",
             "asrHttpCanaryRequired",
             "stage-report",
@@ -699,13 +708,15 @@ def _static_checks() -> list[dict]:
     upstream_idx = prod_stage.find("run_upstream_readiness_evidence\n\nrun_provider_audit_evidence")
     provider_idx = prod_stage.find("run_provider_audit_evidence\n\nif [ -n \"$repo\" ]")
     fast_idx = prod_stage.find("run_or_print ./fast.sh")
+    video_canary_idx = prod_stage.find("run_video_canary_evidence\n\nrun_asr_http_canary_evidence")
     asr_canary_idx = prod_stage.find("run_asr_http_canary_evidence\n\nrun_shadow_seed_evidence")
     upstream_before_deploy = (
         preflight_idx >= 0
         and upstream_idx >= 0
         and provider_idx >= 0
+        and video_canary_idx >= 0
         and asr_canary_idx >= 0
-        and preflight_idx < upstream_idx < provider_idx < fast_idx < asr_canary_idx
+        and preflight_idx < upstream_idx < provider_idx < fast_idx < video_canary_idx < asr_canary_idx
     )
     ledger_ok, ledger_detail = _contains_all(
         rollout_ledger,
@@ -743,6 +754,10 @@ def _static_checks() -> list[dict]:
             "\"providerAuditRequired\": _bool_flag(args.provider_audit_required)",
             "_require_provider_audit",
             "provider config audit evidence",
+            "\"videoCanaryJson\": args.video_canary_json",
+            "\"videoCanaryRequired\": _bool_flag(args.video_canary_required)",
+            "_require_video_canary",
+            "video canary evidence",
             "_require_prod_preflight_for_commit",
             "production preflight evidence",
             "\"servingProbeJson\": args.serving_probe_json",

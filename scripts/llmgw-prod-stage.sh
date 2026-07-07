@@ -32,6 +32,7 @@ Required environment for deploy stages:
   LLMGW_STAGE_SHADOW_SEED_FLAGS Extra llmgw-map-shadow-seed.py flags, for example --include-video-direct
   LLMGW_STAGE_RUN_UPSTREAM_READINESS=1 enables /gw/v1/resolve upstream readiness evidence
   LLMGW_STAGE_RUN_PROVIDER_AUDIT=1 enables read-only video/ASR provider config audit
+  LLMGW_STAGE_RUN_VIDEO_CANARY=1 enables /gw/v1/raw video exchange canary evidence
   LLMGW_STAGE_MIN_FREE_MB minimum free disk MB before execute deploy stages, default 4096
   LLMGW_STAGE_AUTO_RESTORE_SHADOW_ON_FAILURE=1 restores shadow/low-sample after failed high-sample shadow-start (default)
 
@@ -290,6 +291,7 @@ upstream_readiness_json="${evidence_prefix}.upstream-readiness.json"
 upstream_readiness_md="${evidence_prefix}.upstream-readiness.md"
 provider_audit_json="${evidence_prefix}.provider-audit.json"
 provider_audit_md="${evidence_prefix}.provider-audit.md"
+video_canary_json="${evidence_prefix}.video-canary.json"
 asr_http_canary_json="${evidence_prefix}.asr-http-canary.json"
 stage_json="${evidence_prefix}.stage.json"
 stage_md="${evidence_prefix}.stage.md"
@@ -313,6 +315,16 @@ case "$stage" in
     ;;
 esac
 run_provider_audit="${LLMGW_STAGE_RUN_PROVIDER_AUDIT:-$provider_audit_default}"
+
+case "$stage" in
+  canary-video-asr|http-full)
+    video_canary_default=1
+    ;;
+  *)
+    video_canary_default=0
+    ;;
+esac
+run_video_canary="${LLMGW_STAGE_RUN_VIDEO_CANARY:-$video_canary_default}"
 
 case "$stage" in
   canary-video-asr|http-full)
@@ -351,6 +363,8 @@ print_plan() {
     echo "  upstreamReadinessEnabled: $run_upstream_readiness"
     echo "  providerAuditJson: $provider_audit_json"
     echo "  providerAuditEnabled: $run_provider_audit"
+    echo "  videoCanaryJson: $video_canary_json"
+    echo "  videoCanaryEnabled: $run_video_canary"
     echo "  asrHttpCanaryJson: $asr_http_canary_json"
     echo "  asrHttpCanaryEnabled: $run_asr_http_canary"
     echo "  diskGuardPath: $disk_guard_path"
@@ -452,6 +466,8 @@ append_ledger_entry() {
     --upstream-readiness-required "$run_upstream_readiness" \
     --provider-audit-json "$provider_audit_json" \
     --provider-audit-required "$run_provider_audit" \
+    --video-canary-json "$video_canary_json" \
+    --video-canary-required "$run_video_canary" \
     --serving-probe-json "$serving_probe_json" \
     --smoke-json "$smoke_json" \
     --main-ref "$main_ref" \
@@ -484,6 +500,8 @@ write_dry_run_stage_report() {
   LLMGW_DRY_RUN_UPSTREAM_READINESS_ENABLED="${run_upstream_readiness:-0}" \
   LLMGW_DRY_RUN_PROVIDER_AUDIT_JSON="${provider_audit_json:-}" \
   LLMGW_DRY_RUN_PROVIDER_AUDIT_ENABLED="${run_provider_audit:-0}" \
+  LLMGW_DRY_RUN_VIDEO_CANARY_JSON="${video_canary_json:-}" \
+  LLMGW_DRY_RUN_VIDEO_CANARY_ENABLED="${run_video_canary:-0}" \
   LLMGW_DRY_RUN_ASR_HTTP_CANARY_JSON="${asr_http_canary_json:-}" \
   LLMGW_DRY_RUN_ASR_HTTP_CANARY_ENABLED="${run_asr_http_canary:-0}" \
   LLMGW_DRY_RUN_SERVING_PROBE_JSON="${serving_probe_json:-}" \
@@ -533,6 +551,13 @@ else:
             + os.environ.get("LLMGW_DRY_RUN_ASR_HTTP_CANARY_JSON", "")
             + " python3 scripts/llmgw-asr-http-canary.py"
         )
+    if os.environ.get("LLMGW_DRY_RUN_VIDEO_CANARY_ENABLED", "0") == "1":
+        commands.append(
+            "GW_BASE=${LLMGW_GATE_BASE} "
+            "LLMGW_VIDEO_CANARY_JSON_OUT="
+            + os.environ.get("LLMGW_DRY_RUN_VIDEO_CANARY_JSON", "")
+            + " python3 scripts/llmgw-video-exchange-canary.py"
+        )
     if stage == "shadow-start" and os.environ.get("LLMGW_STAGE_RUN_SHADOW_SEED", "0") == "1":
         flags = os.environ.get("LLMGW_STAGE_SHADOW_SEED_FLAGS", "").strip()
         seed = (
@@ -566,6 +591,8 @@ report = {
     "upstreamReadinessEnabled": os.environ.get("LLMGW_DRY_RUN_UPSTREAM_READINESS_ENABLED", "0") == "1",
     "providerAuditJson": os.environ.get("LLMGW_DRY_RUN_PROVIDER_AUDIT_JSON", ""),
     "providerAuditRequired": os.environ.get("LLMGW_DRY_RUN_PROVIDER_AUDIT_ENABLED", "0") == "1",
+    "videoCanaryJson": os.environ.get("LLMGW_DRY_RUN_VIDEO_CANARY_JSON", ""),
+    "videoCanaryRequired": os.environ.get("LLMGW_DRY_RUN_VIDEO_CANARY_ENABLED", "0") == "1",
     "asrHttpCanaryJson": os.environ.get("LLMGW_DRY_RUN_ASR_HTTP_CANARY_JSON", ""),
     "asrHttpCanaryRequired": os.environ.get("LLMGW_DRY_RUN_ASR_HTTP_CANARY_ENABLED", "0") == "1",
     "servingProbeJson": os.environ.get("LLMGW_DRY_RUN_SERVING_PROBE_JSON", ""),
@@ -756,6 +783,30 @@ run_asr_http_canary_evidence() {
   fi
 }
 
+run_video_canary_evidence() {
+  if [ "$run_video_canary" != "1" ]; then
+    if [ "$execute" = "1" ]; then
+      echo "LLM Gateway video canary skipped: LLMGW_STAGE_RUN_VIDEO_CANARY is not 1"
+    else
+      echo "LLM Gateway video canary dry-run skipped for this stage"
+    fi
+    return 0
+  fi
+  if [ ! -f "scripts/llmgw-video-exchange-canary.py" ]; then
+    echo "ERROR: missing scripts/llmgw-video-exchange-canary.py; cannot collect video canary evidence." >&2
+    exit 1
+  fi
+  if [ "$execute" = "1" ]; then
+    mkdir -p "$evidence_dir"
+    GW_BASE="$gate_base" \
+    GW_KEY="$gate_key" \
+    LLMGW_VIDEO_CANARY_JSON_OUT="$video_canary_json" \
+    python3 scripts/llmgw-video-exchange-canary.py
+  else
+    echo "+ GW_BASE=\"$gate_base\" LLMGW_VIDEO_CANARY_JSON_OUT=\"$video_canary_json\" python3 scripts/llmgw-video-exchange-canary.py"
+  fi
+}
+
 rollout_ledger_status="pending"
 record_failed_stage_on_exit() {
   exit_code="$?"
@@ -852,6 +903,8 @@ if [ "$stage" = "rollback-rehearsal" ]; then
       --upstream-readiness-required "$run_upstream_readiness" \
       --provider-audit-json "$provider_audit_json" \
       --provider-audit-required "$run_provider_audit" \
+      --video-canary-json "$video_canary_json" \
+      --video-canary-required "$run_video_canary" \
       --serving-probe-json "$serving_probe_json" \
       --smoke-json "$smoke_json" \
       --main-ref "$main_ref" \
@@ -921,6 +974,8 @@ else
   run_or_print ./exec_dep.sh --commit "$commit"
 fi
 
+run_video_canary_evidence
+
 run_asr_http_canary_evidence
 
 run_shadow_seed_evidence
@@ -945,6 +1000,8 @@ if [ "$execute" = "1" ]; then
     --upstream-readiness-required "$run_upstream_readiness" \
     --provider-audit-json "$provider_audit_json" \
     --provider-audit-required "$run_provider_audit" \
+    --video-canary-json "$video_canary_json" \
+    --video-canary-required "$run_video_canary" \
     --serving-probe-json "$serving_probe_json" \
     --smoke-json "$smoke_json" \
     --main-ref "$main_ref" \
