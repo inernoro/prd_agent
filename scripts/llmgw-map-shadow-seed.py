@@ -644,7 +644,11 @@ def call_image_raw_generate(
         "POST",
         join_url(base, "/api/visual-agent/image-gen/generate"),
         {
-            "prompt": f"Minimal production gateway raw evidence card. tag={tag}. Plain white background, black text only.",
+            "prompt": (
+                "Abstract geometry test image for system verification. "
+                f"tag={tag}. White background, one blue square, one green circle, one thin gray border. "
+                "No people, no faces, no logos, no letters, no readable text."
+            ),
             "platformId": platform_id,
             "modelId": model_id,
             "responseFormat": response_format,
@@ -727,8 +731,9 @@ def call_image_worker_text2img_run(
             "items": [
                 {
                     "prompt": (
-                        "Minimal production gateway worker text2img evidence card. "
-                        f"tag={tag}. Plain white background, black text only."
+                        "Abstract geometry test image for system verification. "
+                        f"tag={tag}. White background, one blue square, one green circle, one thin gray border. "
+                        "No people, no faces, no logos, no letters, no readable text."
                     ),
                     "count": 1,
                     "size": size,
@@ -772,8 +777,9 @@ def call_image_worker_img2img_run(
             "items": [
                 {
                     "prompt": (
-                        "Minimal production gateway worker img2img evidence. "
-                        f"tag={tag}. Preserve the reference composition and add a small black label."
+                        "Low-risk abstract image variation for system verification. "
+                        f"tag={tag}. Keep the reference as simple geometric shapes and muted colors. "
+                        "No people, no faces, no logos, no letters, no readable text."
                     ),
                     "count": 1,
                     "size": size,
@@ -842,8 +848,9 @@ def call_image_worker_vision_run(
         join_url(base, f"/api/visual-agent/image-master/workspaces/{urllib.parse.quote(workspace_id)}/image-gen/runs"),
         {
             "prompt": (
-                "Use @img1 and @img2 as references. Minimal production gateway worker vision evidence. "
-                f"tag={tag}. Create a simple combined comparison card."
+                "Use @img1 and @img2 as references for a low-risk abstract composition. "
+                f"tag={tag}. Combine only simple geometric shapes and muted colors. "
+                "No people, no faces, no logos, no letters, no readable text."
             ),
             "targetKey": f"llmgw-shadow-vision-{tag}",
             "platformId": platform_id,
@@ -851,7 +858,10 @@ def call_image_worker_vision_run(
             "size": size,
             "responseFormat": response_format,
             "imageRefs": refs,
-            "userMessageContent": f"Use @img1 and @img2 for LLM Gateway shadow vision evidence. tag={tag}",
+            "userMessageContent": (
+                f"Use @img1 and @img2 for a geometry-only system verification image. tag={tag}. "
+                "No people, no logos, no readable text."
+            ),
         },
         headers={**bearer(token), "Idempotency-Key": f"llmgw-shadow-image-worker-vision-{tag}"},
         timeout=timeout,

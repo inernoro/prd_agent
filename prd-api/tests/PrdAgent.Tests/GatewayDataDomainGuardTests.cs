@@ -1098,6 +1098,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--include-visual-video-direct", plan);
         Assert.Contains("--include-video-to-doc-asr", plan);
         Assert.Contains("--include-video-to-text-asr-workflow", plan);
+        Assert.Contains("No people, no faces, no logos, no letters, no readable text.", script);
+        Assert.DoesNotContain("black text only", script);
+        Assert.DoesNotContain("small black label", script);
+        Assert.DoesNotContain("combined comparison card", script);
     }
 
     [Fact]
