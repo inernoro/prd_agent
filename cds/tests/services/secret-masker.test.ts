@@ -7,6 +7,7 @@ import {
   maskEnvRecord,
   maskBranchExtraProfilesEnv,
   looksLikeUrlWithCredentials,
+  looksLikeSecretBearingValue,
   shouldMask,
 } from '../../src/services/secret-masker.js';
 
@@ -335,6 +336,33 @@ describe('secret-masker.looksLikeUrlWithCredentials', () => {
     expect(looksLikeUrlWithCredentials('redis://redis:6379')).toBe(false);
     expect(looksLikeUrlWithCredentials('info')).toBe(false);
     expect(looksLikeUrlWithCredentials('')).toBe(false);
+  });
+});
+
+// SSOT for value-shape secret detection — consumed by BOTH maskEnvRecord (GET
+// responses / effective-config provenance) and the container-exec output masker
+// (`echo $VAR` in stdout/stderr, cds/src/routes/branches.ts). Locking the
+// contract here keeps the two paths from drifting (Codex PR #1008 review).
+describe('secret-masker.looksLikeSecretBearingValue', () => {
+  it('flags inline-credential URLs, connection strings, and known secret prefixes', () => {
+    expect(looksLikeSecretBearingValue('postgres://u:p@h:5432/db')).toBe(true);
+    expect(looksLikeSecretBearingValue('Server=x;User Id=sa;Password=hunter2;')).toBe(true);
+    expect(looksLikeSecretBearingValue('ghp_' + 'a'.repeat(36))).toBe(true);
+    expect(looksLikeSecretBearingValue('AKIAIOSFODNN7EXAMPLE')).toBe(true);
+    expect(
+      looksLikeSecretBearingValue(
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U',
+      ),
+    ).toBe(true);
+    expect(looksLikeSecretBearingValue('-----BEGIN RSA PRIVATE KEY-----')).toBe(true);
+  });
+  it('does not flag plain URLs, commit SHAs, account ids, or short strings', () => {
+    expect(looksLikeSecretBearingValue('https://cfi.miduo.org')).toBe(false);
+    expect(looksLikeSecretBearingValue('mongodb://172.17.0.1:10001')).toBe(false);
+    expect(looksLikeSecretBearingValue('6779b9f2fb4531af95e007d1446c53141fc75621')).toBe(false);
+    expect(looksLikeSecretBearingValue('b821db9da72264f7e790a2b8d8cc6a58')).toBe(false);
+    expect(looksLikeSecretBearingValue('prd-agent')).toBe(false);
+    expect(looksLikeSecretBearingValue('')).toBe(false);
   });
 });
 
