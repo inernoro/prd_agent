@@ -65,7 +65,6 @@ CDS 全局默认(_global 变量层)
 
 - 派生拷贝会把来源分支覆盖里**硬编码的连接串原样带过来**(per-branch DB 名会自动按新分支后缀化,但硬编码串穿透)。检查器把这类 key 的来源显示为「分支覆盖」,用户可辨;后续可对 `PER_BRANCH_DB_ENV_KEYS` 命中的覆盖 key 加警示徽标。
 - 跨项目派生被显式拒绝(profileId 引用与隔离语义均为项目内)。
-- 分支列表页的「新建分支」对话框暂未提供来源分支选择器(API 与 cdscli 已支持),待补 UI 入口。
 
 ---
 
@@ -104,7 +103,7 @@ CDS 全局默认(_global 变量层)
 | 分支临时服务 | GET/PUT `/branches/:id/extra-services[?redeploy=1]` | `cdscli branch extra-services list/set/remove` | 分支抽屉「设置」tab + 详情页面板(预设:Nacos/Kafka/RabbitMQ/Redis/MinIO) |
 | per-branch DB 开关 | PUT `/branches/:id/profile-overrides/:pid`(dbScope) | — | 分支抽屉运行模式区选择器 |
 | 生效配置检查器 | GET `/branches/:id/effective-config` | — | 抽屉「配置」tab / 详情页「生效配置」 |
-| 派生建分支 | POST `/branches`(sourceBranchId) | `branch create --from <id>` | 待补(见已知边界) |
+| 派生建分支 | POST `/branches`(sourceBranchId) | `branch create --from <id>` | 分支列表页搜索下拉「配置来源」选择器(默认项目模板,不派生) |
 | 显式拉取配置 | POST `/branches/:id/copy-config-from/:sourceId[?redeploy=1]` | — | 检查器派生行按钮 |
 | 快照/回滚 | `/api/config-snapshots*`(含分支层) | — | 项目设置快照 tab |
 
@@ -112,18 +111,38 @@ CDS 全局默认(_global 变量层)
 
 ## 七、波4 / 波5 方向(未实施,只定方向)
 
-**波4 双 SSOT 收敛(repo compose = 纯结构种子)**
+**波4 双 SSOT 收敛(repo compose = 纯结构种子)—— 代码层已实现(2026-07-06)**
 
-- 仓库 `cds-compose.yml` 只声明结构(服务/依赖/路由/资源),密钥与环境值全部剥离到 CDS env scope → 直接偿还 `debt.cds.compose-secrets.md` D1(TODO 占位卡死全量 import);
-- `composeSource='repo-sync'` 枚举落地:repo 侧 compose 变更触发漂移巡检,diff 出「同步建议」进 pending-import 审批流,人审后落 CDS 配置树;CDS 侧的运行时改动不回写 repo(单向种子);
-- `config-authority` 增加 seed 级:结构字段以 repo 为权威、运行时字段以 CDS 为权威,漂移检测按权威分级分别报告;
-- 「CDS 级默认 profile 片段」与结构种子一起设计,避免出现第二个结构默认源。
+- **已落地**:仓库 `cds-compose.yml` 的 `x-cds-env` 已剥离全部密钥/占位符键(仅留
+  `ASSETS_PROVIDER` / `TENCENT_COS_PREFIX` 结构默认),密钥统一走 CDS env scope →
+  消除 `debt.cds.compose-secrets.md` D1 的 import-reject 根因(占位覆盖真实密钥);
+- **已落地**:`config-authority.classifyEnvSeed(key,value)` = seed 级判定(`repo-structural`
+  vs `cds-env-scope`);`compose-drift.computeComposeDrift(repo, live)` 纯函数按权威分级
+  产出漂移报告(密钥应剥离 / 结构漂移同步建议 / CDS 运行时独占不回写);
+- **已落地**:`POST /api/projects/:id/compose-drift-scan` 读 repo 结构种子 diff 配置树,
+  `createImport=true` 时用 `composeSource='repo-sync'` 语义开一条 `repo-sync` PendingImport
+  走既有人审流(去重,单向:CDS 运行时改动不回写 repo);
+- **仍 open**:运行实例上验证 env scope 注入不丢(D1 判 paid 的最后一环,见 debt 台账);
+  可选增强:drift-scan 由 webhook push 自动触发 + 面板漂移入口 UI + 「CDS 级默认 profile
+  片段」结构默认源统一。
 
-**波5 无 Agent 接入**
+**波5 无 Agent 接入 —— 后端 race-free 检测已实现(2026-07-06)**
 
-- 把 cdscli scan 的检测逻辑(栈识别/infra 识别/env 三色)以服务端等价物进 onboarding 向导,解决「无 compose 项目 clone 后停在保留为手动配置」的断头路;
-- 解决 ghost profile race(服务端 detect 与 cdscli scan 并发)后重新默认打开 clone 后自动检测;
-- 目标画像:产品经理不借 Claude,也能 UI 三步完成「选仓库 → 确认检测结果 → 首个分支预览」。
+- **关键发现**:建项目对话框(`ProjectListPage`)**已**提供 URL 式 3 步接入 —— 粘贴 Git URL →
+  「检测」调 `POST /api/detect-runtime`(浅克隆 + `detectModules` 填 runtime/命令/端口)→
+  确认应用服务 → 建项目时 `onboardingServices` + `autoDetectOnClone` 走 `applyRuntimeHintProfiles`
+  (用户确认 = race-free,不产 ghost profile)。所以「PM 无法在 UI 接入」的旧前提大体已过时。
+- **本波补齐的真实断头路** = 「已 clone 的空项目」事后检测(webhook 自动 clone / 建时没勾服务 /
+  检测为空的项目,clone 后停在「保留为手动配置」):
+  - `GET /api/projects/:id/detect-preview`:只读扫描项目**已 clone** 的 worktree(不再重复克隆、
+    不写状态),复用抽出的 `buildDetectedServicesFromDir`;
+  - `POST /api/projects/:id/detect-apply`:用户显式确认后按检测结果建 profile,**空项目守门**
+    (已有 profile 则 409),用户发起 = 无 ghost race;
+  - ghost race 的根因是「clone 时自动提交」,本波不重开该自动提交,而是走「用户确认再提交」绕开。
+- **UI 已落地**:`BranchListPage` 空项目态(`buildProfiles.length===0`)引导「检测技术栈」→
+  `DetectStackDialog`(shadcn Dialog,主题 token 双色,列表勾选)调 detect-preview → detect-apply →
+  刷新,PM 无需 Claude/cdscli 即可 UI 完成接入。
+- **仍 open**:灰度真视觉验收(双主题截图,`real-visual-acceptance`),故本波记 80%。
 
 ---
 

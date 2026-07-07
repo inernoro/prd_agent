@@ -1275,6 +1275,7 @@ export const api = {
       publicShare: (token: string) => `/api/document-store/public/share/${token}`,
       publicShareEntries: (token: string) => `/api/document-store/public/share/${token}/entries`,
       publicShareEntryContent: (token: string, entryId: string) => `/api/document-store/public/share/${token}/entries/${entryId}/content`,
+      publicShareGraph: (token: string) => `/api/document-store/public/share/${token}/graph`,
       // 互动
       like: (storeId: string) => `/api/document-store/stores/${storeId}/like`,
       favorite: (storeId: string) => `/api/document-store/stores/${storeId}/favorite`,

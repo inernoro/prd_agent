@@ -1891,6 +1891,51 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     return { services, infraPresets };
   }
 
+  // 波5 无 Agent 接入:把「扫描一个目录 → 返回检测到的应用服务」抽成共享纯逻辑,
+  // 供 3 处复用:detect-runtime(URL 浅克隆后扫)、detect-preview(扫项目已 clone 的
+  // worktree,不再重复克隆)、以及未来的 onboarding 向导。只读,不写任何状态。
+  const stackToRuntime: Record<string, string> = { nodejs: 'node', python: 'python', go: 'go', rust: 'rust', java: 'java', php: 'php', dockerfile: 'dockerfile', ruby: 'custom', unknown: 'auto' };
+  function buildDetectedServicesFromDir(dir: string) {
+    const composeConfig = detectedRuntimeConfigFromCdsCompose(dir);
+    const composeServices = composeConfig.services;
+    const modules = composeServices.length > 0 ? [] : detectModules(dir);
+    const services: DetectedRuntimeService[] = composeServices.length > 0 ? composeServices : modules.map((m, i) => {
+      const d = m.detection;
+      const sub = m.subPath && m.subPath !== '.' ? m.subPath : '';
+      const inner = [d.installCommand, d.suggestedBuildCommand || d.buildCommand, d.suggestedRunCommand || d.runCommand].filter(Boolean).join(' && ');
+      const command = sub ? `cd ${sub} && ${inner}` : inner;
+      const fw = d.framework || '';
+      const isFrontend = /vite|react|vue|svelte|astro/i.test(fw) || (d.stack === 'nodejs' && /\bserve\b|\bdist\b/.test(inner) && !/nest|express|fastify|next/i.test(fw));
+      return {
+        id: sub ? slugifyName(sub) : (i === 0 ? 'app' : `service-${i + 1}`),
+        name: sub || (i === 0 ? '应用服务' : `应用服务 ${i + 1}`),
+        role: isFrontend ? 'frontend' : 'backend',
+        runtime: stackToRuntime[d.stack] || 'auto',
+        dockerImage: d.dockerImage || '',
+        command,
+        port: d.containerPort || (isFrontend ? 4173 : 8080),
+        summary: d.summary,
+        stack: d.stack,
+        confidence: typeof d.confidence === 'number' ? d.confidence : 0,
+        signals: Array.isArray(d.signals) ? d.signals.slice(0, 6) : [],
+        databaseInit: d.databaseInit || null,
+        databaseInitCandidates: d.databaseInitCandidates || [],
+        manualSetupRequired: Boolean(d.manualSetupRequired),
+      };
+    });
+    const databaseInitCandidates = [
+      ...detectDatabaseInitialization(dir),
+      ...modules.flatMap((m) => m.detection.databaseInitCandidates || []),
+    ];
+    return {
+      services,
+      moduleCount: modules.length,
+      databaseInit: databaseInitCandidates[0] || null,
+      databaseInitCandidates,
+      infraPresets: composeConfig.infraPresets,
+    };
+  }
+
   // 检测并回填:仓库 URL → 浅克隆 → 复用 detectModules(monorepo 感知)识别栈 → 返回每个模块的建议
   // 服务配置(镜像/命令/端口),前端据此把应用服务一键填好,取代"按运行时猜测的默认",减少第一次点红。
   router.post('/detect-runtime', async (req, res) => {
@@ -1912,53 +1957,82 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     const maskTok = (s: string): string => (deviceToken ? s.split(deviceToken).join('***') : s);
     const token = randomBytes(5).toString('hex');
     const dir = nodePath.join(nodeOs.tmpdir(), `cds-detect-${token}`);
-    const stackToRuntime: Record<string, string> = { nodejs: 'node', python: 'python', go: 'go', rust: 'rust', java: 'java', php: 'php', dockerfile: 'dockerfile', ruby: 'custom', unknown: 'auto' };
     try {
       const clone = await shell.exec(`git clone --depth 1 ${gitRef ? `--branch ${q(gitRef)} ` : ''}${q(authedCloneUrl)} ${q(dir)}`, { timeout: 120000 });
       if (clone.exitCode !== 0) { res.status(400).json({ error: '克隆失败——检查 URL / 分支 / 访问权限。', detail: maskTok(combinedOutput(clone)).slice(-400) }); return; }
-      const composeConfig = detectedRuntimeConfigFromCdsCompose(dir);
-      const composeServices = composeConfig.services;
-      const modules = composeServices.length > 0 ? [] : detectModules(dir);
-      const services: DetectedRuntimeService[] = composeServices.length > 0 ? composeServices : modules.map((m, i) => {
-        const d = m.detection;
-        const sub = m.subPath && m.subPath !== '.' ? m.subPath : '';
-        const inner = [d.installCommand, d.suggestedBuildCommand || d.buildCommand, d.suggestedRunCommand || d.runCommand].filter(Boolean).join(' && ');
-        const command = sub ? `cd ${sub} && ${inner}` : inner;
-        const fw = d.framework || '';
-        const isFrontend = /vite|react|vue|svelte|astro/i.test(fw) || (d.stack === 'nodejs' && /\bserve\b|\bdist\b/.test(inner) && !/nest|express|fastify|next/i.test(fw));
-        return {
-          id: sub ? slugifyName(sub) : (i === 0 ? 'app' : `service-${i + 1}`),
-          name: sub || (i === 0 ? '应用服务' : `应用服务 ${i + 1}`),
-          role: isFrontend ? 'frontend' : 'backend',
-          runtime: stackToRuntime[d.stack] || 'auto',
-          dockerImage: d.dockerImage || '',
-          command,
-          port: d.containerPort || (isFrontend ? 4173 : 8080),
-          summary: d.summary,
-          stack: d.stack,
-          confidence: typeof d.confidence === 'number' ? d.confidence : 0,
-          signals: Array.isArray(d.signals) ? d.signals.slice(0, 6) : [],
-          databaseInit: d.databaseInit || null,
-          databaseInitCandidates: d.databaseInitCandidates || [],
-          manualSetupRequired: Boolean(d.manualSetupRequired),
-        };
-      });
-      const databaseInitCandidates = [
-        ...detectDatabaseInitialization(dir),
-        ...modules.flatMap((m) => m.detection.databaseInitCandidates || []),
-      ];
-      res.json({
-        services,
-        moduleCount: modules.length,
-        databaseInit: databaseInitCandidates[0] || null,
-        databaseInitCandidates,
-        infraPresets: composeConfig.infraPresets,
-      });
+      res.json(buildDetectedServicesFromDir(dir));
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     } finally {
       try { nodeFs.rmSync(dir, { recursive: true, force: true }); } catch { /* noop */ }
     }
+  });
+
+  // 波5 无 Agent 接入 — 已 clone 项目的「事后」栈检测(race-free)
+  //
+  // 背景:autoConfigureClonedProject 里启发式栈扫描默认关闭(避免与 cdscli scan
+  // 并发生成 ghost profile)。后果:没有 cds-compose.yml、也没在建项目时勾选应用
+  // 服务的项目(如 webhook 自动 clone / 建时未 detect)clone 后停在「保留为手动
+  // 配置」空态,纯 UI 用户(产品经理)无路可走。
+  //
+  // 这里补两条 race-free 路径:preview 只读扫已 clone 的 worktree(不重复克隆、
+  // 不写状态),apply 由用户显式确认后才建 profile(用户发起 = 无 ghost race)。
+
+  // GET /api/projects/:id/detect-preview — 只读扫描项目已 clone 的 worktree
+  router.get('/projects/:id/detect-preview', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) { res.status(404).json({ error: 'project_not_found' }); return; }
+    const repoRoot = stateService.getProjectRepoRoot(project.id, deps.config?.repoRoot || '');
+    if (!repoRoot || !nodeFs.existsSync(repoRoot)) {
+      res.status(409).json({ error: 'repo_not_ready', message: '项目仓库尚未克隆完成,暂无法扫描。请等待 clone 完成后重试。' });
+      return;
+    }
+    const existingProfiles = stateService.getBuildProfilesForProject(project.id).length;
+    try {
+      const result = buildDetectedServicesFromDir(repoRoot);
+      res.json({ projectId: project.id, hasProfiles: existingProfiles > 0, existingProfileCount: existingProfiles, ...result });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // POST /api/projects/:id/detect-apply — 用户确认后按检测结果建构建配置(幂等)
+  // body: { services: Array<{ id?, name?, runtime, command?, dockerImage?, port? }> }
+  router.post('/projects/:id/detect-apply', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) { res.status(404).json({ error: 'project_not_found' }); return; }
+    // 只对「空项目」开放:已有 profile 说明已配置好,再 apply 会撞 id / 造重复。
+    // 精确匹配 autoConfigureClonedProject 顶部的 existing.length>0 守门语义。
+    const existing = stateService.getBuildProfilesForProject(project.id);
+    if (existing.length > 0) {
+      res.status(409).json({ error: 'profiles_exist', message: `项目已有 ${existing.length} 个构建配置;如需重配请先在项目设置删除后再检测。` });
+      return;
+    }
+    const body = (req.body || {}) as { services?: Array<Partial<OnboardingService>> };
+    const picked = Array.isArray(body.services)
+      ? body.services.filter((s) => s && s.runtime && s.runtime !== 'auto' && s.runtime !== 'dockerfile')
+      : [];
+    if (picked.length === 0) {
+      res.status(400).json({ error: 'no_applicable_services', message: '没有可创建的应用服务(需带明确 runtime,dockerfile/auto 走其它路径)。' });
+      return;
+    }
+    const created: BuildProfile[] = [];
+    for (const svc of picked) {
+      const profile = runtimeProfilePreset(project, svc as OnboardingService);
+      if (profile) {
+        stateService.addBuildProfile(profile);
+        created.push(profile);
+      }
+    }
+    if (created.length === 0) {
+      res.status(400).json({ error: 'no_profiles_created', message: '所选服务无法生成构建配置(runtime 不受支持?)。' });
+      return;
+    }
+    stateService.save();
+    res.status(201).json({
+      projectId: project.id,
+      created: created.map((p) => ({ id: p.id, name: p.name, dockerImage: p.dockerImage, command: p.command, containerPort: p.containerPort })),
+    });
   });
 
   // PR_C.4: 项目活动日志（供 UI 渲染时间线 / 浮窗）。

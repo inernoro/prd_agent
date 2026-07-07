@@ -24,11 +24,15 @@
 //       走既有的 infra resync(POST .../infra/resync/execute),职责分离。
 
 import { Router } from 'express';
+import fs from 'node:fs';
+import path from 'node:path';
+import { randomBytes } from 'node:crypto';
 import yaml from 'js-yaml';
 import type { StateService } from '../services/state.js';
-import type { BuildProfile, InfraService } from '../types.js';
+import type { BuildProfile, InfraService, PendingImport } from '../types.js';
 import { parseCdsCompose } from '../services/compose-parser.js';
 import { annotateComposeAuthority, validateComposePatch, classifyComposeField, escapeSeg } from '../services/config-authority.js';
+import { computeComposeDrift, type LiveComposeSnapshot } from '../services/compose-drift.js';
 import { cdsEventsBus } from '../services/cds-events-bus.js';
 
 /** 解析原始 cds-compose YAML 拿到 services map(权威标注/字段 diff 用)。 */
@@ -45,6 +49,38 @@ function parseRawServices(yamlText: string): { services?: Record<string, Record<
 export interface ProjectComposeDeps {
   stateService: StateService;
   assertProjectAccess: (req: any, projectId: string) => { status: number; body: unknown } | null;
+  /** 全局 repoRoot 兜底(legacy 项目无 per-project repoPath 时用)。 */
+  repoRootFallback: string;
+}
+
+/** 从项目 worktree 读 repo 的 cds-compose.yml(结构种子)。缺失返回 null。 */
+function readRepoComposeYaml(repoRoot: string): string | null {
+  const candidates = [
+    path.join(repoRoot, 'cds-compose.yaml'),
+    path.join(repoRoot, 'cds-compose.yml'),
+  ];
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) return fs.readFileSync(p, 'utf8');
+    } catch { /* try next */ }
+  }
+  return null;
+}
+
+/** 组装 CDS 侧现有配置树快照,喂给 computeComposeDrift(纯函数)。 */
+function buildLiveSnapshot(stateService: StateService, projectId: string): LiveComposeSnapshot {
+  const profiles = stateService.getBuildProfilesForProject(projectId) || [];
+  const infra = stateService.getInfraServicesForProject(projectId) || [];
+  const routes = stateService.getRoutingRulesForProject?.(projectId) || [];
+  const profileCommands: Record<string, string | undefined> = {};
+  for (const p of profiles) profileCommands[p.id] = p.command;
+  return {
+    buildProfileIds: profiles.map((p) => p.id),
+    profileCommands,
+    infraServiceIds: infra.map((s) => s.id),
+    routingRuleIds: routes.map((r) => r.id),
+    envKeys: Object.keys(stateService.getCustomEnv(projectId) || {}),
+  };
 }
 
 /**
@@ -202,7 +238,89 @@ export function createProjectComposeRouter(deps: ProjectComposeDeps): Router {
     });
   });
 
+  // POST .../compose-drift-scan — 波4 漂移巡检
+  //
+  // 从项目 worktree 读 repo 的 cds-compose.yml(结构种子),与 CDS 配置树 diff,
+  // 按权威分级产出「同步建议」。repo→CDS 单向:
+  //   - 有结构漂移且 body.createImport===true → 开一条 repo-sync PendingImport 走人审
+  //     (复用既有 pending-import 审批流,人审 approve 后落 CDS 配置树)
+  //   - 密钥/占位符键出现在 repo → 报「应剥离」违规(偿还 D1)
+  //   - CDS 运行时独占的 env 键 → 标注「CDS 权威,不回写 repo」
+  router.post('/projects/:id/compose-drift-scan', (req, res) => {
+    const projectId = req.params.id;
+    const access = deps.assertProjectAccess(req, projectId);
+    if (access) { res.status(access.status).json(access.body); return; }
+    const project = stateService.getProject(projectId);
+    if (!project) { res.status(404).json({ error: '项目不存在' }); return; }
+
+    const repoRoot = stateService.getProjectRepoRoot(projectId, deps.repoRootFallback);
+    const repoYaml = readRepoComposeYaml(repoRoot);
+    let repoParsed = null;
+    if (repoYaml) {
+      try { repoParsed = parseCdsCompose(repoYaml); } catch { repoParsed = null; }
+    }
+    const live = buildLiveSnapshot(stateService, projectId);
+    const report = computeComposeDrift(repoParsed, live);
+
+    const createImport = (req.body || {}).createImport === true;
+    let createdImportId: string | null = null;
+    // 仅在有 repo compose、有结构漂移、且调用方要求时才开单 —— 不制造噪音。
+    if (createImport && report.hasRepoCompose && report.syncRecommended && repoYaml) {
+      // 去重:该项目已有 pending 的 repo-sync 单则不重复开。
+      const dup = stateService
+        .getPendingImports()
+        .some((i) => i.projectId === projectId && i.status === 'pending' && i.agentName === REPO_SYNC_AGENT);
+      if (!dup) {
+        const item: PendingImport = {
+          id: randomHex(),
+          projectId,
+          agentName: REPO_SYNC_AGENT,
+          purpose: 'repo cds-compose.yml 结构漂移;人审后同步进 CDS 配置树(单向种子,不回写 repo)',
+          composeYaml: repoYaml,
+          summary: {
+            addedProfiles: report.structuralDrift.addedProfiles,
+            addedInfra: report.structuralDrift.addedInfra,
+            addedEnvKeys: report.structuralDrift.addedStructuralEnvKeys,
+          },
+          submittedAt: new Date().toISOString(),
+          status: 'pending',
+        };
+        stateService.addPendingImport(item);
+        stateService.save();
+        createdImportId = item.id;
+        try {
+          const pendingCount = stateService.getPendingImports().filter((i) => i.status === 'pending').length;
+          cdsEventsBus.publish('pending-import.created', {
+            importId: item.id,
+            projectId,
+            agentName: item.agentName,
+            purpose: item.purpose,
+            summary: item.summary,
+            submittedAt: item.submittedAt,
+            pendingCount,
+          });
+          cdsEventsBus.publish('pending-import.count', { pendingCount });
+        } catch { /* event publish 失败不影响主流程 */ }
+      }
+    }
+
+    res.json({
+      projectId,
+      report,
+      createdImportId,
+      approveUrl: createdImportId ? `/project-list?pendingImport=${createdImportId}` : null,
+    });
+  });
+
   return router;
+}
+
+/** repo-sync 漂移巡检开单时的固定 agentName(用于去重 + 面板标注来源)。 */
+const REPO_SYNC_AGENT = 'repo-sync 漂移巡检';
+
+/** 生成 pending-import 用的 16 字节 hex id(与 pending-import.ts 的 newId 同源规格)。 */
+function randomHex(): string {
+  return randomBytes(16).toString('hex');
 }
 
 /**
