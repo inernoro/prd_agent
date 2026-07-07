@@ -111,6 +111,10 @@ def _static_checks() -> list[dict]:
     disk_guard = disk_guard_path.read_text(encoding="utf-8") if disk_guard_path.exists() else ""
     external_backup_path = ROOT / "scripts/llmgw-prod-external-backup.sh"
     external_backup = external_backup_path.read_text(encoding="utf-8") if external_backup_path.exists() else ""
+    chat_bootstrap_path = ROOT / "scripts/llmgw-prod-chat-pool-bootstrap.sh"
+    chat_bootstrap = chat_bootstrap_path.read_text(encoding="utf-8") if chat_bootstrap_path.exists() else ""
+    chat_bootstrap_js_path = ROOT / "scripts/llmgw-prod-chat-pool-bootstrap.js"
+    chat_bootstrap_js = chat_bootstrap_js_path.read_text(encoding="utf-8") if chat_bootstrap_js_path.exists() else ""
     asr_bootstrap_path = ROOT / "scripts/llmgw-prod-asr-pool-bootstrap.sh"
     asr_bootstrap = asr_bootstrap_path.read_text(encoding="utf-8") if asr_bootstrap_path.exists() else ""
     asr_bootstrap_js_path = ROOT / "scripts/llmgw-prod-asr-pool-bootstrap.js"
@@ -352,6 +356,35 @@ def _static_checks() -> list[dict]:
         "prod_external_backup_streams_mongo_without_remote_archives",
         ok and external_backup_executable and not external_backup_destructive,
         f"{detail}; executable={external_backup_executable}; destructive={external_backup_destructive}",
+    ))
+
+    ok, detail = _contains_all(
+        chat_bootstrap + "\n" + chat_bootstrap_js,
+        [
+            "LLMGW_CHAT_BOOTSTRAP_DRY_RUN:-1",
+            "mongodump --db \"$mongo_db\" --archive",
+            "llmgw-disk-space-guard.sh",
+            "LLMGW_CHAT_BOOTSTRAP_MIN_FREE_MB:-6144",
+            "llmgw-prod-before-chat-pool-bootstrap",
+            "LLMGW_CHAT_BOOTSTRAP_MODEL_NAME",
+            "LLMGW_CHAT_BOOTSTRAP_PLATFORM_ID",
+            "LLMGW_CHAT_BOOTSTRAP_POOL_ID",
+            "LLMGW_CHAT_BOOTSTRAP_TARGET_CALLERS",
+            "LLMGW_CHAT_BOOTSTRAP_BIND_CALLERS",
+            "deepseek-ai/DeepSeek-V4-Flash",
+            "report-agent.generate::chat",
+            "enabled LLMModel not found",
+            "target chat pool missing or not chat",
+            "ModelGroupIds",
+            "ModelGroupId",
+        ],
+    )
+    chat_bootstrap_executable = bool(chat_bootstrap_path.exists() and (chat_bootstrap_path.stat().st_mode & stat.S_IXUSR))
+    chat_bootstrap_destructive = any(item in chat_bootstrap + chat_bootstrap_js for item in ["dropDatabase", "deleteMany", "remove(", "docker volume rm", "down -v"])
+    checks.append(_check(
+        "prod_chat_pool_bootstrap_is_backed_up_and_dry_run_first",
+        ok and chat_bootstrap_executable and not chat_bootstrap_destructive,
+        f"{detail}; executable={chat_bootstrap_executable}; destructive={chat_bootstrap_destructive}",
     ))
 
     ok, detail = _contains_all(

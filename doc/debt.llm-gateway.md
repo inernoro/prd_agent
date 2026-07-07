@@ -73,6 +73,16 @@
 - 其他阻塞仍在：没有 Healthy video-gen model；APIyi `bytedance/seedance-2.0-fast` 与 `alibaba/wan-2.6` 仍是 no available channels；ASR 仍有 `Invalid X-Api-Key`、stream 502、whisper 503 等失败。
 - 结论不变：当前生产只能继续 shadow 与文本类证据收集；禁止 `canary-video-asr`、禁止全量 `LLMGW_MODE=http`、禁止宣称视频/ASR/字幕已完成迁移。下一步必须二选一：配置真正 OpenRouter-compatible video 平台，或实现专用火山视频适配器；同时替换有效 ASR 凭据/资源后重跑 raw seed，直到 `httpFail=0`。
 
+## 最新生产取证（2026-07-07 12:43 CST）
+
+- 已部署 commit `b059d85e2ed37584e66ffe8d500c6f015b78fd42` 到生产 `shadow-start`，容器 `api / llmgw / llmgw-serve / llmgw-web` 均为同一 commit；生产仍保持 `LlmGateway__Mode=shadow`、`LlmGateway__ShadowFullSamplePercent=1`、allowlist 空。
+- 生产备份点：`/root/backups/llmgw-current-audit-20260707T121813+0800`；chat 池小粒度回滚备份：`/root/backups/llmgw-current-audit-20260707T121813+0800/model_group_fc839_before_siliconflow_20260707T123954+0800.json`。
+- 初次 `shadow-start` 的 D 层 smoke 失败于 `report-agent.generate::chat`：`/gw/v1/resolve` 解析到 `api.vveai.com`，上游返回 `该令牌额度已用尽`。修正方式是在默认 chat 池 `fc839911f86d4b0193c42c08d600b25d` 前置已由生产日志验证可用的 `deepseek-ai/DeepSeek-V4-Flash @ 硅基流动`，不切 mode、不删除原池项。
+- 修正后生产 `/gw/v1/resolve` 已解析到硅基流动，`/gw/v1/send` 成功；完整 `scripts/gw-smoke.py` 10/10 PASS，证据：`.llmgw-release-evidence/20260707T044026Z_manual-after-chat-pool-fix_b059d85e2ed3.gw-smoke.json`。
+- 文本 MAP shadow seed 已成功：`stream` 样本 2 条、`allMatch=2`、`critical=0`、`httpFail=0`，证据：`.llmgw-release-evidence/20260707T044241Z_manual-map-shadow-seed-text_b059d85e2ed3.json`。仅要求文本 stream 的小门槛 release gate PASS，证据：`.llmgw-release-evidence/20260707T044312Z_manual-release-gate-text-shadow_b059d85e2ed3.json`。
+- ASR HTTP canary 已证明 MAP API 能到达 `/api/ops/llmgw/canary/asr` 并进入 raw 阶段，但 BigModel 返回 `Invalid X-Api-Key`，stream 返回 WebSocket 401（诊断显示 appKey 为空或 accessKey 无效/过期），证据：`.llmgw-release-evidence/20260707T044056Z_manual-asr-http-canary_b059d85e2ed3.json` 与 `.llmgw-release-evidence/20260707T044137Z_manual-asr-http-canary-stream_b059d85e2ed3.json`。
+- 代码侧已新增 `scripts/llmgw-prod-chat-pool-bootstrap.sh` / `.js`，把上述 chat 池修正固化为默认 dry-run、执行前备份、幂等前置候选模型的生产操作；`scripts/llmgw-readiness-audit.py` 已纳入静态守卫。结论仍不变：文本链路可继续 shadow/低风险灰度取证，video/ASR/raw 未达全量发布门，禁止全量 `LLMGW_MODE=http`。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘
