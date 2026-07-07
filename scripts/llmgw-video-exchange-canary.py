@@ -26,6 +26,8 @@ DEFAULT_APP_CALLERS = [
     "visual-agent.videogen::video-gen",
 ]
 DEFAULT_MODEL = "doubao-seedance-2-0-fast-260128"
+DEFAULT_MODEL_ENV = "LLMGW_VIDEO_CANARY_MODEL"
+DEFAULT_MODELS_ENV = "LLMGW_VIDEO_CANARY_MODELS"
 DEFAULT_PROMPT = "A five second minimal test video of a red cube rotating on a white background."
 VOLCENGINE_MODEL_NOT_OPEN_CODE = "ModelNotOpen"
 
@@ -145,6 +147,8 @@ def _classify(response: dict[str, Any]) -> tuple[bool, list[str], list[str]]:
         failures.append("video-gen model pool has no available model; restore pool health only after upstream activation passes.")
     elif VOLCENGINE_MODEL_NOT_OPEN_CODE.lower() in normalized or "has not activated the model" in normalized or "not activated the model" in normalized:
         failures.append("Volcengine Ark account has not activated the requested video model.")
+    elif "overdue balance" in normalized or "insufficient balance" in normalized or "余额不足" in normalized or "欠费" in normalized:
+        failures.append("Video upstream account balance is overdue or insufficient.")
     elif "no available channels" in normalized:
         failures.append("Video upstream has no available channels.")
     elif "401" in normalized or "403" in normalized or "unauthorized" in normalized or "forbidden" in normalized:
@@ -162,6 +166,9 @@ def _external_blocker_from_failure(app_caller: str, model_id: str, failure: str)
     if "has not activated the requested video model" in normalized:
         code = "video_model_not_open"
         remediation = "Activate the requested video model in Ark Console, then rerun the video exchange canary."
+    elif "account balance is overdue or insufficient" in normalized:
+        code = "video_account_balance_unavailable"
+        remediation = "Restore the video provider account balance or switch the appCaller to a healthy video pool, then rerun the video exchange canary."
     elif "video upstream has no available channels" in normalized or "video-gen model pool has no available model" in normalized:
         code = "video_channel_unavailable"
         remediation = "Restore a Healthy video-gen provider channel before video/ASR canary."
@@ -295,6 +302,24 @@ def _resolve_app_callers(args: argparse.Namespace) -> list[str]:
     return DEFAULT_APP_CALLERS.copy()
 
 
+def _resolve_models(args: argparse.Namespace) -> list[str]:
+    values: list[str] = []
+    for raw in args.model or []:
+        values.extend(_split_csv(raw))
+    if values:
+        return list(dict.fromkeys(values))
+
+    env_raw = os.environ.get(DEFAULT_MODELS_ENV, "").strip()
+    if env_raw:
+        return list(dict.fromkeys(_split_csv(env_raw)))
+
+    single_env = os.environ.get(DEFAULT_MODEL_ENV, "").strip()
+    if single_env:
+        return [single_env]
+
+    return [DEFAULT_MODEL]
+
+
 def _submit_request_body(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "model": args.model,
@@ -421,7 +446,12 @@ def main() -> int:
         default=[],
         help="Video appCallerCode to canary. May be repeated or comma-separated. Defaults to all production video callers.",
     )
-    parser.add_argument("--model", default=os.environ.get("LLMGW_VIDEO_CANARY_MODEL", DEFAULT_MODEL))
+    parser.add_argument(
+        "--model",
+        action="append",
+        default=[],
+        help="Video model or model pool code to canary. May be repeated or comma-separated.",
+    )
     parser.add_argument("--prompt", default=os.environ.get("LLMGW_VIDEO_CANARY_PROMPT", DEFAULT_PROMPT))
     parser.add_argument("--timeout", type=int, default=int(os.environ.get("LLMGW_VIDEO_CANARY_TIMEOUT", "120")))
     parser.add_argument("--poll-status", action="store_true", default=os.environ.get("LLMGW_VIDEO_CANARY_POLL_STATUS", "").lower() in {"1", "true"})
@@ -438,12 +468,13 @@ def main() -> int:
     key_env_names = [item.strip() for item in args.gw_key_env.replace(",", "/").split("/") if item.strip()]
     key_env, key = _env_first(key_env_names)
     app_callers = _resolve_app_callers(args)
+    models = _resolve_models(args)
     report: dict[str, Any] = {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "gatewayBase": base,
         "gatewayKeyEnv": key_env,
         "appCallers": app_callers,
-        "model": args.model,
+        "models": models,
         "verdict": "fail",
         "failures": [],
         "warnings": [],
@@ -469,19 +500,22 @@ def main() -> int:
     all_warnings: list[str] = []
     all_external_blockers: list[dict[str, Any]] = []
     canaries: list[dict[str, Any]] = []
-    for app_caller in app_callers:
-        item = _run_one_canary(args, base, key, app_caller)
-        canaries.append(item)
-        for failure in item.get("failures") or []:
-            all_failures.append(f"{app_caller}: {failure}")
-        for warning in item.get("warnings") or []:
-            all_warnings.append(f"{app_caller}: {warning}")
-        for blocker in item.get("externalBlockers") or []:
-            _append_blocker_unique(all_external_blockers, blocker)
+    for model in models:
+        args.model = model
+        for app_caller in app_callers:
+            item = _run_one_canary(args, base, key, app_caller)
+            canaries.append(item)
+            for failure in item.get("failures") or []:
+                all_failures.append(f"{app_caller} model={model}: {failure}")
+            for warning in item.get("warnings") or []:
+                all_warnings.append(f"{app_caller} model={model}: {warning}")
+            for blocker in item.get("externalBlockers") or []:
+                _append_blocker_unique(all_external_blockers, blocker)
 
     report["canaries"] = canaries
     if len(canaries) == 1:
         report["appCallerCode"] = canaries[0].get("appCallerCode")
+        report["model"] = canaries[0].get("model")
         report["gateway"] = canaries[0].get("gateway")
         report["jobId"] = canaries[0].get("jobId")
         report["request"] = canaries[0].get("request")
