@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
-  Boxes, CircleAlert, ClipboardCheck, Clock3, FileCode2, FileText, Folder, FolderOpen, FolderPlus,
-  GitPullRequest, Inbox, Layers, Link2, Pencil, Plus, RefreshCw, Share2, Trash2, Upload,
+  ArrowLeft, Boxes, Check, ChevronRight, CircleAlert, CircleCheck, CircleX, ClipboardCheck, Clock3, FileCode2, FileText, FolderOpen,
+  GitPullRequest, Inbox, Layers, Link2, Maximize2, Minimize2, MoreVertical, Plus, RefreshCw, Share2, SlidersHorizontal, Trash2, Upload,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { marked } from 'marked';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
+import { DropdownDivider, DropdownItem, DropdownLabel, DropdownMenu } from '@/components/ui/dropdown-menu';
 import {
   Dialog,
   DialogContent,
@@ -22,7 +25,6 @@ import {
   createReportFromFile,
   createReportFromText,
   deleteReport,
-  deleteReportFolder,
   disableReportShare,
   enableReportShare,
   fetchReportRaw,
@@ -30,7 +32,6 @@ import {
   pushReportToPr,
   listReports,
   moveReportToFolder,
-  renameReportFolder,
   reportRawUrl,
   type AcceptanceReport,
   type ReportFolder,
@@ -50,11 +51,40 @@ type ListState =
   | { status: 'ok'; reports: AcceptanceReport[] };
 
 type ReportSystemView = 'all' | 'none' | 'recent' | 'shared' | 'failed';
+type ProjectFilter = 'all' | 'self' | string;
 
 // 当前筛选：系统视图 / '<id>' 指定文件夹。
 type FolderFilter = ReportSystemView | string;
 
-const REPORT_SYSTEM_VIEWS: ReportSystemView[] = ['all', 'none', 'recent', 'shared', 'failed'];
+type ReportCounts = {
+  byFolder: Map<string, number>;
+  unfiled: number;
+  recent: number;
+  shared: number;
+  failed: number;
+  total: number;
+};
+
+type ProjectCounts = {
+  byProject: Map<string, number>;
+  self: number;
+  total: number;
+};
+
+const REPORT_SYSTEM_VIEW_DEFINITIONS: Array<{
+  id: ReportSystemView;
+  label: string;
+  Icon: LucideIcon;
+  count: (counts: ReportCounts) => number;
+}> = [
+  { id: 'all', label: '全部', Icon: Layers, count: (counts) => counts.total },
+  { id: 'none', label: '未归类', Icon: Inbox, count: (counts) => counts.unfiled },
+  { id: 'recent', label: '最近 7 天', Icon: Clock3, count: (counts) => counts.recent },
+  { id: 'shared', label: '已分享', Icon: Share2, count: (counts) => counts.shared },
+  { id: 'failed', label: '不通过', Icon: CircleAlert, count: (counts) => counts.failed },
+];
+
+const REPORT_SYSTEM_VIEWS: ReportSystemView[] = REPORT_SYSTEM_VIEW_DEFINITIONS.map((item) => item.id);
 
 function isReportSystemView(value: FolderFilter): value is ReportSystemView {
   return REPORT_SYSTEM_VIEWS.includes(value as ReportSystemView);
@@ -83,9 +113,12 @@ export function ReportsPage(): JSX.Element {
   const [state, setState] = useState<ListState>({ status: 'loading' });
   const [projects, setProjects] = useState<ProjectLite[]>([]);
   const [folders, setFolders] = useState<ReportFolder[]>([]);
+  const [activeProjectFilter, setActiveProjectFilter] = useState<ProjectFilter>('all');
   const [activeFolder, setActiveFolder] = useState<FolderFilter>('all');
   const [createOpen, setCreateOpen] = useState(false);
+  const [folderCreateOpen, setFolderCreateOpen] = useState(false);
   const [selected, setSelected] = useState<AcceptanceReport | null>(null);
+  const [navDrawerOpen, setNavDrawerOpen] = useState(false);
   const [toast, setToast] = useState('');
 
   const load = useCallback(async () => {
@@ -108,6 +141,7 @@ export function ReportsPage(): JSX.Element {
   }, [projectId]);
 
   useEffect(() => {
+    setActiveProjectFilter('all');
     setActiveFolder('all');
     setSelected(null);
     void load();
@@ -148,20 +182,26 @@ export function ReportsPage(): JSX.Element {
   }, [projectId, projects]);
 
   const allReports = state.status === 'ok' ? state.reports : [];
+  const projectFilteredReports = useMemo(() => {
+    if (activeProjectFilter === 'all') return allReports;
+    if (activeProjectFilter === 'self') return allReports.filter((r) => !r.projectId);
+    return allReports.filter((r) => r.projectId === activeProjectFilter);
+  }, [allReports, activeProjectFilter]);
+
   const visibleReports = useMemo(() => {
-    if (activeFolder === 'all') return allReports;
-    if (activeFolder === 'none') return allReports.filter((r) => !r.folderId);
+    if (activeFolder === 'all') return projectFilteredReports;
+    if (activeFolder === 'none') return projectFilteredReports.filter((r) => !r.folderId);
     if (activeFolder === 'recent') {
       const since = Date.now() - 7 * 24 * 60 * 60 * 1000;
-      return allReports.filter((r) => {
+      return projectFilteredReports.filter((r) => {
         const created = new Date(r.createdAt).getTime();
         return !Number.isNaN(created) && created >= since;
       });
     }
-    if (activeFolder === 'shared') return allReports.filter((r) => Boolean(r.shareToken));
-    if (activeFolder === 'failed') return allReports.filter((r) => r.verdict === 'fail');
-    return allReports.filter((r) => r.folderId === activeFolder);
-  }, [allReports, activeFolder]);
+    if (activeFolder === 'shared') return projectFilteredReports.filter((r) => Boolean(r.shareToken));
+    if (activeFolder === 'failed') return projectFilteredReports.filter((r) => r.verdict === 'fail');
+    return projectFilteredReports.filter((r) => r.folderId === activeFolder);
+  }, [projectFilteredReports, activeFolder]);
 
   const folderCounts = useMemo(() => {
     const m = new Map<string, number>();
@@ -170,7 +210,7 @@ export function ReportsPage(): JSX.Element {
     let shared = 0;
     let failed = 0;
     const since = Date.now() - 7 * 24 * 60 * 60 * 1000;
-    for (const r of allReports) {
+    for (const r of projectFilteredReports) {
       if (r.folderId) m.set(r.folderId, (m.get(r.folderId) ?? 0) + 1);
       else unfiled += 1;
       const created = new Date(r.createdAt).getTime();
@@ -178,8 +218,29 @@ export function ReportsPage(): JSX.Element {
       if (r.shareToken) shared += 1;
       if (r.verdict === 'fail') failed += 1;
     }
-    return { byFolder: m, unfiled, recent, shared, failed, total: allReports.length };
+    return { byFolder: m, unfiled, recent, shared, failed, total: projectFilteredReports.length };
+  }, [projectFilteredReports]);
+
+  const projectCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    let self = 0;
+    for (const r of allReports) {
+      if (r.projectId) m.set(r.projectId, (m.get(r.projectId) ?? 0) + 1);
+      else self += 1;
+    }
+    return { byProject: m, self, total: allReports.length };
   }, [allReports]);
+
+  const handleProjectFilterChange = useCallback((next: ProjectFilter) => {
+    setActiveProjectFilter(next);
+    setActiveFolder((current) => (isReportSystemView(current) ? current : 'all'));
+    setSelected(null);
+  }, []);
+
+  const handleSelectReport = useCallback((report: AcceptanceReport) => {
+    setSelected(report);
+    setNavDrawerOpen(false);
+  }, []);
 
   const handleCreated = useCallback((report: AcceptanceReport) => {
     setCreateOpen(false);
@@ -229,48 +290,18 @@ export function ReportsPage(): JSX.Element {
     }
   }, [projectId]);
 
-  const handleCreateFolder = useCallback(async (name: string) => {
+  const handleCreateFolder = useCallback(async (name: string): Promise<boolean> => {
     try {
       const folder = await createReportFolder(name, projectId || null);
       setFolders((cur) => [...cur, folder]);
-      setActiveFolder(folder.id);
+      setActiveFolder((current) => (isReportSystemView(current) ? current : 'all'));
       setToast(`已新建文件夹「${folder.name}」`);
+      return true;
     } catch (err) {
       setToast(`新建文件夹失败：${err instanceof ApiError ? err.message : String(err)}`);
+      return false;
     }
   }, [projectId]);
-
-  const handleRenameFolder = useCallback(async (id: string, name: string) => {
-    try {
-      const folder = await renameReportFolder(id, name);
-      setFolders((cur) => cur.map((f) => (f.id === id ? folder : f)));
-    } catch (err) {
-      setToast(`重命名失败：${err instanceof ApiError ? err.message : String(err)}`);
-    }
-  }, []);
-
-  const handleDeleteFolder = useCallback(async (id: string) => {
-    try {
-      await deleteReportFolder(id);
-      // 后端删父级时把子文件夹上提一层(parentId → 被删者的父级)。本地必须同样上提，
-      // 否则子文件夹的 parentId 仍指向已删 id，FolderRail 的 parentId 树会丢掉它们直到刷新
-      // (Codex review P2)。
-      setFolders((cur) => {
-        const deleted = cur.find((f) => f.id === id);
-        const newParent = deleted?.parentId ?? null;
-        return cur
-          .filter((f) => f.id !== id)
-          .map((f) => ((f.parentId ?? null) === id ? { ...f, parentId: newParent } : f));
-      });
-      setState((cur) => (cur.status === 'ok'
-        ? { status: 'ok', reports: cur.reports.map((r) => (r.folderId === id ? { ...r, folderId: null } : r)) }
-        : cur));
-      setActiveFolder((cur) => (cur === id ? 'all' : cur));
-      setToast('已删除文件夹（其中报告改为未归类）');
-    } catch (err) {
-      setToast(`删除文件夹失败：${err instanceof ApiError ? err.message : String(err)}`);
-    }
-  }, []);
 
   return (
     <AppShell
@@ -302,35 +333,93 @@ export function ReportsPage(): JSX.Element {
           {state.status === 'error' ? <ErrorBlock message={state.message} transient={state.transient} /> : null}
 
           {state.status === 'ok' ? (
-            <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
-              <FolderRail
-                folders={folders}
-                counts={folderCounts}
-                active={activeFolder}
-                onSelect={setActiveFolder}
-                onCreate={handleCreateFolder}
-                onRename={handleRenameFolder}
-                onDelete={handleDeleteFolder}
-                projects={projects}
-                scopeProjectId={projectId || null}
-              />
-              {visibleReports.length === 0 ? (
-                <EmptyReportsState onCreate={() => setCreateOpen(true)} filtered={allReports.length > 0} />
-              ) : (
-                <>
-                  <ReportList
-                    reports={visibleReports}
-                    folders={folders}
-                    projects={projects}
-                    selectedId={selected?.id ?? null}
-                    onSelect={setSelected}
-                    onDelete={handleDelete}
-                    onMove={handleMove}
-                    onCopy={handleCopyLink}
+            <div className="flex min-h-0 flex-1 flex-col">
+              <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
+                {visibleReports.length === 0 ? (
+                  <EmptyReportsState
+                    onCreate={() => setCreateOpen(true)}
+                    filtered={allReports.length > 0}
+                    filterMenu={(
+                      <div className="flex items-center gap-1">
+                        {!projectId ? (
+                          <ProjectFilterMenu
+                            projects={projects}
+                            counts={projectCounts}
+                            active={activeProjectFilter}
+                            onSelect={handleProjectFilterChange}
+                          />
+                        ) : null}
+                        <ReportFilterMenu
+                          folders={folders}
+                          counts={folderCounts}
+                          active={activeFolder}
+                          onSelect={setActiveFolder}
+                          onRequestCreate={() => setFolderCreateOpen(true)}
+                        />
+                      </div>
+                    )}
                   />
-                  <ReportViewer report={selected} />
-                </>
-              )}
+                ) : (
+                  <>
+                    <ReportList
+                      reports={visibleReports}
+                      folders={folders}
+                      projects={projects}
+                      projectCounts={projectCounts}
+                      activeProjectFilter={activeProjectFilter}
+                      counts={folderCounts}
+                      activeFilter={activeFolder}
+                      selectedId={selected?.id ?? null}
+                      onSelect={handleSelectReport}
+                      onDelete={handleDelete}
+                      onMove={handleMove}
+                      onCopy={handleCopyLink}
+                      onProjectFilterSelect={handleProjectFilterChange}
+                      onFilterSelect={setActiveFolder}
+                      onCreateFolder={() => setFolderCreateOpen(true)}
+                      showProjectFilter={!projectId}
+                      className={selected ? 'hidden lg:flex' : undefined}
+                    />
+                    <ReportViewer report={selected} onBack={() => setSelected(null)} onOpenNav={() => setNavDrawerOpen(true)} />
+                  </>
+                )}
+              </div>
+              {selected && navDrawerOpen ? (
+                <div className="fixed inset-0 z-[11000] lg:hidden">
+                  <button
+                    type="button"
+                    className="absolute inset-0 bg-black/30"
+                    aria-label="关闭报告目录"
+                    onClick={() => setNavDrawerOpen(false)}
+                  />
+                  <div className="absolute left-0 top-0 flex h-full w-[min(88vw,420px)] flex-col border-r border-[hsl(var(--hairline))] bg-[hsl(var(--background))] shadow-2xl">
+                    <div className="flex h-11 shrink-0 items-center justify-between border-b border-[hsl(var(--hairline))] px-3 text-sm font-medium">
+                      <span>报告目录</span>
+                      <Button variant="ghost" size="sm" onClick={() => setNavDrawerOpen(false)}>关闭</Button>
+                    </div>
+                    <ReportList
+                      reports={visibleReports}
+                      folders={folders}
+                      projects={projects}
+                      projectCounts={projectCounts}
+                      activeProjectFilter={activeProjectFilter}
+                      counts={folderCounts}
+                      activeFilter={activeFolder}
+                      selectedId={selected?.id ?? null}
+                      onSelect={handleSelectReport}
+                      onDelete={handleDelete}
+                      onMove={handleMove}
+                      onCopy={handleCopyLink}
+                      onProjectFilterSelect={handleProjectFilterChange}
+                      onFilterSelect={setActiveFolder}
+                      onCreateFolder={() => setFolderCreateOpen(true)}
+                      showProjectFilter={!projectId}
+                      resizable={false}
+                      className="min-h-0 flex-1 rounded-none border-0"
+                    />
+                  </div>
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -345,173 +434,131 @@ export function ReportsPage(): JSX.Element {
         defaultFolderId={!isReportSystemView(activeFolder) ? activeFolder : ''}
         onCreated={handleCreated}
       />
+      <CreateFolderDialog
+        open={folderCreateOpen}
+        onOpenChange={setFolderCreateOpen}
+        onCreate={handleCreateFolder}
+      />
     </AppShell>
   );
 }
 
-function FolderRail({
-  folders, counts, active, onSelect, onCreate, onRename, onDelete, projects, scopeProjectId,
+function ProjectFilterMenu({
+  projects, counts, active, onSelect,
 }: {
-  folders: ReportFolder[];
-  counts: { byFolder: Map<string, number>; unfiled: number; recent: number; shared: number; failed: number; total: number };
-  active: FolderFilter;
-  onSelect: (f: FolderFilter) => void;
-  onCreate: (name: string) => void;
-  onRename: (id: string, name: string) => void;
-  onDelete: (id: string) => void;
   projects: ProjectLite[];
-  scopeProjectId?: string | null;
+  counts: ProjectCounts;
+  active: ProjectFilter;
+  onSelect: (f: ProjectFilter) => void;
 }): JSX.Element {
-  const [creating, setCreating] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editName, setEditName] = useState('');
-
-  const rowCls = (on: boolean) =>
-    `group flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-sm transition-colors ${on ? 'bg-primary/10 text-primary' : 'hover:bg-[hsl(var(--surface-sunken))] text-foreground'}`;
-
-  const sectionTitleCls = 'px-2 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80';
-
-  // 子文件夹索引（parentId → 直接子文件夹，沿用后端 sortOrder 顺序）。
-  const byParent = new Map<string | null, ReportFolder[]>();
-  for (const f of folders) {
-    const p = f.parentId ?? null;
-    const arr = byParent.get(p) ?? [];
-    arr.push(f);
-    byParent.set(p, arr);
-  }
-  const projectName = (pid: string | null): string =>
-    pid ? (projects.find((p) => p.id === pid)?.name ?? pid) : 'CDS 自身';
-
-  // 递归渲染一棵文件夹子树：每层按 parentId 缩进 14px，技能自取的多层路径在此可视化。
-  const renderFolder = (f: ReportFolder, depth: number): JSX.Element[] => {
-    const pad = 8 + depth * 14;
-    const rows: JSX.Element[] = [];
-    if (editingId === f.id) {
-      rows.push(
-        <form key={f.id} className="flex items-center gap-1 px-1 py-1" style={{ paddingLeft: pad }}
-          onSubmit={(e) => { e.preventDefault(); const n = editName.trim(); if (n) onRename(f.id, n); setEditingId(null); }}>
-          <input autoFocus value={editName} onChange={(e) => setEditName(e.target.value)}
-            onBlur={() => setEditingId(null)}
-            className="h-7 w-full rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-sm outline-none focus:border-primary/60" />
-        </form>,
-      );
-    } else {
-      rows.push(
-        <div key={f.id} className={rowCls(active === f.id)} style={{ paddingLeft: pad }} onClick={() => onSelect(f.id)}>
-          {active === f.id ? <FolderOpen className="h-4 w-4 shrink-0" /> : <Folder className="h-4 w-4 shrink-0" />}
-          <span className="flex-1 truncate" title={f.name}>{f.name}</span>
-          <span className="text-[11px] text-muted-foreground group-hover:hidden">{counts.byFolder.get(f.id) ?? 0}</span>
-          <span className="hidden items-center gap-0.5 group-hover:flex" onClick={(e) => e.stopPropagation()}>
-            <Button variant="ghost" size="icon" className="h-6 w-6" title="重命名" aria-label="重命名文件夹"
-              onClick={() => { setEditingId(f.id); setEditName(f.name); }}>
-              <Pencil className="h-3.5 w-3.5" />
-            </Button>
-            <ConfirmAction
-              trigger={<Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground" title="删除文件夹" aria-label="删除文件夹"><Trash2 className="h-3.5 w-3.5" /></Button>}
-              title="删除这个文件夹？"
-              description="文件夹会被删除，其中报告改为「未归类」、子文件夹上提一层（内容不会丢失）。"
-              confirmLabel="删除"
-              onConfirm={() => onDelete(f.id)}
-            />
-          </span>
-        </div>,
-      );
-    }
-    for (const kid of byParent.get(f.id) ?? []) rows.push(...renderFolder(kid, depth + 1));
-    return rows;
-  };
-
-  // 全局视图(无 scopeProjectId)：根文件夹按项目分组，每组一个项目名表头(= 根目录)，比以往
-  // 多一级"项目"分类。项目视图：项目已是上下文，直接渲染该项目的文件夹树。
-  const isGlobal = scopeProjectId === undefined || scopeProjectId === null;
-  const roots = byParent.get(null) ?? [];
-  let tree: JSX.Element[];
-  if (isGlobal) {
-    const groups = new Map<string | null, ReportFolder[]>();
-    for (const r of roots) {
-      const pid = r.projectId ?? null;
-      const arr = groups.get(pid) ?? [];
-      arr.push(r);
-      groups.set(pid, arr);
-    }
-    const pids = [...groups.keys()].sort((a, b) =>
-      a === null ? 1 : b === null ? -1 : projectName(a).localeCompare(projectName(b), 'zh'),
-    );
-    tree = [];
-    for (const pid of pids) {
-      tree.push(
-        <div key={`hdr-${pid ?? 'self'}`} className="mt-2 flex items-center gap-1.5 px-2 pb-0.5 pt-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
-          <Boxes className="h-3.5 w-3.5 shrink-0 opacity-70" />
-          <span className="truncate" title={projectName(pid)}>{projectName(pid)}</span>
-        </div>,
-      );
-      for (const r of groups.get(pid) ?? []) tree.push(...renderFolder(r, 0));
-    }
-  } else {
-    tree = roots.flatMap((r) => renderFolder(r, 0));
-  }
+  const activeProject = active === 'all' || active === 'self' ? null : projects.find((p) => p.id === active);
+  const label = active === 'all'
+    ? '全部项目'
+    : active === 'self'
+      ? 'CDS 自身'
+      : activeProject?.name || activeProject?.slug || '项目';
 
   return (
-    <div className="flex min-h-0 w-full flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] lg:w-[224px] lg:shrink-0">
-      <div className="border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-xs font-medium text-muted-foreground">
-        <span>报告库</span>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-2" style={{ overscrollBehavior: 'contain' }}>
-        <div className={sectionTitleCls}>视图</div>
-        <div className={rowCls(active === 'all')} onClick={() => onSelect('all')}>
-          <Layers className="h-4 w-4 shrink-0" />
-          <span className="flex-1 truncate">全部</span>
-          <span className="text-[11px] text-muted-foreground">{counts.total}</span>
-        </div>
-        <div className={rowCls(active === 'none')} onClick={() => onSelect('none')}>
-          <Inbox className="h-4 w-4 shrink-0" />
-          <span className="flex-1 truncate">未归类</span>
-          <span className="text-[11px] text-muted-foreground">{counts.unfiled}</span>
-        </div>
-        <div className={rowCls(active === 'recent')} onClick={() => onSelect('recent')}>
-          <Clock3 className="h-4 w-4 shrink-0" />
-          <span className="flex-1 truncate">最近 7 天</span>
-          <span className="text-[11px] text-muted-foreground">{counts.recent}</span>
-        </div>
-        <div className={rowCls(active === 'shared')} onClick={() => onSelect('shared')}>
-          <Share2 className="h-4 w-4 shrink-0" />
-          <span className="flex-1 truncate">已分享</span>
-          <span className="text-[11px] text-muted-foreground">{counts.shared}</span>
-        </div>
-        <div className={rowCls(active === 'failed')} onClick={() => onSelect('failed')}>
-          <CircleAlert className="h-4 w-4 shrink-0" />
-          <span className="flex-1 truncate">不通过</span>
-          <span className="text-[11px] text-muted-foreground">{counts.failed}</span>
-        </div>
-        <div className="my-2 border-t border-[hsl(var(--hairline))]" />
-        <div className="flex items-center justify-between gap-2 px-2 pb-1 pt-1">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">文件夹</span>
-          <Button variant="ghost" size="icon" className="h-5 w-5" title="新建文件夹" aria-label="新建文件夹"
-            onClick={() => { setCreating(true); setNewName(''); }}>
-            <FolderPlus className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-        {tree}
-        {creating ? (
-          <form className="mt-1 flex items-center gap-1 px-1"
-            onSubmit={(e) => { e.preventDefault(); const n = newName.trim(); if (n) onCreate(n); setCreating(false); }}>
-            <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)}
-              onBlur={() => { const n = newName.trim(); if (n) onCreate(n); setCreating(false); }}
-              placeholder="文件夹名称"
-              className="h-7 w-full rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-sm outline-none focus:border-primary/60" />
-          </form>
-        ) : folders.length === 0 ? (
-          <p className="px-2 py-2 text-[11px] text-muted-foreground">还没有文件夹。技能用项目 key 提交报告并带文件夹路径会自动建（项目 → 功能 → …）；也可点右上角 + 手动建。</p>
-        ) : null}
-      </div>
-    </div>
+    <DropdownMenu
+      align="end"
+      width={268}
+      trigger={(
+        <Button variant="ghost" size="sm" className="h-7 min-w-0 shrink-0 gap-1.5 px-2" aria-label="打开项目筛选" title="项目筛选">
+          <Boxes className="h-4 w-4" />
+          <span className="max-w-[96px] truncate">{label}</span>
+        </Button>
+      )}
+    >
+      <DropdownLabel>项目</DropdownLabel>
+      <DropdownItem onSelect={() => onSelect('all')}>
+        <Layers className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate">全部项目</span>
+        <span className="text-xs text-muted-foreground">{counts.total}</span>
+        {active === 'all' ? <Check className="h-4 w-4 shrink-0 text-primary" /> : null}
+      </DropdownItem>
+      <DropdownItem onSelect={() => onSelect('self')}>
+        <Boxes className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate">CDS 自身</span>
+        <span className="text-xs text-muted-foreground">{counts.self}</span>
+        {active === 'self' ? <Check className="h-4 w-4 shrink-0 text-primary" /> : null}
+      </DropdownItem>
+      <DropdownDivider />
+      {projects.length === 0 ? (
+        <DropdownItem disabled>
+          <Boxes className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate">暂无项目</span>
+        </DropdownItem>
+      ) : projects.map((project) => (
+        <DropdownItem key={project.id} onSelect={() => onSelect(project.id)}>
+          <Boxes className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate" title={project.name || project.slug || project.id}>
+            {project.name || project.slug || project.id}
+          </span>
+          <span className="text-xs text-muted-foreground">{counts.byProject.get(project.id) ?? 0}</span>
+          {active === project.id ? <Check className="h-4 w-4 shrink-0 text-primary" /> : null}
+        </DropdownItem>
+      ))}
+    </DropdownMenu>
   );
 }
 
-function EmptyReportsState({ onCreate, filtered }: { onCreate: () => void; filtered: boolean }): JSX.Element {
+function ReportFilterMenu({
+  folders, counts, active, onSelect, onRequestCreate,
+}: {
+  folders: ReportFolder[];
+  counts: ReportCounts;
+  active: FolderFilter;
+  onSelect: (f: FolderFilter) => void;
+  onRequestCreate: () => void;
+}): JSX.Element {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-md border border-dashed border-border px-6 py-16 text-center">
+    <DropdownMenu
+      align="end"
+      width={268}
+      trigger={(
+        <Button variant="ghost" size="sm" className="h-7 shrink-0 gap-1.5 px-2" aria-label="打开报告库筛选" title="筛选报告">
+          <SlidersHorizontal className="h-4 w-4" />
+          <span className="hidden sm:inline">筛选</span>
+        </Button>
+      )}
+    >
+      <DropdownLabel>视图</DropdownLabel>
+      {REPORT_SYSTEM_VIEW_DEFINITIONS.map(({ id, label, Icon, count }) => (
+        <DropdownItem key={id} onSelect={() => onSelect(id)}>
+          <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate">{label}</span>
+          <span className="text-xs text-muted-foreground">{count(counts)}</span>
+          {active === id ? <Check className="h-4 w-4 shrink-0 text-primary" /> : null}
+        </DropdownItem>
+      ))}
+      <DropdownDivider />
+      <DropdownLabel>文件夹</DropdownLabel>
+      <DropdownItem onSelect={onRequestCreate}>
+        <Plus className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate">新建文件夹</span>
+      </DropdownItem>
+      <DropdownDivider />
+      {folders.length === 0 ? (
+        <DropdownItem disabled>
+          <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate">暂无文件夹</span>
+        </DropdownItem>
+      ) : folders.map((folder) => (
+        <DropdownItem key={folder.id} onSelect={() => onSelect(folder.id)}>
+          <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate" title={folder.name}>{folder.name}</span>
+          <span className="text-xs text-muted-foreground">{counts.byFolder.get(folder.id) ?? 0}</span>
+          {active === folder.id ? <Check className="h-4 w-4 shrink-0 text-primary" /> : null}
+        </DropdownItem>
+      ))}
+    </DropdownMenu>
+  );
+}
+
+function EmptyReportsState({ onCreate, filtered, filterMenu }: { onCreate: () => void; filtered: boolean; filterMenu?: JSX.Element }): JSX.Element {
+  return (
+    <div className="relative flex flex-1 flex-col items-center justify-center gap-4 rounded-md border border-dashed border-border px-6 py-16 text-center">
+      {filterMenu ? <div className="absolute right-2 top-2">{filterMenu}</div> : null}
       <div className="flex h-14 w-14 items-center justify-center rounded-full bg-[hsl(var(--surface-sunken))] text-muted-foreground">
         <ClipboardCheck className="h-7 w-7" />
       </div>
@@ -553,88 +600,363 @@ function VerdictBadge({ verdict }: { verdict: NonNullable<AcceptanceReport['verd
   );
 }
 
+function VerdictIcon({ verdict }: { verdict?: AcceptanceReport['verdict'] | null }): JSX.Element {
+  if (verdict === 'pass') return <CircleCheck className="h-4 w-4 shrink-0 text-emerald-500" aria-label="通过" />;
+  if (verdict === 'fail') return <CircleX className="h-4 w-4 shrink-0 text-red-500" aria-label="不通过" />;
+  if (verdict === 'conditional') return <CircleAlert className="h-4 w-4 shrink-0 text-amber-500" aria-label="有条件" />;
+  return <FileText className="h-4 w-4 shrink-0 text-muted-foreground" aria-label="无结论" />;
+}
+
+function reportTooltip(report: AcceptanceReport, projectName: string | undefined): string {
+  return [
+    report.title,
+    report.verdict ? `结论：${report.verdict === 'pass' ? '通过' : report.verdict === 'fail' ? '不通过' : '有条件'}` : '结论：未标记',
+    `格式：${report.format === 'html' ? 'HTML' : 'Markdown'}`,
+    `大小：${formatBytes(report.sizeBytes)}`,
+    projectName ? `项目：${projectName}` : null,
+    report.commitSha ? `Commit：${report.commitSha}` : null,
+    report.prNumber ? `PR：#${report.prNumber}` : null,
+    `创建：${formatTime(report.createdAt)}`,
+  ].filter(Boolean).join('\n');
+}
+
 function ReportList({
-  reports, folders, projects, selectedId, onSelect, onDelete, onMove, onCopy,
+  reports, folders, projects, projectCounts, activeProjectFilter, counts, activeFilter, selectedId, onSelect, onDelete, onMove, onCopy,
+  onProjectFilterSelect, onFilterSelect, onCreateFolder, showProjectFilter, resizable = true, className,
 }: {
   reports: AcceptanceReport[];
   folders: ReportFolder[];
   projects: ProjectLite[];
+  projectCounts: ProjectCounts;
+  activeProjectFilter: ProjectFilter;
+  counts: ReportCounts;
+  activeFilter: FolderFilter;
   selectedId: string | null;
   onSelect: (report: AcceptanceReport) => void;
   onDelete: (report: AcceptanceReport) => void;
   onMove: (report: AcceptanceReport, folderId: string | null) => void;
   onCopy: (report: AcceptanceReport) => void;
+  onProjectFilterSelect: (f: ProjectFilter) => void;
+  onFilterSelect: (f: FolderFilter) => void;
+  onCreateFolder: () => void;
+  showProjectFilter: boolean;
+  resizable?: boolean;
+  className?: string;
 }): JSX.Element {
+  const [navWidth, setNavWidth] = useState(340);
+  const [collapsedFolderIds, setCollapsedFolderIds] = useState<Set<string>>(() => new Set());
+
   const projectName = useMemo(() => {
     const map = new Map<string, string>();
     for (const p of projects) map.set(p.id, p.name || p.slug || p.id);
     return map;
   }, [projects]);
 
+  const knownFolderIds = useMemo(() => new Set(folders.map((folder) => folder.id)), [folders]);
+
+  const foldersByParent = useMemo(() => {
+    const map = new Map<string | null, ReportFolder[]>();
+    for (const folder of folders) {
+      const parentId = folder.parentId ?? null;
+      const siblings = map.get(parentId) ?? [];
+      siblings.push(folder);
+      map.set(parentId, siblings);
+    }
+    return map;
+  }, [folders]);
+
+  const reportsByFolder = useMemo(() => {
+    const map = new Map<string, AcceptanceReport[]>();
+    const root: AcceptanceReport[] = [];
+    for (const report of reports) {
+      if (report.folderId && knownFolderIds.has(report.folderId)) {
+        const bucket = map.get(report.folderId) ?? [];
+        bucket.push(report);
+        map.set(report.folderId, bucket);
+      } else {
+        root.push(report);
+      }
+    }
+    return { byFolder: map, root };
+  }, [reports, knownFolderIds]);
+
+  const folderVisibleReportCount = useMemo(() => {
+    const cache = new Map<string, number>();
+    const countFor = (folderId: string): number => {
+      const cached = cache.get(folderId);
+      if (cached !== undefined) return cached;
+      let total = reportsByFolder.byFolder.get(folderId)?.length ?? 0;
+      for (const child of foldersByParent.get(folderId) ?? []) total += countFor(child.id);
+      cache.set(folderId, total);
+      return total;
+    };
+    for (const folder of folders) countFor(folder.id);
+    return cache;
+  }, [folders, foldersByParent, reportsByFolder]);
+
+  const showEmptyFolders = activeFilter === 'all';
+
+  const toggleFolder = useCallback((folderId: string) => {
+    setCollapsedFolderIds((current) => {
+      const next = new Set(current);
+      if (next.has(folderId)) next.delete(folderId);
+      else next.add(folderId);
+      return next;
+    });
+  }, []);
+
+  const beginResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = navWidth;
+    const onMove = (moveEvent: PointerEvent) => {
+      const next = Math.max(260, Math.min(560, startWidth + moveEvent.clientX - startX));
+      setNavWidth(next);
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+    };
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  }, [navWidth]);
+
+  const renderReportRow = (report: AcceptanceReport, depth: number): JSX.Element => {
+    const active = report.id === selectedId;
+    const projectLabel = report.projectId ? projectName.get(report.projectId) ?? report.projectId : undefined;
+    return (
+      <div key={report.id}
+        className={`group flex h-8 cursor-pointer items-center gap-2 rounded px-2 text-sm transition-colors ${active ? 'bg-primary/10 text-primary' : 'hover:bg-[hsl(var(--surface-sunken))]'}`}
+        style={{ paddingLeft: 8 + depth * 16 }}
+        onClick={() => onSelect(report)}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          onSelect(report);
+        }}
+        role="button"
+        tabIndex={0}
+        title={reportTooltip(report, projectLabel)}
+        aria-label={`打开报告：${report.title}`}>
+        <VerdictIcon verdict={report.verdict} />
+        <span className="min-w-0 flex-1 truncate">{report.title}</span>
+        <div className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100" onClick={(event) => event.stopPropagation()}>
+          <ReportRowActions
+            report={report}
+            folders={folders}
+            onOpen={() => onSelect(report)}
+            onDelete={() => onDelete(report)}
+            onMove={(folderId) => onMove(report, folderId)}
+            onCopy={() => onCopy(report)}
+          />
+        </div>
+      </div>
+    );
+  };
+
+  const renderFolder = (folder: ReportFolder, depth: number): JSX.Element[] => {
+    const count = folderVisibleReportCount.get(folder.id) ?? 0;
+    if (!showEmptyFolders && count === 0) return [];
+    const collapsed = collapsedFolderIds.has(folder.id);
+    const rows: JSX.Element[] = [
+      <div key={folder.id}
+        className="group flex h-8 cursor-pointer items-center gap-1.5 rounded px-2 text-sm text-muted-foreground transition-colors hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground"
+        style={{ paddingLeft: 6 + depth * 16 }}
+        title={`${folder.name}\n${count} 份报告`}
+        onClick={() => toggleFolder(folder.id)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          toggleFolder(folder.id);
+        }}>
+        <ChevronRight className={`h-3.5 w-3.5 shrink-0 transition-transform ${collapsed ? '' : 'rotate-90'}`} />
+        <FolderOpen className="h-4 w-4 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{folder.name}</span>
+        <span className="shrink-0 text-[11px] text-muted-foreground">{count}</span>
+      </div>,
+    ];
+    if (!collapsed) {
+      for (const child of foldersByParent.get(folder.id) ?? []) rows.push(...renderFolder(child, depth + 1));
+      for (const report of reportsByFolder.byFolder.get(folder.id) ?? []) rows.push(renderReportRow(report, depth + 1));
+    }
+    return rows;
+  };
+
+  const treeRows = [
+    ...(foldersByParent.get(null) ?? []).flatMap((folder) => renderFolder(folder, 0)),
+    ...reportsByFolder.root.map((report) => renderReportRow(report, 0)),
+  ];
+
   return (
-    <div className="flex min-h-0 w-full flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] lg:w-[340px] lg:shrink-0">
-      <div className="border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-xs font-medium text-muted-foreground">
-        共 {reports.length} 份报告
+    <div className={`relative flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] lg:flex-none lg:shrink-0 lg:w-[var(--report-nav-width)] ${className ?? ''}`}
+      style={{ '--report-nav-width': `${navWidth}px` } as CSSProperties}>
+      <div className="flex items-center justify-between gap-2 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] py-1.5 pl-3 pr-1 text-xs font-medium text-muted-foreground">
+        <span>共 {reports.length} 份报告</span>
+        <div className="flex min-w-0 items-center gap-1">
+          {showProjectFilter ? (
+            <ProjectFilterMenu
+              projects={projects}
+              counts={projectCounts}
+              active={activeProjectFilter}
+              onSelect={onProjectFilterSelect}
+            />
+          ) : null}
+          <ReportFilterMenu
+            folders={folders}
+            counts={counts}
+            active={activeFilter}
+            onSelect={onFilterSelect}
+            onRequestCreate={onCreateFolder}
+          />
+        </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-        {reports.map((report) => {
-          const active = report.id === selectedId;
-          return (
-            <div key={report.id}
-              className={`group flex cursor-pointer items-start gap-2 border-b border-[hsl(var(--hairline))] px-3 py-3 transition-colors ${active ? 'bg-primary/10' : 'hover:bg-[hsl(var(--surface-sunken))]'}`}
-              onClick={() => onSelect(report)}>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  {report.verdict ? <VerdictBadge verdict={report.verdict} /> : null}
-                  <span className="truncate text-sm font-medium">{report.title}</span>
-                </div>
-                <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                  <FormatBadge format={report.format} />
-                  <span>{formatBytes(report.sizeBytes)}</span>
-                  {report.projectId ? <span className="truncate">项目：{projectName.get(report.projectId) ?? report.projectId}</span> : null}
-                  {report.commitSha ? <span className="font-mono">· {report.commitSha.slice(0, 7)}</span> : null}
-                  {report.prNumber ? <span>· PR #{report.prNumber}</span> : null}
-                </div>
-                <div className="mt-1 flex items-center justify-between gap-2">
-                  <span className="text-[11px] text-muted-foreground/80">{formatTime(report.createdAt)}</span>
-                  <select
-                    value={report.folderId ?? ''}
-                    onClick={(e) => e.stopPropagation()}
-                    onChange={(e) => onMove(report, e.target.value || null)}
-                    title="移动到文件夹"
-                    className="max-w-[120px] rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 text-[11px] text-muted-foreground opacity-0 outline-none transition-opacity focus:opacity-100 group-hover:opacity-100"
-                  >
-                    <option value="">未归类</option>
-                    {folders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
-                  </select>
-                </div>
-              </div>
-              <div className="flex items-center" onClick={(e) => e.stopPropagation()}>
-                <Button variant="ghost" size="icon"
-                  className="h-7 w-7 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
-                  aria-label="复制直达链接" title="复制直达链接"
-                  onClick={() => onCopy(report)}>
-                  <Link2 className="h-3.5 w-3.5" />
-                </Button>
-                <ConfirmAction
-                  trigger={(
-                    <Button variant="ghost" size="icon"
-                      className="h-7 w-7 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
-                      aria-label="删除报告" title="删除报告">
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  )}
-                  title="删除这份验收报告？"
-                  description="报告的元数据和内容文件都会被删除，无法恢复。"
-                  confirmLabel="删除"
-                  onConfirm={() => onDelete(report)}
-                />
-              </div>
-            </div>
-          );
-        })}
+      <div className="min-h-0 flex-1 overflow-y-auto p-1.5 pb-24 sm:pb-1.5" style={{ overscrollBehavior: 'contain' }}>
+        {treeRows.length > 0 ? treeRows : (
+          <div className="px-2 py-8 text-center text-sm text-muted-foreground">当前筛选下没有报告</div>
+        )}
       </div>
+      {resizable ? (
+        <div
+          className="absolute right-0 top-0 hidden h-full w-1 cursor-col-resize bg-transparent transition-colors hover:bg-primary/40 lg:block"
+          role="separator"
+          aria-orientation="vertical"
+          title="拖拽调整导航宽度"
+          onPointerDown={beginResize}
+        />
+      ) : null}
     </div>
+  );
+}
+
+function ReportRowActions({
+  report, folders, onOpen, onDelete, onMove, onCopy,
+}: {
+  report: AcceptanceReport;
+  folders: ReportFolder[];
+  onOpen: () => void;
+  onDelete: () => void;
+  onMove: (folderId: string | null) => void;
+  onCopy: () => void;
+}): JSX.Element {
+  const confirmDelete = (): void => {
+    if (window.confirm(`删除报告「${report.title}」？`)) onDelete();
+  };
+
+  return (
+    <DropdownMenu
+      align="end"
+      width={220}
+      trigger={(
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 text-muted-foreground opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"
+          aria-label="打开报告操作菜单"
+          title="更多操作"
+        >
+          <MoreVertical className="h-4 w-4" />
+        </Button>
+      )}
+    >
+      <DropdownItem onSelect={onOpen}>
+        <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate">打开报告</span>
+      </DropdownItem>
+      <DropdownItem onSelect={onCopy}>
+        <Link2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate">复制直达链接</span>
+      </DropdownItem>
+      <DropdownDivider />
+      <DropdownLabel>移动到文件夹</DropdownLabel>
+      <DropdownItem onSelect={() => onMove(null)} disabled={!report.folderId}>
+        <Inbox className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate">未归类</span>
+        {!report.folderId ? <Check className="h-4 w-4 shrink-0 text-primary" /> : null}
+      </DropdownItem>
+      {folders.length === 0 ? (
+        <DropdownItem disabled>
+          <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate">暂无文件夹</span>
+        </DropdownItem>
+      ) : folders.map((folder) => (
+        <DropdownItem key={folder.id} onSelect={() => onMove(folder.id)} disabled={report.folderId === folder.id}>
+          <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate" title={folder.name}>{folder.name}</span>
+          {report.folderId === folder.id ? <Check className="h-4 w-4 shrink-0 text-primary" /> : null}
+        </DropdownItem>
+      ))}
+      <DropdownDivider />
+      <DropdownItem destructive onSelect={confirmDelete}>
+        <Trash2 className="h-4 w-4 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">删除报告</span>
+      </DropdownItem>
+    </DropdownMenu>
+  );
+}
+
+function CreateFolderDialog({
+  open, onOpenChange, onCreate,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onCreate: (name: string) => Promise<boolean>;
+}): JSX.Element {
+  const [name, setName] = useState('');
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setName('');
+    setError('');
+    setSubmitting(false);
+  }, [open]);
+
+  const submit = useCallback(async () => {
+    const clean = name.trim();
+    if (!clean) {
+      setError('请填写文件夹名称');
+      return;
+    }
+    setSubmitting(true);
+    setError('');
+    const ok = await onCreate(clean);
+    setSubmitting(false);
+    if (ok) onOpenChange(false);
+  }, [name, onCreate, onOpenChange]);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>新建文件夹</DialogTitle>
+          <DialogDescription>用于把验收报告按项目、功能或批次归档。</DialogDescription>
+        </DialogHeader>
+        <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+          <label className="block space-y-1.5">
+            <span className="text-sm font-medium">文件夹名称</span>
+            <input
+              autoFocus
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="例如：每日验收"
+              className="h-9 w-full rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 text-sm outline-none focus:border-primary/60"
+            />
+          </label>
+          {error ? <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div> : null}
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>取消</Button>
+            <Button type="submit" disabled={submitting}>{submitting ? '创建中' : '创建'}</Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -643,11 +965,11 @@ function ReportList({
  * Markdown fetched, converted with `marked`, injected via srcDoc into the same
  * no-same-origin sandbox. See routes/reports.ts security note.
  */
-function ReportViewer({ report }: { report: AcceptanceReport | null }): JSX.Element {
+function ReportViewer({ report, onBack, onOpenNav }: { report: AcceptanceReport | null; onBack?: () => void; onOpenNav?: () => void }): JSX.Element {
   const [mdHtml, setMdHtml] = useState<string | null>(null);
   const [mdError, setMdError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
   const reqRef = useRef(0);
-  const reportFrameSandbox = 'allow-scripts allow-popups allow-popups-to-escape-sandbox';
 
   useEffect(() => {
     setMdHtml(null);
@@ -676,6 +998,15 @@ function ReportViewer({ report }: { report: AcceptanceReport | null }): JSX.Elem
       });
   }, [report]);
 
+  useEffect(() => {
+    if (!expanded) return undefined;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setExpanded(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [expanded]);
+
   if (!report) {
     return (
       <div className="hidden min-h-0 flex-1 items-center justify-center rounded-md border border-dashed border-border text-sm text-muted-foreground lg:flex">
@@ -685,9 +1016,19 @@ function ReportViewer({ report }: { report: AcceptanceReport | null }): JSX.Elem
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))]">
+    <div className={`flex min-h-0 flex-1 flex-col overflow-hidden border border-[hsl(var(--hairline))] bg-[hsl(var(--background))] ${expanded ? 'fixed inset-0 z-[12000] rounded-none' : 'rounded-md'}`}>
       <div className="flex items-center justify-between gap-2 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
+          {onBack ? (
+            <Button variant="ghost" size="icon" className="-ml-1 h-8 w-8 shrink-0 lg:hidden" aria-label="返回报告列表" title="返回报告列表" onClick={onBack}>
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+          ) : null}
+          {onOpenNav ? (
+            <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 lg:hidden" aria-label="打开报告目录" title="打开报告目录" onClick={onOpenNav}>
+              <Layers className="h-4 w-4" />
+            </Button>
+          ) : null}
           {report.verdict ? <VerdictBadge verdict={report.verdict} /> : null}
           <span className="truncate text-sm font-medium">{report.title}</span>
           <FormatBadge format={report.format} />
@@ -696,17 +1037,27 @@ function ReportViewer({ report }: { report: AcceptanceReport | null }): JSX.Elem
           {report.prNumber && report.verdict ? <PushToPrControl report={report} /> : null}
           <ShareControl report={report} />
           <span className="text-[11px] text-muted-foreground">{formatBytes(report.sizeBytes)}</span>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-muted-foreground"
+            aria-label={expanded ? '退出全屏查看' : '全屏查看报告'}
+            title={expanded ? '退出全屏查看' : '全屏查看报告'}
+            onClick={() => setExpanded((current) => !current)}
+          >
+            {expanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+          </Button>
         </div>
       </div>
       <div className="min-h-0 flex-1 bg-white">
         {report.format === 'html' ? (
-          <iframe key={report.id} title={report.title} src={reportRawUrl(report.id)} sandbox={reportFrameSandbox} className="h-full w-full border-0" />
+          <iframe key={report.id} title={report.title} src={reportRawUrl(report.id)} sandbox="allow-scripts" className="h-full w-full border-0" />
         ) : mdError ? (
           <div className="p-4"><ErrorBlock message={mdError} /></div>
         ) : mdHtml === null ? (
           <div className="p-4"><LoadingBlock label="正在渲染 Markdown" /></div>
         ) : (
-          <iframe key={report.id} title={report.title} srcDoc={mdHtml} sandbox={reportFrameSandbox} className="h-full w-full border-0" />
+          <iframe key={report.id} title={report.title} srcDoc={mdHtml} sandbox="allow-scripts" className="h-full w-full border-0" />
         )}
       </div>
     </div>
