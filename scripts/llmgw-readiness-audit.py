@@ -108,6 +108,8 @@ def _static_checks() -> list[dict]:
     upstream_readiness = upstream_readiness_path.read_text(encoding="utf-8") if upstream_readiness_path.exists() else ""
     disk_guard_path = ROOT / "scripts/llmgw-disk-space-guard.sh"
     disk_guard = disk_guard_path.read_text(encoding="utf-8") if disk_guard_path.exists() else ""
+    external_backup_path = ROOT / "scripts/llmgw-prod-external-backup.sh"
+    external_backup = external_backup_path.read_text(encoding="utf-8") if external_backup_path.exists() else ""
     asr_bootstrap_path = ROOT / "scripts/llmgw-prod-asr-pool-bootstrap.sh"
     asr_bootstrap = asr_bootstrap_path.read_text(encoding="utf-8") if asr_bootstrap_path.exists() else ""
     asr_bootstrap_js_path = ROOT / "scripts/llmgw-prod-asr-pool-bootstrap.js"
@@ -309,6 +311,29 @@ def _static_checks() -> list[dict]:
         "disk_space_guard_available_for_prod_rollout",
         ok and disk_guard_executable and not disk_guard_destructive,
         f"{detail}; executable={disk_guard_executable}; destructive={disk_guard_destructive}",
+    ))
+
+    ok, detail = _contains_all(
+        external_backup,
+        [
+            "LLM Gateway production external backup",
+            "LLMGW_EXTERNAL_BACKUP_HOST",
+            "LLMGW_EXTERNAL_BACKUP_REMOTE_REPO",
+            "LLMGW_EXTERNAL_BACKUP_DATABASES:-prdagent llm_gateway",
+            "mongodump --db '$db' --archive",
+            "| gzip > \"$backup_dir/$db.archive.gz\"",
+            "gzip -t \"$backup_dir/$db.archive.gz\"",
+            "SHA256SUMS",
+            "env.snapshot.redacted",
+            "LLMGW_EXTERNAL_BACKUP_INCLUDE_SECRETS",
+        ],
+    )
+    external_backup_executable = bool(external_backup_path.exists() and (external_backup_path.stat().st_mode & stat.S_IXUSR))
+    external_backup_destructive = any(item in external_backup for item in ["rm -", "deleteMany", "dropDatabase", "docker volume rm", "down -v"])
+    checks.append(_check(
+        "prod_external_backup_streams_mongo_without_remote_archives",
+        ok and external_backup_executable and not external_backup_destructive,
+        f"{detail}; executable={external_backup_executable}; destructive={external_backup_destructive}",
     ))
 
     ok, detail = _contains_all(

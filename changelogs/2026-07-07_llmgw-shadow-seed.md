@@ -24,3 +24,4 @@
 | ops | prd-agent | LLM Gateway ASR bootstrap 与 provider 审计支持 stream 候选池参数化，便于在 BigModel 凭据失败时安全切换取证 |
 | ops | prd-agent | LLM Gateway provider 审计补充 video 平台 key 形态、候选模型健康状态和 no available channels 分类 |
 | ops | prd-agent | LLM Gateway provider 审计默认读取近期 GW 请求日志，自动阻断 video/ASR 最近真实上游失败 |
+| ops | prd-agent | 新增 LLM Gateway 生产外置流式备份脚本，避免大 Mongo 备份继续占满生产根盘 |
