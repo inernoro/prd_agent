@@ -141,6 +141,34 @@ describe('secret-masker.maskLine', () => {
     expect(maskLine('LOG_LEVEL=info')).toBe('LOG_LEVEL=info');
   });
 
+  // Step 4 line-level scrub: the KEY=VALUE pass truncates values at `;` and its
+  // prefix class excludes `;`, so a `;Password=` segment deeper in a connection
+  // string was never seen (Codex PR #1008 review). Also covers secrets not in
+  // KEY=VALUE form at all.
+  it('masks the Password= segment inside a truncated ADO.NET connection string', () => {
+    const result = maskLine('SQLSERVER_URL=Server=x;User Id=sa;Password=hunter2;TrustServerCertificate=True;');
+    expect(result).not.toContain('hunter2');
+    expect(result).toContain('Password=***[masked]***');
+    expect(result).toContain('Server=x'); // non-secret parts preserved
+  });
+
+  it('masks a bare vendor-prefix token in free (non KEY=VALUE) log text', () => {
+    const result = maskLine('Cloning into repo using ghp_' + 'a'.repeat(36) + ' now');
+    expect(result).not.toContain('ghp_a');
+    expect(result).toContain('***[masked]***');
+  });
+
+  it('masks the password of an inline-credential URL mid-line, keeping user/host', () => {
+    const result = maskLine('remote: pushing to https://gituser:s3cr3tpw@github.com/o/r.git');
+    expect(result).not.toContain('s3cr3tpw');
+    expect(result).toContain('https://gituser:***[masked]***@github.com/o/r.git');
+  });
+
+  it('does NOT over-mask reset-password flags or plain URLs', () => {
+    expect(maskLine('opts: resetPassword=true')).toBe('opts: resetPassword=true');
+    expect(maskLine('API=https://api.example.com/v1')).toBe('API=https://api.example.com/v1');
+  });
+
   it('preserves PATH=/usr/bin:/bin', () => {
     const result = maskLine('PATH=/usr/bin:/bin');
     expect(result).toBe('PATH=/usr/bin:/bin');

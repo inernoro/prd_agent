@@ -193,6 +193,20 @@ export function maskLine(line: string): string {
     },
   );
 
+  // Step 4: line-level secret scrub for what the KEY=VALUE pass structurally
+  // cannot see. (a) The value regex truncates at the first `;` and its prefix
+  // class excludes `;`, so a `;Password=` segment deeper in an ADO.NET/ODBC
+  // connection string (e.g. `SQLSERVER_URL=Server=x;User Id=sa;Password=hunter2;`)
+  // is never matched (Codex PR #1008 review). (b) Secrets not in KEY=VALUE form
+  // at all — a bare `ghp_...` token or a `scheme://user:pass@` URL sitting in
+  // free log text. These are prefix/structure-anchored so plain URLs, commit
+  // SHAs, and ids are not touched.
+  working = working.replace(CONN_STRING_PASSWORD_SEGMENT_GLOBAL, (_m, head: string) => `${head}***[masked]***`);
+  working = working.replace(URL_CREDENTIALS_INLINE_GLOBAL, (_m, head: string) => `${head}***[masked]***@`);
+  for (const re of SECRET_VALUE_PATTERNS_GLOBAL) {
+    working = working.replace(re, '***[masked]***');
+  }
+
   return working;
 }
 
@@ -267,6 +281,17 @@ const SECRET_VALUE_PATTERNS: RegExp[] = [
   /-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----/, // PEM private key
   /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/, // JWT (header.payload.sig)
 ];
+
+// Global-flagged variants for line-mode scrubbing (maskLine step 4), where we
+// replace every secret-shaped substring in a log line rather than test a single
+// value. Kept in sync with SECRET_VALUE_PATTERNS by construction.
+const SECRET_VALUE_PATTERNS_GLOBAL: RegExp[] = SECRET_VALUE_PATTERNS.map(
+  (p) => new RegExp(p.source, p.flags.includes('g') ? p.flags : p.flags + 'g'),
+);
+// Connection-string password segment (`;Password=secret`) anywhere on a line.
+const CONN_STRING_PASSWORD_SEGMENT_GLOBAL = /((?:^|[\s;{,"'])(?:password|pwd)\s*=)([^\s;,"']+)/gi;
+// Inline-credential URL password part (`scheme://user:PASS@`) anywhere on a line.
+const URL_CREDENTIALS_INLINE_GLOBAL = /\b([a-z][a-z0-9+.\-]*:\/\/[^@/\s]*:)[^@/\s]+@/gi;
 
 /**
  * Does a value carry inline credentials — URL (`scheme://user:pass@`),
