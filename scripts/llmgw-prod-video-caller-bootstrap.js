@@ -6,10 +6,8 @@
 const dryRunRaw = (process.env.LLMGW_VIDEO_BOOTSTRAP_DRY_RUN || "1").toLowerCase();
 const dryRun = !(dryRunRaw === "0" || dryRunRaw === "false");
 const sourceCallerCode = process.env.LLMGW_VIDEO_BOOTSTRAP_SOURCE_CALLER || "video-agent.videogen::video-gen";
-const targetCallers = (process.env.LLMGW_VIDEO_BOOTSTRAP_TARGET_CALLERS || "visual-agent.videogen::video-gen")
-  .split(/[,\s]+/)
-  .map((x) => x.trim())
-  .filter((x) => x.length > 0);
+const targetCallersRaw = process.env.LLMGW_VIDEO_BOOTSTRAP_TARGET_CALLERS || "visual-agent.videogen::video-gen";
+const targetCallers = targetCallersRaw.split(/[,\s]+/).map((x) => x.trim()).filter((x) => x.length > 0);
 
 function fail(message) {
   print(`ERROR: ${message}`);
