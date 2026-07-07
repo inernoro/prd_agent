@@ -74,6 +74,63 @@ public class GatewayDoubaoStreamAsrTests
         root.GetProperty("gateway").GetProperty("protocol").GetString().ShouldBe("websocket");
     }
 
+    [Fact]
+    public async Task DoubaoStreamAsrFailure_ShouldKeepInitializedDiagnostic()
+    {
+        var service = new DoubaoStreamAsrService(NullLogger<DoubaoStreamAsrService>.Instance);
+
+        var result = await service.TranscribeAsync(
+            "not-a-ws-url",
+            "",
+            "single-access-key",
+            CreateSilentWav(),
+            new Dictionary<string, object>
+            {
+                ["resourceId"] = "volc.test.resource",
+            });
+
+        result.Success.ShouldBeFalse();
+        result.Error.ShouldNotBeNullOrWhiteSpace();
+        result.Diagnostic.WsUrl.ShouldBe("not-a-ws-url");
+        result.Diagnostic.ResourceId.ShouldBe("volc.test.resource");
+        result.Diagnostic.RequestId.ShouldNotBeNullOrWhiteSpace();
+        result.Diagnostic.AuthMode.ShouldBe("单Key (x-api-key)");
+        result.Diagnostic.AppKeyPreview.ShouldBe("(空)");
+        result.Diagnostic.AccessKeyPreview!.ShouldContain("len=17");
+        result.Diagnostic.RawErrorChain.ShouldNotBeNullOrWhiteSpace();
+        result.Diagnostic.FriendlyError.ShouldNotBeNullOrWhiteSpace();
+        result.Diagnostic.WscatCommand!.ShouldContain("not-a-ws-url");
+        result.Diagnostic.Audio.ShouldNotBeNull();
+        result.Diagnostic.Audio!.SegmentCount.ShouldBeGreaterThan(0);
+    }
+
+    private static byte[] CreateSilentWav()
+    {
+        const int sampleRate = 16000;
+        const short channels = 1;
+        const short bitsPerSample = 16;
+        const int samples = sampleRate / 10;
+        var pcmBytes = samples * channels * bitsPerSample / 8;
+
+        using var ms = new MemoryStream();
+        using var writer = new BinaryWriter(ms);
+        writer.Write("RIFF"u8.ToArray());
+        writer.Write(36 + pcmBytes);
+        writer.Write("WAVE"u8.ToArray());
+        writer.Write("fmt "u8.ToArray());
+        writer.Write(16);
+        writer.Write((short)1);
+        writer.Write(channels);
+        writer.Write(sampleRate);
+        writer.Write(sampleRate * channels * bitsPerSample / 8);
+        writer.Write((short)(channels * bitsPerSample / 8));
+        writer.Write(bitsPerSample);
+        writer.Write("data"u8.ToArray());
+        writer.Write(pcmBytes);
+        writer.Write(new byte[pcmBytes]);
+        return ms.ToArray();
+    }
+
     private sealed class FakeDoubaoStreamAsrExecutor : IDoubaoStreamAsrExecutor
     {
         public string? WsUrl { get; private set; }

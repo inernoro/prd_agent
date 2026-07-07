@@ -88,6 +88,7 @@ public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
         CancellationToken ct = default)
     {
         var result = new StreamAsrResult();
+        var diag = InitializeDiagnostic(result, wsUrl, appKey, accessKey, config);
         var segmentDurationMs = 200;
         var sampleRate = 16000;
 
@@ -190,13 +191,20 @@ public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
         var segments = SplitAudio(pcmData, segmentSize);
         _logger.LogInformation("[DoubaoStreamAsr] 音频分片: {Count} 片, 每片 {Size} bytes", segments.Count, segmentSize);
 
+        diag.Audio = new AsrAudioInfo
+        {
+            Channels = channels,
+            BitsPerSample = bitsPerSample,
+            SampleRate = actualRate,
+            PcmBytes = pcmData.Length,
+            SegmentCount = segments.Count,
+        };
+
         // 构建认证头（支持双Key和单Key两种模式）
-        var resourceId = config?.GetValueOrDefault("resourceId")?.ToString() ?? "volc.bigasr.sauc.duration";
-        var requestId = Guid.NewGuid().ToString();
         var headers = new Dictionary<string, string>
         {
-            ["X-Api-Resource-Id"] = resourceId,
-            ["X-Api-Request-Id"] = requestId,
+            ["X-Api-Resource-Id"] = diag.ResourceId!,
+            ["X-Api-Request-Id"] = diag.RequestId!,
         };
 
         if (!string.IsNullOrEmpty(appKey))
@@ -237,6 +245,8 @@ public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
             if (initResp.Code != 0)
             {
                 result.Error = $"初始化失败: code={initResp.Code}";
+                diag.RawErrorChain = $"ServerFullResponse code={initResp.Code}";
+                diag.FriendlyError = $"ASR 初始化失败，服务端返回业务错误码 {initResp.Code}。requestId={diag.RequestId}";
                 return result;
             }
 
@@ -293,11 +303,29 @@ public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
             result.FullText = ExtractFullText(responses);
             result.Segments = ExtractSegments(responses);
 
+            if (!result.Success)
+            {
+                var firstErrCode = responses.FirstOrDefault(r => r.Code != 0)?.Code ?? 0;
+                diag.RawErrorChain = $"ServerErrorResponse code={firstErrCode}";
+                diag.FriendlyError = $"ASR 服务返回业务错误码 {firstErrCode}。requestId={diag.RequestId}";
+                result.Error ??= diag.FriendlyError;
+            }
+
             _logger.LogInformation("[DoubaoStreamAsr] 转录完成, text_length={Len}, segments={SegCount}",
                 result.FullText.Length, result.Segments.Count);
         }
+        catch (WebSocketException wsEx)
+        {
+            FillHandshakeDiagnostic(diag, wsEx);
+            _logger.LogError(wsEx,
+                "[DoubaoStreamAsr] 握手/通信异常: status={Status} chain={Chain}",
+                diag.HandshakeStatusCode, diag.RawErrorChain);
+            result.Error = diag.FriendlyError ?? wsEx.Message;
+        }
         catch (Exception ex)
         {
+            diag.RawErrorChain = BuildExceptionChain(ex);
+            diag.FriendlyError = $"ASR 调用异常: {ex.Message}";
             _logger.LogError(ex, "[DoubaoStreamAsr] 转录失败");
             result.Error = ex.Message;
         }
@@ -529,6 +557,29 @@ public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
     // ═══════════════════════════════════════════════════════════
     // 诊断辅助
     // ═══════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// 初始化诊断包，让失败日志也能定位 URL、鉴权模式和请求 ID。
+    /// </summary>
+    private static AsrDiagnostic InitializeDiagnostic(
+        StreamAsrResult result,
+        string wsUrl,
+        string appKey,
+        string accessKey,
+        Dictionary<string, object>? config)
+    {
+        var diag = result.Diagnostic;
+        diag.WsUrl = wsUrl;
+        diag.ResourceId = (config?.GetValueOrDefault("resourceId")?.ToString()) ?? "volc.bigasr.sauc.duration";
+        diag.RequestId = Guid.NewGuid().ToString();
+        diag.AppKeyPreview = MaskSecret(appKey);
+        diag.AccessKeyPreview = MaskSecret(accessKey);
+        diag.AuthMode = !string.IsNullOrEmpty(appKey) ? "双Key (X-Api-App-Key + X-Api-Access-Key)"
+                       : !string.IsNullOrEmpty(accessKey) ? "单Key (x-api-key)"
+                       : "无密钥（必然 401）";
+        diag.WscatCommand = BuildWscatCommand(wsUrl, appKey, accessKey, diag.ResourceId, diag.RequestId);
+        return diag;
+    }
 
     /// <summary>
     /// 脱敏密钥：前 4 + *** + 后 2。少于 6 位时整体打码。
