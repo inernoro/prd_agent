@@ -86,6 +86,45 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ShadowForceSampling_PropagatesAcrossQueuedRuns()
+    {
+        var imageRun = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/ImageGenRun.cs");
+        var transcriptRun = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/TranscriptRun.cs");
+        var documentRun = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/DocumentStoreAgentRun.cs");
+        var videoGenRun = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/VideoGenModels.cs");
+        var videoToDocRun = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/VideoToDocModels.cs");
+
+        foreach (var model in new[] { imageRun, transcriptRun, documentRun, videoGenRun, videoToDocRun })
+        {
+            Assert.Contains("public bool ForceFullShadowSample { get; set; }", model);
+        }
+
+        var imageController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageGenController.cs");
+        var imageMasterController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs");
+        var transcriptController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/TranscriptAgentController.cs");
+        var documentController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreController.cs");
+        var videoController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/VideoAgentController.cs");
+        var videoService = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Services/VideoGenService.cs");
+
+        foreach (var creator in new[] { imageController, imageMasterController, transcriptController, documentController, videoController, videoService })
+        {
+            Assert.Contains("ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true", creator);
+        }
+
+        var imageWorker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs");
+        var transcriptWorker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/TranscriptRunWorker.cs");
+        var subtitleProcessor = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/SubtitleGenerationProcessor.cs");
+        var reprocessProcessor = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ContentReprocessProcessor.cs");
+        var videoWorker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/VideoGenRunWorker.cs");
+        var videoToDocWorker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/VideoToDocRunWorker.cs");
+
+        foreach (var worker in new[] { imageWorker, transcriptWorker, subtitleProcessor, reprocessProcessor, videoWorker, videoToDocWorker })
+        {
+            Assert.Contains("ForceFullShadowSample: run.ForceFullShadowSample", worker);
+        }
+    }
+
+    [Fact]
     public void ExecDep_RequiresReleaseGateBeforeFullHttpOrCanaryMode()
     {
         var script = ReadRepoFile("exec_dep.sh");
@@ -1152,7 +1191,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--include-visual-video-direct", plan);
         Assert.Contains("--include-video-to-doc-asr", plan);
         Assert.Contains("--include-video-to-text-asr-workflow", plan);
-        Assert.Contains("No people, no faces, no logos, no letters, no readable text.", script);
+        Assert.Contains("No people, no faces, no logos, no letters, no readable text, no symbols.", script);
+        Assert.Contains("Static test card with color blocks only, no text.", script);
         Assert.DoesNotContain("black text only", script);
         Assert.DoesNotContain("small black label", script);
         Assert.DoesNotContain("combined comparison card", script);

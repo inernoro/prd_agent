@@ -26,18 +26,21 @@ public class SubtitleGenerationProcessor
     private readonly IDocumentService _documentService;
     private readonly ILogger<SubtitleGenerationProcessor> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ILLMRequestContextAccessor _llmCtx;
 
     public SubtitleGenerationProcessor(
         IModelResolver modelResolver,
         ILlmGateway llmGateway,
         IDocumentService documentService,
         IHttpClientFactory httpClientFactory,
+        ILLMRequestContextAccessor llmCtx,
         ILogger<SubtitleGenerationProcessor> logger)
     {
         _modelResolver = modelResolver;
         _llmGateway = llmGateway;
         _documentService = documentService;
         _httpClientFactory = httpClientFactory;
+        _llmCtx = llmCtx;
         _logger = logger;
     }
 
@@ -287,6 +290,19 @@ public class SubtitleGenerationProcessor
             Context = new GatewayRequestContext { UserId = run.UserId }
         };
 
+        using var _ = _llmCtx.BeginScope(new LlmRequestContext(
+            RequestId: run.Id,
+            GroupId: null,
+            SessionId: run.Id,
+            UserId: run.UserId,
+            ViewRole: null,
+            DocumentChars: null,
+            DocumentHash: null,
+            SystemPromptRedacted: "[DOC_STORE_SUBTITLE_ASR]",
+            RequestType: ModelTypes.Asr,
+            AppCallerCode: AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+            ForceFullShadowSample: run.ForceFullShadowSample));
+
         var rawResp = await _llmGateway.SendRawWithResolutionAsync(rawRequest, gwResolution, CancellationToken.None);
 
         if (rawResp?.Success != true || rawResp.Content == null)
@@ -404,6 +420,19 @@ public class SubtitleGenerationProcessor
             Context = new GatewayRequestContext { UserId = run.UserId },
         };
 
+        using var _ = _llmCtx.BeginScope(new LlmRequestContext(
+            RequestId: run.Id,
+            GroupId: null,
+            SessionId: run.Id,
+            UserId: run.UserId,
+            ViewRole: null,
+            DocumentChars: null,
+            DocumentHash: null,
+            SystemPromptRedacted: "[DOC_STORE_SUBTITLE_AUDIO_CHAT]",
+            RequestType: ModelTypes.Asr,
+            AppCallerCode: AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+            ForceFullShadowSample: run.ForceFullShadowSample));
+
         var rawResp = await _llmGateway.SendRawWithResolutionAsync(rawRequest, gwResolution, CancellationToken.None);
         if (rawResp?.Success != true || string.IsNullOrWhiteSpace(rawResp.Content))
         {
@@ -485,6 +514,19 @@ public class SubtitleGenerationProcessor
         _logger.LogInformation(
             "[doc-store-agent] 走豆包异步 ASR JSON 路径: model={Model} bytes={Bytes}",
             resolution.ActualModel, audioBytes.Length);
+
+        using var _ = _llmCtx.BeginScope(new LlmRequestContext(
+            RequestId: run.Id,
+            GroupId: null,
+            SessionId: run.Id,
+            UserId: run.UserId,
+            ViewRole: null,
+            DocumentChars: null,
+            DocumentHash: null,
+            SystemPromptRedacted: "[DOC_STORE_SUBTITLE_ASR_JSON]",
+            RequestType: ModelTypes.Asr,
+            AppCallerCode: AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+            ForceFullShadowSample: run.ForceFullShadowSample));
 
         var rawResp = await _llmGateway.SendRawWithResolutionAsync(rawRequest, gwResolution, CancellationToken.None);
 
@@ -648,6 +690,19 @@ public class SubtitleGenerationProcessor
         string fileUrl)
     {
         await UpdateProgressAsync(db, runStore, run, 30, "视觉识别中");
+
+        using var _ = _llmCtx.BeginScope(new LlmRequestContext(
+            RequestId: run.Id,
+            GroupId: null,
+            SessionId: run.Id,
+            UserId: run.UserId,
+            ViewRole: null,
+            DocumentChars: null,
+            DocumentHash: null,
+            SystemPromptRedacted: "[DOC_STORE_SUBTITLE_VISION]",
+            RequestType: ModelTypes.Vision,
+            AppCallerCode: AppCallerRegistry.DocumentStoreAgent.Subtitle.Vision,
+            ForceFullShadowSample: run.ForceFullShadowSample));
 
         var client = _llmGateway.CreateClient(
             AppCallerRegistry.DocumentStoreAgent.Subtitle.Vision,

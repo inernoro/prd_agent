@@ -756,9 +756,9 @@ def call_image_raw_generate(
         join_url(base, "/api/visual-agent/image-gen/generate"),
         {
             "prompt": (
-                "Abstract geometry test image for system verification. "
+                "Plain software test card for system verification. "
                 f"tag={tag}. White background, one blue square, one green circle, one thin gray border. "
-                "No people, no faces, no logos, no letters, no readable text."
+                "No people, no faces, no logos, no letters, no readable text, no symbols."
             ),
             "platformId": platform_id,
             "modelId": model_id,
@@ -842,9 +842,9 @@ def call_image_worker_text2img_run(
             "items": [
                 {
                     "prompt": (
-                        "Abstract geometry test image for system verification. "
+                        "Plain software test card for system verification. "
                         f"tag={tag}. White background, one blue square, one green circle, one thin gray border. "
-                        "No people, no faces, no logos, no letters, no readable text."
+                        "No people, no faces, no logos, no letters, no readable text, no symbols."
                     ),
                     "count": 1,
                     "size": size,
@@ -888,9 +888,9 @@ def call_image_worker_img2img_run(
             "items": [
                 {
                     "prompt": (
-                        "Low-risk abstract image variation for system verification. "
-                        f"tag={tag}. Keep the reference as simple geometric shapes and muted colors. "
-                        "No people, no faces, no logos, no letters, no readable text."
+                        "Plain software test card variation for system verification. "
+                        f"tag={tag}. Preserve only basic color blocks and simple geometric layout from the reference. "
+                        "No people, no faces, no logos, no letters, no readable text, no symbols."
                     ),
                     "count": 1,
                     "size": size,
@@ -959,9 +959,9 @@ def call_image_worker_vision_run(
         join_url(base, f"/api/visual-agent/image-master/workspaces/{urllib.parse.quote(workspace_id)}/image-gen/runs"),
         {
             "prompt": (
-                "Use @img1 and @img2 as references for a low-risk abstract composition. "
-                f"tag={tag}. Combine only simple geometric shapes and muted colors. "
-                "No people, no faces, no logos, no letters, no readable text."
+                "Use @img1 and @img2 as references for a plain software test card. "
+                f"tag={tag}. Combine only flat color rectangles, one circle, and a neutral background. "
+                "No people, no faces, no logos, no letters, no readable text, no symbols."
             ),
             "targetKey": f"llmgw-shadow-vision-{tag}",
             "platformId": platform_id,
@@ -970,8 +970,8 @@ def call_image_worker_vision_run(
             "responseFormat": response_format,
             "imageRefs": refs,
             "userMessageContent": (
-                f"Use @img1 and @img2 for a geometry-only system verification image. tag={tag}. "
-                "No people, no logos, no readable text."
+                f"Use @img1 and @img2 for a geometry-only software test card. tag={tag}. "
+                "No people, no logos, no readable text, no symbols."
             ),
         },
         headers={**bearer(token), "Idempotency-Key": f"llmgw-shadow-image-worker-vision-{tag}"},
@@ -1010,7 +1010,7 @@ def call_video_direct(
         "POST",
         join_url(base, "/api/video-agent/videogen-direct"),
         {
-            "prompt": f"Minimal LLM Gateway video raw evidence. tag={tag}. Static test card with plain text.",
+            "prompt": f"Minimal LLM Gateway video raw evidence. tag={tag}. Static test card with color blocks only, no text.",
             "aspectRatio": aspect_ratio,
             "resolution": resolution,
             "durationSeconds": duration_seconds,
@@ -1076,7 +1076,7 @@ def call_visual_video_direct_run(
         join_url(base, "/api/visual-agent/video-gen/runs"),
         {
             "mode": "direct",
-            "directPrompt": f"Minimal LLM Gateway visual video raw evidence. tag={tag}. Static test card with plain text.",
+            "directPrompt": f"Minimal LLM Gateway visual video raw evidence. tag={tag}. Static test card with color blocks only, no text.",
             "directAspectRatio": aspect_ratio,
             "directResolution": resolution,
             "directDuration": duration_seconds,

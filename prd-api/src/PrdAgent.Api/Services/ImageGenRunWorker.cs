@@ -585,7 +585,8 @@ public class ImageGenRunWorker : BackgroundService
                             PlatformId: run.PlatformId,
                             ModelResolutionType: run.ModelResolutionType,
                             ModelGroupId: run.ModelGroupId,
-                            ModelGroupName: run.ModelGroupName));
+                            ModelGroupName: run.ModelGroupName,
+                            ForceFullShadowSample: run.ForceFullShadowSample));
 
                         _logger.LogInformation("[ImageGenRunWorker Debug] Calling GenerateAsync with appCallerCode={AppCallerCode}", appCallerCode);
 
