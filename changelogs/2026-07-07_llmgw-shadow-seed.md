@@ -29,3 +29,4 @@
 | ops | prd-agent | LLM Gateway ASR bootstrap 支持只创建候选池不绑定 caller，降低 stream 试切风险 |
 | fix | prd-api | LLM Gateway 豆包 stream ASR 失败路径补齐诊断包，避免生产日志出现未初始化排障信息 |
 | ops | prd-agent | LLM Gateway provider 审计解析 ASR stream 诊断包，阻断未初始化诊断日志进入 video/ASR 灰度 |
+| ops | prd-agent | shadow-start 发布阶段支持复用现有 prd-admin 静态站，避免后端/GW 诊断部署被 Pages 包缺失阻断 |

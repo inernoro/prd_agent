@@ -24,6 +24,7 @@ set -eu
 #   - PRD_AGENT_RELEASE_INTENT_FILE：fast.sh 写入、exec_dep.sh 校验的同 commit 发布意图文件，默认 .prd-agent-release-intent.env
 #   - PRD_AGENT_REQUIRE_FAST_INTENT=1：强制要求先跑 fast.sh 生成发布意图文件
 #   - PRD_AGENT_IGNORE_FAST_INTENT=1：紧急场景忽略 fast.sh 发布意图文件漂移校验
+#   - PRD_AGENT_REUSE_EXISTING_STATIC_DIST=1：复用现有 deploy/web/dist，不下载 prd-admin zip；仅用于后端/GW-only shadow 部署
 #   - PRD_AGENT_API_IMAGE：覆盖后端镜像（默认按 REPO + 发布 ref 组装，并优先走 get.miduo.org 镜像代理）
 #   - PRD_AGENT_LLMGW_IMAGE：覆盖独立 LLM 网关镜像（默认按 REPO + 发布 ref 组装；compose 已含 llmgw service，随 up 一起拉起）
 #   - API_PULL_TIMEOUT_SECONDS：后端镜像拉取超时时间，默认 30 秒
@@ -481,80 +482,93 @@ tmp_dir="$(mktemp -d)"
 cleanup() { rm -rf "$tmp_dir"; }
 trap cleanup EXIT
 
-asset_url=""
-sha_url=""
-manifest_url=""
-
-if [ -n "${DIST_URL:-}" ]; then
-  asset_url="$DIST_URL"
-else
-  pages_base="${PAGES_BASE_URL:-https://get.miduo.org/https://${OWNER}.github.io/${REPO_NAME}}"
-  asset_url="${pages_base%/}/prd-admin-dist-${TAG}.zip"
-  sha_url="${pages_base%/}/prd-admin-dist-${TAG}.zip.sha256"
-  manifest_url="${pages_base%/}/release-manifest-${TAG}.json"
-fi
-
-if [ -z "$asset_url" ]; then
-  echo "ERROR: 未能确定静态站压缩包下载地址。" >&2
-  echo "  - 默认从 GitHub Pages 下载 prd-admin-dist-${TAG}.zip（可用 PAGES_BASE_URL 覆盖）" >&2
-  echo "  - 或直接设置 DIST_URL=... 指定 zip 地址" >&2
-  exit 1
-fi
-
-if [ -n "$manifest_url" ]; then
-  manifest_path="$tmp_dir/release-manifest.json"
-  if curl -fL "$manifest_url" -o "$manifest_path" 2>/dev/null; then
-    echo "Release manifest: $manifest_url"
-    grep -E '"commit"|"ref"|"apiImage"|"llmgwImage"|"llmgwServeImage"|"llmgwWebImage"|"webDist"|"webSha256"' "$manifest_path" || true
-  fi
-fi
-
-zip_path="$tmp_dir/prd-admin-dist.zip"
-echo "Downloading: $asset_url"
-curl -fL "$asset_url" -o "$zip_path"
-
-sha_path="$tmp_dir/prd-admin-dist.zip.sha256"
-
-if [ -n "$SKIP_VERIFY" ]; then
-  echo "跳过 sha256 校验（SKIP_VERIFY=1 或 --skip-verify）"
-elif [ -n "$sha_url" ] && command -v sha256sum >/dev/null 2>&1; then
-  if curl -fL "$sha_url" -o "$sha_path" 2>/dev/null; then
-    echo "Verifying sha256..."
-    # 兼容 sha256 文件内容为："<hash>  <filename>"
-    expected="$(awk '{print $1}' "$sha_path" | head -n 1)"
-    actual="$(sha256sum "$zip_path" | awk '{print $1}')"
-    if [ -n "$expected" ] && [ "$expected" != "$actual" ]; then
-      echo "WARN: sha256 不匹配，可能是 CDN 缓存不一致，等待 5 秒后重新下载..."
-      sleep 5
-      curl -fL -H "Cache-Control: no-cache" "$asset_url" -o "$zip_path"
-      curl -fL -H "Cache-Control: no-cache" "$sha_url" -o "$sha_path" 2>/dev/null || true
-      expected="$(awk '{print $1}' "$sha_path" | head -n 1)"
-      actual="$(sha256sum "$zip_path" | awk '{print $1}')"
-      if [ -n "$expected" ] && [ "$expected" != "$actual" ]; then
-        echo "" >&2
-        echo "ERROR: sha256 校验失败（expected=$expected actual=$actual）" >&2
-        echo "" >&2
-        echo "可能原因：" >&2
-        echo "  1. GitHub Pages CDN 缓存了不同版本的 zip 和 sha256 文件" >&2
-        echo "  2. 下载过程中文件被截断或损坏" >&2
-        echo "" >&2
-        echo "解决办法：" >&2
-        echo "  - 等待几分钟后重试（等待 CDN 缓存刷新）" >&2
-        echo "  - 跳过校验：SKIP_VERIFY=1 ./exec_dep.sh" >&2
-        echo "  - 或使用 --skip-verify 参数：./exec_dep.sh --skip-verify" >&2
-        exit 1
-      fi
-      echo "重试成功，sha256 校验通过"
+reuse_static_dist="$(printf '%s' "${PRD_AGENT_REUSE_EXISTING_STATIC_DIST:-0}" | tr 'A-Z' 'a-z' | xargs || true)"
+case "$reuse_static_dist" in
+  1|true|yes)
+    if [ ! -d deploy/web/dist ] || [ -z "$(find deploy/web/dist -mindepth 1 -maxdepth 1 2>/dev/null | head -n 1)" ]; then
+      echo "ERROR: PRD_AGENT_REUSE_EXISTING_STATIC_DIST=1 but deploy/web/dist is missing or empty." >&2
+      echo "       This option is only for backend/GW-only shadow deploys where an existing static site is already present." >&2
+      exit 1
     fi
-  fi
-fi
+    echo "Static dist reuse enabled: keeping existing deploy/web/dist"
+    ;;
+  *)
+    asset_url=""
+    sha_url=""
+    manifest_url=""
 
-mkdir -p deploy/web/dist
-rm -rf deploy/web/dist/*
-unzip -q "$zip_path" -d deploy/web/dist
+    if [ -n "${DIST_URL:-}" ]; then
+      asset_url="$DIST_URL"
+    else
+      pages_base="${PAGES_BASE_URL:-https://get.miduo.org/https://${OWNER}.github.io/${REPO_NAME}}"
+      asset_url="${pages_base%/}/prd-admin-dist-${TAG}.zip"
+      sha_url="${pages_base%/}/prd-admin-dist-${TAG}.zip.sha256"
+      manifest_url="${pages_base%/}/release-manifest-${TAG}.json"
+    fi
 
-echo ""
-echo "Static dist extracted to: deploy/web/dist"
+    if [ -z "$asset_url" ]; then
+      echo "ERROR: 未能确定静态站压缩包下载地址。" >&2
+      echo "  - 默认从 GitHub Pages 下载 prd-admin-dist-${TAG}.zip（可用 PAGES_BASE_URL 覆盖）" >&2
+      echo "  - 或直接设置 DIST_URL=... 指定 zip 地址" >&2
+      exit 1
+    fi
+
+    if [ -n "$manifest_url" ]; then
+      manifest_path="$tmp_dir/release-manifest.json"
+      if curl -fL "$manifest_url" -o "$manifest_path" 2>/dev/null; then
+        echo "Release manifest: $manifest_url"
+        grep -E '"commit"|"ref"|"apiImage"|"llmgwImage"|"llmgwServeImage"|"llmgwWebImage"|"webDist"|"webSha256"' "$manifest_path" || true
+      fi
+    fi
+
+    zip_path="$tmp_dir/prd-admin-dist.zip"
+    echo "Downloading: $asset_url"
+    curl -fL "$asset_url" -o "$zip_path"
+
+    sha_path="$tmp_dir/prd-admin-dist.zip.sha256"
+
+    if [ -n "$SKIP_VERIFY" ]; then
+      echo "跳过 sha256 校验（SKIP_VERIFY=1 或 --skip-verify）"
+    elif [ -n "$sha_url" ] && command -v sha256sum >/dev/null 2>&1; then
+      if curl -fL "$sha_url" -o "$sha_path" 2>/dev/null; then
+        echo "Verifying sha256..."
+        # 兼容 sha256 文件内容为："<hash>  <filename>"
+        expected="$(awk '{print $1}' "$sha_path" | head -n 1)"
+        actual="$(sha256sum "$zip_path" | awk '{print $1}')"
+        if [ -n "$expected" ] && [ "$expected" != "$actual" ]; then
+          echo "WARN: sha256 不匹配，可能是 CDN 缓存不一致，等待 5 秒后重新下载..."
+          sleep 5
+          curl -fL -H "Cache-Control: no-cache" "$asset_url" -o "$zip_path"
+          curl -fL -H "Cache-Control: no-cache" "$sha_url" -o "$sha_path" 2>/dev/null || true
+          expected="$(awk '{print $1}' "$sha_path" | head -n 1)"
+          actual="$(sha256sum "$zip_path" | awk '{print $1}')"
+          if [ -n "$expected" ] && [ "$expected" != "$actual" ]; then
+            echo "" >&2
+            echo "ERROR: sha256 校验失败（expected=$expected actual=$actual）" >&2
+            echo "" >&2
+            echo "可能原因：" >&2
+            echo "  1. GitHub Pages CDN 缓存了不同版本的 zip 和 sha256 文件" >&2
+            echo "  2. 下载过程中文件被截断或损坏" >&2
+            echo "" >&2
+            echo "解决办法：" >&2
+            echo "  - 等待几分钟后重试（等待 CDN 缓存刷新）" >&2
+            echo "  - 跳过校验：SKIP_VERIFY=1 ./exec_dep.sh" >&2
+            echo "  - 或使用 --skip-verify 参数：./exec_dep.sh --skip-verify" >&2
+            exit 1
+          fi
+          echo "重试成功，sha256 校验通过"
+        fi
+      fi
+    fi
+
+    mkdir -p deploy/web/dist
+    rm -rf deploy/web/dist/*
+    unzip -q "$zip_path" -d deploy/web/dist
+
+    echo ""
+    echo "Static dist extracted to: deploy/web/dist"
+    ;;
+esac
 
 # 激活独立部署模式的 nginx 配置：
 # - 仓库里 default.conf 默认 symlink 到 branches/_disconnected.conf（CDS 未激活时的 502 兜底）

@@ -463,6 +463,7 @@ write_dry_run_stage_report() {
   LLMGW_DRY_RUN_ALLOWLIST="${allowlist:-}" \
   LLMGW_DRY_RUN_SHADOW_PERCENT="${shadow_percent:-}" \
   LLMGW_DRY_RUN_GATE_BASE="${gate_base:-}" \
+  LLMGW_DRY_RUN_REUSE_STATIC_DIST="${PRD_AGENT_REUSE_EXISTING_STATIC_DIST:-0}" \
   LLMGW_DRY_RUN_RELEASE_GATE_REQUIRED="${release_gate_required:-0}" \
   LLMGW_DRY_RUN_PROD_PREFLIGHT_JSON="${prod_preflight_json:-}" \
   LLMGW_DRY_RUN_SHADOW_SEED_JSON="${shadow_seed_json:-}" \
@@ -506,7 +507,10 @@ else:
             + os.environ.get("LLMGW_DRY_RUN_PROVIDER_AUDIT_JSON", "")
         )
     commands.append("./fast.sh --commit " + commit)
-    commands.append("./exec_dep.sh --commit " + commit)
+    exec_dep = "./exec_dep.sh --commit " + commit
+    if os.environ.get("LLMGW_DRY_RUN_REUSE_STATIC_DIST", "0") in ("1", "true", "yes"):
+        exec_dep = "PRD_AGENT_REUSE_EXISTING_STATIC_DIST=1 " + exec_dep
+    commands.append(exec_dep)
     if stage == "shadow-start" and os.environ.get("LLMGW_STAGE_RUN_SHADOW_SEED", "0") == "1":
         flags = os.environ.get("LLMGW_STAGE_SHADOW_SEED_FLAGS", "").strip()
         seed = (
@@ -531,6 +535,7 @@ report = {
     "allowlist": os.environ.get("LLMGW_DRY_RUN_ALLOWLIST", ""),
     "shadowFullSamplePercent": os.environ.get("LLMGW_DRY_RUN_SHADOW_PERCENT", ""),
     "gateBase": os.environ.get("LLMGW_DRY_RUN_GATE_BASE", ""),
+    "reuseExistingStaticDist": os.environ.get("LLMGW_DRY_RUN_REUSE_STATIC_DIST", "0") in ("1", "true", "yes"),
     "releaseGateRequired": os.environ.get("LLMGW_DRY_RUN_RELEASE_GATE_REQUIRED", "0") == "1",
     "prodPreflightJson": os.environ.get("LLMGW_DRY_RUN_PROD_PREFLIGHT_JSON", ""),
     "shadowSeedJson": os.environ.get("LLMGW_DRY_RUN_SHADOW_SEED_JSON", ""),
@@ -833,6 +838,9 @@ export GW_SMOKE_REPORT_MD="${GW_SMOKE_REPORT_MD:-$smoke_md}"
 export LLMGW_GATE_SHADOW_SINCE_HOURS="${LLMGW_GATE_SHADOW_SINCE_HOURS:-24}"
 export LLMGW_GATE_HEALTH_SAMPLES="${LLMGW_GATE_HEALTH_SAMPLES:-3}"
 export LLMGW_GATE_HEALTH_INTERVAL_SECONDS="${LLMGW_GATE_HEALTH_INTERVAL_SECONDS:-5}"
+if [ "$stage" = "shadow-start" ]; then
+  export PRD_AGENT_REUSE_EXISTING_STATIC_DIST="${PRD_AGENT_REUSE_EXISTING_STATIC_DIST:-1}"
+fi
 
 case "$stage" in
   shadow-start)
