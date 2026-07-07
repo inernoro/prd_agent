@@ -228,10 +228,14 @@ def _require_provider_audit(path: str, label: str) -> None:
 
 
 def _provider_external_blockers(path: str) -> list[dict]:
+    return _external_blockers_from_json(path, "provider config audit evidence")
+
+
+def _external_blockers_from_json(path: str, label: str) -> list[dict]:
     if not path or not os.path.exists(path):
         return []
     try:
-        payload = _load_json_file(path, "provider config audit evidence")
+        payload = _load_json_file(path, label)
     except SystemExit:
         return []
     blockers = payload.get("externalBlockers") or payload.get("ExternalBlockers") or []
@@ -252,6 +256,30 @@ def _provider_external_blockers(path: str) -> list[dict]:
             "remediation": str(item.get("remediation") or item.get("Remediation") or ""),
         })
     return sanitized
+
+
+def _canary_external_blockers(path: str) -> list[dict]:
+    return _external_blockers_from_json(path, "canary evidence")
+
+
+def _merge_blockers(*groups: list[dict]) -> list[dict]:
+    merged: list[dict] = []
+    seen: set[tuple[str, str, str, str, str, str]] = set()
+    for group in groups:
+        for item in group:
+            key = (
+                str(item.get("code") or ""),
+                str(item.get("scope") or ""),
+                str(item.get("source") or ""),
+                str(item.get("appCaller") or ""),
+                str(item.get("modelId") or ""),
+                str(item.get("step") or ""),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(item)
+    return merged
 
 
 def _require_video_canary(path: str, label: str) -> None:
@@ -608,6 +636,13 @@ def append(args: argparse.Namespace) -> int:
                 _require_asr_http_canary(args.asr_http_canary_json, "ASR HTTP canary evidence")
 
     provider_external_blockers = _provider_external_blockers(args.provider_audit_json)
+    video_canary_external_blockers = _canary_external_blockers(args.video_canary_json)
+    asr_http_canary_external_blockers = _canary_external_blockers(args.asr_http_canary_json)
+    all_external_blockers = _merge_blockers(
+        provider_external_blockers,
+        video_canary_external_blockers,
+        asr_http_canary_external_blockers,
+    )
     entry = {
         "recordedAt": datetime.now(timezone.utc).isoformat(),
         "stage": args.stage,
@@ -631,8 +666,11 @@ def append(args: argparse.Namespace) -> int:
         "providerAuditExternalBlockers": provider_external_blockers,
         "videoCanaryJson": args.video_canary_json,
         "videoCanaryRequired": _bool_flag(args.video_canary_required),
+        "videoCanaryExternalBlockers": video_canary_external_blockers,
         "asrHttpCanaryJson": args.asr_http_canary_json,
         "asrHttpCanaryRequired": _bool_flag(args.asr_http_canary_required),
+        "asrHttpCanaryExternalBlockers": asr_http_canary_external_blockers,
+        "externalBlockers": all_external_blockers,
         "rollbackRehearsal": args.stage == ROLLBACK_REHEARSAL_STAGE,
         "allowOutOfOrder": _bool_flag(args.allow_out_of_order),
         "allowOutOfOrderReason": args.allow_out_of_order_reason.strip(),
@@ -718,11 +756,32 @@ def _write_markdown(path: str, report: dict) -> None:
                 )
         else:
             fh.write("- none\n")
+        canary_blockers = _merge_blockers(
+            report.get("videoCanaryExternalBlockers") or [],
+            report.get("asrHttpCanaryExternalBlockers") or [],
+        )
+        fh.write("\n## Canary External Blockers\n\n")
+        if canary_blockers:
+            for item in canary_blockers:
+                fh.write(
+                    f"- `{cell(item.get('code') or '')}` scope=`{cell(item.get('scope') or '')}` "
+                    f"source=`{cell(item.get('source') or '')}` appCaller=`{cell(item.get('appCaller') or '')}` "
+                    f"model=`{cell(item.get('modelId') or '')}`: {cell(item.get('remediation') or '')}\n"
+                )
+        else:
+            fh.write("- none\n")
 
 
 def stage_report(args: argparse.Namespace) -> int:
     failures: list[str] = []
     provider_external_blockers = _provider_external_blockers(args.provider_audit_json)
+    video_canary_external_blockers = _canary_external_blockers(args.video_canary_json)
+    asr_http_canary_external_blockers = _canary_external_blockers(args.asr_http_canary_json)
+    all_external_blockers = _merge_blockers(
+        provider_external_blockers,
+        video_canary_external_blockers,
+        asr_http_canary_external_blockers,
+    )
     checks = [
         ("prodPreflightJson", args.prod_preflight_json, True),
         ("servingProbeJson", args.serving_probe_json, True),
@@ -784,8 +843,11 @@ def stage_report(args: argparse.Namespace) -> int:
         "providerAuditExternalBlockers": provider_external_blockers,
         "videoCanaryJson": args.video_canary_json,
         "videoCanaryRequired": _bool_flag(args.video_canary_required),
+        "videoCanaryExternalBlockers": video_canary_external_blockers,
         "asrHttpCanaryJson": args.asr_http_canary_json,
         "asrHttpCanaryRequired": _bool_flag(args.asr_http_canary_required),
+        "asrHttpCanaryExternalBlockers": asr_http_canary_external_blockers,
+        "externalBlockers": all_external_blockers,
         "servingProbeJson": args.serving_probe_json,
         "smokeJson": args.smoke_json,
         "releaseMainRef": args.main_ref,
@@ -847,8 +909,15 @@ def audit(args: argparse.Namespace) -> int:
                 "providerAuditExternalBlockers": latest.get("providerAuditExternalBlockers") or _provider_external_blockers(str(latest.get("providerAuditJson") or "")),
                 "videoCanaryJson": latest.get("videoCanaryJson") or "",
                 "videoCanaryRequired": _bool_flag(str(latest.get("videoCanaryRequired") or "0")),
+                "videoCanaryExternalBlockers": latest.get("videoCanaryExternalBlockers") or _canary_external_blockers(str(latest.get("videoCanaryJson") or "")),
                 "asrHttpCanaryJson": latest.get("asrHttpCanaryJson") or "",
                 "asrHttpCanaryRequired": _bool_flag(str(latest.get("asrHttpCanaryRequired") or "0")),
+                "asrHttpCanaryExternalBlockers": latest.get("asrHttpCanaryExternalBlockers") or _canary_external_blockers(str(latest.get("asrHttpCanaryJson") or "")),
+                "externalBlockers": latest.get("externalBlockers") or _merge_blockers(
+                    latest.get("providerAuditExternalBlockers") or _provider_external_blockers(str(latest.get("providerAuditJson") or "")),
+                    latest.get("videoCanaryExternalBlockers") or _canary_external_blockers(str(latest.get("videoCanaryJson") or "")),
+                    latest.get("asrHttpCanaryExternalBlockers") or _canary_external_blockers(str(latest.get("asrHttpCanaryJson") or "")),
+                ),
                 "releaseMainRef": latest.get("releaseMainRef") or "",
                 "releaseMainSha": latest.get("releaseMainSha") or "",
                 "allowOutOfOrder": _bool_flag(str(latest.get("allowOutOfOrder") or "0")),

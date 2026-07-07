@@ -157,6 +157,55 @@ def _classify(response: dict[str, Any]) -> tuple[bool, list[str], list[str]]:
     return False, failures, warnings
 
 
+def _external_blocker_from_failure(app_caller: str, model_id: str, failure: str) -> dict[str, Any] | None:
+    normalized = failure.lower()
+    if "has not activated the requested video model" in normalized:
+        code = "video_model_not_open"
+        remediation = "Activate the requested video model in Ark Console, then rerun the video exchange canary."
+    elif "video upstream has no available channels" in normalized or "video-gen model pool has no available model" in normalized:
+        code = "video_channel_unavailable"
+        remediation = "Restore a Healthy video-gen provider channel before video/ASR canary."
+    elif "video upstream authorization failed" in normalized or "video upstream returned http 401" in normalized or "video upstream returned http 403" in normalized:
+        code = "video_authorization_failed"
+        remediation = "Verify video provider key and model access before video/ASR canary."
+    else:
+        return None
+
+    return {
+        "code": code,
+        "scope": "video",
+        "source": "videoCanary",
+        "appCaller": app_caller,
+        "modelId": model_id,
+        "step": "video-exchange-canary",
+        "remediation": remediation,
+    }
+
+
+def _append_blocker_unique(items: list[dict[str, Any]], blocker: dict[str, Any] | None) -> None:
+    if not blocker:
+        return
+    key = (
+        blocker.get("code"),
+        blocker.get("scope"),
+        blocker.get("source"),
+        blocker.get("appCaller"),
+        blocker.get("modelId"),
+        blocker.get("step"),
+    )
+    for item in items:
+        if (
+            item.get("code"),
+            item.get("scope"),
+            item.get("source"),
+            item.get("appCaller"),
+            item.get("modelId"),
+            item.get("step"),
+        ) == key:
+            return
+    items.append(blocker)
+
+
 def _content_json(response: dict[str, Any]) -> dict[str, Any]:
     gateway = response.get("gatewayResponse") if isinstance(response.get("gatewayResponse"), dict) else {}
     content = _get(gateway, "content")
@@ -354,6 +403,10 @@ def _run_one_canary(args: argparse.Namespace, base: str, key: str, app_caller: s
 
     item["failures"] = failures
     item["warnings"] = warnings
+    external_blockers: list[dict[str, Any]] = []
+    for failure in failures:
+        _append_blocker_unique(external_blockers, _external_blocker_from_failure(app_caller, args.model, failure))
+    item["externalBlockers"] = external_blockers
     item["verdict"] = "pass" if ok and not failures else "fail"
     return item
 
@@ -414,6 +467,7 @@ def main() -> int:
 
     all_failures: list[str] = []
     all_warnings: list[str] = []
+    all_external_blockers: list[dict[str, Any]] = []
     canaries: list[dict[str, Any]] = []
     for app_caller in app_callers:
         item = _run_one_canary(args, base, key, app_caller)
@@ -422,6 +476,8 @@ def main() -> int:
             all_failures.append(f"{app_caller}: {failure}")
         for warning in item.get("warnings") or []:
             all_warnings.append(f"{app_caller}: {warning}")
+        for blocker in item.get("externalBlockers") or []:
+            _append_blocker_unique(all_external_blockers, blocker)
 
     report["canaries"] = canaries
     if len(canaries) == 1:
@@ -431,6 +487,7 @@ def main() -> int:
         report["request"] = canaries[0].get("request")
     report["failures"] = all_failures
     report["warnings"] = all_warnings
+    report["externalBlockers"] = all_external_blockers
     report["verdict"] = "pass" if canaries and not all_failures and all(item.get("verdict") == "pass" for item in canaries) else "fail"
     _write_json(args.json_out, report)
 

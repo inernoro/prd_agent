@@ -471,12 +471,17 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("_provider_external_blockers", ledger);
         Assert.Contains("contains external blockers", ledger);
         Assert.Contains("providerExternalBlockers", ledger);
+        Assert.Contains("_canary_external_blockers", ledger);
+        Assert.Contains("_merge_blockers", ledger);
+        Assert.Contains("\"externalBlockers\": all_external_blockers", ledger);
         Assert.Contains("\"videoCanaryJson\": args.video_canary_json", ledger);
         Assert.Contains("\"videoCanaryRequired\": _bool_flag(args.video_canary_required)", ledger);
+        Assert.Contains("\"videoCanaryExternalBlockers\": video_canary_external_blockers", ledger);
         Assert.Contains("_require_video_canary", ledger);
         Assert.Contains("video canary evidence", ledger);
         Assert.Contains("\"asrHttpCanaryJson\": args.asr_http_canary_json", ledger);
         Assert.Contains("\"asrHttpCanaryRequired\": _bool_flag(args.asr_http_canary_required)", ledger);
+        Assert.Contains("\"asrHttpCanaryExternalBlockers\": asr_http_canary_external_blockers", ledger);
         Assert.Contains("_require_asr_http_canary", ledger);
         Assert.Contains("ASR HTTP canary evidence", ledger);
         Assert.Contains("missing expectedCommit for same-commit evidence", ledger);
