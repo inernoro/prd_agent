@@ -1015,18 +1015,19 @@ def _static_checks() -> list[dict]:
         ok,
         detail,
     ))
+    direct_transport_empty = _dictionary_block_is_empty(direct, "DirectTransportMarkerBaseline")
     ok, detail = _contains_all(
         direct,
         [
             "DirectTransportMarkers_AreOnlyInTrackedNonGatewayPaths",
             "DirectTransportMarkerBaseline",
-            "PrdAgent.Api/Controllers/Api/PlatformsController.cs",
+            "GatewayTransports.AdminProbe",
         ],
     )
     checks.append(_check(
-        "direct_transport_markers_are_tracked",
-        ok,
-        detail,
+        "direct_transport_marker_baseline_is_empty",
+        ok and direct_transport_empty,
+        f"{detail}; DirectTransportMarkerBaseline={direct_transport_empty}",
     ))
 
     gateway_src = _read("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs")

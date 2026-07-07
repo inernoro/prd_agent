@@ -901,8 +901,8 @@ public class PlatformsController : ControllerBase
             AppCallerCode: string.IsNullOrWhiteSpace(requestPurpose) ? "admin.platforms.fetch-models" : requestPurpose.Trim(),
             PlatformId: platform.Id,
             PlatformName: platform.Name,
-            // S2 观测标记：拉取平台模型列表由 admin 直接发 HTTP（非网关路由），标记 direct。
-            GatewayTransport: GatewayTransports.Direct);
+            // S2 观测标记：拉取平台模型列表是管理侧只读供应商探测，不属于用户生成请求。
+            GatewayTransport: GatewayTransports.AdminProbe);
 
         var logId = await _logWriter.StartAsync(start);
 

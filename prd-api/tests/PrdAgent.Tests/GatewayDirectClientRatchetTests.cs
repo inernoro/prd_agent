@@ -68,12 +68,11 @@ public class GatewayDirectClientRatchetTests
     };
 
     /// <summary>
-    /// 仍然允许写入 direct transport 的位置。这个清单不是"已完成"证明，而是发布前必须逐项处理
-    /// 或在 gate 中明确排除的剩余风险。
+    /// 仍然允许写入 direct transport 的位置。全量迁移发布前这个清单必须为空；
+    /// 管理侧只读探测请使用 GatewayTransports.AdminProbe，不能污染 direct 口径。
     /// </summary>
     private static readonly Dictionary<string, string> DirectTransportMarkerBaseline = new(StringComparer.Ordinal)
     {
-        ["PrdAgent.Api/Controllers/Api/PlatformsController.cs"] = "admin 拉取模型列表是管理探测路径，不是用户生成请求",
     };
 
     [Fact]
