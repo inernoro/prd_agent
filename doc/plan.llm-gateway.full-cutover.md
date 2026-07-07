@@ -155,6 +155,8 @@ python3 scripts/llmgw-map-shadow-seed.py --iterations 1
 都会等待 `ImageGenRunWorker` 后台 run 结束；img2img/vision 必须额外传 `--image-ref-shas`
 （vision 至少两张），用于证明 `visual-agent.image.text2img::generation`、
 `visual-agent.image.img2img::generation`、`visual-agent.image.vision::generation` 三条后台生图入口都不是只靠直连同步生成路径覆盖。
+生产证据期优先使用本轮 seed 自己生成的干净图片 sha 作为 vision 参考图；历史用户素材可能触发上游内容策略差异，
+这类样本必须归因记录，不能计入 httpFail=0 的发布门。
 需要补视频或 ASR/raw 证据时必须显式加 `--include-video-direct` / `--include-visual-video-direct` /
 `--include-transcript-asr` / `--include-document-store-subtitle-asr`。视频路径通过 `/api/video-agent/videogen-direct`
 记录 `video-agent.videogen::video-gen:raw`；视觉视频路径通过 `/api/visual-agent/video-gen/runs` 创建 direct run
