@@ -99,6 +99,7 @@
 - 已用 `scripts/llmgw-map-shadow-seed.py --include-image-raw --include-image-worker-text2img --include-image-worker-img2img --include-image-worker-vision` 走 MAP 真实入口补图片 raw 样本。`visual-agent.image-gen.generate::generation`、`visual-agent.image.text2img::generation`、`visual-agent.image.img2img::generation` 均得到 `HttpOk=true`、`AllMatch=true`、`critical=false`。证据文件：`.llmgw-release-evidence/20260707T114029Z_map-shadow-seed-image-raw.json`。
 - 初次 `visual-agent.image.vision::generation` 使用历史参考图时，inproc 成功但 http shadow 被上游内容策略拒绝，错误为“提交中含有违反平台政策的内容”，`HasCritical=false`，mismatch 为 `rawSuccess` warning。该样本证明不是文件 rehydrate/hash/transport 失败，但仍不能作为发布门成功样本。
 - 随后改用本轮 seed 自己生成的两张干净图片 sha 重跑 `--include-image-worker-vision`，`visual-agent.image.vision::generation` 得到 `HttpOk=true`、`AllMatch=true`、`critical=false`、`mismatches=[]`。证据文件：`.llmgw-release-evidence/20260707T114823Z_map-shadow-seed-image-vision-clean-refs.json`。
+- 按全量 http raw 发布门做只读预检仍 FAIL，证据文件：`.llmgw-release-evidence/20260707T115229Z_release-gate-full-raw-precheck.json`。失败项集中在每格样本不足、覆盖时长不足 24 小时、以及上述已归因的 vision policy httpFail 仍在 24 小时窗口内。
 - 结论更新：图片 raw 四类核心入口已经各自出现至少 1 条真实 MAP shadow 成功样本；视频、ASR、图片的跨进程 raw 能力不再是“完全未通”。但最近 24 小时/当前 commit 下仍有一条已归因的 vision policy httpFail 历史样本，且每个核心 appCaller 尚未达到 30 条、覆盖窗口尚未满 24 小时。因此仍禁止宣称全量迁移完成，下一步应从 clean-ref 时间点之后重新累计样本，并只允许按 allowlist 小批灰度。
 
 ## 已还的债务（归档）
