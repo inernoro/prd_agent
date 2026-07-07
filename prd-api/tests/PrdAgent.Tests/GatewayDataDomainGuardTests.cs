@@ -960,6 +960,29 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ShadowSampleAccumulator_RunsBatchedWindowsAndCoverageWithoutLeakingGatewayKeyInArgv()
+    {
+        var script = ReadRepoFile("scripts/llmgw-shadow-sample-accumulate.sh");
+
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_DRY_RUN:-1", script);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_BATCHES:-1", script);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_SEED_FLAGS", script);
+        Assert.Contains("执行模式必须设置 LLMGW_SHADOW_ACCUMULATE_SEED_FLAGS", script);
+        Assert.Contains("llmgw-shadow-sample-window.sh", script);
+        Assert.Contains("LLMGW_SHADOW_SAMPLE_WINDOW_DRY_RUN=0", script);
+        Assert.Contains("LLMGW_SHADOW_SAMPLE_WINDOW_SEED_FLAGS=\"$seed_flags\"", script);
+        Assert.Contains("batch-$batch_id-shadow-sample-window.json", script);
+        Assert.Contains("llmgw-shadow-coverage-report.py", script);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_RUN_COVERAGE:-1", script);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_MIN_PER_CELL:-30", script);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_MIN_COVERAGE_HOURS:-24", script);
+        Assert.Contains("GW_KEY=\"$gate_key\" python3", script);
+        Assert.DoesNotContain("--key \"$gate_key\"", script);
+        Assert.DoesNotContain("--gw-key \"$gate_key\"", script);
+        Assert.DoesNotContain("echo \"$gate_key\"", script);
+    }
+
+    [Fact]
     public void ProdPreflightWorkflow_RunsStartAndCompletionPreflightWithoutLeakingKeys()
     {
         var workflow = ReadRepoFile(".github/workflows/llmgw-prod-preflight.yml");
