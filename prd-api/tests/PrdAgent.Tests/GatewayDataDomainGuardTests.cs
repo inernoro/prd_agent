@@ -88,6 +88,7 @@ public class GatewayDataDomainGuardTests
     public void ExecDep_RequiresReleaseGateBeforeFullHttpOrCanaryMode()
     {
         var script = ReadRepoFile("exec_dep.sh");
+        var readiness = ReadRepoFile("scripts/llmgw-readiness-audit.py");
 
         Assert.Contains("run_llmgw_release_gate_if_needed", script);
         Assert.Contains("check_fast_release_intent", script);
@@ -223,7 +224,15 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("dedicated Volcengine video adapter", providerAudit);
         Assert.Contains("externalBlockers", providerAudit);
         Assert.Contains("asr_credential_rejected", providerAudit);
+        Assert.Contains("asr_authorization_failed", providerAudit);
+        Assert.Contains("asr_channel_unavailable", providerAudit);
+        Assert.Contains("video_channel_unavailable", providerAudit);
         Assert.Contains("video_model_not_open", providerAudit);
+        Assert.Contains("--self-test", providerAudit);
+        Assert.Contains("_self_test_report", providerAudit);
+        Assert.Contains("requiredCodes", providerAudit);
+        Assert.Contains("missingCodes", providerAudit);
+        Assert.Contains("provider_audit_external_blocker_self_test", readiness);
         Assert.Contains("probe_args=\"--base $gate_base\"", script);
         Assert.Contains("python3 scripts/llmgw-serving-probe.py $probe_args", script);
         Assert.Contains("LLM Gateway post-deploy serving probe: required", script);

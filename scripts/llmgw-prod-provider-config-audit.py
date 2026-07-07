@@ -931,6 +931,166 @@ def _write_md(path: str, report: dict[str, Any]) -> None:
             fh.write("- none\n")
 
 
+def _self_test_report() -> dict[str, Any]:
+    """Run a deterministic provider-audit fixture without Docker or secrets."""
+
+    asr_exchange_id = "fixture-asr-exchange"
+    video_exchange_id = "fixture-video-exchange"
+    video_pool_id = "fixture-video-pool"
+    video_model_id = "doubao-seedance-2-0-fast-260128"
+
+    data = {
+        "generatedAt": "2026-07-07T00:00:00+00:00",
+        "gatewayDatabase": "llm_gateway",
+        "recentGatewayLogHours": 24,
+        "exchanges": [
+            {
+                "_id": asr_exchange_id,
+                "Name": "Fixture Doubao ASR",
+                "Enabled": True,
+                "TransformerType": DEFAULT_ASR_TRANSFORMER,
+                "TargetUrl": "https://openspeech.bytedance.com/api/v3/auc/bigmodel/submit",
+                "TransformerConfig": {"resourceId": "fixture-resource"},
+                "TargetAuthScheme": "XApiKey",
+                "ModelAlias": DEFAULT_ASR_MODEL_ID,
+                "TargetApiKeyEncrypted": "",
+            },
+            {
+                "_id": video_exchange_id,
+                "Name": "Fixture Volcengine Video",
+                "Enabled": True,
+                "TransformerType": DEFAULT_VIDEO_TRANSFORMER,
+                "TargetUrl": "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks",
+                "ModelAlias": video_model_id,
+                "TargetApiKeyEncrypted": "",
+            },
+        ],
+        "modelGroups": [
+            {
+                "_id": DEFAULT_ASR_POOL_ID,
+                "Name": "Fixture ASR Pool",
+                "ModelType": "asr",
+                "Models": [
+                    {
+                        "ModelId": DEFAULT_ASR_MODEL_ID,
+                        "PlatformId": asr_exchange_id,
+                        "HealthStatus": 0,
+                    },
+                ],
+            },
+            {
+                "_id": video_pool_id,
+                "Name": "Fixture Video Pool",
+                "ModelType": "video-gen",
+                "Models": [
+                    {
+                        "ModelId": video_model_id,
+                        "PlatformId": video_exchange_id,
+                        "HealthStatus": 0,
+                    },
+                ],
+            },
+        ],
+        "appCallers": [
+            *[
+                {
+                    "AppCode": code,
+                    "ModelRequirements": [
+                        {"ModelType": "asr", "ModelGroupIds": [DEFAULT_ASR_POOL_ID]},
+                    ],
+                }
+                for code in ASR_APP_CALLERS
+            ],
+            *[
+                {
+                    "AppCode": code,
+                    "ModelRequirements": [
+                        {"ModelType": "video-gen", "ModelGroupIds": [video_pool_id]},
+                    ],
+                }
+                for code in VIDEO_APP_CALLERS
+            ],
+        ],
+        "platforms": [],
+        "recentGatewayLogs": [
+            {
+                "_id": "fixture-asr-invalid-key",
+                "AppCallerCode": "transcript-agent.transcribe::asr",
+                "RequestType": "raw",
+                "GatewayTransport": "http",
+                "Model": DEFAULT_ASR_MODEL_ID,
+                "Status": "failed",
+                "StatusCode": 401,
+                "Error": "Invalid X-Api-Key",
+            },
+            {
+                "_id": "fixture-asr-unauthorized",
+                "AppCallerCode": "document-store.subtitle::asr",
+                "RequestType": "raw",
+                "GatewayTransport": "http",
+                "Model": "doubao-asr-stream",
+                "Status": "failed",
+                "StatusCode": 403,
+                "Error": "unauthorized",
+            },
+            {
+                "_id": "fixture-video-model-not-open",
+                "AppCallerCode": "video-agent.videogen::video-gen",
+                "RequestType": "raw",
+                "GatewayTransport": "http",
+                "Model": video_model_id,
+                "Status": "failed",
+                "StatusCode": 400,
+                "Error": "ModelNotOpen: has not activated the model",
+            },
+        ],
+    }
+    seed_evidence = {
+        "ok": False,
+        "steps": [
+            {
+                "name": "transcript-asr",
+                "ok": False,
+                "error": "ASR upstream has no available channels",
+            },
+            {
+                "name": "video-direct",
+                "ok": False,
+                "error": "Video upstream has no available channels",
+            },
+        ],
+    }
+
+    audit = _audit(
+        data,
+        None,
+        seed_evidence,
+        DEFAULT_ASR_POOL_ID,
+        DEFAULT_ASR_MODEL_ID,
+        DEFAULT_ASR_TRANSFORMER,
+    )
+    blockers = audit.get("externalBlockers") or []
+    actual_codes = sorted({str(item.get("code") or "") for item in blockers})
+    required_codes = sorted([
+        "asr_authorization_failed",
+        "asr_channel_unavailable",
+        "asr_credential_rejected",
+        "video_channel_unavailable",
+        "video_model_not_open",
+    ])
+    missing = [code for code in required_codes if code not in actual_codes]
+    ok = not missing
+    return {
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "verdict": "pass" if ok else "fail",
+        "requiredCodes": required_codes,
+        "actualCodes": actual_codes,
+        "missingCodes": missing,
+        "sampleAuditVerdict": audit.get("verdict"),
+        "sampleAuditExternalBlockers": blockers,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="LLM Gateway production provider config audit")
     parser.add_argument("--compose-file", default=os.environ.get("LLMGW_PROVIDER_AUDIT_COMPOSE_FILE", "docker-compose.yml"))
@@ -949,7 +1109,19 @@ def main() -> int:
     parser.add_argument("--json-out", default="")
     parser.add_argument("--report-md", default="")
     parser.add_argument("--print-json", action="store_true")
+    parser.add_argument("--self-test", action="store_true", help="Run deterministic classification self-test without Docker")
     args = parser.parse_args()
+
+    if args.self_test:
+        report = _self_test_report()
+        _write_json(args.json_out, report)
+        if args.print_json:
+            print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+        else:
+            print(f"LLM Gateway provider config audit self-test: {str(report.get('verdict')).upper()}")
+            if report.get("missingCodes"):
+                print("- missingCodes: " + ",".join(report.get("missingCodes") or []))
+        return 0 if report.get("verdict") == "pass" else 1
 
     try:
         data = _load_snapshot(args.input_json) if args.input_json else _mongo_snapshot(

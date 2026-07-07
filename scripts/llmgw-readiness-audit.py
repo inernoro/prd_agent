@@ -591,7 +591,14 @@ def _static_checks() -> list[dict]:
             "ASR upstream rejected credential",
             "externalBlockers",
             "asr_credential_rejected",
+            "asr_authorization_failed",
+            "asr_channel_unavailable",
+            "video_channel_unavailable",
             "video_model_not_open",
+            "--self-test",
+            "_self_test_report",
+            "requiredCodes",
+            "missingCodes",
             "asrClassifications",
             "asrDiagnostic",
             "uninitialized diagnostic",
@@ -1218,6 +1225,29 @@ def _restore_shadow_persist_env_test() -> dict:
         return {"name": "restore_shadow_persist_env_test", "ok": ok, "detail": detail, "command": result}
 
 
+def _provider_audit_self_test() -> dict:
+    result = _run(
+        ["python3", "scripts/llmgw-prod-provider-config-audit.py", "--self-test", "--print-json"],
+        timeout=60,
+    )
+    detail = result["stdout"] + result["stderr"]
+    ok = result["ok"]
+    try:
+        payload = _parse_json_object(result["stdout"])
+        codes = set(payload.get("actualCodes") or [])
+        required = set(payload.get("requiredCodes") or [])
+        ok = ok and payload.get("verdict") == "pass" and required.issubset(codes)
+        detail = json.dumps({
+            "verdict": payload.get("verdict"),
+            "requiredCodes": sorted(required),
+            "actualCodes": sorted(codes),
+            "missingCodes": payload.get("missingCodes") or [],
+        }, ensure_ascii=False, sort_keys=True)
+    except Exception:
+        ok = False
+    return {"name": "provider_audit_external_blocker_self_test", "ok": ok, "detail": detail, "command": result}
+
+
 def _dotnet_checks() -> list[dict]:
     checks: list[dict] = []
     tests = [
@@ -1617,6 +1647,7 @@ def main() -> int:
     checks.append(_rollback_dry_run())
     checks.append(_restore_shadow_dry_run())
     checks.append(_restore_shadow_persist_env_test())
+    checks.append(_provider_audit_self_test())
     if args.run_dotnet:
         checks.extend(_dotnet_checks())
     if args.run_smoke:
