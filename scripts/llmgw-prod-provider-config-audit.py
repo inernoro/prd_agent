@@ -190,6 +190,28 @@ def _health_name(value: Any) -> str:
     }.get(num, str(num))
 
 
+def _classify_asr_seed_error(error: str, auth_scheme: str, shape: dict[str, Any]) -> str | None:
+    normalized = error.lower()
+    scheme = auth_scheme.strip() or "unknown"
+    if "invalid x-api-key" in normalized or "invalid x api key" in normalized:
+        key_shape = "single UUID x-api-key" if shape.get("looksUuidOnly") else "x-api-key"
+        if shape.get("containsPipe"):
+            key_shape = "appId|accessToken"
+        return (
+            "ASR upstream rejected credential: Invalid X-Api-Key "
+            f"(authScheme={scheme}, keyShape={key_shape}). Replace the ASR exchange credential "
+            "or switch TargetAuthScheme to DoubaoAsr only when the stored secret is appId|accessToken."
+        )
+    if "401" in normalized or "unauthorized" in normalized or "forbidden" in normalized or "403" in normalized:
+        return f"ASR upstream authorization failed (authScheme={scheme}); verify ASR exchange credential and resourceId."
+    return None
+
+
+def _append_unique(items: list[str], value: str) -> None:
+    if value not in items:
+        items.append(value)
+
+
 def _sanitize_exchange(exchange: dict[str, Any], secret: str | None) -> dict[str, Any]:
     encrypted = str(exchange.get("TargetApiKeyEncrypted") or "")
     clean = {k: v for k, v in exchange.items() if k != "TargetApiKeyEncrypted"}
@@ -221,6 +243,8 @@ def _audit(data: dict[str, Any], secret: str | None, seed_evidence: dict[str, An
     )
     if not asr_exchange:
         failures.append(f"ASR exchange missing for model {ASR_MODEL_ID}")
+        asr_clean = None
+        shape = {}
     else:
         asr_clean = _sanitize_exchange(asr_exchange, secret)
         shape = asr_clean.get("targetApiKeyShape") or {}
@@ -290,6 +314,7 @@ def _audit(data: dict[str, Any], secret: str | None, seed_evidence: dict[str, An
     seed_summary = None
     if seed_evidence:
         failed = [s for s in seed_evidence.get("steps", []) if not s.get("ok")]
+        asr_classifications: list[dict[str, str]] = []
         seed_summary = {
             "ok": bool(seed_evidence.get("ok")),
             "failedStepCount": len(failed),
@@ -300,13 +325,26 @@ def _audit(data: dict[str, Any], secret: str | None, seed_evidence: dict[str, An
                 }
                 for s in failed
             ],
+            "asrClassifications": asr_classifications,
             "expectedGrowth": seed_evidence.get("expectedGrowth"),
             "summaries": seed_evidence.get("summaries"),
         }
         for step in failed:
             name = str(step.get("name") or "")
+            error = str(step.get("error") or "")
             if "asr" in name:
                 failures.append(f"seed evidence ASR failed: {name}")
+                classification = _classify_asr_seed_error(
+                    error,
+                    str((asr_exchange or {}).get("TargetAuthScheme") or ""),
+                    shape,
+                )
+                if classification:
+                    _append_unique(failures, classification)
+                    asr_classifications.append({
+                        "step": name,
+                        "classification": classification,
+                    })
             if "video" in name:
                 failures.append(f"seed evidence video failed: {name}")
 
