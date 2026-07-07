@@ -52,10 +52,18 @@ interface GraphState {
   enabledCats: Set<string>;
 }
 
-export function UniverseGraphPage() {
+export interface UniverseGraphPageProps {
+  storeIdOverride?: string;
+  storeNameOverride?: string;
+  loadGraph?: (storeId: string) => ReturnType<typeof getStoreGraph>;
+  onBack?: () => void;
+  onOpenGalaxy?: () => void;
+}
+
+export function UniverseGraphPage({ storeIdOverride, storeNameOverride, loadGraph, onBack, onOpenGalaxy }: UniverseGraphPageProps = {}) {
   const { storeId: storeIdParam } = useParams();
   const navigate = useNavigate();
-  const [storeId, setStoreId] = useState<string | undefined>(storeIdParam);
+  const [storeId, setStoreId] = useState<string | undefined>(storeIdOverride ?? storeIdParam);
   const [stores, setStores] = useState<DocumentStore[]>([]);
   const [storeName, setStoreName] = useState<string>('');
   const [loading, setLoading] = useState(true);
@@ -83,6 +91,11 @@ export function UniverseGraphPage() {
 
   // 进入页面时如未指定 storeId，先取当前用户的库列表
   useEffect(() => {
+    if (storeIdOverride) {
+      setStoreId(storeIdOverride);
+      if (storeNameOverride) setStoreName(storeNameOverride);
+      return;
+    }
     let cancelled = false;
     listDocumentStoresReal(1, 50).then((res) => {
       if (cancelled || !res.success) return;
@@ -94,7 +107,7 @@ export function UniverseGraphPage() {
     return () => {
       cancelled = true;
     };
-  }, [storeId]);
+  }, [storeId, storeIdOverride, storeNameOverride]);
 
   // 拉图数据
   useEffect(() => {
@@ -102,7 +115,8 @@ export function UniverseGraphPage() {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    getStoreGraph(storeId)
+    const loadGraphFn = loadGraph ?? getStoreGraph;
+    loadGraphFn(storeId)
       .then((res) => {
         if (cancelled) return;
         if (!res.success) {
@@ -111,7 +125,7 @@ export function UniverseGraphPage() {
         }
         setNodes(res.data.nodes);
         setEdges(res.data.edges);
-        setStoreName(res.data.storeName);
+        setStoreName(storeNameOverride || res.data.storeName);
         // 初始化启用全部类别
         const cats = new Set<string>();
         res.data.nodes.forEach((n) => cats.add(n.category ?? '__default__'));
@@ -127,7 +141,7 @@ export function UniverseGraphPage() {
     return () => {
       cancelled = true;
     };
-  }, [storeId]);
+  }, [storeId, loadGraph, storeNameOverride]);
 
   // ── canvas 引用 + 力导向模拟（保持在 ref 中以避免 React state 频繁渲染） ──
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -167,6 +181,8 @@ export function UniverseGraphPage() {
     }));
     // 预热
     for (let i = 0; i < 250; i++) simulate();
+    // simulate 只读 refs + 当前 edges，纳入 deps 会让初始化 effect 每帧级联重建。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes, edges]);
 
   // 物理模拟一步
@@ -519,6 +535,10 @@ export function UniverseGraphPage() {
       <div style={{ position: 'absolute', top: 12, left: 56, zIndex: 11, display: 'flex', alignItems: 'center', gap: 12 }}>
         <button
           onClick={() => {
+            if (onBack) {
+              onBack();
+              return;
+            }
             // 回到知识库详情：把当前库 ID 塞回 sessionStorage，让 DocumentStorePage 自动选中
             if (storeId) sessionStorage.setItem('doc-store-selected-id', storeId);
             navigate('/document-store');
@@ -545,7 +565,13 @@ export function UniverseGraphPage() {
         {/* 进入 3D 星系（独立全屏页） */}
         {storeId && (
           <button
-            onClick={() => navigate(`/document-store/${storeId}/galaxy`)}
+            onClick={() => {
+              if (onOpenGalaxy) {
+                onOpenGalaxy();
+                return;
+              }
+              navigate(`/document-store/${storeId}/galaxy`);
+            }}
             style={{
               display: 'flex',
               alignItems: 'center',
