@@ -214,7 +214,44 @@ def _require_upstream_readiness(path: str, label: str) -> None:
 
 
 def _require_provider_audit(path: str, label: str) -> None:
-    _require_pass_json(path, label)
+    payload = _require_pass_json(path, label)
+    blockers = payload.get("externalBlockers") or payload.get("ExternalBlockers") or []
+    if blockers:
+        codes = sorted({
+            str(item.get("code") or item.get("Code") or "unknown")
+            for item in blockers
+            if isinstance(item, dict)
+        })
+        raise SystemExit(
+            f"ERROR: {label} contains external blockers: {','.join(codes) or 'unknown'}"
+        )
+
+
+def _provider_external_blockers(path: str) -> list[dict]:
+    if not path or not os.path.exists(path):
+        return []
+    try:
+        payload = _load_json_file(path, "provider config audit evidence")
+    except SystemExit:
+        return []
+    blockers = payload.get("externalBlockers") or payload.get("ExternalBlockers") or []
+    if not isinstance(blockers, list):
+        return []
+    sanitized: list[dict] = []
+    for item in blockers:
+        if not isinstance(item, dict):
+            continue
+        sanitized.append({
+            "code": str(item.get("code") or item.get("Code") or ""),
+            "scope": str(item.get("scope") or item.get("Scope") or ""),
+            "source": str(item.get("source") or item.get("Source") or ""),
+            "appCaller": str(item.get("appCaller") or item.get("AppCaller") or ""),
+            "modelId": str(item.get("modelId") or item.get("ModelId") or ""),
+            "logId": str(item.get("logId") or item.get("LogId") or ""),
+            "step": str(item.get("step") or item.get("Step") or ""),
+            "remediation": str(item.get("remediation") or item.get("Remediation") or ""),
+        })
+    return sanitized
 
 
 def _require_video_canary(path: str, label: str) -> None:
@@ -410,8 +447,14 @@ def _write_audit_markdown(path: str, report: dict) -> None:
         for item in report.get("stageResults") or []:
             fh.write(
                 f"- {cell(item['stage'])}: status=`{cell(item['status'])}` "
-                f"recordedAt=`{cell(item.get('recordedAt') or '')}`\n"
+                f"recordedAt=`{cell(item.get('recordedAt') or '')}` "
+                f"providerExternalBlockers=`{len(item.get('providerAuditExternalBlockers') or [])}`\n"
             )
+            for blocker in item.get("providerAuditExternalBlockers") or []:
+                fh.write(
+                    f"  - `{cell(blocker.get('code') or '')}` scope=`{cell(blocker.get('scope') or '')}` "
+                    f"appCaller=`{cell(blocker.get('appCaller') or '')}` model=`{cell(blocker.get('modelId') or '')}`\n"
+                )
         fh.write("\n## Failures\n\n")
         failures = report.get("failures") or []
         if failures:
@@ -564,6 +607,7 @@ def append(args: argparse.Namespace) -> int:
             if _bool_flag(args.asr_http_canary_required):
                 _require_asr_http_canary(args.asr_http_canary_json, "ASR HTTP canary evidence")
 
+    provider_external_blockers = _provider_external_blockers(args.provider_audit_json)
     entry = {
         "recordedAt": datetime.now(timezone.utc).isoformat(),
         "stage": args.stage,
@@ -584,6 +628,7 @@ def append(args: argparse.Namespace) -> int:
         "upstreamReadinessRequired": _bool_flag(args.upstream_readiness_required),
         "providerAuditJson": args.provider_audit_json,
         "providerAuditRequired": _bool_flag(args.provider_audit_required),
+        "providerAuditExternalBlockers": provider_external_blockers,
         "videoCanaryJson": args.video_canary_json,
         "videoCanaryRequired": _bool_flag(args.video_canary_required),
         "asrHttpCanaryJson": args.asr_http_canary_json,
@@ -646,6 +691,7 @@ def _write_markdown(path: str, report: dict) -> None:
         fh.write(f"- upstreamReadinessJson: `{cell(report['upstreamReadinessJson'])}`\n")
         fh.write(f"- providerAuditRequired: `{cell(report['providerAuditRequired'])}`\n")
         fh.write(f"- providerAuditJson: `{cell(report['providerAuditJson'])}`\n")
+        fh.write(f"- providerAuditExternalBlockers: `{len(report.get('providerAuditExternalBlockers') or [])}`\n")
         fh.write(f"- videoCanaryRequired: `{cell(report['videoCanaryRequired'])}`\n")
         fh.write(f"- videoCanaryJson: `{cell(report['videoCanaryJson'])}`\n")
         fh.write(f"- asrHttpCanaryRequired: `{cell(report['asrHttpCanaryRequired'])}`\n")
@@ -661,10 +707,22 @@ def _write_markdown(path: str, report: dict) -> None:
                 fh.write(f"- {failure}\n")
         else:
             fh.write("- none\n")
+        blockers = report.get("providerAuditExternalBlockers") or []
+        fh.write("\n## Provider External Blockers\n\n")
+        if blockers:
+            for item in blockers:
+                fh.write(
+                    f"- `{cell(item.get('code') or '')}` scope=`{cell(item.get('scope') or '')}` "
+                    f"appCaller=`{cell(item.get('appCaller') or '')}` model=`{cell(item.get('modelId') or '')}`: "
+                    f"{cell(item.get('remediation') or '')}\n"
+                )
+        else:
+            fh.write("- none\n")
 
 
 def stage_report(args: argparse.Namespace) -> int:
     failures: list[str] = []
+    provider_external_blockers = _provider_external_blockers(args.provider_audit_json)
     checks = [
         ("prodPreflightJson", args.prod_preflight_json, True),
         ("servingProbeJson", args.serving_probe_json, True),
@@ -723,6 +781,7 @@ def stage_report(args: argparse.Namespace) -> int:
         "upstreamReadinessRequired": _bool_flag(args.upstream_readiness_required),
         "providerAuditJson": args.provider_audit_json,
         "providerAuditRequired": _bool_flag(args.provider_audit_required),
+        "providerAuditExternalBlockers": provider_external_blockers,
         "videoCanaryJson": args.video_canary_json,
         "videoCanaryRequired": _bool_flag(args.video_canary_required),
         "asrHttpCanaryJson": args.asr_http_canary_json,
@@ -785,6 +844,7 @@ def audit(args: argparse.Namespace) -> int:
                 "upstreamReadinessRequired": _bool_flag(str(latest.get("upstreamReadinessRequired") or "0")),
                 "providerAuditJson": latest.get("providerAuditJson") or "",
                 "providerAuditRequired": _bool_flag(str(latest.get("providerAuditRequired") or "0")),
+                "providerAuditExternalBlockers": latest.get("providerAuditExternalBlockers") or _provider_external_blockers(str(latest.get("providerAuditJson") or "")),
                 "videoCanaryJson": latest.get("videoCanaryJson") or "",
                 "videoCanaryRequired": _bool_flag(str(latest.get("videoCanaryRequired") or "0")),
                 "asrHttpCanaryJson": latest.get("asrHttpCanaryJson") or "",

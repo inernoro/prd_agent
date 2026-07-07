@@ -458,6 +458,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("_require_serving_probe_for_commit", ledger);
         Assert.Contains("_require_smoke_for_commit", ledger);
         Assert.Contains("_require_release_gate_for_commit", ledger);
+        Assert.Contains("\"providerAuditExternalBlockers\": provider_external_blockers", ledger);
+        Assert.Contains("_provider_external_blockers", ledger);
+        Assert.Contains("contains external blockers", ledger);
+        Assert.Contains("providerExternalBlockers", ledger);
         Assert.Contains("\"videoCanaryJson\": args.video_canary_json", ledger);
         Assert.Contains("\"videoCanaryRequired\": _bool_flag(args.video_canary_required)", ledger);
         Assert.Contains("_require_video_canary", ledger);
