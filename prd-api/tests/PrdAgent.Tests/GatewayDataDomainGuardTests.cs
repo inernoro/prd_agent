@@ -205,6 +205,13 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_SERVING_PROBE_JSON_OUT", script);
         Assert.Contains("LLMGW_SERVING_PROBE_REPORT_MD", script);
         Assert.Contains("scripts/llmgw-serving-probe.py", script);
+        Assert.Contains("provider_audit_required=0", script);
+        Assert.Contains("if [ \"$mode\" = \"http\" ] || [ \"$canary_stage\" = \"video-asr\" ]; then", script);
+        Assert.Contains("scripts/llmgw-prod-provider-config-audit.py", script);
+        Assert.Contains("LLMGW_PROVIDER_AUDIT_JSON_OUT", script);
+        Assert.Contains("LLMGW_PROVIDER_AUDIT_REPORT_MD", script);
+        Assert.Contains("LLMGW_PROVIDER_AUDIT_SEED_EVIDENCE_JSON", script);
+        Assert.Contains("LLM Gateway provider config audit: required before deploy", script);
         Assert.Contains("probe_args=\"--base $gate_base\"", script);
         Assert.Contains("python3 scripts/llmgw-serving-probe.py $probe_args", script);
         Assert.Contains("LLM Gateway post-deploy serving probe: required", script);

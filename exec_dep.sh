@@ -793,6 +793,30 @@ run_llmgw_release_gate_if_needed() {
     exit 1
   fi
 
+  provider_audit_required=0
+  if [ "$mode" = "http" ] || [ "$canary_stage" = "video-asr" ]; then
+    provider_audit_required=1
+  fi
+  if [ "$provider_audit_required" = "1" ]; then
+    if [ ! -f "scripts/llmgw-prod-provider-config-audit.py" ]; then
+      echo "ERROR: LLM Gateway http/video-asr 发布但缺少 scripts/llmgw-prod-provider-config-audit.py，拒绝发布。" >&2
+      exit 1
+    fi
+    provider_audit_args=""
+    if [ -n "$(printf '%s' "${LLMGW_PROVIDER_AUDIT_JSON_OUT:-}" | xargs || true)" ]; then
+      provider_audit_args="$provider_audit_args --json-out $LLMGW_PROVIDER_AUDIT_JSON_OUT"
+    fi
+    if [ -n "$(printf '%s' "${LLMGW_PROVIDER_AUDIT_REPORT_MD:-}" | xargs || true)" ]; then
+      provider_audit_args="$provider_audit_args --report-md $LLMGW_PROVIDER_AUDIT_REPORT_MD"
+    fi
+    if [ -n "$(printf '%s' "${LLMGW_PROVIDER_AUDIT_SEED_EVIDENCE_JSON:-}" | xargs || true)" ]; then
+      provider_audit_args="$provider_audit_args --seed-evidence-json $LLMGW_PROVIDER_AUDIT_SEED_EVIDENCE_JSON"
+    fi
+    echo "LLM Gateway provider config audit: required before deploy (mode=$mode, canaryStage=${canary_stage:-none})"
+    # shellcheck disable=SC2086
+    python3 scripts/llmgw-prod-provider-config-audit.py $provider_audit_args
+  fi
+
   gate_base="${LLMGW_GATE_BASE:-${GW_BASE:-}}"
   gate_key="${LLMGW_GATE_KEY:-${GW_KEY:-${LLMGW_SERVE_KEY:-}}}"
   if [ -z "$gate_base" ]; then
