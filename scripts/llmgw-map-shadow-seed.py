@@ -1721,6 +1721,8 @@ def main() -> int:
         or args.include_video_direct
         or args.include_transcript_asr
         or args.include_document_store_subtitle_asr
+        or args.include_video_to_doc_asr
+        or args.include_video_to_text_asr_workflow
     )
     if needs_seed_user:
         seed_username = args.seed_username.strip()
@@ -1744,6 +1746,8 @@ def main() -> int:
                 or args.include_video_direct
                 or args.include_transcript_asr
                 or args.include_document_store_subtitle_asr
+                or args.include_video_to_doc_asr
+                or args.include_video_to_text_asr_workflow
             )
             else "PM"
         )
