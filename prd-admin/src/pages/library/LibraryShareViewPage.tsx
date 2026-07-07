@@ -14,19 +14,23 @@
  *   - 整库分享（entryId 为空）：文件树 + 全部文档只读浏览
  *   - 单篇分享（entryId 非空）：只展示那一篇
  */
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, type ReactNode } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowRight, ShieldCheck, BookOpen, AlertCircle, Eye, FileText } from 'lucide-react';
+import { ArrowRight, ShieldCheck, BookOpen, AlertCircle, Eye, FileText, Orbit, Network } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 import { DocBrowser } from '@/components/doc-browser/DocBrowser';
 import type { DocBrowserEntry, EntryPreview } from '@/components/doc-browser/DocBrowser';
+import { DocumentGalaxyView, type GalaxyLabelMode } from '@/pages/document-store/DocumentGalaxyView';
+import { UniverseGraphPage } from '@/pages/document-store/UniverseGraphPage';
 import {
   getDocStoreShareView,
   listDocStoreShareEntries,
   getDocStoreShareEntryContent,
+  getDocStoreShareGraph,
 } from '@/services';
 import type { DocStoreShareView, DocumentEntry } from '@/services/contracts/documentStore';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
+import { parseLibraryShareViewMode, withLibraryShareViewMode, type LibraryShareViewMode } from './libraryShareViewMode';
 
 const PAGE_BG = '#0a0a0a';
 const SANS = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
@@ -35,15 +39,17 @@ export function LibraryShareViewPage() {
   const { token } = useParams<{ token: string }>();
   const navigate = useNavigate();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   // URL ?entry={id} 优先级最高：归档脚本/外部链接可指定一打开就高亮某篇
   const entryFromUrl = searchParams.get('entry');
+  const viewFromUrl = searchParams.get('view');
 
   const [view, setView] = useState<DocStoreShareView | null>(null);
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>(undefined);
+  const [galaxyLabelMode, setGalaxyLabelMode] = useState<GalaxyLabelMode>('content');
 
   useEffect(() => {
     if (!token) return;
@@ -99,6 +105,22 @@ export function LibraryShareViewPage() {
     };
   }, [token]);
 
+  const loadGalaxyContent = useCallback((entryId: string) => {
+    return getDocStoreShareEntryContent(token ?? '', entryId);
+  }, [token]);
+
+  const listGalaxyEntries = useCallback(() => {
+    return listDocStoreShareEntries(token ?? '');
+  }, [token]);
+
+  const loadShareGraph = useCallback(() => {
+    return getDocStoreShareGraph(token ?? '');
+  }, [token]);
+
+  const setShareViewMode = useCallback((mode: LibraryShareViewMode) => {
+    setSearchParams(withLibraryShareViewMode(searchParams, mode));
+  }, [searchParams, setSearchParams]);
+
   // DocumentEntry 字段是 DocBrowserEntry 的超集，可直接传入
   const browserEntries = entries as unknown as DocBrowserEntry[];
 
@@ -140,6 +162,7 @@ export function LibraryShareViewPage() {
 
   const store = view.store;
   const isSingleDoc = Boolean(view.entryId);
+  const activeView = parseLibraryShareViewMode(viewFromUrl, isSingleDoc);
   const title = isSingleDoc ? (view.entryTitle ?? store.name) : (view.title || store.name);
   const desc = view.description || store.description;
   const hasMeta = Boolean(desc) || (!isSingleDoc && store.documentCount > 0) || store.viewCount > 0;
@@ -226,21 +249,86 @@ export function LibraryShareViewPage() {
         </div>
       )}
 
-      {/* 阅读器：直接复用 DocBrowser。
-          只读模式 = 不传任何 onXxx 写操作 callback，按钮自动隐藏。 */}
+      {!isSingleDoc && (
+        <div
+          style={{
+            flexShrink: 0,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '8px 16px',
+            background: 'rgba(255,255,255,0.018)',
+            borderBottom: '1px solid rgba(255,255,255,0.05)',
+          }}
+        >
+          <ShareModeButton active={activeView === 'read'} icon={<BookOpen size={13} />} label="阅读" onClick={() => setShareViewMode('read')} />
+          <ShareModeButton active={activeView === 'galaxy'} icon={<Orbit size={13} />} label="知识星球" onClick={() => setShareViewMode('galaxy')} />
+          <ShareModeButton active={activeView === 'universe'} icon={<Network size={13} />} label="Obsidian 双链图" onClick={() => setShareViewMode('universe')} />
+        </div>
+      )}
+
       <div className="flex-1 min-h-0 flex flex-col">
-        <DocBrowser
-          entries={browserEntries}
-          primaryEntryId={store.primaryEntryId}
-          pinnedEntryIds={store.pinnedEntryIds ?? []}
-          selectedEntryId={selectedEntryId}
-          onSelectEntry={setSelectedEntryId}
-          loadContent={loadContent}
-          sortMode="created-desc"
-          inlineCommentShareToken={token ?? undefined}
-        />
+        {activeView === 'read' && (
+          <DocBrowser
+            entries={browserEntries}
+            primaryEntryId={store.primaryEntryId}
+            pinnedEntryIds={store.pinnedEntryIds ?? []}
+            selectedEntryId={selectedEntryId}
+            onSelectEntry={setSelectedEntryId}
+            loadContent={loadContent}
+            sortMode="created-desc"
+            inlineCommentShareToken={token ?? undefined}
+          />
+        )}
+        {activeView === 'galaxy' && (
+          <DocumentGalaxyView
+            storeId={store.id}
+            storeName={store.name}
+            listEntries={listGalaxyEntries}
+            loadGraph={loadShareGraph}
+            loadContent={loadGalaxyContent}
+            labelMode={galaxyLabelMode}
+            onBack={() => setShareViewMode('read')}
+            onToggleLabelMode={() => setGalaxyLabelMode((m) => (m === 'content' ? 'structural' : 'content'))}
+          />
+        )}
+        {activeView === 'universe' && (
+          <UniverseGraphPage
+            storeIdOverride={store.id}
+            storeNameOverride={store.name}
+            loadGraph={() => loadShareGraph()}
+            onBack={() => setShareViewMode('read')}
+            onOpenGalaxy={() => setShareViewMode('galaxy')}
+          />
+        )}
       </div>
     </div>
+  );
+}
+
+function ShareModeButton({ active, icon, label, onClick }: { active: boolean; icon: ReactNode; label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        height: 30,
+        padding: '0 12px',
+        borderRadius: 8,
+        border: active ? '1px solid rgba(129,140,248,0.55)' : '1px solid rgba(255,255,255,0.10)',
+        background: active ? 'rgba(129,140,248,0.18)' : 'rgba(255,255,255,0.045)',
+        color: active ? 'rgba(224,231,255,0.98)' : 'rgba(255,255,255,0.62)',
+        fontSize: 12,
+        fontWeight: 700,
+        cursor: 'pointer',
+      }}
+    >
+      {icon}
+      {label}
+    </button>
   );
 }
 

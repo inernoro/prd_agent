@@ -42,6 +42,7 @@ public class DocumentStoreController : ControllerBase
     private readonly ITeamActivityService _teamActivity;
     private readonly DocStoreServices.MentionService _mentions;
     private readonly DocStoreServices.DocumentVersionService _versions;
+    private readonly IShortLinkService _shortLinks;
     private readonly ILlmGateway _gateway;
     private readonly DocumentStoreAssetNormalizer _assetNormalizer;
     private readonly ILogger<DocumentStoreController> _logger;
@@ -69,6 +70,7 @@ public class DocumentStoreController : ControllerBase
         DocStoreServices.MentionService mentions,
         DocStoreServices.DocumentVersionService versions,
         IAdminPermissionService adminPermissions,
+        IShortLinkService shortLinks,
         ILlmGateway gateway,
         IConfiguration config,
         DocumentStoreAssetNormalizer assetNormalizer,
@@ -85,6 +87,7 @@ public class DocumentStoreController : ControllerBase
         _mentions = mentions;
         _versions = versions;
         _adminPermissions = adminPermissions;
+        _shortLinks = shortLinks;
         _gateway = gateway;
         _config = config;
         _assetNormalizer = assetNormalizer;
@@ -4194,6 +4197,45 @@ public class DocumentStoreController : ControllerBase
             entryTitle = entry.Title;
         }
 
+        var nowUtc = DateTime.UtcNow;
+        var expiresAt = request.ExpiresInDays > 0 ? nowUtc.AddDays(request.ExpiresInDays) : (DateTime?)null;
+        var title = request.Title?.Trim();
+        var description = request.Description?.Trim();
+        var fb = Builders<DocumentStoreShareLink>.Filter;
+        var reuseFilter =
+            fb.Eq(l => l.StoreId, storeId) &
+            fb.Eq(l => l.CreatedBy, userId) &
+            fb.Eq(l => l.IsRevoked, false) &
+            (entryId == null ? fb.Eq(l => l.EntryId, null) : fb.Eq(l => l.EntryId, entryId)) &
+            (fb.Eq(l => l.ExpiresAt, null) | fb.Gt(l => l.ExpiresAt, nowUtc));
+        var reusable = await _db.DocumentStoreShareLinks
+            .Find(reuseFilter)
+            .SortByDescending(l => l.CreatedAt)
+            .FirstOrDefaultAsync();
+
+        if (reusable != null)
+        {
+            var updates = new List<UpdateDefinition<DocumentStoreShareLink>>
+            {
+                Builders<DocumentStoreShareLink>.Update.Set(l => l.StoreName, store.Name),
+                Builders<DocumentStoreShareLink>.Update.Set(l => l.EntryTitle, entryTitle),
+                Builders<DocumentStoreShareLink>.Update.Set(l => l.Title, title),
+                Builders<DocumentStoreShareLink>.Update.Set(l => l.Description, description),
+                Builders<DocumentStoreShareLink>.Update.Set(l => l.ExpiresAt, expiresAt),
+            };
+            await _db.DocumentStoreShareLinks.UpdateOneAsync(
+                l => l.Id == reusable.Id,
+                Builders<DocumentStoreShareLink>.Update.Combine(updates),
+                cancellationToken: CancellationToken.None);
+            reusable.StoreName = store.Name;
+            reusable.EntryTitle = entryTitle;
+            reusable.Title = title;
+            reusable.Description = description;
+            reusable.ExpiresAt = expiresAt;
+            await TryAllocateDocumentStoreShortSeqAsync(reusable);
+            return Ok(ApiResponse<DocumentStoreShareLink>.Ok(reusable));
+        }
+
         var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
         var link = new DocumentStoreShareLink
         {
@@ -4205,21 +4247,35 @@ public class DocumentStoreController : ControllerBase
             Description = request.Description?.Trim(),
             CreatedBy = userId,
             CreatedByName = user?.DisplayName,
-            ExpiresAt = request.ExpiresInDays > 0 ? DateTime.UtcNow.AddDays(request.ExpiresInDays) : null,
+            ExpiresAt = expiresAt,
         };
-        await _db.DocumentStoreShareLinks.InsertOneAsync(link);
+        await _db.DocumentStoreShareLinks.InsertOneAsync(link, cancellationToken: CancellationToken.None);
+        await TryAllocateDocumentStoreShortSeqAsync(link);
 
-        // 注意：知识库分享目前没有可用的前端展示页（App.tsx 无 /library/share/:token 路由，
-        // ShortLinkRouter 对 document_store 走 UnsupportedTargetError）。因此暂不注册 ShortLink
-        // 数字短链，避免对外暴露打不开的 /s/{seq} 链接。待补齐 /library/share/:token 视图后
-        // 再纳入短链体系（详见 doc/debt.platform.share-link-security.md）。
-        // 前端 DocumentStorePage 历史用 /library/share/{token}（自己拼），此处不返回 url 字段。
-
-        // 返回完整 DocumentStoreShareLink，保持前端 DocumentStoreShareLink 类型契约不变
-        //（前端 DocumentStorePage prepend 到 list 后会渲染 viewCount/createdAt/isRevoked，
-        //  缺字段会回归；且前端自己用 token 拼 /library/share/{token}，不依赖后端 url 字段）
-        // ShortLink 已通过上面 AllocateAsync 注册，分享总管理 / 体检页另行查询，不靠此返回值。
+        // 返回完整 DocumentStoreShareLink，保持前端 DocumentStoreShareLink 类型契约不变。
+        // 统一短链只登记 token，不区分阅读/星球/双链图；不同展示方式是同一公开页的 view 参数。
         return Ok(ApiResponse<DocumentStoreShareLink>.Ok(link));
+    }
+
+    private async Task TryAllocateDocumentStoreShortSeqAsync(DocumentStoreShareLink link)
+    {
+        if (link.ShortSeq > 0) return;
+        try
+        {
+            var seq = await _shortLinks.AllocateAsync(
+                ShortLinkTargetTypes.DocumentStore,
+                link.Token,
+                CancellationToken.None);
+            await _db.DocumentStoreShareLinks.UpdateOneAsync(
+                l => l.Id == link.Id,
+                Builders<DocumentStoreShareLink>.Update.Set(l => l.ShortSeq, seq),
+                cancellationToken: CancellationToken.None);
+            link.ShortSeq = seq;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "为知识库分享 {ShareId} 分配统一短链失败，将仅提供 /s/lib/{Token}", link.Id, link.Token);
+        }
     }
 
     /// <summary>列出某知识库的所有分享链接</summary>
@@ -4350,6 +4406,63 @@ public class DocumentStoreController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档不存在"));
 
         return Ok(ApiResponse<object>.Ok(await BuildEntryContentPayloadAsync(entry)));
+    }
+
+    /// <summary>读取分享范围内的整库图谱（匿名，token 门禁；单篇分享不暴露整库结构）</summary>
+    [HttpGet("public/share/{token}/graph")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetShareGraph(string token)
+    {
+        var link = await ResolveActiveShareLinkAsync(token);
+        if (link == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接不存在或已撤销"));
+        if (!string.IsNullOrEmpty(link.EntryId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "单篇文档分享不支持整库图谱"));
+
+        var store = await _db.DocumentStores.Find(s => s.Id == link.StoreId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "关联知识库已删除"));
+
+        var entries = await _db.DocumentEntries
+            .Find(e => e.StoreId == link.StoreId && !e.IsFolder)
+            .ToListAsync();
+        var entryIds = entries.Select(e => e.Id).ToHashSet();
+        var mentions = (await _mentions.GetStoreGraphAsync(link.StoreId))
+            .Where(m => entryIds.Contains(m.FromId) && entryIds.Contains(m.ToId))
+            .ToList();
+
+        var nodes = entries.Select(e => new
+        {
+            id = e.Id,
+            title = e.Title,
+            summary = e.Summary,
+            tags = e.Tags,
+            category = e.Category,
+            updatedAt = e.UpdatedAt,
+            createdAt = e.CreatedAt,
+        });
+
+        var edges = mentions.Select(m => new
+        {
+            id = m.Id,
+            from = m.FromId,
+            to = m.ToId,
+            anchorText = m.AnchorText,
+            isAutoDetected = m.IsAutoDetected,
+        });
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            storeId = link.StoreId,
+            storeName = store.Name,
+            nodes,
+            edges,
+            stats = new
+            {
+                nodeCount = entries.Count,
+                edgeCount = mentions.Count,
+            },
+        }));
     }
 
     /// <summary>解析有效（未撤销/未过期）的分享链接，找不到返回 null</summary>

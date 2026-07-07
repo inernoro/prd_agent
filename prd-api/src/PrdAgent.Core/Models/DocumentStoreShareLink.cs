@@ -12,6 +12,9 @@ public class DocumentStoreShareLink
     /// <summary>短 Token（用于 URL）</summary>
     public string Token { get; set; } = GenerateToken();
 
+    /// <summary>统一短链全局序号（/s/{seq}），0 表示尚未分配。</summary>
+    public long ShortSeq { get; set; }
+
     /// <summary>关联的知识库 ID</summary>
     public string StoreId { get; set; } = string.Empty;
 
