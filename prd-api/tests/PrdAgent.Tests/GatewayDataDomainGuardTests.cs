@@ -1003,6 +1003,24 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ShadowSampleAccumulatorMonitor_FailsIfSamplingStaysHighWithoutWindow()
+    {
+        var script = ReadRepoFile("scripts/llmgw-shadow-accumulate-monitor.sh");
+
+        Assert.Contains("LLM Gateway shadow accumulator monitor", script);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_MONITOR_RUN_DIR", script);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_MONITOR_SAFE_PERCENT:-1", script);
+        Assert.Contains("LlmGateway__ShadowFullSamplePercent", script);
+        Assert.Contains("LLMGW_SHADOW_FULL_SAMPLE_PERCENT", script);
+        Assert.Contains("window_running=0", script);
+        Assert.Contains("no sample window is running", script);
+        Assert.Contains("batchFailedStepCount", script);
+        Assert.DoesNotContain("GW_KEY", script);
+        Assert.DoesNotContain("LLMGW_SERVE_KEY", script);
+        Assert.DoesNotContain("--key", script);
+    }
+
+    [Fact]
     public void ProdPreflightWorkflow_RunsStartAndCompletionPreflightWithoutLeakingKeys()
     {
         var workflow = ReadRepoFile(".github/workflows/llmgw-prod-preflight.yml");
