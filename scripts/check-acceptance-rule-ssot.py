@@ -92,13 +92,18 @@ def check_official_catalog() -> None:
         item = by_key.get(skill)
         if not item:
             fail(f"official catalog missing skill: {skill}")
-        paths = {f.get("path") for f in item.get("files", [])}
-        if "references/rules/manifest.json" not in paths:
+        files_by_path = {f.get("path"): f for f in item.get("files", [])}
+        if "references/rules/manifest.json" not in files_by_path:
             fail(f"official catalog missing rules manifest: {skill}")
-        for snapshot in SNAPSHOTS:
-            snap_path = f"references/rules/{snapshot}"
-            if snap_path not in paths:
-                fail(f"official catalog missing rules snapshot: {skill}/{snap_path}")
+        for embedded_path in ["references/rules/manifest.json", *[f"references/rules/{s}" for s in SNAPSHOTS]]:
+            file_entry = files_by_path.get(embedded_path)
+            if not file_entry:
+                fail(f"official catalog missing rules snapshot: {skill}/{embedded_path}")
+            if file_entry.get("truncated"):
+                fail(f"official catalog embedded rule file is truncated: {skill}/{embedded_path}")
+            disk_text = rel(f".claude/skills/{skill}/{embedded_path}").read_text(encoding="utf-8")
+            if file_entry.get("content") != disk_text:
+                fail(f"official catalog stale embedded rule snapshot: {skill}/{embedded_path}")
 
 
 def main() -> None:

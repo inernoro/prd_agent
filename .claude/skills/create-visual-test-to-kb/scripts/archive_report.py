@@ -1290,6 +1290,10 @@ VISUAL_PROBLEM_PAT = re.compile(
     r"contrast|overflow|blank|overlap|blocked|invisible|missing image)",
     re.I,
 )
+COVERAGE_GAP_PAT = re.compile(
+    r"(未覆盖|没有覆盖|覆盖不足|覆盖缺口|覆盖率|测试覆盖|用例覆盖|场景覆盖|路径覆盖|缺少覆盖|未测|漏测)",
+    re.I,
+)
 DEFECT_SEVERITY_PAT = re.compile(r"\b(P[0-2])\b", re.I)
 
 
@@ -1344,6 +1348,8 @@ def _problem_localization_errors(body, manifest):
         candidates.append((severity, row_text))
     for severity, row_text in candidates:
         if severity not in {"P0", "P1", "P2"}:
+            continue
+        if COVERAGE_GAP_PAT.search(row_text):
             continue
         if not VISUAL_PROBLEM_PAT.search(row_text):
             continue

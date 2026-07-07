@@ -75,6 +75,24 @@ P1: 报告页右侧为空且遮挡正文，没有截图锚点。
 """
     assert_no_errors(archive._problem_localization_errors(api_only, annotated_manifest))
 
+    coverage_gap = """
+## 缺陷清单
+
+| 严重级 | 现象 | 证据 |
+|---|---|---|
+| P2 | 未覆盖删除流程，测试覆盖不足 | 需要补用例 |
+"""
+    assert_no_errors(archive._problem_localization_errors(coverage_gap, annotated_manifest))
+
+    visual_overlay = """
+## 缺陷清单
+
+| 严重级 | 现象 | 证据 |
+|---|---|---|
+| P2 | 按钮被弹窗覆盖，用户看不到主操作 | 无截图锚点 |
+"""
+    assert_has_error(archive._problem_localization_errors(visual_overlay, annotated_manifest), "没有链接到截图锚点")
+
     print("acceptance archive report gates passed")
 
 
