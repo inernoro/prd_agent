@@ -280,6 +280,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("check_intent_image_match PRD_AGENT_LLMGW_IMAGE", execDep);
         Assert.Contains("check_intent_image_match PRD_AGENT_LLMGW_SERVE_IMAGE", execDep);
         Assert.Contains("check_intent_image_match PRD_AGENT_LLMGW_WEB_IMAGE", execDep);
+        Assert.Contains("persist_release_image_pins", execDep);
+        Assert.Contains("PRD_AGENT_PERSIST_IMAGE_PINS", execDep);
+        Assert.Contains("PRD_AGENT_API_IMAGE_VALUE", execDep);
+        Assert.Contains("Release image pins: persisted to", execDep);
         Assert.Contains("fast.sh / exec_dep.sh image mismatch", execDep);
         Assert.Contains("fast.sh warmed:", execDep);
         Assert.Contains("exec_dep wants:", execDep);
@@ -1067,6 +1071,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("export LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST=", rollback);
         Assert.Contains("\"LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST\": \"\"", restore);
         Assert.Contains("export LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST=", restore);
+        Assert.Contains("preserve_release_image_vars", restore);
+        Assert.Contains("preserve_image_var PRD_AGENT_API_IMAGE prdagent-api", restore);
+        Assert.Contains("RESTORE_PRD_AGENT_API_IMAGE", restore);
+        Assert.Contains("\"PRD_AGENT_API_IMAGE\": os.environ.get(\"RESTORE_PRD_AGENT_API_IMAGE\", \"\")", restore);
     }
 
     private static string ReadRepoFile(string relativePath)

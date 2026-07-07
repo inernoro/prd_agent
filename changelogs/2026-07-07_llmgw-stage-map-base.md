@@ -8,3 +8,6 @@
 | ops | prd-agent | 发布、回滚和 shadow restore 脚本接入并清理 `LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST`，避免 raw 采样配置长期滞留 |
 | fix | prd-agent | `exec_dep.sh` 将 per-app full sample allowlist 也纳入 LLM Gateway 发布 gate，防止 raw 采样发布绕过 stage runner |
 | test | prd-api | 补充 raw shadow 强制采样与运维变量守卫，防止发布证据再次退化为随机命中 |
+| fix | prd-agent | LLM Gateway 发布脚本持久化四个 release 镜像 pin，避免后续单服务重启读取旧 `.env` 镜像 |
+| fix | prd-agent | `llmgw-restore-shadow-safe.sh` 恢复 shadow 时保留当前运行镜像并同步写回 `.env`，防止 API 回退到旧版本 |
+| test | prd-api | 补充 LLM Gateway 发布镜像 pin 与 shadow restore 镜像保留的静态守卫 |

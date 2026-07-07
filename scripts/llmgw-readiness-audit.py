@@ -966,6 +966,9 @@ def _static_checks() -> list[dict]:
             "check_intent_image_match PRD_AGENT_LLMGW_IMAGE",
             "check_intent_image_match PRD_AGENT_LLMGW_SERVE_IMAGE",
             "check_intent_image_match PRD_AGENT_LLMGW_WEB_IMAGE",
+            "persist_release_image_pins",
+            "PRD_AGENT_PERSIST_IMAGE_PINS",
+            "PRD_AGENT_API_IMAGE_VALUE",
             "fast.sh / exec_dep.sh image mismatch",
             "Release intent: matched fast.sh warmup",
             "LLMGW_HTTP_APP_CALLER_ALLOWLIST",
@@ -1076,10 +1079,12 @@ def _static_checks() -> list[dict]:
             "LLMGW_RESTORE_PERSIST_ENV",
             "LLMGW_RESTORE_SHADOW_FULL_SAMPLE_PERCENT",
             "persist_env_file",
+            "preserve_release_image_vars",
+            "RESTORE_PRD_AGENT_API_IMAGE",
             "LLM Gateway restore dry-run",
             "up -d --no-deps --force-recreate",
             "database: unchanged",
-            "images: unchanged",
+            "images: preserve running release pins",
         ],
     )
     restore_executable = bool(restore_path.exists() and (restore_path.stat().st_mode & stat.S_IXUSR))

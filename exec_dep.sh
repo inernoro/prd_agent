@@ -374,6 +374,67 @@ check_fast_release_intent() {
   echo "Release intent: matched fast.sh warmup (tag=$TAG repo=$REPO)"
 }
 
+persist_release_image_pins() {
+  persist_images="${PRD_AGENT_PERSIST_IMAGE_PINS:-1}"
+  if [ "$persist_images" = "0" ] || [ "$persist_images" = "false" ]; then
+    echo "Release image pins: env persistence disabled"
+    return
+  fi
+
+  dotenv_file="${PRD_AGENT_DOTENV_FILE:-.env}"
+  dotenv_dir="$(dirname -- "$dotenv_file")"
+  if [ ! -d "$dotenv_dir" ]; then
+    echo "WARN: release image pins not persisted because env directory is missing: $dotenv_dir" >&2
+    return
+  fi
+
+  tmp_file="${dotenv_file}.tmp.$$"
+  DOTENV_FILE="$dotenv_file" \
+  TMP_FILE="$tmp_file" \
+  PRD_AGENT_API_IMAGE_VALUE="$PRD_AGENT_API_IMAGE" \
+  PRD_AGENT_LLMGW_IMAGE_VALUE="$PRD_AGENT_LLMGW_IMAGE" \
+  PRD_AGENT_LLMGW_SERVE_IMAGE_VALUE="$PRD_AGENT_LLMGW_SERVE_IMAGE" \
+  PRD_AGENT_LLMGW_WEB_IMAGE_VALUE="$PRD_AGENT_LLMGW_WEB_IMAGE" \
+  python3 - <<'PY'
+import os
+import re
+from pathlib import Path
+
+env_path = Path(os.environ["DOTENV_FILE"])
+tmp_path = Path(os.environ["TMP_FILE"])
+updates = {
+    "PRD_AGENT_API_IMAGE": os.environ["PRD_AGENT_API_IMAGE_VALUE"],
+    "PRD_AGENT_LLMGW_IMAGE": os.environ["PRD_AGENT_LLMGW_IMAGE_VALUE"],
+    "PRD_AGENT_LLMGW_SERVE_IMAGE": os.environ["PRD_AGENT_LLMGW_SERVE_IMAGE_VALUE"],
+    "PRD_AGENT_LLMGW_WEB_IMAGE": os.environ["PRD_AGENT_LLMGW_WEB_IMAGE_VALUE"],
+}
+
+lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
+seen = {key: False for key in updates}
+out = []
+pattern = re.compile(r"^(\s*)(export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
+
+for line in lines:
+    match = pattern.match(line)
+    if match and match.group(3) in updates:
+        key = match.group(3)
+        out.append(f"{match.group(1)}{match.group(2) or ''}{key}={updates[key]}")
+        seen[key] = True
+    else:
+        out.append(line)
+
+if out and out[-1] != "":
+    out.append("")
+for key, value in updates.items():
+    if not seen[key]:
+        out.append(f"{key}={value}")
+
+tmp_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+PY
+  mv "$tmp_file" "$dotenv_file"
+  echo "Release image pins: persisted to $dotenv_file"
+}
+
 read_dotenv_value() {
   dotenv_key="$1"
   dotenv_file="${PRD_AGENT_DOTENV_FILE:-.env}"
@@ -488,6 +549,8 @@ else
   echo "ERROR: 未找到 docker-compose 或 docker 命令" >&2
   exit 1
 fi
+
+persist_release_image_pins
 
 tmp_dir="$(mktemp -d)"
 cleanup() { rm -rf "$tmp_dir"; }

@@ -35,6 +35,29 @@ else
   exit 1
 fi
 
+preserve_image_var() {
+  image_var="$1"
+  container_name="$2"
+  eval "existing_value=\${$image_var:-}"
+  if [ -n "$existing_value" ]; then
+    return
+  fi
+  if ! command -v docker >/dev/null 2>&1; then
+    return
+  fi
+  running_image="$(docker inspect "$container_name" --format '{{.Config.Image}}' 2>/dev/null || true)"
+  if [ -n "$running_image" ]; then
+    export "$image_var=$running_image"
+  fi
+}
+
+preserve_release_image_vars() {
+  preserve_image_var PRD_AGENT_API_IMAGE prdagent-api
+  preserve_image_var PRD_AGENT_LLMGW_IMAGE prdagent-llmgw
+  preserve_image_var PRD_AGENT_LLMGW_SERVE_IMAGE prdagent-llmgw-serve
+  preserve_image_var PRD_AGENT_LLMGW_WEB_IMAGE prdagent-llmgw-web
+}
+
 persist_env_file() {
   if [ "$persist_env" = "0" ] || [ "$persist_env" = "false" ]; then
     echo "LLM Gateway restore: env persistence disabled"
@@ -53,7 +76,14 @@ persist_env_file() {
   fi
 
   tmp_file="${env_file}.tmp.$$"
-  ENV_FILE="$env_file" TMP_FILE="$tmp_file" RESTORE_SAMPLE_PERCENT="$sample_percent" python3 - <<'PY'
+  ENV_FILE="$env_file" \
+  TMP_FILE="$tmp_file" \
+  RESTORE_SAMPLE_PERCENT="$sample_percent" \
+  RESTORE_PRD_AGENT_API_IMAGE="${PRD_AGENT_API_IMAGE:-}" \
+  RESTORE_PRD_AGENT_LLMGW_IMAGE="${PRD_AGENT_LLMGW_IMAGE:-}" \
+  RESTORE_PRD_AGENT_LLMGW_SERVE_IMAGE="${PRD_AGENT_LLMGW_SERVE_IMAGE:-}" \
+  RESTORE_PRD_AGENT_LLMGW_WEB_IMAGE="${PRD_AGENT_LLMGW_WEB_IMAGE:-}" \
+  python3 - <<'PY'
 import os
 import re
 from pathlib import Path
@@ -66,6 +96,13 @@ updates = {
     "LLMGW_SHADOW_FULL_SAMPLE_PERCENT": os.environ["RESTORE_SAMPLE_PERCENT"],
     "LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST": "",
 }
+image_updates = {
+    "PRD_AGENT_API_IMAGE": os.environ.get("RESTORE_PRD_AGENT_API_IMAGE", ""),
+    "PRD_AGENT_LLMGW_IMAGE": os.environ.get("RESTORE_PRD_AGENT_LLMGW_IMAGE", ""),
+    "PRD_AGENT_LLMGW_SERVE_IMAGE": os.environ.get("RESTORE_PRD_AGENT_LLMGW_SERVE_IMAGE", ""),
+    "PRD_AGENT_LLMGW_WEB_IMAGE": os.environ.get("RESTORE_PRD_AGENT_LLMGW_WEB_IMAGE", ""),
+}
+updates.update({key: value for key, value in image_updates.items() if value})
 
 lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
 seen = {key: False for key in updates}
@@ -103,8 +140,10 @@ echo "  allowlist: empty"
 echo "  shadowFullSamplePercent: $sample_percent"
 echo "  persistEnv: $persist_env"
 echo "  database: unchanged"
-echo "  images: unchanged"
+echo "  images: preserve running release pins"
 echo "  dryRun: $dry_run"
+
+preserve_release_image_vars
 
 export LLMGW_MODE=shadow
 export LLMGW_HTTP_APP_CALLER_ALLOWLIST=
