@@ -953,29 +953,13 @@ main{{padding:0 16px 60px}}
 def _report_flavor(a, body):
     """报告刊头身份：每日验收 =「每日巡检特刊」，其余 =「MAP 验收档案」。
 
-    只影响皮肤选择，不参与准入门禁——所以在 _declares_daily_acceptance（契约严格，
-    只认紧邻的「每日验收/每日报告」等）之外，再对 target 做一层宽匹配兜底：
-    「每日视觉验收报告」「每日巡检」这类中间插词的目标同样属于巡检特刊（Codex P2）。
+    直接复用门禁判定 _declares_daily_acceptance（每日措辞的唯一入口），
+    皮肤与门禁不可能不一致——拿巡检刊头的报告必然也被要求满足每日门禁。
     """
-    target = getattr(a, "target", "") or ""
     try:
-        if _declares_daily_acceptance(target, body or ""):
-            return "daily"
+        return "daily" if _declares_daily_acceptance(getattr(a, "target", "") or "", body or "") else "acceptance"
     except Exception:
-        pass
-    # 宽匹配的扫描面 = target + 正文标题/范围声明行（_scope_declaration_text），
-    # 覆盖「--target 写得泛、每日属性在正文标题里」的情况（Codex P2 追加）；
-    # 不扫正文散句，避免"对比昨日巡检报告"之类的顺带提及误触发。
-    try:
-        scope_text = _scope_declaration_text(target, body or "")
-    except Exception:
-        scope_text = target
-    if re.search(
-        r"(每日|昨日|昨天).{0,8}(验收|复验|测试|报告|巡检)|巡检特刊|\bdaily[-_ ]?(visual|patrol)\b",
-        scope_text, re.I,
-    ):
-        return "daily"
-    return "acceptance"
+        return "acceptance"
 
 
 # ── CDS 验收中心（默认主路，职责分离：验收能力归 CDS，MAP 走开放协议消费）──
@@ -1345,8 +1329,11 @@ def _scope_declaration_text(target, body):
 
 
 def _declares_complex_acceptance(target, body):
-    """Return true only for explicit complex acceptance scenarios, not generic metadata columns."""
-    if _target_declares_daily_scope(target):
+    """Return true only for explicit complex acceptance scenarios, not generic metadata columns.
+
+    复杂验收必须是每日验收的超集：每日判定唯一入口 _declares_daily_acceptance
+    命中即复杂，避免「算每日却不算复杂」的缝隙。"""
+    if _declares_daily_acceptance(target, body):
         return True
     text = _scope_declaration_text(target, body)
     patterns = [
@@ -1364,13 +1351,21 @@ def _declares_complex_acceptance(target, body):
 
 
 def _declares_daily_acceptance(target, body):
+    """每日验收判定的唯一入口：门禁（validate_inputs 的每日结构/证据要求）与
+    皮肤（_report_flavor 的巡检特刊）都走这一个函数，保证「拿巡检刊头的报告
+    必过每日门禁」（Codex P2：措辞并入门禁本体而不是各自维护两套正则）。
+
+    措辞覆盖：紧邻与中间插词（每日视觉验收报告）、巡检系（每日巡检/巡检特刊）、
+    英文变体（daily-yesterday/daily-visual/daily-patrol）。扫描面仍是
+    _scope_declaration_text（target + 标题 + 范围声明行），正文散句不触发。
+    """
     if _target_declares_daily_scope(target):
         return True
     text = _scope_declaration_text(target, body)
     return bool(re.search(
-        r"(每日|昨日|昨天)\s*(?:验收|复验|测试|报告)|"
-        r"(?:验收|复验|测试|报告).{0,8}(每日|昨日|昨天)|"
-        r"\bdaily[-_ ]?yesterday\b",
+        r"(每日|昨日|昨天).{0,8}(验收|复验|测试|报告|巡检)|"
+        r"(?:验收|复验|测试|报告|巡检).{0,8}(每日|昨日|昨天)|"
+        r"巡检特刊|\bdaily[-_ ]?(?:yesterday|visual|patrol)\b",
         text,
         re.I,
     ))
@@ -1379,13 +1374,7 @@ def _declares_daily_acceptance(target, body):
 def _declares_deep_daily_acceptance(target, body):
     """Daily deep gate applies only to positive deep-acceptance declarations."""
     scope_text = _scope_declaration_text(target, body)
-    daily_context = _target_declares_daily_scope(target) or bool(re.search(
-        r"(每日|昨日|昨天)\s*(?:验收|复验|测试|报告)|"
-        r"(?:验收|复验|测试|报告).{0,8}(每日|昨日|昨天)|"
-        r"\bdaily[-_ ]?yesterday\b",
-        scope_text,
-        re.I,
-    )) or bool(re.search(
+    daily_context = _declares_daily_acceptance(target, body) or bool(re.search(
         r"(每日|昨日|昨天).{0,12}(深度验收|深度复验|深入功能验收)|"
         r"(深度验收|深度复验|深入功能验收).{0,12}(每日|昨日|昨天)",
         target or "",
