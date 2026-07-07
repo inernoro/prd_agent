@@ -45,6 +45,8 @@ Options:
   --main-ref REF              Mainline ref that must be included by --commit, default origin/main
   --evidence-dir PATH         Evidence output directory, default .llmgw-release-evidence
   --ledger PATH               Append-only rollout ledger, default <evidence-dir>/rollout-ledger.jsonl
+  LLMGW_STAGE_ALLOW_SCRIPT_TREE_MISMATCH=1
+                              Emergency bypass when local rollout scripts differ from --commit
   --allow-out-of-order        Skip ledger stage order validation; requires an explicit release note
   --allow-out-of-order-reason TEXT
                               Required with --allow-out-of-order; written to stage evidence and ledger
@@ -337,6 +339,7 @@ esac
 run_asr_http_canary="${LLMGW_STAGE_RUN_ASR_HTTP_CANARY:-$asr_http_canary_default}"
 disk_guard_path="${LLMGW_STAGE_DISK_GUARD_PATH:-$evidence_dir}"
 disk_guard_min_free_mb="${LLMGW_STAGE_MIN_FREE_MB:-4096}"
+allow_script_tree_mismatch="${LLMGW_STAGE_ALLOW_SCRIPT_TREE_MISMATCH:-0}"
 
 print_plan() {
   echo "LLM Gateway production stage:"
@@ -416,6 +419,68 @@ validate_main_ancestry() {
     exit 1
   fi
   echo "LLM Gateway release main ancestry: OK mainRef=$main_ref mainSha=$main_sha"
+}
+
+validate_release_script_tree() {
+  if [ "$stage" = "rollback-inproc" ]; then
+    return 0
+  fi
+
+  critical_paths="
+fast.sh
+exec_dep.sh
+scripts/llmgw-prod-stage.sh
+scripts/llmgw-rollout-ledger.py
+scripts/llmgw-prod-preflight.py
+scripts/llmgw-upstream-readiness.py
+scripts/llmgw-prod-provider-config-audit.py
+scripts/llmgw-video-exchange-canary.py
+scripts/llmgw-asr-http-canary.py
+scripts/llmgw-release-gate.py
+scripts/llmgw-serving-probe.py
+scripts/gw-smoke.py
+scripts/llmgw-disk-space-guard.sh
+scripts/llmgw-rollback-inproc.sh
+scripts/llmgw-restore-shadow-safe.sh
+"
+
+  if [ "$execute" != "1" ]; then
+    echo '+ git show "$commit:<critical rollout scripts>" | cmp local files'
+    return 0
+  fi
+
+  mismatches=""
+  for path in $critical_paths; do
+    if [ ! -f "$path" ]; then
+      mismatches="${mismatches}
+missing local file: $path"
+      continue
+    fi
+    if ! git cat-file -e "$commit:$path" 2>/dev/null; then
+      mismatches="${mismatches}
+missing in release commit: $path"
+      continue
+    fi
+    if ! git show "$commit:$path" | cmp -s - "$path"; then
+      mismatches="${mismatches}
+script differs from release commit: $path"
+    fi
+  done
+
+  if [ -n "$mismatches" ]; then
+    if [ "$allow_script_tree_mismatch" = "1" ] || [ "$allow_script_tree_mismatch" = "true" ]; then
+      echo "WARN: local rollout scripts differ from release commit; continuing because LLMGW_STAGE_ALLOW_SCRIPT_TREE_MISMATCH=1." >&2
+      printf '%s\n' "$mismatches" >&2
+      return 0
+    fi
+    echo "ERROR: local rollout scripts must match --commit before executing LLM Gateway production stages." >&2
+    echo "This prevents deploying one image commit with another commit's release gates or dirty production scripts." >&2
+    printf '%s\n' "$mismatches" >&2
+    echo "Checkout the release commit on the production runner, or set LLMGW_STAGE_ALLOW_SCRIPT_TREE_MISMATCH=1 only for an explicitly reviewed emergency." >&2
+    exit 1
+  fi
+
+  echo "LLM Gateway release script tree: OK critical scripts match commit=$commit"
 }
 
 validate_ledger_order() {
@@ -880,6 +945,7 @@ run_stage_disk_guard
 
 validate_ledger_order
 validate_main_ancestry
+validate_release_script_tree
 
 if [ "$stage" = "rollback-rehearsal" ]; then
   release_gate_required=0

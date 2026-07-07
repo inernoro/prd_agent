@@ -369,6 +369,13 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("validate_main_ancestry", script);
         Assert.Contains("git merge-base --is-ancestor", script);
         Assert.Contains("release commit does not include latest main", script);
+        Assert.Contains("LLMGW_STAGE_ALLOW_SCRIPT_TREE_MISMATCH", script);
+        Assert.Contains("validate_release_script_tree", script);
+        Assert.Contains("critical_paths", script);
+        Assert.Contains("git show \"$commit:<critical rollout scripts>\" | cmp local files", script);
+        Assert.Contains("local rollout scripts must match --commit", script);
+        Assert.Contains("script differs from release commit", script);
+        Assert.Contains("LLM Gateway release script tree: OK", script);
         Assert.Contains("LLMGW_ALLOW_OUT_OF_ORDER_REASON", script);
         Assert.Contains("--allow-out-of-order-reason", script);
         Assert.Contains("requires --allow-out-of-order-reason", script);
@@ -560,6 +567,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_RELEASE_MAIN_REF", readiness);
         Assert.Contains("validate_main_ancestry", readiness);
         Assert.Contains("release commit does not include latest main", readiness);
+        Assert.Contains("LLMGW_STAGE_ALLOW_SCRIPT_TREE_MISMATCH", readiness);
+        Assert.Contains("validate_release_script_tree", readiness);
+        Assert.Contains("local rollout scripts must match --commit", readiness);
+        Assert.Contains("script differs from release commit", readiness);
         Assert.Contains("LLMGW_ALLOW_OUT_OF_ORDER_REASON", readiness);
         Assert.Contains("--allow-out-of-order-reason", readiness);
         Assert.Contains("allowOutOfOrderReason", readiness);
