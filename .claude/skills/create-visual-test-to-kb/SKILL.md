@@ -133,6 +133,7 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
 - `format=html` 使用独立阅读模板,归档脚本负责生成顶部结论区、指标卡、证据缩略图、左侧证据导航、图号锚点、表格搜索、按未通过/有缺陷/未覆盖过滤、章节折叠。
 - HTML 交互只用于阅读和定位证据,不得把验收结论只藏在 JS 状态里。核心结论、缺陷、未覆盖项仍必须以正文表格存在,保证 raw 内容和跨系统同步可读。
 - 不要手写复杂前端应用或远程依赖。报告 HTML 必须单文件可归档,截图走 CDS report assets,总正文仍受 10MB 上限约束。
+- 执行类验收 HTML 必须由 `archive_report.py` 从 Markdown 写作源和 manifest 生成,并带 `map-acceptance-template` 模板标记。禁止把 `/tmp/*.html`、临时手写页面或外部生成的自由样式 HTML 直接上传到 CDS 作为每日/视觉验收报告。CDS 会对带 verdict 或 L0/L1/L2 档位的验收 HTML 做模板血统校验,不合格返回 `acceptance_html_template_required`。
 
 ## 线上报告与通知门禁（自动化/每日验收强制）
 

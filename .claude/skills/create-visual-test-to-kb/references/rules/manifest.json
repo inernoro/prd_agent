@@ -1,31 +1,31 @@
 {
   "kind": "acceptance-rule-snapshots",
-  "sourceCommit": "b68f83c212ccca22f9d5be5e07db4ab3d33cea8b+worktree",
-  "generatedAt": "2026-07-06T20:27:14.569799+00:00",
+  "sourceCommit": "dcc811ec521b01fe1e34ed747f975dad3ca255cf+worktree",
+  "generatedAt": "2026-07-07T08:12:08.667809+00:00",
   "sources": [
     {
       "sourceId": "acceptance.rule.enterprise",
       "sourcePath": "doc/rule.acceptance.map-enterprise.md",
       "snapshotPath": "references/rules/rule.acceptance.map-enterprise.md",
-      "contentHash": "sha256:7a20f1f8d8948202587e88c221362ae810abcdadb57ef7ccec82825deaadd4cf"
+      "contentHash": "sha256:fa46366d1c7f028b7a931286f9068ccaf4164eb68498b8075e7127c195761840"
     },
     {
       "sourceId": "acceptance.rule.ssot",
       "sourcePath": "doc/rule.acceptance.ssot.md",
       "snapshotPath": "references/rules/rule.acceptance.ssot.md",
-      "contentHash": "sha256:60a52e60b7f5270aa01527838b07a92c74d18a81f1ded276829d4881fe4b7d63"
+      "contentHash": "sha256:d8a51ce4cb33f3f442308159fabdb1665a5cab12dcbff1838b8cd8e3c1d9a3c9"
     },
     {
       "sourceId": "acceptance.guide.daily-sop",
       "sourcePath": "doc/guide.acceptance.daily-sop.md",
       "snapshotPath": "references/rules/guide.acceptance.daily-sop.md",
-      "contentHash": "sha256:9d758fe78813404fd6eb39951373b6436ee868acabae40cfd7b974273972e3c3"
+      "contentHash": "sha256:87eb223c60c6086c10d56b61181ea74b69eeb02e427df4ad63676530423cdffe"
     },
     {
       "sourceId": "acceptance.guide.report-evidence",
       "sourcePath": "doc/guide.acceptance.report-evidence.md",
       "snapshotPath": "references/rules/guide.acceptance.report-evidence.md",
-      "contentHash": "sha256:96fe098419f09a738514b756446cb3d758373a693a92fca36dcc3ebab789c620"
+      "contentHash": "sha256:ad77d9318272a185c5857f7485b20c9c13368cfba480dd04236ab214e4b026d7"
     },
     {
       "sourceId": "acceptance.design.knowledge-governance",

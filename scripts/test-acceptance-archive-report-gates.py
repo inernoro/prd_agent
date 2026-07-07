@@ -93,6 +93,10 @@ P1: 报告页右侧为空且遮挡正文，没有截图锚点。
 """
     assert_has_error(archive._problem_localization_errors(visual_overlay, annotated_manifest), "没有链接到截图锚点")
 
+    html = archive.build_interactive_html("日报", "fail", "# 日报\n\n正文", annotated_manifest)
+    if "map-acceptance-template" not in html or 'data-template="map-acceptance-interactive-html-v2"' not in html:
+        raise AssertionError("standard interactive HTML is missing the acceptance template marker")
+
     print("acceptance archive report gates passed")
 
 

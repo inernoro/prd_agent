@@ -678,10 +678,12 @@ def build_interactive_html(title, verdict, markdown_content, manifest):
             f'</section>'
         )
     return f"""<!doctype html>
-<html lang="zh-CN">
+<!-- map-acceptance-template: interactive-html-v2 -->
+<html lang="zh-CN" data-template="map-acceptance-interactive-html-v2">
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="map-acceptance-template" content="interactive-html-v2"/>
 <title>{html.escape(title)}</title>
 <style>
 :root{{color-scheme:light;--text:#1f2328;--muted:#59636e;--line:#d8dee4;--soft:#f6f8fa;--panel:#fff;--pass:#1a7f37;--warn:#9a6700;--fail:#b42318;--link:#0969da;--ink:#0d1117}}

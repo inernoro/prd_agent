@@ -298,6 +298,55 @@ function exceedsCap(content: string): boolean {
   return Buffer.byteLength(content, 'utf8') > MAX_CONTENT_BYTES;
 }
 
+const ACCEPTANCE_HTML_TEMPLATE_MARKERS = [
+  'map-acceptance-template',
+  'data-template="map-acceptance-interactive-html-v2"',
+  'class="layout"',
+  'class="hero"',
+  'class="evidence-nav"',
+  'id="reportBody"',
+] as const;
+
+function isStrictAcceptanceHtmlReport(input: {
+  title?: string | null;
+  format?: ReportFormat | null;
+  content?: string | null;
+  verdict?: string | null;
+  tier?: string | null;
+}): boolean {
+  if (input.format !== 'html') return false;
+  const title = input.title || '';
+  const contentHead = (input.content || '').slice(0, 4000);
+  const hasExecutionMeta = !!input.verdict || /^L[0-2]$/i.test(input.tier || '');
+  if (!hasExecutionMeta) return false;
+  return /每日|昨日|昨天|验收报告|视觉验收|自动验收|acceptance|visual-test/i.test(`${title}\n${contentHead}`);
+}
+
+function validateAcceptanceHtmlTemplate(input: {
+  title?: string | null;
+  format?: ReportFormat | null;
+  content?: string | null;
+  verdict?: string | null;
+  tier?: string | null;
+}): { ok: true } | { ok: false; message: string } {
+  if (!isStrictAcceptanceHtmlReport(input)) return { ok: true };
+  const content = input.content || '';
+  const hasExplicitMarker = /map-acceptance-template|data-template=["']map-acceptance-interactive-html-v2["']/i.test(content);
+  const hasLegacyStandardStructure =
+    /\bclass=["'][^"']*\blayout\b/i.test(content)
+    && /\bclass=["'][^"']*\bhero\b/i.test(content)
+    && /\bclass=["'][^"']*\bevidence-nav\b/i.test(content)
+    && /\bid=["']reportBody["']/i.test(content);
+  if (hasExplicitMarker || hasLegacyStandardStructure) return { ok: true };
+  return {
+    ok: false,
+    message:
+      '执行类验收 HTML 必须由 create-visual-test-to-kb 标准模板生成。'
+      + `缺少模板标记或标准结构：${ACCEPTANCE_HTML_TEMPLATE_MARKERS.join(' / ')}。`
+      + '请从 Markdown 写作源和 manifest 重新运行 archive_report.py，不要直接上传临时 HTML。',
+  };
+}
+
 /**
  * Serve a report body with the hardened headers described in the security note
  * at the top of this file (nosniff + sandbox CSP so the raw HTML can never run
@@ -454,6 +503,21 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       }
     }
 
+    const verdict = normVerdict(rawVerdict);
+    const tier = normShort(rawTier, 80);
+    const templateGate = validateAcceptanceHtmlTemplate({
+      title: cleanTitle,
+      format,
+      content,
+      verdict,
+      tier,
+    });
+    if (!templateGate.ok) {
+      return res.status(422).json({
+        error: 'acceptance_html_template_required',
+        message: templateGate.message,
+      });
+    }
     // 入库前归一化：把内联 base64 图片抽出、内容寻址存盘、正文改写为 HTTPS 资源链接，
     // 让 CDS 报告正文永不再携带 base64（下游知识库拉取时也就不会出现 base64）。
     const { content: normalizedContent } = normalizeInlineImages(content, publicBaseFromReq(req), stateService);
@@ -465,8 +529,8 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       projectId: resolvedProjectId,
       branchId: resolvedBranchId,
       folderId: resolvedFolderId,
-      verdict: normVerdict(rawVerdict),
-      tier: normShort(rawTier, 80),
+      verdict,
+      tier,
       defectCounts: normDefectCounts(rawDefectCounts),
       commitSha: resolvedCommitSha,
       branch: resolvedBranch,
@@ -705,9 +769,34 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
         return res.status(400).json({ error: 'invalid_folder', message: '目标文件夹不存在或与报告项目不一致' });
       }
     }
+    const effectiveFormat = format ?? existing.format;
+    const effectiveContentRaw = content !== undefined
+      ? content
+      : stateService.readAcceptanceReportContent(existing.id);
+    const templateGate = validateAcceptanceHtmlTemplate({
+      title: title ?? existing.title,
+      format: effectiveFormat,
+      content: effectiveContentRaw,
+      verdict: Object.prototype.hasOwnProperty.call(metaUpdates, 'verdict') ? metaUpdates.verdict ?? null : existing.verdict ?? null,
+      tier: Object.prototype.hasOwnProperty.call(metaUpdates, 'tier') ? metaUpdates.tier ?? null : existing.tier ?? null,
+    });
+    if (!templateGate.ok) {
+      return res.status(422).json({
+        error: 'acceptance_html_template_required',
+        message: templateGate.message,
+      });
+    }
+    const effectiveContent = content !== undefined
+      ? normalizeInlineImages(content, publicBaseFromReq(req), stateService).content
+      : effectiveContentRaw;
     let updated = existing;
     if (title !== undefined || content !== undefined || hasFormat || hasMeta) {
-      updated = stateService.updateAcceptanceReport(req.params.id, { title, content, format, ...metaUpdates }) ?? existing;
+      updated = stateService.updateAcceptanceReport(req.params.id, {
+        title,
+        content: content !== undefined ? effectiveContent : undefined,
+        format,
+        ...metaUpdates,
+      }) ?? existing;
     }
     if (hasFolder) {
       const moved = stateService.setReportFolder(req.params.id, nextFolder ?? null);

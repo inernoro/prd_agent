@@ -220,6 +220,7 @@ python3 .claude/skills/acceptance-test-design/scripts/daily_scope.py \
 | 验收产物进入 git 工作区 | 必须移出仓库，不得提交 |
 | P0/P1/P2 视觉问题没有图内框选定位 | 判报告质量失败，重拍或降级为 observation |
 | 报告规范引用与实际流程不一致 | 判规范一致性失败，补写自测或修正流程 |
+| 执行类验收 HTML 缺少标准模板血统 | CDS 拒收，返回 `acceptance_html_template_required`；必须从 Markdown 源和 manifest 重新跑 `archive_report.py` |
 
 ## 14. 可审计字段
 
@@ -243,6 +244,21 @@ python3 .claude/skills/acceptance-test-design/scripts/daily_scope.py \
 5. 用 CDS Agent 截图冒充 CDS 平台通过。
 6. 把规范复制到 automation prompt，导致 prompt、memory、技能三套规则漂移。
 7. 报告引用只有几个字，没有解释为什么该规则适用于本轮验收。
+
+## 15.1 报告模板血统
+
+执行类验收报告可以是 HTML，但 HTML 只能由 `create-visual-test-to-kb` 的归档脚本从 Markdown 写作源和 manifest 生成。禁止把临时手写 HTML、一次性调试页面或本地 `/tmp/*.html` 直接上传成每日验收报告。
+
+标准交互 HTML 必须至少满足一个条件:
+
+| 条件 | 用途 |
+|---|---|
+| 含 `map-acceptance-template` 或 `data-template="map-acceptance-interactive-html-v2"` | 当前标准模板标记 |
+| 含 `.layout`、`.hero`、`.evidence-nav`、`#reportBody` | 兼容历史标准模板 |
+
+CDS `/api/reports` 对带 `verdict` 或 `L0/L1/L2` 档位、且标题或正文表明是验收/每日验收/视觉验收的 HTML 报告执行模板血统校验。校验失败时拒收，不创建报告，也不覆盖旧报告。
+
+恢复错误报告的方式是重新归档生成新 report id，并撤销或废弃旧分享链；不要原地修改历史报告来伪造连续性。
 
 ## 16. 外部方法论参考
 

@@ -274,4 +274,75 @@ describe('Acceptance report routes — project-scoped key access', () => {
     const got = await call(server, 'GET', `/api/reports/assets/${name}`);
     expect(got.status).toBe(200);
   });
+
+  it('rejects execution acceptance HTML without the standard report template', async () => {
+    const badDailyHtml = `
+      <!doctype html>
+      <html><head><title>prd-agent 每日验收 2026-07-06</title></head>
+      <body><h1>prd-agent 每日自动验收报告</h1><div class="grid"><div class="card">Verdict: 不通过</div></div></body></html>
+    `;
+    const res = await call(server, 'POST', '/api/reports', {
+      body: {
+        title: 'prd-agent 每日验收 2026-07-06',
+        format: 'html',
+        content: badDailyHtml,
+        verdict: 'fail',
+        tier: 'L2',
+      },
+    });
+    expect(res.status).toBe(422);
+    expect(res.body.error).toBe('acceptance_html_template_required');
+  });
+
+  it('accepts execution acceptance HTML with the current standard template marker', async () => {
+    const standardHtml = `
+      <!doctype html>
+      <!-- map-acceptance-template: interactive-html-v2 -->
+      <html lang="zh-CN" data-template="map-acceptance-interactive-html-v2">
+      <body><div class="layout"><aside class="evidence-nav"></aside><main><header class="hero"></header><article id="reportBody"></article></main></div></body></html>
+    `;
+    const res = await call(server, 'POST', '/api/reports', {
+      body: {
+        title: 'prd-agent · 每日验收 · 2026-07-06 · 验收报告',
+        format: 'html',
+        content: standardHtml,
+        verdict: 'fail',
+        tier: 'L2',
+      },
+    });
+    expect(res.status).toBe(201);
+  });
+
+  it('does not apply the acceptance template gate to generic HTML reports', async () => {
+    const res = await call(server, 'POST', '/api/reports', {
+      body: {
+        title: '普通 HTML 附件',
+        format: 'html',
+        content: '<!doctype html><html><body><h1>普通报告</h1></body></html>',
+      },
+    });
+    expect(res.status).toBe(201);
+  });
+
+  it('rejects PATCH that would replace an execution acceptance report with ad-hoc HTML', async () => {
+    const standard = service.createAcceptanceReport({
+      title: 'prd-agent · 每日验收 · 2026-07-06 · 验收报告',
+      format: 'html',
+      content: '<!doctype html><!-- map-acceptance-template: interactive-html-v2 --><html><body><div class="layout"><aside class="evidence-nav"></aside><main><header class="hero"></header><article id="reportBody"></article></main></div></body></html>',
+      projectId: 'proj-a',
+      branchId: null,
+      verdict: 'fail',
+      tier: 'L2',
+      createdBy: 't',
+    });
+    const original = service.readAcceptanceReportContent(standard.id);
+    const res = await call(server, 'PATCH', `/api/reports/${standard.id}`, {
+      body: {
+        content: '<!doctype html><html><body><h1>prd-agent 每日自动验收报告</h1><div class="grid"></div></body></html>',
+      },
+    });
+    expect(res.status).toBe(422);
+    expect(res.body.error).toBe('acceptance_html_template_required');
+    expect(service.readAcceptanceReportContent(standard.id)).toBe(original);
+  });
 });

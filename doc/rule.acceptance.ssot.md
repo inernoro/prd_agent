@@ -17,7 +17,7 @@
 | 主源 | `doc/rule.acceptance.map-enterprise.md` 等仓库 Markdown | 规范 SSOT | 是 | 评审、PR、版本控制、代码审查都以这里为准 |
 | 技能快照 | `.claude/skills/*/references/rules/*.md` | 离线 fallback | 否 | 从 `doc/` 生成，供海鲜市场下载包在无仓库 `doc/` 时读取 |
 | CDS 发布副本 | CDS `/reports` 中 `MAP自动化测试规范` 文件夹 | 在线阅读视图 | 否 | 由脚本从仓库 Markdown 发布，格式为 Markdown，不手写 HTML |
-| 执行报告 | CDS `/reports` 验收报告 | 单次执行结果 | 是，由验收流水线生成 | 引用规范，但不反向成为规范 |
+| 执行报告 | CDS `/reports` 验收报告 | 单次执行结果 | 是，由验收流水线生成 | 引用规范，但不反向成为规范；HTML 必须来自标准模板 |
 | automation prompt | 自动化调度文本 | 调度壳 | 是，限上下文 | 只写日期、目录、env、Slack、技能链，不复制规范正文 |
 
 ## 3. 主源文件
@@ -104,6 +104,15 @@ CDS `MAP自动化测试规范` 文件夹只是在线阅读视图。发布规则:
 5. 若 CDS 文档 hash 与仓库不同，发布脚本必须能检测并重发。
 
 CDS 阅读体验由 CDS Markdown 渲染器负责。规范内容的准确性优先于视觉包装。
+
+执行类验收报告与规范文档分开治理:
+
+| 类型 | 格式 | 门禁 |
+|---|---|---|
+| 规范文档 | Markdown | 发布脚本校验 raw 内容等于仓库源文件 |
+| 每日/视觉/PR 验收执行报告 | 标准交互 HTML | CDS 校验 `map-acceptance-template` 或历史标准结构，拒收临时手写 HTML |
+
+因此，优化权威文档时只改 `doc/` Markdown 和 CDS Markdown 发布；优化每日验收阅读体验时只改 `archive_report.py` 标准模板。两者不能互相替代。
 
 ## 7. 报告引用规则
 

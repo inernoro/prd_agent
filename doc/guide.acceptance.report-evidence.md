@@ -159,6 +159,7 @@ type Evidence = {
 | caption 写“所有可点项正常” | 结论过大，缺少逐项点击证据 |
 | 失败截图没有红框，只在图外说明 | 读者看图时无法定位问题 |
 | 用 API 200 证明 UI 交互通过 | 内部证据不能替代用户可见行为 |
+| 临时 HTML 上传成每日验收报告 | 绕过标准模板，读者会看到不一致的样式、空白证据栏或不可点击链接 |
 
 ## 10. 报告交付门禁
 
@@ -178,3 +179,16 @@ type Evidence = {
 12. 存在 P0/P1、核心链接不可达、核心证据缺失时，报告只能判不通过。
 13. P0/P1/P2 视觉问题必须通过图内框选定位；读者只看截图也应能知道问题在哪里。
 14. 报告必须有规范一致性自测：实际技能链、深度标签、证据门禁和引用文档必须对得上。
+15. 执行类验收 HTML 必须带标准模板标记或历史标准结构；CDS 拒收临时手写 HTML。
+
+## 11. 模板血统门禁
+
+每日验收和视觉验收报告的 HTML 是阅读层，不是自由发挥的页面。正确链路是:
+
+```text
+Markdown 写作源 + manifest + 截图资产 -> archive_report.py -> 标准交互 HTML -> CDS /api/reports
+```
+
+标准交互 HTML 必须带 `map-acceptance-template` 标记，或保留历史标准结构 `.layout`、`.hero`、`.evidence-nav`、`#reportBody`。CDS 在创建或更新报告时会识别执行类验收 HTML；若缺少这些标记，返回 `422 acceptance_html_template_required`。
+
+这条门禁只约束执行类验收 HTML。普通 HTML 附件、Markdown 规范文档和 `MAP自动化测试规范` 文件夹里的 SSOT 文档不受影响。规范文档统一以 Markdown 发布，执行报告才使用标准交互 HTML。
