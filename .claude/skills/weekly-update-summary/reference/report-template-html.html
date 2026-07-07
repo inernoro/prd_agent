@@ -31,6 +31,17 @@
 
   其他：内容结构与 reference/report-template.md（md 版）对应；期号 = ISO 周号；
   星期用中文；表格一律包 .table-scroll 容器保证移动端横滚不破版
+
+  防漏数据硬性要求（成稿前逐项核对，见 SKILL.md 纪律 8 对账清单）：
+  1. 附录 PR 表必须列全本周全部 PR（行数 = 头部 PR 收口数），禁止节选；
+     带「分类」列（feat/fix/polish/docs/ops/refactor 文字分级），表下注明归属口径
+  2. 提交成分 legend 每项带占比%（如「fix 140 · 39%」），与 md 版类型分布表同数
+  3. 下周优先级每条写成「动作——依据」两段式（依据 = 引用规则/数据/临界点）
+  4. baseline 行允许多行：第二行放口径异常说明（如「行变更含跨 PR 合并副作用」）；
+     纪律 3.5 基线漂移 / 纪律 7 历史版本对照触发时追加一行
+     「基线漂移：OLD_SHA 推进到 NEW_SHA，新增 N commit 影响本周统计」
+  5. md 底稿「本周完成」的每个分类段都必须映射到 深度报道 或 一周简讯，
+     不得因版面取舍丢分类段；每日「重点方向」由一周脉络时间轴逐日承载
 -->
 <html lang="zh-CN">
 <head>
@@ -299,7 +310,12 @@
     <span>2026 年第 <b>27</b> 周 · 06-29 至 07-05 · 总第 <b>W27</b> 期</span>
     <span>主干落地 <b>356</b> 次提交 · <b>44</b> 个 PR 收口 · 695 个文件 · 4 个署名</span>
   </div>
-  <div class="baseline">统计基线 origin/main @ c228927（采集 2026-07-05）· 口径：仅主干、按提交日期文本过滤、PR 以实际落地 merge commit 为准 · 与上次同周报告无基线漂移</div>
+  <div class="baseline">
+    统计基线 origin/main @ c228927（采集 2026-07-05）· 口径：仅主干、按提交日期文本过滤、PR 以本周实际落地主干的 merge/squash commit 为准（不信 GitHub mergedAt）· 与上次同周报告无基线漂移<br>
+    口径说明：文件 / 行变更为 git diff --shortstat FIRST^..LAST，含跨 PR 合并副作用（本周大头来自网关剥离新增 serving 工程与首页/CDS 视觉重构资产）
+    <!-- 纪律 3.5 基线漂移 / 纪律 7 历史版本对照触发时，在此追加一行，如：
+         基线漂移：c228927 推进到 a3be597，新增 N 个 commit 影响本周统计 -->
+  </div>
 
   <!-- 封面故事 -->
   <section class="cover">
@@ -502,11 +518,11 @@
         <i class="sfix" style="width:39.3%"></i><i class="spol" style="width:10.1%"></i><i class="sfeat" style="width:9.0%"></i><i class="sdoc" style="width:5.6%"></i><i class="setc" style="width:36.0%"></i>
       </div>
       <div class="legend">
-        <span><i style="background:var(--ink)"></i>fix 140</span>
-        <span><i style="background:rgba(79,70,229,0.30)"></i>polish 36</span>
-        <span><i style="background:var(--indigo)"></i>feat 32</span>
-        <span><i style="background:rgba(33,29,24,0.24)"></i>docs 20</span>
-        <span><i style="background:rgba(33,29,24,0.08)"></i>其他 128</span>
+        <span><i style="background:var(--ink)"></i>fix 140 · 39%</span>
+        <span><i style="background:rgba(79,70,229,0.30)"></i>polish 36 · 10%</span>
+        <span><i style="background:var(--indigo)"></i>feat 32 · 9%</span>
+        <span><i style="background:rgba(33,29,24,0.24)"></i>docs 20 · 6%</span>
+        <span><i style="background:rgba(33,29,24,0.08)"></i>其他 128 · 36%</span>
       </div>
       <p class="byline-row">fix 占 39%——典型的「大功能落地 + 密集收口」周型；周四 88 次提交为本周峰值，主战场是网关双出口。</p>
     </section>
@@ -541,42 +557,78 @@
     <div>
       <div class="ph"><b>P0 必须做</b><span>MUST</span></div>
       <ul>
-        <li>影子比对攒样本：达到 Gate 阈值（样本量 + diff 率）后评估生产翻 http</li>
-        <li>网关控制台配置面从只读放开第一批可写项</li>
+        <li>影子比对攒样本，Gate 全绿后评估生产翻 http——依据 extraction-readiness-gate 记分卡：样本量与 diff 率是仅剩红灯项</li>
+        <li>网关控制台配置面从只读放开第一批可写项——依据本周 #985 已把登录/观测/配置三级铺到只读，可写是自然下一刀</li>
       </ul>
     </div>
     <div>
       <div class="ph"><b>P1 应该做</b><span>SHOULD</span></div>
       <ul>
-        <li>CDS _global 环境变量注入 llmgw 容器问题跟进基建侧修复</li>
-        <li>周报 HTML 周刊版首刊试发，双端走查</li>
+        <li>CDS _global 环境变量注入 llmgw 容器问题跟进——依据 W27 计划与遗留：等基建侧修复后补真机取证</li>
+        <li>周报 HTML 周刊版首刊试发并双端走查——依据本周日报报纸版（#991）已验证同链路可行</li>
       </ul>
     </div>
     <div>
       <div class="ph"><b>P2 可以做</b><span>COULD</span></div>
       <ul>
-        <li>知识星球 3D 星系移动端性能档位</li>
-        <li>每日熵减 W28 批次：索引补录 + changelog 到 doc 补录</li>
+        <li>知识星球 3D 星系移动端性能档位——依据 #988 桌面端已到艺术级，移动端帧率未测</li>
+        <li>每日熵减 W28 批次：索引补录 + changelog 到 doc 补录——依据熵清理台账 D2/D3/D6 三项未清</li>
       </ul>
     </div>
   </div>
 
-  <!-- 附录 -->
-  <div class="col-head"><h2>附录 · 本周落地 PR</h2><span>APPENDIX</span><span class="w">44 个 · 节选示例</span></div>
+  <!-- 附录（硬性要求：必须列全本周全部 PR，行数 = 头部 PR 收口数，禁止节选） -->
+  <div class="col-head"><h2>附录 · 本周落地 PR</h2><span>APPENDIX</span><span class="w">44 个 · 全量</span></div>
   <div class="table-scroll">
     <table class="prtable">
-      <tr><th>PR</th><th>落地日</th><th>标题</th></tr>
-      <tr><td>#965</td><td>07-01</td><td>LLM 网关物理剥离：跨进程 serving + shadow 影子比对 + CDS 命名子域</td></tr>
-      <tr><td>#971</td><td>07-01</td><td>网关安全基座：多出口面板 + 观测标记 + 直连守卫棘轮 + MECE 测试</td></tr>
-      <tr><td>#974</td><td>07-02</td><td>分支抽屉多出口重设计为图标卡片列</td></tr>
-      <tr><td>#985</td><td>07-03</td><td>网关控制台可登录 / 可观测 / 可配置 + Mongo Console 受控写</td></tr>
-      <tr><td>#991</td><td>07-04</td><td>日报报纸版 HTML 二选项 + 知识库 HTML 阅读滚动修复</td></tr>
-      <tr><td>#995</td><td>07-05</td><td>CDS 品牌换代：宝石六芒标 + 顶部导航贯穿 + 布局架构归一</td></tr>
-      <tr><td>#996</td><td>07-05</td><td>首页工作台重构：继续上次 + 统一设计语言 + 极光氛围</td></tr>
-      <tr><td>#997</td><td>07-05</td><td>涌现探索器：流式 JSON 实时解析为正在生长的节点卡</td></tr>
+      <tr><th>PR</th><th>落地日</th><th>标题</th><th>分类</th></tr>
+      <tr><td>#941</td><td>07-01</td><td>新增系统原则速查表（命名原则索引）</td><td>docs</td></tr>
+      <tr><td>#943</td><td>06-29</td><td>新增 2026-W26 周报 + 归档 128 个 changelog 碎片</td><td>docs</td></tr>
+      <tr><td>#946</td><td>06-29</td><td>修复 CDS compose 自动检测与技能链接补齐</td><td>fix</td></tr>
+      <tr><td>#947</td><td>06-29</td><td>CDS 任务调度动作步骤</td><td>feat</td></tr>
+      <tr><td>#949</td><td>06-29</td><td>接入米多星球 SSO 登录</td><td>feat</td></tr>
+      <tr><td>#951</td><td>06-30</td><td>CDS 分支级隔离体系：网络隔离 + 临时额外服务 + 极速版等待页</td><td>feat</td></tr>
+      <tr><td>#952</td><td>06-30</td><td>调整文档星系触摸板旋转手势</td><td>fix</td></tr>
+      <tr><td>#953</td><td>06-30</td><td>修复首页背景柔光与 CDS 预览生成</td><td>fix</td></tr>
+      <tr><td>#954</td><td>06-30</td><td>修复米多星球 SSO 边界问题</td><td>fix</td></tr>
+      <tr><td>#955</td><td>06-30</td><td>网页托管公开快捷位改为分享</td><td>polish</td></tr>
+      <tr><td>#956</td><td>06-30</td><td>修复热重启等待计时锚点</td><td>fix</td></tr>
+      <tr><td>#959</td><td>06-30</td><td>修复发布步骤状态误判</td><td>fix</td></tr>
+      <tr><td>#960</td><td>06-30</td><td>修复删除分支残留误报</td><td>fix</td></tr>
+      <tr><td>#961</td><td>06-30</td><td>优化文档星系触摸板与聚焦动效</td><td>fix</td></tr>
+      <tr><td>#962</td><td>07-02</td><td>新增用户通知推送订阅（Bark 协议）</td><td>feat</td></tr>
+      <tr><td>#963</td><td>06-30</td><td>优化网页托管卡片操作区</td><td>polish</td></tr>
+      <tr><td>#964</td><td>07-01</td><td>优化同步中心心智与方向保护</td><td>polish</td></tr>
+      <tr><td>#965</td><td>07-01</td><td>LLM 网关从 MAP 物理剥离（跨进程 serving + shadow 影子比对 + CDS 命名子域）</td><td>feat</td></tr>
+      <tr><td>#966</td><td>07-01</td><td>修复首页资源卡与背景配置</td><td>fix</td></tr>
+      <tr><td>#968</td><td>07-01</td><td>新增邮件模板智能体（模板库 + 一键复制 + AI 起草润色）</td><td>feat</td></tr>
+      <tr><td>#969</td><td>07-01</td><td>支持禁用密码登录</td><td>feat</td></tr>
+      <tr><td>#970</td><td>07-01</td><td>优化每日验收 HTML 报告模板</td><td>polish</td></tr>
+      <tr><td>#971</td><td>07-01</td><td>网关切换安全基座（CDS 多出口面板 + 观测标记 + 直连守卫棘轮 + MECE 测试）</td><td>feat</td></tr>
+      <tr><td>#972</td><td>07-02</td><td>分支详情抽屉补齐网关多出口（主应用入口 + 网关入口并列）</td><td>feat</td></tr>
+      <tr><td>#973</td><td>07-02</td><td>分支详情抽屉入口区重设计为图标卡片列</td><td>polish</td></tr>
+      <tr><td>#974</td><td>07-02</td><td>网关入口打开真实控制台 prd-llmgw-web（替换心跳落地）</td><td>feat</td></tr>
+      <tr><td>#975</td><td>07-02</td><td>导入 / 配置校验豁免预构建镜像站点的 command 必填</td><td>fix</td></tr>
+      <tr><td>#977</td><td>07-02</td><td>优化海鲜市场半高卡片</td><td>polish</td></tr>
+      <tr><td>#978</td><td>07-02</td><td>网关控制台登录简化为开箱 admin/admin + upsert + 交接文档</td><td>fix</td></tr>
+      <tr><td>#979</td><td>07-04</td><td>优化移动端热点页面体验</td><td>polish</td></tr>
+      <tr><td>#980</td><td>07-02</td><td>cdscli 支持口令创建任务调度</td><td>feat</td></tr>
+      <tr><td>#981</td><td>07-02</td><td>跨创建路径回收 docker 网络</td><td>fix</td></tr>
+      <tr><td>#982</td><td>07-02</td><td>回收空项目 docker 网络</td><td>fix</td></tr>
+      <tr><td>#983</td><td>07-02</td><td>支持生产不可变产物发布</td><td>ops</td></tr>
+      <tr><td>#984</td><td>07-02</td><td>打通快捷指令短视频解析入队</td><td>fix</td></tr>
+      <tr><td>#985</td><td>07-03</td><td>网关剥离推进：控制台可登录 / 可观测 / 可配置 + CDS Mongo Console 受控写</td><td>feat</td></tr>
+      <tr><td>#986</td><td>07-03</td><td>修复不可变发布评论问题</td><td>fix</td></tr>
+      <tr><td>#987</td><td>07-03</td><td>修复 Stub 平台密钥误告警</td><td>fix</td></tr>
+      <tr><td>#988</td><td>07-02</td><td>知识星球 3D 星系视觉艺术升级 v2（深空穹顶 + 星场 + 星云 + 热核着色 + 光路编排）</td><td>polish</td></tr>
+      <tr><td>#991</td><td>07-04</td><td>日报报纸版 HTML 二选项 + 知识库 HTML 阅读滚动修复</td><td>feat</td></tr>
+      <tr><td>#992</td><td>07-04</td><td>修复验收报告内链接点击无效</td><td>fix</td></tr>
+      <tr><td>#995</td><td>07-05</td><td>CDS 品牌标换代为宝石六芒、顶部导航贯穿、布局架构归一</td><td>refactor</td></tr>
+      <tr><td>#996</td><td>07-05</td><td>首页工作台重构：继续上次 + 统一设计语言 + 极光氛围 + 落地页性能修复</td><td>feat</td></tr>
+      <tr><td>#997</td><td>07-05</td><td>涌现探索器生成节点体验重做：流式 JSON 实时解析为正在生长的节点卡</td><td>feat</td></tr>
     </table>
   </div>
-  <p class="appendix-note">完整 44 个 PR 清单以 doc/report.2026-W27.md 附录为准（成稿时应列全，此处为模板节选示例）。</p>
+  <p class="appendix-note">归属口径：本地 origin/main 上 merge / squash commit 的提交日期（%cd --date=short），非 GitHub mergedAt；行数必须等于头部「PR 收口」数（本期 44 = 44，成稿前自查）。</p>
 
   <div class="note"><b>取证说明</b> 本期为周刊 HTML 版式创刊样稿：封面配版画示意图，数据版图表由 git 真实数据生成；重点功能界面实拍可按 IMG 占位（双花括号语法，见头部注释）随刊补图——占位字面量不要写进成稿说明文字，publish.py 会把残留占位当坏图拒发。</div>
 
