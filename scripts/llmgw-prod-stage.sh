@@ -28,6 +28,8 @@ Required environment for deploy stages:
   LLMGW_GATE_BASE or GW_BASE   Serving base URL, for example https://host/gw/v1
   LLMGW_GATE_KEY, GW_KEY, or LLMGW_SERVE_KEY
   LLMGW_STAGE_RUN_SHADOW_SEED=1 enables MAP shadow seed evidence after shadow-start deploy
+  LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST
+                              Optional appCaller list forced to full shadow sampling for deterministic raw evidence
   LLMGW_STAGE_MAP_BASE or PRD_AGENT_BASE
                               MAP base URL for preflight, ASR canary, and shadow seed
   LLMGW_STAGE_SHADOW_SEED_FLAGS Extra llmgw-map-shadow-seed.py flags, for example --include-video-direct
@@ -210,6 +212,7 @@ mode=""
 allowlist=""
 canary_stage=""
 shadow_percent="0"
+shadow_full_sample_allowlist="${LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST:-}"
 main_sha=""
 
 case "$stage" in
@@ -358,6 +361,7 @@ print_plan() {
     echo "  canaryStage: ${canary_stage:-none}"
     echo "  allowlist: ${allowlist:-empty}"
     echo "  shadowFullSamplePercent: $shadow_percent"
+    echo "  shadowFullSampleAppCallerAllowlist: ${shadow_full_sample_allowlist:-empty}"
     echo "  gateBase: ${gate_base:-none}"
     echo "  releaseGateJson: $release_gate_json"
     echo "  servingProbeJson: $serving_probe_json"
@@ -1025,6 +1029,7 @@ export LLMGW_PROD_STAGE="$stage"
 export LLMGW_HTTP_APP_CALLER_ALLOWLIST="$allowlist"
 export LLMGW_CANARY_STAGE="$canary_stage"
 export LLMGW_SHADOW_FULL_SAMPLE_PERCENT="$shadow_percent"
+export LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST="$shadow_full_sample_allowlist"
 export LLMGW_GATE_BASE="$gate_base"
 export LLMGW_GATE_KEY="${LLMGW_GATE_KEY:-$gate_key}"
 export LLMGW_SERVE_KEY="${LLMGW_SERVE_KEY:-$gate_key}"

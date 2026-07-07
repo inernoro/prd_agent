@@ -223,6 +223,10 @@ var httpAllowlist = (builder.Configuration["LlmGateway:HttpAppCallerAllowlist"] 
     .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
     .Where(x => !string.IsNullOrWhiteSpace(x))
     .ToHashSet(StringComparer.OrdinalIgnoreCase);
+var shadowFullSampleAllowlist = (builder.Configuration["LlmGateway:ShadowFullSampleAppCallerAllowlist"] ?? string.Empty)
+    .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+    .Where(x => !string.IsNullOrWhiteSpace(x))
+    .ToHashSet(StringComparer.OrdinalIgnoreCase);
 var isShadow = string.Equals(gatewayMode, "shadow", StringComparison.OrdinalIgnoreCase);
 
 if (string.Equals(gatewayMode, "http", StringComparison.OrdinalIgnoreCase))
@@ -255,6 +259,7 @@ else if (isShadow || httpAllowlist.Count > 0)
             fullSamplePercent: shadowSamplePercent,
             ctx: sp.GetService<PrdAgent.Core.Interfaces.ILLMRequestContextAccessor>(),
             httpAllowlist: httpAllowlist,
+            fullSampleAllowlist: shadowFullSampleAllowlist,
             releaseCommit: FirstEnv("GIT_COMMIT", "COMMIT_SHA", "GITHUB_SHA", "SOURCE_VERSION", "CDS_COMMIT_SHA")));
 }
 else

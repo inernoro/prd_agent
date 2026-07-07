@@ -76,6 +76,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}", dockerCompose);
         Assert.Contains("LlmGateway__HttpAppCallerAllowlist=${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}", dockerCompose);
         Assert.Contains("LlmGateway__ShadowFullSamplePercent=${LLMGW_SHADOW_FULL_SAMPLE_PERCENT:-0}", dockerCompose);
+        Assert.Contains("LlmGateway__ShadowFullSampleAppCallerAllowlist=${LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST:-}", dockerCompose);
         Assert.Contains("LLMGW_ADMIN_PASSWORD=${LLMGW_ADMIN_PASSWORD:-}", dockerCompose);
         Assert.Contains("LLMGW_ADMIN_FORCE_RESET=${LLMGW_ADMIN_FORCE_RESET:-}", dockerCompose);
         Assert.DoesNotContain("LLMGW_ADMIN_PASSWORD=${LLMGW_ADMIN_PASSWORD:?", dockerCompose);
@@ -104,6 +105,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("config_value LLMGW_MODE LlmGateway__Mode", script);
         Assert.Contains("config_value LLMGW_HTTP_APP_CALLER_ALLOWLIST LlmGateway__HttpAppCallerAllowlist", script);
         Assert.Contains("config_value LLMGW_SHADOW_FULL_SAMPLE_PERCENT LlmGateway__ShadowFullSamplePercent", script);
+        Assert.Contains("config_value LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST LlmGateway__ShadowFullSampleAppCallerAllowlist", script);
         Assert.Contains("mode_raw=\"$(llmgw_mode_value)\"", script);
         Assert.Contains("LLMGW_POST_DEPLOY_VERIFY_NEEDED", script);
         Assert.Contains("LLMGW_POST_DEPLOY_GATE_BASE", script);
@@ -119,7 +121,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLM Gateway canary 阶段 $canary_stage 不允许入口 $app_trimmed", script);
         Assert.Contains("LLM Gateway canary stage: $canary_stage allowlist=$allowlist_compact", script);
         Assert.Contains("LLMGW_SHADOW_FULL_SAMPLE_PERCENT", script);
+        Assert.Contains("shadow_sample_allowlist_compact", script);
         Assert.Contains("shadow_sample_enabled=0", script);
+        Assert.Contains("if [ -n \"$shadow_sample_allowlist_compact\" ]; then", script);
         Assert.Contains("release_gate_required=0", script);
         Assert.Contains("if [ \"$release_gate_required\" != \"1\" ] && [ \"$shadow_sample_enabled\" != \"1\" ]; then", script);
         Assert.Contains("LLMGW_PROD_STAGE_ACTIVE", script);
@@ -1043,6 +1047,26 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("GW_SMOKE_JSON_OUT", script);
         Assert.Contains("GW_SMOKE_REPORT_MD", script);
         Assert.Contains("\"verdict\": \"pass\" if passed == len(rows) else \"fail\"", script);
+    }
+
+    [Fact]
+    public void ShadowRawEvidence_UsesExplicitFullSampleAllowlistAndRollbackClearsIt()
+    {
+        var apiProgram = ReadRepoFile("prd-api/src/PrdAgent.Api/Program.cs");
+        var shadowGateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ShadowLlmGateway.cs");
+        var prodStage = ReadRepoFile("scripts/llmgw-prod-stage.sh");
+        var rollback = ReadRepoFile("scripts/llmgw-rollback-inproc.sh");
+        var restore = ReadRepoFile("scripts/llmgw-restore-shadow-safe.sh");
+
+        Assert.Contains("LlmGateway:ShadowFullSampleAppCallerAllowlist", apiProgram);
+        Assert.Contains("fullSampleAllowlist: shadowFullSampleAllowlist", apiProgram);
+        Assert.Contains("_fullSampleAllowlist.Contains(appCallerCode)", shadowGateway);
+        Assert.Contains("LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST", prodStage);
+        Assert.Contains("export LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST=\"$shadow_full_sample_allowlist\"", prodStage);
+        Assert.Contains("llmgw_shadow_sample_allowlist_value()", ReadRepoFile("exec_dep.sh"));
+        Assert.Contains("export LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST=", rollback);
+        Assert.Contains("\"LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST\": \"\"", restore);
+        Assert.Contains("export LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST=", restore);
     }
 
     private static string ReadRepoFile(string relativePath)

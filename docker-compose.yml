@@ -102,6 +102,7 @@ services:
       - LlmGateway__Mode=${LLMGW_MODE:-inproc}
       - LlmGateway__HttpAppCallerAllowlist=${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}
       - LlmGateway__ShadowFullSamplePercent=${LLMGW_SHADOW_FULL_SAMPLE_PERCENT:-0}
+      - LlmGateway__ShadowFullSampleAppCallerAllowlist=${LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST:-}
       - LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}
       - LlmGateway__ServeBaseUrl=${LLMGW_SERVE_BASE_URL:-http://llmgw-serve:8091}
       - LlmGwServe__ApiKey=${LLMGW_SERVE_KEY:?must set LLMGW_SERVE_KEY in production (gateway /gw/v1 shared key gate, no insecure default)}

@@ -38,6 +38,8 @@ set -eu
 #   - LLMGW_CANARY_STAGE：灰度阶段，allowlist 非空且非全量 http 时必填；枚举 intent-text/chat/streaming/vision/image/video-asr
 #   - LLMGW_SHADOW_FULL_SAMPLE_PERCENT：shadow 模式非流式完整比对采样比例，默认 0
 #     非 0 时会强制部署后 serving probe + gw-smoke 校验，但不会要求已有 shadow 样本数
+#   - LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST：shadow 模式下强制 full sample 的 appCaller 列表；
+#     非空时同样必须通过 stage runner，避免 raw 证据采样绕过 gate
 #   - LLMGW_GATE_BASE / GW_BASE：release gate 使用的 serving base URL（形如 https://host/gw/v1）
 #   - LLMGW_GATE_KEY / GW_KEY：release gate 使用的 X-Gateway-Key；未设时回退 LLMGW_SERVE_KEY
 #   - LLMGW_GATE_MIN_TOTAL：全局 shadow 最小样本数，默认 30
@@ -433,6 +435,10 @@ llmgw_shadow_sample_value() {
   printf '%s' "$value"
 }
 
+llmgw_shadow_sample_allowlist_value() {
+  config_value LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST LlmGateway__ShadowFullSampleAppCallerAllowlist
+}
+
 guard_llmgw_prod_stage_context_if_needed() {
   mode_raw="$(llmgw_mode_value)"
   mode="$(printf '%s' "$mode_raw" | tr 'A-Z' 'a-z' | xargs)"
@@ -440,6 +446,8 @@ guard_llmgw_prod_stage_context_if_needed() {
   allowlist_compact="$(printf '%s' "$allowlist_raw" | tr ',;\n\r' '    ' | xargs || true)"
   shadow_sample_raw="$(llmgw_shadow_sample_value)"
   shadow_sample_compact="$(printf '%s' "$shadow_sample_raw" | xargs || true)"
+  shadow_sample_allowlist_raw="$(llmgw_shadow_sample_allowlist_value)"
+  shadow_sample_allowlist_compact="$(printf '%s' "$shadow_sample_allowlist_raw" | tr ',;\n\r' '    ' | xargs || true)"
   shadow_sample_enabled=0
   if [ "$mode" = "shadow" ]; then
     case "$shadow_sample_compact" in
@@ -449,6 +457,9 @@ guard_llmgw_prod_stage_context_if_needed() {
         shadow_sample_enabled=1
         ;;
     esac
+    if [ -n "$shadow_sample_allowlist_compact" ]; then
+      shadow_sample_enabled=1
+    fi
   fi
   release_gate_required=0
   if [ "$mode" = "http" ] || [ -n "$allowlist_compact" ]; then
@@ -708,6 +719,8 @@ run_llmgw_release_gate_if_needed() {
   allowlist_compact="$(printf '%s' "$allowlist_raw" | tr ',;\n\r' '    ' | xargs || true)"
   shadow_sample_raw="$(llmgw_shadow_sample_value)"
   shadow_sample_compact="$(printf '%s' "$shadow_sample_raw" | xargs || true)"
+  shadow_sample_allowlist_raw="$(llmgw_shadow_sample_allowlist_value)"
+  shadow_sample_allowlist_compact="$(printf '%s' "$shadow_sample_allowlist_raw" | tr ',;\n\r' '    ' | xargs || true)"
   shadow_sample_enabled=0
   if [ "$mode" = "shadow" ]; then
     case "$shadow_sample_compact" in
@@ -717,13 +730,16 @@ run_llmgw_release_gate_if_needed() {
         shadow_sample_enabled=1
         ;;
     esac
+    if [ -n "$shadow_sample_allowlist_compact" ]; then
+      shadow_sample_enabled=1
+    fi
   fi
   release_gate_required=0
   if [ "$mode" = "http" ] || [ -n "$allowlist_compact" ]; then
     release_gate_required=1
   fi
   if [ "$release_gate_required" != "1" ] && [ "$shadow_sample_enabled" != "1" ]; then
-    echo "LLM Gateway release gate: skipped (LLMGW_MODE=${mode:-inproc}, allowlist=empty, shadowSample=${shadow_sample_compact:-0})"
+    echo "LLM Gateway release gate: skipped (LLMGW_MODE=${mode:-inproc}, allowlist=empty, shadowSample=${shadow_sample_compact:-0}, shadowSampleAllowlist=empty)"
     return 0
   fi
 

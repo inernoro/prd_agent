@@ -37,6 +37,7 @@ echo "  dryRun: $dry_run"
 export LLMGW_MODE=inproc
 export LLMGW_HTTP_APP_CALLER_ALLOWLIST=
 export LLMGW_SHADOW_FULL_SAMPLE_PERCENT=0
+export LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST=
 
 if [ "$dry_run" = "1" ] || [ "$dry_run" = "true" ]; then
   echo "LLM Gateway rollback dry-run: $COMPOSE -f $compose_file up -d --no-deps --force-recreate $service_name"

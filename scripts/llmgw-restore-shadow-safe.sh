@@ -64,6 +64,7 @@ updates = {
     "LLMGW_MODE": "shadow",
     "LLMGW_HTTP_APP_CALLER_ALLOWLIST": "",
     "LLMGW_SHADOW_FULL_SAMPLE_PERCENT": os.environ["RESTORE_SAMPLE_PERCENT"],
+    "LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST": "",
 }
 
 lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
@@ -108,6 +109,7 @@ echo "  dryRun: $dry_run"
 export LLMGW_MODE=shadow
 export LLMGW_HTTP_APP_CALLER_ALLOWLIST=
 export LLMGW_SHADOW_FULL_SAMPLE_PERCENT="$sample_percent"
+export LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST=
 
 persist_env_file
 
