@@ -149,9 +149,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_GATE_FULL_HTTP_APP_CALLERS", script);
         Assert.Contains("gate_app_callers_raw=\"${LLMGW_GATE_FULL_HTTP_APP_CALLERS:-report-agent.generate::chat", script);
         Assert.Contains("prd-agent-desktop.chat.sendmessage::chat", script);
+        Assert.Contains("prd-agent-desktop.preview-ask.section::chat", script);
         Assert.Contains("open-platform-agent.proxy::chat", script);
+        Assert.Contains("open-api.proxy::chat", script);
         Assert.Contains("prd-agent-web.model-lab.run::chat", script);
         Assert.Contains("prd-agent.arena.battle::chat", script);
+        Assert.Contains("tutorial-email.generate::chat", script);
         Assert.Contains("visual-agent.image-gen.generate::generation", script);
         Assert.Contains("visual-agent.image.text2img::generation", script);
         Assert.Contains("visual-agent.image.img2img::generation", script);
@@ -177,6 +180,15 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_GATE_FULL_HTTP_APP_KINDS", script);
         Assert.Contains("required_app_kinds_raw=\"${LLMGW_GATE_REQUIRED_APP_KINDS:-}\"", script);
         Assert.Contains("full_http_app_kind_min=\"${LLMGW_GATE_FULL_HTTP_APP_KIND_MIN:-${LLMGW_GATE_FULL_HTTP_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}}\"", script);
+        Assert.Contains("report-agent.generate::chat:send:", script);
+        Assert.Contains("prd-agent-desktop.chat.sendmessage::chat:stream:", script);
+        Assert.Contains("prd-agent-desktop.preview-ask.section::chat:stream:", script);
+        Assert.Contains("open-platform-agent.proxy::chat:send:", script);
+        Assert.Contains("open-api.proxy::chat:send:", script);
+        Assert.Contains("open-api.proxy::chat:stream:", script);
+        Assert.Contains("prd-agent-web.model-lab.run::chat:stream:", script);
+        Assert.Contains("prd-agent.arena.battle::chat:stream:", script);
+        Assert.Contains("tutorial-email.generate::chat:send:", script);
         Assert.Contains("visual-agent.image-gen.generate::generation:raw:", script);
         Assert.Contains("visual-agent.image.text2img::generation:raw:", script);
         Assert.Contains("visual-agent.image.img2img::generation:raw:", script);
@@ -187,7 +199,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("transcript-agent.transcribe::asr:raw:", script);
         Assert.Contains("video-agent.v2d.transcribe::asr:raw:", script);
         Assert.Contains("video-agent.video-to-text::asr:raw:", script);
-        Assert.Contains("LLM Gateway release gate: LLMGW_MODE=http 未设置 LLMGW_GATE_REQUIRED_APP_KINDS，默认要求 raw 入口逐个具备 raw 样本", script);
+        Assert.Contains("LLM Gateway release gate: LLMGW_MODE=http 未设置 LLMGW_GATE_REQUIRED_APP_KINDS，默认要求核心 send/stream/raw 入口逐个具备 app-kind 样本", script);
         Assert.Contains("LLMGW_GATE_CANARY_APP_KIND_MIN", script);
         Assert.Contains("LLMGW_GATE_CANARY_APP_KINDS", script);
         Assert.Contains("LLM Gateway release gate: canary 阶段 $canary_stage 默认要求 raw app-kind 样本逐个达标", script);

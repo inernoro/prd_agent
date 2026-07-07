@@ -53,7 +53,7 @@ set -eu
 #   - LLMGW_GATE_REQUIRED_KINDS：逗号/分号分隔的 kind[:min] 列表，例如 send:30,stream:30，防 resolve-only 放行
 #     全量 LLMGW_MODE=http 时若未显式设置，默认要求 send/stream/raw 各达到 LLMGW_GATE_MIN_PER_APP（默认 30）
 #   - LLMGW_GATE_REQUIRED_APP_KINDS：逗号/分号分隔的 appCallerCode:kind:min 列表，例如 report-agent.generate::chat:send:30
-#     全量 LLMGW_MODE=http 时若未显式设置，默认要求图片/视频/ASR 等 raw 入口各自达到 raw 样本门槛
+#     全量 LLMGW_MODE=http 时若未显式设置，默认要求核心 send/stream/raw 入口逐个达到样本门槛
 #   - LLMGW_GATE_FULL_HTTP_APP_KINDS：全量 http 未显式设置 LLMGW_GATE_REQUIRED_APP_KINDS 时默认逐个 gate 的 appCallerCode:kind:min 列表
 #   - LLMGW_GATE_CANARY_KIND_MIN：canary 阶段默认 kind 样本门槛，默认跟随 LLMGW_GATE_MIN_PER_APP
 #   - LLMGW_GATE_CANARY_APP_KIND_MIN：canary 阶段 raw app-kind 样本门槛，默认跟随 LLMGW_GATE_CANARY_KIND_MIN
@@ -964,7 +964,7 @@ run_llmgw_release_gate_if_needed() {
   gate_app_callers_raw="${LLMGW_GATE_APP_CALLERS:-}"
   gate_app_callers_compact="$(printf '%s' "$gate_app_callers_raw" | tr ',;\n\r' '    ' | xargs || true)"
   if [ "$mode" = "http" ] && [ -z "$gate_app_callers_compact" ]; then
-    gate_app_callers_raw="${LLMGW_GATE_FULL_HTTP_APP_CALLERS:-report-agent.generate::chat,prd-agent-desktop.chat.sendmessage::chat,open-platform-agent.proxy::chat,prd-agent-web.model-lab.run::chat,prd-agent.arena.battle::chat,visual-agent.image-gen.generate::generation,visual-agent.image.text2img::generation,visual-agent.image.img2img::generation,visual-agent.image.vision::generation,video-agent.videogen::video-gen,visual-agent.videogen::video-gen,document-store.subtitle::asr,transcript-agent.transcribe::asr,video-agent.v2d.transcribe::asr,video-agent.video-to-text::asr}"
+    gate_app_callers_raw="${LLMGW_GATE_FULL_HTTP_APP_CALLERS:-report-agent.generate::chat,prd-agent-desktop.chat.sendmessage::chat,prd-agent-desktop.preview-ask.section::chat,open-platform-agent.proxy::chat,open-api.proxy::chat,prd-agent-web.model-lab.run::chat,prd-agent.arena.battle::chat,tutorial-email.generate::chat,visual-agent.image-gen.generate::generation,visual-agent.image.text2img::generation,visual-agent.image.img2img::generation,visual-agent.image.vision::generation,video-agent.videogen::video-gen,visual-agent.videogen::video-gen,document-store.subtitle::asr,transcript-agent.transcribe::asr,video-agent.v2d.transcribe::asr,video-agent.video-to-text::asr}"
     echo "LLM Gateway release gate: LLMGW_MODE=http 未设置 LLMGW_GATE_APP_CALLERS，默认要求核心入口逐个达标"
   fi
   for app in ${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}; do
@@ -1014,8 +1014,8 @@ run_llmgw_release_gate_if_needed() {
   required_app_kinds_compact="$(printf '%s' "$required_app_kinds_raw" | tr ',;\n\r' '    ' | xargs || true)"
   if [ "$mode" = "http" ] && [ -z "$required_app_kinds_compact" ]; then
     full_http_app_kind_min="${LLMGW_GATE_FULL_HTTP_APP_KIND_MIN:-${LLMGW_GATE_FULL_HTTP_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}}"
-    required_app_kinds_raw="${LLMGW_GATE_FULL_HTTP_APP_KINDS:-visual-agent.image-gen.generate::generation:raw:${full_http_app_kind_min},visual-agent.image.text2img::generation:raw:${full_http_app_kind_min},visual-agent.image.img2img::generation:raw:${full_http_app_kind_min},visual-agent.image.vision::generation:raw:${full_http_app_kind_min},video-agent.videogen::video-gen:raw:${full_http_app_kind_min},visual-agent.videogen::video-gen:raw:${full_http_app_kind_min},document-store.subtitle::asr:raw:${full_http_app_kind_min},transcript-agent.transcribe::asr:raw:${full_http_app_kind_min},video-agent.v2d.transcribe::asr:raw:${full_http_app_kind_min},video-agent.video-to-text::asr:raw:${full_http_app_kind_min}}"
-    echo "LLM Gateway release gate: LLMGW_MODE=http 未设置 LLMGW_GATE_REQUIRED_APP_KINDS，默认要求 raw 入口逐个具备 raw 样本"
+    required_app_kinds_raw="${LLMGW_GATE_FULL_HTTP_APP_KINDS:-report-agent.generate::chat:send:${full_http_app_kind_min},prd-agent-desktop.chat.sendmessage::chat:stream:${full_http_app_kind_min},prd-agent-desktop.preview-ask.section::chat:stream:${full_http_app_kind_min},open-platform-agent.proxy::chat:send:${full_http_app_kind_min},open-api.proxy::chat:send:${full_http_app_kind_min},open-api.proxy::chat:stream:${full_http_app_kind_min},prd-agent-web.model-lab.run::chat:stream:${full_http_app_kind_min},prd-agent.arena.battle::chat:stream:${full_http_app_kind_min},tutorial-email.generate::chat:send:${full_http_app_kind_min},visual-agent.image-gen.generate::generation:raw:${full_http_app_kind_min},visual-agent.image.text2img::generation:raw:${full_http_app_kind_min},visual-agent.image.img2img::generation:raw:${full_http_app_kind_min},visual-agent.image.vision::generation:raw:${full_http_app_kind_min},video-agent.videogen::video-gen:raw:${full_http_app_kind_min},visual-agent.videogen::video-gen:raw:${full_http_app_kind_min},document-store.subtitle::asr:raw:${full_http_app_kind_min},transcript-agent.transcribe::asr:raw:${full_http_app_kind_min},video-agent.v2d.transcribe::asr:raw:${full_http_app_kind_min},video-agent.video-to-text::asr:raw:${full_http_app_kind_min}}"
+    echo "LLM Gateway release gate: LLMGW_MODE=http 未设置 LLMGW_GATE_REQUIRED_APP_KINDS，默认要求核心 send/stream/raw 入口逐个具备 app-kind 样本"
   elif [ -n "$canary_stage" ] && [ -z "$required_app_kinds_compact" ]; then
     canary_app_kind_min="${LLMGW_GATE_CANARY_APP_KIND_MIN:-${LLMGW_GATE_CANARY_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}}"
     case "$canary_stage" in
