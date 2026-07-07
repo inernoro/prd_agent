@@ -3,13 +3,14 @@
 
 This script is read-only. It calls /gw/v1/resolve for production-critical
 AppCallerCode + ModelType pairs and verifies that the gateway can select a
-usable model, platform, protocol, and decrypted upstream key before a staged
-rollout enters video/ASR or full HTTP cutover.
+usable model, platform, and protocol before a staged rollout enters video/ASR
+or full HTTP cutover.
 
 It does not replace raw shadow seed evidence. Provider-side channel failures
-can only be proven by real MAP business requests, but this gate catches missing
-AppCaller bindings, empty pools, unavailable models, disabled platforms, and
-undecryptable keys earlier and with lower cost.
+can only be proven by real MAP business requests, and key decryptability is
+covered by the llmgw-serve ServingKeyIntegrity startup check. This gate catches
+missing AppCaller bindings, empty pools, unavailable models, and disabled
+platforms earlier and with lower cost.
 """
 
 from __future__ import annotations
@@ -31,6 +32,8 @@ DEFAULT_REQUIREMENTS = [
     "video-agent.videogen::video-gen=video-gen",
     "document-store.subtitle::asr=asr",
     "transcript-agent.transcribe::asr=asr",
+    "video-agent.v2d.transcribe::asr=asr",
+    "video-agent.video-to-text::asr=asr",
 ]
 
 
@@ -160,6 +163,8 @@ def _check_one(
         failures.append("resolve did not return actualPlatformId")
     if not protocol:
         failures.append("resolve did not return protocol")
+    if not api_key_present:
+        warnings.append("resolve response does not expose apiKey; ServingKeyIntegrity covers decryptability")
     if not allow_missing_api_key and not api_key_present:
         failures.append("resolve did not return a decrypted apiKey")
     if not allow_legacy and resolution_type.lower() == "legacy":
@@ -256,7 +261,8 @@ def main() -> int:
     parser.add_argument("--gw-key-env", default="LLMGW_GATE_KEY")
     parser.add_argument("--require", action="append", default=[], help="Required app caller in appCallerCode=modelType format")
     parser.add_argument("--allow-legacy", action="store_true")
-    parser.add_argument("--allow-missing-api-key", action="store_true")
+    parser.add_argument("--allow-missing-api-key", action="store_true", default=True)
+    parser.add_argument("--require-api-key", dest="allow_missing_api_key", action="store_false")
     parser.add_argument("--fail-on-degraded", action="store_true")
     parser.add_argument("--timeout", type=int, default=30)
     parser.add_argument("--json-out", default=os.environ.get("LLMGW_UPSTREAM_READINESS_JSON_OUT", ""))

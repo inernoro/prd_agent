@@ -106,6 +106,10 @@ def _static_checks() -> list[dict]:
     prod_preflight = prod_preflight_path.read_text(encoding="utf-8") if prod_preflight_path.exists() else ""
     upstream_readiness_path = ROOT / "scripts/llmgw-upstream-readiness.py"
     upstream_readiness = upstream_readiness_path.read_text(encoding="utf-8") if upstream_readiness_path.exists() else ""
+    asr_bootstrap_path = ROOT / "scripts/llmgw-prod-asr-pool-bootstrap.sh"
+    asr_bootstrap = asr_bootstrap_path.read_text(encoding="utf-8") if asr_bootstrap_path.exists() else ""
+    asr_bootstrap_js_path = ROOT / "scripts/llmgw-prod-asr-pool-bootstrap.js"
+    asr_bootstrap_js = asr_bootstrap_js_path.read_text(encoding="utf-8") if asr_bootstrap_js_path.exists() else ""
     ok, detail = _contains_all(
         release_gate,
         [
@@ -286,6 +290,30 @@ def _static_checks() -> list[dict]:
     checks.append(_check("serving_probe_available", ok, detail))
 
     ok, detail = _contains_all(
+        asr_bootstrap + "\n" + asr_bootstrap_js,
+        [
+            "LLMGW_ASR_BOOTSTRAP_DRY_RUN:-1",
+            "mongodump --db \"$mongo_db\" --archive",
+            "llmgw-prod-before-asr-pool-bootstrap",
+            "asr_doubao_bigmodel_pool",
+            "doubao-asr-bigmodel",
+            "document-store.subtitle::asr",
+            "transcript-agent.transcribe::asr",
+            "video-agent.v2d.transcribe::asr",
+            "video-agent.video-to-text::asr",
+            "ModelGroupIds",
+            "ModelGroupId",
+        ],
+    )
+    asr_bootstrap_executable = bool(asr_bootstrap_path.exists() and (asr_bootstrap_path.stat().st_mode & stat.S_IXUSR))
+    asr_bootstrap_destructive = any(item in asr_bootstrap + asr_bootstrap_js for item in ["dropDatabase", "deleteMany", "remove(", "docker volume rm", "down -v"])
+    checks.append(_check(
+        "prod_asr_pool_bootstrap_is_backed_up_and_dry_run_first",
+        ok and asr_bootstrap_executable and not asr_bootstrap_destructive,
+        f"{detail}; executable={asr_bootstrap_executable}; destructive={asr_bootstrap_destructive}",
+    ))
+
+    ok, detail = _contains_all(
         prod_stage,
         [
             "LLM Gateway production stage runner",
@@ -351,7 +379,7 @@ def _static_checks() -> list[dict]:
             "scripts/llmgw-rollout-ledger.py append",
             "report-agent.generate::chat,prd-agent-desktop.chat.sendmessage::chat,open-platform-agent.proxy::chat",
             "visual-agent.image-gen.generate::generation,visual-agent.image.text2img::generation,visual-agent.image.img2img::generation",
-            "video-agent.videogen::video-gen,document-store.subtitle::asr,transcript-agent.transcribe::asr",
+            "video-agent.videogen::video-gen,document-store.subtitle::asr,transcript-agent.transcribe::asr,video-agent.v2d.transcribe::asr,video-agent.video-to-text::asr",
             "./fast.sh --commit \"$commit\"",
             "./exec_dep.sh --commit \"$commit\"",
             "scripts/llmgw-rollback-inproc.sh",
@@ -448,11 +476,14 @@ def _static_checks() -> list[dict]:
             "video-agent.videogen::video-gen=video-gen",
             "document-store.subtitle::asr=asr",
             "transcript-agent.transcribe::asr=asr",
+            "video-agent.v2d.transcribe::asr=asr",
+            "video-agent.video-to-text::asr=asr",
             "/resolve",
             "X-Gateway-Key",
             "apiKeyPresent",
             "--allow-legacy",
             "--allow-missing-api-key",
+            "--require-api-key",
             "--fail-on-degraded",
             "--json-out",
             "--report-md",
@@ -530,6 +561,8 @@ def _static_checks() -> list[dict]:
             "visual-agent.image-gen.generate::generation",
             "visual-agent.image.img2img::generation",
             "document-store.subtitle::asr",
+            "video-agent.v2d.transcribe::asr",
+            "video-agent.video-to-text::asr",
             "required_kinds_raw=\"${LLMGW_GATE_REQUIRED_KINDS:-}\"",
             "required_kinds_raw=\"send:${full_http_kind_min},stream:${full_http_kind_min},raw:${full_http_kind_min}\"",
             "LLMGW_GATE_CANARY_KIND_MIN",
@@ -542,6 +575,8 @@ def _static_checks() -> list[dict]:
             "visual-agent.image.img2img::generation:raw:",
             "video-agent.videogen::video-gen:raw:",
             "transcript-agent.transcribe::asr:raw:",
+            "video-agent.v2d.transcribe::asr:raw:",
+            "video-agent.video-to-text::asr:raw:",
             "LLMGW_GATE_CANARY_APP_KIND_MIN",
             "LLMGW_GATE_CANARY_APP_KINDS",
             "canary 阶段 $canary_stage 默认要求 raw app-kind 样本逐个达标",
