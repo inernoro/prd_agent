@@ -280,7 +280,8 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
       className="group relative w-full h-full text-left rounded-xl transition-all duration-200 hover:-translate-y-0.5 flex flex-col gap-3 p-4"
       style={{
         background: `radial-gradient(140px 90px at 14% 0%, ${accent.faint} 0%, transparent 100%), var(--bg-elevated, rgba(255,255,255,0.03))`,
-        border: '1px solid rgba(255,255,255,0.06)',
+        border: '1px solid rgba(255,255,255,0.08)',
+        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.04)',
       }}
     >
       {/* Hover：本卡色相的描边 + 一缕同色投影（静时安静，碰时呼吸） */}
@@ -330,8 +331,9 @@ function CompactCard({ item, onClick }: { item: ToolboxItem; onClick: () => void
       onClick={onClick}
       className="group relative w-full text-left rounded-xl overflow-hidden transition-all duration-200 hover:-translate-y-0.5 flex items-center gap-3.5 px-4 py-3.5"
       style={{
-        background: 'var(--bg-elevated, rgba(255,255,255,0.03))',
-        border: '1px solid rgba(255,255,255,0.06)',
+        background: `radial-gradient(120px 70px at 10% 0%, ${accent.faint} 0%, transparent 100%), var(--bg-elevated, rgba(255,255,255,0.03))`,
+        border: '1px solid rgba(255,255,255,0.08)',
+        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.04)',
       }}
     >
       {/* Hover：本卡色相描边 + 同色投影 */}
@@ -392,8 +394,9 @@ function RecentWorkCard({ item, onClick }: { item: RecentWorkItemDto; onClick: (
       onClick={onClick}
       className="group relative w-full text-left rounded-xl overflow-hidden transition-all duration-200 hover:-translate-y-0.5 flex items-center gap-3 px-4 py-3"
       style={{
-        background: 'var(--bg-elevated, rgba(255,255,255,0.03))',
-        border: '1px solid rgba(255,255,255,0.06)',
+        background: `radial-gradient(120px 70px at 10% 0%, ${accent.faint} 0%, transparent 100%), var(--bg-elevated, rgba(255,255,255,0.03))`,
+        border: '1px solid rgba(255,255,255,0.08)',
+        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.04)',
       }}
     >
       <div

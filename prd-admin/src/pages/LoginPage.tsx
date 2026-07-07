@@ -407,9 +407,9 @@ function RetroHorizon() {
           top: '72vh',
           height: '2px',
           background:
-            'linear-gradient(90deg, transparent 0%, rgba(244, 63, 94, 0.5) 30%, rgba(226, 232, 240, 0.9) 50%, rgba(0, 240, 255, 0.5) 70%, transparent 100%)',
+            'linear-gradient(90deg, transparent 0%, rgba(139, 92, 246, 0.5) 30%, rgba(226, 232, 240, 0.9) 50%, rgba(122, 140, 246, 0.55) 70%, transparent 100%)',
           boxShadow:
-            '0 0 28px rgba(226, 232, 240, 0.5), 0 -1px 40px rgba(244, 63, 94, 0.3)',
+            '0 0 28px rgba(226, 232, 240, 0.5), 0 -1px 40px rgba(139, 92, 246, 0.3)',
         }}
       />
 
@@ -423,7 +423,7 @@ function RetroHorizon() {
           width: 'clamp(360px, 34vw, 560px)',
           height: 'clamp(360px, 34vw, 560px)',
           background:
-            'radial-gradient(circle at center, rgba(244, 63, 94, 0.32) 0%, rgba(203, 213, 225, 0.15) 35%, rgba(0, 240, 255, 0.05) 60%, transparent 75%)',
+            'radial-gradient(circle at center, rgba(139, 92, 246, 0.30) 0%, rgba(203, 213, 225, 0.15) 35%, rgba(122, 140, 246, 0.06) 60%, transparent 75%)',
           filter: 'blur(6px)',
         }}
       />
@@ -453,8 +453,8 @@ function RetroHorizon() {
                 90deg,
                 transparent 0,
                 transparent 43px,
-                rgba(0, 240, 255, 0.38) 43px,
-                rgba(0, 240, 255, 0.38) 44px
+                rgba(122, 140, 246, 0.38) 43px,
+                rgba(122, 140, 246, 0.38) 44px
               )
             `,
             transform: 'rotateX(62deg)',
@@ -529,9 +529,9 @@ function MapMark({ className = 'w-14 h-14' }: { className?: string }) {
     <svg className={className} viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
       <defs>
         <linearGradient id="mapLoginGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" style={{ stopColor: '#00f0ff', stopOpacity: 1 }} />
-          <stop offset="50%" style={{ stopColor: '#7c3aed', stopOpacity: 1 }} />
-          <stop offset="100%" style={{ stopColor: '#f43f5e', stopOpacity: 1 }} />
+          <stop offset="0%" style={{ stopColor: '#5B8DEF', stopOpacity: 1 }} />
+          <stop offset="50%" style={{ stopColor: '#7C6CF0', stopOpacity: 1 }} />
+          <stop offset="100%" style={{ stopColor: '#A78BFA', stopOpacity: 1 }} />
         </linearGradient>
       </defs>
       <rect x="0" y="0" width="512" height="512" rx="102" ry="102" fill="url(#mapLoginGradient)" />
@@ -629,7 +629,7 @@ function PrimaryPill({
       style={{
         background: HERO_GRADIENT,
         boxShadow:
-          '0 0 48px rgba(124, 58, 237, 0.35), 0 0 100px rgba(0, 240, 255, 0.2), 0 10px 32px rgba(0, 0, 0, 0.5)',
+          '0 0 48px rgba(124, 108, 240, 0.35), 0 0 100px rgba(122, 140, 246, 0.18), 0 10px 32px rgba(0, 0, 0, 0.5)',
         letterSpacing: '0.01em',
         fontFamily: 'var(--font-display)',
       }}

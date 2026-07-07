@@ -29,7 +29,7 @@ export function ThreePillars() {
 
   return (
     <section
-      className="relative py-28 md:py-40 px-6"
+      className="relative py-20 md:py-28 px-6"
       style={{ fontFamily: 'var(--font-body)' }}
     >
       <div className="max-w-[1240px] mx-auto">

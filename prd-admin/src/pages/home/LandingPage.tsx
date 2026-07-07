@@ -43,9 +43,9 @@ function MapLogo({ className = 'w-10 h-10' }: { className?: string }) {
     <svg className={className} viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
       <defs>
         <linearGradient id="indigoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" style={{ stopColor: '#00f0ff', stopOpacity: 1 }} />
-          <stop offset="50%" style={{ stopColor: '#7c3aed', stopOpacity: 1 }} />
-          <stop offset="100%" style={{ stopColor: '#f43f5e', stopOpacity: 1 }} />
+          <stop offset="0%" style={{ stopColor: '#5B8DEF', stopOpacity: 1 }} />
+          <stop offset="50%" style={{ stopColor: '#7C6CF0', stopOpacity: 1 }} />
+          <stop offset="100%" style={{ stopColor: '#A78BFA', stopOpacity: 1 }} />
         </linearGradient>
       </defs>
       <rect x="0" y="0" width="512" height="512" rx="102" ry="102" fill="url(#indigoGradient)" />
@@ -159,7 +159,7 @@ function LandingInner() {
                 className="px-4 py-2 rounded-full text-[13px] font-medium text-white transition-all duration-200 hover:scale-[1.02]"
                 style={{
                   background: HERO_GRADIENT,
-                  boxShadow: '0 0 20px rgba(124, 58, 237, 0.3)',
+                  boxShadow: '0 0 20px rgba(124, 108, 240, 0.32)',
                   fontFamily: 'var(--font-display)',
                   letterSpacing: '0.01em',
                 }}
@@ -232,7 +232,7 @@ function LandingInner() {
                   className="w-full py-3 rounded-full text-[15px] font-medium text-white transition-all hover:opacity-90"
                   style={{
                     background: HERO_GRADIENT,
-                    boxShadow: '0 0 20px rgba(124, 58, 237, 0.3)',
+                    boxShadow: '0 0 20px rgba(124, 108, 240, 0.32)',
                     fontFamily: 'var(--font-display)',
                   }}
                 >
