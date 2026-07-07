@@ -152,6 +152,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("prd-agent-desktop.preview-ask.section::chat", script);
         Assert.Contains("open-platform-agent.proxy::chat", script);
         Assert.Contains("open-api.proxy::chat", script);
+        Assert.Contains("open-api.proxy::generation", script);
         Assert.Contains("prd-agent-web.model-lab.run::chat", script);
         Assert.Contains("prd-agent.arena.battle::chat", script);
         Assert.Contains("tutorial-email.generate::chat", script);
@@ -185,7 +186,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("prd-agent-desktop.preview-ask.section::chat:stream:", script);
         Assert.Contains("open-platform-agent.proxy::chat:send:", script);
         Assert.Contains("open-api.proxy::chat:send:", script);
-        Assert.Contains("open-api.proxy::chat:stream:", script);
+        Assert.Contains("open-api.proxy::generation:raw:", script);
         Assert.Contains("prd-agent-web.model-lab.run::chat:stream:", script);
         Assert.Contains("prd-agent.arena.battle::chat:stream:", script);
         Assert.Contains("tutorial-email.generate::chat:send:", script);
@@ -1112,6 +1113,8 @@ public class GatewayDataDomainGuardTests
 
         Assert.Contains("--include-desktop-chat-run", script);
         Assert.Contains("--include-open-platform", script);
+        Assert.Contains("--include-open-api-chat", script);
+        Assert.Contains("--include-open-api-image", script);
         Assert.Contains("--include-model-lab-run", script);
         Assert.Contains("--include-arena-run", script);
         Assert.Contains("/api/v1/chat-runs/", script);
@@ -1126,6 +1129,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("seedream", script);
         Assert.Contains("prd-agent-desktop.chat.sendmessage::chat", plan);
         Assert.Contains("open-platform-agent.proxy::chat", plan);
+        Assert.Contains("open-api.proxy::chat", plan);
+        Assert.Contains("open-api.proxy::generation", plan);
         Assert.Contains("prd-agent-web.model-lab.run::chat", plan);
         Assert.Contains("prd-agent.arena.battle::chat", plan);
         Assert.Contains("--include-visual-video-direct", script);

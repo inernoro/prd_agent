@@ -320,7 +320,7 @@ def call_open_platform_chat(base: str, api_key: str, group_id: str, timeout: flo
         "POST",
         join_url(base, "/api/v1/open-platform/v1/chat/completions"),
         {
-            "model": "prdagent",
+            "model": "master",
             "stream": False,
             "groupId": group_id,
             "messages": [
@@ -336,6 +336,67 @@ def call_open_platform_chat(base: str, api_key: str, group_id: str, timeout: flo
     doc = parse_json_object(result.body, "open platform chat")
     if "choices" not in doc and doc.get("success") is not True:
         raise RuntimeError(f"open platform chat failed: {result.body[:500]}")
+
+
+def create_open_api_key(base: str, token: str, timeout: float, tag: str) -> str:
+    result = request_json(
+        "POST",
+        join_url(base, "/api/agent-api-keys"),
+        {
+            "name": f"LLMGW OpenAPI Shadow Seed {tag}",
+            "description": "Temporary low-risk OpenAI-compatible shadow evidence seed",
+            "scopes": ["open-api:call"],
+            "ttlDays": 1,
+        },
+        headers=bearer(token),
+        timeout=timeout,
+    )
+    data = api_data(result, "create open api key")
+    api_key = str((data or {}).get("apiKey") or "")
+    if not api_key:
+        raise RuntimeError(f"create open api key response missing apiKey: {json.dumps(data, ensure_ascii=False)[:500]}")
+    return api_key
+
+
+def call_open_api_chat(base: str, api_key: str, timeout: float, tag: str) -> None:
+    result = request_json(
+        "POST",
+        join_url(base, "/api/v1/chat/completions"),
+        {
+            "model": "auto",
+            "stream": False,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": f"OpenAI compatible chat shadow evidence ping {tag}. Reply with one short sentence.",
+                }
+            ],
+        },
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=timeout,
+    )
+    doc = parse_json_object(result.body, "open api chat")
+    if "choices" not in doc:
+        raise RuntimeError(f"open api chat failed: {result.body[:500]}")
+
+
+def call_open_api_image(base: str, api_key: str, timeout: float, tag: str, size: str, response_format: str) -> None:
+    result = request_json(
+        "POST",
+        join_url(base, "/api/v1/images/generations"),
+        {
+            "model": "auto",
+            "prompt": f"Minimal shadow evidence icon {tag}: a blue square on a white background.",
+            "n": 1,
+            "size": size,
+            "response_format": response_format,
+        },
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=timeout,
+    )
+    doc = parse_json_object(result.body, "open api image")
+    if "data" not in doc and doc.get("success") is not True:
+        raise RuntimeError(f"open api image failed: {result.body[:500]}")
 
 
 def wait_run_meta(
@@ -1506,6 +1567,8 @@ def main() -> int:
     parser.add_argument("--skip-preview-ask", action="store_true", help="Only run session chat, skip preview-ask")
     parser.add_argument("--include-desktop-chat-run", action="store_true", help="Also seed and wait one desktop chat run per iteration")
     parser.add_argument("--include-open-platform", action="store_true", help="Also seed one non-stream Open Platform call per iteration")
+    parser.add_argument("--include-open-api-chat", action="store_true", help="Also seed one non-stream OpenAI-compatible /api/v1/chat/completions call per iteration")
+    parser.add_argument("--include-open-api-image", action="store_true", help="Also seed one OpenAI-compatible /api/v1/images/generations raw call per iteration")
     parser.add_argument("--include-model-lab-run", action="store_true", help="Also seed one Model Lab pinned gateway run per iteration")
     parser.add_argument("--include-arena-run", action="store_true", help="Also seed one Arena pinned gateway run per iteration")
     parser.add_argument("--include-tutorial-email-send", action="store_true", help="Also seed one admin non-stream SendAsync call per iteration")
@@ -1569,6 +1632,8 @@ def main() -> int:
         admin_token, user_id = login(base, args.root_username, args.root_password, args.timeout)
     elif (
         args.include_open_platform
+        or args.include_open_api_chat
+        or args.include_open_api_image
         or args.include_model_lab_run
         or args.include_arena_run
         or args.include_image_raw
@@ -1586,6 +1651,8 @@ def main() -> int:
     token = admin_token
     needs_seed_user = (
         args.include_open_platform
+        or args.include_open_api_chat
+        or args.include_open_api_image
         or args.include_tutorial_email_send
         or args.include_image_raw
         or args.include_image_worker_text2img
@@ -1768,6 +1835,38 @@ def main() -> int:
                     )
                     if open_platform_step.ok:
                         send_successes += 1
+        if args.include_open_api_chat or args.include_open_api_image:
+            open_api_key_step = run_seed_step(
+                evidence,
+                f"{prefix}.create_open_api_key",
+                args.continue_on_error,
+                lambda: create_open_api_key(base, token, args.timeout, tag),
+            )
+            if open_api_key_step.ok and args.include_open_api_chat:
+                open_api_chat_step = run_seed_step(
+                    evidence,
+                    f"{prefix}.open_api_chat",
+                    args.continue_on_error,
+                    lambda: call_open_api_chat(base, open_api_key_step.result, args.timeout, tag),
+                )
+                if open_api_chat_step.ok:
+                    send_successes += 1
+            if open_api_key_step.ok and args.include_open_api_image:
+                open_api_image_step = run_seed_step(
+                    evidence,
+                    f"{prefix}.open_api_image",
+                    args.continue_on_error,
+                    lambda: call_open_api_image(
+                        base,
+                        open_api_key_step.result,
+                        args.timeout,
+                        tag,
+                        args.image_size,
+                        args.image_response_format,
+                    ),
+                )
+                if open_api_image_step.ok:
+                    raw_successes += 1
         if args.include_model_lab_run:
             model_lab_step = run_seed_step(
                 evidence,

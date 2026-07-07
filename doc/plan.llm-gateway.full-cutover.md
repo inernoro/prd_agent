@@ -148,7 +148,7 @@ python3 scripts/llmgw-map-shadow-seed.py --iterations 1
 ```
 
 该脚本默认只跑文档 session chat 与 preview-ask 两条低成本文本路径；需要补 send 或图片 raw 证据时必须显式加
-`--include-desktop-chat-run` / `--include-open-platform` / `--include-model-lab-run` /
+`--include-desktop-chat-run` / `--include-open-platform` / `--include-open-api-chat` / `--include-open-api-image` / `--include-model-lab-run` /
 `--include-arena-run` / `--include-tutorial-email-send` / `--include-image-raw` / `--include-image-worker-text2img` /
 `--include-image-worker-img2img` / `--include-image-worker-vision`，其中图片 raw 会通过
 `/api/visual-agent/image-gen/generate`、`/api/visual-agent/image-gen/runs` 与
@@ -156,7 +156,9 @@ python3 scripts/llmgw-map-shadow-seed.py --iterations 1
 （也可用 `LLMGW_SHADOW_IMAGE_PLATFORM_ID` 和 `LLMGW_SHADOW_IMAGE_MODEL_ID` 钉死模型）。
 `--include-desktop-chat-run` 会等待 `/api/v1/chat-runs/{runId}` 到 `Done`，用于补
 `prd-agent-desktop.chat.sendmessage::chat`；`--include-open-platform` 走历史开放平台代理
-`open-platform-agent.proxy::chat`；`--include-model-lab-run` 与 `--include-arena-run` 会从 `/api/mds`
+`open-platform-agent.proxy::chat`；`--include-open-api-chat` / `--include-open-api-image` 会分别走 OpenAI-compatible
+`/api/v1/chat/completions` 与 `/api/v1/images/generations`，用于证明 `open-api.proxy::chat` 与
+`open-api.proxy::generation` 不是只靠 resolve-only 样本覆盖；`--include-model-lab-run` 与 `--include-arena-run` 会从 `/api/mds`
 选择启用模型并通过 pinned gateway 语义触发 `prd-agent-web.model-lab.run::chat` 和
 `prd-agent.arena.battle::chat`，保证 ModelLab/Arena 仍测试具体模型而不绕过网关。
 `--include-image-worker-text2img` / `--include-image-worker-img2img` / `--include-image-worker-vision`
@@ -378,6 +380,10 @@ resolve-only 或单一路径证据放行全量切换；raw 样本由 `ShadowFull
 用于证明 multipart/raw 已真实跨进程通过 serving；canary allowlist 阶段不自动追加全局 kind，仍按 allowlist/app-kind
 逐批收紧。
 全量 `LLMGW_MODE=http` 时如果未显式设置 `LLMGW_GATE_REQUIRED_APP_KINDS`，`exec_dep.sh` 还会默认要求
+`report-agent.generate::chat:send`、`prd-agent-desktop.chat.sendmessage::chat:stream`、
+`prd-agent-desktop.preview-ask.section::chat:stream`、`open-platform-agent.proxy::chat:send`、
+`open-api.proxy::chat:send`、`open-api.proxy::generation:raw`、`prd-agent-web.model-lab.run::chat:stream`、
+`prd-agent.arena.battle::chat:stream`、`tutorial-email.generate::chat:send`、
 `visual-agent.image-gen.generate::generation:raw`、`visual-agent.image.text2img::generation:raw`、
 `visual-agent.image.img2img::generation:raw`、`visual-agent.image.vision::generation:raw`、
 `video-agent.videogen::video-gen:raw`、`visual-agent.videogen::video-gen:raw`、
@@ -386,6 +392,7 @@ resolve-only 或单一路径证据放行全量切换；raw 样本由 `ShadowFull
 其它入口的 raw 样本或自身 resolve 样本被误放行。
 全量 `LLMGW_MODE=http` 时如果未显式设置 `LLMGW_GATE_APP_CALLERS`，`exec_dep.sh` 还会默认要求
 `report-agent.generate::chat`、`prd-agent-desktop.chat.sendmessage::chat`、`open-platform-agent.proxy::chat`、
+`open-api.proxy::chat`、`open-api.proxy::generation`、
 `prd-agent-web.model-lab.run::chat`、`prd-agent.arena.battle::chat`、
 `visual-agent.image-gen.generate::generation`、`visual-agent.image.text2img::generation`、
 `visual-agent.image.img2img::generation`、`visual-agent.image.vision::generation`、`video-agent.videogen::video-gen`、
