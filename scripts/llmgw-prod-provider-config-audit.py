@@ -33,6 +33,8 @@ VIDEO_APP_CALLERS = [
 DEFAULT_ASR_POOL_ID = "asr_doubao_bigmodel_pool"
 DEFAULT_ASR_MODEL_ID = "doubao-asr-bigmodel"
 DEFAULT_ASR_TRANSFORMER = "doubao-asr"
+DEFAULT_VIDEO_TRANSFORMER = "volcengine-video"
+VOLCENGINE_VIDEO_TASKS_PATH = "/contents/generations/tasks"
 
 
 def _run(cmd: list[str], cwd: str | None = None, input_text: str | None = None) -> str:
@@ -324,6 +326,36 @@ def _classify_video_platform_protocol(platform: dict[str, Any] | None, model_id:
     return None
 
 
+def _classify_video_exchange_protocol(exchange: dict[str, Any] | None, model_id: str | None = None) -> str | None:
+    if not exchange:
+        return None
+    transformer = str(exchange.get("TransformerType") or "")
+    target_url = str(exchange.get("TargetUrl") or "").lower()
+    exchange_name = str(exchange.get("Name") or exchange.get("_id") or "unknown")
+    model_suffix = f" model={model_id}" if model_id else ""
+    if transformer.lower() == DEFAULT_VIDEO_TRANSFORMER and VOLCENGINE_VIDEO_TASKS_PATH not in target_url:
+        return (
+            "video-gen model is bound to Volcengine video exchange but TargetUrl is not the native task endpoint. "
+            f"exchange={exchange_name}{model_suffix}; expected {VOLCENGINE_VIDEO_TASKS_PATH}."
+        )
+    if "video" in transformer.lower() and transformer.lower() != DEFAULT_VIDEO_TRANSFORMER:
+        return (
+            "video-gen model is bound to an unsupported video exchange transformer. "
+            f"exchange={exchange_name} transformer={transformer}{model_suffix}; expected {DEFAULT_VIDEO_TRANSFORMER}."
+        )
+    return None
+
+
+def _exchange_supports_model(exchange: dict[str, Any], model_id: str) -> bool:
+    if not model_id:
+        return True
+    return (
+        str(exchange.get("ModelAlias") or "") == model_id
+        or model_id in (exchange.get("ModelAliases") or [])
+        or any(str(m.get("ModelId") or "") == model_id for m in (exchange.get("Models") or []))
+    )
+
+
 def _append_unique(items: list[str], value: str) -> None:
     if value not in items:
         items.append(value)
@@ -464,6 +496,7 @@ def _audit(
     recent_gateway_logs = data.get("recentGatewayLogs") or []
 
     by_platform_id = {str(x.get("_id")): x for x in platforms}
+    by_exchange_id = {str(x.get("_id")): x for x in exchanges}
     asr_exchange = next(
         (
             x for x in exchanges
@@ -539,21 +572,38 @@ def _audit(
     for group in video_groups:
         for model in group.get("Models") or []:
             platform = by_platform_id.get(str(model.get("PlatformId") or ""))
+            exchange = by_exchange_id.get(str(model.get("PlatformId") or ""))
+            sanitized_platform = _sanitize_platform(platform, secret)
+            sanitized_exchange = _sanitize_exchange(exchange, secret) if exchange else None
+            video_endpoint_name = (platform or exchange or {}).get("Name")
             model_info = {
                 "groupId": group.get("_id"),
                 "groupName": group.get("Name"),
                 "modelId": model.get("ModelId"),
                 "platformId": model.get("PlatformId"),
-                "platformName": (platform or {}).get("Name"),
+                "platformName": video_endpoint_name,
                 "healthStatus": _health_name(model.get("HealthStatus")),
                 "lastFailedAt": model.get("LastFailedAt"),
                 "lastSuccessAt": model.get("LastSuccessAt"),
                 "consecutiveFailures": model.get("ConsecutiveFailures"),
-                "platform": _sanitize_platform(platform, secret),
+                "platform": sanitized_platform,
+                "exchange": sanitized_exchange,
             }
             video_models.append(model_info)
-            if not platform:
+            if not platform and not exchange:
                 failures.append(f"video model platform missing: model={model.get('ModelId')} platform={model.get('PlatformId')}")
+            elif exchange:
+                clean_exchange = model_info.get("exchange") or {}
+                exchange_shape = clean_exchange.get("targetApiKeyShape") or {}
+                if exchange.get("Enabled") is not True:
+                    failures.append(f"video model exchange is disabled: model={model.get('ModelId')} exchange={exchange.get('Name')}")
+                if not _exchange_supports_model(exchange, str(model.get("ModelId") or "")):
+                    failures.append(f"video model exchange does not declare model: model={model.get('ModelId')} exchange={exchange.get('Name')}")
+                if secret is not None and not exchange_shape.get("decryptOk"):
+                    failures.append(f"video model exchange key cannot be decrypted: model={model.get('ModelId')} exchange={exchange.get('Name')}")
+                exchange_protocol_failure = _classify_video_exchange_protocol(exchange, str(model.get("ModelId") or ""))
+                if exchange_protocol_failure:
+                    failures.append(exchange_protocol_failure)
             else:
                 clean_platform = model_info.get("platform") or {}
                 platform_shape = clean_platform.get("apiKeyShape") or {}
@@ -570,7 +620,7 @@ def _audit(
                     "groupName": group.get("Name"),
                     "modelId": model.get("ModelId"),
                     "platformId": model.get("PlatformId"),
-                    "platformName": (platform or {}).get("Name"),
+                    "platformName": video_endpoint_name,
                 })
     if not healthy_video_models:
         failures.append("no Healthy video-gen model in production model_groups")

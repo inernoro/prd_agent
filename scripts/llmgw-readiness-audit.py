@@ -118,6 +118,10 @@ def _static_checks() -> list[dict]:
     video_bootstrap = video_bootstrap_path.read_text(encoding="utf-8") if video_bootstrap_path.exists() else ""
     video_bootstrap_js_path = ROOT / "scripts/llmgw-prod-video-caller-bootstrap.js"
     video_bootstrap_js = video_bootstrap_js_path.read_text(encoding="utf-8") if video_bootstrap_js_path.exists() else ""
+    video_exchange_bootstrap_path = ROOT / "scripts/llmgw-prod-video-exchange-bootstrap.sh"
+    video_exchange_bootstrap = video_exchange_bootstrap_path.read_text(encoding="utf-8") if video_exchange_bootstrap_path.exists() else ""
+    video_exchange_bootstrap_js_path = ROOT / "scripts/llmgw-prod-video-exchange-bootstrap.js"
+    video_exchange_bootstrap_js = video_exchange_bootstrap_js_path.read_text(encoding="utf-8") if video_exchange_bootstrap_js_path.exists() else ""
     provider_audit_path = ROOT / "scripts/llmgw-prod-provider-config-audit.py"
     provider_audit = provider_audit_path.read_text(encoding="utf-8") if provider_audit_path.exists() else ""
     ok, detail = _contains_all(
@@ -407,6 +411,39 @@ def _static_checks() -> list[dict]:
     ))
 
     ok, detail = _contains_all(
+        video_exchange_bootstrap + "\n" + video_exchange_bootstrap_js,
+        [
+            "LLMGW_VIDEO_EXCHANGE_BOOTSTRAP_DRY_RUN:-1",
+            "mongodump --db \"$mongo_db\" --archive",
+            "llmgw-disk-space-guard.sh",
+            "LLMGW_VIDEO_EXCHANGE_BOOTSTRAP_MIN_FREE_MB:-6144",
+            "llmgw-prod-before-video-exchange-bootstrap",
+            "LLMGW_VIDEO_EXCHANGE_BOOTSTRAP_EXCHANGE_ID",
+            "LLMGW_VIDEO_EXCHANGE_BOOTSTRAP_POOL_ID",
+            "LLMGW_VIDEO_EXCHANGE_BOOTSTRAP_RESET_HEALTH",
+            "LLMGW_VIDEO_EXCHANGE_BOOTSTRAP_BIND_CALLERS",
+            "video_seedance_2_0_fast_pool",
+            "doubao-seedance-2-0-fast-260128",
+            "volcengine-video",
+            "contents/generations/tasks",
+            "llmplatforms.ApiKeyEncrypted copied to model_exchanges.TargetApiKeyEncrypted",
+            "source Volcengine platform has no encrypted key",
+            "video-agent.videogen::video-gen",
+            "visual-agent.videogen::video-gen",
+            "ModelGroupIds",
+            "ModelGroupId",
+            "HealthStatus: nextHealthStatus",
+        ],
+    )
+    video_exchange_bootstrap_executable = bool(video_exchange_bootstrap_path.exists() and (video_exchange_bootstrap_path.stat().st_mode & stat.S_IXUSR))
+    video_exchange_bootstrap_destructive = any(item in video_exchange_bootstrap + video_exchange_bootstrap_js for item in ["dropDatabase", "deleteMany", "remove(", "docker volume rm", "down -v"])
+    checks.append(_check(
+        "prod_video_exchange_bootstrap_is_backed_up_and_dry_run_first",
+        ok and video_exchange_bootstrap_executable and not video_exchange_bootstrap_destructive,
+        f"{detail}; executable={video_exchange_bootstrap_executable}; destructive={video_exchange_bootstrap_destructive}",
+    ))
+
+    ok, detail = _contains_all(
         provider_audit,
         [
             "LLM Gateway production provider config audit",
@@ -427,6 +464,7 @@ def _static_checks() -> list[dict]:
             "LLMGW_PROVIDER_AUDIT_ASR_TRANSFORMER",
             "TargetApiKeyEncrypted",
             "llmplatforms",
+            "model_exchanges",
             "llmrequestlogs",
             "LLMGW_PROVIDER_AUDIT_GATEWAY_DB",
             "LLMGW_PROVIDER_AUDIT_RECENT_LOG_HOURS",
@@ -434,6 +472,10 @@ def _static_checks() -> list[dict]:
             "skip-gateway-logs",
             "ApiKeyEncrypted",
             "apiKeyShape",
+            "volcengine-video",
+            "contents/generations/tasks",
+            "video model exchange key cannot be decrypted",
+            "video model exchange does not declare model",
             "videoClassifications",
             "ASR upstream has no available channels",
             "Video upstream has no available channels",

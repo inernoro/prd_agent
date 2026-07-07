@@ -914,10 +914,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     resolution.ExchangeName, resolution.ExchangeTransformerType, endpoint);
 
                 var jsonContent = transformedBody.ToJsonString();
-                httpRequest = new HttpRequestMessage(new HttpMethod(request.HttpMethod), endpoint)
+                httpRequest = new HttpRequestMessage(new HttpMethod(request.HttpMethod), endpoint);
+                if (!HttpMethodAllowsEmptyBody(request.HttpMethod))
                 {
-                    Content = new StringContent(jsonContent, System.Text.Encoding.UTF8, "application/json")
-                };
+                    httpRequest.Content = new StringContent(jsonContent, System.Text.Encoding.UTF8, "application/json");
+                }
                 requestBodyForLog = jsonContent;
 
                 // Exchange 转换器额外 headers（如 X-Api-Resource-Id）
@@ -936,7 +937,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 var multipartContent = new MultipartFormDataContent();
 
                 // 添加 model 字段
-                multipartContent.Add(new StringContent(resolution.ActualModel), "model");
+                multipartContent.Add(new StringContent(resolution.ActualModel ?? string.Empty), "model");
 
                 // 添加其他字段
                 if (request.MultipartFields != null)
@@ -1811,6 +1812,12 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         {
             httpRequest.Headers.TryAddWithoutValidation("anthropic-version", "2023-06-01");
         }
+    }
+
+    private static bool HttpMethodAllowsEmptyBody(string? method)
+    {
+        var normalized = (method ?? "POST").Trim().ToUpperInvariant();
+        return normalized is "GET" or "HEAD";
     }
 
     /// <summary>

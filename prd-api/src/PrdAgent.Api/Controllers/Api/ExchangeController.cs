@@ -950,6 +950,40 @@ public static class ExchangeTemplates
         },
         new ExchangeTemplate
         {
+            Id = "volcengine-video",
+            Name = "火山方舟 Seedance 视频生成",
+            Description = "火山方舟原生视频生成 API，使用 /contents/generations/tasks 异步任务协议，适配 MAP 现有视频生成客户端。",
+            ApiKeyPlaceholder = "Ark API Key",
+            ApiKeyHint = "在火山方舟控制台获取 API Key，请求头使用 Authorization: Bearer",
+            Preset = new ExchangeTemplatePreset
+            {
+                Name = "火山方舟 Seedance 视频生成",
+                Models = new List<ExchangeModelRequest>
+                {
+                    new()
+                    {
+                        ModelId = "doubao-seedance-2-0-fast-260128",
+                        DisplayName = "Doubao Seedance 2.0 Fast",
+                        ModelType = "video-gen",
+                        Enabled = true
+                    },
+                    new()
+                    {
+                        ModelId = "doubao-seedance-2-0-260128",
+                        DisplayName = "Doubao Seedance 2.0",
+                        ModelType = "video-gen",
+                        Enabled = true
+                    }
+                },
+                TargetUrl = "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks",
+                TargetAuthScheme = "Bearer",
+                TransformerType = "volcengine-video",
+                Enabled = true,
+                Description = "火山方舟原生 Seedance 视频生成。submit 返回任务 ID，status 查询 content.video_url。"
+            }
+        },
+        new ExchangeTemplate
+        {
             Id = "gemini-native",
             Name = "Google Gemini 原生协议",
             Description = "Google Gemini Native API，一条中继承接多个 Gemini 模型。URL 模版中的 {model} 会在运行时替换为实际模型 ID，所以同一条中继可以同时挂接多个模型（文本对话 + 图像生成都能跑）。",
