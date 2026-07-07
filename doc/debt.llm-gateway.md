@@ -63,6 +63,16 @@
 - provider config audit 复验文件：`.llmgw-release-evidence/20260707T032001Z_provider-config-after-video-caller-bootstrap.json`。`HAS_VISUAL_BINDING_FAILURE=false`，说明视觉视频漏绑项已消除；audit 仍 FAIL，因为生产没有 Healthy video-gen model，且历史 video/ASR 上游错误仍存在。
 - upstream readiness 复验文件：`.llmgw-release-evidence/20260707T032044Z_upstream-readiness-after-video-caller-bootstrap.json`。`video-agent.videogen::video-gen` 与 `visual-agent.videogen::video-gen` 均失败于“模型池内所有模型不可用”，不再是视觉入口独有配置漏绑。
 - 结论更新：video/ASR 发布阻塞从“视觉视频漏绑 + 上游不可用”缩小为“video-gen 上游模型池不可用 + ASR 凭据/通道失败”。仍禁止进入 `canary-video-asr` 或全量 `LLMGW_MODE=http`。
+
+## 最新生产取证（2026-07-07 11:34 CST）
+
+- 已把 video-gen 平台协议检查加入 `scripts/llmgw-prod-provider-config-audit.py` 与 readiness 静态守卫，防止把火山 Ark OpenAI chat base URL 误当成 OpenRouter `/videos` 平台放行。
+- 生产同步前已备份旧审计脚本：`/root/backups/llmgw-provider-audit-scripts-before-protocol-gate-20260707T113258+0800`；同步后生产语法检查通过：`python3 -m py_compile scripts/llmgw-prod-provider-config-audit.py scripts/llmgw-readiness-audit.py`。
+- 生产只读 provider config audit 证据：`.llmgw-release-evidence/20260707T033318Z_provider-config-video-platform-protocol-gate.json` 与 `.llmgw-release-evidence/20260707T033318Z_provider-config-video-platform-protocol-gate.md`。审计 FAIL，共 15 个失败项。
+- 新协议门禁已命中真实生产配置：`doubao-seedance-2-0-fast-260128` 绑定平台 `火山引擎`，`ApiUrl=https://ark.cn-beijing.volces.com/api/v3/`，但 MAP 现有视频客户端发送 OpenRouter `/videos` 请求；该组合会导致视频 HTTP 404，不能进入视频灰度。
+- 其他阻塞仍在：没有 Healthy video-gen model；APIyi `bytedance/seedance-2.0-fast` 与 `alibaba/wan-2.6` 仍是 no available channels；ASR 仍有 `Invalid X-Api-Key`、stream 502、whisper 503 等失败。
+- 结论不变：当前生产只能继续 shadow 与文本类证据收集；禁止 `canary-video-asr`、禁止全量 `LLMGW_MODE=http`、禁止宣称视频/ASR/字幕已完成迁移。下一步必须二选一：配置真正 OpenRouter-compatible video 平台，或实现专用火山视频适配器；同时替换有效 ASR 凭据/资源后重跑 raw seed，直到 `httpFail=0`。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘
