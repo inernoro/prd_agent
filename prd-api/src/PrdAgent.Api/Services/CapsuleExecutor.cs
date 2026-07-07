@@ -6534,6 +6534,24 @@ function safeChart(canvasId, config) {
                     // Exchange 走自己的 transformer(doubao-asr 已在上游单独分流;gemini-native 的
                     // GeminiNativeTransformer 只转 text/image_url、会丢掉音频部分),其 PlatformType=exchange
                     // 不在 google/gemini 排除内,若误走 chat-audio 会把音频丢失导致 ASR 失败(Codex P2)。
+                    var llmCtx = sp.GetService<ILLMRequestContextAccessor>();
+                    var triggeredBy = variables.GetValueOrDefault("__triggeredBy") ?? "workflow-system";
+                    var forceFullShadowSample = string.Equals(
+                        variables.GetValueOrDefault("__forceFullShadowSample"),
+                        "true",
+                        StringComparison.OrdinalIgnoreCase);
+                    using var asrScope = llmCtx?.BeginScope(new LlmRequestContext(
+                        RequestId: variables.GetValueOrDefault("__executionId") ?? Guid.NewGuid().ToString("N"),
+                        GroupId: null,
+                        SessionId: null,
+                        UserId: triggeredBy,
+                        ViewRole: null,
+                        DocumentChars: null,
+                        DocumentHash: null,
+                        SystemPromptRedacted: "[WORKFLOW_VIDEO_TO_TEXT_ASR]",
+                        RequestType: ModelTypes.Asr,
+                        AppCallerCode: resolvedCaller!,
+                        ForceFullShadowSample: forceFullShadowSample));
                     var gatewayResult = !gwRes.IsExchange && IsChatAudioModel(gwRes.ActualModel, gwRes.PlatformType)
                         ? await TranscribeAudioViaChatAsync(gateway, resolvedCaller!, audioBytes, gwRes)
                         : await TranscribeAudioViaGatewayAsync(gateway, resolvedCaller!, audioBytes, gwRes);

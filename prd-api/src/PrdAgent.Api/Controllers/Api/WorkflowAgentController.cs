@@ -27,6 +27,7 @@ public class WorkflowAgentController : ControllerBase
     private readonly IRunQueue _runQueue;
     private readonly IRunEventStore _eventStore;
     private readonly ILlmGateway _gateway;
+    private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly WorkflowAiFillService _aiFillService;
     private readonly PrdAgent.Core.Services.WorkflowValidationService _validation;
     private readonly ILogger<WorkflowAgentController> _logger;
@@ -36,6 +37,7 @@ public class WorkflowAgentController : ControllerBase
         IRunQueue runQueue,
         IRunEventStore eventStore,
         ILlmGateway gateway,
+        ILLMRequestContextAccessor llmRequestContext,
         WorkflowAiFillService aiFillService,
         PrdAgent.Core.Services.WorkflowValidationService validation,
         ILogger<WorkflowAgentController> logger)
@@ -44,6 +46,7 @@ public class WorkflowAgentController : ControllerBase
         _runQueue = runQueue;
         _eventStore = eventStore;
         _gateway = gateway;
+        _llmRequestContext = llmRequestContext;
         _aiFillService = aiFillService;
         _validation = validation;
         _logger = logger;
@@ -700,6 +703,10 @@ public class WorkflowAgentController : ControllerBase
         {
             var req = HttpContext.Request;
             variables["API_BASE"] = $"{req.Scheme}://{req.Host}";
+        }
+        if (_llmRequestContext.Current?.ForceFullShadowSample == true)
+        {
+            variables["__forceFullShadowSample"] = "true";
         }
 
         // 创建执行实例
