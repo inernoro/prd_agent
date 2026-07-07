@@ -370,7 +370,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--main-ref", script);
         Assert.Contains("LLMGW_RELEASE_MAIN_REF", script);
         Assert.Contains("validate_main_ancestry", script);
-        Assert.Contains("if [ \"$stage\" = \"rollback-inproc\" ] || [ \"$stage\" = \"rollback-rehearsal\" ]; then", script);
+        Assert.Contains("if [ \"$stage\" = \"rollback-inproc\" ]; then", script);
+        Assert.Contains("if [ \"$stage\" = \"rollback-rehearsal\" ]; then", script);
+        Assert.Contains("LLM Gateway rollback rehearsal: release main SHA recorded without ancestry enforcement", script);
         Assert.Contains("git merge-base --is-ancestor", script);
         Assert.Contains("release commit does not include latest main", script);
         Assert.Contains("LLMGW_STAGE_ALLOW_RELEASE_TREE_MISMATCH", script);
@@ -581,7 +583,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_STAGE_MIN_OBSERVATION_HOURS", readiness);
         Assert.Contains("LLMGW_RELEASE_MAIN_REF", readiness);
         Assert.Contains("validate_main_ancestry", readiness);
-        Assert.Contains("if [ \\\"$stage\\\" = \\\"rollback-inproc\\\" ] || [ \\\"$stage\\\" = \\\"rollback-rehearsal\\\" ]; then", readiness);
+        Assert.Contains("if [ \\\"$stage\\\" = \\\"rollback-inproc\\\" ]; then", readiness);
+        Assert.Contains("if [ \\\"$stage\\\" = \\\"rollback-rehearsal\\\" ]; then", readiness);
+        Assert.Contains("LLM Gateway rollback rehearsal: release main SHA recorded without ancestry enforcement", readiness);
         Assert.Contains("release commit does not include latest main", readiness);
         Assert.Contains("LLMGW_STAGE_ALLOW_RELEASE_TREE_MISMATCH", readiness);
         Assert.Contains("validate_release_tree", readiness);

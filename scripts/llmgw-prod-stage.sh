@@ -394,7 +394,7 @@ run_stage_disk_guard() {
 }
 
 validate_main_ancestry() {
-  if [ "$stage" = "rollback-inproc" ] || [ "$stage" = "rollback-rehearsal" ]; then
+  if [ "$stage" = "rollback-inproc" ]; then
     return 0
   fi
   if [ "$execute" != "1" ]; then
@@ -416,6 +416,10 @@ validate_main_ancestry() {
     exit 1
   fi
   main_sha="$(git rev-parse "$main_ref^{commit}")"
+  if [ "$stage" = "rollback-rehearsal" ]; then
+    echo "LLM Gateway rollback rehearsal: release main SHA recorded without ancestry enforcement mainRef=$main_ref mainSha=$main_sha"
+    return 0
+  fi
   if ! git merge-base --is-ancestor "$main_sha" "$commit"; then
     echo "ERROR: release commit does not include latest main. mainRef=$main_ref mainSha=$main_sha commit=$commit" >&2
     exit 1
