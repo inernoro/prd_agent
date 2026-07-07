@@ -858,6 +858,34 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ProdVideoCallerBootstrap_BacksUpBeforeBindingVisualVideoCaller()
+    {
+        var script = ReadRepoFile("scripts/llmgw-prod-video-caller-bootstrap.sh");
+        var js = ReadRepoFile("scripts/llmgw-prod-video-caller-bootstrap.js");
+        var readiness = ReadRepoFile("scripts/llmgw-readiness-audit.py");
+
+        Assert.Contains("LLMGW_VIDEO_BOOTSTRAP_DRY_RUN:-1", script);
+        Assert.Contains("LLM Gateway video caller bootstrap dry-run: backup skipped", script);
+        Assert.Contains("llmgw-disk-space-guard.sh", script);
+        Assert.Contains("mongodump --db \"$mongo_db\" --archive", script);
+        Assert.Contains("mongo-$mongo_db-video-caller-bootstrap.archive.gz", script);
+        Assert.Contains("LLMGW_VIDEO_BOOTSTRAP_SOURCE_CALLER", script);
+        Assert.Contains("video-agent.videogen::video-gen", script);
+        Assert.Contains("LLMGW_VIDEO_BOOTSTRAP_TARGET_CALLERS", script);
+        Assert.Contains("visual-agent.videogen::video-gen", script);
+
+        Assert.Contains("source video appCaller missing", js);
+        Assert.Contains("source video appCaller has no video-gen ModelGroupIds", js);
+        Assert.Contains("source video appCaller references missing video-gen pools", js);
+        Assert.Contains("target video appCallers missing", js);
+        Assert.Contains("ModelType: \"video-gen\"", js);
+        Assert.Contains("ModelGroupIds: poolIds", js);
+        Assert.Contains("LLM Gateway video caller bootstrap dry-run: no data changed", js);
+
+        Assert.Contains("prod_video_caller_bootstrap_is_backed_up_and_dry_run_first", readiness);
+    }
+
+    [Fact]
     public void GwSmoke_CoversStreamingAndClientStreamBoundaries()
     {
         var script = ReadRepoFile("scripts/gw-smoke.py");

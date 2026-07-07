@@ -114,6 +114,10 @@ def _static_checks() -> list[dict]:
     asr_bootstrap = asr_bootstrap_path.read_text(encoding="utf-8") if asr_bootstrap_path.exists() else ""
     asr_bootstrap_js_path = ROOT / "scripts/llmgw-prod-asr-pool-bootstrap.js"
     asr_bootstrap_js = asr_bootstrap_js_path.read_text(encoding="utf-8") if asr_bootstrap_js_path.exists() else ""
+    video_bootstrap_path = ROOT / "scripts/llmgw-prod-video-caller-bootstrap.sh"
+    video_bootstrap = video_bootstrap_path.read_text(encoding="utf-8") if video_bootstrap_path.exists() else ""
+    video_bootstrap_js_path = ROOT / "scripts/llmgw-prod-video-caller-bootstrap.js"
+    video_bootstrap_js = video_bootstrap_js_path.read_text(encoding="utf-8") if video_bootstrap_js_path.exists() else ""
     provider_audit_path = ROOT / "scripts/llmgw-prod-provider-config-audit.py"
     provider_audit = provider_audit_path.read_text(encoding="utf-8") if provider_audit_path.exists() else ""
     ok, detail = _contains_all(
@@ -372,6 +376,34 @@ def _static_checks() -> list[dict]:
         "prod_asr_pool_bootstrap_is_backed_up_and_dry_run_first",
         ok and asr_bootstrap_executable and not asr_bootstrap_destructive,
         f"{detail}; executable={asr_bootstrap_executable}; destructive={asr_bootstrap_destructive}",
+    ))
+
+    ok, detail = _contains_all(
+        video_bootstrap + "\n" + video_bootstrap_js,
+        [
+            "LLMGW_VIDEO_BOOTSTRAP_DRY_RUN:-1",
+            "mongodump --db \"$mongo_db\" --archive",
+            "llmgw-disk-space-guard.sh",
+            "LLMGW_VIDEO_BOOTSTRAP_MIN_FREE_MB:-6144",
+            "llmgw-prod-before-video-caller-bootstrap",
+            "LLMGW_VIDEO_BOOTSTRAP_SOURCE_CALLER",
+            "LLMGW_VIDEO_BOOTSTRAP_TARGET_CALLERS",
+            "video-agent.videogen::video-gen",
+            "visual-agent.videogen::video-gen",
+            "source video appCaller missing",
+            "source video appCaller has no video-gen ModelGroupIds",
+            "source video appCaller references missing video-gen pools",
+            "target video appCallers missing",
+            "ModelGroupIds: poolIds",
+            "ModelGroupId: poolIds[0]",
+        ],
+    )
+    video_bootstrap_executable = bool(video_bootstrap_path.exists() and (video_bootstrap_path.stat().st_mode & stat.S_IXUSR))
+    video_bootstrap_destructive = any(item in video_bootstrap + video_bootstrap_js for item in ["dropDatabase", "deleteMany", "remove(", "docker volume rm", "down -v"])
+    checks.append(_check(
+        "prod_video_caller_bootstrap_is_backed_up_and_dry_run_first",
+        ok and video_bootstrap_executable and not video_bootstrap_destructive,
+        f"{detail}; executable={video_bootstrap_executable}; destructive={video_bootstrap_destructive}",
     ))
 
     ok, detail = _contains_all(
