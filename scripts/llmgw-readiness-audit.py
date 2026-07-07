@@ -110,6 +110,8 @@ def _static_checks() -> list[dict]:
     asr_bootstrap = asr_bootstrap_path.read_text(encoding="utf-8") if asr_bootstrap_path.exists() else ""
     asr_bootstrap_js_path = ROOT / "scripts/llmgw-prod-asr-pool-bootstrap.js"
     asr_bootstrap_js = asr_bootstrap_js_path.read_text(encoding="utf-8") if asr_bootstrap_js_path.exists() else ""
+    provider_audit_path = ROOT / "scripts/llmgw-prod-provider-config-audit.py"
+    provider_audit = provider_audit_path.read_text(encoding="utf-8") if provider_audit_path.exists() else ""
     ok, detail = _contains_all(
         release_gate,
         [
@@ -311,6 +313,34 @@ def _static_checks() -> list[dict]:
         "prod_asr_pool_bootstrap_is_backed_up_and_dry_run_first",
         ok and asr_bootstrap_executable and not asr_bootstrap_destructive,
         f"{detail}; executable={asr_bootstrap_executable}; destructive={asr_bootstrap_destructive}",
+    ))
+
+    ok, detail = _contains_all(
+        provider_audit,
+        [
+            "LLM Gateway production provider config audit",
+            "document-store.subtitle::asr",
+            "transcript-agent.transcribe::asr",
+            "video-agent.v2d.transcribe::asr",
+            "video-agent.video-to-text::asr",
+            "video-agent.videogen::video-gen",
+            "asr_doubao_bigmodel_pool",
+            "doubao-asr-bigmodel",
+            "TargetApiKeyEncrypted",
+            "targetApiKeyEncryptedLength",
+            "targetApiKeyShape",
+            "containsPipe",
+            "looksUuidOnly",
+            "seed-evidence-json",
+            "no Healthy video-gen model",
+        ],
+    )
+    provider_audit_executable = bool(provider_audit_path.exists() and (provider_audit_path.stat().st_mode & stat.S_IXUSR))
+    provider_audit_destructive = any(item in provider_audit for item in ["updateOne", "insertOne", "deleteMany", "dropDatabase", "remove(", "docker volume rm", "down -v"])
+    checks.append(_check(
+        "prod_provider_config_audit_is_read_only_and_secret_safe",
+        ok and provider_audit_executable and not provider_audit_destructive,
+        f"{detail}; executable={provider_audit_executable}; destructive={provider_audit_destructive}",
     ))
 
     ok, detail = _contains_all(
