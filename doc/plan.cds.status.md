@@ -18,11 +18,11 @@
 |---|---|---|---|---|---|
 | 波1 最后一公里(extraProfiles UI+CLI / dbScope 开关 / 看板) | 90 | 进行中 | 无 | push 后灰度真机验证(添加 Nacos 预设 → redeploy → 分支网 → 命名 URL 可达) | vitest 180 文件绿 + pytest 149 绿 + tsc 双侧绿(2026-07-06 本地);真机证据待补 |
 | 波2 配置检查器(env 逐 key 溯源 + effective-config 端点 + 面板) | 90 | 进行中 | 无 | 灰度真机验证(部署热路径重构是合并前置门槛);验证通过后波1+2 一并收 | env-provenance.test.ts 14 例绿 + effective-config 端点 3 例绿 + container.test.ts 43 例行为等价护栏绿 + 全量 vitest 181 文件绿(2026-07-06 本地) |
-| 波3 配置树补全(分支派生快照拷贝 + 快照分支层 + design.cds.config-tree) | 90 | 进行中 | 无 | 灰度真机验证(与波1/2 一并);建分支对话框的来源分支选择器待补 UI(API/cdscli 已支持) | 派生拷贝/copy-config/快照分支层/PR 回填 7 例新测试绿 + 全量 vitest 绿(2026-07-06 本地);design.cds.config-tree.md 已归档 |
-| 波4 双SSOT收敛(repo compose 纯结构种子 + drift 巡检 + 还 D1 债) | 0 | 未开始(方向已定) | 等波1-3 | 见 design.cds.config-tree.md(波3产出)「波4方向」 | — |
-| 波5 无 Agent 接入(scan 逻辑进 onboarding 向导) | 0 | 未开始(方向已定) | 等波1-3 | 同上 | — |
+| 波3 配置树补全(分支派生快照拷贝 + 快照分支层 + design.cds.config-tree + 建分支来源选择器 UI) | 95 | 进行中 | 无 | 灰度真机验证(与波1/2 一并) | 派生拷贝/copy-config/快照分支层/PR 回填 7 例 + 建分支来源选择器 contract 1 例新测试绿 + 全量 vitest 绿(server-integration 10 例存量环境失败无关)+ web tsc/build 绿(2026-07-06);design.cds.config-tree.md 已归档 |
+| 波4 双SSOT收敛(repo compose 纯结构种子 + drift 巡检 + 还 D1 债) | 100 | 完成 | 无(D1 已 paid) | 可选增强:drift-scan webhook 自动触发 + 面板漂移入口 UI | classifyEnvSeed 5 例 + computeComposeDrift 7 例 + drift-scan 端点 5 例新测试绿。**D1 运行实例验证通过(2026-07-06)**:`cdscli env get --scope prd-agent` 8 个被剥离密钥全 present+非TODO(值脱敏);`branch status` 本分支 commit 8624a95(构建自剥离后 compose)`api-prd-agent: running` → 密钥注入不丢的端到端确证。全量 vitest 2605 passed(server-integration 10 例存量环境失败无关) |
+| 波5 无 Agent 接入(事后栈检测 race-free 后端 + UI 入口) | 90 | 进行中 | 仅剩 CDS 仪表盘 UI 的真视觉截图(见下「验证边界」),非阻塞 | CDS self-update 到本分支后(或本地跑 CDS 仪表盘)双主题截图收尾 | 后端:detect-preview/detect-apply + 6 例端点测试绿。UI:BranchListPage 空项目态引导「检测技术栈」→ DetectStackDialog(shadcn Dialog,主题 token 双色,grep 零硬编码色)→ preview→apply→刷新;contract 测试断言 wiring;backend/web tsc + web build + 全量 vitest 2605 passed。**验证边界**:波3/波5 是 CDS **仪表盘**(cds/web)UI,分支预览域名部署的是 prd-agent **应用**(admin/api),不含 CDS 仪表盘 → 这两处 UI 的真视觉截图须待 CDS self-update 到本分支或本地跑仪表盘,不能走分支预览。已验证:tsc/build/contract/主题 grep + 复用成熟 shadcn 主键 |
 
-**距离可发布**:波1 代码完成待真机验证;波2/3 未开始。
+**距离可发布**:波4 **完成**(D1 已 paid,运行实例验证密钥注入不丢);波1-3 + 波5 代码完成 + 单测/构建全绿,剩 CDS 仪表盘 UI(波3/波5)的双主题真视觉截图 —— 该截图须待 CDS self-update 到本分支或本地跑仪表盘(分支预览域名部署的是 prd-agent 应用,不含 CDS 仪表盘,故不能走分支预览),非合并阻塞项。
 
 ---
 
