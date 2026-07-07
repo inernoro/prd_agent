@@ -82,8 +82,33 @@ const SENSITIVE_KEY_PATTERNS: RegExp[] = [
  * Exported for unit tests so we can verify the pattern coverage directly
  * without going through full string masking.
  */
+/**
+ * Insert `_` at camelCase / PascalCase word boundaries so the SCREAMING_SNAKE
+ * `(?:^|_)WORD(?:_|$)` patterns also fire on .NET-style config keys.
+ *
+ * The provenance endpoint surfaces keys like `Changelog__GitHubToken`,
+ * `GitHubOAuth__ClientSecret`, `ApiKeyCrypto__LegacySecrets` — the sensitive
+ * words (Token / Secret / Key) sit at camelCase boundaries that `_`-anchored
+ * patterns never see, so those secrets were returned in plaintext. Normalizing
+ * `GitHubToken` -> `Git_Hub_Token`, `ClientSecret` -> `Client_Secret`,
+ * `ApiKeyCrypto` -> `Api_Key_Crypto` makes the existing patterns match. This
+ * only ADDS boundaries, so SCREAMING_SNAKE keys are unchanged and nothing that
+ * matched before stops matching.
+ */
+function withCamelBoundaries(key: string): string {
+  return key
+    // Keep the OAuth protocol prefix atomic. Without this, `OAuth` splits to
+    // `O_Auth` and the AUTH pattern fires on a public `GitHubOAuth__ClientId`
+    // — over-masking a non-secret identifier. `GitHubOAuth__ClientSecret` still
+    // masks (via SECRET), so this only restores ClientId visibility.
+    .replace(/OAuth/g, 'Oauth')
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2') // fooBar -> foo_Bar
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2'); // APIKey -> API_Key
+}
+
 export function isSensitiveKey(key: string): boolean {
-  return SENSITIVE_KEY_PATTERNS.some((p) => p.test(key));
+  const normalized = withCamelBoundaries(key);
+  return SENSITIVE_KEY_PATTERNS.some((p) => p.test(key) || p.test(normalized));
 }
 
 /**
@@ -204,6 +229,53 @@ export function maskSecretsInObject<T>(obj: T, opts: { mask?: boolean } = {}): T
 const URL_WITH_CREDENTIALS = /^[a-z][a-z0-9+.\-]*:\/\/[^@/\s]*:[^@/\s]+@/i;
 
 /**
+ * Semicolon-delimited connection string carrying an inline password
+ * (`Server=...;User Id=sa;Password=secret;...` — ADO.NET / SQL Server / ODBC).
+ * These don't match the `scheme://user:pass@host` URL shape, and the key name
+ * (`SQLSERVER_URL`, `DATABASE`, ...) is often not sensitive, so the password
+ * segment leaked through the provenance endpoint. Precise `;password=`/`pwd=`
+ * detection catches them without over-masking plain URLs.
+ */
+const CONN_STRING_WITH_PASSWORD = /(^|;)\s*(password|pwd)\s*=[^;]/i;
+
+/**
+ * Values that ARE a secret by their own shape, regardless of key name — so a
+ * bare token stashed under a neutral key (`FOO=ghp_...`) is still masked
+ * (defense in depth). Deliberately prefix/structure-anchored, NOT entropy-based,
+ * so commit SHAs (40-hex), account ids (32-hex), and long public ids are never
+ * caught — only unambiguous vendor secret shapes.
+ */
+const SECRET_VALUE_PATTERNS: RegExp[] = [
+  /\bghp_[A-Za-z0-9]{20,}/, // GitHub PAT (classic)
+  /\bgithub_pat_[A-Za-z0-9_]{20,}/, // GitHub fine-grained PAT
+  /\bgh[ousr]_[A-Za-z0-9]{20,}/, // gho_/ghu_/ghs_/ghr_
+  /\bglpat-[A-Za-z0-9_-]{18,}/, // GitLab PAT
+  /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}/, // Stripe
+  /\bsk-[A-Za-z0-9]{20,}/, // OpenAI-style
+  /\bxox[baprs]-[A-Za-z0-9-]{10,}/, // Slack
+  /\bASIA[0-9A-Z]{16}\b/, // AWS temp access key id
+  /\bAKIA[0-9A-Z]{16}\b/, // AWS access key id
+  /\bAIza[0-9A-Za-z_-]{30,}/, // Google API key
+  /-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----/, // PEM private key
+  /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/, // JWT (header.payload.sig)
+];
+
+/**
+ * Does a value carry inline credentials — URL (`scheme://user:pass@`),
+ * connection-string (`...;Password=...`), or a recognizable vendor secret
+ * shape (`ghp_...`, JWT, PEM key, ...)? Single SSOT for value-shape secret
+ * detection used by response serialization.
+ */
+export function looksLikeSecretBearingValue(value: string): boolean {
+  if (typeof value !== 'string') return false;
+  return (
+    URL_WITH_CREDENTIALS.test(value) ||
+    CONN_STRING_WITH_PASSWORD.test(value) ||
+    SECRET_VALUE_PATTERNS.some((p) => p.test(value))
+  );
+}
+
+/**
  * Does a value look like a connection string carrying inline credentials
  * (`scheme://user:pass@host`)? Exported so the container-exec literal-value
  * masking path can reuse the SAME URL detection that maskEnvRecord uses for
@@ -221,7 +293,7 @@ export function maskEnvRecord(env: Record<string, string>, marker = '***'): Reco
     // 而非早期窄正则 secret|password|token|key|credential —— 否则 WEBHOOK_URL / SLACK_WEBHOOK / SMTP_URL /
     // AUTH_URL 这类存密钥 URL 的 key 名不命中、值又非 user:pass@ 形态时会原样泄露给任何能查看分支的调用方
     // （Codex P1「Mask webhook-style env secrets in extra services」）。叠加值为含内联凭据 URL 的兜底。
-    const sensitive = isSensitiveKey(k) || (typeof v === 'string' && URL_WITH_CREDENTIALS.test(v));
+    const sensitive = isSensitiveKey(k) || looksLikeSecretBearingValue(v);
     out[k] = sensitive ? marker : v;
   }
   return out;

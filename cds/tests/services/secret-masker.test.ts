@@ -68,6 +68,31 @@ describe('secret-masker.isSensitiveKey', () => {
   ])('does NOT flag %s as sensitive', (k) => {
     expect(isSensitiveKey(k)).toBe(false);
   });
+
+  // Regression: .NET / camelCase config keys (Changelog__GitHubToken, etc.) put
+  // the sensitive word at a camelCase boundary the `_`-anchored patterns never
+  // saw, so these secrets leaked in plaintext through the provenance endpoint.
+  it.each([
+    'Changelog__GitHubToken',
+    'GitHubOAuth__ClientSecret',
+    'ApiKeyCrypto__LegacySecrets',
+    'ApiKeyCrypto__Secret',
+    'ClaudeSdkExecutor__CdsDiscovery__SharedSidecarToken',
+    'Jwt__Secret',
+  ])('flags .NET/camelCase key %s as sensitive', (k) => {
+    expect(isSensitiveKey(k)).toBe(true);
+  });
+
+  it.each([
+    'MongoDB__DatabaseName',
+    'MongoDB__ConnectionString',
+    'AspNetCoreEnvironment',
+    'PreviewDomain',
+    'Changelog__RootPath',
+    'GitHubOAuth__ClientId', // OAuth kept atomic → public client id stays visible
+  ])('does NOT over-flag innocuous camelCase key %s', (k) => {
+    expect(isSensitiveKey(k)).toBe(false);
+  });
 });
 
 describe('secret-masker.maskLine', () => {
@@ -252,6 +277,50 @@ describe('secret-masker.maskEnvRecord', () => {
     expect(out.MONGODB_URI).toBe('***');
     expect(out.REDIS_URL).toBe('***');
     expect(out.PUBLIC_API_URL).toBe('https://api.example.com/v1');
+  });
+
+  it('masks ADO.NET/SQL connection-string values with inline Password= (provenance leak fix)', () => {
+    const out = maskEnvRecord({
+      SQLSERVER_URL: 'Server=sqlserver,1433;Database=master;User Id=sa;Password=hunter2;TrustServerCertificate=True;',
+      MongoDB__ConnectionString: 'mongodb://172.17.0.1:10001', // no creds → not masked
+      R2_PUBLIC_BASE_URL: 'https://cfi.miduo.org', // plain public URL → not masked
+    });
+    expect(out.SQLSERVER_URL).toBe('***');
+    expect(out['MongoDB__ConnectionString']).toBe('mongodb://172.17.0.1:10001');
+    expect(out.R2_PUBLIC_BASE_URL).toBe('https://cfi.miduo.org');
+  });
+
+  it('masks .NET/camelCase secret keys (provenance leak fix)', () => {
+    const out = maskEnvRecord({
+      Changelog__GitHubToken: 'ghp_realtoken',
+      GitHubOAuth__ClientSecret: 'oauthsecret',
+      ApiKeyCrypto__LegacySecrets: 'legacy==',
+      GitHubOAuth__ClientId: 'Ov23liPublicId', // public client id → stays visible
+      MongoDB__DatabaseName: 'prdagent', // neutral camelCase key → not masked
+    });
+    expect(out['Changelog__GitHubToken']).toBe('***');
+    expect(out['GitHubOAuth__ClientSecret']).toBe('***');
+    expect(out['ApiKeyCrypto__LegacySecrets']).toBe('***');
+    expect(out['GitHubOAuth__ClientId']).toBe('Ov23liPublicId');
+    expect(out['MongoDB__DatabaseName']).toBe('prdagent');
+  });
+
+  it('masks recognizable secret VALUE shapes under neutral key names (defense in depth)', () => {
+    const out = maskEnvRecord({
+      NEUTRAL_A: 'ghp_' + 'a'.repeat(36), // GitHub PAT shape
+      NEUTRAL_B: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U', // JWT
+      NEUTRAL_C: 'AKIAIOSFODNN7EXAMPLE', // AWS access key id
+      // must NOT be masked: not secret shapes
+      CDS_COMMIT_SHA: '6779b9f2fb4531af95e007d1446c53141fc75621', // 40-hex commit
+      R2_ACCOUNT_ID: 'b821db9da72264f7e790a2b8d8cc6a58', // 32-hex public id
+      APP_NAME: 'prd-agent',
+    });
+    expect(out.NEUTRAL_A).toBe('***');
+    expect(out.NEUTRAL_B).toBe('***');
+    expect(out.NEUTRAL_C).toBe('***');
+    expect(out.CDS_COMMIT_SHA).toBe('6779b9f2fb4531af95e007d1446c53141fc75621');
+    expect(out.R2_ACCOUNT_ID).toBe('b821db9da72264f7e790a2b8d8cc6a58');
+    expect(out.APP_NAME).toBe('prd-agent');
   });
 });
 

@@ -1,0 +1,1 @@
+| security | cds | 修复生效配置溯源端点(effective-config)对 .NET/camelCase 密钥 key(如 Changelog__GitHubToken / GitHubOAuth__ClientSecret / ApiKeyCrypto__LegacySecrets)与含内联口令连接串(SQLSERVER_URL 的 Password=)未脱敏的明文泄漏——isSensitiveKey 增加 camelCase 边界归一 + 新增连接串口令值检测(SSOT maskEnvRecord) |
