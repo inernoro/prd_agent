@@ -1595,6 +1595,14 @@ export interface AcceptanceReportMeta {
   prNumber?: number | null;
   /** E1 部署上下文：部署模式（如 'fast' 极速版 / 'source' 源码 / 'preview'）；可空。 */
   deployMode?: string | null;
+  /** 规范/外部源同步：源文档标识；普通验收报告为空。 */
+  sourceId?: string | null;
+  /** 规范/外部源同步：仓库内源文档路径；普通验收报告为空。 */
+  sourcePath?: string | null;
+  /** 规范/外部源同步：源内容哈希，如 sha256:...；普通验收报告为空。 */
+  contentHash?: string | null;
+  /** 规范/外部源同步：发布到 CDS 的时间；普通验收报告为空。 */
+  publishedAt?: string | null;
   /**
    * E6 匿名分享 token（只读公开链接 `/r/<token>`，补登录态门控缺口）。
    * 为 null 时未开启分享；撤销分享即置回 null。token 是不可枚举的随机串。

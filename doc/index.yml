@@ -56,6 +56,7 @@ docs:
   design.daily-tips: 每日小贴士 / 路径式教程系统设计
   design.acceptance.system: 功能验收体系设计（业界对标的标准化验收 + 取证 + 归档）
   design.acceptance.kb: 验收报告知识库设计（最新在前 + 结论可视 + 模板约束 + 跨环境同步）
+  design.acceptance.knowledge-governance: MAP 自动化验收知识库治理设计
   design.agent-universe: 智能体宇宙设计（能力契约 SSOT + 统一调用信封 + 漫威宇宙式互通）
   design.knowledge-base.agent-architecture: 知识库智能体架构设计（三层模型 + map/cds-agent 命名 + 借运行时不重建 + KB-as-files 进、diff 闸出）
   design.platform.map-mcp-connector: MAP MCP 连接器设计（把开放接口翻译成 MCP 工具，可被 Claude/Codex 接入）
@@ -171,6 +172,8 @@ docs:
   guide.marketplace: 海鲜市场（配置市场）使用教程
   guide.platform.mcp-connector: MAP MCP 连接器接入指南（Claude/Codex 接入 + 共享其他 Agent + 自助签发自测）
   guide.visual-agent.acceptance-skill: 视觉验收技能跨仓库使用教程
+  guide.acceptance.daily-sop: MAP 每日自动化验收 SOP
+  guide.acceptance.report-evidence: MAP 验收报告与证据交互规范
   guide.workflow-agent.canvas: 工作流画布操作手册
   guide.report-agent.weekly: 周报功能完整操作指南
   guide.submission-gallery.poster-feed-card: 多平台博主订阅 → 首页海报弹窗（涌现 1，TikTok/抖音/B站/小红书/YouTube）
@@ -236,6 +239,8 @@ docs:
   rule.frontend.audit-prd-desktop-codebase: PRD Agent 全面代码审计报告
   rule.platform.ai-model-visibility: AI 模型可见性原则
   rule.skill.issues-system: Issues 体系协议规则（autofix + 视觉验收 + 元 issue #605）
+  rule.acceptance.map-enterprise: MAP 企业级自动化验收规范
+  rule.acceptance.ssot: MAP 验收规范 SSOT
   rule.frontend.streaming-text: 流式文本动效统一规范 (Blur focus 默认)
   rule.cds.mongo-migration: CDS state.json → MongoDB 迁移与回滚规则
   rule.cds.project-isolation-audit: CDS 多项目隔离审计规则

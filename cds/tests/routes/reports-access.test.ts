@@ -19,7 +19,7 @@ import express from 'express';
 import { StateService } from '../../src/services/state.js';
 import { createReportsRouter } from '../../src/routes/reports.js';
 
-interface Res { status: number; body: any; }
+interface Res { status: number; body: any; headers: http.IncomingHttpHeaders; }
 
 async function call(
   server: http.Server,
@@ -44,7 +44,7 @@ async function call(
         res.on('end', () => {
           let body: any = raw;
           try { body = JSON.parse(raw); } catch { /* keep raw */ }
-          resolve({ status: res.statusCode!, body });
+          resolve({ status: res.statusCode!, body, headers: res.headers });
         });
       },
     );
@@ -139,6 +139,20 @@ describe('Acceptance report routes — project-scoped key access', () => {
     expect(res.status).toBe(403);
   });
 
+  it('HTML raw reports allow target=_blank links to open from the sandbox', async () => {
+    const report = service.createAcceptanceReport({
+      title: 'HTML report',
+      format: 'html',
+      content: '<!doctype html><a target="_blank" href="https://example.com">open</a>',
+      projectId: 'proj-a',
+      branchId: null,
+      createdBy: 't',
+    });
+    const res = await call(server, 'GET', `/api/reports/${report.id}/raw`, { projectKey: 'proj-a' });
+    expect(res.status).toBe(200);
+    expect(res.headers['content-security-policy']).toContain('sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox');
+  });
+
   it('project key cannot read/delete a global (null-project) report (403)', async () => {
     const meta = await call(server, 'GET', `/api/reports/${reportGlobal.id}`, { projectKey: 'proj-a' });
     expect(meta.status).toBe(403);
@@ -210,6 +224,31 @@ describe('Acceptance report routes — project-scoped key access', () => {
     expect(service.getAcceptanceReport(reportA.id)!.folderId).toBe(folderA.id);
   });
 
+  it('PATCH can switch report format to Markdown together with content', async () => {
+    const res = await call(server, 'PATCH', `/api/reports/${reportA.id}`, {
+      body: {
+        title: '规范文档',
+        format: 'md',
+        content: '# 规范文档\n\n正文',
+        sourceId: 'acceptance.rule.enterprise',
+        sourcePath: 'doc/rule.acceptance.map-enterprise.md',
+        contentHash: 'sha256:abc',
+        publishedAt: '2026-07-07T00:00:00.000Z',
+      },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.report.format).toBe('md');
+    expect(res.body.report.sourceId).toBe('acceptance.rule.enterprise');
+    expect(res.body.report.sourcePath).toBe('doc/rule.acceptance.map-enterprise.md');
+    expect(res.body.report.contentHash).toBe('sha256:abc');
+    expect(res.body.report.publishedAt).toBe('2026-07-07T00:00:00.000Z');
+    expect(service.readAcceptanceReportContent(reportA.id)).toContain('# 规范文档');
+
+    const raw = await call(server, 'GET', `/api/reports/${reportA.id}/raw`);
+    expect(raw.status).toBe(200);
+    expect(raw.headers['content-type']).toContain('text/markdown');
+  });
+
   it('extracts inline base64 images into content-addressed assets on ingest', async () => {
     // Minimal valid 1x1 PNG.
     const b64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
@@ -234,5 +273,76 @@ describe('Acceptance report routes — project-scoped key access', () => {
     // The public asset route serves it (200).
     const got = await call(server, 'GET', `/api/reports/assets/${name}`);
     expect(got.status).toBe(200);
+  });
+
+  it('rejects execution acceptance HTML without the standard report template', async () => {
+    const badDailyHtml = `
+      <!doctype html>
+      <html><head><title>prd-agent 每日验收 2026-07-06</title></head>
+      <body><h1>prd-agent 每日自动验收报告</h1><div class="grid"><div class="card">Verdict: 不通过</div></div></body></html>
+    `;
+    const res = await call(server, 'POST', '/api/reports', {
+      body: {
+        title: 'prd-agent 每日验收 2026-07-06',
+        format: 'html',
+        content: badDailyHtml,
+        verdict: 'fail',
+        tier: 'L2',
+      },
+    });
+    expect(res.status).toBe(422);
+    expect(res.body.error).toBe('acceptance_html_template_required');
+  });
+
+  it('accepts execution acceptance HTML with the current standard template marker', async () => {
+    const standardHtml = `
+      <!doctype html>
+      <!-- map-acceptance-template: interactive-html-v2 -->
+      <html lang="zh-CN" data-template="map-acceptance-interactive-html-v2">
+      <body><div class="layout"><aside class="evidence-nav"></aside><main><header class="hero"></header><article id="reportBody"></article></main></div></body></html>
+    `;
+    const res = await call(server, 'POST', '/api/reports', {
+      body: {
+        title: 'prd-agent · 每日验收 · 2026-07-06 · 验收报告',
+        format: 'html',
+        content: standardHtml,
+        verdict: 'fail',
+        tier: 'L2',
+      },
+    });
+    expect(res.status).toBe(201);
+  });
+
+  it('does not apply the acceptance template gate to generic HTML reports', async () => {
+    const res = await call(server, 'POST', '/api/reports', {
+      body: {
+        title: '普通 HTML 附件',
+        format: 'html',
+        content: '<!doctype html><html><body><h1>普通报告</h1></body></html>',
+      },
+    });
+    expect(res.status).toBe(201);
+  });
+
+  it('rejects PATCH that would replace an execution acceptance report with ad-hoc HTML', async () => {
+    const standard = service.createAcceptanceReport({
+      title: 'prd-agent · 每日验收 · 2026-07-06 · 验收报告',
+      format: 'html',
+      content: '<!doctype html><!-- map-acceptance-template: interactive-html-v2 --><html><body><div class="layout"><aside class="evidence-nav"></aside><main><header class="hero"></header><article id="reportBody"></article></main></div></body></html>',
+      projectId: 'proj-a',
+      branchId: null,
+      verdict: 'fail',
+      tier: 'L2',
+      createdBy: 't',
+    });
+    const original = service.readAcceptanceReportContent(standard.id);
+    const res = await call(server, 'PATCH', `/api/reports/${standard.id}`, {
+      body: {
+        content: '<!doctype html><html><body><h1>prd-agent 每日自动验收报告</h1><div class="grid"></div></body></html>',
+      },
+    });
+    expect(res.status).toBe(422);
+    expect(res.body.error).toBe('acceptance_html_template_required');
+    expect(service.readAcceptanceReportContent(standard.id)).toBe(original);
   });
 });

@@ -102,6 +102,8 @@
 - [功能验收体系设计](design.acceptance.system) `design.acceptance.system`
 - [验收报告知识库设计](design.acceptance.kb) `design.acceptance.kb`
   > 业界对标(IEEE 829 / ISO·IEC·IEEE 29119-3 / 29148 / ISTQB / BDD)的标准化验收：为何而写、踩过的坑、v2 落地与 v3 演进、涌现与未来
+- [MAP 自动化验收知识库治理设计](design.acceptance.knowledge-governance) `design.acceptance.knowledge-governance`
+  > 规范、技能、CDS 报告和知识库引用之间的治理关系
 
 - [智能体宇宙设计](design.agent-universe) `design.agent-universe`
   > 能力契约 SSOT + 统一调用信封；选了不自动发、视觉创作真出图、漫威宇宙式互通
@@ -433,6 +435,10 @@
 
 - [视觉验收技能跨仓库使用教程](guide.visual-agent.acceptance-skill) `guide.visual-agent.acceptance-skill`
   > 用个人 AgentApiKey + 海鲜市场安装、更新 `create-visual-test-to-kb`，避免借用个人 accesskey
+- [MAP 每日自动化验收 SOP](guide.acceptance.daily-sop) `guide.acceptance.daily-sop`
+  > 每日验收的范围冻结、执行顺序、失败降级、归档和通知契约
+- [MAP 验收报告与证据交互规范](guide.acceptance.report-evidence) `guide.acceptance.report-evidence`
+  > 报告中的截图、红标、链接、证据导航和问题定位交互规范
 
 - [工作流画布操作手册](guide.workflow-agent.canvas) `guide.workflow-agent.canvas`
   > 工作流画布的详细操作参考
@@ -603,6 +609,10 @@
 
 - [AI 模型可见性原则](rule.platform.ai-model-visibility) `rule.platform.ai-model-visibility`
   > 大模型调用功能必须向用户展示当前模型名称的强制规则
+- [MAP 企业级自动化验收规范](rule.acceptance.map-enterprise) `rule.acceptance.map-enterprise`
+  > MAP 自动化验收的企业级规则主契约、证明力、比例原则和门禁
+- [MAP 验收规范 SSOT](rule.acceptance.ssot) `rule.acceptance.ssot`
+  > 规定验收规范以仓库 Markdown 为主源，技能快照和 CDS Markdown 只做同步视图
 
 - [Issues 体系协议规则](rule.skill.issues-system) `rule.skill.issues-system`
   > 三技能协同（autofix/visual-create/visual-run）+ label 全局体系 + #605 模板演化机制
