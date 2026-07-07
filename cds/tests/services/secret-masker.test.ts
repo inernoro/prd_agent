@@ -119,6 +119,28 @@ describe('secret-masker.maskLine', () => {
     expect(result).toBe('NODE_ENV=production');
   });
 
+  // Value-shape masking in line mode: a secret VALUE under a non-sensitive KEY
+  // must be masked in log lines too (Codex PR #1008 review — log snapshots /
+  // resource logs / container logs go through maskLine, not the exec collector).
+  it('masks a vendor-prefix token under a neutral key', () => {
+    const result = maskLine('NEUTRAL_A=ghp_' + 'a'.repeat(36));
+    expect(result).toBe('NEUTRAL_A=***[masked]***');
+    expect(result).not.toContain('ghp_');
+  });
+
+  it('masks an inline-credential URL under a neutral key', () => {
+    const result = maskLine('DATABASE_URL=postgres://user:pass@host:5432/db');
+    expect(result).toBe('DATABASE_URL=***[masked]***');
+    expect(result).not.toContain('pass@');
+  });
+
+  it('does NOT mask a commit SHA or plain value under a neutral key', () => {
+    expect(maskLine('COMMIT=6779b9f2fb4531af95e007d1446c53141fc75621')).toBe(
+      'COMMIT=6779b9f2fb4531af95e007d1446c53141fc75621',
+    );
+    expect(maskLine('LOG_LEVEL=info')).toBe('LOG_LEVEL=info');
+  });
+
   it('preserves PATH=/usr/bin:/bin', () => {
     const result = maskLine('PATH=/usr/bin:/bin');
     expect(result).toBe('PATH=/usr/bin:/bin');

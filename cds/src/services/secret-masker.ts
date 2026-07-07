@@ -177,8 +177,16 @@ export function maskLine(line: string): string {
   // mask the whole thing in one shot.
   working = working.replace(
     /(^|[\s"'{,])([A-Za-z_][A-Za-z0-9_]*)(\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;]*)/g,
-    (match, prefix: string, key: string, sep: string, _value: string) => {
-      if (isSensitiveKey(key)) {
+    (match, prefix: string, key: string, sep: string, value: string) => {
+      // Mask when the KEY name is sensitive OR the VALUE is a secret by its own
+      // shape (URL creds / connection-string password / vendor token prefix).
+      // The value-shape arm makes line-mode masking match maskEnvRecord, so a
+      // log line like `NEUTRAL_A=ghp_...` or `DATABASE_URL=postgres://u:p@h/db`
+      // — sensitive value under a non-sensitive key — is masked in log snapshots
+      // / resource logs / container logs too (Codex PR #1008 review). Strip
+      // surrounding quotes so the ^-anchored URL detector still matches.
+      const bareValue = value.replace(/^(["'])([\s\S]*)\1$/, '$2');
+      if (isSensitiveKey(key) || looksLikeSecretBearingValue(bareValue)) {
         return `${prefix}${key}${sep}***[masked]***`;
       }
       return match;
