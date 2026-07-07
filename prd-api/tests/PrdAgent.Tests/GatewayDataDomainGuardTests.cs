@@ -1060,6 +1060,17 @@ public class GatewayDataDomainGuardTests
         var script = ReadRepoFile("scripts/llmgw-map-shadow-seed.py");
         var plan = ReadRepoFile("doc/plan.llm-gateway.full-cutover.md");
 
+        Assert.Contains("--include-desktop-chat-run", script);
+        Assert.Contains("--include-open-platform", script);
+        Assert.Contains("--include-model-lab-run", script);
+        Assert.Contains("--include-arena-run", script);
+        Assert.Contains("/api/v1/chat-runs/", script);
+        Assert.Contains("/api/lab/model/runs/stream", script);
+        Assert.Contains("/api/lab/arena/runs", script);
+        Assert.Contains("prd-agent-desktop.chat.sendmessage::chat", plan);
+        Assert.Contains("open-platform-agent.proxy::chat", plan);
+        Assert.Contains("prd-agent-web.model-lab.run::chat", plan);
+        Assert.Contains("prd-agent.arena.battle::chat", plan);
         Assert.Contains("--include-visual-video-direct", script);
         Assert.Contains("/api/visual-agent/video-gen/runs", script);
         Assert.Contains("wait_visual_video_run", script);

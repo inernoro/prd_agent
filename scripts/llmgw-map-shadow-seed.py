@@ -338,6 +338,185 @@ def call_open_platform_chat(base: str, api_key: str, group_id: str, timeout: flo
         raise RuntimeError(f"open platform chat failed: {result.body[:500]}")
 
 
+def wait_run_meta(
+    base: str,
+    token: str,
+    timeout: float,
+    path: str,
+    poll_seconds: float,
+    poll_interval_seconds: float,
+    context: str,
+) -> str:
+    deadline = time.monotonic() + max(1, poll_seconds)
+    last_status = ""
+    last_body = ""
+    while True:
+        result = request_json(
+            "GET",
+            join_url(base, path),
+            headers=bearer(token),
+            timeout=timeout,
+        )
+        data = api_data(result, f"{context} get run")
+        status = str((data or {}).get("status") or "")
+        last_status = status
+        last_body = result.body[:1000]
+        if status in {"Done", "Error", "Cancelled"}:
+            if status != "Done":
+                raise RuntimeError(f"{context} ended with {status}: {last_body}")
+            return status
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"{context} timed out at status {last_status}: {last_body}")
+        time.sleep(max(0.5, poll_interval_seconds))
+
+
+def call_desktop_chat_run(
+    base: str,
+    token: str,
+    session_id: str,
+    timeout: float,
+    tag: str,
+    poll_seconds: float,
+    poll_interval_seconds: float,
+) -> str:
+    result = request_json(
+        "POST",
+        join_url(base, f"/api/v1/sessions/{urllib.parse.quote(session_id)}/messages/run"),
+        {
+            "content": f"Desktop chat shadow evidence ping {tag}. Reply with one short sentence.",
+        },
+        headers=bearer(token),
+        timeout=timeout,
+    )
+    data = api_data(result, "desktop chat create run")
+    run_id = str((data or {}).get("runId") or "")
+    if not run_id:
+        raise RuntimeError(f"desktop chat create run response missing runId: {json.dumps(data, ensure_ascii=False)[:500]}")
+    wait_run_meta(
+        base,
+        token,
+        timeout,
+        f"/api/v1/chat-runs/{urllib.parse.quote(run_id)}",
+        poll_seconds,
+        poll_interval_seconds,
+        "desktop chat run",
+    )
+    return run_id
+
+
+def resolve_chat_model(base: str, token: str, timeout: float) -> dict[str, str]:
+    result = request_json(
+        "GET",
+        join_url(base, "/api/mds"),
+        headers=bearer(token),
+        timeout=timeout,
+    )
+    data = api_data(result, "mds chat models")
+    if not isinstance(data, list):
+        raise RuntimeError(f"mds models returned non-list data: {json.dumps(data, ensure_ascii=False)[:500]}")
+
+    candidates: list[dict[str, Any]] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        if item.get("enabled") is not True:
+            continue
+        if item.get("isImageGen") is True:
+            continue
+        platform_id = str(item.get("platformId") or "").strip()
+        model_name = str(item.get("modelName") or item.get("name") or "").strip()
+        if platform_id and model_name:
+            candidates.append(item)
+    if not candidates:
+        raise RuntimeError("no enabled chat model with platformId/modelName found")
+
+    picked = candidates[0]
+    model_name = str(picked.get("modelName") or picked.get("name") or "").strip()
+    return {
+        "platformId": str(picked.get("platformId") or "").strip(),
+        "modelId": model_name,
+        "modelName": model_name,
+        "name": str(picked.get("displayName") or picked.get("name") or model_name).strip(),
+        "group": str(picked.get("group") or "").strip(),
+    }
+
+
+def call_model_lab_run(base: str, token: str, timeout: float, tag: str, model: dict[str, str]) -> None:
+    result = request_json(
+        "POST",
+        join_url(base, "/api/lab/model/runs/stream"),
+        {
+            "suite": "Speed",
+            "promptText": f"Model Lab shadow evidence ping {tag}. Reply with one short sentence.",
+            "params": {
+                "temperature": 0.1,
+                "maxTokens": 64,
+                "timeoutMs": 60000,
+                "maxConcurrency": 1,
+                "repeatN": 1,
+            },
+            "models": [
+                {
+                    "platformId": model["platformId"],
+                    "modelId": model["modelId"],
+                    "modelName": model["modelName"],
+                    "name": model["name"],
+                    "group": model.get("group") or None,
+                }
+            ],
+            "enablePromptCache": False,
+        },
+        headers=bearer(token),
+        timeout=timeout,
+    )
+    accept_json_or_sse(result, "model lab run")
+
+
+def call_arena_run(
+    base: str,
+    token: str,
+    timeout: float,
+    tag: str,
+    model: dict[str, str],
+    poll_seconds: float,
+    poll_interval_seconds: float,
+) -> str:
+    result = request_json(
+        "POST",
+        join_url(base, "/api/lab/arena/runs"),
+        {
+            "prompt": f"Arena shadow evidence ping {tag}. Reply with one short sentence.",
+            "groupKey": "llmgw-shadow",
+            "slots": [
+                {
+                    "slotId": f"llmgw-shadow-{tag}",
+                    "platformId": model["platformId"],
+                    "modelId": model["modelId"],
+                    "label": model["name"],
+                    "labelIndex": 1,
+                }
+            ],
+            "attachmentIds": [],
+        },
+        headers={**bearer(token), "Idempotency-Key": f"llmgw-shadow-arena-{tag}"},
+        timeout=timeout,
+    )
+    data = api_data(result, "arena create run")
+    run_id = str((data or {}).get("runId") or "")
+    if not run_id:
+        raise RuntimeError(f"arena create run response missing runId: {json.dumps(data, ensure_ascii=False)[:500]}")
+    wait_run_meta(
+        base,
+        token,
+        timeout,
+        f"/api/lab/arena/runs/{urllib.parse.quote(run_id)}",
+        poll_seconds,
+        poll_interval_seconds,
+        "arena run",
+    )
+    return run_id
+
+
 def call_tutorial_email_send(base: str, token: str, timeout: float, tag: str) -> None:
     result = request_json(
         "POST",
@@ -1052,7 +1231,10 @@ def main() -> int:
     parser.add_argument("--since-hours", type=float, default=168, help="Shadow summary window")
     parser.add_argument("--release-commit", default="", help="Release commit filter; defaults to gateway health commit")
     parser.add_argument("--skip-preview-ask", action="store_true", help="Only run session chat, skip preview-ask")
+    parser.add_argument("--include-desktop-chat-run", action="store_true", help="Also seed and wait one desktop chat run per iteration")
     parser.add_argument("--include-open-platform", action="store_true", help="Also seed one non-stream Open Platform call per iteration")
+    parser.add_argument("--include-model-lab-run", action="store_true", help="Also seed one Model Lab pinned gateway run per iteration")
+    parser.add_argument("--include-arena-run", action="store_true", help="Also seed one Arena pinned gateway run per iteration")
     parser.add_argument("--include-tutorial-email-send", action="store_true", help="Also seed one admin non-stream SendAsync call per iteration")
     parser.add_argument("--include-image-raw", action="store_true", help="Also seed one real image raw call per iteration")
     parser.add_argument("--include-image-worker-text2img", action="store_true", help="Also seed one ImageGenRunWorker text2img run per iteration")
@@ -1074,6 +1256,8 @@ def main() -> int:
     parser.add_argument("--video-resolution", default="720p", help="Video seed resolution")
     parser.add_argument("--video-run-poll-seconds", type=float, default=600, help="How long to wait for visual-agent video-gen runs")
     parser.add_argument("--video-run-poll-interval-seconds", type=float, default=10, help="Visual video-gen run poll interval")
+    parser.add_argument("--chat-run-poll-seconds", type=float, default=240, help="How long to wait for desktop chat and arena runs")
+    parser.add_argument("--chat-run-poll-interval-seconds", type=float, default=3, help="Desktop chat and arena run poll interval")
     parser.add_argument("--asr-wav-seconds", type=float, default=1.5, help="Generated WAV duration for ASR seed paths")
     parser.add_argument("--asr-run-poll-seconds", type=float, default=360, help="How long to wait for transcript/document-store ASR runs")
     parser.add_argument("--asr-run-poll-interval-seconds", type=float, default=5, help="ASR run poll interval")
@@ -1105,6 +1289,8 @@ def main() -> int:
         admin_token, user_id = login(base, args.root_username, args.root_password, args.timeout)
     elif (
         args.include_open_platform
+        or args.include_model_lab_run
+        or args.include_arena_run
         or args.include_image_raw
         or args.include_image_worker_text2img
         or args.include_image_worker_img2img
@@ -1162,6 +1348,10 @@ def main() -> int:
     if needs_image_model and (not image_platform_id or not image_model_id):
         image_platform_id, image_model_id = resolve_image_gen_model(base, token, args.timeout)
 
+    chat_model: dict[str, str] = {}
+    if args.include_model_lab_run or args.include_arena_run:
+        chat_model = resolve_chat_model(base, token, args.timeout)
+
     image_ref_shas: list[str] = []
     if args.include_image_worker_img2img:
         image_ref_shas = require_image_ref_shas(args.image_ref_shas, 1, "image worker img2img")
@@ -1199,6 +1389,8 @@ def main() -> int:
         print(f"imageWorkerVisionRefShas={','.join(image_ref_shas[:2])}")
     if args.include_video_direct or args.include_visual_video_direct:
         print(f"videoDirect={args.video_aspect_ratio}/{args.video_resolution}/{args.video_duration_seconds}s")
+    if args.include_model_lab_run or args.include_arena_run:
+        print(f"chatPinnedModel={chat_model['platformId']}/{chat_model['modelId']}")
     if args.include_transcript_asr or args.include_document_store_subtitle_asr:
         print(f"asrSeedWavBytes={len(wav_bytes)}")
 
@@ -1247,6 +1439,24 @@ def main() -> int:
                 args.continue_on_error,
                 lambda: call_preview_ask(base, token, session_id, args.timeout, tag),
             )
+        if args.include_desktop_chat_run:
+            desktop_chat_step = run_seed_step(
+                evidence,
+                f"{prefix}.desktop_chat_run",
+                args.continue_on_error,
+                lambda: call_desktop_chat_run(
+                    base,
+                    token,
+                    session_id,
+                    args.timeout,
+                    tag,
+                    args.chat_run_poll_seconds,
+                    args.chat_run_poll_interval_seconds,
+                ),
+            )
+            if desktop_chat_step.ok:
+                stream_successes += 1
+                print(f"seed[{index + 1}] desktopChatRunId={desktop_chat_step.result}")
         group_id = ""
         if args.include_open_platform:
             group_step = run_seed_step(
@@ -1270,6 +1480,35 @@ def main() -> int:
                         args.continue_on_error,
                         lambda: call_open_platform_chat(base, app_step.result, group_id, args.timeout, tag),
                     )
+                    if open_platform_step.ok:
+                        send_successes += 1
+        if args.include_model_lab_run:
+            model_lab_step = run_seed_step(
+                evidence,
+                f"{prefix}.model_lab_run",
+                args.continue_on_error,
+                lambda: call_model_lab_run(base, token, args.timeout, tag, chat_model),
+            )
+            if model_lab_step.ok:
+                stream_successes += 1
+        if args.include_arena_run:
+            arena_step = run_seed_step(
+                evidence,
+                f"{prefix}.arena_run",
+                args.continue_on_error,
+                lambda: call_arena_run(
+                    base,
+                    token,
+                    args.timeout,
+                    tag,
+                    chat_model,
+                    args.chat_run_poll_seconds,
+                    args.chat_run_poll_interval_seconds,
+                ),
+            )
+            if arena_step.ok:
+                stream_successes += 1
+                print(f"seed[{index + 1}] arenaRunId={arena_step.result}")
         if args.include_tutorial_email_send:
             tutorial_step = run_seed_step(
                 evidence,

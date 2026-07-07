@@ -110,6 +110,7 @@
 - 已新增 `scripts/llmgw-shadow-sample-accumulate.sh`，用于把同一类 MAP 真实入口按 batch 累计到发布门要求的每格样本量。该脚本默认 dry-run；执行模式必须显式设置 `LLMGW_SHADOW_ACCUMULATE_SEED_FLAGS`；每个 batch 都通过短时采样窗口脚本完成提采样、seed、恢复，并把证据归档到同一 run 目录。脚本末尾默认跑 `llmgw-shadow-coverage-report.py`，因此 coverage 仍失败时不会被误写成发布达标。
 - 当前最近 2 小时 `visual-agent.image.vision::generation:raw` 有 3 条样本，其中 2 条 clean-ref 成功为 `HttpOk=true`、`AllMatch=true`、`critical=false`、`mismatches=[]`；1 条旧历史参考图样本仍是已归因的上游 policy httpFail。下一步继续从 clean-ref 样本累计，不把旧 policy fail 计入成功发布门。
 - 代码侧直连 ratchet 已达到 baseline 空集合：`GatewayDirectClientRatchetTests` 18/18 PASS，覆盖 `new ClaudeClient/OpenAIClient`、手写上游 HTTP、`GatewayTransports.Direct` 标记、ASR WebSocket 直连、API 层直接依赖 `OpenAIImageClient` / `OpenRouterVideoClient`。这证明当前源码层面没有已知 MAP 业务路径绕过 `ILlmGateway`；剩余发布阻塞转为运行态 shadow 样本量、24 小时窗口与灰度观察。
+- 只读 release gate 复查显示，watch/gate 必须使用真实注册表 code：`prd-agent-desktop.chat.sendmessage::chat`、`open-platform-agent.proxy::chat`、`prd-agent-web.model-lab.run::chat`、`prd-agent.arena.battle::chat`，不能使用 `desktop-chat.create`、`open-platform.chat-completions`、`model-lab.run`、`arena.run` 这类简称。已扩展 `scripts/llmgw-map-shadow-seed.py`，新增 `--include-desktop-chat-run`、`--include-model-lab-run`、`--include-arena-run`，并修复 open-platform 成功后 expectedGrowth 未计入 send 的证据统计问题。
 
 ## 已还的债务（归档）
 
