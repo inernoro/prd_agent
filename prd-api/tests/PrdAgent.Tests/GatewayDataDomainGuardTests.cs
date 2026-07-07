@@ -1069,6 +1069,13 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("/api/v1/chat-runs/", script);
         Assert.Contains("/api/lab/model/runs/stream", script);
         Assert.Contains("/api/lab/arena/runs", script);
+        Assert.Contains("resolve_chat_model_from_gateway", script);
+        Assert.Contains("/pools", script);
+        Assert.Contains("\"modelType\": \"chat\"", script);
+        Assert.Contains("HealthStatus", script);
+        Assert.Contains("looks_like_non_chat_model", script);
+        Assert.Contains("seedance", script);
+        Assert.Contains("seedream", script);
         Assert.Contains("prd-agent-desktop.chat.sendmessage::chat", plan);
         Assert.Contains("open-platform-agent.proxy::chat", plan);
         Assert.Contains("prd-agent-web.model-lab.run::chat", plan);

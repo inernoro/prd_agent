@@ -404,7 +404,75 @@ def call_desktop_chat_run(
     return run_id
 
 
-def resolve_chat_model(base: str, token: str, timeout: float) -> dict[str, str]:
+def resolve_chat_model_from_gateway(gw_base: str, gw_key: str, timeout: float) -> dict[str, str]:
+    if not gw_base.strip() or not gw_key.strip():
+        return {}
+
+    query = urllib.parse.urlencode({
+        "appCallerCode": "prd-agent-web.model-lab.run::chat",
+        "modelType": "chat",
+    })
+    result = request_json(
+        "GET",
+        join_url(gw_base, "/pools") + f"?{query}",
+        headers={"X-Gateway-Key": gw_key},
+        timeout=timeout,
+    )
+    try:
+        pools = json.loads(result.body)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"gateway pools returned non-json: {result.body[:500]}") from exc
+    if not isinstance(pools, list):
+        raise RuntimeError(f"gateway pools returned non-list json: {result.body[:500]}")
+
+    candidates: list[dict[str, Any]] = []
+    for pool in pools:
+        if not isinstance(pool, dict):
+            continue
+        models = pool.get("Models") or pool.get("models") or []
+        if not isinstance(models, list):
+            continue
+        for model in models:
+            if not isinstance(model, dict):
+                continue
+            status = str(model.get("HealthStatus") or model.get("healthStatus") or "").strip().lower()
+            platform_id = str(model.get("PlatformId") or model.get("platformId") or "").strip()
+            model_id = str(model.get("ModelId") or model.get("modelId") or "").strip()
+            if status != "healthy" or not platform_id or not model_id:
+                continue
+            candidates.append({
+                "platformId": platform_id,
+                "modelId": model_id,
+                "modelName": model_id,
+                "name": model_id,
+                "group": "",
+            })
+    if candidates:
+        return candidates[0]
+    return {}
+
+
+def looks_like_non_chat_model(model_name: str, group: str) -> bool:
+    value = f"{model_name} {group}".lower()
+    markers = (
+        "seedance",
+        "seedream",
+        "image",
+        "banana",
+        "video",
+        "wan",
+        "veo",
+        "sora",
+        "kling",
+    )
+    return any(marker in value for marker in markers)
+
+
+def resolve_chat_model(base: str, token: str, timeout: float, gw_base: str = "", gw_key: str = "") -> dict[str, str]:
+    gateway_model = resolve_chat_model_from_gateway(gw_base, gw_key, timeout)
+    if gateway_model:
+        return gateway_model
+
     result = request_json(
         "GET",
         join_url(base, "/api/mds"),
@@ -425,12 +493,15 @@ def resolve_chat_model(base: str, token: str, timeout: float) -> dict[str, str]:
             continue
         platform_id = str(item.get("platformId") or "").strip()
         model_name = str(item.get("modelName") or item.get("name") or "").strip()
+        group = str(item.get("group") or "").strip()
+        if looks_like_non_chat_model(model_name, group):
+            continue
         if platform_id and model_name:
             candidates.append(item)
     if not candidates:
         raise RuntimeError("no enabled chat model with platformId/modelName found")
 
-    picked = candidates[0]
+    picked = next((item for item in candidates if item.get("isMain") is True), candidates[0])
     model_name = str(picked.get("modelName") or picked.get("name") or "").strip()
     return {
         "platformId": str(picked.get("platformId") or "").strip(),
@@ -1352,7 +1423,7 @@ def main() -> int:
 
     chat_model: dict[str, str] = {}
     if args.include_model_lab_run or args.include_arena_run:
-        chat_model = resolve_chat_model(base, token, args.timeout)
+        chat_model = resolve_chat_model(base, token, args.timeout, gw_base, args.gw_key)
 
     image_ref_shas: list[str] = []
     if args.include_image_worker_img2img:
