@@ -5,5 +5,7 @@
 | ops | scripts | 扩展 LLM Gateway MAP shadow seed，补齐 desktop chat、ModelLab、Arena 真实入口和 open-platform send 增长计数 |
 | fix | scripts | 修复 LLM Gateway shadow 采样窗口恢复时被 shell 环境变量覆盖导致 sample percent 未降回低采样的问题 |
 | fix | scripts | 修正 LLM Gateway ModelLab/Arena shadow seed 的文本模型选择，避免把 Seedance 视频模型误计为 chat 证据 |
+| ops | scripts | 扩展 LLM Gateway MAP shadow seed，补齐 VideoToDoc 与 Workflow video-to-text 两条视频 ASR 真实入口 |
+| security | scripts | LLM Gateway shadow 采样窗口打印 seed flags 时隐藏 ASR 视频 URL，避免 signed URL 出现在日志 |
 | test | prd-api | 增加 LLM Gateway 采样窗口脚本守卫，防止恢复采样和密钥传参退化 |
 | docs | doc | 记录 LLM Gateway 直连 ratchet baseline 清零证据，明确剩余发布阻塞转为运行态样本门 |

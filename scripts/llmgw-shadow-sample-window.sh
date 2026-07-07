@@ -95,6 +95,10 @@ compose_up_api() {
   fi
 }
 
+redact_seed_flags() {
+  printf '%s' "$1" | sed -E 's#(--asr-video-url=)[^ ]+#\1<redacted>#g; s#(--asr-video-url[[:space:]]+)[^ ]+#\1<redacted>#g'
+}
+
 wait_api_ready() {
   expected_sample="$1"
   max_attempts="${LLMGW_SHADOW_SAMPLE_WINDOW_READY_ATTEMPTS:-90}"
@@ -152,7 +156,7 @@ echo "  restorePercent: $restore_percent"
 echo "  dryRun: $dry_run"
 echo "  backupDir: $backup_dir"
 echo "  evidenceOut: $evidence_out"
-echo "  seedFlags: $seed_flags"
+echo "  seedFlags: $(redact_seed_flags "$seed_flags")"
 
 if [ "$dry_run" = "1" ] || [ "$dry_run" = "true" ]; then
   echo "LLM Gateway shadow sample window dry-run completed"

@@ -1052,6 +1052,198 @@ def call_transcript_asr(
     return wait_transcript_run(base, token, timeout, run_id, poll_seconds, poll_interval_seconds)
 
 
+def wait_video_to_doc_run(
+    base: str,
+    token: str,
+    timeout: float,
+    run_id: str,
+    poll_seconds: float,
+    poll_interval_seconds: float,
+) -> str:
+    deadline = time.monotonic() + max(1, poll_seconds)
+    last_status = ""
+    last_body = ""
+    while True:
+        result = request_json(
+            "GET",
+            join_url(base, f"/api/video-agent/v2d/runs/{urllib.parse.quote(run_id)}"),
+            headers=bearer(token),
+            timeout=timeout,
+        )
+        data = api_data(result, "video-to-doc get run")
+        status = str((data or {}).get("status") or (data or {}).get("Status") or "")
+        last_status = status
+        last_body = result.body[:1000]
+        if status.lower() in {"analyzing", "completed"}:
+            return run_id
+        if status.lower() in {"failed", "cancelled"}:
+            raise RuntimeError(f"video-to-doc asr run {run_id} ended with {status}: {last_body}")
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"video-to-doc asr run {run_id} timed out at status {last_status}: {last_body}")
+        time.sleep(max(0.5, poll_interval_seconds))
+
+
+def call_video_to_doc_asr(
+    base: str,
+    token: str,
+    timeout: float,
+    tag: str,
+    video_url: str,
+    poll_seconds: float,
+    poll_interval_seconds: float,
+) -> str:
+    result = request_json(
+        "POST",
+        join_url(base, "/api/video-agent/v2d/runs"),
+        {
+            "videoUrl": video_url,
+            "videoTitle": f"LLMGW shadow video-to-doc ASR {tag}",
+            "language": "auto",
+            "systemPrompt": "Summarize the transcript briefly for LLM Gateway shadow evidence.",
+        },
+        headers=bearer(token),
+        timeout=timeout,
+    )
+    data = api_data(result, "video-to-doc create run")
+    run_id = str((data or {}).get("runId") or (data or {}).get("RunId") or "")
+    if not run_id:
+        raise RuntimeError(f"video-to-doc create response missing runId: {json.dumps(data, ensure_ascii=False)[:500]}")
+    return wait_video_to_doc_run(base, token, timeout, run_id, poll_seconds, poll_interval_seconds)
+
+
+def wait_workflow_execution(
+    base: str,
+    token: str,
+    timeout: float,
+    execution_id: str,
+    poll_seconds: float,
+    poll_interval_seconds: float,
+) -> str:
+    deadline = time.monotonic() + max(1, poll_seconds)
+    last_status = ""
+    last_body = ""
+    while True:
+        result = request_json(
+            "GET",
+            join_url(base, f"/api/workflow-agent/executions/{urllib.parse.quote(execution_id)}"),
+            headers=bearer(token),
+            timeout=timeout,
+        )
+        data = api_data(result, "workflow get execution")
+        execution = (data or {}).get("execution") if isinstance(data, dict) else None
+        status = str((execution or {}).get("status") or (execution or {}).get("Status") or "")
+        last_status = status
+        last_body = result.body[:1000]
+        if status in {"completed", "failed", "cancelled", "timed_out"}:
+            if status != "completed":
+                raise RuntimeError(f"video-to-text asr workflow {execution_id} ended with {status}: {last_body}")
+            return execution_id
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"video-to-text asr workflow {execution_id} timed out at status {last_status}: {last_body}")
+        time.sleep(max(0.5, poll_interval_seconds))
+
+
+def call_video_to_text_asr_workflow(
+    base: str,
+    token: str,
+    timeout: float,
+    tag: str,
+    video_url: str,
+    poll_seconds: float,
+    poll_interval_seconds: float,
+) -> str:
+    script_code = (
+        "result = { items: [{ "
+        f"videoUrl: {json.dumps(video_url)}, "
+        f"title: {json.dumps('LLMGW shadow video-to-text ASR ' + tag)} "
+        "}] };"
+    )
+    workflow_body = {
+        "name": f"LLMGW shadow video-to-text ASR {tag}",
+        "description": "Temporary workflow for LLM Gateway video-to-text ASR shadow evidence.",
+        "tags": ["llmgw-shadow"],
+        "variables": [],
+        "triggers": [],
+        "nodes": [
+            {
+                "nodeId": "n-trigger",
+                "name": "Manual trigger",
+                "nodeType": "manual-trigger",
+                "config": {},
+                "inputSlots": [],
+                "outputSlots": [{"slotId": "trigger-output", "name": "trigger", "dataType": "json", "required": True}],
+                "position": {"x": 0, "y": 0},
+            },
+            {
+                "nodeId": "n-video-info",
+                "name": "Build video info",
+                "nodeType": "script-executor",
+                "config": {"language": "javascript", "code": script_code, "timeoutSeconds": "5"},
+                "inputSlots": [{"slotId": "script-in", "name": "input", "dataType": "json", "required": False}],
+                "outputSlots": [{"slotId": "script-out", "name": "videoInfo", "dataType": "json", "required": True}],
+                "position": {"x": 260, "y": 0},
+            },
+            {
+                "nodeId": "n-video-to-text",
+                "name": "Video to text ASR",
+                "nodeType": "video-to-text",
+                "config": {
+                    "extractMode": "asr",
+                    "videoUrlField": "videoUrl",
+                    "itemsField": "items",
+                    "maxItems": "1",
+                    "enableHookExtraction": "false",
+                },
+                "inputSlots": [{"slotId": "vt-in", "name": "videoInfo", "dataType": "json", "required": True}],
+                "outputSlots": [{"slotId": "vt-out", "name": "textContent", "dataType": "json", "required": True}],
+                "position": {"x": 560, "y": 0},
+            },
+        ],
+        "edges": [
+            {
+                "edgeId": "e-trigger-video-info",
+                "sourceNodeId": "n-trigger",
+                "sourceSlotId": "trigger-output",
+                "targetNodeId": "n-video-info",
+                "targetSlotId": "script-in",
+            },
+            {
+                "edgeId": "e-video-info-to-text",
+                "sourceNodeId": "n-video-info",
+                "sourceSlotId": "script-out",
+                "targetNodeId": "n-video-to-text",
+                "targetSlotId": "vt-in",
+            },
+        ],
+    }
+    create_result = request_json(
+        "POST",
+        join_url(base, "/api/workflow-agent/workflows"),
+        workflow_body,
+        headers=bearer(token),
+        timeout=timeout,
+    )
+    create_data = api_data(create_result, "workflow create video-to-text asr")
+    workflow = (create_data or {}).get("workflow") if isinstance(create_data, dict) else None
+    workflow_id = str((workflow or {}).get("id") or (workflow or {}).get("Id") or "")
+    if not workflow_id:
+        raise RuntimeError(f"workflow create response missing workflow id: {json.dumps(create_data, ensure_ascii=False)[:500]}")
+
+    exec_result = request_json(
+        "POST",
+        join_url(base, f"/api/workflow-agent/workflows/{urllib.parse.quote(workflow_id)}/execute"),
+        {"variables": {}},
+        headers=bearer(token),
+        timeout=timeout,
+    )
+    exec_data = api_data(exec_result, "workflow execute video-to-text asr")
+    execution = (exec_data or {}).get("execution") if isinstance(exec_data, dict) else None
+    execution_id = str((execution or {}).get("id") or (execution or {}).get("Id") or "")
+    if not execution_id:
+        raise RuntimeError(f"workflow execute response missing execution id: {json.dumps(exec_data, ensure_ascii=False)[:500]}")
+    return wait_workflow_execution(base, token, timeout, execution_id, poll_seconds, poll_interval_seconds)
+
+
 def create_document_store(base: str, token: str, timeout: float, tag: str) -> str:
     result = request_json(
         "POST",
@@ -1315,9 +1507,12 @@ def main() -> int:
     parser.add_argument("--include-visual-video-direct", action="store_true", help="Also seed one visual-agent direct video run per iteration")
     parser.add_argument("--include-transcript-asr", action="store_true", help="Also seed one transcript-agent ASR raw run per iteration")
     parser.add_argument("--include-document-store-subtitle-asr", action="store_true", help="Also seed one document-store subtitle ASR raw run per iteration")
+    parser.add_argument("--include-video-to-doc-asr", action="store_true", help="Also seed one video-agent v2d ASR raw run per iteration; requires --asr-video-url")
+    parser.add_argument("--include-video-to-text-asr-workflow", action="store_true", help="Also seed one workflow video-to-text ASR raw run per iteration; requires --asr-video-url")
     parser.add_argument("--image-platform-id", default=read_env_secret("LLMGW_SHADOW_IMAGE_PLATFORM_ID"), help="Pinned image platform id; defaults to first enabled image model from /api/mds")
     parser.add_argument("--image-model-id", default=read_env_secret("LLMGW_SHADOW_IMAGE_MODEL_ID"), help="Pinned image model id; defaults to first enabled image model from /api/mds")
     parser.add_argument("--image-ref-shas", default=read_env_secret("LLMGW_SHADOW_IMAGE_REF_SHAS"), help="Comma-separated existing image asset sha256 values for img2img/vision evidence")
+    parser.add_argument("--asr-video-url", default=read_env_secret("LLMGW_SHADOW_ASR_VIDEO_URL"), help="Reachable MP4/video URL for v2d and video-to-text ASR shadow evidence")
     parser.add_argument("--image-size", default="1024x1024", help="Image seed size")
     parser.add_argument("--image-response-format", default="url", help="Image seed response format")
     parser.add_argument("--image-worker-poll-seconds", type=float, default=360, help="How long to wait for ImageGenRunWorker runs")
@@ -1347,6 +1542,10 @@ def main() -> int:
     base = args.base.rstrip("/")
     gw_base = (args.gw_base or join_url(base, "/gw/v1")).rstrip("/")
 
+    if args.include_video_to_doc_asr or args.include_video_to_text_asr_workflow:
+        if not args.asr_video_url.strip():
+            raise SystemExit("--asr-video-url or LLMGW_SHADOW_ASR_VIDEO_URL is required for video ASR evidence")
+
     release_commit = args.release_commit.strip()
     if not release_commit:
         health = fetch_gateway_health(gw_base, args.timeout)
@@ -1369,6 +1568,8 @@ def main() -> int:
         or args.include_video_direct
         or args.include_transcript_asr
         or args.include_document_store_subtitle_asr
+        or args.include_video_to_doc_asr
+        or args.include_video_to_text_asr_workflow
     ):
         user_id = fetch_user_id(base, admin_token, args.timeout)
 
@@ -1466,6 +1667,8 @@ def main() -> int:
         print(f"chatPinnedModel={chat_model['platformId']}/{chat_model['modelId']}")
     if args.include_transcript_asr or args.include_document_store_subtitle_asr:
         print(f"asrSeedWavBytes={len(wav_bytes)}")
+    if args.include_video_to_doc_asr or args.include_video_to_text_asr_workflow:
+        print("asrVideoUrl=provided")
 
     baseline_counts: dict[str, int] = {}
     if args.gw_key:
@@ -1748,6 +1951,42 @@ def main() -> int:
             if subtitle_step.ok:
                 raw_successes += 1
                 print(f"seed[{index + 1}] documentStoreSubtitleRunId={subtitle_step.result}")
+        if args.include_video_to_doc_asr:
+            v2d_step = run_seed_step(
+                evidence,
+                f"{prefix}.video_to_doc_asr",
+                args.continue_on_error,
+                lambda: call_video_to_doc_asr(
+                    base,
+                    token,
+                    args.timeout,
+                    tag,
+                    args.asr_video_url.strip(),
+                    args.asr_run_poll_seconds,
+                    args.asr_run_poll_interval_seconds,
+                ),
+            )
+            if v2d_step.ok:
+                raw_successes += 1
+                print(f"seed[{index + 1}] videoToDocRunId={v2d_step.result}")
+        if args.include_video_to_text_asr_workflow:
+            video_to_text_step = run_seed_step(
+                evidence,
+                f"{prefix}.video_to_text_asr_workflow",
+                args.continue_on_error,
+                lambda: call_video_to_text_asr_workflow(
+                    base,
+                    token,
+                    args.timeout,
+                    tag,
+                    args.asr_video_url.strip(),
+                    args.asr_run_poll_seconds,
+                    args.asr_run_poll_interval_seconds,
+                ),
+            )
+            if video_to_text_step.ok:
+                raw_successes += 1
+                print(f"seed[{index + 1}] videoToTextExecutionId={video_to_text_step.result}")
         print(f"seed[{index + 1}] sessionId={session_id}")
         if index + 1 < args.iterations and args.sleep_seconds > 0:
             time.sleep(args.sleep_seconds)

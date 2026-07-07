@@ -957,6 +957,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("shadow sample restore failed", script);
         Assert.Contains("LLMGW_GATE_KEY=\"$gate_key\" python3", script);
         Assert.Contains("export LLMGW_SHADOW_FULL_SAMPLE_PERCENT=\"$sample_percent\"", script);
+        Assert.Contains("redact_seed_flags", script);
+        Assert.Contains("--asr-video-url", script);
+        Assert.Contains("seedFlags: $(redact_seed_flags \"$seed_flags\")", script);
         Assert.DoesNotContain("--gw-key \"$gate_key\"", script);
         Assert.DoesNotContain("echo \"$gate_key\"", script);
     }
@@ -1081,10 +1084,20 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("prd-agent-web.model-lab.run::chat", plan);
         Assert.Contains("prd-agent.arena.battle::chat", plan);
         Assert.Contains("--include-visual-video-direct", script);
+        Assert.Contains("--include-video-to-doc-asr", script);
+        Assert.Contains("--include-video-to-text-asr-workflow", script);
+        Assert.Contains("--asr-video-url", script);
         Assert.Contains("/api/visual-agent/video-gen/runs", script);
+        Assert.Contains("/api/video-agent/v2d/runs", script);
+        Assert.Contains("/api/workflow-agent/workflows", script);
+        Assert.Contains("video-to-text", script);
         Assert.Contains("wait_visual_video_run", script);
         Assert.Contains("visual-agent.videogen::video-gen:raw", plan);
+        Assert.Contains("video-agent.v2d.transcribe::asr:raw", plan);
+        Assert.Contains("video-agent.video-to-text::asr:raw", plan);
         Assert.Contains("--include-visual-video-direct", plan);
+        Assert.Contains("--include-video-to-doc-asr", plan);
+        Assert.Contains("--include-video-to-text-asr-workflow", plan);
     }
 
     [Fact]
