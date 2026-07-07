@@ -102,6 +102,13 @@
 - 按全量 http raw 发布门做只读预检仍 FAIL，证据文件：`.llmgw-release-evidence/20260707T115229Z_release-gate-full-raw-precheck.json`。失败项集中在每格样本不足、覆盖时长不足 24 小时、以及上述已归因的 vision policy httpFail 仍在 24 小时窗口内。
 - 结论更新：图片 raw 四类核心入口已经各自出现至少 1 条真实 MAP shadow 成功样本；视频、ASR、图片的跨进程 raw 能力不再是“完全未通”。但最近 24 小时/当前 commit 下仍有一条已归因的 vision policy httpFail 历史样本，且每个核心 appCaller 尚未达到 30 条、覆盖窗口尚未满 24 小时。因此仍禁止宣称全量迁移完成，下一步应从 clean-ref 时间点之后重新累计样本，并只允许按 allowlist 小批灰度。
 
+## 最新生产取证（2026-07-07 20:03 CST）
+
+- 已新增并同步生产 `scripts/llmgw-shadow-sample-window.sh`，把短时 100% shadow 采样、配置备份、API 强制重建、MAP seed 执行、退出恢复固化为脚本。脚本默认 dry-run；执行模式必须显式设置 `LLMGW_SHADOW_SAMPLE_WINDOW_SEED_FLAGS`；恢复目标默认 `LLMGW_SHADOW_SAMPLE_WINDOW_RESTORE_PERCENT=1`，避免手工窗口把 100% 采样误留在线上。
+- 已用该脚本在生产跑 1 条 clean-ref `visual-agent.image.vision::generation` 样本。证据文件：`.llmgw-release-evidence/20260707T115734Z_shadow-sample-window.json`；备份目录：`/root/backups/llmgw-before-shadow-sample-window-20260707T195734+0800`。
+- 脚本退出后生产已确认恢复：`LlmGateway__Mode=shadow`、`LlmGateway__HttpAppCallerAllowlist=`、`LlmGateway__ShadowFullSamplePercent=1`。新版脚本已同步生产并 dry-run 通过。
+- 当前最近 2 小时 `visual-agent.image.vision::generation:raw` 有 3 条样本，其中 2 条 clean-ref 成功为 `HttpOk=true`、`AllMatch=true`、`critical=false`、`mismatches=[]`；1 条旧历史参考图样本仍是已归因的上游 policy httpFail。下一步继续从 clean-ref 样本累计，不把旧 policy fail 计入成功发布门。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘

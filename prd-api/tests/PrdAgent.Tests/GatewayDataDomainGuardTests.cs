@@ -939,6 +939,27 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ShadowSampleWindow_RestoresSamplingAndDoesNotLeakGatewayKeyInArgv()
+    {
+        var script = ReadRepoFile("scripts/llmgw-shadow-sample-window.sh");
+
+        Assert.Contains("LLMGW_SHADOW_SAMPLE_WINDOW_DRY_RUN:-1", script);
+        Assert.Contains("LLMGW_SHADOW_SAMPLE_WINDOW_RESTORE_PERCENT:-1", script);
+        Assert.Contains("LLMGW_SHADOW_SAMPLE_WINDOW_COMPOSE_TIMEOUT_SECONDS:-180", script);
+        Assert.Contains("执行模式必须设置 LLMGW_SHADOW_SAMPLE_WINDOW_SEED_FLAGS", script);
+        Assert.Contains("up -d --force-recreate \"$api_service\"", script);
+        Assert.Contains("trap restore_sampling EXIT INT TERM", script);
+        Assert.Contains("trap - EXIT INT TERM", script);
+        Assert.Contains("set_env_value LLMGW_SHADOW_FULL_SAMPLE_PERCENT \"$restore_percent\"", script);
+        Assert.Contains("wait_api_ready \"$restore_percent\"", script);
+        Assert.Contains("restore_failed=0", script);
+        Assert.Contains("shadow sample restore failed", script);
+        Assert.Contains("LLMGW_GATE_KEY=\"$gate_key\" python3", script);
+        Assert.DoesNotContain("--gw-key \"$gate_key\"", script);
+        Assert.DoesNotContain("echo \"$gate_key\"", script);
+    }
+
+    [Fact]
     public void ProdPreflightWorkflow_RunsStartAndCompletionPreflightWithoutLeakingKeys()
     {
         var workflow = ReadRepoFile(".github/workflows/llmgw-prod-preflight.yml");

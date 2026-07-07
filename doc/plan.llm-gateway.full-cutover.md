@@ -157,6 +157,9 @@ python3 scripts/llmgw-map-shadow-seed.py --iterations 1
 `visual-agent.image.img2img::generation`、`visual-agent.image.vision::generation` 三条后台生图入口都不是只靠直连同步生成路径覆盖。
 生产证据期优先使用本轮 seed 自己生成的干净图片 sha 作为 vision 参考图；历史用户素材可能触发上游内容策略差异，
 这类样本必须归因记录，不能计入 httpFail=0 的发布门。
+生产短时采样窗口统一用 `scripts/llmgw-shadow-sample-window.sh` 执行；该脚本默认 dry-run，执行时必须显式提供
+`LLMGW_SHADOW_SAMPLE_WINDOW_SEED_FLAGS`，并在退出时把 `LLMGW_SHADOW_FULL_SAMPLE_PERCENT` 强制恢复到
+`LLMGW_SHADOW_SAMPLE_WINDOW_RESTORE_PERCENT`（默认 1）后重建 API，避免手工操作把 100% 采样误留在线上。
 需要补视频或 ASR/raw 证据时必须显式加 `--include-video-direct` / `--include-visual-video-direct` /
 `--include-transcript-asr` / `--include-document-store-subtitle-asr`。视频路径通过 `/api/video-agent/videogen-direct`
 记录 `video-agent.videogen::video-gen:raw`；视觉视频路径通过 `/api/visual-agent/video-gen/runs` 创建 direct run
