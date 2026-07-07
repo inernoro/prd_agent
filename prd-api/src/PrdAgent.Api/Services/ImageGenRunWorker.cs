@@ -314,6 +314,7 @@ public class ImageGenRunWorker : BackgroundService
                         // 已加载的图片引用列表（用于 Vision API 多图场景）
                         var loadedImageRefs = new List<Core.Models.MultiImage.ImageRefData>();
                         var isMultiImageVisionMode = false;
+                        var expectedReferenceCount = 0;
 
                         // ========== 兼容层：统一 InitImageAssetSha256 → ImageRefs ==========
                         // 如果 ImageRefs 为空但 InitImageAssetSha256 存在，自动转换为 ImageRefs
@@ -339,6 +340,8 @@ public class ImageGenRunWorker : BackgroundService
 
                             if (parseResult.IsValid && parseResult.ResolvedRefs.Count > 0)
                             {
+                                expectedReferenceCount = parseResult.ResolvedRefs.Count;
+
                                 // 构建增强 prompt（包含图片对照表）
                                 finalPrompt = await multiImageService.BuildFinalPromptAsync(
                                     curPrompt,
@@ -416,6 +419,7 @@ public class ImageGenRunWorker : BackgroundService
                             // 这种场景下不做 prompt 增强（因为没有 @imgN 可以替换）
                             if (parseResult.ResolvedRefs.Count == 0 && run.ImageRefs.Count > 0)
                             {
+                                expectedReferenceCount = run.ImageRefs.Count;
                                 _logger.LogInformation("[无@imgN场景] prompt 无 @imgN 引用，但有 {Count} 张图片，直接加载使用", run.ImageRefs.Count);
 
                                 foreach (var imgRef in run.ImageRefs)
@@ -501,6 +505,46 @@ public class ImageGenRunWorker : BackgroundService
                             return;
                         }
 
+                        if (expectedReferenceCount > 0 && loadedImageRefs.Count < expectedReferenceCount)
+                        {
+                            var loadedRefs = loadedImageRefs.Count == 0
+                                ? "(none)"
+                                : string.Join(", ", loadedImageRefs.Select(r => $"@img{r.RefId}:{r.Sha256}"));
+                            var missingMsg = $"参考图加载不完整：期望 {expectedReferenceCount} 张，实际 {loadedImageRefs.Count} 张。请重新选择图片后再试";
+                            _logger.LogWarning(
+                                "[ImageGenRunWorker] 参考图加载不完整。RunId={RunId}, Expected={Expected}, Loaded={Loaded}, LoadedRefs={LoadedRefs}",
+                                run.Id,
+                                expectedReferenceCount,
+                                loadedImageRefs.Count,
+                                loadedRefs);
+
+                            await UpsertRunItemAsync(run, curItemIndex, imageIndex, curPrompt, reqSize, ImageGenRunItemStatus.Error, null, null, null, "IMAGE_REF_UNAVAILABLE", missingMsg, ct);
+                            await _db.ImageGenRuns.UpdateOneAsync(x => x.Id == run.Id, Builders<ImageGenRun>.Update.Inc(x => x.Failed, 1), cancellationToken: ct);
+
+                            var refShas = run.ImageRefs?
+                                .Select(r => (r.AssetSha256 ?? string.Empty).Trim().ToLowerInvariant())
+                                .Where(s => !string.IsNullOrWhiteSpace(s))
+                                .ToList();
+                            var errMsgContent = $"[GEN_ERROR]{JsonSerializer.Serialize(new { msg = missingMsg, prompt = curDisplayPrompt ?? StripImageGenPrefix(curPrompt), runId = run.Id, modelPool = run.ModelGroupName, genType = "image-ref-unavailable", imageRefShas = refShas }, JsonOptions)}";
+                            var errMsgId = await SaveWorkspaceMessageAsync(run.WorkspaceId ?? string.Empty, run.OwnerAdminId, "Assistant", errMsgContent, ct);
+
+                            await AppendEventAsync(run, "image", new
+                            {
+                                type = "imageError",
+                                runId = run.Id,
+                                itemIndex = curItemIndex,
+                                imageIndex,
+                                prompt = curPrompt,
+                                requestedSize = reqSize,
+                                modelId = run.ModelId,
+                                platformId = run.PlatformId,
+                                errorCode = "IMAGE_REF_UNAVAILABLE",
+                                errorMessage = missingMsg,
+                                savedMessageId = errMsgId
+                            }, ct);
+                            return;
+                        }
+
                         _logger.LogInformation("[ImageGenRunWorker Debug] Run {RunId}: AppKey={AppKey}, UserId={UserId}, AppCallerCode={AppCallerCode}",
                             run.Id, run.AppKey ?? "(null)", run.OwnerAdminId, run.AppCallerCode ?? "(null)");
 
@@ -518,6 +562,14 @@ public class ImageGenRunWorker : BackgroundService
                             return;
                         }
                         var appCallerCode = resolvedAppCallerCode!;
+                        if (!string.Equals(run.AppCallerCode, appCallerCode, StringComparison.Ordinal))
+                        {
+                            run.AppCallerCode = appCallerCode;
+                            await _db.ImageGenRuns.UpdateOneAsync(
+                                x => x.Id == run.Id,
+                                Builders<ImageGenRun>.Update.Set(x => x.AppCallerCode, appCallerCode),
+                                cancellationToken: ct);
+                        }
 
                         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
                             RequestId: $"{run.Id}-{curItemIndex}-{imageIndex}",

@@ -1237,6 +1237,20 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("拒绝降级 legacy 直连", resolver);
     }
 
+    [Fact]
+    public void ImageGenRunWorker_DoesNotSilentlyDowngradeReferenceImageRunsToText2Img()
+    {
+        var worker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs");
+
+        Assert.Contains("expectedReferenceCount", worker);
+        Assert.Contains("IMAGE_REF_UNAVAILABLE", worker);
+        Assert.Contains("参考图加载不完整", worker);
+        Assert.Contains("loadedImageRefs.Count < expectedReferenceCount", worker);
+        Assert.Contains("Builders<ImageGenRun>.Update.Set(x => x.AppCallerCode, appCallerCode)", worker);
+        Assert.Contains("AppCallerRegistry.VisualAgent.Image.Img2Img", worker);
+        Assert.Contains("AppCallerRegistry.VisualAgent.Image.VisionGen", worker);
+    }
+
     private static string ReadRepoFile(string relativePath)
     {
         var root = LocateRepoRoot();
