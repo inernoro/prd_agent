@@ -963,9 +963,16 @@ def _report_flavor(a, body):
             return "daily"
     except Exception:
         pass
+    # 宽匹配的扫描面 = target + 正文标题/范围声明行（_scope_declaration_text），
+    # 覆盖「--target 写得泛、每日属性在正文标题里」的情况（Codex P2 追加）；
+    # 不扫正文散句，避免"对比昨日巡检报告"之类的顺带提及误触发。
+    try:
+        scope_text = _scope_declaration_text(target, body or "")
+    except Exception:
+        scope_text = target
     if re.search(
         r"(每日|昨日|昨天).{0,8}(验收|复验|测试|报告|巡检)|巡检特刊|\bdaily[-_ ]?(visual|patrol)\b",
-        target, re.I,
+        scope_text, re.I,
     ):
         return "daily"
     return "acceptance"

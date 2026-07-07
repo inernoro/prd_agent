@@ -3,4 +3,4 @@
 | rule | .claude | 新增 report-design-system.md：米多刊系共享纸墨基因 token + 一刊一色一版式设定 + 验收模板兼容红线 |
 | polish | skill | 周刊模板防漏数据五闸：附录 PR 全量硬性化（44 条样稿 + 分类列 + 归属口径行）、成分占比%、优先级「动作——依据」句式、baseline 多行口径/漂移样例、SKILL.md 纪律 8 成稿对账清单 |
 | chore | prd-api | 重跑 bundle-official-skills 重新生成 official-skills.generated.json，官方技能目录同步验收报告新皮肤（Codex review P2） |
-| fix | skill | _report_flavor 加宽匹配兜底：「每日视觉验收报告」「每日巡检」等中间插词目标正确归巡检特刊皮肤，不再落回通用档案（Codex review P2 第二条） |
+| fix | skill | _report_flavor 加宽匹配兜底：「每日视觉验收报告」「每日巡检」等中间插词目标正确归巡检特刊皮肤，扫描面含正文标题/范围声明行（_scope_declaration_text），正文散句提及不误触发（Codex review P2 两条追加） |
