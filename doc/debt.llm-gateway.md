@@ -111,6 +111,7 @@
 - 当前最近 2 小时 `visual-agent.image.vision::generation:raw` 有 3 条样本，其中 2 条 clean-ref 成功为 `HttpOk=true`、`AllMatch=true`、`critical=false`、`mismatches=[]`；1 条旧历史参考图样本仍是已归因的上游 policy httpFail。下一步继续从 clean-ref 样本累计，不把旧 policy fail 计入成功发布门。
 - 代码侧直连 ratchet 已达到 baseline 空集合：`GatewayDirectClientRatchetTests` 18/18 PASS，覆盖 `new ClaudeClient/OpenAIClient`、手写上游 HTTP、`GatewayTransports.Direct` 标记、ASR WebSocket 直连、API 层直接依赖 `OpenAIImageClient` / `OpenRouterVideoClient`。这证明当前源码层面没有已知 MAP 业务路径绕过 `ILlmGateway`；剩余发布阻塞转为运行态 shadow 样本量、24 小时窗口与灰度观察。
 - 只读 release gate 复查显示，watch/gate 必须使用真实注册表 code：`prd-agent-desktop.chat.sendmessage::chat`、`open-platform-agent.proxy::chat`、`prd-agent-web.model-lab.run::chat`、`prd-agent.arena.battle::chat`，不能使用 `desktop-chat.create`、`open-platform.chat-completions`、`model-lab.run`、`arena.run` 这类简称。已扩展 `scripts/llmgw-map-shadow-seed.py`，新增 `--include-desktop-chat-run`、`--include-model-lab-run`、`--include-arena-run`，并修复 open-platform 成功后 expectedGrowth 未计入 send 的证据统计问题。
+- 生产小批文本 seed 验证暴露采样窗口恢复 bug：脚本在采样阶段 source `.env` 后，当前 shell 仍保留 `LLMGW_SHADOW_FULL_SAMPLE_PERCENT=100`，导致 restore 阶段 docker compose 插值优先读旧 shell 环境而不是 `.env=1`。已立即用 `scripts/llmgw-restore-shadow-safe.sh` 将生产恢复为 `Mode=shadow`、allowlist 空、`ShadowFullSamplePercent=1`，并修复 `scripts/llmgw-shadow-sample-window.sh`，在提采样和恢复采样时同步 export 当前目标值，防止复发。该次 seed 自身成功：desktop chat、open-platform、ModelLab、Arena 均完成，证据文件 `.llmgw-release-evidence/20260707T122651Z_text-core-shadow-seed-window.json`。
 
 ## 已还的债务（归档）
 

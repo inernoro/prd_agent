@@ -951,10 +951,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("trap restore_sampling EXIT INT TERM", script);
         Assert.Contains("trap - EXIT INT TERM", script);
         Assert.Contains("set_env_value LLMGW_SHADOW_FULL_SAMPLE_PERCENT \"$restore_percent\"", script);
+        Assert.Contains("export LLMGW_SHADOW_FULL_SAMPLE_PERCENT=\"$restore_percent\"", script);
         Assert.Contains("wait_api_ready \"$restore_percent\"", script);
         Assert.Contains("restore_failed=0", script);
         Assert.Contains("shadow sample restore failed", script);
         Assert.Contains("LLMGW_GATE_KEY=\"$gate_key\" python3", script);
+        Assert.Contains("export LLMGW_SHADOW_FULL_SAMPLE_PERCENT=\"$sample_percent\"", script);
         Assert.DoesNotContain("--gw-key \"$gate_key\"", script);
         Assert.DoesNotContain("echo \"$gate_key\"", script);
     }

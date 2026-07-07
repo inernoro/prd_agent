@@ -127,6 +127,7 @@ restore_sampling() {
   set +e
   restore_failed=0
   set_env_value LLMGW_SHADOW_FULL_SAMPLE_PERCENT "$restore_percent"
+  export LLMGW_SHADOW_FULL_SAMPLE_PERCENT="$restore_percent"
   compose_up_api >/tmp/llmgw-shadow-sample-window-restore.log 2>&1 || restore_failed=1
   wait_api_ready "$restore_percent" >/tmp/llmgw-shadow-sample-window-restore-wait.log 2>&1 || restore_failed=1
   restored="$(docker exec "$api_container" printenv LlmGateway__ShadowFullSamplePercent 2>/dev/null || true)"
@@ -169,6 +170,7 @@ fi
 mkdir -p "$(dirname "$evidence_out")"
 
 set_env_value LLMGW_SHADOW_FULL_SAMPLE_PERCENT "$sample_percent"
+export LLMGW_SHADOW_FULL_SAMPLE_PERCENT="$sample_percent"
 compose_up_api
 wait_api_ready "$sample_percent"
 
