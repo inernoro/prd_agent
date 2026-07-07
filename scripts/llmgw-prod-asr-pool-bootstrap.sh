@@ -63,6 +63,8 @@ echo "  mongoService: $mongo_service"
 echo "  database: $mongo_db"
 echo "  dryRun: $dry_run"
 echo "  mode: $bootstrap_mode"
+echo "  bindCallers: ${LLMGW_ASR_BOOTSTRAP_BIND_CALLERS:-1}"
+echo "  defaultForType: ${LLMGW_ASR_BOOTSTRAP_DEFAULT_FOR_TYPE:-auto}"
 echo "  backupDir: $backup_dir"
 
 if [ "$dry_run" = "1" ] || [ "$dry_run" = "true" ]; then
@@ -86,6 +88,8 @@ $COMPOSE -f "$compose_file" exec -T \
   -e LLMGW_ASR_BOOTSTRAP_MODEL_ID="${LLMGW_ASR_BOOTSTRAP_MODEL_ID:-$default_model_id}" \
   -e LLMGW_ASR_BOOTSTRAP_TRANSFORMER="${LLMGW_ASR_BOOTSTRAP_TRANSFORMER:-$default_transformer}" \
   -e LLMGW_ASR_BOOTSTRAP_DESCRIPTION="${LLMGW_ASR_BOOTSTRAP_DESCRIPTION:-$default_description}" \
+  -e LLMGW_ASR_BOOTSTRAP_BIND_CALLERS="${LLMGW_ASR_BOOTSTRAP_BIND_CALLERS:-1}" \
+  -e LLMGW_ASR_BOOTSTRAP_DEFAULT_FOR_TYPE="${LLMGW_ASR_BOOTSTRAP_DEFAULT_FOR_TYPE:-}" \
   "$mongo_service" mongosh "$mongo_db" --quiet < "$script_dir/llmgw-prod-asr-pool-bootstrap.js"
 
 if [ "$dry_run" = "1" ] || [ "$dry_run" = "true" ]; then

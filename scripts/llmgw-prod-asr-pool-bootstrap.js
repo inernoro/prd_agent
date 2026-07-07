@@ -10,6 +10,10 @@ const poolCode = process.env.LLMGW_ASR_BOOTSTRAP_POOL_CODE || "asr-doubao-bigmod
 const modelId = process.env.LLMGW_ASR_BOOTSTRAP_MODEL_ID || "doubao-asr-bigmodel";
 const transformerType = process.env.LLMGW_ASR_BOOTSTRAP_TRANSFORMER || "doubao-asr";
 const description = process.env.LLMGW_ASR_BOOTSTRAP_DESCRIPTION || "LLM Gateway ASR 发布门默认池：豆包 ASR exchange";
+const bindCallersRaw = (process.env.LLMGW_ASR_BOOTSTRAP_BIND_CALLERS || "1").toLowerCase();
+const bindCallers = !(bindCallersRaw === "0" || bindCallersRaw === "false");
+const defaultForTypeRaw = (process.env.LLMGW_ASR_BOOTSTRAP_DEFAULT_FOR_TYPE || (bindCallers ? "1" : "0")).toLowerCase();
+const defaultForType = !(defaultForTypeRaw === "0" || defaultForTypeRaw === "false");
 
 const appCallers = [
   "document-store.subtitle::asr",
@@ -59,7 +63,7 @@ const poolDoc = {
   Code: poolCode,
   Priority: 10,
   ModelType: "asr",
-  IsDefaultForType: true,
+  IsDefaultForType: defaultForType,
   Models: [
     {
       ModelId: modelId,
@@ -89,6 +93,8 @@ const planned = {
   modelId,
   exchangeId: exchange._id,
   exchangeName: exchange.Name,
+  bindCallers,
+  defaultForType,
   appCallers,
 };
 printjson(planned);
@@ -107,39 +113,43 @@ db.model_groups.updateOne(
   { upsert: true },
 );
 
-for (const code of appCallers) {
-  const caller = db.llm_app_callers.findOne({ AppCode: code });
-  const requirements = caller.ModelRequirements || [];
-  let found = false;
-  const nextRequirements = requirements.map((req) => {
-    if (req.ModelType !== "asr") return req;
-    found = true;
-    return {
-      ...req,
-      ModelGroupIds: uniq([poolId, ...(req.ModelGroupIds || [])]),
-      ModelGroupId: poolId,
-      IsRequired: req.IsRequired !== false,
-    };
-  });
-  if (!found) {
-    nextRequirements.push({
-      ModelType: "asr",
-      Purpose: `用于 ${caller.DisplayName || code}`,
-      ModelGroupIds: [poolId],
-      ModelGroupId: poolId,
-      IsRequired: true,
+if (bindCallers) {
+  for (const code of appCallers) {
+    const caller = db.llm_app_callers.findOne({ AppCode: code });
+    const requirements = caller.ModelRequirements || [];
+    let found = false;
+    const nextRequirements = requirements.map((req) => {
+      if (req.ModelType !== "asr") return req;
+      found = true;
+      return {
+        ...req,
+        ModelGroupIds: uniq([poolId, ...(req.ModelGroupIds || [])]),
+        ModelGroupId: poolId,
+        IsRequired: req.IsRequired !== false,
+      };
     });
-  }
+    if (!found) {
+      nextRequirements.push({
+        ModelType: "asr",
+        Purpose: `用于 ${caller.DisplayName || code}`,
+        ModelGroupIds: [poolId],
+        ModelGroupId: poolId,
+        IsRequired: true,
+      });
+    }
 
-  db.llm_app_callers.updateOne(
-    { _id: caller._id },
-    {
-      $set: {
-        ModelRequirements: nextRequirements,
-        UpdatedAt: now,
+    db.llm_app_callers.updateOne(
+      { _id: caller._id },
+      {
+        $set: {
+          ModelRequirements: nextRequirements,
+          UpdatedAt: now,
+        },
       },
-    },
-  );
+    );
+  }
+} else {
+  print("LLM Gateway ASR pool bootstrap: caller binding skipped");
 }
 
 print("LLM Gateway ASR pool bootstrap completed");
