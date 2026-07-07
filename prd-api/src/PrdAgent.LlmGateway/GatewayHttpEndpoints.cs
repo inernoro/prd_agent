@@ -275,6 +275,7 @@ public static class GatewayHttpEndpoints
             // parameters"），进而拖垮整张路由表（含 healthz / 全部 /gw/v1/*）。见 GatewayKeyGateContractTests。
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services,
             int? limit,
+            int? failureLimit,
             string? appCallerCode,
             string? kind,
             string? releaseCommit,
@@ -313,11 +314,20 @@ public static class GatewayHttpEndpoints
                 ? Math.Max(0, (last.Value - first.Value).TotalHours)
                 : 0;
             var recent = await col.Find(filter).SortByDescending(x => x.ComparedAt).Limit(n).ToListAsync();
+            var failureN = Math.Clamp(failureLimit ?? 10, 0, 100);
+            var failureRecent = failureN == 0
+                ? new List<LlmShadowComparison>()
+                : await col.Find(filter & (Builders<LlmShadowComparison>.Filter.Eq(x => x.HttpOk, false)
+                                           | Builders<LlmShadowComparison>.Filter.Eq(x => x.HasCritical, true)))
+                    .SortByDescending(x => x.ComparedAt)
+                    .Limit(failureN)
+                    .ToListAsync();
 
             return Results.Json(new
             {
                 summary = new { total, allMatch, critical, httpFail, sinceHours, since, releaseCommit = normalizedReleaseCommit, firstComparedAt = first, lastComparedAt = last, coverageHours },
                 recent,
+                failureRecent,
             }, jsonOpts);
         });
     }

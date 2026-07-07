@@ -851,6 +851,7 @@ public class GatewayDataDomainGuardTests
     public void ShadowCoverageReport_RendersAppCallerKindMatrixWithoutLeakingKey()
     {
         var script = ReadRepoFile("scripts/llmgw-shadow-coverage-report.py");
+        var endpoint = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
 
         Assert.Contains("LLM Gateway shadow coverage", script);
         Assert.Contains("/shadow-comparisons", script);
@@ -869,6 +870,14 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("releaseCommit", script);
         Assert.Contains("minCoverageHours", script);
         Assert.Contains("覆盖时长不足", script);
+        Assert.Contains("--failure-sample-limit", script);
+        Assert.Contains("LLMGW_SHADOW_COVERAGE_FAILURE_SAMPLE_LIMIT", script);
+        Assert.Contains("failureSamples", script);
+        Assert.Contains("Failure Samples", script);
+        Assert.Contains("httpError", script);
+        Assert.Contains("failureLimit", endpoint);
+        Assert.Contains("failureRecent", endpoint);
+        Assert.Contains("Filter.Eq(x => x.HttpOk, false)", endpoint);
         Assert.DoesNotContain("print(key", script);
         Assert.DoesNotContain("GW_KEY=\"", script);
     }

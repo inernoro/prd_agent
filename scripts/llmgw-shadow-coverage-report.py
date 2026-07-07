@@ -70,8 +70,11 @@ def _normalize_commit(value: str | None) -> str:
     return raw.lower()
 
 
-def _summary_from_payload(raw: str) -> dict:
-    payload = json.loads(raw)
+def _payload_from_raw(raw: str) -> dict:
+    return json.loads(raw)
+
+
+def _summary_from_payload(payload: dict) -> dict:
     summary = payload.get("summary") or payload.get("Summary") or {}
     return {
         "total": int(summary.get("total") or summary.get("Total") or 0),
@@ -84,6 +87,39 @@ def _summary_from_payload(raw: str) -> dict:
     }
 
 
+def _failure_samples_from_payload(payload: dict) -> list[dict]:
+    samples = payload.get("failureRecent") or payload.get("FailureRecent") or []
+    if not isinstance(samples, list):
+        return []
+
+    out: list[dict] = []
+    for item in samples:
+        if not isinstance(item, dict):
+            continue
+        inproc = item.get("inproc") or item.get("Inproc") or {}
+        http = item.get("http") or item.get("Http") or {}
+        if not isinstance(inproc, dict):
+            inproc = {}
+        if not isinstance(http, dict):
+            http = {}
+        out.append({
+            "id": item.get("id") or item.get("_id") or item.get("Id"),
+            "comparedAt": item.get("comparedAt") or item.get("ComparedAt"),
+            "releaseCommit": item.get("releaseCommit") or item.get("ReleaseCommit"),
+            "appCallerCode": item.get("appCallerCode") or item.get("AppCallerCode"),
+            "kind": item.get("kind") or item.get("Kind"),
+            "modelType": item.get("modelType") or item.get("ModelType"),
+            "httpOk": item.get("httpOk") if "httpOk" in item else item.get("HttpOk"),
+            "hasCritical": item.get("hasCritical") if "hasCritical" in item else item.get("HasCritical"),
+            "httpError": item.get("httpError") or item.get("HttpError"),
+            "inprocModel": inproc.get("actualModel") or inproc.get("ActualModel"),
+            "httpModel": http.get("actualModel") or http.get("ActualModel"),
+            "inprocGroup": inproc.get("modelGroupId") or inproc.get("ModelGroupId"),
+            "httpGroup": http.get("modelGroupId") or http.get("ModelGroupId"),
+        })
+    return out
+
+
 def _cell(
     base: str,
     key: str,
@@ -93,6 +129,7 @@ def _cell(
     since_hours: float,
     min_coverage_hours: float,
     release_commit: str,
+    failure_sample_limit: int,
 ) -> dict:
     query: dict[str, str] = {}
     label = "global"
@@ -104,6 +141,8 @@ def _cell(
         label = f"{label}/{kind}"
     if since_hours > 0:
         query["sinceHours"] = f"{since_hours:g}"
+    if failure_sample_limit >= 0:
+        query["failureLimit"] = str(failure_sample_limit)
     normalized_release_commit = _normalize_commit(release_commit)
     if normalized_release_commit:
         query["releaseCommit"] = normalized_release_commit
@@ -127,13 +166,16 @@ def _cell(
         "coverageHours": 0.0,
         "ok": False,
         "failures": [],
+        "failureSamples": [],
     }
     if code != 200:
         result["failures"].append(f"HTTP {code}: {raw[:200]}")
         return result
 
     try:
-        result.update(_summary_from_payload(raw))
+        payload = _payload_from_raw(raw)
+        result.update(_summary_from_payload(payload))
+        result["failureSamples"] = _failure_samples_from_payload(payload)
     except Exception as exc:
         result["failures"].append(f"invalid JSON: {exc}")
         return result
@@ -196,6 +238,31 @@ def _write_markdown(path: str, report: dict) -> None:
                 f"{status} | {cell(failures)} |\n"
             )
 
+        samples: list[tuple[str, dict]] = []
+        seen: set[str] = set()
+        for item in report["cells"]:
+            for sample in item.get("failureSamples") or []:
+                key = str(sample.get("id") or json.dumps(sample, sort_keys=True, ensure_ascii=False))
+                if key in seen:
+                    continue
+                seen.add(key)
+                samples.append((str(item.get("label") or ""), sample))
+
+        if samples:
+            fh.write("\n## Failure Samples\n\n")
+            fh.write("| cell | comparedAt | appCaller | kind | model | httpError |\n")
+            fh.write("|---|---|---|---|---|---|\n")
+            for label, sample in samples:
+                model = sample.get("httpModel") or sample.get("inprocModel") or ""
+                error = str(sample.get("httpError") or "")
+                if len(error) > 180:
+                    error = error[:177] + "..."
+                fh.write(
+                    f"| {cell(label)} | {cell(sample.get('comparedAt') or '')} | "
+                    f"{cell(sample.get('appCallerCode') or '')} | {cell(sample.get('kind') or '')} | "
+                    f"{cell(model)} | {cell(error)} |\n"
+                )
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="LLM Gateway shadow coverage matrix report")
@@ -208,6 +275,8 @@ def main() -> int:
     parser.add_argument("--min-coverage-hours", type=float, default=float(os.environ.get("LLMGW_GATE_MIN_COVERAGE_HOURS", "0")))
     parser.add_argument("--release-commit", default=os.environ.get("LLMGW_SHADOW_COVERAGE_RELEASE_COMMIT", os.environ.get("GIT_COMMIT", "")),
                         help="可选：只统计指定 MAP/API commit 产生的 shadow 样本")
+    parser.add_argument("--failure-sample-limit", type=int, default=int(os.environ.get("LLMGW_SHADOW_COVERAGE_FAILURE_SAMPLE_LIMIT", "10")),
+                        help="每个 cell 附带的最近失败样本数；设为 0 可关闭")
     parser.add_argument("--json-out", default=os.environ.get("LLMGW_SHADOW_COVERAGE_JSON_OUT", ""))
     parser.add_argument("--report-md", default=os.environ.get("LLMGW_SHADOW_COVERAGE_REPORT_MD", ""))
     parser.add_argument("--print-json", action="store_true")
@@ -228,6 +297,7 @@ def main() -> int:
         "minCoverageHours": max(0, args.min_coverage_hours),
         "appCallers": app_callers,
         "kinds": kinds,
+        "failureSampleLimit": max(0, args.failure_sample_limit),
         "cells": [],
         "failures": [],
     }
@@ -239,12 +309,13 @@ def main() -> int:
 
     if not report["failures"]:
         min_coverage_hours = max(0, args.min_coverage_hours)
-        report["cells"].append(_cell(base, key, None, None, args.min_per_cell, max(0, args.since_hours), min_coverage_hours, args.release_commit))
+        failure_sample_limit = report["failureSampleLimit"]
+        report["cells"].append(_cell(base, key, None, None, args.min_per_cell, max(0, args.since_hours), min_coverage_hours, args.release_commit, failure_sample_limit))
         for kind in kinds:
-            report["cells"].append(_cell(base, key, None, kind, args.min_per_cell, max(0, args.since_hours), min_coverage_hours, args.release_commit))
+            report["cells"].append(_cell(base, key, None, kind, args.min_per_cell, max(0, args.since_hours), min_coverage_hours, args.release_commit, failure_sample_limit))
         for app in app_callers:
             for kind in kinds:
-                report["cells"].append(_cell(base, key, app, kind, args.min_per_cell, max(0, args.since_hours), min_coverage_hours, args.release_commit))
+                report["cells"].append(_cell(base, key, app, kind, args.min_per_cell, max(0, args.since_hours), min_coverage_hours, args.release_commit, failure_sample_limit))
         for item in report["cells"]:
             for failure in item.get("failures") or []:
                 report["failures"].append(f"{item['label']}: {failure}")
