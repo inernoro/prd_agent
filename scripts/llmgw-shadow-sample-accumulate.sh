@@ -62,12 +62,16 @@ if [ "$dry_run" != "1" ] && [ "$dry_run" != "true" ] && [ -z "$(printf '%s' "$se
   exit 1
 fi
 
+redact_seed_flags() {
+  printf '%s' "$1" | sed -E 's/(--gw-key|--admin-token|--root-password|--seed-password|--asr-video-url)([= ]+)[^ ]+/\1\2<redacted>/g'
+}
+
 echo "LLM Gateway shadow sample accumulator"
 echo "  dryRun: $dry_run"
 echo "  batches: $batches"
 echo "  sleepSeconds: $sleep_seconds"
 echo "  runDir: $run_dir"
-echo "  seedFlags: $seed_flags"
+echo "  seedFlags: $(redact_seed_flags "$seed_flags")"
 echo "  runCoverage: $run_coverage"
 echo "  coverageKinds: $coverage_kinds"
 echo "  coverageApps: $coverage_apps"

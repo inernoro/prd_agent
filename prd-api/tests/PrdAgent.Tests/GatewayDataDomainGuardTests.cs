@@ -991,11 +991,14 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_MIN_COVERAGE_HOURS:-24", script);
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_REQUIRED_KINDS", script);
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_REQUIRED_APP_KINDS", script);
+        Assert.Contains("redact_seed_flags", script);
+        Assert.Contains("seedFlags: $(redact_seed_flags \"$seed_flags\")", script);
         Assert.Contains("--require-kind $trimmed", script);
         Assert.Contains("--require-app-kind $trimmed", script);
         Assert.Contains("GW_KEY=\"$gate_key\" python3", script);
         Assert.DoesNotContain("--key \"$gate_key\"", script);
         Assert.DoesNotContain("--gw-key \"$gate_key\"", script);
+        Assert.DoesNotContain("seedFlags: $seed_flags", script);
         Assert.DoesNotContain("echo \"$gate_key\"", script);
     }
 
