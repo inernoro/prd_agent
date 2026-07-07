@@ -1325,6 +1325,8 @@ def main() -> int:
             "ADMIN"
             if (
                 args.include_tutorial_email_send
+                or args.include_model_lab_run
+                or args.include_arena_run
                 or args.include_image_raw
                 or args.include_image_worker_text2img
                 or args.include_image_worker_img2img
