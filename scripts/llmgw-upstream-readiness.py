@@ -30,6 +30,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 DEFAULT_REQUIREMENTS = [
     "video-agent.videogen::video-gen=video-gen",
+    "visual-agent.videogen::video-gen=video-gen",
     "document-store.subtitle::asr=asr",
     "transcript-agent.transcribe::asr=asr",
     "video-agent.v2d.transcribe::asr=asr",

@@ -157,7 +157,8 @@ python3 scripts/llmgw-map-shadow-seed.py --iterations 1
 `visual-agent.image.img2img::generation`、`visual-agent.image.vision::generation` 三条后台生图入口都不是只靠直连同步生成路径覆盖。
 需要补视频或 ASR/raw 证据时必须显式加 `--include-video-direct` / `--include-transcript-asr` /
 `--include-document-store-subtitle-asr`。视频路径通过 `/api/video-agent/videogen-direct` 只提交真实视频任务并记录
-`video-agent.videogen::video-gen:raw`；ASR 路径会生成短 WAV 文件，分别通过转写工作区上传和文档库字幕任务等待后台 run
+`video-agent.videogen::video-gen:raw`；视觉视频入口 `visual-agent.videogen::video-gen:raw` 也必须纳入 release gate，
+不能只用 video-agent 直出样本替代。ASR 路径会生成短 WAV 文件，分别通过转写工作区上传和文档库字幕任务等待后台 run
 终态，用于证明 `transcript-agent.transcribe::asr:raw` 与 `document-store.subtitle::asr:raw` 不是只靠 resolve 样本。
 视频、ASR/raw 证据必须通过对应真实业务入口产生，不能用文本样本替代 raw gate。脚本执行后会读取
 `/gw/v1/shadow-comparisons` 输出 global/send/stream/raw 覆盖摘要，便于证据期连续采样。
@@ -349,7 +350,7 @@ resolve-only 或单一路径证据放行全量切换；raw 样本由 `ShadowFull
 全量 `LLMGW_MODE=http` 时如果未显式设置 `LLMGW_GATE_REQUIRED_APP_KINDS`，`exec_dep.sh` 还会默认要求
 `visual-agent.image-gen.generate::generation:raw`、`visual-agent.image.text2img::generation:raw`、
 `visual-agent.image.img2img::generation:raw`、`visual-agent.image.vision::generation:raw`、
-`video-agent.videogen::video-gen:raw`、
+`video-agent.videogen::video-gen:raw`、`visual-agent.videogen::video-gen:raw`、
 `document-store.subtitle::asr:raw`、`transcript-agent.transcribe::asr:raw` 分别达到
 `LLMGW_GATE_FULL_HTTP_APP_KIND_MIN`（默认继承 kind/app 样本门槛），避免某个图片/视频/ASR 入口只靠
 其它入口的 raw 样本或自身 resolve 样本被误放行。
@@ -358,7 +359,7 @@ resolve-only 或单一路径证据放行全量切换；raw 样本由 `ShadowFull
 `prd-agent-web.model-lab.run::chat`、`prd-agent.arena.battle::chat`、
 `visual-agent.image-gen.generate::generation`、`visual-agent.image.text2img::generation`、
 `visual-agent.image.img2img::generation`、`visual-agent.image.vision::generation`、`video-agent.videogen::video-gen`、
-`document-store.subtitle::asr`、`transcript-agent.transcribe::asr` 每个入口样本达标；可用
+`visual-agent.videogen::video-gen`、`document-store.subtitle::asr`、`transcript-agent.transcribe::asr` 每个入口样本达标；可用
 `LLMGW_GATE_FULL_HTTP_APP_CALLERS` 显式替换这组核心入口。
 正式发布脚本默认 `LLMGW_GATE_SHADOW_SINCE_HOURS=24`，只接受最近 24 小时内的 shadow 样本；
 如需更长证据期，应显式调大该值，禁止用很久以前的历史样本放行当前 commit 的 http/canary 发布。

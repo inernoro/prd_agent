@@ -245,7 +245,7 @@ case "$stage" in
   canary-video-asr)
     mode="shadow"
     canary_stage="video-asr"
-    allowlist="video-agent.videogen::video-gen,document-store.subtitle::asr,transcript-agent.transcribe::asr,video-agent.v2d.transcribe::asr,video-agent.video-to-text::asr"
+    allowlist="video-agent.videogen::video-gen,visual-agent.videogen::video-gen,document-store.subtitle::asr,transcript-agent.transcribe::asr,video-agent.v2d.transcribe::asr,video-agent.video-to-text::asr"
     shadow_percent="$sample_percent"
     ;;
   rollback-rehearsal)

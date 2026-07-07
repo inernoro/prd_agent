@@ -54,7 +54,7 @@ jobs:
       SERVING_PROBE_INTERVAL_SECONDS: ${{ vars.LLMGW_WATCH_SERVING_PROBE_INTERVAL_SECONDS || '5' }}
       INPUT_EXPECT_COMMIT: ${{ github.event.inputs.expect_commit || '' }}
       EXPECT_COMMIT: ${{ github.event.inputs.expect_commit || vars.LLMGW_PROD_EXPECT_COMMIT || '' }}
-      WATCH_APP_CALLERS: ${{ vars.LLMGW_WATCH_APP_CALLERS || 'report-agent.generate::chat,prd-agent-desktop.chat.sendmessage::chat,open-platform-agent.proxy::chat,prd-agent-web.model-lab.run::chat,prd-agent.arena.battle::chat,visual-agent.image.text2img::generation,visual-agent.image.img2img::generation,visual-agent.image.vision::generation,video-agent.videogen::video-gen,document-store.subtitle::asr,transcript-agent.transcribe::asr' }}
+      WATCH_APP_CALLERS: ${{ vars.LLMGW_WATCH_APP_CALLERS || 'report-agent.generate::chat,prd-agent-desktop.chat.sendmessage::chat,open-platform-agent.proxy::chat,prd-agent-web.model-lab.run::chat,prd-agent.arena.battle::chat,visual-agent.image.text2img::generation,visual-agent.image.img2img::generation,visual-agent.image.vision::generation,video-agent.videogen::video-gen,visual-agent.videogen::video-gen,document-store.subtitle::asr,transcript-agent.transcribe::asr' }}
       WATCH_COVERAGE_KINDS: ${{ vars.LLMGW_WATCH_COVERAGE_KINDS || 'send,stream,raw' }}
       WATCH_REQUIRED_KINDS: ${{ vars.LLMGW_WATCH_REQUIRED_KINDS || '' }}
       WATCH_REQUIRED_APP_KINDS: ${{ vars.LLMGW_WATCH_REQUIRED_APP_KINDS || '' }}
@@ -119,7 +119,7 @@ jobs:
           }
 
           required_kinds="${WATCH_REQUIRED_KINDS:-send:${MIN_PER_CELL},stream:${MIN_PER_CELL},raw:${MIN_PER_CELL}}"
-          required_app_kinds="${WATCH_REQUIRED_APP_KINDS:-visual-agent.image.text2img::generation:raw:${MIN_PER_CELL},visual-agent.image.img2img::generation:raw:${MIN_PER_CELL},visual-agent.image.vision::generation:raw:${MIN_PER_CELL},video-agent.videogen::video-gen:raw:${MIN_PER_CELL},document-store.subtitle::asr:raw:${MIN_PER_CELL},transcript-agent.transcribe::asr:raw:${MIN_PER_CELL}}"
+          required_app_kinds="${WATCH_REQUIRED_APP_KINDS:-visual-agent.image.text2img::generation:raw:${MIN_PER_CELL},visual-agent.image.img2img::generation:raw:${MIN_PER_CELL},visual-agent.image.vision::generation:raw:${MIN_PER_CELL},video-agent.videogen::video-gen:raw:${MIN_PER_CELL},visual-agent.videogen::video-gen:raw:${MIN_PER_CELL},document-store.subtitle::asr:raw:${MIN_PER_CELL},transcript-agent.transcribe::asr:raw:${MIN_PER_CELL}}"
 
           append_csv_args "--app-caller" "$WATCH_APP_CALLERS"
           append_csv_args "--kind" "$WATCH_COVERAGE_KINDS"

@@ -26,7 +26,10 @@ ASR_APP_CALLERS = [
     "video-agent.v2d.transcribe::asr",
     "video-agent.video-to-text::asr",
 ]
-VIDEO_APP_CALLER = "video-agent.videogen::video-gen"
+VIDEO_APP_CALLERS = [
+    "video-agent.videogen::video-gen",
+    "visual-agent.videogen::video-gen",
+]
 DEFAULT_ASR_POOL_ID = "asr_doubao_bigmodel_pool"
 DEFAULT_ASR_MODEL_ID = "doubao-asr-bigmodel"
 DEFAULT_ASR_TRANSFORMER = "doubao-asr"
@@ -71,7 +74,8 @@ const asrCallers = [
   "transcript-agent.transcribe::asr",
   "video-agent.v2d.transcribe::asr",
   "video-agent.video-to-text::asr",
-  "video-agent.videogen::video-gen"
+  "video-agent.videogen::video-gen",
+  "visual-agent.videogen::video-gen"
 ];
 const gatewayDbName = __GATEWAY_DB__;
 const recentLogHours = __RECENT_LOG_HOURS__;
@@ -503,14 +507,15 @@ def _audit(
         if not req or asr_pool_id not in ids:
             failures.append(f"ASR appCaller is not bound to {asr_pool_id}: {code}")
 
-    video_caller = by_caller.get(VIDEO_APP_CALLER)
-    if not video_caller:
-        failures.append(f"video appCaller missing: {VIDEO_APP_CALLER}")
-    else:
+    for code in VIDEO_APP_CALLERS:
+        video_caller = by_caller.get(code)
+        if not video_caller:
+            failures.append(f"video appCaller missing: {code}")
+            continue
         req = _req_for(video_caller, "video-gen")
         ids = [str(x) for x in ((req or {}).get("ModelGroupIds") or [])]
         if not ids:
-            failures.append(f"video appCaller has no video-gen ModelGroupIds: {VIDEO_APP_CALLER}")
+            failures.append(f"video appCaller has no video-gen ModelGroupIds: {code}")
 
     video_groups = [g for g in groups if str(g.get("ModelType") or "").lower() == "video-gen"]
     healthy_video_models: list[dict[str, Any]] = []
@@ -633,7 +638,7 @@ def _audit(
                     "classification": classification,
                     "diagnostic": asr_diagnostic,
                 })
-        if app_code == VIDEO_APP_CALLER:
+        if app_code in VIDEO_APP_CALLERS:
             failures.append(f"recent gateway log video failed: {app_code} model={model_id} statusCode={log.get('StatusCode')}")
             classification = _classify_video_seed_error(error_text, model_id)
             if classification:
@@ -642,7 +647,7 @@ def _audit(
                     "logId": str(log.get("_id") or ""),
                     "classification": classification,
                 })
-        if app_code in ASR_APP_CALLERS or app_code == VIDEO_APP_CALLER:
+        if app_code in ASR_APP_CALLERS or app_code in VIDEO_APP_CALLERS:
             recent_failed_logs.append(_summarize_gateway_log(
                 log,
                 classification,
@@ -663,7 +668,7 @@ def _audit(
             "appCallers": ASR_APP_CALLERS,
         },
         "video": {
-            "appCaller": VIDEO_APP_CALLER,
+            "appCallers": VIDEO_APP_CALLERS,
             "groupCount": len(video_groups),
             "models": video_models,
             "healthyModels": healthy_video_models,
