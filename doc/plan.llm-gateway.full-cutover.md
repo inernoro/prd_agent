@@ -155,10 +155,11 @@ python3 scripts/llmgw-map-shadow-seed.py --iterations 1
 都会等待 `ImageGenRunWorker` 后台 run 结束；img2img/vision 必须额外传 `--image-ref-shas`
 （vision 至少两张），用于证明 `visual-agent.image.text2img::generation`、
 `visual-agent.image.img2img::generation`、`visual-agent.image.vision::generation` 三条后台生图入口都不是只靠直连同步生成路径覆盖。
-需要补视频或 ASR/raw 证据时必须显式加 `--include-video-direct` / `--include-transcript-asr` /
-`--include-document-store-subtitle-asr`。视频路径通过 `/api/video-agent/videogen-direct` 只提交真实视频任务并记录
-`video-agent.videogen::video-gen:raw`；视觉视频入口 `visual-agent.videogen::video-gen:raw` 也必须纳入 release gate，
-不能只用 video-agent 直出样本替代。ASR 路径会生成短 WAV 文件，分别通过转写工作区上传和文档库字幕任务等待后台 run
+需要补视频或 ASR/raw 证据时必须显式加 `--include-video-direct` / `--include-visual-video-direct` /
+`--include-transcript-asr` / `--include-document-store-subtitle-asr`。视频路径通过 `/api/video-agent/videogen-direct`
+记录 `video-agent.videogen::video-gen:raw`；视觉视频路径通过 `/api/visual-agent/video-gen/runs` 创建 direct run
+并等待后台 worker 完成，记录 `visual-agent.videogen::video-gen:raw`。两者都必须纳入 release gate，
+不能只用 video-agent 直出样本替代视觉视频入口。ASR 路径会生成短 WAV 文件，分别通过转写工作区上传和文档库字幕任务等待后台 run
 终态，用于证明 `transcript-agent.transcribe::asr:raw` 与 `document-store.subtitle::asr:raw` 不是只靠 resolve 样本。
 视频、ASR/raw 证据必须通过对应真实业务入口产生，不能用文本样本替代 raw gate。脚本执行后会读取
 `/gw/v1/shadow-comparisons` 输出 global/send/stream/raw 覆盖摘要，便于证据期连续采样。
@@ -169,7 +170,7 @@ python3 scripts/llmgw-map-shadow-seed.py --iterations 1
 ```bash
 LLMGW_STAGE_RUN_SHADOW_SEED=1 \
 LLMGW_STAGE_MAP_BASE=https://<prod-map> \
-LLMGW_STAGE_SHADOW_SEED_FLAGS="--include-image-worker-text2img --include-image-worker-img2img --include-image-worker-vision --include-video-direct --include-transcript-asr --include-document-store-subtitle-asr --summary-poll-seconds 240" \
+LLMGW_STAGE_SHADOW_SEED_FLAGS="--include-image-worker-text2img --include-image-worker-img2img --include-image-worker-vision --include-video-direct --include-visual-video-direct --include-transcript-asr --include-document-store-subtitle-asr --summary-poll-seconds 240" \
 LLMGW_GATE_BASE=https://<prod-llmgw-serve>/gw/v1 \
 LLMGW_GATE_KEY=<X-Gateway-Key> \
 scripts/llmgw-prod-stage.sh --stage shadow-start --commit <40位SHA> --execute

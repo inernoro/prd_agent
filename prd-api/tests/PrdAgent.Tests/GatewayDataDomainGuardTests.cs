@@ -1011,6 +1011,19 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void MapShadowSeed_CoversVisualVideoRawGate()
+    {
+        var script = ReadRepoFile("scripts/llmgw-map-shadow-seed.py");
+        var plan = ReadRepoFile("doc/plan.llm-gateway.full-cutover.md");
+
+        Assert.Contains("--include-visual-video-direct", script);
+        Assert.Contains("/api/visual-agent/video-gen/runs", script);
+        Assert.Contains("wait_visual_video_run", script);
+        Assert.Contains("visual-agent.videogen::video-gen:raw", plan);
+        Assert.Contains("--include-visual-video-direct", plan);
+    }
+
+    [Fact]
     public void ProdAsrCredentialRotate_UsesApiEncryptionAfterBackup()
     {
         var script = ReadRepoFile("scripts/llmgw-prod-asr-credential-rotate.sh");

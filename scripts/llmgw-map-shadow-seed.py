@@ -656,6 +656,70 @@ def call_video_direct(
     return job_id
 
 
+def wait_visual_video_run(
+    base: str,
+    token: str,
+    timeout: float,
+    run_id: str,
+    poll_seconds: float,
+    poll_interval_seconds: float,
+) -> str:
+    deadline = time.monotonic() + max(1, poll_seconds)
+    terminal_statuses = {"Completed", "Failed", "Cancelled"}
+    last_status = ""
+    last_body = ""
+    while True:
+        result = request_json(
+            "GET",
+            join_url(base, f"/api/visual-agent/video-gen/runs/{urllib.parse.quote(run_id)}"),
+            headers=bearer(token),
+            timeout=timeout,
+        )
+        data = api_data(result, "visual video get run")
+        run = data if isinstance(data, dict) else {}
+        status = str(run.get("status") or "")
+        last_status = status
+        last_body = result.body[:1000]
+        if status in terminal_statuses:
+            if status != "Completed":
+                raise RuntimeError(f"visual video run {run_id} ended with {status}: {last_body}")
+            return run_id
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"visual video run {run_id} timed out at status {last_status}: {last_body}")
+        time.sleep(max(0.5, poll_interval_seconds))
+
+
+def call_visual_video_direct_run(
+    base: str,
+    token: str,
+    timeout: float,
+    tag: str,
+    duration_seconds: int,
+    aspect_ratio: str,
+    resolution: str,
+    poll_seconds: float,
+    poll_interval_seconds: float,
+) -> str:
+    result = request_json(
+        "POST",
+        join_url(base, "/api/visual-agent/video-gen/runs"),
+        {
+            "mode": "direct",
+            "directPrompt": f"Minimal LLM Gateway visual video raw evidence. tag={tag}. Static test card with plain text.",
+            "directAspectRatio": aspect_ratio,
+            "directResolution": resolution,
+            "directDuration": duration_seconds,
+        },
+        headers={**bearer(token), "Idempotency-Key": f"llmgw-shadow-visual-video-direct-{tag}"},
+        timeout=timeout,
+    )
+    data = api_data(result, "visual video direct create run")
+    run_id = str((data or {}).get("runId") or "")
+    if not run_id:
+        raise RuntimeError(f"visual video direct response missing runId: {json.dumps(data, ensure_ascii=False)[:500]}")
+    return wait_visual_video_run(base, token, timeout, run_id, poll_seconds, poll_interval_seconds)
+
+
 def create_transcript_workspace(base: str, token: str, timeout: float, tag: str) -> str:
     result = request_json(
         "POST",
@@ -995,6 +1059,7 @@ def main() -> int:
     parser.add_argument("--include-image-worker-img2img", action="store_true", help="Also seed one ImageGenRunWorker img2img run per iteration; requires --image-ref-shas")
     parser.add_argument("--include-image-worker-vision", action="store_true", help="Also seed one ImageGenRunWorker multi-image vision run per iteration; requires at least two --image-ref-shas")
     parser.add_argument("--include-video-direct", action="store_true", help="Also seed one video-agent direct video submit raw call per iteration")
+    parser.add_argument("--include-visual-video-direct", action="store_true", help="Also seed one visual-agent direct video run per iteration")
     parser.add_argument("--include-transcript-asr", action="store_true", help="Also seed one transcript-agent ASR raw run per iteration")
     parser.add_argument("--include-document-store-subtitle-asr", action="store_true", help="Also seed one document-store subtitle ASR raw run per iteration")
     parser.add_argument("--image-platform-id", default=read_env_secret("LLMGW_SHADOW_IMAGE_PLATFORM_ID"), help="Pinned image platform id; defaults to first enabled image model from /api/mds")
@@ -1007,6 +1072,8 @@ def main() -> int:
     parser.add_argument("--video-duration-seconds", type=int, default=5, help="Video seed requested duration")
     parser.add_argument("--video-aspect-ratio", default="16:9", help="Video seed aspect ratio")
     parser.add_argument("--video-resolution", default="720p", help="Video seed resolution")
+    parser.add_argument("--video-run-poll-seconds", type=float, default=600, help="How long to wait for visual-agent video-gen runs")
+    parser.add_argument("--video-run-poll-interval-seconds", type=float, default=10, help="Visual video-gen run poll interval")
     parser.add_argument("--asr-wav-seconds", type=float, default=1.5, help="Generated WAV duration for ASR seed paths")
     parser.add_argument("--asr-run-poll-seconds", type=float, default=360, help="How long to wait for transcript/document-store ASR runs")
     parser.add_argument("--asr-run-poll-interval-seconds", type=float, default=5, help="ASR run poll interval")
@@ -1130,7 +1197,7 @@ def main() -> int:
     if args.include_image_worker_vision:
         print(f"imageWorkerVisionModel={image_platform_id}/{image_model_id}")
         print(f"imageWorkerVisionRefShas={','.join(image_ref_shas[:2])}")
-    if args.include_video_direct:
+    if args.include_video_direct or args.include_visual_video_direct:
         print(f"videoDirect={args.video_aspect_ratio}/{args.video_resolution}/{args.video_duration_seconds}s")
     if args.include_transcript_asr or args.include_document_store_subtitle_asr:
         print(f"asrSeedWavBytes={len(wav_bytes)}")
@@ -1313,6 +1380,26 @@ def main() -> int:
             if video_step.ok:
                 raw_successes += 1
                 print(f"seed[{index + 1}] videoDirectJobId={video_step.result}")
+        if args.include_visual_video_direct:
+            visual_video_step = run_seed_step(
+                evidence,
+                f"{prefix}.visual_video_direct",
+                args.continue_on_error,
+                lambda: call_visual_video_direct_run(
+                    base,
+                    token,
+                    args.timeout,
+                    tag,
+                    args.video_duration_seconds,
+                    args.video_aspect_ratio,
+                    args.video_resolution,
+                    args.video_run_poll_seconds,
+                    args.video_run_poll_interval_seconds,
+                ),
+            )
+            if visual_video_step.ok:
+                raw_successes += 1
+                print(f"seed[{index + 1}] visualVideoRunId={visual_video_step.result}")
         if args.include_transcript_asr:
             transcript_step = run_seed_step(
                 evidence,

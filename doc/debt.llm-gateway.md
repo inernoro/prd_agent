@@ -84,6 +84,15 @@
 - 代码侧已新增 `scripts/llmgw-prod-chat-pool-bootstrap.sh` / `.js`，把上述 chat 池修正固化为默认 dry-run、执行前备份、幂等前置候选模型的生产操作；`scripts/llmgw-readiness-audit.py` 已纳入静态守卫。结论仍不变：文本链路可继续 shadow/低风险灰度取证，video/ASR/raw 未达全量发布门，禁止全量 `LLMGW_MODE=http`。
 - 同日继续扩展 `scripts/llmgw-video-exchange-canary.py`：默认仍保持低成本 submit canary；显式传 `--poll-status --download-result` 时会通过 `/gw/v1/raw` 轮询火山视频任务状态，并对返回的结果 URL 做下载探测。这样在上游模型开通后，同一脚本可覆盖发布计划要求的 video submit / poll / download 证据链；当前生产仍会在 submit 阶段被 `ModelNotOpen` 或模型池不可用阻断。
 
+## 最新生产取证（2026-07-07 19:22 CST）
+
+- 用户已开通火山方舟 Seedance 后，生产复验显示 `video-agent.videogen::video-gen` 与 `visual-agent.videogen::video-gen` 均可解析到 `Exchange:火山方舟 Seedance 视频生成` / `doubao-seedance-2-0-fast-260128`，upstream readiness 6 项 PASS。
+- ASR HTTP multipart canary 已 PASS：`document-store.subtitle::asr`、`transcript-agent.transcribe::asr`、`video-agent.v2d.transcribe::asr`、`video-agent.video-to-text::asr` 均通过 BigModel raw 路径，返回 `StatusCode=200`。
+- Seedance submit / status / download 证据已补齐：两个视频入口 submit 均 200；初次 24 次轮询仍为 `in_progress`，后续复查均 `completed` 且有结果 URL；下载探测返回 `206`、`Content-Type=video/mp4`、采样 1 MiB 成功。证据文件：`.llmgw-release-evidence/20260707T111308Z_video-exchange-canary-after-seedance-open.json`、`.llmgw-release-evidence/20260707T111759Z_video-download-followup-after-seedance-open.json`。
+- 已在短时 100% shadow 采样窗口跑 MAP 真实入口 seed，并自动恢复到 `LlmGateway__Mode=shadow`、allowlist 空、`ShadowFullSamplePercent=1`。同 commit `80bf92566328f67830c530bbfe07cdc815a1d72c` 当前 raw shadow 汇总：`raw=55`、`allMatch=55`、`critical=0`、`httpFail=0`。raw 样本覆盖 `video-agent.videogen::video-gen`、`visual-agent.videogen::video-gen`、`transcript-agent.transcribe::asr`、`document-store.subtitle::asr`。证据文件：`.llmgw-release-evidence/20260707T112155Z_map-shadow-seed-video-asr-after-seedance-open.json`、`.llmgw-release-evidence/20260707T112632Z_map-shadow-seed-visual-video-after-seedance-open.json`。
+- 代码侧已扩展 `scripts/llmgw-map-shadow-seed.py`，新增 `--include-visual-video-direct`，通过 `/api/visual-agent/video-gen/runs` 创建 direct run 并等待后台 worker 完成，用于补齐 `visual-agent.videogen::video-gen:raw` 的 MAP 真实入口 shadow 样本；`doc/plan.llm-gateway.full-cutover.md` 与 `GatewayDataDomainGuardTests` 已同步守卫该参数。
+- 结论更新：Seedance 与 ASR 不再是“不可调用”阻塞，视频/ASR raw 真实 MAP 样本已闭合到 allMatch/httpFail=0；当前剩余发布 gate 是图片 raw 样本、核心 appCaller 每格 30 条、以及 24 小时覆盖观察窗口。因此继续禁止全量 `LLMGW_MODE=http`，只能按 allowlist 小批灰度。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘
