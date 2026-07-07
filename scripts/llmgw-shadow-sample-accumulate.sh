@@ -20,6 +20,8 @@ run_dir="${LLMGW_SHADOW_ACCUMULATE_RUN_DIR:-$evidence_root/shadow-accumulate-$ru
 coverage_base="${LLMGW_SHADOW_ACCUMULATE_COVERAGE_BASE:-${GW_BASE:-${LLMGW_GATE_BASE:-}}}"
 coverage_kinds="${LLMGW_SHADOW_ACCUMULATE_COVERAGE_KINDS:-send,stream,raw}"
 coverage_apps="${LLMGW_SHADOW_ACCUMULATE_COVERAGE_APP_CALLERS:-}"
+coverage_required_kinds="${LLMGW_SHADOW_ACCUMULATE_REQUIRED_KINDS:-}"
+coverage_required_app_kinds="${LLMGW_SHADOW_ACCUMULATE_REQUIRED_APP_KINDS:-}"
 coverage_min_per_cell="${LLMGW_SHADOW_ACCUMULATE_MIN_PER_CELL:-30}"
 coverage_since_hours="${LLMGW_SHADOW_ACCUMULATE_SINCE_HOURS:-24}"
 coverage_min_hours="${LLMGW_SHADOW_ACCUMULATE_MIN_COVERAGE_HOURS:-24}"
@@ -69,6 +71,8 @@ echo "  seedFlags: $seed_flags"
 echo "  runCoverage: $run_coverage"
 echo "  coverageKinds: $coverage_kinds"
 echo "  coverageApps: $coverage_apps"
+echo "  coverageRequiredKinds: $coverage_required_kinds"
+echo "  coverageRequiredAppKinds: $coverage_required_app_kinds"
 echo "  releaseCommit: $release_commit"
 
 if [ "$dry_run" = "1" ] || [ "$dry_run" = "true" ]; then
@@ -113,6 +117,18 @@ if [ "$run_coverage" = "1" ] || [ "$run_coverage" = "true" ]; then
     trimmed="$(printf '%s' "$app" | xargs || true)"
     if [ -n "$trimmed" ]; then
       coverage_args="$coverage_args --app-caller $trimmed"
+    fi
+  done
+  for kind_req in $coverage_required_kinds; do
+    trimmed="$(printf '%s' "$kind_req" | xargs || true)"
+    if [ -n "$trimmed" ]; then
+      coverage_args="$coverage_args --require-kind $trimmed"
+    fi
+  done
+  for app_kind_req in $coverage_required_app_kinds; do
+    trimmed="$(printf '%s' "$app_kind_req" | xargs || true)"
+    if [ -n "$trimmed" ]; then
+      coverage_args="$coverage_args --require-app-kind $trimmed"
     fi
   done
   IFS="$old_ifs"

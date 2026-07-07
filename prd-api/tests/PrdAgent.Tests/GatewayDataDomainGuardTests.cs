@@ -989,6 +989,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_RUN_COVERAGE:-1", script);
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_MIN_PER_CELL:-30", script);
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_MIN_COVERAGE_HOURS:-24", script);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_REQUIRED_KINDS", script);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_REQUIRED_APP_KINDS", script);
+        Assert.Contains("--require-kind $trimmed", script);
+        Assert.Contains("--require-app-kind $trimmed", script);
         Assert.Contains("GW_KEY=\"$gate_key\" python3", script);
         Assert.DoesNotContain("--key \"$gate_key\"", script);
         Assert.DoesNotContain("--gw-key \"$gate_key\"", script);
