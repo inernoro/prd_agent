@@ -288,7 +288,9 @@ ASR seed 均被上游拒绝，错误为 `Invalid X-Api-Key`；因此 `canary-vid
 不得因为 resolve 通过就宣称 ASR 发布门完成。
 `scripts/llmgw-prod-provider-config-audit.py` 是生产 video/ASR 只读诊断脚本：读取 Mongo 的 exchange、模型池、
 appCaller 绑定与 video 模型对应的 `llmplatforms`，必要时只输出 key 形态元数据（长度、是否 UUID、是否
-`appId|accessToken`、是否可解密），不会输出明文密钥。它可附加
+`appId|accessToken`、是否可解密），不会输出明文密钥。它默认读取 `llm_gateway.llmrequestlogs`
+最近 24 小时 video/ASR 请求，把 failed 日志和上游错误分类纳入发布门；可用
+`LLMGW_PROVIDER_AUDIT_RECENT_LOG_HOURS` 调整窗口，或测试时显式 `--skip-gateway-logs`。它可附加
 `--seed-evidence-json /tmp/llmgw-asr-seed-after-bootstrap.json` 把真实 seed 失败一并纳入机器可读报告；
 如果 seed 报 `Invalid X-Api-Key`，审计会明确归因为 ASR 上游拒绝凭据，下一步应替换 ASR exchange 密钥或在密钥确为
 `appId|accessToken` 时改用 `DoubaoAsr` 认证方案；如果 video seed 报 `no available channels`，审计会明确归因为

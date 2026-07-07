@@ -54,7 +54,17 @@ def _compose_cmd() -> list[str]:
     raise RuntimeError("docker compose/docker-compose not found")
 
 
-def _mongo_snapshot(compose_file: str, mongo_service: str, mongo_db: str) -> dict[str, Any]:
+def _mongo_snapshot(
+    compose_file: str,
+    mongo_service: str,
+    mongo_db: str,
+    gateway_db: str,
+    recent_log_hours: int,
+    collect_gateway_logs: bool,
+) -> dict[str, Any]:
+    gateway_db_literal = json.dumps(gateway_db)
+    recent_log_hours_literal = json.dumps(max(1, recent_log_hours))
+    collect_gateway_logs_literal = "true" if collect_gateway_logs else "false"
     js = r'''
 const asrCallers = [
   "document-store.subtitle::asr",
@@ -63,8 +73,13 @@ const asrCallers = [
   "video-agent.video-to-text::asr",
   "video-agent.videogen::video-gen"
 ];
+const gatewayDbName = __GATEWAY_DB__;
+const recentLogHours = __RECENT_LOG_HOURS__;
+const collectGatewayLogs = __COLLECT_GATEWAY_LOGS__;
 const data = {
   generatedAt: new Date().toISOString(),
+  gatewayDatabase: gatewayDbName,
+  recentGatewayLogHours: recentLogHours,
   exchanges: db.model_exchanges.find({
     $or: [
       { TransformerType: /asr|video/i },
@@ -102,7 +117,8 @@ const data = {
     ModelRequirements: 1,
     UpdatedAt: 1
   }).toArray(),
-  platforms: []
+  platforms: [],
+  recentGatewayLogs: []
 };
 const platformIds = Array.from(new Set(
   data.modelGroups
@@ -125,8 +141,47 @@ if (platformIds.length > 0) {
     UpdatedAt: 1
   }).toArray();
 }
+if (collectGatewayLogs) {
+try {
+  const gatewayDb = db.getSiblingDB(gatewayDbName);
+  const since = new Date(Date.now() - recentLogHours * 60 * 60 * 1000);
+  data.recentGatewayLogs = gatewayDb.llmrequestlogs.find({
+    AppCallerCode: { $in: asrCallers },
+    $or: [
+      { StartedAt: { $gte: since } },
+      { CreatedAt: { $gte: since } },
+      { startedAt: { $gte: since } },
+      { createdAt: { $gte: since } }
+    ]
+  }, {
+    _id: 1,
+    StartedAt: 1,
+    CreatedAt: 1,
+    AppCallerCode: 1,
+    RequestType: 1,
+    GatewayTransport: 1,
+    Model: 1,
+    PlatformId: 1,
+    PlatformName: 1,
+    ModelGroupId: 1,
+    ModelGroupName: 1,
+    StatusCode: 1,
+    Status: 1,
+    AnswerText: 1,
+    Error: 1
+  }).sort({ StartedAt: -1, CreatedAt: -1 }).limit(50).toArray();
+} catch (err) {
+  data.recentGatewayLogError = String(err);
+}
+}
 print(JSON.stringify(data));
 '''
+    js = (
+        js
+        .replace("__GATEWAY_DB__", gateway_db_literal)
+        .replace("__RECENT_LOG_HOURS__", recent_log_hours_literal)
+        .replace("__COLLECT_GATEWAY_LOGS__", collect_gateway_logs_literal)
+    )
     cmd = _compose_cmd() + ["-f", compose_file, "exec", "-T", mongo_service, "mongosh", mongo_db, "--quiet", "--eval", js]
     return json.loads(_run(cmd))
 
@@ -216,6 +271,8 @@ def _health_name(value: Any) -> str:
 def _classify_asr_seed_error(error: str, auth_scheme: str, shape: dict[str, Any]) -> str | None:
     normalized = error.lower()
     scheme = auth_scheme.strip() or "unknown"
+    if "no available channels" in normalized:
+        return "ASR upstream has no available channels; fix provider channel or ASR model pool before video/ASR canary."
     if "invalid x-api-key" in normalized or "invalid x api key" in normalized:
         key_shape = "single UUID x-api-key" if shape.get("looksUuidOnly") else "x-api-key"
         if shape.get("containsPipe"):
@@ -238,6 +295,8 @@ def _classify_video_seed_error(error: str, model_id: str | None = None) -> str |
             "Video upstream has no available channels"
             f"{model_suffix}; keep video/ASR canary blocked until the provider channel or model pool is fixed."
         )
+    if "404" in normalized or "not found" in normalized:
+        return f"Video upstream model or endpoint was not found{model_suffix}; verify provider route and model id before canary."
     if "401" in normalized or "unauthorized" in normalized or "forbidden" in normalized or "403" in normalized:
         return f"Video upstream authorization failed{model_suffix}; verify platform key and provider access."
     if "insufficient" in normalized and ("quota" in normalized or "balance" in normalized):
@@ -270,6 +329,43 @@ def _sanitize_platform(platform: dict[str, Any] | None, secret: str | None) -> d
     return clean
 
 
+def _gateway_log_error_text(log: dict[str, Any]) -> str:
+    parts = [
+        str(log.get("Error") or ""),
+        str(log.get("AnswerText") or ""),
+        f"statusCode={log.get('StatusCode')}" if log.get("StatusCode") is not None else "",
+    ]
+    return "\n".join(part for part in parts if part).strip()
+
+
+def _is_failed_gateway_log(log: dict[str, Any]) -> bool:
+    status = str(log.get("Status") or "").lower()
+    if status == "failed":
+        return True
+    try:
+        return int(log.get("StatusCode") or 0) >= 400
+    except Exception:
+        return False
+
+
+def _summarize_gateway_log(log: dict[str, Any], classification: str | None = None) -> dict[str, Any]:
+    text = _gateway_log_error_text(log)
+    return {
+        "id": str(log.get("_id") or ""),
+        "startedAt": log.get("StartedAt") or log.get("CreatedAt"),
+        "appCaller": log.get("AppCallerCode"),
+        "requestType": log.get("RequestType"),
+        "transport": log.get("GatewayTransport"),
+        "status": log.get("Status"),
+        "statusCode": log.get("StatusCode"),
+        "model": log.get("Model"),
+        "platformName": log.get("PlatformName"),
+        "modelGroupId": log.get("ModelGroupId"),
+        "error": text[:500],
+        "classification": classification,
+    }
+
+
 def _audit(
     data: dict[str, Any],
     secret: str | None,
@@ -284,6 +380,7 @@ def _audit(
     groups = data.get("modelGroups") or []
     callers = data.get("appCallers") or []
     platforms = data.get("platforms") or []
+    recent_gateway_logs = data.get("recentGatewayLogs") or []
 
     by_platform_id = {str(x.get("_id")): x for x in platforms}
     asr_exchange = next(
@@ -439,6 +536,41 @@ def _audit(
                         "classification": classification,
                     })
 
+    recent_failed_logs: list[dict[str, Any]] = []
+    asr_log_classifications: list[dict[str, str]] = []
+    video_log_classifications: list[dict[str, str]] = []
+    for log in recent_gateway_logs:
+        if not _is_failed_gateway_log(log):
+            continue
+        app_code = str(log.get("AppCallerCode") or "")
+        model_id = str(log.get("Model") or "")
+        error_text = _gateway_log_error_text(log)
+        classification = None
+        if app_code in ASR_APP_CALLERS:
+            failures.append(f"recent gateway log ASR failed: {app_code} model={model_id} statusCode={log.get('StatusCode')}")
+            classification = _classify_asr_seed_error(
+                error_text,
+                str((asr_exchange or {}).get("TargetAuthScheme") or ""),
+                shape,
+            )
+            if classification:
+                _append_unique(failures, classification)
+                asr_log_classifications.append({
+                    "logId": str(log.get("_id") or ""),
+                    "classification": classification,
+                })
+        if app_code == VIDEO_APP_CALLER:
+            failures.append(f"recent gateway log video failed: {app_code} model={model_id} statusCode={log.get('StatusCode')}")
+            classification = _classify_video_seed_error(error_text, model_id)
+            if classification:
+                _append_unique(failures, classification)
+                video_log_classifications.append({
+                    "logId": str(log.get("_id") or ""),
+                    "classification": classification,
+                })
+        if app_code in ASR_APP_CALLERS or app_code == VIDEO_APP_CALLER:
+            recent_failed_logs.append(_summarize_gateway_log(log, classification))
+
     report = {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "snapshotGeneratedAt": data.get("generatedAt"),
@@ -457,6 +589,15 @@ def _audit(
             "groupCount": len(video_groups),
             "models": video_models,
             "healthyModels": healthy_video_models,
+        },
+        "recentGatewayLogs": {
+            "database": data.get("gatewayDatabase"),
+            "hours": data.get("recentGatewayLogHours"),
+            "collected": len(recent_gateway_logs),
+            "failed": recent_failed_logs,
+            "asrClassifications": asr_log_classifications,
+            "videoClassifications": video_log_classifications,
+            "error": data.get("recentGatewayLogError"),
         },
         "seedEvidence": seed_summary,
     }
@@ -491,6 +632,10 @@ def _write_md(path: str, report: dict[str, Any]) -> None:
         fh.write(f"- ASR exchange: `{((report.get('asr') or {}).get('exchange') or {}).get('name') or ((report.get('asr') or {}).get('exchange') or {}).get('Name') or ''}`\n")
         fh.write(f"- video candidate models: `{len((report.get('video') or {}).get('models') or [])}`\n")
         fh.write(f"- video healthy models: `{len((report.get('video') or {}).get('healthyModels') or [])}`\n\n")
+        recent = report.get("recentGatewayLogs") or {}
+        fh.write(f"- recent gateway log hours: `{recent.get('hours') or ''}`\n")
+        fh.write(f"- recent gateway log collected: `{recent.get('collected') or 0}`\n")
+        fh.write(f"- recent gateway log failed: `{len(recent.get('failed') or [])}`\n\n")
         fh.write("## Failures\n\n")
         failures = report.get("failures") or []
         if failures:
@@ -513,6 +658,9 @@ def main() -> int:
     parser.add_argument("--mongo-service", default=os.environ.get("LLMGW_PROVIDER_AUDIT_MONGO_SERVICE", "mongodb"))
     parser.add_argument("--api-service", default=os.environ.get("LLMGW_PROVIDER_AUDIT_API_SERVICE", "api"))
     parser.add_argument("--mongo-db", default=os.environ.get("LLMGW_PROVIDER_AUDIT_DB", "prdagent"))
+    parser.add_argument("--gateway-db", default=os.environ.get("LLMGW_PROVIDER_AUDIT_GATEWAY_DB", "llm_gateway"))
+    parser.add_argument("--recent-log-hours", type=int, default=int(os.environ.get("LLMGW_PROVIDER_AUDIT_RECENT_LOG_HOURS", "24")))
+    parser.add_argument("--skip-gateway-logs", action="store_true", help="Do not collect recent llm_gateway request logs")
     parser.add_argument("--asr-pool-id", default=os.environ.get("LLMGW_PROVIDER_AUDIT_ASR_POOL_ID", DEFAULT_ASR_POOL_ID))
     parser.add_argument("--asr-model-id", default=os.environ.get("LLMGW_PROVIDER_AUDIT_ASR_MODEL_ID", DEFAULT_ASR_MODEL_ID))
     parser.add_argument("--asr-transformer", default=os.environ.get("LLMGW_PROVIDER_AUDIT_ASR_TRANSFORMER", DEFAULT_ASR_TRANSFORMER))
@@ -525,7 +673,14 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        data = _load_snapshot(args.input_json) if args.input_json else _mongo_snapshot(args.compose_file, args.mongo_service, args.mongo_db)
+        data = _load_snapshot(args.input_json) if args.input_json else _mongo_snapshot(
+            args.compose_file,
+            args.mongo_service,
+            args.mongo_db,
+            args.gateway_db,
+            args.recent_log_hours,
+            not args.skip_gateway_logs,
+        )
         secret = None if args.skip_key_shape else _primary_secret(args.compose_file, args.api_service)
         seed_evidence = _load_snapshot(args.seed_evidence_json) if args.seed_evidence_json else None
         report = _audit(
