@@ -38,7 +38,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
-import { X, RotateCcw, Search, ArrowLeft, ToggleLeft, ToggleRight, Layers, Folder, FileText, ChevronDown } from 'lucide-react';
+import { X, RotateCcw, Search, ArrowLeft, ToggleLeft, ToggleRight, Layers, Folder, FileText, ChevronDown, Grid2x2, Orbit } from 'lucide-react';
 import { MarkdownViewer } from '@/components/file-preview/MarkdownViewer';
 import { GalaxyConstellationLoader } from './GalaxyConstellationLoader';
 import { parseFrontmatter } from '@/lib/frontmatter';
@@ -1052,6 +1052,8 @@ interface GalaxyCanvasProps {
   focusHubReq?: { id: string; n: number } | null;
   /** 阅读抽屉宽度(px，0=关)：打开时按实际宽度用 setViewOffset 把星系投影左移，让聚焦星居中于左半可见区。 */
   drawerWidth?: number;
+  /** 折叠 2D：true 时整个星系沿 Z 轴动画压平成平面、相机转正视；false 恢复 3D。 */
+  flatten?: boolean;
 }
 
 /**
@@ -1059,7 +1061,7 @@ interface GalaxyCanvasProps {
  * 选择性 bloom 双 pass。type 筛选通过 typeOn 同步给场景（dim/hide leaf）。
  * unmount / galaxy 变化时彻底 dispose，避免 React 重复挂载泄漏。
  */
-function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocusChange, flyToEntryId, focusHubReq, drawerWidth }: GalaxyCanvasProps) {
+function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocusChange, flyToEntryId, focusHubReq, drawerWidth, flatten }: GalaxyCanvasProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   // 选中文档的发光旋转指针环（DOM 覆盖层，渲染循环每帧把它定位到选中星的屏幕投影处）
   const selRingRef = useRef<HTMLDivElement>(null);
@@ -1120,6 +1122,9 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
   const drawerWidthRef = useRef(drawerWidth);
   drawerWidthRef.current = drawerWidth;
   const applyViewOffsetRef = useRef<(() => void) | null>(null);
+  // 折叠 2D：prop 快照（场景重建时直达形态）+ 命令引用（动画切换）
+  const flattenRefProp = useRef(!!flatten);
+  const setFlattenRef = useRef<((on: boolean) => void) | null>(null);
 
   useEffect(() => {
     applyFilterRef.current?.();
@@ -1140,6 +1145,14 @@ function GalaxyCanvas({ galaxy, typeOn, onOpen, labelMode, contentTitles, onFocu
   useEffect(() => {
     if (focusHubReq) focusHubRef.current?.(focusHubReq.id);
   }, [focusHubReq]);
+
+  // 折叠 2D 开关变化 → 通知内核动画切换（对齐 flyToEntryId 的 ref 命令模式）
+  useEffect(() => {
+    const on = !!flatten;
+    if (flattenRefProp.current === on) return;
+    flattenRefProp.current = on;
+    setFlattenRef.current?.(on);
+  }, [flatten]);
 
   // 选中指针环用到的 CSS 动画关键帧（旋转 + 呼吸辉光）注入一次（全局 style，id 守卫防重复）。
   useEffect(() => {
@@ -1519,8 +1532,14 @@ void main() {
 
     // ── 布局 + 节点 mesh / halo / label ──
     const { placed, edges } = layoutGalaxy(galaxy.root);
+    // 星系整体容器：星点/光路/流光全部挂进来，「折叠 2D」时对整组做 scale.z 压平
+    //（连线顶点在组内坐标系自动跟随;sprite 面向相机不受非均匀缩放影响）。
+    // 背景星空/星云/流星不进组,保持 3D 氛围。
+    const galaxyGroup = new THREE.Group();
+    galaxyGroup.scale.z = flattenRefProp.current ? 0.001 : 1;
+    scene.add(galaxyGroup);
     const nodeGroup = new THREE.Group();
-    scene.add(nodeGroup);
+    galaxyGroup.add(nodeGroup);
 
     const renders: NodeRender[] = [];
     const coreMeshes: THREE.Mesh[] = [];
@@ -1725,7 +1744,7 @@ void main() {
         depthWrite: false,
       }),
     );
-    scene.add(new THREE.LineSegments(hierGeo, hierMat));
+    galaxyGroup.add(new THREE.LineSegments(hierGeo, hierMat));
 
     // ── 横向引用：拱高更大的能量弧（两端暗、中段亮），任一端隐藏则折叠 ──
     const SEG_M = 16;
@@ -1785,7 +1804,7 @@ void main() {
           depthWrite: false,
         }),
       );
-      scene.add(new THREE.LineSegments(mentionGeo, mentionMat));
+      galaxyGroup.add(new THREE.LineSegments(mentionGeo, mentionMat));
     }
 
     // ── 引用流光脉冲：小光点沿引用弧巡游（知识在流动）。上限 320 条控制成本。 ──
@@ -1814,7 +1833,7 @@ void main() {
       // 动态点云禁用视锥剔除：初始位置全部驻留在 1e7 远处，首帧缓存的包围球不可信
       const pulsePoints = new THREE.Points(pulseGeo, pulseMat);
       pulsePoints.frustumCulled = false;
-      scene.add(pulsePoints);
+      galaxyGroup.add(pulsePoints);
     }
 
     // ── 主干流光：root → 一级分类的长边上各一粒缓行光点（银心在供能） ──
@@ -1848,7 +1867,7 @@ void main() {
       // 同上：动态点云禁用视锥剔除
       const flowPoints = new THREE.Points(flowGeo, flowMat);
       flowPoints.frustumCulled = false;
-      scene.add(flowPoints);
+      galaxyGroup.add(flowPoints);
     }
 
     // ── 聚焦时光路同步压暗：keep 集合外的边按倍率重写顶点色（一次性写，非每帧） ──
@@ -1969,6 +1988,10 @@ void main() {
       return ids;
     };
 
+    // 折叠 2D 状态：flatK 0=完整 3D、1=压平成 XY 平面。补间驱动 galaxyGroup.scale.z。
+    let flatK = flattenRefProp.current ? 1 : 0;
+    let flatTween: { t0: number; dur: number; from: number; to: number } | null = null;
+
     // 相机缓动：苹果式自然速度，慢起步 → 加速 → 慢停下。
     let camTween: {
       t0: number;
@@ -1980,18 +2003,23 @@ void main() {
     } | null = null;
 
     const startCamTween = (targetPos: THREE.Vector3, distance: number) => {
+      // 折叠态下星点的世界坐标 z 被 galaxyGroup.scale.z 压过 —— 飞行目标同步修正，
+      // 否则相机会飞到「未压平的 3D 位置」看不到目标星。
+      const flatScaleZ = Math.max(0.001, 1 - flatK);
+      const target = targetPos.clone();
+      target.z *= flatScaleZ;
       // 沿当前相机→目标方向退到 distance 处，保留观察角度，避免镜头乱翻
       const dir = camera.position.clone().sub(controls.target);
       if (dir.lengthSq() < 1e-6) dir.set(0, 0.3, 1);
       dir.normalize();
       const fromTarget = controls.target.clone();
       const fromPos = camera.position.clone();
-      const toPos = targetPos.clone().add(dir.multiplyScalar(distance));
+      const toPos = target.clone().add(dir.multiplyScalar(distance));
       camTween = {
         t0: performance.now(),
-        dur: cameraTweenDurationMs(fromTarget, targetPos, fromPos, toPos),
+        dur: cameraTweenDurationMs(fromTarget, target, fromPos, toPos),
         fromTarget,
-        toTarget: targetPos.clone(),
+        toTarget: target.clone(),
         fromPos,
         toPos,
       };
@@ -2097,11 +2125,11 @@ void main() {
       applyEdgeDim(null);
       setFocusInfo(null);
       onFocusChangeRef.current?.(null);
-      // 相机平滑回到初始机位
+      // 相机平滑回到初始机位（折叠态回正视机位，不破坏 2D 形态）
       const fromTarget = controls.target.clone();
       const fromPos = camera.position.clone();
       const toTarget = new THREE.Vector3(0, 0, 0);
-      const toPos = new THREE.Vector3(0, 120, 1050);
+      const toPos = flatK > 0.5 ? new THREE.Vector3(0, 0, 1500) : new THREE.Vector3(0, 120, 1050);
       camTween = {
         t0: performance.now(),
         dur: cameraTweenDurationMs(fromTarget, toTarget, fromPos, toPos),
@@ -2116,7 +2144,8 @@ void main() {
     resetFocusRef.current = resetFocus;
     recenterRef.current = () => {
       resetFocus();
-      controls.autoRotate = true; // 复位即回到初始自动旋转态
+      // 复位即回到初始自动旋转态;折叠 2D 下保持锁定,不恢复旋转
+      if (flatK <= 0.5) controls.autoRotate = true;
     };
     // 面包屑下拉选兄弟分组 → 聚焦该枢纽（按 id 取 placed 节点）
     focusHubRef.current = (id: string) => {
@@ -2124,15 +2153,46 @@ void main() {
       if (pl) focusNode(pl.node);
     };
 
+    // ── 折叠 2D ↔ 展开 3D：整组 scale.z 补间 + 相机飞到正视/常驻机位 + 交互模式切换 ──
+    const applyFlattenInteraction = (on: boolean) => {
+      controls.enableRotate = !on; // 折叠态锁旋转，pan/zoom 保留
+      if (on) {
+        controls.autoRotate = false;
+        controls.mouseButtons.LEFT = THREE.MOUSE.PAN;
+        controls.touches.ONE = THREE.TOUCH.PAN;
+      } else {
+        controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
+        controls.touches.ONE = THREE.TOUCH.ROTATE;
+      }
+    };
+    setFlattenRef.current = (on: boolean) => {
+      flatTween = { t0: performance.now(), dur: 1100, from: flatK, to: on ? 1 : 0 };
+      applyFlattenInteraction(on);
+      const fromTarget = controls.target.clone();
+      const fromPos = camera.position.clone();
+      const toTarget = new THREE.Vector3(0, 0, 0);
+      const toPos = on ? new THREE.Vector3(0, 0, 1500) : new THREE.Vector3(0, 120, 1050);
+      camTween = {
+        t0: performance.now(),
+        dur: cameraTweenDurationMs(fromTarget, toTarget, fromPos, toPos),
+        fromTarget,
+        toTarget,
+        fromPos,
+        toPos,
+      };
+    };
+    // 场景重建（galaxy 变化）时按当前 prop 无动画直达形态
+    if (flattenRefProp.current) applyFlattenInteraction(true);
+
     // 入场相机推进：从远处缓推到常驻位（不关自动旋转 —— 推进中带一点公转更有生命感；
-    // 任何用户手势会照常打断该 tween）
+    // 任何用户手势会照常打断该 tween）。折叠态重建场景时直接推到正视机位。
     camTween = {
       t0: performance.now() + 100,
       dur: 2400,
       fromTarget: new THREE.Vector3(0, 0, 0),
       toTarget: new THREE.Vector3(0, 0, 0),
       fromPos: camera.position.clone(),
-      toPos: new THREE.Vector3(0, 120, 1050),
+      toPos: flattenRefProp.current ? new THREE.Vector3(0, 0, 1500) : new THREE.Vector3(0, 120, 1050),
     };
 
     // ── 选择性 bloom 双 pass（演示版同款配方） ──
@@ -2343,6 +2403,21 @@ void main() {
       d = Math.min(controls.maxDistance, Math.max(controls.minDistance, d));
       camera.position.copy(controls.target).add(gOffset.setLength(d));
     };
+    // 折叠 2D 态：触摸板双指滑 = 平移画布（2D 图没有「旋转视角」语义，对齐 gesture-unification 两指=平移）
+    const gPan = new THREE.Vector3();
+    const panByPixels = (dxPx: number, dyPx: number) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      const dist = camera.position.distanceTo(controls.target);
+      const worldPerPx = (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * dist) / Math.max(1, rect.height);
+      gPan.setFromMatrixColumn(camera.matrix, 0); // 相机右方向
+      gPan.multiplyScalar(dxPx * worldPerPx);
+      camera.position.add(gPan);
+      controls.target.add(gPan);
+      gPan.setFromMatrixColumn(camera.matrix, 1); // 相机上方向
+      gPan.multiplyScalar(-dyPx * worldPerPx);
+      camera.position.add(gPan);
+      controls.target.add(gPan);
+    };
     // 鼠标滚轮 vs 触摸板的「黏性」判别（鼠标滚轮=缩放、触摸板双指滑=轨道旋转）。
     // 正确约定（业界 3D 通行，Figma/Blender/Earth/本项目视觉创作画布）：
     //   · 鼠标滚轮（无修饰键）          → 缩放
@@ -2366,13 +2441,14 @@ void main() {
       ev.preventDefault();
       controls.autoRotate = false;
       camTween = null; // 手势打断聚焦缓动
-      // 捏合 / ⌘·Ctrl+滚轮 一律缩放；否则按设备判别：鼠标滚轮缩放、触摸板旋转
+      // 捏合 / ⌘·Ctrl+滚轮 一律缩放；否则按设备判别：鼠标滚轮缩放、触摸板旋转（折叠 2D 态改平移）
       if (ev.ctrlKey || ev.metaKey || classifyWheel(ev) === 'mouse') dollyByDelta(ev.deltaY);
+      else if (flatK > 0.5) panByPixels(ev.deltaX, ev.deltaY);
       else rotateViewByPixels(ev.deltaX, ev.deltaY);
     };
-    // 双击空白处 → 继续自动旋转（双击节点不触发；不做双击缩放，遵守 gesture-unification）
+    // 双击空白处 → 继续自动旋转（双击节点不触发；不做双击缩放，遵守 gesture-unification；折叠 2D 态不恢复旋转）
     const onDblClick = (ev: MouseEvent) => {
-      if (!pick(ev.clientX, ev.clientY)) controls.autoRotate = true;
+      if (!pick(ev.clientX, ev.clientY) && flatK <= 0.5) controls.autoRotate = true;
     };
 
     renderer.domElement.addEventListener('pointermove', onPointerMove);
@@ -2387,6 +2463,7 @@ void main() {
     let rafId = 0;
     const camPos = new THREE.Vector3();
     const haloWorld = new THREE.Vector3();
+    const labWorld = new THREE.Vector3();
     const render = () => {
       rafId = requestAnimationFrame(render);
       const dt = clock.getDelta();
@@ -2414,6 +2491,14 @@ void main() {
         camera.position.lerpVectors(camTween.fromPos, camTween.toPos, e);
         if (k >= 1) camTween = null;
       }
+
+      // 折叠 2D 补间：整组 scale.z 压平/展开（与相机机位动画同款缓动曲线）
+      if (flatTween) {
+        const k = Math.min(1, (nowMs - flatTween.t0) / flatTween.dur);
+        flatK = flatTween.from + (flatTween.to - flatTween.from) * naturalCameraEase(k);
+        if (k >= 1) flatTween = null;
+      }
+      galaxyGroup.scale.z = Math.max(0.001, 1 - flatK); // 下限 0.001 防退化矩阵
 
       // 叶子脉冲高亮生命周期：聚焦到具体文档后"呼吸"约 1.4s（衰减正弦），结束复位
       let pulseScale = 1;
@@ -2493,7 +2578,10 @@ void main() {
       for (const [id, lab] of labelByNodeId) {
         if (!lab.visible) continue;
         const dim = dimCurrentById.get(id) ?? 1;
-        const dCam = camPos.distanceTo(lab.position);
+        // 用世界坐标算距离：折叠态下 lab.position（组内局部坐标）的 z 未被 scale.z 压过，
+        // 直接用会把距离算大、误把标签淡出。
+        lab.getWorldPosition(labWorld);
+        const dCam = camPos.distanceTo(labWorld);
         const d = depthById.get(id) ?? 0;
         let fade = 1;
         if (d >= 3) fade = clamp01((1500 - dCam) / 420);
@@ -3244,6 +3332,8 @@ export function DocumentGalaxyView({ storeId, storeName, listEntries, loadGraph,
   const crumbMenuRef = useRef<HTMLDivElement>(null);
   // 请求 GalaxyCanvas 聚焦某枢纽（面包屑下拉选兄弟分组）。带单调 token 让重复点同一 id 也能再触发。
   const [focusHubReq, setFocusHubReq] = useState<{ id: string; n: number } | null>(null);
+  // 折叠 2D：星系沿 Z 轴动画压平成平面图（再点恢复 3D）
+  const [flat2D, setFlat2D] = useState(false);
   const focusHubReqN = useRef(0);
   const storeNameRef = useRef(storeName);
   storeNameRef.current = storeName;
@@ -3915,6 +4005,33 @@ export function DocumentGalaxyView({ storeId, storeName, listEntries, loadGraph,
             )}
           </div>
 
+          {/* 折叠 2D ↔ 展开 3D：星系沿 Z 轴动画压平成平面图 */}
+          <button
+            type="button"
+            onClick={() => setFlat2D((v) => !v)}
+            title={
+              flat2D
+                ? '当前：2D 平面图。点击展开回 3D 星系'
+                : '当前：3D 星系。点击把星空折叠成 2D 平面图（俯视全局关系）'
+            }
+            style={{
+              flexShrink: 0,
+              display: 'flex',
+              alignItems: 'center',
+              gap: isMobile ? 4 : 5,
+              background: 'rgba(45,45,55,0.85)',
+              border: '1px solid rgba(255,255,255,0.12)',
+              borderRadius: 6,
+              padding: isMobile ? '5px 7px' : '5px 9px',
+              color: flat2D ? '#8ab4ff' : '#cfcfd6',
+              cursor: 'pointer',
+              fontSize: 12,
+            }}
+          >
+            {flat2D ? <Orbit size={14} /> : <Grid2x2 size={14} />}
+            {!isMobile && (flat2D ? '展开 3D' : '折叠 2D')}
+          </button>
+
           {/* 标题显示开关（最右）：结构名 ↔ 正文标题 */}
           {onToggleLabelMode && (
             <button
@@ -4065,6 +4182,7 @@ export function DocumentGalaxyView({ storeId, storeName, listEntries, loadGraph,
             flyToEntryId={openEntryId}
             focusHubReq={focusHubReq}
             drawerWidth={openEntryId ? drawerWidth : 0}
+            flatten={flat2D}
           />
         )}
 

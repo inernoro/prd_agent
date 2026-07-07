@@ -11,9 +11,11 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Settings as SettingsIcon, ArrowLeft, Loader2, Orbit } from 'lucide-react';
+import { Settings as SettingsIcon, ArrowLeft, Loader2, Orbit, Link2 } from 'lucide-react';
 import { getStoreGraph, type GraphNode, type GraphEdge } from '@/services/real/mentions';
-import { listDocumentStoresReal } from '@/services/real/documentStore';
+import { listDocumentStoresReal, startAutoLink, getAgentRun } from '@/services/real/documentStore';
+import { useSseStream } from '@/lib/useSseStream';
+import { api } from '@/services/api';
 import type { DocumentStore } from '@/services/contracts/documentStore';
 
 // ── 类别上色（简化版：按 category 字段 hash 取色；空 category 走默认） ──
@@ -74,6 +76,18 @@ export function UniverseGraphPage({ storeIdOverride, storeNameOverride, loadGrap
   const [hoverNodeId, setHoverNodeId] = useState<string | null>(null);
   const [focusNodeId, setFocusNodeId] = useState<string | null>(null);
   const [zoomBadge, setZoomBadge] = useState<number>(100);
+  // 一键生成双链任务状态（Run/Worker + SSE 进度）
+  const [autoLinkRunId, setAutoLinkRunId] = useState<string | null>(null);
+  const [autoLink, setAutoLink] = useState<{
+    status: 'idle' | 'running' | 'done' | 'failed';
+    processed: number;
+    total: number;
+    changed: number;
+    linksAdded: number;
+    message?: string;
+  }>({ status: 'idle', processed: 0, total: 0, changed: 0, linksAdded: 0 });
+  // 自增触发图数据重拉（补链完成后刷新出新边）
+  const [reloadToken, setReloadToken] = useState(0);
 
   // 力导向参数 + 显示 / 过滤选项（可调）
   const stateRef = useRef<GraphState>({
@@ -141,7 +155,95 @@ export function UniverseGraphPage({ storeIdOverride, storeNameOverride, loadGrap
     return () => {
       cancelled = true;
     };
-  }, [storeId, loadGraph, storeNameOverride]);
+  }, [storeId, loadGraph, storeNameOverride, reloadToken]);
+
+  // ── 一键生成双链：启动任务 + SSE 进度 + 完成后刷新图 ──
+  const autoLinkStreamUrl = useMemo(
+    () => (autoLinkRunId ? `${api.documentStore.stores.agentRunStream(autoLinkRunId)}?afterSeq=0` : ''),
+    [autoLinkRunId],
+  );
+
+  const finishAutoLink = (generatedText?: string | null) => {
+    let summary = { scanned: 0, changed: 0, linksAdded: 0 };
+    try {
+      if (generatedText) summary = { ...summary, ...(JSON.parse(generatedText) as Partial<typeof summary>) };
+    } catch { /* 汇总解析失败时保留默认值 */ }
+    setAutoLink({
+      status: 'done',
+      processed: summary.scanned,
+      total: summary.scanned,
+      changed: summary.changed,
+      linksAdded: summary.linksAdded,
+    });
+    setAutoLinkRunId(null);
+    setReloadToken((t) => t + 1);
+  };
+
+  const { start: startAutoLinkStream, abort: abortAutoLinkStream } = useSseStream({
+    url: autoLinkStreamUrl,
+    onEvent: {
+      progress: (data) => {
+        const d = data as { processed?: number; total?: number; changed?: number; linksAdded?: number };
+        setAutoLink((s) => ({
+          ...s,
+          status: 'running',
+          processed: d.processed ?? s.processed,
+          total: d.total ?? s.total,
+          changed: d.changed ?? s.changed,
+          linksAdded: d.linksAdded ?? s.linksAdded,
+        }));
+      },
+      done: (data) => {
+        const d = data as { generatedText?: string };
+        finishAutoLink(d.generatedText);
+      },
+      error: (data) => {
+        const d = data as { message?: string };
+        setAutoLink((s) => ({ ...s, status: 'failed', message: d.message ?? '任务失败' }));
+        setAutoLinkRunId(null);
+      },
+    },
+    onError: (msg) => {
+      setAutoLink((s) => ({ ...s, status: 'failed', message: msg }));
+      setAutoLinkRunId(null);
+    },
+  });
+
+  // runId 就绪后订阅 SSE，并兜底拉一次状态（任务可能已跑完 / SSE 漏事件）
+  useEffect(() => {
+    if (!autoLinkRunId) return;
+    void startAutoLinkStream();
+    void getAgentRun(autoLinkRunId).then((res) => {
+      if (!res.success) return;
+      if (res.data.status === 'done') finishAutoLink(res.data.generatedText);
+      else if (res.data.status === 'failed') {
+        setAutoLink((s) => ({ ...s, status: 'failed', message: res.data.errorMessage ?? '任务失败' }));
+        setAutoLinkRunId(null);
+      }
+    });
+    return () => abortAutoLinkStream();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoLinkRunId]);
+
+  // 完成/失败提示 chip 数秒后自动淡出回 idle
+  useEffect(() => {
+    if (autoLink.status !== 'done' && autoLink.status !== 'failed') return;
+    const timer = window.setTimeout(() => {
+      setAutoLink((s) => (s.status === 'done' || s.status === 'failed' ? { ...s, status: 'idle' } : s));
+    }, 8000);
+    return () => window.clearTimeout(timer);
+  }, [autoLink.status]);
+
+  const handleAutoLink = async () => {
+    if (!storeId || autoLink.status === 'running') return;
+    setAutoLink({ status: 'running', processed: 0, total: 0, changed: 0, linksAdded: 0 });
+    const res = await startAutoLink(storeId);
+    if (!res.success) {
+      setAutoLink((s) => ({ ...s, status: 'failed', message: res.error?.message ?? '启动任务失败' }));
+      return;
+    }
+    setAutoLinkRunId(res.data.runId);
+  };
 
   // ── canvas 引用 + 力导向模拟（保持在 ref 中以避免 React state 频繁渲染） ──
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -739,32 +841,100 @@ export function UniverseGraphPage({ storeIdOverride, storeNameOverride, loadGrap
         </div>
       )}
 
-      {/* 库切换器 */}
-      {stores.length > 1 && (
-        <select
-          value={storeId}
-          onChange={(e) => {
-            setStoreId(e.target.value);
-            navigate(`/document-store/${e.target.value}/universe`);
-          }}
-          style={{
-            position: 'absolute',
-            top: 12,
-            right: 12,
-            background: 'rgba(36,36,36,0.85)',
-            border: '1px solid #3a3a3a',
-            borderRadius: 6,
-            padding: '6px 10px',
-            color: '#cfcfcf',
-            fontSize: 12,
-            zIndex: 11,
-          }}
-        >
-          {stores.map((s) => (
-            <option key={s.id} value={s.id}>{s.name}</option>
-          ))}
-        </select>
-      )}
+      {/* 右上角：生成双链 + 库切换器 */}
+      <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 11, display: 'flex', alignItems: 'center', gap: 8 }}>
+        {/* 完成/失败结果 chip（数秒后自动淡出） */}
+        {autoLink.status === 'done' && (
+          <div
+            style={{
+              background: 'rgba(35,60,45,0.9)',
+              border: '1px solid #3c6a4e',
+              borderRadius: 6,
+              padding: '6px 10px',
+              color: '#9fdcb4',
+              fontSize: 12,
+            }}
+          >
+            {autoLink.linksAdded > 0
+              ? `扫描 ${autoLink.total} 篇 · 改写 ${autoLink.changed} 篇 · 新增 ${autoLink.linksAdded} 条链接`
+              : '没有可新增的双链'}
+          </div>
+        )}
+        {autoLink.status === 'failed' && (
+          <div
+            style={{
+              background: 'rgba(70,38,38,0.9)',
+              border: '1px solid #7a4444',
+              borderRadius: 6,
+              padding: '6px 10px',
+              color: '#ffb4b4',
+              fontSize: 12,
+              maxWidth: 320,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+            title={autoLink.message}
+          >
+            生成双链失败:{autoLink.message ?? '未知错误'}
+          </div>
+        )}
+
+        {/* 一键生成双链（仅默认认证模式;分享页注入 loadGraph 时不显示） */}
+        {!loadGraph && storeId && (
+          <button
+            onClick={() => { void handleAutoLink(); }}
+            disabled={autoLink.status === 'running'}
+            title="扫描本库全部文档,把正文中出现的其他文档标题改写为 [[标题]] 双链(只链每篇首次出现,跳过代码块,可在版本历史回滚)"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '6px 12px',
+              fontSize: 12,
+              border: '1px solid #3a3a3a',
+              borderRadius: 6,
+              cursor: autoLink.status === 'running' ? 'default' : 'pointer',
+              background: 'rgba(45,45,45,0.85)',
+              color: autoLink.status === 'running' ? '#8a8a8a' : '#bdbdbd',
+            }}
+          >
+            {autoLink.status === 'running' ? (
+              <Loader2 size={13} className="animate-spin" />
+            ) : (
+              <Link2 size={13} />
+            )}
+            {autoLink.status === 'running'
+              ? autoLink.total > 0
+                ? `生成中 ${autoLink.processed}/${autoLink.total}`
+                : '生成中'
+              : '生成双链'}
+          </button>
+        )}
+
+        {/* 库切换器 */}
+        {stores.length > 1 && (
+          <select
+            value={storeId}
+            onChange={(e) => {
+              setStoreId(e.target.value);
+              navigate(`/document-store/${e.target.value}/universe`);
+            }}
+            style={{
+              background: 'rgba(36,36,36,0.85)',
+              border: '1px solid #3a3a3a',
+              borderRadius: 6,
+              padding: '6px 10px',
+              color: '#cfcfcf',
+              fontSize: 12,
+            }}
+          >
+            {stores.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </select>
+        )}
+      </div>
 
       {/* hover 浮卡 */}
       {hoverNode && (

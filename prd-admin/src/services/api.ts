@@ -1292,6 +1292,8 @@ export const api = {
       // 知识库 Agent：Run 状态查询与 SSE 流
       agentRun: (runId: string) => `/api/document-store/agent-runs/${runId}`,
       agentRunStream: (runId: string) => `/api/document-store/agent-runs/${runId}/stream`,
+      // 一键生成双链（标题精确匹配，改写正文为 [[标题]]）
+      autoLink: (storeId: string) => `/api/document-store/stores/${storeId}/auto-link`,
     },
     entries: {
       list: (storeId: string) => `/api/document-store/stores/${storeId}/entries`,

@@ -74,6 +74,7 @@ public class DocumentStoreController : ControllerBase
         ILlmGateway gateway,
         IConfiguration config,
         DocumentStoreAssetNormalizer assetNormalizer,
+        EntryContentWriteService entryContentWriter,
         ILogger<DocumentStoreController> logger)
     {
         _db = db;
@@ -91,8 +92,11 @@ public class DocumentStoreController : ControllerBase
         _gateway = gateway;
         _config = config;
         _assetNormalizer = assetNormalizer;
+        _entryContentWriter = entryContentWriter;
         _logger = logger;
     }
+
+    private readonly EntryContentWriteService _entryContentWriter;
 
     private readonly IConfiguration _config;
 
@@ -1095,30 +1099,11 @@ public class DocumentStoreController : ControllerBase
             contentCompliant = sectionProblems.Count == 0 && metaProblems.Count == 0;
         }
 
-        // 更新或创建 ParsedPrd（内容寻址 + 共享保护，详见 WriteEntryContentDocAsync）
-        var (newDocId, oldContent) = await WriteEntryContentDocAsync(entry, content);
-        entry.DocumentId = newDocId;
-
-        // 更新 DocumentEntry 的摘要和内容索引。
-        // text/html 条目必须先剥标签取可读文本，否则摘要/搜索片段会展示裸 <!DOCTYPE html> 标记（Bugbot）。
-        var indexable = ToIndexableText(content, request.ContentType ?? entry.ContentType);
-        var summary = indexable.Length > 200 ? indexable[..200] : indexable;
-        var contentIndex = indexable.Length > 2000 ? indexable[..2000] : indexable;
-        // 单一时间戳：DB 写入与响应必须用同一个 now，否则前端用响应 updatedAt 推进 loadedContentKey 后，
-        // 服务端列表重载返回的是 DB 里那个（差几毫秒的）UpdatedAt → 缓存键不一致 → 多余重拉 + 回顶（Bugbot）。
-        var now = DateTime.UtcNow;
-
-        var contentUpdate = Builders<DocumentEntry>.Update
-            .Set(e => e.DocumentId, entry.DocumentId)
-            .Set(e => e.Summary, summary.Trim())
-            .Set(e => e.ContentIndex, contentIndex.Trim())
-            .Set(e => e.UpdatedBy, userId)
-            .Set(e => e.UpdatedByName, userName)
-            .Set(e => e.UpdatedAt, now);
-        if (!string.IsNullOrWhiteSpace(request.ContentType))
-            contentUpdate = contentUpdate.Set(e => e.ContentType, request.ContentType);
-
-        await _db.DocumentEntries.UpdateOneAsync(e => e.Id == entryId, contentUpdate);
+        // 核心写入（ParsedPrd 内容寻址 + 摘要索引 + 重锚评论 + 重算双链 + 双版本快照）
+        // 抽取到 EntryContentWriteService，与版本恢复 / 自动补链批处理共用同一条路径。
+        var writeResult = await _entryContentWriter.WriteAsync(
+            entry, store, content, userId, userName,
+            DocumentVersionSource.Edit, contentTypeOverride: request.ContentType);
 
         // 模板库的人工写入：持久化合规标记，前端可据此提示「缺 需求一一对应表」
         if (contentCompliant.HasValue)
@@ -1128,29 +1113,17 @@ public class DocumentStoreController : ControllerBase
                 Builders<DocumentEntry>.Update.Set("Metadata.templateCompliant", contentCompliant.Value ? "true" : "false"));
         }
 
-        // 重锚定划词评论：正文更新后，遍历所有 active 评论，用 SelectedText + context 重新定位
-        var rebindStats = await RebindInlineCommentsAsync(entryId, content);
-
-        // 重算双链账本：解析正文里的 [[xxx]]，写入 mentions 集合
-        var mentionsWritten = await _mentions.ResyncDocumentMentionsAsync(store.Id, entryId, content);
-
-        // 版本快照（知识库版本控制）：先把改动前基线落库（去重，仅首次/外部覆盖时真正写入），
-        // 再把本次保存的新正文落库。最新版本恒等于当前正文。快照只存文本、不碰任何图片资产。
-        if (oldContent != null)
-            await _versions.SnapshotAsync(entryId, store.Id, oldContent, DocumentVersionSource.Edit, userId, userName);
-        await _versions.SnapshotAsync(entryId, store.Id, content, DocumentVersionSource.Edit, userId, userName);
-
         await LogStoreActivityAsync(store, userId, TeamActivityAction.EntryUpdated, "entry", entryId, entry.Title);
 
         return Ok(ApiResponse<object>.Ok(new
         {
             updated = true,
-            updatedAt = now,
+            updatedAt = writeResult.UpdatedAt,
             updatedBy = userId,
             updatedByName = userName,
-            inlineCommentsRebound = rebindStats.rebound,
-            inlineCommentsOrphaned = rebindStats.orphaned,
-            mentionsWritten,
+            inlineCommentsRebound = writeResult.Rebound,
+            inlineCommentsOrphaned = writeResult.Orphaned,
+            mentionsWritten = writeResult.MentionsWritten,
         }));
     }
 
@@ -1252,63 +1225,8 @@ public class DocumentStoreController : ControllerBase
 
     /// <summary>
     /// 把一段正文写入条目（解析存 ParsedPrd + 更新摘要/索引 + 重锚评论 + 重算双链 + 版本快照）。
-    /// 供版本恢复复用，与 UpdateEntryContent 的核心写入路径保持一致。
+    /// 供版本恢复复用；核心写入路径抽取在 EntryContentWriteService，与 UpdateEntryContent 保持一致。
     /// </summary>
-    /// <summary>
-    /// 把正文写入 entry 对应的 ParsedPrd，返回 (最终 DocumentId, 改动前正文)。
-    /// ParsedPrd 内容寻址（id=内容 hash），相同内容会被多个 entry 共享（相同上传等）。
-    /// 若旧 DocumentId 被别的 entry 共享，<b>不得就地覆盖</b>（会改到别的 entry 的正文）——
-    /// 按新内容 hash 落库 + 只把本 entry 重指向新文档；旧文档为本 entry 独占时沿用旧 id 就地更新，
-    /// 避免产生孤儿文档（Codex P1）。即便旧 ParsedPrd 行已丢失也照样落库（Bugbot High）。
-    /// 改动前正文取旧 RawContent，缺失则回退 ContentIndex（无 DocumentId 短文档 ContentIndex 即完整正文）。
-    /// </summary>
-    /// <summary>
-    /// 摘要 / 搜索索引取材：text/html 条目先剥注释、script/style 块与标签取可读文本，
-    /// 否则库列表、卡片预览、搜索片段会展示原始 HTML 标记。仅用于派生 Summary/ContentIndex，
-    /// 不改动正文本身。非 html 条目原样返回。
-    /// </summary>
-    private static string ToIndexableText(string content, string? contentType)
-    {
-        if (string.IsNullOrEmpty(content) ||
-            contentType?.Contains("html", StringComparison.OrdinalIgnoreCase) != true)
-            return content;
-        var text = Regex.Replace(content, @"<!--.*?-->", " ", RegexOptions.Singleline);
-        text = Regex.Replace(text, @"<(script|style)\b[^>]*>.*?</\1\s*>", " ",
-            RegexOptions.Singleline | RegexOptions.IgnoreCase);
-        text = Regex.Replace(text, @"<[^>]+>", " ");
-        text = System.Net.WebUtility.HtmlDecode(text);
-        return Regex.Replace(text, @"\s+", " ").Trim();
-    }
-
-    private async Task<(string documentId, string? oldContent)> WriteEntryContentDocAsync(DocumentEntry entry, string content)
-    {
-        var parsed = await _documentService.ParseAsync(content); // parsed.Id = 内容 hash
-        string? oldContent;
-        if (!string.IsNullOrEmpty(entry.DocumentId))
-        {
-            var oldDoc = await _documentService.GetByIdAsync(entry.DocumentId);
-            // 不回退 ContentIndex：它截断到 2000 字，长文档会留下被截断的「改动前」版本无法完整恢复。
-            // ParsedPrd 行确已丢失时旧全文本就不可得，宁可不快照（null）也不存截断版本（Bugbot）。
-            oldContent = oldDoc?.RawContent;
-            parsed.Title = oldDoc?.Title ?? entry.Title;
-            if (parsed.Id != entry.DocumentId)
-            {
-                var sharedByOthers = await _db.DocumentEntries.CountDocumentsAsync(
-                    e => e.DocumentId == entry.DocumentId && e.Id != entry.Id) > 0;
-                if (!sharedByOthers)
-                    parsed.Id = entry.DocumentId; // 独占 → 复用旧 id 就地更新，不产生孤儿
-                // 共享 → 保留新内容 hash id，仅把本 entry 重指向，旧共享文档保持不变
-            }
-        }
-        else
-        {
-            oldContent = entry.ContentIndex;
-            parsed.Title = entry.Title;
-        }
-        await _documentService.SaveAsync(parsed);
-        return (parsed.Id, oldContent);
-    }
-
     private async Task<DateTime> ApplyContentToEntryAsync(
         DocumentEntry entry, DocumentStore store, string content,
         string userId, string? userName, string source, string? restoredFromVersionId)
@@ -1319,33 +1237,9 @@ public class DocumentStoreController : ControllerBase
             null,
             HttpContext.RequestAborted);
         content = normalized.Content;
-        // 内容寻址 + 共享保护（详见 WriteEntryContentDocAsync）：恢复也不得覆盖被别的 entry 共享的 ParsedPrd
-        var (newDocId, oldContent) = await WriteEntryContentDocAsync(entry, content);
-        entry.DocumentId = newDocId;
-
-        var now = DateTime.UtcNow;
-        // 与 UpdateEntryContent 同口径：html 条目摘要/索引取剥标签后的可读文本
-        var indexable = ToIndexableText(content, entry.ContentType);
-        var summary = indexable.Length > 200 ? indexable[..200] : indexable;
-        var contentIndex = indexable.Length > 2000 ? indexable[..2000] : indexable;
-        await _db.DocumentEntries.UpdateOneAsync(e => e.Id == entry.Id, Builders<DocumentEntry>.Update
-            .Set(e => e.DocumentId, entry.DocumentId)
-            .Set(e => e.Summary, summary.Trim())
-            .Set(e => e.ContentIndex, contentIndex.Trim())
-            .Set(e => e.UpdatedBy, userId)
-            .Set(e => e.UpdatedByName, userName)
-            .Set(e => e.UpdatedAt, now));
-
-        await RebindInlineCommentsAsync(entry.Id, content);
-        await _mentions.ResyncDocumentMentionsAsync(store.Id, entry.Id, content);
-
-        // 先保留改动前正文（去重；未版本化的写入借此也能找回），再记本次新内容。
-        // 基线用 Edit 而非 Sync：这是用户当前的工作内容（多为手动编辑），标 Sync 会在历史里
-        // 把手动编辑误显示成「外部同步」（Bugbot）。真·同步覆盖路径自己另记 source=sync。
-        if (oldContent != null)
-            await _versions.SnapshotAsync(entry.Id, store.Id, oldContent, DocumentVersionSource.Edit, userId, userName);
-        await _versions.SnapshotAsync(entry.Id, store.Id, content, source, userId, userName, restoredFromVersionId);
-        return now;
+        var result = await _entryContentWriter.WriteAsync(
+            entry, store, content, userId, userName, source, restoredFromVersionId);
+        return result.UpdatedAt;
     }
 
     /// <summary>
@@ -1433,74 +1327,10 @@ public class DocumentStoreController : ControllerBase
     }
 
     /// <summary>
-    /// 文档正文更新后重新锚定划词评论。
-    /// 算法（按成本递增）：
-    ///   1) SelectedText 在新正文中唯一出现 → 直接更新 offset
-    ///   2) 多处出现 → 用 ContextBefore/ContextAfter 前后文进行消歧，取最佳匹配位置
-    ///   3) 零出现 → 状态改为 orphaned，评论保留但前端不再高亮正文
+    /// 文档正文更新后重新锚定划词评论（实现已抽取到 EntryContentWriteService，此处委托保持既有调用点不变）。
     /// </summary>
-    private async Task<(int rebound, int orphaned)> RebindInlineCommentsAsync(string entryId, string newContent)
-    {
-        // 全文评论（IsWholeDocument）无锚点，不参与正文 rebind。
-        // 用 Ne(IsWholeDocument, true) 而非 !c.IsWholeDocument：后者被 LINQ 译成
-        // { IsWholeDocument: false } 会漏掉缺该字段的历史评论（IsWholeDocument 是新增字段）；
-        // Ne(...,true) 在 MongoDB 下匹配 false / null / 缺字段三种，正好覆盖历史数据。
-        var rebindFilter = Builders<DocumentInlineComment>.Filter.And(
-            Builders<DocumentInlineComment>.Filter.Eq(c => c.EntryId, entryId),
-            Builders<DocumentInlineComment>.Filter.Eq(c => c.Status, DocumentInlineCommentStatus.Active),
-            Builders<DocumentInlineComment>.Filter.Ne(c => c.IsWholeDocument, true));
-        var comments = await _db.DocumentInlineComments
-            .Find(rebindFilter)
-            .ToListAsync();
-
-        if (comments.Count == 0) return (0, 0);
-
-        var newHash = ComputeSha256(newContent);
-        int rebound = 0, orphaned = 0;
-
-        foreach (var c in comments)
-        {
-            // 哈希未变（理论上不应走到这里，但保险）
-            if (c.ContentHash == newHash) { rebound++; continue; }
-
-            // 委托给纯函数做重锚定（便于单元测试覆盖）
-            var result = DocStoreServices.InlineCommentRebinder.TryRebind(
-                newContent,
-                c.SelectedText ?? string.Empty,
-                c.ContextBefore ?? string.Empty,
-                c.ContextAfter ?? string.Empty);
-
-            if (result is null)
-            {
-                await MarkCommentOrphaned(c.Id, newHash);
-                orphaned++;
-                continue;
-            }
-
-            await _db.DocumentInlineComments.UpdateOneAsync(
-                x => x.Id == c.Id,
-                Builders<DocumentInlineComment>.Update
-                    .Set(x => x.StartOffset, result.StartOffset)
-                    .Set(x => x.EndOffset, result.EndOffset)
-                    .Set(x => x.ContextBefore, result.ContextBefore)
-                    .Set(x => x.ContextAfter, result.ContextAfter)
-                    .Set(x => x.ContentHash, newHash)
-                    .Set(x => x.UpdatedAt, DateTime.UtcNow));
-            rebound++;
-        }
-
-        return (rebound, orphaned);
-    }
-
-    private async Task MarkCommentOrphaned(string commentId, string newHash)
-    {
-        await _db.DocumentInlineComments.UpdateOneAsync(
-            x => x.Id == commentId,
-            Builders<DocumentInlineComment>.Update
-                .Set(x => x.Status, DocumentInlineCommentStatus.Orphaned)
-                .Set(x => x.ContentHash, newHash)
-                .Set(x => x.UpdatedAt, DateTime.UtcNow));
-    }
+    private Task<(int rebound, int orphaned)> RebindInlineCommentsAsync(string entryId, string newContent)
+        => _entryContentWriter.RebindInlineCommentsAsync(entryId, newContent);
 
     /// <summary>设置文件夹内的主文档</summary>
     [HttpPut("entries/{folderId}/primary-child")]
@@ -3677,6 +3507,63 @@ public class DocumentStoreController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// 发起知识库自动补链任务（标题精确匹配 → 首处出现改写为 [[标题]]，写回正文）。
+    /// 库级任务：SourceEntryId 存空串。进度经 GET agent-runs/{runId}/stream 订阅。
+    /// </summary>
+    [HttpPost("stores/{storeId}/auto-link")]
+    public async Task<IActionResult> StartAutoLink(string storeId)
+    {
+        var userId = GetUserId();
+        var (store, error) = await LoadWritableStoreAsync(storeId, userId);
+        if (error != null) return error;
+
+        // 去重/认领三段式与 GenerateSubtitle 相同（定向消费，见 InstanceIdentity）：
+        var selfInstanceId = InstanceIdentity.Get(_config);
+
+        // (1) 原子认领历史无主的 queued run
+        var claimed = await _db.DocumentStoreAgentRuns.FindOneAndUpdateAsync(
+            Builders<DocumentStoreAgentRun>.Filter.And(
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.StoreId, storeId),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Kind, DocumentStoreAgentRunKind.AutoLink),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, DocumentStoreRunStatus.Queued),
+                Builders<DocumentStoreAgentRun>.Filter.Or(
+                    Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
+                    Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, ""))),
+            Builders<DocumentStoreAgentRun>.Update.Set(r => r.OwnerInstanceId, selfInstanceId),
+            new FindOneAndUpdateOptions<DocumentStoreAgentRun> { ReturnDocument = ReturnDocument.After },
+            cancellationToken: CancellationToken.None);
+        if (claimed != null)
+            return Ok(ApiResponse<object>.Ok(new { runId = claimed.Id, status = claimed.Status, reused = true }));
+
+        // (2) 复用本实例已有的在途 run（queued/running，owner==self）
+        var selfRun = await _db.DocumentStoreAgentRuns.Find(
+            Builders<DocumentStoreAgentRun>.Filter.And(
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.StoreId, storeId),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Kind, DocumentStoreAgentRunKind.AutoLink),
+                Builders<DocumentStoreAgentRun>.Filter.In(r => r.Status, new[] { DocumentStoreRunStatus.Queued, DocumentStoreRunStatus.Running }),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, selfInstanceId))
+        ).FirstOrDefaultAsync();
+        if (selfRun != null)
+            return Ok(ApiResponse<object>.Ok(new { runId = selfRun.Id, status = selfRun.Status, reused = true }));
+
+        // (3) 新建归属本实例的 run
+        var run = new DocumentStoreAgentRun
+        {
+            Kind = DocumentStoreAgentRunKind.AutoLink,
+            SourceEntryId = string.Empty, // 库级任务
+            StoreId = store!.Id,
+            UserId = userId,
+            OwnerInstanceId = selfInstanceId,
+            Status = DocumentStoreRunStatus.Queued,
+            Phase = "排队中",
+        };
+        await _db.DocumentStoreAgentRuns.InsertOneAsync(run);
+
+        _logger.LogInformation("[doc-store-agent] AutoLink run queued: {RunId} store={StoreId}", run.Id, storeId);
+        return Ok(ApiResponse<object>.Ok(new { runId = run.Id, status = run.Status, reused = false }));
+    }
+
     /// <summary>获取 Run 当前状态（用于 Drawer 打开时判断）</summary>
     [HttpGet("agent-runs/{runId}")]
     public async Task<IActionResult> GetAgentRun(string runId)
@@ -3722,9 +3609,7 @@ public class DocumentStoreController : ControllerBase
             return;
         }
 
-        var kindKey = run.Kind == DocumentStoreAgentRunKind.Subtitle
-            ? DocumentStoreRunKinds.Subtitle
-            : DocumentStoreRunKinds.Reprocess;
+        var kindKey = DocumentStoreAgentWorker.KindForEvents(run.Kind);
 
         long lastSeq = afterSeq ?? 0;
         var lastKeepAliveAt = DateTime.UtcNow;
@@ -5346,11 +5231,7 @@ public class DocumentStoreController : ControllerBase
     }
 
     private static string ComputeSha256(string content)
-    {
-        var bytes = System.Text.Encoding.UTF8.GetBytes(content);
-        var hash = System.Security.Cryptography.SHA256.HashData(bytes);
-        return Convert.ToHexString(hash);
-    }
+        => EntryContentWriteService.ComputeSha256(content);
 }
 
 // ─────────────────────────────────────────────
