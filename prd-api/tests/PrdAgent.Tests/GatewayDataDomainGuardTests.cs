@@ -221,6 +221,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("OpenRouter /videos requests", providerAudit);
         Assert.Contains("Volcengine Ark OpenAI chat base URL", providerAudit);
         Assert.Contains("dedicated Volcengine video adapter", providerAudit);
+        Assert.Contains("externalBlockers", providerAudit);
+        Assert.Contains("asr_credential_rejected", providerAudit);
+        Assert.Contains("video_model_not_open", providerAudit);
         Assert.Contains("probe_args=\"--base $gate_base\"", script);
         Assert.Contains("python3 scripts/llmgw-serving-probe.py $probe_args", script);
         Assert.Contains("LLM Gateway post-deploy serving probe: required", script);

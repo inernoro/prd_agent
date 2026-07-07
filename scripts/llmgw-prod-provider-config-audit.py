@@ -366,6 +366,91 @@ def _append_unique(items: list[str], value: str) -> None:
         items.append(value)
 
 
+def _external_blocker_from_classification(
+    classification: str | None,
+    *,
+    source: str,
+    app_caller: str = "",
+    model_id: str = "",
+    log_id: str = "",
+    step: str = "",
+) -> dict[str, Any] | None:
+    if not classification:
+        return None
+    normalized = classification.lower()
+    code = ""
+    scope = "provider"
+    remediation = ""
+
+    if "invalid x-api-key" in normalized or "rejected credential" in normalized:
+        code = "asr_credential_rejected"
+        scope = "asr"
+        remediation = "Replace the ASR exchange credential with a valid Doubao ASR X-Api-Key, then rerun ASR HTTP canary."
+    elif "asr upstream authorization failed" in normalized:
+        code = "asr_authorization_failed"
+        scope = "asr"
+        remediation = "Verify the ASR exchange credential, TargetAuthScheme, and resourceId in the Volcengine speech console."
+    elif "asr upstream has no available channels" in normalized:
+        code = "asr_channel_unavailable"
+        scope = "asr"
+        remediation = "Restore a Healthy ASR model pool channel before video/ASR canary."
+    elif "has not activated the video model" in normalized:
+        code = "video_model_not_open"
+        scope = "video"
+        remediation = "Activate the requested video model in Ark Console, then rerun the video exchange canary."
+    elif "video upstream has no available channels" in normalized:
+        code = "video_channel_unavailable"
+        scope = "video"
+        remediation = "Restore a Healthy video-gen provider channel before video/ASR canary."
+    elif "video upstream authorization failed" in normalized:
+        code = "video_authorization_failed"
+        scope = "video"
+        remediation = "Verify the video provider key and model access before video/ASR canary."
+    elif "quota or balance is insufficient" in normalized:
+        code = "video_quota_or_balance_insufficient"
+        scope = "video"
+        remediation = "Fix provider billing or quota before video/ASR canary."
+    else:
+        return None
+
+    return {
+        "code": code,
+        "scope": scope,
+        "source": source,
+        "appCaller": app_caller,
+        "modelId": model_id,
+        "logId": log_id,
+        "step": step,
+        "evidence": classification,
+        "remediation": remediation,
+    }
+
+
+def _append_blocker_unique(items: list[dict[str, Any]], blocker: dict[str, Any] | None) -> None:
+    if not blocker:
+        return
+    key = (
+        blocker.get("code"),
+        blocker.get("scope"),
+        blocker.get("appCaller"),
+        blocker.get("modelId"),
+        blocker.get("logId"),
+        blocker.get("step"),
+    )
+    for item in items:
+        existing = (
+            item.get("code"),
+            item.get("scope"),
+            item.get("appCaller"),
+            item.get("modelId"),
+            item.get("logId"),
+            item.get("step"),
+        )
+        if existing == key:
+            return
+    items.append(blocker)
+
+
 def _sanitize_exchange(exchange: dict[str, Any], secret: str | None) -> dict[str, Any]:
     encrypted = str(exchange.get("TargetApiKeyEncrypted") or "")
     clean = {k: v for k, v in exchange.items() if k != "TargetApiKeyEncrypted"}
@@ -494,6 +579,7 @@ def _audit(
 ) -> dict[str, Any]:
     failures: list[str] = []
     warnings: list[str] = []
+    external_blockers: list[dict[str, Any]] = []
     exchanges = data.get("exchanges") or []
     groups = data.get("modelGroups") or []
     callers = data.get("appCallers") or []
@@ -662,6 +748,11 @@ def _audit(
                 )
                 if classification:
                     _append_unique(failures, classification)
+                    _append_blocker_unique(external_blockers, _external_blocker_from_classification(
+                        classification,
+                        source="seedEvidence",
+                        step=name,
+                    ))
                     asr_classifications.append({
                         "step": name,
                         "classification": classification,
@@ -671,6 +762,11 @@ def _audit(
                 classification = _classify_video_seed_error(error)
                 if classification:
                     _append_unique(failures, classification)
+                    _append_blocker_unique(external_blockers, _external_blocker_from_classification(
+                        classification,
+                        source="seedEvidence",
+                        step=name,
+                    ))
                     video_classifications.append({
                         "step": name,
                         "classification": classification,
@@ -707,6 +803,13 @@ def _audit(
                         classification = diagnostic_failure
             if classification:
                 _append_unique(failures, classification)
+                _append_blocker_unique(external_blockers, _external_blocker_from_classification(
+                    classification,
+                    source="recentGatewayLogs",
+                    app_caller=app_code,
+                    model_id=model_id,
+                    log_id=str(log.get("_id") or ""),
+                ))
                 asr_log_classifications.append({
                     "logId": str(log.get("_id") or ""),
                     "classification": classification,
@@ -717,6 +820,13 @@ def _audit(
             classification = _classify_video_seed_error(error_text, model_id)
             if classification:
                 _append_unique(failures, classification)
+                _append_blocker_unique(external_blockers, _external_blocker_from_classification(
+                    classification,
+                    source="recentGatewayLogs",
+                    app_caller=app_code,
+                    model_id=model_id,
+                    log_id=str(log.get("_id") or ""),
+                ))
                 video_log_classifications.append({
                     "logId": str(log.get("_id") or ""),
                     "classification": classification,
@@ -734,6 +844,7 @@ def _audit(
         "verdict": "fail" if failures else "pass",
         "failures": failures,
         "warnings": warnings,
+        "externalBlockers": external_blockers,
         "asr": {
             "exchange": _sanitize_exchange(asr_exchange, secret) if asr_exchange else None,
             "poolId": asr_pool_id,
@@ -805,6 +916,17 @@ def _write_md(path: str, report: dict[str, Any]) -> None:
         if warnings:
             for item in warnings:
                 fh.write(f"- {item}\n")
+        else:
+            fh.write("- none\n")
+        fh.write("\n## External Blockers\n\n")
+        blockers = report.get("externalBlockers") or []
+        if blockers:
+            for item in blockers:
+                fh.write(
+                    f"- `{item.get('code')}` scope=`{item.get('scope')}` "
+                    f"appCaller=`{item.get('appCaller') or ''}` model=`{item.get('modelId') or ''}`: "
+                    f"{item.get('remediation') or ''}\n"
+                )
         else:
             fh.write("- none\n")
 
