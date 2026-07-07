@@ -449,6 +449,14 @@ export async function getDocStoreShareEntryContent(token: string, entryId: strin
   }>(api.documentStore.stores.publicShareEntryContent(token, entryId), { method: 'GET', auth: false });
 }
 
+/** 读取分享范围内的整库图谱（匿名；单篇分享会被后端拒绝） */
+export async function getDocStoreShareGraph(token: string) {
+  return await apiRequest<import('@/services/real/mentions').StoreGraphResponse>(
+    api.documentStore.stores.publicShareGraph(token),
+    { method: 'GET', auth: false },
+  );
+}
+
 /** 列出分享链接 */
 export async function listShareLinks(storeId: string) {
   return await apiRequest<{ items: import('@/services/contracts/documentStore').DocumentStoreShareLink[] }>(

@@ -74,6 +74,7 @@ export type PublicStoreDetail = PublicDocumentStore & {
 export type DocumentStoreShareLink = {
   id: string;
   token: string;
+  shortSeq?: number;
   storeId: string;
   storeName: string;
   /** 非空 = 单篇文档分享；空 = 整库分享 */

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams, Navigate } from 'react-router-dom';
+import { useParams, Navigate, useLocation } from 'react-router-dom';
 import { AlertCircle } from 'lucide-react';
 import { resolveShortLinkSlug } from '@/services';
 import type { ShortLinkTargetType } from '@/services';
@@ -22,6 +22,7 @@ import ShareViewPage from './ShareViewPage';
  */
 export default function ShortLinkRouter() {
   const { slug } = useParams<{ slug: string }>();
+  const location = useLocation();
   const [state, setState] = useState<
     | { kind: 'loading' }
     | { kind: 'error'; title: string; detail?: string }
@@ -111,10 +112,10 @@ export default function ShortLinkRouter() {
   // 目前仅 web_page 接入；将来其他分享类型在此 switch 增加分支即可。
   // default 显式 fallback 一个 error 页，避免新加 targetType 但忘了添加 case 时
   // 用户看到完全空白页（bugbot low #77adffb8）。
-  return renderTarget(state.targetType, state.token);
+  return renderTarget(state.targetType, state.token, location.search);
 }
 
-function renderTarget(targetType: ShortLinkTargetType, token: string) {
+function renderTarget(targetType: ShortLinkTargetType, token: string, search: string) {
   switch (targetType) {
     case 'web_page':
       // ShareViewPage 已支持 tokenOverride，直接 mount，URL bar 不变
@@ -127,7 +128,7 @@ function renderTarget(targetType: ShortLinkTargetType, token: string) {
       return <Navigate to={`/s/skill/${token}`} replace />;
     case 'document_store':
       // 知识库 / 单篇文档分享，统一展示页 /s/lib/:token（LibraryShareViewPage）
-      return <Navigate to={`/s/lib/${token}`} replace />;
+      return <Navigate to={`/s/lib/${token}${search}`} replace />;
     case 'workflow':
       // 工作流没有专用 ViewPage SPA 路由，历史一直走 /s/{token} 走本 Router；
       // 显示 Unsupported 让用户知道路径，避免跳转到不存在的地址造成静默 404

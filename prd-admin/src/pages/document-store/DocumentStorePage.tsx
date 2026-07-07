@@ -11,6 +11,7 @@ import {
   Sparkle,
   Trash2,
   FileText,
+  BookOpen,
   Share2,
   Globe,
   Lock as GlobeLock,
@@ -596,8 +597,13 @@ function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle, onClos
     }
   };
 
-  const copyLink = (token: string) => {
-    const url = `${window.location.origin}/s/lib/${token}`;
+  const buildShareUrl = (link: DocumentStoreShareLink, view?: 'galaxy' | 'universe') => {
+    const path = link.shortSeq && link.shortSeq > 0 ? `/s/${link.shortSeq}` : `/s/lib/${link.token}`;
+    return `${window.location.origin}${path}${view ? `?view=${view}` : ''}`;
+  };
+
+  const copyShareViewLink = (link: DocumentStoreShareLink, view?: 'galaxy' | 'universe') => {
+    const url = buildShareUrl(link, view);
     navigator.clipboard.writeText(url).then(() => toast.success('链接已复制'));
   };
 
@@ -686,7 +692,8 @@ function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle, onClos
           ) : (
             <div className="space-y-2">
               {links.map(link => {
-                const fullUrl = `${window.location.origin}/s/lib/${link.token}`;
+                const hasShortLink = Boolean(link.shortSeq && link.shortSeq > 0);
+                const visibleUrl = buildShareUrl(link);
                 return (
                   <div
                     key={link.id}
@@ -708,6 +715,12 @@ function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle, onClos
                         <span className="truncate text-[12px] font-semibold text-token-primary">
                           {link.title || (link.entryId ? (link.entryTitle || '文档分享') : '整库分享')}
                         </span>
+                        {hasShortLink && (
+                          <span className="flex-shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold"
+                            style={{ background: 'rgba(59,130,246,0.14)', color: 'rgba(147,197,253,0.96)', border: '1px solid rgba(59,130,246,0.28)' }}>
+                            全局短链 #{link.shortSeq}
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-3 text-[10px] text-token-muted flex-shrink-0">
                         <span className="flex items-center gap-1">
@@ -726,30 +739,45 @@ function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle, onClos
                       // 已撤销：链接失效，明示状态（不再提供复制）
                       <div className="flex items-center gap-2">
                         <span className="flex-1 min-w-0 truncate font-mono text-[11px] text-token-muted line-through">
-                          {fullUrl}
+                          {visibleUrl}
                         </span>
                         <span className="text-[11px] font-semibold text-token-error flex-shrink-0">已撤销</span>
                       </div>
                     ) : (
                       // 有效：完整链接直接平铺可选中 + 醒目「复制」，撤销降为次要操作
-                      <div className="flex items-center gap-2">
-                        <input
-                          value={fullUrl}
-                          readOnly
-                          onFocus={(e) => e.currentTarget.select()}
-                          className="prd-field h-8 flex-1 min-w-0 rounded-[8px] px-3 font-mono text-[11px] outline-none"
-                        />
-                        <button
-                          onClick={() => copyLink(link.token)}
-                          className="surface-action-accent flex h-8 cursor-pointer items-center gap-1 rounded-[8px] px-3 text-[11px] font-semibold flex-shrink-0">
-                          <Copy size={11} /> 复制
-                        </button>
-                        <button
-                          onClick={() => handleRevoke(link.id)}
-                          className="flex h-8 cursor-pointer items-center gap-1 rounded-[8px] px-2.5 text-[11px] text-token-muted transition-colors hover:text-token-error flex-shrink-0"
-                          title="撤销此分享（撤销后链接立即失效）">
-                          <Trash2 size={11} /> 撤销
-                        </button>
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <input
+                            value={visibleUrl}
+                            readOnly
+                            onFocus={(e) => e.currentTarget.select()}
+                            className="prd-field h-8 flex-1 min-w-0 rounded-[8px] px-3 font-mono text-[11px] outline-none"
+                          />
+                          <button
+                            onClick={() => copyShareViewLink(link)}
+                            className="surface-action-accent flex h-8 cursor-pointer items-center gap-1 rounded-[8px] px-3 text-[11px] font-semibold flex-shrink-0">
+                            <Copy size={11} /> 复制
+                          </button>
+                          <button
+                            onClick={() => handleRevoke(link.id)}
+                            className="flex h-8 cursor-pointer items-center gap-1 rounded-[8px] px-2.5 text-[11px] text-token-muted transition-colors hover:text-token-error flex-shrink-0"
+                            title="撤销此分享（撤销后链接立即失效）">
+                            <Trash2 size={11} /> 撤销
+                          </button>
+                        </div>
+                        {!link.entryId && (
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <button type="button" onClick={() => copyShareViewLink(link)} className="surface-action flex h-7 cursor-pointer items-center gap-1 rounded-[7px] px-2.5 text-[11px] font-semibold">
+                              <BookOpen size={11} /> 复制阅读页
+                            </button>
+                            <button type="button" onClick={() => copyShareViewLink(link, 'galaxy')} className="surface-action flex h-7 cursor-pointer items-center gap-1 rounded-[7px] px-2.5 text-[11px] font-semibold">
+                              <Orbit size={11} /> 复制知识星球
+                            </button>
+                            <button type="button" onClick={() => copyShareViewLink(link, 'universe')} className="surface-action flex h-7 cursor-pointer items-center gap-1 rounded-[7px] px-2.5 text-[11px] font-semibold">
+                              <LinkIcon size={11} /> 复制双链图
+                            </button>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1593,9 +1621,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                   <MoreItem icon={<Globe size={14} />} label={publishing ? '处理中…' : '发布到智识殿堂'} disabled={publishing} onClick={handleTogglePublish} dataTourId="document-store-publish" />
                 )}
                 <MoreItem icon={<Download size={14} />} label={downloading ? '打包中…' : '下载全部文档（ZIP）'} disabled={downloading} onClick={handleDownloadStore} />
-                {/* 默认只暴露「知识星球」(3D 星系)。obsidian 风的「关系图谱/宇宙图」与星系是两套不同心智，
-                    并存让用户分不清该用哪个、返回关系也乱（见 debt.knowledge-base.galaxy-vs-universe）。
-                    暂时收起宇宙图入口（路由仍在，深链可达），待智能判别落地后再决定按库展示哪一个。 */}
+                <MoreItem icon={<LinkIcon size={14} />} label="Obsidian 双链图" onClick={() => { setMoreOpen(false); navigate(`/document-store/${storeId}/universe`); }} />
                 <MoreItem icon={<Orbit size={14} />} label="知识星球（3D 星系）" onClick={() => { setMoreOpen(false); navigate(`/document-store/${storeId}/galaxy`); }} />
                 <MoreItem icon={<BarChart3 size={14} />} label="访客统计" onClick={() => { setMoreOpen(false); setShowViewers(true); }} />
                 <MoreItem icon={<Rss size={14} />} label="添加订阅" onClick={() => { setMoreOpen(false); setShowSubscribe(true); }} />

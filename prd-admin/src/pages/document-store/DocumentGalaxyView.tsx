@@ -44,6 +44,8 @@ import { GalaxyConstellationLoader } from './GalaxyConstellationLoader';
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { listDocumentEntriesReal, getDocumentContent } from '@/services/real/documentStore';
 import { getStoreGraph } from '@/services/real/mentions';
+import type { ApiResponse } from '@/types/api';
+import type { DocumentEntry } from '@/services/contracts/documentStore';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 import {
   buildDocGalaxy,
@@ -2992,6 +2994,7 @@ function ReaderPanel({
   pathNames,
   width,
   onResize,
+  loadContent,
   onClose,
 }: {
   entryId: string;
@@ -2999,6 +3002,7 @@ function ReaderPanel({
   pathNames?: string[];
   width: number;
   onResize: (w: number) => void;
+  loadContent?: (entryId: string) => ReturnType<typeof getDocumentContent>;
   onClose: () => void;
 }) {
   const [content, setContent] = useState<string | null>(null);
@@ -3011,7 +3015,8 @@ function ReaderPanel({
     setLoading(true);
     setError(null);
     setContent(null);
-    getDocumentContent(entryId)
+    const loadContentFn = loadContent ?? getDocumentContent;
+    loadContentFn(entryId)
       .then((res) => {
         if (cancelled) return;
         if (!res.success) {
@@ -3030,7 +3035,7 @@ function ReaderPanel({
     return () => {
       cancelled = true;
     };
-  }, [entryId]);
+  }, [entryId, loadContent]);
 
   // ESC 关闭
   useEffect(() => {
@@ -3186,6 +3191,12 @@ export interface GalaxyCrumb {
 export interface DocumentGalaxyViewProps {
   storeId: string;
   storeName?: string;
+  /** 条目列表数据源：默认读取登录态知识库；分享页可注入 token 门禁匿名接口。 */
+  listEntries?: (page: number, pageSize: number) => Promise<ApiResponse<{ items: DocumentEntry[]; total: number }>>;
+  /** 双链图谱数据源：默认读取登录态知识库；分享页可注入 token 门禁匿名接口。 */
+  loadGraph?: () => ReturnType<typeof getStoreGraph>;
+  /** 阅读面板正文数据源：默认读取登录态知识库；分享页可注入 token 门禁匿名接口。 */
+  loadContent?: (entryId: string) => ReturnType<typeof getDocumentContent>;
   /** 叶子名显示模式（结构名/正文标题），由外层头部开关控制。默认正文标题。 */
   labelMode?: GalaxyLabelMode;
   /** 当前关系链变化（聚焦枢纽 / 打开文档），供外层头部渲染面包屑。 */
@@ -3198,7 +3209,7 @@ export interface DocumentGalaxyViewProps {
   onToggleLabelMode?: () => void;
 }
 
-export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', onContextChange, openEntryRef, onBack, onToggleLabelMode }: DocumentGalaxyViewProps) {
+export function DocumentGalaxyView({ storeId, storeName, listEntries, loadGraph, loadContent, labelMode = 'content', onContextChange, openEntryRef, onBack, onToggleLabelMode }: DocumentGalaxyViewProps) {
   const isMobile = useIsMobile();
   const [galaxy, setGalaxy] = useState<DocGalaxy | null>(null);
   const [loading, setLoading] = useState(true);
@@ -3414,9 +3425,11 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
     // 整个加载（首页 + 翻页 + 成图）作为一个 async 单元，整体纳入下面的超时 race，
     // 任何一页 await 卡住都会触发超时报错，不会再静默停在「正在构建文档星系...」
     const loadGalaxy = async (): Promise<{ built: DocGalaxy; partial: boolean; linksFailed: boolean }> => {
+      const listEntriesFn = listEntries ?? ((page: number, pageSize: number) => listDocumentEntriesReal(storeId, page, pageSize));
+      const loadGraphFn = loadGraph ?? (() => getStoreGraph(storeId));
       const [firstRes, graphRes] = await Promise.all([
-        listDocumentEntriesReal(storeId, 1, 200),
-        getStoreGraph(storeId),
+        listEntriesFn(1, 200),
+        loadGraphFn(),
       ]);
       if (!firstRes.success) {
         console.error('[galaxy] 加载文档条目失败', firstRes.error);
@@ -3436,7 +3449,7 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
         page < MAX_PAGES
       ) {
         page += 1;
-        const res = await listDocumentEntriesReal(storeId, page, PAGE_SIZE);
+        const res = await listEntriesFn(page, PAGE_SIZE);
         if (cancelled) break;
         if (!res.success) {
           console.error('[galaxy] 翻页加载条目失败（图谱将不完整）', page, res.error);
@@ -3503,7 +3516,7 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
     return () => {
       cancelled = true;
     };
-  }, [storeId]);
+  }, [storeId, listEntries, loadGraph]);
 
   // 关系链面包屑（透明，无药丸底盒）—— 渲染在顶栏里（第一层）。每段带 ▾ 跳同级兄弟下拉。
   const breadcrumbNode =
@@ -4123,6 +4136,7 @@ export function DocumentGalaxyView({ storeId, storeName, labelMode = 'content', 
             pathNames={pathNames}
             width={drawerWidth}
             onResize={setDrawerWidthPersist}
+            loadContent={loadContent}
             onClose={() => setOpenEntryId(null)}
           />
         );
