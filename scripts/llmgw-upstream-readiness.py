@@ -164,9 +164,10 @@ def _check_one(
         failures.append("resolve did not return actualPlatformId")
     if not protocol:
         failures.append("resolve did not return protocol")
+    is_exchange = protocol.lower() == "exchange" or platform_name.lower().startswith("exchange:")
     if not api_key_present:
         warnings.append("resolve response does not expose apiKey; ServingKeyIntegrity covers decryptability")
-    if not allow_missing_api_key and not api_key_present:
+    if not allow_missing_api_key and not api_key_present and not is_exchange:
         failures.append("resolve did not return a decrypted apiKey")
     if not allow_legacy and resolution_type.lower() == "legacy":
         failures.append("resolve used legacy fallback instead of model pool binding")
