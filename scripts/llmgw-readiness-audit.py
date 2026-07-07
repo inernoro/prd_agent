@@ -511,7 +511,12 @@ def _static_checks() -> list[dict]:
         [
             "LLM Gateway ASR HTTP canary",
             "/api/ops/llmgw/canary/asr",
+            "document-store.subtitle::asr",
             "transcript-agent.transcribe::asr",
+            "video-agent.v2d.transcribe::asr",
+            "video-agent.video-to-text::asr",
+            "DEFAULT_APP_CALLERS",
+            "canaries",
             "X-Gateway-Key",
             "MultipartFileRefs",
             "MAP API failed to upload ASR canary audio to object storage",

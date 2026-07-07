@@ -20,7 +20,12 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_APP_CALLER = "transcript-agent.transcribe::asr"
+DEFAULT_APP_CALLERS = [
+    "document-store.subtitle::asr",
+    "transcript-agent.transcribe::asr",
+    "video-agent.v2d.transcribe::asr",
+    "video-agent.video-to-text::asr",
+]
 
 
 def _env_first(names: list[str]) -> tuple[str, str]:
@@ -139,11 +144,64 @@ def _write_json(path: str, report: dict[str, Any]) -> None:
     out.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _split_csv(raw: str) -> list[str]:
+    return [item.strip() for item in raw.replace(";", ",").split(",") if item.strip()]
+
+
+def _resolve_app_callers(args: argparse.Namespace) -> list[str]:
+    values: list[str] = []
+    for raw in args.app_caller or []:
+        values.extend(_split_csv(raw))
+    if values:
+        return list(dict.fromkeys(values))
+
+    env_raw = os.environ.get("LLMGW_ASR_CANARY_APP_CALLERS", "").strip()
+    if env_raw:
+        return list(dict.fromkeys(_split_csv(env_raw)))
+
+    single_env = os.environ.get("LLMGW_ASR_CANARY_APP_CALLER", "").strip()
+    if single_env:
+        return [single_env]
+
+    return DEFAULT_APP_CALLERS.copy()
+
+
+def _run_one_canary(args: argparse.Namespace, base: str, key: str, app_caller: str) -> dict[str, Any]:
+    request_id = "llmgw-asr-canary-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    body: dict[str, Any] = {
+        "appCallerCode": app_caller,
+        "requestId": request_id,
+        "timeoutSeconds": args.timeout,
+    }
+    if args.expected_model.strip():
+        body["expectedModel"] = args.expected_model.strip()
+    if args.pinned_platform_id.strip():
+        body["pinnedPlatformId"] = args.pinned_platform_id.strip()
+    if args.pinned_model_id.strip():
+        body["pinnedModelId"] = args.pinned_model_id.strip()
+
+    response = _post_json(base + "/api/ops/llmgw/canary/asr", key, body, args.timeout + 15)
+    ok, failures, warnings = _classify(response)
+    return {
+        "appCallerCode": app_caller,
+        "requestId": request_id,
+        "api": response,
+        "failures": failures,
+        "warnings": warnings,
+        "verdict": "pass" if ok and not failures else "fail",
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="LLM Gateway ASR HTTP multipart canary")
     parser.add_argument("--api-base", default=os.environ.get("PRD_AGENT_BASE") or os.environ.get("MAP_BASE") or "")
     parser.add_argument("--key-env", default=os.environ.get("LLMGW_ASR_CANARY_KEY_ENV", "LLMGW_SERVE_KEY/GW_KEY/LLMGW_GATE_KEY"))
-    parser.add_argument("--app-caller", default=os.environ.get("LLMGW_ASR_CANARY_APP_CALLER", DEFAULT_APP_CALLER))
+    parser.add_argument(
+        "--app-caller",
+        action="append",
+        default=[],
+        help="ASR appCallerCode to canary. May be repeated or comma-separated. Defaults to all production ASR callers.",
+    )
     parser.add_argument("--expected-model", default=os.environ.get("LLMGW_ASR_CANARY_EXPECTED_MODEL", ""))
     parser.add_argument("--pinned-platform-id", default=os.environ.get("LLMGW_ASR_CANARY_PINNED_PLATFORM_ID", ""))
     parser.add_argument("--pinned-model-id", default=os.environ.get("LLMGW_ASR_CANARY_PINNED_MODEL_ID", ""))
@@ -155,17 +213,19 @@ def main() -> int:
     base = args.api_base.strip().rstrip("/")
     key_env_names = [item.strip() for item in args.key_env.replace(",", "/").split("/") if item.strip()]
     key_env, key = _env_first(key_env_names)
+    app_callers = _resolve_app_callers(args)
     report: dict[str, Any] = {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "apiBase": base,
         "gatewayKeyEnv": key_env,
-        "appCallerCode": args.app_caller,
+        "appCallers": app_callers,
         "expectedModel": args.expected_model.strip() or None,
         "pinnedPlatformId": args.pinned_platform_id.strip() or None,
         "pinnedModelId": args.pinned_model_id.strip() or None,
         "verdict": "fail",
         "failures": [],
         "warnings": [],
+        "canaries": [],
     }
 
     if not base:
@@ -181,32 +241,31 @@ def main() -> int:
         print(f"- missing gateway key env: {args.key_env}")
         return 2
 
-    request_id = "llmgw-asr-canary-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    body = {
-        "appCallerCode": args.app_caller,
-        "requestId": request_id,
-        "timeoutSeconds": args.timeout,
-    }
-    if args.expected_model.strip():
-        body["expectedModel"] = args.expected_model.strip()
-    if args.pinned_platform_id.strip():
-        body["pinnedPlatformId"] = args.pinned_platform_id.strip()
-    if args.pinned_model_id.strip():
-        body["pinnedModelId"] = args.pinned_model_id.strip()
+    all_failures: list[str] = []
+    all_warnings: list[str] = []
+    canaries: list[dict[str, Any]] = []
+    for app_caller in app_callers:
+        item = _run_one_canary(args, base, key, app_caller)
+        canaries.append(item)
+        for failure in item.get("failures") or []:
+            all_failures.append(f"{app_caller}: {failure}")
+        for warning in item.get("warnings") or []:
+            all_warnings.append(f"{app_caller}: {warning}")
 
-    response = _post_json(base + "/api/ops/llmgw/canary/asr", key, body, args.timeout + 15)
-    ok, failures, warnings = _classify(response)
-    report["requestId"] = request_id
-    report["api"] = response
-    report["failures"] = failures
-    report["warnings"] = warnings
-    report["verdict"] = "pass" if ok and not failures else "fail"
+    report["canaries"] = canaries
+    if len(canaries) == 1:
+        report["appCallerCode"] = canaries[0].get("appCallerCode")
+        report["requestId"] = canaries[0].get("requestId")
+        report["api"] = canaries[0].get("api")
+    report["failures"] = all_failures
+    report["warnings"] = all_warnings
+    report["verdict"] = "pass" if canaries and not all_failures and all(item.get("verdict") == "pass" for item in canaries) else "fail"
     _write_json(args.json_out, report)
 
     print(f"LLM Gateway ASR HTTP canary: {report['verdict'].upper()}")
-    for failure in failures:
+    for failure in all_failures:
         print(f"- {failure}")
-    for warning in warnings:
+    for warning in all_warnings:
         print(f"- warning: {warning}")
     if args.print_json:
         print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
