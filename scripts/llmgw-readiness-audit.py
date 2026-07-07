@@ -25,7 +25,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _read(rel: str) -> str:
-    return (ROOT / rel).read_text(encoding="utf-8")
+    path = ROOT / rel
+    return path.read_text(encoding="utf-8") if path.exists() else ""
 
 
 def _redact_cmd(cmd: list[str]) -> list[str]:
