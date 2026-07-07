@@ -175,8 +175,11 @@ python3 scripts/llmgw-map-shadow-seed.py --iterations 1
 `LLMGW_SHADOW_SAMPLE_WINDOW_RESTORE_PERCENT`（默认 1）后重建 API，避免手工操作把 100% 采样误留在线上。
 需要把某类入口从 1 条取证累计到每格 30 条时，统一用 `scripts/llmgw-shadow-sample-accumulate.sh` 包装执行。
 该脚本默认 dry-run，执行时必须显式提供 `LLMGW_SHADOW_ACCUMULATE_SEED_FLAGS`、`LLMGW_SHADOW_ACCUMULATE_BATCHES`
-和必要的间隔参数；每个 batch 都会单独调用采样窗口脚本，因此仍然是“短时提采样、跑 MAP seed、立刻恢复”的受控流程。
-累计脚本会把每批 `shadow-sample-window` 证据写入同一个 run 目录，并默认在最后调用
+和必要的间隔参数。生产 24 小时证据期优先启用 `LLMGW_SHADOW_ACCUMULATE_FORCE_SAMPLE=1`：累计脚本会直接调用
+`scripts/llmgw-map-shadow-seed.py --force-shadow-sample`，由 API 校验 `X-Llmgw-Shadow-Sample-Key` 后仅对本次请求强制完整
+shadow 比对，不修改 `.env`、不重建 API。`scripts/llmgw-shadow-sample-window.sh` 保留给短时诊断或确需临时提高
+`ShadowFullSamplePercent` 的场景；不得用反复重建 API 的方式硬刷 30 条生产样本。
+累计脚本会把每批 seed 证据写入同一个 run 目录，并默认在最后调用
 `scripts/llmgw-shadow-coverage-report.py` 生成 coverage JSON/Markdown。若 coverage 仍有样本不足、覆盖时长不足、
 critical 或 httpFail，结论只能是继续累计或归因修复，不能降低 release gate。
 需要补视频或 ASR/raw 证据时必须显式加 `--include-video-direct` / `--include-visual-video-direct` /

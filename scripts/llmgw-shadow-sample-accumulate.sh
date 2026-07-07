@@ -8,9 +8,11 @@ set -eu
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 window_script="$script_dir/llmgw-shadow-sample-window.sh"
+seed_script="$script_dir/llmgw-map-shadow-seed.py"
 coverage_script="$script_dir/llmgw-shadow-coverage-report.py"
 
 dry_run="${LLMGW_SHADOW_ACCUMULATE_DRY_RUN:-1}"
+force_sample="${LLMGW_SHADOW_ACCUMULATE_FORCE_SAMPLE:-0}"
 batches="${LLMGW_SHADOW_ACCUMULATE_BATCHES:-1}"
 sleep_seconds="${LLMGW_SHADOW_ACCUMULATE_SLEEP_SECONDS:-0}"
 seed_flags="${LLMGW_SHADOW_ACCUMULATE_SEED_FLAGS:-}"
@@ -30,6 +32,11 @@ run_coverage="${LLMGW_SHADOW_ACCUMULATE_RUN_COVERAGE:-1}"
 
 if [ ! -x "$window_script" ]; then
   echo "ERROR: 找不到可执行采样窗口脚本: $window_script" >&2
+  exit 1
+fi
+
+if [ ! -f "$seed_script" ]; then
+  echo "ERROR: 找不到 MAP seed 脚本: $seed_script" >&2
   exit 1
 fi
 
@@ -68,6 +75,7 @@ redact_seed_flags() {
 
 echo "LLM Gateway shadow sample accumulator"
 echo "  dryRun: $dry_run"
+echo "  forceSample: $force_sample"
 echo "  batches: $batches"
 echo "  sleepSeconds: $sleep_seconds"
 echo "  runDir: $run_dir"
@@ -86,17 +94,33 @@ fi
 
 mkdir -p "$run_dir"
 
+gate_key="${LLMGW_GATE_KEY:-${GW_KEY:-${LLMGW_SERVE_KEY:-}}}"
+if [ "$force_sample" = "1" ] || [ "$force_sample" = "true" ]; then
+  if [ -z "$(printf '%s' "$gate_key" | xargs || true)" ]; then
+    echo "ERROR: force sample 模式缺少 LLMGW_GATE_KEY/GW_KEY/LLMGW_SERVE_KEY" >&2
+    exit 1
+  fi
+fi
+
 i=1
 while [ "$i" -le "$batches" ]; do
   batch_id="$(printf '%03d' "$i")"
   evidence_out="$run_dir/batch-$batch_id-shadow-sample-window.json"
   echo "LLM Gateway shadow sample batch $batch_id/$batches"
 
-  # shellcheck disable=SC2086
-  LLMGW_SHADOW_SAMPLE_WINDOW_DRY_RUN=0 \
-  LLMGW_SHADOW_SAMPLE_WINDOW_SEED_FLAGS="$seed_flags" \
-  LLMGW_SHADOW_SAMPLE_WINDOW_EVIDENCE_OUT="$evidence_out" \
-  "$window_script"
+  if [ "$force_sample" = "1" ] || [ "$force_sample" = "true" ]; then
+    # shellcheck disable=SC2086
+    LLMGW_GATE_KEY="$gate_key" python3 "$seed_script" \
+      --force-shadow-sample \
+      --evidence-out "$evidence_out" \
+      $seed_flags
+  else
+    # shellcheck disable=SC2086
+    LLMGW_SHADOW_SAMPLE_WINDOW_DRY_RUN=0 \
+    LLMGW_SHADOW_SAMPLE_WINDOW_SEED_FLAGS="$seed_flags" \
+    LLMGW_SHADOW_SAMPLE_WINDOW_EVIDENCE_OUT="$evidence_out" \
+    "$window_script"
+  fi
 
   if [ "$i" -lt "$batches" ] && [ "$sleep_seconds" -gt 0 ]; then
     sleep "$sleep_seconds"
@@ -144,7 +168,6 @@ if [ "$run_coverage" = "1" ] || [ "$run_coverage" = "true" ]; then
     coverage_args="$coverage_args --release-commit $release_commit"
   fi
 
-  gate_key="${LLMGW_GATE_KEY:-${GW_KEY:-${LLMGW_SERVE_KEY:-}}}"
   if [ -z "$(printf '%s' "$gate_key" | xargs || true)" ]; then
     echo "ERROR: 缺少 LLMGW_GATE_KEY/GW_KEY/LLMGW_SERVE_KEY，无法生成 shadow coverage" >&2
     exit 1

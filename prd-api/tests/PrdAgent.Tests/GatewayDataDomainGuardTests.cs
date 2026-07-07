@@ -1251,6 +1251,30 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("AppCallerRegistry.VisualAgent.Image.VisionGen", worker);
     }
 
+    [Fact]
+    public void ShadowForceSample_IsKeyCheckedAndDoesNotRequireApiRestart()
+    {
+        var apiProgram = ReadRepoFile("prd-api/src/PrdAgent.Api/Program.cs");
+        var context = ReadRepoFile("prd-api/src/PrdAgent.Core/Interfaces/ILLMRequestContextAccessor.cs");
+        var accessor = ReadRepoFile("prd-api/src/PrdAgent.Core/Services/LLMRequestContextAccessor.cs");
+        var shadowGateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ShadowLlmGateway.cs");
+        var seed = ReadRepoFile("scripts/llmgw-map-shadow-seed.py");
+        var accumulator = ReadRepoFile("scripts/llmgw-shadow-sample-accumulate.sh");
+
+        Assert.Contains("X-Llmgw-Shadow-Sample-Key", apiProgram);
+        Assert.Contains("FixedTimeEqualsNonEmpty", apiProgram);
+        Assert.Contains("ForceFullShadowSample: true", apiProgram);
+        Assert.Contains("bool ForceFullShadowSample = false", context);
+        Assert.Contains("prev?.ForceFullShadowSample == true", accessor);
+        Assert.Contains("_ctx?.Current?.ForceFullShadowSample == true", shadowGateway);
+        Assert.Contains("--force-shadow-sample", seed);
+        Assert.Contains("X-Llmgw-Shadow-Sample-Key", seed);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_FORCE_SAMPLE", accumulator);
+        Assert.Contains("--force-shadow-sample", accumulator);
+        Assert.Contains("python3 \"$seed_script\"", accumulator);
+        Assert.Contains("\"$window_script\"", accumulator);
+    }
+
     private static string ReadRepoFile(string relativePath)
     {
         var root = LocateRepoRoot();

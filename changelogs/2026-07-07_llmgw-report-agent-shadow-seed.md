@@ -12,3 +12,4 @@
 | ops | prd-api | 将 report-agent.generate 纳入 LLM Gateway shadow seed 矩阵，补齐 full-http 发布 gate 的 send 证据单元 |
 | test | prd-api | 增加网关数据域守卫，防止 report-agent.generate 证据入口从全量迁移计划中漂移 |
 | fix | prd-api | 修复视觉生图 worker 参考图加载不完整时静默降级 text2img，确保 img2img 和多图 vision 按真实 AppCallerCode 落网关证据 |
+| ops | prd-api | 新增 LLM Gateway 内部强制 shadow 采样 header 和无重启累计模式，用于生产证据期低扰动补样本 |

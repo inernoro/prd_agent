@@ -180,7 +180,8 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     // ─────────────────────── 后台比对（fire-and-forget，全隔离）───────────────────────
 
     private bool SampleHit(string appCallerCode)
-        => _fullSampleAllowlist.Contains(appCallerCode)
+        => _ctx?.Current?.ForceFullShadowSample == true
+           || _fullSampleAllowlist.Contains(appCallerCode)
            || (_fullSamplePercent > 0 && Random.Shared.Next(100) < _fullSamplePercent);
 
     private void SafeRun(Func<Task> work) => _ = Task.Run(async () =>

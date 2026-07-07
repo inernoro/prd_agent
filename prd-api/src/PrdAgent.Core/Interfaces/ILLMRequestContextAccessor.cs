@@ -23,7 +23,12 @@ public record LlmRequestContext(
     /// 网关传输路径观测标记（S2）：inproc / http / shadow / direct。
     /// 仅真实直连路径需要显式设置 direct；网关路径由各自的日志构建点权威标注，不依赖此字段。
     /// </summary>
-    string? GatewayTransport = null);
+    string? GatewayTransport = null,
+    /// <summary>
+    /// 内部发布取证开关：当前请求强制执行完整 shadow 比对。
+    /// 仅由服务端校验过的内部采样 header 设置；普通用户请求保持 false。
+    /// </summary>
+    bool ForceFullShadowSample = false);
 
 public interface ILLMRequestContextAccessor
 {

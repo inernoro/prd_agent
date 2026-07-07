@@ -30,6 +30,7 @@ from typing import Any
 
 
 DEFAULT_BASE = "http://127.0.0.1:5500"
+FORCE_SHADOW_SAMPLE_KEY = ""
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,8 @@ def request_json(
 ) -> ApiResult:
     data: bytes | None = None
     req_headers = dict(headers or {})
+    if FORCE_SHADOW_SAMPLE_KEY:
+        req_headers.setdefault("X-Llmgw-Shadow-Sample-Key", FORCE_SHADOW_SAMPLE_KEY)
     if payload is not None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         req_headers.setdefault("Content-Type", "application/json")
@@ -105,6 +108,8 @@ def request_multipart(
         chunks.append(b"\r\n")
     chunks.append(f"--{boundary}--\r\n".encode("ascii"))
     req_headers = dict(headers or {})
+    if FORCE_SHADOW_SAMPLE_KEY:
+        req_headers.setdefault("X-Llmgw-Shadow-Sample-Key", FORCE_SHADOW_SAMPLE_KEY)
     req_headers.setdefault("Content-Type", f"multipart/form-data; boundary={boundary}")
     req_headers.setdefault("User-Agent", "llmgw-map-shadow-seed/1.0")
     req = urllib.request.Request(url, data=b"".join(chunks), headers=req_headers, method=method)
@@ -1601,6 +1606,7 @@ def main() -> int:
     parser.add_argument("--base", default=os.environ.get("PRD_AGENT_BASE", DEFAULT_BASE), help="MAP API base URL")
     parser.add_argument("--gw-base", default=os.environ.get("LLMGW_GATE_BASE") or os.environ.get("GW_BASE") or "", help="Gateway /gw/v1 base URL")
     parser.add_argument("--gw-key", default=read_env_secret("LLMGW_GATE_KEY", "GW_KEY", "LLMGW_SERVE_KEY"), help="Gateway key, preferably via env")
+    parser.add_argument("--force-shadow-sample", action="store_true", help="Force full shadow sampling for seeded MAP requests via an internal key-checked header")
     parser.add_argument("--admin-token", default=read_env_secret("PRD_TEST_ADMIN_TOKEN", "MAP_ADMIN_TOKEN"), help="Existing MAP admin JWT")
     parser.add_argument("--root-username", default=read_env_secret("ROOT_ACCESS_USERNAME") or "root", help="Root username for login")
     parser.add_argument("--root-password", default=read_env_secret("ROOT_ACCESS_PASSWORD"), help="Root password for login, preferably via env")
@@ -1654,9 +1660,15 @@ def main() -> int:
     parser.add_argument("--seed-username", default="", help="Optional reusable business user for open-platform seeding")
     parser.add_argument("--seed-password", default=read_env_secret("LLMGW_SHADOW_SEED_PASSWORD"), help="Password for --seed-username; omit for auto generated one-shot user")
     args = parser.parse_args()
+    global FORCE_SHADOW_SAMPLE_KEY
 
     if args.iterations < 1:
         raise SystemExit("--iterations must be >= 1")
+
+    if args.force_shadow_sample:
+        if not args.gw_key.strip():
+            raise SystemExit("--force-shadow-sample requires --gw-key or LLMGW_GATE_KEY/GW_KEY/LLMGW_SERVE_KEY")
+        FORCE_SHADOW_SAMPLE_KEY = args.gw_key.strip()
 
     base = args.base.rstrip("/")
     gw_base = (args.gw_base or join_url(base, "/gw/v1")).rstrip("/")
