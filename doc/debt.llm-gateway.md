@@ -108,6 +108,7 @@
 - 已用该脚本在生产跑 1 条 clean-ref `visual-agent.image.vision::generation` 样本。证据文件：`.llmgw-release-evidence/20260707T115734Z_shadow-sample-window.json`；备份目录：`/root/backups/llmgw-before-shadow-sample-window-20260707T195734+0800`。
 - 脚本退出后生产已确认恢复：`LlmGateway__Mode=shadow`、`LlmGateway__HttpAppCallerAllowlist=`、`LlmGateway__ShadowFullSamplePercent=1`。新版脚本已同步生产并 dry-run 通过。
 - 当前最近 2 小时 `visual-agent.image.vision::generation:raw` 有 3 条样本，其中 2 条 clean-ref 成功为 `HttpOk=true`、`AllMatch=true`、`critical=false`、`mismatches=[]`；1 条旧历史参考图样本仍是已归因的上游 policy httpFail。下一步继续从 clean-ref 样本累计，不把旧 policy fail 计入成功发布门。
+- 代码侧直连 ratchet 已达到 baseline 空集合：`GatewayDirectClientRatchetTests` 18/18 PASS，覆盖 `new ClaudeClient/OpenAIClient`、手写上游 HTTP、`GatewayTransports.Direct` 标记、ASR WebSocket 直连、API 层直接依赖 `OpenAIImageClient` / `OpenRouterVideoClient`。这证明当前源码层面没有已知 MAP 业务路径绕过 `ILlmGateway`；剩余发布阻塞转为运行态 shadow 样本量、24 小时窗口与灰度观察。
 
 ## 已还的债务（归档）
 
