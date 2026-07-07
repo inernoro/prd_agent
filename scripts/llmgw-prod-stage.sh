@@ -32,6 +32,7 @@ Required environment for deploy stages:
   LLMGW_STAGE_SHADOW_SEED_FLAGS Extra llmgw-map-shadow-seed.py flags, for example --include-video-direct
   LLMGW_STAGE_RUN_UPSTREAM_READINESS=1 enables /gw/v1/resolve upstream readiness evidence
   LLMGW_STAGE_RUN_PROVIDER_AUDIT=1 enables read-only video/ASR provider config audit
+  LLMGW_STAGE_MIN_FREE_MB minimum free disk MB before execute deploy stages, default 4096
   LLMGW_STAGE_AUTO_RESTORE_SHADOW_ON_FAILURE=1 restores shadow/low-sample after failed high-sample shadow-start (default)
 
 Options:
@@ -311,6 +312,8 @@ case "$stage" in
     ;;
 esac
 run_provider_audit="${LLMGW_STAGE_RUN_PROVIDER_AUDIT:-$provider_audit_default}"
+disk_guard_path="${LLMGW_STAGE_DISK_GUARD_PATH:-$evidence_dir}"
+disk_guard_min_free_mb="${LLMGW_STAGE_MIN_FREE_MB:-4096}"
 
 print_plan() {
   echo "LLM Gateway production stage:"
@@ -337,8 +340,25 @@ print_plan() {
     echo "  upstreamReadinessEnabled: $run_upstream_readiness"
     echo "  providerAuditJson: $provider_audit_json"
     echo "  providerAuditEnabled: $run_provider_audit"
+    echo "  diskGuardPath: $disk_guard_path"
+    echo "  diskGuardMinFreeMb: $disk_guard_min_free_mb"
     echo "  stageJson: $stage_json"
   fi
+}
+
+run_stage_disk_guard() {
+  if [ "$stage" = "rollback-inproc" ] || [ "$stage" = "rollback-rehearsal" ]; then
+    return 0
+  fi
+  if [ "$execute" != "1" ]; then
+    echo "+ scripts/llmgw-disk-space-guard.sh \"$disk_guard_path\" \"$disk_guard_min_free_mb\" \"LLM Gateway production stage $stage\""
+    return 0
+  fi
+  if [ ! -f "scripts/llmgw-disk-space-guard.sh" ]; then
+    echo "ERROR: missing scripts/llmgw-disk-space-guard.sh; refusing production rollout without disk guard." >&2
+    exit 1
+  fi
+  scripts/llmgw-disk-space-guard.sh "$disk_guard_path" "$disk_guard_min_free_mb" "LLM Gateway production stage $stage"
 }
 
 validate_main_ancestry() {
@@ -745,6 +765,8 @@ if [ "$stage" = "rollback-inproc" ]; then
   rollout_ledger_status="rollback"
   exit 0
 fi
+
+run_stage_disk_guard
 
 validate_ledger_order
 validate_main_ancestry

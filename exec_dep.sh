@@ -792,6 +792,11 @@ run_llmgw_release_gate_if_needed() {
     echo "ERROR: LLM Gateway http/canary/shadow sample 发布但缺少 scripts/llmgw-serving-probe.py，拒绝发布。" >&2
     exit 1
   fi
+  if [ ! -f "scripts/llmgw-disk-space-guard.sh" ]; then
+    echo "ERROR: LLM Gateway http/canary/shadow sample 发布但缺少 scripts/llmgw-disk-space-guard.sh，拒绝发布。" >&2
+    exit 1
+  fi
+  scripts/llmgw-disk-space-guard.sh "${LLMGW_DEPLOY_DISK_GUARD_PATH:-.}" "${LLMGW_DEPLOY_MIN_FREE_MB:-4096}" "LLM Gateway exec_dep deploy"
 
   provider_audit_required=0
   if [ "$mode" = "http" ] || [ "$canary_stage" = "video-asr" ]; then

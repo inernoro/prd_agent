@@ -19,3 +19,4 @@
 | ops | prd-agent | LLM Gateway shadow 安全恢复脚本默认持久化低采样环境配置，避免后续 compose 重启恢复高采样 |
 | docs | prd-agent | 在全量迁移计划中补充 shadow 证据不足时的采样方式和 raw gate 边界 |
 | ops | prd-agent | exec_dep.sh 在 LLM Gateway http 与 video-asr 灰度发布前重复执行 provider 配置审计，防止绕过 stage 脚本误发 |
+| ops | prd-agent | 新增 LLM Gateway 生产磁盘空间 guard，并接入 ASR 备份、prod-stage 与 exec_dep 发布路径 |

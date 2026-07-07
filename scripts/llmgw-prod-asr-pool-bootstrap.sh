@@ -43,6 +43,7 @@ echo "  backupDir: $backup_dir"
 if [ "$dry_run" = "1" ] || [ "$dry_run" = "true" ]; then
   echo "LLM Gateway ASR pool bootstrap dry-run: backup skipped"
 else
+  "$script_dir/llmgw-disk-space-guard.sh" "$backup_dir" "${LLMGW_ASR_BOOTSTRAP_MIN_FREE_MB:-6144}" "LLM Gateway ASR pool bootstrap backup"
   mkdir -p "$backup_dir"
   echo "LLM Gateway ASR pool bootstrap: writing Mongo backup"
   # shellcheck disable=SC2086

@@ -205,6 +205,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_SERVING_PROBE_JSON_OUT", script);
         Assert.Contains("LLMGW_SERVING_PROBE_REPORT_MD", script);
         Assert.Contains("scripts/llmgw-serving-probe.py", script);
+        Assert.Contains("scripts/llmgw-disk-space-guard.sh", script);
+        Assert.Contains("LLMGW_DEPLOY_DISK_GUARD_PATH", script);
+        Assert.Contains("LLMGW_DEPLOY_MIN_FREE_MB:-4096", script);
+        Assert.Contains("LLM Gateway exec_dep deploy", script);
         Assert.Contains("provider_audit_required=0", script);
         Assert.Contains("if [ \"$mode\" = \"http\" ] || [ \"$canary_stage\" = \"video-asr\" ]; then", script);
         Assert.Contains("scripts/llmgw-prod-provider-config-audit.py", script);
@@ -338,6 +342,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--execute", script);
         Assert.Contains("--min-observation-hours", script);
         Assert.Contains("LLMGW_STAGE_MIN_OBSERVATION_HOURS", script);
+        Assert.Contains("LLMGW_STAGE_MIN_FREE_MB", script);
+        Assert.Contains("LLMGW_STAGE_DISK_GUARD_PATH", script);
+        Assert.Contains("run_stage_disk_guard", script);
+        Assert.Contains("scripts/llmgw-disk-space-guard.sh", script);
+        Assert.Contains("LLM Gateway production stage $stage", script);
         Assert.Contains("--main-ref", script);
         Assert.Contains("LLMGW_RELEASE_MAIN_REF", script);
         Assert.Contains("validate_main_ancestry", script);

@@ -106,6 +106,8 @@ def _static_checks() -> list[dict]:
     prod_preflight = prod_preflight_path.read_text(encoding="utf-8") if prod_preflight_path.exists() else ""
     upstream_readiness_path = ROOT / "scripts/llmgw-upstream-readiness.py"
     upstream_readiness = upstream_readiness_path.read_text(encoding="utf-8") if upstream_readiness_path.exists() else ""
+    disk_guard_path = ROOT / "scripts/llmgw-disk-space-guard.sh"
+    disk_guard = disk_guard_path.read_text(encoding="utf-8") if disk_guard_path.exists() else ""
     asr_bootstrap_path = ROOT / "scripts/llmgw-prod-asr-pool-bootstrap.sh"
     asr_bootstrap = asr_bootstrap_path.read_text(encoding="utf-8") if asr_bootstrap_path.exists() else ""
     asr_bootstrap_js_path = ROOT / "scripts/llmgw-prod-asr-pool-bootstrap.js"
@@ -292,10 +294,30 @@ def _static_checks() -> list[dict]:
     checks.append(_check("serving_probe_available", ok, detail))
 
     ok, detail = _contains_all(
+        disk_guard,
+        [
+            "df -Pm",
+            "available_mb",
+            "min_free_mb",
+            "nearest existing parent",
+            "requires at least",
+        ],
+    )
+    disk_guard_executable = bool(disk_guard_path.exists() and (disk_guard_path.stat().st_mode & stat.S_IXUSR))
+    disk_guard_destructive = any(item in disk_guard for item in ["rm -", "deleteMany", "dropDatabase", "docker volume rm", "down -v"])
+    checks.append(_check(
+        "disk_space_guard_available_for_prod_rollout",
+        ok and disk_guard_executable and not disk_guard_destructive,
+        f"{detail}; executable={disk_guard_executable}; destructive={disk_guard_destructive}",
+    ))
+
+    ok, detail = _contains_all(
         asr_bootstrap + "\n" + asr_bootstrap_js,
         [
             "LLMGW_ASR_BOOTSTRAP_DRY_RUN:-1",
             "mongodump --db \"$mongo_db\" --archive",
+            "llmgw-disk-space-guard.sh",
+            "LLMGW_ASR_BOOTSTRAP_MIN_FREE_MB:-6144",
             "llmgw-prod-before-asr-pool-bootstrap",
             "asr_doubao_bigmodel_pool",
             "doubao-asr-bigmodel",
@@ -399,6 +421,10 @@ def _static_checks() -> list[dict]:
             "LLMGW_STAGE_RUN_PROVIDER_AUDIT",
             "run_provider_audit_evidence",
             "scripts/llmgw-prod-provider-config-audit.py",
+            "LLMGW_STAGE_MIN_FREE_MB",
+            "LLMGW_STAGE_DISK_GUARD_PATH",
+            "run_stage_disk_guard",
+            "scripts/llmgw-disk-space-guard.sh",
             "providerAuditRequired",
             "LLMGW_STAGE_AUTO_RESTORE_SHADOW_ON_FAILURE",
             "scripts/llmgw-restore-shadow-safe.sh",
@@ -631,6 +657,10 @@ def _static_checks() -> list[dict]:
             "GW_BASE=\"$gate_base\" GW_KEY=\"$gate_key\" GW_TIMEOUT=\"${LLMGW_GATE_SMOKE_TIMEOUT_SECONDS:-120}\" GW_EXPECT_COMMIT=\"$expect_commit\" python3 scripts/gw-smoke.py",
             "LLMGW_GATE_RUN_SERVING_PROBE",
             "LLMGW_SERVING_PROBE_JSON_OUT",
+            "scripts/llmgw-disk-space-guard.sh",
+            "LLMGW_DEPLOY_DISK_GUARD_PATH",
+            "LLMGW_DEPLOY_MIN_FREE_MB:-4096",
+            "LLM Gateway exec_dep deploy",
             "provider_audit_required=0",
             "if [ \"$mode\" = \"http\" ] || [ \"$canary_stage\" = \"video-asr\" ]; then",
             "scripts/llmgw-prod-provider-config-audit.py",
