@@ -11,6 +11,13 @@ import { ModelPoolsPage } from '@/pages/ModelPoolsPage';
 import { PlatformsPage } from '@/pages/PlatformsPage';
 import { ShadowPage } from '@/pages/ShadowPage';
 
+function getRouterBasename() {
+  if (typeof window === 'undefined') return undefined;
+  return window.location.pathname === '/llmgw' || window.location.pathname.startsWith('/llmgw/')
+    ? '/llmgw'
+    : undefined;
+}
+
 // 受保护路由守卫：未登录跳登录页；已登录但挂着「强制改密」标记则跳改密页（服务端策略门同样拦截，双保险）。
 function RequireAuth({ children }: { children: ReactNode }) {
   const { authed, mustChangePassword } = useAuth();
@@ -31,7 +38,7 @@ function RequireChangePassword({ children }: { children: ReactNode }) {
 export function App() {
   return (
     <AuthProvider>
-      <BrowserRouter>
+      <BrowserRouter basename={getRouterBasename()}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route
