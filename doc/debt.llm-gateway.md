@@ -82,6 +82,7 @@
 - 文本 MAP shadow seed 已成功：`stream` 样本 2 条、`allMatch=2`、`critical=0`、`httpFail=0`，证据：`.llmgw-release-evidence/20260707T044241Z_manual-map-shadow-seed-text_b059d85e2ed3.json`。仅要求文本 stream 的小门槛 release gate PASS，证据：`.llmgw-release-evidence/20260707T044312Z_manual-release-gate-text-shadow_b059d85e2ed3.json`。
 - ASR HTTP canary 已证明 MAP API 能到达 `/api/ops/llmgw/canary/asr` 并进入 raw 阶段，但 BigModel 返回 `Invalid X-Api-Key`，stream 返回 WebSocket 401（诊断显示 appKey 为空或 accessKey 无效/过期），证据：`.llmgw-release-evidence/20260707T044056Z_manual-asr-http-canary_b059d85e2ed3.json` 与 `.llmgw-release-evidence/20260707T044137Z_manual-asr-http-canary-stream_b059d85e2ed3.json`。
 - 代码侧已新增 `scripts/llmgw-prod-chat-pool-bootstrap.sh` / `.js`，把上述 chat 池修正固化为默认 dry-run、执行前备份、幂等前置候选模型的生产操作；`scripts/llmgw-readiness-audit.py` 已纳入静态守卫。结论仍不变：文本链路可继续 shadow/低风险灰度取证，video/ASR/raw 未达全量发布门，禁止全量 `LLMGW_MODE=http`。
+- 同日继续扩展 `scripts/llmgw-video-exchange-canary.py`：默认仍保持低成本 submit canary；显式传 `--poll-status --download-result` 时会通过 `/gw/v1/raw` 轮询火山视频任务状态，并对返回的结果 URL 做下载探测。这样在上游模型开通后，同一脚本可覆盖发布计划要求的 video submit / poll / download 证据链；当前生产仍会在 submit 阶段被 `ModelNotOpen` 或模型池不可用阻断。
 
 ## 已还的债务（归档）
 
