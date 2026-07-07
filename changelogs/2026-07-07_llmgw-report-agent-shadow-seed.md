@@ -9,3 +9,5 @@
 | security | scripts | LLM Gateway shadow 采样窗口打印 seed flags 时隐藏 ASR 视频 URL，避免 signed URL 出现在日志 |
 | test | prd-api | 增加 LLM Gateway 采样窗口脚本守卫，防止恢复采样和密钥传参退化 |
 | docs | doc | 记录 LLM Gateway 直连 ratchet baseline 清零证据，明确剩余发布阻塞转为运行态样本门 |
+| ops | prd-api | 将 report-agent.generate 纳入 LLM Gateway shadow seed 矩阵，补齐 full-http 发布 gate 的 send 证据单元 |
+| test | prd-api | 增加网关数据域守卫，防止 report-agent.generate 证据入口从全量迁移计划中漂移 |

@@ -149,7 +149,7 @@ python3 scripts/llmgw-map-shadow-seed.py --iterations 1
 
 该脚本默认只跑文档 session chat 与 preview-ask 两条低成本文本路径；需要补 send 或图片 raw 证据时必须显式加
 `--include-desktop-chat-run` / `--include-open-platform` / `--include-open-api-chat` / `--include-open-api-image` / `--include-model-lab-run` /
-`--include-arena-run` / `--include-tutorial-email-send` / `--include-image-raw` / `--include-image-worker-text2img` /
+`--include-arena-run` / `--include-tutorial-email-send` / `--include-report-agent-generate` / `--include-image-raw` / `--include-image-worker-text2img` /
 `--include-image-worker-img2img` / `--include-image-worker-vision`，其中图片 raw 会通过
 `/api/visual-agent/image-gen/generate`、`/api/visual-agent/image-gen/runs` 与
 `/api/visual-agent/image-master/workspaces/{id}/image-gen/runs` 走 MAP 真实业务入口并自动选择启用的生图模型
@@ -161,6 +161,9 @@ python3 scripts/llmgw-map-shadow-seed.py --iterations 1
 `open-api.proxy::generation` 不是只靠 resolve-only 样本覆盖；`--include-model-lab-run` 与 `--include-arena-run` 会从 `/api/mds`
 选择启用模型并通过 pinned gateway 语义触发 `prd-agent-web.model-lab.run::chat` 和
 `prd-agent.arena.battle::chat`，保证 ModelLab/Arena 仍测试具体模型而不绕过网关。
+`--include-report-agent-generate` 会复用 `scripts/llmgw-report-agent-shadow-seed.py`，通过真实
+`/api/report-agent/reports` 的 `ai-draft` 创建路径触发 `report-agent.generate::chat/send`，并清理临时周报数据。
+该入口是 full-http gate 的必达单元，不能只靠 tutorial/email send 样本替代。
 `--include-image-worker-text2img` / `--include-image-worker-img2img` / `--include-image-worker-vision`
 都会等待 `ImageGenRunWorker` 后台 run 结束；img2img/vision 必须额外传 `--image-ref-shas`
 （vision 至少两张），用于证明 `visual-agent.image.text2img::generation`、

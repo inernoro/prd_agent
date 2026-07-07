@@ -17,6 +17,7 @@ import math
 import os
 import secrets
 import struct
+import subprocess
 import sys
 import time
 import urllib.error
@@ -663,6 +664,50 @@ def call_tutorial_email_send(base: str, token: str, timeout: float, tag: str) ->
         timeout=timeout,
     )
     api_data(result, "tutorial email generate")
+
+
+def call_report_agent_generate(base: str, release_commit: str, timeout: float, tag: str) -> dict[str, Any]:
+    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "llmgw-report-agent-shadow-seed.py")
+    evidence_out = os.path.join("/tmp", f"llmgw-report-agent-shadow-seed-{tag}.json")
+    cmd = [
+        sys.executable,
+        script_path,
+        "--base",
+        base,
+        "--release-commit",
+        release_commit,
+        "--iterations",
+        "1",
+        "--week-year",
+        "2099",
+        "--start-week",
+        "1",
+        "--timeout",
+        str(int(max(timeout, 180))),
+        "--no-sample-raise",
+        "--evidence-out",
+        evidence_out,
+    ]
+    result = subprocess.run(cmd, text=True, capture_output=True, timeout=max(timeout + 90, 240), check=False)
+    if result.returncode != 0:
+        detail = (result.stdout + "\n" + result.stderr).strip()
+        raise RuntimeError(f"report-agent shadow seed failed rc={result.returncode}: {detail[:1000]}")
+    try:
+        with open(evidence_out, "r", encoding="utf-8") as handle:
+            evidence = json.load(handle)
+    finally:
+        try:
+            os.remove(evidence_out)
+        except OSError:
+            pass
+    if int(evidence.get("succeeded") or 0) < 1 or int(evidence.get("failed") or 0) > 0:
+        raise RuntimeError(f"report-agent shadow seed did not succeed: {json.dumps(evidence, ensure_ascii=False)[:1000]}")
+    return {
+        "succeeded": evidence.get("succeeded"),
+        "failed": evidence.get("failed"),
+        "shadowAfter": evidence.get("shadow_after"),
+        "cleanup": evidence.get("cleanup"),
+    }
 
 
 def resolve_image_gen_model(base: str, token: str, timeout: float) -> tuple[str, str]:
@@ -1572,6 +1617,7 @@ def main() -> int:
     parser.add_argument("--include-model-lab-run", action="store_true", help="Also seed one Model Lab pinned gateway run per iteration")
     parser.add_argument("--include-arena-run", action="store_true", help="Also seed one Arena pinned gateway run per iteration")
     parser.add_argument("--include-tutorial-email-send", action="store_true", help="Also seed one admin non-stream SendAsync call per iteration")
+    parser.add_argument("--include-report-agent-generate", action="store_true", help="Also seed one report-agent.generate::chat SendAsync call per iteration")
     parser.add_argument("--include-image-raw", action="store_true", help="Also seed one real image raw call per iteration")
     parser.add_argument("--include-image-worker-text2img", action="store_true", help="Also seed one ImageGenRunWorker text2img run per iteration")
     parser.add_argument("--include-image-worker-img2img", action="store_true", help="Also seed one ImageGenRunWorker img2img run per iteration; requires --image-ref-shas")
@@ -1636,6 +1682,7 @@ def main() -> int:
         or args.include_open_api_image
         or args.include_model_lab_run
         or args.include_arena_run
+        or args.include_report_agent_generate
         or args.include_image_raw
         or args.include_image_worker_text2img
         or args.include_image_worker_img2img
@@ -1654,6 +1701,7 @@ def main() -> int:
         or args.include_open_api_chat
         or args.include_open_api_image
         or args.include_tutorial_email_send
+        or args.include_report_agent_generate
         or args.include_image_raw
         or args.include_image_worker_text2img
         or args.include_image_worker_img2img
@@ -1676,6 +1724,7 @@ def main() -> int:
                 args.include_tutorial_email_send
                 or args.include_model_lab_run
                 or args.include_arena_run
+                or args.include_report_agent_generate
                 or args.include_image_raw
                 or args.include_image_worker_text2img
                 or args.include_image_worker_img2img
@@ -1902,6 +1951,15 @@ def main() -> int:
                 lambda: call_tutorial_email_send(base, token, args.timeout, tag),
             )
             if tutorial_step.ok:
+                send_successes += 1
+        if args.include_report_agent_generate:
+            report_step = run_seed_step(
+                evidence,
+                f"{prefix}.report_agent_generate",
+                args.continue_on_error,
+                lambda: call_report_agent_generate(base, release_commit, args.timeout, tag),
+            )
+            if report_step.ok:
                 send_successes += 1
         if args.include_image_raw:
             image_raw_step = run_seed_step(

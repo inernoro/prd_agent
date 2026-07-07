@@ -1117,6 +1117,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--include-open-api-image", script);
         Assert.Contains("--include-model-lab-run", script);
         Assert.Contains("--include-arena-run", script);
+        Assert.Contains("--include-report-agent-generate", script);
+        Assert.Contains("llmgw-report-agent-shadow-seed.py", script);
         Assert.Contains("/api/v1/chat-runs/", script);
         Assert.Contains("/api/lab/model/runs/stream", script);
         Assert.Contains("/api/lab/arena/runs", script);
@@ -1133,6 +1135,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("open-api.proxy::generation", plan);
         Assert.Contains("prd-agent-web.model-lab.run::chat", plan);
         Assert.Contains("prd-agent.arena.battle::chat", plan);
+        Assert.Contains("--include-report-agent-generate", plan);
+        Assert.Contains("report-agent.generate::chat/send", plan);
         Assert.Contains("--include-visual-video-direct", script);
         Assert.Contains("--include-video-to-doc-asr", script);
         Assert.Contains("--include-video-to-text-asr-workflow", script);
