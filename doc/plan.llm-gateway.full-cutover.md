@@ -287,10 +287,12 @@ ASR seed 均被上游拒绝，错误为 `Invalid X-Api-Key`；因此 `canary-vid
 `doubao-asr-stream` exchange，下一步只能按上面的 stream 候选路径做 dry-run、备份、只读审计和真实 seed，
 不得因为 resolve 通过就宣称 ASR 发布门完成。
 `scripts/llmgw-prod-provider-config-audit.py` 是生产 video/ASR 只读诊断脚本：读取 Mongo 的 exchange、模型池、
-appCaller 绑定，必要时只输出 key 形态元数据（长度、是否 UUID、是否 `appId|accessToken`），不会输出明文密钥。
-它可附加 `--seed-evidence-json /tmp/llmgw-asr-seed-after-bootstrap.json` 把真实 seed 失败一并纳入机器可读报告；
+appCaller 绑定与 video 模型对应的 `llmplatforms`，必要时只输出 key 形态元数据（长度、是否 UUID、是否
+`appId|accessToken`、是否可解密），不会输出明文密钥。它可附加
+`--seed-evidence-json /tmp/llmgw-asr-seed-after-bootstrap.json` 把真实 seed 失败一并纳入机器可读报告；
 如果 seed 报 `Invalid X-Api-Key`，审计会明确归因为 ASR 上游拒绝凭据，下一步应替换 ASR exchange 密钥或在密钥确为
-`appId|accessToken` 时改用 `DoubaoAsr` 认证方案，不能通过放宽 gate 继续发布。
+`appId|accessToken` 时改用 `DoubaoAsr` 认证方案；如果 video seed 报 `no available channels`，审计会明确归因为
+上游 provider/model channel 不可用，必须修 provider channel 或替换 video 模型池，不能通过放宽 gate 继续发布。
 当它返回 fail 时，不得进入 `canary-video-asr`。`scripts/llmgw-prod-stage.sh` 在 `canary-video-asr` 与
 `http-full` 阶段默认启用该审计，并在 `fast.sh` / `exec_dep.sh` 之前失败退出；stage report 与 rollout
 ledger 会记录 `provider-audit.json`，后续 ledger audit 会重新校验该证据必须为 pass。`exec_dep.sh` 也会在

@@ -101,8 +101,30 @@ const data = {
     DisplayName: 1,
     ModelRequirements: 1,
     UpdatedAt: 1
-  }).toArray()
+  }).toArray(),
+  platforms: []
 };
+const platformIds = Array.from(new Set(
+  data.modelGroups
+    .flatMap(g => g.Models || [])
+    .map(m => m.PlatformId)
+    .filter(id => !!id)
+));
+if (platformIds.length > 0) {
+  data.platforms = db.llmplatforms.find({
+    _id: { $in: platformIds }
+  }, {
+    _id: 1,
+    Name: 1,
+    PlatformType: 1,
+    ProviderId: 1,
+    ApiUrl: 1,
+    Enabled: 1,
+    MaxConcurrency: 1,
+    ApiKeyEncrypted: 1,
+    UpdatedAt: 1
+  }).toArray();
+}
 print(JSON.stringify(data));
 '''
     cmd = _compose_cmd() + ["-f", compose_file, "exec", "-T", mongo_service, "mongosh", mongo_db, "--quiet", "--eval", js]
@@ -208,6 +230,21 @@ def _classify_asr_seed_error(error: str, auth_scheme: str, shape: dict[str, Any]
     return None
 
 
+def _classify_video_seed_error(error: str, model_id: str | None = None) -> str | None:
+    normalized = error.lower()
+    model_suffix = f" for model {model_id}" if model_id else ""
+    if "no available channels" in normalized:
+        return (
+            "Video upstream has no available channels"
+            f"{model_suffix}; keep video/ASR canary blocked until the provider channel or model pool is fixed."
+        )
+    if "401" in normalized or "unauthorized" in normalized or "forbidden" in normalized or "403" in normalized:
+        return f"Video upstream authorization failed{model_suffix}; verify platform key and provider access."
+    if "insufficient" in normalized and ("quota" in normalized or "balance" in normalized):
+        return f"Video upstream quota or balance is insufficient{model_suffix}; fix provider billing before canary."
+    return None
+
+
 def _append_unique(items: list[str], value: str) -> None:
     if value not in items:
         items.append(value)
@@ -219,6 +256,17 @@ def _sanitize_exchange(exchange: dict[str, Any], secret: str | None) -> dict[str
     clean["targetApiKeyEncryptedLength"] = len(encrypted)
     if secret is not None:
         clean["targetApiKeyShape"] = _decrypt_shape(encrypted, secret)
+    return clean
+
+
+def _sanitize_platform(platform: dict[str, Any] | None, secret: str | None) -> dict[str, Any] | None:
+    if not platform:
+        return None
+    encrypted = str(platform.get("ApiKeyEncrypted") or "")
+    clean = {k: v for k, v in platform.items() if k != "ApiKeyEncrypted"}
+    clean["apiKeyEncryptedLength"] = len(encrypted)
+    if secret is not None:
+        clean["apiKeyShape"] = _decrypt_shape(encrypted, secret)
     return clean
 
 
@@ -235,8 +283,9 @@ def _audit(
     exchanges = data.get("exchanges") or []
     groups = data.get("modelGroups") or []
     callers = data.get("appCallers") or []
+    platforms = data.get("platforms") or []
 
-    by_exchange_id = {str(x.get("_id")): x for x in exchanges}
+    by_platform_id = {str(x.get("_id")): x for x in platforms}
     asr_exchange = next(
         (
             x for x in exchanges
@@ -307,16 +356,39 @@ def _audit(
 
     video_groups = [g for g in groups if str(g.get("ModelType") or "").lower() == "video-gen"]
     healthy_video_models: list[dict[str, Any]] = []
+    video_models: list[dict[str, Any]] = []
     for group in video_groups:
         for model in group.get("Models") or []:
+            platform = by_platform_id.get(str(model.get("PlatformId") or ""))
+            model_info = {
+                "groupId": group.get("_id"),
+                "groupName": group.get("Name"),
+                "modelId": model.get("ModelId"),
+                "platformId": model.get("PlatformId"),
+                "platformName": (platform or {}).get("Name"),
+                "healthStatus": _health_name(model.get("HealthStatus")),
+                "lastFailedAt": model.get("LastFailedAt"),
+                "lastSuccessAt": model.get("LastSuccessAt"),
+                "consecutiveFailures": model.get("ConsecutiveFailures"),
+                "platform": _sanitize_platform(platform, secret),
+            }
+            video_models.append(model_info)
+            if not platform:
+                failures.append(f"video model platform missing: model={model.get('ModelId')} platform={model.get('PlatformId')}")
+            else:
+                clean_platform = model_info.get("platform") or {}
+                platform_shape = clean_platform.get("apiKeyShape") or {}
+                if platform.get("Enabled") is not True:
+                    failures.append(f"video model platform is disabled: model={model.get('ModelId')} platform={platform.get('Name')}")
+                if secret is not None and not platform_shape.get("decryptOk"):
+                    failures.append(f"video model platform key cannot be decrypted: model={model.get('ModelId')} platform={platform.get('Name')}")
             if int(model.get("HealthStatus") or 0) == 0:
-                exchange = by_exchange_id.get(str(model.get("PlatformId") or ""))
                 healthy_video_models.append({
                     "groupId": group.get("_id"),
                     "groupName": group.get("Name"),
                     "modelId": model.get("ModelId"),
                     "platformId": model.get("PlatformId"),
-                    "platformName": (exchange or {}).get("Name"),
+                    "platformName": (platform or {}).get("Name"),
                 })
     if not healthy_video_models:
         failures.append("no Healthy video-gen model in production model_groups")
@@ -325,6 +397,7 @@ def _audit(
     if seed_evidence:
         failed = [s for s in seed_evidence.get("steps", []) if not s.get("ok")]
         asr_classifications: list[dict[str, str]] = []
+        video_classifications: list[dict[str, str]] = []
         seed_summary = {
             "ok": bool(seed_evidence.get("ok")),
             "failedStepCount": len(failed),
@@ -336,6 +409,7 @@ def _audit(
                 for s in failed
             ],
             "asrClassifications": asr_classifications,
+            "videoClassifications": video_classifications,
             "expectedGrowth": seed_evidence.get("expectedGrowth"),
             "summaries": seed_evidence.get("summaries"),
         }
@@ -357,6 +431,13 @@ def _audit(
                     })
             if "video" in name:
                 failures.append(f"seed evidence video failed: {name}")
+                classification = _classify_video_seed_error(error)
+                if classification:
+                    _append_unique(failures, classification)
+                    video_classifications.append({
+                        "step": name,
+                        "classification": classification,
+                    })
 
     report = {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
@@ -374,6 +455,7 @@ def _audit(
         "video": {
             "appCaller": VIDEO_APP_CALLER,
             "groupCount": len(video_groups),
+            "models": video_models,
             "healthyModels": healthy_video_models,
         },
         "seedEvidence": seed_summary,
@@ -407,6 +489,7 @@ def _write_md(path: str, report: dict[str, Any]) -> None:
         fh.write(f"- ASR model: `{asr.get('modelId') or ''}`\n")
         fh.write(f"- ASR transformer: `{asr.get('transformer') or ''}`\n")
         fh.write(f"- ASR exchange: `{((report.get('asr') or {}).get('exchange') or {}).get('name') or ((report.get('asr') or {}).get('exchange') or {}).get('Name') or ''}`\n")
+        fh.write(f"- video candidate models: `{len((report.get('video') or {}).get('models') or [])}`\n")
         fh.write(f"- video healthy models: `{len((report.get('video') or {}).get('healthyModels') or [])}`\n\n")
         fh.write("## Failures\n\n")
         failures = report.get("failures") or []
