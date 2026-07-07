@@ -433,6 +433,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("videoCanaryRequired", script);
         Assert.Contains("run_prod_preflight", script);
         Assert.Contains("scripts/llmgw-prod-preflight.py --mode start", script);
+        Assert.Contains("LLMGW_STAGE_MAP_BASE or PRD_AGENT_BASE", script);
+        Assert.Contains("preflight += \" --map-base ${LLMGW_STAGE_MAP_BASE:-${PRD_AGENT_BASE:-}}\"", script);
+        Assert.Contains("map_base=\"$(printf '%s' \"${LLMGW_STAGE_MAP_BASE:-${PRD_AGENT_BASE:-}}\" | xargs || true)\"", script);
+        Assert.Contains("preflight_args=\"$preflight_args --map-base $map_base\"", script);
         Assert.Contains("--prod-preflight-json \"$prod_preflight_json\"", script);
         Assert.Contains("scripts/llmgw-rollout-ledger.py validate", script);
         Assert.Contains("scripts/llmgw-rollout-ledger.py append", script);
@@ -518,6 +522,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--mode", preflight);
         Assert.Contains("start", preflight);
         Assert.Contains("completion", preflight);
+        Assert.Contains("LLMGW_STAGE_MAP_BASE", preflight);
+        Assert.Contains("missing PRD_AGENT_BASE, LLMGW_STAGE_MAP_BASE, or --map-base", preflight);
         Assert.Contains("map_logs_scope", preflight);
         Assert.Contains("map_direct_transport_absent", preflight);
         Assert.Contains("LLMGW_PROD_PREFLIGHT_DIRECT_TRANSPORT_SINCE_HOURS", preflight);
