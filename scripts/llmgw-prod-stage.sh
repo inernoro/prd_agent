@@ -290,6 +290,7 @@ upstream_readiness_json="${evidence_prefix}.upstream-readiness.json"
 upstream_readiness_md="${evidence_prefix}.upstream-readiness.md"
 provider_audit_json="${evidence_prefix}.provider-audit.json"
 provider_audit_md="${evidence_prefix}.provider-audit.md"
+asr_http_canary_json="${evidence_prefix}.asr-http-canary.json"
 stage_json="${evidence_prefix}.stage.json"
 stage_md="${evidence_prefix}.stage.md"
 
@@ -312,6 +313,16 @@ case "$stage" in
     ;;
 esac
 run_provider_audit="${LLMGW_STAGE_RUN_PROVIDER_AUDIT:-$provider_audit_default}"
+
+case "$stage" in
+  canary-video-asr|http-full)
+    asr_http_canary_default=1
+    ;;
+  *)
+    asr_http_canary_default=0
+    ;;
+esac
+run_asr_http_canary="${LLMGW_STAGE_RUN_ASR_HTTP_CANARY:-$asr_http_canary_default}"
 disk_guard_path="${LLMGW_STAGE_DISK_GUARD_PATH:-$evidence_dir}"
 disk_guard_min_free_mb="${LLMGW_STAGE_MIN_FREE_MB:-4096}"
 
@@ -340,6 +351,8 @@ print_plan() {
     echo "  upstreamReadinessEnabled: $run_upstream_readiness"
     echo "  providerAuditJson: $provider_audit_json"
     echo "  providerAuditEnabled: $run_provider_audit"
+    echo "  asrHttpCanaryJson: $asr_http_canary_json"
+    echo "  asrHttpCanaryEnabled: $run_asr_http_canary"
     echo "  diskGuardPath: $disk_guard_path"
     echo "  diskGuardMinFreeMb: $disk_guard_min_free_mb"
     echo "  stageJson: $stage_json"
@@ -471,6 +484,8 @@ write_dry_run_stage_report() {
   LLMGW_DRY_RUN_UPSTREAM_READINESS_ENABLED="${run_upstream_readiness:-0}" \
   LLMGW_DRY_RUN_PROVIDER_AUDIT_JSON="${provider_audit_json:-}" \
   LLMGW_DRY_RUN_PROVIDER_AUDIT_ENABLED="${run_provider_audit:-0}" \
+  LLMGW_DRY_RUN_ASR_HTTP_CANARY_JSON="${asr_http_canary_json:-}" \
+  LLMGW_DRY_RUN_ASR_HTTP_CANARY_ENABLED="${run_asr_http_canary:-0}" \
   LLMGW_DRY_RUN_SERVING_PROBE_JSON="${serving_probe_json:-}" \
   LLMGW_DRY_RUN_SMOKE_JSON="${smoke_json:-}" \
   LLMGW_DRY_RUN_RELEASE_GATE_JSON="${release_gate_json:-}" \
@@ -511,6 +526,13 @@ else:
     if os.environ.get("LLMGW_DRY_RUN_REUSE_STATIC_DIST", "0") in ("1", "true", "yes"):
         exec_dep = "PRD_AGENT_REUSE_EXISTING_STATIC_DIST=1 " + exec_dep
     commands.append(exec_dep)
+    if os.environ.get("LLMGW_DRY_RUN_ASR_HTTP_CANARY_ENABLED", "0") == "1":
+        commands.append(
+            "PRD_AGENT_BASE=${PRD_AGENT_BASE:-${LLMGW_STAGE_MAP_BASE:-}} "
+            "LLMGW_ASR_CANARY_JSON_OUT="
+            + os.environ.get("LLMGW_DRY_RUN_ASR_HTTP_CANARY_JSON", "")
+            + " python3 scripts/llmgw-asr-http-canary.py"
+        )
     if stage == "shadow-start" and os.environ.get("LLMGW_STAGE_RUN_SHADOW_SEED", "0") == "1":
         flags = os.environ.get("LLMGW_STAGE_SHADOW_SEED_FLAGS", "").strip()
         seed = (
@@ -544,6 +566,8 @@ report = {
     "upstreamReadinessEnabled": os.environ.get("LLMGW_DRY_RUN_UPSTREAM_READINESS_ENABLED", "0") == "1",
     "providerAuditJson": os.environ.get("LLMGW_DRY_RUN_PROVIDER_AUDIT_JSON", ""),
     "providerAuditRequired": os.environ.get("LLMGW_DRY_RUN_PROVIDER_AUDIT_ENABLED", "0") == "1",
+    "asrHttpCanaryJson": os.environ.get("LLMGW_DRY_RUN_ASR_HTTP_CANARY_JSON", ""),
+    "asrHttpCanaryRequired": os.environ.get("LLMGW_DRY_RUN_ASR_HTTP_CANARY_ENABLED", "0") == "1",
     "servingProbeJson": os.environ.get("LLMGW_DRY_RUN_SERVING_PROBE_JSON", ""),
     "smokeJson": os.environ.get("LLMGW_DRY_RUN_SMOKE_JSON", ""),
     "releaseGateJson": os.environ.get("LLMGW_DRY_RUN_RELEASE_GATE_JSON", ""),
@@ -701,6 +725,34 @@ run_provider_audit_evidence() {
       $seed_evidence_arg
   else
     echo "+ python3 scripts/llmgw-prod-provider-config-audit.py --json-out \"$provider_audit_json\" --report-md \"$provider_audit_md\"$seed_evidence_arg"
+  fi
+}
+
+run_asr_http_canary_evidence() {
+  if [ "$run_asr_http_canary" != "1" ]; then
+    if [ "$execute" = "1" ]; then
+      echo "LLM Gateway ASR HTTP canary skipped: LLMGW_STAGE_RUN_ASR_HTTP_CANARY is not 1"
+    else
+      echo "LLM Gateway ASR HTTP canary dry-run skipped for this stage"
+    fi
+    return 0
+  fi
+  if [ ! -f "scripts/llmgw-asr-http-canary.py" ]; then
+    echo "ERROR: missing scripts/llmgw-asr-http-canary.py; cannot collect ASR HTTP canary evidence." >&2
+    exit 1
+  fi
+  map_base="$(printf '%s' "${PRD_AGENT_BASE:-${LLMGW_STAGE_MAP_BASE:-}}" | xargs || true)"
+  if [ -z "$map_base" ]; then
+    echo "ERROR: ASR HTTP canary requires PRD_AGENT_BASE or LLMGW_STAGE_MAP_BASE, for example https://host" >&2
+    exit 1
+  fi
+  if [ "$execute" = "1" ]; then
+    mkdir -p "$evidence_dir"
+    PRD_AGENT_BASE="$map_base" \
+    LLMGW_ASR_CANARY_JSON_OUT="$asr_http_canary_json" \
+    python3 scripts/llmgw-asr-http-canary.py
+  else
+    echo "+ PRD_AGENT_BASE=\"$map_base\" LLMGW_ASR_CANARY_JSON_OUT=\"$asr_http_canary_json\" python3 scripts/llmgw-asr-http-canary.py"
   fi
 }
 
@@ -868,6 +920,8 @@ else
   run_or_print ./fast.sh --commit "$commit"
   run_or_print ./exec_dep.sh --commit "$commit"
 fi
+
+run_asr_http_canary_evidence
 
 run_shadow_seed_evidence
 

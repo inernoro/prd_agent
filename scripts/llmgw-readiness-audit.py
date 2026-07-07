@@ -125,6 +125,8 @@ def _static_checks() -> list[dict]:
     video_exchange_bootstrap_js = video_exchange_bootstrap_js_path.read_text(encoding="utf-8") if video_exchange_bootstrap_js_path.exists() else ""
     video_canary_path = ROOT / "scripts/llmgw-video-exchange-canary.py"
     video_canary = video_canary_path.read_text(encoding="utf-8") if video_canary_path.exists() else ""
+    asr_http_canary_path = ROOT / "scripts/llmgw-asr-http-canary.py"
+    asr_http_canary = asr_http_canary_path.read_text(encoding="utf-8") if asr_http_canary_path.exists() else ""
     provider_audit_path = ROOT / "scripts/llmgw-prod-provider-config-audit.py"
     provider_audit = provider_audit_path.read_text(encoding="utf-8") if provider_audit_path.exists() else ""
     ok, detail = _contains_all(
@@ -468,6 +470,29 @@ def _static_checks() -> list[dict]:
     ))
 
     ok, detail = _contains_all(
+        asr_http_canary,
+        [
+            "LLM Gateway ASR HTTP canary",
+            "/api/ops/llmgw/canary/asr",
+            "transcript-agent.transcribe::asr",
+            "X-Gateway-Key",
+            "MultipartFileRefs",
+            "MAP API failed to upload ASR canary audio to object storage",
+            "llmgw-serve could not rehydrate ASR MultipartFileRefs from shared object storage",
+            "ASR upstream rejected credential",
+            "ASR model pool or upstream provider has no available channel",
+            "return 0 if report[\"verdict\"] == \"pass\" else 1",
+        ],
+    )
+    asr_http_canary_executable = bool(asr_http_canary_path.exists() and (asr_http_canary_path.stat().st_mode & stat.S_IXUSR))
+    asr_http_canary_destructive = any(item in asr_http_canary for item in ["updateOne", "deleteMany", "dropDatabase", "mongorestore", "docker volume rm", "down -v"])
+    checks.append(_check(
+        "asr_http_canary_proves_multipart_refs_without_mutating_config",
+        ok and asr_http_canary_executable and not asr_http_canary_destructive,
+        f"{detail}; executable={asr_http_canary_executable}; destructive={asr_http_canary_destructive}",
+    ))
+
+    ok, detail = _contains_all(
         provider_audit,
         [
             "LLM Gateway production provider config audit",
@@ -579,12 +604,18 @@ def _static_checks() -> list[dict]:
             "gw-smoke.json",
             "upstream-readiness.json",
             "provider-audit.json",
+            "asr-http-canary.json",
             "LLMGW_STAGE_RUN_UPSTREAM_READINESS",
             "run_upstream_readiness_evidence",
             "scripts/llmgw-upstream-readiness.py",
             "LLMGW_STAGE_RUN_PROVIDER_AUDIT",
             "run_provider_audit_evidence",
             "scripts/llmgw-prod-provider-config-audit.py",
+            "LLMGW_STAGE_RUN_ASR_HTTP_CANARY",
+            "run_asr_http_canary_evidence",
+            "scripts/llmgw-asr-http-canary.py",
+            "PRD_AGENT_BASE",
+            "LLMGW_ASR_CANARY_JSON_OUT",
             "LLMGW_STAGE_MIN_FREE_MB",
             "LLMGW_STAGE_DISK_GUARD_PATH",
             "run_stage_disk_guard",
@@ -599,6 +630,8 @@ def _static_checks() -> list[dict]:
             "--upstream-readiness-required \"$run_upstream_readiness\"",
             "--provider-audit-json \"$provider_audit_json\"",
             "--provider-audit-required \"$run_provider_audit\"",
+            "asrHttpCanaryJson",
+            "asrHttpCanaryRequired",
             "stage-report",
             "GW_SMOKE_JSON_OUT",
             "LLMGW_SERVING_PROBE_JSON_OUT",
@@ -621,11 +654,13 @@ def _static_checks() -> list[dict]:
     upstream_idx = prod_stage.find("run_upstream_readiness_evidence\n\nrun_provider_audit_evidence")
     provider_idx = prod_stage.find("run_provider_audit_evidence\n\nif [ -n \"$repo\" ]")
     fast_idx = prod_stage.find("run_or_print ./fast.sh")
+    asr_canary_idx = prod_stage.find("run_asr_http_canary_evidence\n\nrun_shadow_seed_evidence")
     upstream_before_deploy = (
         preflight_idx >= 0
         and upstream_idx >= 0
         and provider_idx >= 0
-        and preflight_idx < upstream_idx < provider_idx < fast_idx
+        and asr_canary_idx >= 0
+        and preflight_idx < upstream_idx < provider_idx < fast_idx < asr_canary_idx
     )
     ledger_ok, ledger_detail = _contains_all(
         rollout_ledger,
