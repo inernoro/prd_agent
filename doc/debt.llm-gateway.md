@@ -45,6 +45,15 @@
 - 生产 GW 控制台入口：`https://map.ebcone.net/llmgw/`、`https://map.ebcone.net/llmgw/logs` 已经通过 host nginx 反代到 `prd-llmgw-web`，浏览器检查 root 已渲染，登录 API `POST /gw/auth/login` 返回 JSON 信封而不是主站 HTML。
 - 同 commit 文本 shadow 证据：`scripts/llmgw-map-shadow-seed.py --include-tutorial-email-send` 成功，`send=1`、`stream=2`、`critical=0`、`httpFail=0`；coverage 证据为生产 `.llmgw-release-evidence/20260707T025032Z_manual_text-shadow-coverage.json`。
 - 仍然禁止进入 `canary-video-asr` 或全量 `LLMGW_MODE=http`：最新 upstream readiness / provider audit 仍失败，`video-agent.videogen::video-gen` 无可用 video-gen 模型，ASR 近期失败仍包含 `Invalid X-Api-Key` / no available channels / stream 502。必须补可用视频渠道和有效 ASR 凭据后，重新产生 `raw` allMatch 且 `httpFail=0` 的真实样本。
+
+## 最新生产取证（2026-07-07 11:06 CST）
+
+- 已将 `visual-agent.videogen::video-gen` 纳入 video/ASR release gate、provider config audit、upstream readiness、shadow watch 和 `exec_dep.sh` 默认 full-http/canary 门禁，避免只用 `video-agent.videogen::video-gen` 样本替代视觉视频入口。
+- 同步生产脚本前已重新备份数据：`/root/backups/llmgw-prod-before-video-gate-sync-20260707T110320+0800`，包含 `mongo-prdagent.archive.gz` 与 `mongo-llm_gateway.archive.gz`，并生成 `SHA256SUMS`。
+- 同步生产脚本前已备份旧脚本：`/root/backups/llmgw-prod-release-gate-scripts-before-sync-20260707T110556+0800`。
+- 同步后在生产机完成脚本语法校验：`python3 -m py_compile scripts/llmgw-prod-provider-config-audit.py scripts/llmgw-upstream-readiness.py scripts/llmgw-readiness-audit.py` 与 `sh -n exec_dep.sh scripts/llmgw-prod-stage.sh` 均通过。
+- 生产只读 provider config audit 使用新脚本跑出预期 FAIL，证据为 `.llmgw-release-evidence/20260707T030620Z_provider-config-video-visual-gate.json`。首要失败项为 `visual-agent.videogen::video-gen` 没有 video-gen `ModelGroupIds`；同时仍有 no Healthy video-gen model、视频上游 404/503、ASR `Invalid X-Api-Key`/502/503 等阻塞。
+- 结论不变：当前只允许继续 shadow 与文本类证据收集；禁止发布 `canary-video-asr` 或全量 `LLMGW_MODE=http`。
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘
