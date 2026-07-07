@@ -1593,9 +1593,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                   <MoreItem icon={<Globe size={14} />} label={publishing ? '处理中…' : '发布到智识殿堂'} disabled={publishing} onClick={handleTogglePublish} dataTourId="document-store-publish" />
                 )}
                 <MoreItem icon={<Download size={14} />} label={downloading ? '打包中…' : '下载全部文档（ZIP）'} disabled={downloading} onClick={handleDownloadStore} />
-                {/* 默认只暴露「知识星球」(3D 星系)。obsidian 风的「关系图谱/宇宙图」与星系是两套不同心智，
-                    并存让用户分不清该用哪个、返回关系也乱（见 debt.knowledge-base.galaxy-vs-universe）。
-                    暂时收起宇宙图入口（路由仍在，深链可达），待智能判别落地后再决定按库展示哪一个。 */}
+                <MoreItem icon={<LinkIcon size={14} />} label="Obsidian 双链图" onClick={() => { setMoreOpen(false); navigate(`/document-store/${storeId}/universe`); }} />
                 <MoreItem icon={<Orbit size={14} />} label="知识星球（3D 星系）" onClick={() => { setMoreOpen(false); navigate(`/document-store/${storeId}/galaxy`); }} />
                 <MoreItem icon={<BarChart3 size={14} />} label="访客统计" onClick={() => { setMoreOpen(false); setShowViewers(true); }} />
                 <MoreItem icon={<Rss size={14} />} label="添加订阅" onClick={() => { setMoreOpen(false); setShowSubscribe(true); }} />
