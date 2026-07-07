@@ -634,7 +634,17 @@ def _audit(
             if asr_exchange and str(match.get("PlatformId") or "") != str(asr_exchange.get("_id") or ""):
                 failures.append("ASR pool model PlatformId does not point to the selected ASR exchange")
             if int(match.get("HealthStatus") or 0) != 0:
-                failures.append(f"ASR pool model is not Healthy: {_health_name(match.get('HealthStatus'))}")
+                classification = (
+                    "ASR upstream has no available channels; "
+                    f"ASR pool model is not Healthy: {_health_name(match.get('HealthStatus'))}"
+                )
+                failures.append(classification)
+                _append_blocker_unique(external_blockers, _external_blocker_from_classification(
+                    classification,
+                    source="modelPoolConfig",
+                    model_id=asr_model_id,
+                    step=asr_pool_id,
+                ))
 
     by_caller = {str(c.get("AppCode") or ""): c for c in callers}
     for code in ASR_APP_CALLERS:
@@ -713,8 +723,29 @@ def _audit(
                     "platformId": model.get("PlatformId"),
                     "platformName": video_endpoint_name,
                 })
+            else:
+                classification = (
+                    "Video upstream has no available channels "
+                    f"for model {model.get('ModelId')}; "
+                    f"model pool health is {_health_name(model.get('HealthStatus'))}."
+                )
+                _append_blocker_unique(external_blockers, _external_blocker_from_classification(
+                    classification,
+                    source="modelPoolConfig",
+                    model_id=str(model.get("ModelId") or ""),
+                    step=str(group.get("_id") or ""),
+                ))
     if not healthy_video_models:
-        failures.append("no Healthy video-gen model in production model_groups")
+        classification = (
+            "Video upstream has no available channels; "
+            "no Healthy video-gen model in production model_groups."
+        )
+        failures.append(classification)
+        _append_blocker_unique(external_blockers, _external_blocker_from_classification(
+            classification,
+            source="modelPoolConfig",
+            step="video-gen-model-groups",
+        ))
 
     seed_summary = None
     if seed_evidence:
@@ -974,7 +1005,7 @@ def _self_test_report() -> dict[str, Any]:
                     {
                         "ModelId": DEFAULT_ASR_MODEL_ID,
                         "PlatformId": asr_exchange_id,
-                        "HealthStatus": 0,
+                        "HealthStatus": 2,
                     },
                 ],
             },
@@ -986,7 +1017,7 @@ def _self_test_report() -> dict[str, Any]:
                     {
                         "ModelId": video_model_id,
                         "PlatformId": video_exchange_id,
-                        "HealthStatus": 0,
+                        "HealthStatus": 2,
                     },
                 ],
             },
@@ -1071,6 +1102,10 @@ def _self_test_report() -> dict[str, Any]:
     )
     blockers = audit.get("externalBlockers") or []
     actual_codes = sorted({str(item.get("code") or "") for item in blockers})
+    actual_pairs = sorted({
+        f"{str(item.get('code') or '')}:{str(item.get('source') or '')}"
+        for item in blockers
+    })
     required_codes = sorted([
         "asr_authorization_failed",
         "asr_channel_unavailable",
@@ -1078,14 +1113,22 @@ def _self_test_report() -> dict[str, Any]:
         "video_channel_unavailable",
         "video_model_not_open",
     ])
+    required_pairs = sorted([
+        "asr_channel_unavailable:modelPoolConfig",
+        "video_channel_unavailable:modelPoolConfig",
+    ])
     missing = [code for code in required_codes if code not in actual_codes]
-    ok = not missing
+    missing_pairs = [pair for pair in required_pairs if pair not in actual_pairs]
+    ok = not missing and not missing_pairs
     return {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "verdict": "pass" if ok else "fail",
         "requiredCodes": required_codes,
         "actualCodes": actual_codes,
         "missingCodes": missing,
+        "requiredPairs": required_pairs,
+        "actualPairs": actual_pairs,
+        "missingPairs": missing_pairs,
         "sampleAuditVerdict": audit.get("verdict"),
         "sampleAuditExternalBlockers": blockers,
     }

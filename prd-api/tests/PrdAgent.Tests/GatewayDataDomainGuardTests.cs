@@ -223,6 +223,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("Volcengine Ark OpenAI chat base URL", providerAudit);
         Assert.Contains("dedicated Volcengine video adapter", providerAudit);
         Assert.Contains("externalBlockers", providerAudit);
+        Assert.Contains("modelPoolConfig", providerAudit);
         Assert.Contains("asr_credential_rejected", providerAudit);
         Assert.Contains("asr_authorization_failed", providerAudit);
         Assert.Contains("asr_channel_unavailable", providerAudit);
@@ -232,6 +233,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("_self_test_report", providerAudit);
         Assert.Contains("requiredCodes", providerAudit);
         Assert.Contains("missingCodes", providerAudit);
+        Assert.Contains("requiredPairs", providerAudit);
+        Assert.Contains("missingPairs", providerAudit);
         Assert.Contains("provider_audit_external_blocker_self_test", readiness);
         Assert.Contains("probe_args=\"--base $gate_base\"", script);
         Assert.Contains("python3 scripts/llmgw-serving-probe.py $probe_args", script);
