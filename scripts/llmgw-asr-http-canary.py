@@ -136,11 +136,27 @@ def _classify(response: dict[str, Any]) -> tuple[bool, list[str], list[str]]:
     return False, failures, warnings
 
 
-def _external_blocker_from_failure(app_caller: str, failure: str) -> dict[str, Any] | None:
+def _external_blocker_from_failure(app_caller: str, failure: str, response: dict[str, Any]) -> dict[str, Any] | None:
     normalized = failure.lower()
+    api = response.get("apiResponse") if isinstance(response.get("apiResponse"), dict) else {}
+    model = str(_get(api, "model") or "")
+    status_code = _get(api, "statusCode")
+    error_code = str(_get(api, "errorCode") or "")
+    error_message = str(_get(api, "errorMessage") or "")
+    evidence_parts = [failure]
+    if model:
+        evidence_parts.append(f"model={model}")
+    if status_code:
+        evidence_parts.append(f"statusCode={status_code}")
+    if error_code:
+        evidence_parts.append(f"errorCode={error_code}")
+    if error_message:
+        evidence_parts.append(error_message)
+    evidence = "; ".join(evidence_parts)
+
     if "asr upstream rejected credential" in normalized:
         code = "asr_credential_rejected"
-        remediation = "Replace the ASR exchange credential, then rerun ASR HTTP canary."
+        remediation = "Replace the ASR exchange credential with a valid X-Api-Key, then rerun ASR HTTP canary."
     elif "asr model pool or upstream provider has no available channel" in normalized:
         code = "asr_channel_unavailable"
         remediation = "Restore a Healthy ASR model pool channel before video/ASR canary."
@@ -155,8 +171,9 @@ def _external_blocker_from_failure(app_caller: str, failure: str) -> dict[str, A
         "scope": "asr",
         "source": "asrHttpCanary",
         "appCaller": app_caller,
-        "modelId": "",
+        "modelId": model,
         "step": "asr-http-canary",
+        "evidence": evidence,
         "remediation": remediation,
     }
 
@@ -233,7 +250,7 @@ def _run_one_canary(args: argparse.Namespace, base: str, key: str, app_caller: s
     ok, failures, warnings = _classify(response)
     external_blockers: list[dict[str, Any]] = []
     for failure in failures:
-        _append_blocker_unique(external_blockers, _external_blocker_from_failure(app_caller, failure))
+        _append_blocker_unique(external_blockers, _external_blocker_from_failure(app_caller, failure, response))
     return {
         "appCallerCode": app_caller,
         "requestId": request_id,
