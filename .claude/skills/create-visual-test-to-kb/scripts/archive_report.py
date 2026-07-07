@@ -951,11 +951,24 @@ main{{padding:0 16px 60px}}
 
 
 def _report_flavor(a, body):
-    """报告刊头身份：每日验收 =「每日巡检特刊」，其余 =「MAP 验收档案」。"""
+    """报告刊头身份：每日验收 =「每日巡检特刊」，其余 =「MAP 验收档案」。
+
+    只影响皮肤选择，不参与准入门禁——所以在 _declares_daily_acceptance（契约严格，
+    只认紧邻的「每日验收/每日报告」等）之外，再对 target 做一层宽匹配兜底：
+    「每日视觉验收报告」「每日巡检」这类中间插词的目标同样属于巡检特刊（Codex P2）。
+    """
+    target = getattr(a, "target", "") or ""
     try:
-        return "daily" if _declares_daily_acceptance(getattr(a, "target", ""), body or "") else "acceptance"
+        if _declares_daily_acceptance(target, body or ""):
+            return "daily"
     except Exception:
-        return "acceptance"
+        pass
+    if re.search(
+        r"(每日|昨日|昨天).{0,8}(验收|复验|测试|报告|巡检)|巡检特刊|\bdaily[-_ ]?(visual|patrol)\b",
+        target, re.I,
+    ):
+        return "daily"
+    return "acceptance"
 
 
 # ── CDS 验收中心（默认主路，职责分离：验收能力归 CDS，MAP 走开放协议消费）──
