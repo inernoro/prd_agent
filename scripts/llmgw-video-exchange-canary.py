@@ -21,7 +21,10 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_APP_CALLER = "video-agent.videogen::video-gen"
+DEFAULT_APP_CALLERS = [
+    "video-agent.videogen::video-gen",
+    "visual-agent.videogen::video-gen",
+]
 DEFAULT_MODEL = "doubao-seedance-2-0-fast-260128"
 DEFAULT_PROMPT = "A five second minimal test video of a red cube rotating on a white background."
 VOLCENGINE_MODEL_NOT_OPEN_CODE = "ModelNotOpen"
@@ -194,9 +197,9 @@ def _extract_result_url(response: dict[str, Any]) -> str:
     return ""
 
 
-def _status_request_body(args: argparse.Namespace, job_id: str) -> dict[str, Any]:
+def _status_request_body(args: argparse.Namespace, app_caller: str, job_id: str) -> dict[str, Any]:
     return {
-        "appCallerCode": args.app_caller,
+        "appCallerCode": app_caller,
         "modelType": "video-gen",
         "expectedModel": args.model,
         "endpointPath": f"/videos/{job_id}",
@@ -221,73 +224,61 @@ def _write_json(path: str, report: dict[str, Any]) -> None:
     out.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="LLM Gateway Volcengine video exchange canary")
-    parser.add_argument("--gw-base", default=os.environ.get("GW_BASE") or os.environ.get("LLMGW_GATE_BASE") or "")
-    parser.add_argument("--gw-key-env", default=os.environ.get("LLMGW_VIDEO_CANARY_KEY_ENV", "LLMGW_SERVE_KEY/GW_KEY/LLMGW_GATE_KEY"))
-    parser.add_argument("--app-caller", default=os.environ.get("LLMGW_VIDEO_CANARY_APP_CALLER", DEFAULT_APP_CALLER))
-    parser.add_argument("--model", default=os.environ.get("LLMGW_VIDEO_CANARY_MODEL", DEFAULT_MODEL))
-    parser.add_argument("--prompt", default=os.environ.get("LLMGW_VIDEO_CANARY_PROMPT", DEFAULT_PROMPT))
-    parser.add_argument("--timeout", type=int, default=int(os.environ.get("LLMGW_VIDEO_CANARY_TIMEOUT", "120")))
-    parser.add_argument("--poll-status", action="store_true", default=os.environ.get("LLMGW_VIDEO_CANARY_POLL_STATUS", "").lower() in {"1", "true"})
-    parser.add_argument("--poll-attempts", type=int, default=int(os.environ.get("LLMGW_VIDEO_CANARY_POLL_ATTEMPTS", "12")))
-    parser.add_argument("--poll-interval-seconds", type=float, default=float(os.environ.get("LLMGW_VIDEO_CANARY_POLL_INTERVAL_SECONDS", "10")))
-    parser.add_argument("--download-result", action="store_true", default=os.environ.get("LLMGW_VIDEO_CANARY_DOWNLOAD_RESULT", "").lower() in {"1", "true"})
-    parser.add_argument("--json-out", default=os.environ.get("LLMGW_VIDEO_CANARY_JSON_OUT", ""))
-    parser.add_argument("--print-json", action="store_true")
-    args = parser.parse_args()
-    if args.download_result:
-        args.poll_status = True
+def _split_csv(raw: str) -> list[str]:
+    return [item.strip() for item in raw.replace(";", ",").split(",") if item.strip()]
 
-    base = args.gw_base.strip().rstrip("/")
-    key_env_names = [item.strip() for item in args.gw_key_env.replace(",", "/").split("/") if item.strip()]
-    key_env, key = _env_first(key_env_names)
-    report: dict[str, Any] = {
-        "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "gatewayBase": base,
-        "gatewayKeyEnv": key_env,
-        "appCallerCode": args.app_caller,
+
+def _resolve_app_callers(args: argparse.Namespace) -> list[str]:
+    values: list[str] = []
+    for raw in args.app_caller or []:
+        values.extend(_split_csv(raw))
+    if values:
+        return list(dict.fromkeys(values))
+
+    env_raw = os.environ.get("LLMGW_VIDEO_CANARY_APP_CALLERS", "").strip()
+    if env_raw:
+        return list(dict.fromkeys(_split_csv(env_raw)))
+
+    single_env = os.environ.get("LLMGW_VIDEO_CANARY_APP_CALLER", "").strip()
+    if single_env:
+        return [single_env]
+
+    return DEFAULT_APP_CALLERS.copy()
+
+
+def _submit_request_body(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "model": args.model,
+        "prompt": args.prompt,
+        "aspect_ratio": "16:9",
+        "resolution": "720p",
+        "duration": 5,
+        "generate_audio": False,
+    }
+
+
+def _run_one_canary(args: argparse.Namespace, base: str, key: str, app_caller: str) -> dict[str, Any]:
+    request_body = _submit_request_body(args)
+    item: dict[str, Any] = {
+        "appCallerCode": app_caller,
         "model": args.model,
         "verdict": "fail",
         "failures": [],
         "warnings": [],
-        "pollStatus": bool(args.poll_status),
-        "downloadResult": bool(args.download_result),
         "request": {
             "endpointPath": "/videos",
             "httpMethod": "POST",
-            "requestBody": {
-                "model": args.model,
-                "prompt": args.prompt,
-                "aspect_ratio": "16:9",
-                "resolution": "720p",
-                "duration": 5,
-                "generate_audio": False,
-            },
+            "requestBody": request_body,
         },
     }
-
-    if not base:
-        report["failures"].append("missing --gw-base")
-        _write_json(args.json_out, report)
-        print("LLM Gateway video canary: FAIL")
-        print("- missing --gw-base")
-        return 2
-    if not key:
-        report["failures"].append(f"missing gateway key env: {args.gw_key_env}")
-        _write_json(args.json_out, report)
-        print("LLM Gateway video canary: FAIL")
-        print(f"- missing gateway key env: {args.gw_key_env}")
-        return 2
-
     body = {
-        "appCallerCode": args.app_caller,
+        "appCallerCode": app_caller,
         "modelType": "video-gen",
         "expectedModel": args.model,
         "endpointPath": "/videos",
         "httpMethod": "POST",
         "timeoutSeconds": args.timeout,
-        "requestBody": report["request"]["requestBody"],
+        "requestBody": request_body,
         "context": {
             "requestId": "llmgw-video-canary-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
             "questionText": "LLM Gateway video exchange canary submit",
@@ -295,11 +286,11 @@ def main() -> int:
     }
     response = _post_json(base + "/raw", key, body, args.timeout)
     ok, failures, warnings = _classify(response)
-    report["gateway"] = response
+    item["gateway"] = response
 
     if ok and args.poll_status:
         job_id = _extract_job_id(response)
-        report["jobId"] = job_id
+        item["jobId"] = job_id
         if not job_id:
             failures.append("video submit succeeded but response did not contain a job id.")
             ok = False
@@ -313,7 +304,7 @@ def main() -> int:
                 status_response = _post_json(
                     base + "/raw",
                     key,
-                    _status_request_body(args, job_id),
+                    _status_request_body(args, app_caller, job_id),
                     args.timeout,
                 )
                 last_status_response = status_response
@@ -330,7 +321,7 @@ def main() -> int:
                 })
                 warnings.extend(status_warnings)
                 if not status_ok:
-                    failures.extend([f"video status poll failed: {item}" for item in status_failures])
+                    failures.extend([f"video status poll failed: {detail}" for detail in status_failures])
                     ok = False
                     break
                 if status in terminal_statuses:
@@ -342,32 +333,109 @@ def main() -> int:
                 ok = False
                 failures.append(f"video status did not complete after {args.poll_attempts} attempts.")
 
-            report["statusHistory"] = status_history
+            item["statusHistory"] = status_history
             if last_status_response is not None:
-                report["lastStatusGateway"] = last_status_response
+                item["lastStatusGateway"] = last_status_response
 
             if ok and args.download_result:
                 result_url = _extract_result_url(last_status_response or {})
-                report["resultUrlPresent"] = bool(result_url)
+                item["resultUrlPresent"] = bool(result_url)
                 if not result_url:
                     ok = False
                     failures.append("video completed but status response did not contain unsigned_urls or a video URL.")
                 else:
                     download = _download_probe(result_url, args.timeout)
-                    report["download"] = download
+                    item["download"] = download
                     download_status = int(download.get("httpStatus") or 0)
                     sampled = int(download.get("byteLengthSampled") or 0)
                     if download_status < 200 or download_status >= 300 or sampled <= 0:
                         ok = False
                         failures.append(f"video result download probe failed: HTTP {download_status}, sampledBytes={sampled}.")
 
-    report["failures"] = failures
-    report["warnings"] = warnings
-    report["verdict"] = "pass" if ok and not failures else "fail"
+    item["failures"] = failures
+    item["warnings"] = warnings
+    item["verdict"] = "pass" if ok and not failures else "fail"
+    return item
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="LLM Gateway Volcengine video exchange canary")
+    parser.add_argument("--gw-base", default=os.environ.get("GW_BASE") or os.environ.get("LLMGW_GATE_BASE") or "")
+    parser.add_argument("--gw-key-env", default=os.environ.get("LLMGW_VIDEO_CANARY_KEY_ENV", "LLMGW_SERVE_KEY/GW_KEY/LLMGW_GATE_KEY"))
+    parser.add_argument(
+        "--app-caller",
+        action="append",
+        default=[],
+        help="Video appCallerCode to canary. May be repeated or comma-separated. Defaults to all production video callers.",
+    )
+    parser.add_argument("--model", default=os.environ.get("LLMGW_VIDEO_CANARY_MODEL", DEFAULT_MODEL))
+    parser.add_argument("--prompt", default=os.environ.get("LLMGW_VIDEO_CANARY_PROMPT", DEFAULT_PROMPT))
+    parser.add_argument("--timeout", type=int, default=int(os.environ.get("LLMGW_VIDEO_CANARY_TIMEOUT", "120")))
+    parser.add_argument("--poll-status", action="store_true", default=os.environ.get("LLMGW_VIDEO_CANARY_POLL_STATUS", "").lower() in {"1", "true"})
+    parser.add_argument("--poll-attempts", type=int, default=int(os.environ.get("LLMGW_VIDEO_CANARY_POLL_ATTEMPTS", "12")))
+    parser.add_argument("--poll-interval-seconds", type=float, default=float(os.environ.get("LLMGW_VIDEO_CANARY_POLL_INTERVAL_SECONDS", "10")))
+    parser.add_argument("--download-result", action="store_true", default=os.environ.get("LLMGW_VIDEO_CANARY_DOWNLOAD_RESULT", "").lower() in {"1", "true"})
+    parser.add_argument("--json-out", default=os.environ.get("LLMGW_VIDEO_CANARY_JSON_OUT", ""))
+    parser.add_argument("--print-json", action="store_true")
+    args = parser.parse_args()
+    if args.download_result:
+        args.poll_status = True
+
+    base = args.gw_base.strip().rstrip("/")
+    key_env_names = [item.strip() for item in args.gw_key_env.replace(",", "/").split("/") if item.strip()]
+    key_env, key = _env_first(key_env_names)
+    app_callers = _resolve_app_callers(args)
+    report: dict[str, Any] = {
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "gatewayBase": base,
+        "gatewayKeyEnv": key_env,
+        "appCallers": app_callers,
+        "model": args.model,
+        "verdict": "fail",
+        "failures": [],
+        "warnings": [],
+        "pollStatus": bool(args.poll_status),
+        "downloadResult": bool(args.download_result),
+        "canaries": [],
+    }
+
+    if not base:
+        report["failures"].append("missing --gw-base")
+        _write_json(args.json_out, report)
+        print("LLM Gateway video canary: FAIL")
+        print("- missing --gw-base")
+        return 2
+    if not key:
+        report["failures"].append(f"missing gateway key env: {args.gw_key_env}")
+        _write_json(args.json_out, report)
+        print("LLM Gateway video canary: FAIL")
+        print(f"- missing gateway key env: {args.gw_key_env}")
+        return 2
+
+    all_failures: list[str] = []
+    all_warnings: list[str] = []
+    canaries: list[dict[str, Any]] = []
+    for app_caller in app_callers:
+        item = _run_one_canary(args, base, key, app_caller)
+        canaries.append(item)
+        for failure in item.get("failures") or []:
+            all_failures.append(f"{app_caller}: {failure}")
+        for warning in item.get("warnings") or []:
+            all_warnings.append(f"{app_caller}: {warning}")
+
+    report["canaries"] = canaries
+    if len(canaries) == 1:
+        report["appCallerCode"] = canaries[0].get("appCallerCode")
+        report["gateway"] = canaries[0].get("gateway")
+        report["jobId"] = canaries[0].get("jobId")
+        report["request"] = canaries[0].get("request")
+    report["failures"] = all_failures
+    report["warnings"] = all_warnings
+    report["verdict"] = "pass" if canaries and not all_failures and all(item.get("verdict") == "pass" for item in canaries) else "fail"
     _write_json(args.json_out, report)
 
     print(f"LLM Gateway video canary: {report['verdict'].upper()}")
-    for failure in failures:
+    for failure in all_failures:
         print(f"- {failure}")
     if args.print_json:
         print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
