@@ -301,6 +301,11 @@ def _classify_video_seed_error(error: str, model_id: str | None = None) -> str |
             "Video upstream has no available channels"
             f"{model_suffix}; keep video/ASR canary blocked until the provider channel or model pool is fixed."
         )
+    if "modelnotopen" in normalized or "has not activated the model" in normalized or "not activated the model" in normalized:
+        return (
+            "Volcengine Ark account has not activated the video model"
+            f"{model_suffix}; open the model service in Ark Console before restoring the video-gen pool to Healthy."
+        )
     if "404" in normalized or "not found" in normalized:
         return f"Video upstream model or endpoint was not found{model_suffix}; verify provider route and model id before canary."
     if "401" in normalized or "unauthorized" in normalized or "forbidden" in normalized or "403" in normalized:

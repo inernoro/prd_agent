@@ -122,6 +122,8 @@ def _static_checks() -> list[dict]:
     video_exchange_bootstrap = video_exchange_bootstrap_path.read_text(encoding="utf-8") if video_exchange_bootstrap_path.exists() else ""
     video_exchange_bootstrap_js_path = ROOT / "scripts/llmgw-prod-video-exchange-bootstrap.js"
     video_exchange_bootstrap_js = video_exchange_bootstrap_js_path.read_text(encoding="utf-8") if video_exchange_bootstrap_js_path.exists() else ""
+    video_canary_path = ROOT / "scripts/llmgw-video-exchange-canary.py"
+    video_canary = video_canary_path.read_text(encoding="utf-8") if video_canary_path.exists() else ""
     provider_audit_path = ROOT / "scripts/llmgw-prod-provider-config-audit.py"
     provider_audit = provider_audit_path.read_text(encoding="utf-8") if provider_audit_path.exists() else ""
     ok, detail = _contains_all(
@@ -444,6 +446,27 @@ def _static_checks() -> list[dict]:
     ))
 
     ok, detail = _contains_all(
+        video_canary,
+        [
+            "LLM Gateway Volcengine video exchange canary",
+            "/raw",
+            "video-agent.videogen::video-gen",
+            "doubao-seedance-2-0-fast-260128",
+            "LLMGW_VIDEO_CANARY_JSON_OUT",
+            "ModelNotOpen",
+            "has not activated the requested video model",
+            "return 0 if report[\"verdict\"] == \"pass\" else 1",
+        ],
+    )
+    video_canary_executable = bool(video_canary_path.exists() and (video_canary_path.stat().st_mode & stat.S_IXUSR))
+    video_canary_destructive = any(item in video_canary for item in ["updateOne", "deleteMany", "dropDatabase", "mongorestore", "docker volume rm", "down -v"])
+    checks.append(_check(
+        "video_exchange_canary_records_submit_evidence_without_mutating_config",
+        ok and video_canary_executable and not video_canary_destructive,
+        f"{detail}; executable={video_canary_executable}; destructive={video_canary_destructive}",
+    ))
+
+    ok, detail = _contains_all(
         provider_audit,
         [
             "LLM Gateway production provider config audit",
@@ -479,6 +502,7 @@ def _static_checks() -> list[dict]:
             "videoClassifications",
             "ASR upstream has no available channels",
             "Video upstream has no available channels",
+            "Volcengine Ark account has not activated the video model",
             "OpenRouter /videos requests",
             "Volcengine Ark OpenAI chat base URL",
             "dedicated Volcengine video adapter",
