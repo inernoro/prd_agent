@@ -479,6 +479,13 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("start", preflight);
         Assert.Contains("completion", preflight);
         Assert.Contains("map_logs_scope", preflight);
+        Assert.Contains("map_direct_transport_absent", preflight);
+        Assert.Contains("LLMGW_PROD_PREFLIGHT_DIRECT_TRANSPORT_SINCE_HOURS", preflight);
+        Assert.Contains("LLMGW_PROD_PREFLIGHT_DIRECT_TRANSPORT_PAGE_SIZE", preflight);
+        Assert.Contains("LLMGW_PROD_PREFLIGHT_DIRECT_TRANSPORT_MAX_PAGES", preflight);
+        Assert.Contains("directTransportSinceHours", preflight);
+        Assert.Contains("gatewayTransport", preflight);
+        Assert.Contains("\"direct\"", preflight);
         Assert.Contains("gateway_protected_requires_key", preflight);
         Assert.Contains("gateway_key_configured", preflight);
         Assert.Contains("rollout_ledger_start_ready", preflight);
@@ -497,6 +504,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("scripts/llmgw-prod-stage.sh", readiness);
         Assert.Contains("scripts/llmgw-rollout-ledger.py", readiness);
         Assert.Contains("scripts/llmgw-prod-preflight.py", readiness);
+        Assert.Contains("map_direct_transport_absent", readiness);
+        Assert.Contains("LLMGW_PROD_PREFLIGHT_DIRECT_TRANSPORT_SINCE_HOURS", readiness);
+        Assert.Contains("LLMGW_PROD_PREFLIGHT_DIRECT_TRANSPORT_PAGE_SIZE", readiness);
+        Assert.Contains("LLMGW_PROD_PREFLIGHT_DIRECT_TRANSPORT_MAX_PAGES", readiness);
+        Assert.Contains("directTransportSinceHours", readiness);
+        Assert.Contains("gatewayTransport", readiness);
         Assert.Contains("preflightExecutable", readiness);
         Assert.Contains("ledgerExecutable", readiness);
         Assert.Contains("prod-preflight.json", readiness);

@@ -18,7 +18,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,6 +64,109 @@ def _redact_url(url: str) -> str:
     if not parsed.query:
         return url
     return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "?redacted", parsed.fragment))
+
+
+def _payload_dict(value: object, name: str) -> dict:
+    if isinstance(value, dict):
+        child = value.get(name) or value.get(name[:1].upper() + name[1:])
+        return child if isinstance(child, dict) else {}
+    return {}
+
+
+def _item_value(item: dict, *names: str) -> str:
+    for name in names:
+        value = item.get(name)
+        if value is None:
+            value = item.get(name[:1].upper() + name[1:])
+        if value is not None:
+            return str(value)
+    return ""
+
+
+def _direct_transport_check(args: argparse.Namespace, base: str, key_name: str, key: str) -> dict:
+    if args.mode != "completion":
+        return {
+            "name": "map_direct_transport_deferred",
+            "ok": True,
+            "detail": "direct transport absence is enforced by completion mode",
+        }
+
+    since_hours = max(0.0, float(args.direct_transport_since_hours))
+    page_size = min(max(10, int(args.direct_transport_page_size)), 200)
+    max_pages = max(1, int(args.direct_transport_max_pages))
+    from_dt = datetime.now(timezone.utc) - timedelta(hours=since_hours) if since_hours > 0 else None
+    headers = {"Authorization": f"Bearer {key}", "Accept": "application/json"}
+
+    total: int | None = None
+    scanned = 0
+    direct_samples: list[dict[str, str]] = []
+    failures: list[str] = []
+
+    for page in range(1, max_pages + 1):
+        query: dict[str, object] = {"page": page, "pageSize": page_size}
+        if from_dt:
+            query["from"] = from_dt.isoformat()
+        logs_url = f"{base}/api/logs/llm?" + urllib.parse.urlencode(query)
+        logs = _http_json(logs_url, headers=headers, timeout=args.timeout)
+        if not logs["ok"]:
+            failures.append(f"page={page} status={logs['status']}")
+            break
+
+        payload = logs.get("payload") if isinstance(logs.get("payload"), dict) else {}
+        data = _payload_dict(payload, "data")
+        items = data.get("items") or data.get("Items") or []
+        if not isinstance(items, list):
+            failures.append(f"page={page} items_not_list")
+            break
+
+        total_value = data.get("total") if "total" in data else data.get("Total")
+        if isinstance(total_value, int):
+            total = total_value
+        elif isinstance(total_value, str) and total_value.isdigit():
+            total = int(total_value)
+        elif total is None:
+            total = len(items)
+
+        scanned += len(items)
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            transport = _item_value(item, "gatewayTransport", "transport").strip().lower()
+            if transport == "direct":
+                direct_samples.append({
+                    "requestId": _item_value(item, "requestId"),
+                    "appCallerCode": _item_value(item, "appCallerCode"),
+                    "provider": _item_value(item, "provider"),
+                    "model": _item_value(item, "model"),
+                    "startedAt": _item_value(item, "startedAt", "createdAt"),
+                    "gatewayTransport": transport,
+                })
+                if len(direct_samples) >= 10:
+                    break
+        if direct_samples:
+            break
+        if len(items) == 0 or (total is not None and scanned >= total):
+            break
+
+    truncated = total is not None and scanned < total and not direct_samples and not failures
+    ok = not failures and not direct_samples and not truncated
+    return {
+        "name": "map_direct_transport_absent",
+        "ok": ok,
+        "detail": json.dumps({
+            "keyEnv": key_name,
+            "directTransportSinceHours": since_hours,
+            "from": from_dt.isoformat() if from_dt else None,
+            "pageSize": page_size,
+            "maxPages": max_pages,
+            "scanned": scanned,
+            "total": total,
+            "truncated": truncated,
+            "directCountInScanned": len(direct_samples),
+            "directSamples": direct_samples,
+            "failures": failures,
+        }, ensure_ascii=False),
+    }
 
 
 def _map_checks(args: argparse.Namespace) -> list[dict]:
@@ -128,6 +231,8 @@ def _map_checks(args: argparse.Namespace) -> list[dict]:
             "deferred": not logs_ok and args.allow_missing_map_logs and args.mode == "start",
         }, ensure_ascii=False),
     })
+    if logs_ok:
+        checks.append(_direct_transport_check(args, base, key_name, key))
     return checks
 
 
@@ -238,6 +343,9 @@ def main() -> int:
     parser.add_argument("--rollout-ledger", default=os.environ.get("LLMGW_ROLLOUT_LEDGER", ".llmgw-release-evidence/rollout-ledger.jsonl"))
     parser.add_argument("--rollout-target-stage", default=os.environ.get("LLMGW_ROLLOUT_TARGET_STAGE", "http-full"))
     parser.add_argument("--rollout-min-observation-hours", type=float, default=float(os.environ.get("LLMGW_STAGE_MIN_OBSERVATION_HOURS", "24")))
+    parser.add_argument("--direct-transport-since-hours", type=float, default=float(os.environ.get("LLMGW_PROD_PREFLIGHT_DIRECT_TRANSPORT_SINCE_HOURS", "24")))
+    parser.add_argument("--direct-transport-page-size", type=int, default=int(os.environ.get("LLMGW_PROD_PREFLIGHT_DIRECT_TRANSPORT_PAGE_SIZE", "200")))
+    parser.add_argument("--direct-transport-max-pages", type=int, default=int(os.environ.get("LLMGW_PROD_PREFLIGHT_DIRECT_TRANSPORT_MAX_PAGES", "10")))
     parser.add_argument("--timeout", type=int, default=30)
     parser.add_argument("--json-out", default=os.environ.get("LLMGW_PROD_PREFLIGHT_JSON_OUT", ""))
     args = parser.parse_args()
