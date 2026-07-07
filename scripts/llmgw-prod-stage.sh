@@ -394,7 +394,7 @@ run_stage_disk_guard() {
 }
 
 validate_main_ancestry() {
-  if [ "$stage" = "rollback-inproc" ]; then
+  if [ "$stage" = "rollback-inproc" ] || [ "$stage" = "rollback-rehearsal" ]; then
     return 0
   fi
   if [ "$execute" != "1" ]; then

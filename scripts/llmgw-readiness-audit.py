@@ -688,6 +688,7 @@ def _static_checks() -> list[dict]:
             "LLMGW_RELEASE_MAIN_REF",
             "--main-ref",
             "validate_main_ancestry",
+            "if [ \"$stage\" = \"rollback-inproc\" ] || [ \"$stage\" = \"rollback-rehearsal\" ]; then",
             "git merge-base --is-ancestor",
             "release commit does not include latest main",
             "LLMGW_STAGE_ALLOW_RELEASE_TREE_MISMATCH",
