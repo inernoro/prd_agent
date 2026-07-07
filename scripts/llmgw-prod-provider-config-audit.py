@@ -308,6 +308,22 @@ def _classify_video_seed_error(error: str, model_id: str | None = None) -> str |
     return None
 
 
+def _classify_video_platform_protocol(platform: dict[str, Any] | None, model_id: str | None = None) -> str | None:
+    if not platform:
+        return None
+    api_url = str(platform.get("ApiUrl") or "").lower()
+    platform_name = str(platform.get("Name") or platform.get("_id") or "unknown")
+    model_suffix = f" model={model_id}" if model_id else ""
+    if "ark.cn-" in api_url and "volces.com/api/v3" in api_url:
+        return (
+            "video-gen model is bound to Volcengine Ark OpenAI chat base URL, "
+            "but MAP video client sends OpenRouter /videos requests. "
+            f"platform={platform_name}{model_suffix}; configure an OpenRouter-compatible video platform "
+            "or add a dedicated Volcengine video adapter before video/ASR canary."
+        )
+    return None
+
+
 def _append_unique(items: list[str], value: str) -> None:
     if value not in items:
         items.append(value)
@@ -545,6 +561,9 @@ def _audit(
                     failures.append(f"video model platform is disabled: model={model.get('ModelId')} platform={platform.get('Name')}")
                 if secret is not None and not platform_shape.get("decryptOk"):
                     failures.append(f"video model platform key cannot be decrypted: model={model.get('ModelId')} platform={platform.get('Name')}")
+                platform_protocol_failure = _classify_video_platform_protocol(platform, str(model.get("ModelId") or ""))
+                if platform_protocol_failure:
+                    failures.append(platform_protocol_failure)
             if int(model.get("HealthStatus") or 0) == 0:
                 healthy_video_models.append({
                     "groupId": group.get("_id"),

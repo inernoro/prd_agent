@@ -217,6 +217,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_PROVIDER_AUDIT_REPORT_MD", script);
         Assert.Contains("LLMGW_PROVIDER_AUDIT_SEED_EVIDENCE_JSON", script);
         Assert.Contains("LLM Gateway provider config audit: required before deploy", script);
+        var providerAudit = ReadRepoFile("scripts/llmgw-prod-provider-config-audit.py");
+        Assert.Contains("OpenRouter /videos requests", providerAudit);
+        Assert.Contains("Volcengine Ark OpenAI chat base URL", providerAudit);
+        Assert.Contains("dedicated Volcengine video adapter", providerAudit);
         Assert.Contains("probe_args=\"--base $gate_base\"", script);
         Assert.Contains("python3 scripts/llmgw-serving-probe.py $probe_args", script);
         Assert.Contains("LLM Gateway post-deploy serving probe: required", script);
