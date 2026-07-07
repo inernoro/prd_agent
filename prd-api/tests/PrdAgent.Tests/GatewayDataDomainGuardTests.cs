@@ -997,6 +997,33 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ProdAsrCredentialRotate_UsesApiEncryptionAfterBackup()
+    {
+        var script = ReadRepoFile("scripts/llmgw-prod-asr-credential-rotate.sh");
+        var py = ReadRepoFile("scripts/llmgw-prod-asr-credential-rotate.py");
+        var readiness = ReadRepoFile("scripts/llmgw-readiness-audit.py");
+
+        Assert.Contains("LLMGW_ASR_CREDENTIAL_ROTATE_DRY_RUN:-1", script);
+        Assert.Contains("LLMGW_ASR_NEW_KEY", script);
+        Assert.Contains("LLM Gateway ASR credential rotate dry-run: backup skipped", script);
+        Assert.Contains("llmgw-disk-space-guard.sh", script);
+        Assert.Contains("mongodump --db \"$mongo_db\" --collection model_exchanges --archive", script);
+        Assert.Contains("ROOT_ACCESS_USERNAME", script);
+        Assert.Contains("ROOT_ACCESS_PASSWORD", script);
+        Assert.Contains("llmgw-prod-asr-credential-rotate.py", script);
+
+        Assert.Contains("never prints the new key", py);
+        Assert.Contains("/api/mds/exchanges", py);
+        Assert.Contains("\"targetApiKey\": new_key", py);
+        Assert.Contains("DoubaoAsr", py);
+        Assert.Contains("XApiKey", py);
+        Assert.Contains("newKeyShape", py);
+        Assert.DoesNotContain("TargetApiKeyEncrypted", py);
+
+        Assert.Contains("asr_credential_rotate_is_backup_first_and_api_encrypted", readiness);
+    }
+
+    [Fact]
     public void GwSmoke_CoversStreamingAndClientStreamBoundaries()
     {
         var script = ReadRepoFile("scripts/gw-smoke.py");

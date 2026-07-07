@@ -131,6 +131,10 @@ def _static_checks() -> list[dict]:
     video_canary = video_canary_path.read_text(encoding="utf-8") if video_canary_path.exists() else ""
     asr_http_canary_path = ROOT / "scripts/llmgw-asr-http-canary.py"
     asr_http_canary = asr_http_canary_path.read_text(encoding="utf-8") if asr_http_canary_path.exists() else ""
+    asr_credential_rotate_path = ROOT / "scripts/llmgw-prod-asr-credential-rotate.sh"
+    asr_credential_rotate = asr_credential_rotate_path.read_text(encoding="utf-8") if asr_credential_rotate_path.exists() else ""
+    asr_credential_rotate_py_path = ROOT / "scripts/llmgw-prod-asr-credential-rotate.py"
+    asr_credential_rotate_py = asr_credential_rotate_py_path.read_text(encoding="utf-8") if asr_credential_rotate_py_path.exists() else ""
     provider_audit_path = ROOT / "scripts/llmgw-prod-provider-config-audit.py"
     provider_audit = provider_audit_path.read_text(encoding="utf-8") if provider_audit_path.exists() else ""
     ok, detail = _contains_all(
@@ -551,6 +555,39 @@ def _static_checks() -> list[dict]:
         "asr_http_canary_proves_multipart_refs_without_mutating_config",
         ok and asr_http_canary_executable and not asr_http_canary_destructive,
         f"{detail}; executable={asr_http_canary_executable}; destructive={asr_http_canary_destructive}",
+    ))
+
+    ok, detail = _contains_all(
+        asr_credential_rotate + "\n" + asr_credential_rotate_py,
+        [
+            "LLM Gateway ASR credential rotate",
+            "LLMGW_ASR_NEW_KEY",
+            "LLMGW_ASR_CREDENTIAL_ROTATE_DRY_RUN",
+            "mongodump --db \"$mongo_db\" --collection model_exchanges --archive",
+            "llmgw-disk-space-guard.sh",
+            "ROOT_ACCESS_USERNAME",
+            "ROOT_ACCESS_PASSWORD",
+            "llmgw-prod-asr-credential-rotate.py",
+            "/api/mds/exchanges",
+            "targetApiKey",
+            "DoubaoAsr",
+            "XApiKey",
+            "newKeyShape",
+            "--new-key-env",
+            "--dry-run",
+            "never prints the new key",
+        ],
+    )
+    asr_credential_rotate_executable = bool(asr_credential_rotate_path.exists() and (asr_credential_rotate_path.stat().st_mode & stat.S_IXUSR))
+    asr_credential_rotate_py_executable = bool(asr_credential_rotate_py_path.exists() and (asr_credential_rotate_py_path.stat().st_mode & stat.S_IXUSR))
+    asr_credential_rotate_destructive = any(
+        item in asr_credential_rotate + asr_credential_rotate_py
+        for item in ["deleteMany", "dropDatabase", "mongorestore", "docker volume rm", "down -v"]
+    )
+    checks.append(_check(
+        "asr_credential_rotate_is_backup_first_and_api_encrypted",
+        ok and asr_credential_rotate_executable and asr_credential_rotate_py_executable and not asr_credential_rotate_destructive,
+        f"{detail}; executable={asr_credential_rotate_executable}; pyExecutable={asr_credential_rotate_py_executable}; destructive={asr_credential_rotate_destructive}",
     ))
 
     ok, detail = _contains_all(
