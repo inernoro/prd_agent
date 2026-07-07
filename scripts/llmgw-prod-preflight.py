@@ -171,10 +171,18 @@ def _direct_transport_check(args: argparse.Namespace, base: str, key_name: str, 
 
 def _map_checks(args: argparse.Namespace) -> list[dict]:
     checks: list[dict] = []
-    base = (args.map_base or os.environ.get("PRD_AGENT_BASE", "")).strip().rstrip("/")
+    base = (
+        args.map_base
+        or os.environ.get("PRD_AGENT_BASE", "")
+        or os.environ.get("LLMGW_STAGE_MAP_BASE", "")
+    ).strip().rstrip("/")
     key_name, key = _env_first([args.map_key_env, "PRD_AGENT_API_KEY"])
     if not base:
-        checks.append({"name": "map_base_configured", "ok": False, "detail": "missing PRD_AGENT_BASE or --map-base"})
+        checks.append({
+            "name": "map_base_configured",
+            "ok": False,
+            "detail": "missing PRD_AGENT_BASE, LLMGW_STAGE_MAP_BASE, or --map-base",
+        })
         return checks
     checks.append({"name": "map_base_configured", "ok": True, "detail": base})
 
@@ -325,7 +333,7 @@ def _rollout_check(args: argparse.Namespace) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description="LLM Gateway production preflight")
     parser.add_argument("--mode", choices=["start", "completion"], default=os.environ.get("LLMGW_PROD_PREFLIGHT_MODE", "completion"))
-    parser.add_argument("--map-base", default="")
+    parser.add_argument("--map-base", default="", help="MAP base URL; falls back to PRD_AGENT_BASE or LLMGW_STAGE_MAP_BASE.")
     parser.add_argument("--map-key-env", default="PRD_AGENT_API_KEY")
     parser.add_argument(
         "--allow-missing-map-logs",

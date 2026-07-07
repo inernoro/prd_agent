@@ -28,7 +28,8 @@ Required environment for deploy stages:
   LLMGW_GATE_BASE or GW_BASE   Serving base URL, for example https://host/gw/v1
   LLMGW_GATE_KEY, GW_KEY, or LLMGW_SERVE_KEY
   LLMGW_STAGE_RUN_SHADOW_SEED=1 enables MAP shadow seed evidence after shadow-start deploy
-  LLMGW_STAGE_MAP_BASE          MAP base URL for shadow seed, for example https://host
+  LLMGW_STAGE_MAP_BASE or PRD_AGENT_BASE
+                              MAP base URL for preflight, ASR canary, and shadow seed
   LLMGW_STAGE_SHADOW_SEED_FLAGS Extra llmgw-map-shadow-seed.py flags, for example --include-video-direct
   LLMGW_STAGE_RUN_UPSTREAM_READINESS=1 enables /gw/v1/resolve upstream readiness evidence
   LLMGW_STAGE_RUN_PROVIDER_AUDIT=1 enables read-only video/ASR provider config audit
@@ -599,9 +600,15 @@ if stage == "rollback-inproc":
 elif stage == "rollback-rehearsal":
     commands.append("LLMGW_ROLLBACK_DRY_RUN=1 scripts/llmgw-rollback-inproc.sh")
 else:
-    commands.append(
+    preflight = (
         "python3 scripts/llmgw-prod-preflight.py --mode start --expect-commit "
         + commit
+    )
+    map_base = os.environ.get("LLMGW_STAGE_MAP_BASE", "").strip() or os.environ.get("PRD_AGENT_BASE", "").strip()
+    if map_base:
+        preflight += " --map-base ${LLMGW_STAGE_MAP_BASE:-${PRD_AGENT_BASE:-}}"
+    commands.append(
+        preflight
     )
     if os.environ.get("LLMGW_DRY_RUN_UPSTREAM_READINESS_ENABLED", "0") == "1":
         commands.append(
@@ -723,6 +730,10 @@ run_prod_preflight() {
   if [ "$execute" = "1" ]; then
     mkdir -p "$evidence_dir"
     preflight_args="--mode start --expect-commit $commit --json-out $prod_preflight_json"
+    map_base="$(printf '%s' "${LLMGW_STAGE_MAP_BASE:-${PRD_AGENT_BASE:-}}" | xargs || true)"
+    if [ -n "$map_base" ]; then
+      preflight_args="$preflight_args --map-base $map_base"
+    fi
     if [ "$stage" = "shadow-start" ]; then
       preflight_args="$preflight_args --allow-missing-gateway --allow-missing-map-logs"
     fi
@@ -731,8 +742,12 @@ run_prod_preflight() {
       $preflight_args
   else
     suffix=""
+    map_base="$(printf '%s' "${LLMGW_STAGE_MAP_BASE:-${PRD_AGENT_BASE:-}}" | xargs || true)"
+    if [ -n "$map_base" ]; then
+      suffix="$suffix --map-base \"$map_base\""
+    fi
     if [ "$stage" = "shadow-start" ]; then
-      suffix=" --allow-missing-gateway --allow-missing-map-logs"
+      suffix="$suffix --allow-missing-gateway --allow-missing-map-logs"
     fi
     echo "+ python3 scripts/llmgw-prod-preflight.py --mode start --expect-commit \"$commit\" --json-out \"$prod_preflight_json\"$suffix"
   fi
