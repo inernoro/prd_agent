@@ -338,6 +338,60 @@ def _gateway_log_error_text(log: dict[str, Any]) -> str:
     return "\n".join(part for part in parts if part).strip()
 
 
+def _try_parse_json_prefix(text: str) -> Any | None:
+    stripped = text.strip()
+    if not stripped.startswith("{"):
+        return None
+    decoder = json.JSONDecoder()
+    try:
+        value, _ = decoder.raw_decode(stripped)
+        return value
+    except Exception:
+        return None
+
+
+def _extract_asr_diagnostic(error_text: str) -> dict[str, Any] | None:
+    parsed = _try_parse_json_prefix(error_text)
+    if not isinstance(parsed, dict):
+        return None
+    gateway = parsed.get("gateway")
+    if not isinstance(gateway, dict):
+        return None
+    diagnostic = gateway.get("diagnostic")
+    if not isinstance(diagnostic, dict):
+        return None
+    return diagnostic
+
+
+def _summarize_asr_diagnostic(diagnostic: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not diagnostic:
+        return None
+    audio = diagnostic.get("Audio") or diagnostic.get("audio")
+    return {
+        "wsUrl": diagnostic.get("WsUrl") or diagnostic.get("wsUrl"),
+        "resourceId": diagnostic.get("ResourceId") or diagnostic.get("resourceId"),
+        "requestId": diagnostic.get("RequestId") or diagnostic.get("requestId"),
+        "authMode": diagnostic.get("AuthMode") or diagnostic.get("authMode"),
+        "handshakeStatusCode": diagnostic.get("HandshakeStatusCode") or diagnostic.get("handshakeStatusCode"),
+        "hasAudio": isinstance(audio, dict),
+        "hasRawErrorChain": bool(diagnostic.get("RawErrorChain") or diagnostic.get("rawErrorChain")),
+        "hasFriendlyError": bool(diagnostic.get("FriendlyError") or diagnostic.get("friendlyError")),
+        "hasWscatCommand": bool(diagnostic.get("WscatCommand") or diagnostic.get("wscatCommand")),
+    }
+
+
+def _is_uninitialized_asr_diagnostic(summary: dict[str, Any] | None) -> bool:
+    if not summary:
+        return True
+    auth_mode = str(summary.get("authMode") or "")
+    return (
+        auth_mode == "未初始化"
+        or not summary.get("resourceId")
+        or not summary.get("requestId")
+        or not summary.get("hasRawErrorChain")
+    )
+
+
 def _is_failed_gateway_log(log: dict[str, Any]) -> bool:
     status = str(log.get("Status") or "").lower()
     if status == "failed":
@@ -348,9 +402,13 @@ def _is_failed_gateway_log(log: dict[str, Any]) -> bool:
         return False
 
 
-def _summarize_gateway_log(log: dict[str, Any], classification: str | None = None) -> dict[str, Any]:
+def _summarize_gateway_log(
+    log: dict[str, Any],
+    classification: str | None = None,
+    asr_diagnostic: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     text = _gateway_log_error_text(log)
-    return {
+    summary = {
         "id": str(log.get("_id") or ""),
         "startedAt": log.get("StartedAt") or log.get("CreatedAt"),
         "appCaller": log.get("AppCallerCode"),
@@ -364,6 +422,9 @@ def _summarize_gateway_log(log: dict[str, Any], classification: str | None = Non
         "error": text[:500],
         "classification": classification,
     }
+    if asr_diagnostic is not None:
+        summary["asrDiagnostic"] = asr_diagnostic
+    return summary
 
 
 def _audit(
@@ -553,11 +614,24 @@ def _audit(
                 str((asr_exchange or {}).get("TargetAuthScheme") or ""),
                 shape,
             )
+            asr_diagnostic = _summarize_asr_diagnostic(_extract_asr_diagnostic(error_text))
+            if "doubao-asr-stream" in model_id or "doubao-asr-stream" in error_text:
+                if _is_uninitialized_asr_diagnostic(asr_diagnostic):
+                    diagnostic_failure = (
+                        "ASR stream gateway log has missing or uninitialized diagnostic; "
+                        "deploy the diagnostic build and rerun ASR seed before video/ASR canary."
+                    )
+                    _append_unique(failures, diagnostic_failure)
+                    if classification:
+                        classification = f"{classification} {diagnostic_failure}"
+                    else:
+                        classification = diagnostic_failure
             if classification:
                 _append_unique(failures, classification)
                 asr_log_classifications.append({
                     "logId": str(log.get("_id") or ""),
                     "classification": classification,
+                    "diagnostic": asr_diagnostic,
                 })
         if app_code == VIDEO_APP_CALLER:
             failures.append(f"recent gateway log video failed: {app_code} model={model_id} statusCode={log.get('StatusCode')}")
@@ -569,7 +643,11 @@ def _audit(
                     "classification": classification,
                 })
         if app_code in ASR_APP_CALLERS or app_code == VIDEO_APP_CALLER:
-            recent_failed_logs.append(_summarize_gateway_log(log, classification))
+            recent_failed_logs.append(_summarize_gateway_log(
+                log,
+                classification,
+                asr_diagnostic if app_code in ASR_APP_CALLERS else None,
+            ))
 
     report = {
         "generatedAt": datetime.now(timezone.utc).isoformat(),

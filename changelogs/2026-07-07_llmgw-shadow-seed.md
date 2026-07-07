@@ -28,3 +28,4 @@
 | ops | prd-agent | LLM Gateway 生产外置备份支持 critical 模式，快速保护网关迁移关键集合 |
 | ops | prd-agent | LLM Gateway ASR bootstrap 支持只创建候选池不绑定 caller，降低 stream 试切风险 |
 | fix | prd-api | LLM Gateway 豆包 stream ASR 失败路径补齐诊断包，避免生产日志出现未初始化排障信息 |
+| ops | prd-agent | LLM Gateway provider 审计解析 ASR stream 诊断包，阻断未初始化诊断日志进入 video/ASR 灰度 |
