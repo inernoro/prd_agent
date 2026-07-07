@@ -9,7 +9,9 @@ remote_host="${LLMGW_EXTERNAL_BACKUP_HOST:-root@map.ebcone.net}"
 remote_repo="${LLMGW_EXTERNAL_BACKUP_REMOTE_REPO:-/root/inernoro/prd_agent}"
 compose_file="${LLMGW_EXTERNAL_BACKUP_COMPOSE_FILE:-cds-compose.yml}"
 mongo_service="${LLMGW_EXTERNAL_BACKUP_MONGO_SERVICE:-mongodb}"
+mode="$(printf '%s' "${LLMGW_EXTERNAL_BACKUP_MODE:-full}" | tr 'A-Z' 'a-z' | xargs || true)"
 databases="${LLMGW_EXTERNAL_BACKUP_DATABASES:-prdagent llm_gateway}"
+critical_collections="${LLMGW_EXTERNAL_BACKUP_COLLECTIONS:-prdagent.model_groups prdagent.llm_app_callers prdagent.llmplatforms prdagent.model_exchanges prdagent.llmrequestlogs llm_gateway.*}"
 stamp="$(date '+%Y%m%dT%H%M%S%z' 2>/dev/null || date '+%Y%m%dT%H%M%S')"
 backup_root="${LLMGW_EXTERNAL_BACKUP_ROOT:-$HOME/prd-agent-prod-backups}"
 backup_dir="${LLMGW_EXTERNAL_BACKUP_DIR:-$backup_root/llmgw-prod-external-$stamp}"
@@ -25,9 +27,20 @@ echo "  remoteHost: $remote_host"
 echo "  remoteRepo: $remote_repo"
 echo "  compose: $compose_file"
 echo "  mongoService: $mongo_service"
+echo "  mode: $mode"
 echo "  databases: $databases"
+echo "  criticalCollections: $critical_collections"
 echo "  localDir: $backup_dir"
 echo "  dryRun: $dry_run"
+
+case "$mode" in
+  full|critical)
+    ;;
+  *)
+    echo "ERROR: LLMGW_EXTERNAL_BACKUP_MODE=$mode is invalid; allowed: full, critical" >&2
+    exit 1
+    ;;
+esac
 
 if [ "$dry_run" = "1" ] || [ "$dry_run" = "true" ]; then
   echo "LLM Gateway external backup dry-run: no local files will be written"
@@ -58,18 +71,57 @@ else
   fi
 fi
 
-for db in $databases; do
-  case "$db" in
-    *[!A-Za-z0-9_-]*|"")
-      echo "ERROR: invalid database name: $db" >&2
-      exit 1
-      ;;
-  esac
-  echo "LLM Gateway external backup: streaming Mongo database $db"
-  run_remote "cd '$remote_repo' && docker compose -f '$compose_file' exec -T '$mongo_service' mongodump --db '$db' --archive" \
-    | gzip > "$backup_dir/$db.archive.gz"
-  gzip -t "$backup_dir/$db.archive.gz"
-done
+if [ "$mode" = "full" ]; then
+  for db in $databases; do
+    case "$db" in
+      *[!A-Za-z0-9_-]*|"")
+        echo "ERROR: invalid database name: $db" >&2
+        exit 1
+        ;;
+    esac
+    echo "LLM Gateway external backup: streaming Mongo database $db"
+    run_remote "cd '$remote_repo' && docker compose -f '$compose_file' exec -T '$mongo_service' mongodump --db '$db' --archive" \
+      | gzip > "$backup_dir/$db.archive.gz"
+    gzip -t "$backup_dir/$db.archive.gz"
+  done
+else
+  for spec in $critical_collections; do
+    case "$spec" in
+      *.*)
+        db="${spec%%.*}"
+        collection="${spec#*.}"
+        ;;
+      *)
+        echo "ERROR: invalid critical collection spec: $spec; expected db.collection or db.*" >&2
+        exit 1
+        ;;
+    esac
+    case "$db" in
+      *[!A-Za-z0-9_-]*|"")
+        echo "ERROR: invalid database name in spec: $spec" >&2
+        exit 1
+        ;;
+    esac
+    case "$collection" in
+      "*")
+        echo "LLM Gateway external backup: streaming Mongo database $db"
+        run_remote "cd '$remote_repo' && docker compose -f '$compose_file' exec -T '$mongo_service' mongodump --db '$db' --archive" \
+          | gzip > "$backup_dir/$db.archive.gz"
+        gzip -t "$backup_dir/$db.archive.gz"
+        ;;
+      *[!A-Za-z0-9_-]*|"")
+        echo "ERROR: invalid collection name in spec: $spec" >&2
+        exit 1
+        ;;
+      *)
+        echo "LLM Gateway external backup: streaming Mongo collection $db.$collection"
+        run_remote "cd '$remote_repo' && docker compose -f '$compose_file' exec -T '$mongo_service' mongodump --db '$db' --collection '$collection' --archive" \
+          | gzip > "$backup_dir/$db.$collection.archive.gz"
+        gzip -t "$backup_dir/$db.$collection.archive.gz"
+        ;;
+    esac
+  done
+fi
 
 (
   cd "$backup_dir"

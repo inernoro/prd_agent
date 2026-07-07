@@ -25,3 +25,4 @@
 | ops | prd-agent | LLM Gateway provider 审计补充 video 平台 key 形态、候选模型健康状态和 no available channels 分类 |
 | ops | prd-agent | LLM Gateway provider 审计默认读取近期 GW 请求日志，自动阻断 video/ASR 最近真实上游失败 |
 | ops | prd-agent | 新增 LLM Gateway 生产外置流式备份脚本，避免大 Mongo 备份继续占满生产根盘 |
+| ops | prd-agent | LLM Gateway 生产外置备份支持 critical 模式，快速保护网关迁移关键集合 |
