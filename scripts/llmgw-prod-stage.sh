@@ -45,8 +45,9 @@ Options:
   --main-ref REF              Mainline ref that must be included by --commit, default origin/main
   --evidence-dir PATH         Evidence output directory, default .llmgw-release-evidence
   --ledger PATH               Append-only rollout ledger, default <evidence-dir>/rollout-ledger.jsonl
+  LLMGW_STAGE_ALLOW_RELEASE_TREE_MISMATCH=1
   LLMGW_STAGE_ALLOW_SCRIPT_TREE_MISMATCH=1
-                              Emergency bypass when local rollout scripts differ from --commit
+                              Emergency bypass when local rollout/deploy files differ from --commit
   --allow-out-of-order        Skip ledger stage order validation; requires an explicit release note
   --allow-out-of-order-reason TEXT
                               Required with --allow-out-of-order; written to stage evidence and ledger
@@ -339,7 +340,7 @@ esac
 run_asr_http_canary="${LLMGW_STAGE_RUN_ASR_HTTP_CANARY:-$asr_http_canary_default}"
 disk_guard_path="${LLMGW_STAGE_DISK_GUARD_PATH:-$evidence_dir}"
 disk_guard_min_free_mb="${LLMGW_STAGE_MIN_FREE_MB:-4096}"
-allow_script_tree_mismatch="${LLMGW_STAGE_ALLOW_SCRIPT_TREE_MISMATCH:-0}"
+allow_release_tree_mismatch="${LLMGW_STAGE_ALLOW_RELEASE_TREE_MISMATCH:-${LLMGW_STAGE_ALLOW_SCRIPT_TREE_MISMATCH:-0}}"
 
 print_plan() {
   echo "LLM Gateway production stage:"
@@ -421,14 +422,21 @@ validate_main_ancestry() {
   echo "LLM Gateway release main ancestry: OK mainRef=$main_ref mainSha=$main_sha"
 }
 
-validate_release_script_tree() {
+validate_release_tree() {
   if [ "$stage" = "rollback-inproc" ]; then
     return 0
   fi
 
   critical_paths="
+docker-compose.yml
+cds-compose.yml
 fast.sh
 exec_dep.sh
+execdep.sh
+deploy/nginx/Dockerfile
+deploy/nginx/nginx.conf
+deploy/nginx/conf.d/branches/_disconnected.conf
+deploy/nginx/conf.d/branches/_standalone.conf
 scripts/llmgw-prod-stage.sh
 scripts/llmgw-rollout-ledger.py
 scripts/llmgw-prod-preflight.py
@@ -445,7 +453,7 @@ scripts/llmgw-restore-shadow-safe.sh
 "
 
   if [ "$execute" != "1" ]; then
-    echo '+ git show "$commit:<critical rollout scripts>" | cmp local files'
+    echo '+ git show "$commit:<critical rollout/deploy files>" | cmp local files'
     return 0
   fi
 
@@ -463,24 +471,24 @@ missing in release commit: $path"
     fi
     if ! git show "$commit:$path" | cmp -s - "$path"; then
       mismatches="${mismatches}
-script differs from release commit: $path"
+release file differs from release commit: $path"
     fi
   done
 
   if [ -n "$mismatches" ]; then
-    if [ "$allow_script_tree_mismatch" = "1" ] || [ "$allow_script_tree_mismatch" = "true" ]; then
-      echo "WARN: local rollout scripts differ from release commit; continuing because LLMGW_STAGE_ALLOW_SCRIPT_TREE_MISMATCH=1." >&2
+    if [ "$allow_release_tree_mismatch" = "1" ] || [ "$allow_release_tree_mismatch" = "true" ]; then
+      echo "WARN: local rollout/deploy files differ from release commit; continuing because release tree mismatch bypass is enabled." >&2
       printf '%s\n' "$mismatches" >&2
       return 0
     fi
-    echo "ERROR: local rollout scripts must match --commit before executing LLM Gateway production stages." >&2
-    echo "This prevents deploying one image commit with another commit's release gates or dirty production scripts." >&2
+    echo "ERROR: local rollout/deploy files must match --commit before executing LLM Gateway production stages." >&2
+    echo "This prevents deploying one image commit with another commit's release gates, compose files, or nginx config." >&2
     printf '%s\n' "$mismatches" >&2
-    echo "Checkout the release commit on the production runner, or set LLMGW_STAGE_ALLOW_SCRIPT_TREE_MISMATCH=1 only for an explicitly reviewed emergency." >&2
+    echo "Checkout the release commit on the production runner, or set LLMGW_STAGE_ALLOW_RELEASE_TREE_MISMATCH=1 only for an explicitly reviewed emergency." >&2
     exit 1
   fi
 
-  echo "LLM Gateway release script tree: OK critical scripts match commit=$commit"
+  echo "LLM Gateway release tree: OK critical rollout/deploy files match commit=$commit"
 }
 
 validate_ledger_order() {
@@ -945,7 +953,7 @@ run_stage_disk_guard
 
 validate_ledger_order
 validate_main_ancestry
-validate_release_script_tree
+validate_release_tree
 
 if [ "$stage" = "rollback-rehearsal" ]; then
   release_gate_required=0
