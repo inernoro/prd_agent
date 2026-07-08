@@ -14,6 +14,8 @@ public static class GatewayTransports
     public const string Http = "http";
     /// <summary>ShadowLlmGateway 影子/灰度路由入口。</summary>
     public const string Shadow = "shadow";
+    /// <summary>管理侧只读供应商探测（如刷新 /models），不属于用户生成请求。</summary>
+    public const string AdminProbe = "admin-probe";
     /// <summary>绕开网关池调度的直连（ModelLab/Arena 锁定 platform+model、ModelDomainService 兜底直连）。</summary>
     public const string Direct = "direct";
 }
@@ -75,7 +77,8 @@ public class LlmRequestLog
     /// - "inproc"：进程内 LlmGateway（默认模式，字节直传）
     /// - "http"：跨进程 HttpLlmGatewayClient（serving /gw/v1/*）
     /// - "shadow"：ShadowLlmGateway 影子/灰度路由入口
-    /// - "direct"：绕开网关池调度的直连（如 ModelLab/Arena 锁定 platform+model、ModelDomainService 兜底直连）
+    /// - "admin-probe"：管理侧只读供应商探测（如刷新 /models），不属于用户生成请求
+    /// - "direct"：绕开网关池调度的直连；全量迁移发布前业务生成路径不得出现
     /// 仅追加字段，存量日志为 null；老查询不受影响。用于日志页/排障辨识请求走了哪条传输通道。
     /// </summary>
     public string? GatewayTransport { get; set; }
@@ -241,4 +244,3 @@ public class LlmLogImage
     public string? Label { get; set; }
     public string? Sha256 { get; set; }
 }
-

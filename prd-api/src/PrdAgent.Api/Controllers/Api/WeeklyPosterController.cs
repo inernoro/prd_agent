@@ -885,6 +885,7 @@ public sealed class WeeklyPosterController : ControllerBase
             AppCallerCode = ImageGenAppCallerCode,
             AppKey = AppNames.ReportAgent,
             WeeklyPosterId = id,
+            ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
             CreatedAt = DateTime.UtcNow
         };
 

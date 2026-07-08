@@ -1654,6 +1654,7 @@ public class ImageMasterController : ControllerBase
                 InitImageAssetSha256 = initSha,
                 ImageRefs = imageRefs, // 多图引用（新架构）
                 MaskBase64 = string.IsNullOrWhiteSpace(request?.MaskBase64) ? null : request!.MaskBase64!.Trim(),
+                ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
                 TargetX = request?.X,
                 TargetY = request?.Y,
                 TargetW = request?.W,

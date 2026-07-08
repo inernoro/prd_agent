@@ -36,6 +36,22 @@ public class ReviewAgentStateGuardsTests
         ReviewAgentController.CanUseSystemRerun(Sub(ReviewStatuses.Running)).ShouldBeFalse();
     }
 
+    // ── CanReuploadAfterError (Error 状态独占，不消耗救机会) ────
+
+    [Fact]
+    public void ReuploadAfterError_仅Error状态_允许()
+    {
+        ReviewAgentController.CanReuploadAfterError(Sub(ReviewStatuses.Error)).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ReuploadAfterError_Done_Queued_Running_拒绝()
+    {
+        ReviewAgentController.CanReuploadAfterError(Sub(ReviewStatuses.Done, isPassed: false)).ShouldBeFalse();
+        ReviewAgentController.CanReuploadAfterError(Sub(ReviewStatuses.Queued)).ShouldBeFalse();
+        ReviewAgentController.CanReuploadAfterError(Sub(ReviewStatuses.Running)).ShouldBeFalse();
+    }
+
     // ── CanReuploadOnFailure (Done + 未通过 + 救机会未用) ────
 
     [Fact]

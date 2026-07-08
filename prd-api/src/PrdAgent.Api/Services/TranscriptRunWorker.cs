@@ -79,6 +79,7 @@ public class TranscriptRunWorker : BackgroundService
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
         var gateway = scope.ServiceProvider.GetRequiredService<ILlmGateway>();
+        var ctxAccessor = scope.ServiceProvider.GetRequiredService<ILLMRequestContextAccessor>();
 
         // 原子认领一个 queued 任务
         var filter = Builders<TranscriptRun>.Filter.Eq(r => r.Status, "queued");
@@ -98,6 +99,22 @@ public class TranscriptRunWorker : BackgroundService
 
         try
         {
+            var appCallerCode = run.Type == "asr"
+                ? AppCallerRegistry.TranscriptAgent.Transcribe.Audio
+                : AppCallerRegistry.TranscriptAgent.Copywrite.Generate;
+            using var _ = ctxAccessor.BeginScope(new LlmRequestContext(
+                RequestId: run.Id,
+                GroupId: null,
+                SessionId: run.WorkspaceId,
+                UserId: run.OwnerUserId,
+                ViewRole: "ADMIN",
+                DocumentChars: null,
+                DocumentHash: null,
+                SystemPromptRedacted: "[TRANSCRIPT_RUN]",
+                RequestType: run.Type == "asr" ? ModelTypes.Asr : ModelTypes.Chat,
+                AppCallerCode: appCallerCode,
+                ForceFullShadowSample: run.ForceFullShadowSample));
+
             if (run.Type == "asr")
                 await ProcessAsrAsync(db, gateway, run);
             else if (run.Type == "copywrite")

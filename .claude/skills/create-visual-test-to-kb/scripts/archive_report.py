@@ -588,7 +588,30 @@ def markdown_to_html(markdown):
     return "\n".join(out) + (meta or "")
 
 
-def build_interactive_html(title, verdict, markdown_content, manifest):
+def build_interactive_html(title, verdict, markdown_content, manifest, flavor="acceptance"):
+    """交互式验收 HTML（模板契约 interactive-html-v2 不变，皮肤为「米多刊系」检验档案风）。
+
+    flavor 决定刊头身份（.claude/rules/report-design-system.md）：
+      - acceptance（默认）：单次验收 =「MAP 验收档案」，身份色青碧
+      - daily：每日视觉验收 =「每日巡检特刊」，身份色钢蓝
+    结构性 class（layout/hero/evidence-nav/reportBody 等）与模板标记保持逐字节兼容，
+    CDS reports.ts 的 validateAcceptanceHtmlTemplate 与 gate 测试依赖它们。
+    """
+    _FLAVORS = {
+        "acceptance": {
+            "cn": "MAP 验收档案", "en": "ACCEPTANCE DOSSIER",
+            "accent": "#0f766e", "accent_soft": "rgba(15,118,110,0.08)",
+            "byline": "验收智能体 · 自动编档",
+        },
+        "daily": {
+            "cn": "每日巡检特刊", "en": "DAILY PATROL EDITION",
+            "accent": "#3b5f8a", "accent_soft": "rgba(59,95,138,0.08)",
+            "byline": "每日全量巡检 · 自动编档",
+        },
+    }
+    fl = _FLAVORS.get(flavor) or _FLAVORS["acceptance"]
+    flavor_cn, flavor_en = fl["cn"], fl["en"]
+    accent, accent_soft, byline = fl["accent"], fl["accent_soft"], fl["byline"]
     body_html = markdown_to_html(markdown_content)
     figure_srcs = _figure_src_map(markdown_content)
     problem_items = _collect_problem_items(markdown_content, manifest)
@@ -679,43 +702,169 @@ def build_interactive_html(title, verdict, markdown_content, manifest):
         )
     return f"""<!doctype html>
 <!-- map-acceptance-template: interactive-html-v2 -->
-<html lang="zh-CN" data-template="map-acceptance-interactive-html-v2">
+<html lang="zh-CN" data-template="map-acceptance-interactive-html-v2" data-skin="miduo-press-dossier">
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <meta name="map-acceptance-template" content="interactive-html-v2"/>
 <title>{html.escape(title)}</title>
 <style>
-:root{{color-scheme:light;--text:#1f2328;--muted:#59636e;--line:#d8dee4;--soft:#f6f8fa;--panel:#fff;--pass:#1a7f37;--warn:#9a6700;--fail:#b42318;--link:#0969da;--ink:#0d1117}}
-*{{box-sizing:border-box}}body{{margin:0;background:#f4f6f8;color:var(--text);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}}
-.layout{{display:grid;grid-template-columns:minmax(240px,310px) minmax(0,1fr);min-height:100vh}}
-aside{{position:sticky;top:0;height:100vh;overflow:auto;border-right:1px solid var(--line);background:#0d1117;color:#e6edf3;padding:18px}}
-main{{min-width:0;width:100%;max-width:none;padding:0 32px 72px}}
-.hero{{margin:0 -32px 22px;padding:26px 32px 22px;background:#101820;color:#fff;border-bottom:1px solid #202b36}}
-.title{{margin:0 0 12px;font-size:30px;line-height:1.2;letter-spacing:0}}.badge{{display:inline-block;padding:5px 12px;border-radius:999px;color:#fff;font-weight:800;background:var(--muted);vertical-align:middle}}
-.badge.pass{{background:var(--pass)}}.badge.conditional{{background:var(--warn)}}.badge.fail{{background:var(--fail)}}
-.failure-focus{{margin:0 0 18px;border:2px solid var(--fail);border-radius:8px;background:#fff7f5;box-shadow:0 8px 24px rgba(180,35,24,.12);padding:16px}}.failure-focus h2{{margin:4px 0 12px;padding:0;color:#7f1d1d;font-size:22px}}.focus-kicker{{font-weight:900;color:#b42318;letter-spacing:0}}.problem-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}}.problem-card{{position:relative;border:1px solid var(--line);border-left:6px solid var(--muted);border-radius:8px;background:#fff;padding:12px}}.problem-card.is-fail{{border-left-color:var(--fail);background:#fff1f1}}.problem-card.is-risk{{border-left-color:var(--warn);background:#fff8e6}}.problem-card.is-gap{{border-left-color:#57606a;background:#f6f8fa}}.problem-card strong{{display:block;font-size:14px;line-height:1.4}}.problem-card strong span{{display:inline-block;margin-right:7px;padding:2px 7px;border-radius:999px;background:var(--fail);color:#fff;font-size:12px}}.problem-card.is-risk strong span{{background:var(--warn)}}.problem-card.is-gap strong span{{background:#57606a}}.problem-card p{{border:0;box-shadow:none;background:transparent;margin:7px 0 8px;padding:0;color:#4b5563;font-size:13px;line-height:1.45}}.problem-card a{{font-weight:800;text-decoration:none}}
-.method-note{{margin:-2px 0 12px;border:1px solid #bfdbfe;border-left:5px solid #0969da;border-radius:8px;background:#eff6ff;color:#1f2937;padding:10px 12px;font-size:13px;line-height:1.55;box-shadow:0 1px 2px rgba(16,24,40,.03)}}.method-note strong{{color:#0f172a}}.method-note a{{font-weight:800;text-decoration:none}}.method-note span{{color:#475569}}
-.metric-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-top:18px}}.metric{{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.18);border-radius:8px;padding:12px}}.metric span,.metric small{{display:block;color:#c9d1d9}}.metric strong{{display:block;font-size:28px;line-height:1.1;margin:5px 0;color:#fff}}
-.toolbar{{background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px;margin:0 0 18px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;box-shadow:0 1px 2px rgba(16,24,40,.04)}}
-.toolbar input{{min-width:260px;flex:1;border:1px solid var(--line);border-radius:6px;padding:8px 10px;font:inherit;background:#fff}}button{{border:1px solid var(--line);background:#fff;border-radius:6px;padding:8px 10px;font:inherit;cursor:pointer;transition:background .18s ease,border-color .18s ease,color .18s ease}}button:hover{{border-color:#8c959f;background:#f6f8fa}}button:focus-visible,input:focus-visible,a:focus-visible{{outline:2px solid #0969da;outline-offset:2px}}button.active{{border-color:var(--link);color:var(--link);font-weight:700;background:#eef6ff}}
-.nav-title{{font-weight:800;margin:0 0 8px;color:#fff}}.evidence-nav{{display:flex;flex-direction:column;gap:8px;margin-bottom:18px}}.evidence-nav a{{display:grid;grid-template-columns:76px minmax(0,1fr);gap:9px;align-items:start;text-decoration:none;color:#e6edf3;border:1px solid #30363d;background:#161b22;border-radius:7px;padding:7px;min-height:64px}}.evidence-nav a.is-fail{{border:2px solid #f85149;background:#2d1111;box-shadow:0 0 0 1px rgba(248,81,73,.25)}}.evidence-nav a.is-risk{{border-color:#d29922;background:#2b2111}}.evidence-nav a:hover{{border-color:#58a6ff}}.evidence-nav .nav-thumb{{width:76px;aspect-ratio:16/9;object-fit:cover;border:1px solid #30363d;border-radius:5px;background:#0d1117}}.nav-copy{{min-width:0}}.evidence-nav span{{display:block;font-weight:900;margin:0 0 2px;color:#fff}}.evidence-nav small{{display:block;color:#9da7b3;font-size:12px;line-height:1.35;margin-top:0;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}}
-.gallery-title{{font-size:18px;font-weight:800;margin:8px 0 10px}}.evidence-gallery{{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px;margin:0 0 22px}}.evidence-card{{position:relative;display:block;text-decoration:none;color:var(--text);background:#fff;border:1px solid var(--line);border-radius:8px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.04)}}.evidence-card.is-fail{{border:3px solid var(--fail);box-shadow:0 10px 24px rgba(180,35,24,.18)}}.evidence-card.is-risk{{border:2px solid var(--warn);box-shadow:0 8px 18px rgba(154,103,0,.14)}}.evidence-card img,.thumb-placeholder{{width:100%;aspect-ratio:16/9;object-fit:cover;border:0;border-radius:0;border-bottom:1px solid var(--line);background:#f6f8fa}}.thumb-placeholder{{display:grid;place-items:center;color:var(--muted);font-size:13px}}.card-badge{{position:absolute;top:8px;left:8px;z-index:2;padding:3px 8px;border-radius:999px;background:var(--fail);color:#fff;font-style:normal;font-size:12px;font-weight:900;box-shadow:0 2px 8px rgba(0,0,0,.2)}}.card-badge.risk{{background:var(--warn)}}.card-badge.gap{{background:#57606a}}.evidence-card strong,.evidence-card span{{display:block;padding:0 10px}}.evidence-card strong{{padding-top:9px}}.evidence-card span{{font-size:12px;color:var(--muted);line-height:1.35;padding-bottom:10px}}
-#reportBody{{display:block}}#reportBody>h1{{display:none}}h1,h2,h3{{scroll-margin-top:24px}}h2{{font-size:20px;line-height:1.35;margin:28px 0 10px;padding:0;color:#111827}}h3{{font-size:16px;margin:18px 0 8px}}p,ul,ol,blockquote,pre{{background:#fff;border:1px solid var(--line);border-radius:8px;margin:0 0 12px;padding:12px 14px;box-shadow:0 1px 2px rgba(16,24,40,.03)}}a{{color:var(--link)}}code{{background:var(--soft);border:1px solid var(--line);border-radius:4px;padding:1px 4px}}pre{{background:#0d1117;color:#e6edf3;overflow:auto}}
-.table-wrap{{overflow-x:auto;margin:0 0 16px;border:1px solid var(--line);border-radius:8px;background:#fff;box-shadow:0 1px 2px rgba(16,24,40,.04)}}table{{border-collapse:separate;border-spacing:0;width:100%;font-size:14px;background:#fff}}th,td{{border-bottom:1px solid var(--line);border-right:1px solid var(--line);padding:10px 12px;text-align:left;vertical-align:top}}th{{background:#f6f8fa;color:#24292f;font-weight:800}}tr:last-child td{{border-bottom:0}}th:last-child,td:last-child{{border-right:0}}tbody tr:hover td{{background:#f6fbff}}tr.row-fail td{{background:#fff1f1}}tr.row-risk td{{background:#fff8e6}}tr.row-gap td{{background:#f6f8fa;color:#57606a}}tr.is-hidden{{display:none}}
-figure{{margin:18px 0 28px}}img{{max-width:100%;height:auto;border:1px solid var(--line);border-radius:8px;display:block}}figcaption{{color:var(--muted);font-size:13px;margin-top:6px}}blockquote{{border-left:3px solid var(--line);color:#444}}.section-toggle{{float:right;font-size:12px;padding:4px 8px}}.figure-anchor{{display:block;scroll-margin-top:96px;height:1px}}:target{{outline:3px solid #54aeff;outline-offset:3px;border-radius:6px}}
+:root{{color-scheme:light;
+--paper:#f7f1e8;--paper-2:#fffdf8;--ink:#211d18;
+--ink-2:rgba(33,29,24,.74);--ink-3:rgba(33,29,24,.48);
+--line:rgba(33,29,24,.14);--line-2:rgba(33,29,24,.30);
+--accent:{accent};--accent-soft:{accent_soft};
+--pass:#1a7f37;--warn:#9a6700;--fail:#b42318;
+--side:#211d18;--side-text:#f3ead9;--side-muted:rgba(243,234,217,.55);--side-line:rgba(243,234,217,.16);
+--serif:"Source Serif 4","Songti SC","Noto Serif SC","STSong",Georgia,serif;
+--sans:-apple-system,"PingFang SC","HarmonyOS Sans SC","Microsoft YaHei","Helvetica Neue",sans-serif;
+--mono:"SF Mono","JetBrains Mono",Consolas,monospace}}
+*{{box-sizing:border-box}}
+body{{margin:0;background:var(--paper);color:var(--ink);font:14.5px/1.75 var(--sans);-webkit-font-smoothing:antialiased;
+background-image:radial-gradient(ellipse 80% 40% at 50% -6%,{accent_soft},transparent),repeating-linear-gradient(0deg,rgba(33,29,24,.016) 0 1px,transparent 1px 3px)}}
+.layout{{display:grid;grid-template-columns:minmax(240px,300px) minmax(0,1fr);min-height:100vh}}
+aside{{position:sticky;top:0;height:100vh;overflow:auto;border-right:2px solid var(--ink);background:var(--side);color:var(--side-text);padding:18px}}
+.side-mast{{display:flex;align-items:center;gap:10px;padding-bottom:12px;margin-bottom:14px;border-bottom:1px solid var(--side-line)}}
+.side-mast .side-stamp{{width:34px;height:34px;flex-shrink:0;background:var(--accent);color:#fff7ee;border-radius:3px;display:grid;place-items:center;font-family:var(--serif);font-weight:700;font-size:12px;box-shadow:2px 2px 0 rgba(0,0,0,.5)}}
+.side-mast b{{font-family:var(--serif);font-size:14.5px;font-weight:700;display:block;letter-spacing:.02em;color:var(--side-text)}}
+aside p{{color:var(--side-muted);margin:0;font-size:12.5px}}
+.side-mast i{{font-style:normal;font-family:var(--mono);font-size:8.5px;letter-spacing:.22em;color:var(--side-muted);display:block;margin-top:2px}}
+.nav-title{{font-family:var(--mono);font-size:10px;letter-spacing:.24em;color:var(--side-muted);margin:0 0 10px}}
+.evidence-nav{{display:flex;flex-direction:column;gap:8px;margin-bottom:18px}}
+.evidence-nav a{{display:grid;grid-template-columns:76px minmax(0,1fr);gap:9px;align-items:start;text-decoration:none;color:var(--side-text);border:1px solid var(--side-line);background:rgba(255,255,255,.03);border-radius:3px;padding:7px;min-height:64px}}
+.evidence-nav a.is-fail{{border:2px solid #e0604c;background:rgba(180,35,24,.20);box-shadow:0 0 0 1px rgba(224,96,76,.25)}}
+.evidence-nav a.is-risk{{border-color:#d5a03f;background:rgba(154,103,0,.16)}}
+.evidence-nav a:hover{{border-color:rgba(243,234,217,.55)}}
+.evidence-nav .nav-thumb{{width:76px;aspect-ratio:16/9;object-fit:cover;border:1px solid var(--side-line);border-radius:2px;background:rgba(0,0,0,.35)}}
+.nav-copy{{min-width:0}}
+.evidence-nav span{{display:block;font-family:var(--mono);font-size:11px;font-weight:700;margin:0 0 3px;color:#fff}}
+.evidence-nav small{{display:block;color:var(--side-muted);font-size:12px;line-height:1.4;margin-top:0;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}}
+main{{min-width:0;width:100%;max-width:none;padding:0 34px 72px}}
+.hero{{padding:24px 0 0}}
+.masthead{{display:flex;align-items:center;gap:14px;padding-bottom:12px;border-bottom:3px solid var(--ink);position:relative}}
+.masthead::after{{content:"";position:absolute;left:0;right:0;bottom:-6px;height:1px;background:var(--ink)}}
+.masthead .stamp{{width:40px;height:40px;flex-shrink:0;background:var(--accent);color:#fff7ee;border-radius:3px;display:grid;place-items:center;font-family:var(--serif);font-weight:700;font-size:13px;box-shadow:3px 3px 0 rgba(33,29,24,.82)}}
+.masthead .t b{{font-family:var(--serif);font-size:20px;font-weight:700;display:block;letter-spacing:.02em}}
+.masthead .t span{{font-family:var(--mono);font-size:9.5px;color:var(--ink-3);letter-spacing:.3em}}
+.masthead .r{{margin-left:auto;text-align:right;font-family:var(--mono);font-size:10px;color:var(--ink-3);letter-spacing:.12em;line-height:1.8}}
+.title-row{{display:flex;align-items:flex-start;gap:20px;flex-wrap:wrap;margin:20px 0 4px}}
+.title{{margin:0;font-family:var(--serif);font-size:clamp(21px,3vw,29px);line-height:1.45;font-weight:650;flex:1;min-width:min(100%,300px);text-wrap:balance}}
+.badge{{flex-shrink:0;align-self:flex-start;display:inline-block;padding:9px 16px;border:2.5px solid currentColor;border-radius:4px;background:var(--paper-2);color:var(--ink-3);font-family:var(--serif);font-weight:700;font-size:15px;letter-spacing:.18em;transform:rotate(-4deg);box-shadow:2px 2px 0 rgba(33,29,24,.18);position:relative;margin-top:4px}}
+.badge::after{{content:"";position:absolute;inset:3px;border:1px solid currentColor;border-radius:2px;opacity:.55}}
+.badge.pass{{color:var(--pass)}}.badge.conditional{{color:var(--warn)}}.badge.fail{{color:var(--fail)}}
+.metric-grid{{display:flex;flex-wrap:wrap;margin:20px 0 0;border:1px solid var(--line);border-radius:3px;background:rgba(255,253,248,.6);overflow:hidden}}
+.metric{{flex:1 1 110px;padding:12px 8px;text-align:center;border-right:1px solid var(--line)}}
+.metric:last-child{{border-right:none}}
+.metric span{{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.08em;color:var(--ink-3)}}
+.metric strong{{display:block;font-family:var(--serif);font-size:24px;line-height:1.15;margin:4px 0;color:var(--ink)}}
+.metric small{{display:block;font-size:10.5px;color:var(--ink-3)}}
+.failure-focus{{margin:22px 0 18px;border:1.5px solid var(--fail);border-radius:3px;background:var(--paper-2);box-shadow:5px 5px 0 rgba(180,35,24,.12);padding:16px 18px}}
+.focus-kicker{{font-family:var(--mono);font-size:10.5px;letter-spacing:.22em;color:var(--fail);font-weight:600}}
+.failure-focus h2{{margin:6px 0 12px;padding:0;border:none;font-family:var(--serif);font-size:20px;color:var(--ink)}}
+.problem-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}}
+.problem-card{{position:relative;border:1px solid var(--line-2);border-left:5px solid var(--ink-3);border-radius:3px;background:var(--paper-2);padding:12px}}
+.problem-card.is-fail{{border-left-color:var(--fail);background:rgba(180,35,24,.05)}}
+.problem-card.is-risk{{border-left-color:var(--warn);background:rgba(154,103,0,.06)}}
+.problem-card.is-gap{{border-left-color:var(--ink-3);background:rgba(33,29,24,.04)}}
+.problem-card strong{{display:block;font-size:14px;line-height:1.5;color:var(--ink)}}
+.problem-card strong span{{display:inline-block;margin-right:7px;padding:2px 7px;border-radius:2px;background:var(--fail);color:#fff7ee;font-family:var(--mono);font-size:11px;font-weight:700}}
+.problem-card.is-risk strong span{{background:var(--warn)}}
+.problem-card.is-gap strong span{{background:var(--ink-3)}}
+.problem-card p{{border:0;box-shadow:none;background:transparent;margin:7px 0 8px;padding:0;color:var(--ink-2);font-size:13px;line-height:1.55}}
+.problem-card a{{font-family:var(--mono);font-size:11.5px;font-weight:700;text-decoration:none}}
+.method-note{{margin:14px 0 0;border:1px solid var(--line-2);border-left:4px solid var(--accent);border-radius:3px;background:var(--accent-soft);color:var(--ink-2);padding:10px 12px;font-size:13px;line-height:1.6}}
+.method-note strong{{color:var(--ink)}}
+.method-note a{{font-weight:700;text-decoration:none}}
+.method-note span{{color:var(--ink-3)}}
+.toolbar{{background:var(--paper-2);border:1px solid var(--line-2);border-radius:3px;padding:10px;margin:18px 0;display:flex;gap:8px;flex-wrap:wrap;align-items:center;box-shadow:3px 3px 0 rgba(33,29,24,.08)}}
+.toolbar input{{min-width:220px;flex:1;border:1px solid var(--line-2);border-radius:2px;padding:8px 10px;font:inherit;background:#fff;color:var(--ink)}}
+button{{border:1px solid var(--ink);background:var(--paper-2);border-radius:2px;padding:7px 12px;font-family:var(--mono);font-size:12px;color:var(--ink-2);cursor:pointer;transition:background .16s ease,border-color .16s ease,color .16s ease}}
+button:hover{{background:var(--ink);color:var(--paper)}}
+button.active{{background:var(--accent);border-color:var(--accent);color:#fff7ee;font-weight:700}}
+button:focus-visible,input:focus-visible,a:focus-visible{{outline:2px solid var(--accent);outline-offset:2px}}
+.gallery-title{{font-family:var(--serif);font-size:18px;font-weight:700;margin:26px 0 0;padding-bottom:10px;border-bottom:2px solid var(--ink)}}
+.evidence-gallery{{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px;margin:16px 0 22px}}
+.evidence-card{{position:relative;display:block;text-decoration:none;color:var(--ink);background:var(--paper-2);border:1.5px solid var(--ink);border-radius:3px;overflow:hidden;box-shadow:4px 4px 0 rgba(33,29,24,.10);transition:transform .15s ease,box-shadow .15s ease}}
+.evidence-card:hover{{transform:translate(-1px,-1px);box-shadow:5px 5px 0 rgba(33,29,24,.16)}}
+.evidence-card.is-fail{{border-color:var(--fail);box-shadow:4px 4px 0 rgba(180,35,24,.28)}}
+.evidence-card.is-risk{{border-color:var(--warn);box-shadow:4px 4px 0 rgba(154,103,0,.22)}}
+.evidence-card img,.thumb-placeholder{{width:100%;aspect-ratio:16/9;object-fit:cover;border:0;border-radius:0;border-bottom:1.5px solid var(--ink);background:rgba(33,29,24,.05)}}
+.thumb-placeholder{{display:grid;place-items:center;color:var(--ink-3);font-size:13px}}
+.card-badge{{position:absolute;top:8px;left:8px;z-index:2;padding:2px 8px;border-radius:2px;background:var(--fail);color:#fff7ee;font-style:normal;font-family:var(--mono);font-size:11px;font-weight:700;box-shadow:2px 2px 0 rgba(33,29,24,.4)}}
+.card-badge.risk{{background:var(--warn)}}
+.card-badge.gap{{background:var(--ink-3)}}
+.evidence-card strong,.evidence-card span{{display:block;padding:0 10px}}
+.evidence-card strong{{padding-top:9px;font-family:var(--mono);font-size:11.5px;color:var(--accent)}}
+.evidence-card span{{font-size:12.5px;color:var(--ink-2);line-height:1.5;padding-top:2px;padding-bottom:10px}}
+#reportBody{{display:block}}
+#reportBody>h1{{display:none}}
+h1,h2,h3{{scroll-margin-top:24px}}
+#reportBody h2{{font-family:var(--serif);font-size:20px;font-weight:700;line-height:1.4;margin:36px 0 14px;padding:0 0 10px;border-bottom:2px solid var(--ink);color:var(--ink)}}
+#reportBody h3{{font-family:var(--serif);font-size:16px;font-weight:700;margin:20px 0 8px}}
+p,ul,ol{{background:transparent;border:0;box-shadow:none;margin:0 0 12px;padding:0;font-size:14px;line-height:1.95;color:var(--ink-2)}}
+ul,ol{{padding-left:1.5em}}
+li{{margin:3px 0}}
+b,strong{{color:var(--ink)}}
+blockquote{{margin:0 0 12px;padding:10px 14px;border:0;border-left:3px solid var(--accent);border-radius:0 3px 3px 0;background:var(--accent-soft);color:var(--ink-2);box-shadow:none}}
+a{{color:var(--accent)}}
+code{{background:rgba(33,29,24,.07);border:1px solid var(--line);border-radius:2px;padding:1px 5px;font-family:var(--mono);font-size:.9em}}
+pre{{margin:0 0 12px;padding:12px 14px;background:#241f19;color:#efe6d8;border:1px solid var(--ink);border-radius:3px;overflow:auto;box-shadow:3px 3px 0 rgba(33,29,24,.12);font-size:12.5px;line-height:1.7}}
+pre code{{background:transparent;border:0;padding:0;color:inherit}}
+.table-wrap{{overflow-x:auto;margin:0 0 16px;border:1px solid var(--line-2);border-radius:3px;background:var(--paper-2);box-shadow:3px 3px 0 rgba(33,29,24,.06)}}
+table{{border-collapse:collapse;width:100%;font-size:13px;background:transparent}}
+th{{background:var(--ink);color:#f3ead9;font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;font-weight:600;padding:9px 12px;text-align:left;white-space:nowrap}}
+td{{border-bottom:1px dotted var(--line);padding:9px 12px;text-align:left;vertical-align:top;color:var(--ink-2)}}
+tr:last-child td{{border-bottom:0}}
+tbody tr:hover td{{background:rgba(33,29,24,.03)}}
+tr.row-fail td{{background:rgba(180,35,24,.06)}}
+tr.row-risk td{{background:rgba(154,103,0,.07)}}
+tr.row-gap td{{background:rgba(33,29,24,.04);color:var(--ink-3)}}
+tr.is-hidden{{display:none}}
+tr.filter-empty-row{{display:none}}
+tr.filter-empty-row td{{background:rgba(33,29,24,.035);color:var(--ink-3);font-style:italic}}
+.table-wrap.has-filter-empty tr.filter-empty-row{{display:table-row}}
+figure{{margin:18px 0 28px}}
+img{{max-width:100%;height:auto;border:1.5px solid var(--ink);border-radius:3px;display:block;box-shadow:4px 4px 0 rgba(33,29,24,.10)}}
+figcaption{{color:var(--ink-3);font-size:12.5px;margin-top:8px;line-height:1.7}}
+.section-toggle{{float:right;font-size:11px;padding:3px 8px}}
+.figure-anchor{{display:block;scroll-margin-top:96px;height:1px}}
+:target{{outline:3px solid var(--accent);outline-offset:3px;border-radius:3px}}
 @media(prefers-reduced-motion:reduce){{*{{scroll-behavior:auto!important;transition:none!important}}}}
-@media(max-width:980px){{.layout{{display:block}}aside{{position:relative;height:auto;border-right:0;border-bottom:1px solid #30363d}}main{{padding:0 16px 60px}}.hero{{margin:0 -16px 18px;padding:22px 16px}}.metric-grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}.toolbar{{top:0}}}}
+@media(max-width:980px){{
+.layout{{display:block}}
+aside{{position:relative;height:auto;border-right:0;border-bottom:2px solid var(--ink)}}
+.evidence-nav{{flex-direction:row;overflow-x:auto;padding-bottom:6px;-webkit-overflow-scrolling:touch}}
+.evidence-nav a{{flex:0 0 210px}}
+main{{padding:0 16px 60px}}
+.hero{{padding-top:18px}}
+.metric{{flex:1 1 32%;border-bottom:1px solid var(--line)}}
+.toolbar{{top:0}}
+}}
+@media(max-width:640px){{
+.masthead .r{{display:none}}
+.title-row{{gap:12px}}
+.badge{{font-size:13px;padding:7px 12px}}
+.metric{{flex:1 1 48%}}
+}}
 </style>
 </head>
 <body>
 <div class="layout">
 <aside>
-  <div class="nav-title">证据导航</div>
+  <div class="side-mast"><span class="side-stamp">MAP</span><div><b>{flavor_cn}</b><i>{flavor_en}</i></div></div>
+  <div class="nav-title">证据导航 EVIDENCE</div>
   <div class="evidence-nav">{''.join(figures) or '<p>无截图证据</p>'}</div>
 </aside>
 <main>
-  <header class="hero"><h1 class="title">{html.escape(title)}</h1><span class="badge {verdict_class}">{html.escape(verdict_cn)}</span><div class="metric-grid">{summary_html}</div></header>
+  <header class="hero">
+    <div class="masthead">
+      <div class="stamp">MAP</div>
+      <div class="t"><b>{flavor_cn}</b><span>{flavor_en}</span></div>
+      <div class="r">MAP 验收标准 v2 · 真人路径取证<br>{byline}</div>
+    </div>
+    <div class="title-row"><h1 class="title">{html.escape(title)}</h1><span class="badge {verdict_class}">{html.escape(verdict_cn)}</span></div>
+    <div class="metric-grid">{summary_html}</div>
+  </header>
   {problem_html}
   <div class="toolbar">
     <input id="reportFilter" placeholder="筛选表格、缺陷、模块或图号"/>
@@ -735,10 +884,29 @@ figure{{margin:18px 0 28px}}img{{max-width:100%;height:auto;border:1px solid var
   function applyFilter(){{
     var q=(filterInput.value||'').toLowerCase();
     document.querySelectorAll('tbody tr').forEach(function(row){{
+      if(row.classList.contains('filter-empty-row')) return;
       var text=row.textContent.toLowerCase();
       var modeOk=mode==='all'||(mode==='fail'&&/\\bp0\\b|未通过|\\bfail\\b|阻断/i.test(text))||(mode==='risk'&&/p1|有缺陷|conditional|风险/i.test(text))||(mode==='gap'&&/未覆盖|not-run|未深测|弱相关|无关/i.test(text));
       var queryOk=!q||text.indexOf(q)>=0;
       row.classList.toggle('is-hidden', !(modeOk&&queryOk));
+    }});
+    document.querySelectorAll('.table-wrap table').forEach(function(table){{
+      var tbody=table.querySelector('tbody');
+      if(!tbody) return;
+      var empty=tbody.querySelector('.filter-empty-row');
+      if(!empty){{
+        empty=document.createElement('tr');
+        empty.className='filter-empty-row';
+        var td=document.createElement('td');
+        td.colSpan=Math.max(1, table.querySelectorAll('thead th').length);
+        td.textContent='当前筛选条件下无匹配行；请清空筛选或切回“全部”。';
+        empty.appendChild(td);
+        tbody.appendChild(empty);
+      }}
+      var visible=Array.prototype.some.call(tbody.querySelectorAll('tr:not(.filter-empty-row)'), function(row){{
+        return !row.classList.contains('is-hidden');
+      }});
+      table.closest('.table-wrap').classList.toggle('has-filter-empty', !visible);
     }});
   }}
   filterInput.addEventListener('input', applyFilter);
@@ -802,6 +970,18 @@ figure{{margin:18px 0 28px}}img{{max-width:100%;height:auto;border:1px solid var
 </script>
 </body>
 </html>"""
+
+
+def _report_flavor(a, body):
+    """报告刊头身份：每日验收 =「每日巡检特刊」，其余 =「MAP 验收档案」。
+
+    直接复用门禁判定 _declares_daily_acceptance（每日措辞的唯一入口），
+    皮肤与门禁不可能不一致——拿巡检刊头的报告必然也被要求满足每日门禁。
+    """
+    try:
+        return "daily" if _declares_daily_acceptance(getattr(a, "target", "") or "", body or "") else "acceptance"
+    except Exception:
+        return "acceptance"
 
 
 # ── CDS 验收中心（默认主路，职责分离：验收能力归 CDS，MAP 走开放协议消费）──
@@ -884,7 +1064,7 @@ def run_cds(cfg, a, title, report_id, body, manifest, now, tags=None):
     meta = build_meta(report_id, now, "cds", a, "")
     content_md = assemble(title, body, "\n\n".join(evid_parts), meta, img_md)
     fmt = report_format(cfg, "cds")
-    content = build_interactive_html(title, a.verdict, content_md, manifest) if fmt == "html" else content_md
+    content = build_interactive_html(title, a.verdict, content_md, manifest, flavor=_report_flavor(a, body)) if fmt == "html" else content_md
     size = len(content.encode("utf-8"))
     if size > CDS_REPORT_CAP:
         raise RuntimeError(
@@ -947,7 +1127,7 @@ def run_local(cfg, a, title, report_id, body, manifest, meta, tags=None):
         print(f"  拷贝截图 {m['name']} -> {dst}")
     content_md = assemble(title, body, "\n\n".join(evid_parts), meta, img_md)
     fmt = report_format(cfg, "local")
-    content = build_interactive_html(title, a.verdict, content_md, manifest) if fmt == "html" else content_md
+    content = build_interactive_html(title, a.verdict, content_md, manifest, flavor=_report_flavor(a, body)) if fmt == "html" else content_md
     ext = "html" if fmt == "html" else "md"
     report_path = os.path.join(out_dir, f"{report_id}.{ext}")
     with open(report_path, "w", encoding="utf-8") as f:
@@ -1171,8 +1351,11 @@ def _scope_declaration_text(target, body):
 
 
 def _declares_complex_acceptance(target, body):
-    """Return true only for explicit complex acceptance scenarios, not generic metadata columns."""
-    if _target_declares_daily_scope(target):
+    """Return true only for explicit complex acceptance scenarios, not generic metadata columns.
+
+    复杂验收必须是每日验收的超集：每日判定唯一入口 _declares_daily_acceptance
+    命中即复杂，避免「算每日却不算复杂」的缝隙。"""
+    if _declares_daily_acceptance(target, body):
         return True
     text = _scope_declaration_text(target, body)
     patterns = [
@@ -1190,13 +1373,21 @@ def _declares_complex_acceptance(target, body):
 
 
 def _declares_daily_acceptance(target, body):
+    """每日验收判定的唯一入口：门禁（validate_inputs 的每日结构/证据要求）与
+    皮肤（_report_flavor 的巡检特刊）都走这一个函数，保证「拿巡检刊头的报告
+    必过每日门禁」（Codex P2：措辞并入门禁本体而不是各自维护两套正则）。
+
+    措辞覆盖：紧邻与中间插词（每日视觉验收报告）、巡检系（每日巡检/巡检特刊）、
+    英文变体（daily-yesterday/daily-visual/daily-patrol）。扫描面仍是
+    _scope_declaration_text（target + 标题 + 范围声明行），正文散句不触发。
+    """
     if _target_declares_daily_scope(target):
         return True
     text = _scope_declaration_text(target, body)
     return bool(re.search(
-        r"(每日|昨日|昨天)\s*(?:验收|复验|测试|报告)|"
-        r"(?:验收|复验|测试|报告).{0,8}(每日|昨日|昨天)|"
-        r"\bdaily[-_ ]?yesterday\b",
+        r"(每日|昨日|昨天).{0,8}(验收|复验|测试|报告|巡检)|"
+        r"(?:验收|复验|测试|报告|巡检).{0,8}(每日|昨日|昨天)|"
+        r"巡检特刊|\bdaily[-_ ]?(?:yesterday|visual|patrol)\b",
         text,
         re.I,
     ))
@@ -1205,13 +1396,7 @@ def _declares_daily_acceptance(target, body):
 def _declares_deep_daily_acceptance(target, body):
     """Daily deep gate applies only to positive deep-acceptance declarations."""
     scope_text = _scope_declaration_text(target, body)
-    daily_context = _target_declares_daily_scope(target) or bool(re.search(
-        r"(每日|昨日|昨天)\s*(?:验收|复验|测试|报告)|"
-        r"(?:验收|复验|测试|报告).{0,8}(每日|昨日|昨天)|"
-        r"\bdaily[-_ ]?yesterday\b",
-        scope_text,
-        re.I,
-    )) or bool(re.search(
+    daily_context = _declares_daily_acceptance(target, body) or bool(re.search(
         r"(每日|昨日|昨天).{0,12}(深度验收|深度复验|深入功能验收)|"
         r"(深度验收|深度复验|深入功能验收).{0,12}(每日|昨日|昨天)",
         target or "",

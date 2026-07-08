@@ -1745,6 +1745,7 @@ public class ImageGenController : ControllerBase
             ArticleMarkerIndex = articleMarkerIndex,
             InitImageAssetSha256 = initImageAssetSha256,
             MaskBase64 = string.IsNullOrWhiteSpace(request?.MaskBase64) ? null : request!.MaskBase64!.Trim(),
+            ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
             CreatedAt = DateTime.UtcNow
         };
 

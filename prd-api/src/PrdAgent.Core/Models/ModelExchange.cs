@@ -98,7 +98,7 @@ public class ExchangeModel
 
     /// <summary>
     /// 模型类型，决定一键体验用什么测试 prompt，也用于模型池过滤。
-    /// 取值: chat / vision / generation / tts / asr / embedding。
+    /// 取值: chat / vision / generation / video-gen / tts / asr / embedding。
     /// </summary>
     public string ModelType { get; set; } = "chat";
 
@@ -164,6 +164,7 @@ public static class ModelExchangeAccessors
     {
         if (string.IsNullOrEmpty(transformerType)) return "chat";
         if (transformerType.StartsWith("fal-image", StringComparison.OrdinalIgnoreCase)) return "generation";
+        if (transformerType.Contains("video", StringComparison.OrdinalIgnoreCase)) return "video-gen";
         if (transformerType.Contains("asr", StringComparison.OrdinalIgnoreCase)) return "asr";
         if (transformerType.Contains("tts", StringComparison.OrdinalIgnoreCase)) return "tts";
         return "chat";

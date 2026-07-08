@@ -133,6 +133,26 @@ public class ShadowLlmGatewayTests
     }
 
     [Fact]
+    public async Task Stream_WhenConsumerBreaksAfterDone_StillComparesResolve()
+    {
+        var inproc = new FakeGateway(Res("m1", "openai", "openai"));
+        var http = new FakeGateway(Res("m1", "openai", "openai"));
+        var writer = new CapturingWriter();
+        var shadow = new ShadowLlmGateway(inproc, http, NullLogger<ShadowLlmGateway>.Instance, writer);
+
+        await foreach (var c in shadow.StreamAsync(Req()))
+        {
+            if (c.Type == GatewayChunkType.Done)
+                break;
+        }
+
+        var cmp = await writer.WaitForRecordAsync();
+        cmp.Kind.ShouldBe("stream");
+        cmp.AllMatch.ShouldBeTrue();
+        http.SendCount.ShouldBe(0, "调用方提前结束枚举时仍只做免费 resolve 比对");
+    }
+
+    [Fact]
     public async Task Raw_DefaultSampleZero_DoesNotDoubleHitModel()
     {
         var inproc = new FakeGateway(Res("m1", "openai", "openai")) { RawContent = "raw-inproc" };
@@ -169,6 +189,34 @@ public class ShadowLlmGatewayTests
         cmp.InprocTextChars.ShouldBe("raw-inproc".Length);
         cmp.HttpTextChars.ShouldBe("raw-http".Length);
         http.RawCount.ShouldBe(1, "raw 采样命中时应产生真实 http raw 样本");
+    }
+
+    [Fact]
+    public async Task Raw_FullSampleAllowlist_WritesRawComparison_WhenGlobalSampleIsZero()
+    {
+        var inproc = new FakeGateway(Res("m1", "openai", "openai")) { RawContent = "raw-inproc" };
+        var http = new FakeGateway(Res("m1", "openai", "openai")) { RawContent = "raw-http" };
+        var writer = new CapturingWriter();
+        var shadow = new ShadowLlmGateway(
+            inproc,
+            http,
+            NullLogger<ShadowLlmGateway>.Instance,
+            writer,
+            fullSamplePercent: 0,
+            fullSampleAllowlist: new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "demo.app::generation"
+            });
+
+        var resp = await shadow.SendRawWithResolutionAsync(RawReq(), Res("m1", "openai", "openai"));
+
+        resp.Content.ShouldBe("raw-inproc", "强制采样只影响证据，不改变调用方返回");
+        var cmp = await writer.WaitForRecordAsync();
+        cmp.Kind.ShouldBe("raw");
+        cmp.AppCallerCode.ShouldBe("demo.app::generation");
+        cmp.HttpOk.ShouldBeTrue();
+        cmp.AllMatch.ShouldBeTrue();
+        http.RawCount.ShouldBe(1, "allowlist 命中应在全局采样为 0 时仍产生确定性的 raw http 样本");
     }
 
     [Fact]

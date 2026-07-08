@@ -1881,6 +1881,7 @@ export {
   getAllSubmissions as getAllReviewSubmissions,
   getSubmission as getReviewSubmission,
   rerunSubmission as rerunReviewSubmission,
+  reuploadAfterError as reuploadReviewAfterError,
   reuploadOnFailure as reuploadReviewOnFailure,
   getSubmissionResults as getReviewSubmissionResults,
   getResultStreamUrl as getReviewResultStreamUrl,

@@ -223,6 +223,10 @@ var httpAllowlist = (builder.Configuration["LlmGateway:HttpAppCallerAllowlist"] 
     .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
     .Where(x => !string.IsNullOrWhiteSpace(x))
     .ToHashSet(StringComparer.OrdinalIgnoreCase);
+var shadowFullSampleAllowlist = (builder.Configuration["LlmGateway:ShadowFullSampleAppCallerAllowlist"] ?? string.Empty)
+    .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+    .Where(x => !string.IsNullOrWhiteSpace(x))
+    .ToHashSet(StringComparer.OrdinalIgnoreCase);
 var isShadow = string.Equals(gatewayMode, "shadow", StringComparison.OrdinalIgnoreCase);
 
 if (string.Equals(gatewayMode, "http", StringComparison.OrdinalIgnoreCase))
@@ -255,6 +259,7 @@ else if (isShadow || httpAllowlist.Count > 0)
             fullSamplePercent: shadowSamplePercent,
             ctx: sp.GetService<PrdAgent.Core.Interfaces.ILLMRequestContextAccessor>(),
             httpAllowlist: httpAllowlist,
+            fullSampleAllowlist: shadowFullSampleAllowlist,
             releaseCommit: FirstEnv("GIT_COMMIT", "COMMIT_SHA", "GITHUB_SHA", "SOURCE_VERSION", "CDS_COMMIT_SHA")));
 }
 else
@@ -1416,6 +1421,35 @@ app.UseRequestResponseLogging();
 app.UseExceptionMiddleware();
 app.UseRateLimiting();
 app.UseCors();
+app.Use(async (context, next) =>
+{
+    var provided = context.Request.Headers["X-Llmgw-Shadow-Sample-Key"].ToString().Trim();
+    if (string.IsNullOrWhiteSpace(provided))
+    {
+        await next();
+        return;
+    }
+
+    var expected = (builder.Configuration["LlmGwServe:ApiKey"] ?? string.Empty).Trim();
+    if (!FixedTimeEqualsNonEmpty(expected, provided))
+    {
+        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        return;
+    }
+
+    var accessor = context.RequestServices.GetRequiredService<ILLMRequestContextAccessor>();
+    using var _ = accessor.BeginScope(new LlmRequestContext(
+        RequestId: context.TraceIdentifier,
+        GroupId: null,
+        SessionId: null,
+        UserId: null,
+        ViewRole: null,
+        DocumentChars: null,
+        DocumentHash: null,
+        SystemPromptRedacted: null,
+        ForceFullShadowSample: true));
+    await next();
+});
 app.UseAuthentication();
 // 认证通过后做 3 天滑动续期（now+72h，按端独立）
 app.UseMiddleware<AuthSlidingExpirationMiddleware>();
@@ -1504,6 +1538,19 @@ static string? ShortCommit(string? commit)
 {
     if (string.IsNullOrWhiteSpace(commit)) return null;
     return commit.Length <= 8 ? commit : commit[..8];
+}
+
+static bool FixedTimeEqualsNonEmpty(string expected, string provided)
+{
+    if (string.IsNullOrWhiteSpace(expected) || string.IsNullOrWhiteSpace(provided))
+    {
+        return false;
+    }
+
+    var expectedBytes = Encoding.UTF8.GetBytes(expected);
+    var providedBytes = Encoding.UTF8.GetBytes(provided);
+    return expectedBytes.Length == providedBytes.Length
+           && CryptographicOperations.FixedTimeEquals(expectedBytes, providedBytes);
 }
 
 // 使 Program 类可被测试项目访问（用于 WebApplicationFactory<Program>）

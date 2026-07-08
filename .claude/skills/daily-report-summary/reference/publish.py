@@ -334,6 +334,11 @@ def main():
     ap.add_argument("--manifest", default="", help="harness 截图清单 json：[{name,caption,path}]；有截图时必传")
     ap.add_argument("--local", action="store_true", help="不发网络，落本地文件（无密钥/无文档空间时用）")
     ap.add_argument("--out", default="", help="--local 模式输出路径")
+    # 刊系复用参数（weekly-update-summary 周刊版等同链路发布时用；缺省保持日报行为不变）
+    ap.add_argument("--store", default=STORE_NAME, help="目标知识库名（find-or-create），如「周报知识库」")
+    ap.add_argument("--store-desc", default=STORE_DESC, help="新建目标库时的描述")
+    ap.add_argument("--kind", default="daily-report", help="metadata.kind，如 weekly-report")
+    ap.add_argument("--tags", default="日报,今日大事", help="条目 tags，逗号分隔")
     a = ap.parse_args()
 
     if bool(a.report_md) == bool(a.report_html):
@@ -367,21 +372,22 @@ def main():
     HJ = headers(a.impersonate, with_json=True)
 
     # find-or-create store（分页查找）
-    existing = find_store(base, H, STORE_NAME)
+    store_name = a.store or STORE_NAME
+    existing = find_store(base, H, store_name)
     created_store = False
     if existing:
         rid = existing["id"]
-        # 日报库按私有创建；若复用到一个同名【公开】库，私有日报会悄悄进公开库——告警（对齐验收技能纪律 4）
+        # 报告库按私有创建；若复用到一个同名【公开】库，私有报告会悄悄进公开库——告警（对齐验收技能纪律 4）
         if existing.get("isPublic"):
-            print(f"  [告警] 复用的「{STORE_NAME}」是公开库(isPublic=true)，日报通常应私有；"
+            print(f"  [告警] 复用的「{store_name}」是公开库(isPublic=true)，报告库通常应私有；"
                   "如非本意请把该库设为私有，或改用别的库名。")
-        print(f"  复用知识库「{STORE_NAME}」id={rid}（isPublic={existing.get('isPublic')}）")
+        print(f"  复用知识库「{store_name}」id={rid}（isPublic={existing.get('isPublic')}）")
     else:
         rid = curl(HJ + ["-X", "POST", "-d", json.dumps(
-            {"name": STORE_NAME, "description": STORE_DESC, "isPublic": False}
+            {"name": store_name, "description": a.store_desc or STORE_DESC, "isPublic": False}
         ), f"{base}/stores"])["data"]["id"]
         created_store = True
-        print(f"  新建知识库「{STORE_NAME}」id={rid}")
+        print(f"  新建知识库「{store_name}」id={rid}")
 
     def rollback_store_if_new():
         if not created_store:
@@ -417,14 +423,15 @@ def main():
 
     # create entry（失败则回滚新建的库）
     daily_date = resolve_daily_date(a.daily_date, a.title)
-    meta = {"kind": "daily-report", "dailyDate": daily_date,
+    meta = {"kind": a.kind or "daily-report", "dailyDate": daily_date,
             "format": "html" if is_html else "md"}
     content_type = "text/html" if is_html else "text/markdown"
+    tags = [t.strip() for t in (a.tags or "").split(",") if t.strip()] or ["日报", "今日大事"]
     try:
         eid = curl(HJ + ["-X", "POST", "-d", json.dumps({
             "title": a.title, "summary": a.title if is_html else f"# {a.title}",
             "sourceType": "reference", "contentType": content_type,
-            "tags": ["日报", "今日大事"], "metadata": meta,
+            "tags": tags, "metadata": meta,
         }), f"{base}/stores/{rid}/entries"])["data"]["id"]
     except Exception as e:
         print(f"  建条目失败：{str(e)[:120]}")
@@ -503,10 +510,10 @@ def main():
         print("  分享链生成失败（可登录后手动分享）：", str(e)[:120])
 
     print(json.dumps({"storeId": rid, "entryId": eid, "title": a.title, "shareUrl": share_url,
-                      "ownerView": f"登录后 知识库 → 「{STORE_NAME}」→ 本篇"}, ensure_ascii=False))
-    print("\n===== 日报发布完成 =====")
+                      "ownerView": f"登录后 知识库 → 「{store_name}」→ 本篇"}, ensure_ascii=False))
+    print("\n===== 报告发布完成 =====")
     print("分享链：" + (share_url or "（分享接口超时，请登录后在该库手动生成）"))
-    print(f"Owner 自看：登录后 知识库 → 「{STORE_NAME}」→ 本篇")
+    print(f"Owner 自看：登录后 知识库 → 「{store_name}」→ 本篇")
 
 
 if __name__ == "__main__":

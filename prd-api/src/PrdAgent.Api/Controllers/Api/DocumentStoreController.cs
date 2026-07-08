@@ -44,6 +44,7 @@ public class DocumentStoreController : ControllerBase
     private readonly DocStoreServices.DocumentVersionService _versions;
     private readonly IShortLinkService _shortLinks;
     private readonly ILlmGateway _gateway;
+    private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly DocumentStoreAssetNormalizer _assetNormalizer;
     private readonly ILogger<DocumentStoreController> _logger;
 
@@ -72,6 +73,7 @@ public class DocumentStoreController : ControllerBase
         IAdminPermissionService adminPermissions,
         IShortLinkService shortLinks,
         ILlmGateway gateway,
+        ILLMRequestContextAccessor llmRequestContext,
         IConfiguration config,
         DocumentStoreAssetNormalizer assetNormalizer,
         ILogger<DocumentStoreController> logger)
@@ -89,6 +91,7 @@ public class DocumentStoreController : ControllerBase
         _adminPermissions = adminPermissions;
         _shortLinks = shortLinks;
         _gateway = gateway;
+        _llmRequestContext = llmRequestContext;
         _config = config;
         _assetNormalizer = assetNormalizer;
         _logger = logger;
@@ -3194,6 +3197,7 @@ public class DocumentStoreController : ControllerBase
             OwnerInstanceId = InstanceIdentity.Get(_config), // 定向消费：只让本实例 Worker 处理
             Status = DocumentStoreRunStatus.Queued,
             Phase = "排队中",
+            ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
         };
         await _db.DocumentStoreAgentRuns.InsertOneAsync(run);
 
@@ -3307,6 +3311,7 @@ public class DocumentStoreController : ControllerBase
                 Status = DocumentStoreRunStatus.Queued,
                 Phase = "排队中",
                 Messages = new List<ReprocessChatMessage> { userMsg },
+                ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
             };
             await _db.DocumentStoreAgentRuns.InsertOneAsync(run);
         }
@@ -3351,7 +3356,8 @@ public class DocumentStoreController : ControllerBase
                     .Set(r => r.Progress, 0)
                     .Set(r => r.GeneratedText, null)
                     .Set(r => r.EndedAt, (DateTime?)null)
-                    .Set(r => r.ErrorMessage, null),
+                    .Set(r => r.ErrorMessage, null)
+                    .Set(r => r.ForceFullShadowSample, _llmRequestContext.Current?.ForceFullShadowSample == true),
                 cancellationToken: CancellationToken.None);
             if (updateResult.ModifiedCount == 0)
             {

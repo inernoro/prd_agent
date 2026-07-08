@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
@@ -15,7 +16,7 @@ import {
 import { toast } from '@/lib/toast';
 import { DefectSeverity } from '@/services/contracts/defectAgent';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { AiPreviewModal } from '@/components/streaming';
+import { AiPreviewModal } from '@/components/streaming/AiPreviewModal';
 import { useAiPreviewStream } from '@/lib/useAiPreviewStream';
 import {
   X,
@@ -37,8 +38,15 @@ type DefectSeverityValue = (typeof DefectSeverity)[keyof typeof DefectSeverity];
 /** 带分析状态的附件 */
 interface AnalyzedAttachment {
   file: File;
+  previewUrl?: string;
   status: 'idle' | 'analyzing' | 'done' | 'error';
   description?: string;
+}
+
+function revokeAttachmentPreview(item: AnalyzedAttachment | undefined) {
+  if (item?.previewUrl) {
+    URL.revokeObjectURL(item.previewUrl);
+  }
 }
 
 /** 将 File 转为 base64 字符串（不含 data: 前缀） */
@@ -99,6 +107,18 @@ export function DefectSubmitPanel() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const attachmentsRef = useRef<AnalyzedAttachment[]>([]);
+
+  useEffect(() => {
+    attachmentsRef.current = attachments;
+  }, [attachments]);
+
+  useEffect(() => {
+    return () => {
+      attachmentsRef.current.forEach(revokeAttachmentPreview);
+      attachmentsRef.current = [];
+    };
+  }, []);
 
   /**
    * 添加文件并对图片自动触发 VLM 分析
@@ -106,6 +126,7 @@ export function DefectSubmitPanel() {
   const addFiles = useCallback((files: File[]) => {
     const newItems: AnalyzedAttachment[] = files.map((file) => ({
       file,
+      previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
       status: file.type.startsWith('image/') ? 'analyzing' as const : 'idle' as const,
     }));
 
@@ -203,7 +224,10 @@ export function DefectSubmitPanel() {
 
   // Remove attachment
   const removeAttachment = useCallback((index: number) => {
-    setAttachments((prev) => prev.filter((_, i) => i !== index));
+    setAttachments((prev) => {
+      revokeAttachmentPreview(prev[index]);
+      return prev.filter((_, i) => i !== index);
+    });
     setPreviewIndex(null);
   }, []);
 
@@ -302,7 +326,7 @@ export function DefectSubmitPanel() {
 
   const previewItem = previewIndex !== null ? attachments[previewIndex] : null;
 
-  return (
+  return createPortal((
     <div
       className="surface-backdrop fixed inset-0 z-50 flex items-center justify-center p-4"
       onClick={() => setShowSubmitPanel(false)}
@@ -311,7 +335,8 @@ export function DefectSubmitPanel() {
         glow
         animated
         variant="default"
-        className="w-full max-w-[760px] max-h-[90vh] flex flex-col"
+        className="w-full max-w-[760px] flex flex-col"
+        style={{ maxHeight: '90vh' }}
         overflow="hidden"
         padding="none"
         onClick={(e: React.MouseEvent) => e.stopPropagation()}
@@ -491,7 +516,7 @@ export function DefectSubmitPanel() {
                           onClick={() => setPreviewIndex(previewIndex === index ? null : index)}
                         >
                           <img
-                            src={URL.createObjectURL(item.file)}
+                            src={item.previewUrl}
                             alt={item.file.name}
                             className="w-full h-full object-cover"
                           />
@@ -678,5 +703,5 @@ export function DefectSubmitPanel() {
         applyLabel="应用为原文"
       />
     </div>
-  );
+  ), document.body);
 }

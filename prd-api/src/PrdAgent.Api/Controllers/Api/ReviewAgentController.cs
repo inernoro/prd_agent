@@ -524,6 +524,9 @@ public class ReviewAgentController : ControllerBase
     /// <summary>系统故障恢复用的「重新评审」：仅 Error 状态可用，其他状态拒绝</summary>
     internal static bool CanUseSystemRerun(ReviewSubmission s) => s.Status == ReviewStatuses.Error;
 
+    /// <summary>系统故障恢复用的「重新上传并评审」：仅 Error 状态可用，不消耗用户救机会</summary>
+    internal static bool CanReuploadAfterError(ReviewSubmission s) => s.Status == ReviewStatuses.Error;
+
     /// <summary>「未通过救机会」：仅 Done + IsPassed=false + RerunCount=0 三个条件齐备才可用</summary>
     internal static bool CanReuploadOnFailure(ReviewSubmission s) =>
         s.Status == ReviewStatuses.Done
@@ -611,6 +614,49 @@ public class ReviewAgentController : ControllerBase
             cancellationToken: CancellationToken.None);
 
         return Ok(ApiResponse<object>.Ok(new { message = "已重置，请刷新页面重新评审" }));
+    }
+
+    /// <summary>
+    /// 系统故障恢复 — Error 状态允许替换附件并重新排队，不消耗未通过救机会。
+    /// </summary>
+    [HttpPost("submissions/{id}/reupload-after-error")]
+    public async Task<IActionResult> ReuploadAfterError(string id, [FromBody] ReuploadRequest req, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var submission = await _db.ReviewSubmissions.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (submission == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "提交记录不存在"));
+
+        if (submission.SubmitterId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅本人可重新上传方案"));
+
+        if (!CanReuploadAfterError(submission))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅在评审过程出错时才能重新上传方案"));
+
+        if (string.IsNullOrWhiteSpace(req?.AttachmentId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "attachmentId 不能为空"));
+
+        var attachment = await _db.Attachments.Find(x => x.AttachmentId == req.AttachmentId).FirstOrDefaultAsync(ct);
+        if (attachment == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "附件不存在"));
+        if (string.IsNullOrWhiteSpace(attachment.ExtractedText))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无法从文件中提取文本内容，请确认上传的是有效的 Markdown 文件"));
+
+        await _db.ReviewSubmissions.UpdateOneAsync(
+            x => x.Id == id,
+            Builders<ReviewSubmission>.Update
+                .Set(x => x.AttachmentId, req.AttachmentId)
+                .Set(x => x.FileName, attachment.FileName)
+                .Set(x => x.ExtractedContent, attachment.ExtractedText)
+                .Set(x => x.Status, ReviewStatuses.Queued)
+                .Unset(x => x.ResultId)
+                .Unset(x => x.IsPassed)
+                .Unset(x => x.CompletedAt)
+                .Unset(x => x.StartedAt)
+                .Unset(x => x.ErrorMessage),
+            cancellationToken: CancellationToken.None);
+
+        return Ok(ApiResponse<object>.Ok(new { message = "已替换附件，请刷新页面重新评审" }));
     }
 
     /// <summary>
