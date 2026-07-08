@@ -511,7 +511,6 @@ export default function AppShell() {
   const useSidebarGlass = sidebarGlass === 'always' || (sidebarGlass === 'auto' && isLabPage);
 
   const asideWidth = collapsed ? 68 : 176;
-  const asideGap = 12;
   // 专注模式（fullBleedMain）、移动端下隐藏侧栏，主区最大化
   const focusHideAside = fullBleedMain || isMobile;
   // 侧栏为全高贴边直边栏（flush rail），主区只需让出栏宽本身
@@ -1839,12 +1838,14 @@ export default function AppShell() {
           }}
         >
           {/*
-           * 桌面端全屏画布面板（治「页面半截子」）：
-           * 内容不再是"深色虚空里漂浮的卡片"，而是一块与侧栏同 12px 网格对齐、
-           * 常驻撑满视口的圆角画布——滚动发生在画布内部，页面内容再短，
-           * 画布也始终占满整屏（content-fills-canvas / full-height-layout）。
-           * 材质走主题 token（color-mix 半透），暗色下不遮 app-aurora 光晕，
-           * 浅色主题自动翻转。移动端与专注模式（fullBleedMain）保持原结构。
+           * 桌面端全屏画布（治「页面半截子」，只保留几何不带外观）：
+           * 常驻撑满视口的滚动容器——滚动发生在容器内部，页面内容再短，
+           * 内容区也始终占满整屏（content-fills-canvas / full-height-layout）。
+           * 演化记录：曾做过"圆角描边面板"版画布，但它叠在页面自带的
+           * TabBar/卡片上多出一层框，用户反馈"整个页面浮肿"（2026-07-08）——
+           * 直边侧栏落地后面板外观已无必要，去掉边距/描边/底色/圆角，
+           * 页面直接坐在应用背景上（Linear 式平整）。
+           * 移动端与专注模式（fullBleedMain）保持原结构。
            */}
           <div
             className={cn(
@@ -1856,29 +1857,9 @@ export default function AppShell() {
                   ? 'p-0'
                   : isHomePage
                     ? 'p-0'
-                    : 'px-3 py-3'
+                    : 'px-4 py-3'
             )}
-            style={
-              useCanvasPanel
-                ? isHomePage
-                  ? {
-                      // 首页全出血：极光直接铺到视口边缘。带边距的画布会在明亮的
-                      // 极光顶上留一条 12px 的深色细缝（2026-07-08 用户反馈
-                      // "顶部有一条黑黑的细条"），首页是沉浸页，不需要面板框。
-                      margin: 0,
-                      overscrollBehavior: 'contain',
-                    }
-                  : {
-                      margin: asideGap,
-                      borderRadius: 18,
-                      border: '1px solid var(--border-faint, rgba(255,255,255,0.08))',
-                      background:
-                        'color-mix(in srgb, var(--bg-elevated, #1e1e24) 42%, transparent)',
-                      boxShadow: '0 18px 60px rgba(0, 0, 0, 0.22)',
-                      overscrollBehavior: 'contain',
-                    }
-                : undefined
-            }
+            style={useCanvasPanel ? { overscrollBehavior: 'contain' } : undefined}
           >
             <div className="flex-1 min-h-0 relative">
               {/* 移动端兼容门槛：根据路由显示 banner / 模态，非阻断式 */}
