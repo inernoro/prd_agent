@@ -25,6 +25,7 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_REQUIRE_APP_KIND = ["report-agent.generate::chat:send:30"]
 
 
 def _normalize_commit(value: object) -> str:
@@ -312,13 +313,91 @@ def _print_table(report: dict[str, Any]) -> None:
         print(f"| {item['name']} | {item['progress']}% | {item['status']} | {item['detail']} |")
 
 
+def _fake_coverage(first_compared_at: str) -> dict[str, Any]:
+    return {
+        "verdict": "fail",
+        "releaseCommit": "abc123",
+        "failures": ["覆盖时长不足 coverageHours=0.72, required=24"],
+        "cells": [
+            {
+                "label": "report-agent.generate::chat/send",
+                "appCallerCode": "report-agent.generate::chat",
+                "kind": "send",
+                "requiredTotal": 30,
+                "total": 30,
+                "critical": 0,
+                "httpFail": 0,
+                "coverageHours": 0.72,
+                "minCoverageHours": 24,
+                "firstComparedAt": first_compared_at,
+                "lastComparedAt": "2026-01-01T00:43:00+00:00",
+                "failures": ["覆盖时长不足 coverageHours=0.72, required=24"],
+            }
+        ],
+    }
+
+
+def _self_test() -> int:
+    tmp = Path(tempfile.mkdtemp(prefix="llmgw-rollout-status-self-test-"))
+
+    def run_case(name: str, first_compared_at: str, expected_action: str, expected_batches: int) -> None:
+        coverage_path = tmp / f"{name}.coverage.json"
+        coverage_path.write_text(
+            json.dumps(_fake_coverage(first_compared_at), ensure_ascii=False),
+            encoding="utf-8",
+        )
+        args = argparse.Namespace(
+            base="",
+            key="",
+            release_commit="abc123",
+            coverage_json=str(coverage_path),
+            require_app_kind=DEFAULT_REQUIRE_APP_KIND,
+            require_kind=[],
+            since_hours=48.0,
+            min_coverage_hours=24.0,
+            failure_sample_limit=0,
+            batch_yield=1,
+            max_batches=1,
+            allow_window_extension=True,
+            skip_global_cells=True,
+            skip_health=True,
+            json_out="",
+            report_md="",
+            print_json=False,
+            self_test=False,
+        )
+        report = build_status(args)
+        action = str(report.get("action") or "")
+        batches = int(report.get("recommendedBatches") or 0)
+        if action != expected_action or batches != expected_batches:
+            raise AssertionError(
+                f"{name}: action={action} batches={batches}, "
+                f"expected action={expected_action} batches={expected_batches}"
+            )
+
+    run_case(
+        "wait-window",
+        "2099-01-01T00:00:00+00:00",
+        "wait-coverage-window",
+        0,
+    )
+    run_case(
+        "extend-window",
+        "2026-01-01T00:00:00+00:00",
+        "run-one-window-extension",
+        1,
+    )
+    print("LLM Gateway rollout status self-test: PASS")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Read-only LLM Gateway rollout status board")
     parser.add_argument("--base", default=os.environ.get("LLMGW_STATUS_BASE", os.environ.get("GW_BASE", "")).strip().rstrip("/"))
     parser.add_argument("--key", default=os.environ.get("LLMGW_STATUS_KEY", os.environ.get("GW_KEY", "")).strip())
     parser.add_argument("--release-commit", default=os.environ.get("LLMGW_STATUS_RELEASE_COMMIT", "").strip())
     parser.add_argument("--coverage-json", default="")
-    parser.add_argument("--require-app-kind", action="append", default=["report-agent.generate::chat:send:30"])
+    parser.add_argument("--require-app-kind", action="append", default=[])
     parser.add_argument("--require-kind", action="append", default=[])
     parser.add_argument("--since-hours", type=float, default=float(os.environ.get("LLMGW_STATUS_SINCE_HOURS", "48")))
     parser.add_argument("--min-coverage-hours", type=float, default=float(os.environ.get("LLMGW_STATUS_MIN_COVERAGE_HOURS", "24")))
@@ -332,7 +411,13 @@ def main() -> int:
     parser.add_argument("--json-out", default="")
     parser.add_argument("--report-md", default="")
     parser.add_argument("--print-json", action="store_true")
+    parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
+
+    if args.self_test:
+        return _self_test()
+    if not args.require_app_kind:
+        args.require_app_kind = list(DEFAULT_REQUIRE_APP_KIND)
 
     report = build_status(args)
     _write_json(args.json_out, report)

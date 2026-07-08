@@ -193,6 +193,7 @@ def _static_checks() -> list[dict]:
             "llmgw-shadow-sample-plan.py",
             "--coverage-json",
             "--allow-window-extension",
+            "--self-test",
             "wait-coverage-window",
             "run-one-window-extension",
             "shadow 样本数",
