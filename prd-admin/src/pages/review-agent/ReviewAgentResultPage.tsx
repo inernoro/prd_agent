@@ -5,7 +5,7 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useSseStream } from '@/lib/useSseStream';
 import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
 import { SseTypingBlock } from '@/components/sse/SseTypingBlock';
-import { getReviewSubmission, getReviewResultStreamUrl, rerunReviewSubmission, getReviewDimensions, reuploadReviewOnFailure, getReviewSubmissionResults } from '@/services';
+import { getReviewSubmission, getReviewResultStreamUrl, rerunReviewSubmission, getReviewDimensions, reuploadReviewAfterError, reuploadReviewOnFailure, getReviewSubmissionResults } from '@/services';
 import type { ReviewSubmission, ReviewResult, ReviewDimensionScore, ReviewDimensionConfig, DimensionCheckItemResult } from '@/services';
 import { reuploadReviewSubmission } from '@/services/real/reviewAgent';
 import { uploadAttachment } from '@/services/real/aiToolbox';
@@ -187,6 +187,7 @@ export function ReviewAgentResultPage() {
   const [reuploadError, setReuploadError] = useState<string | null>(null);
   const reuploadInputRef = useRef<HTMLInputElement>(null);
   const reuploadOnFailureInputRef = useRef<HTMLInputElement>(null);
+  const reuploadAfterErrorInputRef = useRef<HTMLInputElement>(null);
   const [resultHistory, setResultHistory] = useState<ReviewResult[]>([]);
   const [showHistory, setShowHistory] = useState(false);
 
@@ -205,6 +206,7 @@ export function ReviewAgentResultPage() {
     && submission?.status === 'Done'
     && submission?.isPassed === false
     && (submission?.rerunCount ?? 0) === 0;
+  const canReuploadAfterError = isOwner && submission?.status === 'Error';
   const hasAppealRecord = !!submission?.latestAppealId;
 
   const loadData = useCallback(async () => {
@@ -339,6 +341,47 @@ export function ReviewAgentResultPage() {
     } finally {
       setReuploading(false);
       if (reuploadOnFailureInputRef.current) reuploadOnFailureInputRef.current.value = '';
+    }
+  }
+
+  async function handleReuploadAfterErrorFile(file: File) {
+    if (!id || reuploading) return;
+    setReuploading(true);
+    setReuploadError(null);
+    try {
+      const up = await uploadAttachment(file);
+      if (!up.success || !up.data) {
+        setReuploadError(up.error?.message ?? '文件上传失败');
+        return;
+      }
+      const res = await reuploadReviewAfterError(id, up.data.attachmentId);
+      if (!res.success) {
+        setReuploadError(res.error?.message ?? '替换失败');
+        return;
+      }
+      setResult(null);
+      setDimensionScores([]);
+      setSummary('');
+      setTotalScore(null);
+      setIsPassed(null);
+      setAdjustmentLog([]);
+      setExpandedDims(new Set());
+      setStreaming(true);
+      setSubmission(prev => prev ? {
+        ...prev,
+        status: 'Queued',
+        resultId: undefined,
+        isPassed: undefined,
+        completedAt: undefined,
+        startedAt: undefined,
+        errorMessage: undefined,
+        attachmentId: up.data!.attachmentId,
+        fileName: file.name,
+      } : prev);
+      sse.start({ url: getReviewResultStreamUrl(id!) });
+    } finally {
+      setReuploading(false);
+      if (reuploadAfterErrorInputRef.current) reuploadAfterErrorInputRef.current.value = '';
     }
   }
 
@@ -479,7 +522,7 @@ export function ReviewAgentResultPage() {
             <div className="flex-shrink-0">
               <div className="flex items-center gap-1.5 text-xs text-red-400/80">
                 <XCircle className="w-3.5 h-3.5" />
-                失败
+                评审失败
               </div>
             </div>
           )}
@@ -487,8 +530,30 @@ export function ReviewAgentResultPage() {
       </div>
 
       {/* 申诉操作行（仅在相关状态下展示） */}
-      {(canAppeal || canReupload || canReuploadOnFailure || hasAppealRecord) && (
+      {(canAppeal || canReupload || canReuploadOnFailure || canReuploadAfterError || hasAppealRecord) && (
         <div className="flex flex-wrap items-center gap-2 mb-6">
+          {canReuploadAfterError && (
+            <>
+              <input
+                ref={reuploadAfterErrorInputRef}
+                type="file"
+                accept=".md,.markdown,text/markdown,text/plain"
+                style={{ display: 'none' }}
+                onChange={e => {
+                  const f = e.target.files?.[0];
+                  if (f) handleReuploadAfterErrorFile(f);
+                }}
+              />
+              <button
+                onClick={() => reuploadAfterErrorInputRef.current?.click()}
+                disabled={reuploading}
+                title="评审过程出错时，可替换方案文件后重新发起评审"
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white transition-colors disabled:opacity-50"
+              >
+                <Upload className="w-3.5 h-3.5" /> {reuploading ? '上传中...' : '重新上传方案并评审'}
+              </button>
+            </>
+          )}
           {canReuploadOnFailure && (
             <>
               <input
@@ -557,6 +622,13 @@ export function ReviewAgentResultPage() {
           {reuploadError && (
             <span className="text-xs text-red-400/90">{reuploadError}</span>
           )}
+        </div>
+      )}
+
+      {isError && submission.errorMessage && (
+        <div className="mb-6 bg-red-500/8 border border-red-500/20 rounded-xl p-4">
+          <p className="text-xs font-medium text-red-300/90 mb-1">评审失败原因</p>
+          <p className="text-sm text-red-100/80 whitespace-pre-wrap">{submission.errorMessage}</p>
         </div>
       )}
 
