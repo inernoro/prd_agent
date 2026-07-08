@@ -386,6 +386,33 @@
 - planner 复核输出 `reason=wait-coverage-window`、`recommendedBatches=0`、`canRunRecommendedBatches=false`。因此当前不能继续补 canary-intent 样本，也不能执行 `canary-intent-text` 灰度或全量 `LLMGW_MODE=http`。
 - 下一步最早在首个目标样本 `2026-07-08T10:56:23.927Z` 之后满 24 小时时间窗后执行：先只读 coverage + planner；只有 planner 返回 `window-extension-top-up` 且推荐 `1` 个 batch，才显式开启 `LLMGW_SHADOW_ACCUMULATE_ALLOW_WINDOW_EXTENSION=1` 做 1 条低成本延展样本。
 
+## 最新生产状态板同步（2026-07-08 20:49 CST）
+
+- PR #1023 已合并到 `main`，merge commit 为 `a766f1d620dc57d02b2780b3405b3e0f958bf23c`。该 PR 新增只读 rollout status 状态板，并修复 `healthz` 失败时误显示 `gate-ready` 的门禁问题。
+- 生产机 `/root/inernoro/prd_agent` 仍是旧 git 工作树，因此已先备份旧脚本到 `/root/backups/llmgw-script-sync-20260708T204927+0800`，再只同步两个只读脚本：`scripts/llmgw-rollout-status.py`、`scripts/llmgw-readiness-audit.py`。没有改 compose、没有重启容器、没有触发模型请求。
+- 同步后生产 sha256 与本地 `main` 一致：`llmgw-rollout-status.py=d16d03701c4824d003136c8737552301094482073ef5bcfb952f14720ebb03b9`，`llmgw-readiness-audit.py=8aab7882eeaf3300691b58a4a80bd2b5e7a2e5ea6b6a33b9255019c28e84cc50`；生产 `python3 -m py_compile` 与 `scripts/llmgw-rollout-status.py --self-test` 均通过。
+- 生产 host 本机状态板复核仍为 `action=wait-coverage-window`：`report-agent.generate::chat/send total=30/30`，`critical=0`，`httpFail=0`，`coverageHours=0.716/24`。`/gw/v1/healthz` 为 200，commit 仍是 `2f6b0658397019e809f46ceb001245c6fdb03f40`。
+- `scripts/llmgw-prod-stage.sh --stage canary-intent-text --dry-run` 与 `--stage http-full --dry-run` 均被 rollout ledger 前置条件挡住，要求同 commit 的 `rollback-rehearsal` 成功记录，证明正式发布脚本不会跳过阶段顺序直接灰度或全量 HTTP。
+
+## 最新 release gate 复核（2026-07-08 20:52 CST）
+
+- 生产 runtime commit 仍是 `2f6b0658397019e809f46ceb001245c6fdb03f40`，当前 `main` 最新可发布 commit 是 `a766f1d620dc57d02b2780b3405b3e0f958bf23c`。这两个 commit 不等价，旧 shadow 证据不能直接证明新 commit。
+- 只读 release gate 漂移验证：使用 `--expect-commit a766f1d620dc57d02b2780b3405b3e0f958bf23c --shadow-release-commit a766f1d620dc57d02b2780b3405b3e0f958bf23c` 查询生产 `/gw/v1`，结果 `verdict=fail`。失败原因包括 `healthz` 实际 commit 为 `2f6b0658397019e809f46ceb001245c6fdb03f40`，以及 `a766f1d...` 对应 `report-agent.generate::chat/send total=0/30`。
+- 只读 release gate 当前生产验证：使用 `--expect-commit 2f6b0658397019e809f46ceb001245c6fdb03f40 --shadow-release-commit 2f6b0658397019e809f46ceb001245c6fdb03f40`，结果仍为 `verdict=fail`。样本数为 `30/30` 且 `critical=0`、`httpFail=0`，但唯一失败项仍是 `coverageHours=0.72 < 24`。
+- 结论：release gate 已正确阻止两类误发布：不能用旧证据发布新 commit，也不能在当前生产 commit 覆盖窗口不足时灰度或全量 HTTP。下一步仍只能等覆盖窗口到点后先跑只读状态板；若要发布新 commit，必须先部署该 commit 的 shadow 模式并重新积累同 commit 证据。
+
+## 最新状态板可操作性修正（2026-07-08 20:54 CST）
+
+- 本地 `scripts/llmgw-rollout-status.py` 的覆盖窗口行新增 `nextEligibleAt`，从所有未达标 cell 的 `firstComparedAt + minCoverageHours` 推导最晚可动作时间，多 cell 时不会被已达标 cell 误导。
+- 零费用验证通过：`python3 -m py_compile scripts/llmgw-rollout-status.py scripts/llmgw-readiness-audit.py`、`scripts/llmgw-rollout-status.py --self-test`、`python3 scripts/llmgw-readiness-audit.py --print-json` 均通过。
+- 使用生产 `/gw/v1` 只读状态板复核，仍为 `action=wait-coverage-window`，但覆盖窗口行现在明确显示 `nextEligibleAt=2026-07-09T10:56:23.927000Z`，即北京时间 `2026-07-09 18:56:23.927 CST`。本次复核没有触发 MAP seed、没有触发模型请求、没有改生产配置。
+
+## 昂贵 canary 默认限量（2026-07-08 20:59 CST）
+
+- 因火山侧已充值但要求避免过量测试，本地 `scripts/llmgw-asr-http-canary.py` 与 `scripts/llmgw-video-exchange-canary.py` 增加 `--max-canary-calls`，默认均为 `1`，也可分别通过 `LLMGW_ASR_CANARY_MAX_CALLS`、`LLMGW_VIDEO_CANARY_MAX_CALLS` 显式提高。
+- 新默认会在执行任何网络请求前拦截超预算目标：ASR 默认的 4 个 appCaller、Video 默认的 2 个 appCaller 都会 fail-closed。真实验证必须先用 `--app-caller`、`--model` 缩到单个目标；只有有明确预算时才提高上限。
+- 该改动是防误操作保护，不代表视频/ASR gate 已通过；视频仍按用户要求暂缓，后续优先推进低风险文本 allowlist 和只读证据。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘

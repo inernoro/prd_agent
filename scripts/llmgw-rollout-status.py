@@ -19,7 +19,7 @@ import sys
 import tempfile
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -146,6 +146,23 @@ def _pct(done: float, total: float) -> int:
     return max(0, min(100, round(done * 100 / total)))
 
 
+def _parse_dt(value: object) -> datetime | None:
+    if not value:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def _coverage_cells(coverage: dict[str, Any]) -> list[dict[str, Any]]:
     cells = coverage.get("cells") or []
     return [item for item in cells if isinstance(item, dict)]
@@ -183,6 +200,7 @@ def _cell_summary(cells: list[dict[str, Any]]) -> dict[str, Any]:
     http_fail_total = 0
     sample_worst: dict[str, Any] | None = None
     coverage_worst: dict[str, Any] | None = None
+    next_eligible_values: list[datetime] = []
 
     for cell in cells:
         total = int(cell.get("total") or 0)
@@ -207,10 +225,21 @@ def _cell_summary(cells: list[dict[str, Any]]) -> dict[str, Any]:
             sample_worst = {"progress": sample_progress, "cell": cell}
         if coverage_worst is None or coverage_progress < int(coverage_worst["progress"]):
             coverage_worst = {"progress": coverage_progress, "cell": cell}
+        first = _parse_dt(cell.get("firstComparedAt"))
+        if first is not None and min_coverage_hours > 0 and coverage_hours < min_coverage_hours:
+            next_eligible_values.append(first + timedelta(hours=min_coverage_hours))
 
     count = len(cells)
     sample_worst_cell = (sample_worst or {}).get("cell") or {}
     coverage_worst_cell = (coverage_worst or {}).get("cell") or {}
+    next_eligible_at = max(next_eligible_values).isoformat().replace("+00:00", "Z") if next_eligible_values else ""
+    coverage_detail = (
+        f"{coverage_pass}/{count} cells pass; worst={coverage_worst_cell.get('label') or '<unknown>'} "
+        f"coverageHours={float(coverage_worst_cell.get('coverageHours') or 0):.3f}/"
+        f"{float(coverage_worst_cell.get('minCoverageHours') or 0):g}"
+    )
+    if next_eligible_at:
+        coverage_detail += f"; nextEligibleAt={next_eligible_at}"
     return {
         "count": count,
         "samplePass": sample_pass,
@@ -225,11 +254,8 @@ def _cell_summary(cells: list[dict[str, Any]]) -> dict[str, Any]:
             f"total={int(sample_worst_cell.get('total') or 0)}/{int(sample_worst_cell.get('requiredTotal') or 0)}"
         ),
         "qualityDetail": f"{quality_pass}/{count} cells pass; critical={critical_total} httpFail={http_fail_total}",
-        "coverageDetail": (
-            f"{coverage_pass}/{count} cells pass; worst={coverage_worst_cell.get('label') or '<unknown>'} "
-            f"coverageHours={float(coverage_worst_cell.get('coverageHours') or 0):.3f}/"
-            f"{float(coverage_worst_cell.get('minCoverageHours') or 0):g}"
-        ),
+        "coverageDetail": coverage_detail,
+        "nextEligibleAt": next_eligible_at,
         "samplesOk": sample_pass == count,
         "qualityOk": quality_pass == count,
         "coverageOk": coverage_pass == count,
@@ -463,6 +489,9 @@ def _self_test() -> int:
                 f"{name}: action={action} batches={batches}, "
                 f"expected action={expected_action} batches={expected_batches}"
             )
+        next_eligible_at = str((report.get("cellSummary") or {}).get("nextEligibleAt") or "")
+        if not next_eligible_at:
+            raise AssertionError(f"{name}: nextEligibleAt must be present while coverage is pending")
 
     run_case(
         "wait-window",
@@ -523,6 +552,8 @@ def _self_test() -> int:
         raise AssertionError(f"multi-cell sample progress must use worst cell: {report['cellSummary']}")
     if "1/2 cells pass" not in str(report["cellSummary"]["sampleDetail"]):
         raise AssertionError(f"multi-cell sample detail must include pass count: {report['cellSummary']}")
+    if report["cellSummary"]["nextEligibleAt"] != "2026-01-02T00:00:00Z":
+        raise AssertionError(f"multi-cell next eligible time must use latest pending cell: {report['cellSummary']}")
 
     health_fail_coverage_path = tmp / "health-fail-ready.coverage.json"
     health_fail_coverage_path.write_text(
