@@ -229,6 +229,16 @@
 - 新 commit 的 `canary-intent-text` gate 已从零开始重算。只读 release gate 初始 FAIL：`total=0/30`、`coverageHours=0/24`。为启动证据窗口，仅跑 1 个低成本 `canary-intent-text` force-sample batch，证据目录 `.llmgw-release-evidence/shadow-accumulate-20260708T085012Z/`；结果为 `global total=3`、`global/send total=1`、`report-agent.generate::chat total=1`、`report-agent.generate::chat/send total=1`，全部 `critical=0`、`httpFail=0`。coverage 仍预期 FAIL，因样本数和 24 小时窗口不足。
 - 结论：最新 main 已安全进入生产 shadow 证据期，且回滚演练已对齐同 commit。下一步不能直接进入 `canary-intent-text --execute`，因为 rollout ledger 仍要求从 `shadow-start` 起观察 24 小时，release gate 也要求同 commit 样本达到 30 且覆盖 24 小时。继续禁止全量 `LLMGW_MODE=http`，禁止视频/图片/ASR 重复高成本测试；后续只允许按明确预算补低成本文本样本。
 
+## 最新生产取证（2026-07-08 16:54 CST）
+
+- 只读复核生产仍为 `dabeffbf18552ec3628be0612623aba5c24be1de`，5 个核心镜像均为同一 sha，`.env` 仍保持 `LLMGW_MODE=shadow`、`LLMGW_HTTP_APP_CALLER_ALLOWLIST=`、`LLMGW_SHADOW_FULL_SAMPLE_PERCENT=1`、`LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST=`。
+- 只读 shadow coverage 正确带 gateway key 后仍预期 FAIL，原因是新 commit 证据窗口刚启动，样本数与 24 小时覆盖均不足；该检查不发模型请求。
+- 已在生产创建两条只读手工复查脚本，并通过 `sh -n`：
+  - `.llmgw-release-evidence/manual-gates/run-canary-intent-gate-dabeffbf.sh`：运行 release gate，只读读取 shadow comparisons，输出 JSON/Markdown。
+  - `.llmgw-release-evidence/manual-gates/run-canary-intent-dryrun-dabeffbf.sh`：运行 `canary-intent-text --dry-run`，只检查 rollout ledger 和计划，不切流。
+- 立即执行 dry-run 脚本被 rollout ledger 正确拦截：`observed_hours=0.10 < 24`。这证明后续即使误触发 dry-run，也不会绕过阶段观察窗口；真正 `--execute` 仍禁止。
+- 下一次可复查窗口按 `shadow-start` 成功时间 `2026-07-08T08:48:14Z` 起算，最早应在 `2026-07-09T08:48:14Z` 之后；届时仍必须先确认样本数达到 30/30、`critical=0`、`httpFail=0`，再看 dry-run 是否 PASS。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘
