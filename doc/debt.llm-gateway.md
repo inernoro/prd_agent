@@ -239,6 +239,13 @@
 - 立即执行 dry-run 脚本被 rollout ledger 正确拦截：`observed_hours=0.10 < 24`。这证明后续即使误触发 dry-run，也不会绕过阶段观察窗口；真正 `--execute` 仍禁止。
 - 下一次可复查窗口按 `shadow-start` 成功时间 `2026-07-08T08:48:14Z` 起算，最早应在 `2026-07-09T08:48:14Z` 之后；届时仍必须先确认样本数达到 30/30、`critical=0`、`httpFail=0`，再看 dry-run 是否 PASS。
 
+## 最新代码守卫（2026-07-08 16:58 CST）
+
+- 已在 `scripts/llmgw-shadow-sample-accumulate.sh` 增加过量取证保护：执行前默认先跑 shadow coverage preflight；若目标 coverage 已经 PASS，则默认直接退出，不再 seed。`canary-intent-text` 预设默认 `LLMGW_SHADOW_ACCUMULATE_MAX_BATCHES=3`，超过上限会 fail-closed；如确有预算必须显式提高该环境变量。
+- 本地验证：`sh -n scripts/llmgw-shadow-sample-accumulate.sh` 通过；`LLMGW_SHADOW_ACCUMULATE_PROFILE=canary-intent-text LLMGW_SHADOW_ACCUMULATE_DRY_RUN=1 LLMGW_SHADOW_ACCUMULATE_BATCHES=4 ...` 被预期拒绝；`BATCHES=3` dry-run 通过；临时目录伪造 coverage PASS 时脚本直接退出且未调用 seed/window。
+- 测试验证：`GatewayDataDomainGuardTests` 30/30 PASS；`cd prd-api && dotnet build --no-restore` 退出码 0，仅输出既有 CS warning。
+- 结论：后续补 `dabeffbf` 的 `report-agent.generate::chat/send` 样本时，默认不会一条命令误打超过 3 个 batch，也不会在 coverage 已经达标后继续消耗模型额度。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘

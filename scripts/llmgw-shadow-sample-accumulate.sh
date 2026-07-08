@@ -31,12 +31,16 @@ coverage_min_hours="${LLMGW_SHADOW_ACCUMULATE_MIN_COVERAGE_HOURS:-24}"
 release_commit="${LLMGW_SHADOW_ACCUMULATE_RELEASE_COMMIT:-${GIT_COMMIT:-}}"
 release_commit_trimmed="$(printf '%s' "$release_commit" | xargs || true)"
 run_coverage="${LLMGW_SHADOW_ACCUMULATE_RUN_COVERAGE:-1}"
+preflight_coverage="${LLMGW_SHADOW_ACCUMULATE_PREFLIGHT_COVERAGE:-1}"
+allow_after_pass="${LLMGW_SHADOW_ACCUMULATE_ALLOW_AFTER_PASS:-0}"
+max_batches="${LLMGW_SHADOW_ACCUMULATE_MAX_BATCHES:-0}"
 
 case "$profile" in
   "")
     ;;
   canary-intent-text)
     force_sample="${LLMGW_SHADOW_ACCUMULATE_FORCE_SAMPLE:-1}"
+    max_batches="${LLMGW_SHADOW_ACCUMULATE_MAX_BATCHES:-3}"
     seed_flags="${LLMGW_SHADOW_ACCUMULATE_SEED_FLAGS:---iterations 1 --skip-preview-ask --include-report-agent-generate --continue-on-error}"
     coverage_kinds="${LLMGW_SHADOW_ACCUMULATE_COVERAGE_KINDS:-send}"
     coverage_apps="${LLMGW_SHADOW_ACCUMULATE_COVERAGE_APP_CALLERS:-report-agent.generate::chat}"
@@ -84,6 +88,19 @@ if [ "$batches" -lt 1 ]; then
   exit 1
 fi
 
+case "$max_batches" in
+  ''|*[!0-9]*)
+    echo "ERROR: LLMGW_SHADOW_ACCUMULATE_MAX_BATCHES 必须是非负整数" >&2
+    exit 1
+    ;;
+esac
+
+if [ "$max_batches" -gt 0 ] && [ "$batches" -gt "$max_batches" ]; then
+  echo "ERROR: LLMGW_SHADOW_ACCUMULATE_BATCHES=${batches} 超过本 profile 默认上限 ${max_batches}。" >&2
+  echo "如已确认预算并需要继续补样本，显式设置 LLMGW_SHADOW_ACCUMULATE_MAX_BATCHES=${batches} 后重跑。" >&2
+  exit 1
+fi
+
 if [ "$dry_run" != "1" ] && [ "$dry_run" != "true" ] && [ -z "$(printf '%s' "$seed_flags" | xargs || true)" ]; then
   echo "ERROR: 执行模式必须设置 LLMGW_SHADOW_ACCUMULATE_SEED_FLAGS，避免空跑累计窗口" >&2
   exit 1
@@ -98,10 +115,12 @@ echo "  profile: ${profile:-<none>}"
 echo "  dryRun: $dry_run"
 echo "  forceSample: $force_sample"
 echo "  batches: $batches"
+echo "  maxBatches: $max_batches"
 echo "  sleepSeconds: $sleep_seconds"
 echo "  runDir: $run_dir"
 echo "  seedFlags: $(redact_seed_flags "$seed_flags")"
 echo "  runCoverage: $run_coverage"
+echo "  preflightCoverage: $preflight_coverage"
 echo "  coverageKinds: $coverage_kinds"
 echo "  coverageApps: $coverage_apps"
 echo "  coverageRequiredKinds: $coverage_required_kinds"
@@ -133,35 +152,7 @@ if [ "$force_sample" = "1" ] || [ "$force_sample" = "true" ]; then
   fi
 fi
 
-i=1
-while [ "$i" -le "$batches" ]; do
-  batch_id="$(printf '%03d' "$i")"
-  evidence_out="$run_dir/batch-$batch_id-shadow-sample-window.json"
-  echo "LLM Gateway shadow sample batch $batch_id/$batches"
-
-  if [ "$force_sample" = "1" ] || [ "$force_sample" = "true" ]; then
-    # shellcheck disable=SC2086
-    LLMGW_GATE_KEY="$gate_key" python3 "$seed_script" \
-      --force-shadow-sample \
-      --evidence-out "$evidence_out" \
-      $seed_run_flags
-  else
-    # shellcheck disable=SC2086
-    LLMGW_SHADOW_SAMPLE_WINDOW_DRY_RUN=0 \
-    LLMGW_SHADOW_SAMPLE_WINDOW_SEED_FLAGS="$seed_run_flags" \
-    LLMGW_SHADOW_SAMPLE_WINDOW_EVIDENCE_OUT="$evidence_out" \
-    "$window_script"
-  fi
-
-  if [ "$i" -lt "$batches" ] && [ "$sleep_seconds" -gt 0 ]; then
-    sleep "$sleep_seconds"
-  fi
-  i=$((i + 1))
-done
-
-if [ "$run_coverage" = "1" ] || [ "$run_coverage" = "true" ]; then
-  coverage_json="$run_dir/shadow-coverage.json"
-  coverage_md="$run_dir/shadow-coverage.md"
+build_coverage_args() {
   coverage_args=""
 
   old_ifs="$IFS"
@@ -198,7 +189,11 @@ if [ "$run_coverage" = "1" ] || [ "$run_coverage" = "true" ]; then
   if [ -n "$release_commit_trimmed" ]; then
     coverage_args="$coverage_args --release-commit $release_commit_trimmed"
   fi
+}
 
+run_coverage_report() {
+  coverage_json="$1"
+  coverage_md="$2"
   if [ -z "$(printf '%s' "$gate_key" | xargs || true)" ]; then
     echo "ERROR: 缺少 LLMGW_GATE_KEY/GW_KEY/LLMGW_SERVE_KEY，无法生成 shadow coverage" >&2
     exit 1
@@ -212,6 +207,61 @@ if [ "$run_coverage" = "1" ] || [ "$run_coverage" = "true" ]; then
     --json-out "$coverage_json" \
     --report-md "$coverage_md" \
     $coverage_args
+}
+
+if [ "$run_coverage" = "1" ] || [ "$run_coverage" = "true" ]; then
+  build_coverage_args
+fi
+
+if { [ "$preflight_coverage" = "1" ] || [ "$preflight_coverage" = "true" ]; } && { [ "$run_coverage" = "1" ] || [ "$run_coverage" = "true" ]; }; then
+  preflight_json="$run_dir/preflight-shadow-coverage.json"
+  preflight_md="$run_dir/preflight-shadow-coverage.md"
+  echo "LLM Gateway shadow sample preflight coverage"
+  set +e
+  run_coverage_report "$preflight_json" "$preflight_md"
+  preflight_status="$?"
+  set -e
+  if [ "$preflight_status" = "0" ]; then
+    echo "LLM Gateway shadow sample accumulator: coverage already satisfies gate; skip seeding."
+    if [ "$allow_after_pass" != "1" ] && [ "$allow_after_pass" != "true" ]; then
+      exit 0
+    fi
+    echo "WARN: LLMGW_SHADOW_ACCUMULATE_ALLOW_AFTER_PASS is enabled; continuing despite satisfied coverage." >&2
+  else
+    echo "LLM Gateway shadow sample preflight coverage did not pass; continuing with bounded seed batches."
+  fi
+fi
+
+i=1
+while [ "$i" -le "$batches" ]; do
+  batch_id="$(printf '%03d' "$i")"
+  evidence_out="$run_dir/batch-$batch_id-shadow-sample-window.json"
+  echo "LLM Gateway shadow sample batch $batch_id/$batches"
+
+  if [ "$force_sample" = "1" ] || [ "$force_sample" = "true" ]; then
+    # shellcheck disable=SC2086
+    LLMGW_GATE_KEY="$gate_key" python3 "$seed_script" \
+      --force-shadow-sample \
+      --evidence-out "$evidence_out" \
+      $seed_run_flags
+  else
+    # shellcheck disable=SC2086
+    LLMGW_SHADOW_SAMPLE_WINDOW_DRY_RUN=0 \
+    LLMGW_SHADOW_SAMPLE_WINDOW_SEED_FLAGS="$seed_run_flags" \
+    LLMGW_SHADOW_SAMPLE_WINDOW_EVIDENCE_OUT="$evidence_out" \
+    "$window_script"
+  fi
+
+  if [ "$i" -lt "$batches" ] && [ "$sleep_seconds" -gt 0 ]; then
+    sleep "$sleep_seconds"
+  fi
+  i=$((i + 1))
+done
+
+if [ "$run_coverage" = "1" ] || [ "$run_coverage" = "true" ]; then
+  coverage_json="$run_dir/shadow-coverage.json"
+  coverage_md="$run_dir/shadow-coverage.md"
+  run_coverage_report "$coverage_json" "$coverage_md"
 fi
 
 echo "LLM Gateway shadow sample accumulator evidence: $run_dir"
