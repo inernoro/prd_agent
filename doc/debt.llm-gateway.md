@@ -394,6 +394,13 @@
 - 生产 host 本机状态板复核仍为 `action=wait-coverage-window`：`report-agent.generate::chat/send total=30/30`，`critical=0`，`httpFail=0`，`coverageHours=0.716/24`。`/gw/v1/healthz` 为 200，commit 仍是 `2f6b0658397019e809f46ceb001245c6fdb03f40`。
 - `scripts/llmgw-prod-stage.sh --stage canary-intent-text --dry-run` 与 `--stage http-full --dry-run` 均被 rollout ledger 前置条件挡住，要求同 commit 的 `rollback-rehearsal` 成功记录，证明正式发布脚本不会跳过阶段顺序直接灰度或全量 HTTP。
 
+## 最新 release gate 复核（2026-07-08 20:52 CST）
+
+- 生产 runtime commit 仍是 `2f6b0658397019e809f46ceb001245c6fdb03f40`，当前 `main` 最新可发布 commit 是 `a766f1d620dc57d02b2780b3405b3e0f958bf23c`。这两个 commit 不等价，旧 shadow 证据不能直接证明新 commit。
+- 只读 release gate 漂移验证：使用 `--expect-commit a766f1d620dc57d02b2780b3405b3e0f958bf23c --shadow-release-commit a766f1d620dc57d02b2780b3405b3e0f958bf23c` 查询生产 `/gw/v1`，结果 `verdict=fail`。失败原因包括 `healthz` 实际 commit 为 `2f6b0658397019e809f46ceb001245c6fdb03f40`，以及 `a766f1d...` 对应 `report-agent.generate::chat/send total=0/30`。
+- 只读 release gate 当前生产验证：使用 `--expect-commit 2f6b0658397019e809f46ceb001245c6fdb03f40 --shadow-release-commit 2f6b0658397019e809f46ceb001245c6fdb03f40`，结果仍为 `verdict=fail`。样本数为 `30/30` 且 `critical=0`、`httpFail=0`，但唯一失败项仍是 `coverageHours=0.72 < 24`。
+- 结论：release gate 已正确阻止两类误发布：不能用旧证据发布新 commit，也不能在当前生产 commit 覆盖窗口不足时灰度或全量 HTTP。下一步仍只能等覆盖窗口到点后先跑只读状态板；若要发布新 commit，必须先部署该 commit 的 shadow 模式并重新积累同 commit 证据。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘
