@@ -85,6 +85,12 @@ public class VideoToDocRun
     public bool CancelRequested { get; set; }
     public string? ErrorCode { get; set; }
     public string? ErrorMessage { get; set; }
+
+    /// <summary>
+    /// 内部发布证据采样标记：仅由带服务密钥的 LLM Gateway shadow seed 写入。
+    /// Worker 读取后把本次 run 的 LLM 调用强制纳入 shadow comparison。
+    /// </summary>
+    public bool ForceFullShadowSample { get; set; }
 }
 
 /// <summary>

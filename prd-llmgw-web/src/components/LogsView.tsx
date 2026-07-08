@@ -32,12 +32,13 @@ import {
 
 const PAGE_SIZE = 30;
 
-// 网关传输通道（GatewayTransport）chip：这次调用走进程内 / 跨进程 HTTP / 影子 / 直连。
+// 网关传输通道（GatewayTransport）chip：这次调用走进程内 / 跨进程 HTTP / 影子 / 管理探测 / 直连。
 // 是翻 http 前后排障「这条走了哪条路」的关键标记。历史日志为 null → 不显示 chip。
 const TRANSPORT_META: Record<string, { label: string; color: string; bg: string }> = {
   inproc: { label: 'inproc', color: 'var(--text-muted)', bg: 'var(--bg-elevated)' },
   http: { label: 'http', color: 'var(--accent)', bg: 'var(--accent-soft)' },
   shadow: { label: 'shadow', color: '#d29922', bg: 'rgba(210,153,34,0.14)' },
+  'admin-probe': { label: 'admin-probe', color: '#6e7681', bg: 'rgba(110,118,129,0.14)' },
   direct: { label: 'direct', color: '#f85149', bg: 'rgba(248,81,73,0.14)' },
 };
 function getTransportMeta(t?: string | null) {

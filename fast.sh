@@ -151,10 +151,25 @@ normalize_ref() {
 
 tag="$(normalize_ref "$release_ref" "$release_ref_type")"
 repo="${REPO:-inernoro/prd_agent}"
-api_image="${PRD_AGENT_API_IMAGE:-get.miduo.org/ghcr.io/${repo}/prdagent-server:${tag}}"
-llmgw_image="${PRD_AGENT_LLMGW_IMAGE:-get.miduo.org/ghcr.io/${repo}/prdagent-llmgw:${tag}}"
-llmgw_serve_image="${PRD_AGENT_LLMGW_SERVE_IMAGE:-get.miduo.org/ghcr.io/${repo}/prdagent-llmgw-serve:${tag}}"
-llmgw_web_image="${PRD_AGENT_LLMGW_WEB_IMAGE:-get.miduo.org/ghcr.io/${repo}/prdagent-llmgw-web:${tag}}"
+default_api_image="get.miduo.org/ghcr.io/${repo}/prdagent-server:${tag}"
+default_llmgw_image="get.miduo.org/ghcr.io/${repo}/prdagent-llmgw:${tag}"
+default_llmgw_serve_image="get.miduo.org/ghcr.io/${repo}/prdagent-llmgw-serve:${tag}"
+default_llmgw_web_image="get.miduo.org/ghcr.io/${repo}/prdagent-llmgw-web:${tag}"
+
+if [ "$release_ref_type" = "commit" ] && [ "${PRD_AGENT_ALLOW_IMAGE_OVERRIDE:-0}" != "1" ]; then
+  if [ -n "${PRD_AGENT_API_IMAGE:-}${PRD_AGENT_LLMGW_IMAGE:-}${PRD_AGENT_LLMGW_SERVE_IMAGE:-}${PRD_AGENT_LLMGW_WEB_IMAGE:-}" ]; then
+    echo "WARN: --commit 发布默认忽略 PRD_AGENT_*_IMAGE 覆盖，确保四个镜像钉到 ${tag}；如确需覆盖请设置 PRD_AGENT_ALLOW_IMAGE_OVERRIDE=1" >&2
+  fi
+  api_image="$default_api_image"
+  llmgw_image="$default_llmgw_image"
+  llmgw_serve_image="$default_llmgw_serve_image"
+  llmgw_web_image="$default_llmgw_web_image"
+else
+  api_image="${PRD_AGENT_API_IMAGE:-$default_api_image}"
+  llmgw_image="${PRD_AGENT_LLMGW_IMAGE:-$default_llmgw_image}"
+  llmgw_serve_image="${PRD_AGENT_LLMGW_SERVE_IMAGE:-$default_llmgw_serve_image}"
+  llmgw_web_image="${PRD_AGENT_LLMGW_WEB_IMAGE:-$default_llmgw_web_image}"
+fi
 timeout_seconds="${FAST_PULL_TIMEOUT_SECONDS:-30}"
 release_intent_file="${PRD_AGENT_RELEASE_INTENT_FILE:-.prd-agent-release-intent.env}"
 

@@ -33,6 +33,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private readonly int _fullSamplePercent;
     private readonly ILLMRequestContextAccessor? _ctx;
     private readonly IReadOnlySet<string> _httpAllowlist;
+    private readonly IReadOnlySet<string> _fullSampleAllowlist;
     private readonly string? _releaseCommit;
 
     public ShadowLlmGateway(
@@ -43,6 +44,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         int fullSamplePercent = 0,
         ILLMRequestContextAccessor? ctx = null,
         IReadOnlySet<string>? httpAllowlist = null,
+        IReadOnlySet<string>? fullSampleAllowlist = null,
         string? releaseCommit = null)
     {
         _inproc = inproc;
@@ -52,6 +54,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         _fullSamplePercent = Math.Clamp(fullSamplePercent, 0, 100);
         _ctx = ctx;
         _httpAllowlist = httpAllowlist ?? new HashSet<string>();
+        _fullSampleAllowlist = fullSampleAllowlist ?? new HashSet<string>();
         _releaseCommit = NormalizeCommit(releaseCommit);
     }
 
@@ -74,7 +77,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         // 否则影子 http 探针拿到的是 inproc 的答案当输入 → 永远 match，影子比对形同虚设（评审 P2）。
         var expectedModel = request.GetEffectiveExpectedModel();
         var inproc = await _inproc.SendAsync(request, ct);
-        if (SampleHit())
+        if (SampleHit(request.AppCallerCode))
             FireFullSendCompare(request, inproc, expectedModel);  // 采样：完整 send 比对（2x 打模型，有界）
         else
             FireResolveCompare(request.AppCallerCode, request.ModelType, expectedModel, request.PinnedPlatformId, request.PinnedModelId, inproc.Resolution, "send");
@@ -94,14 +97,20 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         // 否则影子探针拿到 inproc 选中的模型当输入 → 永远 match（评审 P2）。
         var expectedModel = request.GetEffectiveExpectedModel();
         GatewayModelResolution? startResolution = null;
-        await foreach (var chunk in _inproc.StreamAsync(request, ct))
+        try
         {
-            if (chunk.Type == GatewayChunkType.Start && chunk.Resolution != null)
-                startResolution = chunk.Resolution;
-            yield return chunk;
+            await foreach (var chunk in _inproc.StreamAsync(request, ct))
+            {
+                if (chunk.Type == GatewayChunkType.Start && chunk.Resolution != null)
+                    startResolution = chunk.Resolution;
+                yield return chunk;
+            }
         }
-        // 流式只做免费 resolve 比对（不重发 http 流，绝不 2x 打大模型）。
-        FireResolveCompare(request.AppCallerCode, request.ModelType, expectedModel, request.PinnedPlatformId, request.PinnedModelId, startResolution, "stream");
+        finally
+        {
+            if (startResolution != null)
+                FireResolveCompare(request.AppCallerCode, request.ModelType, expectedModel, request.PinnedPlatformId, request.PinnedModelId, startResolution, "stream");
+        }
     }
 
     public async Task<GatewayModelResolution> ResolveModelAsync(
@@ -141,7 +150,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             return await _http.SendRawWithResolutionAsync(request, resolution, ct);
 
         var inproc = await _inproc.SendRawWithResolutionAsync(request, resolution, ct);
-        if (SampleHit())
+        if (SampleHit(request.AppCallerCode))
             FireRawCompare(request, resolution, inproc);
         return inproc;
     }
@@ -170,7 +179,10 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
     // ─────────────────────── 后台比对（fire-and-forget，全隔离）───────────────────────
 
-    private bool SampleHit() => _fullSamplePercent > 0 && Random.Shared.Next(100) < _fullSamplePercent;
+    private bool SampleHit(string appCallerCode)
+        => _ctx?.Current?.ForceFullShadowSample == true
+           || _fullSampleAllowlist.Contains(appCallerCode)
+           || (_fullSamplePercent > 0 && Random.Shared.Next(100) < _fullSamplePercent);
 
     private void SafeRun(Func<Task> work) => _ = Task.Run(async () =>
     {

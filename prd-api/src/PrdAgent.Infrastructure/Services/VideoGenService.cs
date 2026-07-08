@@ -14,12 +14,18 @@ public class VideoGenService : IVideoGenService
 {
     private readonly MongoDbContext _db;
     private readonly IRunEventStore _runStore;
+    private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly ILogger<VideoGenService> _logger;
 
-    public VideoGenService(MongoDbContext db, IRunEventStore runStore, ILogger<VideoGenService> logger)
+    public VideoGenService(
+        MongoDbContext db,
+        IRunEventStore runStore,
+        ILLMRequestContextAccessor llmRequestContext,
+        ILogger<VideoGenService> logger)
     {
         _db = db;
         _runStore = runStore;
+        _llmRequestContext = llmRequestContext;
         _logger = logger;
     }
 
@@ -68,6 +74,7 @@ public class VideoGenService : IVideoGenService
                 DirectResolution = resolution,
                 DirectDuration = duration,
                 CurrentPhase = "queued",
+                ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
                 CreatedAt = DateTime.UtcNow,
             };
             await _db.VideoGenRuns.InsertOneAsync(run, cancellationToken: ct);
@@ -111,6 +118,7 @@ public class VideoGenService : IVideoGenService
             DirectFirstFrameUrl = string.IsNullOrWhiteSpace(request?.DirectFirstFrameUrl) ? null : request!.DirectFirstFrameUrl!.Trim(),
             TotalDurationSeconds = duration,
             CurrentPhase = "queued",
+            ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
             CreatedAt = DateTime.UtcNow,
         };
 

@@ -14,14 +14,19 @@ namespace PrdAgent.Infrastructure.Services;
 public class OpenRouterVideoClient : IOpenRouterVideoClient
 {
     private readonly ILlmGateway _gateway;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<OpenRouterVideoClient> _logger;
     // 缓存 SubmitAsync 阶段的解析结果，供同一 Scoped 实例的轮询调用复用（避免每次 poll 都查一次 DB）
     private GatewayModelResolution? _submitResolution;
     private string? _submitAppCallerCode;
 
-    public OpenRouterVideoClient(ILlmGateway gateway, ILogger<OpenRouterVideoClient> logger)
+    public OpenRouterVideoClient(
+        ILlmGateway gateway,
+        IHttpClientFactory httpClientFactory,
+        ILogger<OpenRouterVideoClient> logger)
     {
         _gateway = gateway;
+        _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
 
@@ -136,11 +141,20 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
         if (!statusResolution.Success)
             return new OpenRouterVideoStatus { Status = "failed", ErrorMessage = statusResolution.ErrorMessage };
 
+        var statusBody = IsVolcengineVideoResolution(statusResolution)
+            ? new JsonObject
+            {
+                ["_gateway_operation"] = "status",
+                ["task_id"] = jobId
+            }
+            : null;
+
         var rawResp = await _gateway.SendRawWithResolutionAsync(new GatewayRawRequest
         {
             AppCallerCode = appCallerCode,
             ModelType = ModelTypes.VideoGen,
             EndpointPath = $"/videos/{Uri.EscapeDataString(jobId)}",
+            RequestBody = statusBody,
             HttpMethod = "GET",
             TimeoutSeconds = 30
         }, statusResolution, ct);
@@ -192,6 +206,21 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
         if (!resolution.Success)
             return new OpenRouterVideoDownload { Success = false, ErrorMessage = resolution.ErrorMessage };
 
+        if (IsVolcengineVideoResolution(resolution))
+        {
+            var status = await GetStatusAsync(appCallerCode, jobId, ct);
+            if (!status.IsCompleted || string.IsNullOrWhiteSpace(status.VideoUrl))
+            {
+                return new OpenRouterVideoDownload
+                {
+                    Success = false,
+                    ErrorMessage = status.ErrorMessage ?? $"视频任务尚未完成，status={status.Status}"
+                };
+            }
+
+            return await DownloadSignedVideoUrlAsync(status.VideoUrl, ct);
+        }
+
         // OpenRouter 视频下载端点：GET /videos/{jobId}/content?index={i}
         // 通过 Gateway 走，自动注入 ApiKey + base URL
         var rawResp = await _gateway.SendRawWithResolutionAsync(new GatewayRawRequest
@@ -225,6 +254,54 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
             ContentType = "video/mp4",
         };
     }
+
+    private async Task<OpenRouterVideoDownload> DownloadSignedVideoUrlAsync(string videoUrl, CancellationToken ct)
+    {
+        if (!Uri.TryCreate(videoUrl, UriKind.Absolute, out var uri)
+            || uri.Scheme is not ("http" or "https"))
+        {
+            return new OpenRouterVideoDownload
+            {
+                Success = false,
+                ErrorMessage = "视频结果 URL 非法，无法下载。"
+            };
+        }
+
+        try
+        {
+            using var http = _httpClientFactory.CreateClient();
+            http.Timeout = TimeSpan.FromSeconds(120);
+            using var resp = await http.GetAsync(uri, ct);
+            var bytes = await resp.Content.ReadAsByteArrayAsync(ct);
+            if (!resp.IsSuccessStatusCode || bytes.Length == 0)
+            {
+                return new OpenRouterVideoDownload
+                {
+                    Success = false,
+                    ErrorMessage = $"视频签名 URL 下载失败: HTTP {(int)resp.StatusCode}"
+                };
+            }
+
+            return new OpenRouterVideoDownload
+            {
+                Success = true,
+                Bytes = bytes,
+                ContentType = resp.Content.Headers.ContentType?.MediaType ?? "video/mp4",
+            };
+        }
+        catch (Exception ex)
+        {
+            return new OpenRouterVideoDownload
+            {
+                Success = false,
+                ErrorMessage = $"视频签名 URL 下载异常: {ex.Message}"
+            };
+        }
+    }
+
+    private static bool IsVolcengineVideoResolution(GatewayModelResolution resolution)
+        => resolution.IsExchange
+           && string.Equals(resolution.ExchangeTransformerType, "volcengine-video", StringComparison.OrdinalIgnoreCase);
 
     private static double? ReadCost(JsonObject? doc)
     {

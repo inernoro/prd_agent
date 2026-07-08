@@ -287,8 +287,12 @@ function SegmentPills({
 }) {
   return (
     <div
-      className="inline-flex items-center gap-1 p-1 rounded-lg shrink-0"
-      style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-default)' }}
+      className="inline-flex max-w-full items-center gap-1 overflow-x-auto p-1 rounded-lg shrink-0"
+      style={{
+        background: 'rgba(255,255,255,0.04)',
+        border: '1px solid var(--border-default)',
+        scrollbarWidth: 'none',
+      }}
     >
       {options.map((opt) => {
         const active = opt.value === value;
@@ -297,7 +301,7 @@ function SegmentPills({
             key={opt.value}
             type="button"
             onClick={() => onChange(opt.value)}
-            className="h-7 px-3 rounded-md text-[13px] transition-colors"
+            className="h-7 min-w-10 shrink-0 whitespace-nowrap px-3 rounded-md text-center text-[13px] transition-colors"
             style={
               active
                 ? {
