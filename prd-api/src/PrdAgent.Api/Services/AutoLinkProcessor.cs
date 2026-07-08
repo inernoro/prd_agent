@@ -70,25 +70,43 @@ public class AutoLinkProcessor
             List<object>? newLinks = null;
             try
             {
-                var content = await LoadWritableContentAsync(entry);
-                if (content != null)
+                // 逐篇处理前重取最新 entry：批量任务要跑几十秒，期间用户可能编辑过该文档——
+                // 用 run 开始时的旧快照（旧 DocumentId）会把改动前正文+链接写回去覆盖新内容（Codex P1）。
+                var fresh = await db.DocumentEntries
+                    .Find(e => e.Id == entry.Id && !e.IsFolder)
+                    .FirstOrDefaultAsync();
+                var content = fresh == null ? null : await LoadWritableContentAsync(fresh);
+                if (fresh != null && content != null)
                 {
-                    var candidates = allTitles.Where(t => t != entry.Title).ToList();
+                    var candidates = allTitles.Where(t => t != fresh.Title).ToList();
                     var result = WikiLinkAutoLinker.LinkTitles(content, candidates);
                     if (result.LinksAdded > 0)
                     {
-                        await _entryContentWriter.WriteAsync(
-                            entry, store, result.Content, run.UserId, userName, DocumentVersionSource.Edit);
-                        changed++;
-                        linksAdded += result.LinksAdded;
-                        // 本篇新增链接明细（from=当前条目 → to=标题命中的目标条目），随 progress 事件推给前端做边生长动画
-                        newLinks = result.LinkedTitles
-                            .Select(t => titleToId.TryGetValue(t, out var toId) && toId != entry.Id
-                                ? new { from = entry.Id, to = toId, anchorText = t }
-                                : null)
-                            .Where(l => l != null)
-                            .Cast<object>()
-                            .ToList();
+                        // 写前乐观并发检查：加载正文后用户又保存过（UpdatedAt 变化）则跳过本篇，
+                        // 宁可少补一篇（下次重跑幂等补上）也不覆盖用户刚写的内容。
+                        var currentUpdatedAt = await db.DocumentEntries
+                            .Find(e => e.Id == entry.Id)
+                            .Project(e => e.UpdatedAt)
+                            .FirstOrDefaultAsync();
+                        if (currentUpdatedAt != fresh.UpdatedAt)
+                        {
+                            skipped++;
+                        }
+                        else
+                        {
+                            await _entryContentWriter.WriteAsync(
+                                fresh, store, result.Content, run.UserId, userName, DocumentVersionSource.Edit);
+                            changed++;
+                            linksAdded += result.LinksAdded;
+                            // 本篇新增链接明细（from=当前条目 → to=标题命中的目标条目），随 progress 事件推给前端做边生长动画
+                            newLinks = result.LinkedTitles
+                                .Select(t => titleToId.TryGetValue(t, out var toId) && toId != entry.Id
+                                    ? new { from = entry.Id, to = toId, anchorText = t }
+                                    : null)
+                                .Where(l => l != null)
+                                .Cast<object>()
+                                .ToList();
+                        }
                     }
                 }
                 else
