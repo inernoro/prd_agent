@@ -118,6 +118,14 @@
 - 全量 release gate 矩阵复查显示 `video-agent.v2d.transcribe::asr:raw` 与 `video-agent.video-to-text::asr:raw` 仍为 0，原因是 release gate 已纳入这两个入口，但 MAP shadow seed 还没有对应真实业务采样路径。已扩展 `scripts/llmgw-map-shadow-seed.py`：`--include-video-to-doc-asr` 通过 `/api/video-agent/v2d/runs` 触发 VideoToDoc worker；`--include-video-to-text-asr-workflow` 创建临时 workflow 并通过 `video-to-text` capsule 的 ASR 模式触发 WorkflowRunWorker。两者都要求 `--asr-video-url` 或 `LLMGW_SHADOW_ASR_VIDEO_URL`，避免用裸 `/gw/v1/raw` 样本替代真实 MAP 入口。
 - 修复后已在生产短时 100% shadow 采样窗口跑通上述两条新增入口，并自动恢复生产到 `Mode=shadow`、allowlist 空、`ShadowFullSamplePercent=1`。证据文件 `.llmgw-release-evidence/20260707T130533Z_video-asr-v2d-vtt-seed-window.json`：`seed[1].video_to_doc_asr`、`seed[1].video_to_text_asr_workflow` 均为 `ok=True`，`expectedGrowth.raw=2`。随后用 coverage report 验证：`video-agent.v2d.transcribe::asr/raw total=1 allMatch=1 critical=0 httpFail=0`；`video-agent.video-to-text::asr/raw total=1 allMatch=1 critical=0 httpFail=0`。这只证明两条入口已打通，仍未满足每格 30 条与 24 小时覆盖门槛。
 
+## 最新生产取证（2026-07-08 13:06 CST）
+
+- 用户确认视频生成暂缓后，已停止批量视频取证，并将非视频 scoped gate 从全局视频失败中拆出。生产当前仍为 `LlmGateway__Mode=shadow`、`LlmGateway__HttpAppCallerAllowlist=`、`LlmGateway__ShadowFullSamplePercent=1`。
+- 只读运行 `scripts/llmgw-shadow-coverage-report.py --skip-global-cells`，统计生产 commit `ca44d6c89238b2af54c3f663cf25be4773c2be03` 最近 24 小时非视频 17 个 appCaller:kind 单元：每格样本数均已达到 30，`critical=0`、`httpFail=0`，运行安全门通过。
+- 非视频 17 个单元包含：`report-agent.generate::chat/send`、`prd-agent-desktop.chat.sendmessage::chat/stream`、`prd-agent-desktop.preview-ask.section::chat/stream`、`open-platform-agent.proxy::chat/stream`、`open-api.proxy::chat/send`、`open-api.proxy::generation/raw`、`prd-agent-web.model-lab.run::chat/stream`、`prd-agent.arena.battle::chat/stream`、`tutorial-email.generate::chat/send`、四个图片 raw 单元，以及四个 ASR raw 单元。
+- 同一矩阵加 `--min-coverage-hours 24` 复跑仍 FAIL，17 个失败全部为覆盖时长不足；当前覆盖时长约 0.98-2.52 小时，不是样本数、critical 或 httpFail 问题。因此非视频可进入候选灰度排序，但不能宣称已满足 24 小时观察门。
+- `open-api.proxy::chat/send` 与 `tutorial-email.generate::chat/send` 存在非 critical `content` warning mismatch：两侧均 http 成功、模型/池/平台/解析一致，无 critical mismatch。该差异来自生成式文本非确定性，不能当作 transport 失败；但在汇报时必须明确区分“运行安全门通过”和“逐字内容 allMatch 未满分”。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘
