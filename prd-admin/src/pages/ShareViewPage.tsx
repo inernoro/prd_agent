@@ -15,6 +15,29 @@ function fmtSize(b: number) {
   return `${(b / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function escapeHtmlAttr(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function isHtmlEntry(siteUrl: string, entryFile?: string) {
+  const target = entryFile || siteUrl.split('?')[0].split('#')[0];
+  return /\.html?$/i.test(target);
+}
+
+function withPreviewBase(html: string, siteUrl: string) {
+  if (/<base\b/i.test(html)) return html;
+  const baseHref = new URL('.', siteUrl).toString();
+  const baseTag = `<base href="${escapeHtmlAttr(baseHref)}">`;
+  if (/<head\b[^>]*>/i.test(html)) {
+    return html.replace(/<head\b([^>]*)>/i, `<head$1>${baseTag}`);
+  }
+  return `${baseTag}${html}`;
+}
+
 interface ShareViewPageProps {
   /** 显式注入 token；若未传，则从 useParams().token 读取（兼容旧路由 /s/wp/:token） */
   tokenOverride?: string;
@@ -42,6 +65,8 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   const [showComments, setShowComments] = useState(false);
   // 顶栏按钮上展示的评论数。初始拉一次，抽屉打开后由 CommentsSection 的 onCountChange 接管实时同步
   const [commentCount, setCommentCount] = useState<number | null>(null);
+  const [embeddedHtml, setEmbeddedHtml] = useState<{ siteUrl: string; html: string } | null>(null);
+  const [embeddedHtmlLoading, setEmbeddedHtmlLoading] = useState(false);
 
   const handleSave = useCallback(async () => {
     if (!token) return;
@@ -120,6 +145,33 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
       .catch(() => {});
     return () => { alive = false; };
   }, [token, password, data]);
+
+  useEffect(() => {
+    const site = data?.sites.length === 1 ? data.sites[0] : null;
+    if (!site || site.pdfAssetUrl || !isHtmlEntry(site.siteUrl, site.entryFile)) {
+      setEmbeddedHtml(null);
+      setEmbeddedHtmlLoading(false);
+      return;
+    }
+
+    let alive = true;
+    setEmbeddedHtml(null);
+    setEmbeddedHtmlLoading(true);
+    fetch(site.siteUrl, { credentials: 'omit' })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const html = await res.text();
+        if (alive) setEmbeddedHtml({ siteUrl: site.siteUrl, html: withPreviewBase(html, site.siteUrl) });
+      })
+      .catch(() => {
+        if (alive) setEmbeddedHtml(null);
+      })
+      .finally(() => {
+        if (alive) setEmbeddedHtmlLoading(false);
+      });
+
+    return () => { alive = false; };
+  }, [data]);
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -373,8 +425,20 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   // Single site -> directly embed in iframe
   if (data.sites.length === 1) {
     const site = data.sites[0];
+    const iframeHtml = embeddedHtml?.siteUrl === site.siteUrl ? embeddedHtml.html : null;
     return (
-      <div ref={singleViewRef} style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', background: '#0a0a0a' }}>
+      <div
+        ref={singleViewRef}
+        style={{
+          width: '100vw',
+          height: '100vh',
+          minHeight: 0,
+          display: 'grid',
+          gridTemplateRows: isFullscreen ? 'minmax(0, 1fr)' : 'auto minmax(0, 1fr)',
+          background: '#0a0a0a',
+          overflow: 'hidden',
+        }}
+      >
         {/* Top bar —— 全屏演示时隐藏，让 PPT 占满整屏 */}
         <div style={{
           padding: '8px 16px',
@@ -457,19 +521,37 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             )}
           </div>
         </div>
-        {/* Iframe
-            所有站点（含 PDF 包装站）统一 iframe 到 siteUrl(壳子 index.html) + allow-scripts 沙箱。
-            PDF 壳子现在用 PDF.js 渲染成 canvas（见后端 BuildPdfWrapper），不再依赖浏览器原生 PDF Viewer，
-            因此手机浏览器 / 微信内置 WebView 也能正常显示——旧版直接 iframe *.pdf 在移动端一片空白。
-            canvas 渲染没有"壳子里再套 PDF Viewer 被 Chrome 屏蔽"的问题，allow-scripts + allow-same-origin
-            让壳子能同源 fetch 同目录的 .pdf 文件。 */}
-        <iframe
-          src={site.siteUrl}
-          title={site.title}
-          style={{ flex: 1, border: 'none', width: '100%' }}
-          sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-fullscreen"
-          allowFullScreen
-        />
+        <div style={{ position: 'relative', minHeight: 0, background: '#fff' }}>
+          {/* Iframe
+              普通 HTML 托管页优先走 srcDoc：COS 直链在 Chrome iframe 中可能只绘制空白，
+              但同一 HTML 下载后可正常打开。srcDoc 注入 base 后保留相对资源路径，同时不加
+              allow-same-origin，避免用户上传 HTML 获得 MAP 同源能力。
+              PDF 壳子仍保留 siteUrl 路径：它需要以 COS 文档源加载同目录 PDF。 */}
+          <iframe
+            src={iframeHtml ? undefined : site.siteUrl}
+            srcDoc={iframeHtml || undefined}
+            title={site.title}
+            style={{ border: 'none', width: '100%', height: '100%', minHeight: 0, display: 'block', background: '#fff' }}
+            sandbox={iframeHtml
+              ? 'allow-scripts allow-popups allow-forms allow-fullscreen'
+              : 'allow-scripts allow-same-origin allow-popups allow-forms allow-fullscreen'}
+            allowFullScreen
+          />
+          {embeddedHtmlLoading && !iframeHtml && (
+            <div style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: '#fff',
+              color: '#475569',
+              fontSize: 14,
+            }}>
+              正在准备预览...
+            </div>
+          )}
+        </div>
 
         {/* 评论：右侧滑出抽屉（由顶栏「评论」按钮打开）。不占页面布局、不盖 PPT 控件（token 必有） */}
         {token && showComments && (
