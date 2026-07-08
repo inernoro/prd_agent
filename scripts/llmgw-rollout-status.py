@@ -146,16 +146,97 @@ def _pct(done: float, total: float) -> int:
     return max(0, min(100, round(done * 100 / total)))
 
 
-def _first_cell(coverage: dict[str, Any]) -> dict[str, Any]:
+def _coverage_cells(coverage: dict[str, Any]) -> list[dict[str, Any]]:
     cells = coverage.get("cells") or []
-    return cells[0] if cells and isinstance(cells[0], dict) else {}
+    return [item for item in cells if isinstance(item, dict)]
 
 
 def _item(name: str, progress: int, status: str, detail: str) -> dict[str, Any]:
     return {"name": name, "progress": progress, "status": status, "detail": detail}
 
 
-def _decision(plan: dict[str, Any], cell: dict[str, Any]) -> tuple[str, str]:
+def _cell_summary(cells: list[dict[str, Any]]) -> dict[str, Any]:
+    if not cells:
+        return {
+            "count": 0,
+            "samplePass": 0,
+            "qualityPass": 0,
+            "coveragePass": 0,
+            "sampleProgress": 0,
+            "coverageProgress": 0,
+            "critical": 0,
+            "httpFail": 0,
+            "sampleDetail": "cells=0",
+            "qualityDetail": "cells=0 critical=0 httpFail=0",
+            "coverageDetail": "cells=0",
+            "samplesOk": False,
+            "qualityOk": False,
+            "coverageOk": False,
+        }
+
+    sample_progress_values: list[int] = []
+    coverage_progress_values: list[int] = []
+    sample_pass = 0
+    coverage_pass = 0
+    quality_pass = 0
+    critical_total = 0
+    http_fail_total = 0
+    sample_worst: dict[str, Any] | None = None
+    coverage_worst: dict[str, Any] | None = None
+
+    for cell in cells:
+        total = int(cell.get("total") or 0)
+        required = int(cell.get("requiredTotal") or 0)
+        critical = int(cell.get("critical") or 0)
+        http_fail = int(cell.get("httpFail") or 0)
+        coverage_hours = float(cell.get("coverageHours") or 0)
+        min_coverage_hours = float(cell.get("minCoverageHours") or 0)
+        sample_progress = _pct(total, required)
+        coverage_progress = _pct(coverage_hours, min_coverage_hours)
+        sample_progress_values.append(sample_progress)
+        coverage_progress_values.append(coverage_progress)
+        critical_total += critical
+        http_fail_total += http_fail
+        if required > 0 and total >= required:
+            sample_pass += 1
+        if min_coverage_hours > 0 and coverage_hours >= min_coverage_hours:
+            coverage_pass += 1
+        if critical == 0 and http_fail == 0:
+            quality_pass += 1
+        if sample_worst is None or sample_progress < int(sample_worst["progress"]):
+            sample_worst = {"progress": sample_progress, "cell": cell}
+        if coverage_worst is None or coverage_progress < int(coverage_worst["progress"]):
+            coverage_worst = {"progress": coverage_progress, "cell": cell}
+
+    count = len(cells)
+    sample_worst_cell = (sample_worst or {}).get("cell") or {}
+    coverage_worst_cell = (coverage_worst or {}).get("cell") or {}
+    return {
+        "count": count,
+        "samplePass": sample_pass,
+        "qualityPass": quality_pass,
+        "coveragePass": coverage_pass,
+        "sampleProgress": min(sample_progress_values) if sample_progress_values else 0,
+        "coverageProgress": min(coverage_progress_values) if coverage_progress_values else 0,
+        "critical": critical_total,
+        "httpFail": http_fail_total,
+        "sampleDetail": (
+            f"{sample_pass}/{count} cells pass; worst={sample_worst_cell.get('label') or '<unknown>'} "
+            f"total={int(sample_worst_cell.get('total') or 0)}/{int(sample_worst_cell.get('requiredTotal') or 0)}"
+        ),
+        "qualityDetail": f"{quality_pass}/{count} cells pass; critical={critical_total} httpFail={http_fail_total}",
+        "coverageDetail": (
+            f"{coverage_pass}/{count} cells pass; worst={coverage_worst_cell.get('label') or '<unknown>'} "
+            f"coverageHours={float(coverage_worst_cell.get('coverageHours') or 0):.3f}/"
+            f"{float(coverage_worst_cell.get('minCoverageHours') or 0):g}"
+        ),
+        "samplesOk": sample_pass == count,
+        "qualityOk": quality_pass == count,
+        "coverageOk": coverage_pass == count,
+    }
+
+
+def _decision(plan: dict[str, Any]) -> tuple[str, str]:
     reason = str(plan.get("reason") or "")
     recommended = int(plan.get("recommendedBatches") or 0)
     can_run = bool(plan.get("canRunRecommendedBatches"))
@@ -195,23 +276,14 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         coverage, coverage_path = _coverage_from_tool(args, release_commit, tmp)
 
     plan, plan_path = _plan_from_tool(args, coverage_path, tmp)
-    cell = _first_cell(coverage)
-    total = int(cell.get("total") or 0)
-    required = int(cell.get("requiredTotal") or 0)
-    critical = int(cell.get("critical") or 0)
-    http_fail = int(cell.get("httpFail") or 0)
-    coverage_hours = float(cell.get("coverageHours") or 0)
-    min_coverage_hours = float(cell.get("minCoverageHours") or 0)
-    action, action_detail = _decision(plan, cell)
+    cells = _coverage_cells(coverage)
+    cell_summary = _cell_summary(cells)
+    action, action_detail = _decision(plan)
 
     health_commit = _normalize_commit((health.get("json") or {}).get("commit"))
     health_ok = bool(health.get("skipped")) or (
         bool(health.get("ok")) and (not release_commit or not health_commit or health_commit == release_commit)
     )
-    samples_ok = required > 0 and total >= required
-    quality_ok = critical == 0 and http_fail == 0
-    coverage_ok = min_coverage_hours > 0 and coverage_hours >= min_coverage_hours
-
     items = [
         _item(
             "生产 healthz",
@@ -223,21 +295,21 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         ),
         _item(
             "shadow 样本数",
-            _pct(total, required),
-            "pass" if samples_ok else "pending",
-            f"{cell.get('label') or '<no-cell>'} total={total}/{required}",
+            int(cell_summary["sampleProgress"]),
+            "pass" if cell_summary["samplesOk"] else "pending",
+            str(cell_summary["sampleDetail"]),
         ),
         _item(
             "shadow 质量",
-            100 if quality_ok else 0,
-            "pass" if quality_ok else "fail",
-            f"critical={critical} httpFail={http_fail}",
+            100 if cell_summary["qualityOk"] else 0,
+            "pass" if cell_summary["qualityOk"] else "fail",
+            str(cell_summary["qualityDetail"]),
         ),
         _item(
             "覆盖窗口",
-            _pct(coverage_hours, min_coverage_hours),
-            "pass" if coverage_ok else "pending",
-            f"coverageHours={coverage_hours:.3f}/{min_coverage_hours:g}",
+            int(cell_summary["coverageProgress"]),
+            "pass" if cell_summary["coverageOk"] else "pending",
+            str(cell_summary["coverageDetail"]),
         ),
         _item(
             "planner 下一步",
@@ -247,7 +319,7 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         ),
         _item(
             "全量 HTTP 发布",
-            100 if action == "ready-for-release-gate" and coverage_ok else 0,
+            100 if action == "ready-for-release-gate" and cell_summary["coverageOk"] else 0,
             "not-ready" if action != "ready-for-release-gate" else "gate-ready",
             "未完成全量迁移前不得切 LLMGW_MODE=http。",
         ),
@@ -270,7 +342,8 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
             "httpStatus": health.get("httpStatus"),
             "commit": health_commit,
         },
-        "primaryCell": cell,
+        "primaryCell": cells[0] if cells else {},
+        "cellSummary": cell_summary,
         "items": items,
     }
 
@@ -387,6 +460,53 @@ def _self_test() -> int:
         "run-one-window-extension",
         1,
     )
+
+    multi_coverage_path = tmp / "multi-cell.coverage.json"
+    multi_coverage = _fake_coverage("2026-01-01T00:00:00+00:00")
+    multi_coverage["failures"] = ["样本不足 total=3, required=6"]
+    multi_coverage["cells"].append({
+        "label": "custom.app::chat/send",
+        "appCallerCode": "custom.app::chat",
+        "kind": "send",
+        "requiredTotal": 6,
+        "total": 3,
+        "critical": 0,
+        "httpFail": 0,
+        "coverageHours": 0.1,
+        "minCoverageHours": 24,
+        "firstComparedAt": "2026-01-01T00:00:00+00:00",
+        "lastComparedAt": "2026-01-01T00:06:00+00:00",
+        "failures": ["样本不足 total=3, required=6", "覆盖时长不足 coverageHours=0.1, required=24"],
+    })
+    multi_coverage_path.write_text(
+        json.dumps(multi_coverage, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    args = argparse.Namespace(
+        base="",
+        key="",
+        release_commit="abc123",
+        coverage_json=str(multi_coverage_path),
+        require_app_kind=DEFAULT_REQUIRE_APP_KIND,
+        require_kind=[],
+        since_hours=48.0,
+        min_coverage_hours=24.0,
+        failure_sample_limit=0,
+        batch_yield=1,
+        max_batches=1,
+        allow_window_extension=True,
+        skip_global_cells=True,
+        skip_health=True,
+        json_out="",
+        report_md="",
+        print_json=False,
+        self_test=False,
+    )
+    report = build_status(args)
+    if int(report["cellSummary"]["sampleProgress"]) != 50:
+        raise AssertionError(f"multi-cell sample progress must use worst cell: {report['cellSummary']}")
+    if "1/2 cells pass" not in str(report["cellSummary"]["sampleDetail"]):
+        raise AssertionError(f"multi-cell sample detail must include pass count: {report['cellSummary']}")
     print("LLM Gateway rollout status self-test: PASS")
     return 0
 

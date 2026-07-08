@@ -196,6 +196,8 @@ def _static_checks() -> list[dict]:
             "--self-test",
             "wait-coverage-window",
             "run-one-window-extension",
+            "cellSummary",
+            "multi-cell sample progress",
             "shadow 样本数",
             "shadow 质量",
             "覆盖窗口",
