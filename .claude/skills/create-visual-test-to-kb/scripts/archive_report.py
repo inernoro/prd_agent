@@ -820,6 +820,9 @@ tr.row-fail td{{background:rgba(180,35,24,.06)}}
 tr.row-risk td{{background:rgba(154,103,0,.07)}}
 tr.row-gap td{{background:rgba(33,29,24,.04);color:var(--ink-3)}}
 tr.is-hidden{{display:none}}
+tr.filter-empty-row{{display:none}}
+tr.filter-empty-row td{{background:rgba(33,29,24,.035);color:var(--ink-3);font-style:italic}}
+.table-wrap.has-filter-empty tr.filter-empty-row{{display:table-row}}
 figure{{margin:18px 0 28px}}
 img{{max-width:100%;height:auto;border:1.5px solid var(--ink);border-radius:3px;display:block;box-shadow:4px 4px 0 rgba(33,29,24,.10)}}
 figcaption{{color:var(--ink-3);font-size:12.5px;margin-top:8px;line-height:1.7}}
@@ -881,10 +884,29 @@ main{{padding:0 16px 60px}}
   function applyFilter(){{
     var q=(filterInput.value||'').toLowerCase();
     document.querySelectorAll('tbody tr').forEach(function(row){{
+      if(row.classList.contains('filter-empty-row')) return;
       var text=row.textContent.toLowerCase();
       var modeOk=mode==='all'||(mode==='fail'&&/\\bp0\\b|未通过|\\bfail\\b|阻断/i.test(text))||(mode==='risk'&&/p1|有缺陷|conditional|风险/i.test(text))||(mode==='gap'&&/未覆盖|not-run|未深测|弱相关|无关/i.test(text));
       var queryOk=!q||text.indexOf(q)>=0;
       row.classList.toggle('is-hidden', !(modeOk&&queryOk));
+    }});
+    document.querySelectorAll('.table-wrap table').forEach(function(table){{
+      var tbody=table.querySelector('tbody');
+      if(!tbody) return;
+      var empty=tbody.querySelector('.filter-empty-row');
+      if(!empty){{
+        empty=document.createElement('tr');
+        empty.className='filter-empty-row';
+        var td=document.createElement('td');
+        td.colSpan=Math.max(1, table.querySelectorAll('thead th').length);
+        td.textContent='当前筛选条件下无匹配行；请清空筛选或切回“全部”。';
+        empty.appendChild(td);
+        tbody.appendChild(empty);
+      }}
+      var visible=Array.prototype.some.call(tbody.querySelectorAll('tr:not(.filter-empty-row)'), function(row){{
+        return !row.classList.contains('is-hidden');
+      }});
+      table.closest('.table-wrap').classList.toggle('has-filter-empty', !visible);
     }});
   }}
   filterInput.addEventListener('input', applyFilter);
