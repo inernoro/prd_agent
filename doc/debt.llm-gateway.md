@@ -378,6 +378,14 @@
 - 生产只读停补验证通过：显式设置 `LLMGW_SHADOW_ACCUMULATE_ALLOW_WINDOW_EXTENSION=1`、`BATCHES=1` 运行 accumulator，preflight coverage 后 planner 输出 `remainingBatchesNeeded=0`、`recommendedBatches=0`、`canRunRecommendedBatches=false`、`reason=wait-coverage-window`，脚本在 seed 前退出，没有触发模型请求。
 - 验证后正式 `/gw/v1/healthz` 仍返回 `2f6b0658397019e809f46ceb001245c6fdb03f40`，API 容器开关仍为 `Mode=shadow`、allowlist 空、采样 `1%`。下一次最早应在首样本时间约 24 小时后再显式开启 window extension，且只允许 planner 推荐的 1 个 batch。
 
+## 最新生产脚本漂移修复（2026-07-08 20:04 CST）
+
+- 继续执行只读 gate 时发现生产机 `scripts/llmgw-shadow-coverage-report.py` 仍是旧版本，缺少 scoped gate 必需的 `--skip-global-cells` 参数；首次命令只在 argparse 阶段失败，没有触发模型请求、没有改数据库、没有重启容器。
+- 已先备份旧脚本到 `/root/backups/llmgw-shadow-coverage-script-before-sync-20260708T200400+0800`，再从当前 `main` 精确同步 `scripts/llmgw-shadow-coverage-report.py`；同步后生产 sha256 为 `106e9551b4af8651fed5c951209a857c146efd95a4311229113058b8a13c6c2b`，`python3 -m py_compile` 通过，`--help` 已显示 `--skip-global-cells`。
+- 只读复核证据目录：生产 `/tmp/llmgw-shadow-plan-now-20260708T120423Z/`。`report-agent.generate::chat/send total=30/30`、`critical=0`、`httpFail=0`，但 `coverageHours=0.716 < 24`，coverage verdict 仍为 `fail`。
+- planner 复核输出 `reason=wait-coverage-window`、`recommendedBatches=0`、`canRunRecommendedBatches=false`。因此当前不能继续补 canary-intent 样本，也不能执行 `canary-intent-text` 灰度或全量 `LLMGW_MODE=http`。
+- 下一步最早在首个目标样本 `2026-07-08T10:56:23.927Z` 之后满 24 小时时间窗后执行：先只读 coverage + planner；只有 planner 返回 `window-extension-top-up` 且推荐 `1` 个 batch，才显式开启 `LLMGW_SHADOW_ACCUMULATE_ALLOW_WINDOW_EXTENSION=1` 做 1 条低成本延展样本。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘
