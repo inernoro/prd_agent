@@ -401,6 +401,12 @@
 - 只读 release gate 当前生产验证：使用 `--expect-commit 2f6b0658397019e809f46ceb001245c6fdb03f40 --shadow-release-commit 2f6b0658397019e809f46ceb001245c6fdb03f40`，结果仍为 `verdict=fail`。样本数为 `30/30` 且 `critical=0`、`httpFail=0`，但唯一失败项仍是 `coverageHours=0.72 < 24`。
 - 结论：release gate 已正确阻止两类误发布：不能用旧证据发布新 commit，也不能在当前生产 commit 覆盖窗口不足时灰度或全量 HTTP。下一步仍只能等覆盖窗口到点后先跑只读状态板；若要发布新 commit，必须先部署该 commit 的 shadow 模式并重新积累同 commit 证据。
 
+## 最新状态板可操作性修正（2026-07-08 20:54 CST）
+
+- 本地 `scripts/llmgw-rollout-status.py` 的覆盖窗口行新增 `nextEligibleAt`，从所有未达标 cell 的 `firstComparedAt + minCoverageHours` 推导最晚可动作时间，多 cell 时不会被已达标 cell 误导。
+- 零费用验证通过：`python3 -m py_compile scripts/llmgw-rollout-status.py scripts/llmgw-readiness-audit.py`、`scripts/llmgw-rollout-status.py --self-test`、`python3 scripts/llmgw-readiness-audit.py --print-json` 均通过。
+- 使用生产 `/gw/v1` 只读状态板复核，仍为 `action=wait-coverage-window`，但覆盖窗口行现在明确显示 `nextEligibleAt=2026-07-09T10:56:23.927000Z`，即北京时间 `2026-07-09 18:56:23.927 CST`。本次复核没有触发 MAP seed、没有触发模型请求、没有改生产配置。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘
