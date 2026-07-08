@@ -14,6 +14,10 @@ public class LLMRequestContextAccessor : ILLMRequestContextAccessor
     public IDisposable BeginScope(LlmRequestContext context)
     {
         var prev = _current.Value;
+        if (prev?.ForceFullShadowSample == true && !context.ForceFullShadowSample)
+        {
+            context = context with { ForceFullShadowSample = true };
+        }
         _current.Value = context;
         return new Scope(() => _current.Value = prev);
     }
@@ -33,4 +37,3 @@ public class LLMRequestContextAccessor : ILLMRequestContextAccessor
         }
     }
 }
-

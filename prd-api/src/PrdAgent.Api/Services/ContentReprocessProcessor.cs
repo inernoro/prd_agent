@@ -144,7 +144,8 @@ public class ContentReprocessProcessor
             DocumentHash: null,
             SystemPromptRedacted: "doc-store-reprocess",
             RequestType: "chat",
-            AppCallerCode: AppCallerRegistry.DocumentStoreAgent.Reprocess.Generate));
+            AppCallerCode: AppCallerRegistry.DocumentStoreAgent.Reprocess.Generate,
+            ForceFullShadowSample: run.ForceFullShadowSample));
 
         var client = _llmGateway.CreateClient(
             AppCallerRegistry.DocumentStoreAgent.Reprocess.Generate,

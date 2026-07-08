@@ -10,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.LlmGatewayHost;
 using Shouldly;
@@ -111,6 +112,35 @@ public class GatewayServingEndpointContractTests
             send.Success.ShouldBeTrue();
             // stub 把 expectedModel 回显进 Content，证明请求字段真正跨 HTTP 送达 serving 端。
             send.Content.ShouldBe("sent:echo-model");
+        }
+        finally { await app.StopAsync(); }
+    }
+
+    [Fact]
+    public async Task OpenAiCompatibleChatCompletions_RoundTrips_OverRealHttp()
+    {
+        await using var app = await StartServingHostAsync();
+        try
+        {
+            var client = new HttpClient { BaseAddress = new Uri(ResolveBaseUrl(app)) };
+            var req = new HttpRequestMessage(HttpMethod.Post, "/v1/chat/completions")
+            {
+                Content = new StringContent(
+                    """
+                    {"model":"sidecar-model","messages":[{"role":"user","content":"hi"}],"stream":false}
+                    """,
+                    System.Text.Encoding.UTF8,
+                    "application/json"),
+            };
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", TestKey);
+            req.Headers.Add("X-Gateway-App-Caller", AppCallerRegistry.PageAgent.Generate);
+
+            var resp = await client.SendAsync(req);
+            var body = await resp.Content.ReadAsStringAsync();
+
+            resp.StatusCode.ShouldBe(System.Net.HttpStatusCode.OK);
+            body.ShouldContain("\"model\":\"sidecar-model\"");
+            body.ShouldContain("\"content\":\"sent:sidecar-model\"");
         }
         finally { await app.StopAsync(); }
     }
@@ -219,6 +249,7 @@ public class GatewayServingEndpointContractTests
         {
             await Task.Yield();
             yield return new GatewayStreamChunk { Type = GatewayChunkType.Start, Seq = 1, Resolution = Resolve(request.ExpectedModel) };
+            yield return new GatewayStreamChunk { Type = GatewayChunkType.Text, Seq = 2, Content = $"stream:{request.ExpectedModel}" };
             yield return new GatewayStreamChunk { Type = GatewayChunkType.Done, Seq = 2, FinishReason = "stop" };
         }
 

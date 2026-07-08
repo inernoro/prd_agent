@@ -3,8 +3,8 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
-using PrdAgent.Core.Security;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.AssetStorage;
@@ -31,15 +31,18 @@ public class TranscriptAgentController : ControllerBase
 
     private readonly MongoDbContext _db;
     private readonly IAssetStorage _assetStorage;
+    private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly ILogger<TranscriptAgentController> _logger;
 
     public TranscriptAgentController(
         MongoDbContext db,
         IAssetStorage assetStorage,
+        ILLMRequestContextAccessor llmRequestContext,
         ILogger<TranscriptAgentController> logger)
     {
         _db = db;
         _assetStorage = assetStorage;
+        _llmRequestContext = llmRequestContext;
         _logger = logger;
     }
 
@@ -152,7 +155,8 @@ public class TranscriptAgentController : ControllerBase
             WorkspaceId = workspaceId,
             OwnerUserId = userId,
             Type = "asr",
-            Status = "queued"
+            Status = "queued",
+            ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true
         };
         await _db.TranscriptRuns.InsertOneAsync(run);
 
@@ -259,7 +263,8 @@ public class TranscriptAgentController : ControllerBase
             OwnerUserId = userId,
             Type = "copywrite",
             TemplateId = dto.TemplateId,
-            Status = "queued"
+            Status = "queued",
+            ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true
         };
         await _db.TranscriptRuns.InsertOneAsync(run);
 

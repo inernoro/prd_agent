@@ -19,6 +19,10 @@
     --since-hours 24 \
     --require-kind send:30 \
     --require-app-kind report-agent.generate::chat:send:30
+
+Scoped rollout canaries may pass --skip-global-cells and only provide
+--require-app-kind cells. This is intentionally opt-in; full http gates keep
+global/kind checks by default.
 """
 
 from __future__ import annotations
@@ -345,6 +349,8 @@ def main() -> int:
                         help="要求某类 shadow Kind 达到最小样本数，格式 kind 或 kind:min，可重复")
     parser.add_argument("--require-app-kind", action="append", default=[],
                         help="要求某个 appCallerCode 的某类 Kind 达到最小样本数，格式 appCallerCode:kind:min，可重复")
+    parser.add_argument("--skip-global-cells", action="store_true",
+                        help="跳过默认 global shadow 检查；用于视频暂缓等 scoped canary，默认全量发布不得启用")
     parser.add_argument("--since-hours", type=float, default=float(os.environ.get("LLMGW_GATE_SHADOW_SINCE_HOURS", "0")),
                         help="只统计最近 N 小时 shadow 样本；0 表示不限制。生产 http/canary 发布建议 >=24")
     parser.add_argument("--min-coverage-hours", type=float, default=float(os.environ.get("LLMGW_GATE_MIN_COVERAGE_HOURS", "0")),
@@ -378,6 +384,7 @@ def main() -> int:
             "minCoverageHours": max(0, args.min_coverage_hours),
             "healthSamples": max(1, args.health_samples),
             "healthIntervalSeconds": args.health_interval,
+            "skipGlobalCells": bool(args.skip_global_cells),
         },
         "health": {
             "httpStatus": 0,
@@ -423,15 +430,16 @@ def main() -> int:
     shadow_checks: list[dict] = []
     since_hours = max(0, args.since_hours)
     min_coverage_hours = max(0, args.min_coverage_hours)
-    shadow_checks.append(_shadow_check(
-        base,
-        args.key,
-        None,
-        args.min_total,
-        since_hours=since_hours,
-        min_coverage_hours=min_coverage_hours,
-        release_commit=shadow_release_commit,
-    ))
+    if not args.skip_global_cells:
+        shadow_checks.append(_shadow_check(
+            base,
+            args.key,
+            None,
+            args.min_total,
+            since_hours=since_hours,
+            min_coverage_hours=min_coverage_hours,
+            release_commit=shadow_release_commit,
+        ))
     for app in args.app_caller:
         shadow_checks.append(_shadow_check(
             base,

@@ -669,11 +669,9 @@ public class ModelLabController : ControllerBase
                 SystemPromptRedacted: "[MODEL_LAB]",
                 RequestType: requestType,
                 AppCallerCode: appCallerCode,
-                ModelResolutionType: ModelResolutionType.DirectModel,
-                // S2 观测标记：B 类保留直连锁定语义（测 admin 明确选中的 platform+model，故意绕开网关池
-                // 调度，走网关池会破坏「选 A 测 A」语义）。全网关路由留待网关支持 pinned platform+model
-                // 入口后做（见 doc/plan.llm-gateway.full-cutover.md S3）。此处只纳入 transport 观测：direct。
-                GatewayTransport: GatewayTransports.Direct));
+                // ModelLab 仍锁定 admin 明确选中的 platform+model，但该语义已由 pinned gateway 保证。
+                // transport 不在调用方硬写，交给当前网关模式在日志构建点标注为 inproc/http。
+                ModelResolutionType: ModelResolutionType.DirectModel));
 
             var startedAt = item.StartedAt;
             var firstTokenAt = (DateTime?)null;

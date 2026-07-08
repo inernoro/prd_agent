@@ -25,7 +25,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _read(rel: str) -> str:
-    return (ROOT / rel).read_text(encoding="utf-8")
+    path = ROOT / rel
+    return path.read_text(encoding="utf-8") if path.exists() else ""
 
 
 def _redact_cmd(cmd: list[str]) -> list[str]:
@@ -104,6 +105,38 @@ def _static_checks() -> list[dict]:
     rollout_ledger = rollout_ledger_path.read_text(encoding="utf-8") if rollout_ledger_path.exists() else ""
     prod_preflight_path = ROOT / "scripts/llmgw-prod-preflight.py"
     prod_preflight = prod_preflight_path.read_text(encoding="utf-8") if prod_preflight_path.exists() else ""
+    upstream_readiness_path = ROOT / "scripts/llmgw-upstream-readiness.py"
+    upstream_readiness = upstream_readiness_path.read_text(encoding="utf-8") if upstream_readiness_path.exists() else ""
+    disk_guard_path = ROOT / "scripts/llmgw-disk-space-guard.sh"
+    disk_guard = disk_guard_path.read_text(encoding="utf-8") if disk_guard_path.exists() else ""
+    external_backup_path = ROOT / "scripts/llmgw-prod-external-backup.sh"
+    external_backup = external_backup_path.read_text(encoding="utf-8") if external_backup_path.exists() else ""
+    chat_bootstrap_path = ROOT / "scripts/llmgw-prod-chat-pool-bootstrap.sh"
+    chat_bootstrap = chat_bootstrap_path.read_text(encoding="utf-8") if chat_bootstrap_path.exists() else ""
+    chat_bootstrap_js_path = ROOT / "scripts/llmgw-prod-chat-pool-bootstrap.js"
+    chat_bootstrap_js = chat_bootstrap_js_path.read_text(encoding="utf-8") if chat_bootstrap_js_path.exists() else ""
+    asr_bootstrap_path = ROOT / "scripts/llmgw-prod-asr-pool-bootstrap.sh"
+    asr_bootstrap = asr_bootstrap_path.read_text(encoding="utf-8") if asr_bootstrap_path.exists() else ""
+    asr_bootstrap_js_path = ROOT / "scripts/llmgw-prod-asr-pool-bootstrap.js"
+    asr_bootstrap_js = asr_bootstrap_js_path.read_text(encoding="utf-8") if asr_bootstrap_js_path.exists() else ""
+    video_bootstrap_path = ROOT / "scripts/llmgw-prod-video-caller-bootstrap.sh"
+    video_bootstrap = video_bootstrap_path.read_text(encoding="utf-8") if video_bootstrap_path.exists() else ""
+    video_bootstrap_js_path = ROOT / "scripts/llmgw-prod-video-caller-bootstrap.js"
+    video_bootstrap_js = video_bootstrap_js_path.read_text(encoding="utf-8") if video_bootstrap_js_path.exists() else ""
+    video_exchange_bootstrap_path = ROOT / "scripts/llmgw-prod-video-exchange-bootstrap.sh"
+    video_exchange_bootstrap = video_exchange_bootstrap_path.read_text(encoding="utf-8") if video_exchange_bootstrap_path.exists() else ""
+    video_exchange_bootstrap_js_path = ROOT / "scripts/llmgw-prod-video-exchange-bootstrap.js"
+    video_exchange_bootstrap_js = video_exchange_bootstrap_js_path.read_text(encoding="utf-8") if video_exchange_bootstrap_js_path.exists() else ""
+    video_canary_path = ROOT / "scripts/llmgw-video-exchange-canary.py"
+    video_canary = video_canary_path.read_text(encoding="utf-8") if video_canary_path.exists() else ""
+    asr_http_canary_path = ROOT / "scripts/llmgw-asr-http-canary.py"
+    asr_http_canary = asr_http_canary_path.read_text(encoding="utf-8") if asr_http_canary_path.exists() else ""
+    asr_credential_rotate_path = ROOT / "scripts/llmgw-prod-asr-credential-rotate.sh"
+    asr_credential_rotate = asr_credential_rotate_path.read_text(encoding="utf-8") if asr_credential_rotate_path.exists() else ""
+    asr_credential_rotate_py_path = ROOT / "scripts/llmgw-prod-asr-credential-rotate.py"
+    asr_credential_rotate_py = asr_credential_rotate_py_path.read_text(encoding="utf-8") if asr_credential_rotate_py_path.exists() else ""
+    provider_audit_path = ROOT / "scripts/llmgw-prod-provider-config-audit.py"
+    provider_audit = provider_audit_path.read_text(encoding="utf-8") if provider_audit_path.exists() else ""
     ok, detail = _contains_all(
         release_gate,
         [
@@ -129,6 +162,8 @@ def _static_checks() -> list[dict]:
             "/shadow-comparisons",
             "--app-caller",
             "--kind",
+            "--require-kind",
+            "--require-app-kind",
             "--min-per-cell",
             "--min-coverage-hours",
             "--release-commit",
@@ -160,6 +195,12 @@ def _static_checks() -> list[dict]:
             "--min-coverage-hours \"$MIN_COVERAGE_HOURS\"",
             "WATCH_APP_CALLERS",
             "WATCH_REQUIRED_APP_KINDS",
+            "visual-agent.image-gen.generate::generation",
+            "visual-agent.image-gen.generate::generation:raw:${MIN_PER_CELL}",
+            "video-agent.v2d.transcribe::asr",
+            "video-agent.v2d.transcribe::asr:raw:${MIN_PER_CELL}",
+            "video-agent.video-to-text::asr",
+            "video-agent.video-to-text::asr:raw:${MIN_PER_CELL}",
             "actions/upload-artifact@v4",
         ],
     )
@@ -219,6 +260,7 @@ def _static_checks() -> list[dict]:
             "canary-streaming",
             "canary-vision",
             "canary-image",
+            "canary-asr",
             "canary-video-asr",
             "http-full",
             "rollback-inproc",
@@ -284,6 +326,349 @@ def _static_checks() -> list[dict]:
     checks.append(_check("serving_probe_available", ok, detail))
 
     ok, detail = _contains_all(
+        disk_guard,
+        [
+            "df -Pm",
+            "available_mb",
+            "min_free_mb",
+            "nearest existing parent",
+            "requires at least",
+        ],
+    )
+    disk_guard_executable = bool(disk_guard_path.exists() and (disk_guard_path.stat().st_mode & stat.S_IXUSR))
+    disk_guard_destructive = any(item in disk_guard for item in ["rm -", "deleteMany", "dropDatabase", "docker volume rm", "down -v"])
+    checks.append(_check(
+        "disk_space_guard_available_for_prod_rollout",
+        ok and disk_guard_executable and not disk_guard_destructive,
+        f"{detail}; executable={disk_guard_executable}; destructive={disk_guard_destructive}",
+    ))
+
+    ok, detail = _contains_all(
+        external_backup,
+        [
+            "LLM Gateway production external backup",
+            "LLMGW_EXTERNAL_BACKUP_HOST",
+            "LLMGW_EXTERNAL_BACKUP_REMOTE_REPO",
+            "LLMGW_EXTERNAL_BACKUP_MODE",
+            "LLMGW_EXTERNAL_BACKUP_DATABASES:-prdagent llm_gateway",
+            "LLMGW_EXTERNAL_BACKUP_COLLECTIONS",
+            "prdagent.model_groups",
+            "llm_gateway.*",
+            "--collection '$collection'",
+            "mongodump --db '$db' --archive",
+            "| gzip > \"$backup_dir/$db.archive.gz\"",
+            "gzip -t \"$backup_dir/$db.archive.gz\"",
+            "SHA256SUMS",
+            "env.snapshot.redacted",
+            "LLMGW_EXTERNAL_BACKUP_INCLUDE_SECRETS",
+        ],
+    )
+    external_backup_executable = bool(external_backup_path.exists() and (external_backup_path.stat().st_mode & stat.S_IXUSR))
+    external_backup_destructive = any(item in external_backup for item in ["rm -", "deleteMany", "dropDatabase", "docker volume rm", "down -v"])
+    checks.append(_check(
+        "prod_external_backup_streams_mongo_without_remote_archives",
+        ok and external_backup_executable and not external_backup_destructive,
+        f"{detail}; executable={external_backup_executable}; destructive={external_backup_destructive}",
+    ))
+
+    ok, detail = _contains_all(
+        chat_bootstrap + "\n" + chat_bootstrap_js,
+        [
+            "LLMGW_CHAT_BOOTSTRAP_DRY_RUN:-1",
+            "mongodump --db \"$mongo_db\" --archive",
+            "llmgw-disk-space-guard.sh",
+            "LLMGW_CHAT_BOOTSTRAP_MIN_FREE_MB:-6144",
+            "llmgw-prod-before-chat-pool-bootstrap",
+            "LLMGW_CHAT_BOOTSTRAP_MODEL_NAME",
+            "LLMGW_CHAT_BOOTSTRAP_PLATFORM_ID",
+            "LLMGW_CHAT_BOOTSTRAP_POOL_ID",
+            "LLMGW_CHAT_BOOTSTRAP_TARGET_CALLERS",
+            "LLMGW_CHAT_BOOTSTRAP_BIND_CALLERS",
+            "deepseek-ai/DeepSeek-V4-Flash",
+            "report-agent.generate::chat",
+            "enabled LLMModel not found",
+            "target chat pool missing or not chat",
+            "ModelGroupIds",
+            "ModelGroupId",
+        ],
+    )
+    chat_bootstrap_executable = bool(chat_bootstrap_path.exists() and (chat_bootstrap_path.stat().st_mode & stat.S_IXUSR))
+    chat_bootstrap_destructive = any(item in chat_bootstrap + chat_bootstrap_js for item in ["dropDatabase", "deleteMany", "remove(", "docker volume rm", "down -v"])
+    checks.append(_check(
+        "prod_chat_pool_bootstrap_is_backed_up_and_dry_run_first",
+        ok and chat_bootstrap_executable and not chat_bootstrap_destructive,
+        f"{detail}; executable={chat_bootstrap_executable}; destructive={chat_bootstrap_destructive}",
+    ))
+
+    ok, detail = _contains_all(
+        asr_bootstrap + "\n" + asr_bootstrap_js,
+        [
+            "LLMGW_ASR_BOOTSTRAP_DRY_RUN:-1",
+            "mongodump --db \"$mongo_db\" --archive",
+            "llmgw-disk-space-guard.sh",
+            "LLMGW_ASR_BOOTSTRAP_MIN_FREE_MB:-6144",
+            "llmgw-prod-before-asr-pool-bootstrap",
+            "LLMGW_ASR_BOOTSTRAP_MODE",
+            "LLMGW_ASR_BOOTSTRAP_BIND_CALLERS",
+            "LLMGW_ASR_BOOTSTRAP_DEFAULT_FOR_TYPE",
+            "caller binding skipped",
+            "asr_doubao_bigmodel_pool",
+            "doubao-asr-bigmodel",
+            "asr_doubao_stream_pool",
+            "doubao-asr-stream",
+            "LLMGW_ASR_BOOTSTRAP_DESCRIPTION",
+            "document-store.subtitle::asr",
+            "transcript-agent.transcribe::asr",
+            "video-agent.v2d.transcribe::asr",
+            "video-agent.video-to-text::asr",
+            "ModelGroupIds",
+            "ModelGroupId",
+        ],
+    )
+    asr_bootstrap_executable = bool(asr_bootstrap_path.exists() and (asr_bootstrap_path.stat().st_mode & stat.S_IXUSR))
+    asr_bootstrap_destructive = any(item in asr_bootstrap + asr_bootstrap_js for item in ["dropDatabase", "deleteMany", "remove(", "docker volume rm", "down -v"])
+    checks.append(_check(
+        "prod_asr_pool_bootstrap_is_backed_up_and_dry_run_first",
+        ok and asr_bootstrap_executable and not asr_bootstrap_destructive,
+        f"{detail}; executable={asr_bootstrap_executable}; destructive={asr_bootstrap_destructive}",
+    ))
+
+    ok, detail = _contains_all(
+        video_bootstrap + "\n" + video_bootstrap_js,
+        [
+            "LLMGW_VIDEO_BOOTSTRAP_DRY_RUN:-1",
+            "mongodump --db \"$mongo_db\" --archive",
+            "llmgw-disk-space-guard.sh",
+            "LLMGW_VIDEO_BOOTSTRAP_MIN_FREE_MB:-6144",
+            "llmgw-prod-before-video-caller-bootstrap",
+            "LLMGW_VIDEO_BOOTSTRAP_SOURCE_CALLER",
+            "LLMGW_VIDEO_BOOTSTRAP_TARGET_CALLERS",
+            "video-agent.videogen::video-gen",
+            "visual-agent.videogen::video-gen",
+            "source video appCaller missing",
+            "source video appCaller has no video-gen ModelGroupIds",
+            "source video appCaller references missing video-gen pools",
+            "target video appCallers missing",
+            "ModelGroupIds: poolIds",
+            "ModelGroupId: poolIds[0]",
+        ],
+    )
+    video_bootstrap_executable = bool(video_bootstrap_path.exists() and (video_bootstrap_path.stat().st_mode & stat.S_IXUSR))
+    video_bootstrap_destructive = any(item in video_bootstrap + video_bootstrap_js for item in ["dropDatabase", "deleteMany", "remove(", "docker volume rm", "down -v"])
+    checks.append(_check(
+        "prod_video_caller_bootstrap_is_backed_up_and_dry_run_first",
+        ok and video_bootstrap_executable and not video_bootstrap_destructive,
+        f"{detail}; executable={video_bootstrap_executable}; destructive={video_bootstrap_destructive}",
+    ))
+
+    ok, detail = _contains_all(
+        video_exchange_bootstrap + "\n" + video_exchange_bootstrap_js,
+        [
+            "LLMGW_VIDEO_EXCHANGE_BOOTSTRAP_DRY_RUN:-1",
+            "mongodump --db \"$mongo_db\" --archive",
+            "llmgw-disk-space-guard.sh",
+            "LLMGW_VIDEO_EXCHANGE_BOOTSTRAP_MIN_FREE_MB:-6144",
+            "llmgw-prod-before-video-exchange-bootstrap",
+            "LLMGW_VIDEO_EXCHANGE_BOOTSTRAP_EXCHANGE_ID",
+            "LLMGW_VIDEO_EXCHANGE_BOOTSTRAP_POOL_ID",
+            "LLMGW_VIDEO_EXCHANGE_BOOTSTRAP_RESET_HEALTH",
+            "LLMGW_VIDEO_EXCHANGE_BOOTSTRAP_BIND_CALLERS",
+            "video_seedance_2_0_fast_pool",
+            "doubao-seedance-2-0-fast-260128",
+            "volcengine-video",
+            "contents/generations/tasks",
+            "llmplatforms.ApiKeyEncrypted copied to model_exchanges.TargetApiKeyEncrypted",
+            "source Volcengine platform has no encrypted key",
+            "video-agent.videogen::video-gen",
+            "visual-agent.videogen::video-gen",
+            "ModelGroupIds",
+            "ModelGroupId",
+            "HealthStatus: nextHealthStatus",
+        ],
+    )
+    video_exchange_bootstrap_executable = bool(video_exchange_bootstrap_path.exists() and (video_exchange_bootstrap_path.stat().st_mode & stat.S_IXUSR))
+    video_exchange_bootstrap_destructive = any(item in video_exchange_bootstrap + video_exchange_bootstrap_js for item in ["dropDatabase", "deleteMany", "remove(", "docker volume rm", "down -v"])
+    checks.append(_check(
+        "prod_video_exchange_bootstrap_is_backed_up_and_dry_run_first",
+        ok and video_exchange_bootstrap_executable and not video_exchange_bootstrap_destructive,
+        f"{detail}; executable={video_exchange_bootstrap_executable}; destructive={video_exchange_bootstrap_destructive}",
+    ))
+
+    ok, detail = _contains_all(
+        video_canary,
+        [
+            "LLM Gateway Volcengine video exchange canary",
+            "/raw",
+            "video-agent.videogen::video-gen",
+            "visual-agent.videogen::video-gen",
+            "DEFAULT_APP_CALLERS",
+            "canaries",
+            "doubao-seedance-2-0-fast-260128",
+            "LLMGW_VIDEO_CANARY_JSON_OUT",
+            "--poll-status",
+            "--download-result",
+            "video status did not complete",
+            "video result download probe failed",
+            "ModelNotOpen",
+            "has not activated the requested video model",
+            "externalBlockers",
+            "video_model_not_open",
+            "video_channel_unavailable",
+            "video_authorization_failed",
+            "_external_blocker_from_failure",
+            "return 0 if report[\"verdict\"] == \"pass\" else 1",
+        ],
+    )
+    video_canary_executable = bool(video_canary_path.exists() and (video_canary_path.stat().st_mode & stat.S_IXUSR))
+    video_canary_destructive = any(item in video_canary for item in ["updateOne", "deleteMany", "dropDatabase", "mongorestore", "docker volume rm", "down -v"])
+    checks.append(_check(
+        "video_exchange_canary_records_submit_evidence_without_mutating_config",
+        ok and video_canary_executable and not video_canary_destructive,
+        f"{detail}; executable={video_canary_executable}; destructive={video_canary_destructive}",
+    ))
+
+    ok, detail = _contains_all(
+        asr_http_canary,
+        [
+            "LLM Gateway ASR HTTP canary",
+            "/api/ops/llmgw/canary/asr",
+            "document-store.subtitle::asr",
+            "transcript-agent.transcribe::asr",
+            "video-agent.v2d.transcribe::asr",
+            "video-agent.video-to-text::asr",
+            "DEFAULT_APP_CALLERS",
+            "canaries",
+            "X-Gateway-Key",
+            "MultipartFileRefs",
+            "MAP API failed to upload ASR canary audio to object storage",
+            "llmgw-serve could not rehydrate ASR MultipartFileRefs from shared object storage",
+            "ASR upstream rejected credential",
+            "ASR model pool or upstream provider has no available channel",
+            "externalBlockers",
+            "asr_credential_rejected",
+            "asr_channel_unavailable",
+            "asr_authorization_failed",
+            "_external_blocker_from_failure",
+            "return 0 if report[\"verdict\"] == \"pass\" else 1",
+        ],
+    )
+    asr_http_canary_executable = bool(asr_http_canary_path.exists() and (asr_http_canary_path.stat().st_mode & stat.S_IXUSR))
+    asr_http_canary_destructive = any(item in asr_http_canary for item in ["updateOne", "deleteMany", "dropDatabase", "mongorestore", "docker volume rm", "down -v"])
+    checks.append(_check(
+        "asr_http_canary_proves_multipart_refs_without_mutating_config",
+        ok and asr_http_canary_executable and not asr_http_canary_destructive,
+        f"{detail}; executable={asr_http_canary_executable}; destructive={asr_http_canary_destructive}",
+    ))
+
+    ok, detail = _contains_all(
+        asr_credential_rotate + "\n" + asr_credential_rotate_py,
+        [
+            "LLM Gateway ASR credential rotate",
+            "LLMGW_ASR_NEW_KEY",
+            "LLMGW_ASR_CREDENTIAL_ROTATE_DRY_RUN",
+            "mongodump --db \"$mongo_db\" --collection model_exchanges --archive",
+            "llmgw-disk-space-guard.sh",
+            "ROOT_ACCESS_USERNAME",
+            "ROOT_ACCESS_PASSWORD",
+            "llmgw-prod-asr-credential-rotate.py",
+            "/api/mds/exchanges",
+            "targetApiKey",
+            "DoubaoAsr",
+            "XApiKey",
+            "newKeyShape",
+            "--new-key-env",
+            "--dry-run",
+            "never prints the new key",
+        ],
+    )
+    asr_credential_rotate_executable = bool(asr_credential_rotate_path.exists() and (asr_credential_rotate_path.stat().st_mode & stat.S_IXUSR))
+    asr_credential_rotate_py_executable = bool(asr_credential_rotate_py_path.exists() and (asr_credential_rotate_py_path.stat().st_mode & stat.S_IXUSR))
+    asr_credential_rotate_destructive = any(
+        item in asr_credential_rotate + asr_credential_rotate_py
+        for item in ["deleteMany", "dropDatabase", "mongorestore", "docker volume rm", "down -v"]
+    )
+    checks.append(_check(
+        "asr_credential_rotate_is_backup_first_and_api_encrypted",
+        ok and asr_credential_rotate_executable and asr_credential_rotate_py_executable and not asr_credential_rotate_destructive,
+        f"{detail}; executable={asr_credential_rotate_executable}; pyExecutable={asr_credential_rotate_py_executable}; destructive={asr_credential_rotate_destructive}",
+    ))
+
+    ok, detail = _contains_all(
+        provider_audit,
+        [
+            "LLM Gateway production provider config audit",
+            "document-store.subtitle::asr",
+            "transcript-agent.transcribe::asr",
+            "video-agent.v2d.transcribe::asr",
+            "video-agent.video-to-text::asr",
+            "video-agent.videogen::video-gen",
+            "visual-agent.videogen::video-gen",
+            "asr_doubao_bigmodel_pool",
+            "doubao-asr-bigmodel",
+            "DEFAULT_ASR_POOL_ID",
+            "DEFAULT_ASR_TRANSFORMER",
+            "doubao-asr-stream",
+            "asr-pool-id",
+            "LLMGW_PROVIDER_AUDIT_ASR_POOL_ID",
+            "asr-transformer",
+            "LLMGW_PROVIDER_AUDIT_ASR_TRANSFORMER",
+            "TargetApiKeyEncrypted",
+            "llmplatforms",
+            "model_exchanges",
+            "llmrequestlogs",
+            "LLMGW_PROVIDER_AUDIT_GATEWAY_DB",
+            "LLMGW_PROVIDER_AUDIT_RECENT_LOG_HOURS",
+            "recentGatewayLogs",
+            "skip-gateway-logs",
+            "ApiKeyEncrypted",
+            "apiKeyShape",
+            "volcengine-video",
+            "contents/generations/tasks",
+            "video model exchange key cannot be decrypted",
+            "video model exchange does not declare model",
+            "videoClassifications",
+            "ASR upstream has no available channels",
+            "Video upstream has no available channels",
+            "Volcengine Ark account has not activated the video model",
+            "OpenRouter /videos requests",
+            "Volcengine Ark OpenAI chat base URL",
+            "dedicated Volcengine video adapter",
+            "targetApiKeyEncryptedLength",
+            "targetApiKeyShape",
+            "containsPipe",
+            "looksUuidOnly",
+            "Invalid X-Api-Key",
+            "ASR upstream rejected credential",
+            "externalBlockers",
+            "modelPoolConfig",
+            "asr_credential_rejected",
+            "asr_authorization_failed",
+            "asr_channel_unavailable",
+            "video_channel_unavailable",
+            "video_model_not_open",
+            "--self-test",
+            "_self_test_report",
+            "requiredCodes",
+            "missingCodes",
+            "requiredPairs",
+            "missingPairs",
+            "asrClassifications",
+            "asrDiagnostic",
+            "uninitialized diagnostic",
+            "deploy the diagnostic build and rerun ASR seed",
+            "seed-evidence-json",
+            "no Healthy video-gen model",
+        ],
+    )
+    provider_audit_executable = bool(provider_audit_path.exists() and (provider_audit_path.stat().st_mode & stat.S_IXUSR))
+    provider_audit_destructive = any(item in provider_audit for item in ["updateOne", "insertOne", "deleteMany", "dropDatabase", "remove(", "docker volume rm", "down -v"])
+    checks.append(_check(
+        "prod_provider_config_audit_is_read_only_and_secret_safe",
+        ok and provider_audit_executable and not provider_audit_destructive,
+        f"{detail}; executable={provider_audit_executable}; destructive={provider_audit_destructive}",
+    ))
+
+    ok, detail = _contains_all(
         prod_stage,
         [
             "LLM Gateway production stage runner",
@@ -293,6 +678,7 @@ def _static_checks() -> list[dict]:
             "canary-streaming",
             "canary-vision",
             "canary-image",
+            "canary-asr",
             "canary-video-asr",
             "rollback-rehearsal",
             "http-full",
@@ -306,8 +692,23 @@ def _static_checks() -> list[dict]:
             "LLMGW_RELEASE_MAIN_REF",
             "--main-ref",
             "validate_main_ancestry",
+            "if [ \"$stage\" = \"rollback-inproc\" ]; then",
+            "if [ \"$stage\" = \"rollback-rehearsal\" ]; then",
+            "LLM Gateway rollback rehearsal: release main SHA recorded without ancestry enforcement",
             "git merge-base --is-ancestor",
             "release commit does not include latest main",
+            "LLMGW_STAGE_ALLOW_RELEASE_TREE_MISMATCH",
+            "LLMGW_STAGE_ALLOW_SCRIPT_TREE_MISMATCH",
+            "validate_release_tree",
+            "critical_paths",
+            "docker-compose.yml",
+            "cds-compose.yml",
+            "execdep.sh",
+            "deploy/nginx/conf.d/branches/_standalone.conf",
+            "git show \"$commit:<critical rollout/deploy files>\" | cmp local files",
+            "local rollout/deploy files must match --commit",
+            "release file differs from release commit",
+            "LLM Gateway release tree: OK",
             "LLMGW_ALLOW_OUT_OF_ORDER_REASON",
             "--allow-out-of-order-reason",
             "requires --allow-out-of-order-reason",
@@ -331,17 +732,55 @@ def _static_checks() -> list[dict]:
             "prod-preflight.json",
             "serving-probe.json",
             "gw-smoke.json",
+            "upstream-readiness.json",
+            "provider-audit.json",
+            "video-canary.json",
+            "asr-http-canary.json",
+            "LLMGW_STAGE_RUN_UPSTREAM_READINESS",
+            "run_upstream_readiness_evidence",
+            "scripts/llmgw-upstream-readiness.py",
+            "LLMGW_STAGE_RUN_PROVIDER_AUDIT",
+            "run_provider_audit_evidence",
+            "scripts/llmgw-prod-provider-config-audit.py",
+            "LLMGW_STAGE_RUN_VIDEO_CANARY",
+            "run_video_canary_evidence",
+            "scripts/llmgw-video-exchange-canary.py",
+            "LLMGW_VIDEO_CANARY_JSON_OUT",
+            "LLMGW_STAGE_RUN_ASR_HTTP_CANARY",
+            "run_asr_http_canary_evidence",
+            "scripts/llmgw-asr-http-canary.py",
+            "PRD_AGENT_BASE",
+            "LLMGW_ASR_CANARY_JSON_OUT",
+            "LLMGW_STAGE_MIN_FREE_MB",
+            "LLMGW_STAGE_DISK_GUARD_PATH",
+            "run_stage_disk_guard",
+            "scripts/llmgw-disk-space-guard.sh",
+            "providerAuditRequired",
+            "LLMGW_STAGE_AUTO_RESTORE_SHADOW_ON_FAILURE",
+            "scripts/llmgw-restore-shadow-safe.sh",
             "run_prod_preflight",
             "scripts/llmgw-prod-preflight.py --mode start",
             "--prod-preflight-json \"$prod_preflight_json\"",
+            "--upstream-readiness-json \"$upstream_readiness_json\"",
+            "--upstream-readiness-required \"$run_upstream_readiness\"",
+            "--provider-audit-json \"$provider_audit_json\"",
+            "--provider-audit-required \"$run_provider_audit\"",
+            "--video-canary-json \"$video_canary_json\"",
+            "--video-canary-required \"$run_video_canary\"",
+            "--asr-http-canary-json \"$asr_http_canary_json\"",
+            "--asr-http-canary-required \"$run_asr_http_canary\"",
+            "videoCanaryJson",
+            "videoCanaryRequired",
+            "asrHttpCanaryJson",
+            "asrHttpCanaryRequired",
             "stage-report",
             "GW_SMOKE_JSON_OUT",
             "LLMGW_SERVING_PROBE_JSON_OUT",
             "scripts/llmgw-rollout-ledger.py validate",
             "scripts/llmgw-rollout-ledger.py append",
             "report-agent.generate::chat,prd-agent-desktop.chat.sendmessage::chat,open-platform-agent.proxy::chat",
-            "visual-agent.image.text2img::generation,visual-agent.image.img2img::generation",
-            "video-agent.videogen::video-gen,document-store.subtitle::asr,transcript-agent.transcribe::asr",
+            "visual-agent.image-gen.generate::generation,visual-agent.image.text2img::generation,visual-agent.image.img2img::generation",
+            "video-agent.videogen::video-gen,visual-agent.videogen::video-gen,document-store.subtitle::asr,transcript-agent.transcribe::asr,video-agent.v2d.transcribe::asr,video-agent.video-to-text::asr",
             "./fast.sh --commit \"$commit\"",
             "./exec_dep.sh --commit \"$commit\"",
             "scripts/llmgw-rollback-inproc.sh",
@@ -351,6 +790,21 @@ def _static_checks() -> list[dict]:
     executable = bool(prod_stage_path.stat().st_mode & stat.S_IXUSR)
     ledger_executable = bool(rollout_ledger_path.exists() and (rollout_ledger_path.stat().st_mode & stat.S_IXUSR))
     preflight_executable = bool(prod_preflight_path.exists() and (prod_preflight_path.stat().st_mode & stat.S_IXUSR))
+    upstream_executable = bool(upstream_readiness_path.exists() and (upstream_readiness_path.stat().st_mode & stat.S_IXUSR))
+    preflight_idx = prod_stage.find("run_prod_preflight\n\nrun_upstream_readiness_evidence")
+    upstream_idx = prod_stage.find("run_upstream_readiness_evidence\n\nrun_provider_audit_evidence")
+    provider_idx = prod_stage.find("run_provider_audit_evidence\n\nif [ -n \"$repo\" ]")
+    fast_idx = prod_stage.find("run_or_print ./fast.sh")
+    video_canary_idx = prod_stage.find("run_video_canary_evidence\n\nrun_asr_http_canary_evidence")
+    asr_canary_idx = prod_stage.find("run_asr_http_canary_evidence\n\nrun_shadow_seed_evidence")
+    upstream_before_deploy = (
+        preflight_idx >= 0
+        and upstream_idx >= 0
+        and provider_idx >= 0
+        and video_canary_idx >= 0
+        and asr_canary_idx >= 0
+        and preflight_idx < upstream_idx < provider_idx < fast_idx < video_canary_idx < asr_canary_idx
+    )
     ledger_ok, ledger_detail = _contains_all(
         rollout_ledger,
         [
@@ -359,6 +813,7 @@ def _static_checks() -> list[dict]:
             "ROLLBACK_REHEARSAL_STAGE = \"rollback-rehearsal\"",
             "_stage_requires_rehearsal",
             "shadow-start",
+            "canary-asr",
             "canary-video-asr",
             "http-full",
             "missing_success",
@@ -379,6 +834,31 @@ def _static_checks() -> list[dict]:
             "\"status\": args.status",
             "\"evidenceJson\": args.evidence_json",
             "\"prodPreflightJson\": args.prod_preflight_json",
+            "\"upstreamReadinessJson\": args.upstream_readiness_json",
+            "\"upstreamReadinessRequired\": _bool_flag(args.upstream_readiness_required)",
+            "_require_upstream_readiness",
+            "upstream readiness evidence",
+            "\"providerAuditJson\": args.provider_audit_json",
+            "\"providerAuditRequired\": _bool_flag(args.provider_audit_required)",
+            "_require_provider_audit",
+            "provider config audit evidence",
+            "\"providerAuditExternalBlockers\": provider_external_blockers",
+            "_provider_external_blockers",
+            "contains external blockers",
+            "providerExternalBlockers",
+            "_canary_external_blockers",
+            "_merge_blockers",
+            "\"externalBlockers\": all_external_blockers",
+            "\"videoCanaryJson\": args.video_canary_json",
+            "\"videoCanaryRequired\": _bool_flag(args.video_canary_required)",
+            "\"videoCanaryExternalBlockers\": video_canary_external_blockers",
+            "_require_video_canary",
+            "video canary evidence",
+            "\"asrHttpCanaryJson\": args.asr_http_canary_json",
+            "\"asrHttpCanaryRequired\": _bool_flag(args.asr_http_canary_required)",
+            "\"asrHttpCanaryExternalBlockers\": asr_http_canary_external_blockers",
+            "_require_asr_http_canary",
+            "ASR HTTP canary evidence",
             "_require_prod_preflight_for_commit",
             "production preflight evidence",
             "\"servingProbeJson\": args.serving_probe_json",
@@ -409,6 +889,13 @@ def _static_checks() -> list[dict]:
             "start",
             "completion",
             "map_logs_scope",
+            "map_direct_transport_absent",
+            "LLMGW_PROD_PREFLIGHT_DIRECT_TRANSPORT_SINCE_HOURS",
+            "LLMGW_PROD_PREFLIGHT_DIRECT_TRANSPORT_PAGE_SIZE",
+            "LLMGW_PROD_PREFLIGHT_DIRECT_TRANSPORT_MAX_PAGES",
+            "directTransportSinceHours",
+            "gatewayTransport",
+            "\"direct\"",
             "gateway_protected_requires_key",
             "rollout_ledger_start_ready",
             "rollout_ledger_completion",
@@ -421,11 +908,34 @@ def _static_checks() -> list[dict]:
             "\"expectCommit\"",
         ],
     )
+    upstream_ok, upstream_detail = _contains_all(
+        upstream_readiness,
+        [
+            "LLM Gateway upstream resolution readiness gate",
+            "DEFAULT_REQUIREMENTS",
+            "video-agent.videogen::video-gen=video-gen",
+            "visual-agent.videogen::video-gen=video-gen",
+            "document-store.subtitle::asr=asr",
+            "transcript-agent.transcribe::asr=asr",
+            "video-agent.v2d.transcribe::asr=asr",
+            "video-agent.video-to-text::asr=asr",
+            "/resolve",
+            "X-Gateway-Key",
+            "apiKeyPresent",
+            "--allow-legacy",
+            "--allow-missing-api-key",
+            "--require-api-key",
+            "--fail-on-degraded",
+            "--json-out",
+            "--report-md",
+            "\"verdict\": \"pass\" if not failures else \"fail\"",
+        ],
+    )
     leaks_key_arg = "--key" in prod_stage or "--gateway-key" in prod_stage or "--key" in rollout_ledger
     checks.append(_check(
         "prod_stage_runner_sequences_shadow_canary_http_and_rollback",
-        ok and ledger_ok and preflight_ok and executable and ledger_executable and preflight_executable and not leaks_key_arg,
-        f"{detail}; ledger={ledger_detail}; preflight={preflight_detail}; executable={executable}; ledgerExecutable={ledger_executable}; preflightExecutable={preflight_executable}; leaksKeyArg={leaks_key_arg}",
+        ok and ledger_ok and preflight_ok and upstream_ok and upstream_before_deploy and executable and ledger_executable and preflight_executable and upstream_executable and not leaks_key_arg,
+        f"{detail}; ledger={ledger_detail}; preflight={preflight_detail}; upstream={upstream_detail}; upstreamBeforeDeploy={upstream_before_deploy}; executable={executable}; ledgerExecutable={ledger_executable}; preflightExecutable={preflight_executable}; upstreamExecutable={upstream_executable}; leaksKeyArg={leaks_key_arg}",
     ))
 
     fast = _read("fast.sh")
@@ -461,11 +971,16 @@ def _static_checks() -> list[dict]:
             "check_intent_image_match PRD_AGENT_LLMGW_IMAGE",
             "check_intent_image_match PRD_AGENT_LLMGW_SERVE_IMAGE",
             "check_intent_image_match PRD_AGENT_LLMGW_WEB_IMAGE",
+            "persist_release_image_pins",
+            "PRD_AGENT_PERSIST_IMAGE_PINS",
+            "PRD_AGENT_API_IMAGE_VALUE",
             "fast.sh / exec_dep.sh image mismatch",
             "Release intent: matched fast.sh warmup",
             "LLMGW_HTTP_APP_CALLER_ALLOWLIST",
             "LLMGW_CANARY_STAGE",
             "canary_allowed_app_callers=\"report-agent.generate::chat prd-agent-desktop.chat.sendmessage::chat open-platform-agent.proxy::chat\"",
+            "canary_allowed_app_callers=\"visual-agent.image-gen.generate::generation visual-agent.image.text2img::generation visual-agent.image.img2img::generation\"",
+            "canary_allowed_app_callers=\"document-store.subtitle::asr transcript-agent.transcribe::asr video-agent.v2d.transcribe::asr video-agent.video-to-text::asr\"",
             "ERROR: LLM Gateway canary 发布设置了 LLMGW_HTTP_APP_CALLER_ALLOWLIST，但未设置 LLMGW_CANARY_STAGE。",
             "LLMGW_PROD_STAGE_ACTIVE",
             "LLMGW_PROD_STAGE",
@@ -489,8 +1004,15 @@ def _static_checks() -> list[dict]:
             "probe_args=\"$probe_args --expect-commit $expect_commit\"",
             "LLMGW_GATE_FULL_HTTP_APP_CALLERS",
             "gate_app_callers_raw=\"${LLMGW_GATE_FULL_HTTP_APP_CALLERS:-report-agent.generate::chat",
+            "prd-agent-desktop.preview-ask.section::chat",
+            "visual-agent.image-gen.generate::generation",
+            "open-api.proxy::chat",
+            "open-api.proxy::generation",
+            "tutorial-email.generate::chat",
             "visual-agent.image.img2img::generation",
             "document-store.subtitle::asr",
+            "video-agent.v2d.transcribe::asr",
+            "video-agent.video-to-text::asr",
             "required_kinds_raw=\"${LLMGW_GATE_REQUIRED_KINDS:-}\"",
             "required_kinds_raw=\"send:${full_http_kind_min},stream:${full_http_kind_min},raw:${full_http_kind_min}\"",
             "LLMGW_GATE_CANARY_KIND_MIN",
@@ -499,9 +1021,23 @@ def _static_checks() -> list[dict]:
             "LLMGW_GATE_FULL_HTTP_APP_KINDS",
             "required_app_kinds_raw=\"${LLMGW_GATE_REQUIRED_APP_KINDS:-}\"",
             "full_http_app_kind_min=\"${LLMGW_GATE_FULL_HTTP_APP_KIND_MIN:-${LLMGW_GATE_FULL_HTTP_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}}\"",
+            "report-agent.generate::chat:send:",
+            "prd-agent-desktop.chat.sendmessage::chat:stream:",
+            "prd-agent-desktop.preview-ask.section::chat:stream:",
+            "open-platform-agent.proxy::chat:stream:",
+            "open-api.proxy::chat:send:",
+            "open-api.proxy::generation:raw:",
+            "prd-agent-web.model-lab.run::chat:stream:",
+            "prd-agent.arena.battle::chat:stream:",
+            "tutorial-email.generate::chat:send:",
+            "visual-agent.image-gen.generate::generation:raw:",
             "visual-agent.image.img2img::generation:raw:",
             "video-agent.videogen::video-gen:raw:",
+            "visual-agent.videogen::video-gen:raw:",
             "transcript-agent.transcribe::asr:raw:",
+            "video-agent.v2d.transcribe::asr:raw:",
+            "video-agent.video-to-text::asr:raw:",
+            "默认要求核心 send/stream/raw 入口逐个具备 app-kind 样本",
             "LLMGW_GATE_CANARY_APP_KIND_MIN",
             "LLMGW_GATE_CANARY_APP_KINDS",
             "canary 阶段 $canary_stage 默认要求 raw app-kind 样本逐个达标",
@@ -509,6 +1045,17 @@ def _static_checks() -> list[dict]:
             "GW_BASE=\"$gate_base\" GW_KEY=\"$gate_key\" GW_TIMEOUT=\"${LLMGW_GATE_SMOKE_TIMEOUT_SECONDS:-120}\" GW_EXPECT_COMMIT=\"$expect_commit\" python3 scripts/gw-smoke.py",
             "LLMGW_GATE_RUN_SERVING_PROBE",
             "LLMGW_SERVING_PROBE_JSON_OUT",
+            "scripts/llmgw-disk-space-guard.sh",
+            "LLMGW_DEPLOY_DISK_GUARD_PATH",
+            "LLMGW_DEPLOY_MIN_FREE_MB:-4096",
+            "LLM Gateway exec_dep deploy",
+            "provider_audit_required=0",
+            "if [ \"$mode\" = \"http\" ] || [ \"$canary_stage\" = \"video-asr\" ]; then",
+            "scripts/llmgw-prod-provider-config-audit.py",
+            "LLMGW_PROVIDER_AUDIT_JSON_OUT",
+            "LLMGW_PROVIDER_AUDIT_REPORT_MD",
+            "LLMGW_PROVIDER_AUDIT_SEED_EVIDENCE_JSON",
+            "LLM Gateway provider config audit: required before deploy",
             "GW_SMOKE_JSON_OUT",
             "python3 scripts/llmgw-serving-probe.py $probe_args",
             "LLM Gateway post-deploy serving probe",
@@ -539,6 +1086,35 @@ def _static_checks() -> list[dict]:
     destructive = any(item in rollback for item in ["down -v", "docker volume rm", "mongorestore", "db.dropDatabase", "git checkout"])
     checks.append(_check("rollback_script_is_safe_and_executable", ok and executable and not destructive, f"{detail}; executable={executable}; destructive={destructive}"))
 
+    restore_path = ROOT / "scripts/llmgw-restore-shadow-safe.sh"
+    restore = restore_path.read_text(encoding="utf-8") if restore_path.exists() else ""
+    ok, detail = _contains_all(
+        restore,
+        [
+            "export LLMGW_MODE=shadow",
+            "export LLMGW_HTTP_APP_CALLER_ALLOWLIST=",
+            "export LLMGW_SHADOW_FULL_SAMPLE_PERCENT=\"$sample_percent\"",
+            "LLMGW_RESTORE_DRY_RUN",
+            "LLMGW_RESTORE_ENV_FILE",
+            "LLMGW_RESTORE_PERSIST_ENV",
+            "LLMGW_RESTORE_SHADOW_FULL_SAMPLE_PERCENT",
+            "persist_env_file",
+            "preserve_release_image_vars",
+            "RESTORE_PRD_AGENT_API_IMAGE",
+            "LLM Gateway restore dry-run",
+            "up -d --no-deps --force-recreate",
+            "database: unchanged",
+            "images: preserve running release pins",
+        ],
+    )
+    restore_executable = bool(restore_path.exists() and (restore_path.stat().st_mode & stat.S_IXUSR))
+    restore_destructive = any(item in restore for item in ["down -v", "docker volume rm", "mongorestore", "db.dropDatabase", "git checkout"])
+    checks.append(_check(
+        "restore_shadow_script_is_safe_and_executable",
+        ok and restore_executable and not restore_destructive,
+        f"{detail}; executable={restore_executable}; destructive={restore_destructive}",
+    ))
+
     direct = _read("prd-api/tests/PrdAgent.Tests/GatewayDirectClientRatchetTests.cs")
     direct_empty = _dictionary_block_is_empty(direct, "Baseline")
     manual_empty = _dictionary_block_is_empty(direct, "ManualUpstreamHttpBaseline")
@@ -567,6 +1143,20 @@ def _static_checks() -> list[dict]:
         "manual_upstream_http_guard_covers_text_image_audio_video",
         ok,
         detail,
+    ))
+    direct_transport_empty = _dictionary_block_is_empty(direct, "DirectTransportMarkerBaseline")
+    ok, detail = _contains_all(
+        direct,
+        [
+            "DirectTransportMarkers_AreOnlyInTrackedNonGatewayPaths",
+            "DirectTransportMarkerBaseline",
+            "GatewayTransports.AdminProbe",
+        ],
+    )
+    checks.append(_check(
+        "direct_transport_marker_baseline_is_empty",
+        ok and direct_transport_empty,
+        f"{detail}; DirectTransportMarkerBaseline={direct_transport_empty}",
     ))
 
     gateway_src = _read("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs")
@@ -644,6 +1234,115 @@ def _rollback_dry_run() -> dict:
         return {"name": "rollback_dry_run", "ok": ok, "detail": stdout + captured, "command": result}
 
 
+def _restore_shadow_dry_run() -> dict:
+    with tempfile.TemporaryDirectory(prefix="llmgw-restore-audit-") as tmp:
+        tmp_path = Path(tmp)
+        fake_compose = tmp_path / "docker-compose"
+        out_path = tmp_path / "compose.out"
+        fake_compose.write_text(
+            "#!/usr/bin/env sh\n"
+            "printf 'ARGS=%s\\n' \"$*\" > \"$FAKE_RESTORE_OUT\"\n"
+            "printf 'LLMGW_MODE=%s\\n' \"$LLMGW_MODE\" >> \"$FAKE_RESTORE_OUT\"\n"
+            "printf 'ALLOWLIST=%s\\n' \"$LLMGW_HTTP_APP_CALLER_ALLOWLIST\" >> \"$FAKE_RESTORE_OUT\"\n"
+            "printf 'SHADOW=%s\\n' \"$LLMGW_SHADOW_FULL_SAMPLE_PERCENT\" >> \"$FAKE_RESTORE_OUT\"\n",
+            encoding="utf-8",
+        )
+        fake_compose.chmod(0o755)
+        env = os.environ.copy()
+        env["PATH"] = f"{tmp}:{env.get('PATH', '')}"
+        env["FAKE_RESTORE_OUT"] = str(out_path)
+        env_file = tmp_path / "prod.env"
+        env["LLMGW_RESTORE_COMPOSE_FILE"] = str(ROOT / "docker-compose.yml")
+        env["LLMGW_RESTORE_ENV_FILE"] = str(env_file)
+        env["LLMGW_RESTORE_DRY_RUN"] = "1"
+        env["LLMGW_RESTORE_SHADOW_FULL_SAMPLE_PERCENT"] = "1"
+        result = _run(["scripts/llmgw-restore-shadow-safe.sh"], env=env, timeout=60)
+        captured = out_path.read_text(encoding="utf-8") if out_path.exists() else ""
+        stdout = str(result.get("stdout") or "")
+        ok = (
+            result["ok"]
+            and not captured
+            and not env_file.exists()
+            and "dryRun: 1" in stdout
+            and "env file would be updated" in stdout
+            and "LLM Gateway restore dry-run" in stdout
+            and "up -d --no-deps --force-recreate api" in stdout
+            and "API would restart with LLMGW_MODE=shadow and sample=1" in stdout
+        )
+        return {"name": "restore_shadow_dry_run", "ok": ok, "detail": stdout + captured, "command": result}
+
+
+def _restore_shadow_persist_env_test() -> dict:
+    with tempfile.TemporaryDirectory(prefix="llmgw-restore-persist-audit-") as tmp:
+        tmp_path = Path(tmp)
+        fake_compose = tmp_path / "docker-compose"
+        out_path = tmp_path / "compose.out"
+        env_path = tmp_path / "prod.env"
+        env_path.write_text(
+            "UNCHANGED=value\n"
+            "LLMGW_MODE=http\n"
+            "LLMGW_HTTP_APP_CALLER_ALLOWLIST=image-worker.text2img\n"
+            "LLMGW_SHADOW_FULL_SAMPLE_PERCENT=100\n",
+            encoding="utf-8",
+        )
+        fake_compose.write_text(
+            "#!/usr/bin/env sh\n"
+            "printf 'ARGS=%s\\n' \"$*\" >> \"$FAKE_RESTORE_OUT\"\n"
+            "printf 'LLMGW_MODE=%s\\n' \"$LLMGW_MODE\" >> \"$FAKE_RESTORE_OUT\"\n"
+            "printf 'ALLOWLIST=%s\\n' \"$LLMGW_HTTP_APP_CALLER_ALLOWLIST\" >> \"$FAKE_RESTORE_OUT\"\n"
+            "printf 'SHADOW=%s\\n' \"$LLMGW_SHADOW_FULL_SAMPLE_PERCENT\" >> \"$FAKE_RESTORE_OUT\"\n",
+            encoding="utf-8",
+        )
+        fake_compose.chmod(0o755)
+        env = os.environ.copy()
+        env["PATH"] = f"{tmp}:{env.get('PATH', '')}"
+        env["FAKE_RESTORE_OUT"] = str(out_path)
+        env["LLMGW_RESTORE_COMPOSE_FILE"] = str(ROOT / "docker-compose.yml")
+        env["LLMGW_RESTORE_ENV_FILE"] = str(env_path)
+        env["LLMGW_RESTORE_GATEWAY_SERVICE"] = ""
+        env["LLMGW_RESTORE_DRY_RUN"] = "0"
+        env["LLMGW_RESTORE_SHADOW_FULL_SAMPLE_PERCENT"] = "1"
+        result = _run(["scripts/llmgw-restore-shadow-safe.sh"], env=env, timeout=60)
+        captured = out_path.read_text(encoding="utf-8") if out_path.exists() else ""
+        persisted = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
+        ok = (
+            result["ok"]
+            and "LLMGW_MODE=shadow" in persisted
+            and "LLMGW_HTTP_APP_CALLER_ALLOWLIST=\n" in persisted
+            and "LLMGW_SHADOW_FULL_SAMPLE_PERCENT=1" in persisted
+            and "UNCHANGED=value" in persisted
+            and "LLMGW_MODE=shadow" in captured
+            and "ALLOWLIST=\n" in captured
+            and "SHADOW=1" in captured
+            and "up -d --no-deps --force-recreate api" in captured
+        )
+        detail = str(result.get("stdout") or "") + captured + "\n" + persisted
+        return {"name": "restore_shadow_persist_env_test", "ok": ok, "detail": detail, "command": result}
+
+
+def _provider_audit_self_test() -> dict:
+    result = _run(
+        ["python3", "scripts/llmgw-prod-provider-config-audit.py", "--self-test", "--print-json"],
+        timeout=60,
+    )
+    detail = result["stdout"] + result["stderr"]
+    ok = result["ok"]
+    try:
+        payload = _parse_json_object(result["stdout"])
+        codes = set(payload.get("actualCodes") or [])
+        required = set(payload.get("requiredCodes") or [])
+        ok = ok and payload.get("verdict") == "pass" and required.issubset(codes)
+        detail = json.dumps({
+            "verdict": payload.get("verdict"),
+            "requiredCodes": sorted(required),
+            "actualCodes": sorted(codes),
+            "missingCodes": payload.get("missingCodes") or [],
+        }, ensure_ascii=False, sort_keys=True)
+    except Exception:
+        ok = False
+    return {"name": "provider_audit_external_blocker_self_test", "ok": ok, "detail": detail, "command": result}
+
+
 def _dotnet_checks() -> list[dict]:
     checks: list[dict] = []
     tests = [
@@ -667,7 +1366,7 @@ def _dotnet_checks() -> list[dict]:
                 "tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj",
                 "--no-restore",
                 "--filter",
-                "FullyQualifiedName~GatewayProtocolFidelityTests|FullyQualifiedName~ClaudeToolTranslationTests|FullyQualifiedName~ShadowLlmGatewayTests",
+                "FullyQualifiedName~GatewayPinnedModelTests|FullyQualifiedName~GatewayProtocolFidelityTests|FullyQualifiedName~ClaudeToolTranslationTests|FullyQualifiedName~ShadowLlmGatewayTests",
             ],
             ROOT / "prd-api",
         ),
@@ -782,6 +1481,10 @@ def _shadow_coverage(args: argparse.Namespace) -> dict:
         cmd.extend(["--app-caller", item])
     for item in args.kind:
         cmd.extend(["--kind", item])
+    for item in args.require_kind:
+        cmd.extend(["--require-kind", item])
+    for item in args.require_app_kind:
+        cmd.extend(["--require-app-kind", item])
     result = _run(cmd, timeout=600)
     return {"name": "shadow_coverage_matrix", "ok": result["ok"], "detail": result["stdout"] + result["stderr"], "command": result}
 
@@ -1041,6 +1744,9 @@ def main() -> int:
 
     checks = _static_checks()
     checks.append(_rollback_dry_run())
+    checks.append(_restore_shadow_dry_run())
+    checks.append(_restore_shadow_persist_env_test())
+    checks.append(_provider_audit_self_test())
     if args.run_dotnet:
         checks.extend(_dotnet_checks())
     if args.run_smoke:

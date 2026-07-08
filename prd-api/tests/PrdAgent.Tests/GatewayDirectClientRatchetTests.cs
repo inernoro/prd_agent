@@ -40,6 +40,10 @@ public class GatewayDirectClientRatchetTests
         @"\bnew\s+(?<cls>ClaudeClient|OpenAIClient)\s*\(",
         RegexOptions.Compiled);
 
+    private static readonly Regex DirectTransportMarkerPattern = new(
+        @"\bGatewayTransport\s*:\s*GatewayTransports\.Direct\b",
+        RegexOptions.Compiled);
+
     // 网关本体目录（路径片段，正斜杠归一后匹配）：网关内部有权直接构造上游客户端。
     private static readonly string[] GatewayInternalPathFragments =
     {
@@ -60,6 +64,14 @@ public class GatewayDirectClientRatchetTests
     /// 零惊吓发布前必须逐项迁入 llmgw-serve，或在发布 gate 中继续明确排除。
     /// </summary>
     private static readonly Dictionary<string, string> ManualUpstreamHttpBaseline = new(StringComparer.Ordinal)
+    {
+    };
+
+    /// <summary>
+    /// 仍然允许写入 direct transport 的位置。全量迁移发布前这个清单必须为空；
+    /// 管理侧只读探测请使用 GatewayTransports.AdminProbe，不能污染 direct 口径。
+    /// </summary>
+    private static readonly Dictionary<string, string> DirectTransportMarkerBaseline = new(StringComparer.Ordinal)
     {
     };
 
@@ -214,6 +226,68 @@ public class GatewayDirectClientRatchetTests
 
         _output.WriteLine(
             $"OK 手写上游 HTTP 守卫通过：当前剩余 {actual.Count} 个文件，均已登记为待迁移 debt。");
+    }
+
+    [Fact]
+    public void DirectTransportMarkers_AreOnlyInTrackedNonGatewayPaths()
+    {
+        var srcRoot = LocateSrcRoot();
+        Assert.True(Directory.Exists(srcRoot), $"找不到源码目录: {srcRoot}");
+
+        var actual = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        foreach (var file in Directory.EnumerateFiles(srcRoot, "*.cs", SearchOption.AllDirectories))
+        {
+            var rel = Path.GetRelativePath(srcRoot, file).Replace('\\', '/');
+            if (rel.Contains("/bin/") || rel.Contains("/obj/")) continue;
+
+            // 上游客户端内部的 direct 是兜底日志语义；真正的业务绕行由 new-client 守卫拦截。
+            if (rel is "PrdAgent.Infrastructure/LLM/ClaudeClient.cs"
+                or "PrdAgent.Infrastructure/LLM/OpenAIClient.cs")
+                continue;
+
+            var relForFragment = "/" + rel;
+            if (GatewayInternalPathFragments.Any(frag =>
+                    relForFragment.Contains(frag, StringComparison.Ordinal)))
+                continue;
+
+            string content;
+            try { content = File.ReadAllText(file); }
+            catch { continue; }
+
+            var count = DirectTransportMarkerPattern.Matches(content).Count;
+            if (count > 0) actual[rel] = count;
+        }
+
+        var violations = new List<string>();
+
+        foreach (var (rel, count) in actual.OrderBy(kv => kv.Key))
+        {
+            if (!DirectTransportMarkerBaseline.ContainsKey(rel))
+                violations.Add($"  X 未登记 direct transport 标记: {rel} 出现 {count} 处");
+        }
+
+        foreach (var rel in DirectTransportMarkerBaseline.Keys.OrderBy(x => x, StringComparer.Ordinal))
+        {
+            if (!actual.ContainsKey(rel))
+                violations.Add($"  ! direct transport baseline 已过期，应删除或收紧: {rel}");
+        }
+
+        if (violations.Count > 0)
+        {
+            var msg = string.Join('\n', new[]
+            {
+                "检测到 GatewayTransports.Direct 标记清单漂移。",
+                "已迁入 ILlmGateway 的调用不得继续硬写 direct，否则会污染发布前 transport 证据；",
+                "真实直连路径必须登记原因，并作为全量迁移发布前 blocker 处理。",
+                "",
+            }.Concat(violations));
+            _output.WriteLine(msg);
+            Assert.Fail(msg);
+        }
+
+        _output.WriteLine(
+            $"OK direct transport 标记守卫通过：当前剩余 {actual.Count} 个文件，均已登记原因。");
     }
 
     [Theory]

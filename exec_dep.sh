@@ -24,6 +24,7 @@ set -eu
 #   - PRD_AGENT_RELEASE_INTENT_FILE：fast.sh 写入、exec_dep.sh 校验的同 commit 发布意图文件，默认 .prd-agent-release-intent.env
 #   - PRD_AGENT_REQUIRE_FAST_INTENT=1：强制要求先跑 fast.sh 生成发布意图文件
 #   - PRD_AGENT_IGNORE_FAST_INTENT=1：紧急场景忽略 fast.sh 发布意图文件漂移校验
+#   - PRD_AGENT_REUSE_EXISTING_STATIC_DIST=1：复用现有 deploy/web/dist，不下载 prd-admin zip；仅用于后端/GW-only shadow 部署
 #   - PRD_AGENT_API_IMAGE：覆盖后端镜像（默认按 REPO + 发布 ref 组装，并优先走 get.miduo.org 镜像代理）
 #   - PRD_AGENT_LLMGW_IMAGE：覆盖独立 LLM 网关镜像（默认按 REPO + 发布 ref 组装；compose 已含 llmgw service，随 up 一起拉起）
 #   - API_PULL_TIMEOUT_SECONDS：后端镜像拉取超时时间，默认 30 秒
@@ -34,9 +35,11 @@ set -eu
 #   - GITHUB_TOKEN：仅当 Release 资产为私有时需要（公开 Pages 下载不需要）
 #   - LLMGW_MODE=http：全量切 HTTP 时必须先通过 scripts/llmgw-release-gate.py
 #   - LLMGW_HTTP_APP_CALLER_ALLOWLIST：灰度入口列表；非空时这些入口会走 http 权威，也必须先通过 release gate
-#   - LLMGW_CANARY_STAGE：灰度阶段，allowlist 非空且非全量 http 时必填；枚举 intent-text/chat/streaming/vision/image/video-asr
+#   - LLMGW_CANARY_STAGE：灰度阶段，allowlist 非空且非全量 http 时必填；枚举 intent-text/chat/streaming/vision/image/asr/video-asr
 #   - LLMGW_SHADOW_FULL_SAMPLE_PERCENT：shadow 模式非流式完整比对采样比例，默认 0
 #     非 0 时会强制部署后 serving probe + gw-smoke 校验，但不会要求已有 shadow 样本数
+#   - LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST：shadow 模式下强制 full sample 的 appCaller 列表；
+#     非空时同样必须通过 stage runner，避免 raw 证据采样绕过 gate
 #   - LLMGW_GATE_BASE / GW_BASE：release gate 使用的 serving base URL（形如 https://host/gw/v1）
 #   - LLMGW_GATE_KEY / GW_KEY：release gate 使用的 X-Gateway-Key；未设时回退 LLMGW_SERVE_KEY
 #   - LLMGW_GATE_MIN_TOTAL：全局 shadow 最小样本数，默认 30
@@ -50,7 +53,7 @@ set -eu
 #   - LLMGW_GATE_REQUIRED_KINDS：逗号/分号分隔的 kind[:min] 列表，例如 send:30,stream:30，防 resolve-only 放行
 #     全量 LLMGW_MODE=http 时若未显式设置，默认要求 send/stream/raw 各达到 LLMGW_GATE_MIN_PER_APP（默认 30）
 #   - LLMGW_GATE_REQUIRED_APP_KINDS：逗号/分号分隔的 appCallerCode:kind:min 列表，例如 report-agent.generate::chat:send:30
-#     全量 LLMGW_MODE=http 时若未显式设置，默认要求图片/视频/ASR 等 raw 入口各自达到 raw 样本门槛
+#     全量 LLMGW_MODE=http 时若未显式设置，默认要求核心 send/stream/raw 入口逐个达到样本门槛
 #   - LLMGW_GATE_FULL_HTTP_APP_KINDS：全量 http 未显式设置 LLMGW_GATE_REQUIRED_APP_KINDS 时默认逐个 gate 的 appCallerCode:kind:min 列表
 #   - LLMGW_GATE_CANARY_KIND_MIN：canary 阶段默认 kind 样本门槛，默认跟随 LLMGW_GATE_MIN_PER_APP
 #   - LLMGW_GATE_CANARY_APP_KIND_MIN：canary 阶段 raw app-kind 样本门槛，默认跟随 LLMGW_GATE_CANARY_KIND_MIN
@@ -255,9 +258,24 @@ fi
 OWNER="${REPO%%/*}"
 REPO_NAME="${REPO##*/}"
 
+default_api_image="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-server:${TAG}"
+default_llmgw_image="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-llmgw:${TAG}"
+default_llmgw_serve_image="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-llmgw-serve:${TAG}"
+default_llmgw_web_image="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-llmgw-web:${TAG}"
+
+if [ "$release_ref_type" = "commit" ] && [ "${PRD_AGENT_ALLOW_IMAGE_OVERRIDE:-0}" != "1" ]; then
+  if [ -n "${PRD_AGENT_API_IMAGE:-}${PRD_AGENT_LLMGW_IMAGE:-}${PRD_AGENT_LLMGW_SERVE_IMAGE:-}${PRD_AGENT_LLMGW_WEB_IMAGE:-}" ]; then
+    echo "WARN: --commit 发布默认忽略 PRD_AGENT_*_IMAGE 覆盖，确保四个镜像钉到 ${TAG}；如确需覆盖请设置 PRD_AGENT_ALLOW_IMAGE_OVERRIDE=1" >&2
+  fi
+  export PRD_AGENT_API_IMAGE="$default_api_image"
+  export PRD_AGENT_LLMGW_IMAGE="$default_llmgw_image"
+  export PRD_AGENT_LLMGW_SERVE_IMAGE="$default_llmgw_serve_image"
+  export PRD_AGENT_LLMGW_WEB_IMAGE="$default_llmgw_web_image"
+fi
+
 # 默认后端镜像。latest 兼容旧部署；指定 ref 时钉到不可变 tag，避免 latest 竞态。
 if [ -z "${PRD_AGENT_API_IMAGE:-}" ]; then
-  export PRD_AGENT_API_IMAGE="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-server:${TAG}"
+  export PRD_AGENT_API_IMAGE="$default_api_image"
 fi
 
 # 默认独立 LLM 网关镜像（控制台 prd-llmgw，自包含 ASP.NET 服务，监听 8090，提供 /gw/healthz、
@@ -266,20 +284,20 @@ fi
 # PrdAgent.Api.dll、/gw/* 端点全缺。指定 --commit 时也必须钉到同一个 sha ref，避免
 # api 是不可变版本而 GW 三容器仍漂在 latest。
 if [ -z "${PRD_AGENT_LLMGW_IMAGE:-}" ]; then
-  export PRD_AGENT_LLMGW_IMAGE="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-llmgw:${TAG}"
+  export PRD_AGENT_LLMGW_IMAGE="$default_llmgw_image"
 fi
 
 # 默认 LLM serving 网关镜像（llmgw-serve，DI 承载 LlmGateway/ModelResolver，监听 8091，暴露 /gw/v1/*）。
 # compose 现在随 up 一起拉起 llmgw-serve；docker-compose.yml 默认直连 ghcr.io，需代理的主机会绕过
 # get.miduo.org 预拉/超时路径而卡住或失败，故这里照 PRD_AGENT_LLMGW_IMAGE 范式钉到镜像源。
 if [ -z "${PRD_AGENT_LLMGW_SERVE_IMAGE:-}" ]; then
-  export PRD_AGENT_LLMGW_SERVE_IMAGE="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-llmgw-serve:${TAG}"
+  export PRD_AGENT_LLMGW_SERVE_IMAGE="$default_llmgw_serve_image"
 fi
 
 # 默认 LLM 网关前端静态站镜像（llmgw-web，nginx 托管控制台构建产物）。同样随 compose up 拉起，
 # 默认直连 ghcr.io，需代理主机会卡住，故一并钉到 get.miduo.org 镜像源。
 if [ -z "${PRD_AGENT_LLMGW_WEB_IMAGE:-}" ]; then
-  export PRD_AGENT_LLMGW_WEB_IMAGE="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-llmgw-web:${TAG}"
+  export PRD_AGENT_LLMGW_WEB_IMAGE="$default_llmgw_web_image"
 fi
 
 intent_value() {
@@ -356,10 +374,141 @@ check_fast_release_intent() {
   echo "Release intent: matched fast.sh warmup (tag=$TAG repo=$REPO)"
 }
 
+persist_release_image_pins() {
+  persist_images="${PRD_AGENT_PERSIST_IMAGE_PINS:-1}"
+  if [ "$persist_images" = "0" ] || [ "$persist_images" = "false" ]; then
+    echo "Release image pins: env persistence disabled"
+    return
+  fi
+
+  dotenv_file="${PRD_AGENT_DOTENV_FILE:-.env}"
+  dotenv_dir="$(dirname -- "$dotenv_file")"
+  if [ ! -d "$dotenv_dir" ]; then
+    echo "WARN: release image pins not persisted because env directory is missing: $dotenv_dir" >&2
+    return
+  fi
+
+  tmp_file="${dotenv_file}.tmp.$$"
+  DOTENV_FILE="$dotenv_file" \
+  TMP_FILE="$tmp_file" \
+  PRD_AGENT_API_IMAGE_VALUE="$PRD_AGENT_API_IMAGE" \
+  PRD_AGENT_LLMGW_IMAGE_VALUE="$PRD_AGENT_LLMGW_IMAGE" \
+  PRD_AGENT_LLMGW_SERVE_IMAGE_VALUE="$PRD_AGENT_LLMGW_SERVE_IMAGE" \
+  PRD_AGENT_LLMGW_WEB_IMAGE_VALUE="$PRD_AGENT_LLMGW_WEB_IMAGE" \
+  python3 - <<'PY'
+import os
+import re
+from pathlib import Path
+
+env_path = Path(os.environ["DOTENV_FILE"])
+tmp_path = Path(os.environ["TMP_FILE"])
+updates = {
+    "PRD_AGENT_API_IMAGE": os.environ["PRD_AGENT_API_IMAGE_VALUE"],
+    "PRD_AGENT_LLMGW_IMAGE": os.environ["PRD_AGENT_LLMGW_IMAGE_VALUE"],
+    "PRD_AGENT_LLMGW_SERVE_IMAGE": os.environ["PRD_AGENT_LLMGW_SERVE_IMAGE_VALUE"],
+    "PRD_AGENT_LLMGW_WEB_IMAGE": os.environ["PRD_AGENT_LLMGW_WEB_IMAGE_VALUE"],
+}
+
+lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
+seen = {key: False for key in updates}
+out = []
+pattern = re.compile(r"^(\s*)(export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
+
+for line in lines:
+    match = pattern.match(line)
+    if match and match.group(3) in updates:
+        key = match.group(3)
+        out.append(f"{match.group(1)}{match.group(2) or ''}{key}={updates[key]}")
+        seen[key] = True
+    else:
+        out.append(line)
+
+if out and out[-1] != "":
+    out.append("")
+for key, value in updates.items():
+    if not seen[key]:
+        out.append(f"{key}={value}")
+
+tmp_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+PY
+  mv "$tmp_file" "$dotenv_file"
+  echo "Release image pins: persisted to $dotenv_file"
+}
+
+read_dotenv_value() {
+  dotenv_key="$1"
+  dotenv_file="${PRD_AGENT_DOTENV_FILE:-.env}"
+  if [ ! -f "$dotenv_file" ]; then
+    return 0
+  fi
+  awk -v key="$dotenv_key" '
+    {
+      line=$0
+      sub(/\r$/, "", line)
+      sub(/^[[:space:]]*export[[:space:]]+/, "", line)
+      if (line ~ "^[[:space:]]*" key "[[:space:]]*=") {
+        sub("^[[:space:]]*" key "[[:space:]]*=", "", line)
+        sub(/^[[:space:]]+/, "", line)
+        sub(/[[:space:]]+$/, "", line)
+        if ((line ~ /^".*"$/) || (line ~ /^'\''.*'\''$/)) {
+          line=substr(line, 2, length(line)-2)
+        }
+        print line
+        exit
+      }
+    }
+  ' "$dotenv_file"
+}
+
+config_value() {
+  for config_key in "$@"; do
+    eval "config_current=\${$config_key:-}"
+    if [ -n "$config_current" ]; then
+      printf '%s' "$config_current"
+      return 0
+    fi
+    config_current="$(read_dotenv_value "$config_key")"
+    if [ -n "$config_current" ]; then
+      printf '%s' "$config_current"
+      return 0
+    fi
+  done
+  return 0
+}
+
+llmgw_mode_value() {
+  value="$(config_value LLMGW_MODE LlmGateway__Mode)"
+  if [ -z "$value" ]; then
+    value="inproc"
+  fi
+  printf '%s' "$value"
+}
+
+llmgw_allowlist_value() {
+  config_value LLMGW_HTTP_APP_CALLER_ALLOWLIST LlmGateway__HttpAppCallerAllowlist
+}
+
+llmgw_shadow_sample_value() {
+  value="$(config_value LLMGW_SHADOW_FULL_SAMPLE_PERCENT LlmGateway__ShadowFullSamplePercent)"
+  if [ -z "$value" ]; then
+    value="0"
+  fi
+  printf '%s' "$value"
+}
+
+llmgw_shadow_sample_allowlist_value() {
+  config_value LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST LlmGateway__ShadowFullSampleAppCallerAllowlist
+}
+
 guard_llmgw_prod_stage_context_if_needed() {
-  mode="$(printf '%s' "${LLMGW_MODE:-inproc}" | tr 'A-Z' 'a-z' | xargs)"
-  allowlist_compact="$(printf '%s' "${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}" | tr ',;\n\r' '    ' | xargs || true)"
-  shadow_sample_compact="$(printf '%s' "${LLMGW_SHADOW_FULL_SAMPLE_PERCENT:-0}" | xargs || true)"
+  mode_raw="$(llmgw_mode_value)"
+  mode="$(printf '%s' "$mode_raw" | tr 'A-Z' 'a-z' | xargs)"
+  allowlist_raw="$(llmgw_allowlist_value)"
+  allowlist_compact="$(printf '%s' "$allowlist_raw" | tr ',;\n\r' '    ' | xargs || true)"
+  shadow_sample_raw="$(llmgw_shadow_sample_value)"
+  shadow_sample_compact="$(printf '%s' "$shadow_sample_raw" | xargs || true)"
+  shadow_sample_allowlist_raw="$(llmgw_shadow_sample_allowlist_value)"
+  shadow_sample_allowlist_compact="$(printf '%s' "$shadow_sample_allowlist_raw" | tr ',;\n\r' '    ' | xargs || true)"
   shadow_sample_enabled=0
   if [ "$mode" = "shadow" ]; then
     case "$shadow_sample_compact" in
@@ -369,6 +518,9 @@ guard_llmgw_prod_stage_context_if_needed() {
         shadow_sample_enabled=1
         ;;
     esac
+    if [ -n "$shadow_sample_allowlist_compact" ]; then
+      shadow_sample_enabled=1
+    fi
   fi
   release_gate_required=0
   if [ "$mode" = "http" ] || [ -n "$allowlist_compact" ]; then
@@ -398,84 +550,99 @@ else
   exit 1
 fi
 
+persist_release_image_pins
+
 tmp_dir="$(mktemp -d)"
 cleanup() { rm -rf "$tmp_dir"; }
 trap cleanup EXIT
 
-asset_url=""
-sha_url=""
-manifest_url=""
-
-if [ -n "${DIST_URL:-}" ]; then
-  asset_url="$DIST_URL"
-else
-  pages_base="${PAGES_BASE_URL:-https://get.miduo.org/https://${OWNER}.github.io/${REPO_NAME}}"
-  asset_url="${pages_base%/}/prd-admin-dist-${TAG}.zip"
-  sha_url="${pages_base%/}/prd-admin-dist-${TAG}.zip.sha256"
-  manifest_url="${pages_base%/}/release-manifest-${TAG}.json"
-fi
-
-if [ -z "$asset_url" ]; then
-  echo "ERROR: 未能确定静态站压缩包下载地址。" >&2
-  echo "  - 默认从 GitHub Pages 下载 prd-admin-dist-${TAG}.zip（可用 PAGES_BASE_URL 覆盖）" >&2
-  echo "  - 或直接设置 DIST_URL=... 指定 zip 地址" >&2
-  exit 1
-fi
-
-if [ -n "$manifest_url" ]; then
-  manifest_path="$tmp_dir/release-manifest.json"
-  if curl -fL "$manifest_url" -o "$manifest_path" 2>/dev/null; then
-    echo "Release manifest: $manifest_url"
-    grep -E '"commit"|"ref"|"apiImage"|"llmgwImage"|"llmgwServeImage"|"llmgwWebImage"|"webDist"|"webSha256"' "$manifest_path" || true
-  fi
-fi
-
-zip_path="$tmp_dir/prd-admin-dist.zip"
-echo "Downloading: $asset_url"
-curl -fL "$asset_url" -o "$zip_path"
-
-sha_path="$tmp_dir/prd-admin-dist.zip.sha256"
-
-if [ -n "$SKIP_VERIFY" ]; then
-  echo "跳过 sha256 校验（SKIP_VERIFY=1 或 --skip-verify）"
-elif [ -n "$sha_url" ] && command -v sha256sum >/dev/null 2>&1; then
-  if curl -fL "$sha_url" -o "$sha_path" 2>/dev/null; then
-    echo "Verifying sha256..."
-    # 兼容 sha256 文件内容为："<hash>  <filename>"
-    expected="$(awk '{print $1}' "$sha_path" | head -n 1)"
-    actual="$(sha256sum "$zip_path" | awk '{print $1}')"
-    if [ -n "$expected" ] && [ "$expected" != "$actual" ]; then
-      echo "WARN: sha256 不匹配，可能是 CDN 缓存不一致，等待 5 秒后重新下载..."
-      sleep 5
-      curl -fL -H "Cache-Control: no-cache" "$asset_url" -o "$zip_path"
-      curl -fL -H "Cache-Control: no-cache" "$sha_url" -o "$sha_path" 2>/dev/null || true
-      expected="$(awk '{print $1}' "$sha_path" | head -n 1)"
-      actual="$(sha256sum "$zip_path" | awk '{print $1}')"
-      if [ -n "$expected" ] && [ "$expected" != "$actual" ]; then
-        echo "" >&2
-        echo "ERROR: sha256 校验失败（expected=$expected actual=$actual）" >&2
-        echo "" >&2
-        echo "可能原因：" >&2
-        echo "  1. GitHub Pages CDN 缓存了不同版本的 zip 和 sha256 文件" >&2
-        echo "  2. 下载过程中文件被截断或损坏" >&2
-        echo "" >&2
-        echo "解决办法：" >&2
-        echo "  - 等待几分钟后重试（等待 CDN 缓存刷新）" >&2
-        echo "  - 跳过校验：SKIP_VERIFY=1 ./exec_dep.sh" >&2
-        echo "  - 或使用 --skip-verify 参数：./exec_dep.sh --skip-verify" >&2
-        exit 1
-      fi
-      echo "重试成功，sha256 校验通过"
+reuse_static_dist="$(printf '%s' "${PRD_AGENT_REUSE_EXISTING_STATIC_DIST:-0}" | tr 'A-Z' 'a-z' | xargs || true)"
+case "$reuse_static_dist" in
+  1|true|yes)
+    if [ ! -d deploy/web/dist ] || [ -z "$(find deploy/web/dist -mindepth 1 -maxdepth 1 2>/dev/null | head -n 1)" ]; then
+      echo "ERROR: PRD_AGENT_REUSE_EXISTING_STATIC_DIST=1 but deploy/web/dist is missing or empty." >&2
+      echo "       This option is only for backend/GW-only shadow deploys where an existing static site is already present." >&2
+      exit 1
     fi
-  fi
-fi
+    echo "Static dist reuse enabled: keeping existing deploy/web/dist"
+    ;;
+  *)
+    asset_url=""
+    sha_url=""
+    manifest_url=""
 
-mkdir -p deploy/web/dist
-rm -rf deploy/web/dist/*
-unzip -q "$zip_path" -d deploy/web/dist
+    if [ -n "${DIST_URL:-}" ]; then
+      asset_url="$DIST_URL"
+    else
+      pages_base="${PAGES_BASE_URL:-https://get.miduo.org/https://${OWNER}.github.io/${REPO_NAME}}"
+      asset_url="${pages_base%/}/prd-admin-dist-${TAG}.zip"
+      sha_url="${pages_base%/}/prd-admin-dist-${TAG}.zip.sha256"
+      manifest_url="${pages_base%/}/release-manifest-${TAG}.json"
+    fi
 
-echo ""
-echo "Static dist extracted to: deploy/web/dist"
+    if [ -z "$asset_url" ]; then
+      echo "ERROR: 未能确定静态站压缩包下载地址。" >&2
+      echo "  - 默认从 GitHub Pages 下载 prd-admin-dist-${TAG}.zip（可用 PAGES_BASE_URL 覆盖）" >&2
+      echo "  - 或直接设置 DIST_URL=... 指定 zip 地址" >&2
+      exit 1
+    fi
+
+    if [ -n "$manifest_url" ]; then
+      manifest_path="$tmp_dir/release-manifest.json"
+      if curl -fL "$manifest_url" -o "$manifest_path" 2>/dev/null; then
+        echo "Release manifest: $manifest_url"
+        grep -E '"commit"|"ref"|"apiImage"|"llmgwImage"|"llmgwServeImage"|"llmgwWebImage"|"webDist"|"webSha256"' "$manifest_path" || true
+      fi
+    fi
+
+    zip_path="$tmp_dir/prd-admin-dist.zip"
+    echo "Downloading: $asset_url"
+    curl -fL "$asset_url" -o "$zip_path"
+
+    sha_path="$tmp_dir/prd-admin-dist.zip.sha256"
+
+    if [ -n "$SKIP_VERIFY" ]; then
+      echo "跳过 sha256 校验（SKIP_VERIFY=1 或 --skip-verify）"
+    elif [ -n "$sha_url" ] && command -v sha256sum >/dev/null 2>&1; then
+      if curl -fL "$sha_url" -o "$sha_path" 2>/dev/null; then
+        echo "Verifying sha256..."
+        # 兼容 sha256 文件内容为："<hash>  <filename>"
+        expected="$(awk '{print $1}' "$sha_path" | head -n 1)"
+        actual="$(sha256sum "$zip_path" | awk '{print $1}')"
+        if [ -n "$expected" ] && [ "$expected" != "$actual" ]; then
+          echo "WARN: sha256 不匹配，可能是 CDN 缓存不一致，等待 5 秒后重新下载..."
+          sleep 5
+          curl -fL -H "Cache-Control: no-cache" "$asset_url" -o "$zip_path"
+          curl -fL -H "Cache-Control: no-cache" "$sha_url" -o "$sha_path" 2>/dev/null || true
+          expected="$(awk '{print $1}' "$sha_path" | head -n 1)"
+          actual="$(sha256sum "$zip_path" | awk '{print $1}')"
+          if [ -n "$expected" ] && [ "$expected" != "$actual" ]; then
+            echo "" >&2
+            echo "ERROR: sha256 校验失败（expected=$expected actual=$actual）" >&2
+            echo "" >&2
+            echo "可能原因：" >&2
+            echo "  1. GitHub Pages CDN 缓存了不同版本的 zip 和 sha256 文件" >&2
+            echo "  2. 下载过程中文件被截断或损坏" >&2
+            echo "" >&2
+            echo "解决办法：" >&2
+            echo "  - 等待几分钟后重试（等待 CDN 缓存刷新）" >&2
+            echo "  - 跳过校验：SKIP_VERIFY=1 ./exec_dep.sh" >&2
+            echo "  - 或使用 --skip-verify 参数：./exec_dep.sh --skip-verify" >&2
+            exit 1
+          fi
+          echo "重试成功，sha256 校验通过"
+        fi
+      fi
+    fi
+
+    mkdir -p deploy/web/dist
+    rm -rf deploy/web/dist/*
+    unzip -q "$zip_path" -d deploy/web/dist
+
+    echo ""
+    echo "Static dist extracted to: deploy/web/dist"
+    ;;
+esac
 
 # 激活独立部署模式的 nginx 配置：
 # - 仓库里 default.conf 默认 symlink 到 branches/_disconnected.conf（CDS 未激活时的 502 兜底）
@@ -609,11 +776,14 @@ run_llmgw_release_gate_if_needed() {
   LLMGW_POST_DEPLOY_GATE_KEY=""
   LLMGW_POST_DEPLOY_EXPECT_COMMIT=""
 
-  mode="$(printf '%s' "${LLMGW_MODE:-inproc}" | tr 'A-Z' 'a-z' | xargs)"
-  allowlist_raw="${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}"
+  mode_raw="$(llmgw_mode_value)"
+  mode="$(printf '%s' "$mode_raw" | tr 'A-Z' 'a-z' | xargs)"
+  allowlist_raw="$(llmgw_allowlist_value)"
   allowlist_compact="$(printf '%s' "$allowlist_raw" | tr ',;\n\r' '    ' | xargs || true)"
-  shadow_sample_raw="${LLMGW_SHADOW_FULL_SAMPLE_PERCENT:-0}"
+  shadow_sample_raw="$(llmgw_shadow_sample_value)"
   shadow_sample_compact="$(printf '%s' "$shadow_sample_raw" | xargs || true)"
+  shadow_sample_allowlist_raw="$(llmgw_shadow_sample_allowlist_value)"
+  shadow_sample_allowlist_compact="$(printf '%s' "$shadow_sample_allowlist_raw" | tr ',;\n\r' '    ' | xargs || true)"
   shadow_sample_enabled=0
   if [ "$mode" = "shadow" ]; then
     case "$shadow_sample_compact" in
@@ -623,13 +793,16 @@ run_llmgw_release_gate_if_needed() {
         shadow_sample_enabled=1
         ;;
     esac
+    if [ -n "$shadow_sample_allowlist_compact" ]; then
+      shadow_sample_enabled=1
+    fi
   fi
   release_gate_required=0
   if [ "$mode" = "http" ] || [ -n "$allowlist_compact" ]; then
     release_gate_required=1
   fi
   if [ "$release_gate_required" != "1" ] && [ "$shadow_sample_enabled" != "1" ]; then
-    echo "LLM Gateway release gate: skipped (LLMGW_MODE=${LLMGW_MODE:-inproc}, allowlist=empty, shadowSample=${shadow_sample_compact:-0})"
+    echo "LLM Gateway release gate: skipped (LLMGW_MODE=${mode:-inproc}, allowlist=empty, shadowSample=${shadow_sample_compact:-0}, shadowSampleAllowlist=empty)"
     return 0
   fi
 
@@ -658,18 +831,21 @@ run_llmgw_release_gate_if_needed() {
         canary_allowed_app_callers="visual-agent.image.vision::generation"
         ;;
       image)
-        canary_allowed_app_callers="visual-agent.image.text2img::generation visual-agent.image.img2img::generation"
+        canary_allowed_app_callers="visual-agent.image-gen.generate::generation visual-agent.image.text2img::generation visual-agent.image.img2img::generation"
+        ;;
+      asr)
+        canary_allowed_app_callers="document-store.subtitle::asr transcript-agent.transcribe::asr video-agent.v2d.transcribe::asr video-agent.video-to-text::asr"
         ;;
       video-asr)
-        canary_allowed_app_callers="video-agent.videogen::video-gen document-store.subtitle::asr transcript-agent.transcribe::asr"
+        canary_allowed_app_callers="video-agent.videogen::video-gen visual-agent.videogen::video-gen document-store.subtitle::asr transcript-agent.transcribe::asr video-agent.v2d.transcribe::asr video-agent.video-to-text::asr"
         ;;
       "")
         echo "ERROR: LLM Gateway canary 发布设置了 LLMGW_HTTP_APP_CALLER_ALLOWLIST，但未设置 LLMGW_CANARY_STAGE。" >&2
-        echo "       允许阶段：intent-text/chat/streaming/vision/image/video-asr；必须按低风险到高风险逐段推进。" >&2
+        echo "       允许阶段：intent-text/chat/streaming/vision/image/asr/video-asr；必须按低风险到高风险逐段推进。" >&2
         exit 1
         ;;
       *)
-        echo "ERROR: LLMGW_CANARY_STAGE=$canary_stage 不合法；允许 intent-text/chat/streaming/vision/image/video-asr。" >&2
+        echo "ERROR: LLMGW_CANARY_STAGE=$canary_stage 不合法；允许 intent-text/chat/streaming/vision/image/asr/video-asr。" >&2
         exit 1
         ;;
     esac
@@ -711,6 +887,35 @@ run_llmgw_release_gate_if_needed() {
   if [ "${LLMGW_GATE_RUN_SERVING_PROBE:-1}" != "0" ] && [ ! -f "scripts/llmgw-serving-probe.py" ]; then
     echo "ERROR: LLM Gateway http/canary/shadow sample 发布但缺少 scripts/llmgw-serving-probe.py，拒绝发布。" >&2
     exit 1
+  fi
+  if [ ! -f "scripts/llmgw-disk-space-guard.sh" ]; then
+    echo "ERROR: LLM Gateway http/canary/shadow sample 发布但缺少 scripts/llmgw-disk-space-guard.sh，拒绝发布。" >&2
+    exit 1
+  fi
+  scripts/llmgw-disk-space-guard.sh "${LLMGW_DEPLOY_DISK_GUARD_PATH:-.}" "${LLMGW_DEPLOY_MIN_FREE_MB:-4096}" "LLM Gateway exec_dep deploy"
+
+  provider_audit_required=0
+  if [ "$mode" = "http" ] || [ "$canary_stage" = "video-asr" ]; then
+    provider_audit_required=1
+  fi
+  if [ "$provider_audit_required" = "1" ]; then
+    if [ ! -f "scripts/llmgw-prod-provider-config-audit.py" ]; then
+      echo "ERROR: LLM Gateway http/video-asr 发布但缺少 scripts/llmgw-prod-provider-config-audit.py，拒绝发布。" >&2
+      exit 1
+    fi
+    provider_audit_args=""
+    if [ -n "$(printf '%s' "${LLMGW_PROVIDER_AUDIT_JSON_OUT:-}" | xargs || true)" ]; then
+      provider_audit_args="$provider_audit_args --json-out $LLMGW_PROVIDER_AUDIT_JSON_OUT"
+    fi
+    if [ -n "$(printf '%s' "${LLMGW_PROVIDER_AUDIT_REPORT_MD:-}" | xargs || true)" ]; then
+      provider_audit_args="$provider_audit_args --report-md $LLMGW_PROVIDER_AUDIT_REPORT_MD"
+    fi
+    if [ -n "$(printf '%s' "${LLMGW_PROVIDER_AUDIT_SEED_EVIDENCE_JSON:-}" | xargs || true)" ]; then
+      provider_audit_args="$provider_audit_args --seed-evidence-json $LLMGW_PROVIDER_AUDIT_SEED_EVIDENCE_JSON"
+    fi
+    echo "LLM Gateway provider config audit: required before deploy (mode=$mode, canaryStage=${canary_stage:-none})"
+    # shellcheck disable=SC2086
+    python3 scripts/llmgw-prod-provider-config-audit.py $provider_audit_args
   fi
 
   gate_base="${LLMGW_GATE_BASE:-${GW_BASE:-}}"
@@ -762,7 +967,7 @@ run_llmgw_release_gate_if_needed() {
   gate_app_callers_raw="${LLMGW_GATE_APP_CALLERS:-}"
   gate_app_callers_compact="$(printf '%s' "$gate_app_callers_raw" | tr ',;\n\r' '    ' | xargs || true)"
   if [ "$mode" = "http" ] && [ -z "$gate_app_callers_compact" ]; then
-    gate_app_callers_raw="${LLMGW_GATE_FULL_HTTP_APP_CALLERS:-report-agent.generate::chat,prd-agent-desktop.chat.sendmessage::chat,open-platform-agent.proxy::chat,prd-agent-web.model-lab.run::chat,prd-agent.arena.battle::chat,visual-agent.image.text2img::generation,visual-agent.image.img2img::generation,visual-agent.image.vision::generation,video-agent.videogen::video-gen,document-store.subtitle::asr,transcript-agent.transcribe::asr}"
+    gate_app_callers_raw="${LLMGW_GATE_FULL_HTTP_APP_CALLERS:-report-agent.generate::chat,prd-agent-desktop.chat.sendmessage::chat,prd-agent-desktop.preview-ask.section::chat,open-platform-agent.proxy::chat,open-api.proxy::chat,open-api.proxy::generation,prd-agent-web.model-lab.run::chat,prd-agent.arena.battle::chat,tutorial-email.generate::chat,visual-agent.image-gen.generate::generation,visual-agent.image.text2img::generation,visual-agent.image.img2img::generation,visual-agent.image.vision::generation,video-agent.videogen::video-gen,visual-agent.videogen::video-gen,document-store.subtitle::asr,transcript-agent.transcribe::asr,video-agent.v2d.transcribe::asr,video-agent.video-to-text::asr}"
     echo "LLM Gateway release gate: LLMGW_MODE=http 未设置 LLMGW_GATE_APP_CALLERS，默认要求核心入口逐个达标"
   fi
   for app in ${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}; do
@@ -796,7 +1001,7 @@ run_llmgw_release_gate_if_needed() {
       streaming)
         required_kinds_raw="stream:${canary_kind_min}"
         ;;
-      vision|image|video-asr)
+      vision|image|asr|video-asr)
         required_kinds_raw="raw:${canary_kind_min}"
         ;;
     esac
@@ -812,8 +1017,8 @@ run_llmgw_release_gate_if_needed() {
   required_app_kinds_compact="$(printf '%s' "$required_app_kinds_raw" | tr ',;\n\r' '    ' | xargs || true)"
   if [ "$mode" = "http" ] && [ -z "$required_app_kinds_compact" ]; then
     full_http_app_kind_min="${LLMGW_GATE_FULL_HTTP_APP_KIND_MIN:-${LLMGW_GATE_FULL_HTTP_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}}"
-    required_app_kinds_raw="${LLMGW_GATE_FULL_HTTP_APP_KINDS:-visual-agent.image.text2img::generation:raw:${full_http_app_kind_min},visual-agent.image.img2img::generation:raw:${full_http_app_kind_min},visual-agent.image.vision::generation:raw:${full_http_app_kind_min},video-agent.videogen::video-gen:raw:${full_http_app_kind_min},document-store.subtitle::asr:raw:${full_http_app_kind_min},transcript-agent.transcribe::asr:raw:${full_http_app_kind_min}}"
-    echo "LLM Gateway release gate: LLMGW_MODE=http 未设置 LLMGW_GATE_REQUIRED_APP_KINDS，默认要求 raw 入口逐个具备 raw 样本"
+    required_app_kinds_raw="${LLMGW_GATE_FULL_HTTP_APP_KINDS:-report-agent.generate::chat:send:${full_http_app_kind_min},prd-agent-desktop.chat.sendmessage::chat:stream:${full_http_app_kind_min},prd-agent-desktop.preview-ask.section::chat:stream:${full_http_app_kind_min},open-platform-agent.proxy::chat:stream:${full_http_app_kind_min},open-api.proxy::chat:send:${full_http_app_kind_min},open-api.proxy::generation:raw:${full_http_app_kind_min},prd-agent-web.model-lab.run::chat:stream:${full_http_app_kind_min},prd-agent.arena.battle::chat:stream:${full_http_app_kind_min},tutorial-email.generate::chat:send:${full_http_app_kind_min},visual-agent.image-gen.generate::generation:raw:${full_http_app_kind_min},visual-agent.image.text2img::generation:raw:${full_http_app_kind_min},visual-agent.image.img2img::generation:raw:${full_http_app_kind_min},visual-agent.image.vision::generation:raw:${full_http_app_kind_min},video-agent.videogen::video-gen:raw:${full_http_app_kind_min},visual-agent.videogen::video-gen:raw:${full_http_app_kind_min},document-store.subtitle::asr:raw:${full_http_app_kind_min},transcript-agent.transcribe::asr:raw:${full_http_app_kind_min},video-agent.v2d.transcribe::asr:raw:${full_http_app_kind_min},video-agent.video-to-text::asr:raw:${full_http_app_kind_min}}"
+    echo "LLM Gateway release gate: LLMGW_MODE=http 未设置 LLMGW_GATE_REQUIRED_APP_KINDS，默认要求核心 send/stream/raw 入口逐个具备 app-kind 样本"
   elif [ -n "$canary_stage" ] && [ -z "$required_app_kinds_compact" ]; then
     canary_app_kind_min="${LLMGW_GATE_CANARY_APP_KIND_MIN:-${LLMGW_GATE_CANARY_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}}"
     case "$canary_stage" in
@@ -821,10 +1026,13 @@ run_llmgw_release_gate_if_needed() {
         required_app_kinds_raw="${LLMGW_GATE_CANARY_APP_KINDS:-visual-agent.image.vision::generation:raw:${canary_app_kind_min}}"
         ;;
       image)
-        required_app_kinds_raw="${LLMGW_GATE_CANARY_APP_KINDS:-visual-agent.image.text2img::generation:raw:${canary_app_kind_min},visual-agent.image.img2img::generation:raw:${canary_app_kind_min}}"
+        required_app_kinds_raw="${LLMGW_GATE_CANARY_APP_KINDS:-visual-agent.image-gen.generate::generation:raw:${canary_app_kind_min},visual-agent.image.text2img::generation:raw:${canary_app_kind_min},visual-agent.image.img2img::generation:raw:${canary_app_kind_min}}"
+        ;;
+      asr)
+        required_app_kinds_raw="${LLMGW_GATE_CANARY_APP_KINDS:-document-store.subtitle::asr:raw:${canary_app_kind_min},transcript-agent.transcribe::asr:raw:${canary_app_kind_min},video-agent.v2d.transcribe::asr:raw:${canary_app_kind_min},video-agent.video-to-text::asr:raw:${canary_app_kind_min}}"
         ;;
       video-asr)
-        required_app_kinds_raw="${LLMGW_GATE_CANARY_APP_KINDS:-video-agent.videogen::video-gen:raw:${canary_app_kind_min},document-store.subtitle::asr:raw:${canary_app_kind_min},transcript-agent.transcribe::asr:raw:${canary_app_kind_min}}"
+        required_app_kinds_raw="${LLMGW_GATE_CANARY_APP_KINDS:-video-agent.videogen::video-gen:raw:${canary_app_kind_min},visual-agent.videogen::video-gen:raw:${canary_app_kind_min},document-store.subtitle::asr:raw:${canary_app_kind_min},transcript-agent.transcribe::asr:raw:${canary_app_kind_min},video-agent.v2d.transcribe::asr:raw:${canary_app_kind_min},video-agent.video-to-text::asr:raw:${canary_app_kind_min}}"
         ;;
     esac
     if [ -n "$required_app_kinds_raw" ]; then
@@ -844,7 +1052,7 @@ run_llmgw_release_gate_if_needed() {
     # shellcheck disable=SC2086
     GW_KEY="$gate_key" python3 scripts/llmgw-release-gate.py $args
   else
-    echo "LLM Gateway release gate: skipped shadow sample startup (LLMGW_MODE=${LLMGW_MODE:-inproc}, shadowSample=${shadow_sample_compact:-0}); serving/smoke verification runs after compose up"
+    echo "LLM Gateway release gate: skipped shadow sample startup (LLMGW_MODE=${mode:-inproc}, shadowSample=${shadow_sample_compact:-0}); serving/smoke verification runs after compose up"
   fi
 }
 
@@ -925,10 +1133,27 @@ fi
 
 run_llmgw_release_gate_if_needed
 
+refresh_gateway_after_compose() {
+  gateway_service="${PRD_AGENT_GATEWAY_SERVICE:-gateway}"
+  if [ -z "$(printf '%s' "$gateway_service" | xargs || true)" ]; then
+    echo "Gateway refresh skipped: PRD_AGENT_GATEWAY_SERVICE is empty"
+    return 0
+  fi
+
+  if $COMPOSE config --services 2>/dev/null | grep -Fxq "$gateway_service"; then
+    echo "Refreshing gateway service to pick up recreated upstream container IPs..."
+    $COMPOSE up -d --no-deps --force-recreate "$gateway_service"
+  else
+    echo "Gateway refresh skipped: service '$gateway_service' not found in compose"
+  fi
+}
+
 echo "Ensuring Docker network exists..."
 docker network inspect prdagent-network >/dev/null 2>&1 || docker network create prdagent-network
 
 echo "Starting compose (force recreate to ensure new image is used)..."
 $COMPOSE up -d --force-recreate
+
+refresh_gateway_after_compose
 
 run_llmgw_post_deploy_verification_if_needed

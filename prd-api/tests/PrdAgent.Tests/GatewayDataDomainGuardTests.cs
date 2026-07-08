@@ -76,6 +76,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}", dockerCompose);
         Assert.Contains("LlmGateway__HttpAppCallerAllowlist=${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}", dockerCompose);
         Assert.Contains("LlmGateway__ShadowFullSamplePercent=${LLMGW_SHADOW_FULL_SAMPLE_PERCENT:-0}", dockerCompose);
+        Assert.Contains("LlmGateway__ShadowFullSampleAppCallerAllowlist=${LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST:-}", dockerCompose);
         Assert.Contains("LLMGW_ADMIN_PASSWORD=${LLMGW_ADMIN_PASSWORD:-}", dockerCompose);
         Assert.Contains("LLMGW_ADMIN_FORCE_RESET=${LLMGW_ADMIN_FORCE_RESET:-}", dockerCompose);
         Assert.DoesNotContain("LLMGW_ADMIN_PASSWORD=${LLMGW_ADMIN_PASSWORD:?", dockerCompose);
@@ -85,9 +86,49 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ShadowForceSampling_PropagatesAcrossQueuedRuns()
+    {
+        var imageRun = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/ImageGenRun.cs");
+        var transcriptRun = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/TranscriptRun.cs");
+        var documentRun = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/DocumentStoreAgentRun.cs");
+        var videoGenRun = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/VideoGenModels.cs");
+        var videoToDocRun = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/VideoToDocModels.cs");
+
+        foreach (var model in new[] { imageRun, transcriptRun, documentRun, videoGenRun, videoToDocRun })
+        {
+            Assert.Contains("public bool ForceFullShadowSample { get; set; }", model);
+        }
+
+        var imageController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageGenController.cs");
+        var imageMasterController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs");
+        var transcriptController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/TranscriptAgentController.cs");
+        var documentController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreController.cs");
+        var videoController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/VideoAgentController.cs");
+        var videoService = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Services/VideoGenService.cs");
+
+        foreach (var creator in new[] { imageController, imageMasterController, transcriptController, documentController, videoController, videoService })
+        {
+            Assert.Contains("ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true", creator);
+        }
+
+        var imageWorker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs");
+        var transcriptWorker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/TranscriptRunWorker.cs");
+        var subtitleProcessor = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/SubtitleGenerationProcessor.cs");
+        var reprocessProcessor = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ContentReprocessProcessor.cs");
+        var videoWorker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/VideoGenRunWorker.cs");
+        var videoToDocWorker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/VideoToDocRunWorker.cs");
+
+        foreach (var worker in new[] { imageWorker, transcriptWorker, subtitleProcessor, reprocessProcessor, videoWorker, videoToDocWorker })
+        {
+            Assert.Contains("ForceFullShadowSample: run.ForceFullShadowSample", worker);
+        }
+    }
+
+    [Fact]
     public void ExecDep_RequiresReleaseGateBeforeFullHttpOrCanaryMode()
     {
         var script = ReadRepoFile("exec_dep.sh");
+        var readiness = ReadRepoFile("scripts/llmgw-readiness-audit.py");
 
         Assert.Contains("run_llmgw_release_gate_if_needed", script);
         Assert.Contains("check_fast_release_intent", script);
@@ -99,6 +140,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("guard_llmgw_prod_stage_context_if_needed", script);
         Assert.Contains("Release intent: matched fast.sh warmup", script);
         Assert.Contains("LLMGW_HTTP_APP_CALLER_ALLOWLIST", script);
+        Assert.Contains("read_dotenv_value", script);
+        Assert.Contains("config_value LLMGW_MODE LlmGateway__Mode", script);
+        Assert.Contains("config_value LLMGW_HTTP_APP_CALLER_ALLOWLIST LlmGateway__HttpAppCallerAllowlist", script);
+        Assert.Contains("config_value LLMGW_SHADOW_FULL_SAMPLE_PERCENT LlmGateway__ShadowFullSamplePercent", script);
+        Assert.Contains("config_value LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST LlmGateway__ShadowFullSampleAppCallerAllowlist", script);
+        Assert.Contains("mode_raw=\"$(llmgw_mode_value)\"", script);
         Assert.Contains("LLMGW_POST_DEPLOY_VERIFY_NEEDED", script);
         Assert.Contains("LLMGW_POST_DEPLOY_GATE_BASE", script);
         Assert.Contains("run_llmgw_post_deploy_verification_if_needed", script);
@@ -107,13 +154,15 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("canary_allowed_app_callers=\"report-agent.generate::chat\"", script);
         Assert.Contains("canary_allowed_app_callers=\"report-agent.generate::chat prd-agent-desktop.chat.sendmessage::chat open-platform-agent.proxy::chat\"", script);
         Assert.Contains("canary_allowed_app_callers=\"visual-agent.image.vision::generation\"", script);
-        Assert.Contains("canary_allowed_app_callers=\"visual-agent.image.text2img::generation visual-agent.image.img2img::generation\"", script);
-        Assert.Contains("canary_allowed_app_callers=\"video-agent.videogen::video-gen document-store.subtitle::asr transcript-agent.transcribe::asr\"", script);
+        Assert.Contains("canary_allowed_app_callers=\"visual-agent.image-gen.generate::generation visual-agent.image.text2img::generation visual-agent.image.img2img::generation\"", script);
+        Assert.Contains("canary_allowed_app_callers=\"video-agent.videogen::video-gen visual-agent.videogen::video-gen document-store.subtitle::asr transcript-agent.transcribe::asr video-agent.v2d.transcribe::asr video-agent.video-to-text::asr\"", script);
         Assert.Contains("LLM Gateway canary 发布设置了 LLMGW_HTTP_APP_CALLER_ALLOWLIST，但未设置 LLMGW_CANARY_STAGE", script);
         Assert.Contains("LLM Gateway canary 阶段 $canary_stage 不允许入口 $app_trimmed", script);
         Assert.Contains("LLM Gateway canary stage: $canary_stage allowlist=$allowlist_compact", script);
         Assert.Contains("LLMGW_SHADOW_FULL_SAMPLE_PERCENT", script);
+        Assert.Contains("shadow_sample_allowlist_compact", script);
         Assert.Contains("shadow_sample_enabled=0", script);
+        Assert.Contains("if [ -n \"$shadow_sample_allowlist_compact\" ]; then", script);
         Assert.Contains("release_gate_required=0", script);
         Assert.Contains("if [ \"$release_gate_required\" != \"1\" ] && [ \"$shadow_sample_enabled\" != \"1\" ]; then", script);
         Assert.Contains("LLMGW_PROD_STAGE_ACTIVE", script);
@@ -139,15 +188,22 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_GATE_FULL_HTTP_APP_CALLERS", script);
         Assert.Contains("gate_app_callers_raw=\"${LLMGW_GATE_FULL_HTTP_APP_CALLERS:-report-agent.generate::chat", script);
         Assert.Contains("prd-agent-desktop.chat.sendmessage::chat", script);
+        Assert.Contains("prd-agent-desktop.preview-ask.section::chat", script);
         Assert.Contains("open-platform-agent.proxy::chat", script);
+        Assert.Contains("open-api.proxy::chat", script);
+        Assert.Contains("open-api.proxy::generation", script);
         Assert.Contains("prd-agent-web.model-lab.run::chat", script);
         Assert.Contains("prd-agent.arena.battle::chat", script);
+        Assert.Contains("tutorial-email.generate::chat", script);
+        Assert.Contains("visual-agent.image-gen.generate::generation", script);
         Assert.Contains("visual-agent.image.text2img::generation", script);
         Assert.Contains("visual-agent.image.img2img::generation", script);
         Assert.Contains("visual-agent.image.vision::generation", script);
         Assert.Contains("video-agent.videogen::video-gen", script);
         Assert.Contains("document-store.subtitle::asr", script);
         Assert.Contains("transcript-agent.transcribe::asr", script);
+        Assert.Contains("video-agent.v2d.transcribe::asr", script);
+        Assert.Contains("video-agent.video-to-text::asr", script);
         Assert.Contains("LLM Gateway release gate: LLMGW_MODE=http 未设置 LLMGW_GATE_APP_CALLERS，默认要求核心入口逐个达标", script);
         Assert.Contains("LLMGW_GATE_REQUIRED_KINDS", script);
         Assert.Contains("required_kinds_raw=\"${LLMGW_GATE_REQUIRED_KINDS:-}\"", script);
@@ -164,13 +220,26 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_GATE_FULL_HTTP_APP_KINDS", script);
         Assert.Contains("required_app_kinds_raw=\"${LLMGW_GATE_REQUIRED_APP_KINDS:-}\"", script);
         Assert.Contains("full_http_app_kind_min=\"${LLMGW_GATE_FULL_HTTP_APP_KIND_MIN:-${LLMGW_GATE_FULL_HTTP_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}}\"", script);
+        Assert.Contains("report-agent.generate::chat:send:", script);
+        Assert.Contains("prd-agent-desktop.chat.sendmessage::chat:stream:", script);
+        Assert.Contains("prd-agent-desktop.preview-ask.section::chat:stream:", script);
+        Assert.Contains("open-platform-agent.proxy::chat:stream:", script);
+        Assert.Contains("open-api.proxy::chat:send:", script);
+        Assert.Contains("open-api.proxy::generation:raw:", script);
+        Assert.Contains("prd-agent-web.model-lab.run::chat:stream:", script);
+        Assert.Contains("prd-agent.arena.battle::chat:stream:", script);
+        Assert.Contains("tutorial-email.generate::chat:send:", script);
+        Assert.Contains("visual-agent.image-gen.generate::generation:raw:", script);
         Assert.Contains("visual-agent.image.text2img::generation:raw:", script);
         Assert.Contains("visual-agent.image.img2img::generation:raw:", script);
         Assert.Contains("visual-agent.image.vision::generation:raw:", script);
         Assert.Contains("video-agent.videogen::video-gen:raw:", script);
+        Assert.Contains("visual-agent.videogen::video-gen:raw:", script);
         Assert.Contains("document-store.subtitle::asr:raw:", script);
         Assert.Contains("transcript-agent.transcribe::asr:raw:", script);
-        Assert.Contains("LLM Gateway release gate: LLMGW_MODE=http 未设置 LLMGW_GATE_REQUIRED_APP_KINDS，默认要求 raw 入口逐个具备 raw 样本", script);
+        Assert.Contains("video-agent.v2d.transcribe::asr:raw:", script);
+        Assert.Contains("video-agent.video-to-text::asr:raw:", script);
+        Assert.Contains("LLM Gateway release gate: LLMGW_MODE=http 未设置 LLMGW_GATE_REQUIRED_APP_KINDS，默认要求核心 send/stream/raw 入口逐个具备 app-kind 样本", script);
         Assert.Contains("LLMGW_GATE_CANARY_APP_KIND_MIN", script);
         Assert.Contains("LLMGW_GATE_CANARY_APP_KINDS", script);
         Assert.Contains("LLM Gateway release gate: canary 阶段 $canary_stage 默认要求 raw app-kind 样本逐个达标", script);
@@ -194,6 +263,35 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_SERVING_PROBE_JSON_OUT", script);
         Assert.Contains("LLMGW_SERVING_PROBE_REPORT_MD", script);
         Assert.Contains("scripts/llmgw-serving-probe.py", script);
+        Assert.Contains("scripts/llmgw-disk-space-guard.sh", script);
+        Assert.Contains("LLMGW_DEPLOY_DISK_GUARD_PATH", script);
+        Assert.Contains("LLMGW_DEPLOY_MIN_FREE_MB:-4096", script);
+        Assert.Contains("LLM Gateway exec_dep deploy", script);
+        Assert.Contains("provider_audit_required=0", script);
+        Assert.Contains("if [ \"$mode\" = \"http\" ] || [ \"$canary_stage\" = \"video-asr\" ]; then", script);
+        Assert.Contains("scripts/llmgw-prod-provider-config-audit.py", script);
+        Assert.Contains("LLMGW_PROVIDER_AUDIT_JSON_OUT", script);
+        Assert.Contains("LLMGW_PROVIDER_AUDIT_REPORT_MD", script);
+        Assert.Contains("LLMGW_PROVIDER_AUDIT_SEED_EVIDENCE_JSON", script);
+        Assert.Contains("LLM Gateway provider config audit: required before deploy", script);
+        var providerAudit = ReadRepoFile("scripts/llmgw-prod-provider-config-audit.py");
+        Assert.Contains("OpenRouter /videos requests", providerAudit);
+        Assert.Contains("Volcengine Ark OpenAI chat base URL", providerAudit);
+        Assert.Contains("dedicated Volcengine video adapter", providerAudit);
+        Assert.Contains("externalBlockers", providerAudit);
+        Assert.Contains("modelPoolConfig", providerAudit);
+        Assert.Contains("asr_credential_rejected", providerAudit);
+        Assert.Contains("asr_authorization_failed", providerAudit);
+        Assert.Contains("asr_channel_unavailable", providerAudit);
+        Assert.Contains("video_channel_unavailable", providerAudit);
+        Assert.Contains("video_model_not_open", providerAudit);
+        Assert.Contains("--self-test", providerAudit);
+        Assert.Contains("_self_test_report", providerAudit);
+        Assert.Contains("requiredCodes", providerAudit);
+        Assert.Contains("missingCodes", providerAudit);
+        Assert.Contains("requiredPairs", providerAudit);
+        Assert.Contains("missingPairs", providerAudit);
+        Assert.Contains("provider_audit_external_blocker_self_test", readiness);
         Assert.Contains("probe_args=\"--base $gate_base\"", script);
         Assert.Contains("python3 scripts/llmgw-serving-probe.py $probe_args", script);
         Assert.Contains("LLM Gateway post-deploy serving probe: required", script);
@@ -234,6 +332,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("check_intent_image_match PRD_AGENT_LLMGW_IMAGE", execDep);
         Assert.Contains("check_intent_image_match PRD_AGENT_LLMGW_SERVE_IMAGE", execDep);
         Assert.Contains("check_intent_image_match PRD_AGENT_LLMGW_WEB_IMAGE", execDep);
+        Assert.Contains("persist_release_image_pins", execDep);
+        Assert.Contains("PRD_AGENT_PERSIST_IMAGE_PINS", execDep);
+        Assert.Contains("PRD_AGENT_API_IMAGE_VALUE", execDep);
+        Assert.Contains("Release image pins: persisted to", execDep);
         Assert.Contains("fast.sh / exec_dep.sh image mismatch", execDep);
         Assert.Contains("fast.sh warmed:", execDep);
         Assert.Contains("exec_dep wants:", execDep);
@@ -320,11 +422,31 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--execute", script);
         Assert.Contains("--min-observation-hours", script);
         Assert.Contains("LLMGW_STAGE_MIN_OBSERVATION_HOURS", script);
+        Assert.Contains("LLMGW_STAGE_MIN_FREE_MB", script);
+        Assert.Contains("LLMGW_STAGE_DISK_GUARD_PATH", script);
+        Assert.Contains("run_stage_disk_guard", script);
+        Assert.Contains("scripts/llmgw-disk-space-guard.sh", script);
+        Assert.Contains("LLM Gateway production stage $stage", script);
         Assert.Contains("--main-ref", script);
         Assert.Contains("LLMGW_RELEASE_MAIN_REF", script);
         Assert.Contains("validate_main_ancestry", script);
+        Assert.Contains("if [ \"$stage\" = \"rollback-inproc\" ]; then", script);
+        Assert.Contains("if [ \"$stage\" = \"rollback-rehearsal\" ]; then", script);
+        Assert.Contains("LLM Gateway rollback rehearsal: release main SHA recorded without ancestry enforcement", script);
         Assert.Contains("git merge-base --is-ancestor", script);
         Assert.Contains("release commit does not include latest main", script);
+        Assert.Contains("LLMGW_STAGE_ALLOW_RELEASE_TREE_MISMATCH", script);
+        Assert.Contains("LLMGW_STAGE_ALLOW_SCRIPT_TREE_MISMATCH", script);
+        Assert.Contains("validate_release_tree", script);
+        Assert.Contains("critical_paths", script);
+        Assert.Contains("docker-compose.yml", script);
+        Assert.Contains("cds-compose.yml", script);
+        Assert.Contains("execdep.sh", script);
+        Assert.Contains("deploy/nginx/conf.d/branches/_standalone.conf", script);
+        Assert.Contains("git show \"$commit:<critical rollout/deploy files>\" | cmp local files", script);
+        Assert.Contains("local rollout/deploy files must match --commit", script);
+        Assert.Contains("release file differs from release commit", script);
+        Assert.Contains("LLM Gateway release tree: OK", script);
         Assert.Contains("LLMGW_ALLOW_OUT_OF_ORDER_REASON", script);
         Assert.Contains("--allow-out-of-order-reason", script);
         Assert.Contains("requires --allow-out-of-order-reason", script);
@@ -336,8 +458,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("mode=\"shadow\"", script);
         Assert.Contains("mode=\"http\"", script);
         Assert.Contains("report-agent.generate::chat,prd-agent-desktop.chat.sendmessage::chat,open-platform-agent.proxy::chat", script);
-        Assert.Contains("visual-agent.image.text2img::generation,visual-agent.image.img2img::generation", script);
-        Assert.Contains("video-agent.videogen::video-gen,document-store.subtitle::asr,transcript-agent.transcribe::asr", script);
+        Assert.Contains("visual-agent.image-gen.generate::generation,visual-agent.image.text2img::generation,visual-agent.image.img2img::generation", script);
+        Assert.Contains("video-agent.videogen::video-gen,visual-agent.videogen::video-gen,document-store.subtitle::asr,transcript-agent.transcribe::asr,video-agent.v2d.transcribe::asr,video-agent.video-to-text::asr", script);
         Assert.Contains("export PRD_AGENT_REQUIRE_FAST_INTENT=\"${PRD_AGENT_REQUIRE_FAST_INTENT:-1}\"", script);
         Assert.Contains("export LLMGW_PROD_STAGE_ACTIVE=1", script);
         Assert.Contains("export LLMGW_PROD_STAGE=\"$stage\"", script);
@@ -363,8 +485,21 @@ public class GatewayDataDomainGuardTests
             script.IndexOf("record_failed_stage_on_exit()", StringComparison.Ordinal)..script.IndexOf("trap record_failed_stage_on_exit EXIT", StringComparison.Ordinal)];
         Assert.DoesNotContain("rollback-inproc", failureTrap);
         Assert.Contains("prod-preflight.json", script);
+        Assert.Contains("video-canary.json", script);
+        Assert.Contains("LLMGW_STAGE_RUN_VIDEO_CANARY", script);
+        Assert.Contains("run_video_canary_evidence", script);
+        Assert.Contains("scripts/llmgw-video-exchange-canary.py", script);
+        Assert.Contains("LLMGW_VIDEO_CANARY_JSON_OUT", script);
+        Assert.Contains("--video-canary-json \"$video_canary_json\"", script);
+        Assert.Contains("--video-canary-required \"$run_video_canary\"", script);
+        Assert.Contains("videoCanaryJson", script);
+        Assert.Contains("videoCanaryRequired", script);
         Assert.Contains("run_prod_preflight", script);
         Assert.Contains("scripts/llmgw-prod-preflight.py --mode start", script);
+        Assert.Contains("LLMGW_STAGE_MAP_BASE or PRD_AGENT_BASE", script);
+        Assert.Contains("preflight += \" --map-base ${LLMGW_STAGE_MAP_BASE:-${PRD_AGENT_BASE:-}}\"", script);
+        Assert.Contains("map_base=\"$(printf '%s' \"${LLMGW_STAGE_MAP_BASE:-${PRD_AGENT_BASE:-}}\" | xargs || true)\"", script);
+        Assert.Contains("preflight_args=\"$preflight_args --map-base $map_base\"", script);
         Assert.Contains("--prod-preflight-json \"$prod_preflight_json\"", script);
         Assert.Contains("scripts/llmgw-rollout-ledger.py validate", script);
         Assert.Contains("scripts/llmgw-rollout-ledger.py append", script);
@@ -414,6 +549,23 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("_require_serving_probe_for_commit", ledger);
         Assert.Contains("_require_smoke_for_commit", ledger);
         Assert.Contains("_require_release_gate_for_commit", ledger);
+        Assert.Contains("\"providerAuditExternalBlockers\": provider_external_blockers", ledger);
+        Assert.Contains("_provider_external_blockers", ledger);
+        Assert.Contains("contains external blockers", ledger);
+        Assert.Contains("providerExternalBlockers", ledger);
+        Assert.Contains("_canary_external_blockers", ledger);
+        Assert.Contains("_merge_blockers", ledger);
+        Assert.Contains("\"externalBlockers\": all_external_blockers", ledger);
+        Assert.Contains("\"videoCanaryJson\": args.video_canary_json", ledger);
+        Assert.Contains("\"videoCanaryRequired\": _bool_flag(args.video_canary_required)", ledger);
+        Assert.Contains("\"videoCanaryExternalBlockers\": video_canary_external_blockers", ledger);
+        Assert.Contains("_require_video_canary", ledger);
+        Assert.Contains("video canary evidence", ledger);
+        Assert.Contains("\"asrHttpCanaryJson\": args.asr_http_canary_json", ledger);
+        Assert.Contains("\"asrHttpCanaryRequired\": _bool_flag(args.asr_http_canary_required)", ledger);
+        Assert.Contains("\"asrHttpCanaryExternalBlockers\": asr_http_canary_external_blockers", ledger);
+        Assert.Contains("_require_asr_http_canary", ledger);
+        Assert.Contains("ASR HTTP canary evidence", ledger);
         Assert.Contains("missing expectedCommit for same-commit evidence", ledger);
         Assert.Contains("releaseMainSha mismatch", ledger);
         Assert.Contains("shadowReleaseCommit mismatch", ledger);
@@ -433,7 +585,16 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--mode", preflight);
         Assert.Contains("start", preflight);
         Assert.Contains("completion", preflight);
+        Assert.Contains("LLMGW_STAGE_MAP_BASE", preflight);
+        Assert.Contains("missing PRD_AGENT_BASE, LLMGW_STAGE_MAP_BASE, or --map-base", preflight);
         Assert.Contains("map_logs_scope", preflight);
+        Assert.Contains("map_direct_transport_absent", preflight);
+        Assert.Contains("LLMGW_PROD_PREFLIGHT_DIRECT_TRANSPORT_SINCE_HOURS", preflight);
+        Assert.Contains("LLMGW_PROD_PREFLIGHT_DIRECT_TRANSPORT_PAGE_SIZE", preflight);
+        Assert.Contains("LLMGW_PROD_PREFLIGHT_DIRECT_TRANSPORT_MAX_PAGES", preflight);
+        Assert.Contains("directTransportSinceHours", preflight);
+        Assert.Contains("gatewayTransport", preflight);
+        Assert.Contains("\"direct\"", preflight);
         Assert.Contains("gateway_protected_requires_key", preflight);
         Assert.Contains("gateway_key_configured", preflight);
         Assert.Contains("rollout_ledger_start_ready", preflight);
@@ -452,9 +613,28 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("scripts/llmgw-prod-stage.sh", readiness);
         Assert.Contains("scripts/llmgw-rollout-ledger.py", readiness);
         Assert.Contains("scripts/llmgw-prod-preflight.py", readiness);
+        Assert.Contains("map_direct_transport_absent", readiness);
+        Assert.Contains("LLMGW_PROD_PREFLIGHT_DIRECT_TRANSPORT_SINCE_HOURS", readiness);
+        Assert.Contains("LLMGW_PROD_PREFLIGHT_DIRECT_TRANSPORT_PAGE_SIZE", readiness);
+        Assert.Contains("LLMGW_PROD_PREFLIGHT_DIRECT_TRANSPORT_MAX_PAGES", readiness);
+        Assert.Contains("directTransportSinceHours", readiness);
+        Assert.Contains("gatewayTransport", readiness);
         Assert.Contains("preflightExecutable", readiness);
         Assert.Contains("ledgerExecutable", readiness);
         Assert.Contains("prod-preflight.json", readiness);
+        Assert.Contains("video-canary.json", readiness);
+        Assert.Contains("LLMGW_STAGE_RUN_VIDEO_CANARY", readiness);
+        Assert.Contains("run_video_canary_evidence", readiness);
+        Assert.Contains("scripts/llmgw-video-exchange-canary.py", readiness);
+        Assert.Contains("LLMGW_VIDEO_CANARY_JSON_OUT", readiness);
+        Assert.Contains("--video-canary-json \\\"$video_canary_json\\\"", readiness);
+        Assert.Contains("--video-canary-required \\\"$run_video_canary\\\"", readiness);
+        Assert.Contains("--asr-http-canary-json \\\"$asr_http_canary_json\\\"", readiness);
+        Assert.Contains("--asr-http-canary-required \\\"$run_asr_http_canary\\\"", readiness);
+        Assert.Contains("videoCanaryJson", readiness);
+        Assert.Contains("videoCanaryRequired", readiness);
+        Assert.Contains("asrHttpCanaryJson", readiness);
+        Assert.Contains("asrHttpCanaryRequired", readiness);
         Assert.Contains("run_prod_preflight", readiness);
         Assert.Contains("scripts/llmgw-prod-preflight.py --mode start", readiness);
         Assert.Contains("--prod-preflight-json \\\"$prod_preflight_json\\\"", readiness);
@@ -463,7 +643,14 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_STAGE_MIN_OBSERVATION_HOURS", readiness);
         Assert.Contains("LLMGW_RELEASE_MAIN_REF", readiness);
         Assert.Contains("validate_main_ancestry", readiness);
+        Assert.Contains("if [ \\\"$stage\\\" = \\\"rollback-inproc\\\" ]; then", readiness);
+        Assert.Contains("if [ \\\"$stage\\\" = \\\"rollback-rehearsal\\\" ]; then", readiness);
+        Assert.Contains("LLM Gateway rollback rehearsal: release main SHA recorded without ancestry enforcement", readiness);
         Assert.Contains("release commit does not include latest main", readiness);
+        Assert.Contains("LLMGW_STAGE_ALLOW_RELEASE_TREE_MISMATCH", readiness);
+        Assert.Contains("validate_release_tree", readiness);
+        Assert.Contains("local rollout/deploy files must match --commit", readiness);
+        Assert.Contains("release file differs from release commit", readiness);
         Assert.Contains("LLMGW_ALLOW_OUT_OF_ORDER_REASON", readiness);
         Assert.Contains("--allow-out-of-order-reason", readiness);
         Assert.Contains("allowOutOfOrderReason", readiness);
@@ -659,6 +846,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--run-smoke", script);
         Assert.Contains("scripts/gw-smoke.py", script);
         Assert.Contains("gateway_protocol_and_shadow_unit_tests", script);
+        Assert.Contains("GatewayPinnedModelTests", script);
         Assert.Contains("GatewayProtocolFidelityTests", script);
         Assert.Contains("ClaudeToolTranslationTests", script);
         Assert.Contains("ShadowLlmGatewayTests", script);
@@ -732,14 +920,20 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
-    public void ShadowCoverageReport_RendersAppCallerKindMatrixWithoutLeakingKey()
+    public void ShadowCoverageReport_RendersExplicitCoverageCellsWithoutLeakingKey()
     {
         var script = ReadRepoFile("scripts/llmgw-shadow-coverage-report.py");
+        var endpoint = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
 
         Assert.Contains("LLM Gateway shadow coverage", script);
         Assert.Contains("/shadow-comparisons", script);
         Assert.Contains("--app-caller", script);
         Assert.Contains("--kind", script);
+        Assert.Contains("--require-kind", script);
+        Assert.Contains("--require-app-kind", script);
+        Assert.Contains("_parse_kind_requirement", script);
+        Assert.Contains("_parse_app_kind_requirement", script);
+        Assert.Contains("_upsert_cell_spec", script);
         Assert.Contains("--min-per-cell", script);
         Assert.Contains("LLMGW_HTTP_APP_CALLER_ALLOWLIST", script);
         Assert.Contains("LLMGW_SHADOW_COVERAGE_JSON_OUT", script);
@@ -753,6 +947,15 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("releaseCommit", script);
         Assert.Contains("minCoverageHours", script);
         Assert.Contains("覆盖时长不足", script);
+        Assert.Contains("--failure-sample-limit", script);
+        Assert.Contains("LLMGW_SHADOW_COVERAGE_FAILURE_SAMPLE_LIMIT", script);
+        Assert.Contains("failureSamples", script);
+        Assert.Contains("Failure Samples", script);
+        Assert.Contains("httpError", script);
+        Assert.Contains("failureLimit", endpoint);
+        Assert.Contains("failureRecent", endpoint);
+        Assert.Contains("Filter.Eq(x => x.HttpOk, false)", endpoint);
+        Assert.DoesNotContain("for app in app_callers:\n            for kind in kinds:", script);
         Assert.DoesNotContain("print(key", script);
         Assert.DoesNotContain("GW_KEY=\"", script);
     }
@@ -775,6 +978,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("WATCH_COVERAGE_KINDS", workflow);
         Assert.Contains("WATCH_REQUIRED_KINDS", workflow);
         Assert.Contains("WATCH_REQUIRED_APP_KINDS", workflow);
+        Assert.Contains("visual-agent.image-gen.generate::generation", workflow);
+        Assert.Contains("visual-agent.image-gen.generate::generation:raw:${MIN_PER_CELL}", workflow);
+        Assert.Contains("video-agent.v2d.transcribe::asr", workflow);
+        Assert.Contains("video-agent.v2d.transcribe::asr:raw:${MIN_PER_CELL}", workflow);
+        Assert.Contains("video-agent.video-to-text::asr", workflow);
+        Assert.Contains("video-agent.video-to-text::asr:raw:${MIN_PER_CELL}", workflow);
         Assert.Contains("actions/upload-artifact@v4", workflow);
 
         Assert.Contains("_redact_cmd", readiness);
@@ -782,6 +991,85 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("\"cmd\": _redact_cmd(cmd)", readiness);
         Assert.Contains("--min-coverage-hours", readiness);
         Assert.Contains("str(args.min_coverage_hours)", readiness);
+        Assert.Contains("cmd.extend([\"--require-kind\", item])", readiness);
+        Assert.Contains("cmd.extend([\"--require-app-kind\", item])", readiness);
+        Assert.Contains("visual-agent.image-gen.generate::generation:raw:${MIN_PER_CELL}", workflow);
+        Assert.Contains("video-agent.v2d.transcribe::asr:raw:${MIN_PER_CELL}", workflow);
+        Assert.Contains("video-agent.video-to-text::asr:raw:${MIN_PER_CELL}", workflow);
+    }
+
+    [Fact]
+    public void ShadowSampleWindow_RestoresSamplingAndDoesNotLeakGatewayKeyInArgv()
+    {
+        var script = ReadRepoFile("scripts/llmgw-shadow-sample-window.sh");
+
+        Assert.Contains("LLMGW_SHADOW_SAMPLE_WINDOW_DRY_RUN:-1", script);
+        Assert.Contains("LLMGW_SHADOW_SAMPLE_WINDOW_RESTORE_PERCENT:-1", script);
+        Assert.Contains("LLMGW_SHADOW_SAMPLE_WINDOW_COMPOSE_TIMEOUT_SECONDS:-180", script);
+        Assert.Contains("执行模式必须设置 LLMGW_SHADOW_SAMPLE_WINDOW_SEED_FLAGS", script);
+        Assert.Contains("up -d --force-recreate \"$api_service\"", script);
+        Assert.Contains("trap restore_sampling EXIT INT TERM", script);
+        Assert.Contains("trap - EXIT INT TERM", script);
+        Assert.Contains("set_env_value LLMGW_SHADOW_FULL_SAMPLE_PERCENT \"$restore_percent\"", script);
+        Assert.Contains("export LLMGW_SHADOW_FULL_SAMPLE_PERCENT=\"$restore_percent\"", script);
+        Assert.Contains("wait_api_ready \"$restore_percent\"", script);
+        Assert.Contains("restore_failed=0", script);
+        Assert.Contains("shadow sample restore failed", script);
+        Assert.Contains("LLMGW_GATE_KEY=\"$gate_key\" python3", script);
+        Assert.Contains("export LLMGW_SHADOW_FULL_SAMPLE_PERCENT=\"$sample_percent\"", script);
+        Assert.Contains("redact_seed_flags", script);
+        Assert.Contains("--asr-video-url", script);
+        Assert.Contains("seedFlags: $(redact_seed_flags \"$seed_flags\")", script);
+        Assert.DoesNotContain("--gw-key \"$gate_key\"", script);
+        Assert.DoesNotContain("echo \"$gate_key\"", script);
+    }
+
+    [Fact]
+    public void ShadowSampleAccumulator_RunsBatchedWindowsAndCoverageWithoutLeakingGatewayKeyInArgv()
+    {
+        var script = ReadRepoFile("scripts/llmgw-shadow-sample-accumulate.sh");
+
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_DRY_RUN:-1", script);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_BATCHES:-1", script);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_SEED_FLAGS", script);
+        Assert.Contains("执行模式必须设置 LLMGW_SHADOW_ACCUMULATE_SEED_FLAGS", script);
+        Assert.Contains("llmgw-shadow-sample-window.sh", script);
+        Assert.Contains("LLMGW_SHADOW_SAMPLE_WINDOW_DRY_RUN=0", script);
+        Assert.Contains("LLMGW_SHADOW_SAMPLE_WINDOW_SEED_FLAGS=\"$seed_flags\"", script);
+        Assert.Contains("batch-$batch_id-shadow-sample-window.json", script);
+        Assert.Contains("llmgw-shadow-coverage-report.py", script);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_RUN_COVERAGE:-1", script);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_MIN_PER_CELL:-30", script);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_MIN_COVERAGE_HOURS:-24", script);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_REQUIRED_KINDS", script);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_REQUIRED_APP_KINDS", script);
+        Assert.Contains("redact_seed_flags", script);
+        Assert.Contains("seedFlags: $(redact_seed_flags \"$seed_flags\")", script);
+        Assert.Contains("--require-kind $trimmed", script);
+        Assert.Contains("--require-app-kind $trimmed", script);
+        Assert.Contains("GW_KEY=\"$gate_key\" python3", script);
+        Assert.DoesNotContain("--key \"$gate_key\"", script);
+        Assert.DoesNotContain("--gw-key \"$gate_key\"", script);
+        Assert.DoesNotContain("seedFlags: $seed_flags", script);
+        Assert.DoesNotContain("echo \"$gate_key\"", script);
+    }
+
+    [Fact]
+    public void ShadowSampleAccumulatorMonitor_FailsIfSamplingStaysHighWithoutWindow()
+    {
+        var script = ReadRepoFile("scripts/llmgw-shadow-accumulate-monitor.sh");
+
+        Assert.Contains("LLM Gateway shadow accumulator monitor", script);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_MONITOR_RUN_DIR", script);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_MONITOR_SAFE_PERCENT:-1", script);
+        Assert.Contains("LlmGateway__ShadowFullSamplePercent", script);
+        Assert.Contains("LLMGW_SHADOW_FULL_SAMPLE_PERCENT", script);
+        Assert.Contains("window_running=0", script);
+        Assert.Contains("no sample window is running", script);
+        Assert.Contains("batchFailedStepCount", script);
+        Assert.DoesNotContain("GW_KEY", script);
+        Assert.DoesNotContain("LLMGW_SERVE_KEY", script);
+        Assert.DoesNotContain("--key", script);
     }
 
     [Fact]
@@ -829,6 +1117,115 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ProdVideoCallerBootstrap_BacksUpBeforeBindingVisualVideoCaller()
+    {
+        var script = ReadRepoFile("scripts/llmgw-prod-video-caller-bootstrap.sh");
+        var js = ReadRepoFile("scripts/llmgw-prod-video-caller-bootstrap.js");
+        var readiness = ReadRepoFile("scripts/llmgw-readiness-audit.py");
+
+        Assert.Contains("LLMGW_VIDEO_BOOTSTRAP_DRY_RUN:-1", script);
+        Assert.Contains("LLM Gateway video caller bootstrap dry-run: backup skipped", script);
+        Assert.Contains("llmgw-disk-space-guard.sh", script);
+        Assert.Contains("mongodump --db \"$mongo_db\" --archive", script);
+        Assert.Contains("mongo-$mongo_db-video-caller-bootstrap.archive.gz", script);
+        Assert.Contains("LLMGW_VIDEO_BOOTSTRAP_SOURCE_CALLER", script);
+        Assert.Contains("video-agent.videogen::video-gen", script);
+        Assert.Contains("LLMGW_VIDEO_BOOTSTRAP_TARGET_CALLERS", script);
+        Assert.Contains("visual-agent.videogen::video-gen", script);
+
+        Assert.Contains("source video appCaller missing", js);
+        Assert.Contains("source video appCaller has no video-gen ModelGroupIds", js);
+        Assert.Contains("source video appCaller references missing video-gen pools", js);
+        Assert.Contains("target video appCallers missing", js);
+        Assert.Contains("ModelType: \"video-gen\"", js);
+        Assert.Contains("ModelGroupIds: poolIds", js);
+        Assert.Contains("LLM Gateway video caller bootstrap dry-run: no data changed", js);
+
+        Assert.Contains("prod_video_caller_bootstrap_is_backed_up_and_dry_run_first", readiness);
+    }
+
+    [Fact]
+    public void MapShadowSeed_CoversVisualVideoRawGate()
+    {
+        var script = ReadRepoFile("scripts/llmgw-map-shadow-seed.py");
+        var plan = ReadRepoFile("doc/plan.llm-gateway.full-cutover.md");
+
+        Assert.Contains("--include-desktop-chat-run", script);
+        Assert.Contains("--include-open-platform", script);
+        Assert.Contains("--include-open-api-chat", script);
+        Assert.Contains("--include-open-api-image", script);
+        Assert.Contains("--include-model-lab-run", script);
+        Assert.Contains("--include-arena-run", script);
+        Assert.Contains("--include-report-agent-generate", script);
+        Assert.Contains("llmgw-report-agent-shadow-seed.py", script);
+        Assert.Contains("/api/v1/chat-runs/", script);
+        Assert.Contains("/api/lab/model/runs/stream", script);
+        Assert.Contains("/api/lab/arena/runs", script);
+        Assert.Contains("resolve_chat_model_from_gateway", script);
+        Assert.Contains("/pools", script);
+        Assert.Contains("\"modelType\": \"chat\"", script);
+        Assert.Contains("HealthStatus", script);
+        Assert.Contains("looks_like_non_chat_model", script);
+        Assert.Contains("seedance", script);
+        Assert.Contains("seedream", script);
+        Assert.Contains("prd-agent-desktop.chat.sendmessage::chat", plan);
+        Assert.Contains("open-platform-agent.proxy::chat", plan);
+        Assert.Contains("open-api.proxy::chat", plan);
+        Assert.Contains("open-api.proxy::generation", plan);
+        Assert.Contains("prd-agent-web.model-lab.run::chat", plan);
+        Assert.Contains("prd-agent.arena.battle::chat", plan);
+        Assert.Contains("--include-report-agent-generate", plan);
+        Assert.Contains("report-agent.generate::chat/send", plan);
+        Assert.Contains("--include-visual-video-direct", script);
+        Assert.Contains("--include-video-to-doc-asr", script);
+        Assert.Contains("--include-video-to-text-asr-workflow", script);
+        Assert.Contains("--asr-video-url", script);
+        Assert.Contains("/api/visual-agent/video-gen/runs", script);
+        Assert.Contains("/api/video-agent/v2d/runs", script);
+        Assert.Contains("/api/workflow-agent/workflows", script);
+        Assert.Contains("video-to-text", script);
+        Assert.Contains("wait_visual_video_run", script);
+        Assert.Contains("visual-agent.videogen::video-gen:raw", plan);
+        Assert.Contains("video-agent.v2d.transcribe::asr:raw", plan);
+        Assert.Contains("video-agent.video-to-text::asr:raw", plan);
+        Assert.Contains("--include-visual-video-direct", plan);
+        Assert.Contains("--include-video-to-doc-asr", plan);
+        Assert.Contains("--include-video-to-text-asr-workflow", plan);
+        Assert.Contains("No people, no faces, no logos, no letters, no readable text, no symbols.", script);
+        Assert.Contains("Static test card with color blocks only, no text.", script);
+        Assert.DoesNotContain("black text only", script);
+        Assert.DoesNotContain("small black label", script);
+        Assert.DoesNotContain("combined comparison card", script);
+    }
+
+    [Fact]
+    public void ProdAsrCredentialRotate_UsesApiEncryptionAfterBackup()
+    {
+        var script = ReadRepoFile("scripts/llmgw-prod-asr-credential-rotate.sh");
+        var py = ReadRepoFile("scripts/llmgw-prod-asr-credential-rotate.py");
+        var readiness = ReadRepoFile("scripts/llmgw-readiness-audit.py");
+
+        Assert.Contains("LLMGW_ASR_CREDENTIAL_ROTATE_DRY_RUN:-1", script);
+        Assert.Contains("LLMGW_ASR_NEW_KEY", script);
+        Assert.Contains("LLM Gateway ASR credential rotate dry-run: backup skipped", script);
+        Assert.Contains("llmgw-disk-space-guard.sh", script);
+        Assert.Contains("mongodump --db \"$mongo_db\" --collection model_exchanges --archive", script);
+        Assert.Contains("ROOT_ACCESS_USERNAME", script);
+        Assert.Contains("ROOT_ACCESS_PASSWORD", script);
+        Assert.Contains("llmgw-prod-asr-credential-rotate.py", script);
+
+        Assert.Contains("never prints the new key", py);
+        Assert.Contains("/api/mds/exchanges", py);
+        Assert.Contains("\"targetApiKey\": new_key", py);
+        Assert.Contains("DoubaoAsr", py);
+        Assert.Contains("XApiKey", py);
+        Assert.Contains("newKeyShape", py);
+        Assert.DoesNotContain("TargetApiKeyEncrypted", py);
+
+        Assert.Contains("asr_credential_rotate_is_backup_first_and_api_encrypted", readiness);
+    }
+
+    [Fact]
     public void GwSmoke_CoversStreamingAndClientStreamBoundaries()
     {
         var script = ReadRepoFile("scripts/gw-smoke.py");
@@ -842,6 +1239,80 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("GW_SMOKE_JSON_OUT", script);
         Assert.Contains("GW_SMOKE_REPORT_MD", script);
         Assert.Contains("\"verdict\": \"pass\" if passed == len(rows) else \"fail\"", script);
+    }
+
+    [Fact]
+    public void ShadowRawEvidence_UsesExplicitFullSampleAllowlistAndRollbackClearsIt()
+    {
+        var apiProgram = ReadRepoFile("prd-api/src/PrdAgent.Api/Program.cs");
+        var shadowGateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ShadowLlmGateway.cs");
+        var prodStage = ReadRepoFile("scripts/llmgw-prod-stage.sh");
+        var rollback = ReadRepoFile("scripts/llmgw-rollback-inproc.sh");
+        var restore = ReadRepoFile("scripts/llmgw-restore-shadow-safe.sh");
+
+        Assert.Contains("LlmGateway:ShadowFullSampleAppCallerAllowlist", apiProgram);
+        Assert.Contains("fullSampleAllowlist: shadowFullSampleAllowlist", apiProgram);
+        Assert.Contains("_fullSampleAllowlist.Contains(appCallerCode)", shadowGateway);
+        Assert.Contains("LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST", prodStage);
+        Assert.Contains("export LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST=\"$shadow_full_sample_allowlist\"", prodStage);
+        Assert.Contains("llmgw_shadow_sample_allowlist_value()", ReadRepoFile("exec_dep.sh"));
+        Assert.Contains("export LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST=", rollback);
+        Assert.Contains("\"LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST\": \"\"", restore);
+        Assert.Contains("export LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST=", restore);
+        Assert.Contains("preserve_release_image_vars", restore);
+        Assert.Contains("preserve_image_var PRD_AGENT_API_IMAGE prdagent-api", restore);
+        Assert.Contains("RESTORE_PRD_AGENT_API_IMAGE", restore);
+        Assert.Contains("\"PRD_AGENT_API_IMAGE\": os.environ.get(\"RESTORE_PRD_AGENT_API_IMAGE\", \"\")", restore);
+    }
+
+    [Fact]
+    public void ModelResolver_FailClosesRawDedicatedPoolsBeforeLegacyFallback()
+    {
+        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+
+        Assert.Contains("ShouldFailClosedWhenDedicatedPoolUnavailable", resolver);
+        Assert.Contains("ModelTypes.VideoGen", resolver);
+        Assert.Contains("ModelTypes.Asr", resolver);
+        Assert.Contains("跳过 expectedModel 的 LLMModels 直连兜底", resolver);
+        Assert.Contains("拒绝降级 legacy 直连", resolver);
+    }
+
+    [Fact]
+    public void ImageGenRunWorker_DoesNotSilentlyDowngradeReferenceImageRunsToText2Img()
+    {
+        var worker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs");
+
+        Assert.Contains("expectedReferenceCount", worker);
+        Assert.Contains("IMAGE_REF_UNAVAILABLE", worker);
+        Assert.Contains("参考图加载不完整", worker);
+        Assert.Contains("loadedImageRefs.Count < expectedReferenceCount", worker);
+        Assert.Contains("Builders<ImageGenRun>.Update.Set(x => x.AppCallerCode, appCallerCode)", worker);
+        Assert.Contains("AppCallerRegistry.VisualAgent.Image.Img2Img", worker);
+        Assert.Contains("AppCallerRegistry.VisualAgent.Image.VisionGen", worker);
+    }
+
+    [Fact]
+    public void ShadowForceSample_IsKeyCheckedAndDoesNotRequireApiRestart()
+    {
+        var apiProgram = ReadRepoFile("prd-api/src/PrdAgent.Api/Program.cs");
+        var context = ReadRepoFile("prd-api/src/PrdAgent.Core/Interfaces/ILLMRequestContextAccessor.cs");
+        var accessor = ReadRepoFile("prd-api/src/PrdAgent.Core/Services/LLMRequestContextAccessor.cs");
+        var shadowGateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ShadowLlmGateway.cs");
+        var seed = ReadRepoFile("scripts/llmgw-map-shadow-seed.py");
+        var accumulator = ReadRepoFile("scripts/llmgw-shadow-sample-accumulate.sh");
+
+        Assert.Contains("X-Llmgw-Shadow-Sample-Key", apiProgram);
+        Assert.Contains("FixedTimeEqualsNonEmpty", apiProgram);
+        Assert.Contains("ForceFullShadowSample: true", apiProgram);
+        Assert.Contains("bool ForceFullShadowSample = false", context);
+        Assert.Contains("prev?.ForceFullShadowSample == true", accessor);
+        Assert.Contains("_ctx?.Current?.ForceFullShadowSample == true", shadowGateway);
+        Assert.Contains("--force-shadow-sample", seed);
+        Assert.Contains("X-Llmgw-Shadow-Sample-Key", seed);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_FORCE_SAMPLE", accumulator);
+        Assert.Contains("--force-shadow-sample", accumulator);
+        Assert.Contains("python3 \"$seed_script\"", accumulator);
+        Assert.Contains("\"$window_script\"", accumulator);
     }
 
     private static string ReadRepoFile(string relativePath)
