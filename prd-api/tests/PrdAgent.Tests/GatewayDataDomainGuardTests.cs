@@ -1039,6 +1039,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("canary-intent-text", script);
         Assert.Contains("--include-report-agent-generate", script);
         Assert.Contains("report-agent.generate::chat:send:30", script);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_RELEASE_COMMIT", script);
+        Assert.Contains("避免混用旧 commit shadow 样本", script);
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_BATCHES:-1", script);
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_SEED_FLAGS", script);
         Assert.Contains("执行模式必须设置 LLMGW_SHADOW_ACCUMULATE_SEED_FLAGS", script);

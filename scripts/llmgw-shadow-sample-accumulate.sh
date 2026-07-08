@@ -112,6 +112,11 @@ if [ "$dry_run" = "1" ] || [ "$dry_run" = "true" ]; then
   exit 0
 fi
 
+if [ -n "$profile" ] && [ -z "$(printf '%s' "$release_commit" | xargs || true)" ]; then
+  echo "ERROR: LLMGW_SHADOW_ACCUMULATE_PROFILE=$profile 执行模式必须设置 LLMGW_SHADOW_ACCUMULATE_RELEASE_COMMIT 或 GIT_COMMIT，避免混用旧 commit shadow 样本" >&2
+  exit 1
+fi
+
 mkdir -p "$run_dir"
 
 gate_key="${LLMGW_GATE_KEY:-${GW_KEY:-${LLMGW_SERVE_KEY:-}}}"
