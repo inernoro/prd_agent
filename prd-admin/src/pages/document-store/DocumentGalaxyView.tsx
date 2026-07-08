@@ -1488,8 +1488,8 @@ void main() {
       });
       maxDepth = Math.max(maxDepth, pl.depth);
     }
-    // 正视机位距离按图盘半径自适应（fov 60,halfH ~= 0.577z,留 15% 边距;364 叶大库自动退远）
-    const flatCamZ = Math.min(6000, Math.max(1100, radial.maxRadius * 2.1));
+    // 正视机位距离按图盘半径自适应（fov 60,halfH ~= 0.577z;*1.95 时图盘占半高 ~89%,尽量贴合少留白）
+    const flatCamZ = Math.min(6000, Math.max(900, radial.maxRadius * 1.95));
 
     // 星系整体容器：星点/光路/流光全部挂进来（背景星空/星云/流星不进组,保持 3D 氛围）。
     const galaxyGroup = new THREE.Group();
@@ -1503,6 +1503,10 @@ void main() {
     const labelByNodeId = new Map<string, THREE.Sprite>();
     // 标签相对节点的 y 偏移（折叠补间每帧重写标签位置时用）
     const labelDyById = new Map<string, number>();
+    // 标签基准世界尺度（2D 态放大 = 基准 x (1 + 0.45*flatK),relabel 重绘后同步刷新）
+    const labelBaseScaleById = new Map<string, { x: number; y: number }>();
+    // 叶子文档标签:2D 态相机拉近时懒创建（每帧限流）,让用户能读到文档名;3D 态整体隐藏
+    const leafLabelById = new Map<string, THREE.Sprite>();
     const sphereGeoCache = new Map<string, THREE.SphereGeometry>();
     const sphereGeo = (r: number): THREE.SphereGeometry => {
       const key = r.toFixed(2);
@@ -1605,6 +1609,7 @@ void main() {
         const dy = size + (node.kind === 'root' ? 14 : 8);
         lab.position.set(pos.x, pos.y + dy, pos.z);
         labelDyById.set(node.id, dy);
+        labelBaseScaleById.set(node.id, { x: lab.scale.x, y: lab.scale.y });
         nodeGroup.add(lab);
         labelSprite = lab;
       }
@@ -1646,7 +1651,17 @@ void main() {
         if (sprite.userData.labelText === text) continue;
         sprite.userData.labelText = text;
         track(redrawLabelSprite(sprite, text));
+        // 重绘会按文本重置 sprite.scale → 刷新基准,2D 放大由折叠写位块按新基准重新应用
+        labelBaseScaleById.set(id, { x: sprite.scale.x, y: sprite.scale.y });
       }
+      // 叶子标签按旧模式绘制的文本已过期:清缓存,拉近时按新模式重建
+      for (const [, lab] of leafLabelById) {
+        nodeGroup.remove(lab);
+        (lab.material as THREE.SpriteMaterial).map?.dispose();
+        (lab.material as THREE.SpriteMaterial).dispose();
+      }
+      leafLabelById.clear();
+      flatDirty = true; // 补一帧写位,让枢纽标签的 2D 放大立即按新基准生效
     };
 
     // ── 父子光路：二次贝塞尔弧线（向外微拱），顶点色父端亮蓝 → 子端渐隐、
@@ -2446,7 +2461,8 @@ void main() {
     };
     const dollyByDelta = (deltaY: number) => {
       gOffset.copy(camera.position).sub(controls.target);
-      let d = gOffset.length() * Math.pow(0.95, -deltaY * 0.01);
+      // 0.90:每档 ~11%(旧值 0.95 每档仅 ~5%,用户反馈「放大要滚很多次」)
+      let d = gOffset.length() * Math.pow(0.9, -deltaY * 0.01);
       d = Math.min(controls.maxDistance, Math.max(controls.minDistance, d));
       camera.position.copy(controls.target).add(gOffset.setLength(d));
     };
@@ -2572,6 +2588,12 @@ void main() {
           if (!fi) continue;
           const dy = labelDyById.get(id) ?? 8;
           lab.position.set(fi.posDisplay.x, fi.posDisplay.y + dy, fi.posDisplay.z);
+          // 2D 态枢纽标签放大（正视机位更远,不放大读不清）
+          const bs = labelBaseScaleById.get(id);
+          if (bs) {
+            const boost = 1 + 0.45 * flatK;
+            lab.scale.set(bs.x * boost, bs.y * boost, 1);
+          }
         }
         writeEdgePositions();
         if (flatTween) {
@@ -2620,7 +2642,8 @@ void main() {
           const selS = 1.55 + 0.18 * selPhase;
           s = pulseLeafId === rec.node.id ? Math.max(selS, pulseScale) : selS;
         } else if (pulseLeafId === rec.node.id) s = pulseScale;
-        rec.core.scale.setScalar(Math.max(0.0001, intro * s));
+        // 2D 态星点放大（图盘半径比 3D 常驻位大,不放大会显得又小又看不清）
+        rec.core.scale.setScalar(Math.max(0.0001, intro * s * (1 + 0.9 * flatK)));
       }
 
       // 光晕：距离衰减（演示版数值基线）+ 呼吸微闪 + 聚焦淡出 + 入场淡入 + hover/选中强调
@@ -2645,6 +2668,7 @@ void main() {
           rec.coreU.uOpacity.value = 1; // 选中恒亮
         }
         if (rec.node.kind === 'root') scale *= 1 + 0.05 * Math.sin(tNow * 0.9); // 银心心跳
+        scale *= 1 + 0.9 * flatK; // 2D 态光晕随星点同步放大
         rec.halo.scale.set(scale, scale, 1);
         const mat = rec.halo.material as THREE.SpriteMaterial;
         mat.opacity += (tgt - mat.opacity) * 0.2;
@@ -2669,9 +2693,11 @@ void main() {
         lab.getWorldPosition(labWorld);
         const dCam = camPos.distanceTo(labWorld);
         const d = depthById.get(id) ?? 0;
+        // 2D 态阈值放宽一倍:正视机位比 3D 常驻位远,深层枢纽名要更早浮现才看得清
+        const farBoost = 1 + flatK;
         let fade = 1;
-        if (d >= 3) fade = clamp01((1500 - dCam) / 420);
-        else if (d === 2) fade = clamp01((2600 - dCam) / 700);
+        if (d >= 3) fade = clamp01((1500 * farBoost - dCam) / 420);
+        else if (d === 2) fade = clamp01((2600 * farBoost - dCam) / 700);
         const introF = introActive ? clamp01((introElapsed - (introDelayById.get(id) ?? 0)) / 850) : 1;
         const mat = lab.material as THREE.SpriteMaterial;
         const op = dim * fade * introF;
@@ -2680,6 +2706,42 @@ void main() {
       }
 
       // 光路入场淡入（节点长出后光路跟上）
+      // ── 叶子文档标签（仅 2D 态）：相机拉近时懒创建,让用户能读到文档名。
+      //    每帧限流新建,纹理走 track 台账随场景 dispose;3D 态整体隐藏。 ──
+      if (flatK > 0.5) {
+        const LEAF_LABEL_NEAR = 700;
+        let leafLabelBudget = 8; // 每帧最多新建 8 个,拉近瞬间不因批量建纹理卡顿
+        for (const rec of renders) {
+          if (rec.node.kind !== 'leaf') continue;
+          const fi = flatInfo.get(rec.node.id);
+          if (!fi) continue;
+          let lab = leafLabelById.get(rec.node.id);
+          const dCam = camPos.distanceTo(fi.posDisplay);
+          if (!lab) {
+            if (dCam >= LEAF_LABEL_NEAR || leafLabelBudget <= 0 || !rec.core.visible) continue;
+            leafLabelBudget--;
+            lab = makeLabelSprite(
+              leafDisplayName(rec.node, labelModeRef.current, contentTitlesRef.current),
+              'leaf',
+              99,
+              colorForDocType(rec.node.docType),
+            );
+            if (lab.material.map) track(lab.material.map);
+            track(lab.material);
+            nodeGroup.add(lab);
+            leafLabelById.set(rec.node.id, lab);
+          }
+          const mat = lab.material as THREE.SpriteMaterial;
+          const dim = dimCurrentById.get(rec.node.id) ?? 1;
+          const op = rec.core.visible ? clamp01((LEAF_LABEL_NEAR - dCam) / 180) * dim : 0;
+          mat.opacity = op;
+          mat.visible = op > 0.02;
+          if (mat.visible) lab.position.set(fi.posDisplay.x, fi.posDisplay.y - (rec.size + 9), fi.posDisplay.z);
+        }
+      } else if (leafLabelById.size > 0) {
+        for (const [, lab] of leafLabelById) (lab.material as THREE.SpriteMaterial).visible = false;
+      }
+
       // 2D 态更实：hier 0.42→0.85、mention 0.3→0.8（随 flatK 提升,配合顶点色增亮近似「线段变粗」）
       hierMat.opacity = (0.42 + 0.43 * flatK) * clamp01((introElapsed - 400) / 1300);
       if (mentionMat) mentionMat.opacity = (0.3 + 0.5 * flatK) * clamp01((introElapsed - 900) / 1300);

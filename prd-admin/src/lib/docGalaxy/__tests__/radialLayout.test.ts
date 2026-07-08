@@ -41,12 +41,12 @@ describe('layoutRadial2D', () => {
     // 8 个分类均分
     const groups = Array.from({ length: 8 }, (_, gi) => group(`g${gi}`, leaves.slice(gi * 45, (gi + 1) * 45 + (gi === 7 ? 4 : 0))));
     const r = layoutRadial2D(root(groups));
-    // 364 * 26 / 2pi ~= 1506
-    expect(r.maxRadius).toBeGreaterThan(1200);
+    // 364 * 18 / 2pi ~= 1042
+    expect(r.maxRadius).toBeGreaterThan(900);
     // 抽查同分类相邻叶子的弧距不小于下限的一半(中线放置下相邻扇区中点距离 = 平均弧距)
     const p0 = r.pos2dById.get('l0')!;
     const p1 = r.pos2dById.get('l1')!;
-    expect(Math.hypot(p1.x - p0.x, p1.y - p0.y)).toBeGreaterThan(13);
+    expect(Math.hypot(p1.x - p0.x, p1.y - p0.y)).toBeGreaterThan(9);
   });
 
   it('扇区角度覆盖整圈:全部叶子的角度范围接近 2pi', () => {

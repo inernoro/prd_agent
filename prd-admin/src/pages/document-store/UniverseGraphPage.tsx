@@ -15,7 +15,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Settings as SettingsIcon, ArrowLeft, Loader2, Orbit, Link2, Search, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Settings as SettingsIcon, ArrowLeft, Loader2, Orbit, Link2, Search, ToggleLeft, ToggleRight, Maximize2 } from 'lucide-react';
 import { getStoreGraph, type GraphNode, type GraphEdge } from '@/services/real/mentions';
 import { listDocumentStoresReal, startAutoLink, getAgentRun, getDocumentContent } from '@/services/real/documentStore';
 import { deriveContentTitle } from '@/lib/contentTitle';
@@ -403,7 +403,11 @@ export function UniverseGraphPage({ storeIdOverride, storeNameOverride, loadGrap
     idMapRef.current = new Map(simNodesRef.current.map((n) => [n.id, n]));
     if (firstBuild && nodes.length > 0) {
       for (let i = 0; i < 250; i++) simulate();
+      // 预热后自动适配视野:内容居中撑满(增量刷新/生成双链不重置视野)
+      fitView();
     }
+    // fitView/simulate 只读 refs,每次渲染都是新引用,纳入 deps 会让本 effect 无意义重跑
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes, edges]);
 
   // 物理模拟一步
@@ -465,6 +469,31 @@ export function UniverseGraphPage({ storeIdOverride, storeNameOverride, loadGrap
     }
   };
 
+  /** 视野适配:把可见节点的包围盒带边距平滑居中。无论力导向曾把节点推到哪,内容都会回到画面中央。 */
+  const fitView = () => {
+    const ns = simNodesRef.current.filter((n) => isNodeVisible(n));
+    if (ns.length === 0) return;
+    const W = sizeRef.current.W >= 40 ? sizeRef.current.W : window.innerWidth;
+    const H = sizeRef.current.H >= 40 ? sizeRef.current.H : window.innerHeight;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const n of ns) {
+      minX = Math.min(minX, n.x);
+      maxX = Math.max(maxX, n.x);
+      minY = Math.min(minY, n.y);
+      maxY = Math.max(maxY, n.y);
+    }
+    const bw = Math.max(1, maxX - minX);
+    const bh = Math.max(1, maxY - minY);
+    const s = Math.max(0.25, Math.min(4, Math.min(W / bw, H / bh) * 0.85));
+    const v = viewRef.current;
+    v.targetScale = s;
+    v.targetTx = W / 2 - ((minX + maxX) / 2) * s;
+    v.targetTy = H / 2 - ((minY + maxY) / 2) * s;
+  };
+
   const isNodeVisible = (n: SimNode): boolean => {
     const st = stateRef.current;
     const catKey = n.category ?? '__default__';
@@ -495,9 +524,12 @@ export function UniverseGraphPage({ storeIdOverride, storeNameOverride, loadGrap
     const ctx = canvas.getContext('2d')!;
 
     const resize = () => {
-      // canvas 挂在画布容器内（顶栏下方）,尺寸取容器而非视口,否则会被顶栏顶出一截
-      const W = container.clientWidth || 1;
-      const H = container.clientHeight || 1;
+      // canvas 挂在画布容器内（顶栏下方）,尺寸取容器而非视口,否则会被顶栏顶出一截。
+      // 布局未就绪时容器可能量出 0 尺寸——跳过本次写入,等 ResizeObserver 下一次真实尺寸,
+      // 否则 0 高度会把力导向重心钉在 y=0(节点全挤在顶栏下沿,2026-07-08 用户截图)。
+      const W = container.clientWidth;
+      const H = container.clientHeight;
+      if (W < 40 || H < 40) return;
       sizeRef.current = { W, H };
       const dpr = window.devicePixelRatio || 1;
       canvas.width = W * dpr;
@@ -772,7 +804,7 @@ export function UniverseGraphPage({ storeIdOverride, storeNameOverride, loadGrap
     e.preventDefault();
     const { sx, sy } = toLocal(e);
     const v = viewRef.current;
-    const factor = e.deltaY < 0 ? 1.12 : 0.9;
+    const factor = e.deltaY < 0 ? 1.18 : 0.85;
     // 锚点数学全部在 target 空间做：动画途中连续滚动,锚点不漂移
     const wx = (sx - v.targetTx) / v.targetScale;
     const wy = (sy - v.targetTy) / v.targetScale;
@@ -825,16 +857,11 @@ export function UniverseGraphPage({ storeIdOverride, storeNameOverride, loadGrap
     }
   };
 
-  if (!storeId) {
-    return (
-      <div className="flex-1 flex items-center justify-center" style={{ background: '#16161d', color: '#cfcfcf' }}>
-        <div>正在加载知识库列表...</div>
-      </div>
-    );
-  }
-
+  // 注意:不做「!storeId 早退渲染另一棵树」——渲染循环 effect deps=[] 只在 mount 挂一次,
+  // 早退会让顶层路由(/document-store/universe)首进时 canvas 不存在、循环永远没挂上。
+  // 始终渲染完整布局,加载态由画布容器内的覆盖层承担。
   return (
-    <div className="flex-1 flex flex-col" style={{ background: '#16161d', color: '#cfcfcf', minHeight: 0 }}>
+    <div className="h-full flex-1 flex flex-col" style={{ background: '#16161d', color: '#cfcfcf', minHeight: 0 }}>
       {/* ── 实体顶栏（对齐知识星球顶栏 token,不再让控件浮在画布上看不清） ── */}
       <div
         className="shrink-0"
@@ -864,7 +891,7 @@ export function UniverseGraphPage({ storeIdOverride, storeNameOverride, loadGrap
           <ArrowLeft size={13} /> 返回
         </button>
         <span style={{ flexShrink: 0, fontSize: 13, fontWeight: 600, color: '#eaeaf0', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={storeName}>
-          {storeName}
+          {storeName || '加载中…'}
         </span>
         <span style={{ flexShrink: 0, fontSize: 11, color: '#8a8a96', whiteSpace: 'nowrap' }}>
           {nodes.length} 节点 · {edges.length} 引用
@@ -1191,22 +1218,39 @@ export function UniverseGraphPage({ storeIdOverride, storeNameOverride, loadGrap
           </div>
         )}
 
-        {/* 缩放显示 */}
-        <div
-          style={{
-            position: 'absolute',
-            bottom: 12,
-            right: 12,
-            background: 'rgba(36,36,36,0.85)',
-            border: '1px solid #3a3a3a',
-            borderRadius: 6,
-            padding: '6px 10px',
-            fontSize: 11,
-            color: '#8a8a8a',
-            zIndex: 11,
-          }}
-        >
-          {zoomBadge}%
+        {/* 右下角:适配视图 + 缩放显示 */}
+        <div style={{ position: 'absolute', bottom: 12, right: 12, zIndex: 11, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <button
+            type="button"
+            onClick={fitView}
+            title="适配视图:把全部节点居中撑满画布"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 28,
+              height: 28,
+              background: 'rgba(36,36,36,0.85)',
+              border: '1px solid #3a3a3a',
+              borderRadius: 6,
+              color: '#a8a8a8',
+              cursor: 'pointer',
+            }}
+          >
+            <Maximize2 size={13} />
+          </button>
+          <div
+            style={{
+              background: 'rgba(36,36,36,0.85)',
+              border: '1px solid #3a3a3a',
+              borderRadius: 6,
+              padding: '6px 10px',
+              fontSize: 11,
+              color: '#8a8a8a',
+            }}
+          >
+            {zoomBadge}%
+          </div>
         </div>
 
         {/* 左下提示 */}

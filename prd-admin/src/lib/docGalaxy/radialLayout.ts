@@ -21,14 +21,14 @@ export interface RadialLayoutResult {
   maxRadius: number;
 }
 
-/** 环间距下限:第一环留大一点给 root 呼吸,往外逐环收敛 */
+/** 环间距下限:第一环留大一点给 root 呼吸,往外逐环收敛(收紧后图盘更满,相机不用退太远) */
 function ringGap(depth: number): number {
-  return depth === 1 ? 200 : 150;
+  return depth === 1 ? 170 : 130;
 }
 
 /** 同环相邻节点的最小弧距:枢纽环稀(标签大),叶子环密 */
 function minArc(depth: number): number {
-  return depth === 1 ? 90 : 26;
+  return depth === 1 ? 70 : 18;
 }
 
 export function layoutRadial2D(root: RadialTreeNode): RadialLayoutResult {
