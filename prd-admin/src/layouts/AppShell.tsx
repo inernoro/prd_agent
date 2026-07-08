@@ -514,7 +514,8 @@ export default function AppShell() {
   const asideGap = 12;
   // 专注模式（fullBleedMain）、移动端下隐藏侧栏，主区最大化
   const focusHideAside = fullBleedMain || isMobile;
-  const mainPadLeft = focusHideAside ? (isMobile ? 0 : asideGap) : asideWidth + asideGap * 2;
+  // 侧栏为全高贴边直边栏（flush rail），主区只需让出栏宽本身
+  const mainPadLeft = focusHideAside ? 0 : asideWidth;
   // 桌面端（非专注模式）内容区渲染为全屏画布面板；移动端与 fullBleed 保持原结构
   const useCanvasPanel = !isMobile && !fullBleedMain;
 
@@ -1123,7 +1124,10 @@ export default function AppShell() {
 
       {/* 主体容器（背景动画已临时移除以消除渲染卡顿） */}
       <div className="relative h-full w-full">
-        {/* 悬浮侧边栏：不贴左边，像"挂着" (移动端隐藏) */}
+        {/* 侧边栏：全高贴边直边栏 + 右侧发丝分隔线（移动端隐藏）。
+            2026-07-08 由"12px 悬浮圆角浮岛"改为业界主流的 flush rail
+            （Linear/Slack/Notion/Arc 均此做法）：首页画布全出血后，
+            浮岛侧栏与贴边内容不成对，通到顶底的直边栏两种画布都协调。 */}
         <aside
           className={cn(
             'absolute flex flex-col p-2 transition-[width] duration-220 ease-out',
@@ -1131,12 +1135,11 @@ export default function AppShell() {
           )}
           style={{
             display: focusHideAside ? 'none' : undefined,
-            left: asideGap,
-            top: asideGap,
-            bottom: asideGap,
+            left: 0,
+            top: 0,
+            bottom: 0,
             width: focusHideAside ? 0 : asideWidth,
             zIndex: 12,
-            borderRadius: 18,
             opacity: focusHideAside ? 0 : 1,
             // 根据主题配置决定是否使用液态玻璃效果
             // 强制创建持久的 GPU 合成层，避免状态变化时频繁创建/销毁合成层导致闪烁
@@ -1145,9 +1148,12 @@ export default function AppShell() {
             ...(useSidebarGlass ? glassSidebar : {
               backgroundColor: 'var(--bg-elevated, #1e1e24)',
               backgroundImage: 'linear-gradient(180deg, rgba(36,38,44,1) 0%, rgba(20,24,28,1) 100%)',
-              border: '1px solid rgba(255,255,255,0.10)',
-              boxShadow: '0 26px 120px rgba(0,0,0,0.60), 0 0 0 1px rgba(255,255,255,0.04) inset',
             }),
+            // flush rail：无圆角，只保留右侧发丝分隔线（覆盖 glassSidebar 的四边 border/浮岛投影）
+            borderRadius: 0,
+            border: 'none',
+            borderRight: '1px solid rgba(255,255,255,0.08)',
+            boxShadow: 'none',
             pointerEvents: focusHideAside ? 'none' : 'auto',
           }}
         >
@@ -1863,7 +1869,7 @@ export default function AppShell() {
                       overscrollBehavior: 'contain',
                     }
                   : {
-                      margin: `${asideGap}px ${asideGap}px ${asideGap}px 0`,
+                      margin: asideGap,
                       borderRadius: 18,
                       border: '1px solid var(--border-faint, rgba(255,255,255,0.08))',
                       background:
