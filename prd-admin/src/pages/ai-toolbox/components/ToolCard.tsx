@@ -293,7 +293,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
             handleClick();
           }
         }}
-        className="toolbox-card-shell group relative w-full h-full text-left rounded-xl cursor-pointer transition-all duration-200 hover:-translate-y-0.5 flex flex-col gap-3 p-4"
+        className="group relative w-full h-full text-left rounded-xl cursor-pointer transition-all duration-200 hover:-translate-y-0.5 flex flex-col gap-3 p-4"
         style={glassTileStyle(accent)}
       >
         {/* Hover：本卡色相的描边 + 一缕同色投影（静时安静，碰时呼吸）—— 与首页瓦片一致 */}
@@ -425,7 +425,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
 
         {/* Tags — 可点击进行过滤 */}
         {item.tags.length > 0 && (
-          <div className="toolbox-card-tags-row flex flex-wrap gap-1">
+          <div className="flex flex-wrap gap-1">
             {item.tags.slice(0, 3).map((tag) => {
               const isActive = !!activeTagFilter && activeTagFilter.toLowerCase() === tag.toLowerCase();
               return (
@@ -457,7 +457,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
          *   - 我的已公开 → 绿色「已公开」
          *   - 别人公开   → 右侧 Fork 数 +「创建副本」按钮（NEW 徽章在头行渲染）
          */}
-        <div className="toolbox-card-footer mt-auto flex items-center justify-between gap-1 pt-1.5">
+        <div className="mt-auto flex items-center justify-between gap-1 pt-1.5 border-t border-white/[0.06]">
           {isPaAgent ? (
             <div className="flex items-center gap-1 min-w-0">
               <span

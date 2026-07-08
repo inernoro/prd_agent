@@ -1854,15 +1854,23 @@ export default function AppShell() {
             )}
             style={
               useCanvasPanel
-                ? {
-                    margin: `${asideGap}px ${asideGap}px ${asideGap}px 0`,
-                    borderRadius: 18,
-                    border: '1px solid var(--border-faint, rgba(255,255,255,0.08))',
-                    background:
-                      'color-mix(in srgb, var(--bg-elevated, #1e1e24) 42%, transparent)',
-                    boxShadow: '0 18px 60px rgba(0, 0, 0, 0.22)',
-                    overscrollBehavior: 'contain',
-                  }
+                ? isHomePage
+                  ? {
+                      // 首页全出血：极光直接铺到视口边缘。带边距的画布会在明亮的
+                      // 极光顶上留一条 12px 的深色细缝（2026-07-08 用户反馈
+                      // "顶部有一条黑黑的细条"），首页是沉浸页，不需要面板框。
+                      margin: 0,
+                      overscrollBehavior: 'contain',
+                    }
+                  : {
+                      margin: `${asideGap}px ${asideGap}px ${asideGap}px 0`,
+                      borderRadius: 18,
+                      border: '1px solid var(--border-faint, rgba(255,255,255,0.08))',
+                      background:
+                        'color-mix(in srgb, var(--bg-elevated, #1e1e24) 42%, transparent)',
+                      boxShadow: '0 18px 60px rgba(0, 0, 0, 0.22)',
+                      overscrollBehavior: 'contain',
+                    }
                 : undefined
             }
           >
