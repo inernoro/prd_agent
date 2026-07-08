@@ -1169,6 +1169,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--include-arena-run", script);
         Assert.Contains("--include-report-agent-generate", script);
         Assert.Contains("llmgw-report-agent-shadow-seed.py", script);
+        Assert.Contains("--shadow-sample-key", script);
         Assert.Contains("/api/v1/chat-runs/", script);
         Assert.Contains("/api/lab/model/runs/stream", script);
         Assert.Contains("/api/lab/arena/runs", script);
@@ -1310,6 +1311,7 @@ public class GatewayDataDomainGuardTests
         var accessor = ReadRepoFile("prd-api/src/PrdAgent.Core/Services/LLMRequestContextAccessor.cs");
         var shadowGateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ShadowLlmGateway.cs");
         var seed = ReadRepoFile("scripts/llmgw-map-shadow-seed.py");
+        var reportSeed = ReadRepoFile("scripts/llmgw-report-agent-shadow-seed.py");
         var accumulator = ReadRepoFile("scripts/llmgw-shadow-sample-accumulate.sh");
 
         Assert.Contains("X-Llmgw-Shadow-Sample-Key", apiProgram);
@@ -1320,6 +1322,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("_ctx?.Current?.ForceFullShadowSample == true", shadowGateway);
         Assert.Contains("--force-shadow-sample", seed);
         Assert.Contains("X-Llmgw-Shadow-Sample-Key", seed);
+        Assert.Contains("--shadow-sample-key", seed);
+        Assert.Contains("SHADOW_SAMPLE_KEY = args.shadow_sample_key.strip()", reportSeed);
+        Assert.Contains("headers[\"X-Llmgw-Shadow-Sample-Key\"] = SHADOW_SAMPLE_KEY", reportSeed);
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_FORCE_SAMPLE", accumulator);
         Assert.Contains("--force-shadow-sample", accumulator);
         Assert.Contains("python3 \"$seed_script\"", accumulator);

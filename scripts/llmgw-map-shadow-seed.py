@@ -693,6 +693,8 @@ def call_report_agent_generate(base: str, release_commit: str, timeout: float, t
         "--evidence-out",
         evidence_out,
     ]
+    if FORCE_SHADOW_SAMPLE_KEY:
+        cmd.extend(["--shadow-sample-key", FORCE_SHADOW_SAMPLE_KEY])
     result = subprocess.run(cmd, text=True, capture_output=True, timeout=max(timeout + 90, 240), check=False)
     if result.returncode != 0:
         detail = (result.stdout + "\n" + result.stderr).strip()

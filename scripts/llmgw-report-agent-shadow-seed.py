@@ -27,6 +27,7 @@ from typing import Any
 DEFAULT_BASE = "http://127.0.0.1:5500"
 DEFAULT_COMMIT = ""
 APP_CALLER = "report-agent.generate::chat"
+SHADOW_SAMPLE_KEY = ""
 
 
 @dataclass
@@ -107,6 +108,8 @@ def request_json(
 ) -> tuple[int, dict[str, Any]]:
     data = None
     headers = {"Accept": "application/json", "User-Agent": "llmgw-report-agent-shadow-seed/1.0"}
+    if SHADOW_SAMPLE_KEY:
+        headers["X-Llmgw-Shadow-Sample-Key"] = SHADOW_SAMPLE_KEY
     if payload is not None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         headers["Content-Type"] = "application/json"
@@ -363,12 +366,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--root-password", default=os.environ.get("ROOT_ACCESS_PASSWORD", ""))
     parser.add_argument("--keep-seed-data", action="store_true")
     parser.add_argument("--no-sample-raise", action="store_true")
+    parser.add_argument("--shadow-sample-key", default=os.environ.get("LLMGW_SHADOW_SAMPLE_KEY", ""))
     parser.add_argument("--evidence-out", default=os.environ.get("LLMGW_REPORT_AGENT_SEED_EVIDENCE_OUT", ""))
     return parser.parse_args()
 
 
 def main() -> int:
+    global SHADOW_SAMPLE_KEY
     args = parse_args()
+    SHADOW_SAMPLE_KEY = args.shadow_sample_key.strip()
     if not args.release_commit:
         raise RuntimeError("release commit is required; pass --release-commit or run inside a git checkout")
     evidence = SeedEvidence(
