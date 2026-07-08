@@ -283,6 +283,86 @@
 - 该守卫只影响补证据批次数，不降低 release gate，不修改 `minCoverageHours=24`，也不会绕过 `critical=0` / `httpFail=0` 要求。若 coverage 已达标、只差覆盖窗口、存在质量失败，或 preflight coverage 因 key/网关/JSON 异常/参数格式错误读不到可信计数，脚本会停止，不继续消耗模型额度。
 - 结论：后续火山/其它模型已可用时，仍必须先跑只读 coverage 和 planner，再按推荐批次数补样；不得为了追进度重复打视频、图片、ASR 或超过 planner 的文本 batch。
 
+## 最新生产脚本同步（2026-07-08 18:55 CST）
+
+- 已完成新的 critical 外置备份：`/Users/inernoro/prd-agent-prod-backups/llmgw-prod-external-20260708T184825+0800`，包含 `llm_gateway` 全库与 `prdagent.model_groups`、`prdagent.llm_app_callers`、`prdagent.llmplatforms`、`prdagent.model_exchanges`、`prdagent.llmrequestlogs`，并生成 `SHA256SUMS`。
+- 生产工作树仍是手工同步状态，不能整体 `git pull`；本轮只同步与 PR #1020 相关的 3 个脚本：`scripts/llmgw-shadow-sample-accumulate.sh`、`scripts/llmgw-shadow-sample-plan.py`、`scripts/llmgw-readiness-audit.py`。旧脚本备份在 `/root/backups/llmgw-shadow-budget-guard-before-sync-20260708T185212+0800`。
+- 同步后生产脚本 sha256 与 `main` 一致：`llmgw-shadow-sample-accumulate.sh=fcb0282f...`、`llmgw-shadow-sample-plan.py=2f8a61a...`、`llmgw-readiness-audit.py=0f13506...`；`sh -n` 与 `python3 -m py_compile` 通过。
+- 生产只读 health 仍为 `2f6b0658397019e809f46ceb001245c6fdb03f40`，运行开关仍为 `LlmGateway__Mode=shadow`、`LlmGateway__HttpAppCallerAllowlist=`、`LlmGateway__ShadowFullSamplePercent=1`、`LlmGateway__ShadowFullSampleAppCallerAllowlist=`。本轮未重启容器、未切 http、未执行 seed、未触发任何模型请求。
+- 只读 coverage + planner 复核写入生产 `/tmp/llmgw-shadow-plan-20260708T105322Z/`：`report-agent.generate::chat/send` 在当前 commit 下仍为 `0/30`，`critical=0`、`httpFail=0`，planner 输出 `remainingBatchesNeeded=30`、`recommendedBatches=3`、`canRunRecommendedBatches=true`、`reason=bounded-top-up`。这证明新 planner 已正确处理带 `::` 的 appCaller label，后续最多按 3 批小步补样。
+- 生产源码树直接跑全仓 `scripts/llmgw-readiness-audit.py` 仍 FAIL，原因是生产工作树落后且混有手工同步文件，静态扫描不到当前 `main` 的 workflow/multipart 源码；这不代表运行中容器失败。发布/迁移判断仍以 main CI、容器 health、serving probe、shadow coverage 与 rollout ledger 为准。
+
+## 最新低成本补样（2026-07-08 18:58 CST）
+
+- 在完成上述备份和 planner 只读复核后，仅执行 planner 推荐上限内的 3 个 `canary-intent-text` force-sample batch，绑定 `LLMGW_SHADOW_ACCUMULATE_RELEASE_COMMIT=2f6b0658397019e809f46ceb001245c6fdb03f40`；未提高全局采样、未重启 API、未触发视频/图片/ASR。第一次缺少 `ROOT_ACCESS_PASSWORD` 的尝试在 seed 登录前退出，没有进入模型请求。
+- 真实执行证据目录：生产 `.llmgw-release-evidence/shadow-accumulate-20260708T105532Z/`。preflight planner 输出 `recommendedBatches=3`、`reason=bounded-top-up` 后才开始补样，符合预算守卫。
+- 执行后 coverage 仍 FAIL，符合预期：`global total=9`、`global/send total=3`、`report-agent.generate::chat total=3`、`report-agent.generate::chat/send total=3`，全部 `critical=0`、`httpFail=0`；失败项仍只有样本数不足和覆盖时长不足。
+- 结论：当前 commit 的第一批低成本文本证据已从 `0/30` 推进到 `3/30`。不要继续手工追加大批量；下一步仍必须先跑只读 coverage + planner，再按 `recommendedBatches` 小步补样。未达到 `30/30` 且覆盖 24 小时之前，继续禁止 `canary-intent-text --execute` 和全量 `LLMGW_MODE=http`。
+
+## 最新低成本补样（2026-07-08 19:04 CST）
+
+- 再次只读运行 coverage + planner，确认 `report-agent.generate::chat/send total=3/30`、`critical=0`、`httpFail=0`，planner 输出 `remainingBatchesNeeded=27`、`recommendedBatches=3`、`reason=bounded-top-up` 后，才执行第二个 3 batch 小窗口。
+- 第二次真实执行证据目录：生产 `.llmgw-release-evidence/shadow-accumulate-20260708T110030Z/`。执行仍为 `canary-intent-text` force-sample，绑定同一 release commit；未提高全局采样、未重启 API、未触发视频/图片/ASR。
+- 执行后 coverage 仍 FAIL，符合预期：`global total=18`、`global/send total=6`、`report-agent.generate::chat total=6`、`report-agent.generate::chat/send total=6`，全部 `critical=0`、`httpFail=0`；失败项仍只有样本数不足和覆盖时长不足。正式 `/gw/v1/healthz` 仍返回 `2f6b0658397019e809f46ceb001245c6fdb03f40`，API 开关仍为 `Mode=shadow`、allowlist 空、采样 `1%`。
+- 结论：当前 commit 的低风险 canary-intent 证据已从 `3/30` 推进到 `6/30`。为控制成本，本轮停止继续补样；下一步继续遵循“只读 coverage + planner -> 最多推荐批次”的节奏，禁止直接追满，禁止视频/图片/ASR 重复测试。
+
+## 最新低成本补样（2026-07-08 19:10 CST）
+
+- 第三次小窗口执行前，preflight coverage 显示 `global total=18`、`global/send total=6`、`report-agent.generate::chat total=6`、`report-agent.generate::chat/send total=6`，全部 `critical=0`、`httpFail=0`。planner 输出 `remainingBatchesNeeded=24`、`recommendedBatches=3`、`canRunRecommendedBatches=true`、`reason=bounded-top-up`，因此只允许继续 3 batch。
+- 第三次真实执行证据目录：生产 `.llmgw-release-evidence/shadow-accumulate-20260708T110547Z/`。执行仍为低成本 `canary-intent-text` force-sample，绑定 release commit `2f6b0658397019e809f46ceb001245c6fdb03f40`；未提高全局采样、未重启 API、未触发视频/图片/ASR。
+- 执行后 coverage 仍按预期 FAIL：`global total=27`、`global/send total=9`、`report-agent.generate::chat total=9`、`report-agent.generate::chat/send total=9`，全部 `critical=0`、`httpFail=0`；失败项仍只有样本数不足和覆盖时长不足。正式 `/gw/v1/healthz` 仍返回 `2f6b0658397019e809f46ceb001245c6fdb03f40`，API 容器开关仍为 `Mode=shadow`、allowlist 空、采样 `1%`。
+- 结论：当前 commit 的低风险 canary-intent 证据已从 `6/30` 推进到 `9/30`。为避免过量测试，本轮不再追加 batch；下一步仍必须先跑只读 coverage + planner，再按 `recommendedBatches` 小步补样。未达到 `30/30` 且覆盖 24 小时之前，继续禁止 `canary-intent-text --execute`、禁止全量 `LLMGW_MODE=http`。
+
+## 最新低成本补样（2026-07-08 19:15 CST）
+
+- 第四次小窗口执行前，preflight coverage 显示 `global total=27`、`global/send total=9`、`report-agent.generate::chat total=9`、`report-agent.generate::chat/send total=9`，全部 `critical=0`、`httpFail=0`。planner 输出 `remainingBatchesNeeded=21`、`recommendedBatches=3`、`canRunRecommendedBatches=true`、`reason=bounded-top-up`，因此只允许继续 3 batch。
+- 第四次真实执行证据目录：生产 `.llmgw-release-evidence/shadow-accumulate-20260708T111144Z/`。执行仍为低成本 `canary-intent-text` force-sample，绑定 release commit `2f6b0658397019e809f46ceb001245c6fdb03f40`；未提高全局采样、未重启 API、未触发视频/图片/ASR。
+- 执行后 coverage 仍按预期 FAIL：`global total=36` 已达到总量门槛，但 `global/send total=12`、`report-agent.generate::chat total=12`、`report-agent.generate::chat/send total=12` 仍未达到 `30`；全部 `critical=0`、`httpFail=0`。覆盖窗口约 `0.29h < 24h`。正式 `/gw/v1/healthz` 仍返回 `2f6b0658397019e809f46ceb001245c6fdb03f40`，API 容器开关仍为 `Mode=shadow`、allowlist 空、采样 `1%`。
+- 结论：当前 commit 的低风险 canary-intent 证据已从 `9/30` 推进到 `12/30`。继续禁止 `canary-intent-text --execute`、禁止全量 `LLMGW_MODE=http`；后续补样仍必须先只读 coverage + planner，且不得触发视频/图片/ASR。
+
+## 最新低成本补样（2026-07-08 19:19 CST）
+
+- 第五次小窗口执行前，preflight coverage 显示 `global total=36`、`global/send total=12`、`report-agent.generate::chat total=12`、`report-agent.generate::chat/send total=12`，全部 `critical=0`、`httpFail=0`。planner 输出 `remainingBatchesNeeded=18`、`recommendedBatches=3`、`canRunRecommendedBatches=true`、`reason=bounded-top-up`，因此只允许继续 3 batch。
+- 第五次真实执行证据目录：生产 `.llmgw-release-evidence/shadow-accumulate-20260708T111617Z/`。执行仍为低成本 `canary-intent-text` force-sample，绑定 release commit `2f6b0658397019e809f46ceb001245c6fdb03f40`；未提高全局采样、未重启 API、未触发视频/图片/ASR。
+- 执行后 coverage 仍按预期 FAIL：`global total=45`、`global/send total=15`、`report-agent.generate::chat total=15`、`report-agent.generate::chat/send total=15`；全部 `critical=0`、`httpFail=0`。覆盖窗口约 `0.37h < 24h`。正式 `/gw/v1/healthz` 仍返回 `2f6b0658397019e809f46ceb001245c6fdb03f40`，API 容器开关仍为 `Mode=shadow`、allowlist 空、采样 `1%`。
+- 结论：当前 commit 的低风险 canary-intent 证据已从 `12/30` 推进到 `15/30`，质量指标继续为 0 失败。继续禁止 `canary-intent-text --execute`、禁止全量 `LLMGW_MODE=http`；后续仍按 planner 小批量补样，不触发视频/图片/ASR。
+
+## 最新低成本补样（2026-07-08 19:23 CST）
+
+- 第六次小窗口执行前，preflight coverage 显示 `global total=45`、`global/send total=15`、`report-agent.generate::chat total=15`、`report-agent.generate::chat/send total=15`，全部 `critical=0`、`httpFail=0`。planner 输出 `remainingBatchesNeeded=15`、`recommendedBatches=3`、`canRunRecommendedBatches=true`、`reason=bounded-top-up`，因此只允许继续 3 batch。
+- 第六次真实执行证据目录：生产 `.llmgw-release-evidence/shadow-accumulate-20260708T112018Z/`。执行仍为低成本 `canary-intent-text` force-sample，绑定 release commit `2f6b0658397019e809f46ceb001245c6fdb03f40`；未提高全局采样、未重启 API、未触发视频/图片/ASR。
+- 执行后 coverage 仍按预期 FAIL：`global total=54`、`global/send total=18`、`report-agent.generate::chat total=18`、`report-agent.generate::chat/send total=18`；全部 `critical=0`、`httpFail=0`。覆盖窗口约 `0.43h < 24h`。正式 `/gw/v1/healthz` 仍返回 `2f6b0658397019e809f46ceb001245c6fdb03f40`，API 容器开关仍为 `Mode=shadow`、allowlist 空、采样 `1%`。
+- 结论：当前 commit 的低风险 canary-intent 证据已从 `15/30` 推进到 `18/30`，质量指标继续为 0 失败。继续禁止 `canary-intent-text --execute`、禁止全量 `LLMGW_MODE=http`；后续仍必须由只读 planner 控制补样，且不得触发视频/图片/ASR。
+
+## 最新低成本补样（2026-07-08 19:27 CST）
+
+- 第七次小窗口执行前，preflight coverage 显示 `global total=54`、`global/send total=18`、`report-agent.generate::chat total=18`、`report-agent.generate::chat/send total=18`，全部 `critical=0`、`httpFail=0`。planner 输出 `remainingBatchesNeeded=12`、`recommendedBatches=3`、`canRunRecommendedBatches=true`、`reason=bounded-top-up`，因此只允许继续 3 batch。
+- 第七次真实执行证据目录：生产 `.llmgw-release-evidence/shadow-accumulate-20260708T112420Z/`。执行仍为低成本 `canary-intent-text` force-sample，绑定 release commit `2f6b0658397019e809f46ceb001245c6fdb03f40`；未提高全局采样、未重启 API、未触发视频/图片/ASR。
+- 执行后 coverage 仍按预期 FAIL：`global total=63`、`global/send total=21`、`report-agent.generate::chat total=21`、`report-agent.generate::chat/send total=21`；全部 `critical=0`、`httpFail=0`。覆盖窗口约 `0.50h < 24h`。正式 `/gw/v1/healthz` 仍返回 `2f6b0658397019e809f46ceb001245c6fdb03f40`，API 容器开关仍为 `Mode=shadow`、allowlist 空、采样 `1%`。
+- 结论：当前 commit 的低风险 canary-intent 证据已从 `18/30` 推进到 `21/30`，质量指标继续为 0 失败。继续禁止 `canary-intent-text --execute`、禁止全量 `LLMGW_MODE=http`；后续仍必须由只读 planner 控制补样，且不得触发视频/图片/ASR。
+
+## 最新低成本补样（2026-07-08 19:31 CST）
+
+- 第八次小窗口执行前，preflight coverage 显示 `global total=63`、`global/send total=21`、`report-agent.generate::chat total=21`、`report-agent.generate::chat/send total=21`，全部 `critical=0`、`httpFail=0`。planner 输出 `remainingBatchesNeeded=9`、`recommendedBatches=3`、`canRunRecommendedBatches=true`、`reason=bounded-top-up`，因此只允许继续 3 batch。
+- 第八次真实执行证据目录：生产 `.llmgw-release-evidence/shadow-accumulate-20260708T112846Z/`。执行仍为低成本 `canary-intent-text` force-sample，绑定 release commit `2f6b0658397019e809f46ceb001245c6fdb03f40`；未提高全局采样、未重启 API、未触发视频/图片/ASR。
+- 执行后 coverage 仍按预期 FAIL：`global total=72`、`global/send total=24`、`report-agent.generate::chat total=24`、`report-agent.generate::chat/send total=24`；全部 `critical=0`、`httpFail=0`。覆盖窗口约 `0.57h < 24h`。正式 `/gw/v1/healthz` 仍返回 `2f6b0658397019e809f46ceb001245c6fdb03f40`，API 容器开关仍为 `Mode=shadow`、allowlist 空、采样 `1%`。
+- 结论：当前 commit 的低风险 canary-intent 证据已从 `21/30` 推进到 `24/30`，质量指标继续为 0 失败。继续禁止 `canary-intent-text --execute`、禁止全量 `LLMGW_MODE=http`；后续仍必须由只读 planner 控制补样，且不得触发视频/图片/ASR。
+
+## 最新低成本补样（2026-07-08 19:35 CST）
+
+- 第九次小窗口执行前，preflight coverage 显示 `global total=72`、`global/send total=24`、`report-agent.generate::chat total=24`、`report-agent.generate::chat/send total=24`，全部 `critical=0`、`httpFail=0`。planner 输出 `remainingBatchesNeeded=6`、`recommendedBatches=3`、`canRunRecommendedBatches=true`、`reason=bounded-top-up`，因此只允许继续 3 batch。
+- 第九次真实执行证据目录：生产 `.llmgw-release-evidence/shadow-accumulate-20260708T113254Z/`。执行仍为低成本 `canary-intent-text` force-sample，绑定 release commit `2f6b0658397019e809f46ceb001245c6fdb03f40`；未提高全局采样、未重启 API、未触发视频/图片/ASR。
+- 执行后 coverage 仍按预期 FAIL：`global total=80`、`global/send total=27`、`report-agent.generate::chat total=27`、`report-agent.generate::chat/send total=27`；全部 `critical=0`、`httpFail=0`。覆盖窗口约 `0.64h < 24h`。正式 `/gw/v1/healthz` 仍返回 `2f6b0658397019e809f46ceb001245c6fdb03f40`，API 容器开关仍为 `Mode=shadow`、allowlist 空、采样 `1%`。
+- 结论：当前 commit 的低风险 canary-intent 证据已从 `24/30` 推进到 `27/30`，质量指标继续为 0 失败。下一轮只允许最多再补 3 条达到样本数门槛；即使达到 `30/30`，仍必须等待 24 小时覆盖窗口，继续禁止 `canary-intent-text --execute` 与全量 `LLMGW_MODE=http`。
+
+## 最新低成本补样（2026-07-08 19:40 CST）
+
+- 第十次小窗口执行前，preflight coverage 显示 `global total=80`、`global/send total=27`、`report-agent.generate::chat total=27`、`report-agent.generate::chat/send total=27`，全部 `critical=0`、`httpFail=0`。planner 输出 `remainingBatchesNeeded=3`、`recommendedBatches=3`、`canRunRecommendedBatches=true`、`reason=bounded-top-up`，因此只允许继续最后 3 batch。
+- 第十次真实执行证据目录：生产 `.llmgw-release-evidence/shadow-accumulate-20260708T113700Z/`。执行仍为低成本 `canary-intent-text` force-sample，绑定 release commit `2f6b0658397019e809f46ceb001245c6fdb03f40`；未提高全局采样、未重启 API、未触发视频/图片/ASR。
+- 执行后样本数门槛已达成：`global total=89`、`global/send total=30`、`report-agent.generate::chat total=30`、`report-agent.generate::chat/send total=30`；全部 `critical=0`、`httpFail=0`。coverage 仍按预期 FAIL，唯一失败项为覆盖窗口不足，约 `0.72h < 24h`。正式 `/gw/v1/healthz` 仍返回 `2f6b0658397019e809f46ceb001245c6fdb03f40`，API 容器开关仍为 `Mode=shadow`、allowlist 空、采样 `1%`。
+- 只读 planner 复核证据目录：生产 `/tmp/llmgw-shadow-plan-after-30-20260708T114008Z/`。复核输出 `remainingBatchesNeeded=0`、`recommendedBatches=0`、`canRunRecommendedBatches=false`、`reason=wait-coverage-window`，证明当前不应继续补样，必须等待 24 小时覆盖窗口。
+- 结论：当前 commit 的低风险 canary-intent 样本数已达到 `30/30`，质量指标继续为 0 失败；后续禁止继续补 canary-intent 样本，禁止 `canary-intent-text --execute`，禁止全量 `LLMGW_MODE=http`。下一步只能在最早满足 24 小时窗口后跑只读 release gate 和 stage dry-run；两者都 PASS 才能进入 allowlist 灰度。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘
