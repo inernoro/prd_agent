@@ -198,6 +198,13 @@
 - 已在生产证据目录创建只读复查脚本：`.llmgw-release-evidence/manual-gates/run-canary-intent-gate-0fe4eaed.sh`，权限 `700`，`sh -n` 通过。该脚本只读取 `.env` 中的 gateway key，运行 `scripts/llmgw-release-gate.py` 并写 JSON/Markdown 证据；不修改配置、不重启容器、不调用模型。
 - 下一次可执行窗口：最早 `2026-07-09T07:54:02Z` 之后运行上述脚本。只有脚本返回 PASS，且生产仍为同一 commit `0fe4eaed3b37777f3c149a0293184059ce4e0112`、`critical=0`、`httpFail=0`，才允许进入 `canary-intent-text` allowlist 灰度。未达成前继续禁止 `canary-intent-text`、禁止全量 `LLMGW_MODE=http`。
 
+## 最新生产取证（2026-07-08 16:28 CST）
+
+- 已完成同 commit `0fe4eaed3b37777f3c149a0293184059ce4e0112` 的 rollback rehearsal 前置台账。`rollback-rehearsal --dry-run` 先确认只会执行 `LLMGW_ROLLBACK_DRY_RUN=1 scripts/llmgw-rollback-inproc.sh`；随后 `--execute` 记录成功台账，实际输出 `dryRun: 1`，只打印会重建 `api` 与 `gateway`，未修改数据库、未改镜像、未重启容器。
+- 证据文件：`.llmgw-release-evidence/20260708T082841Z_rollback-rehearsal_0fe4eaed3b37.stage.json` 与 `.llmgw-release-evidence/20260708T082841Z_rollback-rehearsal_0fe4eaed3b37.stage.md`，rollout ledger 已追加 `rollback-rehearsal success`。stage 报告里的 `mode=inproc` 表示演练目标模式，不代表生产实际运行态。
+- 演练后复核生产仍为 `LLMGW_MODE=shadow`、`LLMGW_HTTP_APP_CALLER_ALLOWLIST=`、`LLMGW_SHADOW_FULL_SAMPLE_PERCENT=1`，API 容器环境仍为 `LlmGateway__Mode=shadow`，`/gw/v1/healthz` 仍返回 `0fe4eaed3b37777f3c149a0293184059ce4e0112`。
+- 结论：第一批 canary-intent 的两个前置门已满足其一：同 commit rollback rehearsal 已完成；样本数也已达 30/30。剩余唯一 gate 是 24 小时覆盖窗口，未满前仍禁止进入 `canary-intent-text` allowlist 灰度。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘
