@@ -1052,6 +1052,11 @@ export GW_SMOKE_REPORT_MD="${GW_SMOKE_REPORT_MD:-$smoke_md}"
 export LLMGW_GATE_SHADOW_SINCE_HOURS="${LLMGW_GATE_SHADOW_SINCE_HOURS:-24}"
 export LLMGW_GATE_HEALTH_SAMPLES="${LLMGW_GATE_HEALTH_SAMPLES:-3}"
 export LLMGW_GATE_HEALTH_INTERVAL_SECONDS="${LLMGW_GATE_HEALTH_INTERVAL_SECONDS:-5}"
+case "$stage" in
+  canary-intent-text|canary-chat|canary-streaming)
+    export GW_SMOKE_MODEL_TYPES="${GW_SMOKE_MODEL_TYPES:-chat,intent}"
+    ;;
+esac
 if [ "$stage" = "shadow-start" ]; then
   export PRD_AGENT_REUSE_EXISTING_STATIC_DIST="${PRD_AGENT_REUSE_EXISTING_STATIC_DIST:-1}"
 fi

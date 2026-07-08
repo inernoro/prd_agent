@@ -26,11 +26,29 @@ REPORT_MD = os.environ.get("GW_SMOKE_REPORT_MD", "")
 EXPECTED_COMMIT = os.environ.get("GW_EXPECT_COMMIT", "").strip().lower()
 
 # 每类 ModelType 抽 1 个代表入口（D1×D2 抽样）。真机存在性以 /gw/v1/pools 为准。
-SAMPLE_CODES = [
+DEFAULT_SAMPLE_CODES = [
     ("report-agent.generate::chat", "chat"),
     ("prd-agent-desktop.chat.suggested-questions::intent", "intent"),
     ("visual-agent.image::vision", "vision"),
 ]
+
+
+def _parse_csv_env(name):
+    raw = os.environ.get(name, "")
+    return {item.strip().lower() for item in raw.split(",") if item.strip()}
+
+
+def _selected_sample_codes():
+    model_types = _parse_csv_env("GW_SMOKE_MODEL_TYPES")
+    app_callers = _parse_csv_env("GW_SMOKE_APP_CALLERS")
+    selected = []
+    for app_caller, model_type in DEFAULT_SAMPLE_CODES:
+        if model_types and model_type.lower() not in model_types:
+            continue
+        if app_callers and app_caller.lower() not in app_callers:
+            continue
+        selected.append((app_caller, model_type))
+    return selected
 
 
 def _req(method, path, body=None):
@@ -175,14 +193,20 @@ def main():
         ok = False
     rows.append(("healthz", ok, f"{code} status={health_status or 'empty'} commit={health_commit or 'empty'} expected={EXPECTED_COMMIT or 'none'}"))
 
+    sample_codes = _selected_sample_codes()
+    if not sample_codes:
+        rows.append(("sample-scope", False, "GW_SMOKE_MODEL_TYPES/GW_SMOKE_APP_CALLERS selected no cases"))
+
+    has_chat = any(mtype == "chat" for _, mtype in sample_codes)
+
     # 2) pools（每类抽样入口）
-    for accode, mtype in SAMPLE_CODES:
+    for accode, mtype in sample_codes:
         code, raw = _req("GET", f"/pools?appCallerCode={urllib.parse.quote(accode)}&modelType={mtype}")
         ok = code == 200
         rows.append((f"pools[{mtype}]", ok, f"{code} {raw[:120]}"))
 
     # 3) send 非流式（chat 代表）
-    for accode, mtype in SAMPLE_CODES:
+    for accode, mtype in sample_codes:
         body = {
             "AppCallerCode": accode, "ModelType": mtype, "Stream": False,
             "RequestBody": {"messages": [{"role": "user", "content": "ping, reply OK"}], "max_tokens": 16},
@@ -198,55 +222,57 @@ def main():
         rows.append((f"send[{mtype}]", ok, detail))
 
     # 4) stream：真实 SSE 边界。只抽 chat 一类，避免 D 层冒烟成本膨胀。
-    stream_body = {
-        "AppCallerCode": "report-agent.generate::chat",
-        "ModelType": "chat",
-        "Stream": True,
-        "RequestBody": {
-            "messages": [{"role": "user", "content": "ping, stream reply OK"}],
-            "max_tokens": 16,
-            "stream": True,
-        },
-        "Context": {"UserId": "smoke-test"},
-    }
-    code, raw, events = _sse_req("/stream", stream_body)
-    stream_text = "".join(str(e.get("Content") or "") for e in events if isinstance(e, dict))
-    stream_model = next(
-        (
-            (e.get("Resolution") or {}).get("ActualModel")
+    if has_chat:
+        stream_body = {
+            "AppCallerCode": "report-agent.generate::chat",
+            "ModelType": "chat",
+            "Stream": True,
+            "RequestBody": {
+                "messages": [{"role": "user", "content": "ping, stream reply OK"}],
+                "max_tokens": 16,
+                "stream": True,
+            },
+            "Context": {"UserId": "smoke-test"},
+        }
+        code, raw, events = _sse_req("/stream", stream_body)
+        stream_text = "".join(str(e.get("Content") or "") for e in events if isinstance(e, dict))
+        stream_model = next(
+            (
+                (e.get("Resolution") or {}).get("ActualModel")
+                for e in events
+                if isinstance(e, dict) and isinstance(e.get("Resolution"), dict)
+            ),
+            None,
+        )
+        stream_done = any(
+            isinstance(e, dict)
+            and (e.get("FinishReason") or str(e.get("Type")).lower() in {"done", "4"})
             for e in events
-            if isinstance(e, dict) and isinstance(e.get("Resolution"), dict)
-        ),
-        None,
-    )
-    stream_done = any(
-        isinstance(e, dict)
-        and (e.get("FinishReason") or str(e.get("Type")).lower() in {"done", "4"})
-        for e in events
-    )
-    ok = code == 200 and len(events) >= 2 and bool(stream_text) and bool(stream_model) and stream_done
-    rows.append(("stream[chat]", ok, f"{code} events={len(events)} model={stream_model} contentLen={len(stream_text)}"))
+        )
+        ok = code == 200 and len(events) >= 2 and bool(stream_text) and bool(stream_model) and stream_done
+        rows.append(("stream[chat]", ok, f"{code} events={len(events)} model={stream_model} contentLen={len(stream_text)}"))
 
     # 5) client-stream：CreateClient/ILLMClient 跨进程 SSE 边界。
-    client_stream_body = {
-        "AppCallerCode": "report-agent.generate::chat",
-        "ModelType": "chat",
-        "MaxTokens": 16,
-        "Temperature": 0.2,
-        "IncludeThinking": False,
-        "SystemPrompt": "Reply briefly.",
-        "Messages": [{"Role": "user", "Content": "ping, client stream reply OK"}],
-        "EnablePromptCache": True,
-        "Context": {"UserId": "smoke-test"},
-    }
-    code, raw, events = _sse_req("/client-stream", client_stream_body)
-    client_stream_text = "".join(str(e.get("Content") or "") for e in events if isinstance(e, dict))
-    client_stream_done = any(
-        isinstance(e, dict) and str(e.get("Type")).lower() in {"done", "4"}
-        for e in events
-    )
-    ok = code == 200 and len(events) >= 2 and bool(client_stream_text) and client_stream_done
-    rows.append(("client-stream[chat]", ok, f"{code} events={len(events)} contentLen={len(client_stream_text)}"))
+    if has_chat:
+        client_stream_body = {
+            "AppCallerCode": "report-agent.generate::chat",
+            "ModelType": "chat",
+            "MaxTokens": 16,
+            "Temperature": 0.2,
+            "IncludeThinking": False,
+            "SystemPrompt": "Reply briefly.",
+            "Messages": [{"Role": "user", "Content": "ping, client stream reply OK"}],
+            "EnablePromptCache": True,
+            "Context": {"UserId": "smoke-test"},
+        }
+        code, raw, events = _sse_req("/client-stream", client_stream_body)
+        client_stream_text = "".join(str(e.get("Content") or "") for e in events if isinstance(e, dict))
+        client_stream_done = any(
+            isinstance(e, dict) and str(e.get("Type")).lower() in {"done", "4"}
+            for e in events
+        )
+        ok = code == 200 and len(events) >= 2 and bool(client_stream_text) and client_stream_done
+        rows.append(("client-stream[chat]", ok, f"{code} events={len(events)} contentLen={len(client_stream_text)}"))
 
     # 6) canary：指向不存在的入口，必须失败（证明探测有效）
     body = {"AppCallerCode": "nonexistent.canary::chat", "ModelType": "chat",
