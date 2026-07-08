@@ -160,6 +160,14 @@
 - 为开启新 commit 的低成本观察窗口，仅执行 1 个 `canary-intent-text` force-sample batch；未提高全局采样、未重启 API、未触发视频/图片/ASR。证据目录：`.llmgw-release-evidence/shadow-accumulate-20260708T075340Z/`。执行后 `report-agent.generate::chat/send total=1`、`critical=0`、`httpFail=0`，但仍因 `1 < 30` 返回 FAIL。
 - 结论：生产已从旧 `a47d48c` 推进到最新 `main` 的 `0fe4eaed` shadow-start，发布脚本树与目标 commit 对齐，运行安全门通过；但全量迁移仍未完成，`canary-intent-text` 也不得开启。下一步只允许继续低成本累计 `report-agent.generate::chat/send` 到 30 条并等待 24 小时覆盖，之后再进入第一批 allowlist 灰度。
 
+## 最新生产取证（2026-07-08 16:00 CST）
+
+- 在生产 `0fe4eaed3b37777f3c149a0293184059ce4e0112` shadow-start 稳定后，先只读复核安全开关：`.env` 与 API 容器均保持 `Mode=shadow`、`HttpAppCallerAllowlist=`、`ShadowFullSamplePercent=1`，`/gw/v1/healthz` 返回同一 commit。
+- 只读 coverage 显示目标单元仍为 `report-agent.generate::chat/send total=1 < 30`，自然流量没有补足该 canary gate；global 已有 49 条、`critical=0`、`httpFail=0`。
+- 为避免过量测试，仅执行 5 个低成本 `canary-intent-text` force-sample batch，命令绑定 `LLMGW_SHADOW_ACCUMULATE_RELEASE_COMMIT=0fe4eaed3b37777f3c149a0293184059ce4e0112`，每批间隔 5 秒；未提高全局采样、未重启 API、未触发视频/图片/ASR。证据目录：`.llmgw-release-evidence/shadow-accumulate-20260708T075637Z/`。
+- 执行后复核：`report-agent.generate::chat/send total=6 < 30`，`global/send total=7 < 30`，`global total=64`；所有相关单元 `critical=0`、`httpFail=0`。coverage 仍 FAIL 是预期结果，失败原因仅为样本数不足和观察窗口不足。
+- 结论：第一批低风险 canary-intent 证据从 1/30 推进到 6/30，但仍禁止开启 allowlist 灰度。下一步继续以小批次或自然流量补到 30/30，并等待从 `2026-07-08T07:54:02Z` 起算的 24 小时覆盖窗口；未满前不得进入 `canary-intent-text`。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘
