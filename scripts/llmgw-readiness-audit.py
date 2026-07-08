@@ -1028,7 +1028,7 @@ def _static_checks() -> list[dict]:
             "shadow sample startup",
             "serving/smoke verification runs after compose up",
             "LLMGW_GATE_SHADOW_SINCE_HOURS",
-            "--since-hours ${LLMGW_GATE_SHADOW_SINCE_HOURS:-24}",
+            "--since-hours ${LLMGW_GATE_SHADOW_SINCE_HOURS:-48}",
             "LLMGW_GATE_MIN_COVERAGE_HOURS",
             "--min-coverage-hours $gate_min_coverage_hours",
             "默认要求 shadow 证据覆盖 24 小时",

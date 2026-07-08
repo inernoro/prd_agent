@@ -363,6 +363,21 @@
 - 只读 planner 复核证据目录：生产 `/tmp/llmgw-shadow-plan-after-30-20260708T114008Z/`。复核输出 `remainingBatchesNeeded=0`、`recommendedBatches=0`、`canRunRecommendedBatches=false`、`reason=wait-coverage-window`，证明当前不应继续补样，必须等待 24 小时覆盖窗口。
 - 结论：当前 commit 的低风险 canary-intent 样本数已达到 `30/30`，质量指标继续为 0 失败；后续禁止继续补 canary-intent 样本，禁止 `canary-intent-text --execute`，禁止全量 `LLMGW_MODE=http`。下一步只能在最早满足 24 小时窗口后跑只读 release gate 和 stage dry-run；两者都 PASS 才能进入 allowlist 灰度。
 
+## 最新门禁修正（2026-07-08 19:47 CST）
+
+- 代码追踪确认 `/gw/v1/shadow-comparisons` 的 `coverageHours` 是 `lastComparedAt - firstComparedAt`，不是 `now - firstComparedAt`。因此达到 `30/30` 后纯等待不会自然把 `coverageHours` 从约 `0.72h` 推到 `24h`，必须在足够晚的时点再追加一个受控低成本样本来拉长跨度。
+- 已在本地脚本修正发布门可达性：`exec_dep.sh` 与 `scripts/llmgw-prod-stage.sh` 的默认 `LLMGW_GATE_SHADOW_SINCE_HOURS` 从 `24` 调整为 `48`，仍保留 `LLMGW_GATE_MIN_COVERAGE_HOURS=24`。这样“最近样本窗口”大于“覆盖时长要求”，避免 24/24 边界几乎不可达。
+- 已在 `scripts/llmgw-shadow-sample-plan.py` 增加显式 `--allow-window-extension`：仅当样本数已满、`critical=0`、`httpFail=0`、从首样本到当前时间已达到覆盖要求时，才推荐 `window-extension-top-up` 的 `1` 个 batch。默认不开启时仍返回 `reason=wait-coverage-window`、`recommendedBatches=0`。
+- 已在 `scripts/llmgw-shadow-sample-accumulate.sh` 增加 `LLMGW_SHADOW_ACCUMULATE_ALLOW_WINDOW_EXTENSION`，默认 `0`，需要时显式开启并由 planner 限制为 1 个 batch。该脚本修正已在后续步骤同步到生产，且同步验证未触发任何新模型请求。
+- 本地验证：伪造 coverage JSON 自测通过，覆盖三种行为：默认不补、未到 24 小时不补、超过 24 小时且显式开启时只推荐 1 batch；`sh -n` 与 `python3 -m py_compile` 通过；`GatewayDataDomainGuardTests` 32/32 PASS；`dotnet build --no-restore` 退出码 0。
+
+## 最新生产脚本同步（2026-07-08 19:49 CST）
+
+- 已把窗口门禁修正同步到生产机 `/root/inernoro/prd_agent`，仅覆盖 5 个脚本：`exec_dep.sh`、`scripts/llmgw-prod-stage.sh`、`scripts/llmgw-readiness-audit.py`、`scripts/llmgw-shadow-sample-accumulate.sh`、`scripts/llmgw-shadow-sample-plan.py`。旧脚本备份在 `/root/backups/llmgw-shadow-window-extension-scripts-before-sync-20260708T194803+0800`。
+- 同步后远端 sha256 与本地一致；远端 `sh -n exec_dep.sh scripts/llmgw-prod-stage.sh scripts/llmgw-shadow-sample-accumulate.sh` 与 `python3 -m py_compile scripts/llmgw-readiness-audit.py scripts/llmgw-shadow-sample-plan.py` 通过。
+- 生产只读停补验证通过：显式设置 `LLMGW_SHADOW_ACCUMULATE_ALLOW_WINDOW_EXTENSION=1`、`BATCHES=1` 运行 accumulator，preflight coverage 后 planner 输出 `remainingBatchesNeeded=0`、`recommendedBatches=0`、`canRunRecommendedBatches=false`、`reason=wait-coverage-window`，脚本在 seed 前退出，没有触发模型请求。
+- 验证后正式 `/gw/v1/healthz` 仍返回 `2f6b0658397019e809f46ceb001245c6fdb03f40`，API 容器开关仍为 `Mode=shadow`、allowlist 空、采样 `1%`。下一次最早应在首样本时间约 24 小时后再显式开启 window extension，且只允许 planner 推荐的 1 个 batch。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘

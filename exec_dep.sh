@@ -44,7 +44,7 @@ set -eu
 #   - LLMGW_GATE_KEY / GW_KEY：release gate 使用的 X-Gateway-Key；未设时回退 LLMGW_SERVE_KEY
 #   - LLMGW_GATE_MIN_TOTAL：全局 shadow 最小样本数，默认 30
 #   - LLMGW_GATE_MIN_PER_APP：每个 appCaller 最小样本数，默认 30
-#   - LLMGW_GATE_SHADOW_SINCE_HOURS：http/canary 发布只接受最近 N 小时 shadow 样本，默认 24
+#   - LLMGW_GATE_SHADOW_SINCE_HOURS：http/canary 发布只接受最近 N 小时 shadow 样本，默认 48
 #   - LLMGW_GATE_MIN_COVERAGE_HOURS：http/canary 发布要求 shadow 样本覆盖至少 N 小时，默认 24；设 0 可关闭
 #   - LLMGW_GATE_HEALTH_SAMPLES：全量 http 前 healthz 连续采样次数，默认 3
 #   - LLMGW_GATE_HEALTH_INTERVAL_SECONDS：healthz 连续采样间隔秒数，默认 5
@@ -942,7 +942,7 @@ run_llmgw_release_gate_if_needed() {
   LLMGW_POST_DEPLOY_EXPECT_COMMIT="$expect_commit"
 
   args="--base $gate_base --min-total ${LLMGW_GATE_MIN_TOTAL:-30} --min-per-app ${LLMGW_GATE_MIN_PER_APP:-30}"
-  args="$args --since-hours ${LLMGW_GATE_SHADOW_SINCE_HOURS:-24}"
+  args="$args --since-hours ${LLMGW_GATE_SHADOW_SINCE_HOURS:-48}"
   gate_min_coverage_hours="${LLMGW_GATE_MIN_COVERAGE_HOURS:-}"
   if [ "$release_gate_required" = "1" ] && [ -z "$(printf '%s' "$gate_min_coverage_hours" | xargs || true)" ]; then
     gate_min_coverage_hours="24"

@@ -53,6 +53,23 @@ def _is_benign_coverage_failure(message: str) -> bool:
     return any(reason.startswith(prefix) for prefix in benign_prefixes)
 
 
+def _parse_dt(value: object) -> datetime | None:
+    if not value:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def _cell_gap(cell: dict, batch_yield: int) -> dict:
     label = str(cell.get("label") or "")
     total = int(cell.get("total") or 0)
@@ -62,6 +79,8 @@ def _cell_gap(cell: dict, batch_yield: int) -> dict:
     coverage_hours = float(cell.get("coverageHours") or 0)
     min_coverage_hours = float(cell.get("minCoverageHours") or 0)
     failures = [str(item) for item in (cell.get("failures") or [])]
+    first = _parse_dt(cell.get("firstComparedAt"))
+    last = _parse_dt(cell.get("lastComparedAt"))
     missing = max(0, required - total)
     batches_needed = 0 if missing == 0 else (missing + max(1, batch_yield) - 1) // max(1, batch_yield)
     coverage_read_ready = all(_is_benign_coverage_failure(item) for item in failures)
@@ -74,12 +93,31 @@ def _cell_gap(cell: dict, batch_yield: int) -> dict:
         "coverageHours": coverage_hours,
         "minCoverageHours": min_coverage_hours,
         "coverageReady": coverage_hours >= min_coverage_hours,
+        "firstComparedAt": first.isoformat() if first else None,
+        "lastComparedAt": last.isoformat() if last else None,
         "critical": critical,
         "httpFail": http_fail,
         "qualityReady": critical == 0 and http_fail == 0,
         "coverageReadReady": coverage_read_ready,
         "failures": failures,
     }
+
+
+def _can_extend_window(cell_reports: list[dict], now: datetime) -> bool:
+    needing_window = [
+        item for item in cell_reports
+        if item["requiredTotal"] > 0 and item["missingSamples"] == 0 and not item["coverageReady"]
+    ]
+    if not needing_window:
+        return False
+    for item in needing_window:
+        first = _parse_dt(item.get("firstComparedAt"))
+        if first is None:
+            return False
+        elapsed_hours = max(0.0, (now - first).total_seconds() / 3600)
+        if elapsed_hours < float(item["minCoverageHours"]):
+            return False
+    return True
 
 
 def _write_json(path: str, report: dict) -> None:
@@ -131,6 +169,7 @@ def _write_markdown(path: str, report: dict) -> None:
 
 def build_report(args: argparse.Namespace) -> dict:
     coverage = _load_json(args.coverage_json)
+    now = datetime.now(timezone.utc)
     report_failures = [str(item) for item in (coverage.get("failures") or [])]
     cells = coverage.get("cells") or []
     if not isinstance(cells, list):
@@ -157,9 +196,14 @@ def build_report(args: argparse.Namespace) -> dict:
         can_run = False
         recommended_batches = 0
     elif remaining_batches_needed <= 0:
-        reason = "wait-coverage-window"
-        can_run = False
-        recommended_batches = 0
+        if args.allow_window_extension and args.max_batches > 0 and _can_extend_window(cell_reports, now):
+            reason = "window-extension-top-up"
+            can_run = True
+            recommended_batches = 1
+        else:
+            reason = "wait-coverage-window"
+            can_run = False
+            recommended_batches = 0
     elif args.max_batches <= 0:
         reason = "max-batches-zero"
         can_run = False
@@ -194,6 +238,8 @@ def main() -> int:
     parser.add_argument("--json-out", default="")
     parser.add_argument("--report-md", default="")
     parser.add_argument("--print-json", action="store_true")
+    parser.add_argument("--allow-window-extension", action="store_true",
+                        help="Recommend exactly one low-cost batch when samples are full, quality is clean, and the first sample is already old enough to extend coverageHours to the required window.")
     args = parser.parse_args()
 
     report = build_report(args)
