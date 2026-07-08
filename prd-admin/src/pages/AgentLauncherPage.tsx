@@ -73,6 +73,7 @@ import { RelativeTime } from '@/components/ui/RelativeTime';
 import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
 import { Reveal } from '@/pages/home/components/Reveal';
+import { hueAccent, getAccent, glassTileStyle } from '@/lib/tileAccent';
 import { AuroraBackground } from '@/components/backgrounds/AuroraBackground';
 import { TipsRotator } from '@/components/daily-tips/TipsRotator';
 import { LearningCenterTeaser } from '@/components/daily-tips/LearningCenterTeaser';
@@ -107,77 +108,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   PaSecretary,
 };
 
-/**
- * 色阶尺（tonal ladder）：品类色统一取同一饱和度/明度档位，只允许换色相 H。
- * 颜色只出现在图标芯片上；卡片底、描边、辉光一律中性——彩而不乱的关键
- * 是"档位一致 + 颜色不乱涂在装饰上"，不是砍成单色。
- */
-const ICON_HUE: Record<string, number> = {
-  AudioLines: 190,
-  Blocks: 239,
-  BookOpen: 142,
-  Clapperboard: 330,
-  Factory: 25,
-  FileText: 217,
-  Palette: 271,
-  PenTool: 160,
-  Bug: 25,
-  Video: 347,
-  Swords: 38,
-  Code2: 160,
-  Languages: 190,
-  FileSearch: 45,
-  BarChart3: 258,
-  Bot: 239,
-  FileBarChart: 239,
-  Workflow: 173,
-  Zap: 38,
-  Globe: 199,
-  ClipboardCheck: 239,
-  ScanSearch: 258,
-  Wand2: 258,
-  FlaskConical: 199,
-  ScrollText: 215,
-  Sparkle: 271,
-  ListTree: 142,
-  Sparkles: 43,
-  Library: 217,
-  Store: 38,
-  FolderHeart: 330,
-  Cpu: 239,
-  Users: 187,
-  Hammer: 215,
-  FolderKanban: 217,
-  GitPullRequest: 258,
-  GraduationCap: 217,
-  Link2: 173,
-  Mail: 347,
-  Mic: 190,
-  Plug: 160,
-  Route: 258,
-  Share2: 187,
-  Terminal: 215,
-  // 毒舌秘书：科幻深蓝，与 PaAgentCardArt 内联插画呼应
-  PaSecretary: 224,
-};
-
-type Accent = { color: string; soft: string; border: string; faint: string; glow: string };
-
-function hueAccent(h: number): Accent {
-  return {
-    color: `hsl(${h} 68% 64%)`,
-    soft: `hsla(${h}, 68%, 60%, 0.14)`,
-    border: `hsla(${h}, 68%, 60%, 0.26)`,
-    // faint: 静息态渗色（远看近乎不可见）；glow: 悬停投影。
-    // 纪律不变：静时安静、碰时呼吸——色彩只在交互瞬间参与。
-    faint: `hsla(${h}, 68%, 60%, 0.07)`,
-    glow: `hsla(${h}, 68%, 60%, 0.3)`,
-  };
-}
-
-function getAccent(icon: string): Accent {
-  return hueAccent(ICON_HUE[icon] ?? 239);
-}
+// 色阶尺配色 + 玻璃瓦片表面：SSOT 抽至 lib/tileAccent（百宝箱 ToolCard 共用同一套）
 
 function getIcon(name: string): LucideIcon {
   return ICON_MAP[name] || Bot;
@@ -278,11 +209,7 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
       type="button"
       onClick={onClick}
       className="group relative w-full h-full text-left rounded-xl transition-all duration-200 hover:-translate-y-0.5 flex flex-col gap-3 p-4"
-      style={{
-        background: `radial-gradient(140px 90px at 14% 0%, ${accent.faint} 0%, transparent 100%), var(--bg-elevated, rgba(255,255,255,0.03))`,
-        border: '1px solid rgba(255,255,255,0.08)',
-        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.04)',
-      }}
+      style={glassTileStyle(accent)}
     >
       {/* Hover：本卡色相的描边 + 一缕同色投影（静时安静，碰时呼吸） */}
       <div
@@ -330,11 +257,7 @@ function CompactCard({ item, onClick }: { item: ToolboxItem; onClick: () => void
       type="button"
       onClick={onClick}
       className="group relative w-full text-left rounded-xl overflow-hidden transition-all duration-200 hover:-translate-y-0.5 flex items-center gap-3.5 px-4 py-3.5"
-      style={{
-        background: `radial-gradient(120px 70px at 10% 0%, ${accent.faint} 0%, transparent 100%), var(--bg-elevated, rgba(255,255,255,0.03))`,
-        border: '1px solid rgba(255,255,255,0.08)',
-        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.04)',
-      }}
+      style={glassTileStyle(accent)}
     >
       {/* Hover：本卡色相描边 + 同色投影 */}
       <div
@@ -393,11 +316,7 @@ function RecentWorkCard({ item, onClick }: { item: RecentWorkItemDto; onClick: (
       type="button"
       onClick={onClick}
       className="group relative w-full text-left rounded-xl overflow-hidden transition-all duration-200 hover:-translate-y-0.5 flex items-center gap-3 px-4 py-3"
-      style={{
-        background: `radial-gradient(120px 70px at 10% 0%, ${accent.faint} 0%, transparent 100%), var(--bg-elevated, rgba(255,255,255,0.03))`,
-        border: '1px solid rgba(255,255,255,0.08)',
-        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.04)',
-      }}
+      style={glassTileStyle(accent)}
     >
       <div
         className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"

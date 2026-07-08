@@ -1850,7 +1850,7 @@ export default function AppShell() {
                   ? 'p-0'
                   : isHomePage
                     ? 'p-0'
-                    : 'px-5 py-4'
+                    : 'px-3 py-3'
             )}
             style={
               useCanvasPanel
