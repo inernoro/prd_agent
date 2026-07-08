@@ -1030,6 +1030,10 @@ public class GatewayDataDomainGuardTests
         var script = ReadRepoFile("scripts/llmgw-shadow-sample-accumulate.sh");
 
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_DRY_RUN:-1", script);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_PROFILE", script);
+        Assert.Contains("canary-intent-text", script);
+        Assert.Contains("--include-report-agent-generate", script);
+        Assert.Contains("report-agent.generate::chat:send:30", script);
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_BATCHES:-1", script);
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_SEED_FLAGS", script);
         Assert.Contains("执行模式必须设置 LLMGW_SHADOW_ACCUMULATE_SEED_FLAGS", script);
