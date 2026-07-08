@@ -386,6 +386,14 @@
 - planner 复核输出 `reason=wait-coverage-window`、`recommendedBatches=0`、`canRunRecommendedBatches=false`。因此当前不能继续补 canary-intent 样本，也不能执行 `canary-intent-text` 灰度或全量 `LLMGW_MODE=http`。
 - 下一步最早在首个目标样本 `2026-07-08T10:56:23.927Z` 之后满 24 小时时间窗后执行：先只读 coverage + planner；只有 planner 返回 `window-extension-top-up` 且推荐 `1` 个 batch，才显式开启 `LLMGW_SHADOW_ACCUMULATE_ALLOW_WINDOW_EXTENSION=1` 做 1 条低成本延展样本。
 
+## 最新生产状态板同步（2026-07-08 20:49 CST）
+
+- PR #1023 已合并到 `main`，merge commit 为 `a766f1d620dc57d02b2780b3405b3e0f958bf23c`。该 PR 新增只读 rollout status 状态板，并修复 `healthz` 失败时误显示 `gate-ready` 的门禁问题。
+- 生产机 `/root/inernoro/prd_agent` 仍是旧 git 工作树，因此已先备份旧脚本到 `/root/backups/llmgw-script-sync-20260708T204927+0800`，再只同步两个只读脚本：`scripts/llmgw-rollout-status.py`、`scripts/llmgw-readiness-audit.py`。没有改 compose、没有重启容器、没有触发模型请求。
+- 同步后生产 sha256 与本地 `main` 一致：`llmgw-rollout-status.py=d16d03701c4824d003136c8737552301094482073ef5bcfb952f14720ebb03b9`，`llmgw-readiness-audit.py=8aab7882eeaf3300691b58a4a80bd2b5e7a2e5ea6b6a33b9255019c28e84cc50`；生产 `python3 -m py_compile` 与 `scripts/llmgw-rollout-status.py --self-test` 均通过。
+- 生产 host 本机状态板复核仍为 `action=wait-coverage-window`：`report-agent.generate::chat/send total=30/30`，`critical=0`，`httpFail=0`，`coverageHours=0.716/24`。`/gw/v1/healthz` 为 200，commit 仍是 `2f6b0658397019e809f46ceb001245c6fdb03f40`。
+- `scripts/llmgw-prod-stage.sh --stage canary-intent-text --dry-run` 与 `--stage http-full --dry-run` 均被 rollout ledger 前置条件挡住，要求同 commit 的 `rollback-rehearsal` 成功记录，证明正式发布脚本不会跳过阶段顺序直接灰度或全量 HTTP。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘
