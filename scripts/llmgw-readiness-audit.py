@@ -168,6 +168,7 @@ def _static_checks() -> list[dict]:
             "--kind",
             "--require-kind",
             "--require-app-kind",
+            "--skip-global-cells",
             "--min-per-cell",
             "--min-coverage-hours",
             "--release-commit",
