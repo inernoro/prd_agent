@@ -193,9 +193,12 @@ def _static_checks() -> list[dict]:
             "llmgw-shadow-sample-plan.py",
             "--coverage-json",
             "--allow-window-extension",
+            "--require-ready",
+            "--require-action",
             "--self-test",
             "wait-coverage-window",
             "run-one-window-extension",
+            "_required_action_failure",
             "cellSummary",
             "multi-cell sample progress",
             "shadow 样本数",
@@ -786,6 +789,9 @@ def _static_checks() -> list[dict]:
             "append_ledger_entry rollback",
             "rollout_ledger_status=\"rollback\"",
             "release-gate.json",
+            "rollout-status.json",
+            "rolloutStatusRequired",
+            "rolloutStatusJson",
             "prod-preflight.json",
             "serving-probe.json",
             "gw-smoke.json",
@@ -818,6 +824,9 @@ def _static_checks() -> list[dict]:
             "run_prod_preflight",
             "scripts/llmgw-prod-preflight.py --mode start",
             "--prod-preflight-json \"$prod_preflight_json\"",
+            "run_rollout_status_ready_gate",
+            "scripts/llmgw-rollout-status.py",
+            "--require-ready",
             "--upstream-readiness-json \"$upstream_readiness_json\"",
             "--upstream-readiness-required \"$run_upstream_readiness\"",
             "--provider-audit-json \"$provider_audit_json\"",
@@ -856,6 +865,7 @@ def _static_checks() -> list[dict]:
     fast_idx = prod_stage.find("run_or_print ./fast.sh")
     video_canary_idx = prod_stage.find("run_video_canary_evidence\n\nrun_asr_http_canary_evidence")
     asr_canary_idx = prod_stage.find("run_asr_http_canary_evidence\n\nrun_shadow_seed_evidence")
+    release_tree_before_status_idx = prod_stage.find("validate_release_tree\nrun_rollout_status_ready_gate")
     upstream_before_deploy = (
         preflight_idx >= 0
         and upstream_idx >= 0
@@ -864,6 +874,7 @@ def _static_checks() -> list[dict]:
         and asr_canary_idx >= 0
         and preflight_idx < upstream_idx < provider_idx < fast_idx < video_canary_idx < asr_canary_idx
     )
+    release_tree_before_status = release_tree_before_status_idx >= 0
     ledger_ok, ledger_detail = _contains_all(
         rollout_ledger,
         [
@@ -996,8 +1007,8 @@ def _static_checks() -> list[dict]:
     leaks_key_arg = "--key" in prod_stage or "--gateway-key" in prod_stage or "--key" in rollout_ledger
     checks.append(_check(
         "prod_stage_runner_sequences_shadow_canary_http_and_rollback",
-        ok and ledger_ok and preflight_ok and upstream_ok and upstream_before_deploy and executable and ledger_executable and preflight_executable and upstream_executable and not leaks_key_arg,
-        f"{detail}; ledger={ledger_detail}; preflight={preflight_detail}; upstream={upstream_detail}; upstreamBeforeDeploy={upstream_before_deploy}; executable={executable}; ledgerExecutable={ledger_executable}; preflightExecutable={preflight_executable}; upstreamExecutable={upstream_executable}; leaksKeyArg={leaks_key_arg}",
+        ok and ledger_ok and preflight_ok and upstream_ok and upstream_before_deploy and release_tree_before_status and executable and ledger_executable and preflight_executable and upstream_executable and not leaks_key_arg,
+        f"{detail}; ledger={ledger_detail}; preflight={preflight_detail}; upstream={upstream_detail}; upstreamBeforeDeploy={upstream_before_deploy}; releaseTreeBeforeStatus={release_tree_before_status}; executable={executable}; ledgerExecutable={ledger_executable}; preflightExecutable={preflight_executable}; upstreamExecutable={upstream_executable}; leaksKeyArg={leaks_key_arg}",
     ))
 
     fast = _read("fast.sh")
