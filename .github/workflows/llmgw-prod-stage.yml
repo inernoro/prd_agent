@@ -68,6 +68,11 @@ on:
         description: "Required reason when allow_out_of_order is true."
         required: false
         default: ""
+      allow_release_tree_mismatch:
+        description: "Emergency only: allow production runner files to differ from release commit."
+        required: true
+        default: false
+        type: boolean
       rollout_evidence_run_id:
         description: "Previous llmgw-prod-stage run id to restore .llmgw-release-evidence before continuing."
         required: false
@@ -131,6 +136,7 @@ jobs:
       INPUT_MAIN_REF: ${{ github.event.inputs.main_ref || 'origin/main' }}
       INPUT_ALLOW_OUT_OF_ORDER: ${{ github.event.inputs.allow_out_of_order || 'false' }}
       INPUT_ALLOW_OUT_OF_ORDER_REASON: ${{ github.event.inputs.allow_out_of_order_reason || '' }}
+      INPUT_ALLOW_RELEASE_TREE_MISMATCH: ${{ github.event.inputs.allow_release_tree_mismatch || 'false' }}
       INPUT_ROLLOUT_EVIDENCE_RUN_ID: ${{ github.event.inputs.rollout_evidence_run_id || '' }}
       INPUT_ROLLOUT_EVIDENCE_ARTIFACT: ${{ github.event.inputs.rollout_evidence_artifact || '' }}
       PRD_AGENT_API_KEY: ${{ secrets.PRD_AGENT_PROD_API_KEY }}
@@ -168,6 +174,7 @@ jobs:
           main_ref="$(printf '%s' "$INPUT_MAIN_REF" | xargs)"
           allow_out_of_order="$(printf '%s' "$INPUT_ALLOW_OUT_OF_ORDER" | xargs)"
           allow_out_of_order_reason="$(printf '%s' "$INPUT_ALLOW_OUT_OF_ORDER_REASON" | xargs)"
+          allow_release_tree_mismatch="$(printf '%s' "$INPUT_ALLOW_RELEASE_TREE_MISMATCH" | xargs)"
           rollout_evidence_run_id="$(printf '%s' "$INPUT_ROLLOUT_EVIDENCE_RUN_ID" | xargs)"
 
           if [ -z "$stage" ]; then
@@ -206,6 +213,10 @@ jobs:
           export PRD_AGENT_BASE="$map_base"
           export LLMGW_GATE_BASE="$gw_base"
           export LLMGW_STAGE_EVIDENCE_DIR=".llmgw-release-evidence"
+          if [ "$allow_release_tree_mismatch" = "true" ]; then
+            export LLMGW_STAGE_ALLOW_RELEASE_TREE_MISMATCH=1
+          fi
+          release_tree_mismatch_bypass="${LLMGW_STAGE_ALLOW_RELEASE_TREE_MISMATCH:-${LLMGW_STAGE_ALLOW_SCRIPT_TREE_MISMATCH:-0}}"
 
           args=(
             --stage "$stage"
@@ -223,6 +234,25 @@ jobs:
           fi
           if [ "$allow_out_of_order" = "true" ]; then
             args+=(--allow-out-of-order --allow-out-of-order-reason "$allow_out_of_order_reason")
+          fi
+
+          if [ "$execute" = "true" ] && [ "$stage" != "rollback-inproc" ]; then
+            tree_precheck_args=(
+              --commit "$commit"
+              --main-ref "$main_ref"
+              --json-out ".llmgw-release-evidence/tree-precheck.json"
+              --report-md ".llmgw-release-evidence/tree-precheck.md"
+            )
+            if [ "$release_tree_mismatch_bypass" = "1" ] || [ "$release_tree_mismatch_bypass" = "true" ]; then
+              tree_precheck_args+=(--allow-mismatch)
+            fi
+            if ! python3 scripts/llmgw-prod-tree-precheck.py "${tree_precheck_args[@]}"; then
+              if [ "$release_tree_mismatch_bypass" = "1" ] || [ "$release_tree_mismatch_bypass" = "true" ]; then
+                echo "WARN: release tree mismatch precheck failed but emergency bypass is enabled; continuing to stage runner."
+              else
+                exit 1
+              fi
+            fi
           fi
 
           scripts/llmgw-prod-stage.sh "${args[@]}"

@@ -101,6 +101,8 @@ def _static_checks() -> list[dict]:
     prod_stage_workflow = _read(".github/workflows/llmgw-prod-stage.yml")
     prod_stage_path = ROOT / "scripts/llmgw-prod-stage.sh"
     prod_stage = prod_stage_path.read_text(encoding="utf-8")
+    prod_tree_precheck_path = ROOT / "scripts/llmgw-prod-tree-precheck.py"
+    prod_tree_precheck = prod_tree_precheck_path.read_text(encoding="utf-8") if prod_tree_precheck_path.exists() else ""
     rollout_ledger_path = ROOT / "scripts/llmgw-rollout-ledger.py"
     rollout_ledger = rollout_ledger_path.read_text(encoding="utf-8") if rollout_ledger_path.exists() else ""
     prod_preflight_path = ROOT / "scripts/llmgw-prod-preflight.py"
@@ -320,6 +322,11 @@ def _static_checks() -> list[dict]:
             "default: false",
             "runner_labels_json",
             "[\\\"self-hosted\\\",\\\"prd-agent-prod\\\"]",
+            "allow_release_tree_mismatch",
+            "INPUT_ALLOW_RELEASE_TREE_MISMATCH",
+            "LLMGW_STAGE_ALLOW_RELEASE_TREE_MISMATCH=1",
+            "LLMGW_STAGE_ALLOW_SCRIPT_TREE_MISMATCH",
+            "release_tree_mismatch_bypass",
             "environment: production",
             "PRD_AGENT_PROD_BASE",
             "PRD_AGENT_PROD_API_KEY",
@@ -334,6 +341,14 @@ def _static_checks() -> list[dict]:
             "llmgw-prod-stage-{0}",
             "default branch",
             "scripts/llmgw-prod-stage.sh",
+            "scripts/llmgw-prod-tree-precheck.py",
+            "tree-precheck.json",
+            "tree-precheck.md",
+            '[ "$execute" = "true" ] && [ "$stage" != "rollback-inproc" ]',
+            "--allow-mismatch",
+            "emergency bypass is enabled; continuing to stage runner",
+            "--json-out \".llmgw-release-evidence/tree-precheck.json\"",
+            "--report-md \".llmgw-release-evidence/tree-precheck.md\"",
             "stage $stage requires rollout_evidence_run_id so prior rollout ledger evidence is restored",
             "--stage \"$stage\"",
             "--commit \"$commit\"",
@@ -354,10 +369,38 @@ def _static_checks() -> list[dict]:
         ],
     )
     leaks_stage_secret = "echo \"$PRD_AGENT_API_KEY\"" in prod_stage_workflow or "echo \"$LLMGW_GATE_KEY\"" in prod_stage_workflow
+    tree_precheck_executable = bool(prod_tree_precheck_path.exists() and (prod_tree_precheck_path.stat().st_mode & stat.S_IXUSR))
+    tree_precheck_ok, tree_precheck_detail = _contains_all(
+        prod_tree_precheck,
+        [
+            "LLM Gateway production release tree precheck",
+            "CRITICAL_PATHS",
+            "scripts/llmgw-prod-stage.sh",
+            "scripts/llmgw-map-shadow-seed.py",
+            "scripts/llmgw-report-agent-shadow-seed.py",
+            "scripts/llmgw-rollout-status.py",
+            "scripts/llmgw-shadow-coverage-report.py",
+            "scripts/llmgw-shadow-sample-plan.py",
+            "scripts/llmgw-readiness-audit.py",
+            "allowMismatch",
+            "allowMismatchSource",
+            "LLMGW_STAGE_ALLOW_RELEASE_TREE_MISMATCH",
+            "LLMGW_STAGE_ALLOW_SCRIPT_TREE_MISMATCH",
+            "--allow-mismatch",
+            "gitStatus",
+            "pathChecks",
+            "missing-local",
+            "missing-release",
+            "differs",
+            "report-md",
+            "self-test",
+        ],
+    )
+    tree_precheck_destructive = any(item in prod_tree_precheck for item in ["git reset", "git checkout --", "rm -rf", "docker compose up", "docker compose down", "updateOne", "deleteMany"])
     checks.append(_check(
         "prod_stage_workflow_runs_on_production_runner_and_uploads_rollout_evidence",
-        ok and not leaks_stage_secret,
-        f"{detail}; leaksStageSecret={leaks_stage_secret}",
+        ok and tree_precheck_ok and tree_precheck_executable and not tree_precheck_destructive and not leaks_stage_secret,
+        f"{detail}; treePrecheck={tree_precheck_detail}; treePrecheckExecutable={tree_precheck_executable}; treePrecheckDestructive={tree_precheck_destructive}; leaksStageSecret={leaks_stage_secret}",
     ))
 
     ok, detail = _contains_all(
@@ -764,6 +807,8 @@ def _static_checks() -> list[dict]:
             "docker-compose.yml",
             "cds-compose.yml",
             "execdep.sh",
+            "scripts/llmgw-map-shadow-seed.py",
+            "scripts/llmgw-report-agent-shadow-seed.py",
             "deploy/nginx/conf.d/branches/_standalone.conf",
             "git show \"$commit:<critical rollout/deploy files>\" | cmp local files",
             "local rollout/deploy files must match --commit",
