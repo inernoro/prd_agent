@@ -1344,6 +1344,25 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("\"$window_script\"", accumulator);
     }
 
+    [Fact]
+    public void ShadowSamplePlan_IsReadOnlyAndCapsRecommendedBatches()
+    {
+        var planner = ReadRepoFile("scripts/llmgw-shadow-sample-plan.py");
+
+        Assert.Contains("Plan bounded LLM Gateway shadow sample top-up batches", planner);
+        Assert.Contains("This script is read-only", planner);
+        Assert.Contains("--coverage-json", planner);
+        Assert.Contains("LLMGW_SHADOW_SAMPLE_PLAN_MAX_BATCHES", planner);
+        Assert.Contains("recommendedBatches", planner);
+        Assert.Contains("canRunRecommendedBatches", planner);
+        Assert.Contains("bounded-top-up", planner);
+        Assert.Contains("already-ready", planner);
+        Assert.Contains("wait-coverage-window", planner);
+        Assert.DoesNotContain("urllib.request", planner);
+        Assert.DoesNotContain("subprocess.run", planner);
+        Assert.DoesNotContain("requests.", planner);
+    }
+
     private static string ReadRepoFile(string relativePath)
     {
         var root = LocateRepoRoot();

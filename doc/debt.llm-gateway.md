@@ -260,6 +260,13 @@
 - 串行合同测试通过：`GatewayDirectClientRatchetTests` 18/18 PASS；`GatewayPinnedModelTests`、`GatewayMultipartHttpTests`、`GatewayServingEndpointContractTests`、`GatewayKeyGateContractTests` 合计 24/24 PASS；`ShadowLlmGatewayTests`、`CrossProcessServingSelfTest`、`CrossProcessServingErrorLoadTests`、`HttpLlmGatewayClientFailureTests` 合计 38/38 PASS。
 - 结论：当前分支的直连棘轮、pinned model、multipart HTTP、key gate、serving endpoint、shadow 和 cross-process failure 合同均保持绿色；生产灰度仍受 `dabeffbf` 样本数与 24 小时窗口 gate 约束。
 
+## 最新只读补样计划（2026-07-08 17:07 CST）
+
+- 新增 `scripts/llmgw-shadow-sample-plan.py`，只读取 `llmgw-shadow-coverage-report.py` 生成的 coverage JSON，计算缺口、最多建议 batch 数和是否允许补样；脚本不访问网络、不读取密钥、不调用 seed/window。
+- 本地验证通过：伪造 coverage JSON 时，缺口样本 `29` 会被默认 `maxBatches=3` 限制为建议 `3` 批；coverage 已 PASS 时建议 `0` 批；存在 `critical/httpFail` 时禁止补样。`GatewayDataDomainGuardTests` 31/31 PASS，`cd prd-api && dotnet build --no-restore` 退出码 0。
+- 已同步 planner 到生产并只读运行一次，证据文件：`.llmgw-release-evidence/20260708T090701Z_readonly_shadow-sample-plan_dabeffbf.{json,md}`。当前计划输出：`remainingBatchesNeeded=29`、`recommendedBatches=3`、`canRunRecommendedBatches=true`、`reason=bounded-top-up`。
+- 结论：若要继续推进样本数，只允许按 planner 给出的 bounded top-up 小批量执行；仍不得超过脚本默认上限，也不得在未满 24 小时窗口时进入 `canary-intent-text --execute`。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘
