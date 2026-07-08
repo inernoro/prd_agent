@@ -82,20 +82,18 @@ public class AutoLinkProcessor
                     var result = WikiLinkAutoLinker.LinkTitles(content, candidates);
                     if (result.LinksAdded > 0)
                     {
-                        // 写前乐观并发检查：加载正文后用户又保存过（UpdatedAt 变化）则跳过本篇，
+                        // 乐观并发写：以加载正文时的 UpdatedAt 为令牌做条件更新（检查与写入同一条
+                        // 原子操作，无竞态窗口）。期间用户保存过 → Conflicted，跳过本篇——
                         // 宁可少补一篇（下次重跑幂等补上）也不覆盖用户刚写的内容。
-                        var currentUpdatedAt = await db.DocumentEntries
-                            .Find(e => e.Id == entry.Id)
-                            .Project(e => e.UpdatedAt)
-                            .FirstOrDefaultAsync();
-                        if (currentUpdatedAt != fresh.UpdatedAt)
+                        var writeResult = await _entryContentWriter.WriteAsync(
+                            fresh, store, result.Content, run.UserId, userName, DocumentVersionSource.Edit,
+                            expectedUpdatedAt: fresh.UpdatedAt);
+                        if (writeResult.Conflicted)
                         {
                             skipped++;
                         }
                         else
                         {
-                            await _entryContentWriter.WriteAsync(
-                                fresh, store, result.Content, run.UserId, userName, DocumentVersionSource.Edit);
                             changed++;
                             linksAdded += result.LinksAdded;
                             // 本篇新增链接明细（from=当前条目 → to=标题命中的目标条目），随 progress 事件推给前端做边生长动画

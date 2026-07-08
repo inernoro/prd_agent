@@ -42,7 +42,8 @@ public class EntryContentWriteService
     /// <param name="Rebound">重锚定成功的划词评论数</param>
     /// <param name="Orphaned">失锚的划词评论数</param>
     /// <param name="DocumentId">写入后的 ParsedPrd id（内容寻址可能与旧值不同）</param>
-    public record WriteResult(DateTime UpdatedAt, int MentionsWritten, int Rebound, int Orphaned, string DocumentId);
+    /// <param name="Conflicted">乐观并发写失败（expectedUpdatedAt 不匹配，正文/评论/账本/快照均未改动）</param>
+    public record WriteResult(DateTime UpdatedAt, int MentionsWritten, int Rebound, int Orphaned, string DocumentId, bool Conflicted = false);
 
     /// <summary>
     /// 把一段正文写入条目。调用方负责：权限校验、资产归一化、模板校验、活动日志。
@@ -50,6 +51,11 @@ public class EntryContentWriteService
     /// <param name="versionSource">新正文快照的来源（DocumentVersionSource.*）</param>
     /// <param name="restoredFromVersionId">版本恢复时指向被恢复的版本</param>
     /// <param name="contentTypeOverride">非空白时写入 entry.ContentType；索引取材时 null 回退 entry.ContentType（与旧行为一致）</param>
+    /// <param name="expectedUpdatedAt">
+    /// 乐观并发令牌（批处理用）：非空时 entry 更新以「Id + UpdatedAt 相等」为条件原子执行，
+    /// 期间被别人保存过则整次写入放弃并返回 Conflicted=true——检查与写入同一条 update，没有竞态窗口。
+    /// 该模式下 ParsedPrd 不就地覆盖独占旧文档（冲突放弃时旧正文必须原样保留）。
+    /// </param>
     public async Task<WriteResult> WriteAsync(
         DocumentEntry entry,
         DocumentStore store,
@@ -58,10 +64,11 @@ public class EntryContentWriteService
         string? actorName,
         string versionSource,
         string? restoredFromVersionId = null,
-        string? contentTypeOverride = null)
+        string? contentTypeOverride = null,
+        DateTime? expectedUpdatedAt = null)
     {
-        // 更新或创建 ParsedPrd（内容寻址 + 共享保护）
-        var (newDocId, oldContent) = await WriteEntryContentDocAsync(entry, content);
+        // 更新或创建 ParsedPrd（内容寻址 + 共享保护；乐观并发模式不就地覆盖旧文档）
+        var (newDocId, oldContent) = await WriteEntryContentDocAsync(entry, content, reuseExclusiveDocId: expectedUpdatedAt == null);
         entry.DocumentId = newDocId;
 
         // 摘要/搜索索引：html 条目剥标签取可读文本
@@ -81,7 +88,17 @@ public class EntryContentWriteService
         if (!string.IsNullOrWhiteSpace(contentTypeOverride))
             contentUpdate = contentUpdate.Set(e => e.ContentType, contentTypeOverride);
 
-        await _db.DocumentEntries.UpdateOneAsync(e => e.Id == entry.Id, contentUpdate);
+        // 乐观并发：条件更新（Id + UpdatedAt），检查与写入是同一条原子操作。
+        // 未命中说明期间有人保存过 → 整次写入放弃（评论/账本/快照都不动），
+        // 新落的 ParsedPrd 成为无引用的内容寻址文档，无害。
+        var entryFilter = expectedUpdatedAt == null
+            ? Builders<DocumentEntry>.Filter.Eq(e => e.Id, entry.Id)
+            : Builders<DocumentEntry>.Filter.And(
+                Builders<DocumentEntry>.Filter.Eq(e => e.Id, entry.Id),
+                Builders<DocumentEntry>.Filter.Eq(e => e.UpdatedAt, expectedUpdatedAt.Value));
+        var updateResult = await _db.DocumentEntries.UpdateOneAsync(entryFilter, contentUpdate);
+        if (expectedUpdatedAt != null && updateResult.MatchedCount == 0)
+            return new WriteResult(now, 0, 0, 0, entry.DocumentId!, Conflicted: true);
 
         // 重锚定划词评论
         var (rebound, orphaned) = await RebindInlineCommentsAsync(entry.Id, content);
@@ -107,7 +124,7 @@ public class EntryContentWriteService
     /// 改动前正文取旧 RawContent；ParsedPrd 行确已丢失时不回退 ContentIndex
     /// （它截断到 2000 字，宁可不快照也不存截断版本）。
     /// </summary>
-    public async Task<(string documentId, string? oldContent)> WriteEntryContentDocAsync(DocumentEntry entry, string content)
+    public async Task<(string documentId, string? oldContent)> WriteEntryContentDocAsync(DocumentEntry entry, string content, bool reuseExclusiveDocId = true)
     {
         var parsed = await _documentService.ParseAsync(content); // parsed.Id = 内容 hash
         string? oldContent;
@@ -116,13 +133,14 @@ public class EntryContentWriteService
             var oldDoc = await _documentService.GetByIdAsync(entry.DocumentId);
             oldContent = oldDoc?.RawContent;
             parsed.Title = oldDoc?.Title ?? entry.Title;
-            if (parsed.Id != entry.DocumentId)
+            if (parsed.Id != entry.DocumentId && reuseExclusiveDocId)
             {
                 var sharedByOthers = await _db.DocumentEntries.CountDocumentsAsync(
                     e => e.DocumentId == entry.DocumentId && e.Id != entry.Id) > 0;
                 if (!sharedByOthers)
                     parsed.Id = entry.DocumentId; // 独占 → 复用旧 id 就地更新，不产生孤儿
                 // 共享 → 保留新内容 hash id，仅把本 entry 重指向，旧共享文档保持不变
+                // reuseExclusiveDocId=false（乐观并发写）→ 一律落新 id：冲突放弃时旧正文必须原样保留
             }
         }
         else

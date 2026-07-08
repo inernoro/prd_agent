@@ -4,3 +4,4 @@
 | fix | prd-api | 自动补链任务复用/认领限定当前用户:团队库另一成员复用他人 runId 会因 agent-runs 端点按 UserId 鉴权而 404(Codex P2);任务幂等,双人同时发起各跑一遍无害 |
 | fix | prd-admin | 生成双链 SSE 流关闭兜底:终态事件漏发时流正常关闭而 done 回调不触发,按钮会永远卡「生成中」;流关闭后补拉一次 run 终态(Codex P2) |
 | fix | prd-api | 自动补链丢更新竞态修复:批量任务期间用户编辑过的文档不再被旧正文覆盖——逐篇处理前重取最新 entry + 写前 UpdatedAt 乐观并发检查,变化即跳过(下次重跑幂等补上)(Codex P1) |
+| fix | prd-api | 自动补链乐观并发升级为条件更新(CAS):UpdatedAt 检查并入 entry 更新本身,检查与写入零竞态窗口;并发模式下 ParsedPrd 不就地覆盖独占旧文档,冲突放弃时旧正文原样保留(Codex P2 追问) |
