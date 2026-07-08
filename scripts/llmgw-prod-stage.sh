@@ -469,6 +469,8 @@ scripts/llmgw-rollout-status.py
 scripts/llmgw-prod-preflight.py
 scripts/llmgw-upstream-readiness.py
 scripts/llmgw-prod-provider-config-audit.py
+scripts/llmgw-map-shadow-seed.py
+scripts/llmgw-report-agent-shadow-seed.py
 scripts/llmgw-video-exchange-canary.py
 scripts/llmgw-asr-http-canary.py
 scripts/llmgw-release-gate.py

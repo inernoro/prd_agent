@@ -443,6 +443,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("cds-compose.yml", script);
         Assert.Contains("execdep.sh", script);
         Assert.Contains("deploy/nginx/conf.d/branches/_standalone.conf", script);
+        Assert.Contains("scripts/llmgw-map-shadow-seed.py", script);
+        Assert.Contains("scripts/llmgw-report-agent-shadow-seed.py", script);
         Assert.Contains("git show \"$commit:<critical rollout/deploy files>\" | cmp local files", script);
         Assert.Contains("local rollout/deploy files must match --commit", script);
         Assert.Contains("release file differs from release commit", script);
@@ -692,6 +694,7 @@ public class GatewayDataDomainGuardTests
     {
         var workflow = ReadRepoFile(".github/workflows/llmgw-prod-stage.yml");
         var readiness = ReadRepoFile("scripts/llmgw-readiness-audit.py");
+        var treePrecheck = ReadRepoFile("scripts/llmgw-prod-tree-precheck.py");
 
         Assert.Contains("LLM Gateway Production Stage", workflow);
         Assert.Contains("workflow_dispatch:", workflow);
@@ -711,6 +714,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("commit:\n        description: \"40-char release commit. Required for every non-rollback-inproc stage.\"\n        required: false", workflow);
         Assert.Contains("runner_labels_json", workflow);
         Assert.Contains("[\\\"self-hosted\\\",\\\"prd-agent-prod\\\"]", workflow);
+        Assert.Contains("allow_release_tree_mismatch", workflow);
+        Assert.Contains("INPUT_ALLOW_RELEASE_TREE_MISMATCH", workflow);
+        Assert.Contains("LLMGW_STAGE_ALLOW_RELEASE_TREE_MISMATCH=1", workflow);
+        Assert.Contains("LLMGW_STAGE_ALLOW_SCRIPT_TREE_MISMATCH", workflow);
+        Assert.Contains("release_tree_mismatch_bypass", workflow);
         Assert.Contains("environment: production", workflow);
         Assert.Contains("PRD_AGENT_PROD_BASE", workflow);
         Assert.Contains("PRD_AGENT_PROD_API_KEY", workflow);
@@ -739,6 +747,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--main-ref \"$main_ref\"", workflow);
         Assert.Contains("--evidence-dir \".llmgw-release-evidence\"", workflow);
         Assert.Contains("--allow-out-of-order-reason \"$allow_out_of_order_reason\"", workflow);
+        Assert.Contains("scripts/llmgw-prod-tree-precheck.py", workflow);
+        Assert.Contains("[ \"$execute\" = \"true\" ] && [ \"$stage\" != \"rollback-inproc\" ]", workflow);
+        Assert.Contains("--allow-mismatch", workflow);
+        Assert.Contains("emergency bypass is enabled; continuing to stage runner", workflow);
+        Assert.Contains("--json-out \".llmgw-release-evidence/tree-precheck.json\"", workflow);
+        Assert.Contains("--report-md \".llmgw-release-evidence/tree-precheck.md\"", workflow);
         Assert.Contains("scripts/llmgw-rollout-ledger.py audit", workflow);
         Assert.Contains("--require-target-success", workflow);
         Assert.Contains("stage-audit.json", workflow);
@@ -751,7 +765,30 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("prod_stage_workflow_runs_on_production_runner_and_uploads_rollout_evidence", readiness);
         Assert.Contains(".github/workflows/llmgw-prod-stage.yml", readiness);
         Assert.Contains("leaksStageSecret", readiness);
+        Assert.Contains("treePrecheckExecutable", readiness);
+        Assert.Contains("treePrecheckDestructive", readiness);
         Assert.Contains("Restore previous rollout evidence", readiness);
+
+        Assert.Contains("LLM Gateway production release tree precheck", treePrecheck);
+        Assert.Contains("CRITICAL_PATHS", treePrecheck);
+        Assert.Contains("scripts/llmgw-prod-stage.sh", treePrecheck);
+        Assert.Contains("scripts/llmgw-map-shadow-seed.py", treePrecheck);
+        Assert.Contains("scripts/llmgw-report-agent-shadow-seed.py", treePrecheck);
+        Assert.Contains("scripts/llmgw-rollout-status.py", treePrecheck);
+        Assert.Contains("scripts/llmgw-shadow-coverage-report.py", treePrecheck);
+        Assert.Contains("scripts/llmgw-shadow-sample-plan.py", treePrecheck);
+        Assert.Contains("allowMismatch", treePrecheck);
+        Assert.Contains("allowMismatchSource", treePrecheck);
+        Assert.Contains("LLMGW_STAGE_ALLOW_RELEASE_TREE_MISMATCH", treePrecheck);
+        Assert.Contains("LLMGW_STAGE_ALLOW_SCRIPT_TREE_MISMATCH", treePrecheck);
+        Assert.Contains("--allow-mismatch", treePrecheck);
+        Assert.Contains("pathChecks", treePrecheck);
+        Assert.Contains("missing-local", treePrecheck);
+        Assert.Contains("missing-release", treePrecheck);
+        Assert.Contains("differs", treePrecheck);
+        Assert.DoesNotContain("git reset", treePrecheck);
+        Assert.DoesNotContain("git checkout --", treePrecheck);
+        Assert.DoesNotContain("docker compose up", treePrecheck);
     }
 
     [Fact]
