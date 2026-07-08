@@ -246,6 +246,13 @@
 - 测试验证：`GatewayDataDomainGuardTests` 30/30 PASS；`cd prd-api && dotnet build --no-restore` 退出码 0，仅输出既有 CS warning。
 - 结论：后续补 `dabeffbf` 的 `report-agent.generate::chat/send` 样本时，默认不会一条命令误打超过 3 个 batch，也不会在 coverage 已经达标后继续消耗模型额度。
 
+## 最新生产脚本同步（2026-07-08 17:01 CST）
+
+- 已把 `scripts/llmgw-shadow-sample-accumulate.sh` 的预算守卫同步到生产机 `/root/inernoro/prd_agent/scripts/llmgw-shadow-sample-accumulate.sh`，旧脚本备份在 `/root/backups/llmgw-shadow-accumulate-before-budget-guard-20260708T170059+0800/llmgw-shadow-sample-accumulate.sh`。
+- 同步后生产脚本 sha256 为 `edf69880370c8ca1b987f0160d24f7e3cd9ad3abcbe5b23496e881133e89e22e`，与本地分支一致；`sh -n` 通过。
+- 生产 dry-run 验证通过：`BATCHES=4` 被默认上限 3 拒绝；`BATCHES=3` dry-run 通过。验证期间未触发 seed、未调用模型、未修改 `.env`。
+- 生产运行态复核仍为 `dabeffbf18552ec3628be0612623aba5c24be1de`、`LLMGW_MODE=shadow`、`LLMGW_HTTP_APP_CALLER_ALLOWLIST=`、`LLMGW_SHADOW_FULL_SAMPLE_PERCENT=1`。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘
