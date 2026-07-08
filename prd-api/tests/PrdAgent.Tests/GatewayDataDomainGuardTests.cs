@@ -1047,6 +1047,13 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("seed_run_flags=\"$seed_flags\"", script);
         Assert.Contains("seed_run_flags=\"$seed_run_flags --release-commit $release_commit_trimmed\"", script);
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_BATCHES:-1", script);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_MAX_BATCHES", script);
+        Assert.Contains("max_batches=\"${LLMGW_SHADOW_ACCUMULATE_MAX_BATCHES:-3}\"", script);
+        Assert.Contains("超过本 profile 默认上限", script);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_PREFLIGHT_COVERAGE:-1", script);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_ALLOW_AFTER_PASS:-0", script);
+        Assert.Contains("coverage already satisfies gate; skip seeding", script);
+        Assert.Contains("preflight-shadow-coverage.json", script);
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_SEED_FLAGS", script);
         Assert.Contains("执行模式必须设置 LLMGW_SHADOW_ACCUMULATE_SEED_FLAGS", script);
         Assert.Contains("llmgw-shadow-sample-window.sh", script);
@@ -1335,6 +1342,25 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--force-shadow-sample", accumulator);
         Assert.Contains("python3 \"$seed_script\"", accumulator);
         Assert.Contains("\"$window_script\"", accumulator);
+    }
+
+    [Fact]
+    public void ShadowSamplePlan_IsReadOnlyAndCapsRecommendedBatches()
+    {
+        var planner = ReadRepoFile("scripts/llmgw-shadow-sample-plan.py");
+
+        Assert.Contains("Plan bounded LLM Gateway shadow sample top-up batches", planner);
+        Assert.Contains("This script is read-only", planner);
+        Assert.Contains("--coverage-json", planner);
+        Assert.Contains("LLMGW_SHADOW_SAMPLE_PLAN_MAX_BATCHES", planner);
+        Assert.Contains("recommendedBatches", planner);
+        Assert.Contains("canRunRecommendedBatches", planner);
+        Assert.Contains("bounded-top-up", planner);
+        Assert.Contains("already-ready", planner);
+        Assert.Contains("wait-coverage-window", planner);
+        Assert.DoesNotContain("urllib.request", planner);
+        Assert.DoesNotContain("subprocess.run", planner);
+        Assert.DoesNotContain("requests.", planner);
     }
 
     private static string ReadRepoFile(string relativePath)
