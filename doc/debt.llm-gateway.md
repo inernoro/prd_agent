@@ -149,6 +149,17 @@
 - 生产安全开关复核：`.env` 仍为 `LLMGW_MODE=shadow`、`LLMGW_HTTP_APP_CALLER_ALLOWLIST=`、`LLMGW_SHADOW_FULL_SAMPLE_PERCENT=1`；API 容器环境仍为 `LlmGateway__Mode=shadow`、`LlmGateway__HttpAppCallerAllowlist=`、`LlmGateway__ShadowFullSamplePercent=1`、`LlmGateway__ShadowFullSampleAppCallerAllowlist=report-agent.generate::chat,prd-agent-desktop.chat.suggested-questions::intent`。
 - 结论：生产脚本保护已补齐，但生产运行 commit 仍是 `a47d48c`，且 `canary-intent-text` 只达到 2/30 样本、覆盖约 1.22 小时。继续禁止 `canary-intent-text` 灰度、禁止视频批量取证、禁止全量 `LLMGW_MODE=http`。下一步只能按低成本节奏补 `report-agent.generate::chat/send` 到 30 条并等待覆盖窗口满 24 小时，或先将最新 main 以 shadow 模式部署后重新按新 commit 计证据。
 
+## 最新生产取证（2026-07-08 15:55 CST）
+
+- 已先做外置 critical 备份，再推进最新 main 的 shadow-start。第一次使用 `cds-compose.yml` 备份被 CDS 扩展字段 `fallbackImage` 拦截，未生成有效 archive；随后改用生产 `docker-compose.yml` 成功完成备份：`/Users/inernoro/prd-agent-prod-backups/llmgw-prod-external-20260708T154701+0800`。备份包含 `llm_gateway` 全库，以及 `prdagent.model_groups`、`prdagent.llm_app_callers`、`prdagent.llmplatforms`、`prdagent.model_exchanges`、`prdagent.llmrequestlogs`，并已生成 `SHA256SUMS`。
+- 生产机已 `git fetch origin main` 到 `0fe4eaed3b37777f3c149a0293184059ce4e0112`。`shadow-start` dry-run 通过，确认阶段配置为 `mode=shadow`、allowlist 空、`shadowFullSamplePercent=1`、不运行 video/asr provider gate、不运行 MAP seed。
+- 首次执行 `shadow-start --execute` 被 release tree 守卫拦截，原因是 5 个发布/验证脚本与目标 commit 不一致：`exec_dep.sh`、`scripts/llmgw-rollout-ledger.py`、`scripts/llmgw-video-exchange-canary.py`、`scripts/llmgw-release-gate.py`、`scripts/gw-smoke.py`。已备份旧文件到 `/root/backups/llmgw-prod-release-files-before-0fe-sync-20260708T155122+0800`，再从 `origin/main` 精确同步这 5 个文件并完成 `sh -n` / `python3 -m py_compile` 校验。
+- 第二次执行 `scripts/llmgw-prod-stage.sh --stage shadow-start --commit 0fe4eaed3b37777f3c149a0293184059ce4e0112 --execute` 成功。四个容器 `api / llmgw / llmgw-serve / llmgw-web` 均运行 `sha-0fe4eaed3b37777f3c149a0293184059ce4e0112`；`/gw/v1/healthz` 返回同一 commit；`serving-probe` PASS；`gw-smoke` 10/10 PASS；阶段台账追加 `shadow-start success`。证据前缀：`.llmgw-release-evidence/20260708T075136Z_shadow-start_0fe4eaed3b37.*`。
+- 部署后生产安全开关复核：`.env` 仍为 `LLMGW_MODE=shadow`、`LLMGW_HTTP_APP_CALLER_ALLOWLIST=`、`LLMGW_SHADOW_FULL_SAMPLE_PERCENT=1`、`LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST=`；API 容器环境为 `LlmGateway__Mode=shadow`、`LlmGateway__HttpAppCallerAllowlist=`、`LlmGateway__ShadowFullSamplePercent=1`、`LlmGateway__ShadowFullSampleAppCallerAllowlist=`。即 MAP 主路径仍不切 http。
+- 只读 canary-intent gate 对新 commit 预期 FAIL：`report-agent.generate::chat/send total=0 < 30`、覆盖 `0h < 24h`，但 health 三次采样稳定且 `critical=0`、`httpFail=0`。
+- 为开启新 commit 的低成本观察窗口，仅执行 1 个 `canary-intent-text` force-sample batch；未提高全局采样、未重启 API、未触发视频/图片/ASR。证据目录：`.llmgw-release-evidence/shadow-accumulate-20260708T075340Z/`。执行后 `report-agent.generate::chat/send total=1`、`critical=0`、`httpFail=0`，但仍因 `1 < 30` 返回 FAIL。
+- 结论：生产已从旧 `a47d48c` 推进到最新 `main` 的 `0fe4eaed` shadow-start，发布脚本树与目标 commit 对齐，运行安全门通过；但全量迁移仍未完成，`canary-intent-text` 也不得开启。下一步只允许继续低成本累计 `report-agent.generate::chat/send` 到 30 条并等待 24 小时覆盖，之后再进入第一批 allowlist 灰度。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘
