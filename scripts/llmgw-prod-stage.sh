@@ -19,6 +19,7 @@ Stages:
   canary-streaming   Canary streaming entries
   canary-vision      Canary vision raw entry
   canary-image       Canary image-gen/text2img/img2img raw entries
+  canary-asr         Canary ASR/subtitle raw entries without video generation
   canary-video-asr   Canary video and ASR raw entries
   rollback-rehearsal Dry-run rollback command and record same-commit rehearsal
   http-full          Full LLMGW_MODE=http cutover, gated by all core evidence
@@ -250,6 +251,12 @@ case "$stage" in
     allowlist="visual-agent.image-gen.generate::generation,visual-agent.image.text2img::generation,visual-agent.image.img2img::generation"
     shadow_percent="$sample_percent"
     ;;
+  canary-asr)
+    mode="shadow"
+    canary_stage="asr"
+    allowlist="document-store.subtitle::asr,transcript-agent.transcribe::asr,video-agent.v2d.transcribe::asr,video-agent.video-to-text::asr"
+    shadow_percent="$sample_percent"
+    ;;
   canary-video-asr)
     mode="shadow"
     canary_stage="video-asr"
@@ -304,7 +311,7 @@ stage_json="${evidence_prefix}.stage.json"
 stage_md="${evidence_prefix}.stage.md"
 
 case "$stage" in
-  canary-video-asr|http-full)
+  canary-asr|canary-video-asr|http-full)
     upstream_readiness_default=1
     ;;
   *)
@@ -334,7 +341,7 @@ esac
 run_video_canary="${LLMGW_STAGE_RUN_VIDEO_CANARY:-$video_canary_default}"
 
 case "$stage" in
-  canary-video-asr|http-full)
+  canary-asr|canary-video-asr|http-full)
     asr_http_canary_default=1
     ;;
   *)

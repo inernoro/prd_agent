@@ -21,6 +21,7 @@ STAGES = [
     "canary-streaming",
     "canary-vision",
     "canary-image",
+    "canary-asr",
     "canary-video-asr",
     "http-full",
 ]
@@ -33,6 +34,7 @@ ROLLOUT_SEQUENCE = [
     "canary-streaming",
     "canary-vision",
     "canary-image",
+    "canary-asr",
     "canary-video-asr",
     "http-full",
 ]

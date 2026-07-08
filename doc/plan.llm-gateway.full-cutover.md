@@ -276,7 +276,7 @@ scripts/llmgw-prod-stage.sh --stage shadow-start --commit <40位SHA> --execute
 ```
 
 支持阶段：`shadow-start`、`rollback-rehearsal`、`canary-intent-text`、`canary-chat`、`canary-streaming`、`canary-vision`、
-`canary-image`、`canary-video-asr`、`http-full`、`rollback-inproc`。脚本默认 dry-run，只有显式
+`canary-image`、`canary-asr`、`canary-video-asr`、`http-full`、`rollback-inproc`。脚本默认 dry-run，只有显式
 `--execute` 才会真实运行；deploy 阶段会先跑生产 preflight，随后对 `canary-video-asr` / `http-full`
 前置运行 upstream readiness gate，确认 video/ASR 解析能力可用后才跑 `fast.sh --commit <sha>`，再用同一个 sha 跑
 `exec_dep.sh --commit <sha>`，并默认设置 `PRD_AGENT_REQUIRE_FAST_INTENT=1` 与
@@ -360,9 +360,9 @@ stage/serving-probe/gw-smoke/release-gate 证据文件 verdict 与 commit 归属
 `scripts/llmgw-rollback-inproc.sh`，不回滚数据库。
 
 灰度 `LLMGW_HTTP_APP_CALLER_ALLOWLIST` 非空且不是全量 `LLMGW_MODE=http` 时，必须显式设置
-`LLMGW_CANARY_STAGE=intent-text|chat|streaming|vision|image|video-asr`；`exec_dep.sh` 会校验 allowlist
+`LLMGW_CANARY_STAGE=intent-text|chat|streaming|vision|image|asr|video-asr`；`exec_dep.sh` 会校验 allowlist
 只能包含该阶段允许的 appCaller，防止越级把 image/video/ASR 混进低风险文本灰度。canary 阶段如果未显式设置
-`LLMGW_GATE_REQUIRED_KINDS`，会按阶段自动要求 `send`、`stream` 或 `raw` 样本；vision/image/video-asr 阶段还会默认
+`LLMGW_GATE_REQUIRED_KINDS`，会按阶段自动要求 `send`、`stream` 或 `raw` 样本；vision/image/asr/video-asr 阶段还会默认
 要求对应 raw appCaller 的 `appCaller:raw` 样本逐个达标。
 如果 `LLMGW_MODE=shadow` 且 `LLMGW_SHADOW_FULL_SAMPLE_PERCENT` 非 0，`exec_dep.sh` 会在 compose 起新镜像后
 强制 run serving probe 与 D 层 smoke，但不会要求已有 shadow 样本数，以便安全启动证据期。

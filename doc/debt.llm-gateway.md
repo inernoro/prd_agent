@@ -125,6 +125,7 @@
 - 非视频 17 个单元包含：`report-agent.generate::chat/send`、`prd-agent-desktop.chat.sendmessage::chat/stream`、`prd-agent-desktop.preview-ask.section::chat/stream`、`open-platform-agent.proxy::chat/stream`、`open-api.proxy::chat/send`、`open-api.proxy::generation/raw`、`prd-agent-web.model-lab.run::chat/stream`、`prd-agent.arena.battle::chat/stream`、`tutorial-email.generate::chat/send`、四个图片 raw 单元，以及四个 ASR raw 单元。
 - 同一矩阵加 `--min-coverage-hours 24` 复跑仍 FAIL，17 个失败全部为覆盖时长不足；当前覆盖时长约 0.98-2.52 小时，不是样本数、critical 或 httpFail 问题。因此非视频可进入候选灰度排序，但不能宣称已满足 24 小时观察门。
 - `open-api.proxy::chat/send` 与 `tutorial-email.generate::chat/send` 存在非 critical `content` warning mismatch：两侧均 http 成功、模型/池/平台/解析一致，无 critical mismatch。该差异来自生成式文本非确定性，不能当作 transport 失败；但在汇报时必须明确区分“运行安全门通过”和“逐字内容 allMatch 未满分”。
+- 允许灰度候选排序更新：第一批仅建议 `canary-intent-text` 的 `report-agent.generate::chat`；第二批建议 `canary-streaming` 中 allMatch 满分的 `prd-agent-desktop.chat.sendmessage::chat`、`prd-agent-desktop.preview-ask.section::chat`、`open-platform-agent.proxy::chat`；第三批建议 `canary-vision` 与 `canary-image`；第四批建议新拆出的 `canary-asr` 四个 ASR/字幕入口。`open-api.proxy::chat` 与 `tutorial-email.generate::chat` 因 content warning mismatch 先继续 shadow 观察；视频生成保持暂缓，不进入候选。
 
 ## 已还的债务（归档）
 

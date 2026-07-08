@@ -35,7 +35,7 @@ set -eu
 #   - GITHUB_TOKEN：仅当 Release 资产为私有时需要（公开 Pages 下载不需要）
 #   - LLMGW_MODE=http：全量切 HTTP 时必须先通过 scripts/llmgw-release-gate.py
 #   - LLMGW_HTTP_APP_CALLER_ALLOWLIST：灰度入口列表；非空时这些入口会走 http 权威，也必须先通过 release gate
-#   - LLMGW_CANARY_STAGE：灰度阶段，allowlist 非空且非全量 http 时必填；枚举 intent-text/chat/streaming/vision/image/video-asr
+#   - LLMGW_CANARY_STAGE：灰度阶段，allowlist 非空且非全量 http 时必填；枚举 intent-text/chat/streaming/vision/image/asr/video-asr
 #   - LLMGW_SHADOW_FULL_SAMPLE_PERCENT：shadow 模式非流式完整比对采样比例，默认 0
 #     非 0 时会强制部署后 serving probe + gw-smoke 校验，但不会要求已有 shadow 样本数
 #   - LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST：shadow 模式下强制 full sample 的 appCaller 列表；
@@ -833,16 +833,19 @@ run_llmgw_release_gate_if_needed() {
       image)
         canary_allowed_app_callers="visual-agent.image-gen.generate::generation visual-agent.image.text2img::generation visual-agent.image.img2img::generation"
         ;;
+      asr)
+        canary_allowed_app_callers="document-store.subtitle::asr transcript-agent.transcribe::asr video-agent.v2d.transcribe::asr video-agent.video-to-text::asr"
+        ;;
       video-asr)
         canary_allowed_app_callers="video-agent.videogen::video-gen visual-agent.videogen::video-gen document-store.subtitle::asr transcript-agent.transcribe::asr video-agent.v2d.transcribe::asr video-agent.video-to-text::asr"
         ;;
       "")
         echo "ERROR: LLM Gateway canary 发布设置了 LLMGW_HTTP_APP_CALLER_ALLOWLIST，但未设置 LLMGW_CANARY_STAGE。" >&2
-        echo "       允许阶段：intent-text/chat/streaming/vision/image/video-asr；必须按低风险到高风险逐段推进。" >&2
+        echo "       允许阶段：intent-text/chat/streaming/vision/image/asr/video-asr；必须按低风险到高风险逐段推进。" >&2
         exit 1
         ;;
       *)
-        echo "ERROR: LLMGW_CANARY_STAGE=$canary_stage 不合法；允许 intent-text/chat/streaming/vision/image/video-asr。" >&2
+        echo "ERROR: LLMGW_CANARY_STAGE=$canary_stage 不合法；允许 intent-text/chat/streaming/vision/image/asr/video-asr。" >&2
         exit 1
         ;;
     esac
@@ -998,7 +1001,7 @@ run_llmgw_release_gate_if_needed() {
       streaming)
         required_kinds_raw="stream:${canary_kind_min}"
         ;;
-      vision|image|video-asr)
+      vision|image|asr|video-asr)
         required_kinds_raw="raw:${canary_kind_min}"
         ;;
     esac
@@ -1024,6 +1027,9 @@ run_llmgw_release_gate_if_needed() {
         ;;
       image)
         required_app_kinds_raw="${LLMGW_GATE_CANARY_APP_KINDS:-visual-agent.image-gen.generate::generation:raw:${canary_app_kind_min},visual-agent.image.text2img::generation:raw:${canary_app_kind_min},visual-agent.image.img2img::generation:raw:${canary_app_kind_min}}"
+        ;;
+      asr)
+        required_app_kinds_raw="${LLMGW_GATE_CANARY_APP_KINDS:-document-store.subtitle::asr:raw:${canary_app_kind_min},transcript-agent.transcribe::asr:raw:${canary_app_kind_min},video-agent.v2d.transcribe::asr:raw:${canary_app_kind_min},video-agent.video-to-text::asr:raw:${canary_app_kind_min}}"
         ;;
       video-asr)
         required_app_kinds_raw="${LLMGW_GATE_CANARY_APP_KINDS:-video-agent.videogen::video-gen:raw:${canary_app_kind_min},visual-agent.videogen::video-gen:raw:${canary_app_kind_min},document-store.subtitle::asr:raw:${canary_app_kind_min},transcript-agent.transcribe::asr:raw:${canary_app_kind_min},video-agent.v2d.transcribe::asr:raw:${canary_app_kind_min},video-agent.video-to-text::asr:raw:${canary_app_kind_min}}"

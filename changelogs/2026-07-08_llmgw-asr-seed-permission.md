@@ -5,3 +5,4 @@
 | ops | scripts | LLM Gateway shadow coverage 支持跳过全局聚合单元，用于视频暂缓时执行非视频 scoped gate |
 | ops | scripts | 为 LLM Gateway MAP shadow seed 增加视频提交预算闸门，默认阻止高成本视频批量取证 |
 | docs | doc | 记录 LLM Gateway 生产视频 shadow 取证成本风险债务与后续约束 |
+| ops | scripts | 拆分 LLM Gateway `canary-asr` 生产灰度阶段，允许 ASR/字幕独立于视频生成推进 |

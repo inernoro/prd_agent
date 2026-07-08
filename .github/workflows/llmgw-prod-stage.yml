@@ -18,6 +18,7 @@ on:
           - canary-streaming
           - canary-vision
           - canary-image
+          - canary-asr
           - canary-video-asr
           - http-full
           - rollback-inproc
