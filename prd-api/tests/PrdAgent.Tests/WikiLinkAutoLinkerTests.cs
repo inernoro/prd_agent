@@ -115,6 +115,16 @@ public class WikiLinkAutoLinkerTests
     }
 
     [Fact]
+    public void LinkTitles_MarkdownLinkWithParenthesizedUrl_Protected()
+    {
+        // URL 含括号的合法链接（维基式地址）也要整段保护,链接文本不得被改写
+        var content = "[API](https://example.com/a(b)) 之外的 API 才改。";
+        var result = WikiLinkAutoLinker.LinkTitles(content, new[] { "API" });
+        Assert.Equal(1, result.LinksAdded);
+        Assert.Equal("[API](https://example.com/a(b)) 之外的 [[API]] 才改。", result.Content);
+    }
+
+    [Fact]
     public void LinkTitles_BareUrl_Protected()
     {
         var content = "见 https://example.com/spec.cds.md 一文,正文提 spec.cds.md 时改。";

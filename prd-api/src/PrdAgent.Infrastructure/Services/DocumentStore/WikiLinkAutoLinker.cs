@@ -36,9 +36,13 @@ public static class WikiLinkAutoLinker
         @"`[^`\n]+`",
         RegexOptions.Compiled);
 
-    /// <summary>markdown 链接/图片整段 [text](url) / ![alt](url)</summary>
+    /// <summary>
+    /// markdown 链接/图片整段 [text](url) / ![alt](url)。
+    /// URL 段允许一层平衡括号（如维基式地址 https://example.com/a(b)），
+    /// 否则含括号 URL 的链接不被保护,其链接文本会被误改写成 [[..]]（Codex P2）。
+    /// </summary>
     private static readonly Regex MarkdownLinkPattern = new(
-        @"!?\[[^\[\]\n]*\]\([^()\n]*\)",
+        @"!?\[[^\[\]\n]*\]\((?:[^()\n]|\([^()\n]*\))*\)",
         RegexOptions.Compiled);
 
     /// <summary>裸 URL</summary>
