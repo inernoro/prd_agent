@@ -3518,14 +3518,18 @@ public class DocumentStoreController : ControllerBase
         var (store, error) = await LoadWritableStoreAsync(storeId, userId);
         if (error != null) return error;
 
-        // 去重/认领三段式与 GenerateSubtitle 相同（定向消费，见 InstanceIdentity）：
+        // 去重/认领三段式与 GenerateSubtitle 相同（定向消费，见 InstanceIdentity）。
+        // 复用/认领都限定「当前用户自己的 run」：GetAgentRun/StreamAgentRun 按 UserId 鉴权，
+        // 团队库另一成员若复用到别人的 runId 会立刻 404 无法跟进度（Codex P2）；
+        // 任务幂等，两个成员同时发起各跑一遍无害（第二遍 linksAdded=0）。
         var selfInstanceId = InstanceIdentity.Get(_config);
 
-        // (1) 原子认领历史无主的 queued run
+        // (1) 原子认领历史无主的 queued run（仅认领自己发起的）
         var claimed = await _db.DocumentStoreAgentRuns.FindOneAndUpdateAsync(
             Builders<DocumentStoreAgentRun>.Filter.And(
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.StoreId, storeId),
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Kind, DocumentStoreAgentRunKind.AutoLink),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.UserId, userId),
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, DocumentStoreRunStatus.Queued),
                 Builders<DocumentStoreAgentRun>.Filter.Or(
                     Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
@@ -3536,11 +3540,12 @@ public class DocumentStoreController : ControllerBase
         if (claimed != null)
             return Ok(ApiResponse<object>.Ok(new { runId = claimed.Id, status = claimed.Status, reused = true }));
 
-        // (2) 复用本实例已有的在途 run（queued/running，owner==self）
+        // (2) 复用本实例已有的在途 run（queued/running，owner==self 且发起者==当前用户）
         var selfRun = await _db.DocumentStoreAgentRuns.Find(
             Builders<DocumentStoreAgentRun>.Filter.And(
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.StoreId, storeId),
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Kind, DocumentStoreAgentRunKind.AutoLink),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.UserId, userId),
                 Builders<DocumentStoreAgentRun>.Filter.In(r => r.Status, new[] { DocumentStoreRunStatus.Queued, DocumentStoreRunStatus.Running }),
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, selfInstanceId))
         ).FirstOrDefaultAsync();
