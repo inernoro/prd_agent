@@ -820,6 +820,58 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ReadinessAudit_RequireRolloutCompleteFailsWithoutHttpFullLedger()
+    {
+        var root = LocateRepoRoot();
+        var tempDir = Path.Combine(Path.GetTempPath(), "llmgw-readiness-completion-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+            var ledger = Path.Combine(tempDir, "rollout-ledger.jsonl");
+            File.WriteAllText(ledger, string.Empty);
+
+            using var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = "python3",
+                WorkingDirectory = root,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                ArgumentList =
+                {
+                    "scripts/llmgw-readiness-audit.py",
+                    "--expect-commit",
+                    commit,
+                    "--rollout-ledger",
+                    ledger,
+                    "--rollout-target-stage",
+                    "http-full",
+                    "--rollout-min-observation-hours",
+                    "0",
+                    "--require-rollout-complete",
+                    "--print-json"
+                }
+            })!;
+
+            var stdout = process.StandardOutput.ReadToEnd();
+            var stderr = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+
+            var combined = stderr + stdout;
+            Assert.NotEqual(0, process.ExitCode);
+            Assert.Contains("rollout_ledger_completion_state", combined);
+            Assert.Contains("missing success stage for commit: stage=http-full", combined);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void RollbackScript_ReturnsApiToInprocWithoutDatabaseRollback()
     {
         var script = ReadRepoFile("scripts/llmgw-rollback-inproc.sh");
