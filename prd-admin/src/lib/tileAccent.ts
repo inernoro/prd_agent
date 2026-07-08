@@ -97,18 +97,21 @@ export function getAccent(icon: string): Accent {
 }
 
 /**
- * 玻璃瓦片表面（液态玻璃版卡片底）：
- * 半透白纵向渐变 + 顶部高光 + backdrop blur，替代早期近乎全黑的
- * `--bg-elevated 0.03` 平涂——"很黑、很沉重"的根源。
- * accent 传入时在左上角渗一缕品类色（静息态几乎不可见）。
+ * 瓦片表面（现代扁平版）：单层微透白 + 发丝描边，别无其他。
+ *
+ * 演化记录（都是用户实拍反馈驱动）：
+ * v1 近黑平涂（白 3%）→ "很黑、很沉重"；
+ * v2 纵向渐变 + 顶部 inset 高光 + blur → "剥离感太假，像 2000 年代的
+ *    水晶按钮"——纵向渐变和顶部高光正是 aqua 按钮的两个特征，全部去掉。
+ * v3（现行）：对齐 Linear / Raycast 的扁平纪律——底色只有一层平涂
+ *    （白 5%，比 v1 亮一档治沉重），描边发丝级，无渐变、无高光、无
+ *    静息投影、无 blur；色彩只出现在图标芯片与 hover 描边上，
+ *    左上角保留一缕品类色渗光（远看近乎不可见，给卡片一点生气）。
  */
 export function glassTileStyle(accent?: Accent): CSSProperties {
-  const tint = accent ? `radial-gradient(140px 90px at 12% 0%, ${accent.faint} 0%, transparent 100%), ` : '';
+  const tint = accent ? `radial-gradient(150px 100px at 12% 0%, ${accent.faint} 0%, transparent 100%), ` : '';
   return {
-    background: `${tint}linear-gradient(180deg, rgba(255,255,255,0.072) 0%, rgba(255,255,255,0.032) 100%)`,
-    border: '1px solid rgba(255,255,255,0.10)',
-    boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 28px -14px rgba(0,0,0,0.45)',
-    backdropFilter: 'blur(10px)',
-    WebkitBackdropFilter: 'blur(10px)',
+    background: `${tint}rgba(255,255,255,0.05)`,
+    border: '1px solid rgba(255,255,255,0.09)',
   };
 }

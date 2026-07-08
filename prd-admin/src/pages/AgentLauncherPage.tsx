@@ -294,7 +294,11 @@ function CompactCard({ item, onClick }: { item: ToolboxItem; onClick: () => void
   );
 }
 
-// ── Recent Work Card（「继续上次」：一键回到最近的工作现场） ──
+// ── Recent Work Chip（「继续上次」：履历胶囊条，不做成卡片） ──
+//
+// 2026-07-08 用户反馈：脚印长得像卡片会和下方智能体区雷同，且一行只有
+// 三四个铺不满。改为 ghost 胶囊（透明底 + 发丝描边 + 小图标 + 标题 + 时间），
+// flex-wrap 铺满整行——脚印是"痕迹"，视觉重量必须低于下方的"入口"。
 
 /** 与后端 HomeRecentWorkController 的 agentKey 枚举一一对应（iconKey 走 ICON_HUE 色阶尺） */
 const RECENT_AGENT_META: Record<string, { icon: LucideIcon; label: string; iconKey: string }> = {
@@ -307,7 +311,7 @@ const RECENT_AGENT_META: Record<string, { icon: LucideIcon; label: string; iconK
   'document-store': { icon: Library, label: '知识库', iconKey: 'Library' },
 };
 
-function RecentWorkCard({ item, onClick }: { item: RecentWorkItemDto; onClick: () => void }) {
+function RecentWorkChip({ item, onClick }: { item: RecentWorkItemDto; onClick: () => void }) {
   const meta = RECENT_AGENT_META[item.agentKey] ?? { icon: Bot, label: '智能体', iconKey: 'Bot' };
   const accent = getAccent(meta.iconKey);
   const Icon = meta.icon;
@@ -315,34 +319,31 @@ function RecentWorkCard({ item, onClick }: { item: RecentWorkItemDto; onClick: (
     <button
       type="button"
       onClick={onClick}
-      className="group relative w-full text-left rounded-xl overflow-hidden transition-all duration-200 hover:-translate-y-0.5 flex items-center gap-3 px-4 py-3"
-      style={glassTileStyle(accent)}
+      title={`${meta.label} · ${item.title}`}
+      className="group inline-flex items-center gap-2 h-9 pl-3 pr-3.5 rounded-full transition-colors duration-150 min-w-0"
+      style={{
+        background: 'rgba(255,255,255,0.025)',
+        border: '1px solid rgba(255,255,255,0.07)',
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = accent.faint;
+        e.currentTarget.style.borderColor = accent.border;
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = 'rgba(255,255,255,0.025)';
+        e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)';
+      }}
     >
-      <div
-        className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
-        style={{ boxShadow: `inset 0 0 0 1px ${accent.border}, 0 10px 26px -14px ${accent.glow}` }}
-      />
-      <div
-        className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center transition-transform duration-200 group-hover:scale-105"
-        style={{ background: accent.soft, border: `1px solid ${accent.border}` }}
+      <Icon size={14} className="shrink-0" style={{ color: accent.color }} />
+      <span
+        className="text-[12.5px] font-medium truncate"
+        style={{ color: 'var(--text-primary, rgba(255,255,255,0.9))', maxWidth: 220 }}
       >
-        <Icon size={17} style={{ color: accent.color }} />
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary, #fff)' }}>
-          {item.title}
-        </div>
-        <div className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted, rgba(255,255,255,0.4))' }}>
-          {meta.label}
-          <span className="mx-1 opacity-60">·</span>
-          <RelativeTime value={item.lastActiveAt} refreshIntervalMs={0} />
-        </div>
-      </div>
-      <ArrowRight
-        size={14}
-        className="shrink-0 opacity-0 group-hover:opacity-60 transition-all duration-200 group-hover:translate-x-0.5"
-        style={{ color: 'var(--text-muted)' }}
-      />
+        {item.title}
+      </span>
+      <span className="shrink-0 text-[11px]" style={{ color: 'var(--text-muted, rgba(255,255,255,0.4))' }}>
+        <RelativeTime value={item.lastActiveAt} refreshIntervalMs={0} />
+      </span>
     </button>
   );
 }
@@ -765,53 +766,41 @@ export default function AgentLauncherPage() {
               <Reveal delay={REVEAL.recent} duration={REVEAL_DURATION}>
                 <div className={`relative z-10 ${isMobile ? 'px-5 pb-6' : 'px-8 pb-8'}`}>
                   <SectionHeader eyebrow="CONTINUE" title="继续上次" />
-                  <div
-                    className="grid"
-                    style={{
-                      gap: 8,
-                      gridTemplateColumns: isMobile
-                        ? 'repeat(auto-fill, minmax(200px, 1fr))'
-                        : 'repeat(auto-fill, minmax(260px, 1fr))',
-                    }}
-                  >
-                    {/* 默认收起只露一行（含展开卡），展开后浏览全部脚印 */}
-                    {(recentExpanded ? recentWorkItems : recentWorkItems.slice(0, isMobile ? 2 : 3)).map((item) => (
-                      <RecentWorkCard
+                  {/* 履历胶囊条：flex-wrap 铺满整行；默认露一批（桌面 8 条），展开看全部 */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {(recentExpanded ? recentWorkItems : recentWorkItems.slice(0, isMobile ? 3 : 8)).map((item) => (
+                      <RecentWorkChip
                         key={`${item.agentKey}:${item.route}`}
                         item={item}
                         onClick={() => navigate(item.route)}
                       />
                     ))}
-                    {(recentExpanded || recentWorkItems.length > (isMobile ? 2 : 3)) && (
+                    {recentWorkItems.length > (isMobile ? 3 : 8) && (
                       <button
                         type="button"
                         onClick={() => setRecentExpanded((v) => !v)}
-                        className="group relative w-full text-left rounded-xl transition-all duration-200 hover:-translate-y-0.5 flex items-center gap-3 px-4 py-3"
+                        className="group inline-flex items-center gap-1.5 h-9 px-3.5 rounded-full transition-colors duration-150"
                         style={{
                           background: 'transparent',
                           border: '1px dashed rgba(255,255,255,0.14)',
+                          color: 'var(--text-muted, rgba(255,255,255,0.5))',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.borderColor = 'rgba(255,255,255,0.28)';
+                          e.currentTarget.style.color = 'var(--text-primary, rgba(255,255,255,0.85))';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.borderColor = 'rgba(255,255,255,0.14)';
+                          e.currentTarget.style.color = 'var(--text-muted, rgba(255,255,255,0.5))';
                         }}
                       >
-                        <div
-                          className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center transition-transform duration-200 group-hover:scale-105"
-                          style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.10)' }}
-                        >
-                          <History size={17} style={{ color: 'var(--text-muted, rgba(255,255,255,0.55))' }} />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary, #fff)' }}>
-                            {recentExpanded ? '收起脚印' : '浏览全部脚印'}
-                          </div>
-                          <div className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted, rgba(255,255,255,0.4))' }}>
-                            {recentExpanded
-                              ? `共 ${recentWorkItems.length} 条`
-                              : `还有 ${recentWorkItems.length - (isMobile ? 2 : 3)} 条`}
-                          </div>
-                        </div>
+                        <History size={13} />
+                        <span className="text-[12px] font-medium">
+                          {recentExpanded ? '收起' : `还有 ${recentWorkItems.length - (isMobile ? 3 : 8)} 条`}
+                        </span>
                         <ArrowRight
-                          size={14}
-                          className={`shrink-0 opacity-40 transition-transform duration-200 ${recentExpanded ? '-rotate-90' : 'rotate-90'}`}
-                          style={{ color: 'var(--text-muted)' }}
+                          size={12}
+                          className={`transition-transform duration-200 ${recentExpanded ? '-rotate-90' : 'rotate-90'}`}
                         />
                       </button>
                     )}
