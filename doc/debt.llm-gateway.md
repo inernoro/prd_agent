@@ -212,6 +212,14 @@
 - 这说明当前还有两个一致的时间门禁：release gate 的 shadow 覆盖窗口未满 24 小时，rollout ledger 的阶段观察窗口也未满 24 小时。它们都指向同一个等待点，最早仍是 `2026-07-09T07:54:02Z` 之后重新复查。
 - 下一次复查必须同时跑两项只读检查：`.llmgw-release-evidence/manual-gates/run-canary-intent-gate-0fe4eaed.sh` 与 `scripts/llmgw-prod-stage.sh --stage canary-intent-text --commit 0fe4eaed3b37777f3c149a0293184059ce4e0112 --dry-run`。两项都 PASS 后才允许执行 `canary-intent-text --execute`；否则继续停在 shadow 证据期。
 
+## 最新生产取证（2026-07-08 16:35 CST）
+
+- `origin/main` 已前进到 `dabeffbf18552ec3628be0612623aba5c24be1de`，新增范围是 review-agent 重新上传修复与网页托管筛选换行修复；生产运行镜像仍是 `0fe4eaed3b37777f3c149a0293184059ce4e0112`，`/gw/v1/healthz` 三次采样稳定返回同一 commit。生产 `.env` 仍保持 `LLMGW_MODE=shadow`、`LLMGW_HTTP_APP_CALLER_ALLOWLIST=`、`LLMGW_SHADOW_FULL_SAMPLE_PERCENT=1`、`LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST=`。
+- 已把最新 `origin/main` 合入当前证据分支，后续发布前不得复用旧 commit 证据直接切新 commit；若要发布 `dabeffbf`，必须先按同样流程重新做备份、`shadow-start`、serving probe、gw-smoke、release gate 与 rollout ledger。
+- 低成本只读 gate 复查仍 FAIL，失败项仅为覆盖窗口不足：`global coverageHours=0.52 < 24`、`report-agent.generate::chat coverageHours=0.51 < 24`、`global/send coverageHours=0.52 < 24`、`report-agent.generate::chat/send coverageHours=0.51 < 24`。样本数仍达标，`critical=0`、`httpFail=0`。
+- 合入最新 main 后本地静态/单元守卫通过：`GatewayDirectClientRatchetTests` 18/18 PASS，`ReviewAgentStateGuardsTests` 10/10 PASS，`cd prd-api && dotnet build --no-restore` 退出码 0，`prd-admin` 的 `pnpm -s exec tsc --noEmit` 通过，`pnpm -s lint` 退出码 0。lint 仍有仓库存量 warning，但本次合入文件无新增 error。
+- 结论：代码侧没有发现新增 LLM 直连缺口，但生产切流仍被时间门禁挡住。未满 24 小时前，继续禁止 `canary-intent-text --execute`、禁止全量 `LLMGW_MODE=http`，也不要为了追进度重复打火山/视频/图片/ASR 请求。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘
