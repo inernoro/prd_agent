@@ -407,6 +407,12 @@
 - 零费用验证通过：`python3 -m py_compile scripts/llmgw-rollout-status.py scripts/llmgw-readiness-audit.py`、`scripts/llmgw-rollout-status.py --self-test`、`python3 scripts/llmgw-readiness-audit.py --print-json` 均通过。
 - 使用生产 `/gw/v1` 只读状态板复核，仍为 `action=wait-coverage-window`，但覆盖窗口行现在明确显示 `nextEligibleAt=2026-07-09T10:56:23.927000Z`，即北京时间 `2026-07-09 18:56:23.927 CST`。本次复核没有触发 MAP seed、没有触发模型请求、没有改生产配置。
 
+## 昂贵 canary 默认限量（2026-07-08 20:59 CST）
+
+- 因火山侧已充值但要求避免过量测试，本地 `scripts/llmgw-asr-http-canary.py` 与 `scripts/llmgw-video-exchange-canary.py` 增加 `--max-canary-calls`，默认均为 `1`，也可分别通过 `LLMGW_ASR_CANARY_MAX_CALLS`、`LLMGW_VIDEO_CANARY_MAX_CALLS` 显式提高。
+- 新默认会在执行任何网络请求前拦截超预算目标：ASR 默认的 4 个 appCaller、Video 默认的 2 个 appCaller 都会 fail-closed。真实验证必须先用 `--app-caller`、`--model` 缩到单个目标；只有有明确预算时才提高上限。
+- 该改动是防误操作保护，不代表视频/ASR gate 已通过；视频仍按用户要求暂缓，后续优先推进低风险文本 allowlist 和只读证据。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘
