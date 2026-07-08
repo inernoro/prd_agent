@@ -179,6 +179,11 @@ python3 scripts/llmgw-map-shadow-seed.py --iterations 1
 `scripts/llmgw-map-shadow-seed.py --force-shadow-sample`，由 API 校验 `X-Llmgw-Shadow-Sample-Key` 后仅对本次请求强制完整
 shadow 比对，不修改 `.env`、不重建 API。`scripts/llmgw-shadow-sample-window.sh` 保留给短时诊断或确需临时提高
 `ShadowFullSamplePercent` 的场景；不得用反复重建 API 的方式硬刷 30 条生产样本。
+低风险文本 canary 证据可用预设减少误配：
+`LLMGW_SHADOW_ACCUMULATE_PROFILE=canary-intent-text scripts/llmgw-shadow-sample-accumulate.sh`。
+该预设默认仍是 dry-run；执行时需显式设置 `LLMGW_SHADOW_ACCUMULATE_DRY_RUN=0` 和批次数。
+预设只补 `report-agent.generate::chat/send`，默认启用 force-sample，不提高全局采样、不重建 API，
+并继续要求 `send:30`、`report-agent.generate::chat:send:30` 与 24 小时覆盖窗口；不得把它当作降低 release gate 的捷径。
 累计脚本会把每批 seed 证据写入同一个 run 目录，并默认在最后调用
 `scripts/llmgw-shadow-coverage-report.py` 生成 coverage JSON/Markdown。若 coverage 仍有样本不足、覆盖时长不足、
 critical 或 httpFail，结论只能是继续累计或归因修复，不能降低 release gate。
