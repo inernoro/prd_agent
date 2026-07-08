@@ -413,6 +413,14 @@
 - 新默认会在执行任何网络请求前拦截超预算目标：ASR 默认的 4 个 appCaller、Video 默认的 2 个 appCaller 都会 fail-closed。真实验证必须先用 `--app-caller`、`--model` 缩到单个目标；只有有明确预算时才提高上限。
 - 该改动是防误操作保护，不代表视频/ASR gate 已通过；视频仍按用户要求暂缓，后续优先推进低风险文本 allowlist 和只读证据。
 
+## 生产脚本预算护栏同步（2026-07-08 21:09 CST）
+
+- PR #1024 已合并到 main，merge commit 为 `f8a52aa5a02d3cf4b07590b5ca8b37b964d9f21f`；main 的 `CI`、`CDS CI`、`Branch Image`、`Web Latest (Pages)`、`Server Deploy` 均通过。
+- 生产运行时仍是 `2f6b0658397019e809f46ceb001245c6fdb03f40`，未部署新镜像、未重启服务、未改 `.env`、未触发模型请求。本次只同步 4 个发布/验证脚本到 `/root/inernoro/prd_agent/scripts/`：`llmgw-asr-http-canary.py`、`llmgw-video-exchange-canary.py`、`llmgw-readiness-audit.py`、`llmgw-rollout-status.py`。
+- 同步前已备份远端旧脚本到 `/root/backups/llmgw-canary-budget-guard-before-sync-20260708T210820+0800`。同步后远端 sha256 与 main 一致；`python3 -m py_compile ...` 与 `scripts/llmgw-rollout-status.py --self-test` 通过。
+- 生产机零费用验证确认默认预算门生效：ASR 默认入口在请求前拒绝 `requested=4 max=1`，Video 默认入口在请求前拒绝 `requested=2 max=1`。
+- 生产只读状态板证据写入 `.llmgw-release-evidence/rollout-status-20260708T130901Z-budget-sync/`：当前仍为 `action=wait-coverage-window`，`report-agent.generate::chat/send total=30/30`、`critical=0`、`httpFail=0`，覆盖窗口 `0.716/24`，`nextEligibleAt=2026-07-09T10:56:23.927000Z`。下一步到点前不得补样，到点后也只能按 planner 最小批次执行。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘
