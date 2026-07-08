@@ -284,6 +284,12 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
     health_ok = bool(health.get("skipped")) or (
         bool(health.get("ok")) and (not release_commit or not health_commit or health_commit == release_commit)
     )
+    release_ready = bool(health_ok and cell_summary["coverageOk"] and action == "ready-for-release-gate")
+    release_detail = (
+        "health、shadow coverage、planner 均已满足；仍需人工确认全迁移完成后才能切 LLMGW_MODE=http。"
+        if release_ready
+        else "未完成全量迁移前不得切 LLMGW_MODE=http。"
+    )
     items = [
         _item(
             "生产 healthz",
@@ -319,9 +325,9 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         ),
         _item(
             "全量 HTTP 发布",
-            100 if action == "ready-for-release-gate" and cell_summary["coverageOk"] else 0,
-            "not-ready" if action != "ready-for-release-gate" else "gate-ready",
-            "未完成全量迁移前不得切 LLMGW_MODE=http。",
+            100 if release_ready else 0,
+            "gate-ready" if release_ready else "not-ready",
+            release_detail,
         ),
     ]
 
@@ -408,6 +414,16 @@ def _fake_coverage(first_compared_at: str) -> dict[str, Any]:
             }
         ],
     }
+
+
+def _fake_ready_coverage() -> dict[str, Any]:
+    coverage = _fake_coverage("2026-01-01T00:00:00+00:00")
+    coverage["verdict"] = "pass"
+    coverage["failures"] = []
+    cell = coverage["cells"][0]
+    cell["coverageHours"] = 24
+    cell["failures"] = []
+    return coverage
 
 
 def _self_test() -> int:
@@ -507,6 +523,40 @@ def _self_test() -> int:
         raise AssertionError(f"multi-cell sample progress must use worst cell: {report['cellSummary']}")
     if "1/2 cells pass" not in str(report["cellSummary"]["sampleDetail"]):
         raise AssertionError(f"multi-cell sample detail must include pass count: {report['cellSummary']}")
+
+    health_fail_coverage_path = tmp / "health-fail-ready.coverage.json"
+    health_fail_coverage_path.write_text(
+        json.dumps(_fake_ready_coverage(), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    args = argparse.Namespace(
+        base="http://127.0.0.1:1",
+        key="",
+        release_commit="abc123",
+        coverage_json=str(health_fail_coverage_path),
+        require_app_kind=DEFAULT_REQUIRE_APP_KIND,
+        require_kind=[],
+        since_hours=48.0,
+        min_coverage_hours=24.0,
+        failure_sample_limit=0,
+        batch_yield=1,
+        max_batches=1,
+        allow_window_extension=True,
+        skip_global_cells=True,
+        skip_health=False,
+        json_out="",
+        report_md="",
+        print_json=False,
+        self_test=False,
+    )
+    report = build_status(args)
+    release_item = next(item for item in report["items"] if item["name"] == "全量 HTTP 发布")
+    if report["action"] != "ready-for-release-gate":
+        raise AssertionError(f"health-fail case must keep planner ready: {report['action']}")
+    if report["health"]["ok"]:
+        raise AssertionError(f"health-fail case must record health failure: {report['health']}")
+    if release_item["status"] != "not-ready" or release_item["progress"] != 0:
+        raise AssertionError(f"health failure must block release gate-ready status: {release_item}")
     print("LLM Gateway rollout status self-test: PASS")
     return 0
 
