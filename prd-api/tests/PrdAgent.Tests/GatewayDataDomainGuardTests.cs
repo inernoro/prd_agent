@@ -497,9 +497,14 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("run_prod_preflight", script);
         Assert.Contains("scripts/llmgw-prod-preflight.py --mode start", script);
         Assert.Contains("LLMGW_STAGE_MAP_BASE or PRD_AGENT_BASE", script);
+        Assert.Contains("LLMGW_STAGE_ALLOW_MISSING_MAP_LOGS=1", script);
+        Assert.Contains("This does not bypass gateway release gates or completion-mode direct-transport checks.", script);
         Assert.Contains("preflight += \" --map-base ${LLMGW_STAGE_MAP_BASE:-${PRD_AGENT_BASE:-}}\"", script);
         Assert.Contains("map_base=\"$(printf '%s' \"${LLMGW_STAGE_MAP_BASE:-${PRD_AGENT_BASE:-}}\" | xargs || true)\"", script);
         Assert.Contains("preflight_args=\"$preflight_args --map-base $map_base\"", script);
+        Assert.Contains("elif [ \"${LLMGW_STAGE_ALLOW_MISSING_MAP_LOGS:-0}\" = \"1\" ]; then", script);
+        Assert.Contains("preflight_args=\"$preflight_args --allow-missing-map-logs\"", script);
+        Assert.Contains("suffix=\"$suffix --allow-missing-map-logs\"", script);
         Assert.Contains("--prod-preflight-json \"$prod_preflight_json\"", script);
         Assert.Contains("scripts/llmgw-rollout-ledger.py validate", script);
         Assert.Contains("scripts/llmgw-rollout-ledger.py append", script);
