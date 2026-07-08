@@ -9,6 +9,7 @@ remote_host="${LLMGW_EXTERNAL_BACKUP_HOST:-root@map.ebcone.net}"
 remote_repo="${LLMGW_EXTERNAL_BACKUP_REMOTE_REPO:-/root/inernoro/prd_agent}"
 compose_file="${LLMGW_EXTERNAL_BACKUP_COMPOSE_FILE:-cds-compose.yml}"
 mongo_service="${LLMGW_EXTERNAL_BACKUP_MONGO_SERVICE:-mongodb}"
+mongo_container="${LLMGW_EXTERNAL_BACKUP_MONGO_CONTAINER:-}"
 mode="$(printf '%s' "${LLMGW_EXTERNAL_BACKUP_MODE:-full}" | tr 'A-Z' 'a-z' | xargs || true)"
 databases="${LLMGW_EXTERNAL_BACKUP_DATABASES:-prdagent llm_gateway}"
 critical_collections="${LLMGW_EXTERNAL_BACKUP_COLLECTIONS:-prdagent.model_groups prdagent.llm_app_callers prdagent.llmplatforms prdagent.model_exchanges prdagent.llmrequestlogs llm_gateway.*}"
@@ -27,6 +28,7 @@ echo "  remoteHost: $remote_host"
 echo "  remoteRepo: $remote_repo"
 echo "  compose: $compose_file"
 echo "  mongoService: $mongo_service"
+echo "  mongoContainer: ${mongo_container:-empty}"
 echo "  mode: $mode"
 echo "  databases: $databases"
 echo "  criticalCollections: $critical_collections"
@@ -42,9 +44,54 @@ case "$mode" in
     ;;
 esac
 
+case "$mongo_container" in
+  *[!A-Za-z0-9_.-]*)
+    echo "ERROR: invalid LLMGW_EXTERNAL_BACKUP_MONGO_CONTAINER: $mongo_container" >&2
+    exit 1
+    ;;
+esac
+
+remote_mongo_dump() {
+  db="$1"
+  collection="${2:-}"
+  case "$db" in
+    *[!A-Za-z0-9_-]*|"")
+      echo "ERROR: invalid database name: $db" >&2
+      exit 1
+      ;;
+  esac
+  collection_arg=""
+  if [ -n "$collection" ]; then
+    case "$collection" in
+      *[!A-Za-z0-9_-]*)
+        echo "ERROR: invalid collection name: $collection" >&2
+        exit 1
+        ;;
+    esac
+    collection_arg=" --collection '$collection'"
+  fi
+
+  if [ -n "$mongo_container" ]; then
+    run_remote "cd '$remote_repo' && docker exec -i '$mongo_container' mongodump --db '$db'$collection_arg --archive"
+  else
+    run_remote "cd '$remote_repo' && docker compose -f '$compose_file' exec -T '$mongo_service' mongodump --db '$db'$collection_arg --archive"
+  fi
+}
+
+write_remote_container_snapshot() {
+  out="$1"
+  if run_remote "cd '$remote_repo' && docker compose -f '$compose_file' ps" > "$out"; then
+    return 0
+  fi
+  run_remote "docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'" > "$out"
+}
+
 if [ "$dry_run" = "1" ] || [ "$dry_run" = "true" ]; then
   echo "LLM Gateway external backup dry-run: no local files will be written"
-  run_remote "cd '$remote_repo' && pwd && df -Pm / | tail -1 && docker compose -f '$compose_file' ps --format json | head -20"
+  run_remote "cd '$remote_repo' && pwd && df -Pm / | tail -1"
+  if ! run_remote "cd '$remote_repo' && docker compose -f '$compose_file' ps --format json | head -20"; then
+    run_remote "docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}' | head -20"
+  fi
   exit 0
 fi
 
@@ -53,7 +100,7 @@ chmod 700 "$backup_dir"
 
 run_remote "cd '$remote_repo' && pwd" > "$backup_dir/remote-pwd.txt"
 run_remote "cd '$remote_repo' && df -Pm /" > "$backup_dir/remote-df-root.txt"
-run_remote "cd '$remote_repo' && docker compose -f '$compose_file' ps" > "$backup_dir/docker-ps.txt"
+write_remote_container_snapshot "$backup_dir/docker-ps.txt"
 run_remote "cd '$remote_repo' && cat '$compose_file'" > "$backup_dir/$compose_file"
 if run_remote "cd '$remote_repo' && test -f docker-compose.yml"; then
   run_remote "cd '$remote_repo' && cat docker-compose.yml" > "$backup_dir/docker-compose.yml"
@@ -80,7 +127,7 @@ if [ "$mode" = "full" ]; then
         ;;
     esac
     echo "LLM Gateway external backup: streaming Mongo database $db"
-    run_remote "cd '$remote_repo' && docker compose -f '$compose_file' exec -T '$mongo_service' mongodump --db '$db' --archive" \
+    remote_mongo_dump "$db" \
       | gzip > "$backup_dir/$db.archive.gz"
     gzip -t "$backup_dir/$db.archive.gz"
   done
@@ -105,7 +152,7 @@ else
     case "$collection" in
       "*")
         echo "LLM Gateway external backup: streaming Mongo database $db"
-        run_remote "cd '$remote_repo' && docker compose -f '$compose_file' exec -T '$mongo_service' mongodump --db '$db' --archive" \
+        remote_mongo_dump "$db" \
           | gzip > "$backup_dir/$db.archive.gz"
         gzip -t "$backup_dir/$db.archive.gz"
         ;;
@@ -115,7 +162,7 @@ else
         ;;
       *)
         echo "LLM Gateway external backup: streaming Mongo collection $db.$collection"
-        run_remote "cd '$remote_repo' && docker compose -f '$compose_file' exec -T '$mongo_service' mongodump --db '$db' --collection '$collection' --archive" \
+        remote_mongo_dump "$db" "$collection" \
           | gzip > "$backup_dir/$db.$collection.archive.gz"
         gzip -t "$backup_dir/$db.$collection.archive.gz"
         ;;

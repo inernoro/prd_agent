@@ -415,10 +415,13 @@ def _entry_evidence_failures(entry: dict) -> list[str]:
     except SystemExit as exc:
         failures.append(str(exc))
 
-    for key, label in [
-        ("servingProbeJson", "serving probe evidence"),
-        ("smokeJson", "D-layer smoke evidence"),
-    ]:
+    evidence_checks = [
+        ("servingProbeJson", "serving probe evidence", True),
+        ("smokeJson", "D-layer smoke evidence", _bool_flag(str(entry.get("smokeRequired", True)))),
+    ]
+    for key, label, required in evidence_checks:
+        if not required:
+            continue
         try:
             if key == "servingProbeJson":
                 _require_serving_probe_for_commit(str(entry.get(key) or ""), f"{stage} {label}", commit)
@@ -625,7 +628,8 @@ def append(args: argparse.Namespace) -> int:
         if args.stage != ROLLBACK_REHEARSAL_STAGE:
             _require_prod_preflight_for_commit(args.prod_preflight_json, "production preflight evidence", args.commit)
             _require_serving_probe_for_commit(args.serving_probe_json, "serving probe evidence", args.commit)
-            _require_smoke_for_commit(args.smoke_json, "D-layer smoke evidence", args.commit)
+            if _bool_flag(args.smoke_required):
+                _require_smoke_for_commit(args.smoke_json, "D-layer smoke evidence", args.commit)
             if _bool_flag(args.release_gate_required):
                 _require_release_gate_for_commit(args.release_gate_json, "release gate evidence", args.commit)
             if _bool_flag(args.upstream_readiness_required):
@@ -678,6 +682,7 @@ def append(args: argparse.Namespace) -> int:
         "allowOutOfOrderReason": args.allow_out_of_order_reason.strip(),
         "servingProbeJson": args.serving_probe_json,
         "smokeJson": args.smoke_json,
+        "smokeRequired": _bool_flag(args.smoke_required),
         "releaseMainRef": args.main_ref,
         "releaseMainSha": args.main_sha.lower(),
         "minStageObservationHours": args.min_stage_observation_hours,
@@ -737,6 +742,7 @@ def _write_markdown(path: str, report: dict) -> None:
         fh.write(f"- asrHttpCanaryRequired: `{cell(report['asrHttpCanaryRequired'])}`\n")
         fh.write(f"- asrHttpCanaryJson: `{cell(report['asrHttpCanaryJson'])}`\n")
         fh.write(f"- servingProbeJson: `{cell(report['servingProbeJson'])}`\n")
+        fh.write(f"- smokeRequired: `{cell(report['smokeRequired'])}`\n")
         fh.write(f"- smokeJson: `{cell(report['smokeJson'])}`\n\n")
         fh.write(f"- releaseMainRef: `{cell(report['releaseMainRef'])}`\n")
         fh.write(f"- releaseMainSha: `{cell(report['releaseMainSha'])}`\n\n")
@@ -787,7 +793,7 @@ def stage_report(args: argparse.Namespace) -> int:
     checks = [
         ("prodPreflightJson", args.prod_preflight_json, True),
         ("servingProbeJson", args.serving_probe_json, True),
-        ("smokeJson", args.smoke_json, True),
+        ("smokeJson", args.smoke_json, _bool_flag(args.smoke_required)),
         ("releaseGateJson", args.release_gate_json, _bool_flag(args.release_gate_required)),
         ("upstreamReadinessJson", args.upstream_readiness_json, _bool_flag(args.upstream_readiness_required)),
         ("providerAuditJson", args.provider_audit_json, _bool_flag(args.provider_audit_required)),
@@ -852,6 +858,7 @@ def stage_report(args: argparse.Namespace) -> int:
         "externalBlockers": all_external_blockers,
         "servingProbeJson": args.serving_probe_json,
         "smokeJson": args.smoke_json,
+        "smokeRequired": _bool_flag(args.smoke_required),
         "releaseMainRef": args.main_ref,
         "releaseMainSha": args.main_sha.lower(),
         "failures": failures,
@@ -1034,6 +1041,7 @@ def main() -> int:
     append_parser.add_argument("--asr-http-canary-required", default="0")
     append_parser.add_argument("--serving-probe-json", default="")
     append_parser.add_argument("--smoke-json", default="")
+    append_parser.add_argument("--smoke-required", default="1")
     append_parser.add_argument("--main-ref", default="")
     append_parser.add_argument("--main-sha", default="")
     append_parser.add_argument("--allow-out-of-order", default="0")
@@ -1066,6 +1074,7 @@ def main() -> int:
     report_parser.add_argument("--asr-http-canary-required", default="0")
     report_parser.add_argument("--serving-probe-json", default="")
     report_parser.add_argument("--smoke-json", default="")
+    report_parser.add_argument("--smoke-required", default="1")
     report_parser.add_argument("--main-ref", default="")
     report_parser.add_argument("--main-sha", default="")
     report_parser.add_argument("--allow-out-of-order", default="0")

@@ -352,6 +352,10 @@ case "$stage" in
     ;;
 esac
 run_asr_http_canary="${LLMGW_STAGE_RUN_ASR_HTTP_CANARY:-$asr_http_canary_default}"
+smoke_required=1
+if [ "${LLMGW_GATE_RUN_SMOKE:-1}" = "0" ]; then
+  smoke_required=0
+fi
 disk_guard_path="${LLMGW_STAGE_DISK_GUARD_PATH:-$evidence_dir}"
 disk_guard_min_free_mb="${LLMGW_STAGE_MIN_FREE_MB:-4096}"
 allow_release_tree_mismatch="${LLMGW_STAGE_ALLOW_RELEASE_TREE_MISMATCH:-${LLMGW_STAGE_ALLOW_SCRIPT_TREE_MISMATCH:-0}}"
@@ -564,6 +568,7 @@ append_ledger_entry() {
     --asr-http-canary-required "$run_asr_http_canary" \
     --serving-probe-json "$serving_probe_json" \
     --smoke-json "$smoke_json" \
+    --smoke-required "$smoke_required" \
     --main-ref "$main_ref" \
     --main-sha "$main_sha" \
     --allow-out-of-order "$allow_out_of_order" \
@@ -1033,6 +1038,7 @@ if [ "$stage" = "rollback-rehearsal" ]; then
       --asr-http-canary-required "$run_asr_http_canary" \
       --serving-probe-json "$serving_probe_json" \
       --smoke-json "$smoke_json" \
+      --smoke-required "$smoke_required" \
       --main-ref "$main_ref" \
       --main-sha "$main_sha" \
       --allow-out-of-order "$allow_out_of_order" \
@@ -1138,6 +1144,7 @@ if [ "$execute" = "1" ]; then
     --asr-http-canary-required "$run_asr_http_canary" \
     --serving-probe-json "$serving_probe_json" \
     --smoke-json "$smoke_json" \
+    --smoke-required "$smoke_required" \
     --main-ref "$main_ref" \
     --main-sha "$main_sha" \
     --allow-out-of-order "$allow_out_of_order" \
