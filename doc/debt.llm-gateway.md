@@ -176,6 +176,14 @@
 - 执行后复核：`report-agent.generate::chat/send total=12 < 30`，`global/send total=13 < 30`，`global total=217`；所有相关单元仍为 `critical=0`、`httpFail=0`。coverage 仍 FAIL 是预期结果，失败原因仅为样本数不足和观察窗口不足。
 - 结论：第一批低风险 canary-intent 证据从 6/30 推进到 12/30；仍禁止开启 allowlist 灰度。下一步继续小批次补到 30/30，并等待从 `2026-07-08T07:54:02Z` 起算的 24 小时覆盖窗口；未满前不得进入 `canary-intent-text`。
 
+## 最新生产取证（2026-07-08 16:16 CST）
+
+- 继续只读复核生产 `0fe4eaed3b37777f3c149a0293184059ce4e0112`：`.env` 与 API 容器仍为 `Mode=shadow`、`HttpAppCallerAllowlist=`、`ShadowFullSamplePercent=1`，`/gw/v1/healthz` 返回同一 commit。
+- 自然流量没有补足 canary-intent 目标单元，复核时仍为 `report-agent.generate::chat/send total=12 < 30`，`critical=0`、`httpFail=0`。
+- 为保持低成本且不一次性压满，仅执行 9 个 `canary-intent-text` force-sample batch，命令绑定 `LLMGW_SHADOW_ACCUMULATE_RELEASE_COMMIT=0fe4eaed3b37777f3c149a0293184059ce4e0112`，每批间隔 5 秒；未提高全局采样、未重启 API、未触发视频/图片/ASR。证据目录：`.llmgw-release-evidence/shadow-accumulate-20260708T080904Z/`。
+- 执行后复核：`report-agent.generate::chat/send total=21 < 30`，`global/send total=22 < 30`，`global total=244`；所有相关单元仍为 `critical=0`、`httpFail=0`。coverage 仍 FAIL 是预期结果，失败原因仅为样本数不足和观察窗口不足。
+- 结论：第一批低风险 canary-intent 证据从 12/30 推进到 21/30；仍禁止开启 allowlist 灰度。下一步最多再补 9 条到 30/30，然后等待从 `2026-07-08T07:54:02Z` 起算的 24 小时覆盖窗口；未满前不得进入 `canary-intent-text`。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘
