@@ -141,6 +141,8 @@ def _static_checks() -> list[dict]:
     shadow_accumulate = shadow_accumulate_path.read_text(encoding="utf-8") if shadow_accumulate_path.exists() else ""
     shadow_sample_plan_path = ROOT / "scripts/llmgw-shadow-sample-plan.py"
     shadow_sample_plan = shadow_sample_plan_path.read_text(encoding="utf-8") if shadow_sample_plan_path.exists() else ""
+    rollout_status_path = ROOT / "scripts/llmgw-rollout-status.py"
+    rollout_status = rollout_status_path.read_text(encoding="utf-8") if rollout_status_path.exists() else ""
     ok, detail = _contains_all(
         release_gate,
         [
@@ -168,6 +170,7 @@ def _static_checks() -> list[dict]:
             "--kind",
             "--require-kind",
             "--require-app-kind",
+            "--skip-global-cells",
             "--min-per-cell",
             "--min-coverage-hours",
             "--release-commit",
@@ -181,6 +184,27 @@ def _static_checks() -> list[dict]:
         ],
     )
     checks.append(_check("shadow_coverage_report_available", ok, detail))
+
+    ok, detail = _contains_all(
+        rollout_status,
+        [
+            "Read-only LLM Gateway rollout status board",
+            "llmgw-shadow-coverage-report.py",
+            "llmgw-shadow-sample-plan.py",
+            "--coverage-json",
+            "--allow-window-extension",
+            "--self-test",
+            "wait-coverage-window",
+            "run-one-window-extension",
+            "cellSummary",
+            "multi-cell sample progress",
+            "shadow 样本数",
+            "shadow 质量",
+            "覆盖窗口",
+            "全量 HTTP 发布",
+        ],
+    )
+    checks.append(_check("rollout_status_board_available", ok, detail))
 
     ok, detail = _contains_all(
         shadow_accumulate + "\n" + shadow_sample_plan,
@@ -1377,6 +1401,16 @@ def _provider_audit_self_test() -> dict:
     return {"name": "provider_audit_external_blocker_self_test", "ok": ok, "detail": detail, "command": result}
 
 
+def _rollout_status_self_test() -> dict:
+    result = _run(
+        ["python3", "scripts/llmgw-rollout-status.py", "--self-test"],
+        timeout=60,
+    )
+    detail = (result["stdout"] + result["stderr"]).strip()
+    ok = result["ok"] and "LLM Gateway rollout status self-test: PASS" in detail
+    return {"name": "rollout_status_board_self_test", "ok": ok, "detail": detail, "command": result}
+
+
 def _dotnet_checks() -> list[dict]:
     checks: list[dict] = []
     tests = [
@@ -1781,6 +1815,7 @@ def main() -> int:
     checks.append(_restore_shadow_dry_run())
     checks.append(_restore_shadow_persist_env_test())
     checks.append(_provider_audit_self_test())
+    checks.append(_rollout_status_self_test())
     if args.run_dotnet:
         checks.extend(_dotnet_checks())
     if args.run_smoke:
