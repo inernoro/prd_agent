@@ -277,6 +277,12 @@
 - 新 commit 只读 coverage 证据：`.llmgw-release-evidence/20260708T093440Z_readonly_shadow-coverage_2f6b06583970.{json,md}`。当前 `global / send / report-agent.generate::chat / report-agent.generate::chat/send` 均为 `total=0`、`critical=0`、`httpFail=0`、coverageHours `0`；planner 建议最多 `3` 批 bounded top-up，剩余目标 `30`。
 - 结论：正式环境已进入最新 commit 的 shadow 证据期，但全量迁移仍未完成；下一阶段 `canary-intent-text` 被 24 小时观察窗口正确阻断，且样本数未达 30。不得宣称“网关迁移完成”，不得直接切 http。
 
+## 最新补样预算守卫（2026-07-08 18:00 CST）
+
+- `scripts/llmgw-shadow-sample-accumulate.sh` 已在执行前接入只读 `scripts/llmgw-shadow-sample-plan.py`。当 preflight coverage 未达标时，脚本会生成 `preflight-shadow-sample-plan.json/md`，读取 `recommendedBatches` 与 `canRunRecommendedBatches`，并拒绝 `LLMGW_SHADOW_ACCUMULATE_BATCHES` 超过 planner 推荐值的运行。
+- 该守卫只影响补证据批次数，不降低 release gate，不修改 `minCoverageHours=24`，也不会绕过 `critical=0` / `httpFail=0` 要求。若 coverage 已达标、只差覆盖窗口、存在质量失败，或 preflight coverage 因 key/网关/JSON 异常/参数格式错误读不到可信计数，脚本会停止，不继续消耗模型额度。
+- 结论：后续火山/其它模型已可用时，仍必须先跑只读 coverage 和 planner，再按推荐批次数补样；不得为了追进度重复打视频、图片、ASR 或超过 planner 的文本 batch。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘

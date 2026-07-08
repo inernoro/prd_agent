@@ -1060,8 +1060,15 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("超过本 profile 默认上限", script);
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_PREFLIGHT_COVERAGE:-1", script);
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_ALLOW_AFTER_PASS:-0", script);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_ENFORCE_PLAN:-1", script);
         Assert.Contains("coverage already satisfies gate; skip seeding", script);
         Assert.Contains("preflight-shadow-coverage.json", script);
+        Assert.Contains("llmgw-shadow-sample-plan.py", script);
+        Assert.Contains("preflight-shadow-sample-plan.json", script);
+        Assert.Contains("canRunRecommendedBatches", script);
+        Assert.Contains("recommendedBatches", script);
+        Assert.Contains("requested batches=$batches exceeds planner recommendation=$plan_recommended", script);
+        Assert.Contains("refusing to over-sample", script);
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_SEED_FLAGS", script);
         Assert.Contains("执行模式必须设置 LLMGW_SHADOW_ACCUMULATE_SEED_FLAGS", script);
         Assert.Contains("llmgw-shadow-sample-window.sh", script);
@@ -1389,6 +1396,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("recommendedBatches", planner);
         Assert.Contains("canRunRecommendedBatches", planner);
         Assert.Contains("bounded-top-up", planner);
+        Assert.Contains("coverage-read-failure", planner);
+        Assert.Contains("coverageReadReady", planner);
+        Assert.Contains("_coverage_failure_reason", planner);
+        Assert.Contains("_is_benign_coverage_failure", planner);
+        Assert.Contains("coverageFailures", planner);
+        Assert.Contains("coverage.get(\"failures\")", planner);
         Assert.Contains("already-ready", planner);
         Assert.Contains("wait-coverage-window", planner);
         Assert.DoesNotContain("urllib.request", planner);

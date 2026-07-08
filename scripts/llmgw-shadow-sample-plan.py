@@ -33,6 +33,26 @@ def _positive_int(value: str, name: str) -> int:
     return parsed
 
 
+def _coverage_failure_reason(message: str) -> str:
+    reason = message.strip()
+    separator_indexes = [reason.rfind(separator) for separator in (":", "：")]
+    label_separator_index = max(separator_indexes)
+    if label_separator_index >= 0:
+        candidate = reason[label_separator_index + 1:].strip()
+        if candidate:
+            reason = candidate
+    return reason
+
+
+def _is_benign_coverage_failure(message: str) -> bool:
+    benign_prefixes = (
+        "样本不足",
+        "覆盖时长不足",
+    )
+    reason = _coverage_failure_reason(message)
+    return any(reason.startswith(prefix) for prefix in benign_prefixes)
+
+
 def _cell_gap(cell: dict, batch_yield: int) -> dict:
     label = str(cell.get("label") or "")
     total = int(cell.get("total") or 0)
@@ -41,8 +61,10 @@ def _cell_gap(cell: dict, batch_yield: int) -> dict:
     http_fail = int(cell.get("httpFail") or 0)
     coverage_hours = float(cell.get("coverageHours") or 0)
     min_coverage_hours = float(cell.get("minCoverageHours") or 0)
+    failures = [str(item) for item in (cell.get("failures") or [])]
     missing = max(0, required - total)
     batches_needed = 0 if missing == 0 else (missing + max(1, batch_yield) - 1) // max(1, batch_yield)
+    coverage_read_ready = all(_is_benign_coverage_failure(item) for item in failures)
     return {
         "label": label,
         "total": total,
@@ -55,6 +77,8 @@ def _cell_gap(cell: dict, batch_yield: int) -> dict:
         "critical": critical,
         "httpFail": http_fail,
         "qualityReady": critical == 0 and http_fail == 0,
+        "coverageReadReady": coverage_read_ready,
+        "failures": failures,
     }
 
 
@@ -107,18 +131,25 @@ def _write_markdown(path: str, report: dict) -> None:
 
 def build_report(args: argparse.Namespace) -> dict:
     coverage = _load_json(args.coverage_json)
+    report_failures = [str(item) for item in (coverage.get("failures") or [])]
     cells = coverage.get("cells") or []
     if not isinstance(cells, list):
         raise SystemExit("coverage JSON field 'cells' must be a list")
 
     cell_reports = [_cell_gap(cell, args.batch_yield) for cell in cells if isinstance(cell, dict)]
     remaining_batches_needed = max((item["batchesNeeded"] for item in cell_reports), default=0)
+    report_read_ready = all(_is_benign_coverage_failure(item) for item in report_failures)
+    has_coverage_read_failure = not report_read_ready or not cell_reports or any(not item["coverageReadReady"] for item in cell_reports)
     has_quality_failure = any(not item["qualityReady"] for item in cell_reports)
     coverage_ready = all(item["coverageReady"] for item in cell_reports) if cell_reports else False
     samples_ready = remaining_batches_needed == 0
     recommended_batches = min(args.max_batches, remaining_batches_needed)
 
-    if has_quality_failure:
+    if has_coverage_read_failure:
+        reason = "coverage-read-failure"
+        can_run = False
+        recommended_batches = 0
+    elif has_quality_failure:
         reason = "quality-failure"
         can_run = False
     elif samples_ready and coverage_ready:
@@ -147,6 +178,7 @@ def build_report(args: argparse.Namespace) -> dict:
         "recommendedBatches": recommended_batches,
         "canRunRecommendedBatches": can_run,
         "reason": reason,
+        "coverageFailures": report_failures,
         "cells": cell_reports,
     }
 
