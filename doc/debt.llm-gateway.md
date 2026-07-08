@@ -220,6 +220,15 @@
 - 合入最新 main 后本地静态/单元守卫通过：`GatewayDirectClientRatchetTests` 18/18 PASS，`ReviewAgentStateGuardsTests` 10/10 PASS，`cd prd-api && dotnet build --no-restore` 退出码 0，`prd-admin` 的 `pnpm -s exec tsc --noEmit` 通过，`pnpm -s lint` 退出码 0。lint 仍有仓库存量 warning，但本次合入文件无新增 error。
 - 结论：代码侧没有发现新增 LLM 直连缺口，但生产切流仍被时间门禁挡住。未满 24 小时前，继续禁止 `canary-intent-text --execute`、禁止全量 `LLMGW_MODE=http`，也不要为了追进度重复打火山/视频/图片/ASR 请求。
 
+## 最新生产取证（2026-07-08 16:52 CST）
+
+- 已将生产推进到最新 `main` commit `dabeffbf18552ec3628be0612623aba5c24be1de` 的 `shadow-start`。执行前先做备份：full 备份因 `prdagent.apirequestlogs` 过慢在发布前手动中止，并在 `/Users/inernoro/prd-agent-prod-backups/llmgw-prod-external-20260708T163743+0800/INCOMPLETE.txt` 标记；随后完成 critical 备份 `/Users/inernoro/prd-agent-prod-backups/llmgw-prod-external-20260708T164212+0800`，包含 `llm_gateway` 全库、`prdagent.model_groups`、`prdagent.llm_app_callers`、`prdagent.llmplatforms`、`prdagent.model_exchanges`、`prdagent.llmrequestlogs`，`SHA256SUMS` 全部 OK。
+- `shadow-start --execute` 通过发布守卫：disk guard OK、rollout ledger 起点 OK、`origin/main` ancestry OK、release tree OK、production preflight PASS。发布后 5 个核心镜像均为 `sha-dabeffbf18552ec3628be0612623aba5c24be1de`；`/gw/v1/healthz` 返回 `dabeffbf18552ec3628be0612623aba5c24be1de`；`.env` 仍为 `LLMGW_MODE=shadow`、`LLMGW_HTTP_APP_CALLER_ALLOWLIST=`、`LLMGW_SHADOW_FULL_SAMPLE_PERCENT=1`、`LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST=`。
+- post-deploy 低成本验证通过：serving probe PASS，gw-smoke 10/10 PASS。该阶段未启用 video canary、ASR HTTP canary、provider audit、MAP shadow seed。
+- 已补做同 commit rollback rehearsal：`scripts/llmgw-prod-stage.sh --stage rollback-rehearsal --commit dabeffbf18552ec3628be0612623aba5c24be1de --execute` 成功，实际为 `LLMGW_ROLLBACK_DRY_RUN=1`，只记录同 commit 回滚演练，不修改数据库、不重启、不改镜像。
+- 新 commit 的 `canary-intent-text` gate 已从零开始重算。只读 release gate 初始 FAIL：`total=0/30`、`coverageHours=0/24`。为启动证据窗口，仅跑 1 个低成本 `canary-intent-text` force-sample batch，证据目录 `.llmgw-release-evidence/shadow-accumulate-20260708T085012Z/`；结果为 `global total=3`、`global/send total=1`、`report-agent.generate::chat total=1`、`report-agent.generate::chat/send total=1`，全部 `critical=0`、`httpFail=0`。coverage 仍预期 FAIL，因样本数和 24 小时窗口不足。
+- 结论：最新 main 已安全进入生产 shadow 证据期，且回滚演练已对齐同 commit。下一步不能直接进入 `canary-intent-text --execute`，因为 rollout ledger 仍要求从 `shadow-start` 起观察 24 小时，release gate 也要求同 commit 样本达到 30 且覆盖 24 小时。继续禁止全量 `LLMGW_MODE=http`，禁止视频/图片/ASR 重复高成本测试；后续只允许按明确预算补低成本文本样本。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘
