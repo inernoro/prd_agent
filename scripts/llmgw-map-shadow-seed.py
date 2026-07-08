@@ -693,7 +693,10 @@ def call_report_agent_generate(base: str, release_commit: str, timeout: float, t
         "--evidence-out",
         evidence_out,
     ]
-    result = subprocess.run(cmd, text=True, capture_output=True, timeout=max(timeout + 90, 240), check=False)
+    env = None
+    if FORCE_SHADOW_SAMPLE_KEY:
+        env = {**os.environ, "LLMGW_SHADOW_SAMPLE_KEY": FORCE_SHADOW_SAMPLE_KEY}
+    result = subprocess.run(cmd, text=True, capture_output=True, timeout=max(timeout + 90, 240), check=False, env=env)
     if result.returncode != 0:
         detail = (result.stdout + "\n" + result.stderr).strip()
         raise RuntimeError(f"report-agent shadow seed failed rc={result.returncode}: {detail[:1000]}")

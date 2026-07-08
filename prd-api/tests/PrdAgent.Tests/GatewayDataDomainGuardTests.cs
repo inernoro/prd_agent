@@ -497,9 +497,16 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("run_prod_preflight", script);
         Assert.Contains("scripts/llmgw-prod-preflight.py --mode start", script);
         Assert.Contains("LLMGW_STAGE_MAP_BASE or PRD_AGENT_BASE", script);
+        Assert.Contains("LLMGW_STAGE_ALLOW_MISSING_MAP_LOGS=1", script);
+        Assert.Contains("This does not bypass gateway release gates or completion-mode direct-transport checks.", script);
         Assert.Contains("preflight += \" --map-base ${LLMGW_STAGE_MAP_BASE:-${PRD_AGENT_BASE:-}}\"", script);
         Assert.Contains("map_base=\"$(printf '%s' \"${LLMGW_STAGE_MAP_BASE:-${PRD_AGENT_BASE:-}}\" | xargs || true)\"", script);
         Assert.Contains("preflight_args=\"$preflight_args --map-base $map_base\"", script);
+        Assert.Contains("allow_missing_map_logs_waiver_for_stage()", script);
+        Assert.Contains("canary-*)", script);
+        Assert.Contains("elif [ \"${LLMGW_STAGE_ALLOW_MISSING_MAP_LOGS:-0}\" = \"1\" ] && allow_missing_map_logs_waiver_for_stage; then", script);
+        Assert.Contains("preflight_args=\"$preflight_args --allow-missing-map-logs\"", script);
+        Assert.Contains("suffix=\"$suffix --allow-missing-map-logs\"", script);
         Assert.Contains("--prod-preflight-json \"$prod_preflight_json\"", script);
         Assert.Contains("scripts/llmgw-rollout-ledger.py validate", script);
         Assert.Contains("scripts/llmgw-rollout-ledger.py append", script);
@@ -1030,12 +1037,21 @@ public class GatewayDataDomainGuardTests
         var script = ReadRepoFile("scripts/llmgw-shadow-sample-accumulate.sh");
 
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_DRY_RUN:-1", script);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_PROFILE", script);
+        Assert.Contains("canary-intent-text", script);
+        Assert.Contains("--include-report-agent-generate", script);
+        Assert.Contains("report-agent.generate::chat:send:30", script);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_RELEASE_COMMIT", script);
+        Assert.Contains("避免混用旧 commit shadow 样本", script);
+        Assert.Contains("release_commit_trimmed=\"$(printf '%s' \"$release_commit\" | xargs || true)\"", script);
+        Assert.Contains("seed_run_flags=\"$seed_flags\"", script);
+        Assert.Contains("seed_run_flags=\"$seed_run_flags --release-commit $release_commit_trimmed\"", script);
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_BATCHES:-1", script);
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_SEED_FLAGS", script);
         Assert.Contains("执行模式必须设置 LLMGW_SHADOW_ACCUMULATE_SEED_FLAGS", script);
         Assert.Contains("llmgw-shadow-sample-window.sh", script);
         Assert.Contains("LLMGW_SHADOW_SAMPLE_WINDOW_DRY_RUN=0", script);
-        Assert.Contains("LLMGW_SHADOW_SAMPLE_WINDOW_SEED_FLAGS=\"$seed_flags\"", script);
+        Assert.Contains("LLMGW_SHADOW_SAMPLE_WINDOW_SEED_FLAGS=\"$seed_run_flags\"", script);
         Assert.Contains("batch-$batch_id-shadow-sample-window.json", script);
         Assert.Contains("llmgw-shadow-coverage-report.py", script);
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_RUN_COVERAGE:-1", script);
@@ -1158,6 +1174,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--include-arena-run", script);
         Assert.Contains("--include-report-agent-generate", script);
         Assert.Contains("llmgw-report-agent-shadow-seed.py", script);
+        Assert.Contains("\"LLMGW_SHADOW_SAMPLE_KEY\": FORCE_SHADOW_SAMPLE_KEY", script);
         Assert.Contains("/api/v1/chat-runs/", script);
         Assert.Contains("/api/lab/model/runs/stream", script);
         Assert.Contains("/api/lab/arena/runs", script);
@@ -1299,6 +1316,7 @@ public class GatewayDataDomainGuardTests
         var accessor = ReadRepoFile("prd-api/src/PrdAgent.Core/Services/LLMRequestContextAccessor.cs");
         var shadowGateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ShadowLlmGateway.cs");
         var seed = ReadRepoFile("scripts/llmgw-map-shadow-seed.py");
+        var reportSeed = ReadRepoFile("scripts/llmgw-report-agent-shadow-seed.py");
         var accumulator = ReadRepoFile("scripts/llmgw-shadow-sample-accumulate.sh");
 
         Assert.Contains("X-Llmgw-Shadow-Sample-Key", apiProgram);
@@ -1309,6 +1327,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("_ctx?.Current?.ForceFullShadowSample == true", shadowGateway);
         Assert.Contains("--force-shadow-sample", seed);
         Assert.Contains("X-Llmgw-Shadow-Sample-Key", seed);
+        Assert.Contains("\"LLMGW_SHADOW_SAMPLE_KEY\": FORCE_SHADOW_SAMPLE_KEY", seed);
+        Assert.DoesNotContain("cmd.extend([\"--shadow-sample-key\"", seed);
+        Assert.Contains("SHADOW_SAMPLE_KEY = args.shadow_sample_key.strip()", reportSeed);
+        Assert.Contains("headers[\"X-Llmgw-Shadow-Sample-Key\"] = SHADOW_SAMPLE_KEY", reportSeed);
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_FORCE_SAMPLE", accumulator);
         Assert.Contains("--force-shadow-sample", accumulator);
         Assert.Contains("python3 \"$seed_script\"", accumulator);

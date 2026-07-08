@@ -33,6 +33,9 @@ Required environment for deploy stages:
                               Optional appCaller list forced to full shadow sampling for deterministic raw evidence
   LLMGW_STAGE_MAP_BASE or PRD_AGENT_BASE
                               MAP base URL for preflight, ASR canary, and shadow seed
+  LLMGW_STAGE_ALLOW_MISSING_MAP_LOGS=1
+                              Allow production preflight to defer MAP LLM log scan when the operator has no MAP Bearer token.
+                              This does not bypass gateway release gates or completion-mode direct-transport checks.
   LLMGW_STAGE_SHADOW_SEED_FLAGS Extra llmgw-map-shadow-seed.py flags, for example --include-video-direct
   LLMGW_STAGE_RUN_UPSTREAM_READINESS=1 enables /gw/v1/resolve upstream readiness evidence
   LLMGW_STAGE_RUN_PROVIDER_AUDIT=1 enables read-only video/ASR provider config audit
@@ -736,6 +739,17 @@ PY
   echo "LLM Gateway dry-run evidence written: $stage_json"
 }
 
+allow_missing_map_logs_waiver_for_stage() {
+  case "$stage" in
+    canary-*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 run_prod_preflight() {
   if [ ! -f "scripts/llmgw-prod-preflight.py" ]; then
     echo "ERROR: missing scripts/llmgw-prod-preflight.py; refusing staged rollout without production preflight." >&2
@@ -751,6 +765,8 @@ run_prod_preflight() {
     fi
     if [ "$stage" = "shadow-start" ]; then
       preflight_args="$preflight_args --allow-missing-gateway --allow-missing-map-logs"
+    elif [ "${LLMGW_STAGE_ALLOW_MISSING_MAP_LOGS:-0}" = "1" ] && allow_missing_map_logs_waiver_for_stage; then
+      preflight_args="$preflight_args --allow-missing-map-logs"
     fi
     # shellcheck disable=SC2086
     python3 scripts/llmgw-prod-preflight.py \
@@ -763,6 +779,8 @@ run_prod_preflight() {
     fi
     if [ "$stage" = "shadow-start" ]; then
       suffix="$suffix --allow-missing-gateway --allow-missing-map-logs"
+    elif [ "${LLMGW_STAGE_ALLOW_MISSING_MAP_LOGS:-0}" = "1" ] && allow_missing_map_logs_waiver_for_stage; then
+      suffix="$suffix --allow-missing-map-logs"
     fi
     echo "+ python3 scripts/llmgw-prod-preflight.py --mode start --expect-commit \"$commit\" --json-out \"$prod_preflight_json\"$suffix"
   fi

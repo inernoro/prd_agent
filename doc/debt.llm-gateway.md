@@ -1,6 +1,6 @@
 # LLM 网关与模型池 · 债务台账
 
-> **版本**：v1.0 | **日期**：2026-07-07 | **状态**：开发中
+> **版本**：v1.1 | **日期**：2026-07-08 | **状态**：开发中
 > **关联设计**：`design.llm-gateway-unification.md`（统一方案）、`design.llm-gateway.md`、`design.model-pool.md`
 
 ## 总览
@@ -126,6 +126,17 @@
 - 同一矩阵加 `--min-coverage-hours 24` 复跑仍 FAIL，17 个失败全部为覆盖时长不足；当前覆盖时长约 0.98-2.52 小时，不是样本数、critical 或 httpFail 问题。因此非视频可进入候选灰度排序，但不能宣称已满足 24 小时观察门。
 - `open-api.proxy::chat/send` 与 `tutorial-email.generate::chat/send` 存在非 critical `content` warning mismatch：两侧均 http 成功、模型/池/平台/解析一致，无 critical mismatch。该差异来自生成式文本非确定性，不能当作 transport 失败；但在汇报时必须明确区分“运行安全门通过”和“逐字内容 allMatch 未满分”。
 - 允许灰度候选排序更新：第一批仅建议 `canary-intent-text` 的 `report-agent.generate::chat`；第二批建议 `canary-streaming` 中 allMatch 满分的 `prd-agent-desktop.chat.sendmessage::chat`、`prd-agent-desktop.preview-ask.section::chat`、`open-platform-agent.proxy::chat`；第三批建议 `canary-vision` 与 `canary-image`；第四批建议新拆出的 `canary-asr` 四个 ASR/字幕入口。`open-api.proxy::chat` 与 `tutorial-email.generate::chat` 因 content warning mismatch 先继续 shadow 观察；视频生成保持暂缓，不进入候选。
+
+## 最新生产取证（2026-07-08 14:34 CST）
+
+- PR #1012 已合并后，生产发布对象改为最新 `main` commit `a47d48cc8a5df3bcccc4821dbd3dee4dbc3e7649`，避免用旧 commit `39bb3fd321a37832a91833cec05ed40b7a3531a8` 覆盖用户后续合入的 `prd-admin` 修复。该 commit 的 CI、Server Deploy、Web Latest、Branch Image 均已完成且成功。
+- 正式环境 `map.ebcone.net` 已通过 `fast.sh --commit a47d48cc8a5df3bcccc4821dbd3dee4dbc3e7649` 与 `exec_dep.sh --commit a47d48cc8a5df3bcccc4821dbd3dee4dbc3e7649` 部署。四个容器 `api / llmgw / llmgw-serve / llmgw-web` 均运行 `sha-a47d48cc8a5df3bcccc4821dbd3dee4dbc3e7649`，`/gw/v1/healthz` 返回同一 commit。
+- 部署前已备份 `llm_gateway` 数据库与当前容器/healthz 状态：`/root/inernoro/prd-agent-prod-backups/llmgw-before-shadow-start-a47d48c-20260708T062847Z`。该备份包含 `llm_gateway.archive` 与 SHA256。
+- 当前生产安全开关保持未切流：`LlmGateway__Mode=shadow`、`LlmGateway__HttpAppCallerAllowlist=`、`LlmGateway__ShadowFullSamplePercent=1`、`LlmGateway__ShadowFullSampleAppCallerAllowlist=report-agent.generate::chat,prd-agent-desktop.chat.suggested-questions::intent`。这表示 MAP 用户请求仍走 inproc 主路径，shadow 只用于低比例证据收集。
+- `shadow-start` 证据已写入生产 `.llmgw-release-evidence/20260708T062910Z_shadow-start_a47d48cc8a5d.*`。post-deploy serving probe PASS；scoped D-layer smoke 只覆盖 `chat,intent`，结果 8/8 PASS；MAP shadow seed 只跑 1 轮文本 seed，当前同 commit 样本 `critical=0`、`httpFail=0`。
+- 火山方舟充值后仅做最小 vision 复测：第一次 `vision` smoke 因 `doubao-1-5-vision-pro-32k-250115` 仍被历史欠费失败标记为 `Unavailable`，Resolver 未实际调用上游；只复位该单个模型健康状态为 `Healthy` 并把 `ConsecutiveFailures` 归零后，第二次也是最后一次 `vision` smoke 4/4 PASS，实际模型为 `doubao-1-5-vision-pro-32k-250115`。未继续跑视频、图片生成或多轮重试。
+- 只读 release gate 复查仍 FAIL，原因不是质量失败，而是证据期不足：同 commit 最近 24 小时 `shadow[global] total=4 < 30`、覆盖约 `0.04h < 24h`；`report-agent.generate::chat total=1 < 30`；`global/send total=1 < 30`。当前 shadow 聚合中 `critical=0`、`httpFail=0`，没有最近失败记录。
+- 结论：生产已进入最新 commit 的低成本 shadow 证据期，但尚未满足 canary-intent-text 的样本数与 24 小时覆盖门槛。下一步只能继续观察自然流量或在用户确认预算后按低成本文本入口小批 seed；禁止进入 `canary-intent-text`、禁止任何视频批量测试、禁止全量 `LLMGW_MODE=http`。
 
 ## 已还的债务（归档）
 
