@@ -312,19 +312,30 @@ export function UniverseGraphPage({ storeIdOverride, storeNameOverride, loadGrap
     },
   });
 
-  // runId 就绪后订阅 SSE，并兜底拉一次状态（任务可能已跑完 / SSE 漏事件）
+  // runId 就绪后订阅 SSE，并兜底拉状态：
+  // 1) 启动即拉一次（任务可能已跑完）；
+  // 2) 流自然关闭后再拉一次 —— Worker 先落库终态再发 done 事件且事件写入失败会被吞，
+  //    终态事件漏发时流会正常关闭而 done 回调不触发，不兜底会让按钮永远卡「生成中」（Codex P2）。
   useEffect(() => {
     if (!autoLinkRunId) return;
-    void startAutoLinkStream();
-    void getAgentRun(autoLinkRunId).then((res) => {
-      if (!res.success) return;
+    let cancelled = false;
+    const finalizeFromServer = async () => {
+      const res = await getAgentRun(autoLinkRunId);
+      if (cancelled || !res.success) return;
       if (res.data.status === 'done') finishAutoLink(res.data.generatedText);
       else if (res.data.status === 'failed') {
         setAutoLink((s) => ({ ...s, status: 'failed', message: res.data.errorMessage ?? '任务失败' }));
         setAutoLinkRunId(null);
       }
+    };
+    void startAutoLinkStream().finally(() => {
+      if (!cancelled) void finalizeFromServer();
     });
-    return () => abortAutoLinkStream();
+    void finalizeFromServer();
+    return () => {
+      cancelled = true;
+      abortAutoLinkStream();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoLinkRunId]);
 
