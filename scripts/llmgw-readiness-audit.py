@@ -101,6 +101,8 @@ def _static_checks() -> list[dict]:
     prod_stage_workflow = _read(".github/workflows/llmgw-prod-stage.yml")
     prod_stage_path = ROOT / "scripts/llmgw-prod-stage.sh"
     prod_stage = prod_stage_path.read_text(encoding="utf-8")
+    prod_tree_precheck_path = ROOT / "scripts/llmgw-prod-tree-precheck.py"
+    prod_tree_precheck = prod_tree_precheck_path.read_text(encoding="utf-8") if prod_tree_precheck_path.exists() else ""
     rollout_ledger_path = ROOT / "scripts/llmgw-rollout-ledger.py"
     rollout_ledger = rollout_ledger_path.read_text(encoding="utf-8") if rollout_ledger_path.exists() else ""
     prod_preflight_path = ROOT / "scripts/llmgw-prod-preflight.py"
@@ -137,6 +139,12 @@ def _static_checks() -> list[dict]:
     asr_credential_rotate_py = asr_credential_rotate_py_path.read_text(encoding="utf-8") if asr_credential_rotate_py_path.exists() else ""
     provider_audit_path = ROOT / "scripts/llmgw-prod-provider-config-audit.py"
     provider_audit = provider_audit_path.read_text(encoding="utf-8") if provider_audit_path.exists() else ""
+    shadow_accumulate_path = ROOT / "scripts/llmgw-shadow-sample-accumulate.sh"
+    shadow_accumulate = shadow_accumulate_path.read_text(encoding="utf-8") if shadow_accumulate_path.exists() else ""
+    shadow_sample_plan_path = ROOT / "scripts/llmgw-shadow-sample-plan.py"
+    shadow_sample_plan = shadow_sample_plan_path.read_text(encoding="utf-8") if shadow_sample_plan_path.exists() else ""
+    rollout_status_path = ROOT / "scripts/llmgw-rollout-status.py"
+    rollout_status = rollout_status_path.read_text(encoding="utf-8") if rollout_status_path.exists() else ""
     ok, detail = _contains_all(
         release_gate,
         [
@@ -164,6 +172,7 @@ def _static_checks() -> list[dict]:
             "--kind",
             "--require-kind",
             "--require-app-kind",
+            "--skip-global-cells",
             "--min-per-cell",
             "--min-coverage-hours",
             "--release-commit",
@@ -177,6 +186,51 @@ def _static_checks() -> list[dict]:
         ],
     )
     checks.append(_check("shadow_coverage_report_available", ok, detail))
+
+    ok, detail = _contains_all(
+        rollout_status,
+        [
+            "Read-only LLM Gateway rollout status board",
+            "llmgw-shadow-coverage-report.py",
+            "llmgw-shadow-sample-plan.py",
+            "--coverage-json",
+            "--allow-window-extension",
+            "--require-ready",
+            "--require-action",
+            "--self-test",
+            "wait-coverage-window",
+            "run-one-window-extension",
+            "_required_action_failure",
+            "cellSummary",
+            "multi-cell sample progress",
+            "shadow 样本数",
+            "shadow 质量",
+            "覆盖窗口",
+            "全量 HTTP 发布",
+        ],
+    )
+    checks.append(_check("rollout_status_board_available", ok, detail))
+
+    ok, detail = _contains_all(
+        shadow_accumulate + "\n" + shadow_sample_plan,
+        [
+            "llmgw-shadow-sample-plan.py",
+            "LLMGW_SHADOW_ACCUMULATE_ENFORCE_PLAN:-1",
+            "preflight-shadow-sample-plan.json",
+            "canRunRecommendedBatches",
+            "recommendedBatches",
+            "refusing to over-sample",
+            "LLMGW_SHADOW_SAMPLE_PLAN_MAX_BATCHES",
+            "This script is read-only",
+            "coverage-read-failure",
+            "coverageReadReady",
+            "_coverage_failure_reason",
+            "_is_benign_coverage_failure",
+            "coverageFailures",
+            "coverage.get(\"failures\")",
+        ],
+    )
+    checks.append(_check("shadow_accumulator_enforces_readonly_sample_plan", ok, detail))
 
     shadow_watch = _read(".github/workflows/llmgw-shadow-watch.yml")
     ok, detail = _contains_all(
@@ -268,6 +322,11 @@ def _static_checks() -> list[dict]:
             "default: false",
             "runner_labels_json",
             "[\\\"self-hosted\\\",\\\"prd-agent-prod\\\"]",
+            "allow_release_tree_mismatch",
+            "INPUT_ALLOW_RELEASE_TREE_MISMATCH",
+            "LLMGW_STAGE_ALLOW_RELEASE_TREE_MISMATCH=1",
+            "LLMGW_STAGE_ALLOW_SCRIPT_TREE_MISMATCH",
+            "release_tree_mismatch_bypass",
             "environment: production",
             "PRD_AGENT_PROD_BASE",
             "PRD_AGENT_PROD_API_KEY",
@@ -282,6 +341,14 @@ def _static_checks() -> list[dict]:
             "llmgw-prod-stage-{0}",
             "default branch",
             "scripts/llmgw-prod-stage.sh",
+            "scripts/llmgw-prod-tree-precheck.py",
+            "tree-precheck.json",
+            "tree-precheck.md",
+            '[ "$execute" = "true" ] && [ "$stage" != "rollback-inproc" ]',
+            "--allow-mismatch",
+            "emergency bypass is enabled; continuing to stage runner",
+            "--json-out \".llmgw-release-evidence/tree-precheck.json\"",
+            "--report-md \".llmgw-release-evidence/tree-precheck.md\"",
             "stage $stage requires rollout_evidence_run_id so prior rollout ledger evidence is restored",
             "--stage \"$stage\"",
             "--commit \"$commit\"",
@@ -302,10 +369,38 @@ def _static_checks() -> list[dict]:
         ],
     )
     leaks_stage_secret = "echo \"$PRD_AGENT_API_KEY\"" in prod_stage_workflow or "echo \"$LLMGW_GATE_KEY\"" in prod_stage_workflow
+    tree_precheck_executable = bool(prod_tree_precheck_path.exists() and (prod_tree_precheck_path.stat().st_mode & stat.S_IXUSR))
+    tree_precheck_ok, tree_precheck_detail = _contains_all(
+        prod_tree_precheck,
+        [
+            "LLM Gateway production release tree precheck",
+            "CRITICAL_PATHS",
+            "scripts/llmgw-prod-stage.sh",
+            "scripts/llmgw-map-shadow-seed.py",
+            "scripts/llmgw-report-agent-shadow-seed.py",
+            "scripts/llmgw-rollout-status.py",
+            "scripts/llmgw-shadow-coverage-report.py",
+            "scripts/llmgw-shadow-sample-plan.py",
+            "scripts/llmgw-readiness-audit.py",
+            "allowMismatch",
+            "allowMismatchSource",
+            "LLMGW_STAGE_ALLOW_RELEASE_TREE_MISMATCH",
+            "LLMGW_STAGE_ALLOW_SCRIPT_TREE_MISMATCH",
+            "--allow-mismatch",
+            "gitStatus",
+            "pathChecks",
+            "missing-local",
+            "missing-release",
+            "differs",
+            "report-md",
+            "self-test",
+        ],
+    )
+    tree_precheck_destructive = any(item in prod_tree_precheck for item in ["git reset", "git checkout --", "rm -rf", "docker compose up", "docker compose down", "updateOne", "deleteMany"])
     checks.append(_check(
         "prod_stage_workflow_runs_on_production_runner_and_uploads_rollout_evidence",
-        ok and not leaks_stage_secret,
-        f"{detail}; leaksStageSecret={leaks_stage_secret}",
+        ok and tree_precheck_ok and tree_precheck_executable and not tree_precheck_destructive and not leaks_stage_secret,
+        f"{detail}; treePrecheck={tree_precheck_detail}; treePrecheckExecutable={tree_precheck_executable}; treePrecheckDestructive={tree_precheck_destructive}; leaksStageSecret={leaks_stage_secret}",
     ))
 
     ok, detail = _contains_all(
@@ -519,6 +614,8 @@ def _static_checks() -> list[dict]:
             "video_model_not_open",
             "video_channel_unavailable",
             "video_authorization_failed",
+            "LLMGW_VIDEO_CANARY_MAX_CALLS",
+            "refusing to run video canary over budget",
             "_external_blocker_from_failure",
             "return 0 if report[\"verdict\"] == \"pass\" else 1",
         ],
@@ -552,6 +649,8 @@ def _static_checks() -> list[dict]:
             "asr_credential_rejected",
             "asr_channel_unavailable",
             "asr_authorization_failed",
+            "LLMGW_ASR_CANARY_MAX_CALLS",
+            "refusing to run ASR canary over budget",
             "_external_blocker_from_failure",
             "return 0 if report[\"verdict\"] == \"pass\" else 1",
         ],
@@ -708,6 +807,8 @@ def _static_checks() -> list[dict]:
             "docker-compose.yml",
             "cds-compose.yml",
             "execdep.sh",
+            "scripts/llmgw-map-shadow-seed.py",
+            "scripts/llmgw-report-agent-shadow-seed.py",
             "deploy/nginx/conf.d/branches/_standalone.conf",
             "git show \"$commit:<critical rollout/deploy files>\" | cmp local files",
             "local rollout/deploy files must match --commit",
@@ -733,6 +834,9 @@ def _static_checks() -> list[dict]:
             "append_ledger_entry rollback",
             "rollout_ledger_status=\"rollback\"",
             "release-gate.json",
+            "rollout-status.json",
+            "rolloutStatusRequired",
+            "rolloutStatusJson",
             "prod-preflight.json",
             "serving-probe.json",
             "gw-smoke.json",
@@ -765,6 +869,9 @@ def _static_checks() -> list[dict]:
             "run_prod_preflight",
             "scripts/llmgw-prod-preflight.py --mode start",
             "--prod-preflight-json \"$prod_preflight_json\"",
+            "run_rollout_status_ready_gate",
+            "scripts/llmgw-rollout-status.py",
+            "--require-ready",
             "--upstream-readiness-json \"$upstream_readiness_json\"",
             "--upstream-readiness-required \"$run_upstream_readiness\"",
             "--provider-audit-json \"$provider_audit_json\"",
@@ -803,6 +910,7 @@ def _static_checks() -> list[dict]:
     fast_idx = prod_stage.find("run_or_print ./fast.sh")
     video_canary_idx = prod_stage.find("run_video_canary_evidence\n\nrun_asr_http_canary_evidence")
     asr_canary_idx = prod_stage.find("run_asr_http_canary_evidence\n\nrun_shadow_seed_evidence")
+    release_tree_before_status_idx = prod_stage.find("validate_release_tree\nrun_rollout_status_ready_gate")
     upstream_before_deploy = (
         preflight_idx >= 0
         and upstream_idx >= 0
@@ -811,6 +919,7 @@ def _static_checks() -> list[dict]:
         and asr_canary_idx >= 0
         and preflight_idx < upstream_idx < provider_idx < fast_idx < video_canary_idx < asr_canary_idx
     )
+    release_tree_before_status = release_tree_before_status_idx >= 0
     ledger_ok, ledger_detail = _contains_all(
         rollout_ledger,
         [
@@ -943,8 +1052,8 @@ def _static_checks() -> list[dict]:
     leaks_key_arg = "--key" in prod_stage or "--gateway-key" in prod_stage or "--key" in rollout_ledger
     checks.append(_check(
         "prod_stage_runner_sequences_shadow_canary_http_and_rollback",
-        ok and ledger_ok and preflight_ok and upstream_ok and upstream_before_deploy and executable and ledger_executable and preflight_executable and upstream_executable and not leaks_key_arg,
-        f"{detail}; ledger={ledger_detail}; preflight={preflight_detail}; upstream={upstream_detail}; upstreamBeforeDeploy={upstream_before_deploy}; executable={executable}; ledgerExecutable={ledger_executable}; preflightExecutable={preflight_executable}; upstreamExecutable={upstream_executable}; leaksKeyArg={leaks_key_arg}",
+        ok and ledger_ok and preflight_ok and upstream_ok and upstream_before_deploy and release_tree_before_status and executable and ledger_executable and preflight_executable and upstream_executable and not leaks_key_arg,
+        f"{detail}; ledger={ledger_detail}; preflight={preflight_detail}; upstream={upstream_detail}; upstreamBeforeDeploy={upstream_before_deploy}; releaseTreeBeforeStatus={release_tree_before_status}; executable={executable}; ledgerExecutable={ledger_executable}; preflightExecutable={preflight_executable}; upstreamExecutable={upstream_executable}; leaksKeyArg={leaks_key_arg}",
     ))
 
     fast = _read("fast.sh")
@@ -1003,7 +1112,7 @@ def _static_checks() -> list[dict]:
             "shadow sample startup",
             "serving/smoke verification runs after compose up",
             "LLMGW_GATE_SHADOW_SINCE_HOURS",
-            "--since-hours ${LLMGW_GATE_SHADOW_SINCE_HOURS:-24}",
+            "--since-hours ${LLMGW_GATE_SHADOW_SINCE_HOURS:-48}",
             "LLMGW_GATE_MIN_COVERAGE_HOURS",
             "--min-coverage-hours $gate_min_coverage_hours",
             "默认要求 shadow 证据覆盖 24 小时",
@@ -1350,6 +1459,16 @@ def _provider_audit_self_test() -> dict:
     except Exception:
         ok = False
     return {"name": "provider_audit_external_blocker_self_test", "ok": ok, "detail": detail, "command": result}
+
+
+def _rollout_status_self_test() -> dict:
+    result = _run(
+        ["python3", "scripts/llmgw-rollout-status.py", "--self-test"],
+        timeout=60,
+    )
+    detail = (result["stdout"] + result["stderr"]).strip()
+    ok = result["ok"] and "LLM Gateway rollout status self-test: PASS" in detail
+    return {"name": "rollout_status_board_self_test", "ok": ok, "detail": detail, "command": result}
 
 
 def _dotnet_checks() -> list[dict]:
@@ -1756,6 +1875,7 @@ def main() -> int:
     checks.append(_restore_shadow_dry_run())
     checks.append(_restore_shadow_persist_env_test())
     checks.append(_provider_audit_self_test())
+    checks.append(_rollout_status_self_test())
     if args.run_dotnet:
         checks.extend(_dotnet_checks())
     if args.run_smoke:

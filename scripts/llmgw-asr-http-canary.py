@@ -214,6 +214,16 @@ def _split_csv(raw: str) -> list[str]:
     return [item.strip() for item in raw.replace(";", ",").split(",") if item.strip()]
 
 
+def _positive_int(value: str, name: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"{name} must be an integer") from exc
+    if parsed < 0:
+        raise argparse.ArgumentTypeError(f"{name} must be >= 0")
+    return parsed
+
+
 def _resolve_app_callers(args: argparse.Namespace) -> list[str]:
     values: list[str] = []
     for raw in args.app_caller or []:
@@ -276,6 +286,12 @@ def main() -> int:
     parser.add_argument("--pinned-platform-id", default=os.environ.get("LLMGW_ASR_CANARY_PINNED_PLATFORM_ID", ""))
     parser.add_argument("--pinned-model-id", default=os.environ.get("LLMGW_ASR_CANARY_PINNED_MODEL_ID", ""))
     parser.add_argument("--timeout", type=int, default=int(os.environ.get("LLMGW_ASR_CANARY_TIMEOUT", "180")))
+    parser.add_argument(
+        "--max-canary-calls",
+        type=lambda value: _positive_int(value, "max-canary-calls"),
+        default=int(os.environ.get("LLMGW_ASR_CANARY_MAX_CALLS", "1")),
+        help="Maximum ASR canary calls allowed in this run. Defaults to 1; raise explicitly when budgeted.",
+    )
     parser.add_argument("--json-out", default=os.environ.get("LLMGW_ASR_CANARY_JSON_OUT", ""))
     parser.add_argument("--print-json", action="store_true")
     args = parser.parse_args()
@@ -292,11 +308,25 @@ def main() -> int:
         "expectedModel": args.expected_model.strip() or None,
         "pinnedPlatformId": args.pinned_platform_id.strip() or None,
         "pinnedModelId": args.pinned_model_id.strip() or None,
+        "maxCanaryCalls": args.max_canary_calls,
+        "requestedCanaryCalls": len(app_callers),
         "verdict": "fail",
         "failures": [],
         "warnings": [],
         "canaries": [],
     }
+
+    if len(app_callers) > args.max_canary_calls:
+        failure = (
+            "refusing to run ASR canary over budget: "
+            f"requested={len(app_callers)} max={args.max_canary_calls}. "
+            "Set --app-caller to one target, or raise LLMGW_ASR_CANARY_MAX_CALLS only with an approved test budget."
+        )
+        report["failures"].append(failure)
+        _write_json(args.json_out, report)
+        print("LLM Gateway ASR HTTP canary: FAIL")
+        print(f"- {failure}")
+        return 2
 
     if not base:
         report["failures"].append("missing --api-base")

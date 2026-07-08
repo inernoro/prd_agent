@@ -277,6 +277,150 @@
 - 新 commit 只读 coverage 证据：`.llmgw-release-evidence/20260708T093440Z_readonly_shadow-coverage_2f6b06583970.{json,md}`。当前 `global / send / report-agent.generate::chat / report-agent.generate::chat/send` 均为 `total=0`、`critical=0`、`httpFail=0`、coverageHours `0`；planner 建议最多 `3` 批 bounded top-up，剩余目标 `30`。
 - 结论：正式环境已进入最新 commit 的 shadow 证据期，但全量迁移仍未完成；下一阶段 `canary-intent-text` 被 24 小时观察窗口正确阻断，且样本数未达 30。不得宣称“网关迁移完成”，不得直接切 http。
 
+## 最新补样预算守卫（2026-07-08 18:00 CST）
+
+- `scripts/llmgw-shadow-sample-accumulate.sh` 已在执行前接入只读 `scripts/llmgw-shadow-sample-plan.py`。当 preflight coverage 未达标时，脚本会生成 `preflight-shadow-sample-plan.json/md`，读取 `recommendedBatches` 与 `canRunRecommendedBatches`，并拒绝 `LLMGW_SHADOW_ACCUMULATE_BATCHES` 超过 planner 推荐值的运行。
+- 该守卫只影响补证据批次数，不降低 release gate，不修改 `minCoverageHours=24`，也不会绕过 `critical=0` / `httpFail=0` 要求。若 coverage 已达标、只差覆盖窗口、存在质量失败，或 preflight coverage 因 key/网关/JSON 异常/参数格式错误读不到可信计数，脚本会停止，不继续消耗模型额度。
+- 结论：后续火山/其它模型已可用时，仍必须先跑只读 coverage 和 planner，再按推荐批次数补样；不得为了追进度重复打视频、图片、ASR 或超过 planner 的文本 batch。
+
+## 最新生产脚本同步（2026-07-08 18:55 CST）
+
+- 已完成新的 critical 外置备份：`/Users/inernoro/prd-agent-prod-backups/llmgw-prod-external-20260708T184825+0800`，包含 `llm_gateway` 全库与 `prdagent.model_groups`、`prdagent.llm_app_callers`、`prdagent.llmplatforms`、`prdagent.model_exchanges`、`prdagent.llmrequestlogs`，并生成 `SHA256SUMS`。
+- 生产工作树仍是手工同步状态，不能整体 `git pull`；本轮只同步与 PR #1020 相关的 3 个脚本：`scripts/llmgw-shadow-sample-accumulate.sh`、`scripts/llmgw-shadow-sample-plan.py`、`scripts/llmgw-readiness-audit.py`。旧脚本备份在 `/root/backups/llmgw-shadow-budget-guard-before-sync-20260708T185212+0800`。
+- 同步后生产脚本 sha256 与 `main` 一致：`llmgw-shadow-sample-accumulate.sh=fcb0282f...`、`llmgw-shadow-sample-plan.py=2f8a61a...`、`llmgw-readiness-audit.py=0f13506...`；`sh -n` 与 `python3 -m py_compile` 通过。
+- 生产只读 health 仍为 `2f6b0658397019e809f46ceb001245c6fdb03f40`，运行开关仍为 `LlmGateway__Mode=shadow`、`LlmGateway__HttpAppCallerAllowlist=`、`LlmGateway__ShadowFullSamplePercent=1`、`LlmGateway__ShadowFullSampleAppCallerAllowlist=`。本轮未重启容器、未切 http、未执行 seed、未触发任何模型请求。
+- 只读 coverage + planner 复核写入生产 `/tmp/llmgw-shadow-plan-20260708T105322Z/`：`report-agent.generate::chat/send` 在当前 commit 下仍为 `0/30`，`critical=0`、`httpFail=0`，planner 输出 `remainingBatchesNeeded=30`、`recommendedBatches=3`、`canRunRecommendedBatches=true`、`reason=bounded-top-up`。这证明新 planner 已正确处理带 `::` 的 appCaller label，后续最多按 3 批小步补样。
+- 生产源码树直接跑全仓 `scripts/llmgw-readiness-audit.py` 仍 FAIL，原因是生产工作树落后且混有手工同步文件，静态扫描不到当前 `main` 的 workflow/multipart 源码；这不代表运行中容器失败。发布/迁移判断仍以 main CI、容器 health、serving probe、shadow coverage 与 rollout ledger 为准。
+
+## 最新低成本补样（2026-07-08 18:58 CST）
+
+- 在完成上述备份和 planner 只读复核后，仅执行 planner 推荐上限内的 3 个 `canary-intent-text` force-sample batch，绑定 `LLMGW_SHADOW_ACCUMULATE_RELEASE_COMMIT=2f6b0658397019e809f46ceb001245c6fdb03f40`；未提高全局采样、未重启 API、未触发视频/图片/ASR。第一次缺少 `ROOT_ACCESS_PASSWORD` 的尝试在 seed 登录前退出，没有进入模型请求。
+- 真实执行证据目录：生产 `.llmgw-release-evidence/shadow-accumulate-20260708T105532Z/`。preflight planner 输出 `recommendedBatches=3`、`reason=bounded-top-up` 后才开始补样，符合预算守卫。
+- 执行后 coverage 仍 FAIL，符合预期：`global total=9`、`global/send total=3`、`report-agent.generate::chat total=3`、`report-agent.generate::chat/send total=3`，全部 `critical=0`、`httpFail=0`；失败项仍只有样本数不足和覆盖时长不足。
+- 结论：当前 commit 的第一批低成本文本证据已从 `0/30` 推进到 `3/30`。不要继续手工追加大批量；下一步仍必须先跑只读 coverage + planner，再按 `recommendedBatches` 小步补样。未达到 `30/30` 且覆盖 24 小时之前，继续禁止 `canary-intent-text --execute` 和全量 `LLMGW_MODE=http`。
+
+## 最新低成本补样（2026-07-08 19:04 CST）
+
+- 再次只读运行 coverage + planner，确认 `report-agent.generate::chat/send total=3/30`、`critical=0`、`httpFail=0`，planner 输出 `remainingBatchesNeeded=27`、`recommendedBatches=3`、`reason=bounded-top-up` 后，才执行第二个 3 batch 小窗口。
+- 第二次真实执行证据目录：生产 `.llmgw-release-evidence/shadow-accumulate-20260708T110030Z/`。执行仍为 `canary-intent-text` force-sample，绑定同一 release commit；未提高全局采样、未重启 API、未触发视频/图片/ASR。
+- 执行后 coverage 仍 FAIL，符合预期：`global total=18`、`global/send total=6`、`report-agent.generate::chat total=6`、`report-agent.generate::chat/send total=6`，全部 `critical=0`、`httpFail=0`；失败项仍只有样本数不足和覆盖时长不足。正式 `/gw/v1/healthz` 仍返回 `2f6b0658397019e809f46ceb001245c6fdb03f40`，API 开关仍为 `Mode=shadow`、allowlist 空、采样 `1%`。
+- 结论：当前 commit 的低风险 canary-intent 证据已从 `3/30` 推进到 `6/30`。为控制成本，本轮停止继续补样；下一步继续遵循“只读 coverage + planner -> 最多推荐批次”的节奏，禁止直接追满，禁止视频/图片/ASR 重复测试。
+
+## 最新低成本补样（2026-07-08 19:10 CST）
+
+- 第三次小窗口执行前，preflight coverage 显示 `global total=18`、`global/send total=6`、`report-agent.generate::chat total=6`、`report-agent.generate::chat/send total=6`，全部 `critical=0`、`httpFail=0`。planner 输出 `remainingBatchesNeeded=24`、`recommendedBatches=3`、`canRunRecommendedBatches=true`、`reason=bounded-top-up`，因此只允许继续 3 batch。
+- 第三次真实执行证据目录：生产 `.llmgw-release-evidence/shadow-accumulate-20260708T110547Z/`。执行仍为低成本 `canary-intent-text` force-sample，绑定 release commit `2f6b0658397019e809f46ceb001245c6fdb03f40`；未提高全局采样、未重启 API、未触发视频/图片/ASR。
+- 执行后 coverage 仍按预期 FAIL：`global total=27`、`global/send total=9`、`report-agent.generate::chat total=9`、`report-agent.generate::chat/send total=9`，全部 `critical=0`、`httpFail=0`；失败项仍只有样本数不足和覆盖时长不足。正式 `/gw/v1/healthz` 仍返回 `2f6b0658397019e809f46ceb001245c6fdb03f40`，API 容器开关仍为 `Mode=shadow`、allowlist 空、采样 `1%`。
+- 结论：当前 commit 的低风险 canary-intent 证据已从 `6/30` 推进到 `9/30`。为避免过量测试，本轮不再追加 batch；下一步仍必须先跑只读 coverage + planner，再按 `recommendedBatches` 小步补样。未达到 `30/30` 且覆盖 24 小时之前，继续禁止 `canary-intent-text --execute`、禁止全量 `LLMGW_MODE=http`。
+
+## 最新低成本补样（2026-07-08 19:15 CST）
+
+- 第四次小窗口执行前，preflight coverage 显示 `global total=27`、`global/send total=9`、`report-agent.generate::chat total=9`、`report-agent.generate::chat/send total=9`，全部 `critical=0`、`httpFail=0`。planner 输出 `remainingBatchesNeeded=21`、`recommendedBatches=3`、`canRunRecommendedBatches=true`、`reason=bounded-top-up`，因此只允许继续 3 batch。
+- 第四次真实执行证据目录：生产 `.llmgw-release-evidence/shadow-accumulate-20260708T111144Z/`。执行仍为低成本 `canary-intent-text` force-sample，绑定 release commit `2f6b0658397019e809f46ceb001245c6fdb03f40`；未提高全局采样、未重启 API、未触发视频/图片/ASR。
+- 执行后 coverage 仍按预期 FAIL：`global total=36` 已达到总量门槛，但 `global/send total=12`、`report-agent.generate::chat total=12`、`report-agent.generate::chat/send total=12` 仍未达到 `30`；全部 `critical=0`、`httpFail=0`。覆盖窗口约 `0.29h < 24h`。正式 `/gw/v1/healthz` 仍返回 `2f6b0658397019e809f46ceb001245c6fdb03f40`，API 容器开关仍为 `Mode=shadow`、allowlist 空、采样 `1%`。
+- 结论：当前 commit 的低风险 canary-intent 证据已从 `9/30` 推进到 `12/30`。继续禁止 `canary-intent-text --execute`、禁止全量 `LLMGW_MODE=http`；后续补样仍必须先只读 coverage + planner，且不得触发视频/图片/ASR。
+
+## 最新低成本补样（2026-07-08 19:19 CST）
+
+- 第五次小窗口执行前，preflight coverage 显示 `global total=36`、`global/send total=12`、`report-agent.generate::chat total=12`、`report-agent.generate::chat/send total=12`，全部 `critical=0`、`httpFail=0`。planner 输出 `remainingBatchesNeeded=18`、`recommendedBatches=3`、`canRunRecommendedBatches=true`、`reason=bounded-top-up`，因此只允许继续 3 batch。
+- 第五次真实执行证据目录：生产 `.llmgw-release-evidence/shadow-accumulate-20260708T111617Z/`。执行仍为低成本 `canary-intent-text` force-sample，绑定 release commit `2f6b0658397019e809f46ceb001245c6fdb03f40`；未提高全局采样、未重启 API、未触发视频/图片/ASR。
+- 执行后 coverage 仍按预期 FAIL：`global total=45`、`global/send total=15`、`report-agent.generate::chat total=15`、`report-agent.generate::chat/send total=15`；全部 `critical=0`、`httpFail=0`。覆盖窗口约 `0.37h < 24h`。正式 `/gw/v1/healthz` 仍返回 `2f6b0658397019e809f46ceb001245c6fdb03f40`，API 容器开关仍为 `Mode=shadow`、allowlist 空、采样 `1%`。
+- 结论：当前 commit 的低风险 canary-intent 证据已从 `12/30` 推进到 `15/30`，质量指标继续为 0 失败。继续禁止 `canary-intent-text --execute`、禁止全量 `LLMGW_MODE=http`；后续仍按 planner 小批量补样，不触发视频/图片/ASR。
+
+## 最新低成本补样（2026-07-08 19:23 CST）
+
+- 第六次小窗口执行前，preflight coverage 显示 `global total=45`、`global/send total=15`、`report-agent.generate::chat total=15`、`report-agent.generate::chat/send total=15`，全部 `critical=0`、`httpFail=0`。planner 输出 `remainingBatchesNeeded=15`、`recommendedBatches=3`、`canRunRecommendedBatches=true`、`reason=bounded-top-up`，因此只允许继续 3 batch。
+- 第六次真实执行证据目录：生产 `.llmgw-release-evidence/shadow-accumulate-20260708T112018Z/`。执行仍为低成本 `canary-intent-text` force-sample，绑定 release commit `2f6b0658397019e809f46ceb001245c6fdb03f40`；未提高全局采样、未重启 API、未触发视频/图片/ASR。
+- 执行后 coverage 仍按预期 FAIL：`global total=54`、`global/send total=18`、`report-agent.generate::chat total=18`、`report-agent.generate::chat/send total=18`；全部 `critical=0`、`httpFail=0`。覆盖窗口约 `0.43h < 24h`。正式 `/gw/v1/healthz` 仍返回 `2f6b0658397019e809f46ceb001245c6fdb03f40`，API 容器开关仍为 `Mode=shadow`、allowlist 空、采样 `1%`。
+- 结论：当前 commit 的低风险 canary-intent 证据已从 `15/30` 推进到 `18/30`，质量指标继续为 0 失败。继续禁止 `canary-intent-text --execute`、禁止全量 `LLMGW_MODE=http`；后续仍必须由只读 planner 控制补样，且不得触发视频/图片/ASR。
+
+## 最新低成本补样（2026-07-08 19:27 CST）
+
+- 第七次小窗口执行前，preflight coverage 显示 `global total=54`、`global/send total=18`、`report-agent.generate::chat total=18`、`report-agent.generate::chat/send total=18`，全部 `critical=0`、`httpFail=0`。planner 输出 `remainingBatchesNeeded=12`、`recommendedBatches=3`、`canRunRecommendedBatches=true`、`reason=bounded-top-up`，因此只允许继续 3 batch。
+- 第七次真实执行证据目录：生产 `.llmgw-release-evidence/shadow-accumulate-20260708T112420Z/`。执行仍为低成本 `canary-intent-text` force-sample，绑定 release commit `2f6b0658397019e809f46ceb001245c6fdb03f40`；未提高全局采样、未重启 API、未触发视频/图片/ASR。
+- 执行后 coverage 仍按预期 FAIL：`global total=63`、`global/send total=21`、`report-agent.generate::chat total=21`、`report-agent.generate::chat/send total=21`；全部 `critical=0`、`httpFail=0`。覆盖窗口约 `0.50h < 24h`。正式 `/gw/v1/healthz` 仍返回 `2f6b0658397019e809f46ceb001245c6fdb03f40`，API 容器开关仍为 `Mode=shadow`、allowlist 空、采样 `1%`。
+- 结论：当前 commit 的低风险 canary-intent 证据已从 `18/30` 推进到 `21/30`，质量指标继续为 0 失败。继续禁止 `canary-intent-text --execute`、禁止全量 `LLMGW_MODE=http`；后续仍必须由只读 planner 控制补样，且不得触发视频/图片/ASR。
+
+## 最新低成本补样（2026-07-08 19:31 CST）
+
+- 第八次小窗口执行前，preflight coverage 显示 `global total=63`、`global/send total=21`、`report-agent.generate::chat total=21`、`report-agent.generate::chat/send total=21`，全部 `critical=0`、`httpFail=0`。planner 输出 `remainingBatchesNeeded=9`、`recommendedBatches=3`、`canRunRecommendedBatches=true`、`reason=bounded-top-up`，因此只允许继续 3 batch。
+- 第八次真实执行证据目录：生产 `.llmgw-release-evidence/shadow-accumulate-20260708T112846Z/`。执行仍为低成本 `canary-intent-text` force-sample，绑定 release commit `2f6b0658397019e809f46ceb001245c6fdb03f40`；未提高全局采样、未重启 API、未触发视频/图片/ASR。
+- 执行后 coverage 仍按预期 FAIL：`global total=72`、`global/send total=24`、`report-agent.generate::chat total=24`、`report-agent.generate::chat/send total=24`；全部 `critical=0`、`httpFail=0`。覆盖窗口约 `0.57h < 24h`。正式 `/gw/v1/healthz` 仍返回 `2f6b0658397019e809f46ceb001245c6fdb03f40`，API 容器开关仍为 `Mode=shadow`、allowlist 空、采样 `1%`。
+- 结论：当前 commit 的低风险 canary-intent 证据已从 `21/30` 推进到 `24/30`，质量指标继续为 0 失败。继续禁止 `canary-intent-text --execute`、禁止全量 `LLMGW_MODE=http`；后续仍必须由只读 planner 控制补样，且不得触发视频/图片/ASR。
+
+## 最新低成本补样（2026-07-08 19:35 CST）
+
+- 第九次小窗口执行前，preflight coverage 显示 `global total=72`、`global/send total=24`、`report-agent.generate::chat total=24`、`report-agent.generate::chat/send total=24`，全部 `critical=0`、`httpFail=0`。planner 输出 `remainingBatchesNeeded=6`、`recommendedBatches=3`、`canRunRecommendedBatches=true`、`reason=bounded-top-up`，因此只允许继续 3 batch。
+- 第九次真实执行证据目录：生产 `.llmgw-release-evidence/shadow-accumulate-20260708T113254Z/`。执行仍为低成本 `canary-intent-text` force-sample，绑定 release commit `2f6b0658397019e809f46ceb001245c6fdb03f40`；未提高全局采样、未重启 API、未触发视频/图片/ASR。
+- 执行后 coverage 仍按预期 FAIL：`global total=80`、`global/send total=27`、`report-agent.generate::chat total=27`、`report-agent.generate::chat/send total=27`；全部 `critical=0`、`httpFail=0`。覆盖窗口约 `0.64h < 24h`。正式 `/gw/v1/healthz` 仍返回 `2f6b0658397019e809f46ceb001245c6fdb03f40`，API 容器开关仍为 `Mode=shadow`、allowlist 空、采样 `1%`。
+- 结论：当前 commit 的低风险 canary-intent 证据已从 `24/30` 推进到 `27/30`，质量指标继续为 0 失败。下一轮只允许最多再补 3 条达到样本数门槛；即使达到 `30/30`，仍必须等待 24 小时覆盖窗口，继续禁止 `canary-intent-text --execute` 与全量 `LLMGW_MODE=http`。
+
+## 最新低成本补样（2026-07-08 19:40 CST）
+
+- 第十次小窗口执行前，preflight coverage 显示 `global total=80`、`global/send total=27`、`report-agent.generate::chat total=27`、`report-agent.generate::chat/send total=27`，全部 `critical=0`、`httpFail=0`。planner 输出 `remainingBatchesNeeded=3`、`recommendedBatches=3`、`canRunRecommendedBatches=true`、`reason=bounded-top-up`，因此只允许继续最后 3 batch。
+- 第十次真实执行证据目录：生产 `.llmgw-release-evidence/shadow-accumulate-20260708T113700Z/`。执行仍为低成本 `canary-intent-text` force-sample，绑定 release commit `2f6b0658397019e809f46ceb001245c6fdb03f40`；未提高全局采样、未重启 API、未触发视频/图片/ASR。
+- 执行后样本数门槛已达成：`global total=89`、`global/send total=30`、`report-agent.generate::chat total=30`、`report-agent.generate::chat/send total=30`；全部 `critical=0`、`httpFail=0`。coverage 仍按预期 FAIL，唯一失败项为覆盖窗口不足，约 `0.72h < 24h`。正式 `/gw/v1/healthz` 仍返回 `2f6b0658397019e809f46ceb001245c6fdb03f40`，API 容器开关仍为 `Mode=shadow`、allowlist 空、采样 `1%`。
+- 只读 planner 复核证据目录：生产 `/tmp/llmgw-shadow-plan-after-30-20260708T114008Z/`。复核输出 `remainingBatchesNeeded=0`、`recommendedBatches=0`、`canRunRecommendedBatches=false`、`reason=wait-coverage-window`，证明当前不应继续补样，必须等待 24 小时覆盖窗口。
+- 结论：当前 commit 的低风险 canary-intent 样本数已达到 `30/30`，质量指标继续为 0 失败；后续禁止继续补 canary-intent 样本，禁止 `canary-intent-text --execute`，禁止全量 `LLMGW_MODE=http`。下一步只能在最早满足 24 小时窗口后跑只读 release gate 和 stage dry-run；两者都 PASS 才能进入 allowlist 灰度。
+
+## 最新门禁修正（2026-07-08 19:47 CST）
+
+- 代码追踪确认 `/gw/v1/shadow-comparisons` 的 `coverageHours` 是 `lastComparedAt - firstComparedAt`，不是 `now - firstComparedAt`。因此达到 `30/30` 后纯等待不会自然把 `coverageHours` 从约 `0.72h` 推到 `24h`，必须在足够晚的时点再追加一个受控低成本样本来拉长跨度。
+- 已在本地脚本修正发布门可达性：`exec_dep.sh` 与 `scripts/llmgw-prod-stage.sh` 的默认 `LLMGW_GATE_SHADOW_SINCE_HOURS` 从 `24` 调整为 `48`，仍保留 `LLMGW_GATE_MIN_COVERAGE_HOURS=24`。这样“最近样本窗口”大于“覆盖时长要求”，避免 24/24 边界几乎不可达。
+- 已在 `scripts/llmgw-shadow-sample-plan.py` 增加显式 `--allow-window-extension`：仅当样本数已满、`critical=0`、`httpFail=0`、从首样本到当前时间已达到覆盖要求时，才推荐 `window-extension-top-up` 的 `1` 个 batch。默认不开启时仍返回 `reason=wait-coverage-window`、`recommendedBatches=0`。
+- 已在 `scripts/llmgw-shadow-sample-accumulate.sh` 增加 `LLMGW_SHADOW_ACCUMULATE_ALLOW_WINDOW_EXTENSION`，默认 `0`，需要时显式开启并由 planner 限制为 1 个 batch。该脚本修正已在后续步骤同步到生产，且同步验证未触发任何新模型请求。
+- 本地验证：伪造 coverage JSON 自测通过，覆盖三种行为：默认不补、未到 24 小时不补、超过 24 小时且显式开启时只推荐 1 batch；`sh -n` 与 `python3 -m py_compile` 通过；`GatewayDataDomainGuardTests` 32/32 PASS；`dotnet build --no-restore` 退出码 0。
+
+## 最新生产脚本同步（2026-07-08 19:49 CST）
+
+- 已把窗口门禁修正同步到生产机 `/root/inernoro/prd_agent`，仅覆盖 5 个脚本：`exec_dep.sh`、`scripts/llmgw-prod-stage.sh`、`scripts/llmgw-readiness-audit.py`、`scripts/llmgw-shadow-sample-accumulate.sh`、`scripts/llmgw-shadow-sample-plan.py`。旧脚本备份在 `/root/backups/llmgw-shadow-window-extension-scripts-before-sync-20260708T194803+0800`。
+- 同步后远端 sha256 与本地一致；远端 `sh -n exec_dep.sh scripts/llmgw-prod-stage.sh scripts/llmgw-shadow-sample-accumulate.sh` 与 `python3 -m py_compile scripts/llmgw-readiness-audit.py scripts/llmgw-shadow-sample-plan.py` 通过。
+- 生产只读停补验证通过：显式设置 `LLMGW_SHADOW_ACCUMULATE_ALLOW_WINDOW_EXTENSION=1`、`BATCHES=1` 运行 accumulator，preflight coverage 后 planner 输出 `remainingBatchesNeeded=0`、`recommendedBatches=0`、`canRunRecommendedBatches=false`、`reason=wait-coverage-window`，脚本在 seed 前退出，没有触发模型请求。
+- 验证后正式 `/gw/v1/healthz` 仍返回 `2f6b0658397019e809f46ceb001245c6fdb03f40`，API 容器开关仍为 `Mode=shadow`、allowlist 空、采样 `1%`。下一次最早应在首样本时间约 24 小时后再显式开启 window extension，且只允许 planner 推荐的 1 个 batch。
+
+## 最新生产脚本漂移修复（2026-07-08 20:04 CST）
+
+- 继续执行只读 gate 时发现生产机 `scripts/llmgw-shadow-coverage-report.py` 仍是旧版本，缺少 scoped gate 必需的 `--skip-global-cells` 参数；首次命令只在 argparse 阶段失败，没有触发模型请求、没有改数据库、没有重启容器。
+- 已先备份旧脚本到 `/root/backups/llmgw-shadow-coverage-script-before-sync-20260708T200400+0800`，再从当前 `main` 精确同步 `scripts/llmgw-shadow-coverage-report.py`；同步后生产 sha256 为 `106e9551b4af8651fed5c951209a857c146efd95a4311229113058b8a13c6c2b`，`python3 -m py_compile` 通过，`--help` 已显示 `--skip-global-cells`。
+- 只读复核证据目录：生产 `/tmp/llmgw-shadow-plan-now-20260708T120423Z/`。`report-agent.generate::chat/send total=30/30`、`critical=0`、`httpFail=0`，但 `coverageHours=0.716 < 24`，coverage verdict 仍为 `fail`。
+- planner 复核输出 `reason=wait-coverage-window`、`recommendedBatches=0`、`canRunRecommendedBatches=false`。因此当前不能继续补 canary-intent 样本，也不能执行 `canary-intent-text` 灰度或全量 `LLMGW_MODE=http`。
+- 下一步最早在首个目标样本 `2026-07-08T10:56:23.927Z` 之后满 24 小时时间窗后执行：先只读 coverage + planner；只有 planner 返回 `window-extension-top-up` 且推荐 `1` 个 batch，才显式开启 `LLMGW_SHADOW_ACCUMULATE_ALLOW_WINDOW_EXTENSION=1` 做 1 条低成本延展样本。
+
+## 最新生产状态板同步（2026-07-08 20:49 CST）
+
+- PR #1023 已合并到 `main`，merge commit 为 `a766f1d620dc57d02b2780b3405b3e0f958bf23c`。该 PR 新增只读 rollout status 状态板，并修复 `healthz` 失败时误显示 `gate-ready` 的门禁问题。
+- 生产机 `/root/inernoro/prd_agent` 仍是旧 git 工作树，因此已先备份旧脚本到 `/root/backups/llmgw-script-sync-20260708T204927+0800`，再只同步两个只读脚本：`scripts/llmgw-rollout-status.py`、`scripts/llmgw-readiness-audit.py`。没有改 compose、没有重启容器、没有触发模型请求。
+- 同步后生产 sha256 与本地 `main` 一致：`llmgw-rollout-status.py=d16d03701c4824d003136c8737552301094482073ef5bcfb952f14720ebb03b9`，`llmgw-readiness-audit.py=8aab7882eeaf3300691b58a4a80bd2b5e7a2e5ea6b6a33b9255019c28e84cc50`；生产 `python3 -m py_compile` 与 `scripts/llmgw-rollout-status.py --self-test` 均通过。
+- 生产 host 本机状态板复核仍为 `action=wait-coverage-window`：`report-agent.generate::chat/send total=30/30`，`critical=0`，`httpFail=0`，`coverageHours=0.716/24`。`/gw/v1/healthz` 为 200，commit 仍是 `2f6b0658397019e809f46ceb001245c6fdb03f40`。
+- `scripts/llmgw-prod-stage.sh --stage canary-intent-text --dry-run` 与 `--stage http-full --dry-run` 均被 rollout ledger 前置条件挡住，要求同 commit 的 `rollback-rehearsal` 成功记录，证明正式发布脚本不会跳过阶段顺序直接灰度或全量 HTTP。
+
+## 最新 release gate 复核（2026-07-08 20:52 CST）
+
+- 生产 runtime commit 仍是 `2f6b0658397019e809f46ceb001245c6fdb03f40`，当前 `main` 最新可发布 commit 是 `a766f1d620dc57d02b2780b3405b3e0f958bf23c`。这两个 commit 不等价，旧 shadow 证据不能直接证明新 commit。
+- 只读 release gate 漂移验证：使用 `--expect-commit a766f1d620dc57d02b2780b3405b3e0f958bf23c --shadow-release-commit a766f1d620dc57d02b2780b3405b3e0f958bf23c` 查询生产 `/gw/v1`，结果 `verdict=fail`。失败原因包括 `healthz` 实际 commit 为 `2f6b0658397019e809f46ceb001245c6fdb03f40`，以及 `a766f1d...` 对应 `report-agent.generate::chat/send total=0/30`。
+- 只读 release gate 当前生产验证：使用 `--expect-commit 2f6b0658397019e809f46ceb001245c6fdb03f40 --shadow-release-commit 2f6b0658397019e809f46ceb001245c6fdb03f40`，结果仍为 `verdict=fail`。样本数为 `30/30` 且 `critical=0`、`httpFail=0`，但唯一失败项仍是 `coverageHours=0.72 < 24`。
+- 结论：release gate 已正确阻止两类误发布：不能用旧证据发布新 commit，也不能在当前生产 commit 覆盖窗口不足时灰度或全量 HTTP。下一步仍只能等覆盖窗口到点后先跑只读状态板；若要发布新 commit，必须先部署该 commit 的 shadow 模式并重新积累同 commit 证据。
+
+## 最新状态板可操作性修正（2026-07-08 20:54 CST）
+
+- 本地 `scripts/llmgw-rollout-status.py` 的覆盖窗口行新增 `nextEligibleAt`，从所有未达标 cell 的 `firstComparedAt + minCoverageHours` 推导最晚可动作时间，多 cell 时不会被已达标 cell 误导。
+- 零费用验证通过：`python3 -m py_compile scripts/llmgw-rollout-status.py scripts/llmgw-readiness-audit.py`、`scripts/llmgw-rollout-status.py --self-test`、`python3 scripts/llmgw-readiness-audit.py --print-json` 均通过。
+- 使用生产 `/gw/v1` 只读状态板复核，仍为 `action=wait-coverage-window`，但覆盖窗口行现在明确显示 `nextEligibleAt=2026-07-09T10:56:23.927000Z`，即北京时间 `2026-07-09 18:56:23.927 CST`。本次复核没有触发 MAP seed、没有触发模型请求、没有改生产配置。
+
+## 昂贵 canary 默认限量（2026-07-08 20:59 CST）
+
+- 因火山侧已充值但要求避免过量测试，本地 `scripts/llmgw-asr-http-canary.py` 与 `scripts/llmgw-video-exchange-canary.py` 增加 `--max-canary-calls`，默认均为 `1`，也可分别通过 `LLMGW_ASR_CANARY_MAX_CALLS`、`LLMGW_VIDEO_CANARY_MAX_CALLS` 显式提高。
+- 新默认会在执行任何网络请求前拦截超预算目标：ASR 默认的 4 个 appCaller、Video 默认的 2 个 appCaller 都会 fail-closed。真实验证必须先用 `--app-caller`、`--model` 缩到单个目标；只有有明确预算时才提高上限。
+- 该改动是防误操作保护，不代表视频/ASR gate 已通过；视频仍按用户要求暂缓，后续优先推进低风险文本 allowlist 和只读证据。
+
+## 生产脚本预算护栏同步（2026-07-08 21:09 CST）
+
+- PR #1024 已合并到 main，merge commit 为 `f8a52aa5a02d3cf4b07590b5ca8b37b964d9f21f`；main 的 `CI`、`CDS CI`、`Branch Image`、`Web Latest (Pages)`、`Server Deploy` 均通过。
+- 生产运行时仍是 `2f6b0658397019e809f46ceb001245c6fdb03f40`，未部署新镜像、未重启服务、未改 `.env`、未触发模型请求。本次只同步 4 个发布/验证脚本到 `/root/inernoro/prd_agent/scripts/`：`llmgw-asr-http-canary.py`、`llmgw-video-exchange-canary.py`、`llmgw-readiness-audit.py`、`llmgw-rollout-status.py`。
+- 同步前已备份远端旧脚本到 `/root/backups/llmgw-canary-budget-guard-before-sync-20260708T210820+0800`。同步后远端 sha256 与 main 一致；`python3 -m py_compile ...` 与 `scripts/llmgw-rollout-status.py --self-test` 通过。
+- 生产机零费用验证确认默认预算门生效：ASR 默认入口在请求前拒绝 `requested=4 max=1`，Video 默认入口在请求前拒绝 `requested=2 max=1`。
+- 生产只读状态板证据写入 `.llmgw-release-evidence/rollout-status-20260708T130901Z-budget-sync/`：当前仍为 `action=wait-coverage-window`，`report-agent.generate::chat/send total=30/30`、`critical=0`、`httpFail=0`，覆盖窗口 `0.716/24`，`nextEligibleAt=2026-07-09T10:56:23.927000Z`。下一步到点前不得补样，到点后也只能按 planner 最小批次执行。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘

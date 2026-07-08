@@ -181,7 +181,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--health-samples ${LLMGW_GATE_HEALTH_SAMPLES:-3}", script);
         Assert.Contains("--health-interval ${LLMGW_GATE_HEALTH_INTERVAL_SECONDS:-5}", script);
         Assert.Contains("LLMGW_GATE_SHADOW_SINCE_HOURS", script);
-        Assert.Contains("--since-hours ${LLMGW_GATE_SHADOW_SINCE_HOURS:-24}", script);
+        Assert.Contains("--since-hours ${LLMGW_GATE_SHADOW_SINCE_HOURS:-48}", script);
         Assert.Contains("LLMGW_GATE_MIN_COVERAGE_HOURS", script);
         Assert.Contains("--min-coverage-hours $gate_min_coverage_hours", script);
         Assert.Contains("默认要求 shadow 证据覆盖 24 小时", script);
@@ -443,6 +443,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("cds-compose.yml", script);
         Assert.Contains("execdep.sh", script);
         Assert.Contains("deploy/nginx/conf.d/branches/_standalone.conf", script);
+        Assert.Contains("scripts/llmgw-map-shadow-seed.py", script);
+        Assert.Contains("scripts/llmgw-report-agent-shadow-seed.py", script);
         Assert.Contains("git show \"$commit:<critical rollout/deploy files>\" | cmp local files", script);
         Assert.Contains("local rollout/deploy files must match --commit", script);
         Assert.Contains("release file differs from release commit", script);
@@ -652,6 +654,15 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("scripts/llmgw-prod-preflight.py --mode start", readiness);
         Assert.Contains("--prod-preflight-json \\\"$prod_preflight_json\\\"", readiness);
         Assert.Contains("serving-probe.json", readiness);
+        Assert.Contains("rollout-status.json", readiness);
+        Assert.Contains("rolloutStatusRequired", readiness);
+        Assert.Contains("rolloutStatusJson", readiness);
+        Assert.Contains("run_rollout_status_ready_gate", readiness);
+        Assert.Contains("scripts/llmgw-rollout-status.py", readiness);
+        Assert.Contains("--require-ready", readiness);
+        var releaseTreeIdx = script.IndexOf("validate_release_tree", StringComparison.Ordinal);
+        var statusGateIdx = script.IndexOf("run_rollout_status_ready_gate", StringComparison.Ordinal);
+        Assert.True(releaseTreeIdx >= 0 && statusGateIdx >= 0 && releaseTreeIdx < statusGateIdx);
         Assert.Contains("GW_SMOKE_JSON_OUT", readiness);
         Assert.Contains("--smoke-required \\\"$smoke_required\\\"", readiness);
         Assert.Contains("LLMGW_GATE_RUN_SMOKE:-1", readiness);
@@ -683,6 +694,7 @@ public class GatewayDataDomainGuardTests
     {
         var workflow = ReadRepoFile(".github/workflows/llmgw-prod-stage.yml");
         var readiness = ReadRepoFile("scripts/llmgw-readiness-audit.py");
+        var treePrecheck = ReadRepoFile("scripts/llmgw-prod-tree-precheck.py");
 
         Assert.Contains("LLM Gateway Production Stage", workflow);
         Assert.Contains("workflow_dispatch:", workflow);
@@ -702,6 +714,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("commit:\n        description: \"40-char release commit. Required for every non-rollback-inproc stage.\"\n        required: false", workflow);
         Assert.Contains("runner_labels_json", workflow);
         Assert.Contains("[\\\"self-hosted\\\",\\\"prd-agent-prod\\\"]", workflow);
+        Assert.Contains("allow_release_tree_mismatch", workflow);
+        Assert.Contains("INPUT_ALLOW_RELEASE_TREE_MISMATCH", workflow);
+        Assert.Contains("LLMGW_STAGE_ALLOW_RELEASE_TREE_MISMATCH=1", workflow);
+        Assert.Contains("LLMGW_STAGE_ALLOW_SCRIPT_TREE_MISMATCH", workflow);
+        Assert.Contains("release_tree_mismatch_bypass", workflow);
         Assert.Contains("environment: production", workflow);
         Assert.Contains("PRD_AGENT_PROD_BASE", workflow);
         Assert.Contains("PRD_AGENT_PROD_API_KEY", workflow);
@@ -730,6 +747,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--main-ref \"$main_ref\"", workflow);
         Assert.Contains("--evidence-dir \".llmgw-release-evidence\"", workflow);
         Assert.Contains("--allow-out-of-order-reason \"$allow_out_of_order_reason\"", workflow);
+        Assert.Contains("scripts/llmgw-prod-tree-precheck.py", workflow);
+        Assert.Contains("[ \"$execute\" = \"true\" ] && [ \"$stage\" != \"rollback-inproc\" ]", workflow);
+        Assert.Contains("--allow-mismatch", workflow);
+        Assert.Contains("emergency bypass is enabled; continuing to stage runner", workflow);
+        Assert.Contains("--json-out \".llmgw-release-evidence/tree-precheck.json\"", workflow);
+        Assert.Contains("--report-md \".llmgw-release-evidence/tree-precheck.md\"", workflow);
         Assert.Contains("scripts/llmgw-rollout-ledger.py audit", workflow);
         Assert.Contains("--require-target-success", workflow);
         Assert.Contains("stage-audit.json", workflow);
@@ -742,7 +765,30 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("prod_stage_workflow_runs_on_production_runner_and_uploads_rollout_evidence", readiness);
         Assert.Contains(".github/workflows/llmgw-prod-stage.yml", readiness);
         Assert.Contains("leaksStageSecret", readiness);
+        Assert.Contains("treePrecheckExecutable", readiness);
+        Assert.Contains("treePrecheckDestructive", readiness);
         Assert.Contains("Restore previous rollout evidence", readiness);
+
+        Assert.Contains("LLM Gateway production release tree precheck", treePrecheck);
+        Assert.Contains("CRITICAL_PATHS", treePrecheck);
+        Assert.Contains("scripts/llmgw-prod-stage.sh", treePrecheck);
+        Assert.Contains("scripts/llmgw-map-shadow-seed.py", treePrecheck);
+        Assert.Contains("scripts/llmgw-report-agent-shadow-seed.py", treePrecheck);
+        Assert.Contains("scripts/llmgw-rollout-status.py", treePrecheck);
+        Assert.Contains("scripts/llmgw-shadow-coverage-report.py", treePrecheck);
+        Assert.Contains("scripts/llmgw-shadow-sample-plan.py", treePrecheck);
+        Assert.Contains("allowMismatch", treePrecheck);
+        Assert.Contains("allowMismatchSource", treePrecheck);
+        Assert.Contains("LLMGW_STAGE_ALLOW_RELEASE_TREE_MISMATCH", treePrecheck);
+        Assert.Contains("LLMGW_STAGE_ALLOW_SCRIPT_TREE_MISMATCH", treePrecheck);
+        Assert.Contains("--allow-mismatch", treePrecheck);
+        Assert.Contains("pathChecks", treePrecheck);
+        Assert.Contains("missing-local", treePrecheck);
+        Assert.Contains("missing-release", treePrecheck);
+        Assert.Contains("differs", treePrecheck);
+        Assert.DoesNotContain("git reset", treePrecheck);
+        Assert.DoesNotContain("git checkout --", treePrecheck);
+        Assert.DoesNotContain("docker compose up", treePrecheck);
     }
 
     [Fact]
@@ -817,6 +863,58 @@ public class GatewayDataDomainGuardTests
         }
 
         static string JsonPath(string path) => path.Replace("\\", "\\\\");
+    }
+
+    [Fact]
+    public void ReadinessAudit_RequireRolloutCompleteFailsWithoutHttpFullLedger()
+    {
+        var root = LocateRepoRoot();
+        var tempDir = Path.Combine(Path.GetTempPath(), "llmgw-readiness-completion-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+            var ledger = Path.Combine(tempDir, "rollout-ledger.jsonl");
+            File.WriteAllText(ledger, string.Empty);
+
+            using var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = "python3",
+                WorkingDirectory = root,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                ArgumentList =
+                {
+                    "scripts/llmgw-readiness-audit.py",
+                    "--expect-commit",
+                    commit,
+                    "--rollout-ledger",
+                    ledger,
+                    "--rollout-target-stage",
+                    "http-full",
+                    "--rollout-min-observation-hours",
+                    "0",
+                    "--require-rollout-complete",
+                    "--print-json"
+                }
+            })!;
+
+            var stdout = process.StandardOutput.ReadToEnd();
+            var stderr = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+
+            var combined = stderr + stdout;
+            Assert.NotEqual(0, process.ExitCode);
+            Assert.Contains("rollout_ledger_completion_state", combined);
+            Assert.Contains("missing success stage for commit: stage=http-full", combined);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+        }
     }
 
     [Fact]
@@ -1060,8 +1158,17 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("超过本 profile 默认上限", script);
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_PREFLIGHT_COVERAGE:-1", script);
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_ALLOW_AFTER_PASS:-0", script);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_ENFORCE_PLAN:-1", script);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_ALLOW_WINDOW_EXTENSION:-0", script);
+        Assert.Contains("--allow-window-extension", script);
         Assert.Contains("coverage already satisfies gate; skip seeding", script);
         Assert.Contains("preflight-shadow-coverage.json", script);
+        Assert.Contains("llmgw-shadow-sample-plan.py", script);
+        Assert.Contains("preflight-shadow-sample-plan.json", script);
+        Assert.Contains("canRunRecommendedBatches", script);
+        Assert.Contains("recommendedBatches", script);
+        Assert.Contains("requested batches=$batches exceeds planner recommendation=$plan_recommended", script);
+        Assert.Contains("refusing to over-sample", script);
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_SEED_FLAGS", script);
         Assert.Contains("执行模式必须设置 LLMGW_SHADOW_ACCUMULATE_SEED_FLAGS", script);
         Assert.Contains("llmgw-shadow-sample-window.sh", script);
@@ -1389,11 +1496,38 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("recommendedBatches", planner);
         Assert.Contains("canRunRecommendedBatches", planner);
         Assert.Contains("bounded-top-up", planner);
+        Assert.Contains("coverage-read-failure", planner);
+        Assert.Contains("coverageReadReady", planner);
+        Assert.Contains("_coverage_failure_reason", planner);
+        Assert.Contains("_is_benign_coverage_failure", planner);
+        Assert.Contains("coverageFailures", planner);
+        Assert.Contains("coverage.get(\"failures\")", planner);
         Assert.Contains("already-ready", planner);
         Assert.Contains("wait-coverage-window", planner);
+        Assert.Contains("window-extension-top-up", planner);
+        Assert.Contains("--allow-window-extension", planner);
+        Assert.Contains("_can_extend_window", planner);
         Assert.DoesNotContain("urllib.request", planner);
         Assert.DoesNotContain("subprocess.run", planner);
         Assert.DoesNotContain("requests.", planner);
+    }
+
+    [Fact]
+    public void RolloutStatus_CanFailAsReleaseGateWithoutCallingProviders()
+    {
+        var status = ReadRepoFile("scripts/llmgw-rollout-status.py");
+
+        Assert.Contains("Read-only LLM Gateway rollout status board", status);
+        Assert.Contains("It never calls MAP seed endpoints and never calls model providers.", status);
+        Assert.Contains("--require-ready", status);
+        Assert.Contains("--require-action", status);
+        Assert.Contains("_required_action_failure", status);
+        Assert.Contains("LLM Gateway rollout status: NOT READY", status);
+        Assert.Contains("require_release_ready", status);
+        Assert.Contains("releaseStatus=", status);
+        Assert.Contains("healthOk=", status);
+        Assert.Contains("nextEligibleAt=", status);
+        Assert.Contains("ready-for-release-gate", status);
     }
 
     private static string ReadRepoFile(string relativePath)

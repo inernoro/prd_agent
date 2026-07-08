@@ -284,6 +284,16 @@ def _split_csv(raw: str) -> list[str]:
     return [item.strip() for item in raw.replace(";", ",").split(",") if item.strip()]
 
 
+def _positive_int(value: str, name: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"{name} must be an integer") from exc
+    if parsed < 0:
+        raise argparse.ArgumentTypeError(f"{name} must be >= 0")
+    return parsed
+
+
 def _resolve_app_callers(args: argparse.Namespace) -> list[str]:
     values: list[str] = []
     for raw in args.app_caller or []:
@@ -458,6 +468,12 @@ def main() -> int:
     parser.add_argument("--poll-attempts", type=int, default=int(os.environ.get("LLMGW_VIDEO_CANARY_POLL_ATTEMPTS", "12")))
     parser.add_argument("--poll-interval-seconds", type=float, default=float(os.environ.get("LLMGW_VIDEO_CANARY_POLL_INTERVAL_SECONDS", "10")))
     parser.add_argument("--download-result", action="store_true", default=os.environ.get("LLMGW_VIDEO_CANARY_DOWNLOAD_RESULT", "").lower() in {"1", "true"})
+    parser.add_argument(
+        "--max-canary-calls",
+        type=lambda value: _positive_int(value, "max-canary-calls"),
+        default=int(os.environ.get("LLMGW_VIDEO_CANARY_MAX_CALLS", "1")),
+        help="Maximum video canary submit calls allowed in this run. Defaults to 1; raise explicitly when budgeted.",
+    )
     parser.add_argument("--json-out", default=os.environ.get("LLMGW_VIDEO_CANARY_JSON_OUT", ""))
     parser.add_argument("--print-json", action="store_true")
     args = parser.parse_args()
@@ -469,12 +485,15 @@ def main() -> int:
     key_env, key = _env_first(key_env_names)
     app_callers = _resolve_app_callers(args)
     models = _resolve_models(args)
+    requested_canary_calls = len(app_callers) * len(models)
     report: dict[str, Any] = {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "gatewayBase": base,
         "gatewayKeyEnv": key_env,
         "appCallers": app_callers,
         "models": models,
+        "maxCanaryCalls": args.max_canary_calls,
+        "requestedCanaryCalls": requested_canary_calls,
         "verdict": "fail",
         "failures": [],
         "warnings": [],
@@ -482,6 +501,18 @@ def main() -> int:
         "downloadResult": bool(args.download_result),
         "canaries": [],
     }
+
+    if requested_canary_calls > args.max_canary_calls:
+        failure = (
+            "refusing to run video canary over budget: "
+            f"requested={requested_canary_calls} max={args.max_canary_calls}. "
+            "Set --app-caller and --model to one target, or raise LLMGW_VIDEO_CANARY_MAX_CALLS only with an approved test budget."
+        )
+        report["failures"].append(failure)
+        _write_json(args.json_out, report)
+        print("LLM Gateway video canary: FAIL")
+        print(f"- {failure}")
+        return 2
 
     if not base:
         report["failures"].append("missing --gw-base")
