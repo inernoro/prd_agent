@@ -418,6 +418,37 @@ def _print_table(report: dict[str, Any]) -> None:
         print(f"| {item['name']} | {item['progress']}% | {item['status']} | {item['detail']} |")
 
 
+def _required_action_failure(
+    report: dict[str, Any],
+    required_actions: list[str],
+    *,
+    require_release_ready: bool = False,
+) -> str:
+    required = [item.strip() for item in required_actions if item.strip()]
+    if not required:
+        return ""
+    action = str(report.get("action") or "")
+    cell_summary = report.get("cellSummary") or {}
+    next_eligible_at = str(cell_summary.get("nextEligibleAt") or "")
+    suffix = f" nextEligibleAt={next_eligible_at}" if next_eligible_at else ""
+    if action not in required:
+        return (
+            "LLM Gateway rollout status: NOT READY "
+            f"action={action or '<empty>'} required={','.join(required)}{suffix}"
+        )
+    if require_release_ready:
+        release_item = next((item for item in report.get("items") or [] if item.get("name") == "全量 HTTP 发布"), {})
+        if release_item.get("status") != "gate-ready":
+            health = report.get("health") or {}
+            return (
+                "LLM Gateway rollout status: NOT READY "
+                f"action={action or '<empty>'} required={','.join(required)} "
+                f"releaseStatus={release_item.get('status') or '<empty>'} "
+                f"healthOk={bool(health.get('ok'))}{suffix}"
+            )
+    return ""
+
+
 def _fake_coverage(first_compared_at: str) -> dict[str, Any]:
     return {
         "verdict": "fail",
@@ -492,6 +523,10 @@ def _self_test() -> int:
         next_eligible_at = str((report.get("cellSummary") or {}).get("nextEligibleAt") or "")
         if not next_eligible_at:
             raise AssertionError(f"{name}: nextEligibleAt must be present while coverage is pending")
+        if expected_action == "wait-coverage-window":
+            failure = _required_action_failure(report, ["ready-for-release-gate"])
+            if "NOT READY" not in failure or "nextEligibleAt=" not in failure:
+                raise AssertionError(f"{name}: require-ready failure must include nextEligibleAt: {failure}")
 
     run_case(
         "wait-window",
@@ -588,6 +623,9 @@ def _self_test() -> int:
         raise AssertionError(f"health-fail case must record health failure: {report['health']}")
     if release_item["status"] != "not-ready" or release_item["progress"] != 0:
         raise AssertionError(f"health failure must block release gate-ready status: {release_item}")
+    failure = _required_action_failure(report, ["ready-for-release-gate"], require_release_ready=True)
+    if "healthOk=False" not in failure or "releaseStatus=not-ready" not in failure:
+        raise AssertionError(f"require-ready must fail when health is not ready: {failure}")
     print("LLM Gateway rollout status self-test: PASS")
     return 0
 
@@ -609,6 +647,8 @@ def main() -> int:
     parser.add_argument("--skip-global-cells", action="store_true", default=True)
     parser.add_argument("--include-global-cells", action="store_false", dest="skip_global_cells")
     parser.add_argument("--skip-health", action="store_true")
+    parser.add_argument("--require-ready", action="store_true", help="exit non-zero unless action is ready-for-release-gate")
+    parser.add_argument("--require-action", action="append", default=[], help="exit non-zero unless action matches one of these values")
     parser.add_argument("--json-out", default="")
     parser.add_argument("--report-md", default="")
     parser.add_argument("--print-json", action="store_true")
@@ -627,6 +667,13 @@ def main() -> int:
         print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
     else:
         _print_table(report)
+    required_actions = list(args.require_action or [])
+    if args.require_ready:
+        required_actions.append("ready-for-release-gate")
+    failure = _required_action_failure(report, required_actions, require_release_ready=bool(args.require_ready))
+    if failure:
+        print(failure, file=sys.stderr)
+        return 1
     return 0
 
 

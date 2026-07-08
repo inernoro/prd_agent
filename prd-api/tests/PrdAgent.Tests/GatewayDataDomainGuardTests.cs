@@ -1466,6 +1466,24 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("requests.", planner);
     }
 
+    [Fact]
+    public void RolloutStatus_CanFailAsReleaseGateWithoutCallingProviders()
+    {
+        var status = ReadRepoFile("scripts/llmgw-rollout-status.py");
+
+        Assert.Contains("Read-only LLM Gateway rollout status board", status);
+        Assert.Contains("It never calls MAP seed endpoints and never calls model providers.", status);
+        Assert.Contains("--require-ready", status);
+        Assert.Contains("--require-action", status);
+        Assert.Contains("_required_action_failure", status);
+        Assert.Contains("LLM Gateway rollout status: NOT READY", status);
+        Assert.Contains("require_release_ready", status);
+        Assert.Contains("releaseStatus=", status);
+        Assert.Contains("healthOk=", status);
+        Assert.Contains("nextEligibleAt=", status);
+        Assert.Contains("ready-for-release-gate", status);
+    }
+
     private static string ReadRepoFile(string relativePath)
     {
         var root = LocateRepoRoot();
