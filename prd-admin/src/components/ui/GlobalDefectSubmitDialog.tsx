@@ -4,6 +4,7 @@
  * 支持截图自动 VLM 分析（异步后台完成，不阻塞用户输入）
  */
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
@@ -47,10 +48,17 @@ type DefectSeverityValue = (typeof DefectSeverity)[keyof typeof DefectSeverity];
 /** 带分析状态的附件 */
 interface AnalyzedAttachment {
   file: File;
+  previewUrl?: string;
   /** VLM 分析状态：idle=非图片无需分析, analyzing=分析中, done=完成, error=失败 */
   status: 'idle' | 'analyzing' | 'done' | 'error';
   /** VLM 提取的缺陷描述 */
   description?: string;
+}
+
+function revokeAttachmentPreview(item: AnalyzedAttachment | undefined) {
+  if (item?.previewUrl) {
+    URL.revokeObjectURL(item.previewUrl);
+  }
 }
 
 /**
@@ -121,6 +129,26 @@ export function GlobalDefectSubmitDialog() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const attachmentsRef = useRef<AnalyzedAttachment[]>([]);
+
+  useEffect(() => {
+    attachmentsRef.current = attachments;
+  }, [attachments]);
+
+  useEffect(() => {
+    return () => {
+      attachmentsRef.current.forEach(revokeAttachmentPreview);
+      attachmentsRef.current = [];
+    };
+  }, []);
+
+  const clearAttachments = useCallback(() => {
+    setAttachments((prev) => {
+      prev.forEach(revokeAttachmentPreview);
+      return [];
+    });
+    setPreviewIndex(null);
+  }, []);
 
   // 加载模板和用户数据
   useEffect(() => {
@@ -153,6 +181,7 @@ export function GlobalDefectSubmitDialog() {
       // 关闭时重置
       setLogPreview(null);
       setLogPreviewExpanded(false);
+      clearAttachments();
       return;
     }
 
@@ -171,7 +200,7 @@ export function GlobalDefectSubmitDialog() {
     };
 
     void loadLogPreview();
-  }, [showDialog]);
+  }, [showDialog, clearAttachments]);
 
   // 保存选择到 sessionStorage
   useEffect(() => {
@@ -220,7 +249,7 @@ export function GlobalDefectSubmitDialog() {
     if (!prefill) {
       setContent('');
       setSeverity(DefectSeverity.Trivial);
-      setAttachments([]);
+      clearAttachments();
       setPreviewIndex(null);
       return;
     }
@@ -234,7 +263,7 @@ export function GlobalDefectSubmitDialog() {
       setAssigneeUserId(prefill.assigneeUserId);
     }
     // 仅在打开携带预填的瞬间灌一次；prefill 引用变化即重灌
-  }, [showDialog, prefill]);
+  }, [clearAttachments, showDialog, prefill]);
 
   // 自动聚焦
   useEffect(() => {
@@ -250,6 +279,7 @@ export function GlobalDefectSubmitDialog() {
   const addFiles = useCallback((files: File[]) => {
     const newItems: AnalyzedAttachment[] = files.map((file) => ({
       file,
+      previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
       status: file.type.startsWith('image/') ? 'analyzing' as const : 'idle' as const,
     }));
 
@@ -353,7 +383,10 @@ export function GlobalDefectSubmitDialog() {
 
   // Remove attachment
   const removeAttachment = useCallback((index: number) => {
-    setAttachments((prev) => prev.filter((_, i) => i !== index));
+    setAttachments((prev) => {
+      revokeAttachmentPreview(prev[index]);
+      return prev.filter((_, i) => i !== index);
+    });
     setPreviewIndex(null);
   }, []);
 
@@ -436,9 +469,8 @@ export function GlobalDefectSubmitDialog() {
         // 重置表单（延迟执行，等撒花动画结束后关闭）
         setTimeout(() => {
           setContent('');
-          setAttachments([]);
+          clearAttachments();
           setSeverity(DefectSeverity.Trivial);
-          setPreviewIndex(null);
           closeDialog();
         }, 1500);
         return true;
@@ -467,7 +499,7 @@ export function GlobalDefectSubmitDialog() {
 
   if (!showDialog) return null;
 
-  return (
+  return createPortal((
     <div
       className="surface-backdrop fixed inset-0 z-50 flex items-center justify-center p-4"
       onClick={closeDialog}
@@ -475,7 +507,8 @@ export function GlobalDefectSubmitDialog() {
       <GlassCard
         glow
         variant="default"
-        className="w-full max-w-[760px] max-h-[90vh] flex flex-col"
+        className="w-full max-w-[760px] flex flex-col"
+        style={{ maxHeight: '90vh' }}
         overflow="hidden"
         padding="none"
         onClick={(e: React.MouseEvent) => e.stopPropagation()}
@@ -651,7 +684,7 @@ export function GlobalDefectSubmitDialog() {
                           onClick={() => setPreviewIndex(previewIndex === index ? null : index)}
                         >
                           <img
-                            src={URL.createObjectURL(item.file)}
+                            src={item.previewUrl}
                             alt={item.file.name}
                             className="w-full h-full object-cover"
                           />
@@ -934,7 +967,7 @@ export function GlobalDefectSubmitDialog() {
         </div>
       </GlassCard>
     </div>
-  );
+  ), document.body);
 }
 
 /**

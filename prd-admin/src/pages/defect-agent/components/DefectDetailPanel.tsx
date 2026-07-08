@@ -114,7 +114,11 @@ function isLogAttachment(att: DefectAttachment): boolean {
   return att.type === DefectAttachmentType.LogRequest || att.type === DefectAttachmentType.LogError;
 }
 
-export function DefectDetailPanel() {
+interface DefectDetailPanelProps {
+  onClose?: () => void;
+}
+
+export function DefectDetailPanel({ onClose }: DefectDetailPanelProps) {
   const {
     defects,
     selectedDefectId,
@@ -264,7 +268,10 @@ export function DefectDetailPanel() {
 
   if (!defect) return null;
 
-  const handleClose = () => setSelectedDefectId(null);
+  const handleClose = () => {
+    setSelectedDefectId(null);
+    onClose?.();
+  };
 
   const handleDeleteClick = () => {
     setConfirmingDelete(true);
