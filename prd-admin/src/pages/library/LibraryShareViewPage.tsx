@@ -297,6 +297,7 @@ export function LibraryShareViewPage() {
             storeIdOverride={store.id}
             storeNameOverride={store.name}
             loadGraph={() => loadShareGraph()}
+            loadContent={loadGalaxyContent}
             onBack={() => setShareViewMode('read')}
             onOpenGalaxy={() => setShareViewMode('galaxy')}
           />

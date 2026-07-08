@@ -149,9 +149,7 @@ public class DocumentStoreAgentWorker : BackgroundService
 
         try
         {
-            var kindForEvents = run.Kind == DocumentStoreAgentRunKind.Subtitle
-                ? DocumentStoreRunKinds.Subtitle
-                : DocumentStoreRunKinds.Reprocess;
+            var kindForEvents = KindForEvents(run.Kind);
 
             await EmitEventAsync(runStore, kindForEvents, run.Id, "phase", new { phase = "started" });
 
@@ -163,6 +161,11 @@ public class DocumentStoreAgentWorker : BackgroundService
             else if (run.Kind == DocumentStoreAgentRunKind.Reprocess)
             {
                 var processor = scope.ServiceProvider.GetRequiredService<ContentReprocessProcessor>();
+                await processor.ProcessAsync(run, db, runStore);
+            }
+            else if (run.Kind == DocumentStoreAgentRunKind.AutoLink)
+            {
+                var processor = scope.ServiceProvider.GetRequiredService<AutoLinkProcessor>();
                 await processor.ProcessAsync(run, db, runStore);
             }
             else
@@ -219,10 +222,7 @@ public class DocumentStoreAgentWorker : BackgroundService
                     .Set(r => r.EndedAt, DateTime.UtcNow),
                 cancellationToken: CancellationToken.None);
 
-            var kindForEvents = run.Kind == DocumentStoreAgentRunKind.Subtitle
-                ? DocumentStoreRunKinds.Subtitle
-                : DocumentStoreRunKinds.Reprocess;
-            await EmitEventAsync(runStore, kindForEvents, run.Id, "error", new
+            await EmitEventAsync(runStore, KindForEvents(run.Kind), run.Id, "error", new
             {
                 message = msg,
                 diagnostic,
@@ -233,6 +233,14 @@ public class DocumentStoreAgentWorker : BackgroundService
             _currentRunId = null;
         }
     }
+
+    /// <summary>Run kind → IRunEventStore 事件 kind 的映射（Controller 的 SSE 端点用同一映射）。</summary>
+    internal static string KindForEvents(string kind) => kind switch
+    {
+        DocumentStoreAgentRunKind.Subtitle => DocumentStoreRunKinds.Subtitle,
+        DocumentStoreAgentRunKind.AutoLink => DocumentStoreRunKinds.AutoLink,
+        _ => DocumentStoreRunKinds.Reprocess,
+    };
 
     /// <summary>
     /// 推 SSE 事件 —— 套 3 秒硬超时，杜绝 Redis 抖动让 AppendEventAsync 永久挂起
