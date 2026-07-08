@@ -267,6 +267,16 @@
 - 已同步 planner 到生产并只读运行一次，证据文件：`.llmgw-release-evidence/20260708T090701Z_readonly_shadow-sample-plan_dabeffbf.{json,md}`。当前计划输出：`remainingBatchesNeeded=29`、`recommendedBatches=3`、`canRunRecommendedBatches=true`、`reason=bounded-top-up`。
 - 结论：若要继续推进样本数，只允许按 planner 给出的 bounded top-up 小批量执行；仍不得超过脚本默认上限，也不得在未满 24 小时窗口时进入 `canary-intent-text --execute`。
 
+## 最新正式 shadow 发布（2026-07-08 17:35 CST）
+
+- 正式域名 `https://map.ebcone.net/gw/v1/healthz` 已从 `dabeffbf18552ec3628be0612623aba5c24be1de` 更新到 `2f6b0658397019e809f46ceb001245c6fdb03f40`；`api / llmgw / llmgw-serve / llmgw-web` 镜像均为 `sha-2f6b0658397019e809f46ceb001245c6fdb03f40`。
+- 发布前完成 critical 外置备份：`/Users/inernoro/prd-agent-prod-backups/llmgw-prod-external-20260708T172318+0800`，含 `llm_gateway` 全库与 MAP 关键集合，`SHA256SUMS` 已生成。为绕过生产 `cds-compose.yml` 的 CDS 扩展字段 `fallbackImage`，`scripts/llmgw-prod-external-backup.sh` 增加 `LLMGW_EXTERNAL_BACKUP_MONGO_CONTAINER` 容器直连兜底。
+- 正式运行开关保持安全态：`LlmGateway__Mode=shadow`、`LlmGateway__HttpAppCallerAllowlist` 为空、`LlmGateway__ShadowFullSamplePercent=1`、`LlmGateway__ShadowFullSampleAppCallerAllowlist` 为空。没有开启 canary，也没有切 `LLMGW_MODE=http`。
+- 为避免过量模型请求，本次正式部署设置 `LLMGW_GATE_RUN_SMOKE=0`，只跑 serving probe；`scripts/llmgw-rollout-ledger.py` 增加 `smokeRequired`，使显式跳过 gw-smoke 时不再把阶段误判失败。对应证据：`.llmgw-release-evidence/20260708T092907Z_shadow-start_2f6b06583970.*`。
+- 同 commit rollback rehearsal 已完成 dry-run 并入账：`.llmgw-release-evidence/20260708T093333Z_rollback-rehearsal_2f6b06583970.*`。该演练只打印回滚命令，不改镜像、不改数据库、不重启。
+- 新 commit 只读 coverage 证据：`.llmgw-release-evidence/20260708T093440Z_readonly_shadow-coverage_2f6b06583970.{json,md}`。当前 `global / send / report-agent.generate::chat / report-agent.generate::chat/send` 均为 `total=0`、`critical=0`、`httpFail=0`、coverageHours `0`；planner 建议最多 `3` 批 bounded top-up，剩余目标 `30`。
+- 结论：正式环境已进入最新 commit 的 shadow 证据期，但全量迁移仍未完成；下一阶段 `canary-intent-text` 被 24 小时观察窗口正确阻断，且样本数未达 30。不得宣称“网关迁移完成”，不得直接切 http。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘

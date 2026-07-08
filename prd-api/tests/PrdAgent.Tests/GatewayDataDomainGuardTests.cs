@@ -466,6 +466,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("release-gate.json", script);
         Assert.Contains("serving-probe.json", script);
         Assert.Contains("gw-smoke.json", script);
+        Assert.Contains("smoke_required=1", script);
+        Assert.Contains("LLMGW_GATE_RUN_SMOKE:-1", script);
+        Assert.Contains("--smoke-required \"$smoke_required\"", script);
         Assert.Contains("stage-report", script);
         Assert.Contains("export LLMGW_GATE_JSON_OUT=\"${LLMGW_GATE_JSON_OUT:-$release_gate_json}\"", script);
         Assert.Contains("export LLMGW_GATE_REPORT_MD=\"${LLMGW_GATE_REPORT_MD:-$release_gate_md}\"", script);
@@ -536,6 +539,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("production preflight evidence", ledger);
         Assert.Contains("\"servingProbeJson\": args.serving_probe_json", ledger);
         Assert.Contains("\"smokeJson\": args.smoke_json", ledger);
+        Assert.Contains("\"smokeRequired\": _bool_flag(args.smoke_required)", ledger);
+        Assert.Contains("append_parser.add_argument(\"--smoke-required\", default=\"1\")", ledger);
+        Assert.Contains("report_parser.add_argument(\"--smoke-required\", default=\"1\")", ledger);
         Assert.Contains("\"rollbackRehearsal\": args.stage == ROLLBACK_REHEARSAL_STAGE", ledger);
         Assert.Contains("\"releaseMainRef\": args.main_ref", ledger);
         Assert.Contains("\"releaseMainSha\": args.main_sha.lower()", ledger);
@@ -647,6 +653,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--prod-preflight-json \\\"$prod_preflight_json\\\"", readiness);
         Assert.Contains("serving-probe.json", readiness);
         Assert.Contains("GW_SMOKE_JSON_OUT", readiness);
+        Assert.Contains("--smoke-required \\\"$smoke_required\\\"", readiness);
+        Assert.Contains("LLMGW_GATE_RUN_SMOKE:-1", readiness);
         Assert.Contains("LLMGW_STAGE_MIN_OBSERVATION_HOURS", readiness);
         Assert.Contains("LLMGW_RELEASE_MAIN_REF", readiness);
         Assert.Contains("validate_main_ancestry", readiness);
@@ -1137,6 +1145,31 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("leaksPreflightSecret", readiness);
         Assert.Contains("Restore rollout evidence for completion", readiness);
         Assert.Contains("default branch", readiness);
+    }
+
+    [Fact]
+    public void ProdExternalBackup_CanBypassComposeExtensionsWithMongoContainer()
+    {
+        var script = ReadRepoFile("scripts/llmgw-prod-external-backup.sh");
+        var readiness = ReadRepoFile("scripts/llmgw-readiness-audit.py");
+
+        Assert.Contains("LLMGW_EXTERNAL_BACKUP_MONGO_CONTAINER", script);
+        Assert.Contains("mongoContainer", script);
+        Assert.Contains("remote_mongo_dump()", script);
+        Assert.Contains("docker exec -i '$mongo_container' mongodump", script);
+        Assert.Contains("docker compose -f '$compose_file' exec -T '$mongo_service' mongodump", script);
+        Assert.Contains("write_remote_container_snapshot", script);
+        Assert.Contains("docker ps --format", script);
+        Assert.Contains("env.snapshot.redacted", script);
+        Assert.Contains("gzip -t \"$backup_dir/$db.archive.gz\"", script);
+        Assert.Contains("SHA256SUMS", script);
+        Assert.DoesNotContain("rm -", script);
+        Assert.DoesNotContain("dropDatabase", script);
+        Assert.DoesNotContain("docker volume rm", script);
+
+        Assert.Contains("LLMGW_EXTERNAL_BACKUP_MONGO_CONTAINER", readiness);
+        Assert.Contains("docker exec -i '$mongo_container'", readiness);
+        Assert.Contains("mongodump --db '$db'$collection_arg --archive", readiness);
     }
 
     [Fact]
