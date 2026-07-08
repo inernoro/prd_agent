@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import type { ToolboxItem } from '@/services';
 import { useToolboxStore, NEW_BADGE_WINDOW_MS } from '@/stores/toolboxStore';
 import { useNavigate } from 'react-router-dom';
@@ -8,6 +8,7 @@ import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { cn } from '@/lib/cn';
+import { getAccent, glassTileStyle } from '@/lib/tileAccent';
 import {
   ArrowUpRight,
   FileText,
@@ -51,6 +52,22 @@ import {
   HardHat,
   FolderKanban,
   Mail,
+  AudioLines,
+  Blocks,
+  Clapperboard,
+  ClipboardCheck,
+  Factory,
+  FileBarChart,
+  GitPullRequest,
+  Link2,
+  ListTree,
+  Mic,
+  Route,
+  Share2,
+  Terminal,
+  Workflow,
+  ScanSearch,
+  Wand2,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { PaSecretary } from '@/lib/paSecretaryIconRegistry';
@@ -71,107 +88,28 @@ const ICON_MAP: Record<string, LucideIcon> = {
   FileText, Palette, PenTool, Bug, Code2, Languages, FileSearch, BarChart3,
   Bot, Lightbulb, Target, Wrench, Sparkles, Rocket, MessageSquare, Zap,
   Brain, Cpu, Database, Globe, Image, Music, Video, BookOpen,
-  GraduationCap, Briefcase, Heart, Star, Shield, Lock, Search, Layers,   Swords,
+  GraduationCap, Briefcase, Heart, Star, Shield, Lock, Search, Layers, Swords,
   FolderKanban, Mail,
+  // 内置工具图标（toolboxStore BUILTIN_TOOLS 用到,与首页启动器覆盖面对齐;
+  // 瓦片化后图标是主视觉,缺失会整排回退成 Bot —— Codex P2）
+  AudioLines, Blocks, Clapperboard, ClipboardCheck, Factory, FileBarChart,
+  GitPullRequest, Link2, ListTree, Mic, Route, Share2, Terminal, Workflow, ScanSearch, Wand2,
   PaSecretary,
 };
-
-const ACCENT_PALETTE: Record<string, { from: string; soft: string }> = {
-  FileText:     { from: '#3B82F6', soft: '#93C5FD' },
-  Palette:      { from: '#A855F7', soft: '#D8B4FE' },
-  PenTool:      { from: '#F59E0B', soft: '#FDE68A' },
-  Bug:          { from: '#EF4444', soft: '#FCA5A5' },
-  Code2:        { from: '#10B981', soft: '#6EE7B7' },
-  Languages:    { from: '#06B6D4', soft: '#67E8F9' },
-  FileSearch:   { from: '#EAB308', soft: '#FDE68A' },
-  BarChart3:    { from: '#8B5CF6', soft: '#C4B5FD' },
-  Bot:          { from: '#6366F1', soft: '#A5B4FC' },
-  Lightbulb:    { from: '#F59E0B', soft: '#FDE68A' },
-  Target:       { from: '#EF4444', soft: '#FCA5A5' },
-  Wrench:       { from: '#78716C', soft: '#D6D3D1' },
-  Sparkles:     { from: '#A855F7', soft: '#D8B4FE' },
-  Rocket:       { from: '#3B82F6', soft: '#93C5FD' },
-  MessageSquare:{ from: '#14B8A6', soft: '#5EEAD4' },
-  Brain:        { from: '#D946EF', soft: '#F0ABFC' },
-  Cpu:          { from: '#64748B', soft: '#94A3B8' },
-  Database:     { from: '#0EA5E9', soft: '#7DD3FC' },
-  Globe:        { from: '#22D3EE', soft: '#A5F3FC' },
-  Image:        { from: '#EC4899', soft: '#F9A8D4' },
-  Music:        { from: '#D946EF', soft: '#F0ABFC' },
-  Video:        { from: '#F43F5E', soft: '#FDA4AF' },
-  BookOpen:     { from: '#22C55E', soft: '#86EFAC' },
-  GraduationCap:{ from: '#3B82F6', soft: '#93C5FD' },
-  Briefcase:    { from: '#78716C', soft: '#A8A29E' },
-  Heart:        { from: '#F43F5E', soft: '#FDA4AF' },
-  Star:         { from: '#F59E0B', soft: '#FCD34D' },
-  Shield:       { from: '#3B82F6', soft: '#93C5FD' },
-  Lock:         { from: '#64748B', soft: '#94A3B8' },
-  Search:       { from: '#14B8A6', soft: '#5EEAD4' },
-  Layers:       { from: '#8B5CF6', soft: '#C4B5FD' },
-  Swords:       { from: '#F97316', soft: '#FDBA74' },
-  FolderKanban: { from: '#3B82F6', soft: '#93C5FD' },
-  // 毒舌秘书：科幻深蓝 + 青色高光，与 PaAgentCardArt 内联插画呼应
-  PaSecretary:  { from: '#2563EB', soft: '#67E8F9' },
-};
-
-/** Agent 封面图 CDN 路径映射 */
-const AGENT_COVER_PATHS: Record<string, string> = {
-  'prd-agent': 'icon/backups/agent/prd-agent.png',
-  'visual-agent': 'icon/backups/agent/visual-agent.png',
-  'literary-agent': 'icon/backups/agent/literary-agent.png',
-  'defect-agent': 'icon/backups/agent/defect-agent.png',
-  'video-agent': 'icon/backups/agent/video-agent.png',
-  'report-agent': 'icon/backups/agent/report-agent.png',
-  'arena': 'icon/backups/agent/arena.png',
-  'shortcuts-agent': 'icon/backups/agent/shortcuts-agent.png',
-  'workflow-agent': 'icon/backups/agent/workflow-agent.png',
-};
-
-/** Agent 封面视频 CDN 路径映射 */
-const AGENT_VIDEO_PATHS: Record<string, string> = {
-  'prd-agent': 'icon/backups/agent/prd-agent.mp4',
-  'visual-agent': 'icon/backups/agent/visual-agent.mp4',
-  'literary-agent': 'icon/backups/agent/literary-agent.mp4',
-  'defect-agent': 'icon/backups/agent/defect-agent.mp4',
-  'video-agent': 'icon/backups/agent/video-agent.mp4',
-  'report-agent': 'icon/backups/agent/report-agent.mp4',
-  'arena': 'icon/backups/agent/arena.mp4',
-  'shortcuts-agent': 'icon/backups/agent/shortcuts-agent.mp4',
-  'workflow-agent': 'icon/backups/agent/workflow-agent.mp4',
-};
-
-function getCoverImageUrl(agentKey?: string): string | null {
-  if (!agentKey) return null;
-  const path = AGENT_COVER_PATHS[agentKey];
-  if (!path) return null;
-  const base = (useAuthStore.getState().cdnBaseUrl ?? '').replace(/\/+$/, '');
-  return base ? `${base}/${path}` : `/${path}`;
-}
-
-function getCoverVideoUrl(agentKey?: string): string | null {
-  if (!agentKey) return null;
-  const path = AGENT_VIDEO_PATHS[agentKey];
-  if (!path) return null;
-  const base = (useAuthStore.getState().cdnBaseUrl ?? '').replace(/\/+$/, '');
-  return base ? `${base}/${path}` : `/${path}`;
-}
 
 function getIconComponent(iconName: string): LucideIcon {
   return ICON_MAP[iconName] || Bot;
 }
 
-function getPalette(iconName: string) {
-  return ACCENT_PALETTE[iconName] ?? ACCENT_PALETTE.Bot;
-}
-
-import { SpotlightEffect } from './SpotlightEffect';
-import { ReviewAgentCardArt } from './ReviewAgentCardArt';
-import { ProjectRouteAgentCardArt } from './ProjectRouteAgentCardArt';
-import { PaAgentCardArt } from './PaAgentCardArt';
-import { PmAgentCardArt } from './PmAgentCardArt';
-import { ProductAgentCardArt } from './ProductAgentCardArt';
-import { useAgentImageUrl, useAgentVideoUrl } from '@/stores/homepageAssetsStore';
-
+/**
+ * ToolCard —— 与首页启动器同一套视觉语言（2026-07-08 风格统一）。
+ *
+ * 早期版本是 16:10 封面卡（CDN 封面图 / 悬停视频 / 内联插画 / 星云兜底），
+ * 与首页的紧凑玻璃瓦片是两套语言，用户点名"首页风格带入百宝箱，做成统一"。
+ * 现改为 lib/tileAccent 的玻璃瓦片（色阶尺图标芯片 + 半透玻璃底 + hover 色相描边），
+ * 全部行为保留：NEW/施工中/已公开徽章、编辑/公开/删除浮条、创建副本、收藏、标签过滤。
+ * 封面/视频资产仍在 CDN 与 homepageAssetsStore 中，详情页可继续使用。
+ */
 export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
   const {
     selectItem,
@@ -189,25 +127,15 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
     trackRecentlyUsed,
   } = useToolboxStore();
   const navigate = useNavigate();
-  const palette = getPalette(item.icon);
+  const accent = getAccent(item.icon);
   const IconComponent = getIconComponent(item.icon);
   const isPaAgent = item.agentKey === 'pa-agent';
   const paPrimaryCopy = '把模糊想法转成 MECE 执行清单的 MBB 级私人助理';
   const isCustomized = !!item.routePath;
   const favorited = isFavorite(item.id);
-  // 资源解析优先级：上传图 (homepageAssetsStore) > CDN 默认硬编码
-  // —— 与首页 FeaturedCard 行为一致，运维上传 `agent.{key}.image/.video` 后自动覆盖
-  const uploadedCover = useAgentImageUrl(item.agentKey);
-  const uploadedVideo = useAgentVideoUrl(item.agentKey);
-  const coverUrl = uploadedCover ?? getCoverImageUrl(item.agentKey);
-  const videoUrl = uploadedVideo ?? getCoverVideoUrl(item.agentKey);
-  const [coverFailed, setCoverFailed] = useState(false);
-  const [videoReady, setVideoReady] = useState(false);
-  const [hovering, setHovering] = useState(false);
   const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
   const [forking, setForking] = useState(false);
   const [togglingPublish, setTogglingPublish] = useState(false);
-  const videoRef = useRef<HTMLVideoElement>(null);
 
   const isMarketplaceCard = source === 'marketplace';
   const isBuiltin = item.type === 'builtin';
@@ -256,7 +184,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
     (item.createdByUserId === currentUser.userId ||
       item.createdBy === currentUser.userId ||
       (isOwnCustomCard && !item.createdByUserId && !item.createdBy));
-  // 头像 URL — BUILTIN官方 走 MAP 品牌徽标（下方 JSX 专门渲染），不走 img 通道
+  // 头像 URL — BUILTIN官方 走首字母圆标，不走 img 通道
   const authorAvatarUrl = isBuiltin
     ? null
     : item.createdByAvatarFileName
@@ -373,262 +301,154 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
     else toast.error('删除失败');
   };
 
-  const handleMouseEnter = () => {
-    setHovering(true);
-    if (videoRef.current && videoReady) {
-      videoRef.current.currentTime = 0;
-      videoRef.current.play().catch(() => {});
-    }
-  };
-
-  const handleMouseLeave = () => {
-    setHovering(false);
-    if (videoRef.current) {
-      videoRef.current.pause();
-    }
-  };
-
   return (
     <>
-    <SpotlightEffect
-      spotlightColor={`${palette.from}33`} // 20% opacity of the main color
-      onClick={handleClick}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
-      className="toolbox-card-shell surface surface-interactive group relative rounded-xl overflow-hidden cursor-pointer transition-all duration-200"
-      style={{
-        // 横板 16:10 — 接近统计卡片的紧凑信息密度，避免大面积空暗背景。
-        aspectRatio: '16 / 10',
-        '--toolbox-accent-soft': `${palette.from}22`,
-        '--toolbox-accent-line': `${palette.from}66`,
-      } as React.CSSProperties}
-    >
-      {/* Cover visual — 内联插画 / 上传图 / CDN 默认 / 渐变兜底
-          毒舌秘书：用户没上传图时走 PaAgentCardArt 内联插画（无 CDN 也能用），
-          上传后立即走上传图（uploadedCover 优先于硬编码 CDN）。视频规则不变。 */}
-      {item.agentKey === 'review-agent' ? (
-        <ReviewAgentCardArt />
-      ) : item.agentKey === 'project-route-agent' ? (
-        <ProjectRouteAgentCardArt />
-      ) : item.agentKey === 'pa-agent' && !uploadedCover ? (
-        <>
-          <PaAgentCardArt />
-          {videoUrl && (
-            <video
-              ref={videoRef}
-              src={videoUrl}
-              muted
-              loop
-              playsInline
-              preload="metadata"
-              onCanPlayThrough={() => setVideoReady(true)}
-              className="toolbox-card-media absolute inset-0 w-full h-full object-cover z-[1] transition-opacity duration-500"
-              style={{ opacity: hovering && videoReady ? 1 : 0 }}
-            />
-          )}
-        </>
-      ) : item.agentKey === 'pm-agent' && !uploadedCover ? (
-        <PmAgentCardArt />
-      ) : item.agentKey === 'product-agent' && !uploadedCover ? (
-        <ProductAgentCardArt />
-      ) : coverUrl && !coverFailed ? (
-        <>
-          <img
-            src={coverUrl}
-            alt={item.name}
-            className="toolbox-card-media absolute inset-0 w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-[1.04] z-0"
-            draggable={false}
-            onError={() => setCoverFailed(true)}
-          />
-          {videoUrl && (
-            <video
-              ref={videoRef}
-              src={videoUrl}
-              muted
-              loop
-              playsInline
-              preload="metadata"
-              onCanPlayThrough={() => setVideoReady(true)}
-              className="toolbox-card-media absolute inset-0 w-full h-full object-cover z-[1] transition-opacity duration-500"
-              style={{ opacity: hovering && videoReady ? 1 : 0 }}
-            />
-          )}
-        </>
-      ) : (
-        <div
-          className="toolbox-card-fallback-visual absolute inset-0 z-0"
-          style={{
-            background: `
-              radial-gradient(circle at 50% 0%, ${palette.from}25 0%, transparent 60%),
-              radial-gradient(ellipse at 80% 80%, ${palette.from}15 0%, transparent 50%),
-              linear-gradient(180deg, rgba(20, 22, 35, 0.8) 0%, rgba(12, 14, 22, 1) 100%)
-            `,
-          }}
-        >
-          {/* 图标视觉焦点 + 光晕 */}
-          <div
-            className="absolute inset-x-0 top-[18%] flex justify-center transition-transform duration-700 ease-out group-hover:scale-110 group-hover:-translate-y-1"
-          >
-            {/* 图标背后的柔光圈 */}
-            <div
-              className="absolute rounded-full blur-2xl transition-opacity duration-500 group-hover:opacity-100 opacity-60"
-              style={{
-                width: 64,
-                height: 64,
-                background: `radial-gradient(circle, ${palette.from}60 0%, ${palette.from}20 50%, transparent 100%)`,
-                top: '50%',
-                left: '50%',
-                transform: 'translate(-50%, -50%)',
-              }}
-            />
-            <IconComponent
-              size={28}
-              strokeWidth={1.4}
-              className="relative drop-shadow-2xl"
-              style={{ color: palette.soft, opacity: 0.95 }}
-            />
-          </div>
-          {/* 装饰性光点 */}
-          <div
-            className="absolute w-16 h-16 rounded-full blur-[20px] opacity-20 group-hover:opacity-40 transition-opacity duration-500"
-            style={{
-              background: palette.from,
-              top: '5%',
-              right: '5%',
-            }}
-          />
-        </div>
-      )}
-
-      <div className="toolbox-card-cover-wash absolute inset-0 pointer-events-none z-10" />
-
-      {/* NEW 徽章 — 别人 7 天内发布的公开条目，左上角红底脉动，帮助用户一眼看到新发布 */}
-      {isNewByOthers && (
-        <div
-          className="absolute top-1.5 left-1.5 z-30 text-[10px] font-bold px-1.5 py-0.5 rounded-md inline-flex items-center gap-0.5 animate-pulse"
-          style={{
-            background: 'linear-gradient(135deg, #ef4444, #dc2626)',
-            color: '#fff',
-            letterSpacing: '0.05em',
-            boxShadow: '0 2px 8px rgba(239, 68, 68, 0.55), 0 0 0 1px rgba(255,255,255,0.2) inset',
-          }}
-          title={`这是一个 ${Math.max(
-            1,
-            Math.round((Date.now() - new Date(item.createdAt).getTime()) / 86400000)
-          )} 天内新发布的公开智能体`}
-        >
-          <Sparkles size={9} />
-          NEW
-        </div>
-      )}
-
-      {/* Hover 时顶部边框流光高光边缘 */}
       <div
-        className="absolute top-0 inset-x-0 h-[1px] pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-500 z-20"
-        style={{
-          background: `linear-gradient(90deg, transparent 10%, ${palette.from}90 50%, transparent 90%)`,
+        role="button"
+        tabIndex={0}
+        onClick={handleClick}
+        onKeyDown={(e) => {
+          // 只在焦点落在卡片本体时接管;子操作按钮(收藏/编辑/公开/删除/复制)的
+          // Enter/Space 冒泡到这里若被 preventDefault 会变成"打开卡片"(Codex P2)
+          if (e.target !== e.currentTarget) return;
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            handleClick();
+          }
         }}
-      />
-
-      {/* 右上角操作浮条 — 卡片 hover 时显示核心操作：编辑/公开/删除 或 复制 */}
-      {(isOwnCustomCard || isForkableBuiltin) && (
-        <div
-          data-publish-hint={needsPublishHint}
-          className={`toolbox-card-actions absolute top-1.5 right-1.5 z-30 flex items-center gap-0.5 transition-opacity duration-200 ${
-            needsPublishHint ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-          }`}
-        >
-          {isOwnCustomCard && (
-            <>
-              <button
-                onClick={handleQuickEdit}
-                title="编辑此智能体"
-                className="toolbox-card-icon-button w-6 h-6 rounded-md flex items-center justify-center transition-all duration-150 hover:scale-110"
-              >
-                <Edit size={12} className="text-token-secondary" />
-              </button>
-              <button
-                onClick={(e) => {
-                  // 用户已经注意到按钮，清除脉动标记（无论点后是否确认）
-                  dismissNewUnpublished(item.id);
-                  void handleTogglePublish(e);
-                }}
-                disabled={togglingPublish}
-                title={
-                  item.isPublic
-                    ? '已公开 — 他人可在「公开市场」Tab 看到并 Fork；点击取消公开'
-                    : needsPublishHint
-                    ? '点击公开发布，让同事也能看到这个智能体（否则只有你自己可见）'
-                    : '公开发布到「公开市场」，让所有用户都能看到并 Fork'
-                }
-                data-active={item.isPublic}
-                className="toolbox-card-icon-button relative w-6 h-6 rounded-md flex items-center justify-center transition-all duration-150 hover:scale-110 disabled:opacity-50"
-              >
-                {needsPublishHint && (
-                  <span
-                    className="absolute inset-[-4px] rounded-lg animate-ping pointer-events-none"
-                    style={{
-                      background: 'rgba(16, 185, 129, 0.35)',
-                      border: '1px solid rgba(16, 185, 129, 0.8)',
-                    }}
-                  />
-                )}
-                <Globe2
-                  size={12}
-                  className={cn('relative', (item.isPublic || needsPublishHint) ? 'text-token-success' : 'text-token-secondary')}
-                />
-              </button>
-              <button
-                onClick={handleDelete}
-                title="删除此智能体"
-                className="toolbox-card-icon-button toolbox-card-danger-button w-6 h-6 rounded-md flex items-center justify-center transition-all duration-150 hover:scale-110"
-              >
-                <Trash2 size={12} className="text-token-error" />
-              </button>
-            </>
-          )}
-          {isForkableBuiltin && (
-            <button
-              onClick={handleCopyBuiltin}
-              title="复制一份到我的百宝箱（可自由修改提示词、模型等参数）"
-              className="toolbox-card-copy-action text-token-primary flex items-center gap-1 h-6 px-2 rounded-md transition-all duration-150 text-[10px] font-medium"
-            >
-              <Copy size={11} />
-              复制并编辑
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* 信息区 */}
-      <div
-        className="toolbox-card-info-panel absolute inset-x-3 bottom-3 z-20 rounded-lg px-3 py-2.5"
+        className="group relative w-full h-full text-left rounded-xl cursor-pointer transition-all duration-200 hover:-translate-y-0.5 flex flex-col gap-3 p-4"
+        style={glassTileStyle(accent)}
       >
-        {/* 标题行 */}
-        <div className="toolbox-card-title-row flex items-center gap-2 mb-1">
-          <div className="toolbox-card-leading-icon">
-            <IconComponent size={15} strokeWidth={1.8} style={{ color: palette.soft }} />
-          </div>
+        {/* Hover：本卡色相的描边 + 一缕同色投影（静时安静，碰时呼吸）—— 与首页瓦片一致 */}
+        <div
+          className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
+          style={{ boxShadow: `inset 0 0 0 1px ${accent.border}, 0 12px 32px -16px ${accent.glow}` }}
+        />
+
+        {/* 头行：图标芯片 + NEW 徽章 + 操作浮条 + 悬停箭头 */}
+        <div className="flex items-start justify-between gap-2">
           <div
-            className="text-token-primary font-semibold text-[13px] truncate flex-1"
+            className="shrink-0 w-10 h-10 rounded-[10px] flex items-center justify-center transition-transform duration-200 group-hover:scale-105"
+            style={{ background: accent.soft, border: `1px solid ${accent.border}` }}
           >
+            <IconComponent size={19} style={{ color: accent.color }} />
+          </div>
+
+          <div className="flex items-center gap-1 shrink-0">
+            {/* NEW 徽章 — 别人 7 天内发布的公开条目 */}
+            {isNewByOthers && (
+              <span
+                className="text-[10px] font-bold px-1.5 py-0.5 rounded-md inline-flex items-center gap-0.5 animate-pulse"
+                style={{
+                  background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+                  color: '#fff',
+                  letterSpacing: '0.05em',
+                  boxShadow: '0 2px 8px rgba(239, 68, 68, 0.55), 0 0 0 1px rgba(255,255,255,0.2) inset',
+                }}
+                title={`这是一个 ${Math.max(
+                  1,
+                  Math.round((Date.now() - new Date(item.createdAt).getTime()) / 86400000)
+                )} 天内新发布的公开智能体`}
+              >
+                <Sparkles size={9} />
+                NEW
+              </span>
+            )}
+
+            {/* 操作浮条 — hover 时显示核心操作：编辑/公开/删除 或 复制 */}
+            {(isOwnCustomCard || isForkableBuiltin) && (
+              <div
+                data-publish-hint={needsPublishHint}
+                className={`toolbox-card-actions flex items-center gap-0.5 transition-opacity duration-200 ${
+                  needsPublishHint ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                }`}
+              >
+                {isOwnCustomCard && (
+                  <>
+                    <button
+                      onClick={handleQuickEdit}
+                      title="编辑此智能体"
+                      className="toolbox-card-icon-button w-6 h-6 rounded-md flex items-center justify-center transition-all duration-150 hover:scale-110"
+                    >
+                      <Edit size={12} className="text-token-secondary" />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        // 用户已经注意到按钮，清除脉动标记（无论点后是否确认）
+                        dismissNewUnpublished(item.id);
+                        void handleTogglePublish(e);
+                      }}
+                      disabled={togglingPublish}
+                      title={
+                        item.isPublic
+                          ? '已公开 — 他人可在「公开市场」Tab 看到并 Fork；点击取消公开'
+                          : needsPublishHint
+                          ? '点击公开发布，让同事也能看到这个智能体（否则只有你自己可见）'
+                          : '公开发布到「公开市场」，让所有用户都能看到并 Fork'
+                      }
+                      data-active={item.isPublic}
+                      className="toolbox-card-icon-button relative w-6 h-6 rounded-md flex items-center justify-center transition-all duration-150 hover:scale-110 disabled:opacity-50"
+                    >
+                      {needsPublishHint && (
+                        <span
+                          className="absolute inset-[-4px] rounded-lg animate-ping pointer-events-none"
+                          style={{
+                            background: 'rgba(16, 185, 129, 0.35)',
+                            border: '1px solid rgba(16, 185, 129, 0.8)',
+                          }}
+                        />
+                      )}
+                      <Globe2
+                        size={12}
+                        className={cn('relative', (item.isPublic || needsPublishHint) ? 'text-token-success' : 'text-token-secondary')}
+                      />
+                    </button>
+                    <button
+                      onClick={handleDelete}
+                      title="删除此智能体"
+                      className="toolbox-card-icon-button toolbox-card-danger-button w-6 h-6 rounded-md flex items-center justify-center transition-all duration-150 hover:scale-110"
+                    >
+                      <Trash2 size={12} className="text-token-error" />
+                    </button>
+                  </>
+                )}
+                {isForkableBuiltin && (
+                  <button
+                    onClick={handleCopyBuiltin}
+                    title="复制一份到我的百宝箱（可自由修改提示词、模型等参数）"
+                    className="toolbox-card-copy-action text-token-primary flex items-center gap-1 h-6 px-2 rounded-md transition-all duration-150 text-[10px] font-medium"
+                  >
+                    <Copy size={11} />
+                    复制并编辑
+                  </button>
+                )}
+              </div>
+            )}
+
+            <ArrowUpRight
+              size={15}
+              className="shrink-0 opacity-0 -translate-x-1 group-hover:opacity-60 group-hover:translate-x-0 transition-all duration-200"
+              style={{ color: 'var(--text-muted)' }}
+            />
+          </div>
+        </div>
+
+        {/* 名称 + 描述 */}
+        <div className="min-w-0">
+          <div className="text-[14px] font-semibold truncate" style={{ color: 'var(--text-primary, #fff)' }}>
             {item.name}
           </div>
-          <ArrowUpRight
-            size={13}
-            className="shrink-0 opacity-0 group-hover:opacity-100 transition-all duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
-            style={{ color: palette.soft }}
-          />
-        </div>
-
-        {/* 描述 */}
-        <div className="toolbox-card-description text-token-secondary text-[11px] line-clamp-1 leading-snug mb-2 transition-colors duration-300">
-          {isPaAgent ? paPrimaryCopy : item.description}
+          <p
+            className="text-[12px] mt-1 leading-relaxed line-clamp-2"
+            style={{ color: 'var(--text-muted, rgba(255,255,255,0.45))' }}
+          >
+            {isPaAgent ? paPrimaryCopy : item.description}
+          </p>
         </div>
 
         {/* Tags — 可点击进行过滤 */}
         {item.tags.length > 0 && (
-          <div className="toolbox-card-tags-row flex flex-wrap gap-1 mb-2">
+          <div className="flex flex-wrap gap-1">
             {item.tags.slice(0, 3).map((tag) => {
               const isActive = !!activeTagFilter && activeTagFilter.toLowerCase() === tag.toLowerCase();
               return (
@@ -656,14 +476,11 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
         {/* Footer —
          * 规则：只有"用户创建的通用智能体"（我的 + 别人公开的）才显示作者头像。
          * BUILTIN（含定制版 + 普通版）一律按"默认智能体样子"处理，不加特殊标记 —
-         * 不再有「定制版」/「官方」/「MAP」徽标，保持卡片整洁。
          *   - 我的未公开 → 橙色「施工中」
          *   - 我的已公开 → 绿色「已公开」
-         *   - 别人公开   → 右侧 Fork 数 +「创建副本」按钮（NEW 徽章在顶部独立渲染）
+         *   - 别人公开   → 右侧 Fork 数 +「创建副本」按钮（NEW 徽章在头行渲染）
          */}
-        <div
-          className="toolbox-card-footer flex items-center justify-between gap-1 pt-1.5"
-        >
+        <div className="mt-auto flex items-center justify-between gap-1 pt-1.5 border-t border-white/[0.06]">
           {isPaAgent ? (
             <div className="flex items-center gap-1 min-w-0">
               <span
@@ -722,7 +539,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                   <div
                     className="w-4 h-4 rounded-full shrink-0 flex items-center justify-center text-[9px] font-bold"
                     style={{
-                      background: `linear-gradient(135deg, ${palette.from}, ${palette.soft})`,
+                      background: accent.color,
                       color: 'rgba(0, 0, 0, 0.7)',
                     }}
                     title={authorName}
@@ -743,7 +560,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                         className="text-token-muted flex items-center gap-0.5 text-[10px]"
                         title="被复制成副本的次数"
                       >
-                        <GitFork size={10} style={{ color: palette.soft }} />
+                        <GitFork size={10} style={{ color: accent.color }} />
                         {item.forkCount}
                       </span>
                     )}
@@ -756,9 +573,9 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                       disabled={forking}
                       className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded font-medium transition-all duration-300 hover:scale-105 disabled:opacity-50"
                       style={{
-                        background: `${palette.from}25`,
-                        color: palette.soft,
-                        border: `1px solid ${palette.from}40`,
+                        background: accent.soft,
+                        color: accent.color,
+                        border: `1px solid ${accent.border}`,
                       }}
                       title="显式创建副本到我的百宝箱（会弹窗确认）；只想使用原版的话直接点卡片主体即可"
                     >
@@ -769,10 +586,8 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                 ) : (
                   <>
                     {item.usageCount > 0 && (
-                      <span
-                        className="text-token-muted flex items-center gap-0.5 text-[10px]"
-                      >
-                        <Zap size={10} style={{ color: palette.soft }} />
+                      <span className="text-token-muted flex items-center gap-0.5 text-[10px]">
+                        <Zap size={10} style={{ color: accent.color }} />
                         {item.usageCount >= 1000 ? `${(item.usageCount / 1000).toFixed(1)}k` : item.usageCount}
                       </span>
                     )}
@@ -799,10 +614,8 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
             <>
               <div className="flex items-center gap-1 min-w-0">
                 {item.usageCount > 0 && (
-                  <span
-                    className="text-token-muted flex items-center gap-0.5 text-[10px]"
-                  >
-                    <Zap size={10} style={{ color: palette.soft }} />
+                  <span className="text-token-muted flex items-center gap-0.5 text-[10px]">
+                    <Zap size={10} style={{ color: accent.color }} />
                     {item.usageCount >= 1000 ? `${(item.usageCount / 1000).toFixed(1)}k` : item.usageCount}
                   </span>
                 )}
@@ -826,16 +639,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
         </div>
       </div>
 
-      {/* Hover inner border glow */}
-      <div
-        className="absolute inset-0 rounded-xl pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-500 z-30"
-        style={{
-          boxShadow: `inset 0 0 0 1px ${palette.from}60`,
-        }}
-      />
-    </SpotlightEffect>
-
-    <DesktopDownloadDialog open={downloadDialogOpen} onOpenChange={setDownloadDialogOpen} />
+      <DesktopDownloadDialog open={downloadDialogOpen} onOpenChange={setDownloadDialogOpen} />
     </>
   );
 }

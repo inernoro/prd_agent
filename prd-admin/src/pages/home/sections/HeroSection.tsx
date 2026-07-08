@@ -16,7 +16,13 @@ import { useLanguage } from '../contexts/LanguageContext';
  *   · Hero 主标题辉光为静态 text-shadow —— 禁止改回无限循环的
  *     text-shadow / box-shadow 动画（绘制属性逐帧重绘，实测导致整页卡顿）
  */
-export const HERO_GRADIENT = 'linear-gradient(135deg, #00f0ff 0%, #7c3aed 50%, #f43f5e 100%)';
+/**
+ * 品牌主渐变（SSOT）：登录 CTA / 落地页 CTA / Arena 主按钮共用。
+ * 靛蓝-紫罗兰同族色（对齐应用内 --accent-primary #818CF8 与首页极光
+ * #2E2A55/#6E56CF/#5B8DEF），取代早期青→紫→玫红三色霓虹——
+ * 邻近色相保证"彩而不乱"，与登录后的工作台观感统一。
+ */
+export const HERO_GRADIENT = 'linear-gradient(135deg, #5B8DEF 0%, #7C6CF0 48%, #A78BFA 100%)';
 export const HERO_GRADIENT_TEXT = {
   background: HERO_GRADIENT,
   WebkitBackgroundClip: 'text' as const,
@@ -39,20 +45,20 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
     >
       {/* ── Hero 本地 retro 装饰（只影响 Hero 自己，不会穿透后续 section） ── */}
 
-      {/* Synthwave 地平线光带（Hero 底部 · 去紫版：玫瑰 → 冷白 → 青）*/}
+      {/* Synthwave 地平线光带（Hero 底部 · 品牌同族色：紫罗兰 → 冷白 → 长春花蓝）*/}
       <div
         className="absolute inset-x-0 pointer-events-none"
         style={{
           top: '72vh',
           height: '2px',
           background:
-            'linear-gradient(90deg, transparent 0%, rgba(244, 63, 94, 0.5) 30%, rgba(226, 232, 240, 0.9) 50%, rgba(0, 240, 255, 0.5) 70%, transparent 100%)',
+            'linear-gradient(90deg, transparent 0%, rgba(139, 92, 246, 0.5) 30%, rgba(226, 232, 240, 0.9) 50%, rgba(122, 140, 246, 0.55) 70%, transparent 100%)',
           boxShadow:
-            '0 0 28px rgba(226, 232, 240, 0.5), 0 -1px 40px rgba(244, 63, 94, 0.3)',
+            '0 0 28px rgba(226, 232, 240, 0.5), 0 -1px 40px rgba(139, 92, 246, 0.3)',
         }}
       />
 
-      {/* 合成太阳半圆 · 去紫版 */}
+      {/* 合成太阳半圆 · 品牌同族色 */}
       <div
         className="absolute pointer-events-none"
         style={{
@@ -62,12 +68,12 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
           width: 'clamp(360px, 34vw, 560px)',
           height: 'clamp(360px, 34vw, 560px)',
           background:
-            'radial-gradient(circle at center, rgba(244, 63, 94, 0.32) 0%, rgba(203, 213, 225, 0.15) 35%, rgba(0, 240, 255, 0.05) 60%, transparent 75%)',
+            'radial-gradient(circle at center, rgba(139, 92, 246, 0.30) 0%, rgba(203, 213, 225, 0.15) 35%, rgba(122, 140, 246, 0.06) 60%, transparent 75%)',
           filter: 'blur(6px)',
         }}
       />
 
-      {/* Tron 透视地板 · 去紫版（冷白 + 青双向 grid）*/}
+      {/* Tron 透视地板（冷白 + 长春花蓝双向 grid）*/}
       <div
         className="absolute inset-x-0 pointer-events-none"
         style={{
@@ -92,8 +98,8 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
                 90deg,
                 transparent 0,
                 transparent 43px,
-                rgba(0, 240, 255, 0.38) 43px,
-                rgba(0, 240, 255, 0.38) 44px
+                rgba(122, 140, 246, 0.38) 43px,
+                rgba(122, 140, 246, 0.38) 44px
               )
             `,
             transform: 'rotateX(62deg)',
@@ -168,18 +174,23 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
         {/* ★ 主标题 — 4s duration，前 600ms 可读，后 3.4s 雾慢慢散 */}
         <Reveal delay={0} blur={10} duration={4000} offset={30}>
           <h1
-            className="text-center text-white font-medium"
+            className="text-center font-medium"
             style={{
               fontFamily: 'var(--font-display)',
               fontSize: 'clamp(2.75rem, 7.5vw, 6.5rem)',
-              lineHeight: 1.02,
+              lineHeight: 1.08,
               letterSpacing: '-0.035em',
               maxWidth: '16ch',
-              // 静态辉光（原 hero-title-pulse 呼吸动画的中间值）：
-              // text-shadow 是纯绘制属性，无限循环动画它会让大标题区域每帧重绘，
-              // 是整页滚动卡顿的头号来源，故固定为常量。
-              textShadow:
-                '0 0 34px rgba(213, 221, 232, 0.38), 0 0 100px rgba(0, 240, 255, 0.26), 0 0 150px rgba(59, 130, 246, 0.15)',
+              // 白 → 长春花蓝的纵向渐隐（Linear 式标题处理）：比纯白平涂多一层精致感
+              background: 'linear-gradient(180deg, #FFFFFF 0%, #EDEFFE 55%, #B9C0F5 100%)',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+              backgroundClip: 'text',
+              // 静态辉光：渐变裁切文字下 text-shadow 会透过透明字形发浑，
+              // 改用 drop-shadow（按实际像素投影）。保持静态常量，禁止无限循环
+              // 动画（绘制属性逐帧重绘是整页滚动卡顿的头号来源）。
+              filter:
+                'drop-shadow(0 0 34px rgba(213, 221, 232, 0.28)) drop-shadow(0 0 90px rgba(122, 140, 246, 0.22))',
             }}
           >
             {t.hero.title}
@@ -190,11 +201,12 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
         {/* 容器放宽到 max-w-3xl、字号收到 clamp(13.6,0.95vw,16px)，承载 100 字中文定义 */}
         <Reveal delay={500} duration={2000} offset={20}>
           <p
-            className="mt-8 text-center text-white/62 max-w-3xl mx-auto leading-relaxed"
+            className="mt-8 text-center text-white/62 max-w-2xl mx-auto"
             style={{
               fontFamily: 'var(--font-body)',
               fontSize: 'clamp(0.85rem, 0.95vw, 1rem)',
-              letterSpacing: '0.005em',
+              letterSpacing: '0.01em',
+              lineHeight: 1.9,
             }}
           >
             {t.hero.subtitle}
@@ -211,7 +223,7 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
               style={{
                 background: HERO_GRADIENT,
                 boxShadow:
-                  '0 0 48px rgba(124, 58, 237, 0.35), 0 0 100px rgba(0, 240, 255, 0.2), 0 10px 32px rgba(0, 0, 0, 0.5)',
+                  '0 0 48px rgba(124, 108, 240, 0.35), 0 0 100px rgba(122, 140, 246, 0.18), 0 10px 32px rgba(0, 0, 0, 0.5)',
                 letterSpacing: '0.01em',
                 fontFamily: 'var(--font-display)',
               }}
