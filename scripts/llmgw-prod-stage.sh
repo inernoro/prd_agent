@@ -739,6 +739,17 @@ PY
   echo "LLM Gateway dry-run evidence written: $stage_json"
 }
 
+allow_missing_map_logs_waiver_for_stage() {
+  case "$stage" in
+    canary-*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 run_prod_preflight() {
   if [ ! -f "scripts/llmgw-prod-preflight.py" ]; then
     echo "ERROR: missing scripts/llmgw-prod-preflight.py; refusing staged rollout without production preflight." >&2
@@ -754,7 +765,7 @@ run_prod_preflight() {
     fi
     if [ "$stage" = "shadow-start" ]; then
       preflight_args="$preflight_args --allow-missing-gateway --allow-missing-map-logs"
-    elif [ "${LLMGW_STAGE_ALLOW_MISSING_MAP_LOGS:-0}" = "1" ]; then
+    elif [ "${LLMGW_STAGE_ALLOW_MISSING_MAP_LOGS:-0}" = "1" ] && allow_missing_map_logs_waiver_for_stage; then
       preflight_args="$preflight_args --allow-missing-map-logs"
     fi
     # shellcheck disable=SC2086
@@ -768,7 +779,7 @@ run_prod_preflight() {
     fi
     if [ "$stage" = "shadow-start" ]; then
       suffix="$suffix --allow-missing-gateway --allow-missing-map-logs"
-    elif [ "${LLMGW_STAGE_ALLOW_MISSING_MAP_LOGS:-0}" = "1" ]; then
+    elif [ "${LLMGW_STAGE_ALLOW_MISSING_MAP_LOGS:-0}" = "1" ] && allow_missing_map_logs_waiver_for_stage; then
       suffix="$suffix --allow-missing-map-logs"
     fi
     echo "+ python3 scripts/llmgw-prod-preflight.py --mode start --expect-commit \"$commit\" --json-out \"$prod_preflight_json\"$suffix"
