@@ -29,6 +29,7 @@ coverage_min_per_cell="${LLMGW_SHADOW_ACCUMULATE_MIN_PER_CELL:-30}"
 coverage_since_hours="${LLMGW_SHADOW_ACCUMULATE_SINCE_HOURS:-24}"
 coverage_min_hours="${LLMGW_SHADOW_ACCUMULATE_MIN_COVERAGE_HOURS:-24}"
 release_commit="${LLMGW_SHADOW_ACCUMULATE_RELEASE_COMMIT:-${GIT_COMMIT:-}}"
+release_commit_trimmed="$(printf '%s' "$release_commit" | xargs || true)"
 run_coverage="${LLMGW_SHADOW_ACCUMULATE_RUN_COVERAGE:-1}"
 
 case "$profile" in
@@ -105,16 +106,21 @@ echo "  coverageKinds: $coverage_kinds"
 echo "  coverageApps: $coverage_apps"
 echo "  coverageRequiredKinds: $coverage_required_kinds"
 echo "  coverageRequiredAppKinds: $coverage_required_app_kinds"
-echo "  releaseCommit: $release_commit"
+echo "  releaseCommit: $release_commit_trimmed"
 
 if [ "$dry_run" = "1" ] || [ "$dry_run" = "true" ]; then
   echo "LLM Gateway shadow sample accumulator dry-run completed"
   exit 0
 fi
 
-if [ -n "$profile" ] && [ -z "$(printf '%s' "$release_commit" | xargs || true)" ]; then
+if [ -n "$profile" ] && [ -z "$release_commit_trimmed" ]; then
   echo "ERROR: LLMGW_SHADOW_ACCUMULATE_PROFILE=$profile 执行模式必须设置 LLMGW_SHADOW_ACCUMULATE_RELEASE_COMMIT 或 GIT_COMMIT，避免混用旧 commit shadow 样本" >&2
   exit 1
+fi
+
+seed_run_flags="$seed_flags"
+if [ -n "$release_commit_trimmed" ]; then
+  seed_run_flags="$seed_run_flags --release-commit $release_commit_trimmed"
 fi
 
 mkdir -p "$run_dir"
@@ -138,11 +144,11 @@ while [ "$i" -le "$batches" ]; do
     LLMGW_GATE_KEY="$gate_key" python3 "$seed_script" \
       --force-shadow-sample \
       --evidence-out "$evidence_out" \
-      $seed_flags
+      $seed_run_flags
   else
     # shellcheck disable=SC2086
     LLMGW_SHADOW_SAMPLE_WINDOW_DRY_RUN=0 \
-    LLMGW_SHADOW_SAMPLE_WINDOW_SEED_FLAGS="$seed_flags" \
+    LLMGW_SHADOW_SAMPLE_WINDOW_SEED_FLAGS="$seed_run_flags" \
     LLMGW_SHADOW_SAMPLE_WINDOW_EVIDENCE_OUT="$evidence_out" \
     "$window_script"
   fi
@@ -189,8 +195,8 @@ if [ "$run_coverage" = "1" ] || [ "$run_coverage" = "true" ]; then
   if [ -n "$coverage_base" ]; then
     coverage_args="$coverage_args --base $coverage_base"
   fi
-  if [ -n "$release_commit" ]; then
-    coverage_args="$coverage_args --release-commit $release_commit"
+  if [ -n "$release_commit_trimmed" ]; then
+    coverage_args="$coverage_args --release-commit $release_commit_trimmed"
   fi
 
   if [ -z "$(printf '%s' "$gate_key" | xargs || true)" ]; then

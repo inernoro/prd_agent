@@ -2,6 +2,7 @@
 | ops | scripts | 限制 LLM Gateway MAP 日志 preflight 豁免仅可用于 canary 阶段，防止全量 http 切换跳过 MAP 日志证明 |
 | ops | scripts | LLM Gateway shadow 累计脚本增加 canary-intent-text 低成本取证预设，减少手工配置误差 |
 | ops | scripts | LLM Gateway shadow 累计预设执行时强制指定 release commit，避免混用旧版本样本 |
+| fix | scripts | 修复 LLM Gateway shadow 累计预设未向 seed 命令透传 release commit 的证据错配风险 |
 | fix | scripts | 修复 report-agent shadow seed 未继承强制采样 key，确保 canary-intent-text 预设可稳定补齐目标样本 |
 | test | prd-api | 增加 LLM Gateway shadow 累计预设守卫，防止 canary-intent-text 取证参数漂移 |
 | test | prd-api | 增加 LLM Gateway 生产 stage preflight 豁免开关守卫，防止误删 release gate 说明与参数传递 |

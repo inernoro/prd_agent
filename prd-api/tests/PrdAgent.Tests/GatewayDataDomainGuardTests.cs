@@ -1043,12 +1043,15 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("report-agent.generate::chat:send:30", script);
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_RELEASE_COMMIT", script);
         Assert.Contains("避免混用旧 commit shadow 样本", script);
+        Assert.Contains("release_commit_trimmed=\"$(printf '%s' \"$release_commit\" | xargs || true)\"", script);
+        Assert.Contains("seed_run_flags=\"$seed_flags\"", script);
+        Assert.Contains("seed_run_flags=\"$seed_run_flags --release-commit $release_commit_trimmed\"", script);
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_BATCHES:-1", script);
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_SEED_FLAGS", script);
         Assert.Contains("执行模式必须设置 LLMGW_SHADOW_ACCUMULATE_SEED_FLAGS", script);
         Assert.Contains("llmgw-shadow-sample-window.sh", script);
         Assert.Contains("LLMGW_SHADOW_SAMPLE_WINDOW_DRY_RUN=0", script);
-        Assert.Contains("LLMGW_SHADOW_SAMPLE_WINDOW_SEED_FLAGS=\"$seed_flags\"", script);
+        Assert.Contains("LLMGW_SHADOW_SAMPLE_WINDOW_SEED_FLAGS=\"$seed_run_flags\"", script);
         Assert.Contains("batch-$batch_id-shadow-sample-window.json", script);
         Assert.Contains("llmgw-shadow-coverage-report.py", script);
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_RUN_COVERAGE:-1", script);
