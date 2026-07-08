@@ -52,6 +52,22 @@ import {
   HardHat,
   FolderKanban,
   Mail,
+  AudioLines,
+  Blocks,
+  Clapperboard,
+  ClipboardCheck,
+  Factory,
+  FileBarChart,
+  GitPullRequest,
+  Link2,
+  ListTree,
+  Mic,
+  Route,
+  Share2,
+  Terminal,
+  Workflow,
+  ScanSearch,
+  Wand2,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { PaSecretary } from '@/lib/paSecretaryIconRegistry';
@@ -74,6 +90,10 @@ const ICON_MAP: Record<string, LucideIcon> = {
   Brain, Cpu, Database, Globe, Image, Music, Video, BookOpen,
   GraduationCap, Briefcase, Heart, Star, Shield, Lock, Search, Layers, Swords,
   FolderKanban, Mail,
+  // 内置工具图标（toolboxStore BUILTIN_TOOLS 用到,与首页启动器覆盖面对齐;
+  // 瓦片化后图标是主视觉,缺失会整排回退成 Bot —— Codex P2）
+  AudioLines, Blocks, Clapperboard, ClipboardCheck, Factory, FileBarChart,
+  GitPullRequest, Link2, ListTree, Mic, Route, Share2, Terminal, Workflow, ScanSearch, Wand2,
   PaSecretary,
 };
 
@@ -288,6 +308,9 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
         tabIndex={0}
         onClick={handleClick}
         onKeyDown={(e) => {
+          // 只在焦点落在卡片本体时接管;子操作按钮(收藏/编辑/公开/删除/复制)的
+          // Enter/Space 冒泡到这里若被 preventDefault 会变成"打开卡片"(Codex P2)
+          if (e.target !== e.currentTarget) return;
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
             handleClick();
