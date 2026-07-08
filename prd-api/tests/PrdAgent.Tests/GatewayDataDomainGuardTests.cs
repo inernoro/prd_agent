@@ -652,6 +652,15 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("scripts/llmgw-prod-preflight.py --mode start", readiness);
         Assert.Contains("--prod-preflight-json \\\"$prod_preflight_json\\\"", readiness);
         Assert.Contains("serving-probe.json", readiness);
+        Assert.Contains("rollout-status.json", readiness);
+        Assert.Contains("rolloutStatusRequired", readiness);
+        Assert.Contains("rolloutStatusJson", readiness);
+        Assert.Contains("run_rollout_status_ready_gate", readiness);
+        Assert.Contains("scripts/llmgw-rollout-status.py", readiness);
+        Assert.Contains("--require-ready", readiness);
+        var releaseTreeIdx = script.IndexOf("validate_release_tree", StringComparison.Ordinal);
+        var statusGateIdx = script.IndexOf("run_rollout_status_ready_gate", StringComparison.Ordinal);
+        Assert.True(releaseTreeIdx >= 0 && statusGateIdx >= 0 && releaseTreeIdx < statusGateIdx);
         Assert.Contains("GW_SMOKE_JSON_OUT", readiness);
         Assert.Contains("--smoke-required \\\"$smoke_required\\\"", readiness);
         Assert.Contains("LLMGW_GATE_RUN_SMOKE:-1", readiness);

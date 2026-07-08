@@ -298,6 +298,8 @@ short_commit="$(printf '%s' "$commit" | cut -c1-12)"
 evidence_prefix="$evidence_dir/${ts}_${stage}_${short_commit}"
 release_gate_json="${evidence_prefix}.release-gate.json"
 release_gate_md="${evidence_prefix}.release-gate.md"
+rollout_status_json="${evidence_prefix}.rollout-status.json"
+rollout_status_md="${evidence_prefix}.rollout-status.md"
 serving_probe_json="${evidence_prefix}.serving-probe.json"
 serving_probe_md="${evidence_prefix}.serving-probe.md"
 smoke_json="${evidence_prefix}.gw-smoke.json"
@@ -378,6 +380,7 @@ print_plan() {
     echo "  shadowFullSampleAppCallerAllowlist: ${shadow_full_sample_allowlist:-empty}"
     echo "  gateBase: ${gate_base:-none}"
     echo "  releaseGateJson: $release_gate_json"
+    echo "  rolloutStatusJson: $rollout_status_json"
     echo "  servingProbeJson: $serving_probe_json"
     echo "  smokeJson: $smoke_json"
     echo "  prodPreflightJson: $prod_preflight_json"
@@ -462,6 +465,7 @@ deploy/nginx/conf.d/branches/_disconnected.conf
 deploy/nginx/conf.d/branches/_standalone.conf
 scripts/llmgw-prod-stage.sh
 scripts/llmgw-rollout-ledger.py
+scripts/llmgw-rollout-status.py
 scripts/llmgw-prod-preflight.py
 scripts/llmgw-upstream-readiness.py
 scripts/llmgw-prod-provider-config-audit.py
@@ -582,6 +586,10 @@ write_dry_run_stage_report() {
   fi
 
   mkdir -p "$evidence_dir"
+  rollout_status_gate_enabled=0
+  if rollout_status_ready_gate_required; then
+    rollout_status_gate_enabled=1
+  fi
   LLMGW_DRY_RUN_STAGE_JSON="$stage_json" \
   LLMGW_DRY_RUN_STAGE_MD="$stage_md" \
   LLMGW_DRY_RUN_STAGE="$stage" \
@@ -591,6 +599,8 @@ write_dry_run_stage_report() {
   LLMGW_DRY_RUN_ALLOWLIST="${allowlist:-}" \
   LLMGW_DRY_RUN_SHADOW_PERCENT="${shadow_percent:-}" \
   LLMGW_DRY_RUN_GATE_BASE="${gate_base:-}" \
+  LLMGW_DRY_RUN_ROLLOUT_STATUS_JSON="${rollout_status_json:-}" \
+  LLMGW_DRY_RUN_ROLLOUT_STATUS_ENABLED="$rollout_status_gate_enabled" \
   LLMGW_DRY_RUN_REUSE_STATIC_DIST="${PRD_AGENT_REUSE_EXISTING_STATIC_DIST:-0}" \
   LLMGW_DRY_RUN_RELEASE_GATE_REQUIRED="${release_gate_required:-0}" \
   LLMGW_DRY_RUN_PROD_PREFLIGHT_JSON="${prod_preflight_json:-}" \
@@ -633,6 +643,16 @@ else:
     commands.append(
         preflight
     )
+    if os.environ.get("LLMGW_DRY_RUN_ROLLOUT_STATUS_ENABLED", "0") == "1":
+        commands.append(
+            "GW_KEY=${LLMGW_GATE_KEY} "
+            "python3 scripts/llmgw-rollout-status.py --base ${LLMGW_GATE_BASE} "
+            "--release-commit "
+            + commit
+            + " --skip-global-cells --allow-window-extension --json-out "
+            + os.environ.get("LLMGW_DRY_RUN_ROLLOUT_STATUS_JSON", "")
+            + " --require-ready"
+        )
     if os.environ.get("LLMGW_DRY_RUN_UPSTREAM_READINESS_ENABLED", "0") == "1":
         commands.append(
             "python3 scripts/llmgw-upstream-readiness.py --gw-base ${LLMGW_GATE_BASE} "
@@ -687,6 +707,8 @@ report = {
     "allowlist": os.environ.get("LLMGW_DRY_RUN_ALLOWLIST", ""),
     "shadowFullSamplePercent": os.environ.get("LLMGW_DRY_RUN_SHADOW_PERCENT", ""),
     "gateBase": os.environ.get("LLMGW_DRY_RUN_GATE_BASE", ""),
+    "rolloutStatusJson": os.environ.get("LLMGW_DRY_RUN_ROLLOUT_STATUS_JSON", ""),
+    "rolloutStatusRequired": os.environ.get("LLMGW_DRY_RUN_ROLLOUT_STATUS_ENABLED", "0") == "1",
     "reuseExistingStaticDist": os.environ.get("LLMGW_DRY_RUN_REUSE_STATIC_DIST", "0") in ("1", "true", "yes"),
     "releaseGateRequired": os.environ.get("LLMGW_DRY_RUN_RELEASE_GATE_REQUIRED", "0") == "1",
     "prodPreflightJson": os.environ.get("LLMGW_DRY_RUN_PROD_PREFLIGHT_JSON", ""),
@@ -728,6 +750,8 @@ with open(md_path, "w", encoding="utf-8") as fh:
         "mode",
         "canaryStage",
         "allowlist",
+        "rolloutStatusRequired",
+        "rolloutStatusJson",
         "releaseGateRequired",
         "shadowSeedEnabled",
         "shadowSeedJson",
@@ -987,6 +1011,45 @@ run_or_print() {
   fi
 }
 
+rollout_status_ready_gate_required() {
+  case "$stage" in
+    canary-intent-text)
+      return 0
+      ;;
+    *)
+      [ "${LLMGW_STAGE_RUN_ROLLOUT_STATUS_GATE:-0}" = "1" ]
+      ;;
+  esac
+}
+
+run_rollout_status_ready_gate() {
+  if ! rollout_status_ready_gate_required; then
+    return 0
+  fi
+  if [ ! -f "scripts/llmgw-rollout-status.py" ]; then
+    echo "ERROR: missing scripts/llmgw-rollout-status.py; cannot check rollout readiness before $stage." >&2
+    exit 1
+  fi
+  status_since_hours="${LLMGW_STATUS_SINCE_HOURS:-${LLMGW_GATE_SHADOW_SINCE_HOURS:-48}}"
+  status_min_coverage_hours="${LLMGW_STATUS_MIN_COVERAGE_HOURS:-${LLMGW_GATE_MIN_COVERAGE_HOURS:-24}}"
+  if [ "$execute" = "1" ]; then
+    mkdir -p "$evidence_dir"
+    GW_KEY="$gate_key" \
+    python3 scripts/llmgw-rollout-status.py \
+      --base "$gate_base" \
+      --release-commit "$commit" \
+      --since-hours "$status_since_hours" \
+      --min-coverage-hours "$status_min_coverage_hours" \
+      --skip-global-cells \
+      --allow-window-extension \
+      --json-out "$rollout_status_json" \
+      --report-md "$rollout_status_md" \
+      --require-ready
+  else
+    echo "+ GW_KEY=\"***\" python3 scripts/llmgw-rollout-status.py --base \"$gate_base\" --release-commit \"$commit\" --since-hours \"$status_since_hours\" --min-coverage-hours \"$status_min_coverage_hours\" --skip-global-cells --allow-window-extension --json-out \"$rollout_status_json\" --report-md \"$rollout_status_md\" --require-ready"
+  fi
+}
+
 print_plan
 
 if [ "$stage" = "rollback-inproc" ]; then
@@ -1007,6 +1070,7 @@ run_stage_disk_guard
 validate_ledger_order
 validate_main_ancestry
 validate_release_tree
+run_rollout_status_ready_gate
 
 if [ "$stage" = "rollback-rehearsal" ]; then
   release_gate_required=0
