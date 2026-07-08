@@ -34,7 +34,7 @@ export function ProductMockup() {
         className="absolute -inset-x-20 -bottom-20 top-20 pointer-events-none"
         style={{
           background:
-            'radial-gradient(ellipse 60% 50% at 50% 50%, rgba(124, 58, 237, 0.22) 0%, rgba(0, 240, 255, 0.12) 35%, transparent 70%)',
+            'radial-gradient(ellipse 60% 50% at 50% 50%, rgba(124, 108, 240, 0.22) 0%, rgba(122, 140, 246, 0.12) 35%, transparent 70%)',
           filter: 'blur(60px)',
         }}
       />
@@ -45,7 +45,7 @@ export function ProductMockup() {
         style={{
           background: '#0A0D14',
           boxShadow:
-            '0 50px 120px -30px rgba(124, 58, 237, 0.35), 0 30px 80px -20px rgba(0, 240, 255, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
+            '0 50px 120px -30px rgba(124, 108, 240, 0.35), 0 30px 80px -20px rgba(122, 140, 246, 0.18), 0 0 0 1px rgba(255, 255, 255, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
         }}
       >
         {/* 浏览器 chrome */}
@@ -207,8 +207,8 @@ export function ProductMockup() {
                 <button
                   className="w-7 h-7 rounded-md flex items-center justify-center text-white"
                   style={{
-                    background: 'linear-gradient(135deg, #00f0ff 0%, #7c3aed 50%, #f43f5e 100%)',
-                    boxShadow: '0 0 12px rgba(124, 58, 237, 0.5)',
+                    background: 'linear-gradient(135deg, #5B8DEF 0%, #7C6CF0 48%, #A78BFA 100%)',
+                    boxShadow: '0 0 12px rgba(124, 108, 240, 0.5)',
                   }}
                 >
                   <ArrowUp className="w-3.5 h-3.5" />

@@ -511,10 +511,12 @@ export default function AppShell() {
   const useSidebarGlass = sidebarGlass === 'always' || (sidebarGlass === 'auto' && isLabPage);
 
   const asideWidth = collapsed ? 68 : 176;
-  const asideGap = 12;
   // 专注模式（fullBleedMain）、移动端下隐藏侧栏，主区最大化
   const focusHideAside = fullBleedMain || isMobile;
-  const mainPadLeft = focusHideAside ? (isMobile ? 0 : asideGap) : asideWidth + asideGap * 2;
+  // 侧栏为全高贴边直边栏（flush rail），主区只需让出栏宽本身
+  const mainPadLeft = focusHideAside ? 0 : asideWidth;
+  // 桌面端（非专注模式）内容区渲染为全屏画布面板；移动端与 fullBleed 保持原结构
+  const useCanvasPanel = !isMobile && !fullBleedMain;
 
   // 移动端底部 Tab 栏: 5 固定 Tab（首页/浏览/+/资产/我的），不再依赖后端菜单
 
@@ -1121,7 +1123,10 @@ export default function AppShell() {
 
       {/* 主体容器（背景动画已临时移除以消除渲染卡顿） */}
       <div className="relative h-full w-full">
-        {/* 悬浮侧边栏：不贴左边，像"挂着" (移动端隐藏) */}
+        {/* 侧边栏：全高贴边直边栏 + 右侧发丝分隔线（移动端隐藏）。
+            2026-07-08 由"12px 悬浮圆角浮岛"改为业界主流的 flush rail
+            （Linear/Slack/Notion/Arc 均此做法）：首页画布全出血后，
+            浮岛侧栏与贴边内容不成对，通到顶底的直边栏两种画布都协调。 */}
         <aside
           className={cn(
             'absolute flex flex-col p-2 transition-[width] duration-220 ease-out',
@@ -1129,12 +1134,11 @@ export default function AppShell() {
           )}
           style={{
             display: focusHideAside ? 'none' : undefined,
-            left: asideGap,
-            top: asideGap,
-            bottom: asideGap,
+            left: 0,
+            top: 0,
+            bottom: 0,
             width: focusHideAside ? 0 : asideWidth,
             zIndex: 12,
-            borderRadius: 18,
             opacity: focusHideAside ? 0 : 1,
             // 根据主题配置决定是否使用液态玻璃效果
             // 强制创建持久的 GPU 合成层，避免状态变化时频繁创建/销毁合成层导致闪烁
@@ -1143,9 +1147,12 @@ export default function AppShell() {
             ...(useSidebarGlass ? glassSidebar : {
               backgroundColor: 'var(--bg-elevated, #1e1e24)',
               backgroundImage: 'linear-gradient(180deg, rgba(36,38,44,1) 0%, rgba(20,24,28,1) 100%)',
-              border: '1px solid rgba(255,255,255,0.10)',
-              boxShadow: '0 26px 120px rgba(0,0,0,0.60), 0 0 0 1px rgba(255,255,255,0.04) inset',
             }),
+            // flush rail：无圆角，只保留右侧发丝分隔线（覆盖 glassSidebar 的四边 border/浮岛投影）
+            borderRadius: 0,
+            border: 'none',
+            borderRight: '1px solid rgba(255,255,255,0.08)',
+            boxShadow: 'none',
             pointerEvents: focusHideAside ? 'none' : 'auto',
           }}
         >
@@ -1816,7 +1823,10 @@ export default function AppShell() {
         </aside>
 
         <main
-          className="relative h-full w-full overflow-auto flex flex-col transition-[padding-left] duration-220 ease-out"
+          className={cn(
+            'relative h-full w-full flex flex-col transition-[padding-left] duration-220 ease-out',
+            useCanvasPanel ? 'overflow-hidden' : 'overflow-auto'
+          )}
           style={{
             // 透明 → 让外层 .app-aurora 的彩色光晕透到内容区(否则不透明 base 会盖住 aurora,
             // 半透卡片/玻璃只能折射到平底色)。aurora 自身以 var(--bg-base) 收底,floor 色不变。
@@ -1827,11 +1837,29 @@ export default function AppShell() {
             paddingBottom: isMobile ? 'calc(var(--mobile-tab-height, 60px) + env(safe-area-inset-bottom, 0px))' : undefined,
           }}
         >
+          {/*
+           * 桌面端全屏画布（治「页面半截子」，只保留几何不带外观）：
+           * 常驻撑满视口的滚动容器——滚动发生在容器内部，页面内容再短，
+           * 内容区也始终占满整屏（content-fills-canvas / full-height-layout）。
+           * 演化记录：曾做过"圆角描边面板"版画布，但它叠在页面自带的
+           * TabBar/卡片上多出一层框，用户反馈"整个页面浮肿"（2026-07-08）——
+           * 直边侧栏落地后面板外观已无必要，去掉边距/描边/底色/圆角，
+           * 页面直接坐在应用背景上（Linear 式平整）。
+           * 移动端与专注模式（fullBleedMain）保持原结构。
+           */}
           <div
             className={cn(
               'relative w-full flex-1 min-h-0 flex flex-col',
-              isMobile ? 'px-[var(--mobile-padding,16px)] py-3' : fullBleedMain ? 'p-0' : isHomePage ? 'px-3 py-3' : 'px-5 py-5'
+              useCanvasPanel && 'overflow-auto',
+              isMobile
+                ? 'px-[var(--mobile-padding,16px)] py-3'
+                : fullBleedMain
+                  ? 'p-0'
+                  : isHomePage
+                    ? 'p-0'
+                    : 'px-4 py-3'
             )}
+            style={useCanvasPanel ? { overscrollBehavior: 'contain' } : undefined}
           >
             <div className="flex-1 min-h-0 relative">
               {/* 移动端兼容门槛：根据路由显示 banner / 模态，非阻断式 */}

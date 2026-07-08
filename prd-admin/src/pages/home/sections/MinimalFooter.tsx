@@ -17,7 +17,7 @@ export function MinimalFooter() {
           <div
             className="w-7 h-7 rounded-lg flex items-center justify-center text-[9px] font-bold text-white"
             style={{
-              background: 'linear-gradient(135deg, #00f0ff 0%, #7c3aed 50%, #f43f5e 100%)',
+              background: 'linear-gradient(135deg, #5B8DEF 0%, #7C6CF0 48%, #A78BFA 100%)',
               fontFamily: 'var(--font-display)',
               letterSpacing: '-0.02em',
             }}
