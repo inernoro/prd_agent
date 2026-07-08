@@ -30,7 +30,7 @@
  * 功能层（保留）：type 图例筛选、点叶子复用系统 MarkdownViewer 阅读、hover 显示节点名、
  * 数据加载超时护栏、错误显式报错、full-height flex-1 撑满。
  */
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MutableRefObject, type PointerEvent as ReactPointerEvent } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MutableRefObject } from 'react';
 import { createPortal } from 'react-dom';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -39,9 +39,11 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { X, RotateCcw, Search, ArrowLeft, ToggleLeft, ToggleRight, Layers, Folder, FileText, ChevronDown, Grid2x2, Orbit } from 'lucide-react';
-import { MarkdownViewer } from '@/components/file-preview/MarkdownViewer';
 import { GalaxyConstellationLoader } from './GalaxyConstellationLoader';
+import { ReaderPanel } from './ReaderPanel';
 import { parseFrontmatter } from '@/lib/frontmatter';
+import { deriveContentTitle } from '@/lib/contentTitle';
+import { layoutRadial2D } from '@/lib/docGalaxy/radialLayout';
 import { listDocumentEntriesReal, getDocumentContent } from '@/services/real/documentStore';
 import { getStoreGraph } from '@/services/real/mentions';
 import type { ApiResponse } from '@/types/api';
@@ -164,10 +166,10 @@ function spreadInCone(parentDir: THREE.Vector3, count: number, spread: number): 
 
 function layoutGalaxy(root: GalaxyNode): {
   placed: Map<string, PlacedNode>;
-  edges: Array<{ a: THREE.Vector3; b: THREE.Vector3; child: GalaxyNode }>;
+  edges: Array<{ a: THREE.Vector3; b: THREE.Vector3; child: GalaxyNode; parentId: string }>;
 } {
   const placed = new Map<string, PlacedNode>();
-  const edges: Array<{ a: THREE.Vector3; b: THREE.Vector3; child: GalaxyNode }> = [];
+  const edges: Array<{ a: THREE.Vector3; b: THREE.Vector3; child: GalaxyNode; parentId: string }> = [];
 
   // 根在原点
   placed.set(root.id, { node: root, pos: new THREE.Vector3(0, 0, 0), depth: 0 });
@@ -183,7 +185,7 @@ function layoutGalaxy(root: GalaxyNode): {
       const dir = dirs[i];
       const pos = dir.clone().multiplyScalar(R);
       placed.set(kid.id, { node: kid, pos, depth });
-      edges.push({ a: parentPos.clone(), b: pos.clone(), child: kid });
+      edges.push({ a: parentPos.clone(), b: pos.clone(), child: kid, parentId: parent.id });
       layoutChildren(kid, pos, dir, depth + 1);
     });
   };
@@ -195,7 +197,7 @@ function layoutGalaxy(root: GalaxyNode): {
     const dir = catDirs[i];
     const pos = dir.clone().multiplyScalar(radiusForDepth(1));
     placed.set(c.id, { node: c, pos, depth: 1 });
-    edges.push({ a: new THREE.Vector3(0, 0, 0), b: pos.clone(), child: c });
+    edges.push({ a: new THREE.Vector3(0, 0, 0), b: pos.clone(), child: c, parentId: root.id });
     layoutChildren(c, pos, dir, 2);
   });
 
@@ -498,40 +500,6 @@ function leafDisplayName(node: GalaxyNode, mode: GalaxyLabelMode, contentTitles:
 }
 
 /**
- * 从正文标题里剥掉重复的「文件名前缀」。
- * doc/ 作者约定：H1 常写成「{点分文件名} — {真标题}」甚至纯文件名。
- * 直接拿 H1 当标题会把文件名带进来（用户「都是文件名字」的根因）。
- * 尝试两种前缀：完整文件名、去掉 {type}. 段后的剩余；命中则连同其后的分隔符一并剥掉。
- */
-function stripFilenamePrefix(title: string, filenameBare: string): string {
-  let t = title.trim();
-  const cands = [filenameBare];
-  const dot = filenameBare.indexOf('.');
-  if (dot > 0) cands.push(filenameBare.slice(dot + 1)); // 去掉 type 前缀（如 web-hosting-client-ip）
-  for (const c of cands) {
-    if (c && t.toLowerCase().startsWith(c.toLowerCase())) {
-      // 剥掉前缀后，去掉紧跟的分隔符（— – -- - · : ： | 及空白）
-      t = t.slice(c.length).replace(/^[\s—–―·:：|/-]+/, '').trim();
-      break;
-    }
-  }
-  return t;
-}
-
-/**
- * 从知识库 entry 的 summary 推导「人类正文标题」：frontmatter title / 首个标题，
- * 再剥掉重复的文件名前缀。无可用人类标题（如 H1 就是文件名本身）返回 null。
- */
-function deriveContentTitle(summary: string | null | undefined, filenameBare: string): string | null {
-  if (!summary) return null;
-  if (summary.trimStart().startsWith('<')) return null; // HTML/XML 片段不参与
-  const raw = parseFrontmatter(summary).title?.trim();
-  if (!raw) return null;
-  const cleaned = stripFilenamePrefix(raw, filenameBare);
-  return cleaned || null;
-}
-
-/**
  * 把 summary 清成「纯文本预览」：剥 frontmatter + 去 markdown 标记（标题/链接/代码/列表/表格/强调），
  * 折叠空白。用于 hover 缩略卡 / 列表行预览，避免把 `--- title: ... ---` 和 `#`、`**` 直接糊在卡里。
  */
@@ -551,36 +519,6 @@ function cleanPreview(summary?: string | null): string {
     .replace(/\|/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-}
-
-/**
- * 阅读面板正文去重：面板头部已显示标题，正文若以同名标题(H1/H2)开头会出现「两个标题」。
- * 跳过 frontmatter 块与空行，取首个标题行；其文本规范化后等于头部标题、或以之结尾
- *（兼容「{文件名} — {真标题}」式 H1），则连同紧随空行一并剥掉。否则原样返回。
- */
-function stripDuplicateLeadingHeading(md: string, title: string): string {
-  if (!md || !title) return md;
-  const norm = (s: string) => s.replace(/\s+/g, '').toLowerCase();
-  const want = norm(title);
-  if (!want) return md;
-  const lines = md.split('\n');
-  let i = 0;
-  // 跳过 YAML frontmatter
-  if (lines[0]?.trim() === '---') {
-    const end = lines.indexOf('---', 1);
-    if (end > 0) i = end + 1;
-  }
-  while (i < lines.length && lines[i].trim() === '') i++;
-  const m = lines[i]?.match(/^#{1,2}\s+(.+?)\s*#*\s*$/);
-  if (m) {
-    const h = norm(m[1]);
-    if (h === want || (want.length >= 4 && h.endsWith(want))) {
-      lines.splice(i, 1);
-      if (lines[i]?.trim() === '') lines.splice(i, 1);
-      return lines.join('\n');
-    }
-  }
-  return md;
 }
 
 /** 收集某节点子树下的全部文档叶（DFS，保留遇见顺序）。 */
@@ -1532,11 +1470,29 @@ void main() {
 
     // ── 布局 + 节点 mesh / halo / label ──
     const { placed, edges } = layoutGalaxy(galaxy.root);
-    // 星系整体容器：星点/光路/流光全部挂进来，「折叠 2D」时对整组做 scale.z 压平
-    //（连线顶点在组内坐标系自动跟随;sprite 面向相机不受非均匀缩放影响）。
-    // 背景星空/星云/流星不进组,保持 3D 氛围。
+
+    // ── 折叠 2D 目标布局：放射状层级树（root 居中、层级同心环、分支按叶子数占角度扇区）。
+    //    折叠不再是 scale.z 压扁投影,而是每颗星错峰飞到自己的 2D 目标位（变形金刚式层层收拢）。
+    const radial = layoutRadial2D(galaxy.root);
+    // 节点补间状态:pos2d=2D 目标位、posDisplay=当前显示位（每帧 = lerp(pos3d, pos2d, kNode)）、kNode=该节点折叠进度
+    const flatInfo = new Map<string, { pos2d: THREE.Vector3; posDisplay: THREE.Vector3; kNode: number }>();
+    let maxDepth = 1;
+    for (const pl of placed.values()) {
+      const p2 = radial.pos2dById.get(pl.node.id) ?? { x: 0, y: 0 };
+      const pos2d = new THREE.Vector3(p2.x, p2.y, 0);
+      const startFlat = flattenRefProp.current;
+      flatInfo.set(pl.node.id, {
+        pos2d,
+        posDisplay: startFlat ? pos2d.clone() : pl.pos.clone(),
+        kNode: startFlat ? 1 : 0,
+      });
+      maxDepth = Math.max(maxDepth, pl.depth);
+    }
+    // 正视机位距离按图盘半径自适应（fov 60,halfH ~= 0.577z,留 15% 边距;364 叶大库自动退远）
+    const flatCamZ = Math.min(6000, Math.max(1100, radial.maxRadius * 2.1));
+
+    // 星系整体容器：星点/光路/流光全部挂进来（背景星空/星云/流星不进组,保持 3D 氛围）。
     const galaxyGroup = new THREE.Group();
-    galaxyGroup.scale.z = flattenRefProp.current ? 0.001 : 1;
     scene.add(galaxyGroup);
     const nodeGroup = new THREE.Group();
     galaxyGroup.add(nodeGroup);
@@ -1545,6 +1501,8 @@ void main() {
     const coreMeshes: THREE.Mesh[] = [];
     // 标签随聚焦淡出 —— 单独收集 group 标签 sprite（label 没进 renders）
     const labelByNodeId = new Map<string, THREE.Sprite>();
+    // 标签相对节点的 y 偏移（折叠补间每帧重写标签位置时用）
+    const labelDyById = new Map<string, number>();
     const sphereGeoCache = new Map<string, THREE.SphereGeometry>();
     const sphereGeo = (r: number): THREE.SphereGeometry => {
       const key = r.toFixed(2);
@@ -1646,6 +1604,7 @@ void main() {
         // 演示版标签偏移：size + (root?14:8)
         const dy = size + (node.kind === 'root' ? 14 : 8);
         lab.position.set(pos.x, pos.y + dy, pos.z);
+        labelDyById.set(node.id, dy);
         nodeGroup.add(lab);
         labelSprite = lab;
       }
@@ -1695,6 +1654,8 @@ void main() {
     const SEG_H = 12;
     const HIER_BASE = new THREE.Color('#5a86c8');
     const edgeCurvePts: THREE.Vector3[][] = [];
+    // 2D 目标形态下的同一批光路：父子间直线（放射树的辐条）,与 3D 弧线逐顶点插值
+    const edgeCurvePts2d: THREE.Vector3[][] = [];
     {
       const mid = new THREE.Vector3();
       const ctrl = new THREE.Vector3();
@@ -1705,6 +1666,10 @@ void main() {
         ctrl.copy(mid);
         if (mid.lengthSq() > 1e-6) ctrl.addScaledVector(mid.clone().normalize(), bow);
         edgeCurvePts.push(new THREE.QuadraticBezierCurve3(e.a.clone(), ctrl.clone(), e.b.clone()).getPoints(SEG_H));
+
+        const a2 = flatInfo.get(e.parentId)?.pos2d ?? new THREE.Vector3();
+        const b2 = flatInfo.get(e.child.id)?.pos2d ?? new THREE.Vector3();
+        edgeCurvePts2d.push(new THREE.LineCurve3(a2.clone(), b2.clone()).getPoints(SEG_H));
       }
     }
     const hierGeo = track(new THREE.BufferGeometry());
@@ -1755,6 +1720,8 @@ void main() {
       if (a && b) mentionPairs.push({ a: a.pos, b: b.pos, source: link.source, target: link.target });
     }
     const mentionCurvePts: THREE.Vector3[][] = [];
+    // 2D 目标形态下的引用弧：XY 平面内拱起（垂直平分方向取远离原点侧）,与 3D 弧逐顶点插值
+    const mentionCurvePts2d: THREE.Vector3[][] = [];
     let mentionGeo: THREE.BufferGeometry | null = null;
     let mentionColorAttr: THREE.Float32BufferAttribute | null = null;
     let mentionBase: Float32Array | null = null;
@@ -1771,6 +1738,17 @@ void main() {
         ctrl.copy(mid);
         if (mid.lengthSq() > 1e-6) ctrl.addScaledVector(mid.clone().normalize(), len * 0.22);
         mentionCurvePts.push(new THREE.QuadraticBezierCurve3(m.a.clone(), ctrl.clone(), m.b.clone()).getPoints(SEG_M));
+
+        const a2 = flatInfo.get(m.source)?.pos2d ?? new THREE.Vector3();
+        const b2 = flatInfo.get(m.target)?.pos2d ?? new THREE.Vector3();
+        const mid2 = a2.clone().add(b2).multiplyScalar(0.5);
+        const len2 = a2.distanceTo(b2);
+        // 平面内法向 (dy, -dx, 0)，取远离原点一侧,弧朝外拱
+        const perp = new THREE.Vector3(b2.y - a2.y, -(b2.x - a2.x), 0);
+        if (perp.lengthSq() > 1e-6) perp.normalize();
+        if (perp.dot(mid2) < 0) perp.negate();
+        const ctrl2 = mid2.clone().addScaledVector(perp, len2 * 0.18);
+        mentionCurvePts2d.push(new THREE.QuadraticBezierCurve3(a2.clone(), ctrl2, b2.clone()).getPoints(SEG_M));
       }
       mentionGeo = track(new THREE.BufferGeometry());
       mentionGeo.setAttribute(
@@ -1899,6 +1877,80 @@ void main() {
     };
 
     // ── type 筛选：隐藏被关类型的叶子 + 「空分组」整体隐藏（核心/光晕/标签）+ 折叠入边/引用线 ──
+    // ── 边顶点统一写入：按各端 kNode 在 3D/2D 两套曲线点间插值,隐藏边折叠到父端。
+    //    筛选（applyFilter）与折叠补间（渲染循环）共用这一支笔,避免互相覆盖。 ──
+    const edgeVisArr: boolean[] = edges.map(() => true);
+    const writeEdgePositions = () => {
+      const hp = hierGeo.getAttribute('position') as THREE.BufferAttribute;
+      edges.forEach((e, i) => {
+        const o = i * SEG_H * 2;
+        if (!edgeVisArr[i]) {
+          // 隐藏语义保留：整条折叠到父端当前显示位（零长不可见）
+          const a = flatInfo.get(e.parentId)?.posDisplay ?? e.a;
+          for (let s = 0; s < SEG_H; s++) {
+            hp.setXYZ(o + s * 2, a.x, a.y, a.z);
+            hp.setXYZ(o + s * 2 + 1, a.x, a.y, a.z);
+          }
+          return;
+        }
+        const kP = flatInfo.get(e.parentId)?.kNode ?? 0;
+        const kC = flatInfo.get(e.child.id)?.kNode ?? 0;
+        const pts3 = edgeCurvePts[i];
+        const pts2 = edgeCurvePts2d[i];
+        for (let s = 0; s < SEG_H; s++) {
+          for (let k2 = 0; k2 < 2; k2++) {
+            const idx = s + k2;
+            const t = idx / SEG_H;
+            const kV = kP + (kC - kP) * t; // 端点与星严格粘连（k 沿边线性过渡）
+            const p3 = pts3[idx];
+            const p2 = pts2[idx];
+            hp.setXYZ(
+              o + s * 2 + k2,
+              p3.x + (p2.x - p3.x) * kV,
+              p3.y + (p2.y - p3.y) * kV,
+              p3.z + (p2.z - p3.z) * kV,
+            );
+          }
+        }
+      });
+      hp.needsUpdate = true;
+
+      if (mentionGeo) {
+        const mp = mentionGeo.getAttribute('position') as THREE.BufferAttribute;
+        mentionPairs.forEach((m, i) => {
+          const o = i * SEG_M * 2;
+          if (!mentionVisibleArr[i]) {
+            const a = flatInfo.get(m.source)?.posDisplay ?? m.a;
+            for (let s = 0; s < SEG_M; s++) {
+              mp.setXYZ(o + s * 2, a.x, a.y, a.z);
+              mp.setXYZ(o + s * 2 + 1, a.x, a.y, a.z);
+            }
+            return;
+          }
+          const kA = flatInfo.get(m.source)?.kNode ?? 0;
+          const kB = flatInfo.get(m.target)?.kNode ?? 0;
+          const pts3 = mentionCurvePts[i];
+          const pts2 = mentionCurvePts2d[i];
+          for (let s = 0; s < SEG_M; s++) {
+            for (let k2 = 0; k2 < 2; k2++) {
+              const idx = s + k2;
+              const t = idx / SEG_M;
+              const kV = kA + (kB - kA) * t;
+              const p3 = pts3[idx];
+              const p2 = pts2[idx];
+              mp.setXYZ(
+                o + s * 2 + k2,
+                p3.x + (p2.x - p3.x) * kV,
+                p3.y + (p2.y - p3.y) * kV,
+                p3.z + (p2.z - p3.z) * kV,
+              );
+            }
+          }
+        });
+        mp.needsUpdate = true;
+      }
+    };
+
     const applyFilter = () => {
       const on = typeOnRef.current;
       // 任一类型（含 unknown）被关 → 进入过滤；按 docType ?? 'unknown' 取开关
@@ -1929,37 +1981,16 @@ void main() {
       }
       // 星芒随其节点显隐（root 恒可见；一级分类可能被筛空）
       for (const s of sparkles) s.sp.visible = vis.get(s.nodeId) ?? true;
-      // 父子弧线：子端隐藏 → 整条折叠到父端（零长，不可见）
-      const hp = hierGeo.getAttribute('position') as THREE.BufferAttribute;
+      // 父子弧线/引用弧的顶点写入统一走 writeEdgePositions（含折叠补间插值）；此处只维护可见性
       edges.forEach((e, i) => {
-        const show = vis.get(e.child.id) ?? true;
-        const pts = edgeCurvePts[i];
-        const o = i * SEG_H * 2;
-        for (let s = 0; s < SEG_H; s++) {
-          const p0 = show ? pts[s] : e.a;
-          const p1 = show ? pts[s + 1] : e.a;
-          hp.setXYZ(o + s * 2, p0.x, p0.y, p0.z);
-          hp.setXYZ(o + s * 2 + 1, p1.x, p1.y, p1.z);
-        }
+        edgeVisArr[i] = vis.get(e.child.id) ?? true;
       });
-      hp.needsUpdate = true;
-      // 引用弧：任一端隐藏 → 折叠；同步登记可见性给流光脉冲（隐藏的弧不再巡游）
       if (mentionGeo) {
-        const mp = mentionGeo.getAttribute('position') as THREE.BufferAttribute;
         mentionPairs.forEach((m, i) => {
-          const show = (vis.get(m.source) ?? true) && (vis.get(m.target) ?? true);
-          mentionVisibleArr[i] = show;
-          const pts = mentionCurvePts[i];
-          const o = i * SEG_M * 2;
-          for (let s = 0; s < SEG_M; s++) {
-            const p0 = show ? pts[s] : m.a;
-            const p1 = show ? pts[s + 1] : m.a;
-            mp.setXYZ(o + s * 2, p0.x, p0.y, p0.z);
-            mp.setXYZ(o + s * 2 + 1, p1.x, p1.y, p1.z);
-          }
+          mentionVisibleArr[i] = (vis.get(m.source) ?? true) && (vis.get(m.target) ?? true);
         });
-        mp.needsUpdate = true;
       }
+      writeEdgePositions();
       // 主干流光可见性跟随其分类枢纽
       flowEdges.forEach((f, k) => {
         flowVisibleArr[k] = vis.get(edges[f.edgeIdx].child.id) ?? true;
@@ -1988,9 +2019,29 @@ void main() {
       return ids;
     };
 
-    // 折叠 2D 状态：flatK 0=完整 3D、1=压平成 XY 平面。补间驱动 galaxyGroup.scale.z。
+    // ── 折叠 2D 状态：flatK 0=完整 3D、1=放射状 2D 平面树。
+    //    每颗星按 depth 错峰飞向自己的 pos2d（外层先折、内层先展）,边顶点/流光随各端 kNode 插值。 ──
+    const FLAT_STAGGER = 800; // 层间错峰总窗口
+    const FLAT_NODE_DUR = 700; // 单节点飞行时长
+    const FLAT_TOTAL = FLAT_STAGGER + FLAT_NODE_DUR; // 1500ms
     let flatK = flattenRefProp.current ? 1 : 0;
     let flatTween: { t0: number; dur: number; from: number; to: number } | null = null;
+    // 折叠脏标志：补间结束/筛选变化/重建后,保证终态至少写一帧再停笔
+    let flatDirty = flattenRefProp.current;
+    const flatDelayFor = (depth: number, to: number) => {
+      if (maxDepth <= 0) return 0;
+      const norm = to === 1 ? (maxDepth - depth) / maxDepth : depth / maxDepth;
+      return norm * FLAT_STAGGER;
+    };
+    // 节点当前显示位（补间中取终态,避免相机飞向移动中的星）
+    const displayPosOf = (id: string): THREE.Vector3 => {
+      const pl = placed.get(id);
+      const fi = flatInfo.get(id);
+      if (!pl) return new THREE.Vector3();
+      if (!fi) return pl.pos.clone();
+      if (flatTween) return (flatTween.to === 1 ? fi.pos2d : pl.pos).clone();
+      return fi.posDisplay.clone();
+    };
 
     // 相机缓动：苹果式自然速度，慢起步 → 加速 → 慢停下。
     let camTween: {
@@ -2003,23 +2054,18 @@ void main() {
     } | null = null;
 
     const startCamTween = (targetPos: THREE.Vector3, distance: number) => {
-      // 折叠态下星点的世界坐标 z 被 galaxyGroup.scale.z 压过 —— 飞行目标同步修正，
-      // 否则相机会飞到「未压平的 3D 位置」看不到目标星。
-      const flatScaleZ = Math.max(0.001, 1 - flatK);
-      const target = targetPos.clone();
-      target.z *= flatScaleZ;
       // 沿当前相机→目标方向退到 distance 处，保留观察角度，避免镜头乱翻
       const dir = camera.position.clone().sub(controls.target);
       if (dir.lengthSq() < 1e-6) dir.set(0, 0.3, 1);
       dir.normalize();
       const fromTarget = controls.target.clone();
       const fromPos = camera.position.clone();
-      const toPos = target.clone().add(dir.multiplyScalar(distance));
+      const toPos = targetPos.clone().add(dir.multiplyScalar(distance));
       camTween = {
         t0: performance.now(),
-        dur: cameraTweenDurationMs(fromTarget, target, fromPos, toPos),
+        dur: cameraTweenDurationMs(fromTarget, targetPos, fromPos, toPos),
         fromTarget,
-        toTarget: target.clone(),
+        toTarget: targetPos.clone(),
         fromPos,
         toPos,
       };
@@ -2066,7 +2112,7 @@ void main() {
       for (const id of ancestors) keepIds.add(id);
       applyEdgeDim(keepIds);
       const depth = placedNode.depth;
-      startCamTween(placedNode.pos.clone(), focusDistanceFor(node, depth));
+      startCamTween(displayPosOf(node.id), focusDistanceFor(node, depth));
       // 信息面板数据
       const typeTally = tallySubtreeTypes(node);
       const childList = node.children.map((c) => ({ node: c, isLeaf: c.kind === 'leaf' }));
@@ -2085,7 +2131,7 @@ void main() {
       keep.add(node.id);
       for (const rec of renders) dimTargetById.set(rec.node.id, keep.has(rec.node.id) ? 1 : 0.12);
       applyEdgeDim(keep);
-      startCamTween(placedNode.pos.clone(), 150);
+      startCamTween(displayPosOf(node.id), 150);
       pulseLeafId = node.id;
       pulseT0 = performance.now();
       selectedLeafId = node.id; // 进入持续选中态（发光 + 放大 + 呼吸）
@@ -2129,7 +2175,7 @@ void main() {
       const fromTarget = controls.target.clone();
       const fromPos = camera.position.clone();
       const toTarget = new THREE.Vector3(0, 0, 0);
-      const toPos = flatK > 0.5 ? new THREE.Vector3(0, 0, 1500) : new THREE.Vector3(0, 120, 1050);
+      const toPos = flatK > 0.5 ? new THREE.Vector3(0, 0, flatCamZ) : new THREE.Vector3(0, 120, 1050);
       camTween = {
         t0: performance.now(),
         dur: cameraTweenDurationMs(fromTarget, toTarget, fromPos, toPos),
@@ -2153,7 +2199,7 @@ void main() {
       if (pl) focusNode(pl.node);
     };
 
-    // ── 折叠 2D ↔ 展开 3D：整组 scale.z 补间 + 相机飞到正视/常驻机位 + 交互模式切换 ──
+    // ── 折叠 2D ↔ 展开 3D：每颗星错峰飞向放射树目标位 + 相机飞到正视/常驻机位 + 交互模式切换 ──
     const applyFlattenInteraction = (on: boolean) => {
       controls.enableRotate = !on; // 折叠态锁旋转，pan/zoom 保留
       if (on) {
@@ -2166,12 +2212,13 @@ void main() {
       }
     };
     setFlattenRef.current = (on: boolean) => {
-      flatTween = { t0: performance.now(), dur: 1100, from: flatK, to: on ? 1 : 0 };
+      flatTween = { t0: performance.now(), dur: FLAT_TOTAL, from: flatK, to: on ? 1 : 0 };
+      flatDirty = true;
       applyFlattenInteraction(on);
       const fromTarget = controls.target.clone();
       const fromPos = camera.position.clone();
       const toTarget = new THREE.Vector3(0, 0, 0);
-      const toPos = on ? new THREE.Vector3(0, 0, 1500) : new THREE.Vector3(0, 120, 1050);
+      const toPos = on ? new THREE.Vector3(0, 0, flatCamZ) : new THREE.Vector3(0, 120, 1050);
       camTween = {
         t0: performance.now(),
         dur: cameraTweenDurationMs(fromTarget, toTarget, fromPos, toPos),
@@ -2192,7 +2239,7 @@ void main() {
       fromTarget: new THREE.Vector3(0, 0, 0),
       toTarget: new THREE.Vector3(0, 0, 0),
       fromPos: camera.position.clone(),
-      toPos: flattenRefProp.current ? new THREE.Vector3(0, 0, 1500) : new THREE.Vector3(0, 120, 1050),
+      toPos: flattenRefProp.current ? new THREE.Vector3(0, 0, flatCamZ) : new THREE.Vector3(0, 120, 1050),
     };
 
     // ── 选择性 bloom 双 pass（演示版同款配方） ──
@@ -2492,13 +2539,53 @@ void main() {
         if (k >= 1) camTween = null;
       }
 
-      // 折叠 2D 补间：整组 scale.z 压平/展开（与相机机位动画同款缓动曲线）
+      // ── 折叠 2D 补间：每颗星按 depth 错峰飞向放射树目标位（折叠外层先动、展开内层先动）。
+      //    星点/光晕/星芒/标签逐帧写位,边顶点/流光按各端 kNode 插值;稳态（无补间且不脏）零成本。 ──
       if (flatTween) {
         const k = Math.min(1, (nowMs - flatTween.t0) / flatTween.dur);
         flatK = flatTween.from + (flatTween.to - flatTween.from) * naturalCameraEase(k);
-        if (k >= 1) flatTween = null;
       }
-      galaxyGroup.scale.z = Math.max(0.001, 1 - flatK); // 下限 0.001 防退化矩阵
+      if (flatTween || flatDirty) {
+        for (const [id, fi] of flatInfo) {
+          const pl = placed.get(id);
+          if (!pl) continue;
+          let kN = flatK;
+          if (flatTween) {
+            const local = clamp01((nowMs - flatTween.t0 - flatDelayFor(pl.depth, flatTween.to)) / FLAT_NODE_DUR);
+            kN = flatTween.from + (flatTween.to - flatTween.from) * naturalCameraEase(local);
+          }
+          fi.kNode = kN;
+          fi.posDisplay.lerpVectors(pl.pos, fi.pos2d, kN);
+        }
+        for (const rec of renders) {
+          const fi = flatInfo.get(rec.node.id);
+          if (!fi) continue;
+          rec.core.position.copy(fi.posDisplay);
+          rec.halo.position.copy(fi.posDisplay);
+        }
+        for (const s of sparkles) {
+          const fi = flatInfo.get(s.nodeId);
+          if (fi) s.sp.position.copy(fi.posDisplay);
+        }
+        for (const [id, lab] of labelByNodeId) {
+          const fi = flatInfo.get(id);
+          if (!fi) continue;
+          const dy = labelDyById.get(id) ?? 8;
+          lab.position.set(fi.posDisplay.x, fi.posDisplay.y + dy, fi.posDisplay.z);
+        }
+        writeEdgePositions();
+        if (flatTween) {
+          if (nowMs - flatTween.t0 >= flatTween.dur) {
+            flatTween = null; // 补间结束;flatDirty 保持 true 再写一帧精确终态
+          }
+        } else {
+          flatDirty = false;
+        }
+      }
+
+      // 2D 态线路「变粗变实」：透明度/顶点色亮度/流光尺寸随 flatK 提升（additive 下亮度提升近似加粗）
+      hierMat.color.setScalar(1 + 0.5 * flatK);
+      if (mentionMat) mentionMat.color.setScalar(1 + 0.4 * flatK);
 
       // 叶子脉冲高亮生命周期：聚焦到具体文档后"呼吸"约 1.4s（衰减正弦），结束复位
       let pulseScale = 1;
@@ -2578,8 +2665,7 @@ void main() {
       for (const [id, lab] of labelByNodeId) {
         if (!lab.visible) continue;
         const dim = dimCurrentById.get(id) ?? 1;
-        // 用世界坐标算距离：折叠态下 lab.position（组内局部坐标）的 z 未被 scale.z 压过，
-        // 直接用会把距离算大、误把标签淡出。
+        // 用世界坐标算距离（标签挂在 galaxyGroup 内,世界坐标是稳妥口径）。
         lab.getWorldPosition(labWorld);
         const dCam = camPos.distanceTo(labWorld);
         const d = depthById.get(id) ?? 0;
@@ -2594,12 +2680,15 @@ void main() {
       }
 
       // 光路入场淡入（节点长出后光路跟上）
-      hierMat.opacity = 0.42 * clamp01((introElapsed - 400) / 1300);
-      if (mentionMat) mentionMat.opacity = 0.3 * clamp01((introElapsed - 900) / 1300);
+      // 2D 态更实：hier 0.42→0.85、mention 0.3→0.8（随 flatK 提升,配合顶点色增亮近似「线段变粗」）
+      hierMat.opacity = (0.42 + 0.43 * flatK) * clamp01((introElapsed - 400) / 1300);
+      if (mentionMat) mentionMat.opacity = (0.3 + 0.5 * flatK) * clamp01((introElapsed - 900) / 1300);
 
-      // 引用流光脉冲：沿引用弧巡游；隐藏弧的光点驻留远处不可见
+      // 引用流光脉冲：沿引用弧巡游；隐藏弧的光点驻留远处不可见。
+      // 折叠补间中按两端 kNode 在 3D/2D 曲线间插值采样,光点始终贴着正在变形的弧。
       if (pulseGeo && pulseMat) {
         pulseMat.opacity = 0.85 * clamp01((introElapsed - 1400) / 900);
+        pulseMat.size = 6 + 3 * flatK;
         const pa = pulseGeo.getAttribute('position') as THREE.BufferAttribute;
         for (let i = 0; i < pulseCount; i++) {
           if (!mentionVisibleArr[i] || !mentionFocusKeep[i]) {
@@ -2614,14 +2703,33 @@ void main() {
           const f = x - si;
           const p0 = pts[si];
           const p1 = pts[si + 1];
-          pa.setXYZ(i, p0.x + (p1.x - p0.x) * f, p0.y + (p1.y - p0.y) * f, p0.z + (p1.z - p0.z) * f);
+          let px = p0.x + (p1.x - p0.x) * f;
+          let py = p0.y + (p1.y - p0.y) * f;
+          let pz = p0.z + (p1.z - p0.z) * f;
+          const m = mentionPairs[i];
+          const kA = flatInfo.get(m.source)?.kNode ?? 0;
+          const kB = flatInfo.get(m.target)?.kNode ?? 0;
+          if (kA > 0 || kB > 0) {
+            const kV = kA + (kB - kA) * t;
+            const pts2 = mentionCurvePts2d[i];
+            const q0 = pts2[si];
+            const q1 = pts2[si + 1];
+            const qx = q0.x + (q1.x - q0.x) * f;
+            const qy = q0.y + (q1.y - q0.y) * f;
+            const qz = q0.z + (q1.z - q0.z) * f;
+            px += (qx - px) * kV;
+            py += (qy - py) * kV;
+            pz += (qz - pz) * kV;
+          }
+          pa.setXYZ(i, px, py, pz);
         }
         pa.needsUpdate = true;
       }
 
-      // 主干流光：root → 一级分类，缓慢外行
+      // 主干流光：root → 一级分类，缓慢外行（折叠插值同上）
       if (flowGeo && flowMat) {
         flowMat.opacity = 0.5 * clamp01((introElapsed - 1200) / 900);
+        flowMat.size = 5 + 2.5 * flatK;
         const fa = flowGeo.getAttribute('position') as THREE.BufferAttribute;
         for (let k = 0; k < flowEdges.length; k++) {
           if (!flowVisibleArr[k] || !flowFocusKeep[k]) {
@@ -2630,13 +2738,32 @@ void main() {
           }
           const speed = 0.05 + hash01(k * 5 + 2) * 0.03;
           const t = (tNow * speed + hash01(k * 17 + 9)) % 1;
-          const pts = edgeCurvePts[flowEdges[k].edgeIdx];
+          const edgeIdx = flowEdges[k].edgeIdx;
+          const pts = edgeCurvePts[edgeIdx];
           const x = t * SEG_H;
           const si = Math.min(SEG_H - 1, Math.floor(x));
           const f = x - si;
           const p0 = pts[si];
           const p1 = pts[si + 1];
-          fa.setXYZ(k, p0.x + (p1.x - p0.x) * f, p0.y + (p1.y - p0.y) * f, p0.z + (p1.z - p0.z) * f);
+          let px = p0.x + (p1.x - p0.x) * f;
+          let py = p0.y + (p1.y - p0.y) * f;
+          let pz = p0.z + (p1.z - p0.z) * f;
+          const e = edges[edgeIdx];
+          const kP = flatInfo.get(e.parentId)?.kNode ?? 0;
+          const kC = flatInfo.get(e.child.id)?.kNode ?? 0;
+          if (kP > 0 || kC > 0) {
+            const kV = kP + (kC - kP) * t;
+            const pts2 = edgeCurvePts2d[edgeIdx];
+            const q0 = pts2[si];
+            const q1 = pts2[si + 1];
+            const qx = q0.x + (q1.x - q0.x) * f;
+            const qy = q0.y + (q1.y - q0.y) * f;
+            const qz = q0.z + (q1.z - q0.z) * f;
+            px += (qx - px) * kV;
+            py += (qy - py) * kV;
+            pz += (qz - pz) * kV;
+          }
+          fa.setXYZ(k, px, py, pz);
         }
         fa.needsUpdate = true;
       }
@@ -3071,197 +3198,6 @@ void main() {
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-// ── 阅读面板：点星弹出，复用系统 MarkdownViewer。玻璃质感悬浮卡（拉宽 + 通透 + 圆润）──
-function ReaderPanel({
-  entryId,
-  displayTitle,
-  pathNames,
-  width,
-  onResize,
-  loadContent,
-  onClose,
-}: {
-  entryId: string;
-  displayTitle?: string;
-  pathNames?: string[];
-  width: number;
-  onResize: (w: number) => void;
-  loadContent?: (entryId: string) => ReturnType<typeof getDocumentContent>;
-  onClose: () => void;
-}) {
-  const [content, setContent] = useState<string | null>(null);
-  const [title, setTitle] = useState<string>('');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    setContent(null);
-    const loadContentFn = loadContent ?? getDocumentContent;
-    loadContentFn(entryId)
-      .then((res) => {
-        if (cancelled) return;
-        if (!res.success) {
-          setError(res.error?.message || '加载文档失败');
-          return;
-        }
-        setTitle(res.data.title || '');
-        setContent(res.data.hasContent ? (res.data.content ?? '') : '');
-      })
-      .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : '加载失败');
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [entryId, loadContent]);
-
-  // ESC 关闭
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  // 左缘拖拽改宽：按指针 x 反推宽度 = 视口宽 - x - 右边距(12)，夹 [360, 94vw]。
-  const onResizeRef = useRef(onResize);
-  onResizeRef.current = onResize;
-  const startResize = (e: ReactPointerEvent) => {
-    e.preventDefault();
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    const move = (ev: PointerEvent) => {
-      onResizeRef.current(window.innerWidth - ev.clientX - 12);
-    };
-    const up = (ev: PointerEvent) => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-      try {
-        (e.target as HTMLElement).releasePointerCapture(ev.pointerId);
-      } catch {
-        /* 已释放 */
-      }
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-  };
-
-  const shownTitle = displayTitle || title || '文档';
-  const crumbLine = (pathNames ?? []).join(' / ');
-  // 去重：面板头部已经显示标题，正文若以同名 H1/H2 开头会变成「两个标题」（用户反馈）。
-  // 正文首个标题文本 ≈ 头部标题（或以其结尾，兼容「文件名 — 真标题」式 H1）时，剥掉该行。
-  const bodyForView = content ? stripDuplicateLeadingHeading(content, shownTitle) : content;
-
-  return (
-    // 悬浮玻璃卡：四周留白 + 全圆角，比贴边硬面板更圆润通透
-    <div
-      style={{
-        position: 'absolute',
-        top: 12,
-        right: 12,
-        bottom: 12,
-        width: `min(${Math.round(width)}px, 94vw)`,
-        // 玻璃质感但保证可读：底色足够实（0.92），blur 只做轻微通透，正文不被背景星点干扰
-        background: 'rgba(17,18,26,0.92)',
-        backdropFilter: 'blur(20px) saturate(130%)',
-        WebkitBackdropFilter: 'blur(20px) saturate(130%)',
-        border: '1px solid rgba(255,255,255,0.12)',
-        borderRadius: 18,
-        boxShadow: '0 18px 60px rgba(0,0,0,0.6)',
-        zIndex: 20,
-        display: 'flex',
-        flexDirection: 'column',
-        minHeight: 0,
-        overflow: 'hidden',
-      }}
-    >
-      {/* 左缘拖拽手柄：改阅读面板宽度（投影偏移随之同步，聚焦星保持左半居中）。 */}
-      <div
-        onPointerDown={startResize}
-        title="拖拽调整阅读面板宽度"
-        style={{
-          position: 'absolute',
-          left: -3,
-          top: 0,
-          bottom: 0,
-          width: 10,
-          cursor: 'ew-resize',
-          zIndex: 2,
-          touchAction: 'none',
-        }}
-      >
-        <div style={{ position: 'absolute', left: 3, top: '50%', transform: 'translateY(-50%)', width: 3, height: 42, borderRadius: 3, background: 'rgba(255,255,255,0.22)' }} />
-      </div>
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'flex-start',
-          justifyContent: 'space-between',
-          gap: 12,
-          padding: '16px 20px 14px',
-          borderBottom: '1px solid rgba(255,255,255,0.07)',
-          flexShrink: 0,
-        }}
-      >
-        <div style={{ minWidth: 0 }}>
-          {crumbLine && (
-            <div style={{ fontSize: 11, color: '#8a8c9c', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {crumbLine}
-            </div>
-          )}
-          <div style={{ fontSize: 17, fontWeight: 700, color: '#f1f2f7', lineHeight: 1.35, wordBreak: 'break-word' }}>
-            {shownTitle}
-          </div>
-        </div>
-        <button
-          onClick={onClose}
-          aria-label="关闭"
-          style={{
-            background: 'rgba(255,255,255,0.06)',
-            border: '1px solid rgba(255,255,255,0.12)',
-            borderRadius: 9,
-            width: 30,
-            height: 30,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: '#c8c8d0',
-            cursor: 'pointer',
-            flexShrink: 0,
-          }}
-        >
-          <X size={15} />
-        </button>
-      </div>
-      <div
-        style={{
-          flex: 1,
-          minHeight: 0,
-          overflowY: 'auto',
-          overscrollBehavior: 'contain',
-          padding: '22px 28px 32px',
-        }}
-      >
-        {/* 正文限宽居中，长行不顶到边，阅读更舒适（容器仍撑满，靠 padding 收口） */}
-        <div style={{ maxWidth: 720, margin: '0 auto' }}>
-          {loading && <div style={{ padding: '32px 0' }}><GalaxyConstellationLoader text="正在加载文档…" size={140} /></div>}
-          {error && !loading && <div style={{ color: '#ffb0b0', fontSize: 13 }}>加载失败：{error}</div>}
-          {!loading && !error && content !== null && content.trim() !== '' && <MarkdownViewer content={bodyForView ?? content} />}
-          {!loading && !error && (content === null || content.trim() === '') && (
-            <div style={{ color: '#888', fontSize: 13 }}>该文档暂无可预览的正文内容。</div>
-          )}
-        </div>
-      </div>
     </div>
   );
 }

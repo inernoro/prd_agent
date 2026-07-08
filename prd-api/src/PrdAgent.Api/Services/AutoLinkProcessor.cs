@@ -54,6 +54,9 @@ public class AutoLinkProcessor
 
         // 候选标题 = 库内全部非文件夹条目的标题（可作为链接目标，即便自身不可改写）
         var allTitles = entries.Select(e => e.Title).ToList();
+        // 标题 → entryId（撞名取最早创建，与 MentionService.ResyncDocumentMentionsAsync 同口径），
+        // 用于把改写命中的标题映射成图谱边的目标节点，供前端「经脉长出」动画增量绘制
+        var titleToId = BuildTitleToIdMap(entries.Select(e => (e.Id, e.Title, e.CreatedAt)));
 
         var total = entries.Count;
         int processed = 0, changed = 0, linksAdded = 0, skipped = 0;
@@ -64,6 +67,7 @@ public class AutoLinkProcessor
         foreach (var entry in entries)
         {
             processed++;
+            List<object>? newLinks = null;
             try
             {
                 var content = await LoadWritableContentAsync(entry);
@@ -77,6 +81,14 @@ public class AutoLinkProcessor
                             entry, store, result.Content, run.UserId, userName, DocumentVersionSource.Edit);
                         changed++;
                         linksAdded += result.LinksAdded;
+                        // 本篇新增链接明细（from=当前条目 → to=标题命中的目标条目），随 progress 事件推给前端做边生长动画
+                        newLinks = result.LinkedTitles
+                            .Select(t => titleToId.TryGetValue(t, out var toId) && toId != entry.Id
+                                ? new { from = entry.Id, to = toId, anchorText = t }
+                                : null)
+                            .Where(l => l != null)
+                            .Cast<object>()
+                            .ToList();
                     }
                 }
                 else
@@ -93,7 +105,7 @@ public class AutoLinkProcessor
 
             var progress = total == 0 ? 100 : Math.Min(99, (int)Math.Round(processed * 100.0 / total));
             await UpdateProgressAsync(db, runStore, run, progress,
-                $"扫描中 {processed}/{total}", processed, total, changed, linksAdded);
+                $"扫描中 {processed}/{total}", processed, total, changed, linksAdded, newLinks);
         }
 
         // 汇总写入 GeneratedText：Worker 通用 done 事件自带该字段，前端解析展示
@@ -134,9 +146,25 @@ public class AutoLinkProcessor
         return idx;
     }
 
+    /// <summary>
+    /// 标题 → entryId 映射。同库标题撞名取最早创建（CreatedAt 最小，再按 Id 稳定破平），
+    /// 与 MentionService.ResyncDocumentMentionsAsync 的账本落点保持同口径。
+    /// </summary>
+    internal static Dictionary<string, string> BuildTitleToIdMap(
+        IEnumerable<(string Id, string Title, DateTime CreatedAt)> entries)
+    {
+        return entries
+            .GroupBy(e => e.Title, StringComparer.Ordinal)
+            .ToDictionary(
+                g => g.Key,
+                g => g.OrderBy(e => e.CreatedAt).ThenBy(e => e.Id, StringComparer.Ordinal).First().Id,
+                StringComparer.Ordinal);
+    }
+
     private static async Task UpdateProgressAsync(
         MongoDbContext db, IRunEventStore runStore, DocumentStoreAgentRun run,
-        int progress, string phase, int processed, int total, int changed, int linksAdded)
+        int progress, string phase, int processed, int total, int changed, int linksAdded,
+        IReadOnlyList<object>? newLinks = null)
     {
         await db.DocumentStoreAgentRuns.UpdateOneAsync(
             r => r.Id == run.Id,
@@ -148,7 +176,7 @@ public class AutoLinkProcessor
         {
             await runStore.AppendEventAsync(
                 DocumentStoreRunKinds.AutoLink, run.Id, "progress",
-                new { progress, phase, processed, total, changed, linksAdded },
+                new { progress, phase, processed, total, changed, linksAdded, newLinks },
                 ct: CancellationToken.None);
         }
         catch { /* 事件失败不阻塞主流程 */ }
