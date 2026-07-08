@@ -525,36 +525,17 @@
     0 1px 1px rgba(15, 23, 42, 0.04);
 }
 
+/* 2026-07-08 去历史补偿：旧版用 -20px 负边距对冲旧外壳 20px 内边距并
+   自刷整幅不透明底——外壳改 16/12 后负边距反超出视口顶 8px，且私有底
+   盖住应用背景与其他页面色调不一致。现直接坐在外壳上，不再自带底色。 */
 .toolbox-page {
-  --toolbox-page-padding-x: 20px;
-  --toolbox-page-padding-y: 20px;
   gap: 16px;
-  margin: calc(var(--toolbox-page-padding-y) * -1) calc(var(--toolbox-page-padding-x) * -1);
-  padding: var(--toolbox-page-padding-y) var(--toolbox-page-padding-x);
-  background:
-    radial-gradient(62% 58% at 14% 8%, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0.09) 34%, transparent 68%),
-    radial-gradient(54% 52% at 86% 14%, rgba(248, 250, 252, 0.16) 0%, rgba(248, 250, 252, 0.06) 36%, transparent 70%),
-    radial-gradient(72% 64% at 52% 92%, rgba(226, 232, 240, 0.10) 0%, rgba(226, 232, 240, 0.04) 44%, transparent 76%),
-    linear-gradient(135deg, rgba(43, 45, 54, 0.96) 0%, rgba(24, 28, 35, 0.98) 48%, rgba(15, 24, 28, 0.98) 100%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
-}
-
-@media (max-width: 767px) {
-  .toolbox-page {
-    --toolbox-page-padding-x: var(--mobile-padding, 16px);
-    --toolbox-page-padding-y: 12px;
-  }
 }
 
 .toolbox-filter-bar {
   min-height: 46px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.145) 0%, rgba(255, 255, 255, 0.055) 100%);
-  border-color: rgba(255, 255, 255, 0.20);
-  box-shadow:
-    inset 0 1px 1px rgba(255, 255, 255, 0.24),
-    inset 0 -1px 1px rgba(0, 0, 0, 0.10),
-    0 16px 38px -26px rgba(255, 255, 255, 0.30);
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.14);
 }
 
 .toolbox-filter-content {

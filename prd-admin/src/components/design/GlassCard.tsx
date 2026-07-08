@@ -225,11 +225,11 @@ function buildObsidianStyle(
       : 'var(--glass-border, rgba(255, 255, 255, 0.09))';
 
   // 阴影：精调内高光与底部暗边，塑造伪 3D 棱感
-  let boxShadow = '0 8px 16px -4px rgba(0, 0, 0, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.08), inset 0 -1px 1px rgba(0, 0, 0, 0.15)';
+  let boxShadow = '0 8px 16px -4px rgba(0, 0, 0, 0.5)';
   if (variant === 'gold') {
-    boxShadow = '0 8px 24px -4px rgba(99, 102, 241, 0.18), 0 8px 16px -4px rgba(0, 0, 0, 0.5), inset 0 1px 1px rgba(99, 102, 241, 0.15), inset 0 -1px 1px rgba(0, 0, 0, 0.15)';
+    boxShadow = '0 8px 24px -4px rgba(99, 102, 241, 0.18), 0 8px 16px -4px rgba(0, 0, 0, 0.5)';
   } else if (accentHue !== undefined) {
-    boxShadow = `0 8px 24px -4px hsla(${accentHue}, 60%, 50%, 0.14), 0 8px 16px -4px rgba(0, 0, 0, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.08), inset 0 -1px 1px rgba(0, 0, 0, 0.15)`;
+    boxShadow = `0 8px 24px -4px hsla(${accentHue}, 60%, 50%, 0.14), 0 8px 16px -4px rgba(0, 0, 0, 0.5)`;
   }
 
   // 浅色"纸感"卡片:走 token 暖咖啡微影,无白色 inset 高光(在白底上无效)、无黑色 inset 暗边(违反纸感)。

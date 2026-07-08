@@ -797,10 +797,13 @@ export default function WebPagesPage() {
   return (
     <div
       data-tour-id="webpages-root"
-      className={isMobile ? 'h-full flex flex-col gap-3 overflow-auto' : 'h-full flex flex-col gap-4 p-4 overflow-auto'}
+      className={isMobile ? 'h-full flex flex-col gap-3 overflow-auto' : 'h-full flex flex-col gap-4 overflow-auto'}
       style={{
+        // 不再自刷整幅不透明深色底（会盖住应用背景、与外壳 16px 内边距形成
+        // "黑框 + 内容内缩"的错位，2026-07-08 用户反馈）；仅保留顶部一缕
+        // 品牌靛蓝氛围光，透明叠加在应用背景上。p-4 同步移除——外壳已供内边距。
         background:
-          'radial-gradient(ellipse 70% 40% at 50% -10%, rgba(99,102,241,0.14) 0%, transparent 55%), linear-gradient(180deg, #20212a 0%, #181a22 480px, #16181f 100%)',
+          'radial-gradient(ellipse 70% 40% at 50% -10%, rgba(99,102,241,0.12) 0%, transparent 55%)',
         width: '100%',
       }}
     >
