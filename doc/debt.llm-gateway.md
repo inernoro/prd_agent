@@ -253,6 +253,13 @@
 - 生产 dry-run 验证通过：`BATCHES=4` 被默认上限 3 拒绝；`BATCHES=3` dry-run 通过。验证期间未触发 seed、未调用模型、未修改 `.env`。
 - 生产运行态复核仍为 `dabeffbf18552ec3628be0612623aba5c24be1de`、`LLMGW_MODE=shadow`、`LLMGW_HTTP_APP_CALLER_ALLOWLIST=`、`LLMGW_SHADOW_FULL_SAMPLE_PERCENT=1`。
 
+## 最新本地合同验证（2026-07-08 17:03 CST）
+
+- 生产只读复核仍为 `dabeffbf18552ec3628be0612623aba5c24be1de`、`LLMGW_MODE=shadow`、allowlist 空；本轮未补样本、未调用模型。
+- 首次并行跑多组 `dotnet test` 时触发本地 MSBuild 写 `obj/bin` 的文件锁冲突与 `apphost` 缺失，已判定为并发构建争用，不是网关合同失败。随后改为串行 `-m:1` 重跑同一矩阵。
+- 串行合同测试通过：`GatewayDirectClientRatchetTests` 18/18 PASS；`GatewayPinnedModelTests`、`GatewayMultipartHttpTests`、`GatewayServingEndpointContractTests`、`GatewayKeyGateContractTests` 合计 24/24 PASS；`ShadowLlmGatewayTests`、`CrossProcessServingSelfTest`、`CrossProcessServingErrorLoadTests`、`HttpLlmGatewayClientFailureTests` 合计 38/38 PASS。
+- 结论：当前分支的直连棘轮、pinned model、multipart HTTP、key gate、serving endpoint、shadow 和 cross-process failure 合同均保持绿色；生产灰度仍受 `dabeffbf` 样本数与 24 小时窗口 gate 约束。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘
