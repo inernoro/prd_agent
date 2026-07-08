@@ -10,6 +10,7 @@ repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 window_script="$script_dir/llmgw-shadow-sample-window.sh"
 seed_script="$script_dir/llmgw-map-shadow-seed.py"
 coverage_script="$script_dir/llmgw-shadow-coverage-report.py"
+plan_script="$script_dir/llmgw-shadow-sample-plan.py"
 
 profile="${LLMGW_SHADOW_ACCUMULATE_PROFILE:-}"
 dry_run="${LLMGW_SHADOW_ACCUMULATE_DRY_RUN:-1}"
@@ -34,6 +35,7 @@ run_coverage="${LLMGW_SHADOW_ACCUMULATE_RUN_COVERAGE:-1}"
 preflight_coverage="${LLMGW_SHADOW_ACCUMULATE_PREFLIGHT_COVERAGE:-1}"
 allow_after_pass="${LLMGW_SHADOW_ACCUMULATE_ALLOW_AFTER_PASS:-0}"
 max_batches="${LLMGW_SHADOW_ACCUMULATE_MAX_BATCHES:-0}"
+enforce_plan="${LLMGW_SHADOW_ACCUMULATE_ENFORCE_PLAN:-1}"
 
 case "$profile" in
   "")
@@ -66,6 +68,11 @@ fi
 
 if [ ! -f "$coverage_script" ]; then
   echo "ERROR: 找不到 shadow coverage 脚本: $coverage_script" >&2
+  exit 1
+fi
+
+if [ ! -f "$plan_script" ]; then
+  echo "ERROR: 找不到 shadow sample plan 脚本: $plan_script" >&2
   exit 1
 fi
 
@@ -121,6 +128,7 @@ echo "  runDir: $run_dir"
 echo "  seedFlags: $(redact_seed_flags "$seed_flags")"
 echo "  runCoverage: $run_coverage"
 echo "  preflightCoverage: $preflight_coverage"
+echo "  enforcePlan: $enforce_plan"
 echo "  coverageKinds: $coverage_kinds"
 echo "  coverageApps: $coverage_apps"
 echo "  coverageRequiredKinds: $coverage_required_kinds"
@@ -209,6 +217,25 @@ run_coverage_report() {
     $coverage_args
 }
 
+read_plan_field() {
+  plan_json="$1"
+  field="$2"
+  python3 - "$plan_json" "$field" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    data = json.load(fh)
+value = data.get(sys.argv[2])
+if isinstance(value, bool):
+    print("true" if value else "false")
+elif value is None:
+    print("")
+else:
+    print(value)
+PY
+}
+
 if [ "$run_coverage" = "1" ] || [ "$run_coverage" = "true" ]; then
   build_coverage_args
 fi
@@ -229,6 +256,42 @@ if { [ "$preflight_coverage" = "1" ] || [ "$preflight_coverage" = "true" ]; } &&
     echo "WARN: LLMGW_SHADOW_ACCUMULATE_ALLOW_AFTER_PASS is enabled; continuing despite satisfied coverage." >&2
   else
     echo "LLM Gateway shadow sample preflight coverage did not pass; continuing with bounded seed batches."
+    if [ "$enforce_plan" = "1" ] || [ "$enforce_plan" = "true" ]; then
+      plan_json="$run_dir/preflight-shadow-sample-plan.json"
+      plan_md="$run_dir/preflight-shadow-sample-plan.md"
+      plan_max_batches="$batches"
+      if [ "$max_batches" -gt 0 ]; then
+        plan_max_batches="$max_batches"
+      fi
+      python3 "$plan_script" \
+        --coverage-json "$preflight_json" \
+        --max-batches "$plan_max_batches" \
+        --json-out "$plan_json" \
+        --report-md "$plan_md"
+      plan_can_run="$(read_plan_field "$plan_json" canRunRecommendedBatches)"
+      plan_recommended="$(read_plan_field "$plan_json" recommendedBatches)"
+      plan_reason="$(read_plan_field "$plan_json" reason)"
+      echo "LLM Gateway shadow sample plan: canRun=$plan_can_run recommendedBatches=$plan_recommended reason=$plan_reason"
+      if [ "$plan_can_run" != "true" ]; then
+        if [ "$plan_reason" = "wait-coverage-window" ] || [ "$plan_reason" = "already-ready" ]; then
+          echo "LLM Gateway shadow sample accumulator: planner says no more seed batches are needed now."
+          exit 0
+        fi
+        echo "ERROR: shadow sample planner blocked seeding: $plan_reason" >&2
+        exit 1
+      fi
+      case "$plan_recommended" in
+        ''|*[!0-9]*)
+          echo "ERROR: shadow sample planner returned invalid recommendedBatches: $plan_recommended" >&2
+          exit 1
+          ;;
+      esac
+      if [ "$batches" -gt "$plan_recommended" ]; then
+        echo "ERROR: requested batches=$batches exceeds planner recommendation=$plan_recommended; refusing to over-sample." >&2
+        echo "Set LLMGW_SHADOW_ACCUMULATE_BATCHES=$plan_recommended or rerun after a fresh coverage report." >&2
+        exit 1
+      fi
+    fi
   fi
 fi
 

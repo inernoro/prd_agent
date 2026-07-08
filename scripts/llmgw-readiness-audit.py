@@ -137,6 +137,10 @@ def _static_checks() -> list[dict]:
     asr_credential_rotate_py = asr_credential_rotate_py_path.read_text(encoding="utf-8") if asr_credential_rotate_py_path.exists() else ""
     provider_audit_path = ROOT / "scripts/llmgw-prod-provider-config-audit.py"
     provider_audit = provider_audit_path.read_text(encoding="utf-8") if provider_audit_path.exists() else ""
+    shadow_accumulate_path = ROOT / "scripts/llmgw-shadow-sample-accumulate.sh"
+    shadow_accumulate = shadow_accumulate_path.read_text(encoding="utf-8") if shadow_accumulate_path.exists() else ""
+    shadow_sample_plan_path = ROOT / "scripts/llmgw-shadow-sample-plan.py"
+    shadow_sample_plan = shadow_sample_plan_path.read_text(encoding="utf-8") if shadow_sample_plan_path.exists() else ""
     ok, detail = _contains_all(
         release_gate,
         [
@@ -177,6 +181,27 @@ def _static_checks() -> list[dict]:
         ],
     )
     checks.append(_check("shadow_coverage_report_available", ok, detail))
+
+    ok, detail = _contains_all(
+        shadow_accumulate + "\n" + shadow_sample_plan,
+        [
+            "llmgw-shadow-sample-plan.py",
+            "LLMGW_SHADOW_ACCUMULATE_ENFORCE_PLAN:-1",
+            "preflight-shadow-sample-plan.json",
+            "canRunRecommendedBatches",
+            "recommendedBatches",
+            "refusing to over-sample",
+            "LLMGW_SHADOW_SAMPLE_PLAN_MAX_BATCHES",
+            "This script is read-only",
+            "coverage-read-failure",
+            "coverageReadReady",
+            "_coverage_failure_reason",
+            "_is_benign_coverage_failure",
+            "coverageFailures",
+            "coverage.get(\"failures\")",
+        ],
+    )
+    checks.append(_check("shadow_accumulator_enforces_readonly_sample_plan", ok, detail))
 
     shadow_watch = _read(".github/workflows/llmgw-shadow-watch.yml")
     ok, detail = _contains_all(
