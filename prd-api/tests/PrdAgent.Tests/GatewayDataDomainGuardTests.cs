@@ -181,7 +181,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--health-samples ${LLMGW_GATE_HEALTH_SAMPLES:-3}", script);
         Assert.Contains("--health-interval ${LLMGW_GATE_HEALTH_INTERVAL_SECONDS:-5}", script);
         Assert.Contains("LLMGW_GATE_SHADOW_SINCE_HOURS", script);
-        Assert.Contains("--since-hours ${LLMGW_GATE_SHADOW_SINCE_HOURS:-24}", script);
+        Assert.Contains("--since-hours ${LLMGW_GATE_SHADOW_SINCE_HOURS:-48}", script);
         Assert.Contains("LLMGW_GATE_MIN_COVERAGE_HOURS", script);
         Assert.Contains("--min-coverage-hours $gate_min_coverage_hours", script);
         Assert.Contains("默认要求 shadow 证据覆盖 24 小时", script);
@@ -1061,6 +1061,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_PREFLIGHT_COVERAGE:-1", script);
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_ALLOW_AFTER_PASS:-0", script);
         Assert.Contains("LLMGW_SHADOW_ACCUMULATE_ENFORCE_PLAN:-1", script);
+        Assert.Contains("LLMGW_SHADOW_ACCUMULATE_ALLOW_WINDOW_EXTENSION:-0", script);
+        Assert.Contains("--allow-window-extension", script);
         Assert.Contains("coverage already satisfies gate; skip seeding", script);
         Assert.Contains("preflight-shadow-coverage.json", script);
         Assert.Contains("llmgw-shadow-sample-plan.py", script);
@@ -1404,6 +1406,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("coverage.get(\"failures\")", planner);
         Assert.Contains("already-ready", planner);
         Assert.Contains("wait-coverage-window", planner);
+        Assert.Contains("window-extension-top-up", planner);
+        Assert.Contains("--allow-window-extension", planner);
+        Assert.Contains("_can_extend_window", planner);
         Assert.DoesNotContain("urllib.request", planner);
         Assert.DoesNotContain("subprocess.run", planner);
         Assert.DoesNotContain("requests.", planner);

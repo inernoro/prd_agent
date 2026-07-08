@@ -36,6 +36,7 @@ preflight_coverage="${LLMGW_SHADOW_ACCUMULATE_PREFLIGHT_COVERAGE:-1}"
 allow_after_pass="${LLMGW_SHADOW_ACCUMULATE_ALLOW_AFTER_PASS:-0}"
 max_batches="${LLMGW_SHADOW_ACCUMULATE_MAX_BATCHES:-0}"
 enforce_plan="${LLMGW_SHADOW_ACCUMULATE_ENFORCE_PLAN:-1}"
+allow_window_extension="${LLMGW_SHADOW_ACCUMULATE_ALLOW_WINDOW_EXTENSION:-0}"
 
 case "$profile" in
   "")
@@ -129,6 +130,7 @@ echo "  seedFlags: $(redact_seed_flags "$seed_flags")"
 echo "  runCoverage: $run_coverage"
 echo "  preflightCoverage: $preflight_coverage"
 echo "  enforcePlan: $enforce_plan"
+echo "  allowWindowExtension: $allow_window_extension"
 echo "  coverageKinds: $coverage_kinds"
 echo "  coverageApps: $coverage_apps"
 echo "  coverageRequiredKinds: $coverage_required_kinds"
@@ -263,11 +265,17 @@ if { [ "$preflight_coverage" = "1" ] || [ "$preflight_coverage" = "true" ]; } &&
       if [ "$max_batches" -gt 0 ]; then
         plan_max_batches="$max_batches"
       fi
+      plan_extra_args=""
+      if [ "$allow_window_extension" = "1" ] || [ "$allow_window_extension" = "true" ]; then
+        plan_extra_args="$plan_extra_args --allow-window-extension"
+      fi
+      # shellcheck disable=SC2086
       python3 "$plan_script" \
         --coverage-json "$preflight_json" \
         --max-batches "$plan_max_batches" \
         --json-out "$plan_json" \
-        --report-md "$plan_md"
+        --report-md "$plan_md" \
+        $plan_extra_args
       plan_can_run="$(read_plan_field "$plan_json" canRunRecommendedBatches)"
       plan_recommended="$(read_plan_field "$plan_json" recommendedBatches)"
       plan_reason="$(read_plan_field "$plan_json" reason)"
