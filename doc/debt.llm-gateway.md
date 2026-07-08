@@ -138,6 +138,17 @@
 - 只读 release gate 复查仍 FAIL，原因不是质量失败，而是证据期不足：同 commit 最近 24 小时 `shadow[global] total=4 < 30`、覆盖约 `0.04h < 24h`；`report-agent.generate::chat total=1 < 30`；`global/send total=1 < 30`。当前 shadow 聚合中 `critical=0`、`httpFail=0`，没有最近失败记录。
 - 结论：生产已进入最新 commit 的低成本 shadow 证据期，但尚未满足 canary-intent-text 的样本数与 24 小时覆盖门槛。下一步只能继续观察自然流量或在用户确认预算后按低成本文本入口小批 seed；禁止进入 `canary-intent-text`、禁止任何视频批量测试、禁止全量 `LLMGW_MODE=http`。
 
+## 最新生产取证（2026-07-08 15:44 CST）
+
+- PR #1015 已合并到 `main`，merge commit 为 `0fe4eaed3b37777f3c149a0293184059ce4e0112`。该 PR 修复低成本采样与阶段门禁脚本：`canary-intent-text` 强制绑定 release commit、seed 命令实际透传 `--release-commit`、report-agent 子进程通过环境变量接收 shadow sample key、MAP 日志缺失豁免只限 canary 阶段。
+- 生产容器仍运行 `a47d48cc8a5df3bcccc4821dbd3dee4dbc3e7649`，不是 `0fe4eaed3b37777f3c149a0293184059ce4e0112`；`/gw/v1/healthz` 三次连续采样均返回 `a47d48cc8a5df3bcccc4821dbd3dee4dbc3e7649`，commit 稳定。
+- 生产工作树存在大量手工同步文件与本地配置变更，不能直接 `git pull` 覆盖。已先备份旧脚本到 `/root/backups/llmgw-prod-scripts-before-1015-sync-20260708T154208+0800`，再从已合并的 `origin/main` 精确同步 4 个脚本：`scripts/llmgw-shadow-sample-accumulate.sh`、`scripts/llmgw-map-shadow-seed.py`、`scripts/llmgw-report-agent-shadow-seed.py`、`scripts/llmgw-prod-stage.sh`。
+- 同步后已在生产机完成语法与关键保护检查：`sh -n scripts/llmgw-shadow-sample-accumulate.sh scripts/llmgw-prod-stage.sh`、`python3 -m py_compile scripts/llmgw-map-shadow-seed.py scripts/llmgw-report-agent-shadow-seed.py` 通过；grep 确认存在 `seed_run_flags`、`LLMGW_SHADOW_SAMPLE_KEY`、`allow_missing_map_logs_waiver_for_stage` 与 `LLMGW_SHADOW_ACCUMULATE_RELEASE_COMMIT`。
+- 只读 `canary-intent-text` release gate 仍 FAIL，但失败原因为证据不足，不是链路质量失败：`shadow[global] total=279`、`allMatch=278`、`critical=0`、`httpFail=0`，覆盖约 `1.20h < 24h`；`report-agent.generate::chat/send total=1 < 30`，覆盖 `0h < 24h`。证据已写入生产 `.llmgw-release-evidence/*_readonly_canary-intent-text-gate_a47d48c.{json,md}` 与 `.llmgw-release-evidence/*_readonly_current-shadow-coverage_a47d48c.{json,md}`。
+- 为避免过量测试，仅执行 1 个低成本 `canary-intent-text` force-sample batch；未提高全局采样、未重启 API、未触发视频/图片。执行后同 commit `send` 与 `report-agent.generate::chat/send` 样本从 1 增至 2，`critical=0`、`httpFail=0`，但仍因 `2 < 30` 返回 FAIL。证据目录为 `.llmgw-release-evidence/shadow-accumulate-20260708T074315Z/`。
+- 生产安全开关复核：`.env` 仍为 `LLMGW_MODE=shadow`、`LLMGW_HTTP_APP_CALLER_ALLOWLIST=`、`LLMGW_SHADOW_FULL_SAMPLE_PERCENT=1`；API 容器环境仍为 `LlmGateway__Mode=shadow`、`LlmGateway__HttpAppCallerAllowlist=`、`LlmGateway__ShadowFullSamplePercent=1`、`LlmGateway__ShadowFullSampleAppCallerAllowlist=report-agent.generate::chat,prd-agent-desktop.chat.suggested-questions::intent`。
+- 结论：生产脚本保护已补齐，但生产运行 commit 仍是 `a47d48c`，且 `canary-intent-text` 只达到 2/30 样本、覆盖约 1.22 小时。继续禁止 `canary-intent-text` 灰度、禁止视频批量取证、禁止全量 `LLMGW_MODE=http`。下一步只能按低成本节奏补 `report-agent.generate::chat/send` 到 30 条并等待覆盖窗口满 24 小时，或先将最新 main 以 shadow 模式部署后重新按新 commit 计证据。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘
