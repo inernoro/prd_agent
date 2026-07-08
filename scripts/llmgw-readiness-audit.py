@@ -141,6 +141,8 @@ def _static_checks() -> list[dict]:
     shadow_accumulate = shadow_accumulate_path.read_text(encoding="utf-8") if shadow_accumulate_path.exists() else ""
     shadow_sample_plan_path = ROOT / "scripts/llmgw-shadow-sample-plan.py"
     shadow_sample_plan = shadow_sample_plan_path.read_text(encoding="utf-8") if shadow_sample_plan_path.exists() else ""
+    rollout_status_path = ROOT / "scripts/llmgw-rollout-status.py"
+    rollout_status = rollout_status_path.read_text(encoding="utf-8") if rollout_status_path.exists() else ""
     ok, detail = _contains_all(
         release_gate,
         [
@@ -182,6 +184,24 @@ def _static_checks() -> list[dict]:
         ],
     )
     checks.append(_check("shadow_coverage_report_available", ok, detail))
+
+    ok, detail = _contains_all(
+        rollout_status,
+        [
+            "Read-only LLM Gateway rollout status board",
+            "llmgw-shadow-coverage-report.py",
+            "llmgw-shadow-sample-plan.py",
+            "--coverage-json",
+            "--allow-window-extension",
+            "wait-coverage-window",
+            "run-one-window-extension",
+            "shadow 样本数",
+            "shadow 质量",
+            "覆盖窗口",
+            "全量 HTTP 发布",
+        ],
+    )
+    checks.append(_check("rollout_status_board_available", ok, detail))
 
     ok, detail = _contains_all(
         shadow_accumulate + "\n" + shadow_sample_plan,
