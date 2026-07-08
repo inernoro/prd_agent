@@ -335,6 +335,8 @@ def main() -> int:
                         help="required shadow Kind aggregate cell, format kind or kind:min; repeatable")
     parser.add_argument("--require-app-kind", action="append", default=[],
                         help="required appCallerCode + Kind cell, format appCallerCode:kind:min; repeatable")
+    parser.add_argument("--skip-global-cells", action="store_true",
+                        help="Only check explicitly requested appCaller/kind cells; useful for scoped non-video gates.")
     parser.add_argument("--min-per-cell", type=int, default=int(os.environ.get("LLMGW_GATE_MIN_PER_APP", "30")))
     parser.add_argument("--since-hours", type=float, default=float(os.environ.get("LLMGW_GATE_SHADOW_SINCE_HOURS", "24")))
     parser.add_argument("--min-coverage-hours", type=float, default=float(os.environ.get("LLMGW_GATE_MIN_COVERAGE_HOURS", "0")))
@@ -379,9 +381,10 @@ def main() -> int:
         failure_sample_limit = report["failureSampleLimit"]
         specs: list[dict] = []
         spec_index: dict[tuple[str | None, str | None], dict] = {}
-        _upsert_cell_spec(specs, spec_index, app=None, kind=None, required_total=args.min_per_cell, source="global")
-        for kind in kinds:
-            _upsert_cell_spec(specs, spec_index, app=None, kind=kind, required_total=args.min_per_cell, source="kind")
+        if not args.skip_global_cells:
+            _upsert_cell_spec(specs, spec_index, app=None, kind=None, required_total=args.min_per_cell, source="global")
+            for kind in kinds:
+                _upsert_cell_spec(specs, spec_index, app=None, kind=kind, required_total=args.min_per_cell, source="kind")
         for app in app_callers:
             _upsert_cell_spec(specs, spec_index, app=app, kind=None, required_total=args.min_per_cell, source="appCaller")
         for raw in args.require_kind:

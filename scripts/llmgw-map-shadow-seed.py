@@ -1499,6 +1499,16 @@ def read_env_secret(*names: str) -> str:
     return ""
 
 
+def read_env_int(name: str, default: int) -> int:
+    value = (os.environ.get(name) or "").strip()
+    if not value:
+        return default
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise SystemExit(f"{name} must be an integer") from exc
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -1630,6 +1640,8 @@ def main() -> int:
     parser.add_argument("--include-image-worker-vision", action="store_true", help="Also seed one ImageGenRunWorker multi-image vision run per iteration; requires at least two --image-ref-shas")
     parser.add_argument("--include-video-direct", action="store_true", help="Also seed one video-agent direct video submit raw call per iteration")
     parser.add_argument("--include-visual-video-direct", action="store_true", help="Also seed one visual-agent direct video run per iteration")
+    parser.add_argument("--max-video-submits", type=int, default=read_env_int("LLMGW_SHADOW_MAX_VIDEO_SUBMITS", 3), help="Maximum video submit requests allowed unless --allow-high-cost-video is set")
+    parser.add_argument("--allow-high-cost-video", action="store_true", help="Explicitly allow video seed batches above --max-video-submits")
     parser.add_argument("--include-transcript-asr", action="store_true", help="Also seed one transcript-agent ASR raw run per iteration")
     parser.add_argument("--include-document-store-subtitle-asr", action="store_true", help="Also seed one document-store subtitle ASR raw run per iteration")
     parser.add_argument("--include-video-to-doc-asr", action="store_true", help="Also seed one video-agent v2d ASR raw run per iteration; requires --asr-video-url")
@@ -1664,6 +1676,17 @@ def main() -> int:
 
     if args.iterations < 1:
         raise SystemExit("--iterations must be >= 1")
+    if args.max_video_submits < 1:
+        raise SystemExit("--max-video-submits must be >= 1")
+
+    video_submit_paths = int(bool(args.include_video_direct)) + int(bool(args.include_visual_video_direct))
+    requested_video_submits = video_submit_paths * args.iterations
+    if requested_video_submits > args.max_video_submits and not args.allow_high_cost_video:
+        raise SystemExit(
+            "Video seed would submit "
+            f"{requested_video_submits} video requests, above --max-video-submits={args.max_video_submits}. "
+            "Reduce --iterations or pass --allow-high-cost-video after confirming provider budget."
+        )
 
     if args.force_shadow_sample:
         if not args.gw_key.strip():
@@ -1785,6 +1808,11 @@ def main() -> int:
         "releaseCommit": release_commit,
         "iterations": args.iterations,
         "continueOnError": bool(args.continue_on_error),
+        "videoSubmitGuard": {
+            "requestedVideoSubmits": requested_video_submits,
+            "maxVideoSubmits": args.max_video_submits,
+            "allowHighCostVideo": bool(args.allow_high_cost_video),
+        },
         "steps": [],
         "summaries": {},
     }
@@ -1793,6 +1821,11 @@ def main() -> int:
     print(f"gwBase={gw_base}")
     print(f"releaseCommit={release_commit}")
     print(f"iterations={args.iterations}")
+    print(
+        "videoSubmitGuard="
+        f"{requested_video_submits}/{args.max_video_submits}"
+        f" allowHighCostVideo={bool(args.allow_high_cost_video)}"
+    )
     if args.include_image_raw:
         print(f"imageRawModel={image_platform_id}/{image_model_id}")
     if args.include_image_worker_text2img:
