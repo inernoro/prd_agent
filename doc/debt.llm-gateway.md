@@ -192,6 +192,12 @@
 - 同一矩阵开启 `--min-coverage-hours 24` 后仍 FAIL，唯一失败原因为覆盖时长不足：`report-agent.generate::chat/send coverageHours=0.51 < 24`，global/send 覆盖约 `0.52h < 24`。没有 critical/httpFail 失败。
 - 结论：第一批低风险 canary-intent 已达 30/30 样本数，但 24 小时观察窗口未满。继续禁止开启 allowlist 灰度；最早也要等 `2026-07-09T07:54:02Z` 之后重新跑 release gate，确认样本仍在最近 24 小时窗口内且 coverageHours >= 24 后，才允许进入 `canary-intent-text` 阶段。
 
+## 最新生产取证（2026-07-08 16:27 CST）
+
+- 严格 `canary-intent-text` release gate 只读复核仍 FAIL，但失败项已收敛到 24 小时覆盖窗口不足：`report-agent.generate::chat/send total=30`、`global/send total=31`、`critical=0`、`httpFail=0`、health 三次采样稳定，`coverageHours` 约 `0.51h < 24h`。证据写入生产 `.llmgw-release-evidence/*_readonly_canary-intent-24h-gate_0fe4eaed.{json,md}`。
+- 已在生产证据目录创建只读复查脚本：`.llmgw-release-evidence/manual-gates/run-canary-intent-gate-0fe4eaed.sh`，权限 `700`，`sh -n` 通过。该脚本只读取 `.env` 中的 gateway key，运行 `scripts/llmgw-release-gate.py` 并写 JSON/Markdown 证据；不修改配置、不重启容器、不调用模型。
+- 下一次可执行窗口：最早 `2026-07-09T07:54:02Z` 之后运行上述脚本。只有脚本返回 PASS，且生产仍为同一 commit `0fe4eaed3b37777f3c149a0293184059ce4e0112`、`critical=0`、`httpFail=0`，才允许进入 `canary-intent-text` allowlist 灰度。未达成前继续禁止 `canary-intent-text`、禁止全量 `LLMGW_MODE=http`。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘
