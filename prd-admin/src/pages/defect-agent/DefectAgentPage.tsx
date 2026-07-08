@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/design/Button';
 import { Surface } from '@/components/design';
@@ -21,6 +21,7 @@ import { SharesListPanel } from './components/SharesListPanel';
 import { DefectAutomationPanel } from './components/DefectAutomationPanel';
 import { cn } from '@/lib/cn';
 import { useIsMobile } from '@/hooks/useBreakpoint';
+import { clearDefectDeepLinkParams, getDefectDeepLinkId } from './defectDeepLink';
 
 const NOTIFICATION_STORAGE_KEY = 'defect-agent-notified-ids';
 
@@ -55,11 +56,16 @@ export default function DefectAgentPage() {
   const [showProjectDialog, setShowProjectDialog] = useState(false);
   const [showSharesPanel, setShowSharesPanel] = useState(false);
   const [showAutomationPanel, setShowAutomationPanel] = useState(false);
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const isMobile = useIsMobile();
   const notifiedRef = useRef(false);
   const directLoadRef = useRef<string | null>(null);
-  const queryDefectId = searchParams.get('defectId');
+  const queryDefectId = getDefectDeepLinkId(searchParams);
+
+  const handleDetailClose = useCallback(() => {
+    if (!queryDefectId) return;
+    setSearchParams(clearDefectDeepLinkParams(searchParams), { replace: true });
+  }, [queryDefectId, searchParams, setSearchParams]);
 
   // 与 DefectList 一致的客户端过滤逻辑，计算当前可见的缺陷 ID
   const visibleDefectIds = useMemo(() => {
@@ -448,7 +454,7 @@ export default function DefectAgentPage() {
       )}
 
       {/* Detail Modal */}
-      {selectedDefectId && <DefectDetailPanel />}
+      {selectedDefectId && <DefectDetailPanel onClose={handleDetailClose} />}
 
       {/* Submit Panel (slide-over) */}
       {showSubmitPanel && <DefectSubmitPanel />}
