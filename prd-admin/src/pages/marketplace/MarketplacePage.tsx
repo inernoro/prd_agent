@@ -26,7 +26,7 @@ import {
 } from '@/lib/marketplaceTypes';
 import { toast } from '@/lib/toast';
 import { getMarketplaceSkillTags } from '@/services';
-import { useHomepageAssetsStore } from '@/stores/homepageAssetsStore';
+import { useHomepageAssetsStore, useMarketplaceBgUrl } from '@/stores/homepageAssetsStore';
 import { SkillUploadDialog } from './SkillUploadDialog';
 import { SkillOpenApiDialog } from './SkillOpenApiDialog';
 import { useAuthStore } from '@/stores/authStore';
@@ -162,6 +162,7 @@ export const MarketplacePage: React.FC = () => {
   }, [quickConnectOpen]);
 
   const loadHomepageAssets = useHomepageAssetsStore((s) => s.load);
+  const marketplaceBgUrl = useMarketplaceBgUrl();
 
   useEffect(() => { void loadHomepageAssets(); }, [loadHomepageAssets]);
 
@@ -260,14 +261,26 @@ export const MarketplacePage: React.FC = () => {
     <div
       className="marketplace-page relative min-h-full overflow-auto"
       style={{
-        // 2026-07-08 去页面私有整幅背景：深色遮罩 + 运营封面图画在外壳内边距
-        // 之内，形成一个与相邻页面错位的"图片盒子"（用户反馈"还有一个背景、
-        // 不整齐靠边"）。运营上传的 marketplaceBgUrl 资产保留在素材库，
-        // 如需氛围背景应升级为外壳级全出血能力再启用。min-h-screen 同步改
-        // min-h-full（页面已在外壳滚动容器内，100vh 会永远多出一截滚动）。
+        // 2026-07-08 去页面私有默认背景：此前的深色遮罩 + 内置渐变画在外壳
+        // 内边距之内，形成一个与相邻页面错位的"图片盒子"（用户反馈"还有一个
+        // 背景、不整齐靠边"）。默认态保持 transparent 与全站一致；仅当运营在
+        // 素材库上传了 marketplaceBgUrl 时才铺整层氛围背景（见下方图层）。
+        // min-h-screen 同步改 min-h-full（页面已在外壳滚动容器内，100vh 会
+        // 永远多出一截滚动）。
         background: 'transparent',
       }}
     >
+      {marketplaceBgUrl && (
+        <div
+          aria-hidden
+          className="absolute inset-0 z-0 pointer-events-none"
+          style={{
+            backgroundImage: `linear-gradient(180deg, rgba(11,11,16,0.62) 0%, rgba(11,11,16,0.78) 100%), url(${marketplaceBgUrl})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+          }}
+        />
+      )}
       <div className="relative z-10">
         {/* ── Toolbar ── */}
         <div className="surface-nav-bar marketplace-toolbar" style={{ marginBottom: 8 }}>
