@@ -1399,6 +1399,16 @@ def _provider_audit_self_test() -> dict:
     return {"name": "provider_audit_external_blocker_self_test", "ok": ok, "detail": detail, "command": result}
 
 
+def _rollout_status_self_test() -> dict:
+    result = _run(
+        ["python3", "scripts/llmgw-rollout-status.py", "--self-test"],
+        timeout=60,
+    )
+    detail = (result["stdout"] + result["stderr"]).strip()
+    ok = result["ok"] and "LLM Gateway rollout status self-test: PASS" in detail
+    return {"name": "rollout_status_board_self_test", "ok": ok, "detail": detail, "command": result}
+
+
 def _dotnet_checks() -> list[dict]:
     checks: list[dict] = []
     tests = [
@@ -1803,6 +1813,7 @@ def main() -> int:
     checks.append(_restore_shadow_dry_run())
     checks.append(_restore_shadow_persist_env_test())
     checks.append(_provider_audit_self_test())
+    checks.append(_rollout_status_self_test())
     if args.run_dotnet:
         checks.extend(_dotnet_checks())
     if args.run_smoke:
