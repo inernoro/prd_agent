@@ -205,6 +205,13 @@
 - 演练后复核生产仍为 `LLMGW_MODE=shadow`、`LLMGW_HTTP_APP_CALLER_ALLOWLIST=`、`LLMGW_SHADOW_FULL_SAMPLE_PERCENT=1`，API 容器环境仍为 `LlmGateway__Mode=shadow`，`/gw/v1/healthz` 仍返回 `0fe4eaed3b37777f3c149a0293184059ce4e0112`。
 - 结论：第一批 canary-intent 的两个前置门已满足其一：同 commit rollback rehearsal 已完成；样本数也已达 30/30。剩余唯一 gate 是 24 小时覆盖窗口，未满前仍禁止进入 `canary-intent-text` allowlist 灰度。
 
+## 最新生产取证（2026-07-08 16:31 CST）
+
+- 用户确认火山引擎已充值后，发布策略仍保持低成本证据优先：火山相关能力允许小样本单次验证，但禁止反复视频、图片、ASR 或多轮重试。后续若必须测高成本模型，默认每类只做最小样本，并以日志与 release gate 作为主要证据。
+- 重新以生产 `.env` 注入 gateway key 后执行 `canary-intent-text --dry-run`，未进入任何模型调用或配置变更，脚本在执行前被 rollout ledger 拦截：`previous_stage=shadow-start`、`observed_hours=0.64`、`required_hours=24`。单独运行 `scripts/llmgw-rollout-ledger.py validate` 得到同一结论。
+- 这说明当前还有两个一致的时间门禁：release gate 的 shadow 覆盖窗口未满 24 小时，rollout ledger 的阶段观察窗口也未满 24 小时。它们都指向同一个等待点，最早仍是 `2026-07-09T07:54:02Z` 之后重新复查。
+- 下一次复查必须同时跑两项只读检查：`.llmgw-release-evidence/manual-gates/run-canary-intent-gate-0fe4eaed.sh` 与 `scripts/llmgw-prod-stage.sh --stage canary-intent-text --commit 0fe4eaed3b37777f3c149a0293184059ce4e0112 --dry-run`。两项都 PASS 后才允许执行 `canary-intent-text --execute`；否则继续停在 shadow 证据期。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘
