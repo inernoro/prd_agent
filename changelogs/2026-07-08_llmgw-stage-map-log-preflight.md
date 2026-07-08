@@ -4,6 +4,7 @@
 | ops | scripts | LLM Gateway shadow 累计预设执行时强制指定 release commit，避免混用旧版本样本 |
 | fix | scripts | 修复 LLM Gateway shadow 累计预设未向 seed 命令透传 release commit 的证据错配风险 |
 | fix | scripts | 修复 report-agent shadow seed 未继承强制采样 key，确保 canary-intent-text 预设可稳定补齐目标样本 |
+| security | scripts | LLM Gateway report-agent shadow seed 改用环境变量传递强制采样 key，避免敏感值出现在子进程 argv |
 | test | prd-api | 增加 LLM Gateway shadow 累计预设守卫，防止 canary-intent-text 取证参数漂移 |
 | test | prd-api | 增加 LLM Gateway 生产 stage preflight 豁免开关守卫，防止误删 release gate 说明与参数传递 |
 | docs | doc | 记录 LLM Gateway 最新生产 shadow 证据期状态与下一步门禁 |
