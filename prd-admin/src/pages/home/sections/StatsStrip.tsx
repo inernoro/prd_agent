@@ -11,7 +11,7 @@ export function StatsStrip() {
 
   return (
     <section
-      className="relative py-28 md:py-36 px-6"
+      className="relative py-20 md:py-24 px-6"
       style={{ fontFamily: 'var(--font-body)' }}
     >
       <div className="max-w-6xl mx-auto">

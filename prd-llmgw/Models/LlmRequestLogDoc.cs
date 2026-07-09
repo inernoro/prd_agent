@@ -26,6 +26,9 @@ public class LlmRequestLogDoc
     public string? RequestType { get; set; }
     public string? AppCallerCode { get; set; }
     public string? AppCallerCodeDisplayName { get; set; }
+    public string? AppCallerTitle { get; set; }
+    public string? SourceSystem { get; set; }
+    public string? IngressProtocol { get; set; }
 
     public string Provider { get; set; } = string.Empty;
     public string Model { get; set; } = string.Empty;
@@ -33,6 +36,8 @@ public class LlmRequestLogDoc
     public string? PlatformName { get; set; }
     public string? Protocol { get; set; }
     public string? ResolutionReason { get; set; }
+    public string? ModelPolicy { get; set; }
+    public string? ModelPoolId { get; set; }
 
     public string RequestBodyRedacted { get; set; } = string.Empty;
     public string? SystemPromptText { get; set; }
@@ -46,6 +51,9 @@ public class LlmRequestLogDoc
 
     public int? InputTokens { get; set; }
     public int? OutputTokens { get; set; }
+    public decimal? EstimatedCost { get; set; }
+    public string? EstimatedCostCurrency { get; set; }
+    public decimal? EstimatedCostUsd { get; set; }
     public int? StatusCode { get; set; }
     public string Status { get; set; } = string.Empty;
 
@@ -57,5 +65,26 @@ public class LlmRequestLogDoc
     public bool? IsFallback { get; set; }
     public string? FallbackReason { get; set; }
     public string? ExpectedModel { get; set; }
+    public List<LlmProviderAttemptDoc>? ProviderAttempts { get; set; }
     public string? Error { get; set; }
+}
+
+public class LlmProviderAttemptDoc
+{
+    public int Order { get; set; }
+    public string Stage { get; set; } = "send";
+    public string? Provider { get; set; }
+    public string? PlatformId { get; set; }
+    public string? PlatformName { get; set; }
+    public string? Model { get; set; }
+    public string? ModelGroupId { get; set; }
+    public string? ModelGroupName { get; set; }
+    public string? Protocol { get; set; }
+    public string? Transport { get; set; }
+    public string Status { get; set; } = "selected";
+    public string? Reason { get; set; }
+    public int? StatusCode { get; set; }
+    public long? DurationMs { get; set; }
+    public string? Error { get; set; }
+    public string? EndedAt { get; set; }
 }

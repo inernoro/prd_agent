@@ -26,7 +26,7 @@ import {
 } from '@/lib/marketplaceTypes';
 import { toast } from '@/lib/toast';
 import { getMarketplaceSkillTags } from '@/services';
-import { useHomepageAssetsStore, useMarketplaceBgUrl } from '@/stores/homepageAssetsStore';
+import { useHomepageAssetsStore } from '@/stores/homepageAssetsStore';
 import { SkillUploadDialog } from './SkillUploadDialog';
 import { SkillOpenApiDialog } from './SkillOpenApiDialog';
 import { useAuthStore } from '@/stores/authStore';
@@ -162,7 +162,6 @@ export const MarketplacePage: React.FC = () => {
   }, [quickConnectOpen]);
 
   const loadHomepageAssets = useHomepageAssetsStore((s) => s.load);
-  const marketplaceBgUrl = useMarketplaceBgUrl('hero');
 
   useEffect(() => { void loadHomepageAssets(); }, [loadHomepageAssets]);
 
@@ -259,11 +258,14 @@ export const MarketplacePage: React.FC = () => {
 
   return (
     <div
-      className="marketplace-page relative min-h-screen overflow-auto"
+      className="marketplace-page relative min-h-full overflow-auto"
       style={{
-        background: marketplaceBgUrl
-          ? `linear-gradient(rgba(8, 10, 16, 0.78), rgba(8, 10, 16, 0.90)), url("${marketplaceBgUrl}") center / cover no-repeat`
-          : 'transparent',
+        // 2026-07-08 去页面私有整幅背景：深色遮罩 + 运营封面图画在外壳内边距
+        // 之内，形成一个与相邻页面错位的"图片盒子"（用户反馈"还有一个背景、
+        // 不整齐靠边"）。运营上传的 marketplaceBgUrl 资产保留在素材库，
+        // 如需氛围背景应升级为外壳级全出血能力再启用。min-h-screen 同步改
+        // min-h-full（页面已在外壳滚动容器内，100vh 会永远多出一截滚动）。
+        background: 'transparent',
       }}
     >
       <div className="relative z-10">
@@ -458,7 +460,8 @@ export const MarketplacePage: React.FC = () => {
       )}
 
       {/* ── 卡片内容区 ── */}
-      <div data-tour-id="marketplace-list" className="relative pt-4 pb-6 px-4">
+      {/* 水平不再叠 px-4：外壳已供 16px 内边距，双重内边距会让列表与工具条错位 */}
+      <div data-tour-id="marketplace-list" className="relative pt-4 pb-6">
         {loading ? (
           <MapSectionLoader />
         ) : filtered.length === 0 ? (

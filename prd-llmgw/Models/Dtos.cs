@@ -58,6 +58,7 @@ public sealed class LlmLogListItem
 {
     public string Id { get; set; } = string.Empty;
     public string RequestId { get; set; } = string.Empty;
+    public string? ReleaseCommit { get; set; }
     public string Provider { get; set; } = string.Empty;
     public string Model { get; set; } = string.Empty;
     public string? PlatformId { get; set; }
@@ -70,6 +71,9 @@ public sealed class LlmLogListItem
     public string? RequestType { get; set; }
     public string? AppCallerCode { get; set; }
     public string? AppCallerCodeDisplayName { get; set; }
+    public string? AppCallerTitle { get; set; }
+    public string? SourceSystem { get; set; }
+    public string? IngressProtocol { get; set; }
     public string Status { get; set; } = string.Empty;
     public string? StartedAt { get; set; }
     public string? FirstByteAt { get; set; }
@@ -78,12 +82,17 @@ public sealed class LlmLogListItem
     public int? StatusCode { get; set; }
     public int? InputTokens { get; set; }
     public int? OutputTokens { get; set; }
+    public decimal? EstimatedCost { get; set; }
+    public string? EstimatedCostCurrency { get; set; }
+    public decimal? EstimatedCostUsd { get; set; }
     public string? Error { get; set; }
     public bool? IsFallback { get; set; }
     public string? ExpectedModel { get; set; }
     public string? Protocol { get; set; }
     public string? ResolutionReason { get; set; }
     public string? Transport { get; set; }
+    public string? ModelPolicy { get; set; }
+    public string? ModelPoolId { get; set; }
     public int? ToolCallCount { get; set; }
     public string? FinishReason { get; set; }
     public bool? IsStreaming { get; set; }
@@ -102,12 +111,16 @@ public sealed class LlmLogDetail
 {
     public string Id { get; set; } = string.Empty;
     public string RequestId { get; set; } = string.Empty;
+    public string? ReleaseCommit { get; set; }
     public string? GroupId { get; set; }
     public string? SessionId { get; set; }
     public string? UserId { get; set; }
     public string? RequestType { get; set; }
     public string? AppCallerCode { get; set; }
     public string? AppCallerCodeDisplayName { get; set; }
+    public string? AppCallerTitle { get; set; }
+    public string? SourceSystem { get; set; }
+    public string? IngressProtocol { get; set; }
     public string Provider { get; set; } = string.Empty;
     public string Model { get; set; } = string.Empty;
     public string? RequestBodyRedacted { get; set; }
@@ -119,6 +132,16 @@ public sealed class LlmLogDetail
     public int? ToolCallCount { get; set; }
     public int? InputTokens { get; set; }
     public int? OutputTokens { get; set; }
+    public decimal? InputPricePerMillion { get; set; }
+    public decimal? OutputPricePerMillion { get; set; }
+    public decimal? PricePerCall { get; set; }
+    public string? PriceCurrency { get; set; }
+    public decimal? EstimatedInputCost { get; set; }
+    public decimal? EstimatedOutputCost { get; set; }
+    public decimal? EstimatedCallCost { get; set; }
+    public decimal? EstimatedCost { get; set; }
+    public string? EstimatedCostCurrency { get; set; }
+    public decimal? EstimatedCostUsd { get; set; }
     public string? StartedAt { get; set; }
     public string? FirstByteAt { get; set; }
     public string? EndedAt { get; set; }
@@ -127,13 +150,77 @@ public sealed class LlmLogDetail
     public int? StatusCode { get; set; }
     public bool? IsFallback { get; set; }
     public string? FallbackReason { get; set; }
+    public string? PlatformId { get; set; }
+    public string? PlatformName { get; set; }
+    public string? ModelResolutionType { get; set; }
+    public string? ModelGroupId { get; set; }
+    public string? ModelGroupName { get; set; }
     public string? ExpectedModel { get; set; }
     public string? Protocol { get; set; }
     public string? ResolutionReason { get; set; }
     public string? Transport { get; set; }
+    public string? ModelPolicy { get; set; }
+    public string? ModelPoolId { get; set; }
+    public string? ParameterPolicy { get; set; }
+    public List<string> DroppedParameters { get; set; } = new();
+    public List<ProviderAttemptDto> ProviderAttempts { get; set; } = new();
+    public RouterTraceDto RouterTrace { get; set; } = new();
     public string? FinishReason { get; set; }
     public bool? IsStreaming { get; set; }
     public string? Error { get; set; }
+}
+
+public sealed class RouterTraceDto
+{
+    public string? Mode { get; set; }
+    public string? RequestedModel { get; set; }
+    public string? ActualModel { get; set; }
+    public string? ModelGroupId { get; set; }
+    public string? ModelGroupName { get; set; }
+    public string? Provider { get; set; }
+    public string? PlatformId { get; set; }
+    public string? PlatformName { get; set; }
+    public string? Protocol { get; set; }
+    public string? Transport { get; set; }
+    public string? SourceSystem { get; set; }
+    public string? IngressProtocol { get; set; }
+    public string? ModelPolicy { get; set; }
+    public string? ModelPoolId { get; set; }
+    public bool IsFallback { get; set; }
+    public string? FallbackReason { get; set; }
+    public string? ResolutionReason { get; set; }
+    public string? ParameterPolicy { get; set; }
+    public List<string> DroppedParameters { get; set; } = new();
+    public List<RouterTraceStepDto> Steps { get; set; } = new();
+}
+
+public sealed class ProviderAttemptDto
+{
+    public int Order { get; set; }
+    public string Stage { get; set; } = "send";
+    public string? Provider { get; set; }
+    public string? PlatformId { get; set; }
+    public string? PlatformName { get; set; }
+    public string? Model { get; set; }
+    public string? ModelGroupId { get; set; }
+    public string? ModelGroupName { get; set; }
+    public string? Protocol { get; set; }
+    public string? Transport { get; set; }
+    public string Status { get; set; } = "selected";
+    public string? Reason { get; set; }
+    public int? StatusCode { get; set; }
+    public long? DurationMs { get; set; }
+    public string? Error { get; set; }
+    public string? EndedAt { get; set; }
+}
+
+public sealed class RouterTraceStepDto
+{
+    public int Order { get; set; }
+    public string Stage { get; set; } = "";
+    public string Label { get; set; } = "";
+    public string? Value { get; set; }
+    public string Status { get; set; } = "info";
 }
 
 // ── 元信息 ──
@@ -145,6 +232,9 @@ public sealed class LogsMeta
     public List<string> AppCallers { get; set; } = new();
     public List<string> Transports { get; set; } = new();
     public List<string> RequestTypes { get; set; } = new();
+    public List<string> SourceSystems { get; set; } = new();
+    public List<string> IngressProtocols { get; set; } = new();
+    public List<string> ModelPolicies { get; set; } = new();
 }
 
 // ── 日志汇总 ──
@@ -159,6 +249,7 @@ public sealed class LogsSummaryData
     public long InputTokens { get; set; }
     public long OutputTokens { get; set; }
     public long TotalTokens { get; set; }
+    public decimal EstimatedCostUsd { get; set; }
     public long? AverageDurationMs { get; set; }
     public List<LogsBucketItem> TransportDistribution { get; set; } = new();
     public List<LogsBucketItem> StatusDistribution { get; set; } = new();
@@ -207,6 +298,209 @@ public sealed class SessionsData
 // 字段用 nullable：缺字段/空 body 时为 null，处理器拒绝（避免默认 false 误关平台/模型/默认池）。
 public sealed class ToggleEnabledRequest { public bool? Enabled { get; set; } }
 public sealed class ToggleDefaultRequest { public bool? IsDefault { get; set; } }
+public sealed class RotateApiKeyRequest { public string? ApiKey { get; set; } }
+public sealed class BulkRotateApiKeysRequest
+{
+    public string? ObjectType { get; set; }
+    public string? ApiKey { get; set; }
+    public List<string>? Ids { get; set; }
+    public string? PlatformId { get; set; }
+    public bool? EnabledOnly { get; set; }
+    public bool? OnlyMissing { get; set; }
+    public bool? AllGwOwned { get; set; }
+}
+public sealed class BulkRotateApiKeysResult
+{
+    public string ObjectType { get; set; } = "";
+    public long MatchedCount { get; set; }
+    public long ModifiedCount { get; set; }
+    public long SkippedCount { get; set; }
+    public string FilterSummary { get; set; } = "";
+}
+public sealed class CreatePoolRequest
+{
+    public string? Name { get; set; }
+    public string? Code { get; set; }
+    public string? ModelType { get; set; }
+    public int? Priority { get; set; }
+    public bool? IsDefaultForType { get; set; }
+    public int? StrategyType { get; set; }
+    public string? Description { get; set; }
+}
+public sealed class UpdatePoolRequest
+{
+    public string? Name { get; set; }
+    public string? Code { get; set; }
+    public string? ModelType { get; set; }
+    public int? Priority { get; set; }
+    public bool? IsDefaultForType { get; set; }
+    public int? StrategyType { get; set; }
+    public string? Description { get; set; }
+}
+public sealed class BulkClaimPoolsRequest
+{
+    public string? ModelType { get; set; }
+    public bool? Overwrite { get; set; }
+}
+public sealed class BulkClaimPoolsResult
+{
+    public int Claimed { get; set; }
+    public int Skipped { get; set; }
+    public List<PoolItem> Items { get; set; } = new();
+}
+public sealed class BulkCalibratePoolPriceCurrencyRequest
+{
+    public string? ModelType { get; set; }
+    public string? TargetCurrency { get; set; }
+    public bool? OnlyMissing { get; set; }
+    public bool? IncludeMembersWithoutPrice { get; set; }
+}
+public sealed class BulkCalibratePoolPriceCurrencyResult
+{
+    public int ScannedPools { get; set; }
+    public int TouchedPools { get; set; }
+    public int MatchedMembers { get; set; }
+    public int UpdatedMembers { get; set; }
+    public string TargetCurrency { get; set; } = "";
+}
+public sealed class BulkImportPoolModelsRequest
+{
+    public string? PlatformId { get; set; }
+    public bool? EnabledOnly { get; set; }
+    public string? CapabilityFilter { get; set; }
+    public bool? OverwriteExisting { get; set; }
+    public int? MaxCount { get; set; }
+    public int? StartPriority { get; set; }
+    public int? PriorityStep { get; set; }
+}
+public sealed class BulkImportPoolModelsResult
+{
+    public int ScannedModels { get; set; }
+    public int MatchedModels { get; set; }
+    public int Imported { get; set; }
+    public int Updated { get; set; }
+    public int SkippedExisting { get; set; }
+    public int SkippedInvalid { get; set; }
+    public string CapabilityFilter { get; set; } = "";
+    public PoolItem? Pool { get; set; }
+}
+public sealed class BulkUpdateModelCapabilitiesRequest
+{
+    public string? PlatformId { get; set; }
+    public bool? EnabledOnly { get; set; }
+    public bool? OnlyMissing { get; set; }
+    public bool? AllGwOwned { get; set; }
+    public List<ModelCapabilityItem>? Capabilities { get; set; }
+}
+public sealed class BulkUpdateModelCapabilitiesResult
+{
+    public long MatchedCount { get; set; }
+    public int ModifiedCount { get; set; }
+    public int SkippedCount { get; set; }
+    public int CapabilityCount { get; set; }
+    public string FilterSummary { get; set; } = "";
+}
+public sealed class BulkClaimConfigAuthorityRequest
+{
+    public bool? Overwrite { get; set; }
+}
+public sealed class BulkClaimConfigAuthorityResult
+{
+    public int ClaimedPools { get; set; }
+    public int SkippedPools { get; set; }
+    public int ClaimedPlatforms { get; set; }
+    public int SkippedPlatforms { get; set; }
+    public int ClaimedModels { get; set; }
+    public int SkippedModels { get; set; }
+    public int ClaimedExchanges { get; set; }
+    public int SkippedExchanges { get; set; }
+    public int ClaimedTotal { get; set; }
+    public int SkippedTotal { get; set; }
+}
+public sealed class BindActiveAppCallerPoolsResult
+{
+    public int Bound { get; set; }
+    public int Skipped { get; set; }
+    public int MissingDefaultPool { get; set; }
+    public List<ConfigAuthorityGapItem> Items { get; set; } = new();
+}
+public sealed class UpsertPoolModelRequest
+{
+    public string? ModelId { get; set; }
+    public string? PlatformId { get; set; }
+    public int? Priority { get; set; }
+    public string? Protocol { get; set; }
+    public bool? EnablePromptCache { get; set; }
+    public int? MaxTokens { get; set; }
+    public decimal? InputPricePerMillion { get; set; }
+    public decimal? OutputPricePerMillion { get; set; }
+    public decimal? PricePerCall { get; set; }
+    public string? PriceCurrency { get; set; }
+    public List<ModelCapabilityItem>? Capabilities { get; set; }
+}
+public sealed class UpdateGatewayAppCallerRequest
+{
+    public string? Status { get; set; }
+    public string? ModelPoolId { get; set; }
+    public string? ModelPolicy { get; set; }
+    public string? ParameterPolicy { get; set; }
+    public string? Owner { get; set; }
+    public decimal? MonthlyBudgetUsd { get; set; }
+    public int? RateLimitPerMinute { get; set; }
+    public string? Notes { get; set; }
+}
+
+public sealed class BulkUpdateGatewayAppCallersRequest
+{
+    public string? FilterStatus { get; set; }
+    public string? SourceSystem { get; set; }
+    public string? IngressProtocol { get; set; }
+    public string? RequestType { get; set; }
+    public string? Drift { get; set; }
+    public string? Search { get; set; }
+    public string? TargetStatus { get; set; }
+    public string? ModelPolicy { get; set; }
+    public string? ParameterPolicy { get; set; }
+    public string? Owner { get; set; }
+    public decimal? MonthlyBudgetUsd { get; set; }
+    public int? RateLimitPerMinute { get; set; }
+}
+
+public sealed class BulkUpdateGatewayAppCallersResult
+{
+    public long MatchedCount { get; set; }
+    public long ModifiedCount { get; set; }
+    public string FilterSummary { get; set; } = "";
+}
+
+// ── GW 操作审计（llm_gateway.llmgw_operation_audits，只读）──
+public sealed class OperationAuditsData
+{
+    public List<OperationAuditItem> Items { get; set; } = new();
+    public long Total { get; set; }
+    public int Page { get; set; }
+    public int PageSize { get; set; }
+    public List<string> Actions { get; set; } = new();
+    public List<string> TargetTypes { get; set; } = new();
+    public List<string> Actors { get; set; } = new();
+}
+
+public sealed class OperationAuditItem
+{
+    public string Id { get; set; } = "";
+    public string Action { get; set; } = "";
+    public string TargetType { get; set; } = "";
+    public string? TargetId { get; set; }
+    public string? TargetName { get; set; }
+    public string? ActorUserId { get; set; }
+    public string? ActorUsername { get; set; }
+    public bool Success { get; set; }
+    public string? Reason { get; set; }
+    public string ChangesJson { get; set; } = "{}";
+    public string? RemoteIp { get; set; }
+    public string? UserAgent { get; set; }
+    public string? CreatedAt { get; set; }
+}
 
 // ── 模型池（只读，网关配置面第一刀）──
 public sealed class PoolsData { public List<PoolItem> Items { get; set; } = new(); public long Total { get; set; } }
@@ -215,6 +509,8 @@ public sealed class PoolItem
     public string Id { get; set; } = ""; public string Name { get; set; } = ""; public string Code { get; set; } = "";
     public int Priority { get; set; } public string ModelType { get; set; } = ""; public bool IsDefaultForType { get; set; }
     public int StrategyType { get; set; } public string? Description { get; set; }
+    public string SourceCollection { get; set; } = "model_groups"; public string Authority { get; set; } = "map";
+    public string? ClaimedAt { get; set; }
     public string? CreatedAt { get; set; } public string? UpdatedAt { get; set; }
     public List<PoolModelItem> Models { get; set; } = new();
 }
@@ -225,7 +521,9 @@ public sealed class PoolModelItem
     public string? LastFailedAt { get; set; } public string? LastSuccessAt { get; set; }
     public int ConsecutiveFailures { get; set; } public int ConsecutiveSuccesses { get; set; }
     public bool? EnablePromptCache { get; set; } public int? MaxTokens { get; set; }
-    public decimal? InputPricePerMillion { get; set; } public decimal? OutputPricePerMillion { get; set; } public decimal? PricePerCall { get; set; }
+    public bool IsMain { get; set; } public bool IsIntent { get; set; } public bool IsVision { get; set; } public bool IsImageGen { get; set; }
+    public List<ModelCapabilityItem> Capabilities { get; set; } = new();
+    public decimal? InputPricePerMillion { get; set; } public decimal? OutputPricePerMillion { get; set; } public decimal? PricePerCall { get; set; } public string? PriceCurrency { get; set; }
 }
 
 // ── 平台（无任何密钥字段，仅 hasKey）──
@@ -235,6 +533,8 @@ public sealed class PlatformItem
     public string Id { get; set; } = ""; public string Name { get; set; } = ""; public string PlatformType { get; set; } = "";
     public string? ProviderId { get; set; } public string? ApiUrl { get; set; } public bool Enabled { get; set; }
     public int MaxConcurrency { get; set; } public string? Remark { get; set; } public bool HasKey { get; set; }
+    public string SourceCollection { get; set; } = "llmplatforms"; public string Authority { get; set; } = "map";
+    public string? ClaimedAt { get; set; }
     public string? CreatedAt { get; set; } public string? UpdatedAt { get; set; }
 }
 
@@ -248,11 +548,188 @@ public sealed class ModelItem
     public bool Enabled { get; set; } public int Priority { get; set; }
     public bool IsMain { get; set; } public bool IsIntent { get; set; } public bool IsVision { get; set; } public bool IsImageGen { get; set; }
     public bool? EnablePromptCache { get; set; } public string? Remark { get; set; } public bool HasKey { get; set; }
+    public string SourceCollection { get; set; } = "llmmodels"; public string Authority { get; set; } = "map";
+    public string? ClaimedAt { get; set; }
     public long CallCount { get; set; } public long SuccessCount { get; set; } public long FailCount { get; set; } public long TotalDuration { get; set; }
     public List<ModelCapabilityItem> Capabilities { get; set; } = new();
     public string? CreatedAt { get; set; } public string? UpdatedAt { get; set; }
 }
 public sealed class ModelCapabilityItem { public string Type { get; set; } = ""; public string Source { get; set; } = ""; public bool Value { get; set; } }
+public sealed class ParameterCapabilitiesMetaData
+{
+    public List<ParameterCapabilityMetaItem> Items { get; set; } = new();
+    public List<ParameterCapabilityTemplateItem> Templates { get; set; } = new();
+}
+public sealed class ParameterCapabilityMetaItem
+{
+    public string Name { get; set; } = "";
+    public string Label { get; set; } = "";
+    public string CapabilityType { get; set; } = "";
+    public string Category { get; set; } = "";
+}
+public sealed class ParameterCapabilityTemplateItem
+{
+    public string Key { get; set; } = "";
+    public string Label { get; set; } = "";
+    public string Provider { get; set; } = "";
+    public string Description { get; set; } = "";
+    public List<string> Capabilities { get; set; } = new();
+}
+
+// ── Exchange（无密钥，仅 hasKey）──
+public sealed class ExchangesData { public List<ExchangeItem> Items { get; set; } = new(); public long Total { get; set; } }
+public sealed class ExchangeItem
+{
+    public string Id { get; set; } = ""; public string Name { get; set; } = ""; public string ModelAlias { get; set; } = "";
+    public List<string> ModelAliases { get; set; } = new(); public List<ExchangeModelItem> Models { get; set; } = new();
+    public string TargetUrl { get; set; } = ""; public string TargetAuthScheme { get; set; } = ""; public string TransformerType { get; set; } = "";
+    public bool Enabled { get; set; } public string? Description { get; set; } public bool HasKey { get; set; }
+    public string SourceCollection { get; set; } = "model_exchanges"; public string Authority { get; set; } = "map";
+    public string? ClaimedAt { get; set; }
+    public string? CreatedAt { get; set; } public string? UpdatedAt { get; set; }
+}
+public sealed class ExchangeModelItem
+{
+    public string ModelId { get; set; } = ""; public string? DisplayName { get; set; } public string ModelType { get; set; } = "";
+    public string? Description { get; set; } public bool Enabled { get; set; }
+}
+
+// ── GW-owned API key 健康自检（不返回明文/密文/脱敏 key）──
+public sealed class KeyHealthData
+{
+    public KeyHealthSummary Summary { get; set; } = new();
+    public List<KeyHealthItem> Items { get; set; } = new();
+}
+public sealed class KeyHealthSummary
+{
+    public bool PrimaryConfigured { get; set; }
+    public int LegacySecretCount { get; set; }
+    public int Total { get; set; }
+    public int Ok { get; set; }
+    public int Missing { get; set; }
+    public int Unreadable { get; set; }
+    public int LegacyReadable { get; set; }
+    public int StubUnreadable { get; set; }
+    public string Status { get; set; } = "unknown";
+}
+public sealed class KeyHealthItem
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string ObjectType { get; set; } = "";
+    public string Authority { get; set; } = "llm_gateway";
+    public bool Enabled { get; set; }
+    public bool HasKey { get; set; }
+    public string Status { get; set; } = "";
+    public bool UsedLegacySecret { get; set; }
+}
+
+// ── 配置权威迁移报告：量化 MAP fallback 退场前还剩哪些缺口 ──
+public sealed class ConfigAuthorityReportData
+{
+    public ConfigAuthoritySummary Summary { get; set; } = new();
+    public List<ConfigAuthorityGapItem> Gaps { get; set; } = new();
+}
+public sealed class ConfigAuthoritySummary
+{
+    public int MapPools { get; set; }
+    public int GatewayPools { get; set; }
+    public int MapOnlyPools { get; set; }
+    public int MapPlatforms { get; set; }
+    public int GatewayPlatforms { get; set; }
+    public int MapOnlyPlatforms { get; set; }
+    public int MapModels { get; set; }
+    public int GatewayModels { get; set; }
+    public int MapOnlyModels { get; set; }
+    public int MapExchanges { get; set; }
+    public int GatewayExchanges { get; set; }
+    public int MapOnlyExchanges { get; set; }
+    public long AppCallersTotal { get; set; }
+    public int ActiveAppCallers { get; set; }
+    public int ActiveWithGatewayPool { get; set; }
+    public int ActiveMissingGatewayPool { get; set; }
+    public int DiscoveredAppCallers { get; set; }
+    public int ConfiguredAppCallers { get; set; }
+    public int DisabledAppCallers { get; set; }
+    public int MapFallbackObjectsRemaining { get; set; }
+    public bool ActiveAppCallerMapFallbackReady { get; set; }
+    public string ActiveAppCallerMapFallbackPolicy { get; set; } = "configurable";
+    public int ReadinessPercent { get; set; }
+    public string Status { get; set; } = "unknown";
+}
+public sealed class ConfigAuthorityGapItem
+{
+    public string ObjectType { get; set; } = "";
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Status { get; set; } = "";
+    public string Detail { get; set; } = "";
+}
+
+// ── 运行态发布 gate 聚合：只读回答“是否可以切 full-http” ──
+public sealed class RuntimeGatesData
+{
+    public string Status { get; set; } = "waiting";
+    public string? ReleaseCommit { get; set; }
+    public bool ReadyForHttpFull { get; set; }
+    public int Passed { get; set; }
+    public int Blocked { get; set; }
+    public int Waiting { get; set; }
+    public int Retained { get; set; }
+    public string GeneratedAt { get; set; } = string.Empty;
+    public List<RuntimeGateItem> Items { get; set; } = new();
+}
+
+public sealed class RuntimeGateItem
+{
+    public string Id { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
+    public string Status { get; set; } = "waiting";
+    public bool Blocking { get; set; }
+    public string Detail { get; set; } = string.Empty;
+    public string Evidence { get; set; } = string.Empty;
+    public string NextAction { get; set; } = string.Empty;
+    public Dictionary<string, string> Facts { get; set; } = new();
+}
+
+// ── GW appCaller 注册表（llm_gateway.llmgw_app_callers，只读）──
+public sealed class GatewayAppCallersData
+{
+    public List<GatewayAppCallerItem> Items { get; set; } = new();
+    public long Total { get; set; }
+    public int Page { get; set; }
+    public int PageSize { get; set; }
+    public List<string> Statuses { get; set; } = new();
+    public List<string> SourceSystems { get; set; } = new();
+    public List<string> IngressProtocols { get; set; } = new();
+    public List<string> RequestTypes { get; set; } = new();
+}
+
+public sealed class GatewayAppCallerItem
+{
+    public string Id { get; set; } = "";
+    public string AppCallerCode { get; set; } = "";
+    public string RequestType { get; set; } = "";
+    public string SourceSystem { get; set; } = "";
+    public string IngressProtocol { get; set; } = "";
+    public string? Title { get; set; }
+    public string Status { get; set; } = "";
+    public string? ModelPoolId { get; set; }
+    public string? ModelPolicy { get; set; }
+    public string? ParameterPolicy { get; set; }
+    public string? LastObservedModelPoolId { get; set; }
+    public string? LastObservedModelPolicy { get; set; }
+    public string? LastObservedParameterPolicy { get; set; }
+    public string? Owner { get; set; }
+    public decimal? MonthlyBudgetUsd { get; set; }
+    public int? RateLimitPerMinute { get; set; }
+    public string? Notes { get; set; }
+    public long TotalSeen { get; set; }
+    public string? FirstSeenAt { get; set; }
+    public string? LastSeenAt { get; set; }
+    public string? CreatedAt { get; set; }
+    public string? UpdatedAt { get; set; }
+}
 
 // ── 影子比对（只读）──
 public sealed class ShadowData { public ShadowSummary Summary { get; set; } = new(); public List<ShadowItem> Recent { get; set; } = new(); }
