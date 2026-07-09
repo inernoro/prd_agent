@@ -26,7 +26,7 @@
 
 import { Router } from 'express';
 import { randomBytes, createHash } from 'node:crypto';
-import type { StateService } from '../services/state.js';
+import { StateService } from '../services/state.js';
 import { detectStack, detectModules, detectDatabaseInitialization, type StackDetection } from '../services/stack-detector.js';
 import { buildCacheMounts } from '../services/cache-catalog.js';
 import { discoverComposeFiles, parseCdsCompose } from '../services/compose-parser.js';
@@ -50,7 +50,7 @@ import * as nodeFs from 'node:fs';
 import * as nodePath from 'node:path';
 import * as nodeOs from 'node:os';
 import { spawn } from 'node:child_process';
-import type { IShellExecutor, Project, CdsConfig, AgentKey, BuildProfile, InfraService } from '../types.js';
+import type { IShellExecutor, Project, CdsConfig, AgentKey, AgentKeyAccess, BuildProfile, InfraService } from '../types.js';
 import { combinedOutput } from '../types.js';
 
 type OnboardingRuntime = NonNullable<Project['onboardingRuntime']>;
@@ -284,6 +284,36 @@ function formatKeyPreview(plaintext: string): string {
 }
 
 /**
+ * Mint a project-scoped `cdsp_` Agent Key and persist it under the project.
+ * Plaintext layout: `cdsp_<slugHead12>_<base64url 32 bytes>`. Only the
+ * sha256 is stored; the plaintext is returned once for the caller to relay.
+ * Shared by POST /projects/:id/agent-keys and the create-project flow that
+ * returns a scoped key to a create-only caller.
+ */
+function mintProjectAgentKey(
+  stateService: StateService,
+  project: Project,
+  label: string,
+  createdBy?: string,
+): { keyId: string; plaintext: string; preview: string } {
+  const slugHead = project.slug.slice(0, 12).toLowerCase();
+  const suffix = randomBytes(32).toString('base64url');
+  const plaintext = `cdsp_${slugHead}_${suffix}`;
+  const hash = createHash('sha256').update(plaintext).digest('hex');
+  const keyId = randomBytes(4).toString('hex');
+  const entry: AgentKey = {
+    id: keyId,
+    label,
+    hash,
+    scope: 'rw',
+    createdAt: new Date().toISOString(),
+    createdBy: createdBy || undefined,
+  };
+  stateService.addAgentKey(project.id, entry);
+  return { keyId, plaintext, preview: formatKeyPreview(plaintext) };
+}
+
+/**
  * Minimal helper that enforces a project-key request can only touch its
  * own project. Returns null when access is allowed (or when the request
  * isn't using a project key at all), or a `{ status, body }` object for
@@ -293,23 +323,150 @@ function formatKeyPreview(plaintext: string): string {
  * write-heavy routes we care about. Read-only GETs don't need it.
  */
 export function assertProjectAccess(
-  req: { cdsProjectKey?: { projectId: string; keyId: string } },
+  req: {
+    cdsProjectKey?: { projectId: string; keyId: string };
+    cdsAccess?: { keyId: string; access: AgentKeyAccess };
+  },
   targetProjectId: string | undefined,
 ): null | { status: number; body: Record<string, unknown> } {
   const projectKey = req.cdsProjectKey;
-  if (!projectKey) return null; // bootstrap key or cookie auth — no scope check
-  if (!targetProjectId) return null; // no target to check against
-  if (projectKey.projectId === targetProjectId) return null;
+  // (1) 单项目 cdsp_ key —— 只能操作绑定的那个项目。
+  if (projectKey) {
+    if (!targetProjectId) return null; // no target to check against
+    if (projectKey.projectId === targetProjectId) return null;
+    return {
+      status: 403,
+      body: {
+        error: 'project_mismatch',
+        expected: projectKey.projectId,
+        got: targetProjectId,
+        message:
+          '这把 key 只能操作 ' + projectKey.projectId + ' 项目，请让用户在目标项目页重新「授权 Agent」',
+      },
+    };
+  }
+  // (2) cdsg_ 全局 key 带作用域 —— 按 access.projects 放行。
+  //   'all' → 放行所有;list → 仅列表内;[] → 不能碰任何现有项目(create-only)。
+  //   存量 key 解析为 'all'(见 state.ts),故老部署零回归。
+  const access = req.cdsAccess?.access;
+  if (access) {
+    if (!targetProjectId) return null; // 无具体项目目标,不在此拦
+    if (access.projects === 'all') return null;
+    if (Array.isArray(access.projects) && access.projects.includes(targetProjectId)) return null;
+    return {
+      status: 403,
+      body: {
+        error: 'project_out_of_scope',
+        got: targetProjectId,
+        message:
+          '这把全局 Key 的授权范围不含项目 ' + targetProjectId +
+          '。请在「签发全局 Key」面板勾选该项目或「操作所有现有项目」，或改用该项目的项目级 Key。',
+      },
+    };
+  }
+  // (3) bootstrap 静态 key / cookie auth —— 无作用域限制。
+  return null;
+}
+
+/**
+ * 拒绝任何机器 Agent Key（项目级 cdsp_ 或全局 cdsg_，无论作用域）调用密钥管理类
+ * 端点（签发/吊销全局 key）。只有人类 cookie 登录或 bootstrap 静态 AI_ACCESS_KEY
+ * 可以 —— 静态 key 不在 globalAgentKeys 里、不会被 stamp cdsProjectKey/cdsAccess，
+ * 故对它返回 null(放行)。防止 create-only 全局 key 给自己升级成全权 key。
+ */
+export function assertNotMachineAgentKey(
+  req: { cdsProjectKey?: unknown; cdsAccess?: unknown },
+): null | { status: number; body: Record<string, unknown> } {
+  if (!req.cdsProjectKey && !req.cdsAccess) return null;
   return {
     status: 403,
     body: {
-      error: 'project_mismatch',
-      expected: projectKey.projectId,
-      got: targetProjectId,
+      error: 'agent_key_cannot_mint_global',
       message:
-        '这把 key 只能操作 ' + projectKey.projectId + ' 项目，请让用户在目标项目页重新「授权 Agent」',
+        'Agent Key（项目级或全局级）无权签发/吊销全局通行证。请在浏览器登录 CDS，或使用 bootstrap AI_ACCESS_KEY 操作。',
     },
   };
+}
+
+/**
+ * 无项目语境的管理员操作门卫（Codex P1，2026-07-09）。用于像 detect-runtime /
+ * validate-runtime 这种「借服务器级 GitHub 凭据克隆任意仓库」的探针端点:它们没有
+ * `:id` 目标项目,原来只挡 cdsProjectKey,但 create-only / 指定项目的 cdsg_ key 被
+ * stamp 的是 cdsAccess → 仍能借服务器凭据读任意私有仓库。放行条件收敛为「真正的
+ * 管理员」:人类 cookie / bootstrap 静态 key（无 stamp）或全权 'all' cdsg_ key。
+ * 任何带作用域的机器 key（cdsp_ 或 projects!=='all' 的 cdsg_）一律 403。
+ */
+export function assertUnscopedAdmin(
+  req: { cdsProjectKey?: unknown; cdsAccess?: { keyId: string; access: AgentKeyAccess } },
+): null | { status: number; body: Record<string, unknown> } {
+  if (req.cdsProjectKey) {
+    return {
+      status: 403,
+      body: {
+        error: 'project_key_forbidden',
+        message: '该操作借服务器级凭据且无项目语境，仅限管理员 / 控制台会话，项目级 key 不可用。',
+      },
+    };
+  }
+  const access = req.cdsAccess?.access;
+  if (access && access.projects !== 'all') {
+    return {
+      status: 403,
+      body: {
+        error: 'scoped_key_forbidden',
+        message: '该操作借服务器级凭据且无项目语境，带作用域的全局 Key 不可用；仅限管理员会话或全权全局 Key。',
+      },
+    };
+  }
+  return null;
+}
+
+/**
+ * 跨项目「清扫型」路由的作用域门卫（Codex P1，2026-07-09）。用于那些「不带 ?project=
+ * 就遍历所有项目做副作用」的端点(如 branches 的 cleanup-stopped / cleanup-damaged-
+ * containers)。原来只在 cdsProjectKey 存在时才锁项目,create-only / 指定项目的 cdsg_
+ * key(cdsAccess)会跳过校验 → 跨项目批量删。
+ *
+ * 返回 { projectFilter, mismatch }:
+ * - 人类 cookie / bootstrap / 全权 'all' cdsg_ → 原样返回 filter(可为 undefined = 清扫
+ *   全部),放行。
+ * - 单项目 cdsp_ → filter 缺省锁到自身项目,再 assertProjectAccess。
+ * - 带作用域 cdsg_(projects 列表 / [])→ 必须显式带一个授权范围内的 ?project=,否则
+ *   403(禁止清扫全部);带了就 assertProjectAccess 校验。
+ */
+export function assertScopedSweep(
+  req: {
+    cdsProjectKey?: { projectId: string; keyId: string };
+    cdsAccess?: { keyId: string; access: AgentKeyAccess };
+  },
+  projectFilter: string | null | undefined,
+): { projectFilter?: string; mismatch?: { status: number; body: Record<string, unknown> } } {
+  const projectKey = req.cdsProjectKey;
+  const access = req.cdsAccess?.access;
+  // 全权 / 人类 / bootstrap —— 无限制。
+  if (!projectKey && (!access || access.projects === 'all')) {
+    return { projectFilter: projectFilter ?? undefined };
+  }
+  // 带作用域的机器 key:必须锁定到唯一一个授权范围内的项目。
+  let filter: string | undefined = projectFilter ?? undefined;
+  if (!filter) {
+    if (projectKey) {
+      filter = projectKey.projectId; // cdsp_ 缺省锁到自身项目
+    } else {
+      return {
+        mismatch: {
+          status: 403,
+          body: {
+            error: 'scoped_key_requires_project_filter',
+            message: '带作用域的全局 Key 不能跨项目批量操作，请带上 ?project=<projectId>（且需在授权范围内）。',
+          },
+        },
+      };
+    }
+  }
+  const m = assertProjectAccess(req, filter);
+  if (m) return { mismatch: m };
+  return { projectFilter: filter };
 }
 
 /**
@@ -431,6 +588,50 @@ function maskProjectSummary<T extends ProjectSummary>(req: unknown, summary: T):
 export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   const router = Router();
   const { stateService, shell, config } = deps;
+
+  // ── 项目作用域统一门卫（Codex P1，2026-07-09）──
+  //
+  // create-only / 指定项目的 cdsg_ key 声称"碰不到未授权的现有项目"。但作用域
+  // 校验以前只发生在少数显式调 assertProjectAccess() 的写路由里,像
+  // PUT /projects/:id/preview-mode、/comment-template、POST /projects/:id/files
+  // 等没调的就是漏洞 —— 一把 projects:[] 的 key 仍能改现有项目状态。
+  //
+  // 这里加一道**路由级门卫**:任何对 /projects/:id[/...] 的**变更**请求(非
+  // GET/HEAD/OPTIONS)在进入具体 handler 前,统一按 :id 做 assertProjectAccess。
+  // 只收紧"带作用域的机器 key":未授权/cookie 人类/bootstrap 静态 key 没有
+  // cdsProjectKey/cdsAccess stamp → assertProjectAccess 返回 null → 照常放行,
+  // 故不影响公开的授权申请路由与人类操作。POST /projects(建项目,无 :id)不匹配
+  // 本正则,由其自身的 canCreateProjects 校验把关。
+  router.use((req, res, next) => {
+    const method = req.method.toUpperCase();
+    if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
+      next();
+      return;
+    }
+    const m = /^\/(?:api\/)?projects\/([^/?]+)/.exec(req.path);
+    if (!m) {
+      next();
+      return;
+    }
+    let targetProjectId: string;
+    try {
+      targetProjectId = decodeURIComponent(m[1]);
+    } catch {
+      targetProjectId = m[1];
+    }
+    const mismatch = assertProjectAccess(
+      req as unknown as {
+        cdsProjectKey?: { projectId: string; keyId: string };
+        cdsAccess?: { keyId: string; access: AgentKeyAccess };
+      },
+      targetProjectId,
+    );
+    if (mismatch) {
+      res.status(mismatch.status).json(mismatch.body);
+      return;
+    }
+    next();
+  });
 
   function statsFor(project: Project): ProjectStats {
     // P4 Part 17 (G9 fix): use the project-scoped helper so non-legacy
@@ -1617,10 +1818,10 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // 安全(PR #711 P1):本接口在"项目创建前"用服务器级 GitHub Device Flow 凭据克隆任意
     // gitRepoUrl + 跑任意 command + 回流容器日志。项目级 agent key 没有可授权的目标项目/仓库,
     // 放行等于让低权限 key 借服务器凭据克隆并 cat 出任意私有仓库内容。故仅管理员/控制台会话
-    // (无 cdsProjectKey)可调用,项目级 key 一律 403。
-    if ((req as { cdsProjectKey?: unknown }).cdsProjectKey) {
-      res.status(403).json({ error: 'project_key_forbidden', message: '试运行用服务器级 GitHub 凭据且未绑定项目,仅限管理员 / 控制台会话调用,项目级 key 不可用。' });
-      return;
+    // 或全权 'all' 全局 key 可调用;项目级 cdsp_ 与带作用域的 cdsg_ 一律 403(Codex P1)。
+    {
+      const guard = assertUnscopedAdmin(req as unknown as { cdsProjectKey?: unknown; cdsAccess?: { keyId: string; access: AgentKeyAccess } });
+      if (guard) { res.status(guard.status).json(guard.body); return; }
     }
     const body = (req.body || {}) as { gitRepoUrl?: string; gitRef?: string; image?: string; command?: string; port?: number };
     const gitRepoUrl = (body.gitRepoUrl || '').trim();
@@ -1939,11 +2140,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   // 检测并回填:仓库 URL → 浅克隆 → 复用 detectModules(monorepo 感知)识别栈 → 返回每个模块的建议
   // 服务配置(镜像/命令/端口),前端据此把应用服务一键填好,取代"按运行时猜测的默认",减少第一次点红。
   router.post('/detect-runtime', async (req, res) => {
-    // 安全(PR #711 P1):同 validate-runtime——用服务器级 GitHub 凭据克隆任意仓库,项目级 key
-    // 没有可授权目标,放行等于借服务器凭据读任意私有仓库。仅管理员 / 控制台会话可调用。
-    if ((req as { cdsProjectKey?: unknown }).cdsProjectKey) {
-      res.status(403).json({ error: 'project_key_forbidden', message: '检测仓库用服务器级 GitHub 凭据且未绑定项目,仅限管理员 / 控制台会话调用,项目级 key 不可用。' });
-      return;
+    // 安全(PR #711 P1 + Codex P1):同 validate-runtime——用服务器级 GitHub 凭据克隆任意仓库。
+    // 仅管理员 / 控制台会话或全权 'all' 全局 key 可调用;cdsp_ 与带作用域的 cdsg_ 一律 403。
+    {
+      const guard = assertUnscopedAdmin(req as unknown as { cdsProjectKey?: unknown; cdsAccess?: { keyId: string; access: AgentKeyAccess } });
+      if (guard) { res.status(guard.status).json(guard.body); return; }
     }
     const body = (req.body || {}) as { gitRepoUrl?: string; gitRef?: string };
     const gitRepoUrl = (body.gitRepoUrl || '').trim();
@@ -2059,12 +2260,26 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   //   409 { error: 'duplicate', field }
   //   500 { error: 'docker', message } — docker create failed
   router.post('/projects', async (req, res) => {
-    // Project keys are bound to a single project — they may not mint
-    // new projects. Only the bootstrap key / cookie-auth may.
-    if ((req as unknown as { cdsProjectKey?: unknown }).cdsProjectKey) {
+    // 建项目授权判定。注意:单项目作用域的 cdsg_ key 现在也会 stamp cdsProjectKey
+    // (作为 cdsp_ 别名继承逐路由防护,见 server.ts stampSingleProjectScope),所以这里
+    // **必须先看 cdsAccess**:凡带 cdsAccess 的一律按 access.canCreateProjects 判定,
+    // 只有既无 cdsAccess、又有 cdsProjectKey 的「纯 cdsp_ 项目 key」才走 project_key 分支。
+    const callerAccess = (req as unknown as { cdsAccess?: { keyId: string; access: AgentKeyAccess } }).cdsAccess;
+    if (callerAccess) {
+      // cdsg_ 全局 key —— 只有勾了「允许创建新项目」的才放行。存量 key 解析为全权
+      // (canCreateProjects:true),故不回归;create-only / all-projects / 单项目+建项目 都能建。
+      if (callerAccess.access.canCreateProjects !== true) {
+        res.status(403).json({
+          error: 'global_key_cannot_create',
+          message: '这把全局 Key 未勾选「允许创建新项目」，无权创建项目。请在「签发全局 Key」面板勾选该权限后重签。',
+        });
+        return;
+      }
+    } else if ((req as unknown as { cdsProjectKey?: unknown }).cdsProjectKey) {
+      // 纯项目级 cdsp_ key —— 绑定单一项目,不得创建新项目。
       res.status(403).json({
         error: 'project_key_cannot_create',
-        message: 'Project-scoped Agent Key 无权创建新项目；请在 CDS 管理页手动新建。',
+        message: 'Project-scoped Agent Key 无权创建新项目；请改用勾选了「允许创建新项目」的全局 Key，或在 CDS 管理页手动新建。',
       });
       return;
     }
@@ -2418,6 +2633,30 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
     }
 
+    // 若调用方是「只能建项目」的全局 Key(access 未覆盖到这个新项目),当场给它签一把
+    // 新项目的 cdsp_ scoped key 一并返回 —— 这样 create-only key 永远碰不到现有项目,
+    // 每个新建项目发一把独立、隔离的 key,建完即可接着操作它刚建的项目(2026-07-09 统一
+    // 授权模型:创建时返回 scoped key)。access.projects === 'all' 的全权 key 本就能操作
+    // 所有项目,无需再发。
+    let issuedProjectKey: { keyId: string; plaintext: string; preview: string } | undefined;
+    if (callerAccess && callerAccess.access.projects !== 'all') {
+      const already = Array.isArray(callerAccess.access.projects)
+        && callerAccess.access.projects.includes(newProject.id);
+      if (!already) {
+        try {
+          issuedProjectKey = mintProjectAgentKey(
+            stateService,
+            newProject,
+            `建项目时签发 ${new Date().toISOString().replace('T', ' ').slice(0, 16)}`,
+            (req as unknown as { cdsUser?: { login?: string } }).cdsUser?.login,
+          );
+        } catch {
+          // 签发失败不阻断建项目本身:项目已建好,用户仍可去项目卡手动签 key。
+          issuedProjectKey = undefined;
+        }
+      }
+    }
+
     res.status(201).json({
       project: toSummary(newProject, EMPTY_STATS),
       // Surface the auto-suffix so the frontend can show a friendly
@@ -2428,6 +2667,9 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       infraPresetsApplied: appliedInfraPresets,
       // 被基建连接串覆盖的用户环境变量 key(非空时前端可提示"你粘贴的 X 被自动生成的连接串取代")。
       infraEnvOverrides: infraEnvOverrides.length > 0 ? infraEnvOverrides : undefined,
+      // 给 create-only 全局 Key 返回的新项目 scoped key(明文只此一次)。cdscli 建项目后
+      // 可直接切到这把 key 做后续部署/操作。全权 key 或人类 cookie 建项目时不返回。
+      issuedProjectKey,
     });
   });
 
@@ -3264,29 +3506,12 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       ? body.label.trim().slice(0, 100)
       : defaultLabel;
 
-    // Plaintext layout: cdsp_<slugHead12>_<base64url 32 bytes>
-    // - slugHead: first 12 chars of project.slug (lowercased). slug regex
-    //   already forbids `_` and `/`, so the prefix splits cleanly on `_`.
-    // - suffix: 32 random bytes, base64url — ~43 chars, entropy sufficient.
-    const slugHead = project.slug.slice(0, 12).toLowerCase();
-    const suffix = randomBytes(32).toString('base64url');
-    const plaintext = `cdsp_${slugHead}_${suffix}`;
-    const hash = createHash('sha256').update(plaintext).digest('hex');
-    const keyId = randomBytes(4).toString('hex');
-
     // Capture signer identity from the github-auth middleware when present.
     const ghUser = (req as unknown as { cdsUser?: { login?: string } }).cdsUser;
 
-    const entry: AgentKey = {
-      id: keyId,
-      label,
-      hash,
-      scope: 'rw',
-      createdAt: now.toISOString(),
-      createdBy: ghUser?.login || undefined,
-    };
+    let minted: { keyId: string; plaintext: string; preview: string };
     try {
-      stateService.addAgentKey(project.id, entry);
+      minted = mintProjectAgentKey(stateService, project, label, ghUser?.login);
     } catch (err) {
       res.status(500).json({
         error: 'state_save_failed',
@@ -3295,11 +3520,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
 
-    res.status(201).json({
-      keyId,
-      plaintext,
-      preview: formatKeyPreview(plaintext),
-    });
+    res.status(201).json(minted);
   });
 
   router.get('/projects/:id/agent-keys', (req, res) => {
@@ -3354,16 +3575,18 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     res.json({ ok: true, keyId: req.params.keyId });
   });
 
-  // ── Global (bootstrap-equivalent) Agent Keys ──
+  // ── Global (cdsg_) Agent Keys ──
   //
-  // POST /api/global-agent-keys — sign a new bootstrap key
-  //   body: { label?: string }
-  //   201 { keyId, plaintext, preview }
+  // POST /api/global-agent-keys — sign a new global key with an access scope
+  //   body: { label?: string, access?: { canCreateProjects, projects: 'all'|string[] } }
+  //     access omitted → 安全默认「只能创建新项目」{ canCreateProjects:true, projects:[] }。
+  //   201 { keyId, plaintext, preview, access }
+  //   400 when the requested access grants nothing (can't create AND no projects).
   //   403 when the caller is using a project-scoped key (those can't
   //       escalate their own scope; only cookie auth or the bootstrap
   //       AI_ACCESS_KEY may mint globals).
   //
-  // GET /api/global-agent-keys — list metadata (no plaintext)
+  // GET /api/global-agent-keys — list metadata (no plaintext), each with resolved access
   // DELETE /api/global-agent-keys/:keyId — revoke
   //
   // Global keys use the `cdsg_` prefix (parallel to `cdsp_` for project
@@ -3371,23 +3594,69 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   // lookup. See server.ts findGlobalAgentKeyForAuth path.
 
   router.post('/global-agent-keys', (req, res) => {
-    // Project-scoped keys may not mint bootstrap-level keys — that would
-    // be a privilege escalation (project key → global key → new project).
-    if ((req as unknown as { cdsProjectKey?: unknown }).cdsProjectKey) {
-      res.status(403).json({
-        error: 'project_key_cannot_mint_global',
-        message:
-          '项目级 Agent Key 无权签发全局通行证。请在浏览器登录 CDS，或使用 bootstrap AI_ACCESS_KEY 操作。',
-      });
+    // 任何机器 Agent Key（项目级 cdsp_ 或全局 cdsg_，无论作用域）都无权签发全局
+    // 通行证 —— 否则一把 create-only 全局 key 就能给自己签一把 projects:'all' 的
+    // 全权 key，绕过隔离模型(Codex P1)。签发全局 key 是密钥管理动作,只允许人类
+    // cookie 登录或 bootstrap 静态 AI_ACCESS_KEY(静态 key 不进 globalAgentKeys、
+    // 不会被 stamp cdsAccess,故这里放行)。
+    const machineKey = assertNotMachineAgentKey(req as unknown as { cdsProjectKey?: unknown; cdsAccess?: unknown });
+    if (machineKey) {
+      res.status(machineKey.status).json(machineKey.body);
       return;
     }
 
-    const body = (req.body || {}) as { label?: string };
+    const body = (req.body || {}) as {
+      label?: string;
+      access?: { canCreateProjects?: unknown; projects?: unknown };
+    };
     const now = new Date();
-    const defaultLabel = 'Global bootstrap 签发于 ' + now.toISOString().replace('T', ' ').slice(0, 16);
+    const defaultLabel = 'Global 签发于 ' + now.toISOString().replace('T', ' ').slice(0, 16);
     const label = typeof body.label === 'string' && body.label.trim()
       ? body.label.trim().slice(0, 100)
       : defaultLabel;
+
+    // 解析授权作用域。省略 access → 安全默认「只能创建新项目」(用户诉求:签发全局 key
+    // 默认只给创建项目,怕别人搞坏现有项目)。给了 access → 逐字段校验,projects 数组
+    // 过滤成真实存在的项目 id,避免写入幽灵 id。
+    let access: AgentKeyAccess;
+    if (!body.access) {
+      access = { canCreateProjects: true, projects: [] };
+    } else {
+      const canCreateProjects = body.access.canCreateProjects === true;
+      let projects: 'all' | string[];
+      if (body.access.projects === 'all') {
+        projects = 'all';
+      } else if (Array.isArray(body.access.projects)) {
+        const requested = body.access.projects.filter((p): p is string => typeof p === 'string');
+        // 只保留真实存在的项目 id(去重)。
+        const valid = new Set(stateService.getProjects().map((p) => p.id));
+        projects = Array.from(new Set(requested)).filter((id) => valid.has(id));
+      } else {
+        projects = [];
+      }
+      access = { canCreateProjects, projects };
+    }
+
+    // 授权为空(既不能建项目、也不含任何现有项目)的 key 毫无用处,直接拒绝,避免
+    // 用户误签一把什么都干不了的 key。
+    if (!access.canCreateProjects && access.projects !== 'all' && access.projects.length === 0) {
+      res.status(400).json({
+        error: 'empty_access',
+        message: '授权范围为空:请至少勾选「允许创建新项目」或选择一个现有项目。',
+      });
+      return;
+    }
+    // 多项目(≥2)作用域暂不支持(Codex P1,2026-07-09):单项目 cdsg_ key 靠
+    // stampSingleProjectScope 透明继承所有 cdsp_ 逐路由防护而全局安全;≥2 个项目
+    // 无法用单一 cdsProjectKey 别名表达,需逐 router 补 cdsAccess 才安全,列为后续。
+    // 现阶段只放行:create-only([]) / 单项目([a]) / 所有项目('all')。
+    if (access.projects !== 'all' && access.projects.length > 1) {
+      res.status(400).json({
+        error: 'multi_project_scope_unsupported',
+        message: '暂不支持「多个指定项目」的全局 Key。请选单个项目、所有项目，或仅「允许创建新项目」。多项目授权即将支持。',
+      });
+      return;
+    }
 
     // Plaintext layout: cdsg_<base64url 32 bytes>. No slug head — global
     // keys have no project scope, so the auth path walks the full list
@@ -3404,6 +3673,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       label,
       hash,
       scope: 'rw' as const,
+      access,
       createdAt: now.toISOString(),
       createdBy: ghUser?.login || undefined,
     };
@@ -3421,6 +3691,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       keyId,
       plaintext,
       preview: formatKeyPreview(plaintext),
+      access,
     });
   });
 
@@ -3431,6 +3702,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         id: e.id,
         label: e.label,
         scope: e.scope,
+        // 解析后的授权作用域(存量 key 无 access → 解析为全权 admin)。
+        access: StateService.resolveGlobalAgentKeyAccess(e),
         createdAt: e.createdAt,
         createdBy: e.createdBy,
         lastUsedAt: e.lastUsedAt,
@@ -3441,11 +3714,10 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   });
 
   router.delete('/global-agent-keys/:keyId', (req, res) => {
-    if ((req as unknown as { cdsProjectKey?: unknown }).cdsProjectKey) {
-      res.status(403).json({
-        error: 'project_key_cannot_revoke_global',
-        message: '项目级 Agent Key 无权吊销全局通行证。',
-      });
+    // 同签发:任何机器 Agent Key 都无权吊销全局通行证(密钥管理动作)。
+    const machineKey = assertNotMachineAgentKey(req as unknown as { cdsProjectKey?: unknown; cdsAccess?: unknown });
+    if (machineKey) {
+      res.status(machineKey.status).json(machineKey.body);
       return;
     }
     const ok = stateService.revokeGlobalAgentKey(req.params.keyId);

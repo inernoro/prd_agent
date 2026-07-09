@@ -2758,22 +2758,58 @@ export interface AccessRequest {
 }
 
 /**
- * Global (bootstrap-equivalent) Agent Key — NOT scoped to any project.
+ * AgentKeyAccess — 一把 `cdsg_` 通行证的授权作用域(2026-07-09 统一授权模型)。
  *
- * Project-scoped AgentKey (`cdsp_<slug12>_<suffix>`) can't create projects
- * (see routes/projects.ts POST handler → 403 project_key_cannot_create),
- * which creates a chicken-and-egg problem: an AI assistant needs a key to
- * call POST /api/projects, but the only keys it can obtain from the UI
- * are project-scoped.
+ * 背景:早先 `cdsg_` 全局 key 是"全权 admin"一档到底 —— 能建项目、能操作所有
+ * 现有项目,泄露即全盘失守。用户要求把授权拆成可勾选的作用域,并让"签发全局 key"
+ * 默认只给"创建项目"(怕别人搞坏现有项目)。于是引入本描述符:
  *
- * GlobalAgentKey solves that by issuing a prefix-distinct `cdsg_<suffix>`
- * key that behaves like the bootstrap AI_ACCESS_KEY: no project scope
- * enforcement, can create/delete projects and work across project boundaries.
+ *   { canCreateProjects, projects }
  *
- * Security note: because this is bootstrap-equivalent, the UI that issues
- * it MUST show a loud warning ("don't hand this out casually"). The user
- * is expected to mint one, hand it to a specific Agent, and revoke it
- * after that Agent finishes provisioning.
+ * - `canCreateProjects`: 是否允许 POST /api/projects 创建新项目。
+ * - `projects`:
+ *     'all'      → 操作所有现有项目(旧全权 admin 行为,危险,需显式勾选)。
+ *     string[]   → 只能操作列表里的项目(可为空 [] = 不能碰任何现有项目)。
+ *
+ * 组合示例:
+ *   { canCreateProjects: true,  projects: [] }        —— 「只能建项目」的安全默认。
+ *                                                        建成后由 POST /projects 返回
+ *                                                        新项目的 cdsp_ scoped key。
+ *   { canCreateProjects: true,  projects: 'all' }     —— 旧全权 admin(opt-in)。
+ *   { canCreateProjects: false, projects: ['a','b'] } —— 跨指定项目、但不能建项目。
+ *
+ * 向后兼容:存量 `cdsg_` key 的 state 里没有 `access` 字段 → 解析时按旧语义
+ * 缺省为 { canCreateProjects: true, projects: 'all' }(全权),保证零回归。见
+ * state.ts resolveGlobalAgentKeyAccess()。bootstrap 静态 AI_ACCESS_KEY 不进
+ * globalAgentKeys、永不被 stamp access → 始终全权(见 server.ts)。
+ */
+export interface AgentKeyAccess {
+  /** 允许创建新项目(POST /api/projects)。 */
+  canCreateProjects: boolean;
+  /**
+   * 可操作的现有项目范围。'all' = 所有项目(admin);string[] = 指定项目 id 列表
+   * (空数组 = 不能操作任何现有项目)。
+   */
+  projects: 'all' | string[];
+}
+
+/**
+ * Global (bootstrap-equivalent) Agent Key — carries an explicit access scope.
+ *
+ * Project-scoped AgentKey (`cdsp_<slug12>_<suffix>`) is bound to exactly one
+ * project by its storage location and can't create projects (see
+ * routes/projects.ts POST handler → 403 project_key_cannot_create), which
+ * created a chicken-and-egg problem: an AI needs a key to call
+ * POST /api/projects, but the UI only handed out project-scoped keys.
+ *
+ * A `cdsg_<suffix>` key lives in the top-level store and carries an
+ * {@link AgentKeyAccess} descriptor deciding what it may do — create projects
+ * and/or operate a set (or 'all') of existing projects. Legacy entries with
+ * no `access` resolve to full admin for back-compat.
+ *
+ * Security note: an 'all'-projects key is bootstrap-equivalent — the UI that
+ * issues one MUST show a loud warning. The safe default at signing time is
+ * create-only ({ canCreateProjects: true, projects: [] }).
  *
  * Storage parallels AgentKey: only sha256 of the plaintext is persisted;
  * plaintext is shown once at signing time.
@@ -2787,6 +2823,11 @@ export interface GlobalAgentKey {
   hash: string;
   /** Permission scope. Always 'rw' — a placeholder for future tiers. */
   scope: 'rw';
+  /**
+   * 授权作用域。缺省(存量 key 无此字段)时按全权 admin 解析,见
+   * state.ts resolveGlobalAgentKeyAccess()。
+   */
+  access?: AgentKeyAccess;
   /** ISO timestamp of sign time. */
   createdAt: string;
   /** GitHub login of the signer if github auth mode, else undefined. */

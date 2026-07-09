@@ -1,7 +1,7 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction } from '../types.js';
+import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import { mergeBranchProfiles, isValidExtraProfileId } from './branch-extra-services.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
@@ -2190,12 +2190,28 @@ export class StateService {
   }
 
   /**
+   * Resolve a GlobalAgentKey's effective access scope. Legacy entries (signed
+   * before the 2026-07-09 unified-authorization model) have no `access` field
+   * and are treated as full admin — bootstrap-equivalent, no regression for
+   * existing deployments. See types.ts AgentKeyAccess.
+   */
+  static resolveGlobalAgentKeyAccess(entry: Pick<GlobalAgentKey, 'access'>): AgentKeyAccess {
+    const a = entry.access;
+    if (!a) return { canCreateProjects: true, projects: 'all' };
+    return {
+      canCreateProjects: a.canCreateProjects === true,
+      projects: a.projects === 'all' ? 'all' : Array.isArray(a.projects) ? a.projects : [],
+    };
+  }
+
+  /**
    * Parse an incoming plaintext `cdsg_<suffix>` and find the matching
    * non-revoked GlobalAgentKey. Parallels findAgentKeyForAuth but
    * without the project lookup step — all global keys live in one
-   * array. Returns null on any failure.
+   * array. Returns the keyId plus the resolved access scope so the auth
+   * layer can enforce it. Returns null on any failure.
    */
-  findGlobalAgentKeyForAuth(plaintextKey: string): { keyId: string } | null {
+  findGlobalAgentKeyForAuth(plaintextKey: string): { keyId: string; access: AgentKeyAccess } | null {
     if (!plaintextKey || !plaintextKey.startsWith('cdsg_')) return null;
     const hash = crypto.createHash('sha256').update(plaintextKey).digest('hex');
     const hashBuf = Buffer.from(hash, 'hex');
@@ -2205,7 +2221,7 @@ export class StateService {
         const entryBuf = Buffer.from(entry.hash, 'hex');
         if (entryBuf.length !== hashBuf.length) continue;
         if (crypto.timingSafeEqual(entryBuf, hashBuf)) {
-          return { keyId: entry.id };
+          return { keyId: entry.id, access: StateService.resolveGlobalAgentKeyAccess(entry) };
         }
       } catch {
         /* malformed hash in state, skip */
