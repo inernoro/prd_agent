@@ -72,7 +72,7 @@ export const NOTIFICATION_TYPE_REGISTRY: Record<string, NotificationTypeConfig> 
  * 与后端 AdminPushNotificationService.IsDefectReminderNotification 判定口径保持一致。
  */
 export function isEscalationNotification(
-  item: Pick<AdminNotificationItem, 'source' | 'key' | 'title' | 'message'>
+  item: Pick<AdminNotificationItem, 'source' | 'key' | 'title' | 'message'> & { level?: string | null }
 ): boolean {
   const source = (item.source ?? '').toLowerCase();
   if (source === 'defect-escalation' || source === 'defect-reminder' || source === 'pm-reminder') return true;
@@ -80,7 +80,14 @@ export function isEscalationNotification(
   if (key.startsWith('defect-escalation') || key.startsWith('defect-reminder')) return true;
   const title = item.title ?? '';
   if (title.includes('催办')) return true;
-  // 与后端 IsDefectReminderNotification 对齐：兜底命中「仅正文」透出催办语义的残留提醒。
+
+  // 「仅正文」兜底：只对可能真是催办提醒的记录生效。催办/提醒本质是「督促处理」，
+  // 一定是 warning/info 语义、且不会是缺陷解决(defect-resolved)成功通知。
+  // 缺陷解决通知的 Message 会拼接用户/Agent 自由填写的处理说明（可能恰好含「超时未处理」
+  // 「请尽快跟进验收」等词），若不设门就会把该成功通知误杀，报告人永远收不到待验收提醒。
+  // 故成功语义 / defect-resolved key 一律不走正文兜底（对齐 Codex 评审）。
+  const level = (item.level ?? '').toLowerCase();
+  if (level === 'success' || key.startsWith('defect-resolved')) return false;
   const message = item.message ?? '';
   return message.includes('请尽快跟进') || (message.includes('超时') && message.includes('未处理'));
 }
