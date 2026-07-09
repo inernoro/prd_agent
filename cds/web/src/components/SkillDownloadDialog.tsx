@@ -67,9 +67,11 @@ export function SkillDownloadDialog({ open, onOpenChange, onOpenGlobalKey }: Pro
         '【步骤 3 - 接入 CDS】',
         '装好后按你当前情况二选一(项目 key 建不了项目,别在这卡死循环):',
         '  A. 还没有任何项目(全新接入):',
-        '     去 CDS 右上角「一键部署 → 全局 Agent Key」签发一把 cdsg_ 全局通行证,',
+        '     去 CDS 右上角「一键部署 → 全局 Agent Key」直接签发(默认「只能创建新项目」即可),',
         '     把 CDS_HOST + AI_ACCESS_KEY=<这把 cdsg_ key> 两行粘给我。',
-        '     我先跑 cdscli project create 建第一个项目, 再帮你签一把项目级 key 做日常操作。',
+        '     我跑 cdscli project create 建第一个项目 —— 它会直接返回这个新项目的项目级 key',
+        '     (CDS_PROJECT_ID / CDS_PROJECT_KEY),我保存并切换到它做后续部署/操作。',
+        '     (注意:这把「只能创建项目」的全局 key 不能再去签项目级 key,直接用 create 返回的那把。)',
         '  B. 已经有项目:',
         '     去项目卡上点钥匙图标签发「项目级 Agent Key」,',
         '     把 CDS_HOST / CDS_PROJECT_ID / CDS_PROJECT_KEY 三行粘给我, 我跑 cdscli init 接入。',
@@ -292,7 +294,7 @@ function NextStepGuidance({ onOpenGlobalKey }: { onOpenGlobalKey?: () => void })
           <code className="mx-1 rounded bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 font-mono text-foreground">
             cdscli project create
           </code>
-          建第一个项目,再切项目级 Key。
+          建第一个项目 —— 它会直接返回新项目的项目级 Key(CDS_PROJECT_ID / CDS_PROJECT_KEY),AI 保存并切换到它做后续操作，无需再签。
         </div>
         {onOpenGlobalKey ? (
           <Button size="sm" variant="outline" className="mt-2" onClick={onOpenGlobalKey}>
