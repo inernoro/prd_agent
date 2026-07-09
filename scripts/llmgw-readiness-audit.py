@@ -1286,6 +1286,8 @@ def _static_checks() -> list[dict]:
             "python3 scripts/llmgw-serving-probe.py $probe_args",
             "LLM Gateway post-deploy serving probe",
             "LLM Gateway post-deploy D-layer smoke",
+            "LLM Gateway post-deploy runtime gates: allowing self-finalizing full_http_rollout_ledger only",
+            "--allow-pending-http-full-ledger",
             "LLMGW_SKIP_RELEASE_GATE=1",
             "LLMGW_SKIP_RELEASE_GATE=1 is not allowed when LLM Gateway release evidence is required",
             "Use scripts/llmgw-rollback-inproc.sh for emergency rollback",

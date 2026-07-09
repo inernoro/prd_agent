@@ -296,6 +296,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("python3 scripts/llmgw-serving-probe.py $probe_args", script);
         Assert.Contains("LLM Gateway post-deploy serving probe: required", script);
         Assert.Contains("LLM Gateway post-deploy D-layer smoke: required", script);
+        Assert.Contains("LLM Gateway post-deploy runtime gates: allowing self-finalizing full_http_rollout_ledger only", script);
+        Assert.Contains("--allow-pending-http-full-ledger", script);
         Assert.Contains("LLMGW_GATE_SERVING_PROBE_SAMPLES", script);
         Assert.Contains("LLMGW_GATE_SERVING_PROBE_INTERVAL_SECONDS", script);
         Assert.Contains("LLMGW_SKIP_RELEASE_GATE=1", script);
@@ -384,6 +386,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--require-app-kind", releaseGate);
         Assert.Contains("--health-samples", releaseGate);
         Assert.Contains("--health-interval", releaseGate);
+        Assert.Contains("--require-runtime-gates", releaseGate);
+        Assert.Contains("--allow-pending-http-full-ledger", releaseGate);
+        Assert.Contains("allowedPendingRuntimeGates", releaseGate);
+        Assert.Contains("selfFinalizingHttpFullLedger", releaseGate);
+        Assert.Contains("remaining == [\"full_http_rollout_ledger\"]", releaseGate);
         Assert.Contains("\"stable\"", releaseGate);
         Assert.Contains("--json-out", releaseGate);
         Assert.Contains("--report-md", releaseGate);
@@ -564,6 +571,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("_require_serving_probe_for_commit", ledger);
         Assert.Contains("_require_smoke_for_commit", ledger);
         Assert.Contains("_require_release_gate_for_commit", ledger);
+        Assert.Contains("allowedPendingRuntimeGates", ledger);
+        Assert.Contains("selfFinalizingHttpFullLedger", ledger);
+        Assert.Contains("pending_http_full_ledger_only", ledger);
+        Assert.Contains("allowedPending=", ledger);
         Assert.Contains("\"providerAuditExternalBlockers\": provider_external_blockers", ledger);
         Assert.Contains("_provider_external_blockers", ledger);
         Assert.Contains("contains external blockers", ledger);

@@ -403,8 +403,19 @@ def _config_authority_check(
     return result
 
 
-def _runtime_gates_check(console_base: str, token: str, expected_commit: str = "") -> dict:
-    result = _runtime_gates_result_from_data(console_base, {}, http_status=0, expected_commit=expected_commit)
+def _runtime_gates_check(
+    console_base: str,
+    token: str,
+    expected_commit: str = "",
+    allow_pending_http_full_ledger: bool = False,
+) -> dict:
+    result = _runtime_gates_result_from_data(
+        console_base,
+        {},
+        http_status=0,
+        expected_commit=expected_commit,
+        allow_pending_http_full_ledger=allow_pending_http_full_ledger,
+    )
     code, raw = _console_request("GET", console_base, "/runtime-gates", token)
     if code != 200:
         result["httpStatus"] = code
@@ -417,10 +428,22 @@ def _runtime_gates_check(console_base: str, token: str, expected_commit: str = "
         result["httpStatus"] = code
         result["failures"].append(str(exc))
         return result
-    return _runtime_gates_result_from_data(console_base, data, http_status=code, expected_commit=expected_commit)
+    return _runtime_gates_result_from_data(
+        console_base,
+        data,
+        http_status=code,
+        expected_commit=expected_commit,
+        allow_pending_http_full_ledger=allow_pending_http_full_ledger,
+    )
 
 
-def _runtime_gates_result_from_data(console_base: str, data: dict, http_status: int = 200, expected_commit: str = "") -> dict:
+def _runtime_gates_result_from_data(
+    console_base: str,
+    data: dict,
+    http_status: int = 200,
+    expected_commit: str = "",
+    allow_pending_http_full_ledger: bool = False,
+) -> dict:
     result = {
         "required": False,
         "ok": False,
@@ -437,6 +460,8 @@ def _runtime_gates_result_from_data(console_base: str, data: dict, http_status: 
         "generatedAt": None,
         "remainingRuntimeGates": [],
         "remainingRuntimeGateDetails": [],
+        "allowedPendingRuntimeGates": [],
+        "selfFinalizingHttpFullLedger": False,
         "failures": [],
     }
 
@@ -474,13 +499,18 @@ def _runtime_gates_result_from_data(console_base: str, data: dict, http_status: 
     result["generatedAt"] = _get_nested(data, "generatedAt")
     result["remainingRuntimeGates"] = remaining
     result["remainingRuntimeGateDetails"] = remaining_details
+    allowed_pending: list[str] = []
+    if allow_pending_http_full_ledger and remaining == ["full_http_rollout_ledger"]:
+        allowed_pending = ["full_http_rollout_ledger"]
+    result["allowedPendingRuntimeGates"] = allowed_pending
+    result["selfFinalizingHttpFullLedger"] = bool(allowed_pending)
 
     failures: list[str] = []
     if expected and release_commit != expected:
         failures.append(f"runtime gates releaseCommit mismatch: actual={release_commit or 'empty'} expected={expected}")
-    if not ready:
+    if not ready and not allowed_pending:
         failures.append(f"runtime gates 未 readyForHttpFull: status={status}; remaining={', '.join(remaining) or 'unknown'}")
-    if remaining:
+    if remaining and not allowed_pending:
         failures.append(f"runtime gates 仍有 blocking gate 未通过: {', '.join(remaining)}")
     result["failures"] = failures
     result["ok"] = not failures
@@ -540,6 +570,26 @@ def _self_test() -> int:
         failures.append(f"blocked runtime gates missing structured facts: {blocked}")
     if (detail_facts.get("current_commit_http_transport") or {}).get("nonHttpTransportLogs") != "1":
         failures.append(f"blocked runtime gates missing transport facts: {blocked}")
+    self_finalizing = _runtime_gates_result_from_data(
+        "http://console/gw",
+        {
+            "status": "waiting",
+            "releaseCommit": "abc123",
+            "readyForHttpFull": False,
+            "items": [
+                {
+                    "id": "full_http_rollout_ledger",
+                    "status": "waiting",
+                    "blocking": True,
+                    "facts": {"releaseCommit": "abc123"},
+                }
+            ],
+        },
+        expected_commit="abc123",
+        allow_pending_http_full_ledger=True,
+    )
+    if not self_finalizing["ok"] or self_finalizing["allowedPendingRuntimeGates"] != ["full_http_rollout_ledger"]:
+        failures.append(f"self-finalizing http-full ledger should pass only for rollout ledger gate: {self_finalizing}")
     with tempfile.TemporaryDirectory(prefix="llmgw-release-gate-self-test-") as tmp:
         md_path = os.path.join(tmp, "release-gate.md")
         _write_markdown(md_path, {
@@ -711,6 +761,8 @@ def main() -> int:
                         help="要求 GW 控制台配置权威报告 ready：MAP fallback 对象清零且 active appCaller 均绑定 GW 池")
     parser.add_argument("--require-runtime-gates", action="store_true",
                         help="要求 GW 控制台 /runtime-gates readyForHttpFull=true；用于 http-full 部署后最终放行")
+    parser.add_argument("--allow-pending-http-full-ledger", action="store_true",
+                        help="仅用于 http-full 自举：允许 runtime-gates 只剩 full_http_rollout_ledger，待本阶段成功后由 ledger 补齐")
     parser.add_argument("--config-authority-base", default=os.environ.get("LLMGW_CONSOLE_BASE", ""),
                         help="GW 控制台 API base，例如 https://host/gw；未以 /gw 结尾时自动追加")
     parser.add_argument("--config-authority-token", default=os.environ.get("LLMGW_CONSOLE_TOKEN", ""),
@@ -846,7 +898,12 @@ def main() -> int:
                 report["configAuthority"] = config_check
                 failures.extend(config_check.get("failures") or [])
             if token and args.require_runtime_gates:
-                runtime_check = _runtime_gates_check(console_base, token, expected_commit=args.expect_commit)
+                runtime_check = _runtime_gates_check(
+                    console_base,
+                    token,
+                    expected_commit=args.expect_commit,
+                    allow_pending_http_full_ledger=args.allow_pending_http_full_ledger,
+                )
                 runtime_check["required"] = True
                 report["runtimeGates"] = runtime_check
                 failures.extend(runtime_check.get("failures") or [])

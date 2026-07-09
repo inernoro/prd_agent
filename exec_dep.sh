@@ -1114,6 +1114,10 @@ run_llmgw_post_deploy_verification_if_needed() {
     if [ -n "$expect_commit" ]; then
       runtime_gate_expect_arg="--expect-commit $expect_commit"
     fi
+    if [ "$mode" = "http" ] && [ "${LLMGW_PROD_STAGE:-}" = "http-full" ]; then
+      echo "LLM Gateway post-deploy runtime gates: allowing self-finalizing full_http_rollout_ledger only"
+      runtime_gate_expect_arg="$runtime_gate_expect_arg --allow-pending-http-full-ledger"
+    fi
     # shellcheck disable=SC2086
     GW_KEY="$gate_key" python3 scripts/llmgw-release-gate.py $args $runtime_gate_expect_arg --require-runtime-gates
   else
