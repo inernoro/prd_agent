@@ -188,6 +188,7 @@ public class GatewayKeyGateContractTests
             gateway.LastRequest.Context.ShouldNotBeNull();
             gateway.LastRequest.Context!.ModelPolicy.ShouldBe("pool");
             gateway.LastRequest.Context.ModelPoolId.ShouldBe("pool-chat-premium");
+            AssertRoutingContext(gateway.LastRequest.Context, "openai-compatible", "pool", "pool-chat-premium");
             var upstreamBody = gateway.LastRequest.RequestBody!.ToJsonString();
             upstreamBody.ShouldNotContain("model_policy");
             upstreamBody.ShouldNotContain("model_pool_id");
@@ -229,6 +230,7 @@ public class GatewayKeyGateContractTests
             gateway.LastRequest.PinnedModelId.ShouldBe("anthropic/claude-sonnet-4");
             gateway.LastRequest.Context.ShouldNotBeNull();
             gateway.LastRequest.Context!.ModelPolicy.ShouldBe("pinned");
+            AssertRoutingContext(gateway.LastRequest.Context, "openai-compatible", "pinned");
         }
         finally
         {
@@ -267,6 +269,7 @@ public class GatewayKeyGateContractTests
             gateway.LastRequest.Context!.IngressProtocol.ShouldBe("gw-native");
             gateway.LastRequest.Context.ModelPolicy.ShouldBe("pool");
             gateway.LastRequest.Context.ModelPoolId.ShouldBe("pool-native-chat");
+            AssertRoutingContext(gateway.LastRequest.Context, "gw-native", "pool", "pool-native-chat", sourceSystem: "map");
         }
         finally
         {
@@ -422,6 +425,7 @@ public class GatewayKeyGateContractTests
             var droppedParameters = gateway.LastRequest.Context!.DroppedParameters;
             droppedParameters.ShouldNotBeNull();
             droppedParameters.ShouldNotContain("parallel_tool_calls");
+            gateway.LastRequest.Context.ParameterPolicy.ShouldBe("strict-require");
             gateway.LastRequest.RequestBody!.ContainsKey("parallel_tool_calls").ShouldBeTrue();
         }
         finally
@@ -916,6 +920,7 @@ public class GatewayKeyGateContractTests
             gateway.LastRequest.PinnedModelId.ShouldBe("claude-3-7-sonnet-latest");
             gateway.LastRequest.Context.ShouldNotBeNull();
             gateway.LastRequest.Context!.ModelPolicy.ShouldBe("pinned");
+            AssertRoutingContext(gateway.LastRequest.Context, "claude-compatible", "pinned");
         }
         finally
         {
@@ -954,6 +959,7 @@ public class GatewayKeyGateContractTests
             gateway.LastRequest.Context.ShouldNotBeNull();
             gateway.LastRequest.Context!.ModelPolicy.ShouldBe("pool");
             gateway.LastRequest.Context.ModelPoolId.ShouldBe("pool-claude-quality");
+            AssertRoutingContext(gateway.LastRequest.Context, "claude-compatible", "pool", "pool-claude-quality");
         }
         finally
         {
@@ -1364,6 +1370,7 @@ public class GatewayKeyGateContractTests
             gateway.LastRequest.Context.ShouldNotBeNull();
             gateway.LastRequest.Context!.ModelPolicy.ShouldBe("pool");
             gateway.LastRequest.Context.ModelPoolId.ShouldBe("pool-gemini-quality");
+            AssertRoutingContext(gateway.LastRequest.Context, "gemini-compatible", "pool", "pool-gemini-quality");
         }
         finally
         {
@@ -1404,6 +1411,7 @@ public class GatewayKeyGateContractTests
             gateway.LastRequest.PinnedModelId.ShouldBe("gemini-2.5-pro");
             gateway.LastRequest.Context.ShouldNotBeNull();
             gateway.LastRequest.Context!.ModelPolicy.ShouldBe("pinned");
+            AssertRoutingContext(gateway.LastRequest.Context, "gemini-compatible", "pinned");
         }
         finally
         {
@@ -1648,6 +1656,22 @@ public class GatewayKeyGateContractTests
         };
         app.MapGatewayServingEndpoints(pascalJson, GatewayKey, "keygate-contract-test");
         return app;
+    }
+
+    private static void AssertRoutingContext(
+        GatewayRequestContext? context,
+        string ingressProtocol,
+        string modelPolicy,
+        string? modelPoolId = null,
+        string parameterPolicy = "default-drop",
+        string sourceSystem = "external")
+    {
+        context.ShouldNotBeNull();
+        context!.SourceSystem.ShouldBe(sourceSystem);
+        context.IngressProtocol.ShouldBe(ingressProtocol);
+        context.ModelPolicy.ShouldBe(modelPolicy);
+        context.ModelPoolId.ShouldBe(modelPoolId);
+        context.ParameterPolicy.ShouldBe(parameterPolicy);
     }
 
     private sealed class EchoingGateway : PrdAgent.Infrastructure.LlmGateway.ILlmGateway
