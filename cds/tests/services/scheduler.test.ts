@@ -418,10 +418,12 @@ describe('SchedulerService', () => {
       expect(stateService.getSchedulerMaxHotOverride()).toBeUndefined();
     });
 
-    it('overrides survive a save + reload cycle', () => {
+    it('overrides survive a save + reload cycle', async () => {
       stateService.setSchedulerIdleTTLOverride(120);
       stateService.setSchedulerMaxHotOverride(5);
       stateService.save();
+      // json store 的 save 是去抖异步落盘（2026-07-09），跨实例 reload 前先 flush
+      await (stateService.getBackingStore() as unknown as { flush(): Promise<void> }).flush();
       const reloaded = new StateService(stateFile);
       reloaded.load();
       expect(reloaded.getSchedulerIdleTTLOverride()).toBe(120);

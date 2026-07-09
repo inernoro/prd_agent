@@ -106,8 +106,10 @@ describe('StateService deploy duration store', () => {
     expect(summary.sourceSamples).toBe(1);
   });
 
-  it('persists samples across reload', () => {
+  it('persists samples across reload', async () => {
     [2000, 6000, 4000].forEach((ms) => service.recordDeployDuration('proj', 'release', ms));
+    // json store 的 save 是去抖异步落盘（2026-07-09），跨实例 reload 前先 flush
+    await (service.getBackingStore() as unknown as { flush(): Promise<void> }).flush();
     const reloaded = new StateService(stateFile);
     reloaded.load();
     const est = reloaded.getDeployEstimate('proj', 'release');

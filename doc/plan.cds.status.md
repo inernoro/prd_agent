@@ -35,7 +35,7 @@
 | 远端实例 | `https://cds.miduo.org` |
 | 后端栈 | Node 20 + Express + MongoDB(`mongo-split` 默认) |
 | 前端栈 | React + Vite + Tailwind + shadcn/ui(`cds/web/`),React Router 为唯一 dashboard 权威;`cds/web-legacy/` 仅作代码对照层不再被服务 |
-| 测试 | vitest 2605 passed / 186 文件(2026-07-06),pytest 149,tsc backend + web 全绿 |
+| 测试 | vitest 2653 passed / 188 文件(2026-07-09,server-integration 10 例为存量环境失败、基线同现),pytest 149,tsc backend + web 全绿 |
 
 ---
 

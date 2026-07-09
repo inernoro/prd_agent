@@ -290,9 +290,11 @@ describe('JanitorService', () => {
       expect(stateService.getJanitorEnabledOverride()).toBeUndefined();
     });
 
-    it('worktree TTL override survives a save + reload cycle', () => {
+    it('worktree TTL override survives a save + reload cycle', async () => {
       stateService.setJanitorWorktreeTTLOverride(7);
       stateService.save();
+      // json store 的 save 是去抖异步落盘（2026-07-09），跨实例 reload 前先 flush
+      await (stateService.getBackingStore() as unknown as { flush(): Promise<void> }).flush();
       const reloaded = new StateService(stateFile);
       reloaded.load();
       expect(reloaded.getJanitorWorktreeTTLOverride()).toBe(7);

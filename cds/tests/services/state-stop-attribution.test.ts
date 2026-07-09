@@ -5,7 +5,7 @@ import path from 'node:path';
 import { StateService } from '../../src/services/state.js';
 
 describe('StateService legacy stop attribution migration', () => {
-  it('repairs old webhook stops that were stored as user stops', () => {
+  it('repairs old webhook stops that were stored as user stops', async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-state-stop-'));
     const stateFile = path.join(tmpDir, 'state.json');
     try {
@@ -40,6 +40,8 @@ describe('StateService legacy stop attribution migration', () => {
         at: now,
       });
       service.save();
+      // json store 的 save 是去抖异步落盘（2026-07-09），跨实例 reload 前先 flush
+      await (service.getBackingStore() as unknown as { flush(): Promise<void> }).flush();
 
       const reloaded = new StateService(stateFile, tmpDir);
       reloaded.load();
@@ -51,7 +53,7 @@ describe('StateService legacy stop attribution migration', () => {
     }
   });
 
-  it('keeps old user stops unchanged when the activity log does not prove automation', () => {
+  it('keeps old user stops unchanged when the activity log does not prove automation', async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-state-stop-'));
     const stateFile = path.join(tmpDir, 'state.json');
     try {
@@ -86,6 +88,8 @@ describe('StateService legacy stop attribution migration', () => {
         at: now,
       });
       service.save();
+      // json store 的 save 是去抖异步落盘（2026-07-09），跨实例 reload 前先 flush
+      await (service.getBackingStore() as unknown as { flush(): Promise<void> }).flush();
 
       const reloaded = new StateService(stateFile, tmpDir);
       reloaded.load();
