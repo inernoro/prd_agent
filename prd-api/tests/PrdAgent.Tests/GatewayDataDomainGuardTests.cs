@@ -733,8 +733,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("Restore previous rollout evidence", workflow);
         Assert.Contains("llmgw-prod-stage-{0}", workflow);
         Assert.Contains("default branch", ReadRepoFile("doc/plan.llm-gateway.full-cutover.md"));
-        Assert.Contains("[ \"$stage\" != \"rollback-inproc\" ] && [ \"$stage\" != \"rollback-rehearsal\" ] && [ -z \"$map_base\" ]", workflow);
-        Assert.Contains("[ \"$stage\" != \"rollback-inproc\" ] && [ \"$stage\" != \"rollback-rehearsal\" ] && [ -z \"$(printf '%s' \"${PRD_AGENT_API_KEY:-}\" | xargs)\" ]", workflow);
+        Assert.Contains("[ \"$stage\" != \"rollback-inproc\" ] && [ \"$stage\" != \"rollback-rehearsal\" ] && [ \"$stage\" != \"config-authority\" ] && [ -z \"$map_base\" ]", workflow);
+        Assert.Contains("[ \"$stage\" != \"rollback-inproc\" ] && [ \"$stage\" != \"rollback-rehearsal\" ] && [ \"$stage\" != \"config-authority\" ] && [ -z \"$(printf '%s' \"${PRD_AGENT_API_KEY:-}\" | xargs)\" ]", workflow);
         Assert.Contains("stage $stage requires rollout_evidence_run_id so prior rollout ledger evidence is restored", workflow);
         Assert.Contains("scripts/llmgw-prod-stage.sh", workflow);
         Assert.Contains("--stage \"$stage\"", workflow);
