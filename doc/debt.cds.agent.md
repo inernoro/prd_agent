@@ -38,11 +38,10 @@
 - **偿还计划**：收敛为 4 篇 canonical —— `spec.cds-agent`（这是什么/能做什么）、`design.cds-agent`（架构 + 官方/自研边界）、`guide.cds.agent.workbench`（用户/排障 runbook，已存在）、`debt.cds.agent`（本文件）。同一周的 `report.cds-agent-*-2026-05-19.*` 与重复 plan 归档或删除，同步 `index.yml` 与 `guide.list.directory.md`。
 - **未在本轮执行删除**：保留历史，避免一次性大规模删除丢信息；本台账先登记，后续走 `/entropy` / `/doc-sync` 分批偿还。
 
-### D4 · 无 runtime profile 时的 Lite 直跑（open）
+### D4 · 无 runtime profile 时的 Lite 直跑（paid，2026-07-09）
 
-- **现状**：`CdsAgentAdapter`（工作流节点）在完全没有系统级 runtime profile 时仍硬报「没有系统级模型配置」。Lite 实际只依赖 Gateway 默认 chat 池，理论上可在无 profile 时直跑。
-- **影响**：全新环境未配任何 profile 时，工作流 CdsAgentRun 节点无法发起。
-- **偿还条件**：为 Lite 提供合成默认（runtime/model 占位）让 `CreateAsync` 在 lite 可用时放行。
+- **原现状**：`CdsAgentAdapter`（工作流节点）在完全没有系统级 runtime profile 时硬报「没有系统级模型配置」，全新环境工作流 CdsAgentRun 节点无法发起。
+- **偿还**：`CdsAgentAdapter` 无 profile 时不再报错——输出提示「尝试以 CDS Lite 模式直跑」并合成占位 `RuntimeProfileChoice(null, "claude-sdk", ...)` 放行；下游 `EnsureRuntimeProfileCompatibleOrLiteFallback` / `DecideRuntimeSelection` 本就兼容 null profile，Lite 不可用时 session 层仍显式失败（行为不劣于原硬报错）。
 
 ## 相关文件
 

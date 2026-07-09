@@ -1,6 +1,6 @@
 # CDS 当前状态看板 · 计划
 
-> **类型**:plan(总览看板) · **更新**:2026-07-06 · **状态**:活的 — 每次 handoff 必须更新本文件
+> **类型**:plan(总览看板) · **更新**:2026-07-09 · **状态**:活的 — 每次 handoff 必须更新本文件
 >
 > 这是 **CDS 唯一的"我在哪"入口**。任何 AI / 人类接手 CDS 改动前先读本页 30 秒,然后按需深入子文档。
 >
@@ -31,7 +31,7 @@
 | 维度 | 状态 |
 |---|---|
 | 主分支 | `main` @ `0044f01`(2026-07-03) |
-| 进行中分支 | `claude/session-y2bpgw`(配置体系波1-5,见顶部看板);`claude/cds-code-review-lsxkwx`(四维扫描 24 项修复:性能/样式/功能/文档) |
+| 进行中分支 | `claude/session-y2bpgw`(配置体系波1-5,见顶部看板);`claude/cds-code-review-lsxkwx`(R1 四维扫描 24 项修复 + R2 债务台账综合还债 2026-07-09:state 拆 collection Phase1+2 / BULLMQ_PREFIX 注入 / BNI-cleanup / 孤儿 infra 报告 + 残留 app sweep / loading 页 SSOT 2 页 / 极速版入口校验 / export 分页 / agent D4 Lite 直跑 / D16 文案 / smoke 脚本整组退役,台账勾销见各 debt.cds.* 2026-07-09 批注) |
 | 远端实例 | `https://cds.miduo.org` |
 | 后端栈 | Node 20 + Express + MongoDB(`mongo-split` 默认) |
 | 前端栈 | React + Vite + Tailwind + shadcn/ui(`cds/web/`),React Router 为唯一 dashboard 权威;`cds/web-legacy/` 仅作代码对照层不再被服务 |
