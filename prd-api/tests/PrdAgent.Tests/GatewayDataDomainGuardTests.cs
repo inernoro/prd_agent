@@ -1612,6 +1612,37 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("ready-for-release-gate", status);
     }
 
+    [Fact]
+    public void ConsoleLogsSummary_ExposesProtocolRouterDistributions()
+    {
+        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
+        var consoleDtos = ReadRepoFile("prd-llmgw/Models/Dtos.cs");
+        var consoleTypes = ReadRepoFile("prd-llmgw-web/src/lib/types.ts");
+        var logsView = ReadRepoFile("prd-llmgw-web/src/components/LogsView.tsx");
+
+        foreach (var field in new[] { "SourceSystem", "IngressProtocol", "ModelPolicy" })
+        {
+            Assert.Contains($".Include(\"{field}\")", consoleProgram);
+            Assert.Contains($"BuildBucket(docs, \"{field}\", fallbackKey: \"unknown\")", consoleProgram);
+        }
+
+        Assert.Contains("public List<LogsBucketItem> SourceSystemDistribution", consoleDtos);
+        Assert.Contains("public List<LogsBucketItem> IngressProtocolDistribution", consoleDtos);
+        Assert.Contains("public List<LogsBucketItem> ModelPolicyDistribution", consoleDtos);
+        Assert.Contains("sourceSystemDistribution: LogsBucketItem[]", consoleTypes);
+        Assert.Contains("ingressProtocolDistribution: LogsBucketItem[]", consoleTypes);
+        Assert.Contains("modelPolicyDistribution: LogsBucketItem[]", consoleTypes);
+        Assert.Contains("<DistributionStrip label=\"Ingress\"", logsView);
+        Assert.Contains("items={summary?.ingressProtocolDistribution}", logsView);
+        Assert.Contains("onSelect={setFilterIngressProtocol}", logsView);
+        Assert.Contains("<DistributionStrip label=\"Policy\"", logsView);
+        Assert.Contains("items={summary?.modelPolicyDistribution}", logsView);
+        Assert.Contains("onSelect={setFilterModelPolicy}", logsView);
+        Assert.Contains("<DistributionStrip label=\"Source\"", logsView);
+        Assert.Contains("items={summary?.sourceSystemDistribution}", logsView);
+        Assert.Contains("onSelect={setFilterSourceSystem}", logsView);
+    }
+
     private static string ReadRepoFile(string relativePath)
     {
         var root = LocateRepoRoot();

@@ -14,3 +14,4 @@
 | test | scripts | LLM Gateway D 层 smoke 改为真打 GW Native `/gw/v1/invoke` 主入口，并保留 `/gw/v1/send` 兼容抽样 |
 | test | prd-api | LLM Gateway 入口协议契约补齐 Native/OpenAI/Claude/Gemini 的路由元数据一致性断言 |
 | feat | prd-llmgw-web | LLM Gateway 日志 Activity 顶部展示入口协议、模型策略和来源系统分布，并支持点击快速筛选 |
+| test | prd-api | 增加 LLM Gateway 控制台日志 summary 路由观测字段防退化守卫 |
