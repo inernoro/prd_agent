@@ -65,6 +65,7 @@ public sealed class LlmLogListItem
     public string? PlatformName { get; set; }
     public string? GroupId { get; set; }
     public string? SessionId { get; set; }
+    public string? RunId { get; set; }
     public string? UserId { get; set; }
     public string? Username { get; set; }
     public string? DisplayName { get; set; }
@@ -114,6 +115,7 @@ public sealed class LlmLogDetail
     public string? ReleaseCommit { get; set; }
     public string? GroupId { get; set; }
     public string? SessionId { get; set; }
+    public string? RunId { get; set; }
     public string? UserId { get; set; }
     public string? RequestType { get; set; }
     public string? AppCallerCode { get; set; }
@@ -184,6 +186,7 @@ public sealed class RouterTraceDto
     public string? Transport { get; set; }
     public string? SourceSystem { get; set; }
     public string? IngressProtocol { get; set; }
+    public string? RunId { get; set; }
     public string? ModelPolicy { get; set; }
     public string? ModelPoolId { get; set; }
     public bool IsFallback { get; set; }

@@ -52,6 +52,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("IsHealthProbe: ctx?.IsHealthProbe", servingEndpoints);
         Assert.Contains("IsHealthProbe = current?.IsHealthProbe", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/HttpLlmClient.cs"));
         Assert.Contains("IsHealthProbe = scopeCtx?.IsHealthProbe", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayLLMClient.cs"));
+        Assert.Contains("var runId = ResolveCompatRunId(http, body)", servingEndpoints);
+        Assert.Contains("RunId = runId", servingEndpoints);
+        Assert.Contains("ResolveHeader(http, \"X-Gateway-Run-Id\")", servingEndpoints);
+        Assert.Contains("RunId = d.AsNullableString(\"RunId\")", consoleProgram);
+        Assert.Contains("RunId = string.IsNullOrWhiteSpace(start.RunId) ? null : start.RunId.Trim()", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/LlmRequestLogWriter.cs"));
     }
 
     [Fact]

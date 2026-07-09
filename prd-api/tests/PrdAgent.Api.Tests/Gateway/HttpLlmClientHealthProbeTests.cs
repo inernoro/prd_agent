@@ -47,7 +47,8 @@ public class HttpLlmClientHealthProbeTests
             SystemPromptRedacted: null,
             RequestType: ModelTypes.Chat,
             AppCallerCode: "prd-agent-smoke.chat::chat",
-            IsHealthProbe: true));
+            IsHealthProbe: true,
+            RunId: "run-health-probe"));
 
         var client = new HttpLlmClient(
             factory,
@@ -82,6 +83,7 @@ public class HttpLlmClientHealthProbeTests
         var body = JsonNode.Parse(capturedBody!)!.AsObject();
         var context = body["Context"]!.AsObject();
         context["RequestId"]!.GetValue<string>().ShouldBe("req-health-probe");
+        context["RunId"]!.GetValue<string>().ShouldBe("run-health-probe");
         context["UserId"]!.GetValue<string>().ShouldBe("smoke-test");
         context["GatewayTransport"]!.GetValue<string>().ShouldBe(GatewayTransports.Http);
         context["IsHealthProbe"]!.GetValue<bool>().ShouldBeTrue();
@@ -100,7 +102,8 @@ public class HttpLlmClientHealthProbeTests
             DocumentChars: null,
             DocumentHash: null,
             SystemPromptRedacted: null,
-            IsHealthProbe: true));
+            IsHealthProbe: true,
+            RunId: "run-outer"));
 
         using var inner = contextAccessor.BeginScope(new LlmRequestContext(
             RequestId: "inner",
@@ -114,6 +117,7 @@ public class HttpLlmClientHealthProbeTests
 
         contextAccessor.Current!.RequestId.ShouldBe("inner");
         contextAccessor.Current.IsHealthProbe.ShouldBe(true);
+        contextAccessor.Current.RunId.ShouldBe("run-outer");
     }
 
     private static JsonSerializerOptions GatewayJsonOptions()

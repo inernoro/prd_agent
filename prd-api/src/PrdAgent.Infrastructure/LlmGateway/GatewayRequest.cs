@@ -170,6 +170,11 @@ public class GatewayRequestContext
     public string? SessionId { get; init; }
 
     /// <summary>
+    /// MAP 业务运行 ID。用于从 GW 请求日志反查到业务 run。
+    /// </summary>
+    public string? RunId { get; init; }
+
+    /// <summary>
     /// 用户组 ID
     /// </summary>
     public string? GroupId { get; init; }
@@ -272,6 +277,7 @@ public class GatewayRequestContext
         {
             RequestId = source?.RequestId,
             SessionId = source?.SessionId,
+            RunId = source?.RunId,
             GroupId = source?.GroupId,
             UserId = source?.UserId,
             ViewRole = source?.ViewRole,
@@ -335,6 +341,7 @@ public sealed class GatewayIngressRequest
             {
                 RequestId = Context?.RequestId ?? RequestId,
                 SessionId = Context?.SessionId,
+                RunId = Context?.RunId,
                 GroupId = Context?.GroupId,
                 UserId = Context?.UserId,
                 ViewRole = Context?.ViewRole,

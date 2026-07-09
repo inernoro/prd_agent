@@ -77,7 +77,9 @@ public record LlmLogStart(
     decimal? PricePerCall = null,
     string? PriceCurrency = null,
     /// <summary>产生本条请求日志的发布 commit；为空时写入器从 GIT_COMMIT 兜底。</summary>
-    string? ReleaseCommit = null);
+    string? ReleaseCommit = null,
+    /// <summary>MAP 业务运行 ID，用于把 GW 请求日志反查到业务 run。</summary>
+    string? RunId = null);
 
 public record LlmLogDone(
     int? StatusCode,

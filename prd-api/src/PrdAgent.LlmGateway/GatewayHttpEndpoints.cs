@@ -91,6 +91,7 @@ public static class GatewayHttpEndpoints
             }
 
             var requestId = ResolveHeader(http, "X-Request-Id") ?? Guid.NewGuid().ToString("N");
+            var runId = ResolveCompatRunId(http, body);
             var requestedModel = ReadString(body, "model");
             var modelPoolId = ResolveCompatModelPoolId(http, body);
             var (pinnedPlatformId, pinnedModelId) = ResolveCompatPinnedTarget(http, body);
@@ -128,6 +129,7 @@ public static class GatewayHttpEndpoints
                 Context = new GatewayRequestContext
                 {
                     RequestId = requestId,
+                    RunId = runId,
                     UserId = ResolveHeader(http, "X-Gateway-User-Id"),
                     QuestionText = ExtractQuestionText(openAiBody),
                     GatewayTransport = GatewayTransports.Http,
@@ -171,6 +173,7 @@ public static class GatewayHttpEndpoints
             }
 
             var requestId = ResolveHeader(http, "X-Request-Id") ?? Guid.NewGuid().ToString("N");
+            var runId = ResolveCompatRunId(http, body);
             var requestedModel = ReadString(body, "model");
             var modelPoolId = ResolveCompatModelPoolId(http, body);
             var (pinnedPlatformId, pinnedModelId) = ResolveCompatPinnedTarget(http, body);
@@ -201,6 +204,7 @@ public static class GatewayHttpEndpoints
                 Context = new GatewayRequestContext
                 {
                     RequestId = requestId,
+                    RunId = runId,
                     UserId = ResolveHeader(http, "X-Gateway-User-Id"),
                     QuestionText = ReadString(body, "prompt"),
                     GatewayTransport = GatewayTransports.Http,
@@ -256,6 +260,7 @@ public static class GatewayHttpEndpoints
             var requestId = ResolveHeader(http, "X-Request-Id") ?? Guid.NewGuid().ToString("N");
             var requestedModel = parsed.Model;
             var multipartFields = parsed.MultipartFields ?? new Dictionary<string, object>(StringComparer.Ordinal);
+            var runId = ResolveCompatRunId(http, multipartFields);
             var modelPoolId = ResolveCompatModelPoolId(http, multipartFields);
             var (pinnedPlatformId, pinnedModelId) = ResolveCompatPinnedTarget(http, multipartFields);
             var modelPolicy = ResolveCompatModelPolicy(http, multipartFields, requestedModel, pinnedPlatformId, pinnedModelId);
@@ -281,6 +286,7 @@ public static class GatewayHttpEndpoints
                 Context = new GatewayRequestContext
                 {
                     RequestId = requestId,
+                    RunId = runId,
                     UserId = ResolveHeader(http, "X-Gateway-User-Id"),
                     QuestionText = parsed.Prompt,
                     GatewayTransport = GatewayTransports.Http,
@@ -341,6 +347,7 @@ public static class GatewayHttpEndpoints
             }
 
             var requestedModel = ReadString(body, "model");
+            var runId = ResolveCompatRunId(http, body);
             var modelPoolId = ResolveCompatModelPoolId(http, body);
             var (pinnedPlatformId, pinnedModelId) = ResolveCompatPinnedTarget(http, body);
             var modelPolicy = ResolveCompatModelPolicy(http, body, requestedModel, pinnedPlatformId, pinnedModelId);
@@ -373,6 +380,7 @@ public static class GatewayHttpEndpoints
                 Context = new GatewayRequestContext
                 {
                     RequestId = requestId,
+                    RunId = runId,
                     UserId = userId,
                     QuestionText = ExtractQuestionText(body),
                     GatewayTransport = GatewayTransports.Http,
@@ -420,6 +428,7 @@ public static class GatewayHttpEndpoints
             }
 
             var requestId = ResolveHeader(http, "X-Request-Id") ?? Guid.NewGuid().ToString("N");
+            var runId = ResolveCompatRunId(http, body);
             var requestedModel = ReadString(body, "model");
             var modelPoolId = ResolveCompatModelPoolId(http, body);
             var (pinnedPlatformId, pinnedModelId) = ResolveCompatPinnedTarget(http, body);
@@ -457,6 +466,7 @@ public static class GatewayHttpEndpoints
                 Context = new GatewayRequestContext
                 {
                     RequestId = requestId,
+                    RunId = runId,
                     UserId = ResolveHeader(http, "X-Gateway-User-Id"),
                     QuestionText = ExtractQuestionText(openAiBody),
                     GatewayTransport = GatewayTransports.Http,
@@ -531,6 +541,7 @@ public static class GatewayHttpEndpoints
             }
 
             var requestId = ResolveHeader(http, "X-Request-Id") ?? Guid.NewGuid().ToString("N");
+            var runId = ResolveCompatRunId(http, body);
             var requestedModel = NormalizeGeminiRouteModel(model);
             var modelPoolId = ResolveCompatModelPoolId(http, body);
             var (pinnedPlatformId, pinnedModelId) = ResolveCompatPinnedTarget(http, body);
@@ -566,6 +577,7 @@ public static class GatewayHttpEndpoints
                 Context = new GatewayRequestContext
                 {
                     RequestId = requestId,
+                    RunId = runId,
                     UserId = ResolveHeader(http, "X-Gateway-User-Id"),
                     QuestionText = ExtractQuestionText(openAiBody),
                     GatewayTransport = GatewayTransports.Http,
@@ -1045,6 +1057,40 @@ public static class GatewayHttpEndpoints
             ReadFieldString(fields, "modelPoolId"));
     }
 
+    private static string? ResolveCompatRunId(HttpContext http, JsonObject body)
+    {
+        var runId = FirstNonEmpty(
+            ResolveHeader(http, "X-Gateway-Run-Id"),
+            ResolveHeader(http, "X-Run-Id"),
+            ReadString(body, "run_id"),
+            ReadString(body, "runId"));
+        if (!string.IsNullOrWhiteSpace(runId))
+            return runId;
+
+        if (body.TryGetPropertyValue("metadata", out var metadataNode) && metadataNode is JsonObject metadata)
+        {
+            runId = FirstNonEmpty(ReadString(metadata, "run_id"), ReadString(metadata, "runId"));
+            if (!string.IsNullOrWhiteSpace(runId))
+                return runId;
+        }
+
+        if (body.TryGetPropertyValue("provider", out var providerNode) && providerNode is JsonObject provider)
+        {
+            return FirstNonEmpty(ReadString(provider, "run_id"), ReadString(provider, "runId"));
+        }
+
+        return null;
+    }
+
+    private static string? ResolveCompatRunId(HttpContext http, Dictionary<string, object> fields)
+    {
+        return FirstNonEmpty(
+            ResolveHeader(http, "X-Gateway-Run-Id"),
+            ResolveHeader(http, "X-Run-Id"),
+            ReadFieldString(fields, "run_id"),
+            ReadFieldString(fields, "runId"));
+    }
+
     private static (string? PinnedPlatformId, string? PinnedModelId) ResolveCompatPinnedTarget(
         HttpContext http,
         JsonObject body)
@@ -1153,6 +1199,8 @@ public static class GatewayHttpEndpoints
         "pinnedPlatformId",
         "pinned_model_id",
         "pinnedModelId",
+        "run_id",
+        "runId",
     ];
 
     private static async Task<AppCallerGovernanceDecision> RecordAndCheckAppCallerGovernanceAsync(
@@ -2453,6 +2501,7 @@ public static class GatewayHttpEndpoints
             {
                 RequestId = ingress.Context?.RequestId ?? ingress.RequestId,
                 SessionId = ingress.Context?.SessionId,
+                RunId = ingress.Context?.RunId,
                 GroupId = ingress.Context?.GroupId,
                 UserId = ingress.Context?.UserId,
                 QuestionText = ingress.Context?.QuestionText,
@@ -2544,6 +2593,8 @@ public static class GatewayHttpEndpoints
             "response_format",
             "user",
             "provider",
+            "run_id",
+            "runId",
         };
         var dropped = form.Keys
             .Concat(form.Files.Select(f => f.Name))
@@ -3082,6 +3133,7 @@ public static class GatewayHttpEndpoints
             RequestId: ctx?.RequestId ?? Guid.NewGuid().ToString("N"),
             GroupId: ctx?.GroupId,
             SessionId: ctx?.SessionId,
+            RunId: ctx?.RunId,
             UserId: ctx?.UserId,
             ViewRole: ctx?.ViewRole,
             DocumentChars: ctx?.DocumentChars,
@@ -3144,6 +3196,7 @@ public static class GatewayHttpEndpoints
             {
                 RequestId = source?.RequestId ?? ingress.RequestId,
                 SessionId = source?.SessionId,
+                RunId = source?.RunId,
                 GroupId = source?.GroupId,
                 UserId = source?.UserId,
                 ViewRole = source?.ViewRole,
@@ -3190,6 +3243,7 @@ public static class GatewayHttpEndpoints
             {
                 RequestId = source?.RequestId ?? ingress.RequestId,
                 SessionId = source?.SessionId,
+                RunId = source?.RunId,
                 GroupId = source?.GroupId,
                 UserId = source?.UserId,
                 ViewRole = source?.ViewRole,

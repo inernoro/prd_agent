@@ -32,7 +32,11 @@ public record LlmRequestContext(
     /// <summary>
     /// 内部健康探针标记：探针必须走真实网关链路，但日志和发布 gate 需要把它与用户流量区分开。
     /// </summary>
-    bool? IsHealthProbe = null);
+    bool? IsHealthProbe = null,
+    /// <summary>
+    /// MAP 业务运行 ID。用于把 GW 请求日志反查到 chat/image/video/asr 等业务 run。
+    /// </summary>
+    string? RunId = null);
 
 public interface ILLMRequestContextAccessor
 {

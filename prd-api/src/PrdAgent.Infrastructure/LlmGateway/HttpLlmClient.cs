@@ -91,6 +91,7 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
         {
             RequestId = current?.RequestId,
             GroupId = current?.GroupId,
+            RunId = current?.RunId,
             SessionId = current?.SessionId,
             UserId = current?.UserId,
             ViewRole = current?.ViewRole,

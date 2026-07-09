@@ -3780,6 +3780,7 @@ static LlmLogListItem MapListItem(BsonDocument d) => new()
     PlatformName = d.AsNullableString("PlatformName"),
     GroupId = d.AsNullableString("GroupId"),
     SessionId = d.AsNullableString("SessionId"),
+    RunId = d.AsNullableString("RunId"),
     UserId = d.AsNullableString("UserId"),
     Username = null,
     DisplayName = null,
@@ -3820,6 +3821,7 @@ static LlmLogDetail MapDetail(BsonDocument d) => new()
     ReleaseCommit = d.AsNullableString("ReleaseCommit"),
     GroupId = d.AsNullableString("GroupId"),
     SessionId = d.AsNullableString("SessionId"),
+    RunId = d.AsNullableString("RunId"),
     UserId = d.AsNullableString("UserId"),
     RequestType = d.AsNullableString("RequestType"),
     AppCallerCode = d.AsNullableString("AppCallerCode"),
@@ -3890,6 +3892,7 @@ static RouterTraceDto BuildRouterTrace(BsonDocument d)
     var transport = d.AsNullableString("GatewayTransport");
     var sourceSystem = d.AsNullableString("SourceSystem");
     var ingressProtocol = d.AsNullableString("IngressProtocol");
+    var runId = d.AsNullableString("RunId");
     var modelPolicy = d.AsNullableString("ModelPolicy");
     var modelPoolId = d.AsNullableString("ModelPoolId");
     var parameterPolicy = d.AsNullableString("ParameterPolicy");
@@ -3914,6 +3917,7 @@ static RouterTraceDto BuildRouterTrace(BsonDocument d)
 
     Add("ingress", "source", sourceSystem);
     Add("ingress", "protocol", ingressProtocol);
+    Add("ingress", "run", runId);
     Add("ingress", "appCaller", d.AsNullableString("AppCallerCode") ?? d.AsNullableString("AppCallerCodeDisplayName") ?? d.AsNullableString("AppCallerTitle"));
     Add("ingress", "request type", d.AsNullableString("RequestType"));
     Add("policy", "model policy", modelPolicy ?? mode);
@@ -3945,6 +3949,7 @@ static RouterTraceDto BuildRouterTrace(BsonDocument d)
         Transport = transport,
         SourceSystem = sourceSystem,
         IngressProtocol = ingressProtocol,
+        RunId = runId,
         ModelPolicy = modelPolicy,
         ModelPoolId = modelPoolId,
         IsFallback = isFallback,

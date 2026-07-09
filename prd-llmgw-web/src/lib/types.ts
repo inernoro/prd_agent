@@ -44,6 +44,7 @@ export type LlmLogListItem = {
   platformName?: string | null;
   groupId?: string | null;
   sessionId?: string | null;
+  runId?: string | null;
   userId?: string | null;
   username?: string | null;
   displayName?: string | null;
@@ -84,6 +85,7 @@ export type LlmLogDetail = {
   releaseCommit?: string | null;
   groupId?: string | null;
   sessionId?: string | null;
+  runId?: string | null;
   userId?: string | null;
   requestType?: string | null;
   appCallerCode?: string | null;
@@ -153,6 +155,7 @@ export type RouterTrace = {
   transport?: string | null;
   sourceSystem?: string | null;
   ingressProtocol?: string | null;
+  runId?: string | null;
   modelPolicy?: string | null;
   modelPoolId?: string | null;
   isFallback: boolean;
