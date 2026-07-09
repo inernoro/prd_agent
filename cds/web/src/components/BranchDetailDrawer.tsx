@@ -4,6 +4,7 @@ import { AlertCircle, Braces, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, 
 import { Button } from '@/components/ui/button';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { apiRequest, ApiError } from '@/lib/api';
+import { useNowTick } from '@/hooks/useNowTick';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
 import { BranchDetailLoadingSkeleton, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { EnvEditor } from '@/pages/cds-settings/EnvEditor';
@@ -756,7 +757,6 @@ export function BranchDetailDrawer({
   onClose,
   deployments = [],
   activityEvents = [],
-  now = Date.now(),
   previewUrl = '',
   branchStatus,
   initialResourceId,
@@ -771,7 +771,6 @@ export function BranchDetailDrawer({
   onClose: () => void;
   deployments?: BranchDeploymentItem[];
   activityEvents?: DrawerActivityEvent[];
-  now?: number;
   /** 由父页面注入的 toast 函数 — 设置 tab 操作完成后用它反馈结果 */
   onToast?: (message: string) => void;
   /** 操作(deploy/pull/stop/reset/delete)完成后回调,父页面用来重拉 BranchList。
@@ -795,6 +794,10 @@ export function BranchDetailDrawer({
    */
   branchStatus?: string;
 }): JSX.Element | null {
+  // 2026-07-09 性能重构：时钟从父页面 prop 改为抽屉内自持——原先由
+  // BranchListPage 顶层 1s tick 供给（那个 tick 会整页重渲染，已删）。
+  // 抽屉打开期间才滴答，驱动「进行中部署」的实时耗时显示。
+  const now = useNowTick(open);
   const [branch, setBranch] = useState<BranchDetailData | null>(null);
   // 网关入口（声明了 cds.subdomain 的服务，如 LLM 网关 console/serving 获得独立命名域名）。
   // 与主应用入口并列展示，让「多出口」在这个抽屉里可见（用户点名的「右侧面板显示两个入口和名字」）。

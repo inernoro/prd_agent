@@ -1829,7 +1829,8 @@ function ProjectCard({
           : 'bg-muted-foreground/40';
 
   return (
-    <article className="cds-project-card group relative flex min-w-0 flex-col overflow-hidden rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] transition-[border-color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-lg">
+    // cds-cv-auto：离屏项目卡跳过 layout/paint（卡片本就 overflow-hidden，无浮层裁剪风险）
+    <article className="cds-project-card cds-cv-auto group relative flex min-w-0 flex-col overflow-hidden rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] transition-[border-color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-lg">
       <a
         href={isReady ? projectHref(project) : '#'}
         onClick={(event) => {
