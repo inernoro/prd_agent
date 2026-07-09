@@ -47,6 +47,11 @@ function getTransportMeta(t?: string | null) {
   return TRANSPORT_META[t.toLowerCase()] ?? { label: t, color: 'var(--text-secondary)', bg: 'var(--bg-elevated)' };
 }
 
+function initialQueryValue(key: string) {
+  if (typeof window === 'undefined') return '';
+  return new URLSearchParams(window.location.search).get(key) ?? '';
+}
+
 export function LogsView() {
   const [subtab, setSubtab] = useState<LogsSubTab>('generations');
   const [presetKey, setPresetKey] = useState('30d');
@@ -59,9 +64,9 @@ export function LogsView() {
   const [filterSourceSystem, setFilterSourceSystem] = useState('');
   const [filterIngressProtocol, setFilterIngressProtocol] = useState('');
   const [filterModelPolicy, setFilterModelPolicy] = useState('');
-  const [filterRunId, setFilterRunId] = useState('');
-  const [filterRequestId, setFilterRequestId] = useState('');
-  const [filterSessionId, setFilterSessionId] = useState('');
+  const [filterRunId, setFilterRunId] = useState(() => initialQueryValue('runId'));
+  const [filterRequestId, setFilterRequestId] = useState(() => initialQueryValue('requestId'));
+  const [filterSessionId, setFilterSessionId] = useState(() => initialQueryValue('sessionId'));
 
   const [meta, setMeta] = useState<{
     models: string[];

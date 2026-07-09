@@ -585,6 +585,9 @@ export type GatewayAppCaller = {
   lastObservedModelPoolId?: string | null;
   lastObservedModelPolicy?: string | null;
   lastObservedParameterPolicy?: string | null;
+  lastObservedRequestId?: string | null;
+  lastObservedSessionId?: string | null;
+  lastObservedRunId?: string | null;
   owner?: string | null;
   monthlyBudgetUsd?: number | null;
   rateLimitPerMinute?: number | null;

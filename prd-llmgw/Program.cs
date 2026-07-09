@@ -1440,7 +1440,10 @@ app.MapGet("/gw/app-callers", async (
         var pattern = new BsonRegularExpression(search.Trim(), "i");
         filters.Add(fb.Or(
             fb.Regex("AppCallerCode", pattern),
-            fb.Regex("Title", pattern)));
+            fb.Regex("Title", pattern),
+            fb.Regex("LastObservedRequestId", pattern),
+            fb.Regex("LastObservedSessionId", pattern),
+            fb.Regex("LastObservedRunId", pattern)));
     }
     var filter = filters.Count > 0 ? fb.And(filters) : fb.Empty;
     var total = await gwAppCallers.CountDocumentsAsync(filter);
@@ -4406,6 +4409,9 @@ static GatewayAppCallerItem MapGatewayAppCaller(BsonDocument d) => new()
     LastObservedModelPoolId = d.AsNullableString("LastObservedModelPoolId"),
     LastObservedModelPolicy = d.AsNullableString("LastObservedModelPolicy"),
     LastObservedParameterPolicy = d.AsNullableString("LastObservedParameterPolicy"),
+    LastObservedRequestId = d.AsNullableString("LastObservedRequestId"),
+    LastObservedSessionId = d.AsNullableString("LastObservedSessionId"),
+    LastObservedRunId = d.AsNullableString("LastObservedRunId"),
     Owner = d.AsNullableString("Owner"),
     MonthlyBudgetUsd = d.AsNullableDecimal("MonthlyBudgetUsd"),
     RateLimitPerMinute = d.AsNullableInt("RateLimitPerMinute"),

@@ -384,6 +384,9 @@ public sealed class GatewayAppCallerRecord
     public string? LastObservedModelPoolId { get; set; }
     public string? LastObservedModelPolicy { get; set; }
     public string? LastObservedParameterPolicy { get; set; }
+    public string? LastObservedRequestId { get; set; }
+    public string? LastObservedSessionId { get; set; }
+    public string? LastObservedRunId { get; set; }
     public string? Owner { get; set; }
     public decimal? MonthlyBudgetUsd { get; set; }
     public int? RateLimitPerMinute { get; set; }

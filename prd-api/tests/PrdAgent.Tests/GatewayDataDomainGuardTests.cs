@@ -60,14 +60,27 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("fb.Eq(\"RunId\", runId.Trim())", consoleProgram);
         Assert.Contains("fb.Eq(\"RequestId\", requestId.Trim())", consoleProgram);
         Assert.Contains("fb.Eq(\"SessionId\", sessionId.Trim())", consoleProgram);
+        Assert.Contains("LastObservedRequestId", servingEndpoints);
+        Assert.Contains("LastObservedSessionId", servingEndpoints);
+        Assert.Contains("LastObservedRunId", servingEndpoints);
+        Assert.Contains("LastObservedRequestId = d.AsNullableString(\"LastObservedRequestId\")", consoleProgram);
+        Assert.Contains("fb.Regex(\"LastObservedRequestId\", pattern)", consoleProgram);
         var logsTypes = ReadRepoFile("prd-llmgw-web/src/lib/types.ts");
         Assert.Contains("runId?: string", logsTypes);
         Assert.Contains("requestId?: string", logsTypes);
         Assert.Contains("sessionId?: string", logsTypes);
+        Assert.Contains("lastObservedRequestId?: string | null", logsTypes);
+        Assert.Contains("lastObservedSessionId?: string | null", logsTypes);
+        Assert.Contains("lastObservedRunId?: string | null", logsTypes);
         var logsView = ReadRepoFile("prd-llmgw-web/src/components/LogsView.tsx");
         Assert.Contains("runId: filterRunId.trim() || undefined", logsView);
         Assert.Contains("requestId: filterRequestId.trim() || undefined", logsView);
         Assert.Contains("sessionId: filterSessionId.trim() || undefined", logsView);
+        Assert.Contains("initialQueryValue('requestId')", logsView);
+        var appCallersPage = ReadRepoFile("prd-llmgw-web/src/pages/AppCallersPage.tsx");
+        Assert.Contains("logsHref('requestId', item.lastObservedRequestId)", appCallersPage);
+        Assert.Contains("logsHref('sessionId', item.lastObservedSessionId)", appCallersPage);
+        Assert.Contains("logsHref('runId', item.lastObservedRunId)", appCallersPage);
         Assert.Contains("RunId = string.IsNullOrWhiteSpace(start.RunId) ? null : start.RunId.Trim()", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/LlmRequestLogWriter.cs"));
     }
 

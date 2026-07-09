@@ -3312,6 +3312,9 @@ public static class GatewayHttpEndpoints
         var modelPolicy = string.IsNullOrWhiteSpace(ingress.ModelPolicy) ? "auto" : ingress.ModelPolicy.Trim().ToLowerInvariant();
         var modelPoolId = string.IsNullOrWhiteSpace(ingress.ModelPoolId) ? null : ingress.ModelPoolId.Trim();
         var parameterPolicy = string.IsNullOrWhiteSpace(ingress.ParameterPolicy) ? "default-drop" : ingress.ParameterPolicy.Trim().ToLowerInvariant();
+        var requestId = NormalizeOptionalTraceId(ingress.Context?.RequestId) ?? NormalizeOptionalTraceId(ingress.RequestId);
+        var sessionId = NormalizeOptionalTraceId(ingress.Context?.SessionId);
+        var runId = NormalizeOptionalTraceId(ingress.Context?.RunId);
         var filter = Builders<GatewayAppCallerRecord>.Filter.And(
             Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.AppCallerCode, ingress.AppCallerCode),
             Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.RequestType, ingress.RequestType));
@@ -3332,6 +3335,9 @@ public static class GatewayHttpEndpoints
             .Set(x => x.LastObservedModelPolicy, modelPolicy)
             .Set(x => x.LastObservedModelPoolId, modelPoolId)
             .Set(x => x.LastObservedParameterPolicy, parameterPolicy)
+            .Set(x => x.LastObservedRequestId, requestId)
+            .Set(x => x.LastObservedSessionId, sessionId)
+            .Set(x => x.LastObservedRunId, runId)
             .Set(x => x.LastSeenAt, now)
             .Set(x => x.UpdatedAt, now)
             .Inc(x => x.TotalSeen, 1)
@@ -3350,6 +3356,12 @@ public static class GatewayHttpEndpoints
         {
             // 被动登记是观测能力，不能阻断模型请求主链路。
         }
+    }
+
+    private static string? NormalizeOptionalTraceId(string? value)
+    {
+        var trimmed = value?.Trim();
+        return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed;
     }
 
     private static IResult JsonContentResult<T>(T value, JsonSerializerOptions jsonOpts)
