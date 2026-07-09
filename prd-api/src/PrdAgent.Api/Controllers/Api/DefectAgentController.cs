@@ -1059,6 +1059,35 @@ public class DefectAgentController : ControllerBase
 
         _logger.LogInformation("[{AppKey}] Defect resolved (verifying): {DefectNo} by {UserId}", AppKey, defect.DefectNo, userId);
 
+        // 站内通知：缺陷解决后通知「提交缺陷的人」（报告人），点击一键跳到该缺陷本身，而非缺陷智能体首页。
+        // 报告人自己标记完成时无需再通知自己。
+        if (!string.IsNullOrEmpty(defect.ReporterId) && defect.ReporterId != userId)
+        {
+            var resolutionText = string.IsNullOrWhiteSpace(defect.Resolution) ? null : defect.Resolution!.Trim();
+            var defectLabel = string.IsNullOrWhiteSpace(defect.Title) ? (defect.DefectNo ?? "缺陷") : defect.Title!.Trim();
+            var reporterNotifyKey = $"defect-resolved:{defect.Id}";
+            // 去重：同一缺陷若再次进入解决流程（验收不通过后重修），替换旧的待验收提醒，避免堆叠。
+            await _db.AdminNotifications.DeleteManyAsync(x => x.Key == reporterNotifyKey, CancellationToken.None);
+            var reporterNotification = new AdminNotification
+            {
+                Key = reporterNotifyKey,
+                TargetUserId = defect.ReporterId,
+                Title = "缺陷已解决，待你验收",
+                Message = resolutionText == null
+                    ? $"你提交的缺陷「{defectLabel}」已由 {resolverName} 处理完成，请前往验收。"
+                    : $"你提交的缺陷「{defectLabel}」已由 {resolverName} 处理完成：{resolutionText}",
+                Level = "success",
+                ActionLabel = "查看并验收",
+                ActionUrl = $"/defect-agent?id={defect.Id}",
+                ActionKind = "navigate",
+                Source = "defect-agent",
+                Attachments = BuildNotificationAttachments(defect),
+                ExpiresAt = DateTime.UtcNow.AddDays(7),
+            };
+            await _db.AdminNotifications.InsertOneAsync(reporterNotification, cancellationToken: CancellationToken.None);
+            _adminPushDispatchSignal.NotifyPending();
+        }
+
         // 发送 webhook 通知
         _ = _webhookService.NotifyAsync(defect, DefectEventType.Resolved);
 

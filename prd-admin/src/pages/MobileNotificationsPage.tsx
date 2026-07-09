@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Bell,
   CheckCircle2,
@@ -8,6 +9,7 @@ import {
 import { getAdminNotifications, handleAdminNotification, handleAllAdminNotifications } from '@/services';
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { getNotificationType, isEscalationNotification } from '@/lib/notificationTypeRegistry';
 
 /* ── 通知色调 ── */
 const notificationTone = {
@@ -26,6 +28,7 @@ function getNotificationTone(level?: string) {
  * 移动端系统通知页 — 展示全部通知，支持单条/一键处理。
  */
 export default function MobileNotificationsPage() {
+  const navigate = useNavigate();
   const [notifications, setNotifications] = useState<AdminNotificationItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [handlingIds, setHandlingIds] = useState<Set<string>>(new Set());
@@ -45,14 +48,20 @@ export default function MobileNotificationsPage() {
     return tb - ta;
   };
 
-  const activeNotifications = useMemo(
-    () => notifications.filter((n) => n.status === 'open').slice().sort(sortByCreatedDesc),
+  // 用户要求：通知不再出现催办。兜底过滤已下线的催办/超时提醒残留。
+  const visibleNotifications = useMemo(
+    () => notifications.filter((n) => !isEscalationNotification(n)),
     [notifications],
   );
 
+  const activeNotifications = useMemo(
+    () => visibleNotifications.filter((n) => n.status === 'open').slice().sort(sortByCreatedDesc),
+    [visibleNotifications],
+  );
+
   const handledNotifications = useMemo(
-    () => notifications.filter((n) => n.status === 'handled').slice().sort(sortByCreatedDesc),
-    [notifications],
+    () => visibleNotifications.filter((n) => n.status === 'handled').slice().sort(sortByCreatedDesc),
+    [visibleNotifications],
   );
 
   const handleOne = useCallback(async (id: string) => {
@@ -65,6 +74,20 @@ export default function MobileNotificationsPage() {
     }
     setHandlingIds((s) => { const next = new Set(s); next.delete(id); return next; });
   }, []);
+
+  // 点击通知本体：标记已处理后一键跳到目标页面（如缺陷解决通知 → 该缺陷本身）
+  const openNotification = useCallback(async (item: AdminNotificationItem) => {
+    if (!item.actionUrl) return;
+    setHandlingIds((s) => new Set(s).add(item.id));
+    const res = await handleAdminNotification(item.id);
+    setHandlingIds((s) => { const next = new Set(s); next.delete(item.id); return next; });
+    if (res.success) {
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === item.id ? { ...n, status: 'handled' as const, handledAt: new Date().toISOString() } : n)),
+      );
+      navigate(item.actionUrl);
+    }
+  }, [navigate]);
 
   const handleAll = useCallback(async () => {
     const res = await handleAllAdminNotifications();
@@ -102,15 +125,32 @@ export default function MobileNotificationsPage() {
           <div className="space-y-3 mb-6">
             {activeNotifications.map((item) => {
               const tone = getNotificationTone(item.level);
+              const variant = getNotificationType(item);
+              const ItemTypeIcon = variant.icon;
               const isHandling = handlingIds.has(item.id);
+              const clickable = !!item.actionUrl;
               return (
                 <div
                   key={item.id}
                   className="rounded-2xl border px-4 py-3"
-                  style={{ borderColor: tone.border, background: tone.bg }}
+                  style={{
+                    borderColor: `${variant.accent}55`,
+                    background: tone.bg,
+                    cursor: clickable ? 'pointer' : 'default',
+                  }}
+                  onClick={clickable ? () => void openNotification(item) : undefined}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
+                      <div className="mb-1 flex flex-wrap items-center gap-2">
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
+                          style={{ background: `${variant.accent}1f`, color: variant.accent }}
+                        >
+                          <ItemTypeIcon size={11} />
+                          {variant.label}
+                        </span>
+                      </div>
                       <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                         {item.title}
                       </div>
@@ -150,7 +190,7 @@ export default function MobileNotificationsPage() {
                       type="button"
                       className="shrink-0 mt-0.5 rounded-lg p-1.5 transition-all active:scale-90"
                       style={{ background: 'rgba(255,255,255,0.08)' }}
-                      onClick={() => handleOne(item.id)}
+                      onClick={(e) => { e.stopPropagation(); void handleOne(item.id); }}
                       disabled={isHandling}
                     >
                       {isHandling

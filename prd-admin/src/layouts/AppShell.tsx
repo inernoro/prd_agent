@@ -20,7 +20,6 @@ import {
   Bell,
   BellOff,
   Moon,
-  AlertTriangle,
   CheckCircle2,
   X,
   Bug,
@@ -78,6 +77,7 @@ import { UserAvatar } from '@/components/ui/UserAvatar';
 import { AvatarProgressRing } from '@/components/daily-tips/AvatarProgressRing';
 import { getAdminNotifications, handleAdminNotification, handleAllAdminNotifications, updateMyAvatar, uploadMyAvatar } from '@/services';
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
+import { getNotificationType, isEscalationNotification } from '@/lib/notificationTypeRegistry';
 import { GlobalDefectSubmitDialog, DefectSubmitButton } from '@/components/ui/GlobalDefectSubmitDialog';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import { NotificationSubscriptionsPanel } from '@/components/notifications/NotificationSubscriptionsPanel';
@@ -525,6 +525,8 @@ export default function AppShell() {
     () =>
       notifications
         .filter((n) => n.status === 'open')
+        // 用户要求：通知（含右下角浮窗）不再出现催办。兜底过滤已下线的催办/超时提醒残留。
+        .filter((n) => !isEscalationNotification(n))
         .slice()
         .sort((a, b) => {
           const ta = new Date(a.createdAt).getTime() || 0;
@@ -691,12 +693,9 @@ export default function AppShell() {
       {/* 移动端顶栏已有 Bell 按钮，隐藏右下浮球避免和 MobileTabBar "+" 重叠 */}
       {!suppressFloatingDock && !isMobile && toastNotification && (() => {
         const tone = getNotificationTone(toastNotification.level);
-        const level = (toastNotification.level ?? '').toLowerCase();
-        const LevelIcon = level === 'warning' || level === 'error'
-          ? AlertTriangle
-          : level === 'success'
-            ? CheckCircle2
-            : Bell;
+        // 通知类型注册表：不同类型（缺陷协作 / 周报 / 系统告警 …）展示不同图标、强调色与弹窗气质
+        const variant = getNotificationType(toastNotification);
+        const TypeIcon = variant.icon;
         // 免打扰时强制走「安静铃铛」分支:不自动弹卡片打断,只保留入口
         const showCollapsed = toastCollapsed || isSnoozed;
         return showCollapsed ? (
@@ -730,7 +729,7 @@ export default function AppShell() {
           >
             {isSnoozed
               ? <BellOff size={18} style={{ color: 'var(--text-muted)' }} />
-              : <Bell size={18} style={{ color: tone.text }} />}
+              : <TypeIcon size={18} style={{ color: variant.accent }} />}
             {/* 未读数徽章 */}
             <span
               className="absolute -top-1 -right-1 min-w-5 h-5 px-1 rounded-full flex items-center justify-center text-[10px] font-bold"
@@ -749,25 +748,36 @@ export default function AppShell() {
               minHeight: 112,
               borderRadius: 16,
               background: 'var(--panel-solid, rgba(18, 18, 22, 0.94))',
-              border: `1px solid ${tone.border}`,
-              boxShadow: '0 18px 48px -12px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.02) inset',
+              border: `1px solid ${variant.accent}55`,
+              // 弹窗气质：庆祝（成功完成）加一圈柔和强调光晕，告警加更实的边框，让不同类型一眼可辨
+              boxShadow: variant.popupStyle === 'celebrate'
+                ? `0 18px 48px -12px rgba(0,0,0,0.55), 0 0 0 1px ${variant.accent}33 inset, 0 0 26px -6px ${variant.accent}66`
+                : variant.popupStyle === 'alert'
+                  ? `0 18px 48px -12px rgba(0,0,0,0.55), 0 0 0 1px ${variant.accent}40 inset`
+                  : '0 18px 48px -12px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.02) inset',
               animation: 'notifToastIn 240ms cubic-bezier(.2,.8,.2,1)',
             }}
             onMouseEnter={() => setToastHovering(true)}
             onMouseLeave={() => setToastHovering(false)}
           >
-            {/* 左侧等级色条 */}
-            <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 3, background: tone.text, opacity: 0.9 }} />
-            {/* 头部:图标徽章 + 标题 + 条数 + 右侧操作 */}
+            {/* 左侧类型色条：颜色由通知类型决定 */}
+            <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 3, background: variant.accent, opacity: 0.9 }} />
+            {/* 头部:类型图标徽章 + 标题 + 类型标签 + 条数 + 右侧操作 */}
             <div className="flex items-start gap-2.5 pl-4 pr-3 pt-3.5">
               <div
                 className="mt-0.5 h-7 w-7 shrink-0 rounded-[9px] flex items-center justify-center"
-                style={{ background: tone.bg, border: `1px solid ${tone.border}` }}
+                style={{ background: `${variant.accent}22`, border: `1px solid ${variant.accent}55` }}
               >
-                <LevelIcon size={15} style={{ color: tone.text }} />
+                <TypeIcon size={15} style={{ color: variant.accent }} />
               </div>
               <div className="flex-1 min-w-0 pt-0.5">
                 <div className="flex items-center gap-2">
+                  <span
+                    className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full leading-none"
+                    style={{ background: `${variant.accent}1f`, color: variant.accent }}
+                  >
+                    {variant.label}
+                  </span>
                   <span className="text-[13px] font-semibold leading-snug truncate" style={{ color: 'var(--text-primary)' }}>
                     {toastNotification.title}
                   </span>
@@ -1712,24 +1722,36 @@ export default function AppShell() {
 
                       {section.items.map((item) => {
                         const tone = getNotificationTone(item.level);
+                        // 通知类型注册表：按类型给出图标 + 强调色 + 类型标签
+                        const variant = getNotificationType(item);
+                        const ItemTypeIcon = variant.icon;
                         return (
                           <div
                             key={item.id}
                             className="rounded-[16px] border px-4 py-3"
-                            style={{ borderColor: tone.border, background: tone.bg }}
+                            style={{ borderColor: `${variant.accent}55`, background: tone.bg }}
                           >
                             <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                               <div className="min-w-0 flex-1">
                                 <div className="flex flex-wrap items-center gap-2">
+                                  <span
+                                    className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
+                                    style={{ background: `${variant.accent}1f`, color: variant.accent }}
+                                  >
+                                    <ItemTypeIcon size={11} />
+                                    {variant.label}
+                                  </span>
                                   <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                                     {item.title}
                                   </div>
-                                  <span
-                                    className="rounded-full px-2 py-0.5 text-[10px]"
-                                    style={{ background: 'rgba(255,255,255,0.1)', color: tone.text }}
-                                  >
-                                    {item.sourceLabel || item.source || '通知'}
-                                  </span>
+                                  {item.sourceLabel && item.sourceLabel !== variant.label && (
+                                    <span
+                                      className="rounded-full px-2 py-0.5 text-[10px]"
+                                      style={{ background: 'rgba(255,255,255,0.1)', color: tone.text }}
+                                    >
+                                      {item.sourceLabel}
+                                    </span>
+                                  )}
                                 </div>
                                 {item.message && (
                                   looksLikeMarkdown(item.message) ? (
