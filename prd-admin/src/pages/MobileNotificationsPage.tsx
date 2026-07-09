@@ -79,6 +79,10 @@ export default function MobileNotificationsPage() {
   const openNotification = useCallback(async (item: AdminNotificationItem) => {
     const url = item.actionUrl;
     if (!url) return;
+    // 外部链接（actionKind=external 或绝对 URL）必须在用户点击的同步栈内打开，
+    // 否则 await 之后丢失用户手势激活，会被移动端浏览器拦截弹窗。
+    const isExternal = item.actionKind === 'external' || /^https?:\/\//i.test(url);
+    if (isExternal) window.open(url, '_blank', 'noopener,noreferrer');
     setHandlingIds((s) => new Set(s).add(item.id));
     const res = await handleAdminNotification(item.id);
     setHandlingIds((s) => { const next = new Set(s); next.delete(item.id); return next; });
@@ -86,10 +90,7 @@ export default function MobileNotificationsPage() {
       setNotifications((prev) =>
         prev.map((n) => (n.id === item.id ? { ...n, status: 'handled' as const, handledAt: new Date().toISOString() } : n)),
       );
-      // 外部链接（actionKind=external 或绝对 URL）走新窗口打开，避免被 React Router 当成站内路由吞掉
-      const isExternal = item.actionKind === 'external' || /^https?:\/\//i.test(url);
-      if (isExternal) window.open(url, '_blank', 'noopener,noreferrer');
-      else navigate(url);
+      if (!isExternal) navigate(url);
     }
   }, [navigate]);
 

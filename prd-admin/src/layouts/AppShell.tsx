@@ -581,6 +581,9 @@ export default function AppShell() {
   }, []);
 
   const handleNotification = useCallback(async (id: string, actionUrl?: string | null) => {
+    // 外部链接（绝对 URL）必须在用户点击的同步栈内打开，避免 await 之后丢失手势激活被浏览器拦截弹窗
+    const isExternal = !!actionUrl && /^https?:\/\//i.test(actionUrl);
+    if (isExternal) window.open(actionUrl!, '_blank', 'noopener,noreferrer');
     // 乐观更新：立即从本地状态移除，同时加入 dismiss 黑名单，count 即时 -1
     setHandlingId(id);
     setNotifications((prev) => prev.map((n) => n.id === id ? { ...n, status: 'closed' as const } : n));
@@ -592,11 +595,8 @@ export default function AppShell() {
     });
     try {
       const res = await handleAdminNotification(id);
-      if (res.success && actionUrl) {
-        // 外部链接（绝对 URL）走新窗口打开，避免被 React Router 当成站内路由吞掉
-        if (/^https?:\/\//i.test(actionUrl)) window.open(actionUrl, '_blank', 'noopener,noreferrer');
-        else navigate(actionUrl);
-      }
+      // 站内路由跳转在 handle 成功后进行（SPA navigate 不受手势激活限制）
+      if (res.success && actionUrl && !isExternal) navigate(actionUrl);
     } finally {
       setHandlingId(null);
       await loadNotifications({ silent: true });
