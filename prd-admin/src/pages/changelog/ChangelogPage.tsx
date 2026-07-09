@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RefObject } from 'react';
+import { Link } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
@@ -12,7 +13,7 @@ import { useChangelogStore } from '@/stores/changelogStore';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { SseTypingBlock } from '@/components/sse/SseTypingBlock';
 import { glassPanel } from '@/lib/glassStyles';
-import { getChangelogGitHubLogs, getChangelogGitHubPendingReview, postChangelogAiSummary } from '@/services';
+import { getChangelogGitHubLogs, getChangelogGitHubPendingReview, getChangelogGitHubHotfixes, postChangelogAiSummary } from '@/services';
 import type {
   ChangelogEntry,
   ChangelogRelease,
@@ -21,7 +22,10 @@ import type {
   GitHubLogsView,
   GitHubPendingReviewEntry,
   GitHubPendingReviewView,
+  GitHubHotfixEntry,
+  GitHubHotfixesView,
 } from '@/services';
+import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
 import { api } from '@/services/api';
 import { useSseStream } from '@/lib/useSseStream';
 import { TabBar } from '@/components/design/TabBar';
@@ -112,7 +116,7 @@ interface FlatEntry extends ChangelogEntry {
   releaseVersion?: string;
 }
 
-type HistorySubtab = 'releases' | 'fragments' | 'github_logs' | 'github_pending_review';
+type HistorySubtab = 'releases' | 'fragments' | 'github_logs' | 'github_pending_review' | 'hotfix';
 type HistorySummaryStatus = 'idle' | 'loading' | 'ready' | 'error';
 
 // v4：新增 repoTotalCommitCount / matched* / coAuthors 字段，bump key 使旧缓存自然失效
@@ -285,29 +289,36 @@ export default function ChangelogPage() {
   const [gitHubPendingReviewError, setGitHubPendingReviewError] = useState<string | null>(null);
   const [newGitHubLogShas, setNewGitHubLogShas] = useState<Set<string>>(() => new Set());
   const [liveFetchedAt, setLiveFetchedAt] = useState<string | null>(() => githubLogs?.fetchedAt ?? null);
+  const [githubHotfixes, setGitHubHotfixes] = useState<GitHubHotfixesView | null>(null);
+  const [loadingGitHubHotfixes, setLoadingGitHubHotfixes] = useState(false);
+  const [gitHubHotfixesError, setGitHubHotfixesError] = useState<string | null>(null);
   const [summaryCache, setSummaryCache] = useState<Record<HistorySubtab, HistorySummaryResult | null>>({
     releases: null,
     fragments: null,
     github_logs: null,
     github_pending_review: null,
+    hotfix: null,
   });
   const [summaryStatus, setSummaryStatus] = useState<Record<HistorySubtab, HistorySummaryStatus>>({
     releases: 'idle',
     fragments: 'idle',
     github_logs: 'idle',
     github_pending_review: 'idle',
+    hotfix: 'idle',
   });
   const [summaryThinking, setSummaryThinking] = useState<Record<HistorySubtab, string>>({
     releases: '',
     fragments: '',
     github_logs: '',
     github_pending_review: '',
+    hotfix: '',
   });
   const [summaryError, setSummaryError] = useState<Record<HistorySubtab, string | null>>({
     releases: null,
     fragments: null,
     github_logs: null,
     github_pending_review: null,
+    hotfix: null,
   });
   /** 各子 tab 独立世代，避免切 tab 后先发起的请求被后一次全局 runId 误判为过期而永久卡在 loading */
   const summaryRunByTab = useRef<Record<HistorySubtab, number>>({
@@ -315,6 +326,7 @@ export default function ChangelogPage() {
     fragments: 0,
     github_logs: 0,
     github_pending_review: 0,
+    hotfix: 0,
   });
   const scrollRootRef = useRef<HTMLDivElement>(null);
   const githubLogsRef = useRef<GitHubLogsView | null>(githubLogs);
@@ -405,6 +417,12 @@ export default function ChangelogPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 热修复：首屏后台拉一次，让 chip 计数反映累计缺陷修复数。
+  useEffect(() => {
+    void refreshGitHubHotfixes({ force: false, foreground: false, showError: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     githubLogsRef.current = githubLogs;
   }, [githubLogs]);
@@ -420,6 +438,16 @@ export default function ChangelogPage() {
     if (activeTab !== 'update_center' || historySubtab !== 'github_pending_review') {
       setGitHubPendingReviewError(null);
     }
+  }, [activeTab, historySubtab]);
+
+  // 进入热修复子 tab：前台拉一次（若尚无数据则显 loading）；离开时清错误
+  useEffect(() => {
+    if (activeTab !== 'update_center' || historySubtab !== 'hotfix') {
+      setGitHubHotfixesError(null);
+      return;
+    }
+    void refreshGitHubHotfixes({ force: false, foreground: !githubHotfixes, showError: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, historySubtab]);
 
   const refreshGitHubLogs = useCallback(async ({
@@ -549,6 +577,36 @@ export default function ChangelogPage() {
     refreshGitHubPendingReviewRef.current = refreshGitHubPendingReview;
   }, [refreshGitHubPendingReview]);
 
+  const refreshGitHubHotfixes = useCallback(async ({
+    force = false,
+    foreground = false,
+    showError = false,
+  }: {
+    force?: boolean;
+    foreground?: boolean;
+    showError?: boolean;
+  } = {}) => {
+    if (foreground) {
+      setLoadingGitHubHotfixes(true);
+      setGitHubHotfixesError(null);
+    }
+    try {
+      const res = await getChangelogGitHubHotfixes({ limit: 200, force });
+      if (res.success && res.data) {
+        setGitHubHotfixes(res.data);
+        setGitHubHotfixesError(null);
+      } else if (showError) {
+        setGitHubHotfixesError(res.error?.message || '加载热修复失败');
+      }
+    } catch (error: unknown) {
+      if (showError) {
+        setGitHubHotfixesError(error instanceof Error ? error.message : '加载热修复失败');
+      }
+    } finally {
+      if (foreground) setLoadingGitHubHotfixes(false);
+    }
+  }, []);
+
   // cursor 分页续接 GitHub 提交（向更老的方向）
   const loadingMoreLogsRef = useRef(false);
   const loadMoreGitHubLogs = useCallback(async () => {
@@ -633,6 +691,11 @@ export default function ChangelogPage() {
       foreground: historySubtab === 'github_pending_review',
       showError: historySubtab === 'github_pending_review',
     });
+    void refreshGitHubHotfixes({
+      force: true,
+      foreground: historySubtab === 'hotfix',
+      showError: historySubtab === 'hotfix',
+    });
   };
 
   // ── 实时推送（SSE）：服务器后台刷新有更新时主动推到本页，无需用户手动刷新 ──
@@ -708,6 +771,8 @@ export default function ChangelogPage() {
 
   const summarizeCurrentTab = async () => {
     const tab = historySubtab;
+    // 热修复子 tab 无 AI 总结（后端 subtab 枚举未含），且按钮已隐藏；此处兜底 narrow 类型。
+    if (tab === 'hotfix') return;
     summaryRunByTab.current[tab] += 1;
     const runId = summaryRunByTab.current[tab];
     setSummaryError((prev) => ({ ...prev, [tab]: null }));
@@ -763,13 +828,15 @@ export default function ChangelogPage() {
     // 统计失败时降级为「最近一周」窗口内条数
     const logs = githubLogs?.repoTotalCommitCount ?? githubLogs?.totalCount ?? githubLogs?.logs.length ?? 0;
     const pendingReview = githubPendingReview?.totalCount ?? githubPendingReview?.items.length ?? 0;
+    const hotfix = githubHotfixes?.totalCount ?? githubHotfixes?.items.length ?? 0;
     return {
       releases: released,
       fragments: unpublished,
       github_logs: logs,
       github_pending_review: pendingReview,
+      hotfix,
     };
-  }, [currentWeek, githubLogs, githubPendingReview, releases]);
+  }, [currentWeek, githubLogs, githubPendingReview, githubHotfixes, releases]);
 
   // 收集 release / fragment 中出现过的 type 用于筛选 chip
   const { availableTypes } = useMemo(() => {
@@ -916,6 +983,7 @@ export default function ChangelogPage() {
 
   const githubLogRows = githubLogs?.logs ?? [];
   const githubPendingReviewRows = githubPendingReview?.items ?? [];
+  const githubHotfixRows = githubHotfixes?.items ?? [];
   const releaseList = useIncrementalVisible(
     activeTab === 'update_center' && historySubtab === 'releases',
     publishedTimelineGroups.length,
@@ -1030,7 +1098,9 @@ export default function ChangelogPage() {
       ? '未发布'
       : historySubtab === 'github_logs'
         ? 'GitHub 提交'
-        : 'GitHub 待审核提交';
+        : historySubtab === 'github_pending_review'
+          ? 'GitHub 待审核提交'
+          : '热修复';
   const activeTotal = counts[historySubtab];
 
   // 新提交/新条目到达时给「共 N 次提交」chip 一道扫光（同页签内数值增长才触发，切页签不闪）
@@ -1080,7 +1150,7 @@ export default function ChangelogPage() {
           <button
             type="button"
             onClick={handleRefresh}
-            disabled={loadingReleases || loadingCurrent || loadingGitHubLogs || loadingGitHubPendingReview}
+            disabled={loadingReleases || loadingCurrent || loadingGitHubLogs || loadingGitHubPendingReview || loadingGitHubHotfixes}
             className="h-8 w-8 shrink-0 rounded-full inline-flex items-center justify-center transition-colors disabled:opacity-50"
             style={{
               border: '1px solid rgba(255, 255, 255, 0.10)',
@@ -1089,7 +1159,7 @@ export default function ChangelogPage() {
             }}
             title="刷新"
           >
-            {(loadingReleases || loadingCurrent || loadingGitHubLogs || loadingGitHubPendingReview) ? <MapSpinner size={13} /> : <RefreshCw size={13} />}
+            {(loadingReleases || loadingCurrent || loadingGitHubLogs || loadingGitHubPendingReview || loadingGitHubHotfixes) ? <MapSpinner size={13} /> : <RefreshCw size={13} />}
           </button>
         </div>
       )}
@@ -1169,7 +1239,7 @@ export default function ChangelogPage() {
           <button
             type="button"
             onClick={handleRefresh}
-            disabled={loadingReleases || loadingCurrent || loadingGitHubLogs || loadingGitHubPendingReview}
+            disabled={loadingReleases || loadingCurrent || loadingGitHubLogs || loadingGitHubPendingReview || loadingGitHubHotfixes}
             className="h-9 px-3 rounded-lg inline-flex items-center gap-1.5 text-[12px] transition-colors disabled:opacity-50"
             style={{
               border: '1px solid rgba(255, 255, 255, 0.12)',
@@ -1178,7 +1248,7 @@ export default function ChangelogPage() {
             }}
             title="刷新（绕过服务端缓存并重新拉取）"
           >
-            {(loadingReleases || loadingCurrent || loadingGitHubLogs || loadingGitHubPendingReview) ? <MapSpinner size={14} /> : <RefreshCw size={14} />}
+            {(loadingReleases || loadingCurrent || loadingGitHubLogs || loadingGitHubPendingReview || loadingGitHubHotfixes) ? <MapSpinner size={14} /> : <RefreshCw size={14} />}
             {!isMobile && <span>刷新</span>}
           </button>
         </div>
@@ -1343,6 +1413,7 @@ export default function ChangelogPage() {
                 ),
               },
               { key: 'github_pending_review', label: 'GitHub 待审核提交', icon: <GitPullRequest size={13} /> },
+              { key: 'hotfix', label: '热修复', icon: <Flame size={13} /> },
             ] as const).map((tab) => {
               const active = historySubtab === tab.key;
               const count = counts[tab.key];
@@ -1351,7 +1422,9 @@ export default function ChangelogPage() {
                 ? '提交'
                 : tab.key === 'github_pending_review'
                   ? '待审'
-                  : tab.label;
+                  : tab.key === 'hotfix'
+                    ? '热修复'
+                    : tab.label;
               const tabTitle = tab.key === 'fragments' && currentWeek
                 ? `${fragmentFileCount} 个碎片文件 · ${count} 条未发布改动\n来源：changelogs/*.md\n进入已发布流水：发布到 admin 生产环境后合入 CHANGELOG.md`
                 : undefined;
@@ -1423,12 +1496,19 @@ export default function ChangelogPage() {
                   {githubPendingReview?.fetchedAt ? ` · ${formatRelativeTime(githubPendingReview.fetchedAt)}同步` : ''}
                 </span>
               )}
+              {historySubtab === 'hotfix' && (
+                <span className="inline-flex items-center gap-1">
+                  专门修复了他人上报缺陷的提交 · 点缺陷编号可查看缺陷详情
+                  {githubHotfixes?.fetchedAt ? ` · ${formatRelativeTime(githubHotfixes.fetchedAt)}同步` : ''}
+                </span>
+              )}
             </span>}
             {isMobile && (
               <span className="min-w-0 truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>
                 {activeSummaryLabel} · {historySubtab === 'github_logs' ? '最近一周' : historySubtab === 'github_pending_review' ? '待处理' : '按时间排序'}
               </span>
             )}
+            {historySubtab !== 'hotfix' && (
             <button
               type="button"
               onClick={() => { void summarizeCurrentTab(); }}
@@ -1447,6 +1527,7 @@ export default function ChangelogPage() {
               {activeSummaryStatus === 'loading' ? <MapSpinner size={12} /> : <Wand2 size={13} />}
               {activeSummaryStatus === 'loading' ? '总结中' : 'AI 总结'}
             </button>
+            )}
           </div>
         </div>
 
@@ -1900,6 +1981,78 @@ export default function ChangelogPage() {
                         item={item}
                         index={idx}
                       />
+                    ))}
+                  </AnimatePresence>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {historySubtab === 'hotfix' && (
+          <>
+            {loadingGitHubHotfixes && !githubHotfixes && <MapSectionLoader text="正在加载热修复…" />}
+
+            {gitHubHotfixesError && (
+              <div
+                className="rounded-xl px-4 py-3 text-[12px]"
+                style={{
+                  background: 'rgba(248, 113, 113, 0.08)',
+                  border: '1px solid rgba(248, 113, 113, 0.32)',
+                  color: '#fca5a5',
+                }}
+              >
+                注意：{gitHubHotfixesError}
+              </div>
+            )}
+
+            {!loadingGitHubHotfixes && githubHotfixes && githubHotfixRows.length === 0 && (
+              <div
+                className="rounded-xl px-4 py-8 text-center"
+                style={{
+                  background: 'rgba(255, 255, 255, 0.02)',
+                  border: '1px dashed rgba(255, 255, 255, 0.08)',
+                  color: 'var(--text-muted)',
+                }}
+              >
+                <Flame size={26} className="mx-auto mb-2" style={{ color: '#fb923c', opacity: 0.6 }} />
+                <div className="text-[13px]">暂无热修复记录</div>
+                <div className="text-[11px] mt-1" style={{ opacity: 0.8 }}>
+                  当有人修复了缺陷提交人上报的缺陷（缺陷分享 / AI 自动修复）后，这里会列出对应的提交与缺陷。
+                </div>
+              </div>
+            )}
+
+            {githubHotfixRows.length > 0 && (
+              <div
+                className="rounded-xl px-4 py-3"
+                style={{
+                  background: 'rgba(255, 255, 255, 0.025)',
+                  border: '1px solid rgba(255, 255, 255, 0.06)',
+                }}
+              >
+                <div className="flex items-center gap-2 mb-3 flex-wrap">
+                  <div
+                    className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md"
+                    style={{
+                      background: 'rgba(251, 146, 60, 0.10)',
+                      border: '1px solid rgba(251, 146, 60, 0.28)',
+                      color: '#fdba74',
+                      fontSize: '13px',
+                      fontWeight: 600,
+                    }}
+                  >
+                    <Flame size={13} />
+                    热修复
+                  </div>
+                  <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    · {githubHotfixRows.length} 条缺陷修复
+                  </span>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <AnimatePresence initial={false}>
+                    {githubHotfixRows.map((item, idx) => (
+                      <HotfixRow key={item.traceId} item={item} index={idx} />
                     ))}
                   </AnimatePresence>
                 </div>
@@ -2551,6 +2704,148 @@ function GitHubLogRow({ log, index, isLiveNew }: { log: GitHubLogEntry; index: n
       <a href={log.htmlUrl} target="_blank" rel="noreferrer" className="shrink-0 inline-flex" title="查看 GitHub commit">
         <ExternalLink size={13} style={{ color: 'var(--text-muted)', opacity: 0.65, flexShrink: 0 }} />
       </a>
+    </motion.div>
+  );
+}
+
+const HOTFIX_MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+
+/** 热修复单行：被修复缺陷（可点编号进详情）+ 修复 commit/PR + 发布状态 + 验收链接 */
+function HotfixRow({ item, index }: { item: GitHubHotfixEntry; index: number }) {
+  const statusMeta = getPublishStatusMeta(item.publishStatus);
+  const relativeTime = formatRelativeTime(item.createdAt);
+  const defectUrl = `/defect-agent?defectId=${encodeURIComponent(item.defectId)}`;
+  const reporterAvatar = resolveAvatarUrl({ avatarFileName: item.reporterAvatarFileName ?? undefined });
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 10, scale: 0.995 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -8, scale: 0.99 }}
+      transition={{ duration: 0.28, delay: Math.min(index, 8) * 0.025, ease: [0.25, 0.46, 0.45, 0.94] }}
+      className="rounded-lg px-3.5 py-3 flex flex-col gap-2 transition-colors hover:bg-white/5"
+      style={{
+        background: 'rgba(255, 255, 255, 0.025)',
+        border: '1px solid rgba(255, 255, 255, 0.06)',
+      }}
+    >
+      {/* 主行：热修复标记 + 缺陷编号（可点）+ 标题 + 发布状态 + 时间 */}
+      <div className="flex items-center gap-2 flex-wrap min-w-0">
+        <span
+          className="shrink-0 inline-flex items-center gap-1 px-2 h-[24px] rounded-md text-[12px] font-semibold"
+          style={{
+            background: 'rgba(251, 146, 60, 0.10)',
+            color: '#fdba74',
+            border: '1px solid rgba(251, 146, 60, 0.28)',
+          }}
+        >
+          <Flame size={11} />
+          热修复
+        </span>
+        <Link
+          to={defectUrl}
+          className="shrink-0 inline-flex items-center gap-1 px-2 h-[24px] rounded-md text-[12px] font-semibold transition-all hover:brightness-110"
+          style={{
+            background: 'rgba(59, 130, 246, 0.12)',
+            color: '#bfdbfe',
+            border: '1px solid rgba(59, 130, 246, 0.30)',
+            fontFamily: HOTFIX_MONO,
+          }}
+          title="查看缺陷详情"
+        >
+          <Bug size={11} />
+          {item.defectNo ? `#${item.defectNo}` : '缺陷'}
+        </Link>
+        <Link
+          to={defectUrl}
+          className="text-[13px] leading-relaxed flex-1 truncate hover:underline"
+          style={{ color: 'var(--text-secondary)', minWidth: 0 }}
+          title={item.defectTitle || '未命名缺陷'}
+        >
+          {item.defectTitle || '未命名缺陷'}
+        </Link>
+        <span
+          className="shrink-0 inline-flex items-center h-[24px] px-2 rounded-md text-[12px] font-semibold"
+          style={{
+            color: statusMeta.color,
+            background: statusMeta.bg,
+            border: `1px solid ${statusMeta.border}`,
+          }}
+        >
+          {statusMeta.label}
+        </span>
+        <span
+          className="shrink-0 text-[12px]"
+          style={{ color: 'var(--text-muted)', fontFamily: HOTFIX_MONO, fontVariantNumeric: 'tabular-nums' }}
+          title={item.createdAt ? new Date(item.createdAt).toLocaleString() : undefined}
+        >
+          {relativeTime}
+        </span>
+      </div>
+
+      {/* 次行：提交人 + 修复 commit / PR + 验收链接 */}
+      <div className="flex items-center gap-x-3 gap-y-1.5 flex-wrap text-[12px]" style={{ color: 'var(--text-muted)' }}>
+        {item.reporterName && (
+          <span className="inline-flex items-center gap-1.5">
+            <img
+              src={reporterAvatar}
+              alt=""
+              className="h-4 w-4 rounded-full object-cover"
+              onError={(e) => {
+                e.currentTarget.onerror = null;
+                e.currentTarget.src = resolveNoHeadAvatarUrl();
+              }}
+            />
+            提交人 {item.reporterName}
+            {item.isSubmittedByMe && (
+              <span
+                className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px]"
+                style={{ color: '#f0abfc', background: 'rgba(217, 70, 239, 0.12)', border: '1px solid rgba(217, 70, 239, 0.28)' }}
+              >
+                <UserCheck size={10} />
+                我提交的
+              </span>
+            )}
+          </span>
+        )}
+        {item.shortSha && (
+          item.commitUrl ? (
+            <a href={item.commitUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:underline" style={{ color: 'var(--text-secondary)', fontFamily: HOTFIX_MONO }} title="查看修复 commit">
+              <GitCommit size={11} />
+              {item.shortSha}
+            </a>
+          ) : (
+            <span className="inline-flex items-center gap-1" style={{ fontFamily: HOTFIX_MONO }}>
+              <GitCommit size={11} />
+              {item.shortSha}
+            </span>
+          )
+        )}
+        {item.pullRequestUrl && (
+          <a href={item.pullRequestUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:underline" style={{ color: 'var(--text-secondary)' }} title="查看 GitHub PR">
+            <Github size={11} />
+            {item.pullRequestNumber ? `PR #${item.pullRequestNumber}` : 'PR'}
+          </a>
+        )}
+        {item.previewUrl && (
+          <a href={item.previewUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:underline" style={{ color: 'var(--text-secondary)' }}>
+            <Eye size={11} />
+            验收地址
+          </a>
+        )}
+        {item.visualReportUrl && (
+          <a href={item.visualReportUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:underline" style={{ color: 'var(--text-secondary)' }}>
+            <FileCheck2 size={11} />
+            验收报告
+          </a>
+        )}
+        {item.knowledgeBaseUrl && (
+          <a href={item.knowledgeBaseUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:underline" style={{ color: 'var(--text-secondary)' }}>
+            <FileText size={11} />
+            知识库
+          </a>
+        )}
+      </div>
     </motion.div>
   );
 }
