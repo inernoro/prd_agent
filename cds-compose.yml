@@ -263,6 +263,7 @@ services:
       MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
       MongoDB__DatabaseName: prdagent
       LlmGateway__DatabaseName: llm_gateway
+      LlmGateway__RolloutLedgerPath: /repo/.llmgw-release-evidence/rollout-ledger.jsonl
       # 控制台写 GW-owned 平台/模型/Exchange key 时使用；必须与 api/llmgw-serve 同一把。
       ApiKeyCrypto__Secret: "${ApiKeyCrypto__Secret}"
       ApiKeyCrypto__LegacySecrets: "${ApiKeyCrypto__LegacySecrets}"
