@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { execSync, spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createGzip } from 'node:zlib';
 import { Router, type Request, type Response } from 'express';
 import { StateService } from '../services/state.js';
@@ -17701,7 +17701,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
   //   .claude/skills/cds-project-scan/   — 扫描技能（向后兼容旧工作流）
   //
   // 旧入参 `?legacy=1` 保留：仍能仅导出 cds-project-scan（向后兼容）。
-  router.get('/export-skill', (req, res) => {
+  // 2026-07-09：目录复制与 tar 打包全部异步化——原实现 statSync/readdirSync
+  // 递归复制 + execSync(tar) 在请求路径上同步阻塞整个事件循环。
+  router.get('/export-skill', async (req, res) => {
     try {
       const useLegacy = req.query.legacy === '1';
 
@@ -17720,18 +17722,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const tmpDir = path.join(config.repoRoot, '.cds', 'tmp');
       const packDir = path.join(tmpDir, packName);
 
-      const copyRecursive = (src: string, dst: string) => {
-        const stat = fs.statSync(src);
-        if (stat.isDirectory()) {
-          fs.mkdirSync(dst, { recursive: true });
-          for (const entry of fs.readdirSync(src)) {
-            copyRecursive(path.join(src, entry), path.join(dst, entry));
-          }
-        } else {
-          fs.copyFileSync(src, dst);
-        }
-      };
-
       // 要打包的技能列表
       const skillsToCopy: string[] = useLegacy
         ? ['cds-project-scan']
@@ -17742,8 +17732,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const skillDir = path.join(skillsRoot, skillName);
         if (!fs.existsSync(skillDir)) continue;
         const targetSkillDir = path.join(packDir, '.claude', 'skills', skillName);
-        fs.mkdirSync(targetSkillDir, { recursive: true });
-        copyRecursive(skillDir, targetSkillDir);
+        await fs.promises.mkdir(targetSkillDir, { recursive: true });
+        await fs.promises.cp(skillDir, targetSkillDir, { recursive: true });
         copiedCount++;
       }
 
@@ -17809,18 +17799,24 @@ cdscli project list --human
 
 缺功能 / 新根因模式 / 扫描误判 → 把 \`cdscli diagnose <branchId>\` 输出贴给维护方。
 `;
-      fs.writeFileSync(path.join(packDir, 'README.md'), readme, 'utf-8');
+      await fs.promises.writeFile(path.join(packDir, 'README.md'), readme, 'utf-8');
 
-      // Create tar.gz using tar command (available on all Linux)
+      // Create tar.gz using tar command (available on all Linux) — 异步 execFile，
+      // 压缩期间事件循环不阻塞（原 execSync 会让所有请求/SSE/代理停摆）。
       const tarName = `${packName}.tar.gz`;
-      execSync(`cd "${tmpDir}" && tar -czf "${tarName}" "${packName}/"`, { stdio: 'pipe' });
+      await new Promise<void>((resolve, reject) => {
+        execFile('tar', ['-czf', tarName, `${packName}/`], { cwd: tmpDir }, (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
 
       // Clean up pack dir
-      fs.rmSync(packDir, { recursive: true, force: true });
+      await fs.promises.rm(packDir, { recursive: true, force: true });
 
       // Send tar.gz
       const tarPath = path.join(tmpDir, tarName);
-      const stat = fs.statSync(tarPath);
+      const stat = await fs.promises.stat(tarPath);
       res.setHeader('Content-Type', 'application/gzip');
       res.setHeader('Content-Disposition', `attachment; filename="${tarName}"`);
       res.setHeader('Content-Length', stat.size);

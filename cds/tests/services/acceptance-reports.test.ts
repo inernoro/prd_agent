@@ -127,8 +127,10 @@ describe('StateService acceptance reports', () => {
     expect(service.deleteAcceptanceReport('nope')).toBe(false);
   });
 
-  it('persists metadata across a reload (file-backed state round-trip)', () => {
+  it('persists metadata across a reload (file-backed state round-trip)', async () => {
     const meta = service.createAcceptanceReport({ title: 'Persisted', format: 'md', content: '# kept' });
+    // json store 的 save 是去抖异步落盘（2026-07-09），跨实例 reload 前先 flush
+    await (service.getBackingStore() as unknown as { flush(): Promise<void> }).flush();
 
     const reloaded = new StateService(stateFile);
     reloaded.load();
