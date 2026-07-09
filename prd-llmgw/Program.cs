@@ -888,7 +888,9 @@ app.MapGet("/gw/runtime-gates", async () =>
     var shadowHttpFail = runtimeCommit is null ? 0 : await shadows.CountDocumentsAsync(Builders<BsonDocument>.Filter.And(shadowFilter, Builders<BsonDocument>.Filter.Eq("HttpOk", false)));
     var logReleaseFilter = runtimeCommit is null
         ? FilterDefinition<BsonDocument>.Empty
-        : Builders<BsonDocument>.Filter.Eq("ReleaseCommit", runtimeCommit);
+        : Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("ReleaseCommit", runtimeCommit),
+            Builders<BsonDocument>.Filter.Ne("IsHealthProbe", true));
     var releaseLogTotal = runtimeCommit is null ? 0 : await logs.CountDocumentsAsync(logReleaseFilter);
     var httpTransportLogs = runtimeCommit is null
         ? 0

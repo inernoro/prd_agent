@@ -39,12 +39,15 @@ public class GatewayDataDomainGuardTests
     {
         var servingEndpoints = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
         var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
+        var smoke = ReadRepoFile("scripts/gw-smoke.py");
 
         Assert.Contains("services.GetService<LlmGatewayDataContext>()?.Context", servingEndpoints);
         Assert.Contains("var logs = gatewayDatabase.GetCollection<BsonDocument>(\"llmrequestlogs\");", consoleProgram);
         Assert.DoesNotContain("var logs = mapDatabase.GetCollection<BsonDocument>(\"llmrequestlogs\");", consoleProgram);
         Assert.Contains("var shadows = gatewayDatabase.GetCollection<BsonDocument>(\"llmshadow_comparisons\");", consoleProgram);
         Assert.DoesNotContain("var shadows = mapDatabase.GetCollection<BsonDocument>(\"llmshadow_comparisons\");", consoleProgram);
+        Assert.Contains("Builders<BsonDocument>.Filter.Ne(\"IsHealthProbe\", true)", consoleProgram);
+        Assert.Contains("\"IsHealthProbe\": True", smoke);
     }
 
     [Fact]

@@ -318,7 +318,7 @@ def main():
         body = {
             "AppCallerCode": accode, "ModelType": mtype, "Stream": False,
             "RequestBody": {"messages": [{"role": "user", "content": "ping, reply OK"}], "max_tokens": 16},
-            "Context": {"UserId": "smoke-test"},
+            "Context": {"UserId": "smoke-test", "IsHealthProbe": True},
         }
         code, raw = _req("POST", "/send", body)
         d = _envelope_data(raw) or {}
@@ -340,7 +340,7 @@ def main():
                 "max_tokens": 16,
                 "stream": True,
             },
-            "Context": {"UserId": "smoke-test"},
+            "Context": {"UserId": "smoke-test", "IsHealthProbe": True},
         }
         code, raw, events = _sse_req("/stream", stream_body)
         stream_text = "".join(str(e.get("Content") or "") for e in events if isinstance(e, dict))
@@ -371,7 +371,7 @@ def main():
             "SystemPrompt": "Reply briefly.",
             "Messages": [{"Role": "user", "Content": "ping, client stream reply OK"}],
             "EnablePromptCache": True,
-            "Context": {"UserId": "smoke-test"},
+            "Context": {"UserId": "smoke-test", "IsHealthProbe": True},
         }
         code, raw, events = _sse_req("/client-stream", client_stream_body)
         client_stream_text = "".join(str(e.get("Content") or "") for e in events if isinstance(e, dict))
@@ -433,7 +433,7 @@ def main():
 
     # 7) canary：指向不存在的入口，必须失败（证明探测有效）
     body = {"AppCallerCode": "nonexistent.canary::chat", "ModelType": "chat",
-            "RequestBody": {"messages": [{"role": "user", "content": "x"}]}, "Context": {"UserId": "smoke-test"}}
+            "RequestBody": {"messages": [{"role": "user", "content": "x"}]}, "Context": {"UserId": "smoke-test", "IsHealthProbe": True}}
     code, raw = _req("POST", "/send", body)
     d = _envelope_data(raw) or {}
     canary_caught = not (code == 200 and d.get("Success") is True)
