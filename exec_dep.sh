@@ -952,6 +952,11 @@ run_llmgw_release_gate_if_needed() {
     args="$args --min-coverage-hours $gate_min_coverage_hours"
   fi
   args="$args --health-samples ${LLMGW_GATE_HEALTH_SAMPLES:-3} --health-interval ${LLMGW_GATE_HEALTH_INTERVAL_SECONDS:-5}"
+  require_config_authority_compact="$(printf '%s' "${LLMGW_GATE_REQUIRE_CONFIG_AUTHORITY:-}" | xargs || true)"
+  if [ "$mode" = "http" ] || [ "$require_config_authority_compact" = "1" ] || [ "$require_config_authority_compact" = "true" ]; then
+    args="$args --require-config-authority"
+    echo "LLM Gateway release gate: requiring GW config-authority report for http/full rollout"
+  fi
   if [ -n "${LLMGW_GATE_JSON_OUT:-}" ]; then
     args="$args --json-out $LLMGW_GATE_JSON_OUT"
   fi
@@ -1100,6 +1105,19 @@ run_llmgw_post_deploy_verification_if_needed() {
     GW_BASE="$gate_base" GW_KEY="$gate_key" GW_TIMEOUT="${LLMGW_GATE_SMOKE_TIMEOUT_SECONDS:-120}" GW_EXPECT_COMMIT="$expect_commit" python3 scripts/gw-smoke.py
   else
     echo "WARN: LLM Gateway post-deploy D-layer smoke skipped because LLMGW_GATE_RUN_SMOKE=0" >&2
+  fi
+
+  require_runtime_gates_compact="$(printf '%s' "${LLMGW_GATE_REQUIRE_RUNTIME_GATES:-}" | xargs || true)"
+  if [ "$mode" = "http" ] || [ "$require_runtime_gates_compact" = "1" ] || [ "$require_runtime_gates_compact" = "true" ]; then
+    echo "LLM Gateway post-deploy runtime gates: required (/gw/runtime-gates readyForHttpFull)"
+    runtime_gate_expect_arg=""
+    if [ -n "$expect_commit" ]; then
+      runtime_gate_expect_arg="--expect-commit $expect_commit"
+    fi
+    # shellcheck disable=SC2086
+    GW_KEY="$gate_key" python3 scripts/llmgw-release-gate.py $args $runtime_gate_expect_arg --require-runtime-gates
+  else
+    echo "LLM Gateway post-deploy runtime gates: skipped (not full http)"
   fi
 }
 

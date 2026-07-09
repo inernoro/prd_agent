@@ -21,6 +21,7 @@ Stages:
   canary-image       Canary image-gen/text2img/img2img raw entries
   canary-asr         Canary ASR/subtitle raw entries without video generation
   canary-video-asr   Canary video and ASR raw entries
+  config-authority   Claim MAP model config into llm_gateway and bind active appCallers
   rollback-rehearsal Dry-run rollback command and record same-commit rehearsal
   http-full          Full LLMGW_MODE=http cutover, gated by all core evidence
   rollback-inproc    Execute rollback script to return MAP API to inproc mode
@@ -38,8 +39,13 @@ Required environment for deploy stages:
                               This does not bypass gateway release gates or completion-mode direct-transport checks.
   LLMGW_STAGE_SHADOW_SEED_FLAGS Extra llmgw-map-shadow-seed.py flags, for example --include-video-direct
   LLMGW_STAGE_RUN_UPSTREAM_READINESS=1 enables /gw/v1/resolve upstream readiness evidence
+  LLMGW_GATE_SMOKE_ROUTE_MATRIX=1 enables /gw/v1/resolve auto/pool/pinned route matrix evidence
+  LLMGW_GATE_SMOKE_ROUTE_POOL_ID and LLMGW_GATE_SMOKE_ROUTE_PINNED_PLATFORM_ID/MODEL_ID
+                              Required when LLMGW_GATE_SMOKE_ROUTE_MATRIX=1
   LLMGW_STAGE_RUN_PROVIDER_AUDIT=1 enables read-only video/ASR provider config audit
   LLMGW_STAGE_RUN_VIDEO_CANARY=1 enables /gw/v1/raw video exchange canary evidence
+  LLMGW_CONSOLE_BASE and LLMGW_CONSOLE_TOKEN, or LLMGW_CONSOLE_USER/PASSWORD
+                              Required for config-authority and http-full stages
   LLMGW_STAGE_MIN_FREE_MB minimum free disk MB before execute deploy stages, default 4096
   LLMGW_STAGE_AUTO_RESTORE_SHADOW_ON_FAILURE=1 restores shadow/low-sample after failed high-sample shadow-start (default)
 
@@ -266,6 +272,10 @@ case "$stage" in
     allowlist="video-agent.videogen::video-gen,visual-agent.videogen::video-gen,document-store.subtitle::asr,transcript-agent.transcribe::asr,video-agent.v2d.transcribe::asr,video-agent.video-to-text::asr"
     shadow_percent="$sample_percent"
     ;;
+  config-authority)
+    mode="config-authority"
+    canary_stage="config-authority"
+    ;;
   rollback-rehearsal)
     mode="inproc"
     canary_stage="rollback-rehearsal"
@@ -282,13 +292,27 @@ case "$stage" in
     ;;
 esac
 
-if [ "$stage" != "rollback-inproc" ] && [ "$stage" != "rollback-rehearsal" ]; then
+if [ "$stage" != "rollback-inproc" ] && [ "$stage" != "rollback-rehearsal" ] && [ "$stage" != "config-authority" ]; then
   if [ -z "$gate_base" ]; then
     echo "ERROR: $stage requires LLMGW_GATE_BASE or GW_BASE" >&2
     exit 1
   fi
   if [ -z "$gate_key" ]; then
     echo "ERROR: $stage requires LLMGW_GATE_KEY, GW_KEY, or LLMGW_SERVE_KEY" >&2
+    exit 1
+  fi
+fi
+if [ "$stage" = "config-authority" ] || [ "$stage" = "http-full" ]; then
+  console_base="$(printf '%s' "${LLMGW_CONSOLE_BASE:-}" | xargs || true)"
+  console_token="$(printf '%s' "${LLMGW_CONSOLE_TOKEN:-}" | xargs || true)"
+  console_user="$(printf '%s' "${LLMGW_CONSOLE_USER:-}" | xargs || true)"
+  console_password="$(printf '%s' "${LLMGW_CONSOLE_PASSWORD:-}" | xargs || true)"
+  if [ -z "$console_base" ]; then
+    echo "ERROR: $stage requires LLMGW_CONSOLE_BASE" >&2
+    exit 1
+  fi
+  if [ -z "$console_token" ] && { [ -z "$console_user" ] || [ -z "$console_password" ]; }; then
+    echo "ERROR: $stage requires LLMGW_CONSOLE_TOKEN or LLMGW_CONSOLE_USER/LLMGW_CONSOLE_PASSWORD" >&2
     exit 1
   fi
 fi
@@ -310,8 +334,14 @@ upstream_readiness_json="${evidence_prefix}.upstream-readiness.json"
 upstream_readiness_md="${evidence_prefix}.upstream-readiness.md"
 provider_audit_json="${evidence_prefix}.provider-audit.json"
 provider_audit_md="${evidence_prefix}.provider-audit.md"
+protocol_router_audit_json="${evidence_prefix}.protocol-router-audit.json"
+protocol_router_audit_md="${evidence_prefix}.protocol-router-audit.md"
 video_canary_json="${evidence_prefix}.video-canary.json"
 asr_http_canary_json="${evidence_prefix}.asr-http-canary.json"
+config_authority_backup_json="${evidence_prefix}.config-authority-backup.json"
+config_authority_backup_md="${evidence_prefix}.config-authority-backup.md"
+config_authority_json="${evidence_prefix}.config-authority.json"
+config_authority_md="${evidence_prefix}.config-authority.md"
 stage_json="${evidence_prefix}.stage.json"
 stage_md="${evidence_prefix}.stage.md"
 
@@ -354,9 +384,50 @@ case "$stage" in
     ;;
 esac
 run_asr_http_canary="${LLMGW_STAGE_RUN_ASR_HTTP_CANARY:-$asr_http_canary_default}"
+case "$stage" in
+  http-full)
+    disable_map_fallback_default=true
+    ;;
+  *)
+    disable_map_fallback_default=false
+    ;;
+esac
+disable_map_fallback_for_active_app_callers="${LLMGW_STAGE_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-$disable_map_fallback_default}"
 smoke_required=1
 if [ "${LLMGW_GATE_RUN_SMOKE:-1}" = "0" ]; then
   smoke_required=0
+fi
+route_matrix_raw="$(printf '%s' "${LLMGW_GATE_SMOKE_ROUTE_MATRIX:-0}" | xargs || true)"
+case "$route_matrix_raw" in
+  1|true|TRUE|yes|YES|on|ON)
+    smoke_route_matrix=1
+    ;;
+  *)
+    smoke_route_matrix=0
+    ;;
+esac
+smoke_route_app_caller="$(printf '%s' "${LLMGW_GATE_SMOKE_ROUTE_APP_CALLER:-report-agent.generate::chat}" | xargs || true)"
+smoke_route_model_type="$(printf '%s' "${LLMGW_GATE_SMOKE_ROUTE_MODEL_TYPE:-chat}" | xargs || true)"
+smoke_route_pool_id="$(printf '%s' "${LLMGW_GATE_SMOKE_ROUTE_POOL_ID:-}" | xargs || true)"
+smoke_route_pinned_platform_id="$(printf '%s' "${LLMGW_GATE_SMOKE_ROUTE_PINNED_PLATFORM_ID:-}" | xargs || true)"
+smoke_route_pinned_model_id="$(printf '%s' "${LLMGW_GATE_SMOKE_ROUTE_PINNED_MODEL_ID:-}" | xargs || true)"
+if [ "$smoke_route_matrix" = "1" ]; then
+  if [ "$smoke_required" = "0" ]; then
+    echo "ERROR: LLMGW_GATE_SMOKE_ROUTE_MATRIX=1 requires LLMGW_GATE_RUN_SMOKE to stay enabled." >&2
+    exit 1
+  fi
+  if [ -z "$smoke_route_app_caller" ] || [ -z "$smoke_route_model_type" ]; then
+    echo "ERROR: route matrix requires LLMGW_GATE_SMOKE_ROUTE_APP_CALLER and LLMGW_GATE_SMOKE_ROUTE_MODEL_TYPE." >&2
+    exit 1
+  fi
+  if [ -z "$smoke_route_pool_id" ]; then
+    echo "ERROR: route matrix requires LLMGW_GATE_SMOKE_ROUTE_POOL_ID." >&2
+    exit 1
+  fi
+  if [ -z "$smoke_route_pinned_platform_id" ] || [ -z "$smoke_route_pinned_model_id" ]; then
+    echo "ERROR: route matrix requires LLMGW_GATE_SMOKE_ROUTE_PINNED_PLATFORM_ID and LLMGW_GATE_SMOKE_ROUTE_PINNED_MODEL_ID." >&2
+    exit 1
+  fi
 fi
 disk_guard_path="${LLMGW_STAGE_DISK_GUARD_PATH:-$evidence_dir}"
 disk_guard_min_free_mb="${LLMGW_STAGE_MIN_FREE_MB:-4096}"
@@ -378,21 +449,31 @@ print_plan() {
     echo "  allowlist: ${allowlist:-empty}"
     echo "  shadowFullSamplePercent: $shadow_percent"
     echo "  shadowFullSampleAppCallerAllowlist: ${shadow_full_sample_allowlist:-empty}"
+    echo "  disableMapConfigFallbackForActiveAppCallers: $disable_map_fallback_for_active_app_callers"
     echo "  gateBase: ${gate_base:-none}"
     echo "  releaseGateJson: $release_gate_json"
     echo "  rolloutStatusJson: $rollout_status_json"
     echo "  servingProbeJson: $serving_probe_json"
     echo "  smokeJson: $smoke_json"
+    echo "  smokeRouteMatrix: $smoke_route_matrix"
+    echo "  smokeRouteAppCaller: ${smoke_route_app_caller:-none}"
+    echo "  smokeRouteModelType: ${smoke_route_model_type:-none}"
+    echo "  smokeRoutePoolId: ${smoke_route_pool_id:-none}"
+    echo "  smokeRoutePinnedPlatformId: ${smoke_route_pinned_platform_id:-none}"
+    echo "  smokeRoutePinnedModelId: ${smoke_route_pinned_model_id:-none}"
     echo "  prodPreflightJson: $prod_preflight_json"
     echo "  shadowSeedJson: $shadow_seed_json"
     echo "  upstreamReadinessJson: $upstream_readiness_json"
     echo "  upstreamReadinessEnabled: $run_upstream_readiness"
     echo "  providerAuditJson: $provider_audit_json"
     echo "  providerAuditEnabled: $run_provider_audit"
+    echo "  protocolRouterAuditJson: $protocol_router_audit_json"
     echo "  videoCanaryJson: $video_canary_json"
     echo "  videoCanaryEnabled: $run_video_canary"
     echo "  asrHttpCanaryJson: $asr_http_canary_json"
     echo "  asrHttpCanaryEnabled: $run_asr_http_canary"
+    echo "  configAuthorityBackupJson: $config_authority_backup_json"
+    echo "  configAuthorityJson: $config_authority_json"
     echo "  diskGuardPath: $disk_guard_path"
     echo "  diskGuardMinFreeMb: $disk_guard_min_free_mb"
     echo "  stageJson: $stage_json"
@@ -469,11 +550,14 @@ scripts/llmgw-rollout-status.py
 scripts/llmgw-prod-preflight.py
 scripts/llmgw-upstream-readiness.py
 scripts/llmgw-prod-provider-config-audit.py
+scripts/llmgw-protocol-router-audit.py
 scripts/llmgw-map-shadow-seed.py
 scripts/llmgw-report-agent-shadow-seed.py
 scripts/llmgw-video-exchange-canary.py
 scripts/llmgw-asr-http-canary.py
 scripts/llmgw-release-gate.py
+scripts/llmgw-config-authority-backup.sh
+scripts/llmgw-config-authority-apply.py
 scripts/llmgw-serving-probe.py
 scripts/gw-smoke.py
 scripts/llmgw-disk-space-guard.sh
@@ -557,6 +641,7 @@ append_ledger_entry() {
     --canary-stage "$canary_stage" \
     --allowlist "$allowlist" \
     --shadow-full-sample-percent "$shadow_percent" \
+    --disable-map-config-fallback-for-active-app-callers "$disable_map_fallback_for_active_app_callers" \
     --gate-base "$gate_base" \
     --evidence-json "$stage_json" \
     --evidence-md "$stage_md" \
@@ -568,13 +653,17 @@ append_ledger_entry() {
     --upstream-readiness-required "$run_upstream_readiness" \
     --provider-audit-json "$provider_audit_json" \
     --provider-audit-required "$run_provider_audit" \
+    --protocol-router-audit-json "$protocol_router_audit_json" \
     --video-canary-json "$video_canary_json" \
     --video-canary-required "$run_video_canary" \
     --asr-http-canary-json "$asr_http_canary_json" \
     --asr-http-canary-required "$run_asr_http_canary" \
+    --config-authority-json "$config_authority_json" \
+    --external-backup-json "$config_authority_backup_json" \
     --serving-probe-json "$serving_probe_json" \
     --smoke-json "$smoke_json" \
     --smoke-required "$smoke_required" \
+    --smoke-route-matrix-required "$smoke_route_matrix" \
     --main-ref "$main_ref" \
     --main-sha "$main_sha" \
     --allow-out-of-order "$allow_out_of_order" \
@@ -600,6 +689,7 @@ write_dry_run_stage_report() {
   LLMGW_DRY_RUN_CANARY_STAGE="${canary_stage:-}" \
   LLMGW_DRY_RUN_ALLOWLIST="${allowlist:-}" \
   LLMGW_DRY_RUN_SHADOW_PERCENT="${shadow_percent:-}" \
+  LLMGW_DRY_RUN_DISABLE_MAP_FALLBACK="${disable_map_fallback_for_active_app_callers:-false}" \
   LLMGW_DRY_RUN_GATE_BASE="${gate_base:-}" \
   LLMGW_DRY_RUN_ROLLOUT_STATUS_JSON="${rollout_status_json:-}" \
   LLMGW_DRY_RUN_ROLLOUT_STATUS_ENABLED="$rollout_status_gate_enabled" \
@@ -611,10 +701,16 @@ write_dry_run_stage_report() {
   LLMGW_DRY_RUN_UPSTREAM_READINESS_ENABLED="${run_upstream_readiness:-0}" \
   LLMGW_DRY_RUN_PROVIDER_AUDIT_JSON="${provider_audit_json:-}" \
   LLMGW_DRY_RUN_PROVIDER_AUDIT_ENABLED="${run_provider_audit:-0}" \
+  LLMGW_DRY_RUN_PROTOCOL_ROUTER_AUDIT_JSON="${protocol_router_audit_json:-}" \
+  LLMGW_DRY_RUN_PROTOCOL_ROUTER_AUDIT_MD="${protocol_router_audit_md:-}" \
   LLMGW_DRY_RUN_VIDEO_CANARY_JSON="${video_canary_json:-}" \
   LLMGW_DRY_RUN_VIDEO_CANARY_ENABLED="${run_video_canary:-0}" \
   LLMGW_DRY_RUN_ASR_HTTP_CANARY_JSON="${asr_http_canary_json:-}" \
   LLMGW_DRY_RUN_ASR_HTTP_CANARY_ENABLED="${run_asr_http_canary:-0}" \
+  LLMGW_DRY_RUN_CONFIG_AUTHORITY_BACKUP_JSON="${config_authority_backup_json:-}" \
+  LLMGW_DRY_RUN_CONFIG_AUTHORITY_BACKUP_MD="${config_authority_backup_md:-}" \
+  LLMGW_DRY_RUN_CONFIG_AUTHORITY_JSON="${config_authority_json:-}" \
+  LLMGW_DRY_RUN_CONFIG_AUTHORITY_MD="${config_authority_md:-}" \
   LLMGW_DRY_RUN_SERVING_PROBE_JSON="${serving_probe_json:-}" \
   LLMGW_DRY_RUN_SMOKE_JSON="${smoke_json:-}" \
   LLMGW_DRY_RUN_RELEASE_GATE_JSON="${release_gate_json:-}" \
@@ -630,10 +726,34 @@ from datetime import datetime, timezone
 stage = os.environ["LLMGW_DRY_RUN_STAGE"]
 commit = os.environ["LLMGW_DRY_RUN_COMMIT"]
 commands = []
+if stage != "rollback-inproc":
+    commands.append(
+        "python3 scripts/llmgw-protocol-router-audit.py --json-out "
+        + os.environ.get("LLMGW_DRY_RUN_PROTOCOL_ROUTER_AUDIT_JSON", "")
+        + " --report-md "
+        + os.environ.get("LLMGW_DRY_RUN_PROTOCOL_ROUTER_AUDIT_MD", "")
+    )
 if stage == "rollback-inproc":
     commands.append("scripts/llmgw-rollback-inproc.sh")
 elif stage == "rollback-rehearsal":
     commands.append("LLMGW_ROLLBACK_DRY_RUN=1 scripts/llmgw-rollback-inproc.sh")
+elif stage == "config-authority":
+    commands.append(
+        "LLMGW_CONFIG_AUTHORITY_BACKUP_DRY_RUN=1 "
+        "LLMGW_CONFIG_AUTHORITY_BACKUP_JSON_OUT="
+        + os.environ.get("LLMGW_DRY_RUN_CONFIG_AUTHORITY_BACKUP_JSON", "")
+        + " LLMGW_CONFIG_AUTHORITY_BACKUP_REPORT_MD="
+        + os.environ.get("LLMGW_DRY_RUN_CONFIG_AUTHORITY_BACKUP_MD", "")
+        + " scripts/llmgw-config-authority-backup.sh"
+    )
+    commands.append(
+        "python3 scripts/llmgw-config-authority-apply.py --base ${LLMGW_CONSOLE_BASE} "
+        "--json-out "
+        + os.environ.get("LLMGW_DRY_RUN_CONFIG_AUTHORITY_JSON", "")
+        + " --report-md "
+        + os.environ.get("LLMGW_DRY_RUN_CONFIG_AUTHORITY_MD", "")
+        + " --require-ready"
+    )
 else:
     preflight = (
         "python3 scripts/llmgw-prod-preflight.py --mode start --expect-commit "
@@ -696,7 +816,6 @@ else:
         if flags:
             seed += " " + flags
         commands.append(seed)
-
 report = {
     "generatedAt": datetime.now(timezone.utc).isoformat(),
     "verdict": "pass",
@@ -708,6 +827,7 @@ report = {
     "canaryStage": os.environ.get("LLMGW_DRY_RUN_CANARY_STAGE", ""),
     "allowlist": os.environ.get("LLMGW_DRY_RUN_ALLOWLIST", ""),
     "shadowFullSamplePercent": os.environ.get("LLMGW_DRY_RUN_SHADOW_PERCENT", ""),
+    "disableMapConfigFallbackForActiveAppCallers": os.environ.get("LLMGW_DRY_RUN_DISABLE_MAP_FALLBACK", ""),
     "gateBase": os.environ.get("LLMGW_DRY_RUN_GATE_BASE", ""),
     "rolloutStatusJson": os.environ.get("LLMGW_DRY_RUN_ROLLOUT_STATUS_JSON", ""),
     "rolloutStatusRequired": os.environ.get("LLMGW_DRY_RUN_ROLLOUT_STATUS_ENABLED", "0") == "1",
@@ -720,10 +840,14 @@ report = {
     "upstreamReadinessEnabled": os.environ.get("LLMGW_DRY_RUN_UPSTREAM_READINESS_ENABLED", "0") == "1",
     "providerAuditJson": os.environ.get("LLMGW_DRY_RUN_PROVIDER_AUDIT_JSON", ""),
     "providerAuditRequired": os.environ.get("LLMGW_DRY_RUN_PROVIDER_AUDIT_ENABLED", "0") == "1",
+    "protocolRouterAuditJson": os.environ.get("LLMGW_DRY_RUN_PROTOCOL_ROUTER_AUDIT_JSON", ""),
+    "protocolRouterAuditMd": os.environ.get("LLMGW_DRY_RUN_PROTOCOL_ROUTER_AUDIT_MD", ""),
     "videoCanaryJson": os.environ.get("LLMGW_DRY_RUN_VIDEO_CANARY_JSON", ""),
     "videoCanaryRequired": os.environ.get("LLMGW_DRY_RUN_VIDEO_CANARY_ENABLED", "0") == "1",
     "asrHttpCanaryJson": os.environ.get("LLMGW_DRY_RUN_ASR_HTTP_CANARY_JSON", ""),
     "asrHttpCanaryRequired": os.environ.get("LLMGW_DRY_RUN_ASR_HTTP_CANARY_ENABLED", "0") == "1",
+    "configAuthorityBackupJson": os.environ.get("LLMGW_DRY_RUN_CONFIG_AUTHORITY_BACKUP_JSON", ""),
+    "configAuthorityJson": os.environ.get("LLMGW_DRY_RUN_CONFIG_AUTHORITY_JSON", ""),
     "servingProbeJson": os.environ.get("LLMGW_DRY_RUN_SERVING_PROBE_JSON", ""),
     "smokeJson": os.environ.get("LLMGW_DRY_RUN_SMOKE_JSON", ""),
     "releaseGateJson": os.environ.get("LLMGW_DRY_RUN_RELEASE_GATE_JSON", ""),
@@ -752,6 +876,7 @@ with open(md_path, "w", encoding="utf-8") as fh:
         "mode",
         "canaryStage",
         "allowlist",
+        "disableMapConfigFallbackForActiveAppCallers",
         "rolloutStatusRequired",
         "rolloutStatusJson",
         "releaseGateRequired",
@@ -759,6 +884,9 @@ with open(md_path, "w", encoding="utf-8") as fh:
         "shadowSeedJson",
         "upstreamReadinessEnabled",
         "upstreamReadinessJson",
+        "configAuthorityBackupJson",
+        "configAuthorityJson",
+        "protocolRouterAuditJson",
         "releaseMainRef",
         "minStageObservationHours",
     ):
@@ -906,6 +1034,24 @@ run_provider_audit_evidence() {
       $seed_evidence_arg
   else
     echo "+ python3 scripts/llmgw-prod-provider-config-audit.py --json-out \"$provider_audit_json\" --report-md \"$provider_audit_md\"$seed_evidence_arg"
+  fi
+}
+
+run_protocol_router_audit_evidence() {
+  if [ "$stage" = "rollback-inproc" ]; then
+    return 0
+  fi
+  if [ ! -f "scripts/llmgw-protocol-router-audit.py" ]; then
+    echo "ERROR: missing scripts/llmgw-protocol-router-audit.py; cannot collect protocol router target evidence." >&2
+    exit 1
+  fi
+  if [ "$execute" = "1" ]; then
+    mkdir -p "$evidence_dir"
+    python3 scripts/llmgw-protocol-router-audit.py \
+      --json-out "$protocol_router_audit_json" \
+      --report-md "$protocol_router_audit_md"
+  else
+    echo "+ python3 scripts/llmgw-protocol-router-audit.py --json-out \"$protocol_router_audit_json\" --report-md \"$protocol_router_audit_md\""
   fi
 }
 
@@ -1072,6 +1218,7 @@ run_stage_disk_guard
 validate_ledger_order
 validate_main_ancestry
 validate_release_tree
+run_protocol_router_audit_evidence
 run_rollout_status_ready_gate
 
 if [ "$stage" = "rollback-rehearsal" ]; then
@@ -1089,6 +1236,7 @@ if [ "$stage" = "rollback-rehearsal" ]; then
       --canary-stage "$canary_stage" \
       --allowlist "$allowlist" \
       --shadow-full-sample-percent "$shadow_percent" \
+      --disable-map-config-fallback-for-active-app-callers "$disable_map_fallback_for_active_app_callers" \
       --gate-base "$gate_base" \
       --release-gate-json "$release_gate_json" \
       --release-gate-required "$release_gate_required" \
@@ -1098,13 +1246,16 @@ if [ "$stage" = "rollback-rehearsal" ]; then
       --upstream-readiness-required "$run_upstream_readiness" \
       --provider-audit-json "$provider_audit_json" \
       --provider-audit-required "$run_provider_audit" \
+      --protocol-router-audit-json "$protocol_router_audit_json" \
       --video-canary-json "$video_canary_json" \
       --video-canary-required "$run_video_canary" \
       --asr-http-canary-json "$asr_http_canary_json" \
       --asr-http-canary-required "$run_asr_http_canary" \
+      --config-authority-json "$config_authority_json" \
       --serving-probe-json "$serving_probe_json" \
       --smoke-json "$smoke_json" \
       --smoke-required "$smoke_required" \
+      --smoke-route-matrix-required "$smoke_route_matrix" \
       --main-ref "$main_ref" \
       --main-sha "$main_sha" \
       --allow-out-of-order "$allow_out_of_order" \
@@ -1120,6 +1271,65 @@ if [ "$stage" = "rollback-rehearsal" ]; then
   exit 0
 fi
 
+if [ "$stage" = "config-authority" ]; then
+  release_gate_required=0
+  if [ "$execute" = "1" ]; then
+    mkdir -p "$evidence_dir"
+    LLMGW_CONFIG_AUTHORITY_BACKUP_DRY_RUN=0 \
+    LLMGW_CONFIG_AUTHORITY_BACKUP_JSON_OUT="$config_authority_backup_json" \
+    LLMGW_CONFIG_AUTHORITY_BACKUP_REPORT_MD="$config_authority_backup_md" \
+    scripts/llmgw-config-authority-backup.sh
+    python3 scripts/llmgw-config-authority-apply.py \
+      --base "$console_base" \
+      --execute \
+      --require-ready \
+      --json-out "$config_authority_json" \
+      --report-md "$config_authority_md"
+    python3 scripts/llmgw-rollout-ledger.py stage-report \
+      --json-out "$stage_json" \
+      --report-md "$stage_md" \
+      --stage "$stage" \
+      --status success \
+      --commit "$commit" \
+      --mode "$mode" \
+      --canary-stage "$canary_stage" \
+      --allowlist "$allowlist" \
+      --shadow-full-sample-percent "$shadow_percent" \
+      --disable-map-config-fallback-for-active-app-callers "$disable_map_fallback_for_active_app_callers" \
+      --gate-base "$gate_base" \
+      --release-gate-json "$release_gate_json" \
+      --release-gate-required "$release_gate_required" \
+      --prod-preflight-json "$prod_preflight_json" \
+      --shadow-seed-json "$shadow_seed_json" \
+      --upstream-readiness-json "$upstream_readiness_json" \
+      --upstream-readiness-required "$run_upstream_readiness" \
+      --provider-audit-json "$provider_audit_json" \
+      --provider-audit-required "$run_provider_audit" \
+      --protocol-router-audit-json "$protocol_router_audit_json" \
+      --video-canary-json "$video_canary_json" \
+      --video-canary-required "$run_video_canary" \
+      --asr-http-canary-json "$asr_http_canary_json" \
+      --asr-http-canary-required "$run_asr_http_canary" \
+      --config-authority-json "$config_authority_json" \
+      --external-backup-json "$config_authority_backup_json" \
+      --serving-probe-json "$serving_probe_json" \
+      --smoke-json "$smoke_json" \
+      --smoke-required "$smoke_required" \
+      --smoke-route-matrix-required "$smoke_route_matrix" \
+      --main-ref "$main_ref" \
+      --main-sha "$main_sha" \
+      --allow-out-of-order "$allow_out_of_order" \
+      --allow-out-of-order-reason "$allow_out_of_order_reason" \
+      --min-stage-observation-hours "$min_observation_hours"
+    append_ledger_entry success
+    rollout_ledger_status="success"
+  else
+    write_dry_run_stage_report
+    echo "Dry-run only. Add --execute to run config authority migration."
+  fi
+  exit 0
+fi
+
 export LLMGW_MODE="$mode"
 export LLMGW_PROD_STAGE_ACTIVE=1
 export LLMGW_PROD_STAGE="$stage"
@@ -1127,6 +1337,7 @@ export LLMGW_HTTP_APP_CALLER_ALLOWLIST="$allowlist"
 export LLMGW_CANARY_STAGE="$canary_stage"
 export LLMGW_SHADOW_FULL_SAMPLE_PERCENT="$shadow_percent"
 export LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST="$shadow_full_sample_allowlist"
+export LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS="$disable_map_fallback_for_active_app_callers"
 export LLMGW_GATE_BASE="$gate_base"
 export LLMGW_GATE_KEY="${LLMGW_GATE_KEY:-$gate_key}"
 export LLMGW_SERVE_KEY="${LLMGW_SERVE_KEY:-$gate_key}"
@@ -1139,6 +1350,12 @@ export LLMGW_SERVING_PROBE_JSON_OUT="${LLMGW_SERVING_PROBE_JSON_OUT:-$serving_pr
 export LLMGW_SERVING_PROBE_REPORT_MD="${LLMGW_SERVING_PROBE_REPORT_MD:-$serving_probe_md}"
 export GW_SMOKE_JSON_OUT="${GW_SMOKE_JSON_OUT:-$smoke_json}"
 export GW_SMOKE_REPORT_MD="${GW_SMOKE_REPORT_MD:-$smoke_md}"
+export GW_SMOKE_ROUTE_MATRIX="${GW_SMOKE_ROUTE_MATRIX:-$smoke_route_matrix}"
+export GW_SMOKE_ROUTE_APP_CALLER="${GW_SMOKE_ROUTE_APP_CALLER:-$smoke_route_app_caller}"
+export GW_SMOKE_ROUTE_MODEL_TYPE="${GW_SMOKE_ROUTE_MODEL_TYPE:-$smoke_route_model_type}"
+export GW_SMOKE_ROUTE_POOL_ID="${GW_SMOKE_ROUTE_POOL_ID:-$smoke_route_pool_id}"
+export GW_SMOKE_ROUTE_PINNED_PLATFORM_ID="${GW_SMOKE_ROUTE_PINNED_PLATFORM_ID:-$smoke_route_pinned_platform_id}"
+export GW_SMOKE_ROUTE_PINNED_MODEL_ID="${GW_SMOKE_ROUTE_PINNED_MODEL_ID:-$smoke_route_pinned_model_id}"
 export LLMGW_GATE_SHADOW_SINCE_HOURS="${LLMGW_GATE_SHADOW_SINCE_HOURS:-48}"
 export LLMGW_GATE_HEALTH_SAMPLES="${LLMGW_GATE_HEALTH_SAMPLES:-3}"
 export LLMGW_GATE_HEALTH_INTERVAL_SECONDS="${LLMGW_GATE_HEALTH_INTERVAL_SECONDS:-5}"
@@ -1195,6 +1412,7 @@ if [ "$execute" = "1" ]; then
     --canary-stage "$canary_stage" \
     --allowlist "$allowlist" \
     --shadow-full-sample-percent "$shadow_percent" \
+    --disable-map-config-fallback-for-active-app-callers "$disable_map_fallback_for_active_app_callers" \
     --gate-base "$gate_base" \
     --release-gate-json "$release_gate_json" \
     --release-gate-required "$release_gate_required" \
@@ -1204,13 +1422,17 @@ if [ "$execute" = "1" ]; then
     --upstream-readiness-required "$run_upstream_readiness" \
     --provider-audit-json "$provider_audit_json" \
     --provider-audit-required "$run_provider_audit" \
+    --protocol-router-audit-json "$protocol_router_audit_json" \
     --video-canary-json "$video_canary_json" \
     --video-canary-required "$run_video_canary" \
     --asr-http-canary-json "$asr_http_canary_json" \
     --asr-http-canary-required "$run_asr_http_canary" \
+    --config-authority-json "$config_authority_json" \
+    --external-backup-json "$config_authority_backup_json" \
     --serving-probe-json "$serving_probe_json" \
     --smoke-json "$smoke_json" \
     --smoke-required "$smoke_required" \
+    --smoke-route-matrix-required "$smoke_route_matrix" \
     --main-ref "$main_ref" \
     --main-sha "$main_sha" \
     --allow-out-of-order "$allow_out_of_order" \

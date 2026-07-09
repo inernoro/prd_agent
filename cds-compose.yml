@@ -194,6 +194,7 @@ services:
       # Mode 默认 inproc，不切就不会用到这两项；切了即就位。serving 地址用 profile-id 网络别名。
       LlmGwServe__ApiKey: "${LLMGW_SERVE_API_KEY:-llmgw-serve-cds-preview-internal-4d8b1e3a}"
       LlmGateway__ServeBaseUrl: "http://llmgw-serve-prd-agent:8091"
+      LlmGateway__DisableMapConfigFallbackForActiveAppCallers: "${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}"
       # Jwt__Secret 由全局 x-cds-env.JWT_SECRET 自动注入，不在此声明
       Jwt__Issuer: prdagent
       ClaudeSdkExecutor__Enabled: "true"
@@ -262,6 +263,10 @@ services:
       MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
       MongoDB__DatabaseName: prdagent
       LlmGateway__DatabaseName: llm_gateway
+      LlmGateway__RolloutLedgerPath: /repo/.llmgw-release-evidence/rollout-ledger.jsonl
+      # 控制台写 GW-owned 平台/模型/Exchange key 时使用；必须与 api/llmgw-serve 同一把。
+      ApiKeyCrypto__Secret: "${ApiKeyCrypto__Secret}"
+      ApiKeyCrypto__LegacySecrets: "${ApiKeyCrypto__LegacySecrets}"
       # JWT 签名密钥：**bare `${LLMGW_JWT_SECRET}` 不带 fallback**（Codex P1）。本 console 已公网命名路由
       # （见 labels.cds.subdomain=llmgw，/gw/* 对外可达）；若回落仓库可见 fallback，任何缺该 env 的预览/fork
       # 都能自签 token 读 /gw/* 日志（prd-llmgw 守卫只认空/dev 值，长 fallback 会过守卫）。去掉 fallback →

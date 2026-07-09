@@ -18,6 +18,8 @@ backup_root="${LLMGW_EXTERNAL_BACKUP_ROOT:-$HOME/prd-agent-prod-backups}"
 backup_dir="${LLMGW_EXTERNAL_BACKUP_DIR:-$backup_root/llmgw-prod-external-$stamp}"
 dry_run="${LLMGW_EXTERNAL_BACKUP_DRY_RUN:-0}"
 include_secrets="${LLMGW_EXTERNAL_BACKUP_INCLUDE_SECRETS:-0}"
+json_out="${LLMGW_EXTERNAL_BACKUP_JSON_OUT:-}"
+report_md="${LLMGW_EXTERNAL_BACKUP_REPORT_MD:-}"
 
 run_remote() {
   ssh "$remote_host" "$@"
@@ -86,12 +88,86 @@ write_remote_container_snapshot() {
   run_remote "docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'" > "$out"
 }
 
+write_report() {
+  verdict="$1"
+  if [ -z "$json_out" ] && [ -z "$report_md" ]; then
+    return 0
+  fi
+  LLMGW_EXTERNAL_BACKUP_REPORT_VERDICT="$verdict" \
+  LLMGW_EXTERNAL_BACKUP_REPORT_JSON="$json_out" \
+  LLMGW_EXTERNAL_BACKUP_REPORT_MD="$report_md" \
+  LLMGW_EXTERNAL_BACKUP_REPORT_DIR="$backup_dir" \
+  LLMGW_EXTERNAL_BACKUP_REPORT_HOST="$remote_host" \
+  LLMGW_EXTERNAL_BACKUP_REPORT_REPO="$remote_repo" \
+  LLMGW_EXTERNAL_BACKUP_REPORT_COMPOSE="$compose_file" \
+  LLMGW_EXTERNAL_BACKUP_REPORT_MODE="$mode" \
+  LLMGW_EXTERNAL_BACKUP_REPORT_DATABASES="$databases" \
+  LLMGW_EXTERNAL_BACKUP_REPORT_COLLECTIONS="$critical_collections" \
+  LLMGW_EXTERNAL_BACKUP_REPORT_DRY_RUN="$dry_run" \
+  python3 - <<'PY'
+import json
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+
+backup_dir = Path(os.environ["LLMGW_EXTERNAL_BACKUP_REPORT_DIR"])
+archives = []
+if backup_dir.exists():
+    archives = sorted(str(path) for path in backup_dir.glob("*.archive.gz"))
+sha_path = backup_dir / "SHA256SUMS"
+report = {
+    "generatedAt": datetime.now(timezone.utc).isoformat(),
+    "verdict": os.environ["LLMGW_EXTERNAL_BACKUP_REPORT_VERDICT"],
+    "backupDir": str(backup_dir),
+    "remoteHost": os.environ["LLMGW_EXTERNAL_BACKUP_REPORT_HOST"],
+    "remoteRepo": os.environ["LLMGW_EXTERNAL_BACKUP_REPORT_REPO"],
+    "composeFile": os.environ["LLMGW_EXTERNAL_BACKUP_REPORT_COMPOSE"],
+    "mode": os.environ["LLMGW_EXTERNAL_BACKUP_REPORT_MODE"],
+    "databases": os.environ["LLMGW_EXTERNAL_BACKUP_REPORT_DATABASES"].split(),
+    "criticalCollections": os.environ["LLMGW_EXTERNAL_BACKUP_REPORT_COLLECTIONS"].split(),
+    "dryRun": os.environ["LLMGW_EXTERNAL_BACKUP_REPORT_DRY_RUN"].lower() in {"1", "true", "yes"},
+    "archiveCount": len(archives),
+    "archives": archives,
+    "sha256Sums": str(sha_path) if sha_path.exists() else "",
+}
+json_out = os.environ.get("LLMGW_EXTERNAL_BACKUP_REPORT_JSON", "")
+if json_out:
+    parent = Path(json_out).parent
+    parent.mkdir(parents=True, exist_ok=True)
+    Path(json_out).write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+md_out = os.environ.get("LLMGW_EXTERNAL_BACKUP_REPORT_MD", "")
+if md_out:
+    parent = Path(md_out).parent
+    parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "# LLM Gateway External Backup Report",
+        "",
+        f"- generatedAt: `{report['generatedAt']}`",
+        f"- verdict: `{report['verdict']}`",
+        f"- dryRun: `{report['dryRun']}`",
+        f"- mode: `{report['mode']}`",
+        f"- backupDir: `{report['backupDir']}`",
+        f"- archiveCount: `{report['archiveCount']}`",
+        f"- sha256Sums: `{report['sha256Sums']}`",
+        "",
+        "## Archives",
+        "",
+    ]
+    if archives:
+        lines.extend(f"- `{item}`" for item in archives)
+    else:
+        lines.append("- none")
+    Path(md_out).write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+}
+
 if [ "$dry_run" = "1" ] || [ "$dry_run" = "true" ]; then
   echo "LLM Gateway external backup dry-run: no local files will be written"
   run_remote "cd '$remote_repo' && pwd && df -Pm / | tail -1"
   if ! run_remote "cd '$remote_repo' && docker compose -f '$compose_file' ps --format json | head -20"; then
     run_remote "docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}' | head -20"
   fi
+  write_report pass
   exit 0
 fi
 
@@ -177,3 +253,4 @@ fi
 
 echo "LLM Gateway external backup completed: $backup_dir"
 cat "$backup_dir/SHA256SUMS"
+write_report pass
