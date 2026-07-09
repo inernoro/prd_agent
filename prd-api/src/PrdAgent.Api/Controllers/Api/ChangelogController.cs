@@ -480,6 +480,18 @@ public class ChangelogController : ControllerBase
             .Select((log, index) => new { log.Sha, index })
             .GroupBy(x => x.Sha, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First().index, StringComparer.OrdinalIgnoreCase);
+        // 追踪记录里存的可能是短 sha；shaIndex 只以完整 sha 为键，故先把短/别名解析成完整 sha，
+        // 与「GitHub 提交」linked-defect 路径一致，否则短 sha 追踪永远落到 unknown（PR #1036 Codex P2）。
+        var fullShaByAlias = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var log in view.Logs)
+        {
+            var fullSha = log.Sha.Trim().ToLowerInvariant();
+            foreach (var alias in BuildCommitShaAliases(log.Sha, log.ShortSha))
+            {
+                if (!fullShaByAlias.ContainsKey(alias))
+                    fullShaByAlias[alias] = fullSha;
+            }
+        }
 
         var defectIds = traces
             .Select(x => x.DefectId)
@@ -498,7 +510,8 @@ public class ChangelogController : ControllerBase
         var items = traces.ConvertAll(trace =>
         {
             var normalizedSha = trace.CommitSha?.Trim().ToLowerInvariant() ?? string.Empty;
-            var publishStatus = ResolvePublishStatus(trace, normalizedSha, deployedCommitSha, deployedIndex, shaIndex);
+            var resolvedSha = fullShaByAlias.TryGetValue(normalizedSha, out var full) ? full : normalizedSha;
+            var publishStatus = ResolvePublishStatus(trace, resolvedSha, deployedCommitSha, deployedIndex, shaIndex);
             defectsById.TryGetValue(trace.DefectId, out var defect);
             return new HotfixEntryDto
             {
