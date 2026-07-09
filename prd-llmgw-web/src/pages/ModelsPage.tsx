@@ -193,7 +193,7 @@ export function ModelsPage() {
     const template = capabilityTemplates.find((item) => item.key === templateKey);
     if (!template) return;
     const templateText = template.capabilities
-      .map((capability) => capability.replace(/^parameter:/, ''))
+      .map((capability) => capability)
       .join(', ');
     setCapabilityText((prev) => mergeCapabilityText(prev, templateText));
   }
@@ -450,7 +450,7 @@ function mergeCapabilityText(current: string, incoming: string) {
   for (const part of parts) {
     const [rawName] = part.split('=');
     const name = rawName.trim().replace(/^parameter:/, '').toLowerCase();
-    if (name) byName.set(name, part.replace(/^parameter:/, ''));
+    if (name) byName.set(name, part);
   }
   return Array.from(byName.values()).sort((a, b) => a.localeCompare(b)).join(', ');
 }
