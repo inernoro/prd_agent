@@ -108,7 +108,7 @@ python3 scripts/llmgw-readiness-audit.py \
 直连棘轮空 baseline、multipart HTTP rehydrate、回滚脚本 dry-run；传 `--run-dotnet` 时会跑关键 xUnit 守卫；
 当前 `--run-dotnet` 覆盖直连/数据域、93-cell 协议保真、Claude 工具翻译、shadow/raw 对账、
 multipart/key-gate/http-failure、C 层跨进程矩阵、serving 端点合同、Doubao ASR 与 OpenRouter 视频合同；
-传 `--run-smoke` 时会调用 `scripts/gw-smoke.py` 真打 `/gw/v1/healthz`、`/pools`、`/send`、`/stream`、
+传 `--run-smoke` 时会调用 `scripts/gw-smoke.py` 真打 `/gw/v1/healthz`、`/pools`、`/invoke`、`/send` 兼容入口、`/stream`、
 `/client-stream` 与 canary 必败；协议路由矩阵实现 PR 合入后，readiness audit 还会用 `/gw/v1/resolve`
 验证 `auto`、`pool`、`pinned` 三种路由语义，且 `pool` 和 `pinned` 必须给出真实 GW 池、平台与模型，
 否则不得计入发布证据；
@@ -394,7 +394,7 @@ stage/serving-probe/gw-smoke/release-gate 证据文件 verdict 与 commit 归属
 要求对应 raw appCaller 的 `appCaller:raw` 样本逐个达标。
 如果 `LLMGW_MODE=shadow` 且 `LLMGW_SHADOW_FULL_SAMPLE_PERCENT` 非 0，`exec_dep.sh` 会在 compose 起新镜像后
 强制 run serving probe 与 D 层 smoke，但不会要求已有 shadow 样本数，以便安全启动证据期。
-http/canary 发布默认还会在部署后强制运行 `scripts/gw-smoke.py`，真打 healthz/pools/send/stream/client-stream/canary；
+http/canary 发布默认还会在部署后强制运行 `scripts/gw-smoke.py`，真打 healthz/pools/invoke/send-compat/stream/client-stream/canary；
 仅在人工强制场景显式设置 `LLMGW_GATE_RUN_SMOKE=0` 才跳过，并会打印警告。
 生产 workflow 可通过 `route_matrix=true` 和 `route_pool_id`、`route_pinned_platform_id`、`route_pinned_model_id`
 把同一组 `/resolve` 路由矩阵证据纳入 stage；stage runner 也支持 `LLMGW_GATE_SMOKE_ROUTE_MATRIX=1`。启用后

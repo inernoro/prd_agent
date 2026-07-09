@@ -11,3 +11,4 @@
 | security | prd-llmgw | LLM Gateway 控制台禁止将无可解析成员的 GW 模型池设为默认池 |
 | security | prd-llmgw | LLM Gateway 控制台阻止默认 GW 模型池在成员删除、更新或批量导入后变为不可解析 |
 | feat | prd-api | LLM Gateway serving 新增 GW Native `/gw/v1/invoke` 非流式入口并复用 `/gw/v1/send` 路由治理链路 |
+| test | scripts | LLM Gateway D 层 smoke 改为真打 GW Native `/gw/v1/invoke` 主入口，并保留 `/gw/v1/send` 兼容抽样 |

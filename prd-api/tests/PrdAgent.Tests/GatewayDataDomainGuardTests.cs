@@ -1472,6 +1472,10 @@ public class GatewayDataDomainGuardTests
     {
         var script = ReadRepoFile("scripts/gw-smoke.py");
 
+        Assert.Contains("\"/invoke\"", script);
+        Assert.Contains("invoke[{mtype}]", script);
+        Assert.Contains("\"/send\"", script);
+        Assert.Contains("send-compat[chat]", script);
         Assert.Contains("_sse_req", script);
         Assert.Contains("\"/stream\"", script);
         Assert.Contains("stream[chat]", script);
