@@ -3284,12 +3284,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
       throw new Error(`SQL 初始化文件路径非法: ${file}`);
     }
     const sql = fs.readFileSync(sqlPath, 'utf-8');
-    const infra = stateService.getInfraServicesForProject(projectId)
+    const runningSqlInfra = stateService.getInfraServicesForProject(projectId)
       .filter((svc) => svc.status === 'running' && isSqlInitInfra(svc))
-      .sort((a, b) => a.id.localeCompare(b.id))[0];
-    if (!infra) {
+      .sort((a, b) => a.id.localeCompare(b.id));
+    if (runningSqlInfra.length === 0) {
       throw new Error('检测到 SQL 初始化脚本，但没有已运行的 PostgreSQL/MySQL/MariaDB 服务可执行。');
     }
+    // 优先选部署 profile 的 depends_on 明确声明的那个 SQL 库（compose depends_on 里的 infra id/名）；
+    // 仅当没有任何依赖信息命中时，才退回按 id 字母序取首个（历史行为），避免多库项目初始化到错的库。
+    const dependsOnIds = new Set<string>();
+    for (const p of [
+      ...stateService.getBuildProfilesForProject(projectId),
+      ...(entry.extraProfiles ?? []),
+    ]) {
+      for (const dep of p.dependsOn ?? []) dependsOnIds.add(dep);
+    }
+    const infra = runningSqlInfra.find((svc) => dependsOnIds.has(svc.id) || dependsOnIds.has(svc.name))
+      ?? runningSqlInfra[0];
     logEvent({
       step: `database-init-sql-${infra.id}`,
       status: 'running',
