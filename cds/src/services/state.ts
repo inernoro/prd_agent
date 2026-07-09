@@ -1757,6 +1757,11 @@ export class StateService {
     if (!this.state.releaseTargets) this.state.releaseTargets = {};
     const now = new Date().toISOString();
     const existing = this.state.releaseTargets[target.id];
+    // 跨项目 id 复用防护：客户端可指定 id，若命中的既有目标属于其他项目，
+    // 直接抛冲突（路由侧捕获返回 409），禁止盲合并覆盖他人项目的发布目标。
+    if (existing && existing.projectId !== target.projectId) {
+      throw new Error(`发布目标 '${target.id}' 已属于其他项目，无法跨项目覆盖`);
+    }
     this.state.releaseTargets[target.id] = {
       ...existing,
       ...target,
