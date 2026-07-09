@@ -223,6 +223,41 @@ public class GatewayRequestContext
     public string? GatewayTransport { get; init; }
 
     /// <summary>
+    /// 调用来源系统。目标协议路由中用于区分 map / external / console / workflow 等来源。
+    /// </summary>
+    public string? SourceSystem { get; init; }
+
+    /// <summary>
+    /// 入口协议。典型值：gw-native / openai-compatible / claude-compatible / gemini-compatible。
+    /// </summary>
+    public string? IngressProtocol { get; init; }
+
+    /// <summary>
+    /// 调用方展示标题。用于 GW 被动注册 appCaller 时给控制台一个可读名称。
+    /// </summary>
+    public string? AppCallerTitle { get; init; }
+
+    /// <summary>
+    /// 模型策略。典型值：auto / pool / pinned。
+    /// </summary>
+    public string? ModelPolicy { get; init; }
+
+    /// <summary>
+    /// 显式指定的 GW 模型池 ID。仅在 ModelPolicy=pool 时作为本次请求的池选择键。
+    /// </summary>
+    public string? ModelPoolId { get; init; }
+
+    /// <summary>
+    /// 参数策略。典型值：default-drop / strict-require。
+    /// </summary>
+    public string? ParameterPolicy { get; init; }
+
+    /// <summary>
+    /// 被入口适配器丢弃的参数名。目标态会进入 router metadata 和控制台详情。
+    /// </summary>
+    public List<string>? DroppedParameters { get; init; }
+
+    /// <summary>
     /// 是否为模型池健康探活请求。探活也必须走网关，但日志需要明确区分，避免被误认为用户流量。
     /// </summary>
     public bool? IsHealthProbe { get; init; }
@@ -247,8 +282,110 @@ public class GatewayRequestContext
             SystemPromptText = source?.SystemPromptText,
             ImageReferences = source?.ImageReferences,
             GatewayTransport = transport,
+            SourceSystem = source?.SourceSystem,
+            IngressProtocol = source?.IngressProtocol,
+            AppCallerTitle = source?.AppCallerTitle,
+            ModelPolicy = source?.ModelPolicy,
+            ModelPoolId = source?.ModelPoolId,
+            ParameterPolicy = source?.ParameterPolicy,
+            DroppedParameters = source?.DroppedParameters,
             IsHealthProbe = source?.IsHealthProbe,
         };
+}
+
+/// <summary>
+/// GW 入口层统一 IR。外部 OpenAI / Claude / Gemini 形状先转换为该结构，再交给 router。
+/// 当前用于 serving 入口和测试表达协议边界；后续 router 迁移会逐步直接消费它。
+/// </summary>
+public sealed class GatewayIngressRequest
+{
+    public required string RequestId { get; init; }
+    public string SourceSystem { get; init; } = "external";
+    public required string IngressProtocol { get; init; }
+    public required string AppCallerCode { get; init; }
+    public string? AppCallerTitle { get; init; }
+    public required string RequestType { get; init; }
+    public string ModelPolicy { get; init; } = "auto";
+    public string? ModelPoolId { get; init; }
+    public string ParameterPolicy { get; init; } = "default-drop";
+    public string? ExpectedModel { get; init; }
+    public string? PinnedPlatformId { get; init; }
+    public string? PinnedModelId { get; init; }
+    public JsonObject RequestBody { get; init; } = new();
+    public List<string> DroppedParameters { get; init; } = new();
+    public GatewayRequestContext? Context { get; init; }
+
+    public GatewayRequest ToGatewayRequest(bool stream, int timeoutSeconds = 600, bool includeThinking = true)
+    {
+        return new GatewayRequest
+        {
+            AppCallerCode = AppCallerCode,
+            ModelType = RequestType,
+            ExpectedModel = string.Equals(ModelPolicy, "pool", StringComparison.OrdinalIgnoreCase)
+                              && !string.IsNullOrWhiteSpace(ModelPoolId)
+                ? ModelPoolId
+                : ExpectedModel,
+            PinnedPlatformId = PinnedPlatformId,
+            PinnedModelId = PinnedModelId,
+            RequestBody = RequestBody,
+            Stream = stream,
+            IncludeThinking = includeThinking,
+            TimeoutSeconds = timeoutSeconds,
+            Context = new GatewayRequestContext
+            {
+                RequestId = Context?.RequestId ?? RequestId,
+                SessionId = Context?.SessionId,
+                GroupId = Context?.GroupId,
+                UserId = Context?.UserId,
+                ViewRole = Context?.ViewRole,
+                DocumentChars = Context?.DocumentChars,
+                DocumentHash = Context?.DocumentHash,
+                QuestionText = Context?.QuestionText,
+                SystemPromptChars = Context?.SystemPromptChars,
+                SystemPromptText = Context?.SystemPromptText,
+                ImageReferences = Context?.ImageReferences,
+                GatewayTransport = Context?.GatewayTransport,
+                SourceSystem = SourceSystem,
+                IngressProtocol = IngressProtocol,
+                AppCallerTitle = AppCallerTitle,
+                ModelPolicy = ModelPolicy,
+                ModelPoolId = ModelPoolId,
+                ParameterPolicy = ParameterPolicy,
+                DroppedParameters = DroppedParameters,
+                IsHealthProbe = Context?.IsHealthProbe,
+            },
+        };
+    }
+}
+
+/// <summary>
+/// LLM Gateway 自有 appCaller 注册记录，写入 llm_gateway.llmgw_app_callers。
+/// 它不是 MAP 的 LLMAppCaller；目标态由 GW 控制台维护这里的状态、池绑定和治理策略。
+/// </summary>
+public sealed class GatewayAppCallerRecord
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string AppCallerCode { get; set; } = string.Empty;
+    public string RequestType { get; set; } = string.Empty;
+    public string SourceSystem { get; set; } = "external";
+    public string IngressProtocol { get; set; } = string.Empty;
+    public string? Title { get; set; }
+    public string Status { get; set; } = "discovered";
+    public string? ModelPoolId { get; set; }
+    public string? ModelPolicy { get; set; }
+    public string? ParameterPolicy { get; set; }
+    public string? LastObservedModelPoolId { get; set; }
+    public string? LastObservedModelPolicy { get; set; }
+    public string? LastObservedParameterPolicy { get; set; }
+    public string? Owner { get; set; }
+    public decimal? MonthlyBudgetUsd { get; set; }
+    public int? RateLimitPerMinute { get; set; }
+    public string? Notes { get; set; }
+    public long TotalSeen { get; set; }
+    public DateTime FirstSeenAt { get; set; } = DateTime.UtcNow;
+    public DateTime LastSeenAt { get; set; } = DateTime.UtcNow;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 
 /// <summary>
