@@ -1405,3 +1405,23 @@ db.home_recent_opens.createIndex(
   { name: "uniq_home_recent_opens_user_entity", unique: true }
 )
 ```
+
+## CDS split store（数据库 cds_state_db）
+
+> 2026-07-09：CDS `mongo-split` 存储把两类日志字段从 `cds_global_state` 单文档拆到独立
+> collection（`debt.cds.state-json` #1/#2）。数据量有内存 ring buffer 上限
+> （webhook 全局 1000 条 / 活动流每项目 200 条），全量拉取可用；以下索引为
+> 未来按项目 / 按时间查询的读路径预留，由 DBA 手动创建（CDS 代码不自动建）。
+
+```js
+// 活动流：按项目 + 时间倒序读
+db.cds_activity_logs.createIndex(
+  { "projectId": 1, "at": -1 },
+  { name: "idx_cds_activity_logs_project_at" }
+)
+// webhook 投递：按接收时间倒序读
+db.cds_webhook_deliveries.createIndex(
+  { "receivedAt": -1 },
+  { name: "idx_cds_webhook_deliveries_received" }
+)
+```
