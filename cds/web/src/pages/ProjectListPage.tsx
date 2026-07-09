@@ -864,6 +864,12 @@ export function ProjectListPage(): JSX.Element {
         <SkillDownloadDialog
           open={skillDownloadOpen}
           onOpenChange={setSkillDownloadOpen}
+          onOpenGlobalKey={() => {
+            // 接入引导里直接跳到全局 Key 管理:全新接入(没项目)只能靠 cdsg_
+            // 全局 key bootstrap 建第一个项目,别让新手回下拉里翻。
+            setSkillDownloadOpen(false);
+            setGlobalAgentKeyOpen(true);
+          }}
         />
         <MonitoringDialog
           open={monitoringOpen}
