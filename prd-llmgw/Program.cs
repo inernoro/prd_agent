@@ -3,7 +3,7 @@
 // 设计意图（见 doc/design.llm-gateway-physical-isolation.md）：
 //   - 本服务与 prd-api 完全解耦，不引用任何 PrdAgent.* 项目，仅依赖 NuGet 包。
 //   - MAP 继续负责 MAP 自己的业务日志；GW 控制台账号、登录审计等自有状态落独立数据库 llm_gateway。
-//   - 当前控制台仍读取 MAP 的 llmrequestlogs/模型配置作为观测视图，但不把账号状态写进 MAP 库。
+//   - 控制台读取 GW 自有 llmrequestlogs / shadow / 审计作为权威观测；MAP 业务日志只作为跨系统关联来源。
 //   - 共享集合 llmrequestlogs 由 .NET 驱动以 PascalCase 字段名序列化；为规避历史文档里
 //     数值/日期类型混存导致的反序列化异常，日志查询统一以 BsonDocument 读取并手动安全映射。
 
@@ -136,7 +136,8 @@ var adminBootstrapPwd = Environment.GetEnvironmentVariable("LLMGW_ADMIN_PASSWORD
 var operationAudits = gatewayDatabase.GetCollection<BsonDocument>("llmgw_operation_audits");
 await SeedAdminAsync(gatewayDatabase, operationAudits, AdminUser, DefaultAdminPwd, forceResetAdmin, adminBootstrapPwd);
 
-var logs = mapDatabase.GetCollection<BsonDocument>("llmrequestlogs");
+// GW 请求日志由 llmgw-serve 写入独立 llm_gateway 库；控制台和 runtime gates 必须读取同一权威来源。
+var logs = gatewayDatabase.GetCollection<BsonDocument>("llmrequestlogs");
 // GW 自有账号和审计落独立库 llm_gateway，避免被 MAP 项目 env / shared DB 状态覆盖。
 var users = gatewayDatabase.GetCollection<LlmGwUser>("llmgw_console_users");
 var loginAudits = gatewayDatabase.GetCollection<LlmGwLoginAudit>("llmgw_login_audits");
