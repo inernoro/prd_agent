@@ -19,12 +19,12 @@
  */
 export const glassPanel: React.CSSProperties = {
   background:
-    'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.10)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.05)) 100%)',
+    'var(--glass-bg-start, rgba(255, 255, 255, 0.10))',
   border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.18))',
   boxShadow:
-    'inset 0 1px 1px rgba(255, 255, 255, 0.15), inset 0 -1px 1px rgba(0, 0, 0, 0.15), 0 24px 60px -12px rgba(10, 10, 14, 0.55)',
-  backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-  WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+    '0 24px 60px -12px rgba(10, 10, 14, 0.55)',
+  backdropFilter: 'blur(40px) saturate(180%)',
+  WebkitBackdropFilter: 'blur(40px) saturate(180%)',
 };
 
 /**
@@ -32,12 +32,12 @@ export const glassPanel: React.CSSProperties = {
  */
 export const glassBar: React.CSSProperties = {
   background:
-    'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.06)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.02)) 100%)',
+    'var(--glass-bg-start, rgba(255, 255, 255, 0.06))',
   border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.12))',
-  backdropFilter: 'blur(40px) saturate(200%) brightness(1.1)',
-  WebkitBackdropFilter: 'blur(40px) saturate(200%) brightness(1.1)',
+  backdropFilter: 'blur(40px) saturate(200%)',
+  WebkitBackdropFilter: 'blur(40px) saturate(200%)',
   boxShadow:
-    'inset 0 1px 1px rgba(255, 255, 255, 0.15), inset 0 -1px 1px rgba(0, 0, 0, 0.15), 0 12px 32px -8px rgba(10, 10, 14, 0.3)',
+    '0 12px 32px -8px rgba(10, 10, 14, 0.3)',
 };
 
 /**
@@ -46,9 +46,9 @@ export const glassBar: React.CSSProperties = {
 export const glassBarGold: React.CSSProperties = {
   ...glassBar,
   background:
-    'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.04)) 100%)',
+    'var(--glass-bg-start, rgba(255, 255, 255, 0.08))',
   boxShadow:
-    'inset 0 1px 1px rgba(255, 255, 255, 0.20), inset 0 -1px 1px rgba(0, 0, 0, 0.15), 0 12px 32px -8px rgba(10, 10, 14, 0.4)',
+    '0 12px 32px -8px rgba(10, 10, 14, 0.4)',
 };
 
 /**
@@ -56,12 +56,12 @@ export const glassBarGold: React.CSSProperties = {
  */
 export const glassSidebar: React.CSSProperties = {
   background:
-    'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.06)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.02)) 100%)',
+    'var(--glass-bg-start, rgba(255, 255, 255, 0.06))',
   border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.12))',
-  backdropFilter: 'blur(40px) saturate(200%) brightness(1.1)',
-  WebkitBackdropFilter: 'blur(40px) saturate(200%) brightness(1.1)',
+  backdropFilter: 'blur(40px) saturate(200%)',
+  WebkitBackdropFilter: 'blur(40px) saturate(200%)',
   boxShadow:
-    'inset 0 1px 1px rgba(255, 255, 255, 0.15), inset 0 -1px 1px rgba(0, 0, 0, 0.15), 0 16px 48px -12px rgba(10, 10, 14, 0.5)',
+    '0 16px 48px -12px rgba(10, 10, 14, 0.5)',
 };
 
 /**
@@ -71,7 +71,7 @@ export const glassTooltip: React.CSSProperties = {
   background: 'var(--glass-bg-end, rgba(20, 20, 24, 0.95))',
   border: '1px solid rgba(255,255,255,0.12)',
   boxShadow:
-    'inset 0 1px 1px rgba(255, 255, 255, 0.15), inset 0 -1px 1px rgba(0, 0, 0, 0.15), 0 8px 32px -8px rgba(10, 10, 14, 0.6)',
+    '0 8px 32px -8px rgba(10, 10, 14, 0.6)',
   backdropFilter: 'blur(12px)',
   WebkitBackdropFilter: 'blur(12px)',
 };
@@ -83,7 +83,7 @@ export const glassToolbar: React.CSSProperties = {
   background: 'var(--glass-bg-end, rgba(32, 32, 38, 0.95))',
   border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
   boxShadow:
-    'inset 0 1px 1px rgba(255, 255, 255, 0.15), inset 0 -1px 1px rgba(0, 0, 0, 0.15), 0 12px 32px -8px rgba(10, 10, 14, 0.45)',
+    '0 12px 32px -8px rgba(10, 10, 14, 0.45)',
   backdropFilter: 'blur(16px)',
   WebkitBackdropFilter: 'blur(16px)',
 };
@@ -174,7 +174,7 @@ export const glassInputArea: React.CSSProperties = {
  */
 export const glassDrawer: React.CSSProperties = {
   background:
-    'linear-gradient(180deg, var(--glass-bg-start, rgba(20, 20, 25, 0.98)) 0%, var(--glass-bg-end, rgba(16, 16, 20, 0.98)) 100%)',
+    'var(--glass-bg-start, rgba(20, 20, 25, 0.98))',
   border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.1))',
   boxShadow: '0 20px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255, 255, 255, 0.04) inset',
   backdropFilter: 'blur(40px)',
@@ -199,11 +199,11 @@ export const glassDropdown: React.CSSProperties = {
  */
 export const glassBottomSheet: React.CSSProperties = {
   background:
-    'linear-gradient(180deg, var(--glass-bg-start, rgba(24, 24, 28, 0.98)) 0%, var(--glass-bg-end, rgba(18, 18, 22, 0.99)) 100%)',
+    'var(--glass-bg-start, rgba(24, 24, 28, 0.98))',
   borderTop: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
   boxShadow: '0 -12px 48px rgba(0,0,0,0.5), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-  backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
-  WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
+  backdropFilter: 'blur(40px) saturate(180%)',
+  WebkitBackdropFilter: 'blur(40px) saturate(180%)',
 };
 
 /**
@@ -211,7 +211,7 @@ export const glassBottomSheet: React.CSSProperties = {
  */
 export const glassMobileHeader: React.CSSProperties = {
   background:
-    'linear-gradient(180deg, var(--glass-bg-start, rgba(18, 18, 22, 0.95)) 0%, var(--glass-bg-end, rgba(18, 18, 22, 0.88)) 100%)',
+    'var(--glass-bg-start, rgba(18, 18, 22, 0.95))',
   borderBottom: '1px solid var(--glass-border, rgba(255, 255, 255, 0.1))',
   backdropFilter: 'blur(40px) saturate(180%)',
   WebkitBackdropFilter: 'blur(40px) saturate(180%)',
