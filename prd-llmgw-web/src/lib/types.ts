@@ -37,6 +37,7 @@ export type ChangePasswordResult = {
 export type LlmLogListItem = {
   id: string;
   requestId: string;
+  releaseCommit?: string | null;
   provider: string;
   model: string;
   platformId?: string | null;
@@ -49,6 +50,9 @@ export type LlmLogListItem = {
   requestType?: string | null;
   appCallerCode?: string | null;
   appCallerCodeDisplayName?: string | null;
+  appCallerTitle?: string | null;
+  sourceSystem?: string | null;
+  ingressProtocol?: string | null;
   status: string;
   startedAt: string;
   firstByteAt?: string | null;
@@ -57,12 +61,17 @@ export type LlmLogListItem = {
   statusCode?: number | null;
   inputTokens?: number | null;
   outputTokens?: number | null;
+  estimatedCost?: number | null;
+  estimatedCostCurrency?: string | null;
+  estimatedCostUsd?: number | null;
   error?: string | null;
   isFallback?: boolean | null;
   expectedModel?: string | null;
   protocol?: string | null;
   resolutionReason?: string | null;
   transport?: string | null;
+  modelPolicy?: string | null;
+  modelPoolId?: string | null;
   toolCallCount?: number | null;
   finishReason?: string | null;
   isStreaming?: boolean | null;
@@ -72,12 +81,16 @@ export type LlmLogListItem = {
 export type LlmLogDetail = {
   id: string;
   requestId: string;
+  releaseCommit?: string | null;
   groupId?: string | null;
   sessionId?: string | null;
   userId?: string | null;
   requestType?: string | null;
   appCallerCode?: string | null;
   appCallerCodeDisplayName?: string | null;
+  appCallerTitle?: string | null;
+  sourceSystem?: string | null;
+  ingressProtocol?: string | null;
   provider: string;
   model: string;
   requestBodyRedacted?: string | null;
@@ -89,6 +102,16 @@ export type LlmLogDetail = {
   toolCallCount?: number | null;
   inputTokens?: number | null;
   outputTokens?: number | null;
+  inputPricePerMillion?: number | null;
+  outputPricePerMillion?: number | null;
+  pricePerCall?: number | null;
+  priceCurrency?: string | null;
+  estimatedInputCost?: number | null;
+  estimatedOutputCost?: number | null;
+  estimatedCallCost?: number | null;
+  estimatedCost?: number | null;
+  estimatedCostCurrency?: string | null;
+  estimatedCostUsd?: number | null;
   startedAt: string;
   firstByteAt?: string | null;
   endedAt?: string | null;
@@ -97,13 +120,74 @@ export type LlmLogDetail = {
   statusCode?: number | null;
   isFallback?: boolean | null;
   fallbackReason?: string | null;
+  platformId?: string | null;
+  platformName?: string | null;
+  modelResolutionType?: string | null;
+  modelGroupId?: string | null;
+  modelGroupName?: string | null;
   expectedModel?: string | null;
   protocol?: string | null;
   resolutionReason?: string | null;
   transport?: string | null;
+  modelPolicy?: string | null;
+  modelPoolId?: string | null;
+  parameterPolicy?: string | null;
+  droppedParameters?: string[];
+  providerAttempts: ProviderAttempt[];
+  routerTrace: RouterTrace;
   finishReason?: string | null;
   isStreaming?: boolean | null;
   error?: string | null;
+};
+
+export type RouterTrace = {
+  mode?: string | null;
+  requestedModel?: string | null;
+  actualModel?: string | null;
+  modelGroupId?: string | null;
+  modelGroupName?: string | null;
+  provider?: string | null;
+  platformId?: string | null;
+  platformName?: string | null;
+  protocol?: string | null;
+  transport?: string | null;
+  sourceSystem?: string | null;
+  ingressProtocol?: string | null;
+  modelPolicy?: string | null;
+  modelPoolId?: string | null;
+  isFallback: boolean;
+  fallbackReason?: string | null;
+  resolutionReason?: string | null;
+  parameterPolicy?: string | null;
+  droppedParameters: string[];
+  steps: RouterTraceStep[];
+};
+
+export type RouterTraceStep = {
+  order: number;
+  stage: string;
+  label: string;
+  value?: string | null;
+  status: 'info' | 'warning' | 'error' | string;
+};
+
+export type ProviderAttempt = {
+  order: number;
+  stage: string;
+  provider?: string | null;
+  platformId?: string | null;
+  platformName?: string | null;
+  model?: string | null;
+  modelGroupId?: string | null;
+  modelGroupName?: string | null;
+  protocol?: string | null;
+  transport?: string | null;
+  status: string;
+  reason?: string | null;
+  statusCode?: number | null;
+  durationMs?: number | null;
+  error?: string | null;
+  endedAt?: string | null;
 };
 
 // ── 元信息（筛选下拉）──
@@ -114,6 +198,9 @@ export type LogsMeta = {
   appCallers: string[];
   transports: string[];
   requestTypes: string[];
+  sourceSystems: string[];
+  ingressProtocols: string[];
+  modelPolicies: string[];
 };
 
 export type LogsBucketItem = {
@@ -131,6 +218,7 @@ export type LogsSummaryData = {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  estimatedCostUsd: number;
   averageDurationMs?: number | null;
   transportDistribution: LogsBucketItem[];
   statusDistribution: LogsBucketItem[];
@@ -148,6 +236,10 @@ export type LogsListParams = {
   appCallerCode?: string;
   transport?: string;
   requestType?: string;
+  sourceSystem?: string;
+  ingressProtocol?: string;
+  modelPolicy?: string;
+  releaseCommit?: string;
 };
 
 export type LogsListData = {
@@ -187,35 +279,385 @@ export type PoolModelInfo = {
   lastFailedAt?: string | null; lastSuccessAt?: string | null;
   consecutiveFailures: number; consecutiveSuccesses: number;
   enablePromptCache?: boolean | null; maxTokens?: number | null;
-  inputPricePerMillion?: number | null; outputPricePerMillion?: number | null; pricePerCall?: number | null;
+  isMain: boolean; isIntent: boolean; isVision: boolean; isImageGen: boolean;
+  capabilities: ModelCapability[];
+  inputPricePerMillion?: number | null; outputPricePerMillion?: number | null; pricePerCall?: number | null; priceCurrency?: string | null;
 };
 export type ModelPool = {
   id: string; name: string; code: string; priority: number; modelType: string;
   isDefaultForType: boolean; strategyType: number; description?: string | null;
+  sourceCollection: string; authority: string; claimedAt?: string | null;
   createdAt?: string | null; updatedAt?: string | null; models: PoolModelInfo[];
 };
 export type PoolsData = { items: ModelPool[]; total: number };
+export type CreatePoolRequest = {
+  name: string;
+  code?: string;
+  modelType: string;
+  priority?: number;
+  isDefaultForType?: boolean;
+  strategyType?: number;
+  description?: string;
+};
+export type UpdatePoolRequest = {
+  name?: string;
+  code?: string;
+  modelType?: string;
+  priority?: number;
+  isDefaultForType?: boolean;
+  strategyType?: number;
+  description?: string;
+};
+export type BulkClaimPoolsRequest = {
+  modelType?: string;
+  overwrite?: boolean;
+};
+export type BulkClaimPoolsResult = {
+  claimed: number;
+  skipped: number;
+  items: ModelPool[];
+};
+export type BulkCalibratePoolPriceCurrencyRequest = {
+  modelType?: string;
+  targetCurrency?: string;
+  onlyMissing?: boolean;
+  includeMembersWithoutPrice?: boolean;
+};
+export type BulkCalibratePoolPriceCurrencyResult = {
+  scannedPools: number;
+  touchedPools: number;
+  matchedMembers: number;
+  updatedMembers: number;
+  targetCurrency: string;
+};
+export type BulkImportPoolModelsRequest = {
+  platformId?: string;
+  enabledOnly?: boolean;
+  capabilityFilter?: string;
+  overwriteExisting?: boolean;
+  maxCount?: number;
+  startPriority?: number;
+  priorityStep?: number;
+};
+export type BulkImportPoolModelsResult = {
+  scannedModels: number;
+  matchedModels: number;
+  imported: number;
+  updated: number;
+  skippedExisting: number;
+  skippedInvalid: number;
+  capabilityFilter: string;
+  pool?: ModelPool | null;
+};
+export type BulkRotateApiKeysRequest = {
+  objectType: 'platform' | 'model' | 'exchange';
+  apiKey: string;
+  ids?: string[];
+  platformId?: string;
+  enabledOnly?: boolean;
+  onlyMissing?: boolean;
+  allGwOwned?: boolean;
+};
+export type BulkRotateApiKeysResult = {
+  objectType: string;
+  matchedCount: number;
+  modifiedCount: number;
+  skippedCount: number;
+  filterSummary: string;
+};
+export type BulkUpdateModelCapabilitiesRequest = {
+  platformId?: string;
+  enabledOnly?: boolean;
+  onlyMissing?: boolean;
+  allGwOwned?: boolean;
+  capabilities?: ModelCapability[];
+};
+export type BulkUpdateModelCapabilitiesResult = {
+  matchedCount: number;
+  modifiedCount: number;
+  skippedCount: number;
+  capabilityCount: number;
+  filterSummary: string;
+};
+export type BulkClaimConfigAuthorityRequest = {
+  overwrite?: boolean;
+};
+export type BulkClaimConfigAuthorityResult = {
+  claimedPools: number;
+  skippedPools: number;
+  claimedPlatforms: number;
+  skippedPlatforms: number;
+  claimedModels: number;
+  skippedModels: number;
+  claimedExchanges: number;
+  skippedExchanges: number;
+  claimedTotal: number;
+  skippedTotal: number;
+};
+export type BindActiveAppCallerPoolsResult = {
+  bound: number;
+  skipped: number;
+  missingDefaultPool: number;
+  items: ConfigAuthorityGapItem[];
+};
+export type UpsertPoolModelRequest = {
+  modelId: string;
+  platformId?: string;
+  priority?: number;
+  protocol?: string;
+  enablePromptCache?: boolean;
+  maxTokens?: number;
+  inputPricePerMillion?: number;
+  outputPricePerMillion?: number;
+  pricePerCall?: number;
+  priceCurrency?: string;
+  capabilities?: ModelCapability[];
+};
 
 // ── 平台（无密钥，仅 hasKey）──
 export type PlatformItem = {
   id: string; name: string; platformType: string; providerId?: string | null; apiUrl?: string | null;
   enabled: boolean; maxConcurrency: number; remark?: string | null; hasKey: boolean;
+  sourceCollection: string; authority: string; claimedAt?: string | null;
   createdAt?: string | null; updatedAt?: string | null;
 };
 export type PlatformsData = { items: PlatformItem[]; total: number };
 
 // ── 模型（无密钥，仅 hasKey）──
 export type ModelCapability = { type: string; source: string; value: boolean };
+export type ParameterCapabilityMetaItem = {
+  name: string;
+  label: string;
+  capabilityType: string;
+  category: string;
+};
+export type ParameterCapabilityTemplateItem = {
+  key: string;
+  label: string;
+  provider: string;
+  description: string;
+  capabilities: string[];
+};
+export type ParameterCapabilitiesMetaData = { items: ParameterCapabilityMetaItem[]; templates: ParameterCapabilityTemplateItem[] };
 export type ModelItem = {
   id: string; name: string; modelName: string; apiUrl?: string | null; protocol?: string | null;
   platformId?: string | null; group?: string | null; timeout: number; maxRetries: number;
   maxConcurrency: number; maxTokens?: number | null; enabled: boolean; priority: number;
   isMain: boolean; isIntent: boolean; isVision: boolean; isImageGen: boolean;
   enablePromptCache?: boolean | null; remark?: string | null; hasKey: boolean;
+  sourceCollection: string; authority: string; claimedAt?: string | null;
   callCount: number; successCount: number; failCount: number; totalDuration: number;
   capabilities: ModelCapability[]; createdAt?: string | null; updatedAt?: string | null;
 };
 export type ModelsData = { items: ModelItem[]; total: number };
+
+// ── Exchange（无密钥，仅 hasKey）──
+export type ExchangeModelItem = {
+  modelId: string;
+  displayName?: string | null;
+  modelType: string;
+  description?: string | null;
+  enabled: boolean;
+};
+export type ExchangeItem = {
+  id: string;
+  name: string;
+  modelAlias: string;
+  modelAliases: string[];
+  models: ExchangeModelItem[];
+  targetUrl: string;
+  targetAuthScheme: string;
+  transformerType: string;
+  enabled: boolean;
+  description?: string | null;
+  hasKey: boolean;
+  sourceCollection: string;
+  authority: string;
+  claimedAt?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+export type ExchangesData = { items: ExchangeItem[]; total: number };
+
+// ── GW-owned API key 健康自检 ──
+export type KeyHealthSummary = {
+  primaryConfigured: boolean;
+  legacySecretCount: number;
+  total: number;
+  ok: number;
+  missing: number;
+  unreadable: number;
+  legacyReadable: number;
+  stubUnreadable: number;
+  status: string;
+};
+export type KeyHealthItem = {
+  id: string;
+  name: string;
+  objectType: string;
+  authority: string;
+  enabled: boolean;
+  hasKey: boolean;
+  status: string;
+  usedLegacySecret: boolean;
+};
+export type KeyHealthData = { summary: KeyHealthSummary; items: KeyHealthItem[] };
+
+// ── 配置权威迁移报告 ──
+export type ConfigAuthoritySummary = {
+  mapPools: number;
+  gatewayPools: number;
+  mapOnlyPools: number;
+  mapPlatforms: number;
+  gatewayPlatforms: number;
+  mapOnlyPlatforms: number;
+  mapModels: number;
+  gatewayModels: number;
+  mapOnlyModels: number;
+  mapExchanges: number;
+  gatewayExchanges: number;
+  mapOnlyExchanges: number;
+  appCallersTotal: number;
+  activeAppCallers: number;
+  activeWithGatewayPool: number;
+  activeMissingGatewayPool: number;
+  discoveredAppCallers: number;
+  configuredAppCallers: number;
+  disabledAppCallers: number;
+  mapFallbackObjectsRemaining: number;
+  activeAppCallerMapFallbackReady: boolean;
+  activeAppCallerMapFallbackPolicy: string;
+  readinessPercent: number;
+  status: string;
+};
+export type ConfigAuthorityGapItem = {
+  objectType: string;
+  id: string;
+  name: string;
+  status: string;
+  detail: string;
+};
+export type ConfigAuthorityReportData = {
+  summary: ConfigAuthoritySummary;
+  gaps: ConfigAuthorityGapItem[];
+};
+
+export type RuntimeGateItem = {
+  id: string;
+  label: string;
+  status: string;
+  blocking: boolean;
+  detail: string;
+  evidence: string;
+  nextAction: string;
+  facts?: Record<string, string>;
+};
+export type RuntimeGatesData = {
+  status: string;
+  releaseCommit?: string | null;
+  readyForHttpFull: boolean;
+  passed: number;
+  blocked: number;
+  waiting: number;
+  retained: number;
+  generatedAt: string;
+  items: RuntimeGateItem[];
+};
+
+// ── GW appCaller 注册表（llm_gateway.llmgw_app_callers）──
+export type GatewayAppCaller = {
+  id: string;
+  appCallerCode: string;
+  requestType: string;
+  sourceSystem: string;
+  ingressProtocol: string;
+  title?: string | null;
+  status: string;
+  modelPoolId?: string | null;
+  modelPolicy?: string | null;
+  parameterPolicy?: string | null;
+  lastObservedModelPoolId?: string | null;
+  lastObservedModelPolicy?: string | null;
+  lastObservedParameterPolicy?: string | null;
+  owner?: string | null;
+  monthlyBudgetUsd?: number | null;
+  rateLimitPerMinute?: number | null;
+  notes?: string | null;
+  totalSeen: number;
+  firstSeenAt?: string | null;
+  lastSeenAt?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export type UpdateGatewayAppCallerRequest = {
+  status?: string;
+  modelPoolId?: string;
+  modelPolicy?: string;
+  parameterPolicy?: string;
+  owner?: string;
+  monthlyBudgetUsd?: number;
+  rateLimitPerMinute?: number;
+  notes?: string;
+};
+
+export type BulkUpdateGatewayAppCallersRequest = {
+  filterStatus?: string;
+  sourceSystem?: string;
+  ingressProtocol?: string;
+  requestType?: string;
+  drift?: string;
+  search?: string;
+  targetStatus?: string;
+  modelPolicy?: string;
+  parameterPolicy?: string;
+  owner?: string;
+  monthlyBudgetUsd?: number;
+  rateLimitPerMinute?: number;
+};
+
+export type BulkUpdateGatewayAppCallersResult = {
+  matchedCount: number;
+  modifiedCount: number;
+  filterSummary: string;
+};
+
+export type OperationAuditItem = {
+  id: string;
+  action: string;
+  targetType: string;
+  targetId?: string | null;
+  targetName?: string | null;
+  actorUserId?: string | null;
+  actorUsername?: string | null;
+  success: boolean;
+  reason?: string | null;
+  changesJson: string;
+  remoteIp?: string | null;
+  userAgent?: string | null;
+  createdAt?: string | null;
+};
+
+export type OperationAuditsData = {
+  items: OperationAuditItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+  actions: string[];
+  targetTypes: string[];
+  actors: string[];
+};
+
+export type GatewayAppCallersData = {
+  items: GatewayAppCaller[];
+  total: number;
+  page: number;
+  pageSize: number;
+  statuses: string[];
+  sourceSystems: string[];
+  ingressProtocols: string[];
+  requestTypes: string[];
+};
 
 // ── 影子比对（只读）──
 export type ShadowSnapshot = {

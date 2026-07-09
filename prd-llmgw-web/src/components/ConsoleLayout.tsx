@@ -1,6 +1,6 @@
 // 网关控制台共享外壳：顶部 header（标题 + 导航「日志/模型池/平台/影子」+ 当前用户 + 登出）+ Outlet。
 // SSOT 头部只此一处，4 个子页复用。
-import { Activity, LogOut, Boxes, Server, GitCompare, ScrollText, LayoutDashboard, Search } from 'lucide-react';
+import { Activity, LogOut, Boxes, Server, GitCompare, ScrollText, LayoutDashboard, Search, Tags, Cpu, Shuffle, History } from 'lucide-react';
 import { NavLink, Outlet } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { useAuth } from '@/lib/auth';
@@ -9,8 +9,12 @@ import { Button } from '@/components/ui';
 const NAV: { to: string; label: string; icon: ReactNode }[] = [
   { to: '/', label: '概览', icon: <LayoutDashboard size={14} /> },
   { to: '/logs', label: '日志', icon: <ScrollText size={14} /> },
+  { to: '/app-callers', label: '调用方', icon: <Tags size={14} /> },
   { to: '/pools', label: '模型池', icon: <Boxes size={14} /> },
   { to: '/platforms', label: '平台', icon: <Server size={14} /> },
+  { to: '/models', label: '模型', icon: <Cpu size={14} /> },
+  { to: '/exchanges', label: 'Exchange', icon: <Shuffle size={14} /> },
+  { to: '/audits', label: '审计', icon: <History size={14} /> },
   { to: '/shadow', label: '影子比对', icon: <GitCompare size={14} /> },
 ];
 
