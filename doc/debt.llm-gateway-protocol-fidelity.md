@@ -36,6 +36,7 @@
 - 现状：F1/F3a/G1-G5 已 CI 全绿（1037 测试 + 11 新增）+ 部署到预览（`/api/v` 确认运行本分支 commit）。但**实机** before/after 取证未完成：
   - 函数调用实跑 `/api/v1/chat/completions` 需 `sk-ak-*` OpenApi key（用户 JWT 在「接入 AI」弹窗签发）；`AI_ACCESS_KEY` 不被该端点接受（`AgentApiKeysController` 注释：AiAccessKey 双身份已撤回）。AI 无法自助签发。
   - 识图 detail 走内部 `LLMAttachment` 路径（缺陷图分析 / 多图合成等内部功能），需登录态 + 功能上下文；浏览器直连预览被 agent 代理阻断（chromium ERR_CONNECTION_CLOSED，本 session 已确认 curl 可达但 chromium 不可达）。
+- 已补的非上游证据门：`/gw/v1/route-self-test` 提供受 `X-Gateway-Key` 保护的 dry-run 自检，覆盖 GW Native / OpenAI-compatible / Claude-compatible / Gemini-compatible 四类入口到 IR 的路由元数据，不访问上游、不写 appCaller 注册表、不递增限流窗口。它只能证明入口协议和路由上下文未漂移，不能替代真实 provider E2E。
 - 补法：用户提供一个 `sk-ak-*`（接入 AI 弹窗一键生成）即可由 AI 跑函数调用实机冒烟；识图 A/B 由用户在缺陷图分析等功能页眼检，或后续补一条接受 AiAccessKey 的内部 vision 自测端点。
 
 ## 范围外（更大的后续波次，非本债务）

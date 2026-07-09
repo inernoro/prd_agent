@@ -75,6 +75,21 @@ public static class GatewayHttpEndpoints
             time = DateTime.UtcNow.ToString("o"),
         }, jsonOpts), "application/json"));
 
+        // 协议路由 dry-run 自检：不访问上游、不写 appCaller 注册表、不递增限流窗口。
+        // 用于维护窗口第一步确认四类入口协议能落到同一套 IR 与路由元数据。
+        app.MapGet("/gw/v1/route-self-test", () =>
+        {
+            var cases = BuildRouteSelfTestCases();
+            var passed = cases.Count(x => x.Passed);
+            return Results.Json(new RouteSelfTestResponse(
+                Status: passed == cases.Count ? "ok" : "failed",
+                Mode: "dry-run",
+                UpstreamCalled: false,
+                Total: cases.Count,
+                Passed: passed,
+                Cases: cases), jsonOpts);
+        });
+
         // OpenAI Responses 兼容入口。外部仍按 OpenAI 心智传 input / instructions，
         // 内部统一转成 chat-style GatewayRequest，router、日志、appCaller registry 不分叉。
         app.MapPost("/v1/responses", async (
@@ -1093,6 +1108,160 @@ public static class GatewayHttpEndpoints
             StatusCodes.Status400BadRequest);
         return true;
     }
+
+    private static List<RouteSelfTestCaseResult> BuildRouteSelfTestCases()
+    {
+        var nativeRequest = new GatewayRequest
+        {
+            AppCallerCode = "self-test.native.chat::chat",
+            ModelType = ModelTypes.Chat,
+            ExpectedModel = "ignored-native-model",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "route self-test" },
+                },
+            },
+            Context = new GatewayRequestContext
+            {
+                RequestId = "route-self-test-native",
+                SourceSystem = "map",
+                ModelPolicy = "pool",
+                ModelPoolId = "self-test-native-chat-pool",
+                ParameterPolicy = "strict-require",
+                DroppedParameters = new List<string>(),
+                GatewayTransport = GatewayTransports.Http,
+            },
+        };
+        var nativeIngress = ToIngress(nativeRequest, "gw-native", "map");
+        var nativeRouted = ApplyIngressRouting(nativeRequest, nativeIngress, stream: false);
+
+        var openAiIngress = new GatewayIngressRequest
+        {
+            RequestId = "route-self-test-openai",
+            SourceSystem = "external",
+            IngressProtocol = "openai-compatible",
+            AppCallerCode = "self-test.openai.chat::chat",
+            AppCallerTitle = "Route self-test OpenAI",
+            RequestType = ModelTypes.Chat,
+            ModelPolicy = "auto",
+            ParameterPolicy = "default-drop",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "route self-test" },
+                },
+                ["logprobs"] = true,
+            },
+            DroppedParameters = new List<string>(),
+        };
+        var openAiRequest = openAiIngress.ToGatewayRequest(stream: false);
+
+        var claudeIngress = new GatewayIngressRequest
+        {
+            RequestId = "route-self-test-claude",
+            SourceSystem = "external",
+            IngressProtocol = "claude-compatible",
+            AppCallerCode = "self-test.claude.chat::chat",
+            AppCallerTitle = "Route self-test Claude",
+            RequestType = ModelTypes.Chat,
+            ModelPolicy = "pinned",
+            ParameterPolicy = "default-drop",
+            PinnedPlatformId = "self-test-anthropic-platform",
+            PinnedModelId = "claude-3-7-sonnet-latest",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "route self-test" },
+                },
+            },
+            DroppedParameters = new List<string> { "metadata" },
+        };
+        var claudeRequest = claudeIngress.ToGatewayRequest(stream: false);
+
+        var geminiIngress = new GatewayIngressRequest
+        {
+            RequestId = "route-self-test-gemini",
+            SourceSystem = "external",
+            IngressProtocol = "gemini-compatible",
+            AppCallerCode = "self-test.gemini.chat::chat",
+            AppCallerTitle = "Route self-test Gemini",
+            RequestType = ModelTypes.Chat,
+            ModelPolicy = "pool",
+            ModelPoolId = "self-test-gemini-chat-pool",
+            ParameterPolicy = "default-drop",
+            ExpectedModel = "gemini-2.5-pro",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "route self-test" },
+                },
+            },
+            DroppedParameters = new List<string>(),
+        };
+        var geminiRequest = geminiIngress.ToGatewayRequest(stream: false);
+
+        return new List<RouteSelfTestCaseResult>
+        {
+            SnapshotRouteSelfTestCase("gw-native pool", nativeRouted, "gw-native", "map", "pool", "self-test-native-chat-pool", "strict-require"),
+            SnapshotRouteSelfTestCase("openai-compatible auto", openAiRequest, "openai-compatible", "external", "auto", null, "default-drop"),
+            SnapshotRouteSelfTestCase("claude-compatible pinned", claudeRequest, "claude-compatible", "external", "pinned", null, "default-drop"),
+            SnapshotRouteSelfTestCase("gemini-compatible pool", geminiRequest, "gemini-compatible", "external", "pool", "self-test-gemini-chat-pool", "default-drop"),
+        };
+    }
+
+    private static RouteSelfTestCaseResult SnapshotRouteSelfTestCase(
+        string name,
+        GatewayRequest request,
+        string expectedIngressProtocol,
+        string expectedSourceSystem,
+        string expectedModelPolicy,
+        string? expectedModelPoolId,
+        string expectedParameterPolicy)
+    {
+        var context = request.Context;
+        var assertions = new List<RouteSelfTestAssertion>
+        {
+            AssertSelfTest("context_present", context is not null),
+            AssertSelfTest("source_system", string.Equals(context?.SourceSystem, expectedSourceSystem, StringComparison.Ordinal)),
+            AssertSelfTest("ingress_protocol", string.Equals(context?.IngressProtocol, expectedIngressProtocol, StringComparison.Ordinal)),
+            AssertSelfTest("app_caller_code", !string.IsNullOrWhiteSpace(request.AppCallerCode)),
+            AssertSelfTest("request_type", !string.IsNullOrWhiteSpace(request.ModelType)),
+            AssertSelfTest("model_policy", string.Equals(context?.ModelPolicy, expectedModelPolicy, StringComparison.Ordinal)),
+            AssertSelfTest("model_pool_id", string.Equals(context?.ModelPoolId, expectedModelPoolId, StringComparison.Ordinal)),
+            AssertSelfTest("parameter_policy", string.Equals(context?.ParameterPolicy, expectedParameterPolicy, StringComparison.Ordinal)),
+            AssertSelfTest("request_body_present", request.RequestBody is not null),
+        };
+
+        if (string.Equals(expectedModelPolicy, "pool", StringComparison.Ordinal))
+            assertions.Add(AssertSelfTest("pool_expected_model", string.Equals(request.ExpectedModel, expectedModelPoolId, StringComparison.Ordinal)));
+
+        if (string.Equals(expectedModelPolicy, "pinned", StringComparison.Ordinal))
+            assertions.Add(AssertSelfTest("pinned_target", !string.IsNullOrWhiteSpace(request.PinnedPlatformId) && !string.IsNullOrWhiteSpace(request.PinnedModelId)));
+
+        return new RouteSelfTestCaseResult(
+            Name: name,
+            Passed: assertions.All(x => x.Passed),
+            SourceSystem: context?.SourceSystem,
+            IngressProtocol: context?.IngressProtocol,
+            AppCallerCode: request.AppCallerCode,
+            RequestType: request.ModelType,
+            ModelPolicy: context?.ModelPolicy,
+            ModelPoolId: context?.ModelPoolId,
+            ExpectedModel: request.ExpectedModel,
+            PinnedPlatformId: request.PinnedPlatformId,
+            PinnedModelId: request.PinnedModelId,
+            ParameterPolicy: context?.ParameterPolicy,
+            DroppedParameters: context?.DroppedParameters ?? new List<string>(),
+            Assertions: assertions);
+    }
+
+    private static RouteSelfTestAssertion AssertSelfTest(string name, bool passed)
+        => new(name, passed);
 
     private static List<string> FindDroppedParameters(JsonObject body, params string[] supported)
     {
@@ -3551,6 +3720,32 @@ public static class GatewayHttpEndpoints
                 AppCallerBudgetDecision.Allow(appCallerCode, requestType, 0, 0, hasCostEvidence: false));
     }
 }
+
+public sealed record RouteSelfTestResponse(
+    string Status,
+    string Mode,
+    bool UpstreamCalled,
+    int Total,
+    int Passed,
+    IReadOnlyList<RouteSelfTestCaseResult> Cases);
+
+public sealed record RouteSelfTestCaseResult(
+    string Name,
+    bool Passed,
+    string? SourceSystem,
+    string? IngressProtocol,
+    string AppCallerCode,
+    string RequestType,
+    string? ModelPolicy,
+    string? ModelPoolId,
+    string? ExpectedModel,
+    string? PinnedPlatformId,
+    string? PinnedModelId,
+    string? ParameterPolicy,
+    IReadOnlyList<string> DroppedParameters,
+    IReadOnlyList<RouteSelfTestAssertion> Assertions);
+
+public sealed record RouteSelfTestAssertion(string Name, bool Passed);
 
 // /gw/v1/resolve 的请求体 DTO（PascalCase）。
 public sealed record ResolveRequestDto(

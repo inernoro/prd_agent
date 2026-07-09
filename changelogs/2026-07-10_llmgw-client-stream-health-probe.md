@@ -17,3 +17,4 @@
 | test | prd-api | 增加 LLM Gateway 控制台日志 summary 路由观测字段防退化守卫 |
 | fix | prd-api | LLM Gateway 池成员缺少能力快照时从模型配置补齐协议和能力元数据，避免 strict-require 在旧池路径 unknown 放行 |
 | feat | prd-api | LLM Gateway OpenAI 兼容非流式响应通过 Extensions 保留并回吐 choice logprobs |
+| feat | prd-api | LLM Gateway serving 新增受密钥保护的 `/gw/v1/route-self-test` dry-run 入口，秒级验证四类协议入口路由元数据 |

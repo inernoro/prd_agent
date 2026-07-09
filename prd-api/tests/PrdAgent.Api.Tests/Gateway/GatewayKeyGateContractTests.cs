@@ -67,6 +67,7 @@ public class GatewayKeyGateContractTests
         new object[] { HttpMethod.Post, "/gw/v1/profile-test" },
         new object[] { HttpMethod.Post, "/gw/v1/stream" },
         new object[] { HttpMethod.Post, "/gw/v1/client-stream" },
+        new object[] { HttpMethod.Get, "/gw/v1/route-self-test" },
         new object[] { HttpMethod.Post, "/v1/chat/completions" },
         new object[] { HttpMethod.Post, "/v1/responses" },
         new object[] { HttpMethod.Post, "/v1/images/generations" },
@@ -1647,6 +1648,52 @@ public class GatewayKeyGateContractTests
             var client = app.GetTestClient();
             var resp = await client.GetAsync("/gw/v1/healthz");
             resp.StatusCode.ShouldBe(HttpStatusCode.OK, "healthz 应豁免密钥门");
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task RouteSelfTest_IsProtectedDryRunAndCoversProtocolIngresses()
+    {
+        await using var app = BuildHost();
+        await app.StartAsync();
+        try
+        {
+            var client = app.GetTestClient();
+            var req = new HttpRequestMessage(HttpMethod.Get, "/gw/v1/route-self-test");
+            req.Headers.Add("X-Gateway-Key", GatewayKey);
+
+            var resp = await client.SendAsync(req);
+            var body = await resp.Content.ReadAsStringAsync();
+
+            resp.StatusCode.ShouldBe(HttpStatusCode.OK);
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            root.GetProperty("Status").GetString().ShouldBe("ok");
+            root.GetProperty("Mode").GetString().ShouldBe("dry-run");
+            root.GetProperty("UpstreamCalled").GetBoolean().ShouldBeFalse();
+            root.GetProperty("Total").GetInt32().ShouldBe(4);
+            root.GetProperty("Passed").GetInt32().ShouldBe(4);
+
+            var protocols = root.GetProperty("Cases").EnumerateArray()
+                .Select(x => x.GetProperty("IngressProtocol").GetString())
+                .ToHashSet();
+            protocols.ShouldContain("gw-native");
+            protocols.ShouldContain("openai-compatible");
+            protocols.ShouldContain("claude-compatible");
+            protocols.ShouldContain("gemini-compatible");
+
+            var poolCases = root.GetProperty("Cases").EnumerateArray()
+                .Where(x => x.GetProperty("ModelPolicy").GetString() == "pool")
+                .ToList();
+            poolCases.Count.ShouldBe(2);
+            poolCases.All(x => string.Equals(
+                x.GetProperty("ExpectedModel").GetString(),
+                x.GetProperty("ModelPoolId").GetString(),
+                StringComparison.Ordinal)).ShouldBeTrue();
         }
         finally
         {
