@@ -479,6 +479,9 @@
 - [CDS GitHub Webhook 订阅配置指南](guide.cds.github-webhook-events) `guide.cds.github-webhook-events`
   > 说明 CDS 消费哪些 GitHub webhook 事件、哪些被静默过滤,以及如何在 GitHub App 后台配置订阅
 
+- [CDS GitHub App 接入与部署 Runbook](guide.cds.github-app) `guide.cds.github-app`
+  > 新 CDS 域名从建 GitHub App、生成 private key、写 5 个 .cds.env 变量到 push 自测的完整 runbook；含敏感值清单与 geole 实测踩坑排查（401 鉴权非配置、RSA command not found、apex DNS）
+
 - [CDS CLI 蜂群优化操作手册](guide.cds.cli-swarm) `guide.cds.cli-swarm`
   > 多 agent 并行反馈+修复+复测：3 个反馈方 + 1 个修复方 + 1 个协调方，含 5 段可直接复制的 prompt
 
