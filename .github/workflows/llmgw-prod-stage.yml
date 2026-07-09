@@ -13,6 +13,7 @@ on:
         options:
           - shadow-start
           - rollback-rehearsal
+          - config-authority
           - canary-intent-text
           - canary-chat
           - canary-streaming
@@ -81,6 +82,31 @@ on:
         description: "Previous evidence artifact name. Defaults to llmgw-prod-stage-<rollout_evidence_run_id>."
         required: false
         default: ""
+      route_matrix:
+        description: "Run gw-smoke /resolve auto/pool/pinned route matrix evidence."
+        required: true
+        default: false
+        type: boolean
+      route_app_caller:
+        description: "appCallerCode for route matrix /resolve evidence."
+        required: false
+        default: "report-agent.generate::chat"
+      route_model_type:
+        description: "modelType for route matrix /resolve evidence."
+        required: false
+        default: "chat"
+      route_pool_id:
+        description: "GW model pool id required when route_matrix is true."
+        required: false
+        default: ""
+      route_pinned_platform_id:
+        description: "Pinned platform id required when route_matrix is true."
+        required: false
+        default: ""
+      route_pinned_model_id:
+        description: "Pinned model id required when route_matrix is true."
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -131,6 +157,7 @@ jobs:
       DEFAULT_MAP_BASE: ${{ vars.PRD_AGENT_PROD_BASE || '' }}
       INPUT_GW_BASE: ${{ github.event.inputs.gw_base || '' }}
       DEFAULT_GW_BASE: ${{ vars.LLMGW_PROD_GATE_BASE || '' }}
+      DEFAULT_CONSOLE_BASE: ${{ vars.LLMGW_PROD_CONSOLE_BASE || '' }}
       INPUT_SAMPLE_PERCENT: ${{ github.event.inputs.sample_percent || '1' }}
       INPUT_MIN_OBSERVATION_HOURS: ${{ github.event.inputs.min_observation_hours || '24' }}
       INPUT_MAIN_REF: ${{ github.event.inputs.main_ref || 'origin/main' }}
@@ -139,8 +166,17 @@ jobs:
       INPUT_ALLOW_RELEASE_TREE_MISMATCH: ${{ github.event.inputs.allow_release_tree_mismatch || 'false' }}
       INPUT_ROLLOUT_EVIDENCE_RUN_ID: ${{ github.event.inputs.rollout_evidence_run_id || '' }}
       INPUT_ROLLOUT_EVIDENCE_ARTIFACT: ${{ github.event.inputs.rollout_evidence_artifact || '' }}
+      INPUT_ROUTE_MATRIX: ${{ github.event.inputs.route_matrix || 'false' }}
+      INPUT_ROUTE_APP_CALLER: ${{ github.event.inputs.route_app_caller || 'report-agent.generate::chat' }}
+      INPUT_ROUTE_MODEL_TYPE: ${{ github.event.inputs.route_model_type || 'chat' }}
+      INPUT_ROUTE_POOL_ID: ${{ github.event.inputs.route_pool_id || '' }}
+      INPUT_ROUTE_PINNED_PLATFORM_ID: ${{ github.event.inputs.route_pinned_platform_id || '' }}
+      INPUT_ROUTE_PINNED_MODEL_ID: ${{ github.event.inputs.route_pinned_model_id || '' }}
       PRD_AGENT_API_KEY: ${{ secrets.PRD_AGENT_PROD_API_KEY }}
       LLMGW_GATE_KEY: ${{ secrets.LLMGW_PROD_GATE_KEY }}
+      LLMGW_CONSOLE_TOKEN: ${{ secrets.LLMGW_PROD_CONSOLE_TOKEN }}
+      LLMGW_CONSOLE_USER: ${{ secrets.LLMGW_PROD_CONSOLE_USER }}
+      LLMGW_CONSOLE_PASSWORD: ${{ secrets.LLMGW_PROD_CONSOLE_PASSWORD }}
       GITHUB_TOKEN: ${{ secrets.PRD_AGENT_PROD_GITHUB_TOKEN || github.token }}
 
     steps:
@@ -169,6 +205,10 @@ jobs:
           repo="$(printf '%s' "$INPUT_REPO" | xargs)"
           map_base="$(printf '%s' "${INPUT_MAP_BASE:-$DEFAULT_MAP_BASE}" | xargs)"
           gw_base="$(printf '%s' "${INPUT_GW_BASE:-$DEFAULT_GW_BASE}" | xargs)"
+          console_base="$(printf '%s' "${DEFAULT_CONSOLE_BASE:-}" | xargs)"
+          if [ -z "$console_base" ] && [ -n "$map_base" ]; then
+            console_base="${map_base%/}/gw"
+          fi
           sample_percent="$(printf '%s' "$INPUT_SAMPLE_PERCENT" | xargs)"
           min_observation_hours="$(printf '%s' "$INPUT_MIN_OBSERVATION_HOURS" | xargs)"
           main_ref="$(printf '%s' "$INPUT_MAIN_REF" | xargs)"
@@ -176,6 +216,12 @@ jobs:
           allow_out_of_order_reason="$(printf '%s' "$INPUT_ALLOW_OUT_OF_ORDER_REASON" | xargs)"
           allow_release_tree_mismatch="$(printf '%s' "$INPUT_ALLOW_RELEASE_TREE_MISMATCH" | xargs)"
           rollout_evidence_run_id="$(printf '%s' "$INPUT_ROLLOUT_EVIDENCE_RUN_ID" | xargs)"
+          route_matrix="$(printf '%s' "$INPUT_ROUTE_MATRIX" | xargs)"
+          route_app_caller="$(printf '%s' "$INPUT_ROUTE_APP_CALLER" | xargs)"
+          route_model_type="$(printf '%s' "$INPUT_ROUTE_MODEL_TYPE" | xargs)"
+          route_pool_id="$(printf '%s' "$INPUT_ROUTE_POOL_ID" | xargs)"
+          route_pinned_platform_id="$(printf '%s' "$INPUT_ROUTE_PINNED_PLATFORM_ID" | xargs)"
+          route_pinned_model_id="$(printf '%s' "$INPUT_ROUTE_PINNED_MODEL_ID" | xargs)"
 
           if [ -z "$stage" ]; then
             echo "ERROR: missing rollout stage." >&2
@@ -185,21 +231,31 @@ jobs:
             echo "ERROR: non-rollback stages require a full 40-char commit." >&2
             exit 1
           fi
-          if [ "$stage" != "rollback-inproc" ] && [ "$stage" != "rollback-rehearsal" ] && [ -z "$map_base" ]; then
+          if [ "$stage" != "rollback-inproc" ] && [ "$stage" != "rollback-rehearsal" ] && [ "$stage" != "config-authority" ] && [ -z "$map_base" ]; then
             echo "ERROR: missing MAP base URL. Set vars.PRD_AGENT_PROD_BASE or workflow input map_base." >&2
             exit 1
           fi
-          if [ "$stage" != "rollback-inproc" ] && [ "$stage" != "rollback-rehearsal" ] && [ -z "$gw_base" ]; then
+          if [ "$stage" != "rollback-inproc" ] && [ "$stage" != "rollback-rehearsal" ] && [ "$stage" != "config-authority" ] && [ -z "$gw_base" ]; then
             echo "ERROR: missing gateway base URL. Set vars.LLMGW_PROD_GATE_BASE or workflow input gw_base." >&2
             exit 1
           fi
-          if [ "$stage" != "rollback-inproc" ] && [ "$stage" != "rollback-rehearsal" ] && [ -z "$(printf '%s' "${PRD_AGENT_API_KEY:-}" | xargs)" ]; then
+          if [ "$stage" != "rollback-inproc" ] && [ "$stage" != "rollback-rehearsal" ] && [ "$stage" != "config-authority" ] && [ -z "$(printf '%s' "${PRD_AGENT_API_KEY:-}" | xargs)" ]; then
             echo "ERROR: missing MAP API key. Set secrets.PRD_AGENT_PROD_API_KEY with logs:read access." >&2
             exit 1
           fi
-          if [ "$stage" != "rollback-inproc" ] && [ "$stage" != "rollback-rehearsal" ] && [ -z "$(printf '%s' "${LLMGW_GATE_KEY:-}" | xargs)" ]; then
+          if [ "$stage" != "rollback-inproc" ] && [ "$stage" != "rollback-rehearsal" ] && [ "$stage" != "config-authority" ] && [ -z "$(printf '%s' "${LLMGW_GATE_KEY:-}" | xargs)" ]; then
             echo "ERROR: missing gateway key. Set secrets.LLMGW_PROD_GATE_KEY." >&2
             exit 1
+          fi
+          if [ "$stage" = "config-authority" ] || [ "$stage" = "http-full" ]; then
+            if [ -z "$console_base" ]; then
+              echo "ERROR: $stage requires vars.LLMGW_PROD_CONSOLE_BASE or map_base to derive /gw." >&2
+              exit 1
+            fi
+            if [ -z "$(printf '%s' "${LLMGW_CONSOLE_TOKEN:-}" | xargs)" ] && { [ -z "$(printf '%s' "${LLMGW_CONSOLE_USER:-}" | xargs)" ] || [ -z "$(printf '%s' "${LLMGW_CONSOLE_PASSWORD:-}" | xargs)" ]; }; then
+              echo "ERROR: $stage requires secrets.LLMGW_PROD_CONSOLE_TOKEN or LLMGW_PROD_CONSOLE_USER/PASSWORD." >&2
+              exit 1
+            fi
           fi
           if [ "$allow_out_of_order" = "true" ] && [ -z "$allow_out_of_order_reason" ]; then
             echo "ERROR: allow_out_of_order requires allow_out_of_order_reason." >&2
@@ -212,7 +268,14 @@ jobs:
 
           export PRD_AGENT_BASE="$map_base"
           export LLMGW_GATE_BASE="$gw_base"
+          export LLMGW_CONSOLE_BASE="$console_base"
           export LLMGW_STAGE_EVIDENCE_DIR=".llmgw-release-evidence"
+          export LLMGW_GATE_SMOKE_ROUTE_MATRIX="$route_matrix"
+          export LLMGW_GATE_SMOKE_ROUTE_APP_CALLER="$route_app_caller"
+          export LLMGW_GATE_SMOKE_ROUTE_MODEL_TYPE="$route_model_type"
+          export LLMGW_GATE_SMOKE_ROUTE_POOL_ID="$route_pool_id"
+          export LLMGW_GATE_SMOKE_ROUTE_PINNED_PLATFORM_ID="$route_pinned_platform_id"
+          export LLMGW_GATE_SMOKE_ROUTE_PINNED_MODEL_ID="$route_pinned_model_id"
           if [ "$allow_release_tree_mismatch" = "true" ]; then
             export LLMGW_STAGE_ALLOW_RELEASE_TREE_MISMATCH=1
           fi

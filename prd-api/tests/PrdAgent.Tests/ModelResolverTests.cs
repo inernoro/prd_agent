@@ -171,6 +171,39 @@ public class ModelResolverTests
     }
 
     [Fact]
+    public async Task PoolPolicy_WhenExpectedModelIsPoolId_ShouldUseThatPool()
+    {
+        var platform = CreatePlatform("plat-1", "OpenAI");
+        var fastPool = CreateModelGroup(
+            "pool-fast", "Fast Pool", "chat",
+            isDefault: false, priority: 0,
+            ("plat-1", "fast-model", ModelHealthStatus.Healthy));
+        var qualityPool = CreateModelGroup(
+            "pool-quality", "Quality Pool", "chat",
+            isDefault: false, priority: 10,
+            ("plat-1", "quality-model", ModelHealthStatus.Healthy));
+        var appCaller = CreateAppCaller(
+            "demo.pool-policy::chat", "Pool Policy Demo",
+            ("chat", new List<string> { "pool-fast", "pool-quality" }));
+
+        var resolver = new InMemoryModelResolver()
+            .WithPlatform(platform, "sk-test-key")
+            .WithModelGroup(fastPool)
+            .WithModelGroup(qualityPool)
+            .WithAppCaller(appCaller);
+
+        var result = await resolver.ResolveAsync(
+            "demo.pool-policy::chat",
+            "chat",
+            expectedModel: "pool-quality");
+
+        Assert.True(result.Success);
+        Assert.Equal("DedicatedPool", result.ResolutionType);
+        Assert.Equal("pool-quality", result.ModelGroupId);
+        Assert.Equal("quality-model", result.ActualModel);
+    }
+
+    [Fact]
     public async Task DedicatedPool_WhenMultiplePools_ShouldUseByPriority()
     {
         // Arrange
@@ -203,6 +236,39 @@ public class ModelResolverTests
         Assert.Equal("DedicatedPool", result.ResolutionType);
         Assert.Equal("gpt-4-vision", result.ActualModel);
         Assert.Equal("pool-high", result.ModelGroupId);
+    }
+
+    [Fact]
+    public async Task DedicatedPool_WhenAutoModeHasMultipleHealthyModels_ShouldReturnRetryCandidates()
+    {
+        var platformA = CreatePlatform("plat-a", "Provider A");
+        var platformB = CreatePlatform("plat-b", "Provider B");
+        var dedicatedPool = CreateModelGroup(
+            "pool-retry",
+            "Retry Pool",
+            "chat",
+            isDefault: false,
+            priority: 0,
+            ("plat-a", "model-a", ModelHealthStatus.Healthy),
+            ("plat-b", "model-b", ModelHealthStatus.Healthy));
+        var appCaller = CreateAppCaller(
+            "prd-agent-web.chat::chat",
+            "Chat",
+            ("chat", new List<string> { "pool-retry" }));
+
+        var resolver = new InMemoryModelResolver()
+            .WithPlatform(platformA, "sk-a")
+            .WithPlatform(platformB, "sk-b")
+            .WithModelGroup(dedicatedPool)
+            .WithAppCaller(appCaller);
+
+        var result = await resolver.ResolveAsync("prd-agent-web.chat::chat", "chat");
+
+        Assert.True(result.Success);
+        Assert.Equal("model-a", result.ActualModel);
+        var retry = Assert.Single(result.RetryCandidates ?? []);
+        Assert.Equal("model-b", retry.ActualModel);
+        Assert.Equal("plat-b", retry.ActualPlatformId);
     }
 
     #endregion
@@ -262,6 +328,68 @@ public class ModelResolverTests
         Assert.True(result.Success);
         Assert.Equal("DefaultPool", result.ResolutionType);
         Assert.Equal("gpt-4o", result.ActualModel);
+    }
+
+    [Fact]
+    public async Task PoolModelCapability_WhenFunctionCallingFalse_ShouldFlowToResolution()
+    {
+        var platform = CreatePlatform("plat-1", "OpenAI");
+        var pool = CreateModelGroup(
+            "pool-tools", "Tool Gate Pool", "chat",
+            isDefault: true, priority: 0,
+            ("plat-1", "no-tools-model", ModelHealthStatus.Healthy));
+        pool.Models[0].Capabilities = new List<LLMModelCapability>
+        {
+            new() { Type = "function_calling", Source = "user", Value = false }
+        };
+
+        var resolver = new InMemoryModelResolver()
+            .WithPlatform(platform, "sk-test")
+            .WithModelGroup(pool);
+
+        var result = await resolver.ResolveAsync("any::chat", "chat");
+
+        Assert.True(result.Success);
+        Assert.Equal("no-tools-model", result.ActualModel);
+        Assert.False(result.SupportsFunctionCalling);
+    }
+
+    [Fact]
+    public async Task PoolModelCapability_WhenVisionImageThinkingFalse_ShouldFlowToResolution()
+    {
+        var platform = CreatePlatform("plat-1", "OpenAI");
+        var pool = CreateModelGroup(
+            "pool-capability", "Capability Gate Pool", "vision",
+            isDefault: true, priority: 0,
+            ("plat-1", "limited-model", ModelHealthStatus.Healthy));
+        pool.Models[0].Capabilities = new List<LLMModelCapability>
+        {
+            new() { Type = "vision", Source = "user", Value = false },
+            new() { Type = "image_generation", Source = "user", Value = false },
+            new() { Type = "thinking", Source = "user", Value = false },
+            new() { Type = "json_schema", Source = "user", Value = false },
+            new() { Type = "logprobs", Source = "user", Value = false },
+            new() { Type = "parallel_tool_calls", Source = "user", Value = false },
+            new() { Type = "parameter:seed", Source = "user", Value = false },
+            new() { Type = "param.stop", Source = "user", Value = true }
+        };
+
+        var resolver = new InMemoryModelResolver()
+            .WithPlatform(platform, "sk-test")
+            .WithModelGroup(pool);
+
+        var result = await resolver.ResolveAsync("any::vision", "vision");
+
+        Assert.True(result.Success);
+        Assert.False(result.SupportsVision);
+        Assert.False(result.SupportsImageGeneration);
+        Assert.False(result.SupportsThinking);
+        Assert.False(result.SupportsStructuredOutput);
+        Assert.False(result.SupportsLogprobs);
+        Assert.False(result.SupportsParallelToolCalls);
+        Assert.NotNull(result.ParameterCapabilities);
+        Assert.False(result.ParameterCapabilities!["seed"]);
+        Assert.True(result.ParameterCapabilities["stop"]);
     }
 
     #endregion
@@ -680,6 +808,10 @@ public class ModelResolverTests
         Assert.Equal(result.ActualPlatformName, gatewayResolution.ActualPlatformName);
         Assert.Equal(result.ModelGroupId, gatewayResolution.ModelGroupId);
         Assert.Equal(result.ModelGroupName, gatewayResolution.ModelGroupName);
+        Assert.Equal(result.SupportsStructuredOutput, gatewayResolution.SupportsStructuredOutput);
+        Assert.Equal(result.SupportsLogprobs, gatewayResolution.SupportsLogprobs);
+        Assert.Equal(result.SupportsParallelToolCalls, gatewayResolution.SupportsParallelToolCalls);
+        Assert.Equal(result.ParameterCapabilities, gatewayResolution.ParameterCapabilities);
     }
 
     #endregion

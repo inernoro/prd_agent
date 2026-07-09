@@ -128,7 +128,39 @@ public sealed class LlmRequestLogBackground
             .Set(l => l.DurationMs, done.DurationMs)
             .Set(l => l.ResponseToolCalls, toolCalls)
             .Set(l => l.ToolCallCount, done.ToolCallCount)
-            .Set(l => l.FinishReason, done.FinishReason);
+            .Set(l => l.FinishReason, done.FinishReason)
+            .Set(l => l.EstimatedInputCost, done.EstimatedInputCost)
+            .Set(l => l.EstimatedOutputCost, done.EstimatedOutputCost)
+            .Set(l => l.EstimatedCallCost, done.EstimatedCallCost)
+            .Set(l => l.EstimatedCost, done.EstimatedCost)
+            .Set(l => l.EstimatedCostCurrency, done.EstimatedCostCurrency)
+            .Set(l => l.EstimatedCostUsd, done.EstimatedCostUsd);
+        if (done.ProviderAttempts is not null)
+        {
+            update = update.Set(l => l.ProviderAttempts, done.ProviderAttempts);
+        }
+        if (!string.IsNullOrWhiteSpace(done.Provider))
+            update = update.Set(l => l.Provider, done.Provider);
+        if (!string.IsNullOrWhiteSpace(done.Model))
+            update = update.Set(l => l.Model, done.Model);
+        if (!string.IsNullOrWhiteSpace(done.ApiBase))
+            update = update.Set(l => l.ApiBase, done.ApiBase);
+        if (!string.IsNullOrWhiteSpace(done.Path))
+            update = update.Set(l => l.Path, done.Path);
+        if (!string.IsNullOrWhiteSpace(done.PlatformId))
+            update = update.Set(l => l.PlatformId, done.PlatformId);
+        if (!string.IsNullOrWhiteSpace(done.PlatformName))
+            update = update.Set(l => l.PlatformName, done.PlatformName);
+        if (!string.IsNullOrWhiteSpace(done.Protocol))
+            update = update.Set(l => l.Protocol, done.Protocol);
+        if (!string.IsNullOrWhiteSpace(done.ResolutionReason))
+            update = update.Set(l => l.ResolutionReason, done.ResolutionReason);
+        if (done.ModelResolutionType.HasValue)
+            update = update.Set(l => l.ModelResolutionType, done.ModelResolutionType);
+        if (!string.IsNullOrWhiteSpace(done.ModelGroupId))
+            update = update.Set(l => l.ModelGroupId, done.ModelGroupId);
+        if (!string.IsNullOrWhiteSpace(done.ModelGroupName))
+            update = update.Set(l => l.ModelGroupName, done.ModelGroupName);
 
         // blackhole 占位记录由 LlmRequestLogWriter.StartAsync 失败路径返回 null 保护——logId 永不复用，
         // 故这里无需再按 Status 过滤；按主键直接更新即可。
@@ -139,14 +171,29 @@ public sealed class LlmRequestLogBackground
     {
         var errorMaxChars = LlmLogLimits.DefaultErrorMaxChars;
         if (!string.IsNullOrEmpty(error) && error.Length > errorMaxChars) error = error[..errorMaxChars] + "...[TRUNCATED]";
+        var endedAt = DateTime.UtcNow;
         var update = Builders<LlmRequestLog>.Update
             .Set(l => l.Error, error)
             .Set(l => l.StatusCode, statusCode)
             .Set(l => l.Status, "failed")
-            .Set(l => l.EndedAt, DateTime.UtcNow);
+            .Set(l => l.EndedAt, endedAt)
+            .Set("ProviderAttempts.$[send].Status", "failed")
+            .Set("ProviderAttempts.$[send].StatusCode", statusCode)
+            .Set("ProviderAttempts.$[send].Error", error)
+            .Set("ProviderAttempts.$[send].EndedAt", endedAt);
 
         // 同上：blackhole 占位记录的 logId 不会被复用（StartAsync 失败返回 null），按主键直接更新即可。
-        return _db.LlmRequestLogs.UpdateOneAsync(l => l.Id == logId, update);
+        return _db.LlmRequestLogs.UpdateOneAsync(
+            l => l.Id == logId,
+            update,
+            new UpdateOptions
+            {
+                ArrayFilters =
+                [
+                    new BsonDocumentArrayFilterDefinition<LlmProviderAttempt>(
+                        new MongoDB.Bson.BsonDocument("send.Status", "sent"))
+                ]
+            });
     }
 
     private async Task WithRetryAsync(LlmLogOp op, Func<Task> action)
@@ -169,4 +216,3 @@ public sealed class LlmRequestLogBackground
         _logger.LogWarning("LLM log update failed permanently: {Type} {LogId}", op.Type, op.LogId);
     }
 }
-

@@ -537,6 +537,14 @@ public static class OpenApi
         public const string Chat = "open-api.proxy::chat";
 
         [AppCallerMetadata(
+            "开放接口-视觉网关",
+            "对外开放接口（OpenAI 兼容）视觉请求网关，按 Key 绑定固定模型，未绑定走默认 vision 池",
+            ModelTypes = new[] { ModelTypes.Vision },
+            Category = "Proxy"
+        )]
+        public const string Vision = "open-api.proxy::vision";
+
+        [AppCallerMetadata(
             "开放接口-生图网关",
             "对外开放接口（OpenAI 兼容）images/generations 网关，按 Key 绑定固定模型，未绑定走默认 image 池",
             ModelTypes = new[] { ModelTypes.ImageGen },

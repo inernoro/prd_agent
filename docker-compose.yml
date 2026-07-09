@@ -103,6 +103,7 @@ services:
       - LlmGateway__HttpAppCallerAllowlist=${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}
       - LlmGateway__ShadowFullSamplePercent=${LLMGW_SHADOW_FULL_SAMPLE_PERCENT:-0}
       - LlmGateway__ShadowFullSampleAppCallerAllowlist=${LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST:-}
+      - LlmGateway__DisableMapConfigFallbackForActiveAppCallers=${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}
       - LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}
       - LlmGateway__ServeBaseUrl=${LLMGW_SERVE_BASE_URL:-http://llmgw-serve:8091}
       - LlmGwServe__ApiKey=${LLMGW_SERVE_KEY:?must set LLMGW_SERVE_KEY in production (gateway /gw/v1 shared key gate, no insecure default)}
@@ -179,6 +180,10 @@ services:
       - MongoDB__ConnectionString=mongodb://mongodb:27017
       - MongoDB__DatabaseName=prdagent
       - LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}
+      - LlmGateway__RolloutLedgerPath=/app/.llmgw-release-evidence/rollout-ledger.jsonl
+      # 控制台只在已认领到 GW 的平台/模型/Exchange 上写密钥；加密密钥必须与 api / llmgw-serve 一致。
+      - ApiKeyCrypto__Secret=${API_KEY_CRYPTO_SECRET:?must set API_KEY_CRYPTO_SECRET in production (platform API key encryption, shared by api, llmgw and llmgw-serve)}
+      - ApiKeyCrypto__LegacySecrets=${API_KEY_CRYPTO_LEGACY_SECRETS:-}
       # 网关自身鉴权密钥：独立于 api 的 JWT_SECRET（跨服务隔离）
       - LlmGwJwt__Secret=${LLMGW_JWT_SECRET:?must set LLMGW_JWT_SECRET in production (gateway console JWT signing key, >=32 bytes, no insecure default — empty falls back to a repo-known dev key that lets anyone forge a token to read /gw/*)}
       - LlmGwJwt__Issuer=prdagent-llmgw
@@ -190,6 +195,8 @@ services:
     read_only: true
     tmpfs:
       - /tmp
+    volumes:
+      - ./.llmgw-release-evidence:/app/.llmgw-release-evidence:ro
     depends_on:
       - mongodb
     networks:

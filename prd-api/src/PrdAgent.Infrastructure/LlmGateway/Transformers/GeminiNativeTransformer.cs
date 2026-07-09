@@ -76,13 +76,45 @@ public class GeminiNativeTransformer : IExchangeTransformer
 
                 var parts = new JsonArray();
 
+                if (role == "tool")
+                {
+                    var name = ReadStringSafe(msg["name"]) ?? ReadStringSafe(msg["tool_call_id"]) ?? "tool";
+                    parts.Add(new JsonObject
+                    {
+                        ["functionResponse"] = new JsonObject
+                        {
+                            ["name"] = name,
+                            ["response"] = ParseJsonNodeOrText(ExtractTextContent(msg["content"])),
+                        },
+                    });
+                }
+
+                if (role == "assistant" && msg["tool_calls"] is JsonArray toolCalls)
+                {
+                    foreach (var toolCallNode in toolCalls)
+                    {
+                        if (toolCallNode is not JsonObject toolCall) continue;
+                        var function = toolCall["function"] as JsonObject;
+                        var name = ReadStringSafe(function?["name"]);
+                        if (string.IsNullOrWhiteSpace(name)) continue;
+                        parts.Add(new JsonObject
+                        {
+                            ["functionCall"] = new JsonObject
+                            {
+                                ["name"] = name,
+                                ["args"] = ParseJsonNodeOrText(ReadStringSafe(function?["arguments"]) ?? "{}"),
+                            },
+                        });
+                    }
+                }
+
                 // content 可能是字符串或 parts 数组
                 var contentNode = msg["content"];
-                if (contentNode is JsonValue)
+                if (role != "tool" && contentNode is JsonValue)
                 {
                     parts.Add(new JsonObject { ["text"] = ReadStringSafe(contentNode) ?? string.Empty });
                 }
-                else if (contentNode is JsonArray contentArr)
+                else if (role != "tool" && contentNode is JsonArray contentArr)
                 {
                     foreach (var partNode in contentArr)
                     {
@@ -191,6 +223,14 @@ public class GeminiNativeTransformer : IExchangeTransformer
         if (generationConfig.Count > 0)
             geminiBody["generationConfig"] = generationConfig;
 
+        var tools = ConvertOpenAiToolsToGeminiTools(standardBody);
+        if (tools.Count > 0)
+            geminiBody["tools"] = tools;
+
+        var toolConfig = ConvertOpenAiToolChoiceToGeminiToolConfig(standardBody);
+        if (toolConfig is not null)
+            geminiBody["toolConfig"] = toolConfig;
+
         return geminiBody;
     }
 
@@ -231,6 +271,7 @@ public class GeminiNativeTransformer : IExchangeTransformer
 
         // 扫描 parts：分离图像和文本
         var imageDataArray = new JsonArray();
+        var toolCalls = new JsonArray();
         var textBuilder = new System.Text.StringBuilder();
 
         foreach (var partNode in parts)
@@ -256,6 +297,24 @@ public class GeminiNativeTransformer : IExchangeTransformer
             {
                 var text = ReadStringSafe(partObj["text"]);
                 if (text != null) textBuilder.Append(text);
+            }
+            else if (partObj["functionCall"] is JsonObject functionCall)
+            {
+                var name = ReadStringSafe(functionCall["name"]);
+                if (!string.IsNullOrWhiteSpace(name))
+                {
+                    var args = functionCall["args"] ?? new JsonObject();
+                    toolCalls.Add(new JsonObject
+                    {
+                        ["id"] = $"gemini-call-{name}",
+                        ["type"] = "function",
+                        ["function"] = new JsonObject
+                        {
+                            ["name"] = name,
+                            ["arguments"] = args.ToJsonString(),
+                        },
+                    });
+                }
             }
         }
 
@@ -288,9 +347,12 @@ public class GeminiNativeTransformer : IExchangeTransformer
                     ["message"] = new JsonObject
                     {
                         ["role"] = "assistant",
-                        ["content"] = textBuilder.ToString()
+                        ["content"] = toolCalls.Count > 0 ? null : textBuilder.ToString(),
+                        ["tool_calls"] = toolCalls.Count > 0 ? toolCalls : null,
                     },
-                    ["finish_reason"] = ReadStringSafe(firstCandidate?["finishReason"])?.ToLowerInvariant() ?? "stop"
+                    ["finish_reason"] = toolCalls.Count > 0
+                        ? "tool_calls"
+                        : ReadStringSafe(firstCandidate?["finishReason"])?.ToLowerInvariant() ?? "stop"
                 }
             }
         };
@@ -315,6 +377,86 @@ public class GeminiNativeTransformer : IExchangeTransformer
     }
 
     // ========== 辅助方法 ==========
+
+    private static JsonArray ConvertOpenAiToolsToGeminiTools(JsonObject standardBody)
+    {
+        var declarations = new JsonArray();
+        if (standardBody["tools"] is not JsonArray tools)
+            return new JsonArray();
+
+        foreach (var toolNode in tools)
+        {
+            if (toolNode is not JsonObject tool) continue;
+            var function = tool["function"] as JsonObject;
+            var name = ReadStringSafe(function?["name"]);
+            if (string.IsNullOrWhiteSpace(name)) continue;
+
+            var declaration = new JsonObject
+            {
+                ["name"] = name,
+            };
+            if (function!.TryGetPropertyValue("description", out var description) && description is not null)
+                declaration["description"] = description.DeepClone();
+            if (function.TryGetPropertyValue("parameters", out var parameters) && parameters is not null)
+                declaration["parameters"] = parameters.DeepClone();
+            declarations.Add(declaration);
+        }
+
+        return declarations.Count == 0
+            ? new JsonArray()
+            : new JsonArray { new JsonObject { ["functionDeclarations"] = declarations } };
+    }
+
+    private static JsonObject? ConvertOpenAiToolChoiceToGeminiToolConfig(JsonObject standardBody)
+    {
+        if (!standardBody.TryGetPropertyValue("tool_choice", out var choice) || choice is null)
+            return null;
+
+        JsonObject config;
+        if (choice is JsonValue value && value.TryGetValue<string>(out var s))
+        {
+            config = new JsonObject
+            {
+                ["mode"] = string.Equals(s, "none", StringComparison.OrdinalIgnoreCase) ? "NONE" : "AUTO",
+            };
+        }
+        else if (choice is JsonObject obj
+                 && string.Equals(ReadStringSafe(obj["type"]), "function", StringComparison.OrdinalIgnoreCase)
+                 && obj["function"] is JsonObject function
+                 && !string.IsNullOrWhiteSpace(ReadStringSafe(function["name"])))
+        {
+            config = new JsonObject
+            {
+                ["mode"] = "ANY",
+                ["allowedFunctionNames"] = new JsonArray { ReadStringSafe(function["name"]) },
+            };
+        }
+        else
+        {
+            return null;
+        }
+
+        return new JsonObject
+        {
+            ["functionCallingConfig"] = config,
+        };
+    }
+
+    private static JsonNode ParseJsonNodeOrText(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return new JsonObject();
+        try
+        {
+            return JsonNode.Parse(value) ?? new JsonObject();
+        }
+        catch
+        {
+            return new JsonObject
+            {
+                ["text"] = value,
+            };
+        }
+    }
 
     /// <summary>
     /// 从 JsonNode 安全读取整数（兼容 int/long/string 三种底层类型）。
