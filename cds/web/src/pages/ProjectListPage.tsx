@@ -60,6 +60,7 @@ import { RuntimeValidateButton } from '@/components/deployment/RuntimeValidateBu
 import { CodePill, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { EnvSetupDialog } from '@/components/env/EnvSetupDialog';
 import { SkillDownloadDialog } from '@/components/SkillDownloadDialog';
+import { AgentKeyScopePanel, describeAgentKeyScope, type AgentKeyScope } from '@/components/AgentKeyScopePanel';
 import { MonitoringDialog } from '@/components/monitoring/MonitoringDialog';
 
 const PROJECT_DOCK_BASE_SIZE = 56;
@@ -305,6 +306,7 @@ interface AgentKeySummary {
   id: string;
   label?: string;
   scope?: string;
+  access?: AgentKeyScope;
   createdAt?: string;
   createdBy?: string;
   lastUsedAt?: string;
@@ -320,6 +322,7 @@ interface AgentKeySignResponse {
   keyId: string;
   plaintext: string;
   preview?: string;
+  access?: AgentKeyScope;
 }
 
 interface LegacyCleanupStatus {
@@ -2441,7 +2444,7 @@ function GlobalAgentKeyManagerDialog({
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-medium">{key.label || key.id}</span>
                         <CodePill>{key.revokedAt ? '已吊销' : '有效'}</CodePill>
-                        <CodePill>{key.scope || 'rw'}</CodePill>
+                        <CodePill>{describeAgentKeyScope(key.access)}</CodePill>
                       </div>
                       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
                         <span>签发：{formatDate(key.createdAt)}</span>
@@ -2507,6 +2510,8 @@ function GlobalAgentKeySignDialog({
   const [signing, setSigning] = useState(false);
   const [error, setError] = useState('');
   const [signed, setSigned] = useState<AgentKeySignResponse | null>(null);
+  // 默认作用域 = 只能创建新项目(用户诉求:签发全局 Key 默认只给建项目,怕别人搞坏现有项目)。
+  const [scope, setScope] = useState<AgentKeyScope>({ canCreateProjects: true, projects: [] });
 
   useEffect(() => {
     if (!open) {
@@ -2514,8 +2519,13 @@ function GlobalAgentKeySignDialog({
       setError('');
       setSigned(null);
       setSigning(false);
+      setScope({ canCreateProjects: true, projects: [] });
     }
   }, [open]);
+
+  // 空授权(既不能建项目、也没选任何现有项目)不允许签发,给按钮兜底禁用。
+  const emptyScope =
+    !scope.canCreateProjects && scope.projects !== 'all' && scope.projects.length === 0;
 
   async function sign(): Promise<void> {
     setSigning(true);
@@ -2523,7 +2533,7 @@ function GlobalAgentKeySignDialog({
     try {
       const data = await apiRequest<AgentKeySignResponse>('/api/global-agent-keys', {
         method: 'POST',
-        body: { label: label.trim() || undefined },
+        body: { label: label.trim() || undefined, access: scope },
       });
       setSigned(data);
       await onSigned();
@@ -2546,12 +2556,15 @@ function GlobalAgentKeySignDialog({
           <DialogDescription>
             {signed
               ? '明文只显示一次。关闭后 CDS 只保留 sha256 摘要，无法再次查看。'
-              : '这会创建一把跨项目访问密钥，可创建项目、提交配置申请和触发部署。'}
+              : '按需勾选授权范围。默认「只能创建新项目」——能建项目，但碰不到你现有的项目。'}
           </DialogDescription>
         </DialogHeader>
 
         {signed ? (
           <div className="space-y-4">
+            <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-3 py-2 text-xs text-muted-foreground">
+              授权范围：<span className="font-medium text-foreground">{describeAgentKeyScope(signed.access)}</span>
+            </div>
             <pre className="cds-surface-raised cds-hairline whitespace-pre-wrap break-all p-3 font-mono text-xs leading-6">
               {codeText}
             </pre>
@@ -2577,9 +2590,18 @@ function GlobalAgentKeySignDialog({
                 placeholder="例如 Codex 自动接入"
               />
             </label>
-            <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm leading-6 text-muted-foreground">
-              全局 Key 权限高于项目级 Key。只交给需要创建项目或跨项目自动化的 Agent，用完请吊销。
-            </div>
+
+            <AgentKeyScopePanel value={scope} onChange={setScope} disabled={signing} />
+
+            {scope.projects === 'all' ? (
+              <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm leading-6 text-destructive">
+                你勾选了「操作所有现有项目」——这把 Key 等同管理员权限，泄露后果严重。只交给需要跨项目自动化的 Agent，用完立刻吊销。
+              </div>
+            ) : (
+              <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-3 py-2 text-sm leading-6 text-muted-foreground">
+                当前范围：{describeAgentKeyScope(scope)}。
+              </div>
+            )}
             {error ? (
               <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                 {error}
@@ -2593,7 +2615,7 @@ function GlobalAgentKeySignDialog({
             {signed ? '关闭' : '取消'}
           </Button>
           {!signed ? (
-            <Button type="button" onClick={() => void sign()} disabled={signing}>
+            <Button type="button" onClick={() => void sign()} disabled={signing || emptyScope}>
               {signing ? <Loader2 className="animate-spin" /> : <KeyRound />}
               确认签发
             </Button>
