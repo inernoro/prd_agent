@@ -852,8 +852,24 @@ export function toCdsCompose(
  * 用 fixed-point iteration:迭代展开 cdsVars 自身,直到稳定或达到 8 次上限
  * (8 次足够覆盖任何合理的引用深度,防止循环引用造成无限循环)。
  */
-const ENV_TEMPLATE_RE = /\$\{(\w+)(?::-(.*?))?\}/g;
+// #753：除 ${VAR} / ${VAR:-default} 外，还要识别 POSIX 的
+//   ${VAR:?msg}（必填，无默认）、${VAR:=default}（默认并回填）、${VAR:+alt}（已设置才用 alt）。
+// group1=变量名，group2=操作符（- = ? +，可选），group3=操作数（可选）。
+export const ENV_TEMPLATE_RE = /\$\{(\w+)(?::([-=?+])([^}]*))?\}/g;
 const MAX_ENV_RESOLVE_ITERATIONS = 8;
+
+/**
+ * 计算某个 `${VAR:op...}` 模板在「变量未设置」时应展开成的默认值。
+ *   - `:-` / `:=` → 提供默认值（操作数），未设置时用它
+ *   - `:+`        → 未设置时展开为空串（不算缺失，也不算必填）
+ *   - `:?` 或无操作符（`${VAR}`）→ 无默认（必填，未设置即缺失）
+ * 返回 undefined 表示「无默认值」（供 missing 判定用）。
+ */
+export function envTemplateDefault(op: string | undefined, operand: string | undefined): string | undefined {
+  if (op === '-' || op === '=') return operand ?? '';
+  if (op === '+') return '';
+  return undefined;
+}
 
 function singlePassResolve(
   value: string | number | boolean | null | undefined,
@@ -864,7 +880,8 @@ function singlePassResolve(
   // 直接 .replace() 会炸 "value.replace is not a function"。统一 stringify。
   if (value === null || value === undefined) return '';
   const s = typeof value === 'string' ? value : String(value);
-  return s.replace(ENV_TEMPLATE_RE, (_match, name, defaultVal) => {
+  return s.replace(ENV_TEMPLATE_RE, (_match, name, op, operand) => {
+    const defaultVal = envTemplateDefault(op, operand);
     return vars[name] ?? process.env[name] ?? defaultVal ?? '';
   });
 }

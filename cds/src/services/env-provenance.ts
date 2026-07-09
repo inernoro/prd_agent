@@ -17,7 +17,7 @@
  */
 
 import type { BuildProfile, EnvKeyProvenance, EnvSource } from '../types.js';
-import { resolveEnvTemplates } from './compose-parser.js';
+import { resolveEnvTemplates, ENV_TEMPLATE_RE, envTemplateDefault } from './compose-parser.js';
 import { applyPerBranchDbIsolation } from './db-scope-isolation.js';
 
 /** 一层 env 来源。合并顺序 = 数组顺序,靠后覆盖靠前(last-writer-wins)。 */
@@ -34,7 +34,10 @@ export interface EnvLayer {
 export function missingEnvTemplates(env: Record<string, string>): string[] {
   const missing = new Set<string>();
   for (const value of Object.values(env)) {
-    value.replace(/\$\{(\w+)(?::-(.*?))?\}/g, (_match, name: string, defaultVal: string | undefined) => {
+    // #753：与 compose-parser 共用同一套模板正则/默认值口径（SSOT，避免漂移）。
+    // 仅 `${VAR}` 与 `${VAR:?msg}`（无默认）在未设置时算缺失；`:-` `:=` `:+` 均有默认/兜底。
+    value.replace(ENV_TEMPLATE_RE, (_match, name: string, op: string | undefined, operand: string | undefined) => {
+      const defaultVal = envTemplateDefault(op, operand);
       if (env[name] === undefined && process.env[name] === undefined && defaultVal === undefined) {
         missing.add(name);
       }
