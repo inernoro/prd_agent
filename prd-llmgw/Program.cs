@@ -1317,6 +1317,15 @@ app.MapPost("/gw/config-authority/bind-active-app-callers", async (HttpContext h
         .Select(d => d.GetStringOrEmpty("_id"))
         .Where(x => !string.IsNullOrWhiteSpace(x))
         .ToHashSet(StringComparer.Ordinal);
+    var usableGwPoolIds = new HashSet<string>(StringComparer.Ordinal);
+    foreach (var pool in gwPoolDocs)
+    {
+        var poolId = pool.GetStringOrEmpty("_id");
+        if (poolId.Length > 0 && await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, pool))
+        {
+            usableGwPoolIds.Add(poolId);
+        }
+    }
     var defaultPoolByType = gwPoolDocs
         .Where(d => d.AsNullableBool("IsDefaultForType") == true)
         .Select(d => new
@@ -1325,7 +1334,7 @@ app.MapPost("/gw/config-authority/bind-active-app-callers", async (HttpContext h
             Type = d.GetStringOrEmpty("ModelType").Trim(),
             Name = d.AsNullableString("Name") ?? d.AsNullableString("Code") ?? d.GetStringOrEmpty("_id"),
         })
-        .Where(x => x.Id.Length > 0 && x.Type.Length > 0)
+        .Where(x => x.Id.Length > 0 && x.Type.Length > 0 && usableGwPoolIds.Contains(x.Id))
         .GroupBy(x => x.Type, StringComparer.OrdinalIgnoreCase)
         .ToDictionary(g => g.Key, g => g.OrderBy(x => x.Name, StringComparer.Ordinal).First(), StringComparer.OrdinalIgnoreCase);
 
@@ -1342,6 +1351,20 @@ app.MapPost("/gw/config-authority/bind-active-app-callers", async (HttpContext h
         var currentModelPolicy = appCaller.AsNullableString("ModelPolicy");
         if (!string.IsNullOrWhiteSpace(currentPoolId) && gwPoolIds.Contains(currentPoolId))
         {
+            if (!usableGwPoolIds.Contains(currentPoolId))
+            {
+                result.Skipped++;
+                result.Items.Add(new ConfigAuthorityGapItem
+                {
+                    ObjectType = "appCaller",
+                    Id = appCallerId,
+                    Name = appCallerCode,
+                    Status = "gw-pool-without-usable-member",
+                    Detail = $"active appCaller 当前绑定的 GW 模型池 {currentPoolId} 没有可解析成员；请先在 /pools 补齐 enabled 模型或 Exchange。",
+                });
+                continue;
+            }
+
             if (string.Equals(currentModelPolicy, "pool", StringComparison.OrdinalIgnoreCase))
             {
                 result.Skipped++;
@@ -1680,6 +1703,9 @@ app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody
 
     var activeConfigError = await ValidateActiveGatewayAppCallerConfigAsync(
         gwModelPools,
+        gwPlatforms,
+        gwModels,
+        gwModelExchanges,
         effectiveStatus,
         effectiveModelPoolId,
         effectiveModelPolicy,
@@ -1874,6 +1900,9 @@ app.MapPost("/gw/app-callers/bulk-governance", async (HttpContext http, [FromBod
     var bulkActiveConfigError = await ValidateBulkActiveGatewayAppCallerConfigAsync(
         gwAppCallers,
         gwModelPools,
+        gwPlatforms,
+        gwModels,
+        gwModelExchanges,
         filter,
         targetStatus,
         targetModelPolicyTouched,
@@ -4507,6 +4536,9 @@ static FilterDefinition<BsonDocument>? BuildAppCallerDriftFilter(string? drift)
 static async Task<string?> ValidateBulkActiveGatewayAppCallerConfigAsync(
     IMongoCollection<BsonDocument> appCallers,
     IMongoCollection<BsonDocument> gwModelPools,
+    IMongoCollection<BsonDocument> gwPlatforms,
+    IMongoCollection<BsonDocument> gwModels,
+    IMongoCollection<BsonDocument> gwModelExchanges,
     FilterDefinition<BsonDocument> filter,
     string? targetStatus,
     bool targetModelPolicyTouched,
@@ -4527,6 +4559,9 @@ static async Task<string?> ValidateBulkActiveGatewayAppCallerConfigAsync(
         var effectiveModelPolicy = targetModelPolicyTouched ? targetModelPolicy : doc.AsNullableString("ModelPolicy");
         var error = await ValidateActiveGatewayAppCallerConfigAsync(
             gwModelPools,
+            gwPlatforms,
+            gwModels,
+            gwModelExchanges,
             effectiveStatus,
             effectiveModelPoolId,
             effectiveModelPolicy,
@@ -4542,6 +4577,9 @@ static async Task<string?> ValidateBulkActiveGatewayAppCallerConfigAsync(
 
 static async Task<string?> ValidateActiveGatewayAppCallerConfigAsync(
     IMongoCollection<BsonDocument> gwModelPools,
+    IMongoCollection<BsonDocument> gwPlatforms,
+    IMongoCollection<BsonDocument> gwModels,
+    IMongoCollection<BsonDocument> gwModelExchanges,
     string? status,
     string? modelPoolId,
     string? modelPolicy,
@@ -4578,7 +4616,75 @@ static async Task<string?> ValidateActiveGatewayAppCallerConfigAsync(
         return $"active appCaller 绑定的 GW 模型池类型 {poolType} 与调用类型 {requestType} 不一致。";
     }
 
+    if (!await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, pool))
+    {
+        return $"active appCaller 绑定的 GW 模型池 {modelPoolId.Trim()} 没有可解析、非 unavailable 的成员；请先在 /pools 补齐 enabled 模型或 Exchange。";
+    }
+
     return null;
+}
+
+static async Task<bool> HasUsableGatewayPoolMemberAsync(
+    IMongoCollection<BsonDocument> gwPlatforms,
+    IMongoCollection<BsonDocument> gwModels,
+    IMongoCollection<BsonDocument> gwModelExchanges,
+    BsonDocument pool)
+{
+    var enabledPlatformIds = (await gwPlatforms.Find(FilterDefinition<BsonDocument>.Empty)
+            .Project(Builders<BsonDocument>.Projection.Include("_id").Include("Enabled"))
+            .ToListAsync())
+        .Where(d => d.AsNullableBool("Enabled") ?? true)
+        .Select(d => d.GetStringOrEmpty("_id"))
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .ToHashSet(StringComparer.Ordinal);
+    var enabledModels = await gwModels.Find(Builders<BsonDocument>.Filter.Ne("Enabled", false))
+        .Project(Builders<BsonDocument>.Projection.Include("_id").Include("ModelName").Include("Name").Include("PlatformId").Include("Enabled"))
+        .ToListAsync();
+    var enabledExchanges = await gwModelExchanges.Find(Builders<BsonDocument>.Filter.Ne("Enabled", false))
+        .Project(Builders<BsonDocument>.Projection.Include("_id").Include("Name").Include("Enabled").Include("ModelAlias").Include("ModelAliases").Include("Models"))
+        .ToListAsync();
+
+    var members = pool.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
+    return members
+        .Where(x => x.IsBsonDocument)
+        .Select(x => x.AsBsonDocument)
+        .Any(member => IsResolvableGatewayPoolMember(member, enabledPlatformIds, enabledModels, enabledExchanges));
+}
+
+static bool IsResolvableGatewayPoolMember(
+    BsonDocument member,
+    HashSet<string> enabledPlatformIds,
+    List<BsonDocument> enabledModels,
+    List<BsonDocument> enabledExchanges)
+{
+    if ((member.AsNullableInt("HealthStatus") ?? 0) == 2) return false;
+    var modelId = member.GetStringOrEmpty("ModelId");
+    var platformId = member.GetStringOrEmpty("PlatformId");
+    if (modelId.Length == 0 || platformId.Length == 0) return false;
+    if (string.Equals(platformId, "__exchange__", StringComparison.Ordinal))
+    {
+        return enabledExchanges.Any(exchange => GatewayExchangeSupportsModel(exchange, modelId));
+    }
+    var exchangeById = enabledExchanges.FirstOrDefault(exchange => string.Equals(exchange.GetStringOrEmpty("_id"), platformId, StringComparison.Ordinal));
+    if (exchangeById is not null) return GatewayExchangeSupportsModel(exchangeById, modelId);
+    if (!enabledPlatformIds.Contains(platformId)) return false;
+    return enabledModels.Any(model =>
+        string.Equals(model.AsNullableString("PlatformId"), platformId, StringComparison.Ordinal)
+        && (string.Equals(model.GetStringOrEmpty("_id"), modelId, StringComparison.Ordinal)
+            || string.Equals(model.AsNullableString("ModelName"), modelId, StringComparison.Ordinal)
+            || string.Equals(model.AsNullableString("Name"), modelId, StringComparison.Ordinal)));
+}
+
+static bool GatewayExchangeSupportsModel(BsonDocument exchange, string modelId)
+{
+    if (string.Equals(exchange.AsNullableString("ModelAlias"), modelId, StringComparison.Ordinal)) return true;
+    if (exchange.AsStringList("ModelAliases").Contains(modelId, StringComparer.Ordinal)) return true;
+    if (!exchange.TryGetValue("Models", out var modelsValue) || !modelsValue.IsBsonArray) return false;
+    return modelsValue.AsBsonArray
+        .Where(x => x.IsBsonDocument)
+        .Select(x => x.AsBsonDocument)
+        .Any(m => string.Equals(m.AsNullableString("ModelId"), modelId, StringComparison.Ordinal)
+                  || string.Equals(m.AsNullableString("DisplayName"), modelId, StringComparison.Ordinal));
 }
 
 static BsonDocument BuildFieldDriftExpr(string configuredField, string observedField)

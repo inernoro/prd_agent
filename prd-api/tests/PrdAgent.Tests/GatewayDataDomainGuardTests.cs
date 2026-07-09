@@ -77,6 +77,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("active appCaller 必须使用 modelPolicy=pool", consoleProgram);
         Assert.Contains("normalized-to-gw-pool-policy", consoleProgram);
         Assert.Contains(".Set(\"ModelPolicy\", \"pool\")", consoleProgram);
+        Assert.Contains("HasUsableGatewayPoolMemberAsync", consoleProgram);
+        Assert.Contains("gw-pool-without-usable-member", consoleProgram);
+        Assert.Contains("没有可解析、非 unavailable 的成员", consoleProgram);
         Assert.Contains("ValidateBulkActiveGatewayAppCallerConfigAsync", consoleProgram);
         var logsTypes = ReadRepoFile("prd-llmgw-web/src/lib/types.ts");
         Assert.Contains("runId?: string", logsTypes);
