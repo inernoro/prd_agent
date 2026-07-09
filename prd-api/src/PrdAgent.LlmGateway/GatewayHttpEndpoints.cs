@@ -586,13 +586,12 @@ public static class GatewayHttpEndpoints
             return Results.Json(resolution, jsonOpts);
         });
 
-        // 非流式发送。
-        app.MapPost("/gw/v1/send", async (
+        async Task<IResult> HandleNativeInvokeAsync(
             HttpContext http,
             GatewayRequest request,
             PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
             ILLMRequestContextAccessor accessor,
-            [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services) =>
+            [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services)
         {
             var ingress = ToIngress(request, "gw-native", "map");
             var governance = await RecordAndCheckAppCallerGovernanceAsync(services, ingress, CancellationToken.None);
@@ -602,7 +601,11 @@ public static class GatewayHttpEndpoints
             using var _ = OpenContextScope(accessor, routedRequest.Context, routedRequest.ModelType, routedRequest.AppCallerCode);
             var response = await gateway.SendAsync(routedRequest, CancellationToken.None);
             return Results.Json(response, jsonOpts);
-        });
+        }
+
+        // GW Native 非流式调用入口。/gw/v1/invoke 是目标协议名，/gw/v1/send 保持 MAP 现有客户端兼容。
+        app.MapPost("/gw/v1/invoke", HandleNativeInvokeAsync);
+        app.MapPost("/gw/v1/send", HandleNativeInvokeAsync);
 
         // 流式发送（SSE）。server-authority：客户端断开不取消网关任务，向网关传 CancellationToken.None，
         // 仅在写失败时静默 break。

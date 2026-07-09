@@ -60,6 +60,7 @@ public class GatewayKeyGateContractTests
     // /gw/v1/* 的写端点（send/resolve/raw）与读端点（pools）都覆盖，证明密钥门是全 /gw/v1 前缀级。
     public static IEnumerable<object[]> ProtectedRequests() => new[]
     {
+        new object[] { HttpMethod.Post, "/gw/v1/invoke" },
         new object[] { HttpMethod.Post, "/gw/v1/send" },
         new object[] { HttpMethod.Post, "/gw/v1/resolve" },
         new object[] { HttpMethod.Post, "/gw/v1/raw" },
@@ -228,6 +229,44 @@ public class GatewayKeyGateContractTests
             gateway.LastRequest.PinnedModelId.ShouldBe("anthropic/claude-sonnet-4");
             gateway.LastRequest.Context.ShouldNotBeNull();
             gateway.LastRequest.Context!.ModelPolicy.ShouldBe("pinned");
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task GwNativeInvoke_PreservesExplicitPoolModelPolicy()
+    {
+        var gateway = new EchoingGateway();
+        await using var app = BuildHostWithGateway(gateway);
+        await app.StartAsync();
+        try
+        {
+            var client = app.GetTestClient();
+            var req = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/invoke")
+            {
+                Content = JsonContent.Create(new
+                {
+                    AppCallerCode = "demo.app::chat",
+                    ModelType = "chat",
+                    ExpectedModel = "native-chat-pool",
+                    RequestBody = new { messages = new[] { new { role = "user", content = "hi" } } },
+                    Context = new { ModelPolicy = "pool", ModelPoolId = "pool-native-chat", RequestId = "native-invoke-pool-test" },
+                }),
+            };
+            req.Headers.Add("X-Gateway-Key", GatewayKey);
+
+            var resp = await client.SendAsync(req);
+
+            resp.StatusCode.ShouldBe(HttpStatusCode.OK);
+            gateway.LastRequest.ShouldNotBeNull();
+            gateway.LastRequest.ExpectedModel.ShouldBe("pool-native-chat");
+            gateway.LastRequest.Context.ShouldNotBeNull();
+            gateway.LastRequest.Context!.IngressProtocol.ShouldBe("gw-native");
+            gateway.LastRequest.Context.ModelPolicy.ShouldBe("pool");
+            gateway.LastRequest.Context.ModelPoolId.ShouldBe("pool-native-chat");
         }
         finally
         {
