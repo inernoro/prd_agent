@@ -155,6 +155,34 @@ def _require_serving_probe_for_commit(path: str, label: str, commit: str) -> Non
         raise SystemExit(
             f"ERROR: {label} health sample commit mismatch: {path} actual={','.join(sample_commits)} expected={expected}"
         )
+    _require_serving_probe_route_self_test(payload, label, path)
+
+
+def _require_serving_probe_route_self_test(payload: dict, label: str, path: str) -> None:
+    route = payload.get("routeSelfTest") or payload.get("RouteSelfTest") or {}
+    if not isinstance(route, dict):
+        raise SystemExit(f"ERROR: {label} routeSelfTest is not an object: {path}")
+    if route.get("ok") is not True and route.get("Ok") is not True:
+        raise SystemExit(f"ERROR: {label} routeSelfTest is not ok: {path}")
+
+    required_protocols = {"gw-native", "openai-compatible", "claude-compatible", "gemini-compatible"}
+    protocols = {
+        str(item).strip()
+        for item in (route.get("protocols") or route.get("Protocols") or [])
+        if str(item).strip()
+    }
+    missing_protocols = sorted(required_protocols.difference(protocols))
+    status = str(route.get("selfTestStatus") or route.get("SelfTestStatus") or "").strip().lower()
+    mode = str(route.get("mode") or route.get("Mode") or "").strip().lower()
+    upstream_called = route.get("upstreamCalled") if "upstreamCalled" in route else route.get("UpstreamCalled")
+    total = route.get("total") if "total" in route else route.get("Total")
+    passed = route.get("passed") if "passed" in route else route.get("Passed")
+    if status != "ok" or mode != "dry-run" or upstream_called is not False or not isinstance(total, int) or not isinstance(passed, int) or total != passed or missing_protocols:
+        raise SystemExit(
+            f"ERROR: {label} routeSelfTest invalid: {path} "
+            f"status={status or 'empty'} mode={mode or 'empty'} upstreamCalled={upstream_called} "
+            f"total={total} passed={passed} missingProtocols={','.join(missing_protocols) or 'none'}"
+        )
 
 
 def _require_smoke_for_commit(path: str, label: str, commit: str) -> None:
