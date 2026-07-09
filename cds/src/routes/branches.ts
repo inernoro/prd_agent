@@ -9931,7 +9931,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       let envError: string | undefined;
       try {
         const resolved = resolveProfileRuntimeEnvWithProvenance(
-          entry, effective, customLayers, profileLayers, { jwtIssuer: config.jwt.issuer },
+          entry, effective, customLayers, profileLayers,
+          // injectBullmqPrefix 与部署路径（container.ts resolveProfileRuntimeEnv）同源同值
+          { jwtIssuer: config.jwt.issuer, injectBullmqPrefix: process.env.CDS_BULLMQ_PREFIX_INJECTION !== '0' },
         );
         // 脱敏走 maskSecrets SSOT:按 key 名或 URL 凭据值判定,provenance 的 value 同步替换
         const maskedEnv = maskSecrets(resolved.env);

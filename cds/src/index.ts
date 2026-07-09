@@ -2082,6 +2082,10 @@ janitorService.setRemoveFn(async (slug: string) => {
     const repoRoot = stateService.getProjectRepoRoot(branch.projectId, config.repoRoot);
     await worktreeService.remove(repoRoot, branch.worktreePath);
   } catch { /* best effort */ }
+  // 分支专属网络（cds-br-*）随分支回收：不清会缓慢堆积空网络
+  //（debt.cds.branch-isolation BNI-cleanup，2026-07-09 接线）。内部已容错
+  // not-found/仍被占用，失败不阻断删除主流程。
+  await containerService.removeBranchNetwork(slug).catch(() => { /* best-effort */ });
   branchOperationLease?.assertCurrent('janitor remove before state delete');
   stateService.removeBranch(slug);
   stateService.save();
@@ -2167,6 +2171,8 @@ janitorService.setRemoveFn(async (slug: string) => {
         try {
           stateService.removeLogs(branch.id);
         } catch { /* best-effort */ }
+        // 启动残留 prune 同样带走分支专属网络（BNI-cleanup，2026-07-09 接线）
+        await containerService.removeBranchNetwork(branch.id).catch(() => { /* best-effort */ });
         try {
           stateService.removeBranch(branch.id);
           appReconciled++;
