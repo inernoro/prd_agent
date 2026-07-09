@@ -607,6 +607,57 @@ export function LogsView() {
     );
   }
 
+  function DistributionStrip({
+    label,
+    items,
+    selected,
+    onSelect,
+  }: {
+    label: string;
+    items?: { key: string; count: number }[];
+    selected: string;
+    onSelect: (v: string) => void;
+  }) {
+    const visible = (items ?? []).filter((x) => x.key && x.count > 0).slice(0, 6);
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0 }}>{label}</span>
+        {visible.length === 0 ? (
+          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{DASH}</span>
+        ) : (
+          visible.map((item) => {
+            const active = selected === item.key;
+            return (
+              <button
+                key={`${label}:${item.key}`}
+                type="button"
+                onClick={() => onSelect(active ? '' : item.key)}
+                title={`${label}: ${item.key} (${fmtCompact(item.count)} requests)`}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  maxWidth: 220,
+                  height: 24,
+                  padding: '0 8px',
+                  borderRadius: 'var(--radius-sm)',
+                  border: active ? '1px solid var(--accent)' : '1px solid var(--border-subtle)',
+                  background: active ? 'var(--accent-soft)' : 'var(--bg-input)',
+                  color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+                  fontSize: 11,
+                  cursor: 'pointer',
+                }}
+              >
+                <span className="lg-truncate" style={{ minWidth: 0 }}>{item.key}</span>
+                <span className="tabular" style={{ color: 'var(--text-muted)' }}>{fmtCompact(item.count)}</span>
+              </button>
+            );
+          })
+        )}
+      </div>
+    );
+  }
+
   const primaryTransport = summary?.transportDistribution?.[0];
 
   return (
@@ -786,6 +837,23 @@ export function LogsView() {
         <Card style={{ padding: 8, minHeight: 92, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
           <MiniBarChart data={series} height={82} />
         </Card>
+      </div>
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+          gap: 8,
+          flexShrink: 0,
+          padding: '8px 10px',
+          border: '1px solid var(--border-subtle)',
+          borderRadius: 'var(--radius-sm)',
+          background: 'var(--bg-surface)',
+        }}
+      >
+        <DistributionStrip label="Ingress" items={summary?.ingressProtocolDistribution} selected={filterIngressProtocol} onSelect={setFilterIngressProtocol} />
+        <DistributionStrip label="Policy" items={summary?.modelPolicyDistribution} selected={filterModelPolicy} onSelect={setFilterModelPolicy} />
+        <DistributionStrip label="Source" items={summary?.sourceSystemDistribution} selected={filterSourceSystem} onSelect={setFilterSourceSystem} />
       </div>
 
       <TabBar items={LOGS_SUBTABS} activeKey={subtab} onChange={(k) => setSubtab(k)} />

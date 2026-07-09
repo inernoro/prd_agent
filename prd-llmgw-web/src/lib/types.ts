@@ -225,6 +225,9 @@ export type LogsSummaryData = {
   averageDurationMs?: number | null;
   transportDistribution: LogsBucketItem[];
   statusDistribution: LogsBucketItem[];
+  sourceSystemDistribution: LogsBucketItem[];
+  ingressProtocolDistribution: LogsBucketItem[];
+  modelPolicyDistribution: LogsBucketItem[];
 };
 
 // ── 列表查询参数 ──

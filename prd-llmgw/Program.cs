@@ -438,7 +438,10 @@ app.MapGet("/gw/logs/summary", async (
         .Include("OutputTokens")
         .Include("EstimatedCostUsd")
         .Include("IsFallback")
-        .Include("GatewayTransport");
+        .Include("GatewayTransport")
+        .Include("SourceSystem")
+        .Include("IngressProtocol")
+        .Include("ModelPolicy");
     var docs = await logs.Find(filter).Project(projection).ToListAsync();
 
     var durations = docs.Select(d => d.AsNullableLong("DurationMs")).Where(d => d is > 0).Select(d => d!.Value).ToList();
@@ -456,6 +459,9 @@ app.MapGet("/gw/logs/summary", async (
         AverageDurationMs = durations.Count == 0 ? null : (long)Math.Round(durations.Average()),
         TransportDistribution = BuildBucket(docs, "GatewayTransport", fallbackKey: "unknown"),
         StatusDistribution = BuildBucket(docs, "Status", fallbackKey: "unknown"),
+        SourceSystemDistribution = BuildBucket(docs, "SourceSystem", fallbackKey: "unknown"),
+        IngressProtocolDistribution = BuildBucket(docs, "IngressProtocol", fallbackKey: "unknown"),
+        ModelPolicyDistribution = BuildBucket(docs, "ModelPolicy", fallbackKey: "unknown"),
     };
     data.TotalTokens = data.InputTokens + data.OutputTokens;
 

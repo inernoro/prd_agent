@@ -256,6 +256,9 @@ public sealed class LogsSummaryData
     public long? AverageDurationMs { get; set; }
     public List<LogsBucketItem> TransportDistribution { get; set; } = new();
     public List<LogsBucketItem> StatusDistribution { get; set; } = new();
+    public List<LogsBucketItem> SourceSystemDistribution { get; set; } = new();
+    public List<LogsBucketItem> IngressProtocolDistribution { get; set; } = new();
+    public List<LogsBucketItem> ModelPolicyDistribution { get; set; } = new();
 }
 
 public sealed class LogsBucketItem
