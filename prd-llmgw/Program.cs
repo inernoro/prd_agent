@@ -3171,6 +3171,17 @@ app.MapPost("/gw/pools/{id}/models/bulk-import", async (HttpContext http, string
 
     if (imported > 0 || updated > 0)
     {
+        var validationError = await ValidateDefaultGatewayPoolMembersAsync(
+            gwPlatforms,
+            gwModels,
+            gwModelExchanges,
+            pool,
+            new BsonArray(nextMembers));
+        if (validationError is not null)
+        {
+            return Json(ApiEnvelope<BulkImportPoolModelsResult>.Fail("INVALID_INPUT", validationError), jsonOptions, 400);
+        }
+
         await gwModelPools.UpdateOneAsync(poolFilter, Builders<BsonDocument>.Update
             .Set("Models", new BsonArray(nextMembers))
             .Set("UpdatedAt", DateTime.UtcNow));
@@ -3352,6 +3363,17 @@ app.MapPut("/gw/pools/{id}/models", async (HttpContext http, string id, [FromBod
         .ToList();
 
     var nextModels = new BsonArray(members);
+    var validationError = await ValidateDefaultGatewayPoolMembersAsync(
+        gwPlatforms,
+        gwModels,
+        gwModelExchanges,
+        pool,
+        nextModels);
+    if (validationError is not null)
+    {
+        return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", validationError), jsonOptions, 400);
+    }
+
     await gwModelPools.UpdateOneAsync(poolFilter, Builders<BsonDocument>.Update
         .Set("Models", nextModels)
         .Set("UpdatedAt", DateTime.UtcNow));
@@ -3399,8 +3421,20 @@ app.MapDelete("/gw/pools/{id}/models", async (HttpContext http, string id, strin
     }
 
     members = members.Except(removed).ToList();
+    var nextModels = new BsonArray(members);
+    var validationError = await ValidateDefaultGatewayPoolMembersAsync(
+        gwPlatforms,
+        gwModels,
+        gwModelExchanges,
+        pool,
+        nextModels);
+    if (validationError is not null)
+    {
+        return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", validationError), jsonOptions, 400);
+    }
+
     await gwModelPools.UpdateOneAsync(poolFilter, Builders<BsonDocument>.Update
-        .Set("Models", new BsonArray(members))
+        .Set("Models", nextModels)
         .Set("UpdatedAt", DateTime.UtcNow));
     await WriteOperationAuditAsync(
         operationAudits,
@@ -4652,6 +4686,30 @@ static async Task<string?> ValidateActiveGatewayAppCallerConfigAsync(
     }
 
     return null;
+}
+
+static async Task<string?> ValidateDefaultGatewayPoolMembersAsync(
+    IMongoCollection<BsonDocument> gwPlatforms,
+    IMongoCollection<BsonDocument> gwModels,
+    IMongoCollection<BsonDocument> gwModelExchanges,
+    BsonDocument pool,
+    BsonArray nextModels)
+{
+    if (pool.AsNullableBool("IsDefaultForType") != true)
+    {
+        return null;
+    }
+
+    var nextPool = new BsonDocument(pool)
+    {
+        ["Models"] = nextModels,
+    };
+    if (await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, nextPool))
+    {
+        return null;
+    }
+
+    return "默认 GW 模型池必须保留至少一个可解析、非 unavailable 的成员；请先添加 enabled 模型或 Exchange，再删除或覆盖现有成员。";
 }
 
 static async Task<bool> HasUsableGatewayPoolMemberAsync(
