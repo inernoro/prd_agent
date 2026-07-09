@@ -183,7 +183,7 @@ describe('resource external TCP access', () => {
     expect(joined).toContain('iptables -I DOCKER-USER 1 -p tcp -m conntrack --ctorigdstport');
   });
 
-  it('does not reuse a preferred external port when it is already listening', async () => {
+  it('reuses the resource own external port when updating an already-enabled policy (#805)', async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-resource-ext-'));
     const config: CdsConfig = {
       repoRoot: tmpDir,
@@ -289,11 +289,14 @@ describe('resource external TCP access', () => {
     );
 
     expect(res.status).toBe(200);
-    expect(res.body.policy.port).not.toBe(43111);
+    // #805：更新一个已启用资源的策略时，监听中的 43111 是该资源自己的旧 proxy，
+    // 必须稳定复用同一端口，而非分配新端口丢弃既有连接。旧 proxy 在分配之后、
+    // 启动新 proxy 之前被 disableTcpResourceExternalAccess 拆除，不存在双重绑定。
+    expect(res.body.policy.port).toBe(43111);
     expect(res.body.policy.connectionString).toContain(`miduo.org:${res.body.policy.port}`);
     const dockerRun = shell.commands.find((cmd) => cmd.startsWith('docker run -d'));
     expect(dockerRun).toBeTruthy();
-    expect(dockerRun).not.toContain('-p 0.0.0.0:43111:15432');
+    expect(dockerRun).toContain('-p 0.0.0.0:43111:15432');
   });
 
   it('rejects enabling public TCP access without an allowlist', async () => {
