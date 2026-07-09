@@ -8,7 +8,11 @@ import { ChangePasswordPage } from '@/pages/ChangePasswordPage';
 import { OverviewPage } from '@/pages/OverviewPage';
 import { LogsPage } from '@/pages/LogsPage';
 import { ModelPoolsPage } from '@/pages/ModelPoolsPage';
+import { AppCallersPage } from '@/pages/AppCallersPage';
 import { PlatformsPage } from '@/pages/PlatformsPage';
+import { ModelsPage } from '@/pages/ModelsPage';
+import { ExchangesPage } from '@/pages/ExchangesPage';
+import { AuditsPage } from '@/pages/AuditsPage';
 import { ShadowPage } from '@/pages/ShadowPage';
 
 function getRouterBasename() {
@@ -58,8 +62,12 @@ export function App() {
           >
             <Route path="/" element={<OverviewPage />} />
             <Route path="/logs" element={<LogsPage />} />
+            <Route path="/app-callers" element={<AppCallersPage />} />
             <Route path="/pools" element={<ModelPoolsPage />} />
             <Route path="/platforms" element={<PlatformsPage />} />
+            <Route path="/models" element={<ModelsPage />} />
+            <Route path="/exchanges" element={<ExchangesPage />} />
+            <Route path="/audits" element={<AuditsPage />} />
             <Route path="/shadow" element={<ShadowPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
