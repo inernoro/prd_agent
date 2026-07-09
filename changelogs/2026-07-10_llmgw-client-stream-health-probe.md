@@ -8,3 +8,4 @@
 | security | prd-llmgw | LLM Gateway 控制台禁止将未绑定 GW 权威模型池或使用 auto 策略的 appCaller 激活 |
 | fix | prd-llmgw | LLM Gateway 配置权威自动绑池工具同步将 active appCaller 路由策略规范化为 pool |
 | security | prd-llmgw | LLM Gateway 控制台激活 appCaller 前校验绑定池存在可解析成员，自动绑池跳过不可用默认池 |
+| security | prd-llmgw | LLM Gateway 控制台禁止将无可解析成员的 GW 模型池设为默认池 |

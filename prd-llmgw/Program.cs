@@ -2752,6 +2752,16 @@ app.MapPost("/gw/pools", async (HttpContext http, [FromBody] CreatePoolRequest b
     };
     if (description.Length > 0) doc["Description"] = description;
 
+    if (body.IsDefaultForType == true
+        && !await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, doc))
+    {
+        return Json(ApiEnvelope<PoolItem>.Fail(
+            "INVALID_INPUT",
+            "默认 GW 模型池必须至少包含一个可解析、非 unavailable 的成员；请先创建为非默认池并添加 enabled 模型或 Exchange。"),
+            jsonOptions,
+            400);
+    }
+
     await gwModelPools.InsertOneAsync(doc);
     if (body.IsDefaultForType == true)
     {
@@ -2868,9 +2878,20 @@ app.MapPut("/gw/pools/{id}", async (HttpContext http, string id, [FromBody] Upda
 
     var now = DateTime.UtcNow;
     updates.Add(Builders<BsonDocument>.Update.Set("UpdatedAt", now));
-    await gwModelPools.UpdateOneAsync(filter, Builders<BsonDocument>.Update.Combine(updates));
 
     var shouldBeDefault = body.IsDefaultForType ?? (doc.AsNullableBool("IsDefaultForType") ?? false);
+    if (shouldBeDefault
+        && !await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, doc))
+    {
+        return Json(ApiEnvelope<PoolItem>.Fail(
+            "INVALID_INPUT",
+            "默认 GW 模型池必须至少包含一个可解析、非 unavailable 的成员；请先添加 enabled 模型或 Exchange。"),
+            jsonOptions,
+            400);
+    }
+
+    await gwModelPools.UpdateOneAsync(filter, Builders<BsonDocument>.Update.Combine(updates));
+
     if (shouldBeDefault)
     {
         var fb = Builders<BsonDocument>.Filter;
@@ -3425,6 +3446,15 @@ app.MapPut("/gw/pools/{id}/default", async (HttpContext http, string id, ToggleD
     }
     if (doc is null) return Json(ApiEnvelope<PoolItem>.Fail("NOT_FOUND", $"模型池不存在：{id}"), jsonOptions, 404);
     var modelType = doc.GetStringOrEmpty("ModelType");
+    if (targetAuthority == "llm_gateway"
+        && !await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, doc))
+    {
+        return Json(ApiEnvelope<PoolItem>.Fail(
+            "INVALID_INPUT",
+            "默认 GW 模型池必须至少包含一个可解析、非 unavailable 的成员；请先添加 enabled 模型或 Exchange。"),
+            jsonOptions,
+            400);
+    }
     // 非事务安全次序：先置本池为默认、再清同类型其它池。第二步万一失败是「暂时两个默认」（MAP 仍能选到一个），
     // 远好于「先清后置」失败=零默认。
     await targetPools.UpdateOneAsync(filter, Builders<BsonDocument>.Update.Set("IsDefaultForType", true).Set("UpdatedAt", DateTime.UtcNow));
