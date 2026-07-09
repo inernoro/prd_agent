@@ -267,11 +267,27 @@ def _require_release_gate_for_commit(path: str, label: str, commit: str, require
             remaining = runtime.get("RemainingRuntimeGates")
         if not isinstance(remaining, list):
             remaining = []
-        if not runtime_required or not runtime_ok or not runtime_ready:
+        allowed_pending = runtime.get("allowedPendingRuntimeGates")
+        if allowed_pending is None:
+            allowed_pending = runtime.get("AllowedPendingRuntimeGates")
+        if not isinstance(allowed_pending, list):
+            allowed_pending = []
+        self_finalizing = bool(
+            runtime.get("selfFinalizingHttpFullLedger")
+            if "selfFinalizingHttpFullLedger" in runtime
+            else runtime.get("SelfFinalizingHttpFullLedger")
+        )
+        pending_http_full_ledger_only = (
+            self_finalizing
+            and remaining == ["full_http_rollout_ledger"]
+            and allowed_pending == ["full_http_rollout_ledger"]
+        )
+        if not runtime_required or not runtime_ok or (not runtime_ready and not pending_http_full_ledger_only):
             raise SystemExit(
                 f"ERROR: {label} runtimeGates is not required+ok+ready for http-full gate: "
                 f"{path} required={runtime_required} ok={runtime_ok} readyForHttpFull={runtime_ready} "
-                f"remaining={','.join(str(x) for x in remaining) or 'none'}"
+                f"remaining={','.join(str(x) for x in remaining) or 'none'} "
+                f"allowedPending={','.join(str(x) for x in allowed_pending) or 'none'}"
             )
 
 
