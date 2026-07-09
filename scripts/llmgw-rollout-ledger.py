@@ -291,7 +291,7 @@ def _require_release_gate_for_commit(path: str, label: str, commit: str, require
             )
 
 
-def _require_prod_preflight_for_commit(path: str, label: str, commit: str) -> None:
+def _require_prod_preflight_for_commit(path: str, label: str, commit: str, stage: str = "") -> None:
     payload = _require_pass_json(path, label)
     expected = _normalize_commit(commit)
     if not expected:
@@ -306,6 +306,55 @@ def _require_prod_preflight_for_commit(path: str, label: str, commit: str) -> No
     mode = str(payload.get("mode") or "").strip().lower()
     if mode != "start":
         raise SystemExit(f"ERROR: {label} mode mismatch: {path} actual={mode or 'empty'} expected=start")
+
+    if str(stage or "").strip() != "shadow-start":
+        _require_prod_preflight_route_self_test(payload, label, path)
+
+
+def _require_prod_preflight_route_self_test(payload: dict, label: str, path: str) -> None:
+    checks = payload.get("checks") or payload.get("Checks") or []
+    if not isinstance(checks, list):
+        raise SystemExit(f"ERROR: {label} checks is not a list: {path}")
+
+    matches = [
+        item for item in checks
+        if isinstance(item, dict)
+        and str(item.get("name") or item.get("Name") or "").strip() == "gateway_route_self_test"
+    ]
+    if not matches:
+        raise SystemExit(f"ERROR: {label} missing gateway_route_self_test check: {path}")
+
+    check = matches[-1]
+    if check.get("ok") is not True and check.get("Ok") is not True:
+        raise SystemExit(f"ERROR: {label} gateway_route_self_test is not ok: {path}")
+
+    detail_raw = str(check.get("detail") or check.get("Detail") or "{}")
+    try:
+        detail = json.loads(detail_raw)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"ERROR: {label} gateway_route_self_test detail is not JSON: {path}: {exc}") from exc
+    if not isinstance(detail, dict):
+        raise SystemExit(f"ERROR: {label} gateway_route_self_test detail is not an object: {path}")
+
+    required_protocols = {"gw-native", "openai-compatible", "claude-compatible", "gemini-compatible"}
+    protocols = {
+        str(item).strip()
+        for item in (detail.get("protocols") or detail.get("Protocols") or [])
+        if str(item).strip()
+    }
+    missing_protocols = sorted(required_protocols.difference(protocols))
+    status = str(detail.get("selfTestStatus") or detail.get("SelfTestStatus") or "").strip().lower()
+    mode = str(detail.get("mode") or detail.get("Mode") or "").strip().lower()
+    upstream_called = detail.get("upstreamCalled") if "upstreamCalled" in detail else detail.get("UpstreamCalled")
+    total = detail.get("total") if "total" in detail else detail.get("Total")
+    passed = detail.get("passed") if "passed" in detail else detail.get("Passed")
+
+    if status != "ok" or mode != "dry-run" or upstream_called is not False or not isinstance(total, int) or not isinstance(passed, int) or total != passed or missing_protocols:
+        raise SystemExit(
+            f"ERROR: {label} gateway_route_self_test invalid: {path} "
+            f"status={status or 'empty'} mode={mode or 'empty'} upstreamCalled={upstream_called} "
+            f"total={total} passed={passed} missingProtocols={','.join(missing_protocols) or 'none'}"
+        )
 
 
 def _require_upstream_readiness(path: str, label: str) -> None:
@@ -604,7 +653,7 @@ def _entry_evidence_failures(entry: dict) -> list[str]:
         return failures
 
     try:
-        _require_prod_preflight_for_commit(str(entry.get("prodPreflightJson") or ""), f"{stage} production preflight evidence", commit)
+        _require_prod_preflight_for_commit(str(entry.get("prodPreflightJson") or ""), f"{stage} production preflight evidence", commit, stage)
     except SystemExit as exc:
         failures.append(str(exc))
 
@@ -836,7 +885,7 @@ def append(args: argparse.Namespace) -> int:
             _require_external_backup(args.external_backup_json, "external backup evidence")
             _require_config_authority_apply(args.config_authority_json, "config authority evidence")
         elif args.stage != ROLLBACK_REHEARSAL_STAGE:
-            _require_prod_preflight_for_commit(args.prod_preflight_json, "production preflight evidence", args.commit)
+            _require_prod_preflight_for_commit(args.prod_preflight_json, "production preflight evidence", args.commit, args.stage)
             _require_serving_probe_for_commit(args.serving_probe_json, "serving probe evidence", args.commit)
             if _bool_flag(args.smoke_required):
                 _require_smoke_for_commit(args.smoke_json, "D-layer smoke evidence", args.commit)
@@ -1060,7 +1109,7 @@ def stage_report(args: argparse.Namespace) -> int:
                     require_config_authority=args.stage == "http-full",
                 )
             elif label == "prodPreflightJson":
-                _require_prod_preflight_for_commit(path, label, args.commit)
+                _require_prod_preflight_for_commit(path, label, args.commit, args.stage)
             elif label == "upstreamReadinessJson":
                 _require_upstream_readiness(path, label)
             elif label == "providerAuditJson":

@@ -256,6 +256,8 @@ scripts/llmgw-prod-stage.sh --stage shadow-start --commit <40位SHA> --execute
 `prod-preflight.json`，用于在执行 `shadow-start` 前证明 MAP 日志权限、GW health/key、目标 commit 配置和
 `/gw/v1/route-self-test` 协议路由 dry-run gate 可用；route-self-test 必须返回 `Status=ok`、`Mode=dry-run`、
 `UpstreamCalled=false`，并覆盖 GW Native、OpenAI-compatible、Claude-compatible、Gemini-compatible 四类入口；
+除首次 `shadow-start` 可因网关首次部署使用 bootstrap deferred 外，rollout ledger 在 `stage-report`、`append` 和
+后续 `audit` 时都会拒绝缺少 `gateway_route_self_test` 的 `prod-preflight.json`；
 `completion` 模式必须填写最终 `llmgw-prod-stage` 的 `rollout_evidence_run_id`，workflow 会先下载
 `llmgw-prod-stage-<runId>` artifact 到 `.llmgw-release-evidence/`，再审计 `rollout-ledger.jsonl` 终态，
 防止没有 `http-full` 成功台账时宣称完成。

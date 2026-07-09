@@ -19,3 +19,4 @@
 | feat | prd-api | LLM Gateway OpenAI 兼容非流式响应通过 Extensions 保留并回吐 choice logprobs |
 | feat | prd-api | LLM Gateway serving 新增受密钥保护的 `/gw/v1/route-self-test` dry-run 入口，秒级验证四类协议入口路由元数据 |
 | ops | scripts | LLM Gateway 生产 preflight 接入 `/gw/v1/route-self-test`，发布前自动校验四类协议入口 dry-run gate |
+| ops | scripts | LLM Gateway rollout ledger 拒绝缺少 `gateway_route_self_test` 的 canary/http preflight 证据 |
