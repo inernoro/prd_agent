@@ -48,6 +48,10 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("var shadows = mapDatabase.GetCollection<BsonDocument>(\"llmshadow_comparisons\");", consoleProgram);
         Assert.Contains("Builders<BsonDocument>.Filter.Ne(\"IsHealthProbe\", true)", consoleProgram);
         Assert.Contains("\"IsHealthProbe\": True", smoke);
+        Assert.Contains("bool? IsHealthProbe = null", ReadRepoFile("prd-api/src/PrdAgent.Core/Interfaces/ILLMRequestContextAccessor.cs"));
+        Assert.Contains("IsHealthProbe: ctx?.IsHealthProbe", servingEndpoints);
+        Assert.Contains("IsHealthProbe = current?.IsHealthProbe", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/HttpLlmClient.cs"));
+        Assert.Contains("IsHealthProbe = scopeCtx?.IsHealthProbe", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayLLMClient.cs"));
     }
 
     [Fact]

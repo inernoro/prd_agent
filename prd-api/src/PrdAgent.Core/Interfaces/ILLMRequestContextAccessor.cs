@@ -28,7 +28,11 @@ public record LlmRequestContext(
     /// 内部发布取证开关：当前请求强制执行完整 shadow 比对。
     /// 仅由服务端校验过的内部采样 header 设置；普通用户请求保持 false。
     /// </summary>
-    bool ForceFullShadowSample = false);
+    bool ForceFullShadowSample = false,
+    /// <summary>
+    /// 内部健康探针标记：探针必须走真实网关链路，但日志和发布 gate 需要把它与用户流量区分开。
+    /// </summary>
+    bool? IsHealthProbe = null);
 
 public interface ILLMRequestContextAccessor
 {

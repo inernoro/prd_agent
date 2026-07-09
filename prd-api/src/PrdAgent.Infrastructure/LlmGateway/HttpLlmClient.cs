@@ -97,6 +97,7 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
             DocumentChars = current?.DocumentChars,
             DocumentHash = current?.DocumentHash,
             GatewayTransport = PrdAgent.Core.Models.GatewayTransports.Http,
+            IsHealthProbe = current?.IsHealthProbe,
         };
 
         var payload = new
