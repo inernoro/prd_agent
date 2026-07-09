@@ -202,6 +202,38 @@ def _require_smoke_for_commit(path: str, label: str, commit: str) -> None:
         raise SystemExit(f"ERROR: {label} missing healthCommit for same-commit evidence: {path}")
     if health_commit != expected:
         raise SystemExit(f"ERROR: {label} D-layer smoke healthCommit mismatch: {path} actual={health_commit} expected={expected}")
+    _require_smoke_provider_canary_rows(payload, label, path)
+
+
+def _require_smoke_provider_canary_rows(payload: dict, label: str, path: str) -> None:
+    rows = payload.get("rows") or payload.get("Rows") or []
+    if not isinstance(rows, list):
+        raise SystemExit(f"ERROR: {label} rows are not a list: {path}")
+
+    required_prefixes = [
+        "invoke[chat]",
+        "send-compat[chat]",
+        "stream[chat]",
+        "client-stream[chat]",
+        "canary(",
+    ]
+    missing: list[str] = []
+    failed: list[str] = []
+    for prefix in required_prefixes:
+        matches = [
+            row for row in rows
+            if isinstance(row, dict) and str(row.get("case") or row.get("Case") or "").startswith(prefix)
+        ]
+        if not matches:
+            missing.append(prefix)
+            continue
+        if not any(str(row.get("status") or row.get("Status") or "").lower() == "pass" for row in matches):
+            failed.append(prefix)
+    if missing or failed:
+        raise SystemExit(
+            f"ERROR: {label} missing real provider canary rows: {path} "
+            f"missing={','.join(missing) or 'none'} failed={','.join(failed) or 'none'}"
+        )
 
 
 def _require_smoke_route_matrix(path: str, label: str) -> None:

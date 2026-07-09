@@ -399,6 +399,8 @@ stage/serving-probe/gw-smoke/release-gate 证据文件 verdict 与 commit 归属
 如果 `LLMGW_MODE=shadow` 且 `LLMGW_SHADOW_FULL_SAMPLE_PERCENT` 非 0，`exec_dep.sh` 会在 compose 起新镜像后
 强制 run serving probe 与 D 层 smoke，但不会要求已有 shadow 样本数，以便安全启动证据期。
 http/canary 发布默认还会在部署后强制运行 `scripts/gw-smoke.py`，真打 healthz/pools/invoke/send-compat/stream/client-stream/canary；
+rollout ledger 会要求 `gw-smoke.json` 中 `invoke[chat]`、`send-compat[chat]`、`stream[chat]`、`client-stream[chat]`
+和必败 canary 行均为 pass，确保低成本真实 provider canary 已执行，而不是只用 healthz 或 resolve-only 证据放行；
 仅在人工强制场景显式设置 `LLMGW_GATE_RUN_SMOKE=0` 才跳过，并会打印警告。
 生产 workflow 可通过 `route_matrix=true` 和 `route_pool_id`、`route_pinned_platform_id`、`route_pinned_model_id`
 把同一组 `/resolve` 路由矩阵证据纳入 stage；stage runner 也支持 `LLMGW_GATE_SMOKE_ROUTE_MATRIX=1`。启用后

@@ -21,3 +21,4 @@
 | ops | scripts | LLM Gateway 生产 preflight 接入 `/gw/v1/route-self-test`，发布前自动校验四类协议入口 dry-run gate |
 | ops | scripts | LLM Gateway rollout ledger 拒绝缺少 `gateway_route_self_test` 的 canary/http preflight 证据 |
 | ops | scripts | LLM Gateway serving-probe 部署后强制记录并校验 `routeSelfTest`，防止发布后协议入口漂移 |
+| ops | scripts | LLM Gateway rollout ledger 强制校验 gw-smoke 的 invoke/send/stream/client-stream 低成本真实 provider canary 行 |
