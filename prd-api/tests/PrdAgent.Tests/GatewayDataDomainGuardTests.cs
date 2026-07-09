@@ -74,7 +74,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("fb.Regex(\"LastObservedRequestId\", pattern)", consoleProgram);
         Assert.Contains("ValidateActiveGatewayAppCallerConfigAsync", consoleProgram);
         Assert.Contains("active appCaller 必须绑定 llm_gateway.llmgw_model_pools", consoleProgram);
-        Assert.Contains("active appCaller 不能使用 modelPolicy=auto", consoleProgram);
+        Assert.Contains("active appCaller 必须使用 modelPolicy=pool", consoleProgram);
+        Assert.Contains("normalized-to-gw-pool-policy", consoleProgram);
+        Assert.Contains(".Set(\"ModelPolicy\", \"pool\")", consoleProgram);
         Assert.Contains("ValidateBulkActiveGatewayAppCallerConfigAsync", consoleProgram);
         var logsTypes = ReadRepoFile("prd-llmgw-web/src/lib/types.ts");
         Assert.Contains("runId?: string", logsTypes);

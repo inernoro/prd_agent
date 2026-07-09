@@ -1339,9 +1339,36 @@ app.MapPost("/gw/config-authority/bind-active-app-callers", async (HttpContext h
         var appCallerId = appCaller.GetStringOrEmpty("_id");
         var appCallerCode = appCaller.AsNullableString("AppCallerCode") ?? appCallerId;
         var currentPoolId = appCaller.AsNullableString("ModelPoolId");
+        var currentModelPolicy = appCaller.AsNullableString("ModelPolicy");
         if (!string.IsNullOrWhiteSpace(currentPoolId) && gwPoolIds.Contains(currentPoolId))
         {
-            result.Skipped++;
+            if (string.Equals(currentModelPolicy, "pool", StringComparison.OrdinalIgnoreCase))
+            {
+                result.Skipped++;
+                continue;
+            }
+
+            var policyUpdateResult = await gwAppCallers.UpdateOneAsync(
+                Builders<BsonDocument>.Filter.Eq("_id", appCallerId),
+                Builders<BsonDocument>.Update
+                    .Set("ModelPolicy", "pool")
+                    .Set("UpdatedAt", now));
+            if (policyUpdateResult.ModifiedCount > 0)
+            {
+                result.Bound++;
+                result.Items.Add(new ConfigAuthorityGapItem
+                {
+                    ObjectType = "appCaller",
+                    Id = appCallerId,
+                    Name = appCallerCode,
+                    Status = "normalized-to-gw-pool-policy",
+                    Detail = $"已保留现有 GW 模型池 {currentPoolId}，并将路由策略收敛为 pool。",
+                });
+            }
+            else
+            {
+                result.Skipped++;
+            }
             continue;
         }
 
@@ -1366,12 +1393,9 @@ app.MapPost("/gw/config-authority/bind-active-app-callers", async (HttpContext h
         var updates = new List<UpdateDefinition<BsonDocument>>
         {
             Builders<BsonDocument>.Update.Set("ModelPoolId", defaultPool.Id),
+            Builders<BsonDocument>.Update.Set("ModelPolicy", "pool"),
             Builders<BsonDocument>.Update.Set("UpdatedAt", now),
         };
-        if (string.IsNullOrWhiteSpace(appCaller.AsNullableString("ModelPolicy")))
-        {
-            updates.Add(Builders<BsonDocument>.Update.Set("ModelPolicy", "pool"));
-        }
 
         var updateResult = await gwAppCallers.UpdateOneAsync(
             Builders<BsonDocument>.Filter.Eq("_id", appCallerId),
@@ -1385,7 +1409,7 @@ app.MapPost("/gw/config-authority/bind-active-app-callers", async (HttpContext h
                 Id = appCallerId,
                 Name = appCallerCode,
                 Status = "bound-to-gw-default-pool",
-                Detail = $"已绑定 requestType={requestType} 的 GW 默认池 {defaultPool.Name}。",
+                Detail = $"已绑定 requestType={requestType} 的 GW 默认池 {defaultPool.Name}，并将路由策略收敛为 pool。",
             });
         }
         else
@@ -4528,9 +4552,9 @@ static async Task<string?> ValidateActiveGatewayAppCallerConfigAsync(
         return null;
     }
 
-    if (string.Equals(modelPolicy, "auto", StringComparison.OrdinalIgnoreCase))
+    if (!string.Equals(modelPolicy, "pool", StringComparison.OrdinalIgnoreCase))
     {
-        return "active appCaller 不能使用 modelPolicy=auto；请绑定 GW 模型池并使用 pool 策略。";
+        return "active appCaller 必须使用 modelPolicy=pool；请绑定 GW 模型池并使用 pool 策略。";
     }
 
     if (string.IsNullOrWhiteSpace(modelPoolId))
