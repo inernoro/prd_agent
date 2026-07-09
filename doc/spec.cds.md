@@ -2,8 +2,17 @@
 
 > **版本**：v1.0 | **日期**：2026-03-15 | **类型**：spec
 >
+> **快照声明（2026-07-09 补注）**：本文是 **2026-03-15 时点的功能快照**，仅覆盖单项目时代的能力面。
+> 2026-04 之后落地的能力**不在本文内**，以下列专文为准，阅读本文时不得将其当作 CDS 现状全貌：
+> - 多项目模型与隔离：`spec.cds.project-model.md`（Project 实体 / dockerNetwork / clone / detect stack）
+> - 生命周期与缓存：`spec.cds.lifecycle.md`；Compose 契约：`spec.cds.compose-contract.md`
+> - GitHub push 即部署 / PR check-run / slash 命令：`.claude/rules/cds-auto-deploy.md`
+> - MAP 配对协议：`spec.cds.map-pairing-protocol.md`；Agent 工作台：`design.cds.agent.runtime-architecture.md`
+> - 角色与鉴权已非「单角色」：登录账号 + Agent Key + GitHub App + AI pairing 多主体并存（见 `guide.cds.ai-auth.md`）
+> - 「唯一集成点 prd-admin/vite.config.ts」的说法已过时：现有 GitHub webhook、验收中心报告协议等多个集成点
+>
 > 本文档定义 CDS 的**纯功能需求**，不包含 UI 布局、视觉风格、交互动效等 UX 细节。
-> 用途：作为 AI 重写前端页面时的唯一功能参照，确保所有能力被保留，但不限制设计自由度。
+> 用途：作为 AI 重写前端页面时的功能参照（限单项目时代能力），确保所有能力被保留，但不限制设计自由度。
 
 ---
 
@@ -34,6 +43,7 @@ CDS 是一个**多分支并行开发环境管理器**。核心价值：
 | 预览访问 | F9 | 多种预览模式 |
 | 配置导入导出 | F10 | 一键配置迁移 |
 | 系统维护 | F11 | 清理/重置 |
+| 项目管理 | F12 | 多项目隔离（2026-04 落地，本文未详述；Project CRUD / GitHub 仓库 clone / 技术栈 detect / 自动 BuildProfile，详见 `spec.cds.project-model.md`） |
 
 ---
 

@@ -30,12 +30,12 @@
 
 | 维度 | 状态 |
 |---|---|
-| 主分支 | `main` @ `f2c48716`(2026-05-02 PR #522 合) |
-| 进行中分支 | `claude/cds-loose-ends-wrap-up`(2026-05-03,F11/F12/Bug A/B/C) |
-| 远端实例 | `https://cds.miduo.org`(已 self-update 到 main) |
-| 后端栈 | Node 20 + Express + MongoDB(`mongo-split` 默认),3000+ 测试 |
-| 前端栈 | React + Vite + Tailwind + shadcn/ui(`cds/web/`),legacy `cds/web-legacy/` 逐页迁移中 |
-| 测试 | vitest 1098 / 64 文件,pytest 90,tsc backend + web 全绿 |
+| 主分支 | `main` @ `0044f01`(2026-07-03) |
+| 进行中分支 | `claude/session-y2bpgw`(配置体系波1-5,见顶部看板);`claude/cds-code-review-lsxkwx`(四维扫描 24 项修复:性能/样式/功能/文档) |
+| 远端实例 | `https://cds.miduo.org` |
+| 后端栈 | Node 20 + Express + MongoDB(`mongo-split` 默认) |
+| 前端栈 | React + Vite + Tailwind + shadcn/ui(`cds/web/`),React Router 为唯一 dashboard 权威;`cds/web-legacy/` 仅作代码对照层不再被服务 |
+| 测试 | vitest 2605 passed / 186 文件(2026-07-06),pytest 149,tsc backend + web 全绿 |
 
 ---
 
@@ -214,3 +214,4 @@ push → cds.miduo.org auto-deploy(等 2-5 分钟)
 2. **不要新建独立 handoff 文档**:有内容直接进本文件 §二/§三,要详细推演进 `plan.cds.backlog-matrix`
 3. **历史快照**:由 `doc/report.2026-W*.md` 周报承担,本文件只装 *现在*
 4. **更新顺序**:本文件 → `MEMORY.md` → `doc/index.yml` + `doc/guide.list.directory.md`
+5. **顶部看板与 §一 表必须同一次 handoff 同步更新**:两处的分支名 / 测试数量 / 实例状态不允许出现两个时代的快照(2026-07-09 曾出现顶部写 vitest 2605、§一 还停在 1098 的自相矛盾,「唯一现状入口」自身失真)。改任何一处前先对照另一处
