@@ -592,7 +592,11 @@ export default function AppShell() {
     });
     try {
       const res = await handleAdminNotification(id);
-      if (res.success && actionUrl) navigate(actionUrl);
+      if (res.success && actionUrl) {
+        // 外部链接（绝对 URL）走新窗口打开，避免被 React Router 当成站内路由吞掉
+        if (/^https?:\/\//i.test(actionUrl)) window.open(actionUrl, '_blank', 'noopener,noreferrer');
+        else navigate(actionUrl);
+      }
     } finally {
       setHandlingId(null);
       await loadNotifications({ silent: true });

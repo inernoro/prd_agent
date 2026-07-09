@@ -77,7 +77,8 @@ export default function MobileNotificationsPage() {
 
   // 点击通知本体：标记已处理后一键跳到目标页面（如缺陷解决通知 → 该缺陷本身）
   const openNotification = useCallback(async (item: AdminNotificationItem) => {
-    if (!item.actionUrl) return;
+    const url = item.actionUrl;
+    if (!url) return;
     setHandlingIds((s) => new Set(s).add(item.id));
     const res = await handleAdminNotification(item.id);
     setHandlingIds((s) => { const next = new Set(s); next.delete(item.id); return next; });
@@ -85,7 +86,10 @@ export default function MobileNotificationsPage() {
       setNotifications((prev) =>
         prev.map((n) => (n.id === item.id ? { ...n, status: 'handled' as const, handledAt: new Date().toISOString() } : n)),
       );
-      navigate(item.actionUrl);
+      // 外部链接（actionKind=external 或绝对 URL）走新窗口打开，避免被 React Router 当成站内路由吞掉
+      const isExternal = item.actionKind === 'external' || /^https?:\/\//i.test(url);
+      if (isExternal) window.open(url, '_blank', 'noopener,noreferrer');
+      else navigate(url);
     }
   }, [navigate]);
 

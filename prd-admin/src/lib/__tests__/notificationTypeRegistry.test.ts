@@ -14,9 +14,14 @@ describe('notificationTypeRegistry', () => {
       expect(isEscalationNotification({ source: 'defect-agent', key: null, title: '缺陷催办：DEF-1' })).toBe(true);
     });
 
+    it('flags仅正文透出催办语义的残留（与后端口径对齐）', () => {
+      expect(isEscalationNotification({ source: 'defect-agent', key: null, title: '缺陷进展', message: '请尽快跟进该缺陷' })).toBe(true);
+      expect(isEscalationNotification({ source: 'defect-agent', key: null, title: '缺陷进展', message: '该缺陷已超时仍未处理' })).toBe(true);
+    });
+
     it('放行正常缺陷/系统通知', () => {
-      expect(isEscalationNotification({ source: 'defect-agent', key: 'defect-resolved:x', title: '缺陷已解决，待你验收' })).toBe(false);
-      expect(isEscalationNotification({ source: 'report-agent', key: null, title: '本周周报已生成' })).toBe(false);
+      expect(isEscalationNotification({ source: 'defect-agent', key: 'defect-resolved:x', title: '缺陷已解决，待你验收', message: '请前往验收' })).toBe(false);
+      expect(isEscalationNotification({ source: 'report-agent', key: null, title: '本周周报已生成', message: '超时未提交' })).toBe(false);
     });
   });
 

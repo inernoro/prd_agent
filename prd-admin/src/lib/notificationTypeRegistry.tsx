@@ -71,13 +71,18 @@ export const NOTIFICATION_TYPE_REGISTRY: Record<string, NotificationTypeConfig> 
  * 用户要求：通知右下角不再出现催办。作为兜底，前端不渲染任何残留的催办通知。
  * 与后端 AdminPushNotificationService.IsDefectReminderNotification 判定口径保持一致。
  */
-export function isEscalationNotification(item: Pick<AdminNotificationItem, 'source' | 'key' | 'title'>): boolean {
+export function isEscalationNotification(
+  item: Pick<AdminNotificationItem, 'source' | 'key' | 'title' | 'message'>
+): boolean {
   const source = (item.source ?? '').toLowerCase();
   if (source === 'defect-escalation' || source === 'defect-reminder' || source === 'pm-reminder') return true;
   const key = (item.key ?? '').toLowerCase();
   if (key.startsWith('defect-escalation') || key.startsWith('defect-reminder')) return true;
   const title = item.title ?? '';
-  return title.includes('催办');
+  if (title.includes('催办')) return true;
+  // 与后端 IsDefectReminderNotification 对齐：兜底命中「仅正文」透出催办语义的残留提醒。
+  const message = item.message ?? '';
+  return message.includes('请尽快跟进') || (message.includes('超时') && message.includes('未处理'));
 }
 
 /**
