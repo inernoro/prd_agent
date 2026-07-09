@@ -348,6 +348,12 @@
     ]
   },
   {
+    "code": "open-api.proxy::vision",
+    "modelTypes": [
+      "vision"
+    ]
+  },
+  {
     "code": "open-platform-agent.proxy::chat",
     "modelTypes": [
       "chat"
