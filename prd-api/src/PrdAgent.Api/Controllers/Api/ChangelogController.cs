@@ -445,6 +445,106 @@ public class ChangelogController : ControllerBase
             : DefectResolutionPublishStatus.Pending;
     }
 
+    /// <summary>
+    /// 热修复列表：专门展示"为缺陷提交人上报的缺陷所做的修复"。
+    /// 数据源为 DefectResolutionTrace（缺陷修复追踪 SSOT），覆盖全历史而非仅最近一周提交窗口。
+    /// 每条含被修复缺陷（编号/标题/提交人）+ 修复 commit/PR + 预览/验收/知识库链接 + 发布状态。
+    /// </summary>
+    /// <param name="limit">返回条数（1..500，默认 100，按创建时间倒序）</param>
+    /// <param name="force">true 时绕过客户端缓存头</param>
+    [HttpGet("github-hotfixes")]
+    public async Task<IActionResult> GetGitHubHotfixes(
+        [FromQuery] int limit = 100,
+        [FromQuery] bool force = false)
+    {
+        if (limit <= 0 || limit > 500) limit = 100;
+
+        var totalCount = (int)await _db.DefectResolutionTraces
+            .CountDocumentsAsync(FilterDefinition<DefectResolutionTrace>.Empty)
+            .ConfigureAwait(false);
+
+        var traces = await _db.DefectResolutionTraces
+            .Find(FilterDefinition<DefectResolutionTrace>.Empty)
+            .SortByDescending(x => x.CreatedAt)
+            .Limit(limit)
+            .ToListAsync()
+            .ConfigureAwait(false);
+
+        // 发布状态判定与「GitHub 提交」tab 保持一致：以当前部署 commit 在提交历史中的位置为界。
+        var view = await _reader.GetGitHubLogsAsync(1000, force).ConfigureAwait(false);
+        var deployedCommitSha = ResolveCurrentDeployCommitSha();
+        var deployedIndex = string.IsNullOrWhiteSpace(deployedCommitSha)
+            ? -1
+            : view.Logs.FindIndex(l => string.Equals(l.Sha, deployedCommitSha, StringComparison.OrdinalIgnoreCase));
+        var shaIndex = view.Logs
+            .Select((log, index) => new { log.Sha, index })
+            .GroupBy(x => x.Sha, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().index, StringComparer.OrdinalIgnoreCase);
+
+        var defectIds = traces
+            .Select(x => x.DefectId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var defectsById = defectIds.Count == 0
+            ? new Dictionary<string, DefectReport>(StringComparer.Ordinal)
+            : (await _db.DefectReports
+                .Find(x => defectIds.Contains(x.Id))
+                .ToListAsync()
+                .ConfigureAwait(false))
+                .ToDictionary(x => x.Id, StringComparer.Ordinal);
+        var currentUserId = this.GetRequiredUserId();
+
+        var items = traces.ConvertAll(trace =>
+        {
+            var normalizedSha = trace.CommitSha?.Trim().ToLowerInvariant() ?? string.Empty;
+            var publishStatus = ResolvePublishStatus(trace, normalizedSha, deployedCommitSha, deployedIndex, shaIndex);
+            defectsById.TryGetValue(trace.DefectId, out var defect);
+            return new HotfixEntryDto
+            {
+                TraceId = trace.Id,
+                DefectId = trace.DefectId,
+                DefectNo = trace.DefectNo,
+                DefectTitle = trace.DefectTitle,
+                ReporterName = defect?.ReporterName,
+                ReporterAvatarFileName = defect?.ReporterAvatarFileName,
+                IsSubmittedByMe = defect != null
+                    && string.Equals(defect.ReporterId, currentUserId, StringComparison.Ordinal),
+                AgentName = trace.AgentName,
+                Repository = trace.Repository,
+                Branch = trace.Branch,
+                CommitSha = trace.CommitSha,
+                ShortSha = trace.ShortSha,
+                CommitMessage = trace.CommitMessage,
+                CommitUrl = trace.CommitUrl,
+                PullRequestNumber = trace.PullRequestNumber,
+                PullRequestUrl = trace.PullRequestUrl,
+                PreviewUrl = trace.PreviewUrl,
+                VisualReportUrl = trace.VisualReportUrl,
+                KnowledgeBaseUrl = trace.KnowledgeBaseUrl,
+                RiskLevel = trace.RiskLevel,
+                ValidationStatus = trace.ValidationStatus,
+                ValidationVerdict = trace.ValidationVerdict,
+                FixStatus = publishStatus == DefectResolutionPublishStatus.Published
+                    ? DefectResolutionFixStatus.Published
+                    : trace.FixStatus,
+                PublishStatus = publishStatus,
+                CreatedAt = trace.CreatedAt.ToString("o"),
+                UpdatedAt = trace.UpdatedAt.ToString("o"),
+            };
+        });
+
+        if (!force) SetClientCacheHeaders();
+        return Ok(ApiResponse<HotfixesDto>.Ok(new HotfixesDto
+        {
+            DataSourceAvailable = true,
+            Source = "database",
+            FetchedAt = DateTime.UtcNow.ToString("o"),
+            TotalCount = totalCount,
+            Items = items,
+        }));
+    }
+
     // ── GitHub 作者名 ↔ 系统用户 彩蛋匹配 ────────────────────────────
 
     private sealed record GitHubUserMatchCandidate(
@@ -1218,5 +1318,48 @@ public class ChangelogController : ControllerBase
         public string FetchedAt { get; set; } = string.Empty;
         public int TotalCount { get; set; }
         public List<GitHubPendingReviewEntryDto> Items { get; set; } = new();
+    }
+
+    /// <summary>热修复条目：一条缺陷修复追踪 = 一次「为上报缺陷做的修复」。</summary>
+    public sealed class HotfixEntryDto
+    {
+        public string TraceId { get; set; } = string.Empty;
+        public string DefectId { get; set; } = string.Empty;
+        public string? DefectNo { get; set; }
+        public string? DefectTitle { get; set; }
+        public string? ReporterName { get; set; }
+        public string? ReporterAvatarFileName { get; set; }
+        public bool IsSubmittedByMe { get; set; }
+        /// <summary>完成修复的 Agent 自报名称</summary>
+        public string? AgentName { get; set; }
+        public string? Repository { get; set; }
+        public string? Branch { get; set; }
+        public string CommitSha { get; set; } = string.Empty;
+        public string ShortSha { get; set; } = string.Empty;
+        public string? CommitMessage { get; set; }
+        public string? CommitUrl { get; set; }
+        public int? PullRequestNumber { get; set; }
+        public string? PullRequestUrl { get; set; }
+        public string? PreviewUrl { get; set; }
+        public string? VisualReportUrl { get; set; }
+        public string? KnowledgeBaseUrl { get; set; }
+        public string RiskLevel { get; set; } = string.Empty;
+        public string ValidationStatus { get; set; } = string.Empty;
+        public string? ValidationVerdict { get; set; }
+        public string FixStatus { get; set; } = string.Empty;
+        public string PublishStatus { get; set; } = string.Empty;
+        /// <summary>ISO 8601 创建时间（=修复追踪落库时间）</summary>
+        public string CreatedAt { get; set; } = string.Empty;
+        /// <summary>ISO 8601 更新时间</summary>
+        public string UpdatedAt { get; set; } = string.Empty;
+    }
+
+    public sealed class HotfixesDto
+    {
+        public bool DataSourceAvailable { get; set; }
+        public string Source { get; set; } = "none";
+        public string FetchedAt { get; set; } = string.Empty;
+        public int TotalCount { get; set; }
+        public List<HotfixEntryDto> Items { get; set; } = new();
     }
 }
