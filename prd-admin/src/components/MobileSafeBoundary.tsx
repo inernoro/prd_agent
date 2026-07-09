@@ -14,15 +14,16 @@ interface State {
   expanded: boolean;
 }
 
-const CHUNK_RELOAD_KEY = 'prd-admin:chunk-load-reload-once';
+const ASSET_RELOAD_KEY = 'prd-admin:asset-load-reload-once';
 
-function isChunkLoadError(error: Error): boolean {
+export function isRecoverableAssetLoadError(error: Error): boolean {
   const message = error.message || '';
   return message.includes('Failed to fetch dynamically imported module')
     || message.includes('Importing a module script failed')
     || message.includes('error loading dynamically imported module')
     || message.includes('Loading chunk')
-    || message.includes('ChunkLoadError');
+    || message.includes('ChunkLoadError')
+    || (message.includes('Unable to preload CSS') && message.includes('.css'));
 }
 
 /**
@@ -50,8 +51,8 @@ export class MobileSafeBoundary extends React.Component<Props, State> {
       viewport: `${window.innerWidth}x${window.innerHeight}`,
     });
 
-    if (isChunkLoadError(error)) {
-      const reloadKey = `${CHUNK_RELOAD_KEY}:${window.location.origin}`;
+    if (isRecoverableAssetLoadError(error)) {
+      const reloadKey = `${ASSET_RELOAD_KEY}:${window.location.origin}`;
       if (sessionStorage.getItem(reloadKey) !== '1') {
         sessionStorage.setItem(reloadKey, '1');
         window.location.reload();
@@ -66,7 +67,7 @@ export class MobileSafeBoundary extends React.Component<Props, State> {
   }
 
   reset = () => {
-    if (this.state.error && isChunkLoadError(this.state.error)) {
+    if (this.state.error && isRecoverableAssetLoadError(this.state.error)) {
       window.location.reload();
       return;
     }
