@@ -60,6 +60,8 @@ export function LogsView() {
   const [filterIngressProtocol, setFilterIngressProtocol] = useState('');
   const [filterModelPolicy, setFilterModelPolicy] = useState('');
   const [filterRunId, setFilterRunId] = useState('');
+  const [filterRequestId, setFilterRequestId] = useState('');
+  const [filterSessionId, setFilterSessionId] = useState('');
 
   const [meta, setMeta] = useState<{
     models: string[];
@@ -119,8 +121,10 @@ export function LogsView() {
       ingressProtocol: filterIngressProtocol || undefined,
       modelPolicy: filterModelPolicy || undefined,
       runId: filterRunId.trim() || undefined,
+      requestId: filterRequestId.trim() || undefined,
+      sessionId: filterSessionId.trim() || undefined,
     }),
-    [range, filterModel, filterStatus, filterProvider, filterAppCaller, filterTransport, filterRequestType, filterSourceSystem, filterIngressProtocol, filterModelPolicy, filterRunId],
+    [range, filterModel, filterStatus, filterProvider, filterAppCaller, filterTransport, filterRequestType, filterSourceSystem, filterIngressProtocol, filterModelPolicy, filterRunId, filterRequestId, filterSessionId],
   );
 
   useEffect(() => {
@@ -547,6 +551,8 @@ export function LogsView() {
     filterIngressProtocol,
     filterModelPolicy,
     filterRunId.trim(),
+    filterRequestId.trim(),
+    filterSessionId.trim(),
   ].filter(Boolean).length;
   const clearFilters = () => {
     setFilterModel('');
@@ -559,6 +565,8 @@ export function LogsView() {
     setFilterIngressProtocol('');
     setFilterModelPolicy('');
     setFilterRunId('');
+    setFilterRequestId('');
+    setFilterSessionId('');
   };
 
   function SummaryTile({
@@ -673,6 +681,20 @@ export function LogsView() {
             value={filterRunId}
             onChange={(e) => setFilterRunId(e.target.value)}
             placeholder="Run ID"
+            spellCheck={false}
+            style={inputStyle}
+          />
+          <input
+            value={filterRequestId}
+            onChange={(e) => setFilterRequestId(e.target.value)}
+            placeholder="Request ID"
+            spellCheck={false}
+            style={inputStyle}
+          />
+          <input
+            value={filterSessionId}
+            onChange={(e) => setFilterSessionId(e.target.value)}
+            placeholder="Session ID"
             spellCheck={false}
             style={inputStyle}
           />

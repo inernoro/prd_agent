@@ -244,6 +244,8 @@ export type LogsListParams = {
   modelPolicy?: string;
   releaseCommit?: string;
   runId?: string;
+  requestId?: string;
+  sessionId?: string;
 };
 
 export type LogsListData = {

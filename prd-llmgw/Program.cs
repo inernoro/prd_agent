@@ -335,13 +335,14 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
 app.MapGet("/gw/logs", async (
     int? page, int? pageSize, string? from, string? to, string? model, string? status,
     string? provider, string? appCallerCode, string? transport, string? requestType,
-    string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit, string? runId) =>
+    string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit,
+    string? runId, string? requestId, string? sessionId) =>
 {
     var p = page is > 0 ? page.Value : 1;
     var ps = pageSize is > 0 and <= 500 ? pageSize.Value : 50;
 
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId);
+    var filter = BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId);
 
     var total = await logs.CountDocumentsAsync(filter);
     var docs = await logs.Find(filter)
@@ -394,10 +395,11 @@ app.MapGet("/gw/logs/meta", async () =>
 app.MapGet("/gw/logs/timeseries", async (
     string? from, string? to, string? model, string? status,
     string? provider, string? appCallerCode, string? transport, string? requestType,
-    string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit, string? runId) =>
+    string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit,
+    string? runId, string? requestId, string? sessionId) =>
 {
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId);
+    var filter = BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId);
 
     // 仅取 StartedAt 字段做内存分组（按 UTC 日期）。
     var projection = Builders<BsonDocument>.Projection.Include("StartedAt");
@@ -424,10 +426,11 @@ app.MapGet("/gw/logs/timeseries", async (
 app.MapGet("/gw/logs/summary", async (
     string? from, string? to, string? model, string? status,
     string? provider, string? appCallerCode, string? transport, string? requestType,
-    string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit, string? runId) =>
+    string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit,
+    string? runId, string? requestId, string? sessionId) =>
 {
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId);
+    var filter = BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId);
     var projection = Builders<BsonDocument>.Projection
         .Include("Status")
         .Include("DurationMs")
@@ -463,13 +466,14 @@ app.MapGet("/gw/logs/summary", async (
 app.MapGet("/gw/logs/sessions", async (
     string? from, string? to, int? page, int? pageSize,
     string? model, string? status, string? provider, string? appCallerCode, string? transport, string? requestType,
-    string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit, string? runId) =>
+    string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit,
+    string? runId, string? requestId, string? sessionId) =>
 {
     var p = page is > 0 ? page.Value : 1;
     var ps = pageSize is > 0 and <= 500 ? pageSize.Value : 50;
 
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId);
+    var filter = BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId);
 
     var docs = await logs.Find(filter)
         .Sort(Builders<BsonDocument>.Sort.Descending("StartedAt"))
@@ -3730,7 +3734,9 @@ static FilterDefinition<BsonDocument> BuildFilter(
     string? ingressProtocol,
     string? modelPolicy,
     string? releaseCommit,
-    string? runId)
+    string? runId,
+    string? requestId,
+    string? sessionId)
 {
     var fb = Builders<BsonDocument>.Filter;
     var filters = new List<FilterDefinition<BsonDocument>>
@@ -3748,6 +3754,8 @@ static FilterDefinition<BsonDocument> BuildFilter(
     if (!string.IsNullOrWhiteSpace(ingressProtocol)) filters.Add(fb.Eq("IngressProtocol", ingressProtocol));
     if (!string.IsNullOrWhiteSpace(modelPolicy)) filters.Add(fb.Eq("ModelPolicy", modelPolicy));
     if (!string.IsNullOrWhiteSpace(runId)) filters.Add(fb.Eq("RunId", runId.Trim()));
+    if (!string.IsNullOrWhiteSpace(requestId)) filters.Add(fb.Eq("RequestId", requestId.Trim()));
+    if (!string.IsNullOrWhiteSpace(sessionId)) filters.Add(fb.Eq("SessionId", sessionId.Trim()));
     var normalizedReleaseCommit = NormalizeCommitFilter(releaseCommit);
     if (normalizedReleaseCommit is not null) filters.Add(fb.Eq("ReleaseCommit", normalizedReleaseCommit));
     return fb.And(filters);
