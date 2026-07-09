@@ -33,7 +33,7 @@ install 默认走 mongo。但代码层面 `state.json` 仍然是 in-memory state
 | 编号 | 债务 | 影响 | 状态 |
 |---|---|---|---|
 | #1 | webhook deliveries ring buffer 按一次性 `save()` 整数组刷盘 | 启动加载慢 / save 抖动 | **paid（2026-07-09）**：拆独立 collection `cds_webhook_deliveries`（`_id=delivery.id`，diff-based bulkWrite 只写变化条目；内存 ring buffer 淘汰经 diff 产生 deleteOne 天然上限，不用 capped collection）。global doc 不再含此字段，旧数据 legacy 回退读，零迁移脚本 |
-| #2 | branch activity log（ProjectActivityLog ring buffer）按整对象 save | save 频率提高时阻塞主循环 | **paid（2026-07-09）**：拆独立 collection `cds_activity_logs`（复合 `_id=${projectId}__${at}__${log.id}`，log.id 非全局唯一故用复合键），同 #1 的 diff-based 写与 legacy 回退。**索引待 DBA 手建**（`{projectId:1, at:-1}` 等，DDL 见 `doc/guide.platform.mongodb-indexes.md` CDS 段，遵守 no-auto-index） |
+| #2 | branch activity log（ProjectActivityLog ring buffer）按整对象 save | save 频率提高时阻塞主循环 | **paid（2026-07-09）**：拆独立 collection `cds_activity_logs`（复合 `_id=${projectId}__${at}__${log.id}`，log.id 非全局唯一故用复合键），同 #1 的 diff-based 写与 legacy 回退。索引由 `init()` 自动创建（`{projectId:1, at:-1}` / `{receivedAt:-1}`，沿 split store 既有惯例；no-auto-index 规则针对 prd-api 应用库，不适用 CDS 自持库。DDL 记录见 `doc/guide.platform.mongodb-indexes.md` CDS 段） |
 | #3 | 项目级 `defaultDeployModes` / `autoPublishAfterMinutes` / `autoStopAfterMinutes` 等元信息混在 state 顶级 | 任何改设置都要重写整个 state.json | open（Phase 3） |
 | #4 | mongo-split 模式仍保留 state.json fallback，意外回滚到 json 模式时数据可能落后 mongo | 容易踩到"为什么我新建的分支不见了"陷阱 | open（Phase 4） |
 

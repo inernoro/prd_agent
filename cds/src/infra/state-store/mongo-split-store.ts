@@ -355,6 +355,11 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     try {
       await this.handle.branchesCollection().createIndex?.({ projectId: 1 }, { name: 'projectId_1' });
       await this.handle.selfUpdateHistoryCollection().createIndex?.({ ts: -1 }, { name: 'ts_-1' });
+      // 2026-07-09 拆分出的两个日志 collection：按项目/时间的读路径索引。
+      // 沿用本文件既有惯例（split store 自建自己的索引，idempotent），CDS 运维
+      // 不依赖 DBA 手动执行；guide.platform.mongodb-indexes.md CDS 段仅作记录备查。
+      await this.handle.activityLogsCollection().createIndex?.({ projectId: 1, at: -1 }, { name: 'projectId_1_at_-1' });
+      await this.handle.webhookDeliveriesCollection().createIndex?.({ receivedAt: -1 }, { name: 'receivedAt_-1' });
     } catch {
       // 如果 driver 不支持 createIndex 或权限不足，跳过 — 索引非功能必需。
     }
