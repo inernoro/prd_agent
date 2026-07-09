@@ -95,6 +95,7 @@ updates = {
     "LLMGW_HTTP_APP_CALLER_ALLOWLIST": "",
     "LLMGW_SHADOW_FULL_SAMPLE_PERCENT": os.environ["RESTORE_SAMPLE_PERCENT"],
     "LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST": "",
+    "LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS": "false",
 }
 image_updates = {
     "PRD_AGENT_API_IMAGE": os.environ.get("RESTORE_PRD_AGENT_API_IMAGE", ""),
@@ -138,6 +139,7 @@ echo "  gatewayService: ${gateway_service:-none}"
 echo "  mode: shadow"
 echo "  allowlist: empty"
 echo "  shadowFullSamplePercent: $sample_percent"
+echo "  disableMapConfigFallbackForActiveAppCallers: false"
 echo "  persistEnv: $persist_env"
 echo "  database: unchanged"
 echo "  images: preserve running release pins"
@@ -149,6 +151,7 @@ export LLMGW_MODE=shadow
 export LLMGW_HTTP_APP_CALLER_ALLOWLIST=
 export LLMGW_SHADOW_FULL_SAMPLE_PERCENT="$sample_percent"
 export LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST=
+export LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS=false
 
 persist_env_file
 
@@ -157,7 +160,7 @@ if [ "$dry_run" = "1" ] || [ "$dry_run" = "true" ]; then
   if [ -n "$(printf '%s' "$gateway_service" | xargs || true)" ]; then
     echo "LLM Gateway restore dry-run: $COMPOSE -f $compose_file up -d --no-deps --force-recreate $gateway_service"
   fi
-  echo "LLM Gateway restore dry-run completed: API would restart with LLMGW_MODE=shadow and sample=$sample_percent"
+  echo "LLM Gateway restore dry-run completed: API would restart with LLMGW_MODE=shadow, sample=$sample_percent, and disableMapConfigFallbackForActiveAppCallers=false"
 else
   # shellcheck disable=SC2086
   $COMPOSE -f "$compose_file" up -d --no-deps --force-recreate "$service_name"
@@ -170,5 +173,5 @@ else
       echo "LLM Gateway restore: gateway service '$gateway_service' not found, refresh skipped"
     fi
   fi
-  echo "LLM Gateway restore completed: API restarted with LLMGW_MODE=shadow and sample=$sample_percent"
+  echo "LLM Gateway restore completed: API restarted with LLMGW_MODE=shadow, sample=$sample_percent, and disableMapConfigFallbackForActiveAppCallers=false"
 fi
