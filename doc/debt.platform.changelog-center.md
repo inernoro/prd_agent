@@ -30,8 +30,12 @@ ChangelogPushHub / ChangelogRefreshWorker）、`ChangelogController` 的 `/api/c
 | 2 | 刷新周期为全局，不分视图冷热 | 三个视图（待发布/历史发布/GitHub 日志）共用同一刷新周期。GitHub 日志变化最频繁、历史发布最稳定，统一 4h 对日志略保守。 | 如需更实时，可拆分各视图独立周期，或接 GitHub push webhook 触发即时刷新（仓库已有 webhook 基建）。 |
 | 3 | GitHub 日志前端仍保留 35s 轮询 | `ChangelogPage` 既有的 `GITHUB_LOGS_LIVE_POLL_MS` 客户端轮询未移除，与新的 SSE 推送并存（轮询 force=true 仍会触发真实拉取）。本次为控制改动面未动它。已加 trailing-edge：在途轮询期间到达的 SSE update 不再被吞，待在途请求结束补跑一次。 | 评估改为依赖 SSE 推送后下调/移除该轮询，进一步贴合「加载只读存量、刷新交给服务器」。 |
 | 4 | 分支预览环境拿不到「仓库总提交数」 | 2026-06-10 新增 `repoTotalCommitCount`（本地 `git rev-list --count`，浅克隆/无 `.git` 时用 GitHub `commits?per_page=1` 的 Link header rel="last" 反推）。CDS 分支容器既无完整本地仓库、又未配 `Changelog:GitHubToken`，匿名调 GitHub 被 403 限流 → 字段为 null，前端降级显示「最近一周」条数。生产环境有 token，不受影响（实测 main 全历史 7282 次提交）。 | 在 CDS 分支 env 注入只读 `Changelog:GitHubToken`，或接受预览环境降级展示。 |
+| 5 | 热修复子 tab 非 SSE 实时推送 | 2026-07-09 新增「热修复」子 tab（`GET /api/changelog/github-hotfixes`，数据源 `DefectResolutionTrace` 全历史）。仅在进入该 tab、手动刷新、首屏拉计数三处触发，未接入 `/api/changelog/stream` SSE viewType。新缺陷修复落库后不会自动 push 到已打开的页面。 | 缺陷修复量大且用户需要实时时，给 SSE 增加 `hotfixes` viewType 并在 `DefectResolutionTrace` 落库处触发 push。 |
+| 6 | 热修复无 AI 总结 | 后端 `ChangelogAiSummarySubtab` 枚举未含 `hotfix`，前端已隐藏该 tab 的「AI 总结」按钮。 | 如需，在后端 AiSummary 端点补 `hotfix` 分支（喂缺陷编号/标题/发布状态）并放开前端按钮。 |
+| 7 | 热修复发布状态判定依赖全量 GitHub 日志 | `github-hotfixes` 复用 `ResolvePublishStatus`，需拉 `GetGitHubLogsAsync(1000)` 求 deployedIndex/shaIndex（reader 5 分钟缓存兜底）。分支预览环境无 token/无完整仓库时（同边界 4）拿不到部署基准 → 未持久化 `PublishStatus` 的追踪显示「unknown」。已发布状态一旦被 `github-logs` tab 写回则稳定。 | 同边界 4：注入 token；或把发布状态判定下沉为独立可缓存服务，避免每次拉全量日志。 |
 
 ## 偿还触发条件
 
 - 边界 1：一旦更新中心需要多实例部署，必须先偿还（否则推送只覆盖部分用户）。
 - 边界 2/3：用户反馈「更新不够实时」或要做 push-webhook 即时刷新时偿还。
+- 边界 5/6/7：热修复使用量上来、用户要求实时/总结/更准的发布状态时偿还。

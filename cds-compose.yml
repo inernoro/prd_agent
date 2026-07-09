@@ -6,30 +6,29 @@ x-cds-project:
   description: "PRD Agent 全栈项目 (.NET 8 + React 18 + Tauri 2.0)"
   repo: https://github.com/inernoro/prd_agent.git
 
-# 全局共享环境变量 — CDS 自动注入所有容器，禁止在 services.*.environment 中重复
+# 全局共享结构默认（波4：repo cds-compose.yml = 纯结构种子）
+#
+# 本段只声明「非密钥的结构默认值」。所有密钥/凭据/部署环境值
+# （TENCENT_COS_* / JWT_SECRET / ApiKeyCrypto__Secret / AI_ACCESS_KEY 等）
+# 一律**不写进仓库**，只存在于 CDS env scope：
+#   cdscli env get --scope prd-agent      # 查看
+#   cdscli env set KEY=VALUE --scope prd-agent
+# CDS 部署时按 env scope 注入容器，优先级高于本段结构默认。
+#
+# 为什么剥离：仓库携带 `TODO: 请填写实际值` 占位符会让全量 `cdscli import`
+# 被审核拒绝（占位值覆盖线上真实密钥），结构变更无法落地（见
+# doc/debt.cds.compose-secrets.md D1）。剥离占位后 import 不再覆盖密钥即可通过。
+#
+# 应用所需的密钥清单（去 CDS env scope 配，勿写回本文件）：
+#   ASSETS_PROVIDER=tencentCos 时：TENCENT_COS_BUCKET / TENCENT_COS_REGION /
+#     TENCENT_COS_SECRET_ID / TENCENT_COS_SECRET_KEY / TENCENT_COS_PUBLIC_BASE_URL
+#   通用：JWT_SECRET / ApiKeyCrypto__Secret / AI_ACCESS_KEY
+#   （切 cloudflareR2 时改配 R2_* 系列，语义同上）
 x-cds-env:
-  # 资产存储（tencentCos / cloudflareR2 二选一）
+  # 资产存储提供方（tencentCos / cloudflareR2 二选一）——结构默认，非密钥
   ASSETS_PROVIDER: tencentCos
-  # --- Tencent COS ---
-  TENCENT_COS_BUCKET: "TODO: 请填写实际值"
-  TENCENT_COS_REGION: "TODO: 请填写实际值"
-  TENCENT_COS_SECRET_ID: "TODO: 请填写实际值"
-  TENCENT_COS_SECRET_KEY: "TODO: 请填写实际值"
-  TENCENT_COS_PUBLIC_BASE_URL: "TODO: 请填写实际值"
+  # 对象存储路径前缀——结构约定，非密钥
   TENCENT_COS_PREFIX: data
-  # --- Cloudflare R2（如使用 R2 则将 ASSETS_PROVIDER 改为 cloudflareR2）---
-  # R2_ACCOUNT_ID: ""
-  # R2_ACCESS_KEY_ID: ""
-  # R2_SECRET_ACCESS_KEY: ""
-  # R2_BUCKET: ""
-  # R2_PUBLIC_BASE_URL: ""
-  # R2_PREFIX: ""
-  # R2_ENDPOINT: ""
-  JWT_SECRET: "TODO: 请填写实际值"
-  ApiKeyCrypto__Secret: "TODO: 请填写实际值"
-  # 如需迁移旧平台密文，可临时填写旧数据加密密钥，多个用英文分号分隔；迁移完成后删除。
-  # ApiKeyCrypto__LegacySecrets: ""
-  AI_ACCESS_KEY: "TODO: 请填写实际值"
 
 # 部署模式 — 每个服务可在 CDS 左侧面板下拉切换
 # dev: 热重载开发模式（改代码自动刷新）
@@ -188,6 +187,7 @@ services:
       Changelog__GitHubToken: "${GITHUB_PAT:-}"
       MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
       MongoDB__DatabaseName: prdagent
+      LlmGateway__DatabaseName: llm_gateway
       Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT}"
       # 网关跨进程：把 LlmGateway:Mode 切 http/shadow（profile override）时，HttpLlmGatewayClient 需要
       # 与 llmgw-serve 同一把 M2M key + serving 地址，否则 X-Gateway-Key 为空 → serving 401（Cursor Bugbot）。
@@ -261,22 +261,22 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
       MongoDB__DatabaseName: prdagent
+      LlmGateway__DatabaseName: llm_gateway
       # JWT 签名密钥：**bare `${LLMGW_JWT_SECRET}` 不带 fallback**（Codex P1）。本 console 已公网命名路由
       # （见 labels.cds.subdomain=llmgw，/gw/* 对外可达）；若回落仓库可见 fallback，任何缺该 env 的预览/fork
       # 都能自签 token 读 /gw/* 日志（prd-llmgw 守卫只认空/dev 值，长 fallback 会过守卫）。去掉 fallback →
       # 未注入时解析为空 → 守卫拒绝空 JWT（拒启动、命名路由不发布）= fail-closed；prd-agent 项目变量已钉强随机值。
       LlmGwJwt__Secret: "${LLMGW_JWT_SECRET}"
       LlmGwJwt__Issuer: prdagent-llmgw
-      # 网关控制台登录口令（用户 2026-07-02 二次拍板：口令存项目 env、别再登不进）：
-      # **显式透传** LLMGW_ADMIN_PASSWORD（bare `${KEY}` 不带默认——CDS resolveProfileRuntimeEnv 只在值恰好
-      # 等于 `${KEY}` 时才还原项目变量，带默认会被当字面量覆盖用户配置，Codex P1）。项目变量 scope=prd-agent
-      # 已设该口令；后端 seed 每次启动把 admin 口令对齐到此 env 值（权威），改密=改项目变量+重部署 llmgw。
-      # 未设该 env 时后端回退内置 admin/admin 引导 + 自愈（永不锁死）。显式声明确保该 env 一定注入本容器。
+      # 控制台账号长期权威是 llm_gateway.llmgw_console_users。未设置 bootstrap 口令时内置 admin/admin
+      # 并强制首登改密；LLMGW_ADMIN_PASSWORD 仅用于空库首次创建或 LLMGW_ADMIN_FORCE_RESET 破玻璃，
+      # 不能作为每次启动覆盖数据库口令的长期权威。bare `${KEY}` 保留为可选透传，不带默认，避免 CDS
+      # 把 `${KEY:-default}` 解析成字面量覆盖项目变量。
       LLMGW_ADMIN_PASSWORD: "${LLMGW_ADMIN_PASSWORD}"
     labels:
-      # 公网命名 URL（用户 2026-07-01 要求）：登录走项目变量 LLMGW_ADMIN_USER/LLMGW_ADMIN_PASSWORD（可见可改），
-      # JWT 签名密钥 LLMGW_JWT_SECRET 已在项目变量（scope=prd-agent）设为强随机（非仓库默认，杜绝 JWT 伪造绕过登录），
-      # 故可安全对外发布命名子域。<previewSlug>-llmgw.<root> 根路径直达 8090 网关 console（登录后看 LLM 日志）。
+      # 公网命名 URL（用户 2026-07-01 要求）：账号库在 llm_gateway，初始 admin/admin 只能进入改密门；
+      # JWT 签名密钥 LLMGW_JWT_SECRET 已在项目变量（scope=prd-agent）设为强随机（非仓库默认，杜绝 JWT 伪造绕过登录）。
+      # <previewSlug>-llmgw.<root> 根路径直达 8090 网关 console（登录后看 LLM 日志）。
       cds.subdomain: "llmgw"
       cds.readiness-path: "/gw/healthz"
 
@@ -302,6 +302,7 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
       MongoDB__DatabaseName: prdagent
+      LlmGateway__DatabaseName: llm_gateway
       # M2M 密钥门：**bare `${LLMGW_SERVE_API_KEY}` 不带 fallback**（Codex P1）。本 serving 已公网命名路由
       # （见 labels.cds.subdomain=llmgw-serve），/gw/v1/send|stream|raw 对外可达；若回落仓库可见 fallback，
       # 任何缺该 env 的预览/fork 都暴露已知 X-Gateway-Key 可烧 provider 额度。去掉 fallback → 未注入时解析为空 →

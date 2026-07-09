@@ -1,0 +1,4 @@
+| security | cds | 修复生效配置溯源端点(effective-config)对 .NET/camelCase 密钥 key(如 Changelog__GitHubToken / GitHubOAuth__ClientSecret / ApiKeyCrypto__LegacySecrets)与含内联口令连接串(SQLSERVER_URL 的 Password=)未脱敏的明文泄漏——isSensitiveKey 增加 camelCase 边界归一 + 新增连接串口令值检测(SSOT maskEnvRecord) |
+| security | cds | 容器 exec 输出脱敏收敛到同一 SSOT(looksLikeSecretBearingValue)：`echo $SQLSERVER_URL`(连接串口令) / `echo $NEUTRAL`(中性 key 下 ghp_ 令牌) 不再从 stdout/stderr 吐明文(Codex PR #1008 review) |
+| security | cds | 行模式脱敏(maskLine，日志快照/资源日志/容器日志经它)也接入值形态检测：`NEUTRAL=ghp_...` / `DATABASE_URL=postgres://u:p@h/db` 这类「中性 key + 密钥值」的日志行同样脱敏，与 maskEnvRecord 同口径(Codex PR #1008 review) |
+| security | cds | maskLine 增行级密钥擦除(step4)：KEY=VALUE 在 `;` 处截断且前缀类不含 `;`，导致连接串深处 `;Password=` 段(SQLSERVER_URL=Server=x;…;Password=…)从不被匹配而在日志中泄漏；补 `;Password=`/`;pwd=` 段、行内 `scheme://user:pass@` 口令、自由文本中的 vendor 前缀令牌(ghp_/sk-/…)全覆盖(Codex PR #1008 review) |

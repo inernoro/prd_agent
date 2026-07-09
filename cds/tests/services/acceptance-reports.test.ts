@@ -98,6 +98,21 @@ describe('StateService acceptance reports', () => {
     expect(updated!.updatedAt >= meta.createdAt).toBe(true);
   });
 
+  it('updates report format and moves the content file extension', () => {
+    const meta = service.createAcceptanceReport({ title: 'Format switch', format: 'html', content: '<h1>old</h1>' });
+    const oldPath = path.join(service.getReportsBase(), `${meta.id}.html`);
+    expect(fs.existsSync(oldPath)).toBe(true);
+
+    const md = '# New source\n\nMarkdown body';
+    const updated = service.updateAcceptanceReport(meta.id, { format: 'md', content: md });
+
+    expect(updated).not.toBeNull();
+    expect(updated!.format).toBe('md');
+    expect(service.readAcceptanceReportContent(meta.id)).toBe(md);
+    expect(fs.existsSync(path.join(service.getReportsBase(), `${meta.id}.md`))).toBe(true);
+    expect(fs.existsSync(oldPath)).toBe(false);
+  });
+
   it('deletes metadata and the on-disk content file', () => {
     const meta = service.createAcceptanceReport({ title: 'Doomed', format: 'html', content: '<x/>' });
     const filePath = path.join(service.getReportsBase(), `${meta.id}.html`);
@@ -155,9 +170,20 @@ describe('StateService acceptance reports', () => {
     expect(bare.defectCounts).toBeNull();
 
     // PATCH-style metadata update (verdict flip + pr number backfill).
-    const patched = service.updateAcceptanceReport(bare.id, { verdict: 'pass', prNumber: 7 });
+    const patched = service.updateAcceptanceReport(bare.id, {
+      verdict: 'pass',
+      prNumber: 7,
+      sourceId: 'acceptance.rule.enterprise',
+      sourcePath: 'doc/rule.acceptance.map-enterprise.md',
+      contentHash: 'sha256:abc',
+      publishedAt: '2026-07-07T00:00:00.000Z',
+    });
     expect(patched!.verdict).toBe('pass');
     expect(patched!.prNumber).toBe(7);
+    expect(patched!.sourceId).toBe('acceptance.rule.enterprise');
+    expect(patched!.sourcePath).toBe('doc/rule.acceptance.map-enterprise.md');
+    expect(patched!.contentHash).toBe('sha256:abc');
+    expect(patched!.publishedAt).toBe('2026-07-07T00:00:00.000Z');
   });
 
   it('mints, looks up and revokes an anonymous share token (E6)', () => {

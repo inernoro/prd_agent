@@ -1082,6 +1082,155 @@ emit_server_blocks() {
   echo ""
 }
 
+# Emit one preview server block for full custom hosts that are not under
+# CDS_ROOT_DOMAINS, e.g. app.example.com and www.example.com. Routing ownership
+# stays in BranchEntry.customDomains; this edge block only lets those Host
+# headers reach the forwarder.
+emit_custom_preview_server_block() {
+  local hosts_csv="$1" cert_domain="${2:-}" hosts="" raw h
+  IFS=',' read -r -a _host_arr <<< "$hosts_csv"
+  for raw in "${_host_arr[@]}"; do
+    h="$(printf '%s' "$raw" | xargs | tr '[:upper:]' '[:lower:]')"
+    h="${h#http://}"
+    h="${h#https://}"
+    h="${h%%/*}"
+    h="${h%.}"
+    [ -n "$h" ] || continue
+    hosts="${hosts} ${h}"
+  done
+  hosts="$(printf '%s' "$hosts" | xargs)"
+  [ -n "$hosts" ] || return 0
+
+  if [ -z "$cert_domain" ]; then
+    cert_domain="$(printf '%s' "$hosts" | awk '{print $1}')"
+  fi
+
+  local ssl_block=""
+  if [ -f "$NGINX_CERTS_DIR/${cert_domain}.crt" ] && [ -f "$NGINX_CERTS_DIR/${cert_domain}.key" ]; then
+    ssl_block=$'    listen 443 ssl;\n    listen [::]:443 ssl;\n    http2 on;\n    ssl_certificate     /etc/nginx/certs/'"${cert_domain}"$'.crt;\n    ssl_certificate_key /etc/nginx/certs/'"${cert_domain}"$'.key;\n    ssl_protocols       TLSv1.2 TLSv1.3;\n'
+  fi
+
+  echo "# ── Custom preview hosts ──"
+  echo "server {"
+  echo "    listen 80;"
+  echo "    listen [::]:80;"
+  [ -n "$ssl_block" ] && printf '%s' "$ssl_block"
+  echo "    server_name ${hosts};"
+  echo ""
+  echo "    error_page 502 504 = @cds_waiting;"
+  echo "    location @cds_waiting {"
+  echo "        root /var/www/html;"
+  echo "        try_files /cds-waiting.html =503;"
+  echo "        add_header Retry-After 5 always;"
+  echo "        add_header Cache-Control \"no-cache, no-store, must-revalidate\" always;"
+  echo "        default_type text/html;"
+  echo "        internal;"
+  echo "    }"
+  echo "    location = /cds-waiting.html {"
+  echo "        root /var/www/html;"
+  echo "        add_header Cache-Control \"no-cache, no-store, must-revalidate\" always;"
+  echo "    }"
+  echo ""
+  echo "    location ^~ /.well-known/acme-challenge/ {"
+  echo "        root /var/www/html;"
+  echo "        allow all;"
+  echo "    }"
+  echo ""
+  echo "    location / {"
+  echo "        proxy_pass http://cds_worker;"
+  proxy_directives
+  echo "    }"
+  echo "}"
+  echo ""
+}
+
+# Emit cache-friendly immutable asset locations for direct production hosts.
+# Operators can set CDS_DIRECT_PROXY_IMMUTABLE_PATHS=/path-a/,/path-b/ for
+# framework-specific content-hashed asset roots.
+emit_direct_proxy_immutable_locations() {
+  local upstream="$1" paths_csv="${2:-}" raw path
+  [ -n "$paths_csv" ] || return 0
+  IFS=',' read -r -a _path_arr <<< "$paths_csv"
+  for raw in "${_path_arr[@]}"; do
+    path="$(printf '%s' "$raw" | xargs)"
+    [ -n "$path" ] || continue
+    case "$path" in
+      /*) ;;
+      *) path="/$path" ;;
+    esac
+    if [[ ! "$path" =~ ^/[A-Za-z0-9._~/%:@+-]+$ ]]; then
+      continue
+    fi
+    echo "    location ^~ ${path} {"
+    echo "        proxy_pass ${upstream};"
+    echo "        proxy_http_version 1.1;"
+    echo '        proxy_set_header Host              $host;'
+    echo '        proxy_set_header X-Real-IP         $remote_addr;'
+    echo '        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;'
+    echo '        proxy_set_header X-Forwarded-Proto $scheme;'
+    echo '        proxy_set_header X-Forwarded-Host  $host;'
+    echo '        proxy_set_header X-Forwarded-Port  $server_port;'
+    echo "        proxy_buffering off;"
+    echo "        proxy_cache     off;"
+    echo "        proxy_read_timeout 3600s;"
+    echo "        proxy_send_timeout 3600s;"
+    echo '        add_header X-Accel-Buffering "no" always;'
+    echo '        add_header Cache-Control "public, max-age=31536000, immutable" always;'
+    echo "    }"
+    echo ""
+  done
+}
+
+# Emit a server block for stable production hosts that should bypass the CDS
+# forwarder entirely. This is for apps promoted out of preview mode. CDS can
+# still build and publish the app, but runtime traffic no longer depends on
+# cds-master or cds-forwarder.
+emit_direct_proxy_server_block() {
+  local hosts_csv="$1" upstream="$2" cert_domain="${3:-}" hosts="" raw h
+  [ -n "$upstream" ] || return 0
+  IFS=',' read -r -a _host_arr <<< "$hosts_csv"
+  for raw in "${_host_arr[@]}"; do
+    h="$(printf '%s' "$raw" | xargs | tr '[:upper:]' '[:lower:]')"
+    h="${h#http://}"
+    h="${h#https://}"
+    h="${h%%/*}"
+    h="${h%.}"
+    [ -n "$h" ] || continue
+    hosts="${hosts} ${h}"
+  done
+  hosts="$(printf '%s' "$hosts" | xargs)"
+  [ -n "$hosts" ] || return 0
+
+  if [ -z "$cert_domain" ]; then
+    cert_domain="$(printf '%s' "$hosts" | awk '{print $1}')"
+  fi
+
+  local ssl_block=""
+  if [ -f "$NGINX_CERTS_DIR/${cert_domain}.crt" ] && [ -f "$NGINX_CERTS_DIR/${cert_domain}.key" ]; then
+    ssl_block=$'    listen 443 ssl;\n    listen [::]:443 ssl;\n    http2 on;\n    ssl_certificate     /etc/nginx/certs/'"${cert_domain}"$'.crt;\n    ssl_certificate_key /etc/nginx/certs/'"${cert_domain}"$'.key;\n    ssl_protocols       TLSv1.2 TLSv1.3;\n'
+  fi
+
+  echo "# ── Direct production hosts ──"
+  echo "server {"
+  echo "    listen 80;"
+  echo "    listen [::]:80;"
+  [ -n "$ssl_block" ] && printf '%s' "$ssl_block"
+  echo "    server_name ${hosts};"
+  echo ""
+  echo "    location ^~ /.well-known/acme-challenge/ {"
+  echo "        root /var/www/html;"
+  echo "        allow all;"
+  echo "    }"
+  echo ""
+  emit_direct_proxy_immutable_locations "$upstream" "${CDS_DIRECT_PROXY_IMMUTABLE_PATHS:-}"
+  echo "    location / {"
+  echo "        proxy_pass ${upstream};"
+  proxy_directives
+  echo "    }"
+  echo "}"
+  echo ""
+}
+
 # Static waiting page baked into nginx. Fires when cds_worker (CDS master)
 # is unreachable — typically during self-update restart or process crash.
 # For every other half-ready state CDS's own proxy renders a richer loading
@@ -1274,6 +1423,15 @@ NGINX_BASE
       [ -n "$d" ] || continue
       emit_server_blocks "$d"
     done
+    if [ -n "${CDS_CUSTOM_PREVIEW_HOSTS:-}" ]; then
+      echo "# CDS_CUSTOM_PREVIEW_HOSTS=${CDS_CUSTOM_PREVIEW_HOSTS}"
+      emit_custom_preview_server_block "$CDS_CUSTOM_PREVIEW_HOSTS" "${CDS_CUSTOM_PREVIEW_CERT_DOMAIN:-}"
+    fi
+    if [ -n "${CDS_DIRECT_PROXY_HOSTS:-}" ] && [ -n "${CDS_DIRECT_PROXY_UPSTREAM:-}" ]; then
+      echo "# CDS_DIRECT_PROXY_HOSTS=${CDS_DIRECT_PROXY_HOSTS}"
+      echo "# CDS_DIRECT_PROXY_UPSTREAM=${CDS_DIRECT_PROXY_UPSTREAM}"
+      emit_direct_proxy_server_block "$CDS_DIRECT_PROXY_HOSTS" "$CDS_DIRECT_PROXY_UPSTREAM" "${CDS_DIRECT_PROXY_CERT_DOMAIN:-}"
+    fi
   })
   write_if_changed "$NGINX_SITE_CONF" "$site_content"
 

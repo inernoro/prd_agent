@@ -25,6 +25,7 @@ public class VideoAgentController : ControllerBase
     private readonly IVideoGenService _videoGenService;
     private readonly IRunEventStore _runStore;
     private readonly MongoDbContext _db;
+    private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly ILogger<VideoAgentController> _logger;
 
     private const string AppKey = "video-agent";
@@ -35,12 +36,14 @@ public class VideoAgentController : ControllerBase
         IRunEventStore runStore,
         MongoDbContext db,
         IOpenRouterVideoClient videoClient,
+        ILLMRequestContextAccessor llmRequestContext,
         ILogger<VideoAgentController> logger)
     {
         _videoGenService = videoGenService;
         _runStore = runStore;
         _db = db;
         _videoClient = videoClient;
+        _llmRequestContext = llmRequestContext;
         _logger = logger;
     }
 
@@ -309,6 +312,7 @@ public class VideoAgentController : ControllerBase
             VideoTitle = request?.VideoTitle?.Trim(),
             SystemPrompt = request?.SystemPrompt?.Trim(),
             Language = (request?.Language ?? "auto").Trim(),
+            ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
             CreatedAt = DateTime.UtcNow
         };
 

@@ -90,6 +90,7 @@ public class VideoToDocRunWorker : BackgroundService
         var runStore = sp.GetRequiredService<IRunEventStore>();
         var gateway = sp.GetRequiredService<ILlmGateway>();
         var assetStorage = sp.GetRequiredService<IAssetStorage>();
+        var ctxAccessor = sp.GetRequiredService<ILLMRequestContextAccessor>();
 
         try
         {
@@ -113,7 +114,7 @@ public class VideoToDocRunWorker : BackgroundService
             await PublishPhaseAsync(runStore, run.Id, "transcribing", 0);
 
             // Phase 2: 语音转文字（Whisper API）
-            var (transcript, detectedLang) = await TranscribeAudioAsync(run, audioPath, gateway);
+            var (transcript, detectedLang) = await TranscribeAudioAsync(run, audioPath, gateway, ctxAccessor);
 
             var plainTranscript = string.Join(" ", transcript.Select(s => s.Text));
 
@@ -133,7 +134,7 @@ public class VideoToDocRunWorker : BackgroundService
             await PublishPhaseAsync(runStore, run.Id, "analyzing", 0);
 
             // Phase 3: 多模态 LLM 分析（帧 + 转写文本 → 结构化文档）
-            var markdown = await AnalyzeWithLlmAsync(run, transcript, frameInfos, gateway, runStore);
+            var markdown = await AnalyzeWithLlmAsync(run, transcript, frameInfos, gateway, runStore, ctxAccessor);
 
             // 完成
             await UpdateRunAsync(db, run.Id, Builders<VideoToDocRun>.Update
@@ -242,13 +243,13 @@ public class VideoToDocRunWorker : BackgroundService
     // ═══════════════════════════════════════════════════════════
 
     private async Task<(List<TranscriptSegment> segments, string language)> TranscribeAudioAsync(
-        VideoToDocRun run, string audioPath, ILlmGateway gateway)
+        VideoToDocRun run, string audioPath, ILlmGateway gateway, ILLMRequestContextAccessor ctxAccessor)
     {
         // 通过 Gateway 的 SendRawWithResolutionAsync 调用 ASR 模型池（遵循 compute-then-send 原则）
         // ASR 模型池统一管理语音识别模型（Whisper / TeleSpeechASR / Qwen3-ASR 等）
         // API 兼容 OpenAI /v1/audio/transcriptions 端点
         var asrResolution = await gateway.ResolveModelAsync(
-            AppCallerRegistry.VideoAgent.VideoToDoc.Transcribe, ModelTypes.Asr, null, CancellationToken.None);
+            AppCallerRegistry.VideoAgent.VideoToDoc.Transcribe, ModelTypes.Asr, null, ct: CancellationToken.None);
         if (!asrResolution.Success)
         {
             _logger.LogWarning("VideoToDoc ASR 模型调度失败，降级为无转写模式: runId={RunId}, reason={Reason}",
@@ -275,12 +276,26 @@ public class VideoToDocRunWorker : BackgroundService
             {
                 ["file"] = ("audio.wav", audioBytes, "audio/wav")
             },
-            TimeoutSeconds = 600 // 长音频可能需要较长时间
+            TimeoutSeconds = 600, // 长音频可能需要较长时间
+            Context = new GatewayRequestContext { UserId = run.OwnerAdminId }
         };
 
         GatewayRawResponse? rawResp = null;
         try
         {
+            using var _ = ctxAccessor.BeginScope(new LlmRequestContext(
+                RequestId: run.Id,
+                GroupId: null,
+                SessionId: run.Id,
+                UserId: run.OwnerAdminId,
+                ViewRole: null,
+                DocumentChars: null,
+                DocumentHash: null,
+                SystemPromptRedacted: "[VIDEO_TO_DOC_ASR]",
+                RequestType: ModelTypes.Asr,
+                AppCallerCode: AppCallerRegistry.VideoAgent.VideoToDoc.Transcribe,
+                ForceFullShadowSample: run.ForceFullShadowSample));
+
             rawResp = await gateway.SendRawWithResolutionAsync(rawRequest, asrResolution, CancellationToken.None);
         }
         catch (Exception ex)
@@ -339,7 +354,8 @@ public class VideoToDocRunWorker : BackgroundService
         List<TranscriptSegment> transcript,
         List<FrameInfo> frames,
         ILlmGateway gateway,
-        IRunEventStore runStore)
+        IRunEventStore runStore,
+        ILLMRequestContextAccessor ctxAccessor)
     {
         var systemPrompt = BuildAnalysisSystemPrompt(run);
         var transcriptText = FormatTranscriptForLlm(transcript);
@@ -410,6 +426,19 @@ public class VideoToDocRunWorker : BackgroundService
         };
 
         var resultBuilder = new StringBuilder();
+
+        using var _ = ctxAccessor.BeginScope(new LlmRequestContext(
+            RequestId: run.Id,
+            GroupId: null,
+            SessionId: run.Id,
+            UserId: run.OwnerAdminId,
+            ViewRole: null,
+            DocumentChars: transcriptText.Length,
+            DocumentHash: null,
+            SystemPromptRedacted: "[VIDEO_TO_DOC_ANALYZE]",
+            RequestType: ModelTypes.Vision,
+            AppCallerCode: AppCallerRegistry.VideoAgent.VideoToDoc.Analyze,
+            ForceFullShadowSample: run.ForceFullShadowSample));
 
         await foreach (var chunk in gateway.StreamAsync(request, CancellationToken.None))
         {

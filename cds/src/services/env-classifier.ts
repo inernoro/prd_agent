@@ -54,6 +54,22 @@ const SECRET_KEY_PATTERNS = [
   'GITHUB_CLIENT',
 ] as const;
 
+/**
+ * key 命中 secret 关键词 → 该变量是密钥/凭据类。波4 漂移巡检用它判定
+ * 「repo compose 是否携带了本该只存在于 CDS env scope 的密钥」。
+ */
+export function isSecretEnvKey(key: string): boolean {
+  const keyUpper = key.toUpperCase();
+  return SECRET_KEY_PATTERNS.some((p) => keyUpper.includes(p));
+}
+
+/** value 是否为占位符(TODO / 请填写 / <your-> 等,尚未填真实值)。 */
+export function isPlaceholderEnvValue(value: string | null | undefined): boolean {
+  if (!value) return false;
+  const upperVal = value.toUpperCase();
+  return REQUIRED_VALUE_MARKERS.some((m) => upperVal.includes(m.toUpperCase()));
+}
+
 export interface ClassifyOptions {
   /** 是否密码类(cdscli 在 yaml 生成阶段标的) */
   isPassword?: boolean;

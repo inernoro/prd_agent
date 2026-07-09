@@ -17,11 +17,14 @@ public class LlmShadowComparison
     /// <summary>主键（Guid）</summary>
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
-    /// <summary>比对种类：resolve（仅解析，免费）/ send（完整非流式）/ stream（完整流式）/ pools（模型池列表）</summary>
+    /// <summary>比对种类：resolve（仅解析，免费）/ send（完整非流式）/ stream（流式解析）/ raw（图片/ASR/视频原始代理）/ pools（模型池列表）</summary>
     public string Kind { get; set; } = "resolve";
 
     /// <summary>对应 LlmRequestContext.RequestId（可关联 llmrequestlogs）</summary>
     public string? RequestId { get; set; }
+
+    /// <summary>产生本条 shadow 证据的 MAP/API 发布 commit。release gate 用它防止旧样本误放行新版本。</summary>
+    public string? ReleaseCommit { get; set; }
 
     /// <summary>请求入口</summary>
     public string AppCallerCode { get; set; } = string.Empty;

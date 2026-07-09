@@ -90,6 +90,9 @@ jobs:
             "commit": "${GITHUB_SHA}",
             "ref": "${ref}",
             "apiImage": "ghcr.io/${GITHUB_REPOSITORY}/prdagent-server:${ref}",
+            "llmgwImage": "ghcr.io/${GITHUB_REPOSITORY}/prdagent-llmgw:${ref}",
+            "llmgwServeImage": "ghcr.io/${GITHUB_REPOSITORY}/prdagent-llmgw-serve:${ref}",
+            "llmgwWebImage": "ghcr.io/${GITHUB_REPOSITORY}/prdagent-llmgw-web:${ref}",
             "webDist": "${zip_name}",
             "webSha256": "${sha}"
           }

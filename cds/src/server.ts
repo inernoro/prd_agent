@@ -56,7 +56,7 @@ import type { ProxyService } from './services/proxy.js';
 import type { BridgeService } from './services/bridge.js';
 import type { SchedulerService } from './services/scheduler.js';
 import type { JanitorService } from './services/janitor.js';
-import type { CdsConfig, IShellExecutor } from './types.js';
+import type { CdsConfig, IShellExecutor, AgentKeyAccess } from './types.js';
 import type { GracefulShutdownController } from './services/graceful-shutdown.js';
 import {
   bodyPreviewFromUnknown,
@@ -86,6 +86,32 @@ function getRemoteAddr(req: express.Request): string | undefined {
     || (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
     || req.ip
     || req.socket?.remoteAddress;
+}
+
+/**
+ * 单项目作用域的 cdsg_ 全局 Key —— 同时 stamp req.cdsProjectKey（2026-07-09 Codex P1）。
+ *
+ * 一把 `projects: ['a']`（恰好一个项目）的 cdsg_ key，对项目级操作而言语义等同一把
+ * project a 的 cdsp_ key。CDS 有 11+ router、大量端点用「无 cdsProjectKey 即管理员」
+ * 的自定义守卫（reports/releases/scheduled-jobs/remote-hosts…），它们不认识 cdsAccess。
+ * 与其逐个 router 补 cdsAccess（打地鼠、易漏），不如让单项目 cdsg_ key 直接 stamp
+ * cdsProjectKey —— 于是它**透明继承**所有既有 cdsp_ 逐路由防护，一处收口、全局生效。
+ *
+ * 只对「恰好一个项目」stamp：'all' 是管理员（不 stamp），[] 是 create-only（走系统级
+ * 兜底），≥2 的多项目作用域目前在签发端被禁止（见 routes/projects.ts POST /global-agent-keys），
+ * 故不会到达这里。cdsAccess 仍并存，供 POST /projects 读 canCreateProjects 放行建项目。
+ */
+function stampSingleProjectScope(
+  req: express.Request,
+  match: { keyId: string; access: AgentKeyAccess },
+): void {
+  const projects = match.access.projects;
+  if (Array.isArray(projects) && projects.length === 1) {
+    const r = req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } };
+    if (!r.cdsProjectKey) {
+      r.cdsProjectKey = { projectId: projects[0], keyId: match.keyId };
+    }
+  }
 }
 
 function extractApiMutationContext(req: express.Request, deps: ServerDeps): {
@@ -663,6 +689,7 @@ export function resolveApiLabel(method: string, path: string): string {
     // 发布控制面（preview → release，2026-06-10）
     'GET /releases/targets': '列出发布目标',
     'POST /releases/targets': '创建发布目标',
+    'POST /releases/targets/local-prod': '创建本机生产发布目标',
     'PATCH /releases/targets/:id': '更新发布目标',
     'DELETE /releases/targets/:id': '删除发布目标',
     'POST /releases/branches/:branchId/preflight': '执行发布前检查',
@@ -921,6 +948,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/branches\/(.+)\/pull$/, '拉取分支代码'],
     [/^POST \/branches\/(.+)\/deploy\/(.+)$/, '部署单服务'],
     [/^POST \/branches\/(.+)\/deploy$/, '全量部署'],
+    [/^POST \/branches\/(.+)\/prebuilt-image\/claim$/, '认领预构建镜像'],
     [/^POST \/branches\/(.+)\/database-init\/run$/, '执行数据库初始化命令'],
     [/^POST \/branches\/(.+)\/stop$/, '停止分支服务'],
     [/^POST \/branches\/(.+)\/restart$/, '重新启动分支'],
@@ -987,6 +1015,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/projects\/(.+)\/github\/link$/, '关联 GitHub 仓库'],
     [/^DELETE \/projects\/(.+)\/github\/link$/, '解除 GitHub 关联'],
     [/^POST \/projects\/(.+)\/clone$/, '克隆代码'],
+    [/^GET \/projects\/(.+)\/detect-preview$/, '预览栈检测'],
+    [/^POST \/projects\/(.+)\/detect-apply$/, '应用栈检测'],
     [/^GET \/projects\/(.+)\/storage$/, '获取项目存储'],
     [/^GET \/projects\/(.+)$/, '查询项目'],
     [/^PUT \/projects\/(.+)$/, '更新项目'],
@@ -1003,6 +1033,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/projects\/(.+)\/compose\.yml$/, '下载项目配置'],
     [/^GET \/projects\/(.+)\/compose$/, '获取项目配置'],
     [/^PUT \/projects\/(.+)\/compose$/, '保存项目配置'],
+    [/^POST \/projects\/(.+)\/compose-drift-scan$/, '巡检配置漂移'],
     // 项目基础设施重新同步
     [/^GET \/projects\/(.+)\/infra\/resync\/sources$/, '列出同步配置来源'],
     [/^POST \/projects\/(.+)\/infra\/resync\/preview$/, '预览基础设施同步'],
@@ -1016,6 +1047,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/branches\/(.+)\/smoke$/, '分支冒烟测试'],
     [/^GET \/branches\/(.+)\/subdomain-aliases$/, '列出分支域名别名'],
     [/^PUT \/branches\/(.+)\/subdomain-aliases$/, '设置分支域名别名'],
+    [/^GET \/branches\/(.+)\/custom-domains$/, '列出分支完整自定义域名'],
+    [/^PUT \/branches\/(.+)\/custom-domains$/, '设置分支完整自定义域名'],
     [/^GET \/branches\/(.+)\/profile-overrides$/, '获取构建覆写'],
     [/^PUT \/branches\/(.+)\/profile-overrides\/(.+)$/, '更新构建覆写'],
     [/^DELETE \/branches\/(.+)\/profile-overrides\/(.+)$/, '删除构建覆写'],
@@ -1027,6 +1060,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/branches\/[^/]+$/, '查看分支详情'],
     [/^GET \/branches\/[^/]+\/effective-env$/, '查看生效环境变量'],
     [/^GET \/branches\/[^/]+\/effective-env\/reveal$/, '查看密钥明文'],
+    [/^GET \/branches\/[^/]+\/effective-config$/, '查分支生效配置'],
+    [/^POST \/branches\/[^/]+\/copy-config-from\/[^/]+$/, '拉取来源分支配置'],
     [/^GET \/branches\/[^/]+\/metrics$/, '查看分支指标'],
     [/^GET \/branches\/[^/]+\/failure-diagnosis$/, '诊断失败原因'],
     // 构建 Profile 扩展
@@ -1195,15 +1230,19 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
         };
       }
     }
-    // Global (bootstrap-equivalent) Agent Key (cdsg_<suffix>). Behaves
-    // like the static AI_ACCESS_KEY: no project scoping, free to hit
-    // POST /api/projects and cross-project routes. The UI must warn
-    // the user before issuing one (see agent-key-modal.js bootstrap
-    // confirmation). NOT stamping cdsProjectKey on purpose.
+    // Global (cdsg_<suffix>) Agent Key. Carries an explicit access scope
+    // (create-projects and/or a set/'all' of existing projects). We stamp
+    // req.cdsAccess so the enforcement hook (assertProjectAccess /
+    // POST /api/projects in routes/projects.ts) can honor it. Legacy keys
+    // resolve to full admin (see state.ts resolveGlobalAgentKeyAccess), so
+    // no regression.
     if (stateService && headerKey.startsWith('cdsg_')) {
       const match = stateService.findGlobalAgentKeyForAuth(headerKey);
       if (match) {
         stateService.touchGlobalAgentKeyLastUsed(match.keyId);
+        (req as unknown as { cdsAccess?: { keyId: string; access: AgentKeyAccess } })
+          .cdsAccess = { keyId: match.keyId, access: match.access };
+        stampSingleProjectScope(req, match);
         return {
           id: `globalkey:${match.keyId}`,
           agentName: `AI (global key ${match.keyId})`,
@@ -2404,6 +2443,50 @@ export function createServer(deps: ServerDeps): express.Express {
           .cdsProjectKey = match;
       }
     }
+    // Parallel fallback for cdsg_ global keys — stamp req.cdsAccess so scope
+    // enforcement works even when cookie auth is disabled (mirrors the cdsp_
+    // fallback above). Cheap no-op when header absent / key malformed.
+    if (h && h.startsWith('cdsg_') && !(req as unknown as { cdsAccess?: unknown }).cdsAccess) {
+      const gmatch = deps.stateService.findGlobalAgentKeyForAuth(h);
+      if (gmatch) {
+        deps.stateService.touchGlobalAgentKeyLastUsed(gmatch.keyId);
+        (req as unknown as { cdsAccess?: { keyId: string; access: AgentKeyAccess } })
+          .cdsAccess = { keyId: gmatch.keyId, access: gmatch.access };
+        stampSingleProjectScope(req, gmatch);
+      }
+    }
+
+    // ── create-only 全局 Key 的系统级默认拒绝门卫（Codex P1 深层修复，2026-07-09）──
+    //
+    // 签发全局 Key 的默认作用域是「只能创建新项目」(canCreateProjects:true,
+    // projects:[])。这把 key 的**唯一**合法用途就是 POST /api/projects 建项目;建成
+    // 后立刻改用返回的项目级 cdsp_ key 操作新项目。它对任何现有资源都无授权。
+    //
+    // 但 CDS 有 11+ 个 router、大量端点历史上把「无 cdsProjectKey」当成管理员放行,
+    // 逐个补 assertProjectAccess/assertUnscopedAdmin 是打地鼠。这里在**所有 /api
+    // router 之前**加一道系统级兜底:create-only key 只允许「建项目 + 只读」,其余
+    // 一律 403。既堵死当前已知/未知的写路由绕过,又不影响带作用域的 cdsg_(projects
+    // 列表/all,走各自 assertProjectAccess)与 cdsp_/cookie/bootstrap。
+    const acc = (req as unknown as { cdsAccess?: { access: AgentKeyAccess } }).cdsAccess?.access;
+    if (
+      acc &&
+      acc.canCreateProjects === true &&
+      Array.isArray(acc.projects) &&
+      acc.projects.length === 0 &&
+      req.path.startsWith('/api/')
+    ) {
+      const method = req.method.toUpperCase();
+      const isRead = method === 'GET' || method === 'HEAD' || method === 'OPTIONS';
+      const isCreateProject = method === 'POST' && req.path === '/api/projects';
+      if (!isRead && !isCreateProject) {
+        _res.status(403).json({
+          error: 'create_only_key_forbidden',
+          message:
+            '这把「只能创建新项目」的全局 Key 仅可调用创建项目（POST /api/projects）与只读接口。建项目后请改用返回的项目级 Key 操作该项目。',
+        });
+        return;
+      }
+    }
     next();
   });
 
@@ -3274,6 +3357,7 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use('/api', createProjectComposeRouter({
     stateService: deps.stateService,
     assertProjectAccess: assertProjectAccess as any,
+    repoRootFallback: deps.config.repoRoot,
   }));
   // 项目迁移:配置打包复刻 + 数据迁移扫描,把项目移植到另一个 CDS 节点(2026-06-23)
   app.use('/api', createProjectMigrationRouter({
@@ -3309,6 +3393,7 @@ export function createServer(deps: ServerDeps): express.Express {
   }));
   app.use('/api', createReleasesRouter({
     stateService: deps.stateService,
+    config: deps.config,
   }));
   // CDS 配对连接（系统级），见 routes/cds-system-connections.ts。
   app.use('/api', createCdsSystemConnectionsRouter({

@@ -287,8 +287,12 @@ function SegmentPills({
 }) {
   return (
     <div
-      className="inline-flex items-center gap-1 p-1 rounded-lg shrink-0"
-      style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-default)' }}
+      className="inline-flex max-w-full items-center gap-1 overflow-x-auto p-1 rounded-lg shrink-0"
+      style={{
+        background: 'rgba(255,255,255,0.04)',
+        border: '1px solid var(--border-default)',
+        scrollbarWidth: 'none',
+      }}
     >
       {options.map((opt) => {
         const active = opt.value === value;
@@ -297,7 +301,7 @@ function SegmentPills({
             key={opt.value}
             type="button"
             onClick={() => onChange(opt.value)}
-            className="h-7 px-3 rounded-md text-[13px] transition-colors"
+            className="h-7 min-w-10 shrink-0 whitespace-nowrap px-3 rounded-md text-center text-[13px] transition-colors"
             style={
               active
                 ? {
@@ -797,10 +801,13 @@ export default function WebPagesPage() {
   return (
     <div
       data-tour-id="webpages-root"
-      className={isMobile ? 'h-full flex flex-col gap-3 overflow-auto' : 'h-full flex flex-col gap-4 p-4 overflow-auto'}
+      className={isMobile ? 'h-full flex flex-col gap-3 overflow-auto' : 'h-full flex flex-col gap-4 overflow-auto'}
       style={{
+        // 不再自刷整幅不透明深色底（会盖住应用背景、与外壳 16px 内边距形成
+        // "黑框 + 内容内缩"的错位，2026-07-08 用户反馈）；仅保留顶部一缕
+        // 品牌靛蓝氛围光，透明叠加在应用背景上。p-4 同步移除——外壳已供内边距。
         background:
-          'radial-gradient(ellipse 70% 40% at 50% -10%, rgba(99,102,241,0.14) 0%, transparent 55%), linear-gradient(180deg, #20212a 0%, #181a22 480px, #16181f 100%)',
+          'radial-gradient(ellipse 70% 40% at 50% -10%, rgba(99,102,241,0.12) 0%, transparent 55%)',
         width: '100%',
       }}
     >

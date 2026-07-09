@@ -1,2 +1,0 @@
-| chore | doc | 每日熵减 2026-07-01：合并昨日重复 PR #967（D3 debt.llm-gateway 系列 3 条 + D6 manifest 标记 5 条）；本次新增 D2/D3 补缺 plan.llm-gateway.full-cutover 1 条，D6 changelog→doc 覆盖处理 5 条（imagegen-request-builder/llm-gateway-standalone/llm-log-observability/llmgw-deploy-scaffold/llmgw-web-skeleton，内容均已在既有 debt.llm-gateway-isolation.md / plan.llm-gateway.rollout.md 覆盖，无需新增章节） |
-| docs | doc | D5 复查发现工程债务：codebase-snapshot.md 声称 MongoDB 集合数（118/120）与实际 MongoDbContext.cs 统计（249）严重漂移，需人工审查后批量更新，遵循 D5 需人工确认原则本次未自动改写 |

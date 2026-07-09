@@ -1,0 +1,301 @@
+# MAP 企业级自动化验收规范 · 规则
+
+> **版本**：v1.0 | **日期**：2026-07-07 | **状态**：已落地
+
+Owner: MAP 验收规范 Owner。复核: 产品 Owner、技术 Owner、CDS Owner。关联技能: `acceptance-test-design` -> `acceptance-scenario-orchestrator` -> `create-visual-test-to-kb`。
+
+## 1. 目标
+
+MAP 企业级自动化验收不是“跑脚本、截图片、发链接”。它是一套可审计的质量治理系统，用于回答五个问题:
+
+1. 本轮验收的范围是什么，范围来自哪里。
+2. 每个 PR、commit 或未发布分支声称改变了什么可观察行为。
+3. 哪些页面、接口、日志、数据状态或部署状态能证明这些行为。
+4. 哪些证据足以支撑通过，哪些只能支撑有条件通过或失败。
+5. 哪些内容没有覆盖，谁负责补测，缺口如何影响最终 Verdict。
+
+如果报告不能让第三方在不询问执行人的情况下复核这些问题，它就不是企业级验收报告。
+
+## 2. 审查来源
+
+本规范来自一次“智能体部门专家会议”的合并结论，四类专家分别审查:
+
+| 专家角色 | 关注点 | 进入本规范的结论 |
+|---|---|---|
+| 技能链架构专家 | 三技能链职责、输入输出、可审计字段、漂移治理 | 建立 `scope -> design -> execution -> evidence -> report` 的契约链 |
+| 每日验收运营专家 | 每日自动化生命周期、RACI、失败降级、Slack 通知 | 自动化只做调度壳，规则来自技能链，报告必须线上可打开 |
+| 证据与报告审计专家 | 红标、图片、点击、证据对象、截图回读 | 报告必须可读、可点、可复核，失败必须首屏红标 |
+| 引用文档与知识库治理专家 | 长期规范、执行报告、CDS 归档、引用写法 | 长期规范进 `doc/`，执行产物进 CDS，报告引用必须先解释再引用 |
+
+## 3. SSOT 与资产分层
+
+| 资产 | 位置 | 作用 | 禁止事项 |
+|---|---|---|---|
+| 企业级规范 | `doc/rule.acceptance.map-enterprise.md` | 定义验收治理主契约 | 不写单次执行结果 |
+| 每日验收 SOP | `doc/guide.acceptance.daily-sop.md` | 定义每日自动化如何运行 | 不复制技能全文到 automation prompt |
+| 报告与证据规范 | `doc/guide.acceptance.report-evidence.md` | 定义报告信息架构、截图、链接和失败呈现 | 不把截图堆成无解释素材墙 |
+| 引用与知识库治理 | `doc/design.acceptance.knowledge-governance.md` | 定义 CDS 文件夹、规范文档和引用方式 | 不把执行报告塞进 `doc/` |
+| 技能实现 | `.claude/skills/**` | 可执行规则、脚本和模板 | 不与主规范语义冲突 |
+| 执行报告 | CDS `/reports` | 每次验收结果、截图资产、元数据和分享链 | 不提交到仓库 |
+
+规范的长期主权在 `doc/`，执行报告的证据主权在 CDS。周报、PR 评论和 Slack 只引用报告链接与摘要，不复制报告正文和截图。
+
+## 4. 三技能链职责边界
+
+| 技能 | 职责 | 输入 | 输出 | 禁止越界 |
+|---|---|---|---|---|
+| `acceptance-test-design` | 范围冻结和测试设计 | 日期、PR、commit、release scope、`daily_scope.py` 输出 | 行为断言、影响面、风险假设、证明策略、融合测试、覆盖缺口 | 不截图、不归档、不直接判最终通过 |
+| `acceptance-scenario-orchestrator` | 场景编排和证据契约 | 验收测试设计稿 | 可执行测试单元、指差法清单、预期结果、证据要求、报告结构 | 不浏览器取证、不静默缩减范围 |
+| `create-visual-test-to-kb` | 浏览器取证、报告生成、CDS 归档、`verify-open` | 场景编排稿、预览环境、凭据、manifest | HTML/Markdown 报告、截图资产、CDS 链接、打开验证结果 | 不改写设计范围来迎合截图结果 |
+
+企业级验收必须保留链路:
+
+```text
+scope.json -> design-brief -> execution-brief -> evidence-manifest -> report-meta -> CDS report
+```
+
+报告 Markdown/HTML 是可读层，不是唯一事实来源。后续应逐步把这些中间产物 schema 化，减少脚本文本扫描和人工约定。
+
+## 4.1 验收链路总控矩阵
+
+系统必须先识别用户要的是哪一种产物，再选择技能链、模板、归档位置和门禁。样式差异不是审美选项，而是链路职责不同:
+
+| 链路 | 触发语义 | 技能链 | 产物样式 | 归档位置 | 能否给 Verdict | 系统控制点 |
+|---|---|---|---|---|---|---|
+| 单个验收 | 单一功能、单页、单 PR 的具体验收 | `create-visual-test-to-kb` | ZZ 照做风或九段集中证据；逐步骤、逐截图证明 | CDS 验收报告 | 可以 | 模板自动选择、截图标注、manifest、准入校验、`verify-open` |
+| 每日验收 | 上一个自然日、昨日全部改动、自动化每日验收 | `acceptance-test-design -> acceptance-scenario-orchestrator -> create-visual-test-to-kb` | 每日专用验收报告；昨日总结、PR/commit 映射、影响面矩阵、证明力矩阵、覆盖缺口、截图回读 | CDS 验收报告和 Slack 链接 | 可以 | `daily_scope.py`、深度预算、CDS ready、范围冻结、归档、打开验证、Slack 摘要 |
+| 日报 | 今日大事、开发日报、早知道 | `daily-report-summary`；必要时借用 `create-visual-test-to-kb` harness 取图 | 报纸版或 Markdown 朴素版；讲当日价值、重点新增、优化修复、计划遗留 | 日报知识库 | 不单独作为验收 Verdict | git 主干统计、日报模板校验、截图占位回填、知识库发布 |
+
+三条链路允许共享截图取证能力，但不允许互相替代:
+
+1. 日报可以借用验收 harness 给新增方向配图，但日报不是验收报告。若日报提到“通过/不通过”，必须引用对应 CDS 验收报告链接，不能自己产生验收 Verdict。
+2. 每日验收可以有“昨日工作总结”，但它不是日报。它必须覆盖范围、断言、证据、缺口和 Verdict，不能套报纸版样式。
+3. 单个验收可以使用交互 HTML 外壳，但不应强行塞入每日验收的 PR/commit 全量矩阵，除非用户目标本身跨 PR、跨 commit 或跨模块。
+4. 任何执行类验收报告只要进入 CDS `/reports` 并声明 verdict 或 L0/L1/L2，就必须经过 `archive_report.py` 标准模板血统门禁。
+5. automation prompt、技能说明和日报模板只能引用本矩阵，不得各自维护一套“什么场景用什么样式”的解释。
+
+### 4.1.1 路由决策
+
+当用户请求含义不清时，系统按下列顺序判定:
+
+| 判断 | 结果 |
+|---|---|
+| 请求包含“日报、今日大事、早知道、今天干了啥” | 进入日报链路 |
+| 请求包含“每日验收、昨日验收、昨天全部、上一自然日、自动化验收” | 进入每日验收链路 |
+| 请求指定单个功能、页面、PR、缺陷复测或视觉测试 | 进入单个验收或复杂验收链路；若范围跨 PR/commit，则补前置设计和场景编排 |
+| 请求同时包含日报和验收 | 拆成两个产物: 先验收给 Verdict，再日报引用验收结论 |
+
+拆分产物时必须在交付说明里写清哪个链接是验收结论，哪个链接是日报阅读材料。
+
+## 5. 术语
+
+| 术语 | 定义 |
+|---|---|
+| Scope | 本轮验收范围，包含日期、分支、目标 SHA、PR、commit、模块和未发布分支 |
+| Change assertion | 代码变更声称带来的可观察行为变化 |
+| Impact model | 改动可能影响的页面、接口、数据、权限、异步任务、外部依赖和回滚面 |
+| Fusion scenario | 一个真实用户场景同时证明多个相关断言，但不降低证明质量 |
+| Page-first evidence | 用户可见改动先用页面状态和用户动作证明，再用内部证据佐证 |
+| Internal corroboration | API、日志、数据库、队列、文件或命令输出，用于解释或增强页面证据 |
+| Coverage gap | 范围内但未测、弱相关、环境阻塞、内部-only 或不安全执行的项 |
+| Verdict | 报告总判定，只能由最严重有效结果决定，不能靠愿望改写 |
+
+## 6. 场景矩阵
+
+| 场景 | 触发 | 必须输出 |
+|---|---|---|
+| `daily-yesterday` | 每日验收、昨天验收、上一自然日全部内容 | 昨日工作总结、PR/commit 映射、深度预算、未覆盖账本、Slack 摘要 |
+| `pull-request` | 指定 PR 验收 | PR diff 到行为断言，逐断言证据和结论 |
+| `commit-range` | 指定 commit 或范围 | commit 到结果矩阵，环境 SHA 一致性说明 |
+| `unpublished-branch` | 未发布分支、灰度、预览 | branch 状态、preview URL、功能证据，区分环境 ready 与功能通过 |
+| `defect-retest` | 缺陷复测、失败报告复测 | 原始失败、修复路径、失败是否复现、回归证据 |
+| `visual-regression` | 布局、图片、链接、文字、空白区、错位 | 语义读图、前后/左右对比、布局健康检查 |
+| `release-preflight` | 发布前、上线前 | 风险门禁、关键路径、负面路径、阻断项 |
+
+多个场景同时出现时，选择最窄主场景，并列出修饰场景。例如“昨天未发布分支验收”是 `daily-yesterday` 加 `unpublished-branch`。
+
+## 7. 范围冻结规则
+
+范围冻结必须早于测试设计和截图。每日验收必须先运行:
+
+```bash
+python3 .claude/skills/acceptance-test-design/scripts/daily_scope.py \
+  --date <YYYY-MM-DD> \
+  --json-out /tmp/daily-scope.json \
+  --md-out /tmp/daily-scope.md
+```
+
+范围表至少包含:
+
+| 字段 | 要求 |
+|---|---|
+| `target_type` | daily、PR、commit-range、release 等 |
+| `target_date` | Asia/Shanghai 绝对日期 |
+| `timezone` | 必填，默认 Asia/Shanghai |
+| `repo` | 仓库路径或仓库名 |
+| `branch` | 被测分支 |
+| `target_sha` | 应测 SHA |
+| `tested_sha` | 实测 SHA |
+| `origin_main_sha` | 远端 main 基线 |
+| `preview_url` | 由 CDS 或被测系统提供，不手拼 |
+| `scope_source` | `daily_scope.py` JSON 或 PR/diff 来源 |
+
+任一 commit、PR 或未发布分支必须进入以下状态之一:
+
+| 状态 | 含义 |
+|---|---|
+| `covered` | 已有有效证据覆盖 |
+| `conditional` | 有证据但不完整，或存在非阻断风险 |
+| `fail` | 真实失败或关键证据不符合预期 |
+| `internal-only` | 无用户可见页面，使用内部证据并说明原因 |
+| `non-runtime` | 不影响运行态，但保留来源和理由 |
+| `uncovered` | 范围内但未测，必须进入缺口账本 |
+
+## 8. 证明力模型
+
+| 分数 | 名称 | 含义 | 可支撑通过 |
+|---|---|---|---|
+| 0 | 无关 | 同项目或同模块，但未命中改动行为 | 不可 |
+| 1 | 入口 | 页面、路由、按钮、列表可达 | 仅当改动就是入口可达 |
+| 2 | 弱相关 | 附近状态暗示功能存在，但未触发变化路径 | 深度验收不可 |
+| 3 | 行为相关 | 用户动作产生预期页面结果或失败症状 | 可 |
+| 4 | 闭环证明 | 用户动作、页面结果、内部状态、负面或边界路径一致 | 强通过 |
+
+弱证据陷阱:
+
+- `页面可达`
+- `按钮可见`
+- `列表可见`
+- `接口 200`
+- `日志有输出`
+- `数据库有记录`
+- `同模块截图`
+- `看起来加载了`
+
+这些证据可以作为上下文，但不能替代改动行为证明。
+
+## 9. 页面优先证据
+
+用户可感知改动必须先回答:
+
+1. 用户从哪里进入。
+2. 用户做了什么动作。
+3. 页面出现了什么预期结果。
+4. 如果失败，页面出现了什么失败症状。
+5. API、日志、数据库如何佐证页面结果。
+
+内部证据不能掩盖页面失败。若页面失败但日志成功，判用户路径失败；若页面成功但数据未落地，判副作用缺失。
+
+## 10. 融合测试规则
+
+融合测试允许一个真实场景覆盖多个相关断言，但必须满足:
+
+1. 被融合的断言共享真实用户路径或状态流。
+2. 每个断言在证据中仍能定位。
+3. 融合后证明力不低于单独测试。
+4. 报告列出融合风险，说明可能隐藏什么。
+
+过度融合示例:
+
+- 只因文件在同一目录就合并测试。
+- 一个 dashboard 截图声称覆盖多个无关 commit。
+- 用 API-only 场景覆盖用户可见页面变化。
+- 删除负面路径，只保留 happy path。
+
+## 11. 深度预算
+
+| 深度 | 定义 | 证据下限 |
+|---|---|---|
+| 广度冒烟 | 确认主入口和代表性页面可达，不证明每个功能深度正确 | 每个主要模块至少一个上下文证据，明确标注 smoke |
+| 深度验收 | 真实执行关键用户流程、结果状态、API/日志佐证和负面路径 | 每日验收至少 12 张有效截图；高风险模块至少 2 个证据点 |
+| 发布前阻断验收 | 上线门禁，关键路径缺证或 P0/P1 阻断即失败 | 风险驱动，必须覆盖关键流程、回滚或负面路径 |
+
+深度预算必须写入报告，不允许事后把冒烟报告升级为深度通过。
+
+## 11.1 比例原则
+
+企业级验收不是无限找茬。验收深度必须同时有下限和上限:
+
+| 维度 | 要求 |
+|---|---|
+| 下限 | 高风险、用户可见、运行态、发布阻断路径必须有足够证据 |
+| 上限 | 继续加测不会改变风险判断、证明力或 Verdict 时，应停止 |
+| 严重级 | P0/P1 只给阻断、数据损害、核心路径不可用、信任破坏或硬门禁失败 |
+| 观察项 | 轻微样式、非核心文本、低影响体验问题应记为 P3 或 observation，不得包装成阻断 |
+| 合并 | 大范围日报允许融合测试，但必须保留断言和证据定位 |
+
+报告必须说明“为什么这个深度足够”。若报告显得吹毛求疵，说明深度预算没有写清或严重级膨胀。
+
+## 12. CDS 与 CDS Agent 边界
+
+| 目标 | 有效证据 | 无效替代 |
+|---|---|---|
+| CDS 平台: `cds/` 部署、预览、报告中心、分支网络、extra-services、self-update、scheduler、proxy、smoke | cdscli/API branch status、deploy/smoke 输出、`/reports` 页面、preview routing、服务状态、日志 | prd-admin `/cds-agent` 页面 |
+| CDS Agent: 工作台、runtime/session、adapter/event renderer、工具调用流程 | `/cds-agent` 页面、会话状态、runtime events、相关 API | generic CDS branch ready |
+
+若两类目标同时变更，必须拆成两条断言和两条证据链。
+
+## 13. 强制门禁
+
+| 门禁 | 不通过处理 |
+|---|---|
+| `daily_scope.py` 或等价机器范围缺失 | 不准截图，生成设计风险报告 |
+| 目标 SHA 与实测 SHA 不一致且无解释 | 不得通过 |
+| CDS ready 或 smoke 未通过 | 判环境不可验，不用登录页或 503 图冒充功能证据 |
+| 深度验收截图数或高风险证据不足 | 降级为广度冒烟或有条件通过 |
+| pass 行没有可点击证据 | 归档拒收 |
+| 图片缺失、空白、caption 弱、图文不符 | 重拍或判失败 |
+| P0/P1 存在 | 总 Verdict 不得 pass |
+| 归档链接不是线上 HTTPS | Slack 不得发送为交付入口 |
+| `verify-open` 三次失败 | 验收链路失败 |
+| 验收产物进入 git 工作区 | 必须移出仓库，不得提交 |
+| P0/P1/P2 视觉问题没有图内框选定位 | 判报告质量失败，重拍或降级为 observation |
+| 报告规范引用与实际流程不一致 | 判规范一致性失败，补写自测或修正流程 |
+| 执行类验收 HTML 缺少标准模板血统 | CDS 拒收，返回 `acceptance_html_template_required`；必须从 Markdown 源和 manifest 重新跑 `archive_report.py` |
+
+## 14. 可审计字段
+
+| 类别 | 字段 |
+|---|---|
+| 范围 | `target_type`、`target_date`、`timezone`、`repo`、`branch`、`target_sha`、`tested_sha`、`preview_url`、`scope_source` |
+| 变更 | `pr`、`commit`、`changed_files`、`module`、`risk_tags`、`assertion_id`、`change_assertion` |
+| 设计 | `user_visible_surface`、`impact_model`、`proof_strategy`、`proof_strength_score`、`fusion_scenario_id`、`coverage_decision` |
+| 执行 | `test_unit_id`、`breadcrumb`、`final_url`、`expected_result`、`actual_result`、`evidence_ids`、`screenshot_anchors`、`api_log_state_refs` |
+| 质量 | `tier`、`depth_label`、`verdict`、`defect_counts`、`uncovered_items`、`downgrade_reason`、`retry_record`、`readback_status` |
+| 归档 | `report_id`、`standard_id`、`standard_version`、`skill_versions`、`script_checksums`、`cds_project`、`cds_folder`、`deeplink`、`verify_open_attempts` |
+
+## 15. 伪企业级判定
+
+以下情况一律视为伪企业级:
+
+1. 用“企业级、全链路、深度验收”等大词替代 scope、断言、证据和缺口。
+2. 用截图数量冒充质量。
+3. 用 API 200 冒充用户路径通过。
+4. 用相邻页面冒充行为证明。
+5. 用 CDS Agent 截图冒充 CDS 平台通过。
+6. 把规范复制到 automation prompt，导致 prompt、memory、技能三套规则漂移。
+7. 报告引用只有几个字，没有解释为什么该规则适用于本轮验收。
+
+## 15.1 报告模板血统
+
+执行类验收报告可以是 HTML，但 HTML 只能由 `create-visual-test-to-kb` 的归档脚本从 Markdown 写作源和 manifest 生成。禁止把临时手写 HTML、一次性调试页面或本地 `/tmp/*.html` 直接上传成每日验收报告。
+
+标准交互 HTML 必须至少满足一个条件:
+
+| 条件 | 用途 |
+|---|---|
+| 含 `map-acceptance-template` 或 `data-template="map-acceptance-interactive-html-v2"` | 当前标准模板标记 |
+| 含 `.layout`、`.hero`、`.evidence-nav`、`#reportBody` | 兼容历史标准模板 |
+
+CDS `/api/reports` 对带 `verdict` 或 `L0/L1/L2` 档位、且标题或正文表明是验收/每日验收/视觉验收的 HTML 报告执行模板血统校验。校验失败时拒收，不创建报告，也不覆盖旧报告。
+
+恢复错误报告的方式是重新归档生成新 report id，并撤销或废弃旧分享链；不要原地修改历史报告来伪造连续性。
+
+## 16. 外部方法论参考
+
+MAP 规范不是简单复制外部标准，而是把通用测试工程原则落到每日验收和 CDS 归档:
+
+- ISTQB glossary 的 impact analysis 和 traceability 用于解释为什么要做影响面与追溯。
+- ISO/IEC/IEEE 29119 用于解释测试过程、测试文档和测试设计技术的行业背景。
+- Google Testing Blog 与 Practical Test Pyramid 用于解释为什么不能把所有风险都交给端到端测试。
+- NIST combinatorial testing 用于解释有限组合覆盖交互风险的价值。

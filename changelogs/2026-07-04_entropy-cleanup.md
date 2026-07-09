@@ -1,1 +1,0 @@
-| chore | doc | 熵清理：D1 0 个，D2 +0/-0，D3 +0/-0，D4 +0/-0，D6 5 条（gw-shadow-mode/gw-dlayer-realmachine/gw-test-matrix/gw-test-matrix-data-driven 内容已由既有 plan/spec/report 文档覆盖；galaxy-trackpad-orbit 补充 design.knowledge-base.mention-network.md 4.3.1 手势与入口动效小节） |

@@ -1,5 +1,3 @@
-using PrdAgent.Infrastructure.LLM;
-
 namespace PrdAgent.Infrastructure.LlmGateway.ImageGen;
 
 /// <summary>
@@ -13,9 +11,9 @@ namespace PrdAgent.Infrastructure.LlmGateway.ImageGen;
 /// </summary>
 public sealed class ImageGenGateway : IImageGenGateway
 {
-    private readonly OpenAIImageClient _imageClient;
+    private readonly IImageGenerationClient _imageClient;
 
-    public ImageGenGateway(OpenAIImageClient imageClient)
+    public ImageGenGateway(IImageGenerationClient imageClient)
     {
         _imageClient = imageClient;
     }

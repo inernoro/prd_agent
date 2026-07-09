@@ -19,6 +19,8 @@
  * 违规清单，让调用方明确「这个字段不归你管」。
  */
 
+import { isSecretEnvKey, isPlaceholderEnvValue } from './env-classifier.js';
+
 export type FieldAuthority = 'repo' | 'platform' | 'user';
 
 export interface FieldAuthorityEntry {
@@ -124,6 +126,65 @@ export function classifyComposeField(path: string): FieldAuthorityEntry & { know
     if (ancestor) return { ...ancestor, known: true };
   }
   return { authority: 'user', reason: '未登记字段，默认按用户权威处理', known: false };
+}
+
+/**
+ * 波4 seed 级权威 —— repo `cds-compose.yml` 定位为「纯结构种子」后,
+ * 需要判定 `x-cds-env` 里每个 env 键「归谁」:
+ *
+ * - `repo-structural`  结构默认值,repo 是权威(如 ASSETS_PROVIDER: tencentCos /
+ *                      TENCENT_COS_PREFIX: data)。repo 可以携带默认,漂移时按
+ *                      repo→CDS 单向同步建议处理。
+ * - `cds-env-scope`    密钥/凭据/占位符,值只应存在于 CDS env scope
+ *                      (`cdscli env get --scope <project>`)。repo **不得**携带
+ *                      实际值或 TODO 占位——携带即视为「应剥离」违规(直接偿还
+ *                      debt.cds.compose-secrets D1:TODO 占位卡死全量 import)。
+ *
+ * 判定只看 key 语义 + value 形态,不做任何网络/DB 查询,纯函数可测。
+ */
+export type EnvSeedBelonging = 'repo-structural' | 'cds-env-scope';
+
+export interface EnvSeedClassification {
+  key: string;
+  belonging: EnvSeedBelonging;
+  /** key 命中密钥关键词(PASSWORD/SECRET/TOKEN/…)。 */
+  isSecret: boolean;
+  /** value 是 TODO/请填写 之类的占位符。 */
+  isPlaceholder: boolean;
+  reason: string;
+}
+
+export function classifyEnvSeed(key: string, value: string | null | undefined): EnvSeedClassification {
+  const isSecret = isSecretEnvKey(key);
+  const isPlaceholder = isPlaceholderEnvValue(value);
+  // 占位符(不管 key 是不是密钥)一律归 CDS env scope —— 它正是 D1 卡 import 的元凶。
+  if (isPlaceholder) {
+    return {
+      key,
+      belonging: 'cds-env-scope',
+      isSecret,
+      isPlaceholder,
+      reason: 'repo 携带占位符值(TODO/请填写),实际值应存于 CDS env scope;repo 结构种子里应移除该键',
+    };
+  }
+  // 密钥/凭据类:即便 repo 写了「真实值」也应剥离(隔离穿透 + 泄密风险)。
+  if (isSecret) {
+    return {
+      key,
+      belonging: 'cds-env-scope',
+      isSecret,
+      isPlaceholder,
+      reason: '密钥/凭据类变量,值只应存于 CDS env scope;repo 结构种子不得携带其值',
+    };
+  }
+  // 其余:非密钥、有具体值 → 结构默认值,repo 可作权威种子。
+  return {
+    key,
+    belonging: 'repo-structural',
+    isSecret,
+    isPlaceholder,
+    reason: '非密钥结构默认值,repo 可作为权威种子;运行时可被 CDS env scope 覆盖',
+  };
 }
 
 export interface ComposePatchViolation {

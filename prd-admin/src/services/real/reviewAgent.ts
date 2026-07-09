@@ -172,6 +172,19 @@ export async function reuploadOnFailure(
   });
 }
 
+/**
+ * 评审过程出错后的恢复：替换附件并触发重新评审，不消耗未通过救机会。
+ */
+export async function reuploadAfterError(
+  id: string,
+  attachmentId: string
+): Promise<ApiResponse<{ message: string }>> {
+  return apiRequest(`/api/review-agent/submissions/${encodeURIComponent(id)}/reupload-after-error`, {
+    method: 'POST',
+    body: { attachmentId },
+  });
+}
+
 /** 获取该 submission 的所有评审历史（按时间倒序） */
 export async function getSubmissionResults(
   id: string

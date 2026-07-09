@@ -9,7 +9,7 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
 > **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/验收`、`/视觉验收`、"视觉验收"、"验收"、"视觉测试"、"验收归档"、"create visual test"
 
 > 一条不可分的流水线:**标准定义测什么/怎么截/怎么命名 → 模拟人类浏览器取证 → 证据落 CDS 验收中心出直达深链**。
-> 主纲在此,完整规则按需加载(见下"按需文件")。**先读 `reference/standard-v2.md`**——那是下限基线,不是参考是必读。
+> 主纲在此,完整规则按需加载(见下"按需文件")。规则 SSOT 先读仓库 `doc/`,外部技能包才读 `references/rules/`;`reference/standard-v2.md` 是执行协议和准入下限,同样必读。
 
 ## 何时用
 
@@ -31,6 +31,18 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
 
 接入新仓库:见文末"跨仓库复用",改 `acceptance.config.json` 一处即可。
 
+## Rule Source SSOT
+
+执行任何验收前,按以下顺序加载规范:
+
+1. 仓库 SSOT: `doc/rule.acceptance.map-enterprise.md`, `doc/rule.acceptance.ssot.md`, `doc/guide.acceptance.daily-sop.md`, `doc/guide.acceptance.report-evidence.md`, `doc/design.acceptance.knowledge-governance.md`。
+2. 技能包离线快照: `references/rules/*.md` 与 `references/rules/manifest.json`。仅当技能安装在外部项目、没有本仓库 `doc/` 时使用。
+3. 执行协议: `reference/standard-v2.md`。它定义归档准入、截图命名、报告结构和脚本约束,不得替代上面的规则源。
+
+`doc/` 是唯一主源。`references/rules/` 由 `python3 scripts/sync-acceptance-rule-snapshots.py` 生成,用于官方技能下载包离线运行。若两者都不存在,必须失败并说明缺少验收规范源;不得临时编一套规则。报告里的“这是什么测试”必须先用自己的语言解释,再链接这些规范文档。
+
+单个验收、每日验收和日报的链路边界、样式差异、归档位置和 Verdict 权限，统一由 `doc/rule.acceptance.map-enterprise.md` 的“验收链路总控矩阵”定义。本技能只承担验收执行和归档，不重新定义日报样式；日报若需要图片，只能借用本技能 harness 的取证环节。
+
 ## 三个核心规矩(v2 相对 v1 的升级,违反即不合格)
 
 1. **模拟人类,禁地址栏直达**:登录后用 `gotoByClick(可见文本)` 点击导航进入目标页,`page.goto` 只许用于登录页。**从导航点不到目标页 = P1 缺陷**(功能做了但用户找不到/没进菜单)——这是 goto 直达永远测不出的真问题。
@@ -38,6 +50,8 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
 3. **命名 + 防 `---`**:报告名业界状态前置 `[{verdict_cn}] {目标} · 验收报告 · {项目} · {日期}`;正文必须以 `# 标题` 打头(目录显示名取 summary 首行,见标准 §2.1)。`archive_report.py` 已内置,手工归档也照此。
 4. **准入门槛(入口准则)**:归档前强制校验——目标有意义、档位/Verdict 合法、截图数达档位下限、证据完整、报告结构齐、无半成品残留;**任一不达标直接拒收、不写库**(见标准 §3.5)。输入不对,输出不可能对。
 5. **证据文件不进代码库**:截图、录屏、临时 HTML、manifest、报告草稿等验收产物必须写到 `/tmp`、系统临时目录、对象存储或知识库,**禁止落到 git 仓库目录内**。默认配置已把 `screenshot.outDir` 与 `report.localOutDir` 指向 `/tmp`;`harness.mjs` 和 `archive_report.py` 会拒绝仓库内截图路径。归档前必须看一眼 `git status --short`,发现 `*.png/*.jpg/*.jpeg/*.webp/*.gif/*.mp4/*.webm` 或 `doc/acceptance/`、`acceptance-*`、`peer-sync-effect-*.html` 这类验收产物在仓库内,先移到 `/tmp` 或删除,不得提交。
+6. **比例原则**:严格不等于吹毛求疵。测试深度必须由风险、用户影响和证明力决定;低风险、非运行态、观察型问题不得被包装成 P0/P1。报告必须说明为什么当前深度足够,也必须说明继续加测不会改变 Verdict 的边界。
+7. **问题可定位**:凡报告写 P0/P1/P2 视觉问题,读者必须能从图里 3 秒定位。缺陷行要写清`位置 + 阻挡物/异常物 + 被影响对象 + 用户影响`,证据图必须有红/橙框或圈和短标签。只写"遮挡""异常""看这里"不合格。
 
 ## 复杂验收前置（每日/PR/commit/未发布分支/缺陷复测/视觉回归/发布前必用）
 
@@ -121,6 +135,7 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
 - `format=html` 使用独立阅读模板,归档脚本负责生成顶部结论区、指标卡、证据缩略图、左侧证据导航、图号锚点、表格搜索、按未通过/有缺陷/未覆盖过滤、章节折叠。
 - HTML 交互只用于阅读和定位证据,不得把验收结论只藏在 JS 状态里。核心结论、缺陷、未覆盖项仍必须以正文表格存在,保证 raw 内容和跨系统同步可读。
 - 不要手写复杂前端应用或远程依赖。报告 HTML 必须单文件可归档,截图走 CDS report assets,总正文仍受 10MB 上限约束。
+- 执行类验收 HTML 必须由 `archive_report.py` 从 Markdown 写作源和 manifest 生成,并带 `map-acceptance-template` 模板标记。禁止把 `/tmp/*.html`、临时手写页面或外部生成的自由样式 HTML 直接上传到 CDS 作为每日/视觉验收报告。CDS 会对带 verdict 或 L0/L1/L2 档位的验收 HTML 做模板血统校验,不合格返回 `acceptance_html_template_required`。
 
 ## 线上报告与通知门禁（自动化/每日验收强制）
 
@@ -258,6 +273,8 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
    - **每日验收必须内置标记法则与验收标准**:每日/昨日验收报告必须有「标记法则与验收标准」章节,把颜色含义、严重级、测试规则、所用验收标准写清楚,让读者不用回看技能文档也知道图上的框是什么意思、为什么最终判通过/不通过。
    - **颜色标记统一**:红色=P0 阻断缺陷(空白/崩溃/核心不可用),橙色=P1/P2 中高风险或体验干扰(遮挡/错位/可用但不稳),蓝色=环境/路径/数据可达性说明(顶栏可见/路由可达/接口返回),绿色=通过证据(主体可见/关键区域正常)。同一张图里同时存在「可达」和「失败」时必须拆成不同颜色标记,不能全用一种颜色。
    - **问题标记必须可定位**:问题区域必须框到具体范围,标签写清严重级 + 现象,如 `P0: 正文区域空白`;禁止只写「有问题」「异常」「看这里」。通过标记也要写清通过了什么,如 `通过: CDS Agent 主体可见`;禁止只写「正常」。
+   - **问题定位自测必须入报告**:日报、争议复测、失败报告必须加「问题定位自测」或等价段落。每条 P0/P1/P2 视觉问题要回答:具体页面区域、异常物是什么、挡住或破坏了什么、用户为什么受影响、图内哪个框/圈证明它。回答不出来就不能把该问题写成有效缺陷。
+   - **规范一致性自测必须入报告**:日报、争议复测、失败报告必须加「规范一致性自测」或等价段落,核对本轮实际流程是否真的使用 `acceptance-test-design -> acceptance-scenario-orchestrator -> create-visual-test-to-kb`,深度标签是否与证据一致,规范引用是否真正改变了测试动作而不是装饰性引用。
    - **截图回读必须显式写进报告**:截图后不仅要自己看一眼,还要在报告里增加「截图回读检查」表,逐图记录是否截歪、是否加载完成、是否空白、问题是否入镜。发现缓慢加载/半截/空白但不是目标缺陷时,必须重拍;如果空白正是目标缺陷,要在图上框出空白区域并在回读表中说明。
 4. **归档(默认进 CDS 验收中心,职责分离)**:`python3 scripts/archive_report.py --config acceptance.config.json --target "<目标>" --module "<模块>" --feature "<功能>" --type "<新增功能|优化|修复>" --verdict <pass|conditional|fail> --tier <L0|L1|L2> --report-md <正文.md> --manifest <outDir>/manifest.json [--branch --commit --pr]`。
    - **归属唯一:CDS**。验收能力归 CDS(平台自带、按项目分类、证据链内置);技能**不再分流到 MAP 知识库**——MAP 等系统通过知识库开放协议(peer-sync)从 CDS 拉取展示。`report.mode` 缺省=`cds`;`local` 为离线兜底;`doc-store` 仅向后兼容(需 config 显式保留)。详见 `../cds/reference/acceptance-reports.md`。

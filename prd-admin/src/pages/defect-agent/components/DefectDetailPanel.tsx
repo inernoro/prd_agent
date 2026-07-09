@@ -2,6 +2,7 @@ import { useMemo, useState, useEffect, useCallback, useRef, type DragEvent, type
 import { createPortal } from 'react-dom';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import ReactMarkdown from 'react-markdown';
+import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import { Button } from '@/components/design/Button';
@@ -106,6 +107,17 @@ function formatMsgTimestamp(ts: string | null | undefined) {
   return `${y}.${mo}.${day} ${h}:${mi}:${sec}`;
 }
 
+/**
+ * 缺陷描述 / 评论 markdown 渲染的自定义组件：
+ * 超链接一律新标签打开并带安全 rel，避免在弹窗内直接跳走丢失上下文。
+ * 样式（颜色/下划线/换行）走 .defect-md CSS。
+ */
+const DEFECT_MD_COMPONENTS: Components = {
+  a: ({ node: _node, ...props }) => (
+    <a {...props} target="_blank" rel="noopener noreferrer" />
+  ),
+};
+
 function isImageAttachment(att: DefectAttachment): boolean {
   return att.mimeType?.startsWith('image/') || false;
 }
@@ -114,7 +126,11 @@ function isLogAttachment(att: DefectAttachment): boolean {
   return att.type === DefectAttachmentType.LogRequest || att.type === DefectAttachmentType.LogError;
 }
 
-export function DefectDetailPanel() {
+interface DefectDetailPanelProps {
+  onClose?: () => void;
+}
+
+export function DefectDetailPanel({ onClose }: DefectDetailPanelProps) {
   const {
     defects,
     selectedDefectId,
@@ -264,7 +280,10 @@ export function DefectDetailPanel() {
 
   if (!defect) return null;
 
-  const handleClose = () => setSelectedDefectId(null);
+  const handleClose = () => {
+    setSelectedDefectId(null);
+    onClose?.();
+  };
 
   const handleDeleteClick = () => {
     setConfirmingDelete(true);
@@ -614,7 +633,7 @@ export function DefectDetailPanel() {
                   contentSegments.map((seg, idx) =>
                     seg.type === 'text' ? (
                       <div key={idx} className="defect-md">
-                        <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+                        <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={DEFECT_MD_COMPONENTS}>
                           {seg.content}
                         </ReactMarkdown>
                       </div>
@@ -1022,7 +1041,7 @@ export function DefectDetailPanel() {
                           {msgSegments.map((seg, idx) =>
                             seg.type === 'text' ? (
                               <div key={idx} className="defect-md text-[12px]">
-                                <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+                                <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={DEFECT_MD_COMPONENTS}>
                                   {seg.content}
                                 </ReactMarkdown>
                               </div>

@@ -12,7 +12,7 @@ export function Chip({ label, color, bg, title }: { label: string; color: string
         alignItems: 'center',
         borderRadius: 999,
         padding: '0 6px',
-        height: 18,
+        height: 17,
         fontSize: 10,
         fontWeight: 600,
         flexShrink: 0,
@@ -54,8 +54,8 @@ export function SectionLoader({ text }: { text?: string }) {
 type BtnVariant = 'primary' | 'secondary' | 'ghost';
 
 const BTN_STYLE: Record<BtnVariant, CSSProperties> = {
-  primary: { background: 'var(--accent)', color: '#fff', border: '1px solid transparent' },
-  secondary: { background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)' },
+  primary: { background: 'var(--accent)', color: 'var(--accent-contrast)', border: '1px solid transparent' },
+  secondary: { background: 'var(--bg-input)', color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)' },
   ghost: { background: 'transparent', color: 'var(--text-secondary)', border: '1px solid transparent' },
 };
 
@@ -83,7 +83,7 @@ export function Button({
         gap: 6,
         opacity: rest.disabled ? 0.5 : 1,
         cursor: rest.disabled ? 'not-allowed' : 'pointer',
-        transition: 'background 0.15s, opacity 0.15s',
+        transition: 'background 0.15s, opacity 0.15s, border-color 0.15s, color 0.15s',
         ...style,
       }}
     >
@@ -119,7 +119,7 @@ export function TabBar<K extends string>({
   onChange: (k: K) => void;
 }) {
   return (
-    <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--border-subtle)', flexShrink: 0 }}>
+    <div style={{ display: 'flex', gap: 2, borderBottom: '1px solid var(--border-subtle)', flexShrink: 0 }}>
       {items.map((it) => {
         const active = it.key === activeKey;
         return (
@@ -129,11 +129,11 @@ export function TabBar<K extends string>({
             style={{
               background: 'transparent',
               border: 'none',
-              padding: '8px 12px',
-              fontSize: 13,
+              padding: '9px 10px',
+              fontSize: 12,
               fontWeight: active ? 600 : 500,
               color: active ? 'var(--text-primary)' : 'var(--text-muted)',
-              borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
+              borderBottom: active ? '1px solid var(--text-primary)' : '1px solid transparent',
               marginBottom: -1,
             }}
           >

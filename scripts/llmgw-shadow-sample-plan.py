@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+"""Plan bounded LLM Gateway shadow sample top-up batches from a coverage JSON.
+
+This script is read-only. It never calls MAP, llmgw, or model providers. It only
+loads a JSON report produced by scripts/llmgw-shadow-coverage-report.py and
+computes how many low-cost seed batches are still missing.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+def _load_json(path: str) -> dict:
+    with open(path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    if not isinstance(data, dict):
+        raise SystemExit(f"coverage JSON root must be an object: {path}")
+    return data
+
+
+def _positive_int(value: str, name: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"{name} must be an integer") from exc
+    if parsed < 0:
+        raise argparse.ArgumentTypeError(f"{name} must be >= 0")
+    return parsed
+
+
+def _coverage_failure_reason(message: str) -> str:
+    reason = message.strip()
+    separator_indexes = [reason.rfind(separator) for separator in (":", "：")]
+    label_separator_index = max(separator_indexes)
+    if label_separator_index >= 0:
+        candidate = reason[label_separator_index + 1:].strip()
+        if candidate:
+            reason = candidate
+    return reason
+
+
+def _is_benign_coverage_failure(message: str) -> bool:
+    benign_prefixes = (
+        "样本不足",
+        "覆盖时长不足",
+    )
+    reason = _coverage_failure_reason(message)
+    return any(reason.startswith(prefix) for prefix in benign_prefixes)
+
+
+def _parse_dt(value: object) -> datetime | None:
+    if not value:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _cell_gap(cell: dict, batch_yield: int) -> dict:
+    label = str(cell.get("label") or "")
+    total = int(cell.get("total") or 0)
+    required = int(cell.get("requiredTotal") or 0)
+    critical = int(cell.get("critical") or 0)
+    http_fail = int(cell.get("httpFail") or 0)
+    coverage_hours = float(cell.get("coverageHours") or 0)
+    min_coverage_hours = float(cell.get("minCoverageHours") or 0)
+    failures = [str(item) for item in (cell.get("failures") or [])]
+    first = _parse_dt(cell.get("firstComparedAt"))
+    last = _parse_dt(cell.get("lastComparedAt"))
+    missing = max(0, required - total)
+    batches_needed = 0 if missing == 0 else (missing + max(1, batch_yield) - 1) // max(1, batch_yield)
+    coverage_read_ready = all(_is_benign_coverage_failure(item) for item in failures)
+    return {
+        "label": label,
+        "total": total,
+        "requiredTotal": required,
+        "missingSamples": missing,
+        "batchesNeeded": batches_needed,
+        "coverageHours": coverage_hours,
+        "minCoverageHours": min_coverage_hours,
+        "coverageReady": coverage_hours >= min_coverage_hours,
+        "firstComparedAt": first.isoformat() if first else None,
+        "lastComparedAt": last.isoformat() if last else None,
+        "critical": critical,
+        "httpFail": http_fail,
+        "qualityReady": critical == 0 and http_fail == 0,
+        "coverageReadReady": coverage_read_ready,
+        "failures": failures,
+    }
+
+
+def _can_extend_window(cell_reports: list[dict], now: datetime) -> bool:
+    needing_window = [
+        item for item in cell_reports
+        if item["requiredTotal"] > 0 and item["missingSamples"] == 0 and not item["coverageReady"]
+    ]
+    if not needing_window:
+        return False
+    for item in needing_window:
+        first = _parse_dt(item.get("firstComparedAt"))
+        if first is None:
+            return False
+        elapsed_hours = max(0.0, (now - first).total_seconds() / 3600)
+        if elapsed_hours < float(item["minCoverageHours"]):
+            return False
+    return True
+
+
+def _write_json(path: str, report: dict) -> None:
+    if not path:
+        return
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(report, fh, ensure_ascii=False, indent=2, sort_keys=True)
+        fh.write("\n")
+
+
+def _write_markdown(path: str, report: dict) -> None:
+    if not path:
+        return
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+    def cell(value: object) -> str:
+        return str(value).replace("|", "\\|")
+
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("# LLM Gateway Shadow Sample Plan\n\n")
+        for key in (
+            "generatedAt",
+            "coverageJson",
+            "coverageVerdict",
+            "releaseCommit",
+            "batchYield",
+            "maxBatches",
+            "remainingBatchesNeeded",
+            "recommendedBatches",
+            "canRunRecommendedBatches",
+            "reason",
+        ):
+            fh.write(f"- {key}: `{cell(report.get(key))}`\n")
+        fh.write("\n| cell | total | required | missing | batchesNeeded | coverageHours | minCoverageHours | critical | httpFail |\n")
+        fh.write("|---|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+        for item in report["cells"]:
+            fh.write(
+                f"| {cell(item['label'])} | {item['total']} | {item['requiredTotal']} | "
+                f"{item['missingSamples']} | {item['batchesNeeded']} | "
+                f"{round(float(item['coverageHours']), 2)} | {round(float(item['minCoverageHours']), 2)} | "
+                f"{item['critical']} | {item['httpFail']} |\n"
+            )
+
+
+def build_report(args: argparse.Namespace) -> dict:
+    coverage = _load_json(args.coverage_json)
+    now = datetime.now(timezone.utc)
+    report_failures = [str(item) for item in (coverage.get("failures") or [])]
+    cells = coverage.get("cells") or []
+    if not isinstance(cells, list):
+        raise SystemExit("coverage JSON field 'cells' must be a list")
+
+    cell_reports = [_cell_gap(cell, args.batch_yield) for cell in cells if isinstance(cell, dict)]
+    remaining_batches_needed = max((item["batchesNeeded"] for item in cell_reports), default=0)
+    report_read_ready = all(_is_benign_coverage_failure(item) for item in report_failures)
+    has_coverage_read_failure = not report_read_ready or not cell_reports or any(not item["coverageReadReady"] for item in cell_reports)
+    has_quality_failure = any(not item["qualityReady"] for item in cell_reports)
+    coverage_ready = all(item["coverageReady"] for item in cell_reports) if cell_reports else False
+    samples_ready = remaining_batches_needed == 0
+    recommended_batches = min(args.max_batches, remaining_batches_needed)
+
+    if has_coverage_read_failure:
+        reason = "coverage-read-failure"
+        can_run = False
+        recommended_batches = 0
+    elif has_quality_failure:
+        reason = "quality-failure"
+        can_run = False
+    elif samples_ready and coverage_ready:
+        reason = "already-ready"
+        can_run = False
+        recommended_batches = 0
+    elif remaining_batches_needed <= 0:
+        if args.allow_window_extension and args.max_batches > 0 and _can_extend_window(cell_reports, now):
+            reason = "window-extension-top-up"
+            can_run = True
+            recommended_batches = 1
+        else:
+            reason = "wait-coverage-window"
+            can_run = False
+            recommended_batches = 0
+    elif args.max_batches <= 0:
+        reason = "max-batches-zero"
+        can_run = False
+    else:
+        reason = "bounded-top-up"
+        can_run = recommended_batches > 0
+
+    return {
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "coverageJson": args.coverage_json,
+        "coverageVerdict": coverage.get("verdict"),
+        "releaseCommit": coverage.get("releaseCommit") or "",
+        "batchYield": args.batch_yield,
+        "maxBatches": args.max_batches,
+        "remainingBatchesNeeded": remaining_batches_needed,
+        "recommendedBatches": recommended_batches,
+        "canRunRecommendedBatches": can_run,
+        "reason": reason,
+        "coverageFailures": report_failures,
+        "cells": cell_reports,
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Plan bounded shadow sample top-up batches from coverage JSON")
+    parser.add_argument("--coverage-json", required=True, help="Path to llmgw-shadow-coverage-report.py JSON output")
+    parser.add_argument("--batch-yield", type=lambda v: _positive_int(v, "batch-yield"), default=1,
+                        help="Expected sample increment per batch for the target cell, default 1")
+    parser.add_argument("--max-batches", type=lambda v: _positive_int(v, "max-batches"),
+                        default=int(os.environ.get("LLMGW_SHADOW_SAMPLE_PLAN_MAX_BATCHES", "3")),
+                        help="Maximum batches to recommend in this run, default 3")
+    parser.add_argument("--json-out", default="")
+    parser.add_argument("--report-md", default="")
+    parser.add_argument("--print-json", action="store_true")
+    parser.add_argument("--allow-window-extension", action="store_true",
+                        help="Recommend exactly one low-cost batch when samples are full, quality is clean, and the first sample is already old enough to extend coverageHours to the required window.")
+    args = parser.parse_args()
+
+    report = build_report(args)
+    _write_json(args.json_out, report)
+    _write_markdown(args.report_md, report)
+    if args.print_json:
+        print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+
+    print("LLM Gateway shadow sample plan")
+    print(f"- remainingBatchesNeeded={report['remainingBatchesNeeded']}")
+    print(f"- recommendedBatches={report['recommendedBatches']}")
+    print(f"- canRunRecommendedBatches={str(report['canRunRecommendedBatches']).lower()}")
+    print(f"- reason={report['reason']}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1507,6 +1507,7 @@ export {
   getChangelogReleaseByVersion,
   getChangelogGitHubLogs,
   getChangelogGitHubPendingReview,
+  getChangelogGitHubHotfixes,
   postChangelogAiSummary,
   listChangelogReportSources,
   createChangelogReportSource,
@@ -1526,6 +1527,8 @@ export type {
   GitHubLogsView,
   GitHubPendingReviewEntry,
   GitHubPendingReviewView,
+  GitHubHotfixEntry,
+  GitHubHotfixesView,
   ChangelogAiSummarySubtab,
   ChangelogAiSummaryDto,
   ChangelogReportSource,
@@ -1881,6 +1884,7 @@ export {
   getAllSubmissions as getAllReviewSubmissions,
   getSubmission as getReviewSubmission,
   rerunSubmission as rerunReviewSubmission,
+  reuploadAfterError as reuploadReviewAfterError,
   reuploadOnFailure as reuploadReviewOnFailure,
   getSubmissionResults as getReviewSubmissionResults,
   getResultStreamUrl as getReviewResultStreamUrl,
@@ -2006,6 +2010,7 @@ export {
   getDocStoreShareView,
   listDocStoreShareEntries,
   getDocStoreShareEntryContent,
+  getDocStoreShareGraph,
   getDocumentStoreFolders,
 } from '@/services/real/documentStore';
 export type {

@@ -169,6 +169,7 @@ public class VideoGenRunWorker : BackgroundService
 
         using var scope = _scopeFactory.CreateScope();
         var client = scope.ServiceProvider.GetRequiredService<IOpenRouterVideoClient>();
+        var ctxAccessor = scope.ServiceProvider.GetRequiredService<ILLMRequestContextAccessor>();
 
         // ─── 提交任务 ───
         var prompt = run.DirectPrompt ?? string.Empty;
@@ -196,6 +197,19 @@ public class VideoGenRunWorker : BackgroundService
         // 置终态不提交，避免烧视频额度。覆盖「claim 与 submit 之间」的取消窗口（Codex review）。
         var freshBeforeSubmit = await _db.VideoGenRuns.Find(x => x.Id == run.Id).FirstOrDefaultAsync(CancellationToken.None);
         if (freshBeforeSubmit?.CancelRequested == true) { await CancelRunAsync(run); return; }
+
+        using var _ = ctxAccessor.BeginScope(new LlmRequestContext(
+            RequestId: run.Id,
+            GroupId: null,
+            SessionId: run.Id,
+            UserId: run.OwnerAdminId,
+            ViewRole: null,
+            DocumentChars: null,
+            DocumentHash: null,
+            SystemPromptRedacted: "[VIDEO_GEN_DIRECT]",
+            RequestType: ModelTypes.VideoGen,
+            AppCallerCode: appCallerCode,
+            ForceFullShadowSample: run.ForceFullShadowSample));
 
         var submitResult = await client.SubmitAsync(submitReq, CancellationToken.None);
         if (!submitResult.Success || string.IsNullOrWhiteSpace(submitResult.JobId))
@@ -434,7 +448,8 @@ public class VideoGenRunWorker : BackgroundService
             DocumentHash: null,
             SystemPromptRedacted: null,
             RequestType: "chat",
-            AppCallerCode: AppCallerRegistry.VideoAgent.Script.Chat
+            AppCallerCode: AppCallerRegistry.VideoAgent.Script.Chat,
+            ForceFullShadowSample: run.ForceFullShadowSample
         ));
 
         var userPrompt = string.IsNullOrWhiteSpace(run.StyleDescription)
@@ -452,7 +467,7 @@ public class VideoGenRunWorker : BackgroundService
         };
 
         var resolution = await gateway.ResolveModelAsync(
-            AppCallerRegistry.VideoAgent.Script.Chat, ModelTypes.Chat, null, CancellationToken.None);
+            AppCallerRegistry.VideoAgent.Script.Chat, ModelTypes.Chat, null, ct: CancellationToken.None);
         if (!resolution.Success)
         {
             await FailRunAsync(run, "MODEL_RESOLVE_FAILED", $"模型调度失败: {resolution.ErrorMessage}");
@@ -632,6 +647,7 @@ public class VideoGenRunWorker : BackgroundService
 
         using var scope = _scopeFactory.CreateScope();
         var client = scope.ServiceProvider.GetRequiredService<IOpenRouterVideoClient>();
+        var ctxAccessor = scope.ServiceProvider.GetRequiredService<ILLMRequestContextAccessor>();
 
         try
         {
@@ -647,6 +663,19 @@ public class VideoGenRunWorker : BackgroundService
                 UserId = run.OwnerAdminId,
                 RequestId = $"{run.Id}_scene_{sceneIdx}",
             };
+
+            using var _ = ctxAccessor.BeginScope(new LlmRequestContext(
+                RequestId: $"{run.Id}_scene_{sceneIdx}",
+                GroupId: null,
+                SessionId: run.Id,
+                UserId: run.OwnerAdminId,
+                ViewRole: null,
+                DocumentChars: null,
+                DocumentHash: null,
+                SystemPromptRedacted: "[VIDEO_GEN_SCENE]",
+                RequestType: ModelTypes.VideoGen,
+                AppCallerCode: appCallerCode,
+                ForceFullShadowSample: run.ForceFullShadowSample));
 
             var submitResult = await client.SubmitAsync(submitReq, CancellationToken.None);
             if (!submitResult.Success || string.IsNullOrWhiteSpace(submitResult.JobId))
@@ -735,7 +764,8 @@ public class VideoGenRunWorker : BackgroundService
             UserId: run.OwnerAdminId,
             ViewRole: null, DocumentChars: null, DocumentHash: null, SystemPromptRedacted: null,
             RequestType: "chat",
-            AppCallerCode: AppCallerRegistry.VideoAgent.Script.Chat));
+            AppCallerCode: AppCallerRegistry.VideoAgent.Script.Chat,
+            ForceFullShadowSample: run.ForceFullShadowSample));
 
         var systemPrompt = "你是视频导演。请重新生成一个英文 prompt 来描述同一主题的新镜头，画面要与原 prompt 不同但风格一致。直接输出 prompt 文本，不要解释、不要 JSON。";
         var userMsg = $"原主题：{scene.Topic}\n原 prompt：{scene.Prompt}\n\n请生成一个新 prompt。";
@@ -743,7 +773,7 @@ public class VideoGenRunWorker : BackgroundService
             userMsg = $"统一风格：{run.StyleDescription}\n\n" + userMsg;
 
         var resolution = await gateway.ResolveModelAsync(
-            AppCallerRegistry.VideoAgent.Script.Chat, ModelTypes.Chat, null, CancellationToken.None);
+            AppCallerRegistry.VideoAgent.Script.Chat, ModelTypes.Chat, null, ct: CancellationToken.None);
         if (!resolution.Success)
         {
             await MarkSceneErrorAsync(run.Id, sceneIdx, "模型调度失败: " + resolution.ErrorMessage);

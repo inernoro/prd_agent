@@ -372,7 +372,7 @@ public class OpenApiController : ControllerBase
             // 先解析模型（廉价、不占额）。解析失败时不消耗配额/限速槽——避免错配绑定（模型/池被删）空烧客户每日额度（Bugbot）。
             var resolution = await _gateway.ResolveModelAsync(
                 AppCallerRegistry.OpenApi.Proxy.Generation, ModelTypes.ImageGen,
-                expectedModel: string.IsNullOrWhiteSpace(chosen) ? null : chosen, CancellationToken.None);
+                expectedModel: string.IsNullOrWhiteSpace(chosen) ? null : chosen, ct: CancellationToken.None);
 
             if (!resolution.Success)
             {
@@ -459,7 +459,7 @@ public class OpenApiController : ControllerBase
             // 无白名单：列默认池解析出的模型
             try
             {
-                var res = await _gateway.ResolveModelAsync(code, modelType, expectedModel: null, CancellationToken.None);
+                var res = await _gateway.ResolveModelAsync(code, modelType, expectedModel: null, ct: CancellationToken.None);
                 if (res.Success) AddModel(res.ActualModel, res.ActualPlatformName);
             }
             catch (Exception ex) { _logger.LogWarning(ex, "[OpenApi] /v1/models 解析 {Code} 失败", code); }

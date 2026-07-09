@@ -53,6 +53,18 @@ public interface ILlmGateway
         CancellationToken ct = default);
 
     /// <summary>
+    /// 使用调用方提供的临时上游 profile 做连通性测试。该方法只用于内部 M2M，
+    /// 使用户保存的 runtime profile 测试也通过 llmgw-serve 触达上游，而不是 MAP 进程直连。
+    /// </summary>
+    Task<GatewayRawResponse> TestUpstreamProfileAsync(
+        GatewayUpstreamProfileTestRequest request,
+        CancellationToken ct = default)
+        => Task.FromResult(GatewayRawResponse.Fail(
+            "PROFILE_TEST_UNSUPPORTED",
+            "当前 ILlmGateway 实现未支持 runtime profile 上游连通性测试。",
+            501));
+
+    /// <summary>
     /// 预解析模型调度结果（不发送请求）
     /// 用于前端展示可用模型池信息
     /// </summary>
@@ -60,6 +72,8 @@ public interface ILlmGateway
         string appCallerCode,
         string modelType,
         string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null,
         CancellationToken ct = default);
 
     /// <summary>
@@ -85,7 +99,9 @@ public interface ILlmGateway
         int maxTokens = 4096,
         double temperature = 0.2,
         bool includeThinking = false,
-        string? expectedModel = null);
+        string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null);
 }
 
 /// <summary>

@@ -240,6 +240,39 @@ export interface EnvMeta {
 }
 
 /**
+ * 波2 配置检查器 — env 逐 key 溯源(公开契约,GET /branches/:id/effective-config)。
+ *
+ * 来源枚举分两段(与容器注入的两段式一致):
+ *   段A 分支 customEnv 合并(与既有 effective-env 端点口径完全一致):
+ *     cds-builtin(CDS_HOST 等系统注入) / cds-derived(CDS_PROJECT_ID/SLUG 项目身份,
+ *     保留 key 不可覆盖) / mirror(镜像加速) / global(CDS 全局变量 _global) /
+ *     project(项目环境变量) / branch(分支级 env scope)
+ *   段B 单容器运行时注入(resolveProfileRuntimeEnv 的分层):
+ *     profile(项目 BuildProfile.env 底座) / extra-service(分支临时额外服务自带 env) /
+ *     branch-override(分支 profileOverrides[x].env) / deploy-mode(部署模式 env) /
+ *     platform-injected(JWT 兜底 / node PATH / 版本元数据等平台注入,detail 细分) /
+ *     per-branch-db(per-branch DB 隔离对库名 key 的改写)
+ */
+export type EnvSource =
+  | 'cds-builtin' | 'cds-derived' | 'mirror' | 'global' | 'project' | 'branch'
+  | 'profile' | 'extra-service' | 'branch-override' | 'deploy-mode'
+  | 'platform-injected' | 'per-branch-db';
+
+export interface EnvKeyProvenance {
+  key: string;
+  /** 输出到 API 前必须过 maskSecrets SSOT,状态层保持明文 */
+  value: string;
+  /** 最终生效值来自哪一层(last-writer-wins) */
+  source: EnvSource;
+  /** 细分说明:'jwt-fallback' | 'node-runtime' | 'version-metadata' | 'per-branch-db-suffix' 等 */
+  detail?: string;
+  /** 被更高层覆盖(shadow)的更低层来源,按合并顺序排列 — 继承链展示用 */
+  shadowed?: EnvSource[];
+  /** 值经过 ${VAR} 模板展开 */
+  templated?: boolean;
+}
+
+/**
  * Phase 9.5 — env 修改审计条目。
  *
  * 每次 PUT /env 或 PUT /env/:key 时追加一条,记录"谁、何时、改了哪些 key"。
@@ -578,6 +611,15 @@ export interface BranchEntry {
    */
   subdomainAliases?: string[];
   /**
+   * Full custom hostnames for this branch, such as "example.com" or
+   * "www.example.com". Unlike subdomainAliases these are not combined with
+   * CDS_ROOT_DOMAINS; the forwarder publishes them as exact Host routes.
+   *
+   * Edge/Nginx must also be configured to accept these hosts, typically via
+   * CDS_CUSTOM_PREVIEW_HOSTS, otherwise traffic will never reach the forwarder.
+   */
+  customDomains?: string[];
+  /**
    * Per-branch overrides keyed by BuildProfile.id. Each entry extends (rather
    * than replaces) the shared public BuildProfile — unset fields inherit from
    * the baseline. Merged into the effective profile by `resolveEffectiveProfile`
@@ -602,6 +644,24 @@ export interface BranchEntry {
    * (保护底座,要按分支改项目服务请用 profileOverrides,不是这里)。
    */
   extraProfiles?: BuildProfile[];
+  /**
+   * 波3 配置树:分支派生溯源(2026-07-06,快照拷贝语义)。
+   *
+   * 三层判定策略(design.cds.config-tree):
+   *   1. 手动创建(POST /branches 带 sourceBranchId)= 显式选择、**真拷贝**:
+   *      深拷贝来源分支的 profileOverrides + extraProfiles(拷贝赢项目模板),之后各自独立;
+   *   2. webhook push 自动建分支 = 保持项目模板,**不猜**来源(push payload 无可靠派生信号);
+   *   3. PR opened/reopened = 仅回填指针(base 分支),**不拷贝配置**(分支往往已按模板部署,
+   *      静默改写违反最小惊讶);要拷贝走显式端点 POST /branches/:id/copy-config-from/:sourceId。
+   *
+   * 快照拷贝(用户拍板):拷贝后两分支各自独立,父分支后续改动**不会**跟随;
+   * 指针仅用于溯源展示与「一键拉取配置」入口。纯增量可选字段,旧数据零迁移。
+   */
+  derivedFromBranchId?: string;
+  /** 来源分支的 git 分支名(来源被删后仍可展示) */
+  derivedFromBranchName?: string;
+  /** 派生指针写入时间(ISO) */
+  derivedAt?: string;
   /**
    * GitHub Checks integration — populated when the branch was
    * auto-created by a webhook push or the user linked a repo to the
@@ -1535,6 +1595,14 @@ export interface AcceptanceReportMeta {
   prNumber?: number | null;
   /** E1 部署上下文：部署模式（如 'fast' 极速版 / 'source' 源码 / 'preview'）；可空。 */
   deployMode?: string | null;
+  /** 规范/外部源同步：源文档标识；普通验收报告为空。 */
+  sourceId?: string | null;
+  /** 规范/外部源同步：仓库内源文档路径；普通验收报告为空。 */
+  sourcePath?: string | null;
+  /** 规范/外部源同步：源内容哈希，如 sha256:...；普通验收报告为空。 */
+  contentHash?: string | null;
+  /** 规范/外部源同步：发布到 CDS 的时间；普通验收报告为空。 */
+  publishedAt?: string | null;
   /**
    * E6 匿名分享 token（只读公开链接 `/r/<token>`，补登录态门控缺口）。
    * 为 null 时未开启分享；撤销分享即置回 null。token 是不可枚举的随机串。
@@ -2041,6 +2109,18 @@ export interface ConfigSnapshot {
     customEnv: CustomEnvStore;
     infraServices: InfraService[];
     routingRules: RoutingRule[];
+    /**
+     * 波3 配置树:分支层配置(profileOverrides / extraProfiles / 派生指针)。
+     * 只收「有配置」的分支(控体积);旧快照无此字段 → 回滚时分支层 no-op。
+     * 回滚语义:仅恢复**仍存在**的分支(快照后新建的不动、已删的不复活)。
+     */
+    branchConfigs?: Record<string, {
+      profileOverrides?: Record<string, BuildProfileOverride>;
+      extraProfiles?: BuildProfile[];
+      derivedFromBranchId?: string;
+      derivedFromBranchName?: string;
+      derivedAt?: string;
+    }>;
   };
   /** 快照字节数（存 state.json 时粗略统计，用于 UI 展示） */
   sizeBytes?: number;
@@ -2653,22 +2733,58 @@ export interface AccessRequest {
 }
 
 /**
- * Global (bootstrap-equivalent) Agent Key — NOT scoped to any project.
+ * AgentKeyAccess — 一把 `cdsg_` 通行证的授权作用域(2026-07-09 统一授权模型)。
  *
- * Project-scoped AgentKey (`cdsp_<slug12>_<suffix>`) can't create projects
- * (see routes/projects.ts POST handler → 403 project_key_cannot_create),
- * which creates a chicken-and-egg problem: an AI assistant needs a key to
- * call POST /api/projects, but the only keys it can obtain from the UI
- * are project-scoped.
+ * 背景:早先 `cdsg_` 全局 key 是"全权 admin"一档到底 —— 能建项目、能操作所有
+ * 现有项目,泄露即全盘失守。用户要求把授权拆成可勾选的作用域,并让"签发全局 key"
+ * 默认只给"创建项目"(怕别人搞坏现有项目)。于是引入本描述符:
  *
- * GlobalAgentKey solves that by issuing a prefix-distinct `cdsg_<suffix>`
- * key that behaves like the bootstrap AI_ACCESS_KEY: no project scope
- * enforcement, can create/delete projects and work across project boundaries.
+ *   { canCreateProjects, projects }
  *
- * Security note: because this is bootstrap-equivalent, the UI that issues
- * it MUST show a loud warning ("don't hand this out casually"). The user
- * is expected to mint one, hand it to a specific Agent, and revoke it
- * after that Agent finishes provisioning.
+ * - `canCreateProjects`: 是否允许 POST /api/projects 创建新项目。
+ * - `projects`:
+ *     'all'      → 操作所有现有项目(旧全权 admin 行为,危险,需显式勾选)。
+ *     string[]   → 只能操作列表里的项目(可为空 [] = 不能碰任何现有项目)。
+ *
+ * 组合示例:
+ *   { canCreateProjects: true,  projects: [] }        —— 「只能建项目」的安全默认。
+ *                                                        建成后由 POST /projects 返回
+ *                                                        新项目的 cdsp_ scoped key。
+ *   { canCreateProjects: true,  projects: 'all' }     —— 旧全权 admin(opt-in)。
+ *   { canCreateProjects: false, projects: ['a','b'] } —— 跨指定项目、但不能建项目。
+ *
+ * 向后兼容:存量 `cdsg_` key 的 state 里没有 `access` 字段 → 解析时按旧语义
+ * 缺省为 { canCreateProjects: true, projects: 'all' }(全权),保证零回归。见
+ * state.ts resolveGlobalAgentKeyAccess()。bootstrap 静态 AI_ACCESS_KEY 不进
+ * globalAgentKeys、永不被 stamp access → 始终全权(见 server.ts)。
+ */
+export interface AgentKeyAccess {
+  /** 允许创建新项目(POST /api/projects)。 */
+  canCreateProjects: boolean;
+  /**
+   * 可操作的现有项目范围。'all' = 所有项目(admin);string[] = 指定项目 id 列表
+   * (空数组 = 不能操作任何现有项目)。
+   */
+  projects: 'all' | string[];
+}
+
+/**
+ * Global (bootstrap-equivalent) Agent Key — carries an explicit access scope.
+ *
+ * Project-scoped AgentKey (`cdsp_<slug12>_<suffix>`) is bound to exactly one
+ * project by its storage location and can't create projects (see
+ * routes/projects.ts POST handler → 403 project_key_cannot_create), which
+ * created a chicken-and-egg problem: an AI needs a key to call
+ * POST /api/projects, but the UI only handed out project-scoped keys.
+ *
+ * A `cdsg_<suffix>` key lives in the top-level store and carries an
+ * {@link AgentKeyAccess} descriptor deciding what it may do — create projects
+ * and/or operate a set (or 'all') of existing projects. Legacy entries with
+ * no `access` resolve to full admin for back-compat.
+ *
+ * Security note: an 'all'-projects key is bootstrap-equivalent — the UI that
+ * issues one MUST show a loud warning. The safe default at signing time is
+ * create-only ({ canCreateProjects: true, projects: [] }).
  *
  * Storage parallels AgentKey: only sha256 of the plaintext is persisted;
  * plaintext is shown once at signing time.
@@ -2682,6 +2798,11 @@ export interface GlobalAgentKey {
   hash: string;
   /** Permission scope. Always 'rw' — a placeholder for future tiers. */
   scope: 'rw';
+  /**
+   * 授权作用域。缺省(存量 key 无此字段)时按全权 admin 解析,见
+   * state.ts resolveGlobalAgentKeyAccess()。
+   */
+  access?: AgentKeyAccess;
   /** ISO timestamp of sign time. */
   createdAt: string;
   /** GitHub login of the signer if github auth mode, else undefined. */

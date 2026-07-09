@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+
 /**
  * Preview-slug 计算与解析的唯一来源（Single Source of Truth）。
  *
@@ -43,6 +45,17 @@ export function slugifyForPreview(s: string): string {
     .replace(/[^a-z0-9-]+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
+}
+
+const DNS_LABEL_MAX_LENGTH = 63;
+const PREVIEW_SLUG_HASH_LENGTH = 8;
+
+function capPreviewSlug(slug: string): string {
+  if (slug.length <= DNS_LABEL_MAX_LENGTH) return slug;
+  const hash = crypto.createHash('sha1').update(slug).digest('hex').slice(0, PREVIEW_SLUG_HASH_LENGTH);
+  const prefixLength = DNS_LABEL_MAX_LENGTH - PREVIEW_SLUG_HASH_LENGTH - 1;
+  const prefix = slug.slice(0, prefixLength).replace(/-+$/g, '');
+  return `${prefix || slug.slice(0, prefixLength)}-${hash}`;
 }
 
 export interface PreviewProjectIdentity {
@@ -277,18 +290,21 @@ export function previewSlugMatchPercent(
  */
 export function computePreviewSlug(branch: string, projectSlug: string): string {
   const project = slugifyForPreview(projectSlug);
-  if (!branch) return project;
+  if (!branch) return capPreviewSlug(project);
   // 第一个 `/` 切一刀；多级 `/` 在 tail 里走 slugify 变 `-`。
   const cutAt = branch.indexOf('/');
+  let slug = project;
   if (cutAt < 0) {
     // 无 prefix：`${tail}-${project}`，中段省略
     const tail = slugifyForPreview(branch);
-    return tail ? `${tail}-${project}` : project;
+    slug = tail ? `${tail}-${project}` : project;
+    return capPreviewSlug(slug);
   }
   const prefix = slugifyForPreview(branch.slice(0, cutAt));
   const tail = slugifyForPreview(branch.slice(cutAt + 1));
   // prefix 被规范化后可能为空（如分支名以 `/` 开头），fallback 到无 prefix 形式
-  if (!prefix) return tail ? `${tail}-${project}` : project;
-  if (!tail) return `${prefix}-${project}`;
-  return `${tail}-${prefix}-${project}`;
+  if (!prefix) slug = tail ? `${tail}-${project}` : project;
+  else if (!tail) slug = `${prefix}-${project}`;
+  else slug = `${tail}-${prefix}-${project}`;
+  return capPreviewSlug(slug);
 }

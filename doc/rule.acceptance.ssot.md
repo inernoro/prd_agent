@@ -1,0 +1,176 @@
+# MAP 验收规范 SSOT · 规则
+
+> **版本**：v1.0 | **日期**：2026-07-07 | **状态**：已落地
+
+## 1. 目标
+
+本规则定义 MAP 自动化验收规范的单一事实源、技能引用方式、海鲜市场分发 fallback、CDS 发布视图和漂移校验。目标是避免三类长期问题:
+
+1. 规范在 `doc/`、技能、CDS 文档、automation prompt 中各写一份，语义漂移。
+2. 技能通过海鲜市场下载给外部用户后，引用仓库 `doc/` 但外部环境没有这些文件。
+3. CDS 文档被人工改成另一套内容或样式，和仓库规范不一致。
+
+## 2. 事实源分层
+
+| 层级 | 位置 | 角色 | 是否可人工编辑 | 说明 |
+|---|---|---|---|---|
+| 主源 | `doc/rule.acceptance.map-enterprise.md` 等仓库 Markdown | 规范 SSOT | 是 | 评审、PR、版本控制、代码审查都以这里为准 |
+| 技能快照 | `.claude/skills/*/references/rules/*.md` | 离线 fallback | 否 | 从 `doc/` 生成，供海鲜市场下载包在无仓库 `doc/` 时读取 |
+| CDS 发布副本 | CDS `/reports` 中 `MAP自动化测试规范` 文件夹 | 在线阅读视图 | 否 | 由脚本从仓库 Markdown 发布，格式为 Markdown，不手写 HTML |
+| 执行报告 | CDS `/reports` 验收报告 | 单次执行结果 | 是，由验收流水线生成 | 引用规范，但不反向成为规范；HTML 必须来自标准模板 |
+| automation prompt | 自动化调度文本 | 调度壳 | 是，限上下文 | 只写日期、目录、env、Slack、技能链，不复制规范正文 |
+
+## 3. 主源文件
+
+验收规范主源固定为以下文件:
+
+| sourceId | path | 责任 |
+|---|---|---|
+| `acceptance.rule.enterprise` | `doc/rule.acceptance.map-enterprise.md` | 企业级验收主契约、场景、证明力、门禁、比例原则 |
+| `acceptance.rule.ssot` | `doc/rule.acceptance.ssot.md` | 本文件，定义规范同步和引用治理 |
+| `acceptance.guide.daily-sop` | `doc/guide.acceptance.daily-sop.md` | 每日自动化验收生命周期和通知契约 |
+| `acceptance.guide.report-evidence` | `doc/guide.acceptance.report-evidence.md` | 报告交互、截图、链接、失败红标和证据对象 |
+| `acceptance.design.knowledge-governance` | `doc/design.acceptance.knowledge-governance.md` | 规范、报告、知识库和引用关系治理 |
+
+新增验收规范文件必须同时更新:
+
+1. 本文件的主源表。
+2. `doc/index.yml` 和 `doc/guide.list.directory.md`。
+3. 规则快照同步脚本的源清单。
+4. CDS 发布脚本的源清单。
+5. 相关技能的 `references/rules/manifest.json`。
+
+## 4. 技能引用规则
+
+验收技能必须按以下顺序加载规范:
+
+1. 优先读取当前仓库的 `doc/` 主源文件。
+2. 若当前执行环境没有 `doc/`，读取技能包内的 `references/rules/` 快照。
+3. 若主源和快照都缺失，必须 fail closed: 生成“规范源缺失”的失败报告或阻止继续验收。
+
+技能内禁止复制维护大段规范正文。技能可以保留:
+
+- 技能职责和执行顺序。
+- 必读规范清单。
+- 输入输出 contract。
+- 脚本命令。
+- 必须立即执行的简短硬门禁摘要。
+
+但以下内容必须以 `doc/` 主源为准，不得在技能中另写一套:
+
+- 验收链路总控矩阵: 单个验收、每日验收、日报的技能链、样式、归档位置和 Verdict 边界。
+- L0/L1/L2 档位定义。
+- P0/P1/P2/P3 判级口径。
+- 每日验收结构章节。
+- 证明力模型。
+- 页面优先证据规则。
+- CDS 和 CDS Agent 证据边界。
+- 比例原则和停止条件。
+- P0/P1/P2 视觉问题定位规则。
+
+技能可以写“本技能在链路中的职责”，但不能重新解释三条链路的样式差异。凡涉及“单个验收直接用 `create-visual-test-to-kb`、每日验收走三技能链、日报走 `daily-report-summary` 且只借用取证环节”的说明，必须指向 `doc/rule.acceptance.map-enterprise.md` 的“验收链路总控矩阵”。
+
+## 5. 海鲜市场分发 fallback
+
+官方技能通过海鲜市场下载时，外部用户通常没有本仓库 `doc/`。因此每个可单独下载的验收技能必须自带规则快照:
+
+```text
+.claude/skills/<skill>/references/rules/
+├── manifest.json
+├── rule.acceptance.map-enterprise.md
+├── rule.acceptance.ssot.md
+├── guide.acceptance.daily-sop.md
+├── guide.acceptance.report-evidence.md
+└── design.acceptance.knowledge-governance.md
+```
+
+快照只作为 fallback，不是新事实源。快照文件头必须包含生成说明，说明源文件路径、源 commit 和内容 hash。外部用户看到快照时应知道它是下载时的离线副本。
+
+官方技能包必须包含这些快照:
+
+| 技能 | 原因 |
+|---|---|
+| `acceptance-test-design` | 独立下载时需要主规范、证明力和比例原则 |
+| `acceptance-scenario-orchestrator` | 独立下载时需要场景、证据链和报告契约 |
+| `create-visual-test-to-kb` | 独立下载时需要取证、归档、报告和证据门禁 |
+
+`create-visual-test-to-kb` 下载包仍可携带前置技能依赖，但不能以“通常会一起下载”为由省略每个技能自己的 fallback。
+
+## 6. CDS 发布规则
+
+CDS `MAP自动化测试规范` 文件夹只是在线阅读视图。发布规则:
+
+1. 格式必须是 Markdown (`format=md`)，正文直接来自仓库主源 Markdown。
+2. 发布脚本必须对已有 report id 做 PATCH，保留原链接，不新建重复文档。
+3. metadata 必须记录 `sourceId`、`sourcePath`、`sourceCommit`、`contentHash`、`publishedAt`。
+4. CDS 正文不得手写独立 HTML 样式，不得改写或缩写仓库规范。
+5. 若 CDS 文档 hash 与仓库不同，发布脚本必须能检测并重发。
+
+CDS 阅读体验由 CDS Markdown 渲染器负责。规范内容的准确性优先于视觉包装。
+
+执行类验收报告与规范文档分开治理:
+
+| 类型 | 格式 | 门禁 |
+|---|---|---|
+| 规范文档 | Markdown | 发布脚本校验 raw 内容等于仓库源文件 |
+| 每日/视觉/PR 验收执行报告 | 标准交互 HTML | CDS 校验 `map-acceptance-template` 或历史标准结构，拒收临时手写 HTML |
+
+因此，优化权威文档时只改 `doc/` Markdown 和 CDS Markdown 发布；优化每日验收阅读体验时只改 `archive_report.py` 标准模板。两者不能互相替代。
+
+## 7. 报告引用规则
+
+验收报告引用规范时必须先说明本轮如何应用，再给链接。合格写法:
+
+```markdown
+本轮按 `acceptance.rule.enterprise §11.1 比例原则` 执行。该规则要求验收深度同时有下限和上限: 高风险用户路径必须有行为证据，但低风险观察项不能升级成 P0/P1。因此本轮把轻微文案问题列为 observation，没有作为阻断缺陷处理。
+
+参考: [MAP 企业级自动化验收规范](<CDS Markdown 链接>)
+```
+
+不合格写法:
+
+```markdown
+基础知识: MAP 自动化测试规范。
+```
+
+不合格原因: 没有说明规则如何改变本轮测试动作、证据选择或 Verdict。
+
+## 8. 漂移校验
+
+提交前必须能通过以下校验:
+
+```bash
+python3 scripts/sync-acceptance-rule-snapshots.py --check
+python3 scripts/check-acceptance-rule-ssot.py
+```
+
+校验内容:
+
+| 校验 | 失败含义 |
+|---|---|
+| 主源文件存在且纳入 `doc/index.yml` | 新规范没有进入仓库文档体系 |
+| 技能快照 hash 等于主源 hash | 海鲜市场下载包会拿到旧规范 |
+| 官方技能生成包包含 `references/rules/manifest.json` | 外部用户无 fallback |
+| 技能只引用规则源，不把大段规则另写一套 | 技能和规范会漂移 |
+| CDS 发布 manifest 与主源 hash 匹配 | 在线文档不是仓库规则副本 |
+
+## 9. 允许的降级
+
+| 场景 | 处理 |
+|---|---|
+| 本仓库开发环境 | 读取 `doc/` 主源；若缺失则失败 |
+| 外部下载技能包 | 读取 `references/rules/` 快照；报告注明使用快照版本 |
+| CDS 不可达 | 不影响本地验收规则读取；发布视图标记未同步 |
+| 规范刚改但 CDS 未发布 | 不阻塞本地测试，但不得声称 CDS 文档已同步 |
+| 快照过期 | 官方技能打包或校验失败；必须先同步快照 |
+
+## 10. 完成标准
+
+一次验收规范变更只有同时满足以下条件才算完成:
+
+1. 仓库 `doc/` 主源已更新。
+2. 技能快照已同步。
+3. 相关技能引用的是主源或快照，不依赖散落规则副本。
+4. CDS Markdown 副本已发布或报告中明确发布失败。
+5. 校验脚本通过。
+6. PR 描述写清规范变更、技能影响、海鲜市场 fallback 和 CDS 发布状态。

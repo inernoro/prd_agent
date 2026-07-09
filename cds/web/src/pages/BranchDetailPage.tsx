@@ -11,6 +11,7 @@ import {
   Router as RouterIcon,
   FileText,
   GitCommitHorizontal,
+  Layers,
   Loader2,
   Network,
   Play,
@@ -30,6 +31,8 @@ import { DisclosurePanel } from '@/components/ui/disclosure-panel';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { apiRequest, ApiError, apiUrl } from '@/lib/api';
 import { BranchDetailLoadingSkeleton, CodePill, ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
+import { ExtraServicesPanel } from '@/components/branch/ExtraServicesPanel';
+import { EffectiveConfigPanel } from '@/components/branch/EffectiveConfigPanel';
 
 interface ProjectSummary {
   id: string;
@@ -144,6 +147,7 @@ interface BuildProfileOverride {
   pathPrefixes?: string[];
   activeDeployMode?: string;
   startupSignal?: string;
+  dbScope?: 'shared' | 'per-branch';
   notes?: string;
 }
 
@@ -1570,6 +1574,23 @@ export function BranchDetailPage(): JSX.Element {
                   })}
                 </CardContent>
               </Card>
+
+              {/* 波1 W1b:分支级临时额外服务(只作用于本分支的实验容器,如 Nacos)。 */}
+              <ExtraServicesPanel
+                branchId={state.branch.id}
+                onToast={setToast}
+                onChanged={() => void load(false)}
+              />
+
+              {/* 波2:配置检查器(逐 key 溯源 + 部署计划预览)。 */}
+              <DisclosurePanel
+                icon={<Layers className="h-4 w-4" />}
+                title="生效配置"
+                subtitle="每项配置从哪继承、被谁覆盖、部署时 CDS 会做什么"
+                contentClassName="p-5"
+              >
+                <EffectiveConfigPanel branchId={state.branch.id} onToast={setToast} />
+              </DisclosurePanel>
 
               <DisclosurePanel
                 icon={<FileText className="h-4 w-4" />}

@@ -102,6 +102,8 @@
 - [功能验收体系设计](design.acceptance.system) `design.acceptance.system`
 - [验收报告知识库设计](design.acceptance.kb) `design.acceptance.kb`
   > 业界对标(IEEE 829 / ISO·IEC·IEEE 29119-3 / 29148 / ISTQB / BDD)的标准化验收：为何而写、踩过的坑、v2 落地与 v3 演进、涌现与未来
+- [MAP 自动化验收知识库治理设计](design.acceptance.knowledge-governance) `design.acceptance.knowledge-governance`
+  > 规范、技能、CDS 报告和知识库引用之间的治理关系
 
 - [智能体宇宙设计](design.agent-universe) `design.agent-universe`
   > 能力契约 SSOT + 统一调用信封；选了不自动发、视觉创作真出图、漫威宇宙式互通
@@ -228,6 +230,9 @@
 
 - [CDS 分支级临时额外服务](design.cds.branch-local-extra-services) `design.cds.branch-local-extra-services`
   > 项目底座稳定（审批改、影响全体）+ 分支可自助加临时额外服务（只在本分支部署、跑分支专属网、删分支即消失、不影响别的分支）；纯增量可选、老行为零回归
+
+- [CDS 配置树](design.cds.config-tree) `design.cds.config-tree`
+  > 全局→项目→分支→派生分支四层继承；派生=快照拷贝（保留溯源指针）；生效配置检查器（env 逐 key 溯源 + 部署计划预览）；快照覆盖分支层；波4/5 方向（repo compose 纯结构种子、无 Agent 接入）
 
 - [CDS Agent API 契约设计](design.cds.agent.api) `design.cds.agent.api`
   > MAP/CDS 会话、事件、工具审批、Hook、runtime profile 与工作流调用的 API 契约
@@ -430,6 +435,10 @@
 
 - [视觉验收技能跨仓库使用教程](guide.visual-agent.acceptance-skill) `guide.visual-agent.acceptance-skill`
   > 用个人 AgentApiKey + 海鲜市场安装、更新 `create-visual-test-to-kb`，避免借用个人 accesskey
+- [MAP 每日自动化验收 SOP](guide.acceptance.daily-sop) `guide.acceptance.daily-sop`
+  > 每日验收的范围冻结、执行顺序、失败降级、归档和通知契约
+- [MAP 验收报告与证据交互规范](guide.acceptance.report-evidence) `guide.acceptance.report-evidence`
+  > 报告中的截图、红标、链接、证据导航和问题定位交互规范
 
 - [工作流画布操作手册](guide.workflow-agent.canvas) `guide.workflow-agent.canvas`
   > 工作流画布的详细操作参考
@@ -600,6 +609,10 @@
 
 - [AI 模型可见性原则](rule.platform.ai-model-visibility) `rule.platform.ai-model-visibility`
   > 大模型调用功能必须向用户展示当前模型名称的强制规则
+- [MAP 企业级自动化验收规范](rule.acceptance.map-enterprise) `rule.acceptance.map-enterprise`
+  > MAP 自动化验收的企业级规则主契约、证明力、比例原则和门禁
+- [MAP 验收规范 SSOT](rule.acceptance.ssot) `rule.acceptance.ssot`
+  > 规定验收规范以仓库 Markdown 为主源，技能快照和 CDS Markdown 只做同步视图
 
 - [Issues 体系协议规则](rule.skill.issues-system) `rule.skill.issues-system`
   > 三技能协同（autofix/visual-create/visual-run）+ label 全局体系 + #605 模板演化机制
@@ -905,7 +918,7 @@
 ### 七、周报
 
 - [AI 大模型网关测试矩阵全量报告](report.gw-test-matrix) `report.gw-test-matrix`
-  > 全枚举大表：A 解析 153 入口 + B 协议保真 91 cell + C 跨进程 18 cell + 20 扩展维度；B/C 即 CI 真跑 cell
+  > 全枚举大表：A 解析 153 入口 + B 协议保真 93 cell + C 跨进程 18 cell + 20 扩展维度；B/C 即 CI 真跑 cell
 
   > 各智能体完备度看板：终极目标、当前进度、TodoList、目前情况、风险点（当前加权进度约 55%）
 
@@ -939,6 +952,9 @@
   > CDS Agent 当前开发进度与状态面板（已合并到权威入口）
 
   > CDS Agent 工作台从连接探活到远程 sandbox 自巡检 PR 闭环的功能清单、坑位、未完成债务和交接提示词
+
+- [周报 2026-W27 (06-29 ~ 07-05)](report.2026-W27) `report.2026-W27`
+  > 2026 年第 27 周工作总结（356 commits / 44 PRs，剥离落地周 + 视觉归一周：LLM 网关从 MAP 物理剥离 跨进程 serving+shadow 影子比对+CDS 命名子域+双出口面板+真实观测控制台 prd-llmgw-web 可登录可观测可配置+Mongo Console 受控写(#965/#971~#985 八连)、首页/登录页/CDS 品牌视觉语言归一 首页工作台重构继续上次+极光氛围+落地页性能+CDS 宝石六芒标+布局架构归一+日报报纸版 HTML、米多星球 SSO 登录+禁用密码登录、知识星球 3D 星系视觉艺术升级 v2 深空穹顶+星云+热核着色、CDS 稳定性 分支级网络隔离+docker 网络跨路径回收+不可变生产发布、新增邮件模板智能体+用户通知推送订阅 Bark 协议+涌现探索器流式生长节点+快捷指令短视频解析；fix 占比 43% 大功能落地+密集收口）
 
 - [周报 2026-W26 (06-22 ~ 06-28)](report.2026-W26) `report.2026-W26`
   > 2026 年第 26 周工作总结（414 commits / 30 PRs，W25 收口后的反弹周，两条大新功能 + CDS 稳定性深水区三线并进：知识库「文档星系/宇宙图」三维视图 buildDocGalaxy+UnrealBloom 辉光+双链连线+六批交互迭代到演示级、VOC 行为之声「AI 用户分析下钻」端点三段式 证据→大模型→Tab+根因置顶+加载动效 1:1 复刻、CDS 自更新极速版 CI 预构建到 ghcr+决策层+运行层三步基建、CDS 部署卡死收敛器 看门狗租约判活+调度器永不降温主干+持久化投影剥离 runtime 派生(#886 75commits)、CDS 性能治理 构建并发闸+分支列表缓存+状态广播节流+mongo-split 写入合并、CDS 验收报告升级为验收中心 项目级文件夹+匿名分享链+深链+PR 回写+MAP peer-sync+base64 截图内容寻址、知识库跨节点同步支持二进制附件一篇不差、移动端整体重构首批 headbar/首页 Hero/百宝箱发现、生图等待流光进度条+文学配图缩放预览、revert 删除所有催办产品决策；fix 占比 47% 边清债边开新坑）

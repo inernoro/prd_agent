@@ -8,7 +8,7 @@ import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState
 import { combinedOutput } from '../types.js';
 import { resolveCommandTemplate, resolveEnvTemplates } from './compose-parser.js';
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
-import { applyPerBranchDbIsolation } from './db-scope-isolation.js';
+import { resolveProfileRuntimeEnvWithProvenance } from './env-provenance.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkPlan } from './branch-network.js';
 import { nodeModulesVolumeName } from '../util/node-modules-volume.js';
 import { ensureDockerNetworkWithReclaim } from './docker-network-reclaim.js';
@@ -453,18 +453,7 @@ export function applyDeployReadinessFloor(
   return { ...(probe ?? {}), timeoutSeconds: floorSeconds };
 }
 
-function missingEnvTemplates(env: Record<string, string>): string[] {
-  const missing = new Set<string>();
-  for (const value of Object.values(env)) {
-    value.replace(/\$\{(\w+)(?::-(.*?))?\}/g, (_match, name: string, defaultVal: string | undefined) => {
-      if (env[name] === undefined && process.env[name] === undefined && defaultVal === undefined) {
-        missing.add(name);
-      }
-      return '';
-    });
-  }
-  return Array.from(missing).sort();
-}
+// missingEnvTemplates 迁到 env-provenance.ts(波2:溯源解析需要同一份校验,单处 SSOT)。
 
 /** docker stats 单容器瞬时值(2026-05-04 Phase B) */
 export interface ContainerStats {
@@ -742,76 +731,25 @@ export class ContainerService {
     return `'${value.replace(/'/g, `'\\''`)}'`;
   }
 
+  /**
+   * 波2 重构:方法体抽为 env-provenance.ts 的纯函数(带逐 key 溯源),这里退化为
+   * 「单层包装 + 只取 .env」。**部署行为与旧实现逐字节一致**——步骤顺序/条件/
+   * 异常消息全部由纯函数保留,container.test.ts 既有断言即回归护栏。
+   * JWT 兜底语义不变:只允许项目 scope 自己提供 Jwt__Secret(兼容旧 compose 的
+   * JWT_SECRET 也必须来自项目 env),Jwt__Issuer 缺省用 CDS config 值。
+   */
   private resolveProfileRuntimeEnv(
     entry: BranchEntry,
     profile: BuildProfile,
     customEnv?: Record<string, string>,
   ): Record<string, string> {
-    const mergedEnv: Record<string, string> = {};
-
-    if (customEnv) {
-      Object.assign(mergedEnv, customEnv);
-    }
-
-    // JWT — CDS 自身鉴权密钥不得穿透进项目容器。
-    // 历史行为曾把 CDS_JWT_SECRET 兜底映射为项目 Jwt__Secret，导致 CDS
-    // 自身密钥轮换会破坏业务项目登录签名和 prd-agent 存量平台密文。
-    // 现在只允许项目 scope 自己提供 Jwt__Secret；兼容旧 compose 的
-    // JWT_SECRET 也必须来自项目 env，而不是 CDS 全局 config.jwt.secret。
-    if (!mergedEnv['Jwt__Secret'] && mergedEnv['JWT_SECRET']) {
-      mergedEnv['Jwt__Secret'] = mergedEnv['JWT_SECRET'];
-    }
-    if (!mergedEnv['Jwt__Issuer']) mergedEnv['Jwt__Issuer'] = this.config.jwt.issuer;
-
-    const isNodeContainer = /\bnode:/.test(profile.dockerImage);
-    if (isNodeContainer) {
-      mergedEnv['PNPM_HOME'] = mergedEnv['PNPM_HOME'] || '/pnpm';
-      mergedEnv['npm_config_store_dir'] = mergedEnv['npm_config_store_dir'] || '/pnpm/store';
-      const currentPath = mergedEnv['PATH'] || '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
-      if (!currentPath.includes('/pnpm')) {
-        mergedEnv['PATH'] = `/pnpm:${currentPath}`;
-      }
-    }
-
-    if (profile.env) {
-      Object.assign(mergedEnv, profile.env);
-    }
-
-    const deployCommit = entry.pinnedCommit || entry.githubCommitSha || entry.lastDeployDispatchCommitSha;
-    if (entry.branch) {
-      mergedEnv['VITE_GIT_BRANCH'] = entry.branch;
-    }
-    if (deployCommit) {
-      // 平台版本元数据必须覆盖项目 env，供发布中心和 /api/version 判断当前部署 commit。
-      mergedEnv['GIT_COMMIT'] = deployCommit;
-      mergedEnv['COMMIT_SHA'] = deployCommit;
-      mergedEnv['GITHUB_SHA'] = deployCommit;
-      mergedEnv['SOURCE_VERSION'] = deployCommit;
-      mergedEnv['CDS_COMMIT_SHA'] = deployCommit;
-      mergedEnv['VITE_BUILD_ID'] = deployCommit.slice(0, 12);
-    }
-    const deployTime = entry.lastDeployDispatchAt || entry.lastPushAt || entry.createdAt;
-    if (deployTime) {
-      mergedEnv['CDS_BUILD_TIME'] = deployTime;
-    }
-
-    const isolatedEnv = applyPerBranchDbIsolation(mergedEnv, profile.dbScope, entry.branch);
-    const missingTemplates = missingEnvTemplates(isolatedEnv);
-    if (missingTemplates.length > 0) {
-      throw new Error(
-        `环境变量模板缺少值: ${missingTemplates.join(', ')}。请在项目环境变量中填写，或先启动对应基础设施服务后再部署。`,
-      );
-    }
-
-    const resolveVars: Record<string, string> = { ...isolatedEnv };
-    if (customEnv) {
-      for (const [k, v] of Object.entries(isolatedEnv)) {
-        if (v === `\${${k}}` && customEnv[k] !== undefined) {
-          resolveVars[k] = customEnv[k];
-        }
-      }
-    }
-    return resolveEnvTemplates(isolatedEnv, resolveVars);
+    return resolveProfileRuntimeEnvWithProvenance(
+      entry,
+      profile,
+      customEnv ? [{ source: 'project', env: customEnv }] : [],
+      profile.env ? [{ source: 'profile', env: profile.env }] : [],
+      { jwtIssuer: this.config.jwt.issuer },
+    ).env;
   }
 
   private async buildProfileVolumeFlags(

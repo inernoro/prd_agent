@@ -18,10 +18,12 @@ var builder = WebApplication.CreateBuilder(args);
 // 严格复刻 MAP（PrdAgent.Api/Program.cs）中承载 LlmGateway / ModelResolver 所需的注册，
 // 让本服务通过进程内 DI 直接 HOST 既有实现，再用 HTTP 端点暴露出去。不重写任何网关逻辑。
 
-// MongoDB（ModelResolver / LlmRequestLogWriter / PoolFailoverNotifier / AppSettingsService 依赖）
+// MongoDB：主库用于模型配置/模型池解析；GW 自有库用于 serving 请求日志与 shadow 证据。
 var mongoConn = builder.Configuration["MongoDB:ConnectionString"] ?? "mongodb://localhost:27017";
 var mongoDb = builder.Configuration["MongoDB:DatabaseName"] ?? "prdagent";
+var gatewayDb = builder.Configuration["LlmGateway:DatabaseName"] ?? "llm_gateway";
 builder.Services.AddSingleton(new MongoDbContext(mongoConn, mongoDb));
+builder.Services.AddSingleton(new LlmGatewayDataContext(mongoConn, gatewayDb));
 
 // IHttpClientFactory（LlmGateway 发 HTTP 用）
 builder.Services.AddHttpClient();
@@ -31,8 +33,21 @@ builder.Services.AddMemoryCache();
 
 // LLM 请求上下文 + 旁路日志写入
 builder.Services.AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAccessor>();
-builder.Services.AddSingleton<LlmRequestLogBackground>();
-builder.Services.AddSingleton<ILlmRequestLogWriter, LlmRequestLogWriter>();
+builder.Services.AddSingleton(sp =>
+    new LlmRequestLogBackground(
+        sp.GetRequiredService<LlmGatewayDataContext>().Context,
+        sp.GetRequiredService<ILogger<LlmRequestLogBackground>>()));
+builder.Services.AddSingleton<ILlmRequestLogWriter>(sp =>
+    new LlmRequestLogWriter(
+        sp.GetRequiredService<LlmGatewayDataContext>().Context,
+        sp.GetRequiredService<ILogger<LlmRequestLogWriter>>(),
+        sp.GetRequiredService<LlmRequestLogBackground>(),
+        sp.GetRequiredService<PrdAgent.Core.Interfaces.IAppSettingsService>(),
+        sp.GetRequiredService<IAssetStorage>()));
+builder.Services.AddSingleton<ILlmShadowComparisonWriter>(sp =>
+    new LlmShadowComparisonWriter(
+        sp.GetRequiredService<LlmGatewayDataContext>().Context,
+        sp.GetRequiredService<ILogger<LlmShadowComparisonWriter>>()));
 
 // 应用设置服务（LlmRequestLogWriter 依赖 IAppSettingsService）
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IAppSettingsService, PrdAgent.Infrastructure.Services.AppSettingsService>();

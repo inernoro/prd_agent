@@ -74,6 +74,7 @@ export type PublicStoreDetail = PublicDocumentStore & {
 export type DocumentStoreShareLink = {
   id: string;
   token: string;
+  shortSeq?: number;
   storeId: string;
   storeName: string;
   /** 非空 = 单篇文档分享；空 = 整库分享 */
@@ -149,10 +150,10 @@ export type DocumentEntry = {
   updatedAt: string;
 };
 
-/** 知识库 Agent Run（字幕生成 + 文档再加工共用） */
+/** 知识库 Agent Run（字幕生成 + 文档再加工 + 自动补链共用） */
 export type DocumentStoreAgentRun = {
   id: string;
-  kind: 'subtitle' | 'reprocess';
+  kind: 'subtitle' | 'reprocess' | 'autolink';
   sourceEntryId: string;
   storeId: string;
   userId: string;

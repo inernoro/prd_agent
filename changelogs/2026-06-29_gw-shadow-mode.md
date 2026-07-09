@@ -1,4 +1,0 @@
-| feat | prd-api | LLM 网关新增 shadow 影子比对模式：inproc 权威返回 + 后台对跨进程 http 网关做逐字段比对落 llmshadow_comparisons，灰度翻 http 前积累一致性证据。默认只比解析(免费,覆盖选A给B)，ShadowFullSamplePercent>0 才采样完整 send 比对。CreateClient 绑定 shadow 覆盖 chat 主链路；http 影子失败全隔离，caller 永远拿 inproc |
-| feat | prd-api | LLM 网关灰度翻 http：新增 LlmGateway:HttpAppCallerAllowlist(按 appCallerCode 逐个切)，命中入口走 http 权威、其余按 Mode；ShadowLlmGateway 统一影子+灰度路由(白名单命中=真正切 http 不比对，未命中=inproc 权威+后台比对)。纯配置可回滚 |
-| test | prd-api | 新增 ShadowLlmGatewayTests(数据驱动)：caller 永远拿 inproc / 比对 critical+warning 分级正确 / http 抛异常不破坏 caller / resolve-only 不 2x 打模型 / 白名单命中走 http 权威不比对 / 未命中走 inproc 且比对。CI 真跑绿(1326 passed/0 fail) |
-| feat | prd-api | serving 网关新增 GET /gw/v1/shadow-comparisons(X-Gateway-Key 门内)：读 llmshadow_comparisons 给汇总(total/allMatch/critical/httpFail)+最近 N 条,灰度翻 http 前看 inproc vs http 一致性(去黑盒观测) |

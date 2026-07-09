@@ -14,6 +14,18 @@ Use this skill before visual acceptance or MAP report archiving when the hard pa
 
 This skill does not take screenshots and does not archive reports. Its output is an acceptance test design brief that downstream skills, especially `acceptance-scenario-orchestrator` and `create-visual-test-to-kb`, must follow.
 
+## Rule Source SSOT
+
+Before designing tests, load the acceptance rule source in this order:
+
+1. Repository SSOT when available: `doc/rule.acceptance.map-enterprise.md`, `doc/rule.acceptance.ssot.md`, `doc/guide.acceptance.daily-sop.md`, `doc/guide.acceptance.report-evidence.md`, `doc/design.acceptance.knowledge-governance.md`.
+2. Skill-package fallback when the skill is installed outside this repository: `references/rules/*.md` and `references/rules/manifest.json`.
+3. If neither source exists, fail closed and state that the acceptance rule source is missing. Do not invent a local substitute.
+
+The `doc/` files are authoritative. The bundled `references/rules/` files are generated snapshots for marketplace/offline users. When local instructions conflict with these rule documents, the rule documents win.
+
+Use `doc/rule.acceptance.map-enterprise.md` section “验收链路总控矩阵” to decide whether the request belongs to single acceptance, daily acceptance, or daily-report communication. This skill designs acceptance tests only; it does not design the newspaper-style daily report except to provide acceptance conclusions that the report may cite.
+
 ## Core Rule
 
 Do not start from pages. Start from changed behavior.
@@ -37,6 +49,19 @@ For daily/yesterday, PR, commit-range, or disputed acceptance:
 - Avoid empty shorthand such as `见上文`, `同上`, `略`, `待补`, or `按常规`. If a cell cannot be filled, write the specific missing input and the impact on verdict.
 - For a large day, group related commits, but keep the commit list visible inside the group. Grouping is allowed; omission is not.
 - The handoff must state whether the expected report can only be `广度冒烟`, `有条件通过`, or `不通过`. Do not let downstream execution infer this silently.
+
+## Proportionality Rule
+
+Completeness is not over-execution. The design brief must be risk-proportionate:
+
+- Do not create tests only because a field, component, or commit exists. Test the behavior, risk, or user consequence.
+- Do not escalate a minor visual observation into P0/P1 unless it blocks a primary path, hides required information, causes data loss, breaks trust, or prevents a user action.
+- For low-risk or non-runtime changes, prefer file/rule evidence, changelog evidence, or `non-runtime` classification over browser busywork.
+- For large daily scopes, use fused scenarios when they preserve proof strength. Do not split every commit into a separate browser path if one real workflow proves the grouped assertion.
+- Stop when the evidence is sufficient for the declared depth. Extra screenshots that add no new assertion, state, boundary, or risk explanation are noise and should be omitted.
+- When a concern is worth mentioning but not worth failing the run, classify it as `observation` or `P3` and state why it does not affect the Verdict.
+
+The brief must state the proportionality decision: why this depth is enough, what was deliberately not tested, and why those omissions are acceptable or recorded as gaps.
 
 ## Workflow
 
@@ -67,6 +92,7 @@ For daily/yesterday, PR, commit-range, or disputed acceptance:
    - Prefer scenarios that cover multiple assertions through one realistic user journey.
    - Do not stop at 10 screenshots by habit. The screenshot budget follows risk and proof coverage.
    - If a small number of images is enough, explain why each image has high proof density.
+   - If a large number of images is requested by scope pressure, cap it by proof value. More images are justified only when they add a new assertion, failure condition, boundary, role, viewport, or state transition.
 
 6. Produce the design brief.
    - Read `references/output-contract.md`.
@@ -92,6 +118,8 @@ For daily/yesterday, PR, commit-range, or disputed acceptance:
 - No nearby-page substitution. Same module does not mean same behavior.
 - No CDS/CDS Agent substitution. CDS platform changes and CDS Agent user/runtime changes are separate acceptance targets; one cannot prove the other.
 - No fixed 10-image brake. Evidence count is driven by risk, impact, and fusion coverage.
+- No open-ended over-testing. Evidence count also has an upper bound: stop when the declared depth and risk model are satisfied.
+- No severity inflation. Minor cosmetic findings are not P0/P1 unless they block user value or violate a hard gate.
 - No pass without falsifiability. Every planned proof must say what would make it fail.
 - No disappearing commits. Each commit is passed, failed, fused into a higher-level scenario, marked non-runtime, or marked uncovered.
 - No "looks right" verdict. A pass must answer: what changed, who sees it, where they see it, what action caused it, and what result proves it.

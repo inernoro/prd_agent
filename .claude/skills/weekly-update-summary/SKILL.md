@@ -146,6 +146,44 @@ git log "$DEFAULT_BRANCH" --format="%cd\t%H\t%an\t%s" --date=short | \
 
 这样避免"同一周由不同 session 写出两份不一致报告而无人察觉"。
 
+### 纪律 8：读者交付默认 html 周刊版，doc/ 的 md 是机器底稿
+
+周报有两个产物，职责不同、**都要产出**：
+
+| 产物 | 模板 | 去向 | 角色 |
+|------|------|------|------|
+| **html 周刊版（读者交付，默认）** | `reference/report-template-html.html` | 知识库「周报知识库」（`daily-report-summary/reference/publish.py --report-html --store 周报知识库`），出分享链 | 用户实际阅读的版本（用户 2026-07-07 指定：不再让人读 md 版式） |
+| md 底稿 | `reference/report-template.md` | `doc/report.YYYY-WXX.md` | 机器底稿：Phase 1.5 空缺扫描、Phase 3 上周对比、doc-sync 索引、幂等对照都依赖它，**不可省** |
+
+html 周刊版硬约束（publish.py `--report-html` 发布前校验，与日报同一套）：
+- **自包含**：内联 CSS，无外部 http 资源；图片仅允许知识库 upload 返回的站内 URL
+- **禁 `<script>`**：知识库沙箱 iframe 不给 allow-scripts，动效一律纯 CSS
+- **必带 `<meta viewport>`**：否则移动端按 980px 桌面视口缩放、整页变小
+- **禁 `data:image`**：插图一律内联 `<svg>`、图表纯 CSS
+- 版式即「米多智能体周刊」（刊系归属见 `.claude/rules/report-design-system.md`）：刊头 + 期号 dateline + 统计基线行 + 封面故事 + 一周脉络时间轴（替代 mermaid）+ 深度报道 + 简讯双栏 + 数据版（一周行情竖条图 / 提交成分堆积条 / 与上周对比 delta 表）+ 上周方向落地对照 + 下周优先级三卡 + 附录 PR 表 + 数据页脚
+- 内容与 md 底稿同源同数（纪律 5：数字全部来自 git），格式只改皮不改骨
+**防漏数据对账清单（html 周刊版成稿后、发布前逐项打勾；任一不过不许发布）**：
+
+- [ ] 附录 PR 表**列全**：行数 = 头部「PR 收口」数（禁止节选、禁止"以 doc 为准"糊弄），带「分类」列，表下注明归属口径
+- [ ] 提交成分 legend 每项带数量 + 占比%，与 md 底稿「提交类型分布」表同数
+- [ ] md 底稿「本周完成」的每个分类段都能在 深度报道 或 一周简讯 里找到对应条目（逐段指认，不得因版面丢段）
+- [ ] 每日「重点方向」在一周脉络时间轴逐日有承载；每日提交数与 md 底稿分布表同数
+- [ ] 下周优先级每条为「动作——依据」两段式；与上周对比表、上周方向落地对照与 md 底稿同数同结论
+- [ ] baseline 行含统计基线 SHA + 采集时间 + 口径说明；触发纪律 3.5/7 时追加基线漂移 / 历史版本对照行
+
+- 发布命令（复用日报发布脚本的刊系参数）：
+
+```bash
+python3 .claude/skills/daily-report-summary/reference/publish.py \
+  --base https://main-prd-agent.miduo.org \
+  --impersonate inernoro \
+  --title "周报-${ISO_YEAR}-W${WEEK_NUM}-本周纵深" \
+  --daily-date "${MONDAY}" \
+  --report-html /tmp/weekly-${ISO_YEAR}-W${WEEK_NUM}.html \
+  --store "周报知识库" --kind weekly-report --tags "周报,本周纵深"
+# 无密钥 / 无文档空间时退化：加 --local --out <path>，落本地文件（仅自查，不算交付）
+```
+
 ## 触发词
 
 "生成周报" / "写周报" / "本周总结" / "周报" / "weekly report" / "weekly summary" / "上周总结"
@@ -297,7 +335,16 @@ PREV_FILE="doc/report.${PREV_ISO_YEAR}-W$(printf '%02d' $PREV_WEEK_NUM).md"
 
 ### Phase 5: 生成报告
 
-使用模板生成完整报告，写入 `$REPORT_FILE` → 见 [reference/report-template.md](reference/report-template.md)
+两个产物都要生成（纪律 8）：
+
+1. **md 底稿**：使用模板生成完整报告，写入 `$REPORT_FILE` → 见 [reference/report-template.md](reference/report-template.md)
+2. **html 周刊版（读者交付）**：整页复制 [reference/report-template-html.html](reference/report-template-html.html)，用本周真实数据替换周次/统计/各栏目正文（封面故事 = 本周最大脉络；一周脉络时间轴 = md 版 mermaid timeline 的内容；数据版三图从 Phase 2 数字生成），落 `/tmp/weekly-{ISO_YEAR}-W{WEEK_NUM}.html`
+
+---
+
+### Phase 5.5: 发布 html 周刊版到知识库
+
+按纪律 8 的发布命令调 `daily-report-summary/reference/publish.py`（`--store 周报知识库 --kind weekly-report`）。发布成功后记录分享链，Phase 6 一并输出。无密钥/环境不可达时退化 `--local` 并在输出里明确说明「周刊版未发布，仅 md 底稿落盘」。
 
 ---
 
@@ -307,7 +354,10 @@ PREV_FILE="doc/report.${PREV_ISO_YEAR}-W$(printf '%02d' $PREV_WEEK_NUM).md"
 2. 向用户展示摘要：
 
 ```
-周报已生成：doc/report.2026-W08.md
+周报已生成：
+【底稿】doc/report.2026-W08.md
+【周刊版】周报知识库 · 周报-2026-W08-本周纵深
+【分享链】https://<base>/s/lib/<token>?entry=<eid>
 
 本周概要：
 - {COMMIT_COUNT} 次提交，{PR_COUNT} 个 PR 合并

@@ -25,6 +25,13 @@ const MARKETPLACE_URL = 'https://miduo.org/marketplace?type=skill&keyword=cds';
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * 打开「全局 Agent Key」管理弹窗。全局 cdsg_ key 是唯一能 bootstrap 建项目的
+   * 凭据(项目级 cdsp_ key 建项目会 403)。全新接入、一个项目都没有时必须走它,
+   * 否则就撞上「项目 key 建不了项目 / 没项目签不出项目 key」的死循环。
+   * 在接入引导里直接给一个入口露出它,而不是让新手去右上角下拉里翻。
+   */
+  onOpenGlobalKey?: () => void;
 }
 
 type TabKey = 'token' | 'marketplace' | 'zip';
@@ -35,7 +42,7 @@ const TABS: Array<{ key: TabKey; label: string; icon: typeof KeyRound; recommend
   { key: 'zip', label: '技能压缩包', icon: Package },
 ];
 
-export function SkillDownloadDialog({ open, onOpenChange }: Props): JSX.Element {
+export function SkillDownloadDialog({ open, onOpenChange, onOpenGlobalKey }: Props): JSX.Element {
   const [active, setActive] = useState<TabKey>('token');
 
   // 组装 AI 口令（带当前 CDS 域名 + 版本去重指令 + 接入引导）
@@ -58,9 +65,16 @@ export function SkillDownloadDialog({ open, onOpenChange }: Props): JSX.Element 
         '本机每个技能名只能有一份当前版本, 禁止多版本共存。',
         '',
         '【步骤 3 - 接入 CDS】',
-        '装好后告诉我:',
-        '  "技能已装好。请去 CDS 项目卡上点钥匙图标签发项目级 Agent Key,',
-        '   把 CDS_HOST / CDS_PROJECT_ID / CDS_PROJECT_KEY 三行粘给我, 我跑 cdscli init 接入。"',
+        '装好后按你当前情况二选一(项目 key 建不了项目,别在这卡死循环):',
+        '  A. 还没有任何项目(全新接入):',
+        '     去 CDS 右上角「一键部署 → 全局 Agent Key」直接签发(默认「只能创建新项目」即可),',
+        '     把 CDS_HOST + AI_ACCESS_KEY=<这把 cdsg_ key> 两行粘给我。',
+        '     我跑 cdscli project create 建第一个项目 —— 它会直接返回这个新项目的项目级 key',
+        '     (CDS_PROJECT_ID / CDS_PROJECT_KEY),我保存并切换到它做后续部署/操作。',
+        '     (注意:这把「只能创建项目」的全局 key 不能再去签项目级 key,直接用 create 返回的那把。)',
+        '  B. 已经有项目:',
+        '     去项目卡上点钥匙图标签发「项目级 Agent Key」,',
+        '     把 CDS_HOST / CDS_PROJECT_ID / CDS_PROJECT_KEY 三行粘给我, 我跑 cdscli init 接入。',
         '',
         '【这个技能能干啥】',
         '让你能扫描我的项目结构、生成 CDS docker-compose YAML、推送部署到 CDS 灰度环境、',
@@ -114,7 +128,7 @@ export function SkillDownloadDialog({ open, onOpenChange }: Props): JSX.Element 
         </div>
 
         {/* 跨 Tab 共享:下一步引导(永远显示,因为三种装法都需要拿 Agent Key 才能让 AI 真用上) */}
-        <NextStepGuidance />
+        <NextStepGuidance onOpenGlobalKey={onOpenGlobalKey} />
       </DialogContent>
     </Dialog>
   );
@@ -251,25 +265,65 @@ function ZipTab(): JSX.Element {
 // 跨 Tab 共享:下一步引导(下载只是第一步,要让 AI 真用上 CDS 还需要 Agent Key)
 // ----------------------------------------------------------------------------
 
-function NextStepGuidance(): JSX.Element {
+function NextStepGuidance({ onOpenGlobalKey }: { onOpenGlobalKey?: () => void }): JSX.Element {
   return (
-    <div className="rounded-md border border-primary/30 bg-primary/5 px-4 py-3">
+    <div className="space-y-3 rounded-md border border-primary/30 bg-primary/5 px-4 py-3">
       <div className="flex items-start gap-2">
         <KeyRound className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
         <div className="space-y-1.5 text-xs leading-relaxed text-muted-foreground">
-          <div className="text-sm font-semibold text-foreground">下一步:让 AI 接入到 CDS</div>
+          <div className="text-sm font-semibold text-foreground">下一步:给 AI 一把 Key 才能真用上</div>
           <div>
-            技能装好后 AI 还需要凭据才能调 CDS。回到项目卡片
-            → 点钥匙图标签发<span className="font-medium text-foreground">「项目级 Agent Key」</span>
-            → 复制 CDS_HOST / CDS_PROJECT_ID / CDS_PROJECT_KEY 三行 → 粘给 AI 让它跑
-            <code className="mx-1 rounded bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 font-mono text-foreground">
-              cdscli init
-            </code>
-            。之后 AI 就能自动部署/扫描/冒烟。
+            技能装好后 AI 还需要凭据才能调 CDS。CDS 有<span className="font-medium text-foreground">两种 Key</span>,
+            按你现在有没有项目挑一种——别在「项目 Key 建不了项目 / 没项目又签不出项目 Key」里绕死循环。
           </div>
-          <div className="text-[11px] opacity-80">
-            提示:跨项目自动化(创建项目、批量操作)需要走右上角「全局 Agent Key」,权限更高。
+        </div>
+      </div>
+
+      {/* 场景 A:全新接入,还没有项目 → 必须用全局 Key bootstrap */}
+      <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-3 py-2.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+            全新接入
+          </span>
+          <span className="text-xs font-semibold text-foreground">还没有任何项目</span>
+        </div>
+        <div className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+          项目级 Key 建不了项目。签一把<span className="font-medium text-foreground">「全局 Agent Key」</span>
+          (<code className="rounded bg-[hsl(var(--surface-sunken))] px-1 font-mono text-foreground">cdsg_</code> 前缀,能建项目)
+          → 把 CDS_HOST + AI_ACCESS_KEY 两行粘给 AI → AI 跑
+          <code className="mx-1 rounded bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 font-mono text-foreground">
+            cdscli project create
+          </code>
+          建第一个项目 —— 它会直接返回新项目的项目级 Key(CDS_PROJECT_ID / CDS_PROJECT_KEY),AI 保存并切换到它做后续操作，无需再签。
+        </div>
+        {onOpenGlobalKey ? (
+          <Button size="sm" variant="outline" className="mt-2" onClick={onOpenGlobalKey}>
+            <KeyRound className="h-3.5 w-3.5" />
+            签发全局 Agent Key
+          </Button>
+        ) : (
+          <div className="mt-1 text-[11px] opacity-80">
+            入口:右上角「一键部署 → 全局 Agent Key」。
           </div>
+        )}
+      </div>
+
+      {/* 场景 B:已有项目 → 用项目级 Key,权限被隔离,泄露面更小 */}
+      <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-3 py-2.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
+            日常操作
+          </span>
+          <span className="text-xs font-semibold text-foreground">已经有项目</span>
+        </div>
+        <div className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+          回到项目卡片 → 点钥匙图标签发<span className="font-medium text-foreground">「项目级 Agent Key」</span>
+          (<code className="rounded bg-[hsl(var(--surface-sunken))] px-1 font-mono text-foreground">cdsp_</code> 前缀,只能碰这个项目)
+          → 复制 CDS_HOST / CDS_PROJECT_ID / CDS_PROJECT_KEY 三行 → 粘给 AI 跑
+          <code className="mx-1 rounded bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 font-mono text-foreground">
+            cdscli init
+          </code>
+          。之后 AI 就能自动部署/扫描/冒烟。
         </div>
       </div>
     </div>

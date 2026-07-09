@@ -33,10 +33,10 @@ describe('release site publishing UI contract', () => {
     expect(releaseCenterSource).toContain('还没有站点发布目标');
     expect(releaseCenterSource).toContain('添加站点发布');
     expect(releaseCenterSource).toContain('选择服务器');
-    expect(releaseCenterSource).toContain('站点目录');
-    expect(releaseCenterSource).toContain('./fast.sh');
-    expect(releaseCenterSource).toContain('./exec_dep.sh');
-    expect(releaseCenterSource).toContain('上线地址');
+    expect(releaseCenterSource).toContain('生产域名');
+    expect(releaseCenterSource).toContain('本机端口');
+    expect(releaseCenterSource).toContain('本机生产发布');
+    expect(releaseCenterSource).toContain('健康检查');
     expect(releaseCenterSource).toContain('发布记录');
     expect(releaseCenterSource).toContain('响应时间');
     expect(releaseCenterSource).toContain('最近检查');
@@ -88,8 +88,8 @@ describe('release site publishing UI contract', () => {
     expect(branchListSource).toContain('执行 ${scriptOne.replace');
     expect(branchListSource).toContain('执行 ${scriptTwo.replace');
     expect(branchListSource).toContain('releaseScriptPhase(scriptOne)');
-    expect(releaseCenterSource).toContain("releaseScriptPhase('./fast.sh')");
-    expect(releaseCenterSource).toContain("releaseScriptPhase('./exec_dep.sh')");
+    expect(releaseCenterSource).toContain('执行本机生产发布');
+    expect(releaseCenterSource).toContain("phaseSet.has('deploy')");
     expect(branchListSource).toContain('检查上线地址');
     expect(branchListSource).toContain('标记完成');
     expect(branchListSource).toContain('ReleaseRunStepList');

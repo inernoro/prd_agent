@@ -10,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.LlmGatewayHost;
 using Shouldly;
@@ -116,6 +117,62 @@ public class GatewayServingEndpointContractTests
     }
 
     [Fact]
+    public async Task OpenAiCompatibleChatCompletions_RoundTrips_OverRealHttp()
+    {
+        await using var app = await StartServingHostAsync();
+        try
+        {
+            var client = new HttpClient { BaseAddress = new Uri(ResolveBaseUrl(app)) };
+            var req = new HttpRequestMessage(HttpMethod.Post, "/v1/chat/completions")
+            {
+                Content = new StringContent(
+                    """
+                    {"model":"sidecar-model","messages":[{"role":"user","content":"hi"}],"stream":false}
+                    """,
+                    System.Text.Encoding.UTF8,
+                    "application/json"),
+            };
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", TestKey);
+            req.Headers.Add("X-Gateway-App-Caller", AppCallerRegistry.PageAgent.Generate);
+
+            var resp = await client.SendAsync(req);
+            var body = await resp.Content.ReadAsStringAsync();
+
+            resp.StatusCode.ShouldBe(System.Net.HttpStatusCode.OK);
+            body.ShouldContain("\"model\":\"sidecar-model\"");
+            body.ShouldContain("\"content\":\"sent:sidecar-model\"");
+        }
+        finally { await app.StopAsync(); }
+    }
+
+    [Fact]
+    public async Task ProfileTest_RoundTrips_OverRealHttp()
+    {
+        await using var app = await StartServingHostAsync();
+        try
+        {
+            var client = BuildClient(ResolveBaseUrl(app), TestKey);
+
+            var resp = await client.TestUpstreamProfileAsync(new GatewayUpstreamProfileTestRequest
+            {
+                AppCallerCode = "infra-agent.runtime-profile-test::chat",
+                Protocol = "openai",
+                BaseUrl = "https://example.invalid/v1",
+                Model = "runtime-picked-model",
+                ApiKey = "SECRET-profile-test-key",
+                ProfileId = "profile-1",
+                ProfileName = "测试配置",
+                UserId = "user-1",
+            });
+
+            resp.Success.ShouldBeTrue();
+            resp.StatusCode.ShouldBe(200);
+            resp.Content.ShouldBe("profile-test:runtime-picked-model");
+        }
+        finally { await app.StopAsync(); }
+    }
+
+    [Fact]
     public async Task Pools_ReturnsNonEmpty()
     {
         await using var app = await StartServingHostAsync();
@@ -192,6 +249,7 @@ public class GatewayServingEndpointContractTests
         {
             await Task.Yield();
             yield return new GatewayStreamChunk { Type = GatewayChunkType.Start, Seq = 1, Resolution = Resolve(request.ExpectedModel) };
+            yield return new GatewayStreamChunk { Type = GatewayChunkType.Text, Seq = 2, Content = $"stream:{request.ExpectedModel}" };
             yield return new GatewayStreamChunk { Type = GatewayChunkType.Done, Seq = 2, FinishReason = "stop" };
         }
 
@@ -199,8 +257,13 @@ public class GatewayServingEndpointContractTests
             GatewayRawRequest request, GatewayModelResolution resolution, CancellationToken ct = default)
             => Task.FromResult(new GatewayRawResponse { Success = true, StatusCode = 200, Content = "raw-ok" });
 
+        public Task<GatewayRawResponse> TestUpstreamProfileAsync(
+            GatewayUpstreamProfileTestRequest request, CancellationToken ct = default)
+            => Task.FromResult(new GatewayRawResponse { Success = true, StatusCode = 200, Content = $"profile-test:{request.Model}" });
+
         public Task<GatewayModelResolution> ResolveModelAsync(
-            string appCallerCode, string modelType, string? expectedModel = null, CancellationToken ct = default)
+            string appCallerCode, string modelType, string? expectedModel = null,
+            string? pinnedPlatformId = null, string? pinnedModelId = null, CancellationToken ct = default)
             => Task.FromResult(Resolve(expectedModel));
 
         public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(
@@ -213,7 +276,8 @@ public class GatewayServingEndpointContractTests
 
         public ILLMClient CreateClient(
             string appCallerCode, string modelType, int maxTokens = 4096,
-            double temperature = 0.2, bool includeThinking = false, string? expectedModel = null)
+            double temperature = 0.2, bool includeThinking = false, string? expectedModel = null,
+            string? pinnedPlatformId = null, string? pinnedModelId = null)
             => throw new NotSupportedException("本骨架不测 CreateClient 路径");
     }
 }

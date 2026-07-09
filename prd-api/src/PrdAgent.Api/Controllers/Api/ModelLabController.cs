@@ -10,7 +10,6 @@ using PrdAgent.Core.Models;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
-using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.Prompts.Templates;
 using PrdAgent.Infrastructure.Security;
 using static PrdAgent.Core.Models.AppCallerRegistry;
@@ -29,10 +28,8 @@ public class ModelLabController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly IModelLabRepository _repo;
     private readonly IConfiguration _config;
-    private readonly IHttpClientFactory _httpClientFactory;
-    private readonly ILlmRequestLogWriter _logWriter;
     private readonly ILLMRequestContextAccessor _ctxAccessor;
-    private readonly ILogger<ClaudeClient> _claudeLogger;
+    private readonly PrdAgent.Infrastructure.LlmGateway.ILlmGateway _gateway;
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
@@ -40,18 +37,14 @@ public class ModelLabController : ControllerBase
         MongoDbContext db,
         IModelLabRepository repo,
         IConfiguration config,
-        IHttpClientFactory httpClientFactory,
-        ILlmRequestLogWriter logWriter,
         ILLMRequestContextAccessor ctxAccessor,
-        ILogger<ClaudeClient> claudeLogger)
+        PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway)
     {
         _db = db;
         _repo = repo;
         _config = config;
-        _httpClientFactory = httpClientFactory;
-        _logWriter = logWriter;
         _ctxAccessor = ctxAccessor;
-        _claudeLogger = claudeLogger;
+        _gateway = gateway;
     }
 
     private string GetAdminId() => this.GetRequiredUserId();
@@ -383,7 +376,7 @@ public class ModelLabController : ControllerBase
                 return;
             }
 
-            var (platformApiUrl, platformApiKey, fallbackPlatformType) = ResolveApiConfigForPlatform(platform);
+            var (platformApiUrl, platformApiKey, _) = ResolveApiConfigForPlatform(platform);
             if (string.IsNullOrWhiteSpace(platformApiUrl) || string.IsNullOrWhiteSpace(platformApiKey))
             {
                 var errItem = new ModelLabRunItem
@@ -428,15 +421,14 @@ public class ModelLabController : ControllerBase
             }
 
             var enablePromptCacheForPlatform = mainEnablePromptCache && (effective.EnablePromptCache ?? true);
-
-            var httpClient2 = _httpClientFactory.CreateClient("LoggedHttpClient");
-            httpClient2.BaseAddress = new Uri(platformApiUrl.TrimEnd('/'));
-
-            // S3 B 类：保留直连（测 admin 明确选中的 platform+model，故意绕开网关池调度以守「选 A 测 A」）。
-            // 传输观测标记 direct 由上方 BeginScope 的 GatewayTransport 承载，日志可辨识为直连锁定路径。
-            ILLMClient client2 = fallbackPlatformType == "anthropic" || platformApiUrl.Contains("anthropic.com", StringComparison.OrdinalIgnoreCase)
-                ? new ClaudeClient(httpClient2, platformApiKey, modelName, 4096, 0.2, enablePromptCacheForPlatform, _claudeLogger, _logWriter, _ctxAccessor, platform.Id, platform.Name)
-                : new OpenAIClient(httpClient2, platformApiKey, modelName, 4096, 0.2, enablePromptCacheForPlatform, _logWriter, _ctxAccessor, null, platform.Id, platform.Name);
+            ILLMClient client2 = _gateway.CreateClient(
+                Admin.ModelLab.Run,
+                ModelTypes.Chat,
+                maxTokens: 4096,
+                temperature: 0.2,
+                expectedModel: modelName,
+                pinnedPlatformId: platform.Id,
+                pinnedModelId: modelName);
 
             // 继续使用下方通用逻辑（systemPrompt/prompt/stream）
             await RunStreamWithClientAsync(client2, selected, run, effective, enablePromptCacheForPlatform, writeLock, queueMs, ct);
@@ -486,7 +478,7 @@ public class ModelLabController : ControllerBase
             return;
         }
 
-        var (apiUrl, apiKey, platformType, resolvedPlatformId, resolvedPlatformName) = ResolveApiConfigForModel(model);
+        var (apiUrl, apiKey, _, resolvedPlatformId, _) = ResolveApiConfigForModel(model);
         if (string.IsNullOrWhiteSpace(apiUrl) || string.IsNullOrWhiteSpace(apiKey))
         {
             var errItem = new ModelLabRunItem
@@ -531,15 +523,14 @@ public class ModelLabController : ControllerBase
         }
 
         var enablePromptCache = mainEnablePromptCache && (model.EnablePromptCache ?? true) && (effective.EnablePromptCache ?? true);
-
-        var httpClient = _httpClientFactory.CreateClient("LoggedHttpClient");
-        httpClient.BaseAddress = new Uri(apiUrl.TrimEnd('/'));
-
-        // S3 B 类：保留直连（测 admin 明确选中的 platform+model，故意绕开网关池调度以守「选 A 测 A」）。
-        // 传输观测标记 direct 由上方 BeginScope 的 GatewayTransport 承载，日志可辨识为直连锁定路径。
-        ILLMClient client = platformType == "anthropic" || apiUrl.Contains("anthropic.com", StringComparison.OrdinalIgnoreCase)
-            ? new ClaudeClient(httpClient, apiKey, model.ModelName, 4096, 0.2, enablePromptCache, _claudeLogger, _logWriter, _ctxAccessor, resolvedPlatformId, resolvedPlatformName)
-            : new OpenAIClient(httpClient, apiKey, model.ModelName, 4096, 0.2, enablePromptCache, _logWriter, _ctxAccessor, null, resolvedPlatformId, resolvedPlatformName);
+        ILLMClient client = _gateway.CreateClient(
+            Admin.ModelLab.Run,
+            ModelTypes.Chat,
+            maxTokens: 4096,
+            temperature: 0.2,
+            expectedModel: model.ModelName,
+            pinnedPlatformId: resolvedPlatformId,
+            pinnedModelId: model.ModelName);
 
         await RunStreamWithClientAsync(client, selected, run, effective, enablePromptCache, writeLock, queueMs, ct);
         return;
@@ -678,11 +669,9 @@ public class ModelLabController : ControllerBase
                 SystemPromptRedacted: "[MODEL_LAB]",
                 RequestType: requestType,
                 AppCallerCode: appCallerCode,
-                ModelResolutionType: ModelResolutionType.DirectModel,
-                // S2 观测标记：B 类保留直连锁定语义（测 admin 明确选中的 platform+model，故意绕开网关池
-                // 调度，走网关池会破坏「选 A 测 A」语义）。全网关路由留待网关支持 pinned platform+model
-                // 入口后做（见 doc/plan.llm-gateway.full-cutover.md S3）。此处只纳入 transport 观测：direct。
-                GatewayTransport: GatewayTransports.Direct));
+                // ModelLab 仍锁定 admin 明确选中的 platform+model，但该语义已由 pinned gateway 保证。
+                // transport 不在调用方硬写，交给当前网关模式在日志构建点标注为 inproc/http。
+                ModelResolutionType: ModelResolutionType.DirectModel));
 
             var startedAt = item.StartedAt;
             var firstTokenAt = (DateTime?)null;
@@ -1140,4 +1129,3 @@ internal class EffectiveRunRequest
         ImageBase64List = imageBase64List ?? new()
     };
 }
-

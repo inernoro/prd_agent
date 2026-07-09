@@ -45,13 +45,13 @@ serving 影子比对读端点。本文档把每一屏拆成**自动化工具（P
 
 ## 2. 测试覆盖矩阵摘要（A/B/C/D 四层 + shadow）
 
-事实来源：`doc/spec.llm-gateway-test-matrix.md`（设计 SSOT）+ `doc/report.gw-test-matrix.md`（约 282 行全量报告，
+事实来源：`doc/spec.llm-gateway-test-matrix.md`（设计 SSOT）+ `doc/report.gw-test-matrix.md`（约 284 行全量报告，
 `scripts/gen-gw-matrix-report.py` 自动生成）。本节只给摘要，不复制全文。
 
 | 层 | 测什么 | 跑在哪 | CI 测试类 | 规模 |
 |----|--------|--------|-----------|------|
 | A 解析/调度 | 153 个 appCallerCode 真实解析到正确 model/档位/协议 | CI 单元（golden，反射，无 Mongo） | `GwResolutionMatrixTests` + golden 套件 | 153 入口 |
-| B 协议保真 | think 位置 / 工具调用归一 / token-cache / 图片三格式还原 / 流式 | CI 单元（纯函数喂 canned payload） | `GatewayProtocolFidelityTests`（读 `protocol-cells.json`） | 91 cell |
+| B 协议保真 | think 位置 / 工具调用归一 / token-cache / 图片三格式还原 / 流式 | CI 单元（纯函数喂 canned payload） | `GatewayProtocolFidelityTests`（读 `protocol-cells.json`） | 93 cell |
 | C 跨进程传输 | SSE 逐块 / 上游 500/超时/重置/畸形SSE/空响应 → 归一失败 / 并发 | CI 单元（真 Kestrel loopback + stub gateway） | `CrossProcessServingSelfTest` + `CrossProcessServingErrorLoadTests`（读 `transport-cells.json`） | 18 cell |
 | D 真机 | 全 153 resolve + 抽样真打 + 真生图 + 多轮 | CDS 起来后脚本 | `scripts/gw-smoke.py` | 待 CDS 跑 |
 | shadow 影子比对 | inproc（权威）vs http 网关逐字段一致性（翻 http 前的去黑盒证据） | serving 进程 + 共享 Mongo | `LlmShadowComparison` 落 `llmshadow_comparisons`，读端点 `/gw/v1/shadow-comparisons` | resolve 全量 + send 采样 |

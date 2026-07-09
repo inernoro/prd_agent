@@ -5,8 +5,8 @@
 ## 是什么
 
 - 自包含服务，不引用任何 prd-api 项目，仅依赖 NuGet 包。
-- 与 MAP（prd-api）共享同一个 MongoDB，只读共享集合 `llmrequestlogs`。
-- 拥有独立的 JWT 账户体系（独立密钥，存 `llmgw_users` 集合），与 MAP 账户/密钥完全隔离。
+- MAP 继续负责自己的日志；本服务只读 MAP 库里的 `llmrequestlogs` 作为观测视图。
+- 拥有独立的 JWT 账户体系（独立密钥，账号存 `llm_gateway.llmgw_console_users`），与 MAP 账户/密钥完全隔离。
 - 监听端口 8090（容器内由 `ASPNETCORE_URLS` 指定）。
 
 ## 环境变量
@@ -14,11 +14,12 @@
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `MongoDB__ConnectionString` | `mongodb://localhost:27017` | 与 prd-api 同一 key，共享 DB |
-| `MongoDB__DatabaseName` | `prdagent` | 同上 |
+| `MongoDB__DatabaseName` | `prdagent` | MAP 业务库；GW 只读 `llmrequestlogs` 等观测集合 |
+| `LlmGateway__DatabaseName` | `llm_gateway` | GW 自有账号、登录审计等状态库 |
 | `LlmGwJwt__Secret` | `llmgw-dev-secret-change-me-please-0001`（开发占位，必须改） | HS256 密钥，>=32 字符。独立于 MAP |
 | `LlmGwJwt__Issuer` | `prdagent-llmgw` | JWT issuer |
-| `LLMGW_ADMIN_USER` | `admin` | 启动时幂等播种的管理员用户名 |
-| `LLMGW_ADMIN_PASSWORD` | `llmgw-admin-2026` | 管理员初始口令（PBKDF2 入库） |
+| `LLMGW_ADMIN_PASSWORD` | 未设置时 `admin` | 仅首次 bootstrap 或 `LLMGW_ADMIN_FORCE_RESET=1` 破玻璃时使用；已有账号以数据库哈希为权威 |
+| `LLMGW_ADMIN_FORCE_RESET` | 空 | 设为 `1`/`true`/`yes`/`on` 时显式重置 admin 口令 |
 | `GIT_COMMIT` | `""` | 由 CI 注入，`/gw/healthz` 回显 |
 
 环境变量用 `__` 双下划线映射到配置层级里的 `:`。
@@ -51,7 +52,7 @@ dotnet run
 ```bash
 curl -s http://localhost:8090/gw/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"llmgw-admin-2026"}'
+  -d '{"username":"admin","password":"admin"}'
 ```
 
 ## 容器构建

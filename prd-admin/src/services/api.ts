@@ -1275,6 +1275,7 @@ export const api = {
       publicShare: (token: string) => `/api/document-store/public/share/${token}`,
       publicShareEntries: (token: string) => `/api/document-store/public/share/${token}/entries`,
       publicShareEntryContent: (token: string, entryId: string) => `/api/document-store/public/share/${token}/entries/${entryId}/content`,
+      publicShareGraph: (token: string) => `/api/document-store/public/share/${token}/graph`,
       // 互动
       like: (storeId: string) => `/api/document-store/stores/${storeId}/like`,
       favorite: (storeId: string) => `/api/document-store/stores/${storeId}/favorite`,
@@ -1291,6 +1292,8 @@ export const api = {
       // 知识库 Agent：Run 状态查询与 SSE 流
       agentRun: (runId: string) => `/api/document-store/agent-runs/${runId}`,
       agentRunStream: (runId: string) => `/api/document-store/agent-runs/${runId}/stream`,
+      // 一键生成双链（标题精确匹配，改写正文为 [[标题]]）
+      autoLink: (storeId: string) => `/api/document-store/stores/${storeId}/auto-link`,
     },
     entries: {
       list: (storeId: string) => `/api/document-store/stores/${storeId}/entries`,
@@ -1437,6 +1440,12 @@ export const api = {
       if (opts?.limit != null) params.push(`limit=${opts.limit}`);
       if (opts?.force) params.push('force=true');
       return `/api/changelog/github-pending-review${params.length ? `?${params.join('&')}` : ''}`;
+    },
+    githubHotfixes: (opts?: { limit?: number; force?: boolean }) => {
+      const params: string[] = [];
+      if (opts?.limit != null) params.push(`limit=${opts.limit}`);
+      if (opts?.force) params.push('force=true');
+      return `/api/changelog/github-hotfixes${params.length ? `?${params.join('&')}` : ''}`;
     },
     /** AI 总结（走 ILlmGateway + prd-admin.changelog.aiSummary::chat） */
     aiSummary: () => '/api/changelog/ai-summary',

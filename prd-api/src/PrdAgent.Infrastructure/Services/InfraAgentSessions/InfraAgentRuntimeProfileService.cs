@@ -2,15 +2,13 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using System.Diagnostics;
-using System.Net.Http.Headers;
-using System.Text;
-using System.Text.Json;
 using System.Security.Cryptography;
 using MongoDB.Driver;
 using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Infrastructure.Services.InfraAgentSessions;
@@ -21,19 +19,19 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
 
     private readonly MongoDbContext _db;
     private readonly IDataProtector _protector;
-    private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _configuration;
+    private readonly ILlmGateway _gateway;
 
     public InfraAgentRuntimeProfileService(
         MongoDbContext db,
         IDataProtectionProvider protectionProvider,
-        IHttpClientFactory httpClientFactory,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        ILlmGateway gateway)
     {
         _db = db;
         _protector = protectionProvider.CreateProtector(ProtectorPurpose);
-        _httpClientFactory = httpClientFactory;
         _configuration = configuration;
+        _gateway = gateway;
     }
 
     public async Task<List<InfraAgentRuntimeProfileView>> ListAsync(string userId, CancellationToken ct)
@@ -559,18 +557,20 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         var sw = Stopwatch.StartNew();
         try
         {
-            var http = _httpClientFactory.CreateClient();
-            http.Timeout = TimeSpan.FromSeconds(30);
-            var url = BuildTestUrl(secret.BaseUrl, secret.Protocol);
-            using var req = new HttpRequestMessage(HttpMethod.Post, url);
-            ApplyAuthHeaders(req, secret.Protocol, secret.ApiKey);
-            req.Headers.UserAgent.Add(new ProductInfoHeaderValue("prd-agent-runtime-profile-test", "1.0"));
-            req.Content = new StringContent(BuildTestBody(secret.Protocol, secret.Model), Encoding.UTF8, "application/json");
-
-            using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+            var resp = await _gateway.TestUpstreamProfileAsync(new GatewayUpstreamProfileTestRequest
+            {
+                AppCallerCode = AppCallerRegistry.InfraAgent.RuntimeProfileTest.Chat,
+                Protocol = secret.Protocol,
+                BaseUrl = secret.BaseUrl,
+                Model = secret.Model,
+                ApiKey = secret.ApiKey,
+                ProfileId = secret.Id,
+                ProfileName = secret.Name,
+                UserId = userId,
+                TimeoutSeconds = 30
+            }, ct);
             sw.Stop();
-            var text = await resp.Content.ReadAsStringAsync(ct);
-            if (resp.IsSuccessStatusCode)
+            if (resp.Success && resp.StatusCode is >= 200 and < 300)
             {
                 return new InfraAgentRuntimeProfileTestResult(
                     secret.Id,
@@ -580,7 +580,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
                     secret.Protocol,
                     secret.BaseUrl,
                     secret.Model,
-                    (int)resp.StatusCode,
+                    resp.StatusCode,
                     sw.ElapsedMilliseconds);
             }
 
@@ -588,11 +588,11 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
                 secret.Id,
                 false,
                 "failed",
-                BuildUpstreamError((int)resp.StatusCode, text),
+                BuildUpstreamError(resp.StatusCode, resp.ErrorMessage ?? resp.Content ?? string.Empty),
                 secret.Protocol,
                 secret.BaseUrl,
                 secret.Model,
-                (int)resp.StatusCode,
+                resp.StatusCode,
                 sw.ElapsedMilliseconds);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or OperationCanceledException)
@@ -777,60 +777,6 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
                 StatusCodes.Status400BadRequest);
         }
         return uri.GetLeftPart(UriPartial.Path).TrimEnd('/');
-    }
-
-    private static string BuildTestUrl(string baseUrl, string protocol)
-    {
-        return NormalizeProtocol(protocol) == InfraAgentRuntimeProtocols.OpenAiCompatible
-            ? CombineEndpoint(baseUrl, "/v1/chat/completions")
-            : CombineEndpoint(baseUrl, "/v1/messages");
-    }
-
-    private static string CombineEndpoint(string baseUrl, string endpoint)
-    {
-        var root = baseUrl.TrimEnd('/');
-        var cleanEndpoint = endpoint.StartsWith("/v1/", StringComparison.Ordinal) && root.EndsWith("/v1", StringComparison.OrdinalIgnoreCase)
-            ? endpoint[3..]
-            : endpoint;
-        return $"{root}{cleanEndpoint}";
-    }
-
-    private static void ApplyAuthHeaders(HttpRequestMessage req, string protocol, string apiKey)
-    {
-        if (NormalizeProtocol(protocol) == InfraAgentRuntimeProtocols.OpenAiCompatible)
-        {
-            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-            return;
-        }
-
-        req.Headers.Add("x-api-key", apiKey);
-        req.Headers.Add("anthropic-version", "2023-06-01");
-    }
-
-    private static string BuildTestBody(string protocol, string model)
-    {
-        if (NormalizeProtocol(protocol) == InfraAgentRuntimeProtocols.OpenAiCompatible)
-        {
-            return JsonSerializer.Serialize(new
-            {
-                model,
-                max_tokens = 8,
-                messages = new[]
-                {
-                    new { role = "user", content = "Reply with ok." }
-                }
-            });
-        }
-
-        return JsonSerializer.Serialize(new
-        {
-            model,
-            max_tokens = 8,
-            messages = new[]
-            {
-                new { role = "user", content = "Reply with ok." }
-            }
-        });
     }
 
     private static string? NormalizeOptional(string? value)

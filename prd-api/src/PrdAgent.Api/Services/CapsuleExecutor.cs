@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Jint;
 using Jint.Runtime;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
@@ -5629,7 +5630,7 @@ function safeChart(canvasId, config) {
         }
 
         var runId = Guid.NewGuid().ToString("N");
-        var appCallerCode = "page-agent.claude-sdk::agent";
+        var appCallerCode = AppCallerRegistry.PageAgent.Generate;
         var effectiveModel = string.IsNullOrWhiteSpace(model) ? "claude-opus-4-5" : model;
 
         // 工具白名单：node.config.tools 是逗号分隔的工具名列表，从 IAgentToolRegistry 解析
@@ -5661,6 +5662,25 @@ function safeChart(canvasId, config) {
             sb.AppendLine($"[claude-sdk] tools whitelist=[{toolsCsv}] resolved={tools.Count}");
         }
 
+        var configuration = sp.GetService<IConfiguration>();
+        var gatewayServeBaseUrl = configuration?["LlmGateway:ServeBaseUrl"]?.Trim().TrimEnd('/');
+        var gatewayApiKey = configuration?["LlmGwServe:ApiKey"]?.Trim();
+        var hasDirectUpstreamOverride =
+            !string.IsNullOrWhiteSpace(profile)
+            || !string.IsNullOrWhiteSpace(baseUrl)
+            || !string.IsNullOrWhiteSpace(apiKey);
+        if (hasDirectUpstreamOverride)
+        {
+            throw new InvalidOperationException(
+                "claude-sdk sidecar direct upstream override is disabled. Route model calls through llmgw-serve by configuring LlmGateway:ServeBaseUrl and LlmGwServe:ApiKey.");
+        }
+
+        if (string.IsNullOrWhiteSpace(gatewayServeBaseUrl) || string.IsNullOrWhiteSpace(gatewayApiKey))
+        {
+            throw new InvalidOperationException(
+                "claude-sdk sidecar requires llmgw-serve routing. Missing LlmGateway:ServeBaseUrl or LlmGwServe:ApiKey.");
+        }
+
         var request = new SidecarRunRequest
         {
             RunId = runId,
@@ -5678,9 +5698,11 @@ function safeChart(canvasId, config) {
             AppCallerCode = appCallerCode,
             SidecarTag = string.IsNullOrWhiteSpace(sidecarTag) ? null : sidecarTag,
             StickyKey = string.IsNullOrWhiteSpace(stickyKey) ? runId : stickyKey,
-            Profile = string.IsNullOrWhiteSpace(profile) ? null : profile,
-            BaseUrl = string.IsNullOrWhiteSpace(baseUrl) ? null : baseUrl,
-            ApiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey,
+            Profile = null,
+            BaseUrl = gatewayServeBaseUrl,
+            ApiKey = gatewayApiKey,
+            Protocol = "openai-compatible",
+            RuntimeAdapter = "legacy-sidecar",
         };
 
         // 把 LlmRequestContext 推上 scope（与 .claude/rules/llm-gateway.md 对齐），
@@ -5733,8 +5755,7 @@ function safeChart(canvasId, config) {
                     StartedAt: startedAt,
                     RequestType: "agent",
                     AppCallerCode: appCallerCode,
-                    // S2 观测标记：claude-sdk 直连（非网关路由），标记 direct。
-                    GatewayTransport: GatewayTransports.Direct));
+                    GatewayTransport: GatewayTransports.Http));
             }
             catch (Exception ex)
             {
@@ -5744,10 +5765,7 @@ function safeChart(canvasId, config) {
 
         sb.AppendLine($"[claude-sdk] runId={runId} model={request.Model} maxTurns={maxTurns}");
         sb.AppendLine($"[claude-sdk] systemPrompt={systemPrompt.Length}c userPrompt={userPrompt.Length}c tools={tools.Count}");
-        if (!string.IsNullOrWhiteSpace(profile))
-            sb.AppendLine($"[claude-sdk] upstream profile={profile}");
-        else if (!string.IsNullOrWhiteSpace(baseUrl))
-            sb.AppendLine($"[claude-sdk] upstream baseUrl={baseUrl} (override)");
+        sb.AppendLine("[claude-sdk] upstream=llmgw-serve openai-compatible runtimeAdapter=legacy-sidecar");
 
         if (emitEvent != null)
             await emitEvent("cli-agent-phase", new { phase = "running", message = "Claude Agent SDK 执行中…" });
@@ -6403,14 +6421,13 @@ function safeChart(canvasId, config) {
 
         // DI
         var modelResolver = sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.IModelResolver>();
-        var streamAsr = sp.GetRequiredService<DoubaoStreamAsrService>();
         var httpFactory = sp.GetRequiredService<IHttpClientFactory>();
         var gateway = sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>();
         var urlValidator = sp.GetRequiredService<ISafeOutboundUrlValidator>();
 
         // 解析 ASR 模型（fallback 链：先专属 → 再 v2d.transcribe → 再 document-store.subtitle）。
-        // 优先使用 doubao-asr-stream；如果线上模型池只绑定普通 Whisper/OpenAI 兼容 ASR，
-        // 则走 Gateway multipart /v1/audio/transcriptions，避免要求用户额外改模型池。
+        // 只选择能经 ILlmGateway/llmgw-serve 执行的 ASR；doubao-asr-stream 的 WebSocket 协议
+        // 已迁入网关 raw 发送路径，不再由 MAP 进程直连上游服务类。
         var asrCallerChain = new[]
         {
             AppCallerRegistry.VideoAgent.VideoToText.Asr,
@@ -6430,7 +6447,7 @@ function safeChart(canvasId, config) {
                 firstSuccessfulResolution = r;
                 firstSuccessfulCaller = caller;
             }
-            if (r.Success && r.IsExchange && r.ExchangeTransformerType == "doubao-asr-stream")
+            if (r.Success)
             {
                 resolution = r;
                 resolvedCaller = caller;
@@ -6449,25 +6466,7 @@ function safeChart(canvasId, config) {
                 "ASR 模型调度失败：尝试了 video-agent.video-to-text::asr / video-agent.v2d.transcribe::asr / document-store.subtitle::asr 三个 caller，无一可用。诊断："
                 + string.Join(" | ", resolutionErrors));
         }
-        var useDoubaoStream = resolution.IsExchange && resolution.ExchangeTransformerType == "doubao-asr-stream";
-        sb.AppendLine($"[VideoToText:asr] ASR caller={resolvedCaller} mode={(useDoubaoStream ? "doubao-stream" : "gateway-multipart")}");
-
-        var apiKeyRaw = resolution.ApiKey ?? "";
-        string appKey = "", accessKey = apiKeyRaw;
-        if (apiKeyRaw.Contains('|'))
-        {
-            var parts = apiKeyRaw.Split('|', 2);
-            appKey = parts[0];
-            accessKey = parts[1];
-        }
-        var wsUrl = resolution.ApiUrl ?? "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel";
-        var asrConfig = resolution.ExchangeTransformerConfig ?? new Dictionary<string, object>
-        {
-            ["resourceId"] = "volc.bigasr.sauc.duration",
-            ["enableItn"] = true,
-            ["enablePunc"] = true,
-            ["enableDdc"] = true,
-        };
+        sb.AppendLine($"[VideoToText:asr] ASR caller={resolvedCaller} mode=gateway-multipart");
 
         // ffmpeg 启动前探测，防止错误被误读为 ASR/网络问题
         await EnsureFfmpegAvailableAsync();
@@ -6530,81 +6529,41 @@ function safeChart(canvasId, config) {
                     var audioBytes = await ExtractAudioWithFfmpegFromFileAsync(tmpVideoPath);
                     sb.AppendLine($"[VideoToText:asr] item#{idx} 音频 {audioBytes.Length} 字节，提交 ASR");
 
-                    if (useDoubaoStream)
+                    var gwRes = resolution.ToGatewayResolution();
+                    // chat-audio(OpenAI input_audio→/v1/chat/completions)只用于非 Exchange 的 OpenAI 兼容平台。
+                    // Exchange 走自己的 transformer(doubao-asr 已在上游单独分流;gemini-native 的
+                    // GeminiNativeTransformer 只转 text/image_url、会丢掉音频部分),其 PlatformType=exchange
+                    // 不在 google/gemini 排除内,若误走 chat-audio 会把音频丢失导致 ASR 失败(Codex P2)。
+                    var llmCtx = sp.GetService<ILLMRequestContextAccessor>();
+                    var triggeredBy = variables.GetValueOrDefault("__triggeredBy") ?? "workflow-system";
+                    var forceFullShadowSample = string.Equals(
+                        variables.GetValueOrDefault("__forceFullShadowSample"),
+                        "true",
+                        StringComparison.OrdinalIgnoreCase);
+                    using var asrScope = llmCtx?.BeginScope(new LlmRequestContext(
+                        RequestId: variables.GetValueOrDefault("__executionId") ?? Guid.NewGuid().ToString("N"),
+                        GroupId: null,
+                        SessionId: null,
+                        UserId: triggeredBy,
+                        ViewRole: null,
+                        DocumentChars: null,
+                        DocumentHash: null,
+                        SystemPromptRedacted: "[WORKFLOW_VIDEO_TO_TEXT_ASR]",
+                        RequestType: ModelTypes.Asr,
+                        AppCallerCode: resolvedCaller!,
+                        ForceFullShadowSample: forceFullShadowSample));
+                    var gatewayResult = !gwRes.IsExchange && IsChatAudioModel(gwRes.ActualModel, gwRes.PlatformType)
+                        ? await TranscribeAudioViaChatAsync(gateway, resolvedCaller!, audioBytes, gwRes)
+                        : await TranscribeAudioViaGatewayAsync(gateway, resolvedCaller!, audioBytes, gwRes);
+                    transcript = gatewayResult.Transcript;
+                    if (gatewayResult.Cues.Count > 0)
                     {
-                        var asrResult = await streamAsr.TranscribeWithCallbackAsync(
-                            wsUrl, appKey, accessKey, audioBytes, asrConfig,
-                            onStage: (_, _) => Task.CompletedTask,
-                            onProgress: (_, _) => Task.CompletedTask,
-                            onFrame: (_, _, _) => Task.CompletedTask,
-                            ct: CancellationToken.None);
-
-                        if (asrResult.Success)
-                        {
-                            transcript = asrResult.FullText ?? "";
-                            sb.AppendLine($"[VideoToText:asr] item#{idx} ASR 完成，转写 {transcript.Length} 字");
-
-                            // 从最后一帧 raw response 抽取 utterances 时间戳（豆包 ASR 返回毫秒）→ TranscriptCue 数组
-                            try
-                            {
-                                var cuesArr = new JsonArray();
-                                var lastResp = asrResult.Responses.LastOrDefault(r => r.PayloadMsg != null);
-                                if (lastResp?.PayloadMsg != null)
-                                {
-                                    var payload = lastResp.PayloadMsg.Value;
-                                    if (payload.TryGetProperty("result", out var res) && res.TryGetProperty("utterances", out var utts) && utts.ValueKind == JsonValueKind.Array)
-                                    {
-                                        foreach (var utt in utts.EnumerateArray())
-                                        {
-                                            var cueText = utt.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
-                                            if (string.IsNullOrWhiteSpace(cueText)) continue;
-                                            double startMs = utt.TryGetProperty("start_time", out var stEl) && stEl.ValueKind == JsonValueKind.Number ? stEl.GetDouble() : 0;
-                                            double endMs = utt.TryGetProperty("end_time", out var etEl) && etEl.ValueKind == JsonValueKind.Number ? etEl.GetDouble() : 0;
-                                            cuesArr.Add(new JsonObject
-                                            {
-                                                ["startSec"] = startMs / 1000.0,
-                                                ["endSec"] = endMs / 1000.0,
-                                                ["text"] = cueText.Trim(),
-                                            });
-                                        }
-                                    }
-                                }
-                                if (cuesArr.Count > 0)
-                                {
-                                    enriched["transcriptCues"] = cuesArr;
-                                    sb.AppendLine($"[VideoToText:asr] item#{idx} 提取 {cuesArr.Count} 条带时间戳字幕");
-                                }
-                            }
-                            catch (Exception cueEx)
-                            {
-                                sb.AppendLine($"[VideoToText:asr] item#{idx} cue 抽取异常（不影响 transcript）: {cueEx.Message}");
-                            }
-                        }
-                        else
-                        {
-                            sb.AppendLine($"[VideoToText:asr] item#{idx} ASR 失败: {asrResult.Error}");
-                        }
+                        enriched["transcriptCues"] = gatewayResult.Cues;
+                        sb.AppendLine($"[VideoToText:asr] item#{idx} Gateway ASR 完成，转写 {transcript.Length} 字，时间戳 {gatewayResult.Cues.Count} 条");
                     }
                     else
                     {
-                        var gwRes = resolution.ToGatewayResolution();
-                        // chat-audio(OpenAI input_audio→/v1/chat/completions)只用于非 Exchange 的 OpenAI 兼容平台。
-                        // Exchange 走自己的 transformer(doubao-asr 已在上游单独分流;gemini-native 的
-                        // GeminiNativeTransformer 只转 text/image_url、会丢掉音频部分),其 PlatformType=exchange
-                        // 不在 google/gemini 排除内,若误走 chat-audio 会把音频丢失导致 ASR 失败(Codex P2)。
-                        var gatewayResult = !gwRes.IsExchange && IsChatAudioModel(gwRes.ActualModel, gwRes.PlatformType)
-                            ? await TranscribeAudioViaChatAsync(gateway, resolvedCaller!, audioBytes, gwRes)
-                            : await TranscribeAudioViaGatewayAsync(gateway, resolvedCaller!, audioBytes, gwRes);
-                        transcript = gatewayResult.Transcript;
-                        if (gatewayResult.Cues.Count > 0)
-                        {
-                            enriched["transcriptCues"] = gatewayResult.Cues;
-                            sb.AppendLine($"[VideoToText:asr] item#{idx} Gateway ASR 完成，转写 {transcript.Length} 字，时间戳 {gatewayResult.Cues.Count} 条");
-                        }
-                        else
-                        {
-                            sb.AppendLine($"[VideoToText:asr] item#{idx} Gateway ASR 完成（model={gwRes.ActualModel}），转写 {transcript.Length} 字");
-                        }
+                        sb.AppendLine($"[VideoToText:asr] item#{idx} Gateway ASR 完成（model={gwRes.ActualModel}），转写 {transcript.Length} 字");
                     }
                 }
                 catch (Exception ex)

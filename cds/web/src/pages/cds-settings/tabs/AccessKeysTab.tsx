@@ -23,11 +23,13 @@ import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
 import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { apiRequest, ApiError } from '@/lib/api';
+import { AgentKeyScopePanel, describeAgentKeyScope, type AgentKeyScope } from '@/components/AgentKeyScopePanel';
 
 interface AgentKeySummary {
   id: string;
   label: string;
   scope: string;
+  access?: AgentKeyScope;
   createdAt: string;
   createdBy?: string;
   lastUsedAt?: string;
@@ -53,8 +55,10 @@ export function AccessKeysTab({ onToast }: Props): JSX.Element {
   const [signing, setSigning] = useState(false);
   const [signLabel, setSignLabel] = useState('');
   const [signError, setSignError] = useState('');
+  // 默认作用域 = 只能创建新项目(签发全局 Key 的安全默认)。
+  const [signScope, setSignScope] = useState<AgentKeyScope>({ canCreateProjects: true, projects: [] });
   /** 刚签出的 plaintext key — 只展示一次,用户必须复制 */
-  const [freshKey, setFreshKey] = useState<{ plaintext: string; preview: string } | null>(null);
+  const [freshKey, setFreshKey] = useState<{ plaintext: string; preview: string; access?: AgentKeyScope } | null>(null);
   const [copyHint, setCopyHint] = useState('');
 
   const loadKeys = useCallback(async () => {
@@ -71,19 +75,23 @@ export function AccessKeysTab({ onToast }: Props): JSX.Element {
     void loadKeys();
   }, [loadKeys]);
 
+  const emptyScope =
+    !signScope.canCreateProjects && signScope.projects !== 'all' && signScope.projects.length === 0;
+
   async function signKey(): Promise<void> {
     setSigning(true);
     setSignError('');
     try {
-      const res = await apiRequest<{ keyId: string; plaintext: string; preview: string }>(
+      const res = await apiRequest<{ keyId: string; plaintext: string; preview: string; access?: AgentKeyScope }>(
         '/api/global-agent-keys',
         {
           method: 'POST',
-          body: { label: signLabel.trim() || undefined },
+          body: { label: signLabel.trim() || undefined, access: signScope },
         },
       );
-      setFreshKey({ plaintext: res.plaintext, preview: res.preview });
+      setFreshKey({ plaintext: res.plaintext, preview: res.preview, access: res.access });
       setSignLabel('');
+      setSignScope({ canCreateProjects: true, projects: [] });
       await loadKeys();
       onToast(`已签发新 Key ${res.preview}`);
     } catch (err) {
@@ -173,7 +181,10 @@ export function AccessKeysTab({ onToast }: Props): JSX.Element {
             </Button>
           </div>
           {copyHint ? <div className="mt-1 text-xs text-amber-700 dark:text-amber-300">{copyHint}</div> : null}
-          <div className="mt-2 text-xs text-amber-700/80 dark:text-amber-300/80">
+          <div className="mt-2 text-xs text-amber-700/90 dark:text-amber-300/90">
+            授权范围：<span className="font-medium">{describeAgentKeyScope(freshKey.access)}</span>
+          </div>
+          <div className="mt-1 text-xs text-amber-700/80 dark:text-amber-300/80">
             签发后该明文不再保存。关闭本提示后无法再次显示,请确认已复制。
           </div>
           <Button type="button" variant="ghost" size="sm" className="mt-2" onClick={() => setFreshKey(null)}>
@@ -183,24 +194,26 @@ export function AccessKeysTab({ onToast }: Props): JSX.Element {
       ) : null}
 
       {/* 签发新 Key */}
-      <div className="cds-surface-raised cds-hairline px-4 py-3">
-        <div className="mb-2 text-sm font-semibold">签发新 Key</div>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <input
-            className="h-10 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-            placeholder="可选标签,例如 prod-rotate-2026-05 / shenzhen-mac"
-            value={signLabel}
-            onChange={(e) => setSignLabel(e.target.value)}
-            maxLength={100}
-            disabled={signing}
-          />
-          <Button type="button" onClick={() => void signKey()} disabled={signing}>
+      <div className="cds-surface-raised cds-hairline space-y-3 px-4 py-3">
+        <div className="text-sm font-semibold">签发新 Key</div>
+        <input
+          className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+          placeholder="可选标签,例如 prod-rotate-2026-05 / shenzhen-mac"
+          value={signLabel}
+          onChange={(e) => setSignLabel(e.target.value)}
+          maxLength={100}
+          disabled={signing}
+        />
+        <AgentKeyScopePanel value={signScope} onChange={setSignScope} disabled={signing} />
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs text-muted-foreground">范围：{describeAgentKeyScope(signScope)}</span>
+          <Button type="button" onClick={() => void signKey()} disabled={signing || emptyScope}>
             {signing ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Plus className="mr-1 h-3.5 w-3.5" />}
             签发
           </Button>
         </div>
         {signError ? (
-          <div className="mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
             {signError}
           </div>
         ) : null}
@@ -246,8 +259,8 @@ export function AccessKeysTab({ onToast }: Props): JSX.Element {
                         >
                           {isRevoked ? '已吊销' : '有效'}
                         </span>
-                        <span className="rounded-md border border-[hsl(var(--hairline))] bg-muted/40 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-                          {key.scope}
+                        <span className="rounded-md border border-[hsl(var(--hairline))] bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                          {describeAgentKeyScope(key.access)}
                         </span>
                       </div>
                       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px] text-muted-foreground">

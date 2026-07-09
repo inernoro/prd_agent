@@ -18,6 +18,8 @@ public class GatewayLLMClient : ILLMClient
     private readonly string? _platformId;
     private readonly string? _platformName;
     private readonly string? _expectedModel;
+    private readonly string? _pinnedPlatformId;
+    private readonly string? _pinnedModelId;
     private readonly bool _enablePromptCache;
     private readonly int _maxTokens;
     private readonly double _temperature;
@@ -37,7 +39,9 @@ public class GatewayLLMClient : ILLMClient
         double temperature = 0.2,
         bool includeThinking = false,
         ILLMRequestContextAccessor? contextAccessor = null,
-        string? expectedModel = null)
+        string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null)
     {
         _gateway = gateway;
         _appCallerCode = appCallerCode;
@@ -50,6 +54,8 @@ public class GatewayLLMClient : ILLMClient
         _includeThinking = includeThinking;
         _contextAccessor = contextAccessor;
         _expectedModel = expectedModel;
+        _pinnedPlatformId = pinnedPlatformId;
+        _pinnedModelId = pinnedModelId;
     }
 
     /// <summary>AppCallerCode（用于测试断言）</summary>
@@ -98,6 +104,8 @@ public class GatewayLLMClient : ILLMClient
             AppCallerCode = _appCallerCode,
             ModelType = _modelType,
             ExpectedModel = _expectedModel,
+            PinnedPlatformId = _pinnedPlatformId,
+            PinnedModelId = _pinnedModelId,
             RequestBody = requestBody,
             EnablePromptCache = enablePromptCache,
             IncludeThinking = _includeThinking,

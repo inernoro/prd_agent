@@ -4,6 +4,7 @@ using Moq;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.LlmGateway;
 using Shouldly;
 using Xunit;
@@ -45,11 +46,11 @@ public class SubtitleGenerationProcessorTests
             });
 
         var processor = new SubtitleGenerationProcessor(
-            streamAsr: null!,
             modelResolver: Mock.Of<IModelResolver>(),
             llmGateway: gateway.Object,
             documentService: Mock.Of<IDocumentService>(),
             httpClientFactory: Mock.Of<IHttpClientFactory>(),
+            llmCtx: new LLMRequestContextAccessor(),
             logger: NullLogger<SubtitleGenerationProcessor>.Instance);
 
         var resolution = new ModelResolutionResult

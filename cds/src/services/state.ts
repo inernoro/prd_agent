@@ -1,7 +1,7 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction } from '../types.js';
+import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import { mergeBranchProfiles, isValidExtraProfileId } from './branch-extra-services.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
@@ -892,6 +892,10 @@ export class StateService {
     return this.state.branches[branchId]?.subdomainAliases || [];
   }
 
+  getBranchCustomDomains(branchId: string): string[] {
+    return this.state.branches[branchId]?.customDomains || [];
+  }
+
   /**
    * Replace the alias list for a branch. Validates that the branch exists
    * but does NOT validate DNS format or cross-branch collisions — those
@@ -906,6 +910,16 @@ export class StateService {
       return;
     }
     branch.subdomainAliases = [...aliases];
+  }
+
+  setBranchCustomDomains(branchId: string, domains: string[]): void {
+    const branch = this.state.branches[branchId];
+    if (!branch) throw new Error(`分支 "${branchId}" 不存在`);
+    if (!domains || domains.length === 0) {
+      delete branch.customDomains;
+      return;
+    }
+    branch.customDomains = [...domains];
   }
 
   /**
@@ -947,6 +961,20 @@ export class StateService {
         // Collision: candidate equals another branch's alias
         if (other.subdomainAliases?.some(a => a.toLowerCase() === normalized)) {
           conflicts.push({ alias: candidate, conflictWith: other.id, reason: 'alias' });
+        }
+      }
+    }
+    return conflicts;
+  }
+
+  findCustomDomainCollisions(branchId: string, candidateDomains: string[]): Array<{ domain: string; conflictWith: string }> {
+    const conflicts: Array<{ domain: string; conflictWith: string }> = [];
+    for (const candidate of candidateDomains) {
+      const normalized = candidate.toLowerCase();
+      for (const other of Object.values(this.state.branches)) {
+        if (other.id === branchId) continue;
+        if (other.customDomains?.some((d) => d.toLowerCase() === normalized)) {
+          conflicts.push({ domain: candidate, conflictWith: other.id });
         }
       }
     }
@@ -1588,6 +1616,23 @@ export class StateService {
     if ('ciImageError' in updates) branch.ciImageError = updates.ciImageError;
   }
 
+  /**
+   * 波3 配置树:写分支派生指针(derivedFrom*)。仅当尚未设置时写入(idempotent,
+   * 不覆盖已有溯源——手动创建时写的显式来源优先于 PR base 推断)。
+   * 必须走本方法改内存权威对象再由调用方 save() —— mongo-split 下 getBranch
+   * 可能返回副本,直接改返回值不落盘(见 dispatcher 既往教训)。
+   * @returns 是否发生写入
+   */
+  setBranchDerivedFrom(branchId: string, source: { branchId: string; branchName: string }): boolean {
+    const branch = this.state.branches[branchId];
+    if (!branch) return false;
+    if (branch.derivedFromBranchId) return false;
+    branch.derivedFromBranchId = source.branchId;
+    branch.derivedFromBranchName = source.branchName;
+    branch.derivedAt = new Date().toISOString();
+    return true;
+  }
+
   // ── Remote hosts (shared-service deployment targets, 2026-05-06) ──
   //
   // 系统级登记表。SSH 凭据已 seal（infra/secret-seal.ts），明文不出库。
@@ -2074,12 +2119,28 @@ export class StateService {
   }
 
   /**
+   * Resolve a GlobalAgentKey's effective access scope. Legacy entries (signed
+   * before the 2026-07-09 unified-authorization model) have no `access` field
+   * and are treated as full admin — bootstrap-equivalent, no regression for
+   * existing deployments. See types.ts AgentKeyAccess.
+   */
+  static resolveGlobalAgentKeyAccess(entry: Pick<GlobalAgentKey, 'access'>): AgentKeyAccess {
+    const a = entry.access;
+    if (!a) return { canCreateProjects: true, projects: 'all' };
+    return {
+      canCreateProjects: a.canCreateProjects === true,
+      projects: a.projects === 'all' ? 'all' : Array.isArray(a.projects) ? a.projects : [],
+    };
+  }
+
+  /**
    * Parse an incoming plaintext `cdsg_<suffix>` and find the matching
    * non-revoked GlobalAgentKey. Parallels findAgentKeyForAuth but
    * without the project lookup step — all global keys live in one
-   * array. Returns null on any failure.
+   * array. Returns the keyId plus the resolved access scope so the auth
+   * layer can enforce it. Returns null on any failure.
    */
-  findGlobalAgentKeyForAuth(plaintextKey: string): { keyId: string } | null {
+  findGlobalAgentKeyForAuth(plaintextKey: string): { keyId: string; access: AgentKeyAccess } | null {
     if (!plaintextKey || !plaintextKey.startsWith('cdsg_')) return null;
     const hash = crypto.createHash('sha256').update(plaintextKey).digest('hex');
     const hashBuf = Buffer.from(hash, 'hex');
@@ -2089,7 +2150,7 @@ export class StateService {
         const entryBuf = Buffer.from(entry.hash, 'hex');
         if (entryBuf.length !== hashBuf.length) continue;
         if (crypto.timingSafeEqual(entryBuf, hashBuf)) {
-          return { keyId: entry.id };
+          return { keyId: entry.id, access: StateService.resolveGlobalAgentKeyAccess(entry) };
         }
       } catch {
         /* malformed hash in state, skip */
@@ -3504,11 +3565,32 @@ export class StateService {
     projectId?: string | null;
     triggeredBy?: string;
   }): ConfigSnapshot {
+    // 波3 配置树:分支层配置一并入快照(只收有配置的分支,控体积;projectId 过滤对齐快照 scope)。
+    const branchConfigs: NonNullable<ConfigSnapshot['payload']['branchConfigs']> = {};
+    for (const [branchId, branch] of Object.entries(this.state.branches)) {
+      if (params.projectId && (branch.projectId || 'default') !== params.projectId) continue;
+      const hasOverrides = branch.profileOverrides && Object.keys(branch.profileOverrides).length > 0;
+      const hasExtras = branch.extraProfiles && branch.extraProfiles.length > 0;
+      if (!hasOverrides && !hasExtras && !branch.derivedFromBranchId) continue;
+      branchConfigs[branchId] = JSON.parse(JSON.stringify({
+        ...(hasOverrides ? { profileOverrides: branch.profileOverrides } : {}),
+        ...(hasExtras ? { extraProfiles: branch.extraProfiles } : {}),
+        ...(branch.derivedFromBranchId ? {
+          derivedFromBranchId: branch.derivedFromBranchId,
+          derivedFromBranchName: branch.derivedFromBranchName,
+          derivedAt: branch.derivedAt,
+        } : {}),
+      }));
+    }
+    // branchConfigs **总是**写入(即使空对象):回滚的对称语义依赖它区分「新快照拍照时
+    // 确无分支配置(空对象 → 回滚要清掉事后新增的配置)」vs「旧快照没拍过分支层
+    // (字段缺失 → 回滚 no-op,向后兼容)」。
     const payload = {
       buildProfiles: JSON.parse(JSON.stringify(this.state.buildProfiles)),
       customEnv: JSON.parse(JSON.stringify(this.state.customEnv)),
       infraServices: JSON.parse(JSON.stringify(this.state.infraServices)),
       routingRules: JSON.parse(JSON.stringify(this.state.routingRules)),
+      branchConfigs,
     };
     const serialized = JSON.stringify(payload);
     const snapshot: ConfigSnapshot = {
@@ -3550,6 +3632,38 @@ export class StateService {
     this.state.customEnv = JSON.parse(JSON.stringify(target.payload.customEnv));
     this.state.infraServices = JSON.parse(JSON.stringify(target.payload.infraServices));
     this.state.routingRules = JSON.parse(JSON.stringify(target.payload.routingRules));
+    // 波3 配置树:分支层回滚。仅恢复**仍存在**的分支(快照后新建的不动、已删的不复活);
+    // 旧快照无 branchConfigs → no-op(向后兼容,零迁移)。快照 scope 为项目时,
+    // 该项目下「快照里没有配置、现在有了」的分支也要清掉(对称恢复到拍照时刻)。
+    if (target.payload.branchConfigs) {
+      const snapConfigs = target.payload.branchConfigs;
+      for (const [branchId, branch] of Object.entries(this.state.branches)) {
+        if (target.projectId && (branch.projectId || 'default') !== target.projectId) continue;
+        const snap = snapConfigs[branchId];
+        if (snap) {
+          if (snap.profileOverrides) branch.profileOverrides = JSON.parse(JSON.stringify(snap.profileOverrides));
+          else delete branch.profileOverrides;
+          if (snap.extraProfiles) branch.extraProfiles = JSON.parse(JSON.stringify(snap.extraProfiles));
+          else delete branch.extraProfiles;
+          if (snap.derivedFromBranchId) {
+            branch.derivedFromBranchId = snap.derivedFromBranchId;
+            branch.derivedFromBranchName = snap.derivedFromBranchName;
+            branch.derivedAt = snap.derivedAt;
+          } else {
+            delete branch.derivedFromBranchId;
+            delete branch.derivedFromBranchName;
+            delete branch.derivedAt;
+          }
+        } else {
+          // 拍照时该分支没有任何分支层配置 → 恢复为无配置
+          delete branch.profileOverrides;
+          delete branch.extraProfiles;
+          delete branch.derivedFromBranchId;
+          delete branch.derivedFromBranchName;
+          delete branch.derivedAt;
+        }
+      }
+    }
     this.save();
     return target;
   }
@@ -3766,6 +3880,10 @@ export class StateService {
     branch?: string | null;
     prNumber?: number | null;
     deployMode?: string | null;
+    sourceId?: string | null;
+    sourcePath?: string | null;
+    contentHash?: string | null;
+    publishedAt?: string | null;
     createdBy?: string;
   }): AcceptanceReportMeta {
     if (!this.state.acceptanceReports) this.state.acceptanceReports = [];
@@ -3790,6 +3908,10 @@ export class StateService {
       branch: input.branch ?? null,
       prNumber: input.prNumber ?? null,
       deployMode: input.deployMode ?? null,
+      sourceId: input.sourceId ?? null,
+      sourcePath: input.sourcePath ?? null,
+      contentHash: input.contentHash ?? null,
+      publishedAt: input.publishedAt ?? null,
       createdBy: input.createdBy,
       createdAt: now,
       updatedAt: now,
@@ -3810,6 +3932,7 @@ export class StateService {
     id: string,
     updates: {
       title?: string;
+      format?: 'html' | 'md';
       content?: string;
       verdict?: 'pass' | 'conditional' | 'fail' | null;
       tier?: string | null;
@@ -3818,15 +3941,35 @@ export class StateService {
       branch?: string | null;
       prNumber?: number | null;
       deployMode?: string | null;
+      sourceId?: string | null;
+      sourcePath?: string | null;
+      contentHash?: string | null;
+      publishedAt?: string | null;
     },
   ): AcceptanceReportMeta | null {
     const meta = this.getAcceptanceReport(id);
     if (!meta) return null;
+    const previousPath = this.reportFilePath(meta);
     if (typeof updates.title === 'string') meta.title = updates.title;
+    let formatChanged = false;
+    if (updates.format !== undefined && updates.format !== meta.format) {
+      meta.format = updates.format;
+      formatChanged = true;
+    }
     if (typeof updates.content === 'string') {
       fs.mkdirSync(this.getReportsBase(), { recursive: true });
       fs.writeFileSync(this.reportFilePath(meta), updates.content, 'utf-8');
       meta.sizeBytes = Buffer.byteLength(updates.content, 'utf8');
+      const nextPath = this.reportFilePath(meta);
+      if (previousPath !== nextPath && fs.existsSync(previousPath)) {
+        try { fs.unlinkSync(previousPath); } catch { /* best-effort cleanup of old extension */ }
+      }
+    } else if (formatChanged) {
+      const nextPath = this.reportFilePath(meta);
+      if (previousPath !== nextPath && fs.existsSync(previousPath) && !fs.existsSync(nextPath)) {
+        fs.mkdirSync(this.getReportsBase(), { recursive: true });
+        fs.renameSync(previousPath, nextPath);
+      }
     }
     if (updates.verdict !== undefined) meta.verdict = updates.verdict;
     if (updates.tier !== undefined) meta.tier = updates.tier;
@@ -3835,6 +3978,10 @@ export class StateService {
     if (updates.branch !== undefined) meta.branch = updates.branch;
     if (updates.prNumber !== undefined) meta.prNumber = updates.prNumber;
     if (updates.deployMode !== undefined) meta.deployMode = updates.deployMode;
+    if (updates.sourceId !== undefined) meta.sourceId = updates.sourceId;
+    if (updates.sourcePath !== undefined) meta.sourcePath = updates.sourcePath;
+    if (updates.contentHash !== undefined) meta.contentHash = updates.contentHash;
+    if (updates.publishedAt !== undefined) meta.publishedAt = updates.publishedAt;
     meta.updatedAt = new Date().toISOString();
     this.save();
     return meta;

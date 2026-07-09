@@ -63,6 +63,12 @@ public class DocumentStoreAgentRun
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? StartedAt { get; set; }
     public DateTime? EndedAt { get; set; }
+
+    /// <summary>
+    /// 内部发布证据采样标记：仅由带服务密钥的 LLM Gateway shadow seed 写入。
+    /// Worker 读取后把本次 run 的 LLM 调用强制纳入 shadow comparison。
+    /// </summary>
+    public bool ForceFullShadowSample { get; set; }
 }
 
 /// <summary>再加工对话历史消息</summary>
@@ -87,6 +93,9 @@ public static class DocumentStoreAgentRunKind
 {
     public const string Subtitle = "subtitle";
     public const string Reprocess = "reprocess";
+
+    /// <summary>知识库级自动补链（标题精确匹配改写为 [[标题]]）。SourceEntryId 存空串，任务粒度是整个 StoreId。</summary>
+    public const string AutoLink = "autolink";
 }
 
 public static class DocumentStoreRunStatus
@@ -98,9 +107,10 @@ public static class DocumentStoreRunStatus
     public const string Cancelled = "cancelled";
 }
 
-/// <summary>字幕生成 / 再加工 的 RunKinds（用于 IRunEventStore）</summary>
+/// <summary>字幕生成 / 再加工 / 自动补链 的 RunKinds（用于 IRunEventStore）</summary>
 public static class DocumentStoreRunKinds
 {
     public const string Subtitle = "docStoreSubtitle";
     public const string Reprocess = "docStoreReprocess";
+    public const string AutoLink = "docStoreAutoLink";
 }

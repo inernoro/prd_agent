@@ -206,6 +206,8 @@ public class CdsAgentRuntimeCompatibilityTests
             string appCallerCode,
             string modelType,
             string? expectedModel = null,
+            string? pinnedPlatformId = null,
+            string? pinnedModelId = null,
             CancellationToken ct = default) =>
             Task.FromResult(FakeResolution());
 
@@ -221,7 +223,9 @@ public class CdsAgentRuntimeCompatibilityTests
             int maxTokens = 4096,
             double temperature = 0.2,
             bool includeThinking = false,
-            string? expectedModel = null) =>
+            string? expectedModel = null,
+            string? pinnedPlatformId = null,
+            string? pinnedModelId = null) =>
             throw new NotSupportedException("N6 compatibility tests do not create legacy LLM clients.");
 
         private static GatewayModelResolution FakeResolution() => new()

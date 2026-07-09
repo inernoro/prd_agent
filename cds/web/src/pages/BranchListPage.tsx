@@ -39,6 +39,7 @@ import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/la
 import { BranchDetailDrawer, type BranchDeploymentItem, type BranchResourceDetailTab } from '@/components/BranchDetailDrawer';
 import { MonitoringDialog } from '@/components/monitoring/MonitoringDialog';
 import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
+import { DetectStackDialog } from '@/components/branch/DetectStackDialog';
 import { CapacityFullDialog } from '@/components/CapacityFullDialog';
 import { Button } from '@/components/ui/button';
 import {
@@ -1348,6 +1349,12 @@ export function BranchListPage(): JSX.Element {
   } | null>(null);
   const [releaseBranchId, setReleaseBranchId] = useState<string | null>(null);
   const [branchSearchOpen, setBranchSearchOpen] = useState(false);
+  // 波3 补 UI:新建分支时可选「配置来源分支」——选中后把该分支的分支级配置
+  // 快照拷贝到新分支(走 POST /api/branches 的 sourceBranchId)。默认 null =
+  // 不派生,新分支从项目模板起步(零摩擦:不选也能建)。
+  const [configSourceBranchId, setConfigSourceBranchId] = useState<string | null>(null);
+  // 波5:空项目「检测技术栈」对话框(项目无构建配置时的接入入口)。
+  const [detectStackOpen, setDetectStackOpen] = useState(false);
   const [pendingEnvKeys, setPendingEnvKeys] = useState<string[]>([]);
   // 标签过滤:用户点击 BranchCard 上某个标签 chip 时切到只显示该标签的分支;
   // 顶部出现"正在过滤:#xxx ×"chip,点 × 清除。单标签过滤(对齐 legacy)。
@@ -2764,7 +2771,7 @@ export function BranchListPage(): JSX.Element {
    * the new BranchCard appears with a "构建中" status and the user can
    * click 预览 on the card once it's running.
    */
-  const previewRemoteBranch = useCallback(async (remote: RemoteBranch): Promise<void> => {
+  const previewRemoteBranch = useCallback(async (remote: RemoteBranch, sourceBranchId?: string | null): Promise<void> => {
     if (!projectId || state.status !== 'ok') return;
     const existing = trackedByName.get(remote.name);
     if (existing) {
@@ -2779,8 +2786,10 @@ export function BranchListPage(): JSX.Element {
     try {
       const result = await apiRequest<{ branch: BranchSummary }>('/api/branches', {
         method: 'POST',
-        body: { branch: remote.name, projectId },
+        // 波3 派生:选了来源分支才带 sourceBranchId,否则走项目模板(不派生)。
+        body: { branch: remote.name, projectId, ...(sourceBranchId ? { sourceBranchId } : {}) },
       });
+      setConfigSourceBranchId(null);
       setAction(remote.name, null);
       await refresh(false);
       // Pass `null` as the preview target so deployBranch doesn't try to
@@ -2796,7 +2805,7 @@ export function BranchListPage(): JSX.Element {
     }
   }, [deployBranch, focusBranchCard, projectId, refresh, setAction, state, trackedByName]);
 
-  const previewBranchByName = useCallback(async (name: string): Promise<void> => {
+  const previewBranchByName = useCallback(async (name: string, sourceBranchId?: string | null): Promise<void> => {
     const branchName = name.trim();
     if (!branchName) {
       setToast('输入分支名');
@@ -2821,9 +2830,11 @@ export function BranchListPage(): JSX.Element {
     try {
       const result = await apiRequest<{ branch: BranchSummary }>('/api/branches', {
         method: 'POST',
-        body: { branch: branchName, projectId },
+        // 波3 派生:选了来源分支才带 sourceBranchId,否则走项目模板(不派生)。
+        body: { branch: branchName, projectId, ...(sourceBranchId ? { sourceBranchId } : {}) },
       });
       setManualBranchName('');
+      setConfigSourceBranchId(null);
       setAction(branchName, null);
       await refresh(false);
       setToast(`已添加 ${branchName}，正在后台部署`);
@@ -2946,7 +2957,7 @@ export function BranchListPage(): JSX.Element {
                   event.preventDefault();
                   if (manualBranchName.trim()) {
                     setBranchSearchOpen(false);
-                    void previewBranchByName(manualBranchName);
+                    void previewBranchByName(manualBranchName, configSourceBranchId);
                   }
                 }}
               >
@@ -2981,6 +2992,8 @@ export function BranchListPage(): JSX.Element {
                   remoteLoading={remoteBranchesLoading}
                   trackedByName={trackedByName}
                   actions={actions}
+                  configSourceBranchId={configSourceBranchId}
+                  onChangeConfigSource={setConfigSourceBranchId}
                   onPickTracked={(branch) => {
                     // 用户反馈(2026-05-07):点已跟踪的下拉条目不要跳详情页,
                     // 在本页选中卡片即可。要查看详情走卡片
@@ -2993,7 +3006,7 @@ export function BranchListPage(): JSX.Element {
                   onPickRemote={(remote) => {
                     setBranchSearchOpen(false);
                     setManualBranchName('');
-                    void previewRemoteBranch(remote);
+                    void previewRemoteBranch(remote, configSourceBranchId);
                   }}
                   onForceFetchRemote={() => void refreshRemoteBranches(true)}
                 />
@@ -3166,13 +3179,36 @@ export function BranchListPage(): JSX.Element {
             {branches.length === 0 ? (
               <div className="cds-surface-raised cds-hairline px-8 py-16">
                 <div className="mx-auto flex max-w-md flex-col items-center text-center">
-                  <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary">
-                    <GitBranch className="h-6 w-6" />
-                  </div>
-                  <h2 className="mt-5 text-lg font-semibold">还没有分支</h2>
-                  <p className="mt-2 max-w-sm text-sm leading-6 text-muted-foreground">
-                    在顶部搜索框粘贴远程分支名，或在下拉中选择已有远程分支，CDS 会自动创建工作树并打开预览。
-                  </p>
+                  {state.status === 'ok' && state.buildProfiles.length === 0 ? (
+                    // 波5:项目还没有构建配置(webhook 自动 clone / 建时没勾服务)→
+                    // 先引导「检测技术栈」,否则即便建了分支也无从部署。
+                    <>
+                      <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary">
+                        <Server className="h-6 w-6" />
+                      </div>
+                      <h2 className="mt-5 text-lg font-semibold">项目还没有构建配置</h2>
+                      <p className="mt-2 max-w-sm text-sm leading-6 text-muted-foreground">
+                        CDS 可以扫描已克隆的代码，按真实技术栈自动生成构建配置——不用手写。生成后即可创建分支预览。
+                      </p>
+                      <Button className="mt-5" onClick={() => setDetectStackOpen(true)}>
+                        <Server />
+                        检测技术栈
+                      </Button>
+                      <p className="mt-3 text-xs text-muted-foreground">
+                        也可以在顶部搜索框直接粘贴分支名先建分支，稍后到「项目设置」手动配置。
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary">
+                        <GitBranch className="h-6 w-6" />
+                      </div>
+                      <h2 className="mt-5 text-lg font-semibold">还没有分支</h2>
+                      <p className="mt-2 max-w-sm text-sm leading-6 text-muted-foreground">
+                        在顶部搜索框粘贴远程分支名，或在下拉中选择已有远程分支，CDS 会自动创建工作树并打开预览。
+                      </p>
+                    </>
+                  )}
                 </div>
               </div>
             ) : (
@@ -3624,6 +3660,18 @@ export function BranchListPage(): JSX.Element {
           />
         ) : null}
 
+        {projectId ? (
+          <DetectStackDialog
+            projectId={projectId}
+            open={detectStackOpen}
+            onOpenChange={setDetectStackOpen}
+            onApplied={() => {
+              setToast('已生成构建配置，现在可以创建分支预览了');
+              void refresh(false);
+            }}
+          />
+        ) : null}
+
         {bulkTagBranchId && state.status === 'ok' ? (() => {
           const target = state.branches.find((branch) => branch.id === bulkTagBranchId);
           if (!target) return null;
@@ -3795,6 +3843,8 @@ function BranchSearchDropdown({
   remoteLoading,
   trackedByName,
   actions,
+  configSourceBranchId,
+  onChangeConfigSource,
   onPickTracked,
   onPickRemote,
   onForceFetchRemote,
@@ -3805,12 +3855,17 @@ function BranchSearchDropdown({
   remoteLoading: boolean;
   trackedByName: Map<string, BranchSummary>;
   actions: Record<string, BranchAction>;
+  configSourceBranchId: string | null;
+  onChangeConfigSource: (branchId: string | null) => void;
   onPickTracked: (branch: BranchSummary) => void;
   onPickRemote: (remote: RemoteBranch) => void;
   onForceFetchRemote: () => void;
 }): JSX.Element {
   const trimmed = query.trim().toLowerCase();
   const matches = (text: string) => !trimmed || text.toLowerCase().includes(trimmed);
+  // 波3 补 UI:新建分支的「配置来源」——按分支名排序,供用户从本项目已有分支
+  // 快照拷贝分支级配置。跨项目派生后端已拒绝,这里天然只列本项目分支。
+  const sourceCandidates = [...tracked].sort((a, b) => a.branch.localeCompare(b.branch));
 
   const visibleTracked = tracked
     .filter((branch) => matches(branch.branch) || matches(branch.commitSha || '') || (branch.tags || []).some(matches))
@@ -3825,6 +3880,29 @@ function BranchSearchDropdown({
       role="listbox"
       aria-label="分支建议"
     >
+      {/* 波3 补 UI:配置来源分支选择器。常驻于建议列表之上,仅在新建分支时生效
+          (选中已跟踪分支只是聚焦卡片,不创建,忽略此项)。默认「项目模板」= 不派生。 */}
+      {sourceCandidates.length > 0 ? (
+        <div className="flex items-center gap-2 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/40 px-4 py-2">
+          <label htmlFor="cds-config-source" className="shrink-0 text-[11px] font-medium text-muted-foreground">
+            配置来源
+          </label>
+          <select
+            id="cds-config-source"
+            value={configSourceBranchId ?? ''}
+            onChange={(event) => onChangeConfigSource(event.target.value || null)}
+            className="min-w-0 flex-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-2 py-1 text-xs text-foreground outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--ring))]"
+            title="新建分支时从来源分支快照拷贝分支级配置;默认走项目模板(不派生)"
+          >
+            <option value="">项目模板(默认,不派生)</option>
+            {sourceCandidates.map((branch) => (
+              <option key={branch.id} value={branch.id}>
+                派生自 {branch.branch}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : null}
       <div className="max-h-[420px] overflow-y-auto py-1">
         {empty ? (
           <div className="px-4 py-6 text-center text-sm text-muted-foreground">

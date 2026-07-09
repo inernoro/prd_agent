@@ -196,6 +196,10 @@ export class ForwarderRoutePublisher {
           hosts.push(`${alias}.${root}`);
         }
       }
+      for (const domain of branch.customDomains ?? []) {
+        const host = String(domain || '').trim().toLowerCase();
+        if (host) hosts.push(host);
+      }
 
       let idx = 0;
       for (const host of hosts) {

@@ -47,9 +47,14 @@ public class OfficialSkillCatalogTests
         Assert.Contains("reference/standard-v2.md", paths);
         Assert.Contains("scripts/harness.mjs", paths);
         Assert.Contains("scripts/archive_report.py", paths);
+        Assert.Contains("scripts/publish_acceptance_rules_to_cds.py", paths);
         Assert.Contains("scripts/verify-open.mjs", paths);
         Assert.Contains("templates/zz-report.md", paths);
         Assert.Contains("templates/report-template.md", paths);
+        Assert.Contains("references/rules/manifest.json", paths);
+        Assert.Contains("references/rules/rule.acceptance.map-enterprise.md", paths);
+        Assert.Contains("references/rules/rule.acceptance.ssot.md", paths);
+        Assert.Contains("references/rules/guide.acceptance.report-evidence.md", paths);
         Assert.DoesNotContain(paths, p => p.StartsWith("scripts/sv-", StringComparison.Ordinal));
 
         var skillMd = entry.Files.Single(f => f.Path == "SKILL.md").Content;
@@ -68,10 +73,14 @@ public class OfficialSkillCatalogTests
         Assert.Contains(design.Files, f => f.Path == "references/proof-strength.md");
         Assert.Contains(design.Files, f => f.Path == "references/fusion-testing.md");
         Assert.Contains(design.Files, f => f.Path == "references/output-contract.md");
+        Assert.Contains(design.Files, f => f.Path == "references/rules/manifest.json");
+        Assert.Contains(design.Files, f => f.Path == "references/rules/rule.acceptance.map-enterprise.md");
 
         Assert.NotNull(orchestrator);
         Assert.Contains(orchestrator.Files, f => f.Path == "references/evidence-contract.md");
         Assert.Contains(orchestrator.Files, f => f.Path == "references/scenario-matrix.md");
+        Assert.Contains(orchestrator.Files, f => f.Path == "references/rules/manifest.json");
+        Assert.Contains(orchestrator.Files, f => f.Path == "references/rules/rule.acceptance.ssot.md");
     }
 
     [Fact]
@@ -114,7 +123,12 @@ public class OfficialSkillCatalogTests
         Assert.Contains("acceptance-test-design/scripts/daily_scope.py", names);
         Assert.Contains("acceptance-scenario-orchestrator/SKILL.md", names);
         Assert.Contains("acceptance-test-design/references/proof-strength.md", names);
+        Assert.Contains("acceptance-test-design/references/rules/manifest.json", names);
+        Assert.Contains("acceptance-test-design/references/rules/rule.acceptance.map-enterprise.md", names);
         Assert.Contains("acceptance-scenario-orchestrator/references/evidence-contract.md", names);
+        Assert.Contains("acceptance-scenario-orchestrator/references/rules/manifest.json", names);
+        Assert.Contains("create-visual-test-to-kb/references/rules/manifest.json", names);
+        Assert.Contains("create-visual-test-to-kb/references/rules/guide.acceptance.report-evidence.md", names);
         Assert.DoesNotContain(names, n => n.Contains("/scripts/sv-", StringComparison.Ordinal));
     }
 
@@ -155,6 +169,8 @@ public class OfficialSkillCatalogTests
         Assert.Contains("acceptance-scenario-orchestrator/references/evidence-contract.md", names);
         Assert.Contains("acceptance-test-design/SKILL.md", names);
         Assert.Contains("acceptance-test-design/references/proof-strength.md", names);
+        Assert.Contains("acceptance-test-design/references/rules/manifest.json", names);
+        Assert.Contains("acceptance-scenario-orchestrator/references/rules/manifest.json", names);
     }
 
     private static HttpRequest BuildRequest(string origin)

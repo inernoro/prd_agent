@@ -1,10 +1,28 @@
 # CDS 当前状态看板 · 计划
 
-> **类型**:plan(总览看板) · **更新**:2026-05-03 · **状态**:活的 — 每次 handoff 必须更新本文件
+> **类型**:plan(总览看板) · **更新**:2026-07-06 · **状态**:活的 — 每次 handoff 必须更新本文件
 >
 > 这是 **CDS 唯一的"我在哪"入口**。任何 AI / 人类接手 CDS 改动前先读本页 30 秒,然后按需深入子文档。
 >
 > **不要**给 CDS 新建额外的 handoff/进度文档 — 全部归口本文件 + `plan.cds.backlog-matrix.md`(碎片项 SSOT)。
+
+---
+
+## 〇、配置体系三波演进看板(2026-07-06 起,当前主线)
+
+> 背景:用户 2026-07-06 提出「拔高上限的同时降低下限」——配置树(全局→项目→分支→派生分支)、
+> 分支临时容器产品化、配置可观测性。方案定盘:派生=快照拷贝、repo compose=纯结构种子(波4)。
+> 分支:`claude/session-y2bpgw`。
+
+| 阶段 | 进度% | 状态 | 当前 blocker | 下一步 | 验收证据 |
+|---|---|---|---|---|---|
+| 波1 最后一公里(extraProfiles UI+CLI / dbScope 开关 / 看板) | 90 | 进行中 | 无 | push 后灰度真机验证(添加 Nacos 预设 → redeploy → 分支网 → 命名 URL 可达) | vitest 180 文件绿 + pytest 149 绿 + tsc 双侧绿(2026-07-06 本地);真机证据待补 |
+| 波2 配置检查器(env 逐 key 溯源 + effective-config 端点 + 面板) | 90 | 进行中 | 无 | 灰度真机验证(部署热路径重构是合并前置门槛);验证通过后波1+2 一并收 | env-provenance.test.ts 14 例绿 + effective-config 端点 3 例绿 + container.test.ts 43 例行为等价护栏绿 + 全量 vitest 181 文件绿(2026-07-06 本地) |
+| 波3 配置树补全(分支派生快照拷贝 + 快照分支层 + design.cds.config-tree + 建分支来源选择器 UI) | 95 | 进行中 | 无 | 灰度真机验证(与波1/2 一并) | 派生拷贝/copy-config/快照分支层/PR 回填 7 例 + 建分支来源选择器 contract 1 例新测试绿 + 全量 vitest 绿(server-integration 10 例存量环境失败无关)+ web tsc/build 绿(2026-07-06);design.cds.config-tree.md 已归档 |
+| 波4 双SSOT收敛(repo compose 纯结构种子 + drift 巡检 + 还 D1 债) | 100 | 完成 | 无(D1 已 paid) | 可选增强:drift-scan webhook 自动触发 + 面板漂移入口 UI | classifyEnvSeed 5 例 + computeComposeDrift 7 例 + drift-scan 端点 5 例新测试绿。**D1 运行实例验证通过(2026-07-06)**:`cdscli env get --scope prd-agent` 8 个被剥离密钥全 present+非TODO(值脱敏);`branch status` 本分支 commit 8624a95(构建自剥离后 compose)`api-prd-agent: running` → 密钥注入不丢的端到端确证。全量 vitest 2605 passed(server-integration 10 例存量环境失败无关) |
+| 波5 无 Agent 接入(事后栈检测 race-free 后端 + UI 入口) | 90 | 进行中 | 仅剩 CDS 仪表盘 UI 的真视觉截图(见下「验证边界」),非阻塞 | CDS self-update 到本分支后(或本地跑 CDS 仪表盘)双主题截图收尾 | 后端:detect-preview/detect-apply + 6 例端点测试绿。UI:BranchListPage 空项目态引导「检测技术栈」→ DetectStackDialog(shadcn Dialog,主题 token 双色,grep 零硬编码色)→ preview→apply→刷新;contract 测试断言 wiring;backend/web tsc + web build + 全量 vitest 2605 passed。**验证边界**:波3/波5 是 CDS **仪表盘**(cds/web)UI,分支预览域名部署的是 prd-agent **应用**(admin/api),不含 CDS 仪表盘 → 这两处 UI 的真视觉截图须待 CDS self-update 到本分支或本地跑仪表盘,不能走分支预览。已验证:tsc/build/contract/主题 grep + 复用成熟 shadcn 主键 |
+
+**距离可发布**:波4 **完成**(D1 已 paid,运行实例验证密钥注入不丢);波1-3 + 波5 代码完成 + 单测/构建全绿,剩 CDS 仪表盘 UI(波3/波5)的双主题真视觉截图 —— 该截图须待 CDS self-update 到本分支或本地跑仪表盘(分支预览域名部署的是 prd-agent 应用,不含 CDS 仪表盘,故不能走分支预览),非合并阻塞项。
 
 ---
 
@@ -46,14 +64,17 @@
 | **mongo-split storage** | 2026-05 | 默认 `CDS_STORAGE_MODE=mongo-split` |
 | **per-branch DB 隔离机制(代码层)** | 2026-05 | `applyPerBranchDbIsolation` + `dbScope='per-branch'` |
 | **Onboarding 收尾第二波(F11/F12 + 3 UI bug)** | 2026-05-03 | `claude/cds-loose-ends-wrap-up` |
+| **分支专属网络隔离(cds-br-*)** | 2026-06-29 | `branch-network.ts`(见 design.cds.branch-network-isolation) |
+| **分支级临时额外服务(后端+API)** | 2026-06-29 | `BranchEntry.extraProfiles` + PUT /extra-services(见 design.cds.branch-local-extra-services) |
+| **临时额外服务产品化(UI+cdscli)+ dbScope 分支开关(波1)** | 2026-07-06 | `claude/session-y2bpgw`(ExtraServicesPanel + cdscli branch extra-services + override 白名单补 dbScope) |
 
 ### 进行中
 
 | 项 | 进度 | 阻塞 |
 |---|---|---|
+| **配置体系三波演进(§〇)** | 波1 90% | 见顶部看板 |
 | **Onboarding UAT 真人验收剩余 22%** | 待真人浏览器跑 | 需用户跑[剩余清单](report.cds.onboarding-uat.md#真人-uat-剩余清单) |
 | **React 迁移**(`cds/web-legacy/` → `cds/web/`) | ~60% | 见 [plan.cds.web-migration](plan.cds.web-migration.md) |
-| **F16-UI**(BuildProfile 暴露 dbScope toggle) | 后端能力齐 / React 编辑器缺 | 等 React 迁移更进一步 |
 
 ### 未启动
 
@@ -86,11 +107,11 @@
 | F13 | P4 | cdscli scan 不识别 init.sql | ✅ 已修 2026-05-03(verify INFO `infra-init-script-detected`) |
 | F14 | P4 | `schemaful-db-no-migration` 误报 | ✅ 已修 2026-05-03(挂 init.sql 时不再 WARN) |
 | F15 | HIGH | container-exec 输出回显 secret | ✅ 已修(`secret-masker.ts`) |
-| F16 | P2 | per-branch DB 后缀未实施 | 🔨 后端能力齐(`dbScope='per-branch'`),UI 入口缺(F16-UI) |
+| F16 | P2 | per-branch DB 后缀未实施 | ✅ 已修 2026-07-06(波1:override 白名单补 dbScope 透传 + 分支抽屉「数据库隔离」选择器) |
 | F17 | 契约违反 | 预览过渡页是纯文本 | ✅ 已修(SVG 双圈+CDS 字样) |
 | F18 | P4 | repo picker 命名歧义(Tab vs Dialog) | ✅ 已修 2026-05-03(dropdown 直接弹 picker) |
 
-**F 系列状态**:18 项中 **17 项已修**,剩 F16-UI(后端齐 / 前端 React 端没 BuildProfile 编辑器,等迁移)。
+**F 系列状态**:18 项 **全部已修**(F16 于 2026-07-06 波1 收尾)。
 
 ### Bug 系列(2026-05-03 用户反馈的 UI bug)
 

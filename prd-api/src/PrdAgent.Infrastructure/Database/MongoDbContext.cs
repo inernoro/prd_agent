@@ -1466,6 +1466,24 @@ public class MongoDbContext
             Builders<DocumentStore>.IndexKeys.Ascending(x => x.SharedTeamIds),
             new CreateIndexOptions { Name = "idx_document_stores_shared_teams" }));
 
+        // DocumentStoreShareLinks：token 全局唯一；统一短链以 token 作为 TargetId 注册到 short_links。
+        try
+        {
+            DocumentStoreShareLinks.Indexes.CreateOne(new CreateIndexModel<DocumentStoreShareLink>(
+                Builders<DocumentStoreShareLink>.IndexKeys.Ascending(x => x.Token),
+                new CreateIndexOptions { Name = "uniq_document_store_share_links_token", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        DocumentStoreShareLinks.Indexes.CreateOne(new CreateIndexModel<DocumentStoreShareLink>(
+            Builders<DocumentStoreShareLink>.IndexKeys.Ascending(x => x.CreatedBy).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_document_store_share_links_creator_created" }));
+        DocumentStoreShareLinks.Indexes.CreateOne(new CreateIndexModel<DocumentStoreShareLink>(
+            Builders<DocumentStoreShareLink>.IndexKeys.Ascending(x => x.StoreId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_document_store_share_links_store_created" }));
+
         // ========== Report Agent 周报管理索引 ==========
 
         // ReportTeams：按 LeaderUserId 查询

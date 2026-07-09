@@ -130,6 +130,7 @@ public sealed class LlmLogDetail
     public string? ExpectedModel { get; set; }
     public string? Protocol { get; set; }
     public string? ResolutionReason { get; set; }
+    public string? Transport { get; set; }
     public string? FinishReason { get; set; }
     public bool? IsStreaming { get; set; }
     public string? Error { get; set; }
@@ -140,6 +141,33 @@ public sealed class LogsMeta
 {
     public List<string> Models { get; set; } = new();
     public List<string> Statuses { get; set; } = new();
+    public List<string> Providers { get; set; } = new();
+    public List<string> AppCallers { get; set; } = new();
+    public List<string> Transports { get; set; } = new();
+    public List<string> RequestTypes { get; set; } = new();
+}
+
+// ── 日志汇总 ──
+public sealed class LogsSummaryData
+{
+    public long Total { get; set; }
+    public long Succeeded { get; set; }
+    public long Failed { get; set; }
+    public long Running { get; set; }
+    public long Cancelled { get; set; }
+    public long Fallbacks { get; set; }
+    public long InputTokens { get; set; }
+    public long OutputTokens { get; set; }
+    public long TotalTokens { get; set; }
+    public long? AverageDurationMs { get; set; }
+    public List<LogsBucketItem> TransportDistribution { get; set; } = new();
+    public List<LogsBucketItem> StatusDistribution { get; set; } = new();
+}
+
+public sealed class LogsBucketItem
+{
+    public string Key { get; set; } = "";
+    public long Count { get; set; }
 }
 
 // ── 时间序列 ──
@@ -228,10 +256,23 @@ public sealed class ModelCapabilityItem { public string Type { get; set; } = "";
 
 // ── 影子比对（只读）──
 public sealed class ShadowData { public ShadowSummary Summary { get; set; } = new(); public List<ShadowItem> Recent { get; set; } = new(); }
-public sealed class ShadowSummary { public long Total { get; set; } public long AllMatch { get; set; } public long Critical { get; set; } public long HttpFail { get; set; } }
+public sealed class ShadowSummary
+{
+    public long Total { get; set; }
+    public long AllMatch { get; set; }
+    public long Critical { get; set; }
+    public long HttpFail { get; set; }
+    public double? SinceHours { get; set; }
+    public string? Since { get; set; }
+    public string? ReleaseCommit { get; set; }
+    public string? FirstComparedAt { get; set; }
+    public string? LastComparedAt { get; set; }
+    public double CoverageHours { get; set; }
+}
 public sealed class ShadowItem
 {
     public string Id { get; set; } = ""; public string Kind { get; set; } = ""; public string? RequestId { get; set; }
+    public string? ReleaseCommit { get; set; }
     public string AppCallerCode { get; set; } = ""; public string ModelType { get; set; } = ""; public string? ComparedAt { get; set; }
     public long ShadowDurationMs { get; set; } public bool HttpOk { get; set; } public string? HttpError { get; set; }
     public bool AllMatch { get; set; } public bool HasCritical { get; set; }

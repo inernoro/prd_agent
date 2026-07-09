@@ -692,7 +692,6 @@ public class ExchangeController : ControllerBase
         string id,
         [FromForm] IFormFile? file,
         [FromForm] string? audioUrl,
-        [FromServices] Services.DoubaoStreamAsrService streamAsr,
         CancellationToken ct)
     {
         Response.ContentType = "text/event-stream";
@@ -714,8 +713,6 @@ public class ExchangeController : ControllerBase
             catch (OperationCanceledException) { /* 客户端断开 */ }
         }
 
-        var startedAt = DateTime.UtcNow;
-
         try
         {
             // 查找 Exchange 配置
@@ -732,85 +729,12 @@ public class ExchangeController : ControllerBase
                 return;
             }
 
-            // 获取音频数据
-            byte[] audioData;
-            if (file != null && file.Length > 0)
+            await SendEvent("error", new
             {
-                await SendEvent("stage", new { stage = "uploading", message = $"正在读取音频文件 ({file.Length / 1024}KB)..." });
-                using var ms = new MemoryStream();
-                await file.CopyToAsync(ms, ct);
-                audioData = ms.ToArray();
-            }
-            else if (!string.IsNullOrWhiteSpace(audioUrl))
-            {
-                await SendEvent("stage", new { stage = "downloading", message = "正在下载音频文件..." });
-                var httpClient = _httpClientFactory.CreateClient();
-                httpClient.Timeout = TimeSpan.FromSeconds(60);
-                audioData = await httpClient.GetByteArrayAsync(audioUrl, ct);
-                await SendEvent("stage", new { stage = "downloaded", message = $"音频下载完成 ({audioData.Length / 1024}KB)" });
-            }
-            else
-            {
-                await SendEvent("error", new { error = "请上传音频文件或提供 audioUrl" });
-                return;
-            }
-
-            // 从 Exchange 配置获取认证信息
-            var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(exchange.TargetApiKeyEncrypted, _config) ?? string.Empty;
-            string appKey = "", accessKey = apiKey;
-            if (apiKey.Contains('|'))
-            {
-                var parts = apiKey.Split('|', 2);
-                appKey = parts[0];
-                accessKey = parts[1];
-            }
-
-            var wsUrl = exchange.TargetUrl ?? "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream";
-            var config = exchange.TransformerConfig ?? new Dictionary<string, object>
-            {
-                ["resourceId"] = "volc.bigasr.sauc.duration",
-                ["enableItn"] = true,
-                ["enablePunc"] = true,
-                ["enableDdc"] = true
-            };
-
-            await SendEvent("stage", new { stage = "processing", message = "正在处理音频..." });
-
-            var result = await streamAsr.TranscribeWithCallbackAsync(
-                wsUrl, appKey, accessKey, audioData, config,
-                onStage: async (stage, msg) => await SendEvent("stage", new { stage, message = msg }),
-                onProgress: async (sent, total) => await SendEvent("progress", new { sent, total }),
-                onFrame: async (seq, text, isLast) => await SendEvent("frame", new { seq, text, isLast }),
-                ct: ct);
-
-            var durationMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
-
-            await SendEvent("result", new
-            {
-                success = result.Success,
-                text = result.FullText,
-                segmentCount = result.Segments.Count,
-                segments = result.Segments.Select(s => new { s.Text, s.DurationSec }),
-                responseFrameCount = result.Responses.Count,
-                error = result.Error,
-                durationMs,
-                audioSizeBytes = audioData.Length,
-                diagnostic = result.Diagnostic,
+                error = "WebSocket 流式 ASR 直连测试已禁用：MAP 不再允许在 API 进程内直连豆包上游。该协议已迁入 LLM Gateway raw 路径，请通过业务 ASR 流程或 /gw/v1/raw 验证。",
+                code = "LLMGW_ASR_STREAM_DIRECT_DISABLED",
                 exchange = new { exchange.Id, exchange.Name, exchange.TransformerType }
             });
-
-            // 失败时除了 result 事件，再发一个独立 error 事件以便老前端兼容
-            if (!result.Success && !string.IsNullOrEmpty(result.Error))
-            {
-                await SendEvent("error", new
-                {
-                    error = result.Error,
-                    diagnostic = result.Diagnostic,
-                    exchange = new { exchange.Id, exchange.Name, exchange.TransformerType }
-                });
-            }
-
-            await SendEvent("stage", new { stage = "done", message = $"转录完成 ({durationMs}ms)" });
         }
         catch (Exception ex)
         {
@@ -1022,6 +946,40 @@ public static class ExchangeTemplates
                 TransformerType = "fal-image",
                 Enabled = true,
                 Description = "fal.ai 图片生成 - Nano Banana Pro"
+            }
+        },
+        new ExchangeTemplate
+        {
+            Id = "volcengine-video",
+            Name = "火山方舟 Seedance 视频生成",
+            Description = "火山方舟原生视频生成 API，使用 /contents/generations/tasks 异步任务协议，适配 MAP 现有视频生成客户端。",
+            ApiKeyPlaceholder = "Ark API Key",
+            ApiKeyHint = "在火山方舟控制台获取 API Key，请求头使用 Authorization: Bearer",
+            Preset = new ExchangeTemplatePreset
+            {
+                Name = "火山方舟 Seedance 视频生成",
+                Models = new List<ExchangeModelRequest>
+                {
+                    new()
+                    {
+                        ModelId = "doubao-seedance-2-0-fast-260128",
+                        DisplayName = "Doubao Seedance 2.0 Fast",
+                        ModelType = "video-gen",
+                        Enabled = true
+                    },
+                    new()
+                    {
+                        ModelId = "doubao-seedance-2-0-260128",
+                        DisplayName = "Doubao Seedance 2.0",
+                        ModelType = "video-gen",
+                        Enabled = true
+                    }
+                },
+                TargetUrl = "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks",
+                TargetAuthScheme = "Bearer",
+                TransformerType = "volcengine-video",
+                Enabled = true,
+                Description = "火山方舟原生 Seedance 视频生成。submit 返回任务 ID，status 查询 content.video_url。"
             }
         },
         new ExchangeTemplate
