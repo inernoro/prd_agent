@@ -238,6 +238,31 @@ describe('JanitorService', () => {
     });
   });
 
+  // ── 孤儿 infra 对账（2026-07-09，只报不删）──
+
+  describe('sweep — orphan infra scan', () => {
+    it('未注入扫描函数时字段为 null（旧行为不变）', async () => {
+      const report = await janitor.sweep();
+      expect(report.orphanInfraContainers).toBeNull();
+    });
+
+    it('注入后每次 sweep 上报孤儿容器名', async () => {
+      janitor.setOrphanInfraScan(async () => ['cds-infra-ghost-mongo', 'cds-infra-ghost-redis']);
+      const report = await janitor.sweep();
+      expect(report.orphanInfraContainers).toEqual(['cds-infra-ghost-mongo', 'cds-infra-ghost-redis']);
+      expect(report.errors).toEqual([]);
+    });
+
+    it('扫描失败进 errors，不阻断 sweep 其余步骤', async () => {
+      janitor.setOrphanInfraScan(async () => { throw new Error('docker down'); });
+      stateService.addBranch(makeBranch('stale-x', 8));
+      const report = await janitor.sweep();
+      expect(report.errors.some((e) => e.includes('orphan infra scan'))).toBe(true);
+      // TTL 删除照常执行
+      expect(report.removedBranches).toContain('stale-x');
+    });
+  });
+
   // ── dryRun ──
 
   describe('dryRun', () => {

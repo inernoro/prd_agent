@@ -10349,6 +10349,31 @@ export function createBranchRouter(deps: RouterDeps): Router {
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
 
     const finalizeBranchDelete = async (message: string): Promise<void> => {
+      // 残留 app 容器 sweep(2026-07-09,debt.cds.performance 根因 #2):分支改名/删 profile
+      // 后,不在 entry.services 快照里的遗留容器不会被上面的删除循环覆盖,会在删分支后
+      // 继续占资源。按 label cds.branch.id 严格匹配本分支的 Docker 实况,补删快照外的残留。
+      // 只在显式 DELETE 路径做;严格 label 匹配保证永不触及 infra(cds.type=infra)容器;
+      // best-effort,任何失败不阻断删除主流程。
+      try {
+        const appDiscovery = await containerService.discoverAppContainersWithStatus();
+        if (appDiscovery.ok) {
+          const known = new Set(Object.values(entry.services || {}).map((svc) => svc.containerName));
+          for (const info of appDiscovery.containers.values()) {
+            if (info.branchId !== id || known.has(info.containerName)) continue;
+            await containerService.remove(info.containerName, {
+              projectId: entry.projectId,
+              branchId: id,
+              profileId: info.profileId,
+              operationId: branchOperationLease?.operationId || null,
+              actor,
+              trigger: trigger || null,
+              operation: 'delete-residue-sweep',
+              source: 'api.delete-branch',
+              reason: '删分支残留容器清扫：容器带本分支 label 但不在 services 快照（改名/删 profile 遗留）',
+            }).catch(() => { /* best-effort */ });
+          }
+        }
+      } catch { /* best-effort：发现失败不阻断删除 */ }
       // 分支删除收尾:容器此时已 stop+remove,顺手清掉分支专属网(cds-br-<id>),让「删分支即消失」
       // 覆盖到网络层(分支级临时额外服务的隔离网随分支一起消失)。best-effort:网络仍被占用/不存在
       // 都吞掉(removeBranchNetwork 内部已容错)。分支的 extraProfiles 是 BranchEntry 字段,

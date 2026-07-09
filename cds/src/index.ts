@@ -2038,6 +2038,28 @@ const autoLifecycleService = new AutoLifecycleService(
   { tickIntervalSeconds: 30, enabled: true },
 );
 
+// 孤儿 infra 容器对账（2026-07-09）：把启动 reconcile 的一次性 orphan warn 周期化到
+// 每次 janitor sweep——不在 CDS 台账上的 infra 容器长期吃资源且无人知晓
+// （debt.cds.performance 根因 #2 降级实施：只报不删，删除决策留给运维）。
+janitorService.setOrphanInfraScan(async () => {
+  const discovered = await containerService.discoverInfraContainers();
+  const known = new Set(stateService.getInfraServices().map((svc) => svc.containerName).filter(Boolean));
+  const orphans = [...discovered.values()]
+    .filter((info) => !known.has(info.containerName))
+    .map((info) => info.containerName);
+  if (orphans.length > 0) {
+    activeServerEventLogStore?.record({
+      category: 'container',
+      severity: 'warn',
+      source: 'janitor',
+      action: 'infra.orphan.detected',
+      message: `janitor 对账发现 ${orphans.length} 个孤儿 infra 容器（不在 CDS 台账上，只报不删）: ${orphans.join(', ')}`,
+      details: { orphans },
+    });
+  }
+  return orphans;
+});
+
 janitorService.setRemoveFn(async (slug: string) => {
   // Reuse the existing removal path: stop containers → git worktree remove → drop state.
   const branch = stateService.getBranch(slug);
