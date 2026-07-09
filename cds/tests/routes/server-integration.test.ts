@@ -327,6 +327,89 @@ describe('Server route ordering (regression)', () => {
     expect(body.events[0].requestId).toBe('req-alias');
   });
 
+  it('real createServer exposes public auth capability before basic auth gate', async () => {
+    const prevMode = process.env.CDS_AUTH_MODE;
+    const prevUser = process.env.CDS_USERNAME;
+    const prevPass = process.env.CDS_PASSWORD;
+    try {
+      delete process.env.CDS_AUTH_MODE;
+      process.env.CDS_USERNAME = 'operator';
+      process.env.CDS_PASSWORD = 'secret';
+
+      const app = buildRealServerWithEvents([]);
+      server = await startServer(app);
+
+      const res = await request(server, '/api/auth/public-status');
+
+      expect(res.status).toBe(200);
+      expect(res.contentType).toContain('application/json');
+      const body = JSON.parse(res.body);
+      expect(body).toEqual({
+        mode: 'basic',
+        enabled: true,
+        loginMethods: {
+          github: false,
+          local: true,
+        },
+      });
+
+      const me = await request(server, '/api/me', { Cookie: 'cds_token=invalid' });
+      expect(me.status).toBe(401);
+
+      const login = await new Promise<HttpResponse>((resolve, reject) => {
+        const addr = server!.address() as { port: number };
+        const payload = JSON.stringify({ username: 'operator', password: 'secret' });
+        const req = http.request(
+          {
+            hostname: '127.0.0.1',
+            port: addr.port,
+            path: '/api/login',
+            method: 'POST',
+            headers: {
+              Accept: 'application/json',
+              'Content-Type': 'application/json',
+              'Content-Length': String(Buffer.byteLength(payload)),
+            },
+          },
+          (res) => {
+            let raw = '';
+            res.on('data', (chunk: Buffer) => (raw += chunk.toString()));
+            res.on('end', () => resolve({
+              status: res.statusCode!,
+              contentType: (res.headers['content-type'] || '').toString(),
+              body: raw,
+              headers: res.headers,
+            }));
+          },
+        );
+        req.on('error', reject);
+        req.write(payload);
+        req.end();
+      });
+      expect(login.status).toBe(200);
+      const rawCookie = Array.isArray(login.headers['set-cookie'])
+        ? login.headers['set-cookie'][0]
+        : String(login.headers['set-cookie'] || '');
+      const cookie = rawCookie.split(';')[0];
+
+      const authedMe = await request(server, '/api/me', { Cookie: cookie });
+      expect(authedMe.status).toBe(200);
+      const meBody = JSON.parse(authedMe.body);
+      expect(meBody.user).toMatchObject({
+        username: 'operator',
+        authProvider: 'local',
+        isSystemOwner: true,
+      });
+    } finally {
+      if (prevMode === undefined) delete process.env.CDS_AUTH_MODE;
+      else process.env.CDS_AUTH_MODE = prevMode;
+      if (prevUser === undefined) delete process.env.CDS_USERNAME;
+      else process.env.CDS_USERNAME = prevUser;
+      if (prevPass === undefined) delete process.env.CDS_PASSWORD;
+      else process.env.CDS_PASSWORD = prevPass;
+    }
+  });
+
   it('real createServer rejects invalid /api/server-events since timestamps', async () => {
     const app = buildRealServerWithEvents([]);
     server = await startServer(app);

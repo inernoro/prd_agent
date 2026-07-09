@@ -456,6 +456,23 @@ function makeToken(user: string, pass: string): string {
   return crypto.createHash('sha256').update(`cds:${user}:${pass}`).digest('hex');
 }
 
+function legacyAuthUser(username: string, authMode: 'disabled' | 'basic') {
+  return {
+    id: authMode === 'basic' ? `basic:${username}` : 'anonymous',
+    username,
+    githubLogin: '',
+    authProvider: 'local',
+    name: username,
+    email: null,
+    avatarUrl: null,
+    orgs: [],
+    isSystemOwner: authMode === 'basic',
+    status: 'active',
+    lastLoginAt: null,
+    createdAt: '',
+  };
+}
+
 function shortText(value: unknown, max = 1200): string | undefined {
   if (typeof value !== 'string') return undefined;
   const text = value.trim();
@@ -775,6 +792,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /auth/github/callback': 'GitHub 登录回调',
     'POST /auth/logout': '退出登录',
     'GET /auth/status': '获取认证状态',
+    'GET /auth/public-status': '获取公开认证能力',
     'POST /auth/login': '本地账号登录',
     'GET /auth/bootstrap-status': '查询首启引导状态',
     'POST /auth/bootstrap': '创建首个本地账号',
@@ -1665,6 +1683,17 @@ export function createServer(deps: ServerDeps): express.Express {
   const authEnabled = authMode === 'basic';
   const validToken = authEnabled ? makeToken(cdsUser!, cdsPass!) : '';
 
+  app.get('/api/auth/public-status', (_req, res) => {
+    res.json({
+      mode: authMode,
+      enabled: authMode !== 'disabled',
+      loginMethods: {
+        github: authMode === 'github',
+        local: authMode === 'basic' || authMode === 'github',
+      },
+    });
+  });
+
   // ── AI pairing endpoints (before auth, some are public) ──
   // POST /api/ai/request-access — AI agent requests pairing (public)
   app.post('/api/ai/request-access', (req, res) => {
@@ -2371,9 +2400,10 @@ export function createServer(deps: ServerDeps): express.Express {
   if (authMode !== 'github') {
     app.get('/api/me', (_req, res) => {
       const username = authMode === 'basic' ? cdsUser : 'anonymous';
+      const user = legacyAuthUser(username || 'anonymous', authMode);
       res.json({
         username,
-        user: username,
+        user,
         authMode,
         authEnabled: authMode !== 'disabled',
       });
