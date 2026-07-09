@@ -575,7 +575,10 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
     <div
       className={`${rootClass} relative overflow-hidden ${embedded ? 'rounded-2xl' : ''}`}
       style={{
-        background: 'var(--bg-page, #131319)',
+        // 非嵌入模式：透明，坐在外壳画布上（2026-07-08 用户反馈"背景有一些黑"——
+        // 这层不透明近黑底会盖住画布与 aurora，比周围画布更黑一截）。
+        // 嵌入模式（带圆角描边独立卡）保留自己的底色。
+        background: embedded ? 'var(--bg-page, #131319)' : 'transparent',
         border: embedded ? '1px solid var(--border-subtle, rgba(255,255,255,0.08))' : undefined,
       }}
     >

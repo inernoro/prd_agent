@@ -44,6 +44,7 @@ import { normalizeFileToSquareDataUrl } from '@/lib/imageSquare';
 import { NightSkyBackground } from '@/components/effects/NightSkyBackground';
 import { ParticleVortex } from '@/components/effects/ParticleVortex';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
+import { getNextWorkspaceSkip, isVisibleWorkspace } from './workspaceListPaging';
 
 function formatDate(iso: string | null | undefined) {
   const s = String(iso ?? '').trim();
@@ -963,6 +964,8 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string>('');
+  const nextWorkspaceSkipRef = useRef(0);
+  const loadMoreBusyRef = useRef(false);
   const refreshBusyRef = useRef<Set<string>>(new Set());
   const lastRefreshHashRef = useRef<Map<string, string>>(new Map());
 
@@ -999,8 +1002,9 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
         return;
       }
       const list = Array.isArray(res.data?.items) ? res.data.items : [];
-      const filtered = list.filter((item) => item.scenarioType !== 'article-illustration');
+      const filtered = list.filter(isVisibleWorkspace);
       setItems(filtered);
+      nextWorkspaceSkipRef.current = getNextWorkspaceSkip(0, list);
       setHasMore(res.data?.hasMore ?? false);
     } finally {
       setLoading(false);
@@ -1008,19 +1012,23 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   };
 
   const loadMore = useCallback(async () => {
-    if (loadingMore || !hasMore) return;
+    if (loadMoreBusyRef.current || !hasMore) return;
+    loadMoreBusyRef.current = true;
     setLoadingMore(true);
     try {
-      const res = await listVisualAgentWorkspaces({ limit: PAGE_SIZE, skip: items.length });
+      const skip = nextWorkspaceSkipRef.current;
+      const res = await listVisualAgentWorkspaces({ limit: PAGE_SIZE, skip });
       if (!res.success) return;
       const list = Array.isArray(res.data?.items) ? res.data.items : [];
-      const filtered = list.filter((item) => item.scenarioType !== 'article-illustration');
+      nextWorkspaceSkipRef.current = getNextWorkspaceSkip(skip, list);
+      const filtered = list.filter(isVisibleWorkspace);
       setItems((prev) => [...prev, ...filtered]);
       setHasMore(res.data?.hasMore ?? false);
     } finally {
+      loadMoreBusyRef.current = false;
       setLoadingMore(false);
     }
-  }, [loadingMore, hasMore, items.length]);
+  }, [hasMore]);
 
   useEffect(() => {
     void reload();

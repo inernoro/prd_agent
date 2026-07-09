@@ -2302,6 +2302,11 @@ export function DocumentStorePage() {
     return () => document.removeEventListener('mousedown', onDown);
   }, [tagOpen]);
 
+  // 吸顶工具栏滚动感知:未滚动时保持透明(顶部不再压一块"黑黑的"底),
+  // 滚动后才亮出模糊底防止卡片透字(2026-07-08 用户反馈"顶部反复改,
+  // 加了黑底在顶部就黑黑的"——标准解法是 scroll-aware header)。
+  const [listScrolled, setListScrolled] = useState(false);
+
   // 防 stale 响应:tab/teamId/筛选 快速切换时,旧请求回填会覆盖新数据。
   // 用单调递增序号锁住"只有最新一次请求才能 setState"。
   // 三个加载器共用同一个序号,跨 tab 切换也能互相失效(例如 mine→收藏 时未完成的 loadStores 会被废弃)。
@@ -2540,17 +2545,24 @@ export function DocumentStorePage() {
 
   // 空间列表视图
   return (
-    <div className="h-full min-h-0 flex flex-col overflow-x-hidden overflow-y-auto gap-5">
+    <div
+      className="h-full min-h-0 flex flex-col overflow-x-hidden overflow-y-auto gap-5"
+      onScroll={(e) => {
+        const scrolled = e.currentTarget.scrollTop > 4;
+        if (scrolled !== listScrolled) setListScrolled(scrolled);
+      }}
+    >
       {/* 顶部 tab + 工具栏：滚动时整体悬浮（sticky）— 知识库多时菜单不消失
-          -mb-5 + pb-5 用于"吃掉"父级 gap-5 间距，避免卡片从间隙缝隙里穿过 */}
+          -mb-5 + pb-5 用于"吃掉"父级 gap-5 间距，避免卡片从间隙缝隙里穿过。
+          滚动感知：顶部保持透明（不压黑底），滚动后才亮出模糊底防透字 */}
       <div
         data-tour-id="library-tabs"
         className="sticky top-0 z-20 flex flex-col gap-3 pb-5 -mb-5"
-        style={{
+        style={listScrolled ? {
           background: 'linear-gradient(180deg, color-mix(in srgb, var(--bg-primary, #121218) 82%, transparent) 0%, color-mix(in srgb, var(--bg-primary, #121218) 58%, transparent) 74%, transparent 100%)',
           backdropFilter: 'blur(12px) saturate(130%)',
           WebkitBackdropFilter: 'blur(12px) saturate(130%)',
-        }}
+        } : undefined}
       >
         {/* 顶部第一排：左上角空间切换（我的空间 / 团队空间 / 我的收藏 / 我的点赞） */}
         <TabBar
