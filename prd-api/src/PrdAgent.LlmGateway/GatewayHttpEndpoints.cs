@@ -140,16 +140,7 @@ public static class GatewayHttpEndpoints
                 return;
 
             var governance = await RecordAndCheckAppCallerGovernanceAsync(services, ingress, CancellationToken.None);
-            if (governance.RateLimit.Rejected)
-            {
-                await WriteRateLimitErrorAsync(http, governance.RateLimit);
-                return;
-            }
-            if (governance.Budget.Rejected)
-            {
-                await WriteBudgetErrorAsync(http, governance.Budget);
-                return;
-            }
+            if (await TryWriteGovernanceErrorAsync(http, governance)) return;
             var gatewayRequest = ingress.ToGatewayRequest(stream);
             using var _ = OpenContextScope(accessor, gatewayRequest.Context, gatewayRequest.ModelType, gatewayRequest.AppCallerCode);
             if (stream)
@@ -215,16 +206,7 @@ public static class GatewayHttpEndpoints
                 return;
 
             var governance = await RecordAndCheckAppCallerGovernanceAsync(services, ingress, CancellationToken.None);
-            if (governance.RateLimit.Rejected)
-            {
-                await WriteRateLimitErrorAsync(http, governance.RateLimit);
-                return;
-            }
-            if (governance.Budget.Rejected)
-            {
-                await WriteBudgetErrorAsync(http, governance.Budget);
-                return;
-            }
+            if (await TryWriteGovernanceErrorAsync(http, governance)) return;
             var rawRequest = ToOpenAiImageRawRequest(ingress);
             using var _ = OpenContextScope(accessor, rawRequest.Context, rawRequest.ModelType, rawRequest.AppCallerCode);
             var resolution = await gateway.ResolveModelAsync(
@@ -294,16 +276,7 @@ public static class GatewayHttpEndpoints
             };
 
             var governance = await RecordAndCheckAppCallerGovernanceAsync(services, ingress, CancellationToken.None);
-            if (governance.RateLimit.Rejected)
-            {
-                await WriteRateLimitErrorAsync(http, governance.RateLimit);
-                return;
-            }
-            if (governance.Budget.Rejected)
-            {
-                await WriteBudgetErrorAsync(http, governance.Budget);
-                return;
-            }
+            if (await TryWriteGovernanceErrorAsync(http, governance)) return;
             var rawRequest = ToOpenAiImageRawRequest(
                 ingress,
                 "/v1/images/edits",
@@ -391,16 +364,7 @@ public static class GatewayHttpEndpoints
                 return;
 
             var governance = await RecordAndCheckAppCallerGovernanceAsync(services, ingress, CancellationToken.None);
-            if (governance.RateLimit.Rejected)
-            {
-                await WriteRateLimitErrorAsync(http, governance.RateLimit);
-                return;
-            }
-            if (governance.Budget.Rejected)
-            {
-                await WriteBudgetErrorAsync(http, governance.Budget);
-                return;
-            }
+            if (await TryWriteGovernanceErrorAsync(http, governance)) return;
             var gatewayRequest = ingress.ToGatewayRequest(stream);
             using var _ = OpenContextScope(accessor, gatewayRequest.Context, gatewayRequest.ModelType, gatewayRequest.AppCallerCode);
             if (stream)
@@ -477,16 +441,7 @@ public static class GatewayHttpEndpoints
                 return;
 
             var governance = await RecordAndCheckAppCallerGovernanceAsync(services, ingress, CancellationToken.None);
-            if (governance.RateLimit.Rejected)
-            {
-                await WriteRateLimitErrorAsync(http, governance.RateLimit);
-                return;
-            }
-            if (governance.Budget.Rejected)
-            {
-                await WriteBudgetErrorAsync(http, governance.Budget);
-                return;
-            }
+            if (await TryWriteGovernanceErrorAsync(http, governance)) return;
             var gatewayRequest = ingress.ToGatewayRequest(stream);
             using var _ = OpenContextScope(accessor, gatewayRequest.Context, gatewayRequest.ModelType, gatewayRequest.AppCallerCode);
             if (stream)
@@ -588,16 +543,7 @@ public static class GatewayHttpEndpoints
                 return;
 
             var governance = await RecordAndCheckAppCallerGovernanceAsync(services, ingress, CancellationToken.None);
-            if (governance.RateLimit.Rejected)
-            {
-                await WriteRateLimitErrorAsync(http, governance.RateLimit);
-                return;
-            }
-            if (governance.Budget.Rejected)
-            {
-                await WriteBudgetErrorAsync(http, governance.Budget);
-                return;
-            }
+            if (await TryWriteGovernanceErrorAsync(http, governance)) return;
             var gatewayRequest = ingress.ToGatewayRequest(stream);
             using var _ = OpenContextScope(accessor, gatewayRequest.Context, gatewayRequest.ModelType, gatewayRequest.AppCallerCode);
             if (stream)
@@ -650,8 +596,8 @@ public static class GatewayHttpEndpoints
         {
             var ingress = ToIngress(request, "gw-native", "map");
             var governance = await RecordAndCheckAppCallerGovernanceAsync(services, ingress, CancellationToken.None);
-            if (governance.RateLimit.Rejected) return RateLimitResult(http, governance.RateLimit, jsonOpts);
-            if (governance.Budget.Rejected) return BudgetResult(governance.Budget, jsonOpts);
+            var governanceResult = GovernanceResult(http, governance, jsonOpts);
+            if (governanceResult is not null) return governanceResult;
             var routedRequest = ApplyIngressRouting(request, ingress, stream: false);
             using var _ = OpenContextScope(accessor, routedRequest.Context, routedRequest.ModelType, routedRequest.AppCallerCode);
             var response = await gateway.SendAsync(routedRequest, CancellationToken.None);
@@ -669,16 +615,7 @@ public static class GatewayHttpEndpoints
         {
             var ingress = ToIngress(request, "gw-native", "map");
             var governance = await RecordAndCheckAppCallerGovernanceAsync(services, ingress, CancellationToken.None);
-            if (governance.RateLimit.Rejected)
-            {
-                await WriteRateLimitErrorAsync(http, governance.RateLimit);
-                return;
-            }
-            if (governance.Budget.Rejected)
-            {
-                await WriteBudgetErrorAsync(http, governance.Budget);
-                return;
-            }
+            if (await TryWriteGovernanceErrorAsync(http, governance)) return;
 
             http.Response.Headers.ContentType = "text/event-stream";
             http.Response.Headers.CacheControl = "no-cache";
@@ -715,8 +652,8 @@ public static class GatewayHttpEndpoints
         {
             var ingress = ToIngress(request, "gw-native", "map");
             var governance = await RecordAndCheckAppCallerGovernanceAsync(services, ingress, CancellationToken.None);
-            if (governance.RateLimit.Rejected) return RateLimitResult(http, governance.RateLimit, jsonOpts);
-            if (governance.Budget.Rejected) return BudgetResult(governance.Budget, jsonOpts);
+            var governanceResult = GovernanceResult(http, governance, jsonOpts);
+            if (governanceResult is not null) return governanceResult;
             var rehydrated = await RehydrateMultipartFileRefsAsync(request, services.GetService<IAssetStorage>(), CancellationToken.None);
             if (!rehydrated.Success)
             {
@@ -791,16 +728,7 @@ public static class GatewayHttpEndpoints
                 Context = body.Context,
             };
             var governance = await RecordAndCheckAppCallerGovernanceAsync(services, ingress, CancellationToken.None);
-            if (governance.RateLimit.Rejected)
-            {
-                await WriteRateLimitErrorAsync(http, governance.RateLimit);
-                return;
-            }
-            if (governance.Budget.Rejected)
-            {
-                await WriteBudgetErrorAsync(http, governance.Budget);
-                return;
-            }
+            if (await TryWriteGovernanceErrorAsync(http, governance)) return;
 
             http.Response.Headers.ContentType = "text/event-stream";
             http.Response.Headers.CacheControl = "no-cache";
@@ -1232,13 +1160,23 @@ public static class GatewayHttpEndpoints
                     Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.AppCallerCode, appCallerCode),
                     Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.RequestType, requestType)))
                 .FirstOrDefaultAsync(ct);
+            var status = CheckAppCallerStatus(appCallerCode, requestType, caller?.Status);
+            if (status.Rejected)
+                return new AppCallerGovernanceDecision(
+                    status,
+                    AppCallerRateLimitDecision.Allow(appCallerCode, requestType),
+                    AppCallerBudgetDecision.Allow(appCallerCode, requestType, 0, 0, hasCostEvidence: false));
+
             var budget = await CheckAppCallerMonthlyBudgetAsync(gatewayData, appCallerCode, requestType, caller?.MonthlyBudgetUsd, ct);
             if (budget.Rejected)
-                return new AppCallerGovernanceDecision(AppCallerRateLimitDecision.Allow(appCallerCode, requestType), budget);
+                return new AppCallerGovernanceDecision(
+                    status,
+                    AppCallerRateLimitDecision.Allow(appCallerCode, requestType),
+                    budget);
 
             var limit = caller?.RateLimitPerMinute ?? 0;
             if (limit <= 0)
-                return new AppCallerGovernanceDecision(AppCallerRateLimitDecision.Allow(appCallerCode, requestType), budget);
+                return new AppCallerGovernanceDecision(status, AppCallerRateLimitDecision.Allow(appCallerCode, requestType), budget);
 
             var now = DateTime.UtcNow;
             var windowStart = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, DateTimeKind.Utc);
@@ -1265,13 +1203,21 @@ public static class GatewayHttpEndpoints
             var rateLimit = count > limit
                 ? AppCallerRateLimitDecision.Reject(appCallerCode, requestType, limit, count, windowStart)
                 : AppCallerRateLimitDecision.Allow(appCallerCode, requestType, limit, count, windowStart);
-            return new AppCallerGovernanceDecision(rateLimit, budget);
+            return new AppCallerGovernanceDecision(status, rateLimit, budget);
         }
         catch
         {
             // 治理窗口异常不能把全部 AI 请求打挂；DB 恢复后下一次请求重新计数。
             return AppCallerGovernanceDecision.Allow(appCallerCode, requestType);
         }
+    }
+
+    private static AppCallerStatusDecision CheckAppCallerStatus(string appCallerCode, string requestType, string? status)
+    {
+        var normalized = string.IsNullOrWhiteSpace(status) ? "discovered" : status.Trim().ToLowerInvariant();
+        return normalized is "disabled" or "archived"
+            ? AppCallerStatusDecision.Reject(appCallerCode, requestType, normalized)
+            : AppCallerStatusDecision.Allow(appCallerCode, requestType, normalized);
     }
 
     private static async Task<AppCallerBudgetDecision> CheckAppCallerMonthlyBudgetAsync(
@@ -1363,6 +1309,60 @@ public static class GatewayHttpEndpoints
             "APP_CALLER_RATE_LIMITED",
             StatusCodes.Status429TooManyRequests);
     }
+
+    private static async Task WriteStatusErrorAsync(HttpContext http, AppCallerStatusDecision decision)
+    {
+        await WriteCompatErrorAsync(
+            http,
+            $"appCaller {decision.AppCallerCode} 当前状态为 {decision.Status}，已禁止调用",
+            "permission_error",
+            "APP_CALLER_DISABLED",
+            StatusCodes.Status403Forbidden);
+    }
+
+    private static async Task<bool> TryWriteGovernanceErrorAsync(HttpContext http, AppCallerGovernanceDecision decision)
+    {
+        if (decision.Status.Rejected)
+        {
+            await WriteStatusErrorAsync(http, decision.Status);
+            return true;
+        }
+        if (decision.Budget.Rejected)
+        {
+            await WriteBudgetErrorAsync(http, decision.Budget);
+            return true;
+        }
+        if (decision.RateLimit.Rejected)
+        {
+            await WriteRateLimitErrorAsync(http, decision.RateLimit);
+            return true;
+        }
+        return false;
+    }
+
+    private static IResult? GovernanceResult(
+        HttpContext http,
+        AppCallerGovernanceDecision decision,
+        JsonSerializerOptions jsonOpts)
+    {
+        if (decision.Status.Rejected) return StatusResult(decision.Status, jsonOpts);
+        if (decision.Budget.Rejected) return BudgetResult(decision.Budget, jsonOpts);
+        if (decision.RateLimit.Rejected) return RateLimitResult(http, decision.RateLimit, jsonOpts);
+        return null;
+    }
+
+    private static IResult StatusResult(AppCallerStatusDecision decision, JsonSerializerOptions jsonOpts)
+        => Results.Json(new
+        {
+            error = new
+            {
+                code = "APP_CALLER_DISABLED",
+                message = $"appCaller {decision.AppCallerCode} 当前状态为 {decision.Status}，已禁止调用",
+                appCallerCode = decision.AppCallerCode,
+                requestType = decision.RequestType,
+                status = decision.Status,
+            },
+        }, jsonOpts, statusCode: StatusCodes.Status403Forbidden);
 
     private static IResult RateLimitResult(
         HttpContext http,
@@ -3467,6 +3467,19 @@ public static class GatewayHttpEndpoints
             => new(false, null, GatewayRawResponse.Fail(code, message, statusCode));
     }
 
+    private sealed record AppCallerStatusDecision(
+        bool Rejected,
+        string AppCallerCode,
+        string RequestType,
+        string Status)
+    {
+        public static AppCallerStatusDecision Allow(string appCallerCode, string requestType, string status)
+            => new(false, appCallerCode, requestType, status);
+
+        public static AppCallerStatusDecision Reject(string appCallerCode, string requestType, string status)
+            => new(true, appCallerCode, requestType, status);
+    }
+
     private sealed record AppCallerRateLimitDecision(
         bool Rejected,
         string AppCallerCode,
@@ -3520,11 +3533,13 @@ public static class GatewayHttpEndpoints
     }
 
     private sealed record AppCallerGovernanceDecision(
+        AppCallerStatusDecision Status,
         AppCallerRateLimitDecision RateLimit,
         AppCallerBudgetDecision Budget)
     {
         public static AppCallerGovernanceDecision Allow(string appCallerCode, string requestType)
             => new(
+                AppCallerStatusDecision.Allow(appCallerCode, requestType, "discovered"),
                 AppCallerRateLimitDecision.Allow(appCallerCode, requestType),
                 AppCallerBudgetDecision.Allow(appCallerCode, requestType, 0, 0, hasCostEvidence: false));
     }

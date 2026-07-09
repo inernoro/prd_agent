@@ -63,6 +63,13 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LastObservedRequestId", servingEndpoints);
         Assert.Contains("LastObservedSessionId", servingEndpoints);
         Assert.Contains("LastObservedRunId", servingEndpoints);
+        Assert.Contains("private static AppCallerStatusDecision CheckAppCallerStatus", servingEndpoints);
+        Assert.Contains("normalized is \"disabled\" or \"archived\"", servingEndpoints);
+        Assert.Contains("APP_CALLER_DISABLED", servingEndpoints);
+        Assert.Contains("StatusCodes.Status403Forbidden", servingEndpoints);
+        Assert.Contains("if (decision.Status.Rejected)", servingEndpoints);
+        Assert.Contains("if (await TryWriteGovernanceErrorAsync(http, governance)) return;", servingEndpoints);
+        Assert.Contains("var governanceResult = GovernanceResult(http, governance, jsonOpts);", servingEndpoints);
         Assert.Contains("LastObservedRequestId = d.AsNullableString(\"LastObservedRequestId\")", consoleProgram);
         Assert.Contains("fb.Regex(\"LastObservedRequestId\", pattern)", consoleProgram);
         var logsTypes = ReadRepoFile("prd-llmgw-web/src/lib/types.ts");
