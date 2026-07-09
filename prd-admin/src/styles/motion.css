@@ -208,17 +208,30 @@
 }
 
 /* Defect description markdown rendering */
-.defect-md { line-height: 1.7; }
+/* overflow-wrap/word-break：长 URL、无空格长串必须换行，禁止撑破弹窗（横向溢出根因） */
+.defect-md { line-height: 1.7; overflow-wrap: anywhere; word-break: break-word; }
 .defect-md p { margin: 0.4em 0; }
 .defect-md strong { color: var(--text-primary); font-weight: 600; }
 .defect-md ul, .defect-md ol { padding-left: 1.5em; margin: 0.3em 0; }
 .defect-md li { margin: 0.15em 0; }
-.defect-md code { background: rgba(255,255,255,0.06); border-radius: 4px; padding: 1px 4px; font-size: 0.9em; }
-.defect-md pre { background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 10px; overflow: auto; margin: 0.5em 0; }
-.defect-md pre code { background: transparent; border: 0; padding: 0; }
+/* 超链接：明确的 accent 颜色 + 下划线，区分于正文（此前无 a 样式，链接和普通文字同色不可辨） */
+.defect-md a {
+  color: var(--accent-primary, #818cf8);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+  overflow-wrap: anywhere;
+  transition: opacity 0.15s ease;
+}
+.defect-md a:hover { opacity: 0.8; }
+.defect-md img { max-width: 100%; height: auto; border-radius: 8px; }
+.defect-md code { background: rgba(255,255,255,0.06); border-radius: 4px; padding: 1px 4px; font-size: 0.9em; overflow-wrap: anywhere; }
+.defect-md pre { background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 10px; overflow: auto; margin: 0.5em 0; max-width: 100%; }
+.defect-md pre code { background: transparent; border: 0; padding: 0; overflow-wrap: normal; word-break: normal; }
 .defect-md blockquote { border-left: 3px solid rgba(255,255,255,0.15); padding-left: 12px; margin: 0.5em 0; color: var(--text-muted); }
 .defect-md h1, .defect-md h2, .defect-md h3, .defect-md h4 { color: var(--text-primary); margin: 0.6em 0 0.3em; }
-.defect-md table { width: 100%; border-collapse: collapse; margin: 0.5em 0; }
+/* 宽表格改为块级横向滚动，超出容器时内部滚动而非撑破弹窗 */
+.defect-md table { display: block; width: max-content; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: 0.5em 0; }
 .defect-md th, .defect-md td { border: 1px solid rgba(255,255,255,0.08); padding: 4px 8px; }
 .defect-md th { color: var(--text-primary); background: rgba(255,255,255,0.03); }
 

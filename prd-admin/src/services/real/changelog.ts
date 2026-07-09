@@ -155,6 +155,47 @@ export interface GitHubPendingReviewView {
   items: GitHubPendingReviewEntry[];
 }
 
+/** 热修复条目：一条缺陷修复追踪（DefectResolutionTrace） = 一次为上报缺陷做的修复 */
+export interface GitHubHotfixEntry {
+  traceId: string;
+  defectId: string;
+  defectNo?: string | null;
+  defectTitle?: string | null;
+  reporterName?: string | null;
+  reporterAvatarFileName?: string | null;
+  isSubmittedByMe?: boolean;
+  /** 完成修复的 Agent 自报名称 */
+  agentName?: string | null;
+  repository?: string | null;
+  branch?: string | null;
+  commitSha: string;
+  shortSha: string;
+  commitMessage?: string | null;
+  commitUrl?: string | null;
+  pullRequestNumber?: number | null;
+  pullRequestUrl?: string | null;
+  previewUrl?: string | null;
+  visualReportUrl?: string | null;
+  knowledgeBaseUrl?: string | null;
+  riskLevel: string;
+  validationStatus: string;
+  validationVerdict?: string | null;
+  fixStatus: string;
+  publishStatus: 'unknown' | 'pending' | 'published' | string;
+  /** ISO 8601 创建时间（=修复追踪落库时间） */
+  createdAt: string;
+  /** ISO 8601 更新时间 */
+  updatedAt: string;
+}
+
+export interface GitHubHotfixesView {
+  dataSourceAvailable: boolean;
+  source: 'database' | 'none' | string;
+  fetchedAt: string;
+  totalCount?: number;
+  items: GitHubHotfixEntry[];
+}
+
 // ============ API Calls ============
 
 /**
@@ -211,6 +252,16 @@ export async function getChangelogGitHubPendingReview(opts: {
   force?: boolean;
 } = {}): Promise<ApiResponse<GitHubPendingReviewView>> {
   return await apiRequest<GitHubPendingReviewView>(api.changelog.githubPendingReview(opts), { method: 'GET' });
+}
+
+/**
+ * 获取热修复列表（缺陷修复追踪 SSOT，全历史）。用于「更新中心 → 热修复」子 tab。
+ */
+export async function getChangelogGitHubHotfixes(opts: {
+  limit?: number;
+  force?: boolean;
+} = {}): Promise<ApiResponse<GitHubHotfixesView>> {
+  return await apiRequest<GitHubHotfixesView>(api.changelog.githubHotfixes(opts), { method: 'GET' });
 }
 
 export type ChangelogAiSummarySubtab = 'releases' | 'fragments' | 'github_logs' | 'github_pending_review';
