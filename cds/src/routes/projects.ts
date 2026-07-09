@@ -2260,23 +2260,26 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   //   409 { error: 'duplicate', field }
   //   500 { error: 'docker', message } — docker create failed
   router.post('/projects', async (req, res) => {
-    // Single-project cdsp_ keys are bound to one project — they may not mint
-    // new projects. (Statically stored: their storage location IS the scope.)
-    if ((req as unknown as { cdsProjectKey?: unknown }).cdsProjectKey) {
+    // 建项目授权判定。注意:单项目作用域的 cdsg_ key 现在也会 stamp cdsProjectKey
+    // (作为 cdsp_ 别名继承逐路由防护,见 server.ts stampSingleProjectScope),所以这里
+    // **必须先看 cdsAccess**:凡带 cdsAccess 的一律按 access.canCreateProjects 判定,
+    // 只有既无 cdsAccess、又有 cdsProjectKey 的「纯 cdsp_ 项目 key」才走 project_key 分支。
+    const callerAccess = (req as unknown as { cdsAccess?: { keyId: string; access: AgentKeyAccess } }).cdsAccess;
+    if (callerAccess) {
+      // cdsg_ 全局 key —— 只有勾了「允许创建新项目」的才放行。存量 key 解析为全权
+      // (canCreateProjects:true),故不回归;create-only / all-projects / 单项目+建项目 都能建。
+      if (callerAccess.access.canCreateProjects !== true) {
+        res.status(403).json({
+          error: 'global_key_cannot_create',
+          message: '这把全局 Key 未勾选「允许创建新项目」，无权创建项目。请在「签发全局 Key」面板勾选该权限后重签。',
+        });
+        return;
+      }
+    } else if ((req as unknown as { cdsProjectKey?: unknown }).cdsProjectKey) {
+      // 纯项目级 cdsp_ key —— 绑定单一项目,不得创建新项目。
       res.status(403).json({
         error: 'project_key_cannot_create',
         message: 'Project-scoped Agent Key 无权创建新项目；请改用勾选了「允许创建新项目」的全局 Key，或在 CDS 管理页手动新建。',
-      });
-      return;
-    }
-    // cdsg_ 全局 key —— 只有勾了「允许创建新项目」的才放行。存量 key 解析为全权
-    // (canCreateProjects:true),故不回归;新签的 create-only / all-projects key 都能建;
-    // 但显式 canCreateProjects:false 的(例如只授权了某几个现有项目)会被挡住。
-    const callerAccess = (req as unknown as { cdsAccess?: { keyId: string; access: AgentKeyAccess } }).cdsAccess;
-    if (callerAccess && callerAccess.access.canCreateProjects !== true) {
-      res.status(403).json({
-        error: 'global_key_cannot_create',
-        message: '这把全局 Key 未勾选「允许创建新项目」，无权创建项目。请在「签发全局 Key」面板勾选该权限后重签。',
       });
       return;
     }
@@ -3640,6 +3643,17 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       res.status(400).json({
         error: 'empty_access',
         message: '授权范围为空:请至少勾选「允许创建新项目」或选择一个现有项目。',
+      });
+      return;
+    }
+    // 多项目(≥2)作用域暂不支持(Codex P1,2026-07-09):单项目 cdsg_ key 靠
+    // stampSingleProjectScope 透明继承所有 cdsp_ 逐路由防护而全局安全;≥2 个项目
+    // 无法用单一 cdsProjectKey 别名表达,需逐 router 补 cdsAccess 才安全,列为后续。
+    // 现阶段只放行:create-only([]) / 单项目([a]) / 所有项目('all')。
+    if (access.projects !== 'all' && access.projects.length > 1) {
+      res.status(400).json({
+        error: 'multi_project_scope_unsupported',
+        message: '暂不支持「多个指定项目」的全局 Key。请选单个项目、所有项目，或仅「允许创建新项目」。多项目授权即将支持。',
       });
       return;
     }

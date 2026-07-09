@@ -71,10 +71,9 @@ export function AgentKeyScopePanel({ value, onChange, disabled, currentProjectId
 
   function toggleProject(id: string): void {
     if (allProjects) return;
-    const set = new Set(selectedList);
-    if (set.has(id)) set.delete(id);
-    else set.add(id);
-    onChange({ ...value, projects: Array.from(set) });
+    // 单选:选一个项目即替换(多项目 ≥2 作用域后端暂不支持,见 projects.ts 签发校验)。
+    // 再点已选项 = 取消。
+    onChange({ ...value, projects: selectedList.includes(id) ? [] : [id] });
   }
 
   const rowClass =
@@ -129,7 +128,7 @@ export function AgentKeyScopePanel({ value, onChange, disabled, currentProjectId
       <div className={rowClass.replace('items-start', 'flex-col items-stretch') + (allProjects ? ' opacity-50' : '')}>
         <div className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-foreground">
           <FolderGit2 className="h-3.5 w-3.5" />
-          指定现有项目
+          指定一个现有项目
           {allProjects ? <span className="text-xs font-normal text-muted-foreground">（已选「所有项目」，无需再选）</span> : null}
         </div>
         {loadState === 'loading' ? (

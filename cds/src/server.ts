@@ -88,6 +88,32 @@ function getRemoteAddr(req: express.Request): string | undefined {
     || req.socket?.remoteAddress;
 }
 
+/**
+ * 单项目作用域的 cdsg_ 全局 Key —— 同时 stamp req.cdsProjectKey（2026-07-09 Codex P1）。
+ *
+ * 一把 `projects: ['a']`（恰好一个项目）的 cdsg_ key，对项目级操作而言语义等同一把
+ * project a 的 cdsp_ key。CDS 有 11+ router、大量端点用「无 cdsProjectKey 即管理员」
+ * 的自定义守卫（reports/releases/scheduled-jobs/remote-hosts…），它们不认识 cdsAccess。
+ * 与其逐个 router 补 cdsAccess（打地鼠、易漏），不如让单项目 cdsg_ key 直接 stamp
+ * cdsProjectKey —— 于是它**透明继承**所有既有 cdsp_ 逐路由防护，一处收口、全局生效。
+ *
+ * 只对「恰好一个项目」stamp：'all' 是管理员（不 stamp），[] 是 create-only（走系统级
+ * 兜底），≥2 的多项目作用域目前在签发端被禁止（见 routes/projects.ts POST /global-agent-keys），
+ * 故不会到达这里。cdsAccess 仍并存，供 POST /projects 读 canCreateProjects 放行建项目。
+ */
+function stampSingleProjectScope(
+  req: express.Request,
+  match: { keyId: string; access: AgentKeyAccess },
+): void {
+  const projects = match.access.projects;
+  if (Array.isArray(projects) && projects.length === 1) {
+    const r = req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } };
+    if (!r.cdsProjectKey) {
+      r.cdsProjectKey = { projectId: projects[0], keyId: match.keyId };
+    }
+  }
+}
+
 function extractApiMutationContext(req: express.Request, deps: ServerDeps): {
   branchId?: string;
   projectId?: string;
@@ -1209,14 +1235,14 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
     // req.cdsAccess so the enforcement hook (assertProjectAccess /
     // POST /api/projects in routes/projects.ts) can honor it. Legacy keys
     // resolve to full admin (see state.ts resolveGlobalAgentKeyAccess), so
-    // no regression. Deliberately NOT stamping cdsProjectKey — that marker
-    // means "single-project cdsp_ key"; cdsg_ keys route through cdsAccess.
+    // no regression.
     if (stateService && headerKey.startsWith('cdsg_')) {
       const match = stateService.findGlobalAgentKeyForAuth(headerKey);
       if (match) {
         stateService.touchGlobalAgentKeyLastUsed(match.keyId);
         (req as unknown as { cdsAccess?: { keyId: string; access: AgentKeyAccess } })
           .cdsAccess = { keyId: match.keyId, access: match.access };
+        stampSingleProjectScope(req, match);
         return {
           id: `globalkey:${match.keyId}`,
           agentName: `AI (global key ${match.keyId})`,
@@ -2426,6 +2452,7 @@ export function createServer(deps: ServerDeps): express.Express {
         deps.stateService.touchGlobalAgentKeyLastUsed(gmatch.keyId);
         (req as unknown as { cdsAccess?: { keyId: string; access: AgentKeyAccess } })
           .cdsAccess = { keyId: gmatch.keyId, access: gmatch.access };
+        stampSingleProjectScope(req, gmatch);
       }
     }
 

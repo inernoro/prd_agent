@@ -100,7 +100,13 @@ describe('Global Agent Keys (bootstrap-equivalent)', () => {
         if (match) (req as any).cdsProjectKey = match;
       } else if (h && h.startsWith('cdsg_')) {
         const gmatch = stateService.findGlobalAgentKeyForAuth(h);
-        if (gmatch) (req as any).cdsAccess = { keyId: gmatch.keyId, access: gmatch.access };
+        if (gmatch) {
+          (req as any).cdsAccess = { keyId: gmatch.keyId, access: gmatch.access };
+          // 镜像 server.ts stampSingleProjectScope:单项目 cdsg_ 同时 stamp cdsProjectKey。
+          if (Array.isArray(gmatch.access.projects) && gmatch.access.projects.length === 1) {
+            (req as any).cdsProjectKey = { projectId: gmatch.access.projects[0], keyId: gmatch.keyId };
+          }
+        }
       }
       next();
     });
@@ -255,7 +261,13 @@ describe('Global Agent Keys — 统一授权作用域', () => {
         if (match) (req as any).cdsProjectKey = match;
       } else if (h && h.startsWith('cdsg_')) {
         const gmatch = stateService.findGlobalAgentKeyForAuth(h);
-        if (gmatch) (req as any).cdsAccess = { keyId: gmatch.keyId, access: gmatch.access };
+        if (gmatch) {
+          (req as any).cdsAccess = { keyId: gmatch.keyId, access: gmatch.access };
+          // 镜像 server.ts stampSingleProjectScope:单项目 cdsg_ 同时 stamp cdsProjectKey。
+          if (Array.isArray(gmatch.access.projects) && gmatch.access.projects.length === 1) {
+            (req as any).cdsProjectKey = { projectId: gmatch.access.projects[0], keyId: gmatch.keyId };
+          }
+        }
       }
       next();
     });
@@ -415,6 +427,39 @@ describe('Global Agent Keys — 统一授权作用域', () => {
       { mode: 'port' }, { 'X-AI-Access-Key': adminAll },
     );
     expect(ok.status).toBe(200);
+  });
+
+  it('单项目 cdsg_ key 透明继承 cdsp_ 防护:能操作自身项目、挡其它项目、可建项目（Codex P1）', async () => {
+    seedProject('own-proj');
+    seedProject('other-proj');
+    // 单项目 + 允许建项目
+    const sign = await request(server, 'POST', '/api/global-agent-keys', {
+      access: { canCreateProjects: true, projects: ['own-proj'] },
+    });
+    expect(sign.status).toBe(201);
+    expect(sign.body.access).toEqual({ canCreateProjects: true, projects: ['own-proj'] });
+    const key = sign.body.plaintext as string;
+
+    // 能操作自身项目(preview-mode 此前只认 cdsProjectKey,现在单项目 cdsg_ 也被 stamp)
+    const own = await request(server, 'PUT', '/api/projects/own-proj/preview-mode', { mode: 'port' }, { 'X-AI-Access-Key': key });
+    expect(own.status).toBe(200);
+    // 挡其它项目
+    const other = await request(server, 'PUT', '/api/projects/other-proj/preview-mode', { mode: 'port' }, { 'X-AI-Access-Key': key });
+    expect(other.status).toBe(403);
+    expect(other.body.error).toBe('project_mismatch');
+    // 仍可建项目(POST /projects 先看 cdsAccess.canCreateProjects,不被别名 cdsProjectKey 挡)
+    const create = await request(server, 'POST', '/api/projects', { name: 'From Single Scoped' }, { 'X-AI-Access-Key': key });
+    expect(create.status).toBe(201);
+  });
+
+  it('多项目(≥2)作用域签发被拒绝（Codex P1：暂不支持,防跨 router 越界）', async () => {
+    seedProject('p1');
+    seedProject('p2');
+    const res = await request(server, 'POST', '/api/global-agent-keys', {
+      access: { canCreateProjects: false, projects: ['p1', 'p2'] },
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('multi_project_scope_unsupported');
   });
 
   it('无项目语境的克隆探针端点拒绝带作用域的 key（Codex P1：detect-runtime）', async () => {
