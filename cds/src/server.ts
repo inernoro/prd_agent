@@ -2428,6 +2428,38 @@ export function createServer(deps: ServerDeps): express.Express {
           .cdsAccess = { keyId: gmatch.keyId, access: gmatch.access };
       }
     }
+
+    // ── create-only 全局 Key 的系统级默认拒绝门卫（Codex P1 深层修复，2026-07-09）──
+    //
+    // 签发全局 Key 的默认作用域是「只能创建新项目」(canCreateProjects:true,
+    // projects:[])。这把 key 的**唯一**合法用途就是 POST /api/projects 建项目;建成
+    // 后立刻改用返回的项目级 cdsp_ key 操作新项目。它对任何现有资源都无授权。
+    //
+    // 但 CDS 有 11+ 个 router、大量端点历史上把「无 cdsProjectKey」当成管理员放行,
+    // 逐个补 assertProjectAccess/assertUnscopedAdmin 是打地鼠。这里在**所有 /api
+    // router 之前**加一道系统级兜底:create-only key 只允许「建项目 + 只读」,其余
+    // 一律 403。既堵死当前已知/未知的写路由绕过,又不影响带作用域的 cdsg_(projects
+    // 列表/all,走各自 assertProjectAccess)与 cdsp_/cookie/bootstrap。
+    const acc = (req as unknown as { cdsAccess?: { access: AgentKeyAccess } }).cdsAccess?.access;
+    if (
+      acc &&
+      acc.canCreateProjects === true &&
+      Array.isArray(acc.projects) &&
+      acc.projects.length === 0 &&
+      req.path.startsWith('/api/')
+    ) {
+      const method = req.method.toUpperCase();
+      const isRead = method === 'GET' || method === 'HEAD' || method === 'OPTIONS';
+      const isCreateProject = method === 'POST' && req.path === '/api/projects';
+      if (!isRead && !isCreateProject) {
+        _res.status(403).json({
+          error: 'create_only_key_forbidden',
+          message:
+            '这把「只能创建新项目」的全局 Key 仅可调用创建项目（POST /api/projects）与只读接口。建项目后请改用返回的项目级 Key 操作该项目。',
+        });
+        return;
+      }
+    }
     next();
   });
 

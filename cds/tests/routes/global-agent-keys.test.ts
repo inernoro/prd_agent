@@ -17,7 +17,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { createProjectsRouter } from '../../src/routes/projects.js';
+import { createProjectsRouter, assertUnscopedAdmin, assertScopedSweep } from '../../src/routes/projects.js';
 import { StateService } from '../../src/services/state.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 
@@ -415,5 +415,53 @@ describe('Global Agent Keys — 统一授权作用域', () => {
       { mode: 'port' }, { 'X-AI-Access-Key': adminAll },
     );
     expect(ok.status).toBe(200);
+  });
+
+  it('无项目语境的克隆探针端点拒绝带作用域的 key（Codex P1：detect-runtime）', async () => {
+    const createOnly = (await request(server, 'POST', '/api/global-agent-keys', {})).body.plaintext as string;
+    // create-only cdsg_ key 借服务器凭据克隆任意仓库 → 必须 403,连 clone 都不许开始
+    const res = await request(
+      server, 'POST', '/api/detect-runtime',
+      { gitRepoUrl: 'https://github.com/some/private-repo' },
+      { 'X-AI-Access-Key': createOnly },
+    );
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('scoped_key_forbidden');
+  });
+});
+
+/**
+ * 作用域门卫纯函数单测（Codex P1）—— 直接断言 assertUnscopedAdmin / assertScopedSweep
+ * 的判定逻辑,不经 HTTP。这两个门卫护约「无项目语境的管理员操作」与「跨项目清扫」。
+ */
+describe('作用域门卫纯函数', () => {
+  const allAccess = { keyId: 'g1', access: { canCreateProjects: true, projects: 'all' as const } };
+  const createOnly = { keyId: 'g2', access: { canCreateProjects: true, projects: [] as string[] } };
+  const scopedA = { keyId: 'g3', access: { canCreateProjects: false, projects: ['a'] } };
+
+  it('assertUnscopedAdmin：仅放行 cookie/bootstrap 与全权 all', () => {
+    expect(assertUnscopedAdmin({})).toBeNull(); // 无 stamp(人类/bootstrap)
+    expect(assertUnscopedAdmin({ cdsAccess: allAccess })).toBeNull(); // 全权
+    expect(assertUnscopedAdmin({ cdsProjectKey: { projectId: 'a' } })?.body.error).toBe('project_key_forbidden');
+    expect(assertUnscopedAdmin({ cdsAccess: createOnly })?.body.error).toBe('scoped_key_forbidden');
+    expect(assertUnscopedAdmin({ cdsAccess: scopedA })?.body.error).toBe('scoped_key_forbidden');
+  });
+
+  it('assertScopedSweep：全权/人类可清全部，作用域 key 必须锁定授权项目', () => {
+    // 人类 / 全权 → 保留 filter(可 undefined = 清全部)
+    expect(assertScopedSweep({}, undefined)).toEqual({ projectFilter: undefined });
+    expect(assertScopedSweep({ cdsAccess: allAccess }, undefined)).toEqual({ projectFilter: undefined });
+    // 单项目 cdsp_ 无 filter → 锁到自身
+    expect(assertScopedSweep({ cdsProjectKey: { projectId: 'a', keyId: 'k' } }, undefined))
+      .toEqual({ projectFilter: 'a' });
+    // cdsp_ 带了别的项目 → mismatch
+    expect(assertScopedSweep({ cdsProjectKey: { projectId: 'a', keyId: 'k' } }, 'b').mismatch?.body.error)
+      .toBe('project_mismatch');
+    // create-only cdsg_ 无 filter → 禁止清全部
+    expect(assertScopedSweep({ cdsAccess: createOnly }, undefined).mismatch?.body.error)
+      .toBe('scoped_key_requires_project_filter');
+    // 指定项目 cdsg_:范围内放行,范围外 403
+    expect(assertScopedSweep({ cdsAccess: scopedA }, 'a')).toEqual({ projectFilter: 'a' });
+    expect(assertScopedSweep({ cdsAccess: scopedA }, 'b').mismatch?.body.error).toBe('project_out_of_scope');
   });
 });

@@ -389,6 +389,87 @@ export function assertNotMachineAgentKey(
 }
 
 /**
+ * 无项目语境的管理员操作门卫（Codex P1，2026-07-09）。用于像 detect-runtime /
+ * validate-runtime 这种「借服务器级 GitHub 凭据克隆任意仓库」的探针端点:它们没有
+ * `:id` 目标项目,原来只挡 cdsProjectKey,但 create-only / 指定项目的 cdsg_ key 被
+ * stamp 的是 cdsAccess → 仍能借服务器凭据读任意私有仓库。放行条件收敛为「真正的
+ * 管理员」:人类 cookie / bootstrap 静态 key（无 stamp）或全权 'all' cdsg_ key。
+ * 任何带作用域的机器 key（cdsp_ 或 projects!=='all' 的 cdsg_）一律 403。
+ */
+export function assertUnscopedAdmin(
+  req: { cdsProjectKey?: unknown; cdsAccess?: { keyId: string; access: AgentKeyAccess } },
+): null | { status: number; body: Record<string, unknown> } {
+  if (req.cdsProjectKey) {
+    return {
+      status: 403,
+      body: {
+        error: 'project_key_forbidden',
+        message: '该操作借服务器级凭据且无项目语境，仅限管理员 / 控制台会话，项目级 key 不可用。',
+      },
+    };
+  }
+  const access = req.cdsAccess?.access;
+  if (access && access.projects !== 'all') {
+    return {
+      status: 403,
+      body: {
+        error: 'scoped_key_forbidden',
+        message: '该操作借服务器级凭据且无项目语境，带作用域的全局 Key 不可用；仅限管理员会话或全权全局 Key。',
+      },
+    };
+  }
+  return null;
+}
+
+/**
+ * 跨项目「清扫型」路由的作用域门卫（Codex P1，2026-07-09）。用于那些「不带 ?project=
+ * 就遍历所有项目做副作用」的端点(如 branches 的 cleanup-stopped / cleanup-damaged-
+ * containers)。原来只在 cdsProjectKey 存在时才锁项目,create-only / 指定项目的 cdsg_
+ * key(cdsAccess)会跳过校验 → 跨项目批量删。
+ *
+ * 返回 { projectFilter, mismatch }:
+ * - 人类 cookie / bootstrap / 全权 'all' cdsg_ → 原样返回 filter(可为 undefined = 清扫
+ *   全部),放行。
+ * - 单项目 cdsp_ → filter 缺省锁到自身项目,再 assertProjectAccess。
+ * - 带作用域 cdsg_(projects 列表 / [])→ 必须显式带一个授权范围内的 ?project=,否则
+ *   403(禁止清扫全部);带了就 assertProjectAccess 校验。
+ */
+export function assertScopedSweep(
+  req: {
+    cdsProjectKey?: { projectId: string; keyId: string };
+    cdsAccess?: { keyId: string; access: AgentKeyAccess };
+  },
+  projectFilter: string | null | undefined,
+): { projectFilter?: string; mismatch?: { status: number; body: Record<string, unknown> } } {
+  const projectKey = req.cdsProjectKey;
+  const access = req.cdsAccess?.access;
+  // 全权 / 人类 / bootstrap —— 无限制。
+  if (!projectKey && (!access || access.projects === 'all')) {
+    return { projectFilter: projectFilter ?? undefined };
+  }
+  // 带作用域的机器 key:必须锁定到唯一一个授权范围内的项目。
+  let filter: string | undefined = projectFilter ?? undefined;
+  if (!filter) {
+    if (projectKey) {
+      filter = projectKey.projectId; // cdsp_ 缺省锁到自身项目
+    } else {
+      return {
+        mismatch: {
+          status: 403,
+          body: {
+            error: 'scoped_key_requires_project_filter',
+            message: '带作用域的全局 Key 不能跨项目批量操作，请带上 ?project=<projectId>（且需在授权范围内）。',
+          },
+        },
+      };
+    }
+  }
+  const m = assertProjectAccess(req, filter);
+  if (m) return { mismatch: m };
+  return { projectFilter: filter };
+}
+
+/**
  * Roll-up runtime stats rendered on the project list card so the user
  * can tell at a glance whether a project is alive without clicking in.
  *
@@ -1737,10 +1818,10 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // 安全(PR #711 P1):本接口在"项目创建前"用服务器级 GitHub Device Flow 凭据克隆任意
     // gitRepoUrl + 跑任意 command + 回流容器日志。项目级 agent key 没有可授权的目标项目/仓库,
     // 放行等于让低权限 key 借服务器凭据克隆并 cat 出任意私有仓库内容。故仅管理员/控制台会话
-    // (无 cdsProjectKey)可调用,项目级 key 一律 403。
-    if ((req as { cdsProjectKey?: unknown }).cdsProjectKey) {
-      res.status(403).json({ error: 'project_key_forbidden', message: '试运行用服务器级 GitHub 凭据且未绑定项目,仅限管理员 / 控制台会话调用,项目级 key 不可用。' });
-      return;
+    // 或全权 'all' 全局 key 可调用;项目级 cdsp_ 与带作用域的 cdsg_ 一律 403(Codex P1)。
+    {
+      const guard = assertUnscopedAdmin(req as unknown as { cdsProjectKey?: unknown; cdsAccess?: { keyId: string; access: AgentKeyAccess } });
+      if (guard) { res.status(guard.status).json(guard.body); return; }
     }
     const body = (req.body || {}) as { gitRepoUrl?: string; gitRef?: string; image?: string; command?: string; port?: number };
     const gitRepoUrl = (body.gitRepoUrl || '').trim();
@@ -2059,11 +2140,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   // 检测并回填:仓库 URL → 浅克隆 → 复用 detectModules(monorepo 感知)识别栈 → 返回每个模块的建议
   // 服务配置(镜像/命令/端口),前端据此把应用服务一键填好,取代"按运行时猜测的默认",减少第一次点红。
   router.post('/detect-runtime', async (req, res) => {
-    // 安全(PR #711 P1):同 validate-runtime——用服务器级 GitHub 凭据克隆任意仓库,项目级 key
-    // 没有可授权目标,放行等于借服务器凭据读任意私有仓库。仅管理员 / 控制台会话可调用。
-    if ((req as { cdsProjectKey?: unknown }).cdsProjectKey) {
-      res.status(403).json({ error: 'project_key_forbidden', message: '检测仓库用服务器级 GitHub 凭据且未绑定项目,仅限管理员 / 控制台会话调用,项目级 key 不可用。' });
-      return;
+    // 安全(PR #711 P1 + Codex P1):同 validate-runtime——用服务器级 GitHub 凭据克隆任意仓库。
+    // 仅管理员 / 控制台会话或全权 'all' 全局 key 可调用;cdsp_ 与带作用域的 cdsg_ 一律 403。
+    {
+      const guard = assertUnscopedAdmin(req as unknown as { cdsProjectKey?: unknown; cdsAccess?: { keyId: string; access: AgentKeyAccess } });
+      if (guard) { res.status(guard.status).json(guard.body); return; }
     }
     const body = (req.body || {}) as { gitRepoUrl?: string; gitRef?: string };
     const gitRepoUrl = (body.gitRepoUrl || '').trim();
