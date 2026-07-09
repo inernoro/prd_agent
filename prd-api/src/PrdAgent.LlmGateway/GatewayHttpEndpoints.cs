@@ -96,6 +96,7 @@ public static class GatewayHttpEndpoints
             var (pinnedPlatformId, pinnedModelId) = ResolveCompatPinnedTarget(http, body);
             var modelPolicy = ResolveCompatModelPolicy(http, body, requestedModel, pinnedPlatformId, pinnedModelId);
             var stream = ReadBool(body, "stream");
+            StripGatewayRoutingFields(body);
             var droppedParameters = FindDroppedParameters(
                 body,
                 "model", "input", "instructions", "max_output_tokens", "temperature", "top_p",
@@ -175,6 +176,7 @@ public static class GatewayHttpEndpoints
             var (pinnedPlatformId, pinnedModelId) = ResolveCompatPinnedTarget(http, body);
             var modelPolicy = ResolveCompatModelPolicy(http, body, requestedModel, pinnedPlatformId, pinnedModelId);
             body.Remove("model");
+            StripGatewayRoutingFields(body);
 
             var ingress = new GatewayIngressRequest
             {
@@ -344,6 +346,7 @@ public static class GatewayHttpEndpoints
             var modelPolicy = ResolveCompatModelPolicy(http, body, requestedModel, pinnedPlatformId, pinnedModelId);
             var stream = ReadBool(body, "stream");
             body.Remove("model");
+            StripGatewayRoutingFields(body);
             var droppedParameters = FindDroppedParameters(
                 body,
                 "messages", "max_tokens", "temperature", "top_p", "stream",
@@ -422,6 +425,7 @@ public static class GatewayHttpEndpoints
             var (pinnedPlatformId, pinnedModelId) = ResolveCompatPinnedTarget(http, body);
             var modelPolicy = ResolveCompatModelPolicy(http, body, requestedModel, pinnedPlatformId, pinnedModelId);
             var stream = ReadBool(body, "stream");
+            StripGatewayRoutingFields(body);
             var droppedParameters = FindDroppedParameters(
                 body,
                 "model", "system", "messages", "max_tokens", "temperature", "top_p", "top_k",
@@ -531,6 +535,7 @@ public static class GatewayHttpEndpoints
             var modelPoolId = ResolveCompatModelPoolId(http, body);
             var (pinnedPlatformId, pinnedModelId) = ResolveCompatPinnedTarget(http, body);
             var modelPolicy = ResolveCompatModelPolicy(http, body, requestedModel, pinnedPlatformId, pinnedModelId);
+            StripGatewayRoutingFields(body);
             var droppedParameters = FindDroppedParameters(
                 body,
                 "contents", "systemInstruction", "generationConfig", "tools", "toolConfig",
@@ -1115,6 +1120,34 @@ public static class GatewayHttpEndpoints
             .OrderBy(k => k, StringComparer.Ordinal)
             .ToList();
     }
+
+    private static void StripGatewayRoutingFields(JsonObject body)
+    {
+        foreach (var key in GatewayRoutingFieldNames)
+        {
+            body.Remove(key);
+        }
+
+        if (body["provider"] is JsonObject provider)
+        {
+            foreach (var key in GatewayRoutingFieldNames)
+            {
+                provider.Remove(key);
+            }
+        }
+    }
+
+    private static readonly string[] GatewayRoutingFieldNames =
+    [
+        "model_policy",
+        "modelPolicy",
+        "model_pool_id",
+        "modelPoolId",
+        "pinned_platform_id",
+        "pinnedPlatformId",
+        "pinned_model_id",
+        "pinnedModelId",
+    ];
 
     private static async Task<AppCallerGovernanceDecision> RecordAndCheckAppCallerGovernanceAsync(
         IServiceProvider services,

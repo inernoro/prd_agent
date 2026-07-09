@@ -167,7 +167,7 @@ public sealed class LlmRequestLogBackground
         return _db.LlmRequestLogs.UpdateOneAsync(l => l.Id == logId, update);
     }
 
-    private Task UpdateErrorAsync(string logId, string error, int? statusCode)
+    private async Task UpdateErrorAsync(string logId, string error, int? statusCode)
     {
         var errorMaxChars = LlmLogLimits.DefaultErrorMaxChars;
         if (!string.IsNullOrEmpty(error) && error.Length > errorMaxChars) error = error[..errorMaxChars] + "...[TRUNCATED]";
@@ -176,16 +176,25 @@ public sealed class LlmRequestLogBackground
             .Set(l => l.Error, error)
             .Set(l => l.StatusCode, statusCode)
             .Set(l => l.Status, "failed")
-            .Set(l => l.EndedAt, endedAt)
+            .Set(l => l.EndedAt, endedAt);
+
+        // 同上：blackhole 占位记录的 logId 不会被复用（StartAsync 失败返回 null），按主键直接更新即可。
+        await _db.LlmRequestLogs.UpdateOneAsync(l => l.Id == logId, update);
+
+        var attemptUpdate = Builders<LlmRequestLog>.Update
             .Set("ProviderAttempts.$[send].Status", "failed")
             .Set("ProviderAttempts.$[send].StatusCode", statusCode)
             .Set("ProviderAttempts.$[send].Error", error)
             .Set("ProviderAttempts.$[send].EndedAt", endedAt);
 
-        // 同上：blackhole 占位记录的 logId 不会被复用（StartAsync 失败返回 null），按主键直接更新即可。
-        return _db.LlmRequestLogs.UpdateOneAsync(
-            l => l.Id == logId,
-            update,
+        var attemptFilter = Builders<LlmRequestLog>.Filter.And(
+            Builders<LlmRequestLog>.Filter.Eq(l => l.Id, logId),
+            Builders<LlmRequestLog>.Filter.Exists("ProviderAttempts.0", true),
+            Builders<LlmRequestLog>.Filter.ElemMatch(l => l.ProviderAttempts, a => a.Status == "sent"));
+
+        await _db.LlmRequestLogs.UpdateOneAsync(
+            attemptFilter,
+            attemptUpdate,
             new UpdateOptions
             {
                 ArrayFilters =

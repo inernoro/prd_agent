@@ -187,6 +187,10 @@ public class GatewayKeyGateContractTests
             gateway.LastRequest.Context.ShouldNotBeNull();
             gateway.LastRequest.Context!.ModelPolicy.ShouldBe("pool");
             gateway.LastRequest.Context.ModelPoolId.ShouldBe("pool-chat-premium");
+            var upstreamBody = gateway.LastRequest.RequestBody!.ToJsonString();
+            upstreamBody.ShouldNotContain("model_policy");
+            upstreamBody.ShouldNotContain("model_pool_id");
+            upstreamBody.ShouldContain("messages");
         }
         finally
         {
@@ -619,6 +623,11 @@ public class GatewayKeyGateContractTests
             gateway.LastRawRequest.Context!.ModelPolicy.ShouldBe("pinned");
             gateway.LastResolvePinnedPlatformId.ShouldBe("plat-image");
             gateway.LastResolvePinnedModelId.ShouldBe("openai/gpt-image-1");
+            var upstreamBody = gateway.LastRawRequest.RequestBody!.ToJsonString();
+            upstreamBody.ShouldNotContain("model_policy");
+            upstreamBody.ShouldNotContain("pinned_platform_id");
+            upstreamBody.ShouldNotContain("pinned_model_id");
+            upstreamBody.ShouldContain("prompt");
         }
         finally
         {
