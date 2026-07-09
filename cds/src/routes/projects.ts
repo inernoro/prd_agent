@@ -369,6 +369,26 @@ export function assertProjectAccess(
 }
 
 /**
+ * 拒绝任何机器 Agent Key（项目级 cdsp_ 或全局 cdsg_，无论作用域）调用密钥管理类
+ * 端点（签发/吊销全局 key）。只有人类 cookie 登录或 bootstrap 静态 AI_ACCESS_KEY
+ * 可以 —— 静态 key 不在 globalAgentKeys 里、不会被 stamp cdsProjectKey/cdsAccess，
+ * 故对它返回 null(放行)。防止 create-only 全局 key 给自己升级成全权 key。
+ */
+export function assertNotMachineAgentKey(
+  req: { cdsProjectKey?: unknown; cdsAccess?: unknown },
+): null | { status: number; body: Record<string, unknown> } {
+  if (!req.cdsProjectKey && !req.cdsAccess) return null;
+  return {
+    status: 403,
+    body: {
+      error: 'agent_key_cannot_mint_global',
+      message:
+        'Agent Key（项目级或全局级）无权签发/吊销全局通行证。请在浏览器登录 CDS，或使用 bootstrap AI_ACCESS_KEY 操作。',
+    },
+  };
+}
+
+/**
  * Roll-up runtime stats rendered on the project list card so the user
  * can tell at a glance whether a project is alive without clicking in.
  *
@@ -487,6 +507,50 @@ function maskProjectSummary<T extends ProjectSummary>(req: unknown, summary: T):
 export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   const router = Router();
   const { stateService, shell, config } = deps;
+
+  // ── 项目作用域统一门卫（Codex P1，2026-07-09）──
+  //
+  // create-only / 指定项目的 cdsg_ key 声称"碰不到未授权的现有项目"。但作用域
+  // 校验以前只发生在少数显式调 assertProjectAccess() 的写路由里,像
+  // PUT /projects/:id/preview-mode、/comment-template、POST /projects/:id/files
+  // 等没调的就是漏洞 —— 一把 projects:[] 的 key 仍能改现有项目状态。
+  //
+  // 这里加一道**路由级门卫**:任何对 /projects/:id[/...] 的**变更**请求(非
+  // GET/HEAD/OPTIONS)在进入具体 handler 前,统一按 :id 做 assertProjectAccess。
+  // 只收紧"带作用域的机器 key":未授权/cookie 人类/bootstrap 静态 key 没有
+  // cdsProjectKey/cdsAccess stamp → assertProjectAccess 返回 null → 照常放行,
+  // 故不影响公开的授权申请路由与人类操作。POST /projects(建项目,无 :id)不匹配
+  // 本正则,由其自身的 canCreateProjects 校验把关。
+  router.use((req, res, next) => {
+    const method = req.method.toUpperCase();
+    if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
+      next();
+      return;
+    }
+    const m = /^\/(?:api\/)?projects\/([^/?]+)/.exec(req.path);
+    if (!m) {
+      next();
+      return;
+    }
+    let targetProjectId: string;
+    try {
+      targetProjectId = decodeURIComponent(m[1]);
+    } catch {
+      targetProjectId = m[1];
+    }
+    const mismatch = assertProjectAccess(
+      req as unknown as {
+        cdsProjectKey?: { projectId: string; keyId: string };
+        cdsAccess?: { keyId: string; access: AgentKeyAccess };
+      },
+      targetProjectId,
+    );
+    if (mismatch) {
+      res.status(mismatch.status).json(mismatch.body);
+      return;
+    }
+    next();
+  });
 
   function statsFor(project: Project): ProjectStats {
     // P4 Part 17 (G9 fix): use the project-scoped helper so non-legacy
@@ -3446,14 +3510,14 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   // lookup. See server.ts findGlobalAgentKeyForAuth path.
 
   router.post('/global-agent-keys', (req, res) => {
-    // Project-scoped keys may not mint global keys — that would
-    // be a privilege escalation (project key → global key → new project).
-    if ((req as unknown as { cdsProjectKey?: unknown }).cdsProjectKey) {
-      res.status(403).json({
-        error: 'project_key_cannot_mint_global',
-        message:
-          '项目级 Agent Key 无权签发全局通行证。请在浏览器登录 CDS，或使用 bootstrap AI_ACCESS_KEY 操作。',
-      });
+    // 任何机器 Agent Key（项目级 cdsp_ 或全局 cdsg_，无论作用域）都无权签发全局
+    // 通行证 —— 否则一把 create-only 全局 key 就能给自己签一把 projects:'all' 的
+    // 全权 key，绕过隔离模型(Codex P1)。签发全局 key 是密钥管理动作,只允许人类
+    // cookie 登录或 bootstrap 静态 AI_ACCESS_KEY(静态 key 不进 globalAgentKeys、
+    // 不会被 stamp cdsAccess,故这里放行)。
+    const machineKey = assertNotMachineAgentKey(req as unknown as { cdsProjectKey?: unknown; cdsAccess?: unknown });
+    if (machineKey) {
+      res.status(machineKey.status).json(machineKey.body);
       return;
     }
 
@@ -3555,11 +3619,10 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   });
 
   router.delete('/global-agent-keys/:keyId', (req, res) => {
-    if ((req as unknown as { cdsProjectKey?: unknown }).cdsProjectKey) {
-      res.status(403).json({
-        error: 'project_key_cannot_revoke_global',
-        message: '项目级 Agent Key 无权吊销全局通行证。',
-      });
+    // 同签发:任何机器 Agent Key 都无权吊销全局通行证(密钥管理动作)。
+    const machineKey = assertNotMachineAgentKey(req as unknown as { cdsProjectKey?: unknown; cdsAccess?: unknown });
+    if (machineKey) {
+      res.status(machineKey.status).json(machineKey.body);
       return;
     }
     const ok = stateService.revokeGlobalAgentKey(req.params.keyId);

@@ -179,7 +179,7 @@ describe('Global Agent Keys (bootstrap-equivalent)', () => {
       { 'X-AI-Access-Key': projectPlaintext },
     );
     expect(res.status).toBe(403);
-    expect(res.body.error).toBe('project_key_cannot_mint_global');
+    expect(res.body.error).toBe('agent_key_cannot_mint_global');
 
     // And must not be able to revoke someone else's global either.
     const preSign = await request(server, 'POST', '/api/global-agent-keys', {});
@@ -369,5 +369,51 @@ describe('Global Agent Keys — 统一授权作用域', () => {
     expect(create.status).toBe(201);
     const ok = await request(server, 'POST', '/api/projects/legacy-proj/agent-keys', {}, { 'X-AI-Access-Key': plaintext });
     expect(ok.status).toBe(201);
+  });
+
+  it('create-only cdsg_ key 无权签发/吊销全局 key（Codex P1：防自我提权）', async () => {
+    const sign = await request(server, 'POST', '/api/global-agent-keys', {});
+    const createOnlyKey = sign.body.plaintext as string;
+
+    // 用 create-only key 想给自己签一把 projects:'all' 的全权 key → 必须 403
+    const mint = await request(
+      server, 'POST', '/api/global-agent-keys',
+      { access: { canCreateProjects: true, projects: 'all' } },
+      { 'X-AI-Access-Key': createOnlyKey },
+    );
+    expect(mint.status).toBe(403);
+    expect(mint.body.error).toBe('agent_key_cannot_mint_global');
+
+    // 也不能吊销别的全局 key
+    const preSign = await request(server, 'POST', '/api/global-agent-keys', {});
+    const revoke = await request(
+      server, 'DELETE', `/api/global-agent-keys/${preSign.body.keyId}`,
+      undefined, { 'X-AI-Access-Key': createOnlyKey },
+    );
+    expect(revoke.status).toBe(403);
+    expect(revoke.body.error).toBe('agent_key_cannot_mint_global');
+  });
+
+  it('路由级门卫：create-only key 被挡在此前未显式校验的项目变更路由外（Codex P1）', async () => {
+    seedProject('guarded-proj');
+    const createOnly = (await request(server, 'POST', '/api/global-agent-keys', {})).body.plaintext as string;
+    const adminAll = (await request(server, 'POST', '/api/global-agent-keys', {
+      access: { canCreateProjects: true, projects: 'all' },
+    })).body.plaintext as string;
+
+    // PUT /projects/:id/preview-mode 从不调 assertProjectAccess,但路由级门卫覆盖它。
+    const blocked = await request(
+      server, 'PUT', '/api/projects/guarded-proj/preview-mode',
+      { mode: 'port' }, { 'X-AI-Access-Key': createOnly },
+    );
+    expect(blocked.status).toBe(403);
+    expect(blocked.body.error).toBe('project_out_of_scope');
+
+    // 全权 'all' key 照常放行
+    const ok = await request(
+      server, 'PUT', '/api/projects/guarded-proj/preview-mode',
+      { mode: 'port' }, { 'X-AI-Access-Key': adminAll },
+    );
+    expect(ok.status).toBe(200);
   });
 });
