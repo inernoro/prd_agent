@@ -56,7 +56,7 @@ import type { ProxyService } from './services/proxy.js';
 import type { BridgeService } from './services/bridge.js';
 import type { SchedulerService } from './services/scheduler.js';
 import type { JanitorService } from './services/janitor.js';
-import type { CdsConfig, IShellExecutor } from './types.js';
+import type { CdsConfig, IShellExecutor, AgentKeyAccess } from './types.js';
 import type { GracefulShutdownController } from './services/graceful-shutdown.js';
 import {
   bodyPreviewFromUnknown,
@@ -1204,15 +1204,19 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
         };
       }
     }
-    // Global (bootstrap-equivalent) Agent Key (cdsg_<suffix>). Behaves
-    // like the static AI_ACCESS_KEY: no project scoping, free to hit
-    // POST /api/projects and cross-project routes. The UI must warn
-    // the user before issuing one (see agent-key-modal.js bootstrap
-    // confirmation). NOT stamping cdsProjectKey on purpose.
+    // Global (cdsg_<suffix>) Agent Key. Carries an explicit access scope
+    // (create-projects and/or a set/'all' of existing projects). We stamp
+    // req.cdsAccess so the enforcement hook (assertProjectAccess /
+    // POST /api/projects in routes/projects.ts) can honor it. Legacy keys
+    // resolve to full admin (see state.ts resolveGlobalAgentKeyAccess), so
+    // no regression. Deliberately NOT stamping cdsProjectKey — that marker
+    // means "single-project cdsp_ key"; cdsg_ keys route through cdsAccess.
     if (stateService && headerKey.startsWith('cdsg_')) {
       const match = stateService.findGlobalAgentKeyForAuth(headerKey);
       if (match) {
         stateService.touchGlobalAgentKeyLastUsed(match.keyId);
+        (req as unknown as { cdsAccess?: { keyId: string; access: AgentKeyAccess } })
+          .cdsAccess = { keyId: match.keyId, access: match.access };
         return {
           id: `globalkey:${match.keyId}`,
           agentName: `AI (global key ${match.keyId})`,
@@ -2411,6 +2415,17 @@ export function createServer(deps: ServerDeps): express.Express {
         deps.stateService.touchAgentKeyLastUsed(match.projectId, match.keyId);
         (req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } })
           .cdsProjectKey = match;
+      }
+    }
+    // Parallel fallback for cdsg_ global keys — stamp req.cdsAccess so scope
+    // enforcement works even when cookie auth is disabled (mirrors the cdsp_
+    // fallback above). Cheap no-op when header absent / key malformed.
+    if (h && h.startsWith('cdsg_') && !(req as unknown as { cdsAccess?: unknown }).cdsAccess) {
+      const gmatch = deps.stateService.findGlobalAgentKeyForAuth(h);
+      if (gmatch) {
+        deps.stateService.touchGlobalAgentKeyLastUsed(gmatch.keyId);
+        (req as unknown as { cdsAccess?: { keyId: string; access: AgentKeyAccess } })
+          .cdsAccess = { keyId: gmatch.keyId, access: gmatch.access };
       }
     }
     next();

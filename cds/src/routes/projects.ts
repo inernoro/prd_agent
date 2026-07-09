@@ -26,7 +26,7 @@
 
 import { Router } from 'express';
 import { randomBytes, createHash } from 'node:crypto';
-import type { StateService } from '../services/state.js';
+import { StateService } from '../services/state.js';
 import { detectStack, detectModules, detectDatabaseInitialization, type StackDetection } from '../services/stack-detector.js';
 import { buildCacheMounts } from '../services/cache-catalog.js';
 import { discoverComposeFiles, parseCdsCompose } from '../services/compose-parser.js';
@@ -50,7 +50,7 @@ import * as nodeFs from 'node:fs';
 import * as nodePath from 'node:path';
 import * as nodeOs from 'node:os';
 import { spawn } from 'node:child_process';
-import type { IShellExecutor, Project, CdsConfig, AgentKey, BuildProfile, InfraService } from '../types.js';
+import type { IShellExecutor, Project, CdsConfig, AgentKey, AgentKeyAccess, BuildProfile, InfraService } from '../types.js';
 import { combinedOutput } from '../types.js';
 
 type OnboardingRuntime = NonNullable<Project['onboardingRuntime']>;
@@ -284,6 +284,36 @@ function formatKeyPreview(plaintext: string): string {
 }
 
 /**
+ * Mint a project-scoped `cdsp_` Agent Key and persist it under the project.
+ * Plaintext layout: `cdsp_<slugHead12>_<base64url 32 bytes>`. Only the
+ * sha256 is stored; the plaintext is returned once for the caller to relay.
+ * Shared by POST /projects/:id/agent-keys and the create-project flow that
+ * returns a scoped key to a create-only caller.
+ */
+function mintProjectAgentKey(
+  stateService: StateService,
+  project: Project,
+  label: string,
+  createdBy?: string,
+): { keyId: string; plaintext: string; preview: string } {
+  const slugHead = project.slug.slice(0, 12).toLowerCase();
+  const suffix = randomBytes(32).toString('base64url');
+  const plaintext = `cdsp_${slugHead}_${suffix}`;
+  const hash = createHash('sha256').update(plaintext).digest('hex');
+  const keyId = randomBytes(4).toString('hex');
+  const entry: AgentKey = {
+    id: keyId,
+    label,
+    hash,
+    scope: 'rw',
+    createdAt: new Date().toISOString(),
+    createdBy: createdBy || undefined,
+  };
+  stateService.addAgentKey(project.id, entry);
+  return { keyId, plaintext, preview: formatKeyPreview(plaintext) };
+}
+
+/**
  * Minimal helper that enforces a project-key request can only touch its
  * own project. Returns null when access is allowed (or when the request
  * isn't using a project key at all), or a `{ status, body }` object for
@@ -293,23 +323,49 @@ function formatKeyPreview(plaintext: string): string {
  * write-heavy routes we care about. Read-only GETs don't need it.
  */
 export function assertProjectAccess(
-  req: { cdsProjectKey?: { projectId: string; keyId: string } },
+  req: {
+    cdsProjectKey?: { projectId: string; keyId: string };
+    cdsAccess?: { keyId: string; access: AgentKeyAccess };
+  },
   targetProjectId: string | undefined,
 ): null | { status: number; body: Record<string, unknown> } {
   const projectKey = req.cdsProjectKey;
-  if (!projectKey) return null; // bootstrap key or cookie auth — no scope check
-  if (!targetProjectId) return null; // no target to check against
-  if (projectKey.projectId === targetProjectId) return null;
-  return {
-    status: 403,
-    body: {
-      error: 'project_mismatch',
-      expected: projectKey.projectId,
-      got: targetProjectId,
-      message:
-        '这把 key 只能操作 ' + projectKey.projectId + ' 项目，请让用户在目标项目页重新「授权 Agent」',
-    },
-  };
+  // (1) 单项目 cdsp_ key —— 只能操作绑定的那个项目。
+  if (projectKey) {
+    if (!targetProjectId) return null; // no target to check against
+    if (projectKey.projectId === targetProjectId) return null;
+    return {
+      status: 403,
+      body: {
+        error: 'project_mismatch',
+        expected: projectKey.projectId,
+        got: targetProjectId,
+        message:
+          '这把 key 只能操作 ' + projectKey.projectId + ' 项目，请让用户在目标项目页重新「授权 Agent」',
+      },
+    };
+  }
+  // (2) cdsg_ 全局 key 带作用域 —— 按 access.projects 放行。
+  //   'all' → 放行所有;list → 仅列表内;[] → 不能碰任何现有项目(create-only)。
+  //   存量 key 解析为 'all'(见 state.ts),故老部署零回归。
+  const access = req.cdsAccess?.access;
+  if (access) {
+    if (!targetProjectId) return null; // 无具体项目目标,不在此拦
+    if (access.projects === 'all') return null;
+    if (Array.isArray(access.projects) && access.projects.includes(targetProjectId)) return null;
+    return {
+      status: 403,
+      body: {
+        error: 'project_out_of_scope',
+        got: targetProjectId,
+        message:
+          '这把全局 Key 的授权范围不含项目 ' + targetProjectId +
+          '。请在「签发全局 Key」面板勾选该项目或「操作所有现有项目」，或改用该项目的项目级 Key。',
+      },
+    };
+  }
+  // (3) bootstrap 静态 key / cookie auth —— 无作用域限制。
+  return null;
 }
 
 /**
@@ -2059,12 +2115,23 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   //   409 { error: 'duplicate', field }
   //   500 { error: 'docker', message } — docker create failed
   router.post('/projects', async (req, res) => {
-    // Project keys are bound to a single project — they may not mint
-    // new projects. Only the bootstrap key / cookie-auth may.
+    // Single-project cdsp_ keys are bound to one project — they may not mint
+    // new projects. (Statically stored: their storage location IS the scope.)
     if ((req as unknown as { cdsProjectKey?: unknown }).cdsProjectKey) {
       res.status(403).json({
         error: 'project_key_cannot_create',
-        message: 'Project-scoped Agent Key 无权创建新项目；请在 CDS 管理页手动新建。',
+        message: 'Project-scoped Agent Key 无权创建新项目；请改用勾选了「允许创建新项目」的全局 Key，或在 CDS 管理页手动新建。',
+      });
+      return;
+    }
+    // cdsg_ 全局 key —— 只有勾了「允许创建新项目」的才放行。存量 key 解析为全权
+    // (canCreateProjects:true),故不回归;新签的 create-only / all-projects key 都能建;
+    // 但显式 canCreateProjects:false 的(例如只授权了某几个现有项目)会被挡住。
+    const callerAccess = (req as unknown as { cdsAccess?: { keyId: string; access: AgentKeyAccess } }).cdsAccess;
+    if (callerAccess && callerAccess.access.canCreateProjects !== true) {
+      res.status(403).json({
+        error: 'global_key_cannot_create',
+        message: '这把全局 Key 未勾选「允许创建新项目」，无权创建项目。请在「签发全局 Key」面板勾选该权限后重签。',
       });
       return;
     }
@@ -2418,6 +2485,30 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
     }
 
+    // 若调用方是「只能建项目」的全局 Key(access 未覆盖到这个新项目),当场给它签一把
+    // 新项目的 cdsp_ scoped key 一并返回 —— 这样 create-only key 永远碰不到现有项目,
+    // 每个新建项目发一把独立、隔离的 key,建完即可接着操作它刚建的项目(2026-07-09 统一
+    // 授权模型:创建时返回 scoped key)。access.projects === 'all' 的全权 key 本就能操作
+    // 所有项目,无需再发。
+    let issuedProjectKey: { keyId: string; plaintext: string; preview: string } | undefined;
+    if (callerAccess && callerAccess.access.projects !== 'all') {
+      const already = Array.isArray(callerAccess.access.projects)
+        && callerAccess.access.projects.includes(newProject.id);
+      if (!already) {
+        try {
+          issuedProjectKey = mintProjectAgentKey(
+            stateService,
+            newProject,
+            `建项目时签发 ${new Date().toISOString().replace('T', ' ').slice(0, 16)}`,
+            (req as unknown as { cdsUser?: { login?: string } }).cdsUser?.login,
+          );
+        } catch {
+          // 签发失败不阻断建项目本身:项目已建好,用户仍可去项目卡手动签 key。
+          issuedProjectKey = undefined;
+        }
+      }
+    }
+
     res.status(201).json({
       project: toSummary(newProject, EMPTY_STATS),
       // Surface the auto-suffix so the frontend can show a friendly
@@ -2428,6 +2519,9 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       infraPresetsApplied: appliedInfraPresets,
       // 被基建连接串覆盖的用户环境变量 key(非空时前端可提示"你粘贴的 X 被自动生成的连接串取代")。
       infraEnvOverrides: infraEnvOverrides.length > 0 ? infraEnvOverrides : undefined,
+      // 给 create-only 全局 Key 返回的新项目 scoped key(明文只此一次)。cdscli 建项目后
+      // 可直接切到这把 key 做后续部署/操作。全权 key 或人类 cookie 建项目时不返回。
+      issuedProjectKey,
     });
   });
 
@@ -3264,29 +3358,12 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       ? body.label.trim().slice(0, 100)
       : defaultLabel;
 
-    // Plaintext layout: cdsp_<slugHead12>_<base64url 32 bytes>
-    // - slugHead: first 12 chars of project.slug (lowercased). slug regex
-    //   already forbids `_` and `/`, so the prefix splits cleanly on `_`.
-    // - suffix: 32 random bytes, base64url — ~43 chars, entropy sufficient.
-    const slugHead = project.slug.slice(0, 12).toLowerCase();
-    const suffix = randomBytes(32).toString('base64url');
-    const plaintext = `cdsp_${slugHead}_${suffix}`;
-    const hash = createHash('sha256').update(plaintext).digest('hex');
-    const keyId = randomBytes(4).toString('hex');
-
     // Capture signer identity from the github-auth middleware when present.
     const ghUser = (req as unknown as { cdsUser?: { login?: string } }).cdsUser;
 
-    const entry: AgentKey = {
-      id: keyId,
-      label,
-      hash,
-      scope: 'rw',
-      createdAt: now.toISOString(),
-      createdBy: ghUser?.login || undefined,
-    };
+    let minted: { keyId: string; plaintext: string; preview: string };
     try {
-      stateService.addAgentKey(project.id, entry);
+      minted = mintProjectAgentKey(stateService, project, label, ghUser?.login);
     } catch (err) {
       res.status(500).json({
         error: 'state_save_failed',
@@ -3295,11 +3372,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
 
-    res.status(201).json({
-      keyId,
-      plaintext,
-      preview: formatKeyPreview(plaintext),
-    });
+    res.status(201).json(minted);
   });
 
   router.get('/projects/:id/agent-keys', (req, res) => {
@@ -3354,16 +3427,18 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     res.json({ ok: true, keyId: req.params.keyId });
   });
 
-  // ── Global (bootstrap-equivalent) Agent Keys ──
+  // ── Global (cdsg_) Agent Keys ──
   //
-  // POST /api/global-agent-keys — sign a new bootstrap key
-  //   body: { label?: string }
-  //   201 { keyId, plaintext, preview }
+  // POST /api/global-agent-keys — sign a new global key with an access scope
+  //   body: { label?: string, access?: { canCreateProjects, projects: 'all'|string[] } }
+  //     access omitted → 安全默认「只能创建新项目」{ canCreateProjects:true, projects:[] }。
+  //   201 { keyId, plaintext, preview, access }
+  //   400 when the requested access grants nothing (can't create AND no projects).
   //   403 when the caller is using a project-scoped key (those can't
   //       escalate their own scope; only cookie auth or the bootstrap
   //       AI_ACCESS_KEY may mint globals).
   //
-  // GET /api/global-agent-keys — list metadata (no plaintext)
+  // GET /api/global-agent-keys — list metadata (no plaintext), each with resolved access
   // DELETE /api/global-agent-keys/:keyId — revoke
   //
   // Global keys use the `cdsg_` prefix (parallel to `cdsp_` for project
@@ -3371,7 +3446,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   // lookup. See server.ts findGlobalAgentKeyForAuth path.
 
   router.post('/global-agent-keys', (req, res) => {
-    // Project-scoped keys may not mint bootstrap-level keys — that would
+    // Project-scoped keys may not mint global keys — that would
     // be a privilege escalation (project key → global key → new project).
     if ((req as unknown as { cdsProjectKey?: unknown }).cdsProjectKey) {
       res.status(403).json({
@@ -3382,12 +3457,47 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
 
-    const body = (req.body || {}) as { label?: string };
+    const body = (req.body || {}) as {
+      label?: string;
+      access?: { canCreateProjects?: unknown; projects?: unknown };
+    };
     const now = new Date();
-    const defaultLabel = 'Global bootstrap 签发于 ' + now.toISOString().replace('T', ' ').slice(0, 16);
+    const defaultLabel = 'Global 签发于 ' + now.toISOString().replace('T', ' ').slice(0, 16);
     const label = typeof body.label === 'string' && body.label.trim()
       ? body.label.trim().slice(0, 100)
       : defaultLabel;
+
+    // 解析授权作用域。省略 access → 安全默认「只能创建新项目」(用户诉求:签发全局 key
+    // 默认只给创建项目,怕别人搞坏现有项目)。给了 access → 逐字段校验,projects 数组
+    // 过滤成真实存在的项目 id,避免写入幽灵 id。
+    let access: AgentKeyAccess;
+    if (!body.access) {
+      access = { canCreateProjects: true, projects: [] };
+    } else {
+      const canCreateProjects = body.access.canCreateProjects === true;
+      let projects: 'all' | string[];
+      if (body.access.projects === 'all') {
+        projects = 'all';
+      } else if (Array.isArray(body.access.projects)) {
+        const requested = body.access.projects.filter((p): p is string => typeof p === 'string');
+        // 只保留真实存在的项目 id(去重)。
+        const valid = new Set(stateService.getProjects().map((p) => p.id));
+        projects = Array.from(new Set(requested)).filter((id) => valid.has(id));
+      } else {
+        projects = [];
+      }
+      access = { canCreateProjects, projects };
+    }
+
+    // 授权为空(既不能建项目、也不含任何现有项目)的 key 毫无用处,直接拒绝,避免
+    // 用户误签一把什么都干不了的 key。
+    if (!access.canCreateProjects && access.projects !== 'all' && access.projects.length === 0) {
+      res.status(400).json({
+        error: 'empty_access',
+        message: '授权范围为空:请至少勾选「允许创建新项目」或选择一个现有项目。',
+      });
+      return;
+    }
 
     // Plaintext layout: cdsg_<base64url 32 bytes>. No slug head — global
     // keys have no project scope, so the auth path walks the full list
@@ -3404,6 +3514,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       label,
       hash,
       scope: 'rw' as const,
+      access,
       createdAt: now.toISOString(),
       createdBy: ghUser?.login || undefined,
     };
@@ -3421,6 +3532,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       keyId,
       plaintext,
       preview: formatKeyPreview(plaintext),
+      access,
     });
   });
 
@@ -3431,6 +3543,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         id: e.id,
         label: e.label,
         scope: e.scope,
+        // 解析后的授权作用域(存量 key 无 access → 解析为全权 admin)。
+        access: StateService.resolveGlobalAgentKeyAccess(e),
         createdAt: e.createdAt,
         createdBy: e.createdBy,
         lastUsedAt: e.lastUsedAt,
