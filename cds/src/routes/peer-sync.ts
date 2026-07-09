@@ -123,14 +123,44 @@ function computeSignature(reports: AcceptanceReportMeta[]): string {
   return sha256hex(parts.join('\n'));
 }
 
-/** 把一个 item 的报告组装成 MAP-KBTP SyncResourceBundle（resourceType=document-store）。 */
+/**
+ * 把一个 item 的报告组装成 MAP-KBTP SyncResourceBundle（resourceType=document-store）。
+ *
+ * 分页（2026-07-09，debt.acceptance-center-cds「export bundle 无分页」）：
+ * page 传入时按 (createdAt, id) 稳定排序切片，bundle 追加 `page` 元数据；
+ * **不传 page 时输出与历史逐字节一致**（全量 records、无 page 字段），旧对端零感知。
+ * item 级 createdAt/updatedAt/signature 语义始终基于全量报告，与分页无关。
+ */
 async function buildBundle(
   stateService: StateService,
   itemId: string,
-): Promise<Record<string, unknown> | null> {
+  page?: { limit: number; cursor?: string },
+): Promise<Record<string, unknown> | null | 'bad-cursor'> {
   const resolved = resolveItem(stateService, itemId);
   if (!resolved) return null;
-  const { key, name, reports } = resolved;
+  const { key, name } = resolved;
+  let reports = resolved.reports;
+  let pageMeta: { nextCursor: string | null; hasMore: boolean; total: number } | undefined;
+  if (page) {
+    const sorted = [...resolved.reports].sort((a, b) => {
+      if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? -1 : 1;
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+    let startIndex = 0;
+    if (page.cursor) {
+      const idx = sorted.findIndex((r) => r.id === page.cursor);
+      if (idx < 0) return 'bad-cursor';
+      startIndex = idx + 1;
+    }
+    const slice = sorted.slice(startIndex, startIndex + page.limit);
+    const hasMore = startIndex + slice.length < sorted.length;
+    pageMeta = {
+      nextCursor: hasMore && slice.length > 0 ? slice[slice.length - 1].id : null,
+      hasMore,
+      total: sorted.length,
+    };
+    reports = slice;
+  }
 
   // 异步读每份报告正文：交给 libuv 线程池，避免在主线程 readFileSync 串行读完一大堆大
   // 报告把单进程 CDS 卡住(Cursor Bugbot High)。Promise.all 的并发由线程池(默认 4)自然限流。
@@ -168,12 +198,15 @@ async function buildBundle(
     };
   }));
 
-  const createdAt = reports.length ? reports.map((r) => r.createdAt).sort()[0] : new Date(0).toISOString();
-  const updatedAt = reports.length
-    ? reports.map((r) => r.updatedAt || r.createdAt).sort().slice(-1)[0]
+  // item 级时间戳基于**全量**报告（分页切片不改变 item 元数据语义）
+  const allReports = resolved.reports;
+  const createdAt = allReports.length ? allReports.map((r) => r.createdAt).sort()[0] : new Date(0).toISOString();
+  const updatedAt = allReports.length
+    ? allReports.map((r) => r.updatedAt || r.createdAt).sort().slice(-1)[0]
     : new Date(0).toISOString();
 
   return {
+    ...(pageMeta ? { page: pageMeta } : {}),
     schemaVersion: 1,
     resourceType: RESOURCE_TYPE,
     item: {
@@ -292,11 +325,26 @@ export function createPeerSyncRouter(deps: PeerSyncRouterDeps): Router {
   });
 
   // 5) export — 导出 item 的 SyncResourceBundle。
+  // 可选分页：body.limit（1-500）+ body.cursor（上一页 page.nextCursor，即报告 id）。
+  // 不传 limit 时行为与历史逐字节一致（全量、无 page 字段）。
   router.post('/resources/:type/export', async (req: Request, res: Response) => {
     if (!requireSig(req, res)) return;
     if (req.params.type !== RESOURCE_TYPE) return fail(res, 404, 'NOT_FOUND', `未注册的资源类型：${req.params.type}`);
-    const itemId = String(jsonBodyOf(req).itemId || '').trim();
-    const bundle = await buildBundle(stateService, itemId);
+    const body = jsonBodyOf(req);
+    const itemId = String(body.itemId || '').trim();
+    let page: { limit: number; cursor?: string } | undefined;
+    if (body.limit !== undefined) {
+      const limit = Number(body.limit);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+        return fail(res, 400, 'INVALID_FORMAT', 'limit 必须是 1-500 的整数');
+      }
+      const cursor = body.cursor !== undefined ? String(body.cursor).trim() : undefined;
+      page = { limit, ...(cursor ? { cursor } : {}) };
+    } else if (body.cursor !== undefined) {
+      return fail(res, 400, 'INVALID_FORMAT', 'cursor 必须与 limit 一起使用');
+    }
+    const bundle = await buildBundle(stateService, itemId, page);
+    if (bundle === 'bad-cursor') return fail(res, 400, 'INVALID_FORMAT', `cursor 无效：${String(body.cursor)}`);
     if (!bundle) return fail(res, 404, 'NOT_FOUND', `item 不存在：${itemId}`);
     return ok(res, bundle);
   });
