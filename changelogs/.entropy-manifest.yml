@@ -420,3 +420,8 @@ processed:
   - 2026-07-06_cds-wave4-compose-structure-seed.md
   - 2026-07-06_cds-wave4-d1-verified.md
   - 2026-07-06_cds-wave5-detect-stack-ui.md
+  - 2026-07-06_cds-wave5-post-clone-detect.md
+  - 2026-07-06_entropy-cleanup.md
+  - 2026-07-06_llmgw-asr-direct-guard.md
+  - 2026-07-06_llmgw-doubao-stream-asr.md
+  - 2026-07-06_llmgw-pinned-cutover.md
