@@ -32,7 +32,7 @@ import { topoSortLayers } from '../services/topo-sort.js';
 import { detectStack, type DatabaseInitRecommendation, type StackDetection } from '../services/stack-detector.js';
 import { buildInfraDataExec, detectInfraDataKind, maskSecretValues, runDockerExec } from './infra-data.js';
 import { getInfraCatalogPublic } from '../services/infra-catalog.js';
-import { assertProjectAccess } from './projects.js';
+import { assertProjectAccess, assertScopedSweep } from './projects.js';
 import { CheckRunRunner } from '../services/check-run-runner.js';
 import { branchEvents, nowIso } from '../services/branch-events.js';
 import { GitHubAppClient } from '../services/github-app-client.js';
@@ -4437,18 +4437,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.post('/branches/cleanup-damaged-containers', async (req, res) => {
     let projectFilter = resolveProjectIdParam(req.query.project);
-    // 项目级访问控制（Codex P1 / learned rule，同 cleanup-stopped）：本接口删容器/服务条目，
-    // 项目级 cdsp_ key 不得跨项目操作 —— 未带 ?project= 锁到自身项目，带了则校验一致否则 403。
+    // 项目级访问控制（Codex P1，同 cleanup-stopped）：本接口删容器/服务条目，带作用域的
+    // 机器 key(cdsp_ 或 projects!=='all' 的 cdsg_)不得跨项目清扫 —— 未带 ?project= 时:
+    // cdsp_ 锁到自身项目、带作用域 cdsg_ 直接 403;带了则 assertProjectAccess 校验。
     {
-      const projectKey = (req as any).cdsProjectKey as { projectId: string; keyId: string } | undefined;
-      if (projectKey) {
-        if (!projectFilter) projectFilter = projectKey.projectId;
-        const m = assertProjectAccess(req as any, projectFilter);
-        if (m) {
-          res.status(m.status).json(m.body);
-          return;
-        }
+      const sweep = assertScopedSweep(req as any, projectFilter);
+      if (sweep.mismatch) {
+        res.status(sweep.mismatch.status).json(sweep.mismatch.body);
+        return;
       }
+      projectFilter = sweep.projectFilter ?? null;
     }
     const branches = Object.values(stateService.getState().branches).filter(
       (b) => !projectFilter || (b.projectId || 'default') === projectFilter,
@@ -4604,19 +4602,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // 让 /branches/stream 订阅者实时移除卡片，无需手动刷新。
   router.post('/branches/cleanup-stopped', async (req, res) => {
     let projectFilter = resolveProjectIdParam(req.query.project);
-    // 项目级访问控制（Bugbot High / learned rule: 所有项目级资源 handler 必须 assertProjectAccess）：
-    // 该接口会整条删除分支（容器 + worktree + entry），项目级 cdsp_ key 绝不能跨项目批量删。
-    //   - 项目级 key 未带 ?project= → 强制锁定到 key 自己的项目（不允许"清全部"）；
-    //   - 带了 ?project= → assertProjectAccess 校验与 key 一致，否则 403；
-    //   - bootstrap / cookie / 全局 key（cdsProjectKey 为空）→ 不受限，保持原行为。
-    const projectKey = (req as any).cdsProjectKey as { projectId: string; keyId: string } | undefined;
-    if (projectKey) {
-      if (!projectFilter) projectFilter = projectKey.projectId;
-      const m = assertProjectAccess(req as any, projectFilter);
-      if (m) {
-        res.status(m.status).json(m.body);
+    // 项目级访问控制（Bugbot High + Codex P1: 所有项目级资源 handler 必须 assertProjectAccess）：
+    // 该接口会整条删除分支（容器 + worktree + entry），带作用域的机器 key 绝不能跨项目批量删。
+    //   - 单项目 cdsp_ 未带 ?project= → 锁定到 key 自己的项目（不允许"清全部"）；
+    //   - 带作用域 cdsg_(projects!=='all') 未带 ?project= → 403（禁止清全部）；
+    //   - 带了 ?project= → assertProjectAccess 校验在授权范围内，否则 403；
+    //   - bootstrap / cookie / 全权 'all' cdsg_ → 不受限，保持原行为。
+    {
+      const sweep = assertScopedSweep(req as any, projectFilter);
+      if (sweep.mismatch) {
+        res.status(sweep.mismatch.status).json(sweep.mismatch.body);
         return;
       }
+      projectFilter = sweep.projectFilter ?? null;
     }
     const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null;
     const actor = resolveActorFromRequest(req);
