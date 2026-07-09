@@ -2069,6 +2069,10 @@ public static class GatewayHttpEndpoints
             totalTokens = (response.TokenUsage?.InputTokens ?? 0) + (response.TokenUsage?.OutputTokens ?? 0),
         };
         var created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var logprobs = response.Extensions is not null
+            && response.Extensions.TryGetValue("logprobs", out var logprobsNode)
+            ? logprobsNode
+            : null;
         http.Response.ContentType = "application/json";
         if (response.ToolCalls is { Count: > 0 })
         {
@@ -2078,7 +2082,7 @@ public static class GatewayHttpEndpoints
                 @object = "chat.completion",
                 created,
                 model,
-                choices = new[] { new { index = 0, message = new { role = "assistant", content = (string?)null, toolCalls = response.ToolCalls }, finishReason = "tool_calls" } },
+                choices = new[] { new { index = 0, message = new { role = "assistant", content = (string?)null, toolCalls = response.ToolCalls }, logprobs, finishReason = "tool_calls" } },
                 usage,
             };
             await http.Response.WriteAsync(JsonSerializer.Serialize(toolCompletion, SnakeJson));
@@ -2091,7 +2095,7 @@ public static class GatewayHttpEndpoints
             @object = "chat.completion",
             created,
             model,
-            choices = new[] { new { index = 0, message = new { role = "assistant", content = response.Content ?? string.Empty, toolCalls = (JsonArray?)null }, finishReason = "stop" } },
+            choices = new[] { new { index = 0, message = new { role = "assistant", content = response.Content ?? string.Empty, toolCalls = (JsonArray?)null }, logprobs, finishReason = "stop" } },
             usage,
         };
         await http.Response.WriteAsync(JsonSerializer.Serialize(textCompletion, SnakeJson));

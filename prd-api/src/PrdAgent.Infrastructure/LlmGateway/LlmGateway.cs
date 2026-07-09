@@ -254,6 +254,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             IGatewayAdapter? activeAdapter = adapter;
             GatewayTokenUsage? tokenUsage = null;
             System.Text.Json.Nodes.JsonArray? toolCalls = null;
+            Dictionary<string, System.Text.Json.Nodes.JsonNode?>? extensions = null;
             string? finishReason = null;
 
             for (var attemptIndex = 0; attemptIndex < retryResolutions.Count; attemptIndex++)
@@ -354,6 +355,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     tokenUsage = activeAdapter.ParseTokenUsage(responseBody);
                     // 协议保真：提取工具调用（函数调用），归一为 OpenAI 形状（无则 null，不影响纯文本响应）
                     toolCalls = activeAdapter.ParseToolCalls(responseBody);
+                    extensions = activeAdapter.ParseExtensions(responseBody);
                     finishReason = ExtractFinishReason(responseBody);
                 }
 
@@ -423,6 +425,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 Content = messageContent ?? responseBody,
                 RawResponseBody = responseBody,
                 ToolCalls = toolCalls,
+                Extensions = extensions,
                 Resolution = activeResolution.ToGatewayResolution(),
                 TokenUsage = tokenUsage,
                 DurationMs = durationMs,

@@ -160,6 +160,43 @@ public class GatewayKeyGateContractTests
     }
 
     [Fact]
+    public async Task OpenAiCompatibleEndpoint_PreservesLogprobsExtension()
+    {
+        await using var app = BuildHostWithGateway(new EchoingGateway());
+        await app.StartAsync();
+        try
+        {
+            var client = app.GetTestClient();
+            var req = new HttpRequestMessage(HttpMethod.Post, "/v1/chat/completions")
+            {
+                Content = JsonContent.Create(new
+                {
+                    model = "sidecar-picked",
+                    messages = new[] { new { role = "user", content = "hi" } },
+                    logprobs = true,
+                    top_logprobs = 1,
+                    stream = false,
+                }),
+            };
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", GatewayKey);
+
+            var resp = await client.SendAsync(req);
+            var body = await resp.Content.ReadAsStringAsync();
+
+            resp.StatusCode.ShouldBe(HttpStatusCode.OK);
+            using var doc = JsonDocument.Parse(body);
+            var logprobs = doc.RootElement
+                .GetProperty("choices")[0]
+                .GetProperty("logprobs");
+            logprobs.GetProperty("content")[0].GetProperty("token").GetString().ShouldBe("sent");
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
     public async Task OpenAiCompatibleEndpoint_PreservesPoolModelPolicy()
     {
         var gateway = new EchoingGateway();
@@ -1713,6 +1750,30 @@ public class GatewayKeyGateContractTests
                             {
                                 ["name"] = "get_weather",
                                 ["arguments"] = "{\"city\":\"Shanghai\"}",
+                            },
+                        },
+                    },
+                });
+            }
+            if (request.RequestBody?["logprobs"]?.GetValue<bool>() == true)
+            {
+                return Task.FromResult(new GatewayResponse
+                {
+                    Success = true,
+                    StatusCode = 200,
+                    Content = $"sent:{request.ExpectedModel}",
+                    Resolution = Resolve(request.ExpectedModel),
+                    Extensions = new Dictionary<string, JsonNode?>
+                    {
+                        ["logprobs"] = new JsonObject
+                        {
+                            ["content"] = new JsonArray
+                            {
+                                new JsonObject
+                                {
+                                    ["token"] = "sent",
+                                    ["logprob"] = -0.01,
+                                },
                             },
                         },
                     },
