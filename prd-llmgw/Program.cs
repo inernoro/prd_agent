@@ -1472,7 +1472,7 @@ app.MapGet("/gw/app-callers", async (
     return Json(ApiEnvelope<GatewayAppCallersData>.Ok(data), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
-// GW appCaller 配置：状态、模型池绑定与参数策略先落 GW 自有库，resolver 消费在下一阶段接入。
+// GW appCaller 配置：状态、模型池绑定与参数策略落 GW 自有库；active 状态必须绑定可用的 GW 权威池。
 app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody] UpdateGatewayAppCallerRequest body) =>
 {
     if (body is null) return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
@@ -1483,6 +1483,9 @@ app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody
 
     var updates = new List<UpdateDefinition<BsonDocument>>();
     var changes = new BsonDocument();
+    var effectiveStatus = doc.AsNullableString("Status") ?? "discovered";
+    var effectiveModelPoolId = doc.AsNullableString("ModelPoolId");
+    var effectiveModelPolicy = doc.AsNullableString("ModelPolicy");
     void AddChange(string field, object? from, object? to) =>
         changes[field] = new BsonDocument { { "from", ToBsonAuditValue(from) }, { "to", ToBsonAuditValue(to) } };
 
@@ -1496,6 +1499,7 @@ app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody
         }
         updates.Add(Builders<BsonDocument>.Update.Set("Status", normalizedStatus));
         AddChange("status", doc.AsNullableString("Status") ?? "discovered", normalizedStatus);
+        effectiveStatus = normalizedStatus;
     }
 
     if (body.ModelPoolId is not null)
@@ -1505,6 +1509,7 @@ app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody
         {
             updates.Add(Builders<BsonDocument>.Update.Unset("ModelPoolId"));
             AddChange("modelPoolId", doc.AsNullableString("ModelPoolId"), null);
+            effectiveModelPoolId = null;
         }
         else
         {
@@ -1523,12 +1528,14 @@ app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody
             }
             updates.Add(Builders<BsonDocument>.Update.Set("ModelPoolId", modelPoolId));
             AddChange("modelPoolId", doc.AsNullableString("ModelPoolId"), modelPoolId);
+            effectiveModelPoolId = modelPoolId;
 
             var currentStatus = doc.AsNullableString("Status") ?? "discovered";
             if (!statusExplicit && string.Equals(currentStatus, "discovered", StringComparison.OrdinalIgnoreCase))
             {
                 updates.Add(Builders<BsonDocument>.Update.Set("Status", "configured"));
                 AddChange("status", currentStatus, "configured");
+                effectiveStatus = "configured";
             }
         }
     }
@@ -1540,6 +1547,7 @@ app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody
         {
             updates.Add(Builders<BsonDocument>.Update.Unset("ModelPolicy"));
             AddChange("modelPolicy", doc.AsNullableString("ModelPolicy"), null);
+            effectiveModelPolicy = null;
         }
         else
         {
@@ -1549,6 +1557,7 @@ app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody
             }
             updates.Add(Builders<BsonDocument>.Update.Set("ModelPolicy", modelPolicy));
             AddChange("modelPolicy", doc.AsNullableString("ModelPolicy"), modelPolicy);
+            effectiveModelPolicy = modelPolicy;
         }
     }
 
@@ -1645,6 +1654,17 @@ app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody
         }
     }
 
+    var activeConfigError = await ValidateActiveGatewayAppCallerConfigAsync(
+        gwModelPools,
+        effectiveStatus,
+        effectiveModelPoolId,
+        effectiveModelPolicy,
+        doc.GetStringOrEmpty("RequestType"));
+    if (activeConfigError is not null)
+    {
+        return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("INVALID_INPUT", activeConfigError), jsonOptions, 400);
+    }
+
     if (updates.Count == 0)
     {
         return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("INVALID_INPUT", "没有可更新字段"), jsonOptions, 400);
@@ -1708,6 +1728,9 @@ app.MapPost("/gw/app-callers/bulk-governance", async (HttpContext http, [FromBod
 
     var updates = new List<UpdateDefinition<BsonDocument>>();
     var setSummary = new BsonDocument();
+    string? targetStatus = null;
+    var targetModelPolicyTouched = false;
+    string? targetModelPolicy = null;
     void AddSetSummary(string field, object? to) => setSummary[field] = ToBsonAuditValue(to);
 
     if (body.TargetStatus is not null)
@@ -1719,15 +1742,18 @@ app.MapPost("/gw/app-callers/bulk-governance", async (HttpContext http, [FromBod
         }
         updates.Add(Builders<BsonDocument>.Update.Set("Status", normalizedStatus));
         AddSetSummary("status", normalizedStatus);
+        targetStatus = normalizedStatus;
     }
 
     if (body.ModelPolicy is not null)
     {
+        targetModelPolicyTouched = true;
         var modelPolicy = body.ModelPolicy.Trim().ToLowerInvariant();
         if (modelPolicy.Length == 0)
         {
             updates.Add(Builders<BsonDocument>.Update.Unset("ModelPolicy"));
             AddSetSummary("modelPolicy", null);
+            targetModelPolicy = null;
         }
         else
         {
@@ -1737,6 +1763,7 @@ app.MapPost("/gw/app-callers/bulk-governance", async (HttpContext http, [FromBod
             }
             updates.Add(Builders<BsonDocument>.Update.Set("ModelPolicy", modelPolicy));
             AddSetSummary("modelPolicy", modelPolicy);
+            targetModelPolicy = modelPolicy;
         }
     }
 
@@ -1819,8 +1846,20 @@ app.MapPost("/gw/app-callers/bulk-governance", async (HttpContext http, [FromBod
         return Json(ApiEnvelope<BulkUpdateGatewayAppCallersResult>.Fail("INVALID_INPUT", "没有可更新字段"), jsonOptions, 400);
     }
 
-    updates.Add(Builders<BsonDocument>.Update.Set("UpdatedAt", DateTime.UtcNow));
     var filter = fb.And(filters);
+    var bulkActiveConfigError = await ValidateBulkActiveGatewayAppCallerConfigAsync(
+        gwAppCallers,
+        gwModelPools,
+        filter,
+        targetStatus,
+        targetModelPolicyTouched,
+        targetModelPolicy);
+    if (bulkActiveConfigError is not null)
+    {
+        return Json(ApiEnvelope<BulkUpdateGatewayAppCallersResult>.Fail("INVALID_INPUT", bulkActiveConfigError), jsonOptions, 400);
+    }
+
+    updates.Add(Builders<BsonDocument>.Update.Set("UpdatedAt", DateTime.UtcNow));
     var result = await gwAppCallers.UpdateManyAsync(filter, Builders<BsonDocument>.Update.Combine(updates));
     var filterText = string.Join(", ", filterSummary);
     await WriteOperationAuditAsync(
@@ -4439,6 +4478,83 @@ static FilterDefinition<BsonDocument>? BuildAppCallerDriftFilter(string? drift)
         "any" => new BsonDocument("$expr", new BsonDocument("$or", new BsonArray { routePolicy, routePool, parameter })),
         _ => null,
     };
+}
+
+static async Task<string?> ValidateBulkActiveGatewayAppCallerConfigAsync(
+    IMongoCollection<BsonDocument> appCallers,
+    IMongoCollection<BsonDocument> gwModelPools,
+    FilterDefinition<BsonDocument> filter,
+    string? targetStatus,
+    bool targetModelPolicyTouched,
+    string? targetModelPolicy)
+{
+    var projection = Builders<BsonDocument>.Projection
+        .Include("_id")
+        .Include("AppCallerCode")
+        .Include("RequestType")
+        .Include("Status")
+        .Include("ModelPoolId")
+        .Include("ModelPolicy");
+    var docs = await appCallers.Find(filter).Project(projection).ToListAsync();
+    foreach (var doc in docs)
+    {
+        var effectiveStatus = targetStatus ?? doc.AsNullableString("Status") ?? "discovered";
+        var effectiveModelPoolId = doc.AsNullableString("ModelPoolId");
+        var effectiveModelPolicy = targetModelPolicyTouched ? targetModelPolicy : doc.AsNullableString("ModelPolicy");
+        var error = await ValidateActiveGatewayAppCallerConfigAsync(
+            gwModelPools,
+            effectiveStatus,
+            effectiveModelPoolId,
+            effectiveModelPolicy,
+            doc.GetStringOrEmpty("RequestType"));
+        if (error is not null)
+        {
+            var code = doc.AsNullableString("AppCallerCode") ?? doc.GetStringOrEmpty("_id");
+            return $"{code}: {error}";
+        }
+    }
+    return null;
+}
+
+static async Task<string?> ValidateActiveGatewayAppCallerConfigAsync(
+    IMongoCollection<BsonDocument> gwModelPools,
+    string? status,
+    string? modelPoolId,
+    string? modelPolicy,
+    string? requestType)
+{
+    if (!string.Equals(status, "active", StringComparison.OrdinalIgnoreCase))
+    {
+        return null;
+    }
+
+    if (string.Equals(modelPolicy, "auto", StringComparison.OrdinalIgnoreCase))
+    {
+        return "active appCaller 不能使用 modelPolicy=auto；请绑定 GW 模型池并使用 pool 策略。";
+    }
+
+    if (string.IsNullOrWhiteSpace(modelPoolId))
+    {
+        return "active appCaller 必须绑定 llm_gateway.llmgw_model_pools 中的 GW 权威模型池。";
+    }
+
+    var pool = await gwModelPools
+        .Find(Builders<BsonDocument>.Filter.Eq("_id", modelPoolId.Trim()))
+        .FirstOrDefaultAsync();
+    if (pool is null)
+    {
+        return $"active appCaller 绑定的模型池 {modelPoolId.Trim()} 不是 GW 权威模型池；请先在 /pools 认领或创建。";
+    }
+
+    var poolType = pool.AsNullableString("ModelType");
+    if (!string.IsNullOrWhiteSpace(poolType)
+        && !string.IsNullOrWhiteSpace(requestType)
+        && !string.Equals(poolType, requestType, StringComparison.OrdinalIgnoreCase))
+    {
+        return $"active appCaller 绑定的 GW 模型池类型 {poolType} 与调用类型 {requestType} 不一致。";
+    }
+
+    return null;
 }
 
 static BsonDocument BuildFieldDriftExpr(string configuredField, string observedField)
