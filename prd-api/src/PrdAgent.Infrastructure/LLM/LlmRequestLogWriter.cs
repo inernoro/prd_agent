@@ -35,6 +35,7 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
         try
         {
             var settings = await _settingsService.GetSettingsAsync(ct);
+            var releaseCommit = NormalizeReleaseCommit(start.ReleaseCommit ?? Environment.GetEnvironmentVariable("GIT_COMMIT"));
             var requestBodyRaw = start.RequestBodyRedacted ?? string.Empty;
             var requestBodyChars = requestBodyRaw.Length;
             var requestBodyMaxChars = LlmLogLimits.GetRequestBodyMaxChars(settings);
@@ -51,6 +52,7 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
             {
                 Id = Guid.NewGuid().ToString(),
                 RequestId = start.RequestId,
+                ReleaseCommit = releaseCommit,
                 GroupId = start.GroupId,
                 SessionId = start.SessionId,
                 UserId = start.UserId,
@@ -58,6 +60,9 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 RequestType = start.RequestType,
                 AppCallerCode = start.AppCallerCode,
                 AppCallerCodeDisplayName = GetDisplayName(start.AppCallerCode),
+                AppCallerTitle = string.IsNullOrWhiteSpace(start.AppCallerTitle) ? null : start.AppCallerTitle,
+                SourceSystem = string.IsNullOrWhiteSpace(start.SourceSystem) ? null : start.SourceSystem,
+                IngressProtocol = string.IsNullOrWhiteSpace(start.IngressProtocol) ? null : start.IngressProtocol,
                 Provider = start.Provider,
                 Model = start.Model,
                 ApiBase = start.ApiBase,
@@ -69,6 +74,10 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 ResolutionReason = start.ResolutionReason,
                 // S2 观测标记：网关传输路径（inproc/http/shadow/direct）。构建点未标注则留 null。
                 GatewayTransport = start.GatewayTransport,
+                ModelPolicy = string.IsNullOrWhiteSpace(start.ModelPolicy) ? null : start.ModelPolicy,
+                ModelPoolId = string.IsNullOrWhiteSpace(start.ModelPoolId) ? null : start.ModelPoolId,
+                ParameterPolicy = string.IsNullOrWhiteSpace(start.ParameterPolicy) ? null : start.ParameterPolicy,
+                DroppedParameters = start.DroppedParameters?.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.Ordinal).ToList(),
                 ModelResolutionType = start.ModelResolutionType,
                 ModelGroupId = start.ModelGroupId,
                 ModelGroupName = start.ModelGroupName,
@@ -92,6 +101,7 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 ExchangeId = start.ExchangeId,
                 ExchangeName = start.ExchangeName,
                 ExchangeTransformerType = start.ExchangeTransformerType,
+                ProviderAttempts = start.ProviderAttempts,
                 // 图片引用
                 ImageReferences = start.ImageReferences,
                 // 模型降级信息
@@ -99,7 +109,11 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 FallbackReason = start.FallbackReason,
                 ExpectedModel = start.ExpectedModel,
                 IsHealthProbe = start.IsHealthProbe,
-                IsStreaming = start.IsStreaming
+                IsStreaming = start.IsStreaming,
+                InputPricePerMillion = start.InputPricePerMillion,
+                OutputPricePerMillion = start.OutputPricePerMillion,
+                PricePerCall = start.PricePerCall,
+                PriceCurrency = string.IsNullOrWhiteSpace(start.PriceCurrency) ? null : start.PriceCurrency.Trim().ToUpperInvariant()
             };
 
             await _db.LlmRequestLogs.InsertOneAsync(log, cancellationToken: ct);
@@ -131,10 +145,12 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
             // 作为独立、不可变的「记录降级」标记留存。不再依赖 LlmRequestLogBackground 的 Status 过滤兜底。
             try
             {
+                var releaseCommit = NormalizeReleaseCommit(start.ReleaseCommit ?? Environment.GetEnvironmentVariable("GIT_COMMIT"));
                 var fallbackLog = new LlmRequestLog
                 {
                     Id = Guid.NewGuid().ToString(),
                     RequestId = start.RequestId,
+                    ReleaseCommit = releaseCommit,
                     GroupId = start.GroupId,
                     SessionId = start.SessionId,
                     UserId = start.UserId,
@@ -142,9 +158,16 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                     RequestType = start.RequestType,
                     AppCallerCode = start.AppCallerCode,
                     AppCallerCodeDisplayName = GetDisplayName(start.AppCallerCode),
+                    AppCallerTitle = string.IsNullOrWhiteSpace(start.AppCallerTitle) ? null : start.AppCallerTitle,
+                    SourceSystem = string.IsNullOrWhiteSpace(start.SourceSystem) ? null : start.SourceSystem,
+                    IngressProtocol = string.IsNullOrWhiteSpace(start.IngressProtocol) ? null : start.IngressProtocol,
                     Provider = start.Provider,
                     Model = start.Model,
                     GatewayTransport = start.GatewayTransport,
+                    ModelPolicy = string.IsNullOrWhiteSpace(start.ModelPolicy) ? null : start.ModelPolicy,
+                    ModelPoolId = string.IsNullOrWhiteSpace(start.ModelPoolId) ? null : start.ModelPoolId,
+                    ParameterPolicy = string.IsNullOrWhiteSpace(start.ParameterPolicy) ? null : start.ParameterPolicy,
+                    DroppedParameters = start.DroppedParameters?.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.Ordinal).ToList(),
                     StartedAt = start.StartedAt == default ? DateTime.UtcNow : start.StartedAt,
                     EndedAt = DateTime.UtcNow,
                     Status = "blackhole",
@@ -190,6 +213,12 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
         if (string.IsNullOrEmpty(s)) return s;
         if (s.Length <= max) return s;
         return s[..max] + "...[TRUNCATED]";
+    }
+
+    private static string? NormalizeReleaseCommit(string? value)
+    {
+        var commit = (value ?? string.Empty).Trim();
+        return string.IsNullOrWhiteSpace(commit) ? null : commit.ToLowerInvariant();
     }
 
     /// <summary>
@@ -325,4 +354,3 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
         return def?.DisplayName;
     }
 }
-

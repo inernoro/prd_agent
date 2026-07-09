@@ -258,7 +258,11 @@ export default function AiToolboxPage() {
           )}
         </Surface>
       ) : (
-        <div className="grid grid-auto-tool-cards gap-4">
+        // 网格与首页启动器同规格（minmax 230 + 等高 stretch），两页卡片视觉完全一致
+        <div
+          className="grid"
+          style={{ gap: 10, gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', alignItems: 'stretch' }}
+        >
           {filteredItems.map((item) => (
             <ToolCard
               key={item.id}
