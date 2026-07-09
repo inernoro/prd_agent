@@ -39,6 +39,7 @@ import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/la
 import { BranchDetailDrawer, type BranchDeploymentItem, type BranchResourceDetailTab } from '@/components/BranchDetailDrawer';
 import { useNowTick } from '@/hooks/useNowTick';
 import { MonitoringDialog } from '@/components/monitoring/MonitoringDialog';
+import type { PerfHealth, PerfWarning } from '@/components/monitoring/useMonitoringData';
 import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
 import { DetectStackDialog } from '@/components/branch/DetectStackDialog';
 import { CapacityFullDialog } from '@/components/CapacityFullDialog';
@@ -146,6 +147,16 @@ interface BranchSummary {
   lastPullAt?: string;
   lastDeployAt?: string;
   lastDeployStartedAt?: string;
+  /** 构建并发闸排队快照（2026-07-09）：存在 = 有服务仍在排队等构建槽位。 */
+  buildQueue?: {
+    queuedAt: string;
+    ahead: number;
+    active: number;
+    max: number;
+    serviceIds: string[];
+  };
+  /** 本轮部署累计排队等待毫秒（耗时对比与 ETA 均需剔除）。 */
+  lastDeployQueueWaitMs?: number;
   lastDeployDispatchAt?: string;
   lastStoppedAt?: string;
   lastStopReason?: string;
@@ -848,6 +859,21 @@ function formatDurationMs(ms: number | null | undefined): string {
 }
 
 /**
+ * 本轮部署的「净构建耗时」（2026-07-09 构建排队可视化）：
+ * 从 busySince 起算，剔除已结清的排队等待（lastDeployQueueWaitMs）与
+ * 仍在排队的进行中等待（buildQueue.queuedAt → now）。排队 ≠ 构建慢，
+ * 混进耗时会让「耗时 vs 预计」在多分支并发 push 时必然误报琥珀色超时。
+ */
+function effectiveDeployElapsedMs(branch: BranchSummary, busySince: string | undefined, now: number): number {
+  const startMs = busySince ? Date.parse(busySince) : NaN;
+  if (!Number.isFinite(startMs)) return 0;
+  const settledQueueMs = branch.lastDeployQueueWaitMs || 0;
+  const inflightQueuedAt = branch.buildQueue ? Date.parse(branch.buildQueue.queuedAt) : NaN;
+  const inflightQueueMs = Number.isFinite(inflightQueuedAt) ? Math.max(0, now - inflightQueuedAt) : 0;
+  return Math.max(0, now - startMs - settledQueueMs - inflightQueueMs);
+}
+
+/**
  * 根据分支当前运行模式（deployRuntime.kind）选对应的历史预计耗时。
  *   - kind='release'/'mixed' → 发布版样本
  *   - 其余 → 源码/热加载样本
@@ -1328,6 +1354,20 @@ export function BranchListPage(): JSX.Element {
   const [toast, setToast] = useState('');
   const [actions, setActions] = useState<Record<string, BranchAction>>({});
   const [activityEvents, setActivityEvents] = useState<ActivityEvent[]>([]);
+  // 2026-07-09：perf-health 的 critical 告警前置到「运维」入口按钮（红点 + 红描边）。
+  // 此前唯一消费方是运维弹窗打开后的 useMonitoringData——调度器禁用/主机过载这类
+  // 会拖垮主机的状态用户不点开弹窗就永远看不到，「避免静默复发」的目标落空一半。
+  // 挂载轻量拉一次即可（弹窗内已有实时链路），旧版无端点/失败一律静默。
+  const [perfCriticals, setPerfCriticals] = useState<PerfWarning[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    apiRequest<PerfHealth>('/api/cds-system/perf-health')
+      .then((res) => {
+        if (!cancelled) setPerfCriticals((res.warnings || []).filter((w) => w.level === 'critical'));
+      })
+      .catch(() => { /* best-effort */ });
+    return () => { cancelled = true; };
+  }, []);
   const [slowHttpState, setSlowHttpState] = useState<SlowHttpState>({ status: 'idle' });
   const [redeployFailedRunning, setRedeployFailedRunning] = useState(false);
   const [cleanupDamagedRunning, setCleanupDamagedRunning] = useState(false);
@@ -3141,10 +3181,16 @@ export function BranchListPage(): JSX.Element {
                 variant="ghost"
                 size="sm"
                 onClick={() => setOpsDrawerOpen(true)}
-                title="运维（性能 / 执行器 / 活动 / 运维操作）"
+                title={perfCriticals.length > 0
+                  ? `运维健康告警：${perfCriticals[0].message}${perfCriticals.length > 1 ? `（共 ${perfCriticals.length} 条，点击查看）` : ''}`
+                  : '运维（性能 / 执行器 / 活动 / 运维操作）'}
+                className={perfCriticals.length > 0 ? 'relative text-red-600 ring-1 ring-red-500/45 dark:text-red-400' : undefined}
               >
                 <Activity />
                 运维
+                {perfCriticals.length > 0 ? (
+                  <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-destructive" aria-hidden />
+                ) : null}
               </Button>
               {!sseConnected ? (
                 <Button
@@ -5188,29 +5234,50 @@ const BranchCard = memo(function BranchCard({
           </span>
         ) : null}
         {/*
+          2026-07-09 构建排队可视化：buildQueue 存在 = 有服务在等构建槽位。
+          排队 chip 单独渲染（禁止空白等待：动点 + 位置 + 等待时长），且排队
+          期间不判 overdue——排队 ≠ 构建慢，不该被琥珀色误报「超预计」。
+        */}
+        {isInterim && branch.buildQueue ? (
+          <span
+            className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-xs text-muted-foreground"
+            title={`构建并发已满（${branch.buildQueue.active}/${branch.buildQueue.max} 进行中），本分支排队等待构建槽位；已等待 ${formatElapsedFrom(branch.buildQueue.queuedAt, now)}。排队时间不计入构建耗时对比。`}
+          >
+            <span className="cds-ai-kinetic-dot h-1.5 w-1.5 rounded-full bg-sky-400" aria-hidden />
+            排队中 · 前面还有 {branch.buildQueue.ahead} 个
+            <span className="text-muted-foreground/70">（{branch.buildQueue.active}/{branch.buildQueue.max} 构建中）</span>
+          </span>
+        ) : null}
+        {/*
           2026-06-20：构建中显示「模式 · 已耗时 · 历史中位预计耗时」。
           - 模式标签区分 发布版 / 热加载（来自 deployRuntime.kind）。
           - 已耗时实时累加（formatElapsedFrom 走 1s tick 的 now）。
           - 预计耗时为静态历史中位（近 N 次），无样本则不显示预计（no-rootless-tree：
             不编造数据）。下方细进度条对比已耗时 vs 预计，纯主题 token 着色，不喧宾夺主。
+          - 2026-07-09：耗时改用 effectiveDeployElapsedMs（剔除排队等待），排队中不判 overdue。
         */}
         {isInterim ? (() => {
           const estimate = pickDeployEstimate(branch);
-          const elapsedMs = busySince ? Math.max(0, now - new Date(busySince).getTime()) : 0;
+          const elapsedMs = effectiveDeployElapsedMs(branch, busySince, now);
+          const queuedNow = Boolean(branch.buildQueue);
           const ratio = estimate && estimate.medianMs > 0
             ? Math.min(1, elapsedMs / estimate.medianMs)
             : 0;
-          const overdue = estimate ? elapsedMs > estimate.medianMs : false;
+          const overdue = estimate && !queuedNow ? elapsedMs > estimate.medianMs : false;
+          const elapsedText = formatDurationMs(elapsedMs);
+          const queueSuffix = (branch.lastDeployQueueWaitMs || 0) > 0 || queuedNow
+            ? `（另有排队等待，不计入耗时）`
+            : '';
           return (
             <span
               className="inline-flex h-6 shrink-0 items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-xs text-muted-foreground"
               title={estimate
-                ? `当前以「${deployModeLabel(branch)}」部署；已耗时 ${formatElapsedFrom(busySince, now)}，预计 ${formatDurationMs(estimate.medianMs)}（近 ${estimate.samples} 次成功部署的中位值）`
-                : `当前以「${deployModeLabel(branch)}」部署；已耗时 ${formatElapsedFrom(busySince, now)}；暂无历史样本，完成后将累积预计耗时`}
+                ? `当前以「${deployModeLabel(branch)}」部署；净耗时 ${elapsedText}${queueSuffix}，预计 ${formatDurationMs(estimate.medianMs)}（近 ${estimate.samples} 次成功部署的中位值）`
+                : `当前以「${deployModeLabel(branch)}」部署；净耗时 ${elapsedText}${queueSuffix}；暂无历史样本，完成后将累积预计耗时`}
             >
               <span className="font-medium text-foreground/85">{deployModeLabel(branch)}</span>
               <span className="text-muted-foreground/80">耗时</span>
-              <span className="branch-deploy-timer-value font-mono text-foreground/85">{formatElapsedFrom(busySince, now)}</span>
+              <span className="branch-deploy-timer-value font-mono text-foreground/85">{elapsedText}</span>
               {estimate ? (
                 <>
                   <span className="text-muted-foreground/80">预计</span>

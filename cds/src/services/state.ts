@@ -357,6 +357,11 @@ export class StateService {
       // 且分支删除后永久留在 state 里。启动时统一裁剪：存量按 per-branch 上限收敛，
       // 已删分支的孤儿归档超过保留窗口后移除。
       this.trimContainerLogArchivesOnLoad();
+      // 2026-07-09: buildQueue 是构建并发闸的瞬态排队快照（内存队列），CDS 重启后
+      // 必然过期——清残留，否则分支卡会永远显示「排队中」。
+      for (const branch of Object.values(this.state.branches)) {
+        if (branch.buildQueue) branch.buildQueue = undefined;
+      }
     } else {
       this.state = emptyState();
       // Fresh installs start with zero projects. The project-list empty

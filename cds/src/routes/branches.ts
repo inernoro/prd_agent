@@ -18,6 +18,7 @@ import { resolveProfileRuntimeEnvWithProvenance, type EnvLayer } from '../servic
 import { branchAppNetworkName, branchNetworkIsolationEnabled } from '../services/branch-network.js';
 import { classifyTriggerSource, deriveDeployMode, deriveCommitMeta, parsePulledSha, shouldRefreshCommitSha } from '../services/build-log-meta.js';
 import { acquireBuildSlot, buildGateStatus } from '../services/build-gate.js';
+import { createDeployQueueTracker } from '../services/deploy-queue-tracker.js';
 import { recordBuild } from '../services/build-activity-tracker.js';
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
@@ -487,7 +488,9 @@ function recordDeployDurationSample(
   const startMs = Date.parse(opLog.startedAt);
   const endMs = Date.parse(opLog.runtimeStartedAt);
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return;
-  const elapsedMs = endMs - startMs;
+  // 剔除 build-gate 排队等待（2026-07-09）：排队不是构建耗时，混进样本会把
+  // 中位 ETA 越推越长，反过来又让排队中的分支更容易被误报「超预计」。
+  const elapsedMs = Math.max(0, endMs - startMs - (branch.lastDeployQueueWaitMs || 0));
   const mode = classifyBranchDeployModeForDuration(branch, profiles);
   // 上界：取参与本次部署的 profile 里最大的 buildTimeout * 2，兜底 30 分钟。
   const maxTimeout = profiles.reduce((acc, p) => Math.max(acc, p.buildTimeout || 0), 0);
@@ -11141,6 +11144,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // const __prevStatus 是块级作用域，catch 看不到）。
     const __deployEntryStatus = entry.status;
 
+    // 构建排队可视化（2026-07-09）：把 build-gate 的排队状态挂到 entry.buildQueue，
+    // 分支卡显示「排队中 · 前面还有 N 个」并把排队时间从耗时对比中剔除。
+    // 声明在 try 外，finally 兜底 dispose（部署 throw 也不许留下「排队中」残影）。
+    const deployQueueTracker = createDeployQueueTracker({
+      entry,
+      save: () => stateService.save(),
+      emitBranchUpdated: () => branchEvents.emitEvent({
+        type: 'branch.updated',
+        // patch 只带排队白名单字段：/branches/stream 的 anyHandler 会自己取
+        // 最新分支并过 branchForView 脱敏管道，禁止在 payload 里塞原始 entry。
+        payload: {
+          branchId: id,
+          projectId: entry.projectId,
+          patch: { buildQueue: entry.buildQueue, lastDeployQueueWaitMs: entry.lastDeployQueueWaitMs },
+          ts: new Date().toISOString(),
+        },
+      }),
+    });
+
     try {
       logDeploy(id, '开始部署');
 
@@ -11169,6 +11191,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 本轮构建起点锚点 —— 预览等待页 ETA 以此计"已等待"，避免回退到上一轮
       // 已完成的历史 op-log 误算几小时（见 BranchEntry.lastDeployStartedAt）。
       entry.lastDeployStartedAt = new Date().toISOString();
+      // 排队快照按轮重置（deploy-queue-tracker 维护）。
+      entry.lastDeployQueueWaitMs = 0;
+      entry.buildQueue = undefined;
       stateService.save();
       // Live UI: surface the "building" transition to subscribed dashboards
       // so the branch card can flip to a spinner immediately on deploy kick-
@@ -11522,6 +11547,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 timestamp: new Date().toISOString(),
               });
               sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 排队中：前面还有 ${ahead} 个构建（${active}/${max} 进行中）...\n` });
+              // 分支卡排队 chip：挂到 entry.buildQueue 并发 branch.updated（2026-07-09）。
+              deployQueueTracker.onQueued(profile.id, { ahead, active, max });
               // 每 15s 刷新一次排队位置，长时间排队也持续有动静（不像卡死）。
               queueRefreshTimer = setInterval(() => {
                 const s = buildGateStatus();
@@ -11532,6 +11559,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
                   timestamp: new Date().toISOString(),
                 });
                 sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 仍在排队：${s.queued} 等待 / ${s.active} 构建中\n` });
+                deployQueueTracker.refresh();
               }, 15000);
               if (typeof queueRefreshTimer.unref === 'function') queueRefreshTimer.unref();
             },
@@ -11544,6 +11572,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 timestamp: new Date().toISOString(),
               });
               sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 排队结束（等待 ${Math.round(waitedMs / 1000)}s），开始构建\n` });
+              deployQueueTracker.onStart(profile.id);
             },
           });
           clearQueueTimer();
@@ -12141,6 +12170,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
       }
     } finally {
+      // 排队快照兜底清理：部署中途 throw / cancel 也不许在卡片上留下「排队中」残影。
+      deployQueueTracker.dispose();
       completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
       res.end();
     }
