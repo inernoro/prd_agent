@@ -56,6 +56,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("RunId = runId", servingEndpoints);
         Assert.Contains("ResolveHeader(http, \"X-Gateway-Run-Id\")", servingEndpoints);
         Assert.Contains("RunId = d.AsNullableString(\"RunId\")", consoleProgram);
+        Assert.Contains("string? releaseCommit, string? runId", consoleProgram);
+        Assert.Contains("fb.Eq(\"RunId\", runId.Trim())", consoleProgram);
+        Assert.Contains("runId?: string", ReadRepoFile("prd-llmgw-web/src/lib/types.ts"));
+        Assert.Contains("runId: filterRunId.trim() || undefined", ReadRepoFile("prd-llmgw-web/src/components/LogsView.tsx"));
         Assert.Contains("RunId = string.IsNullOrWhiteSpace(start.RunId) ? null : start.RunId.Trim()", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/LlmRequestLogWriter.cs"));
     }
 

@@ -59,6 +59,7 @@ export function LogsView() {
   const [filterSourceSystem, setFilterSourceSystem] = useState('');
   const [filterIngressProtocol, setFilterIngressProtocol] = useState('');
   const [filterModelPolicy, setFilterModelPolicy] = useState('');
+  const [filterRunId, setFilterRunId] = useState('');
 
   const [meta, setMeta] = useState<{
     models: string[];
@@ -117,8 +118,9 @@ export function LogsView() {
       sourceSystem: filterSourceSystem || undefined,
       ingressProtocol: filterIngressProtocol || undefined,
       modelPolicy: filterModelPolicy || undefined,
+      runId: filterRunId.trim() || undefined,
     }),
-    [range, filterModel, filterStatus, filterProvider, filterAppCaller, filterTransport, filterRequestType, filterSourceSystem, filterIngressProtocol, filterModelPolicy],
+    [range, filterModel, filterStatus, filterProvider, filterAppCaller, filterTransport, filterRequestType, filterSourceSystem, filterIngressProtocol, filterModelPolicy, filterRunId],
   );
 
   useEffect(() => {
@@ -524,6 +526,11 @@ export function LogsView() {
     padding: '0 9px',
     fontSize: 12,
   };
+  const inputStyle: CSSProperties = {
+    ...selectStyle,
+    width: 180,
+    minWidth: 150,
+  };
 
   const emptyCell = (text: string) => (
     <div style={{ padding: '64px 0', textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>{text}</div>
@@ -539,6 +546,7 @@ export function LogsView() {
     filterSourceSystem,
     filterIngressProtocol,
     filterModelPolicy,
+    filterRunId.trim(),
   ].filter(Boolean).length;
   const clearFilters = () => {
     setFilterModel('');
@@ -550,6 +558,7 @@ export function LogsView() {
     setFilterSourceSystem('');
     setFilterIngressProtocol('');
     setFilterModelPolicy('');
+    setFilterRunId('');
   };
 
   function SummaryTile({
@@ -660,6 +669,13 @@ export function LogsView() {
               </option>
             ))}
           </select>
+          <input
+            value={filterRunId}
+            onChange={(e) => setFilterRunId(e.target.value)}
+            placeholder="Run ID"
+            spellCheck={false}
+            style={inputStyle}
+          />
           <select value={filterProvider} onChange={(e) => setFilterProvider(e.target.value)} style={selectStyle}>
             <option value="">All providers</option>
             {meta.providers.map((p) => (

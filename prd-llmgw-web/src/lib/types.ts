@@ -243,6 +243,7 @@ export type LogsListParams = {
   ingressProtocol?: string;
   modelPolicy?: string;
   releaseCommit?: string;
+  runId?: string;
 };
 
 export type LogsListData = {
