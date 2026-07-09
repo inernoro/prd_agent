@@ -461,6 +461,21 @@ public class ChangelogController : ControllerBase
     }
 
     /// <summary>
+    /// 缺陷模块访问判定：与 DefectAgentController 的模块门（AdminPermissionCatalog.DefectAgentUse）对齐。
+    /// 只有更新中心访问权、但无 defect-agent.use 的用户不得经热修复端点读取任何缺陷数据。
+    /// </summary>
+    private bool CanAccessDefectAgent()
+    {
+        if (string.Equals(User.FindFirst(AiAccessKeyAuthenticationHandler.ClaimTypeIsAiSuperAccess)?.Value, "1", StringComparison.Ordinal))
+            return true;
+
+        var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
+        return permissions.Contains(AdminPermissionCatalog.DefectAgentUse)
+               || permissions.Contains(AdminPermissionCatalog.DefectAgentManage)
+               || permissions.Contains(AdminPermissionCatalog.Super);
+    }
+
+    /// <summary>
     /// 热修复列表：专门展示"为缺陷提交人上报的缺陷所做的修复"。
     /// 数据源为 DefectResolutionTrace（缺陷修复追踪 SSOT），覆盖全历史而非仅最近一周提交窗口。
     /// 每条含被修复缺陷（编号/标题/提交人）+ 修复 commit/PR + 预览/验收/知识库链接 + 发布状态。
@@ -475,6 +490,15 @@ public class ChangelogController : ControllerBase
         if (limit <= 0 || limit > 500) limit = 100;
 
         var currentUserId = this.GetRequiredUserId();
+
+        // 缺陷模块门：无 defect-agent.use（且非 manage/super/AI 超级访问）者，热修复端点不返回任何缺陷数据，
+        // 与 DefectAgentController 的模块门一致，避免仅有更新中心访问权的用户绕过缺陷模块读取数据（PR #1036 Codex P2）。
+        if (!CanAccessDefectAgent())
+        {
+            if (!force) SetClientCacheHeaders();
+            return Ok(ApiResponse<HotfixesDto>.Ok(BuildEmptyHotfixes()));
+        }
+
         var isDefectAdmin = HasDefectManagePermission();
 
         // 权限隔离：热修复条目会带出缺陷编号/标题/提交人/预览与验收链接，必须沿用缺陷可见性口径。
@@ -494,14 +518,7 @@ public class ChangelogController : ControllerBase
             if (visibleDefectIds.Count == 0)
             {
                 if (!force) SetClientCacheHeaders();
-                return Ok(ApiResponse<HotfixesDto>.Ok(new HotfixesDto
-                {
-                    DataSourceAvailable = true,
-                    Source = "database",
-                    FetchedAt = DateTime.UtcNow.ToString("o"),
-                    TotalCount = 0,
-                    Items = new List<HotfixEntryDto>(),
-                }));
+                return Ok(ApiResponse<HotfixesDto>.Ok(BuildEmptyHotfixes()));
             }
             traceFilter = Builders<DefectResolutionTrace>.Filter.In(x => x.DefectId, visibleDefectIds);
         }
@@ -519,6 +536,20 @@ public class ChangelogController : ControllerBase
 
         // 发布状态判定与「GitHub 提交」tab 保持一致：以当前部署 commit 在提交历史中的位置为界。
         var view = await _reader.GetGitHubLogsAsync(1000, force).ConfigureAwait(false);
+        // 当前仍 open 的 PR 号集合：仅这些 PR 对应的未部署修复才算"待发布"，与「待审核 PR」路径口径一致，
+        // 避免已 merge/close、commit 又落在 1000 条日志窗口之外的旧追踪被误判为 pending（PR #1036 Codex P2）。
+        var openPrNumbers = new HashSet<int>();
+        try
+        {
+            var pendingReview = await _reader.GetGitHubPendingReviewAsync(100, force).ConfigureAwait(false);
+            foreach (var pr in pendingReview.Items)
+                openPrNumbers.Add(pr.Number);
+        }
+        catch
+        {
+            // 拉取 open PR 失败（如无 token/限流）时不阻断主流程：openPrNumbers 为空 →
+            // 未部署且不在日志窗口内的修复保持 unknown，不冒充 pending。
+        }
         var deployedCommitSha = ResolveCurrentDeployCommitSha();
         var deployedIndex = string.IsNullOrWhiteSpace(deployedCommitSha)
             ? -1
@@ -569,10 +600,12 @@ public class ChangelogController : ControllerBase
             {
                 newlyPublishedTraceIds.Add(trace.Id);
             }
-            // 修复提交尚未进入部署分支历史（多为仍在 open PR、未 merge 阶段）时 ResolvePublishStatus 落 unknown，
-            // 但热修复追踪本身代表"已完成的修复在等待发布"。与「待审核 PR」路径口径一致：有 PR 号的按 pending 呈现，
-            // 避免可操作的 open PR 修复被渲染成灰色 unknown（PR #1036 Codex P2）。
-            if (publishStatus == DefectResolutionPublishStatus.Unknown && trace.PullRequestNumber.HasValue)
+            // 修复提交尚未进入部署分支历史、但其 PR 仍 open 时，ResolvePublishStatus 落 unknown；
+            // 与「待审核 PR」路径口径一致按 pending 呈现，避免可操作的 open PR 修复被渲染成灰色 unknown。
+            // 仅限"仍 open 的 PR"——已 merge/close 的旧追踪不冒充 pending（PR #1036 Codex P2）。
+            if (publishStatus == DefectResolutionPublishStatus.Unknown
+                && trace.PullRequestNumber.HasValue
+                && openPrNumbers.Contains(trace.PullRequestNumber.Value))
             {
                 publishStatus = ResolvePendingReviewPublishStatus(trace);
             }
@@ -1453,4 +1486,13 @@ public class ChangelogController : ControllerBase
         public int TotalCount { get; set; }
         public List<HotfixEntryDto> Items { get; set; } = new();
     }
+
+    private static HotfixesDto BuildEmptyHotfixes() => new()
+    {
+        DataSourceAvailable = true,
+        Source = "database",
+        FetchedAt = DateTime.UtcNow.ToString("o"),
+        TotalCount = 0,
+        Items = new List<HotfixEntryDto>(),
+    };
 }
