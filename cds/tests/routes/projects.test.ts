@@ -140,7 +140,7 @@ describe('Projects router (P4 Part 2)', () => {
 
   afterEach(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   describe('GET /api/projects', () => {
@@ -955,7 +955,7 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
 
   afterEach(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   describe('POST /api/projects — auto repoPath when reposBase is set', () => {
@@ -1596,7 +1596,7 @@ describe('Projects router — F11 沙盒模式 + F12 文件上传', () => {
 
   afterEach(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   // ── F11 — POST /api/projects 沙盒模式 ──────────────────────────

@@ -18,7 +18,7 @@ describe('stack-detector', () => {
   });
 
   afterEach(() => {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it('returns an unknown detection for an empty directory', () => {

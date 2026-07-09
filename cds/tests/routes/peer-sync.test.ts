@@ -95,7 +95,7 @@ describe('peer-sync MAP-KBTP endpoints', () => {
     delete process.env.CDS_CACHE_BASE;
     await new Promise<void>((r) => server.close(() => r()));
     const dir = path.dirname(stateFile);
-    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true });
+    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   async function pairAndGetSecret(): Promise<{ secret: string; selfNodeId: string }> {

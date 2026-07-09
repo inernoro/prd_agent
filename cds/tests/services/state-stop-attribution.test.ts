@@ -49,7 +49,7 @@ describe('StateService legacy stop attribution migration', () => {
       expect(reloaded.getBranch('webhook-stop')?.lastStopSource).toBe('webhook');
       expect(reloaded.getBranch('webhook-stop')?.lastStopReason).toBe('GitHub webhook 触发停止');
     } finally {
-      if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true });
+      if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }
   });
 
@@ -97,7 +97,7 @@ describe('StateService legacy stop attribution migration', () => {
       expect(reloaded.getBranch('manual-stop')?.lastStopSource).toBe('user');
       expect(reloaded.getBranch('manual-stop')?.lastStopReason).toBe('用户手动停止');
     } finally {
-      if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true });
+      if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }
   });
 });

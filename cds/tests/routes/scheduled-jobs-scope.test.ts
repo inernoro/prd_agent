@@ -86,7 +86,7 @@ describe('scheduled job routes project-scope isolation', () => {
   });
 
   afterEach(() => {
-    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
+    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it('narrows unscoped scheduled job lists to the project key scope', async () => {

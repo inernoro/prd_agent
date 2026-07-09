@@ -47,7 +47,7 @@ describe('active-update-store + StateService 集成', () => {
   });
 
   afterEach(() => {
-    if (fs.existsSync(repoRoot)) fs.rmSync(repoRoot, { recursive: true });
+    if (fs.existsSync(repoRoot)) fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   describe('落盘 SSOT 路径', () => {

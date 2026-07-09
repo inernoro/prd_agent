@@ -245,7 +245,7 @@ describe('P4 Part 18 (G1) multi-repo clone + worktree smoke test', () => {
 
   afterAll(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    fs.rmSync(tmpRoot, { recursive: true, force: true });
+    fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it('completes the full clone → worktree → file landing round trip', async () => {

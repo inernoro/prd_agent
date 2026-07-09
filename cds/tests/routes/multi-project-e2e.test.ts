@@ -124,7 +124,7 @@ describe('Multi-project end-to-end isolation (data + endpoints)', () => {
 
   afterEach(async () => {
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
-    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
+    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it('两个项目可以各自有 "main" 分支(branch id 用 slug 前缀消歧)', () => {

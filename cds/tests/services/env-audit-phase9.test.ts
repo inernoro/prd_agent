@@ -29,7 +29,7 @@ describe('Phase 9.5 — StateService env audit log', () => {
     });
   });
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it('append + 读取', () => {

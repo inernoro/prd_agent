@@ -159,7 +159,7 @@ describe('POST /api/branches/:id/smoke', () => {
     } else {
       process.env.CDS_SMOKE_SCRIPT_DIR = prevEnv.CDS_SMOKE_SCRIPT_DIR;
     }
-    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
+    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it('returns 404 when the branch does not exist', async () => {
@@ -222,7 +222,7 @@ describe('POST /api/branches/:id/smoke', () => {
       expect(res.status).toBe(500);
       expect((res.body as any).error).toBe('smoke_script_missing');
     } finally {
-      fs.rmSync(emptyDir, { recursive: true });
+      fs.rmSync(emptyDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }
   });
 
@@ -286,7 +286,7 @@ describe('runSmokeForBranch (Phase 4 helper)', () => {
   });
 
   afterEach(() => {
-    if (fs.existsSync(scriptDir)) fs.rmSync(scriptDir, { recursive: true });
+    if (fs.existsSync(scriptDir)) fs.rmSync(scriptDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it('propagates env vars, forwards lines, reports pass/fail counts + exit code', async () => {
@@ -330,7 +330,7 @@ describe('runSmokeForBranch (Phase 4 helper)', () => {
     } finally {
       if (prev === undefined) delete process.env.CDS_SMOKE_SCRIPT_DIR;
       else process.env.CDS_SMOKE_SCRIPT_DIR = prev;
-      fs.rmSync(emptyDir, { recursive: true });
+      fs.rmSync(emptyDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }
   });
 });

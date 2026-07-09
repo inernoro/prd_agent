@@ -150,7 +150,7 @@ describe('GitHub webhook route', () => {
 
   afterEach(async () => {
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
-    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it('returns 503 when GitHub App is not configured', async () => {
@@ -610,7 +610,7 @@ describe('POST /api/projects/:id/github/link', () => {
 
   afterEach(async () => {
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
-    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it('validates installationId + repoFullName', async () => {

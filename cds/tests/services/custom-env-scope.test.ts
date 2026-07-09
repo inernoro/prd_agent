@@ -27,7 +27,7 @@ describe('StateService customEnv scoped store', () => {
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it('migrates legacy flat customEnv into { _global: <flat> } on load', () => {

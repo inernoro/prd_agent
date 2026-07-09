@@ -108,7 +108,7 @@ describe('syncSystemdUnit branching', () => {
       });
       expect(r.status).toBe('skipped');
     } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }
   });
 
@@ -126,7 +126,7 @@ describe('syncSystemdUnit branching', () => {
       });
       expect(r.status).toBe('skipped');
     } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }
   });
 
@@ -151,7 +151,7 @@ describe('syncSystemdUnit branching', () => {
         expect(r.status).toBe('skipped');
       }
     } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }
   });
 });

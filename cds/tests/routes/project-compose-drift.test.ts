@@ -99,8 +99,8 @@ describe('compose-drift-scan 端点', () => {
 
   afterEach(() => {
     server.close();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-    fs.rmSync(repoDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    fs.rmSync(repoDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it('空 CDS 侧 → 报结构漂移 + 密钥应剥离,不建单', async () => {

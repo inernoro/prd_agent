@@ -93,7 +93,7 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
 
   afterEach(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it('免密发起 → 返回 requestId + 一次性 pollToken', async () => {

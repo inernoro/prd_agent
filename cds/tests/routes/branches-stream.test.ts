@@ -136,7 +136,7 @@ describe('GET /api/branches/stream', () => {
 
   afterEach(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
+    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     // remove any lingering test listeners so each test starts clean
     branchEvents.removeAllListeners('any');
   });

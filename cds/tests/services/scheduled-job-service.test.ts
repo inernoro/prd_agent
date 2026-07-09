@@ -37,7 +37,7 @@ describe('ScheduledJobService', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     delete process.env.CDS_TASK_SANDBOX_IMAGE;
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it('runs a command job and persists run history', async () => {

@@ -60,8 +60,8 @@ describe('波5 detect-preview / detect-apply', () => {
 
   afterEach(() => {
     server.close();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-    fs.rmSync(repoDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    fs.rmSync(repoDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it('detect-preview 只读扫 worktree,返回检测服务且不写状态', async () => {
@@ -106,7 +106,7 @@ describe('波5 detect-preview / detect-apply', () => {
   });
 
   it('detect-preview:仓库目录不存在 → 409 repo_not_ready', async () => {
-    fs.rmSync(repoDir, { recursive: true, force: true });
+    fs.rmSync(repoDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     const res = await request(server, 'GET', `/api/projects/${projectId}/detect-preview`);
     expect(res.status).toBe(409);
     expect(res.body.error).toBe('repo_not_ready');

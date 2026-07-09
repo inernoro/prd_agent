@@ -242,7 +242,7 @@ describe('View parity smoke test (list + topology)', () => {
     if (server) {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
-    fs.rmSync(tmpRoot, { recursive: true, force: true });
+    fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   // ══════════════════════════════════════════════════════════════════

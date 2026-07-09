@@ -100,7 +100,7 @@ describe('GitHub OAuth Device Flow router (P4 Part 18 Phase E)', () => {
     if (server) {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
-    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   describe('not configured', () => {

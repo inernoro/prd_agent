@@ -34,7 +34,7 @@ describe('StateService acceptance reports', () => {
   afterEach(() => {
     delete process.env.CDS_CACHE_BASE;
     const dir = path.dirname(stateFile);
-    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true });
+    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it('creates a report: writes content file + metadata, records sizeBytes', () => {

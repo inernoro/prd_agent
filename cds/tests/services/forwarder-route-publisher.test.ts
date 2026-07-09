@@ -32,7 +32,7 @@ beforeEach(() => {
 afterEach(() => {
   publisher?.stop();
   publisher = null;
-  if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true });
+  if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 });
 
 function ensureProject(id: string, slug: string) {

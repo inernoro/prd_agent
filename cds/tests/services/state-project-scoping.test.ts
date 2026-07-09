@@ -90,7 +90,7 @@ describe('StateService — project scoping (P4 Part 3a)', () => {
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   describe('migrateProjectScoping on load', () => {

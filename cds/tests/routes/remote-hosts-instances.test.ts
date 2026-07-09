@@ -79,7 +79,7 @@ describe('Remote hosts project instances route', () => {
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
     if (runtimeServer) await new Promise<void>((resolve) => runtimeServer!.close(() => resolve()));
     runtimeServer = undefined;
-    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     for (const key of previewEnvKeys) delete process.env[key];
   });
 
