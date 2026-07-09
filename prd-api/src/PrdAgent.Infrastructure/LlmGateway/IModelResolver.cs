@@ -148,9 +148,44 @@ public class ModelResolutionResult
     /// <summary>
     /// 是否支持函数调用（function_calling 能力）。
     /// null = 未知（能力未分类，best-effort 放行）；true = 支持；false = 明确不支持（带 tools 时网关熔断报错，不骗用户）。
-    /// 仅在解析上下文已持有 LLMModel 对象时填充（直连/Legacy 路径）；池路径无模型对象，留 null（见 debt.llm-gateway-protocol-fidelity）。
+    /// 池路径优先读取 ModelGroupItem.Capabilities 快照；旧池成员无快照时留 null。
     /// </summary>
     public bool? SupportsFunctionCalling { get; init; }
+
+    /// <summary>是否支持视觉输入。false 表示明确不支持，null 表示未知。</summary>
+    public bool? SupportsVision { get; init; }
+
+    /// <summary>是否支持图片生成。false 表示明确不支持，null 表示未知。</summary>
+    public bool? SupportsImageGeneration { get; init; }
+
+    /// <summary>是否支持 thinking/reasoning 输出。false 表示明确不支持，null 表示未知。</summary>
+    public bool? SupportsThinking { get; init; }
+
+    /// <summary>是否支持结构化输出（json_schema/json_object/response_format）。false 表示明确不支持，null 表示未知。</summary>
+    public bool? SupportsStructuredOutput { get; init; }
+
+    /// <summary>是否支持 token logprobs/top_logprobs。false 表示明确不支持，null 表示未知。</summary>
+    public bool? SupportsLogprobs { get; init; }
+
+    /// <summary>是否支持并行工具调用（parallel_tool_calls）。false 表示明确不支持，null 表示未知。</summary>
+    public bool? SupportsParallelToolCalls { get; init; }
+
+    /// <summary>
+    /// 字段级参数能力矩阵。key 为请求参数名（如 seed/stop），value=false 表示明确不支持，缺失表示未知。
+    /// </summary>
+    public Dictionary<string, bool>? ParameterCapabilities { get; init; }
+
+    /// <summary>输入 Token 单价快照（币种由 PriceCurrency 指定，单位为每百万 Token）。</summary>
+    public decimal? InputPricePerMillion { get; init; }
+
+    /// <summary>输出 Token 单价快照（币种由 PriceCurrency 指定，单位为每百万 Token）。</summary>
+    public decimal? OutputPricePerMillion { get; init; }
+
+    /// <summary>每次调用固定费用快照（币种由 PriceCurrency 指定）。</summary>
+    public decimal? PricePerCall { get; init; }
+
+    /// <summary>价格币种。MAP 模型池历史价格字段为 CNY。</summary>
+    public string? PriceCurrency { get; init; }
 
     // ========== Exchange 中继信息 ==========
 
@@ -207,6 +242,12 @@ public class ModelResolutionResult
     public List<OriginalModelInfo>? OriginalModels { get; init; }
 
     /// <summary>
+    /// 同一次解析阶段预计算出的后续可重试候选。
+    /// 发送阶段只能消费这里的结果，不能在失败后再次调用 resolver，避免“算/发”混在一起。
+    /// </summary>
+    public List<ModelResolutionResult>? RetryCandidates { get; set; }
+
+    /// <summary>
     /// 转换为 GatewayModelResolution（用于响应）
     /// </summary>
     public GatewayModelResolution ToGatewayResolution()
@@ -230,6 +271,18 @@ public class ModelResolutionResult
             ModelPriority = ModelPriority,
             HealthStatus = HealthStatus,
             MaxTokens = MaxTokens,
+            SupportsFunctionCalling = SupportsFunctionCalling,
+            SupportsVision = SupportsVision,
+            SupportsImageGeneration = SupportsImageGeneration,
+            SupportsThinking = SupportsThinking,
+            SupportsStructuredOutput = SupportsStructuredOutput,
+            SupportsLogprobs = SupportsLogprobs,
+            SupportsParallelToolCalls = SupportsParallelToolCalls,
+            ParameterCapabilities = ParameterCapabilities,
+            InputPricePerMillion = InputPricePerMillion,
+            OutputPricePerMillion = OutputPricePerMillion,
+            PricePerCall = PricePerCall,
+            PriceCurrency = PriceCurrency,
             // 降级信息
             IsFallback = IsFallback,
             FallbackReason = FallbackReason,
@@ -251,7 +304,8 @@ public class ModelResolutionResult
             // 发送阶段所需字段（compute-then-send 原则）
             ApiKey = ApiKey,
             ExchangeAuthScheme = ExchangeAuthScheme,
-            ExchangeTransformerConfig = ExchangeTransformerConfig
+            ExchangeTransformerConfig = ExchangeTransformerConfig,
+            RetryCandidates = RetryCandidates
         };
     }
 
@@ -315,7 +369,19 @@ public class ModelResolutionResult
             ModelGroupCode = group.Code,
             ModelPriority = model.Priority,
             HealthStatus = model.HealthStatus.ToString(),
-            MaxTokens = model.MaxTokens
+            MaxTokens = model.MaxTokens,
+            SupportsFunctionCalling = FunctionCallingCapability(model),
+            SupportsVision = VisionCapability(model),
+            SupportsImageGeneration = ImageGenerationCapability(model),
+            SupportsThinking = ThinkingCapability(model),
+            SupportsStructuredOutput = StructuredOutputCapability(model),
+            SupportsLogprobs = LogprobsCapability(model),
+            SupportsParallelToolCalls = ParallelToolCallsCapability(model),
+            ParameterCapabilities = ExtractParameterCapabilities(model.Capabilities),
+            InputPricePerMillion = model.InputPricePerMillion,
+            OutputPricePerMillion = model.OutputPricePerMillion,
+            PricePerCall = model.PricePerCall,
+            PriceCurrency = NormalizeModelPoolPriceCurrency(model.PriceCurrency)
         };
     }
 
@@ -356,7 +422,19 @@ public class ModelResolutionResult
             ExchangeName = exchange.Name,
             ExchangeTransformerType = exchange.TransformerType,
             ExchangeAuthScheme = exchange.TargetAuthScheme,
-            ExchangeTransformerConfig = exchange.TransformerConfig
+            ExchangeTransformerConfig = exchange.TransformerConfig,
+            SupportsFunctionCalling = FunctionCallingCapability(model),
+            SupportsVision = VisionCapability(model),
+            SupportsImageGeneration = ImageGenerationCapability(model),
+            SupportsThinking = ThinkingCapability(model),
+            SupportsStructuredOutput = StructuredOutputCapability(model),
+            SupportsLogprobs = LogprobsCapability(model),
+            SupportsParallelToolCalls = ParallelToolCallsCapability(model),
+            ParameterCapabilities = ExtractParameterCapabilities(model.Capabilities),
+            InputPricePerMillion = model.InputPricePerMillion,
+            OutputPricePerMillion = model.OutputPricePerMillion,
+            PricePerCall = model.PricePerCall,
+            PriceCurrency = NormalizeModelPoolPriceCurrency(model.PriceCurrency)
         };
     }
 
@@ -385,7 +463,14 @@ public class ModelResolutionResult
             HealthStatus = "Healthy",
             MaxTokens = model.MaxTokens,
             // 直连/Legacy 路径持有真实 LLMModel，可读 function_calling 能力供 G4 软门使用
-            SupportsFunctionCalling = FunctionCallingCapability(model)
+            SupportsFunctionCalling = FunctionCallingCapability(model),
+            SupportsVision = VisionCapability(model),
+            SupportsImageGeneration = ImageGenerationCapability(model),
+            SupportsThinking = ThinkingCapability(model),
+            SupportsStructuredOutput = StructuredOutputCapability(model),
+            SupportsLogprobs = LogprobsCapability(model),
+            SupportsParallelToolCalls = ParallelToolCallsCapability(model),
+            ParameterCapabilities = ExtractParameterCapabilities(model.Capabilities)
         };
     }
 
@@ -411,8 +496,27 @@ public class ModelResolutionResult
             ApiKey = result.ApiKey,
             HealthStatus = result.HealthStatus,
             MaxTokens = result.MaxTokens,
-            SupportsFunctionCalling = result.SupportsFunctionCalling
+            SupportsFunctionCalling = result.SupportsFunctionCalling,
+            SupportsVision = result.SupportsVision,
+            SupportsImageGeneration = result.SupportsImageGeneration,
+            SupportsThinking = result.SupportsThinking,
+            SupportsStructuredOutput = result.SupportsStructuredOutput,
+            SupportsLogprobs = result.SupportsLogprobs,
+            SupportsParallelToolCalls = result.SupportsParallelToolCalls,
+            ParameterCapabilities = result.ParameterCapabilities,
+            InputPricePerMillion = result.InputPricePerMillion,
+            OutputPricePerMillion = result.OutputPricePerMillion,
+            PricePerCall = result.PricePerCall,
+            PriceCurrency = result.PriceCurrency
         };
+    }
+
+    private const string DefaultModelPoolPriceCurrency = "CNY";
+
+    private static string NormalizeModelPoolPriceCurrency(string? currency)
+    {
+        var normalized = currency?.Trim().ToUpperInvariant();
+        return normalized is "CNY" or "USD" ? normalized : DefaultModelPoolPriceCurrency;
     }
 
     public static ModelResolutionResult FromLegacyConfig(
@@ -453,6 +557,91 @@ public class ModelResolutionResult
         var cap = model.Capabilities?.FirstOrDefault(c =>
             string.Equals(c.Type, "function_calling", StringComparison.OrdinalIgnoreCase));
         return cap?.Value;
+    }
+
+    private static bool? FunctionCallingCapability(ModelGroupItem model)
+    {
+        return CapabilityValue(model.Capabilities, "function_calling", "tool_calling", "tools");
+    }
+
+    private static bool? VisionCapability(LLMModel model)
+        => model.IsVision || CapabilityValue(model.Capabilities, "vision", "image_input", "multimodal") == true
+            ? true
+            : CapabilityValue(model.Capabilities, "vision", "image_input", "multimodal");
+
+    private static bool? VisionCapability(ModelGroupItem model)
+        => model.IsVision || CapabilityValue(model.Capabilities, "vision", "image_input", "multimodal") == true
+            ? true
+            : CapabilityValue(model.Capabilities, "vision", "image_input", "multimodal");
+
+    private static bool? ImageGenerationCapability(LLMModel model)
+        => model.IsImageGen || CapabilityValue(model.Capabilities, "image_generation", "text_to_image", "image") == true
+            ? true
+            : CapabilityValue(model.Capabilities, "image_generation", "text_to_image", "image");
+
+    private static bool? ImageGenerationCapability(ModelGroupItem model)
+        => model.IsImageGen || CapabilityValue(model.Capabilities, "image_generation", "text_to_image", "image") == true
+            ? true
+            : CapabilityValue(model.Capabilities, "image_generation", "text_to_image", "image");
+
+    private static bool? ThinkingCapability(LLMModel model)
+        => CapabilityValue(model.Capabilities, "thinking", "reasoning");
+
+    private static bool? ThinkingCapability(ModelGroupItem model)
+        => CapabilityValue(model.Capabilities, "thinking", "reasoning");
+
+    private static bool? StructuredOutputCapability(LLMModel model)
+        => CapabilityValue(model.Capabilities, "structured_output", "json_schema", "json_mode", "response_format");
+
+    private static bool? StructuredOutputCapability(ModelGroupItem model)
+        => CapabilityValue(model.Capabilities, "structured_output", "json_schema", "json_mode", "response_format");
+
+    private static bool? LogprobsCapability(LLMModel model)
+        => CapabilityValue(model.Capabilities, "logprobs", "top_logprobs", "token_logprobs");
+
+    private static bool? LogprobsCapability(ModelGroupItem model)
+        => CapabilityValue(model.Capabilities, "logprobs", "top_logprobs", "token_logprobs");
+
+    private static bool? ParallelToolCallsCapability(LLMModel model)
+        => CapabilityValue(model.Capabilities, "parallel_tool_calls", "parallel_tools", "parallel_function_calling");
+
+    private static bool? ParallelToolCallsCapability(ModelGroupItem model)
+        => CapabilityValue(model.Capabilities, "parallel_tool_calls", "parallel_tools", "parallel_function_calling");
+
+    private static bool? CapabilityValue(IEnumerable<LLMModelCapability>? capabilities, params string[] types)
+    {
+        if (capabilities is null) return null;
+        var wanted = new HashSet<string>(types, StringComparer.OrdinalIgnoreCase);
+        var cap = capabilities.FirstOrDefault(c => wanted.Contains(c.Type));
+        return cap?.Value;
+    }
+
+    private static Dictionary<string, bool>? ExtractParameterCapabilities(IEnumerable<LLMModelCapability>? capabilities)
+    {
+        if (capabilities is null) return null;
+        var result = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        foreach (var capability in capabilities)
+        {
+            var parameterName = ParameterCapabilityName(capability.Type);
+            if (parameterName is null) continue;
+            result[parameterName] = capability.Value;
+        }
+        return result.Count == 0 ? null : result;
+    }
+
+    private static string? ParameterCapabilityName(string? type)
+    {
+        if (string.IsNullOrWhiteSpace(type)) return null;
+        var normalized = type.Trim();
+        foreach (var prefix in new[] { "parameter:", "parameter.", "param:", "param." })
+        {
+            if (normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                var name = normalized[prefix.Length..].Trim();
+                return name.Length == 0 ? null : name;
+            }
+        }
+        return null;
     }
 }
 
