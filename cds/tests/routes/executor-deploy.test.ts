@@ -29,6 +29,7 @@ import { createExecutorRouter } from '../../src/executor/routes.js';
 import type { CdsConfig, BranchEntry } from '../../src/types.js';
 import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 // Source contract for the building-status timing fix (Bugbot "Executor deploy skips building status"):
 // the worker must set entry.status='building' BEFORE the pre-pull orphan teardown, so heartbeats don't
 // sync a stale running/idle onto master during the teardown+pull window. Asserted at source level because
@@ -185,6 +186,7 @@ describe('Executor /exec/deploy', () => {
   });
 
   afterEach(async () => {
+    await flushAllJsonStateStores();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });

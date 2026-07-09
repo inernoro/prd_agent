@@ -6,6 +6,7 @@ import { StateService } from '../../src/services/state.js';
 import { JanitorService, type JanitorConfig, type JanitorClock, type DiskUsageFn, isBranchProtected } from '../../src/services/janitor.js';
 import type { BranchEntry } from '../../src/types.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 /**
  * Tests for JanitorService — Phase 2 worktree TTL + disk watermark.
  */
@@ -73,7 +74,8 @@ describe('JanitorService', () => {
 
   beforeEach(() => setup());
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flushAllJsonStateStores();
     janitor.stop();
     const dir = path.dirname(stateFile);
     if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });

@@ -24,6 +24,7 @@ import os from 'node:os';
 import { StateService } from '../../src/services/state.js';
 import type { BranchEntry, BuildProfile, InfraService, RoutingRule } from '../../src/types.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 function writeRawState(filePath: string, state: any): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify(state), 'utf-8');
@@ -89,7 +90,8 @@ describe('StateService — project scoping (P4 Part 3a)', () => {
     stateFile = path.join(tmpDir, 'state.json');
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flushAllJsonStateStores();
     fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 

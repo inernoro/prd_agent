@@ -25,6 +25,7 @@ import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import type { Project, CdsConfig } from '../../src/types.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 const NOW = '2026-01-01T00:00:00.000Z';
 const PROJECT_ID = 'proj-test';
 
@@ -77,7 +78,8 @@ describe('ProjectFilesService', () => {
     fs.mkdirSync(worktreeDir, { recursive: true });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flushAllJsonStateStores();
     fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 

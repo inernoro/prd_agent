@@ -6,6 +6,7 @@ import { StateService } from '../../src/services/state.js';
 import { SchedulerService, type Clock } from '../../src/services/scheduler.js';
 import type { BranchEntry, SchedulerConfig } from '../../src/types.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 /**
  * Tests for the warm-pool scheduler.
  *
@@ -68,7 +69,8 @@ describe('SchedulerService', () => {
 
   beforeEach(() => setup());
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flushAllJsonStateStores();
     scheduler.stop();
     const dir = path.dirname(stateFile);
     if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });

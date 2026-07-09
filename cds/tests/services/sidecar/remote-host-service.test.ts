@@ -16,6 +16,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { StateService } from '../../../src/services/state.js';
+import { flushAllJsonStateStores } from '../../../src/infra/state-store/json-backing-store.js';
 import {
   RemoteHostService,
   fingerprintPrivateKey,
@@ -39,7 +40,8 @@ describe('RemoteHostService', () => {
     svc = new RemoteHostService(state);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flushAllJsonStateStores();
     fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 

@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 describe('StateService', () => {
   let stateFile: string;
   let service: StateService;
@@ -15,7 +16,8 @@ describe('StateService', () => {
     service = new StateService(stateFile);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flushAllJsonStateStores();
     const dir = path.dirname(stateFile);
     if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });

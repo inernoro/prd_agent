@@ -16,6 +16,7 @@ import { StateService } from '../../src/services/state.js';
 import { ForwarderRoutePublisher } from '../../src/services/forwarder-route-publisher.js';
 import { computePreviewSlug } from '../../src/services/preview-slug.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 let tmpDir: string;
 let stateFile: string;
 let outFile: string;
@@ -29,7 +30,8 @@ beforeEach(() => {
   state = new StateService(stateFile);
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await flushAllJsonStateStores();
   publisher?.stop();
   publisher = null;
   if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });

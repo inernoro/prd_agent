@@ -28,6 +28,7 @@ import { MongoStateBackingStore } from '../../src/infra/state-store/mongo-backin
 import type { IMongoHandle, IMongoCollection } from '../../src/infra/state-store/mongo-backing-store.js';
 import type { ISplitMongoCollection, ISplitMongoHandle } from '../../src/infra/state-store/mongo-split-store.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 // ── Mongo fake (copied from mongo-backing-store.test.ts) ────────────
 class FakeCollection implements IMongoCollection {
   docs = new Map<string, any>();
@@ -176,6 +177,7 @@ describe('Storage-mode router (P4 Part 18 D.3)', () => {
   });
 
   afterEach(async () => {
+    await flushAllJsonStateStores();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });

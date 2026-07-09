@@ -18,6 +18,7 @@ import { StateService } from '../../src/services/state.js';
 import { cdsEventsBus } from '../../src/services/cds-events-bus.js';
 import type { Project } from '../../src/types.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 async function request(
   server: http.Server,
   method: string,
@@ -63,6 +64,7 @@ describe('Agent requests observability routes', () => {
   let server: http.Server;
 
   afterEach(async () => {
+    await flushAllJsonStateStores();
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
     if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });

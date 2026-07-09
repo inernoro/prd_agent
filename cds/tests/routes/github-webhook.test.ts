@@ -17,6 +17,7 @@ import { createHmac } from 'node:crypto';
 import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import type { IShellExecutor, CdsConfig } from '../../src/types.js';
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 import {
   createGithubWebhookRouter,
   __resetWebhookDedupForTests,
@@ -149,6 +150,7 @@ describe('GitHub webhook route', () => {
   });
 
   afterEach(async () => {
+    await flushAllJsonStateStores();
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
     fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
@@ -609,6 +611,7 @@ describe('POST /api/projects/:id/github/link', () => {
   });
 
   afterEach(async () => {
+    await flushAllJsonStateStores();
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
     fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });

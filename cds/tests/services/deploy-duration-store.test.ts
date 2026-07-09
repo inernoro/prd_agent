@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 /**
  * 部署耗时样本台账（state.ts recordDeployDuration / getDeployEstimate）单测。
  * 覆盖：中位计算（奇偶）、ring buffer 上限、模式分桶隔离、非法值忽略、
@@ -20,7 +21,8 @@ describe('StateService deploy duration store', () => {
     service.load();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flushAllJsonStateStores();
     const dir = path.dirname(stateFile);
     if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });

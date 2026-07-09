@@ -15,6 +15,7 @@ import { createReleasesRouter } from '../../src/routes/releases.js';
 import { StateService } from '../../src/services/state.js';
 import type { BranchEntry, ReleaseRun, ReleaseTarget } from '../../src/types.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 async function request(
   server: http.Server,
   method: string,
@@ -160,6 +161,7 @@ describe('release control plane project-scope isolation', () => {
   });
 
   afterEach(async () => {
+    await flushAllJsonStateStores();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });

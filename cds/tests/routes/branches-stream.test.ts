@@ -27,6 +27,7 @@ import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { branchEvents, nowIso } from '../../src/services/branch-events.js';
 import type { CdsConfig, BranchEntry } from '../../src/types.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 function makeConfig(tmpDir: string): CdsConfig {
   return {
     repoRoot: tmpDir,
@@ -135,6 +136,7 @@ describe('GET /api/branches/stream', () => {
   });
 
   afterEach(async () => {
+    await flushAllJsonStateStores();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     // remove any lingering test listeners so each test starts clean

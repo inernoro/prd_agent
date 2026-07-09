@@ -15,6 +15,7 @@ import type { CdsConfig } from '../../src/types.js';
 import type { ServerEventLogSink, ServerEventRecord } from '../../src/services/server-event-log-store.js';
 import type { ActiveHttpRequestRecord, HttpActiveRequestFilter, HttpLogRecord, HttpLogSink } from '../../src/services/http-log-store.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 /**
  * Integration regression test: verifies that routes mounted after the
  * base createServer() (scheduler + cluster) are reachable and return
@@ -120,6 +121,7 @@ describe('Server route ordering (regression)', () => {
   });
 
   afterEach(async () => {
+    await flushAllJsonStateStores();
     if (server) {
       await new Promise<void>((resolve) => server!.close(() => resolve()));
       server = null;

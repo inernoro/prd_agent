@@ -15,6 +15,7 @@ import os from 'node:os';
 import { StateService } from '../../src/services/state.js';
 import type { Project, CdsState, BranchEntry } from '../../src/types.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 function writeRawState(filePath: string, state: Partial<CdsState>): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify(state), 'utf-8');
@@ -60,7 +61,8 @@ describe('StateService — projects (P4 Part 1)', () => {
     stateFile = path.join(tmpDir, 'state.json');
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flushAllJsonStateStores();
     fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 

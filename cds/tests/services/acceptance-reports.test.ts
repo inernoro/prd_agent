@@ -17,6 +17,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { StateService } from '../../src/services/state.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 describe('StateService acceptance reports', () => {
   let stateFile: string;
   let service: StateService;
@@ -31,7 +32,8 @@ describe('StateService acceptance reports', () => {
     service.load();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flushAllJsonStateStores();
     delete process.env.CDS_CACHE_BASE;
     const dir = path.dirname(stateFile);
     if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });

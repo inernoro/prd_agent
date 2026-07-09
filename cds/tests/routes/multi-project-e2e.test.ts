@@ -36,6 +36,7 @@ import { ContainerService } from '../../src/services/container.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { CdsConfig, BranchEntry } from '../../src/types.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 async function request(
   server: http.Server,
   method: string,
@@ -123,6 +124,7 @@ describe('Multi-project end-to-end isolation (data + endpoints)', () => {
   });
 
   afterEach(async () => {
+    await flushAllJsonStateStores();
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });

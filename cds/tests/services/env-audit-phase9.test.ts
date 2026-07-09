@@ -9,6 +9,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { StateService } from '../../src/services/state.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 describe('Phase 9.5 — StateService env audit log', () => {
   let tmpDir: string;
   let svc: StateService;
@@ -28,7 +29,8 @@ describe('Phase 9.5 — StateService env audit log', () => {
       updatedAt: new Date().toISOString(),
     });
   });
-  afterEach(() => {
+  afterEach(async () => {
+    await flushAllJsonStateStores();
     fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 

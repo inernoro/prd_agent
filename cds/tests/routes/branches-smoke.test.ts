@@ -27,6 +27,7 @@ import { ContainerService } from '../../src/services/container.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { CdsConfig } from '../../src/types.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 function makeConfig(tmpDir: string, withPreview = true): CdsConfig {
   return {
     repoRoot: tmpDir,
@@ -153,6 +154,7 @@ describe('POST /api/branches/:id/smoke', () => {
   });
 
   afterEach(async () => {
+    await flushAllJsonStateStores();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     if (prevEnv.CDS_SMOKE_SCRIPT_DIR === undefined) {
       delete process.env.CDS_SMOKE_SCRIPT_DIR;
@@ -285,7 +287,8 @@ describe('runSmokeForBranch (Phase 4 helper)', () => {
     fs.chmodSync(entry, 0o755);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flushAllJsonStateStores();
     if (fs.existsSync(scriptDir)) fs.rmSync(scriptDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 

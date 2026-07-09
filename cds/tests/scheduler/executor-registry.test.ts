@@ -6,6 +6,7 @@ import { StateService } from '../../src/services/state.js';
 import { ExecutorRegistry } from '../../src/scheduler/executor-registry.js';
 import type { ExecutorNode } from '../../src/types.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 /**
  * Tests for ExecutorRegistry — cluster bootstrap additions focus on:
  *   - role defaulting ('remote' vs 'embedded')
@@ -30,7 +31,8 @@ describe('ExecutorRegistry', () => {
     registry = new ExecutorRegistry(stateService);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flushAllJsonStateStores();
     registry.stopHealthChecks();
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });

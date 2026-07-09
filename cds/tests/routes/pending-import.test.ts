@@ -19,6 +19,7 @@ import os from 'node:os';
 import { createPendingImportRouter } from '../../src/routes/pending-import.js';
 import { StateService } from '../../src/services/state.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 function request(
   server: http.Server,
   method: string,
@@ -117,6 +118,7 @@ describe('Pending-import router', () => {
   });
 
   afterEach(async () => {
+    await flushAllJsonStateStores();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });

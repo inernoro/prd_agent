@@ -7,6 +7,7 @@ import { ExecutorRegistry } from '../../src/scheduler/executor-registry.js';
 import { BranchDispatcher, type ExecutorSchedulerSnapshot, type SnapshotFetcher } from '../../src/scheduler/dispatcher.js';
 import type { ExecutorNode } from '../../src/types.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 /**
  * Tests for BranchDispatcher — Phase 3 capacity-aware executor selection.
  *
@@ -65,7 +66,8 @@ describe('BranchDispatcher', () => {
     dispatcher = new BranchDispatcher(registry, fetcher);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flushAllJsonStateStores();
     registry.stopHealthChecks();
     const dir = path.dirname(stateFile);
     if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });

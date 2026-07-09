@@ -11,6 +11,7 @@ import os from 'node:os';
 import { StateService } from '../../src/services/state.js';
 import type { EnvMeta } from '../../src/types.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 describe('Phase 8 — StateService.envMeta', () => {
   let tmpDir: string;
   let svc: StateService;
@@ -32,7 +33,8 @@ describe('Phase 8 — StateService.envMeta', () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flushAllJsonStateStores();
     fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 

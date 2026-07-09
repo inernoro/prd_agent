@@ -31,6 +31,26 @@ export const MAX_STATE_BACKUPS = 10;
 /** .bak 快照的最小写入间隔（每次 save 都写一份完整副本是旧实现的双倍磁盘放大器）。 */
 const BACKUP_MIN_INTERVAL_MS = 60_000;
 
+/**
+ * 活实例登记（2026-07-09）：save() 去抖异步化后，测试收尾 rmSync 临时目录时
+ * 在途写会往正被删除的目录里落新文件 → ENOTEMPTY 抽风（CI 已三次撞上同族）。
+ * WeakRef 登记全部活实例，vitest 全局 afterEach 统一 flushAllJsonStateStores()
+ * 等在途写落地后再清目录——一处兜底覆盖所有套件。生产开销：仅一个 WeakRef 集合。
+ */
+const LIVE_STORES = new Set<WeakRef<JsonStateBackingStore>>();
+
+/** 等待所有活实例的在途写落地（测试收尾兜底用；单实例失败不阻断其他实例）。 */
+export async function flushAllJsonStateStores(): Promise<void> {
+  for (const ref of [...LIVE_STORES]) {
+    const store = ref.deref();
+    if (!store) {
+      LIVE_STORES.delete(ref);
+      continue;
+    }
+    await store.flush().catch(() => {});
+  }
+}
+
 export class JsonStateBackingStore implements StateBackingStore {
   readonly kind = 'json' as const;
 
@@ -43,7 +63,9 @@ export class JsonStateBackingStore implements StateBackingStore {
   private lastWriteError: Error | null = null;
   private lastBackupAtMs = 0;
 
-  constructor(private readonly filePath: string) {}
+  constructor(private readonly filePath: string) {
+    LIVE_STORES.add(new WeakRef(this));
+  }
 
   load(): CdsState | null {
     // Happy path: read the primary state file.

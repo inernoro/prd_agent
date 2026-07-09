@@ -13,6 +13,7 @@ import os from 'node:os';
 import { createProjectComposeRouter } from '../../src/routes/project-compose.js';
 import { StateService } from '../../src/services/state.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 function request(server: http.Server, method: string, urlPath: string, body?: unknown): Promise<{ status: number; body: any }> {
   return new Promise((resolve, reject) => {
     const addr = server.address() as { port: number };
@@ -97,7 +98,8 @@ describe('compose-drift-scan 端点', () => {
     server = app.listen(0);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flushAllJsonStateStores();
     server.close();
     fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     fs.rmSync(repoDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });

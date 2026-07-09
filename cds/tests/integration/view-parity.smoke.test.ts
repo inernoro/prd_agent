@@ -46,6 +46,7 @@ import { BranchOperationCoordinator } from '../../src/services/branch-operation-
 import type { ServerEventLogSink, ServerEventRecord } from '../../src/services/server-event-log-store.js';
 import type { CdsConfig } from '../../src/types.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 // Lightweight JSON request helper — tests its own contract so we don't
 // import supertest and blow up the dev dep footprint.
 function requestJson(
@@ -239,6 +240,7 @@ describe('View parity smoke test (list + topology)', () => {
   }, 30000);
 
   afterAll(async () => {
+    await flushAllJsonStateStores();
     if (server) {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }

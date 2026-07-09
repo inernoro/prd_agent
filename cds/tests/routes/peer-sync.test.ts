@@ -19,6 +19,7 @@ import crypto from 'node:crypto';
 import { StateService } from '../../src/services/state.js';
 import { createPeerSyncRouter, createPeerSyncAdminRouter } from '../../src/routes/peer-sync.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 function request(
   server: http.Server,
   method: string,
@@ -92,6 +93,7 @@ describe('peer-sync MAP-KBTP endpoints', () => {
   });
 
   afterEach(async () => {
+    await flushAllJsonStateStores();
     delete process.env.CDS_CACHE_BASE;
     await new Promise<void>((r) => server.close(() => r()));
     const dir = path.dirname(stateFile);

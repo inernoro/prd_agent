@@ -19,6 +19,7 @@ import express from 'express';
 import { StateService } from '../../src/services/state.js';
 import { createReportsRouter } from '../../src/routes/reports.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 interface Res { status: number; body: any; headers: http.IncomingHttpHeaders; }
 
 async function call(
@@ -95,6 +96,7 @@ describe('Acceptance report routes — project-scoped key access', () => {
   });
 
   afterEach(async () => {
+    await flushAllJsonStateStores();
     server?.close();
     delete process.env.CDS_CACHE_BASE;
     // json store 的 save 是去抖异步落盘（2026-07-09）：先 flush 等在途写完成，
