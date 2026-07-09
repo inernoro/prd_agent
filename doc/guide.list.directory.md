@@ -655,6 +655,12 @@
 - [LLM 网关剥离活状态看板](plan.llm-gateway.status-dashboard) `plan.llm-gateway.status-dashboard`
   > 网关剥离唯一进度真相：一句话现状 + 能不能发布 + 记分卡 + Gate + 下一步 + 验收证据
 
+- [LLM Gateway 协议入口与模型池迁移计划](plan.platform.llm-gateway-protocol-router) `plan.platform.llm-gateway-protocol-router`
+  > GW Native/OpenAI/Claude/Gemini 多入口统一到 GW Request IR，appCaller、模型池、路由、密钥、日志与审计归 GW 管理
+
+- [LLM Gateway 协议路由 PR 拆分计划](plan.platform.llm-gateway-protocol-router-pr-split) `plan.platform.llm-gateway-protocol-router-pr-split`
+  > 将 staging 大分支拆成文档、API 协议路由核心、GW 控制台与发布 gate 四个可审查、可验证、可回滚的合并单元
+
 - [PA Agent 竞品调研与改进方案](plan.product-agent.pa.competitive-improvements) `plan.product-agent.pa.competitive-improvements`
   > 四类竞品谱系、与 Phase 1 差距对照、P2～P4 分期改进包
 
@@ -1053,6 +1059,8 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-07-10 | 新增 | `plan.platform.llm-gateway-protocol-router-pr-split` | LLM Gateway 协议路由 PR 拆分计划 |
+| 2026-07-09 | 新增 | `plan.platform.llm-gateway-protocol-router` | LLM Gateway 协议入口与模型池迁移计划 |
 | 2026-06-28 | 新增 | `report.2026-W26` | 2026-W26 周报（06-22 ~ 06-28）：W25 收口后反弹周，知识库文档星系三维视图 + VOC AI 用户分析下钻 + CDS 自更新极速版/卡死收敛器/性能治理/验收中心 + 跨节点同步二进制附件 + 移动端整体重构首批 + revert 删除所有催办 |
 | 2026-06-21 | 新增 | `report.2026-W25` | 2026-W25 周报（06-15 ~ 06-21）：W24 峰值后归途收口周，缺陷自动化闭环合龙 + CDS 灰度预览体感升级 + 视觉/知识库收口 + 两条新系统规则 |
 | 2026-06-21 | 新增 | `.claude/rules/expectation-management.md` | 预期管理总纲：让用户任何时刻知道在做什么/还要多久/接下来怎样/刚才变了什么/我该做什么 |

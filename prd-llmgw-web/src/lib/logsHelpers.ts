@@ -26,6 +26,13 @@ export function fmtCompact(n?: number | null): string {
   return `${(n / 1_000_000).toFixed(1)}m`;
 }
 
+export function fmtCost(value?: number | null, currency?: string | null): string {
+  if (value == null || !isFinite(value)) return DASH;
+  const prefix = currency?.trim().toUpperCase() || '';
+  const amount = Math.abs(value) >= 1 ? value.toFixed(4) : value.toFixed(8);
+  return prefix ? `${prefix} ${amount}` : amount;
+}
+
 export function fmtShortTime(iso?: string | null): string {
   if (!iso) return DASH;
   const d = new Date(iso);
@@ -100,7 +107,7 @@ export const GENERATIONS_COLUMNS: ColumnDef[] = [
   { key: 'provider', label: 'Provider', width: '1.1fr' },
   { key: 'app', label: 'App', width: '1.35fr' },
   { key: 'tokens', label: 'Tokens', width: '0.9fr', align: 'right' },
-  { key: 'cost', label: 'Cost', width: '0.7fr', align: 'right', tip: '成本计算需后端聚合模型价格，暂未提供（统一显示 —）' },
+  { key: 'cost', label: 'Cost', width: '0.7fr', align: 'right', tip: '来自 GW 模型池价格快照与本次 token / 按次费用的估算成本；缺价格显示 —' },
   { key: 'latency', label: 'Latency', width: '0.85fr', align: 'right' },
   { key: 'status', label: 'Status', width: '0.75fr', align: 'center' },
   { key: 'finish', label: 'Finish', width: '0.85fr', tip: '完成原因 finish_reason（旧日志未记录显示 —）' },

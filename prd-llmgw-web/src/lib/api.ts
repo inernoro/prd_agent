@@ -9,7 +9,7 @@
 //   GET   {BASE}/logs/sessions     query { from, to, page, pageSize }  → { success, data: SessionsData }
 //   GET   {BASE}/logs/:id                                        → { success, data: LlmLogDetail }
 //
-// 列表数据形状与现有 /api/logs/llm 对齐，对接时只需把 BASE 指过去即可。
+// 列表数据形状与 /gw 控制台 API 对齐；密钥字段只返回 hasKey，不返回明文或密文。
 
 import type {
   ApiResponse,
@@ -27,10 +27,38 @@ import type {
   PoolsData,
   PlatformsData,
   ModelsData,
+  GatewayAppCallersData,
+  GatewayAppCaller,
+  UpdateGatewayAppCallerRequest,
+  BulkUpdateGatewayAppCallersRequest,
+  BulkUpdateGatewayAppCallersResult,
+  OperationAuditsData,
   ShadowData,
   ModelPool,
   PlatformItem,
   ModelItem,
+  ParameterCapabilitiesMetaData,
+  ExchangesData,
+  ExchangeItem,
+  UpsertPoolModelRequest,
+  KeyHealthData,
+  CreatePoolRequest,
+  UpdatePoolRequest,
+  BulkClaimPoolsRequest,
+  BulkClaimPoolsResult,
+  BulkCalibratePoolPriceCurrencyRequest,
+  BulkCalibratePoolPriceCurrencyResult,
+  BulkImportPoolModelsRequest,
+  BulkImportPoolModelsResult,
+  BulkRotateApiKeysRequest,
+  BulkRotateApiKeysResult,
+  BulkUpdateModelCapabilitiesRequest,
+  BulkUpdateModelCapabilitiesResult,
+  ConfigAuthorityReportData,
+  BulkClaimConfigAuthorityRequest,
+  BulkClaimConfigAuthorityResult,
+  BindActiveAppCallerPoolsResult,
+  RuntimeGatesData,
 } from './types';
 
 const TOKEN_KEY = 'llmgw.token';
@@ -203,6 +231,81 @@ export function getModels(params?: { platformId?: string; enabled?: boolean }): 
     query: { platformId: params?.platformId, enabled: params?.enabled === undefined ? undefined : String(params.enabled) },
   });
 }
+export function getParameterCapabilitiesMeta(): Promise<ApiResponse<ParameterCapabilitiesMetaData>> {
+  return apiRequest<ParameterCapabilitiesMetaData>('/parameter-capabilities/meta');
+}
+export function getExchanges(params?: { enabled?: boolean }): Promise<ApiResponse<ExchangesData>> {
+  return apiRequest<ExchangesData>('/exchanges', {
+    query: { enabled: params?.enabled === undefined ? undefined : String(params.enabled) },
+  });
+}
+export function getKeyHealth(): Promise<ApiResponse<KeyHealthData>> {
+  return apiRequest<KeyHealthData>('/key-health');
+}
+export function getConfigAuthorityReport(): Promise<ApiResponse<ConfigAuthorityReportData>> {
+  return apiRequest<ConfigAuthorityReportData>('/config-authority/report');
+}
+export function getRuntimeGates(): Promise<ApiResponse<RuntimeGatesData>> {
+  return apiRequest<RuntimeGatesData>('/runtime-gates');
+}
+export function bulkClaimConfigAuthority(req: BulkClaimConfigAuthorityRequest): Promise<ApiResponse<BulkClaimConfigAuthorityResult>> {
+  return apiRequest<BulkClaimConfigAuthorityResult>('/config-authority/bulk-claim', { method: 'POST', body: req });
+}
+export function bindActiveAppCallerPools(): Promise<ApiResponse<BindActiveAppCallerPoolsResult>> {
+  return apiRequest<BindActiveAppCallerPoolsResult>('/config-authority/bind-active-app-callers', { method: 'POST' });
+}
+export function getGatewayAppCallers(params?: {
+  page?: number;
+  pageSize?: number;
+  status?: string;
+  sourceSystem?: string;
+  ingressProtocol?: string;
+  requestType?: string;
+  drift?: string;
+  search?: string;
+}): Promise<ApiResponse<GatewayAppCallersData>> {
+  return apiRequest<GatewayAppCallersData>('/app-callers', {
+    query: {
+      page: params?.page,
+      pageSize: params?.pageSize,
+      status: params?.status,
+      sourceSystem: params?.sourceSystem,
+      ingressProtocol: params?.ingressProtocol,
+      requestType: params?.requestType,
+      drift: params?.drift,
+      search: params?.search,
+    },
+  });
+}
+export function updateGatewayAppCaller(id: string, req: UpdateGatewayAppCallerRequest): Promise<ApiResponse<GatewayAppCaller>> {
+  return apiRequest<GatewayAppCaller>(`/app-callers/${encodeURIComponent(id)}`, { method: 'PUT', body: req });
+}
+export function bulkUpdateGatewayAppCallers(req: BulkUpdateGatewayAppCallersRequest): Promise<ApiResponse<BulkUpdateGatewayAppCallersResult>> {
+  return apiRequest<BulkUpdateGatewayAppCallersResult>('/app-callers/bulk-governance', { method: 'POST', body: req });
+}
+export function getOperationAudits(params?: {
+  page?: number;
+  pageSize?: number;
+  action?: string;
+  targetType?: string;
+  actor?: string;
+  success?: boolean;
+  search?: string;
+  sinceHours?: number;
+}): Promise<ApiResponse<OperationAuditsData>> {
+  return apiRequest<OperationAuditsData>('/audits', {
+    query: {
+      page: params?.page,
+      pageSize: params?.pageSize,
+      action: params?.action,
+      targetType: params?.targetType,
+      actor: params?.actor,
+      success: params?.success === undefined ? undefined : String(params.success),
+      search: params?.search,
+      sinceHours: params?.sinceHours,
+    },
+  });
+}
 export function getShadowComparisons(params?: { limit?: number; appCallerCode?: string; kind?: string; releaseCommit?: string; sinceHours?: number }): Promise<ApiResponse<ShadowData>> {
   return apiRequest<ShadowData>('/shadow-comparisons', { query: { limit: params?.limit, appCallerCode: params?.appCallerCode, kind: params?.kind, releaseCommit: params?.releaseCommit, sinceHours: params?.sinceHours } });
 }
@@ -211,9 +314,69 @@ export function getShadowComparisons(params?: { limit?: number; appCallerCode?: 
 export function setPlatformEnabled(id: string, enabled: boolean): Promise<ApiResponse<PlatformItem>> {
   return apiRequest<PlatformItem>(`/platforms/${encodeURIComponent(id)}/enabled`, { method: 'PUT', body: { enabled } });
 }
+export function claimPlatformToGateway(id: string): Promise<ApiResponse<PlatformItem>> {
+  return apiRequest<PlatformItem>(`/platforms/${encodeURIComponent(id)}/claim`, { method: 'PUT' });
+}
+export function rotatePlatformApiKey(id: string, apiKey: string): Promise<ApiResponse<PlatformItem>> {
+  return apiRequest<PlatformItem>(`/platforms/${encodeURIComponent(id)}/api-key`, { method: 'PUT', body: { apiKey } });
+}
+export function deletePlatformApiKey(id: string): Promise<ApiResponse<PlatformItem>> {
+  return apiRequest<PlatformItem>(`/platforms/${encodeURIComponent(id)}/api-key`, { method: 'DELETE' });
+}
 export function setModelEnabled(id: string, enabled: boolean): Promise<ApiResponse<ModelItem>> {
   return apiRequest<ModelItem>(`/models/${encodeURIComponent(id)}/enabled`, { method: 'PUT', body: { enabled } });
 }
+export function claimModelToGateway(id: string): Promise<ApiResponse<ModelItem>> {
+  return apiRequest<ModelItem>(`/models/${encodeURIComponent(id)}/claim`, { method: 'PUT' });
+}
+export function rotateModelApiKey(id: string, apiKey: string): Promise<ApiResponse<ModelItem>> {
+  return apiRequest<ModelItem>(`/models/${encodeURIComponent(id)}/api-key`, { method: 'PUT', body: { apiKey } });
+}
+export function deleteModelApiKey(id: string): Promise<ApiResponse<ModelItem>> {
+  return apiRequest<ModelItem>(`/models/${encodeURIComponent(id)}/api-key`, { method: 'DELETE' });
+}
+export function bulkUpdateModelCapabilities(req: BulkUpdateModelCapabilitiesRequest): Promise<ApiResponse<BulkUpdateModelCapabilitiesResult>> {
+  return apiRequest<BulkUpdateModelCapabilitiesResult>('/models/capabilities/bulk-update', { method: 'POST', body: req });
+}
+export function claimExchangeToGateway(id: string): Promise<ApiResponse<ExchangeItem>> {
+  return apiRequest<ExchangeItem>(`/exchanges/${encodeURIComponent(id)}/claim`, { method: 'PUT' });
+}
+export function rotateExchangeApiKey(id: string, apiKey: string): Promise<ApiResponse<ExchangeItem>> {
+  return apiRequest<ExchangeItem>(`/exchanges/${encodeURIComponent(id)}/api-key`, { method: 'PUT', body: { apiKey } });
+}
+export function deleteExchangeApiKey(id: string): Promise<ApiResponse<ExchangeItem>> {
+  return apiRequest<ExchangeItem>(`/exchanges/${encodeURIComponent(id)}/api-key`, { method: 'DELETE' });
+}
+export function bulkRotateApiKeys(req: BulkRotateApiKeysRequest): Promise<ApiResponse<BulkRotateApiKeysResult>> {
+  return apiRequest<BulkRotateApiKeysResult>('/api-keys/bulk-rotate', { method: 'POST', body: req });
+}
 export function setPoolDefault(id: string, isDefault: boolean): Promise<ApiResponse<ModelPool>> {
   return apiRequest<ModelPool>(`/pools/${encodeURIComponent(id)}/default`, { method: 'PUT', body: { isDefault } });
+}
+export function claimPoolToGateway(id: string): Promise<ApiResponse<ModelPool>> {
+  return apiRequest<ModelPool>(`/pools/${encodeURIComponent(id)}/claim`, { method: 'PUT' });
+}
+export function createPool(req: CreatePoolRequest): Promise<ApiResponse<ModelPool>> {
+  return apiRequest<ModelPool>('/pools', { method: 'POST', body: req });
+}
+export function updatePool(id: string, req: UpdatePoolRequest): Promise<ApiResponse<ModelPool>> {
+  return apiRequest<ModelPool>(`/pools/${encodeURIComponent(id)}`, { method: 'PUT', body: req });
+}
+export function bulkClaimPools(req: BulkClaimPoolsRequest): Promise<ApiResponse<BulkClaimPoolsResult>> {
+  return apiRequest<BulkClaimPoolsResult>('/pools/bulk-claim', { method: 'POST', body: req });
+}
+export function bulkCalibratePoolPriceCurrency(req: BulkCalibratePoolPriceCurrencyRequest): Promise<ApiResponse<BulkCalibratePoolPriceCurrencyResult>> {
+  return apiRequest<BulkCalibratePoolPriceCurrencyResult>('/pools/price-currency/bulk-calibrate', { method: 'POST', body: req });
+}
+export function bulkImportPoolModels(id: string, req: BulkImportPoolModelsRequest): Promise<ApiResponse<BulkImportPoolModelsResult>> {
+  return apiRequest<BulkImportPoolModelsResult>(`/pools/${encodeURIComponent(id)}/models/bulk-import`, { method: 'POST', body: req });
+}
+export function upsertPoolModel(id: string, req: UpsertPoolModelRequest): Promise<ApiResponse<ModelPool>> {
+  return apiRequest<ModelPool>(`/pools/${encodeURIComponent(id)}/models`, { method: 'PUT', body: req });
+}
+export function removePoolModel(id: string, modelId: string, platformId?: string): Promise<ApiResponse<ModelPool>> {
+  return apiRequest<ModelPool>(`/pools/${encodeURIComponent(id)}/models`, {
+    method: 'DELETE',
+    query: { modelId, platformId },
+  });
 }

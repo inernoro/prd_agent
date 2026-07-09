@@ -30,6 +30,10 @@ public class LlmRequestLog
 
     // 关联/定位
     public string RequestId { get; set; } = string.Empty;
+    /// <summary>
+    /// 产生本条请求日志的发布 commit。用于发布 gate 只接受同一 commit 的运行证据。
+    /// </summary>
+    public string? ReleaseCommit { get; set; }
     public string? GroupId { get; set; }
     public string? SessionId { get; set; }
     public string? UserId { get; set; }
@@ -45,6 +49,21 @@ public class LlmRequestLog
     /// AppCallerCode 的中文显示名（日志写入时一次性保存，确保日志自包含）
     /// </summary>
     public string? AppCallerCodeDisplayName { get; set; }
+
+    /// <summary>
+    /// GW 入口侧传入的调用方展示标题。被动注册 appCaller 时用于解释来源，不覆盖 MAP 注册表显示名。
+    /// </summary>
+    public string? AppCallerTitle { get; set; }
+
+    /// <summary>
+    /// 调用来源系统：map / external / console / workflow 等。
+    /// </summary>
+    public string? SourceSystem { get; set; }
+
+    /// <summary>
+    /// 入口协议：gw-native / openai-compatible / claude-compatible / gemini-compatible。
+    /// </summary>
+    public string? IngressProtocol { get; set; }
 
     // Provider / 模型信息
     public string Provider { get; set; } = string.Empty; // Claude/OpenAI/...
@@ -82,6 +101,26 @@ public class LlmRequestLog
     /// 仅追加字段，存量日志为 null；老查询不受影响。用于日志页/排障辨识请求走了哪条传输通道。
     /// </summary>
     public string? GatewayTransport { get; set; }
+
+    /// <summary>
+    /// GW 路由模型策略：auto / pool / pinned。
+    /// </summary>
+    public string? ModelPolicy { get; set; }
+
+    /// <summary>
+    /// 请求显式指定的 GW 模型池 ID。与实际命中的 ModelGroupId 分开记录，便于排查 pool 策略是否被改写。
+    /// </summary>
+    public string? ModelPoolId { get; set; }
+
+    /// <summary>
+    /// 入口/Provider 参数策略：default-drop / strict-require。
+    /// </summary>
+    public string? ParameterPolicy { get; set; }
+
+    /// <summary>
+    /// 入口适配器或 Provider adapter 丢弃的参数名。
+    /// </summary>
+    public List<string>? DroppedParameters { get; set; }
 
     // 模型池信息（来自 ModelGroup）
     /// <summary>
@@ -175,6 +214,18 @@ public class LlmRequestLog
     public int? CacheCreationInputTokens { get; set; }
     public int? CacheReadInputTokens { get; set; }
 
+    // 成本快照（来自 GW 模型池成员价格配置；按请求完成时的 token 用量计算）
+    public decimal? InputPricePerMillion { get; set; }
+    public decimal? OutputPricePerMillion { get; set; }
+    public decimal? PricePerCall { get; set; }
+    public string? PriceCurrency { get; set; }
+    public decimal? EstimatedInputCost { get; set; }
+    public decimal? EstimatedOutputCost { get; set; }
+    public decimal? EstimatedCallCost { get; set; }
+    public decimal? EstimatedCost { get; set; }
+    public string? EstimatedCostCurrency { get; set; }
+    public decimal? EstimatedCostUsd { get; set; }
+
     // Exchange 中继信息
     /// <summary>是否为 Exchange 中继请求</summary>
     public bool? IsExchange { get; set; }
@@ -184,6 +235,12 @@ public class LlmRequestLog
     public string? ExchangeName { get; set; }
     /// <summary>Exchange 转换器类型</summary>
     public string? ExchangeTransformerType { get; set; }
+
+    /// <summary>
+    /// 上游尝试链快照。当前至少记录最终发送尝试；发生 fallback 时可记录原池不可用候选。
+    /// 后续真实 provider retry/fallback 可继续追加到同一结构。
+    /// </summary>
+    public List<LlmProviderAttempt>? ProviderAttempts { get; set; }
 
     // 健康探活标记
     /// <summary>是否为健康探活请求（后台自动发送，非用户触发）</summary>
@@ -229,6 +286,26 @@ public class LlmImageReference
     public string? Label { get; set; }
     public string? MimeType { get; set; }
     public long? SizeBytes { get; set; }
+}
+
+public class LlmProviderAttempt
+{
+    public int Order { get; set; }
+    public string Stage { get; set; } = "send";
+    public string? Provider { get; set; }
+    public string? PlatformId { get; set; }
+    public string? PlatformName { get; set; }
+    public string? Model { get; set; }
+    public string? ModelGroupId { get; set; }
+    public string? ModelGroupName { get; set; }
+    public string? Protocol { get; set; }
+    public string? Transport { get; set; }
+    public string Status { get; set; } = "selected";
+    public string? Reason { get; set; }
+    public int? StatusCode { get; set; }
+    public long? DurationMs { get; set; }
+    public string? Error { get; set; }
+    public DateTime? EndedAt { get; set; }
 }
 
 /// <summary>

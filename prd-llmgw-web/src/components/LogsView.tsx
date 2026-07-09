@@ -23,6 +23,7 @@ import {
   fmtDate,
   fmtMs,
   fmtCompact,
+  fmtCost,
   computeTokPerSec,
   statusBadgeStyle,
   userLabel,
@@ -55,14 +56,30 @@ export function LogsView() {
   const [filterAppCaller, setFilterAppCaller] = useState('');
   const [filterTransport, setFilterTransport] = useState('');
   const [filterRequestType, setFilterRequestType] = useState('');
+  const [filterSourceSystem, setFilterSourceSystem] = useState('');
+  const [filterIngressProtocol, setFilterIngressProtocol] = useState('');
+  const [filterModelPolicy, setFilterModelPolicy] = useState('');
 
-  const [meta, setMeta] = useState<{ models: string[]; statuses: string[]; providers: string[]; appCallers: string[]; transports: string[]; requestTypes: string[] }>({
+  const [meta, setMeta] = useState<{
+    models: string[];
+    statuses: string[];
+    providers: string[];
+    appCallers: string[];
+    transports: string[];
+    requestTypes: string[];
+    sourceSystems: string[];
+    ingressProtocols: string[];
+    modelPolicies: string[];
+  }>({
     models: [],
     statuses: [],
     providers: [],
     appCallers: [],
     transports: [],
     requestTypes: [],
+    sourceSystems: [],
+    ingressProtocols: [],
+    modelPolicies: [],
   });
   const [metaError, setMetaError] = useState<string | null>(null);
   const [listError, setListError] = useState<string | null>(null);
@@ -97,8 +114,11 @@ export function LogsView() {
       appCallerCode: filterAppCaller || undefined,
       transport: filterTransport || undefined,
       requestType: filterRequestType || undefined,
+      sourceSystem: filterSourceSystem || undefined,
+      ingressProtocol: filterIngressProtocol || undefined,
+      modelPolicy: filterModelPolicy || undefined,
     }),
-    [range, filterModel, filterStatus, filterProvider, filterAppCaller, filterTransport, filterRequestType],
+    [range, filterModel, filterStatus, filterProvider, filterAppCaller, filterTransport, filterRequestType, filterSourceSystem, filterIngressProtocol, filterModelPolicy],
   );
 
   useEffect(() => {
@@ -111,6 +131,9 @@ export function LogsView() {
           appCallers: res.data.appCallers ?? [],
           transports: res.data.transports ?? [],
           requestTypes: res.data.requestTypes ?? [],
+          sourceSystems: res.data.sourceSystems ?? [],
+          ingressProtocols: res.data.ingressProtocols ?? [],
+          modelPolicies: res.data.modelPolicies ?? [],
         });
         setMetaError(null);
       } else {
@@ -273,7 +296,7 @@ export function LogsView() {
           </span>
         );
       case 'cost':
-        return <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{DASH}</span>;
+        return <span className="tabular" style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{fmtCost(it.estimatedCost, it.estimatedCostCurrency)}</span>;
       case 'latency':
         return <span className="tabular" style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{fmtMs(it.durationMs)}</span>;
       case 'status': {
@@ -506,7 +529,17 @@ export function LogsView() {
     <div style={{ padding: '64px 0', textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>{text}</div>
   );
 
-  const activeFilterCount = [filterModel, filterStatus, filterProvider, filterAppCaller, filterTransport, filterRequestType].filter(Boolean).length;
+  const activeFilterCount = [
+    filterModel,
+    filterStatus,
+    filterProvider,
+    filterAppCaller,
+    filterTransport,
+    filterRequestType,
+    filterSourceSystem,
+    filterIngressProtocol,
+    filterModelPolicy,
+  ].filter(Boolean).length;
   const clearFilters = () => {
     setFilterModel('');
     setFilterStatus('');
@@ -514,6 +547,9 @@ export function LogsView() {
     setFilterAppCaller('');
     setFilterTransport('');
     setFilterRequestType('');
+    setFilterSourceSystem('');
+    setFilterIngressProtocol('');
+    setFilterModelPolicy('');
   };
 
   function SummaryTile({
@@ -600,6 +636,30 @@ export function LogsView() {
           background: 'var(--bg-surface)',
         }}
       >
+          <select value={filterSourceSystem} onChange={(e) => setFilterSourceSystem(e.target.value)} style={selectStyle}>
+            <option value="">All sources</option>
+            {meta.sourceSystems.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+          <select value={filterIngressProtocol} onChange={(e) => setFilterIngressProtocol(e.target.value)} style={selectStyle}>
+            <option value="">All ingress</option>
+            {meta.ingressProtocols.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
+          <select value={filterModelPolicy} onChange={(e) => setFilterModelPolicy(e.target.value)} style={selectStyle}>
+            <option value="">All policies</option>
+            {meta.modelPolicies.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
           <select value={filterProvider} onChange={(e) => setFilterProvider(e.target.value)} style={selectStyle}>
             <option value="">All providers</option>
             {meta.providers.map((p) => (
@@ -678,7 +738,7 @@ export function LogsView() {
           <SummaryTile icon={<Clock size={13} />} label="Avg latency" value={fmtMs(summary?.averageDurationMs)} sub="completed requests" />
           <SummaryTile icon={<GitBranch size={13} />} label="Fallbacks" value={fmtCompact(summary?.fallbacks)} sub="fallback requests" />
           <SummaryTile icon={<Layers size={13} />} label="Transport" value={primaryTransport?.key ?? DASH} sub={primaryTransport ? `${fmtCompact(primaryTransport.count)} requests` : 'no marks'} />
-          <SummaryTile icon={<Gauge size={13} />} label="Running" value={fmtCompact(summary?.running)} sub={`${fmtCompact(summary?.cancelled)} cancelled`} />
+          <SummaryTile icon={<Gauge size={13} />} label="Estimated USD" value={fmtCost(summary?.estimatedCostUsd, 'USD')} sub={`${fmtCompact(summary?.running)} running · ${fmtCompact(summary?.cancelled)} cancelled`} />
         </div>
         <Card style={{ padding: 8, minHeight: 92, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
           <MiniBarChart data={series} height={82} />
