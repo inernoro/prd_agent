@@ -253,7 +253,9 @@ scripts/llmgw-prod-stage.sh --stage shadow-start --commit <40位SHA> --execute
 `.github/workflows/llmgw-prod-preflight.yml` 提供手动生产预检入口，支持 `start` 与 `completion` 两种模式；
 需要配置 `vars.PRD_AGENT_PROD_BASE`、`vars.LLMGW_PROD_GATE_BASE`、`vars.LLMGW_PROD_EXPECT_COMMIT`、
 `secrets.PRD_AGENT_PROD_API_KEY`（需 `logs:read`）和 `secrets.LLMGW_PROD_GATE_KEY`。该 workflow 会上传
-`prod-preflight.json`，用于在执行 `shadow-start` 前证明 MAP 日志权限、GW health/key 和目标 commit 配置可用；
+`prod-preflight.json`，用于在执行 `shadow-start` 前证明 MAP 日志权限、GW health/key、目标 commit 配置和
+`/gw/v1/route-self-test` 协议路由 dry-run gate 可用；route-self-test 必须返回 `Status=ok`、`Mode=dry-run`、
+`UpstreamCalled=false`，并覆盖 GW Native、OpenAI-compatible、Claude-compatible、Gemini-compatible 四类入口；
 `completion` 模式必须填写最终 `llmgw-prod-stage` 的 `rollout_evidence_run_id`，workflow 会先下载
 `llmgw-prod-stage-<runId>` artifact 到 `.llmgw-release-evidence/`，再审计 `rollout-ledger.jsonl` 终态，
 防止没有 `http-full` 成功台账时宣称完成。
