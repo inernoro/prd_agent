@@ -512,6 +512,13 @@ public class ChangelogController : ControllerBase
             var normalizedSha = trace.CommitSha?.Trim().ToLowerInvariant() ?? string.Empty;
             var resolvedSha = fullShaByAlias.TryGetValue(normalizedSha, out var full) ? full : normalizedSha;
             var publishStatus = ResolvePublishStatus(trace, resolvedSha, deployedCommitSha, deployedIndex, shaIndex);
+            // 修复提交尚未进入部署分支历史（多为仍在 open PR、未 merge 阶段）时 ResolvePublishStatus 落 unknown，
+            // 但热修复追踪本身代表"已完成的修复在等待发布"。与「待审核 PR」路径口径一致：有 PR 号的按 pending 呈现，
+            // 避免可操作的 open PR 修复被渲染成灰色 unknown（PR #1036 Codex P2）。
+            if (publishStatus == DefectResolutionPublishStatus.Unknown && trace.PullRequestNumber.HasValue)
+            {
+                publishStatus = ResolvePendingReviewPublishStatus(trace);
+            }
             defectsById.TryGetValue(trace.DefectId, out var defect);
             return new HotfixEntryDto
             {
