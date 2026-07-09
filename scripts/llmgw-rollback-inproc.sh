@@ -38,13 +38,14 @@ export LLMGW_MODE=inproc
 export LLMGW_HTTP_APP_CALLER_ALLOWLIST=
 export LLMGW_SHADOW_FULL_SAMPLE_PERCENT=0
 export LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST=
+export LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS=false
 
 if [ "$dry_run" = "1" ] || [ "$dry_run" = "true" ]; then
   echo "LLM Gateway rollback dry-run: $COMPOSE -f $compose_file up -d --no-deps --force-recreate $service_name"
   if [ -n "$(printf '%s' "$gateway_service" | xargs || true)" ]; then
     echo "LLM Gateway rollback dry-run: $COMPOSE -f $compose_file up -d --no-deps --force-recreate $gateway_service"
   fi
-  echo "LLM Gateway rollback dry-run completed: API would restart with LLMGW_MODE=inproc"
+  echo "LLM Gateway rollback dry-run completed: API would restart with LLMGW_MODE=inproc and disableMapConfigFallbackForActiveAppCallers=false"
 else
   # shellcheck disable=SC2086
   $COMPOSE -f "$compose_file" up -d --no-deps --force-recreate "$service_name"
@@ -57,5 +58,5 @@ else
       echo "LLM Gateway rollback: gateway service '$gateway_service' not found, refresh skipped"
     fi
   fi
-  echo "LLM Gateway rollback completed: API restarted with LLMGW_MODE=inproc"
+  echo "LLM Gateway rollback completed: API restarted with LLMGW_MODE=inproc and disableMapConfigFallbackForActiveAppCallers=false"
 fi

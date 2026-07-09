@@ -113,6 +113,10 @@ def _static_checks() -> list[dict]:
     disk_guard = disk_guard_path.read_text(encoding="utf-8") if disk_guard_path.exists() else ""
     external_backup_path = ROOT / "scripts/llmgw-prod-external-backup.sh"
     external_backup = external_backup_path.read_text(encoding="utf-8") if external_backup_path.exists() else ""
+    config_authority_backup_path = ROOT / "scripts/llmgw-config-authority-backup.sh"
+    config_authority_backup = config_authority_backup_path.read_text(encoding="utf-8") if config_authority_backup_path.exists() else ""
+    config_authority_apply_path = ROOT / "scripts/llmgw-config-authority-apply.py"
+    config_authority_apply = config_authority_apply_path.read_text(encoding="utf-8") if config_authority_apply_path.exists() else ""
     chat_bootstrap_path = ROOT / "scripts/llmgw-prod-chat-pool-bootstrap.sh"
     chat_bootstrap = chat_bootstrap_path.read_text(encoding="utf-8") if chat_bootstrap_path.exists() else ""
     chat_bootstrap_js_path = ROOT / "scripts/llmgw-prod-chat-pool-bootstrap.js"
@@ -309,6 +313,7 @@ def _static_checks() -> list[dict]:
             "stage:",
             "shadow-start",
             "rollback-rehearsal",
+            "config-authority",
             "canary-intent-text",
             "canary-chat",
             "canary-streaming",
@@ -468,6 +473,66 @@ def _static_checks() -> list[dict]:
         "prod_external_backup_streams_mongo_without_remote_archives",
         ok and external_backup_executable and not external_backup_destructive,
         f"{detail}; executable={external_backup_executable}; destructive={external_backup_destructive}",
+    ))
+
+    ok, detail = _contains_all(
+        config_authority_backup,
+        [
+            "LLM Gateway config authority backup",
+            "LLMGW_CONFIG_AUTHORITY_BACKUP_DRY_RUN",
+            "LLMGW_CONFIG_AUTHORITY_BACKUP_DATABASES:-prdagent llm_gateway",
+            "LLMGW_CONFIG_AUTHORITY_BACKUP_COLLECTIONS",
+            "prdagent.model_groups",
+            "prdagent.llmplatforms",
+            "prdagent.llmmodels",
+            "prdagent.model_exchanges",
+            "llm_gateway.*",
+            "llmgw-disk-space-guard.sh",
+            "mongodump --db \"$db\" --archive",
+            "mongodump --db \"$db\" --collection \"$collection\" --archive",
+            "gzip -t",
+            "SHA256SUMS",
+            "LLMGW_CONFIG_AUTHORITY_BACKUP_JSON_OUT",
+            "archiveCount",
+            "sha256Sums",
+        ],
+    )
+    config_authority_backup_executable = bool(
+        config_authority_backup_path.exists() and (config_authority_backup_path.stat().st_mode & stat.S_IXUSR)
+    )
+    config_authority_backup_destructive = any(
+        item in config_authority_backup
+        for item in ["rm -", "deleteMany", "dropDatabase", "docker volume rm", "down -v"]
+    )
+    checks.append(_check(
+        "config_authority_stage_backup_is_local_auditable_and_safe",
+        ok and config_authority_backup_executable and not config_authority_backup_destructive,
+        f"{detail}; executable={config_authority_backup_executable}; destructive={config_authority_backup_destructive}",
+    ))
+
+    ok, detail = _contains_all(
+        config_authority_apply,
+        [
+            "LLM Gateway 配置权威退场操作脚本",
+            "--self-test",
+            "LLM Gateway config authority apply self-test: PASS",
+            "_readiness_failures",
+            "config authority status 不是 ready",
+            "MAP fallback 对象未清零",
+            "active appCaller 尚未全部绑定有效 GW 模型池",
+            "active appCaller 缺 GW 池",
+            "mustChangePassword",
+            "config authority 操作不允许用未改密账号放行",
+        ],
+    )
+    config_authority_apply_executable = bool(
+        config_authority_apply_path.exists() and (config_authority_apply_path.stat().st_mode & stat.S_IXUSR)
+    )
+    config_authority_apply_destructive_by_default = "--execute" not in config_authority_apply or "if args.execute:" not in config_authority_apply
+    checks.append(_check(
+        "config_authority_apply_has_local_readiness_self_test",
+        ok and config_authority_apply_executable and not config_authority_apply_destructive_by_default,
+        f"{detail}; executable={config_authority_apply_executable}; destructiveByDefault={config_authority_apply_destructive_by_default}",
     ))
 
     ok, detail = _contains_all(
@@ -783,6 +848,7 @@ def _static_checks() -> list[dict]:
             "canary-image",
             "canary-asr",
             "canary-video-asr",
+            "config-authority",
             "rollback-rehearsal",
             "http-full",
             "rollback-inproc",
@@ -807,8 +873,11 @@ def _static_checks() -> list[dict]:
             "docker-compose.yml",
             "cds-compose.yml",
             "execdep.sh",
+            "scripts/llmgw-protocol-router-audit.py",
             "scripts/llmgw-map-shadow-seed.py",
             "scripts/llmgw-report-agent-shadow-seed.py",
+            "scripts/llmgw-config-authority-backup.sh",
+            "scripts/llmgw-config-authority-apply.py",
             "deploy/nginx/conf.d/branches/_standalone.conf",
             "git show \"$commit:<critical rollout/deploy files>\" | cmp local files",
             "local rollout/deploy files must match --commit",
@@ -842,8 +911,25 @@ def _static_checks() -> list[dict]:
             "gw-smoke.json",
             "upstream-readiness.json",
             "provider-audit.json",
+            "protocol-router-audit.json",
+            "protocolRouterAuditJson",
+            "protocolRouterAuditMd",
+            "disableMapConfigFallbackForActiveAppCallers",
+            "disable_map_fallback_default=true",
+            "LLMGW_STAGE_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS",
+            "LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS",
+            "export LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS=\"$disable_map_fallback_for_active_app_callers\"",
+            "--disable-map-config-fallback-for-active-app-callers \"$disable_map_fallback_for_active_app_callers\"",
+            "run_protocol_router_audit_evidence",
+            "scripts/llmgw-protocol-router-audit.py --json-out",
+            "--protocol-router-audit-json \"$protocol_router_audit_json\"",
             "video-canary.json",
             "asr-http-canary.json",
+            "config-authority-backup.json",
+            "configAuthorityBackupJson",
+            "LLMGW_CONFIG_AUTHORITY_BACKUP_DRY_RUN=0",
+            "LLMGW_CONFIG_AUTHORITY_BACKUP_JSON_OUT=\"$config_authority_backup_json\"",
+            "LLMGW_CONFIG_AUTHORITY_BACKUP_REPORT_MD=\"$config_authority_backup_md\"",
             "LLMGW_STAGE_RUN_UPSTREAM_READINESS",
             "run_upstream_readiness_evidence",
             "scripts/llmgw-upstream-readiness.py",
@@ -872,6 +958,7 @@ def _static_checks() -> list[dict]:
             "run_rollout_status_ready_gate",
             "scripts/llmgw-rollout-status.py",
             "--require-ready",
+            "validate_release_tree\nrun_protocol_router_audit_evidence\nrun_rollout_status_ready_gate",
             "--upstream-readiness-json \"$upstream_readiness_json\"",
             "--upstream-readiness-required \"$run_upstream_readiness\"",
             "--provider-audit-json \"$provider_audit_json\"",
@@ -880,6 +967,7 @@ def _static_checks() -> list[dict]:
             "--video-canary-required \"$run_video_canary\"",
             "--asr-http-canary-json \"$asr_http_canary_json\"",
             "--asr-http-canary-required \"$run_asr_http_canary\"",
+            "--external-backup-json \"$config_authority_backup_json\"",
             "--smoke-required \"$smoke_required\"",
             "LLMGW_GATE_RUN_SMOKE:-1",
             "videoCanaryJson",
@@ -910,7 +998,7 @@ def _static_checks() -> list[dict]:
     fast_idx = prod_stage.find("run_or_print ./fast.sh")
     video_canary_idx = prod_stage.find("run_video_canary_evidence\n\nrun_asr_http_canary_evidence")
     asr_canary_idx = prod_stage.find("run_asr_http_canary_evidence\n\nrun_shadow_seed_evidence")
-    release_tree_before_status_idx = prod_stage.find("validate_release_tree\nrun_rollout_status_ready_gate")
+    release_tree_before_status_idx = prod_stage.find("validate_release_tree\nrun_protocol_router_audit_evidence\nrun_rollout_status_ready_gate")
     upstream_before_deploy = (
         preflight_idx >= 0
         and upstream_idx >= 0
@@ -928,6 +1016,7 @@ def _static_checks() -> list[dict]:
             "ROLLBACK_REHEARSAL_STAGE = \"rollback-rehearsal\"",
             "_stage_requires_rehearsal",
             "shadow-start",
+            "config-authority",
             "canary-asr",
             "canary-video-asr",
             "http-full",
@@ -948,6 +1037,9 @@ def _static_checks() -> list[dict]:
             "ensure_ascii=False",
             "\"status\": args.status",
             "\"evidenceJson\": args.evidence_json",
+            "\"disableMapConfigFallbackForActiveAppCallers\": _bool_flag(args.disable_map_config_fallback_for_active_app_callers)",
+            "append_parser.add_argument(\"--disable-map-config-fallback-for-active-app-callers\", default=\"0\")",
+            "report_parser.add_argument(\"--disable-map-config-fallback-for-active-app-callers\", default=\"0\")",
             "\"prodPreflightJson\": args.prod_preflight_json",
             "\"upstreamReadinessJson\": args.upstream_readiness_json",
             "\"upstreamReadinessRequired\": _bool_flag(args.upstream_readiness_required)",
@@ -958,6 +1050,14 @@ def _static_checks() -> list[dict]:
             "_require_provider_audit",
             "provider config audit evidence",
             "\"providerAuditExternalBlockers\": provider_external_blockers",
+            "_require_protocol_router_audit",
+            "_require_http_full_map_fallback_exit",
+            "http-full success requires --disable-map-config-fallback-for-active-app-callers=true",
+            "\"protocolRouterAuditJson\": args.protocol_router_audit_json",
+            "append_parser.add_argument(\"--protocol-router-audit-json\", default=\"\")",
+            "report_parser.add_argument(\"--protocol-router-audit-json\", default=\"\")",
+            "protocol router audit evidence",
+            "targetComplete must remain false until runtime gates pass",
             "_provider_external_blockers",
             "contains external blockers",
             "providerExternalBlockers",
@@ -974,6 +1074,14 @@ def _static_checks() -> list[dict]:
             "\"asrHttpCanaryExternalBlockers\": asr_http_canary_external_blockers",
             "_require_asr_http_canary",
             "ASR HTTP canary evidence",
+            "\"configAuthorityJson\": args.config_authority_json",
+            "\"externalBackupJson\": args.external_backup_json",
+            "_require_external_backup",
+            "external backup evidence",
+            "is dry-run evidence",
+            "archiveCount is zero",
+            "_require_config_authority_apply",
+            "config authority evidence",
             "_require_prod_preflight_for_commit",
             "production preflight evidence",
             "\"servingProbeJson\": args.serving_probe_json",
@@ -1193,6 +1301,7 @@ def _static_checks() -> list[dict]:
             "export LLMGW_MODE=inproc",
             "export LLMGW_HTTP_APP_CALLER_ALLOWLIST=",
             "export LLMGW_SHADOW_FULL_SAMPLE_PERCENT=0",
+            "export LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS=false",
             "LLMGW_ROLLBACK_DRY_RUN",
             "LLM Gateway rollback dry-run",
             "up -d --no-deps --force-recreate",
@@ -1212,6 +1321,8 @@ def _static_checks() -> list[dict]:
             "export LLMGW_MODE=shadow",
             "export LLMGW_HTTP_APP_CALLER_ALLOWLIST=",
             "export LLMGW_SHADOW_FULL_SAMPLE_PERCENT=\"$sample_percent\"",
+            "export LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS=false",
+            "\"LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS\": \"false\"",
             "LLMGW_RESTORE_DRY_RUN",
             "LLMGW_RESTORE_ENV_FILE",
             "LLMGW_RESTORE_PERSIST_ENV",
@@ -1296,12 +1407,15 @@ def _static_checks() -> list[dict]:
     checks.append(_check("multipart_http_path_has_refs_rehydrate_and_hash_guard", ok and no_unsupported, f"{detail}; noUnsupported={no_unsupported}"))
 
     compose = _read("docker-compose.yml")
+    cds_compose = _read("cds-compose.yml")
     ok, detail = _contains_all(
-        compose,
+        compose + "\n" + cds_compose,
         [
             "LlmGateway__Mode=${LLMGW_MODE:-inproc}",
             "LlmGateway__HttpAppCallerAllowlist=${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}",
             "LlmGateway__ShadowFullSamplePercent=${LLMGW_SHADOW_FULL_SAMPLE_PERCENT:-0}",
+            "LlmGateway__DisableMapConfigFallbackForActiveAppCallers=${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}",
+            "LlmGateway__DisableMapConfigFallbackForActiveAppCallers: \"${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}\"",
             "LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}",
             "LlmGwServe__ApiKey=${LLMGW_SERVE_KEY:?",
             "LLMGW_ADMIN_PASSWORD=${LLMGW_ADMIN_PASSWORD:-}",
@@ -1329,7 +1443,8 @@ def _rollback_dry_run() -> dict:
             "printf 'ARGS=%s\\n' \"$*\" > \"$FAKE_ROLLBACK_OUT\"\n"
             "printf 'LLMGW_MODE=%s\\n' \"$LLMGW_MODE\" >> \"$FAKE_ROLLBACK_OUT\"\n"
             "printf 'ALLOWLIST=%s\\n' \"$LLMGW_HTTP_APP_CALLER_ALLOWLIST\" >> \"$FAKE_ROLLBACK_OUT\"\n"
-            "printf 'SHADOW=%s\\n' \"$LLMGW_SHADOW_FULL_SAMPLE_PERCENT\" >> \"$FAKE_ROLLBACK_OUT\"\n",
+            "printf 'SHADOW=%s\\n' \"$LLMGW_SHADOW_FULL_SAMPLE_PERCENT\" >> \"$FAKE_ROLLBACK_OUT\"\n"
+            "printf 'DISABLE_MAP_FALLBACK=%s\\n' \"$LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS\" >> \"$FAKE_ROLLBACK_OUT\"\n",
             encoding="utf-8",
         )
         fake_compose.chmod(0o755)
@@ -1347,7 +1462,7 @@ def _rollback_dry_run() -> dict:
             and "dryRun: 1" in stdout
             and "LLM Gateway rollback dry-run" in stdout
             and "up -d --no-deps --force-recreate api" in stdout
-            and "API would restart with LLMGW_MODE=inproc" in stdout
+            and "API would restart with LLMGW_MODE=inproc and disableMapConfigFallbackForActiveAppCallers=false" in stdout
         )
         return {"name": "rollback_dry_run", "ok": ok, "detail": stdout + captured, "command": result}
 
@@ -1362,7 +1477,8 @@ def _restore_shadow_dry_run() -> dict:
             "printf 'ARGS=%s\\n' \"$*\" > \"$FAKE_RESTORE_OUT\"\n"
             "printf 'LLMGW_MODE=%s\\n' \"$LLMGW_MODE\" >> \"$FAKE_RESTORE_OUT\"\n"
             "printf 'ALLOWLIST=%s\\n' \"$LLMGW_HTTP_APP_CALLER_ALLOWLIST\" >> \"$FAKE_RESTORE_OUT\"\n"
-            "printf 'SHADOW=%s\\n' \"$LLMGW_SHADOW_FULL_SAMPLE_PERCENT\" >> \"$FAKE_RESTORE_OUT\"\n",
+            "printf 'SHADOW=%s\\n' \"$LLMGW_SHADOW_FULL_SAMPLE_PERCENT\" >> \"$FAKE_RESTORE_OUT\"\n"
+            "printf 'DISABLE_MAP_FALLBACK=%s\\n' \"$LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS\" >> \"$FAKE_RESTORE_OUT\"\n",
             encoding="utf-8",
         )
         fake_compose.chmod(0o755)
@@ -1385,7 +1501,8 @@ def _restore_shadow_dry_run() -> dict:
             and "env file would be updated" in stdout
             and "LLM Gateway restore dry-run" in stdout
             and "up -d --no-deps --force-recreate api" in stdout
-            and "API would restart with LLMGW_MODE=shadow and sample=1" in stdout
+            and "disableMapConfigFallbackForActiveAppCallers: false" in stdout
+            and "API would restart with LLMGW_MODE=shadow, sample=1, and disableMapConfigFallbackForActiveAppCallers=false" in stdout
         )
         return {"name": "restore_shadow_dry_run", "ok": ok, "detail": stdout + captured, "command": result}
 
@@ -1400,7 +1517,8 @@ def _restore_shadow_persist_env_test() -> dict:
             "UNCHANGED=value\n"
             "LLMGW_MODE=http\n"
             "LLMGW_HTTP_APP_CALLER_ALLOWLIST=image-worker.text2img\n"
-            "LLMGW_SHADOW_FULL_SAMPLE_PERCENT=100\n",
+            "LLMGW_SHADOW_FULL_SAMPLE_PERCENT=100\n"
+            "LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS=true\n",
             encoding="utf-8",
         )
         fake_compose.write_text(
@@ -1408,7 +1526,8 @@ def _restore_shadow_persist_env_test() -> dict:
             "printf 'ARGS=%s\\n' \"$*\" >> \"$FAKE_RESTORE_OUT\"\n"
             "printf 'LLMGW_MODE=%s\\n' \"$LLMGW_MODE\" >> \"$FAKE_RESTORE_OUT\"\n"
             "printf 'ALLOWLIST=%s\\n' \"$LLMGW_HTTP_APP_CALLER_ALLOWLIST\" >> \"$FAKE_RESTORE_OUT\"\n"
-            "printf 'SHADOW=%s\\n' \"$LLMGW_SHADOW_FULL_SAMPLE_PERCENT\" >> \"$FAKE_RESTORE_OUT\"\n",
+            "printf 'SHADOW=%s\\n' \"$LLMGW_SHADOW_FULL_SAMPLE_PERCENT\" >> \"$FAKE_RESTORE_OUT\"\n"
+            "printf 'DISABLE_MAP_FALLBACK=%s\\n' \"$LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS\" >> \"$FAKE_RESTORE_OUT\"\n",
             encoding="utf-8",
         )
         fake_compose.chmod(0o755)
@@ -1428,14 +1547,55 @@ def _restore_shadow_persist_env_test() -> dict:
             and "LLMGW_MODE=shadow" in persisted
             and "LLMGW_HTTP_APP_CALLER_ALLOWLIST=\n" in persisted
             and "LLMGW_SHADOW_FULL_SAMPLE_PERCENT=1" in persisted
+            and "LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS=false" in persisted
             and "UNCHANGED=value" in persisted
             and "LLMGW_MODE=shadow" in captured
             and "ALLOWLIST=\n" in captured
             and "SHADOW=1" in captured
+            and "DISABLE_MAP_FALLBACK=false" in captured
             and "up -d --no-deps --force-recreate api" in captured
         )
         detail = str(result.get("stdout") or "") + captured + "\n" + persisted
         return {"name": "restore_shadow_persist_env_test", "ok": ok, "detail": detail, "command": result}
+
+
+def _http_full_map_fallback_exit_gate_test() -> dict:
+    with tempfile.TemporaryDirectory(prefix="llmgw-http-full-fallback-gate-") as tmp:
+        out_json = Path(tmp) / "stage.json"
+        out_md = Path(tmp) / "stage.md"
+        result = _run(
+            [
+                "python3",
+                "scripts/llmgw-rollout-ledger.py",
+                "stage-report",
+                "--json-out",
+                str(out_json),
+                "--report-md",
+                str(out_md),
+                "--stage",
+                "http-full",
+                "--status",
+                "success",
+                "--commit",
+                "a" * 40,
+                "--mode",
+                "http",
+                "--disable-map-config-fallback-for-active-app-callers",
+                "false",
+                "--release-gate-required",
+                "0",
+                "--smoke-required",
+                "0",
+            ],
+            timeout=60,
+        )
+        detail = result["stdout"] + result["stderr"]
+        ok = (
+            not result["ok"]
+            and "http-full success requires --disable-map-config-fallback-for-active-app-callers=true" in detail
+            and "Full HTTP acceptance must fail closed for active appCallers" in detail
+        )
+        return {"name": "http_full_map_fallback_exit_gate_test", "ok": ok, "detail": detail, "command": result}
 
 
 def _provider_audit_self_test() -> dict:
@@ -1461,6 +1621,26 @@ def _provider_audit_self_test() -> dict:
     return {"name": "provider_audit_external_blocker_self_test", "ok": ok, "detail": detail, "command": result}
 
 
+def _config_authority_apply_self_test() -> dict:
+    result = _run(
+        ["python3", "scripts/llmgw-config-authority-apply.py", "--self-test"],
+        timeout=60,
+    )
+    detail = (result["stdout"] + result["stderr"]).strip()
+    ok = result["ok"] and "LLM Gateway config authority apply self-test: PASS" in detail
+    return {"name": "config_authority_apply_self_test", "ok": ok, "detail": detail, "command": result}
+
+
+def _release_gate_self_test() -> dict:
+    result = _run(
+        ["python3", "scripts/llmgw-release-gate.py", "--self-test"],
+        timeout=60,
+    )
+    detail = (result["stdout"] + result["stderr"]).strip()
+    ok = result["ok"] and "LLM Gateway release gate self-test: PASS" in detail
+    return {"name": "release_gate_runtime_gates_self_test", "ok": ok, "detail": detail, "command": result}
+
+
 def _rollout_status_self_test() -> dict:
     result = _run(
         ["python3", "scripts/llmgw-rollout-status.py", "--self-test"],
@@ -1469,6 +1649,43 @@ def _rollout_status_self_test() -> dict:
     detail = (result["stdout"] + result["stderr"]).strip()
     ok = result["ok"] and "LLM Gateway rollout status self-test: PASS" in detail
     return {"name": "rollout_status_board_self_test", "ok": ok, "detail": detail, "command": result}
+
+
+def _protocol_router_target_audit() -> dict:
+    with tempfile.TemporaryDirectory(prefix="llmgw-protocol-router-audit-") as tmp:
+        json_out = str(Path(tmp) / "protocol-router-audit.json")
+        result = _run(
+            ["python3", "scripts/llmgw-protocol-router-audit.py", "--json-out", json_out],
+            timeout=60,
+        )
+        detail = (result["stdout"] + result["stderr"]).strip()
+        ok = result["ok"] and "LLM Gateway protocol router audit: PASS" in detail
+        try:
+            payload = json.loads(Path(json_out).read_text(encoding="utf-8"))
+            remaining = payload.get("remainingRuntimeGates") or []
+            remaining_names = [
+                str(item.get("name") or "")
+                for item in remaining
+                if isinstance(item, dict) and item.get("name")
+            ]
+            ok = (
+                ok
+                and payload.get("verdict") == "pass"
+                and payload.get("scope") == "static-code-and-document-evidence"
+                and payload.get("targetComplete") is False
+                and bool(remaining_names)
+            )
+            detail = json.dumps({
+                "verdict": payload.get("verdict"),
+                "scope": payload.get("scope"),
+                "targetComplete": payload.get("targetComplete"),
+                "staticEvidencePercent": payload.get("staticEvidencePercent"),
+                "remainingRuntimeGates": remaining_names,
+            }, ensure_ascii=False, sort_keys=True)
+        except Exception as exc:
+            ok = False
+            detail = f"{detail}\nfailed to parse protocol router audit JSON: {exc}"
+        return {"name": "protocol_router_target_audit", "ok": ok, "detail": detail, "command": result}
 
 
 def _dotnet_checks() -> list[dict]:
@@ -1584,6 +1801,18 @@ def _gw_smoke(args: argparse.Namespace) -> dict:
         env["GW_TIMEOUT"] = str(args.smoke_timeout_seconds)
     if args.expect_commit:
         env["GW_EXPECT_COMMIT"] = args.expect_commit
+    if args.smoke_route_matrix:
+        env["GW_SMOKE_ROUTE_MATRIX"] = "1"
+    if args.smoke_route_app_caller:
+        env["GW_SMOKE_ROUTE_APP_CALLER"] = args.smoke_route_app_caller
+    if args.smoke_route_model_type:
+        env["GW_SMOKE_ROUTE_MODEL_TYPE"] = args.smoke_route_model_type
+    if args.smoke_route_pool_id:
+        env["GW_SMOKE_ROUTE_POOL_ID"] = args.smoke_route_pool_id
+    if args.smoke_route_pinned_platform_id:
+        env["GW_SMOKE_ROUTE_PINNED_PLATFORM_ID"] = args.smoke_route_pinned_platform_id
+    if args.smoke_route_pinned_model_id:
+        env["GW_SMOKE_ROUTE_PINNED_MODEL_ID"] = args.smoke_route_pinned_model_id
     result = _run(["python3", "scripts/gw-smoke.py"], env=env, timeout=max(60, args.smoke_timeout_seconds * 10))
     return {"name": "gw_smoke_d_layer", "ok": result["ok"], "detail": result["stdout"] + result["stderr"], "command": result}
 
@@ -1864,6 +2093,12 @@ def main() -> int:
     parser.add_argument("--serving-probe-samples", type=int, default=int(os.environ.get("LLMGW_SERVING_PROBE_SAMPLES", "12")))
     parser.add_argument("--serving-probe-interval", type=float, default=float(os.environ.get("LLMGW_SERVING_PROBE_INTERVAL_SECONDS", "5")))
     parser.add_argument("--smoke-timeout-seconds", type=int, default=int(os.environ.get("GW_TIMEOUT", "120")))
+    parser.add_argument("--smoke-route-matrix", action="store_true", default=os.environ.get("GW_SMOKE_ROUTE_MATRIX", "").strip().lower() in {"1", "true", "yes", "on"}, help="run gw-smoke /resolve auto/pool/pinned route matrix")
+    parser.add_argument("--smoke-route-app-caller", default=os.environ.get("GW_SMOKE_ROUTE_APP_CALLER", "report-agent.generate::chat"))
+    parser.add_argument("--smoke-route-model-type", default=os.environ.get("GW_SMOKE_ROUTE_MODEL_TYPE", "chat"))
+    parser.add_argument("--smoke-route-pool-id", default=os.environ.get("GW_SMOKE_ROUTE_POOL_ID", ""))
+    parser.add_argument("--smoke-route-pinned-platform-id", default=os.environ.get("GW_SMOKE_ROUTE_PINNED_PLATFORM_ID", ""))
+    parser.add_argument("--smoke-route-pinned-model-id", default=os.environ.get("GW_SMOKE_ROUTE_PINNED_MODEL_ID", ""))
     parser.add_argument("--require-release-gate", action="store_true", help="fail when --base/--key are missing and run live release gate")
     parser.add_argument("--json-out", default=os.environ.get("LLMGW_READINESS_JSON_OUT", ""))
     parser.add_argument("--report-md", default=os.environ.get("LLMGW_READINESS_REPORT_MD", ""))
@@ -1874,8 +2109,12 @@ def main() -> int:
     checks.append(_rollback_dry_run())
     checks.append(_restore_shadow_dry_run())
     checks.append(_restore_shadow_persist_env_test())
+    checks.append(_http_full_map_fallback_exit_gate_test())
     checks.append(_provider_audit_self_test())
+    checks.append(_config_authority_apply_self_test())
+    checks.append(_release_gate_self_test())
     checks.append(_rollout_status_self_test())
+    checks.append(_protocol_router_target_audit())
     if args.run_dotnet:
         checks.extend(_dotnet_checks())
     if args.run_smoke:

@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 
 STAGES = [
     "shadow-start",
+    "config-authority",
     "canary-intent-text",
     "canary-chat",
     "canary-streaming",
@@ -26,9 +27,15 @@ STAGES = [
     "http-full",
 ]
 ROLLBACK_REHEARSAL_STAGE = "rollback-rehearsal"
+CONFIG_AUTHORITY_STAGE = "config-authority"
+HTTP_FULL_MAP_FALLBACK_EXIT_ERROR = (
+    "http-full success requires --disable-map-config-fallback-for-active-app-callers=true. "
+    "Full HTTP acceptance must fail closed for active appCallers and cannot keep MAP config fallback enabled."
+)
 ROLLOUT_SEQUENCE = [
     "shadow-start",
     ROLLBACK_REHEARSAL_STAGE,
+    CONFIG_AUTHORITY_STAGE,
     "canary-intent-text",
     "canary-chat",
     "canary-streaming",
@@ -169,7 +176,35 @@ def _require_smoke_for_commit(path: str, label: str, commit: str) -> None:
         raise SystemExit(f"ERROR: {label} D-layer smoke healthCommit mismatch: {path} actual={health_commit} expected={expected}")
 
 
-def _require_release_gate_for_commit(path: str, label: str, commit: str) -> None:
+def _require_smoke_route_matrix(path: str, label: str) -> None:
+    payload = _require_pass_json(path, label)
+    rows = payload.get("rows") or payload.get("Rows") or []
+    if not isinstance(rows, list):
+        raise SystemExit(f"ERROR: {label} route matrix rows are not a list: {path}")
+
+    missing: list[str] = []
+    failed: list[str] = []
+    skipped: list[str] = []
+    for prefix in ["route-auto", "route-pool", "route-pinned"]:
+        matches = [
+            row for row in rows
+            if isinstance(row, dict) and str(row.get("case") or row.get("Case") or "").startswith(prefix)
+        ]
+        if not matches:
+            missing.append(prefix)
+            continue
+        if not any(str(row.get("status") or row.get("Status") or "").lower() == "pass" for row in matches):
+            failed.append(prefix)
+        if any("skipped:" in str(row.get("detail") or row.get("Detail") or "").lower() for row in matches):
+            skipped.append(prefix)
+    if missing or failed or skipped:
+        raise SystemExit(
+            f"ERROR: {label} route matrix incomplete: {path} "
+            f"missing={','.join(missing) or 'none'} failed={','.join(failed) or 'none'} skipped={','.join(skipped) or 'none'}"
+        )
+
+
+def _require_release_gate_for_commit(path: str, label: str, commit: str, require_config_authority: bool = False) -> None:
     payload = _require_pass_json(path, label)
     expected = _normalize_commit(commit)
     if not expected:
@@ -191,6 +226,52 @@ def _require_release_gate_for_commit(path: str, label: str, commit: str) -> None
             raise SystemExit(
                 f"ERROR: {label} shadowChecks[{item_label}] releaseCommit mismatch: "
                 f"{path} actual={item_commit or 'empty'} expected={expected}"
+            )
+
+    if require_config_authority:
+        config = payload.get("configAuthority") or payload.get("ConfigAuthority") or {}
+        if not isinstance(config, dict):
+            raise SystemExit(f"ERROR: {label} missing configAuthority object for http-full gate: {path}")
+        required = bool(config.get("required") if "required" in config else config.get("Required"))
+        ok = bool(config.get("ok") if "ok" in config else config.get("Ok"))
+        status = str(config.get("status") or config.get("Status") or "").lower()
+        map_remaining = config.get("mapFallbackObjectsRemaining")
+        if map_remaining is None:
+            map_remaining = config.get("MapFallbackObjectsRemaining")
+        active_ready = config.get("activeAppCallerMapFallbackReady")
+        if active_ready is None:
+            active_ready = config.get("ActiveAppCallerMapFallbackReady")
+        if not required or not ok:
+            raise SystemExit(
+                f"ERROR: {label} configAuthority is not required+ok for http-full gate: "
+                f"{path} required={required} ok={ok}"
+            )
+        if status != "ready":
+            raise SystemExit(f"ERROR: {label} configAuthority status is not ready: {path} status={status or 'empty'}")
+        if int(map_remaining or 0) != 0:
+            raise SystemExit(
+                f"ERROR: {label} configAuthority mapFallbackObjectsRemaining is not zero: "
+                f"{path} value={map_remaining}"
+            )
+        if active_ready is not True:
+            raise SystemExit(f"ERROR: {label} activeAppCallerMapFallbackReady is not true: {path}")
+
+        runtime = payload.get("runtimeGates") or payload.get("RuntimeGates") or {}
+        if not isinstance(runtime, dict):
+            raise SystemExit(f"ERROR: {label} missing runtimeGates object for http-full gate: {path}")
+        runtime_required = bool(runtime.get("required") if "required" in runtime else runtime.get("Required"))
+        runtime_ok = bool(runtime.get("ok") if "ok" in runtime else runtime.get("Ok"))
+        runtime_ready = bool(runtime.get("readyForHttpFull") if "readyForHttpFull" in runtime else runtime.get("ReadyForHttpFull"))
+        remaining = runtime.get("remainingRuntimeGates")
+        if remaining is None:
+            remaining = runtime.get("RemainingRuntimeGates")
+        if not isinstance(remaining, list):
+            remaining = []
+        if not runtime_required or not runtime_ok or not runtime_ready:
+            raise SystemExit(
+                f"ERROR: {label} runtimeGates is not required+ok+ready for http-full gate: "
+                f"{path} required={runtime_required} ok={runtime_ok} readyForHttpFull={runtime_ready} "
+                f"remaining={','.join(str(x) for x in remaining) or 'none'}"
             )
 
 
@@ -292,8 +373,77 @@ def _require_asr_http_canary(path: str, label: str) -> None:
     _require_pass_json(path, label)
 
 
+def _require_config_authority_apply(path: str, label: str) -> None:
+    payload = _require_pass_json(path, label)
+    if payload.get("execute") is not True and payload.get("Execute") is not True:
+        raise SystemExit(f"ERROR: {label} was not executed: {path}")
+
+    after = payload.get("after") or payload.get("After") or {}
+    if not isinstance(after, dict):
+        raise SystemExit(f"ERROR: {label} missing final after report: {path}")
+
+    status = str(after.get("status") or after.get("Status") or "").lower()
+    map_remaining = after.get("mapFallbackObjectsRemaining")
+    if map_remaining is None:
+        map_remaining = after.get("MapFallbackObjectsRemaining")
+    active_ready = after.get("activeAppCallerMapFallbackReady")
+    if active_ready is None:
+        active_ready = after.get("ActiveAppCallerMapFallbackReady")
+    active_missing = after.get("activeMissingGatewayPool")
+    if active_missing is None:
+        active_missing = after.get("ActiveMissingGatewayPool")
+
+    if status != "ready":
+        raise SystemExit(f"ERROR: {label} final status is not ready: {path} status={status or 'empty'}")
+    if int(map_remaining or 0) != 0:
+        raise SystemExit(
+            f"ERROR: {label} final mapFallbackObjectsRemaining is not zero: {path} value={map_remaining}"
+        )
+    if active_ready is not True:
+        raise SystemExit(f"ERROR: {label} final activeAppCallerMapFallbackReady is not true: {path}")
+    if int(active_missing or 0) != 0:
+        raise SystemExit(f"ERROR: {label} final activeMissingGatewayPool is not zero: {path} value={active_missing}")
+
+
+def _require_external_backup(path: str, label: str) -> None:
+    payload = _require_pass_json(path, label)
+    backup_dir = str(payload.get("backupDir") or payload.get("BackupDir") or "").strip()
+    if not backup_dir:
+        raise SystemExit(f"ERROR: {label} missing backupDir: {path}")
+    dry_run = bool(payload.get("dryRun") if "dryRun" in payload else payload.get("DryRun"))
+    if dry_run:
+        raise SystemExit(f"ERROR: {label} is dry-run evidence, not an executed backup: {path}")
+    archive_count = int(payload.get("archiveCount") or payload.get("ArchiveCount") or 0)
+    if archive_count <= 0:
+        raise SystemExit(f"ERROR: {label} archiveCount is zero: {path}")
+    sha256_sums = str(payload.get("sha256Sums") or payload.get("Sha256Sums") or "").strip()
+    if not sha256_sums:
+        raise SystemExit(f"ERROR: {label} missing sha256Sums: {path}")
+
+
+def _require_protocol_router_audit(path: str, label: str) -> None:
+    payload = _require_pass_json(path, label)
+    scope = str(payload.get("scope") or payload.get("Scope") or "").strip()
+    if scope != "static-code-and-document-evidence":
+        raise SystemExit(f"ERROR: {label} scope is not static-code-and-document-evidence: {path} scope={scope or 'empty'}")
+    if payload.get("targetComplete") is not False and payload.get("TargetComplete") is not False:
+        raise SystemExit(f"ERROR: {label} targetComplete must remain false until runtime gates pass: {path}")
+    remaining = payload.get("remainingRuntimeGates")
+    if remaining is None:
+        remaining = payload.get("RemainingRuntimeGates")
+    if not isinstance(remaining, list) or not remaining:
+        raise SystemExit(f"ERROR: {label} missing remainingRuntimeGates: {path}")
+
+
 def _bool_flag(value: str) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _require_http_full_map_fallback_exit(stage: str, status: str, value: str, label: str) -> None:
+    if stage != "http-full" or status != "success":
+        return
+    if not _bool_flag(value):
+        raise SystemExit(f"ERROR: {label} {HTTP_FULL_MAP_FALLBACK_EXIT_ERROR}")
 
 
 def _parse_recorded_at(value: object) -> datetime | None:
@@ -387,6 +537,10 @@ def _required_rollout_stages(target_stage: str, require_target_success: bool) ->
     return ROLLOUT_SEQUENCE[:end]
 
 
+def _observation_stages(stages: list[str]) -> list[str]:
+    return [stage for stage in stages if stage != CONFIG_AUTHORITY_STAGE]
+
+
 def _entry_evidence_failures(entry: dict) -> list[str]:
     stage = str(entry.get("stage") or "")
     commit = _normalize_commit(entry.get("commit"))
@@ -406,8 +560,31 @@ def _entry_evidence_failures(entry: dict) -> list[str]:
         _require_stage_evidence_matches_entry(evidence_json, f"{stage} stage evidence", entry)
     except SystemExit as exc:
         failures.append(str(exc))
+    protocol_router_audit_json = str(entry.get("protocolRouterAuditJson") or "")
+    if protocol_router_audit_json:
+        try:
+            _require_protocol_router_audit(protocol_router_audit_json, f"{stage} protocol router audit evidence")
+        except SystemExit as exc:
+            failures.append(str(exc))
 
     if stage == ROLLBACK_REHEARSAL_STAGE:
+        return failures
+
+    if stage == CONFIG_AUTHORITY_STAGE:
+        try:
+            _require_external_backup(
+                str(entry.get("externalBackupJson") or ""),
+                f"{stage} external backup evidence",
+            )
+        except SystemExit as exc:
+            failures.append(str(exc))
+        try:
+            _require_config_authority_apply(
+                str(entry.get("configAuthorityJson") or ""),
+                f"{stage} config authority evidence",
+            )
+        except SystemExit as exc:
+            failures.append(str(exc))
         return failures
 
     try:
@@ -427,6 +604,8 @@ def _entry_evidence_failures(entry: dict) -> list[str]:
                 _require_serving_probe_for_commit(str(entry.get(key) or ""), f"{stage} {label}", commit)
             else:
                 _require_smoke_for_commit(str(entry.get(key) or ""), f"{stage} {label}", commit)
+                if _bool_flag(str(entry.get("smokeRouteMatrixRequired", False))):
+                    _require_smoke_route_matrix(str(entry.get(key) or ""), f"{stage} D-layer smoke route matrix evidence")
         except SystemExit as exc:
             failures.append(str(exc))
     if _bool_flag(str(entry.get("releaseGateRequired") or "0")):
@@ -584,8 +763,13 @@ def validate(args: argparse.Namespace) -> int:
     except (TypeError, ValueError):
         print(f"ERROR: --min-observation-hours must be a non-negative number: {args.min_observation_hours}", file=sys.stderr)
         return 2
-    if min_observation_hours > 0 and required:
-        previous_stage = required[-1]
+    if min_observation_hours > 0 and required and stage != CONFIG_AUTHORITY_STAGE:
+        observation_required = _observation_stages(required)
+        if not observation_required:
+            print(f"LLM Gateway rollout ledger: no observation stage required for {stage}")
+            print(f"LLM Gateway rollout ledger: prior stages satisfied for {stage}")
+            return 0
+        previous_stage = observation_required[-1]
         previous_successes = [
             item
             for item in entries
@@ -624,14 +808,31 @@ def append(args: argparse.Namespace) -> int:
     if parent:
         os.makedirs(parent, exist_ok=True)
     if args.status == "success":
+        _require_http_full_map_fallback_exit(
+            args.stage,
+            args.status,
+            args.disable_map_config_fallback_for_active_app_callers,
+            "rollout ledger append",
+        )
         _require_stage_evidence_for_commit(args.evidence_json, "stage evidence", args.commit)
-        if args.stage != ROLLBACK_REHEARSAL_STAGE:
+        _require_protocol_router_audit(args.protocol_router_audit_json, "protocol router audit evidence")
+        if args.stage == CONFIG_AUTHORITY_STAGE:
+            _require_external_backup(args.external_backup_json, "external backup evidence")
+            _require_config_authority_apply(args.config_authority_json, "config authority evidence")
+        elif args.stage != ROLLBACK_REHEARSAL_STAGE:
             _require_prod_preflight_for_commit(args.prod_preflight_json, "production preflight evidence", args.commit)
             _require_serving_probe_for_commit(args.serving_probe_json, "serving probe evidence", args.commit)
             if _bool_flag(args.smoke_required):
                 _require_smoke_for_commit(args.smoke_json, "D-layer smoke evidence", args.commit)
+                if _bool_flag(args.smoke_route_matrix_required):
+                    _require_smoke_route_matrix(args.smoke_json, "D-layer smoke route matrix evidence")
             if _bool_flag(args.release_gate_required):
-                _require_release_gate_for_commit(args.release_gate_json, "release gate evidence", args.commit)
+                _require_release_gate_for_commit(
+                    args.release_gate_json,
+                    "release gate evidence",
+                    args.commit,
+                    require_config_authority=args.stage == "http-full",
+                )
             if _bool_flag(args.upstream_readiness_required):
                 _require_upstream_readiness(args.upstream_readiness_json, "upstream readiness evidence")
             if _bool_flag(args.provider_audit_required):
@@ -658,6 +859,7 @@ def append(args: argparse.Namespace) -> int:
         "canaryStage": args.canary_stage,
         "allowlist": args.allowlist,
         "shadowFullSamplePercent": args.shadow_full_sample_percent,
+        "disableMapConfigFallbackForActiveAppCallers": _bool_flag(args.disable_map_config_fallback_for_active_app_callers),
         "gateBase": args.gate_base,
         "evidenceJson": args.evidence_json,
         "evidenceMarkdown": args.evidence_md,
@@ -670,12 +872,15 @@ def append(args: argparse.Namespace) -> int:
         "providerAuditJson": args.provider_audit_json,
         "providerAuditRequired": _bool_flag(args.provider_audit_required),
         "providerAuditExternalBlockers": provider_external_blockers,
+        "protocolRouterAuditJson": args.protocol_router_audit_json,
         "videoCanaryJson": args.video_canary_json,
         "videoCanaryRequired": _bool_flag(args.video_canary_required),
         "videoCanaryExternalBlockers": video_canary_external_blockers,
         "asrHttpCanaryJson": args.asr_http_canary_json,
         "asrHttpCanaryRequired": _bool_flag(args.asr_http_canary_required),
         "asrHttpCanaryExternalBlockers": asr_http_canary_external_blockers,
+        "configAuthorityJson": args.config_authority_json,
+        "externalBackupJson": args.external_backup_json,
         "externalBlockers": all_external_blockers,
         "rollbackRehearsal": args.stage == ROLLBACK_REHEARSAL_STAGE,
         "allowOutOfOrder": _bool_flag(args.allow_out_of_order),
@@ -683,6 +888,7 @@ def append(args: argparse.Namespace) -> int:
         "servingProbeJson": args.serving_probe_json,
         "smokeJson": args.smoke_json,
         "smokeRequired": _bool_flag(args.smoke_required),
+        "smokeRouteMatrixRequired": _bool_flag(args.smoke_route_matrix_required),
         "releaseMainRef": args.main_ref,
         "releaseMainSha": args.main_sha.lower(),
         "minStageObservationHours": args.min_stage_observation_hours,
@@ -724,6 +930,7 @@ def _write_markdown(path: str, report: dict) -> None:
         fh.write(f"- mode: `{cell(report['mode'])}`\n")
         fh.write(f"- canaryStage: `{cell(report['canaryStage'])}`\n")
         fh.write(f"- allowlist: `{cell(report['allowlist'])}`\n")
+        fh.write(f"- disableMapConfigFallbackForActiveAppCallers: `{cell(report['disableMapConfigFallbackForActiveAppCallers'])}`\n")
         fh.write(f"- releaseGateRequired: `{cell(report['releaseGateRequired'])}`\n")
         fh.write(f"- rollbackRehearsal: `{cell(report['rollbackRehearsal'])}`\n")
         fh.write(f"- allowOutOfOrder: `{cell(report['allowOutOfOrder'])}`\n")
@@ -737,12 +944,16 @@ def _write_markdown(path: str, report: dict) -> None:
         fh.write(f"- providerAuditRequired: `{cell(report['providerAuditRequired'])}`\n")
         fh.write(f"- providerAuditJson: `{cell(report['providerAuditJson'])}`\n")
         fh.write(f"- providerAuditExternalBlockers: `{len(report.get('providerAuditExternalBlockers') or [])}`\n")
+        fh.write(f"- protocolRouterAuditJson: `{cell(report['protocolRouterAuditJson'])}`\n")
         fh.write(f"- videoCanaryRequired: `{cell(report['videoCanaryRequired'])}`\n")
         fh.write(f"- videoCanaryJson: `{cell(report['videoCanaryJson'])}`\n")
         fh.write(f"- asrHttpCanaryRequired: `{cell(report['asrHttpCanaryRequired'])}`\n")
         fh.write(f"- asrHttpCanaryJson: `{cell(report['asrHttpCanaryJson'])}`\n")
+        fh.write(f"- configAuthorityJson: `{cell(report['configAuthorityJson'])}`\n")
+        fh.write(f"- externalBackupJson: `{cell(report['externalBackupJson'])}`\n")
         fh.write(f"- servingProbeJson: `{cell(report['servingProbeJson'])}`\n")
         fh.write(f"- smokeRequired: `{cell(report['smokeRequired'])}`\n")
+        fh.write(f"- smokeRouteMatrixRequired: `{cell(report['smokeRouteMatrixRequired'])}`\n")
         fh.write(f"- smokeJson: `{cell(report['smokeJson'])}`\n\n")
         fh.write(f"- releaseMainRef: `{cell(report['releaseMainRef'])}`\n")
         fh.write(f"- releaseMainSha: `{cell(report['releaseMainSha'])}`\n\n")
@@ -790,18 +1001,35 @@ def stage_report(args: argparse.Namespace) -> int:
         video_canary_external_blockers,
         asr_http_canary_external_blockers,
     )
-    checks = [
-        ("prodPreflightJson", args.prod_preflight_json, True),
-        ("servingProbeJson", args.serving_probe_json, True),
-        ("smokeJson", args.smoke_json, _bool_flag(args.smoke_required)),
-        ("releaseGateJson", args.release_gate_json, _bool_flag(args.release_gate_required)),
-        ("upstreamReadinessJson", args.upstream_readiness_json, _bool_flag(args.upstream_readiness_required)),
-        ("providerAuditJson", args.provider_audit_json, _bool_flag(args.provider_audit_required)),
-        ("videoCanaryJson", args.video_canary_json, _bool_flag(args.video_canary_required)),
-        ("asrHttpCanaryJson", args.asr_http_canary_json, _bool_flag(args.asr_http_canary_required)),
-    ]
+    if args.stage == CONFIG_AUTHORITY_STAGE:
+        checks = [
+            ("protocolRouterAuditJson", args.protocol_router_audit_json, True),
+            ("externalBackupJson", args.external_backup_json, True),
+            ("configAuthorityJson", args.config_authority_json, True),
+        ]
+    else:
+        checks = [
+            ("protocolRouterAuditJson", args.protocol_router_audit_json, True),
+            ("prodPreflightJson", args.prod_preflight_json, True),
+            ("servingProbeJson", args.serving_probe_json, True),
+            ("smokeJson", args.smoke_json, _bool_flag(args.smoke_required)),
+            ("releaseGateJson", args.release_gate_json, _bool_flag(args.release_gate_required)),
+            ("upstreamReadinessJson", args.upstream_readiness_json, _bool_flag(args.upstream_readiness_required)),
+            ("providerAuditJson", args.provider_audit_json, _bool_flag(args.provider_audit_required)),
+            ("videoCanaryJson", args.video_canary_json, _bool_flag(args.video_canary_required)),
+            ("asrHttpCanaryJson", args.asr_http_canary_json, _bool_flag(args.asr_http_canary_required)),
+        ]
     if args.stage == ROLLBACK_REHEARSAL_STAGE:
-        checks = []
+        checks = [("protocolRouterAuditJson", args.protocol_router_audit_json, True)]
+    try:
+        _require_http_full_map_fallback_exit(
+            args.stage,
+            args.status,
+            args.disable_map_config_fallback_for_active_app_callers,
+            "stage report",
+        )
+    except SystemExit as exc:
+        failures.append(str(exc))
     for label, path, required in checks:
         if not required:
             continue
@@ -809,19 +1037,32 @@ def stage_report(args: argparse.Namespace) -> int:
             if label == "servingProbeJson":
                 _require_serving_probe_for_commit(path, label, args.commit)
             elif label == "releaseGateJson":
-                _require_release_gate_for_commit(path, label, args.commit)
+                _require_release_gate_for_commit(
+                    path,
+                    label,
+                    args.commit,
+                    require_config_authority=args.stage == "http-full",
+                )
             elif label == "prodPreflightJson":
                 _require_prod_preflight_for_commit(path, label, args.commit)
             elif label == "upstreamReadinessJson":
                 _require_upstream_readiness(path, label)
             elif label == "providerAuditJson":
                 _require_provider_audit(path, label)
+            elif label == "protocolRouterAuditJson":
+                _require_protocol_router_audit(path, label)
             elif label == "videoCanaryJson":
                 _require_video_canary(path, label)
             elif label == "asrHttpCanaryJson":
                 _require_asr_http_canary(path, label)
+            elif label == "configAuthorityJson":
+                _require_config_authority_apply(path, label)
+            elif label == "externalBackupJson":
+                _require_external_backup(path, label)
             else:
                 _require_smoke_for_commit(path, label, args.commit)
+                if _bool_flag(args.smoke_route_matrix_required):
+                    _require_smoke_route_matrix(path, "D-layer smoke route matrix evidence")
         except SystemExit as exc:
             failures.append(str(exc))
 
@@ -835,6 +1076,7 @@ def stage_report(args: argparse.Namespace) -> int:
         "canaryStage": args.canary_stage,
         "allowlist": args.allowlist,
         "shadowFullSamplePercent": args.shadow_full_sample_percent,
+        "disableMapConfigFallbackForActiveAppCallers": _bool_flag(args.disable_map_config_fallback_for_active_app_callers),
         "gateBase": args.gate_base,
         "releaseGateRequired": _bool_flag(args.release_gate_required),
         "rollbackRehearsal": args.stage == ROLLBACK_REHEARSAL_STAGE,
@@ -849,16 +1091,20 @@ def stage_report(args: argparse.Namespace) -> int:
         "providerAuditJson": args.provider_audit_json,
         "providerAuditRequired": _bool_flag(args.provider_audit_required),
         "providerAuditExternalBlockers": provider_external_blockers,
+        "protocolRouterAuditJson": args.protocol_router_audit_json,
         "videoCanaryJson": args.video_canary_json,
         "videoCanaryRequired": _bool_flag(args.video_canary_required),
         "videoCanaryExternalBlockers": video_canary_external_blockers,
         "asrHttpCanaryJson": args.asr_http_canary_json,
         "asrHttpCanaryRequired": _bool_flag(args.asr_http_canary_required),
         "asrHttpCanaryExternalBlockers": asr_http_canary_external_blockers,
+        "configAuthorityJson": args.config_authority_json,
+        "externalBackupJson": args.external_backup_json,
         "externalBlockers": all_external_blockers,
         "servingProbeJson": args.serving_probe_json,
         "smokeJson": args.smoke_json,
         "smokeRequired": _bool_flag(args.smoke_required),
+        "smokeRouteMatrixRequired": _bool_flag(args.smoke_route_matrix_required),
         "releaseMainRef": args.main_ref,
         "releaseMainSha": args.main_sha.lower(),
         "failures": failures,
@@ -916,12 +1162,15 @@ def audit(args: argparse.Namespace) -> int:
                 "providerAuditJson": latest.get("providerAuditJson") or "",
                 "providerAuditRequired": _bool_flag(str(latest.get("providerAuditRequired") or "0")),
                 "providerAuditExternalBlockers": latest.get("providerAuditExternalBlockers") or _provider_external_blockers(str(latest.get("providerAuditJson") or "")),
+                "protocolRouterAuditJson": latest.get("protocolRouterAuditJson") or "",
                 "videoCanaryJson": latest.get("videoCanaryJson") or "",
                 "videoCanaryRequired": _bool_flag(str(latest.get("videoCanaryRequired") or "0")),
                 "videoCanaryExternalBlockers": latest.get("videoCanaryExternalBlockers") or _canary_external_blockers(str(latest.get("videoCanaryJson") or "")),
                 "asrHttpCanaryJson": latest.get("asrHttpCanaryJson") or "",
                 "asrHttpCanaryRequired": _bool_flag(str(latest.get("asrHttpCanaryRequired") or "0")),
                 "asrHttpCanaryExternalBlockers": latest.get("asrHttpCanaryExternalBlockers") or _canary_external_blockers(str(latest.get("asrHttpCanaryJson") or "")),
+                "configAuthorityJson": latest.get("configAuthorityJson") or "",
+                "externalBackupJson": latest.get("externalBackupJson") or "",
                 "externalBlockers": latest.get("externalBlockers") or _merge_blockers(
                     latest.get("providerAuditExternalBlockers") or _provider_external_blockers(str(latest.get("providerAuditJson") or "")),
                     latest.get("videoCanaryExternalBlockers") or _canary_external_blockers(str(latest.get("videoCanaryJson") or "")),
@@ -929,19 +1178,20 @@ def audit(args: argparse.Namespace) -> int:
                 ),
                 "releaseMainRef": latest.get("releaseMainRef") or "",
                 "releaseMainSha": latest.get("releaseMainSha") or "",
+                "disableMapConfigFallbackForActiveAppCallers": _bool_flag(str(latest.get("disableMapConfigFallbackForActiveAppCallers") or "0")),
                 "allowOutOfOrder": _bool_flag(str(latest.get("allowOutOfOrder") or "0")),
                 "allowOutOfOrderReason": latest.get("allowOutOfOrderReason") or "",
             }
         )
 
-    canary_or_http = [
+    stages_requiring_prior_rehearsal_order = [
         stage
         for stage in required_stages
-        if stage.startswith("canary-") or stage == "http-full"
+        if stage.startswith("canary-") or stage in {CONFIG_AUTHORITY_STAGE, "http-full"}
     ]
     rehearsal = latest_by_stage.get(ROLLBACK_REHEARSAL_STAGE)
     rehearsal_time = _parse_recorded_at(rehearsal.get("recordedAt")) if rehearsal else None
-    for stage in canary_or_http:
+    for stage in stages_requiring_prior_rehearsal_order:
         stage_entry = latest_by_stage.get(stage)
         stage_time = _parse_recorded_at(stage_entry.get("recordedAt")) if stage_entry else None
         if not rehearsal_time:
@@ -964,7 +1214,7 @@ def audit(args: argparse.Namespace) -> int:
                     f"event_status={item.get('status') or ''} recordedAt={item.get('recordedAt') or ''}"
                 )
 
-    ordered_real_stages = [stage for stage in STAGES if stage in required_stages]
+    ordered_real_stages = _observation_stages([stage for stage in STAGES if stage in required_stages])
     for previous_stage, current_stage in zip(ordered_real_stages, ordered_real_stages[1:]):
         previous = latest_by_stage.get(previous_stage)
         current = latest_by_stage.get(current_stage)
@@ -1024,6 +1274,7 @@ def main() -> int:
     append_parser.add_argument("--canary-stage", default="")
     append_parser.add_argument("--allowlist", default="")
     append_parser.add_argument("--shadow-full-sample-percent", default="")
+    append_parser.add_argument("--disable-map-config-fallback-for-active-app-callers", default="0")
     append_parser.add_argument("--gate-base", default="")
     append_parser.add_argument("--evidence-json", default="")
     append_parser.add_argument("--evidence-md", default="")
@@ -1035,13 +1286,17 @@ def main() -> int:
     append_parser.add_argument("--upstream-readiness-required", default="0")
     append_parser.add_argument("--provider-audit-json", default="")
     append_parser.add_argument("--provider-audit-required", default="0")
+    append_parser.add_argument("--protocol-router-audit-json", default="")
     append_parser.add_argument("--video-canary-json", default="")
     append_parser.add_argument("--video-canary-required", default="0")
     append_parser.add_argument("--asr-http-canary-json", default="")
     append_parser.add_argument("--asr-http-canary-required", default="0")
+    append_parser.add_argument("--config-authority-json", default="")
+    append_parser.add_argument("--external-backup-json", default="")
     append_parser.add_argument("--serving-probe-json", default="")
     append_parser.add_argument("--smoke-json", default="")
     append_parser.add_argument("--smoke-required", default="1")
+    append_parser.add_argument("--smoke-route-matrix-required", default="0")
     append_parser.add_argument("--main-ref", default="")
     append_parser.add_argument("--main-sha", default="")
     append_parser.add_argument("--allow-out-of-order", default="0")
@@ -1059,6 +1314,7 @@ def main() -> int:
     report_parser.add_argument("--canary-stage", default="")
     report_parser.add_argument("--allowlist", default="")
     report_parser.add_argument("--shadow-full-sample-percent", default="")
+    report_parser.add_argument("--disable-map-config-fallback-for-active-app-callers", default="0")
     report_parser.add_argument("--gate-base", default="")
     report_parser.add_argument("--release-gate-json", default="")
     report_parser.add_argument("--release-gate-required", default="0")
@@ -1068,13 +1324,17 @@ def main() -> int:
     report_parser.add_argument("--upstream-readiness-required", default="0")
     report_parser.add_argument("--provider-audit-json", default="")
     report_parser.add_argument("--provider-audit-required", default="0")
+    report_parser.add_argument("--protocol-router-audit-json", default="")
     report_parser.add_argument("--video-canary-json", default="")
     report_parser.add_argument("--video-canary-required", default="0")
     report_parser.add_argument("--asr-http-canary-json", default="")
     report_parser.add_argument("--asr-http-canary-required", default="0")
+    report_parser.add_argument("--config-authority-json", default="")
+    report_parser.add_argument("--external-backup-json", default="")
     report_parser.add_argument("--serving-probe-json", default="")
     report_parser.add_argument("--smoke-json", default="")
     report_parser.add_argument("--smoke-required", default="1")
+    report_parser.add_argument("--smoke-route-matrix-required", default="0")
     report_parser.add_argument("--main-ref", default="")
     report_parser.add_argument("--main-sha", default="")
     report_parser.add_argument("--allow-out-of-order", default="0")
