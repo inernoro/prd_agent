@@ -134,7 +134,6 @@ x-cds-deploy-modes:
       env:
         ASPNETCORE_ENVIRONMENT: Production
         ASPNETCORE_URLS: "http://+:8090"
-        LlmGateway__RolloutLedgerPath: /repo/.llmgw-release-evidence/rollout-ledger.jsonl
   # 独立 LLM serving 网关 llmgw-serve —— DI 承载现有 LlmGateway/ModelResolver，HTTP 暴露 /gw/v1/*。
   # 安全：CDS 预览**不公开 path-route** 本服务（见下 services 块 no-http-readiness）；仅内网可达，
   # api 经 docker 名 http://llmgw-serve:8091 调用。公开命名 URL 属波3 专项。

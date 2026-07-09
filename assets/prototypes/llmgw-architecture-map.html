@@ -1,736 +1,210 @@
 <!doctype html>
 <html lang="zh-CN">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>LLM Gateway 目标架构说明</title>
-  <style>
-    :root {
-      color-scheme: light;
-      --bg: #f7f9fc;
-      --surface: #ffffff;
-      --surface-soft: #f8fafc;
-      --ink: #142033;
-      --text: #253247;
-      --muted: #64748b;
-      --line: #d9e2ef;
-      --line-strong: #aab8cc;
-      --map: #2563eb;
-      --gw: #059669;
-      --gw-dark: #0f766e;
-      --upstream: #7c3aed;
-      --warn: #b45309;
-      --risk: #dc2626;
-      --shadow: 0 14px 36px rgba(15, 23, 42, 0.08);
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
-    }
-
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.55;
-    }
-
-    .page {
-      max-width: 1260px;
-      margin: 0 auto;
-      padding: 32px 24px 64px;
-    }
-
-    header {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 24px;
-      align-items: end;
-      padding-bottom: 22px;
-      border-bottom: 1px solid var(--line);
-    }
-
-    h1, h2, h3, p { margin: 0; }
-    h1 {
-      max-width: 840px;
-      font-size: 34px;
-      line-height: 1.16;
-      color: var(--ink);
-      letter-spacing: 0;
-    }
-    h2 {
-      font-size: 22px;
-      line-height: 1.25;
-      color: var(--ink);
-      margin-bottom: 14px;
-    }
-    h3 {
-      font-size: 15px;
-      line-height: 1.3;
-      color: var(--ink);
-      margin-bottom: 6px;
-    }
-
-    .lead {
-      max-width: 910px;
-      margin-top: 12px;
-      color: var(--muted);
-      font-size: 16px;
-    }
-
-    .version {
-      border: 1px solid var(--line);
-      background: var(--surface);
-      border-radius: 8px;
-      padding: 10px 12px;
-      min-width: 190px;
-      font-size: 13px;
-      color: var(--muted);
-    }
-    .version strong {
-      display: block;
-      color: var(--ink);
-      font-size: 14px;
-      margin-bottom: 3px;
-    }
-
-    section {
-      background: var(--surface);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      margin: 18px 0;
-      padding: 22px;
-      box-shadow: var(--shadow);
-    }
-
-    .summary {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 12px;
-      margin-top: 22px;
-    }
-    .metric {
-      border: 1px solid var(--line);
-      background: var(--surface);
-      border-radius: 8px;
-      padding: 14px;
-    }
-    .metric .label {
-      display: block;
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 700;
-      margin-bottom: 5px;
-      text-transform: uppercase;
-    }
-    .metric .value {
-      display: block;
-      color: var(--ink);
-      font-size: 18px;
-      font-weight: 800;
-    }
-
-    .note {
-      border-left: 4px solid var(--gw);
-      background: #ecfdf5;
-      color: #164e3d;
-      padding: 12px 14px;
-      border-radius: 6px;
-      margin-top: 14px;
-    }
-
-    .architecture {
-      display: grid;
-      gap: 12px;
-      overflow-x: auto;
-      padding-bottom: 4px;
-    }
-    .lane {
-      min-width: 1120px;
-      display: grid;
-      grid-template-columns: 156px repeat(7, minmax(112px, 1fr));
-      gap: 10px;
-      align-items: stretch;
-    }
-    .lane-label {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--surface-soft);
-      padding: 12px;
-      font-weight: 800;
-      color: var(--ink);
-      display: flex;
-      align-items: center;
-      min-height: 86px;
-    }
-    .node {
-      border: 1px solid var(--line-strong);
-      border-radius: 8px;
-      background: #fff;
-      padding: 12px;
-      min-height: 86px;
-      position: relative;
-    }
-    .node p {
-      font-size: 12px;
-      color: var(--muted);
-    }
-    .node.map { border-color: #93b4ff; background: #f4f7ff; }
-    .node.gw { border-color: #8ed8bf; background: #f2fbf7; }
-    .node.data { border-color: #85cfc8; background: #f0fdfa; }
-    .node.upstream { border-color: #c4b5fd; background: #faf5ff; }
-    .node.debt { border-color: #f2aaa2; background: #fff6f5; border-style: dashed; }
-    .node.blank { border-color: transparent; background: transparent; }
-    .arrow {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: var(--muted);
-      min-height: 86px;
-    }
-    .arrow::before {
-      content: "";
-      display: block;
-      height: 2px;
-      width: 100%;
-      background: var(--line-strong);
-    }
-
-    .compact-grid {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 12px;
-    }
-    .panel {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--surface-soft);
-      padding: 14px;
-      min-height: 150px;
-    }
-    .panel ul {
-      margin: 8px 0 0;
-      padding-left: 18px;
-      color: var(--muted);
-      font-size: 13px;
-    }
-    .panel li { margin: 4px 0; }
-
-    .flow {
-      display: grid;
-      grid-template-columns: repeat(7, minmax(0, 1fr));
-      gap: 10px;
-      margin-top: 12px;
-    }
-    .step {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--surface-soft);
-      padding: 12px;
-      min-height: 132px;
-    }
-    .step .num {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 24px;
-      height: 24px;
-      border-radius: 999px;
-      background: var(--gw);
-      color: #fff;
-      font-size: 12px;
-      font-weight: 800;
-      margin-bottom: 8px;
-    }
-    .step p {
-      font-size: 13px;
-      color: var(--muted);
-    }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 14px;
-      margin-top: 10px;
-    }
-    th, td {
-      border-bottom: 1px solid var(--line);
-      text-align: left;
-      padding: 10px 8px;
-      vertical-align: top;
-    }
-    th {
-      color: var(--muted);
-      background: #fbfdff;
-      font-weight: 800;
-    }
-    code {
-      background: #eef2f7;
-      border: 1px solid #e2e8f0;
-      border-radius: 5px;
-      padding: 2px 5px;
-      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-      font-size: 12px;
-    }
-
-    .split {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-      gap: 14px;
-    }
-
-    .tag-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 10px;
-    }
-    .tag {
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      background: #fff;
-      color: var(--muted);
-      padding: 6px 10px;
-      font-size: 12px;
-      font-weight: 700;
-    }
-    .tag.map { color: var(--map); border-color: #b8caff; background: #f4f7ff; }
-    .tag.gw { color: var(--gw); border-color: #a8dbc8; background: #f3fbf7; }
-    .tag.warn { color: var(--warn); border-color: #efcf96; background: #fff8ea; }
-    .tag.risk { color: var(--risk); border-color: #efaaa4; background: #fff6f5; }
-
-    .footer-note {
-      color: var(--muted);
-      font-size: 13px;
-      margin-top: 20px;
-    }
-
-    @media (max-width: 900px) {
-      header { grid-template-columns: 1fr; }
-      .summary, .compact-grid, .split, .flow { grid-template-columns: 1fr; }
-      h1 { font-size: 28px; }
-      .page { padding: 24px 14px 44px; }
-    }
-  </style>
-</head>
-<body>
-  <main class="page">
-    <header>
-      <div>
-        <h1>LLM Gateway 目标架构：统一协议入口、模型池权威和请求治理层</h1>
-        <p class="lead">
-          MAP 继续负责业务协议、run、会话、画布和素材生命周期；所有 AI 请求进入独立 LLM Gateway。
-          GW 负责多协议适配、统一 IR、appCaller 注册、模型池调度、平台密钥、上游发送、请求日志和操作审计。
-        </p>
-      </div>
-      <div class="version">
-        <strong>Target Architecture</strong>
-        2026-07-09<br />
-        Source: protocol router plan
-      </div>
-    </header>
-
-    <div class="summary">
-      <div class="metric">
-        <span class="label">MAP owns</span>
-        <span class="value">业务生命周期</span>
-      </div>
-      <div class="metric">
-        <span class="label">GW owns</span>
-        <span class="value">模型池与路由</span>
-      </div>
-      <div class="metric">
-        <span class="label">Ingress</span>
-        <span class="value">4 类协议入口</span>
-      </div>
-      <div class="metric">
-        <span class="label">Audit</span>
-        <span class="value">独立 GW 证据</span>
-      </div>
-    </div>
-
-    <section>
-      <h2>1. 目标主链路</h2>
-      <div class="architecture" aria-label="LLM Gateway target architecture">
-        <div class="lane">
-          <div class="lane-label">调用方</div>
-          <div class="node map">
-            <h3>MAP Web / Desktop</h3>
-            <p>聊天、视觉创作、模型实验、开放接口后台。</p>
-          </div>
-          <div class="arrow"></div>
-          <div class="node map">
-            <h3>MAP API / Worker</h3>
-            <p>创建 run、保存业务状态、推送 SSE、管理素材。</p>
-          </div>
-          <div class="arrow"></div>
-          <div class="node map">
-            <h3>External Systems</h3>
-            <p>未来直接接 GW，不绕 MAP 请求 AI。</p>
-          </div>
-          <div class="node blank"></div>
-          <div class="node blank"></div>
-        </div>
-
-        <div class="lane">
-          <div class="lane-label">GW 协议入口</div>
-          <div class="node gw">
-            <h3>GW Native</h3>
-            <p><code>/gw/v1/send</code>、<code>/stream</code>、<code>/raw</code></p>
-          </div>
-          <div class="node gw">
-            <h3>OpenAI-compatible</h3>
-            <p>chat、responses、images generation/edit。</p>
-          </div>
-          <div class="node gw">
-            <h3>Claude-compatible</h3>
-            <p>Messages、tool_use、stream events。</p>
-          </div>
-          <div class="node gw">
-            <h3>Gemini-compatible</h3>
-            <p>generateContent、streamGenerateContent。</p>
-          </div>
-          <div class="arrow"></div>
-          <div class="node gw">
-            <h3>Ingress Adapter</h3>
-            <p>只做协议标准化，不决定模型和密钥。</p>
-          </div>
-          <div class="node blank"></div>
-        </div>
-
-        <div class="lane">
-          <div class="lane-label">GW Request IR</div>
-          <div class="node data">
-            <h3>Trace</h3>
-            <p>requestId、sessionId、runId、sourceSystem。</p>
-          </div>
-          <div class="node data">
-            <h3>Attribution</h3>
-            <p>appCallerCode、title、requestType。</p>
-          </div>
-          <div class="node data">
-            <h3>Model Policy</h3>
-            <p>auto、pool、pinned。</p>
-          </div>
-          <div class="node data">
-            <h3>Capability</h3>
-            <p>tools、vision、thinking、structured output。</p>
-          </div>
-          <div class="node data">
-            <h3>Parameter Policy</h3>
-            <p>default-drop 或 strict-require。</p>
-          </div>
-          <div class="arrow"></div>
-          <div class="node data">
-            <h3>Router Input</h3>
-            <p>router 只理解 IR，不理解外部协议细节。</p>
-          </div>
-        </div>
-
-        <div class="lane">
-          <div class="lane-label">GW 治理与路由</div>
-          <div class="node gw">
-            <h3>appCaller Registry</h3>
-            <p>discovered、configured、active、disabled、archived。</p>
-          </div>
-          <div class="arrow"></div>
-          <div class="node gw">
-            <h3>Budget / Rate Limit</h3>
-            <p>按 appCallerCode 执行月预算和每分钟限流。</p>
-          </div>
-          <div class="arrow"></div>
-          <div class="node gw">
-            <h3>GW Router</h3>
-            <p>auto、pool、pinned、fallback、能力过滤。</p>
-          </div>
-          <div class="arrow"></div>
-          <div class="node gw">
-            <h3>GW Model Pools</h3>
-            <p>默认池、专属池、优先级、健康、成本、参数能力。</p>
-          </div>
-          <div class="node blank"></div>
-        </div>
-
-        <div class="lane">
-          <div class="lane-label">上游发送</div>
-          <div class="node upstream">
-            <h3>Provider Adapter</h3>
-            <p>OpenAI、Claude、Gemini、OpenRouter-compatible、Exchange/raw。</p>
-          </div>
-          <div class="arrow"></div>
-          <div class="node upstream">
-            <h3>GW-owned Keys</h3>
-            <p>平台密钥、解密健康、轮换、删除、审计。</p>
-          </div>
-          <div class="arrow"></div>
-          <div class="node upstream">
-            <h3>Upstream Providers</h3>
-            <p>SiliconFlow、APIyi、Google、Volcengine Ark、OpenRouter 等。</p>
-          </div>
-          <div class="arrow"></div>
-          <div class="node data">
-            <h3>GW Logs</h3>
-            <p>request log、provider attempts、shadow comparisons、operation audits。</p>
-          </div>
-          <div class="node blank"></div>
-        </div>
-
-        <div class="lane">
-          <div class="lane-label">回滚与债务</div>
-          <div class="node debt">
-            <h3>inproc / legacy</h3>
-            <p>稳定期回滚兜底，不是目标主路径。</p>
-          </div>
-          <div class="node debt">
-            <h3>MAP config fallback</h3>
-            <p>config-authority 阶段完成后再开启退场门。</p>
-          </div>
-          <div class="node debt">
-            <h3>Raw retry boundary</h3>
-            <p>submit 已覆盖，poll/download/WebSocket 仍需后续收口。</p>
-          </div>
-          <div class="node debt">
-            <h3>Provider templates</h3>
-            <p>参数能力模板需按真实文档持续补齐。</p>
-          </div>
-          <div class="node blank"></div>
-          <div class="node blank"></div>
-          <div class="node blank"></div>
-        </div>
-      </div>
-      <div class="note">
-        核心判断：模型池不是 MAP 的附属配置，也不是 GW 之外的独立层。目标态中，appCaller 注册、模型池、平台、Exchange、密钥和路由策略都属于 LLM Gateway。
-      </div>
-    </section>
-
-    <section>
-      <h2>2. MAP 与 GW 的数据所有权</h2>
-      <div class="split">
-        <div class="panel">
-          <h3>MAP 保留</h3>
-          <ul>
-            <li>前端到 MAP 的业务协议</li>
-            <li>业务鉴权、run 创建、业务状态机</li>
-            <li>用户、项目、会话、画布、素材、作品</li>
-            <li>图片、视频、ASR 等业务生命周期</li>
-            <li>业务日志和业务错误语义</li>
-          </ul>
-          <div class="tag-row">
-            <span class="tag map">business protocol</span>
-            <span class="tag map">run lifecycle</span>
-            <span class="tag map">assets</span>
-          </div>
-        </div>
-        <div class="panel">
-          <h3>GW 接管</h3>
-          <ul>
-            <li>appCaller 注册表和治理元数据</li>
-            <li>GW-owned 模型池、平台、模型、Exchange</li>
-            <li>auto、pool、pinned 路由策略</li>
-            <li>provider key、密钥健康、操作审计</li>
-            <li>请求日志、provider attempts、shadow 证据</li>
-          </ul>
-          <div class="tag-row">
-            <span class="tag gw">appCaller registry</span>
-            <span class="tag gw">model pools</span>
-            <span class="tag gw">request governance</span>
-          </div>
-        </div>
-      </div>
-      <table>
-        <thead>
-          <tr>
-            <th>关联键</th>
-            <th>用途</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td><code>requestId</code></td>
-            <td>端到端追踪同一次请求。</td>
-          </tr>
-          <tr>
-            <td><code>sessionId</code> / <code>runId</code></td>
-            <td>把 GW 请求日志关联回 MAP 业务会话和任务。</td>
-          </tr>
-          <tr>
-            <td><code>appCallerCode</code></td>
-            <td>绑定模型池、预算、限流、日志归因和控制台治理。</td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
-
-    <section>
-      <h2>3. 路由模式</h2>
-      <div class="compact-grid">
-        <div class="panel">
-          <h3>auto</h3>
-          <p>调用方不指定模型。GW 根据 appCallerCode 和 requestType 的默认池调度。</p>
-          <div class="tag-row">
-            <span class="tag gw">默认业务模式</span>
-            <span class="tag gw">统一控价</span>
-          </div>
-        </div>
-        <div class="panel">
-          <h3>pool</h3>
-          <p>调用方指定某个 GW 模型池。GW 仍负责池内健康、fallback 和能力过滤。</p>
-          <div class="tag-row">
-            <span class="tag gw">客户隔离</span>
-            <span class="tag gw">实验池</span>
-          </div>
-        </div>
-        <div class="panel">
-          <h3>pinned</h3>
-          <p>调用方指定模型或 platformId + modelId。必须精确调用，但仍经过 GW 日志、密钥和审计。</p>
-          <div class="tag-row">
-            <span class="tag warn">ModelLab</span>
-            <span class="tag warn">Arena</span>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section>
-      <h2>4. 视觉创作生命周期</h2>
-      <div class="flow">
-        <div class="step">
-          <span class="num">1</span>
-          <h3>页面提交</h3>
-          <p>用户在 MAP 页面发起 text2img、img2img、vision、video 或 ASR。</p>
-        </div>
-        <div class="step">
-          <span class="num">2</span>
-          <h3>MAP 创建 run</h3>
-          <p>MAP 校验业务参数，保存 run、画布、素材引用和状态。</p>
-        </div>
-        <div class="step">
-          <span class="num">3</span>
-          <h3>Worker 执行</h3>
-          <p>Worker 管理重试、进度、SSE 和资产生命周期。</p>
-        </div>
-        <div class="step">
-          <span class="num">4</span>
-          <h3>GW Native 请求</h3>
-          <p>MAP 只提交 appCallerCode、requestType、输入和 trace。</p>
-        </div>
-        <div class="step">
-          <span class="num">5</span>
-          <h3>GW Router</h3>
-          <p>GW 按模型池、能力、健康、预算和参数策略选上游。</p>
-        </div>
-        <div class="step">
-          <span class="num">6</span>
-          <h3>Provider Adapter</h3>
-          <p>适配上游协议，丢弃或拒绝不支持参数，记录 attempts。</p>
-        </div>
-        <div class="step">
-          <span class="num">7</span>
-          <h3>MAP 保存结果</h3>
-          <p>结果资产、业务状态和用户可见进度仍回到 MAP 生命周期。</p>
-        </div>
-      </div>
-      <div class="note">
-        尺寸、画布和素材是 MAP 的业务生命周期；模型选择、上游发送和失败解释是 GW 的治理职责。
-      </div>
-    </section>
-
-    <section>
-      <h2>5. 控制台应该回答的问题</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>问题</th>
-            <th>控制台证据</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>谁在调用</td>
-            <td>appCaller registry、sourceSystem、title、requestType、owner、状态。</td>
-          </tr>
-          <tr>
-            <td>为什么选这个模型</td>
-            <td>routerTrace、modelPolicy、pool、actual model、provider、fallback chain。</td>
-          </tr>
-          <tr>
-            <td>上游发生了什么</td>
-            <td>provider attempts、HTTP status、duration、first byte、tokens、error。</td>
-          </tr>
-          <tr>
-            <td>参数有没有丢</td>
-            <td>requestedParameters、supportedParameters、droppedParameters、strictFailureReason。</td>
-          </tr>
-          <tr>
-            <td>是否可切掉 MAP fallback</td>
-            <td>config-authority report、mapFallbackObjectsRemaining、activeAppCallerMapFallbackReady。</td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
-
-    <section>
-      <h2>6. 与 OpenRouter 的关系</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>OpenRouter 心智</th>
-            <th>本系统采用方式</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>Unified API</td>
-            <td>四类入口统一转换为 GW Request IR。</td>
-          </tr>
-          <tr>
-            <td>Model fallback</td>
-            <td>GW model pools、provider attempts、fallback reason。</td>
-          </tr>
-          <tr>
-            <td>Provider routing</td>
-            <td>健康、成本、能力、参数策略和 appCaller 绑定共同决策。</td>
-          </tr>
-          <tr>
-            <td>Router metadata</td>
-            <td>日志详情展示 routerTrace、actual model、pool、provider attempts。</td>
-          </tr>
-          <tr>
-            <td>Require parameters</td>
-            <td>strict-require 对能力和字段级参数执行 fail closed。</td>
-          </tr>
-        </tbody>
-      </table>
-      <p class="footer-note">
-        本系统不是复制 OpenRouter。目标是统一治理 MAP 和外部系统的 AI 请求，防止业务系统直接分散请求上游。
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LLM Gateway Target Architecture</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b1020;
+        --panel: #121a2c;
+        --panel-2: #172238;
+        --line: #33415f;
+        --text: #eef3ff;
+        --muted: #99a7c2;
+        --accent: #7aa2ff;
+        --ok: #55c7a5;
+        --warn: #e4b25b;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      main {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 40px 28px 56px;
+      }
+      h1 {
+        margin: 0 0 10px;
+        font-size: 32px;
+        font-weight: 720;
+        letter-spacing: 0;
+      }
+      .subtitle {
+        margin: 0 0 28px;
+        color: var(--muted);
+        font-size: 15px;
+        line-height: 1.7;
+      }
+      .diagram {
+        display: grid;
+        grid-template-columns: 1.05fr 1.35fr 1.35fr 1.15fr;
+        gap: 12px;
+        align-items: stretch;
+      }
+      .lane {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        border-radius: 8px;
+        padding: 16px;
+        min-height: 320px;
+      }
+      .lane h2 {
+        margin: 0 0 14px;
+        font-size: 14px;
+        color: var(--accent);
+        letter-spacing: 0;
+      }
+      .node {
+        border: 1px solid var(--line);
+        background: var(--panel-2);
+        border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 10px;
+      }
+      .node strong {
+        display: block;
+        font-size: 13px;
+        margin-bottom: 5px;
+      }
+      .node span {
+        display: block;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.55;
+      }
+      .flow {
+        margin: 22px 0;
+        padding: 16px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #0f1728;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        color: #d8e4ff;
+        overflow-x: auto;
+        white-space: nowrap;
+      }
+      .evidence {
+        margin-top: 24px;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+      }
+      .evidence .node {
+        min-height: 100px;
+      }
+      .ownership {
+        margin-top: 24px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th, td {
+        border-bottom: 1px solid var(--line);
+        padding: 11px 12px;
+        text-align: left;
+        font-size: 12px;
+        vertical-align: top;
+      }
+      th {
+        color: var(--accent);
+        background: #10182a;
+      }
+      tr:last-child td {
+        border-bottom: 0;
+      }
+      .tag {
+        display: inline-block;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 3px 7px;
+        margin: 2px 4px 2px 0;
+        font-size: 11px;
+        color: #dbe6ff;
+      }
+      .ok {
+        color: var(--ok);
+      }
+      .warn {
+        color: var(--warn);
+      }
+      @media (max-width: 900px) {
+        .diagram,
+        .evidence {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>LLM Gateway Target Architecture</h1>
+      <p class="subtitle">
+        This page describes the target architecture. 模型池最终归属是 GW.
+        MAP keeps business protocol and lifecycle. MAP does not own model routing in target state.
       </p>
-    </section>
 
-    <section>
-      <h2>7. 发布与验收门</h2>
-      <div class="compact-grid">
-        <div class="panel">
-          <h3>config-authority</h3>
-          <p>先备份生产数据，再认领 MAP-only 池、平台、模型、Exchange，并绑定 active appCaller 默认 GW 池。</p>
-          <div class="tag-row">
-            <span class="tag gw">backup first</span>
-            <span class="tag gw">ledger evidence</span>
-          </div>
-        </div>
-        <div class="panel">
-          <h3>fallback gate</h3>
-          <p>只有 activeAppCallerMapFallbackReady 为 true 后，才能开启 active appCaller MAP fallback 退场门。</p>
-          <div class="tag-row">
-            <span class="tag warn">fail closed</span>
-          </div>
-        </div>
-        <div class="panel">
-          <h3>http-full</h3>
-          <p>全量切换前必须有 release gate、serving probe、smoke、shadow 和 config-authority 证据。</p>
-          <div class="tag-row">
-            <span class="tag risk">no evidence, no claim</span>
-          </div>
-        </div>
+      <div class="flow">
+        MAP / external systems -> GW ingress adapter -> GW Request IR -> appCaller registry -> GW router -> GW model pools -> provider adapter -> upstream model provider
       </div>
-    </section>
-  </main>
-</body>
+
+      <section class="diagram" aria-label="LLM Gateway architecture">
+        <div class="lane">
+          <h2>Callers</h2>
+          <div class="node"><strong>MAP</strong><span>Business API, run lifecycle, sessions, canvas, assets, and user-facing workflow state.</span></div>
+          <div class="node"><strong>External systems</strong><span>Use GW-compatible protocols instead of calling MAP internals or provider keys.</span></div>
+        </div>
+        <div class="lane">
+          <h2>Ingress and IR</h2>
+          <div class="node"><strong>GW ingress adapter</strong><span>Normalizes GW Native, OpenAI-compatible, Claude-compatible, and Gemini-compatible requests.</span></div>
+          <div class="node"><strong>GW Request IR</strong><span>Preserves appCallerCode, requestType, modelPolicy, modelPoolId, pinned target, parameterPolicy, and droppedParameters.</span></div>
+          <div class="node"><strong>appCaller registry</strong><span>Passive discovery, configured/active state, budget, rate limit, owner, and drift evidence.</span></div>
+        </div>
+        <div class="lane">
+          <h2>Gateway routing</h2>
+          <div class="node"><strong>GW router</strong><span>Owns auto, pool, pinned, fallback, strict parameter policy, and provider retry decisions.</span></div>
+          <div class="node"><strong>GW model pools</strong><span>Owns appCaller-specific pools, pool members, capability snapshots, provider and exchange binding.</span></div>
+          <div class="node"><strong>provider adapter</strong><span>Maps protocol-specific bodies, auth, raw/multipart rehydration, and response normalization.</span></div>
+        </div>
+        <div class="lane">
+          <h2>Upstream</h2>
+          <div class="node"><strong>OpenAI / Claude / Gemini</strong><span>Provider APIs reached only through Gateway-owned keys and routing decisions.</span></div>
+          <div class="node"><strong>OpenRouter / Volcengine Ark / Doubao ASR</strong><span>Exchange transformers and provider adapters keep raw protocols outside MAP.</span></div>
+        </div>
+      </section>
+
+      <section class="evidence" aria-label="Evidence surfaces">
+        <div class="node"><strong class="ok">Request linkage</strong><span>requestId, sessionId, runId, appCallerCode.</span></div>
+        <div class="node"><strong class="ok">GW observability</strong><span>routerTrace, providerAttempts, droppedParameters, transport.</span></div>
+        <div class="node"><strong class="ok">Migration evidence</strong><span>shadow comparisons, release gates, rollout ledger.</span></div>
+        <div class="node"><strong class="warn">Runtime gates</strong><span>config authority execution, active MAP fallback exit, http-full acceptance, legacy cleanup.</span></div>
+      </section>
+
+      <section class="ownership" aria-label="Ownership table">
+        <table>
+          <thead>
+            <tr>
+              <th>Domain</th>
+              <th>Owner</th>
+              <th>Responsibility</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Business lifecycle</td><td>MAP</td><td>Runs, workflow, canvas, business data, user-facing state.</td></tr>
+            <tr><td>Request governance</td><td>LLM Gateway</td><td><span class="tag">appCaller registry</span><span class="tag">rate limit</span><span class="tag">budget</span><span class="tag">audit</span></td></tr>
+            <tr><td>Model routing</td><td>LLM Gateway</td><td><span class="tag">GW router</span><span class="tag">GW model pools</span><span class="tag">fallback</span><span class="tag">pinned</span></td></tr>
+            <tr><td>Provider access</td><td>LLM Gateway</td><td>Provider adapter, exchange, key encryption, upstream protocol compatibility.</td></tr>
+          </tbody>
+        </table>
+      </section>
+    </main>
+  </body>
 </html>

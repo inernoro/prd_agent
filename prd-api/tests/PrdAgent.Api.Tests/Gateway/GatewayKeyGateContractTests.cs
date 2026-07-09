@@ -187,6 +187,10 @@ public class GatewayKeyGateContractTests
             gateway.LastRequest.Context.ShouldNotBeNull();
             gateway.LastRequest.Context!.ModelPolicy.ShouldBe("pool");
             gateway.LastRequest.Context.ModelPoolId.ShouldBe("pool-chat-premium");
+            var upstreamBody = gateway.LastRequest.RequestBody!.ToJsonString();
+            upstreamBody.ShouldNotContain("model_policy");
+            upstreamBody.ShouldNotContain("model_pool_id");
+            upstreamBody.ShouldContain("messages");
         }
         finally
         {
@@ -261,6 +265,45 @@ public class GatewayKeyGateContractTests
             gateway.LastRequest.Context.ShouldNotBeNull();
             gateway.LastRequest.Context!.ModelPolicy.ShouldBe("pool");
             gateway.LastRequest.Context.ModelPoolId.ShouldBe("pool-native-chat");
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task GwNativeRaw_PreservesExplicitPoolModelPolicy()
+    {
+        var gateway = new EchoingGateway();
+        await using var app = BuildHostWithGateway(gateway);
+        await app.StartAsync();
+        try
+        {
+            var client = app.GetTestClient();
+            var req = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/raw")
+            {
+                Content = JsonContent.Create(new
+                {
+                    AppCallerCode = "demo.app::generation",
+                    ModelType = "generation",
+                    EndpointPath = "/v1/images/generations",
+                    ExpectedModel = "native-image-default",
+                    RequestBody = new { prompt = "draw" },
+                    Context = new { ModelPolicy = "pool", ModelPoolId = "pool-native-image", RequestId = "native-raw-pool-test" },
+                }),
+            };
+            req.Headers.Add("X-Gateway-Key", GatewayKey);
+
+            var resp = await client.SendAsync(req);
+
+            resp.StatusCode.ShouldBe(HttpStatusCode.OK);
+            gateway.LastRawRequest.ShouldNotBeNull();
+            gateway.LastRawRequest.ExpectedModel.ShouldBe("pool-native-image");
+            gateway.LastRawRequest.Context.ShouldNotBeNull();
+            gateway.LastRawRequest.Context!.ModelPolicy.ShouldBe("pool");
+            gateway.LastRawRequest.Context.ModelPoolId.ShouldBe("pool-native-image");
+            gateway.LastResolveExpectedModel.ShouldBe("pool-native-image");
         }
         finally
         {
@@ -619,6 +662,11 @@ public class GatewayKeyGateContractTests
             gateway.LastRawRequest.Context!.ModelPolicy.ShouldBe("pinned");
             gateway.LastResolvePinnedPlatformId.ShouldBe("plat-image");
             gateway.LastResolvePinnedModelId.ShouldBe("openai/gpt-image-1");
+            var upstreamBody = gateway.LastRawRequest.RequestBody!.ToJsonString();
+            upstreamBody.ShouldNotContain("model_policy");
+            upstreamBody.ShouldNotContain("pinned_platform_id");
+            upstreamBody.ShouldNotContain("pinned_model_id");
+            upstreamBody.ShouldContain("prompt");
         }
         finally
         {
@@ -1567,6 +1615,7 @@ public class GatewayKeyGateContractTests
     {
         public GatewayRequest? LastRequest { get; private set; }
         public GatewayRawRequest? LastRawRequest { get; private set; }
+        public string? LastResolveExpectedModel { get; private set; }
         public string? LastResolvePinnedPlatformId { get; private set; }
         public string? LastResolvePinnedModelId { get; private set; }
 
@@ -1660,6 +1709,7 @@ public class GatewayKeyGateContractTests
 
         public Task<GatewayModelResolution> ResolveModelAsync(string appCallerCode, string modelType, string? expectedModel = null, string? pinnedPlatformId = null, string? pinnedModelId = null, CancellationToken ct = default)
         {
+            LastResolveExpectedModel = expectedModel;
             LastResolvePinnedPlatformId = pinnedPlatformId;
             LastResolvePinnedModelId = pinnedModelId;
             return Task.FromResult(Resolve(expectedModel));

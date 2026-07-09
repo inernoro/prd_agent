@@ -649,6 +649,14 @@ export async function getAgentRun(runId: string) {
   );
 }
 
+/** 发起知识库一键生成双链任务（标题精确匹配 → 正文改写为 [[标题]]），进度走 agentRunStream SSE */
+export async function startAutoLink(storeId: string) {
+  return await apiRequest<{ runId: string; status: string; reused: boolean }>(
+    api.documentStore.stores.autoLink(storeId),
+    { method: 'POST' },
+  );
+}
+
 /** 查询某 entry 最近一次 Agent Run（按 kind 过滤） */
 export async function getLatestAgentRun(entryId: string, kind: 'subtitle' | 'reprocess') {
   return await apiRequest<import('@/services/contracts/documentStore').DocumentStoreAgentRun | null>(

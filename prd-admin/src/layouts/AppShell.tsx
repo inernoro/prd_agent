@@ -20,7 +20,6 @@ import {
   Bell,
   BellOff,
   Moon,
-  AlertTriangle,
   CheckCircle2,
   X,
   Bug,
@@ -78,6 +77,7 @@ import { UserAvatar } from '@/components/ui/UserAvatar';
 import { AvatarProgressRing } from '@/components/daily-tips/AvatarProgressRing';
 import { getAdminNotifications, handleAdminNotification, handleAllAdminNotifications, updateMyAvatar, uploadMyAvatar } from '@/services';
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
+import { getNotificationType, isEscalationNotification } from '@/lib/notificationTypeRegistry';
 import { GlobalDefectSubmitDialog, DefectSubmitButton } from '@/components/ui/GlobalDefectSubmitDialog';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import { NotificationSubscriptionsPanel } from '@/components/notifications/NotificationSubscriptionsPanel';
@@ -511,10 +511,12 @@ export default function AppShell() {
   const useSidebarGlass = sidebarGlass === 'always' || (sidebarGlass === 'auto' && isLabPage);
 
   const asideWidth = collapsed ? 68 : 176;
-  const asideGap = 12;
   // 专注模式（fullBleedMain）、移动端下隐藏侧栏，主区最大化
   const focusHideAside = fullBleedMain || isMobile;
-  const mainPadLeft = focusHideAside ? (isMobile ? 0 : asideGap) : asideWidth + asideGap * 2;
+  // 侧栏为全高贴边直边栏（flush rail），主区只需让出栏宽本身
+  const mainPadLeft = focusHideAside ? 0 : asideWidth;
+  // 桌面端（非专注模式）内容区渲染为全屏画布面板；移动端与 fullBleed 保持原结构
+  const useCanvasPanel = !isMobile && !fullBleedMain;
 
   // 移动端底部 Tab 栏: 5 固定 Tab（首页/浏览/+/资产/我的），不再依赖后端菜单
 
@@ -523,6 +525,8 @@ export default function AppShell() {
     () =>
       notifications
         .filter((n) => n.status === 'open')
+        // 用户要求：通知（含右下角浮窗）不再出现催办。兜底过滤已下线的催办/超时提醒残留。
+        .filter((n) => !isEscalationNotification(n))
         .slice()
         .sort((a, b) => {
           const ta = new Date(a.createdAt).getTime() || 0;
@@ -577,6 +581,9 @@ export default function AppShell() {
   }, []);
 
   const handleNotification = useCallback(async (id: string, actionUrl?: string | null) => {
+    // 外部链接（绝对 URL）必须在用户点击的同步栈内打开，避免 await 之后丢失手势激活被浏览器拦截弹窗
+    const isExternal = !!actionUrl && /^https?:\/\//i.test(actionUrl);
+    if (isExternal) window.open(actionUrl!, '_blank', 'noopener,noreferrer');
     // 乐观更新：立即从本地状态移除，同时加入 dismiss 黑名单，count 即时 -1
     setHandlingId(id);
     setNotifications((prev) => prev.map((n) => n.id === id ? { ...n, status: 'closed' as const } : n));
@@ -588,7 +595,8 @@ export default function AppShell() {
     });
     try {
       const res = await handleAdminNotification(id);
-      if (res.success && actionUrl) navigate(actionUrl);
+      // 站内路由跳转在 handle 成功后进行（SPA navigate 不受手势激活限制）
+      if (res.success && actionUrl && !isExternal) navigate(actionUrl);
     } finally {
       setHandlingId(null);
       await loadNotifications({ silent: true });
@@ -689,12 +697,9 @@ export default function AppShell() {
       {/* 移动端顶栏已有 Bell 按钮，隐藏右下浮球避免和 MobileTabBar "+" 重叠 */}
       {!suppressFloatingDock && !isMobile && toastNotification && (() => {
         const tone = getNotificationTone(toastNotification.level);
-        const level = (toastNotification.level ?? '').toLowerCase();
-        const LevelIcon = level === 'warning' || level === 'error'
-          ? AlertTriangle
-          : level === 'success'
-            ? CheckCircle2
-            : Bell;
+        // 通知类型注册表：不同类型（缺陷协作 / 周报 / 系统告警 …）展示不同图标、强调色与弹窗气质
+        const variant = getNotificationType(toastNotification);
+        const TypeIcon = variant.icon;
         // 免打扰时强制走「安静铃铛」分支:不自动弹卡片打断,只保留入口
         const showCollapsed = toastCollapsed || isSnoozed;
         return showCollapsed ? (
@@ -728,7 +733,7 @@ export default function AppShell() {
           >
             {isSnoozed
               ? <BellOff size={18} style={{ color: 'var(--text-muted)' }} />
-              : <Bell size={18} style={{ color: tone.text }} />}
+              : <TypeIcon size={18} style={{ color: variant.accent }} />}
             {/* 未读数徽章 */}
             <span
               className="absolute -top-1 -right-1 min-w-5 h-5 px-1 rounded-full flex items-center justify-center text-[10px] font-bold"
@@ -747,25 +752,36 @@ export default function AppShell() {
               minHeight: 112,
               borderRadius: 16,
               background: 'var(--panel-solid, rgba(18, 18, 22, 0.94))',
-              border: `1px solid ${tone.border}`,
-              boxShadow: '0 18px 48px -12px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.02) inset',
+              border: `1px solid ${variant.accent}55`,
+              // 弹窗气质：庆祝（成功完成）加一圈柔和强调光晕，告警加更实的边框，让不同类型一眼可辨
+              boxShadow: variant.popupStyle === 'celebrate'
+                ? `0 18px 48px -12px rgba(0,0,0,0.55), 0 0 0 1px ${variant.accent}33 inset, 0 0 26px -6px ${variant.accent}66`
+                : variant.popupStyle === 'alert'
+                  ? `0 18px 48px -12px rgba(0,0,0,0.55), 0 0 0 1px ${variant.accent}40 inset`
+                  : '0 18px 48px -12px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.02) inset',
               animation: 'notifToastIn 240ms cubic-bezier(.2,.8,.2,1)',
             }}
             onMouseEnter={() => setToastHovering(true)}
             onMouseLeave={() => setToastHovering(false)}
           >
-            {/* 左侧等级色条 */}
-            <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 3, background: tone.text, opacity: 0.9 }} />
-            {/* 头部:图标徽章 + 标题 + 条数 + 右侧操作 */}
+            {/* 左侧类型色条：颜色由通知类型决定 */}
+            <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 3, background: variant.accent, opacity: 0.9 }} />
+            {/* 头部:类型图标徽章 + 标题 + 类型标签 + 条数 + 右侧操作 */}
             <div className="flex items-start gap-2.5 pl-4 pr-3 pt-3.5">
               <div
                 className="mt-0.5 h-7 w-7 shrink-0 rounded-[9px] flex items-center justify-center"
-                style={{ background: tone.bg, border: `1px solid ${tone.border}` }}
+                style={{ background: `${variant.accent}22`, border: `1px solid ${variant.accent}55` }}
               >
-                <LevelIcon size={15} style={{ color: tone.text }} />
+                <TypeIcon size={15} style={{ color: variant.accent }} />
               </div>
               <div className="flex-1 min-w-0 pt-0.5">
                 <div className="flex items-center gap-2">
+                  <span
+                    className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full leading-none"
+                    style={{ background: `${variant.accent}1f`, color: variant.accent }}
+                  >
+                    {variant.label}
+                  </span>
                   <span className="text-[13px] font-semibold leading-snug truncate" style={{ color: 'var(--text-primary)' }}>
                     {toastNotification.title}
                   </span>
@@ -1121,7 +1137,10 @@ export default function AppShell() {
 
       {/* 主体容器（背景动画已临时移除以消除渲染卡顿） */}
       <div className="relative h-full w-full">
-        {/* 悬浮侧边栏：不贴左边，像"挂着" (移动端隐藏) */}
+        {/* 侧边栏：全高贴边直边栏 + 右侧发丝分隔线（移动端隐藏）。
+            2026-07-08 由"12px 悬浮圆角浮岛"改为业界主流的 flush rail
+            （Linear/Slack/Notion/Arc 均此做法）：首页画布全出血后，
+            浮岛侧栏与贴边内容不成对，通到顶底的直边栏两种画布都协调。 */}
         <aside
           className={cn(
             'absolute flex flex-col p-2 transition-[width] duration-220 ease-out',
@@ -1129,12 +1148,11 @@ export default function AppShell() {
           )}
           style={{
             display: focusHideAside ? 'none' : undefined,
-            left: asideGap,
-            top: asideGap,
-            bottom: asideGap,
+            left: 0,
+            top: 0,
+            bottom: 0,
             width: focusHideAside ? 0 : asideWidth,
             zIndex: 12,
-            borderRadius: 18,
             opacity: focusHideAside ? 0 : 1,
             // 根据主题配置决定是否使用液态玻璃效果
             // 强制创建持久的 GPU 合成层，避免状态变化时频繁创建/销毁合成层导致闪烁
@@ -1143,9 +1161,12 @@ export default function AppShell() {
             ...(useSidebarGlass ? glassSidebar : {
               backgroundColor: 'var(--bg-elevated, #1e1e24)',
               backgroundImage: 'linear-gradient(180deg, rgba(36,38,44,1) 0%, rgba(20,24,28,1) 100%)',
-              border: '1px solid rgba(255,255,255,0.10)',
-              boxShadow: '0 26px 120px rgba(0,0,0,0.60), 0 0 0 1px rgba(255,255,255,0.04) inset',
             }),
+            // flush rail：无圆角，只保留右侧发丝分隔线（覆盖 glassSidebar 的四边 border/浮岛投影）
+            borderRadius: 0,
+            border: 'none',
+            borderRight: '1px solid rgba(255,255,255,0.08)',
+            boxShadow: 'none',
             pointerEvents: focusHideAside ? 'none' : 'auto',
           }}
         >
@@ -1705,24 +1726,36 @@ export default function AppShell() {
 
                       {section.items.map((item) => {
                         const tone = getNotificationTone(item.level);
+                        // 通知类型注册表：按类型给出图标 + 强调色 + 类型标签
+                        const variant = getNotificationType(item);
+                        const ItemTypeIcon = variant.icon;
                         return (
                           <div
                             key={item.id}
                             className="rounded-[16px] border px-4 py-3"
-                            style={{ borderColor: tone.border, background: tone.bg }}
+                            style={{ borderColor: `${variant.accent}55`, background: tone.bg }}
                           >
                             <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                               <div className="min-w-0 flex-1">
                                 <div className="flex flex-wrap items-center gap-2">
+                                  <span
+                                    className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
+                                    style={{ background: `${variant.accent}1f`, color: variant.accent }}
+                                  >
+                                    <ItemTypeIcon size={11} />
+                                    {variant.label}
+                                  </span>
                                   <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                                     {item.title}
                                   </div>
-                                  <span
-                                    className="rounded-full px-2 py-0.5 text-[10px]"
-                                    style={{ background: 'rgba(255,255,255,0.1)', color: tone.text }}
-                                  >
-                                    {item.sourceLabel || item.source || '通知'}
-                                  </span>
+                                  {item.sourceLabel && item.sourceLabel !== variant.label && (
+                                    <span
+                                      className="rounded-full px-2 py-0.5 text-[10px]"
+                                      style={{ background: 'rgba(255,255,255,0.1)', color: tone.text }}
+                                    >
+                                      {item.sourceLabel}
+                                    </span>
+                                  )}
                                 </div>
                                 {item.message && (
                                   looksLikeMarkdown(item.message) ? (
@@ -1816,7 +1849,10 @@ export default function AppShell() {
         </aside>
 
         <main
-          className="relative h-full w-full overflow-auto flex flex-col transition-[padding-left] duration-220 ease-out"
+          className={cn(
+            'relative h-full w-full flex flex-col transition-[padding-left] duration-220 ease-out',
+            useCanvasPanel ? 'overflow-hidden' : 'overflow-auto'
+          )}
           style={{
             // 透明 → 让外层 .app-aurora 的彩色光晕透到内容区(否则不透明 base 会盖住 aurora,
             // 半透卡片/玻璃只能折射到平底色)。aurora 自身以 var(--bg-base) 收底,floor 色不变。
@@ -1827,11 +1863,29 @@ export default function AppShell() {
             paddingBottom: isMobile ? 'calc(var(--mobile-tab-height, 60px) + env(safe-area-inset-bottom, 0px))' : undefined,
           }}
         >
+          {/*
+           * 桌面端全屏画布（治「页面半截子」，只保留几何不带外观）：
+           * 常驻撑满视口的滚动容器——滚动发生在容器内部，页面内容再短，
+           * 内容区也始终占满整屏（content-fills-canvas / full-height-layout）。
+           * 演化记录：曾做过"圆角描边面板"版画布，但它叠在页面自带的
+           * TabBar/卡片上多出一层框，用户反馈"整个页面浮肿"（2026-07-08）——
+           * 直边侧栏落地后面板外观已无必要，去掉边距/描边/底色/圆角，
+           * 页面直接坐在应用背景上（Linear 式平整）。
+           * 移动端与专注模式（fullBleedMain）保持原结构。
+           */}
           <div
             className={cn(
               'relative w-full flex-1 min-h-0 flex flex-col',
-              isMobile ? 'px-[var(--mobile-padding,16px)] py-3' : fullBleedMain ? 'p-0' : isHomePage ? 'px-3 py-3' : 'px-5 py-5'
+              useCanvasPanel && 'overflow-auto',
+              isMobile
+                ? 'px-[var(--mobile-padding,16px)] py-3'
+                : fullBleedMain
+                  ? 'p-0'
+                  : isHomePage
+                    ? 'p-0'
+                    : 'px-4 py-3'
             )}
+            style={useCanvasPanel ? { overscrollBehavior: 'contain' } : undefined}
           >
             <div className="flex-1 min-h-0 relative">
               {/* 移动端兼容门槛：根据路由显示 banner / 模态，非阻断式 */}

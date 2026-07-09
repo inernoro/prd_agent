@@ -96,6 +96,7 @@ public static class GatewayHttpEndpoints
             var (pinnedPlatformId, pinnedModelId) = ResolveCompatPinnedTarget(http, body);
             var modelPolicy = ResolveCompatModelPolicy(http, body, requestedModel, pinnedPlatformId, pinnedModelId);
             var stream = ReadBool(body, "stream");
+            StripGatewayRoutingFields(body);
             var droppedParameters = FindDroppedParameters(
                 body,
                 "model", "input", "instructions", "max_output_tokens", "temperature", "top_p",
@@ -175,6 +176,7 @@ public static class GatewayHttpEndpoints
             var (pinnedPlatformId, pinnedModelId) = ResolveCompatPinnedTarget(http, body);
             var modelPolicy = ResolveCompatModelPolicy(http, body, requestedModel, pinnedPlatformId, pinnedModelId);
             body.Remove("model");
+            StripGatewayRoutingFields(body);
 
             var ingress = new GatewayIngressRequest
             {
@@ -344,6 +346,7 @@ public static class GatewayHttpEndpoints
             var modelPolicy = ResolveCompatModelPolicy(http, body, requestedModel, pinnedPlatformId, pinnedModelId);
             var stream = ReadBool(body, "stream");
             body.Remove("model");
+            StripGatewayRoutingFields(body);
             var droppedParameters = FindDroppedParameters(
                 body,
                 "messages", "max_tokens", "temperature", "top_p", "stream",
@@ -422,6 +425,7 @@ public static class GatewayHttpEndpoints
             var (pinnedPlatformId, pinnedModelId) = ResolveCompatPinnedTarget(http, body);
             var modelPolicy = ResolveCompatModelPolicy(http, body, requestedModel, pinnedPlatformId, pinnedModelId);
             var stream = ReadBool(body, "stream");
+            StripGatewayRoutingFields(body);
             var droppedParameters = FindDroppedParameters(
                 body,
                 "model", "system", "messages", "max_tokens", "temperature", "top_p", "top_k",
@@ -531,6 +535,7 @@ public static class GatewayHttpEndpoints
             var modelPoolId = ResolveCompatModelPoolId(http, body);
             var (pinnedPlatformId, pinnedModelId) = ResolveCompatPinnedTarget(http, body);
             var modelPolicy = ResolveCompatModelPolicy(http, body, requestedModel, pinnedPlatformId, pinnedModelId);
+            StripGatewayRoutingFields(body);
             var droppedParameters = FindDroppedParameters(
                 body,
                 "contents", "systemInstruction", "generationConfig", "tools", "toolConfig",
@@ -700,7 +705,6 @@ public static class GatewayHttpEndpoints
             var governance = await RecordAndCheckAppCallerGovernanceAsync(services, ingress, CancellationToken.None);
             if (governance.RateLimit.Rejected) return RateLimitResult(http, governance.RateLimit, jsonOpts);
             if (governance.Budget.Rejected) return BudgetResult(governance.Budget, jsonOpts);
-            using var _ = OpenContextScope(accessor, request.Context, request.ModelType, request.AppCallerCode);
             var rehydrated = await RehydrateMultipartFileRefsAsync(request, services.GetService<IAssetStorage>(), CancellationToken.None);
             if (!rehydrated.Success)
             {
@@ -708,9 +712,16 @@ public static class GatewayHttpEndpoints
             }
 
             request = rehydrated.Request ?? request;
+            var routedRequest = ApplyIngressRouting(request, ingress);
+            using var _ = OpenContextScope(accessor, routedRequest.Context, routedRequest.ModelType, routedRequest.AppCallerCode);
             var res = await gateway.ResolveModelAsync(
-                request.AppCallerCode, request.ModelType, request.ExpectedModel, request.PinnedPlatformId, request.PinnedModelId, CancellationToken.None);
-            var raw = await gateway.SendRawWithResolutionAsync(request, res, CancellationToken.None);
+                routedRequest.AppCallerCode,
+                routedRequest.ModelType,
+                routedRequest.ExpectedModel,
+                routedRequest.PinnedPlatformId,
+                routedRequest.PinnedModelId,
+                CancellationToken.None);
+            var raw = await gateway.SendRawWithResolutionAsync(routedRequest, res, CancellationToken.None);
             return JsonContentResult(raw, jsonOpts);
         });
 
@@ -1115,6 +1126,34 @@ public static class GatewayHttpEndpoints
             .OrderBy(k => k, StringComparer.Ordinal)
             .ToList();
     }
+
+    private static void StripGatewayRoutingFields(JsonObject body)
+    {
+        foreach (var key in GatewayRoutingFieldNames)
+        {
+            body.Remove(key);
+        }
+
+        if (body["provider"] is JsonObject provider)
+        {
+            foreach (var key in GatewayRoutingFieldNames)
+            {
+                provider.Remove(key);
+            }
+        }
+    }
+
+    private static readonly string[] GatewayRoutingFieldNames =
+    [
+        "model_policy",
+        "modelPolicy",
+        "model_pool_id",
+        "modelPoolId",
+        "pinned_platform_id",
+        "pinnedPlatformId",
+        "pinned_model_id",
+        "pinnedModelId",
+    ];
 
     private static async Task<AppCallerGovernanceDecision> RecordAndCheckAppCallerGovernanceAsync(
         IServiceProvider services,
@@ -3100,6 +3139,52 @@ public static class GatewayHttpEndpoints
             EnablePromptCache = request.EnablePromptCache,
             TimeoutSeconds = request.TimeoutSeconds,
             IncludeThinking = request.IncludeThinking,
+            Context = new GatewayRequestContext
+            {
+                RequestId = source?.RequestId ?? ingress.RequestId,
+                SessionId = source?.SessionId,
+                GroupId = source?.GroupId,
+                UserId = source?.UserId,
+                ViewRole = source?.ViewRole,
+                DocumentChars = source?.DocumentChars,
+                DocumentHash = source?.DocumentHash,
+                QuestionText = source?.QuestionText,
+                SystemPromptChars = source?.SystemPromptChars,
+                SystemPromptText = source?.SystemPromptText,
+                ImageReferences = source?.ImageReferences,
+                GatewayTransport = source?.GatewayTransport,
+                SourceSystem = ingress.SourceSystem,
+                IngressProtocol = ingress.IngressProtocol,
+                AppCallerTitle = ingress.AppCallerTitle,
+                ModelPolicy = ingress.ModelPolicy,
+                ModelPoolId = ingress.ModelPoolId,
+                ParameterPolicy = ingress.ParameterPolicy,
+                DroppedParameters = ingress.DroppedParameters,
+                IsHealthProbe = source?.IsHealthProbe,
+            },
+        };
+    }
+
+    private static GatewayRawRequest ApplyIngressRouting(GatewayRawRequest request, GatewayIngressRequest ingress)
+    {
+        var source = request.Context;
+        return new GatewayRawRequest
+        {
+            AppCallerCode = request.AppCallerCode,
+            ModelType = request.ModelType,
+            EndpointPath = request.EndpointPath,
+            ExpectedModel = ingress.ExpectedModel,
+            PinnedPlatformId = ingress.PinnedPlatformId,
+            PinnedModelId = ingress.PinnedModelId,
+            RequestBody = request.RequestBody,
+            IsMultipart = request.IsMultipart,
+            MultipartFields = request.MultipartFields,
+            MultipartFiles = request.MultipartFiles,
+            MultipartFileRefs = request.MultipartFileRefs,
+            HttpMethod = request.HttpMethod,
+            ExtraHeaders = request.ExtraHeaders,
+            TimeoutSeconds = request.TimeoutSeconds,
+            ExpectBinaryResponse = request.ExpectBinaryResponse,
             Context = new GatewayRequestContext
             {
                 RequestId = source?.RequestId ?? ingress.RequestId,
