@@ -351,7 +351,7 @@ public sealed class GatewayIngressRequest
                 SystemPromptChars = Context?.SystemPromptChars,
                 SystemPromptText = Context?.SystemPromptText,
                 ImageReferences = Context?.ImageReferences,
-                GatewayTransport = Context?.GatewayTransport,
+                GatewayTransport = GatewayTransports.Http,
                 SourceSystem = SourceSystem,
                 IngressProtocol = IngressProtocol,
                 AppCallerTitle = AppCallerTitle,
